@@ -34,7 +34,6 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifdef MOZ_IPC
 #include "nsContentPermissionHelper.h"
 #include "nsXULAppAPI.h"
 
@@ -53,7 +52,6 @@
 
 #include "nsDOMEventTargetHelper.h"
 #include "TabChild.h"
-#endif
 
 #include "nsGeolocation.h"
 #include "nsAutoPtr.h"
@@ -243,7 +241,6 @@ nsGeolocationRequest::nsGeolocationRequest(nsGeolocation* aLocator,
                                            PRBool aWatchPositionRequest)
   : mAllowed(PR_FALSE),
     mCleared(PR_FALSE),
-    mIsFirstUpdate(PR_TRUE),
     mIsWatchPositionRequest(aWatchPositionRequest),
     mCallback(aCallback),
     mErrorCallback(aErrorCallback),
@@ -461,20 +458,10 @@ nsGeolocationRequest::SendLocation(nsIDOMGeoPosition* aPosition)
 }
 
 void
-nsGeolocationRequest::Update(nsIDOMGeoPosition* aPosition, PRBool isBetter)
+nsGeolocationRequest::Update(nsIDOMGeoPosition* aPosition)
 {
-  // Only dispatch callbacks if this is the first position for this request, or
-  // if the accuracy is as good or improving.
-  //
-  // This ensures that all listeners get at least one position callback, particularly
-  // in the case when newly detected positions are all less accurate than the cached one.
-  //
-  // Fixes bug 596481
-  if (mIsFirstUpdate || isBetter) {
-    mIsFirstUpdate = PR_FALSE;
-    nsCOMPtr<nsIRunnable> ev  = new RequestSendLocationEvent(aPosition, this);
-    NS_DispatchToMainThread(ev);
-  }
+  nsCOMPtr<nsIRunnable> ev  = new RequestSendLocationEvent(aPosition, this);
+  NS_DispatchToMainThread(ev);
 }
 
 void
@@ -489,7 +476,6 @@ nsGeolocationRequest::Shutdown()
   mErrorCallback = nsnull;
 }
 
-#ifdef MOZ_IPC
 bool nsGeolocationRequest::Recv__delete__(const bool& allow)
 {
   if (allow)
@@ -498,7 +484,6 @@ bool nsGeolocationRequest::Recv__delete__(const bool& allow)
     (void) Cancel();
   return true;
 }
-#endif
 ////////////////////////////////////////////////////
 // nsGeolocationService
 ////////////////////////////////////////////////////
@@ -658,98 +643,11 @@ nsGeolocationService::Observe(nsISupports* aSubject,
 NS_IMETHODIMP
 nsGeolocationService::Update(nsIDOMGeoPosition *aSomewhere)
 {
-  // here we have to determine this aSomewhere is a "better"
-  // position than any previously recv'ed.
-
-  PRBool isBetter = IsBetterPosition(aSomewhere);
-  if (isBetter) {
-    SetCachedPosition(aSomewhere);
-  }
+  SetCachedPosition(aSomewhere);
 
   for (PRUint32 i = 0; i< mGeolocators.Length(); i++)
-    mGeolocators[i]->Update(aSomewhere, isBetter);
+    mGeolocators[i]->Update(aSomewhere);
   return NS_OK;
-}
-
-PRBool
-nsGeolocationService::IsBetterPosition(nsIDOMGeoPosition *aSomewhere)
-{
-  if (!aSomewhere)
-    return PR_FALSE;
-
-  nsRefPtr<nsGeolocationService> geoService = nsGeolocationService::GetInstance();
-  if (!geoService)
-    return PR_FALSE;
-
-  nsCOMPtr<nsIDOMGeoPosition> lastPosition = geoService->GetCachedPosition();
-  if (!lastPosition)
-    return PR_TRUE;
-
-  nsresult rv;
-  DOMTimeStamp oldTime;
-  rv = lastPosition->GetTimestamp(&oldTime);
-  NS_ENSURE_SUCCESS(rv, PR_FALSE);
-
-  nsCOMPtr<nsIDOMGeoPositionCoords> coords;
-  lastPosition->GetCoords(getter_AddRefs(coords));
-  if (!coords)
-    return PR_FALSE;
-
-  double oldAccuracy;
-  rv = coords->GetAccuracy(&oldAccuracy);
-  NS_ENSURE_SUCCESS(rv, PR_FALSE);
-
-  double oldLat, oldLon;
-  rv = coords->GetLongitude(&oldLon);
-  NS_ENSURE_SUCCESS(rv, PR_FALSE);
-
-  rv = coords->GetLatitude(&oldLat);
-  NS_ENSURE_SUCCESS(rv, PR_FALSE);
-
-
-  DOMTimeStamp newTime;
-  rv = aSomewhere->GetTimestamp(&newTime);
-  NS_ENSURE_SUCCESS(rv, PR_FALSE);
-
-  aSomewhere->GetCoords(getter_AddRefs(coords));
-  if (!coords)
-    return PR_FALSE;
-
-  double newAccuracy;
-  rv = coords->GetAccuracy(&newAccuracy);
-  NS_ENSURE_SUCCESS(rv, PR_FALSE);
-
-  double newLat, newLon;
-  rv = coords->GetLongitude(&newLon);
-  NS_ENSURE_SUCCESS(rv, PR_FALSE);
-
-  rv = coords->GetLatitude(&newLat);
-  NS_ENSURE_SUCCESS(rv, PR_FALSE);
-
-  // check to see if there has been a large movement
-  // Use spherical law of cosines to calculate difference
-  // Not quite as correct as the Haversine but simpler and cheaper
-  double radsInDeg = 3.14159265 / 180.0;
-
-  double rNewLat = newLat * radsInDeg;
-  double rNewLon = newLon * radsInDeg;
-  double rOldLat = oldLat * radsInDeg;
-  double rOldLon = oldLon * radsInDeg;
-
-  // WGS84 equatorial radius of earth = 6378137m
-  double delta = acos( (sin(rNewLat) * sin(rOldLat)) + (cos(rNewLat) * cos(rOldLat) * cos(rOldLon - rNewLon)) ) * 6378137; 
-
-  // The threshold is when the distance between the two positions exceeds the
-  // worse (larger value) of the two accuracies.
-  double max_accuracy = NS_MAX(oldAccuracy, newAccuracy);
-  if (delta > max_accuracy)
-    return PR_TRUE;
-
-  // check to see if the aSomewhere position is more accurate
-  if (oldAccuracy >= newAccuracy)
-    return PR_TRUE;
-
-  return PR_FALSE;
 }
 
 void
@@ -775,13 +673,11 @@ nsGeolocationService::StartDevice()
   // inactivivity
   SetDisconnectTimer();
 
-#ifdef MOZ_IPC
   if (XRE_GetProcessType() == GeckoProcessType_Content) {
     ContentChild* cpc = ContentChild::GetSingleton();
     cpc->SendAddGeolocationListener();
     return NS_OK;
   }
-#endif
 
   // Start them up!
   nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
@@ -820,13 +716,11 @@ nsGeolocationService::StopDevice()
     mDisconnectTimer = nsnull;
   }
 
-#ifdef MOZ_IPC
   if (XRE_GetProcessType() == GeckoProcessType_Content) {
     ContentChild* cpc = ContentChild::GetSingleton();
     cpc->SendRemoveGeolocationListener();
     return; // bail early
   }
-#endif
 
   nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
   if (!obs)
@@ -999,19 +893,19 @@ nsGeolocation::RemoveRequest(nsGeolocationRequest* aRequest)
 }
 
 void
-nsGeolocation::Update(nsIDOMGeoPosition *aSomewhere, PRBool isBetter)
+nsGeolocation::Update(nsIDOMGeoPosition *aSomewhere)
 {
   if (!WindowOwnerStillExists())
     return Shutdown();
 
   for (PRUint32 i = 0; i< mPendingCallbacks.Length(); i++) {
-    mPendingCallbacks[i]->Update(aSomewhere, isBetter);
+    mPendingCallbacks[i]->Update(aSomewhere);
   }
   mPendingCallbacks.Clear();
 
   // notify everyone that is watching
   for (PRUint32 i = 0; i< mWatchingCallbacks.Length(); i++) {
-    mWatchingCallbacks[i]->Update(aSomewhere, isBetter);
+    mWatchingCallbacks[i]->Update(aSomewhere);
   }
 }
 
@@ -1147,7 +1041,6 @@ nsGeolocation::WindowOwnerStillExists()
 bool
 nsGeolocation::RegisterRequestWithPrompt(nsGeolocationRequest* request)
 {
-#ifdef MOZ_IPC
   if (XRE_GetProcessType() == GeckoProcessType_Content) {
     nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mOwner);
     if (!window)
@@ -1169,7 +1062,6 @@ nsGeolocation::RegisterRequestWithPrompt(nsGeolocationRequest* request)
     request->Sendprompt();
     return true;
   }
-#endif
 
   if (nsContentUtils::GetBoolPref("geo.prompt.testing", PR_FALSE))
   {

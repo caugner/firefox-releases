@@ -38,14 +38,13 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifdef MOZ_IPC
-# include "mozilla/layers/ShadowLayers.h"
-#endif  // MOZ_IPC
+#include "mozilla/layers/ShadowLayers.h"
 
 #include "ImageLayers.h"
 #include "Layers.h"
 #include "gfxPlatform.h"
 #include "ReadbackLayer.h"
+#include "gfxUtils.h"
 
 using namespace mozilla::layers;
 
@@ -240,7 +239,6 @@ Layer::CanUseOpaqueSurface()
     parent->CanUseOpaqueSurface();
 }
 
-#ifdef MOZ_IPC
 // NB: eventually these methods will be defined unconditionally, and
 // can be moved into Layers.h
 const nsIntRect*
@@ -260,13 +258,6 @@ Layer::GetEffectiveVisibleRegion()
   }
   return GetVisibleRegion();
 }
-
-#else
-
-const nsIntRect* Layer::GetEffectiveClipRect() { return GetClipRect(); }
-const nsIntRegion& Layer::GetEffectiveVisibleRegion() { return GetVisibleRegion(); }
-
-#endif  // MOZ_IPC
 
 gfx3DMatrix
 Layer::SnapTransform(const gfx3DMatrix& aTransform,
@@ -316,13 +307,52 @@ Layer::SnapTransform(const gfx3DMatrix& aTransform,
   return result;
 }
 
+nsIntRect 
+Layer::CalculateScissorRect(bool aIntermediate,
+                            const nsIntRect& aVisibleRect,
+                            const nsIntRect& aParentScissor,
+                            const gfxMatrix& aTransform)
+{
+  nsIntRect scissorRect(aVisibleRect);
+
+  const nsIntRect *clipRect = GetEffectiveClipRect();
+
+  if (!aIntermediate && !clipRect) {
+    return aParentScissor;
+  }
+
+  if (clipRect) {
+    if (clipRect->IsEmpty()) {
+      return *clipRect;
+    }
+    scissorRect = *clipRect;
+    if (!aIntermediate) {
+      gfxRect r(scissorRect.x, scissorRect.y, scissorRect.width, scissorRect.height);
+      gfxRect trScissor = aTransform.TransformBounds(r);
+      trScissor.Round();
+      if (!gfxUtils::GfxRectToIntRect(trScissor, &scissorRect)) {
+        scissorRect = aVisibleRect;
+      }
+    }
+  }
+    
+  if (aIntermediate) {
+    scissorRect.MoveBy(- aVisibleRect.TopLeft());
+  } else if (clipRect) {
+    scissorRect.IntersectRect(scissorRect, aParentScissor);
+  }
+
+  NS_ASSERTION(scissorRect.x >= 0 && scissorRect.y >= 0,
+               "Attempting to scissor out of bounds!");
+
+  return scissorRect;
+}
+
 const gfx3DMatrix&
 Layer::GetLocalTransform()
 {
-#ifdef MOZ_IPC
   if (ShadowLayer* shadow = AsShadowLayer())
     return shadow->GetShadowTransform();
-#endif
   return mTransform;
 }
 
@@ -510,6 +540,9 @@ Layer::PrintInfo(nsACString& aTo, const char* aPrefix)
   if (GetContentFlags() & CONTENT_COMPONENT_ALPHA) {
     aTo += " [componentAlpha]";
   }
+  if (GetIsFixedPosition()) {
+    aTo += " [isFixedPosition]";
+  }
 
   return aTo;
 }
@@ -660,7 +693,6 @@ LayerManager::IsLogEnabled()
   return PR_LOG_TEST(sLog, PR_LOG_DEBUG);
 }
 
-# ifdef MOZ_IPC
 static nsACString&
 PrintInfo(nsACString& aTo, ShadowLayer* aShadowLayer)
 {
@@ -678,12 +710,6 @@ PrintInfo(nsACString& aTo, ShadowLayer* aShadowLayer)
   }
   return aTo;
 }
-# else
-static nsACString& PrintInfo(nsACString& aTo, ShadowLayer* aShadowLayer)
-{
-  return aTo;
-}
-# endif  // MOZ_IPC
 
 #else  // !MOZ_LAYERS_HAVE_LOG
 

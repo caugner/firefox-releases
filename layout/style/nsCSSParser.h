@@ -44,20 +44,24 @@
 #include "nsCSSProperty.h"
 #include "nsColor.h"
 #include "nsCOMArray.h"
+#include "nsCOMPtr.h"
 
 class nsICSSRule;
-class nsICSSStyleRule;
 class nsCSSStyleSheet;
 class nsIPrincipal;
 class nsIURI;
 class nsIUnicharInputStream;
 struct nsCSSSelectorList;
 class nsMediaList;
+#ifdef MOZ_CSS_ANIMATIONS
+class nsCSSKeyframeRule;
+#endif
 
 namespace mozilla {
 namespace css {
 class Declaration;
 class Loader;
+class StyleRule;
 }
 }
 
@@ -128,7 +132,7 @@ public:
                                nsIURI*           aDocURL,
                                nsIURI*           aBaseURL,
                                nsIPrincipal*     aNodePrincipal,
-                               nsICSSStyleRule** aResult);
+                               mozilla::css::StyleRule** aResult);
 
   // Parse the body of a declaration block.  Very similar to
   // ParseStyleAttribute, but used under different circumstances.
@@ -193,6 +197,26 @@ public:
                                nsIURI*             aURL,
                                PRUint32            aLineNumber,
                                nsCSSSelectorList** aSelectorList);
+
+#ifdef MOZ_CSS_ANIMATIONS
+  /*
+   * Parse a keyframe rule (which goes inside an @keyframes rule).
+   * Return it if the parse was successful.
+   */
+  already_AddRefed<nsCSSKeyframeRule>
+  ParseKeyframeRule(const nsSubstring& aBuffer,
+                    nsIURI*            aURL,
+                    PRUint32           aLineNumber);
+
+  /*
+   * Parse a selector list for a keyframe rule.  Return whether
+   * the parse succeeded.
+   */
+  bool ParseKeyframeSelectorString(const nsSubstring& aSelectorString,
+                                   nsIURI*            aURL,
+                                   PRUint32           aLineNumber,
+                                   nsTArray<float>&   aSelectorList);
+#endif
 
 protected:
   // This is a CSSParserImpl*, but if we expose that type name in this

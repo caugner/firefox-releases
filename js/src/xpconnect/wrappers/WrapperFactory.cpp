@@ -235,6 +235,15 @@ WrapperFactory::PrepareForWrapping(JSContext *cx, JSObject *scope, JSObject *obj
     return DoubleWrap(cx, obj, flags);
 }
 
+static XPCWrappedNative *
+GetWrappedNative(JSContext *cx, JSObject *obj)
+{
+    OBJ_TO_INNER_OBJECT(cx, obj);
+    return IS_WN_WRAPPER(obj)
+           ? static_cast<XPCWrappedNative *>(obj->getPrivate())
+           : nsnull;
+}
+
 JSObject *
 WrapperFactory::Rewrap(JSContext *cx, JSObject *obj, JSObject *wrappedProto, JSObject *parent,
                        uintN flags)
@@ -274,13 +283,26 @@ WrapperFactory::Rewrap(JSContext *cx, JSObject *obj, JSObject *wrappedProto, JSO
     } else if (AccessCheck::isChrome(origin)) {
         if (obj->isFunction()) {
             JSFunction *fun = obj->getFunctionPrivate();
-            if (js::IsBuiltinEvalFunction(fun) || js::IsBuiltinFunctionConstructor(fun)) {
+            if (JS_IsBuiltinEvalFunction(fun) || JS_IsBuiltinFunctionConstructor(fun)) {
                 JS_ReportError(cx, "Not allowed to access chrome eval or Function from content");
                 return nsnull;
             }
         }
-        wrapper = &FilteringWrapper<JSCrossCompartmentWrapper,
-                                    ExposedPropertiesOnly>::singleton;
+
+        XPCWrappedNative *wn;
+        if (targetdata &&
+            (wn = GetWrappedNative(cx, obj)) &&
+            wn->HasProto() && wn->GetProto()->ClassIsDOMObject()) {
+            typedef XrayWrapper<JSCrossCompartmentWrapper> Xray;
+            wrapper = &FilteringWrapper<Xray,
+                                        CrossOriginAccessiblePropertiesOnly>::singleton;
+            xrayHolder = Xray::createHolder(cx, obj, parent);
+            if (!xrayHolder)
+                return nsnull;
+        } else {
+            wrapper = &FilteringWrapper<JSCrossCompartmentWrapper,
+                                        ExposedPropertiesOnly>::singleton;
+        }
     } else if (AccessCheck::isSameOrigin(origin, target)) {
         // Same origin we use a transparent wrapper, unless the compartment asks
         // for an Xray or the wrapper needs a SOW.
@@ -317,7 +339,7 @@ WrapperFactory::Rewrap(JSContext *cx, JSObject *obj, JSObject *wrappedProto, JSO
                 wrapper = &FilteringWrapper<Xray,
                     SameOriginOrCrossOriginAccessiblePropertiesOnly>::singleton;
             } else {
-                wrapper= &FilteringWrapper<Xray,
+                wrapper = &FilteringWrapper<Xray,
                     CrossOriginAccessiblePropertiesOnly>::singleton;
             }
 

@@ -487,29 +487,44 @@ TestPilotExperiment.prototype = {
   onNewWindow: function TestPilotExperiment_onNewWindow(window) {
     this._logger.trace("Experiment.onNewWindow called.");
     if (this.experimentIsRunning()) {
-      this._handlers.onNewWindow(window);
+      try {
+        this._handlers.onNewWindow(window);
+      } catch(e) {
+        this._dataStore.logException("onNewWindow: " + e);
+      }
     }
   },
 
   onWindowClosed: function TestPilotExperiment_onWindowClosed(window) {
     this._logger.trace("Experiment.onWindowClosed called.");
     if (this.experimentIsRunning()) {
-      this._handlers.onWindowClosed(window);
+      try {
+        this._handlers.onWindowClosed(window);
+      } catch(e) {
+        this._dataStore.logException("onWindowClosed: " + e);
+      }
     }
   },
 
   onAppStartup: function TestPilotExperiment_onAppStartup() {
     this._logger.trace("Experiment.onAppStartup called.");
     if (this.experimentIsRunning()) {
-      this._handlers.onAppStartup();
+      try {
+        this._handlers.onAppStartup();
+      } catch(e) {
+        this._dataStore.logException("onAppStartup: " + e);
+      }
     }
   },
 
   onAppShutdown: function TestPilotExperiment_onAppShutdown() {
     this._logger.trace("Experiment.onAppShutdown called.");
-    // TODO the caller for this is not yet implemented
     if (this.experimentIsRunning()) {
-      this._handlers.onAppShutdown();
+      try {
+        this._handlers.onAppShutdown();
+      } catch(e) {
+        this._dataStore.logException("onAppShutdown: " + e);
+      }
     }
   },
 
@@ -518,7 +533,11 @@ TestPilotExperiment.prototype = {
     // Make sure not to call this if it's already been called:
     if (this.experimentIsRunning() && !this._startedUpHandlers) {
       this._logger.trace("  ... starting up handlers!");
-      this._handlers.onExperimentStartup(this._dataStore);
+      try {
+        this._handlers.onExperimentStartup(this._dataStore);
+      } catch(e) {
+        this._dataStore.logException("onExperimentStartup: " + e);
+      }
       this._startedUpHandlers = true;
     }
   },
@@ -526,7 +545,11 @@ TestPilotExperiment.prototype = {
   onExperimentShutdown: function TestPilotExperiment_onShutdown() {
     this._logger.trace("Experiment.onExperimentShutdown called.");
     if (this.experimentIsRunning() && this._startedUpHandlers) {
-      this._handlers.onExperimentShutdown();
+      try {
+        this._handlers.onExperimentShutdown();
+      } catch(e) {
+        this._dataStore.logException("onExperimentShutdown: " + e);
+      }
       this._startedUpHandlers = false;
     }
   },
@@ -534,22 +557,49 @@ TestPilotExperiment.prototype = {
   doExperimentCleanup: function TestPilotExperiment_doExperimentCleanup() {
     if (this._handlers.doExperimentCleanup) {
       this._logger.trace("Doing experiment cleanup.");
-      this._handlers.doExperimentCleanup();
+      try {
+        this._handlers.doExperimentCleanup();
+      } catch(e) {
+        this._dataStore.logException("doExperimentCleanup: " + e);
+      }
     }
   },
 
   onEnterPrivateBrowsing: function TestPilotExperiment_onEnterPrivate() {
     this._logger.trace("Task is entering private browsing.");
     if (this.experimentIsRunning()) {
-      this._handlers.onEnterPrivateBrowsing();
+      try {
+        this._handlers.onEnterPrivateBrowsing();
+      } catch(e) {
+        this._dataStore.logException("onEnterPrivateBrowsing: " + e);
+      }
     }
   },
 
   onExitPrivateBrowsing: function TestPilotExperiment_onExitPrivate() {
     this._logger.trace("Task is exiting private browsing.");
     if (this.experimentIsRunning()) {
-      this._handlers.onExitPrivateBrowsing();
+      try {
+        this._handlers.onExitPrivateBrowsing();
+      } catch(e) {
+        this._dataStore.logException("onExitPrivateBrowsing: " + e);
+      }
     }
+  },
+
+  getStudyMetadata: function TestPilotExperiment_getStudyMetadata() {
+    try {
+      if (this._handlers.getStudyMetadata) {
+        let metadata = this._handlers.getStudyMetadata();
+        if (metadata.length) {
+          // getStudyMetadata must return an array, otherwise it is invalid.
+          return metadata;
+        }
+      }
+    } catch(e) {
+      this._logger.warn("Error in getStudyMetadata: " + e);
+    }
+    return null;
   },
 
   _reschedule: function TestPilotExperiment_reschedule() {
@@ -753,10 +803,22 @@ TestPilotExperiment.prototype = {
       json.metadata = md;
       json.metadata.task_guid = self.getGuid(self._id);
       json.metadata.event_headers = self._dataStore.getPropertyNames();
+      let moreMd = self.getStudyMetadata();
+      if (moreMd) {
+        for (let i = 0; i < moreMd.length; i++) {
+          if (moreMd[i].name && moreMd[i].value) {
+            json.metadata[ moreMd[i].name ] = moreMd[i].value; // TODO sanitize strings?
+            // TODO handle case where name or value are something other than strings?
+          }
+        }
+      }
       self._dataStore.getJSONRows(function(rows) {
-                                    json.events = rows;
-                                    callback( JSON.stringify(json) );
-                                  });
+        json.events = rows;
+        self._dataStore.getExceptionsAsJson(function(errs) {
+          json.exceptions = errs;
+          callback( JSON.stringify(json) );
+        });
+      });
     });
   },
 

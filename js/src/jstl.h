@@ -42,16 +42,10 @@
 
 #include "jsbit.h"
 #include "jsstaticcheck.h"
+#include "jsstdint.h"
 
 #include <new>
 #include <string.h>
-
-/* Gross special case for Gecko, which defines malloc/calloc/free. */
-#ifdef mozilla_mozalloc_macro_wrappers_h
-#  define JSSTL_UNDEFD_MOZALLOC_WRAPPERS
-/* The "anti-header" */
-#  include "mozilla/mozalloc_undef_macro_wrappers.h"
-#endif
 
 namespace js {
 
@@ -175,6 +169,9 @@ template <> struct IsPodType<double>          { static const bool result = true;
 template <class T, size_t N> inline T *ArraySize(T (&)[N]) { return N; }
 template <class T, size_t N> inline T *ArrayEnd(T (&arr)[N]) { return arr + N; }
 
+template <bool cond, typename T, T v1, T v2> struct If        { static const T result = v1; };
+template <typename T, T v1, T v2> struct If<false, T, v1, v2> { static const T result = v2; };
+
 } /* namespace tl */
 
 /* Useful for implementing containers that assert non-reentrancy */
@@ -239,11 +236,11 @@ PointerRangeSize(T *begin, T *end)
 /*
  * Allocation policies.  These model the concept:
  *  - public copy constructor, assignment, destructor
- *  - void *malloc(size_t)
+ *  - void *malloc_(size_t)
  *      Responsible for OOM reporting on NULL return value.
- *  - void *realloc(size_t)
+ *  - void *realloc_(size_t)
  *      Responsible for OOM reporting on NULL return value.
- *  - void free(void *)
+ *  - void free_(void *)
  *  - reportAllocOverflow()
  *      Called on overflow before the container returns NULL.
  */
@@ -252,9 +249,9 @@ PointerRangeSize(T *begin, T *end)
 class SystemAllocPolicy
 {
   public:
-    void *malloc(size_t bytes) { return js_malloc(bytes); }
-    void *realloc(void *p, size_t bytes) { return js_realloc(p, bytes); }
-    void free(void *p) { js_free(p); }
+    void *malloc_(size_t bytes) { return js::OffTheBooks::malloc_(bytes); }
+    void *realloc_(void *p, size_t bytes) { return js::OffTheBooks::realloc_(p, bytes); }
+    void free_(void *p) { js::UnwantedForeground::free_(p); }
     void reportAllocOverflow() const {}
 };
 
@@ -311,6 +308,9 @@ class LazilyConstructed
 
     T &asT() { return *storage.addr(); }
 
+    explicit LazilyConstructed(const LazilyConstructed &other);
+    const LazilyConstructed &operator=(const LazilyConstructed &other);
+
   public:
     LazilyConstructed() { constructed = false; }
     ~LazilyConstructed() { if (constructed) asT().~T(); }
@@ -364,6 +364,11 @@ class LazilyConstructed
     void destroy() {
         ref().~T();
         constructed = false;
+    }
+
+    void destroyIfConstructed() {
+        if (!empty())
+            destroy();
     }
 };
 
@@ -486,10 +491,167 @@ InitConst(const T &t)
     return const_cast<T &>(t);
 }
 
-} /* namespace js */
+/* Smart pointer, restricted to a range defined at construction. */
+template <class T>
+class RangeCheckedPointer
+{
+    T *ptr;
 
-#ifdef JSSTL_UNDEFD_MOZALLOC_WRAPPERS
-#  include "mozilla/mozalloc_macro_wrappers.h"
+#ifdef DEBUG
+    T * const rangeStart;
+    T * const rangeEnd;
 #endif
+
+    void sanityChecks() {
+        JS_ASSERT(rangeStart <= ptr);
+        JS_ASSERT(ptr <= rangeEnd);
+    }
+
+    /* Creates a new pointer for |ptr|, restricted to this pointer's range. */
+    RangeCheckedPointer<T> create(T *ptr) const {
+#ifdef DEBUG
+        return RangeCheckedPointer<T>(ptr, rangeStart, rangeEnd);
+#else
+        return RangeCheckedPointer<T>(ptr, NULL, size_t(0));
+#endif
+    }
+
+  public:
+    RangeCheckedPointer(T *p, T *start, T *end)
+      : ptr(p)
+#ifdef DEBUG
+      , rangeStart(start), rangeEnd(end)
+#endif
+    {
+        JS_ASSERT(rangeStart <= rangeEnd);
+        sanityChecks();
+    }
+    RangeCheckedPointer(T *p, T *start, size_t length)
+      : ptr(p)
+#ifdef DEBUG
+      , rangeStart(start), rangeEnd(start + length)
+#endif
+    {
+        JS_ASSERT(length <= size_t(-1) / sizeof(T));
+        JS_ASSERT(uintptr_t(rangeStart) + length * sizeof(T) >= uintptr_t(rangeStart));
+        sanityChecks();
+    }
+
+    RangeCheckedPointer<T> &operator=(const RangeCheckedPointer<T> &other) {
+        JS_ASSERT(rangeStart == other.rangeStart);
+        JS_ASSERT(rangeEnd == other.rangeEnd);
+        ptr = other.ptr;
+        sanityChecks();
+        return *this;
+    }
+
+    RangeCheckedPointer<T> operator+(size_t inc) {
+        JS_ASSERT(inc <= size_t(-1) / sizeof(T));
+        JS_ASSERT(ptr + inc > ptr);
+        return create(ptr + inc);
+    }
+
+    RangeCheckedPointer<T> operator-(size_t dec) {
+        JS_ASSERT(dec <= size_t(-1) / sizeof(T));
+        JS_ASSERT(ptr - dec < ptr);
+        return create(ptr - dec);
+    }
+
+    template <class U>
+    RangeCheckedPointer<T> &operator=(U *p) {
+        *this = create(p);
+        return *this;
+    }
+
+    template <class U>
+    RangeCheckedPointer<T> &operator=(const RangeCheckedPointer<U> &p) {
+        JS_ASSERT(rangeStart <= p.ptr);
+        JS_ASSERT(p.ptr <= rangeEnd);
+        ptr = p.ptr;
+        sanityChecks();
+        return *this;
+    }
+
+    RangeCheckedPointer<T> &operator++() {
+        return (*this += 1);
+    }
+
+    RangeCheckedPointer<T> operator++(int) {
+        RangeCheckedPointer<T> rcp = *this;
+        ++*this;
+        return rcp;
+    }
+
+    RangeCheckedPointer<T> &operator--() {
+        return (*this -= 1);
+    }
+
+    RangeCheckedPointer<T> operator--(int) {
+        RangeCheckedPointer<T> rcp = *this;
+        --*this;
+        return rcp;
+    }
+
+    RangeCheckedPointer<T> &operator+=(size_t inc) {
+        this->operator=<T>(*this + inc);
+        return *this;
+    }
+
+    RangeCheckedPointer<T> &operator-=(size_t dec) {
+        this->operator=<T>(*this - dec);
+        return *this;
+    }
+
+    T &operator[](int index) const {
+        JS_ASSERT(size_t(index > 0 ? index : -index) <= size_t(-1) / sizeof(T));
+        return *create(ptr + index);
+    }
+
+    T &operator*() const {
+        return *ptr;
+    }
+
+    operator T*() const {
+        return ptr;
+    }
+
+    template <class U>
+    bool operator==(const RangeCheckedPointer<U> &other) const {
+        return ptr == other.ptr;
+    }
+    template <class U>
+    bool operator!=(const RangeCheckedPointer<U> &other) const {
+        return !(*this == other);
+    }
+
+    template <class U>
+    bool operator<(const RangeCheckedPointer<U> &other) const {
+        return ptr < other.ptr;
+    }
+    template <class U>
+    bool operator<=(const RangeCheckedPointer<U> &other) const {
+        return ptr <= other.ptr;
+    }
+
+    template <class U>
+    bool operator>(const RangeCheckedPointer<U> &other) const {
+        return ptr > other.ptr;
+    }
+    template <class U>
+    bool operator>=(const RangeCheckedPointer<U> &other) const {
+        return ptr >= other.ptr;
+    }
+
+    size_t operator-(const RangeCheckedPointer<T> &other) const {
+        JS_ASSERT(ptr >= other.ptr);
+        return PointerRangeSize(other.ptr, ptr);
+    }
+
+  private:
+    RangeCheckedPointer();
+    T *operator&();
+};
+
+} /* namespace js */
 
 #endif /* jstl_h_ */

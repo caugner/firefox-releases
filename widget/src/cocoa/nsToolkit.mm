@@ -407,6 +407,11 @@ PRBool nsToolkit::OnSnowLeopardOrLater()
   return (OSXVersion() >= MAC_OS_X_VERSION_10_6_HEX);
 }
 
+PRBool nsToolkit::OnLionOrLater()
+{
+  return (OSXVersion() >= MAC_OS_X_VERSION_10_7_HEX);
+}
+
 // An alternative to [NSObject poseAsClass:] that isn't deprecated on OS X
 // Leopard and is available to 64-bit binaries on Leopard and above.  Based on
 // ideas and code from http://www.cocoadev.com/index.pl?MethodSwizzling.
@@ -783,7 +788,6 @@ void ScanImportedFunctions(const struct mach_header* mh, intptr_t vmaddr_slide)
 #ifdef __i386__
       if (jumpTable) {
         unsigned char *opcodeAddr = stubs + (i * 5);
-        unsigned char oldOpcode = opcodeAddr[0];
         int32_t *displacementAddr = (int32_t *) (opcodeAddr + 1);
         int32_t eip = (int32_t) stubs + (i + 1) * 5;
         int32_t displacement = (int32_t) (gHookedFunctions[j].newAddress) - eip;

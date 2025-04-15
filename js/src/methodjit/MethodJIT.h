@@ -171,7 +171,7 @@ struct Trampolines {
  * the JaegerCompartment at a time.
  */
 class JaegerCompartment {
-    JSC::ExecutableAllocator *execAlloc;     // allocator for jit code
+    JSC::ExecutableAllocator *execAlloc_;    // allocator for jit code
     Trampolines              trampolines;    // force-return trampolines
     VMFrame                  *activeFrame_;  // current active VMFrame
 
@@ -182,8 +182,8 @@ class JaegerCompartment {
 
     ~JaegerCompartment() { Finish(); }
 
-    JSC::ExecutablePool *poolForSize(size_t size) {
-        return execAlloc->poolForSize(size);
+    JSC::ExecutableAllocator *execAlloc() {
+        return execAlloc_;
     }
 
     VMFrame *activeFrame() {
@@ -200,15 +200,17 @@ class JaegerCompartment {
         activeFrame_ = activeFrame_->previous;
     }
 
-    Trampolines::TrampolinePtr forceReturnTrampoline() const {
-        return trampolines.forceReturn;
+    void *forceReturnFromExternC() const {
+        return JS_FUNC_TO_DATA_PTR(void *, trampolines.forceReturn);
     }
 
+    void *forceReturnFromFastCall() const {
 #if (defined(JS_NO_FASTCALL) && defined(JS_CPU_X86)) || defined(_WIN64)
-    Trampolines::TrampolinePtr forceReturnFastTrampoline() const {
-        return trampolines.forceReturnFast;
-    }
+        return JS_FUNC_TO_DATA_PTR(void *, trampolines.forceReturnFast);
+#else
+        return JS_FUNC_TO_DATA_PTR(void *, trampolines.forceReturn);
 #endif
+    }
 };
 
 /*
@@ -233,9 +235,9 @@ class CompilerAllocPolicy : public ContextAllocPolicy
     : ContextAllocPolicy(cx), oomFlag(oomFlag) {}
     CompilerAllocPolicy(JSContext *cx, Compiler &compiler);
 
-    void *malloc(size_t bytes) { return checkAlloc(ContextAllocPolicy::malloc(bytes)); }
-    void *realloc(void *p, size_t bytes) {
-        return checkAlloc(ContextAllocPolicy::realloc(p, bytes));
+    void *malloc_(size_t bytes) { return checkAlloc(ContextAllocPolicy::malloc_(bytes)); }
+    void *realloc_(void *p, size_t bytes) {
+        return checkAlloc(ContextAllocPolicy::realloc_(p, bytes));
     }
 };
 
@@ -485,12 +487,11 @@ JSScript::nativeCodeForPC(bool constructing, jsbytecode *pc)
     return native;
 }
 
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(_WIN64)
 extern "C" void *JaegerThrowpoline(js::VMFrame *vmFrame);
 #else
 extern "C" void JaegerThrowpoline();
 #endif
-extern "C" void InjectJaegerReturn();
 
 #endif /* jsjaeger_h__ */
 

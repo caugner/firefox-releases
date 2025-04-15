@@ -157,11 +157,12 @@ NotificationController::ScheduleContentInsertion(nsAccessible* aContainer,
   if (mTreeConstructedState == eTreeConstructionPending)
     return;
 
-  nsRefPtr<ContentInsertion> insertion =
-    new ContentInsertion(mDocument, aContainer, aStartChildNode, aEndChildNode);
-
-  if (insertion && mContentInsertions.AppendElement(insertion))
+  nsRefPtr<ContentInsertion> insertion = new ContentInsertion(mDocument,
+                                                              aContainer);
+  if (insertion && insertion->InitChildList(aStartChildNode, aEndChildNode) &&
+      mContentInsertions.AppendElement(insertion)) {
     ScheduleProcessing();
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -181,9 +182,7 @@ NotificationController::ScheduleProcessing()
 bool
 NotificationController::IsUpdatePending()
 {
-  nsCOMPtr<nsIPresShell_MOZILLA_2_0_BRANCH2> presShell =
-    do_QueryInterface(mPresShell);
-  return presShell->IsLayoutFlushObserver() ||
+  return mPresShell->IsLayoutFlushObserver() ||
     mObservingState == eRefreshProcessingForUpdate ||
     mContentInsertions.Length() != 0 || mNotifications.Length() != 0 ||
     mTextHash.Count() != 0;
@@ -304,10 +303,10 @@ NotificationController::WillRefresh(mozilla::TimeStamp aTime)
     if (accEvent->mEventRule != AccEvent::eDoNotEmit) {
       mDocument->ProcessPendingEvent(accEvent);
 
-      AccMutationEvent* showOrhideEvent = downcast_accEvent(accEvent);
-      if (showOrhideEvent) {
-        if (showOrhideEvent->mTextChangeEvent)
-          mDocument->ProcessPendingEvent(showOrhideEvent->mTextChangeEvent);
+      AccMutationEvent* showOrHideEvent = downcast_accEvent(accEvent);
+      if (showOrHideEvent) {
+        if (showOrHideEvent->mTextChangeEvent)
+          mDocument->ProcessPendingEvent(showOrHideEvent->mTextChangeEvent);
       }
     }
     if (!mDocument)
@@ -683,15 +682,31 @@ NotificationController::TextEnumerator(nsCOMPtrHashKey<nsIContent>* aEntry,
 // NotificationController: content inserted notification
 
 NotificationController::ContentInsertion::
-  ContentInsertion(nsDocAccessible* aDocument, nsAccessible* aContainer,
-                   nsIContent* aStartChildNode, nsIContent* aEndChildNode) :
+  ContentInsertion(nsDocAccessible* aDocument, nsAccessible* aContainer) :
   mDocument(aDocument), mContainer(aContainer)
 {
+}
+
+bool
+NotificationController::ContentInsertion::
+  InitChildList(nsIContent* aStartChildNode, nsIContent* aEndChildNode)
+{
+  bool haveToUpdate = false;
+
   nsIContent* node = aStartChildNode;
   while (node != aEndChildNode) {
-    mInsertedContent.AppendElement(node);
+    // Notification triggers for content insertion even if no content was
+    // actually inserted, check if the given content has a frame to discard
+    // this case early.
+    if (node->GetPrimaryFrame()) {
+      if (mInsertedContent.AppendElement(node))
+        haveToUpdate = true;
+    }
+
     node = node->GetNextSibling();
   }
+
+  return haveToUpdate;
 }
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(NotificationController::ContentInsertion)

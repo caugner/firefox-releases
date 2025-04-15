@@ -124,15 +124,20 @@ endif
 LIBS += \
 	$(STATIC_COMPONENTS_LINKER_PATH) \
 	$(EXTRA_DSO_LIBS) \
-	$(MOZ_JS_LIBS) \
 	$(APP_XPCOM_LIBS) \
 	$(NSPR_LIBS) \
+	$(NULL)
+
+ifdef BUILD_STATIC_LIBS
+LIBS += \
+	$(MOZ_JS_LIBS) \
 	$(TK_LIBS) \
 	$(NULL)
 
 # Add explicit X11 dependency when building against X11 toolkits
 ifneq (,$(filter gtk2,$(MOZ_WIDGET_TOOLKIT)))
 LIBS += $(XLDFLAGS) $(XLIBS) $(ZLIB_LIBS)
+endif
 endif
 
 ifdef MOZ_JPROF
@@ -199,13 +204,6 @@ RCFLAGS += -DDEBUG
 endif
 endif
 
-ifeq ($(OS_ARCH),BeOS)
-BEOS_PROGRAM_RESOURCE = $(srcdir)/apprunner-beos.rsrc
-ifdef BUILD_STATIC_LIBS
-OS_LIBS += -ltracker -lgame
-endif
-endif
-
 ifeq ($(OS_ARCH),OS2)
 RESFILE=splashos2.res
 RCFLAGS += -DMOZ_PHOENIX
@@ -249,8 +247,6 @@ LDFLAGS += -STACK:2097152
 endif
 endif
 endif
-
-$(PROGRAM): $(DEPTH)/toolkit/xre/$(LIB_PREFIX)xulapp_s.$(LIB_SUFFIX)
 
 ifneq (,$(filter-out OS2 WINNT WINCE,$(OS_ARCH)))
 
@@ -322,7 +318,7 @@ AB_CD = $(MOZ_UI_LOCALE)
 AB := $(firstword $(subst -, ,$(AB_CD)))
 
 clean clobber repackage::
-	rm -rf $(DIST)/$(APP_NAME).app
+	$(RM) -r $(DIST)/$(APP_NAME).app
 
 ifdef LIBXUL_SDK
 APPFILES = Resources
@@ -331,9 +327,9 @@ APPFILES = MacOS
 endif
 
 libs repackage:: $(PROGRAM) application.ini
-	mkdir -p $(DIST)/$(APP_NAME).app/Contents/MacOS
+	$(MKDIR) -p $(DIST)/$(APP_NAME).app/Contents/MacOS
 	rsync -a --exclude CVS --exclude "*.in" $(srcdir)/macbuild/Contents $(DIST)/$(APP_NAME).app --exclude English.lproj
-	mkdir -p $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj
+	$(MKDIR) -p $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj
 	rsync -a --exclude CVS --exclude "*.in" $(srcdir)/macbuild/Contents/Resources/English.lproj/ $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj
 	sed -e "s/%APP_VERSION%/$(APP_VERSION)/" -e "s/%APP_NAME%/$(APP_NAME)/" -e "s/%LOWER_APP_NAME%/$(LOWER_APP_NAME)/" $(srcdir)/macbuild/Contents/Info.plist.in > $(DIST)/$(APP_NAME).app/Contents/Info.plist
 	sed -e "s/%APP_NAME%/$(APP_NAME)/" $(srcdir)/macbuild/Contents/Resources/English.lproj/InfoPlist.strings.in | iconv -f UTF-8 -t UTF-16 > $(DIST)/$(APP_NAME).app/Contents/Resources/$(AB).lproj/InfoPlist.strings
@@ -342,7 +338,7 @@ libs repackage:: $(PROGRAM) application.ini
 ifdef LIBXUL_SDK
 	cp $(LIBXUL_DIST)/bin/$(XR_STUB_NAME) $(DIST)/$(APP_NAME).app/Contents/MacOS/firefox-bin
 else
-	rm -f $(DIST)/$(APP_NAME).app/Contents/MacOS/$(PROGRAM)
+	$(RM) $(DIST)/$(APP_NAME).app/Contents/MacOS/$(PROGRAM)
 	rsync -aL $(PROGRAM) $(DIST)/$(APP_NAME).app/Contents/MacOS
 endif
 	-cp -L $(DIST)/bin/mangle $(DIST)/bin/shlibsign $(DIST)/$(APP_NAME).app/Contents/$(APPFILES)

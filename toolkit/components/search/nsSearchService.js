@@ -498,7 +498,7 @@ function queryCharsetFromCode(aCode) {
   codes[1286] = "windows-1256";
   codes[1536] = "us-ascii";
   codes[1584] = "GB2312";
-  codes[1585] = "x-gbk";
+  codes[1585] = "gbk";
   codes[1600] = "EUC-KR";
   codes[2080] = "ISO-2022-JP";
   codes[2096] = "ISO-2022-CN";
@@ -2560,7 +2560,7 @@ SearchService.prototype = {
 
     try {
       LOG("_buildCache: Writing to cache file.");
-      ostream.init(cacheFile, (MODE_WRONLY | MODE_CREATE | MODE_TRUNCATE), PERMS_FILE, 0);
+      ostream.init(cacheFile, (MODE_WRONLY | MODE_CREATE | MODE_TRUNCATE), PERMS_FILE, ostream.DEFER_OPEN);
       converter.charset = "UTF-8";
       let data = converter.convertToInputStream(JSON.stringify(cache));
 

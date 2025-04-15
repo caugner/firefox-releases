@@ -46,9 +46,9 @@
 #include "nsCRT.h"
 #include "nsIAtom.h"
 #include "nsCSSRuleProcessor.h"
-#include "nsICSSNameSpaceRule.h"
-#include "nsICSSGroupRule.h"
-#include "nsICSSImportRule.h"
+#include "mozilla/css/NameSpaceRule.h"
+#include "mozilla/css/GroupRule.h"
+#include "mozilla/css/ImportRule.h"
 #include "nsIMediaList.h"
 #include "nsIDocument.h"
 #include "nsPresContext.h"
@@ -56,7 +56,6 @@
 #include "nsString.h"
 #include "nsTArray.h"
 #include "nsIDOMCSSStyleSheet.h"
-#include "nsIDOMCSSImportRule.h"
 #include "nsICSSRuleList.h"
 #include "nsIDOMMediaList.h"
 #include "nsIDOMNode.h"
@@ -98,8 +97,6 @@ protected:
   virtual ~CSSRuleListImpl();
 
   nsCSSStyleSheet*  mStyleSheet;
-public:
-  PRBool              mRulesAccessed;
 };
 
 CSSRuleListImpl::CSSRuleListImpl(nsCSSStyleSheet *aStyleSheet)
@@ -107,7 +104,6 @@ CSSRuleListImpl::CSSRuleListImpl(nsCSSStyleSheet *aStyleSheet)
   // Not reference counted to avoid circular references.
   // The style sheet will tell us when its going away.
   mStyleSheet = aStyleSheet;
-  mRulesAccessed = PR_FALSE;
 }
 
 CSSRuleListImpl::~CSSRuleListImpl()
@@ -156,7 +152,6 @@ CSSRuleListImpl::GetItemAt(PRUint32 aIndex, nsresult* aResult)
 
       result = mStyleSheet->GetStyleRuleAt(aIndex, *getter_AddRefs(rule));
       if (rule) {
-        mRulesAccessed = PR_TRUE; // signal to never share rules again
         return rule->GetDOMRuleWeak(aResult);
       }
       if (result == NS_ERROR_ILLEGAL_VALUE) {
@@ -862,7 +857,7 @@ nsCSSStyleSheet::RebuildChildList(nsICSSRule* aRule, void* aBuilder)
     static_cast<ChildSheetListBuilder*>(aBuilder);
 
   // XXXbz We really need to decomtaminate all this stuff.  Is there a reason
-  // that I can't just QI to nsICSSImportRule and get an nsCSSStyleSheet
+  // that I can't just QI to ImportRule and get an nsCSSStyleSheet
   // directly from it?
   nsCOMPtr<nsIDOMCSSImportRule> importRule(do_QueryInterface(aRule));
   NS_ASSERTION(importRule, "GetType lied");
@@ -950,14 +945,12 @@ AddNamespaceRuleToMap(nsICSSRule* aRule, nsXMLNameSpaceMap* aMap)
 {
   NS_ASSERTION(aRule->GetType() == nsICSSRule::NAMESPACE_RULE, "Bogus rule type");
 
-  nsCOMPtr<nsICSSNameSpaceRule> nameSpaceRule = do_QueryInterface(aRule);
-  
-  nsCOMPtr<nsIAtom> prefix;
+  nsRefPtr<css::NameSpaceRule> nameSpaceRule = do_QueryObject(aRule);
+
   nsAutoString  urlSpec;
-  nameSpaceRule->GetPrefix(*getter_AddRefs(prefix));
   nameSpaceRule->GetURLSpec(urlSpec);
 
-  aMap->AddPrefix(prefix, urlSpec);
+  aMap->AddPrefix(nameSpaceRule->GetPrefix(), urlSpec);
 }
 
 static PRBool
@@ -1015,7 +1008,7 @@ nsCSSStyleSheet::nsCSSStyleSheet()
 
 nsCSSStyleSheet::nsCSSStyleSheet(const nsCSSStyleSheet& aCopy,
                                  nsCSSStyleSheet* aParentToUse,
-                                 nsICSSImportRule* aOwnerRuleToUse,
+                                 css::ImportRule* aOwnerRuleToUse,
                                  nsIDocument* aDocumentToUse,
                                  nsIDOMNode* aOwningNodeToUse)
   : mTitle(aCopy.mTitle),
@@ -1025,15 +1018,14 @@ nsCSSStyleSheet::nsCSSStyleSheet(const nsCSSStyleSheet& aCopy,
     mDocument(aDocumentToUse),
     mOwningNode(aOwningNodeToUse),
     mDisabled(aCopy.mDisabled),
-    mDirty(PR_FALSE),
+    mDirty(aCopy.mDirty),
     mInner(aCopy.mInner),
     mRuleProcessors(nsnull)
 {
 
   mInner->AddSheet(this);
 
-  if (aCopy.mRuleCollection && 
-      aCopy.mRuleCollection->mRulesAccessed) {  // CSSOM's been there, force full copy now
+  if (mDirty) { // CSSOM's been there, force full copy now
     NS_ASSERTION(mInner->mComplete, "Why have rules been accessed on an incomplete sheet?");
     // FIXME: handle failure?
     EnsureUniqueInner();
@@ -1277,7 +1269,7 @@ nsCSSStyleSheet::FindOwningWindowID() const
   }
 
   if (windowID == 0 && mOwnerRule) {
-    nsCOMPtr<nsIStyleSheet> sheet = mOwnerRule->GetStyleSheet();
+    nsCOMPtr<nsIStyleSheet> sheet = static_cast<css::Rule*>(mOwnerRule)->GetStyleSheet();
     if (sheet) {
       nsRefPtr<nsCSSStyleSheet> cssSheet = do_QueryObject(sheet);
       if (cssSheet) {
@@ -1363,7 +1355,10 @@ nsCSSStyleSheet::AppendStyleRule(nsICSSRule* aRule)
     DidDirty();
 
     if (nsICSSRule::NAMESPACE_RULE == aRule->GetType()) {
-      nsresult rv = RegisterNamespaceRule(aRule);
+#ifdef DEBUG
+      nsresult rv =
+#endif
+        RegisterNamespaceRule(aRule);
       NS_WARN_IF_FALSE(NS_SUCCEEDED(rv),
                        "RegisterNamespaceRule returned error");
     }
@@ -1432,6 +1427,8 @@ nsCSSStyleSheet::StyleSheetCount() const
 nsCSSStyleSheet::EnsureUniqueInnerResult
 nsCSSStyleSheet::EnsureUniqueInner()
 {
+  mDirty = PR_TRUE;
+
   NS_ABORT_IF_FALSE(mInner->mSheets.Length() != 0,
                     "unexpected number of outers");
   if (mInner->mSheets.Length() == 1) {
@@ -1464,7 +1461,7 @@ nsCSSStyleSheet::AppendAllChildSheets(nsTArray<nsCSSStyleSheet*>& aArray)
 
 already_AddRefed<nsCSSStyleSheet>
 nsCSSStyleSheet::Clone(nsCSSStyleSheet* aCloneParent,
-                       nsICSSImportRule* aCloneOwnerRule,
+                       css::ImportRule* aCloneOwnerRule,
                        nsIDocument* aCloneDocument,
                        nsIDOMNode* aCloneOwningNode) const
 {
@@ -1564,8 +1561,9 @@ nsCSSStyleSheet::WillDirty()
 void
 nsCSSStyleSheet::DidDirty()
 {
+  NS_ABORT_IF_FALSE(!mInner->mComplete || mDirty,
+                    "caller must have called WillDirty()");
   ClearRuleCascades();
-  mDirty = PR_TRUE;
 }
 
 nsresult
@@ -1934,18 +1932,16 @@ nsCSSStyleSheet::DeleteRule(PRUint32 aIndex)
 }
 
 nsresult
-nsCSSStyleSheet::DeleteRuleFromGroup(nsICSSGroupRule* aGroup, PRUint32 aIndex)
+nsCSSStyleSheet::DeleteRuleFromGroup(css::GroupRule* aGroup, PRUint32 aIndex)
 {
   NS_ENSURE_ARG_POINTER(aGroup);
   NS_ASSERTION(mInner->mComplete, "No deleting from an incomplete sheet!");
   nsresult result;
-  nsCOMPtr<nsICSSRule> rule;
-  result = aGroup->GetStyleRuleAt(aIndex, *getter_AddRefs(rule));
-  NS_ENSURE_SUCCESS(result, result);
-  
+  nsCOMPtr<nsICSSRule> rule = aGroup->GetStyleRuleAt(aIndex);
+  NS_ENSURE_TRUE(rule, NS_ERROR_ILLEGAL_VALUE);
+
   // check that the rule actually belongs to this sheet!
-  nsCOMPtr<nsIStyleSheet> ruleSheet = rule->GetStyleSheet();
-  if (this != ruleSheet) {
+  if (this != rule->GetStyleSheet()) {
     return NS_ERROR_INVALID_ARG;
   }
 
@@ -1970,15 +1966,14 @@ nsCSSStyleSheet::DeleteRuleFromGroup(nsICSSGroupRule* aGroup, PRUint32 aIndex)
 
 nsresult
 nsCSSStyleSheet::InsertRuleIntoGroup(const nsAString & aRule,
-                                     nsICSSGroupRule* aGroup,
+                                     css::GroupRule* aGroup,
                                      PRUint32 aIndex,
                                      PRUint32* _retval)
 {
   nsresult result;
   NS_ASSERTION(mInner->mComplete, "No inserting into an incomplete sheet!");
   // check that the group actually belongs to this sheet!
-  nsCOMPtr<nsIStyleSheet> groupSheet = aGroup->GetStyleSheet();
-  if (this != groupSheet) {
+  if (this != aGroup->GetStyleSheet()) {
     return NS_ERROR_INVALID_ARG;
   }
 
@@ -2043,17 +2038,12 @@ nsCSSStyleSheet::InsertRuleIntoGroup(const nsAString & aRule,
 }
 
 nsresult
-nsCSSStyleSheet::ReplaceRuleInGroup(nsICSSGroupRule* aGroup,
+nsCSSStyleSheet::ReplaceRuleInGroup(css::GroupRule* aGroup,
                                     nsICSSRule* aOld, nsICSSRule* aNew)
 {
   nsresult result;
   NS_PRECONDITION(mInner->mComplete, "No replacing in an incomplete sheet!");
-#ifdef DEBUG
-  {
-    nsCOMPtr<nsIStyleSheet> groupSheet = aGroup->GetStyleSheet();
-    NS_ASSERTION(this == groupSheet, "group doesn't belong to this sheet");
-  }
-#endif
+  NS_ASSERTION(this == aGroup->GetStyleSheet(), "group doesn't belong to this sheet");
   result = WillDirty();
   NS_ENSURE_SUCCESS(result, result);
 
@@ -2072,15 +2062,11 @@ nsCSSStyleSheet::StyleSheetLoaded(nsCSSStyleSheet* aSheet,
                "We are being notified of a sheet load for a sheet that is not our child!");
 
   if (mDocument && NS_SUCCEEDED(aStatus)) {
-    nsCOMPtr<nsICSSImportRule> ownerRule = aSheet->GetOwnerRule();
-    
     mozAutoDocUpdate updateBatch(mDocument, UPDATE_STYLE, PR_TRUE);
 
     // XXXldb @import rules shouldn't even implement nsIStyleRule (but
     // they do)!
-    nsCOMPtr<nsIStyleRule> styleRule(do_QueryInterface(ownerRule));
-    
-    mDocument->StyleRuleAdded(this, styleRule);
+    mDocument->StyleRuleAdded(this, aSheet->GetOwnerRule());
   }
 
   return NS_OK;

@@ -100,7 +100,7 @@
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptGlobalObjectOwner.h"
 #include "nsIServiceManager.h"
-#include "nsICSSStyleRule.h"
+#include "mozilla/css/StyleRule.h"
 #include "nsIStyleSheet.h"
 #include "nsIURL.h"
 #include "nsIViewManager.h"
@@ -152,6 +152,8 @@
 #include "nsIDOMXULCommandEvent.h"
 #include "nsIDOMNSEvent.h"
 #include "nsCCUncollectableMarker.h"
+
+namespace css = mozilla::css;
 
 // Global object maintenance
 nsIXBLService * nsXULElement::gXBLService = nsnull;
@@ -246,8 +248,8 @@ nsXULElement::nsXULElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     XUL_PROTOTYPE_ATTRIBUTE_METER(gNumElements);
 }
 
-nsXULElement::nsXULSlots::nsXULSlots(PtrBits aFlags)
-    : nsXULElement::nsDOMSlots(aFlags)
+nsXULElement::nsXULSlots::nsXULSlots()
+    : nsXULElement::nsDOMSlots()
 {
 }
 
@@ -262,7 +264,7 @@ nsXULElement::nsXULSlots::~nsXULSlots()
 nsINode::nsSlots*
 nsXULElement::CreateSlots()
 {
-    return new nsXULSlots(mFlagsOrSlots);
+    return new nsXULSlots();
 }
 
 /* static */
@@ -277,13 +279,13 @@ nsXULElement::Create(nsXULPrototypeElement* aPrototype, nsINodeInfo *aNodeInfo,
 
         element->mPrototype = aPrototype;
         if (aPrototype->mHasIdAttribute) {
-            element->SetFlags(NODE_HAS_ID);
+            element->SetHasID();
         }
         if (aPrototype->mHasClassAttribute) {
             element->SetFlags(NODE_MAY_HAVE_CLASS);
         }
         if (aPrototype->mHasStyleAttribute) {
-            element->SetFlags(NODE_MAY_HAVE_STYLE);
+            element->SetMayHaveStyle();
         }
 
         NS_ASSERTION(aPrototype->mScriptTypeID != nsIProgrammingLanguage::UNKNOWN,
@@ -1341,7 +1343,8 @@ nsXULElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, PRBool aNotify)
         NS_ENSURE_SUCCESS(rv, rv);
     }
 
-    nsAutoRemovableScriptBlocker scriptBlocker;
+    nsIDocument* doc = GetCurrentDoc();
+    mozAutoDocUpdate updateBatch(doc, UPDATE_CONTENT_MODEL, aNotify);
 
     PRBool isId = PR_FALSE;
     if (aName == nsGkAtoms::id && aNameSpaceID == kNameSpaceID_None) {
@@ -1360,9 +1363,6 @@ nsXULElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, PRBool aNotify)
 
     nsAutoString oldValue;
     GetAttr(aNameSpaceID, aName, oldValue);
-
-    nsIDocument* doc = GetCurrentDoc();
-    mozAutoDocUpdate updateBatch(doc, UPDATE_CONTENT_MODEL, aNotify);
 
     // When notifying, make sure to keep track of states whose value
     // depends solely on the value of an attribute.
@@ -1408,7 +1408,7 @@ nsXULElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, PRBool aNotify)
     // XXX Know how to remove POPUP event listeners when an attribute is unset?
 
     if (isId) {
-        UnsetFlags(NODE_HAS_ID);
+        ClearHasID();
     }
 
     if (aNameSpaceID == kNameSpaceID_None) {
@@ -1473,7 +1473,7 @@ nsXULElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aName, PRBool aNotify)
         stateMask ^= IntrinsicState();
         if (doc && !stateMask.IsEmpty()) {
             MOZ_AUTO_DOC_UPDATE(doc, UPDATE_CONTENT_STATE, aNotify);
-            doc->ContentStatesChanged(this, nsnull, stateMask);
+            doc->ContentStateChanged(this, stateMask);
         }
         nsNodeUtils::AttributeChanged(this, aNameSpaceID, aName,
                                       nsIDOMMutationEvent::REMOVAL);
@@ -1778,15 +1778,15 @@ nsXULElement::GetBuilder(nsIXULTemplateBuilder** aBuilder)
 nsIAtom*
 nsXULElement::DoGetID() const
 {
-    NS_ASSERTION(HasFlag(NODE_HAS_ID), "Unexpected call");
+    NS_ASSERTION(HasID(), "Unexpected call");
     const nsAttrValue* attr =
         FindLocalOrProtoAttr(kNameSpaceID_None, nsGkAtoms::id);
 
-    // We need the nullcheck here because during unlink the prototype looses
+    // We need the nullcheck here because during unlink the prototype loses
     // all of its attributes. We might want to change that.
     // The nullcheck would also be needed if we make UnsetAttr use
     // nsGenericElement::UnsetAttr as that calls out to various code between
-    // removing the attribute and clearing the NODE_HAS_ID flag.
+    // removing the attribute and calling ClearHasID().
 
     return attr ? attr->GetAtomValue() : nsnull;
 }
@@ -1804,10 +1804,10 @@ nsXULElement::WalkContentStyleRules(nsRuleWalker* aRuleWalker)
     return NS_OK;
 }
 
-nsICSSStyleRule*
+css::StyleRule*
 nsXULElement::GetInlineStyleRule()
 {
-    if (!HasFlag(NODE_MAY_HAVE_STYLE)) {
+    if (!MayHaveStyle()) {
         return nsnull;
     }
     // Fetch the cached style rule from the attributes.
@@ -1969,7 +1969,7 @@ nsXULElement::EnsureLocalStyle()
             protoattr->mValue.ToString(stringValue);
 
             nsAttrValue value;
-            nsCOMPtr<nsICSSStyleRule> styleRule = do_QueryInterface(ruleClone);
+            nsRefPtr<css::StyleRule> styleRule = do_QueryObject(ruleClone);
             value.SetTo(styleRule, &stringValue);
 
             nsresult rv =
@@ -2347,7 +2347,7 @@ nsresult nsXULElement::MakeHeavyweight()
             nsString stringValue;
             protoattr->mValue.ToString(stringValue);
 
-            nsCOMPtr<nsICSSStyleRule> styleRule = do_QueryInterface(ruleClone);
+            nsRefPtr<css::StyleRule> styleRule = do_QueryObject(ruleClone);
             attrValue.SetTo(styleRule, &stringValue);
         }
         else {
@@ -2560,6 +2560,9 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_NATIVE(nsXULPrototypeNode)
     if (tmp->mType == nsXULPrototypeNode::eType_Element) {
         static_cast<nsXULPrototypeElement*>(tmp)->Unlink();
     }
+    else if (tmp->mType == nsXULPrototypeNode::eType_Script) {
+        static_cast<nsXULPrototypeScript*>(tmp)->UnlinkJSObjects();
+    }
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_BEGIN(nsXULPrototypeNode)
     if (tmp->mType == nsXULPrototypeNode::eType_Element) {
@@ -2600,15 +2603,7 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_NATIVE_BEGIN(nsXULPrototypeNode)
                                                 script->mScriptObject.mObject)
     }
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
-NS_IMPL_CYCLE_COLLECTION_ROOT_BEGIN_NATIVE(nsXULPrototypeNode, AddRef)
-    if (tmp->mType == nsXULPrototypeNode::eType_Element) {
-        static_cast<nsXULPrototypeElement*>(tmp)->UnlinkJSObjects();
-    }
-    else if (tmp->mType == nsXULPrototypeNode::eType_Script) {
-        static_cast<nsXULPrototypeScript*>(tmp)->UnlinkJSObjects();
-    }
-NS_IMPL_CYCLE_COLLECTION_ROOT_END
-//NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(nsXULPrototypeNode, AddRef)
+NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(nsXULPrototypeNode, AddRef)
 NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(nsXULPrototypeNode, Release)
 
 //----------------------------------------------------------------------
@@ -2878,7 +2873,7 @@ nsXULPrototypeElement::SetAttrAt(PRUint32 aPos, const nsAString& aValue,
     else if (mAttributes[aPos].mName.Equals(nsGkAtoms::style)) {
         mHasStyleAttribute = PR_TRUE;
         // Parse the element's 'style' attribute
-        nsCOMPtr<nsICSSStyleRule> rule;
+        nsRefPtr<css::StyleRule> rule;
 
         nsCSSParser parser;
         NS_ENSURE_TRUE(parser, NS_ERROR_OUT_OF_MEMORY);
@@ -2904,18 +2899,13 @@ nsXULPrototypeElement::SetAttrAt(PRUint32 aPos, const nsAString& aValue,
 }
 
 void
-nsXULPrototypeElement::UnlinkJSObjects()
+nsXULPrototypeElement::Unlink()
 {
     if (mHoldsScriptObject) {
         nsContentUtils::DropScriptObjects(mScriptTypeID, this,
                                           &NS_CYCLE_COLLECTION_NAME(nsXULPrototypeNode));
         mHoldsScriptObject = PR_FALSE;
     }
-}
-
-void
-nsXULPrototypeElement::Unlink()
-{
     mNumAttributes = 0;
     delete[] mAttributes;
     mAttributes = nsnull;

@@ -64,6 +64,7 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "BasicLayers.h"
 #include "nsBoxFrame.h"
+#include "nsViewportFrame.h"
 
 using namespace mozilla;
 using namespace mozilla::layers;
@@ -86,7 +87,10 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
       mInTransform(PR_FALSE),
       mSyncDecodeImages(PR_FALSE),
       mIsPaintingToWindow(PR_FALSE),
-      mSnappingEnabled(PR_TRUE) {
+      mSnappingEnabled(mMode != EVENT_DELIVERY),
+      mHasDisplayPort(PR_FALSE),
+      mHasFixedItems(PR_FALSE)
+{
   MOZ_COUNT_CTOR(nsDisplayListBuilder);
   PL_InitArenaPool(&mPool, "displayListArena", 1024,
                    NS_MAX(NS_ALIGNMENT_OF(void*),NS_ALIGNMENT_OF(double))-1);
@@ -98,6 +102,13 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
     if (selcon) {
       selcon->GetSelection(nsISelectionController::SELECTION_NORMAL,
                            getter_AddRefs(mBoundingSelection));
+    }
+  }
+
+  if(mReferenceFrame->GetType() == nsGkAtoms::viewportFrame) {
+    ViewportFrame* viewportFrame = static_cast<ViewportFrame*>(mReferenceFrame);
+    if (!viewportFrame->GetChildList(nsGkAtoms::fixedList).IsEmpty()) {
+      mHasFixedItems = PR_TRUE;
     }
   }
 
@@ -121,10 +132,49 @@ static void MarkFrameForDisplay(nsIFrame* aFrame, nsIFrame* aStopAtFrame) {
   }
 }
 
-static void MarkOutOfFlowFrameForDisplay(nsIFrame* aDirtyFrame, nsIFrame* aFrame,
-                                         const nsRect& aDirtyRect) {
+static PRBool IsFixedFrame(nsIFrame* aFrame)
+{
+  return aFrame && aFrame->GetParent() && !aFrame->GetParent()->GetParent();
+}
+
+static PRBool IsFixedItem(nsDisplayItem *aItem, nsDisplayListBuilder* aBuilder,
+                          PRBool* aIsFixedBackground)
+{
+  nsIFrame* activeScrolledRoot =
+    nsLayoutUtils::GetActiveScrolledRootFor(aItem, aBuilder, aIsFixedBackground);
+  return activeScrolledRoot &&
+         !nsLayoutUtils::ScrolledByViewportScrolling(activeScrolledRoot,
+                                                     aBuilder);
+}
+
+static PRBool ForceVisiblityForFixedItem(nsDisplayListBuilder* aBuilder,
+                                         nsDisplayItem* aItem,
+                                         PRBool* aIsFixedBackground)
+{
+  return aBuilder->GetDisplayPort() && aBuilder->GetHasFixedItems() &&
+         IsFixedItem(aItem, aBuilder, aIsFixedBackground);
+}
+
+void nsDisplayListBuilder::SetDisplayPort(const nsRect& aDisplayPort)
+{
+    static bool fixedPositionLayersEnabled = getenv("MOZ_ENABLE_FIXED_POSITION_LAYERS") != 0;
+    if (fixedPositionLayersEnabled) {
+      mHasDisplayPort = PR_TRUE;
+      mDisplayPort = aDisplayPort;
+    }
+}
+
+void nsDisplayListBuilder::MarkOutOfFlowFrameForDisplay(nsIFrame* aDirtyFrame,
+                                                        nsIFrame* aFrame,
+                                                        const nsRect& aDirtyRect)
+{
   nsRect dirty = aDirtyRect - aFrame->GetOffsetTo(aDirtyFrame);
   nsRect overflowRect = aFrame->GetVisualOverflowRect();
+
+  if (mHasDisplayPort && IsFixedFrame(aFrame)) {
+    dirty = overflowRect;
+  }
+
   if (!dirty.IntersectRect(dirty, overflowRect))
     return;
   aFrame->Properties().Set(nsDisplayListBuilder::OutOfFlowDirtyRectProperty(),
@@ -149,12 +199,13 @@ static void UnmarkFrameForDisplay(nsIFrame* aFrame) {
 }
 
 static void RecordFrameMetrics(nsIFrame* aForFrame,
+                               nsIFrame* aViewportFrame,
                                ContainerLayer* aRoot,
                                nsRect aVisibleRect,
                                nsRect aViewport,
+                               nsRect* aDisplayPort,
                                ViewID aScrollId) {
   nsPresContext* presContext = aForFrame->PresContext();
-  nsIPresShell* presShell = presContext->GetPresShell();
 
   nsIntRect visible = aVisibleRect.ToNearestPixels(presContext->AppUnitsPerDevPixel());
   aRoot->SetVisibleRegion(nsIntRegion(visible));
@@ -163,23 +214,23 @@ static void RecordFrameMetrics(nsIFrame* aForFrame,
 
   PRInt32 auPerDevPixel = presContext->AppUnitsPerDevPixel();
   metrics.mViewport = aViewport.ToNearestPixels(auPerDevPixel);
-  if (presShell->UsingDisplayPort()) {
-    metrics.mDisplayPort =
-      presShell->GetDisplayPort().ToNearestPixels(auPerDevPixel);
+  if (aDisplayPort) {
+    metrics.mDisplayPort = aDisplayPort->ToNearestPixels(auPerDevPixel);
   }
 
-  nsIScrollableFrame* rootScrollableFrame =
-    presShell->GetRootScrollFrameAsScrollable();
-  if (rootScrollableFrame) {
-    nsSize contentSize = 
-      rootScrollableFrame->GetScrollRange().Size() +
-      rootScrollableFrame->GetScrollPortRect().Size();
+  nsIScrollableFrame* scrollableFrame = nsnull;
+  if (aViewportFrame)
+    scrollableFrame = aViewportFrame->GetScrollTargetFrame();
+
+  if (scrollableFrame) {
+    nsSize contentSize =
+      scrollableFrame->GetScrollRange().Size() +
+      scrollableFrame->GetScrollPortRect().Size();
     metrics.mContentSize = nsIntSize(NSAppUnitsToIntPixels(contentSize.width, auPerDevPixel),
                                      NSAppUnitsToIntPixels(contentSize.height, auPerDevPixel));
 
     metrics.mViewportScrollOffset =
-      rootScrollableFrame->GetScrollPosition().ToNearestPixels(auPerDevPixel);
-    
+      scrollableFrame->GetScrollPosition().ToNearestPixels(auPerDevPixel);
   }
   else {
     nsSize contentSize = aForFrame->GetSize();
@@ -393,6 +444,26 @@ TreatAsOpaque(nsDisplayItem* aItem, nsDisplayListBuilder* aBuilder,
   return opaque;
 }
 
+static nsRect GetDisplayPortBounds(nsDisplayListBuilder* aBuilder,
+                                   nsDisplayItem* aItem,
+                                   PRBool aIgnoreTransform)
+{
+  nsIFrame* frame = aItem->GetUnderlyingFrame();
+  nscoord auPerDevPixel = frame->PresContext()->AppUnitsPerDevPixel();
+  gfxMatrix transform;
+
+  if (!aIgnoreTransform) {
+    transform = nsLayoutUtils::GetTransformToAncestor(frame,
+                  aBuilder->ReferenceFrame());
+    transform.Invert();
+  }
+
+  const nsRect* displayport = aBuilder->GetDisplayPort();
+  return nsLayoutUtils::MatrixTransformRect(
+           nsRect(0, 0, displayport->width, displayport->height),
+           transform, auPerDevPixel);
+}
+
 PRBool
 nsDisplayList::ComputeVisibilityForSublist(nsDisplayListBuilder* aBuilder,
                                            nsRegion* aVisibleRegion,
@@ -426,7 +497,12 @@ nsDisplayList::ComputeVisibilityForSublist(nsDisplayListBuilder* aBuilder,
     nsRect bounds = item->GetBounds(aBuilder);
 
     nsRegion itemVisible;
-    itemVisible.And(*aVisibleRegion, bounds);
+    PRBool isFixedBackground;
+    if (ForceVisiblityForFixedItem(aBuilder, item, &isFixedBackground)) {
+      itemVisible.And(GetDisplayPortBounds(aBuilder, item, isFixedBackground), bounds);
+    } else {
+      itemVisible.And(*aVisibleRegion, bounds);
+    }
     item->mVisibleRect = itemVisible.GetBounds();
 
     PRBool containsRootContentDocBG = PR_FALSE;
@@ -523,7 +599,18 @@ void nsDisplayList::PaintForFrame(nsDisplayListBuilder* aBuilder,
   ViewID id = presContext->IsRootContentDocument() ? FrameMetrics::ROOT_SCROLL_ID
                                                    : FrameMetrics::NULL_SCROLL_ID;
 
-  RecordFrameMetrics(aForFrame, root, mVisibleRect, mVisibleRect, id);
+  nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame();
+  nsRect displayport;
+  bool usingDisplayport = false;
+  if (rootScrollFrame) {
+    nsIContent* content = rootScrollFrame->GetContent();
+    if (content) {
+      usingDisplayport = nsLayoutUtils::GetDisplayPort(content, &displayport);
+    }
+  }
+  RecordFrameMetrics(aForFrame, rootScrollFrame,
+                     root, mVisibleRect, mVisibleRect,
+                     (usingDisplayport ? &displayport : nsnull), id);
 
   // If the layer manager supports resolution scaling, set that up
   if (LayerManager::LAYERS_BASIC == layerManager->GetBackendType()) {
@@ -742,7 +829,12 @@ PRBool nsDisplayItem::RecomputeVisibility(nsDisplayListBuilder* aBuilder,
   nsRect bounds = GetBounds(aBuilder);
 
   nsRegion itemVisible;
-  itemVisible.And(*aVisibleRegion, bounds);
+  PRBool isFixedBackground;
+  if (ForceVisiblityForFixedItem(aBuilder, this, &isFixedBackground)) {
+    itemVisible.And(GetDisplayPortBounds(aBuilder, this, isFixedBackground), bounds);
+  } else {
+    itemVisible.And(*aVisibleRegion, bounds);
+  }
   mVisibleRect = itemVisible.GetBounds();
 
   // When we recompute visibility within layers we don't need to
@@ -807,11 +899,20 @@ nsDisplayBackground::nsDisplayBackground(nsDisplayListBuilder* aBuilder,
   const nsStyleDisplay* disp = mFrame->GetStyleDisplay();
   mIsThemed = mFrame->IsThemed(disp, &mThemeTransparency);
 
-  // Perform necessary RegisterThemeGeometry
-  if (mIsThemed &&
-      (disp->mAppearance == NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR ||
-       disp->mAppearance == NS_THEME_TOOLBAR)) {
-    RegisterThemeGeometry(aBuilder, aFrame);
+  if (mIsThemed) {
+    // Perform necessary RegisterThemeGeometry
+    if (disp->mAppearance == NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR ||
+        disp->mAppearance == NS_THEME_TOOLBAR) {
+      RegisterThemeGeometry(aBuilder, aFrame);
+    }
+  } else {
+    // Set HasFixedItems if we construct a background-attachment:fixed item
+    nsPresContext* presContext = mFrame->PresContext();
+    nsStyleContext* bgSC;
+    PRBool hasBG = nsCSSRendering::FindBackground(presContext, mFrame, &bgSC);
+    if (hasBG && bgSC->GetStyleBackground()->HasFixedBackground()) {
+      aBuilder->SetHasFixedItems();
+    }
   }
 }
 
@@ -1118,7 +1219,7 @@ nsDisplayBackground::IsVaryingRelativeToMovingFrame(nsDisplayListBuilder* aBuild
 }
 
 PRBool
-nsDisplayBackground::IsFixedAndCoveringViewport(nsDisplayListBuilder* aBuilder)
+nsDisplayBackground::ShouldFixToViewport(nsDisplayListBuilder* aBuilder)
 {
   if (mIsThemed)
     return PR_FALSE;
@@ -1689,8 +1790,6 @@ nsDisplayOwnLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
   return layer.forget();
 }
 
-#ifdef MOZ_IPC
-
 nsDisplayScrollLayer::nsDisplayScrollLayer(nsDisplayListBuilder* aBuilder,
                                            nsDisplayList* aList,
                                            nsIFrame* aForFrame,
@@ -1721,7 +1820,13 @@ nsDisplayScrollLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
                     mViewportFrame->GetPosition() +
                     aBuilder->ToReferenceFrame(mViewportFrame);
 
-  RecordFrameMetrics(mFrame, layer, mVisibleRect, viewport, scrollId);
+  bool usingDisplayport = false;
+  nsRect displayport;
+  if (content) {
+    usingDisplayport = nsLayoutUtils::GetDisplayPort(content, &displayport);
+  }
+  RecordFrameMetrics(mFrame, mViewportFrame, layer, mVisibleRect, viewport,
+                     (usingDisplayport ? &displayport : nsnull), scrollId);
 
   return layer.forget();
 }
@@ -1732,15 +1837,13 @@ nsDisplayScrollLayer::ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                         const nsRect& aAllowVisibleRegionExpansion,
                                         PRBool& aContainsRootContentDocBG)
 {
-  nsPresContext* presContext = mFrame->PresContext();
-  nsIPresShell* presShell = presContext->GetPresShell();
-
-  if (presShell->UsingDisplayPort()) {
+  nsRect displayport;
+  if (nsLayoutUtils::GetDisplayPort(mFrame->GetContent(), &displayport)) {
     // The visible region for the children may be much bigger than the hole we
     // are viewing the children from, so that the compositor process has enough
     // content to asynchronously pan while content is being refreshed.
 
-    nsRegion childVisibleRegion = presShell->GetDisplayPort() + aBuilder->ToReferenceFrame(mViewportFrame);
+    nsRegion childVisibleRegion = displayport + aBuilder->ToReferenceFrame(mViewportFrame);
 
     nsRect boundedRect;
     boundedRect.IntersectRect(childVisibleRegion.GetBounds(), mList.GetBounds(aBuilder));
@@ -1766,6 +1869,23 @@ nsDisplayScrollLayer::~nsDisplayScrollLayer()
 }
 #endif
 
+nsDisplayScrollInfoLayer::nsDisplayScrollInfoLayer(
+  nsDisplayListBuilder* aBuilder,
+  nsDisplayList* aList,
+  nsIFrame* aForFrame,
+  nsIFrame* aViewportFrame)
+  : nsDisplayScrollLayer(aBuilder, aList, aForFrame, aViewportFrame)
+{
+#ifdef NS_BUILD_REFCNT_LOGGING
+  MOZ_COUNT_CTOR(nsDisplayScrollInfoLayer);
+#endif
+}
+
+#ifdef NS_BUILD_REFCNT_LOGGING
+nsDisplayScrollInfoLayer::~nsDisplayScrollInfoLayer()
+{
+  MOZ_COUNT_DTOR(nsDisplayScrollInfoLayer);
+}
 #endif
 
 nsDisplayClip::nsDisplayClip(nsDisplayListBuilder* aBuilder,

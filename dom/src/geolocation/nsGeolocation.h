@@ -37,11 +37,9 @@
 #ifndef nsGeoLocation_h
 #define nsGeoLocation_h
 
-#ifdef MOZ_IPC
 #include "mozilla/dom/PContentPermissionRequestChild.h"
 // Microsoft's API Name hackery sucks
 #undef CreateEvent
-#endif
 
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
@@ -67,9 +65,7 @@
 #include "nsIGeolocationProvider.h"
 #include "nsIContentPermissionPrompt.h"
 
-#ifdef MOZ_IPC
 #include "PCOMContentPermissionRequestChild.h"
-#endif
 
 class nsGeolocationService;
 class nsGeolocation;
@@ -77,9 +73,7 @@ class nsGeolocation;
 class nsGeolocationRequest
  : public nsIContentPermissionRequest
  , public nsITimerCallback
-#ifdef MOZ_IPC
  , public PCOMContentPermissionRequestChild
-#endif
 {
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -97,8 +91,7 @@ class nsGeolocationRequest
   void Shutdown();
 
   // Called by the geolocation device to notify that a location has changed.
-  // isBetter: the accuracy is as good or better than the previous position. 
-  void Update(nsIDOMGeoPosition* aPosition, PRBool isBetter);
+  void Update(nsIDOMGeoPosition* aPosition);
 
   void SendLocation(nsIDOMGeoPosition* location);
   void MarkCleared();
@@ -108,17 +101,14 @@ class nsGeolocationRequest
 
   ~nsGeolocationRequest();
 
-#ifdef MOZ_IPC
   bool Recv__delete__(const bool& allow);
   void IPDLRelease() { Release(); }
-#endif
 
  private:
 
   void NotifyError(PRInt16 errorCode);
   PRPackedBool mAllowed;
   PRPackedBool mCleared;
-  PRPackedBool mIsFirstUpdate;
   PRPackedBool mIsWatchPositionRequest;
 
   nsCOMPtr<nsITimer> mTimeoutTimer;
@@ -151,8 +141,6 @@ public:
   // Management of the nsGeolocation objects
   void AddLocator(nsGeolocation* locator);
   void RemoveLocator(nsGeolocation* locator);
-
-  PRBool IsBetterPosition(nsIDOMGeoPosition* aPosition);
 
   void SetCachedPosition(nsIDOMGeoPosition* aPosition);
   nsIDOMGeoPosition* GetCachedPosition();
@@ -208,8 +196,7 @@ public:
   nsresult Init(nsIDOMWindow* contentDom=nsnull);
 
   // Called by the geolocation device to notify that a location has changed.
-  // isBetter: the accuracy is as good or better than the previous position. 
-  void Update(nsIDOMGeoPosition* aPosition, PRBool isBetter);
+  void Update(nsIDOMGeoPosition* aPosition);
 
   // Returns true if any of the callbacks are repeating
   PRBool HasActiveCallbacks();

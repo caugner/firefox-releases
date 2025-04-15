@@ -157,7 +157,7 @@ public class GeckoInputConnection
             GeckoAppShell.sendEventToGecko(
                 new GeckoEvent(GeckoEvent.IME_COMPOSITION_END, 0, 0));
             mComposing = false;
-            mComposingText = null;
+            mComposingText = "";
 
             // Make sure caret stays at the same position
             GeckoAppShell.sendEventToGecko(
@@ -257,11 +257,27 @@ public class GeckoInputConnection
         extract.selectionStart = mSelectionStart;
         extract.selectionEnd = mSelectionStart + mSelectionLength;
 
+        // bug 617298 - IME_GET_TEXT sometimes gives the wrong result due to
+        // a stale cache. Use a set of three workarounds:
+        // 1. Sleep for 20 milliseconds and hope the child updates us with the new text.
+        //    Very evil and, consequentially, most effective.
+        try {
+            Thread.sleep(20);
+        } catch (InterruptedException e) {}
+
         GeckoAppShell.sendEventToGecko(
             new GeckoEvent(GeckoEvent.IME_GET_TEXT, 0, Integer.MAX_VALUE));
         try {
             extract.startOffset = 0;
             extract.text = mQueryResult.take();
+
+            // 2. Make a guess about what the text actually is
+            if (mComposing && extract.selectionEnd > extract.text.length())
+                extract.text = extract.text.subSequence(0, mCompositionStart) + mComposingText;
+
+            // 3. If all else fails, make sure our selection indexes make sense
+            extract.selectionStart = Math.min(extract.selectionStart, extract.text.length());
+            extract.selectionEnd = Math.min(extract.selectionEnd, extract.text.length());
 
             if ((flags & GET_EXTRACTED_TEXT_MONITOR) != 0)
                 mUpdateRequest = req;
@@ -532,7 +548,7 @@ public class GeckoInputConnection
 
     public void reset() {
         mComposing = false;
-        mComposingText = null;
+        mComposingText = "";
         mUpdateRequest = null;
     }
 
@@ -561,9 +577,10 @@ public class GeckoInputConnection
 
             GeckoAppShell.sendEventToGecko(
                 new GeckoEvent(GeckoEvent.IME_SET_SELECTION, start + count, 0));
-
-            
         }
+
+        // Block this thread until all pending events are processed
+        GeckoAppShell.geckoEventSync();
     }
 
     public void afterTextChanged(Editable s)
@@ -577,7 +594,7 @@ public class GeckoInputConnection
     // Is a composition active?
     boolean mComposing;
     // Composition text when a composition is active
-    String mComposingText;
+    String mComposingText = "";
     // Start index of the composition within the text body
     int mCompositionStart;
     /* During a composition, we should not alter the real selection,

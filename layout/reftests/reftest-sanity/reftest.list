@@ -44,7 +44,7 @@ HTTP(..) == filter-2.xhtml filter-2-ref.xhtml
 == zoom-invalidation.html zoom-invalidation-ref.html
 
 # test that xulRuntime.OS works
-fails-if(xulRuntime.OS!="Linux") == data:text/html,<body>Linux data:text/html,<script>document.write(navigator.platform.substr(0,5))</script>
+fails-if(xulRuntime.OS!="Linux"&&!Android) == data:text/html,<body>Linux data:text/html,<script>document.write(navigator.platform.substr(0,5))</script>
 fails-if(xulRuntime.OS!="WINNT") == data:text/html,<body>Win data:text/html,<script>document.write(navigator.platform.substr(0,3))</script>
 fails-if(xulRuntime.OS!="Darwin") == data:text/html,<body>Mac data:text/html,<script>document.write(navigator.platform.substr(0,3))</script>
 
@@ -89,3 +89,7 @@ needs-focus == data:text/plain, about:blank
 # Sanity check of viewport+displayport overrides
 fails-if(!browserIsRemote) == test-displayport.html test-displayport-ref.html # bug 593168
 skip-if(!browserIsRemote) != test-displayport-2.html test-displayport-ref.html # bug 593168
+
+# IPC Position-fixed frames/layers test
+# Fixed layers are temporarily disabled (bug 656167).
+#== test-pos-fixed.html test-pos-fixed-ref.html

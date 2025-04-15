@@ -1,6 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set sw=2 ts=8 et tw=80 : */
-
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -17,7 +16,7 @@
  * The Original Code is mozilla.org code.
  *
  * The Initial Developer of the Original Code is
- *  The Mozilla Foundation
+ * the Mozilla Foundation.
  * Portions created by the Initial Developer are Copyright (C) 2009
  * the Initial Developer. All Rights Reserved.
  *
@@ -63,7 +62,10 @@ namespace mozilla {
 namespace net {
 
 HttpChannelParent::HttpChannelParent(PBrowserParent* iframeEmbedding)
-: mIPCClosed(false)
+  : mIPCClosed(false)
+  , mStoredStatus(0)
+  , mStoredProgress(0)
+  , mStoredProgressMax(0)
 {
   // Ensure gHttpHandler is initialized: we need the atom table up and running.
   nsIHttpProtocolHandler* handler;
@@ -466,15 +468,21 @@ HttpChannelParent::OnDataAvailable(nsIRequest *aRequest,
                                    PRUint32 aCount)
 {
   LOG(("HttpChannelParent::OnDataAvailable [this=%x]\n", this));
- 
+
   nsCString data;
   nsresult rv = NS_ReadInputStreamToString(aInputStream, data, aCount);
   if (NS_FAILED(rv))
     return rv;
 
-  if (mIPCClosed || !SendOnDataAvailable(data, aOffset, aCount))
-    return NS_ERROR_UNEXPECTED; 
-
+  // OnDataAvailable is always preceded by OnStatus/OnProgress calls that set
+  // mStoredStatus/mStoredProgress(Max) to appropriate values, unless
+  // LOAD_BACKGROUND set.  In that case, they'll have garbage values, but
+  // child doesn't use them.
+  if (mIPCClosed || !SendOnTransportAndData(mStoredStatus, mStoredProgress,
+                                            mStoredProgressMax, data, aOffset,
+                                            aCount)) {
+    return NS_ERROR_UNEXPECTED;
+  }
   return NS_OK;
 }
 
@@ -488,8 +496,21 @@ HttpChannelParent::OnProgress(nsIRequest *aRequest,
                               PRUint64 aProgress, 
                               PRUint64 aProgressMax)
 {
-  if (mIPCClosed || !SendOnProgress(aProgress, aProgressMax))
-    return NS_ERROR_UNEXPECTED;
+  // OnStatus has always just set mStoredStatus. If it indicates this precedes
+  // OnDataAvailable, store and ODA will send to child.
+  if (mStoredStatus == nsISocketTransport::STATUS_RECEIVING_FROM ||
+      mStoredStatus == nsITransport::STATUS_READING)
+  {
+    mStoredProgress = aProgress;
+    mStoredProgressMax = aProgressMax;
+  } else {
+    // Send to child now.  The only case I've observed that this handles (i.e.
+    // non-ODA status with progress > 0) is data upload progress notification
+    // (status == nsISocketTransport::STATUS_SENDING_TO)
+    if (mIPCClosed || !SendOnProgress(aProgress, aProgressMax))
+      return NS_ERROR_UNEXPECTED;
+  }
+
   return NS_OK;
 }
 
@@ -499,7 +520,15 @@ HttpChannelParent::OnStatus(nsIRequest *aRequest,
                             nsresult aStatus, 
                             const PRUnichar *aStatusArg)
 {
-  if (mIPCClosed || !SendOnStatus(aStatus, nsString(aStatusArg)))
+  // If this precedes OnDataAvailable, store and ODA will send to child.
+  if (aStatus == nsISocketTransport::STATUS_RECEIVING_FROM ||
+      aStatus == nsITransport::STATUS_READING)
+  {
+    mStoredStatus = aStatus;
+    return NS_OK;
+  }
+  // Otherwise, send to child now
+  if (mIPCClosed || !SendOnStatus(aStatus))
     return NS_ERROR_UNEXPECTED;
   return NS_OK;
 }
@@ -512,7 +541,7 @@ NS_IMETHODIMP
 HttpChannelParent::Delete()
 {
   if (!mIPCClosed)
-    SendDeleteSelf();
+    unused << SendDeleteSelf();
 
   return NS_OK;
 }

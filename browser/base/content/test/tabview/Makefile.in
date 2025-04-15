@@ -50,6 +50,7 @@ _BROWSER_FILES = \
                  browser_tabview_bug586553.js \
                  browser_tabview_bug587043.js \
                  browser_tabview_bug587231.js \
+                 browser_tabview_bug587276.js \
                  browser_tabview_bug587351.js \
                  browser_tabview_bug587503.js \
                  browser_tabview_bug587990.js \
@@ -72,6 +73,7 @@ _BROWSER_FILES = \
                  browser_tabview_bug597360.js \
                  browser_tabview_bug597399.js \
                  browser_tabview_bug597980.js \
+                 browser_tabview_bug598375.js \
                  browser_tabview_bug598600.js \
                  browser_tabview_bug599626.js \
                  browser_tabview_bug600645.js \
@@ -85,6 +87,7 @@ _BROWSER_FILES = \
                  browser_tabview_bug608184.js \
                  browser_tabview_bug608158.js \
                  browser_tabview_bug608405.js \
+                 browser_tabview_bug610208.js \
                  browser_tabview_bug610242.js \
                  browser_tabview_bug612470.js \
                  browser_tabview_bug613541.js \
@@ -103,6 +106,7 @@ _BROWSER_FILES = \
                  browser_tabview_bug624953.js \
                  browser_tabview_bug625269.js \
                  browser_tabview_bug625424.js \
+                 browser_tabview_bug625666.js \
                  browser_tabview_bug626368.js \
                  browser_tabview_bug626525.js \
                  browser_tabview_bug626791.js \
@@ -115,14 +119,22 @@ _BROWSER_FILES = \
                  browser_tabview_bug630102.js \
                  browser_tabview_bug630157.js \
                  browser_tabview_bug631662.js \
+                 browser_tabview_bug631752.js \
                  browser_tabview_bug633788.js \
                  browser_tabview_bug634077.js \
                  browser_tabview_bug634085.js \
                  browser_tabview_bug634158.js \
+                 browser_tabview_bug634672.js \
                  browser_tabview_bug635696.js \
+                 browser_tabview_bug640765.js \
+                 browser_tabview_bug641802.js \
+                 browser_tabview_bug644097.js \
+                 browser_tabview_bug645653.js \
+                 browser_tabview_bug656778.js \
                  browser_tabview_dragdrop.js \
                  browser_tabview_exit_button.js \
                  browser_tabview_expander.js \
+                 browser_tabview_firstrun_pref.js \
                  browser_tabview_group.js \
                  browser_tabview_launch.js \
                  browser_tabview_multiwindow_search.js \
@@ -139,6 +151,7 @@ _BROWSER_FILES = \
                  search2.html \
                  test_bug599626.html \
                  test_bug600645.html \
+                 test_bug644097.html \
                  $(NULL)
 
 libs::	$(_BROWSER_FILES)

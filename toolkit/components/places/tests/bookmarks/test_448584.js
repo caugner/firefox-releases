@@ -15,7 +15,7 @@
  *
  * The Original Code is Bug 448584 code.
  *
- * The Initial Developer of the Original Code is Mozilla Corp.
+ * The Initial Developer of the Original Code is the Mozilla Foundation.
  * Portions created by the Initial Developer are Copyright (C) 2008
  * the Initial Developer. All Rights Reserved.
  *
@@ -119,7 +119,7 @@ function run_test() {
     // the bookmark uri becomes null.
     var sql = "UPDATE moz_bookmarks SET fk = 1337 WHERE id = ?1";
     var stmt = mDBConn.createStatement(sql);
-    stmt.bindUTF8StringParameter(0, aTest._itemId);
+    stmt.bindByIndex(0, aTest._itemId);
     try {
       stmt.execute();
     } finally {

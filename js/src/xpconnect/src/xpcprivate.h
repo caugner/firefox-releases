@@ -81,7 +81,6 @@
 #include "nsIJSRuntimeService.h"
 #include "nsWeakReference.h"
 #include "nsCOMPtr.h"
-#include "nsAutoLock.h"
 #include "nsXPTCUtils.h"
 #include "xptinfo.h"
 #include "xpcforwards.h"
@@ -98,6 +97,8 @@
 #include "nsXPIDLString.h"
 #include "nsAutoJSValHolder.h"
 #include "mozilla/AutoRestore.h"
+#include "mozilla/Monitor.h"
+#include "mozilla/Mutex.h"
 #include "nsDataHashtable.h"
 
 #include "nsThreadUtils.h"
@@ -138,16 +139,6 @@
 #ifdef XPC_IDISPATCH_SUPPORT
 // This goop was added because of EXCEPINFO in ThrowCOMError
 // This include is here, because it needs to occur before the undefines below
-#ifdef WINCE
-/* atlbase.h on WINCE has a bug, in that it tries to use
- * GetProcAddress with a wide string, when that is explicitly not
- * supported.  So we use C++ to overload that here, and implement
- * something that works.
- */
-#include <windows.h>
-static FARPROC GetProcAddressA(HMODULE hMod, wchar_t *procName);
-#endif /* WINCE */
-
 #include <atlbase.h>
 #include "oaidl.h"
 #endif
@@ -350,26 +341,18 @@ typedef nsDataHashtable<xpc::PtrAndPrincipalHashKey, JSCompartment *> XPCCompart
 #pragma warning(disable : 4355) // OK to pass "this" in member initializer
 #endif
 
-typedef PRMonitor XPCLock;
+typedef mozilla::Monitor XPCLock;
 
 static inline void xpc_Wait(XPCLock* lock) 
     {
         NS_ASSERTION(lock, "xpc_Wait called with null lock!");
-#ifdef DEBUG
-        PRStatus result = 
-#endif
-        PR_Wait(lock, PR_INTERVAL_NO_TIMEOUT);
-        NS_ASSERTION(PR_SUCCESS == result, "bad result from PR_Wait!");
+        lock->Wait();
     }
 
 static inline void xpc_NotifyAll(XPCLock* lock) 
     {
         NS_ASSERTION(lock, "xpc_NotifyAll called with null lock!");
-#ifdef DEBUG
-        PRStatus result = 
-#endif    
-        PR_NotifyAll(lock);
-        NS_ASSERTION(PR_SUCCESS == result, "bad result from PR_NotifyAll!");
+        lock->NotifyAll();
     }
 
 // This is a cloned subset of nsAutoMonitor. We want the use of a monitor -
@@ -382,36 +365,27 @@ static inline void xpc_NotifyAll(XPCLock* lock)
 // Note that xpconnect only makes *one* monitor and *mostly* holds it locked
 // only through very small critical sections.
 
-class NS_STACK_CLASS XPCAutoLock : public nsAutoLockBase {
+class NS_STACK_CLASS XPCAutoLock {
 public:
 
     static XPCLock* NewLock(const char* name)
-                        {return nsAutoMonitor::NewMonitor(name);}
+                        {return new mozilla::Monitor(name);}
     static void     DestroyLock(XPCLock* lock)
-                        {nsAutoMonitor::DestroyMonitor(lock);}
+                        {delete lock;}
 
     XPCAutoLock(XPCLock* lock MOZILLA_GUARD_OBJECT_NOTIFIER_PARAM)
-#ifdef DEBUG_jband
-        : nsAutoLockBase(lock ? (void*) lock : (void*) this, eAutoMonitor),
-#else
-        : nsAutoLockBase(lock, eAutoMonitor),
-#endif
-          mLock(lock)
+        : mLock(lock)
     {
         MOZILLA_GUARD_OBJECT_NOTIFIER_INIT;
         if(mLock)
-            PR_EnterMonitor(mLock);
+            mLock->Enter();
     }
 
     ~XPCAutoLock()
     {
         if(mLock)
         {
-#ifdef DEBUG
-            PRStatus status =
-#endif
-                PR_ExitMonitor(mLock);
-            NS_ASSERTION(status == PR_SUCCESS, "PR_ExitMonitor failed");
+            mLock->Exit();
         }
     }
 
@@ -437,27 +411,22 @@ private:
 
 /************************************************/
 
-class NS_STACK_CLASS XPCAutoUnlock : public nsAutoUnlockBase {
+class NS_STACK_CLASS XPCAutoUnlock {
 public:
     XPCAutoUnlock(XPCLock* lock MOZILLA_GUARD_OBJECT_NOTIFIER_PARAM)
-        : nsAutoUnlockBase(lock),
-          mLock(lock)
+        : mLock(lock)
     {
         MOZILLA_GUARD_OBJECT_NOTIFIER_INIT;
         if(mLock)
         {
-#ifdef DEBUG
-            PRStatus status =
-#endif
-                PR_ExitMonitor(mLock);
-            NS_ASSERTION(status == PR_SUCCESS, "PR_ExitMonitor failed");
+            mLock->Exit();
         }
     }
 
     ~XPCAutoUnlock()
     {
         if(mLock)
-            PR_EnterMonitor(mLock);
+            mLock->Enter();
     }
 
 private:
@@ -575,7 +544,7 @@ public:
     static JSBool Base64Decode(JSContext *cx, jsval val, jsval *out);
 
     // nsCycleCollectionParticipant
-    NS_IMETHOD RootAndUnlinkJSObjects(void *p);
+    NS_IMETHOD Root(void *p);
     NS_IMETHOD Unlink(void *p);
     NS_IMETHOD Unroot(void *p);
     NS_IMETHOD Traverse(void *p,
@@ -1254,23 +1223,18 @@ private:
 
     // String wrapper entry, holds a string, and a boolean that tells
     // whether the string is in use or not.
+    //
+    // NB: The string is not stored by value so that we avoid the cost of
+    // construction/destruction.
     struct StringWrapperEntry
     {
-        StringWrapperEntry()
-            : mInUse(PR_FALSE)
-        {
-        }
+        StringWrapperEntry() : mInUse(PR_FALSE) { }
 
-        XPCReadableJSStringWrapper mString;
+        js::AlignedStorage2<XPCReadableJSStringWrapper> mString;
         PRBool mInUse;
     };
 
-    // Reserve space for XPCCCX_STRING_CACHE_SIZE string wrapper
-    // entries for use on demand. It's important to not make this be
-    // string class members since we don't want to pay the cost of
-    // calling the constructors and destructors when the strings
-    // aren't being used.
-    char mStringWrapperData[sizeof(StringWrapperEntry) * XPCCCX_STRING_CACHE_SIZE];
+    StringWrapperEntry mScratchStrings[XPCCCX_STRING_CACHE_SIZE];
 };
 
 class XPCLazyCallContext
@@ -1457,7 +1421,6 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JSObject *obj);
         nsnull, /* deleteProperty */                                          \
         js::Valueify(XPC_WN_JSOp_Enumerate),                                  \
         XPC_WN_JSOp_TypeOf_Function,                                          \
-        nsnull, /* trace          */                                          \
         nsnull, /* fix            */                                          \
         XPC_WN_JSOp_ThisObject,                                               \
         XPC_WN_JSOp_Clear                                                     \
@@ -1474,7 +1437,6 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JSObject *obj);
         nsnull, /* deleteProperty */                                          \
         js::Valueify(XPC_WN_JSOp_Enumerate),                                  \
         XPC_WN_JSOp_TypeOf_Object,                                            \
-        nsnull, /* trace          */                                          \
         nsnull, /* fix            */                                          \
         XPC_WN_JSOp_ThisObject,                                               \
         XPC_WN_JSOp_Clear                                                     \
@@ -2473,17 +2435,17 @@ public:
     // collected then its mFlatJSObject will be cycle collected too and
     // finalization of the mFlatJSObject will unlink the js objects (see
     // XPC_WN_NoHelper_Finalize and FlatJSObjectFinalized).
-    // We also rely on NS_DECL_CYCLE_COLLECTION_CLASS_NO_UNLINK having empty
-    // Root/Unroot methods, to avoid root/unrooting the JS objects from
-    // addrefing/releasing the XPCWrappedNative during unlinking, which would
-    // make the JS objects uncollectable to the JS GC.
+    // We also give XPCWrappedNative empty Root/Unroot methods, to avoid
+    // root/unrooting the JS objects from addrefing/releasing the
+    // XPCWrappedNative during unlinking, which would make the JS objects
+    // uncollectable to the JS GC.
     class NS_CYCLE_COLLECTION_INNERCLASS
      : public nsXPCOMCycleCollectionParticipant
     {
       NS_DECL_CYCLE_COLLECTION_CLASS_BODY_NO_UNLINK(XPCWrappedNative,
                                                     XPCWrappedNative)
-      NS_IMETHOD RootAndUnlinkJSObjects(void *p);
-      NS_IMETHOD Unlink(void *p) { return NS_OK; }
+      NS_IMETHOD Root(void *p) { return NS_OK; }
+      NS_IMETHOD Unlink(void *p);
       NS_IMETHOD Unroot(void *p) { return NS_OK; }
     };
     NS_CYCLE_COLLECTION_PARTICIPANT_INSTANCE
@@ -2991,13 +2953,7 @@ public:
     NS_DECL_NSISUPPORTSWEAKREFERENCE
     NS_DECL_NSIPROPERTYBAG
 
-    class NS_CYCLE_COLLECTION_INNERCLASS
-     : public nsXPCOMCycleCollectionParticipant
-    {
-      NS_IMETHOD RootAndUnlinkJSObjects(void *p);
-      NS_DECL_CYCLE_COLLECTION_CLASS_BODY(nsXPCWrappedJS, nsIXPConnectWrappedJS)
-    };
-    NS_CYCLE_COLLECTION_PARTICIPANT_INSTANCE
+    NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsXPCWrappedJS, nsIXPConnectWrappedJS)
     NS_DECL_CYCLE_COLLECTION_UNMARK_PURPLE_STUB(nsXPCWrappedJS)
 
     NS_IMETHOD CallMethod(PRUint16 methodIndex,
@@ -3680,6 +3636,8 @@ private:
 
 class XPCPerThreadData
 {
+    typedef mozilla::Mutex Mutex;
+
 public:
     // Get the instance of this object for the current thread
     static inline XPCPerThreadData* GetData(JSContext *cx)
@@ -3770,7 +3728,7 @@ public:
 
     PRBool IsValid() const {return mJSContextStack != nsnull;}
 
-    static PRLock* GetLock() {return gLock;}
+    static Mutex* GetLock() {return gLock;}
     // Must be called with the threads locked.
     static XPCPerThreadData* IterateThreads(XPCPerThreadData** iteratorp);
 
@@ -3816,7 +3774,7 @@ private:
 #endif
     PRThread*            mThread;
 
-    static PRLock*           gLock;
+    static Mutex*            gLock;
     static XPCPerThreadData* gThreads;
     static PRUintn           gTLSIndex;
 
@@ -4599,27 +4557,6 @@ ParticipatesInCycleCollection(JSContext *cx, js::gc::Cell *cell)
 }
 
 #ifdef XPC_IDISPATCH_SUPPORT
-
-#ifdef WINCE
-/* defined static near the top here */
-FARPROC GetProcAddressA(HMODULE hMod, wchar_t *procName) {
-  FARPROC ret = NULL;
-  int len = wcslen(procName);
-  char *s = new char[len + 1];
-
-  for (int i = 0; i < len; i++) {
-    s[i] = (char) procName[i];
-  }
-  s[len-1] = 0;
-
-  ret = ::GetProcAddress(hMod, s);
-  delete [] s;
-
-  return ret;
-}
-#endif /* WINCE */
-
-
 // IDispatch specific classes
 #include "XPCDispPrivate.h"
 #endif

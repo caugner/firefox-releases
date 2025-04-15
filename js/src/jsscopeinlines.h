@@ -47,14 +47,17 @@
 #include "jsfun.h"
 #include "jsobj.h"
 #include "jsscope.h"
+#include "jsgc.h"
 
+#include "jsgcinlines.h"
 #include "jscntxtinlines.h"
+#include "jsobjinlines.h"
 
 inline void
 js::Shape::freeTable(JSContext *cx)
 {
     if (hasTable()) {
-        cx->destroy(getTable());
+        cx->delete_(getTable());
         setTable(NULL);
     }
 }
@@ -68,7 +71,7 @@ JSObject::getEmptyShape(JSContext *cx, js::Class *aclasp,
 
     if (!emptyShapes) {
         emptyShapes = (js::EmptyShape**)
-            cx->calloc(sizeof(js::EmptyShape*) * js::gc::JS_FINALIZE_OBJECT_LIMIT);
+            cx->calloc_(sizeof(js::EmptyShape*) * js::gc::JS_FINALIZE_OBJECT_LIMIT);
         if (!emptyShapes)
             return NULL;
 
@@ -78,7 +81,7 @@ JSObject::getEmptyShape(JSContext *cx, js::Class *aclasp,
          */
         emptyShapes[0] = js::EmptyShape::create(cx, aclasp);
         if (!emptyShapes[0]) {
-            cx->free(emptyShapes);
+            cx->free_(emptyShapes);
             emptyShapes = NULL;
             return NULL;
         }
@@ -131,37 +134,30 @@ JSObject::extend(JSContext *cx, const js::Shape *shape, bool isDefinitelyAtom)
     updateShape(cx);
 }
 
-inline void
-JSObject::trace(JSTracer *trc)
+inline bool
+JSObject::initString(JSContext *cx, JSString *str)
 {
-    if (!isNative())
-        return;
+    JS_ASSERT(isString());
+    JS_ASSERT(nativeEmpty());
 
-    JSContext *cx = trc->context;
-    js::Shape *shape = lastProp;
-
-    if (IS_GC_MARKING_TRACER(trc) && cx->runtime->gcRegenShapes) {
-        /*
-         * Either this object has its own shape, which must be regenerated, or
-         * it must have the same shape as lastProp.
-         */
-        if (!shape->hasRegenFlag()) {
-            shape->shape = js_RegenerateShapeForGC(cx->runtime);
-            shape->setRegenFlag();
-        }
-
-        uint32 newShape = shape->shape;
-        if (hasOwnShape()) {
-            newShape = js_RegenerateShapeForGC(cx->runtime);
-            JS_ASSERT(newShape != shape->shape);
-        }
-        objShape = newShape;
+    const js::Shape **shapep = &cx->compartment->initialStringShape;
+    if (*shapep) {
+        setLastProperty(*shapep);
+    } else {
+        *shapep = assignInitialStringShape(cx);
+        if (!*shapep)
+            return false;
     }
+    JS_ASSERT(*shapep == lastProperty());
+    JS_ASSERT(!nativeEmpty());
 
-    /* Trace our property tree or dictionary ancestor line. */
-    do {
-        shape->trace(trc);
-    } while ((shape = shape->parent) != NULL);
+    JS_ASSERT(nativeLookup(ATOM_TO_JSID(cx->runtime->atomState.lengthAtom))->slot ==
+              JSObject::JSSLOT_STRING_LENGTH);
+
+    setPrimitiveThis(js::StringValue(str));
+    JS_ASSERT(str->length() < JSString::MAX_LENGTH);
+    setSlot(JSSLOT_STRING_LENGTH, js::Int32Value(int32(str->length())));
+    return true;
 }
 
 namespace js {
@@ -260,7 +256,7 @@ Shape::get(JSContext* cx, JSObject *receiver, JSObject* obj, JSObject *pobj, js:
      */
     if (obj->getClass() == &js_WithClass)
         obj = js_UnwrapWithObject(cx, obj);
-    return js::CallJSPropertyOp(cx, getterOp(), obj, SHAPE_USERID(this), vp);
+    return js::CallJSPropertyOp(cx, getterOp(), receiver, SHAPE_USERID(this), vp);
 }
 
 inline bool

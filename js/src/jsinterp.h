@@ -150,10 +150,6 @@ struct JSStackFrame
      *  function frame: execution of function code or an eval in a function
      *  dummy frame:    bookkeeping frame (read: hack)
      *
-     * As noted, global and function frames may optionally be 'eval frames', which
-     * further restricts the stack frame members which may be used. Namely, the
-     * argument-related members of function eval frames are not valid, since an eval
-     * shares its containing function's arguments rather than having its own.
      */
 
     bool isFunctionFrame() const {
@@ -169,16 +165,38 @@ struct JSStackFrame
     }
 
     bool isScriptFrame() const {
-        return !!(flags_ & (JSFRAME_FUNCTION | JSFRAME_GLOBAL));
+        bool retval = !!(flags_ & (JSFRAME_FUNCTION | JSFRAME_GLOBAL));
+        JS_ASSERT(retval == !isDummyFrame());
+        return retval;
     }
+
+    /*
+     * Eval frames
+     *
+     * As noted above, global and function frames may optionally be 'eval
+     * frames'. Eval code shares its parent's arguments which means that the
+     * arg-access members of JSStackFrame may not be used for eval frames.
+     * Search for 'hasArgs' below for more details.
+     *
+     * A further sub-classification of eval frames is whether the frame was
+     * pushed for an ES5 strict-mode eval().
+     */
 
     bool isEvalFrame() const {
         JS_ASSERT_IF(flags_ & JSFRAME_EVAL, isScriptFrame());
         return flags_ & JSFRAME_EVAL;
     }
 
-    bool isExecuteFrame() const {
-        return !!(flags_ & (JSFRAME_GLOBAL | JSFRAME_EVAL));
+    bool isNonEvalFunctionFrame() const {
+        return (flags_ & (JSFRAME_FUNCTION | JSFRAME_EVAL)) == JSFRAME_FUNCTION;
+    }
+
+    bool isStrictEvalFrame() const {
+        return isEvalFrame() && script()->strictModeCode;
+    }
+
+    bool isNonStrictEvalFrame() const {
+        return isEvalFrame() && !script()->strictModeCode;
     }
 
     /*
@@ -206,7 +224,8 @@ struct JSStackFrame
     /* Used for eval. */
     inline void initEvalFrame(JSContext *cx, JSScript *script, JSStackFrame *prev,
                               uint32 flags);
-    inline void initGlobalFrame(JSScript *script, JSObject &chain, uint32 flags);
+    inline void initGlobalFrame(JSScript *script, JSObject &chain, JSStackFrame *prev,
+                                uint32 flags);
 
     /* Used when activating generators. */
     inline void stealFrameAndSlots(js::Value *vp, JSStackFrame *otherfp,
@@ -344,7 +363,7 @@ struct JSStackFrame
 
     /* True if this frame has arguments. Contrast with hasArgsObj. */
     bool hasArgs() const {
-        return isFunctionFrame() && !isEvalFrame();
+        return isNonEvalFunctionFrame();
     }
 
     uintN numFormalArgs() const {
@@ -398,7 +417,6 @@ struct JSStackFrame
     }
 
     inline void setArgsObj(JSObject &obj);
-    inline void clearArgsObj();
 
     /*
      * This value
@@ -486,6 +504,12 @@ struct JSStackFrame
      * up the scope chain until the first call object. Thus, it is important,
      * when setting the scope chain, to indicate whether the new scope chain
      * contains a new call object and thus changes the 'hasCallObj' state.
+     *
+     * NB: 'fp->hasCallObj()' implies that fp->callObj() needs to be 'put' when
+     * the frame is popped. Since the scope chain of a non-strict eval frame
+     * contains the call object of the parent (function) frame, it is possible
+     * to have:
+     *   !fp->hasCall() && fp->scopeChain().isCall()
      */
 
     JSObject &scopeChain() const {
@@ -498,14 +522,16 @@ struct JSStackFrame
     }
 
     bool hasCallObj() const {
-        return !!(flags_ & JSFRAME_HAS_CALL_OBJ);
+        bool ret = !!(flags_ & JSFRAME_HAS_CALL_OBJ);
+        JS_ASSERT_IF(ret, !isNonStrictEvalFrame());
+        return ret;
     }
 
     inline JSObject &callObj() const;
-    inline JSObject *maybeCallObj() const;
     inline void setScopeChainNoCallObj(JSObject &obj);
-    inline void setScopeChainAndCallObj(JSObject &obj);
-    inline void clearCallObj();
+    inline void setScopeChainWithOwnCallObj(JSObject &obj);
+
+    inline void markActivationObjectsAsPut();
 
     /*
      * Imacropc
@@ -637,6 +663,17 @@ struct JSStackFrame
     }
 
     /*
+     * js::Execute pushes both global and function frames (since eval() in a
+     * function pushes a frame with isFunctionFrame() && isEvalFrame()). Most
+     * code should not care where a frame was pushed, but if it is necessary to
+     * pick out frames pushed by js::Execute, this is the right query:
+     */
+
+    bool isFramePushedByExecute() const {
+        return !!(flags_ & (JSFRAME_GLOBAL | JSFRAME_EVAL));
+    }
+
+    /*
      * Other flags
      */
 
@@ -654,8 +691,8 @@ struct JSStackFrame
         return !!(flags_ & JSFRAME_DEBUGGER);
     }
 
-    bool isEvalOrDebuggerFrame() const {
-        return !!(flags_ & (JSFRAME_EVAL | JSFRAME_DEBUGGER));
+    bool isDirectEvalOrDebuggerFrame() const {
+        return (flags_ & (JSFRAME_EVAL | JSFRAME_DEBUGGER)) && !(flags_ & JSFRAME_GLOBAL);
     }
 
     bool hasOverriddenArgs() const {
@@ -838,10 +875,47 @@ template <typename T>
 bool GetPrimitiveThis(JSContext *cx, Value *vp, T *v);
 
 inline void
-PutActivationObjects(JSContext *cx, JSStackFrame *fp);
+PutActivationObjects(JSContext *cx, JSStackFrame *fp)
+{
+    /* The order is important since js_PutCallObject does js_PutArgsObject. */
+    if (fp->hasCallObj())
+        js_PutCallObject(cx, fp);
+    else if (fp->hasArgsObj())
+        js_PutArgsObject(cx, fp);
+}
 
-inline void
-PutOwnedActivationObjects(JSContext *cx, JSStackFrame *fp);
+/*
+ * ScriptPrologue/ScriptEpilogue must be called in pairs. ScriptPrologue
+ * must be called before the script executes. ScriptEpilogue must be called
+ * after the script returns or exits via exception.
+ */
+
+inline bool
+ScriptPrologue(JSContext *cx, JSStackFrame *fp, JSScript *script);
+
+inline bool
+ScriptEpilogue(JSContext *cx, JSStackFrame *fp, bool ok);
+
+/*
+ * It is not valid to call ScriptPrologue when a generator is resumed or to
+ * call ScriptEpilogue when a generator yields. However, the debugger still
+ * needs LIFO notification of generator start/stop. This pair of functions does
+ * the right thing based on the state of 'fp'.
+ */
+
+inline bool
+ScriptPrologueOrGeneratorResume(JSContext *cx, JSStackFrame *fp);
+
+inline bool
+ScriptEpilogueOrGeneratorYield(JSContext *cx, JSStackFrame *fp, bool ok);
+
+/* Implemented in jsdbgapi: */
+
+extern void
+ScriptDebugPrologue(JSContext *cx, JSStackFrame *fp);
+
+extern bool
+ScriptDebugEpilogue(JSContext *cx, JSStackFrame *fp, bool ok);
 
 /*
  * For a call's vp (which necessarily includes callee at vp[0] and the original
@@ -964,13 +1038,11 @@ ExternalInvokeConstructor(JSContext *cx, const Value &fval, uintN argc, Value *a
 
 /*
  * Performs a direct eval for the given arguments, which must correspond to the
- * currently-executing stack frame, which must be a script frame.  evalfun must
- * be the built-in eval function and must correspond to the callee in vp[0].
- * When this function succeeds it returns the result in *vp, adjusts the JS
- * stack pointer, and returns true.
+ * currently-executing stack frame, which must be a script frame. On completion
+ * the result is returned in *vp and the JS stack pointer is adjusted.
  */
 extern JS_REQUIRES_STACK bool
-DirectEval(JSContext *cx, JSFunction *evalfun, uint32 argc, Value *vp);
+DirectEval(JSContext *cx, uint32 argc, Value *vp);
 
 /*
  * Performs a direct eval for the given arguments, which must correspond to the
@@ -1006,6 +1078,9 @@ CheckRedeclaration(JSContext *cx, JSObject *obj, jsid id, uintN attrs);
 extern bool
 StrictlyEqual(JSContext *cx, const Value &lval, const Value &rval, JSBool *equal);
 
+extern bool
+LooselyEqual(JSContext *cx, const Value &lval, const Value &rval, JSBool *equal);
+
 /* === except that NaN is the same as NaN and -0 is not the same as +0. */
 extern bool
 SameValue(JSContext *cx, const Value &v1, const Value &v2, JSBool *same);
@@ -1013,25 +1088,8 @@ SameValue(JSContext *cx, const Value &v1, const Value &v2, JSBool *same);
 extern JSType
 TypeOfValue(JSContext *cx, const Value &v);
 
-inline bool
-InstanceOf(JSContext *cx, JSObject *obj, Class *clasp, Value *argv)
-{
-    if (obj && obj->getClass() == clasp)
-        return true;
-    extern bool InstanceOfSlow(JSContext *, JSObject *, Class *, Value *);
-    return InstanceOfSlow(cx, obj, clasp, argv);
-}
-
 extern JSBool
 HasInstance(JSContext *cx, JSObject *obj, const js::Value *v, JSBool *bp);
-
-inline void *
-GetInstancePrivate(JSContext *cx, JSObject *obj, Class *clasp, Value *argv)
-{
-    if (!InstanceOf(cx, obj, clasp, argv))
-        return NULL;
-    return obj->getPrivate();
-}
 
 extern bool
 ValueToId(JSContext *cx, const Value &v, jsid *idp);

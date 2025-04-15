@@ -50,13 +50,8 @@ LIBXUL_LIBRARY	= 1
 EXPORTS		= \
 		nsImageMapUtils.h \
 		nsClientRect.h \
+		nsHTMLDNSPrefetch.h \
 		$(NULL)
-
-ifdef MOZ_IPC
-EXPORTS        += \
-                nsHTMLDNSPrefetch.h \
-                $(NULL)
-endif
 
 CPPSRCS		= \
 		nsClientRect.cpp \
@@ -112,8 +107,10 @@ CPPSRCS		= \
 		nsHTMLTableSectionElement.cpp \
 		nsHTMLTextAreaElement.cpp \
 		nsHTMLTitleElement.cpp \
+		nsHTMLUnknownElement.cpp \
 		nsDOMValidityState.cpp \
 		nsIConstraintValidation.cpp \
+		nsRadioVisitor.cpp \
 		$(NULL)
 
 ifdef MOZ_MEDIA

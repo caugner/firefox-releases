@@ -373,7 +373,9 @@ nsIconChannel::InitWithGnome(nsIMozIconURI *aIconURI)
     if (ms) {
       nsCAutoString fileExt;
       aIconURI->GetFileExtension(fileExt);
-      ms->GetTypeFromExtension(fileExt, type);
+      if (!fileExt.IsEmpty()) {
+        ms->GetTypeFromExtension(fileExt, type);
+      }
     }
   }
   // Get the icon theme
@@ -413,8 +415,8 @@ nsIconChannel::InitWithGnome(nsIMozIconURI *aIconURI)
   }
 
   GdkPixbuf* scaled = buf;
-  if (gdk_pixbuf_get_width(buf)  != iconSize &&
-      gdk_pixbuf_get_height(buf) != iconSize) {
+  if (PRUint32(gdk_pixbuf_get_width(buf))  != iconSize &&
+      PRUint32(gdk_pixbuf_get_height(buf)) != iconSize) {
     // scale...
     scaled = gdk_pixbuf_scale_simple(buf, iconSize, iconSize,
                                      GDK_INTERP_BILINEAR);

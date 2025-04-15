@@ -102,6 +102,9 @@ class nsUserFontSet;
 struct nsFontFaceRuleContainer;
 class nsObjectFrame;
 class nsTransitionManager;
+#ifdef MOZ_CSS_ANIMATIONS
+class nsAnimationManager;
+#endif
 class nsRefreshDriver;
 class imgIContainer;
 
@@ -238,6 +241,9 @@ public:
     { return GetPresShell()->FrameManager(); } 
 
   nsTransitionManager* TransitionManager() { return mTransitionManager; }
+#ifdef MOZ_CSS_ANIMATIONS
+  nsAnimationManager* AnimationManager() { return mAnimationManager; }
+#endif
 
   nsRefreshDriver* RefreshDriver() { return mRefreshDriver; }
 #endif
@@ -372,7 +378,7 @@ public:
     // this switch statement away.
     switch (aPrefType) {
     case kPresContext_MinimumFontSize:
-      return mMinimumFontSize;
+      return mMinimumFontSizePref;
     case kPresContext_ScrollbarSide:
       return mPrefScrollbarSide;
     case kPresContext_BidiDirection:
@@ -548,6 +554,23 @@ public:
       return;
 
     mTextZoom = aZoom;
+    if (HasCachedStyleData()) {
+      // Media queries could have changed since we changed the meaning
+      // of 'em' units in them.
+      MediaFeatureValuesChanged(PR_TRUE);
+      RebuildAllStyleData(NS_STYLE_HINT_REFLOW);
+    }
+  }
+
+  PRInt32 MinFontSize() const {
+    return NS_MAX(mMinFontSize, mMinimumFontSizePref);
+  }
+
+  void SetMinFontSize(PRInt32 aMinFontSize) {
+    if (aMinFontSize == mMinFontSize)
+      return;
+
+    mMinFontSize = aMinFontSize;
     if (HasCachedStyleData()) {
       // Media queries could have changed since we changed the meaning
       // of 'em' units in them.
@@ -965,6 +988,11 @@ public:
   }
   inline void ForgetUpdatePluginGeometryFrame(nsIFrame* aFrame);
 
+  PRBool GetContainsUpdatePluginGeometryFrame()
+  {
+    return mContainsUpdatePluginGeometryFrame;
+  }
+
   void SetContainsUpdatePluginGeometryFrame(PRBool aValue)
   {
     mContainsUpdatePluginGeometryFrame = aValue;
@@ -1007,6 +1035,8 @@ protected:
 
   NS_HIDDEN_(void) UpdateCharSet(const nsAFlatCString& aCharSet);
 
+  void AppUnitsPerDevPixelChanged();
+
   PRBool MayHavePaintEventListener();
 
   void HandleRebuildUserFontSet() {
@@ -1037,6 +1067,9 @@ protected:
   nsILookAndFeel*       mLookAndFeel;   // [STRONG]
   nsRefPtr<nsRefreshDriver> mRefreshDriver;
   nsRefPtr<nsTransitionManager> mTransitionManager;
+#ifdef MOZ_CSS_ANIMATIONS
+  nsRefPtr<nsAnimationManager> mAnimationManager;
+#endif
   nsIAtom*              mMedium;        // initialized by subclass ctors;
                                         // weak pointer to static atom
 
@@ -1054,6 +1087,7 @@ protected:
 
   nsWeakPtr             mContainer;
 
+  PRInt32               mMinFontSize;   // Min font size, defaults to 0
   float                 mTextZoom;      // Text zoom, defaults to 1.0
   float                 mFullZoom;      // Page zoom, defaults to 1.0
 
@@ -1079,7 +1113,7 @@ protected:
   nsTArray<nsFontFaceRuleContainer> mFontFaceRules;
   
   PRInt32               mFontScaler;
-  nscoord               mMinimumFontSize;
+  nscoord               mMinimumFontSizePref;
 
   nsRect                mVisibleArea;
   nsSize                mPageSize;
@@ -1279,6 +1313,14 @@ public:
    * mContainsUpdatePluginGeometryFrame is set in the frame's prescontext.
    */
   void RootForgetUpdatePluginGeometryFrame(nsIFrame* aFrame);
+
+  /**
+   * Call this when a document is going to no longer be valid for plugin updates
+   * (say by going into the bfcache). If mContainsUpdatePluginGeometryFrame is
+   * set in the prescontext then it will be cleared along with
+   * mUpdatePluginGeometryForFrame.
+   */
+  void RootForgetUpdatePluginGeometryFrameForPresContext(nsPresContext* aPresContext);
 
   /**
    * Increment DOM-modification generation counter to indicate that

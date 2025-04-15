@@ -43,10 +43,8 @@
  * as <frame>, <iframe>, and some <object>s
  */
 
-#ifdef MOZ_IPC
 #include "mozilla/layout/RenderFrameParent.h"
 using mozilla::layout::RenderFrameParent;
-#endif
 
 #include "nsSubDocumentFrame.h"
 #include "nsCOMPtr.h"
@@ -277,7 +275,6 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   if (!mInnerView)
     return NS_OK;
 
-#ifdef MOZ_IPC
   nsFrameLoader* frameLoader = FrameLoader();
   if (frameLoader) {
     RenderFrameParent* rfp = frameLoader->GetCurrentRemoteFrame();
@@ -285,7 +282,6 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       return rfp->BuildDisplayList(aBuilder, this, aDirtyRect, aLists);
     }
   }
-#endif
 
   nsIView* subdocView = mInnerView->GetFirstChild();
   if (!subdocView)
@@ -340,32 +336,12 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   PRInt32 parentAPD = PresContext()->AppUnitsPerDevPixel();
   PRInt32 subdocAPD = presContext->AppUnitsPerDevPixel();
 
-  nsIFrame* subdocRootScrollFrame = presShell->GetRootScrollFrame();
-
   nsRect dirty;
   if (subdocRootFrame) {
-    if (presShell->UsingDisplayPort() && subdocRootScrollFrame) {
-      dirty = presShell->GetDisplayPort();
-
-      // The visual overflow rect of our viewport frame unfortunately may not
-      // intersect with the displayport of that frame. For example, the scroll
-      // offset of the frame may be (0, 0) so that the visual overflow rect
-      // is (0, 0, 800px, 500px) while the display port may have its top-left
-      // corner below y=500px.
-      //
-      // We have to force the frame to have a little faith and build a display
-      // list anyway. (see nsIFrame::BuildDisplayListForChild for the short-
-      // circuit code we are evading here).
-      //
-      subdocRootScrollFrame->AddStateBits(
-        NS_FRAME_FORCE_DISPLAY_LIST_DESCEND_INTO);
-
-    } else {
-      // get the dirty rect relative to the root frame of the subdoc
-      dirty = aDirtyRect + GetOffsetToCrossDoc(subdocRootFrame);
-      // and convert into the appunits of the subdoc
-      dirty = dirty.ConvertAppUnitsRoundOut(parentAPD, subdocAPD);
-    }
+    // get the dirty rect relative to the root frame of the subdoc
+    dirty = aDirtyRect + GetOffsetToCrossDoc(subdocRootFrame);
+    // and convert into the appunits of the subdoc
+    dirty = dirty.ConvertAppUnitsRoundOut(parentAPD, subdocAPD);
 
     aBuilder->EnterPresShell(subdocRootFrame, dirty);
   }
@@ -411,9 +387,9 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       // Add the canvas background color to the bottom of the list. This
       // happens after we've built the list so that AddCanvasBackgroundColorItem
       // can monkey with the contents if necessary.
-      PRUint32 flags = nsIPresShell_MOZILLA_2_0_BRANCH::FORCE_DRAW;
+      PRUint32 flags = nsIPresShell::FORCE_DRAW;
       if (presContext->IsRootContentDocument()) {
-        flags |= nsIPresShell_MOZILLA_2_0_BRANCH::ROOT_CONTENT_DOC_BG;
+        flags |= nsIPresShell::ROOT_CONTENT_DOC_BG;
       }
       rv = presShell->AddCanvasBackgroundColorItem(
              *aBuilder, childItems, subdocRootFrame ? subdocRootFrame : this,
@@ -424,32 +400,6 @@ nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   if (NS_SUCCEEDED(rv)) {
 
     bool addedLayer = false;
-
-#ifdef MOZ_IPC
-    // Make a scrollable layer in the child process so it can be manipulated
-    // with transforms in the parent process.
-    if (XRE_GetProcessType() == GeckoProcessType_Content) {
-      nsIScrollableFrame* scrollFrame = presShell->GetRootScrollFrameAsScrollable();
-
-      if (scrollFrame) {
-        NS_ASSERTION(subdocRootFrame, "Root scroll frame should be non-null");
-        nsRect scrollRange = scrollFrame->GetScrollRange();
-        
-        // Since making new layers is expensive, only use nsDisplayScrollLayer
-        // if the area is scrollable.
-        if (scrollRange.width != 0 || scrollRange.height != 0) {
-          addedLayer = true;
-          nsDisplayScrollLayer* layerItem = new (aBuilder) nsDisplayScrollLayer(
-            aBuilder,
-            &childItems,
-            subdocRootScrollFrame,
-            subdocRootFrame
-          );
-          childItems.AppendToTop(layerItem);
-        }
-      }
-    }
-#endif
 
     if (subdocRootFrame && parentAPD != subdocAPD) {
       NS_WARN_IF_FALSE(!addedLayer,

@@ -40,6 +40,7 @@
 #include "gfxContext.h"
 #include "gfxPlatform.h"
 #include "gfxUtils.h"
+#include "nsIDeviceContext.h"
 
 namespace mozilla {
 namespace layers {
@@ -168,6 +169,43 @@ ThebesLayerBuffer::GetContextForQuadrantUpdate(const nsIntRect& aBounds,
   return ctx.forget();
 }
 
+// Move the pixels in aBuffer specified by |aSourceRect| to |aDest|.
+// |aSourceRect| and |aDest| are in the space of |aBuffer|, but
+// unscaled by the resolution.  This helper does the scaling.
+static void
+MovePixels(gfxASurface* aBuffer,
+           const nsIntRect& aSourceRect, const nsIntPoint& aDest,
+           float aXResolution, float aYResolution)
+{
+  gfxRect src(aSourceRect.x, aSourceRect.y, aSourceRect.width, aSourceRect.height);
+  gfxRect dest(aDest.x, aDest.y,  aSourceRect.width, aSourceRect.height);
+  src.Scale(aXResolution, aYResolution);
+  dest.Scale(aXResolution, aYResolution);
+
+#ifdef DEBUG
+  // If we're doing a self-copy, enforce that the rects we're copying
+  // were computed in order to round to device pixels.  If the rects
+  // we're moving *weren't* computed to round, then glitches like
+  // seaming are likely.  Assume that the precision of these
+  // computations is 1 app unit, and toss in a fudge factor of 2.0.
+  static const gfxFloat kPrecision =
+    1.0 / gfxFloat(nsIDeviceContext::AppUnitsPerCSSPixel());
+  // FIXME/bug 637852: we've decided to live with transient glitches
+  // during fast-panning for the time being.
+  NS_WARN_IF_FALSE(
+    src.WithinEpsilonOfIntegerPixels(2.0 * kPrecision * aXResolution) &&
+    dest.WithinEpsilonOfIntegerPixels(2.0 * kPrecision * aXResolution),
+    "Rects don't round to device pixels within precision; glitches likely to follow");
+#endif
+
+  src.Round();
+  dest.Round();
+
+  aBuffer->MovePixels(nsIntRect(src.pos.x, src.pos.y,
+                                src.size.width, src.size.height),
+                      nsIntPoint(dest.pos.x, dest.pos.y));
+}
+
 static void
 WrapRotationAxis(PRInt32* aRotationPoint, PRInt32 aSize)
 {
@@ -184,8 +222,17 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
                               PRUint32 aFlags)
 {
   PaintState result;
+  result.mDidSelfCopy = PR_FALSE;
   float curXRes = aLayer->GetXResolution();
   float curYRes = aLayer->GetYResolution();
+  // If we have non-identity resolution then mBufferRotation might not fall
+  // on a buffer pixel boundary, in which case that row of pixels will contain
+  // a mix of two completely different rows of the layer, which would be
+  // a catastrophe. So disable rotation in that case.
+  // We also need to disable rotation if we're going to be resampled when
+  // drawing, because we might sample across the rotation boundary.
+  PRBool canHaveRotation =
+    !(aFlags & PAINT_WILL_RESAMPLE) && aXResolution == 1.0 && aYResolution == 1.0;
 
   nsIntRegion validRegion = aLayer->GetValidRegion();
 
@@ -200,16 +247,18 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
     neededRegion = aLayer->GetVisibleRegion();
     destBufferDims = ScaledSize(neededRegion.GetBounds().Size(),
                                 aXResolution, aYResolution);
-    canReuseBuffer = BufferSizeOkFor(destBufferDims);
+    canReuseBuffer = mBuffer && BufferSizeOkFor(destBufferDims);
 
     if (canReuseBuffer) {
       if (mBufferRect.Contains(neededRegion.GetBounds())) {
         // We don't need to adjust mBufferRect.
         destBufferRect = mBufferRect;
-      } else {
+      } else if (neededRegion.GetBounds().Size() <= mBufferRect.Size()) {
         // The buffer's big enough but doesn't contain everything that's
         // going to be visible. We'll move it.
         destBufferRect = nsIntRect(neededRegion.GetBounds().TopLeft(), mBufferRect.Size());
+      } else {
+        destBufferRect = neededRegion.GetBounds();
       }
     } else {
       destBufferRect = neededRegion.GetBounds();
@@ -251,21 +300,17 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
     break;
   }
 
+  NS_ASSERTION(destBufferRect.Contains(neededRegion.GetBounds()),
+               "Destination rect doesn't contain what we need to paint");
+
   result.mRegionToDraw.Sub(neededRegion, validRegion);
   if (result.mRegionToDraw.IsEmpty())
     return result;
 
-  // If we have non-identity resolution then mBufferRotation might not fall
-  // on a buffer pixel boundary, in which case that row of pixels will contain
-  // a mix of two completely different rows of the layer, which would be
-  // a catastrophe. So disable rotation in that case.
-  // We also need to disable rotation if we're going to be resampled when
-  // drawing, because we might sample across the rotation boundary.
-  PRBool canHaveRotation =
-    !(aFlags & PAINT_WILL_RESAMPLE) && aXResolution == 1.0 && aYResolution == 1.0;
   nsIntRect drawBounds = result.mRegionToDraw.GetBounds();
   nsRefPtr<gfxASurface> destBuffer;
   PRBool bufferDimsChanged = PR_FALSE;
+  PRUint32 bufferFlags = canHaveRotation ? ALLOW_REPEAT : 0;
   if (canReuseBuffer) {
     NS_ASSERTION(curXRes == aXResolution && curYRes == aYResolution,
                  "resolution changes must Clear()!");
@@ -287,15 +332,22 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
           (drawBounds.y < yBoundary && yBoundary < drawBounds.YMost()) ||
           (newRotation != nsIntPoint(0,0) && !canHaveRotation)) {
         // The stuff we need to redraw will wrap around an edge of the
-        // buffer, so we will need to do a self-copy
-        if (mBuffer->SupportsSelfCopy() && mBufferRotation == nsIntPoint(0,0)) {
-          destBuffer = mBuffer;
+        // buffer, so move the pixels we can keep into a position that
+        // lets us redraw in just one quadrant.
+        if (mBufferRotation == nsIntPoint(0,0)) {
+          nsIntRect srcRect(nsIntPoint(0, 0), mBufferRect.Size());
+          nsIntPoint dest = mBufferRect.TopLeft() - destBufferRect.TopLeft();
+          MovePixels(mBuffer, srcRect, dest, curXRes, curYRes);
+          result.mDidSelfCopy = PR_TRUE;
+          // Don't set destBuffer; we special-case self-copies, and
+          // just did the necessary work above.
+          mBufferRect = destBufferRect;
         } else {
           // We can't do a real self-copy because the buffer is rotated.
           // So allocate a new buffer for the destination.
           destBufferRect = neededRegion.GetBounds();
           bufferDimsChanged = PR_TRUE;
-          destBuffer = CreateBuffer(contentType, destBufferDims);
+          destBuffer = CreateBuffer(contentType, destBufferDims, bufferFlags);
           if (!destBuffer)
             return result;
         }
@@ -312,9 +364,8 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
     }
   } else {
     // The buffer's not big enough, so allocate a new one
-    destBufferRect = neededRegion.GetBounds();
     bufferDimsChanged = PR_TRUE;
-    destBuffer = CreateBuffer(contentType, destBufferDims);
+    destBuffer = CreateBuffer(contentType, destBufferDims, bufferFlags);
     if (!destBuffer)
       return result;
   }

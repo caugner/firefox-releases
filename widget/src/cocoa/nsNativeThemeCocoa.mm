@@ -152,7 +152,7 @@ static const int kThemeScrollBarArrowsBoth = 2;
 
 // These enums are for indexing into the margin array.
 enum {
-  leopardOS
+  leopardOS = 0
 };
 
 enum {
@@ -232,6 +232,10 @@ NS_IMPL_ISUPPORTS_INHERITED1(nsNativeThemeCocoa, nsNativeTheme, nsITheme)
 nsNativeThemeCocoa::nsNativeThemeCocoa()
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+
+  // provide a local autorelease pool, as this is called during startup
+  // before the main event-loop pool is in place
+  nsAutoreleasePool pool;
 
   mPushButtonCell = [[NSButtonCell alloc] initTextCell:nil];
   [mPushButtonCell setButtonType:NSMomentaryPushInButton];
@@ -439,11 +443,11 @@ struct CellRenderSettings {
   // If a control has no minimum dimensions in either/both axes, set to 0.0f.
   NSSize minimumSizes[3];
 
-  // A multidimensional array of [2][3][4],
-  // with the first dimension being the OS version (Tiger or Leopard),
+  // A three-dimensional array,
+  // with the first dimension being the OS version (only Leopard for the moment),
   // the second being the control size (mini, small, regular), and the third
   // being the 4 margin values (left, top, right, bottom).
-  float margins[2][3][4];
+  float margins[1][3][4];
 };
 
 /*
@@ -571,11 +575,6 @@ static const CellRenderSettings radioSettings = {
     NSZeroSize, NSZeroSize, NSZeroSize
   },
   {
-    { // Tiger
-      {0, 0, 0, 0},     // mini
-      {0, 1, 1, 2},     // small
-      {0, -1, 0, 1}     // regular
-    },
     { // Leopard
       {0, 0, 0, 0},     // mini
       {0, 1, 1, 1},     // small
@@ -594,11 +593,6 @@ static const CellRenderSettings checkboxSettings = {
     NSZeroSize, NSZeroSize, NSZeroSize
   },
   {
-    { // Tiger
-      {0, 1, 0, 0},     // mini
-      {0, 2, 0, 1},     // small
-      {0, 1, 0, 1}      // regular
-    },
     { // Leopard
       {0, 1, 0, 0},     // mini
       {0, 1, 0, 1},     // small
@@ -652,11 +646,6 @@ static const CellRenderSettings searchFieldSettings = {
     NSMakeSize(44, 0)  // regular
   },
   {
-    { // Tiger
-      {0, 0, 0, 0},     // mini
-      {0, 0, 0, 0},     // small
-      {0, 0, 0, 0}      // regular
-    },
     { // Leopard
       {0, 0, 0, 0},     // mini
       {0, 0, 0, 0},     // small
@@ -695,11 +684,6 @@ static const CellRenderSettings pushButtonSettings = {
     NSMakeSize(30, 0)  // regular
   },
   {
-    { // Tiger
-      {1, 1, 1, 1},    // mini
-      {5, 0, 5, 2},    // small
-      {6, 0, 6, 2}     // regular
-    },
     { // Leopard
       {0, 0, 0, 0},    // mini
       {4, 0, 4, 1},    // small
@@ -919,11 +903,6 @@ static const CellRenderSettings dropdownSettings = {
     NSMakeSize(44, 0)  // regular
   },
   {
-    { // Tiger
-      {1, 1, 2, 1},    // mini
-      {3, 0, 3, 1},    // small
-      {3, 0, 3, 0}     // regular
-    },
     { // Leopard
       {1, 1, 2, 1},    // mini
       {3, 0, 3, 1},    // small
@@ -944,11 +923,6 @@ static const CellRenderSettings editableMenulistSettings = {
     NSMakeSize(44, 0)  // regular
   },
   {
-    { // Tiger
-      {0, 0, 2, 2},    // mini
-      {0, 0, 3, 2},    // small
-      {0, 1, 3, 3}     // regular
-    },
     { // Leopard
       {0, 0, 2, 2},    // mini
       {0, 0, 3, 2},    // small
@@ -1322,9 +1296,12 @@ nsNativeThemeCocoa::GetScrollbarDrawInfo(HIThemeTrackDrawInfo& aTdi, nsIFrame *a
 
   aTdi.trackInfo.scrollbar.pressState = 0;
 
-  // Only go get these scrollbar button states if we need it. For example, there's no reaon to look up scrollbar button 
-  // states when we're only creating a TrackDrawInfo to determine the size of the thumb.
-  if (aShouldGetButtonStates) {
+  // Only go get these scrollbar button states if we need it. For example,
+  // there's no reason to look up scrollbar button states when we're only
+  // creating a TrackDrawInfo to determine the size of the thumb. There's
+  // also no reason to do this on Lion or later, whose scrollbars have no
+  // arrow buttons.
+  if (aShouldGetButtonStates && !nsToolkit::OnLionOrLater()) {
     nsEventStates buttonStates[4];
     GetScrollbarPressStates(aFrame, buttonStates);
     NSString *buttonPlacement = [[NSUserDefaults standardUserDefaults] objectForKey:@"AppleScrollBarVariant"];
@@ -2048,23 +2025,26 @@ nsNativeThemeCocoa::GetWidgetBorder(nsIDeviceContext* aContext,
     case NS_THEME_SCROLLBAR_TRACK_HORIZONTAL:
     case NS_THEME_SCROLLBAR_TRACK_VERTICAL:
     {
-      // There's only an endcap to worry about when both arrows are on the bottom
-      NSString *buttonPlacement = [[NSUserDefaults standardUserDefaults] objectForKey:@"AppleScrollBarVariant"];
-      if (!buttonPlacement || [buttonPlacement isEqualToString:@"DoubleMax"]) {
-        PRBool isHorizontal = (aWidgetType == NS_THEME_SCROLLBAR_TRACK_HORIZONTAL);
+      // On Lion and later, scrollbars have no arrows.
+      if (!nsToolkit::OnLionOrLater()) {
+        // There's only an endcap to worry about when both arrows are on the bottom
+        NSString *buttonPlacement = [[NSUserDefaults standardUserDefaults] objectForKey:@"AppleScrollBarVariant"];
+        if (!buttonPlacement || [buttonPlacement isEqualToString:@"DoubleMax"]) {
+          PRBool isHorizontal = (aWidgetType == NS_THEME_SCROLLBAR_TRACK_HORIZONTAL);
 
-        nsIFrame *scrollbarFrame = GetParentScrollbarFrame(aFrame);
-        if (!scrollbarFrame) return NS_ERROR_FAILURE;
-        PRBool isSmall = (scrollbarFrame->GetStyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL);
+          nsIFrame *scrollbarFrame = GetParentScrollbarFrame(aFrame);
+          if (!scrollbarFrame) return NS_ERROR_FAILURE;
+          PRBool isSmall = (scrollbarFrame->GetStyleDisplay()->mAppearance == NS_THEME_SCROLLBAR_SMALL);
 
-        // There isn't a metric for this, so just hardcode a best guess at the value.
-        // This value is even less exact due to the fact that the endcap is partially concave.
-        PRInt32 endcapSize = isSmall ? 5 : 6;
+          // There isn't a metric for this, so just hardcode a best guess at the value.
+          // This value is even less exact due to the fact that the endcap is partially concave.
+          PRInt32 endcapSize = isSmall ? 5 : 6;
 
-        if (isHorizontal)
-          aResult->SizeTo(endcapSize, 0, 0, 0);
-        else
-          aResult->SizeTo(0, endcapSize, 0, 0);
+          if (isHorizontal)
+            aResult->SizeTo(endcapSize, 0, 0, 0);
+          else
+            aResult->SizeTo(0, endcapSize, 0, 0);
+        }
       }
       break;
     }

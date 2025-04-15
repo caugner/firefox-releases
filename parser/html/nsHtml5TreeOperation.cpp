@@ -260,9 +260,10 @@ nsHtml5TreeOperation::AppendToDocument(nsIContent* aNode,
 
   NS_ASSERTION(!nsContentUtils::IsSafeToRunScript(),
                "Someone forgot to block scripts");
-  nsContentUtils::AddScriptRunner(
-    new nsDocElementCreatedNotificationRunner(doc));
-
+  if (aNode->IsElement()) {
+    nsContentUtils::AddScriptRunner(
+        new nsDocElementCreatedNotificationRunner(doc));
+  }
   return rv;
 }
 
@@ -385,7 +386,7 @@ nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
           stateMask ^= node->IntrinsicState();
           if (!stateMask.IsEmpty() && document) {
             MOZ_AUTO_DOC_UPDATE(document, UPDATE_CONTENT_STATE, PR_TRUE);
-            document->ContentStatesChanged(node, nsnull, stateMask);
+            document->ContentStateChanged(node, stateMask);
           }
           nsNodeUtils::AttributeChanged(node, 
                                         nsuri, 

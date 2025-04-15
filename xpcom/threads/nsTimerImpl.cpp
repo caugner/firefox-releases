@@ -40,7 +40,6 @@
 
 #include "nsTimerImpl.h"
 #include "TimerThread.h"
-#include "nsAutoLock.h"
 #include "nsAutoPtr.h"
 #include "nsThreadManager.h"
 #include "nsThreadUtils.h"
@@ -87,7 +86,7 @@ NS_IMETHODIMP_(nsrefcnt) nsTimerImpl::Release(void)
   nsrefcnt count;
 
   NS_PRECONDITION(0 != mRefCnt, "dup release");
-  count = PR_AtomicDecrement((PRInt32 *)&mRefCnt);
+  count = NS_AtomicDecrementRefcnt(mRefCnt);
   NS_LOG_RELEASE(this, count, "nsTimerImpl");
   if (count == 0) {
     mRefCnt = 1; /* stabilize */
@@ -223,7 +222,7 @@ nsresult nsTimerImpl::InitCommon(PRUint32 aType, PRUint32 aDelay)
   if (mArmed)
     gThread->RemoveTimer(this);
   mCanceled = PR_FALSE;
-  mGeneration = PR_AtomicIncrement(&gGenerator);
+  mGeneration = PR_ATOMIC_INCREMENT(&gGenerator);
 
   mType = (PRUint8)aType;
   SetDelayInternal(aDelay);
@@ -398,7 +397,7 @@ void nsTimerImpl::Fire()
 #endif
 
   TimeStamp timeout = mTimeout;
-  if (mType == TYPE_REPEATING_PRECISE) {
+  if (IsRepeatingPrecisely()) {
     // Precise repeating timers advance mTimeout by mDelay without fail before
     // calling Fire().
     timeout -= TimeDuration::FromMilliseconds(mDelay);
@@ -460,10 +459,14 @@ void nsTimerImpl::Fire()
   }
 #endif
 
-  // Reschedule REPEATING_SLACK timers, but make sure that we aren't armed
-  // already (which can happen if the callback reinitialized the timer).
-  if (mType == TYPE_REPEATING_SLACK && !mArmed) {
-    SetDelayInternal(mDelay); // force mTimeout to be recomputed.
+  // Reschedule repeating timers, except REPEATING_PRECISE which already did
+  // that in PostTimerEvent, but make sure that we aren't armed already (which
+  // can happen if the callback reinitialized the timer).
+  if (IsRepeating() && mType != TYPE_REPEATING_PRECISE && !mArmed) {
+    if (mType == TYPE_REPEATING_SLACK)
+      SetDelayInternal(mDelay); // force mTimeout to be recomputed.  For
+                                // REPEATING_PRECISE_CAN_SKIP timers this has
+                                // already happened.
     if (gThread)
       gThread->AddTimer(this);
   }
@@ -540,9 +543,11 @@ nsresult nsTimerImpl::PostTimerEvent()
 
   // If this is a repeating precise timer, we need to calculate the time for
   // the next timer to fire before we make the callback.
-  if (mType == TYPE_REPEATING_PRECISE) {
+  if (IsRepeatingPrecisely()) {
     SetDelayInternal(mDelay);
-    if (gThread) {
+
+    // But only re-arm REPEATING_PRECISE timers.
+    if (gThread && mType == TYPE_REPEATING_PRECISE) {
       nsresult rv = gThread->AddTimer(this);
       if (NS_FAILED(rv))
         return rv;

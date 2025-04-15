@@ -35,9 +35,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifdef MOZ_IPC
 #include "IPC/IPCMessageUtils.h"
-#endif
 
 #if defined(XP_UNIX) || defined(XP_BEOS)
 #include <unistd.h>
@@ -57,7 +55,6 @@
 #include "nsXPIDLString.h"
 #include "prerror.h"
 #include "nsCRT.h"
-#include "nsInt64.h"
 #include "nsIFile.h"
 #include "nsDirectoryIndexStream.h"
 #include "nsMimeTypes.h"
@@ -72,41 +69,27 @@
 
 nsFileStream::nsFileStream()
     : mFD(nsnull)
-    , mCloseFD(PR_TRUE)
+    , mBehaviorFlags(0)
+    , mDeferredOpen(false)
 {
 }
 
 nsFileStream::~nsFileStream()
 {
-    if (mCloseFD)
-        Close();
+    Close();
 }
 
 NS_IMPL_THREADSAFE_ISUPPORTS1(nsFileStream, nsISeekableStream)
 
 nsresult
-nsFileStream::InitWithFileDescriptor(PRFileDesc* fd, nsISupports* parent)
-{
-    NS_ENSURE_TRUE(mFD == nsnull, NS_ERROR_ALREADY_INITIALIZED);
-    //
-    // this file stream is dependent on its parent to keep the
-    // file descriptor valid.  an owning reference to the parent
-    // prevents the file descriptor from going away prematurely.
-    //
-    mFD = fd;
-    mCloseFD = PR_FALSE;
-    mParent = parent;
-    return NS_OK;
-}
-
-nsresult
 nsFileStream::Close()
 {
+    CleanUpOpen();
+
     nsresult rv = NS_OK;
     if (mFD) {
-        if (mCloseFD)
-            if (PR_Close(mFD) == PR_FAILURE)
-                rv = NS_BASE_STREAM_OSERROR;
+        if (PR_Close(mFD) == PR_FAILURE)
+            rv = NS_BASE_STREAM_OSERROR;
         mFD = nsnull;
     }
     return rv;
@@ -115,11 +98,14 @@ nsFileStream::Close()
 NS_IMETHODIMP
 nsFileStream::Seek(PRInt32 whence, PRInt64 offset)
 {
+    nsresult rv = DoPendingOpen();
+    NS_ENSURE_SUCCESS(rv, rv);
+
     if (mFD == nsnull)
         return NS_BASE_STREAM_CLOSED;
 
-    nsInt64 cnt = PR_Seek64(mFD, offset, (PRSeekWhence)whence);
-    if (cnt == nsInt64(-1)) {
+    PRInt64 cnt = PR_Seek64(mFD, offset, (PRSeekWhence)whence);
+    if (cnt == PRInt64(-1)) {
         return NS_ErrorAccordingToNSPR();
     }
     return NS_OK;
@@ -128,11 +114,14 @@ nsFileStream::Seek(PRInt32 whence, PRInt64 offset)
 NS_IMETHODIMP
 nsFileStream::Tell(PRInt64 *result)
 {
+    nsresult rv = DoPendingOpen();
+    NS_ENSURE_SUCCESS(rv, rv);
+
     if (mFD == nsnull)
         return NS_BASE_STREAM_CLOSED;
 
-    nsInt64 cnt = PR_Seek64(mFD, 0, PR_SEEK_CUR);
-    if (cnt == nsInt64(-1)) {
+    PRInt64 cnt = PR_Seek64(mFD, 0, PR_SEEK_CUR);
+    if (cnt == PRInt64(-1)) {
         return NS_ErrorAccordingToNSPR();
     }
     *result = cnt;
@@ -172,6 +161,62 @@ nsFileStream::SetEOF()
 #endif
 
     return NS_OK;
+}
+
+nsresult
+nsFileStream::MaybeOpen(nsILocalFile* aFile, PRInt32 aIoFlags, PRInt32 aPerm,
+                        bool aDeferred)
+{
+    mOpenParams.ioFlags = aIoFlags;
+    mOpenParams.perm = aPerm;
+
+    if (aDeferred) {
+        // Clone the file, as it may change between now and the deferred open
+        nsCOMPtr<nsIFile> file;
+        nsresult rv = aFile->Clone(getter_AddRefs(file));
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        mOpenParams.localFile = do_QueryInterface(file);
+        NS_ENSURE_TRUE(mOpenParams.localFile, NS_ERROR_UNEXPECTED);
+
+        mDeferredOpen = true;
+        return NS_OK;
+    }
+
+    mOpenParams.localFile = aFile;
+
+    return DoOpen();
+}
+
+void
+nsFileStream::CleanUpOpen()
+{
+    mOpenParams.localFile = nsnull;
+    mDeferredOpen = false;
+}
+
+nsresult
+nsFileStream::DoOpen()
+{
+    NS_PRECONDITION(mOpenParams.localFile, "Must have a file to open");
+
+    PRFileDesc* fd;
+    nsresult rv = mOpenParams.localFile->OpenNSPRFileDesc(mOpenParams.ioFlags, mOpenParams.perm, &fd);
+    CleanUpOpen();
+    if (NS_FAILED(rv)) return rv;
+    mFD = fd;
+
+    return NS_OK;
+}
+
+nsresult
+nsFileStream::DoPendingOpen()
+{
+    if (!mDeferredOpen) {
+        return NS_OK;
+    }
+
+    return DoOpen();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -232,11 +277,9 @@ nsFileInputStream::Open(nsIFile* aFile, PRInt32 aIOFlags, PRInt32 aPerm)
     if (aPerm == -1)
         aPerm = 0;
 
-    PRFileDesc* fd;
-    rv = localFile->OpenNSPRFileDesc(aIOFlags, aPerm, &fd);
+    rv = MaybeOpen(localFile, aIOFlags, aPerm,
+                   mBehaviorFlags & nsIFileInputStream::DEFER_OPEN);
     if (NS_FAILED(rv)) return rv;
-
-    mFD = fd;
 
     if (mBehaviorFlags & DELETE_ON_CLOSE) {
         // POSIX compatible filesystems allow a file to be unlinked while a
@@ -259,7 +302,7 @@ nsFileInputStream::Init(nsIFile* aFile, PRInt32 aIOFlags, PRInt32 aPerm,
                         PRInt32 aBehaviorFlags)
 {
     NS_ENSURE_TRUE(!mFD, NS_ERROR_ALREADY_INITIALIZED);
-    NS_ENSURE_TRUE(!mParent, NS_ERROR_ALREADY_INITIALIZED);
+    NS_ENSURE_TRUE(!mDeferredOpen, NS_ERROR_ALREADY_INITIALIZED);
 
     mBehaviorFlags = aBehaviorFlags;
 
@@ -291,6 +334,9 @@ nsFileInputStream::Close()
 NS_IMETHODIMP
 nsFileInputStream::Available(PRUint32* aResult)
 {
+    nsresult rv = DoPendingOpen();
+    NS_ENSURE_SUCCESS(rv, rv);
+
     if (!mFD) {
         return NS_BASE_STREAM_CLOSED;
     }
@@ -310,6 +356,9 @@ nsFileInputStream::Available(PRUint32* aResult)
 NS_IMETHODIMP
 nsFileInputStream::Read(char* aBuf, PRUint32 aCount, PRUint32* aResult)
 {
+    nsresult rv = DoPendingOpen();
+    NS_ENSURE_SUCCESS(rv, rv);
+
     if (!mFD) {
         *aResult = 0;
         return NS_OK;
@@ -333,6 +382,9 @@ nsFileInputStream::Read(char* aBuf, PRUint32 aCount, PRUint32* aResult)
 NS_IMETHODIMP
 nsFileInputStream::ReadLine(nsACString& aLine, PRBool* aResult)
 {
+    nsresult rv = DoPendingOpen();
+    NS_ENSURE_SUCCESS(rv, rv);
+
     if (!mLineBuffer) {
         nsresult rv = NS_InitLineBuffer(&mLineBuffer);
         if (NS_FAILED(rv)) return rv;
@@ -365,6 +417,9 @@ nsFileInputStream::IsNonBlocking(PRBool *aNonBlocking)
 NS_IMETHODIMP
 nsFileInputStream::Seek(PRInt32 aWhence, PRInt64 aOffset)
 {
+    nsresult rv = DoPendingOpen();
+    NS_ENSURE_SUCCESS(rv, rv);
+
     PR_FREEIF(mLineBuffer); // this invalidates the line buffer
     if (!mFD) {
         if (mBehaviorFlags & REOPEN_ON_REWIND) {
@@ -383,7 +438,6 @@ nsFileInputStream::Seek(PRInt32 aWhence, PRInt64 aOffset)
 PRBool
 nsFileInputStream::Read(const IPC::Message *aMsg, void **aIter)
 {
-#ifdef MOZ_IPC
     using IPC::ReadParam;
 
     nsCString path;
@@ -406,15 +460,11 @@ nsFileInputStream::Read(const IPC::Message *aMsg, void **aIter)
         return PR_FALSE;
 
     return PR_TRUE;
-#else
-    return PR_FALSE;
-#endif
 }
 
 void
 nsFileInputStream::Write(IPC::Message *aMsg)
 {
-#ifdef MOZ_IPC
     using IPC::WriteParam;
 
     nsCString path;
@@ -425,7 +475,6 @@ nsFileInputStream::Write(IPC::Message *aMsg)
     localFile->GetFollowLinks(&followLinks);
     WriteParam(aMsg, followLinks);
     WriteParam(aMsg, mBehaviorFlags);
-#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -564,6 +613,9 @@ nsFileOutputStream::Init(nsIFile* file, PRInt32 ioFlags, PRInt32 perm,
                          PRInt32 behaviorFlags)
 {
     NS_ENSURE_TRUE(mFD == nsnull, NS_ERROR_ALREADY_INITIALIZED);
+    NS_ENSURE_TRUE(!mDeferredOpen, NS_ERROR_ALREADY_INITIALIZED);
+
+    mBehaviorFlags = behaviorFlags;
 
     nsresult rv;
     nsCOMPtr<nsILocalFile> localFile = do_QueryInterface(file, &rv);
@@ -573,12 +625,8 @@ nsFileOutputStream::Init(nsIFile* file, PRInt32 ioFlags, PRInt32 perm,
     if (perm <= 0)
         perm = 0664;
 
-    PRFileDesc* fd;
-    rv = localFile->OpenNSPRFileDesc(ioFlags, perm, &fd);
-    if (NS_FAILED(rv)) return rv;
-
-    mFD = fd;
-    return NS_OK;
+    return MaybeOpen(localFile, ioFlags, perm,
+                     mBehaviorFlags & nsIFileOutputStream::DEFER_OPEN);
 }
 
 NS_IMETHODIMP
@@ -590,6 +638,9 @@ nsFileOutputStream::Close()
 NS_IMETHODIMP
 nsFileOutputStream::Write(const char *buf, PRUint32 count, PRUint32 *result)
 {
+    nsresult rv = DoPendingOpen();
+    NS_ENSURE_SUCCESS(rv, rv);
+
     if (mFD == nsnull)
         return NS_BASE_STREAM_CLOSED;
 
@@ -604,6 +655,9 @@ nsFileOutputStream::Write(const char *buf, PRUint32 count, PRUint32 *result)
 NS_IMETHODIMP
 nsFileOutputStream::Flush(void)
 {
+    nsresult rv = DoPendingOpen();
+    NS_ENSURE_SUCCESS(rv, rv);
+
     if (mFD == nsnull)
         return NS_BASE_STREAM_CLOSED;
 
@@ -653,7 +707,16 @@ NS_IMETHODIMP
 nsSafeFileOutputStream::Init(nsIFile* file, PRInt32 ioFlags, PRInt32 perm,
                              PRInt32 behaviorFlags)
 {
-    NS_ENSURE_ARG(file);
+    return nsFileOutputStream::Init(file, ioFlags, perm, behaviorFlags);
+}
+
+nsresult
+nsSafeFileOutputStream::DoOpen()
+{
+    // Make sure mOpenParams.localFile will be empty if we bail somewhere in
+    // this function
+    nsCOMPtr<nsILocalFile> file;
+    file.swap(mOpenParams.localFile);
 
     nsresult rv = file->Exists(&mTargetFileExists);
     if (NS_FAILED(rv)) {
@@ -680,16 +743,21 @@ nsSafeFileOutputStream::Init(nsIFile* file, PRInt32 ioFlags, PRInt32 perm,
         PRUint32 origPerm;
         if (NS_FAILED(file->GetPermissions(&origPerm))) {
             NS_ERROR("Can't get permissions of target file");
-            origPerm = perm;
+            origPerm = mOpenParams.perm;
         }
         // XXX What if |perm| is more restrictive then |origPerm|?
         // This leaves the user supplied permissions as they were.
         rv = tempResult->CreateUnique(nsIFile::NORMAL_FILE_TYPE, origPerm);
     }
     if (NS_SUCCEEDED(rv)) {
+        // nsFileOutputStream::DoOpen will work on the temporary file, so we
+        // prepare it and place it in mOpenParams.localFile.
+        nsCOMPtr<nsILocalFile> localFile = do_QueryInterface(tempResult, &rv);
+        NS_ENSURE_SUCCESS(rv, rv);
+        mOpenParams.localFile = localFile;
         mTempFile = tempResult;
         mTargetFile = file;
-        rv = nsFileOutputStream::Init(mTempFile, ioFlags, perm, behaviorFlags);
+        rv = nsFileOutputStream::DoOpen();
     }
     return rv;
 }

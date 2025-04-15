@@ -235,10 +235,31 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #endif
 
 // See nsStyleColor
-#define NS_COLOR_MOZ_HYPERLINKTEXT              -1
-#define NS_COLOR_MOZ_VISITEDHYPERLINKTEXT       -2
-#define NS_COLOR_MOZ_ACTIVEHYPERLINKTEXT        -3
-#define NS_COLOR_CURRENTCOLOR                   -4
+#define NS_COLOR_CURRENTCOLOR                   -1
+#define NS_COLOR_MOZ_DEFAULT_COLOR              -2
+#define NS_COLOR_MOZ_DEFAULT_BACKGROUND_COLOR   -3
+#define NS_COLOR_MOZ_HYPERLINKTEXT              -4
+#define NS_COLOR_MOZ_VISITEDHYPERLINKTEXT       -5
+#define NS_COLOR_MOZ_ACTIVEHYPERLINKTEXT        -6
+
+#ifdef MOZ_CSS_ANIMATIONS
+// See nsStyleDisplay
+#define NS_STYLE_ANIMATION_DIRECTION_NORMAL       0
+#define NS_STYLE_ANIMATION_DIRECTION_ALTERNATE    1
+
+// See nsStyleDisplay
+#define NS_STYLE_ANIMATION_FILL_MODE_NONE         0
+#define NS_STYLE_ANIMATION_FILL_MODE_FORWARDS     1
+#define NS_STYLE_ANIMATION_FILL_MODE_BACKWARDS    2
+#define NS_STYLE_ANIMATION_FILL_MODE_BOTH         3
+
+// See nsStyleDisplay
+#define NS_STYLE_ANIMATION_ITERATION_COUNT_INFINITE 0
+
+// See nsStyleDisplay
+#define NS_STYLE_ANIMATION_PLAY_STATE_RUNNING     0
+#define NS_STYLE_ANIMATION_PLAY_STATE_PAUSED      1
+#endif
 
 // See nsStyleBackground
 #define NS_STYLE_BG_ATTACHMENT_SCROLL     0
@@ -375,9 +396,6 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_DISPLAY_INLINE                 2
 #define NS_STYLE_DISPLAY_INLINE_BLOCK           3
 #define NS_STYLE_DISPLAY_LIST_ITEM              4
-#define NS_STYLE_DISPLAY_MARKER                 5
-#define NS_STYLE_DISPLAY_RUN_IN                 6
-#define NS_STYLE_DISPLAY_COMPACT                7
 #define NS_STYLE_DISPLAY_TABLE                  8
 #define NS_STYLE_DISPLAY_INLINE_TABLE           9
 #define NS_STYLE_DISPLAY_TABLE_ROW_GROUP        10
@@ -639,6 +657,8 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE_IN      2
 #define NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE_OUT     3
 #define NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE_IN_OUT  4
+#define NS_STYLE_TRANSITION_TIMING_FUNCTION_STEP_START   5
+#define NS_STYLE_TRANSITION_TIMING_FUNCTION_STEP_END     6
 
 // See nsStyleText
 // Note: these values pickup after the text-align values because there

@@ -7,6 +7,14 @@ from subprocess import *
 
 from tests import TestCase
 
+
+def split_path_into_dirs(path):
+    dirs = []
+    while path != os.path.dirname(path):
+        path = os.path.dirname(path)
+        dirs.append(path)
+    return dirs
+
 class XULInfo:
     def __init__(self, abi, os, isdebug):
         self.abi = abi
@@ -17,10 +25,11 @@ class XULInfo:
         """Return JS that when executed sets up variables so that JS expression
         predicates on XUL build info evaluate properly."""
 
-        return 'var xulRuntime = { OS: "%s", XPCOMABI: "%s", shell: true }; var isDebugBuild=%s;' % (
+        return 'var xulRuntime = { OS: "%s", XPCOMABI: "%s", shell: true }; var isDebugBuild=%s; var Android=%s;' % (
             self.os,
             self.abi,
-            str(self.isdebug).lower())
+            str(self.isdebug).lower(),
+            self.os == "Android")
 
     @classmethod
     def create(cls, jsdir):
@@ -28,17 +37,19 @@ class XULInfo:
 
         # Our strategy is to find the autoconf.mk generated for the build and
         # read the values from there.
-        
+
         # Find config/autoconf.mk.
-        dir = jsdir
-        while True:
-            path = os.path.join(dir, 'config/autoconf.mk')
-            if os.path.isfile(path):
-                break
-            if os.path.dirname(dir) == dir:
-                print "Can't find config/autoconf.mk on a directory containing the JS shell (searched from %s)"%jsdir
-                sys.exit(1)
-            dir = os.path.dirname(dir)
+        dirs = split_path_into_dirs(os.getcwd()) + split_path_into_dirs(jsdir)
+
+        path = None
+        for dir in dirs:
+          path = os.path.join(dir, 'config/autoconf.mk')
+          if os.path.isfile(path):
+              break
+
+        if path == None:
+            print "Can't find config/autoconf.mk on a directory containing the JS shell (searched from %s)"%jsdir
+            sys.exit(1)
 
         # Read the values.
         val_re = re.compile(r'(TARGET_XPCOM_ABI|OS_TARGET|MOZ_DEBUG)\s*=\s*(.*)')
@@ -75,7 +86,9 @@ class XULInfoTester:
             elif out in ('false\n', 'false\r\n'):
                 ans = False
             else:
-                raise Exception("Failed to test XUL condition '%s'"%cond)
+                raise Exception(("Failed to test XUL condition %r;"
+                                 + " output was %r, stderr was %r")
+                                 % (cond, out, err))
             self.cache[cond] = ans
         return ans
 

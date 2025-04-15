@@ -588,6 +588,8 @@ private:
   void DisableAccelerationUpdates();
 
 protected:
+  friend class nsBarProp;
+
   // Object Management
   virtual ~nsGlobalWindow();
   void CleanUp(PRBool aIgnoreModalDialog);
@@ -821,6 +823,8 @@ protected:
   virtual void UpdateParentTarget();
 
   PRBool GetIsTabModalPromptAllowed();
+
+  inline PRInt32 DOMMinTimeoutValue() const;
 
   // When adding new member variables, be careful not to create cycles
   // through JavaScript.  If there is any chance that a member variable

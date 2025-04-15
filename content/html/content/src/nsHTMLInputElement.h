@@ -50,24 +50,24 @@
 #include "nsIConstraintValidation.h"
 #include "nsDOMFile.h"
 #include "nsHTMLFormElement.h" // for ShouldShowInvalidUI()
+#include "nsIFile.h"
 
 //
 // Accessors for mBitField
 //
 #define BF_DISABLED_CHANGED 0
-#define BF_HANDLING_CLICK 1
-#define BF_VALUE_CHANGED 2
-#define BF_CHECKED_CHANGED 3
-#define BF_CHECKED 4
-#define BF_HANDLING_SELECT_EVENT 5
-#define BF_SHOULD_INIT_CHECKED 6
-#define BF_PARSER_CREATING 7
-#define BF_IN_INTERNAL_ACTIVATE 8
-#define BF_CHECKED_IS_TOGGLED 9
-#define BF_INDETERMINATE 10
-#define BF_INHIBIT_RESTORATION 11
-#define BF_CAN_SHOW_INVALID_UI 12
-#define BF_CAN_SHOW_VALID_UI 13
+#define BF_VALUE_CHANGED 1
+#define BF_CHECKED_CHANGED 2
+#define BF_CHECKED 3
+#define BF_HANDLING_SELECT_EVENT 4
+#define BF_SHOULD_INIT_CHECKED 5
+#define BF_PARSER_CREATING 6
+#define BF_IN_INTERNAL_ACTIVATE 7
+#define BF_CHECKED_IS_TOGGLED 8
+#define BF_INDETERMINATE 9
+#define BF_INHIBIT_RESTORATION 10
+#define BF_CAN_SHOW_INVALID_UI 11
+#define BF_CAN_SHOW_VALID_UI 12
 
 #define GET_BOOLBIT(bitfield, field) (((bitfield) & (0x01 << (field))) \
                                         ? PR_TRUE : PR_FALSE)
@@ -110,8 +110,6 @@ private:
   PRBool mInPrivateBrowsing;
 };
 
-class nsIRadioVisitor;
-
 class nsHTMLInputElement : public nsGenericHTMLFormElement,
                            public nsImageLoadingContent,
                            public nsIDOMHTMLInputElement,
@@ -136,9 +134,6 @@ public:
   // nsIDOMElement
   NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLFormElement::)
 
-  // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLFormElement::)
-
   // nsIDOMHTMLInputElement
   NS_DECL_NSIDOMHTMLINPUTELEMENT
 
@@ -150,6 +145,12 @@ public:
   {
     return nsGenericHTMLElement::GetEditor(aEditor);
   }
+
+  // Forward nsIDOMHTMLElement
+  NS_FORWARD_NSIDOMHTMLELEMENT_NOFOCUSCLICK(nsGenericHTMLFormElement::)
+  NS_IMETHOD Focus();
+  NS_IMETHOD Click();
+
   NS_IMETHOD SetUserInput(const nsAString& aInput);
 
   // Overriden nsIFormControl methods
@@ -214,9 +215,8 @@ public:
   NS_IMETHOD_(void) InitializeKeyboardEventListeners();
   NS_IMETHOD_(void) OnValueChanged(PRBool aNotify);
 
-  // nsIFileControlElement
   void GetDisplayFileName(nsAString& aFileName) const;
-  const nsCOMArray<nsIDOMFile>& GetFiles();
+  const nsCOMArray<nsIDOMFile>& GetFiles() const;
   void SetFiles(const nsCOMArray<nsIDOMFile>& aFiles, bool aSetValueChanged);
 
   void SetCheckedChangedInternal(PRBool aCheckedChanged);
@@ -271,9 +271,9 @@ public:
 
   // nsIConstraintValidation
   PRBool   IsTooLong();
-  PRBool   IsValueMissing();
-  PRBool   HasTypeMismatch();
-  PRBool   HasPatternMismatch();
+  PRBool   IsValueMissing() const;
+  PRBool   HasTypeMismatch() const;
+  PRBool   HasPatternMismatch() const;
   void     UpdateTooLongValidityState();
   void     UpdateValueMissingValidityState();
   void     UpdateTypeMismatchValidityState();
@@ -390,6 +390,15 @@ protected:
                             PRBool aUserInput,
                             PRBool aSetValueChanged);
 
+  nsresult GetValueInternal(nsAString& aValue) const;
+
+  /**
+   * Returns whether the current value is the empty string.
+   *
+   * @return whether the current value is the empty string.
+   */
+  bool IsValueEmpty() const;
+
   void ClearFiles(bool aSetValueChanged) {
     nsCOMArray<nsIDOMFile> files;
     SetFiles(files, aSetValueChanged);
@@ -431,11 +440,6 @@ protected:
   {
     return AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
                        nsGkAtoms::image, eIgnoreCase);
-  }
-
-  virtual PRBool AcceptAutofocus() const
-  {
-    return PR_TRUE;
   }
 
   /**
@@ -523,7 +527,7 @@ protected:
   /**
    * Returns if the maxlength attribute applies for the current type.
    */
-  bool MaxLengthApplies() const { return IsSingleLineTextControlInternal(PR_FALSE, mType); }
+  bool MaxLengthApplies() const { return IsSingleLineTextControl(false, mType); }
 
   void FreeData();
   nsTextEditorState *GetEditorState() const;
@@ -542,7 +546,7 @@ protected:
   /**
    * Returns whether the placeholder attribute applies for the current type.
    */
-  bool PlaceholderApplies() const { return IsSingleLineTextControlInternal(PR_FALSE, mType); }
+  bool PlaceholderApplies() const { return IsSingleLineTextControl(false, mType); }
 
   /**
    * Set the current default value to the value of the input element.

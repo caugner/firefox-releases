@@ -58,11 +58,6 @@
 #include <dirent.h>
 #include <ctype.h>
 #include <locale.h>
-#ifdef XP_BEOS
-    #include <Path.h>
-    #include <Entry.h>
-    #include <Roster.h>
-#endif
 #if defined(VMS)
     #include <fabdef.h>
 #endif
@@ -119,6 +114,7 @@ static nsresult MacErrorMapper(OSErr inErr);
 #ifdef ANDROID
 #include "AndroidBridge.h"
 #include "nsIMIMEService.h"
+#include <linux/magic.h>
 #endif
 
 #include "nsNativeCharsetUtils.h"
@@ -562,17 +558,8 @@ nsLocalFile::Normalize()
     char    resolved_path[PATH_MAX] = "";
     char *resolved_path_ptr = nsnull;
 
-#ifdef XP_BEOS
-    BEntry be_e(mPath.get(), true);
-    BPath be_p;
-    status_t err;
-    if ((err = be_e.GetPath(&be_p)) == B_OK) {
-        resolved_path_ptr = (char *)be_p.Path();
-        PL_strncpyz(resolved_path, resolved_path_ptr, PATH_MAX - 1);
-    }
-#else
     resolved_path_ptr = realpath(mPath.get(), resolved_path);
-#endif
+
     // if there is an error, the return is null.
     if (!resolved_path_ptr)
         return NSRESULT_FOR_ERRNO();
@@ -1103,9 +1090,20 @@ nsLocalFile::SetPermissions(PRUint32 aPermissions)
      * Race condition here: we should use fchmod instead, there's no way to 
      * guarantee the name still refers to the same file.
      */
-    if (chmod(mPath.get(), aPermissions) < 0)
-        return NSRESULT_FOR_ERRNO();
-    return NS_OK;
+    if (chmod(mPath.get(), aPermissions) >= 0)
+        return NS_OK;
+#if defined(ANDROID) && defined(STATFS)
+    // For the time being, this is restricted for use by Android, but we 
+    // will figure out what to do for all platforms in bug 638503
+    struct STATFS sfs;
+    if (STATFS(mPath.get(), &sfs) < 0)
+         return NSRESULT_FOR_ERRNO();
+
+    // if this is a FAT file system we can't set file permissions
+    if (sfs.f_type == MSDOS_SUPER_MAGIC )
+        return NS_OK;
+#endif
+    return NSRESULT_FOR_ERRNO();
 }
 
 NS_IMETHODIMP
@@ -1362,66 +1360,6 @@ nsLocalFile::GetParent(nsIFile **aParent)
  */
 
 
-#if defined(XP_BEOS)
-// access() is buggy in BeOS POSIX implementation, at least for BFS, using stat() instead
-// see bug 169506, https://bugzilla.mozilla.org/show_bug.cgi?id=169506
-NS_IMETHODIMP
-nsLocalFile::Exists(PRBool *_retval)
-{
-    CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
-    struct STAT buf;
-
-    *_retval = (STAT(mPath.get(), &buf) == 0);
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsLocalFile::IsWritable(PRBool *_retval)
-{
-    CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
-    struct STAT buf;
-
-    *_retval = (STAT(mPath.get(), &buf) == 0);
-    if (*_retval || errno == EACCES) {
-        *_retval = *_retval && (buf.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH ));
-        return NS_OK;
-    }
-    return NSRESULT_FOR_ERRNO();
-}
-
-NS_IMETHODIMP
-nsLocalFile::IsReadable(PRBool *_retval)
-{
-    CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
-    struct STAT buf;
-
-    *_retval = (STAT(mPath.get(), &buf) == 0);
-    if (*_retval || errno == EACCES) {
-        *_retval = *_retval && (buf.st_mode & (S_IRUSR | S_IRGRP | S_IROTH ));
-        return NS_OK;
-    }
-    return NSRESULT_FOR_ERRNO();
-}
-
-NS_IMETHODIMP
-nsLocalFile::IsExecutable(PRBool *_retval)
-{
-    CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
-    struct STAT buf;
-
-    *_retval = (STAT(mPath.get(), &buf) == 0);
-    if (*_retval || errno == EACCES) {
-        *_retval = *_retval && (buf.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH ));
-        return NS_OK;
-    }
-    return NSRESULT_FOR_ERRNO();
-}
-#else
-
 NS_IMETHODIMP
 nsLocalFile::Exists(PRBool *_retval)
 {
@@ -1485,7 +1423,7 @@ nsLocalFile::IsExecutable(PRBool *_retval)
         return NS_OK;
     return NSRESULT_FOR_ERRNO();
 }
-#endif
+
 NS_IMETHODIMP
 nsLocalFile::IsDirectory(PRBool *_retval)
 {
@@ -1793,36 +1731,6 @@ nsLocalFile::SetPersistentDescriptor(const nsACString &aPersistentDescriptor)
 #endif
 }
 
-#ifdef XP_BEOS
-NS_IMETHODIMP
-nsLocalFile::Reveal()
-{
-    BPath bPath(mPath.get());
-    PRBool isDirectory;
-    if (NS_FAILED(IsDirectory(&isDirectory)))
-        return NS_ERROR_FAILURE;
-  
-    if(!isDirectory)
-        bPath.GetParent(&bPath);
-    entry_ref ref;
-    get_ref_for_path(bPath.Path(),&ref);
-    BMessage message(B_REFS_RECEIVED);
-    message.AddRef("refs",&ref);
-    BMessenger messenger("application/x-vnd.Be-TRAK");
-    messenger.SendMessage(&message);
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsLocalFile::Launch()
-{
-    entry_ref ref;
-    get_ref_for_path (mPath.get(), &ref);
-    be_roster->Launch (&ref);
-
-    return NS_OK;
-}
-#else
 NS_IMETHODIMP
 nsLocalFile::Reveal()
 {
@@ -1936,7 +1844,6 @@ nsLocalFile::Launch()
     return NS_ERROR_FAILURE;
 #endif
 }
-#endif
 
 nsresult
 NS_NewNativeLocalFile(const nsACString &path, PRBool followSymlinks, nsILocalFile **result)

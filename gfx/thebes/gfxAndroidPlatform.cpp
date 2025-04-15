@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -35,10 +35,8 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-#ifdef MOZ_IPC
 #include "mozilla/dom/ContentChild.h"
 #include "nsXULAppAPI.h"
-#endif
 
 #include <android/log.h>
 
@@ -173,17 +171,15 @@ public:
             mMap.ops = nsnull;
             LOG("initializing the map failed");
         }
-#ifdef MOZ_IPC
         NS_ABORT_IF_FALSE(XRE_GetProcessType() == GeckoProcessType_Default,
                           "StartupCacheFontNameCache should only be used in chrome procsess");
-#endif
         mCache = mozilla::scache::StartupCache::GetSingleton();
         Init();
     }
 
     void Init()
     {
-        if (!mMap.ops)
+        if (!mMap.ops || !mCache)
             return;
         nsCAutoString prefName("font.cache");
         PRUint32 size;
@@ -293,7 +289,7 @@ public:
         PL_DHashTableEnumerate(&mMap, WriteOutMap, &buf);
         PL_DHashTableFinish(&mMap);
         nsCAutoString prefName("font.cache");
-        mCache->PutBuffer(prefName.get(), buf.get(), buf.Length());
+        mCache->PutBuffer(prefName.get(), buf.get(), buf.Length() + 1);
     }
 private:
     mozilla::scache::StartupCache* mCache;
@@ -418,35 +414,50 @@ gfxAndroidPlatform::AppendFacesFromFontFile(const char *aFileName, FontNameCache
 }
 
 void
-gfxAndroidPlatform::GetFontList(InfallibleTArray<FontListEntry>* retValue)
+gfxAndroidPlatform::FindFontsInDirectory(const nsCString& aFontsDir,
+                                         FontNameCache* aFontCache)
 {
-#ifdef MOZ_IPC
-    if (XRE_GetProcessType() != GeckoProcessType_Default) {
-        mozilla::dom::ContentChild::GetSingleton()->SendReadFontList(retValue);
-        return;
-    }
-#endif
-
-    if (mFontList.Length() > 0) {
-        *retValue = mFontList;
-        return;
-    }
-    FontNameCache fnc;
-    DIR *d = opendir("/system/fonts");
+    DIR *d = opendir(aFontsDir.get());
     struct dirent *ent = NULL;
     while(d && (ent = readdir(d)) != NULL) {
         int namelen = strlen(ent->d_name);
         if (namelen > 4 &&
             strcasecmp(ent->d_name + namelen - 4, ".ttf") == 0)
         {
-            nsCString s("/system/fonts");
-            s.Append("/");
+            nsCString s(aFontsDir);
             s.Append(nsDependentCString(ent->d_name));
 
             AppendFacesFromFontFile(nsPromiseFlatCString(s).get(),
-                                    &fnc, &mFontList);
+                                    aFontCache, &mFontList);
         }
     }
+    closedir(d);
+}
+
+void
+gfxAndroidPlatform::GetFontList(InfallibleTArray<FontListEntry>* retValue)
+{
+    if (XRE_GetProcessType() != GeckoProcessType_Default) {
+        mozilla::dom::ContentChild::GetSingleton()->SendReadFontList(retValue);
+        return;
+    }
+
+    if (mFontList.Length() > 0) {
+        *retValue = mFontList;
+        return;
+    }
+
+    // ANDROID_ROOT is the root of the android system, typically /system
+    // font files are in /$ANDROID_ROOT/fonts/
+    FontNameCache fnc;
+    FindFontsInDirectory(NS_LITERAL_CSTRING("/system/fonts/"), &fnc);
+    char *androidRoot = PR_GetEnv("ANDROID_ROOT");
+    if (androidRoot && strcmp(androidRoot, "/system")) {
+        nsCString root(androidRoot);
+        root.Append("/fonts/");
+        FindFontsInDirectory(root, &fnc);
+    }
+
     *retValue = mFontList;
 }
 
@@ -552,7 +563,8 @@ gfxAndroidPlatform::IsFontFormatSupported(nsIURI *aFontURI, PRUint32 aFormatFlag
                  "strange font format hint set");
 
     // accept supported formats
-    if (aFormatFlags & (gfxUserFontSet::FLAG_FORMAT_OPENTYPE | 
+    if (aFormatFlags & (gfxUserFontSet::FLAG_FORMAT_OPENTYPE |
+                        gfxUserFontSet::FLAG_FORMAT_WOFF |
                         gfxUserFontSet::FLAG_FORMAT_TRUETYPE)) {
         return PR_TRUE;
     }

@@ -17,11 +17,16 @@
   <![CDATA[
     SimpleTest.waitForExplicitFinish();
 
-    // Run the test in a separate window so we get a clean browser window.
-    window.open("data:text/html,<html style='overflow:scroll'><script>opener.doTest(window);</script>",
-                "", "scrollbars=yes,toolbar,menubar,width=500,height=500");
+    // Bug 640889 - the test doesn't like seeing the WinXP resizer.
+    var version = Components.classes["@mozilla.org/system-info;1"]
+                            .getService(Components.interfaces.nsIPropertyBag2)
+                            .getProperty("version");
+    if (navigator.platform.indexOf("Win") == 0 && parseFloat(version) < 6.0) {
+      todo(false, "Bug 640889 - the test doesn't like seeing the WinXP resizer.");
+      SimpleTest.finish();
+    } else {
 
-    function doTest(win) {
+    function doTest(evt) {
       var initialCount = win.mozPaintCount;
 
       function nextStep() {
@@ -35,8 +40,7 @@
         isnot(win.mozPaintCount, initialCount, "mozPaintCount has increased");
 
         var utils = win.QueryInterface(Components.interfaces.nsIInterfaceRequestor)
-                       .getInterface(Components.interfaces.nsIDOMWindowUtils)
-                       .QueryInterface(Components.interfaces.nsIDOMWindowUtils_MOZILLA_2_0_BRANCH);
+                       .getInterface(Components.interfaces.nsIDOMWindowUtils);
         ok(utils.leafLayersPartitionWindow(),
            "Leaf layers should form a non-overlapping partition of the browser window");
 
@@ -45,6 +49,13 @@
       }
 
       SimpleTest.executeSoon(nextStep);
+    }
+
+    // Run the test in a separate window so we get a clean browser window.
+    var win = window.open("data:text/html,<html style='overflow:scroll'>",
+                "", "scrollbars=yes,toolbar,menubar,width=500,height=500");
+    win.addEventListener('load', doTest, false);
+
     }
   ]]>
   </script>

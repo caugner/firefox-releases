@@ -36,9 +36,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifdef MOZ_IPC
 #include "base/basictypes.h"
-#endif
 
 // FIXME(bug 332648): Give me a real API please!
 #include "jscntxt.h"
@@ -59,11 +57,9 @@
 
 using namespace mozilla::plugins::parent;
 
-#ifdef MOZ_IPC
 #include "mozilla/plugins/PluginScriptableObjectParent.h"
 using mozilla::plugins::PluginScriptableObjectParent;
 using mozilla::plugins::ParentNPObject;
-#endif
 
 // Hash of JSObject wrappers that wraps JSObjects as NPObjects. There
 // will be one wrapper per JSObject per plugin instance, i.e. if two
@@ -97,11 +93,7 @@ namespace {
 inline bool
 NPObjectIsOutOfProcessProxy(NPObject *obj)
 {
-#ifdef MOZ_IPC
   return obj->_class == PluginScriptableObjectParent::GetClass();
-#else
-  return false;
-#endif
 }
 
 } // anonymous namespace
@@ -208,8 +200,8 @@ NPObjectMember_Finalize(JSContext *cx, JSObject *obj);
 static JSBool
 NPObjectMember_Call(JSContext *cx, uintN argc, jsval *vp);
 
-static uint32
-NPObjectMember_Mark(JSContext *cx, JSObject *obj, void *arg);
+static void
+NPObjectMember_Trace(JSTracer *trc, JSObject *obj);
 
 static JSClass sNPObjectMemberClass =
   {
@@ -218,7 +210,7 @@ static JSClass sNPObjectMemberClass =
     JS_PropertyStub, JS_StrictPropertyStub, JS_EnumerateStub,
     JS_ResolveStub, NPObjectMember_Convert,
     NPObjectMember_Finalize, nsnull, nsnull, NPObjectMember_Call,
-    nsnull, nsnull, nsnull, NPObjectMember_Mark, nsnull
+    nsnull, nsnull, nsnull, NPObjectMember_Trace, nsnull
   };
 
 static void
@@ -1336,7 +1328,6 @@ NPObjWrapper_GetProperty(JSContext *cx, JSObject *obj, jsid id, jsval *vp)
 
   NPIdentifier identifier = JSIdToNPIdentifier(id);
 
-#ifdef MOZ_IPC
   if (NPObjectIsOutOfProcessProxy(npobj)) {
     PluginScriptableObjectParent* actor =
       static_cast<ParentNPObject*>(npobj)->parent;
@@ -1368,7 +1359,6 @@ NPObjWrapper_GetProperty(JSContext *cx, JSObject *obj, jsid id, jsval *vp)
     }
     return JS_TRUE;
   }
-#endif
 
   hasProperty = npobj->_class->hasProperty(npobj, identifier);
   if (!ReportExceptionIfPending(cx))
@@ -2298,28 +2288,24 @@ NPObjectMember_Call(JSContext *cx, uintN argc, jsval *vp)
   return ReportExceptionIfPending(cx);
 }
 
-static uint32
-NPObjectMember_Mark(JSContext *cx, JSObject *obj, void *arg)
+static void
+NPObjectMember_Trace(JSTracer *trc, JSObject *obj)
 {
   NPObjectMemberPrivate *memberPrivate =
-    (NPObjectMemberPrivate *)::JS_GetInstancePrivate(cx, obj,
-                                                     &sNPObjectMemberClass,
-                                                     nsnull);
+    (NPObjectMemberPrivate *)::JS_GetPrivate(trc->context, obj);
   if (!memberPrivate)
-    return 0;
+    return;
 
   if (!JSVAL_IS_PRIMITIVE(memberPrivate->fieldValue)) {
-    ::JS_MarkGCThing(cx, memberPrivate->fieldValue,
-                     "NPObject Member => fieldValue", arg);
+    JS_CALL_VALUE_TRACER(trc, memberPrivate->fieldValue,
+                         "NPObject Member => fieldValue");
   }
 
   // There's no strong reference from our private data to the
   // NPObject, so make sure to mark the NPObject wrapper to keep the
   // NPObject alive as long as this NPObjectMember is alive.
   if (memberPrivate->npobjWrapper) {
-    ::JS_MarkGCThing(cx, OBJECT_TO_JSVAL(memberPrivate->npobjWrapper),
-                     "NPObject Member => npobjWrapper", arg);
+    JS_CALL_OBJECT_TRACER(trc, memberPrivate->npobjWrapper,
+                          "NPObject Member => npobjWrapper");
   }
-
-  return 0;
 }

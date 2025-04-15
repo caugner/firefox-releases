@@ -49,16 +49,20 @@
 #include "nsString.h"
 #include "nsGenericElement.h"
 
-class nsICSSStyleRule;
+namespace mozilla {
+namespace css {
+class StyleRule;
+}
+}
 
 typedef nsGenericElement nsStyledElementBase;
 
-class nsStyledElement : public nsStyledElementBase
+class nsStyledElementNotElementCSSInlineStyle : public nsStyledElementBase
 {
 
 protected:
 
-  inline nsStyledElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+  inline nsStyledElementNotElementCSSInlineStyle(already_AddRefed<nsINodeInfo> aNodeInfo)
     : nsStyledElementBase(aNodeInfo)
   {}
 
@@ -70,8 +74,8 @@ public:
   virtual nsIAtom* DoGetID() const;
   virtual const nsAttrValue* DoGetClasses() const;
 
-  virtual nsICSSStyleRule* GetInlineStyleRule();
-  NS_IMETHOD SetInlineStyleRule(nsICSSStyleRule* aStyleRule, PRBool aNotify);
+  virtual mozilla::css::StyleRule* GetInlineStyleRule();
+  NS_IMETHOD SetInlineStyleRule(mozilla::css::StyleRule* aStyleRule, PRBool aNotify);
 
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent,
@@ -108,6 +112,13 @@ protected:
    * document.
    */
   nsresult  ReparseStyleAttribute(PRBool aForceInDataDoc);
+};
+
+class nsStyledElement : public nsStyledElementNotElementCSSInlineStyle {
+protected:
+  inline nsStyledElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+    : nsStyledElementNotElementCSSInlineStyle(aNodeInfo)
+  {}
 };
 
 #endif // __NS_STYLEDELEMENT_H_

@@ -129,7 +129,10 @@ static ContentMap* sContentMap = NULL;
 static ContentMap& GetContentMap() {
   if (!sContentMap) {
     sContentMap = new ContentMap();
-    nsresult rv = sContentMap->Init();
+#ifdef DEBUG
+    nsresult rv =
+#endif
+    sContentMap->Init();
     NS_ABORT_IF_FALSE(NS_SUCCEEDED(rv), "Could not initialize map.");
   }
   return *sContentMap;
@@ -142,6 +145,10 @@ static void DestroyViewID(void* aObject, nsIAtom* aPropertyName,
   GetContentMap().Remove(*id);
   delete id;
 }
+
+/**
+ * A namespace class for static layout utilities.
+ */
 
 ViewID
 nsLayoutUtils::FindIDFor(nsIContent* aContent)
@@ -177,9 +184,19 @@ nsLayoutUtils::FindContentFor(ViewID aId)
   }
 }
 
-/**
- * A namespace class for static layout utilities.
- */
+bool
+nsLayoutUtils::GetDisplayPort(nsIContent* aContent, nsRect *aResult)
+{
+  void* property = aContent->GetProperty(nsGkAtoms::DisplayPort);
+  if (!property) {
+    return false;
+  }
+
+  if (aResult) {
+    *aResult = *static_cast<nsRect*>(property);
+  }
+  return true;
+}
 
 nsIFrame*
 nsLayoutUtils::GetLastContinuationWithChild(nsIFrame* aFrame)
@@ -768,6 +785,44 @@ nsLayoutUtils::GetActiveScrolledRootFor(nsIFrame* aFrame,
   return f;
 }
 
+nsIFrame*
+nsLayoutUtils::GetActiveScrolledRootFor(nsDisplayItem* aItem,
+                                        nsDisplayListBuilder* aBuilder,
+                                        PRBool* aShouldFixToViewport)
+{
+  nsIFrame* f = aItem->GetUnderlyingFrame();
+  if (aShouldFixToViewport) {
+    *aShouldFixToViewport = PR_FALSE;
+  }
+  if (!f) {
+    return nsnull;
+  }
+  if (aItem->ShouldFixToViewport(aBuilder)) {
+    if (aShouldFixToViewport) {
+      *aShouldFixToViewport = PR_TRUE;
+    }
+    // Make its active scrolled root be the active scrolled root of
+    // the enclosing viewport, since it shouldn't be scrolled by scrolled
+    // frames in its document. InvalidateFixedBackgroundFramesFromList in
+    // nsGfxScrollFrame will not repaint this item when scrolling occurs.
+    nsIFrame* viewportFrame =
+      nsLayoutUtils::GetClosestFrameOfType(f, nsGkAtoms::viewportFrame);
+    NS_ASSERTION(viewportFrame, "no viewport???");
+    return nsLayoutUtils::GetActiveScrolledRootFor(viewportFrame, aBuilder->ReferenceFrame());
+  } else {
+    return nsLayoutUtils::GetActiveScrolledRootFor(f, aBuilder->ReferenceFrame());
+  }
+}
+
+PRBool
+nsLayoutUtils::ScrolledByViewportScrolling(nsIFrame* aActiveScrolledRoot,
+                                           nsDisplayListBuilder* aBuilder)
+{
+  nsIFrame* rootScrollFrame =
+    aBuilder->ReferenceFrame()->PresContext()->GetPresShell()->GetRootScrollFrame();
+  return nsLayoutUtils::IsAncestorFrameCrossDoc(rootScrollFrame, aActiveScrolledRoot);
+}
+
 // static
 nsIScrollableFrame*
 nsLayoutUtils::GetNearestScrollableFrameForDirection(nsIFrame* aFrame,
@@ -1044,24 +1099,21 @@ nsLayoutUtils::MatrixTransformPoint(const nsPoint &aPoint,
                  NSFloatPixelsToAppUnits(float(image.y), aFactor));
 }
 
-/**
- * Returns the CTM at the specified frame.
- *
- * @param aFrame The frame at which we should calculate the CTM.
- * @return The CTM at the specified frame.
- */
-static gfxMatrix GetCTMAt(nsIFrame *aFrame)
+gfxMatrix nsLayoutUtils::GetTransformToAncestor(nsIFrame *aFrame,
+                                                nsIFrame* aStopAtAncestor)
 {
   gfxMatrix ctm;
 
   /* Starting at the specified frame, we'll use the GetTransformMatrix
    * function of the frame, which gives us a matrix from this frame up
-   * to some other ancestor frame.  Once this function returns null,
-   * we've hit the top of the frame tree and can stop.  We get the CTM
-   * by simply accumulating all of these matrices together.
+   * to some other ancestor frame. If aStopAtAncestor frame is not reached, 
+   * we stop at root. We get the CTM by simply accumulating all of these
+   * matrices together.
    */
-  while (aFrame)
+  while (aFrame && aFrame != aStopAtAncestor) {
     ctm *= aFrame->GetTransformMatrix(&aFrame);
+  }
+  NS_ASSERTION(aFrame == aStopAtAncestor, "How did we manage to miss the ancestor?");
   return ctm;
 }
 
@@ -1074,7 +1126,7 @@ nsLayoutUtils::InvertTransformsToRoot(nsIFrame *aFrame,
   /* To invert everything to the root, we'll get the CTM, invert it, and use it to transform
    * the point.
    */
-  gfxMatrix ctm = GetCTMAt(aFrame);
+  gfxMatrix ctm = GetTransformToAncestor(aFrame);
 
   /* If the ctm is singular, hand back (0, 0) as a sentinel. */
   if (ctm.IsSingular())
@@ -1368,6 +1420,16 @@ nsLayoutUtils::PaintFrame(nsIRenderingContext* aRenderingContext, nsIFrame* aFra
   nsPresContext* presContext = aFrame->PresContext();
   nsIPresShell* presShell = presContext->PresShell();
 
+  nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame();
+  bool usingDisplayPort = false;
+  nsRect displayport;
+  if (rootScrollFrame) {
+    nsIContent* content = rootScrollFrame->GetContent();
+    if (content) {
+      usingDisplayPort = nsLayoutUtils::GetDisplayPort(content, &displayport);
+    }
+  }
+
   PRBool ignoreViewportScrolling = presShell->IgnoringViewportScrolling();
   nsRegion visibleRegion;
   if (aFlags & PAINT_WIDGET_LAYERS) {
@@ -1377,10 +1439,10 @@ nsLayoutUtils::PaintFrame(nsIRenderingContext* aRenderingContext, nsIFrame* aFra
     // |ignoreViewportScrolling| and |usingDisplayPort| are persistent
     // document-rendering state.  We rely on PresShell to flush
     // retained layers as needed when that persistent state changes.
-    if (!presShell->UsingDisplayPort()) {
+    if (!usingDisplayPort) {
       visibleRegion = aFrame->GetVisualOverflowRectRelativeToSelf();
     } else {
-      visibleRegion = presShell->GetDisplayPort();
+      visibleRegion = displayport;
     }
   } else {
     visibleRegion = aDirtyRegion;
@@ -1393,6 +1455,10 @@ nsLayoutUtils::PaintFrame(nsIRenderingContext* aRenderingContext, nsIFrame* aFra
 
   nsDisplayListBuilder builder(aFrame, nsDisplayListBuilder::PAINTING,
 		                       !(aFlags & PAINT_HIDE_CARET));
+  if (usingDisplayPort) {
+    builder.SetDisplayPort(displayport);
+  }
+
   nsDisplayList list;
   if (aFlags & PAINT_IN_TRANSFORM) {
     builder.SetInTransform(PR_TRUE);
@@ -1560,13 +1626,12 @@ nsLayoutUtils::PaintFrame(nsIRenderingContext* aRenderingContext, nsIFrame* aFra
       NS_WARNING("Flushing retained layers!");
       flags |= nsDisplayList::PAINT_FLUSH_LAYERS;
     } else if (!(aFlags & PAINT_DOCUMENT_RELATIVE)) {
-      nsIWidget_MOZILLA_2_0_BRANCH *widget2 =
-        static_cast<nsIWidget_MOZILLA_2_0_BRANCH*>(aFrame->GetNearestWidget());
-      if (widget2) {
+      nsIWidget *widget = aFrame->GetNearestWidget();
+      if (widget) {
         builder.SetFinalTransparentRegion(visibleRegion);
         // If we're finished building display list items for painting of the outermost
         // pres shell, notify the widget about any toolbars we've encountered.
-        widget2->UpdateThemeGeometries(builder.GetThemeGeometries());
+        widget->UpdateThemeGeometries(builder.GetThemeGeometries());
       }
     }
   }
@@ -1581,12 +1646,11 @@ nsLayoutUtils::PaintFrame(nsIRenderingContext* aRenderingContext, nsIFrame* aFra
   if ((aFlags & PAINT_WIDGET_LAYERS) &&
       !willFlushRetainedLayers &&
       !(aFlags & PAINT_DOCUMENT_RELATIVE)) {
-    nsIWidget_MOZILLA_2_0_BRANCH *widget2 =
-      static_cast<nsIWidget_MOZILLA_2_0_BRANCH*>(aFrame->GetNearestWidget());
-    if (widget2) {
+    nsIWidget *widget = aFrame->GetNearestWidget();
+    if (widget) {
       PRInt32 pixelRatio = presContext->AppUnitsPerDevPixel();
       nsIntRegion visibleWindowRegion(visibleRegion.ToOutsidePixels(presContext->AppUnitsPerDevPixel()));
-      widget2->UpdateTransparentRegion(visibleWindowRegion);
+      widget->UpdateTransparentRegion(visibleWindowRegion);
     }
   }
 
@@ -3737,13 +3801,15 @@ nsLayoutUtils::SurfaceFromElement(nsIDOMElement *aElement,
         return result;
     }
 
+    // Ensure that any future changes to the canvas trigger proper invalidation,
+    // in case this is being used by -moz-element()
+    canvas->MarkContextClean();
+
     if (aSurfaceFlags & SFE_NO_PREMULTIPLY_ALPHA) {
       // we can modify this surface since we force a copy above when
       // when NO_PREMULTIPLY_ALPHA is set
       gfxUtils::UnpremultiplyImageSurface(static_cast<gfxImageSurface*>(surf.get()));
     }
-
-    nsCOMPtr<nsIPrincipal> principal = node->NodePrincipal();
 
     result.mSurface = surf;
     result.mSize = size;
@@ -3797,7 +3863,7 @@ nsLayoutUtils::SurfaceFromElement(nsIDOMElement *aElement,
 
     result.mSurface = surf;
     result.mSize = size;
-    result.mPrincipal = principal;
+    result.mPrincipal = principal.forget();
     result.mIsWriteOnly = PR_FALSE;
 
     return result;
@@ -3902,13 +3968,13 @@ nsLayoutUtils::SurfaceFromElement(nsIDOMElement *aElement,
 
   result.mSurface = gfxsurf;
   result.mSize = gfxIntSize(imgWidth, imgHeight);
-  result.mPrincipal = principal;
-
+  result.mPrincipal = principal.forget();
   // SVG images could have <foreignObject> and/or <image> elements that load
   // content from another domain.  For safety, they make the canvas write-only.
   // XXXdholbert We could probably be more permissive here if we check that our
   // helper SVG document has no elements that could load remote content.
   result.mIsWriteOnly = (imgContainer->GetType() == imgIContainer::TYPE_VECTOR);
+  result.mImageRequest = imgRequest.forget();
 
   return result;
 }

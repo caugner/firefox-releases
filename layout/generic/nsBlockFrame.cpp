@@ -2479,6 +2479,18 @@ nsBlockFrame::DeleteLine(nsBlockReflowState& aState,
   }
 }
 
+static void
+InvalidateThebesLayersInLineBox(nsIFrame* aBlock, nsLineBox* aLine)
+{
+  if (aBlock->GetStateBits() & NS_FRAME_HAS_CONTAINER_LAYER_DESCENDANT) {
+    PRInt32 childCount = aLine->GetChildCount();
+    for (nsIFrame* f = aLine->mFirstChild; childCount;
+         --childCount, f = f->GetNextSibling()) {
+      FrameLayerBuilder::InvalidateThebesLayersInSubtree(f);
+    }
+  }
+}
+
 /**
  * Reflow a line. The line will either contain a single block frame
  * or contain 1 or more inline frames. aKeepReflowGoing indicates
@@ -2572,13 +2584,7 @@ nsBlockFrame::ReflowLine(nsBlockReflowState& aState,
       printf("  dirty line is %p\n", static_cast<void*>(aLine.get()));
 #endif
     Invalidate(dirtyRect);
-    if (GetStateBits() & NS_FRAME_HAS_CONTAINER_LAYER_DESCENDANT) {
-      PRInt32 childCount = aLine->GetChildCount();
-      for (nsIFrame* f = aLine->mFirstChild; childCount;
-           --childCount, f = f->GetNextSibling()) {
-        FrameLayerBuilder::InvalidateThebesLayersInSubtree(f);
-      }
-    }
+    InvalidateThebesLayersInLineBox(this, aLine);
   }
 
   return rv;
@@ -2737,6 +2743,7 @@ nsBlockFrame::SlideLine(nsBlockReflowState& aState,
   // Adjust line state
   aLine->SlideBy(aDY);
   Invalidate(aLine->GetVisualOverflowArea());
+  InvalidateThebesLayersInLineBox(this, aLine);
 
   // Adjust the frames in the line
   nsIFrame* kid = aLine->mFirstChild;
@@ -6635,6 +6642,18 @@ nsBlockFrame::GetBulletText(nsAString& aText) const
   }
 }
 
+bool
+nsBlockFrame::HasBullet() const
+{
+  if (mBullet) {
+    const nsStyleList* styleList = GetStyleList();
+    return styleList->GetListStyleImage() ||
+      styleList->mListStyleType != NS_STYLE_LIST_STYLE_NONE;
+  }
+
+  return false;
+}
+
 // static
 PRBool
 nsBlockFrame::FrameStartsCounterScope(nsIFrame* aFrame)
@@ -6723,6 +6742,7 @@ nsBlockFrame::RenumberListsFor(nsPresContext* aPresContext,
 
   // if the frame is a placeholder, then get the out of flow frame
   nsIFrame* kid = nsPlaceholderFrame::GetRealFrameFor(aKid);
+  const nsStyleDisplay* display = kid->GetStyleDisplay();
 
   // drill down through any wrappers to the real frame
   kid = kid->GetContentInsertionFrame();
@@ -6736,7 +6756,6 @@ nsBlockFrame::RenumberListsFor(nsPresContext* aPresContext,
   // If the frame is a list-item and the frame implements our
   // block frame API then get its bullet and set the list item
   // ordinal.
-  const nsStyleDisplay* display = kid->GetStyleDisplay();
   if (NS_STYLE_DISPLAY_LIST_ITEM == display->mDisplay) {
     // Make certain that the frame is a block frame in case
     // something foreign has crept in.

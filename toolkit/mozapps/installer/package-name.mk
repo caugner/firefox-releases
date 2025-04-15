@@ -74,25 +74,6 @@ endif
 ifeq ($(OS_ARCH),OS2)
 MOZ_PKG_PLATFORM := os2
 endif
-ifeq ($(OS_ARCH),BeOS)
-ifeq (,$(filter-out 6.%, $(OS_RELEASE)))
-MOZ_PKG_PLATFORM := Zeta
-else
-ifeq (,$(filter-out 5.1, $(OS_RELEASE)))
-MOZ_PKG_PLATFORM := BeOS-bone
-else
-ifeq (,$(filter-out 5.0.4, $(OS_RELEASE)))
-MOZ_PKG_PLATFORM := BeOS-bone
-else
-ifeq (,$(filter-out 5.0, $(OS_RELEASE)))
-MOZ_PKG_PLATFORM := BeOS-net_server
-else
-MOZ_PKG_PLATFORM := BeOS-$(OS_RELEASE)
-endif # 5.0
-endif # 5.0.4
-endif # 5.1
-endif # 6.
-endif # OS_ARCH BeOS
 endif #MOZ_PKG_PLATFORM
 
 ifdef MOZ_PKG_SPECIAL
@@ -131,10 +112,7 @@ MOZ_PKG_APPNAME_LC = $(shell echo $(MOZ_PKG_APPNAME) | tr '[A-Z]' '[a-z]')
 
 
 ifndef MOZ_PKG_LONGVERSION
-MOZ_PKG_LONGVERSION = $(shell echo $(MOZ_PKG_VERSION) |\
-                       sed -e 's/a\([0-9][0-9]*\)$$/ Alpha \1/' |\
-                       sed -e 's/b\([0-9][0-9]*\)$$/ Beta \1/' |\
-                       sed -e 's/rc\([0-9][0-9]*\)$$/ RC \1/')
+MOZ_PKG_LONGVERSION = $(shell echo $(MOZ_PKG_VERSION))
 endif
 
 ifeq (,$(filter-out Darwin OS2, $(OS_ARCH))) # Mac and OS2

@@ -50,7 +50,6 @@
 #include "nsStringStream.h"
 #include "netCore.h"
 #include "nsNetCID.h"
-#include "nsAutoLock.h"
 #include "prmem.h"
 
 #ifdef DEBUG
@@ -69,6 +68,8 @@ nsHttpConnection::nsHttpConnection()
     , mConnInfo(nsnull)
     , mLastReadTime(0)
     , mIdleTimeout(0)
+    , mCurrentBytesRead(0)
+    , mMaxBytesRead(0)
     , mKeepAlive(PR_TRUE) // assume to keep-alive by default
     , mKeepAliveMask(PR_TRUE)
     , mSupportsPipelining(PR_FALSE) // assume low-grade server
@@ -144,11 +145,13 @@ nsHttpConnection::Activate(nsAHttpTransaction *trans, PRUint8 caps)
             goto loser;
     }
 
+    // Clear the per activation counter
+    mCurrentBytesRead = 0;
+
     // wait for the output stream to be readable
     rv = mSocketOut->AsyncWait(this, 0, 0, nsnull);
     if (NS_SUCCEEDED(rv))
         return rv;
-
 loser:
     NS_RELEASE(mTransaction);
     return rv;
@@ -383,12 +386,7 @@ nsHttpConnection::OnHeadersAvailable(nsAHttpTransaction *trans,
         }
         else {
             LOG(("SSL proxy CONNECT failed!\n"));
-            // NOTE: this cast is valid since this connection cannot be
-            // processing a transaction pipeline until after the first HTTP/1.1
-            // response.
-            nsHttpTransaction *trans =
-                    static_cast<nsHttpTransaction *>(mTransaction);
-            trans->SetSSLConnectFailed();
+            mTransaction->SetSSLConnectFailed();
         }
     }
 
@@ -510,6 +508,9 @@ nsHttpConnection::CloseTransaction(nsAHttpTransaction *trans, nsresult reason)
     NS_ASSERTION(trans == mTransaction, "wrong transaction");
     NS_ASSERTION(PR_GetCurrentThread() == gSocketThread, "wrong thread");
 
+    if (mCurrentBytesRead > mMaxBytesRead)
+        mMaxBytesRead = mCurrentBytesRead;
+
     // mask this error code because its not a real error.
     if (reason == NS_BASE_STREAM_CLOSED)
         reason = NS_OK;
@@ -622,7 +623,8 @@ nsHttpConnection::OnSocketWritable()
             // here to reflect the fact that we are waiting.  this message will be
             // trumped (overwritten) if the server responds quickly.
             //
-            mTransaction->OnTransportStatus(nsISocketTransport::STATUS_WAITING_FOR,
+            mTransaction->OnTransportStatus(mSocketTransport,
+                                            nsISocketTransport::STATUS_WAITING_FOR,
                                             LL_ZERO);
 
             rv = mSocketIn->AsyncWait(this, 0, 0, nsnull); // start reading
@@ -687,13 +689,16 @@ nsHttpConnection::OnSocketReadable()
                 rv = NS_OK;
             again = PR_FALSE;
         }
-        else if (NS_FAILED(mSocketInCondition)) {
-            // continue waiting for the socket if necessary...
-            if (mSocketInCondition == NS_BASE_STREAM_WOULD_BLOCK)
-                rv = mSocketIn->AsyncWait(this, 0, 0, nsnull);
-            else
-                rv = mSocketInCondition;
-            again = PR_FALSE;
+        else {
+            mCurrentBytesRead += n;
+            if (NS_FAILED(mSocketInCondition)) {
+                // continue waiting for the socket if necessary...
+                if (mSocketInCondition == NS_BASE_STREAM_WOULD_BLOCK)
+                    rv = mSocketIn->AsyncWait(this, 0, 0, nsnull);
+                else
+                    rv = mSocketInCondition;
+                again = PR_FALSE;
+            }
         }
         // read more from the socket until error...
     } while (again);
@@ -726,18 +731,14 @@ nsHttpConnection::SetupSSLProxyConnect()
     // send this header for backwards compatibility.
     request.SetHeader(nsHttp::Proxy_Connection, NS_LITERAL_CSTRING("keep-alive"));
 
-    // NOTE: this cast is valid since this connection cannot be processing a
-    // transaction pipeline until after the first HTTP/1.1 response.
-    nsHttpTransaction *trans = static_cast<nsHttpTransaction *>(mTransaction);
-    
-    val = trans->RequestHead()->PeekHeader(nsHttp::Host);
+    val = mTransaction->RequestHead()->PeekHeader(nsHttp::Host);
     if (val) {
         // all HTTP/1.1 requests must include a Host header (even though it
         // may seem redundant in this case; see bug 82388).
         request.SetHeader(nsHttp::Host, nsDependentCString(val));
     }
 
-    val = trans->RequestHead()->PeekHeader(nsHttp::Proxy_Authorization);
+    val = mTransaction->RequestHead()->PeekHeader(nsHttp::Proxy_Authorization);
     if (val) {
         // we don't know for sure if this authorization is intended for the
         // SSL proxy, so we add it just in case.
@@ -819,7 +820,7 @@ nsHttpConnection::OnTransportStatus(nsITransport *trans,
                                     PRUint64 progressMax)
 {
     if (mTransaction)
-        mTransaction->OnTransportStatus(status, progress);
+        mTransaction->OnTransportStatus(trans, status, progress);
     return NS_OK;
 }
 
@@ -836,7 +837,7 @@ nsHttpConnection::GetInterface(const nsIID &iid, void **result)
     //       have to worry about the possibility of mTransaction going away
     //       part-way through this function call.  See CloseTransaction.
     NS_ASSERTION(PR_GetCurrentThread() != gSocketThread, "wrong thread");
- 
+
     if (mTransaction) {
         nsCOMPtr<nsIInterfaceRequestor> callbacks;
         mTransaction->GetSecurityCallbacks(getter_AddRefs(callbacks));

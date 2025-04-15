@@ -76,10 +76,7 @@ ifeq ($(OS_ARCH),OS2)
 CPPSRCS += dlldeps-xul.cpp
 endif
 
-# dependent libraries
 ifneq (,$(MOZ_ENABLE_GTK2))
-SHARED_LIBRARY_LIBS += \
-  $(DEPTH)/embedding/browser/gtk/src/$(LIB_PREFIX)gtkembedmoz.$(LIB_SUFFIX)
 DEFINES += -DMOZ_ENABLE_GTK2
 endif
 
@@ -91,32 +88,6 @@ SHARED_LIBRARY_LIBS += \
 	$(foreach component,$(COMPONENT_LIBS),$(DEPTH)/staticlib/components/$(LIB_PREFIX)$(component).$(LIB_SUFFIX)) \
 	$(foreach lib,$(STATIC_LIBS),$(DEPTH)/staticlib/$(LIB_PREFIX)$(lib).$(LIB_SUFFIX)) \
 	$(NULL)
-
-ifdef MOZ_JAVAXPCOM
-LOCAL_INCLUDES += \
-		-I$(topsrcdir)/extensions/java/xpcom/src \
-		-I$(JAVA_INCLUDE_PATH) \
-		$(NULL)
-
-ifeq ($(OS_ARCH),WINNT)
-CPPSRCS += dlldeps-javaxpcom.cpp
-LOCAL_INCLUDES += -I$(JAVA_INCLUDE_PATH)/win32
-else
-ifeq ($(OS_ARCH),OS2)
-CPPSRCS += dlldeps-javaxpcom.cpp
-LOCAL_INCLUDES += -I$(JAVA_INCLUDE_PATH)/os2
-else
-ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
-EXTRA_DSO_LDOPTS += -framework JavaVM
-else
-LOCAL_INCLUDES += -I$(JAVA_INCLUDE_PATH)/linux
-endif
-endif
-endif
-
-SHARED_LIBRARY_LIBS += \
-  $(DEPTH)/extensions/java/xpcom/src/$(LIB_PREFIX)javaxpcom.$(LIB_SUFFIX)
-endif #MOZ_JAVAXPCOM
 
 ifdef MOZ_ENABLE_LIBXUL
 include $(srcdir)/libxul-config.mk
@@ -207,7 +178,10 @@ EXTRA_DSO_LDOPTS += $(LIBCONIC_LIBS)
 endif
 
 ifdef MOZ_ENABLE_DBUS
-EXTRA_DSO_LDOPTS += $(MOZ_DBUS_LIBS) $(MOZ_DBUS_GLIB_LIBS)
+EXTRA_DSO_LDOPTS += $(MOZ_DBUS_LIBS)
+ifdef MOZ_PLATFORM_MAEMO
+EXTRA_DSO_LDOPTS += $(MOZ_DBUS_GLIB_LIBS)
+endif
 endif
 
 ifeq (gtk2,$(MOZ_WIDGET_TOOLKIT))
@@ -234,10 +208,6 @@ ifdef MOZ_ENABLE_LIBPROXY
 EXTRA_DSO_LDOPTS += $(MOZ_LIBPROXY_LIBS)
 endif
 
-ifeq ($(OS_ARCH),BeOS)
-EXTRA_DSO_LDOPTS += -lbe -ltracker
-endif
-
 ifeq ($(OS_ARCH),SunOS)
 ifdef GNU_CC
 EXTRA_DSO_LDOPTS += -lelf
@@ -247,9 +217,12 @@ endif
 endif
 
 ifeq ($(OS_ARCH),WINNT)
-OS_LIBS += $(call EXPAND_LIBNAME,shell32 ole32 uuid version winspool comdlg32 imm32 winmm wsock32 msimg32 shlwapi psapi ws2_32)
+OS_LIBS += $(call EXPAND_LIBNAME,shell32 ole32 uuid version winspool comdlg32 imm32 winmm wsock32 msimg32 shlwapi psapi ws2_32 dbghelp)
 ifneq (,$(MOZ_DEBUG)$(NS_TRACE_MALLOC))
 OS_LIBS += $(call EXPAND_LIBNAME,imagehlp)
+endif
+ifdef MOZ_CRASHREPORTER
+OS_LIBS += $(call EXPAND_LIBNAME,wininet)
 endif
 endif # WINNT
 ifeq ($(OS_ARCH),WINCE)

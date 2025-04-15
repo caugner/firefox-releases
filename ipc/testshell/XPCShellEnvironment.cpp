@@ -297,7 +297,11 @@ Dump(JSContext *cx,
     str = JS_ValueToString(cx, JS_ARGV(cx, vp)[0]);
     if (!str)
         return JS_FALSE;
-    JS_FileEscapedString(stdout, str, 0);
+    JSAutoByteString bytes(cx, str);
+    if (!bytes)
+      return JS_FALSE;
+
+    fputs(bytes.ptr(), stdout);
     fflush(stdout);
     return JS_TRUE;
 }
@@ -309,8 +313,7 @@ Load(JSContext *cx,
 {
     uintN i;
     JSString *str;
-    JSScript *script;
-    JSBool ok;
+    JSObject *scriptObj;
     jsval result;
     FILE *file;
 
@@ -332,18 +335,16 @@ Load(JSContext *cx,
             JS_ReportError(cx, "cannot open file '%s' for reading", filename.ptr());
             return JS_FALSE;
         }
-        script = JS_CompileFileHandleForPrincipals(cx, obj, filename.ptr(), file,
-                                                   Environment(cx)->GetPrincipal());
+        scriptObj = JS_CompileFileHandleForPrincipals(cx, obj, filename.ptr(), file,
+                                                      Environment(cx)->GetPrincipal());
         fclose(file);
-        if (!script)
+        if (!scriptObj)
             return JS_FALSE;
 
-        ok = !Environment(cx)->ShouldCompileOnly()
-             ? JS_ExecuteScript(cx, obj, script, &result)
-             : JS_TRUE;
-        JS_DestroyScript(cx, script);
-        if (!ok)
+        if (!Environment(cx)->ShouldCompileOnly() &&
+            !JS_ExecuteScript(cx, obj, scriptObj, &result)) {
             return JS_FALSE;
+        }
     }
     JS_SET_RVAL(cx, vp, JSVAL_VOID);
     return JS_TRUE;
@@ -428,6 +429,23 @@ GC(JSContext *cx,
     JS_SET_RVAL(cx, vp, JSVAL_VOID);
     return JS_TRUE;
 }
+
+#ifdef JS_GC_ZEAL
+static JSBool
+GCZeal(JSContext *cx, 
+       uintN argc,
+       jsval *vp)
+{
+  jsval* argv = JS_ARGV(cx, vp);
+
+  uint32 zeal;
+  if (!JS_ValueToECMAUint32(cx, argv[0], &zeal))
+    return JS_FALSE;
+
+  JS_SetGCZeal(cx, PRUint8(zeal));
+  return JS_TRUE;
+}
+#endif
 
 #ifdef DEBUG
 
@@ -543,6 +561,9 @@ JSFunctionSpec gGlobalFunctions[] =
     {"dumpXPC",         DumpXPC,        1,0},
     {"dump",            Dump,           1,0},
     {"gc",              GC,             0,0},
+#ifdef JS_GC_ZEAL
+    {"gczeal",          GCZeal,         1,0},
+#endif
     {"clear",           Clear,          1,0},
 #ifdef DEBUG
     {"dumpHeap",        DumpHeap,       5,0},
@@ -575,7 +596,7 @@ ProcessFile(JSContext *cx,
     XPCShellEnvironment* env = Environment(cx);
     XPCShellEnvironment::AutoContextPusher pusher(env);
 
-    JSScript *script;
+    JSObject *scriptObj;
     jsval result;
     int lineno, startline;
     JSBool ok, hitEOF;
@@ -615,14 +636,11 @@ ProcessFile(JSContext *cx,
             return;
         }
 
-        JSScript* script =
+        JSObject* scriptObj =
             JS_CompileFileHandleForPrincipals(cx, obj, filename, file,
                                               env->GetPrincipal());
-        if (script) {
-            if (!env->ShouldCompileOnly())
-                (void)JS_ExecuteScript(cx, obj, script, &result);
-            JS_DestroyScript(cx, script);
-        }
+        if (scriptObj && !env->ShouldCompileOnly())
+            (void)JS_ExecuteScript(cx, obj, scriptObj, &result);
 
         return;
     }
@@ -660,14 +678,14 @@ ProcessFile(JSContext *cx,
 
         /* Clear any pending exception from previous failed compiles.  */
         JS_ClearPendingException(cx);
-        script =
+        scriptObj =
             JS_CompileScriptForPrincipals(cx, obj, env->GetPrincipal(), buffer,
                                           strlen(buffer), "typein", startline);
-        if (script) {
+        if (scriptObj) {
             JSErrorReporter older;
 
             if (!env->ShouldCompileOnly()) {
-                ok = JS_ExecuteScript(cx, obj, script, &result);
+                ok = JS_ExecuteScript(cx, obj, scriptObj, &result);
                 if (ok && result != JSVAL_VOID) {
                     /* Suppress error reports from JS_ValueToString(). */
                     older = JS_SetErrorReporter(cx, NULL);
@@ -683,7 +701,6 @@ ProcessFile(JSContext *cx,
                         ok = JS_FALSE;
                 }
             }
-            JS_DestroyScript(cx, script);
         }
     } while (!hitEOF && !env->IsQuitting());
 
@@ -1234,11 +1251,11 @@ XPCShellEnvironment::EvaluateString(const nsString& aString,
       return false;
   }
 
-  JSScript* script =
+  JSObject* scriptObj =
       JS_CompileUCScriptForPrincipals(mCx, global, GetPrincipal(),
                                       aString.get(), aString.Length(),
                                       "typein", 0);
-  if (!script) {
+  if (!scriptObj) {
      return false;
   }
 
@@ -1248,7 +1265,7 @@ XPCShellEnvironment::EvaluateString(const nsString& aString,
       }
 
       jsval result;
-      JSBool ok = JS_ExecuteScript(mCx, global, script, &result);
+      JSBool ok = JS_ExecuteScript(mCx, global, scriptObj, &result);
       if (ok && result != JSVAL_VOID) {
           JSErrorReporter old = JS_SetErrorReporter(mCx, NULL);
           JSString* str = JS_ValueToString(mCx, result);
@@ -1262,8 +1279,6 @@ XPCShellEnvironment::EvaluateString(const nsString& aString,
           }
       }
   }
-
-  JS_DestroyScript(mCx, script);
 
   return true;
 }

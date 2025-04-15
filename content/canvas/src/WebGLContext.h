@@ -315,7 +315,6 @@ struct WebGLContextOptions {
 
 class WebGLContext :
     public nsIDOMWebGLRenderingContext,
-    public nsIDOMWebGLRenderingContext_MOZILLA_2_0_BRANCH,
     public nsICanvasRenderingContextInternal,
     public nsSupportsWeakReference
 {
@@ -328,7 +327,6 @@ public:
     NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(WebGLContext, nsIDOMWebGLRenderingContext)
 
     NS_DECL_NSIDOMWEBGLRENDERINGCONTEXT
-    NS_DECL_NSIDOMWEBGLRENDERINGCONTEXT_MOZILLA_2_0_BRANCH
 
     // nsICanvasRenderingContextInternal
     NS_IMETHOD SetCanvasElement(nsHTMLCanvasElement* aParentCanvas);
@@ -370,9 +368,10 @@ public:
                                              : mBoundCubeMapTextures[mActiveTexture];
     }
 
-    already_AddRefed<CanvasLayer> GetCanvasLayer(CanvasLayer *aOldLayer,
+    already_AddRefed<CanvasLayer> GetCanvasLayer(nsDisplayListBuilder* aBuilder,
+                                                 CanvasLayer *aOldLayer,
                                                  LayerManager *aManager);
-    void MarkContextClean() { }
+    void MarkContextClean() { mInvalidated = PR_FALSE; }
 
     // a number that increments every time we have an event that causes
     // all context resources to be lost.
@@ -1310,7 +1309,8 @@ public:
 
     void DetachShaders() {
         for (PRUint32 i = 0; i < mAttachedShaders.Length(); ++i) {
-            mAttachedShaders[i]->DecrementAttachCount();
+            if (mAttachedShaders[i])
+                mAttachedShaders[i]->DecrementAttachCount();
         }
         mAttachedShaders.Clear();
     }
@@ -1321,7 +1321,7 @@ public:
     PRBool HasDeletePending() { return mDeletePending; }
 
     WebGLuint GLName() { return mName; }
-    const nsTArray<WebGLShader*>& AttachedShaders() const { return mAttachedShaders; }
+    const nsTArray<nsRefPtr<WebGLShader> >& AttachedShaders() const { return mAttachedShaders; }
     PRBool LinkStatus() { return mLinkStatus; }
     PRUint32 Generation() const { return mGeneration.value(); }
     void SetLinkStatus(PRBool val) { mLinkStatus = val; }
@@ -1350,7 +1350,7 @@ public:
 
     PRBool HasAttachedShaderOfType(GLenum shaderType) {
         for (PRUint32 i = 0; i < mAttachedShaders.Length(); ++i) {
-            if (mAttachedShaders[i]->ShaderType() == shaderType) {
+            if (mAttachedShaders[i] && mAttachedShaders[i]->ShaderType() == shaderType) {
                 return PR_TRUE;
             }
         }
@@ -1393,7 +1393,7 @@ protected:
     PRPackedBool mDeletePending;
     PRPackedBool mLinkStatus;
     // attached shaders of the program object
-    nsTArray<WebGLShader*> mAttachedShaders;
+    nsTArray<nsRefPtr<WebGLShader> > mAttachedShaders;
     CheckedUint32 mGeneration;
 
     // post-link data

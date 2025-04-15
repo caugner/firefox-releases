@@ -287,24 +287,27 @@ nsContentSink::Init(nsIDocument* aDoc,
 
   mDocumentURI = aURI;
   mDocShell = do_QueryInterface(aContainer);
-  if (mDocShell) {
-    PRUint32 loadType = 0;
-    mDocShell->GetLoadType(&loadType);
-    mDocument->SetChangeScrollPosWhenScrollingToRef(
-      (loadType & nsIDocShell::LOAD_CMD_HISTORY) == 0);
+  mScriptLoader = mDocument->ScriptLoader();
+
+  if (!mFragmentMode) {
+    if (mDocShell) {
+      PRUint32 loadType = 0;
+      mDocShell->GetLoadType(&loadType);
+      mDocument->SetChangeScrollPosWhenScrollingToRef(
+        (loadType & nsIDocShell::LOAD_CMD_HISTORY) == 0);
+    }
+
+    // use this to avoid a circular reference sink->document->scriptloader->sink
+    nsCOMPtr<nsIScriptLoaderObserver> proxy =
+      new nsScriptLoaderObserverProxy(this);
+    NS_ENSURE_TRUE(proxy, NS_ERROR_OUT_OF_MEMORY);
+
+    mScriptLoader->AddObserver(proxy);
+
+    ProcessHTTPHeaders(aChannel);
   }
 
-  // use this to avoid a circular reference sink->document->scriptloader->sink
-  nsCOMPtr<nsIScriptLoaderObserver> proxy =
-      new nsScriptLoaderObserverProxy(this);
-  NS_ENSURE_TRUE(proxy, NS_ERROR_OUT_OF_MEMORY);
-
-  mScriptLoader = mDocument->ScriptLoader();
-  mScriptLoader->AddObserver(proxy);
-
   mCSSLoader = aDoc->CSSLoader();
-
-  ProcessHTTPHeaders(aChannel);
 
   mNodeInfoManager = aDoc->NodeInfoManager();
 
@@ -315,10 +318,11 @@ nsContentSink::Init(nsIDocument* aDoc,
     FavorPerformanceHint(!mDynamicLowerValue, 0);
   }
 
-  mCanInterruptParser = sCanInterruptParser;
+  // prevent DropParserAndPerfHint from unblocking onload in the fragment
+  // case
+  mCanInterruptParser = !mFragmentMode && sCanInterruptParser;
 
   return NS_OK;
-
 }
 
 NS_IMETHODIMP
@@ -532,24 +536,6 @@ nsContentSink::ProcessHeaderData(nsIAtom* aHeader, const nsAString& aValue,
       nsIPresShell* shell = mDocument->GetShell();
       if (shell) {
         shell->DisableThemeSupport();
-      }
-    }
-  }
-  // Don't report "refresh" headers back to necko, since our document handles
-  // them
-  else if (aHeader != nsGkAtoms::refresh && mParser) {
-    // we also need to report back HTTP-EQUIV headers to the channel
-    // so that it can process things like pragma: no-cache or other
-    // cache-control headers. Ideally this should also be the way for
-    // cookies to be set! But we'll worry about that in the next
-    // iteration
-    nsCOMPtr<nsIChannel> channel;
-    if (NS_SUCCEEDED(mParser->GetChannel(getter_AddRefs(channel)))) {
-      nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
-      if (httpChannel) {
-        httpChannel->SetResponseHeader(nsAtomCString(aHeader),
-                                       NS_ConvertUTF16toUTF8(aValue),
-                                       PR_TRUE);
       }
     }
   }

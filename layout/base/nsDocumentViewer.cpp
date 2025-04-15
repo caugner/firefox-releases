@@ -297,10 +297,9 @@ private:
 
 //-------------------------------------------------------------
 class DocumentViewerImpl : public nsIDocumentViewer,
-                           public nsIContentViewer_MOZILLA_2_0_BRANCH,
                            public nsIContentViewerEdit,
                            public nsIContentViewerFile,
-                           public nsIMarkupDocumentViewer,
+                           public nsIMarkupDocumentViewer_MOZILLA_2_0_BRANCH,
                            public nsIDocumentViewerPrint
 
 #ifdef NS_PRINTING
@@ -345,6 +344,9 @@ public:
   // nsIMarkupDocumentViewer
   NS_DECL_NSIMARKUPDOCUMENTVIEWER
 
+  // nsIMarkupDocumentViewer_MOZILLA_2_0_BRANCH
+  NS_DECL_NSIMARKUPDOCUMENTVIEWER_MOZILLA_2_0_BRANCH
+
 #ifdef NS_PRINTING
   // nsIWebBrowserPrint
   NS_DECL_NSIWEBBROWSERPRINT
@@ -357,8 +359,6 @@ public:
   // nsIDocumentViewerPrint Printing Methods
   NS_DECL_NSIDOCUMENTVIEWERPRINT
 
-  // nsIContentViewer_MOZILLA_2_0_BRANCH interface...
-  NS_DECL_NSICONTENTVIEWER_MOZILLA_2_0_BRANCH
 protected:
   virtual ~DocumentViewerImpl();
 
@@ -437,6 +437,7 @@ protected:
   // class, please make the ownership explicit (pinkerton, scc).
 
   nsWeakPtr mContainer; // it owns me!
+  nsWeakPtr mTopContainerWhilePrinting;
   nsCOMPtr<nsIDeviceContext> mDeviceContext;  // We create and own this baby
 
   // the following six items are explicitly in this order
@@ -462,6 +463,7 @@ protected:
   // presshell only.
   float mTextZoom;      // Text zoom, defaults to 1.0
   float mPageZoom;
+  int mMinFontSize;
 
   PRInt16 mNumURLStarts;
   PRInt16 mDestroyRefCount;    // a second "refcount" for the document viewer's "destroy"
@@ -562,7 +564,7 @@ void DocumentViewerImpl::PrepareToStartLoad()
 
 // Note: operator new zeros our memory, so no need to init things to null.
 DocumentViewerImpl::DocumentViewerImpl()
-  : mTextZoom(1.0), mPageZoom(1.0),
+  : mTextZoom(1.0), mPageZoom(1.0), mMinFontSize(0),
     mIsSticky(PR_TRUE),
 #ifdef NS_PRINT_PREVIEW
     mPrintPreviewZoom(1.0),
@@ -581,6 +583,7 @@ NS_INTERFACE_MAP_BEGIN(DocumentViewerImpl)
     NS_INTERFACE_MAP_ENTRY(nsIContentViewer)
     NS_INTERFACE_MAP_ENTRY(nsIDocumentViewer)
     NS_INTERFACE_MAP_ENTRY(nsIMarkupDocumentViewer)
+    NS_INTERFACE_MAP_ENTRY(nsIMarkupDocumentViewer_MOZILLA_2_0_BRANCH)
     NS_INTERFACE_MAP_ENTRY(nsIContentViewerFile)
     NS_INTERFACE_MAP_ENTRY(nsIContentViewerEdit)
     NS_INTERFACE_MAP_ENTRY(nsIDocumentViewerPrint)
@@ -588,7 +591,6 @@ NS_INTERFACE_MAP_BEGIN(DocumentViewerImpl)
 #ifdef NS_PRINTING
     NS_INTERFACE_MAP_ENTRY(nsIWebBrowserPrint)
 #endif
-    NS_INTERFACE_MAP_ENTRY(nsIContentViewer_MOZILLA_2_0_BRANCH)
 NS_INTERFACE_MAP_END
 
 DocumentViewerImpl::~DocumentViewerImpl()
@@ -754,6 +756,7 @@ DocumentViewerImpl::InitPresentationStuff(PRBool aDoInitialReflow)
   mViewManager->SetWindowDimensions(width, height);
   mPresContext->SetTextZoom(mTextZoom);
   mPresContext->SetFullZoom(mPageZoom);
+  mPresContext->SetMinFontSize(mMinFontSize);
 
   if (aDoInitialReflow) {
     nsCOMPtr<nsIHTMLDocument> htmlDoc = do_QueryInterface(mDocument);
@@ -1416,9 +1419,7 @@ DocumentViewerImpl::Open(nsISupports *aState, nsISHEntry *aSHEntry)
 
     nsIViewManager *vm = GetViewManager();
     NS_ABORT_IF_FALSE(vm, "no view manager");
-    nsIView *v;
-    nsresult rv = vm->GetRootView(v);
-    NS_ABORT_IF_FALSE(NS_SUCCEEDED(rv), "failed in getting the root view");
+    nsIView* v = vm->GetRootView();
     NS_ABORT_IF_FALSE(v, "no root view");
     NS_ABORT_IF_FALSE(mParentWidget, "no mParentWidget to set");
     v->AttachToTopLevelWidget(mParentWidget);
@@ -1563,8 +1564,7 @@ DocumentViewerImpl::Destroy()
     if (mPresShell) {
       nsIViewManager *vm = mPresShell->GetViewManager();
       if (vm) {
-        nsIView *rootView = nsnull;
-        vm->GetRootView(rootView);
+        nsIView *rootView = vm->GetRootView();
 
         if (rootView) {
           // The invalidate that removing this view causes is dropped because
@@ -2360,8 +2360,7 @@ void
 DocumentViewerImpl::DetachFromTopLevelWidget()
 {
   if (mViewManager) {
-    nsIView* oldView = nsnull;
-    mViewManager->GetRootView(oldView);
+    nsIView* oldView = mViewManager->GetRootView();
     if (oldView && oldView->IsAttachedToTopLevel()) {
       oldView->DetachFromTopLevelWidget();
     }
@@ -2750,6 +2749,15 @@ SetChildTextZoom(nsIMarkupDocumentViewer* aChild, void* aClosure)
 }
 
 static void
+SetChildMinFontSize(nsIMarkupDocumentViewer* aChild, void* aClosure)
+{
+  nsCOMPtr<nsIMarkupDocumentViewer_MOZILLA_2_0_BRANCH> branch =
+    do_QueryInterface(aChild);
+  struct ZoomInfo* ZoomInfo = (struct ZoomInfo*) aClosure;
+  branch->SetMinFontSize(ZoomInfo->mZoom);
+}
+
+static void
 SetChildFullZoom(nsIMarkupDocumentViewer* aChild, void* aClosure)
 {
   struct ZoomInfo* ZoomInfo = (struct ZoomInfo*) aClosure;
@@ -2766,6 +2774,21 @@ SetExtResourceTextZoom(nsIDocument* aDocument, void* aClosure)
     if (ctxt) {
       struct ZoomInfo* ZoomInfo = static_cast<struct ZoomInfo*>(aClosure);
       ctxt->SetTextZoom(ZoomInfo->mZoom);
+    }
+  }
+
+  return PR_TRUE;
+}
+
+static PRBool
+SetExtResourceMinFontSize(nsIDocument* aDocument, void* aClosure)
+{
+  nsIPresShell* shell = aDocument->GetShell();
+  if (shell) {
+    nsPresContext* ctxt = shell->GetPresContext();
+    if (ctxt) {
+      struct ZoomInfo* ZoomInfo = static_cast<struct ZoomInfo*>(aClosure);
+      ctxt->SetMinFontSize(ZoomInfo->mZoom);
     }
   }
 
@@ -2826,6 +2849,47 @@ DocumentViewerImpl::GetTextZoom(float* aTextZoom)
   NS_ENSURE_ARG_POINTER(aTextZoom);
   nsPresContext* pc = GetPresContext();
   *aTextZoom = pc ? pc->TextZoom() : 1.0f;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+DocumentViewerImpl::SetMinFontSize(PRInt32 aMinFontSize)
+{
+  if (GetIsPrintPreview()) {
+    return NS_OK;
+  }
+
+  mMinFontSize = aMinFontSize;
+
+  nsIViewManager::UpdateViewBatch batch(GetViewManager());
+      
+  // Set the min font on all children of mContainer (even if our min font didn't
+  // change, our children's min font may be different, though it would be unusual).
+  // Do this first, in case kids are auto-sizing and post reflow commands on
+  // our presshell (which should be subsumed into our own style change reflow).
+  struct ZoomInfo ZoomInfo = { aMinFontSize };
+  CallChildren(SetChildMinFontSize, &ZoomInfo);
+
+  // Now change our own min font
+  nsPresContext* pc = GetPresContext();
+  if (pc && aMinFontSize != mPresContext->MinFontSize()) {
+    pc->SetMinFontSize(aMinFontSize);
+  }
+
+  // And do the external resources
+  mDocument->EnumerateExternalResources(SetExtResourceMinFontSize, &ZoomInfo);
+
+  batch.EndUpdateViewBatch(NS_VMREFRESH_NO_SYNC);
+  
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+DocumentViewerImpl::GetMinFontSize(PRInt32* aMinFontSize)
+{
+  NS_ENSURE_ARG_POINTER(aMinFontSize);
+  nsPresContext* pc = GetPresContext();
+  *aMinFontSize = pc ? pc->MinFontSize() : 0;
   return NS_OK;
 }
 
@@ -4014,27 +4078,33 @@ DocumentViewerImpl::SetIsPrintingInDocShellTree(nsIDocShellTreeNode* aParentNode
                                                 PRBool               aIsPrintingOrPP, 
                                                 PRBool               aStartAtTop)
 {
-  NS_ASSERTION(aParentNode, "Parent can't be NULL!");
-
   nsCOMPtr<nsIDocShellTreeItem> parentItem(do_QueryInterface(aParentNode));
 
   // find top of "same parent" tree
   if (aStartAtTop) {
-    while (parentItem) {
-      nsCOMPtr<nsIDocShellTreeItem> parent;
-      parentItem->GetSameTypeParent(getter_AddRefs(parent));
-      if (!parent) {
-        break;
+    if (aIsPrintingOrPP) {
+      while (parentItem) {
+        nsCOMPtr<nsIDocShellTreeItem> parent;
+        parentItem->GetSameTypeParent(getter_AddRefs(parent));
+        if (!parent) {
+          break;
+        }
+        parentItem = do_QueryInterface(parent);
       }
-      parentItem = do_QueryInterface(parent);
+      mTopContainerWhilePrinting = do_GetWeakReference(parentItem);
+    } else {
+      parentItem = do_QueryReferent(mTopContainerWhilePrinting);
     }
   }
-  NS_ASSERTION(parentItem, "parentItem can't be null");
 
   // Check to see if the DocShell's ContentViewer is printing/PP
   nsCOMPtr<nsIContentViewerContainer> viewerContainer(do_QueryInterface(parentItem));
   if (viewerContainer) {
     viewerContainer->SetIsPrinting(aIsPrintingOrPP);
+  }
+
+  if (!aParentNode) {
+    return;
   }
 
   // Traverse children to see if any of them are printing.
@@ -4105,14 +4175,11 @@ DocumentViewerImpl::SetIsPrinting(PRBool aIsPrinting)
 #ifdef NS_PRINTING
   // Set all the docShells in the docshell tree to be printing.
   // that way if anyone of them tries to "navigate" it can't
-  if (mContainer) {
-    nsCOMPtr<nsIDocShellTreeNode> docShellTreeNode(do_QueryReferent(mContainer));
-    NS_ASSERTION(docShellTreeNode, "mContainer has to be a nsIDocShellTreeNode");
-    if (docShellTreeNode) {
-      SetIsPrintingInDocShellTree(docShellTreeNode, aIsPrinting, PR_TRUE);
-    } else {
-      NS_WARNING("Bug 549251 Did you close a window while printing?");
-    }
+  nsCOMPtr<nsIDocShellTreeNode> docShellTreeNode(do_QueryReferent(mContainer));
+  if (docShellTreeNode || !aIsPrinting) {
+    SetIsPrintingInDocShellTree(docShellTreeNode, aIsPrinting, PR_TRUE);
+  } else {
+    NS_WARNING("Did you close a window before printing?");
   }
 #endif
 }
@@ -4140,9 +4207,8 @@ DocumentViewerImpl::SetIsPrintPreview(PRBool aIsPrintPreview)
 #ifdef NS_PRINTING
   // Set all the docShells in the docshell tree to be printing.
   // that way if anyone of them tries to "navigate" it can't
-  if (mContainer) {
-    nsCOMPtr<nsIDocShellTreeNode> docShellTreeNode(do_QueryReferent(mContainer));
-    NS_ASSERTION(docShellTreeNode, "mContainer has to be a nsIDocShellTreeNode");
+  nsCOMPtr<nsIDocShellTreeNode> docShellTreeNode(do_QueryReferent(mContainer));
+  if (docShellTreeNode || !aIsPrintPreview) {
     SetIsPrintingInDocShellTree(docShellTreeNode, aIsPrintPreview, PR_TRUE);
   }
 #endif
@@ -4192,6 +4258,7 @@ DocumentViewerImpl::ReturnToGalleyPresentation()
 
   SetTextZoom(mTextZoom);
   SetFullZoom(mPageZoom);
+  SetMinFontSize(mMinFontSize);
   Show();
 
 #endif // NS_PRINTING && NS_PRINT_PREVIEW

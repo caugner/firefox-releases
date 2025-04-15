@@ -12,9 +12,9 @@ function test_url_attributes() {
   Svc.Prefs.set("clusterURL", "https://cluster/");
   let engine = makeSteamEngine();
   try {
-    do_check_eq(engine.storageURL, "https://cluster/1.0/foo/storage/");
-    do_check_eq(engine.engineURL, "https://cluster/1.0/foo/storage/steam");
-    do_check_eq(engine.metaURL, "https://cluster/1.0/foo/storage/meta/global");
+    do_check_eq(engine.storageURL, "https://cluster/1.1/foo/storage/");
+    do_check_eq(engine.engineURL, "https://cluster/1.1/foo/storage/steam");
+    do_check_eq(engine.metaURL, "https://cluster/1.1/foo/storage/meta/global");
   } finally {
     Svc.Prefs.resetBranch("");
   }
@@ -82,7 +82,7 @@ function test_toFetch() {
     engine.toFetch = toFetch;
     do_check_eq(engine.toFetch, toFetch);
     // toFetch is written asynchronously
-    engine._sleep(0);
+    engine._store._sleep(0);
     let fakefile = syncTesting.fakeFilesystem.fakeContents[filename];
     do_check_eq(fakefile, JSON.stringify(toFetch));
 
@@ -129,7 +129,7 @@ function test_wipeServer() {
   const PAYLOAD = 42;
   let steamCollection = new ServerWBO("steam", PAYLOAD);
   let server = httpd_setup({
-    "/1.0/foo/storage/steam": steamCollection.handler()
+    "/1.1/foo/storage/steam": steamCollection.handler()
   });
   do_test_pending();
 

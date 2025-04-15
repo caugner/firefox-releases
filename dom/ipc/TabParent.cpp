@@ -518,29 +518,27 @@ TabParent::RecvGetIMEEnabled(PRUint32* aValue)
   if (!widget)
     return true;
 
-  nsIWidget_MOZILLA_2_0_BRANCH* widget2 = static_cast<nsIWidget_MOZILLA_2_0_BRANCH*>(widget.get());
   IMEContext context;
-  if (widget2) {
-    widget2->GetInputMode(context);
-    *aValue = context.mStatus;
-  }
+  widget->GetInputMode(context);
+  *aValue = context.mStatus;
   return true;
 }
 
 bool
 TabParent::RecvSetInputMode(const PRUint32& aValue, const nsString& aType, const nsString& aAction)
 {
+  // mIMETabParent (which is actually static) tracks which if any TabParent has IMEFocus
+  // When the input mode is set to anything but IME_STATUS_NONE, mIMETabParent should be set to this
+  mIMETabParent = aValue & nsIContent::IME_STATUS_MASK_ENABLED ? this : nsnull;
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget || !AllowContentIME())
     return true;
-
-  nsIWidget_MOZILLA_2_0_BRANCH* widget2 = static_cast<nsIWidget_MOZILLA_2_0_BRANCH*>(widget.get());
 
   IMEContext context;
   context.mStatus = aValue;
   context.mHTMLInputType.Assign(aType);
   context.mActionHint.Assign(aAction);
-  widget2->SetInputMode(context);
+  widget->SetInputMode(context);
 
   nsCOMPtr<nsIObserverService> observerService = mozilla::services::GetObserverService();
   if (!observerService)

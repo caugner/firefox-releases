@@ -56,10 +56,8 @@
 #include <QtGui/QInputContext>
 #endif // MOZ_WIDGET_QT
 
-#ifdef MOZ_IPC
 #include "mozilla/dom/ContentParent.h"
 using mozilla::dom::ContentParent;
-#endif
 
 #include "nsAppRunner.h"
 #include "nsUpdateDriver.h"
@@ -163,13 +161,6 @@ using mozilla::dom::ContentParent;
 #include <pwd.h>
 #endif
 
-#ifdef XP_BEOS
-// execv() behaves bit differently in R5 and Zeta, looks unreliable in such situation
-//#include <unistd.h>
-#include <AppKit.h>
-#include <AppFileInfo.h>
-#endif //XP_BEOS
-
 #ifdef XP_WIN
 #ifndef WINCE
 #include <process.h>
@@ -216,9 +207,7 @@ using mozilla::dom::ContentParent;
 #include "nsIPrefService.h"
 #endif
 
-#ifdef MOZ_IPC
 #include "base/command_line.h"
-#endif
 
 #include "mozilla/FunctionTimer.h"
 
@@ -298,6 +287,14 @@ SaveToEnv(const char *putenv)
   // We intentionally leak |expr| here since it is required by PR_SetEnv.
 }
 
+// Tests that an environment variable exists and has a value
+static PRBool
+EnvHasValue(const char *name)
+{
+  const char *val = PR_GetEnv(name);
+  return (val && *val);
+}
+
 // Save the given word to the specified environment variable.
 static void
 SaveWordToEnv(const char *name, const nsACString & word)
@@ -359,8 +356,7 @@ GetFileFromEnv(const char *name)
 static void
 SaveWordToEnvIfUnset(const char *name, const nsACString & word)
 {
-  const char *val = PR_GetEnv(name);
-  if (!(val && *val))
+  if (!EnvHasValue(name))
     SaveWordToEnv(name, word);
 }
 
@@ -369,8 +365,7 @@ SaveWordToEnvIfUnset(const char *name, const nsACString & word)
 static void
 SaveFileToEnvIfUnset(const char *name, nsIFile *file)
 {
-  const char *val = PR_GetEnv(name);
-  if (!(val && *val))
+  if (!EnvHasValue(name))
     SaveFileToEnv(name, file);
 }
 
@@ -614,6 +609,7 @@ class nsXULAppInfo : public nsIXULAppInfo,
 
 {
 public:
+  nsXULAppInfo() {}
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIXULAPPINFO
   NS_DECL_NSIXULRUNTIME
@@ -778,7 +774,6 @@ nsXULAppInfo::GetProcessType(PRUint32* aResult)
 NS_IMETHODIMP
 nsXULAppInfo::EnsureContentProcess()
 {
-#ifdef MOZ_IPC
   if (XRE_GetProcessType() != GeckoProcessType_Default)
     return NS_ERROR_NOT_AVAILABLE;
 
@@ -786,9 +781,6 @@ nsXULAppInfo::EnsureContentProcess()
   if (!c)
     return NS_ERROR_NOT_AVAILABLE;
   return NS_OK;
-#else
-  return NS_ERROR_NOT_AVAILABLE;
-#endif
 }
 
 NS_IMETHODIMP
@@ -1331,10 +1323,7 @@ DumpHelp()
 #ifdef MOZ_X11
   printf("X11 options\n"
          "  --display=DISPLAY  X display to use\n"
-         "  --sync             Make X calls synchronous\n"
-         "  --no-xshm          Don't use X shared memory extension\n"
-         "  --xim-preedit=STYLE\n"
-         "  --xim-status=STYLE\n");
+         "  --sync             Make X calls synchronous\n");
 #endif
 #ifdef XP_UNIX
   printf("  --g-fatal-warnings Make all warnings fatal\n"
@@ -1615,18 +1604,6 @@ XRE_GetBinaryPath(const char* argv0, nsILocalFile* *aResult)
   if (NS_FAILED(rv))
     return rv;
 
-#elif defined(XP_BEOS)
-  int32 cookie = 0;
-  image_info info;
-
-  if(get_next_image_info(0, &cookie, &info) != B_OK)
-    return NS_ERROR_FAILURE;
-
-  rv = NS_NewNativeLocalFile(nsDependentCString(info.name), PR_TRUE,
-                             getter_AddRefs(lf));
-  if (NS_FAILED(rv))
-    return rv;
-
 #else
 #error Oops, you need platform-specific code here
 #endif
@@ -1794,12 +1771,6 @@ static nsresult LaunchChild(nsINativeAppSupport* aNative,
     return NS_ERROR_FAILURE;
 #elif defined(XP_UNIX)
   if (execv(exePath.get(), gRestartArgv) == -1)
-    return NS_ERROR_FAILURE;
-#elif defined(XP_BEOS)
-  extern char **environ;
-  status_t res;
-  res = resume_thread(load_image(gRestartArgc,(const char **)gRestartArgv,(const char **)environ));
-  if (res != B_OK)
     return NS_ERROR_FAILURE;
 #else
   PRProcess* process = PR_CreateProcess(exePath.get(), gRestartArgv,
@@ -2093,8 +2064,7 @@ SelectProfile(nsIProfileLock* *aResult, nsINativeAppSupport* aNative,
     return NS_ERROR_FAILURE;
   }
 
-  arg = PR_GetEnv("XRE_START_OFFLINE");
-  if ((arg && *arg) || ar)
+  if (ar || EnvHasValue("XRE_START_OFFLINE"))
     *aStartOffline = PR_TRUE;
 
 
@@ -2219,8 +2189,7 @@ SelectProfile(nsIProfileLock* *aResult, nsINativeAppSupport* aNative,
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (gAppData->flags & NS_XRE_ENABLE_PROFILE_MIGRATOR) {
-    arg = PR_GetEnv("XRE_IMPORT_PROFILES");
-    if (!count && (!arg || !*arg)) {
+    if (!count && !EnvHasValue("XRE_IMPORT_PROFILES")) {
       return ImportProfiles(profileSvc, aNative);
     }
   }
@@ -2856,7 +2825,7 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
   }
 
   // Suppress atk-bridge init at startup, it works after GNOME 2.24.2
-  PR_SetEnv("NO_AT_BRIDGE=1");
+  SaveToEnv("NO_AT_BRIDGE=1");
 #endif
 
   gArgc = argc;
@@ -3016,8 +2985,7 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
     return 1;
 
 #ifdef MOZ_CRASHREPORTER
-  const char* crashreporterEnv = PR_GetEnv("MOZ_CRASHREPORTER");
-  if (crashreporterEnv && *crashreporterEnv) {
+  if (EnvHasValue("MOZ_CRASHREPORTER")) {
     appData.flags |= NS_XRE_ENABLE_CRASH_REPORTER;
   }
 
@@ -3075,7 +3043,7 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 #endif
 
 #ifdef XP_MACOSX
-  if (PR_GetEnv("MOZ_LAUNCHED_CHILD")) {
+  if (EnvHasValue("MOZ_LAUNCHED_CHILD")) {
     // This is needed, on relaunch, to force the OS to use the "Cocoa Dock
     // API".  Otherwise the call to ReceiveNextEvent() below will make it
     // use the "Carbon Dock API".  For more info see bmo bug 377166.
@@ -3130,10 +3098,10 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
   ScopedFPHandler handler;
 #endif /* XP_OS2 */
 
-  if (PR_GetEnv("MOZ_SAFE_MODE_RESTART")) {
+  if (EnvHasValue("MOZ_SAFE_MODE_RESTART")) {
     gSafeMode = PR_TRUE;
     // unset the env variable
-    PR_SetEnv("MOZ_SAFE_MODE_RESTART=");
+    SaveToEnv("MOZ_SAFE_MODE_RESTART=");
   }
 
   ar = CheckArg("safe-mode", PR_TRUE);
@@ -3402,8 +3370,8 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
                    gRestartArgc,
                    gRestartArgv,
                    appData.version);
-    if (PR_GetEnv("MOZ_PROCESS_UPDATES")) {
-      PR_SetEnv("MOZ_PROCESS_UPDATES=");
+    if (EnvHasValue("MOZ_PROCESS_UPDATES")) {
+      SaveToEnv("MOZ_PROCESS_UPDATES=");
       return 0;
     }
 #endif
@@ -3620,7 +3588,7 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 
         NS_TIME_FUNCTION_MARK("Finished startupNotifier");
 
-        nsCOMPtr<nsIAppStartup2> appStartup
+        nsCOMPtr<nsIAppStartup> appStartup
           (do_GetService(NS_APPSTARTUP_CONTRACTID));
         NS_ENSURE_TRUE(appStartup, 1);
 
@@ -3875,8 +3843,6 @@ XRE_InitCommandLine(int aArgc, char* aArgv[])
 {
   nsresult rv = NS_OK;
 
-#if defined(MOZ_IPC)
-
 #if defined(OS_WIN)
   CommandLine::Init(aArgc, aArgv);
 #else
@@ -3910,7 +3876,6 @@ XRE_InitCommandLine(int aArgc, char* aArgv[])
       free(canonArgs[i]);
   delete[] canonArgs;
 #endif
-#endif
 
 #ifdef MOZ_OMNIJAR
   const char *omnijarPath = nsnull;
@@ -3938,9 +3903,7 @@ XRE_DeinitCommandLine()
 {
   nsresult rv = NS_OK;
 
-#if defined(MOZ_IPC)
   CommandLine::Terminate();
-#endif
 
   return rv;
 }
@@ -3948,11 +3911,7 @@ XRE_DeinitCommandLine()
 GeckoProcessType
 XRE_GetProcessType()
 {
-#ifdef MOZ_IPC
   return mozilla::startup::sChildProcessType;
-#else
-  return GeckoProcessType_Default;
-#endif
 }
 
 void

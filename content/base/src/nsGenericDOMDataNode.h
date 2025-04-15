@@ -131,7 +131,6 @@ public:
   nsresult GetNamespaceURI(nsAString& aNamespaceURI);
   nsresult GetLocalName(nsAString& aLocalName);
   nsresult GetPrefix(nsAString& aPrefix);
-  nsresult SetPrefix(const nsAString& aPrefix);
   nsresult Normalize();
   nsresult IsSupported(const nsAString& aFeature,
                        const nsAString& aVersion,
@@ -234,9 +233,9 @@ public:
   {
     return nsnull;
   }
-  virtual nsresult GetSMILOverrideStyle(nsIDOMCSSStyleDeclaration** aStyle);
-  virtual nsICSSStyleRule* GetSMILOverrideStyleRule();
-  virtual nsresult SetSMILOverrideStyleRule(nsICSSStyleRule* aStyleRule,
+  virtual nsIDOMCSSStyleDeclaration* GetSMILOverrideStyle();
+  virtual mozilla::css::StyleRule* GetSMILOverrideStyleRule();
+  virtual nsresult SetSMILOverrideStyleRule(mozilla::css::StyleRule* aStyleRule,
                                             PRBool aNotify);
 #endif // MOZ_SMIL
 
@@ -252,8 +251,8 @@ public:
   virtual nsIAtom* DoGetID() const;
   virtual const nsAttrValue* DoGetClasses() const;
   NS_IMETHOD WalkContentStyleRules(nsRuleWalker* aRuleWalker);
-  virtual nsICSSStyleRule* GetInlineStyleRule();
-  NS_IMETHOD SetInlineStyleRule(nsICSSStyleRule* aStyleRule, PRBool aNotify);
+  virtual mozilla::css::StyleRule* GetInlineStyleRule();
+  NS_IMETHOD SetInlineStyleRule(mozilla::css::StyleRule* aStyleRule, PRBool aNotify);
   NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
   virtual nsChangeHint GetAttributeChangeHint(const nsIAtom* aAttribute,
                                               PRInt32 aModType) const;
@@ -301,8 +300,8 @@ protected:
   class nsDataSlots : public nsINode::nsSlots
   {
   public:
-    nsDataSlots(PtrBits aFlags)
-      : nsINode::nsSlots(aFlags),
+    nsDataSlots()
+      : nsINode::nsSlots(),
         mBindingParent(nsnull)
     {
     }
@@ -470,9 +469,6 @@ private:
   }                                                                         \
   NS_IMETHOD GetPrefix(nsAString& aPrefix) {                                \
     return nsGenericDOMDataNode::GetPrefix(aPrefix);                        \
-  }                                                                         \
-  NS_IMETHOD SetPrefix(const nsAString& aPrefix) {                          \
-    return nsGenericDOMDataNode::SetPrefix(aPrefix);                        \
   }                                                                         \
   NS_IMETHOD Normalize() {                                                  \
     return NS_OK;                                                           \

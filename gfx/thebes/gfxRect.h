@@ -79,7 +79,6 @@ struct THEBES_API gfxRect {
     gfxSize size;
 
     gfxRect() {}
-    gfxRect(const gfxRect& s) : pos(s.pos), size(s.size) {}
     gfxRect(const gfxPoint& _pos, const gfxSize& _size) : pos(_pos), size(_size) {}
     gfxRect(gfxFloat _x, gfxFloat _y, gfxFloat _width, gfxFloat _height) :
         pos(_x, _y), size(_width, _height) {}
@@ -114,7 +113,14 @@ struct THEBES_API gfxRect {
     gfxRect Union(const gfxRect& aRect) const;
     PRBool Contains(const gfxRect& aRect) const;
     PRBool Contains(const gfxPoint& aPoint) const;
-    // XXX figure out what methods (intersect, union, etc) we use and add them.
+
+    /**
+     * Return true if all components of this rect are within
+     * aEpsilon of integer coordinates, defined as
+     *   |round(coord) - coord| <= |aEpsilon|
+     * for x,y,width,height.
+     */
+    PRBool WithinEpsilonOfIntegerPixels(gfxFloat aEpsilon) const;
 
     gfxPoint TopLeft() { return pos; }
     gfxPoint BottomRight() { return gfxPoint(XMost(), YMost()); }

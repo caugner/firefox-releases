@@ -104,9 +104,7 @@
  **************************************************************
  **************************************************************/
 
-#ifdef MOZ_IPC
 #include "mozilla/ipc/RPCChannel.h"
-#endif
 
 #include "nsWindow.h"
 
@@ -312,12 +310,10 @@ LPFNLRESULTFROMOBJECT
                 nsWindow::sLresultFromObject      = 0;
 #endif // ACCESSIBILITY
 
-#ifdef MOZ_IPC
 // Used in OOPP plugin focus processing.
 const PRUnichar* kOOPPPluginFocusEventId   = L"OOPP Plugin Focus Widget Event";
 PRUint32        nsWindow::sOOPPPluginFocusEvent   =
                   RegisterWindowMessageW(kOOPPPluginFocusEventId);
-#endif
 
 MSG             nsWindow::sRedirectedKeyDown;
 
@@ -1299,6 +1295,9 @@ NS_METHOD nsWindow::Show(PRBool bState)
             break;
           // use default for nsSizeMode_Minimized on Windows CE
 #else
+          case nsSizeMode_Fullscreen:
+            ::ShowWindow(mWnd, SW_SHOW);
+            break;
           case nsSizeMode_Maximized :
             ::ShowWindow(mWnd, SW_SHOWMAXIMIZED);
             break;
@@ -1968,6 +1967,14 @@ NS_METHOD nsWindow::GetBounds(nsIntRect &aRect)
     // assign size
     aRect.width  = r.right - r.left;
     aRect.height = r.bottom - r.top;
+
+    // popup window bounds' are in screen coordinates, not relative to parent
+    // window
+    if (mWindowType == eWindowType_popup) {
+      aRect.x = r.left;
+      aRect.y = r.top;
+      return NS_OK;
+    }
 
     // chrome on parent:
     //  ___      5,5   (chrome start)
@@ -2640,7 +2647,7 @@ void nsWindow::UpdateTransparentRegion(const nsIntRegion &aTransparentRegion)
   // all values must be set to -1 to get a full sheet of glass.
   MARGINS margins = { -1, -1, -1, -1 };
   bool visiblePlugin = false;
-  if (!opaqueRegion.IsEmpty() && !mHideChrome) {
+  if (!opaqueRegion.IsEmpty()) {
     nsIntRect pluginBounds;
     for (nsIWidget* child = GetFirstChild(); child; child = child->GetNextSibling()) {
       nsWindowType type;
@@ -2898,21 +2905,17 @@ nsWindow::MakeFullScreen(PRBool aFullScreen)
 
   UpdateNonClientMargins();
 
-  // Prevent window updates during the transition.
-  DWORD style;
-  if (nsUXThemeData::CheckForCompositor()) {
-    style = GetWindowLong(mWnd, GWL_STYLE);
-    SetWindowLong(mWnd, GWL_STYLE, style & ~WS_VISIBLE);
-  }
-
+  PRBool visible = mIsVisible;
+  if (mOldSizeMode == nsSizeMode_Normal)
+    Show(PR_FALSE);
+  
   // Will call hide chrome, reposition window. Note this will
   // also cache dimensions for restoration, so it should only
   // be called once per fullscreen request.
   nsresult rv = nsBaseWidget::MakeFullScreen(aFullScreen);
 
-  if (nsUXThemeData::CheckForCompositor()) {
-    style = GetWindowLong(mWnd, GWL_STYLE);
-    SetWindowLong(mWnd, GWL_STYLE, style | WS_VISIBLE);
+  if (visible) {
+    Show(PR_TRUE);
     Invalidate(PR_FALSE);
   }
 
@@ -4397,8 +4400,6 @@ PRBool nsWindow::ConvertStatus(nsEventStatus aStatus)
  *
  **************************************************************/
 
-#ifdef MOZ_IPC
-
 // static
 bool
 nsWindow::IsAsyncResponseEvent(UINT aMsg, LRESULT& aResult)
@@ -4465,8 +4466,22 @@ nsWindow::IPCWindowProcHandler(UINT& msg, WPARAM& wParam, LPARAM& lParam)
     // via calls to ShowWindow.
     case WM_ACTIVATE:
       if (lParam != 0 && LOWORD(wParam) == WA_ACTIVE &&
-          IsWindow((HWND)lParam))
+          IsWindow((HWND)lParam)) {
+        // Check for Adobe Reader X sync activate message from their
+        // helper window and ignore. Fixes an annoying focus problem.
+        if ((InSendMessageEx(NULL)&(ISMEX_REPLIED|ISMEX_SEND)) == ISMEX_SEND) {
+          PRUnichar szClass[10];
+          HWND focusWnd = (HWND)lParam;
+          if (IsWindowVisible(focusWnd) &&
+              GetClassNameW(focusWnd, szClass,
+                            sizeof(szClass)/sizeof(PRUnichar)) &&
+              !wcscmp(szClass, L"Edit") &&
+              !IsOurProcessWindow(focusWnd)) {
+            break;
+          }
+        }
         handled = PR_TRUE;
+      }
     break;
     // Wheel events forwarded from the child.
     case WM_MOUSEWHEEL:
@@ -4494,8 +4509,6 @@ nsWindow::IPCWindowProcHandler(UINT& msg, WPARAM& wParam, LPARAM& lParam)
   }
 }
 
-#endif // MOZ_IPC
-
 /**************************************************************
  **************************************************************
  **
@@ -4519,10 +4532,14 @@ nsWindow::IPCWindowProcHandler(UINT& msg, WPARAM& wParam, LPARAM& lParam)
 static PRBool
 DisplaySystemMenu(HWND hWnd, nsSizeMode sizeMode, PRBool isRtl, PRInt32 x, PRInt32 y)
 {
-  GetSystemMenu(hWnd, TRUE); // reset the system menu
   HMENU hMenu = GetSystemMenu(hWnd, FALSE);
   if (hMenu) {
     // update the options
+    EnableMenuItem(hMenu, SC_RESTORE, MF_BYCOMMAND | MF_ENABLED);
+    EnableMenuItem(hMenu, SC_SIZE, MF_BYCOMMAND | MF_ENABLED);
+    EnableMenuItem(hMenu, SC_MOVE, MF_BYCOMMAND | MF_ENABLED);
+    EnableMenuItem(hMenu, SC_MAXIMIZE, MF_BYCOMMAND | MF_ENABLED);
+    EnableMenuItem(hMenu, SC_MINIMIZE, MF_BYCOMMAND | MF_ENABLED);
     switch(sizeMode) {
       case nsSizeMode_Fullscreen:
         EnableMenuItem(hMenu, SC_RESTORE, MF_BYCOMMAND | MF_GRAYED);
@@ -4582,10 +4599,8 @@ LRESULT CALLBACK nsWindow::WindowProcInternal(HWND hWnd, UINT msg, WPARAM wParam
   // Get the window which caused the event and ask it to process the message
   nsWindow *someWindow = GetNSWindowPtr(hWnd);
 
-#ifdef MOZ_IPC
   if (someWindow)
     someWindow->IPCWindowProcHandler(msg, wParam, lParam);
-#endif
 
   // create this here so that we store the last rolled up popup until after
   // the event has been processed.
@@ -5292,6 +5307,12 @@ PRBool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
       DispatchPendingEvents();
       break;
 
+    case WM_EXITSIZEMOVE:
+      if (!sIsInMouseCapture) {
+        DispatchStandardEvent(NS_DONESIZEMOVE);
+      }
+      break;
+
     case WM_APPCOMMAND:
     {
       PRUint32 appCommand = GET_APPCOMMAND_LPARAM(lParam);
@@ -5764,7 +5785,6 @@ PRBool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
       if (msg == nsAppShell::GetTaskbarButtonCreatedMessage())
         SetHasTaskbarIconBeenCreated();
 #endif
-#ifdef MOZ_IPC
       if (msg == sOOPPPluginFocusEvent) {
         if (wParam == 1) {
           // With OOPP, the plugin window exists in another process and is a child of
@@ -5779,7 +5799,6 @@ PRBool nsWindow::ProcessMessage(UINT msg, WPARAM &wParam, LPARAM &lParam,
           }
         }
       }
-#endif
     }
     break;
   }
@@ -6745,11 +6764,9 @@ PRBool nsWindow::OnMouseWheel(UINT msg, WPARAM wParam, LPARAM lParam, PRBool& ge
     return PR_FALSE; // break
   }
 
-#ifdef MOZ_IPC
   // The event may go to a plug-in which already dispatched this message.
   // Then, the event can cause deadlock.  We should unlock the sender here.
   ::ReplyMessage(isVertical ? 0 : TRUE);
-#endif
 
   // Assume the Control key is down if the Elantech touchpad has sent the
   // mis-ordered WM_KEYDOWN/WM_MOUSEWHEEL messages.  (See the comment in
@@ -7758,7 +7775,7 @@ HWND nsWindow::FindOurWindowAtPoint(const POINT& aPoint)
   return info.mOutHWND;
 }
 
-typedef DWORD (*GetProcessImageFileNameProc)(HANDLE, LPWSTR, DWORD);
+typedef DWORD (WINAPI *GetProcessImageFileNameProc)(HANDLE, LPWSTR, DWORD);
 
 // Determine whether the given HWND is the handle for the Elantech helper
 // window.  The helper window cannot be distinguished based on its
@@ -7911,13 +7928,11 @@ PRBool nsWindow::HandleScrollingPlugins(UINT aMsg, WPARAM aWParam,
         // others will call DefWndProc, which itself still forwards back to us.
         // So if we have sent it once, we need to handle it ourself.
 
-#ifdef MOZ_IPC
         // XXX The message shouldn't come from the plugin window at here.
         // But the message might come from it due to some bugs.  If it happens,
         // SendMessage causes deadlock.  For safety, we should unlock the
         // sender here.
         ::ReplyMessage(aMsg == WM_MOUSEHWHEEL ? TRUE : 0);
-#endif
 
         // First time we have seen this message.
         // Call the child - either it will consume it, or
@@ -7995,11 +8010,9 @@ PRBool nsWindow::OnScroll(UINT aMsg, WPARAM aWParam, LPARAM aLParam)
       default:
         return PR_FALSE;
     }
-#ifdef MOZ_IPC
     // The event may go to a plug-in which already dispatched this message.
     // Then, the event can cause deadlock.  We should unlock the sender here.
     ::ReplyMessage(0);
-#endif
     scrollevent.isShift   = IS_VK_DOWN(NS_VK_SHIFT);
     scrollevent.isControl = IS_VK_DOWN(NS_VK_CONTROL);
     scrollevent.isMeta    = PR_FALSE;

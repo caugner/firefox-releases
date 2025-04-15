@@ -545,7 +545,7 @@ public:
 
   /**
    * Determine whether a buffer begins with a BOM for UTF-8, UTF-16LE,
-   * UTF-16BE, UTF-32LE, UTF-32BE.
+   * UTF-16BE
    *
    * @param aBuffer the buffer to check
    * @param aLength the length of the buffer
@@ -741,20 +741,6 @@ public:
     nsNodeInfoManager *niMgr = aNodeInfo->NodeInfoManager();
 
     *aResult = niMgr->GetNodeInfo(aName, aNodeInfo->GetPrefixAtom(),
-                                  aNodeInfo->NamespaceID()).get();
-    return *aResult ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
-  }
-
-  /**
-   * Convenience method to create a new nodeinfo that differs only by prefix
-   * from aNodeInfo.
-   */
-  static nsresult PrefixChanged(nsINodeInfo *aNodeInfo, nsIAtom *aPrefix,
-                                nsINodeInfo** aResult)
-  {
-    nsNodeInfoManager *niMgr = aNodeInfo->NodeInfoManager();
-
-    *aResult = niMgr->GetNodeInfo(aNodeInfo->NameAtom(), aPrefix,
                                   aNodeInfo->NamespaceID()).get();
     return *aResult ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
   }

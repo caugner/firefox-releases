@@ -59,6 +59,7 @@ CPP_UNIT_TESTS = \
   test_service_init_background_thread.cpp \
   test_AsXXX_helpers.cpp \
   test_StatementCache.cpp \
+  test_file_perms.cpp \
   $(NULL)
 
 ifdef MOZ_DEBUG
@@ -78,7 +79,6 @@ LOCAL_INCLUDES = \
 
 LIBS = \
 	$(LIBS_DIR) \
-	$(LIBXUL_DIST)/lib/$(LIB_PREFIX)xpcomglue_s.$(LIB_SUFFIX) \
 	$(MOZ_COMPONENT_LIBS) \
 	$(SQLITE_LIBS) \
 	$(NULL)

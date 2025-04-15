@@ -383,7 +383,10 @@ class GeckoSurfaceView
             outAttrs.imeOptions = EditorInfo.IME_ACTION_SEND;
         else if (mIMEActionHint != null && mIMEActionHint.length() != 0)
             outAttrs.actionLabel = mIMEActionHint;
-            
+
+        if (mIMELandscapeFS == false)
+            outAttrs.imeOptions |= EditorInfo.IME_FLAG_NO_EXTRACT_UI;
+
         inputConnection.reset();
         return inputConnection;
     }
@@ -413,10 +416,47 @@ class GeckoSurfaceView
         GeckoAppShell.sendEventToGecko(new GeckoEvent(event));
     }
 
+    private class GeocoderTask extends AsyncTask<Location, Void, Void> {
+        protected Void doInBackground(Location... location) {
+            try {
+                List<Address> addresses = mGeocoder.getFromLocation(location[0].getLatitude(),
+                                                                    location[0].getLongitude(), 1);
+                // grab the first address.  in the future,
+                // may want to expose multiple, or filter
+                // for best.
+                mLastGeoAddress = addresses.get(0);
+                GeckoAppShell.sendEventToGecko(new GeckoEvent(location[0], mLastGeoAddress));
+            } catch (Exception e) {
+                Log.w("GeckoSurfaceView", "GeocoderTask "+e);
+            }
+            return null;
+        }
+    }
+
     // geolocation
     public void onLocationChanged(Location location)
     {
-        GeckoAppShell.sendEventToGecko(new GeckoEvent(location));
+        if (mGeocoder == null)
+            mGeocoder = new Geocoder(getContext(), Locale.getDefault());
+
+        if (mLastGeoAddress == null) {
+            new GeocoderTask().execute(location);
+        }
+        else {
+            float[] results = new float[1];
+            Location.distanceBetween(location.getLatitude(),
+                                     location.getLongitude(),
+                                     mLastGeoAddress.getLatitude(),
+                                     mLastGeoAddress.getLongitude(),
+                                     results);
+            // pfm value.  don't want to slam the
+            // geocoder with very similar values, so
+            // only call after about 100m
+            if (results[0] > 100)
+                new GeocoderTask().execute(location);
+        }
+
+        GeckoAppShell.sendEventToGecko(new GeckoEvent(location, mLastGeoAddress));
     }
 
     public void onProviderDisabled(String provider)
@@ -494,6 +534,7 @@ class GeckoSurfaceView
         // KeyListener returns true if it handled the event for us.
         if (mIMEState == IME_STATE_DISABLED ||
             keyCode == KeyEvent.KEYCODE_ENTER ||
+            (event.getFlags() & KeyEvent.FLAG_SOFT_KEYBOARD) != 0 ||
             !mKeyListener.onKeyDown(this, mEditable, keyCode, event))
             GeckoAppShell.sendEventToGecko(new GeckoEvent(event));
         return true;
@@ -511,6 +552,7 @@ class GeckoSurfaceView
         }
         if (mIMEState == IME_STATE_DISABLED ||
             keyCode == KeyEvent.KEYCODE_ENTER ||
+            (event.getFlags() & KeyEvent.FLAG_SOFT_KEYBOARD) != 0 ||
             !mKeyListener.onKeyUp(this, mEditable, keyCode, event))
             GeckoAppShell.sendEventToGecko(new GeckoEvent(event));
         return true;
@@ -582,14 +624,17 @@ class GeckoSurfaceView
     KeyListener mKeyListener;
     Editable mEditable;
     Editable.Factory mEditableFactory;
-    boolean mIMEFocus;
     int mIMEState;
     String mIMETypeHint;
     String mIMEActionHint;
+    boolean mIMELandscapeFS;
 
     // Software rendering
     ByteBuffer mSoftwareBuffer;
     Bitmap mSoftwareBitmap;
+
+    Geocoder mGeocoder;
+    Address  mLastGeoAddress;
 
     final SynchronousQueue<ByteBuffer> mSyncBuf = new SynchronousQueue<ByteBuffer>();
 }

@@ -691,11 +691,12 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult) const
       nsStyleUtil::AppendEscapedCSSIdent(buffer, aResult);
     }
   }
-  else if (eCSSUnit_Array <= unit && unit <= eCSSUnit_Cubic_Bezier) {
+  else if (eCSSUnit_Array <= unit && unit <= eCSSUnit_Steps) {
     switch (unit) {
       case eCSSUnit_Counter:  aResult.AppendLiteral("counter(");  break;
       case eCSSUnit_Counters: aResult.AppendLiteral("counters("); break;
       case eCSSUnit_Cubic_Bezier: aResult.AppendLiteral("cubic-bezier("); break;
+      case eCSSUnit_Steps: aResult.AppendLiteral("steps("); break;
       default: break;
     }
 
@@ -716,6 +717,21 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult) const
           aResult.AppendLiteral(" ");
         else
           aResult.AppendLiteral(", ");
+      }
+      if (unit == eCSSUnit_Steps && i == 1) {
+        NS_ABORT_IF_FALSE(array->Item(i).GetUnit() == eCSSUnit_Enumerated &&
+                          (array->Item(i).GetIntValue() ==
+                            NS_STYLE_TRANSITION_TIMING_FUNCTION_STEP_START ||
+                           array->Item(i).GetIntValue() ==
+                            NS_STYLE_TRANSITION_TIMING_FUNCTION_STEP_END),
+                          "unexpected value");
+        if (array->Item(i).GetIntValue() ==
+              NS_STYLE_TRANSITION_TIMING_FUNCTION_STEP_START) {
+          aResult.AppendLiteral("start");
+        } else {
+          aResult.AppendLiteral("end");
+        }
+        continue;
       }
       nsCSSProperty prop =
         ((eCSSUnit_Counter <= unit && unit <= eCSSUnit_Counters) &&
@@ -981,6 +997,7 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult) const
     case eCSSUnit_Array:        break;
     case eCSSUnit_Attr:
     case eCSSUnit_Cubic_Bezier:
+    case eCSSUnit_Steps:
     case eCSSUnit_Counter:
     case eCSSUnit_Counters:     aResult.Append(PRUnichar(')'));    break;
     case eCSSUnit_Local_Font:   break;
@@ -1317,3 +1334,44 @@ nsCSSValueGradient::nsCSSValueGradient(PRBool aIsRadial,
     mRadialSize(eCSSUnit_None)
 {
 }
+
+// --- nsCSSCornerSizes -----------------
+
+nsCSSCornerSizes::nsCSSCornerSizes(void)
+{
+  MOZ_COUNT_CTOR(nsCSSCornerSizes);
+}
+
+nsCSSCornerSizes::nsCSSCornerSizes(const nsCSSCornerSizes& aCopy)
+  : mTopLeft(aCopy.mTopLeft),
+    mTopRight(aCopy.mTopRight),
+    mBottomRight(aCopy.mBottomRight),
+    mBottomLeft(aCopy.mBottomLeft)
+{
+  MOZ_COUNT_CTOR(nsCSSCornerSizes);
+}
+
+nsCSSCornerSizes::~nsCSSCornerSizes()
+{
+  MOZ_COUNT_DTOR(nsCSSCornerSizes);
+}
+
+void
+nsCSSCornerSizes::Reset()
+{
+  NS_FOR_CSS_FULL_CORNERS(corner) {
+    this->GetCorner(corner).Reset();
+  }
+}
+
+PR_STATIC_ASSERT(NS_CORNER_TOP_LEFT == 0 && NS_CORNER_TOP_RIGHT == 1 && \
+    NS_CORNER_BOTTOM_RIGHT == 2 && NS_CORNER_BOTTOM_LEFT == 3);
+
+/* static */ const nsCSSCornerSizes::corner_type
+nsCSSCornerSizes::corners[4] = {
+  &nsCSSCornerSizes::mTopLeft,
+  &nsCSSCornerSizes::mTopRight,
+  &nsCSSCornerSizes::mBottomRight,
+  &nsCSSCornerSizes::mBottomLeft,
+};
+

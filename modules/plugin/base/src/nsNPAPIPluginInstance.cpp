@@ -50,7 +50,6 @@
 #include "nsPluginLogging.h"
 #include "nsIPrivateBrowsingService.h"
 #include "nsContentUtils.h"
-#include "nsIContentUtils.h"
 
 #include "nsIDocument.h"
 #include "nsIScriptGlobalObject.h"
@@ -65,7 +64,7 @@ using namespace mozilla::plugins::parent;
 static NS_DEFINE_IID(kIOutputStreamIID, NS_IOUTPUTSTREAM_IID);
 static NS_DEFINE_IID(kIPluginStreamListenerIID, NS_IPLUGINSTREAMLISTENER_IID);
 
-NS_IMPL_ISUPPORTS2(nsNPAPIPluginInstance, nsIPluginInstance, nsIPluginInstance_MOZILLA_2_0_BRANCH)
+NS_IMPL_ISUPPORTS1(nsNPAPIPluginInstance, nsIPluginInstance)
 
 nsNPAPIPluginInstance::nsNPAPIPluginInstance(nsNPAPIPlugin* plugin)
   :
@@ -82,6 +81,7 @@ nsNPAPIPluginInstance::nsNPAPIPluginInstance(nsNPAPIPlugin* plugin)
     mTransparent(PR_FALSE),
     mCached(PR_FALSE),
     mWantsAllNetworkStreams(PR_FALSE),
+    mUsesDOMForCursor(PR_FALSE),
     mInPluginInitCall(PR_FALSE),
     mPlugin(plugin),
     mMIMEType(nsnull),
@@ -189,10 +189,11 @@ NS_IMETHODIMP nsNPAPIPluginInstance::Stop()
 
   // Make sure we lock while we're writing to mRunning after we've
   // started as other threads might be checking that inside a lock.
-  EnterAsyncPluginThreadCallLock();
-  mRunning = DESTROYING;
-  mStopTime = TimeStamp::Now();
-  ExitAsyncPluginThreadCallLock();
+  {
+    AsyncCallbackAutoLock lock;
+    mRunning = DESTROYING;
+    mStopTime = TimeStamp::Now();
+  }
 
   OnPluginDestroy(&mNPP);
 
@@ -602,19 +603,26 @@ NS_IMETHODIMP nsNPAPIPluginInstance::GetValueFromPlugin(NPPVariable variable, vo
     return NS_OK;
   }
 #endif
+
   if (!mPlugin || !mPlugin->GetLibrary())
     return NS_ERROR_FAILURE;
 
   NPPluginFuncs* pluginFunctions = mPlugin->PluginFuncs();
 
   nsresult rv = NS_ERROR_FAILURE;
+
   if (pluginFunctions->getvalue && RUNNING == mRunning) {
     PluginDestructionGuard guard(this);
 
-    NS_TRY_SAFE_CALL_RETURN(rv, (*pluginFunctions->getvalue)(&mNPP, variable, value), this);
+    NPError pluginError = NPERR_GENERIC_ERROR;
+    NS_TRY_SAFE_CALL_RETURN(pluginError, (*pluginFunctions->getvalue)(&mNPP, variable, value), this);
     NPP_PLUGIN_LOG(PLUGIN_LOG_NORMAL,
     ("NPP GetValue called: this=%p, npp=%p, var=%d, value=%d, return=%d\n", 
-    this, &mNPP, variable, value, rv));
+    this, &mNPP, variable, value, pluginError));
+
+    if (pluginError == NPERR_NO_ERROR) {
+      rv = NS_OK;
+    }
   }
 
   return rv;
@@ -683,6 +691,18 @@ NPError nsNPAPIPluginInstance::SetWantsAllNetworkStreams(PRBool aWantsAllNetwork
 {
   mWantsAllNetworkStreams = aWantsAllNetworkStreams;
   return NPERR_NO_ERROR;
+}
+
+NPError nsNPAPIPluginInstance::SetUsesDOMForCursor(PRBool aUsesDOMForCursor)
+{
+  mUsesDOMForCursor = aUsesDOMForCursor;
+  return NPERR_NO_ERROR;
+}
+
+PRBool
+nsNPAPIPluginInstance::UsesDOMForCursor()
+{
+  return mUsesDOMForCursor;
 }
 
 #ifdef XP_MACOSX
@@ -855,19 +875,6 @@ nsNPAPIPluginInstance::AsyncSetWindow(NPWindow* window)
     return NS_ERROR_FAILURE;
 
   return library->AsyncSetWindow(&mNPP, window);
-}
-
-NS_IMETHODIMP
-nsNPAPIPluginInstance::GetSurface(gfxASurface** aSurface)
-{
-  if (RUNNING != mRunning)
-    return NS_OK;
-
-  AutoPluginLibraryCall library(this);
-  if (!library)
-    return NS_ERROR_FAILURE;
-
-  return library->GetSurface(&mNPP, aSurface);
 }
 
 NS_IMETHODIMP
@@ -1354,17 +1361,8 @@ NS_IMETHODIMP
 CarbonEventModelFailureEvent::Run()
 {
   nsString type = NS_LITERAL_STRING("npapi-carbon-event-model-failure");
-#ifdef MOZ_ENABLE_LIBXUL
   nsContentUtils::DispatchTrustedEvent(mContent->GetDocument(), mContent,
                                        type, PR_TRUE, PR_TRUE);
-#else
-  nsCOMPtr<nsIContentUtils_MOZILLA_2_0_BRANCH> cu =
-    do_GetService("@mozilla.org/content/contentutils-moz2.0;1");
-  if (cu) {
-    cu->DispatchTrustedEvent(mContent->GetDocument(), mContent,
-                             type, PR_TRUE, PR_TRUE);
-  }
-#endif
   return NS_OK;
 }
 

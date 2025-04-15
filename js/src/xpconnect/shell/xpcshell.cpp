@@ -159,7 +159,7 @@ nsAutoString *gWorkingDirectory = nsnull;
 static JSBool
 GetLocationProperty(JSContext *cx, JSObject *obj, jsid id, jsval *vp)
 {
-#if (!defined(XP_WIN) && !defined(XP_UNIX)) || defined(WINCE)
+#if !defined(XP_WIN) && !defined(XP_UNIX)
     //XXX: your platform should really implement this
     return JS_FALSE;
 #else
@@ -462,47 +462,37 @@ Dump(JSContext *cx, uintN argc, jsval *vp)
 static JSBool
 Load(JSContext *cx, uintN argc, jsval *vp)
 {
-    uintN i;
-    JSString *str;
-    JSScript *script;
-    JSBool ok;
-    jsval result;
-    FILE *file;
-
     JSObject *obj = JS_THIS_OBJECT(cx, vp);
     if (!obj)
-        return JS_FALSE;
+        return false;
 
     jsval *argv = JS_ARGV(cx, vp);
-    for (i = 0; i < argc; i++) {
-        str = JS_ValueToString(cx, argv[i]);
+    for (uintN i = 0; i < argc; i++) {
+        JSString *str = JS_ValueToString(cx, argv[i]);
         if (!str)
-            return JS_FALSE;
+            return false;
         argv[i] = STRING_TO_JSVAL(str);
         JSAutoByteString filename(cx, str);
         if (!filename)
-            return JS_FALSE;
-        file = fopen(filename.ptr(), "r");
+            return false;
+        FILE *file = fopen(filename.ptr(), "r");
         if (!file) {
             JS_ReportError(cx, "cannot open file '%s' for reading",
                            filename.ptr());
-            return JS_FALSE;
+            return false;
         }
-        script = JS_CompileFileHandleForPrincipals(cx, obj, filename.ptr(),
-                                                   file, gJSPrincipals);
+        JSObject *scriptObj = JS_CompileFileHandleForPrincipals(cx, obj, filename.ptr(),
+                                                                file, gJSPrincipals);
         fclose(file);
-        if (!script)
-            return JS_FALSE;
+        if (!scriptObj)
+            return false;
 
-        ok = !compileOnly
-             ? JS_ExecuteScript(cx, obj, script, &result)
-             : JS_TRUE;
-        JS_DestroyScript(cx, script);
-        if (!ok)
-            return JS_FALSE;
+        jsval result;
+        if (!compileOnly && !JS_ExecuteScript(cx, obj, scriptObj, &result))
+            return false;
     }
     JS_SET_RVAL(cx, vp, JSVAL_VOID);
-    return JS_TRUE;
+    return true;
 }
 
 static JSBool
@@ -688,8 +678,6 @@ Clear(JSContext *cx, uintN argc, jsval *vp)
     return JS_TRUE;
 }
 
-#ifdef MOZ_IPC
-
 static JSBool
 SendCommand(JSContext* cx,
             uintN argc,
@@ -733,8 +721,6 @@ GetChildGlobalObject(JSContext* cx,
     }
     return JS_FALSE;
 }
-
-#endif // MOZ_IPC
 
 /*
  * JSContext option name to flag map. The option names are in alphabetical
@@ -870,10 +856,8 @@ static JSFunctionSpec glob_functions[] = {
 #ifdef DEBUG
     {"dumpHeap",        DumpHeap,       5,0},
 #endif
-#ifdef MOZ_IPC
     {"sendCommand",     SendCommand,    1,0},
     {"getChildGlobalObject", GetChildGlobalObject, 0,0},
-#endif
 #ifdef MOZ_CALLGRIND
     {"startCallgrind",  js_StartCallgrind,  0,0},
     {"stopCallgrind",   js_StopCallgrind,   0,0},
@@ -892,7 +876,7 @@ static JSBool
 env_setProperty(JSContext *cx, JSObject *obj, jsid id, JSBool strict, jsval *vp)
 {
 /* XXX porting may be easy, but these don't seem to supply setenv by default */
-#if !defined XP_BEOS && !defined XP_OS2 && !defined SOLARIS
+#if !defined XP_OS2 && !defined SOLARIS
     JSString *idstr, *valstr;
     int rv;
 
@@ -938,7 +922,7 @@ env_setProperty(JSContext *cx, JSObject *obj, jsid id, JSBool strict, jsval *vp)
         return JS_FALSE;
     }
     *vp = STRING_TO_JSVAL(valstr);
-#endif /* !defined XP_BEOS && !defined XP_OS2 && !defined SOLARIS */
+#endif /* !defined XP_OS2 && !defined SOLARIS */
     return JS_TRUE;
 }
 
@@ -1046,7 +1030,7 @@ static void
 ProcessFile(JSContext *cx, JSObject *obj, const char *filename, FILE *file,
             JSBool forceTTY)
 {
-    JSScript *script;
+    JSObject *scriptObj;
     jsval result;
     int lineno, startline;
     JSBool ok, hitEOF;
@@ -1079,14 +1063,11 @@ ProcessFile(JSContext *cx, JSObject *obj, const char *filename, FILE *file,
         ungetc(ch, file);
         DoBeginRequest(cx);
 
-        script = JS_CompileFileHandleForPrincipals(cx, obj, filename, file,
-                                                   gJSPrincipals);
+        scriptObj = JS_CompileFileHandleForPrincipals(cx, obj, filename, file,
+                                                      gJSPrincipals);
 
-        if (script) {
-            if (!compileOnly)
-                (void)JS_ExecuteScript(cx, obj, script, &result);
-            JS_DestroyScript(cx, script);
-        }
+        if (scriptObj && !compileOnly)
+            (void)JS_ExecuteScript(cx, obj, scriptObj, &result);
         DoEndRequest(cx);
 
         return;
@@ -1118,13 +1099,13 @@ ProcessFile(JSContext *cx, JSObject *obj, const char *filename, FILE *file,
         DoBeginRequest(cx);
         /* Clear any pending exception from previous failed compiles.  */
         JS_ClearPendingException(cx);
-        script = JS_CompileScriptForPrincipals(cx, obj, gJSPrincipals, buffer,
-                                               strlen(buffer), "typein", startline);
-        if (script) {
+        scriptObj = JS_CompileScriptForPrincipals(cx, obj, gJSPrincipals, buffer,
+                                                  strlen(buffer), "typein", startline);
+        if (scriptObj) {
             JSErrorReporter older;
 
             if (!compileOnly) {
-                ok = JS_ExecuteScript(cx, obj, script, &result);
+                ok = JS_ExecuteScript(cx, obj, scriptObj, &result);
                 if (ok && result != JSVAL_VOID) {
                     /* Suppress error reports from JS_ValueToString(). */
                     older = JS_SetErrorReporter(cx, NULL);
@@ -1137,7 +1118,6 @@ ProcessFile(JSContext *cx, JSObject *obj, const char *filename, FILE *file,
                         ok = JS_FALSE;
                 }
             }
-            JS_DestroyScript(cx, script);
         }
         DoEndRequest(cx);
     } while (!hitEOF && !gQuitting);
@@ -1755,7 +1735,7 @@ ContextCallback(JSContext *cx, uintN contextOp)
 static bool
 GetCurrentWorkingDirectory(nsAString& workingDirectory)
 {
-#if (!defined(XP_WIN) && !defined(XP_UNIX)) || defined(WINCE)
+#if !defined(XP_WIN) && !defined(XP_UNIX)
     //XXX: your platform should really implement this
     return false;
 #elif XP_WIN
@@ -1790,19 +1770,9 @@ GetCurrentWorkingDirectory(nsAString& workingDirectory)
     return true;
 }
 
-#ifdef WINCE
-#include "nsWindowsWMain.cpp"
-#endif
-
 int
-#ifndef WINCE
 main(int argc, char **argv, char **envp)
 {
-#else
-main(int argc, char **argv)
-{
-	char **envp = 0;
-#endif
 #ifdef XP_MACOSX
     InitAutoreleasePool();
 #endif
@@ -2033,10 +2003,8 @@ main(int argc, char **argv)
         JS_DestroyContext(cx);
     } // this scopes the nsCOMPtrs
 
-#ifdef MOZ_IPC
     if (!XRE_ShutdownTestShell())
         NS_ERROR("problem shutting down testshell");
-#endif
 
 #ifdef MOZ_CRASHREPORTER
     // Get the crashreporter service while XPCOM is still active.

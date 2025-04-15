@@ -1,4 +1,4 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
  * vim: set ts=8 sw=4 et tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
@@ -48,6 +48,42 @@
 #include "jsprvtd.h"
 
 JS_BEGIN_EXTERN_C
+
+extern JS_PUBLIC_API(JSCrossCompartmentCall *)
+JS_EnterCrossCompartmentCallScript(JSContext *cx, JSScript *target);
+
+#ifdef __cplusplus
+JS_END_EXTERN_C
+
+namespace JS {
+
+class JS_PUBLIC_API(AutoEnterScriptCompartment)
+{
+    JSCrossCompartmentCall *call;
+
+  public:
+    AutoEnterScriptCompartment() : call(NULL) {}
+
+    bool enter(JSContext *cx, JSScript *target);
+
+    bool entered() const { return call != NULL; }
+
+    ~AutoEnterScriptCompartment() {
+        if (call && call != reinterpret_cast<JSCrossCompartmentCall*>(1))
+            JS_LeaveCrossCompartmentCall(call);
+    }
+};
+
+} /* namespace JS */
+
+JS_BEGIN_EXTERN_C
+#endif
+
+extern JS_PUBLIC_API(JSScript *)
+JS_GetScriptFromObject(JSObject *scriptObject);
+
+extern JS_PUBLIC_API(JSString *)
+JS_DecompileScript(JSContext *cx, JSScript *script, const char *name, uintN indent);
 
 /*
  * Currently, we only support runtime-wide debugging. In the future, we should
@@ -148,8 +184,8 @@ JS_ClearAllWatchPoints(JSContext *cx);
  * Hide these non-API function prototypes by testing whether the internal
  * header file "jsversion.h" has been included.
  */
-extern void
-js_TraceWatchPoints(JSTracer *trc, JSObject *obj);
+extern JSBool
+js_TraceWatchPoints(JSTracer *trc);
 
 extern void
 js_SweepWatchPoints(JSContext *cx);
@@ -283,6 +319,9 @@ JS_IsConstructorFrame(JSContext *cx, JSStackFrame *fp);
 
 extern JS_PUBLIC_API(JSBool)
 JS_IsDebuggerFrame(JSContext *cx, JSStackFrame *fp);
+
+extern JS_PUBLIC_API(JSBool)
+JS_IsGlobalFrame(JSContext *cx, JSStackFrame *fp);
 
 extern JS_PUBLIC_API(jsval)
 JS_GetFrameReturnValue(JSContext *cx, JSStackFrame *fp);
@@ -446,40 +485,6 @@ extern JS_PUBLIC_API(size_t)
 JS_GetScriptTotalSize(JSContext *cx, JSScript *script);
 
 /*
- * Get the top-most running script on cx starting from fp, or from the top of
- * cx's frame stack if fp is null, and return its script filename flags.  If
- * the script has a null filename member, return JSFILENAME_NULL.
- */
-extern JS_PUBLIC_API(uint32)
-JS_GetTopScriptFilenameFlags(JSContext *cx, JSStackFrame *fp);
-
-/*
- * Get the script filename flags for the script.  If the script doesn't have a
- * filename, return JSFILENAME_NULL.
- */
-extern JS_PUBLIC_API(uint32)
-JS_GetScriptFilenameFlags(JSScript *script);
-
-/*
- * Associate flags with a script filename prefix in rt, so that any subsequent
- * script compilation will inherit those flags if the script's filename is the
- * same as prefix, or if prefix is a substring of the script's filename.
- *
- * The API defines only one flag bit, JSFILENAME_SYSTEM, leaving the remaining
- * 31 bits up to the API client to define.  The union of all 32 bits must not
- * be a legal combination, however, in order to preserve JSFILENAME_NULL as a
- * unique value.  API clients may depend on JSFILENAME_SYSTEM being a set bit
- * in JSFILENAME_NULL -- a script with a null filename member is presumed to
- * be a "system" script.
- */
-extern JS_PUBLIC_API(JSBool)
-JS_FlagScriptFilenamePrefix(JSRuntime *rt, const char *prefix, uint32 flags);
-
-#define JSFILENAME_NULL         0xffffffff      /* null script filename */
-#define JSFILENAME_SYSTEM       0x00000001      /* "system" script, see below */
-#define JSFILENAME_PROTECTED    0x00000002      /* scripts need protection */
-
-/*
  * Return true if obj is a "system" object, that is, one created by
  * JS_NewSystemObject with the system flag set and not JS_NewObject.
  *
@@ -497,11 +502,6 @@ JS_IsSystemObject(JSContext *cx, JSObject *obj);
  */
 extern JS_PUBLIC_API(JSBool)
 JS_MakeSystemObject(JSContext *cx, JSObject *obj);
-
-/************************************************************************/
-
-extern JS_PUBLIC_API(JSObject *)
-JS_UnwrapObject(JSContext *cx, JSObject *obj);
 
 /************************************************************************/
 
@@ -562,6 +562,28 @@ js_InitEthogram(JSContext *cx, uintN argc, jsval *vp);
 extern JS_FRIEND_API(JSBool)
 js_ShutdownEthogram(JSContext *cx, uintN argc, jsval *vp);
 #endif /* MOZ_TRACEVIS */
+
+#ifdef MOZ_TRACE_JSCALLS
+typedef void (*JSFunctionCallback)(const JSFunction *fun,
+                                   const JSScript *scr,
+                                   const JSContext *cx,
+                                   int entering);
+
+/*
+ * The callback is expected to be quick and noninvasive. It should not
+ * trigger interrupts, turn on debugging, or produce uncaught JS
+ * exceptions. The state of the stack and registers in the context
+ * cannot be relied upon, since this callback may be invoked directly
+ * from either JIT. The 'entering' field means we are entering a
+ * function if it is positive, leaving a function if it is zero or
+ * negative.
+ */
+extern JS_PUBLIC_API(void)
+JS_SetFunctionCallback(JSContext *cx, JSFunctionCallback fcb);
+
+extern JS_PUBLIC_API(JSFunctionCallback)
+JS_GetFunctionCallback(JSContext *cx);
+#endif /* MOZ_TRACE_JSCALLS */
 
 JS_END_EXTERN_C
 

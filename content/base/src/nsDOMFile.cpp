@@ -76,8 +76,7 @@ using namespace mozilla;
 // from NS_NewByteInputStream is held alive as long as the
 // stream is.  We do that by passing back this class instead.
 class DataOwnerAdapter : public nsIInputStream,
-                         public nsISeekableStream,
-                         public nsIIPCSerializable
+                         public nsISeekableStream
 {
   typedef nsDOMMemoryFile::DataOwner DataOwner;
 public:
@@ -92,29 +91,23 @@ public:
 
   NS_FORWARD_NSISEEKABLESTREAM(mSeekableStream->)
 
-  NS_FORWARD_NSIIPCSERIALIZABLE(mSerializableStream->)
-
 private:
   DataOwnerAdapter(DataOwner* aDataOwner,
                    nsIInputStream* aStream)
     : mDataOwner(aDataOwner), mStream(aStream),
-      mSeekableStream(do_QueryInterface(aStream)),
-      mSerializableStream(do_QueryInterface(aStream))
+      mSeekableStream(do_QueryInterface(aStream))
   {
     NS_ASSERTION(mSeekableStream, "Somebody gave us the wrong stream!");
-    NS_ASSERTION(mSerializableStream, "Somebody gave us the wrong stream!");
   }
 
   nsRefPtr<DataOwner> mDataOwner;
   nsCOMPtr<nsIInputStream> mStream;
   nsCOMPtr<nsISeekableStream> mSeekableStream;
-  nsCOMPtr<nsIIPCSerializable> mSerializableStream;
 };
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(DataOwnerAdapter,
+NS_IMPL_THREADSAFE_ISUPPORTS2(DataOwnerAdapter,
                               nsIInputStream,
-                              nsISeekableStream,
-                              nsIIPCSerializable)
+                              nsISeekableStream)
 
 nsresult DataOwnerAdapter::Create(DataOwner* aDataOwner,
                                   PRUint32 aStart,
@@ -146,6 +139,7 @@ DOMCI_DATA(Blob, nsDOMFile)
 NS_INTERFACE_MAP_BEGIN(nsDOMFile)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMFile)
   NS_INTERFACE_MAP_ENTRY(nsIDOMBlob)
+  NS_INTERFACE_MAP_ENTRY(nsIDOMBlob_MOZILLA_2_0_BRANCH)
   NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIDOMFile, mIsFullFile)
   NS_INTERFACE_MAP_ENTRY(nsIXHRSendable)
   NS_INTERFACE_MAP_ENTRY(nsICharsetDetectionObserver)
@@ -252,17 +246,40 @@ nsDOMFile::GetType(nsAString &aType)
   return NS_OK;
 }
 
-// Makes sure that aStart and aStart + aLength is less then or equal to aSize
+// Makes sure that aStart and aEnd is less then or equal to aSize and greater
+// than 0
 void
-ClampToSize(PRUint64 aSize, PRUint64& aStart, PRUint64& aLength)
+ParseSize(PRInt64 aSize, PRInt64& aStart, PRInt64& aEnd)
 {
-  if (aStart > aSize) {
-    aStart = aLength = 0;
+  CheckedInt64 newStartOffset = aStart;
+  if (aStart < -aSize) {
+    newStartOffset = 0;
   }
-  CheckedUint64 endOffset = aStart;
-  endOffset += aLength;
-  if (!endOffset.valid() || endOffset.value() > aSize) {
-    aLength = aSize - aStart;
+  else if (aStart < 0) {
+    newStartOffset += aSize;
+  }
+  else if (aStart > aSize) {
+    newStartOffset = aSize;
+  }
+
+  CheckedInt64 newEndOffset = aEnd;
+  if (aEnd < -aSize) {
+    newEndOffset = 0;
+  }
+  else if (aEnd < 0) {
+    newEndOffset += aSize;
+  }
+  else if (aEnd > aSize) {
+    newEndOffset = aSize;
+  }
+
+  if (!newStartOffset.valid() || !newEndOffset.valid() ||
+      newStartOffset.value() >= newEndOffset.value()) {
+    aStart = aEnd = 0;
+  }
+  else {
+    aStart = newStartOffset.value();
+    aEnd = newEndOffset.value();
   }
 }
 
@@ -270,16 +287,29 @@ NS_IMETHODIMP
 nsDOMFile::Slice(PRUint64 aStart, PRUint64 aLength,
                  const nsAString& aContentType, nsIDOMBlob **aBlob)
 {
+  return MozSlice(aStart, aStart + aLength, aContentType, 2, aBlob);
+}
+
+NS_IMETHODIMP
+nsDOMFile::MozSlice(PRInt64 aStart, PRInt64 aEnd,
+                    const nsAString& aContentType, PRUint8 optional_argc,
+                    nsIDOMBlob **aBlob)
+{
   *aBlob = nsnull;
 
   // Truncate aLength and aStart so that we stay within this file.
   PRUint64 thisLength;
   nsresult rv = GetSize(&thisLength);
   NS_ENSURE_SUCCESS(rv, rv);
-  ClampToSize(thisLength, aStart, aLength);
+
+  if (!optional_argc) {
+    aEnd = (PRInt64)thisLength;
+  }
+
+  ParseSize((PRInt64)thisLength, aStart, aEnd);
   
   // Create the new file
-  NS_ADDREF(*aBlob = new nsDOMFile(this, aStart, aLength, aContentType));
+  NS_ADDREF(*aBlob = new nsDOMFile(this, aStart, aEnd - aStart, aContentType));
   
   return NS_OK;
 }
@@ -634,16 +664,22 @@ nsDOMMemoryFile::GetSize(PRUint64 *aFileSize)
 }
 
 NS_IMETHODIMP
-nsDOMMemoryFile::Slice(PRUint64 aStart, PRUint64 aLength,
-                       const nsAString& aContentType, nsIDOMBlob **aBlob)
+nsDOMMemoryFile::MozSlice(PRInt64 aStart, PRInt64 aEnd,
+                          const nsAString& aContentType, PRUint8 optional_argc,
+                          nsIDOMBlob **aBlob)
 {
   *aBlob = nsnull;
 
+  if (!optional_argc) {
+    aEnd = (PRInt64)mLength;
+  }
+
   // Truncate aLength and aStart so that we stay within this file.
-  ClampToSize(mLength, aStart, aLength);
+  ParseSize((PRInt64)mLength, aStart, aEnd);
 
   // Create the new file
-  NS_ADDREF(*aBlob = new nsDOMMemoryFile(this, aStart, aLength, aContentType));
+  NS_ADDREF(*aBlob = new nsDOMMemoryFile(this, aStart, aEnd - aStart,
+                                         aContentType));
   
   return NS_OK;
 }

@@ -40,9 +40,7 @@
 #include <QX11Info>
 #endif
 
-#ifdef MOZ_IPC
 #include "base/basictypes.h"
-#endif 
 
 #include "prtypes.h"
 #include "prmem.h"
@@ -51,7 +49,6 @@
 
 #include "jscntxt.h"
 
-#include "nsAutoLock.h"
 #include "nsNPAPIPlugin.h"
 #include "nsNPAPIPluginInstance.h"
 #include "nsNPAPIPluginStreamListener.h"
@@ -108,16 +105,15 @@
 
 #include "nsNetUtil.h"
 
+#include "mozilla/Mutex.h"
 #include "mozilla/PluginLibrary.h"
 using mozilla::PluginLibrary;
 
 #include "mozilla/PluginPRLibrary.h"
 using mozilla::PluginPRLibrary;
 
-#ifdef MOZ_IPC
 #include "mozilla/plugins/PluginModuleParent.h"
 using mozilla::plugins::PluginModuleParent;
-#endif
 
 #ifdef MOZ_X11
 #include "mozilla/X11Util.h"
@@ -127,6 +123,7 @@ using mozilla::plugins::PluginModuleParent;
 #include <windows.h>
 #endif
 
+using namespace mozilla;
 using namespace mozilla::plugins::parent;
 
 // We should make this const...
@@ -190,7 +187,7 @@ static NPNetscapeFuncs sBrowserFuncs = {
   _urlredirectresponse
 };
 
-static PRLock *sPluginThreadAsyncCallLock = nsnull;
+static Mutex *sPluginThreadAsyncCallLock = nsnull;
 static PRCList sPendingAsyncCalls = PR_INIT_STATIC_CLIST(&sPendingAsyncCalls);
 
 // POST/GET stream type
@@ -229,7 +226,7 @@ static void CheckClassInitialized()
     return;
 
   if (!sPluginThreadAsyncCallLock)
-    sPluginThreadAsyncCallLock = nsAutoLock::NewLock("sPluginThreadAsyncCallLock");
+    sPluginThreadAsyncCallLock = new Mutex("nsNPAPIPlugin.sPluginThreadAsyncCallLock");
 
   initialized = PR_TRUE;
 
@@ -265,7 +262,6 @@ nsNPAPIPlugin::SetPluginRefNum(short aRefNum)
 }
 #endif
 
-#ifdef MOZ_IPC
 void
 nsNPAPIPlugin::PluginCrashed(const nsAString& pluginDumpID,
                              const nsAString& browserDumpID)
@@ -273,9 +269,6 @@ nsNPAPIPlugin::PluginCrashed(const nsAString& pluginDumpID,
   nsRefPtr<nsPluginHost> host = dont_AddRef(nsPluginHost::GetInst());
   host->PluginCrashed(this, pluginDumpID, browserDumpID);
 }
-#endif
-
-#ifdef MOZ_IPC
 
 #if defined(XP_MACOSX) && defined(__i386__)
 static PRInt32 OSXVersion()
@@ -460,8 +453,6 @@ nsNPAPIPlugin::RunPluginOOP(const nsPluginTag *aPluginTag)
   return oopPluginsEnabled;
 }
 
-#endif // MOZ_IPC
-
 inline PluginLibrary*
 GetNewPluginLibrary(nsPluginTag *aPluginTag)
 {
@@ -469,11 +460,9 @@ GetNewPluginLibrary(nsPluginTag *aPluginTag)
     return nsnull;
   }
 
-#ifdef MOZ_IPC
   if (nsNPAPIPlugin::RunPluginOOP(aPluginTag)) {
     return PluginModuleParent::LoadModule(aPluginTag->mFullPath.get());
   }
-#endif
   return new PluginPRLibrary(aPluginTag->mFullPath.get(), aPluginTag->mLibrary);
 }
 
@@ -630,13 +619,14 @@ MakeNewNPAPIStreamInternal(NPP npp, const char *relativeURL, const char *target,
   switch (type) {
   case eNPPStreamTypeInternal_Get:
     {
-      if (NS_FAILED(pluginHost->GetURL(inst, relativeURL, target, listener)))
+      if (NS_FAILED(pluginHost->GetURL(inst, relativeURL, target, listener,
+                                       NULL, NULL, false)))
         return NPERR_GENERIC_ERROR;
       break;
     }
   case eNPPStreamTypeInternal_Post:
     {
-      if (NS_FAILED(pluginHost->PostURL(inst, relativeURL, len, buf, file, target, listener)))
+      if (NS_FAILED(pluginHost->PostURL(inst, relativeURL, len, buf, file, target, listener, NULL, NULL, false, 0, NULL)))
         return NPERR_GENERIC_ERROR;
       break;
     }
@@ -840,7 +830,7 @@ nsPluginThreadRunnable::nsPluginThreadRunnable(NPP instance,
   PR_INIT_CLIST(this);
 
   {
-    nsAutoLock lock(sPluginThreadAsyncCallLock);
+    MutexAutoLock lock(*sPluginThreadAsyncCallLock);
 
     nsNPAPIPluginInstance *inst = (nsNPAPIPluginInstance *)instance->ndata;
     if (!inst || !inst->IsRunning()) {
@@ -861,7 +851,7 @@ nsPluginThreadRunnable::~nsPluginThreadRunnable()
   }
 
   {
-    nsAutoLock lock(sPluginThreadAsyncCallLock);
+    MutexAutoLock lock(*sPluginThreadAsyncCallLock);
 
     PR_REMOVE_LINK(this);
   }
@@ -887,7 +877,7 @@ OnPluginDestroy(NPP instance)
   }
 
   {
-    nsAutoLock lock(sPluginThreadAsyncCallLock);
+    MutexAutoLock lock(*sPluginThreadAsyncCallLock);
 
     if (PR_CLIST_IS_EMPTY(&sPendingAsyncCalls)) {
       return;
@@ -913,27 +903,26 @@ OnShutdown()
                "Pending async plugin call list not cleaned up!");
 
   if (sPluginThreadAsyncCallLock) {
-    nsAutoLock::DestroyLock(sPluginThreadAsyncCallLock);
+    delete sPluginThreadAsyncCallLock;
 
     sPluginThreadAsyncCallLock = nsnull;
   }
 }
 
-void
-EnterAsyncPluginThreadCallLock()
+AsyncCallbackAutoLock::AsyncCallbackAutoLock()
 {
   if (sPluginThreadAsyncCallLock) {
-    PR_Lock(sPluginThreadAsyncCallLock);
+    sPluginThreadAsyncCallLock->Lock();
   }
 }
 
-void
-ExitAsyncPluginThreadCallLock()
+AsyncCallbackAutoLock::~AsyncCallbackAutoLock()
 {
   if (sPluginThreadAsyncCallLock) {
-    PR_Unlock(sPluginThreadAsyncCallLock);
+    sPluginThreadAsyncCallLock->Unlock();
   }
 }
+
 
 NPP NPPStack::sCurrentNPP = nsnull;
 
@@ -1525,7 +1514,7 @@ _retainobject(NPObject* npobj)
 #ifdef NS_BUILD_REFCNT_LOGGING
     int32_t refCnt =
 #endif
-      PR_AtomicIncrement((PRInt32*)&npobj->referenceCount);
+      PR_ATOMIC_INCREMENT((PRInt32*)&npobj->referenceCount);
     NS_LOG_ADDREF(npobj, refCnt, "BrowserNPObject", sizeof(NPObject));
   }
 
@@ -1541,7 +1530,7 @@ _releaseobject(NPObject* npobj)
   if (!npobj)
     return;
 
-  int32_t refCnt = PR_AtomicDecrement((PRInt32*)&npobj->referenceCount);
+  int32_t refCnt = PR_ATOMIC_DECREMENT((PRInt32*)&npobj->referenceCount);
   NS_LOG_RELEASE(npobj, refCnt, "BrowserNPObject");
 
   if (refCnt == 0) {
@@ -2042,7 +2031,11 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
       inst->IsWindowless(&windowless);
       NPBool needXEmbed = PR_FALSE;
       if (!windowless) {
-        inst->GetValueFromPlugin(NPPVpluginNeedsXEmbed, &needXEmbed);
+        res = inst->GetValueFromPlugin(NPPVpluginNeedsXEmbed, &needXEmbed);
+        // If the call returned an error code make sure we still use our default value.
+        if (NS_FAILED(res)) {
+          needXEmbed = PR_FALSE;
+        }
       }
       if (windowless || needXEmbed) {
         (*(Display **)result) = mozilla::DefaultXDisplay();
@@ -2374,6 +2367,11 @@ _setvalue(NPP npp, NPPVariable variable, void *result)
     case NPPVpluginWantsAllNetworkStreams: {
       PRBool bWantsAllNetworkStreams = (result != nsnull);
       return inst->SetWantsAllNetworkStreams(bWantsAllNetworkStreams);
+    }
+
+    case NPPVpluginUsesDOMForCursorBool: {
+      PRBool useDOMForCursor = (result != nsnull);
+      return inst->SetUsesDOMForCursor(useDOMForCursor);
     }
 
 #ifdef XP_MACOSX

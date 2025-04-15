@@ -163,6 +163,8 @@ nsHTTPCompressConv::OnDataAvailable(nsIRequest* request,
             if (streamLen == 0)
                 return NS_OK;
 
+            // FALLTHROUGH
+
         case HTTP_COMPRESS_DEFLATE:
 
             if (mInpBuffer != NULL && streamLen > mInpBufferLen)
@@ -264,7 +266,8 @@ nsHTTPCompressConv::OnDataAvailable(nsIRequest* request,
 
                         // stop an endless loop caused by non-deflate data being labelled as deflate
                         if (mDummyStreamInitialised) {
-                            NS_ERROR("endless loop detected");
+                            NS_WARNING("endless loop detected"
+                                       " - invalid deflate");
                             return NS_ERROR_INVALID_CONTENT_ENCODING;
                         }
                         mDummyStreamInitialised = PR_TRUE;

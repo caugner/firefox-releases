@@ -96,6 +96,21 @@ DOMSVGPathSegList::~DOMSVGPathSegList()
   sSVGPathSegListTearoffTable.RemoveTearoff(key);
 }
 
+nsIDOMSVGPathSeg*
+DOMSVGPathSegList::GetItemWithoutAddRef(PRUint32 aIndex)
+{
+#ifdef MOZ_SMIL
+  if (IsAnimValList()) {
+    Element()->FlushAnimations();
+  }
+#endif
+  if (aIndex < Length()) {
+    EnsureItemAt(aIndex);
+    return ItemAt(aIndex);
+  }
+  return nsnull;
+}
+
 void
 DOMSVGPathSegList::InternalListWillChangeTo(const SVGPathData& aNewValue)
 {
@@ -139,6 +154,13 @@ DOMSVGPathSegList::InternalListWillChangeTo(const SVGPathData& aNewValue)
   PRUint32 dataIndex = 0; // index into aNewValue's raw data array
 
   PRUint32 newSegType;
+
+  nsRefPtr<DOMSVGPathSegList> kungFuDeathGrip;
+  if (length && aNewValue.IsEmpty()) {
+    // RemovingFromList() might clear last reference to |this|.
+    // Retain a temporary reference to keep from dying before returning.
+    kungFuDeathGrip = this;
+  }
 
   while (index < length && dataIndex < dataLength) {
     newSegType = SVGPathSegUtils::DecodeType(aNewValue.mData[dataIndex]);
@@ -298,18 +320,12 @@ NS_IMETHODIMP
 DOMSVGPathSegList::GetItem(PRUint32 aIndex,
                            nsIDOMSVGPathSeg **_retval)
 {
-#ifdef MOZ_SMIL
-  if (IsAnimValList()) {
-    Element()->FlushAnimations();
+  *_retval = GetItemWithoutAddRef(aIndex);
+  if (!*_retval) {
+    return NS_ERROR_DOM_INDEX_SIZE_ERR;
   }
-#endif
-  if (aIndex < Length()) {
-    EnsureItemAt(aIndex);
-    NS_ADDREF(*_retval = ItemAt(aIndex));
-    return NS_OK;
-  }
-  *_retval = nsnull;
-  return NS_ERROR_DOM_INDEX_SIZE_ERR;
+  NS_ADDREF(*_retval);
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -491,6 +507,12 @@ DOMSVGPathSegList::AppendItem(nsIDOMSVGPathSeg *aNewItem,
   return InsertItemBefore(aNewItem, Length(), _retval);
 }
 
+NS_IMETHODIMP
+DOMSVGPathSegList::GetLength(PRUint32 *aNumberOfItems)
+{
+  return GetNumberOfItems(aNumberOfItems);
+}
+
 void
 DOMSVGPathSegList::EnsureItemAt(PRUint32 aIndex)
 {
@@ -540,7 +562,9 @@ DOMSVGPathSegList::
     return;
   }
 
-  DOMSVGPathSegList *animVal =
+  // This needs to be a strong reference; otherwise, the RemovingFromList call
+  // below might drop the last reference to animVal before we're done with it.
+  nsRefPtr<DOMSVGPathSegList> animVal =
     GetDOMWrapperIfExists(InternalAList().GetAnimValKey());
   if (!animVal) {
     // No animVal list wrapper

@@ -36,14 +36,12 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifdef MOZ_IPC
-#  include "gfxSharedImageSurface.h"
+#include "gfxSharedImageSurface.h"
 
-#  include "mozilla/layers/PLayerChild.h"
-#  include "mozilla/layers/PLayersChild.h"
-#  include "mozilla/layers/PLayersParent.h"
-#  include "ipc/ShadowLayerChild.h"
-#endif
+#include "mozilla/layers/PLayerChild.h"
+#include "mozilla/layers/PLayersChild.h"
+#include "mozilla/layers/PLayersParent.h"
+#include "ipc/ShadowLayerChild.h"
 
 #include "BasicLayers.h"
 #include "ImageLayers.h"
@@ -325,7 +323,7 @@ public:
   void DrawTo(ThebesLayer* aLayer, gfxContext* aTarget, float aOpacity);
 
   virtual already_AddRefed<gfxASurface>
-  CreateBuffer(ContentType aType, const nsIntSize& aSize);
+  CreateBuffer(ContentType aType, const nsIntSize& aSize, PRUint32 aFlags);
 
   /**
    * Swap out the old backing buffer for |aBuffer| and attributes.
@@ -426,7 +424,9 @@ protected:
   virtual void
   PaintBuffer(gfxContext* aContext,
               const nsIntRegion& aRegionToDraw,
+              const nsIntRegion& aExtendedRegionToDraw,
               const nsIntRegion& aRegionToInvalidate,
+              PRBool aDidSelfCopy,
               LayerManager::DrawThebesLayerCallback aCallback,
               void* aCallbackData)
   {
@@ -434,14 +434,14 @@ protected:
       BasicManager()->SetTransactionIncomplete();
       return;
     }
-    aCallback(this, aContext, aRegionToDraw, aRegionToInvalidate,
+    aCallback(this, aContext, aExtendedRegionToDraw, aRegionToInvalidate,
               aCallbackData);
     // Everything that's visible has been validated. Do this instead of just
     // OR-ing with aRegionToDraw, since that can lead to a very complex region
     // here (OR doesn't automatically simplify to the simplest possible
     // representation of a region.)
     nsIntRegion tmp;
-    tmp.Or(mVisibleRegion, aRegionToDraw);
+    tmp.Or(mVisibleRegion, aExtendedRegionToDraw);
     mValidRegion.Or(mValidRegion, tmp);
   }
 
@@ -586,7 +586,8 @@ BasicThebesLayer::PaintThebes(gfxContext* aContext,
     PRUint32 flags = 0;
     gfxMatrix transform;
     if (!GetEffectiveTransform().Is2D(&transform) ||
-        transform.HasNonIntegerTranslation()) {
+        transform.HasNonIntegerTranslation() ||
+        MustRetainContent() /*<=> has shadow layer*/) {
       flags |= ThebesLayerBuffer::PAINT_WILL_RESAMPLE;
     }
     Buffer::PaintState state =
@@ -599,12 +600,14 @@ BasicThebesLayer::PaintThebes(gfxContext* aContext,
       // from RGB to RGBA, because we might need to repaint with
       // subpixel AA)
       state.mRegionToInvalidate.And(state.mRegionToInvalidate, mVisibleRegion);
-      state.mRegionToDraw.ExtendForScaling(paintXRes, paintYRes);
+      nsIntRegion extendedDrawRegion = state.mRegionToDraw;
+      extendedDrawRegion.ExtendForScaling(paintXRes, paintYRes);
       mXResolution = paintXRes;
       mYResolution = paintYRes;
       SetAntialiasingFlags(this, state.mContext);
       PaintBuffer(state.mContext,
-                  state.mRegionToDraw, state.mRegionToInvalidate,
+                  state.mRegionToDraw, extendedDrawRegion, state.mRegionToInvalidate,
+                  state.mDidSelfCopy,
                   aCallback, aCallbackData);
       Mutated();
     } else {
@@ -666,7 +669,7 @@ BasicThebesLayerBuffer::DrawTo(ThebesLayer* aLayer,
 
 already_AddRefed<gfxASurface>
 BasicThebesLayerBuffer::CreateBuffer(ContentType aType, 
-                                     const nsIntSize& aSize)
+                                     const nsIntSize& aSize, PRUint32 aFlags)
 {
   return mLayer->CreateBuffer(aType, aSize);
 }
@@ -745,6 +748,8 @@ BasicImageLayer::GetAndPaintCurrentImage(gfxContext* aContext,
   if (!mContainer)
     return nsnull;
 
+  nsRefPtr<Image> image = mContainer->GetCurrentImage();
+
   nsRefPtr<gfxASurface> surface = mContainer->GetCurrentAsSurface(&mSize);
   if (!surface) {
     return nsnull;
@@ -764,7 +769,10 @@ BasicImageLayer::GetAndPaintCurrentImage(gfxContext* aContext,
   PaintContext(pat,
                tileSrcRect ? GetVisibleRegion() : nsIntRegion(nsIntRect(0, 0, mSize.width, mSize.height)),
                tileSrcRect,
-               aOpacity, aContext); 
+               aOpacity, aContext);
+
+  GetContainer()->NotifyPaintedImage(image);
+
   return pat.forget();
 }
 
@@ -883,7 +891,6 @@ public:
   }
 
   virtual void Initialize(const Data& aData);
-  virtual void Updated(const nsIntRect& aRect);
   virtual void Paint(gfxContext* aContext);
 
   virtual void PaintWithOpacity(gfxContext* aContext,
@@ -894,12 +901,11 @@ protected:
   {
     return static_cast<BasicLayerManager*>(mManager);
   }
+  void UpdateSurface();
 
   nsRefPtr<gfxASurface> mSurface;
   nsRefPtr<mozilla::gl::GLContext> mGLContext;
   PRUint32 mCanvasFramebuffer;
-
-  nsIntRect mUpdatedRect;
 
   PRPackedBool mGLBufferIsPremultiplied;
   PRPackedBool mNeedsYFlip;
@@ -909,8 +915,6 @@ void
 BasicCanvasLayer::Initialize(const Data& aData)
 {
   NS_ASSERTION(mSurface == nsnull, "BasicCanvasLayer::Initialize called twice!");
-
-  mUpdatedRect.Empty();
 
   if (aData.mSurface) {
     mSurface = aData.mSurface;
@@ -931,12 +935,11 @@ BasicCanvasLayer::Initialize(const Data& aData)
 }
 
 void
-BasicCanvasLayer::Updated(const nsIntRect& aRect)
+BasicCanvasLayer::UpdateSurface()
 {
-  NS_ASSERTION(mUpdatedRect.IsEmpty(),
-               "CanvasLayer::Updated called more than once in a transaction!");
-
-  mUpdatedRect.UnionRect(mUpdatedRect, aRect);
+  if (!mDirty)
+    return;
+  mDirty = PR_FALSE;
 
   if (mGLContext) {
     nsRefPtr<gfxImageSurface> isurf =
@@ -966,9 +969,6 @@ BasicCanvasLayer::Updated(const nsIntRect& aRect)
     if (currentFramebuffer != mCanvasFramebuffer)
       mGLContext->fBindFramebuffer(LOCAL_GL_FRAMEBUFFER, mCanvasFramebuffer);
 
-    // For simplicity, we read the entire framebuffer for now -- in
-    // the future we should use mUpdatedRect, though with WebGL we don't
-    // have an easy way to generate one.
     mGLContext->ReadPixelsIntoImageSurface(0, 0,
                                            mBounds.width, mBounds.height,
                                            isurf);
@@ -987,15 +987,13 @@ BasicCanvasLayer::Updated(const nsIntRect& aRect)
     // stick our surface into mSurface, so that the Paint() path is the same
     mSurface = isurf;
   }
-
-  // sanity
-  NS_ASSERTION(mUpdatedRect.IsEmpty() || mBounds.Contains(mUpdatedRect),
-               "CanvasLayer: Updated rect bigger than bounds!");
 }
 
 void
 BasicCanvasLayer::Paint(gfxContext* aContext)
 {
+  UpdateSurface();
+  FireDidTransactionCallback();
   PaintWithOpacity(aContext, GetEffectiveOpacity());
 }
 
@@ -1027,8 +1025,6 @@ BasicCanvasLayer::PaintWithOpacity(gfxContext* aContext,
   if (mNeedsYFlip) {
     aContext->SetMatrix(m);
   }
-
-  mUpdatedRect.Empty();
 }
 
 class BasicReadbackLayer : public ReadbackLayer,
@@ -1249,6 +1245,7 @@ TransformIntRect(nsIntRect& aRect, const gfxMatrix& aMatrix,
 // This implementation assumes that GetEffectiveTransform transforms
 // all layers to the same coordinate system. It can't be used as is
 // by accelerated layers because of intermediate surfaces.
+// aClipRect and aRegion are in that global coordinate system.
 static void
 MarkLeafLayersCoveredByOpaque(Layer* aLayer, const nsIntRect& aClipRect,
                               nsIntRegion& aRegion)
@@ -1257,7 +1254,6 @@ MarkLeafLayersCoveredByOpaque(Layer* aLayer, const nsIntRect& aClipRect,
   BasicImplData* data = ToData(aLayer);
   data->SetCoveredByOpaque(PR_FALSE);
 
-  const nsIntRect* clipRect = aLayer->GetEffectiveClipRect();
   nsIntRect newClipRect(aClipRect);
 
   // Allow aLayer or aLayer's descendants to cover underlying layers
@@ -1267,14 +1263,21 @@ MarkLeafLayersCoveredByOpaque(Layer* aLayer, const nsIntRect& aClipRect,
     newClipRect.SetRect(0, 0, 0, 0);
   }
 
-  if (clipRect) {
-    nsIntRect cr = *clipRect;
-    gfxMatrix tr;
-    if (aLayer->GetEffectiveTransform().Is2D(&tr)) {
-      TransformIntRect(cr, tr, ToInsideIntRect);
+  {
+    const nsIntRect* clipRect = aLayer->GetEffectiveClipRect();
+    if (clipRect) {
+      nsIntRect cr = *clipRect;
+      // clipRect is in the container's coordinate system. Get it into the
+      // global coordinate system.
+      if (aLayer->GetParent()) {
+        gfxMatrix tr;
+        if (aLayer->GetParent()->GetEffectiveTransform().Is2D(&tr)) {
+          TransformIntRect(cr, tr, ToInsideIntRect);
+        } else {
+          cr.SetRect(0, 0, 0, 0);
+        }
+      }
       newClipRect.IntersectRect(newClipRect, cr);
-    } else {
-      newClipRect.SetRect(0, 0, 0, 0);
     }
   }
 
@@ -1599,8 +1602,6 @@ BasicLayerManager::CreateReadbackLayer()
   return layer.forget();
 }
 
-#ifdef MOZ_IPC
-
 class BasicShadowableThebesLayer;
 class BasicShadowableLayer : public ShadowableLayer
 {
@@ -1795,7 +1796,9 @@ private:
   NS_OVERRIDE virtual void
   PaintBuffer(gfxContext* aContext,
               const nsIntRegion& aRegionToDraw,
+              const nsIntRegion& aExtendedRegionToDraw,
               const nsIntRegion& aRegionToInvalidate,
+              PRBool aDidSelfCopy,
               LayerManager::DrawThebesLayerCallback aCallback,
               void* aCallbackData);
 
@@ -1854,28 +1857,37 @@ BasicShadowableThebesLayer::SetBackBufferAndAttrs(const ThebesBuffer& aBuffer,
 void
 BasicShadowableThebesLayer::PaintBuffer(gfxContext* aContext,
                                         const nsIntRegion& aRegionToDraw,
+                                        const nsIntRegion& aExtendedRegionToDraw,
                                         const nsIntRegion& aRegionToInvalidate,
+                                        PRBool aDidSelfCopy,
                                         LayerManager::DrawThebesLayerCallback aCallback,
                                         void* aCallbackData)
 {
-  Base::PaintBuffer(aContext, aRegionToDraw, aRegionToInvalidate,
+  Base::PaintBuffer(aContext,
+                    aRegionToDraw, aExtendedRegionToDraw, aRegionToInvalidate,
+                    aDidSelfCopy,
                     aCallback, aCallbackData);
   if (!HasShadow()) {
     return;
   }
 
   nsIntRegion updatedRegion;
-  if (mIsNewBuffer) {
+  if (mIsNewBuffer || aDidSelfCopy) {
     // A buffer reallocation clears both buffers. The front buffer has all the
     // content by now, but the back buffer is still clear. Here, in effect, we
     // are saying to copy all of the pixels of the front buffer to the back.
+    // Also when we self-copied in the buffer, the buffer space
+    // changes and some changed buffer content isn't reflected in the
+    // draw or invalidate region (on purpose!).  When this happens, we
+    // need to read back the entire buffer too.
     updatedRegion = mVisibleRegion;
     mIsNewBuffer = false;
   } else {
     updatedRegion = aRegionToDraw;
   }
 
-
+  NS_ASSERTION(mBuffer.BufferRect().Contains(aRegionToDraw.GetBounds()),
+               "Update outside of buffer rect!");
   NS_ABORT_IF_FALSE(IsSurfaceDescriptorValid(mBackBuffer),
                     "should have a back buffer by now");
   BasicManager()->PaintedThebesBuffer(BasicManager()->Hold(this),
@@ -2536,9 +2548,6 @@ public:
 
   virtual void Initialize(const Data& aData);
 
-  virtual void Updated(const nsIntRect& aRect)
-  {}
-
   virtual already_AddRefed<gfxSharedImageSurface>
   Swap(gfxSharedImageSurface* newFront);
 
@@ -2873,7 +2882,6 @@ BasicShadowLayerManager::IsCompositingCheap()
   return mShadowManager &&
          LayerManager::IsCompositingCheap(GetParentBackendType());
 }
-#endif  // MOZ_IPC
 
 }
 }

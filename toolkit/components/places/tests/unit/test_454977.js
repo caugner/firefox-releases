@@ -15,7 +15,7 @@
  *
  * The Original Code is Bug 454977 code.
  *
- * The Initial Developer of the Original Code is Mozilla Corp.
+ * The Initial Developer of the Original Code is the Mozilla Foundation.
  * Portions created by the Initial Developer are Copyright (C) 2009
  * the Initial Developer. All Rights Reserved.
  *
@@ -57,7 +57,7 @@ function add_visit(aURI, aVisitDate, aVisitType) {
   if (visitId > 0) {
     let sql = "SELECT place_id FROM moz_historyvisits WHERE id = ?1";
     let stmt = DBConn().createStatement(sql);
-    stmt.bindInt64Parameter(0, visitId);
+    stmt.bindByIndex(0, visitId);
     do_check_true(stmt.executeStep());
     let placeId = stmt.getInt64(0);
     stmt.finalize();

@@ -56,7 +56,6 @@ XPCOM_GLUE_SRC_LCPPSRCS =        \
   nsISupportsImpl.cpp            \
   nsMemory.cpp                   \
   nsWeakReference.cpp            \
-  nsGREGlue.cpp                  \
   nsVersionComparator.cpp        \
   nsTHashtable.cpp               \
   nsQuickSort.cpp                \
@@ -71,14 +70,12 @@ XPCOM_GLUE_SRC_LCPPSRCS =        \
 
 XPCOM_GLUE_SRC_CPPSRCS = $(addprefix $(topsrcdir)/xpcom/glue/, $(XPCOM_GLUE_SRC_LCPPSRCS))
 
-# TODO nsAutoLock.cpp should die soon
-
 XPCOM_GLUENS_SRC_LCPPSRCS =      \
   BlockingResourceBase.cpp       \
   DeadlockDetector.cpp           \
   SSE.cpp                        \
+  arm.cpp                        \
   unused.cpp                     \
-  nsAutoLock.cpp                 \
   nsProxyRelease.cpp             \
   nsTextFormatter.cpp            \
   GenericFactory.cpp             \

@@ -192,12 +192,23 @@ function Store(name) {
   this._log = Log4Moz.repository.getLogger("Store." + name);
   let level = Svc.Prefs.get("log.logger.engine." + this.name, "Debug");
   this._log.level = Log4Moz.Level[level];
+
+  Utils.lazy2(this, "_timer", function() {
+    return Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
+  });
 }
 Store.prototype = {
 
+  _sleep: function _sleep(delay) {
+    let cb = Utils.makeSyncCallback();
+    this._timer.initWithCallback({notify: cb}, delay,
+                                 Ci.nsITimer.TYPE_ONE_SHOT);
+    Utils.waitForSyncCallback(cb);
+  },
+
   applyIncomingBatch: function applyIncomingBatch(records) {
     let failed = [];
-    records.forEach(function (record) {
+    for each (let record in records) {
       try {
         this.applyIncoming(record);
       } catch (ex) {
@@ -205,7 +216,7 @@ Store.prototype = {
         this._log.warn("Encountered exception: " + Utils.exceptionStr(ex));
         failed.push(record.id);
       }
-    }, this);
+    };
     return failed;
   },
 
@@ -404,19 +415,34 @@ Engine.prototype = {
 function SyncEngine(name) {
   Engine.call(this, name || "SyncEngine");
   this.loadToFetch();
-
-  Utils.lazy2(this, "_timer", function() {
-    return Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
-  });
 }
+
+// Enumeration to define approaches to handling bad records.
+// Attached to the constructor to allow use as a kind of static enumeration.
+SyncEngine.kRecoveryStrategy = {
+  ignore: "ignore",
+  retry:  "retry",
+  error:  "error"
+};
+
 SyncEngine.prototype = {
   __proto__: Engine.prototype,
   _recordObj: CryptoWrapper,
   version: 1,
+  
+  // How many records to pull in a single sync. This is primarily to avoid very
+  // long first syncs against profiles with many history records.
   downloadLimit: null,
+  
+  // How many records to pull at one time when specifying IDs. This is to avoid
+  // URI length limitations.
+  guidFetchBatchSize: DEFAULT_GUID_FETCH_BATCH_SIZE,
+  mobileGUIDFetchBatchSize: DEFAULT_MOBILE_GUID_FETCH_BATCH_SIZE,
+  
+  // How many records to process in a single batch.
   applyIncomingBatchSize: DEFAULT_STORE_BATCH_SIZE,
 
-  get storageURL() Svc.Prefs.get("clusterURL") + Svc.Prefs.get("storageAPI") +
+  get storageURL() Svc.Prefs.get("clusterURL") + SYNC_API_VERSION +
     "/" + ID.get("WeaveID").username + "/storage/",
 
   get engineURL() this.storageURL + this.name,
@@ -497,13 +523,6 @@ SyncEngine.prototype = {
     record.id = id;
     record.collection = this.name;
     return record;
-  },
-
-  _sleep: function _sleep(delay) {
-    let cb = Utils.makeSyncCallback();
-    this._timer.initWithCallback({notify: cb}, delay,
-                                 Ci.nsITimer.TYPE_ONE_SHOT);
-    Utils.waitForSyncCallback(cb);
   },
 
   // Any setup that needs to happen at the beginning of each sync.
@@ -589,7 +608,9 @@ SyncEngine.prototype = {
     // Figure out how many total items to fetch this sync; do less on mobile.
     let batchSize = Infinity;
     let newitems = new Collection(this.engineURL, this._recordObj);
-    if (Svc.Prefs.get("client.type") == "mobile") {
+    let isMobile = (Svc.Prefs.get("client.type") == "mobile");
+
+    if (isMobile) {
       batchSize = MOBILE_BATCH_SIZE;
     }
     newitems.newer = this.lastSync;
@@ -640,14 +661,37 @@ SyncEngine.prototype = {
       try {
         try {
           item.decrypt();
-        } catch (ex if (Utils.isHMACMismatch(ex) &&
-                        self.handleHMACMismatch(item))) {
-          // Let's try handling it.
-          // If the callback returns true, try decrypting again, because
-          // we've got new keys.
-          self._log.info("Trying decrypt again...");
-          item.decrypt();
-        }       
+        } catch (ex if Utils.isHMACMismatch(ex)) {
+          let strategy = self.handleHMACMismatch(item, true);
+          if (strategy == SyncEngine.kRecoveryStrategy.retry) {
+            // You only get one retry.
+            try {
+              // Try decrypting again, typically because we've got new keys.
+              self._log.info("Trying decrypt again...");
+              item.decrypt();
+              strategy = null;
+            } catch (ex if Utils.isHMACMismatch(ex)) {
+              strategy = self.handleHMACMismatch(item, false);
+            }
+          }
+          
+          switch (strategy) {
+            case null:
+              // Retry succeeded! No further handling.
+              break;
+            case SyncEngine.kRecoveryStrategy.retry:
+              self._log.debug("Ignoring second retry suggestion.");
+              // Fall through to error case.
+            case SyncEngine.kRecoveryStrategy.error:
+              self._log.warn("Error decrypting record: " + Utils.exceptionStr(ex));
+              failed.push(item.id);
+              return;
+            case SyncEngine.kRecoveryStrategy.ignore:
+              self._log.debug("Ignoring record " + item.id +
+                              " with bad HMAC: already handled.");
+              return;
+          }
+        }
       } catch (ex) {
         self._log.warn("Error decrypting record: " + Utils.exceptionStr(ex));
         failed.push(item.id);
@@ -675,7 +719,7 @@ SyncEngine.prototype = {
       if (applyBatch.length == self.applyIncomingBatchSize) {
         doApplyBatch.call(self);
       }
-      self._sleep(0);
+      self._store._sleep(0);
     };
 
     // Only bother getting data from the server if there's new things
@@ -718,7 +762,12 @@ SyncEngine.prototype = {
       this.lastSync = this.lastModified;
     }
 
-    // Mobile: process any backlog of GUIDs
+    // Process any backlog of GUIDs.
+    // At this point we impose an upper limit on the number of items to fetch
+    // in a single request, even for desktop, to avoid hitting URI limits.
+    batchSize = isMobile ? this.mobileGUIDFetchBatchSize :
+                           this.guidFetchBatchSize;
+
     while (fetchBatch.length) {
       // Reuse the original query, but get rid of the restricting params
       // and batch remaining records.
@@ -909,7 +958,7 @@ SyncEngine.prototype = {
         if ((++count % MAX_UPLOAD_RECORDS) == 0)
           doUpload((count - MAX_UPLOAD_RECORDS) + " - " + count + " out");
 
-        this._sleep(0);
+        this._store._sleep(0);
       }
 
       // Final upload
@@ -1007,8 +1056,32 @@ SyncEngine.prototype = {
     new Resource(this.engineURL).delete();
     this._resetClient();
   },
-  
-  handleHMACMismatch: function handleHMACMismatch(item) {
-    return Weave.Service.handleHMACEvent();
+
+  removeClientData: function removeClientData() {
+    // Implement this method in engines that store client specific data
+    // on the server.
+  },
+
+  /*
+   * Decide on (and partially effect) an error-handling strategy.
+   *
+   * Asks the Service to respond to an HMAC error, which might result in keys
+   * being downloaded. That call returns true if an action which might allow a
+   * retry to occur.
+   *
+   * If `mayRetry` is truthy, and the Service suggests a retry,
+   * handleHMACMismatch returns kRecoveryStrategy.retry. Otherwise, it returns
+   * kRecoveryStrategy.error.
+   *
+   * Subclasses of SyncEngine can override this method to allow for different
+   * behavior -- e.g., to delete and ignore erroneous entries.
+   *
+   * All return values will be part of the kRecoveryStrategy enumeration.
+   */
+  handleHMACMismatch: function handleHMACMismatch(item, mayRetry) {
+    // By default we either try again, or bail out noisily.
+    return (Weave.Service.handleHMACEvent() && mayRetry) ?
+           SyncEngine.kRecoveryStrategy.retry :
+           SyncEngine.kRecoveryStrategy.error;
   }
 };

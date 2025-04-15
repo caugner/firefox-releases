@@ -56,7 +56,12 @@ namespace mozilla {
 enum LayerState {
   LAYER_NONE,
   LAYER_INACTIVE,
-  LAYER_ACTIVE
+  LAYER_ACTIVE,
+  // Force an active layer even if it causes incorrect rendering, e.g.
+  // when the layer has rounded rect clips.
+  LAYER_ACTIVE_FORCE,
+  // Special layer that is metadata only.
+  LAYER_ACTIVE_EMPTY
 };
 
 /**
@@ -188,9 +193,10 @@ public:
 
   /**
    * Call this to determine if a frame has a dedicated (non-Thebes) layer
-   * for the given display item key.
+   * for the given display item key. If there isn't one, we return null,
+   * otherwise we return the layer.
    */
-  static PRBool HasDedicatedLayer(nsIFrame* aFrame, PRUint32 aDisplayItemKey);
+  static Layer* GetDedicatedLayer(nsIFrame* aFrame, PRUint32 aDisplayItemKey);
 
   /**
    * This callback must be provided to EndTransaction. The callback data
@@ -218,7 +224,9 @@ public:
   /**
    * Record aItem as a display item that is rendered by aLayer.
    */
-  void AddLayerDisplayItem(Layer* aLayer, nsDisplayItem* aItem);
+  void AddLayerDisplayItem(Layer* aLayer,
+                           nsDisplayItem* aItem,
+                           LayerState aLayerState = LAYER_ACTIVE);
 
   /**
    * Record aItem as a display item that is rendered by the ThebesLayer
@@ -364,11 +372,12 @@ protected:
    */
   class DisplayItemData {
   public:
-    DisplayItemData(Layer* aLayer, PRUint32 aKey)
-      : mLayer(aLayer), mDisplayItemKey(aKey) {}
+    DisplayItemData(Layer* aLayer, PRUint32 aKey, LayerState aLayerState)
+      : mLayer(aLayer), mDisplayItemKey(aKey), mLayerState(aLayerState) {}
 
     nsRefPtr<Layer> mLayer;
     PRUint32        mDisplayItemKey;
+    LayerState    mLayerState;
   };
 
   static void InternalDestroyDisplayItemData(nsIFrame* aFrame,
@@ -398,7 +407,7 @@ protected:
       NS_ERROR("Should never be called, since we ALLOW_MEMMOVE");
     }
 
-    PRBool HasContainerLayer();
+    PRBool HasNonEmptyContainerLayer();
 
     nsTArray<DisplayItemData> mData;
 

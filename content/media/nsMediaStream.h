@@ -38,6 +38,7 @@
 #if !defined(nsMediaStream_h_)
 #define nsMediaStream_h_
 
+#include "mozilla/Mutex.h"
 #include "mozilla/XPCOM.h"
 #include "nsIChannel.h"
 #include "nsIPrincipal.h"
@@ -45,7 +46,6 @@
 #include "nsIStreamListener.h"
 #include "nsIChannelEventSink.h"
 #include "nsIInterfaceRequestor.h"
-#include "prlock.h"
 #include "nsMediaCache.h"
 
 // For HTTP seeking, if number of bytes needing to be
@@ -125,6 +125,25 @@ private:
   TimeDuration mAccumulatedTime;
   TimeStamp    mLastStartTime;
   PRPackedBool mIsStarted;
+};
+
+// Represents a section of contiguous media, with a start and end offset.
+// Used to denote ranges of data which are cached.
+class nsByteRange {
+public:
+  nsByteRange() : mStart(0), mEnd(0) {}
+
+  nsByteRange(PRInt64 aStart, PRInt64 aEnd)
+    : mStart(aStart), mEnd(aEnd)
+  {
+    NS_ASSERTION(mStart < mEnd, "Range should end after start!");
+  }
+
+  PRBool IsNull() const {
+    return mStart == 0 && mEnd == 0;
+  }
+
+  PRInt64 mStart, mEnd;
 };
 
 /*
@@ -275,6 +294,13 @@ public:
    */
   virtual nsresult Open(nsIStreamListener** aStreamListener) = 0;
 
+  /**
+   * Fills aRanges with ByteRanges representing the data which is cached
+   * in the media cache. Stream should be pinned during call and while
+   * aRanges is being used.
+   */
+  virtual nsresult GetCachedRanges(nsTArray<nsByteRange>& aRanges) = 0;
+
 protected:
   nsMediaStream(nsMediaDecoder* aDecoder, nsIChannel* aChannel, nsIURI* aURI) :
     mDecoder(aDecoder),
@@ -318,6 +344,8 @@ protected:
  */
 class nsMediaChannelStream : public nsMediaStream
 {
+  typedef mozilla::Mutex Mutex;
+
 public:
   nsMediaChannelStream(nsMediaDecoder* aDecoder, nsIChannel* aChannel, nsIURI* aURI);
   ~nsMediaChannelStream();
@@ -395,6 +423,8 @@ public:
   };
   friend class Listener;
 
+  nsresult GetCachedRanges(nsTArray<nsByteRange>& aRanges);
+
 protected:
   // These are called on the main thread by Listener.
   nsresult OnStartRequest(nsIRequest* aRequest);
@@ -422,6 +452,14 @@ protected:
                                       PRUint32 aCount,
                                       PRUint32 *aWriteCount);
 
+  // Suspend the channel only if the channels is currently downloading data.
+  // If it isn't we set a flag, mIgnoreResume, so that PossiblyResume knows
+  // whether to acutually resume or not.
+  void PossiblySuspend();
+
+  // Resume from a suspend if we actually suspended (See PossiblySuspend).
+  void PossiblyResume();
+
   // Main thread access only
   PRInt64            mOffset;
   nsRefPtr<Listener> mListener;
@@ -440,9 +478,14 @@ protected:
   nsMediaCacheStream mCacheStream;
 
   // This lock protects mChannelStatistics and mCacheSuspendCount
-  PRLock* mLock;
+  Mutex               mLock;
   nsChannelStatistics mChannelStatistics;
   PRUint32            mCacheSuspendCount;
+
+  // PR_TRUE if we couldn't suspend the stream and we therefore don't want
+  // to resume later. This is usually due to the channel not being in the
+  // isPending state at the time of the suspend request.
+  PRPackedBool mIgnoreResume;
 };
 
 #endif

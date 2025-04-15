@@ -398,6 +398,8 @@ nsHtml5Parser::Parse(const nsAString& aSourceBuffer,
         // Lazily initialize if uninitialized
         mDocWriteSpeculativeTreeBuilder =
             new nsHtml5TreeBuilder(nsnull, mExecutor->GetStage());
+        mDocWriteSpeculativeTreeBuilder->setScriptingEnabled(
+            mTreeBuilder->isScriptingEnabled());
         mDocWriteSpeculativeTokenizer =
             new nsHtml5Tokenizer(mDocWriteSpeculativeTreeBuilder);
         mDocWriteSpeculativeTokenizer->setInterner(&mAtomTable);
@@ -495,6 +497,8 @@ nsHtml5Parser::ParseHtml5Fragment(const nsAString& aSourceBuffer,
   nsIURI* uri = doc->GetDocumentURI();
   NS_ENSURE_TRUE(uri, NS_ERROR_NOT_AVAILABLE);
 
+  mExecutor->EnableFragmentMode(aPreventScriptExecution);
+
   Initialize(doc, uri, nsnull, nsnull);
 
   mExecutor->SetParser(this);
@@ -514,8 +518,6 @@ nsHtml5Parser::ParseHtml5Fragment(const nsAString& aSourceBuffer,
   }
 #endif
 
-  mExecutor->EnableFragmentMode(aPreventScriptExecution);
-  
   NS_PRECONDITION(!mExecutor->HasStarted(),
                   "Tried to start parse without initializing the parser.");
   mTreeBuilder->setScriptingEnabled(mExecutor->IsScriptEnabled());
@@ -533,6 +535,12 @@ nsHtml5Parser::ParseHtml5Fragment(const nsAString& aSourceBuffer,
       lastWasCR = PR_FALSE;
       if (buffer.hasMore()) {
         lastWasCR = mTokenizer->tokenizeBuffer(&buffer);
+        if (mTreeBuilder->HasScript()) {
+          // Flush on each script, because the execution prevention code
+          // can handle at most one script per flush.
+          mTreeBuilder->Flush(); // Move ops to the executor
+          mExecutor->FlushDocumentWrite(); // run the ops
+        }
       }
     }
   }

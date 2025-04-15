@@ -38,24 +38,15 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifdef MOZ_IPC
-#  include "base/basictypes.h"
-#endif
+#include "base/basictypes.h"
 
 #include "nsIDOMXULElement.h"
-
-#ifdef _MSC_VER
-#define _USE_MATH_DEFINES
-#endif
-#include <math.h>
-#if defined(XP_WIN) || defined(XP_OS2)
-#include <float.h>
-#endif
 
 #include "prmem.h"
 #include "prenv.h"
 
 #include "nsIServiceManager.h"
+#include "nsMathUtils.h"
 
 #include "nsContentUtils.h"
 
@@ -64,6 +55,7 @@
 #include "nsIDOMCanvasRenderingContext2D.h"
 #include "nsICanvasRenderingContextInternal.h"
 #include "nsHTMLCanvasElement.h"
+#include "nsSVGEffects.h"
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsIVariant.h"
@@ -74,7 +66,7 @@
 #include "nsIScriptError.h"
 
 #include "nsCSSParser.h"
-#include "nsICSSStyleRule.h"
+#include "mozilla/css/StyleRule.h"
 #include "mozilla/css/Declaration.h"
 #include "nsComputedDOMStyle.h"
 #include "nsStyleSet.h"
@@ -96,6 +88,7 @@
 #include "nsIDocShellTreeNode.h"
 #include "nsIXPConnect.h"
 #include "jsapi.h"
+#include "nsDisplayList.h"
 
 #include "nsTArray.h"
 
@@ -111,64 +104,35 @@
 #include "gfxUtils.h"
 
 #include "nsFrameManager.h"
-
 #include "nsFrameLoader.h"
-
 #include "nsBidiPresUtils.h"
-
 #include "Layers.h"
-
 #include "CanvasUtils.h"
-
 #include "nsIMemoryReporter.h"
-
 #include "nsStyleUtil.h"
+#include "CanvasImageCache.h"
 
-#ifdef MOZ_IPC
-#  include <algorithm>
-#  include "mozilla/dom/ContentParent.h"
-#  include "mozilla/ipc/PDocumentRendererParent.h"
-#  include "mozilla/dom/PBrowserParent.h"
-#  include "mozilla/ipc/DocumentRendererParent.h"
+#include <algorithm>
+#include "mozilla/dom/ContentParent.h"
+#include "mozilla/ipc/PDocumentRendererParent.h"
+#include "mozilla/dom/PBrowserParent.h"
+#include "mozilla/ipc/DocumentRendererParent.h"
 
 // windows.h (included by chromium code) defines this, in its infinite wisdom
-#  undef DrawText
+#undef DrawText
 
 using namespace mozilla::ipc;
-#endif
-
-#ifdef MOZ_SVG
-#include "nsSVGEffects.h"
-#endif
 
 using namespace mozilla;
 using namespace mozilla::layers;
 using namespace mozilla::dom;
 
-#ifndef M_PI
-#define M_PI		3.14159265358979323846
-#define M_PI_2		1.57079632679489661923
-#endif
+static float kDefaultFontSize = 10.0;
+static NS_NAMED_LITERAL_STRING(kDefaultFontName, "sans-serif");
+static NS_NAMED_LITERAL_STRING(kDefaultFontStyle, "10px sans-serif");
 
 /* Float validation stuff */
-
-static inline bool
-DoubleIsFinite(double d)
-{
-#ifdef WIN32
-    // NOTE: '!!' casts an int to bool without spamming MSVC warning C4800.
-    return !!_finite(d);
-#else
-    return finite(d);
-#endif
-}
-
-#define VALIDATE(_f)  if (!DoubleIsFinite(_f)) return PR_FALSE
-
-/* These must take doubles as args, because JSDOUBLE_IS_FINITE expects
- * to take the address of its argument; we can't cast/convert in the
- * macro.
- */
+#define VALIDATE(_f)  if (!NS_finite(_f)) return PR_FALSE
 
 static PRBool FloatValidate (double f1) {
     VALIDATE(f1);
@@ -260,14 +224,10 @@ public:
     NS_IMETHOD AddColorStop (float offset,
                              const nsAString& colorstr)
     {
-        nscolor color;
-
-        if (!FloatValidate(offset))
-            return NS_ERROR_DOM_SYNTAX_ERR;
-
-        if (offset < 0.0 || offset > 1.0)
+        if (!FloatValidate(offset) || offset < 0.0 || offset > 1.0)
             return NS_ERROR_DOM_INDEX_SIZE_ERR;
 
+        nscolor color;
         nsCSSParser parser;
         nsresult rv = parser.ParseColorString(nsString(colorstr),
                                               nsnull, 0, &color);
@@ -412,12 +372,15 @@ public:
     NS_IMETHOD GetThebesSurface(gfxASurface **surface);
     NS_IMETHOD SetIsOpaque(PRBool isOpaque);
     NS_IMETHOD Reset();
-    already_AddRefed<CanvasLayer> GetCanvasLayer(CanvasLayer *aOldLayer,
+    already_AddRefed<CanvasLayer> GetCanvasLayer(nsDisplayListBuilder* aBuilder,
+                                                 CanvasLayer *aOldLayer,
                                                  LayerManager *aManager);
     void MarkContextClean();
     NS_IMETHOD SetIsIPC(PRBool isIPC);
-    // this rect is in CSS pixels
+    // this rect is in canvas device space
     NS_IMETHOD Redraw(const gfxRect &r);
+    // this rect is in mThebes's current user space
+    NS_IMETHOD RedrawUser(const gfxRect &r);
 
     // nsISupports interface + CC
     NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -434,8 +397,30 @@ public:
         STYLE_MAX
     };
 
-protected:
+    class PathAutoSaveRestore
+    {
+    public:
+        PathAutoSaveRestore(nsCanvasRenderingContext2D* aCtx) :
+            mContext(aCtx->mThebes)
+        {
+            if (aCtx->mHasPath) {
+                mPath = mContext->CopyPath();
+            }
+        }
+        ~PathAutoSaveRestore()
+        {
+            mContext->NewPath();
+            if (mPath) {
+                mContext->AppendPath(mPath);
+            }
+        }
+    private:
+        gfxContext *mContext;
+        nsRefPtr<gfxPath> mPath;
+    };
+    friend class PathAutoSaveRestore;
 
+protected:
     /**
      * The number of living nsCanvasRenderingContexts.  When this goes down to
      * 0, we free the premultiply and unpremultiply tables, if they exist.
@@ -508,7 +493,17 @@ protected:
      * Flag to avoid duplicate calls to InvalidateFrame. Set to true whenever
      * Redraw is called, reset to false when Render is called.
      */
-    PRBool mIsEntireFrameInvalid;
+    PRPackedBool mIsEntireFrameInvalid;
+    /**
+     * When this is set, the first call to Redraw(gfxRect) should set
+     * mIsEntireFrameInvalid since we expect it will be followed by
+     * many more Redraw calls.
+     */
+    PRPackedBool mPredictManyRedrawCalls;
+    /**
+     * This is set whenever there's a nonempty path set by the API user.
+     */
+    PRPackedBool mHasPath;
 
     /**
      * Number of times we've invalidated before calling redraw
@@ -608,7 +603,7 @@ protected:
      * Draws the current path in the given style. Takes care of
      * any shadow drawing and will use intermediate surfaces as needed.
      *
-     * If dirtyRect is given, it will contain the device-space dirty
+     * If dirtyRect is given, it will contain the user-space dirty
      * rectangle of the draw operation.
      */
     nsresult DrawPath(Style style, gfxRect *dirtyRect = nsnull);
@@ -654,7 +649,11 @@ protected:
         TEXT_BASELINE_BOTTOM
     };
 
-    gfxFontGroup *GetCurrentFontStyle();
+    gfxFontGroup* GetCurrentFontStyle();
+    gfxTextRun* MakeTextRun(const PRUnichar* aText,
+                            PRUint32         aLength,
+                            PRUint32         aAppUnitsPerDevUnit,
+                            PRUint32         aFlags);
 
     enum TextDrawOperation {
         TEXT_DRAW_OPERATION_FILL,
@@ -781,8 +780,8 @@ protected:
     friend struct nsCanvasBidiProcessor;
 };
 
-NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsCanvasRenderingContext2D, nsIDOMCanvasRenderingContext2D)
-NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsCanvasRenderingContext2D, nsIDOMCanvasRenderingContext2D)
+NS_IMPL_CYCLE_COLLECTING_ADDREF(nsCanvasRenderingContext2D)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(nsCanvasRenderingContext2D)
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsCanvasRenderingContext2D)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsCanvasRenderingContext2D)
@@ -826,7 +825,8 @@ nsCanvasRenderingContext2D::nsCanvasRenderingContext2D()
     : mValid(PR_FALSE), mOpaque(PR_FALSE), mResetLayer(PR_TRUE)
     , mIPC(PR_FALSE)
     , mCanvasElement(nsnull)
-    , mSaveCount(0), mIsEntireFrameInvalid(PR_FALSE), mInvalidateCount(0)
+    , mSaveCount(0), mIsEntireFrameInvalid(PR_FALSE)
+    , mPredictManyRedrawCalls(PR_FALSE), mHasPath(PR_FALSE), mInvalidateCount(0)
     , mLastStyle(STYLE_MAX), mStyleStack(20)
 {
     sNumLivingContexts++;
@@ -847,6 +847,10 @@ nsCanvasRenderingContext2D::~nsCanvasRenderingContext2D()
 nsresult
 nsCanvasRenderingContext2D::Reset()
 {
+    if (mCanvasElement) {
+        HTMLCanvasElement()->InvalidateCanvas();
+    }
+
     // only do this for non-docshell created contexts,
     // since those are the ones that we created a surface for
     if (mValid && !mDocShell)
@@ -856,6 +860,7 @@ nsCanvasRenderingContext2D::Reset()
     mThebes = nsnull;
     mValid = PR_FALSE;
     mIsEntireFrameInvalid = PR_FALSE;
+    mPredictManyRedrawCalls = PR_FALSE;
     return NS_OK;
 }
 
@@ -1019,6 +1024,10 @@ nsCanvasRenderingContext2D::ApplyStyle(Style aWhichStyle,
 nsresult
 nsCanvasRenderingContext2D::Redraw()
 {
+    if (mIsEntireFrameInvalid)
+        return NS_OK;
+    mIsEntireFrameInvalid = PR_TRUE;
+
     if (!mCanvasElement) {
         NS_ASSERTION(mDocShell, "Redraw with no canvas element or docshell!");
         return NS_OK;
@@ -1028,12 +1037,7 @@ nsCanvasRenderingContext2D::Redraw()
     nsSVGEffects::InvalidateDirectRenderingObservers(HTMLCanvasElement());
 #endif
 
-    if (mIsEntireFrameInvalid)
-        return NS_OK;
-
-    mIsEntireFrameInvalid = PR_TRUE;
-
-    HTMLCanvasElement()->InvalidateFrame();
+    HTMLCanvasElement()->InvalidateCanvasContent(nsnull);
 
     return NS_OK;
 }
@@ -1041,6 +1045,16 @@ nsCanvasRenderingContext2D::Redraw()
 NS_IMETHODIMP
 nsCanvasRenderingContext2D::Redraw(const gfxRect& r)
 {
+    ++mInvalidateCount;
+
+    if (mIsEntireFrameInvalid)
+        return NS_OK;
+
+    if (mPredictManyRedrawCalls ||
+        mInvalidateCount > kCanvasMaxInvalidateCount) {
+        return Redraw();
+    }
+
     if (!mCanvasElement) {
         NS_ASSERTION(mDocShell, "Redraw with no canvas element or docshell!");
         return NS_OK;
@@ -1050,22 +1064,25 @@ nsCanvasRenderingContext2D::Redraw(const gfxRect& r)
     nsSVGEffects::InvalidateDirectRenderingObservers(HTMLCanvasElement());
 #endif
 
-    if (mIsEntireFrameInvalid)
-        return NS_OK;
-
-    if (++mInvalidateCount > kCanvasMaxInvalidateCount)
-        return Redraw();
-
-    HTMLCanvasElement()->InvalidateFrame(&r);
+    HTMLCanvasElement()->InvalidateCanvasContent(&r);
 
     return NS_OK;
 }
 
 NS_IMETHODIMP
+nsCanvasRenderingContext2D::RedrawUser(const gfxRect& r)
+{
+    if (mIsEntireFrameInvalid) {
+        ++mInvalidateCount;
+        return NS_OK;
+    }
+
+    return Redraw(mThebes->UserToDevice(r));
+}
+
+NS_IMETHODIMP
 nsCanvasRenderingContext2D::SetDimensions(PRInt32 width, PRInt32 height)
 {
-    Reset();
-
     nsRefPtr<gfxASurface> surface;
 
     // Check that the dimensions are sane
@@ -1106,6 +1123,10 @@ nsCanvasRenderingContext2D::SetDimensions(PRInt32 width, PRInt32 height)
         }
 
         gCanvasMemoryUsed += width * height * 4;
+        JSContext* context = nsContentUtils::GetCurrentJSContext();
+        if (context) {
+            JS_updateMallocCounter(context, width * height * 4);
+        }
     }
 
     return InitializeWithSurface(NULL, surface, width, height);
@@ -1188,7 +1209,6 @@ nsCanvasRenderingContext2D::SetIsOpaque(PRBool isOpaque)
 NS_IMETHODIMP
 nsCanvasRenderingContext2D::SetIsIPC(PRBool isIPC)
 {
-#ifdef MOZ_IPC
     if (isIPC == mIPC)
         return NS_OK;
 
@@ -1202,9 +1222,6 @@ nsCanvasRenderingContext2D::SetIsIPC(PRBool isIPC)
     }
 
     return NS_OK;
-#else
-    return NS_ERROR_NOT_IMPLEMENTED;
-#endif
 }
 
 NS_IMETHODIMP
@@ -1361,7 +1378,7 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::Scale(float x, float y)
 {
     if (!FloatValidate(x,y))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
     mThebes->Scale(x, y);
     return NS_OK;
@@ -1371,7 +1388,7 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::Rotate(float angle)
 {
     if (!FloatValidate(angle))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
     mThebes->Rotate(angle);
     return NS_OK;
@@ -1381,7 +1398,7 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::Translate(float x, float y)
 {
     if (!FloatValidate(x,y))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
     mThebes->Translate(gfxPoint(x, y));
     return NS_OK;
@@ -1391,7 +1408,7 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::Transform(float m11, float m12, float m21, float m22, float dx, float dy)
 {
     if (!FloatValidate(m11,m12,m21,m22,dx,dy))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
     gfxMatrix matrix(m11, m12, m21, m22, dx, dy);
     mThebes->Multiply(matrix);
@@ -1418,11 +1435,7 @@ nsCanvasRenderingContext2D::SetTransform(float m11, float m12, float m21, float 
 NS_IMETHODIMP
 nsCanvasRenderingContext2D::SetGlobalAlpha(float aGlobalAlpha)
 {
-    if (!FloatValidate(aGlobalAlpha))
-        return NS_ERROR_DOM_SYNTAX_ERR;
-
-    // ignore invalid values, as per spec
-    if (aGlobalAlpha < 0.0 || aGlobalAlpha > 1.0)
+    if (!FloatValidate(aGlobalAlpha) || aGlobalAlpha < 0.0 || aGlobalAlpha > 1.0)
         return NS_OK;
 
     CurrentState().globalAlpha = aGlobalAlpha;
@@ -1612,6 +1625,9 @@ nsCanvasRenderingContext2D::CreateRadialGradient(float x0, float y0, float r0, f
     if (!FloatValidate(x0,y0,r0,x1,y1,r1))
         return NS_ERROR_DOM_NOT_SUPPORTED_ERR;
 
+    if (r0 < 0.0 || r1 < 0.0)
+        return NS_ERROR_DOM_INDEX_SIZE_ERR;
+
     nsRefPtr<gfxPattern> gradpat = new gfxPattern(x0, y0, r0, x1, y1, r1);
     if (!gradpat)
         return NS_ERROR_OUT_OF_MEMORY;
@@ -1629,6 +1645,9 @@ nsCanvasRenderingContext2D::CreatePattern(nsIDOMHTMLElement *image,
                                           const nsAString& repeat,
                                           nsIDOMCanvasPattern **_retval)
 {
+    if (!image) {
+        return NS_ERROR_DOM_TYPE_MISMATCH_ERR;
+    }
     gfxPattern::GraphicsExtend extend;
 
     if (repeat.IsEmpty() || repeat.EqualsLiteral("repeat")) {
@@ -1674,7 +1693,8 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::SetShadowOffsetX(float x)
 {
     if (!FloatValidate(x))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
+
     CurrentState().shadowOffset.x = x;
     return NS_OK;
 }
@@ -1690,7 +1710,8 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::SetShadowOffsetY(float y)
 {
     if (!FloatValidate(y))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
+
     CurrentState().shadowOffset.y = y;
     return NS_OK;
 }
@@ -1705,10 +1726,9 @@ nsCanvasRenderingContext2D::GetShadowOffsetY(float *y)
 NS_IMETHODIMP
 nsCanvasRenderingContext2D::SetShadowBlur(float blur)
 {
-    if (!FloatValidate(blur))
-        return NS_ERROR_DOM_SYNTAX_ERR;
-    if (blur < 0.0)
+    if (!FloatValidate(blur) || blur < 0.0)
         return NS_OK;
+
     CurrentState().shadowBlur = blur;
     return NS_OK;
 }
@@ -1919,8 +1939,6 @@ nsCanvasRenderingContext2D::DrawPath(Style style, gfxRect *dirtyRect)
             // just use the clip extents
             *dirtyRect = mThebes->GetClipExtents();
         }
-
-        *dirtyRect = mThebes->UserToDevice(*dirtyRect);
     }
 
     return NS_OK;
@@ -1934,9 +1952,9 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::ClearRect(float x, float y, float w, float h)
 {
     if (!FloatValidate(x,y,w,h))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
-    gfxContextPathAutoSaveRestore pathSR(mThebes);
+    PathAutoSaveRestore pathSR(this);
     gfxContextAutoSaveRestore autoSR(mThebes);
 
     mThebes->SetOperator(gfxContext::OPERATOR_CLEAR);
@@ -1944,17 +1962,16 @@ nsCanvasRenderingContext2D::ClearRect(float x, float y, float w, float h)
     mThebes->Rectangle(gfxRect(x, y, w, h));
     mThebes->Fill();
 
-    gfxRect dirty = mThebes->UserToDevice(mThebes->GetUserPathExtent());
-    return Redraw(dirty);
+    return RedrawUser(mThebes->GetUserPathExtent());
 }
 
 nsresult
 nsCanvasRenderingContext2D::DrawRect(const gfxRect& rect, Style style)
 {
     if (!FloatValidate(rect.pos.x, rect.pos.y, rect.size.width, rect.size.height))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
-    gfxContextPathAutoSaveRestore pathSR(mThebes);
+    PathAutoSaveRestore pathSR(this);
 
     mThebes->NewPath();
     mThebes->Rectangle(rect);
@@ -1964,7 +1981,7 @@ nsCanvasRenderingContext2D::DrawRect(const gfxRect& rect, Style style)
     if (NS_FAILED(rv))
         return rv;
 
-    return Redraw(dirty);
+    return RedrawUser(dirty);
 }
 
 NS_IMETHODIMP
@@ -1986,6 +2003,7 @@ nsCanvasRenderingContext2D::StrokeRect(float x, float y, float w, float h)
 NS_IMETHODIMP
 nsCanvasRenderingContext2D::BeginPath()
 {
+    mHasPath = PR_FALSE;
     mThebes->NewPath();
     return NS_OK;
 }
@@ -2004,7 +2022,7 @@ nsCanvasRenderingContext2D::Fill()
     nsresult rv = DrawPath(STYLE_FILL, &dirty);
     if (NS_FAILED(rv))
         return rv;
-    return Redraw(dirty);
+    return RedrawUser(dirty);
 }
 
 NS_IMETHODIMP
@@ -2014,7 +2032,7 @@ nsCanvasRenderingContext2D::Stroke()
     nsresult rv = DrawPath(STYLE_STROKE, &dirty);
     if (NS_FAILED(rv))
         return rv;
-    return Redraw(dirty);
+    return RedrawUser(dirty);
 }
 
 NS_IMETHODIMP
@@ -2028,8 +2046,9 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::MoveTo(float x, float y)
 {
     if (!FloatValidate(x,y))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
+    mHasPath = PR_TRUE;
     mThebes->MoveTo(gfxPoint(x, y));
     return NS_OK;
 }
@@ -2038,8 +2057,9 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::LineTo(float x, float y)
 {
     if (!FloatValidate(x,y))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
+    mHasPath = PR_TRUE;
     mThebes->LineTo(gfxPoint(x, y));
     return NS_OK;
 }
@@ -2048,7 +2068,7 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::QuadraticCurveTo(float cpx, float cpy, float x, float y)
 {
     if (!FloatValidate(cpx,cpy,x,y))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
     // we will always have a current point, since beginPath forces
     // a moveto(0,0)
@@ -2056,6 +2076,7 @@ nsCanvasRenderingContext2D::QuadraticCurveTo(float cpx, float cpy, float x, floa
     gfxPoint p(x,y);
     gfxPoint cp(cpx, cpy);
 
+    mHasPath = PR_TRUE;
     mThebes->CurveTo((c+cp*2)/3.0, (p+cp*2)/3.0, p);
 
     return NS_OK;
@@ -2069,6 +2090,7 @@ nsCanvasRenderingContext2D::BezierCurveTo(float cp1x, float cp1y,
     if (!FloatValidate(cp1x,cp1y,cp2x,cp2y,x,y))
         return NS_ERROR_DOM_SYNTAX_ERR;
 
+    mHasPath = PR_TRUE;
     mThebes->CurveTo(gfxPoint(cp1x, cp1y),
                      gfxPoint(cp2x, cp2y),
                      gfxPoint(x, y));
@@ -2084,6 +2106,8 @@ nsCanvasRenderingContext2D::ArcTo(float x1, float y1, float x2, float y2, float 
 
     if (radius < 0)
         return NS_ERROR_DOM_INDEX_SIZE_ERR;
+
+    mHasPath = PR_TRUE;
 
     gfxPoint p0 = mThebes->CurrentPoint();
 
@@ -2137,13 +2161,14 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::Arc(float x, float y, float r, float startAngle, float endAngle, PRBool ccw)
 {
     if (!FloatValidate(x,y,r,startAngle,endAngle))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
     if (r < 0.0)
         return NS_ERROR_DOM_INDEX_SIZE_ERR;
 
     gfxPoint p(x,y);
 
+    mHasPath = PR_TRUE;
     if (ccw)
         mThebes->NegativeArc(p, r, startAngle, endAngle);
     else
@@ -2155,8 +2180,9 @@ NS_IMETHODIMP
 nsCanvasRenderingContext2D::Rect(float x, float y, float w, float h)
 {
     if (!FloatValidate(x,y,w,h))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+        return NS_OK;
 
+    mHasPath = PR_TRUE;
     mThebes->Rectangle(gfxRect(x, y, w, h));
     return NS_OK;
 }
@@ -2175,9 +2201,9 @@ nsCanvasRenderingContext2D::Rect(float x, float y, float w, float h)
 static nsresult
 CreateFontStyleRule(const nsAString& aFont,
                     nsINode* aNode,
-                    nsICSSStyleRule** aResult)
+                    css::StyleRule** aResult)
 {
-    nsCOMPtr<nsICSSStyleRule> rule;
+    nsRefPtr<css::StyleRule> rule;
     PRBool changed;
 
     nsIPrincipal* principal = aNode->NodePrincipal();
@@ -2241,7 +2267,7 @@ nsCanvasRenderingContext2D::SetFont(const nsAString& font)
 
     nsCOMArray<nsIStyleRule> rules;
 
-    nsCOMPtr<nsICSSStyleRule> rule;
+    nsRefPtr<css::StyleRule> rule;
     rv = CreateFontStyleRule(font, document, getter_AddRefs(rule));
     if (NS_FAILED(rv))
         return rv;
@@ -2277,9 +2303,9 @@ nsCanvasRenderingContext2D::SetFont(const nsAString& font)
                 nsnull,
                 presShell);
     } else {
-        // otherwise inherit from default (10px sans-serif)
-        nsCOMPtr<nsICSSStyleRule> parentRule;
-        rv = CreateFontStyleRule(NS_LITERAL_STRING("10px sans-serif"),
+        // otherwise inherit from default
+        nsRefPtr<css::StyleRule> parentRule;
+        rv = CreateFontStyleRule(kDefaultFontStyle,
                                  document,
                                  getter_AddRefs(parentRule));
         if (NS_FAILED(rv))
@@ -2320,7 +2346,6 @@ nsCanvasRenderingContext2D::SetFont(const nsAString& font)
                        language,
                        fontStyle->mFont.sizeAdjust,
                        fontStyle->mFont.systemFont,
-                       fontStyle->mFont.familyNameQuirks,
                        printerFont,
                        fontStyle->mFont.featureSettings,
                        fontStyle->mFont.languageOverride);
@@ -2724,20 +2749,19 @@ nsCanvasRenderingContext2D::DrawOrMeasureText(const nsAString& aRawText,
 
     switch (CurrentState().textBaseline)
     {
+    case TEXT_BASELINE_HANGING:
+        // fall through; best we can do with the information available
     case TEXT_BASELINE_TOP:
         anchorY = fontMetrics.emAscent;
         break;
-    case TEXT_BASELINE_HANGING:
-        anchorY = 0; // currently unavailable
         break;
     case TEXT_BASELINE_MIDDLE:
         anchorY = (fontMetrics.emAscent - fontMetrics.emDescent) * .5f;
         break;
+    case TEXT_BASELINE_IDEOGRAPHIC:
+        // fall through; best we can do with the information available
     case TEXT_BASELINE_ALPHABETIC:
         anchorY = 0;
-        break;
-    case TEXT_BASELINE_IDEOGRAPHIC:
-        anchorY = 0; // currently unvailable
         break;
     case TEXT_BASELINE_BOTTOM:
         anchorY = -fontMetrics.emDescent;
@@ -2855,7 +2879,7 @@ nsCanvasRenderingContext2D::DrawOrMeasureText(const nsAString& aRawText,
         mThebes->Paint(CurrentState().StyleIsColor(STYLE_FILL) ? 1.0 : CurrentState().globalAlpha);
 
     if (aOp == nsCanvasRenderingContext2D::TEXT_DRAW_OPERATION_FILL && !doDrawShadow)
-        return Redraw(mThebes->UserToDevice(boundingBox));
+        return RedrawUser(boundingBox);
 
     return Redraw();
 }
@@ -2874,19 +2898,46 @@ nsCanvasRenderingContext2D::GetMozTextStyle(nsAString& textStyle)
     return GetFont(textStyle);
 }
 
-gfxFontGroup *nsCanvasRenderingContext2D::GetCurrentFontStyle()
+gfxFontGroup*
+nsCanvasRenderingContext2D::GetCurrentFontStyle()
 {
     // use lazy initilization for the font group since it's rather expensive
     if(!CurrentState().fontGroup) {
-#ifdef DEBUG
-        nsresult res =
-#endif
-            SetMozTextStyle(NS_LITERAL_STRING("10px sans-serif"));
-        NS_ASSERTION(res == NS_OK, "Default canvas font is invalid");
+        nsresult rv = SetMozTextStyle(kDefaultFontStyle);
+        if (NS_FAILED(rv)) {
+            gfxFontStyle style;
+            style.size = kDefaultFontSize;
+            CurrentState().fontGroup =
+                gfxPlatform::GetPlatform()->CreateFontGroup(kDefaultFontName,
+                                                            &style,
+                                                            nsnull);
+            if (CurrentState().fontGroup) {
+                CurrentState().font = kDefaultFontStyle;
+                rv = NS_OK;
+            } else {
+                rv = NS_ERROR_OUT_OF_MEMORY;
+            }
+        }
+            
+        NS_ASSERTION(NS_SUCCEEDED(rv), "Default canvas font is invalid");
     }
 
     return CurrentState().fontGroup;
 }
+
+gfxTextRun*
+nsCanvasRenderingContext2D::MakeTextRun(const PRUnichar* aText,
+                                        PRUint32         aLength,
+                                        PRUint32         aAppUnitsPerDevUnit,
+                                        PRUint32         aFlags)
+{
+    gfxFontGroup* currentFontStyle = GetCurrentFontStyle();
+    if (!currentFontStyle)
+        return nsnull;
+    return gfxTextRunCache::MakeTextRun(aText, aLength, currentFontStyle,
+                                        mThebes, aAppUnitsPerDevUnit, aFlags);
+}
+
 
 NS_IMETHODIMP
 nsCanvasRenderingContext2D::MozDrawText(const nsAString& textToDraw)
@@ -2899,13 +2950,8 @@ nsCanvasRenderingContext2D::MozDrawText(const nsAString& textToDraw)
     PRUint32 aupdp;
     GetAppUnitsValues(&aupdp, NULL);
 
-    gfxTextRunCache::AutoTextRun textRun;
-    textRun = gfxTextRunCache::MakeTextRun(textdata,
-                                           textToDraw.Length(),
-                                           GetCurrentFontStyle(),
-                                           mThebes,
-                                           aupdp,
-                                           textrunflags);
+    gfxTextRunCache::AutoTextRun textRun =
+        MakeTextRun(textdata, textToDraw.Length(), aupdp, textrunflags);
 
     if(!textRun.get())
         return NS_ERROR_FAILURE;
@@ -2947,13 +2993,8 @@ nsCanvasRenderingContext2D::MozPathText(const nsAString& textToPath)
     PRUint32 aupdp;
     GetAppUnitsValues(&aupdp, NULL);
 
-    gfxTextRunCache::AutoTextRun textRun;
-    textRun = gfxTextRunCache::MakeTextRun(textdata,
-                                           textToPath.Length(),
-                                           GetCurrentFontStyle(),
-                                           mThebes,
-                                           aupdp,
-                                           textrunflags);
+    gfxTextRunCache::AutoTextRun textRun =
+        MakeTextRun(textdata, textToPath.Length(), aupdp, textrunflags);
 
     if(!textRun.get())
         return NS_ERROR_FAILURE;
@@ -2983,13 +3024,8 @@ nsCanvasRenderingContext2D::MozTextAlongPath(const nsAString& textToDraw, PRBool
     PRUint32 aupdp;
     GetAppUnitsValues(&aupdp, NULL);
 
-    gfxTextRunCache::AutoTextRun textRun;
-    textRun = gfxTextRunCache::MakeTextRun(textdata,
-                                           textToDraw.Length(),
-                                           GetCurrentFontStyle(),
-                                           mThebes,
-                                           aupdp,
-                                           textrunflags);
+    gfxTextRunCache::AutoTextRun textRun =
+        MakeTextRun(textdata, textToDraw.Length(), aupdp, textrunflags);
 
     if(!textRun.get())
         return NS_ERROR_FAILURE;
@@ -3013,21 +3049,23 @@ nsCanvasRenderingContext2D::MozTextAlongPath(const nsAString& textToDraw, PRBool
 
     gfxPoint position(0.0,0.0);
     gfxFloat x = position.x;
-    for (PRUint32 i = 0; i < strLength; i++)
-    {
-        gfxFloat halfAdvance = textRun->GetAdvanceWidth(i, 1, nsnull) / (2.0 * aupdp);
 
-        // Check for end of path
-        if(x + halfAdvance > length)
+    gfxTextRun::ClusterIterator iter(textRun.get());
+    while (iter.NextCluster()) {
+        gfxFloat halfAdvance = iter.ClusterAdvance(nsnull) / (2.0 * aupdp);
+        if (x + halfAdvance > length) {
             break;
-
-        if(x + halfAdvance >= 0)
-        {
-            cp[i].draw = PR_TRUE;
-            gfxPoint pt = path->FindPoint(gfxPoint(x + halfAdvance, position.y), &(cp[i].angle));
-
-            cp[i].pos = pt - gfxPoint(cos(cp[i].angle), sin(cp[i].angle)) * halfAdvance;
         }
+
+        if (x + halfAdvance >= 0) {
+            cp[iter.Position()].draw = PR_TRUE;
+            gfxPoint pt = path->FindPoint(gfxPoint(x + halfAdvance, position.y),
+                                          &(cp[iter.Position()].angle));
+            cp[iter.Position()].pos =
+                pt - gfxPoint(cos(cp[iter.Position()].angle),
+                              sin(cp[iter.Position()].angle)) * halfAdvance;
+        }
+
         x += 2 * halfAdvance;
     }
 
@@ -3038,25 +3076,30 @@ nsCanvasRenderingContext2D::MozTextAlongPath(const nsAString& textToDraw, PRBool
         ApplyStyle(STYLE_FILL);
     }
 
-    for(PRUint32 i = 0; i < strLength; i++)
-    {
+    iter.Reset();
+    while (iter.NextCluster()) {
         // Skip non-visible characters
-        if(!cp[i].draw) continue;
+        if (!cp[iter.Position()].draw) {
+            continue;
+        }
 
         gfxMatrix matrix = mThebes->CurrentMatrix();
 
         gfxMatrix rot;
-        rot.Rotate(cp[i].angle);
+        rot.Rotate(cp[iter.Position()].angle);
         mThebes->Multiply(rot);
 
         rot.Invert();
         rot.Scale(aupdp,aupdp);
-        gfxPoint pt = rot.Transform(cp[i].pos);
+        gfxPoint pt = rot.Transform(cp[iter.Position()].pos);
 
-        if(stroke) {
-            textRun->DrawToPath(mThebes, pt, i, 1, nsnull, nsnull);
+        if (stroke) {
+            textRun->DrawToPath(mThebes, pt,
+                                iter.Position(), iter.ClusterLength(),
+                                nsnull, nsnull);
         } else {
-            textRun->Draw(mThebes, pt, i, 1, nsnull, nsnull);
+            textRun->Draw(mThebes, pt, iter.Position(), iter.ClusterLength(),
+                          nsnull, nsnull);
         }
         mThebes->SetMatrix(matrix);
     }
@@ -3308,50 +3351,54 @@ nsCanvasRenderingContext2D::DrawImage(nsIDOMElement *imgElt, float a1,
                                       float a6, float a7, float a8,
                                       PRUint8 optional_argc)
 {
-    NS_ENSURE_ARG(imgElt);
-
-    nsresult rv;
-    gfxRect dirty(0.0, 0.0, 0.0, 0.0);
+    if (!imgElt) {
+        return NS_ERROR_DOM_TYPE_MISMATCH_ERR;
+    }
 
     double sx,sy,sw,sh;
     double dx,dy,dw,dh;
 
     gfxMatrix matrix;
     nsRefPtr<gfxPattern> pattern;
-    nsRefPtr<gfxPath> path;
+    gfxIntSize imgSize;
+    nsRefPtr<gfxASurface> imgsurf =
+      CanvasImageCache::Lookup(imgElt, HTMLCanvasElement(), &imgSize);
 
-    // The canvas spec says that drawImage should draw the first frame
-    // of animated images
-    PRUint32 sfeFlags = nsLayoutUtils::SFE_WANT_FIRST_FRAME;
-    nsLayoutUtils::SurfaceFromElementResult res =
-        nsLayoutUtils::SurfaceFromElement(imgElt, sfeFlags);
-    if (!res.mSurface) {
-        // Spec says to silently do nothing if the element is still loading.
-        return res.mIsStillLoading ? NS_OK : NS_ERROR_NOT_AVAILABLE;
-    }
+    if (!imgsurf) {
+        // The canvas spec says that drawImage should draw the first frame
+        // of animated images
+        PRUint32 sfeFlags = nsLayoutUtils::SFE_WANT_FIRST_FRAME;
+        nsLayoutUtils::SurfaceFromElementResult res =
+            nsLayoutUtils::SurfaceFromElement(imgElt, sfeFlags);
+        if (!res.mSurface) {
+            // Spec says to silently do nothing if the element is still loading.
+            return res.mIsStillLoading ? NS_OK : NS_ERROR_NOT_AVAILABLE;
+        }
 
 #ifndef WINCE
-    // On non-CE, force a copy if we're using drawImage with our destination
-    // as a source to work around some Cairo self-copy semantics issues.
-    if (res.mSurface == mSurface) {
-        sfeFlags |= nsLayoutUtils::SFE_WANT_NEW_SURFACE;
-        res = nsLayoutUtils::SurfaceFromElement(imgElt, sfeFlags);
-        if (!res.mSurface)
-            return NS_ERROR_NOT_AVAILABLE;
-    }
+        // On non-CE, force a copy if we're using drawImage with our destination
+        // as a source to work around some Cairo self-copy semantics issues.
+        if (res.mSurface == mSurface) {
+            sfeFlags |= nsLayoutUtils::SFE_WANT_NEW_SURFACE;
+            res = nsLayoutUtils::SurfaceFromElement(imgElt, sfeFlags);
+            if (!res.mSurface)
+                return NS_ERROR_NOT_AVAILABLE;
+        }
 #endif
 
-    nsRefPtr<gfxASurface> imgsurf = res.mSurface;
-    nsCOMPtr<nsIPrincipal> principal = res.mPrincipal;
-    gfxIntSize imgSize = res.mSize;
-    PRBool forceWriteOnly = res.mIsWriteOnly;
+        imgsurf = res.mSurface.forget();
+        imgSize = res.mSize;
 
-    if (mCanvasElement)
-        CanvasUtils::DoDrawImageSecurityCheck(HTMLCanvasElement(), principal, forceWriteOnly);
+        if (mCanvasElement) {
+            CanvasUtils::DoDrawImageSecurityCheck(HTMLCanvasElement(),
+                                                  res.mPrincipal, res.mIsWriteOnly);
+        }
 
-    gfxContextPathAutoSaveRestore pathSR(mThebes, PR_FALSE);
-
-    rv = NS_OK;
+        if (res.mImageRequest) {
+            CanvasImageCache::NotifyDrawImage(imgElt, HTMLCanvasElement(),
+                                              res.mImageRequest, imgsurf, imgSize);
+        }
+    }
 
     if (optional_argc == 0) {
         dx = a1;
@@ -3378,20 +3425,17 @@ nsCanvasRenderingContext2D::DrawImage(nsIDOMElement *imgElt, float a1,
         dh = a8;
     } else {
         // XXX ERRMSG we need to report an error to developers here! (bug 329026)
-        rv = NS_ERROR_INVALID_ARG;
-        goto FINISH;
+        return NS_ERROR_INVALID_ARG;
     }
 
     if (dw == 0.0 || dh == 0.0) {
-        rv = NS_OK;
         // not really failure, but nothing to do --
         // and noone likes a divide-by-zero
-        goto FINISH;
+        return NS_OK;
     }
 
     if (!FloatValidate(sx, sy, sw, sh) || !FloatValidate(dx, dy, dw, dh)) {
-        rv = NS_ERROR_DOM_SYNTAX_ERR;
-        goto FINISH;
+        return NS_ERROR_DOM_SYNTAX_ERR;
     }
 
     // check args
@@ -3401,8 +3445,7 @@ nsCanvasRenderingContext2D::DrawImage(nsIDOMElement *imgElt, float a1,
         dw < 0.0 || dh < 0.0)
     {
         // XXX ERRMSG we need to report an error to developers here! (bug 329026)
-        rv = NS_ERROR_DOM_INDEX_SIZE_ERR;
-        goto FINISH;
+        return NS_ERROR_DOM_INDEX_SIZE_ERR;
     }
 
     matrix.Translate(gfxPoint(sx, sy));
@@ -3429,8 +3472,7 @@ nsCanvasRenderingContext2D::DrawImage(nsIDOMElement *imgElt, float a1,
 
                 if (opaque && unscaled) {
                     bitblt(surf, sx, sy, sw, sh, dx, dy);
-                    rv = NS_OK;
-                    goto FINISH;
+                    return NS_OK;
                 }
             }
         }
@@ -3445,15 +3487,17 @@ nsCanvasRenderingContext2D::DrawImage(nsIDOMElement *imgElt, float a1,
     else
         pattern->SetFilter(gfxPattern::FILTER_NEAREST);
 
-    pathSR.Save();
+    PathAutoSaveRestore pathSR(this);
 
     // Clear the surface if we need to simulate unbounded SOURCE operator
     ClearSurfaceForUnboundedSource();
 
     {
-        gfxContextAutoSaveRestore autoSR(mThebes);
+        gfxContextMatrixAutoSaveRestore autoMatrixSR(mThebes);
+
         mThebes->Translate(gfxPoint(dx, dy));
         mThebes->SetPattern(pattern);
+        DirtyAllStyles();
 
         gfxRect clip(0, 0, dw, dh);
 
@@ -3474,11 +3518,9 @@ nsCanvasRenderingContext2D::DrawImage(nsIDOMElement *imgElt, float a1,
         }
 
         PRBool doUseIntermediateSurface = NeedToUseIntermediateSurface();
-
-        mThebes->SetPattern(pattern);
-        DirtyAllStyles();
-
         if (doUseIntermediateSurface) {
+            gfxContextAutoSaveRestore autoSR(mThebes);
+
             // draw onto a pushed group
             mThebes->PushGroup(gfxASurface::CONTENT_COLOR_ALPHA);
             mThebes->Clip(clip);
@@ -3496,18 +3538,17 @@ nsCanvasRenderingContext2D::DrawImage(nsIDOMElement *imgElt, float a1,
             mThebes->Rectangle(clip);
             mThebes->Fill();
         } else {
+            gfxContextAutoSaveRestore autoSR(mThebes);
+
             /* we need to use to clip instead of fill for globalAlpha */
             mThebes->Clip(clip);
             mThebes->Paint(CurrentState().globalAlpha);
         }
-        dirty = mThebes->UserToDevice(clip);
+
+        RedrawUser(clip);
     }
 
-FINISH:
-    if (NS_SUCCEEDED(rv))
-        rv = Redraw(dirty);
-
-    return rv;
+    return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -3658,9 +3699,7 @@ nsCanvasRenderingContext2D::DrawWindow(nsIDOMWindow* aWindow, float aX, float aY
     // note that aX and aY are coordinates in the document that
     // we're drawing; aX and aY are drawn to 0,0 in current user
     // space.
-    gfxRect damageRect = mThebes->UserToDevice(gfxRect(0, 0, aW, aH));
-
-    Redraw(damageRect);
+    RedrawUser(gfxRect(0, 0, aW, aH));
 
     return rv;
 }
@@ -3693,7 +3732,6 @@ nsCanvasRenderingContext2D::AsyncDrawXULElement(nsIDOMXULElement* aElem, float a
     if (!frameloader)
         return NS_ERROR_FAILURE;
 
-#ifdef MOZ_IPC
     PBrowserParent *child = frameloader->GetRemoteBrowser();
     if (!child) {
         nsCOMPtr<nsIDOMWindow> window =
@@ -3741,14 +3779,6 @@ nsCanvasRenderingContext2D::AsyncDrawXULElement(nsIDOMXULElement* aElem, float a
     }
 
     return NS_OK;
-#else
-    nsCOMPtr<nsIDOMWindow> window =
-        do_GetInterface(frameloader->GetExistingDocShell());
-    if (!window)
-        return NS_ERROR_FAILURE;
-
-    return DrawWindow(window, aX, aY, aW, aH, aBGColor, flags);
-#endif
 }
 
 //
@@ -3811,32 +3841,51 @@ nsCanvasRenderingContext2D::GetImageData_explicit(PRInt32 x, PRInt32 y, PRUint32
         return NS_ERROR_DOM_SECURITY_ERR;
     }
 
-    if (w == 0 || h == 0)
+    if (w == 0 || h == 0 || aDataLen != w * h * 4)
         return NS_ERROR_DOM_SYNTAX_ERR;
 
-    if (!CanvasUtils::CheckSaneSubrectSize (x, y, w, h, mWidth, mHeight))
-        return NS_ERROR_DOM_SYNTAX_ERR;
+    CheckedInt32 rightMost = CheckedInt32(x) + w;
+    CheckedInt32 bottomMost = CheckedInt32(y) + h;
 
-    PRUint32 len = w * h * 4;
-    if (aDataLen != len)
+    if (!rightMost.valid() || !bottomMost.valid())
         return NS_ERROR_DOM_SYNTAX_ERR;
 
     /* Copy the surface contents to the buffer */
-    nsRefPtr<gfxImageSurface> tmpsurf = new gfxImageSurface(aData,
-                                                            gfxIntSize(w, h),
-                                                            w * 4,
-                                                            gfxASurface::ImageFormatARGB32);
-    if (!tmpsurf || tmpsurf->CairoStatus())
+    nsRefPtr<gfxImageSurface> tmpsurf =
+        new gfxImageSurface(aData,
+                            gfxIntSize(w, h),
+                            w * 4,
+                            gfxASurface::ImageFormatARGB32);
+
+    if (tmpsurf->CairoStatus())
         return NS_ERROR_FAILURE;
 
     nsRefPtr<gfxContext> tmpctx = new gfxContext(tmpsurf);
 
-    if (!tmpctx || tmpctx->HasError())
+    if (tmpctx->HasError())
         return NS_ERROR_FAILURE;
 
-    tmpctx->SetOperator(gfxContext::OPERATOR_SOURCE);
-    tmpctx->SetSource(mSurface, gfxPoint(-(int)x, -(int)y));
-    tmpctx->Paint();
+    gfxRect srcRect(0, 0, mWidth, mHeight);
+    gfxRect destRect(x, y, w, h);
+
+    bool finishedPainting = false;
+    // In the common case, we want to avoid the Rectangle call.
+    if (!srcRect.Contains(destRect)) {
+        // If the requested area is entirely outside the canvas, we're done.
+        gfxRect tmp = srcRect.Intersect(destRect);
+        finishedPainting = tmp.IsEmpty();
+
+        // Set clipping region if necessary.
+        if (!finishedPainting) {
+            tmpctx->Rectangle(tmp);
+        }
+    }
+
+    if (!finishedPainting) {
+        tmpctx->SetOperator(gfxContext::OPERATOR_SOURCE);
+        tmpctx->SetSource(mSurface, gfxPoint(-x, -y));
+        tmpctx->Paint();
+    }
 
     // make sure sUnpremultiplyTable has been created
     EnsureUnpremultiplyTable();
@@ -3991,7 +4040,7 @@ nsCanvasRenderingContext2D::PutImageData_explicit(PRInt32 x, PRInt32 y, PRUint32
         }
     }
 
-    gfxContextPathAutoSaveRestore pathSR(mThebes);
+    PathAutoSaveRestore pathSR(this);
     gfxContextAutoSaveRestore autoSR(mThebes);
 
     // ignore clipping region, as per spec
@@ -4048,8 +4097,22 @@ nsCanvasRenderingContext2D::SetMozImageSmoothingEnabled(PRBool val)
 
 static PRUint8 g2DContextLayerUserData;
 
+class CanvasRenderingContext2DUserData : public LayerUserData {
+public:
+  CanvasRenderingContext2DUserData(nsHTMLCanvasElement *aContent)
+    : mContent(aContent) {}
+  static void DidTransactionCallback(void* aData)
+  {
+    static_cast<CanvasRenderingContext2DUserData*>(aData)->mContent->MarkContextClean();
+  }
+
+private:
+  nsRefPtr<nsHTMLCanvasElement> mContent;
+};
+
 already_AddRefed<CanvasLayer>
-nsCanvasRenderingContext2D::GetCanvasLayer(CanvasLayer *aOldLayer,
+nsCanvasRenderingContext2D::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
+                                           CanvasLayer *aOldLayer,
                                            LayerManager *aManager)
 {
     if (!mValid)
@@ -4058,14 +4121,6 @@ nsCanvasRenderingContext2D::GetCanvasLayer(CanvasLayer *aOldLayer,
     if (!mResetLayer && aOldLayer &&
         aOldLayer->HasUserData(&g2DContextLayerUserData)) {
         NS_ADDREF(aOldLayer);
-        if (mIsEntireFrameInvalid || mInvalidateCount > 0) {
-            // XXX Need to just update the changed area here; we should keep track
-            // of the rectangle based on Redraw args.
-            aOldLayer->Updated(nsIntRect(0, 0, mWidth, mHeight));
-            MarkContextClean();
-            HTMLCanvasElement()->GetPrimaryCanvasFrame()->MarkLayersActive();
-        }
-
         return aOldLayer;
     }
 
@@ -4074,7 +4129,25 @@ nsCanvasRenderingContext2D::GetCanvasLayer(CanvasLayer *aOldLayer,
         NS_WARNING("CreateCanvasLayer returned null!");
         return nsnull;
     }
-    canvasLayer->SetUserData(&g2DContextLayerUserData, nsnull);
+    CanvasRenderingContext2DUserData *userData = nsnull;
+    if (aBuilder->IsPaintingToWindow()) {
+      // Make the layer tell us whenever a transaction finishes (including
+      // the current transaction), so we can clear our invalidation state and
+      // start invalidating again. We need to do this for the layer that is
+      // being painted to a window (there shouldn't be more than one at a time,
+      // and if there is, flushing the invalidation state more often than
+      // necessary is harmless).
+
+      // The layer will be destroyed when we tear down the presentation
+      // (at the latest), at which time this userData will be destroyed,
+      // releasing the reference to the element.
+      // The userData will receive DidTransactionCallbacks, which flush the
+      // the invalidation state to indicate that the canvas is up to date.
+      userData = new CanvasRenderingContext2DUserData(HTMLCanvasElement());
+      canvasLayer->SetDidTransactionCallback(
+              CanvasRenderingContext2DUserData::DidTransactionCallback, userData);
+    }
+    canvasLayer->SetUserData(&g2DContextLayerUserData, userData);
 
     CanvasLayer::Data data;
 
@@ -4084,18 +4157,19 @@ nsCanvasRenderingContext2D::GetCanvasLayer(CanvasLayer *aOldLayer,
     canvasLayer->Initialize(data);
     PRUint32 flags = mOpaque ? Layer::CONTENT_OPAQUE : 0;
     canvasLayer->SetContentFlags(flags);
-    canvasLayer->Updated(nsIntRect(0, 0, mWidth, mHeight));
+    canvasLayer->Updated();
 
     mResetLayer = PR_FALSE;
 
-    MarkContextClean();
-
-    return canvasLayer.forget().get();
+    return canvasLayer.forget();
 }
 
 void
 nsCanvasRenderingContext2D::MarkContextClean()
 {
+    if (mInvalidateCount > 0) {
+        mPredictManyRedrawCalls = mInvalidateCount > kCanvasMaxInvalidateCount;
+    }
     mIsEntireFrameInvalid = PR_FALSE;
     mInvalidateCount = 0;
 }

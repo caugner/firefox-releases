@@ -55,9 +55,7 @@
 #undef slots
 #endif
 
-#ifdef MOZ_IPC
 #include "mozilla/plugins/PluginMessageUtils.h"
-#endif
 
 #ifdef MOZ_X11
 #include <cairo-xlib.h>
@@ -90,6 +88,7 @@ enum { XKeyPress = KeyPress };
 #include "nsNetUtil.h"
 #include "nsIPluginInstanceOwner.h"
 #include "nsIPluginInstance.h"
+#include "nsNPAPIPluginInstance.h"
 #include "nsIPluginTagInfo.h"
 #include "plstr.h"
 #include "nsILinkHandler.h"
@@ -240,9 +239,7 @@ static PRLogModuleInfo *nsObjectFrameLM = PR_NewLogModule("nsObjectFrame");
 #endif
 
 using namespace mozilla;
-#ifdef MOZ_IPC
 using namespace mozilla::plugins;
-#endif
 using namespace mozilla::layers;
 
 // special class for handeling DOM context menu events because for
@@ -273,7 +270,6 @@ public:
 
 
 class nsPluginInstanceOwner : public nsIPluginInstanceOwner,
-                              public nsIPluginInstanceOwner_MOZILLA_2_0_BRANCH,
                               public nsIPluginTagInfo,
                               public nsIDOMMouseListener,
                               public nsIDOMMouseMotionListener,
@@ -289,7 +285,6 @@ public:
 
   //nsIPluginInstanceOwner interface
   NS_DECL_NSIPLUGININSTANCEOWNER
-  NS_DECL_NSIPLUGININSTANCEOWNER_MOZILLA_2_0_BRANCH
 
   NS_IMETHOD GetURL(const char *aURL, const char *aTarget,
                     nsIInputStream *aPostStream, 
@@ -405,6 +400,9 @@ public:
   {
     mObjectFrame = aOwner;
   }
+  nsObjectFrame* GetOwner() {
+    return mObjectFrame;
+  }
 
   PRUint32 GetLastEventloopNestingLevel() const {
     return mLastEventloopNestingLevel; 
@@ -500,20 +498,9 @@ private:
   // return FALSE if LayerSurface dirty (newly created and don't have valid plugin content yet)
   PRBool IsUpToDate()
   {
-    nsCOMPtr<nsIPluginInstance_MOZILLA_2_0_BRANCH> inst = do_QueryInterface(mInstance);
-    if (!inst)
-      return PR_FALSE;
-
     nsIntSize size;
-    return NS_SUCCEEDED(inst->GetImageSize(&size)) &&
+    return NS_SUCCEEDED(mInstance->GetImageSize(&size)) &&
            size == nsIntSize(mPluginWindow->width, mPluginWindow->height);
-  }
-
-  already_AddRefed<nsIPluginInstance_MOZILLA_2_0_BRANCH>
-  GetInstance()
-  {
-    nsCOMPtr<nsIPluginInstance_MOZILLA_2_0_BRANCH> inst = do_QueryInterface(mInstance);
-    return inst.forget();
   }
 
   void FixUpURLS(const nsString &name, nsAString &value);
@@ -535,6 +522,7 @@ private:
   PRInt32                                   mInCGPaintLevel;
   nsIOSurface                              *mIOSurface;
   nsCARenderer                              mCARenderer;
+  CGColorSpaceRef                           mColorProfile;
   static nsCOMPtr<nsITimer>                *sCATimer;
   static nsTArray<nsPluginInstanceOwner*>  *sCARefreshListeners;
   PRBool                                    mSentInitialTopLevelWindowEvent;
@@ -933,6 +921,7 @@ nsObjectFrame::CreateWidget(nscoord aWidth,
   } else {
 #ifndef XP_MACOSX
     rpc->RegisterPluginForGeometryUpdates(this);
+    rpc->RequestUpdatePluginGeometry(this);
 #endif
   }
 
@@ -1972,9 +1961,18 @@ nsPluginInstanceOwner::NotifyPaintWaiter(nsDisplayListBuilder* aBuilder)
   }
 }
 
-static void DrawPlugin(ImageContainer* aContainer, void* aObjectFrame)
+static void DrawPlugin(ImageContainer* aContainer, void* aPluginInstanceOwner)
 {
-  static_cast<nsObjectFrame*>(aObjectFrame)->UpdateImageLayer(aContainer, gfxRect(0,0,0,0));
+  nsObjectFrame* frame = static_cast<nsPluginInstanceOwner*>(aPluginInstanceOwner)->GetOwner();
+  if (frame) {
+    frame->UpdateImageLayer(aContainer, gfxRect(0,0,0,0));
+  }
+}
+
+static void OnDestroyImage(void* aPluginInstanceOwner)
+{
+  nsPluginInstanceOwner* owner = static_cast<nsPluginInstanceOwner*>(aPluginInstanceOwner);
+  NS_IF_RELEASE(owner);
 }
 
 void
@@ -1994,15 +1992,18 @@ nsObjectFrame::UpdateImageLayer(ImageContainer* aContainer, const gfxRect& aRect
 PRBool
 nsPluginInstanceOwner::SetCurrentImage(ImageContainer* aContainer)
 {
-  nsCOMPtr<nsIPluginInstance_MOZILLA_2_0_BRANCH> inst = do_QueryInterface(mInstance);
-  if (inst) {
+  if (mInstance) {
     nsRefPtr<Image> image;
-    inst->GetImage(aContainer, getter_AddRefs(image));
+    // Every call to nsIPluginInstance::GetImage() creates
+    // a new image.  See nsIPluginInstance.idl.
+    mInstance->GetImage(aContainer, getter_AddRefs(image));
     if (image) {
 #ifdef XP_MACOSX
       if (image->GetFormat() == Image::MAC_IO_SURFACE && mObjectFrame) {
         MacIOSurfaceImage *oglImage = static_cast<MacIOSurfaceImage*>(image.get());
-        oglImage->SetCallback(&DrawPlugin, mObjectFrame);
+        NS_ADDREF_THIS();
+        oglImage->SetUpdateCallback(&DrawPlugin, this);
+        oglImage->SetDestroyCallback(&OnDestroyImage);
       }
 #endif
       aContainer->SetCurrentImage(image);
@@ -2016,9 +2017,8 @@ nsPluginInstanceOwner::SetCurrentImage(ImageContainer* aContainer)
 void
 nsPluginInstanceOwner::SetBackgroundUnknown()
 {
-  nsCOMPtr<nsIPluginInstance_MOZILLA_2_0_BRANCH> inst = GetInstance();
-  if (inst) {
-    inst->SetBackgroundUnknown();
+  if (mInstance) {
+    mInstance->SetBackgroundUnknown();
   }
 }
 
@@ -2026,10 +2026,9 @@ already_AddRefed<gfxContext>
 nsPluginInstanceOwner::BeginUpdateBackground(const nsIntRect& aRect)
 {
   nsIntRect rect = aRect;
-  nsCOMPtr<nsIPluginInstance_MOZILLA_2_0_BRANCH> inst = GetInstance();
   nsRefPtr<gfxContext> ctx;
-  if (inst &&
-      NS_SUCCEEDED(inst->BeginUpdateBackground(&rect, getter_AddRefs(ctx)))) {
+  if (mInstance &&
+      NS_SUCCEEDED(mInstance->BeginUpdateBackground(&rect, getter_AddRefs(ctx)))) {
     return ctx.forget();
   }
   return nsnull;
@@ -2040,19 +2039,17 @@ nsPluginInstanceOwner::EndUpdateBackground(gfxContext* aContext,
                                            const nsIntRect& aRect)
 {
   nsIntRect rect = aRect;
-  nsCOMPtr<nsIPluginInstance_MOZILLA_2_0_BRANCH> inst = GetInstance();
-  if (inst) {
-    inst->EndUpdateBackground(aContext, &rect);
+  if (mInstance) {
+    mInstance->EndUpdateBackground(aContext, &rect);
   }
 }
 
 nsIntSize
 nsPluginInstanceOwner::GetCurrentImageSize()
 {
-  nsCOMPtr<nsIPluginInstance_MOZILLA_2_0_BRANCH> inst = GetInstance();
   nsIntSize size(0,0);
-  if (inst) {
-    inst->GetImageSize(&size);
+  if (mInstance) {
+    mInstance->GetImageSize(&size);
   }
   return size;
 }
@@ -2339,7 +2336,6 @@ nsObjectFrame::PaintPlugin(nsDisplayListBuilder* aBuilder,
       nsPoint origin;
 
       gfxWindowsNativeDrawing nativeDraw(ctx, frameGfxRect);
-#ifdef MOZ_IPC
       if (nativeDraw.IsDoublePass()) {
         // OOP plugin specific: let the shim know before we paint if we are doing a
         // double pass render. If this plugin isn't oop, the register window message
@@ -2351,7 +2347,6 @@ nsObjectFrame::PaintPlugin(nsDisplayListBuilder* aBuilder,
         if (pluginEvent.event)
           inst->HandleEvent(&pluginEvent, nsnull);
       }
-#endif
       do {
         HDC hdc = nativeDraw.BeginNativeDrawing();
         if (!hdc)
@@ -2535,7 +2530,7 @@ nsObjectFrame::HandleEvent(nsPresContext* aPresContext,
       return fm->SetFocus(elem, 0);
   }
   else if (anEvent->message == NS_PLUGIN_FOCUS) {
-    nsIFocusManager_MOZILLA_2_0_BRANCH* fm = nsFocusManager::GetFocusManager();
+    nsIFocusManager* fm = nsFocusManager::GetFocusManager();
     if (fm)
       return fm->FocusPlugin(GetContent());
   }
@@ -2982,6 +2977,27 @@ nsObjectFrame::StopPluginInternal(PRBool aDelayedStop)
   owner->SetOwner(nsnull);
 }
 
+NS_IMETHODIMP
+nsObjectFrame::GetCursor(const nsPoint& aPoint, nsIFrame::Cursor& aCursor)
+{
+  if (!mInstanceOwner) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsCOMPtr<nsIPluginInstance> inst;
+  mInstanceOwner->GetInstance(*getter_AddRefs(inst));
+  if (!inst) {
+    return NS_ERROR_FAILURE;
+  }
+
+  PRBool useDOMCursor = static_cast<nsNPAPIPluginInstance*>(inst.get())->UsesDOMForCursor();
+  if (!useDOMCursor) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return nsObjectFrameSuper::GetCursor(aPoint, aCursor);
+}
+
 void
 nsObjectFrame::NotifyContentObjectWrapper()
 {
@@ -3165,6 +3181,7 @@ nsPluginInstanceOwner::nsPluginInstanceOwner()
   mInCGPaintLevel = 0;
   mSentInitialTopLevelWindowEvent = PR_FALSE;
   mIOSurface = nsnull;
+  mColorProfile = nsnull;
   mPluginPortChanged = PR_FALSE;
 #endif
   mContentFocused = PR_FALSE;
@@ -3274,7 +3291,6 @@ NS_IMPL_RELEASE(nsPluginInstanceOwner)
 
 NS_INTERFACE_MAP_BEGIN(nsPluginInstanceOwner)
   NS_INTERFACE_MAP_ENTRY(nsIPluginInstanceOwner)
-  NS_INTERFACE_MAP_ENTRY(nsIPluginInstanceOwner_MOZILLA_2_0_BRANCH)
   NS_INTERFACE_MAP_ENTRY(nsIPluginTagInfo)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMouseListener)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMouseMotionListener)
@@ -3493,7 +3509,7 @@ NS_IMETHODIMP nsPluginInstanceOwner::InvalidateRect(NPRect *invalidRect)
   // InvalidateRect is called. We notify reftests that painting is up to
   // date and update our ImageContainer with the new surface.
   nsRefPtr<ImageContainer> container = mObjectFrame->GetImageContainer();
-  gfxIntSize oldSize;
+  gfxIntSize oldSize(0, 0);
   if (container) {
     oldSize = container->GetCurrentSize();
     SetCurrentImage(container);
@@ -3501,9 +3517,14 @@ NS_IMETHODIMP nsPluginInstanceOwner::InvalidateRect(NPRect *invalidRect)
 
 #ifdef MOZ_USE_IMAGE_EXPOSE
   PRBool simpleImageRender = PR_FALSE;
-  mInstance->GetValueFromPlugin(NPPVpluginWindowlessLocalBool,
-                                &simpleImageRender);
-  if (simpleImageRender) {  
+  nsresult rv = mInstance->GetValueFromPlugin(NPPVpluginWindowlessLocalBool,
+                                              &simpleImageRender);
+  // If the call returned an error code make sure we still use our default value.
+  if (NS_FAILED(rv)) {
+    simpleImageRender = PR_FALSE;
+  }
+
+  if (simpleImageRender) {
     NativeImageDraw(invalidRect);
     return NS_OK;
   }
@@ -3855,7 +3876,7 @@ static const moz2javaCharset charsets[] =
     {"EUC-KR",          "EUC_KR"},
     {"x-euc-tw",        "EUC_TW"},
     {"gb18030",         "GB18030"},
-    {"x-gbk",           "GBK"},
+    {"gbk",             "GBK"},
     {"ISO-2022-JP",     "ISO2022JP"},
     {"ISO-2022-KR",     "ISO2022KR"},
     {"ISO-8859-2",      "ISO8859_2"},
@@ -4260,12 +4281,11 @@ NPDrawingModel nsPluginInstanceOwner::GetDrawingModel()
 
 PRBool nsPluginInstanceOwner::IsRemoteDrawingCoreAnimation()
 {
-  nsCOMPtr<nsIPluginInstance_MOZILLA_2_0_BRANCH> inst = do_QueryInterface(mInstance);
-  if (!inst)
+  if (!mInstance)
     return PR_FALSE;
 
   PRBool coreAnimation;
-  if (!NS_SUCCEEDED(inst->IsRemoteDrawingCoreAnimation(&coreAnimation)))
+  if (!NS_SUCCEEDED(mInstance->IsRemoteDrawingCoreAnimation(&coreAnimation)))
     return PR_FALSE;
 
   return coreAnimation;
@@ -4361,8 +4381,8 @@ void nsPluginInstanceOwner::RenderCoreAnimation(CGContextRef aCGContext,
     return;
 
   if (!mIOSurface || 
-     (mIOSurface->GetWidth() != (size_t)aWidth || 
-      mIOSurface->GetHeight() != (size_t)aHeight)) {
+      (mIOSurface->GetWidth() != (size_t)aWidth || 
+       mIOSurface->GetHeight() != (size_t)aHeight)) {
     if (mIOSurface) {
       delete mIOSurface;
     }
@@ -4383,10 +4403,14 @@ void nsPluginInstanceOwner::RenderCoreAnimation(CGContextRef aCGContext,
     }
   }
 
+  if (!mColorProfile) {
+    mColorProfile = CreateSystemColorSpace();
+  }
+
   if (mCARenderer.isInit() == false) {
     void *caLayer = NULL;
-    mInstance->GetValueFromPlugin(NPPVpluginCoreAnimationLayer, &caLayer);
-    if (!caLayer) {
+    nsresult rv = mInstance->GetValueFromPlugin(NPPVpluginCoreAnimationLayer, &caLayer);
+    if (NS_FAILED(rv) || !caLayer) {
       return;
     }
 
@@ -4400,8 +4424,8 @@ void nsPluginInstanceOwner::RenderCoreAnimation(CGContextRef aCGContext,
 
   CGImageRef caImage = NULL;
   nsresult rt = mCARenderer.Render(aWidth, aHeight, &caImage);
-  if (rt == NS_OK && mIOSurface) {
-    nsCARenderer::DrawSurfaceToCGContext(aCGContext, mIOSurface, CreateSystemColorSpace(),
+  if (rt == NS_OK && mIOSurface && mColorProfile) {
+    nsCARenderer::DrawSurfaceToCGContext(aCGContext, mIOSurface, mColorProfile,
                                          0, 0, aWidth, aHeight);
   } else if (rt == NS_OK && caImage != NULL) {
     // Significant speed up by resetting the scaling
@@ -5733,6 +5757,8 @@ nsPluginInstanceOwner::Destroy()
   RemoveFromCARefreshTimer(this);
   if (mIOSurface)
     delete mIOSurface;
+  if (mColorProfile)
+    ::CGColorSpaceRelease(mColorProfile);  
 #endif
 
   // unregister context menu listener
@@ -5795,6 +5821,19 @@ nsPluginInstanceOwner::PrepareToStop(PRBool aDelayedStop)
   // Drop image reference because the child may destroy the surface after we return.
   nsRefPtr<ImageContainer> container = mObjectFrame->GetImageContainer();
   if (container) {
+#ifdef XP_MACOSX
+    nsRefPtr<Image> image = container->GetCurrentImage();
+    if (image && (image->GetFormat() == Image::MAC_IO_SURFACE) && mObjectFrame) {
+      // Undo what we did to the current image in SetCurrentImage().
+      MacIOSurfaceImage *oglImage = static_cast<MacIOSurfaceImage*>(image.get());
+      oglImage->SetUpdateCallback(nsnull, nsnull);
+      oglImage->SetDestroyCallback(nsnull);
+      // If we have a current image here, its destructor hasn't yet been
+      // called, so OnDestroyImage() can't yet have been called.  So we need
+      // to do ourselves what OnDestroyImage() would have done.
+      NS_RELEASE_THIS();
+    }
+#endif
     container->SetCurrentImage(nsnull);
   }
 
@@ -5857,6 +5896,9 @@ void nsPluginInstanceOwner::Paint(const gfxRect& aDirtyRect, CGContextRef cgCont
 
 void nsPluginInstanceOwner::DoCocoaEventDrawRect(const gfxRect& aDrawRect, CGContextRef cgContext)
 {
+  if (!mInstance || !mObjectFrame)
+    return;
+ 
   // The context given here is only valid during the HandleEvent call.
   NPCocoaEvent updateEvent;
   InitializeNPCocoaEvent(&updateEvent);
@@ -5924,8 +5966,12 @@ void nsPluginInstanceOwner::Paint(gfxContext* aContext,
   // us to handle plugins that do not self invalidate (slowly, but
   // accurately), and it allows us to reduce flicker.
   PRBool simpleImageRender = PR_FALSE;
-  mInstance->GetValueFromPlugin(NPPVpluginWindowlessLocalBool,
-                                &simpleImageRender);
+  nsresult rv = mInstance->GetValueFromPlugin(NPPVpluginWindowlessLocalBool,
+                                              &simpleImageRender);
+  // If the call returned an error code make sure we still use our default value.
+  if (NS_FAILED(rv)) {
+    simpleImageRender = PR_FALSE;
+  }
   if (simpleImageRender) {
     gfxMatrix matrix = aContext->CurrentMatrix();
     if (!matrix.HasNonAxisAlignedTransform())
@@ -6991,10 +7037,15 @@ nsPluginInstanceOwner::SetAbsoluteScreenPosition(nsIDOMElement* element,
     return NS_OK;
 
   PRBool simpleImageRender = PR_FALSE;
-  mInstance->GetValueFromPlugin(NPPVpluginWindowlessLocalBool,
-                                &simpleImageRender);
-  if (simpleImageRender)
+  nsresult rv = mInstance->GetValueFromPlugin(NPPVpluginWindowlessLocalBool,
+                                              &simpleImageRender);
+  // If the call returned an error code make sure we still use our default value.
+  if (NS_FAILED(rv)) {
+    simpleImageRender = PR_FALSE;
+  }
+  if (simpleImageRender) {
     NativeImageDraw();
+  }
   return NS_OK;
 }
 #endif

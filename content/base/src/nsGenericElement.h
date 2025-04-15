@@ -455,9 +455,9 @@ public:
   {
     return nsnull;
   }
-  virtual nsresult GetSMILOverrideStyle(nsIDOMCSSStyleDeclaration** aStyle);
-  virtual nsICSSStyleRule* GetSMILOverrideStyleRule();
-  virtual nsresult SetSMILOverrideStyleRule(nsICSSStyleRule* aStyleRule,
+  virtual nsIDOMCSSStyleDeclaration* GetSMILOverrideStyle();
+  virtual mozilla::css::StyleRule* GetSMILOverrideStyleRule();
+  virtual nsresult SetSMILOverrideStyleRule(mozilla::css::StyleRule* aStyleRule,
                                             PRBool aNotify);
 #endif // MOZ_SMIL
 
@@ -473,8 +473,8 @@ public:
 
   virtual const nsAttrValue* DoGetClasses() const;
   NS_IMETHOD WalkContentStyleRules(nsRuleWalker* aRuleWalker);
-  virtual nsICSSStyleRule* GetInlineStyleRule();
-  NS_IMETHOD SetInlineStyleRule(nsICSSStyleRule* aStyleRule, PRBool aNotify);
+  virtual mozilla::css::StyleRule* GetInlineStyleRule();
+  NS_IMETHOD SetInlineStyleRule(mozilla::css::StyleRule* aStyleRule, PRBool aNotify);
   NS_IMETHOD_(PRBool)
     IsAttributeMapped(const nsIAtom* aAttribute) const;
   virtual nsChangeHint GetAttributeChangeHint(const nsIAtom* aAttribute,
@@ -506,7 +506,6 @@ public:
   NS_IMETHOD GetAttributes(nsIDOMNamedNodeMap** aAttributes);
   NS_IMETHOD GetNamespaceURI(nsAString& aNamespaceURI);
   NS_IMETHOD GetPrefix(nsAString& aPrefix);
-  NS_IMETHOD SetPrefix(const nsAString& aPrefix);
   NS_IMETHOD Normalize();
   NS_IMETHOD IsSupported(const nsAString& aFeature,
                          const nsAString& aVersion, PRBool* aReturn);
@@ -943,7 +942,7 @@ public:
   class nsDOMSlots : public nsINode::nsSlots
   {
   public:
-    nsDOMSlots(PtrBits aFlags);
+    nsDOMSlots();
     virtual ~nsDOMSlots();
 
     /**
@@ -961,7 +960,7 @@ public:
     /**
      * Holds any SMIL override style rules for this element.
      */
-    nsCOMPtr<nsICSSStyleRule> mSMILOverrideStyleRule;
+    nsRefPtr<mozilla::css::StyleRule> mSMILOverrideStyleRule;
 
     /**
      * An object implementing nsIDOMNamedNodeMap for this content (attributes)
@@ -1024,14 +1023,14 @@ protected:
    * Add/remove this element to the documents id cache
    */
   void AddToIdTable(nsIAtom* aId) {
-    NS_ASSERTION(HasFlag(NODE_HAS_ID), "Node lacking NODE_HAS_ID flag");
+    NS_ASSERTION(HasID(), "Node doesn't have an ID?");
     nsIDocument* doc = GetCurrentDoc();
     if (doc && (!IsInAnonymousSubtree() || doc->IsXUL())) {
       doc->AddToIdTable(this, aId);
     }
   }
   void RemoveFromIdTable() {
-    if (HasFlag(NODE_HAS_ID)) {
+    if (HasID()) {
       nsIDocument* doc = GetCurrentDoc();
       if (doc) {
         nsIAtom* id = DoGetID();

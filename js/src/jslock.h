@@ -50,8 +50,6 @@
 # include "prthread.h"
 #endif
 
-JS_BEGIN_EXTERN_C
-
 #ifdef JS_THREADSAFE
 
 #if (defined(_WIN32) && defined(_M_IX86)) ||                                  \
@@ -92,10 +90,10 @@ typedef PRLock JSLock;
  * Atomic increment and decrement for a reference counter, given jsrefcount *p.
  * NB: jsrefcount is int32, aka PRInt32, so that pratom.h functions work.
  */
-#define JS_ATOMIC_INCREMENT(p)      PR_AtomicIncrement((PRInt32 *)(p))
-#define JS_ATOMIC_DECREMENT(p)      PR_AtomicDecrement((PRInt32 *)(p))
-#define JS_ATOMIC_ADD(p,v)          PR_AtomicAdd((PRInt32 *)(p), (PRInt32)(v))
-#define JS_ATOMIC_SET(p,v)          PR_AtomicSet((PRInt32 *)(p), (PRInt32)(v))
+#define JS_ATOMIC_INCREMENT(p)      PR_ATOMIC_INCREMENT((PRInt32 *)(p))
+#define JS_ATOMIC_DECREMENT(p)      PR_ATOMIC_DECREMENT((PRInt32 *)(p))
+#define JS_ATOMIC_ADD(p,v)          PR_ATOMIC_ADD((PRInt32 *)(p), (PRInt32)(v))
+#define JS_ATOMIC_SET(p,v)          PR_ATOMIC_SET((PRInt32 *)(p), (PRInt32)(v))
 
 #define js_CurrentThreadId()        PR_GetCurrentThread()
 #define JS_NEW_LOCK()               PR_NewLock()
@@ -144,7 +142,7 @@ extern JSBool js_IsRuntimeLocked(JSRuntime *rt);
 #define JS_ATOMIC_ADD(p,v)          (*(p) += (v))
 #define JS_ATOMIC_SET(p,v)          (*(p) = (v))
 
-#define JS_CurrentThreadId() 0
+#define js_CurrentThreadId()        0
 #define JS_NEW_LOCK()               NULL
 #define JS_DESTROY_LOCK(l)          ((void)0)
 #define JS_ACQUIRE_LOCK(l)          ((void)0)
@@ -217,13 +215,10 @@ js_CompareAndSwap(jsword *w, jsword ov, jsword nv)
 #define JS_ATOMIC_SET_MASK(w, mask) (*(w) |= (mask))
 #define JS_ATOMIC_CLEAR_MASK(w, mask) (*(w) &= ~(mask))
 
-#endif /* JS_THREADSAFE */
+#endif
 
-JS_END_EXTERN_C
-
-#if defined JS_THREADSAFE && defined __cplusplus
+#ifdef JS_THREADSAFE
 namespace js {
-
 class AutoLock {
   private:
     JSLock *lock;
@@ -232,8 +227,10 @@ class AutoLock {
     AutoLock(JSLock *lock) : lock(lock) { JS_ACQUIRE_LOCK(lock); }
     ~AutoLock() { JS_RELEASE_LOCK(lock); }
 };
-
-}
+}  /* namespace js */
+# define JS_AUTO_LOCK_GUARD(name, l) AutoLock name((l));
+#else
+# define JS_AUTO_LOCK_GUARD(name, l)
 #endif
 
 #endif /* jslock_h___ */

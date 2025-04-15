@@ -139,11 +139,7 @@ public:
    */
   void StopPluginInternal(PRBool aDelayedStop);
 
-  /* fail on any requests to get a cursor from us because plugins set their own! see bug 118877 */
-  NS_IMETHOD GetCursor(const nsPoint& aPoint, nsIFrame::Cursor& aCursor) 
-  {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
+  NS_IMETHOD GetCursor(const nsPoint& aPoint, nsIFrame::Cursor& aCursor);
 
   // Compute the desired position of the plugin's widget, on the assumption
   // that it is not visible (clipped out or covered by opaque content).
@@ -212,6 +208,8 @@ public:
    */
   static void EndSwapDocShells(nsIContent* aContent, void*);
 
+  nsIWidget* GetWidget() { return mWidget; }
+
 protected:
   nsObjectFrame(nsStyleContext* aContext);
   virtual ~nsObjectFrame();
@@ -276,8 +274,6 @@ protected:
   void ComputeWidgetGeometry(const nsRegion& aRegion,
                              const nsPoint& aPluginOrigin,
                              nsTArray<nsIWidget::Configuration>* aConfigurations);
-
-  nsIWidget* GetWidget() { return mWidget; }
 
   nsresult SetAbsoluteScreenPosition(nsIDOMElement* element,
                                      nsIDOMClientRect* position,
@@ -353,8 +349,8 @@ public:
   // with the root pres context for geometry updates.
   // The widget, its new position, size and clip region are appended as
   // a Configuration record to aConfigurations.
-  // If there is no widget associated with the plugin, this
-  // simply does nothing.
+  // If the plugin has no widget, no configuration is added, but
+  // the plugin visibility state may be adjusted.
   void GetWidgetConfiguration(nsDisplayListBuilder* aBuilder,
                               nsTArray<nsIWidget::Configuration>* aConfigurations);
 

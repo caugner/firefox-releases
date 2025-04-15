@@ -40,7 +40,6 @@
 #include <android/log.h>
 #include <math.h>
 
-#ifdef MOZ_IPC
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/unused.h"
@@ -48,7 +47,6 @@
 using mozilla::dom::ContentParent;
 using mozilla::dom::ContentChild;
 using mozilla::unused;
-#endif
 
 #include "nsAppShell.h"
 #include "nsIdleService.h"
@@ -84,7 +82,6 @@ NS_IMPL_ISUPPORTS_INHERITED0(nsWindow, nsBaseWidget)
 static gfxIntSize gAndroidBounds;
 static gfxIntSize gAndroidScreenBounds;
 
-#ifdef MOZ_IPC
 class ContentCreationNotifier;
 static nsCOMPtr<ContentCreationNotifier> gContentCreationNotifier;
 // A helper class to send updates when content processes
@@ -119,7 +116,6 @@ class ContentCreationNotifier : public nsIObserver
 
 NS_IMPL_ISUPPORTS1(ContentCreationNotifier,
                    nsIObserver)
-#endif
 
 static PRBool gMenu;
 static PRBool gMenuConsumed;
@@ -363,7 +359,7 @@ nsWindow::Show(PRBool aState)
             BringToFront();
         } else if (TopWindow() == this) {
             // find the next visible window to show
-            int i;
+            unsigned int i;
             for (i = 1; i < gTopLevelWindows.Length(); i++) {
                 nsWindow *win = gTopLevelWindows[i];
                 if (!win->mIsVisible)
@@ -523,7 +519,6 @@ NS_IMETHODIMP
 nsWindow::Invalidate(const nsIntRect &aRect,
                      PRBool aIsSynchronous)
 {
-    ALOG("nsWindow::Invalidate %p [%d %d %d %d]", (void*) this, aRect.x, aRect.y, aRect.width, aRect.height);
     nsAppShell::gAppShell->PostEvent(new AndroidGeckoEvent(-1, -1, -1, -1));
     return NS_OK;
 }
@@ -772,7 +767,6 @@ nsWindow::OnGlobalAndroidEvent(AndroidGeckoEvent *ae)
             gAndroidScreenBounds.width = newScreenWidth;
             gAndroidScreenBounds.height = newScreenHeight;
 
-#ifdef MOZ_IPC
             if (XRE_GetProcessType() != GeckoProcessType_Default)
                 break;
 
@@ -797,7 +791,6 @@ nsWindow::OnGlobalAndroidEvent(AndroidGeckoEvent *ae)
                 else
                     obs->RemoveObserver(notifier, "ipc:content-created");
             }
-#endif
         }
 
         case AndroidGeckoEvent::MOTION_EVENT: {
@@ -846,12 +839,16 @@ nsWindow::OnGlobalAndroidEvent(AndroidGeckoEvent *ae)
             }
             break;
 
-	case AndroidGeckoEvent::SURFACE_CREATED:
-	    break;
+        case AndroidGeckoEvent::SURFACE_CREATED:
+            break;
 
-	case AndroidGeckoEvent::SURFACE_DESTROYED:
-	    sValidSurface = false;
-	    break;
+        case AndroidGeckoEvent::SURFACE_DESTROYED:
+            sValidSurface = false;
+            break;
+
+        case AndroidGeckoEvent::GECKO_EVENT_SYNC:
+            AndroidBridge::Bridge()->AcknowledgeEventSync();
+            break;
 
         default:
             break;
@@ -897,8 +894,6 @@ nsWindow::DrawTo(gfxASurface *targetSurface)
 
     // If we have no covering child, then we need to render this.
     if (coveringChildIndex == -1) {
-        ALOG("nsWindow[%p]::DrawTo no covering child, drawing this", (void*) this);
-
         nsPaintEvent event(PR_TRUE, NS_PAINT, this);
         event.region = boundsRect;
         switch (GetLayerManager(nsnull)->GetBackendType()) {
@@ -946,7 +941,6 @@ nsWindow::DrawTo(gfxASurface *targetSurface)
         offset = targetSurface->GetDeviceOffset();
 
     for (PRUint32 i = coveringChildIndex; i < mChildren.Length(); ++i) {
-        ALOG("nsWindow[%p]::DrawTo child[%d]", (void*) this, i);
         if (mChildren[i]->mBounds.IsEmpty() ||
             !mChildren[i]->mBounds.Intersects(boundsRect)) {
             continue;
@@ -966,16 +960,12 @@ nsWindow::DrawTo(gfxASurface *targetSurface)
     if (targetSurface)
         targetSurface->SetDeviceOffset(offset);
 
-    ALOG("nsWindow[%p]::DrawTo done", (void*) this);
-
     return PR_TRUE;
 }
 
 void
 nsWindow::OnDraw(AndroidGeckoEvent *ae)
 {
-    ALOG(">> OnDraw");
-
     if (!IsTopLevel()) {
         ALOG("##### redraw for window %p, which is not a toplevel window -- sending to toplevel!", (void*) this);
         DumpWindows();
@@ -1079,11 +1069,9 @@ nsWindow::InitEvent(nsGUIEvent& event, nsIntPoint* aPoint)
 gfxIntSize
 nsWindow::GetAndroidScreenBounds()
 {
-#ifdef MOZ_IPC
     if (XRE_GetProcessType() == GeckoProcessType_Content) {
         return ContentChild::GetSingleton()->GetScreenSize();
     }
-#endif
     return gAndroidScreenBounds;
 }
 

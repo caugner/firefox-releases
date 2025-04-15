@@ -152,6 +152,25 @@ function debug(aMsg) {
 /* :::::::: The Service ::::::::::::::: */
 
 function SessionStoreService() {
+  XPCOMUtils.defineLazyGetter(this, "_prefBranch", function () {
+    return Cc["@mozilla.org/preferences-service;1"].
+           getService(Ci.nsIPrefService).getBranch("browser.").
+           QueryInterface(Ci.nsIPrefBranch2);
+  });
+
+  // minimal interval between two save operations (in milliseconds)
+  XPCOMUtils.defineLazyGetter(this, "_interval", function () {
+    // used often, so caching/observing instead of fetching on-demand
+    this._prefBranch.addObserver("sessionstore.interval", this, true);
+    return this._prefBranch.getIntPref("sessionstore.interval");
+  });
+
+  // when crash recovery is disabled, session data is not written to disk
+  XPCOMUtils.defineLazyGetter(this, "_resume_from_crash", function () {
+    // get crash recovery state from prefs and allow for proper reaction to state changes
+    this._prefBranch.addObserver("sessionstore.resume_from_crash", this, true);
+    return this._prefBranch.getBoolPref("sessionstore.resume_from_crash");
+  });
 }
 
 SessionStoreService.prototype = {
@@ -167,12 +186,6 @@ SessionStoreService.prototype = {
 
   // set default load state
   _loadState: STATE_STOPPED,
-
-  // minimal interval between two save operations (in milliseconds)
-  _interval: 15000,
-
-  // when crash recovery is disabled, session data is not written to disk
-  _resume_from_crash: true,
 
   // During the initial restore and setBrowserState calls tracks the number of
   // windows yet to be restored
@@ -248,9 +261,6 @@ SessionStoreService.prototype = {
    * Initialize the component
    */
   initService: function() {
-    this._prefBranch = Services.prefs.getBranch("browser.");
-    this._prefBranch.QueryInterface(Ci.nsIPrefBranch2);
-
     OBSERVING.forEach(function(aTopic) {
       Services.obs.addObserver(this, aTopic, true);
     }, this);
@@ -258,14 +268,6 @@ SessionStoreService.prototype = {
     var pbs = Cc["@mozilla.org/privatebrowsing;1"].
               getService(Ci.nsIPrivateBrowsingService);
     this._inPrivateBrowsing = pbs.privateBrowsingEnabled;
-
-    // get interval from prefs - used often, so caching/observing instead of fetching on-demand
-    this._interval = this._prefBranch.getIntPref("sessionstore.interval");
-    this._prefBranch.addObserver("sessionstore.interval", this, true);
-    
-    // get crash recovery state from prefs and allow for proper reaction to state changes
-    this._resume_from_crash = this._prefBranch.getBoolPref("sessionstore.resume_from_crash");
-    this._prefBranch.addObserver("sessionstore.resume_from_crash", this, true);
     
     // observe prefs changes so we can modify stored data to match
     this._prefBranch.addObserver("sessionstore.max_tabs_undo", this, true);
@@ -769,36 +771,41 @@ SessionStoreService.prototype = {
 
       if (closedWindowState) {
         let newWindowState;
-#ifdef XP_MACOSX
-        // We want to split the window up into pinned tabs and unpinned tabs.
-        // Pinned tabs should be restored. If there are any remaining tabs,
-        // they should be added back to _closedWindows.
-        // We'll cheat a little bit and reuse _prepDataForDeferredRestore
-        // even though it wasn't built exactly for this.
-        let [appTabsState, normalTabsState] =
-          this._prepDataForDeferredRestore(JSON.stringify({ windows: [closedWindowState] }));
+#ifndef XP_MACOSX
+        if (!this._doResumeSession()) {
+#endif
+          // We want to split the window up into pinned tabs and unpinned tabs.
+          // Pinned tabs should be restored. If there are any remaining tabs,
+          // they should be added back to _closedWindows.
+          // We'll cheat a little bit and reuse _prepDataForDeferredRestore
+          // even though it wasn't built exactly for this.
+          let [appTabsState, normalTabsState] =
+            this._prepDataForDeferredRestore(JSON.stringify({ windows: [closedWindowState] }));
 
-        // These are our pinned tabs, which we should restore
-        if (appTabsState.windows.length) {
-          newWindowState = appTabsState.windows[0];
-          delete newWindowState.__lastSessionWindowID;
-        }
+          // These are our pinned tabs, which we should restore
+          if (appTabsState.windows.length) {
+            newWindowState = appTabsState.windows[0];
+            delete newWindowState.__lastSessionWindowID;
+          }
 
-        // In case there were no unpinned tabs, remove the window from _closedWindows
-        if (!normalTabsState.windows.length) {
-          this._closedWindows.splice(closedWindowIndex, 1);
+          // In case there were no unpinned tabs, remove the window from _closedWindows
+          if (!normalTabsState.windows.length) {
+            this._closedWindows.splice(closedWindowIndex, 1);
+          }
+          // Or update _closedWindows with the modified state
+          else {
+            delete normalTabsState.windows[0].__lastSessionWindowID;
+            this._closedWindows[closedWindowIndex] = normalTabsState.windows[0];
+          }
+#ifndef XP_MACOSX
         }
-        // Or update _closedWindows with the modified state
         else {
-          delete normalTabsState.windows[0].__lastSessionWindowID;
-          this._closedWindows[closedWindowIndex] = normalTabsState.windows[0];
+          // If we're just restoring the window, make sure it gets removed from
+          // _closedWindows.
+          this._closedWindows.splice(closedWindowIndex, 1);
+          newWindowState = closedWindowState;
+          delete newWindowState.hidden;
         }
-#else
-        // If we're just restoring the window, make sure it gets removed from
-        // _closedWindows.
-        this._closedWindows.splice(closedWindowIndex, 1);
-        newWindowState = closedWindowState;
-        delete newWindowState.hidden;
 #endif
         if (newWindowState) {
           // Ensure that the window state isn't hidden
@@ -4026,7 +4033,7 @@ SessionStoreService.prototype = {
     // Initialize the file output stream.
     var ostream = Cc["@mozilla.org/network/safe-file-output-stream;1"].
                   createInstance(Ci.nsIFileOutputStream);
-    ostream.init(aFile, 0x02 | 0x08 | 0x20, 0600, 0);
+    ostream.init(aFile, 0x02 | 0x08 | 0x20, 0600, ostream.DEFER_OPEN);
 
     // Obtain a converter to convert our data to a UTF-8 encoded input stream.
     var converter = Cc["@mozilla.org/intl/scriptableunicodeconverter"].

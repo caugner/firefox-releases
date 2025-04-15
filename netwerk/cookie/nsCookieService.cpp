@@ -45,10 +45,8 @@
 #define FORCE_PR_LOG // Allow logging in the release build
 #endif
 
-#ifdef MOZ_IPC
 #include "mozilla/net/CookieServiceChild.h"
 #include "mozilla/net/NeckoCommon.h"
-#endif
 
 #include "nsCookieService.h"
 #include "nsIServiceManager.h"
@@ -563,10 +561,8 @@ NS_IMPL_ISUPPORTS1(CloseCookieDBListener, mozIStorageCompletionCallback)
 nsICookieService*
 nsCookieService::GetXPCOMSingleton()
 {
-#ifdef MOZ_IPC
   if (IsNeckoChild())
     return CookieServiceChild::GetSingleton();
-#endif
 
   return GetSingleton();
 }
@@ -574,9 +570,7 @@ nsCookieService::GetXPCOMSingleton()
 nsCookieService*
 nsCookieService::GetSingleton()
 {
-#ifdef MOZ_IPC
   NS_ASSERTION(!IsNeckoChild(), "not a parent process");
-#endif
 
   if (gCookieService) {
     NS_ADDREF(gCookieService);
@@ -1257,7 +1251,9 @@ nsCookieService::HandleCorruptDB(DBState* aDBState)
   case DBState::REBUILDING: {
     // We had an error while rebuilding the DB. Game over. Close the database
     // and let the close handler do nothing; then we'll move it out of the way.
-    mDefaultDBState->dbConn->AsyncClose(mDefaultDBState->closeListener);
+    if (mDefaultDBState->dbConn) {
+      mDefaultDBState->dbConn->AsyncClose(mDefaultDBState->closeListener);
+    }
     CloseDefaultDBConnection();
     break;
   }
@@ -1529,6 +1525,7 @@ nsCookieService::SetCookieStringInternal(nsIURI          *aHostURI,
   switch (cookieStatus) {
   case STATUS_REJECTED:
     NotifyRejected(aHostURI);
+    return;
   case STATUS_REJECTED_WITH_ERROR:
     return;
   default:
@@ -1553,7 +1550,11 @@ nsCookieService::SetCookieStringInternal(nsIURI          *aHostURI,
   // process each cookie in the header
   nsDependentCString cookieHeader(aCookieHeader);
   while (SetCookieInternal(aHostURI, baseDomain, requireHostMatch,
-                           cookieStatus, cookieHeader, serverTime, aFromHttp));
+                           cookieStatus, cookieHeader, serverTime, aFromHttp)) {
+    // document.cookie can only set one cookie at a time
+    if (!aFromHttp)
+      break;
+  }
 }
 
 // notify observers that a cookie was rejected due to the users' prefs.
@@ -3023,14 +3024,11 @@ nsCookieService::GetBaseDomainFromHost(const nsACString &aHost,
     return NS_ERROR_INVALID_ARG;
 
   // aHost may contain a leading dot; if so, strip it now.
-  nsDependentCString host(aHost);
-  PRBool domain = !host.IsEmpty() && host.First() == '.';
-  if (domain)
-    host.Rebind(host.BeginReading() + 1, host.EndReading());
+  PRBool domain = !aHost.IsEmpty() && aHost.First() == '.';
 
   // get the base domain. this will fail if the host contains a leading dot,
   // more than one trailing dot, or is otherwise malformed.
-  nsresult rv = mTLDService->GetBaseDomainFromHost(host, 0, aBaseDomain);
+  nsresult rv = mTLDService->GetBaseDomainFromHost(Substring(aHost, domain), 0, aBaseDomain);
   if (rv == NS_ERROR_HOST_IS_IP_ADDRESS ||
       rv == NS_ERROR_INSUFFICIENT_DOMAIN_LEVELS) {
     // aHost is either an IP address, an alias such as 'localhost', an eTLD
@@ -3040,7 +3038,7 @@ nsCookieService::GetBaseDomainFromHost(const nsACString &aHost,
     if (domain)
       return NS_ERROR_INVALID_ARG;
 
-    aBaseDomain = host;
+    aBaseDomain = aHost;
     return NS_OK;
   }
   return rv;

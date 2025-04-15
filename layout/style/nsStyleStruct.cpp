@@ -208,7 +208,6 @@ nsChangeHint nsStyleFont::CalcFontDifference(const nsFont& aFont1, const nsFont&
       (aFont1.sizeAdjust == aFont2.sizeAdjust) && 
       (aFont1.style == aFont2.style) &&
       (aFont1.variant == aFont2.variant) &&
-      (aFont1.familyNameQuirks == aFont2.familyNameQuirks) &&
       (aFont1.weight == aFont2.weight) &&
       (aFont1.stretch == aFont2.stretch) &&
       (aFont1.name == aFont2.name) &&
@@ -1922,6 +1921,20 @@ nsStyleBackground::Layer::operator==(const Layer& aOther) const
 //
 void nsTimingFunction::AssignFromKeyword(PRInt32 aTimingFunctionType)
 {
+  switch (aTimingFunctionType) {
+    case NS_STYLE_TRANSITION_TIMING_FUNCTION_STEP_START:
+      mType = StepStart;
+      mSteps = 1;
+      return;
+    case NS_STYLE_TRANSITION_TIMING_FUNCTION_STEP_END:
+      mType = StepEnd;
+      mSteps = 1;
+      return;
+    default:
+      mType = Function;
+      break;
+  }
+
   PR_STATIC_ASSERT(NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE == 0);
   PR_STATIC_ASSERT(NS_STYLE_TRANSITION_TIMING_FUNCTION_LINEAR == 1);
   PR_STATIC_ASSERT(NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE_IN == 2);
@@ -1938,10 +1951,10 @@ void nsTimingFunction::AssignFromKeyword(PRInt32 aTimingFunctionType)
 
   NS_ABORT_IF_FALSE(0 <= aTimingFunctionType && aTimingFunctionType < 5,
                     "keyword out of range");
-  mX1 = timingFunctionValues[aTimingFunctionType][0];
-  mY1 = timingFunctionValues[aTimingFunctionType][1];
-  mX2 = timingFunctionValues[aTimingFunctionType][2];
-  mY2 = timingFunctionValues[aTimingFunctionType][3];
+  mFunc.mX1 = timingFunctionValues[aTimingFunctionType][0];
+  mFunc.mY1 = timingFunctionValues[aTimingFunctionType][1];
+  mFunc.mX2 = timingFunctionValues[aTimingFunctionType][2];
+  mFunc.mY2 = timingFunctionValues[aTimingFunctionType][3];
 }
 
 nsTransition::nsTransition(const nsTransition& aCopy)
@@ -1970,6 +1983,33 @@ void nsTransition::SetUnknownProperty(const nsAString& aUnknownProperty)
   mUnknownProperty = do_GetAtom(aUnknownProperty);
 }
 
+#ifdef MOZ_CSS_ANIMATIONS
+nsAnimation::nsAnimation(const nsAnimation& aCopy)
+  : mTimingFunction(aCopy.mTimingFunction)
+  , mDuration(aCopy.mDuration)
+  , mDelay(aCopy.mDelay)
+  , mName(aCopy.mName)
+  , mDirection(aCopy.mDirection)
+  , mFillMode(aCopy.mFillMode)
+  , mPlayState(aCopy.mPlayState)
+  , mIterationCount(aCopy.mIterationCount)
+{
+}
+
+void
+nsAnimation::SetInitialValues()
+{
+  mTimingFunction = nsTimingFunction(NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE);
+  mDuration = 0.0;
+  mDelay = 0.0;
+  mName = EmptyString();
+  mDirection = NS_STYLE_ANIMATION_DIRECTION_NORMAL;
+  mFillMode = NS_STYLE_ANIMATION_FILL_MODE_NONE;
+  mPlayState = NS_STYLE_ANIMATION_PLAY_STATE_RUNNING;
+  mIterationCount = 1.0f;
+}
+#endif
+
 nsStyleDisplay::nsStyleDisplay()
 {
   MOZ_COUNT_CTOR(nsStyleDisplay);
@@ -1990,6 +2030,7 @@ nsStyleDisplay::nsStyleDisplay()
   mSpecifiedTransform = nsnull;
   mTransformOrigin[0].SetPercentValue(0.5f); // Transform is centered on origin
   mTransformOrigin[1].SetPercentValue(0.5f); 
+
   mTransitions.AppendElement();
   NS_ABORT_IF_FALSE(mTransitions.Length() == 1,
                     "appending within auto buffer should never fail");
@@ -1998,6 +2039,21 @@ nsStyleDisplay::nsStyleDisplay()
   mTransitionDurationCount = 1;
   mTransitionDelayCount = 1;
   mTransitionPropertyCount = 1;
+
+#ifdef MOZ_CSS_ANIMATIONS
+  mAnimations.AppendElement();
+  NS_ABORT_IF_FALSE(mAnimations.Length() == 1,
+                    "appending within auto buffer should never fail");
+  mAnimations[0].SetInitialValues();
+  mAnimationTimingFunctionCount = 1;
+  mAnimationDurationCount = 1;
+  mAnimationDelayCount = 1;
+  mAnimationNameCount = 1;
+  mAnimationDirectionCount = 1;
+  mAnimationFillModeCount = 1;
+  mAnimationPlayStateCount = 1;
+  mAnimationIterationCountCount = 1;
+#endif
 }
 
 nsStyleDisplay::nsStyleDisplay(const nsStyleDisplay& aSource)
@@ -2006,6 +2062,17 @@ nsStyleDisplay::nsStyleDisplay(const nsStyleDisplay& aSource)
   , mTransitionDurationCount(aSource.mTransitionDurationCount)
   , mTransitionDelayCount(aSource.mTransitionDelayCount)
   , mTransitionPropertyCount(aSource.mTransitionPropertyCount)
+#ifdef MOZ_CSS_ANIMATIONS
+  , mAnimations(aSource.mAnimations)
+  , mAnimationTimingFunctionCount(aSource.mAnimationTimingFunctionCount)
+  , mAnimationDurationCount(aSource.mAnimationDurationCount)
+  , mAnimationDelayCount(aSource.mAnimationDelayCount)
+  , mAnimationNameCount(aSource.mAnimationNameCount)
+  , mAnimationDirectionCount(aSource.mAnimationDirectionCount)
+  , mAnimationFillModeCount(aSource.mAnimationFillModeCount)
+  , mAnimationPlayStateCount(aSource.mAnimationPlayStateCount)
+  , mAnimationIterationCountCount(aSource.mAnimationIterationCountCount)
+#endif
 {
   MOZ_COUNT_CTOR(nsStyleDisplay);
   mAppearance = aSource.mAppearance;
@@ -2042,8 +2109,8 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
       || mPosition != aOther.mPosition
       || mDisplay != aOther.mDisplay
       || (mFloats == NS_STYLE_FLOAT_NONE) != (aOther.mFloats == NS_STYLE_FLOAT_NONE)
-      || mOverflowX != aOther.mOverflowX
-      || mOverflowY != aOther.mOverflowY
+      || (mOverflowX != aOther.mOverflowX && mDisplay != NS_STYLE_DISPLAY_INLINE)
+      || (mOverflowY != aOther.mOverflowY && mDisplay != NS_STYLE_DISPLAY_INLINE)
       || mResize != aOther.mResize)
     NS_UpdateHint(hint, nsChangeHint_ReconstructFrame);
 
@@ -2102,7 +2169,11 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
   // We do handle changes to transition-property, but we don't need to
   // bother with anything here, since the transition manager is notified
   // of any style context change anyway.
-  
+
+  // Note: Likewise, for animation-*, the animation manager gets
+  // notified about every new style context constructed, and it uses
+  // that opportunity to handle dynamic changes appropriately.
+
   return hint;
 }
 

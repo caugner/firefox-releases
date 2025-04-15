@@ -61,63 +61,7 @@
 
 namespace js {
 
-#if defined(XP_WIN) && defined(WINCE)
-
-inline bool
-isPageWritable(void *page)
-{
-    MEMORY_BASIC_INFORMATION memoryInformation;
-    jsuword result = VirtualQuery(page, &memoryInformation, sizeof(memoryInformation));
-
-    /* return false on error, including ptr outside memory */
-    if (result != sizeof(memoryInformation))
-        return false;
-
-    jsuword protect = memoryInformation.Protect & ~(PAGE_GUARD | PAGE_NOCACHE);
-    return protect == PAGE_READWRITE ||
-           protect == PAGE_WRITECOPY ||
-           protect == PAGE_EXECUTE_READWRITE ||
-           protect == PAGE_EXECUTE_WRITECOPY;
-}
-
-void *
-GetNativeStackBase()
-{
-    /* find the address of this stack frame by taking the address of a local variable */
-    bool isGrowingDownward = JS_STACK_GROWTH_DIRECTION < 0;
-    void *thisFrame = (void *)(&isGrowingDownward);
-
-    static jsuword pageSize = 0;
-    if (!pageSize) {
-        SYSTEM_INFO systemInfo;
-        GetSystemInfo(&systemInfo);
-        pageSize = systemInfo.dwPageSize;
-    }
-
-    /* scan all of memory starting from this frame, and return the last writeable page found */
-    register char *currentPage = (char *)((jsuword)thisFrame & ~(pageSize - 1));
-    if (isGrowingDownward) {
-        while (currentPage > 0) {
-            /* check for underflow */
-            if (currentPage >= (char *)pageSize)
-                currentPage -= pageSize;
-            else
-                currentPage = 0;
-            if (!isPageWritable(currentPage))
-                return currentPage + pageSize;
-        }
-        return 0;
-    } else {
-        while (true) {
-            /* guaranteed to complete because isPageWritable returns false at end of memory */
-            currentPage += pageSize;
-            if (!isPageWritable(currentPage))
-                return currentPage;
-        }
-    }
-}
-
-#elif defined(XP_WIN)
+#if defined(XP_WIN)
 
 void *
 GetNativeStackBaseImpl()
@@ -160,6 +104,21 @@ GetNativeStackBaseImpl()
     return static_cast<char*>(st.ss_sp) + st.ss_size;
 }
 
+#elif defined(AIX)
+
+#include <ucontext.h>
+
+JS_STATIC_ASSERT(JS_STACK_GROWTH_DIRECTION < 0);
+
+void *
+GetNativeStackBaseImpl()
+{
+    ucontext_t context;
+    getcontext(&context);
+    return static_cast<char*>(context.uc_stack.ss_sp) +
+        context.uc_stack.ss_size;
+}
+
 #elif defined(XP_OS2)
 
 void *
@@ -170,18 +129,6 @@ GetNativeStackBaseImpl()
 
     DosGetInfoBlocks(&ptib, &ppib);
     return ptib->tib_pstacklimit;
-}
-
-#elif defined(SOLARIS)
-
-#include <ucontext.h>
-
-void *
-GetNativeStackBaseImpl()
-{
-    stack_t st;
-    stack_getbounds(&st);
-    return static_cast<char*>(st.ss_sp) + st.ss_size;
 }
 
 #else /* XP_UNIX */
@@ -196,7 +143,9 @@ GetNativeStackBaseImpl()
 # else
     pthread_attr_t sattr;
     pthread_attr_init(&sattr);
-#  if defined(PTHREAD_NP_H) || defined(_PTHREAD_NP_H_) || defined(NETBSD)
+#  if defined(__OpenBSD__)
+    stack_t ss;
+#  elif defined(PTHREAD_NP_H) || defined(_PTHREAD_NP_H_) || defined(NETBSD)
     /* e.g. on FreeBSD 4.8 or newer, neundorf@kde.org */
     pthread_attr_get_np(thread, &sattr);
 #  else
@@ -212,7 +161,13 @@ GetNativeStackBaseImpl()
 #  ifdef DEBUG
     int rc = 
 #  endif
+# if defined(__OpenBSD__)
+        pthread_stackseg_np(pthread_self(), &ss);
+    stackBase = (void*)((size_t) ss.ss_sp - ss.ss_size);
+    stackSize = ss.ss_size;
+# else
         pthread_attr_getstack(&sattr, &stackBase, &stackSize);
+# endif
     JS_ASSERT(!rc);
     JS_ASSERT(stackBase);
     pthread_attr_destroy(&sattr);

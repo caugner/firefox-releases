@@ -205,23 +205,23 @@ nsXULButtonAccessible::CacheChildren()
   if (!isMenu && !isMenuButton)
     return;
 
-  nsRefPtr<nsAccessible> menupopupAccessible;
-  nsRefPtr<nsAccessible> buttonAccessible;
+  nsAccessible* menupopup = nsnull;
+  nsAccessible* button = nsnull;
 
   nsAccTreeWalker walker(mWeakShell, mContent, PR_TRUE);
 
-  nsRefPtr<nsAccessible> child;
-  while ((child = walker.GetNextChild())) {
+  nsAccessible* child = nsnull;
+  while ((child = walker.NextChild())) {
     PRUint32 role = child->Role();
 
     if (role == nsIAccessibleRole::ROLE_MENUPOPUP) {
-      // Get an accessbile for menupopup or panel elements.
-      menupopupAccessible.swap(child);
+      // Get an accessible for menupopup or panel elements.
+      menupopup = child;
 
     } else if (isMenuButton && role == nsIAccessibleRole::ROLE_PUSHBUTTON) {
       // Button type="menu-button" contains a real button. Get an accessible
-      // for it. Ignore dropmarker button what is placed as a last child.
-      buttonAccessible.swap(child);
+      // for it. Ignore dropmarker button which is placed as a last child.
+      button = child;
       break;
 
     } else {
@@ -230,12 +230,12 @@ nsXULButtonAccessible::CacheChildren()
     }
   }
 
-  if (!menupopupAccessible)
+  if (!menupopup)
     return;
 
-  AppendChild(menupopupAccessible);
-  if (buttonAccessible)
-    AppendChild(buttonAccessible);
+  AppendChild(menupopup);
+  if (button)
+    AppendChild(button);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -569,7 +569,7 @@ nsXULProgressMeterAccessible::GetMaximumValue(double *aMaximumValue)
   nsAutoString value;
   if (mContent->GetAttr(kNameSpaceID_None, nsAccessibilityAtoms::max, value)) {
     PRInt32 result = NS_OK;
-    *aMaximumValue = value.ToFloat(&result);
+    *aMaximumValue = value.ToDouble(&result);
     return result;
   }
 
@@ -614,7 +614,7 @@ nsXULProgressMeterAccessible::GetCurrentValue(double *aCurrentValue)
     return NS_OK;
 
   PRInt32 error = NS_OK;
-  double value = attrValue.ToFloat(&error);
+  double value = attrValue.ToDouble(&error);
   if (NS_FAILED(error))
     return NS_OK; // Zero value because of wrong markup.
 
@@ -919,12 +919,12 @@ nsXULTextFieldAccessible::GetStateInternal(PRUint32 *aState,
   // Create a temporary accessible from the HTML text field
   // to get the accessible state from. Doesn't add to cache
   // because Init() is not called.
-  nsHTMLTextFieldAccessible* tempAccessible =
+  nsRefPtr<nsHTMLTextFieldAccessible> tempAccessible =
     new nsHTMLTextFieldAccessible(inputField, mWeakShell);
   if (!tempAccessible)
     return NS_ERROR_OUT_OF_MEMORY;
-  nsCOMPtr<nsIAccessible> kungFuDeathGrip = tempAccessible;
-  rv = tempAccessible->GetStateInternal(aState, nsnull);
+
+  rv = tempAccessible->GetStateInternal(aState, aExtraState);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (gLastFocusedNode == mContent)
@@ -938,30 +938,6 @@ nsXULTextFieldAccessible::GetStateInternal(PRUint32 *aState,
                                nsAccessibilityAtoms::_true, eIgnoreCase)) {
       *aState |= nsIAccessibleStates::STATE_READONLY;
     }
-  }
-  else {
-    // <xul:textbox>
-    if (mContent->AttrValueIs(kNameSpaceID_None, nsAccessibilityAtoms::type,
-                              nsAccessibilityAtoms::password, eIgnoreCase)) {
-      *aState |= nsIAccessibleStates::STATE_PROTECTED;
-    }
-    if (mContent->AttrValueIs(kNameSpaceID_None, nsAccessibilityAtoms::readonly,
-                              nsAccessibilityAtoms::_true, eIgnoreCase)) {
-      *aState |= nsIAccessibleStates::STATE_READONLY;
-    }
-  }
-
-  if (!aExtraState)
-    return NS_OK;
-
-  PRBool isMultiLine = mContent->HasAttr(kNameSpaceID_None,
-                                         nsAccessibilityAtoms::multiline);
-
-  if (isMultiLine) {
-    *aExtraState |= nsIAccessibleStates::EXT_STATE_MULTI_LINE;
-  }
-  else {
-    *aExtraState |= nsIAccessibleStates::EXT_STATE_SINGLE_LINE;
   }
 
   return NS_OK;
@@ -1045,8 +1021,8 @@ nsXULTextFieldAccessible::CacheChildren()
 
   nsAccTreeWalker walker(mWeakShell, inputContent, PR_FALSE);
 
-  nsRefPtr<nsAccessible> child;
-  while ((child = walker.GetNextChild()) && AppendChild(child));
+  nsAccessible* child = nsnull;
+  while ((child = walker.NextChild()) && AppendChild(child));
 }
 
 ////////////////////////////////////////////////////////////////////////////////

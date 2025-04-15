@@ -49,6 +49,7 @@ class nsIScrollableFrame;
 class nsIDOMEvent;
 class nsRegion;
 class nsDisplayListBuilder;
+class nsDisplayItem;
 class nsIFontMetrics;
 class nsClientRectList;
 
@@ -93,6 +94,11 @@ public:
    * Find content for given ID.
    */
   static nsIContent* FindContentFor(ViewID aId);
+
+  /**
+   * Get display port for the given element.
+   */
+  static bool GetDisplayPort(nsIContent* aContent, nsRect *aResult);
 
   /**
    * Use heuristics to figure out the name of the child list that
@@ -323,6 +329,13 @@ public:
   static nsIFrame* GetActiveScrolledRootFor(nsIFrame* aFrame,
                                             nsIFrame* aStopAtAncestor);
 
+  static nsIFrame* GetActiveScrolledRootFor(nsDisplayItem* aItem,
+                                            nsDisplayListBuilder* aBuilder,
+                                            PRBool* aShouldFixToViewport = nsnull);
+
+  static PRBool ScrolledByViewportScrolling(nsIFrame* aActiveScrolledRoot,
+                                            nsDisplayListBuilder* aBuilder);
+
   /**
     * GetFrameFor returns the root frame for a view
     * @param aView is the view to return the root frame for
@@ -495,6 +508,18 @@ public:
                                    nsTArray<nsIFrame*> &aOutFrames,
                                    PRBool aShouldIgnoreSuppression = PR_FALSE,
                                    PRBool aIgnoreRootScrollFrame = PR_FALSE);
+
+  /**
+   * Returns the CTM at the specified frame. This matrix can be used to map
+   * coordinates from aFrame's to aStopAtAncestor's coordinate system.
+   *
+   * @param aFrame The frame at which we should calculate the CTM.
+   * @param aStopAtAncestor is an ancestor frame to stop at. If it's nsnull,
+   * matrix accumulating stops at root.
+   * @return The CTM at the specified frame.
+   */
+  static gfxMatrix GetTransformToAncestor(nsIFrame *aFrame,
+                                          nsIFrame* aStopAtAncestor = nsnull);
 
   /**
    * Given a point in the global coordinate space, returns that point expressed
@@ -868,7 +893,7 @@ public:
     return (aCoord.GetUnit() == eStyleUnit_Coord &&
             aCoord.GetCoordValue() == 0) ||
            (aCoord.GetUnit() == eStyleUnit_Percent &&
-            aCoord.GetPercentValue() == 0.0) ||
+            aCoord.GetPercentValue() == 0.0f) ||
            (aCoord.IsCalcUnit() &&
             // clamp negative calc() to 0
             nsRuleNode::ComputeCoordPercentCalc(aCoord, nscoord_MAX) <= 0 &&
@@ -880,7 +905,7 @@ public:
     return (aCoord.GetUnit() == eStyleUnit_Coord &&
             aCoord.GetCoordValue() == 0) ||
            (aCoord.GetUnit() == eStyleUnit_Percent &&
-            aCoord.GetPercentValue() == 0.0) ||
+            aCoord.GetPercentValue() == 0.0f) ||
            (aCoord.IsCalcUnit() &&
             nsRuleNode::ComputeCoordPercentCalc(aCoord, nscoord_MAX) == 0 &&
             nsRuleNode::ComputeCoordPercentCalc(aCoord, 0) == 0);
@@ -1266,7 +1291,7 @@ public:
   };
 
   struct SurfaceFromElementResult {
-    SurfaceFromElementResult() : mIsStillLoading(PR_FALSE) {}
+    SurfaceFromElementResult() : mIsWriteOnly(PR_TRUE), mIsStillLoading(PR_FALSE) {}
 
     /* mSurface will contain the resulting surface, or will be NULL on error */
     nsRefPtr<gfxASurface> mSurface;
@@ -1274,11 +1299,13 @@ public:
     gfxIntSize mSize;
     /* The principal associated with the element whose surface was returned */
     nsCOMPtr<nsIPrincipal> mPrincipal;
+    /* The image request, if the element is an nsIImageLoadingContent */
+    nsCOMPtr<imgIRequest> mImageRequest;
     /* Whether the element was "write only", that is, the bits should not be exposed to content */
-    PRBool mIsWriteOnly;
+    PRPackedBool mIsWriteOnly;
     /* Whether the element was still loading.  Some consumers need to handle
        this case specially. */
-    PRBool mIsStillLoading;
+    PRPackedBool mIsStillLoading;
   };
 
   static SurfaceFromElementResult SurfaceFromElement(nsIDOMElement *aElement,

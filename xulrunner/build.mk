@@ -62,10 +62,6 @@ tier_app_dirs += embedding/tests
 endif
 endif
 
-ifdef MOZ_JAVAXPCOM
-tier_app_dirs += extensions/java
-endif
-
 tier_app_dirs += xulrunner
 
 installer:
@@ -82,6 +78,9 @@ sdk:
 
 distclean::
 	@$(MAKE) -C xulrunner/installer distclean
+
+source-package::
+	@$(MAKE) -C xulrunner/installer source-package
 
 upload::
 	@$(MAKE) -C xulrunner/installer upload

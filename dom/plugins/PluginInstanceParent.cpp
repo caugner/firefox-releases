@@ -366,6 +366,15 @@ PluginInstanceParent::AnswerNPN_SetValue_NPPVpluginTransparent(
 }
 
 bool
+PluginInstanceParent::AnswerNPN_SetValue_NPPVpluginUsesDOMForCursor(
+    const bool& useDOMForCursor, NPError* result)
+{
+    *result = mNPNIface->setvalue(mNPP, NPPVpluginUsesDOMForCursorBool,
+                                  (void*)(NPBool)useDOMForCursor);
+    return true;
+}
+
+bool
 PluginInstanceParent::AnswerNPN_SetValue_NPPVpluginDrawingModel(
     const int& drawingModel, NPError* result)
 {
@@ -588,16 +597,6 @@ PluginInstanceParent::AsyncSetWindow(NPWindow* aWindow)
 }
 
 nsresult
-PluginInstanceParent::GetSurface(gfxASurface** aSurface)
-{
-    if (mFrontSurface) {
-      NS_ADDREF(*aSurface = mFrontSurface);
-      return NS_OK;
-    }
-    return NS_ERROR_NOT_AVAILABLE;
-}
-
-nsresult
 PluginInstanceParent::GetImage(ImageContainer* aContainer, Image** aImage)
 {
 #ifdef XP_MACOSX
@@ -609,8 +608,12 @@ PluginInstanceParent::GetImage(ImageContainer* aContainer, Image** aImage)
 
     Image::Format format = Image::CAIRO_SURFACE;
 #ifdef XP_MACOSX
-    if (mIOSurface)
+    if (mIOSurface) {
         format = Image::MAC_IO_SURFACE;
+        if (!aContainer->Manager()) {
+            return NS_ERROR_FAILURE;
+        }
+    }
 #endif
 
     nsRefPtr<Image> image;

@@ -54,11 +54,11 @@
 
 interface nsIDOMFile;
 
-[scriptable, uuid(53ad994a-3cd0-48fa-8ffb-7f3d8cd19c50)]
+[scriptable, uuid(2e98cd39-2269-493a-a3bb-abe85be2523c)]
 interface nsIDOMHTMLCanvasElement : nsIDOMHTMLElement
 {
-  attribute long width;
-  attribute long height;
+  attribute unsigned long width;
+  attribute unsigned long height;
   attribute boolean mozOpaque;
 
   nsISupports getContext(in DOMString contextId,

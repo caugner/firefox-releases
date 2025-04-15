@@ -42,7 +42,9 @@
 #include "nsIDOMCSSRule.h"
 #include "nsCSSParser.h"
 #include "mozilla/css/Loader.h"
+#include "nsCSSStyleSheet.h"
 #include "nsIStyleRule.h"
+#include "nsICSSRule.h"
 #include "mozilla/css/Declaration.h"
 #include "nsCSSProps.h"
 #include "nsCOMPtr.h"
@@ -269,6 +271,45 @@ nsDOMCSSDeclaration::RemoveProperty(const nsAString& aPropertyName,
   return RemoveProperty(propID);
 }
 
+/* static */ nsresult
+nsDOMCSSDeclaration::GetCSSParsingEnvironmentForRule(
+                         nsICSSRule* aRule, nsIURI** aSheetURI,
+                         nsIURI** aBaseURI, nsIPrincipal** aSheetPrincipal,
+                         mozilla::css::Loader** aCSSLoader)
+{
+  // null out the out params since some of them may not get initialized below
+  *aSheetURI = nsnull;
+  *aBaseURI = nsnull;
+  *aSheetPrincipal = nsnull;
+  *aCSSLoader = nsnull;
+
+  if (aRule) {
+    nsIStyleSheet* sheet = aRule->GetStyleSheet();
+    if (sheet) {
+      NS_IF_ADDREF(*aSheetURI = sheet->GetSheetURI());
+      NS_IF_ADDREF(*aBaseURI = sheet->GetBaseURI());
+
+      nsRefPtr<nsCSSStyleSheet> cssSheet(do_QueryObject(sheet));
+      if (cssSheet) {
+        NS_ADDREF(*aSheetPrincipal = cssSheet->Principal());
+      }
+
+      nsIDocument* document = sheet->GetOwningDocument();
+      if (document) {
+        NS_ADDREF(*aCSSLoader = document->CSSLoader());
+      }
+    }
+  }
+
+  nsresult result = NS_OK;
+  if (!*aSheetPrincipal) {
+    result = CallCreateInstance("@mozilla.org/nullprincipal;1",
+                                aSheetPrincipal);
+  }
+
+  return result;
+}
+
 nsresult
 nsDOMCSSDeclaration::ParsePropertyValue(const nsCSSProperty aPropID,
                                         const nsAString& aPropValue,
@@ -337,8 +378,9 @@ nsDOMCSSDeclaration::RemoveProperty(const nsCSSProperty aPropID)
 
 // nsIDOMCSS2Properties
 
-#define CSS_PROP(name_, id_, method_, flags_, datastruct_, member_,          \
-                 kwtable_, stylestruct_, stylestructoffset_, animtype_)      \
+#define CSS_PROP_DOMPROP_PREFIXED(prop_) Moz ## prop_
+#define CSS_PROP(name_, id_, method_, flags_, parsevariant_, kwtable_,       \
+                 stylestruct_, stylestructoffset_, animtype_)                \
   NS_IMETHODIMP                                                              \
   nsDOMCSSDeclaration::Get##method_(nsAString& aValue)                       \
   {                                                                          \
@@ -353,17 +395,18 @@ nsDOMCSSDeclaration::RemoveProperty(const nsCSSProperty aPropID)
 
 #define CSS_PROP_LIST_EXCLUDE_INTERNAL
 #define CSS_PROP_SHORTHAND(name_, id_, method_, flags_) \
-  CSS_PROP(name_, id_, method_, flags_, X, X, X, X, X, X)
+  CSS_PROP(name_, id_, method_, flags_, X, X, X, X, X)
 #include "nsCSSPropList.h"
 
 // Aliases
-CSS_PROP(X, opacity, MozOpacity, X, X, X, X, X, X, X)
-CSS_PROP(X, outline, MozOutline, X, X, X, X, X, X, X)
-CSS_PROP(X, outline_color, MozOutlineColor, X, X, X, X, X, X, X)
-CSS_PROP(X, outline_style, MozOutlineStyle, X, X, X, X, X, X, X)
-CSS_PROP(X, outline_width, MozOutlineWidth, X, X, X, X, X, X, X)
-CSS_PROP(X, outline_offset, MozOutlineOffset, X, X, X, X, X, X, X)
+CSS_PROP(X, opacity, MozOpacity, X, X, X, X, X, X)
+CSS_PROP(X, outline, MozOutline, X, X, X, X, X, X)
+CSS_PROP(X, outline_color, MozOutlineColor, X, X, X, X, X, X)
+CSS_PROP(X, outline_style, MozOutlineStyle, X, X, X, X, X, X)
+CSS_PROP(X, outline_width, MozOutlineWidth, X, X, X, X, X, X)
+CSS_PROP(X, outline_offset, MozOutlineOffset, X, X, X, X, X, X)
 
 #undef CSS_PROP_SHORTHAND
 #undef CSS_PROP_LIST_EXCLUDE_INTERNAL
 #undef CSS_PROP
+#undef CSS_PROP_DOMPROP_PREFIXED

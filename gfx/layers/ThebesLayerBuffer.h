@@ -110,12 +110,14 @@ public:
    * by ThebesLayerBuffer and must be redrawn on the screen.
    * mRegionToInvalidate is set when the buffer has changed from
    * opaque to transparent or vice versa, since the details of rendering can
-   * depend on the buffer type.
+   * depend on the buffer type.  mDidSelfCopy is true if we kept our buffer
+   * but used MovePixels() to shift its content.
    */
   struct PaintState {
     nsRefPtr<gfxContext> mContext;
     nsIntRegion mRegionToDraw;
     nsIntRegion mRegionToInvalidate;
+    PRPackedBool mDidSelfCopy;
   };
 
   enum {
@@ -141,11 +143,16 @@ public:
                         float aXResolution, float aYResolution,
                         PRUint32 aFlags);
 
+  enum {
+    ALLOW_REPEAT = 0x01
+  };
   /**
    * Return a new surface of |aSize| and |aType|.
+   * @param aFlags if ALLOW_REPEAT is set, then the buffer should be configured
+   * to allow repeat-mode, otherwise it should be in pad (clamp) mode
    */
   virtual already_AddRefed<gfxASurface>
-  CreateBuffer(ContentType aType, const nsIntSize& aSize) = 0;
+  CreateBuffer(ContentType aType, const nsIntSize& aSize, PRUint32 aFlags) = 0;
 
   /**
    * Get the underlying buffer, if any. This is useful because we can pass

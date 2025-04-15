@@ -30,6 +30,7 @@
  *   Mark Hammond <mhammond@skippinet.com.au>
  *   Ryan Jones <sciguyryan@gmail.com>
  *   Jeff Walden <jwalden+code@mit.edu>
+ *   Ben Bucksch <ben.bucksch  beonex.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -45,9 +46,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifdef MOZ_IPC
 #include "base/basictypes.h"
-#endif
 
 // Local Includes
 #include "nsGlobalWindow.h"
@@ -67,6 +66,8 @@
 #include "nsReadableUtils.h"
 #include "nsDOMClassInfo.h"
 #include "nsJSEnvironment.h"
+#include "nsCharSeparatedTokenizer.h" // for Accept-Language parsing
+#include "nsUnicharUtils.h"
 
 // Other Classes
 #include "nsIEventListenerManager.h"
@@ -108,7 +109,6 @@
 #include "nsIDOMCrypto.h"
 #endif
 #include "nsIDOMDocument.h"
-#include "nsIDOM3Document.h"
 #include "nsIDOMNSDocument.h"
 #include "nsIDOMDocumentView.h"
 #include "nsIDOMElement.h"
@@ -233,6 +233,7 @@
 #include "mozilla/dom/indexedDB/IndexedDatabaseManager.h"
 
 #include "nsRefreshDriver.h"
+#include "mozAutoDocUpdate.h"
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gDOMLeakPRLog;
@@ -271,10 +272,15 @@ static PRBool               gDOMWindowDumpEnabled      = PR_FALSE;
 #endif
 
 // The default shortest interval/timeout we permit
-#define DEFAULT_MIN_TIMEOUT_VALUE 10 // 10ms
+#define DEFAULT_MIN_TIMEOUT_VALUE 4 // 4ms
+#define DEFAULT_MIN_BACKGROUND_TIMEOUT_VALUE 1000 // 1000ms
 static PRInt32 gMinTimeoutValue;
-static inline PRInt32 DOMMinTimeoutValue() {
-  return NS_MAX(gMinTimeoutValue, 0);
+static PRInt32 gMinBackgroundTimeoutValue;
+inline PRInt32
+nsGlobalWindow::DOMMinTimeoutValue() const {
+  PRBool isBackground = !mOuterWindow || mOuterWindow->IsBackground();
+  return
+    NS_MAX(isBackground ? gMinBackgroundTimeoutValue : gMinTimeoutValue, 0);
 }
 
 // The number of nested timeouts before we start clamping. HTML5 says 1, WebKit
@@ -508,6 +514,12 @@ nsDummyJavaPluginOwner::GetWindow(NPWindow *&aWindow)
   aWindow = nsnull;
 
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDummyJavaPluginOwner::SetWindow()
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP
@@ -746,7 +758,8 @@ nsPIDOMWindow::nsPIDOMWindow(nsPIDOMWindow *aOuterWindow)
   mIsHandlingResizeEvent(PR_FALSE), mIsInnerWindow(aOuterWindow != nsnull),
   mMayHavePaintEventListener(PR_FALSE), mMayHaveTouchEventListener(PR_FALSE),
   mMayHaveAudioAvailableEventListener(PR_FALSE), mIsModalContentWindow(PR_FALSE),
-  mIsActive(PR_FALSE), mInnerWindow(nsnull), mOuterWindow(aOuterWindow),
+  mIsActive(PR_FALSE), mIsBackground(PR_FALSE),
+  mInnerWindow(nsnull), mOuterWindow(aOuterWindow),
   // Make sure no actual window ends up with mWindowID == 0
   mWindowID(++gNextWindowID), mHasNotifiedGlobalCreated(PR_FALSE)
  {}
@@ -895,6 +908,9 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
     nsContentUtils::AddIntPrefVarCache("dom.min_timeout_value",
                                        &gMinTimeoutValue,
                                        DEFAULT_MIN_TIMEOUT_VALUE);
+    nsContentUtils::AddIntPrefVarCache("dom.min_background_timeout_value",
+                                       &gMinBackgroundTimeoutValue,
+                                       DEFAULT_MIN_BACKGROUND_TIMEOUT_VALUE);
   }
 
   if (gDumpFile == nsnull) {
@@ -1330,9 +1346,8 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsGlobalWindow)
 NS_INTERFACE_MAP_END
 
 
-NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsGlobalWindow, nsIScriptGlobalObject)
-NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsGlobalWindow,
-                                           nsIScriptGlobalObject)
+NS_IMPL_CYCLE_COLLECTING_ADDREF(nsGlobalWindow)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(nsGlobalWindow)
 
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsGlobalWindow)
@@ -1380,6 +1395,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsGlobalWindow)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindow)
+  nsGlobalWindow::CleanupCachedXBLHandlers(tmp);
+
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mContext)
 
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mControllers)
@@ -1436,10 +1453,6 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsGlobalWindow)
     tmp->mCachedXBLPrototypeHandlers.EnumerateRead(TraceXBLHandlers, &data);
   }
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
-
-NS_IMPL_CYCLE_COLLECTION_ROOT_BEGIN(nsGlobalWindow)
-  nsGlobalWindow::CleanupCachedXBLHandlers(tmp);
-NS_IMPL_CYCLE_COLLECTION_ROOT_END
 
 //*****************************************************************************
 // nsGlobalWindow::nsIScriptGlobalObject
@@ -1609,9 +1622,18 @@ nsGlobalWindow::SetOpenerScriptPrincipal(nsIPrincipal* aPrincipal)
                  "Unexpected original document");
 #endif
 
-    nsCOMPtr<nsIDocShell_MOZILLA_2_0_BRANCH> ds(do_QueryInterface(GetDocShell()));
-    ds->CreateAboutBlankContentViewer(aPrincipal);
+    GetDocShell()->CreateAboutBlankContentViewer(aPrincipal);
     mDoc->SetIsInitialDocument(PR_TRUE);
+
+    nsCOMPtr<nsIPresShell> shell;
+    GetDocShell()->GetPresShell(getter_AddRefs(shell));
+
+    if (shell && !shell->DidInitialReflow()) {
+      // Ensure that if someone plays with this document they will get
+      // layout happening.
+      nsRect r = shell->GetPresContext()->GetVisibleArea();
+      shell->InitialReflow(r.width, r.height);
+    }
   }
 }
 
@@ -2403,28 +2425,6 @@ nsGlobalWindow::SetDocShell(nsIDocShell* aDocShell)
   if (mScreen)
     mScreen->SetDocShell(aDocShell);
 
-  // tell our member elements about the new browserwindow
-  nsCOMPtr<nsIWebBrowserChrome> browserChrome;
-  GetWebBrowserChrome(getter_AddRefs(browserChrome));
-  if (mMenubar) {
-    mMenubar->SetWebBrowserChrome(browserChrome);
-  }
-  if (mToolbar) {
-    mToolbar->SetWebBrowserChrome(browserChrome);
-  }
-  if (mLocationbar) {
-    mLocationbar->SetWebBrowserChrome(browserChrome);
-  }
-  if (mPersonalbar) {
-    mPersonalbar->SetWebBrowserChrome(browserChrome);
-  }
-  if (mStatusbar) {
-    mStatusbar->SetWebBrowserChrome(browserChrome);
-  }
-  if (mScrollbars) {
-    mScrollbars->SetWebBrowserChrome(browserChrome);
-  }
-
   if (!mDocShell) {
     MaybeForgiveSpamCount();
     CleanUp(PR_FALSE);
@@ -2449,6 +2449,10 @@ nsGlobalWindow::SetDocShell(nsIDocShell* aDocShell)
       }
       else NS_NewWindowRoot(this, getter_AddRefs(mChromeEventHandler));
     }
+
+    PRBool docShellActive;
+    mDocShell->GetIsActive(&docShellActive);
+    mIsBackground = !docShellActive;
   }
 }
 
@@ -2498,9 +2502,7 @@ nsGlobalWindow::GetIsTabModalPromptAllowed()
   if (mDocShell) {
     nsCOMPtr<nsIContentViewer> cv;
     mDocShell->GetContentViewer(getter_AddRefs(cv));
-    nsCOMPtr<nsIContentViewer_MOZILLA_2_0_BRANCH> cv2 = do_QueryInterface(cv);
-    if (cv2)
-      cv2->GetIsTabModalPromptAllowed(&allowTabModal);
+    cv->GetIsTabModalPromptAllowed(&allowTabModal);
   }
 
   return allowTabModal;
@@ -3060,15 +3062,10 @@ nsGlobalWindow::GetMenubar(nsIDOMBarProp** aMenubar)
   *aMenubar = nsnull;
 
   if (!mMenubar) {
-    mMenubar = new nsMenubarProp();
+    mMenubar = new nsMenubarProp(this);
     if (!mMenubar) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-
-    nsCOMPtr<nsIWebBrowserChrome> browserChrome;
-    GetWebBrowserChrome(getter_AddRefs(browserChrome));
-
-    mMenubar->SetWebBrowserChrome(browserChrome);
   }
 
   NS_ADDREF(*aMenubar = mMenubar);
@@ -3084,15 +3081,10 @@ nsGlobalWindow::GetToolbar(nsIDOMBarProp** aToolbar)
   *aToolbar = nsnull;
 
   if (!mToolbar) {
-    mToolbar = new nsToolbarProp();
+    mToolbar = new nsToolbarProp(this);
     if (!mToolbar) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-
-    nsCOMPtr<nsIWebBrowserChrome> browserChrome;
-    GetWebBrowserChrome(getter_AddRefs(browserChrome));
-
-    mToolbar->SetWebBrowserChrome(browserChrome);
   }
 
   NS_ADDREF(*aToolbar = mToolbar);
@@ -3108,15 +3100,10 @@ nsGlobalWindow::GetLocationbar(nsIDOMBarProp** aLocationbar)
   *aLocationbar = nsnull;
 
   if (!mLocationbar) {
-    mLocationbar = new nsLocationbarProp();
+    mLocationbar = new nsLocationbarProp(this);
     if (!mLocationbar) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-
-    nsCOMPtr<nsIWebBrowserChrome> browserChrome;
-    GetWebBrowserChrome(getter_AddRefs(browserChrome));
-
-    mLocationbar->SetWebBrowserChrome(browserChrome);
   }
 
   NS_ADDREF(*aLocationbar = mLocationbar);
@@ -3132,15 +3119,10 @@ nsGlobalWindow::GetPersonalbar(nsIDOMBarProp** aPersonalbar)
   *aPersonalbar = nsnull;
 
   if (!mPersonalbar) {
-    mPersonalbar = new nsPersonalbarProp();
+    mPersonalbar = new nsPersonalbarProp(this);
     if (!mPersonalbar) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-
-    nsCOMPtr<nsIWebBrowserChrome> browserChrome;
-    GetWebBrowserChrome(getter_AddRefs(browserChrome));
-
-    mPersonalbar->SetWebBrowserChrome(browserChrome);
   }
 
   NS_ADDREF(*aPersonalbar = mPersonalbar);
@@ -3156,15 +3138,10 @@ nsGlobalWindow::GetStatusbar(nsIDOMBarProp** aStatusbar)
   *aStatusbar = nsnull;
 
   if (!mStatusbar) {
-    mStatusbar = new nsStatusbarProp();
+    mStatusbar = new nsStatusbarProp(this);
     if (!mStatusbar) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-
-    nsCOMPtr<nsIWebBrowserChrome> browserChrome;
-    GetWebBrowserChrome(getter_AddRefs(browserChrome));
-
-    mStatusbar->SetWebBrowserChrome(browserChrome);
   }
 
   NS_ADDREF(*aStatusbar = mStatusbar);
@@ -3184,11 +3161,6 @@ nsGlobalWindow::GetScrollbars(nsIDOMBarProp** aScrollbars)
     if (!mScrollbars) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-
-    nsCOMPtr<nsIWebBrowserChrome> browserChrome;
-    GetWebBrowserChrome(getter_AddRefs(browserChrome));
-
-    mScrollbars->SetWebBrowserChrome(browserChrome);
   }
 
   NS_ADDREF(*aScrollbars = mScrollbars);
@@ -3598,10 +3570,8 @@ nsGlobalWindow::SetInnerWidth(PRInt32 aInnerWidth)
 
   nsRefPtr<nsIPresShell> presShell;
   mDocShell->GetPresShell(getter_AddRefs(presShell));
-  nsCOMPtr<nsIPresShell_MOZILLA_2_0_BRANCH> presShell20 =
-    do_QueryInterface(presShell);
 
-  if (presShell20 && presShell20->GetIsViewportOverridden())
+  if (presShell && presShell->GetIsViewportOverridden())
   {
     nscoord height = 0;
     nscoord width  = 0;
@@ -3667,10 +3637,8 @@ nsGlobalWindow::SetInnerHeight(PRInt32 aInnerHeight)
 
   nsRefPtr<nsIPresShell> presShell;
   mDocShell->GetPresShell(getter_AddRefs(presShell));
-  nsCOMPtr<nsIPresShell_MOZILLA_2_0_BRANCH> presShell20 =
-    do_QueryInterface(presShell);
 
-  if (presShell20 && presShell20->GetIsViewportOverridden())
+  if (presShell && presShell->GetIsViewportOverridden())
   {
     nscoord height = 0;
     nscoord width  = 0;
@@ -7582,15 +7550,11 @@ nsGlobalWindow::SetKeyboardIndicators(UIStateChangeType aShowAccelerators,
     }
   }
 
-  if (mHasFocus) {
-    // send content state notifications
-    nsCOMPtr<nsPresContext> presContext;
-    if (mDocShell) {
-      mDocShell->GetPresContext(getter_AddRefs(presContext));
-      if (presContext) {
-        presContext->EventStateManager()->
-          SetContentState(mFocusedNode, NS_EVENT_STATE_FOCUS);
-      }
+  if (mHasFocus && mFocusedNode) { // send content state notifications
+    nsIDocument *doc = mFocusedNode->GetCurrentDoc();
+    if (doc) {
+      MOZ_AUTO_DOC_UPDATE(doc, UPDATE_CONTENT_STATE, PR_TRUE);
+      doc->ContentStateChanged(mFocusedNode, NS_EVENT_STATE_FOCUSRING);
     }
   }
 }
@@ -7720,12 +7684,7 @@ nsGlobalWindow::DispatchSyncPopState()
   // going to send along with the popstate event.  The object is serialized as
   // JSON.
   nsCOMPtr<nsIVariant> stateObj;
-  nsCOMPtr<nsIDOMNSDocument_MOZILLA_2_0_BRANCH> doc2 = do_QueryInterface(mDoc);
-  if (!doc2) {
-    return NS_OK;
-  }
-  
-  rv = doc2->GetMozCurrentStateObject(getter_AddRefs(stateObj));
+  rv = mDoc->GetMozCurrentStateObject(getter_AddRefs(stateObj));
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Obtain a presentation shell for use in creating a popstate event.
@@ -7941,9 +7900,7 @@ nsGlobalWindow::GetSessionStorage(nsIDOMStorage ** aSessionStorage)
     *aSessionStorage = nsnull;
 
     nsString documentURI;
-    nsCOMPtr<nsIDOM3Document> document3 = do_QueryInterface(mDoc);
-    if (document3)
-        document3->GetDocumentURI(documentURI);
+    mDocument->GetDocumentURI(documentURI);
 
     nsresult rv = docShell->GetSessionStorageForPrincipal(principal,
                                                           documentURI,
@@ -8027,9 +7984,7 @@ nsGlobalWindow::GetLocalStorage(nsIDOMStorage ** aLocalStorage)
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsString documentURI;
-    nsCOMPtr<nsIDOM3Document> document3 = do_QueryInterface(mDoc);
-    if (document3)
-        document3->GetDocumentURI(documentURI);
+    mDocument->GetDocumentURI(documentURI);
 
     rv = storageManager->GetLocalStorageForPrincipal(principal,
                                                      documentURI,
@@ -8131,8 +8086,7 @@ nsGlobalWindow::GetInterface(const nsIID & aIID, void **aSink)
       }
     }
   }
-  else if (aIID.Equals(NS_GET_IID(nsIDOMWindowUtils)) ||
-           aIID.Equals(NS_GET_IID(nsIDOMWindowUtils_MOZILLA_2_0_BRANCH))) {
+  else if (aIID.Equals(NS_GET_IID(nsIDOMWindowUtils))) {
     FORWARD_TO_OUTER(GetInterface, (aIID, aSink), NS_ERROR_NOT_INITIALIZED);
 
     nsCOMPtr<nsISupports> utils(do_QueryReferent(mWindowUtils));
@@ -8423,8 +8377,6 @@ nsGlobalWindow::FireDelayedDOMEvents()
   if (mPendingStorageEventsObsolete) {
     // Fire pending storage events.
     mPendingStorageEventsObsolete->EnumerateRead(FirePendingStorageEvents, this);
-
-    delete mPendingStorageEventsObsolete;
     mPendingStorageEventsObsolete = nsnull;
   }
 
@@ -8729,28 +8681,14 @@ nsGlobalWindow::SetTimeoutOrInterval(nsIScriptTimeoutHandler *aHandler,
     return NS_OK;
   }
 
-  PRUint32 nestingLevel = sNestingLevel + 1;
-  if (interval < DOMMinTimeoutValue()) {
-    if (aIsInterval || nestingLevel >= DOM_CLAMP_TIMEOUT_NESTING_LEVEL) {
-      // Don't allow timeouts less than DOMMinTimeoutValue() from
-      // now...
+  // Disallow negative intervals.  If aIsInterval also disallow 0,
+  // because we use that as a "don't repeat" flag.
+  interval = NS_MAX(aIsInterval ? 1 : 0, interval);
 
-      interval = DOMMinTimeoutValue();;
-    }
-    else if (interval < 0) {
-      // Clamp negative intervals to 0.
-
-      interval = 0;
-    }
-  }
-
-  NS_ASSERTION(interval >= 0, "DOMMinTimeoutValue() lies");
-  PRUint32 realInterval = interval;
-
-  // Make sure we don't proceed with a interval larger than our timer
+  // Make sure we don't proceed with an interval larger than our timer
   // code can handle.
-  if (realInterval > PR_IntervalToMilliseconds(DOM_MAX_TIMEOUT_VALUE)) {
-    realInterval = PR_IntervalToMilliseconds(DOM_MAX_TIMEOUT_VALUE);
+  if (interval > PR_IntervalToMilliseconds(DOM_MAX_TIMEOUT_VALUE)) {
+    interval = PR_IntervalToMilliseconds(DOM_MAX_TIMEOUT_VALUE);
   }
 
   nsTimeout *timeout = new nsTimeout();
@@ -8762,9 +8700,18 @@ nsGlobalWindow::SetTimeoutOrInterval(nsIScriptTimeoutHandler *aHandler,
   timeout->AddRef();
 
   if (aIsInterval) {
-    timeout->mInterval = realInterval;
+    timeout->mInterval = interval;
   }
   timeout->mScriptHandler = aHandler;
+
+  // Now clamp the actual interval we will use for the timer based on
+  PRUint32 nestingLevel = sNestingLevel + 1;
+  PRInt32 realInterval = interval;
+  if (aIsInterval || nestingLevel >= DOM_CLAMP_TIMEOUT_NESTING_LEVEL) {
+    // Don't allow timeouts less than DOMMinTimeoutValue() from
+    // now...
+    realInterval = NS_MAX(realInterval, DOMMinTimeoutValue());
+  }
 
   // Get principal of currently executing code, save for execution of timeout.
   // If our principals subsume the subject principal then use the subject
@@ -8856,6 +8803,9 @@ nsGlobalWindow::SetTimeoutOrInterval(nsIScriptTimeoutHandler *aHandler,
     PRInt32 delay =
       nsContentUtils::GetIntPref("dom.disable_open_click_delay");
 
+    // This is checking |interval|, not realInterval, on purpose,
+    // because our lower bound for |realInterval| could be pretty high
+    // in some cases.
     if (interval <= delay) {
       timeout->mPopupState = gPopupControlState;
     }
@@ -10142,8 +10092,7 @@ nsGlobalChromeWindow::SetCursor(const nsAString& aCursor)
     nsIViewManager* vm = presShell->GetViewManager();
     NS_ENSURE_TRUE(vm, NS_ERROR_FAILURE);
 
-    nsIView *rootView;
-    vm->GetRootView(rootView);
+    nsIView* rootView = vm->GetRootView();
     NS_ENSURE_TRUE(rootView, NS_ERROR_FAILURE);
 
     nsIWidget* widget = rootView->GetNearestWidget(nsnull);
@@ -10563,19 +10512,56 @@ nsNavigator::GetAppName(nsAString& aAppName)
   return NS_GetNavigatorAppName(aAppName);
 }
 
+/**
+ * JS property navigator.language, exposed to web content.
+ * Take first value from Accept-Languages (HTTP header), which is
+ * the "content language" freely set by the user in the Pref window.
+ *
+ * Do not use UI language (chosen app locale) here.
+ * See RFC 2616, Section 15.1.4 "Privacy Issues Connected to Accept Headers"
+ *
+ * "en", "en-US" and "i-cherokee" and "" are valid.
+ * Fallback in case of invalid pref should be "" (empty string), to
+ * let site do fallback, e.g. to site's local language.
+ */
 NS_IMETHODIMP
 nsNavigator::GetLanguage(nsAString& aLanguage)
 {
-  nsresult rv;
-  nsCOMPtr<nsIHttpProtocolHandler>
-    service(do_GetService(NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX "http", &rv));
-  if (NS_SUCCEEDED(rv)) {
-    nsCAutoString lang;
-    rv = service->GetLanguage(lang);
-    CopyASCIItoUTF16(lang, aLanguage);
-  }
+  // e.g. "de-de, en-us,en"
+  const nsAdoptingString& acceptLang =
+      nsContentUtils::GetLocalizedStringPref("intl.accept_languages");
+  // take everything before the first "," or ";", without trailing space
+  nsCharSeparatedTokenizer langTokenizer(acceptLang, ',');
+  const nsSubstring &firstLangPart = langTokenizer.nextToken();
+  nsCharSeparatedTokenizer qTokenizer(firstLangPart, ';');
+  aLanguage.Assign(qTokenizer.nextToken());
 
-  return rv;
+  // checks and fixups
+  // replace "_" with "-", to avoid POSIX/Windows "en_US" notation
+  if (aLanguage.Length() > 2 && aLanguage[2] == PRUnichar('_'))
+    aLanguage.Replace(2, 1, PRUnichar('-')); // TODO replace all
+  // use uppercase for country part, e.g. "en-US", not "en-us", see BCP47
+  // only uppercase 2-letter country codes, not "zh-Hant", "de-DE-x-goethe"
+  if (aLanguage.Length() > 2)
+  {
+    nsCharSeparatedTokenizer localeTokenizer(aLanguage, '-');
+    PRInt32 pos = 0;
+    bool first = true;
+    while (localeTokenizer.hasMoreTokens())
+    {
+      const nsSubstring &code = localeTokenizer.nextToken();
+      if (code.Length() == 2 && !first)
+      {
+        nsAutoString upper(code);
+        ::ToUpperCase(upper);
+        aLanguage.Replace(pos, code.Length(), upper);
+      }
+      pos += code.Length() + 1; // 1 is the separator
+      if (first)
+        first = false;
+    }
+  }
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -10980,9 +10966,11 @@ NS_IMETHODIMP nsNavigator::GetGeolocation(nsIDOMGeoGeolocation **_retval)
   if (!mGeolocation)
     return NS_ERROR_FAILURE;
   
-  if (NS_FAILED(mGeolocation->Init(contentDOMWindow)))
+  if (NS_FAILED(mGeolocation->Init(contentDOMWindow))) {
+    mGeolocation = nsnull;
     return NS_ERROR_FAILURE;
-  
+  }
+
   NS_ADDREF(*_retval = mGeolocation);    
   return NS_OK; 
 }

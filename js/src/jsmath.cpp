@@ -565,7 +565,7 @@ math_random(JSContext *cx, uintN argc, Value *vp)
     return JS_TRUE;
 }
 
-#if defined _WIN32 && !defined WINCE && _MSC_VER < 1400
+#if defined _WIN32 && _MSC_VER < 1400
 /* Try to work around apparent _copysign bustage in VC7.x. */
 double
 js_copysign(double x, double y)
@@ -663,7 +663,7 @@ math_tan(JSContext *cx, uintN argc, Value *vp)
 static JSBool
 math_toSource(JSContext *cx, uintN argc, Value *vp)
 {
-    vp->setString(ATOM_TO_STRING(CLASS_ATOM(cx, Math)));
+    vp->setString(CLASS_ATOM(cx, Math));
     return JS_TRUE;
 }
 #endif

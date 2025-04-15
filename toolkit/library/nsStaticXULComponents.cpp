@@ -71,8 +71,6 @@
 #  define WIDGET_MODULES MODULE(nsWidgetModule)
 #elif defined(XP_MACOSX)
 #  define WIDGET_MODULES MODULE(nsWidgetMacModule)
-#elif defined(XP_BEOS)
-#  define WIDGET_MODULES MODULE(nsWidgetBeOSModule)
 #elif defined(XP_OS2)
 #  define WIDGET_MODULES MODULE(nsWidgetOS2Module)
 #elif defined(MOZ_WIDGET_GTK2)
@@ -97,12 +95,6 @@
     MODULE(nsWindowDataSourceModule)
 #else
 #define RDF_MODULES
-#endif
-
-#ifdef MOZ_PLAINTEXT_EDITOR_ONLY
-#define COMPOSER_MODULE
-#else
-#define COMPOSER_MODULE MODULE(nsComposerModule)
 #endif
 
 #ifdef ACCESSIBILITY
@@ -135,19 +127,15 @@
 #define LAYOUT_DEBUG_MODULE
 #endif
 
-#if defined(MOZ_IPC) && defined(ENABLE_JETPACK_SERVICE)
+#if defined(ENABLE_JETPACK_SERVICE)
 #define JETPACK_MODULES \
     MODULE(jetpack)
 #else
 #define JETPACK_MODULES
 #endif
 
-#ifdef MOZ_PLUGINS
 #define PLUGINS_MODULES \
     MODULE(nsPluginModule)
-#else
-#define PLUGINS_MODULES
-#endif
 
 #ifdef MOZ_JSDEBUGGER
 #define JSDEBUGGER_MODULES \
@@ -235,10 +223,13 @@
 
 #define SERVICES_CRYPTO_MODULE MODULE(nsServicesCryptoModule)
 
+#ifndef MOZ_APP_COMPONENT_MODULES
 #if defined(MOZ_APP_COMPONENT_INCLUDE)
 #include MOZ_APP_COMPONENT_INCLUDE
+#define MOZ_APP_COMPONENT_MODULES APP_COMPONENT_MODULES
 #else
-#define APP_COMPONENT_MODULES
+#define MOZ_APP_COMPONENT_MODULES
+#endif
 #endif
 
 #define XUL_MODULES                          \
@@ -268,7 +259,7 @@
     ACCESS_MODULES                           \
     MODULE(appshell)                         \
     MODULE(nsTransactionManagerModule)       \
-    COMPOSER_MODULE                          \
+    MODULE(nsComposerModule)                 \
     MODULE(application)                      \
     MODULE(Apprunner)                        \
     MODULE(CommandLineModule)                \
@@ -291,7 +282,7 @@
     JSCTYPES_MODULE                          \
     MODULE(jsperf)                           \
     SERVICES_CRYPTO_MODULE                   \
-    APP_COMPONENT_MODULES                    \
+    MOZ_APP_COMPONENT_MODULES                \
     /* end of list */
 
 #define MODULE(_name) \

@@ -108,6 +108,22 @@ static void DestroyRegion(void* aPropertyValue)
  */
 NS_DECLARE_FRAME_PROPERTY(ThebesLayerInvalidRegionProperty, DestroyRegion)
 
+static void DestroyPoint(void* aPropertyValue)
+{
+  delete static_cast<nsPoint*>(aPropertyValue);
+}
+
+/**
+ * The valid content in our child ThebesLayers is defined relative to
+ * the offset from this frame to its active scroll root, mapped back
+ * by the ThebesLayer's inverse transform.  Since we accumulate the
+ * region invalidated between last-paint and next-paint, and because
+ * the offset of this frame to its active root may change during that
+ * period, we save the offset at last-paint in this property and use
+ * it to invalidate at next-paint.
+ */
+NS_DECLARE_FRAME_PROPERTY(ThebesLayerLastPaintOffsetProperty, DestroyPoint)
+
 /**
  * This is a helper object used to build up the layer children for
  * a ContainerLayer.
@@ -266,6 +282,10 @@ protected:
      * convert this to an ImageLayer.
      */
     nsDisplayImage* mImage;
+    /**
+     * Stores the clip that we need to apply to the image.
+     */
+    FrameLayerBuilder::Clip mImageClip;
   };
 
   /**
@@ -418,10 +438,11 @@ FrameLayerBuilder::Init(nsDisplayListBuilder* aBuilder)
 }
 
 PRBool
-FrameLayerBuilder::DisplayItemDataEntry::HasContainerLayer()
+FrameLayerBuilder::DisplayItemDataEntry::HasNonEmptyContainerLayer()
 {
   for (PRUint32 i = 0; i < mData.Length(); ++i) {
-    if (mData[i].mLayer->GetType() == Layer::TYPE_CONTAINER)
+    if (mData[i].mLayer->GetType() == Layer::TYPE_CONTAINER &&
+        mData[i].mLayerState != LAYER_ACTIVE_EMPTY)
       return PR_TRUE;
   }
   return PR_FALSE;
@@ -533,6 +554,35 @@ FrameLayerBuilder::WillEndTransaction(LayerManager* aManager)
                "Some frame must have a layer!");
 }
 
+static void
+SetHasContainerLayer(nsIFrame* aFrame, nsPoint aOffsetToRoot)
+{
+  aFrame->AddStateBits(NS_FRAME_HAS_CONTAINER_LAYER);
+  for (nsIFrame* f = aFrame;
+       f && !(f->GetStateBits() & NS_FRAME_HAS_CONTAINER_LAYER_DESCENDANT);
+       f = nsLayoutUtils::GetCrossDocParentFrame(f)) {
+    f->AddStateBits(NS_FRAME_HAS_CONTAINER_LAYER_DESCENDANT);
+  }
+
+  FrameProperties props = aFrame->Properties();
+  nsPoint* lastPaintOffset = static_cast<nsPoint*>
+    (props.Get(ThebesLayerLastPaintOffsetProperty()));
+  if (lastPaintOffset) {
+    *lastPaintOffset = aOffsetToRoot;
+  } else {
+    props.Set(ThebesLayerLastPaintOffsetProperty(), new nsPoint(aOffsetToRoot));
+  }
+}
+
+static void
+SetNoContainerLayer(nsIFrame* aFrame)
+{
+  FrameProperties props = aFrame->Properties();
+  props.Delete(ThebesLayerInvalidRegionProperty());
+  props.Delete(ThebesLayerLastPaintOffsetProperty());
+  aFrame->RemoveStateBits(NS_FRAME_HAS_CONTAINER_LAYER);
+}
+
 /* static */ PLDHashOperator
 FrameLayerBuilder::UpdateDisplayItemDataForFrame(nsPtrHashKey<nsIFrame>* aEntry,
                                                  void* aUserArg)
@@ -555,12 +605,11 @@ FrameLayerBuilder::UpdateDisplayItemDataForFrame(nsPtrHashKey<nsIFrame>* aEntry,
     // is DidEndTransaction, which would recreate the user data
     // anyway.
     InternalDestroyDisplayItemData(f, prop, PR_FALSE);
-    props.Delete(ThebesLayerInvalidRegionProperty());
-    f->RemoveStateBits(NS_FRAME_HAS_CONTAINER_LAYER);
+    SetNoContainerLayer(f);
     return PL_DHASH_REMOVE;
   }
 
-  if (newDisplayItems->HasContainerLayer()) {
+  if (newDisplayItems->HasNonEmptyContainerLayer()) {
     // Reset or create the invalid region now so we can start collecting
     // new dirty areas.
     // Note that the NS_FRAME_HAS_CONTAINER_LAYER bit is set in
@@ -573,8 +622,7 @@ FrameLayerBuilder::UpdateDisplayItemDataForFrame(nsPtrHashKey<nsIFrame>* aEntry,
       props.Set(ThebesLayerInvalidRegionProperty(), new nsRegion());
     }
   } else {
-    props.Delete(ThebesLayerInvalidRegionProperty());
-    f->RemoveStateBits(NS_FRAME_HAS_CONTAINER_LAYER);
+    SetNoContainerLayer(f);
   }
 
   // We need to remove and re-add the DisplayItemDataProperty in
@@ -874,7 +922,7 @@ ContainerState::FindOpaqueBackgroundColorFor(PRInt32 aThebesLayerIndex)
 nsRefPtr<ImageContainer>
 ContainerState::ThebesLayerData::CanOptimizeImageLayer(LayerManager* aManager)
 {
-  if (!mImage) {
+  if (!mImage || !mImageClip.mRoundedClipRects.IsEmpty()) {
     return nsnull;
   }
 
@@ -899,9 +947,19 @@ ContainerState::PopThebesLayerData()
       nsRefPtr<ImageLayer> imageLayer = CreateOrRecycleImageLayer();
       imageLayer->SetContainer(imageContainer);
       data->mImage->ConfigureLayer(imageLayer);
+      NS_ASSERTION(data->mImageClip.mRoundedClipRects.IsEmpty(),
+                   "How did we get rounded clip rects here?");
+      if (data->mImageClip.mHaveClipRect) {
+        nsPresContext* presContext = mContainerFrame->PresContext();
+        nscoord appUnitsPerDevPixel = presContext->AppUnitsPerDevPixel();
+        nsIntRect clip = data->mImageClip.mClipRect.ToNearestPixels(appUnitsPerDevPixel);
+        imageLayer->IntersectClipRect(
+          data->mImageClip.mClipRect.ToNearestPixels(appUnitsPerDevPixel));
+      }
       layer = imageLayer;
     } else {
       nsRefPtr<ColorLayer> colorLayer = CreateOrRecycleColorLayer();
+      colorLayer->SetIsFixedPosition(data->mLayer->GetIsFixedPosition());
       colorLayer->SetColor(data->mSolidColor);
 
       // Copy transform
@@ -1075,6 +1133,7 @@ ContainerState::ThebesLayerData::Accumulate(nsDisplayListBuilder* aBuilder,
    */
   if (aItem->GetType() == nsDisplayItem::TYPE_IMAGE && mVisibleRegion.IsEmpty()) {
     mImage = static_cast<nsDisplayImage*>(aItem);
+    mImageClip = aClip;
   } else {
     mImage = nsnull;
   }
@@ -1248,19 +1307,30 @@ ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
     }
     mBounds.UnionRect(mBounds, itemContent);
     nsIntRect itemDrawRect = itemContent.ToOutsidePixels(appUnitsPerDevPixel);
-    nsDisplayItem::LayerState layerState =
-      item->GetLayerState(mBuilder, mManager);
+    LayerState layerState = item->GetLayerState(mBuilder, mManager);
+
+    nsIFrame* activeScrolledRoot =
+      nsLayoutUtils::GetActiveScrolledRootFor(item, mBuilder);
 
     // Assign the item to a layer
-    if (layerState == LAYER_ACTIVE && (aClip.mRoundedClipRects.IsEmpty() ||
+    if (layerState == LAYER_ACTIVE_FORCE ||
+        layerState == LAYER_ACTIVE_EMPTY ||
+        layerState == LAYER_ACTIVE && (aClip.mRoundedClipRects.IsEmpty() ||
         // We can use the visible rect here only because the item has its own
         // layer, like the comment below.
         !aClip.IsRectClippedByRoundedCorner(item->GetVisibleRect()))) {
+
+      // LAYER_ACTIVE_EMPTY means the layer is created just for its metadata.
+      // We should never see an empty layer with any visible content!
+      NS_ASSERTION(layerState != LAYER_ACTIVE_EMPTY ||
+                   itemVisibleRect.IsEmpty(),
+                   "State is LAYER_ACTIVE_EMPTY but visible rect is not.");
+
       // If the item would have its own layer but is invisible, just hide it.
       // Note that items without their own layers can't be skipped this
       // way, since their ThebesLayer may decide it wants to draw them
       // into its buffer even if they're currently covered.
-      if (itemVisibleRect.IsEmpty()) {
+      if (itemVisibleRect.IsEmpty() && layerState != LAYER_ACTIVE_EMPTY) {
         InvalidateForLayerChange(item, nsnull);
         continue;
       }
@@ -1273,6 +1343,9 @@ ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
         InvalidateForLayerChange(item, ownLayer);
         continue;
       }
+
+      ownLayer->SetIsFixedPosition(!nsLayoutUtils::ScrolledByViewportScrolling(
+                                      activeScrolledRoot, mBuilder));
 
       // Update that layer's clip and visible rects.
       NS_ASSERTION(ownLayer->Manager() == mManager, "Wrong manager");
@@ -1303,26 +1376,14 @@ ContainerState::ProcessDisplayItems(const nsDisplayList& aList,
       InvalidateForLayerChange(item, ownLayer);
 
       mNewChildLayers.AppendElement(ownLayer);
-      mBuilder->LayerBuilder()->AddLayerDisplayItem(ownLayer, item);
+      mBuilder->LayerBuilder()->AddLayerDisplayItem(ownLayer, item, layerState);
     } else {
-      nsIFrame* f = item->GetUnderlyingFrame();
-      nsIFrame* activeScrolledRoot =
-        nsLayoutUtils::GetActiveScrolledRootFor(f, mBuilder->ReferenceFrame());
-      if (item->IsFixedAndCoveringViewport(mBuilder)) {
-        // Make its active scrolled root be the active scrolled root of
-        // the enclosing viewport, since it shouldn't be scrolled by scrolled
-        // frames in its document. InvalidateFixedBackgroundFramesFromList in
-        // nsGfxScrollFrame will not repaint this item when scrolling occurs.
-        nsIFrame* viewportFrame =
-          nsLayoutUtils::GetClosestFrameOfType(f, nsGkAtoms::viewportFrame);
-        NS_ASSERTION(viewportFrame, "no viewport???");
-        activeScrolledRoot =
-          nsLayoutUtils::GetActiveScrolledRootFor(viewportFrame, mBuilder->ReferenceFrame());
-      }
-
       nsRefPtr<ThebesLayer> thebesLayer =
         FindThebesLayerFor(item, itemVisibleRect, itemDrawRect, aClip,
                            activeScrolledRoot);
+
+      thebesLayer->SetIsFixedPosition(!nsLayoutUtils::ScrolledByViewportScrolling(
+                                         activeScrolledRoot, mBuilder));
 
       InvalidateForLayerChange(item, thebesLayer);
 
@@ -1380,7 +1441,7 @@ PRBool
 FrameLayerBuilder::NeedToInvalidateFixedDisplayItem(nsDisplayListBuilder* aBuilder,
                                                     nsDisplayItem* aItem)
 {
-  return !aItem->IsFixedAndCoveringViewport(aBuilder) ||
+  return !aItem->ShouldFixToViewport(aBuilder) ||
       !HasRetainedLayerFor(aItem->GetUnderlyingFrame(), aItem->GetPerFrameKey());
 }
 
@@ -1405,7 +1466,8 @@ FrameLayerBuilder::AddThebesDisplayItem(ThebesLayer* aLayer,
 
 void
 FrameLayerBuilder::AddLayerDisplayItem(Layer* aLayer,
-                                       nsDisplayItem* aItem)
+                                       nsDisplayItem* aItem,
+                                       LayerState aLayerState)
 {
   if (aLayer->Manager() != mRetainingManager)
     return;
@@ -1413,7 +1475,8 @@ FrameLayerBuilder::AddLayerDisplayItem(Layer* aLayer,
   nsIFrame* f = aItem->GetUnderlyingFrame();
   DisplayItemDataEntry* entry = mNewDisplayItemData.PutEntry(f);
   if (entry) {
-    entry->mData.AppendElement(DisplayItemData(aLayer, aItem->GetPerFrameKey()));
+    entry->mData.AppendElement(
+      DisplayItemData(aLayer, aItem->GetPerFrameKey(), aLayerState));
   }
 }
 
@@ -1505,17 +1568,6 @@ ContainerState::Finish(PRUint32* aTextContentFlags)
   *aTextContentFlags = textContentFlags;
 }
 
-static void
-SetHasContainerLayer(nsIFrame* aFrame)
-{
-  aFrame->AddStateBits(NS_FRAME_HAS_CONTAINER_LAYER);
-  for (nsIFrame* f = aFrame;
-       f && !(f->GetStateBits() & NS_FRAME_HAS_CONTAINER_LAYER_DESCENDANT);
-       f = nsLayoutUtils::GetCrossDocParentFrame(f)) {
-    f->AddStateBits(NS_FRAME_HAS_CONTAINER_LAYER_DESCENDANT);
-  }
-}
-
 already_AddRefed<ContainerLayer>
 FrameLayerBuilder::BuildContainerLayerFor(nsDisplayListBuilder* aBuilder,
                                           LayerManager* aManager,
@@ -1556,6 +1608,16 @@ FrameLayerBuilder::BuildContainerLayerFor(nsDisplayListBuilder* aBuilder,
       return nsnull;
   }
 
+  if (aContainerItem &&
+      aContainerItem->GetLayerState(aBuilder, aManager) == LAYER_ACTIVE_EMPTY) {
+    // Empty layers only have metadata and should never have display items. We
+    // early exit because later, invalidation will walk up the frame tree to
+    // determine which thebes layer gets invalidated. Since an empty layer
+    // should never have anything to paint, it should never be invalidated.
+    NS_ASSERTION(aChildren.IsEmpty(), "Should have no children");
+    return containerLayer.forget();
+  }
+
   ContainerState state(aBuilder, aManager, aContainerFrame, containerLayer);
   nscoord appUnitsPerDevPixel = aContainerFrame->PresContext()->AppUnitsPerDevPixel();
 
@@ -1563,13 +1625,17 @@ FrameLayerBuilder::BuildContainerLayerFor(nsDisplayListBuilder* aBuilder,
     DisplayItemDataEntry* entry = mNewDisplayItemData.PutEntry(aContainerFrame);
     if (entry) {
       entry->mData.AppendElement(
-          DisplayItemData(containerLayer, containerDisplayItemKey));
+          DisplayItemData(containerLayer, containerDisplayItemKey, LAYER_ACTIVE));
     }
+
+    nsPoint* offsetAtLastPaint = static_cast<nsPoint*>
+      (props.Get(ThebesLayerLastPaintOffsetProperty()));
+    nsPoint currentOffset = aBuilder->ToReferenceFrame(aContainerFrame);
 
     nsRegion* invalidThebesContent(static_cast<nsRegion*>
       (props.Get(ThebesLayerInvalidRegionProperty())));
     if (invalidThebesContent) {
-      nsPoint offset = aBuilder->ToReferenceFrame(aContainerFrame);
+      nsPoint offset = offsetAtLastPaint ? *offsetAtLastPaint : currentOffset;
       invalidThebesContent->MoveBy(offset);
       state.SetInvalidThebesContent(invalidThebesContent->
         ToOutsidePixels(appUnitsPerDevPixel));
@@ -1583,7 +1649,7 @@ FrameLayerBuilder::BuildContainerLayerFor(nsDisplayListBuilder* aBuilder,
       // invalidated.
       state.SetInvalidateAllThebesContent();
     }
-    SetHasContainerLayer(aContainerFrame);
+    SetHasContainerLayer(aContainerFrame, currentOffset);
   }
 
   Clip clip;
@@ -1707,12 +1773,12 @@ FrameLayerBuilder::InvalidateAllLayers(LayerManager* aManager)
 }
 
 /* static */
-PRBool
-FrameLayerBuilder::HasDedicatedLayer(nsIFrame* aFrame, PRUint32 aDisplayItemKey)
+Layer*
+FrameLayerBuilder::GetDedicatedLayer(nsIFrame* aFrame, PRUint32 aDisplayItemKey)
 {
   void* propValue = aFrame->Properties().Get(DisplayItemDataProperty());
   if (!propValue)
-    return PR_FALSE;
+    return nsnull;
 
   nsTArray<DisplayItemData>* array =
     (reinterpret_cast<nsTArray<DisplayItemData>*>(&propValue));
@@ -1722,10 +1788,10 @@ FrameLayerBuilder::HasDedicatedLayer(nsIFrame* aFrame, PRUint32 aDisplayItemKey)
       if (!layer->HasUserData(&gColorLayerUserData) &&
           !layer->HasUserData(&gImageLayerUserData) &&
           !layer->HasUserData(&gThebesDisplayItemLayerUserData))
-        return PR_TRUE;
+        return layer;
     }
   }
-  return PR_FALSE;
+  return nsnull;
 }
 
 /* static */ void

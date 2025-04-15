@@ -246,7 +246,8 @@ function getLocale() {
   try {
       // Get the default branch
       var defaultPrefs = gPref.getDefaultBranch(null);
-      return defaultPrefs.getCharPref(PREF_GENERAL_USERAGENT_LOCALE);
+      return defaultPrefs.getComplexPref(PREF_GENERAL_USERAGENT_LOCALE,
+                                         Ci.nsIPrefLocalizedString).data;
   } catch (e) {}
 
   return gPref.getCharPref(PREF_GENERAL_USERAGENT_LOCALE);
@@ -432,12 +433,8 @@ Blocklist.prototype = {
     var pingCountVersion = getPref("getIntPref", PREF_BLOCKLIST_PINGCOUNTVERSION, 0);
     var pingCountTotal = getPref("getIntPref", PREF_BLOCKLIST_PINGCOUNTTOTAL, 1);
     var daysSinceLastPing = 0;
-    if (pingCountVersion < 1 || pingCountTotal < 1) {
-      daysSinceLastPing = pingCountVersion == 0 ? "new" : "reset";
-      if (pingCountVersion < 1)
-        pingCountVersion = 1;
-      if (pingCountTotal < 1)
-        pingCountTotal = 1;
+    if (pingCountVersion == 0) {
+      daysSinceLastPing = "new";
     }
     else {
       // Seconds in one day is used because nsIUpdateTimerManager stores the
@@ -456,6 +453,11 @@ Blocklist.prototype = {
         pingCountVersion = pingCountTotal = "invalid";
       }
     }
+
+    if (pingCountVersion < 1)
+      pingCountVersion = 1;
+    if (pingCountTotal < 1)
+      pingCountTotal = 1;
 
     dsURI = dsURI.replace(/%APP_ID%/g, gApp.ID);
     dsURI = dsURI.replace(/%APP_VERSION%/g, gApp.version);

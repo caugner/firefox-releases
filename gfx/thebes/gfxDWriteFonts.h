@@ -61,8 +61,6 @@ public:
 
     virtual gfxFont* CopyWithAntialiasOption(AntialiasOption anAAOption);
 
-    virtual nsString GetUniqueName();
-
     virtual const gfxFont::Metrics& GetMetrics();
 
     virtual PRUint32 GetSpaceGlyph();
@@ -89,6 +87,8 @@ protected:
     friend class gfxDWriteShaper;
 
     virtual void CreatePlatformShaper();
+
+    PRBool GetFakeMetricsForArialBlack(DWRITE_FONT_METRICS *aFontMetrics);
 
     void ComputeMetrics();
 

@@ -50,7 +50,7 @@
  * http://www.w3.org/TR/DOM-Level-2-Style
  */
 
-[scriptable, uuid(abedfd52-9821-4311-b50c-7ef229b43abf)]
+[scriptable, uuid(e6d25dc8-0831-439c-9f8c-ec86c9dc5293)]
 interface nsIDOMCSS2Properties : nsISupports
 {
            attribute DOMString        azimuth;
@@ -756,5 +756,32 @@ interface nsIDOMCSS2Properties : nsISupports
                                         // raises(DOMException) on setting
 
            attribute DOMString        resize;
+                                        // raises(DOMException) on setting
+
+           attribute DOMString        MozAnimationName;
+                                        // raises(DOMException) on setting
+
+           attribute DOMString        MozAnimationDuration;
+                                        // raises(DOMException) on setting
+
+           attribute DOMString        MozAnimationDelay;
+                                        // raises(DOMException) on setting
+
+           attribute DOMString        MozAnimationTimingFunction;
+                                        // raises(DOMException) on setting
+
+           attribute DOMString        MozAnimationDirection;
+                                        // raises(DOMException) on setting
+
+           attribute DOMString        MozAnimationFillMode;
+                                        // raises(DOMException) on setting
+
+           attribute DOMString        MozAnimationIterationCount;
+                                        // raises(DOMException) on setting
+
+           attribute DOMString        MozAnimationPlayState;
+                                        // raises(DOMException) on setting
+
+           attribute DOMString        MozAnimation;
                                         // raises(DOMException) on setting
 };

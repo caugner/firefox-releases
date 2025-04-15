@@ -35,9 +35,7 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifdef MOZ_IPC
-# include "gfxSharedImageSurface.h"
-#endif
+#include "gfxSharedImageSurface.h"
 
 #include "CanvasLayerOGL.h"
 
@@ -67,6 +65,12 @@ CanvasLayerOGL::Destroy()
       cx->MakeCurrent();
       cx->fDeleteTextures(1, &mTexture);
     }
+#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+    if (mPixmap) {
+        sGLXLibrary.DestroyPixmap(mPixmap);
+        mPixmap = 0;
+    }
+#endif
 
     mDestroyed = PR_TRUE;
   }
@@ -84,9 +88,22 @@ CanvasLayerOGL::Initialize(const Data& aData)
     return;
   }
 
+  mOGLManager->MakeCurrent();
+
   if (aData.mSurface) {
     mCanvasSurface = aData.mSurface;
     mNeedsYFlip = PR_FALSE;
+#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+    mPixmap = sGLXLibrary.CreatePixmap(aData.mSurface);
+    if (mPixmap) {
+        if (aData.mSurface->GetContentType() == gfxASurface::CONTENT_COLOR_ALPHA) {
+            mLayerProgram = gl::RGBALayerProgramType;
+        } else {
+            mLayerProgram = gl::RGBXLayerProgramType;
+        }
+        MakeTexture();
+    }
+#endif
   } else if (aData.mGLContext) {
     if (!aData.mGLContext->IsOffscreen()) {
       NS_WARNING("CanvasLayerOGL with a non-offscreen GL context given");
@@ -135,18 +152,23 @@ CanvasLayerOGL::MakeTexture()
 }
 
 void
-CanvasLayerOGL::Updated(const nsIntRect& aRect)
+CanvasLayerOGL::UpdateSurface()
 {
+  if (!mDirty)
+    return;
+  mDirty = PR_FALSE;
+
   if (mDestroyed || mDelayedUpdates) {
     return;
   }
 
-  NS_ASSERTION(mUpdatedRect.IsEmpty(),
-               "CanvasLayer::Updated called more than once during a transaction!");
+#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+  if (mPixmap) {
+    return;
+  }
+#endif
 
   mOGLManager->MakeCurrent();
-
-  mUpdatedRect.UnionRect(mUpdatedRect, aRect);
 
   if (mCanvasGLContext &&
       mCanvasGLContext->GetContextType() == gl()->GetContextType())
@@ -157,41 +179,36 @@ CanvasLayerOGL::Updated(const nsIntRect& aRect)
       MakeTexture();
     }
   } else {
-    if (!mTexture) {
-      mUpdatedRect = mBounds;
-    }
-
     nsRefPtr<gfxASurface> updatedAreaSurface;
     if (mCanvasSurface) {
       updatedAreaSurface = mCanvasSurface;
     } else if (mCanvasGLContext) {
       nsRefPtr<gfxImageSurface> updatedAreaImageSurface =
-        new gfxImageSurface(gfxIntSize(mUpdatedRect.width, mUpdatedRect.height),
+        new gfxImageSurface(gfxIntSize(mBounds.width, mBounds.height),
                             gfxASurface::ImageFormatARGB32);
-      mCanvasGLContext->ReadPixelsIntoImageSurface(mUpdatedRect.x, mUpdatedRect.y,
-                                                   mUpdatedRect.width,
-                                                   mUpdatedRect.height,
+      mCanvasGLContext->ReadPixelsIntoImageSurface(0, 0,
+                                                   mBounds.width,
+                                                   mBounds.height,
                                                    updatedAreaImageSurface);
       updatedAreaSurface = updatedAreaImageSurface;
     }
 
     mLayerProgram =
       gl()->UploadSurfaceToTexture(updatedAreaSurface,
-                                   mUpdatedRect,
+                                   mBounds,
                                    mTexture,
                                    false,
-                                   mUpdatedRect.TopLeft());
+                                   nsIntPoint(0, 0));
   }
-
-  // sanity
-  NS_ASSERTION(mBounds.Contains(mUpdatedRect),
-               "CanvasLayer: Updated rect bigger than bounds!");
 }
 
 void
 CanvasLayerOGL::RenderLayer(int aPreviousDestination,
                             const nsIntPoint& aOffset)
 {
+  UpdateSurface();
+  FireDidTransactionCallback();
+
   mOGLManager->MakeCurrent();
 
   // XXX We're going to need a different program depending on if
@@ -234,6 +251,12 @@ CanvasLayerOGL::RenderLayer(int aPreviousDestination,
     program = mOGLManager->GetColorTextureLayerProgram(mLayerProgram);
   }
 
+#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+  if (mPixmap && !mDelayedUpdates) {
+    sGLXLibrary.BindTexImage(mPixmap);
+  }
+#endif
+
   ApplyFilter(mFilter);
 
   program->Activate();
@@ -245,15 +268,17 @@ CanvasLayerOGL::RenderLayer(int aPreviousDestination,
 
   mOGLManager->BindAndDrawQuad(program, mNeedsYFlip ? true : false);
 
+#if defined(MOZ_WIDGET_GTK2) && !defined(MOZ_PLATFORM_MAEMO)
+  if (mPixmap && !mDelayedUpdates) {
+    sGLXLibrary.ReleaseTexImage(mPixmap);
+  }
+#endif
+
   if (useGLContext) {
     gl()->UnbindTex2DOffscreen(mCanvasGLContext);
   }
-
-  mUpdatedRect.Empty();
 }
 
-
-#ifdef MOZ_IPC
 
 ShadowCanvasLayerOGL::ShadowCanvasLayerOGL(LayerManagerOGL* aManager)
   : ShadowCanvasLayer(aManager, nsnull)
@@ -342,5 +367,3 @@ ShadowCanvasLayerOGL::RenderLayer(int aPreviousFrameBuffer,
 
   mOGLManager->BindAndDrawQuad(program);
 }
-
-#endif  // MOZ_IPC
