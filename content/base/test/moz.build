@@ -5,7 +5,6 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 TEST_TOOL_DIRS += [
-    'chrome',
     'csp',
     'websocket_hybi',
 ]
@@ -22,9 +21,22 @@ CPP_UNIT_TESTS += [
     'TestPlainTextSerializer.cpp',
 ]
 
-MOCHITEST_MANIFESTS += ['mochitest.ini']
+MOCHITEST_MANIFESTS += [
+    'chrome/mochitest.ini',
+    'mochitest.ini',
+]
+# OOP tests don't work on Windows (bug 763081) or native-fennec
+# (see Bug 774939). App permission checks are also disabled on
+# anything but B2G (Bug 900707).
+if CONFIG['MOZ_CHILD_PERMISSIONS']:
+    MOCHITEST_MANIFESTS += [
+        'mochitest-child-permissions.ini',
+    ]
 
-MOCHITEST_CHROME_MANIFESTS += ['chrome.ini']
+MOCHITEST_CHROME_MANIFESTS += [
+    'chrome.ini',
+    'chrome/chrome.ini',
+]
 
 BROWSER_CHROME_MANIFESTS += ['browser.ini']
 

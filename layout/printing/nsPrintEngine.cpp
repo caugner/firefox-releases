@@ -9,6 +9,7 @@
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
 
+#include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/Selection.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsPIDOMWindow.h"
@@ -19,7 +20,6 @@
 #include "nsError.h"
 
 #include "nsView.h"
-#include "nsAsyncDOMEvent.h"
 #include <algorithm>
 
 // Print Options
@@ -1624,7 +1624,7 @@ nsPrintEngine::ShowPrintErrorDialog(nsresult aPrintError, bool aIsPrinting)
 nsresult
 nsPrintEngine::ReconstructAndReflow(bool doSetPixelScale)
 {
-#if (defined(XP_WIN) || defined(XP_OS2)) && defined(EXTENDED_DEBUG_PRINTING)
+#if defined(XP_WIN) && defined(EXTENDED_DEBUG_PRINTING)
   // We need to clear all the output files here
   // because they will be re-created with second reflow of the docs
   if (kPrintingLogMod && kPrintingLogMod->level == DUMP_LAYOUT_LEVEL) {
@@ -1858,7 +1858,7 @@ nsPrintEngine::FirePrintPreviewUpdateEvent()
   // listener bound to this event and therefore no need to dispatch it.
   if (mIsDoingPrintPreview && !mIsDoingPrinting) {
     nsCOMPtr<nsIContentViewer> cv = do_QueryInterface(mDocViewerPrint);
-    (new nsAsyncDOMEvent(
+    (new AsyncEventDispatcher(
        cv->GetDocument(), NS_LITERAL_STRING("printPreviewUpdate"), true, true)
     )->RunDOMEventWhenSafe();
   }
@@ -2033,6 +2033,18 @@ nsPrintEngine::UpdateSelectionAndShrinkPrintObject(nsPrintObject* aPO,
     nsIPageSequenceFrame* pageSequence = aPO->mPresShell->GetPageSequenceFrame();
     NS_ENSURE_STATE(pageSequence);
     pageSequence->GetSTFPercent(aPO->mShrinkRatio);
+    // Limit the shrink-to-fit scaling for some text-ish type of documents.
+    nsAutoString contentType;
+    aPO->mPresShell->GetDocument()->GetContentType(contentType);
+    if (contentType.EqualsLiteral("application/xhtml+xml") ||
+        StringBeginsWith(contentType, NS_LITERAL_STRING("text/"))) {
+      int32_t limitPercent = 
+        Preferences::GetInt("print.shrink-to-fit.scale-limit-percent", 20);
+      limitPercent = std::max(0, limitPercent);
+      limitPercent = std::min(100, limitPercent);
+      float minShrinkRatio = float(limitPercent) / 100;
+      aPO->mShrinkRatio = std::max(aPO->mShrinkRatio, minShrinkRatio);
+    }
   }
   return NS_OK;
 }
@@ -3593,7 +3605,7 @@ public:
     NS_ASSERTION(mDocViewerPrint, "mDocViewerPrint is null.");
   }
 
-  NS_IMETHOD Run() {
+  NS_IMETHOD Run() MOZ_OVERRIDE {
     if (mDocViewerPrint)
       mDocViewerPrint->OnDonePrinting();
     return NS_OK;
@@ -3617,7 +3629,7 @@ nsPrintEngine::FirePrintCompletionEvent()
 //-- Debug helper routines
 //---------------------------------------------------------------
 //---------------------------------------------------------------
-#if (defined(XP_WIN) || defined(XP_OS2)) && defined(EXTENDED_DEBUG_PRINTING)
+#if defined(XP_WIN) && defined(EXTENDED_DEBUG_PRINTING)
 #include "windows.h"
 #include "process.h"
 #include "direct.h"

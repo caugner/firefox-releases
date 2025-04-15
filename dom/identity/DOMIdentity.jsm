@@ -5,21 +5,14 @@
 "use strict";
 
 const {classes: Cc, interfaces: Ci, utils: Cu} = Components;
-const PREF_FXA_ENABLED = "identity.fxaccounts.enabled";
-let _fxa_enabled = false;
-try {
-  if (Services.prefs.getPrefType(PREF_FXA_ENABLED) === Ci.nsIPrefBranch.PREF_BOOL) {
-    _fxa_enabled = Services.prefs.getBoolPref(PREF_FXA_ENABLED);
-  }
-} catch(noPref) {
-}
-const FXA_ENABLED = _fxa_enabled;
-
-// This is the parent process corresponding to nsDOMIdentity.
-this.EXPORTED_SYMBOLS = ["DOMIdentity"];
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+
+const PREF_FXA_ENABLED = "identity.fxaccounts.enabled";
+
+// This is the parent process corresponding to nsDOMIdentity.
+this.EXPORTED_SYMBOLS = ["DOMIdentity"];
 
 XPCOMUtils.defineLazyModuleGetter(this, "objectCopy",
                                   "resource://gre/modules/identity/IdentityUtils.jsm");
@@ -119,14 +112,6 @@ function RPWatchContext(aOptions, aTargetMM) {
   // Maybe internal.  For hosted b2g identity shim.
   this._internal = aOptions._internal;
 
-  // By default, set the audience of the assertion to the origin of the RP. Bug
-  // 947374 will make it possible for certified apps and packaged apps on
-  // FirefoxOS to request a different audience from their origin.
-  //
-  // For BrowserID on b2g, this audience value is consumed by a hosted identity
-  // shim, set up by b2g/components/SignInToWebsite.jsm.
-  this.audience = this.origin;
-
   this._mm = aTargetMM;
 }
 
@@ -159,7 +144,9 @@ RPWatchContext.prototype = {
   },
 
   doError: function RPWatchContext_onerror(aMessage) {
-    log("doError: " + aMessage);
+    log("doError: " + this.id + ": " + JSON.stringify(aMessage));
+    let message = new IDDOMMessage({id: this.id, message: aMessage});
+    this._mm.sendAsyncMessage("Identity:RP:Watch:OnError", message);
   }
 };
 
@@ -179,6 +166,18 @@ this.DOMIdentity = {
    */
   _serviceContexts: new Map(),
   _mmContexts: new Map(),
+
+  /*
+   * Mockable, for testing
+   */
+  _mockIdentityService: null,
+  get IdentityService() {
+    if (this._mockIdentityService) {
+      log("Using a mocked identity service");
+      return this._mockIdentityService;
+    }
+    return IdentityService;
+  },
 
   /*
    * Create a new RPWatchContext, and update the context maps.
@@ -206,12 +205,13 @@ this.DOMIdentity = {
 
     let context = this._serviceContexts.get(message.id);
     if (context.wantIssuer == "firefox-accounts") {
-      if (FXA_ENABLED) {
+      if (Services.prefs.getPrefType(PREF_FXA_ENABLED) === Ci.nsIPrefBranch.PREF_BOOL
+          && Services.prefs.getBoolPref(PREF_FXA_ENABLED)) {
         return FirefoxAccounts;
       }
       log("WARNING: Firefox Accounts is not enabled; Defaulting to BrowserID");
     }
-    return IdentityService;
+    return this.IdentityService;
   },
 
   /*
@@ -219,6 +219,10 @@ this.DOMIdentity = {
    */
   getContextForMM: function(targetMM) {
     return this._serviceContexts.get(this._mmContexts.get(targetMM));
+  },
+
+  hasContextForMM: function(targetMM) {
+    return this._mmContexts.has(targetMM);
   },
 
   /*
@@ -331,6 +335,7 @@ this.DOMIdentity = {
   },
 
   _unwatch: function DOMIdentity_unwatch(message, targetMM) {
+    log("DOMIDentity__unwatch: " + message.id);
     this.getService(message).RP.unwatch(message.id, targetMM);
   },
 
@@ -344,6 +349,10 @@ this.DOMIdentity = {
   },
 
   _childProcessShutdown: function DOMIdentity__childProcessShutdown(targetMM) {
+    if (!this.hasContextForMM(targetMM)) {
+      return;
+    }
+
     this.getContextForMM(targetMM).RP.childProcessShutdown(targetMM);
     this.deleteContextForMM(targetMM);
 

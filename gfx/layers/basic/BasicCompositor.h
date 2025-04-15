@@ -73,7 +73,7 @@ public:
   {
     mRenderTarget = static_cast<BasicCompositingRenderTarget*>(aSource);
   }
-  virtual CompositingRenderTarget* GetCurrentRenderTarget() MOZ_OVERRIDE
+  virtual CompositingRenderTarget* GetCurrentRenderTarget() const MOZ_OVERRIDE
   {
     return mRenderTarget;
   }
@@ -114,18 +114,23 @@ public:
   virtual void PrepareViewport(const gfx::IntSize& aSize,
                                const gfx::Matrix& aWorldTransform) MOZ_OVERRIDE { }
 
-  virtual void NotifyLayersTransaction() MOZ_OVERRIDE { }
-
   virtual const char* Name() const { return "Basic"; }
+
+  virtual LayersBackend GetBackendType() const MOZ_OVERRIDE {
+    return LayersBackend::LAYERS_BASIC;
+  }
 
   virtual nsIWidget* GetWidget() const MOZ_OVERRIDE { return mWidget; }
 
   gfx::DrawTarget *GetDrawTarget() { return mDrawTarget; }
 
 private:
+
+  virtual gfx::IntSize GetWidgetSize() const MOZ_OVERRIDE { return mWidgetSize; }
+
   // Widget associated with this compositor
   nsIWidget *mWidget;
-  nsIntSize mWidgetSize;
+  gfx::IntSize mWidgetSize;
 
   // The final destination surface
   RefPtr<gfx::DrawTarget> mDrawTarget;

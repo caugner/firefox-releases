@@ -33,6 +33,7 @@ EXPORTS += [
     'gfxPoint.h',
     'gfxPoint3D.h',
     'gfxPointH3D.h',
+    'gfxPrefs.h',
     'gfxQuad.h',
     'gfxQuaternion.h',
     'gfxRect.h',
@@ -132,21 +133,6 @@ elif CONFIG['MOZ_WIDGET_GTK']:
             'gfxXlibSurface.cpp',
         ]
 
-elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'os2':
-    EXPORTS += [
-        'gfxOS2Fonts.h',
-        'gfxOS2Platform.h',
-        'gfxOS2Surface.h',
-        'gfxPDFSurface.h',
-    ]
-    SOURCES += [
-        'gfxFontconfigUtils.cpp',
-        'gfxOS2Fonts.cpp',
-        'gfxOS2Platform.cpp',
-        'gfxOS2Surface.cpp',
-        'gfxPDFSurface.cpp',
-        'nsUnicodeRange.cpp'
-    ]
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'qt':
     EXPORTS += [
         'gfxFT2FontBase.h',
@@ -213,9 +199,13 @@ elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
 
 # Are we targeting x86 or x64?  If so, build gfxAlphaRecoverySSE2.cpp.
 if CONFIG['INTEL_ARCHITECTURE']:
-    SOURCES += [
-        'gfxAlphaRecoverySSE2.cpp',
-    ]
+    SOURCES += ['gfxAlphaRecoverySSE2.cpp']
+    # The file uses SSE2 intrinsics, so it needs special compile flags on some
+    # compilers.
+    if CONFIG['GNU_CC']:
+        SOURCES['gfxAlphaRecoverySSE2.cpp'].flags += ['-msse2']
+    if CONFIG['SOLARIS_SUNPRO_CXX']:
+        SOURCES['gfxAlphaRecoverySSE2.cpp'].flags += ['-xarch=sse2', '-xO4']
 
 SOURCES += [
     # Includes mac system header conflicting with point/size,
@@ -233,6 +223,7 @@ SOURCES += [
     'gfxPlatform.cpp',
     # Uses FORCE_PR_LOG
     'gfxPlatformFontList.cpp',
+    'gfxPrefs.cpp',
     # Uses FORCE_PR_LOG
     'gfxUserFontSet.cpp',
 ]
@@ -283,7 +274,7 @@ include('/ipc/chromium/chromium-config.mozbuild')
 FINAL_LIBRARY = 'xul'
 
 GENERATED_FILES = [
-    'PremultiplyTables.h',
+    'DeprecatedPremultiplyTables.h',
 ]
 
 LOCAL_INCLUDES += [

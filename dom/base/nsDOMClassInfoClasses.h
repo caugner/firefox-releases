@@ -38,9 +38,6 @@ DOMCI_CLASS(XULTemplateBuilder)
 DOMCI_CLASS(XULTreeBuilder)
 #endif
 
-// DOMStringList object
-DOMCI_CLASS(DOMStringList)
-
 #ifdef MOZ_XUL
 DOMCI_CLASS(TreeColumn)
 #endif
@@ -86,8 +83,6 @@ DOMCI_CLASS(MozMobileConnection)
 // @font-face in CSS
 DOMCI_CLASS(CSSFontFaceRule)
 
-DOMCI_CLASS(DataTransfer)
-
 DOMCI_CLASS(EventListenerInfo)
 
 DOMCI_CLASS(ContentFrameMessageManager)
@@ -102,8 +97,6 @@ DOMCI_CLASS(CSSPageRule)
 #ifdef MOZ_B2G_RIL
 DOMCI_CLASS(MozIccManager)
 #endif
-
-DOMCI_CLASS(CameraCapabilities)
 
 DOMCI_CLASS(LockedFile)
 

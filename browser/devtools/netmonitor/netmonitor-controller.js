@@ -57,7 +57,13 @@ const EVENTS = {
   // When the response body is displayed in the UI.
   RESPONSE_BODY_DISPLAYED: "NetMonitor:ResponseBodyAvailable",
 
-  // When `onTabSelect` is fired and subsequently rendered.
+  // When the html response preview is displayed in the UI.
+  RESPONSE_HTML_PREVIEW_DISPLAYED: "NetMonitor:ResponseHtmlPreviewAvailable",
+
+  // When the image response thumbnail is displayed in the UI.
+  RESPONSE_IMAGE_THUMBNAIL_DISPLAYED: "NetMonitor:ResponseImageThumbnailAvailable",
+
+  // When a tab is selected in the NetworkDetailsView and subsequently rendered.
   TAB_UPDATED: "NetMonitor:TabUpdated",
 
   // Fired when Sidebar has finished being populated.
@@ -72,7 +78,11 @@ const EVENTS = {
   // Fired when charts have been displayed in the PerformanceStatisticsView.
   PLACEHOLDER_CHARTS_DISPLAYED: "NetMonitor:PlaceholderChartsDisplayed",
   PRIMED_CACHE_CHART_DISPLAYED: "NetMonitor:PrimedChartsDisplayed",
-  EMPTY_CACHE_CHART_DISPLAYED: "NetMonitor:EmptyChartsDisplayed"
+  EMPTY_CACHE_CHART_DISPLAYED: "NetMonitor:EmptyChartsDisplayed",
+
+  // Fired once the NetMonitorController establishes a connection to the debug
+  // target.
+  CONNECTED: "connected",
 };
 
 // Descriptions for what this frontend is currently doing.
@@ -100,8 +110,9 @@ Cu.import("resource:///modules/devtools/ViewHelpers.jsm");
 
 const require = Cu.import("resource://gre/modules/devtools/Loader.jsm", {}).devtools.require;
 const promise = Cu.import("resource://gre/modules/Promise.jsm", {}).Promise;
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("devtools/toolkit/event-emitter");
 const Editor = require("devtools/sourceeditor/editor");
+const {Tooltip} = require("devtools/shared/widgets/Tooltip");
 
 XPCOMUtils.defineLazyModuleGetter(this, "Chart",
   "resource:///modules/devtools/Chart.jsm");
@@ -193,7 +204,10 @@ let NetMonitorController = {
       this._startMonitoringTab(client, form, deferred.resolve);
     }
 
-    return deferred.promise;
+    return deferred.promise.then((result) => {
+      window.emit(EVENTS.CONNECTED);
+      return result;
+    });
   },
 
   /**
@@ -355,6 +369,25 @@ let NetMonitorController = {
     return promise.reject(new Error("Invalid activity type"));
   },
 
+  /**
+   * Getter that tells if the server supports sending custom network requests.
+   * @type boolean
+   */
+  get supportsCustomRequest() {
+    return this.webConsoleClient &&
+           (this.webConsoleClient.traits.customNetworkRequest ||
+            !this._target.isApp);
+  },
+
+  /**
+   * Getter that tells if the server can do network performance statistics.
+   * @type boolean
+   */
+  get supportsPerfStats() {
+    return this.tabClient &&
+           (this.tabClient.traits.reconfigure || !this._target.isApp);
+  },
+
   _startup: null,
   _shutdown: null,
   _connection: null,
@@ -412,8 +445,7 @@ TargetEventsHandler.prototype = {
       case "will-navigate": {
         // Reset UI.
         NetMonitorView.RequestsMenu.reset();
-        NetMonitorView.Sidebar.reset();
-        NetMonitorView.NetworkDetails.reset();
+        NetMonitorView.Sidebar.toggle(false);
 
         // Switch to the default network traffic inspector view.
         if (NetMonitorController.getCurrentActivity() == ACTIVITY_TYPE.NONE) {
@@ -487,6 +519,11 @@ NetworkEventsHandler.prototype = {
    *        The message received from the server.
    */
   _onNetworkEvent: function(aType, aPacket) {
+    if (aPacket.from != this.webConsoleClient.actor) {
+      // Skip events from different console actors.
+      return;
+    }
+
     let { actor, startedDateTime, method, url, isXHR } = aPacket.eventActor;
     NetMonitorView.RequestsMenu.addRequest(actor, startedDateTime, method, url, isXHR);
     window.emit(EVENTS.NETWORK_EVENT);
@@ -502,6 +539,10 @@ NetworkEventsHandler.prototype = {
    */
   _onNetworkEventUpdate: function(aType, aPacket) {
     let actor = aPacket.from;
+    if (!NetMonitorView.RequestsMenu.getItemByValue(actor)) {
+      // Skip events from unknown actors.
+      return;
+    }
 
     switch (aPacket.updateType) {
       case "requestHeaders":
@@ -691,7 +732,8 @@ let L10N = new ViewHelpers.L10N(NET_STRINGS_URI);
 let Prefs = new ViewHelpers.Prefs("devtools.netmonitor", {
   networkDetailsWidth: ["Int", "panes-network-details-width"],
   networkDetailsHeight: ["Int", "panes-network-details-height"],
-  statistics: ["Bool", "statistics"]
+  statistics: ["Bool", "statistics"],
+  filters: ["Json", "filters"]
 });
 
 /**

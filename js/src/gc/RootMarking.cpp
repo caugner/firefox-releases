@@ -62,7 +62,6 @@ MarkExactStackRoot(JSTracer *trc, Rooted<void*> *rooter, ThingRootKind kind)
       case THING_ROOT_JIT_CODE:    MarkJitCodeRoot(trc, (jit::JitCode **)addr, "exact-jitcode"); break;
       case THING_ROOT_VALUE:       MarkValueRoot(trc, (Value *)addr, "exact-value"); break;
       case THING_ROOT_ID:          MarkIdRoot(trc, (jsid *)addr, "exact-id"); break;
-      case THING_ROOT_PROPERTY_ID: MarkIdRoot(trc, &((js::PropertyId *)addr)->asId(), "exact-propertyid"); break;
       case THING_ROOT_BINDINGS:    ((Bindings *)addr)->trace(trc); break;
       case THING_ROOT_PROPERTY_DESCRIPTOR: ((JSPropertyDescriptor *)addr)->trace(trc); break;
       case THING_ROOT_CUSTOM: {
@@ -247,6 +246,7 @@ MarkIfGCThingWord(JSTracer *trc, uintptr_t w)
     return CGCT_VALID;
 }
 
+#ifndef JSGC_USE_EXACT_ROOTING
 static void
 MarkWordConservatively(JSTracer *trc, uintptr_t w)
 {
@@ -272,7 +272,6 @@ MarkRangeConservatively(JSTracer *trc, const uintptr_t *begin, const uintptr_t *
         MarkWordConservatively(trc, *i);
 }
 
-#ifndef JSGC_USE_EXACT_ROOTING
 static void
 MarkRangeConservativelyAndSkipIon(JSTracer *trc, JSRuntime *rt, const uintptr_t *begin, const uintptr_t *end)
 {
@@ -343,8 +342,6 @@ MarkConservativeStackRoots(JSTracer *trc, bool useSavedRoots)
                             ArrayEnd(cgcd->registerSnapshot.words));
 }
 
-#endif /* JSGC_USE_EXACT_ROOTING */
-
 void
 js::MarkStackRangeConservatively(JSTracer *trc, Value *beginv, Value *endv)
 {
@@ -362,6 +359,8 @@ js::MarkStackRangeConservatively(JSTracer *trc, Value *beginv, Value *endv)
     MarkRangeConservatively(trc, begin, end);
 #endif
 }
+
+#endif /* JSGC_USE_EXACT_ROOTING */
 
 MOZ_NEVER_INLINE void
 ConservativeGCData::recordStackTop()
@@ -428,12 +427,6 @@ AutoGCRooter::trace(JSTracer *trc)
         return;
       }
 
-      case STRING:
-        if (static_cast<AutoStringRooter *>(this)->str_)
-            MarkStringRoot(trc, &static_cast<AutoStringRooter *>(this)->str_,
-                           "JS::AutoStringRooter.str_");
-        return;
-
       case IDVECTOR: {
         AutoIdVector::VectorImpl &vector = static_cast<AutoIdVector *>(this)->vector;
         MarkIdRootRange(trc, vector.length(), vector.begin(), "js::AutoIdVector.vector");
@@ -472,8 +465,12 @@ AutoGCRooter::trace(JSTracer *trc)
       }
 
       case VALARRAY: {
-        AutoValueArray *array = static_cast<AutoValueArray *>(this);
-        MarkValueRootRange(trc, array->length(), array->start(), "js::AutoValueArray");
+        /*
+         * We don't know the template size parameter, but we can safely treat it
+         * as an AutoValueArray<1> because the length is stored separately.
+         */
+        AutoValueArray<1> *array = static_cast<AutoValueArray<1> *>(this);
+        MarkValueRootRange(trc, array->length(), array->begin(), "js::AutoValueArray");
         return;
       }
 
@@ -738,8 +735,8 @@ js::gc::MarkRuntime(JSTracer *trc, bool useSavedRoots)
 
     if (!rt->isBeingDestroyed() && !trc->runtime->isHeapMinorCollecting()) {
         if (!IS_GC_MARKING_TRACER(trc) || rt->atomsCompartment()->zone()->isCollecting()) {
+            MarkPermanentAtoms(trc);
             MarkAtoms(trc);
-            rt->staticStrings.trace(trc);
 #ifdef JS_ION
             jit::JitRuntime::Mark(trc);
 #endif

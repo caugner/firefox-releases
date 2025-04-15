@@ -201,6 +201,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(LoadSlot)
     WRITE_GUARDED_OP(StoreSlot, slots)
     SAFE_OP(FunctionEnvironment) // just a load of func env ptr
+    SAFE_OP(FilterTypeSet)
     SAFE_OP(TypeBarrier) // causes a bailout if the type is not found: a-ok with us
     SAFE_OP(MonitorTypes) // causes a bailout if the type is not found: a-ok with us
     UNSAFE_OP(PostWriteBarrier)
@@ -223,6 +224,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(InitializedLength)
     WRITE_GUARDED_OP(SetInitializedLength, elements)
     SAFE_OP(Not)
+    SAFE_OP(NeuterCheck)
     SAFE_OP(BoundsCheck)
     SAFE_OP(BoundsCheckLower)
     SAFE_OP(LoadElement)
@@ -267,6 +269,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(InstanceOf)
     CUSTOM_OP(InterruptCheck)
     SAFE_OP(ForkJoinContext)
+    SAFE_OP(ForkJoinGetSlice)
     SAFE_OP(NewPar)
     SAFE_OP(NewDenseArrayPar)
     SAFE_OP(NewCallObjectPar)
@@ -278,8 +281,8 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(SetDOMProperty)
     UNSAFE_OP(NewStringObject)
     UNSAFE_OP(Random)
-    UNSAFE_OP(Pow)
-    UNSAFE_OP(PowHalf)
+    SAFE_OP(Pow)
+    SAFE_OP(PowHalf)
     UNSAFE_OP(RegExpTest)
     UNSAFE_OP(RegExpExec)
     UNSAFE_OP(RegExpReplace)
@@ -291,12 +294,13 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(In)
     UNSAFE_OP(InArray)
     SAFE_OP(GuardThreadExclusive)
-    SAFE_OP(CheckInterruptPar)
+    SAFE_OP(InterruptCheckPar)
     SAFE_OP(CheckOverRecursedPar)
     SAFE_OP(FunctionDispatch)
     SAFE_OP(TypeObjectDispatch)
     SAFE_OP(IsCallable)
     SAFE_OP(HaveSameClass)
+    SAFE_OP(HasClass)
     UNSAFE_OP(EffectiveAddress)
     UNSAFE_OP(AsmJSUnsignedToDouble)
     UNSAFE_OP(AsmJSUnsignedToFloat32)
@@ -746,7 +750,7 @@ ParallelSafetyVisitor::visitCheckOverRecursed(MCheckOverRecursed *ins)
 bool
 ParallelSafetyVisitor::visitInterruptCheck(MInterruptCheck *ins)
 {
-    return replace(ins, MCheckInterruptPar::New(alloc(), ForkJoinContext()));
+    return replace(ins, MInterruptCheckPar::New(alloc(), ForkJoinContext()));
 }
 
 /////////////////////////////////////////////////////////////////////////////

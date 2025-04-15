@@ -42,13 +42,12 @@ public:
   NS_DECL_NSIMUTATIONOBSERVER_CONTENTINSERTED
   NS_DECL_NSIMUTATIONOBSERVER_CONTENTREMOVED
 
-  ShadowRoot(nsIContent* aContent, already_AddRefed<nsINodeInfo> aNodeInfo,
+  ShadowRoot(nsIContent* aContent, already_AddRefed<nsINodeInfo>&& aNodeInfo,
              nsXBLPrototypeBinding* aProtoBinding);
   virtual ~ShadowRoot();
 
   void AddToIdTable(Element* aElement, nsIAtom* aId);
   void RemoveFromIdTable(Element* aElement, nsIAtom* aId);
-  static bool PrefEnabled();
   void InsertSheet(nsCSSStyleSheet* aSheet, nsIContent* aLinkingContent);
   void RemoveSheet(nsCSSStyleSheet* aSheet);
   bool ApplyAuthorStyles();

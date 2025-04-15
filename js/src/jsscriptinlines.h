@@ -21,7 +21,8 @@ namespace js {
 
 inline
 Bindings::Bindings()
-    : callObjShape_(nullptr), bindingArrayAndFlag_(TEMPORARY_STORAGE_BIT), numArgs_(0), numVars_(0)
+    : callObjShape_(nullptr), bindingArrayAndFlag_(TEMPORARY_STORAGE_BIT),
+      numArgs_(0), numBlockScoped_(0), numVars_(0)
 {}
 
 inline
@@ -142,7 +143,8 @@ JSScript::principals()
 }
 
 inline JSFunction *
-JSScript::originalFunction() const {
+JSScript::donorFunction() const
+{
     if (!isCallsiteClone())
         return nullptr;
     return &enclosingScopeOrOriginalFunction_->as<JSFunction>();

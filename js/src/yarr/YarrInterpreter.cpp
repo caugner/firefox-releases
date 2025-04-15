@@ -1134,7 +1134,7 @@ public:
         ASSERT(context->term < static_cast<int>(disjunction->terms.size()));
 
         // Prevent jank resulting from getting stuck in Yarr for a long time.
-        if (!JS_CHECK_OPERATION_LIMIT(this->cx))
+        if (!CheckForInterrupt(this->cx))
             return JSRegExpErrorInternal;
 
         switch (currentTerm().type) {
@@ -1296,7 +1296,7 @@ public:
         ASSERT(context->term < static_cast<int>(disjunction->terms.size()));
 
         // Prevent jank resulting from getting stuck in Yarr for a long time.
-        if (!JS_CHECK_OPERATION_LIMIT(this->cx))
+        if (!CheckForInterrupt(this->cx))
             return JSRegExpErrorInternal;
 
         switch (currentTerm().type) {
@@ -1461,10 +1461,7 @@ public:
 
         pattern->m_allocator->stopAllocator();
 
-        if (result != JSRegExpMatch && result != JSRegExpNoMatch)
-            output[0] = offsetError;
-        else
-            ASSERT((result == JSRegExpMatch) == (output[0] != offsetNoMatch));
+        ASSERT((result == JSRegExpMatch) == (output[0] != offsetNoMatch));
         return output[0];
     }
 

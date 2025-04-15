@@ -9,64 +9,15 @@
 #include <stdint.h>
 
 #include "mozilla/BasicEvents.h"
+#include "mozilla/dom/DataTransfer.h"
 #include "mozilla/dom/EventTarget.h"
 #include "nsCOMPtr.h"
-#include "nsIDOMDataTransfer.h"
 #include "nsRect.h"
 #include "nsStringGlue.h"
 
 class nsIContent;
 
 namespace mozilla {
-
-/******************************************************************************
- * mozilla::InternalScriptErrorEvent
- ******************************************************************************/
-
-class InternalScriptErrorEvent : public WidgetEvent
-{
-public:
-  virtual InternalScriptErrorEvent* AsScriptErrorEvent() MOZ_OVERRIDE
-  {
-    return this;
-  }
-
-  InternalScriptErrorEvent(bool aIsTrusted, uint32_t aMessage) :
-    WidgetEvent(aIsTrusted, aMessage, NS_SCRIPT_ERROR_EVENT),
-    lineNr(0), errorMsg(nullptr), fileName(nullptr)
-  {
-  }
-
-  virtual WidgetEvent* Duplicate() const MOZ_OVERRIDE
-  {
-    MOZ_ASSERT(eventStructType == NS_SCRIPT_ERROR_EVENT,
-               "Duplicate() must be overridden by sub class");
-    InternalScriptErrorEvent* result =
-      new InternalScriptErrorEvent(false, message);
-    result->AssignScriptErrorEventData(*this, true);
-    result->mFlags = mFlags;
-    return result;
-  }
-
-
-  int32_t           lineNr;
-  const char16_t*  errorMsg;
-  const char16_t*  fileName;
-
-  // XXX Not tested by test_assign_event_data.html
-  void AssignScriptErrorEventData(const InternalScriptErrorEvent& aEvent,
-                                  bool aCopyTargets)
-  {
-    AssignEventData(aEvent, aCopyTargets);
-
-    lineNr = aEvent.lineNr;
-
-    // We don't copy errorMsg and fileName.  If it's necessary, perhaps, this
-    // should duplicate the characters and free them at destructing.
-    errorMsg = nullptr;
-    fileName = nullptr;
-  }
-};
 
 /******************************************************************************
  * mozilla::InternalScrollPortEvent
@@ -223,7 +174,7 @@ public:
     return result;
   }
 
-  nsCOMPtr<nsIDOMDataTransfer> clipboardData;
+  nsCOMPtr<dom::DataTransfer> clipboardData;
 
   void AssignClipboardEventData(const InternalClipboardEvent& aEvent,
                                 bool aCopyTargets)
@@ -244,7 +195,7 @@ public:
   virtual InternalFocusEvent* AsFocusEvent() MOZ_OVERRIDE { return this; }
 
   InternalFocusEvent(bool aIsTrusted, uint32_t aMessage) :
-    InternalUIEvent(aIsTrusted, aMessage, NS_FOCUS_EVENT, 0),
+    InternalUIEvent(aIsTrusted, aMessage, NS_FOCUS_EVENT),
     fromRaise(false), isRefocus(false)
   {
   }
@@ -287,12 +238,9 @@ public:
     return this;
   }
 
-  InternalTransitionEvent(bool aIsTrusted, uint32_t aMessage,
-                          const nsAString& aPropertyName, float aElapsedTime,
-                          const nsAString& aPseudoElement) :
-    WidgetEvent(aIsTrusted, aMessage, NS_TRANSITION_EVENT),
-    propertyName(aPropertyName), elapsedTime(aElapsedTime),
-    pseudoElement(aPseudoElement)
+  InternalTransitionEvent(bool aIsTrusted, uint32_t aMessage)
+    : WidgetEvent(aIsTrusted, aMessage, NS_TRANSITION_EVENT)
+    , elapsedTime(0.0)
   {
     mFlags.mCancelable = false;
   }
@@ -302,8 +250,7 @@ public:
     MOZ_ASSERT(eventStructType == NS_TRANSITION_EVENT,
                "Duplicate() must be overridden by sub class");
     InternalTransitionEvent* result =
-      new InternalTransitionEvent(false, message, propertyName,
-                                  elapsedTime, pseudoElement);
+      new InternalTransitionEvent(false, message);
     result->AssignTransitionEventData(*this, true);
     result->mFlags = mFlags;
     return result;
@@ -318,8 +265,9 @@ public:
   {
     AssignEventData(aEvent, aCopyTargets);
 
-    // propertyName, elapsedTime and pseudoElement must have been initialized
-    // with the constructor.
+    propertyName = aEvent.propertyName;
+    elapsedTime = aEvent.elapsedTime;
+    pseudoElement = aEvent.pseudoElement;
   }
 };
 
@@ -335,12 +283,9 @@ public:
     return this;
   }
 
-  InternalAnimationEvent(bool aIsTrusted, uint32_t aMessage,
-                         const nsAString& aAnimationName, float aElapsedTime,
-                         const nsAString& aPseudoElement) :
-    WidgetEvent(aIsTrusted, aMessage, NS_ANIMATION_EVENT),
-    animationName(aAnimationName), elapsedTime(aElapsedTime),
-    pseudoElement(aPseudoElement)
+  InternalAnimationEvent(bool aIsTrusted, uint32_t aMessage)
+    : WidgetEvent(aIsTrusted, aMessage, NS_ANIMATION_EVENT)
+    , elapsedTime(0.0)
   {
     mFlags.mCancelable = false;
   }
@@ -349,9 +294,7 @@ public:
   {
     MOZ_ASSERT(eventStructType == NS_ANIMATION_EVENT,
                "Duplicate() must be overridden by sub class");
-    InternalAnimationEvent* result =
-      new InternalAnimationEvent(false, message, animationName,
-                                 elapsedTime, pseudoElement);
+    InternalAnimationEvent* result = new InternalAnimationEvent(false, message);
     result->AssignAnimationEventData(*this, true);
     result->mFlags = mFlags;
     return result;
@@ -366,8 +309,9 @@ public:
   {
     AssignEventData(aEvent, aCopyTargets);
 
-    // animationName, elapsedTime and pseudoElement must have been initialized
-    // with the constructor.
+    animationName = aEvent.animationName;
+    elapsedTime = aEvent.elapsedTime;
+    pseudoElement = aEvent.pseudoElement;
   }
 };
 

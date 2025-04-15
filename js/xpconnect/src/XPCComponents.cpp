@@ -26,6 +26,7 @@
 #include "nsZipArchive.h"
 #include "nsIDOMFile.h"
 #include "nsIDOMFileList.h"
+#include "nsWindowMemoryReporter.h"
 
 using namespace mozilla;
 using namespace JS;
@@ -2155,13 +2156,9 @@ nsXPCConstructor::CallOrConstruct(nsIXPConnectWrappedNative *wrapper,JSContext *
         return ThrowAndFail(NS_ERROR_XPC_CANT_CREATE_WN, cx, _retval);
     }
 
-    JS::AutoValueVector argv(cx);
-    MOZ_ALWAYS_TRUE(argv.resize(1));
-    argv[0].setObject(*iidObj);
-
+    JS::Rooted<JS::Value> arg(cx, ObjectValue(*iidObj));
     RootedValue rval(cx);
-    if (!JS_CallFunctionName(cx, cidObj, "createInstance", 1, argv.begin(),
-                             rval.address()) ||
+    if (!JS_CallFunctionName(cx, cidObj, "createInstance", arg, &rval) ||
         rval.isPrimitive()) {
         // createInstance will have thrown an exception
         *_retval = false;
@@ -2181,7 +2178,7 @@ nsXPCConstructor::CallOrConstruct(nsIXPConnectWrappedNative *wrapper,JSContext *
         }
 
         RootedValue dummy(cx);
-        if (!JS_CallFunctionValue(cx, newObj, fun, args.length(), args.array(), dummy.address())) {
+        if (!JS_CallFunctionValue(cx, newObj, fun, args, &dummy)) {
             // function should have thrown an exception
             *_retval = false;
             return NS_OK;
@@ -2550,7 +2547,8 @@ nsXPCComponents_Utils::GetSandbox(nsIXPCComponents_utils_Sandbox **aSandbox)
     if (!mSandbox)
         mSandbox = NewSandboxConstructor();
 
-    NS_ADDREF(*aSandbox = mSandbox);
+    nsCOMPtr<nsIXPCComponents_utils_Sandbox> rval = mSandbox;
+    rval.forget(aSandbox);
     return NS_OK;
 }
 
@@ -2860,6 +2858,18 @@ nsXPCComponents_Utils::SchedulePreciseShrinkingGC(ScheduledGCCallback* aCallback
     return NS_DispatchToMainThread(event);
 }
 
+/* void unlinkGhostWindows(); */
+NS_IMETHODIMP
+nsXPCComponents_Utils::UnlinkGhostWindows()
+{
+#ifdef DEBUG
+    nsWindowMemoryReporter::UnlinkGhostWindows();
+    return NS_OK;
+#else
+    return NS_ERROR_NOT_IMPLEMENTED;
+#endif
+}
+
 /* [implicit_jscontext] jsval nondeterministicGetWeakMapKeys(in jsval aMap); */
 NS_IMETHODIMP
 nsXPCComponents_Utils::NondeterministicGetWeakMapKeys(HandleValue aMap,
@@ -2998,7 +3008,7 @@ nsXPCComponents_Utils::EvalInWindow(const nsAString &source, HandleValue window,
     return NS_OK;
 }
 
-/* jsval exportFunction(in jsval vfunction, in jsval vscope, in jsval vname); */
+/* jsval exportFunction(in jsval vfunction, in jsval vscope, in jsval voptions); */
 NS_IMETHODIMP
 nsXPCComponents_Utils::ExportFunction(HandleValue vfunction, HandleValue vscope,
                                       HandleValue voptions, JSContext *cx,
@@ -3044,7 +3054,7 @@ nsXPCComponents_Utils::CreateArrayIn(HandleValue vobj, JSContext *cx,
     RootedObject obj(cx);
     {
         JSAutoCompartment ac(cx, scope);
-        obj =  JS_NewArrayObject(cx, 0, nullptr);
+        obj =  JS_NewArrayObject(cx, 0);
         if (!obj)
             return NS_ERROR_FAILURE;
     }
@@ -3236,26 +3246,41 @@ nsXPCComponents_Utils::Dispatch(HandleValue runnableArg, HandleValue scope,
     return NS_DispatchToMainThread(run);
 }
 
-#define GENERATE_JSOPTION_GETTER_SETTER(_attr, _getter, _setter)    \
-    NS_IMETHODIMP                                                   \
-    nsXPCComponents_Utils::Get## _attr(JSContext* cx, bool* aValue) \
-    {                                                               \
-        *aValue = ContextOptionsRef(cx)._getter();                  \
-        return NS_OK;                                               \
-    }                                                               \
-    NS_IMETHODIMP                                                   \
-    nsXPCComponents_Utils::Set## _attr(JSContext* cx, bool aValue)  \
-    {                                                               \
-        ContextOptionsRef(cx)._setter(aValue);                      \
-        return NS_OK;                                               \
+#define GENERATE_JSCONTEXTOPTION_GETTER_SETTER(_attr, _getter, _setter) \
+    NS_IMETHODIMP                                                       \
+    nsXPCComponents_Utils::Get## _attr(JSContext* cx, bool* aValue)     \
+    {                                                                   \
+        *aValue = ContextOptionsRef(cx)._getter();                      \
+        return NS_OK;                                                   \
+    }                                                                   \
+    NS_IMETHODIMP                                                       \
+    nsXPCComponents_Utils::Set## _attr(JSContext* cx, bool aValue)      \
+    {                                                                   \
+        ContextOptionsRef(cx)._setter(aValue);                          \
+        return NS_OK;                                                   \
     }
 
-GENERATE_JSOPTION_GETTER_SETTER(Strict, extraWarnings, setExtraWarnings)
-GENERATE_JSOPTION_GETTER_SETTER(Werror, werror, setWerror)
-GENERATE_JSOPTION_GETTER_SETTER(Strict_mode, strictMode, setStrictMode)
-GENERATE_JSOPTION_GETTER_SETTER(Ion, ion, setIon)
+#define GENERATE_JSRUNTIMEOPTION_GETTER_SETTER(_attr, _getter, _setter) \
+    NS_IMETHODIMP                                                       \
+    nsXPCComponents_Utils::Get## _attr(JSContext* cx, bool* aValue)     \
+    {                                                                   \
+        *aValue = RuntimeOptionsRef(cx)._getter();                      \
+        return NS_OK;                                                   \
+    }                                                                   \
+    NS_IMETHODIMP                                                       \
+    nsXPCComponents_Utils::Set## _attr(JSContext* cx, bool aValue)      \
+    {                                                                   \
+        RuntimeOptionsRef(cx)._setter(aValue);                          \
+        return NS_OK;                                                   \
+    }
 
-#undef GENERATE_JSOPTION_GETTER_SETTER
+GENERATE_JSCONTEXTOPTION_GETTER_SETTER(Strict, extraWarnings, setExtraWarnings)
+GENERATE_JSCONTEXTOPTION_GETTER_SETTER(Werror, werror, setWerror)
+GENERATE_JSCONTEXTOPTION_GETTER_SETTER(Strict_mode, strictMode, setStrictMode)
+GENERATE_JSRUNTIMEOPTION_GETTER_SETTER(Ion, ion, setIon)
+
+#undef GENERATE_JSCONTEXTOPTION_GETTER_SETTER
+#undef GENERATE_JSRUNTIMEOPTION_GETTER_SETTER
 
 NS_IMETHODIMP
 nsXPCComponents_Utils::SetGCZeal(int32_t aValue, JSContext* cx)
@@ -3288,7 +3313,7 @@ nsXPCComponents_Utils::BlockScriptForGlobal(HandleValue globalArg,
     RootedObject global(cx, UncheckedUnwrap(&globalArg.toObject(),
                                             /* stopAtOuter = */ false));
     NS_ENSURE_TRUE(JS_IsGlobalObject(global), NS_ERROR_INVALID_ARG);
-    if (nsContentUtils::IsSystemPrincipal(GetObjectPrincipal(global))) {
+    if (nsContentUtils::IsSystemPrincipal(xpc::GetObjectPrincipal(global))) {
         JS_ReportError(cx, "Script may not be disabled for system globals");
         return NS_ERROR_FAILURE;
     }
@@ -3304,7 +3329,7 @@ nsXPCComponents_Utils::UnblockScriptForGlobal(HandleValue globalArg,
     RootedObject global(cx, UncheckedUnwrap(&globalArg.toObject(),
                                             /* stopAtOuter = */ false));
     NS_ENSURE_TRUE(JS_IsGlobalObject(global), NS_ERROR_INVALID_ARG);
-    if (nsContentUtils::IsSystemPrincipal(GetObjectPrincipal(global))) {
+    if (nsContentUtils::IsSystemPrincipal(xpc::GetObjectPrincipal(global))) {
         JS_ReportError(cx, "Script may not be disabled for system globals");
         return NS_ERROR_FAILURE;
     }
@@ -3385,7 +3410,7 @@ nsXPCComponents_Utils::GetIncumbentGlobal(HandleValue aCallback,
     // Invoke the callback, if passed.
     if (aCallback.isObject()) {
         RootedValue ignored(aCx);
-        if (!JS_CallFunctionValue(aCx, nullptr, aCallback, 1, globalVal.address(), ignored.address()))
+        if (!JS_CallFunctionValue(aCx, JS::NullPtr(), aCallback, globalVal, &ignored))
             return NS_ERROR_FAILURE;
     }
 
@@ -3593,39 +3618,75 @@ static JSStructuredCloneCallbacks CloneIntoCallbacks = {
     nullptr
 };
 
-NS_IMETHODIMP
-nsXPCComponents_Utils::CloneInto(HandleValue aValue, HandleValue aScope,
-                                 HandleValue aOptions, JSContext *aCx,
-                                 MutableHandleValue aCloned)
+bool
+xpc::CloneInto(JSContext *aCx, HandleValue aValue, HandleValue aScope,
+               HandleValue aOptions, MutableHandleValue aCloned)
 {
     if (!aScope.isObject())
-        return NS_ERROR_INVALID_ARG;
+        return false;
 
     RootedObject scope(aCx, &aScope.toObject());
     scope = js::CheckedUnwrap(scope);
-    NS_ENSURE_TRUE(scope, NS_ERROR_FAILURE);
+    if(!scope) {
+        JS_ReportError(aCx, "Permission denied to clone object into scope");
+        return false;
+    }
 
     if (!aOptions.isUndefined() && !aOptions.isObject()) {
         JS_ReportError(aCx, "Invalid argument");
-        return NS_ERROR_FAILURE;
+        return false;
     }
 
     RootedObject optionsObject(aCx, aOptions.isObject() ? &aOptions.toObject()
                                                         : nullptr);
     CloneIntoOptions options(aCx, optionsObject);
     if (aOptions.isObject() && !options.Parse())
-        return NS_ERROR_FAILURE;
+        return false;
 
     {
         CloneIntoCallbacksData data(aCx, &options);
         JSAutoCompartment ac(aCx, scope);
         if (!JS_StructuredClone(aCx, aValue, aCloned, &CloneIntoCallbacks, &data))
-            return NS_ERROR_FAILURE;
+            return false;
     }
 
-    if (!JS_WrapValue(aCx, aCloned))
-        return NS_ERROR_FAILURE;
+    return JS_WrapValue(aCx, aCloned);
+}
 
+NS_IMETHODIMP
+nsXPCComponents_Utils::CloneInto(HandleValue aValue, HandleValue aScope,
+                                 HandleValue aOptions, JSContext *aCx,
+                                 MutableHandleValue aCloned)
+{
+    return xpc::CloneInto(aCx, aValue, aScope, aOptions, aCloned) ?
+           NS_OK : NS_ERROR_FAILURE;
+}
+
+NS_IMETHODIMP
+nsXPCComponents_Utils::GetWebIDLCallerPrincipal(nsIPrincipal **aResult)
+{
+    // This API may only be when the Entry Settings Object corresponds to a
+    // JS-implemented WebIDL call. In all other cases, the value will be null,
+    // and we throw.
+    nsCOMPtr<nsIPrincipal> callerPrin = mozilla::dom::GetWebIDLCallerPrincipal();
+    if (!callerPrin)
+        return NS_ERROR_NOT_AVAILABLE;
+    callerPrin.forget(aResult);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsXPCComponents_Utils::GetObjectPrincipal(HandleValue val, JSContext *cx,
+                                          nsIPrincipal **result)
+{
+    if (!val.isObject())
+        return NS_ERROR_INVALID_ARG;
+    RootedObject obj(cx, &val.toObject());
+    obj = js::CheckedUnwrap(obj);
+    MOZ_ASSERT(obj);
+
+    nsCOMPtr<nsIPrincipal> prin = nsContentUtils::GetObjectPrincipal(obj);
+    prin.forget(result);
     return NS_OK;
 }
 

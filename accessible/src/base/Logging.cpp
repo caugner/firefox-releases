@@ -17,7 +17,7 @@
 #include "nsIChannel.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsISelectionPrivate.h"
-#include "nsTraceRefcntImpl.h"
+#include "nsTraceRefcnt.h"
 #include "nsIWebProgress.h"
 #include "prenv.h"
 #include "nsIDocShellTreeItem.h"
@@ -582,7 +582,8 @@ logging::FocusDispatched(Accessible* aTarget)
 }
 
 void
-logging::SelChange(nsISelection* aSelection, DocAccessible* aDocument)
+logging::SelChange(nsISelection* aSelection, DocAccessible* aDocument,
+                   int16_t aReason)
 {
   nsCOMPtr<nsISelectionPrivate> privSel(do_QueryInterface(aSelection));
 
@@ -598,8 +599,10 @@ logging::SelChange(nsISelection* aSelection, DocAccessible* aDocument)
     strType = "unknown";
 
   bool isIgnored = !aDocument || !aDocument->IsContentLoaded();
-  printf("\nSelection changed, selection type: %s, notification %s\n",
-         strType, (isIgnored ? "ignored" : "pending"));
+  printf("\nSelection changed, selection type: %s, notification %s, reason: %d\n",
+         strType, (isIgnored ? "ignored" : "pending"), aReason);
+
+  Stack();
 }
 
 void
@@ -797,7 +800,7 @@ logging::Stack()
 {
   if (IsEnabled(eStack)) {
     printf("  stack: \n");
-    nsTraceRefcntImpl::WalkTheStack(stdout);
+    nsTraceRefcnt::WalkTheStack(stdout);
   }
 }
 

@@ -36,16 +36,11 @@
                           android:layout_width="fill_parent"
                           android:layout_height="fill_parent"/>
 
-                <org.mozilla.gecko.home.HomeBanner android:id="@+id/home_banner"
-                                                   style="@style/Widget.HomeBanner"
-                                                   android:layout_width="fill_parent"
-                                                   android:layout_height="@dimen/home_banner_height"
-                                                   android:background="@drawable/home_banner"
-                                                   android:layout_gravity="bottom"
-                                                   android:gravity="center_vertical"
-                                                   android:visibility="gone"
-                                                   android:clickable="true"
-                                                   android:focusable="true"/>
+                <ViewStub android:id="@+id/home_banner_stub"
+                          android:layout="@layout/home_banner"
+                          android:layout_width="fill_parent"
+                          android:layout_height="@dimen/home_banner_height"
+                          android:layout_gravity="bottom"/>
 
             </FrameLayout>
 
@@ -111,18 +106,8 @@
 
     </view>
 
-    <LinearLayout android:id="@+id/toast"
-                  style="@style/Toast">
-
-        <TextView android:id="@+id/toast_message"
-                  style="@style/ToastMessage" />
-
-        <ImageView android:id="@+id/toast_divider"
-                   style="@style/ToastDivider" />
-
-        <Button android:id="@+id/toast_button"
-                style="@style/ToastButton" />
-
-    </LinearLayout>
+    <ViewStub android:id="@+id/toast_stub"
+              android:layout="@layout/button_toast"
+              style="@style/Toast"/>
 
 </RelativeLayout>

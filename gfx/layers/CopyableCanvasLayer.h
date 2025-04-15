@@ -19,9 +19,16 @@
 #include "mozilla/gfx/2D.h"             // for DrawTarget
 #include "mozilla/mozalloc.h"           // for operator delete, etc
 #include "nsAutoPtr.h"                  // for nsRefPtr
-#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
+#include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR, etc
 
 namespace mozilla {
+
+namespace gfx {
+class SurfaceStream;
+class SharedSurface;
+class SurfaceFactory;
+}
+
 namespace layers {
 
 class CanvasClientWebGL;
@@ -41,31 +48,50 @@ public:
   virtual bool IsDataValid(const Data& aData);
 
 protected:
-  void PaintWithOpacity(gfxContext* aContext,
+  void PaintWithOpacity(gfx::DrawTarget* aTarget,
                         float aOpacity,
-                        Layer* aMaskLayer,
-                        gfxContext::GraphicsOperator aOperator = gfxContext::OPERATOR_OVER);
+                        gfx::SourceSurface* aMaskSurface,
+                        gfx::CompositionOp aOperator = gfx::CompositionOp::OP_OVER);
 
-  void UpdateSurface(gfxASurface* aDestSurface = nullptr,
-                     Layer* aMaskLayer = nullptr);
+  void UpdateTarget(gfx::DrawTarget* aDestTarget = nullptr,
+                    gfx::SourceSurface* aMaskSurface = nullptr);
 
-  nsRefPtr<gfxASurface> mSurface;
+  RefPtr<gfx::SourceSurface> mSurface;
+  nsRefPtr<gfxASurface> mDeprecatedSurface;
   nsRefPtr<mozilla::gl::GLContext> mGLContext;
   mozilla::RefPtr<mozilla::gfx::DrawTarget> mDrawTarget;
+
+  RefPtr<gfx::SurfaceStream> mStream;
 
   uint32_t mCanvasFramebuffer;
 
   bool mIsGLAlphaPremult;
   bool mNeedsYFlip;
-  bool mForceReadback;
 
-  nsRefPtr<gfxImageSurface> mCachedTempSurface;
+  RefPtr<gfx::DataSourceSurface> mCachedTempSurface;
+  nsRefPtr<gfxImageSurface> mDeprecatedCachedTempSurface;
   gfx::IntSize mCachedSize;
-  gfxImageFormat mCachedFormat;
+  gfx::SurfaceFormat mCachedFormat;
+  gfxImageFormat mDeprecatedCachedFormat;
 
-  gfxImageSurface* GetTempSurface(const gfx::IntSize& aSize, const gfxImageFormat aFormat);
+  gfx::DataSourceSurface* GetTempSurface(const gfx::IntSize& aSize,
+                                         const gfx::SurfaceFormat aFormat);
 
   void DiscardTempSurface();
+
+  /* Deprecated thebes methods */
+protected:
+  void DeprecatedPaintWithOpacity(gfxContext* aContext,
+                                  float aOpacity,
+                                  Layer* aMaskLayer,
+                                  gfxContext::GraphicsOperator aOperator = gfxContext::OPERATOR_OVER);
+
+  void DeprecatedUpdateSurface(gfxASurface* aDestSurface = nullptr,
+                               Layer* aMaskLayer = nullptr);
+
+  gfxImageSurface* DeprecatedGetTempSurface(const gfx::IntSize& aSize,
+                                            const gfxImageFormat aFormat);
+
 };
 
 }

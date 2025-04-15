@@ -26,6 +26,21 @@ Compositor::GetBackend()
 }
 
 /* static */ void
+Compositor::SetBackend(LayersBackend backend)
+{
+  if (sBackend != LayersBackend::LAYERS_NONE && sBackend != backend) {
+    // Assert this once we figure out bug 972891.
+    //MOZ_CRASH("Trying to use more than one OMTC compositor.");
+
+#ifdef XP_MACOSX
+    printf("ERROR: Changing compositor from %u to %u.\n",
+           unsigned(sBackend), unsigned(backend));
+#endif
+  }
+  sBackend = backend;
+}
+
+/* static */ void
 Compositor::AssertOnCompositorThread()
 {
   MOZ_ASSERT(CompositorParent::CompositorLoop() ==
@@ -85,6 +100,38 @@ Compositor::DrawDiagnostics(DiagnosticFlags aFlags,
 
   DrawDiagnosticsInternal(aFlags, aVisibleRect,
                           aClipRect, aTransform);
+}
+
+gfx::Rect
+Compositor::ClipRectInLayersCoordinates(gfx::Rect aClip) const {
+  gfx::Rect result;
+  aClip = aClip + GetCurrentRenderTarget()->GetOrigin();
+  gfx::IntSize destSize = GetWidgetSize();
+
+  switch (mScreenRotation) {
+    case ROTATION_0:
+      result = aClip;
+      break;
+    case ROTATION_90:
+      result = gfx::Rect(aClip.y,
+                         destSize.width - aClip.x - aClip.width,
+                         aClip.height, aClip.width);
+      break;
+    case ROTATION_270:
+      result = gfx::Rect(destSize.height - aClip.y - aClip.height,
+                         aClip.x,
+                         aClip.height, aClip.width);
+      break;
+    case ROTATION_180:
+      result = gfx::Rect(destSize.width - aClip.x - aClip.width,
+                         destSize.height - aClip.y - aClip.height,
+                         aClip.width, aClip.height);
+      break;
+      // ScreenRotation has a sentinel value, need to catch it in the switch
+      // statement otherwise the build fails (-WError)
+    default: {}
+  }
+  return result;
 }
 
 void

@@ -11,6 +11,8 @@ Cu.import("resource://gre/modules/NotificationDB.jsm");
 Cu.import("resource:///modules/RecentWindow.jsm");
 Cu.import("resource://gre/modules/WindowsPrefSync.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "BrowserUtils",
+                                  "resource://gre/modules/BrowserUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Task",
                                   "resource://gre/modules/Task.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "CharsetMenu",
@@ -760,7 +762,11 @@ var gBrowserInit = {
   delayedStartupFinished: false,
 
   onLoad: function() {
-    gMultiProcessBrowser = Services.appinfo.browserTabsRemote;
+    gMultiProcessBrowser =
+      window.QueryInterface(Ci.nsIInterfaceRequestor)
+      .getInterface(Ci.nsIWebNavigation)
+      .QueryInterface(Ci.nsILoadContext)
+      .useRemoteTabs;
 
     var mustLoadSidebar = false;
 
@@ -805,7 +811,7 @@ var gBrowserInit = {
     gBrowser.addTabsProgressListener(window.TabsProgressListener);
 
     // setup our common DOMLinkAdded listener
-    gBrowser.addEventListener("DOMLinkAdded", DOMLinkHandler, false);
+    DOMLinkHandler.init();
 
     // setup simple gestures support
     gGestureSupport.init(true);
@@ -1030,14 +1036,13 @@ var gBrowserInit = {
     OfflineApps.init();
     IndexedDBPromptHelper.init();
     gFormSubmitObserver.init();
-    SocialUI.init();
+    gRemoteTabsUI.init();
 
     // Initialize the full zoom setting.
     // We do this before the session restore service gets initialized so we can
     // apply full zoom settings to tabs restored by the session restore service.
     FullZoom.init();
     PanelUI.init();
-    TabstripFogConstrainer.init();
     LightweightThemeListener.init();
     WebrtcIndicator.init();
 
@@ -1088,12 +1093,9 @@ var gBrowserInit = {
     if (!getBoolPref("ui.click_hold_context_menus", false))
       SetClickAndHoldHandlers();
 
-    // Bug 666804 - NetworkPrioritizer support for e10s
-    if (!gMultiProcessBrowser) {
-      let NP = {};
-      Cu.import("resource:///modules/NetworkPrioritizer.jsm", NP);
-      NP.trackBrowserWindow(window);
-    }
+    let NP = {};
+    Cu.import("resource:///modules/NetworkPrioritizer.jsm", NP);
+    NP.trackBrowserWindow(window);
 
     PlacesToolbarHelper.init();
 
@@ -1216,9 +1218,15 @@ var gBrowserInit = {
     }
 
     SessionStore.promiseInitialized.then(() => {
+      // Bail out if the window has been closed in the meantime.
+      if (window.closed) {
+        return;
+      }
+
       // Enable the Restore Last Session command if needed
       RestoreLastSessionObserver.init();
 
+      SocialUI.init();
       TabView.init();
 
       setTimeout(function () { BrowserChromeTest.markAsReady(); }, 0);
@@ -1318,6 +1326,7 @@ var gBrowserInit = {
       gPrefService.removeObserver(ctrlTab.prefName, ctrlTab);
       ctrlTab.uninit();
       TabView.uninit();
+      SocialUI.uninit();
       gBrowserThumbnails.uninit();
       FullZoom.destroy();
 
@@ -1342,10 +1351,8 @@ var gBrowserInit = {
       BrowserOffline.uninit();
       OfflineApps.uninit();
       IndexedDBPromptHelper.uninit();
-      SocialUI.uninit();
       LightweightThemeListener.uninit();
       PanelUI.uninit();
-      TabstripFogConstrainer.uninit();
     }
 
     // Final window teardown, do this last.
@@ -2379,7 +2386,7 @@ let BrowserOnClick = {
    */
   onE10sAboutNewTab: function(aEvent, aOwnerDoc) {
     let isTopFrame = (aOwnerDoc.defaultView.parent === aOwnerDoc.defaultView);
-    if (!isTopFrame) {
+    if (!isTopFrame || aEvent.button != 0) {
       return;
     }
 
@@ -2801,133 +2808,54 @@ var newWindowButtonObserver = {
 }
 
 const DOMLinkHandler = {
-  handleEvent: function (event) {
-    switch (event.type) {
-      case "DOMLinkAdded":
-        this.onLinkAdded(event);
+  init: function() {
+    let mm = window.messageManager;
+    mm.addMessageListener("Link:AddFeed", this);
+    mm.addMessageListener("Link:AddIcon", this);
+    mm.addMessageListener("Link:AddSearch", this);
+  },
+
+  receiveMessage: function (aMsg) {
+    switch (aMsg.name) {
+      case "Link:AddFeed":
+        let link = {type: aMsg.data.type, href: aMsg.data.href, title: aMsg.data.title};
+        FeedHandler.addFeed(link, aMsg.target);
+        break;
+
+      case "Link:AddIcon":
+        return this.addIcon(aMsg.target, aMsg.data.url);
+        break;
+
+      case "Link:AddSearch":
+        this.addSearch(aMsg.target, aMsg.data.engine, aMsg.data.url);
         break;
     }
   },
-  getLinkIconURI: function(aLink) {
-    let targetDoc = aLink.ownerDocument;
-    var uri = makeURI(aLink.href, targetDoc.characterSet);
 
-    // Verify that the load of this icon is legal.
-    // Some error or special pages can load their favicon.
-    // To be on the safe side, only allow chrome:// favicons.
-    var isAllowedPage = [
-      /^about:neterror\?/,
-      /^about:blocked\?/,
-      /^about:certerror\?/,
-      /^about:home$/,
-    ].some(function (re) re.test(targetDoc.documentURI));
+  addIcon: function(aBrowser, aURL) {
+    if (gBrowser.isFailedIcon(aURL))
+      return false;
 
-    if (!isAllowedPage || !uri.schemeIs("chrome")) {
-      var ssm = Services.scriptSecurityManager;
-      try {
-        ssm.checkLoadURIWithPrincipal(targetDoc.nodePrincipal, uri,
-                                      Ci.nsIScriptSecurityManager.DISALLOW_SCRIPT);
-      } catch(e) {
-        return null;
-      }
-    }
+    let tab = gBrowser._getTabForBrowser(aBrowser);
+    if (!tab)
+      return false;
 
-    try {
-      var contentPolicy = Cc["@mozilla.org/layout/content-policy;1"].
-                          getService(Ci.nsIContentPolicy);
-    } catch(e) {
-      return null; // Refuse to load if we can't do a security check.
-    }
-
-    // Security says okay, now ask content policy
-    if (contentPolicy.shouldLoad(Ci.nsIContentPolicy.TYPE_IMAGE,
-                                 uri, targetDoc.documentURIObject,
-                                 aLink, aLink.type, null)
-                                 != Ci.nsIContentPolicy.ACCEPT)
-      return null;
-
-    try {
-      uri.userPass = "";
-    } catch(e) {
-      // some URIs are immutable
-    }
-    return uri;
+    gBrowser.setIcon(tab, aURL);
+    return true;
   },
-  onLinkAdded: function (event) {
-    var link = event.originalTarget;
-    var rel = link.rel && link.rel.toLowerCase();
-    if (!link || !link.ownerDocument || !rel || !link.href)
-      return;
 
-    var feedAdded = false;
-    var iconAdded = false;
-    var searchAdded = false;
-    var rels = {};
-    for (let relString of rel.split(/\s+/))
-      rels[relString] = true;
+  addSearch: function(aBrowser, aEngine, aURL) {
+    let tab = gBrowser._getTabForBrowser(aBrowser);
+    if (!tab)
+      return false;
 
-    for (let relVal in rels) {
-      switch (relVal) {
-        case "feed":
-        case "alternate":
-          if (!feedAdded) {
-            if (!rels.feed && rels.alternate && rels.stylesheet)
-              break;
-
-            if (isValidFeed(link, link.ownerDocument.nodePrincipal, "feed" in rels)) {
-              FeedHandler.addFeed(link, link.ownerDocument);
-              feedAdded = true;
-            }
-          }
-          break;
-        case "icon":
-          if (!iconAdded) {
-            if (!gPrefService.getBoolPref("browser.chrome.site_icons"))
-              break;
-
-            var uri = this.getLinkIconURI(link);
-            if (!uri)
-              break;
-
-            if (gBrowser.isFailedIcon(uri))
-              break;
-
-            var browserIndex = gBrowser.getBrowserIndexForDocument(link.ownerDocument);
-            // no browser? no favicon.
-            if (browserIndex == -1)
-              break;
-
-            let tab = gBrowser.tabs[browserIndex];
-            gBrowser.setIcon(tab, uri.spec);
-            iconAdded = true;
-          }
-          break;
-        case "search":
-          if (!searchAdded) {
-            var type = link.type && link.type.toLowerCase();
-            type = type.replace(/^\s+|\s*(?:;.*)?$/g, "");
-
-            if (type == "application/opensearchdescription+xml" && link.title &&
-                /^(?:https?|ftp):/i.test(link.href)) {
-              var engine = { title: link.title, href: link.href };
-              BrowserSearch.addEngine(engine, link.ownerDocument);
-              searchAdded = true;
-            }
-          }
-          break;
-      }
-    }
-  }
+    BrowserSearch.addEngine(aBrowser, aEngine, makeURI(aURL));
+  },
 }
 
 const BrowserSearch = {
-  addEngine: function(engine, targetDoc) {
+  addEngine: function(browser, engine, uri) {
     if (!this.searchBar)
-      return;
-
-    var browser = gBrowser.getBrowserForDocument(targetDoc);
-    // ignore search engines from subframes (see bug 479408)
-    if (!browser)
       return;
 
     // Check to see whether we've already added an engine with this title
@@ -2940,8 +2868,8 @@ const BrowserSearch = {
     // Use documentURIObject in the check for shouldLoadFavIcon so that we
     // do the right thing with about:-style error pages.  Bug 453442
     var iconURL = null;
-    if (gBrowser.shouldLoadFavIcon(targetDoc.documentURIObject))
-      iconURL = targetDoc.documentURIObject.prePath + "/favicon.ico";
+    if (gBrowser.shouldLoadFavIcon(uri))
+      iconURL = uri.prePath + "/favicon.ico";
 
     var hidden = false;
     // If this engine (identified by title) is already in the list, add it
@@ -3302,6 +3230,17 @@ function OpenBrowserWindow(options)
     extraFeatures = ",non-private";
   }
 
+  if (options && options.remote) {
+    let omtcEnabled = gPrefService.getBoolPref("layers.offmainthreadcomposition.enabled");
+    if (!omtcEnabled) {
+      alert("To use out-of-process tabs, you must set the layers.offmainthreadcomposition.enabled preference and restart. Opening a normal window instead.");
+    } else {
+      extraFeatures += ",remote";
+    }
+  } else if (options && options.remote === false) {
+    extraFeatures += ",non-remote";
+  }
+
   // if and only if the current window is a browser window and it has a document with a character
   // set, then extract the current charset menu setting from the current document and use it to
   // initialize the new browser window...
@@ -3589,15 +3528,17 @@ var XULBrowserWindow = {
     const nsIWebProgressListener = Ci.nsIWebProgressListener;
     const nsIChannel = Ci.nsIChannel;
 
+    let browser = gBrowser.selectedBrowser;
+
     if (aStateFlags & nsIWebProgressListener.STATE_START &&
         aStateFlags & nsIWebProgressListener.STATE_IS_NETWORK) {
 
       if (aRequest && aWebProgress.isTopLevel) {
         // clear out feed data
-        gBrowser.selectedBrowser.feeds = null;
+        browser.feeds = null;
 
         // clear out search-engine data
-        gBrowser.selectedBrowser.engines = null;
+        browser.engines = null;
       }
 
       this.isBusy = true;
@@ -3638,7 +3579,7 @@ var XULBrowserWindow = {
         this.setDefaultStatus(msg);
 
         // Disable menu entries for images, enable otherwise
-        if (!gMultiProcessBrowser && content.document && mimeTypeIsTextBased(content.document.contentType))
+        if (browser.documentContentType && mimeTypeIsTextBased(browser.documentContentType))
           this.isImage.removeAttribute('disabled');
         else
           this.isImage.setAttribute('disabled', 'true');
@@ -3682,8 +3623,10 @@ var XULBrowserWindow = {
       }
     }
 
+    let browser = gBrowser.selectedBrowser;
+
     // Disable menu entries for images, enable otherwise
-    if (!gMultiProcessBrowser && content.document && mimeTypeIsTextBased(content.document.contentType))
+    if (browser.documentContentType && mimeTypeIsTextBased(browser.documentContentType))
       this.isImage.removeAttribute('disabled');
     else
       this.isImage.setAttribute('disabled', 'true');
@@ -3697,7 +3640,6 @@ var XULBrowserWindow = {
     // Update urlbar only if a new page was loaded on the primary content area
     // Do not update urlbar if there was a subframe navigation
 
-    var browser = gBrowser.selectedBrowser;
     if (aWebProgress.isTopLevel) {
       if ((location == "about:blank" && (gMultiProcessBrowser || !content.opener)) ||
           location == "") {  // Second condition is for new tabs, otherwise
@@ -4519,9 +4461,6 @@ var TabsInTitlebar = {
     let titlebar = $("titlebar");
     let titlebarContent = $("titlebar-content");
     let menubar = $("toolbar-menubar");
-#ifdef XP_MACOSX
-    let secondaryButtonsWidth = rect($("titlebar-secondary-buttonbox")).width;
-#endif
 
     if (allowed) {
       // We set the tabsintitlebar attribute first so that our CSS for
@@ -4539,6 +4478,7 @@ var TabsInTitlebar = {
       let captionButtonsBoxWidth = rect($("titlebar-buttonbox-container")).width;
 
 #ifdef XP_MACOSX
+      let secondaryButtonsWidth = rect($("titlebar-secondary-buttonbox")).width;
       // No need to look up the menubar stuff on OS X:
       let menuHeight = 0;
       let fullMenuHeight = 0;
@@ -4613,6 +4553,9 @@ var TabsInTitlebar = {
 
 
       // Finally, size the placeholders:
+#ifdef XP_MACOSX
+      this._sizePlaceholder("fullscreen-button", secondaryButtonsWidth);
+#endif
       this._sizePlaceholder("caption-buttons", captionButtonsBoxWidth);
 
       if (!this._draghandles) {
@@ -4634,16 +4577,16 @@ var TabsInTitlebar = {
       document.documentElement.removeAttribute("tabsintitlebar");
       updateTitlebarDisplay();
 
+#ifdef XP_MACOSX
+      let secondaryButtonsWidth = rect($("titlebar-secondary-buttonbox")).width;
+      this._sizePlaceholder("fullscreen-button", secondaryButtonsWidth);
+#endif
       // Reset the margins and padding that might have been modified:
       titlebarContent.style.marginTop = "";
       titlebarContent.style.marginBottom = "";
       titlebar.style.marginBottom = "";
       menubar.style.paddingBottom = "";
     }
-
-#ifdef XP_MACOSX
-    this._sizePlaceholder("fullscreen-button", secondaryButtonsWidth);
-#endif
   },
 
   _sizePlaceholder: function (type, width) {
@@ -4707,36 +4650,6 @@ function onTitlebarMaxClick() {
     window.maximize();
 }
 #endif
-
-let TabstripFogConstrainer = {
-  _toolbar: null,
-  init: function() {
-#ifdef XP_WIN
-    this._toolbar = document.getElementById("TabsToolbar");
-    this._toolbar.addEventListener("tabdragstart", this);
-    this._toolbar.addEventListener("tabdragstop", this);
-#endif
-  },
-
-  handleEvent: function(e) {
-    switch (e.type) {
-      case "tabdragstart":
-        this._toolbar.setAttribute("draggingtab", "true");
-        break;
-      case "tabdragstop":
-        this._toolbar.removeAttribute("draggingtab");
-        break;
-    }
-  },
-
-  uninit: function() {
-#ifdef XP_WIN
-    this._toolbar.removeEventListener("tabdragstart", this);
-    this._toolbar.removeEventListener("tabdragstop", this);
-    this._toolbar = null;
-#endif
-  }
-};
 
 function displaySecurityInfo()
 {
@@ -4963,13 +4876,11 @@ function getBrowserSelection(aCharLen) {
   // selections of more than 150 characters aren't useful
   const kMaxSelectionLen = 150;
   const charLen = Math.min(aCharLen || kMaxSelectionLen, kMaxSelectionLen);
-  let commandDispatcher = document.commandDispatcher;
 
-  var focusedWindow = commandDispatcher.focusedWindow;
+  let [element, focusedWindow] = BrowserUtils.getFocusSync(document);
   var selection = focusedWindow.getSelection().toString();
   // try getting a selected text in text input.
   if (!selection) {
-    let element = commandDispatcher.focusedElement;
     var isOnTextInput = function isOnTextInput(elem) {
       // we avoid to return a value if a selection is in password field.
       // ref. bug 565717
@@ -5278,55 +5189,15 @@ function handleDroppedLink(event, url, name)
   event.preventDefault();
 };
 
-function MultiplexHandler(event)
-{ try {
-    var node = event.target;
-    var name = node.getAttribute('name');
-
-    if (name == 'detectorGroup') {
-        BrowserCharsetReload();
-        SelectDetector(event, false);
-    } else if (name == 'charsetGroup') {
-        var charset = node.getAttribute('id');
-        charset = charset.substring(charset.indexOf('charset.') + 'charset.'.length);
-        BrowserSetForcedCharacterSet(charset);
-    } else if (name == 'charsetCustomize') {
-        //do nothing - please remove this else statement, once the charset prefs moves to the pref window
-    } else {
-        BrowserSetForcedCharacterSet(node.getAttribute('id'));
-    }
-    } catch(ex) { alert(ex); }
-}
-
-function SelectDetector(event, doReload)
-{
-    var uri =  event.target.getAttribute("id");
-    var prefvalue = uri.substring(uri.indexOf('chardet.') + 'chardet.'.length);
-    if ("off" == prefvalue) { // "off" is special value to turn off the detectors
-        prefvalue = "";
-    }
-
-    try {
-        var str =  Cc["@mozilla.org/supports-string;1"].
-                   createInstance(Ci.nsISupportsString);
-
-        str.data = prefvalue;
-        gPrefService.setComplexValue("intl.charset.detector", Ci.nsISupportsString, str);
-        if (doReload)
-          window.content.location.reload();
-    }
-    catch (ex) {
-        dump("Failed to set the intl.charset.detector preference.\n");
-    }
-}
-
 function BrowserSetForcedCharacterSet(aCharset)
 {
-  gBrowser.docShell.gatherCharsetMenuTelemetry();
-  gBrowser.docShell.charset = aCharset;
-  // Save the forced character-set
-  if (!PrivateBrowsingUtils.isWindowPrivate(window))
-    PlacesUtils.setCharsetForURI(getWebNavigation().currentURI, aCharset);
+  if (aCharset) {
+    gBrowser.docShell.gatherCharsetMenuTelemetry();
+    gBrowser.docShell.charset = aCharset;
+    // Save the forced character-set
+    if (!PrivateBrowsingUtils.isWindowPrivate(window))
+      PlacesUtils.setCharsetForURI(getWebNavigation().currentURI, aCharset);
+  }
   BrowserCharsetReload();
 }
 
@@ -5335,8 +5206,8 @@ function BrowserCharsetReload()
   BrowserReloadWithFlags(nsIWebNavigation.LOAD_FLAGS_CHARSET_CHANGE);
 }
 
-function charsetMenuGetElement(parent, id) {
-  return parent.getElementsByAttribute("id", id)[0];
+function charsetMenuGetElement(parent, charset) {
+  return parent.getElementsByAttribute("charset", charset)[0];
 }
 
 function UpdateCurrentCharset(target) {
@@ -5346,51 +5217,19 @@ function UpdateCurrentCharset(target) {
 
     // Uncheck previous item
     if (gPrevCharset) {
-        var pref_item = charsetMenuGetElement(target, "charset." + gPrevCharset);
+        var pref_item = charsetMenuGetElement(target, gPrevCharset);
         if (pref_item)
           pref_item.setAttribute('checked', 'false');
     }
 
-    var menuitem = charsetMenuGetElement(target, "charset." + FoldCharset(wnd.document.characterSet));
+    var menuitem = charsetMenuGetElement(target, CharsetMenu.foldCharset(wnd.document.characterSet));
     if (menuitem) {
         menuitem.setAttribute('checked', 'true');
     }
 }
 
-function FoldCharset(charset) {
-  // For substantially similar encodings, treat two encodings as the same
-  // for the purpose of the check mark.
-  if (charset == "ISO-8859-8-I") {
-    return "windows-1255";
-  } else if (charset == "gb18030") {
-    return "gbk";
-  }
-  return charset;
-}
-
-function UpdateCharsetDetector(target) {
-  var prefvalue;
-
-  try {
-    prefvalue = gPrefService.getComplexValue("intl.charset.detector", Ci.nsIPrefLocalizedString).data;
-  }
-  catch (ex) {}
-
-  if (!prefvalue)
-    prefvalue = "off";
-
-  var menuitem = charsetMenuGetElement(target, "chardet." + prefvalue);
-  if (menuitem)
-    menuitem.setAttribute("checked", "true");
-}
-
-function UpdateMenus(event) {
-  UpdateCurrentCharset(event.target);
-  UpdateCharsetDetector(event.target);
-}
-
 function charsetLoadListener() {
-  var charset = FoldCharset(window.content.document.characterSet);
+  var charset = CharsetMenu.foldCharset(window.content.document.characterSet);
 
   if (charset.length > 0 && (charset != gLastBrowserCharset)) {
     gPrevCharset = gLastBrowserCharset;
@@ -6024,6 +5863,10 @@ function WindowIsClosing()
   if (!closeWindow(false, warnAboutClosingWindow))
     return false;
 
+  // Bug 967873 - Proxy nsDocumentViewer::PermitUnload to the child process
+  if (gMultiProcessBrowser)
+    return true;
+
   for (let browser of gBrowser.browsers) {
     let ds = browser.docShell;
     if (ds.contentViewer && !ds.contentViewer.permitUnload())
@@ -6636,6 +6479,7 @@ var gIdentityHandler = {
     ];
     let options = {
       dismissed: true,
+      learnMoreURL: Services.urlFormatter.formatURLPref("app.support.baseURL") + "mixed-content",
     };
     PopupNotifications.show(gBrowser.selectedBrowser, "mixed-content-blocked",
                             messageString, "mixed-content-blocked-notification-icon",
@@ -7015,6 +6859,28 @@ let gPrivateBrowsingUI = {
   }
 };
 
+let gRemoteTabsUI = {
+  init: function() {
+    if (window.location.href != getBrowserURL()) {
+      return;
+    }
+
+    let remoteTabs = gPrefService.getBoolPref("browser.tabs.remote");
+    let autostart = gPrefService.getBoolPref("browser.tabs.remote.autostart");
+
+    let newRemoteWindow = document.getElementById("menu_newRemoteWindow");
+    let newNonRemoteWindow = document.getElementById("menu_newNonRemoteWindow");
+
+    if (!remoteTabs) {
+      newRemoteWindow.hidden = true;
+      newNonRemoteWindow.hidden = true;
+      return;
+    }
+
+    newRemoteWindow.hidden = autostart;
+    newNonRemoteWindow.hidden = !autostart;
+  }
+};
 
 /**
  * Switch to a tab that has a given URI, and focusses its browser window.
@@ -7277,7 +7143,7 @@ XPCOMUtils.defineLazyGetter(window, "gShowPageResizers", function () {
 });
 
 var MousePosTracker = {
-  _listeners: [],
+  _listeners: new Set(),
   _x: 0,
   _y: 0,
   get _windowUtils() {
@@ -7286,21 +7152,17 @@ var MousePosTracker = {
   },
 
   addListener: function (listener) {
-    if (this._listeners.indexOf(listener) >= 0)
+    if (this._listeners.has(listener))
       return;
 
     listener._hover = false;
-    this._listeners.push(listener);
+    this._listeners.add(listener);
 
     this._callListener(listener);
   },
 
   removeListener: function (listener) {
-    var index = this._listeners.indexOf(listener);
-    if (index < 0)
-      return;
-
-    this._listeners.splice(index, 1);
+    this._listeners.delete(listener);
   },
 
   handleEvent: function (event) {
@@ -7363,3 +7225,11 @@ let BrowserChromeTest = {
       this._cb = cb;
   }
 };
+
+function BrowserOpenNewTabOrWindow(event) {
+  if (event.shiftKey) {
+    OpenBrowserWindow();
+  } else {
+    BrowserOpenTab();
+  }
+}

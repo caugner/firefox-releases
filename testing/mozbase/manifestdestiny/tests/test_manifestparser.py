@@ -105,7 +105,7 @@ class TestManifestParser(unittest.TestCase):
         buffer = StringIO()
         parser.write(fp=buffer, global_kwargs={'foo': 'bar'})
         self.assertEqual(buffer.getvalue().strip(),
-                         '[DEFAULT]\nfoo = bar\n\n[fleem]\n\n[include/flowers]\nblue = ocean\nred = roses\nyellow = submarine')
+                         '[DEFAULT]\nfoo = bar\n\n[fleem]\nsubsuite = \n\n[include/flowers]\nblue = ocean\nred = roses\nsubsuite = \nyellow = submarine')
 
     def test_copy(self):
         """Test our ability to copy a set of manifests"""
@@ -189,6 +189,28 @@ class TestManifestParser(unittest.TestCase):
         manifest = ManifestParser(manifests=(manifest_path,))
         missing = manifest.verifyDirectory(directory, extensions=('.js',))
         self.assertEqual(missing, (set([missing_test]), set()))
+
+    def test_just_defaults(self):
+        """Ensure a manifest with just a DEFAULT section exposes that data."""
+
+        parser = ManifestParser()
+        manifest = os.path.join(here, 'just-defaults.ini')
+        parser.read(manifest)
+        self.assertEqual(len(parser.tests), 0)
+        self.assertTrue(manifest in parser.manifest_defaults)
+        self.assertEquals(parser.manifest_defaults[manifest]['foo'], 'bar')
+
+    def test_manifest_list(self):
+        """
+        Ensure a manifest with just a DEFAULT section still returns
+        itself from the manifests() method.
+        """
+
+        parser = ManifestParser()
+        manifest = os.path.join(here, 'no-tests.ini')
+        parser.read(manifest)
+        self.assertEqual(len(parser.tests), 0)
+        self.assertTrue(len(parser.manifests()) == 1)
 
 if __name__ == '__main__':
     unittest.main()

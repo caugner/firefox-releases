@@ -179,8 +179,6 @@ public:
 
   virtual void SetIgnoreViewportScrolling(bool aIgnore) MOZ_OVERRIDE;
 
-  virtual void SetDisplayPort(const nsRect& aDisplayPort);
-
   virtual nsresult SetResolution(float aXResolution, float aYResolution) MOZ_OVERRIDE;
   virtual gfxSize GetCumulativeResolution() MOZ_OVERRIDE;
 
@@ -627,7 +625,7 @@ protected:
   nsIDocument* GetTouchEventTargetDocument();
 #endif
   bool InZombieDocument(nsIContent *aContent);
-  already_AddRefed<nsIPresShell> GetParentPresShell();
+  already_AddRefed<nsIPresShell> GetParentPresShellForEventHandling();
   nsIContent* GetCurrentEventContent();
   nsIFrame* GetCurrentEventFrame();
   nsresult RetargetEventToParent(mozilla::WidgetGUIEvent* aEvent,
@@ -704,6 +702,8 @@ protected:
   void ClearVisibleImagesList();
   static void ClearImageVisibilityVisited(nsView* aView, bool aClear);
   static void MarkImagesInListVisible(const nsDisplayList& aList);
+
+  void EvictTouches();
 
   // A list of images that are visible or almost visible.
   nsTHashtable< nsRefPtrHashKey<nsIImageLoadingContent> > mVisibleImages;

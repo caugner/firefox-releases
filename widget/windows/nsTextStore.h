@@ -9,7 +9,6 @@
 #include "nsAutoPtr.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
-#include "nsITimer.h"
 #include "nsIWidget.h"
 #include "nsWindowBase.h"
 #include "mozilla/Attributes.h"
@@ -105,6 +104,7 @@ public: /*ITfInputProcessorProfileActivationSink*/
                            HKL, DWORD);
 
 protected:
+  typedef mozilla::widget::IMENotification IMENotification;
   typedef mozilla::widget::IMEState IMEState;
   typedef mozilla::widget::InputContext InputContext;
   typedef mozilla::widget::InputContextAction InputContextAction;
@@ -135,18 +135,22 @@ public:
   static nsresult OnFocusChange(bool aGotFocus,
                                 nsWindowBase* aFocusedWidget,
                                 IMEState::Enabled aIMEEnabled);
-  static nsresult OnTextChange(uint32_t aStart,
-                               uint32_t aOldEnd,
-                               uint32_t aNewEnd)
+  static nsresult OnTextChange(const IMENotification& aIMENotification)
   {
     NS_ENSURE_TRUE(sTsfTextStore, NS_ERROR_NOT_AVAILABLE);
-    return sTsfTextStore->OnTextChangeInternal(aStart, aOldEnd, aNewEnd);
+    return sTsfTextStore->OnTextChangeInternal(aIMENotification);
   }
 
   static nsresult OnSelectionChange(void)
   {
     NS_ENSURE_TRUE(sTsfTextStore, NS_ERROR_NOT_AVAILABLE);
     return sTsfTextStore->OnSelectionChangeInternal();
+  }
+
+  static nsresult OnLayoutChange()
+  {
+    NS_ENSURE_TRUE(sTsfTextStore, NS_ERROR_NOT_AVAILABLE);
+    return sTsfTextStore->OnLayoutChangeInternal();
   }
 
   static nsIMEUpdatePreference GetIMEUpdatePreference();
@@ -258,7 +262,7 @@ protected:
   bool     InsertTextAtSelectionInternal(const nsAString &aInsertStr,
                                          TS_TEXTCHANGE* aTextChange);
   void     CommitCompositionInternal(bool);
-  nsresult OnTextChangeInternal(uint32_t, uint32_t, uint32_t);
+  nsresult OnTextChangeInternal(const IMENotification& aIMENotification);
   nsresult OnSelectionChangeInternal(void);
   HRESULT  GetDisplayAttribute(ITfProperty* aProperty,
                                ITfRange* aRange,
@@ -277,7 +281,7 @@ protected:
   // and clear it.
   void     FlushPendingActions();
 
-  nsresult OnLayoutChange();
+  nsresult OnLayoutChangeInternal();
   HRESULT  ProcessScopeRequest(DWORD dwFlags,
                                ULONG cFilterAttrs,
                                const TS_ATTRID *paFilterAttrs);
@@ -351,17 +355,6 @@ protected:
                LONG aCompositionStartOffset,
                const nsAString& aCompositionString);
     void End();
-
-    void StartLayoutChangeTimer(nsTextStore* aTextStore);
-    void EnsureLayoutChangeTimerStopped();
-
-  private:
-    // Timer for calling ITextStoreACPSink::OnLayoutChange(). This is only used
-    // during composing.
-    nsCOMPtr<nsITimer> mLayoutChangeTimer;
-
-    static void TimerCallback(nsITimer* aTimer, void *aClosure);
-    static uint32_t GetLayoutChangeIntervalTime();
   };
   // While the document is locked, we cannot dispatch any events which cause
   // DOM events since the DOM events' handlers may modify the locked document.
@@ -508,7 +501,7 @@ protected:
     // For compositionupdate and compositionend
     nsString mData;
     // For compositionupdate
-    nsTArray<mozilla::TextRange> mRanges;
+    nsRefPtr<mozilla::TextRangeArray> mRanges;
     // For selectionset
     bool mSelectionReversed;
   };
@@ -528,9 +521,7 @@ protected:
     }
     PendingAction* newAction = mPendingActions.AppendElement();
     newAction->mType = PendingAction::COMPOSITION_UPDATE;
-    // We think that 4 ranges (3 clauses and caret position) are enough for
-    // most cases.
-    newAction->mRanges.SetCapacity(4);
+    newAction->mRanges = new mozilla::TextRangeArray();
     return newAction;
   }
 
@@ -587,7 +578,6 @@ protected:
       mText = aText;
       mMinTextModifiedOffset = NOT_MODIFIED;
       mInitialized = true;
-      mNotifyTSFOfLayoutChange = false;
     }
 
     const nsDependentSubstring GetSelectedText() const;
@@ -620,16 +610,6 @@ protected:
       return mInitialized && (mMinTextModifiedOffset != NOT_MODIFIED);
     }
 
-    void NeedsToNotifyTSFOfLayoutChange()
-    {
-      mNotifyTSFOfLayoutChange = true;
-    }
-
-    bool NeedToNotifyTSFOfLayoutChange() const
-    {
-      return mInitialized && mNotifyTSFOfLayoutChange;
-    }
-
     nsTextStore::Composition& Composition() { return mComposition; }
     nsTextStore::Selection& Selection() { return mSelection; }
 
@@ -646,7 +626,6 @@ protected:
     uint32_t mMinTextModifiedOffset;
 
     bool mInitialized;
-    bool mNotifyTSFOfLayoutChange;
   };
   // mContent caches "current content" of the document ONLY while the document
   // is locked.  I.e., the content is cleared at unlocking the document since
@@ -670,9 +649,15 @@ protected:
   // selection change is caused by a call of On*Composition() without document
   // lock since RequestLock() tries to flush the pending actions again (which
   // are flushing).  Therefore, OnSelectionChangeInternal() sets this true
-  // during recoding actions and then, FlushPendingActions() will call
-  // mSink->OnSelectionChange().
-  bool                         mNotifySelectionChange;
+  // during recoding actions and then, RequestLock() will call
+  // mSink->OnSelectionChange() after mLock becomes 0.
+  bool                         mPendingOnSelectionChange;
+  // If GetTextExt() or GetACPFromPoint() is called and the layout hasn't been
+  // calculated yet, these methods return TS_E_NOLAYOUT.  Then, RequestLock()
+  // will call mSink->OnLayoutChange() and
+  // ITfContextOwnerServices::OnLayoutChange() after the layout is fixed and
+  // the document is unlocked.
+  bool                         mPendingOnLayoutChange;
   // While there is native caret, this is true.  Otherwise, false.
   bool                         mNativeCaretIsCreated;
 

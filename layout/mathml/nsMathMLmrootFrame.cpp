@@ -145,7 +145,7 @@ GetRadicalXOffsets(nscoord aIndexWidth, nscoord aSqrWidth,
     *aSqrOffset = dxSqr;
 }
 
-NS_IMETHODIMP
+nsresult
 nsMathMLmrootFrame::Reflow(nsPresContext*          aPresContext,
                            nsHTMLReflowMetrics&     aDesiredSize,
                            const nsHTMLReflowState& aReflowState,
@@ -167,12 +167,12 @@ nsMathMLmrootFrame::Reflow(nsPresContext*          aPresContext,
   int32_t count = 0;
   nsIFrame* baseFrame = nullptr;
   nsIFrame* indexFrame = nullptr;
-  nsHTMLReflowMetrics baseSize(aReflowState.GetWritingMode());
-  nsHTMLReflowMetrics indexSize(aReflowState.GetWritingMode());
+  nsHTMLReflowMetrics baseSize(aReflowState);
+  nsHTMLReflowMetrics indexSize(aReflowState);
   nsIFrame* childFrame = mFrames.FirstChild();
   while (childFrame) {
     // ask our children to compute their bounding metrics 
-    nsHTMLReflowMetrics childDesiredSize(aReflowState.GetWritingMode(),
+    nsHTMLReflowMetrics childDesiredSize(aReflowState,
                                          aDesiredSize.mFlags
                                          | NS_REFLOW_CALC_BOUNDING_METRICS);
     nsHTMLReflowState childReflowState(aPresContext, aReflowState,
@@ -375,8 +375,9 @@ nsMathMLmrootFrame::GetIntrinsicWidthMetrics(nsRenderingContext* aRenderingConte
   nscoord sqrWidth = mSqrChar.GetMaxWidth(PresContext(), *aRenderingContext);
 
   nscoord dxSqr;
-  GetRadicalXOffsets(indexWidth, sqrWidth, aRenderingContext->FontMetrics(),
-                     nullptr, &dxSqr);
+  nsRefPtr<nsFontMetrics> fm;
+  nsLayoutUtils::GetFontMetricsForFrame(this, getter_AddRefs(fm));
+  GetRadicalXOffsets(indexWidth, sqrWidth, fm, nullptr, &dxSqr);
 
   nscoord width = dxSqr + sqrWidth + baseWidth;
 

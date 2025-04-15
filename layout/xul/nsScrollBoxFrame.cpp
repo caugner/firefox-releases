@@ -22,23 +22,23 @@ public:
   friend nsIFrame* NS_NewAutoRepeatBoxFrame(nsIPresShell* aPresShell,
                                             nsStyleContext* aContext);
 
-  virtual void DestroyFrom(nsIFrame* aDestructRoot);
+  virtual void DestroyFrom(nsIFrame* aDestructRoot) MOZ_OVERRIDE;
 
-  NS_IMETHOD AttributeChanged(int32_t aNameSpaceID,
-                              nsIAtom* aAttribute,
-                              int32_t aModType);
+  virtual nsresult AttributeChanged(int32_t aNameSpaceID,
+                                    nsIAtom* aAttribute,
+                                    int32_t aModType) MOZ_OVERRIDE;
 
-  NS_IMETHOD HandleEvent(nsPresContext* aPresContext,
-                         WidgetGUIEvent* aEvent,
-                         nsEventStatus* aEventStatus);
+  virtual nsresult HandleEvent(nsPresContext* aPresContext,
+                               WidgetGUIEvent* aEvent,
+                               nsEventStatus* aEventStatus) MOZ_OVERRIDE;
 
   NS_IMETHOD HandlePress(nsPresContext* aPresContext,
                          WidgetGUIEvent* aEvent,
-                         nsEventStatus* aEventStatus);
+                         nsEventStatus* aEventStatus) MOZ_OVERRIDE;
 
   NS_IMETHOD HandleRelease(nsPresContext* aPresContext,
                            WidgetGUIEvent* aEvent,
-                           nsEventStatus* aEventStatus);
+                           nsEventStatus* aEventStatus) MOZ_OVERRIDE;
 
 protected:
   nsAutoRepeatBoxFrame(nsIPresShell* aPresShell, nsStyleContext* aContext):
@@ -73,7 +73,7 @@ NS_NewAutoRepeatBoxFrame (nsIPresShell* aPresShell, nsStyleContext* aContext)
 
 NS_IMPL_FRAMEARENA_HELPERS(nsAutoRepeatBoxFrame)
 
-NS_IMETHODIMP
+nsresult
 nsAutoRepeatBoxFrame::HandleEvent(nsPresContext* aPresContext,
                                   WidgetGUIEvent* aEvent,
                                   nsEventStatus* aEventStatus)
@@ -142,7 +142,7 @@ nsAutoRepeatBoxFrame::HandleRelease(nsPresContext* aPresContext,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsAutoRepeatBoxFrame::AttributeChanged(int32_t aNameSpaceID,
                                        nsIAtom* aAttribute,
                                        int32_t aModType)

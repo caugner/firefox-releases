@@ -129,6 +129,8 @@ interface TestExampleInterface {
   void passNullableSelf(TestInterface? arg);
   attribute TestInterface nonNullSelf;
   attribute TestInterface? nullableSelf;
+  [Cached, Pure]
+  readonly attribute TestInterface cachedSelf;
   // Optional arguments
   void passOptionalSelf(optional TestInterface? arg);
   void passOptionalNonNullSelf(optional TestInterface arg);
@@ -366,6 +368,7 @@ interface TestExampleInterface {
   void passUnion12(optional (EventInit or long) arg = 5);
   void passUnion13(optional (object or long?) arg = null);
   void passUnion14(optional (object or long?) arg = 5);
+  void passUnionWithCallback((EventHandler or long) arg);
 #endif
   void passUnionWithNullable((object? or long) arg);
   void passNullableUnion((object or long)? arg);
@@ -412,6 +415,7 @@ interface TestExampleInterface {
   void passNullableUnionWithDefaultValue12(optional (unrestricted float or DOMString)? arg = null);
 
   void passSequenceOfUnions(sequence<(CanvasPattern or CanvasGradient)> arg);
+  void passSequenceOfUnions2(sequence<(object or long)> arg);
   void passVariadicUnion((CanvasPattern or CanvasGradient)... arg);
 
   void passSequenceOfNullableUnions(sequence<(CanvasPattern or CanvasGradient)?> arg);
@@ -445,6 +449,18 @@ interface TestExampleInterface {
   attribute byte attributeRenamedFrom;
 
   void passDictionary(optional Dict x);
+  [Cached, Pure]
+  readonly attribute Dict readonlyDictionary;
+  [Cached, Pure]
+  readonly attribute Dict? readonlyNullableDictionary;
+  [Cached, Pure]
+  attribute Dict writableDictionary;
+  [Cached, Pure, Frozen]
+  readonly attribute Dict readonlyFrozenDictionary;
+  [Cached, Pure, Frozen]
+  readonly attribute Dict? readonlyFrozenNullableDictionary;
+  [Cached, Pure, Frozen]
+  attribute Dict writableFrozenDictionary;
   Dict receiveDictionary();
   Dict? receiveNullableDictionary();
   void passOtherDictionary(optional GrandparentDict x);

@@ -27,6 +27,7 @@ namespace system {
 class Volume : public RefCounted<Volume>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(Volume)
   Volume(const nsCSubstring& aVolumeName);
 
   typedef long STATE; // States are now defined in nsIVolume.idl
@@ -47,13 +48,18 @@ public:
   bool MediaPresent() const           { return mMediaPresent; }
   bool CanBeShared() const            { return mCanBeShared; }
   bool CanBeFormatted() const         { return CanBeShared(); }
+  bool CanBeMounted() const           { return CanBeShared(); }
   bool IsSharingEnabled() const       { return mCanBeShared && mSharingEnabled; }
   bool IsFormatRequested() const      { return CanBeFormatted() && mFormatRequested; }
+  bool IsMountRequested() const       { return CanBeMounted() && mMountRequested; }
+  bool IsUnmountRequested() const     { return CanBeMounted() && mUnmountRequested; }
   bool IsSharing() const              { return mIsSharing; }
   bool IsFormatting() const           { return mIsFormatting; }
 
   void SetSharingEnabled(bool aSharingEnabled);
   void SetFormatRequested(bool aFormatRequested);
+  void SetMountRequested(bool aMountRequested);
+  void SetUnmountRequested(bool aUnmountRequested);
 
   typedef mozilla::Observer<Volume *>     EventObserver;
   typedef mozilla::ObserverList<Volume *> EventObserverList;
@@ -98,6 +104,8 @@ private:
   bool              mMountLocked;
   bool              mSharingEnabled;
   bool              mFormatRequested;
+  bool              mMountRequested;
+  bool              mUnmountRequested;
   bool              mCanBeShared;
   bool              mIsSharing;
   bool              mIsFormatting;

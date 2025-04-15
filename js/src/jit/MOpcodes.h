@@ -114,6 +114,7 @@ namespace jit {
     _(LoadSlot)                                                             \
     _(StoreSlot)                                                            \
     _(FunctionEnvironment)                                                  \
+    _(FilterTypeSet)                                                        \
     _(TypeBarrier)                                                          \
     _(MonitorTypes)                                                         \
     _(PostWriteBarrier)                                                     \
@@ -135,6 +136,7 @@ namespace jit {
     _(InitializedLength)                                                    \
     _(SetInitializedLength)                                                 \
     _(Not)                                                                  \
+    _(NeuterCheck)                                                          \
     _(BoundsCheck)                                                          \
     _(BoundsCheckLower)                                                     \
     _(InArray)                                                              \
@@ -188,6 +190,7 @@ namespace jit {
     _(SetDOMProperty)                                                       \
     _(IsCallable)                                                           \
     _(HaveSameClass)                                                        \
+    _(HasClass)                                                              \
     _(AsmJSNeg)                                                             \
     _(AsmJSUnsignedToDouble)                                                \
     _(AsmJSUnsignedToFloat32)                                               \
@@ -212,8 +215,9 @@ namespace jit {
     _(LambdaPar)                                                            \
     _(RestPar)                                                              \
     _(ForkJoinContext)                                                      \
+    _(ForkJoinGetSlice)                                                     \
     _(GuardThreadExclusive)                                                 \
-    _(CheckInterruptPar)                                                    \
+    _(InterruptCheckPar)                                                    \
     _(RecompileCheck)
 
 // Forward declarations of MIR types.

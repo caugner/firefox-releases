@@ -59,8 +59,6 @@ typedef void (*EnterJitCode)(void *code, unsigned argc, Value *argv, StackFrame 
 
 class IonBuilder;
 
-typedef Vector<IonBuilder*, 0, SystemAllocPolicy> OffThreadCompilationVector;
-
 // ICStubSpace is an abstraction for allocation policy and storage for stub data.
 // There are two kinds of stubs: optimized stubs and fallback stubs (the latter
 // also includes stubs that can make non-tail calls that can GC).
@@ -150,9 +148,9 @@ class JitRuntime
 
     // Executable allocator used for allocating the main code in an IonScript.
     // All accesses on this allocator must be protected by the runtime's
-    // operation callback lock, as the executable memory may be protected()
-    // when triggering a callback to force a fault in the Ion code and avoid
-    // the neeed for explicit interrupt checks.
+    // interrupt lock, as the executable memory may be protected() when
+    // requesting an interrupt to force a fault in the Ion code and avoid the
+    // need for explicit interrupt checks.
     JSC::ExecutableAllocator *ionAlloc_;
 
     // Shared post-exception-handler tail
@@ -191,6 +189,9 @@ class JitRuntime
     // Thunk used by the debugger for breakpoint and step mode.
     JitCode *debugTrapHandler_;
 
+    // Stub used to inline the ForkJoinGetSlice intrinsic.
+    JitCode *forkJoinGetSliceStub_;
+
     // Map VMFunction addresses to the JitCode of the wrapper.
     typedef WeakCache<const VMFunction *, JitCode *> VMWrapperMap;
     VMWrapperMap *functionWrappers_;
@@ -199,9 +200,6 @@ class JitRuntime
     // too long, it's also freed in JitCompartment::mark and in EnterBaseline
     // (after returning from JIT code).
     uint8_t *osrTempData_;
-
-    // Keep track of memoryregions that are going to be flushed.
-    AutoFlushCache *flusher_;
 
     // Whether all Ion code in the runtime is protected, and will fault if it
     // is accessed.
@@ -221,6 +219,7 @@ class JitRuntime
     JitCode *generateInvalidator(JSContext *cx);
     JitCode *generatePreBarrier(JSContext *cx, MIRType type);
     JitCode *generateDebugTrapHandler(JSContext *cx);
+    JitCode *generateForkJoinGetSliceStub(JSContext *cx);
     JitCode *generateVMWrapper(JSContext *cx, const VMFunction &f);
 
     JSC::ExecutableAllocator *createIonAlloc(JSContext *cx);
@@ -235,21 +234,17 @@ class JitRuntime
 
     static void Mark(JSTracer *trc);
 
-    AutoFlushCache *flusher() {
-        return flusher_;
-    }
-    void setFlusher(AutoFlushCache *fl) {
-        if (!flusher_ || !fl)
-            flusher_ = fl;
+    JSC::ExecutableAllocator *execAlloc() const {
+        return execAlloc_;
     }
 
     JSC::ExecutableAllocator *getIonAlloc(JSContext *cx) {
-        JS_ASSERT(cx->runtime()->currentThreadOwnsOperationCallbackLock());
+        JS_ASSERT(cx->runtime()->currentThreadOwnsInterruptLock());
         return ionAlloc_ ? ionAlloc_ : createIonAlloc(cx);
     }
 
     JSC::ExecutableAllocator *ionAlloc(JSRuntime *rt) {
-        JS_ASSERT(rt->currentThreadOwnsOperationCallbackLock());
+        JS_ASSERT(rt->currentThreadOwnsInterruptLock());
         return ionAlloc_;
     }
 
@@ -323,20 +318,27 @@ class JitRuntime
     JitCode *shapePreBarrier() const {
         return shapePreBarrier_;
     }
+
+    bool ensureForkJoinGetSliceStubExists(JSContext *cx);
+    JitCode *forkJoinGetSliceStub() const {
+        return forkJoinGetSliceStub_;
+    }
+};
+
+class JitZone
+{
+    // Allocated space for optimized baseline stubs.
+    OptimizedICStubSpace optimizedStubSpace_;
+
+  public:
+    OptimizedICStubSpace *optimizedStubSpace() {
+        return &optimizedStubSpace_;
+    }
 };
 
 class JitCompartment
 {
     friend class JitActivation;
-
-    // Ion state for the compartment's runtime.
-    JitRuntime *rt;
-
-    // Any scripts for which off thread compilation has successfully finished,
-    // failed, or been cancelled. All off thread compilations which are started
-    // will eventually appear in this list asynchronously. Protected by the
-    // runtime's analysis lock.
-    OffThreadCompilationVector finishedOffThreadCompilations_;
 
     // Map ICStub keys to ICStub shared code objects.
     typedef WeakValueCache<uint32_t, ReadBarriered<JitCode> > ICStubCodeMap;
@@ -348,9 +350,6 @@ class JitCompartment
     void *baselineGetPropReturnAddr_;
     void *baselineSetPropReturnAddr_;
 
-    // Allocated space for optimized baseline stubs.
-    OptimizedICStubSpace optimizedStubSpace_;
-
     // Stub to concatenate two strings inline. Note that it can't be
     // stored in JitRuntime because masm.newGCString bakes in zone-specific
     // pointers. This has to be a weak pointer to avoid keeping the whole
@@ -361,10 +360,6 @@ class JitCompartment
     JitCode *generateStringConcatStub(JSContext *cx, ExecutionMode mode);
 
   public:
-    OffThreadCompilationVector &finishedOffThreadCompilations() {
-        return finishedOffThreadCompilations_;
-    }
-
     JitCode *getStubCode(uint32_t key) {
         ICStubCodeMap::AddPtr p = stubCodes_->lookupForAdd(key);
         if (p)
@@ -409,7 +404,7 @@ class JitCompartment
     JSC::ExecutableAllocator *createIonAlloc();
 
   public:
-    JitCompartment(JitRuntime *rt);
+    JitCompartment();
     ~JitCompartment();
 
     bool initialize(JSContext *cx);
@@ -420,10 +415,6 @@ class JitCompartment
     void mark(JSTracer *trc, JSCompartment *compartment);
     void sweep(FreeOp *fop);
 
-    JSC::ExecutableAllocator *execAlloc() {
-        return rt->execAlloc_;
-    }
-
     JitCode *stringConcatStub(ExecutionMode mode) const {
         switch (mode) {
           case SequentialExecution: return stringConcatStub_;
@@ -431,16 +422,11 @@ class JitCompartment
           default:                  MOZ_ASSUME_UNREACHABLE("No such execution mode");
         }
     }
-
-    OptimizedICStubSpace *optimizedStubSpace() {
-        return &optimizedStubSpace_;
-    }
 };
 
 // Called from JSCompartment::discardJitCode().
 void InvalidateAll(FreeOp *fop, JS::Zone *zone);
 void FinishInvalidation(FreeOp *fop, JSScript *script);
-void FinishDiscardJitCode(FreeOp *fop, JSCompartment *comp);
 
 // On windows systems, really large frames need to be incrementally touched.
 // The following constant defines the minimum increment of the touch.

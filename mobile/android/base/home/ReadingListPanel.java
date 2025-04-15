@@ -5,13 +5,14 @@
 
 package org.mozilla.gecko.home;
 
+import java.util.EnumSet;
+
 import org.mozilla.gecko.R;
-import org.mozilla.gecko.db.BrowserContract.Bookmarks;
+import org.mozilla.gecko.ReaderModeUtils;
+import org.mozilla.gecko.db.BrowserContract.ReadingListItems;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
 import org.mozilla.gecko.home.HomePager.OnUrlOpenListener;
-import org.mozilla.gecko.home.TwoLinePageRow;
-import org.mozilla.gecko.ReaderModeUtils;
 
 import android.app.Activity;
 import android.content.Context;
@@ -29,17 +30,18 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewStub;
 import android.widget.AdapterView;
-import android.widget.ListView;
 import android.widget.TextView;
-
-import java.util.EnumSet;
 
 /**
  * Fragment that displays reading list contents in a ListView.
  */
 public class ReadingListPanel extends HomeFragment {
+
     // Cursor loader ID for reading list
     private static final int LOADER_ID_READING_LIST = 0;
+
+    // Formatted string in hint text to be replaced with an icon.
+    private final String MATCH_STRING = "%I";
 
     // Adapter for the list of reading list items
     private ReadingListAdapter mAdapter;
@@ -112,10 +114,9 @@ public class ReadingListPanel extends HomeFragment {
             @Override
             public HomeContextMenuInfo makeInfoForCursor(View view, int position, long id, Cursor cursor) {
                 final HomeContextMenuInfo info = new HomeContextMenuInfo(view, position, id);
-                info.url = cursor.getString(cursor.getColumnIndexOrThrow(URLColumns.URL));
-                info.title = cursor.getString(cursor.getColumnIndexOrThrow(URLColumns.TITLE));
-                info.bookmarkId = cursor.getInt(cursor.getColumnIndexOrThrow(Bookmarks._ID));
-                info.inReadingList = true;
+                info.url = cursor.getString(cursor.getColumnIndexOrThrow(ReadingListItems.URL));
+                info.title = cursor.getString(cursor.getColumnIndexOrThrow(ReadingListItems.TITLE));
+                info.readingListItemId = cursor.getInt(cursor.getColumnIndexOrThrow(ReadingListItems._ID));
                 return info;
             }
         });
@@ -171,17 +172,17 @@ public class ReadingListPanel extends HomeFragment {
             String readingListHint = emptyHint.getText().toString();
 
             // Use an ImageSpan to include the reader icon in the "Tip".
-            int imageSpanIndex = readingListHint.indexOf("%I");
+            int imageSpanIndex = readingListHint.indexOf(MATCH_STRING);
             if (imageSpanIndex != -1) {
                 final ImageSpan readingListIcon = new ImageSpan(getActivity(), R.drawable.reader_cropped, ImageSpan.ALIGN_BOTTOM);
                 final SpannableStringBuilder hintBuilder = new SpannableStringBuilder(readingListHint);
 
                 // Add additional spacing.
-                hintBuilder.insert(imageSpanIndex + 2, " ");
+                hintBuilder.insert(imageSpanIndex + MATCH_STRING.length(), " ");
                 hintBuilder.insert(imageSpanIndex, " ");
 
                 // Add icon.
-                hintBuilder.setSpan(readingListIcon, imageSpanIndex + 1, imageSpanIndex + 3, Spanned.SPAN_INCLUSIVE_INCLUSIVE);
+                hintBuilder.setSpan(readingListIcon, imageSpanIndex + 1, imageSpanIndex + MATCH_STRING.length() + 1, Spanned.SPAN_INCLUSIVE_INCLUSIVE);
 
                 emptyHint.setText(hintBuilder, TextView.BufferType.SPANNABLE);
             }
@@ -200,7 +201,7 @@ public class ReadingListPanel extends HomeFragment {
 
         @Override
         public Cursor loadCursor() {
-            return BrowserDB.getBookmarksInFolder(getContext().getContentResolver(), Bookmarks.FIXED_READING_LIST_ID);
+            return BrowserDB.getReadingList(getContext().getContentResolver());
         }
     }
 

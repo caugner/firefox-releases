@@ -209,7 +209,7 @@ static void glxtest()
   const GLubyte *vendorString = glGetString(GL_VENDOR);
   const GLubyte *rendererString = glGetString(GL_RENDERER);
   const GLubyte *versionString = glGetString(GL_VERSION);
-  
+
   if (!vendorString || !rendererString || !versionString)
     fatal_error("glGetString returned null");
 
@@ -229,7 +229,16 @@ static void glxtest()
   glXDestroyContext(dpy, context);
   XDestroyWindow(dpy, window);
   XFreeColormap(dpy, swa.colormap);
+
+#ifdef NS_FREE_PERMANENT_DATA // conditionally defined in nscore.h, don't forget to #include it above
   XCloseDisplay(dpy);
+#else
+  // This XSync call wanted to be instead:
+  //   XCloseDisplay(dpy);
+  // but this can cause 1-minute stalls on certain setups using Nouveau, see bug 973192
+  XSync(dpy, False);
+#endif
+
   dlclose(libgl);
 
   ///// Finally write data to the pipe
@@ -251,12 +260,14 @@ bool fire_glxtest_process()
       close(pfd[1]);
       return false;
   }
+  // The child exits early to avoid running the full shutdown sequence and avoid conflicting with threads 
+  // we have already spawned (like the profiler).
   if (pid == 0) {
       close(pfd[0]);
       write_end_of_the_pipe = pfd[1];
       glxtest();
       close(pfd[1]);
-      return true;
+      exit(0);
   }
 
   close(pfd[1]);

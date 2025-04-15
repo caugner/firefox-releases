@@ -56,10 +56,8 @@ add_test(function v4_upgrade() {
                           }],
                           attributes: {
                             image: "image"
-                          },
-                          extData: {
-                            weaveLastUsed: 1
-                          }}]}]};
+                          }
+                          }]}]};
     delete Svc.Session;
     Svc.Session = {
       getBrowserState: function () JSON.stringify(myTabs)
@@ -227,10 +225,8 @@ add_test(function v5_upgrade() {
                           }],
                           attributes: {
                             image: "image"
-                          },
-                          extData: {
-                            weaveLastUsed: 1
-                          }}]}]};
+                          }
+                          }]}]};
     delete Svc.Session;
     Svc.Session = {
       getBrowserState: function () JSON.stringify(myTabs)

@@ -50,7 +50,7 @@ nsColorControlFrame::GetType() const
 }
 
 #ifdef DEBUG_FRAME_DUMP
-NS_IMETHODIMP
+nsresult
 nsColorControlFrame::GetFrameName(nsAString& aResult) const
 {
   return MakeFrameName(NS_LITERAL_STRING("ColorControl"), aResult);
@@ -106,7 +106,7 @@ nsColorControlFrame::UpdateColor()
       NS_LITERAL_STRING("background-color:") + color, true);
 }
 
-NS_IMETHODIMP
+nsresult
 nsColorControlFrame::AttributeChanged(int32_t  aNameSpaceID,
                                       nsIAtom* aAttribute,
                                       int32_t  aModType)

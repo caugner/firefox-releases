@@ -17,6 +17,14 @@ namespace jit {
 typedef uint32_t SnapshotOffset;
 typedef uint32_t BailoutId;
 
+// The maximum size of any buffer associated with an assembler or code object.
+// This is chosen to not overflow a signed integer, leaving room for an extra
+// bit on offsets.
+static const uint32_t MAX_BUFFER_SIZE = (1 << 30) - 1;
+
+// Maximum number of scripted arg slots.
+static const uint32_t SNAPSHOT_MAX_NARGS = 127;
+
 static const SnapshotOffset INVALID_SNAPSHOT_OFFSET = uint32_t(-1);
 
 // Different kinds of bailouts. When extending this enum, make sure to check
@@ -41,7 +49,9 @@ enum BailoutKind
     Bailout_BaselineInfo
 };
 
-#ifdef DEBUG
+static const uint32_t BAILOUT_KIND_BITS = 3;
+static const uint32_t BAILOUT_RESUME_BITS = 1;
+
 inline const char *
 BailoutKindString(BailoutKind kind)
 {
@@ -60,7 +70,6 @@ BailoutKindString(BailoutKind kind)
         MOZ_ASSUME_UNREACHABLE("Invalid BailoutKind");
     }
 }
-#endif
 
 static const uint32_t ELEMENT_TYPE_BITS = 4;
 static const uint32_t ELEMENT_TYPE_SHIFT = 0;

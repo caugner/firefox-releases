@@ -11,6 +11,7 @@ import logging
 import os
 import shutil
 import sys
+import urllib2
 
 from StringIO import StringIO
 
@@ -25,6 +26,15 @@ from mach.decorators import (
     CommandProvider,
     Command,
 )
+
+ADB_NOT_FOUND = '''
+The %s command requires the adb binary to be on your path.
+
+If you have a B2G build, this can be found in
+'%s/out/host/<platform>/bin'.
+'''.lstrip()
+
+BUSYBOX_URL = 'http://www.busybox.net/downloads/binaries/latest/busybox-armv7l'
 
 
 if sys.version_info[0] < 3:
@@ -46,12 +56,13 @@ class InvalidTestPathError(Exception):
 class XPCShellRunner(MozbuildObject):
     """Run xpcshell tests."""
     def run_suite(self, **kwargs):
-        manifest = os.path.join(self.topobjdir, '_tests', 'xpcshell',
-            'xpcshell.ini')
+        from manifestparser import TestManifest
+        manifest = TestManifest(manifests=[os.path.join(self.topobjdir,
+            '_tests', 'xpcshell', 'xpcshell.ini')])
 
         return self._run_xpcshell_harness(manifest=manifest, **kwargs)
 
-    def run_test(self, test_file, interactive=False,
+    def run_test(self, test_paths, interactive=False,
                  keep_going=False, sequential=False, shuffle=False,
                  debugger=None, debuggerArgs=None, debuggerInteractive=None,
                  rerun_failures=False,
@@ -66,7 +77,7 @@ class XPCShellRunner(MozbuildObject):
         if build_path not in sys.path:
             sys.path.append(build_path)
 
-        if test_file == 'all':
+        if test_paths == ['all']:
             self.run_suite(interactive=interactive,
                            keep_going=keep_going, shuffle=shuffle, sequential=sequential,
                            debugger=debugger, debuggerArgs=debuggerArgs,
@@ -75,7 +86,7 @@ class XPCShellRunner(MozbuildObject):
             return
 
         resolver = self._spawn(TestResolver)
-        tests = list(resolver.resolve_tests(path=test_file, flavor='xpcshell',
+        tests = list(resolver.resolve_tests(paths=test_paths, flavor='xpcshell',
             cwd=self.cwd))
 
         if not tests:
@@ -101,7 +112,7 @@ class XPCShellRunner(MozbuildObject):
 
         return self._run_xpcshell_harness(**args)
 
-    def _run_xpcshell_harness(self, test_dirs=None, manifest=None,
+    def _run_xpcshell_harness(self, manifest,
                               test_path=None, shuffle=False, interactive=False,
                               keep_going=False, sequential=False,
                               debugger=None, debuggerArgs=None, debuggerInteractive=None,
@@ -119,8 +130,12 @@ class XPCShellRunner(MozbuildObject):
 
         tests_dir = os.path.join(self.topobjdir, '_tests', 'xpcshell')
         modules_dir = os.path.join(self.topobjdir, '_tests', 'modules')
+        # We want output from the test to be written immediately if we are only
+        # running a single test.
+        verbose_output = test_path is not None or (manifest and len(manifest.test_paths())==1)
 
         args = {
+            'manifest': manifest,
             'xpcshell': os.path.join(self.bindir, 'xpcshell'),
             'mozInfo': os.path.join(self.topobjdir, 'mozinfo.json'),
             'symbolsPath': os.path.join(self.distdir, 'crashreporter-symbols'),
@@ -140,18 +155,8 @@ class XPCShellRunner(MozbuildObject):
             'debuggerArgs': debuggerArgs,
             'debuggerInteractive': debuggerInteractive,
             'on_message': (lambda obj, msg: xpcshell.log.info(msg.decode('utf-8', 'replace'))) \
-                            if test_path is not None else None,
+                            if verbose_output else None,
         }
-
-        if manifest is not None:
-            args['manifest'] = manifest
-        elif test_dirs is not None:
-            if isinstance(test_dirs, list):
-                args['testdirs'] = test_dirs
-            else:
-                args['testdirs'] = [test_dirs]
-        else:
-            raise Exception('One of test_dirs or manifest must be provided.')
 
         if test_path is not None:
             args['testPath'] = test_path
@@ -213,7 +218,7 @@ class AndroidXPCShellRunner(MozbuildObject):
 
     """Run Android xpcshell tests."""
     def run_test(self,
-                 test_file, keep_going,
+                 test_paths, keep_going,
                  devicemanager, ip, port, remote_test_root, no_setup, local_apk,
                  # ignore parameters from other platforms' options
                  **kwargs):
@@ -253,13 +258,15 @@ class AndroidXPCShellRunner(MozbuildObject):
             else:
                 raise Exception("You must specify an APK")
 
-        if test_file == 'all':
+        if test_paths == ['all']:
             testdirs = []
             options.testPath = None
             options.verbose = False
         else:
-            testdirs = test_file
-            options.testPath = test_file
+            if len(test_paths) > 1:
+                print('Warning: only the first test path argument will be used.')
+            testdirs = test_paths[0]
+            options.testPath = test_paths[0]
             options.verbose = True
         dummy_log = StringIO()
         xpcshell = remotexpcshelltests.XPCShellRemote(dm, options, args=testdirs, log=dummy_log)
@@ -279,11 +286,104 @@ class AndroidXPCShellRunner(MozbuildObject):
 
         return int(not result)
 
+class B2GXPCShellRunner(MozbuildObject):
+    def __init__(self, *args, **kwargs):
+        MozbuildObject.__init__(self, *args, **kwargs)
+
+        # TODO Bug 794506 remove once mach integrates with virtualenv.
+        build_path = os.path.join(self.topobjdir, 'build')
+        if build_path not in sys.path:
+            sys.path.append(build_path)
+
+        build_path = os.path.join(self.topsrcdir, 'build')
+        if build_path not in sys.path:
+            sys.path.append(build_path)
+
+        self.tests_dir = os.path.join(self.topobjdir, '_tests')
+        self.xpcshell_dir = os.path.join(self.tests_dir, 'xpcshell')
+        self.bin_dir = os.path.join(self.distdir, 'bin')
+
+    def _download_busybox(self, b2g_home):
+        system_bin = os.path.join(b2g_home, 'out', 'target', 'product', 'generic', 'system', 'bin')
+        busybox_path = os.path.join(system_bin, 'busybox')
+
+        if os.path.isfile(busybox_path):
+            return busybox_path
+
+        if not os.path.isdir(system_bin):
+            os.makedirs(system_bin)
+
+        try:
+            data = urllib2.urlopen(BUSYBOX_URL)
+        except urllib2.URLError:
+            print('There was a problem downloading busybox. Proceeding without it,' \
+                  'initial setup will be slow.')
+            return
+
+        with open(busybox_path, 'wb') as f:
+            f.write(data.read())
+        return busybox_path
+
+    def run_test(self, test_paths, b2g_home=None, busybox=None,
+                 # ignore parameters from other platforms' options
+                 **kwargs):
+        try:
+            import which
+            which.which('adb')
+        except which.WhichError:
+            # TODO Find adb automatically if it isn't on the path
+            print(ADB_NOT_FOUND % ('mochitest-remote', b2g_home))
+            sys.exit(1)
+
+        test_path = None
+        if test_paths:
+            if len(test_paths) > 1:
+                print('Warning: Only the first test path will be used.')
+
+            test_path = self._wrap_path_argument(test_paths[0]).relpath()
+
+        import runtestsb2g
+        parser = runtestsb2g.B2GOptions()
+        options, args = parser.parse_args([])
+
+        options.b2g_path = b2g_home
+        options.busybox = busybox or os.environ.get('BUSYBOX')
+        options.emulator = 'arm'
+        options.localLib = self.bin_dir
+        options.localBin = self.bin_dir
+        options.logcat_dir = self.xpcshell_dir
+        options.manifest = os.path.join(self.xpcshell_dir, 'xpcshell_b2g.ini')
+        options.mozInfo = os.path.join(self.topobjdir, 'mozinfo.json')
+        options.objdir = self.topobjdir
+        options.symbolsPath = os.path.join(self.distdir, 'crashreporter-symbols'),
+        options.testingModulesDir = os.path.join(self.tests_dir, 'modules')
+        options.testsRootDir = self.xpcshell_dir
+        options.testPath = test_path
+        options.use_device_libs = True
+
+        if not options.busybox:
+            options.busybox = self._download_busybox(b2g_home)
+
+        return runtestsb2g.run_remote_xpcshell(parser, options, args)
+
+def is_platform_supported(cls):
+    """Must have a Firefox, Android or B2G build."""
+    return conditions.is_android(cls) or \
+           conditions.is_b2g(cls) or \
+           conditions.is_firefox(cls)
+
 @CommandProvider
 class MachCommands(MachCommandBase):
+    def __init__(self, context):
+        MachCommandBase.__init__(self, context)
+
+        for attr in ('b2g_home', 'device_name'):
+            setattr(self, attr, getattr(context, attr, None))
+
     @Command('xpcshell-test', category='testing',
+        conditions=[is_platform_supported],
         description='Run XPCOM Shell tests.')
-    @CommandArgument('test_file', default='all', nargs='?', metavar='TEST',
+    @CommandArgument('test_paths', default='all', nargs='*', metavar='TEST',
         help='Test to run. Can be specified as a single JS file, a directory, '
              'or omitted. If omitted, the entire test suite is executed.')
     @CommandArgument("--debugger", default=None, metavar='DEBUGGER',
@@ -318,6 +418,8 @@ class MachCommands(MachCommandBase):
         help='(Android) Do not copy files to device')
     @CommandArgument('--local-apk', type=str, default=None,
         help='(Android) Use specified Fennec APK')
+    @CommandArgument('--busybox', type=str, default=None,
+        help='(B2G) Path to busybox binary (speeds up installation of tests).')
     def run_xpcshell_test(self, **params):
         from mozbuild.controller.building import BuildDriver
 
@@ -331,6 +433,9 @@ class MachCommands(MachCommandBase):
 
         if conditions.is_android(self):
             xpcshell = self._spawn(AndroidXPCShellRunner)
+        elif conditions.is_b2g(self):
+            xpcshell = self._spawn(B2GXPCShellRunner)
+            params['b2g_home'] = self.b2g_home
         else:
             xpcshell = self._spawn(XPCShellRunner)
         xpcshell.cwd = self._mach_context.cwd

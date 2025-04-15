@@ -24,7 +24,7 @@ class HTMLAudioElement MOZ_FINAL : public HTMLMediaElement,
                                    public nsIDOMHTMLAudioElement
 {
 public:
-  HTMLAudioElement(already_AddRefed<nsINodeInfo> aNodeInfo);
+  HTMLAudioElement(already_AddRefed<nsINodeInfo>& aNodeInfo);
   virtual ~HTMLAudioElement();
 
   // nsISupports
@@ -55,6 +55,7 @@ public:
 
   uint32_t MozWriteAudio(const Float32Array& aData, ErrorResult& aRv)
   {
+    aData.ComputeLengthAndData();
     return MozWriteAudio(aData.Data(), aData.Length(), aRv);
   }
   uint32_t MozWriteAudio(const Sequence<float>& aData, ErrorResult& aRv)

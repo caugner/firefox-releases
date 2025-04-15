@@ -5,17 +5,21 @@
 
 package org.mozilla.gecko.home;
 
-import org.mozilla.gecko.R;
+import static org.mozilla.gecko.home.HomeConfig.createBuiltinPanelConfig;
+
+import java.util.ArrayList;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Locale;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.mozilla.gecko.home.HomeConfig.HomeConfigBackend;
 import org.mozilla.gecko.home.HomeConfig.OnChangeListener;
 import org.mozilla.gecko.home.HomeConfig.PanelConfig;
 import org.mozilla.gecko.home.HomeConfig.PanelType;
 import org.mozilla.gecko.util.HardwareUtils;
-import org.mozilla.gecko.util.ThreadUtils;
-
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import android.content.Context;
 import android.content.SharedPreferences;
@@ -24,21 +28,11 @@ import android.preference.PreferenceManager;
 import android.text.TextUtils;
 import android.util.Log;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.EnumSet;
-import java.util.List;
-
 class HomeConfigPrefsBackend implements HomeConfigBackend {
     private static final String LOGTAG = "GeckoHomeConfigBackend";
 
-    private static final String PREFS_KEY = "home_panels";
-
-    // UUIDs used to create PanelConfigs for default built-in panels 
-    private static final String TOP_SITES_PANEL_ID = "4becc86b-41eb-429a-a042-88fe8b5a094e";
-    private static final String BOOKMARKS_PANEL_ID = "7f6d419a-cd6c-4e34-b26f-f68b1b551907";
-    private static final String READING_LIST_PANEL_ID = "20f4549a-64ad-4c32-93e4-1dcef792733b";
-    private static final String HISTORY_PANEL_ID = "f134bf20-11f7-4867-ab8b-e8e705d7fbe8";
+    private static final String PREFS_CONFIG_KEY = "home_panels";
+    private static final String PREFS_LOCALE_KEY = "home_locale";
 
     private final Context mContext;
     private PrefsListener mPrefsListener;
@@ -55,26 +49,18 @@ class HomeConfigPrefsBackend implements HomeConfigBackend {
     private List<PanelConfig> loadDefaultConfig() {
         final ArrayList<PanelConfig> panelConfigs = new ArrayList<PanelConfig>();
 
-        panelConfigs.add(new PanelConfig(PanelType.TOP_SITES,
-                                         mContext.getString(R.string.home_top_sites_title),
-                                         TOP_SITES_PANEL_ID,
-                                         EnumSet.of(PanelConfig.Flags.DEFAULT_PANEL)));
+        panelConfigs.add(createBuiltinPanelConfig(mContext, PanelType.TOP_SITES,
+                                                  EnumSet.of(PanelConfig.Flags.DEFAULT_PANEL)));
 
-        panelConfigs.add(new PanelConfig(PanelType.BOOKMARKS,
-                                         mContext.getString(R.string.bookmarks_title),
-                                         BOOKMARKS_PANEL_ID));
+        panelConfigs.add(createBuiltinPanelConfig(mContext, PanelType.BOOKMARKS));
 
         // We disable reader mode support on low memory devices. Hence the
         // reading list panel should not show up on such devices.
         if (!HardwareUtils.isLowMemoryPlatform()) {
-            panelConfigs.add(new PanelConfig(PanelType.READING_LIST,
-                                             mContext.getString(R.string.reading_list_title),
-                                             READING_LIST_PANEL_ID));
+            panelConfigs.add(createBuiltinPanelConfig(mContext, PanelType.READING_LIST));
         }
 
-        final PanelConfig historyEntry = new PanelConfig(PanelType.HISTORY,
-                                                         mContext.getString(R.string.home_history_title),
-                                                         HISTORY_PANEL_ID);
+        final PanelConfig historyEntry = createBuiltinPanelConfig(mContext, PanelType.HISTORY);
 
         // On tablets, the history panel is the last.
         // On phones, the history panel is the first one.
@@ -117,7 +103,7 @@ class HomeConfigPrefsBackend implements HomeConfigBackend {
     @Override
     public List<PanelConfig> load() {
         final SharedPreferences prefs = getSharedPreferences();
-        final String jsonString = prefs.getString(PREFS_KEY, null);
+        final String jsonString = prefs.getString(PREFS_CONFIG_KEY, null);
 
         final List<PanelConfig> panelConfigs;
         if (TextUtils.isEmpty(jsonString)) {
@@ -126,7 +112,7 @@ class HomeConfigPrefsBackend implements HomeConfigBackend {
             panelConfigs = loadConfigFromString(jsonString);
         }
 
-        return Collections.unmodifiableList(panelConfigs);
+        return panelConfigs;
     }
 
     @Override
@@ -148,8 +134,34 @@ class HomeConfigPrefsBackend implements HomeConfigBackend {
         final SharedPreferences.Editor editor = prefs.edit();
 
         final String jsonString = jsonPanelConfigs.toString();
-        editor.putString(PREFS_KEY, jsonString);
+        editor.putString(PREFS_CONFIG_KEY, jsonString);
+        editor.putString(PREFS_LOCALE_KEY, Locale.getDefault().toString());
         editor.commit();
+    }
+
+    @Override
+    public String getLocale() {
+        final SharedPreferences prefs = getSharedPreferences();
+
+        String locale = prefs.getString(PREFS_LOCALE_KEY, null);
+        if (locale == null) {
+            // Initialize config with the current locale
+            final String currentLocale = Locale.getDefault().toString();
+
+            final SharedPreferences.Editor editor = prefs.edit();
+            editor.putString(PREFS_LOCALE_KEY, currentLocale);
+            editor.commit();
+
+            // If the user has saved HomeConfig before, return null this
+            // one time to trigger a refresh and ensure we use the
+            // correct locale for the saved state. For more context,
+            // see HomePanelsManager.onLocaleReady().
+            if (!prefs.contains(PREFS_CONFIG_KEY)) {
+                locale = currentLocale;
+            }
+        }
+
+        return locale;
     }
 
     @Override
@@ -172,7 +184,7 @@ class HomeConfigPrefsBackend implements HomeConfigBackend {
     private class PrefsListener implements OnSharedPreferenceChangeListener {
         @Override
         public void onSharedPreferenceChanged(SharedPreferences sharedPreferences, String key) {
-            if (TextUtils.equals(key, PREFS_KEY)) {
+            if (TextUtils.equals(key, PREFS_CONFIG_KEY)) {
                 mChangeListener.onChange();
             }
         }

@@ -5,17 +5,13 @@
 
 package org.mozilla.gecko.prompts;
 
-import org.mozilla.gecko.util.GeckoEventResponder;
-import org.mozilla.gecko.GeckoEvent;
-import org.mozilla.gecko.util.ThreadUtils;
-import org.mozilla.gecko.widget.DateTimePicker;
-import org.mozilla.gecko.prompts.ColorPickerInput;
-import org.mozilla.gecko.R;
-import org.mozilla.gecko.GeckoAppShell;
-
 import org.json.JSONArray;
-import org.json.JSONObject;
 import org.json.JSONException;
+import org.json.JSONObject;
+import org.mozilla.gecko.GeckoAppShell;
+import org.mozilla.gecko.GeckoEvent;
+import org.mozilla.gecko.R;
+import org.mozilla.gecko.util.ThreadUtils;
 
 import android.app.AlertDialog;
 import android.content.Context;
@@ -26,70 +22,42 @@ import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
-import android.text.Html;
-import android.text.InputType;
 import android.text.TextUtils;
-import android.text.format.DateFormat;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.ViewGroup.LayoutParams;
-import android.view.inputmethod.InputMethodManager;
-import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
 import android.widget.ArrayAdapter;
-import android.widget.CheckBox;
 import android.widget.CheckedTextView;
-import android.widget.DatePicker;
-import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ListView;
 import android.widget.ScrollView;
-import android.widget.Spinner;
 import android.widget.TextView;
-import android.widget.TimePicker;
 
-import java.text.SimpleDateFormat;
-import java.util.Calendar;
-import java.util.GregorianCalendar;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.TimeUnit;
+import java.util.ArrayList;
 
-public class Prompt implements OnClickListener, OnCancelListener, OnItemClickListener {
+public class Prompt implements OnClickListener, OnCancelListener, OnItemClickListener,
+                               PromptInput.OnChangeListener {
     private static final String LOGTAG = "GeckoPromptService";
 
     private String[] mButtons;
     private PromptInput[] mInputs;
-    private boolean[] mSelected;
     private AlertDialog mDialog;
 
     private final LayoutInflater mInflater;
-    private ConcurrentLinkedQueue<String> mPromptQueue;
     private final Context mContext;
     private PromptCallback mCallback;
     private String mGuid;
+    private PromptListAdapter mAdapter;
 
     private static boolean mInitialized = false;
-    private static int mGroupPaddingSize;
-    private static int mLeftRightTextWithIconPadding;
-    private static int mTopBottomTextWithIconPadding;
-    private static int mIconTextPadding;
-    private static int mIconSize;
     private static int mInputPaddingSize;
-    private static int mMinRowSize;
-
-    public Prompt(Context context, ConcurrentLinkedQueue<String> queue) {
-        this(context);
-        mCallback = null;
-        mPromptQueue = queue;
-    }
 
     public Prompt(Context context, PromptCallback callback) {
         this(context);
         mCallback = callback;
-        mPromptQueue = null;
     }
 
     private Prompt(Context context) {
@@ -98,13 +66,7 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
 
         if (!mInitialized) {
             Resources res = mContext.getResources();
-            mGroupPaddingSize = (int) (res.getDimension(R.dimen.prompt_service_group_padding_size));
-            mLeftRightTextWithIconPadding = (int) (res.getDimension(R.dimen.prompt_service_left_right_text_with_icon_padding));
-            mTopBottomTextWithIconPadding = (int) (res.getDimension(R.dimen.prompt_service_top_bottom_text_with_icon_padding));
-            mIconTextPadding = (int) (res.getDimension(R.dimen.prompt_service_icon_text_padding));
-            mIconSize = (int) (res.getDimension(R.dimen.prompt_service_icon_size));
             mInputPaddingSize = (int) (res.getDimension(R.dimen.prompt_service_inputs_padding));
-            mMinRowSize = (int) (res.getDimension(R.dimen.prompt_service_min_list_item_height));
             mInitialized = true;
         }
     }
@@ -113,7 +75,7 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
         // Don't add padding to color picker views
         if (input.canApplyInputStyle()) {
             view.setPadding(mInputPaddingSize, 0, mInputPaddingSize, 0);
-        }
+	}
         return view;
     }
 
@@ -121,7 +83,8 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
         processMessage(message);
     }
 
-    public void show(String title, String text, PromptListItem[] listItems, boolean multipleSelection) {
+
+    public void show(String title, String text, PromptListItem[] listItems, int choiceMode) {
         ThreadUtils.assertOnUiThread();
 
         GeckoAppShell.getLayerView().abortPanning();
@@ -138,7 +101,7 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
         // Because lists are currently added through the normal Android AlertBuilder interface, they're
         // incompatible with also adding additional input elements to a dialog.
         if (listItems != null && listItems.length > 0) {
-            addlistItems(builder, listItems, multipleSelection);
+            addListItems(builder, listItems, choiceMode);
         } else if (!addInputs(builder)) {
             // If we failed to add any requested input elements, don't show the dialog
             return;
@@ -170,20 +133,34 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
 
     /* Adds to a result value from the lists that can be shown in dialogs.
      *  Will set the selected value(s) to the button attribute of the
-     *  object that's passed in. If this is a multi-select dialog, can set
-     *  the button attribute to an array.
+     *  object that's passed in. If this is a multi-select dialog, sets a
+     *  selected attribute to an array of booleans.
      */
     private void addListResult(final JSONObject result, int which) {
+        if (mAdapter == null) {
+            return;
+        }
+
         try {
-            if (mSelected != null) {
-                JSONArray selected = new JSONArray();
-                for (int i = 0; i < mSelected.length; i++) {
-                    selected.put(mSelected[i]);
+            JSONArray selected = new JSONArray();
+
+            // If the button has already been filled in
+            ArrayList<Integer> selectedItems = mAdapter.getSelected();
+            for (Integer item : selectedItems) {
+                selected.put(item);
+            }
+
+            // If we haven't assigned a button yet, or we assigned it to -1, assign the which
+            // parameter to both selected and the button.
+            if (!result.has("button") || result.optInt("button") == -1) {
+                if (!selectedItems.contains(which)) {
+                    selected.put(which);
                 }
-                result.put("button", selected);
-            } else {
+
                 result.put("button", which);
             }
+
+            result.put("list", selected);
         } catch(JSONException ex) { }
     }
 
@@ -219,47 +196,31 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
     @Override
     public void onClick(DialogInterface dialog, int which) {
         ThreadUtils.assertOnUiThread();
-        JSONObject ret = new JSONObject();
-        try {
-            ListView list = mDialog.getListView();
-            if (list != null || mSelected != null) {
-                addListResult(ret, which);
-            } else {
-                addButtonResult(ret, which);
-            }
-            addInputValues(ret);
-        } catch(Exception ex) {
-            Log.i(LOGTAG, "Error building return: " + ex);
-        }
-
-        if (dialog != null) {
-            dialog.dismiss();
-        }
-
-        finishDialog(ret);
+        closeDialog(which);
     }
 
     /* Adds a set of list items to the prompt. This can be used for either context menu type dialogs, checked lists,
-     * or multiple selection lists. If mSelected is set in the prompt before addlistItems is called, the items will be
-     * shown with "checkmarks" on their left side.
+     * or multiple selection lists.
      *
      * @param builder
      *        The alert builder currently building this dialog.
      * @param listItems
      *        The items to add.
-     * @param multipleSelection
-     *        If true, and mSelected is defined to be a non-zero-length list, the list will show checkmarks on the
-     *        left and allow multiple selection. 
+     * @param choiceMode
+     *        One of the ListView.CHOICE_MODE constants to designate whether this list shows checkmarks, radios buttons, or nothing. 
     */
-    private void addlistItems(AlertDialog.Builder builder, PromptListItem[] listItems, boolean multipleSelection) {
-        if (mSelected != null && mSelected.length > 0) {
-            if (multipleSelection) {
+    private void addListItems(AlertDialog.Builder builder, PromptListItem[] listItems, int choiceMode) {
+        switch(choiceMode) {
+            case ListView.CHOICE_MODE_MULTIPLE_MODAL:
+            case ListView.CHOICE_MODE_MULTIPLE:
                 addMultiSelectList(builder, listItems);
-            } else {
+                break;
+            case ListView.CHOICE_MODE_SINGLE:
                 addSingleSelectList(builder, listItems);
-            }
-        } else {
-            addMenuList(builder, listItems);
+                break;
+            case ListView.CHOICE_MODE_NONE:
+            default:
+                addMenuList(builder, listItems);
         }
     }
 
@@ -273,13 +234,13 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
      *        The items to add.
      */
     private void addMultiSelectList(AlertDialog.Builder builder, PromptListItem[] listItems) {
-        PromptListAdapter adapter = new PromptListAdapter(mContext, R.layout.select_dialog_multichoice, listItems);
-        adapter.listView = (ListView) mInflater.inflate(R.layout.select_dialog_list, null);
-        adapter.listView.setOnItemClickListener(this);
-        builder.setInverseBackgroundForced(true);
-        adapter.listView.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE);
-        adapter.listView.setAdapter(adapter);
-        builder.setView(adapter.listView);
+        ListView listView = (ListView) mInflater.inflate(R.layout.select_dialog_list, null);
+        listView.setOnItemClickListener(this);
+        listView.setChoiceMode(ListView.CHOICE_MODE_MULTIPLE);
+
+        mAdapter = new PromptListAdapter(mContext, R.layout.select_dialog_multichoice, listItems);
+        listView.setAdapter(mAdapter);
+        builder.setView(listView);
     }
 
     /* Shows a single-select list with radio boxes on the side.
@@ -290,18 +251,22 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
      *        The items to add.
      */
     private void addSingleSelectList(AlertDialog.Builder builder, PromptListItem[] listItems) {
-        PromptListAdapter adapter = new PromptListAdapter(mContext, R.layout.select_dialog_singlechoice, listItems);
-        // For single select, we only maintain a single index of the selected row
-        int selectedIndex = -1;
-        for (int i = 0; i < mSelected.length; i++) {
-            if (mSelected[i]) {
-                selectedIndex = i;
-                break;
-            }
-        }
-        mSelected = null;
+        mAdapter = new PromptListAdapter(mContext, R.layout.select_dialog_singlechoice, listItems);
+        builder.setSingleChoiceItems(mAdapter, mAdapter.getSelectedIndex(), new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                // The adapter isn't aware of single vs. multi choice lists, so manually
+                // clear any other selected items first.
+                ArrayList<Integer> selected = mAdapter.getSelected();
+                for (Integer sel : selected) {
+                    mAdapter.toggleSelected(sel);
+                }
 
-        builder.setSingleChoiceItems(adapter, selectedIndex, this);
+                // Now select this item.
+                mAdapter.toggleSelected(which);
+                closeIfNoButtons(which);
+            }
+        });
     }
 
     /* Shows a single-select list.
@@ -312,11 +277,9 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
      *        The items to add.
      */
     private void addMenuList(AlertDialog.Builder builder, PromptListItem[] listItems) {
-        PromptListAdapter adapter = new PromptListAdapter(mContext, android.R.layout.simple_list_item_1, listItems);
-        builder.setAdapter(adapter, this);
-        mSelected = null;
+        mAdapter = new PromptListAdapter(mContext, android.R.layout.simple_list_item_1, listItems);
+        builder.setAdapter(mAdapter, this);
     }
-
 
     /* Wraps an input in a linearlayout. We do this so that we can set padding that appears outside the background
      * drawable for the view.
@@ -355,17 +318,17 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
             } else if (length > 1) {
                 LinearLayout linearLayout = new LinearLayout(mContext);
                 linearLayout.setOrientation(LinearLayout.VERTICAL);
-
                 for (int i = 0; i < length; i++) {
                     View content = wrapInput(mInputs[i]);
                     linearLayout.addView(content);
                     scrollable |= mInputs[i].getScrollable();
                 }
-
                 root = linearLayout;
             }
 
             if (scrollable) {
+                // If we're showing some sort of scrollable list, force an inverse background.
+                builder.setInverseBackgroundForced(true);
                 builder.setView(root);
             } else {
                 ScrollView view = new ScrollView(mContext);
@@ -389,7 +352,21 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
     @Override
     public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
         ThreadUtils.assertOnUiThread();
-        mSelected[position] = !mSelected[position];
+        mAdapter.toggleSelected(position);
+
+        // If there are no buttons on this dialog, then we take selecting an item as a sign to close
+        // the dialog. Note that means it will be hard to select multiple things in this list, but
+        // given there is no way to confirm+close the dialog, it seems reasonable.
+        closeIfNoButtons(position);
+    }
+
+    private boolean closeIfNoButtons(int selected) {
+        ThreadUtils.assertOnUiThread();
+        if (mButtons == null || mButtons.length == 0) {
+            closeDialog(selected);
+            return true;
+        }
+        return false;
     }
 
     /* @DialogInterface.OnCancelListener
@@ -414,24 +391,30 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
             ret.put("button", -1);
         } catch(Exception ex) { }
         addInputValues(ret);
-        finishDialog(ret);
+        notifyClosing(ret);
     }
 
     /* Called any time we're closing the dialog to cleanup and notify listeners that the dialog
      * is closing.
      */
-    public void finishDialog(JSONObject aReturn) {
-        mInputs = null;
-        mButtons = null;
-        mDialog = null;
-        mSelected = null;
+    private void closeDialog(int which) {
+        JSONObject ret = new JSONObject();
+        mDialog.dismiss();
+
+        addButtonResult(ret, which);
+        addListResult(ret, which);
+        addInputValues(ret);
+
+        notifyClosing(ret);
+    }
+
+    /* Called any time we're closing the dialog to cleanup and notify listeners that the dialog
+     * is closing.
+     */
+    private void notifyClosing(JSONObject aReturn) {
         try {
             aReturn.put("guid", mGuid);
         } catch(JSONException ex) { }
-
-        if (mPromptQueue != null) {
-            mPromptQueue.offer(aReturn.toString());
-        }
 
         // poke the Gecko thread in case it's waiting for new events
         GeckoAppShell.sendEventToGecko(GeckoEvent.createNoOpEvent());
@@ -439,7 +422,6 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
         if (mCallback != null) {
             mCallback.onPromptFinished(aReturn.toString());
         }
-        mGuid = null;
     }
 
     /* Handles parsing the initial JSON sent to show dialogs
@@ -456,13 +438,30 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
         for (int i = 0; i < mInputs.length; i++) {
             try {
                 mInputs[i] = PromptInput.getInput(inputs.getJSONObject(i));
+                mInputs[i].setListener(this);
             } catch(Exception ex) { }
         }
 
-        PromptListItem[] menuitems = getListItemArray(geckoObject, "listitems");
-        mSelected = getBooleanArray(geckoObject, "selected");
-        boolean multiple = geckoObject.optBoolean("multiple");
-        show(title, text, menuitems, multiple);
+        PromptListItem[] menuitems = PromptListItem.getArray(geckoObject.optJSONArray("listitems"));
+        String selected = geckoObject.optString("choiceMode");
+
+        int choiceMode = ListView.CHOICE_MODE_NONE;
+        if ("single".equals(selected)) {
+            choiceMode = ListView.CHOICE_MODE_SINGLE;
+        } else if ("multiple".equals(selected)) {
+            choiceMode = ListView.CHOICE_MODE_MULTIPLE;
+        }
+
+        show(title, text, menuitems, choiceMode);
+    }
+
+    // Called when the prompt inputs on the dialog change
+    @Override
+    public void onChange(PromptInput input) {
+        // If there are no buttons on this dialog, assuming that "changing" an input
+        // means something was selected and we can close. This provides a way to tap
+        // on a list item and close the dialog automatically.
+        closeIfNoButtons(-1);
     }
 
     private static JSONArray getSafeArray(JSONObject json, String key) {
@@ -500,189 +499,7 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
         return list;
     }
 
-    private PromptListItem[] getListItemArray(JSONObject aObject, String aName) {
-        JSONArray items = getSafeArray(aObject, aName);
-        int length = items.length();
-        PromptListItem[] list = new PromptListItem[length];
-        for (int i = 0; i < length; i++) {
-            try {
-                list[i] = new PromptListItem(items.getJSONObject(i));
-            } catch(Exception ex) { }
-        }
-        return list;
-    }
-
-    public static class PromptListItem {
-        public final String label;
-        public final boolean isGroup;
-        public final boolean inGroup;
-        public final boolean disabled;
-        public final int id;
-        public final boolean isParent;
-
-        // This member can't be accessible from JS, see bug 733749.
-        public Drawable icon;
-
-        PromptListItem(JSONObject aObject) {
-            label = aObject.optString("label");
-            isGroup = aObject.optBoolean("isGroup");
-            inGroup = aObject.optBoolean("inGroup");
-            disabled = aObject.optBoolean("disabled");
-            id = aObject.optInt("id");
-            isParent = aObject.optBoolean("isParent");
-        }
-
-        public PromptListItem(String aLabel) {
-            label = aLabel;
-            isGroup = false;
-            inGroup = false;
-            disabled = false;
-            id = 0;
-            isParent = false;
-        }
-    }
-
     public interface PromptCallback {
         public void onPromptFinished(String jsonResult);
-    }
-
-    public class PromptListAdapter extends ArrayAdapter<PromptListItem> {
-        private static final int VIEW_TYPE_ITEM = 0;
-        private static final int VIEW_TYPE_GROUP = 1;
-        private static final int VIEW_TYPE_COUNT = 2;
-
-        public ListView listView;
-        private int mResourceId = -1;
-        private Drawable mBlankDrawable = null;
-        private Drawable mMoreDrawable = null;
-
-        PromptListAdapter(Context context, int textViewResourceId, PromptListItem[] objects) {
-            super(context, textViewResourceId, objects);
-            mResourceId = textViewResourceId;
-        }
-
-        @Override
-        public int getItemViewType(int position) {
-            PromptListItem item = getItem(position);
-            return (item.isGroup ? VIEW_TYPE_GROUP : VIEW_TYPE_ITEM);
-        }
-
-        @Override
-        public int getViewTypeCount() {
-            return VIEW_TYPE_COUNT;
-        }
-
-        private Drawable getMoreDrawable(Resources res) {
-            if (mMoreDrawable == null) {
-                mMoreDrawable = res.getDrawable(android.R.drawable.ic_menu_more);
-            }
-            return mMoreDrawable;
-        }
-
-        private Drawable getBlankDrawable(Resources res) {
-            if (mBlankDrawable == null) {
-                mBlankDrawable = res.getDrawable(R.drawable.blank);
-            }
-            return mBlankDrawable;
-        }
-
-        private void maybeUpdateIcon(PromptListItem item, TextView t) {
-            if (item.icon == null && !item.inGroup && !item.isParent) {
-                t.setCompoundDrawablesWithIntrinsicBounds(null, null, null, null);
-                return;
-            }
-
-            Drawable d = null;
-            Resources res = mContext.getResources();
-            // Set the padding between the icon and the text.
-            t.setCompoundDrawablePadding(mIconTextPadding);
-            if (item.icon != null) {
-                // We want the icon to be of a specific size. Some do not
-                // follow this rule so we have to resize them.
-                Bitmap bitmap = ((BitmapDrawable) item.icon).getBitmap();
-                d = new BitmapDrawable(res, Bitmap.createScaledBitmap(bitmap, mIconSize, mIconSize, true));
-            } else if (item.inGroup) {
-                // We don't currently support "indenting" items with icons
-                d = getBlankDrawable(res);
-            }
-
-            Drawable moreDrawable = null;
-            if (item.isParent) {
-                moreDrawable = getMoreDrawable(res);
-            }
-
-            if (d != null || moreDrawable != null) {
-                t.setCompoundDrawablesWithIntrinsicBounds(d, null, moreDrawable, null);
-            }
-        }
-
-        private void maybeUpdateCheckedState(int position, PromptListItem item, ViewHolder viewHolder) {
-            viewHolder.textView.setEnabled(!item.disabled && !item.isGroup);
-            viewHolder.textView.setClickable(item.isGroup || item.disabled);
-
-            if (mSelected == null) {
-                return;
-            }
-
-            CheckedTextView ct;
-            try {
-                ct = (CheckedTextView) viewHolder.textView;
-                // Apparently just using ct.setChecked(true) doesn't work, so this
-                // is stolen from the android source code as a way to set the checked
-                // state of these items
-                if (listView != null) {
-                    listView.setItemChecked(position, mSelected[position]);
-                }
-            } catch (Exception e) {
-                return;
-            }
-
-        }
-
-        @Override
-        public View getView(int position, View convertView, ViewGroup parent) {
-            PromptListItem item = getItem(position);
-            ViewHolder viewHolder = null;
-
-            if (convertView == null) {
-                int resourceId = mResourceId;
-                if (item.isGroup) {
-                    resourceId = R.layout.list_item_header;
-                }
-
-                convertView = mInflater.inflate(resourceId, null);
-                convertView.setMinimumHeight(mMinRowSize);
-
-                TextView tv = (TextView) convertView.findViewById(android.R.id.text1);
-                viewHolder = new ViewHolder(tv, tv.getPaddingLeft(), tv.getPaddingRight(),
-                                            tv.getPaddingTop(), tv.getPaddingBottom());
-
-                convertView.setTag(viewHolder);
-            } else {
-                viewHolder = (ViewHolder) convertView.getTag();
-            }
-
-            viewHolder.textView.setText(item.label);
-            maybeUpdateCheckedState(position, item, viewHolder);
-            maybeUpdateIcon(item, viewHolder.textView);
-
-            return convertView;
-        }
-
-        private class ViewHolder {
-            public final TextView textView;
-            public final int paddingLeft;
-            public final int paddingRight;
-            public final int paddingTop;
-            public final int paddingBottom;
-
-            ViewHolder(TextView aTextView, int aLeft, int aRight, int aTop, int aBottom) {
-                textView = aTextView;
-                paddingLeft = aLeft;
-                paddingRight = aRight;
-                paddingTop = aTop;
-                paddingBottom = aBottom;
-            }
-        }
     }
 }

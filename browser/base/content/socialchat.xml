@@ -34,7 +34,9 @@
         this.content.__defineGetter__("popupnotificationanchor",
                                       () => document.getAnonymousElementByAttribute(this, "anonid", "notification-icon"));
         Social.setErrorListener(this.content, function(aBrowser) {
-          aBrowser.webNavigation.loadURI("about:socialerror?mode=compactInfo", null, null, null, null);
+          aBrowser.webNavigation.loadURI("about:socialerror?mode=compactInfo&origin=" +
+                                 encodeURIComponent(aBrowser.getAttribute("origin")),
+                                 null, null, null, null);
         });
         if (!this.chatbar) {
           document.getAnonymousElementByAttribute(this, "anonid", "minimize").hidden = true;
@@ -151,7 +153,9 @@
           this.content.swapDocShells(aTarget.content);
           Social.setErrorListener(this.content, function(aBrowser) {}); // 'this' will be destroyed soon.
           Social.setErrorListener(aTarget.content, function(aBrowser) {
-            aBrowser.webNavigation.loadURI("about:socialerror?mode=compactInfo", null, null, null, null);
+            aBrowser.webNavigation.loadURI("about:socialerror?mode=compactInfo&origin=" +
+                                 encodeURIComponent(aBrowser.getAttribute("origin")),
+                                 null, null, null, null);
           });
         ]]></body>
       </method>
@@ -237,7 +241,8 @@
         if (link.rel.indexOf("icon") < 0)
           return;
 
-        let uri = DOMLinkHandler.getLinkIconURI(link);
+        let ContentLinkHandler = Cu.import("resource:///modules/ContentLinkHandler.jsm", {}).ContentLinkHandler;
+        let uri = ContentLinkHandler.getLinkIconURI(link);
         if (!uri)
           return;
 
@@ -630,7 +635,7 @@
       <method name="handleEvent">
         <parameter name="aEvent"/>
         <body><![CDATA[
-          if (aEvent.type == "resize" && aEvent.eventPhase == aEvent.BUBBLING_PHASE) {
+          if (aEvent.type == "resize") {
             this.resize();
           }
         ]]></body>
@@ -677,10 +682,10 @@
         this.nub.removeAttribute("activity");
       ]]></handler>
       <handler event="load"><![CDATA[
-        window.addEventListener("resize", this);
+        window.addEventListener("resize", this, true);
       ]]></handler>
       <handler event="unload"><![CDATA[
-        window.removeEventListener("resize", this);
+        window.removeEventListener("resize", this, true);
       ]]></handler>
 
       <handler event="dragstart"><![CDATA[

@@ -5,11 +5,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "WinUtils.h"
+
+#include "gfxPlatform.h"
 #include "nsWindow.h"
 #include "nsWindowDefs.h"
 #include "KeyboardLayout.h"
 #include "nsIDOMMouseEvent.h"
+#include "mozilla/gfx/2D.h"
+#include "mozilla/gfx/DataSurfaceHelpers.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/RefPtr.h"
 #include "mozilla/WindowsVersion.h"
 
 #ifdef MOZ_LOGGING
@@ -48,6 +53,8 @@
 #ifdef PR_LOGGING
 PRLogModuleInfo* gWindowsLog = nullptr;
 #endif
+
+using namespace mozilla::gfx;
 
 namespace mozilla {
 namespace widget {
@@ -558,6 +565,16 @@ WinUtils::GetMouseInputSource()
   return static_cast<uint16_t>(inputSource);
 }
 
+bool
+WinUtils::GetIsMouseFromTouch(uint32_t aEventType)
+{
+#define MOUSEEVENTF_FROMTOUCH 0xFF515700
+  return (aEventType == NS_MOUSE_BUTTON_DOWN ||
+          aEventType == NS_MOUSE_BUTTON_UP ||
+          aEventType == NS_MOUSE_MOVE) &&
+          (GetMessageExtraInfo() & MOUSEEVENTF_FROMTOUCH);
+}
+
 /* static */
 MSG
 WinUtils::InitMSG(UINT aMessage, WPARAM wParam, LPARAM lParam, HWND aWnd)
@@ -718,45 +735,67 @@ AsyncFaviconDataReady::OnComplete(nsIURI *aFaviconURI,
     container->GetFrame(imgIContainer::FRAME_FIRST, 0);
   NS_ENSURE_TRUE(imgFrame, NS_ERROR_FAILURE);
 
-  nsRefPtr<gfxImageSurface> imageSurface;
-  gfxIntSize size;
-  if (mURLShortcut) {
-    imageSurface =
-      new gfxImageSurface(gfxIntSize(48, 48),
-                          gfxImageFormat::ARGB32);
-    gfxContext context(imageSurface);
-    context.SetOperator(gfxContext::OPERATOR_SOURCE);
-    context.SetColor(gfxRGBA(1, 1, 1, 1));
-    context.Rectangle(gfxRect(0, 0, 48, 48));
-    context.Fill();
+  RefPtr<SourceSurface> surface =
+    gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(nullptr, imgFrame);
+  NS_ENSURE_TRUE(surface, NS_ERROR_FAILURE);
 
-    context.Translate(gfxPoint(16, 16));
-    context.SetOperator(gfxContext::OPERATOR_OVER);
-    context.DrawSurface(imgFrame,  gfxSize(16, 16));
-    size = imageSurface->GetSize();
-  } else {
-    imageSurface = imgFrame->GetAsReadableARGB32ImageSurface();
-    size.width = GetSystemMetrics(SM_CXSMICON);
-    size.height = GetSystemMetrics(SM_CYSMICON);
-    if (!size.width || !size.height) {
-      size.width = 16;
-      size.height = 16;
+  RefPtr<DataSourceSurface> dataSurface;
+  IntSize size;
+
+  if (mURLShortcut) {
+    // Create a 48x48 surface and paint the icon into the central 16x16 rect.
+    size.width = 48;
+    size.height = 48;
+    dataSurface =
+      Factory::CreateDataSourceSurface(size, SurfaceFormat::B8G8R8A8);
+    NS_ENSURE_TRUE(dataSurface, NS_ERROR_FAILURE);
+
+    DataSourceSurface::MappedSurface map;
+    if (!dataSurface->Map(DataSourceSurface::MapType::WRITE, &map)) {
+      return NS_ERROR_FAILURE;
     }
+
+    RefPtr<DrawTarget> dt =
+      Factory::CreateDrawTargetForData(BackendType::CAIRO,
+                                       map.mData,
+                                       dataSurface->GetSize(),
+                                       map.mStride,
+                                       dataSurface->GetFormat());
+    dt->FillRect(Rect(0, 0, size.width, size.height),
+                 ColorPattern(Color(1.0f, 1.0f, 1.0f, 1.0f)));
+    dt->DrawSurface(surface,
+                    Rect(16, 16, 16, 16),
+                    Rect(Point(0, 0),
+                         Size(surface->GetSize().width, surface->GetSize().height)));
+
+    dataSurface->Unmap();
+  } else {
+    // By using the input image surface's size, we may end up encoding
+    // to a different size than a 16x16 (or bigger for higher DPI) ICO, but
+    // Windows will resize appropriately for us. If we want to encode ourselves
+    // one day because we like our resizing better, we'd have to manually
+    // resize the image here and use GetSystemMetrics w/ SM_CXSMICON and
+    // SM_CYSMICON. We don't support resizing images asynchronously at the
+    // moment anyway so getting the DPI aware icon size won't help.
+    size.width = surface->GetSize().width;
+    size.height = surface->GetSize().height;
+    dataSurface = surface->GetDataSurface();
+    NS_ENSURE_TRUE(dataSurface, NS_ERROR_FAILURE);
   }
 
-  // Allocate a new buffer that we own and can use out of line in 
-  // another thread.  Copy the favicon raw data into it.
-  const fallible_t fallible = fallible_t();
-  uint8_t *data = new (fallible) uint8_t[imageSurface->GetDataSize()];
+  // Allocate a new buffer that we own and can use out of line in
+  // another thread.
+  uint8_t *data = SurfaceToPackedBGRA(dataSurface);
   if (!data) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
-  memcpy(data, imageSurface->Data(), imageSurface->GetDataSize());
+  int32_t stride = 4 * size.width;
+  int32_t dataLength = stride * size.height;
 
   // AsyncEncodeAndWriteIcon takes ownership of the heap allocated buffer
   nsCOMPtr<nsIRunnable> event = new AsyncEncodeAndWriteIcon(path, data,
-                                                            imageSurface->GetDataSize(),
-                                                            imageSurface->Stride(),
+                                                            dataLength,
+                                                            stride,
                                                             size.width,
                                                             size.height,
                                                             mURLShortcut);
@@ -788,11 +827,6 @@ NS_IMETHODIMP AsyncEncodeAndWriteIcon::Run()
 {
   NS_PRECONDITION(!NS_IsMainThread(), "Should not be called on the main thread.");
 
-  // Get the recommended icon width and height, or if failure to obtain 
-  // these settings, fall back to 16x16 ICOs.  These values can be different
-  // if the user has a different DPI setting other than 100%.
-  // Windows would scale the 16x16 icon themselves, but it's better
-  // we let our ICO encoder do it.
   nsCOMPtr<nsIInputStream> iconStream;
   nsRefPtr<imgIEncoder> encoder =
     do_CreateInstance("@mozilla.org/image/encoder;2?"
@@ -1143,8 +1177,7 @@ WinUtils::ConvertHRGNToRegion(HRGN aRgn)
 
   DWORD size = ::GetRegionData(aRgn, 0, nullptr);
   nsAutoTArray<uint8_t,100> buffer;
-  if (!buffer.SetLength(size))
-    return rgn;
+  buffer.SetLength(size);
 
   RGNDATA* data = reinterpret_cast<RGNDATA*>(buffer.Elements());
   if (!::GetRegionData(aRgn, size, data))

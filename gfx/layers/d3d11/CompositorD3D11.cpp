@@ -14,6 +14,7 @@
 #include "mozilla/layers/ContentHost.h"
 #include "mozilla/layers/Effects.h"
 #include "nsWindowsHelpers.h"
+#include "gfxPrefs.h"
 
 #ifdef MOZ_METRO
 #include <DXGI1_2.h>
@@ -57,6 +58,7 @@ struct DeviceAttachmentsD3D11
   RefPtr<ID3D11BlendState> mPremulBlendState;
   RefPtr<ID3D11BlendState> mNonPremulBlendState;
   RefPtr<ID3D11BlendState> mComponentBlendState;
+  RefPtr<ID3D11BlendState> mDisabledBlendState;
 };
 
 CompositorD3D11::CompositorD3D11(nsIWidget* aWidget)
@@ -65,7 +67,7 @@ CompositorD3D11::CompositorD3D11(nsIWidget* aWidget)
   , mHwnd(nullptr)
   , mDisableSequenceForNextFrame(false)
 {
-  sBackend = LayersBackend::LAYERS_D3D11;
+  SetBackend(LayersBackend::LAYERS_D3D11);
 }
 
 CompositorD3D11::~CompositorD3D11()
@@ -225,7 +227,7 @@ CompositorD3D11::Initialize()
       return false;
     }
 
-    if (gfxPlatform::ComponentAlphaEnabled()) {
+    if (gfxPrefs::ComponentAlphaEnabled()) {
       D3D11_RENDER_TARGET_BLEND_DESC rtBlendComponent = {
         TRUE,
         D3D11_BLEND_ONE,
@@ -241,6 +243,18 @@ CompositorD3D11::Initialize()
       if (FAILED(hr)) {
         return false;
       }
+    }
+
+    D3D11_RENDER_TARGET_BLEND_DESC rtBlendDisabled = {
+      FALSE,
+      D3D11_BLEND_SRC_ALPHA, D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_OP_ADD,
+      D3D11_BLEND_ONE, D3D11_BLEND_INV_SRC_ALPHA, D3D11_BLEND_OP_ADD,
+      D3D11_COLOR_WRITE_ENABLE_ALL
+    };
+    blendDesc.RenderTarget[0] = rtBlendDisabled;
+    hr = mDevice->CreateBlendState(&blendDesc, byRef(mAttachments->mDisabledBlendState));
+    if (FAILED(hr)) {
+      return false;
     }
   }
 
@@ -342,7 +356,7 @@ TemporaryRef<DataTextureSource>
 CompositorD3D11::CreateDataTextureSource(TextureFlags aFlags)
 {
   RefPtr<DataTextureSource> result = new DataTextureSourceD3D11(gfx::SurfaceFormat::UNKNOWN,
-                                                                this);
+                                                                this, aFlags);
   return result.forget();
 }
 
@@ -461,18 +475,19 @@ CompositorD3D11::SetRenderTarget(CompositingRenderTarget* aRenderTarget)
 }
 
 void
-CompositorD3D11::SetPSForEffect(Effect* aEffect, MaskType aMaskType)
+CompositorD3D11::SetPSForEffect(Effect* aEffect, MaskType aMaskType, gfx::SurfaceFormat aFormat)
 {
   switch (aEffect->mType) {
   case EFFECT_SOLID_COLOR:
     mContext->PSSetShader(mAttachments->mSolidColorShader[aMaskType], nullptr, 0);
     return;
-  case EFFECT_BGRA:
   case EFFECT_RENDER_TARGET:
     mContext->PSSetShader(mAttachments->mRGBAShader[aMaskType], nullptr, 0);
     return;
-  case EFFECT_BGRX:
-    mContext->PSSetShader(mAttachments->mRGBShader[aMaskType], nullptr, 0);
+  case EFFECT_RGB:
+    mContext->PSSetShader((aFormat == SurfaceFormat::B8G8R8A8 || aFormat == SurfaceFormat::R8G8B8A8)
+                          ? mAttachments->mRGBAShader[aMaskType]
+                          : mAttachments->mRGBShader[aMaskType], nullptr, 0);
     return;
   case EFFECT_YCBCR:
     mContext->PSSetShader(mAttachments->mYCbCrShader[aMaskType], nullptr, 0);
@@ -484,6 +499,41 @@ CompositorD3D11::SetPSForEffect(Effect* aEffect, MaskType aMaskType)
     NS_WARNING("No shader to load");
     return;
   }
+}
+
+void
+CompositorD3D11::ClearRect(const gfx::Rect& aRect)
+{
+  mContext->OMSetBlendState(mAttachments->mDisabledBlendState, sBlendFactor, 0xFFFFFFFF);
+
+  Matrix4x4 identity;
+  memcpy(&mVSConstants.layerTransform, &identity._11, 64);
+
+  mVSConstants.layerQuad = aRect;
+  mVSConstants.renderTargetOffset[0] = 0;
+  mVSConstants.renderTargetOffset[1] = 0;
+  mPSConstants.layerOpacity[0] = 1.0f;
+
+  D3D11_RECT scissor;
+  scissor.left = aRect.x;
+  scissor.right = aRect.XMost();
+  scissor.top = aRect.y;
+  scissor.bottom = aRect.YMost();
+  mContext->RSSetScissorRects(1, &scissor);
+  mContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+  mContext->VSSetShader(mAttachments->mVSQuadShader[MaskNone], nullptr, 0);
+
+  mContext->PSSetShader(mAttachments->mSolidColorShader[MaskNone], nullptr, 0);
+  mPSConstants.layerColor[0] = 0;
+  mPSConstants.layerColor[1] = 0;
+  mPSConstants.layerColor[2] = 0;
+  mPSConstants.layerColor[3] = 0;
+
+  UpdateConstantBuffers();
+
+  mContext->Draw(4, 0);
+
+  mContext->OMSetBlendState(mAttachments->mPremulBlendState, sBlendFactor, 0xFFFFFFFF);
 }
 
 void
@@ -510,7 +560,7 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
     if (aTransform.Is2D()) {
       maskType = Mask2d;
     } else {
-      MOZ_ASSERT(aEffectChain.mPrimaryEffect->mType == EFFECT_BGRA);
+      MOZ_ASSERT(aEffectChain.mPrimaryEffect->mType == EFFECT_RGB);
       maskType = Mask3d;
     }
 
@@ -546,10 +596,11 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
   mContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
   mContext->VSSetShader(mAttachments->mVSQuadShader[maskType], nullptr, 0);
 
-  SetPSForEffect(aEffectChain.mPrimaryEffect, maskType);
 
   switch (aEffectChain.mPrimaryEffect->mType) {
   case EFFECT_SOLID_COLOR: {
+      SetPSForEffect(aEffectChain.mPrimaryEffect, maskType, SurfaceFormat::UNKNOWN);
+
       Color color =
         static_cast<EffectSolidColor*>(aEffectChain.mPrimaryEffect.get())->mColor;
       mPSConstants.layerColor[0] = color.r * color.a * aOpacity;
@@ -558,8 +609,7 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
       mPSConstants.layerColor[3] = color.a * aOpacity;
     }
     break;
-  case EFFECT_BGRX:
-  case EFFECT_BGRA:
+  case EFFECT_RGB:
   case EFFECT_RENDER_TARGET:
     {
       TexturedEffect* texturedEffect =
@@ -573,6 +623,8 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
         NS_WARNING("Missing texture source!");
         return;
       }
+
+      SetPSForEffect(aEffectChain.mPrimaryEffect, maskType, texturedEffect->mTexture->GetFormat());
 
       RefPtr<ID3D11ShaderResourceView> view;
       mDevice->CreateShaderResourceView(source->GetD3D11Texture(), nullptr, byRef(view));
@@ -604,6 +656,8 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
         return;
       }
 
+      SetPSForEffect(aEffectChain.mPrimaryEffect, maskType, ycbcrEffect->mTexture->GetFormat());
+
       if (!source->GetSubSource(Y) || !source->GetSubSource(Cb) || !source->GetSubSource(Cr)) {
         // This can happen if we failed to upload the textures, most likely
         // because of unsupported dimensions (we don't tile YCbCr textures).
@@ -628,10 +682,11 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
     break;
   case EFFECT_COMPONENT_ALPHA:
     {
-      MOZ_ASSERT(gfxPlatform::ComponentAlphaEnabled());
+      MOZ_ASSERT(gfxPrefs::ComponentAlphaEnabled());
       MOZ_ASSERT(mAttachments->mComponentBlendState);
       EffectComponentAlpha* effectComponentAlpha =
         static_cast<EffectComponentAlpha*>(aEffectChain.mPrimaryEffect.get());
+
       TextureSourceD3D11* sourceOnWhite = effectComponentAlpha->mOnWhite->AsSourceD3D11();
       TextureSourceD3D11* sourceOnBlack = effectComponentAlpha->mOnBlack->AsSourceD3D11();
 
@@ -639,6 +694,8 @@ CompositorD3D11::DrawQuad(const gfx::Rect& aRect,
         NS_WARNING("Missing texture source(s)!");
         return;
       }
+
+      SetPSForEffect(aEffectChain.mPrimaryEffect, maskType, effectComponentAlpha->mOnWhite->GetFormat());
 
       SetSamplerForFilter(effectComponentAlpha->mFilter);
 
@@ -877,7 +934,7 @@ CompositorD3D11::CreateShaders()
   LOAD_PIXEL_SHADER(RGBShader);
   LOAD_PIXEL_SHADER(RGBAShader);
   LOAD_PIXEL_SHADER(YCbCrShader);
-  if (gfxPlatform::ComponentAlphaEnabled()) {
+  if (gfxPrefs::ComponentAlphaEnabled()) {
     LOAD_PIXEL_SHADER(ComponentAlphaShader);
   }
 

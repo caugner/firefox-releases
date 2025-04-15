@@ -38,36 +38,3 @@
     display: none;
   }
 }
-
-@media (min-width: 701px) and (max-width: 1280px) {
-  #body:not([pane-collapsed]) .requests-menu-filter-button,
-  #body:not([pane-collapsed]) .requests-menu-footer-spacer {
-    display: none;
-  }
-}
-
-@media (min-width: 701px) {
-  #network-table[waterfall-overflows] .requests-menu-waterfall {
-    display: none;
-  }
-
-  #network-table[size-overflows] .requests-menu-size {
-    display: none;
-  }
-
-  #network-table[type-overflows] .requests-menu-type {
-    display: none;
-  }
-
-  #network-table[domain-overflows] .requests-menu-domain {
-    display: none;
-  }
-
-  #network-table[type-overflows] .requests-menu-domain {
-    -moz-box-flex: 1;
-  }
-
-  #network-table[domain-overflows] .requests-menu-file {
-    -moz-box-flex: 1;
-  }
-}

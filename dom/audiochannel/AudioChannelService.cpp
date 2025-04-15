@@ -18,6 +18,7 @@
 #include "nsThreadUtils.h"
 #include "nsHashPropertyBag.h"
 #include "nsComponentManagerUtils.h"
+#include "nsPIDOMWindow.h"
 #include "nsServiceManagerUtils.h"
 
 #ifdef MOZ_WIDGET_GONK
@@ -112,6 +113,18 @@ AudioChannelService::RegisterAudioChannelAgent(AudioChannelAgent* aAgent,
                                 aWithVideo);
   mAgents.Put(aAgent, data);
   RegisterType(aType, CONTENT_PROCESS_ID_MAIN, aWithVideo);
+
+  // If this is the first agent for this window, we must notify the observers.
+  uint32_t count = CountWindow(aAgent->Window());
+  if (count == 1) {
+    nsCOMPtr<nsIObserverService> observerService =
+      services::GetObserverService();
+    if (observerService) {
+      observerService->NotifyObservers(ToSupports(aAgent->Window()),
+                                       "media-playback",
+                                       NS_LITERAL_STRING("active").get());
+    }
+  }
 }
 
 void
@@ -180,6 +193,18 @@ AudioChannelService::UnregisterAudioChannelAgent(AudioChannelAgent* aAgent)
     mSpeakerManager[i]->SetAudioChannelActive(active);
   }
 #endif
+
+  // If this is the last agent for this window, we must notify the observers.
+  uint32_t count = CountWindow(aAgent->Window());
+  if (count == 0) {
+    nsCOMPtr<nsIObserverService> observerService =
+      services::GetObserverService();
+    if (observerService) {
+      observerService->NotifyObservers(ToSupports(aAgent->Window()),
+                                       "media-playback",
+                                       NS_LITERAL_STRING("inactive").get());
+    }
+  }
 }
 
 void
@@ -448,7 +473,7 @@ AudioChannelService::SendAudioChannelChangedNotification(uint64_t aChildID)
   }
 
   // Calculating the most important active channel.
-  AudioChannelType higher = AUDIO_CHANNEL_LAST;
+  AudioChannelType higher = AUDIO_CHANNEL_DEFAULT;
 
   // Top-Down in the hierarchy for visible elements
   if (!mChannelCounters[AUDIO_CHANNEL_INT_PUBLICNOTIFICATION].IsEmpty()) {
@@ -482,30 +507,19 @@ AudioChannelService::SendAudioChannelChangedNotification(uint64_t aChildID)
   AudioChannelType visibleHigher = higher;
 
   // Top-Down in the hierarchy for non-visible elements
-  if (higher == AUDIO_CHANNEL_LAST) {
-    if (!mChannelCounters[AUDIO_CHANNEL_INT_PUBLICNOTIFICATION_HIDDEN].IsEmpty()) {
-      higher = AUDIO_CHANNEL_PUBLICNOTIFICATION;
+  // And we can ignore normal channel because it can't play in the background.
+  for (int i = AUDIO_CHANNEL_LAST - 1;
+       i > higher && i > AUDIO_CHANNEL_NORMAL; i--) {
+    if (i == AUDIO_CHANNEL_CONTENT &&
+      mPlayableHiddenContentChildID != CONTENT_PROCESS_ID_UNKNOWN) {
+      higher = static_cast<AudioChannelType>(i);
     }
 
-    else if (!mChannelCounters[AUDIO_CHANNEL_INT_RINGER_HIDDEN].IsEmpty()) {
-      higher = AUDIO_CHANNEL_RINGER;
-    }
-
-    else if (!mChannelCounters[AUDIO_CHANNEL_INT_TELEPHONY_HIDDEN].IsEmpty()) {
-      higher = AUDIO_CHANNEL_TELEPHONY;
-    }
-
-    else if (!mChannelCounters[AUDIO_CHANNEL_INT_ALARM_HIDDEN].IsEmpty()) {
-      higher = AUDIO_CHANNEL_ALARM;
-    }
-
-    else if (!mChannelCounters[AUDIO_CHANNEL_INT_NOTIFICATION_HIDDEN].IsEmpty()) {
-      higher = AUDIO_CHANNEL_NOTIFICATION;
-    }
-
-    // Check whether there is any playable hidden content channel or not.
-    else if (mPlayableHiddenContentChildID != CONTENT_PROCESS_ID_UNKNOWN) {
-      higher = AUDIO_CHANNEL_CONTENT;
+    // Each channel type will be split to fg and bg for recording the state,
+    // so here need to do a translation.
+    if (!mChannelCounters[i * 2 + 1].IsEmpty()) {
+      higher = static_cast<AudioChannelType>(i);
+      break;
     }
   }
 
@@ -513,7 +527,7 @@ AudioChannelService::SendAudioChannelChangedNotification(uint64_t aChildID)
     mCurrentHigherChannel = higher;
 
     nsString channelName;
-    if (mCurrentHigherChannel != AUDIO_CHANNEL_LAST) {
+    if (mCurrentHigherChannel != AUDIO_CHANNEL_DEFAULT) {
       channelName.AssignASCII(ChannelName(mCurrentHigherChannel));
     } else {
       channelName.AssignLiteral("none");
@@ -528,7 +542,7 @@ AudioChannelService::SendAudioChannelChangedNotification(uint64_t aChildID)
     mCurrentVisibleHigherChannel = visibleHigher;
 
     nsString channelName;
-    if (mCurrentVisibleHigherChannel != AUDIO_CHANNEL_LAST) {
+    if (mCurrentVisibleHigherChannel != AUDIO_CHANNEL_DEFAULT) {
       channelName.AssignASCII(ChannelName(mCurrentVisibleHigherChannel));
     } else {
       channelName.AssignLiteral("none");
@@ -790,4 +804,79 @@ AudioChannelService::GetInternalType(AudioChannelType aType,
   }
 
   MOZ_CRASH("unexpected audio channel type");
+}
+
+struct RefreshAgentsVolumeData
+{
+  RefreshAgentsVolumeData(nsPIDOMWindow* aWindow)
+    : mWindow(aWindow)
+  {}
+
+  nsPIDOMWindow* mWindow;
+  nsTArray<nsRefPtr<AudioChannelAgent>> mAgents;
+};
+
+PLDHashOperator
+AudioChannelService::RefreshAgentsVolumeEnumerator(AudioChannelAgent* aAgent,
+                                                   AudioChannelAgentData* aUnused,
+                                                   void* aPtr)
+{
+  MOZ_ASSERT(aAgent);
+  RefreshAgentsVolumeData* data = static_cast<RefreshAgentsVolumeData*>(aPtr);
+  MOZ_ASSERT(data);
+
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aAgent->Window());
+  if (window && !window->IsInnerWindow()) {
+    window = window->GetCurrentInnerWindow();
+  }
+
+  if (window == data->mWindow) {
+    data->mAgents.AppendElement(aAgent);
+  }
+
+  return PL_DHASH_NEXT;
+}
+void
+AudioChannelService::RefreshAgentsVolume(nsPIDOMWindow* aWindow)
+{
+  RefreshAgentsVolumeData data(aWindow);
+  mAgents.EnumerateRead(RefreshAgentsVolumeEnumerator, &data);
+
+  for (uint32_t i = 0; i < data.mAgents.Length(); ++i) {
+    data.mAgents[i]->WindowVolumeChanged();
+  }
+}
+
+struct CountWindowData
+{
+  CountWindowData(nsIDOMWindow* aWindow)
+    : mWindow(aWindow)
+    , mCount(0)
+  {}
+
+  nsIDOMWindow* mWindow;
+  uint32_t mCount;
+};
+
+PLDHashOperator
+AudioChannelService::CountWindowEnumerator(AudioChannelAgent* aAgent,
+                                           AudioChannelAgentData* aUnused,
+                                           void* aPtr)
+{
+  CountWindowData* data = static_cast<CountWindowData*>(aPtr);
+  MOZ_ASSERT(aAgent);
+
+  if (aAgent->Window() == data->mWindow) {
+    ++data->mCount;
+  }
+
+  return PL_DHASH_NEXT;
+}
+
+uint32_t
+AudioChannelService::CountWindow(nsIDOMWindow* aWindow)
+{
+  CountWindowData data(aWindow);
+  mAgents.EnumerateRead(CountWindowEnumerator, &data);
+  return data.mCount;
 }

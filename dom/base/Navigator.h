@@ -8,11 +8,14 @@
 #define mozilla_dom_Navigator_h
 
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/dom/Nullable.h"
 #include "mozilla/ErrorResult.h"
 #include "nsIDOMNavigator.h"
 #include "nsIMozNavigatorNetwork.h"
 #include "nsAutoPtr.h"
 #include "nsWrapperCache.h"
+#include "nsHashKeys.h"
+#include "nsInterfaceHashtable.h"
 #include "nsString.h"
 #include "nsTArray.h"
 
@@ -24,6 +27,7 @@ class nsIDOMMozMobileMessageManager;
 class nsIDOMNavigatorSystemMessages;
 class nsDOMCameraManager;
 class nsDOMDeviceStorage;
+class nsIDOMBlob;
 
 namespace mozilla {
 namespace dom {
@@ -32,6 +36,7 @@ class systemMessageCallback;
 class MediaStreamConstraints;
 class MediaStreamConstraintsInternal;
 class WakeLock;
+class ArrayBufferViewOrBlobOrStringOrFormData;
 }
 }
 
@@ -221,6 +226,11 @@ public:
 #ifdef MOZ_AUDIO_CHANNEL_MANAGER
   system::AudioChannelManager* GetMozAudioChannelManager(ErrorResult& aRv);
 #endif // MOZ_AUDIO_CHANNEL_MANAGER
+
+  bool SendBeacon(const nsAString& aUrl,
+                  const Nullable<ArrayBufferViewOrBlobOrStringOrFormData>& aData,
+                  ErrorResult& aRv);
+
 #ifdef MOZ_MEDIA_NAVIGATOR
   void MozGetUserMedia(JSContext* aCx,
                        const MediaStreamConstraints& aConstraints,
@@ -265,9 +275,9 @@ public:
                                   JSObject* aGlobal);
   static bool HasIccManagerSupport(JSContext* /* unused */,
                                    JSObject* aGlobal);
-  static bool HasWifiManagerSupport(JSContext* /* unused */,
-                                    JSObject* aGlobal);
 #endif // MOZ_B2G_RIL
+  static bool HasWifiManagerSupport(JSContext* /* unused */,
+                                  JSObject* aGlobal);
 #ifdef MOZ_B2G_BT
   static bool HasBluetoothSupport(JSContext* /* unused */, JSObject* aGlobal);
 #endif // MOZ_B2G_BT
@@ -340,6 +350,13 @@ private:
   nsTArray<nsRefPtr<nsDOMDeviceStorage> > mDeviceStorageStores;
   nsRefPtr<time::TimeManager> mTimeManager;
   nsCOMPtr<nsPIDOMWindow> mWindow;
+
+  // Hashtable for saving cached objects newresolve created, so we don't create
+  // the object twice if asked for it twice, whether due to use of "delete" or
+  // due to Xrays.  We could probably use a nsJSThingHashtable here, but then
+  // we'd need to figure out exactly how to trace that, and that seems to be
+  // rocket science.  :(
+  nsInterfaceHashtable<nsStringHashKey, nsISupports> mCachedResolveResults;
 };
 
 } // namespace dom

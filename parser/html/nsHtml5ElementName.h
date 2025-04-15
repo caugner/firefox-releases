@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2011 Mozilla Foundation
+ * Copyright (c) 2008-2014 Mozilla Foundation
  *
  * Permission is hereby granted, free of charge, to any person obtaining a 
  * copy of this software and associated documentation files (the "Software"), 
@@ -31,7 +31,7 @@
 #include "nsIAtom.h"
 #include "nsHtml5AtomTable.h"
 #include "nsString.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsIContent.h"
 #include "nsTraceRefcnt.h"
 #include "jArray.h"
@@ -41,6 +41,7 @@
 #include "nsHtml5ByteReadable.h"
 #include "nsIUnicodeDecoder.h"
 #include "nsHtml5Macros.h"
+#include "nsIContentHandle.h"
 
 class nsHtml5StreamParser;
 
@@ -442,6 +443,7 @@ class nsHtml5ElementName
     static nsHtml5ElementName* ELT_EXPONENTIALE;
     static nsHtml5ElementName* ELT_FETURBULENCE;
     static nsHtml5ElementName* ELT_FEPOINTLIGHT;
+    static nsHtml5ElementName* ELT_FEDROPSHADOW;
     static nsHtml5ElementName* ELT_FEMORPHOLOGY;
     static nsHtml5ElementName* ELT_OUTERPRODUCT;
     static nsHtml5ElementName* ELT_ANIMATEMOTION;

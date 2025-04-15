@@ -89,23 +89,20 @@ this.EventManager.prototype = {
   },
 
   handleEvent: function handleEvent(aEvent) {
+    Logger.debug(() => {
+      return ['DOMEvent', aEvent.type];
+    });
+
     try {
       switch (aEvent.type) {
       case 'wheel':
       {
         let attempts = 0;
-        let vc = Utils.getVirtualCursor(this.contentScope.content.document);
-        let intervalId = this.contentScope.content.setInterval(() => {
-          if (!Utils.isAliveAndVisible(vc.position, true)) {
-            this.contentScope.content.clearInterval(intervalId);
-            let delta = aEvent.deltaX || aEvent.deltaY;
-            this.contentScope.content.setTimeout(() => {
-              vc[delta > 0 ? 'moveNext' : 'movePrevious'](TraversalRules.SimpleOnScreen);
-            }, 100);
-          } else if (++attempts > 5) {
-            this.contentScope.content.clearInterval(intervalId);
-          }
-        }, 150);
+        let delta = aEvent.deltaX || aEvent.deltaY;
+        this.contentScope.contentControl.autoMove(
+         null,
+         { moveMethod: delta > 0 ? 'moveNext' : 'movePrevious',
+           onScreenOnly: true, noOpIfOnScreen: true, delay: 500 });
         break;
       }
       case 'scroll':
@@ -129,9 +126,10 @@ this.EventManager.prototype = {
   },
 
   handleAccEvent: function handleAccEvent(aEvent) {
-    if (Logger.logLevel >= Logger.DEBUG)
-      Logger.debug('A11yEvent', Logger.eventToString(aEvent),
-                   Logger.accessibleToString(aEvent.accessible));
+    Logger.debug(() => {
+      return ['A11yEvent', Logger.eventToString(aEvent),
+              Logger.accessibleToString(aEvent.accessible)];
+    });
 
     // Don't bother with non-content events in firefox.
     if (Utils.MozBuildApp == 'browser' &&
@@ -155,12 +153,13 @@ this.EventManager.prototype = {
         let event = aEvent.
           QueryInterface(Ci.nsIAccessibleVirtualCursorChangeEvent);
         let reason = event.reason;
+        let oldAccessible = event.oldAccessible;
 
         if (this.editState.editing) {
           aEvent.accessibleDocument.takeFocus();
         }
         this.present(
-          Presentation.pivotChanged(position, event.oldAccessible, reason,
+          Presentation.pivotChanged(position, oldAccessible, reason,
                                     pivot.startOffset, pivot.endOffset));
 
         break;
@@ -184,8 +183,7 @@ this.EventManager.prototype = {
       }
       case Events.SCROLLING_START:
       {
-        let vc = Utils.getVirtualCursor(aEvent.accessibleDocument);
-        vc.moveNext(TraversalRules.Simple, aEvent.accessible, true);
+        this.contentScope.contentControl.autoMove(aEvent.accessible);
         break;
       }
       case Events.TEXT_CARET_MOVED:
@@ -242,18 +240,25 @@ this.EventManager.prototype = {
       }
       case Events.HIDE:
       {
+        let evt = aEvent.QueryInterface(Ci.nsIAccessibleHideEvent);
         let {liveRegion, isPolite} = this._handleLiveRegion(
-          aEvent.QueryInterface(Ci.nsIAccessibleHideEvent),
-          ['removals', 'all']);
-        // Only handle hide if it is a relevant live region.
-        if (!liveRegion) {
-          break;
+          evt, ['removals', 'all']);
+        if (liveRegion) {
+          // Hide for text is handled by the EVENT_TEXT_REMOVED handler.
+          if (aEvent.accessible.role === Roles.TEXT_LEAF) {
+            break;
+          }
+          this._queueLiveEvent(Events.HIDE, liveRegion, isPolite);
+        } else {
+          let vc = Utils.getVirtualCursor(this.contentScope.content.document);
+          if (vc.position &&
+            (Utils.getState(vc.position).contains(States.DEFUNCT) ||
+              Utils.isInSubtree(vc.position, aEvent.accessible))) {
+            this.contentScope.contentControl.autoMove(
+              evt.targetPrevSibling || evt.targetParent,
+              { moveToFocused: true, delay: 500 });
+          }
         }
-        // Hide for text is handled by the EVENT_TEXT_REMOVED handler.
-        if (aEvent.accessible.role === Roles.TEXT_LEAF) {
-          break;
-        }
-        this._queueLiveEvent(Events.HIDE, liveRegion, isPolite);
         break;
       }
       case Events.TEXT_INSERTED:
@@ -274,18 +279,14 @@ this.EventManager.prototype = {
         let acc = aEvent.accessible;
         let doc = aEvent.accessibleDocument;
         if (acc.role != Roles.DOCUMENT && doc.role != Roles.CHROME_WINDOW) {
-          this.contentScope.content.clearTimeout(this._autoMove);
-          let vc = Utils.getVirtualCursor(doc);
-          vc.moveNext(TraversalRules.Simple, acc, true);
-        }
-        break;
+         this.contentScope.contentControl.autoMove(acc);
+       }
+       break;
       }
       case Events.DOCUMENT_LOAD_COMPLETE:
       {
-        this._autoMove = this.contentScope.content.setTimeout(() => {
-          Utils.getVirtualCursor(aEvent.accessibleDocument)
-            .moveNext(TraversalRules.Simple, aEvent.accessible, true);
-        }, 500);
+        this.contentScope.contentControl.autoMove(
+          aEvent.accessible, { delay: 500 });
         break;
       }
     }

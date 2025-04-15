@@ -73,6 +73,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "TelemetryFile",
                                   "resource://gre/modules/TelemetryFile.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "UITelemetry",
                                   "resource://gre/modules/UITelemetry.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "TelemetryLog",
+                                  "resource://gre/modules/TelemetryLog.jsm");
 
 function generateUUID() {
   let str = Cc["@mozilla.org/uuid-generator;1"].getService(Ci.nsIUUIDGenerator).generateUUID().toString();
@@ -291,13 +293,13 @@ let Impl = {
       }
     }
 
-    ret.startupInterrupted = new Number(Services.startup.interrupted);
+    ret.startupInterrupted = Number(Services.startup.interrupted);
 
     // Update debuggerAttached flag
     let debugService = Cc["@mozilla.org/xpcom/debug;1"].getService(Ci.nsIDebug2);
     let isDebuggerAttached = debugService.isDebuggerAttached;
     gWasDebuggerAttached = gWasDebuggerAttached || isDebuggerAttached;
-    ret.debuggerAttached = new Number(gWasDebuggerAttached);
+    ret.debuggerAttached = Number(gWasDebuggerAttached);
 
     ret.js = Cu.getJSEngineTelemetryValue();
 
@@ -458,6 +460,14 @@ let Impl = {
       revision: HISTOGRAMS_FILE_VERSION,
       locale: getLocale()
     };
+
+    // In order to share profile data, the appName used for Metro Firefox is "Firefox",
+    // (the same as desktop Firefox). We set it to "MetroFirefox" here in order to
+    // differentiate telemetry pings sent by desktop vs. metro Firefox.
+    if(Services.metro && Services.metro.immersive) {
+      ret.appName = "MetroFirefox";
+    }
+
     if (this._previousBuildID) {
       ret.previousBuildID = this._previousBuildID;
     }
@@ -680,6 +690,7 @@ let Impl = {
       addonHistograms: this.getAddonHistograms(),
       addonDetails: AddonManagerPrivate.getTelemetryDetails(),
       UIMeasurements: UITelemetry.getUIMeasurements(),
+      log: TelemetryLog.entries(),
       info: info
     };
 
@@ -781,13 +792,13 @@ let Impl = {
 
     function handler(success) {
       return function(event) {
-        this.finishPingRequest(success, startTime, ping);
-
-        if (success) {
-          deferred.resolve();
-        } else {
-          deferred.reject(event);
-        }
+        this.finishPingRequest(success, startTime, ping).then(() => {
+          if (success) {
+            deferred.resolve();
+          } else {
+            deferred.reject(event);
+          }
+        });
       };
     }
     request.addEventListener("error", handler(false).bind(this), false);

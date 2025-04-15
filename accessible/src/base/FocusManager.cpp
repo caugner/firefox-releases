@@ -37,7 +37,7 @@ FocusManager::FocusedAccessible() const
   if (focusedNode) {
     DocAccessible* doc = 
       GetAccService()->GetDocAccessible(focusedNode->OwnerDoc());
-    return doc ? doc->GetAccessibleOrContainer(focusedNode) : nullptr;
+    return doc ? doc->GetAccessibleEvenIfNotInMapOrContainer(focusedNode) : nullptr;
   }
 
   return nullptr;
@@ -61,7 +61,7 @@ FocusManager::IsFocused(const Accessible* aAccessible) const
       DocAccessible* doc = 
         GetAccService()->GetDocAccessible(focusedNode->OwnerDoc());
       return aAccessible ==
-        (doc ? doc->GetAccessibleOrContainer(focusedNode) : nullptr);
+        (doc ? doc->GetAccessibleEvenIfNotInMapOrContainer(focusedNode) : nullptr);
     }
   }
   return false;
@@ -241,12 +241,16 @@ FocusManager::ProcessDOMFocus(nsINode* aTarget)
   DocAccessible* document =
     GetAccService()->GetDocAccessible(aTarget->OwnerDoc());
 
-  Accessible* target = document->GetAccessibleOrContainer(aTarget);
+  Accessible* target = document->GetAccessibleEvenIfNotInMapOrContainer(aTarget);
   if (target && document) {
     // Check if still focused. Otherwise we can end up with storing the active
     // item for control that isn't focused anymore.
+    nsINode* focusedNode = FocusedDOMNode();
+    if (!focusedNode)
+      return;
+
     Accessible* DOMFocus =
-      document->GetAccessibleOrContainer(FocusedDOMNode());
+      document->GetAccessibleEvenIfNotInMapOrContainer(focusedNode);
     if (target != DOMFocus)
       return;
 
@@ -274,8 +278,12 @@ FocusManager::ProcessFocusEvent(AccEvent* aEvent)
     // Check if still focused. Otherwise we can end up with storing the active
     // item for control that isn't focused anymore.
     DocAccessible* document = aEvent->GetDocAccessible();
-    Accessible* DOMFocus = document->GetAccessibleOrContainer(FocusedDOMNode());
+    nsINode* focusedNode = FocusedDOMNode();
+    if (!focusedNode)
+      return;
 
+    Accessible* DOMFocus =
+      document->GetAccessibleEvenIfNotInMapOrContainer(focusedNode);
     if (target != DOMFocus)
       return;
 

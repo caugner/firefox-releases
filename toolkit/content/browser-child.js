@@ -45,7 +45,8 @@ let WebProgressListener = {
       isTopLevel: aWebProgress.isTopLevel,
       isLoadingDocument: aWebProgress.isLoadingDocument,
       requestURI: this._requestSpec(aRequest),
-      loadType: aWebProgress.loadType
+      loadType: aWebProgress.loadType,
+      documentContentType: content.document && content.document.contentType
     };
   },
 
@@ -243,11 +244,21 @@ addEventListener("ImageContentLoaded", function (aEvent) {
   }
 }, false);
 
-Services.obs.addObserver(function (aSubject, aTopic, aData) {
-  if (aSubject == content.document) {
-    sendAsyncMessage("DocumentInserted", {synthetic: aSubject.mozSyntheticDocument});
-  }
-}, "document-element-inserted", false);
+let DocumentObserver = {
+  init: function() {
+    Services.obs.addObserver(this, "document-element-inserted", false);
+    addEventListener("unload", () => {
+      Services.obs.removeObserver(this, "document-element-inserted");
+    });
+  },
+
+  observe: function(aSubject, aTopic, aData) {
+    if (aSubject == content.document) {
+      sendAsyncMessage("DocumentInserted", {synthetic: aSubject.mozSyntheticDocument});
+    }
+  },
+};
+DocumentObserver.init();
 
 function _getMarkupViewer() {
   return docShell.contentViewer.QueryInterface(Ci.nsIMarkupDocumentViewer);
@@ -271,8 +282,11 @@ addEventListener("TextZoomChange", function (aEvent) {
 
 RemoteAddonsChild.init(this);
 
-addMessageListener("History:UseGlobalHistory", function (aMessage) {
-  docShell.useGlobalHistory = aMessage.data.enabled;
+addMessageListener("NetworkPrioritizer:AdjustPriority", (msg) => {
+  let webNav = docShell.QueryInterface(Ci.nsIWebNavigation);
+  let loadGroup = webNav.QueryInterface(Ci.nsIDocumentLoader)
+                        .loadGroup.QueryInterface(Ci.nsISupportsPriority);
+  loadGroup.adjustPriority(msg.data.adjustment);
 });
 
 let AutoCompletePopup = {
@@ -334,6 +348,8 @@ let AutoCompletePopup = {
   }
 }
 
-addMessageListener("FormAutoComplete:InitPopup", function (aMessage) {
+let [initData] = sendSyncMessage("Browser:Init");
+docShell.useGlobalHistory = initData.useGlobalHistory;
+if (initData.initPopup) {
   setTimeout(function() AutoCompletePopup.init(), 0);
-});
+}

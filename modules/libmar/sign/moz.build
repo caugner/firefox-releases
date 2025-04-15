@@ -12,3 +12,13 @@ UNIFIED_SOURCES += [
 ]
 
 FORCE_STATIC_LIB = True
+
+LOCAL_INCLUDES += [
+    '../src',
+    '../verify',
+]
+
+DEFINES['MAR_NSS'] = True
+
+if CONFIG['OS_ARCH'] == 'WINNT':
+    USE_STATIC_LIBS = True

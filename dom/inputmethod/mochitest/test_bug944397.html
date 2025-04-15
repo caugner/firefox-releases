@@ -11,7 +11,6 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=944397
 </head>
 <body>
 <a target="_blank" href="https://bugzilla.mozilla.org/show_bug.cgi?id=944397">Mozilla Bug 944397</a>
-<input type="text" />
 <p id="display"></p>
 <pre id="test">
 <script class="testbody" type="application/javascript;version=1.7">
@@ -24,12 +23,21 @@ inputmethod_setup(function() {
 function appFrameScript() {
   let input = content.document.getElementById('test-input');
   input.oninput = function() {
+    dump('oninput was called in file_test_app.html.');
     sendAsyncMessage('test:InputMethod:oninput', {});
   };
+
+  /*
+   * Bug 957213. Sometimes we need to refocus the input field to avoid
+   * intermittent test failure.
+   */
+  content.setInterval(function() {
+    input.focus();
+  }, 500);
 }
 
 function runTest() {
-  var timeoutId = null;
+  let timeoutId = null;
 
   // Create an app frame to recieve keyboard inputs.
   let app = document.createElement('iframe');
@@ -77,10 +85,6 @@ function runTest() {
 
      req.onsuccess = function() {
        ok(true, 'setInputMethodActive succeeded.');
-       timeoutId = setTimeout(function() {
-        inputmethod_cleanup();
-        ok(false, 'Failed to generate keyboard input.');
-       }, 60000);
      };
 
      req.onerror = function() {
@@ -89,8 +93,13 @@ function runTest() {
      };
 
      // Loads the input method app to the browser frame after a delay.
+     SpecialPowers.DOMWindowUtils.focus(app);
      setTimeout(function() {
        keyboard.src = imeUrl;
+       timeoutId = setTimeout(function() {
+         inputmethod_cleanup();
+         ok(false, 'Failed to generate keyboard input.');
+       }, 20000);
      }, 100);
   });
 }

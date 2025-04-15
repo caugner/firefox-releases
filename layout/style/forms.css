@@ -59,7 +59,7 @@ input {
   color: -moz-FieldText;
   font: -moz-field;
   text-rendering: optimizeLegibility;
-  line-height: normal !important;
+  line-height: normal;
   text-align: start;
   text-transform: none;
   word-spacing: normal;
@@ -137,6 +137,7 @@ textarea::-moz-placeholder {
   display: inline-block;
   ime-mode: inherit;
   resize: inherit;
+  -moz-control-character-visibility: visible;
   overflow-clip-box: inherit;
 }
 
@@ -198,7 +199,7 @@ select {
   word-wrap: normal !important;
   text-align: start; 
   cursor: default;
-  -moz-box-sizing: border-box;
+  box-sizing: border-box;
   -moz-user-select: none;
   -moz-appearance: menulist;
   border-width: 2px;
@@ -247,7 +248,7 @@ select > button {
 
   /* Make sure to size correctly if the combobox has a non-auto height. */
   height: 100% ! important;
-  -moz-box-sizing: border-box ! important;
+  box-sizing: border-box ! important;
 
   /*
     Make sure to align properly with the display frame.  Note that we
@@ -279,7 +280,7 @@ select:empty {
   -moz-user-select: none;
   /* Make sure to size correctly if the combobox has a non-auto height. */
   height: 100% ! important;
-  -moz-box-sizing: border-box ! important;
+  box-sizing: border-box ! important;
 }
 
 option {
@@ -460,7 +461,7 @@ input[type="color"]:-moz-system-metric(color-picker-available)::-moz-color-swatc
   min-height: 3px;
   margin-left: auto;
   margin-right: auto;
-  -moz-box-sizing: border-box;
+  box-sizing: border-box;
   border: 1px solid grey;
   display: block;
 }
@@ -496,7 +497,7 @@ input[type="checkbox"] {
    (Should we maybe set !important on width and height, then?)  */
 input[type="radio"],
 input[type="checkbox"] {
-  -moz-box-sizing: border-box;
+  box-sizing: border-box;
   width: 13px;
   height: 13px;
   cursor: default;
@@ -555,7 +556,7 @@ input[type="submit"] {
   border: 2px outset ButtonFace;
   background-color: ButtonFace;
   cursor: default;
-  -moz-box-sizing: border-box;
+  box-sizing: border-box;
   -moz-user-select: none;
   -moz-binding: none;
 }
@@ -661,6 +662,7 @@ input[type="submit"]:disabled {
   cursor: inherit; 
 }
 
+button:disabled:active, button:disabled,
 input[type="reset"]:disabled:active,
 input[type="reset"]:disabled,
 input[type="button"]:disabled:active,
@@ -745,7 +747,7 @@ progress {
   float: none ! important;
   position: static ! important;
   overflow: visible ! important;
-  -moz-box-sizing: border-box ! important;
+  box-sizing: border-box ! important;
 
   -moz-appearance: progresschunk;
   height: 100%;
@@ -806,6 +808,16 @@ input[type=range] {
 input[type=range][orient=vertical] {
   width: 1.3em;
   height: 12em;
+}
+
+/**
+ * Ideally we'd also require :-moz-focusring here, but that doesn't currently
+ * work. Instead we only use the -moz-focus-outer border style if
+ * NS_EVENT_STATE_FOCUSRING is set (the check is in
+ * nsRangeFrame::BuildDisplayList).
+ */
+input[type=range]::-moz-focus-outer {
+  border: 1px dotted black;
 }
 
 /**
@@ -964,24 +976,3 @@ input[type="number"] > div > div > div:hover {
   /* give some indication of hover state for the up/down buttons */
   background-color: lightblue;
 }
-
-%ifdef XP_OS2
-input {
-  font: medium serif; font-family: inherit
-}
-
-select {
-  font: medium serif; font-family: inherit
-}
-
-optgroup {
-  font: medium serif; font-family: inherit
-}
-
-input[type="reset"],
-input[type="button"],
-input[type="submit"] { 
-  font: medium serif; font-family: inherit
-}
-
-%endif

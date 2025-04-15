@@ -24,7 +24,7 @@ class HTMLSharedObjectElement MOZ_FINAL : public nsGenericHTMLElement
                                         , public nsIDOMHTMLEmbedElement
 {
 public:
-  HTMLSharedObjectElement(already_AddRefed<nsINodeInfo> aNodeInfo,
+  HTMLSharedObjectElement(already_AddRefed<nsINodeInfo>& aNodeInfo,
                           mozilla::dom::FromParser aFromParser = mozilla::dom::NOT_FROM_PARSER);
   virtual ~HTMLSharedObjectElement();
 
@@ -193,19 +193,6 @@ private:
    * Calls LoadObject with the correct arguments to start the plugin load.
    */
   NS_HIDDEN_(void) StartObjectLoad(bool aNotify);
-
-  void GetTypeAttrValue(nsCString &aValue) const
-  {
-    if (mNodeInfo->Equals(nsGkAtoms::applet)) {
-      aValue.AppendLiteral("application/x-java-vm");
-    }
-    else {
-      nsAutoString type;
-      GetAttr(kNameSpaceID_None, nsGkAtoms::type, type);
-
-      CopyUTF16toUTF8(type, aValue);
-    }
-  }
 
   nsIAtom *URIAttrName() const
   {

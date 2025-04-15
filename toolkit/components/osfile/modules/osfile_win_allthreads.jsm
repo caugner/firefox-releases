@@ -39,14 +39,7 @@ let LOG = SharedAll.LOG.bind(SharedAll, "Win", "allthreads");
 let Const = SharedAll.Constants.Win;
 
 // Open libc
-let libc;
-try {
-  libc = ctypes.open("kernel32.dll");
-} catch (ex) {
-  // Note: If you change the string here, please adapt consumers and
-  // tests accordingly
-  throw new Error("Could not open system library: " + ex.message);
-}
+let libc = new SharedAll.Library("libc", "kernel32.dll");
 exports.libc = libc;
 
 // Define declareFFI
@@ -56,17 +49,16 @@ exports.declareFFI = declareFFI;
 let Scope = {};
 
 // Define Error
-SharedAll.declareLazy(Scope, "FormatMessage", libc,
-  "FormatMessageW", ctypes.winapi_abi,
-  /*return*/ ctypes.uint32_t,
-  /*flags*/  ctypes.uint32_t,
-  /*source*/ ctypes.voidptr_t,
-  /*msgid*/  ctypes.uint32_t,
-  /*langid*/ ctypes.uint32_t,
-  /*buf*/    ctypes.jschar.ptr,
-  /*size*/   ctypes.uint32_t,
-  /*Arguments*/ctypes.voidptr_t
-);
+libc.declareLazy(Scope, "FormatMessage",
+                 "FormatMessageW", ctypes.winapi_abi,
+                 /*return*/ ctypes.uint32_t,
+                 /*flags*/  ctypes.uint32_t,
+                 /*source*/ ctypes.voidptr_t,
+                 /*msgid*/  ctypes.uint32_t,
+                 /*langid*/ ctypes.uint32_t,
+                 /*buf*/    ctypes.jschar.ptr,
+                 /*size*/   ctypes.uint32_t,
+                 /*Arguments*/ctypes.voidptr_t);
 
 /**
  * A File-related error.
@@ -87,14 +79,17 @@ SharedAll.declareLazy(Scope, "FormatMessage", libc,
  * @param {number=} lastError The OS-specific constant detailing the
  * reason of the error. If unspecified, this is fetched from the system
  * status.
+ * @param {string=} path The file path that manipulated. If unspecified,
+ * assign the empty string.
  *
  * @constructor
  * @extends {OS.Shared.Error}
  */
-let OSError = function OSError(operation, lastError) {
-  operation = operation || "unknown operation";
-  SharedAll.OSError.call(this, operation);
-  this.winLastError = lastError || ctypes.winLastError;
+let OSError = function OSError(operation = "unknown operation",
+                               lastError = ctypes.winLastError, path = "") {
+  operation = operation;
+  SharedAll.OSError.call(this, operation, path);
+  this.winLastError = lastError;
 };
 OSError.prototype = Object.create(SharedAll.OSError.prototype);
 OSError.prototype.toString = function toString() {
@@ -115,7 +110,8 @@ OSError.prototype.toString = function toString() {
       " while fetching system error message";
   }
   return "Win error " + this.winLastError + " during operation "
-    + this.operation + " (" + buf.readString() + ")";
+    + this.operation + (this.path? " on file " + this.path : "") +
+    " (" + buf.readString() + ")";
 };
 
 /**
@@ -165,6 +161,16 @@ Object.defineProperty(OSError.prototype, "becauseAccessDenied", {
     return this.winLastError == Const.ERROR_ACCESS_DENIED;
   }
 });
+/**
+ * |true| if the error was raised because some invalid argument was passed,
+ * |false| otherwise.
+ */
+Object.defineProperty(OSError.prototype, "becauseInvalidArgument", {
+  get: function becauseInvalidArgument() {
+    return this.winLastError == Const.ERROR_NOT_SUPPORTED ||
+           this.winLastError == Const.ERROR_BAD_ARGUMENTS;
+  }
+});
 
 /**
  * Serialize an instance of OSError to something that can be
@@ -173,7 +179,8 @@ Object.defineProperty(OSError.prototype, "becauseAccessDenied", {
 OSError.toMsg = function toMsg(error) {
   return {
     operation: error.operation,
-    winLastError: error.winLastError
+    winLastError: error.winLastError,
+    path: error.path
   };
 };
 
@@ -181,7 +188,7 @@ OSError.toMsg = function toMsg(error) {
  * Deserialize a message back to an instance of OSError
  */
 OSError.fromMsg = function fromMsg(msg) {
-  return new OSError(msg.operation, msg.winLastError);
+  return new OSError(msg.operation, msg.winLastError, msg.path);
 };
 exports.Error = OSError;
 
@@ -190,8 +197,10 @@ exports.Error = OSError;
  *
  * @constructor
  */
-let AbstractInfo = function AbstractInfo(isDir, isSymLink, size, winBirthDate,
+let AbstractInfo = function AbstractInfo(path, isDir, isSymLink, size,
+                                         winBirthDate,
                                          lastAccessDate, lastWriteDate) {
+  this._path = path;
   this._isDir = isDir;
   this._isSymLink = isSymLink;
   this._size = size;
@@ -201,6 +210,14 @@ let AbstractInfo = function AbstractInfo(isDir, isSymLink, size, winBirthDate,
 };
 
 AbstractInfo.prototype = {
+  /**
+   * The path of the file, used for error-reporting.
+   *
+   * @type {string}
+   */
+  get path() {
+    return this._path;
+  },
   /**
    * |true| if this file is a directory, |false| otherwise
    */
@@ -349,16 +366,20 @@ Type.path = Type.wstring.withName("[in] path");
 Type.out_path = Type.out_wstring.withName("[out] path");
 
 // Special constructors that need to be defined on all threads
-OSError.closed = function closed(operation) {
-  return new OSError(operation, Const.ERROR_INVALID_HANDLE);
+OSError.closed = function closed(operation, path) {
+  return new OSError(operation, Const.ERROR_INVALID_HANDLE, path);
 };
 
-OSError.exists = function exists(operation) {
-  return new OSError(operation, Const.ERROR_FILE_EXISTS);
+OSError.exists = function exists(operation, path) {
+  return new OSError(operation, Const.ERROR_FILE_EXISTS, path);
 };
 
-OSError.noSuchFile = function noSuchFile(operation) {
-  return new OSError(operation, Const.ERROR_FILE_NOT_FOUND);
+OSError.noSuchFile = function noSuchFile(operation, path) {
+  return new OSError(operation, Const.ERROR_FILE_NOT_FOUND, path);
+};
+
+OSError.invalidArgument = function invalidArgument(operation) {
+  return new OSError(operation, Const.ERROR_NOT_SUPPORTED);
 };
 
 let EXPORTED_SYMBOLS = [

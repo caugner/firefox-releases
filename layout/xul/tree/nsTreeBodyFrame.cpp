@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ContentEvents.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MathAlgorithms.h"
@@ -11,7 +12,7 @@
 
 #include "nsCOMPtr.h"
 #include "nsPresContext.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 
 #include "nsTreeBodyFrame.h"
 #include "nsTreeSelection.h"
@@ -23,7 +24,6 @@
 #include "nsIContent.h"
 #include "nsStyleContext.h"
 #include "nsIBoxObject.h"
-#include "nsAsyncDOMEvent.h"
 #include "nsIDOMDataContainerEvent.h"
 #include "nsIDOMMouseEvent.h"
 #include "nsIDOMElement.h"
@@ -2522,7 +2522,7 @@ nsTreeBodyFrame::CalcHorzWidth(const ScrollParts& aParts)
   return width;
 }
 
-NS_IMETHODIMP
+nsresult
 nsTreeBodyFrame::GetCursor(const nsPoint& aPoint,
                            nsIFrame::Cursor& aCursor)
 {
@@ -2563,7 +2563,7 @@ static uint32_t GetDropEffect(WidgetGUIEvent* aEvent)
   return action;
 }
 
-NS_IMETHODIMP
+nsresult
 nsTreeBodyFrame::HandleEvent(nsPresContext* aPresContext,
                              WidgetGUIEvent* aEvent,
                              nsEventStatus* aEventStatus)
@@ -4562,11 +4562,9 @@ nsTreeBodyFrame::FireRowCountChangedEvent(int32_t aIndex, int32_t aCount)
 
   event->SetTrusted(true);
 
-  nsRefPtr<nsAsyncDOMEvent> plevent = new nsAsyncDOMEvent(content, event);
-  if (!plevent)
-    return;
-
-  plevent->PostDOMEvent();
+  nsRefPtr<AsyncEventDispatcher> asyncDispatcher =
+    new AsyncEventDispatcher(content, event);
+  asyncDispatcher->PostDOMEvent();
 }
 
 void
@@ -4644,9 +4642,9 @@ nsTreeBodyFrame::FireInvalidateEvent(int32_t aStartRowIdx, int32_t aEndRowIdx,
 
   event->SetTrusted(true);
 
-  nsRefPtr<nsAsyncDOMEvent> plevent = new nsAsyncDOMEvent(content, event);
-  if (plevent)
-    plevent->PostDOMEvent();
+  nsRefPtr<AsyncEventDispatcher> asyncDispatcher =
+    new AsyncEventDispatcher(content, event);
+  asyncDispatcher->PostDOMEvent();
 }
 #endif
 
@@ -4654,7 +4652,7 @@ class nsOverflowChecker : public nsRunnable
 {
 public:
   nsOverflowChecker(nsTreeBodyFrame* aFrame) : mFrame(aFrame) {}
-  NS_IMETHOD Run()
+  NS_IMETHOD Run() MOZ_OVERRIDE
   {
     if (mFrame.IsAlive()) {
       nsTreeBodyFrame* tree = static_cast<nsTreeBodyFrame*>(mFrame.GetFrame());

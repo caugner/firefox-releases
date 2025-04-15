@@ -20,7 +20,7 @@ include $(topsrcdir)/build/binary-location.mk
 SYMBOLS_PATH := --symbols-path=$(DIST)/crashreporter-symbols
 
 # Usage: |make [TEST_PATH=...] [EXTRA_TEST_ARGS=...] mochitest*|.
-MOCHITESTS := mochitest-plain mochitest-chrome mochitest-a11y mochitest-ipcplugins
+MOCHITESTS := mochitest-plain mochitest-chrome mochitest-devtools mochitest-a11y mochitest-ipcplugins
 mochitest:: $(MOCHITESTS)
 
 ifndef TEST_PACKAGE_NAME
@@ -145,6 +145,10 @@ mochitest-chrome:
 	$(RUN_MOCHITEST) --chrome
 	$(CHECK_TEST_ERROR)
 
+mochitest-devtools:
+	$(RUN_MOCHITEST) --subsuite=devtools
+	$(CHECK_TEST_ERROR)
+
 mochitest-a11y:
 	$(RUN_MOCHITEST) --a11y
 	$(CHECK_TEST_ERROR)
@@ -203,10 +207,10 @@ RUN_REFTEST_B2G = rm -f ./$@.log && $(PYTHON) _tests/reftest/runreftestb2g.py \
 
 ifeq ($(OS_ARCH),WINNT) #{
 # GPU-rendered shadow layers are unsupported here
-OOP_CONTENT = --setpref=browser.tabs.remote=true --setpref=layers.acceleration.disabled=true
+OOP_CONTENT = --setpref=browser.tabs.remote=true --setpref=browser.tabs.remote.autostart=true --setpref=layers.acceleration.disabled=true
 GPU_RENDERING =
 else
-OOP_CONTENT = --setpref=browser.tabs.remote=true
+OOP_CONTENT = --setpref=browser.tabs.remote=true --setpref=browser.tabs.remote.autostart=true
 GPU_RENDERING = --setpref=layers.acceleration.force-enabled=true
 endif #}
 
@@ -280,7 +284,6 @@ crashtest-ipc-gpu:
 jstestbrowser: TESTS_PATH?=test-package-stage/jsreftest/tests/
 jstestbrowser:
 	$(MAKE) -C $(DEPTH)/config
-	$(MAKE) -C $(DEPTH)/js/src/config
 	$(MAKE) stage-jstests
 	$(call RUN_REFTEST,'$(DIST)/$(TESTS_PATH)/jstests.list' --extra-profile-file=$(DIST)/test-package-stage/jsreftest/tests/user.js)
 	$(CHECK_TEST_ERROR)
@@ -461,7 +464,7 @@ stage-xpcshell: make-stage-dir
 	$(MAKE) -C $(DEPTH)/testing/xpcshell stage-package
 
 stage-jstests: make-stage-dir
-	$(MAKE) -C $(DEPTH)/js/src/js/src/tests stage-package
+	$(MAKE) -C $(DEPTH)/js/src/tests stage-package
 
 stage-android: make-stage-dir
 ifdef MOZ_ENABLE_SZIP
@@ -539,6 +542,7 @@ stage-mozbase: make-stage-dir
   mochitest \
   mochitest-plain \
   mochitest-chrome \
+  mochitest-devtools \
   mochitest-a11y \
   mochitest-ipcplugins \
   reftest \

@@ -22,6 +22,10 @@
 #include "mozilla/ipc/MessageLink.h"
 #include "mozilla/LinkedList.h"
 
+#if defined(ANDROID) && defined(DEBUG)
+#include <android/log.h>
+#endif
+
 // WARNING: this takes into account the private, special-message-type
 // enum in ipc_channel.h.  They need to be kept in sync.
 namespace {
@@ -51,6 +55,12 @@ class NeckoParent;
 }
 
 namespace ipc {
+
+#ifdef XP_WIN
+const base::ProcessHandle kInvalidProcessHandle = INVALID_HANDLE_VALUE;
+#else
+const base::ProcessHandle kInvalidProcessHandle = -1;
+#endif
 
 class ProtocolFdMapping;
 class ProtocolCloneContext;

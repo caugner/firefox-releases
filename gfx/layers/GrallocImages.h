@@ -8,11 +8,12 @@
 
 #ifdef MOZ_WIDGET_GONK
 
-#include "mozilla/layers/AtomicRefCountedWithFinalize.h"
-#include "mozilla/layers/LayersSurfaces.h"
-#include "mozilla/gfx/Point.h"
 #include "ImageLayers.h"
 #include "ImageContainer.h"
+#include "mozilla/gfx/Point.h"
+#include "mozilla/layers/AtomicRefCountedWithFinalize.h"
+#include "mozilla/layers/FenceUtils.h"
+#include "mozilla/layers/LayersSurfaces.h"
 
 #include <ui/GraphicBuffer.h>
 
@@ -46,6 +47,16 @@ public:
     return mSurfaceDescriptor;
   }
 
+  void SetReleaseFenceHandle(const FenceHandle& aReleaseFenceHandle)
+  {
+    mReleaseFenceHandle = aReleaseFenceHandle;
+  }
+
+  const FenceHandle& GetReleaseFenceHandle() const
+  {
+    return mReleaseFenceHandle;
+  }
+
 protected:
   virtual void Unlock() {}
 
@@ -65,6 +76,7 @@ private:
 
 protected:
   SurfaceDescriptor mSurfaceDescriptor;
+  FenceHandle mReleaseFenceHandle;
 };
 
 /**
@@ -149,7 +161,7 @@ public:
 
   virtual ISharedImage* AsSharedImage() MOZ_OVERRIDE { return this; }
 
-  virtual TextureClient* GetTextureClient() MOZ_OVERRIDE;
+  virtual TextureClient* GetTextureClient(CompositableClient* aClient) MOZ_OVERRIDE;
 
   virtual uint8_t* GetBuffer()
   {

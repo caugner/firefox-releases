@@ -10,6 +10,7 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/Preferences.h"
 
+#include "gfx2DGlue.h"
 #include "gfxFT2FontList.h"
 #include "gfxImageSurface.h"
 #include "mozilla/dom/ContentChild.h"
@@ -18,8 +19,12 @@
 #include "nsIScreenManager.h"
 #include "nsILocaleService.h"
 #include "nsServiceManagerUtils.h"
-
+#include "gfxPrefs.h"
 #include "cairo.h"
+
+#ifdef MOZ_WIDGET_ANDROID
+#include "AndroidBridge.h"
+#endif
 
 #include "ft2build.h"
 #include FT_FREETYPE_H
@@ -93,7 +98,7 @@ gfxAndroidPlatform::gfxAndroidPlatform()
                        ? gfxImageFormat::RGB16_565
                        : gfxImageFormat::RGB24;
 
-    if (Preferences::GetBool("gfx.android.rgb16.force", false)) {
+    if (gfxPrefs::AndroidRGB16Force()) {
         mOffscreenFormat = gfxImageFormat::RGB16_565;
     }
 
@@ -108,26 +113,14 @@ gfxAndroidPlatform::~gfxAndroidPlatform()
 }
 
 already_AddRefed<gfxASurface>
-gfxAndroidPlatform::CreateOffscreenSurface(const gfxIntSize& size,
-                                      gfxContentType contentType)
+gfxAndroidPlatform::CreateOffscreenSurface(const IntSize& size,
+                                           gfxContentType contentType)
 {
     nsRefPtr<gfxASurface> newSurface;
-    newSurface = new gfxImageSurface(size, OptimalFormatForContent(contentType));
+    newSurface = new gfxImageSurface(ThebesIntSize(size),
+                                     OptimalFormatForContent(contentType));
 
     return newSurface.forget();
-}
-
-already_AddRefed<gfxASurface>
-gfxAndroidPlatform::OptimizeImage(gfxImageSurface *aSurface,
-                                  gfxImageFormat format)
-{
-    /* Android/Gonk have no special offscreen surfaces so we can avoid a copy */
-    if (OptimalFormatForContent(gfxASurface::ContentFromFormat(format)) ==
-        format) {
-        return nullptr;
-    }
-
-    return gfxPlatform::OptimizeImage(aSurface, format);
 }
 
 static bool
@@ -388,4 +381,17 @@ int
 gfxAndroidPlatform::GetScreenDepth() const
 {
     return mScreenDepth;
+}
+
+bool
+gfxAndroidPlatform::UseAcceleratedSkiaCanvas()
+{
+#ifdef MOZ_WIDGET_ANDROID
+    if (AndroidBridge::Bridge()->GetAPIVersion() < 11) {
+        // It's slower than software due to not having a compositing fast path
+        return false;
+    }
+#endif
+
+    return gfxPlatform::UseAcceleratedSkiaCanvas();
 }

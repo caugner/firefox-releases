@@ -6,6 +6,7 @@ package org.mozilla.gecko.tests.helpers;
 
 import static org.mozilla.gecko.tests.helpers.AssertionHelper.*;
 
+import org.mozilla.gecko.tests.components.AppMenuComponent;
 import org.mozilla.gecko.tests.components.ToolbarComponent;
 import org.mozilla.gecko.tests.UITestContext;
 import org.mozilla.gecko.tests.UITestContext.ComponentType;
@@ -22,17 +23,19 @@ final public class NavigationHelper {
     private static UITestContext sContext;
     private static Solo sSolo;
 
+    private static AppMenuComponent sAppMenu;
     private static ToolbarComponent sToolbar;
 
     protected static void init(final UITestContext context) {
         sContext = context;
         sSolo = context.getSolo();
 
+        sAppMenu = (AppMenuComponent) context.getComponent(ComponentType.APPMENU);
         sToolbar = (ToolbarComponent) context.getComponent(ComponentType.TOOLBAR);
     }
 
     public static void enterAndLoadUrl(String url) {
-        assertNotNull("url is not null", url);
+        fAssertNotNull("url is not null", url);
 
         url = adjustUrl(url);
         sToolbar.enterEditingMode()
@@ -44,7 +47,7 @@ final public class NavigationHelper {
      * Returns a new URL with the docshell HTTP server host prefix.
      */
     private static String adjustUrl(final String url) {
-        assertNotNull("url is not null", url);
+        fAssertNotNull("url is not null", url);
 
         if (url.startsWith("about:") || url.startsWith("chrome:")) {
             return url;
@@ -81,8 +84,7 @@ final public class NavigationHelper {
         WaitHelper.waitForPageLoad(new Runnable() {
             @Override
             public void run() {
-                // TODO: Press forward with APPMENU component
-                throw new UnsupportedOperationException("Not yet implemented.");
+                sAppMenu.pressMenuItem(AppMenuComponent.MenuItem.FORWARD);
             }
         });
     }

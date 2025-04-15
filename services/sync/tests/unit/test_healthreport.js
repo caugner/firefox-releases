@@ -84,7 +84,7 @@ add_task(function* test_collect() {
   day = values.days.getDay(now);
   Assert.equal(day.size, 1);
   let engine = Weave.Service.clientsEngine;
-  Assert.ok(engine, "Engine defined");
+  Assert.ok(engine);
   Assert.ok(day.has(engine.localType));
   Assert.equal(day.get(engine.localType), 1);
 
@@ -183,7 +183,7 @@ add_task(function* test_healthreporter_json() {
 
     let devices = day["org.mozilla.sync.devices"];
     let engine = Weave.Service.clientsEngine;
-    Assert.ok(engine, "Engine defined");
+    Assert.ok(engine);
     let type = engine.localType;
     Assert.ok(type);
     Assert.ok(type in devices);

@@ -7,8 +7,6 @@
 #include <sstream>
 #include <errno.h>
 
-#include "IOInterposer.h"
-#include "NSPRInterposer.h"
 #include "ProfilerIOInterposeObserver.h"
 #include "platform.h"
 #include "PlatformMacros.h"
@@ -111,9 +109,11 @@ ThreadInfo::~ThreadInfo() {
 }
 
 ProfilerMarker::ProfilerMarker(const char* aMarkerName,
-    ProfilerMarkerPayload* aPayload)
+    ProfilerMarkerPayload* aPayload,
+    float aTime)
   : mMarkerName(strdup(aMarkerName))
   , mPayload(aPayload)
+  , mTime(aTime)
 {
 }
 
@@ -125,6 +125,11 @@ ProfilerMarker::~ProfilerMarker() {
 void
 ProfilerMarker::SetGeneration(int aGenID) {
   mGenID = aGenID;
+}
+
+float
+ProfilerMarker::GetTime() {
+  return mTime;
 }
 
 template<typename Builder> void
@@ -139,6 +144,7 @@ ProfilerMarker::BuildJSObject(Builder& b, typename Builder::ArrayHandle markers)
                                               mPayload->PreparePayload(b));
     b.DefineProperty(marker, "data", markerData);
   }
+  b.DefineProperty(marker, "time", mTime);
   b.ArrayPush(markers, marker);
 }
 
@@ -470,13 +476,8 @@ void mozilla_sampler_init(void* stackTop)
   // from MOZ_PROFILER_STACK_SCAN.
   read_profiler_env_vars();
 
-  // Allow the profiler to be started using signals
-  OS::RegisterStartHandler();
-
-  // Initialize I/O interposing
-  mozilla::IOInterposer::Init();
-  // Initialize NSPR I/O Interposing
-  mozilla::InitNSPRIOInterposing();
+  // platform specific initialization
+  OS::Startup();
 
   // We can't open pref so we use an environment variable
   // to know if we should trigger the profiler on startup
@@ -524,16 +525,6 @@ void mozilla_sampler_shutdown()
   }
 
   profiler_stop();
-
-  // Unregister IO interpose observer
-  mozilla::IOInterposer::Unregister(mozilla::IOInterposeObserver::OpAll,
-                                    sInterposeObserver);
-  // mozilla_sampler_shutdown is only called at shutdown, and late-write checks
-  // might need the IO interposer, so we don't clear it. Don't worry it's
-  // designed not to report leaks.
-  // mozilla::IOInterposer::Clear();
-  mozilla::ClearNSPRIOInterposing();
-  sInterposeObserver = nullptr;
 
   Sampler::Shutdown();
 
@@ -733,12 +724,33 @@ void mozilla_sampler_stop()
 
   mozilla::IOInterposer::Unregister(mozilla::IOInterposeObserver::OpAll,
                                     sInterposeObserver);
+  sInterposeObserver = nullptr;
 
   sIsProfiling = false;
 
   nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
   if (os)
     os->NotifyObservers(nullptr, "profiler-stopped", nullptr);
+}
+
+bool mozilla_sampler_is_paused() {
+  if (Sampler::GetActiveSampler()) {
+    return Sampler::GetActiveSampler()->IsPaused();
+  } else {
+    return false;
+  }
+}
+
+void mozilla_sampler_pause() {
+  if (Sampler::GetActiveSampler()) {
+    Sampler::GetActiveSampler()->SetPaused(true);
+  }
+}
+
+void mozilla_sampler_resume() {
+  if (Sampler::GetActiveSampler()) {
+    Sampler::GetActiveSampler()->SetPaused(false);
+  }
 }
 
 bool mozilla_sampler_is_active()
@@ -896,7 +908,8 @@ void mozilla_sampler_add_marker(const char *aMarker, ProfilerMarkerPayload *aPay
   if (!stack) {
     return;
   }
-  stack->addMarker(aMarker, payload.forget());
+  TimeDuration delta = TimeStamp::Now() - sStartTime;
+  stack->addMarker(aMarker, payload.forget(), static_cast<float>(delta.ToMilliseconds()));
 }
 
 // END externally visible functions

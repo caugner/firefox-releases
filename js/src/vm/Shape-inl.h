@@ -15,6 +15,7 @@
 
 #include "vm/Interpreter.h"
 #include "vm/ScopeObject.h"
+#include "vm/TypedArrayObject.h"
 
 #include "jsatominlines.h"
 #include "jscntxtinlines.h"
@@ -35,29 +36,6 @@ StackBaseShape::StackBaseShape(ThreadSafeContext *cx, const Class *clasp,
 {}
 
 inline bool
-Shape::getUserId(JSContext *cx, MutableHandleId idp) const
-{
-    const Shape *self = this;
-#ifdef DEBUG
-    {
-        SkipRoot skip(cx, &self);
-        MaybeCheckStackRoots(cx);
-    }
-#endif
-    if (self->hasShortID()) {
-        int16_t id = self->shortid();
-        if (id < 0) {
-            RootedValue v(cx, Int32Value(id));
-            return ValueToId<CanGC>(cx, v, idp);
-        }
-        idp.set(INT_TO_JSID(id));
-    } else {
-        idp.set(self->propid());
-    }
-    return true;
-}
-
-inline bool
 Shape::get(JSContext* cx, HandleObject receiver, JSObject* obj, JSObject *pobj,
            MutableHandleValue vp)
 {
@@ -68,12 +46,8 @@ Shape::get(JSContext* cx, HandleObject receiver, JSObject* obj, JSObject *pobj,
         return InvokeGetterOrSetter(cx, receiver, fval, 0, 0, vp);
     }
 
-    Rooted<Shape *> self(cx, this);
-    RootedId id(cx);
-    if (!self->getUserId(cx, &id))
-        return false;
-
-    return CallJSPropertyOp(cx, self->getterOp(), receiver, id, vp);
+    RootedId id(cx, propid());
+    return CallJSPropertyOp(cx, getterOp(), receiver, id, vp);
 }
 
 inline Shape *
@@ -124,21 +98,18 @@ Shape::set(JSContext* cx, HandleObject obj, HandleObject receiver, bool strict,
     if (attrs & JSPROP_GETTER)
         return js_ReportGetterOnlyAssignment(cx, strict);
 
-    Rooted<Shape *> self(cx, this);
-    RootedId id(cx);
-    if (!self->getUserId(cx, &id))
-        return false;
+    RootedId id(cx, propid());
 
     /*
      * |with (it) color='red';| ends up here.
      * Avoid exposing the With object to native setters.
      */
-    if (obj->is<WithObject>()) {
-        RootedObject nobj(cx, &obj->as<WithObject>().object());
-        return CallJSPropertyOpSetter(cx, self->setterOp(), nobj, id, strict, vp);
+    if (obj->is<DynamicWithObject>()) {
+        RootedObject nobj(cx, &obj->as<DynamicWithObject>().object());
+        return CallJSPropertyOpSetter(cx, setterOp(), nobj, id, strict, vp);
     }
 
-    return CallJSPropertyOpSetter(cx, self->setterOp(), obj, id, strict, vp);
+    return CallJSPropertyOpSetter(cx, setterOp(), obj, id, strict, vp);
 }
 
 /* static */ inline Shape *
@@ -232,6 +203,20 @@ AutoRooterGetterSetter::AutoRooterGetterSetter(ThreadSafeContext *cx, uint8_t at
     if (attrs & (JSPROP_GETTER | JSPROP_SETTER))
         inner.construct(cx, attrs, pgetter, psetter);
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+}
+
+static inline uint8_t
+GetShapeAttributes(JSObject *obj, Shape *shape)
+{
+    JS_ASSERT(obj->isNative());
+
+    if (IsImplicitDenseOrTypedArrayElement(shape)) {
+        if (obj->is<TypedArrayObject>())
+            return JSPROP_ENUMERATE | JSPROP_PERMANENT;
+        return JSPROP_ENUMERATE;
+    }
+
+    return shape->attributes();
 }
 
 } /* namespace js */

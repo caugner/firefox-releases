@@ -16,7 +16,6 @@
 
 #include "nsTextFragment.h"
 #include "nsError.h"
-#include "nsEventListenerManager.h"
 #include "mozilla/dom/Element.h"
 #include "nsCycleCollectionParticipant.h"
 
@@ -70,7 +69,8 @@ public:
 
   NS_DECL_SIZEOF_EXCLUDING_THIS
 
-  nsGenericDOMDataNode(already_AddRefed<nsINodeInfo> aNodeInfo);
+  nsGenericDOMDataNode(already_AddRefed<nsINodeInfo>& aNodeInfo);
+  nsGenericDOMDataNode(already_AddRefed<nsINodeInfo>&& aNodeInfo);
   virtual ~nsGenericDOMDataNode();
 
   virtual void GetNodeValueInternal(nsAString& aNodeValue) MOZ_OVERRIDE;
@@ -161,10 +161,13 @@ public:
   virtual mozilla::dom::ShadowRoot *GetContainingShadow() const MOZ_OVERRIDE;
   virtual mozilla::dom::ShadowRoot *GetShadowRoot() const MOZ_OVERRIDE;
   virtual void SetShadowRoot(mozilla::dom::ShadowRoot* aShadowRoot) MOZ_OVERRIDE;
-  virtual nsIContent *GetXBLInsertionParent() const;
-  virtual void SetXBLInsertionParent(nsIContent* aContent);
+  virtual nsIContent *GetXBLInsertionParent() const MOZ_OVERRIDE;
+  virtual void SetXBLInsertionParent(nsIContent* aContent) MOZ_OVERRIDE;
   virtual bool IsNodeOfType(uint32_t aFlags) const MOZ_OVERRIDE;
   virtual bool IsLink(nsIURI** aURI) const MOZ_OVERRIDE;
+
+  virtual mozilla::dom::CustomElementData* GetCustomElementData() const MOZ_OVERRIDE;
+  virtual void SetCustomElementData(mozilla::dom::CustomElementData* aData) MOZ_OVERRIDE;
 
   virtual nsIAtom* DoGetID() const MOZ_OVERRIDE;
   virtual const nsAttrValue* DoGetClasses() const MOZ_OVERRIDE;

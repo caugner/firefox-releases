@@ -5,6 +5,7 @@
 #ifndef MEDIAENGINE_H_
 #define MEDIAENGINE_H_
 
+#include "mozilla/RefPtr.h"
 #include "nsIDOMFile.h"
 #include "DOMMediaStream.h"
 #include "MediaStreamGraph.h"
@@ -35,9 +36,10 @@ enum {
   kAudioTrack = 2
 };
 
-class MediaEngine
+class MediaEngine : public RefCounted<MediaEngine>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(MediaEngine)
   virtual ~MediaEngine() {}
 
   static const int DEFAULT_VIDEO_FPS = 30;
@@ -45,7 +47,6 @@ public:
   static const int DEFAULT_VIDEO_WIDTH = 640;
   static const int DEFAULT_VIDEO_HEIGHT = 480;
   static const int DEFAULT_AUDIO_TIMER_MS = 10;
-  static const bool DEFAULT_LOAD_ADAPT = false;
 
   /* Populate an array of video sources in the nsTArray. Also include devices
    * that are currently unavailable. */
@@ -131,7 +132,6 @@ struct MediaEnginePrefs {
   int32_t mHeight;
   int32_t mFPS;
   int32_t mMinFPS;
-  bool mLoadAdapt;
 };
 
 class MediaEngineVideoSource : public MediaEngineSource

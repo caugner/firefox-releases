@@ -137,10 +137,10 @@ public:
     }
   }
 
-  virtual void ProduceAudioBlock(AudioNodeStream* aStream,
-                                 const AudioChunk& aInput,
-                                 AudioChunk* aOutput,
-                                 bool* aFinished) MOZ_OVERRIDE
+  virtual void ProcessBlock(AudioNodeStream* aStream,
+                            const AudioChunk& aInput,
+                            AudioChunk* aOutput,
+                            bool* aFinished) MOZ_OVERRIDE
   {
     float inputBuffer[WEBAUDIO_BLOCK_SIZE];
 
@@ -296,6 +296,10 @@ BiquadFilterNode::GetFrequencyResponse(const Float32Array& aFrequencyHz,
                                        const Float32Array& aMagResponse,
                                        const Float32Array& aPhaseResponse)
 {
+  aFrequencyHz.ComputeLengthAndData();
+  aMagResponse.ComputeLengthAndData();
+  aPhaseResponse.ComputeLengthAndData();
+
   uint32_t length = std::min(std::min(aFrequencyHz.Length(), aMagResponse.Length()),
                              aPhaseResponse.Length());
   if (!length) {

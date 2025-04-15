@@ -20,11 +20,29 @@
 #include "mozilla/layers/ShadowLayers.h"  // for ShadowLayerForwarder
 #include "mozilla/layers/SharedPlanarYCbCrImage.h"
 #include "mozilla/layers/YCbCrImageDataSerializer.h"
-#include "mozilla/layers/PTextureChild.h"
 #include "nsDebug.h"                    // for NS_ASSERTION, NS_WARNING, etc
-#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
+#include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR, etc
 #include "ImageContainer.h"             // for PlanarYCbCrImage, etc
 #include "mozilla/gfx/2D.h"
+#include "mozilla/layers/TextureClientOGL.h"
+
+#ifdef XP_WIN
+#include "mozilla/layers/TextureD3D9.h"
+#include "mozilla/layers/TextureD3D11.h"
+#include "gfxWindowsPlatform.h"
+#include "gfx2DGlue.h"
+#endif
+#ifdef MOZ_X11
+#include "mozilla/layers/TextureClientX11.h"
+#ifdef GL_PROVIDER_GLX
+#include "GLXLibrary.h"
+#endif
+#endif
+
+#ifdef MOZ_WIDGET_GONK
+#include <cutils/properties.h>
+#include "mozilla/layers/GrallocTextureClient.h"
+#endif
 
 #ifdef MOZ_ANDROID_OMTC
 #  include "gfxReusableImageSurfaceWrapper.h"
@@ -32,6 +50,12 @@
 #else
 #  include "gfxReusableSharedImageSurfaceWrapper.h"
 #  include "gfxSharedImageSurface.h"
+#endif
+
+#if 0
+#define RECYCLE_LOG(...) printf_stderr(__VA_ARGS__)
+#else
+#define RECYCLE_LOG(...) do { } while (0)
 #endif
 
 using namespace mozilla::gl;
@@ -55,6 +79,7 @@ class TextureChild : public PTextureChild
                    , public AtomicRefCounted<TextureChild>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(TextureChild)
   TextureChild()
   : mForwarder(nullptr)
   , mTextureData(nullptr)
@@ -70,6 +95,28 @@ public:
   }
 
   bool Recv__delete__() MOZ_OVERRIDE;
+
+  bool RecvCompositorRecycle(const MaybeFenceHandle& aFence)
+  {
+    RECYCLE_LOG("Receive recycle %p (%p)\n", mTextureClient, mWaitForRecycle.get());
+    if (aFence.type() != aFence.Tnull_t) {
+      FenceHandle fence = aFence.get_FenceHandle();
+      if (fence.IsValid() && mTextureClient) {
+        mTextureClient->SetReleaseFenceHandle(aFence);
+        // HWC might not provide Fence.
+        // In this case, HWC implicitly handles buffer's fence.
+      }
+    }
+    mWaitForRecycle = nullptr;
+    return true;
+  }
+
+  void WaitForCompositorRecycle()
+  {
+    mWaitForRecycle = mTextureClient;
+    RECYCLE_LOG("Wait for recycle %p\n", mWaitForRecycle.get());
+    SendClientRecycle();
+  }
 
   /**
    * Only used during the deallocation phase iff we need synchronization between
@@ -108,7 +155,8 @@ private:
     Release();
   }
 
-  CompositableForwarder* mForwarder;
+  RefPtr<CompositableForwarder> mForwarder;
+  RefPtr<TextureClient> mWaitForRecycle;
   TextureClientData* mTextureData;
   TextureClient* mTextureClient;
   bool mIPCOpen;
@@ -119,6 +167,7 @@ private:
 void
 TextureChild::DeleteTextureData()
 {
+  mWaitForRecycle = nullptr;
   if (mTextureData) {
     mTextureData->DeallocateSharedData(GetAllocator());
     delete mTextureData;
@@ -139,6 +188,7 @@ TextureChild::ActorDestroy(ActorDestroyReason why)
   if (mTextureClient) {
     mTextureClient->mActor = nullptr;
   }
+  mWaitForRecycle = nullptr;
 }
 
 // static
@@ -158,11 +208,27 @@ TextureClient::DestroyIPDLActor(PTextureChild* actor)
   return true;
 }
 
+// static
+TextureClient*
+TextureClient::AsTextureClient(PTextureChild* actor)
+{
+  return actor ? static_cast<TextureChild*>(actor)->mTextureClient : nullptr;
+}
+
+void
+TextureClient::WaitForCompositorRecycle()
+{
+  mActor->WaitForCompositorRecycle();
+}
+
 bool
 TextureClient::InitIPDLActor(CompositableForwarder* aForwarder)
 {
-  MOZ_ASSERT(!mActor);
   MOZ_ASSERT(aForwarder);
+  if (mActor && mActor->GetForwarder() == aForwarder) {
+    return true;
+  }
+  MOZ_ASSERT(!mActor, "Cannot use a texture on several IPC channels.");
 
   SurfaceDescriptor desc;
   if (!ToSurfaceDescriptor(desc)) {
@@ -182,6 +248,137 @@ TextureClient::GetIPDLActor()
 {
   return mActor;
 }
+
+#ifdef MOZ_WIDGET_GONK
+static bool
+DisableGralloc(SurfaceFormat aFormat, const gfx::IntSize& aSizeHint)
+{
+  if (aFormat == gfx::SurfaceFormat::A8) {
+    return true;
+  }
+
+#if ANDROID_VERSION <= 15
+  // Adreno 200 has a problem of drawing gralloc buffer width less than 64 and
+  // drawing gralloc buffer with a height 9px-16px.
+  // See Bug 983971.
+  if (aSizeHint.width < 64 || aSizeHint.height < 32) {
+    return true;
+  }
+
+  static bool checkedDevice = false;
+  static bool disableGralloc = false;
+
+  if (!checkedDevice) {
+    char propValue[PROPERTY_VALUE_MAX];
+    property_get("ro.product.device", propValue, "None");
+
+    if (strcmp("crespo",propValue) == 0) {
+      NS_WARNING("Nexus S has issues with gralloc, falling back to shmem");
+      disableGralloc = true;
+    }
+
+    checkedDevice = true;
+  }
+
+  if (disableGralloc) {
+    return true;
+  }
+  return false;
+#else
+  return false;
+#endif
+}
+#endif
+
+// static
+TemporaryRef<TextureClient>
+TextureClient::CreateTextureClientForDrawing(ISurfaceAllocator* aAllocator,
+                                             SurfaceFormat aFormat,
+                                             TextureFlags aTextureFlags,
+                                             const gfx::IntSize& aSizeHint)
+{
+  RefPtr<TextureClient> result;
+
+#ifdef XP_WIN
+  LayersBackend parentBackend = aAllocator->GetCompositorBackendType();
+  if (parentBackend == LayersBackend::LAYERS_D3D11 && gfxWindowsPlatform::GetPlatform()->GetD2DDevice() &&
+      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
+    result = new TextureClientD3D11(aFormat, aTextureFlags);
+  }
+  if (parentBackend == LayersBackend::LAYERS_D3D9 &&
+      aAllocator->IsSameProcess() &&
+      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
+    if (!gfxWindowsPlatform::GetPlatform()->GetD3D9Device()) {
+      result = new DIBTextureClientD3D9(aFormat, aTextureFlags);
+    } else {
+      result = new CairoTextureClientD3D9(aFormat, aTextureFlags);
+    }
+  }
+#endif
+
+#ifdef MOZ_X11
+  LayersBackend parentBackend = aAllocator->GetCompositorBackendType();
+  gfxSurfaceType type =
+    gfxPlatform::GetPlatform()->ScreenReferenceSurface()->GetType();
+
+  if (parentBackend == LayersBackend::LAYERS_BASIC &&
+      type == gfxSurfaceType::Xlib &&
+      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK))
+  {
+    result = new TextureClientX11(aFormat, aTextureFlags);
+  }
+#ifdef GL_PROVIDER_GLX
+#if 0
+  // Bug 977963: Disabled for black layers
+  if (parentBackend == LayersBackend::LAYERS_OPENGL &&
+      type == gfxSurfaceType::Xlib &&
+      !(aTextureFlags & TEXTURE_ALLOC_FALLBACK) &&
+      aFormat != SurfaceFormat::A8 &&
+      gl::sGLXLibrary.UseTextureFromPixmap())
+  {
+    result = new TextureClientX11(aFormat, aTextureFlags);
+  }
+#endif
+#endif
+#endif
+
+#ifdef MOZ_WIDGET_GONK
+  if (!DisableGralloc(aFormat, aSizeHint)) {
+    // Don't allow Gralloc texture clients to exceed the maximum texture size.
+    // BufferTextureClients have code to handle tiling the surface client-side.
+    int32_t maxTextureSize = aAllocator->GetMaxTextureSize();
+    if (aSizeHint.width <= maxTextureSize && aSizeHint.height <= maxTextureSize) {
+      result = new GrallocTextureClientOGL(aAllocator, aFormat, aTextureFlags);
+    }
+  }
+#endif
+
+  // Can't do any better than a buffer texture client.
+  if (!result) {
+    result = CreateBufferTextureClient(aAllocator, aFormat, aTextureFlags);
+  }
+
+  MOZ_ASSERT(!result || result->AsTextureClientDrawTarget(),
+             "Not a TextureClientDrawTarget?");
+  return result;
+}
+
+// static
+TemporaryRef<BufferTextureClient>
+TextureClient::CreateBufferTextureClient(ISurfaceAllocator* aAllocator,
+                                         SurfaceFormat aFormat,
+                                         TextureFlags aTextureFlags)
+{
+  if (gfxPlatform::GetPlatform()->PreferMemoryOverShmem()) {
+    RefPtr<BufferTextureClient> result = new MemoryTextureClient(aAllocator, aFormat,
+                                                                 aTextureFlags);
+    return result.forget();
+  }
+  RefPtr<BufferTextureClient> result = new ShmemTextureClient(aAllocator, aFormat,
+                                                              aTextureFlags);
+  return result.forget();
+}
+
 
 class ShmemTextureClientData : public TextureClientData
 {
@@ -219,7 +416,7 @@ public:
   ~MemoryTextureClientData()
   {
     MOZ_ASSERT(!mBuffer, "Forgot to deallocate the shared texture data?");
-    MOZ_COUNT_CTOR(MemoryTextureClientData);
+    MOZ_COUNT_DTOR(MemoryTextureClientData);
   }
 
   virtual void DeallocateSharedData(ISurfaceAllocator*)
@@ -286,6 +483,30 @@ void TextureClient::ForceRemove()
   MarkInvalid();
 }
 
+bool TextureClient::CopyToTextureClient(TextureClient* aTarget,
+                                        const gfx::IntRect* aRect,
+                                        const gfx::IntPoint* aPoint)
+{
+  MOZ_ASSERT(IsLocked());
+  MOZ_ASSERT(aTarget->IsLocked());
+
+  if (!aTarget->AsTextureClientDrawTarget() || !AsTextureClientDrawTarget()) {
+    return false;
+  }
+
+  RefPtr<DrawTarget> destinationTarget = aTarget->AsTextureClientDrawTarget()->GetAsDrawTarget();
+  RefPtr<DrawTarget> sourceTarget = AsTextureClientDrawTarget()->GetAsDrawTarget();
+  RefPtr<gfx::SourceSurface> source = sourceTarget->Snapshot();
+  destinationTarget->CopySurface(source,
+                                 aRect ? *aRect : gfx::IntRect(gfx::IntPoint(0, 0), GetSize()),
+                                 aPoint ? *aPoint : gfx::IntPoint(0, 0));
+  destinationTarget = nullptr;
+  source = nullptr;
+  sourceTarget = nullptr;
+
+  return true;
+}
+
 void
 TextureClient::Finalize()
 {
@@ -294,11 +515,14 @@ TextureClient::Finalize()
   RefPtr<TextureChild> actor = mActor;
 
   if (actor) {
-    // this will call ForceRemove in the right thread, using a sync proxy if needed
-    actor->GetForwarder()->RemoveTexture(this);
-
-    // The actor has a raw pointer to us, actor->mTextureClient. Null it before we die.
+    // The actor has a raw pointer to us, actor->mTextureClient. 
+    // Null it before RemoveTexture calls to avoid invalid actor->mTextureClient
+    // when calling TextureChild::ActorDestroy()
     actor->mTextureClient = nullptr;
+    // this will call ForceRemove in the right thread, using a sync proxy if needed
+    if (actor->GetForwarder()) {
+      actor->GetForwarder()->RemoveTexture(this);
+    }
   }
 }
 
@@ -328,12 +552,6 @@ ShmemTextureClient::ToSurfaceDescriptor(SurfaceDescriptor& aDescriptor)
   return true;
 }
 
-ISurfaceAllocator*
-ShmemTextureClient::GetAllocator() const
-{
-  return mCompositable->GetForwarder();
-}
-
 bool
 ShmemTextureClient::Allocate(uint32_t aSize)
 {
@@ -360,10 +578,10 @@ ShmemTextureClient::GetBufferSize() const
   return mShmem.Size<uint8_t>();
 }
 
-ShmemTextureClient::ShmemTextureClient(CompositableClient* aCompositable,
+ShmemTextureClient::ShmemTextureClient(ISurfaceAllocator* aAllocator,
                                        gfx::SurfaceFormat aFormat,
                                        TextureFlags aFlags)
-  : BufferTextureClient(aCompositable, aFormat, aFlags)
+  : BufferTextureClient(aAllocator, aFormat, aFlags)
   , mAllocated(false)
 {
   MOZ_COUNT_CTOR(ShmemTextureClient);
@@ -375,7 +593,7 @@ ShmemTextureClient::~ShmemTextureClient()
   if (ShouldDeallocateInDestructor()) {
     // if the buffer has never been shared we must deallocate it or ir would
     // leak.
-    mCompositable->GetForwarder()->DeallocShmem(mShmem);
+    GetAllocator()->DeallocShmem(mShmem);
   }
 }
 
@@ -406,10 +624,10 @@ MemoryTextureClient::Allocate(uint32_t aSize)
   return true;
 }
 
-MemoryTextureClient::MemoryTextureClient(CompositableClient* aCompositable,
+MemoryTextureClient::MemoryTextureClient(ISurfaceAllocator* aAllocator,
                                          gfx::SurfaceFormat aFormat,
                                          TextureFlags aFlags)
-  : BufferTextureClient(aCompositable, aFormat, aFlags)
+  : BufferTextureClient(aAllocator, aFormat, aFlags)
   , mBuffer(nullptr)
   , mBufSize(0)
 {
@@ -427,11 +645,11 @@ MemoryTextureClient::~MemoryTextureClient()
   }
 }
 
-BufferTextureClient::BufferTextureClient(CompositableClient* aCompositable,
+BufferTextureClient::BufferTextureClient(ISurfaceAllocator* aAllocator,
                                          gfx::SurfaceFormat aFormat,
                                          TextureFlags aFlags)
   : TextureClient(aFlags)
-  , mCompositable(aCompositable)
+  , mAllocator(aAllocator)
   , mFormat(aFormat)
   , mUsingFallbackDrawTarget(false)
   , mLocked(false)
@@ -440,6 +658,12 @@ BufferTextureClient::BufferTextureClient(CompositableClient* aCompositable,
 BufferTextureClient::~BufferTextureClient()
 {}
 
+ISurfaceAllocator*
+BufferTextureClient::GetAllocator() const
+{
+  return mAllocator;
+}
+
 bool
 BufferTextureClient::UpdateSurface(gfxASurface* aSurface)
 {
@@ -447,7 +671,7 @@ BufferTextureClient::UpdateSurface(gfxASurface* aSurface)
   MOZ_ASSERT(!IsImmutable());
   MOZ_ASSERT(IsValid());
 
-  ImageDataSerializer serializer(GetBuffer());
+  ImageDataSerializer serializer(GetBuffer(), GetBufferSize());
   if (!serializer.IsValid()) {
     return false;
   }
@@ -485,7 +709,7 @@ BufferTextureClient::GetAsSurface()
 {
   MOZ_ASSERT(IsValid());
 
-  ImageDataSerializer serializer(GetBuffer());
+  ImageDataSerializer serializer(GetBuffer(), GetBufferSize());
   if (!serializer.IsValid()) {
     return nullptr;
   }
@@ -512,7 +736,7 @@ BufferTextureClient::AllocateForSurface(gfx::IntSize aSize, TextureAllocationFla
     memset(GetBuffer(), 0, bufSize);
   }
 
-  ImageDataSerializer serializer(GetBuffer());
+  ImageDataSerializer serializer(GetBuffer(), GetBufferSize());
   serializer.InitializeBufferInfo(aSize, mFormat);
   mSize = aSize;
   return true;
@@ -529,7 +753,7 @@ BufferTextureClient::GetAsDrawTarget()
     return mDrawTarget;
   }
 
-  ImageDataSerializer serializer(GetBuffer());
+  ImageDataSerializer serializer(GetBuffer(), GetBufferSize());
   if (!serializer.IsValid()) {
     return nullptr;
   }
@@ -563,8 +787,8 @@ BufferTextureClient::Lock(OpenMode aMode)
   // XXX - Turn this into a fatal assertion as soon as Bug 952507 is fixed
   NS_WARN_IF_FALSE(!mLocked, "The TextureClient is already Locked!");
   mOpenMode = aMode;
-  mLocked = true;
-  return IsValid() && IsAllocated();
+  mLocked = IsValid() && IsAllocated();;
+  return mLocked;
 }
 
 void
@@ -586,7 +810,7 @@ BufferTextureClient::Unlock()
     // memory.
     RefPtr<SourceSurface> snapshot = mDrawTarget->Snapshot();
     RefPtr<DataSourceSurface> surface = snapshot->GetDataSurface();
-    ImageDataSerializer serializer(GetBuffer());
+    ImageDataSerializer serializer(GetBuffer(), GetBufferSize());
     if (!serializer.IsValid() || serializer.GetSize() != surface->GetSize()) {
       NS_WARNING("Could not write the data back into the texture.");
       mDrawTarget = nullptr;
@@ -614,7 +838,7 @@ BufferTextureClient::UpdateYCbCr(const PlanarYCbCrData& aData)
   MOZ_ASSERT(IsValid());
   MOZ_ASSERT(aData.mCbSkip == aData.mCrSkip);
 
-  YCbCrImageDataSerializer serializer(GetBuffer());
+  YCbCrImageDataSerializer serializer(GetBuffer(), GetBufferSize());
   MOZ_ASSERT(serializer.IsValid());
   if (!serializer.CopyData(aData.mYChannel, aData.mCbChannel, aData.mCrChannel,
                            aData.mYSize, aData.mYStride,
@@ -644,7 +868,7 @@ BufferTextureClient::AllocateForYCbCr(gfx::IntSize aYSize,
   if (!Allocate(bufSize)) {
     return false;
   }
-  YCbCrImageDataSerializer serializer(GetBuffer());
+  YCbCrImageDataSerializer serializer(GetBuffer(), GetBufferSize());
   serializer.InitializeBufferInfo(aYSize,
                                   aCbCrSize,
                                   aStereoMode);
@@ -967,7 +1191,7 @@ AutoLockYCbCrClient::Update(PlanarYCbCrImage* aImage)
 
   ipc::Shmem& shmem = mDescriptor->get_YCbCrImage().data();
 
-  YCbCrImageDataSerializer serializer(shmem.get<uint8_t>());
+  YCbCrImageDataSerializer serializer(shmem.get<uint8_t>(), shmem.Size<uint8_t>());
   if (!serializer.CopyData(data->mYChannel, data->mCbChannel, data->mCrChannel,
                            data->mYSize, data->mYStride,
                            data->mCbCrSize, data->mCbCrStride,
@@ -996,7 +1220,7 @@ bool AutoLockYCbCrClient::EnsureDeprecatedTextureClient(PlanarYCbCrImage* aImage
     needsAllocation = true;
   } else {
     ipc::Shmem& shmem = mDescriptor->get_YCbCrImage().data();
-    YCbCrImageDataSerializer serializer(shmem.get<uint8_t>());
+    YCbCrImageDataSerializer serializer(shmem.get<uint8_t>(), shmem.Size<uint8_t>());
     if (serializer.GetYSize() != data->mYSize ||
         serializer.GetCbCrSize() != data->mCbCrSize) {
       needsAllocation = true;
@@ -1017,7 +1241,7 @@ bool AutoLockYCbCrClient::EnsureDeprecatedTextureClient(PlanarYCbCrImage* aImage
     return false;
   }
 
-  YCbCrImageDataSerializer serializer(shmem.get<uint8_t>());
+  YCbCrImageDataSerializer serializer(shmem.get<uint8_t>(), shmem.Size<uint8_t>());
   serializer.InitializeBufferInfo(data->mYSize,
                                   data->mCbCrSize,
                                   data->mStereoMode);

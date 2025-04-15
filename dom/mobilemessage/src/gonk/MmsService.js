@@ -39,7 +39,7 @@ const kSmsReadSuccessObserverTopic       = "sms-read-success";
 const kSmsReadErrorObserverTopic         = "sms-read-error";
 
 const NS_XPCOM_SHUTDOWN_OBSERVER_ID      = "xpcom-shutdown";
-const kNetworkInterfaceStateChangedTopic = "network-interface-state-changed";
+const kNetworkConnStateChangedTopic      = "network-connection-state-changed";
 const kMobileMessageDeletedObserverTopic = "mobile-message-deleted";
 
 const kPrefRilRadioDisabled              = "ril.radio.disabled";
@@ -151,6 +151,40 @@ XPCOMUtils.defineLazyGetter(this, "MMS", function() {
   return MMS;
 });
 
+// Internal Utilities
+
+/**
+ * Return default service Id for MMS.
+ */
+function getDefaultServiceId() {
+  let id = Services.prefs.getIntPref(kPrefDefaultServiceId);
+  let numRil = Services.prefs.getIntPref(kPrefRilNumRadioInterfaces);
+
+  if (id >= numRil || id < 0) {
+    id = 0;
+  }
+
+  return id;
+}
+
+/**
+ * Return Radio disabled state.
+ */
+function getRadioDisabledState() {
+  let state;
+  try {
+    state = Services.prefs.getBoolPref(kPrefRilRadioDisabled);
+  } catch (e) {
+    if (DEBUG) debug("Getting preference 'ril.radio.disabled' fails.");
+    state = false;
+  }
+
+  return state;
+}
+
+/**
+ * Helper Class to control MMS Data Connection.
+ */
 function MmsConnection(aServiceId) {
   this.serviceId = aServiceId;
   this.radioInterface = gRil.getRadioInterface(aServiceId);
@@ -192,9 +226,6 @@ MmsConnection.prototype = {
     return proxyInfo;
   },
 
-  // For keeping track of the radio status.
-  radioDisabled: false,
-  settings: [kPrefRilRadioDisabled],
   connected: false,
 
   //A queue to buffer the MMS HTTP requests when the MMS network
@@ -233,19 +264,9 @@ MmsConnection.prototype = {
   },
 
   init: function() {
-    Services.obs.addObserver(this, kNetworkInterfaceStateChangedTopic,
+    Services.obs.addObserver(this, kNetworkConnStateChangedTopic,
                              false);
     Services.obs.addObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);
-    this.settings.forEach(function(name) {
-      Services.prefs.addObserver(name, this, false);
-    }, this);
-
-    try {
-      this.radioDisabled = Services.prefs.getBoolPref(kPrefRilRadioDisabled);
-    } catch (e) {
-      if (DEBUG) debug("Getting preference 'ril.radio.disabled' fails.");
-      this.radioDisabled = false;
-    }
 
     this.connected = this.radioInterface.getDataCallStateByType("mms") ==
       Ci.nsINetworkInterface.NETWORK_STATE_CONNECTED;
@@ -315,7 +336,7 @@ MmsConnection.prototype = {
   getIccId: function() {
     let iccInfo = this.radioInterface.rilContext.iccInfo;
 
-    if (!iccInfo || !(iccInfo instanceof Ci.nsIDOMMozGsmIccInfo)) {
+    if (!iccInfo) {
       return null;
     }
 
@@ -353,7 +374,7 @@ MmsConnection.prototype = {
       this.pendingCallbacks.push(callback);
 
       let errorStatus;
-      if (this.radioDisabled) {
+      if (getRadioDisabledState()) {
         if (DEBUG) debug("Error! Radio is disabled when sending MMS.");
         errorStatus = _HTTP_STATUS_RADIO_DISABLED;
       } else if (this.radioInterface.rilContext.cardState != "ready") {
@@ -406,7 +427,7 @@ MmsConnection.prototype = {
 
   shutdown: function() {
     Services.obs.removeObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID);
-    Services.obs.removeObserver(this, kNetworkInterfaceStateChangedTopic);
+    Services.obs.removeObserver(this, kNetworkConnStateChangedTopic);
 
     this.connectTimer.cancel();
     this.flushPendingCallbacks(_HTTP_STATUS_RADIO_DISABLED);
@@ -418,7 +439,7 @@ MmsConnection.prototype = {
 
   observe: function(subject, topic, data) {
     switch (topic) {
-      case kNetworkInterfaceStateChangedTopic: {
+      case kNetworkConnStateChangedTopic: {
         // The network for MMS connection must be nsIRilNetworkInterface.
         if (!(subject instanceof Ci.nsIRilNetworkInterface)) {
           return;
@@ -455,18 +476,6 @@ MmsConnection.prototype = {
                          "MMS requests: number: " + this.pendingCallbacks.length);
         this.connectTimer.cancel();
         this.flushPendingCallbacks(_HTTP_STATUS_ACQUIRE_CONNECTION_SUCCESS)
-        break;
-      }
-      case NS_PREFBRANCH_PREFCHANGE_TOPIC_ID: {
-        if (data == kPrefRilRadioDisabled) {
-          try {
-            this.radioDisabled = Services.prefs.getBoolPref(kPrefRilRadioDisabled);
-          } catch (e) {
-            if (DEBUG) debug("Updating preference 'ril.radio.disabled' fails.");
-            this.radioDisabled = false;
-          }
-          return;
-        }
         break;
       }
       case NS_XPCOM_SHUTDOWN_OBSERVER_ID: {
@@ -940,13 +949,8 @@ CancellableTransaction.prototype = {
       }
       case NS_PREFBRANCH_PREFCHANGE_TOPIC_ID: {
         if (data == kPrefRilRadioDisabled) {
-          try {
-            let radioDisabled = Services.prefs.getBoolPref(kPrefRilRadioDisabled);
-            if (radioDisabled) {
-              this.cancelRunning(_MMS_ERROR_RADIO_DISABLED);
-            }
-          } catch (e) {
-            if (DEBUG) debug("Failed to get preference of 'ril.radio.disabled'.");
+          if (getRadioDisabledState()) {
+            this.cancelRunning(_MMS_ERROR_RADIO_DISABLED);
           }
         } else if (data === kPrefDefaultServiceId &&
                    this.serviceId != getDefaultServiceId()) {
@@ -1350,17 +1354,6 @@ AcknowledgeTransaction.prototype = {
   }
 };
 
-function getDefaultServiceId() {
-  let id = Services.prefs.getIntPref(kPrefDefaultServiceId);
-  let numRil = Services.prefs.getIntPref(kPrefRilNumRadioInterfaces);
-
-  if (id >= numRil || id < 0) {
-    id = 0;
-  }
-
-  return id;
-}
-
 /**
  * Return M-Read-Rec.ind back to MMSC
  *
@@ -1578,20 +1571,22 @@ MmsService.prototype = {
     // because the system message mechamism will rewrap the object
     // based on the content window, which needs to know the properties.
     gSystemMessenger.broadcastMessage(aName, {
-      type:          aDomMessage.type,
-      id:            aDomMessage.id,
-      threadId:      aDomMessage.threadId,
-      delivery:      aDomMessage.delivery,
-      deliveryInfo:  aDomMessage.deliveryInfo,
-      sender:        aDomMessage.sender,
-      receivers:     aDomMessage.receivers,
-      timestamp:     aDomMessage.timestamp,
-      sentTimestamp: aDomMessage.sentTimestamp,
-      read:          aDomMessage.read,
-      subject:       aDomMessage.subject,
-      smil:          aDomMessage.smil,
-      attachments:   aDomMessage.attachments,
-      expiryDate:    aDomMessage.expiryDate
+      iccId:               aDomMessage.iccId,
+      type:                aDomMessage.type,
+      id:                  aDomMessage.id,
+      threadId:            aDomMessage.threadId,
+      delivery:            aDomMessage.delivery,
+      deliveryInfo:        aDomMessage.deliveryInfo,
+      sender:              aDomMessage.sender,
+      receivers:           aDomMessage.receivers,
+      timestamp:           aDomMessage.timestamp,
+      sentTimestamp:       aDomMessage.sentTimestamp,
+      read:                aDomMessage.read,
+      subject:             aDomMessage.subject,
+      smil:                aDomMessage.smil,
+      attachments:         aDomMessage.attachments,
+      expiryDate:          aDomMessage.expiryDate,
+      readReportRequested: aDomMessage.readReportRequested
     });
   },
 
@@ -1695,8 +1690,7 @@ MmsService.prototype = {
         // At this point we could send a message to content to notify the user
         // that storing an incoming MMS failed, most likely due to a full disk.
         // The end user has to retrieve the MMS again.
-        if (DEBUG) debug("Could not store MMS " + domMessage.id +
-                         ", error code " + rv);
+        if (DEBUG) debug("Could not store MMS , error code " + rv);
         return;
       }
 
@@ -1778,8 +1772,7 @@ MmsService.prototype = {
     let transactionId = notification.headers["x-mms-transaction-id"];
     gMobileMessageDatabaseService.getMessageRecordByTransactionId(transactionId,
         (function(aRv, aMessageRecord) {
-      if (Ci.nsIMobileMessageCallback.SUCCESS_NO_ERROR === aRv
-          && aMessageRecord) {
+      if (Components.isSuccessCode(aRv) && aMessageRecord) {
         if (DEBUG) debug("We already got the NotificationIndication with transactionId = "
                          + transactionId + " before.");
         return;
@@ -2169,14 +2162,41 @@ MmsService.prototype = {
     gMobileMessageDatabaseService
       .saveSendingMessage(savableMessage,
                           function notifySendingResult(aRv, aDomMessage) {
+      if (!Components.isSuccessCode(aRv)) {
+        if (DEBUG) debug("Error! Fail to save sending message! rv = " + aRv);
+        aRequest.notifySendMessageFailed(
+          gMobileMessageDatabaseService.translateCrErrorToMessageCallbackError(aRv));
+        Services.obs.notifyObservers(aDomMessage, kSmsFailedObserverTopic, null);
+        return;
+      }
+
       if (DEBUG) debug("Saving sending message is done. Start to send.");
 
-      // TODO bug 832140 handle !Components.isSuccessCode(aRv)
       Services.obs.notifyObservers(aDomMessage, kSmsSendingObserverTopic, null);
 
       if (errorCode !== Ci.nsIMobileMessageCallback.SUCCESS_NO_ERROR) {
         if (DEBUG) debug("Error! The params for sending MMS are invalid.");
         sendTransactionCb(aDomMessage, errorCode, null);
+        return;
+      }
+
+      // Check radio state in prior to default service Id.
+      if (getRadioDisabledState()) {
+        if (DEBUG) debug("Error! Radio is disabled when sending MMS.");
+        sendTransactionCb(aDomMessage,
+                          Ci.nsIMobileMessageCallback.RADIO_DISABLED_ERROR,
+                          null);
+        return;
+      }
+
+      // To support DSDS, we have to stop users sending MMS when the selected
+      // SIM is not active, thus avoiding the data disconnection of the current
+      // SIM. Users have to manually swith the default SIM before sending.
+      if (mmsConnection.serviceId != self.mmsDefaultServiceId) {
+        if (DEBUG) debug("RIL service is not active to send MMS.");
+        sendTransactionCb(aDomMessage,
+                          Ci.nsIMobileMessageCallback.NON_ACTIVE_SIM_CARD_ERROR,
+                          null);
         return;
       }
 
@@ -2219,9 +2239,10 @@ MmsService.prototype = {
     if (DEBUG) debug("Retrieving message with ID " + aMessageId);
     gMobileMessageDatabaseService.getMessageRecordById(aMessageId,
         (function notifyResult(aRv, aMessageRecord, aDomMessage) {
-      if (Ci.nsIMobileMessageCallback.SUCCESS_NO_ERROR != aRv) {
-        if (DEBUG) debug("Function getMessageRecordById() return error.");
-        aRequest.notifyGetMessageFailed(aRv);
+      if (!Components.isSuccessCode(aRv)) {
+        if (DEBUG) debug("Function getMessageRecordById() return error: " + aRv);
+        aRequest.notifyGetMessageFailed(
+          gMobileMessageDatabaseService.translateCrErrorToMessageCallbackError(aRv));
         return;
       }
       if ("mms" != aMessageRecord.type) {
@@ -2360,9 +2381,9 @@ MmsService.prototype = {
             // At this point we could send a message to content to
             // notify the user that storing an incoming MMS failed, most
             // likely due to a full disk.
-            if (DEBUG) debug("Could not store MMS " + domMessage.id +
-                  ", error code " + rv);
-            aRequest.notifyGetMessageFailed(Ci.nsIMobileMessageCallback.INTERNAL_ERROR);
+            if (DEBUG) debug("Could not store MMS, error code " + rv);
+            aRequest.notifyGetMessageFailed(
+              gMobileMessageDatabaseService.translateCrErrorToMessageCallbackError(rv));
             return;
           }
 
@@ -2394,9 +2415,9 @@ MmsService.prototype = {
                                        (function(rv) {
           let success = Components.isSuccessCode(rv);
           if (!success) {
-            if (DEBUG) debug("Could not change the delivery status: MMS " +
-                             domMessage.id + ", error code " + rv);
-            aRequest.notifyGetMessageFailed(Ci.nsIMobileMessageCallback.INTERNAL_ERROR);
+            if (DEBUG) debug("Could not change the delivery status, error code " + rv);
+            aRequest.notifyGetMessageFailed(
+              gMobileMessageDatabaseService.translateCrErrorToMessageCallbackError(rv));
             return;
           }
 

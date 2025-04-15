@@ -138,7 +138,6 @@ typedef struct JSStructuredCloneWriter      JSStructuredCloneWriter;
 typedef struct JSTracer                     JSTracer;
 
 class                                       JSFlatString;
-class                                       JSStableString;  // long story
 
 #ifdef JS_THREADSAFE
 typedef struct PRCallOnceType   JSCallOnceType;
@@ -283,7 +282,6 @@ enum ThingRootKind
     THING_ROOT_SCRIPT,
     THING_ROOT_LAZY_SCRIPT,
     THING_ROOT_ID,
-    THING_ROOT_PROPERTY_ID,
     THING_ROOT_VALUE,
     THING_ROOT_TYPE,
     THING_ROOT_BINDINGS,

@@ -172,6 +172,10 @@ class MacroAssembler : public MacroAssemblerSpecific
     bool enoughMemory_;
     bool embedsNurseryPointers_;
 
+    // SPS instrumentation, only used for Ion caches.
+    mozilla::Maybe<IonInstrumentation> spsInstrumentation_;
+    jsbytecode *spsPc_;
+
   private:
     // This field is used to manage profiling instrumentation output. If
     // provided and enabled, then instrumentation will be emitted around call
@@ -212,7 +216,8 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     // This constructor should only be used when there is no IonContext active
     // (for example, Trampoline-$(ARCH).cpp and IonCaches.cpp).
-    MacroAssembler(JSContext *cx, IonScript *ion = nullptr)
+    MacroAssembler(JSContext *cx, IonScript *ion = nullptr,
+                   JSScript *script = nullptr, jsbytecode *pc = nullptr)
       : enoughMemory_(true),
         embedsNurseryPointers_(false),
         sps_(nullptr)
@@ -225,8 +230,17 @@ class MacroAssembler : public MacroAssemblerSpecific
         initWithAllocator();
         m_buffer.id = GetIonContext()->getNextAssemblerId();
 #endif
-        if (ion)
+        if (ion) {
             setFramePushed(ion->frameSize());
+            if (pc && cx->runtime()->spsProfiler.enabled()) {
+                // We have to update the SPS pc when this IC stub calls into
+                // the VM.
+                spsPc_ = pc;
+                spsInstrumentation_.construct(&cx->runtime()->spsProfiler, &spsPc_);
+                sps_ = spsInstrumentation_.addr();
+                sps_->setPushed(script);
+            }
+        }
     }
 
     // asm.js compilation handles its own IonContet-pushing
@@ -338,13 +352,13 @@ class MacroAssembler : public MacroAssemblerSpecific
     }
 
     // Branches to |label| if |reg| is false. |reg| should be a C++ bool.
-    void branchIfFalseBool(const Register &reg, Label *label) {
+    void branchIfFalseBool(Register reg, Label *label) {
         // Note that C++ bool is only 1 byte, so ignore the higher-order bits.
         branchTest32(Assembler::Zero, reg, Imm32(0xFF), label);
     }
 
     // Branches to |label| if |reg| is true. |reg| should be a C++ bool.
-    void branchIfTrueBool(const Register &reg, Label *label) {
+    void branchIfTrueBool(Register reg, Label *label) {
         // Note that C++ bool is only 1 byte, so ignore the higher-order bits.
         branchTest32(Assembler::NonZero, reg, Imm32(0xFF), label);
     }
@@ -363,10 +377,14 @@ class MacroAssembler : public MacroAssemblerSpecific
         rshiftPtr(Imm32(JSString::LENGTH_SHIFT), dest);
     }
 
-    void loadJSContext(const Register &dest) {
+    void loadSliceBounds(Register worker, Register dest) {
+        loadPtr(Address(worker, ThreadPoolWorker::offsetOfSliceBounds()), dest);
+    }
+
+    void loadJSContext(Register dest) {
         loadPtr(AbsoluteAddress(GetIonContext()->runtime->addressOfJSContext()), dest);
     }
-    void loadJitActivation(const Register &dest) {
+    void loadJitActivation(Register dest) {
         loadPtr(AbsoluteAddress(GetIonContext()->runtime->addressOfActivation()), dest);
     }
 
@@ -616,7 +634,7 @@ class MacroAssembler : public MacroAssemblerSpecific
             branch32(cond, length, Imm32(key.constant()), label);
     }
 
-    void branchTestNeedsBarrier(Condition cond, const Register &scratch, Label *label) {
+    void branchTestNeedsBarrier(Condition cond, Register scratch, Label *label) {
         JS_ASSERT(cond == Zero || cond == NonZero);
         CompileZone *zone = GetIonContext()->compartment->zone();
         movePtr(ImmPtr(zone->addressOfNeedsBarrier()), scratch);
@@ -672,7 +690,7 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     void branchNurseryPtr(Condition cond, const Address &ptr1, const ImmMaybeNurseryPtr &ptr2,
                           Label *label);
-    void moveNurseryPtr(const ImmMaybeNurseryPtr &ptr, const Register &reg);
+    void moveNurseryPtr(const ImmMaybeNurseryPtr &ptr, Register reg);
 
     void canonicalizeDouble(FloatRegister reg) {
         Label notNaN;
@@ -698,17 +716,17 @@ class MacroAssembler : public MacroAssemblerSpecific
     template<typename S, typename T>
     void storeToTypedIntArray(int arrayType, const S &value, const T &dest) {
         switch (arrayType) {
-          case ScalarTypeRepresentation::TYPE_INT8:
-          case ScalarTypeRepresentation::TYPE_UINT8:
-          case ScalarTypeRepresentation::TYPE_UINT8_CLAMPED:
+          case ScalarTypeDescr::TYPE_INT8:
+          case ScalarTypeDescr::TYPE_UINT8:
+          case ScalarTypeDescr::TYPE_UINT8_CLAMPED:
             store8(value, dest);
             break;
-          case ScalarTypeRepresentation::TYPE_INT16:
-          case ScalarTypeRepresentation::TYPE_UINT16:
+          case ScalarTypeDescr::TYPE_INT16:
+          case ScalarTypeDescr::TYPE_UINT16:
             store16(value, dest);
             break;
-          case ScalarTypeRepresentation::TYPE_INT32:
-          case ScalarTypeRepresentation::TYPE_UINT32:
+          case ScalarTypeDescr::TYPE_INT32:
+          case ScalarTypeDescr::TYPE_UINT32:
             store32(value, dest);
             break;
           default:
@@ -765,30 +783,31 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     // Emit type case branch on tag matching if the type tag in the definition
     // might actually be that type.
-    void branchEqualTypeIfNeeded(MIRType type, MDefinition *maybeDef, const Register &tag,
-                                 Label *label);
+    void branchEqualTypeIfNeeded(MIRType type, MDefinition *maybeDef, Register tag, Label *label);
 
     // Inline allocation.
-    void newGCThing(const Register &result, gc::AllocKind allocKind, Label *fail,
+    void newGCThing(Register result, Register temp, gc::AllocKind allocKind, Label *fail,
                     gc::InitialHeap initialHeap = gc::DefaultHeap);
-    void newGCThing(const Register &result, JSObject *templateObject, Label *fail,
+    void newGCThing(Register result, Register temp, JSObject *templateObject, Label *fail,
                     gc::InitialHeap initialHeap);
-    void newGCString(const Register &result, Label *fail);
-    void newGCShortString(const Register &result, Label *fail);
+    void newGCString(Register result, Register temp, Label *fail);
+    void newGCShortString(Register result, Register temp, Label *fail);
 
-    void newGCThingPar(const Register &result, const Register &cx,
-                       const Register &tempReg1, const Register &tempReg2,
+    void newGCThingPar(Register result, Register cx, Register tempReg1, Register tempReg2,
                        gc::AllocKind allocKind, Label *fail);
-    void newGCThingPar(const Register &result, const Register &cx,
-                       const Register &tempReg1, const Register &tempReg2,
+    void newGCThingPar(Register result, Register cx, Register tempReg1, Register tempReg2,
                        JSObject *templateObject, Label *fail);
-    void newGCStringPar(const Register &result, const Register &cx,
-                        const Register &tempReg1, const Register &tempReg2,
+    void newGCStringPar(Register result, Register cx, Register tempReg1, Register tempReg2,
                         Label *fail);
-    void newGCShortStringPar(const Register &result, const Register &cx,
-                             const Register &tempReg1, const Register &tempReg2,
+    void newGCShortStringPar(Register result, Register cx, Register tempReg1, Register tempReg2,
                              Label *fail);
-    void initGCThing(const Register &obj, JSObject *templateObject);
+
+    void copySlotsFromTemplate(Register obj, Register temp, const JSObject *templateObj,
+                               uint32_t start, uint32_t end);
+    void fillSlotsWithUndefined(Register obj, Register temp, const JSObject *templateObj,
+                                uint32_t start, uint32_t end);
+    void initGCSlots(Register obj, Register temp, JSObject *templateObj);
+    void initGCThing(Register obj, Register temp, JSObject *templateObj);
 
     // Compares two strings for equality based on the JSOP.
     // This checks for identical pointers, atoms and length and fails for everything else.
@@ -797,7 +816,7 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     // Checks the flags that signal that parallel code may need to interrupt or
     // abort.  Branches to fail in that case.
-    void checkInterruptFlagsPar(const Register &tempReg, Label *fail);
+    void checkInterruptFlagPar(Register tempReg, Label *fail);
 
     // If the JitCode that created this assembler needs to transition into the VM,
     // we want to store the JitCode on the stack in order to mark it during a GC.
@@ -817,6 +836,12 @@ class MacroAssembler : public MacroAssemblerSpecific
         linkExitFrame();
         Push(ImmPtr(codeVal));
         Push(ImmPtr(nullptr));
+    }
+
+    void loadThreadPool(Register pool) {
+        // JitRuntimes are tied to JSRuntimes and there is one ThreadPool per
+        // JSRuntime, so we can hardcode the ThreadPool address here.
+        movePtr(ImmPtr(GetIonContext()->runtime->addressOfThreadPool()), pool);
     }
 
     void loadForkJoinContext(Register cx, Register scratch);
@@ -879,7 +904,7 @@ class MacroAssembler : public MacroAssemblerSpecific
     }
 
     // see above comment for what is returned
-    uint32_t callIon(const Register &callee) {
+    uint32_t callIon(Register callee) {
         leaveSPSFrame();
         MacroAssemblerSpecific::callIon(callee);
         uint32_t ret = currentOffset();
@@ -1178,6 +1203,7 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     enum IntConversionInputKind {
         IntConversion_NumbersOnly,
+        IntConversion_NumbersOrBoolsOnly,
         IntConversion_Any
     };
 

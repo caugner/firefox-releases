@@ -26,11 +26,14 @@ namespace mozilla {
 #define GET_ENCODED_VIDEO_FRAME_TIMEOUT 100000 // microseconds
 
 nsresult
-OmxVideoTrackEncoder::Init(int aWidth, int aHeight, TrackRate aTrackRate)
+OmxVideoTrackEncoder::Init(int aWidth, int aHeight, int aDisplayWidth,
+                           int aDisplayHeight, TrackRate aTrackRate)
 {
   mFrameWidth = aWidth;
   mFrameHeight = aHeight;
   mTrackRate = aTrackRate;
+  mDisplayWidth = aDisplayWidth;
+  mDisplayHeight = aDisplayHeight;
 
   mEncoder = OMXCodecWrapper::CreateAVCEncoder();
   NS_ENSURE_TRUE(mEncoder, NS_ERROR_FAILURE);
@@ -112,12 +115,16 @@ OmxVideoTrackEncoder::GetEncodedTrack(EncodedFrameContainer& aData)
 
   // Send the EOS signal to OMXCodecWrapper.
   if (mEndOfStream && iter.IsEnded() && !mEosSetInEncoder) {
-    mEosSetInEncoder = true;
     uint64_t totalDurationUs = mTotalFrameDuration * USECS_PER_S / mTrackRate;
     layers::Image* img = (!mLastFrame.GetImage() || mLastFrame.GetForceBlack())
                          ? nullptr : mLastFrame.GetImage();
-    mEncoder->Encode(img, mFrameWidth, mFrameHeight, totalDurationUs,
-                     OMXCodecWrapper::BUFFER_EOS);
+    nsresult result = mEncoder->Encode(img, mFrameWidth, mFrameHeight,
+                                       totalDurationUs,
+                                       OMXCodecWrapper::BUFFER_EOS);
+    // Keep sending EOS signal until OMXVideoEncoder gets it.
+    if (result == NS_OK) {
+      mEosSetInEncoder = true;
+    }
   }
 
   // Dequeue an encoded frame from the output buffers of OMXCodecWrapper.
@@ -133,7 +140,7 @@ OmxVideoTrackEncoder::GetEncodedTrack(EncodedFrameContainer& aData)
       videoData->SetFrameType(EncodedFrame::AVC_CSD);
     } else {
       videoData->SetFrameType((outFlags & OMXCodecWrapper::BUFFER_SYNC_FRAME) ?
-                              EncodedFrame::I_FRAME : EncodedFrame::P_FRAME);
+                              EncodedFrame::AVC_I_FRAME : EncodedFrame::AVC_P_FRAME);
     }
     rv = videoData->SwapInFrameData(buffer);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -213,7 +220,7 @@ OmxAudioTrackEncoder::AppendEncodedFrames(EncodedFrameContainer& aContainer)
 
     nsRefPtr<EncodedFrame> audiodata = new EncodedFrame();
     audiodata->SetFrameType(isCSD ?
-      EncodedFrame::AAC_CSD : EncodedFrame::AUDIO_FRAME);
+      EncodedFrame::AAC_CSD : EncodedFrame::AAC_AUDIO_FRAME);
     audiodata->SetTimeStamp(outTimeUs);
     rv = audiodata->SwapInFrameData(frameData);
     NS_ENSURE_SUCCESS(rv, rv);

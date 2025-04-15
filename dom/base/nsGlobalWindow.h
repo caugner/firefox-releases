@@ -32,7 +32,7 @@
 #include "nsIScriptObjectPrincipal.h"
 #include "nsITimer.h"
 #include "nsIDOMModalContentWindow.h"
-#include "nsEventListenerManager.h"
+#include "mozilla/EventListenerManager.h"
 #include "nsIPrincipal.h"
 #include "nsSize.h"
 #include "mozFlushType.h"
@@ -106,6 +106,7 @@ namespace mozilla {
 class Selection;
 namespace dom {
 class BarProp;
+class Console;
 class Function;
 class Gamepad;
 class MediaQueryList;
@@ -266,7 +267,7 @@ public:
   nsresult Get(nsIPrincipal* aSubject, nsIVariant** aResult)
   {
     nsCOMPtr<nsIVariant> result;
-    if (aSubject->Subsumes(mOrigin)) {
+    if (aSubject->SubsumesConsideringDomain(mOrigin)) {
       result = mValue;
     } else {
       result = CreateVoidVariant();
@@ -383,11 +384,11 @@ public:
   // nsIDOMEventTarget
   NS_DECL_NSIDOMEVENTTARGET
 
-  virtual nsEventListenerManager*
-  GetExistingListenerManager() const MOZ_OVERRIDE;
+  virtual mozilla::EventListenerManager*
+    GetExistingListenerManager() const MOZ_OVERRIDE;
 
-  virtual nsEventListenerManager*
-  GetOrCreateListenerManager() MOZ_OVERRIDE;
+  virtual mozilla::EventListenerManager*
+    GetOrCreateListenerManager() MOZ_OVERRIDE;
 
   using mozilla::dom::EventTarget::RemoveEventListener;
   virtual void AddEventListener(const nsAString& aType,
@@ -474,6 +475,8 @@ public:
   already_AddRefed<nsIDOMWindow> IndexedGetter(uint32_t aIndex, bool& aFound);
 
   void GetSupportedNames(nsTArray<nsString>& aNames);
+
+  static bool IsChromeWindow(JSContext* /* unused */, JSObject* aObj);
 
   bool DoNewResolve(JSContext* aCx, JS::Handle<JSObject*> aObj,
                     JS::Handle<jsid> aId,
@@ -602,6 +605,12 @@ public:
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS_AMBIGUOUS(nsGlobalWindow,
                                                                    nsIDOMEventTarget)
 
+#ifdef DEBUG
+  // Call Unlink on this window. This may cause bad things to happen, so use
+  // with caution.
+  void RiskyUnlink();
+#endif
+
   virtual NS_HIDDEN_(JSObject*)
     GetCachedXBLPrototypeHandler(nsXBLPrototypeHandler* aKey);
 
@@ -718,13 +727,13 @@ public:
 #define EVENT(name_, id_, type_, struct_)                                     \
   mozilla::dom::EventHandlerNonNull* GetOn##name_()                           \
   {                                                                           \
-    nsEventListenerManager *elm = GetExistingListenerManager();               \
+    mozilla::EventListenerManager* elm = GetExistingListenerManager();        \
     return elm ? elm->GetEventHandler(nsGkAtoms::on##name_, EmptyString())    \
                : nullptr;                                                     \
   }                                                                           \
   void SetOn##name_(mozilla::dom::EventHandlerNonNull* handler)               \
   {                                                                           \
-    nsEventListenerManager *elm = GetOrCreateListenerManager();               \
+    mozilla::EventListenerManager* elm = GetOrCreateListenerManager();        \
     if (elm) {                                                                \
       elm->SetEventHandler(nsGkAtoms::on##name_, EmptyString(), handler);     \
     }                                                                         \
@@ -732,12 +741,12 @@ public:
 #define ERROR_EVENT(name_, id_, type_, struct_)                               \
   mozilla::dom::OnErrorEventHandlerNonNull* GetOn##name_()                    \
   {                                                                           \
-    nsEventListenerManager *elm = GetExistingListenerManager();               \
+    mozilla::EventListenerManager* elm = GetExistingListenerManager();        \
     return elm ? elm->GetOnErrorEventHandler() : nullptr;                     \
   }                                                                           \
   void SetOn##name_(mozilla::dom::OnErrorEventHandlerNonNull* handler)        \
   {                                                                           \
-    nsEventListenerManager *elm = GetOrCreateListenerManager();               \
+    mozilla::EventListenerManager* elm = GetOrCreateListenerManager();        \
     if (elm) {                                                                \
       elm->SetEventHandler(handler);                                          \
     }                                                                         \
@@ -745,12 +754,12 @@ public:
 #define BEFOREUNLOAD_EVENT(name_, id_, type_, struct_)                        \
   mozilla::dom::OnBeforeUnloadEventHandlerNonNull* GetOn##name_()             \
   {                                                                           \
-    nsEventListenerManager *elm = GetExistingListenerManager();               \
+    mozilla::EventListenerManager* elm = GetExistingListenerManager();        \
     return elm ? elm->GetOnBeforeUnloadEventHandler() : nullptr;              \
   }                                                                           \
   void SetOn##name_(mozilla::dom::OnBeforeUnloadEventHandlerNonNull* handler) \
   {                                                                           \
-    nsEventListenerManager *elm = GetOrCreateListenerManager();               \
+    mozilla::EventListenerManager* elm = GetOrCreateListenerManager();        \
     if (elm) {                                                                \
       elm->SetEventHandler(handler);                                          \
     }                                                                         \
@@ -812,6 +821,8 @@ public:
   mozilla::dom::Navigator* GetNavigator(mozilla::ErrorResult& aError);
   nsIDOMOfflineResourceList* GetApplicationCache(mozilla::ErrorResult& aError);
 
+  mozilla::dom::Console* GetConsole(mozilla::ErrorResult& aRv);
+
 protected:
   bool AlertOrConfirm(bool aAlert, const nsAString& aMessage,
                       mozilla::ErrorResult& aError);
@@ -822,7 +833,7 @@ public:
   void Prompt(const nsAString& aMessage, const nsAString& aInitial,
               nsAString& aReturn, mozilla::ErrorResult& aError);
   void Print(mozilla::ErrorResult& aError);
-  JS::Value ShowModalDialog(JSContext* aCx, const nsAString& aUrl, const mozilla::dom::Optional<JS::Handle<JS::Value> >& aArgument, const nsAString& aOptions, mozilla::ErrorResult& aError);
+  JS::Value ShowModalDialog(JSContext* aCx, const nsAString& aUrl, JS::Handle<JS::Value> aArgument, const nsAString& aOptions, mozilla::ErrorResult& aError);
   void PostMessageMoz(JSContext* aCx, JS::Handle<JS::Value> aMessage,
                       const nsAString& aTargetOrigin,
                       const mozilla::dom::Optional<mozilla::dom::Sequence<JS::Value > >& aTransfer,
@@ -947,6 +958,26 @@ public:
     }
     return GetContent(aCx, aError);
   }
+
+  // ChromeWindow bits.  Do NOT call these unless your window is in
+  // fact an nsGlobalChromeWindow.
+  uint16_t WindowState();
+  nsIBrowserDOMWindow* GetBrowserDOMWindow(mozilla::ErrorResult& aError);
+  void SetBrowserDOMWindow(nsIBrowserDOMWindow* aBrowserWindow,
+                           mozilla::ErrorResult& aError);
+  void GetAttention(mozilla::ErrorResult& aError);
+  void GetAttentionWithCycleCount(int32_t aCycleCount,
+                                  mozilla::ErrorResult& aError);
+  void SetCursor(const nsAString& aCursor, mozilla::ErrorResult& aError);
+  void Maximize(mozilla::ErrorResult& aError);
+  void Minimize(mozilla::ErrorResult& aError);
+  void Restore(mozilla::ErrorResult& aError);
+  void NotifyDefaultButtonLoaded(mozilla::dom::Element& aDefaultButton,
+                                 mozilla::ErrorResult& aError);
+  nsIMessageBroadcaster* GetMessageManager(mozilla::ErrorResult& aError);
+  void BeginWindowMove(mozilla::dom::Event& aMouseDownEvent,
+                       mozilla::dom::Element* aPanel,
+                       mozilla::ErrorResult& aError);
 
 protected:
   // Array of idle observers that are notified of idle events.
@@ -1425,6 +1456,7 @@ protected:
   nsString                      mDefaultStatus;
   nsGlobalWindowObserver*       mObserver; // Inner windows only.
   nsCOMPtr<nsIDOMCrypto>        mCrypto;
+  nsRefPtr<mozilla::dom::Console> mConsole;
 
   nsCOMPtr<nsIDOMStorage>      mLocalStorage;
   nsCOMPtr<nsIDOMStorage>      mSessionStorage;
@@ -1432,7 +1464,7 @@ protected:
   nsCOMPtr<nsIXPConnectJSObjectHolder> mInnerWindowHolder;
 
   // These member variable are used only on inner windows.
-  nsRefPtr<nsEventListenerManager> mListenerManager;
+  nsRefPtr<mozilla::EventListenerManager> mListenerManager;
   // mTimeouts is generally sorted by mWhen, unless mTimeoutInsertionPoint is
   // non-null.  In that case, the dummy timeout pointed to by
   // mTimeoutInsertionPoint may have a later mWhen than some of the timeouts
@@ -1570,6 +1602,18 @@ public:
 
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsGlobalChromeWindow,
                                            nsGlobalWindow)
+
+  using nsGlobalWindow::GetBrowserDOMWindow;
+  using nsGlobalWindow::SetBrowserDOMWindow;
+  using nsGlobalWindow::GetAttention;
+  using nsGlobalWindow::GetAttentionWithCycleCount;
+  using nsGlobalWindow::SetCursor;
+  using nsGlobalWindow::Maximize;
+  using nsGlobalWindow::Minimize;
+  using nsGlobalWindow::Restore;
+  using nsGlobalWindow::NotifyDefaultButtonLoaded;
+  using nsGlobalWindow::GetMessageManager;
+  using nsGlobalWindow::BeginWindowMove;
 
   nsCOMPtr<nsIBrowserDOMWindow> mBrowserDOMWindow;
   nsCOMPtr<nsIMessageBroadcaster> mMessageManager;

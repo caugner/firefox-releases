@@ -237,6 +237,11 @@ public:
 
   ~nsExternalAppHandler();
 
+  /**
+   * Clean up after the request was diverted to the parent process.
+   */
+  void DidDivertRequest(nsIRequest *request);
+
 protected:
   nsCOMPtr<nsIFile> mTempFile;
   nsCOMPtr<nsIURI> mSourceUrl;
@@ -326,7 +331,12 @@ protected:
    * Stores the SHA-256 hash associated with the file that we downloaded.
    */
   nsAutoCString mHash;
-
+  /**
+   * Stores the signature information of the downloaded file in an nsIArray of
+   * nsIX509CertList of nsIX509Cert. If the file is unsigned this will be
+   * empty.
+   */
+  nsCOMPtr<nsIArray> mSignatureInfo;
   /**
    * Creates the temporary file for the download and an output stream for it.
    * Upon successful return, both mTempFile and mSaver will be valid.
@@ -345,6 +355,12 @@ protected:
    * caller MUST call Cancel.
    */
   nsresult CreateTransfer();
+
+  /**
+   * If we fail to create the necessary temporary file to initiate a transfer
+   * we will report the failure by creating a failed nsITransfer.
+   */
+  nsresult CreateFailedTransfer(bool aIsPrivateBrowsing);
 
   /*
    * The following two functions are part of the split of SaveToDisk

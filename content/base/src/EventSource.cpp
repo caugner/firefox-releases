@@ -8,11 +8,11 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/dom/EventSourceBinding.h"
+#include "mozilla/dom/MessageEvent.h"
 
 #include "js/OldDebugAPI.h"
 #include "nsNetUtil.h"
 #include "nsMimeTypes.h"
-#include "nsDOMMessageEvent.h"
 #include "nsIPromptFactory.h"
 #include "nsIWindowWatcher.h"
 #include "nsPresContext.h"
@@ -665,7 +665,7 @@ EventSource::GetInterface(const nsIID & aIID,
 
 // static
 bool
-EventSource::PrefEnabled()
+EventSource::PrefEnabled(JSContext* aCx, JSObject* aGlobal)
 {
   return Preferences::GetBool("dom.server-events.enabled", false);
 }

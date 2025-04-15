@@ -321,7 +321,7 @@ NS_IMETHODIMP nsWebBrowser::GetContainerWindow(nsIWebBrowserChrome** aTopWindow)
    NS_ENSURE_ARG_POINTER(aTopWindow);
 
    if(mDocShellTreeOwner) {
-      *aTopWindow = mDocShellTreeOwner->GetWebBrowserChrome().get();
+      *aTopWindow = mDocShellTreeOwner->GetWebBrowserChrome().take();
    } else {
       *aTopWindow = nullptr;
    }
@@ -607,6 +607,23 @@ NS_IMETHODIMP nsWebBrowser::GoForward()
    NS_ENSURE_STATE(mDocShell);
 
    return mDocShellAsNav->GoForward();
+}
+
+NS_IMETHODIMP nsWebBrowser::LoadURIWithBase(const char16_t* aURI,
+                                            uint32_t aLoadFlags,
+                                            nsIURI* aReferringURI,
+                                            nsIInputStream* aPostDataStream,
+                                            nsIInputStream* aExtraHeaderStream,
+                                            nsIURI* aBaseURI)
+{
+   NS_ENSURE_STATE(mDocShell);
+
+   return mDocShellAsNav->LoadURIWithBase(aURI,
+                                          aLoadFlags,
+                                          aReferringURI,
+                                          aPostDataStream,
+                                          aExtraHeaderStream,
+                                          aBaseURI);
 }
 
 NS_IMETHODIMP nsWebBrowser::LoadURI(const char16_t* aURI,

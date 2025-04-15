@@ -59,11 +59,10 @@ static bool sInShutdown = false;
 
 class mozilla::dom::bluetooth::SendFileBatch {
 public:
-  SendFileBatch(const nsAString& aDeviceAddress, BlobParent* aActor)
+  SendFileBatch(const nsAString& aDeviceAddress, nsIDOMBlob* aBlob)
     : mDeviceAddress(aDeviceAddress)
   {
-    nsCOMPtr<nsIDOMBlob> blob = aActor->GetBlob();
-    mBlobs.AppendElement(blob);
+    mBlobs.AppendElement(aBlob);
   }
 
   nsString mDeviceAddress;
@@ -349,7 +348,18 @@ BluetoothOppManager::SendFile(const nsAString& aDeviceAddress,
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  AppendBlobToSend(aDeviceAddress, aActor);
+  nsCOMPtr<nsIDOMBlob> blob = aActor->GetBlob();
+
+  return SendFile(aDeviceAddress, blob.get());
+}
+
+bool
+BluetoothOppManager::SendFile(const nsAString& aDeviceAddress,
+                              nsIDOMBlob* aBlob)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  AppendBlobToSend(aDeviceAddress, aBlob);
   if (!mSocket) {
     ProcessNextBatch();
   }
@@ -359,7 +369,7 @@ BluetoothOppManager::SendFile(const nsAString& aDeviceAddress,
 
 void
 BluetoothOppManager::AppendBlobToSend(const nsAString& aDeviceAddress,
-                                      BlobParent* aActor)
+                                      nsIDOMBlob* aBlob)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -372,11 +382,10 @@ BluetoothOppManager::AppendBlobToSend(const nsAString& aDeviceAddress,
    */
   if (mBatches.IsEmpty() ||
       aDeviceAddress != mBatches[indexTail].mDeviceAddress) {
-    SendFileBatch batch(aDeviceAddress, aActor);
+    SendFileBatch batch(aDeviceAddress, aBlob);
     mBatches.AppendElement(batch);
   } else {
-    nsCOMPtr<nsIDOMBlob> blob = aActor->GetBlob();
-    mBatches[indexTail].mBlobs.AppendElement(blob);
+    mBatches[indexTail].mBlobs.AppendElement(aBlob);
   }
 }
 
@@ -1455,7 +1464,7 @@ BluetoothOppManager::OnSocketDisconnect(BluetoothSocket* aSocket)
     // Do nothing when a listening server socket is closed.
     return;
   }
-  BT_LOGR("[%s]", (mIsServer) ? "client" : "server");
+  BT_LOGR("[%s]", (mIsServer) ? "server" : "client");
 
   /**
    * It is valid for a bluetooth device which is transfering file via OPP
@@ -1541,6 +1550,12 @@ BluetoothOppManager::OnConnect(const nsAString& aErrorStr)
 
 void
 BluetoothOppManager::OnDisconnect(const nsAString& aErrorStr)
+{
+  MOZ_ASSERT(false);
+}
+
+void
+BluetoothOppManager::Reset()
 {
   MOZ_ASSERT(false);
 }

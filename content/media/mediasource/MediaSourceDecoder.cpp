@@ -19,12 +19,13 @@
 #include "MediaSource.h"
 #include "SubBufferDecoder.h"
 #include "SourceBufferResource.h"
+#include "VideoUtils.h"
 
 #ifdef PR_LOGGING
 extern PRLogModuleInfo* gMediaSourceLog;
-#define LOG(type, msg) PR_LOG(gMediaSourceLog, type, msg)
+#define MSE_DEBUG(...) PR_LOG(gMediaSourceLog, PR_LOG_DEBUG, (__VA_ARGS__))
 #else
-#define LOG(type, msg)
+#define MSE_DEBUG(...)
 #endif
 
 namespace mozilla {
@@ -45,7 +46,10 @@ public:
 
   nsresult Init(MediaDecoderReader* aCloneDonor) MOZ_OVERRIDE
   {
-    return NS_ERROR_NOT_IMPLEMENTED;
+    // Although we technically don't implement anything here, we return NS_OK
+    // so that when the state machine initializes and calls this function
+    // we don't return an error code back to the media element.
+    return NS_OK;
   }
 
   bool DecodeAudioData() MOZ_OVERRIDE
@@ -148,7 +152,14 @@ MediaSourceDecoder::CreateStateMachine()
 nsresult
 MediaSourceDecoder::Load(nsIStreamListener**, MediaDecoder*)
 {
-  return NS_OK;
+  MOZ_ASSERT(!mDecoderStateMachine);
+  mDecoderStateMachine = CreateStateMachine();
+  if (!mDecoderStateMachine) {
+    NS_WARNING("Failed to create state machine!");
+    return NS_ERROR_FAILURE;
+  }
+
+  return mDecoderStateMachine->Init(nullptr);
 }
 
 nsresult
@@ -172,7 +183,6 @@ MediaSourceDecoder::AttachMediaSource(dom::MediaSource* aMediaSource)
 {
   MOZ_ASSERT(!mMediaSource && !mDecoderStateMachine);
   mMediaSource = aMediaSource;
-  mDecoderStateMachine = CreateStateMachine();
 }
 
 void
@@ -192,7 +202,7 @@ MediaSourceDecoder::CreateSubDecoder(const nsACString& aType)
   ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
   mDecoders.AppendElement(decoder);
   mReaders.AppendElement(reader);
-  LOG(PR_LOG_DEBUG, ("Registered subdecoder %p subreader %p", decoder.get(), reader.get()));
+  MSE_DEBUG("Registered subdecoder %p subreader %p", decoder.get(), reader.get());
   mon.NotifyAll();
 
   decoder->SetReader(reader.forget());
@@ -211,7 +221,7 @@ MediaSourceReader::ReadMetadata(MediaInfo* aInfo, MetadataTags** aTags)
     MediaDecoderReader* reader = readers[i];
     MediaInfo mi;
     nsresult rv = reader->ReadMetadata(&mi, aTags);
-    LOG(PR_LOG_DEBUG, ("ReadMetadata on SB reader %p", reader));
+    MSE_DEBUG("ReadMetadata on SB reader %p", reader);
     if (NS_FAILED(rv)) {
       return rv;
     }
@@ -227,6 +237,14 @@ MediaSourceReader::ReadMetadata(MediaInfo* aInfo, MetadataTags** aTags)
   *aInfo = mInfo;
 
   return NS_OK;
+}
+
+double
+MediaSourceDecoder::GetMediaSourceDuration()
+{
+  return mMediaSource ?
+           mMediaSource->Duration() :
+           mDuration / static_cast<double>(USECS_PER_S);
 }
 
 } // namespace mozilla

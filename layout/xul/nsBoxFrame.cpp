@@ -38,7 +38,7 @@
 #include "nsPlaceholderFrame.h"
 #include "nsPresContext.h"
 #include "nsCOMPtr.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsGkAtoms.h"
 #include "nsIContent.h"
 #include "nsHTMLParts.h"
@@ -104,6 +104,12 @@ NS_NewBoxFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 
 NS_IMPL_FRAMEARENA_HELPERS(nsBoxFrame)
 
+#ifdef DEBUG
+NS_QUERYFRAME_HEAD(nsBoxFrame)
+  NS_QUERYFRAME_ENTRY(nsBoxFrame)
+NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
+#endif
+
 nsBoxFrame::nsBoxFrame(nsIPresShell* aPresShell,
                        nsStyleContext* aContext,
                        bool aIsRoot,
@@ -133,7 +139,7 @@ nsBoxFrame::~nsBoxFrame()
 {
 }
 
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::SetInitialChildList(ChildListID     aListID,
                                 nsFrameList&    aChildList)
 {
@@ -545,7 +551,7 @@ nsBoxFrame::GetInitialAutoStretch(bool& aStretch)
   return true;
 }
 
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::DidReflow(nsPresContext*           aPresContext,
                       const nsHTMLReflowState*  aReflowState,
                       nsDidReflowStatus         aStatus)
@@ -621,7 +627,7 @@ nsBoxFrame::GetPrefWidth(nsRenderingContext *aRenderingContext)
   return result;
 }
 
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::Reflow(nsPresContext*          aPresContext,
                    nsHTMLReflowMetrics&     aDesiredSize,
                    const nsHTMLReflowState& aReflowState,
@@ -913,7 +919,7 @@ nsBoxFrame::DoLayout(nsBoxLayoutState& aState)
                                   nsSize(mRect.width, NS_UNCONSTRAINEDSIZE));
 
     // Set up a |desiredSize| to pass into ReflowAbsoluteFrames
-    nsHTMLReflowMetrics desiredSize(reflowState.GetWritingMode());
+    nsHTMLReflowMetrics desiredSize(reflowState);
     desiredSize.Width() = mRect.width;
     desiredSize.Height() = mRect.height;
 
@@ -953,7 +959,7 @@ nsBoxFrame::DestroyFrom(nsIFrame* aDestructRoot)
 } 
 
 #ifdef DEBUG_LAYOUT
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::SetDebug(nsBoxLayoutState& aState, bool aDebug)
 {
   // see if our state matches the given debug state
@@ -996,7 +1002,7 @@ nsBoxFrame::MarkIntrinsicWidthsDirty()
   // IsBoxWrapped check.
 }
 
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::RemoveFrame(ChildListID     aListID,
                         nsIFrame*       aOldFrame)
 {
@@ -1021,7 +1027,7 @@ nsBoxFrame::RemoveFrame(ChildListID     aListID,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::InsertFrames(ChildListID     aListID,
                          nsIFrame*       aPrevFrame,
                          nsFrameList&    aFrameList)
@@ -1060,7 +1066,7 @@ nsBoxFrame::InsertFrames(ChildListID     aListID,
 }
 
 
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::AppendFrames(ChildListID     aListID,
                          nsFrameList&    aFrameList)
 {
@@ -1103,7 +1109,7 @@ nsBoxFrame::GetContentInsertionFrame()
   return nsContainerFrame::GetContentInsertionFrame();
 }
 
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::AttributeChanged(int32_t aNameSpaceID,
                              nsIAtom* aAttribute,
                              int32_t aModType)
@@ -1527,7 +1533,7 @@ nsBoxFrame::GetBoxName(nsAutoString& aName)
 #endif
 
 #ifdef DEBUG_FRAME_DUMP
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::GetFrameName(nsAString& aResult) const
 {
   return MakeFrameName(NS_LITERAL_STRING("Box"), aResult);
@@ -1541,7 +1547,7 @@ nsBoxFrame::GetType() const
 }
 
 #ifdef DEBUG_LAYOUT
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::GetDebug(bool& aDebug)
 {
   aDebug = (mState & NS_STATE_CURRENTLY_IN_DEBUG);
@@ -1934,7 +1940,7 @@ nsBoxFrame::LayoutChildAt(nsBoxLayoutState& aState, nsIFrame* aBox, const nsRect
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsBoxFrame::RelayoutChildAtOrdinal(nsBoxLayoutState& aState, nsIFrame* aChild)
 {
   if (!SupportsOrdinalsInChildren())
@@ -2004,7 +2010,8 @@ public:
                               nsIFrame* aTargetFrame)
     : nsDisplayWrapList(aBuilder, aFrame, aList), mTargetFrame(aTargetFrame) {}
   virtual void HitTest(nsDisplayListBuilder* aBuilder, const nsRect& aRect,
-                       HitTestState* aState, nsTArray<nsIFrame*> *aOutFrames);
+                       HitTestState* aState,
+                       nsTArray<nsIFrame*> *aOutFrames) MOZ_OVERRIDE;
   NS_DISPLAY_DECL_NAME("XULEventRedirector", TYPE_XUL_EVENT_REDIRECTOR)
 private:
   nsIFrame* mTargetFrame;
@@ -2047,12 +2054,13 @@ public:
   nsXULEventRedirectorWrapper(nsIFrame* aTargetFrame)
       : mTargetFrame(aTargetFrame) {}
   virtual nsDisplayItem* WrapList(nsDisplayListBuilder* aBuilder,
-                                  nsIFrame* aFrame, nsDisplayList* aList) {
+                                  nsIFrame* aFrame,
+                                  nsDisplayList* aList) MOZ_OVERRIDE {
     return new (aBuilder)
         nsDisplayXULEventRedirector(aBuilder, aFrame, aList, mTargetFrame);
   }
   virtual nsDisplayItem* WrapItem(nsDisplayListBuilder* aBuilder,
-                                  nsDisplayItem* aItem) {
+                                  nsDisplayItem* aItem) MOZ_OVERRIDE {
     return new (aBuilder)
         nsDisplayXULEventRedirector(aBuilder, aItem->Frame(), aItem,
                                     mTargetFrame);

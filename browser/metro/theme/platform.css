@@ -201,13 +201,10 @@ menulist {
   -moz-box-align: center;
   font-weight: 600;
 }
-
 .menu-popup > richlistbox > richlistitem {
-  padding-right: 50px;
+  -moz-padding-end: 50px;
 }
-
 /* Additional styles applied to popups for form <select> elements. */
-
 #select-container {
   padding: 0;
   position: absolute;
@@ -678,12 +675,8 @@ tabmodalprompt:not([promptType="promptUserAndPass"]) .infoContainer {
   margin-bottom: calc(40px - @tile_side_margin@);
 }
 
-.meta-section:not([expanded]) > .meta-section-title.narrow-title:-moz-locale-dir(ltr):after {
+.meta-section:not([expanded]) > .meta-section-title.narrow-title:after {
   content: ">";
-}
-
-.meta-section:not([expanded]) > .meta-section-title.narrow-title:-moz-locale-dir(rtl):before {
-  content: "<";
 }
 
 .meta-section-container:not([viewstate="snapped"]) .meta-section-title.narrow-title,
@@ -925,4 +918,9 @@ appbar toolbar[labelled] toolbarbutton > .toolbarbutton-text {
  * Setting max-width on the element or a child fixes it. */
 .flyout-narrow .flyoutpanel-hack {
   max-width: calc(346px - 2 * 40px);
+}
+
+.console-row-code {
+   padding-top: 2px;
+   font-size: small;
 }

@@ -20,6 +20,7 @@
 #include "SharedSurfaceIO.h"
 #endif
 #include "ScopedGLHelpers.h"
+#include "gfx2DGlue.h"
 
 using namespace mozilla::gfx;
 
@@ -42,6 +43,7 @@ GLScreenBuffer::Create(GLContext* gl,
 #ifdef MOZ_WIDGET_GONK
     /* On B2G, we want a Gralloc factory, and we want one right at the start */
     if (!factory &&
+        caps.surfaceAllocator &&
         XRE_GetProcessType() != GeckoProcessType_Default)
     {
         factory = new SurfaceFactory_Gralloc(gl, caps);
@@ -69,7 +71,6 @@ GLScreenBuffer::Create(GLContext* gl,
 
 GLScreenBuffer::~GLScreenBuffer()
 {
-    delete mStream;
     delete mDraw;
     delete mRead;
 
@@ -377,7 +378,6 @@ GLScreenBuffer::Morph(SurfaceFactory_GL* newFactory, SurfaceStreamType streamTyp
     SurfaceStream* newStream = SurfaceStream::CreateForType(streamType, mGL, mStream);
     MOZ_ASSERT(newStream);
 
-    delete mStream;
     mStream = newStream;
 }
 
@@ -478,9 +478,23 @@ GLScreenBuffer::CreateRead(SharedSurface_GL* surf)
     return ReadBuffer::Create(gl, caps, formats, surf);
 }
 
+void
+GLScreenBuffer::Readback(SharedSurface_GL* src, DataSourceSurface* dest)
+{
+  MOZ_ASSERT(src && dest);
+  DataSourceSurface::MappedSurface ms;
+  dest->Map(DataSourceSurface::MapType::READ, &ms);
+  nsRefPtr<gfxImageSurface> wrappedDest =
+    new gfxImageSurface(ms.mData,
+                        ThebesIntSize(dest->GetSize()),
+                        ms.mStride,
+                        SurfaceFormatToImageFormat(dest->GetFormat()));
+  DeprecatedReadback(src, wrappedDest);
+  dest->Unmap();
+}
 
 void
-GLScreenBuffer::Readback(SharedSurface_GL* src, gfxImageSurface* dest)
+GLScreenBuffer::DeprecatedReadback(SharedSurface_GL* src, gfxImageSurface* dest)
 {
     MOZ_ASSERT(src && dest);
     MOZ_ASSERT(ToIntSize(dest->GetSize()) == src->Size());
@@ -508,8 +522,6 @@ GLScreenBuffer::Readback(SharedSurface_GL* src, gfxImageSurface* dest)
         SharedSurf()->LockProd();
     }
 }
-
-
 
 DrawBuffer*
 DrawBuffer::Create(GLContext* const gl,
@@ -611,11 +623,11 @@ ReadBuffer::Create(GLContext* gl,
 
     switch (surf->AttachType()) {
     case AttachmentType::GLTexture:
-        colorTex = surf->Texture();
-        target = surf->TextureTarget();
+        colorTex = surf->ProdTexture();
+        target = surf->ProdTextureTarget();
         break;
     case AttachmentType::GLRenderbuffer:
-        colorRB = surf->Renderbuffer();
+        colorRB = surf->ProdRenderbuffer();
         break;
     default:
         MOZ_CRASH("Unknown attachment type?");
@@ -664,11 +676,11 @@ ReadBuffer::Attach(SharedSurface_GL* surf)
 
         switch (surf->AttachType()) {
         case AttachmentType::GLTexture:
-            colorTex = surf->Texture();
-            target = surf->TextureTarget();
+            colorTex = surf->ProdTexture();
+            target = surf->ProdTextureTarget();
             break;
         case AttachmentType::GLRenderbuffer:
-            colorRB = surf->Renderbuffer();
+            colorRB = surf->ProdRenderbuffer();
             break;
         default:
             MOZ_CRASH("Unknown attachment type?");

@@ -166,15 +166,15 @@ WrapperFactory::PrepareForWrapping(JSContext *cx, HandleObject scope,
     //
     // NB: We need to ignore domain here so that the security relationship we
     // compute here can't change over time. See the comment above the other
-    // subsumesIgnoringDomain call below.
-    bool subsumes = AccessCheck::subsumesIgnoringDomain(js::GetContextCompartment(cx),
-                                                        js::GetObjectCompartment(obj));
+    // subsumes call below.
+    bool subsumes = AccessCheck::subsumes(js::GetContextCompartment(cx),
+                                          js::GetObjectCompartment(obj));
     XrayType xrayType = GetXrayType(obj);
     if (!subsumes && xrayType == NotXray) {
         JSProtoKey key = JSProto_Null;
         {
             JSAutoCompartment ac(cx, obj);
-            key = JS_IdentifyClassPrototype(obj);
+            key = IdentifyStandardPrototype(obj);
         }
         if (key != JSProto_Null) {
             RootedObject homeProto(cx);
@@ -269,8 +269,8 @@ WrapperFactory::PrepareForWrapping(JSContext *cx, HandleObject scope,
             // the correct (opaque) wrapper for the object below given the security
             // characteristics of the two compartments.
             if (!AccessCheck::isChrome(js::GetObjectCompartment(wrapScope)) &&
-                 AccessCheck::subsumesIgnoringDomain(js::GetObjectCompartment(wrapScope),
-                                                     js::GetObjectCompartment(obj)))
+                 AccessCheck::subsumes(js::GetObjectCompartment(wrapScope),
+                                       js::GetObjectCompartment(obj)))
             {
                 return DoubleWrap(cx, obj, flags);
             }
@@ -323,7 +323,7 @@ DEBUG_CheckUnwrapSafety(HandleObject obj, js::Wrapper *handler,
         // this case.
     } else {
         // Otherwise, it should depend on whether the target subsumes the origin.
-        MOZ_ASSERT(handler->hasSecurityPolicy() == !AccessCheck::subsumes(target, origin));
+        MOZ_ASSERT(handler->hasSecurityPolicy() == !AccessCheck::subsumesConsideringDomain(target, origin));
     }
 }
 #else
@@ -374,7 +374,7 @@ WrapperFactory::Rewrap(JSContext *cx, HandleObject existing, HandleObject obj,
                GetProxyHandler(obj) == &XrayWaiver ||
                js::GetObjectClass(obj)->ext.innerObject,
                "wrapped object passed to rewrap");
-    MOZ_ASSERT(JS_GetClass(obj) != &XrayUtils::HolderClass, "trying to wrap a holder");
+    MOZ_ASSERT(!XrayUtils::IsXPCWNHolderClass(JS_GetClass(obj)), "trying to wrap a holder");
     MOZ_ASSERT(!js::IsInnerObject(obj));
     // We sometimes end up here after nsContentUtils has been shut down but before
     // XPConnect has been shut down, so check the context stack the roundabout way.
@@ -385,8 +385,8 @@ WrapperFactory::Rewrap(JSContext *cx, HandleObject existing, HandleObject obj,
     JSCompartment *target = js::GetContextCompartment(cx);
     bool originIsChrome = AccessCheck::isChrome(origin);
     bool targetIsChrome = AccessCheck::isChrome(target);
-    bool originSubsumesTarget = AccessCheck::subsumes(origin, target);
-    bool targetSubsumesOrigin = AccessCheck::subsumes(target, origin);
+    bool originSubsumesTarget = AccessCheck::subsumesConsideringDomain(origin, target);
+    bool targetSubsumesOrigin = AccessCheck::subsumesConsideringDomain(target, origin);
     bool sameOrigin = targetSubsumesOrigin && originSubsumesTarget;
     XrayType xrayType = GetXrayType(obj);
     bool waiveXrayFlag = flags & WAIVE_XRAY_WRAPPER_FLAG;
@@ -459,13 +459,13 @@ WrapperFactory::Rewrap(JSContext *cx, HandleObject existing, HandleObject obj,
         wrapper = SelectWrapper(securityWrapper, wantXrays, xrayType, waiveXrays);
     }
 
-    if (wrapper == &ChromeObjectWrapper::singleton) {
-        // This shouldn't happen, but do a quick check to make some dumb addon
-        // doesn't expose chrome eval or Function().
+    if (!targetSubsumesOrigin) {
+        // Do a belt-and-suspenders check against exposing eval()/Function() to
+        // non-subsuming content.
         JSFunction *fun = JS_GetObjectFunction(obj);
         if (fun) {
             if (JS_IsBuiltinEvalFunction(fun) || JS_IsBuiltinFunctionConstructor(fun)) {
-                JS_ReportError(cx, "Not allowed to access chrome eval or Function from content");
+                JS_ReportError(cx, "Permission denied to expose eval or Function to non-subsuming content");
                 return nullptr;
             }
         }

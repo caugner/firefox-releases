@@ -1143,9 +1143,27 @@ SPX_RESAMPLE_EXPORT int speex_resampler_skip_zeros(SpeexResamplerState *st)
    return RESAMPLER_ERR_SUCCESS;
 }
 
+SPX_RESAMPLE_EXPORT int speex_resampler_set_skip_frac_num(SpeexResamplerState *st, spx_uint32_t skip_frac_num)
+{
+   spx_uint32_t i;
+   spx_uint32_t last_sample = skip_frac_num / st->den_rate;
+   spx_uint32_t samp_frac_num = skip_frac_num % st->den_rate;
+   for (i=0;i<st->nb_channels;i++) {
+      st->last_sample[i] = last_sample;
+      st->samp_frac_num[i] = samp_frac_num;
+   }
+   return RESAMPLER_ERR_SUCCESS;
+}
+
 SPX_RESAMPLE_EXPORT int speex_resampler_reset_mem(SpeexResamplerState *st)
 {
    spx_uint32_t i;
+   for (i=0;i<st->nb_channels;i++)
+   {
+      st->last_sample[i] = 0;
+      st->magic_samples[i] = 0;
+      st->samp_frac_num[i] = 0;
+   }
    for (i=0;i<st->nb_channels*(st->filt_len-1);i++)
       st->mem[i] = 0;
    return RESAMPLER_ERR_SUCCESS;

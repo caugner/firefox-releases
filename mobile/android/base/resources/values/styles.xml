@@ -107,36 +107,50 @@
         <item name="android:textAppearance">@style/TextAppearance</item>
         <item name="android:singleLine">true</item>
         <item name="android:ellipsize">middle</item>
+        <item name="android:textSize">@dimen/menu_item_textsize</item>
     </style>
 
-    <style name="Widget.TwoLineRow" />
+    <style name="Widget.TwoLinePageRow" />
 
-    <style name="Widget.TwoLineRow.PrimaryText">
-        <item name="android:textAppearance">@style/TextAppearance.Widget.TwoLineRow.PrimaryText</item>
+    <style name="Widget.TwoLinePageRow.Title">
+        <item name="android:textAppearance">@style/TextAppearance.Widget.Home.ItemTitle</item>
         <item name="android:singleLine">true</item>
         <item name="android:ellipsize">none</item>
     </style>
 
-    <style name="Widget.TwoLineRow.SecondaryText">
-        <item name="android:textAppearance">@style/TextAppearance.Widget.TwoLineRow.SecondaryText</item>
+    <style name="Widget.TwoLinePageRow.Url">
+        <item name="android:textAppearance">@style/TextAppearance.Widget.Home.ItemDescription</item>
         <item name="android:includeFontPadding">false</item>
         <item name="android:singleLine">true</item>
         <item name="android:ellipsize">middle</item>
     </style>
 
-    <style name="Widget.BookmarkFolderView" parent="Widget.TwoLineRow.PrimaryText">
+    <style name="Widget.BookmarkFolderView" parent="Widget.TwoLinePageRow.Title">
         <item name="android:paddingLeft">10dip</item>
         <item name="android:drawablePadding">10dip</item>
         <item name="android:drawableLeft">@drawable/bookmark_folder</item>
     </style>
 
-    <style name="Widget.HomeGridView" parent="Widget.GridView">
+    <style name="Widget.PanelItemView" />
+
+    <style name="Widget.PanelItemView.Title">
+        <item name="android:textAppearance">@style/TextAppearance.Widget.Home.ItemTitle</item>
+        <item name="android:maxLines">2</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+
+    <style name="Widget.PanelItemView.Description">
+        <item name="android:textAppearance">@style/TextAppearance.Widget.Home.ItemDescription</item>
+        <item name="android:includeFontPadding">false</item>
+        <item name="android:maxLines">2</item>
+        <item name="android:ellipsize">end</item>
+    </style>
+
+    <style name="Widget.TopSitesGridView" parent="Widget.GridView">
         <item name="android:padding">7dp</item>
         <item name="android:horizontalSpacing">0dp</item>
         <item name="android:verticalSpacing">7dp</item>
     </style>
-
-    <style name="Widget.TopSitesGridView" parent="Widget.HomeGridView" />
 
     <style name="Widget.TopSitesGridItemView">
       <item name="android:layout_width">fill_parent</item>
@@ -150,25 +164,14 @@
         <item name="android:layout_height">fill_parent</item>
         <item name="android:paddingTop">0dp</item>
         <item name="android:stretchMode">columnWidth</item>
+        <item name="android:numColumns">auto_fit</item>
         <item name="android:columnWidth">@dimen/panel_grid_view_column_width</item>
         <item name="android:horizontalSpacing">2dp</item>
         <item name="android:verticalSpacing">2dp</item>
+        <item name="android:drawSelectorOnTop">true</item>
     </style>
 
-    <style name="Widget.PanelGridItemView">
-      <item name="android:layout_height">wrap_content</item>
-      <item name="android:layout_width">wrap_content</item>
-    </style>
-
-    <style name="Widget.PanelGridItemImageView">
-      <item name="android:layout_height">@dimen/panel_grid_view_column_width</item>
-      <item name="android:layout_width">fill_parent</item>
-      <item name="android:scaleType">centerCrop</item>
-      <item name="android:adjustViewBounds">true</item>
-      <item name="android:background">@color/panel_grid_item_image_background</item>
-    </style>
-
-    <style name="Widget.BookmarkItemView" parent="Widget.TwoLineRow"/>
+    <style name="Widget.BookmarkItemView" parent="Widget.TwoLinePageRow"/>
 
     <style name="Widget.BookmarksListView" parent="Widget.HomeListView"/>
 
@@ -256,7 +259,7 @@
         <item name="android:textColorHighlight">@color/text_color_highlight</item>
         <item name="android:textColorHint">?android:attr/textColorHint</item>
         <item name="android:textColorLink">?android:attr/textColorLink</item>
-        <item name="android:textSize">16sp</item>
+        <item name="android:textSize">@dimen/menu_item_textsize</item>
         <item name="android:textStyle">normal</item>
     </style>
 
@@ -342,14 +345,6 @@
         <item name="android:textSize">14sp</item>
     </style>
 
-    <style name="TextAppearance.Widget.TwoLineRow" />
-
-    <style name="TextAppearance.Widget.TwoLineRow.PrimaryText" parent="TextAppearance.Medium"/>
-
-    <style name="TextAppearance.Widget.TwoLineRow.SecondaryText" parent="TextAppearance.Micro">
-        <item name="android:textColor">?android:attr/textColorSecondary</item>
-    </style>
-
     <style name="TextAppearance.Widget.SuggestionsPrompt" parent="TextAppearance.Small">
         <item name="android:textColor">@color/url_bar_title</item>
     </style>
@@ -364,6 +359,12 @@
 
     <style name="TextAppearance.Widget.Home.PageAction" parent="TextAppearance.Small">
         <item name="android:textColor">#00ACFF</item>
+    </style>
+
+    <style name="TextAppearance.Widget.Home.ItemTitle" parent="TextAppearance.Medium"/>
+
+    <style name="TextAppearance.Widget.Home.ItemDescription" parent="TextAppearance.Micro">
+        <item name="android:textColor">#AFB1B3</item>
     </style>
 
     <style name="TextAppearance.Widget.HomeBanner" parent="TextAppearance.Small">
@@ -601,6 +602,19 @@
         <item name="android:background">@android:color/transparent</item>
         <item name="android:textColor">@color/text_color_primary</item>
         <item name="android:gravity">right</item>
+    </style>
+
+    <style name="TabInput"></style>
+
+    <style name="TabInput.TabWidget">
+        <item name="android:divider">@drawable/divider_vertical</item>
+        <item name="android:background">@drawable/tab_indicator_background</item>
+    </style>
+
+    <style name="TabInput.Tab">
+        <item name="android:background">@drawable/tabs_panel_indicator</item>
+        <item name="android:gravity">center</item>
+        <item name="android:minHeight">@dimen/menu_item_row_height</item>
     </style>
 
 </resources>

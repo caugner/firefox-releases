@@ -10,9 +10,14 @@
 
 #include "nsIDOMWindowUtils.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/BasicEvents.h"
 
 class nsGlobalWindow;
 class nsIPresShell;
+class nsIWidget;
+class nsPresContext;
+class nsPoint;
+class nsIDocument;
 
 class nsDOMWindowUtils MOZ_FINAL : public nsIDOMWindowUtils,
                                    public nsSupportsWeakReference
@@ -35,6 +40,7 @@ protected:
 
   nsIPresShell* GetPresShell();
   nsPresContext* GetPresContext();
+  nsIDocument* GetDocument();
 
   NS_IMETHOD SendMouseEventCommon(const nsAString& aType,
                                   float aX,

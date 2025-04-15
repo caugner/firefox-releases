@@ -15,12 +15,13 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/PluralForm.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/osfile.jsm");
-let promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js").Promise;
-Cu.import("resource:///modules/devtools/shared/event-emitter.js");
+Cu.import("resource://gre/modules/Task.jsm");
+Cu.import("resource://gre/modules/devtools/event-emitter.js");
 Cu.import("resource:///modules/devtools/gDevTools.jsm");
 Cu.import("resource:///modules/devtools/StyleEditorUtil.jsm");
 Cu.import("resource:///modules/devtools/SplitView.jsm");
 Cu.import("resource:///modules/devtools/StyleSheetEditor.jsm");
+const { Promise: promise } = Cu.import("resource://gre/modules/Promise.jsm", {});
 
 const require = Cu.import("resource://gre/modules/devtools/Loader.jsm", {}).devtools.require;
 const { PrefObserver, PREF_ORIG_SOURCES } = require("devtools/styleeditor/utils");
@@ -55,6 +56,7 @@ function StyleEditorUI(debuggee, target, panelDoc) {
 
   this.editors = [];
   this.selectedEditor = null;
+  this.savedLocations = {};
 
   this._updateSourcesLabel = this._updateSourcesLabel.bind(this);
   this._onStyleSheetCreated = this._onStyleSheetCreated.bind(this);
@@ -104,13 +106,14 @@ StyleEditorUI.prototype = {
     let toolbox = gDevTools.getToolbox(this._target);
     return toolbox.initInspector().then(() => {
       this._walker = toolbox.walker;
-    }).then(() => this.createUI())
-      .then(() => this._debuggee.getStyleSheets())
-      .then((styleSheets) => {
-      this._resetStyleSheetList(styleSheets);
+    }).then(() => {
+      this.createUI();
+      this._debuggee.getStyleSheets().then((styleSheets) => {
+        this._resetStyleSheetList(styleSheets);
 
-      this._target.on("will-navigate", this._clear);
-      this._target.on("navigate", this._onNewDocument);
+        this._target.on("will-navigate", this._clear);
+        this._target.on("navigate", this._onNewDocument);
+      });
     });
   },
 
@@ -167,30 +170,6 @@ StyleEditorUI.prototype = {
   },
 
   /**
-   * Remove all editors and add loading indicator.
-   */
-  _clear: function() {
-    // remember selected sheet and line number for next load
-    if (this.selectedEditor && this.selectedEditor.sourceEditor) {
-      let href = this.selectedEditor.styleSheet.href;
-      let {line, ch} = this.selectedEditor.sourceEditor.getCursor();
-
-      this._styleSheetToSelect = {
-        href: href,
-        line: line,
-        col: ch
-      };
-    }
-
-    this._clearStyleSheetEditors();
-    this._view.removeAll();
-
-    this.selectedEditor = null;
-
-    this._root.classList.add("loading");
-  },
-
-  /**
    * Add editors for all the given stylesheets to the UI.
    *
    * @param  {array} styleSheets
@@ -206,6 +185,38 @@ StyleEditorUI.prototype = {
     this._root.classList.remove("loading");
 
     this.emit("stylesheets-reset");
+  },
+
+  /**
+   * Remove all editors and add loading indicator.
+   */
+  _clear: function() {
+    // remember selected sheet and line number for next load
+    if (this.selectedEditor && this.selectedEditor.sourceEditor) {
+      let href = this.selectedEditor.styleSheet.href;
+      let {line, ch} = this.selectedEditor.sourceEditor.getCursor();
+
+      this._styleSheetToSelect = {
+        href: href,
+        line: line,
+        col: ch
+      };
+    }
+
+    // remember saved file locations
+    for (let editor of this.editors) {
+      if (editor.savedFile) {
+        let identifier = this.getStyleSheetIdentifier(editor.styleSheet);
+        this.savedLocations[identifier] = editor.savedFile;
+      }
+    }
+
+    this._clearStyleSheetEditors();
+    this._view.removeAll();
+
+    this.selectedEditor = null;
+
+    this._root.classList.add("loading");
   },
 
   /**
@@ -247,11 +258,17 @@ StyleEditorUI.prototype = {
    *         Optional if stylesheet is a new sheet created by user
    */
   _addStyleSheetEditor: function(styleSheet, file, isNew) {
+    // recall location of saved file for this sheet after page reload
+    let identifier = this.getStyleSheetIdentifier(styleSheet);
+    let savedFile = this.savedLocations[identifier];
+    if (savedFile && !file) {
+      file = savedFile;
+    }
+
     let editor =
       new StyleSheetEditor(styleSheet, this._window, file, isNew, this._walker);
 
     editor.on("property-change", this._summaryChange.bind(this, editor));
-    editor.on("style-applied", this._summaryChange.bind(this, editor));
     editor.on("linked-css-file", this._summaryChange.bind(this, editor));
     editor.on("linked-css-file-error", this._summaryChange.bind(this, editor));
     editor.on("error", this._onError);
@@ -413,60 +430,69 @@ StyleEditorUI.prototype = {
           }
         }, false);
 
-        // autofocus if it's a new user-created stylesheet
-        if (editor.isNew) {
-          this._selectEditor(editor);
-        }
+        Task.spawn(function* () {
+          // autofocus if it's a new user-created stylesheet
+          if (editor.isNew) {
+            yield this._selectEditor(editor);
+          }
 
-        if (this._styleSheetToSelect
-            && this._styleSheetToSelect.href == editor.styleSheet.href) {
-          this.switchToSelectedSheet();
-        }
+          if (this._styleSheetToSelect
+              && this._styleSheetToSelect.href == editor.styleSheet.href) {
+            yield this.switchToSelectedSheet();
+          }
 
-        // If this is the first stylesheet and there is no pending request to
-        // select a particular style sheet, select this sheet.
-        if (!this.selectedEditor && !this._styleSheetBoundToSelect
-            && editor.styleSheet.styleSheetIndex == 0) {
-          this._selectEditor(editor);
-        }
+          // If this is the first stylesheet and there is no pending request to
+          // select a particular style sheet, select this sheet.
+          if (!this.selectedEditor && !this._styleSheetBoundToSelect
+              && editor.styleSheet.styleSheetIndex == 0) {
+            yield this._selectEditor(editor);
+          }
 
-        this.emit("editor-added", editor);
+          this.emit("editor-added", editor);
+        }.bind(this)).then(null, Cu.reportError);
       }.bind(this),
 
       onShow: function(summary, details, data) {
         let editor = data.editor;
         this.selectedEditor = editor;
 
-        if (!editor.sourceEditor) {
-          // only initialize source editor when we switch to this view
-          let inputElement = details.querySelector(".stylesheet-editor-input");
-          editor.load(inputElement);
-        }
-        editor.onShow();
+        Task.spawn(function* () {
+          if (!editor.sourceEditor) {
+            // only initialize source editor when we switch to this view
+            let inputElement = details.querySelector(".stylesheet-editor-input");
+            yield editor.load(inputElement);
+          }
 
-        this.emit("editor-selected", editor);
+          editor.onShow();
+
+          this.emit("editor-selected", editor);
+        }.bind(this)).then(null, Cu.reportError);
       }.bind(this)
     });
   },
 
   /**
    * Switch to the editor that has been marked to be selected.
+   *
+   * @return {Promise}
+   *         Promise that will resolve when the editor is selected.
    */
   switchToSelectedSheet: function() {
     let sheet = this._styleSheetToSelect;
 
-    for each (let editor in this.editors) {
+    for (let editor of this.editors) {
       if (editor.styleSheet.href == sheet.href) {
         // The _styleSheetBoundToSelect will always hold the latest pending
         // requested style sheet (with line and column) which is not yet
         // selected by the source editor. Only after we select that particular
         // editor and go the required line and column, it will become null.
         this._styleSheetBoundToSelect = this._styleSheetToSelect;
-        this._selectEditor(editor, sheet.line, sheet.col);
         this._styleSheetToSelect = null;
-        return;
+        return this._selectEditor(editor, sheet.line, sheet.col);
       }
     }
+
+    return promise.resolve();
   },
 
   /**
@@ -478,19 +504,23 @@ StyleEditorUI.prototype = {
    *         Line number to jump to
    * @param  {number} col
    *         Column number to jump to
+   * @return {Promise}
+   *         Promise that will resolve when the editor is selected.
    */
   _selectEditor: function(editor, line, col) {
     line = line || 0;
     col = col || 0;
 
-    editor.getSourceEditor().then(() => {
+    let editorPromise = editor.getSourceEditor().then(() => {
       editor.sourceEditor.setCursor({line: line, ch: col});
       this._styleSheetBoundToSelect = null;
     });
 
-    this.getEditorSummary(editor).then((summary) => {
+    let summaryPromise = this.getEditorSummary(editor).then((summary) => {
       this._view.activeSummary = summary;
-    })
+    });
+
+    return promise.all([editorPromise, summaryPromise]);
   },
 
   getEditorSummary: function(editor) {
@@ -509,6 +539,18 @@ StyleEditorUI.prototype = {
     });
 
     return deferred.promise;
+  },
+
+  /**
+   * Returns an identifier for the given style sheet.
+   *
+   * @param {StyleSheet} aStyleSheet
+   *        The style sheet to be identified.
+   */
+  getStyleSheetIdentifier: function (aStyleSheet) {
+    // Identify inline style sheets by their host page URI and index at the page.
+    return aStyleSheet.href ? aStyleSheet.href :
+            "inline-" + aStyleSheet.styleSheetIndex + "-at-" + aStyleSheet.nodeHref;
   },
 
   /**
@@ -563,7 +605,7 @@ StyleEditorUI.prototype = {
     }
 
     let ruleCount = editor.styleSheet.ruleCount;
-    if (editor.styleSheet.relatedStyleSheet) {
+    if (editor.styleSheet.relatedStyleSheet && editor.linkedCSSFile) {
       ruleCount = editor.styleSheet.relatedStyleSheet.ruleCount;
     }
     if (ruleCount === undefined) {
@@ -584,6 +626,9 @@ StyleEditorUI.prototype = {
 
     let label = summary.querySelector(".stylesheet-name > label");
     label.setAttribute("value", editor.friendlyName);
+    if (editor.styleSheet.href) {
+      label.setAttribute("tooltiptext", editor.styleSheet.href);
+    }
 
     let linkedCSSFile = "";
     if (editor.linkedCSSFile) {

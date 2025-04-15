@@ -24,7 +24,7 @@
 #include "pldhash.h"
 #include "nscore.h"
 #include "nsISupports.h"
-#include "nsTraceRefcnt.h"
+#include "nsISupportsImpl.h"
 #include "nsStringFwd.h"
 
 class nsIObjectInputStream;
@@ -95,13 +95,13 @@ typedef nsresult
 
 class nsHashtable {
   protected:
-    // members  
+    // members
     PRLock*         mLock;
     PLDHashTable    mHashtable;
     bool            mEnumerating;
 
   public:
-    nsHashtable(uint32_t aSize = 16, bool threadSafe = false);
+    nsHashtable(uint32_t aSize = 16, bool aThreadSafe = false);
     virtual ~nsHashtable();
 
     int32_t Count(void) { return mHashtable.entryCount; }
@@ -145,46 +145,11 @@ class nsObjectHashtable : public nsHashtable {
     static PLDHashOperator CopyElement(PLDHashTable* table,
                                        PLDHashEntryHdr* hdr,
                                        uint32_t i, void *arg);
-    
+
     nsHashtableCloneElementFunc mCloneElementFun;
     void*                       mCloneElementClosure;
     nsHashtableEnumFunc         mDestroyElementFun;
     void*                       mDestroyElementClosure;
-};
-
-////////////////////////////////////////////////////////////////////////////////
-// nsSupportsHashtable: an nsHashtable where the elements are nsISupports*
-
-class nsSupportsHashtable
-  : private nsHashtable
-{
-  public:
-    nsSupportsHashtable(uint32_t aSize = 16, bool threadSafe = false)
-      : nsHashtable(aSize, threadSafe) {}
-    ~nsSupportsHashtable();
-
-    int32_t Count(void) {
-        return nsHashtable::Count();
-    }
-    bool Exists(nsHashKey *aKey) {
-        return nsHashtable::Exists (aKey);
-    }
-    bool Put(nsHashKey *aKey,
-               nsISupports *aData,
-               nsISupports **value = nullptr);
-    nsISupports* Get(nsHashKey *aKey);
-    bool Remove(nsHashKey *aKey, nsISupports **value = nullptr);
-    nsHashtable *Clone();
-    void Enumerate(nsHashtableEnumFunc aEnumFunc, void* aClosure = nullptr) {
-        nsHashtable::Enumerate(aEnumFunc, aClosure);
-    }
-    void Reset();
-
-  private:
-    static bool ReleaseElement(nsHashKey *, void *, void *);
-    static PLDHashOperator EnumerateCopy(PLDHashTable*,
-                                         PLDHashEntryHdr* hdr,
-                                         uint32_t i, void *arg);
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -193,7 +158,7 @@ class nsSupportsHashtable
 class nsISupportsKey : public nsHashKey {
   protected:
     nsISupports* mKey;
-    
+
   public:
     nsISupportsKey(const nsISupportsKey& aKey) : mKey(aKey.mKey) {
 #ifdef DEBUG
@@ -209,11 +174,11 @@ class nsISupportsKey : public nsHashKey {
         mKey = key;
         NS_IF_ADDREF(mKey);
     }
-    
+
     ~nsISupportsKey(void) {
         NS_IF_RELEASE(mKey);
     }
-    
+
     uint32_t HashCode(void) const {
         return NS_PTR_TO_INT32(mKey);
     }
@@ -256,43 +221,6 @@ public:
         return new nsPRUint32Key(mKey);
     }
     uint32_t GetValue() { return mKey; }
-};
-
-////////////////////////////////////////////////////////////////////////////////
-// nsVoidKey: Where keys are void* objects that don't get refcounted.
-
-class nsVoidKey : public nsHashKey {
-  protected:
-    void* mKey;
-    
-  public:
-    nsVoidKey(const nsVoidKey& aKey) : mKey(aKey.mKey) {
-#ifdef DEBUG
-        mKeyType = aKey.mKeyType;
-#endif
-    }
-
-    nsVoidKey(void* key) {
-#ifdef DEBUG
-        mKeyType = VoidKey;
-#endif
-        mKey = key;
-    }
-    
-    uint32_t HashCode(void) const {
-        return NS_PTR_TO_INT32(mKey);
-    }
-
-    bool Equals(const nsHashKey *aKey) const {
-        NS_ASSERTION(aKey->GetKeyType() == VoidKey, "mismatched key types");
-        return (mKey == ((const nsVoidKey *) aKey)->mKey);
-    }
-
-    nsHashKey *Clone() const {
-        return new nsVoidKey(mKey);
-    }
-
-    void* GetValue() { return mKey; }
 };
 
 // for null-terminated c-strings

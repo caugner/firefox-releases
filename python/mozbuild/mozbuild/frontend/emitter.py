@@ -33,10 +33,12 @@ from .data import (
     JARManifest,
     LibraryDefinition,
     LocalInclude,
+    PerSourceFlag,
     PreprocessedTestWebIDLFile,
     PreprocessedWebIDLFile,
     Program,
     ReaderSummary,
+    Resources,
     SandboxWrapped,
     SimpleProgram,
     TestWebIDLFile,
@@ -215,10 +217,12 @@ class TreeMetadataEmitter(LoggingMixin):
             'ANDROID_GENERATED_RESFILES',
             'ANDROID_RES_DIRS',
             'CPP_UNIT_TESTS',
+            'DISABLE_STL_WRAPPING',
             'EXPORT_LIBRARY',
             'EXTRA_ASSEMBLER_FLAGS',
             'EXTRA_COMPILE_FLAGS',
             'EXTRA_COMPONENTS',
+            'EXTRA_DSO_LDOPTS',
             'EXTRA_JS_MODULES',
             'EXTRA_PP_COMPONENTS',
             'EXTRA_PP_JS_MODULES',
@@ -226,6 +230,7 @@ class TreeMetadataEmitter(LoggingMixin):
             'FILES_PER_UNIFIED_FILE',
             'FORCE_SHARED_LIB',
             'FORCE_STATIC_LIB',
+            'USE_STATIC_LIBS',
             'GENERATED_FILES',
             'HOST_LIBRARY_NAME',
             'IS_COMPONENT',
@@ -236,15 +241,28 @@ class TreeMetadataEmitter(LoggingMixin):
             'MSVC_ENABLE_PGO',
             'NO_DIST_INSTALL',
             'OS_LIBS',
+            'RCFILE',
+            'RESFILE',
+            'RCINCLUDE',
+            'DEFFILE',
             'SDK_LIBRARY',
+            'WIN32_EXE_LDFLAGS',
         ]
         for v in varlist:
             if v in sandbox and sandbox[v]:
                 passthru.variables[v] = sandbox[v]
 
+        for v in ['CFLAGS', 'CXXFLAGS', 'CMFLAGS', 'CMMFLAGS', 'LDFLAGS']:
+            if v in sandbox and sandbox[v]:
+                passthru.variables['MOZBUILD_' + v] = sandbox[v]
+
         # NO_VISIBILITY_FLAGS is slightly different
         if sandbox['NO_VISIBILITY_FLAGS']:
             passthru.variables['VISIBILITY_FLAGS'] = ''
+
+        if sandbox['DELAYLOAD_DLLS']:
+            passthru.variables['DELAYLOAD_LDFLAGS'] = [('-DELAYLOAD:%s' % dll) for dll in sandbox['DELAYLOAD_DLLS']]
+            passthru.variables['USE_DELAYIMP'] = True
 
         varmap = dict(
             SOURCES={
@@ -293,6 +311,11 @@ class TreeMetadataEmitter(LoggingMixin):
         if no_pgo_sources:
             passthru.variables['NO_PROFILE_GUIDED_OPTIMIZE'] = no_pgo_sources
 
+        sources_with_flags = [f for f in sources if sources[f].flags]
+        for f in sources_with_flags:
+            ext = mozpath.splitext(f)[1]
+            yield PerSourceFlag(sandbox, f, sources[f].flags)
+
         exports = sandbox.get('EXPORTS')
         if exports:
             yield Exports(sandbox, exports,
@@ -301,6 +324,10 @@ class TreeMetadataEmitter(LoggingMixin):
         defines = sandbox.get('DEFINES')
         if defines:
             yield Defines(sandbox, defines)
+
+        resources = sandbox.get('RESOURCE_FILES')
+        if resources:
+            yield Resources(sandbox, resources, defines)
 
         program = sandbox.get('PROGRAM')
         if program:
@@ -371,14 +398,14 @@ class TreeMetadataEmitter(LoggingMixin):
         # harness can yet deal with test filtering. Once all harnesses can do
         # this, this feature can be dropped.
         test_manifests = dict(
-            A11Y=('a11y', 'testing/mochitest/a11y', True),
-            BROWSER_CHROME=('browser-chrome', 'testing/mochitest/browser', True),
-            METRO_CHROME=('metro-chrome', 'testing/mochitest/metro', True),
-            MOCHITEST=('mochitest', 'testing/mochitest/tests', True),
-            MOCHITEST_CHROME=('chrome', 'testing/mochitest/chrome', True),
-            MOCHITEST_WEBAPPRT_CHROME=('webapprt-chrome', 'testing/mochitest/webapprtChrome', True),
-            WEBRTC_SIGNALLING_TEST=('steeplechase', 'steeplechase', True),
-            XPCSHELL_TESTS=('xpcshell', 'xpcshell', False),
+            A11Y=('a11y', 'testing/mochitest', 'a11y', True),
+            BROWSER_CHROME=('browser-chrome', 'testing/mochitest', 'browser', True),
+            METRO_CHROME=('metro-chrome', 'testing/mochitest', 'metro', True),
+            MOCHITEST=('mochitest', 'testing/mochitest', 'tests', True),
+            MOCHITEST_CHROME=('chrome', 'testing/mochitest', 'chrome', True),
+            MOCHITEST_WEBAPPRT_CHROME=('webapprt-chrome', 'testing/mochitest', 'webapprtChrome', True),
+            WEBRTC_SIGNALLING_TEST=('steeplechase', 'steeplechase', '.', True),
+            XPCSHELL_TESTS=('xpcshell', 'xpcshell', '.', False),
         )
 
         for prefix, info in test_manifests.items():
@@ -408,6 +435,9 @@ class TreeMetadataEmitter(LoggingMixin):
         for name, jar in sandbox.get('JAVA_JAR_TARGETS', {}).items():
             yield SandboxWrapped(sandbox, jar)
 
+        for name, data in sandbox.get('ANDROID_ECLIPSE_PROJECT_TARGETS', {}).items():
+            yield SandboxWrapped(sandbox, data)
+
         if passthru.variables:
             yield passthru
 
@@ -423,32 +453,49 @@ class TreeMetadataEmitter(LoggingMixin):
         return sub
 
     def _process_test_manifest(self, sandbox, info, manifest_path):
-        flavor, install_prefix, filter_inactive = info
+        flavor, install_root, install_subdir, filter_inactive = info
 
         manifest_path = mozpath.normpath(manifest_path)
         path = mozpath.normpath(mozpath.join(sandbox['SRCDIR'], manifest_path))
         manifest_dir = mozpath.dirname(path)
         manifest_reldir = mozpath.dirname(mozpath.relpath(path,
             sandbox['TOPSRCDIR']))
+        install_prefix = mozpath.join(install_root, install_subdir)
 
         try:
             m = manifestparser.TestManifest(manifests=[path], strict=True)
-
-            if not m.tests:
+            defaults = m.manifest_defaults[os.path.normpath(path)]
+            if not m.tests and not 'support-files' in defaults:
                 raise SandboxValidationError('Empty test manifest: %s'
                     % path)
 
             obj = TestManifest(sandbox, path, m, flavor=flavor,
                 install_prefix=install_prefix,
                 relpath=mozpath.join(manifest_reldir, mozpath.basename(path)),
-                dupe_manifest='dupe-manifest' in m.tests[0])
+                dupe_manifest='dupe-manifest' in defaults)
 
             filtered = m.tests
 
             if filter_inactive:
-                filtered = m.active_tests(disabled=False, **self.mozinfo)
+                # We return tests that don't exist because we want manifests
+                # defining tests that don't exist to result in error.
+                filtered = m.active_tests(exists=False, disabled=False,
+                    **self.mozinfo)
+
+                missing = [t['name'] for t in filtered if not os.path.exists(t['path'])]
+                if missing:
+                    raise SandboxValidationError('Test manifest (%s) lists '
+                        'test that does not exist: %s' % (
+                        path, ', '.join(missing)))
 
             out_dir = mozpath.join(install_prefix, manifest_reldir)
+            if 'install-to-subdir' in defaults:
+                # This is terrible, but what are you going to do?
+                out_dir = mozpath.join(out_dir, defaults['install-to-subdir'])
+                obj.manifest_obj_relpath = mozpath.join(manifest_reldir,
+                                                        defaults['install-to-subdir'],
+                                                        mozpath.basename(path))
+
 
             # "head" and "tail" lists.
             # All manifests support support-files.
@@ -459,13 +506,7 @@ class TreeMetadataEmitter(LoggingMixin):
             extras = (('head', set()),
                       ('tail', set()),
                       ('support-files', set()))
-
-            for test in filtered:
-                obj.tests.append(test)
-
-                obj.installs[mozpath.normpath(test['path'])] = \
-                    mozpath.join(out_dir, test['relpath'])
-
+            def process_support_files(test):
                 for thing, seen in extras:
                     value = test.get(thing, '')
                     if value in seen:
@@ -477,26 +518,67 @@ class TreeMetadataEmitter(LoggingMixin):
                         if '*' in pattern and thing == 'support-files':
                             obj.pattern_installs.append(
                                 (manifest_dir, pattern, out_dir))
+                        # "absolute" paths identify files that are to be
+                        # placed in the install_root directory (no globs)
+                        elif pattern[0] == '/':
+                            full = mozpath.normpath(mozpath.join(manifest_dir,
+                                mozpath.basename(pattern)))
+                            obj.installs[full] = (mozpath.join(install_root,
+                                pattern[1:]), False)
                         else:
                             full = mozpath.normpath(mozpath.join(manifest_dir,
                                 pattern))
-                            # Only install paths in our directory. This
-                            # rule is somewhat arbitrary and could be lifted.
+
+                            dest_path = mozpath.join(out_dir, pattern)
+
+                            # If the path resolves to a different directory
+                            # tree, we take special behavior depending on the
+                            # entry type.
                             if not full.startswith(manifest_dir):
-                                continue
+                                # If it's a support file, we install the file
+                                # into the current destination directory.
+                                # This implementation makes installing things
+                                # with custom prefixes impossible. If this is
+                                # needed, we can add support for that via a
+                                # special syntax later.
+                                if thing == 'support-files':
+                                    dest_path = mozpath.join(out_dir,
+                                        os.path.basename(pattern))
+                                # If it's not a support file, we ignore it.
+                                # This preserves old behavior so things like
+                                # head files doesn't get installed multiple
+                                # times.
+                                else:
+                                    continue
 
-                            obj.installs[full] = mozpath.join(out_dir, pattern)
+                            obj.installs[full] = (mozpath.normpath(dest_path),
+                                False)
 
-            # We also copy the manifest into the output directory.
-            out_path = mozpath.join(out_dir, mozpath.basename(manifest_path))
-            obj.installs[path] = out_path
+            for test in filtered:
+                obj.tests.append(test)
+
+                obj.installs[mozpath.normpath(test['path'])] = \
+                    (mozpath.join(out_dir, test['relpath']), True)
+
+                process_support_files(test)
+
+            if not filtered:
+                # If there are no tests, look for support-files under DEFAULT.
+                process_support_files(defaults)
+
+            # We also copy manifests into the output directory,
+            # including manifests from [include:foo] directives.
+            for mpath in m.manifests():
+                mpath = mozpath.normpath(mpath)
+                out_path = mozpath.join(out_dir, mozpath.basename(mpath))
+                obj.installs[mpath] = (out_path, False)
 
             # Some manifests reference files that are auto generated as
             # part of the build or shouldn't be installed for some
             # reason. Here, we prune those files from the install set.
             # FUTURE we should be able to detect autogenerated files from
             # other build metadata. Once we do that, we can get rid of this.
-            for f in m.tests[0].get('generated-files', '').split():
+            for f in defaults.get('generated-files', '').split():
                 # We re-raise otherwise the stack trace isn't informative.
                 try:
                     del obj.installs[mozpath.join(manifest_dir, f)]

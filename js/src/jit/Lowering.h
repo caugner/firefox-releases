@@ -164,8 +164,9 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitForkJoinContext(MForkJoinContext *ins);
     bool visitGuardThreadExclusive(MGuardThreadExclusive *ins);
     bool visitInterruptCheck(MInterruptCheck *ins);
-    bool visitCheckInterruptPar(MCheckInterruptPar *ins);
+    bool visitInterruptCheckPar(MInterruptCheckPar *ins);
     bool visitStoreSlot(MStoreSlot *ins);
+    bool visitFilterTypeSet(MFilterTypeSet *ins);
     bool visitTypeBarrier(MTypeBarrier *ins);
     bool visitMonitorTypes(MMonitorTypes *ins);
     bool visitPostWriteBarrier(MPostWriteBarrier *ins);
@@ -173,6 +174,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitSetArrayLength(MSetArrayLength *ins);
     bool visitTypedArrayLength(MTypedArrayLength *ins);
     bool visitTypedArrayElements(MTypedArrayElements *ins);
+    bool visitNeuterCheck(MNeuterCheck *lir);
     bool visitTypedObjectElements(MTypedObjectElements *ins);
     bool visitInitializedLength(MInitializedLength *ins);
     bool visitSetInitializedLength(MSetInitializedLength *ins);
@@ -236,6 +238,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitFunctionBoundary(MFunctionBoundary *ins);
     bool visitIsCallable(MIsCallable *ins);
     bool visitHaveSameClass(MHaveSameClass *ins);
+    bool visitHasClass(MHasClass *ins);
     bool visitAsmJSLoadGlobalVar(MAsmJSLoadGlobalVar *ins);
     bool visitAsmJSStoreGlobalVar(MAsmJSStoreGlobalVar *ins);
     bool visitAsmJSLoadFFIFunc(MAsmJSLoadFFIFunc *ins);

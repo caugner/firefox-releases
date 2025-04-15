@@ -36,7 +36,6 @@
 #include "nsNetUtil.h"
 #include "nsILoadGroup.h"
 #include "mozilla/Preferences.h"
-#include "nsDOMLists.h"
 #include "xpcpublic.h"
 #include "nsContentPolicyUtils.h"
 #include "nsDOMFile.h"
@@ -667,9 +666,9 @@ WebSocket::Init(JSContext* aCx,
   NS_ENSURE_SUCCESS(rv, rv);
 
   unsigned lineno;
-  JS::Rooted<JSScript*> script(aCx);
-  if (JS_DescribeScriptedCaller(aCx, &script, &lineno)) {
-    mScriptFile = JS_GetScriptFilename(aCx, script);
+  JS::AutoFilename file;
+  if (JS::DescribeScriptedCaller(aCx, &file, &lineno)) {
+    mScriptFile = file.get();
     mScriptLine = lineno;
   }
 
@@ -954,7 +953,7 @@ WebSocket::CreateAndDispatchCloseEvent(bool aWasClean,
 }
 
 bool
-WebSocket::PrefEnabled()
+WebSocket::PrefEnabled(JSContext* aCx, JSObject* aGlobal)
 {
   return Preferences::GetBool("network.websocket.enabled", true);
 }
@@ -1215,7 +1214,10 @@ WebSocket::Send(const ArrayBuffer& aData,
 {
   NS_ABORT_IF_FALSE(NS_IsMainThread(), "Not running on main thread");
 
-  MOZ_ASSERT(sizeof(*aData.Data()) == 1);
+  aData.ComputeLengthAndData();
+
+  static_assert(sizeof(*aData.Data()) == 1, "byte-sized data required");
+
   uint32_t len = aData.Length();
   char* data = reinterpret_cast<char*>(aData.Data());
 
@@ -1229,7 +1231,10 @@ WebSocket::Send(const ArrayBufferView& aData,
 {
   NS_ABORT_IF_FALSE(NS_IsMainThread(), "Not running on main thread");
 
-  MOZ_ASSERT(sizeof(*aData.Data()) == 1);
+  aData.ComputeLengthAndData();
+
+  static_assert(sizeof(*aData.Data()) == 1, "byte-sized data required");
+
   uint32_t len = aData.Length();
   char* data = reinterpret_cast<char*>(aData.Data());
 
@@ -1413,7 +1418,7 @@ WebSocket::GetLoadGroup(nsILoadGroup** aLoadGroup)
     nsContentUtils::GetDocumentFromScriptContext(sc);
 
   if (doc) {
-    *aLoadGroup = doc->GetDocumentLoadGroup().get();  // already_AddRefed
+    *aLoadGroup = doc->GetDocumentLoadGroup().take();
   }
 
   return NS_OK;

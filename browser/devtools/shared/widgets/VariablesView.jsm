@@ -21,7 +21,7 @@ const ITEM_FLASH_DURATION = 300 // ms
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource:///modules/devtools/ViewHelpers.jsm");
-Cu.import("resource:///modules/devtools/shared/event-emitter.js");
+Cu.import("resource://gre/modules/devtools/event-emitter.js");
 Cu.import("resource://gre/modules/devtools/DevToolsUtils.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 let promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js").Promise;
@@ -52,7 +52,7 @@ Object.defineProperty(this, "NetworkHelper", {
   enumerable: true
 });
 
-this.EXPORTED_SYMBOLS = ["VariablesView"];
+this.EXPORTED_SYMBOLS = ["VariablesView", "escapeHTML"];
 
 /**
  * Debugger localization strings.
@@ -512,7 +512,6 @@ VariablesView.prototype = {
   _onSearchboxKeyPress: function(e) {
     switch(e.keyCode) {
       case e.DOM_VK_RETURN:
-      case e.DOM_VK_ENTER:
         this._onSearchboxInput();
         return;
       case e.DOM_VK_ESCAPE:
@@ -861,7 +860,6 @@ VariablesView.prototype = {
         return;
 
       case e.DOM_VK_RETURN:
-      case e.DOM_VK_ENTER:
         // Start editing the value or name of the Variable or Property.
         if (item instanceof Variable) {
           if (e.metaKey || e.altKey || e.shiftKey) {
@@ -3427,7 +3425,24 @@ VariablesView.stringifiers.byObjectClass = {
 
     return "Date " + new Date(preview.timestamp).toISOString();
   },
+
+  String: function({displayString}) {
+    if (displayString === undefined) {
+      return null;
+    }
+    return VariablesView.getString(displayString);
+  },
+
+  Number: function({preview}) {
+    if (preview === undefined) {
+      return null;
+    }
+    return VariablesView.getString(preview.value);
+  },
 }; // VariablesView.stringifiers.byObjectClass
+
+VariablesView.stringifiers.byObjectClass.Boolean =
+  VariablesView.stringifiers.byObjectClass.Number;
 
 VariablesView.stringifiers.byObjectKind = {
   ArrayLike: function(aGrip, {concise}) {
@@ -3945,7 +3960,6 @@ Editable.prototype = {
         this._next();
         break;
       case e.DOM_VK_RETURN:
-      case e.DOM_VK_ENTER:
         this._save();
         break;
       case e.DOM_VK_ESCAPE:

@@ -6,7 +6,6 @@
 
 #include "nsEventDispatcher.h"
 #include "nsPresContext.h"
-#include "nsEventListenerManager.h"
 #include "nsContentUtils.h"
 #include "nsError.h"
 #include <new>
@@ -14,16 +13,18 @@
 #include "nsIDocument.h"
 #include "nsINode.h"
 #include "nsPIDOMWindow.h"
-#include "nsDOMTouchEvent.h"
 #include "GeckoProfiler.h"
 #include "GeneratedEvents.h"
 #include "mozilla/ContentEvents.h"
 #include "mozilla/dom/EventTarget.h"
+#include "mozilla/dom/TouchEvent.h"
+#include "mozilla/EventListenerManager.h"
+#include "mozilla/InternalMutationEvent.h"
 #include "mozilla/MiscEvents.h"
 #include "mozilla/MouseEvents.h"
-#include "mozilla/MutationEvent.h"
 #include "mozilla/TextEvents.h"
 #include "mozilla/TouchEvents.h"
+#include "mozilla/unused.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -35,14 +36,14 @@ public:
     // We can do this optimization only in the main thread.
     mNonMainThread(!NS_IsMainThread()),
     mInitialCount(mNonMainThread ?
-                    0 : nsEventListenerManager::sMainThreadCreatedCount)
+                    0 : EventListenerManager::sMainThreadCreatedCount)
   {
   }
 
   bool MayHaveNewListenerManager()
   {
     return mNonMainThread ||
-           mInitialCount != nsEventListenerManager::sMainThreadCreatedCount;
+           mInitialCount != EventListenerManager::sMainThreadCreatedCount;
   }
 
   bool IsMainThread()
@@ -163,24 +164,24 @@ public:
    * Resets aVisitor object and calls PreHandleEvent.
    * Copies mItemFlags and mItemData to the current nsEventTargetChainItem.
    */
-  nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor);
+  void PreHandleEvent(nsEventChainPreVisitor& aVisitor);
 
   /**
    * If the current item in the event target chain has an event listener
-   * manager, this method calls nsEventListenerManager::HandleEvent().
+   * manager, this method calls EventListenerManager::HandleEvent().
    */
-  nsresult HandleEvent(nsEventChainPostVisitor& aVisitor,
-                       ELMCreationDetector& aCd)
+  void HandleEvent(nsEventChainPostVisitor& aVisitor,
+                   ELMCreationDetector& aCd)
   {
     if (WantsWillHandleEvent()) {
       mTarget->WillHandleEvent(aVisitor);
     }
     if (aVisitor.mEvent->mFlags.mPropagationStopped) {
-      return NS_OK;
+      return;
     }
     if (!mManager) {
       if (!MayHaveListenerManager() && !aCd.MayHaveNewListenerManager()) {
-        return NS_OK;
+        return;
       }
       mManager = mTarget->GetExistingListenerManager();
     }
@@ -194,13 +195,12 @@ public:
       NS_ASSERTION(aVisitor.mEvent->currentTarget == nullptr,
                    "CurrentTarget should be null!");
     }
-    return NS_OK;
   }
 
   /**
    * Copies mItemFlags and mItemData to aVisitor and calls PostHandleEvent.
    */
-  nsresult PostHandleEvent(nsEventChainPostVisitor& aVisitor);
+  void PostHandleEvent(nsEventChainPostVisitor& aVisitor);
 
   nsCOMPtr<EventTarget>             mTarget;
   uint16_t                          mFlags;
@@ -209,7 +209,7 @@ public:
   // Event retargeting must happen whenever mNewTarget is non-null.
   nsCOMPtr<EventTarget>             mNewTarget;
   // Cache mTarget's event listener manager.
-  nsRefPtr<nsEventListenerManager>  mManager;
+  nsRefPtr<EventListenerManager>    mManager;
 };
 
 nsEventTargetChainItem::nsEventTargetChainItem(EventTarget* aTarget)
@@ -218,26 +218,24 @@ nsEventTargetChainItem::nsEventTargetChainItem(EventTarget* aTarget)
   MOZ_ASSERT(!aTarget || mTarget == aTarget->GetTargetForEventTargetChain());
 }
 
-nsresult
+void
 nsEventTargetChainItem::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
 {
   aVisitor.Reset();
-  nsresult rv = mTarget->PreHandleEvent(aVisitor);
+  unused << mTarget->PreHandleEvent(aVisitor);
   SetForceContentDispatch(aVisitor.mForceContentDispatch);
   SetWantsWillHandleEvent(aVisitor.mWantsWillHandleEvent);
   SetMayHaveListenerManager(aVisitor.mMayHaveListenerManager);
   mItemFlags = aVisitor.mItemFlags;
   mItemData = aVisitor.mItemData;
-  return rv;
 }
 
-nsresult
+void
 nsEventTargetChainItem::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
 {
   aVisitor.mItemFlags = mItemFlags;
   aVisitor.mItemData = mItemData;
   mTarget->PostHandleEvent(aVisitor);
-  return NS_OK;
 }
 
 void
@@ -612,7 +610,7 @@ nsEventDispatcher::Dispatch(nsISupports* aTarget,
   aEvent->mFlags.mDispatchedAtLeastOnce = true;
 
   if (!externalDOMEvent && preVisitor.mDOMEvent) {
-    // An nsDOMEvent was created while dispatching the event.
+    // An dom::Event was created while dispatching the event.
     // Duplicate private data if someone holds a pointer to it.
     nsrefcnt rc = 0;
     NS_RELEASE2(preVisitor.mDOMEvent, rc);
@@ -710,8 +708,8 @@ nsEventDispatcher::CreateEvent(mozilla::dom::EventTarget* aOwner,
       return NS_NewDOMDragEvent(aDOMEvent, aOwner, aPresContext,
                                 aEvent->AsDragEvent());
     case NS_TEXT_EVENT:
-      return NS_NewDOMTextEvent(aDOMEvent, aOwner, aPresContext,
-                                aEvent->AsTextEvent());
+      return NS_NewDOMUIEvent(aDOMEvent, aOwner, aPresContext,
+                              aEvent->AsTextEvent());
     case NS_CLIPBOARD_EVENT:
       return NS_NewDOMClipboardEvent(aDOMEvent, aOwner, aPresContext,
                                      aEvent->AsClipboardEvent());
@@ -766,7 +764,7 @@ nsEventDispatcher::CreateEvent(mozilla::dom::EventTarget* aOwner,
     return NS_NewDOMMutationEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("textevent") ||
       aEventType.LowerCaseEqualsLiteral("textevents"))
-    return NS_NewDOMTextEvent(aDOMEvent, aOwner, aPresContext, nullptr);
+    return NS_NewDOMUIEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("popupblockedevents"))
     return NS_NewDOMPopupBlockedEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("deviceorientationevent"))
@@ -820,7 +818,7 @@ nsEventDispatcher::CreateEvent(mozilla::dom::EventTarget* aOwner,
   if (aEventType.LowerCaseEqualsLiteral("closeevent"))
     return NS_NewDOMCloseEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("touchevent") &&
-      nsDOMTouchEvent::PrefEnabled())
+      TouchEvent::PrefEnabled())
     return NS_NewDOMTouchEvent(aDOMEvent, aOwner, aPresContext, nullptr);
   if (aEventType.LowerCaseEqualsLiteral("hashchangeevent"))
     return NS_NewDOMHashChangeEvent(aDOMEvent, aOwner, aPresContext, nullptr);

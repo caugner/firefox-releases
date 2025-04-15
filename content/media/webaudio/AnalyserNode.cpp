@@ -57,10 +57,10 @@ public:
     MOZ_ASSERT(NS_IsMainThread());
   }
 
-  virtual void ProduceAudioBlock(AudioNodeStream* aStream,
-                                 const AudioChunk& aInput,
-                                 AudioChunk* aOutput,
-                                 bool* aFinished) MOZ_OVERRIDE
+  virtual void ProcessBlock(AudioNodeStream* aStream,
+                            const AudioChunk& aInput,
+                            AudioChunk* aOutput,
+                            bool* aFinished) MOZ_OVERRIDE
   {
     *aOutput = aInput;
 
@@ -150,6 +150,8 @@ AnalyserNode::GetFloatFrequencyData(const Float32Array& aArray)
     return;
   }
 
+  aArray.ComputeLengthAndData();
+
   float* buffer = aArray.Data();
   uint32_t length = std::min(aArray.Length(), mOutputBuffer.Length());
 
@@ -168,6 +170,8 @@ AnalyserNode::GetByteFrequencyData(const Uint8Array& aArray)
 
   const double rangeScaleFactor = 1.0 / (mMaxDecibels - mMinDecibels);
 
+  aArray.ComputeLengthAndData();
+
   unsigned char* buffer = aArray.Data();
   uint32_t length = std::min(aArray.Length(), mOutputBuffer.Length());
 
@@ -181,8 +185,23 @@ AnalyserNode::GetByteFrequencyData(const Uint8Array& aArray)
 }
 
 void
+AnalyserNode::GetFloatTimeDomainData(const Float32Array& aArray)
+{
+  aArray.ComputeLengthAndData();
+
+  float* buffer = aArray.Data();
+  uint32_t length = std::min(aArray.Length(), mBuffer.Length());
+
+  for (uint32_t i = 0; i < length; ++i) {
+    buffer[i] = mBuffer[(i + mWriteIndex) % mBuffer.Length()];;
+  }
+}
+
+void
 AnalyserNode::GetByteTimeDomainData(const Uint8Array& aArray)
 {
+  aArray.ComputeLengthAndData();
+
   unsigned char* buffer = aArray.Data();
   uint32_t length = std::min(aArray.Length(), mBuffer.Length());
 

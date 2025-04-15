@@ -16,7 +16,6 @@ const { Services } = Cu.import("resource://gre/modules/Services.jsm");
 
 let browser = Services.wm.getMostRecentWindow("navigator:browser");
 let shell;
-let test_counts = 0;
 
 function loadShell() {
   if (!browser) {
@@ -31,46 +30,27 @@ function getContentWindow() {
   return shell.contentBrowser.contentWindow;
 }
 
-function addChromeEventListener(type, listener) {
+if (loadShell()) {
   let content = getContentWindow();
-  content.addEventListener("mozChromeEvent", function chromeListener(evt) {
-    if (!evt.detail || evt.detail.type !== type) {
+  let eventHandler = function(evt) {
+    if (!evt.detail || evt.detail.type !== "permission-prompt") {
       return;
     }
 
-    let remove = listener(evt);
-    if (remove) {
-      content.removeEventListener("mozChromeEvent", chromeListener);
-    }
+    sendAsyncMessage("permission-request", evt.detail);
+  };
+
+  content.addEventListener("mozChromeEvent", eventHandler);
+
+  // need to remove ChromeEvent listener after test finished.
+  addMessageListener("teardown", function() {
+    content.removeEventListener("mozChromeEvent", eventHandler);
+  });
+
+  addMessageListener("permission-response", function(detail) {
+    let event = content.document.createEvent('CustomEvent');
+    event.initCustomEvent('mozContentEvent', true, true, detail);
+    content.dispatchEvent(event);
   });
 }
 
-function checkPromptEvent(prompt_evt) {
-  let detail = prompt_evt.detail;
-
-  if (detail.permission == "audio-capture") {
-    sendAsyncMessage("permission.granted", "audio-capture");
-    test_counts--;
-  } else if (detail.permission == "desktop-notification") {
-    sendAsyncMessage("permission.granted", "desktop-notification");
-    test_counts--;
-  } else if (detail.permission == "geolocation") {
-    sendAsyncMessage("permission.granted", "geolocation");
-    test_counts--;
-  }
-
-  if (!test_counts) {
-    debug("remove prompt event listener.");
-    return true;
-  }
-
-  return false;
-}
-
-if (loadShell()) {
-  addMessageListener("test.counts", function (counts) {
-    test_counts = counts;
-  });
-
-  addChromeEventListener("permission-prompt", checkPromptEvent);
-}

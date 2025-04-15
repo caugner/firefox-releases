@@ -15,7 +15,7 @@
 #include "nsPresContext.h"
 #include "nsIContent.h"
 #include "nsCOMPtr.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsGkAtoms.h"
 #include "nsHTMLParts.h"
 #include "nsIPresShell.h"
@@ -57,7 +57,7 @@ nsDeckFrame::GetType() const
   return nsGkAtoms::deckFrame;
 }
 
-NS_IMETHODIMP
+nsresult
 nsDeckFrame::AttributeChanged(int32_t         aNameSpaceID,
                               nsIAtom*        aAttribute,
                               int32_t         aModType)

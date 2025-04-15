@@ -19,7 +19,7 @@ function test()
     ["i", "b1", false],
     ["v", "d1", true],
     ["VK_DOWN", "d2", true],
-    ["VK_ENTER", "d1", true],
+    ["VK_RETURN", "d1", true],
     [".", "d1", false],
     ["c", "d1", false],
     ["1", "d2", true],
@@ -52,7 +52,8 @@ function test()
     waitForFocus(setupTest, content);
   }, true);
 
-  content.location = "http://mochi.test:8888/browser/browser/devtools/inspector/test/browser_inspector_bug_650804_search.html";
+  content.location = "http://mochi.test:8888/browser/browser/devtools/" +
+                     "inspector/test/browser_inspector_bug_650804_search.html";
 
   function $(id) {
     if (id == null) return null;

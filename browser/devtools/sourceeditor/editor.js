@@ -19,7 +19,7 @@ const XUL_NS      = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.x
 const MAX_VERTICAL_OFFSET = 3;
 
 const {Promise: promise} = Cu.import("resource://gre/modules/Promise.jsm", {});
-const events  = require("devtools/shared/event-emitter");
+const events  = require("devtools/toolkit/event-emitter");
 
 Cu.import("resource://gre/modules/Services.jsm");
 const L10N = Services.strings.createBundle(L10N_BUNDLE);
@@ -32,8 +32,7 @@ const CM_STYLES   = [
   "chrome://browser/skin/devtools/common.css",
   "chrome://browser/content/devtools/codemirror/codemirror.css",
   "chrome://browser/content/devtools/codemirror/dialog.css",
-  "chrome://browser/content/devtools/codemirror/mozilla.css",
-  "chrome://browser/content/devtools/codemirror/foldgutter.css"
+  "chrome://browser/content/devtools/codemirror/mozilla.css"
 ];
 
 const CM_SCRIPTS  = [
@@ -756,6 +755,26 @@ Editor.prototype = {
       { line: end.line + 1, ch: cm.getLine(end.line + 1).length});
     cm.setSelection({ line: start.line + 1, ch: start.ch },
       { line: end.line + 1, ch: end.ch });
+  },
+
+  /**
+   * Returns current font size for the editor area, in pixels.
+   */
+  getFontSize: function () {
+    let cm  = editors.get(this);
+    let el  = cm.getWrapperElement();
+    let win = el.ownerDocument.defaultView;
+
+    return parseInt(win.getComputedStyle(el).getPropertyValue("font-size"), 10);
+  },
+
+  /**
+   * Sets font size for the editor area.
+   */
+  setFontSize: function (size) {
+    let cm = editors.get(this);
+    cm.getWrapperElement().style.fontSize = parseInt(size, 10) + "px";
+    cm.refresh();
   },
 
   /**

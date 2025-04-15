@@ -97,7 +97,7 @@ public:
   using nsIConstraintValidation::Validity;
   using nsGenericHTMLFormElementWithState::GetForm;
 
-  HTMLInputElement(already_AddRefed<nsINodeInfo> aNodeInfo,
+  HTMLInputElement(already_AddRefed<nsINodeInfo>& aNodeInfo,
                    mozilla::dom::FromParser aFromParser);
   virtual ~HTMLInputElement();
 
@@ -611,7 +611,7 @@ public:
   double ValueAsNumber() const
   {
     return DoesValueAsNumberApply() ? GetValueAsDecimal().toDouble()
-                                    : UnspecifiedNaN();
+                                    : UnspecifiedNaN<double>();
   }
 
   void SetValueAsNumber(double aValue, ErrorResult& aRv);

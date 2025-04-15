@@ -8,6 +8,7 @@
 #include "gfxColor.h"                   // for gfxRGBA
 #include "gfxContext.h"                 // for gfxContext, etc
 #include "gfxPlatform.h"                // for gfxPlatform
+#include "gfxPrefs.h"                   // for gfxPrefs
 #include "gfxPoint.h"                   // for gfxIntSize, gfxPoint
 #include "gfxTeeSurface.h"              // for gfxTeeSurface
 #include "gfxUtils.h"                   // for gfxUtils
@@ -53,7 +54,7 @@ ContentClient::CreateContentClient(CompositableForwarder* aForwarder)
   // XXX We need support for gralloc with non-deprecated textures content before
   // we can use them with FirefoxOS (bug 946720). We need the same locking for
   // Windows.
-#if !defined(MOZ_WIDGET_GONK) && !defined(XP_WIN)
+#if !defined(XP_WIN)
   useDeprecatedTextures = gfxPlatform::GetPlatform()->UseDeprecatedTextures();
 #endif
 
@@ -63,7 +64,8 @@ ContentClient::CreateContentClient(CompositableForwarder* aForwarder)
   } else
 #endif
   {
-    useDoubleBuffering = LayerManagerComposite::SupportsDirectTexturing() ||
+    useDoubleBuffering = (LayerManagerComposite::SupportsDirectTexturing() &&
+                         backend != LayersBackend::LAYERS_D3D9) ||
                          backend == LayersBackend::LAYERS_BASIC;
   }
 
@@ -167,14 +169,16 @@ ContentClientRemoteBuffer::CreateAndAllocateTextureClient(RefPtr<TextureClient>&
                                                           TextureFlags aFlags)
 {
   aClient = CreateTextureClientForDrawing(mSurfaceFormat,
-                                          mTextureInfo.mTextureFlags | aFlags);
+                                          mTextureInfo.mTextureFlags | aFlags,
+                                          mSize);
   if (!aClient) {
     return false;
   }
 
   if (!aClient->AsTextureClientDrawTarget()->AllocateForSurface(mSize, ALLOC_CLEAR_BUFFER)) {
     aClient = CreateTextureClientForDrawing(mSurfaceFormat,
-                mTextureInfo.mTextureFlags | TEXTURE_ALLOC_FALLBACK | aFlags);
+                mTextureInfo.mTextureFlags | TEXTURE_ALLOC_FALLBACK | aFlags,
+                mSize);
     if (!aClient) {
       return false;
     }
@@ -209,8 +213,7 @@ ContentClientRemoteBuffer::BuildTextureClients(SurfaceFormat aFormat,
 
   mSurfaceFormat = aFormat;
   mSize = gfx::IntSize(aRect.width, aRect.height);
-  mTextureInfo.mTextureFlags = (aFlags & ~TEXTURE_DEALLOCATE_CLIENT) |
-                               TEXTURE_DEALLOCATE_DEFERRED;
+  mTextureInfo.mTextureFlags = aFlags & ~TEXTURE_DEALLOCATE_CLIENT;
 
   if (!CreateAndAllocateTextureClient(mTextureClient, TEXTURE_ON_BLACK) ||
       !AddTextureClient(mTextureClient)) {
@@ -293,9 +296,11 @@ ContentClientRemoteBuffer::Updated(const nsIntRegion& aRegionToDraw,
                                                aDidSelfCopy);
 
   MOZ_ASSERT(mTextureClient);
-  mForwarder->UseTexture(this, mTextureClient);
   if (mTextureClientOnWhite) {
-    mForwarder->UseTexture(this, mTextureClientOnWhite);
+    mForwarder->UseComponentAlphaTextures(this, mTextureClient,
+                                          mTextureClientOnWhite);
+  } else {
+    mForwarder->UseTexture(this, mTextureClient);
   }
   mForwarder->UpdateTextureRegion(this,
                                   ThebesBufferData(BufferRect(),
@@ -630,18 +635,22 @@ ContentClientDoubleBuffered::FinalizeFrame(const nsIntRegion& aRegionToDraw)
     mFrontClient->Unlock();
     return;
   }
-  RefPtr<DrawTarget> dt =
-    mFrontClient->AsTextureClientDrawTarget()->GetAsDrawTarget();
-  RefPtr<DrawTarget> dtOnWhite = mFrontClientOnWhite
-    ? mFrontClientOnWhite->AsTextureClientDrawTarget()->GetAsDrawTarget()
-    : nullptr;
-  RotatedBuffer frontBuffer(dt,
-                            dtOnWhite,
-                            mFrontBufferRect,
-                            mFrontBufferRotation);
-  UpdateDestinationFrom(frontBuffer, updateRegion);
-  // We need to flush our buffers before we unlock our front textures
-  FlushBuffers();
+  {
+    // Restrict the DrawTargets and frontBuffer to a scope to make
+    // sure there is no more external references to the DrawTargets
+    // when we Unlock the TextureClients.
+    RefPtr<DrawTarget> dt =
+      mFrontClient->AsTextureClientDrawTarget()->GetAsDrawTarget();
+    RefPtr<DrawTarget> dtOnWhite = mFrontClientOnWhite
+      ? mFrontClientOnWhite->AsTextureClientDrawTarget()->GetAsDrawTarget()
+      : nullptr;
+    RotatedBuffer frontBuffer(dt,
+                              dtOnWhite,
+                              mFrontBufferRect,
+                              mFrontBufferRotation);
+    UpdateDestinationFrom(frontBuffer, updateRegion);
+  }
+
   mFrontClient->Unlock();
   if (mFrontClientOnWhite) {
     mFrontClientOnWhite->Unlock();
@@ -667,6 +676,8 @@ ContentClientDoubleBuffered::UpdateDestinationFrom(const RotatedBuffer& aSource,
   if (isClippingCheap) {
     destDT->PopClip();
   }
+  // Flush the destination before the sources become inaccessible (Unlock).
+  destDT->Flush();
   ReturnDrawTargetToBuffer(destDT);
 
   if (aSource.HaveBufferOnWhite()) {
@@ -686,6 +697,8 @@ ContentClientDoubleBuffered::UpdateDestinationFrom(const RotatedBuffer& aSource,
     if (isClippingCheap) {
       destDT->PopClip();
     }
+    // Flush the destination before the sources become inaccessible (Unlock).
+    destDT->Flush();
     ReturnDrawTargetToBuffer(destDT);
   }
 }
@@ -1090,7 +1103,7 @@ ContentClientIncremental::BeginPaintBuffer(ThebesLayer* aLayer,
     }
 
     if (mode == SurfaceMode::SURFACE_COMPONENT_ALPHA) {
-      if (!gfxPlatform::ComponentAlphaEnabled() ||
+      if (!gfxPrefs::ComponentAlphaEnabled() ||
           !aLayer->GetParent() ||
           !aLayer->GetParent()->SupportsComponentAlphaChildren()) {
         mode = SurfaceMode::SURFACE_SINGLE_CHANNEL_ALPHA;

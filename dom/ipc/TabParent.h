@@ -9,12 +9,11 @@
 
 #include "mozilla/EventForwards.h"
 #include "mozilla/dom/PBrowserParent.h"
-#include "mozilla/dom/PContentDialogParent.h"
+#include "mozilla/dom/PFilePickerParent.h"
 #include "mozilla/dom/TabContext.h"
 #include "nsCOMPtr.h"
 #include "nsIAuthPromptProvider.h"
 #include "nsIBrowserDOMWindow.h"
-#include "nsIDialogParamBlock.h"
 #include "nsISecureBrowserUI.h"
 #include "nsITabParent.h"
 #include "nsIXULBrowserWindow.h"
@@ -46,8 +45,6 @@ class ClonedMessageData;
 class ContentParent;
 class Element;
 struct StructuredCloneData;
-
-class ContentDialogParent : public PContentDialogParent {};
 
 class TabParent : public PBrowserParent 
                 , public nsITabParent 
@@ -148,13 +145,15 @@ public:
                                     uint32_t* aSeqno) MOZ_OVERRIDE;
     virtual bool RecvNotifyIMETextChange(const uint32_t& aStart,
                                          const uint32_t& aEnd,
-                                         const uint32_t& aNewEnd) MOZ_OVERRIDE;
+                                         const uint32_t& aNewEnd,
+                                         const bool& aCausedByComposition) MOZ_OVERRIDE;
     virtual bool RecvNotifyIMESelectedCompositionRect(const uint32_t& aOffset,
                                                       const nsIntRect& aRect,
                                                       const nsIntRect& aCaretRect) MOZ_OVERRIDE;
     virtual bool RecvNotifyIMESelection(const uint32_t& aSeqno,
                                         const uint32_t& aAnchor,
-                                        const uint32_t& aFocus) MOZ_OVERRIDE;
+                                        const uint32_t& aFocus,
+                                        const bool& aCausedByComposition) MOZ_OVERRIDE;
     virtual bool RecvNotifyIMETextHint(const nsString& aText) MOZ_OVERRIDE;
     virtual bool RecvEndIMEComposition(const bool& aCancel,
                                        nsString* aComposition) MOZ_OVERRIDE;
@@ -186,18 +185,10 @@ public:
                                            const ZoomConstraints& aConstraints) MOZ_OVERRIDE;
     virtual bool RecvContentReceivedTouch(const ScrollableLayerGuid& aGuid,
                                           const bool& aPreventDefault) MOZ_OVERRIDE;
-    virtual PContentDialogParent*
-    AllocPContentDialogParent(const uint32_t& aType,
-                              const nsCString& aName,
-                              const nsCString& aFeatures,
-                              const InfallibleTArray<int>& aIntParams,
-                              const InfallibleTArray<nsString>& aStringParams) MOZ_OVERRIDE;
-    virtual bool DeallocPContentDialogParent(PContentDialogParent* aDialog) MOZ_OVERRIDE
-    {
-      delete aDialog;
-      return true;
-    }
 
+    virtual PColorPickerParent*
+    AllocPColorPickerParent(const nsString& aTitle, const nsString& aInitialColor) MOZ_OVERRIDE;
+    virtual bool DeallocPColorPickerParent(PColorPickerParent* aColorPicker) MOZ_OVERRIDE;
 
     void LoadURL(nsIURI* aURI);
     // XXX/cjones: it's not clear what we gain by hiding these
@@ -206,10 +197,19 @@ public:
     void Show(const nsIntSize& size);
     void UpdateDimensions(const nsRect& rect, const nsIntSize& size);
     void UpdateFrame(const layers::FrameMetrics& aFrameMetrics);
-    void HandleDoubleTap(const CSSIntPoint& aPoint, int32_t aModifiers);
-    void HandleSingleTap(const CSSIntPoint& aPoint, int32_t aModifiers);
-    void HandleLongTap(const CSSIntPoint& aPoint, int32_t aModifiers);
-    void HandleLongTapUp(const CSSIntPoint& aPoint, int32_t aModifiers);
+    void AcknowledgeScrollUpdate(const ViewID& aScrollId, const uint32_t& aScrollGeneration);
+    void HandleDoubleTap(const CSSPoint& aPoint,
+                         int32_t aModifiers,
+                         const ScrollableLayerGuid& aGuid);
+    void HandleSingleTap(const CSSPoint& aPoint,
+                         int32_t aModifiers,
+                         const ScrollableLayerGuid& aGuid);
+    void HandleLongTap(const CSSPoint& aPoint,
+                       int32_t aModifiers,
+                       const ScrollableLayerGuid& aGuid);
+    void HandleLongTapUp(const CSSPoint& aPoint,
+                         int32_t aModifiers,
+                         const ScrollableLayerGuid& aGuid);
     void NotifyTransformBegin(ViewID aViewId);
     void NotifyTransformEnd(ViewID aViewId);
     void Activate();
@@ -229,10 +229,10 @@ public:
     bool SendMouseWheelEvent(mozilla::WidgetWheelEvent& event);
     bool SendRealKeyEvent(mozilla::WidgetKeyboardEvent& event);
     bool SendRealTouchEvent(WidgetTouchEvent& event);
-    bool SendHandleSingleTap(const CSSIntPoint& aPoint);
-    bool SendHandleLongTap(const CSSIntPoint& aPoint);
-    bool SendHandleLongTapUp(const CSSIntPoint& aPoint);
-    bool SendHandleDoubleTap(const CSSIntPoint& aPoint);
+    bool SendHandleSingleTap(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid);
+    bool SendHandleLongTap(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid);
+    bool SendHandleLongTapUp(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid);
+    bool SendHandleDoubleTap(const CSSPoint& aPoint, const ScrollableLayerGuid& aGuid);
 
     virtual PDocumentRendererParent*
     AllocPDocumentRendererParent(const nsRect& documentRect,
@@ -244,11 +244,15 @@ public:
     virtual bool DeallocPDocumentRendererParent(PDocumentRendererParent* actor) MOZ_OVERRIDE;
 
     virtual PContentPermissionRequestParent*
-    AllocPContentPermissionRequestParent(const nsCString& aType,
-                                         const nsCString& aAccess,
+    AllocPContentPermissionRequestParent(const InfallibleTArray<PermissionRequest>& aRequests,
                                          const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
     virtual bool
     DeallocPContentPermissionRequestParent(PContentPermissionRequestParent* actor) MOZ_OVERRIDE;
+
+    virtual PFilePickerParent*
+    AllocPFilePickerParent(const nsString& aTitle,
+                           const int16_t& aMode) MOZ_OVERRIDE;
+    virtual bool DeallocPFilePickerParent(PFilePickerParent* actor) MOZ_OVERRIDE;
 
     virtual POfflineCacheUpdateParent*
     AllocPOfflineCacheUpdateParent(const URIParams& aManifestURI,
@@ -269,8 +273,6 @@ public:
     NS_DECL_ISUPPORTS
     NS_DECL_NSIAUTHPROMPTPROVIDER
     NS_DECL_NSISECUREBROWSERUI
-
-    void HandleDelayedDialogs();
 
     static TabParent *GetIMETabParent() { return mIMETabParent; }
     bool HandleQueryContentEvent(mozilla::WidgetQueryContentEvent& aEvent);
@@ -317,24 +319,6 @@ protected:
     Element* mFrameElement;
     nsCOMPtr<nsIBrowserDOMWindow> mBrowserDOMWindow;
 
-    struct DelayedDialogData
-    {
-      DelayedDialogData(PContentDialogParent* aDialog, uint32_t aType,
-                        const nsCString& aName,
-                        const nsCString& aFeatures,
-                        nsIDialogParamBlock* aParams)
-      : mDialog(aDialog), mType(aType), mName(aName), mFeatures(aFeatures),
-        mParams(aParams) {}
-
-      PContentDialogParent* mDialog;
-      uint32_t mType;
-      nsCString mName;
-      nsCString mFeatures;
-      nsCOMPtr<nsIDialogParamBlock> mParams;
-    };
-    InfallibleTArray<DelayedDialogData*> mDelayedDialogs;
-
-    bool ShouldDelayDialogs();
     bool AllowContentIME();
     nsIntPoint GetChildProcessOffset();
 
@@ -376,20 +360,20 @@ private:
     nsRefPtr<ContentParent> mManager;
     void TryCacheDPIAndScale();
 
-    CSSIntPoint AdjustTapToChildWidget(const CSSIntPoint& aPoint);
+    CSSPoint AdjustTapToChildWidget(const CSSPoint& aPoint);
 
     // When true, we create a pan/zoom controller for our frame and
     // notify it of input events targeting us.
     bool UseAsyncPanZoom();
     // If we have a render frame currently, notify it that we're about
     // to dispatch |aEvent| to our child.  If there's a relevant
-    // transform in place, |aOutEvent| is the transformed |aEvent| to
-    // dispatch to content. |aOutTargetGuid| will contain the identifier
+    // transform in place, |aEvent| will be transformed in-place so that
+    // it is ready to be dispatched to content.
+    // |aOutTargetGuid| will contain the identifier
     // of the APZC instance that handled the event. aOutTargetGuid may be
-    // null but aOutEvent must not be.
-    void MaybeForwardEventToRenderFrame(const WidgetInputEvent& aEvent,
-                                        ScrollableLayerGuid* aOutTargetGuid,
-                                        WidgetInputEvent* aOutEvent);
+    // null.
+    void MaybeForwardEventToRenderFrame(WidgetInputEvent& aEvent,
+                                        ScrollableLayerGuid* aOutTargetGuid);
     // The offset for the child process which is sampled at touch start. This
     // means that the touch events are relative to where the frame was at the
     // start of the touch. We need to look for a better solution to this

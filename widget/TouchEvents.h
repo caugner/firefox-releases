@@ -94,20 +94,23 @@ public:
   }
 
   WidgetSimpleGestureEvent(bool aIsTrusted, uint32_t aMessage,
-                           nsIWidget* aWidget, uint32_t aDirection,
-                           double aDelta) :
-    WidgetMouseEventBase(aIsTrusted, aMessage, aWidget,
-                         NS_SIMPLE_GESTURE_EVENT),
-    allowedDirections(0), direction(aDirection), delta(aDelta), clickCount(0)
+                           nsIWidget* aWidget)
+    : WidgetMouseEventBase(aIsTrusted, aMessage, aWidget,
+                           NS_SIMPLE_GESTURE_EVENT)
+    , allowedDirections(0)
+    , direction(0)
+    , delta(0.0)
+    , clickCount(0)
   {
   }
 
-  WidgetSimpleGestureEvent(const WidgetSimpleGestureEvent& aOther) :
-    WidgetMouseEventBase(aOther.mFlags.mIsTrusted,
-                         aOther.message, aOther.widget,
-                         NS_SIMPLE_GESTURE_EVENT),
-    allowedDirections(aOther.allowedDirections), direction(aOther.direction),
-    delta(aOther.delta), clickCount(0)
+  WidgetSimpleGestureEvent(const WidgetSimpleGestureEvent& aOther)
+    : WidgetMouseEventBase(aOther.mFlags.mIsTrusted, aOther.message,
+                           aOther.widget, NS_SIMPLE_GESTURE_EVENT)
+    , allowedDirections(aOther.allowedDirections)
+    , direction(aOther.direction)
+    , delta(aOther.delta)
+    , clickCount(0)
   {
   }
 
@@ -117,7 +120,7 @@ public:
                "Duplicate() must be overridden by sub class");
     // Not copying widget, it is a weak reference.
     WidgetSimpleGestureEvent* result =
-      new WidgetSimpleGestureEvent(false, message, nullptr, direction, delta);
+      new WidgetSimpleGestureEvent(false, message, nullptr);
     result->AssignSimpleGestureEventData(*this, true);
     result->mFlags = mFlags;
     return result;
@@ -165,16 +168,7 @@ public:
     modifiers = aOther.modifiers;
     time = aOther.time;
     touches.AppendElements(aOther.touches);
-    MOZ_COUNT_CTOR(WidgetTouchEvent);
-  }
-
-  WidgetTouchEvent(bool aIsTrusted, const WidgetTouchEvent* aEvent) :
-    WidgetInputEvent(aIsTrusted, aEvent->message, aEvent->widget,
-                     NS_TOUCH_EVENT)
-  {
-    modifiers = aEvent->modifiers;
-    time = aEvent->time;
-    touches.AppendElements(aEvent->touches);
+    mFlags.mCancelable = message != NS_TOUCH_CANCEL;
     MOZ_COUNT_CTOR(WidgetTouchEvent);
   }
 
@@ -182,6 +176,7 @@ public:
     WidgetInputEvent(aIsTrusted, aMessage, aWidget, NS_TOUCH_EVENT)
   {
     MOZ_COUNT_CTOR(WidgetTouchEvent);
+    mFlags.mCancelable = message != NS_TOUCH_CANCEL;
   }
 
   virtual ~WidgetTouchEvent()
@@ -193,8 +188,8 @@ public:
   {
     MOZ_ASSERT(eventStructType == NS_TOUCH_EVENT,
                "Duplicate() must be overridden by sub class");
-    // XXX Why does only WidgetTouchEvent copy the widget?
-    WidgetTouchEvent* result = new WidgetTouchEvent(false, this);
+    // Not copying widget, it is a weak reference.
+    WidgetTouchEvent* result = new WidgetTouchEvent(false, message, nullptr);
     result->AssignTouchEventData(*this, true);
     result->mFlags = mFlags;
     return result;
@@ -206,7 +201,9 @@ public:
   {
     AssignInputEventData(aEvent, aCopyTargets);
 
-    // Currently, we don't need to copy touches.
+    // Assign*EventData() assume that they're called only new instance.
+    MOZ_ASSERT(touches.IsEmpty());
+    touches.AppendElements(aEvent.touches);
   }
 };
 

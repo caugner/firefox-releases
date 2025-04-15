@@ -12,7 +12,7 @@
 #include "nsIServiceManager.h"
 #include "nsGkAtoms.h"
 #include "nsIContent.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsIDocument.h"
 #include "nsIDOMMouseEvent.h"
 #include "nsIDOMElement.h"
@@ -217,7 +217,7 @@ nsListBoxBodyFrame::DestroyFrom(nsIFrame* aDestructRoot)
   nsBoxFrame::DestroyFrom(aDestructRoot);
 }
 
-NS_IMETHODIMP
+nsresult
 nsListBoxBodyFrame::AttributeChanged(int32_t aNameSpaceID,
                                      nsIAtom* aAttribute, 
                                      int32_t aModType)

@@ -59,6 +59,8 @@ class MediaMemoryTracker : public nsIMemoryReporter
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIMEMORYREPORTER
 
+  MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf);
+
   MediaMemoryTracker();
   virtual ~MediaMemoryTracker();
   void InitMemoryReporter();
@@ -1481,7 +1483,7 @@ void MediaDecoder::UpdatePlaybackOffset(int64_t aOffset)
 
 bool MediaDecoder::OnStateMachineThread() const
 {
-  return IsCurrentThread(MediaDecoderStateMachine::GetStateMachineThread());
+  return mDecoderStateMachine->OnStateMachineThread();
 }
 
 void MediaDecoder::NotifyAudioAvailableListener()
@@ -1589,6 +1591,15 @@ void MediaDecoder::UpdatePlaybackPosition(int64_t aTime)
 // Provide access to the state machine object
 MediaDecoderStateMachine* MediaDecoder::GetStateMachine() const {
   return mDecoderStateMachine;
+}
+
+void
+MediaDecoder::NotifyWaitingForResourcesStatusChanged()
+{
+  ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
+  if (mDecoderStateMachine) {
+    mDecoderStateMachine->NotifyWaitingForResourcesStatusChanged();
+  }
 }
 
 bool MediaDecoder::IsShutdown() const {
@@ -1734,7 +1745,6 @@ MediaDecoder::IsRawEnabled()
 }
 #endif
 
-#ifdef MOZ_OGG
 bool
 MediaDecoder::IsOpusEnabled()
 {
@@ -1750,7 +1760,6 @@ MediaDecoder::IsOggEnabled()
 {
   return Preferences::GetBool("media.ogg.enabled");
 }
-#endif
 
 #ifdef MOZ_WAVE
 bool
@@ -1822,10 +1831,16 @@ MediaMemoryTracker::CollectReports(nsIHandleReportCallback* aHandleReport,
                                    nsISupports* aData)
 {
   int64_t video = 0, audio = 0;
+  size_t resources = 0;
   DecodersArray& decoders = Decoders();
   for (size_t i = 0; i < decoders.Length(); ++i) {
-    video += decoders[i]->VideoQueueMemoryInUse();
-    audio += decoders[i]->SizeOfAudioQueue();
+    MediaDecoder* decoder = decoders[i];
+    video += decoder->VideoQueueMemoryInUse();
+    audio += decoder->SizeOfAudioQueue();
+
+    if (decoder->GetResource()) {
+      resources += decoder->GetResource()->SizeOfIncludingThis(MallocSizeOf);
+    }
   }
 
 #define REPORT(_path, _amount, _desc)                                         \
@@ -1837,11 +1852,15 @@ MediaMemoryTracker::CollectReports(nsIHandleReportCallback* aHandleReport,
       NS_ENSURE_SUCCESS(rv, rv);                                              \
   } while (0)
 
-  REPORT("explicit/media/decoded-video", video,
+  REPORT("explicit/media/decoded/video", video,
          "Memory used by decoded video frames.");
 
-  REPORT("explicit/media/decoded-audio", audio,
+  REPORT("explicit/media/decoded/audio", audio,
          "Memory used by decoded audio chunks.");
+
+  REPORT("explicit/media/resources", resources,
+         "Memory used by media resources including streaming buffers, caches, "
+         "etc.");
 
   return NS_OK;
 }

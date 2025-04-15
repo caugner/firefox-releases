@@ -16,8 +16,10 @@
 #define SCREEN_BUFFER_H_
 
 #include "SurfaceTypes.h"
+#include "SurfaceStream.h"
 #include "GLContextTypes.h"
 #include "GLDefs.h"
+#include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Point.h"
 
 // Forwards:
@@ -155,7 +157,7 @@ protected:
     GLContext* const mGL;         // Owns us.
     SurfaceCaps mCaps;
     SurfaceFactory_GL* mFactory;  // Owned by us.
-    SurfaceStream* mStream;       // Owned by us.
+    RefPtr<SurfaceStream> mStream;
 
     DrawBuffer* mDraw;            // Owned by us.
     ReadBuffer* mRead;            // Owned by us.
@@ -277,7 +279,8 @@ public:
 
     bool Resize(const gfx::IntSize& size);
 
-    void Readback(SharedSurface_GL* src, gfxImageSurface* dest);
+    void Readback(SharedSurface_GL* src, gfx::DataSourceSurface* dest);
+    void DeprecatedReadback(SharedSurface_GL* src, gfxImageSurface* dest);
 
 protected:
     void Attach(SharedSurface* surface, const gfx::IntSize& size);

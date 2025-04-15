@@ -41,10 +41,11 @@ interface nsIWebBrowserPrint;
 interface nsIVariant;
 interface nsIPrivacyTransitionObserver;
 interface nsIReflowObserver;
+interface nsIScrollObserver;
 
 typedef unsigned long nsLoadFlags;
 
-[scriptable, builtinclass, uuid(af035c67-1690-431b-9c4d-d38e3cc3137a)]
+[scriptable, builtinclass, uuid(e46d924d-c20f-4add-8cf5-1e1c817b2181)]
 interface nsIDocShell : nsIDocShellTreeItem
 {
   /**
@@ -139,6 +140,9 @@ interface nsIDocShell : nsIDocShellTreeItem
    *                          contents of this parameter will be loaded instead
    *                          of aURI.
    * @param aSourceDocShell - The source browsing context for the navigation.
+   * @param aBaseURI        - The base URI to be used for the load.  Set in
+   *                          srcdoc loads as it cannot otherwise be inferred
+   *                          in certain situations such as view-source.
    */
   [noscript]void internalLoad(in nsIURI aURI,
                               in nsIURI aReferrer,
@@ -154,6 +158,7 @@ interface nsIDocShell : nsIDocShellTreeItem
                               in boolean firstParty,
                               in AString aSrcdoc,
                               in nsIDocShell aSourceDocShell,
+                              in nsIURI aBaseURI,
                               out nsIDocShell aDocShell,
                               out nsIRequest aRequest);
 
@@ -662,6 +667,24 @@ interface nsIDocShell : nsIDocShellTreeItem
   [noscript] void notifyReflowObservers(in bool interruptible,
                                         in DOMHighResTimeStamp start,
                                         in DOMHighResTimeStamp end);
+
+  /**
+   * Add an observer to the list of parties to be notified when scroll position
+   * of some elements is changed.
+   */
+  [noscript] void addWeakScrollObserver(in nsIScrollObserver obs);
+
+  /**
+   * Add an observer to the list of parties to be notified when scroll position
+   * of some elements is changed.
+   */
+  [noscript] void removeWeakScrollObserver(in nsIScrollObserver obs);
+
+  /**
+   * Notify all attached observers that the scroll position of some element
+   * has changed.
+   */
+  [noscript] void notifyScrollObservers();
 
   /**
    * Returns true if this docshell corresponds to an <iframe mozbrowser>.

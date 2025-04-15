@@ -472,7 +472,6 @@ pref("browser.tabs.closeButtons", 1);
 pref("browser.tabs.selectOwnerOnClose", true);
 
 pref("browser.ctrlTab.previews", false);
-pref("browser.ctrlTab.recentlyUsedLimit", 7);
 
 // By default, do not export HTML at shutdown.
 // If true, at shutdown the bookmarks in your menu and toolbar will
@@ -662,18 +661,159 @@ pref("plugins.update.notifyUser", false);
 
 pref("plugins.click_to_play", true);
 
-#ifdef RELEASE_BUILD
-// For now, plugins other than Java and Flash are enabled in beta/release
-// and click-to-activate in earlier channels.
-pref("plugin.default.state", 2);
-#else
+pref("plugins.hideMissingPluginsNotification", false);
+
 pref("plugin.default.state", 1);
-#endif
+
+// Plugins bundled in XPIs are enabled by default.
+pref("plugin.defaultXpi.state", 2);
 
 // Flash is enabled by default, and Java is click-to-activate by default on
 // all channels.
 pref("plugin.state.flash", 2);
 pref("plugin.state.java", 1);
+
+// Whitelist Requests
+
+// Unity player, bug 979849
+#ifdef XP_WIN
+pref("plugin.state.npunity3d", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.unity web player", 2);
+#endif
+
+// Cisco Jabber SDK, bug 980133
+#ifdef XP_WIN
+pref("plugin.state.npciscowebcommunicator", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.ciscowebcommunicator", 2);
+#endif
+
+// McAfee Security Scanner detection plugin, bug 980772
+#ifdef XP_WIN
+pref("plugin.state.npmcafeemss", 2);
+#endif
+
+// Cisco VGConnect for directv.com, bug 981403
+#ifdef XP_WIN
+pref("plugin.state.npplayerplugin", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.playerplugin", 2);
+#endif
+
+// Cisco Jabber Client, bug 981905
+#ifdef XP_WIN
+pref("plugin.state.npchip", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.cisco jabber guest plug-in", 2);
+#endif
+
+// Estonian ID-card plugin, bug 982045
+#ifdef XP_WIN
+pref("plugin.state.npesteid-firefox-plugin", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.esteidfirefoxplugin", 2);
+#endif
+#ifdef UNIX_BUT_NOT_MAC
+pref("plugin.state.npesteid-firefox-plugin", 2);
+#endif
+
+// coupons.com, bug 984441
+#ifdef XP_WIN
+pref("plugin.state.npmozcouponprinter", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.couponprinter-firefox_v", 2);
+#endif
+
+// Nexus Personal BankID, bug 987056
+pref("plugin.state.npbispbrowser", 2);
+
+// Gradecam, bug 988119
+#ifdef XP_WIN
+pref("plugin.state.npgcplugin", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.gcplugin", 2);
+#endif
+
+// Smart Card Plugin, bug 988781
+#ifdef XP_WIN
+pref("plugin.state.npwebcard", 2);
+#endif
+
+// Cisco WebEx, bug 989096
+#ifdef XP_WIN
+pref("plugin.state.npatgpc", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.webex", 2);
+#endif
+#ifdef UNIX_BUT_NOT_MAC
+pref("plugin.state.npatgpc", 2);
+#endif
+
+// Skype, bug 990067
+#ifdef XP_WIN
+pref("plugin.state.npskypewebplugin", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.skypewebplugin", 2);
+#endif
+
+// Facebook video calling, bug 990068
+#ifdef XP_WIN
+pref("plugin.state.npfacebookvideocalling", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.facebookvideocalling", 2);
+#endif
+
+// MS Office Lync plugin, bug 990069
+#ifdef XP_WIN
+pref("plugin.state.npmeetingjoinpluginoc", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.lwaplugin", 2);
+#endif
+
+// VidyoWeb, bug 990286
+#ifdef XP_WIN
+pref("plugin.state.npvidyoweb", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.npvidyoweb", 2);
+pref("plugin.state.vidyoweb", 2);
+#endif
+
+// McAfee Virtual Technician, bug 981503
+#ifdef XP_WIN
+pref("plugin.state.npmvtplugin", 2);
+#endif
+
+// Verimatrix ViewRightWeb, bug 989872
+#ifdef XP_WIN
+pref("plugin.state.npviewright", 2);
+#endif
+#ifdef XP_MACOSX
+pref("plugin.state.viewrightwebplayer", 2);
+#endif
+
+// McAfee SiteAdvisor Enterprise, bug 987057
+#ifdef XP_WIN
+pref("plugin.state.npmcffplg", 2);
+#endif
+
+// F5 Networks SSLVPN plugin, bug 985640
+#ifdef XP_MACOSX
+pref("plugin.state.f5 ssl vpn plugin", 2);
+pref("plugin.state.f5 sam inspection host plugin", 2);
+#endif
 
 // display door hanger if flash not installed
 pref("plugins.notifyMissingFlash", true);
@@ -807,9 +947,7 @@ pref("browser.safebrowsing.reportMalwareURL", "http://%LOCALE%.malware-report.mo
 pref("browser.safebrowsing.reportMalwareErrorURL", "http://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%");
 
 pref("browser.safebrowsing.malware.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
-#ifndef MOZILLA_OFFICIAL
-pref("browser.safebrowsing.appRepURL", "https://sb-ssl.google.com/safebrowsing/clientreport/download&key=%GOOGLE_API_KEY%");
-#endif
+pref("browser.safebrowsing.appRepURL", "https://sb-ssl.google.com/safebrowsing/clientreport/download?key=%GOOGLE_API_KEY%");
 
 #ifdef MOZILLA_OFFICIAL
 // Normally the "client ID" sent in updates is appinfo.name, but for
@@ -829,8 +967,13 @@ pref("urlclassifier.gethashnoise", 4);
 // the database.
 pref("urlclassifier.max-complete-age", 2700);
 // Tables for application reputation.
-pref("urlclassifier.download_block_table", "");
-pref("urlclassifier.download_allow_table", "");
+pref("urlclassifier.downloadBlockTable", "goog-badbinurl-shavar");
+#ifdef XP_WIN
+// Only download the whitelist on Windows, since the whitelist is
+// only useful for suppressing remote lookups for signed binaries which we can
+// only verify on Windows (Bug 974579).
+pref("urlclassifier.downloadAllowTable", "goog-downloadwhite-digest256");
+#endif
 #endif
 
 pref("browser.geolocation.warning.infoURL", "https://www.mozilla.org/%LOCALE%/firefox/geolocation/");
@@ -862,6 +1005,10 @@ pref("browser.sessionstore.max_windows_undo", 3);
 // number of crashes that can occur before the about:sessionrestore page is displayed
 // (this pref has no effect if more than 6 hours have passed since the last crash)
 pref("browser.sessionstore.max_resumed_crashes", 1);
+// number of back button session history entries to restore (-1 = all of them)
+pref("browser.sessionstore.max_serialize_back", 10);
+// number of forward button session history entries to restore (-1 = all of them)
+pref("browser.sessionstore.max_serialize_forward", -1);
 // restore_on_demand overrides MAX_CONCURRENT_TAB_RESTORES (sessionstore constant)
 // and restore_hidden_tabs. When true, tabs will not be restored until they are
 // focused (also applies to tabs that aren't visible). When false, the values
@@ -953,6 +1100,9 @@ pref("toolkit.crashreporter.infoURL",
 // base URL for web-based support pages
 pref("app.support.baseURL", "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/");
 
+// base url for web-based feedback pages
+pref("app.feedback.baseURL", "https://input.mozilla.org/%LOCALE%/feedback/%APP%/%VERSION%/");
+
 // Name of alternate about: page for certificate errors (when undefined, defaults to about:neterror)
 pref("security.alternate_certificate_error_page", "certerror");
 
@@ -978,7 +1128,16 @@ pref("dom.ipc.plugins.enabled.x86_64", true);
 pref("dom.ipc.plugins.enabled", true);
 #endif
 
+#if defined(NIGHTLY_BUILD)
+// browser.tabs.remote is enabled on nightly. However, users won't
+// actually get remote tabs unless they enable
+// browser.tabs.remote.autostart or they use the "New OOP Window" menu
+// option.
+pref("browser.tabs.remote", true);
+#else
 pref("browser.tabs.remote", false);
+#endif
+pref("browser.tabs.remote.autostart", false);
 
 // This pref governs whether we attempt to work around problems caused by
 // plugins using OS calls to manipulate the cursor while running out-of-
@@ -1081,7 +1240,6 @@ pref("devtools.errorconsole.enabled", false);
 // Developer toolbar and GCLI preferences
 pref("devtools.toolbar.enabled", true);
 pref("devtools.toolbar.visible", false);
-pref("devtools.gcli.allowSet", false);
 pref("devtools.commands.dir", "");
 
 // Enable the app manager
@@ -1098,12 +1256,26 @@ pref("devtools.toolbox.toolbarSpec", '["splitconsole", "paintflashing toggle","t
 pref("devtools.toolbox.sideEnabled", true);
 pref("devtools.toolbox.zoomValue", "1");
 
+// Toolbox Button preferences
+pref("devtools.command-button-pick.enabled", true);
+pref("devtools.command-button-splitconsole.enabled", true);
+pref("devtools.command-button-paintflashing.enabled", false);
+pref("devtools.command-button-tilt.enabled", false);
+pref("devtools.command-button-scratchpad.enabled", false);
+pref("devtools.command-button-responsive.enabled", true);
+
+// Inspector preferences
 // Enable the Inspector
 pref("devtools.inspector.enabled", true);
+// What was the last active sidebar in the inspector
 pref("devtools.inspector.activeSidebar", "ruleview");
+// Enable the markup preview
 pref("devtools.inspector.markupPreview", false);
 pref("devtools.inspector.remote", false);
+// Expand pseudo-elements by default in the rule-view
 pref("devtools.inspector.show_pseudo_elements", true);
+// The default size for image preview tooltips in the rule-view/computed-view/markup-view
+pref("devtools.inspector.imagePreviewTooltipSize", 300);
 
 // DevTools default color unit
 pref("devtools.defaultColorUnit", "hex");
@@ -1146,6 +1318,7 @@ pref("devtools.netmonitor.enabled", true);
 pref("devtools.netmonitor.panes-network-details-width", 450);
 pref("devtools.netmonitor.panes-network-details-height", 450);
 pref("devtools.netmonitor.statistics", true);
+pref("devtools.netmonitor.filters", "[\"all\"]");
 
 // Enable the Tilt inspector
 pref("devtools.tilt.enabled", true);
@@ -1185,7 +1358,7 @@ pref("devtools.gcli.eagerHelper", 2);
 
 // Remember the Web Console filters
 pref("devtools.webconsole.filter.network", true);
-pref("devtools.webconsole.filter.networkinfo", true);
+pref("devtools.webconsole.filter.networkinfo", false);
 pref("devtools.webconsole.filter.netwarn", true);
 pref("devtools.webconsole.filter.csserror", true);
 pref("devtools.webconsole.filter.cssparser", false);
@@ -1316,7 +1489,6 @@ pref("image.mem.max_decoded_image_kb", 256000);
 // Default social providers
 pref("social.manifest.facebook", "{\"origin\":\"https://www.facebook.com\",\"name\":\"Facebook Share\",\"shareURL\":\"https://www.facebook.com/sharer/sharer.php?u=%{url}\",\"iconURL\":\"data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8%2F9hAAAAX0lEQVQ4jWP4%2F%2F8%2FAyUYTFhHzjgDxP9JxGeQDSBVMxgTbUBCxer%2Fr999%2BQ8DJBuArJksA9A10s8AXIBoA0B%2BR%2FY%2FjD%2BEwoBoA1yT5v3PbdmCE8MAshhID%2FUMoDgzUYIBj0Cgi7ar4coAAAAASUVORK5CYII%3D\",\"icon32URL\":\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAACXBIWXMAAAsTAAALEwEAmpwYAAADbklEQVRYCc1Xv08UQRj99tctexAuCEFjRE0kGBEtLDSGqIWNxkYKbTAxNlY2JhaGWltNtNFeKgsKKxITK43/gCYW+IsoRhA4D47bH7fn9+bcvdm5JR7sefolC3Ozu9978+bNN7PayUv3HN3umdY0Y6IWBtSJ0HSTarXqTOiuTep6Lj+tdxAcA8RAgSmwdd2aCDs0clldYALb/FvgYVhjmfliVA2XpjEgWo0Attn42Z6WH1RFor5ehwo9XQIUZMoVn4qlCoVMSo62EvD8Kh0b3U2Xz43R2PBO6mUCGDlAf65V6MadZzT/rUimoccc2kYA4BfPHqJb105RzjJigKhRq9kEJUBIjgYVuXeL7SAI6eD+Abp5dTwVHOmEHxT50d8WBYJqSOdPj5BjW8gZR8UNqFR2xagx/65XFYaMH+BGWwiYpi4UkBPPLxTp9v1Z+lHc4DWvCQXWmIy6EjITgKowVd5Jjv7N3Hd6y5esigoOwpkJIAmMpZpLJGdiaaC4F0UmAj6bD84GCEwmB/qxMmRilmnwb/mpjAocHh4UEoNAt5NLZB7oy9OJo0PxqkAtePdhiSqunyC1LQUwWMPQaOr6GRre258Ajn4cP7KHcEXhsxpXbj+lT19X2TMNGTLVAcjcalS8gDwsQ2UOMhH4k8FkcrEn5E5ub2sKohxLK2VR77Hl9RUcsrgeRIEiVOT6z+tDbIeLy+vk+kGTCbXxycet6xhl//3f6bJEkdHYhA+mLtDIvoH4ieev5+juoxdk5+pjhALYEdXIpEB5w+NlSKSzqVQ/+H7IO6BLtl3fngGMiqhGJgIwlM6qpyUGFjySdk8m0Zg0ubeD7X9OIDEFajltRQgUJaUKx69tdgaQa0FMADuahZPMFtcEwNPm2hA7ZI5sK4aoE2NvYI+o8hkCIe7CwTv68zS0q9Dk5vpbm/8FXxitSzmMFHpsGj0wyLUheTwD2Y9fVgh1Ae0EPUgD9241ZEnld+v5kgnVZ/8fE0brVh5BK+1oCqKKF72Dk7HwBsssB/pklU1dfChy3S659H5+uelgIb+8WRv1/uGTV9Sdb5wJFlfW6fPCalMhwhSU1j2xKwKbP838GcOwJja4TqO0bjdmXxYTy1EYjFdCWoCEYZhseH/GDL3yJPHnuW6YmT7P1SlIA4768Hke4vOcsX8BE346lLHhDUQAAAAASUVORK5CYII=\", \"icon64URL\":\"data:image/png;base64,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\", \"description\":\"Easily share the web to your Facebook friends.\",\"author\":\"Facebook\",\"homepageURL\":\"https://www.facebook.com\",\"builtin\":\"true\",\"version\":1}");
 
-pref("social.sidebar.open", true);
 pref("social.sidebar.unload_timeout_ms", 10000);
 
 pref("dom.identity.enabled", false);
@@ -1362,10 +1534,11 @@ pref("identity.fxaccounts.remote.signin.uri", "https://accounts.firefox.com/sign
 // "identity.fxaccounts.remote.signup.uri" pref.
 pref("identity.fxaccounts.settings.uri", "https://accounts.firefox.com/settings");
 
-// The URL of the Firefox Accounts auth server backend
-pref("identity.fxaccounts.auth.uri", "https://api.accounts.firefox.com/v1");
-
 // On GTK, we now default to showing the menubar only when alt is pressed:
 #ifdef MOZ_WIDGET_GTK
 pref("ui.key.menuAccessKeyFocuses", true);
 #endif
+
+
+// Delete HTTP cache v2 data of users that didn't opt-in manually
+pref("browser.cache.auto_delete_cache_version", 1);

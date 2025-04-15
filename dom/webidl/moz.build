@@ -41,6 +41,7 @@ WEBIDL_FILES = [
     'BrowserElementDictionaries.webidl',
     'CallEvent.webidl',
     'CallsList.webidl',
+    'CameraCapabilities.webidl',
     'CameraControl.webidl',
     'CameraManager.webidl',
     'CanvasRenderingContext2D.webidl',
@@ -54,6 +55,7 @@ WEBIDL_FILES = [
     'CommandEvent.webidl',
     'Comment.webidl',
     'CompositionEvent.webidl',
+    'Console.webidl',
     'Contacts.webidl',
     'ConvolverNode.webidl',
     'Coordinates.webidl',
@@ -65,11 +67,13 @@ WEBIDL_FILES = [
     'CSSValueList.webidl',
     'DataContainerEvent.webidl',
     'DataStore.webidl',
+    'DataTransfer.webidl',
     'DedicatedWorkerGlobalScope.webidl',
     'DelayNode.webidl',
     'DesktopNotification.webidl',
     'DeviceMotionEvent.webidl',
     'DeviceStorage.webidl',
+    'Directory.webidl',
     'Document.webidl',
     'DocumentFragment.webidl',
     'DocumentType.webidl',
@@ -83,6 +87,7 @@ WEBIDL_FILES = [
     'DOMRectList.webidl',
     'DOMRequest.webidl',
     'DOMSettableTokenList.webidl',
+    'DOMStringList.webidl',
     'DOMStringMap.webidl',
     'DOMTokenList.webidl',
     'DOMTransaction.webidl',
@@ -232,12 +237,15 @@ WEBIDL_FILES = [
     'MozActivity.webidl',
     'MozConnection.webidl',
     'MozMmsMessage.webidl',
+    'MozMobileConnection.webidl',
     'MozNamedAttrMap.webidl',
+    'MozNetworkStats.webidl',
     'MozPowerManager.webidl',
     'MozTimeManager.webidl',
     'MozWakeLock.webidl',
     'MutationEvent.webidl',
     'MutationObserver.webidl',
+    'NativeOSFileInternals.webidl',
     'NetDashboard.webidl',
     'NetworkOptions.webidl',
     'Node.webidl',
@@ -273,6 +281,7 @@ WEBIDL_FILES = [
     'RGBColor.webidl',
     'RTCConfiguration.webidl',
     'RTCIceCandidate.webidl',
+    'RTCIdentityAssertion.webidl',
     'RTCPeerConnection.webidl',
     'RTCSessionDescription.webidl',
     'RTCStatsReport.webidl',
@@ -326,6 +335,7 @@ WEBIDL_FILES = [
     'SVGFEDiffuseLightingElement.webidl',
     'SVGFEDisplacementMapElement.webidl',
     'SVGFEDistantLightElement.webidl',
+    'SVGFEDropShadowElement.webidl',
     'SVGFEFloodElement.webidl',
     'SVGFEFuncAElement.webidl',
     'SVGFEFuncBElement.webidl',
@@ -422,14 +432,12 @@ WEBIDL_FILES = [
     'VideoStreamTrack.webidl',
     'VTTCue.webidl',
     'VTTRegion.webidl',
-    'VTTRegionList.webidl',
     'WaveShaperNode.webidl',
     'WebComponents.webidl',
     'WebSocket.webidl',
     'WheelEvent.webidl',
     'WifiOptions.webidl',
     'Worker.webidl',
-    'WorkerConsole.webidl',
     'WorkerGlobalScope.webidl',
     'WorkerLocation.webidl',
     'WorkerNavigator.webidl',
@@ -464,6 +472,7 @@ if CONFIG['MOZ_WEBRTC']:
         'PeerConnectionImplEnums.webidl',
         'PeerConnectionObserver.webidl',
         'PeerConnectionObserverEnums.webidl',
+        'WebrtcGlobalInformation.webidl',
     ]
 
 if CONFIG['MOZ_WEBSPEECH']:
@@ -509,6 +518,11 @@ WEBIDL_FILES += [
     'StyleSheetChangeEvent.webidl',
 ]
 
+# We only expose our prefable test interfaces in debug builds, just to be on
+# the safe side.
+if CONFIG['MOZ_DEBUG']:
+    WEBIDL_FILES += ['TestInterfaceJS.webidl']
+
 if CONFIG['MOZ_B2G_BT']:
     WEBIDL_FILES += [
         'BluetoothAdapter.webidl',
@@ -529,7 +543,7 @@ if CONFIG['MOZ_B2G_RIL']:
 
 if CONFIG['MOZ_NFC']:
     WEBIDL_FILES += [
-         'MozNdefRecord.webidl',
+         'MozNDEFRecord.webidl',
          'MozNfc.webidl',
          'MozNFCPeer.webidl',
          'MozNFCTag.webidl',
@@ -579,6 +593,7 @@ GENERATED_EVENTS_WEBIDL_FILES = [
     'MozStkCommandEvent.webidl',
     'RTCDataChannelEvent.webidl',
     'RTCPeerConnectionIceEvent.webidl',
+    'RTCPeerConnectionIdentityEvent.webidl',
     'TrackEvent.webidl',
     'UserProximityEvent.webidl',
     'USSDReceivedEvent.webidl',

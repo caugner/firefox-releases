@@ -186,12 +186,16 @@ public:
   NS_IMETHOD              BeginMoveDrag(mozilla::WidgetMouseEvent* aEvent);
   virtual nsresult        ActivateNativeMenuItemAt(const nsAString& indexString) { return NS_ERROR_NOT_IMPLEMENTED; }
   virtual nsresult        ForceUpdateNativeMenuAt(const nsAString& indexString) { return NS_ERROR_NOT_IMPLEMENTED; }
-  NS_IMETHOD              NotifyIME(NotificationToIME aNotification) MOZ_OVERRIDE { return NS_ERROR_NOT_IMPLEMENTED; }
+  NS_IMETHOD              NotifyIME(const IMENotification& aIMENotification) MOZ_OVERRIDE { return NS_ERROR_NOT_IMPLEMENTED; }
+  NS_IMETHOD_(bool)       ExecuteNativeKeyBinding(
+                            NativeKeyBindingsType aType,
+                            const mozilla::WidgetKeyboardEvent& aEvent,
+                            DoCommandCallback aCallback,
+                            void* aCallbackData) MOZ_OVERRIDE { return false; }
   NS_IMETHOD              SetLayersAcceleration(bool aEnabled);
   virtual bool            GetLayersAcceleration() { return mUseLayersAcceleration; }
   virtual bool            ComputeShouldAccelerate(bool aDefault);
   NS_IMETHOD              GetToggledKeyState(uint32_t aKeyCode, bool* aLEDState) { return NS_ERROR_NOT_IMPLEMENTED; }
-  NS_IMETHOD              NotifyIMEOfTextChange(uint32_t aStart, uint32_t aOldEnd, uint32_t aNewEnd) MOZ_OVERRIDE { return NS_ERROR_NOT_IMPLEMENTED; }
   virtual nsIMEUpdatePreference GetIMEUpdatePreference() MOZ_OVERRIDE { return nsIMEUpdatePreference(); }
   NS_IMETHOD              OnDefaultButtonLoaded(const nsIntRect &aButtonRect) { return NS_ERROR_NOT_IMPLEMENTED; }
   NS_IMETHOD              OverrideSystemMouseScrollSpeed(double aOriginalDeltaX,
@@ -211,6 +215,7 @@ public:
 
   void NotifyWindowDestroyed();
   void NotifySizeMoveDone();
+  void NotifyWindowMoved(int32_t aX, int32_t aY);
 
   // Should be called by derived implementations to notify on system color and
   // theme changes.
@@ -410,6 +415,9 @@ protected:
   bool              mUseLayersAcceleration;
   bool              mForceLayersAcceleration;
   bool              mTemporarilyUseBasicLayerManager;
+  // Windows with out-of-process tabs always require OMTC. This flag designates
+  // such windows.
+  bool              mRequireOffMainThreadCompositing;
   bool              mUseAttachedEvents;
   bool              mContextInitialized;
   nsIntRect         mBounds;

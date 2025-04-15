@@ -8,6 +8,7 @@
 #include "TrackEncoder.h"
 
 #include <binder/ProcessState.h>
+#include <cutils/properties.h>
 #include <media/ICrypto.h>
 #include <media/IOMX.h>
 #include <OMX_Component.h>
@@ -110,6 +111,15 @@ OMXCodecWrapper::Stop()
   return result;
 }
 
+// Check system property to see if we're running on emulator.
+static
+bool IsRunningOnEmulator()
+{
+  char qemu[PROPERTY_VALUE_MAX];
+  property_get("ro.kernel.qemu", qemu, "");
+  return strncmp(qemu, "1", 1) == 0;
+}
+
 nsresult
 OMXVideoEncoder::Configure(int aWidth, int aHeight, int aFrameRate)
 {
@@ -117,6 +127,19 @@ OMXVideoEncoder::Configure(int aWidth, int aHeight, int aFrameRate)
 
   NS_ENSURE_TRUE(aWidth > 0 && aHeight > 0 && aFrameRate > 0,
                  NS_ERROR_INVALID_ARG);
+
+  OMX_VIDEO_AVCLEVELTYPE level = OMX_VIDEO_AVCLevel3;
+  OMX_VIDEO_CONTROLRATETYPE bitrateMode = OMX_Video_ControlRateConstant;
+  // Limitation of soft AVC/H.264 encoder running on emulator in stagefright.
+  static bool emu = IsRunningOnEmulator();
+  if (emu) {
+    if (aWidth > 352 || aHeight > 288) {
+      CODEC_ERROR("SoftAVCEncoder doesn't support resolution larger than CIF");
+      return NS_ERROR_INVALID_ARG;
+    }
+    level = OMX_VIDEO_AVCLevel2;
+    bitrateMode = OMX_Video_ControlRateVariable;
+  }
 
   // Set up configuration parameters for AVC/H.264 encoder.
   sp<AMessage> format = new AMessage;
@@ -128,8 +151,8 @@ OMXVideoEncoder::Configure(int aWidth, int aHeight, int aFrameRate)
   // height is half that of Y
   format->setInt32("color-format", OMX_COLOR_FormatYUV420SemiPlanar);
   format->setInt32("profile", OMX_VIDEO_AVCProfileBaseline);
-  format->setInt32("level", OMX_VIDEO_AVCLevel3);
-  format->setInt32("bitrate-mode", OMX_Video_ControlRateConstant);
+  format->setInt32("level", level);
+  format->setInt32("bitrate-mode", bitrateMode);
   format->setInt32("store-metadata-in-buffers", 0);
   format->setInt32("prepend-sps-pps-to-idr-frames", 0);
   // Input values.
@@ -207,6 +230,72 @@ ConvertPlanarYCbCrToNV12(const PlanarYCbCrData* aSource, uint8_t* aDestination)
   }
 }
 
+// Convert pixels in graphic buffer to NV12 format. aSource is the layer image
+// containing source graphic buffer, and aDestination is the destination of
+// conversion. Currently only 2 source format are supported:
+// - NV21/HAL_PIXEL_FORMAT_YCrCb_420_SP (from camera preview window).
+// - YV12/HAL_PIXEL_FORMAT_YV12 (from video decoder).
+static
+void
+ConvertGrallocImageToNV12(GrallocImage* aSource, uint8_t* aDestination)
+{
+  // Get graphic buffer.
+  SurfaceDescriptor handle = aSource->GetSurfaceDescriptor();
+  SurfaceDescriptorGralloc gralloc = handle.get_SurfaceDescriptorGralloc();
+  sp<GraphicBuffer> graphicBuffer = GrallocBufferActor::GetFrom(gralloc);
+
+  int pixelFormat = graphicBuffer->getPixelFormat();
+  // Only support NV21 (from camera) or YV12 (from HW decoder output) for now.
+  NS_ENSURE_TRUE_VOID(pixelFormat == HAL_PIXEL_FORMAT_YCrCb_420_SP ||
+                      pixelFormat == HAL_PIXEL_FORMAT_YV12);
+
+  void* imgPtr = nullptr;
+  graphicBuffer->lock(GraphicBuffer::USAGE_SW_READ_MASK, &imgPtr);
+  // Build PlanarYCbCrData for NV21 or YV12 buffer.
+  PlanarYCbCrData yuv;
+  switch (pixelFormat) {
+    case HAL_PIXEL_FORMAT_YCrCb_420_SP: // From camera.
+      yuv.mYChannel = static_cast<uint8_t*>(imgPtr);
+      yuv.mYSkip = 0;
+      yuv.mYSize.width = graphicBuffer->getWidth();
+      yuv.mYSize.height = graphicBuffer->getHeight();
+      yuv.mYStride = graphicBuffer->getStride();
+      // 4:2:0.
+      yuv.mCbCrSize.width = yuv.mYSize.width / 2;
+      yuv.mCbCrSize.height = yuv.mYSize.height / 2;
+      // Interleaved VU plane.
+      yuv.mCrChannel = yuv.mYChannel + (yuv.mYStride * yuv.mYSize.height);
+      yuv.mCrSkip = 1;
+      yuv.mCbChannel = yuv.mCrChannel + 1;
+      yuv.mCbSkip = 1;
+      yuv.mCbCrStride = yuv.mYStride;
+      ConvertPlanarYCbCrToNV12(&yuv, aDestination);
+      break;
+    case HAL_PIXEL_FORMAT_YV12: // From video decoder.
+      // Android YV12 format is defined in system/core/include/system/graphics.h
+      yuv.mYChannel = static_cast<uint8_t*>(imgPtr);
+      yuv.mYSkip = 0;
+      yuv.mYSize.width = graphicBuffer->getWidth();
+      yuv.mYSize.height = graphicBuffer->getHeight();
+      yuv.mYStride = graphicBuffer->getStride();
+      // 4:2:0.
+      yuv.mCbCrSize.width = yuv.mYSize.width / 2;
+      yuv.mCbCrSize.height = yuv.mYSize.height / 2;
+      yuv.mCrChannel = yuv.mYChannel + (yuv.mYStride * yuv.mYSize.height);
+      // Aligned to 16 bytes boundary.
+      yuv.mCbCrStride = (yuv.mYStride / 2 + 15) & ~0x0F;
+      yuv.mCrSkip = 0;
+      yuv.mCbChannel = yuv.mCrChannel + (yuv.mCbCrStride * yuv.mCbCrSize.height);
+      yuv.mCbSkip = 0;
+      ConvertPlanarYCbCrToNV12(&yuv, aDestination);
+      break;
+    default:
+      NS_ERROR("Unsupported input gralloc image type. Should never be here.");
+  }
+
+  graphicBuffer->unlock();
+}
+
 nsresult
 OMXVideoEncoder::Encode(const Image* aImage, int aWidth, int aHeight,
                         int64_t aTimestamp, int aInputFlags)
@@ -229,7 +318,6 @@ OMXVideoEncoder::Encode(const Image* aImage, int aWidth, int aHeight,
 
   size_t yLen = aWidth * aHeight;
   size_t uvLen = yLen / 2;
-
   // Buffer should be large enough to hold input image data.
   MOZ_ASSERT(dstSize >= yLen + uvLen);
 
@@ -250,40 +338,7 @@ OMXVideoEncoder::Encode(const Image* aImage, int aWidth, int aHeight,
                aHeight == img->GetSize().height);
 
     if (format == ImageFormat::GRALLOC_PLANAR_YCBCR) {
-      // Get graphic buffer pointer.
-      void* imgPtr = nullptr;
-      GrallocImage* nativeImage = static_cast<GrallocImage*>(img);
-      SurfaceDescriptor handle = nativeImage->GetSurfaceDescriptor();
-      SurfaceDescriptorGralloc gralloc = handle.get_SurfaceDescriptorGralloc();
-      sp<GraphicBuffer> graphicBuffer = GrallocBufferActor::GetFrom(gralloc);
-      graphicBuffer->lock(GraphicBuffer::USAGE_SW_READ_MASK, &imgPtr);
-      uint8_t* src = static_cast<uint8_t*>(imgPtr);
-
-      // Only support NV21 for now.
-      MOZ_ASSERT(graphicBuffer->getPixelFormat() ==
-                 HAL_PIXEL_FORMAT_YCrCb_420_SP);
-
-      // Build PlanarYCbCrData for NV21 buffer.
-      PlanarYCbCrData nv21;
-      // Y plane.
-      nv21.mYChannel = src;
-      nv21.mYSize.width = aWidth;
-      nv21.mYSize.height = aHeight;
-      nv21.mYStride = aWidth;
-      nv21.mYSkip = 0;
-      // Interleaved VU plane.
-      nv21.mCrChannel = src + yLen;
-      nv21.mCrSkip = 1;
-      nv21.mCbChannel = nv21.mCrChannel + 1;
-      nv21.mCbSkip = 1;
-      nv21.mCbCrStride = aWidth;
-      // 4:2:0.
-      nv21.mCbCrSize.width = aWidth / 2;
-      nv21.mCbCrSize.height = aHeight / 2;
-
-      ConvertPlanarYCbCrToNV12(&nv21, dst);
-
-      graphicBuffer->unlock();
+      ConvertGrallocImageToNV12(static_cast<GrallocImage*>(img), dst);
     } else if (format == ImageFormat::PLANAR_YCBCR) {
       ConvertPlanarYCbCrToNV12(static_cast<PlanarYCbCrImage*>(img)->GetData(),
                              dst);

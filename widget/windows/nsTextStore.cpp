@@ -29,8 +29,6 @@ using namespace mozilla;
 using namespace mozilla::widget;
 
 static const char* kPrefNameTSFEnabled = "intl.tsf.enable";
-static const char* kPrefNameLayoutChangeInternal =
-                     "intl.tsf.on_layout_change_interval";
 
 static const char* kLegacyPrefNameTSFEnabled = "intl.enable_tsf_support";
 
@@ -531,7 +529,8 @@ nsTextStore::nsTextStore()
   mInputScopeDetected = false;
   mInputScopeRequested = false;
   mIsRecordingActionsWithoutLock = false;
-  mNotifySelectionChange = false;
+  mPendingOnSelectionChange = false;
+  mPendingOnLayoutChange = false;
   mNativeCaretIsCreated = false;
   mIsIMM_IME = false;
   mOnActivatedCalled = false;
@@ -635,8 +634,6 @@ nsTextStore::~nsTextStore()
       }
     }
   }
-
-  mComposition.EnsureLayoutChangeTimerStopped();
 }
 
 bool
@@ -914,7 +911,44 @@ nsTextStore::RequestLock(DWORD dwLockFlags,
          this, GetLockFlagNameStr(mLock).get()));
       DidLockGranted();
     }
+
+    // The document is now completely unlocked.
     mLock = 0;
+
+    if (mPendingOnLayoutChange) {
+      mPendingOnLayoutChange = false;
+      if (mSink) {
+        PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
+               ("TSF: 0x%p   nsTextStore::RequestLock(), "
+                "calling ITextStoreACPSink::OnLayoutChange()...", this));
+        mSink->OnLayoutChange(TS_LC_CHANGE, TEXTSTORE_DEFAULT_VIEW);
+      }
+      // The layout change caused by composition string change should cause
+      // calling ITfContextOwnerServices::OnLayoutChange() too.
+      if (mContext) {
+        nsRefPtr<ITfContextOwnerServices> service;
+        mContext->QueryInterface(IID_ITfContextOwnerServices,
+                                 getter_AddRefs(service));
+        if (service) {
+          PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
+                 ("TSF: 0x%p   nsTextStore::RequestLock(), "
+                  "calling ITfContextOwnerServices::OnLayoutChange()...",
+                  this));
+          service->OnLayoutChange();
+        }
+      }
+    }
+
+    if (mPendingOnSelectionChange) {
+      mPendingOnSelectionChange = false;
+      if (mSink) {
+        PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
+               ("TSF: 0x%p   nsTextStore::RequestLock(), "
+                "calling ITextStoreACPSink::OnSelectionChange()...", this));
+        mSink->OnSelectionChange();
+      }
+    }
+
     PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
       ("TSF: 0x%p   nsTextStore::RequestLock() succeeded: *phrSession=%s",
        this, GetTextStoreReturnValueName(*phrSession)));
@@ -952,6 +986,12 @@ nsTextStore::DidLockGranted()
   if (IsReadWriteLocked()) {
     FlushPendingActions();
   }
+
+  // If the widget has gone, we don't need to notify anything.
+  if (!mWidget || mWidget->Destroyed()) {
+    mPendingOnSelectionChange = false;
+    mPendingOnLayoutChange = false;
+  }
 }
 
 void
@@ -960,11 +1000,11 @@ nsTextStore::FlushPendingActions()
   if (!mWidget || mWidget->Destroyed()) {
     mPendingActions.Clear();
     mContent.Clear();
-    mNotifySelectionChange = false;
+    mPendingOnSelectionChange = false;
+    mPendingOnLayoutChange = false;
     return;
   }
 
-  bool notifyTSFOfLayoutChange = mContent.NeedToNotifyTSFOfLayoutChange();
   mContent.Clear();
 
   nsRefPtr<nsWindowBase> kungFuDeathGrip(mWidget);
@@ -1003,48 +1043,44 @@ nsTextStore::FlushPendingActions()
         if (!mWidget || mWidget->Destroyed()) {
           break;
         }
-        mComposition.StartLayoutChangeTimer(this);
         break;
       }
       case PendingAction::COMPOSITION_UPDATE: {
         PR_LOG(sTextStoreLog, PR_LOG_DEBUG,
                ("TSF: 0x%p   nsTextStore::FlushPendingActions() "
                 "flushing COMPOSITION_UPDATE={ mData=\"%s\", "
-                "mRanges.Length()=%d }",
-                this, NS_ConvertUTF16toUTF8(action.mData).get(),
-                action.mRanges.Length()));
+                "mRanges=0x%p, mRanges->Length()=%d }",
+                this, NS_ConvertUTF16toUTF8(action.mData).get(), action.mRanges.get(),
+                action.mRanges ? action.mRanges->Length() : 0));
 
-        if (action.mRanges.IsEmpty()) {
-          TextRange wholeRange;
-          wholeRange.mStartOffset = 0;
-          wholeRange.mEndOffset = action.mData.Length();
-          wholeRange.mRangeType = NS_TEXTRANGE_RAWINPUT;
-          action.mRanges.AppendElement(wholeRange);
-        } else {
-          // Adjust offsets in the ranges for XP linefeed character (only \n).
-          // XXX Following code is the safest approach.  However, it wastes
-          //     a little performance.  For ensuring the clauses do not
-          //     overlap each other, we should redesign TextRange later.
-          for (uint32_t i = 0; i < action.mRanges.Length(); ++i) {
-            TextRange& range = action.mRanges[i];
-            TextRange nativeRange = range;
-            if (nativeRange.mStartOffset > 0) {
-              nsAutoString preText(
-                Substring(action.mData, 0, nativeRange.mStartOffset));
-              preText.ReplaceSubstring(NS_LITERAL_STRING("\r\n"),
-                                       NS_LITERAL_STRING("\n"));
-              range.mStartOffset = preText.Length();
-            }
-            if (nativeRange.Length() == 0) {
-              range.mEndOffset = range.mStartOffset;
-            } else {
-              nsAutoString clause(
-                Substring(action.mData,
-                          nativeRange.mStartOffset, nativeRange.Length()));
-              clause.ReplaceSubstring(NS_LITERAL_STRING("\r\n"),
-                                      NS_LITERAL_STRING("\n"));
-              range.mEndOffset = range.mStartOffset + clause.Length();
-            }
+        if (!action.mRanges) {
+          NS_WARNING("How does this case occur?");
+          action.mRanges = new TextRangeArray();
+        }
+
+        // Adjust offsets in the ranges for XP linefeed character (only \n).
+        // XXX Following code is the safest approach.  However, it wastes
+        //     a little performance.  For ensuring the clauses do not
+        //     overlap each other, we should redesign TextRange later.
+        for (uint32_t i = 0; i < action.mRanges->Length(); ++i) {
+          TextRange& range = action.mRanges->ElementAt(i);
+          TextRange nativeRange = range;
+          if (nativeRange.mStartOffset > 0) {
+            nsAutoString preText(
+              Substring(action.mData, 0, nativeRange.mStartOffset));
+            preText.ReplaceSubstring(NS_LITERAL_STRING("\r\n"),
+                                     NS_LITERAL_STRING("\n"));
+            range.mStartOffset = preText.Length();
+          }
+          if (nativeRange.Length() == 0) {
+            range.mEndOffset = range.mStartOffset;
+          } else {
+            nsAutoString clause(
+              Substring(action.mData,
+                        nativeRange.mStartOffset, nativeRange.Length()));
+            clause.ReplaceSubstring(NS_LITERAL_STRING("\r\n"),
+                                    NS_LITERAL_STRING("\n"));
+            range.mEndOffset = range.mStartOffset + clause.Length();
           }
         }
 
@@ -1074,15 +1110,14 @@ nsTextStore::FlushPendingActions()
         WidgetTextEvent textEvent(true, NS_TEXT_TEXT, mWidget);
         mWidget->InitEvent(textEvent);
         textEvent.theText = mComposition.mLastData;
-        if (action.mRanges.IsEmpty()) {
+        if (action.mRanges->IsEmpty()) {
           TextRange wholeRange;
           wholeRange.mStartOffset = 0;
           wholeRange.mEndOffset = textEvent.theText.Length();
           wholeRange.mRangeType = NS_TEXTRANGE_RAWINPUT;
-          action.mRanges.AppendElement(wholeRange);
+          action.mRanges->AppendElement(wholeRange);
         }
-        textEvent.rangeArray = action.mRanges.Elements();
-        textEvent.rangeCount = action.mRanges.Length();
+        textEvent.mRanges = action.mRanges;
         mWidget->DispatchWindowEvent(&textEvent);
         // Be aware, the mWidget might already have been destroyed.
         break;
@@ -1092,8 +1127,6 @@ nsTextStore::FlushPendingActions()
                ("TSF: 0x%p   nsTextStore::FlushPendingActions() "
                 "flushing COMPOSITION_END={ mData=\"%s\" }",
                 this, NS_ConvertUTF16toUTF8(action.mData).get()));
-
-        mComposition.EnsureLayoutChangeTimerStopped();
 
         action.mData.ReplaceSubstring(NS_LITERAL_STRING("\r\n"),
                                       NS_LITERAL_STRING("\n"));
@@ -1163,45 +1196,12 @@ nsTextStore::FlushPendingActions()
       continue;
     }
 
-    mComposition.EnsureLayoutChangeTimerStopped();
-
     PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
            ("TSF: 0x%p   nsTextStore::FlushPendingActions(), "
             "qutting since the mWidget has gone", this));
     break;
   }
   mPendingActions.Clear();
-
-  if (notifyTSFOfLayoutChange && mWidget && !mWidget->Destroyed()) {
-    if (mSink) {
-      PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
-             ("TSF: 0x%p   nsTextStore::FlushPendingActions(), "
-              "calling ITextStoreACPSink::OnLayoutChange()...", this));
-      mSink->OnLayoutChange(TS_LC_CHANGE, TEXTSTORE_DEFAULT_VIEW);
-    }
-    // The layout change caused by composition string change should cause
-    // calling ITfContextOwnerServices::OnLayoutChange() too.
-    // Actually, MS-IME 2002 (The default Japanese IME of WinXP) needs this.
-    if (mContext) {
-      nsRefPtr<ITfContextOwnerServices> service;
-      mContext->QueryInterface(IID_ITfContextOwnerServices,
-                               getter_AddRefs(service));
-      if (service) {
-        PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
-               ("TSF: 0x%p   nsTextStore::FlushPendingActions(), "
-                "calling ITfContextOwnerServices::OnLayoutChange()...", this));
-        service->OnLayoutChange();
-      }
-    }
-  }
-
-  if (mNotifySelectionChange && mSink && mWidget && !mWidget->Destroyed()) {
-    PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
-           ("TSF: 0x%p   nsTextStore::FlushPendingActions(), "
-            "calling ITextStoreACPSink::OnSelectionChange()...", this));
-    mSink->OnSelectionChange();
-  }
-  mNotifySelectionChange = false;
 }
 
 STDMETHODIMP
@@ -1644,11 +1644,10 @@ nsTextStore::RecordCompositionUpdateAction()
 
   PendingAction* action = GetPendingCompositionUpdate();
   action->mData = mComposition.mString;
-  nsTArray<TextRange>& textRanges = action->mRanges;
-  // The ranges might already have been initialized already, however, if this
-  // is called again, that means we need to overwrite the ranges with current
+  // The ranges might already have been initialized, however, if this is
+  // called again, that means we need to overwrite the ranges with current
   // information.
-  textRanges.Clear();
+  action->mRanges->Clear();
 
   TextRange newRange;
   // No matter if we have display attribute info or not,
@@ -1656,7 +1655,7 @@ nsTextStore::RecordCompositionUpdateAction()
   newRange.mStartOffset = 0;
   newRange.mEndOffset = action->mData.Length();
   newRange.mRangeType = NS_TEXTRANGE_RAWINPUT;
-  textRanges.AppendElement(newRange);
+  action->mRanges->AppendElement(newRange);
 
   nsRefPtr<ITfRange> range;
   while (S_OK == enumRanges->Next(1, getter_AddRefs(range), nullptr) && range) {
@@ -1696,14 +1695,14 @@ nsTextStore::RecordCompositionUpdateAction()
       }
     }
 
-    TextRange& lastRange = textRanges[textRanges.Length() - 1];
+    TextRange& lastRange = action->mRanges->LastElement();
     if (lastRange.mStartOffset == newRange.mStartOffset) {
       // Replace range if last range is the same as this one
       // So that ranges don't overlap and confuse the editor
       lastRange = newRange;
     } else {
       lastRange.mEndOffset = newRange.mStartOffset;
-      textRanges.AppendElement(newRange);
+      action->mRanges->AppendElement(newRange);
     }
   }
 
@@ -1715,8 +1714,8 @@ nsTextStore::RecordCompositionUpdateAction()
   // string,  however, Gecko doesn't support the wide caret drawing now (Gecko
   // doesn't support XOR drawing), unfortunately.  For now, we should change
   // the range style to undefined.
-  if (!currentSel.IsCollapsed() && textRanges.Length() == 1) {
-    TextRange& range = textRanges[0];
+  if (!currentSel.IsCollapsed() && action->mRanges->Length() == 1) {
+    TextRange& range = action->mRanges->ElementAt(0);
     LONG start = currentSel.MinOffset();
     LONG end = currentSel.MaxOffset();
     if ((LONG)range.mStartOffset == start - mComposition.mStart &&
@@ -1734,7 +1733,7 @@ nsTextStore::RecordCompositionUpdateAction()
   TextRange caretRange;
   caretRange.mStartOffset = caretRange.mEndOffset = uint32_t(caretPosition);
   caretRange.mRangeType = NS_TEXTRANGE_CARETPOSITION;
-  textRanges.AppendElement(caretRange);
+  action->mRanges->AppendElement(caretRange);
 
   PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
          ("TSF: 0x%p   nsTextStore::RecordCompositionUpdateAction() "
@@ -2346,7 +2345,7 @@ nsTextStore::GetACPFromPoint(TsViewCookie vcView,
     PR_LOG(sTextStoreLog, PR_LOG_ERROR,
            ("TSF: 0x%p   nsTextStore::GetACPFromPoint() FAILED due to "
             "layout not recomputed", this));
-    mContent.NeedsToNotifyTSFOfLayoutChange();
+    mPendingOnLayoutChange = true;
     return TS_E_NOLAYOUT;
   }
 
@@ -2403,7 +2402,7 @@ nsTextStore::GetTextExt(TsViewCookie vcView,
     PR_LOG(sTextStoreLog, PR_LOG_ERROR,
            ("TSF: 0x%p   nsTextStore::GetTextExt() FAILED due to "
             "layout not recomputed at %d", this, acpEnd));
-    mContent.NeedsToNotifyTSFOfLayoutChange();
+    mPendingOnLayoutChange = true;
     return TS_E_NOLAYOUT;
   }
 
@@ -3158,30 +3157,36 @@ nsTextStore::OnFocusChange(bool aGotFocus,
 nsIMEUpdatePreference
 nsTextStore::GetIMEUpdatePreference()
 {
-  nsIMEUpdatePreference::Notifications notifications =
-    nsIMEUpdatePreference::NOTIFY_NOTHING;
   if (sTsfThreadMgr && sTsfTextStore && sTsfTextStore->mDocumentMgr) {
     nsRefPtr<ITfDocumentMgr> docMgr;
     sTsfThreadMgr->GetFocus(getter_AddRefs(docMgr));
     if (docMgr == sTsfTextStore->mDocumentMgr) {
-      notifications = (nsIMEUpdatePreference::NOTIFY_SELECTION_CHANGE |
-                       nsIMEUpdatePreference::NOTIFY_TEXT_CHANGE |
-                       nsIMEUpdatePreference::NOTIFY_DURING_DEACTIVE);
+      nsIMEUpdatePreference updatePreference(
+        nsIMEUpdatePreference::NOTIFY_SELECTION_CHANGE |
+        nsIMEUpdatePreference::NOTIFY_TEXT_CHANGE |
+        nsIMEUpdatePreference::NOTIFY_POSITION_CHANGE |
+        nsIMEUpdatePreference::NOTIFY_DURING_DEACTIVE);
+      // nsTextStore shouldn't notify TSF of selection change and text change
+      // which are caused by composition.
+      updatePreference.DontNotifyChangesCausedByComposition();
+      return updatePreference;
     }
   }
-  return nsIMEUpdatePreference(notifications);
+  return nsIMEUpdatePreference();
 }
 
 nsresult
-nsTextStore::OnTextChangeInternal(uint32_t aStart,
-                                  uint32_t aOldEnd,
-                                  uint32_t aNewEnd)
+nsTextStore::OnTextChangeInternal(const IMENotification& aIMENotification)
 {
   PR_LOG(sTextStoreLog, PR_LOG_DEBUG,
-         ("TSF: 0x%p   nsTextStore::OnTextChangeInternal(aStart=%lu, "
-          "aOldEnd=%lu, aNewEnd=%lu), mSink=0x%p, mSinkMask=%s, "
+         ("TSF: 0x%p   nsTextStore::OnTextChangeInternal(aIMENotification={ "
+          "mMessage=0x%08X, mTextChangeData={ mStartOffset=%lu, "
+          "mOldEndOffset=%lu, mNewEndOffset=%lu}), mSink=0x%p, mSinkMask=%s, "
           "mComposition.IsComposing()=%s",
-          this, aStart, aOldEnd, aNewEnd, mSink.get(),
+          this, aIMENotification.mMessage,
+          aIMENotification.mTextChangeData.mStartOffset,
+          aIMENotification.mTextChangeData.mOldEndOffset,
+          aIMENotification.mTextChangeData.mNewEndOffset, mSink.get(),
           GetSinkMaskNameStr(mSinkMask).get(),
           GetBoolName(mComposition.IsComposing())));
 
@@ -3195,7 +3200,7 @@ nsTextStore::OnTextChangeInternal(uint32_t aStart,
     return NS_OK;
   }
 
-  if (aStart >= INT32_MAX || aOldEnd >= INT32_MAX || aNewEnd >= INT32_MAX) {
+  if (!aIMENotification.mTextChangeData.IsInInt32Range()) {
     PR_LOG(sTextStoreLog, PR_LOG_ERROR,
            ("TSF: 0x%p   nsTextStore::OnTextChangeInternal() FAILED due to "
             "offset is too big for calling mSink->OnTextChange()...",
@@ -3216,12 +3221,15 @@ nsTextStore::OnTextChangeInternal(uint32_t aStart,
   }
 
   TS_TEXTCHANGE textChange;
-  textChange.acpStart = static_cast<LONG>(aStart);
-  textChange.acpOldEnd = static_cast<LONG>(aOldEnd);
-  textChange.acpNewEnd = static_cast<LONG>(aNewEnd);
+  textChange.acpStart =
+    static_cast<LONG>(aIMENotification.mTextChangeData.mStartOffset);
+  textChange.acpOldEnd =
+    static_cast<LONG>(aIMENotification.mTextChangeData.mOldEndOffset);
+  textChange.acpNewEnd =
+    static_cast<LONG>(aIMENotification.mTextChangeData.mNewEndOffset);
 
   PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
-         ("TSF: 0x%p   nsTextStore::OnTextChangeInternal(), calling"
+         ("TSF: 0x%p   nsTextStore::OnTextChangeInternal(), calling "
           "mSink->OnTextChange(0, { acpStart=%ld, acpOldEnd=%ld, "
           "acpNewEnd=%ld })...", this, textChange.acpStart,
           textChange.acpOldEnd, textChange.acpNewEnd));
@@ -3272,23 +3280,19 @@ nsTextStore::OnSelectionChangeInternal(void)
     PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
            ("TSF: 0x%p   nsTextStore::OnSelectionChangeInternal(), pending "
             "a call of mSink->OnSelectionChange()...", this));
-    mNotifySelectionChange = true;
+    mPendingOnSelectionChange = true;
   }
   return NS_OK;
 }
 
 nsresult
-nsTextStore::OnLayoutChange()
+nsTextStore::OnLayoutChangeInternal()
 {
   NS_ENSURE_TRUE(mContext, NS_ERROR_FAILURE);
   NS_ENSURE_TRUE(mSink, NS_ERROR_FAILURE);
 
-  // XXXmnakano We always call OnLayoutChange for now, but this might use CPU
-  // power when the focused editor has very long text. Ideally, we should call
-  // this only when the composition string screen position is changed by window
-  // moving, resizing. And also reflowing and scrolling the contents.
   PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
-         ("TSF: 0x%p   nsTextStore::OnLayoutChange(), calling "
+         ("TSF: 0x%p   nsTextStore::OnLayoutChangeInternal(), calling "
           "mSink->OnLayoutChange()...", this));
   HRESULT hr = mSink->OnLayoutChange(TS_LC_CHANGE, TEXTSTORE_DEFAULT_VIEW);
   NS_ENSURE_TRUE(SUCCEEDED(hr), NS_ERROR_FAILURE);
@@ -3969,47 +3973,6 @@ nsTextStore::Composition::End()
 {
   mView = nullptr;
   mString.Truncate();
-}
-
-void
-nsTextStore::Composition::StartLayoutChangeTimer(nsTextStore* aTextStore)
-{
-  MOZ_ASSERT(!mLayoutChangeTimer);
-  mLayoutChangeTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
-  mLayoutChangeTimer->InitWithFuncCallback(TimerCallback, aTextStore,
-    GetLayoutChangeIntervalTime(), nsITimer::TYPE_REPEATING_SLACK);
-}
-
-void
-nsTextStore::Composition::EnsureLayoutChangeTimerStopped()
-{
-  if (!mLayoutChangeTimer) {
-    return;
-  }
-  mLayoutChangeTimer->Cancel();
-  mLayoutChangeTimer = nullptr;
-}
-
-// static
-void
-nsTextStore::Composition::TimerCallback(nsITimer* aTimer, void* aClosure)
-{
-  nsTextStore *ts = static_cast<nsTextStore*>(aClosure);
-  ts->OnLayoutChange();
-}
-
-// static
-uint32_t
-nsTextStore::Composition::GetLayoutChangeIntervalTime()
-{
-  static int32_t sTime = -1;
-  if (sTime > 0) {
-    return static_cast<uint32_t>(sTime);
-  }
-
-  sTime = std::max(10,
-    Preferences::GetInt(kPrefNameLayoutChangeInternal, 100));
-  return static_cast<uint32_t>(sTime);
 }
 
 /******************************************************************************

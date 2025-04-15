@@ -18,7 +18,6 @@
 #include "nsDebug.h"                    // for NS_ASSERTION
 #include "nsISupportsImpl.h"            // for Layer::AddRef, etc
 #include "nsRegion.h"                   // for nsIntRegion
-#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
 
 using namespace mozilla::gfx;
 
@@ -105,11 +104,18 @@ protected:
       return mImageClientTypeContainer;
     }
 
-    nsRefPtr<gfxASurface> surface;
-    AutoLockImage autoLock(mContainer, getter_AddRefs(surface));
+    RefPtr<gfx::SourceSurface> surface;
+    AutoLockImage autoLock(mContainer, &surface);
 
+#ifdef MOZ_WIDGET_GONK
+    // gralloc buffer needs BUFFER_IMAGE_BUFFERED to prevent
+    // the buffer's usage conflict.
+    mImageClientTypeContainer = autoLock.GetImage() ?
+                                  BUFFER_IMAGE_BUFFERED : BUFFER_UNKNOWN;
+#else
     mImageClientTypeContainer = autoLock.GetImage() ?
                                   BUFFER_IMAGE_SINGLE : BUFFER_UNKNOWN;
+#endif
     return mImageClientTypeContainer;
   }
 

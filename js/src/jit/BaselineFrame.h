@@ -110,6 +110,8 @@ class BaselineFrame
     inline void pushOnScopeChain(ScopeObject &scope);
     inline void popOffScopeChain();
 
+    inline void popWith(JSContext *cx);
+
     CalleeToken calleeToken() const {
         uint8_t *pointer = (uint8_t *)this + Size() + offsetOfCalleeToken();
         return *(CalleeToken *)pointer;
@@ -150,8 +152,8 @@ class BaselineFrame
     }
 
     Value &unaliasedVar(uint32_t i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) const {
+        JS_ASSERT(i < script()->nfixedvars());
         JS_ASSERT_IF(checkAliasing, !script()->varIsAliased(i));
-        JS_ASSERT(i < script()->nfixed());
         return *valueSlot(i);
     }
 
@@ -170,6 +172,7 @@ class BaselineFrame
     }
 
     Value &unaliasedLocal(uint32_t i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING) const {
+        JS_ASSERT(i < script()->nfixed());
 #ifdef DEBUG
         CheckLocalUnaliased(checkAliasing, script(), i);
 #endif
@@ -293,7 +296,7 @@ class BaselineFrame
         flags_ |= OVER_RECURSED;
     }
 
-    void trace(JSTracer *trc);
+    void trace(JSTracer *trc, IonFrameIterator &frame);
 
     bool isFunctionFrame() const {
         return CalleeTokenIsFunction(calleeToken());

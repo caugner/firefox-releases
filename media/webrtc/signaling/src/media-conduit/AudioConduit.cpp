@@ -20,6 +20,7 @@
 #include "nsThreadUtils.h"
 #ifdef MOZILLA_INTERNAL_API
 #include "Latency.h"
+#include "mozilla/Telemetry.h"
 #endif
 
 #include "webrtc/voice_engine/include/voe_errors.h"
@@ -73,7 +74,6 @@ WebrtcAudioConduit::~WebrtcAudioConduit()
   {
     delete mRecvCodecList[i];
   }
-
   delete mCurSendCodecConfig;
 
   // The first one of a pair to be deleted shuts down media for both
@@ -83,12 +83,6 @@ WebrtcAudioConduit::~WebrtcAudioConduit()
       mPtrVoEXmedia->SetExternalRecordingStatus(false);
       mPtrVoEXmedia->SetExternalPlayoutStatus(false);
     }
-    mPtrVoEXmedia->Release();
-  }
-
-  if(mPtrVoEProcessing)
-  {
-    mPtrVoEProcessing->Release();
   }
 
   //Deal with the transport
@@ -97,12 +91,6 @@ WebrtcAudioConduit::~WebrtcAudioConduit()
     if (!mShutDown) {
       mPtrVoENetwork->DeRegisterExternalTransport(mChannel);
     }
-    mPtrVoENetwork->Release();
-  }
-
-  if(mPtrVoECodec)
-  {
-    mPtrVoECodec->Release();
   }
 
   if(mPtrVoEBase)
@@ -114,12 +102,6 @@ WebrtcAudioConduit::~WebrtcAudioConduit()
       mPtrVoEBase->DeleteChannel(mChannel);
       mPtrVoEBase->Terminate();
     }
-    mPtrVoEBase->Release();
-  }
-
-  if (mPtrRTP)
-  {
-    mPtrRTP->Release();
   }
 
   if (mOtherDirection)
@@ -146,11 +128,23 @@ bool WebrtcAudioConduit::GetRemoteSSRC(unsigned int* ssrc) {
   return !mPtrRTP->GetRemoteSSRC(mChannel, *ssrc);
 }
 
-bool WebrtcAudioConduit::GetRTPJitter(unsigned int* jitterMs) {
-  unsigned int maxJitterMs;
+bool WebrtcAudioConduit::GetAVStats(int32_t* jitterBufferDelayMs,
+                                    int32_t* playoutBufferDelayMs,
+                                    int32_t* avSyncOffsetMs) {
+  return !mPtrVoEVideoSync->GetDelayEstimate(mChannel,
+                                             jitterBufferDelayMs,
+                                             playoutBufferDelayMs,
+                                             avSyncOffsetMs);
+}
+
+bool WebrtcAudioConduit::GetRTPStats(unsigned int* jitterMs,
+                                     unsigned int* cumulativeLost) {
+  unsigned int maxJitterMs = 0;
   unsigned int discardedPackets;
+  *jitterMs = 0;
+  *cumulativeLost = 0;
   return !mPtrRTP->GetRTPStatistics(mChannel, *jitterMs, maxJitterMs,
-                                    discardedPackets);
+                                    discardedPackets, *cumulativeLost);
 }
 
 DOMHighResTimeStamp
@@ -160,26 +154,22 @@ NTPtoDOMHighResTimeStamp(uint32_t ntpHigh, uint32_t ntpLow) {
 }
 
 bool WebrtcAudioConduit::GetRTCPReceiverReport(DOMHighResTimeStamp* timestamp,
-                                               unsigned int* jitterMs,
-                                               unsigned int* packetsReceived,
-                                               uint64_t* bytesReceived) {
-  unsigned int ntpHigh, ntpLow;
-  unsigned int rtpTimestamp, playoutTimestamp;
-  unsigned int packetsSent;
-  unsigned int bytesSent32;
-  unsigned short fractionLost;
-  unsigned int cumulativeLost;
-  bool result = !mPtrRTP->GetRemoteRTCPData(mChannel, ntpHigh, ntpLow,
-                                            rtpTimestamp, playoutTimestamp,
-                                            packetsSent, bytesSent32,
-                                            jitterMs,
-                                            &fractionLost, &cumulativeLost);
+                                               uint32_t* jitterMs,
+                                               uint32_t* packetsReceived,
+                                               uint64_t* bytesReceived,
+                                               uint32_t* cumulativeLost,
+                                               int32_t* rttMs) {
+  uint32_t ntpHigh, ntpLow;
+  uint16_t fractionLost;
+  bool result = !mPtrRTP->GetRemoteRTCPReceiverInfo(mChannel, ntpHigh, ntpLow,
+                                                    *packetsReceived,
+                                                    *bytesReceived,
+                                                    *jitterMs,
+                                                    fractionLost,
+                                                    *cumulativeLost,
+                                                    *rttMs);
   if (result) {
     *timestamp = NTPtoDOMHighResTimeStamp(ntpHigh, ntpLow);
-    *packetsReceived = (packetsSent >= cumulativeLost) ?
-                       (packetsSent - cumulativeLost) : 0;
-    *bytesReceived = (packetsSent ?
-                      (bytesSent32 / packetsSent) : 0) * (*packetsReceived);
   }
   return result;
 }
@@ -187,18 +177,13 @@ bool WebrtcAudioConduit::GetRTCPReceiverReport(DOMHighResTimeStamp* timestamp,
 bool WebrtcAudioConduit::GetRTCPSenderReport(DOMHighResTimeStamp* timestamp,
                                              unsigned int* packetsSent,
                                              uint64_t* bytesSent) {
-  unsigned int ntpHigh, ntpLow;
-  unsigned int rtpTimestamp, playoutTimestamp;
-  unsigned int bytesSent32;
-  unsigned int jitterMs;
-  unsigned short fractionLost;
-  bool result = !mPtrRTP->GetRemoteRTCPData(mChannel, ntpHigh, ntpLow,
-                                            rtpTimestamp, playoutTimestamp,
-                                            *packetsSent, bytesSent32,
-                                            &jitterMs, &fractionLost);
+  struct webrtc::SenderInfo senderInfo;
+  bool result = !mPtrRTP->GetRemoteRTCPSenderInfo(mChannel, &senderInfo);
   if (result) {
-    *timestamp = NTPtoDOMHighResTimeStamp(ntpHigh, ntpLow);
-    *bytesSent = bytesSent32;
+    *timestamp = NTPtoDOMHighResTimeStamp(senderInfo.NTP_timestamp_high,
+                                          senderInfo.NTP_timestamp_low);
+    *packetsSent = senderInfo.sender_packet_count;
+    *bytesSent = senderInfo.sender_octet_count;
   }
   return result;
 }
@@ -278,10 +263,14 @@ MediaConduitErrorCode WebrtcAudioConduit::Init(WebrtcAudioConduit *other)
     CSFLogError(logTag, "%s Unable to initialize VoEProcessing", __FUNCTION__);
     return kMediaConduitSessionNotInited;
   }
-
   if(!(mPtrVoEXmedia = VoEExternalMedia::GetInterface(mVoiceEngine)))
   {
     CSFLogError(logTag, "%s Unable to initialize VoEExternalMedia", __FUNCTION__);
+    return kMediaConduitSessionNotInited;
+  }
+  if(!(mPtrVoERTP_RTCP = VoERTP_RTCP::GetInterface(mVoiceEngine)))
+  {
+    CSFLogError(logTag, "%s Unable to initialize VoERTP_RTCP", __FUNCTION__);
     return kMediaConduitSessionNotInited;
   }
 
@@ -290,7 +279,6 @@ MediaConduitErrorCode WebrtcAudioConduit::Init(WebrtcAudioConduit *other)
     CSFLogError(logTag, "%s Unable to initialize VoEVideoSync", __FUNCTION__);
     return kMediaConduitSessionNotInited;
   }
-
   if (!(mPtrRTP = webrtc::VoERTP_RTCP::GetInterface(mVoiceEngine)))
   {
     CSFLogError(logTag, "%s Unable to get audio RTP/RTCP interface ",
@@ -451,7 +439,8 @@ WebrtcAudioConduit::ConfigureSendMediaCodec(const AudioCodecConfig* codecConfig)
                                               codecConfig->mFreq,
                                               codecConfig->mPacSize,
                                               codecConfig->mChannels,
-                                              codecConfig->mRate);
+                                              codecConfig->mRate,
+                                              codecConfig->mLoadManager);
 
   mEngineTransmitting = true;
   return kMediaConduitNoError;
@@ -556,10 +545,22 @@ WebrtcAudioConduit::ConfigureRecvMediaCodecs(
     CSFLogError(logTag, "%s Starting playout Failed", __FUNCTION__);
     return kMediaConduitPlayoutError;
   }
-
   //we should be good here for setting this.
   mEngineReceiving = true;
   DumpCodecDB();
+  return kMediaConduitNoError;
+}
+MediaConduitErrorCode
+WebrtcAudioConduit::EnableAudioLevelExtension(bool enabled, uint8_t id)
+{
+  CSFLogDebug(logTag,  "%s %d %d ", __FUNCTION__, enabled, id);
+
+  if (mPtrVoERTP_RTCP->SetRTPAudioLevelIndicationStatus(mChannel, enabled, id) == -1)
+  {
+    CSFLogError(logTag, "%s SetRTPAudioLevelIndicationStatus Failed", __FUNCTION__);
+    return kMediaConduitUnknownError;
+  }
+
   return kMediaConduitNoError;
 }
 
@@ -570,7 +571,6 @@ WebrtcAudioConduit::SendAudioFrame(const int16_t audio_data[],
                                     int32_t capture_delay)
 {
   CSFLogDebug(logTag,  "%s ", __FUNCTION__);
-
   // Following checks need to be performed
   // 1. Non null audio buffer pointer,
   // 2. invalid sampling frequency -  less than 0 or unsupported ones
@@ -687,6 +687,33 @@ WebrtcAudioConduit::GetAudioFrame(int16_t speechData[],
       return kMediaConduitPlayoutError;
     }
     return kMediaConduitUnknownError;
+  }
+
+  // Not #ifdef DEBUG or on a log module so we can use it for about:webrtc/etc
+  mSamples += lengthSamples;
+  if (mSamples >= mLastSyncLog + samplingFreqHz) {
+    int jitter_buffer_delay_ms;
+    int playout_buffer_delay_ms;
+    int avsync_offset_ms;
+    if (GetAVStats(&jitter_buffer_delay_ms,
+                   &playout_buffer_delay_ms,
+                   &avsync_offset_ms)) {
+#ifdef MOZILLA_INTERNAL_API
+      if (avsync_offset_ms < 0) {
+        Telemetry::Accumulate(Telemetry::WEBRTC_AVSYNC_WHEN_VIDEO_LAGS_AUDIO_MS,
+                              -avsync_offset_ms);
+      } else {
+        Telemetry::Accumulate(Telemetry::WEBRTC_AVSYNC_WHEN_AUDIO_LAGS_VIDEO_MS,
+                              avsync_offset_ms);
+      }
+#endif
+      CSFLogError(logTag,
+                  "A/V sync: sync delta: %dms, audio jitter delay %dms, playout delay %dms",
+                  avsync_offset_ms, jitter_buffer_delay_ms, playout_buffer_delay_ms);
+    } else {
+      CSFLogError(logTag, "A/V sync: GetAVStats failed");
+    }
+    mLastSyncLog = mSamples;
   }
 
 #ifdef MOZILLA_INTERNAL_API
@@ -905,7 +932,8 @@ WebrtcAudioConduit::CopyCodecToDB(const AudioCodecConfig* codecInfo)
                                                      codecInfo->mFreq,
                                                      codecInfo->mPacSize,
                                                      codecInfo->mChannels,
-                                                     codecInfo->mRate);
+                                                     codecInfo->mRate,
+                                                     codecInfo->mLoadManager);
   mRecvCodecList.push_back(cdcConfig);
   return true;
 }

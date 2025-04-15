@@ -8,7 +8,7 @@
 #include "nsIAtom.h"
 #include "nsXBLDocumentInfo.h"
 #include "nsIInputStream.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsHashtable.h"
 #include "nsIURI.h"
 #include "nsIURL.h"
@@ -35,7 +35,7 @@
 #include "nsCRT.h"
 
 // Event listeners
-#include "nsEventListenerManager.h"
+#include "mozilla/EventListenerManager.h"
 #include "nsIDOMEventListener.h"
 #include "nsAttrName.h"
 
@@ -537,7 +537,7 @@ nsXBLBinding::InstallEventHandlers()
     nsXBLPrototypeHandler* handlerChain = mPrototypeBinding->GetPrototypeHandlers();
 
     if (handlerChain) {
-      nsEventListenerManager* manager = mBoundElement->GetOrCreateListenerManager();
+      EventListenerManager* manager = mBoundElement->GetOrCreateListenerManager();
       if (!manager)
         return;
 
@@ -557,7 +557,7 @@ nsXBLBinding::InstallEventHandlers()
         nsXBLEventHandler* handler = curr->GetEventHandler();
         if (handler) {
           // Figure out if we're using capturing or not.
-          dom::EventListenerFlags flags;
+          EventListenerFlags flags;
           flags.mCapture = (curr->GetPhase() == NS_PHASE_CAPTURING);
 
           // If this is a command, add it in the system event group
@@ -594,7 +594,7 @@ nsXBLBinding::InstallEventHandlers()
         // add it to the standard event group.
 
         // Figure out if we're using capturing or not.
-        dom::EventListenerFlags flags;
+        EventListenerFlags flags;
         flags.mCapture = (handler->GetPhase() == NS_PHASE_CAPTURING);
 
         if ((handler->GetType() & (NS_HANDLER_TYPE_XBL_COMMAND |
@@ -686,8 +686,7 @@ nsXBLBinding::UnhookEventHandlers()
   nsXBLPrototypeHandler* handlerChain = mPrototypeBinding->GetPrototypeHandlers();
 
   if (handlerChain) {
-    nsEventListenerManager* manager =
-      mBoundElement->GetExistingListenerManager();
+    EventListenerManager* manager = mBoundElement->GetExistingListenerManager();
     if (!manager) {
       return;
     }
@@ -708,7 +707,7 @@ nsXBLBinding::UnhookEventHandlers()
         continue;
 
       // Figure out if we're using capturing or not.
-      dom::EventListenerFlags flags;
+      EventListenerFlags flags;
       flags.mCapture = (curr->GetPhase() == NS_PHASE_CAPTURING);
 
       // If this is a command, remove it from the system event group,
@@ -735,7 +734,7 @@ nsXBLBinding::UnhookEventHandlers()
       handler->GetEventName(type);
 
       // Figure out if we're using capturing or not.
-      dom::EventListenerFlags flags;
+      EventListenerFlags flags;
       flags.mCapture = (handler->GetPhase() == NS_PHASE_CAPTURING);
 
       // If this is a command, remove it from the system event group, otherwise 
@@ -960,7 +959,7 @@ nsXBLBinding::DoInitJSClass(JSContext *cx, JS::Handle<JSObject*> global,
       // we don't have accidental collisions with the case when parent_proto is
       // null and aClassName ends in some bizarre numbers (yeah, it's unlikely).
       JS::Rooted<jsid> parent_proto_id(cx);
-      if (!::JS_GetObjectId(cx, parent_proto, parent_proto_id.address())) {
+      if (!::JS_GetObjectId(cx, parent_proto, &parent_proto_id)) {
         // Probably OOM
         return NS_ERROR_OUT_OF_MEMORY;
       }

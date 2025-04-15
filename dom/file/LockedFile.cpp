@@ -7,6 +7,7 @@
 #include "LockedFile.h"
 
 #include "nsIAppShell.h"
+#include "nsIDOMEvent.h"
 #include "nsIDOMFile.h"
 #include "nsIFileStorage.h"
 #include "nsISeekableStream.h"
@@ -15,7 +16,6 @@
 #include "nsEventDispatcher.h"
 #include "nsNetUtil.h"
 #include "nsDOMClassInfoID.h"
-#include "nsDOMEvent.h"
 #include "nsJSUtils.h"
 #include "nsStringStream.h"
 #include "nsWidgetsCID.h"
@@ -424,7 +424,7 @@ already_AddRefed<FileRequest>
 LockedFile::GenerateFileRequest()
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
-  return FileRequest::Create(GetOwner(), this, true);
+  return FileRequest::Create(GetOwner(), this, /* aWrapAsDOMRequest */ false);
 }
 
 bool
@@ -458,9 +458,9 @@ LockedFile::IsOpen() const
 }
 
 NS_IMETHODIMP
-LockedFile::GetFileHandle(nsIDOMFileHandle** aFileHandle)
+LockedFile::GetFileHandle(nsISupports** aFileHandle)
 {
-  nsCOMPtr<nsIDOMFileHandle> result(mFileHandle);
+  nsCOMPtr<nsISupports> result(mFileHandle);
   result.forget(aFileHandle);
   return NS_OK;
 }
@@ -557,7 +557,6 @@ LockedFile::GetMetadata(JS::Handle<JS::Value> aParameters,
   }
 
   nsRefPtr<FileRequest> fileRequest = GenerateFileRequest();
-  NS_ENSURE_TRUE(fileRequest, NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR);
 
   nsRefPtr<MetadataHelper> helper =
     new MetadataHelper(this, fileRequest, params);
@@ -595,7 +594,6 @@ LockedFile::ReadAsArrayBuffer(uint64_t aSize,
   }
 
   nsRefPtr<FileRequest> fileRequest = GenerateFileRequest();
-  NS_ENSURE_TRUE(fileRequest, NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR);
 
   nsRefPtr<ReadHelper> helper =
     new ReadHelper(this, fileRequest, mLocation, aSize);
@@ -638,7 +636,6 @@ LockedFile::ReadAsText(uint64_t aSize,
   }
 
   nsRefPtr<FileRequest> fileRequest = GenerateFileRequest();
-  NS_ENSURE_TRUE(fileRequest, NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR);
 
   nsRefPtr<ReadTextHelper> helper =
     new ReadTextHelper(this, fileRequest, mLocation, aSize, aEncoding);
@@ -710,7 +707,6 @@ LockedFile::Truncate(uint64_t aSize,
   }
 
   nsRefPtr<FileRequest> fileRequest = GenerateFileRequest();
-  NS_ENSURE_TRUE(fileRequest, NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR);
 
   nsRefPtr<TruncateHelper> helper =
     new TruncateHelper(this, fileRequest, location);
@@ -746,7 +742,6 @@ LockedFile::Flush(nsISupports** _retval)
   }
 
   nsRefPtr<FileRequest> fileRequest = GenerateFileRequest();
-  NS_ENSURE_TRUE(fileRequest, NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR);
 
   nsRefPtr<FlushHelper> helper = new FlushHelper(this, fileRequest);
 
@@ -869,7 +864,6 @@ LockedFile::WriteOrAppend(JS::Handle<JS::Value> aValue,
   }
 
   nsRefPtr<FileRequest> fileRequest = GenerateFileRequest();
-  NS_ENSURE_TRUE(fileRequest, NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR);
 
   uint64_t location = aAppend ? UINT64_MAX : mLocation;
 

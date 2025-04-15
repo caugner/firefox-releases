@@ -13,8 +13,6 @@ const Ci = Components.interfaces;
 const Cu = Components.utils;
 
 Cu.import("resource://gre/modules/Services.jsm");
-// Initialize DOMApplicationRegistry by importing Webapps.jsm.
-Cu.import("resource://gre/modules/Webapps.jsm");
 Cu.import("resource://gre/modules/AppsUtils.jsm");
 Cu.import("resource://gre/modules/PermissionsInstaller.jsm");
 Cu.import('resource://gre/modules/Payment.jsm');
@@ -22,8 +20,6 @@ Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/Promise.jsm");
 Cu.import("resource://gre/modules/osfile.jsm");
 
-// Initialize window-independent handling of webapps- notifications.
-Cu.import("resource://webapprt/modules/WebappsHandler.jsm");
 Cu.import("resource://webapprt/modules/WebappRT.jsm");
 Cu.import("resource://webapprt/modules/WebRTCHandler.jsm");
 
@@ -47,7 +43,7 @@ function isFirstRunOrUpdate() {
 
 function writeFile(aPath, aData) {
   return Task.spawn(function() {
-    let data = TextEncoder().encode(aData);
+    let data = new TextEncoder().encode(aData);
     yield OS.File.writeAtomic(aPath, data, { tmpPath: aPath + ".tmp" });
   });
 }
@@ -81,39 +77,39 @@ function createBrandingFiles() {
 // It waits for XUL window and webapps registry loading.
 this.startup = function(window) {
   return Task.spawn(function () {
-    // Observe registry loading.
-    let deferredRegistry = Promise.defer();
-    function observeRegistryLoading() {
-      Services.obs.removeObserver(observeRegistryLoading, "webapps-registry-start");
-      deferredRegistry.resolve();
-    }
-    Services.obs.addObserver(observeRegistryLoading, "webapps-registry-start", false);
-
     // Observe XUL window loading.
     // For tests, it could be already loaded.
     let deferredWindowLoad = Promise.defer();
     if (window.document && window.document.getElementById("content")) {
       deferredWindowLoad.resolve();
     } else {
-      window.addEventListener("load", function onLoad() {
-        window.removeEventListener("load", onLoad, false);
+      window.addEventListener("DOMContentLoaded", function onLoad() {
+        window.removeEventListener("DOMContentLoaded", onLoad, false);
         deferredWindowLoad.resolve();
       });
     }
 
-    // Wait for webapps registry loading.
-    yield deferredRegistry.promise;
+    let appUpdated = false;
+    let updatePending = yield WebappRT.isUpdatePending();
+    if (updatePending) {
+      appUpdated = yield WebappRT.applyUpdate();
+    }
 
-    // Install/update permissions and get the appID from the webapps registry.
-    let appID = Ci.nsIScriptSecurityManager.NO_APP_ID;
+    yield WebappRT.loadConfig();
+
+    // Initialize DOMApplicationRegistry by importing Webapps.jsm.
+    Cu.import("resource://gre/modules/Webapps.jsm");
+    // Initialize window-independent handling of webapps- notifications.
+    Cu.import("resource://webapprt/modules/WebappManager.jsm");
+
+    // Wait for webapps registry loading.
+    yield DOMApplicationRegistry.registryStarted;
+
     let manifestURL = WebappRT.config.app.manifestURL;
     if (manifestURL) {
-      appID = DOMApplicationRegistry.getAppLocalIdByManifestURL(manifestURL);
-
       // On firstrun, set permissions to their default values.
       // When the webapp runtime is updated, update the permissions.
-      // TODO: Update the permissions when the application is updated.
-      if (isFirstRunOrUpdate(Services.prefs)) {
+      if (isFirstRunOrUpdate(Services.prefs) || appUpdated) {
         PermissionsInstaller.installPermissions(WebappRT.config.app, true);
         yield createBrandingFiles();
       }
@@ -137,7 +133,17 @@ this.startup = function(window) {
     let appBrowser = window.document.getElementById("content");
 
     // Set the principal to the correct appID and launch the application.
-    appBrowser.docShell.setIsApp(appID);
+    appBrowser.docShell.setIsApp(WebappRT.appID);
     appBrowser.setAttribute("src", WebappRT.launchURI);
+
+    if (WebappRT.config.app.manifest.fullscreen) {
+      appBrowser.addEventListener("load", function onLoad() {
+        appBrowser.removeEventListener("load", onLoad, true);
+        appBrowser.contentDocument.
+          documentElement.mozRequestFullScreen();
+      }, true);
+    }
+
+    WebappRT.startUpdateService();
   }).then(null, Cu.reportError.bind(Cu));
 }

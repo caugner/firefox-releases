@@ -9,9 +9,11 @@
 
 #include "mozilla/MemoryReporting.h"
 
+#include "builtin/TypedObject.h"
 #include "builtin/TypeRepresentation.h"
 #include "gc/Zone.h"
 #include "vm/GlobalObject.h"
+#include "vm/PIC.h"
 
 namespace js {
 
@@ -227,8 +229,7 @@ struct JSCompartment
                                 size_t *shapesCompartmentTables,
                                 size_t *crossCompartmentWrappers,
                                 size_t *regexpCompartment,
-                                size_t *debuggeesSet,
-                                size_t *baselineStubsOptimized);
+                                size_t *debuggeesSet);
 
     /*
      * Shared scope property tree, and arena-pool for allocating its nodes.
@@ -260,6 +261,12 @@ struct JSCompartment
      */
     js::CallsiteCloneTable callsiteClones;
     void sweepCallsiteClones();
+
+    /*
+     * Lazily initialized script source object to use for scripts cloned
+     * from the self-hosting global.
+     */
+    js::ReadBarriered<js::ScriptSourceObject> selfHostingScriptSource;
 
     /* During GC, stores the index of this compartment in rt->compartments. */
     unsigned                     gcIndex;
@@ -513,7 +520,7 @@ namespace js {
 inline bool
 ExclusiveContext::typeInferenceEnabled() const
 {
-    return compartment_->options().typeInference(this);
+    return zone()->types.inferenceEnabled;
 }
 
 inline js::Handle<js::GlobalObject*>

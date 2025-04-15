@@ -10,7 +10,6 @@
 #include "mozilla/Preferences.h"
 #include "TabChild.h"
 #include "nsContentUtils.h"
-#include "nsDOMEvent.h"
 #include "nsIAlertsService.h"
 #include "nsIAppsService.h"
 #include "nsIContentPermissionPrompt.h"
@@ -24,6 +23,7 @@
 #include "nsDOMJSUtils.h"
 #include "nsIScriptSecurityManager.h"
 #include "mozilla/dom/PermissionMessageUtils.h"
+#include "nsContentPermissionHelper.h"
 #ifdef MOZ_B2G
 #include "nsIDOMDesktopNotification.h"
 #endif
@@ -47,7 +47,7 @@ public:
     MOZ_ASSERT(aPromise);
     JSContext* cx = aGlobal.GetContext();
     JSAutoCompartment ac(cx, mGlobal);
-    mNotifications = JS_NewArrayObject(cx, 0, nullptr);
+    mNotifications = JS_NewArrayObject(cx, 0);
     HoldData();
   }
 
@@ -162,7 +162,8 @@ public:
 
   virtual ~NotificationPermissionRequest() {}
 
-  bool Recv__delete__(const bool& aAllow);
+  bool Recv__delete__(const bool& aAllow,
+                      const InfallibleTArray<PermissionChoice>& choices);
   void IPDLRelease() { Release(); }
 
 protected:
@@ -267,9 +268,13 @@ NotificationPermissionRequest::Run()
     // Corresponding release occurs in DeallocPContentPermissionRequest.
     AddRef();
 
-    NS_NAMED_LITERAL_CSTRING(type, "desktop-notification");
-    NS_NAMED_LITERAL_CSTRING(access, "unused");
-    child->SendPContentPermissionRequestConstructor(this, type, access,
+    nsTArray<PermissionRequest> permArray;
+    nsTArray<nsString> emptyOptions;
+    permArray.AppendElement(PermissionRequest(
+                            NS_LITERAL_CSTRING("desktop-notification"),
+                            NS_LITERAL_CSTRING("unused"),
+                            emptyOptions));
+    child->SendPContentPermissionRequestConstructor(this, permArray,
                                                     IPC::Principal(mPrincipal));
 
     Sendprompt();
@@ -315,8 +320,10 @@ NotificationPermissionRequest::Cancel()
 }
 
 NS_IMETHODIMP
-NotificationPermissionRequest::Allow()
+NotificationPermissionRequest::Allow(JS::HandleValue aChoices)
 {
+  MOZ_ASSERT(aChoices.isUndefined());
+
   mPermission = NotificationPermission::Granted;
   return DispatchCallback();
 }
@@ -342,24 +349,23 @@ NotificationPermissionRequest::CallCallback()
 }
 
 NS_IMETHODIMP
-NotificationPermissionRequest::GetAccess(nsACString& aAccess)
+NotificationPermissionRequest::GetTypes(nsIArray** aTypes)
 {
-  aAccess.AssignLiteral("unused");
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-NotificationPermissionRequest::GetType(nsACString& aType)
-{
-  aType.AssignLiteral("desktop-notification");
-  return NS_OK;
+  nsTArray<nsString> emptyOptions;
+  return CreatePermissionArray(NS_LITERAL_CSTRING("desktop-notification"),
+                               NS_LITERAL_CSTRING("unused"),
+                               emptyOptions,
+                               aTypes);
 }
 
 bool
-NotificationPermissionRequest::Recv__delete__(const bool& aAllow)
+NotificationPermissionRequest::Recv__delete__(const bool& aAllow,
+                                              const InfallibleTArray<PermissionChoice>& choices)
 {
+  MOZ_ASSERT(choices.IsEmpty(), "Notification doesn't support permission choice");
+
   if (aAllow) {
-    (void) Allow();
+    (void) Allow(JS::UndefinedHandleValue);
   } else {
     (void) Cancel();
   }
@@ -690,7 +696,10 @@ Notification::Get(const GlobalObject& aGlobal,
                   const GetNotificationOptions& aFilter,
                   ErrorResult& aRv)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
+  nsCOMPtr<nsIGlobalObject> global =
+    do_QueryInterface(aGlobal.GetAsSupports());
+  MOZ_ASSERT(global);
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(global);
   MOZ_ASSERT(window);
   nsIDocument* doc = window->GetExtantDoc();
   if (!doc) {
@@ -712,7 +721,7 @@ Notification::Get(const GlobalObject& aGlobal,
     return nullptr;
   }
 
-  nsRefPtr<Promise> promise = new Promise(window);
+  nsRefPtr<Promise> promise = new Promise(global);
   nsCOMPtr<nsINotificationStorageCallback> callback =
     new NotificationStorageCallback(aGlobal, window, promise);
   nsString tag = aFilter.mTag.WasPassed() ?
@@ -724,12 +733,6 @@ Notification::Get(const GlobalObject& aGlobal,
   }
 
   return promise.forget();
-}
-
-bool
-Notification::PrefEnabled()
-{
-  return Preferences::GetBool("dom.webnotifications.enabled", false);
 }
 
 JSObject*

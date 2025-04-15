@@ -29,7 +29,16 @@ class CompartmentChecker
   public:
     explicit CompartmentChecker(ExclusiveContext *cx)
       : compartment(cx->compartment())
-    {}
+    {
+#ifdef DEBUG
+        // In debug builds, make sure the embedder passed the cx it claimed it
+        // was going to use.
+        JSContext *activeContext = nullptr;
+        if (cx->isJSContext())
+            activeContext = cx->asJSContext()->runtime()->activeContext;
+        JS_ASSERT_IF(activeContext, cx == activeContext);
+#endif
+    }
 
     /*
      * Set a breakpoint here (break js::CompartmentChecker::fail) to debug
@@ -73,6 +82,11 @@ class CompartmentChecker
     }
 
     template<typename T>
+    void check(const Rooted<T>& rooted) {
+        check(rooted.get());
+    }
+
+    template<typename T>
     void check(Handle<T> handle) {
         check(handle.get());
     }
@@ -97,6 +111,11 @@ class CompartmentChecker
     void check(const JSValueArray &arr) {
         for (size_t i = 0; i < arr.length; i++)
             check(arr.array[i]);
+    }
+
+    void check(const JS::HandleValueArray &arr) {
+        for (size_t i = 0; i < arr.length(); i++)
+            check(arr[i]);
     }
 
     void check(const CallArgs &args) {
@@ -316,7 +335,7 @@ CallJSDeletePropertyOp(JSContext *cx, JSDeletePropertyOp op, HandleObject receiv
 
 inline bool
 CallSetter(JSContext *cx, HandleObject obj, HandleId id, StrictPropertyOp op, unsigned attrs,
-           unsigned shortid, bool strict, MutableHandleValue vp)
+           bool strict, MutableHandleValue vp)
 {
     if (attrs & JSPROP_SETTER) {
         RootedValue opv(cx, CastAsObjectJsval(op));
@@ -326,12 +345,7 @@ CallSetter(JSContext *cx, HandleObject obj, HandleId id, StrictPropertyOp op, un
     if (attrs & JSPROP_GETTER)
         return js_ReportGetterOnlyAssignment(cx, strict);
 
-    if (!(attrs & JSPROP_SHORTID))
-        return CallJSPropertyOpSetter(cx, op, obj, id, strict, vp);
-
-    RootedId nid(cx, INT_TO_JSID(shortid));
-
-    return CallJSPropertyOpSetter(cx, op, obj, nid, strict, vp);
+    return CallJSPropertyOpSetter(cx, op, obj, id, strict, vp);
 }
 
 inline uintptr_t
@@ -363,7 +377,9 @@ JSContext::setPendingException(js::Value v)
     JS_ASSERT(!IsPoisonedValue(v));
     this->throwing = true;
     this->unwrappedException_ = v;
-    js::assertSameCompartment(this, v);
+    // We don't use assertSameCompartment here to allow
+    // js::SetPendingExceptionCrossContext to work.
+    JS_ASSERT_IF(v.isObject(), v.toObject().compartment() == compartment());
 }
 
 inline void
@@ -457,6 +473,9 @@ JSContext::currentScript(jsbytecode **ppc,
             return nullptr;
         return script;
     }
+
+    if (act->isAsmJS())
+        return nullptr;
 #endif
 
     JS_ASSERT(act->isInterpreter());

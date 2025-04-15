@@ -2705,6 +2705,16 @@ AttributeEnumFunc(nsCSSSelector* aSelector, AttributeEnumData* aData)
   }
 }
 
+static MOZ_ALWAYS_INLINE void
+EnumerateSelectors(nsTArray<nsCSSSelector*>& aSelectors, AttributeEnumData* aData)
+{
+  nsCSSSelector **iter = aSelectors.Elements(),
+                **end = iter + aSelectors.Length();
+  for (; iter != end; ++iter) {
+    AttributeEnumFunc(*iter, aData);
+  }
+}
+
 nsRestyleHint
 nsCSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData)
 {
@@ -2751,19 +2761,11 @@ nsCSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData
                      (PL_DHashTableOperate(&cascade->mIdSelectors,
                                            id, PL_DHASH_LOOKUP));
         if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
-          nsCSSSelector **iter = entry->mSelectors.Elements(),
-                        **end = iter + entry->mSelectors.Length();
-          for(; iter != end; ++iter) {
-            AttributeEnumFunc(*iter, &data);
-          }
+          EnumerateSelectors(entry->mSelectors, &data);
         }
       }
 
-      nsCSSSelector **iter = cascade->mPossiblyNegatedIDSelectors.Elements(),
-                    **end = iter + cascade->mPossiblyNegatedIDSelectors.Length();
-      for(; iter != end; ++iter) {
-        AttributeEnumFunc(*iter, &data);
-      }
+      EnumerateSelectors(cascade->mPossiblyNegatedIDSelectors, &data);
     }
     
     if (aData->mAttribute == aData->mElement->GetClassAttributeName()) {
@@ -2777,21 +2779,12 @@ nsCSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData
                        (PL_DHashTableOperate(&cascade->mClassSelectors,
                                              curClass, PL_DHASH_LOOKUP));
           if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
-            nsCSSSelector **iter = entry->mSelectors.Elements(),
-                          **end = iter + entry->mSelectors.Length();
-            for(; iter != end; ++iter) {
-              AttributeEnumFunc(*iter, &data);
-            }
+            EnumerateSelectors(entry->mSelectors, &data);
           }
         }
       }
 
-      nsCSSSelector **iter = cascade->mPossiblyNegatedClassSelectors.Elements(),
-                    **end = iter +
-                              cascade->mPossiblyNegatedClassSelectors.Length();
-      for (; iter != end; ++iter) {
-        AttributeEnumFunc(*iter, &data);
-      }
+      EnumerateSelectors(cascade->mPossiblyNegatedClassSelectors, &data);
     }
 
     AtomSelectorEntry *entry =
@@ -2799,11 +2792,7 @@ nsCSSRuleProcessor::HasAttributeDependentStyle(AttributeRuleProcessorData* aData
                  (PL_DHashTableOperate(&cascade->mAttributeSelectors,
                                        aData->mAttribute, PL_DHASH_LOOKUP));
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
-      nsCSSSelector **iter = entry->mSelectors.Elements(),
-                    **end = iter + entry->mSelectors.Length();
-      for(; iter != end; ++iter) {
-        AttributeEnumFunc(*iter, &data);
-      }
+      EnumerateSelectors(entry->mSelectors, &data);
     }
   }
 
@@ -3226,7 +3215,7 @@ struct CascadeEnumData {
       mSheetType(aSheetType)
   {
     if (!PL_DHashTableInit(&mRulesByWeight, &gRulesByWeightOps, nullptr,
-                          sizeof(RuleByWeightEntry), 64))
+                           sizeof(RuleByWeightEntry), 64, fallible_t()))
       mRulesByWeight.ops = nullptr;
 
     // Initialize our arena

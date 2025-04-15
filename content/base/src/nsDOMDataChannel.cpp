@@ -80,7 +80,7 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(nsDOMDataChannel)
   NS_INTERFACE_MAP_ENTRY(nsIDOMDataChannel)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
 
-nsDOMDataChannel::nsDOMDataChannel(already_AddRefed<mozilla::DataChannel> aDataChannel,
+nsDOMDataChannel::nsDOMDataChannel(already_AddRefed<mozilla::DataChannel>& aDataChannel,
                                    nsPIDOMWindow* aWindow)
   : nsDOMEventTargetHelper(aWindow && aWindow->IsOuterWindow() ?
                              aWindow->GetCurrentInnerWindow() : aWindow)
@@ -303,7 +303,10 @@ nsDOMDataChannel::Send(const ArrayBuffer& aData, ErrorResult& aRv)
 {
   NS_ABORT_IF_FALSE(NS_IsMainThread(), "Not running on main thread");
 
-  MOZ_ASSERT(sizeof(*aData.Data()) == 1);
+  aData.ComputeLengthAndData();
+
+  static_assert(sizeof(*aData.Data()) == 1, "byte-sized data required");
+
   uint32_t len = aData.Length();
   char* data = reinterpret_cast<char*>(aData.Data());
 
@@ -316,7 +319,10 @@ nsDOMDataChannel::Send(const ArrayBufferView& aData, ErrorResult& aRv)
 {
   NS_ABORT_IF_FALSE(NS_IsMainThread(), "Not running on main thread");
 
-  MOZ_ASSERT(sizeof(*aData.Data()) == 1);
+  aData.ComputeLengthAndData();
+
+  static_assert(sizeof(*aData.Data()) == 1, "byte-sized data required");
+
   uint32_t len = aData.Length();
   char* data = reinterpret_cast<char*>(aData.Data());
 
@@ -490,7 +496,7 @@ nsDOMDataChannel::AppReady()
 
 /* static */
 nsresult
-NS_NewDOMDataChannel(already_AddRefed<mozilla::DataChannel> aDataChannel,
+NS_NewDOMDataChannel(already_AddRefed<mozilla::DataChannel>&& aDataChannel,
                      nsPIDOMWindow* aWindow,
                      nsIDOMDataChannel** aDomDataChannel)
 {

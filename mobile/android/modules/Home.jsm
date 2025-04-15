@@ -11,6 +11,7 @@ const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/SharedPreferences.jsm");
+Cu.import("resource://gre/modules/Messaging.jsm");
 
 // See bug 915424
 function resolveGeckoURI(aURI) {
@@ -25,10 +26,6 @@ function resolveGeckoURI(aURI) {
     return handler.resolveURI(Services.io.newURI(aURI, null, null));
   }
   return aURI;
-}
-
-function sendMessageToJava(message) {
-  return Services.androidBridge.handleGeckoMessage(JSON.stringify(message));
 }
 
 function BannerMessage(options) {
@@ -51,35 +48,35 @@ function BannerMessage(options) {
     this.ondismiss = options.ondismiss;
 }
 
-let HomeBanner = {
-  // Holds the messages that will rotate through the banner.
-  _messages: {},
+// We need this object to have access to the HomeBanner
+// private members without leaking it outside Home.jsm.
+let HomeBannerMessageHandlers;
 
-  observe: function(subject, topic, data) {
-    switch(topic) {
-      case "HomeBanner:Get":
-        this._handleGet();
-        break;
+let HomeBanner = (function () {
+  // Whether there is a "HomeBanner:Get" request we couldn't fulfill.
+  let _pendingRequest = false;
 
-      case "HomeBanner:Shown":
-        this._handleShown(data);
-        break;
-
-      case "HomeBanner:Click":
-        this._handleClick(data);
-        break;
-
-      case "HomeBanner:Dismiss":
-        this._handleDismiss(data);
-        break;
+  // Functions used to handle messages sent from Java.
+  HomeBannerMessageHandlers = {
+    "HomeBanner:Get": function handleBannerGet(data) {
+      if (!_sendBannerData()) {
+        _pendingRequest = true;
+      }
     }
-  },
+  };
 
-  _handleGet: function() {
+  // Holds the messages that will rotate through the banner.
+  let _messages = {};
+
+  let _sendBannerData = function() {
+    let keys = Object.keys(_messages);
+    if (!keys.length) {
+      return false;
+    }
+
     // Choose a message at random.
-    let keys = Object.keys(this._messages);
     let randomId = keys[Math.floor(Math.random() * keys.length)];
-    let message = this._messages[randomId];
+    let message = _messages[randomId];
 
     sendMessageToJava({
       type: "HomeBanner:Data",
@@ -87,75 +84,95 @@ let HomeBanner = {
       text: message.text,
       iconURI: message.iconURI
     });
-  },
+    return true;
+  };
 
-  _handleShown: function(id) {
-    let message = this._messages[id];
+  let _handleShown = function(id) {
+    let message = _messages[id];
     if (message.onshown)
       message.onshown();
-  },
+  };
 
-  _handleClick: function(id) {
-    let message = this._messages[id];
+  let _handleClick = function(id) {
+    let message = _messages[id];
     if (message.onclick)
       message.onclick();
-  },
+  };
 
-  _handleDismiss: function(id) {
-    let message = this._messages[id];
+  let _handleDismiss = function(id) {
+    let message = _messages[id];
     if (message.ondismiss)
       message.ondismiss();
-  },
+  };
 
-  /**
-   * Adds a new banner message to the rotation.
-   *
-   * @return id Unique identifer for the message.
-   */
-  add: function(options) {
-    let message = new BannerMessage(options);
-    this._messages[message.id] = message;
+  return Object.freeze({
+    observe: function(subject, topic, data) {
+      switch(topic) {
+        case "HomeBanner:Shown":
+          _handleShown(data);
+          break;
 
-    // If this is the first message we're adding, add
-    // observers to listen for requests from the Java UI.
-    if (Object.keys(this._messages).length == 1) {
-      Services.obs.addObserver(this, "HomeBanner:Get", false);
-      Services.obs.addObserver(this, "HomeBanner:Shown", false);
-      Services.obs.addObserver(this, "HomeBanner:Click", false);
-      Services.obs.addObserver(this, "HomeBanner:Dismiss", false);
+        case "HomeBanner:Click":
+          _handleClick(data);
+          break;
 
-      // Send a message to Java, in case there's an active HomeBanner
-      // waiting for a response.
-      this._handleGet();
+        case "HomeBanner:Dismiss":
+          _handleDismiss(data);
+          break;
+      }
+    },
+
+    /**
+     * Adds a new banner message to the rotation.
+     *
+     * @return id Unique identifer for the message.
+     */
+    add: function(options) {
+      let message = new BannerMessage(options);
+      _messages[message.id] = message;
+
+      // If this is the first message we're adding, add
+      // observers to listen for requests from the Java UI.
+      if (Object.keys(_messages).length == 1) {
+        Services.obs.addObserver(this, "HomeBanner:Shown", false);
+        Services.obs.addObserver(this, "HomeBanner:Click", false);
+        Services.obs.addObserver(this, "HomeBanner:Dismiss", false);
+
+        // Send a message to Java if there's a pending "HomeBanner:Get" request.
+        if (_pendingRequest) {
+          _pendingRequest = false;
+          _sendBannerData();
+        }
+      }
+
+      return message.id;
+    },
+
+    /**
+     * Removes a banner message from the rotation.
+     *
+     * @param id The id of the message to remove.
+     */
+    remove: function(id) {
+      if (!(id in _messages)) {
+        throw "Home.banner: Can't remove message that doesn't exist: id = " + id;
+      }
+
+      delete _messages[id];
+
+      // If there are no more messages, remove the observers.
+      if (Object.keys(_messages).length == 0) {
+        Services.obs.removeObserver(this, "HomeBanner:Shown");
+        Services.obs.removeObserver(this, "HomeBanner:Click");
+        Services.obs.removeObserver(this, "HomeBanner:Dismiss");
+      }
     }
+  });
+})();
 
-    return message.id;
-  },
-
-  /**
-   * Removes a banner message from the rotation.
-   *
-   * @param id The id of the message to remove.
-   */
-  remove: function(id) {
-    delete this._messages[id];
-
-    // If there are no more messages, remove the observers.
-    if (Object.keys(this._messages).length == 0) {
-      Services.obs.removeObserver(this, "HomeBanner:Get");
-      Services.obs.removeObserver(this, "HomeBanner:Shown");
-      Services.obs.removeObserver(this, "HomeBanner:Click");
-      Services.obs.removeObserver(this, "HomeBanner:Dismiss");
-    }
-  }
-};
-
-function Panel(options) {
-  if ("id" in options)
-    this.id = options.id;
-
-  if ("title" in options)
-    this.title = options.title;
+function Panel(id, options) {
+  this.id = id;
+  this.title = options.title;
 
   if ("layout" in options)
     this.layout = options.layout;
@@ -164,58 +181,129 @@ function Panel(options) {
     this.views = options.views;
 }
 
-let HomePanels = {
+// We need this object to have access to the HomePanels
+// private members without leaking it outside Home.jsm.
+let HomePanelsMessageHandlers;
+
+let HomePanels = (function () {
+  // Functions used to handle messages sent from Java.
+  HomePanelsMessageHandlers = {
+
+    "HomePanels:Get": function handlePanelsGet(data) {
+      data = JSON.parse(data);
+
+      let requestId = data.requestId;
+      let ids = data.ids || null;
+
+      let panels = [];
+      for (let id in _registeredPanels) {
+        // Null ids means we want to fetch all available panels
+        if (ids == null || ids.indexOf(id) >= 0) {
+          try {
+            panels.push(_generatePanel(id));
+          } catch(e) {
+            Cu.reportError("Home.panels: Invalid options, panel.id = " + id + ": " + e);
+          }
+        }
+      }
+
+      sendMessageToJava({
+        type: "HomePanels:Data",
+        panels: panels,
+        requestId: requestId
+      });
+    },
+
+    "HomePanels:Installed": function handlePanelsInstalled(id) {
+      let options = _registeredPanels[id]();
+      if (!options.oninstall) {
+        return;
+      }
+      if (typeof options.oninstall !== "function") {
+        throw "Home.panels: Invalid oninstall function: panel.id = " + this.id;
+      }
+      options.oninstall();
+    },
+
+    "HomePanels:Uninstalled": function handlePanelsUninstalled(id) {
+      let options = _registeredPanels[id]();
+      if (!options.onuninstall) {
+        return;
+      }
+      if (typeof options.onuninstall !== "function") {
+        throw "Home.panels: Invalid onuninstall function: panel.id = " + this.id;
+      }
+      options.onuninstall();
+    }
+  };
+
+  // Holds the current set of registered panels that can be
+  // installed, updated, uninstalled, or unregistered. It maps
+  // panel ids with the functions that dynamically generate
+  // their respective panel options. This is used to retrieve
+  // the current list of available panels in the system.
+  // See HomePanels:Get handler.
+  let _registeredPanels = {};
+
   // Valid layouts for a panel.
-  Layout: {
+  let Layout = Object.freeze({
     FRAME: "frame"
-  },
+  });
 
   // Valid types of views for a dataset.
-  View: {
+  let View = Object.freeze({
     LIST: "list",
     GRID: "grid"
-  },
+  });
 
-  // Holds the currrent set of registered panels.
-  _panels: {},
+  // Valid item types for a panel view.
+  let Item = Object.freeze({
+    ARTICLE: "article",
+    IMAGE: "image"
+  });
 
-  _handleGet: function(requestId) {
-    let panels = [];
-    for (let id in this._panels) {
-      let panel = this._panels[id];
-      panels.push({
-        id: panel.id,
-        title: panel.title,
-        layout: panel.layout,
-        views: panel.views
-      });
-    }
+  // Valid item handlers for a panel view.
+  let ItemHandler = Object.freeze({
+    BROWSER: "browser",
+    INTENT: "intent"
+  });
 
-    sendMessageToJava({
-      type: "HomePanels:Data",
-      panels: panels,
-      requestId: requestId
-    });
-  },
+  let _generatePanel = function(id) {
+    let panel = new Panel(id, _registeredPanels[id]());
 
-  add: function(options) {
-    let panel = new Panel(options);
     if (!panel.id || !panel.title) {
       throw "Home.panels: Can't create a home panel without an id and title!";
     }
 
-    // Bail if the panel already exists
-    if (panel.id in this._panels) {
-      throw "Home.panels: Panel already exists: id = " + panel.id;
-    }
-
-    if (!this._valueExists(this.Layout, panel.layout)) {
+    if (!panel.layout) {
+      // Use FRAME layout by default
+      panel.layout = Layout.FRAME;
+    } else if (!_valueExists(Layout, panel.layout)) {
       throw "Home.panels: Invalid layout for panel: panel.id = " + panel.id + ", panel.layout =" + panel.layout;
     }
 
     for (let view of panel.views) {
-      if (!this._valueExists(this.View, view.type)) {
+      if (!_valueExists(View, view.type)) {
         throw "Home.panels: Invalid view type: panel.id = " + panel.id + ", view.type = " + view.type;
+      }
+
+      if (!view.itemType) {
+        if (view.type == View.LIST) {
+          // Use ARTICLE item type by default in LIST views
+          view.itemType = Item.ARTICLE;
+        } else if (view.type == View.GRID) {
+          // Use IMAGE item type by default in GRID views
+          view.itemType = Item.IMAGE;
+        }
+      } else if (!_valueExists(Item, view.itemType)) {
+        throw "Home.panels: Invalid item type: panel.id = " + panel.id + ", view.itemType = " + view.itemType;
+      }
+
+      if (!view.itemHandler) {
+        // Use BROWSER item handler by default
+        view.itemHandler = ItemHandler.BROWSER;
+      } else if (!_valueExists(ItemHandler, view.itemHandler)) {
+        throw "Home.panels: Invalid item handler: panel.id = " + panel.id + ", view.itemHandler = " + view.itemHandler;
       }
 
       if (!view.dataset) {
@@ -223,40 +311,92 @@ let HomePanels = {
       }
     }
 
-    this._panels[panel.id] = panel;
-  },
-
-  remove: function(id) {
-    delete this._panels[id];
-
-    sendMessageToJava({
-      type: "HomePanels:Remove",
-      id: id
-    });
-  },
+    return panel;
+  };
 
   // Helper function used to see if a value is in an object.
-  _valueExists: function(obj, value) {
+  let _valueExists = function(obj, value) {
     for (let key in obj) {
       if (obj[key] == value) {
         return true;
       }
     }
     return false;
-  }
-};
+  };
+
+  let _assertPanelExists = function(id) {
+    if (!(id in _registeredPanels)) {
+      throw "Home.panels: Panel doesn't exist: id = " + id;
+    }
+  };
+
+  return Object.freeze({
+    Layout: Layout,
+    View: View,
+    Item: Item,
+    ItemHandler: ItemHandler,
+
+    register: function(id, optionsCallback) {
+      // Bail if the panel already exists
+      if (id in _registeredPanels) {
+        throw "Home.panels: Panel already exists: id = " + id;
+      }
+
+      if (!optionsCallback || typeof optionsCallback !== "function") {
+        throw "Home.panels: Panel callback must be a function: id = " + id;
+      }
+
+      _registeredPanels[id] = optionsCallback;
+    },
+
+    unregister: function(id) {
+      _assertPanelExists(id);
+
+      delete _registeredPanels[id];
+    },
+
+    install: function(id) {
+      _assertPanelExists(id);
+
+      sendMessageToJava({
+        type: "HomePanels:Install",
+        panel: _generatePanel(id)
+      });
+    },
+
+    uninstall: function(id) {
+      _assertPanelExists(id);
+
+      sendMessageToJava({
+        type: "HomePanels:Uninstall",
+        id: id
+      });
+    },
+
+    update: function(id) {
+      _assertPanelExists(id);
+
+      sendMessageToJava({
+        type: "HomePanels:Update",
+        panel: _generatePanel(id)
+      });
+    }
+  });
+})();
 
 // Public API
-this.Home = {
+this.Home = Object.freeze({
   banner: HomeBanner,
   panels: HomePanels,
 
   // Lazy notification observer registered in browser.js
   observe: function(subject, topic, data) {
-    switch(topic) {
-      case "HomePanels:Get":
-        HomePanels._handleGet(data);
-        break;
+    if (topic in HomeBannerMessageHandlers) {
+      HomeBannerMessageHandlers[topic](data);
+    } else if (topic in HomePanelsMessageHandlers) {
+      HomePanelsMessageHandlers[topic](data);
+    } else {
+      Cu.reportError("Home.observe: message handler not found for topic: " + topic);
     }
   }
-}
+});

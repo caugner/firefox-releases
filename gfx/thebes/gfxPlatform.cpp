@@ -15,6 +15,7 @@
 #include "prlog.h"
 
 #include "gfxPlatform.h"
+#include "gfxPrefs.h"
 
 #ifdef XP_WIN
 #include <process.h>
@@ -37,8 +38,6 @@
 #include "gfxPlatformGtk.h"
 #elif defined(MOZ_WIDGET_QT)
 #include "gfxQtPlatform.h"
-#elif defined(XP_OS2)
-#include "gfxOS2Platform.h"
 #elif defined(ANDROID)
 #include "gfxAndroidPlatform.h"
 #endif
@@ -74,9 +73,14 @@
 #include "TexturePoolOGL.h"
 #endif
 
-#ifdef USE_SKIA
 #include "mozilla/Hal.h"
+#ifdef USE_SKIA
 #include "skia/SkGraphics.h"
+
+#include "SkiaGLGlue.h"
+#else
+class mozilla::gl::SkiaGLGlue : public GenericAtomicRefCounted {
+};
 #endif
 
 #include "mozilla/Preferences.h"
@@ -86,6 +90,14 @@
 
 #include "nsIGfxInfo.h"
 #include "nsIXULRuntime.h"
+
+#ifdef MOZ_WIDGET_GONK
+namespace mozilla {
+namespace layers {
+void InitGralloc();
+}
+}
+#endif
 
 using namespace mozilla;
 using namespace mozilla::layers;
@@ -105,25 +117,15 @@ static qcms_transform *gCMSRGBATransform = nullptr;
 
 static bool gCMSInitialized = false;
 static eCMSMode gCMSMode = eCMSMode_Off;
-static int gCMSIntent = -2;
+
+static bool gCMSIntentInitialized = false;
+static int gCMSIntent = QCMS_INTENT_DEFAULT;
+
 
 static void ShutdownCMS();
-static void MigratePrefs();
-
-static bool sDrawFrameCounter = false;
 
 #include "mozilla/gfx/2D.h"
 using namespace mozilla::gfx;
-
-// logs shared across gfx
-#ifdef PR_LOGGING
-static PRLogModuleInfo *sFontlistLog = nullptr;
-static PRLogModuleInfo *sFontInitLog = nullptr;
-static PRLogModuleInfo *sTextrunLog = nullptr;
-static PRLogModuleInfo *sTextrunuiLog = nullptr;
-static PRLogModuleInfo *sCmapDataLog = nullptr;
-static PRLogModuleInfo *sTextPerfLog = nullptr;
-#endif
 
 /* Class to listen for pref changes so that chrome code can dynamically
    force sRGB as an output profile. See Bug #452125. */
@@ -152,12 +154,7 @@ NS_IMPL_ISUPPORTS2(SRGBOverrideObserver, nsIObserver, nsISupportsWeakReference)
 
 #define BIDI_NUMERAL_PREF "bidi.numeral"
 
-#define GFX_PREF_CMS_RENDERING_INTENT "gfx.color_management.rendering_intent"
-#define GFX_PREF_CMS_DISPLAY_PROFILE "gfx.color_management.display_profile"
-#define GFX_PREF_CMS_ENABLED_OBSOLETE "gfx.color_management.enabled"
 #define GFX_PREF_CMS_FORCE_SRGB "gfx.color_management.force_srgb"
-#define GFX_PREF_CMS_ENABLEV4 "gfx.color_management.enablev4"
-#define GFX_PREF_CMS_MODE "gfx.color_management.mode"
 
 NS_IMETHODIMP
 SRGBOverrideObserver::Observe(nsISupports *aSubject,
@@ -202,30 +199,6 @@ FontPrefsObserver::Observe(nsISupports *aSubject,
     return NS_OK;
 }
 
-class OrientationSyncPrefsObserver MOZ_FINAL : public nsIObserver
-{
-public:
-    NS_DECL_ISUPPORTS
-    NS_DECL_NSIOBSERVER
-};
-
-NS_IMPL_ISUPPORTS1(OrientationSyncPrefsObserver, nsIObserver)
-
-NS_IMETHODIMP
-OrientationSyncPrefsObserver::Observe(nsISupports *aSubject,
-                                      const char *aTopic,
-                                      const char16_t *someData)
-{
-    if (!someData) {
-        NS_ERROR("orientation sync pref observer broken");
-        return NS_ERROR_UNEXPECTED;
-    }
-    NS_ASSERTION(gfxPlatform::GetPlatform(), "the singleton instance has gone");
-    gfxPlatform::GetPlatform()->OrientationSyncPrefsObserverChanged();
-
-    return NS_OK;
-}
-
 class MemoryPressureObserver MOZ_FINAL : public nsIObserver
 {
 public:
@@ -242,6 +215,8 @@ MemoryPressureObserver::Observe(nsISupports *aSubject,
 {
     NS_ASSERTION(strcmp(aTopic, "memory-pressure") == 0, "unexpected event topic");
     Factory::PurgeAllCaches();
+
+    gfxPlatform::GetPlatform()->PurgeSkiaCache();
     return NS_OK;
 }
 
@@ -284,9 +259,6 @@ static const char *gPrefLangNames[] = {
 gfxPlatform::gfxPlatform()
   : mAzureCanvasBackendCollector(MOZ_THIS_IN_INITIALIZER_LIST(),
                                  &gfxPlatform::GetAzureBackendInfo)
-  , mDrawLayerBorders(false)
-  , mDrawTileBorders(false)
-  , mDrawBigImageBorders(false)
 {
     mUseHarfBuzzScripts = UNINITIALIZED_VALUE;
     mAllowDownloadableFonts = UNINITIALIZED_VALUE;
@@ -304,20 +276,12 @@ gfxPlatform::gfxPlatform()
     // XXX - When 957560 is fixed, the pref can go away entirely
     mLayersUseDeprecated =
         Preferences::GetBool("layers.use-deprecated-textures", true)
-        && !Preferences::GetBool("layers.prefer-opengl", false);
+        && !gfxPrefs::LayersPreferOpenGL();
 #else
     mLayersUseDeprecated = false;
 #endif
 
-    Preferences::AddBoolVarCache(&mDrawLayerBorders,
-                                 "layers.draw-borders",
-                                 false);
-    Preferences::AddBoolVarCache(&mDrawTileBorders,
-                                 "layers.draw-tile-borders",
-                                 false);
-    Preferences::AddBoolVarCache(&mDrawBigImageBorders,
-                                 "layers.draw-bigimage-borders",
-                                 false);
+    mSkiaGlue = nullptr;
 
     uint32_t canvasMask = BackendTypeBit(BackendType::CAIRO) | BackendTypeBit(BackendType::SKIA);
     uint32_t contentMask = BackendTypeBit(BackendType::CAIRO);
@@ -374,14 +338,8 @@ gfxPlatform::Init()
     }
     gEverInitialized = true;
 
-#ifdef PR_LOGGING
-    sFontlistLog = PR_NewLogModule("fontlist");
-    sFontInitLog = PR_NewLogModule("fontinit");
-    sTextrunLog = PR_NewLogModule("textrun");
-    sTextrunuiLog = PR_NewLogModule("textrunui");
-    sCmapDataLog = PR_NewLogModule("cmapdata");
-    sTextPerfLog = PR_NewLogModule("textperf");
-#endif
+    // Initialize the preferences by creating the singleton.
+    gfxPrefs::GetSingleton();
 
     gGfxPlatformPrefsLock = new Mutex("gfxPlatform::gGfxPlatformPrefsLock");
 
@@ -404,8 +362,6 @@ gfxPlatform::Init()
     gPlatform = new gfxPlatformGtk;
 #elif defined(MOZ_WIDGET_QT)
     gPlatform = new gfxQtPlatform;
-#elif defined(XP_OS2)
-    gPlatform = new gfxOS2Platform;
 #elif defined(ANDROID)
     gPlatform = new gfxAndroidPlatform;
 #else
@@ -425,7 +381,7 @@ gfxPlatform::Init()
 
     if (useOffMainThreadCompositing && (XRE_GetProcessType() == GeckoProcessType_Default)) {
         CompositorParent::StartUp();
-        if (AsyncVideoEnabled()) {
+        if (gfxPrefs::AsyncVideoEnabled()) {
             ImageBridgeChild::StartUp();
         }
     }
@@ -440,7 +396,7 @@ gfxPlatform::Init()
 #endif
 
     gPlatform->mScreenReferenceSurface =
-        gPlatform->CreateOffscreenSurface(gfxIntSize(1,1),
+        gPlatform->CreateOffscreenSurface(IntSize(1, 1),
                                           gfxContentType::COLOR_ALPHA);
     if (!gPlatform->mScreenReferenceSurface) {
         NS_RUNTIMEABORT("Could not initialize mScreenReferenceSurface");
@@ -460,23 +416,12 @@ gfxPlatform::Init()
         NS_RUNTIMEABORT("Could not initialize gfxFontCache");
     }
 
-    /* Pref migration hook. */
-    MigratePrefs();
-
     /* Create and register our CMS Override observer. */
     gPlatform->mSRGBOverrideObserver = new SRGBOverrideObserver();
     Preferences::AddWeakObserver(gPlatform->mSRGBOverrideObserver, GFX_PREF_CMS_FORCE_SRGB);
 
     gPlatform->mFontPrefsObserver = new FontPrefsObserver();
     Preferences::AddStrongObservers(gPlatform->mFontPrefsObserver, kObservedPrefs);
-
-    gPlatform->mOrientationSyncPrefsObserver = new OrientationSyncPrefsObserver();
-    Preferences::AddStrongObserver(gPlatform->mOrientationSyncPrefsObserver, "layers.orientation.sync.timeout");
-
-    gPlatform->mWorkAroundDriverBugs = Preferences::GetBool("gfx.work-around-driver-bugs", true);
-
-    mozilla::Preferences::AddBoolVarCache(&gPlatform->mWidgetUpdateFlashing,
-                                          "nglayout.debug.widget_update_flashing");
 
     mozilla::gl::GLContext::PlatformStartup();
 
@@ -485,19 +430,13 @@ gfxPlatform::Init()
     mozilla::gl::TexturePoolOGL::Init();
 #endif
 
+#ifdef MOZ_WIDGET_GONK
+    mozilla::layers::InitGralloc();
+#endif
+
     Preferences::RegisterCallbackAndCall(RecordingPrefChanged, "gfx.2d.recording", nullptr);
 
-    gPlatform->mOrientationSyncMillis = Preferences::GetUint("layers.orientation.sync.timeout", (uint32_t)0);
-
-    mozilla::Preferences::AddBoolVarCache(&sDrawFrameCounter,
-                                          "layers.frame-counter",
-                                          false);
-
     CreateCMSOutputProfile();
-
-#ifdef USE_SKIA
-    gPlatform->InitializeSkiaCaches();
-#endif
 
     // Listen to memory pressure event so we can purge DrawTarget caches
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
@@ -572,6 +511,9 @@ gfxPlatform::Shutdown()
 
     delete gGfxPlatformPrefsLock;
 
+    gfxPrefs::DestroySingleton();
+    gfxFont::DestroySingletons();
+
     delete gPlatform;
     gPlatform = nullptr;
 }
@@ -598,14 +540,6 @@ gfxPlatform::~gfxPlatform()
     cairo_debug_reset_static_data();
 #endif
 #endif
-
-#if 0
-    // It would be nice to do this (although it might need to be after
-    // the cairo shutdown that happens in ~gfxPlatform).  It even looks
-    // idempotent.  But it has fatal assertions that fire if stuff is
-    // leaked, and we hit them.
-    FcFini();
-#endif
 }
 
 bool
@@ -628,7 +562,7 @@ already_AddRefed<gfxASurface>
 gfxPlatform::OptimizeImage(gfxImageSurface *aSurface,
                            gfxImageFormat format)
 {
-    const gfxIntSize& surfaceSize = aSurface->GetSize();
+    IntSize surfaceSize = aSurface->GetSize().ToIntSize();
 
 #ifdef XP_WIN
     if (gfxWindowsPlatform::GetPlatform()->GetRenderMode() ==
@@ -803,6 +737,7 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
     surf.mFormat = format;
     surf.mType = NativeSurfaceType::D3D10_TEXTURE;
     surf.mSurface = static_cast<gfxD2DSurface*>(aSurface)->GetTexture();
+    surf.mSize = ToIntSize(aSurface->GetSize());
     mozilla::gfx::DrawTarget *dt = static_cast<mozilla::gfx::DrawTarget*>(aSurface->GetData(&kDrawTarget));
     if (dt) {
       dt->Flush();
@@ -817,6 +752,7 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
     surf.mFormat = format;
     surf.mType = NativeSurfaceType::CAIRO_SURFACE;
     surf.mSurface = aSurface->CairoSurface();
+    surf.mSize = ToIntSize(aSurface->GetSize());
     srcBuffer = aTarget->CreateSourceSurfaceFromNativeSurface(surf);
 
     if (srcBuffer) {
@@ -963,19 +899,17 @@ gfxPlatform::SupportsAzureContentForDrawTarget(DrawTarget* aTarget)
 bool
 gfxPlatform::UseAcceleratedSkiaCanvas()
 {
-  return Preferences::GetBool("gfx.canvas.azure.accelerated", false) &&
+  return gfxPrefs::CanvasAzureAccelerated() &&
          mPreferredCanvasBackend == BackendType::SKIA;
 }
 
 void
-gfxPlatform::InitializeSkiaCaches()
+gfxPlatform::InitializeSkiaCacheLimits()
 {
-#ifdef USE_SKIA_GPU
   if (UseAcceleratedSkiaCanvas()) {
-    bool usingDynamicCache = Preferences::GetBool("gfx.canvas.skiagl.dynamic-cache", false);
-
-    int cacheItemLimit = Preferences::GetInt("gfx.canvas.skiagl.cache-items", 256);
-    int cacheSizeLimit = Preferences::GetInt("gfx.canvas.skiagl.cache-size", 96);
+    bool usingDynamicCache = gfxPrefs::CanvasSkiaGLDynamicCache();
+    int cacheItemLimit = gfxPrefs::CanvasSkiaGLCacheItems();
+    int cacheSizeLimit = gfxPrefs::CanvasSkiaGLCacheSize();
 
     // Prefs are in megabytes, but we want the sizes in bytes
     cacheSizeLimit *= 1024*1024;
@@ -991,12 +925,49 @@ gfxPlatform::InitializeSkiaCaches()
       }
     }
 
-#ifdef DEBUG
+  #ifdef DEBUG
     printf_stderr("Determined SkiaGL cache limits: Size %i, Items: %i\n", cacheSizeLimit, cacheItemLimit);
+  #endif
+
+#ifdef USE_SKIA_GPU
+    mSkiaGlue->GetGrContext()->setTextureCacheLimits(cacheItemLimit, cacheSizeLimit);
+#endif
+  }
+}
+
+mozilla::gl::SkiaGLGlue*
+gfxPlatform::GetSkiaGLGlue()
+{
+#ifdef USE_SKIA_GPU
+  if (!mSkiaGlue) {
+    /* Dummy context. We always draw into a FBO.
+     *
+     * FIXME: This should be stored in TLS or something, since there needs to be one for each thread using it. As it
+     * stands, this only works on the main thread.
+     */
+    mozilla::gfx::SurfaceCaps caps = mozilla::gfx::SurfaceCaps::ForRGBA();
+    nsRefPtr<mozilla::gl::GLContext> glContext = mozilla::gl::GLContextProvider::CreateOffscreen(gfxIntSize(16, 16), caps);
+    if (!glContext) {
+      printf_stderr("Failed to create GLContext for SkiaGL!\n");
+      return nullptr;
+    }
+    mSkiaGlue = new mozilla::gl::SkiaGLGlue(glContext);
+    MOZ_ASSERT(mSkiaGlue->GetGrContext(), "No GrContext");
+    InitializeSkiaCacheLimits();
+  }
 #endif
 
-    Factory::SetGlobalSkiaCacheLimits(cacheItemLimit, cacheSizeLimit);
-  }
+  return mSkiaGlue;
+}
+
+void
+gfxPlatform::PurgeSkiaCache()
+{
+#ifdef USE_SKIA_GPU
+  if (!mSkiaGlue)
+      return;
+
+  mSkiaGlue->GetGrContext()->freeGpuResources();
 #endif
 }
 
@@ -1051,7 +1022,7 @@ gfxPlatform::CreateDrawTargetForBackend(BackendType aBackend, const IntSize& aSi
   // CreateOffscreenSurface() and CreateDrawTargetForSurface() for all
   // backends).
   if (aBackend == BackendType::CAIRO) {
-    nsRefPtr<gfxASurface> surf = CreateOffscreenSurface(ThebesIntSize(aSize),
+    nsRefPtr<gfxASurface> surf = CreateOffscreenSurface(aSize,
                                                         ContentForFormat(aFormat));
     if (!surf || surf->CairoStatus()) {
       return nullptr;
@@ -1421,22 +1392,16 @@ mozilla::layers::DiagnosticTypes
 gfxPlatform::GetLayerDiagnosticTypes()
 {
   mozilla::layers::DiagnosticTypes type = DIAGNOSTIC_NONE;
-  if (mDrawLayerBorders) {
+  if (gfxPrefs::DrawLayerBorders()) {
     type |= mozilla::layers::DIAGNOSTIC_LAYER_BORDERS;
   }
-  if (mDrawTileBorders) {
+  if (gfxPrefs::DrawTileBorders()) {
     type |= mozilla::layers::DIAGNOSTIC_TILE_BORDERS;
   }
-  if (mDrawBigImageBorders) {
+  if (gfxPrefs::DrawBigImageBorders()) {
     type |= mozilla::layers::DIAGNOSTIC_BIGIMAGE_BORDERS;
   }
   return type;
-}
-
-bool
-gfxPlatform::DrawFrameCounter()
-{
-    return sDrawFrameCounter;
 }
 
 void
@@ -1636,56 +1601,6 @@ gfxPlatform::GetBackendPref(const char* aBackendPrefName, uint32_t &aBackendBitm
 }
 
 bool
-gfxPlatform::UseProgressiveTilePainting()
-{
-    static bool sUseProgressiveTilePainting;
-    static bool sUseProgressiveTilePaintingPrefCached = false;
-
-    if (!sUseProgressiveTilePaintingPrefCached) {
-        sUseProgressiveTilePaintingPrefCached = true;
-        mozilla::Preferences::AddBoolVarCache(&sUseProgressiveTilePainting,
-                                              "layers.progressive-paint",
-                                              false);
-    }
-
-    return sUseProgressiveTilePainting;
-}
-
-bool
-gfxPlatform::UseLowPrecisionBuffer()
-{
-    static bool sUseLowPrecisionBuffer;
-    static bool sUseLowPrecisionBufferPrefCached = false;
-
-    if (!sUseLowPrecisionBufferPrefCached) {
-        sUseLowPrecisionBufferPrefCached = true;
-        mozilla::Preferences::AddBoolVarCache(&sUseLowPrecisionBuffer,
-                                              "layers.low-precision-buffer",
-                                              false);
-    }
-
-    return sUseLowPrecisionBuffer;
-}
-
-float
-gfxPlatform::GetLowPrecisionResolution()
-{
-    static float sLowPrecisionResolution;
-    static bool sLowPrecisionResolutionPrefCached = false;
-
-    if (!sLowPrecisionResolutionPrefCached) {
-        int32_t lowPrecisionResolution = 250;
-        sLowPrecisionResolutionPrefCached = true;
-        mozilla::Preferences::AddIntVarCache(&lowPrecisionResolution,
-                                             "layers.low-precision-resolution",
-                                             250);
-        sLowPrecisionResolution = lowPrecisionResolution / 1000.f;
-    }
-
-    return sLowPrecisionResolution;
-}
-
-bool
 gfxPlatform::OffMainThreadCompositingEnabled()
 {
   return XRE_GetProcessType() == GeckoProcessType_Default ?
@@ -1698,17 +1613,14 @@ gfxPlatform::GetCMSMode()
 {
     if (gCMSInitialized == false) {
         gCMSInitialized = true;
-        nsresult rv;
 
-        int32_t mode;
-        rv = Preferences::GetInt(GFX_PREF_CMS_MODE, &mode);
-        if (NS_SUCCEEDED(rv) && (mode >= 0) && (mode < eCMSMode_AllCount)) {
+        int32_t mode = gfxPrefs::CMSMode();
+        if (mode >= 0 && mode < eCMSMode_AllCount) {
             gCMSMode = static_cast<eCMSMode>(mode);
         }
 
-        bool enableV4;
-        rv = Preferences::GetBool(GFX_PREF_CMS_ENABLEV4, &enableV4);
-        if (NS_SUCCEEDED(rv) && enableV4) {
+        bool enableV4 = gfxPrefs::CMSEnableV4();
+        if (enableV4) {
             qcms_enable_iccv4();
         }
     }
@@ -1718,23 +1630,22 @@ gfxPlatform::GetCMSMode()
 int
 gfxPlatform::GetRenderingIntent()
 {
-    if (gCMSIntent == -2) {
+    if (!gCMSIntentInitialized) {
+        gCMSIntentInitialized = true;
+
+        // gfxPrefs.h is using 0 as the default for the rendering
+        // intent preference, based on that being the value for
+        // QCMS_INTENT_DEFAULT.  Assert here to catch if that ever
+        // changes and we can then figure out what to do about it.
+        MOZ_ASSERT(QCMS_INTENT_DEFAULT == 0);
 
         /* Try to query the pref system for a rendering intent. */
-        int32_t pIntent;
-        if (NS_SUCCEEDED(Preferences::GetInt(GFX_PREF_CMS_RENDERING_INTENT, &pIntent))) {
-            /* If the pref is within range, use it as an override. */
-            if ((pIntent >= QCMS_INTENT_MIN) && (pIntent <= QCMS_INTENT_MAX)) {
-                gCMSIntent = pIntent;
-            }
+        int32_t pIntent = gfxPrefs::CMSRenderingIntent();
+        if ((pIntent >= QCMS_INTENT_MIN) && (pIntent <= QCMS_INTENT_MAX)) {
+            gCMSIntent = pIntent;
+        } else {
             /* If the pref is out of range, use embedded profile. */
-            else {
-                gCMSIntent = -1;
-            }
-        }
-        /* If we didn't get a valid intent from prefs, use the default. */
-        else {
-            gCMSIntent = QCMS_INTENT_DEFAULT;
+            gCMSIntent = -1;
         }
     }
     return gCMSIntent;
@@ -1942,18 +1853,6 @@ static void ShutdownCMS()
     gCMSInitialized = false;
 }
 
-static void MigratePrefs()
-{
-    /* Migrate from the boolean color_management.enabled pref - we now use
-       color_management.mode. */
-    if (Preferences::HasUserValue(GFX_PREF_CMS_ENABLED_OBSOLETE)) {
-        if (Preferences::GetBool(GFX_PREF_CMS_ENABLED_OBSOLETE, false)) {
-            Preferences::SetInt(GFX_PREF_CMS_MODE, static_cast<int32_t>(eCMSMode_All));
-        }
-        Preferences::ClearUser(GFX_PREF_CMS_ENABLED_OBSOLETE);
-    }
-}
-
 // default SetupClusterBoundaries, based on Unicode properties;
 // platform subclasses may override if they wish
 void
@@ -2023,7 +1922,25 @@ gfxPlatform::FontsPrefsChanged(const char *aPref)
 PRLogModuleInfo*
 gfxPlatform::GetLog(eGfxLog aWhichLog)
 {
+    // logs shared across gfx
 #ifdef PR_LOGGING
+    static PRLogModuleInfo *sFontlistLog = nullptr;
+    static PRLogModuleInfo *sFontInitLog = nullptr;
+    static PRLogModuleInfo *sTextrunLog = nullptr;
+    static PRLogModuleInfo *sTextrunuiLog = nullptr;
+    static PRLogModuleInfo *sCmapDataLog = nullptr;
+    static PRLogModuleInfo *sTextPerfLog = nullptr;
+
+    // Assume that if one is initialized, all are initialized
+    if (!sFontlistLog) {
+        sFontlistLog = PR_NewLogModule("fontlist");
+        sFontInitLog = PR_NewLogModule("fontinit");
+        sTextrunLog = PR_NewLogModule("textrun");
+        sTextrunuiLog = PR_NewLogModule("textrunui");
+        sCmapDataLog = PR_NewLogModule("cmapdata");
+        sTextPerfLog = PR_NewLogModule("textperf");
+    }
+
     switch (aWhichLog) {
     case eGfxLog_fontlist:
         return sFontlistLog;
@@ -2102,18 +2019,6 @@ gfxPlatform::OptimalFormatForContent(gfxContentType aContent)
   }
 }
 
-void
-gfxPlatform::OrientationSyncPrefsObserverChanged()
-{
-  mOrientationSyncMillis = Preferences::GetUint("layers.orientation.sync.timeout", (uint32_t)0);
-}
-
-uint32_t
-gfxPlatform::GetOrientationSyncMillis() const
-{
-  return mOrientationSyncMillis;
-}
-
 /**
  * There are a number of layers acceleration (or layers in general) preferences
  * that should be consistent for the lifetime of the application (bug 840967).
@@ -2121,22 +2026,9 @@ gfxPlatform::GetOrientationSyncMillis() const
  * and remember the values.  Changing these preferences during the run will
  * not have any effect until we restart.
  */
-static bool sPrefLayersOffMainThreadCompositionEnabled = false;
-static bool sPrefLayersOffMainThreadCompositionTestingEnabled = false;
-static bool sPrefLayersOffMainThreadCompositionForceEnabled = false;
-static bool sPrefLayersAccelerationForceEnabled = false;
-static bool sPrefLayersAccelerationDisabled = false;
-static bool sPrefLayersPreferOpenGL = false;
-static bool sPrefLayersPreferD3D9 = false;
-static bool sPrefLayersDump = false;
-static bool sPrefLayersScrollGraph = false;
-static bool sPrefLayersEnableTiles = false;
 static bool sLayersSupportsD3D9 = false;
-static int  sPrefLayoutFrameRate = -1;
-static int  sPrefLayersCompositionFrameRate = -1;
-static bool sBufferRotationEnabled = false;
-static bool sComponentAlphaEnabled = true;
-static bool sPrefBrowserTabsRemote = false;
+static bool sBufferRotationCheckPref = true;
+static bool sPrefBrowserTabsRemoteAutostart = false;
 
 static bool sLayersAccelerationPrefsInitialized = false;
 
@@ -2151,24 +2043,10 @@ InitLayersAccelerationPrefs()
     // explicit.
     MOZ_ASSERT(NS_IsMainThread(), "can only initialize prefs on the main thread");
 
-    sPrefLayersOffMainThreadCompositionEnabled = Preferences::GetBool("layers.offmainthreadcomposition.enabled", false);
-    sPrefLayersOffMainThreadCompositionTestingEnabled = Preferences::GetBool("layers.offmainthreadcomposition.testing.enabled", false);
-    sPrefLayersOffMainThreadCompositionForceEnabled = Preferences::GetBool("layers.offmainthreadcomposition.force-enabled", false);
-    sPrefLayersAccelerationForceEnabled = Preferences::GetBool("layers.acceleration.force-enabled", false);
-    sPrefLayersAccelerationDisabled = Preferences::GetBool("layers.acceleration.disabled", false);
-    sPrefLayersPreferOpenGL = Preferences::GetBool("layers.prefer-opengl", false);
-    sPrefLayersPreferD3D9 = Preferences::GetBool("layers.prefer-d3d9", false);
-    sPrefLayersDump = Preferences::GetBool("layers.dump", false);
-    sPrefLayersScrollGraph = Preferences::GetBool("layers.scroll-graph", false);
-    sPrefLayersEnableTiles = Preferences::GetBool("layers.enable-tiles", false);
-    sPrefLayoutFrameRate = Preferences::GetInt("layout.frame_rate", -1);
-    sPrefLayersCompositionFrameRate = Preferences::GetInt("layers.offmainthreadcomposition.frame-rate", -1);
-    sBufferRotationEnabled = Preferences::GetBool("layers.bufferrotation.enabled", true);
-    sComponentAlphaEnabled = Preferences::GetBool("layers.componentalpha.enabled", true);
-    sPrefBrowserTabsRemote = BrowserTabsRemote();
+    sPrefBrowserTabsRemoteAutostart = Preferences::GetBool("browser.tabs.remote.autostart", false);
 
 #ifdef XP_WIN
-    if (sPrefLayersAccelerationForceEnabled) {
+    if (gfxPrefs::LayersAccelerationForceEnabled()) {
       sLayersSupportsD3D9 = true;
     } else {
       nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
@@ -2191,23 +2069,9 @@ bool
 gfxPlatform::GetPrefLayersOffMainThreadCompositionEnabled()
 {
   InitLayersAccelerationPrefs();
-  return sPrefLayersOffMainThreadCompositionEnabled ||
-         sPrefLayersOffMainThreadCompositionForceEnabled ||
-         sPrefLayersOffMainThreadCompositionTestingEnabled;
-}
-
-bool
-gfxPlatform::GetPrefLayersOffMainThreadCompositionForceEnabled()
-{
-  InitLayersAccelerationPrefs();
-  return sPrefLayersOffMainThreadCompositionForceEnabled;
-}
-
-bool
-gfxPlatform::GetPrefLayersAccelerationForceEnabled()
-{
-  InitLayersAccelerationPrefs();
-  return sPrefLayersAccelerationForceEnabled;
+  return gfxPrefs::LayersOffMainThreadCompositionEnabled() ||
+         gfxPrefs::LayersOffMainThreadCompositionForceEnabled() ||
+         gfxPrefs::LayersOffMainThreadCompositionTestingEnabled();
 }
 
 bool gfxPlatform::OffMainThreadCompositionRequired()
@@ -2215,32 +2079,11 @@ bool gfxPlatform::OffMainThreadCompositionRequired()
   InitLayersAccelerationPrefs();
 #if defined(MOZ_WIDGET_GTK) && defined(NIGHTLY_BUILD)
   // Linux users who chose OpenGL are being grandfathered in to OMTC
-  return sPrefBrowserTabsRemote ||
-         sPrefLayersAccelerationForceEnabled;
+  return sPrefBrowserTabsRemoteAutostart ||
+         gfxPrefs::LayersAccelerationForceEnabled();
 #else
-  return sPrefBrowserTabsRemote;
+  return sPrefBrowserTabsRemoteAutostart;
 #endif
-}
-
-bool
-gfxPlatform::GetPrefLayersAccelerationDisabled()
-{
-  InitLayersAccelerationPrefs();
-  return sPrefLayersAccelerationDisabled;
-}
-
-bool
-gfxPlatform::GetPrefLayersPreferOpenGL()
-{
-  InitLayersAccelerationPrefs();
-  return sPrefLayersPreferOpenGL;
-}
-
-bool
-gfxPlatform::GetPrefLayersPreferD3D9()
-{
-  InitLayersAccelerationPrefs();
-  return sPrefLayersPreferD3D9;
 }
 
 bool
@@ -2252,50 +2095,12 @@ gfxPlatform::CanUseDirect3D9()
   return sLayersSupportsD3D9;
 }
 
-int
-gfxPlatform::GetPrefLayoutFrameRate()
-{
-  InitLayersAccelerationPrefs();
-  return sPrefLayoutFrameRate;
-}
-
-bool
-gfxPlatform::GetPrefLayersDump()
-{
-  InitLayersAccelerationPrefs();
-  return sPrefLayersDump;
-}
-
-bool
-gfxPlatform::GetPrefLayersScrollGraph()
-{
-  // this function is called from the compositor thread, so it is not
-  // safe to init the prefs etc. from here.
-  MOZ_ASSERT(sLayersAccelerationPrefsInitialized);
-  return sPrefLayersScrollGraph;
-}
-
-bool
-gfxPlatform::GetPrefLayersEnableTiles()
-{
-  InitLayersAccelerationPrefs();
-  return sPrefLayersEnableTiles;
-}
-
-int
-gfxPlatform::GetPrefLayersCompositionFrameRate()
-{
-  InitLayersAccelerationPrefs();
-  return sPrefLayersCompositionFrameRate;
-}
-
 bool
 gfxPlatform::BufferRotationEnabled()
 {
   MutexAutoLock autoLock(*gGfxPlatformPrefsLock);
 
-  InitLayersAccelerationPrefs();
-  return sBufferRotationEnabled;
+  return sBufferRotationCheckPref && gfxPrefs::BufferRotationEnabled();
 }
 
 void
@@ -2303,28 +2108,7 @@ gfxPlatform::DisableBufferRotation()
 {
   MutexAutoLock autoLock(*gGfxPlatformPrefsLock);
 
-  sBufferRotationEnabled = false;
-}
-
-bool
-gfxPlatform::ComponentAlphaEnabled()
-{
-#ifdef MOZ_GFX_OPTIMIZE_MOBILE
-  return false;
-#endif
-
-  InitLayersAccelerationPrefs();
-  return sComponentAlphaEnabled;
-}
-
-bool
-gfxPlatform::AsyncVideoEnabled()
-{
-#ifdef XP_WIN
-  return false;
-#else
-  return Preferences::GetBool("layers.async-video.enabled", false);
-#endif
+  sBufferRotationCheckPref = false;
 }
 
 TemporaryRef<ScaledFont>

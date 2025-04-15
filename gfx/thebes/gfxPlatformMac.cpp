@@ -46,6 +46,12 @@ DisableFontActivation()
         mainBundleID = ::CFBundleGetIdentifier(mainBundle);
     }
 
+    // bug 969388 and bug 922590 - mainBundlID as null is sometimes problematic
+    if (!mainBundleID) {
+        NS_WARNING("missing bundle ID, packaging set up incorrectly");
+        return;
+    }
+
     // if possible, fetch CTFontManagerSetAutoActivationSetting
     void (*CTFontManagerSetAutoActivationSettingPtr)
             (CFStringRef, AutoActivationSetting);
@@ -90,11 +96,12 @@ gfxPlatformMac::CreatePlatformFontList()
 }
 
 already_AddRefed<gfxASurface>
-gfxPlatformMac::CreateOffscreenSurface(const gfxIntSize& size,
+gfxPlatformMac::CreateOffscreenSurface(const IntSize& size,
                                        gfxContentType contentType)
 {
     nsRefPtr<gfxASurface> newSurface =
-      new gfxQuartzSurface(size, OptimalFormatForContent(contentType));
+      new gfxQuartzSurface(ThebesIntSize(size),
+                           OptimalFormatForContent(contentType));
     return newSurface.forget();
 }
 
@@ -102,7 +109,8 @@ already_AddRefed<gfxASurface>
 gfxPlatformMac::CreateOffscreenImageSurface(const gfxIntSize& aSize,
                                             gfxContentType aContentType)
 {
-    nsRefPtr<gfxASurface> surface = CreateOffscreenSurface(aSize, aContentType);
+    nsRefPtr<gfxASurface> surface =
+        CreateOffscreenSurface(aSize.ToIntSize(), aContentType);
 #ifdef DEBUG
     nsRefPtr<gfxImageSurface> imageSurface = surface->GetAsImageSurface();
     NS_ASSERTION(imageSurface, "Surface cannot be converted to a gfxImageSurface");

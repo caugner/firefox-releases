@@ -271,7 +271,7 @@ getNumberAttr(txStylesheetAttr* aAttributes,
               txStylesheetCompilerState& aState,
               double& aNumber)
 {
-    aNumber = UnspecifiedNaN();
+    aNumber = UnspecifiedNaN<double>();
     txStylesheetAttr* attr = nullptr;
     nsresult rv = getStyleAttr(aAttributes, aAttrCount, kNameSpaceID_None,
                                aName, aRequired, &attr);
@@ -304,7 +304,7 @@ getAtomAttr(txStylesheetAttr* aAttributes,
         return rv;
     }
 
-    *aAtom = NS_NewAtom(attr->mValue).get();
+    *aAtom = NS_NewAtom(attr->mValue).take();
     NS_ENSURE_TRUE(*aAtom, NS_ERROR_OUT_OF_MEMORY);
 
     return NS_OK;
@@ -520,7 +520,7 @@ txFnStartLREStylesheet(int32_t aNamespaceID,
     NS_ENSURE_SUCCESS(rv, rv);
 
     txExpandedName nullExpr;
-    double prio = UnspecifiedNaN();
+    double prio = UnspecifiedNaN<double>();
 
     nsAutoPtr<txPattern> match(new txRootPattern());
     NS_ENSURE_TRUE(match, NS_ERROR_OUT_OF_MEMORY);
@@ -1113,7 +1113,7 @@ txFnStartTemplate(int32_t aNamespaceID,
                       aState, mode);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    double prio = UnspecifiedNaN();
+    double prio = UnspecifiedNaN<double>();
     rv = getNumberAttr(aAttributes, aAttrCount, nsGkAtoms::priority,
                        false, aState, prio);
     NS_ENSURE_SUCCESS(rv, rv);

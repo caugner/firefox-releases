@@ -7,7 +7,7 @@
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
 #include "nsStyleContext.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsRenderingContext.h"
 #include "nsIDOMMutationEvent.h"
 #include "nsGkAtoms.h"
@@ -80,7 +80,7 @@ public:
 #endif
 
   virtual void Paint(nsDisplayListBuilder* aBuilder,
-                     nsRenderingContext* aCtx);
+                     nsRenderingContext* aCtx) MOZ_OVERRIDE;
   NS_DISPLAY_DECL_NAME("MathMLError", TYPE_MATHML_ERROR)
 };
 
@@ -694,13 +694,6 @@ nsMathMLContainerFrame::ReLayoutChildren(nsIFrame* aParentFrame)
         content->Tag() == nsGkAtoms::math)
       break;
 
-    // mark the frame dirty, and continue to climb up.  It's important that
-    // we're NOT doing this to the frame we plan to pass to FrameNeedsReflow()
-    // XXXldb Why do we need to bother with this?  Marking ancestor
-    // dirty (which we do below) should do a superset of the work this
-    // does.
-    frame->AddStateBits(NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN);
-
     frame = parent;
   }
 
@@ -737,19 +730,12 @@ nsMathMLContainerFrame::ChildListChanged(int32_t aModType)
       GetEmbellishDataFrom(parent, embellishData);
       if (embellishData.coreFrame != mEmbellishData.coreFrame)
         break;
-
-      // Important: do not do this to the frame we plan to pass to
-      // ReLayoutChildren
-      // XXXldb Why do we need to bother with this?  Marking ancestor
-      // dirty (which we do below) should do a superset of the work this
-      // does.
-      frame->AddStateBits(NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN);
     }
   }
   return ReLayoutChildren(frame);
 }
 
-NS_IMETHODIMP
+nsresult
 nsMathMLContainerFrame::AppendFrames(ChildListID     aListID,
                                      nsFrameList&    aFrameList)
 {
@@ -760,7 +746,7 @@ nsMathMLContainerFrame::AppendFrames(ChildListID     aListID,
   return ChildListChanged(nsIDOMMutationEvent::ADDITION);
 }
 
-NS_IMETHODIMP
+nsresult
 nsMathMLContainerFrame::InsertFrames(ChildListID     aListID,
                                      nsIFrame*       aPrevFrame,
                                      nsFrameList&    aFrameList)
@@ -773,7 +759,7 @@ nsMathMLContainerFrame::InsertFrames(ChildListID     aListID,
   return ChildListChanged(nsIDOMMutationEvent::ADDITION);
 }
 
-NS_IMETHODIMP
+nsresult
 nsMathMLContainerFrame::RemoveFrame(ChildListID     aListID,
                                     nsIFrame*       aOldFrame)
 {
@@ -785,7 +771,7 @@ nsMathMLContainerFrame::RemoveFrame(ChildListID     aListID,
   return ChildListChanged(nsIDOMMutationEvent::REMOVAL);
 }
 
-NS_IMETHODIMP
+nsresult
 nsMathMLContainerFrame::AttributeChanged(int32_t         aNameSpaceID,
                                          nsIAtom*        aAttribute,
                                          int32_t         aModType)
@@ -895,7 +881,7 @@ nsMathMLContainerFrame::ReflowChild(nsIFrame*                aChildFrame,
   return rv;
 }
 
-NS_IMETHODIMP
+nsresult
 nsMathMLContainerFrame::Reflow(nsPresContext*           aPresContext,
                                nsHTMLReflowMetrics&     aDesiredSize,
                                const nsHTMLReflowState& aReflowState,
@@ -913,7 +899,7 @@ nsMathMLContainerFrame::Reflow(nsPresContext*           aPresContext,
   nsSize availSize(aReflowState.ComputedWidth(), NS_UNCONSTRAINEDSIZE);
   nsIFrame* childFrame = mFrames.FirstChild();
   while (childFrame) {
-    nsHTMLReflowMetrics childDesiredSize(aReflowState.GetWritingMode(), // ???
+    nsHTMLReflowMetrics childDesiredSize(aReflowState, // ???
                                          aDesiredSize.mFlags);
     nsHTMLReflowState childReflowState(aPresContext, aReflowState,
                                        childFrame, availSize);
@@ -962,7 +948,7 @@ nsMathMLContainerFrame::Reflow(nsPresContext*           aPresContext,
       nsIMathMLFrame* mathMLFrame = do_QueryFrame(childFrame);
       if (mathMLFrame) {
         // retrieve the metrics that was stored at the previous pass
-        nsHTMLReflowMetrics childDesiredSize(aReflowState.GetWritingMode());
+        nsHTMLReflowMetrics childDesiredSize(aReflowState);
         GetReflowAndBoundingMetricsFor(childFrame,
           childDesiredSize, childDesiredSize.mBoundingMetrics);
 
@@ -1333,10 +1319,10 @@ nsMathMLContainerFrame::PositionRowChildFrames(nscoord aOffsetX,
 
 class ForceReflow : public nsIReflowCallback {
 public:
-  virtual bool ReflowFinished() {
+  virtual bool ReflowFinished() MOZ_OVERRIDE {
     return true;
   }
-  virtual void ReflowCallbackCanceled() {}
+  virtual void ReflowCallbackCanceled() MOZ_OVERRIDE {}
 };
 
 // We only need one of these so we just make it a static global, no need
@@ -1532,7 +1518,7 @@ nsMathMLContainerFrame::TransmitAutomaticDataForMrowLikeElement()
 
 /*static*/ void
 nsMathMLContainerFrame::PropagateFrameFlagFor(nsIFrame* aFrame,
-                                              uint64_t  aFlags)
+                                              nsFrameState  aFlags)
 {
   if (!aFrame || !aFlags)
     return;
@@ -1584,7 +1570,7 @@ nsMathMLContainerFrame::ReportInvalidChildError(nsIAtom* aChildTag)
 
 nsIFrame*
 NS_NewMathMLmathBlockFrame(nsIPresShell* aPresShell, nsStyleContext* aContext,
-                           uint32_t aFlags)
+                           nsFrameState aFlags)
 {
   nsMathMLmathBlockFrame* it = new (aPresShell) nsMathMLmathBlockFrame(aContext);
   it->SetFlags(aFlags);

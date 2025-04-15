@@ -26,15 +26,6 @@ endif #} LIBXUL_SDK
 
 # Build a binary bootstrapping with XRE_main
 
-LOCAL_INCLUDES += \
-  -I$(topsrcdir)/toolkit/xre \
-  -I$(topsrcdir)/xpcom/base \
-  -I$(topsrcdir)/xpcom/build \
-  -I$(DEPTH)/build \
-  $(NULL)
-
-STL_FLAGS=
-
 LIBS += \
 	$(XPCOM_STANDALONE_GLUE_LDOPTS) \
 	$(NULL)
@@ -61,53 +52,19 @@ NSDISTMODE = copy
 
 include $(topsrcdir)/config/config.mk
 
-ifdef _MSC_VER
-# Always enter a Windows program through wmain, whether or not we're
-# a console application.
-WIN32_EXE_LDFLAGS += -ENTRY:wmainCRTStartup
-endif
-
 ifeq ($(OS_ARCH),WINNT)
-RCINCLUDE = splash.rc
 # Rebuild firefox.exe if the manifest changes - it's included by splash.rc.
 # (this dependency should really be just for firefox.exe, not other targets)
 # Note the manifest file exists in the tree, so we use the explicit filename
 # here.
 EXTRA_DEPS += firefox.exe.manifest
-ifndef GNU_CC
-RCFLAGS += -DMOZ_PHOENIX -I$(srcdir)
-else
-RCFLAGS += -DMOZ_PHOENIX --include-dir $(srcdir)
-endif
-endif
-
-ifeq ($(OS_ARCH),OS2)
-RESFILE=splashos2.res
-RCFLAGS += -DMOZ_PHOENIX
-RCFLAGS += -DFIREFOX_ICO='"$(DIST)/branding/firefox-os2.ico"' -DDOCUMENT_ICO='"$(DIST)/branding/document-os2.ico"'
 endif
 
 PROGRAMS_DEST = $(DIST)/bin
 
 include $(topsrcdir)/config/rules.mk
 
-ifeq ($(OS_ARCH),WINNT) #{
-#
-# Control the default heap size.
-# This is the heap returned by GetProcessHeap().
-# As we use the CRT heap, the default size is too large and wastes VM.
-#
-# The default heap size is 1MB on Win32.
-# The heap will grow if need be.
-#
-# Set it to 256k.  See bug 127069.
-#
-ifndef GNU_CC #{
-LDFLAGS += /HEAP:0x40000
-endif #}
-endif #}
-
-ifneq (,$(filter-out OS2 WINNT,$(OS_ARCH)))
+ifneq (,$(filter-out WINNT,$(OS_ARCH)))
 
 ifdef COMPILE_ENVIRONMENT
 libs:: 

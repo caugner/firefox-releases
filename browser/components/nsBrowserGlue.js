@@ -38,8 +38,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "BookmarkHTMLUtils",
 XPCOMUtils.defineLazyModuleGetter(this, "BookmarkJSONUtils",
                                   "resource://gre/modules/BookmarkJSONUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "webappsUI",
-                                  "resource:///modules/webappsUI.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "WebappManager",
+                                  "resource:///modules/WebappManager.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PageThumbs",
                                   "resource://gre/modules/PageThumbs.jsm");
@@ -208,16 +208,7 @@ BrowserGlue.prototype = {
         this._onQuitRequest(subject, data);
         break;
       case "quit-application-granted":
-        // This pref must be set here because SessionStore will use its value
-        // on quit-application.
-        this._setPrefToSaveSession();
-        try {
-          let appStartup = Cc["@mozilla.org/toolkit/app-startup;1"].
-                           getService(Ci.nsIAppStartup);
-          appStartup.trackStartupCrashEnd();
-        } catch (e) {
-          Cu.reportError("Could not end startup crash tracking in quit-application-granted: " + e);
-        }
+        this._onQuitApplicationGranted();
         break;
 #ifdef OBSERVE_LASTWINDOW_CLOSE_TOPICS
       case "browser-lastwindow-close-requested":
@@ -309,7 +300,10 @@ BrowserGlue.prototype = {
         }
         break;
       case "profile-before-change":
-        this._onProfileShutdown();
+         // Any component depending on Places should be finalized in
+         // _onPlacesShutdown.  Any component that doesn't need to act after
+         // the UI has gone should be finalized in _onQuitApplicationGranted.
+        this._dispose();
         break;
 #ifdef MOZ_SERVICES_HEALTHREPORT
       case "keyword-search":
@@ -474,7 +468,7 @@ BrowserGlue.prototype = {
 
     this._syncSearchEngines();
 
-    webappsUI.init();
+    WebappManager.init();
     PageThumbs.init();
     NewTabUtils.init();
     BrowserNewTabPreloader.init();
@@ -645,16 +639,28 @@ BrowserGlue.prototype = {
   },
 
   /**
-   * Profile shutdown handler (contains profile cleanup routines).
-   * All components depending on Places should be shut down in
-   * _onPlacesShutdown() and not here.
+   * Application shutdown handler.
    */
-  _onProfileShutdown: function BG__onProfileShutdown() {
+  _onQuitApplicationGranted: function () {
+    // This pref must be set here because SessionStore will use its value
+    // on quit-application.
+    this._setPrefToSaveSession();
+
+    // Call trackStartupCrashEnd here in case the delayed call on startup hasn't
+    // yet occurred (see trackStartupCrashEnd caller in browser.js).
+    try {
+      let appStartup = Cc["@mozilla.org/toolkit/app-startup;1"]
+                         .getService(Ci.nsIAppStartup);
+      appStartup.trackStartupCrashEnd();
+    } catch (e) {
+      Cu.reportError("Could not end startup crash tracking in quit-application-granted: " + e);
+    }
+
     BrowserNewTabPreloader.uninit();
-    webappsUI.uninit();
+    CustomizationTabPreloader.uninit();
+    WebappManager.uninit();
     SignInToWebsiteUX.uninit();
     webrtcUI.uninit();
-    this._dispose();
   },
 
   // All initial windows have opened.
@@ -1043,13 +1049,13 @@ BrowserGlue.prototype = {
     // forced migration (due to a major schema change).
     // If the database is corrupt or has been newly created we should
     // import bookmarks.
-    var dbStatus = PlacesUtils.history.databaseStatus;
-    var importBookmarks = !aInitialMigrationPerformed &&
+    let dbStatus = PlacesUtils.history.databaseStatus;
+    let importBookmarks = !aInitialMigrationPerformed &&
                           (dbStatus == PlacesUtils.history.DATABASE_STATUS_CREATE ||
                            dbStatus == PlacesUtils.history.DATABASE_STATUS_CORRUPT);
 
     // Check if user or an extension has required to import bookmarks.html
-    var importBookmarksHTML = false;
+    let importBookmarksHTML = false;
     try {
       importBookmarksHTML =
         Services.prefs.getBoolPref("browser.places.importBookmarksHTML");
@@ -1067,14 +1073,13 @@ BrowserGlue.prototype = {
       // to be on the safe side, this should run earlier.
       AsyncShutdown.profileChangeTeardown.addBlocker(
         "Places: export bookmarks.html",
-        () => BookmarkHTMLUtils.exportToFile(Services.dirsvc.get("BMarks",
-                                                                 Ci.nsIFile)));
+        () => BookmarkHTMLUtils.exportToFile(BookmarkHTMLUtils.defaultPath));
     }
 
     Task.spawn(function() {
       // Check if Safe Mode or the user has required to restore bookmarks from
       // default profile's bookmarks.html
-      var restoreDefaultBookmarks = false;
+      let restoreDefaultBookmarks = false;
       try {
         restoreDefaultBookmarks =
           Services.prefs.getBoolPref("browser.bookmarks.restore_default_bookmarks");
@@ -1102,10 +1107,7 @@ BrowserGlue.prototype = {
         else {
           // We have created a new database but we don't have any backup available
           importBookmarks = true;
-          var dirService = Cc["@mozilla.org/file/directory_service;1"].
-                           getService(Ci.nsIProperties);
-          var bookmarksHTMLFile = dirService.get("BMarks", Ci.nsILocalFile);
-          if (bookmarksHTMLFile.exists()) {
+          if (yield OS.File.exists(BookmarkHTMLUtils.defaultPath)) {
             // If bookmarks.html is available in current profile import it...
             importBookmarksHTML = true;
           }
@@ -1131,32 +1133,26 @@ BrowserGlue.prototype = {
         // An import operation is about to run.
         // Don't try to recreate smart bookmarks if autoExportHTML is true or
         // smart bookmarks are disabled.
-        var smartBookmarksVersion = 0;
+        let smartBookmarksVersion = 0;
         try {
           smartBookmarksVersion = Services.prefs.getIntPref("browser.places.smartBookmarksVersion");
         } catch(ex) {}
         if (!autoExportHTML && smartBookmarksVersion != -1)
           Services.prefs.setIntPref("browser.places.smartBookmarksVersion", 0);
 
-        // Get bookmarks.html file location
-        var dirService = Cc["@mozilla.org/file/directory_service;1"].
-                         getService(Ci.nsIProperties);
-
-        var bookmarksURI = null;
+        let bookmarksUrl = null;
         if (restoreDefaultBookmarks) {
           // User wants to restore bookmarks.html file from default profile folder
-          bookmarksURI = NetUtil.newURI("resource:///defaults/profile/bookmarks.html");
+          bookmarksUrl = "resource:///defaults/profile/bookmarks.html";
         }
-        else {
-          var bookmarksFile = dirService.get("BMarks", Ci.nsILocalFile);
-          if (bookmarksFile.exists())
-            bookmarksURI = NetUtil.newURI(bookmarksFile);
+        else if (yield OS.File.exists(BookmarkHTMLUtils.defaultPath)) {
+          bookmarksUrl = OS.Path.toFileURI(BookmarkHTMLUtils.defaultPath);
         }
 
-        if (bookmarksURI) {
+        if (bookmarksUrl) {
           // Import from bookmarks.html file.
           try {
-            BookmarkHTMLUtils.importFromURL(bookmarksURI.spec, true).then(null,
+            BookmarkHTMLUtils.importFromURL(bookmarksUrl, true).then(null,
               function onFailure() {
                 Cu.reportError("Bookmarks.html file could be corrupt.");
               }
@@ -1643,7 +1639,7 @@ BrowserGlue.prototype = {
     // be set to the version it has been added in, we will compare its value
     // to users' smartBookmarksVersion and add new smart bookmarks without
     // recreating old deleted ones.
-    const SMART_BOOKMARKS_VERSION = 6;
+    const SMART_BOOKMARKS_VERSION = 7;
     const SMART_BOOKMARKS_ANNO = "Places/SmartBookmark";
     const SMART_BOOKMARKS_PREF = "browser.places.smartBookmarksVersion";
 
@@ -1675,7 +1671,7 @@ BrowserGlue.prototype = {
                                 Ci.nsINavHistoryQueryOptions.SORT_BY_VISITCOUNT_DESCENDING +
                                 "&maxResults=" + MAX_RESULTS),
             parent: PlacesUtils.toolbarFolderId,
-            position: toolbarIndex++,
+            get position() { return toolbarIndex++; },
             newInVersion: 1
           },
           RecentlyBookmarked: {
@@ -1690,7 +1686,7 @@ BrowserGlue.prototype = {
                                 "&maxResults=" + MAX_RESULTS +
                                 "&excludeQueries=1"),
             parent: PlacesUtils.bookmarksMenuFolderId,
-            position: menuIndex++,
+            get position() { return menuIndex++; },
             newInVersion: 1
           },
           RecentTags: {
@@ -1702,25 +1698,31 @@ BrowserGlue.prototype = {
                                 Ci.nsINavHistoryQueryOptions.SORT_BY_LASTMODIFIED_DESCENDING +
                                 "&maxResults=" + MAX_RESULTS),
             parent: PlacesUtils.bookmarksMenuFolderId,
-            position: menuIndex++,
+            get position() { return menuIndex++; },
             newInVersion: 1
           },
         };
 
-        if (Services.sysinfo.getProperty("hasWindowsTouchInterface")) {
+        if (Services.metro && Services.metro.supported) {
           smartBookmarks.Windows8Touch = {
-            title: bundle.GetStringFromName("windows8TouchTitle"),
-            uri: NetUtil.newURI("place:folder=" +
-                                PlacesUtils.annotations.getItemsWithAnnotation('metro/bookmarksRoot', {})[0] +
-                                "&queryType=" +
-                                Ci.nsINavHistoryQueryOptions.QUERY_TYPE_BOOKMARKS +
-                                "&sort=" +
-                                Ci.nsINavHistoryQueryOptions.SORT_BY_DATEADDED_DESCENDING +
-                                "&maxResults=" + MAX_RESULTS +
-                                "&excludeQueries=1"),
+            title: PlacesUtils.getString("windows8TouchTitle"),
+            get uri() {
+              let metroBookmarksRoot = PlacesUtils.annotations.getItemsWithAnnotation('metro/bookmarksRoot', {});
+              if (metroBookmarksRoot.length > 0) {
+                return NetUtil.newURI("place:folder=" +
+                                      metroBookmarksRoot[0] +
+                                      "&queryType=" +
+                                      Ci.nsINavHistoryQueryOptions.QUERY_TYPE_BOOKMARKS +
+                                      "&sort=" +
+                                      Ci.nsINavHistoryQueryOptions.SORT_BY_DATEADDED_DESCENDING +
+                                      "&maxResults=" + MAX_RESULTS +
+                                      "&excludeQueries=1")
+              }
+              return null;
+            },
             parent: PlacesUtils.bookmarksMenuFolderId,
-            position: menuIndex++,
-            newInVersion: 6
+            get position() { return menuIndex++; },
+            newInVersion: 7
           };
         }
 
@@ -1732,9 +1734,13 @@ BrowserGlue.prototype = {
           let queryId = PlacesUtils.annotations.getItemAnnotation(itemId, SMART_BOOKMARKS_ANNO);
           if (queryId in smartBookmarks) {
             let smartBookmark = smartBookmarks[queryId];
+            if (!smartBookmark.uri) {
+              PlacesUtils.bookmarks.removeItem(itemId);
+              return;
+            }
             smartBookmark.itemId = itemId;
             smartBookmark.parent = PlacesUtils.bookmarks.getFolderIdForItem(itemId);
-            smartBookmark.position = PlacesUtils.bookmarks.getItemIndex(itemId);
+            smartBookmark.updatedPosition = PlacesUtils.bookmarks.getItemIndex(itemId);
           }
           else {
             // We don't remove old Smart Bookmarks because user could still
@@ -1752,7 +1758,7 @@ BrowserGlue.prototype = {
           // bookmark if it has been removed.
           if (smartBookmarksCurrentVersion > 0 &&
               smartBookmark.newInVersion <= smartBookmarksCurrentVersion &&
-              !smartBookmark.itemId)
+              !smartBookmark.itemId || !smartBookmark.uri)
             continue;
 
           // Remove old version of the smart bookmark if it exists, since it
@@ -1765,7 +1771,7 @@ BrowserGlue.prototype = {
           smartBookmark.itemId =
             PlacesUtils.bookmarks.insertBookmark(smartBookmark.parent,
                                                  smartBookmark.uri,
-                                                 smartBookmark.position,
+                                                 smartBookmark.updatedPosition || smartBookmark.position,
                                                  smartBookmark.title);
           PlacesUtils.annotations.setItemAnnotation(smartBookmark.itemId,
                                                     SMART_BOOKMARKS_ANNO,
@@ -1929,25 +1935,37 @@ ContentPermissionPrompt.prototype = {
                        popupNotificationActions[0] : null;
     var secondaryActions = popupNotificationActions.splice(1);
 
-    if (aRequest.type == "pointerLock") {
+    // Only allow exactly one permission rquest here.
+    let types = aRequest.types.QueryInterface(Ci.nsIArray);
+    if (types.length != 1) {
+      aRequest.cancel();
+      return;
+    }
+
+    let perm = types.queryElementAt(0, Ci.nsIContentPermissionType);
+
+    if (perm.type == "pointerLock") {
       // If there's no mainAction, this is the autoAllow warning prompt.
       let autoAllow = !mainAction;
-      aOptions = {
-        removeOnDismissal: autoAllow,
-        eventCallback: type => {
-          if (type == "removed") {
-            browser.removeEventListener("mozfullscreenchange", onFullScreen, true);
-            if (autoAllow) {
-              aRequest.allow();
-            }
+
+      if (!aOptions)
+        aOptions = {};
+
+      aOptions.removeOnDismissal = autoAllow;
+      aOptions.eventCallback = type => {
+        if (type == "removed") {
+          browser.removeEventListener("mozfullscreenchange", onFullScreen, true);
+          if (autoAllow) {
+            aRequest.allow();
           }
-        },
-      };
+        }
+      }
+
     }
 
     var popup = chromeWin.PopupNotifications.show(browser, aNotificationId, aMessage, aAnchorId,
                                                   mainAction, secondaryActions, aOptions);
-    if (aRequest.type == "pointerLock") {
+    if (perm.type == "pointerLock") {
       // pointerLock is automatically allowed in fullscreen mode (and revoked
       // upon exit), so if the page enters fullscreen mode after requesting
       // pointerLock (but before the user has granted permission), we should
@@ -2000,15 +2018,14 @@ ContentPermissionPrompt.prototype = {
       });
     }
 
-    var chromeWin = this._getBrowserForRequest(aRequest).ownerDocument.defaultView;
-    var link = chromeWin.document.getElementById("geolocation-learnmore-link");
-    link.value = browserBundle.GetStringFromName("geolocation.learnMore");
-    link.href = Services.urlFormatter.formatURLPref("browser.geolocation.warning.infoURL");
+    var options = {
+                    learnMoreURL: Services.urlFormatter.formatURLPref("browser.geolocation.warning.infoURL"),
+                  };
 
     secHistogram.add(Ci.nsISecurityUITelemetry.WARNING_GEOLOCATION_REQUEST);
 
     this._showPrompt(aRequest, message, "geo", actions, "geolocation",
-                     "geo-notification-icon", null);
+                     "geo-notification-icon", options);
   },
 
   _promptWebNotifications : function(aRequest) {
@@ -2085,13 +2102,21 @@ ContentPermissionPrompt.prototype = {
 
   prompt: function CPP_prompt(request) {
 
+    // Only allow exactly one permission rquest here.
+    let types = request.types.QueryInterface(Ci.nsIArray);
+    if (types.length != 1) {
+      request.cancel();
+      return;
+    }
+    let perm = types.queryElementAt(0, Ci.nsIContentPermissionType);
+
     const kFeatureKeys = { "geolocation" : "geo",
                            "desktop-notification" : "desktop-notification",
                            "pointerLock" : "pointerLock",
                          };
 
     // Make sure that we support the request.
-    if (!(request.type in kFeatureKeys)) {
+    if (!(perm.type in kFeatureKeys)) {
         return;
     }
 
@@ -2103,7 +2128,7 @@ ContentPermissionPrompt.prototype = {
       return;
 
     var autoAllow = false;
-    var permissionKey = kFeatureKeys[request.type];
+    var permissionKey = kFeatureKeys[perm.type];
     var result = Services.perms.testExactPermissionFromPrincipal(requestingPrincipal, permissionKey);
 
     if (result == Ci.nsIPermissionManager.DENY_ACTION) {
@@ -2114,7 +2139,7 @@ ContentPermissionPrompt.prototype = {
     if (result == Ci.nsIPermissionManager.ALLOW_ACTION) {
       autoAllow = true;
       // For pointerLock, we still want to show a warning prompt.
-      if (request.type != "pointerLock") {
+      if (perm.type != "pointerLock") {
         request.allow();
         return;
       }
@@ -2128,7 +2153,7 @@ ContentPermissionPrompt.prototype = {
       return;
 
     // Show the prompt.
-    switch (request.type) {
+    switch (perm.type) {
     case "geolocation":
       this._promptGeo(request);
       break;

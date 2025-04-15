@@ -115,6 +115,16 @@ ImageBridgeChild::UseTexture(CompositableClient* aCompositable,
 }
 
 void
+ImageBridgeChild::UseComponentAlphaTextures(CompositableClient* aCompositable,
+                                            TextureClient* aTextureOnBlack,
+                                            TextureClient* aTextureOnWhite)
+{
+  mTxn->AddNoSwapEdit(OpUseComponentAlphaTextures(nullptr, aCompositable->GetIPDLActor(),
+                                                  nullptr, aTextureOnBlack->GetIPDLActor(),
+                                                  nullptr, aTextureOnWhite->GetIPDLActor()));
+}
+
+void
 ImageBridgeChild::UpdatedTexture(CompositableClient* aCompositable,
                                  TextureClient* aTexture,
                                  nsIntRegion* aRegion)
@@ -323,6 +333,10 @@ void ImageBridgeChild::StartUp()
   ImageBridgeChild::StartUpOnThread(new Thread("ImageBridgeChild"));
 }
 
+#ifdef MOZ_NUWA_PROCESS
+#include "ipc/Nuwa.h"
+#endif
+
 static void
 ConnectImageBridgeInChildProcess(Transport* aTransport,
                                  ProcessHandle aOtherProcess)
@@ -331,11 +345,16 @@ ConnectImageBridgeInChildProcess(Transport* aTransport,
   sImageBridgeChildSingleton->Open(aTransport, aOtherProcess,
                                    XRE_GetIOMessageLoop(),
                                    ipc::ChildSide);
-}
-
 #ifdef MOZ_NUWA_PROCESS
-#include "ipc/Nuwa.h"
+  if (IsNuwaProcess()) {
+    sImageBridgeChildThread
+      ->message_loop()->PostTask(FROM_HERE,
+                                 NewRunnableFunction(NuwaMarkCurrentThread,
+                                                     (void (*)(void *))nullptr,
+                                                     (void *)nullptr));
+  }
 #endif
+}
 
 static void ReleaseImageClientNow(ImageClient* aClient)
 {
@@ -443,15 +462,15 @@ ImageBridgeChild::BeginTransaction()
   mTxn->Begin();
 }
 
-class MOZ_STACK_CLASS AutoForceRemoveTextures
+class MOZ_STACK_CLASS AutoRemoveTextures
 {
 public:
-  AutoForceRemoveTextures(ImageBridgeChild* aImageBridge)
+  AutoRemoveTextures(ImageBridgeChild* aImageBridge)
     : mImageBridge(aImageBridge) {}
 
-  ~AutoForceRemoveTextures()
+  ~AutoRemoveTextures()
   {
-    mImageBridge->ForceRemoveTexturesIfNecessary();
+    mImageBridge->RemoveTexturesIfNecessary();
   }
 private:
   ImageBridgeChild* mImageBridge;
@@ -463,7 +482,7 @@ ImageBridgeChild::EndTransaction()
   MOZ_ASSERT(!mTxn->Finished(), "forgot BeginTransaction?");
 
   AutoEndTransaction _(mTxn);
-  AutoForceRemoveTextures autoForceRemoveTextures(this);
+  AutoRemoveTextures autoRemoveTextures(this);
 
   if (mTxn->IsEmpty()) {
     return;
@@ -506,6 +525,20 @@ ImageBridgeChild::EndTransaction()
         ->SetDescriptorFromReply(ots.textureId(), ots.image());
       break;
     }
+    case EditReply::TReturnReleaseFence: {
+      const ReturnReleaseFence& rep = reply.get_ReturnReleaseFence();
+      FenceHandle fence = rep.fence();
+      PTextureChild* child = rep.textureChild();
+
+      if (!fence.IsValid() || !child) {
+        break;
+      }
+      RefPtr<TextureClient> texture = TextureClient::AsTextureClient(child);
+      if (texture) {
+        texture->SetReleaseFenceHandle(fence);
+      }
+      break;
+    }
     default:
       NS_RUNTIMEABORT("not reached");
     }
@@ -528,16 +561,6 @@ ImageBridgeChild::StartUpInChildProcess(Transport* aTransport,
   if (!sImageBridgeChildThread->Start()) {
     return nullptr;
   }
-
-#ifdef MOZ_NUWA_PROCESS
-  if (IsNuwaProcess()) {
-    sImageBridgeChildThread
-      ->message_loop()->PostTask(FROM_HERE,
-                                 NewRunnableFunction(NuwaMarkCurrentThread,
-                                                     (void (*)(void *))nullptr,
-                                                     (void *)nullptr));
-  }
-#endif
 
   sImageBridgeChildSingleton = new ImageBridgeChild();
   sImageBridgeChildSingleton->GetMessageLoop()->PostTask(
@@ -931,6 +954,21 @@ ImageBridgeChild::CreateTexture(const SurfaceDescriptor& aSharedData,
   return SendPTextureConstructor(aSharedData, aFlags);
 }
 
+void
+ImageBridgeChild::RemoveTextureFromCompositable(CompositableClient* aCompositable,
+                                                TextureClient* aTexture)
+{
+  if (aTexture->GetFlags() & TEXTURE_DEALLOCATE_CLIENT) {
+    mTxn->AddEdit(OpRemoveTexture(nullptr, aCompositable->GetIPDLActor(),
+                                  nullptr, aTexture->GetIPDLActor()));
+  } else {
+    mTxn->AddNoSwapEdit(OpRemoveTexture(nullptr, aCompositable->GetIPDLActor(),
+                                        nullptr, aTexture->GetIPDLActor()));
+  }
+  // Hold texture until transaction complete.
+  HoldUntilTransaction(aTexture);
+}
+
 static void RemoveTextureSync(TextureClient* aTexture, ReentrantMonitor* aBarrier, bool* aDone)
 {
   aTexture->ForceRemove();
@@ -960,6 +998,11 @@ void ImageBridgeChild::RemoveTexture(TextureClient* aTexture)
   while (!done) {
     barrier.Wait();
   }
+}
+
+bool ImageBridgeChild::IsSameProcess() const
+{
+  return OtherProcess() == ipc::kInvalidProcessHandle;
 }
 
 } // layers

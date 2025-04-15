@@ -11,9 +11,9 @@
 #include "mozilla/dom/EventTarget.h"
 #include "nsCOMPtr.h"
 #include "nsIAtom.h"
+#include "nsISupportsImpl.h"
 #include "nsIWidget.h"
 #include "nsString.h"
-#include "nsTraceRefcnt.h"
 #include "Units.h"
 
 /******************************************************************************
@@ -49,7 +49,6 @@ enum nsEventStructType
   NS_TOUCH_EVENT,                    // WidgetTouchEvent
 
   // ContentEvents.h
-  NS_SCRIPT_ERROR_EVENT,             // InternalScriptErrorEvent
   NS_SCROLLPORT_EVENT,               // InternalScrollPortEvent
   NS_SCROLLAREA_EVENT,               // InternalScrollAreaEvent
   NS_FORM_EVENT,                     // InternalFormEvent
@@ -63,7 +62,7 @@ enum nsEventStructType
   NS_CONTENT_COMMAND_EVENT,          // WidgetContentCommandEvent
   NS_PLUGIN_EVENT,                   // WidgetPluginEvent
 
-  // MutationEvent.h (dom/events)
+  // InternalMutationEvent.h (dom/events)
   NS_MUTATION_EVENT,                 // InternalMutationEvent
 
   // Follwoing struct type values are ugly.  They indicate other struct type
@@ -82,7 +81,7 @@ enum nsEventStructType
 #define NS_EVENT_NULL                   0
 
 // This is a dummy event message for all event listener implementation in
-// nsEventListenerManager.
+// EventListenerManager.
 #define NS_EVENT_ALL                    1
 
 #define NS_WINDOW_START                 100
@@ -500,20 +499,20 @@ public:
   // If mInSystemGroup is true, the event is being dispatched in system group.
   bool    mInSystemGroup: 1;
   // If mCancelable is true, the event can be consumed.  I.e., calling
-  // nsDOMEvent::PreventDefault() can prevent the default action.
+  // dom::Event::PreventDefault() can prevent the default action.
   bool    mCancelable : 1;
   // If mBubbles is true, the event can bubble.  Otherwise, cannot be handled
   // in bubbling phase.
   bool    mBubbles : 1;
-  // If mPropagationStopped is true, nsDOMEvent::StopPropagation() or
-  // nsDOMEvent::StopImmediatePropagation() has been called.
+  // If mPropagationStopped is true, dom::Event::StopPropagation() or
+  // dom::Event::StopImmediatePropagation() has been called.
   bool    mPropagationStopped : 1;
   // If mImmediatePropagationStopped is true,
-  // nsDOMEvent::StopImmediatePropagation() has been called.
+  // dom::Event::StopImmediatePropagation() has been called.
   // Note that mPropagationStopped must be true when this is true.
   bool    mImmediatePropagationStopped : 1;
   // If mDefaultPrevented is true, the event has been consumed.
-  // E.g., nsDOMEvent::PreventDefault() has been called or
+  // E.g., dom::Event::PreventDefault() has been called or
   // the default action has been performed.
   bool    mDefaultPrevented : 1;
   // If mDefaultPreventedByContent is true, the event has been
@@ -1055,18 +1054,18 @@ class InternalUIEvent : public WidgetGUIEvent
 {
 protected:
   InternalUIEvent(bool aIsTrusted, uint32_t aMessage,
-                  nsEventStructType aStructType, int32_t aDetail) :
-    WidgetGUIEvent(aIsTrusted, aMessage, nullptr, aStructType),
-    detail(aDetail)
+                  nsEventStructType aStructType)
+    : WidgetGUIEvent(aIsTrusted, aMessage, nullptr, aStructType)
+    , detail(0)
   {
   }
 
 public:
   virtual InternalUIEvent* AsUIEvent() MOZ_OVERRIDE { return this; }
 
-  InternalUIEvent(bool aIsTrusted, uint32_t aMessage, int32_t aDetail) :
-    WidgetGUIEvent(aIsTrusted, aMessage, nullptr, NS_UI_EVENT),
-    detail(aDetail)
+  InternalUIEvent(bool aIsTrusted, uint32_t aMessage)
+    : WidgetGUIEvent(aIsTrusted, aMessage, nullptr, NS_UI_EVENT)
+    , detail(0)
   {
   }
 
@@ -1075,7 +1074,7 @@ public:
     MOZ_ASSERT(eventStructType == NS_UI_EVENT ||
                  eventStructType == NS_SMIL_TIME_EVENT,
                "Duplicate() must be overridden by sub class");
-    InternalUIEvent* result = new InternalUIEvent(false, message, detail);
+    InternalUIEvent* result = new InternalUIEvent(false, message);
     result->AssignUIEventData(*this, true);
     result->mFlags = mFlags;
     return result;
@@ -1087,7 +1086,7 @@ public:
   {
     AssignGUIEventData(aEvent, aCopyTargets);
 
-    // detail must have been initialized with the constructor.
+    detail = aEvent.detail;
   }
 };
 

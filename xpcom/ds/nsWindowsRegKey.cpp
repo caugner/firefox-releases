@@ -80,7 +80,7 @@ nsWindowsRegKey::Open(uint32_t rootKey, const nsAString &path, uint32_t mode)
 {
   Close();
 
-  LONG rv = RegOpenKeyExW((HKEY) rootKey, PromiseFlatString(path).get(), 0,
+  LONG rv = RegOpenKeyExW((HKEY)(intptr_t) rootKey, PromiseFlatString(path).get(), 0,
                           (REGSAM) mode, &mKey);
 
   return (rv == ERROR_SUCCESS) ? NS_OK : NS_ERROR_FAILURE;
@@ -92,7 +92,7 @@ nsWindowsRegKey::Create(uint32_t rootKey, const nsAString &path, uint32_t mode)
   Close();
 
   DWORD disposition;
-  LONG rv = RegCreateKeyExW((HKEY) rootKey, PromiseFlatString(path).get(), 0,
+  LONG rv = RegCreateKeyExW((HKEY)(intptr_t) rootKey, PromiseFlatString(path).get(), 0,
                             nullptr, REG_OPTION_NON_VOLATILE, (REGSAM) mode, nullptr,
                             &mKey, &disposition);
 
@@ -322,7 +322,7 @@ nsWindowsRegKey::ReadStringValue(const nsAString &name, nsAString &result)
   if (type == REG_EXPAND_SZ) {
     const nsString &flatSource = PromiseFlatString(result);
     resultLen = ExpandEnvironmentStringsW(flatSource.get(), nullptr, 0);
-    if (resultLen > 0) {
+    if (resultLen > 1) {
       nsAutoString expandedResult;
       // |resultLen| includes the terminating null character
       --resultLen;
@@ -333,7 +333,7 @@ nsWindowsRegKey::ReadStringValue(const nsAString &name, nsAString &result)
         return NS_ERROR_OUT_OF_MEMORY;
 
       resultLen = ExpandEnvironmentStringsW(flatSource.get(),
-                                            begin.get(),
+                                            wwc(begin.get()),
                                             resultLen + 1);
       if (resultLen <= 0) {
         rv = ERROR_UNKNOWN_FEATURE;
@@ -342,6 +342,9 @@ nsWindowsRegKey::ReadStringValue(const nsAString &name, nsAString &result)
         rv = ERROR_SUCCESS;
         result = expandedResult;
       }
+    } else if (resultLen == 1) {
+      // It apparently expands to nothing (just a null terminator).
+      result.Truncate();
     }
   }
 
@@ -386,6 +389,11 @@ nsWindowsRegKey::ReadBinaryValue(const nsAString &name, nsACString &result)
 
   if (rv != ERROR_SUCCESS)
     return NS_ERROR_FAILURE;
+
+  if (!size) {
+    result.Truncate();
+    return NS_OK;
+  }
 
   result.SetLength(size);
   nsACString::iterator begin;

@@ -535,18 +535,32 @@ public:
 
   /**
    * Get the minimum font size for the specified language. If aLanguage
-   * is nullptr, then the document's language is used.
+   * is nullptr, then the document's language is used.  This combines
+   * the language-specific global preference with the per-presentation
+   * base minimum font size.
    */
   int32_t MinFontSize(nsIAtom *aLanguage) const {
     const LangGroupFontPrefs *prefs = GetFontPrefsForLang(aLanguage);
-    return std::max(mMinFontSize, prefs->mMinimumFontSize);
+    return std::max(mBaseMinFontSize, prefs->mMinimumFontSize);
   }
-
-  void SetMinFontSize(int32_t aMinFontSize) {
-    if (aMinFontSize == mMinFontSize)
+  
+  /**
+   * Get the per-presentation base minimum font size.  This size is
+   * independent of the language-specific global preference.
+   */
+  int32_t BaseMinFontSize() const {
+    return mBaseMinFontSize;
+  }
+  
+  /**
+   * Set the per-presentation base minimum font size.  This size is
+   * independent of the language-specific global preference.
+   */
+  void SetBaseMinFontSize(int32_t aMinFontSize) {
+    if (aMinFontSize == mBaseMinFontSize)
       return;
 
-    mMinFontSize = aMinFontSize;
+    mBaseMinFontSize = aMinFontSize;
     if (HasCachedStyleData()) {
       // Media queries could have changed, since we changed the meaning
       // of 'em' units in them.
@@ -813,22 +827,9 @@ public:
                               mType == eContext_PrintPreview); }
 
   // Is this presentation in a chrome docshell?
-  bool IsChrome() const
-  {
-    return mIsChromeIsCached ? mIsChrome : IsChromeSlow();
-  }
-
+  bool IsChrome() const { return mIsChrome; }
   bool IsChromeOriginImage() const { return mIsChromeOriginImage; }
-
-  virtual void InvalidateIsChromeCacheExternal();
-  void InvalidateIsChromeCacheInternal() { mIsChromeIsCached = false; }
-#ifdef MOZILLA_INTERNAL_API
-  void InvalidateIsChromeCache()
-  { InvalidateIsChromeCacheInternal(); }
-#else
-  void InvalidateIsChromeCache()
-  { InvalidateIsChromeCacheExternal(); }
-#endif
+  void UpdateIsChrome();
 
   // Public API for native theme code to get style internals.
   virtual bool HasAuthorSpecifiedRules(nsIFrame *aFrame, uint32_t ruleTypeMask) const;
@@ -1022,6 +1023,14 @@ public:
 
   bool IsDeviceSizePageSize();
 
+  bool HasWarnedAboutPositionedTableParts() const {
+    return mHasWarnedAboutPositionedTableParts;
+  }
+
+  void SetHasWarnedAboutPositionedTableParts() {
+    mHasWarnedAboutPositionedTableParts = true;
+  }
+
 protected:
   friend class nsRunnableMethod<nsPresContext>;
   NS_HIDDEN_(void) ThemeChangedInternal();
@@ -1193,7 +1202,8 @@ protected:
 
   PRCList               mDOMMediaQueryLists;
 
-  int32_t               mMinFontSize;   // Min font size, defaults to 0
+  // Base minimum font size, independent of the language-specific global preference. Defaults to 0
+  int32_t               mBaseMinFontSize;
   float                 mTextZoom;      // Text zoom, defaults to 1.0
   float                 mFullZoom;      // Page zoom, defaults to 1.0
 
@@ -1316,17 +1326,15 @@ protected:
 
   unsigned              mFireAfterPaintEvents : 1;
 
-  // Cache whether we are chrome or not because it is expensive.  
-  // mIsChromeIsCached tells us if mIsChrome is valid or we need to get the
-  // value the slow way.
-  mutable unsigned      mIsChromeIsCached : 1;
-  mutable unsigned      mIsChrome : 1;
+  unsigned              mIsChrome : 1;
   unsigned              mIsChromeOriginImage : 1;
 
   // Should we paint flash in this context? Do not use this variable directly.
   // Use GetPaintFlashing() method instead.
   mutable unsigned mPaintFlashing : 1;
   mutable unsigned mPaintFlashingInitialized : 1;
+
+  unsigned mHasWarnedAboutPositionedTableParts : 1;
 
 #ifdef DEBUG
   bool                  mInitialized;

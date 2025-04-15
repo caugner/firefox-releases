@@ -28,7 +28,7 @@ class SurfaceDescriptor;
 class SurfaceDescriptorTiles;
 class ThebesBufferData;
 class DeprecatedTextureClient;
-class BasicTiledLayerBuffer;
+class ClientTiledLayerBuffer;
 class PTextureChild;
 
 /**
@@ -48,7 +48,7 @@ class CompositableForwarder : public ISurfaceAllocator
 public:
 
   CompositableForwarder()
-    : mMultiProcess(false)
+    : mSerial(++sSerialCounter)
   {}
 
   /**
@@ -91,8 +91,12 @@ public:
    */
   virtual void DestroyThebesBuffer(CompositableClient* aCompositable) = 0;
 
-  virtual void PaintedTiledLayerBuffer(CompositableClient* aCompositable,
-                                       const SurfaceDescriptorTiles& aTiledDescriptor) = 0;
+  /**
+   * Tell the CompositableHost on the compositor side what TiledLayerBuffer to
+   * use for the next composition.
+   */
+  virtual void UseTiledLayerBuffer(CompositableClient* aCompositable,
+                                   const SurfaceDescriptorTiles& aTiledDescriptor) = 0;
 
   /**
    * Create a TextureChild/Parent pair as as well as the TextureHost on the parent side.
@@ -156,19 +160,27 @@ public:
   virtual void DestroyedThebesBuffer(const SurfaceDescriptor& aBackBufferToDestroy) = 0;
 
   /**
+   * Tell the CompositableHost on the compositor side to remove the texture.
+   * This function does not delete the TextureHost corresponding to the
+   * TextureClient passed in parameter.
+   */
+  virtual void RemoveTextureFromCompositable(CompositableClient* aCompositable,
+                                             TextureClient* aTexture) = 0;
+
+  /**
    * Tell the compositor side to delete the TextureHost corresponding to the
    * TextureClient passed in parameter.
    */
   virtual void RemoveTexture(TextureClient* aTexture) = 0;
 
   /**
-   * Forcibly remove texture data from TextureClient
-   * after a tansaction with Compositor.
+   * Holds a reference to a TextureClient until after the next
+   * compositor transaction, and then drops it.
    */
-  virtual void AddForceRemovingTexture(TextureClient* aClient)
+  virtual void HoldUntilTransaction(TextureClient* aClient)
   {
     if (aClient) {
-      mForceRemovingTextures.AppendElement(aClient);
+      mTexturesToRemove.AppendElement(aClient);
     }
   }
 
@@ -176,12 +188,9 @@ public:
    * Forcibly remove texture data from TextureClient
    * This function needs to be called after a tansaction with Compositor.
    */
-  virtual void ForceRemoveTexturesIfNecessary()
+  virtual void RemoveTexturesIfNecessary()
   {
-    for (uint32_t i = 0; i < mForceRemovingTextures.Length(); i++) {
-       mForceRemovingTextures[i]->ForceRemove();
-    }
-    mForceRemovingTextures.Clear();
+    mTexturesToRemove.Clear();
   }
 
   /**
@@ -190,6 +199,9 @@ public:
    */
   virtual void UseTexture(CompositableClient* aCompositable,
                           TextureClient* aClient) = 0;
+  virtual void UseComponentAlphaTextures(CompositableClient* aCompositable,
+                                         TextureClient* aClientOnBlack,
+                                         TextureClient* aClientOnWhite) = 0;
 
   /**
    * Tell the compositor side that the shared data has been modified so that
@@ -201,10 +213,10 @@ public:
 
   void IdentifyTextureHost(const TextureFactoryIdentifier& aIdentifier);
 
-  /**
-   * Returns the maximum texture size supported by the compositor.
-   */
-  virtual int32_t GetMaxTextureSize() const { return mTextureFactoryIdentifier.mMaxTextureSize; }
+  virtual int32_t GetMaxTextureSize() const MOZ_OVERRIDE
+  {
+    return mTextureFactoryIdentifier.mMaxTextureSize;
+  }
 
   bool IsOnCompositorSide() const MOZ_OVERRIDE { return false; }
 
@@ -213,7 +225,7 @@ public:
    * We only don't allow changing the backend type at runtime so this value can
    * be queried once and will not change until Gecko is restarted.
    */
-  LayersBackend GetCompositorBackendType() const
+  virtual LayersBackend GetCompositorBackendType() const MOZ_OVERRIDE
   {
     return mTextureFactoryIdentifier.mParentBackend;
   }
@@ -228,20 +240,18 @@ public:
     return mTextureFactoryIdentifier.mSupportsPartialUploads;
   }
 
-  bool ForwardsToDifferentProcess() const
-  {
-    return mMultiProcess;
-  }
-
   const TextureFactoryIdentifier& GetTextureFactoryIdentifier() const
   {
     return mTextureFactoryIdentifier;
   }
 
+  int32_t GetSerial() { return mSerial; }
+
 protected:
   TextureFactoryIdentifier mTextureFactoryIdentifier;
-  bool mMultiProcess;
-  nsTArray<RefPtr<TextureClient> > mForceRemovingTextures;
+  nsTArray<RefPtr<TextureClient> > mTexturesToRemove;
+  const int32_t mSerial;
+  static mozilla::Atomic<int32_t> sSerialCounter;
 };
 
 } // namespace

@@ -10,6 +10,7 @@
 #include "Layers.h"
 #include "gfxContext.h"                 // for gfxContext
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
+#include "mozilla/LinkedList.h"         // For LinkedList
 #include "mozilla/WidgetUtils.h"        // for ScreenRotation
 #include "mozilla/gfx/Rect.h"           // for Rect
 #include "mozilla/layers/CompositorTypes.h"
@@ -21,7 +22,6 @@
 #include "nsISupportsImpl.h"            // for Layer::Release, etc
 #include "nsRect.h"                     // for nsIntRect
 #include "nsTArray.h"                   // for nsTArray
-#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR
 #include "nscore.h"                     // for nsAString
 
 class nsIWidget;
@@ -33,6 +33,8 @@ class ClientThebesLayer;
 class CompositorChild;
 class ImageLayer;
 class PLayerChild;
+class TextureClientPool;
+class SimpleTextureClientPool;
 
 class ClientLayerManager : public LayerManager
 {
@@ -97,6 +99,9 @@ public:
 
   virtual void SetIsFirstPaint() MOZ_OVERRIDE;
 
+  TextureClientPool *GetTexturePool(gfx::SurfaceFormat aFormat);
+  SimpleTextureClientPool *GetSimpleTileTexturePool(gfx::SurfaceFormat aFormat);
+
   // Drop cached resources and ask our shadow manager to do the same,
   // if we have one.
   virtual void ClearCachedResources(Layer* aSubtree = nullptr) MOZ_OVERRIDE;
@@ -135,12 +140,12 @@ public:
    * true.
    */
   bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent,
-                                 ScreenRect& aCompositionBounds,
-                                 CSSToScreenScale& aZoom,
+                                 ParentLayerRect& aCompositionBounds,
+                                 CSSToParentLayerScale& aZoom,
                                  bool aDrawingCritical);
 
-#ifdef DEBUG
   bool InConstruction() { return mPhase == PHASE_CONSTRUCTION; }
+#ifdef DEBUG
   bool InDrawing() { return mPhase == PHASE_DRAWING; }
   bool InForward() { return mPhase == PHASE_FORWARD; }
 #endif
@@ -215,6 +220,10 @@ private:
   bool mNeedsComposite;
 
   RefPtr<ShadowLayerForwarder> mForwarder;
+  nsAutoTArray<RefPtr<TextureClientPool>,2> mTexturePools;
+
+  // indexed by gfx::SurfaceFormat
+  nsTArray<RefPtr<SimpleTextureClientPool> > mSimpleTilePools;
 };
 
 class ClientLayer : public ShadowableLayer

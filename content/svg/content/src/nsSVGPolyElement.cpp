@@ -24,7 +24,7 @@ NS_INTERFACE_MAP_END_INHERITING(nsSVGPolyElementBase)
 //----------------------------------------------------------------------
 // Implementation
 
-nsSVGPolyElement::nsSVGPolyElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+nsSVGPolyElement::nsSVGPolyElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
   : nsSVGPolyElementBase(aNodeInfo)
 {
 }
@@ -58,6 +58,15 @@ nsSVGPolyElement::IsAttributeMapped(const nsIAtom* name) const
   
   return FindAttributeDependence(name, map) ||
     nsSVGPolyElementBase::IsAttributeMapped(name);
+}
+
+//----------------------------------------------------------------------
+// nsSVGElement methods
+
+/* virtual */ bool
+nsSVGPolyElement::HasValidDimensions() const
+{
+  return !mPoints.GetAnimValue().IsEmpty();
 }
 
 //----------------------------------------------------------------------

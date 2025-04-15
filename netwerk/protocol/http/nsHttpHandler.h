@@ -15,7 +15,6 @@
 #include "nsCOMPtr.h"
 #include "nsWeakReference.h"
 
-#include "nsIHttpDataUsage.h"
 #include "nsIHttpProtocolHandler.h"
 #include "nsIObserver.h"
 #include "nsISpeculativeConnect.h"
@@ -48,7 +47,6 @@ class nsHttpHandler : public nsIHttpProtocolHandler
                     , public nsIObserver
                     , public nsSupportsWeakReference
                     , public nsISpeculativeConnect
-                    , public nsIHttpDataUsage
 {
 public:
     NS_DECL_THREADSAFE_ISUPPORTS
@@ -57,7 +55,6 @@ public:
     NS_DECL_NSIHTTPPROTOCOLHANDLER
     NS_DECL_NSIOBSERVER
     NS_DECL_NSISPECULATIVECONNECT
-    NS_DECL_NSIHTTPDATAUSAGE
 
     nsHttpHandler();
     virtual ~nsHttpHandler();
@@ -119,6 +116,33 @@ public:
     uint32_t       RequestTokenBucketBurst() {return mRequestTokenBucketBurst; }
 
     bool           PromptTempRedirect()      { return mPromptTempRedirect; }
+
+    // TCP Keepalive configuration values.
+
+    // Returns true if TCP keepalive should be enabled for short-lived conns.
+    bool TCPKeepaliveEnabledForShortLivedConns() {
+      return mTCPKeepaliveShortLivedEnabled;
+    }
+    // Return time (secs) that a connection is consider short lived (for TCP
+    // keepalive purposes). After this time, the connection is long-lived.
+    int32_t GetTCPKeepaliveShortLivedTime() {
+      return mTCPKeepaliveShortLivedTimeS;
+    }
+    // Returns time (secs) before first TCP keepalive probes should be sent;
+    // same time used between successful keepalive probes.
+    int32_t GetTCPKeepaliveShortLivedIdleTime() {
+      return mTCPKeepaliveShortLivedIdleTimeS;
+    }
+
+    // Returns true if TCP keepalive should be enabled for long-lived conns.
+    bool TCPKeepaliveEnabledForLongLivedConns() {
+      return mTCPKeepaliveLongLivedEnabled;
+    }
+    // Returns time (secs) before first TCP keepalive probes should be sent;
+    // same time used between successful keepalive probes.
+    int32_t GetTCPKeepaliveLongLivedIdleTime() {
+      return mTCPKeepaliveLongLivedIdleTimeS;
+    }
 
     nsHttpAuthCache     *AuthCache(bool aPrivate) {
         return aPrivate ? &mPrivateAuthCache : &mAuthCache;
@@ -464,6 +488,20 @@ private:
     // for 1 minute for most requests.
     TimeStamp      mCacheSkippedUntil;
 
+    // TCP Keepalive configuration values.
+
+    // True if TCP keepalive is enabled for short-lived conns.
+    bool mTCPKeepaliveShortLivedEnabled;
+    // Time (secs) indicating how long a conn is considered short-lived.
+    int32_t mTCPKeepaliveShortLivedTimeS;
+    // Time (secs) before first keepalive probe; between successful probes.
+    int32_t mTCPKeepaliveShortLivedIdleTimeS;
+
+    // True if TCP keepalive is enabled for long-lived conns.
+    bool mTCPKeepaliveLongLivedEnabled;
+    // Time (secs) before first keepalive probe; between successful probes.
+    int32_t mTCPKeepaliveLongLivedIdleTimeS;
+
 private:
     // For Rate Pacing Certain Network Events. Only assign this pointer on
     // socket thread.
@@ -487,30 +525,8 @@ public:
     }
 
 private:
-    // for nsIHttpDataUsage
-    uint64_t mEthernetBytesRead;
-    uint64_t mEthernetBytesWritten;
-    uint64_t mCellBytesRead;
-    uint64_t mCellBytesWritten;
-    bool     mNetworkTypeKnown;
-    bool     mNetworkTypeWasEthernet;
-
     nsRefPtr<Tickler> mWifiTickler;
-    nsresult GetNetworkEthernetInfo(nsIInterfaceRequestor *cb,
-                                    bool *ethernet);
-    nsresult GetNetworkEthernetInfoInner(nsIInterfaceRequestor *cb,
-                                         bool *ethernet);
-    nsresult GetNetworkInfo(nsIInterfaceRequestor *cb,
-                            bool *ethernet, uint32_t *gw);
-    nsresult GetNetworkInfoInner(nsIInterfaceRequestor *cb,
-                                 bool *ethernet, uint32_t *gw);
     void TickleWifi(nsIInterfaceRequestor *cb);
-
-public:
-    // this is called to update the member variables used for nsIHttpDataUsage
-    // it can be called from any thread
-    void UpdateDataUsage(nsIInterfaceRequestor *cb,
-                         uint64_t bytesRead, uint64_t bytesWritten);
 };
 
 extern nsHttpHandler *gHttpHandler;

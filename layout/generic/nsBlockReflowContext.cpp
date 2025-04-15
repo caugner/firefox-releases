@@ -262,7 +262,7 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
 
 #ifdef DEBUG
   if (!NS_INLINE_IS_BREAK_BEFORE(aFrameReflowStatus)) {
-    if (CRAZY_WIDTH(mMetrics.Width()) || CRAZY_HEIGHT(mMetrics.Height())) {
+    if (CRAZY_SIZE(mMetrics.Width()) || CRAZY_SIZE(mMetrics.Height())) {
       printf("nsBlockReflowContext: ");
       nsFrame::ListTag(stdout, mFrame);
       printf(" metrics=%d,%d!\n", mMetrics.Width(), mMetrics.Height());
@@ -296,7 +296,7 @@ nsBlockReflowContext::ReflowBlock(const nsRect&       aSpace,
         // which detaches the placeholder from the float.
         nsOverflowContinuationTracker::AutoFinish fini(aState.mOverflowTracker, mFrame);
         static_cast<nsContainerFrame*>(kidNextInFlow->GetParent())
-          ->DeleteNextInFlowChild(mPresContext, kidNextInFlow, true);
+          ->DeleteNextInFlowChild(kidNextInFlow, true);
       }
     }
   }

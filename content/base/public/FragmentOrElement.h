@@ -166,7 +166,8 @@ class UndoManager;
 class FragmentOrElement : public nsIContent
 {
 public:
-  FragmentOrElement(already_AddRefed<nsINodeInfo> aNodeInfo);
+  FragmentOrElement(already_AddRefed<nsINodeInfo>& aNodeInfo);
+  FragmentOrElement(already_AddRefed<nsINodeInfo>&& aNodeInfo);
   virtual ~FragmentOrElement();
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -207,9 +208,12 @@ public:
   virtual ShadowRoot *GetShadowRoot() const MOZ_OVERRIDE;
   virtual ShadowRoot *GetContainingShadow() const MOZ_OVERRIDE;
   virtual void SetShadowRoot(ShadowRoot* aBinding) MOZ_OVERRIDE;
-  virtual nsIContent *GetXBLInsertionParent() const;
-  virtual void SetXBLInsertionParent(nsIContent* aContent);
+  virtual nsIContent *GetXBLInsertionParent() const MOZ_OVERRIDE;
+  virtual void SetXBLInsertionParent(nsIContent* aContent) MOZ_OVERRIDE;
   virtual bool IsLink(nsIURI** aURI) const MOZ_OVERRIDE;
+
+  virtual CustomElementData *GetCustomElementData() const MOZ_OVERRIDE;
+  virtual void SetCustomElementData(CustomElementData* aData) MOZ_OVERRIDE;
 
   virtual void DestroyContent() MOZ_OVERRIDE;
   virtual void SaveSubtreeState() MOZ_OVERRIDE;
@@ -378,6 +382,11 @@ public:
      * XBL binding installed on the lement.
      */
     nsCOMPtr<nsIContent> mXBLInsertionParent;
+
+    /**
+     * Web components custom element data.
+     */
+    nsAutoPtr<CustomElementData> mCustomElementData;
   };
 
 protected:

@@ -27,7 +27,7 @@ namespace widget {
 bool IMEHandler::sIsInTSFMode = false;
 bool IMEHandler::sIsIMMEnabled = true;
 bool IMEHandler::sPluginHasFocus = false;
-IMEHandler::SetInputScopesFunc IMEHandler::sSetInputScopes = nullptr;
+decltype(SetInputScopes)* IMEHandler::sSetInputScopes = nullptr;
 #endif // #ifdef NS_ENABLE_TSF
 
 // static
@@ -46,7 +46,7 @@ IMEHandler::Initialize()
     HMODULE module = nullptr;
     if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_PIN, L"msctf.dll",
                            &module)) {
-      sSetInputScopes = reinterpret_cast<SetInputScopesFunc>(
+      sSetInputScopes = reinterpret_cast<decltype(SetInputScopes)*>(
         GetProcAddress(module, "SetInputScopes"));
     }
   }
@@ -158,13 +158,15 @@ IMEHandler::IsComposingOn(nsWindow* aWindow)
 // static
 nsresult
 IMEHandler::NotifyIME(nsWindow* aWindow,
-                      NotificationToIME aNotification)
+                      const IMENotification& aIMENotification)
 {
 #ifdef NS_ENABLE_TSF
   if (IsTSFAvailable()) {
-    switch (aNotification) {
+    switch (aIMENotification.mMessage) {
       case NOTIFY_IME_OF_SELECTION_CHANGE:
         return nsTextStore::OnSelectionChange();
+      case NOTIFY_IME_OF_TEXT_CHANGE:
+        return nsTextStore::OnTextChange(aIMENotification);
       case NOTIFY_IME_OF_FOCUS:
         return nsTextStore::OnFocusChange(true, aWindow,
                  aWindow->GetInputContext().mIMEState.mEnabled);
@@ -181,19 +183,22 @@ IMEHandler::NotifyIME(nsWindow* aWindow,
           nsTextStore::CommitComposition(true);
         }
         return NS_OK;
+      case NOTIFY_IME_OF_POSITION_CHANGE:
+        return nsTextStore::OnLayoutChange();
       default:
         return NS_ERROR_NOT_IMPLEMENTED;
     }
   }
 #endif //NS_ENABLE_TSF
 
-  switch (aNotification) {
+  switch (aIMENotification.mMessage) {
     case REQUEST_TO_COMMIT_COMPOSITION:
       nsIMM32Handler::CommitComposition(aWindow);
       return NS_OK;
     case REQUEST_TO_CANCEL_COMPOSITION:
       nsIMM32Handler::CancelComposition(aWindow);
       return NS_OK;
+    case NOTIFY_IME_OF_POSITION_CHANGE:
     case NOTIFY_IME_OF_COMPOSITION_UPDATE:
       nsIMM32Handler::OnUpdateComposition(aWindow);
       return NS_OK;
@@ -213,21 +218,6 @@ IMEHandler::NotifyIME(nsWindow* aWindow,
 }
 
 // static
-nsresult
-IMEHandler::NotifyIMEOfTextChange(uint32_t aStart,
-                                  uint32_t aOldEnd,
-                                  uint32_t aNewEnd)
-{
-#ifdef NS_ENABLE_TSF
-  if (IsTSFAvailable()) {
-    return nsTextStore::OnTextChange(aStart, aOldEnd, aNewEnd);
-  }
-#endif //NS_ENABLE_TSF
-
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-// static
 nsIMEUpdatePreference
 IMEHandler::GetUpdatePreference()
 {
@@ -237,7 +227,7 @@ IMEHandler::GetUpdatePreference()
   }
 #endif //NS_ENABLE_TSF
 
-  return nsIMEUpdatePreference();
+  return nsIMM32Handler::GetIMEUpdatePreference();
 }
 
 // static
@@ -277,7 +267,7 @@ IMEHandler::SetInputContext(nsWindow* aWindow,
                             const InputContextAction& aAction)
 {
   // FYI: If there is no composition, this call will do nothing.
-  NotifyIME(aWindow, REQUEST_TO_COMMIT_COMPOSITION);
+  NotifyIME(aWindow, IMENotification(REQUEST_TO_COMMIT_COMPOSITION));
 
   const InputContext& oldInputContext = aWindow->GetInputContext();
 

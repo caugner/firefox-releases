@@ -23,6 +23,7 @@ class VolumeServiceIOThread : public VolumeManager::StateObserver,
                               public RefCounted<VolumeServiceIOThread>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(VolumeServiceIOThread)
   VolumeServiceIOThread(nsVolumeService* aVolumeService);
   ~VolumeServiceIOThread();
 
@@ -38,6 +39,8 @@ private:
 void InitVolumeServiceIOThread(nsVolumeService* const & aVolumeService);
 void ShutdownVolumeServiceIOThread();
 void FormatVolume(const nsCString& aVolume);
+void MountVolume(const nsCString& aVolume);
+void UnmountVolume(const nsCString& aVolume);
 
 } // system
 } // mozilla

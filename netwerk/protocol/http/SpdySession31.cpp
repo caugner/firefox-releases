@@ -7,6 +7,12 @@
 // HttpLog.h should generally be included first
 #include "HttpLog.h"
 
+// Log on level :5, instead of default :4.
+#undef LOG
+#define LOG(args) LOG5(args)
+#undef LOG_ENABLED
+#define LOG_ENABLED() LOG5_ENABLED()
+
 #include "mozilla/Telemetry.h"
 #include "mozilla/Preferences.h"
 #include "nsHttp.h"
@@ -2588,6 +2594,18 @@ SpdySession31::ConnectPushedStream(SpdyStream31 *stream)
 {
   mReadyForRead.Push(stream);
   ForceRecv();
+}
+
+nsresult
+SpdySession31::BufferOutput(const char *buf,
+                            uint32_t count,
+                            uint32_t *countRead)
+{
+  nsAHttpSegmentReader *old = mSegmentReader;
+  mSegmentReader = nullptr;
+  nsresult rv = OnReadSegment(buf, count, countRead);
+  mSegmentReader = old;
+  return rv;
 }
 
 //-----------------------------------------------------------------------------

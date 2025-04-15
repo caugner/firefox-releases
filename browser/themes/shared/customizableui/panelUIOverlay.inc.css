@@ -35,6 +35,11 @@
              moveY 3.4s linear 0s infinite alternate;
 }
 
+#PanelUI-popup #PanelUI-contents:-moz-locale-dir(rtl):empty::before {
+  animation: moveXRTL 3.05s linear 0s infinite alternate,
+             moveY 3.4s linear 0s infinite alternate;
+}
+
 #PanelUI-popup #PanelUI-contents:empty:hover::before {
   background-image: url(chrome://browser/skin/customizableui/whimsy.png);
 }
@@ -53,15 +58,21 @@
   /* These values are adjusted for the padding on the panel. */
   from { margin-left: -15px; } to { margin-left: calc(100% - 49px); }
 }
+
+@keyframes moveXRTL {
+  /* These values are adjusted for the padding on the panel. */
+  from { margin-right: -15px; } to { margin-right: calc(100% - 49px); }
+}
+
 @keyframes moveY {
   /* These values are adjusted for the padding and height of the panel. */
-  from { margin-top: -6px; } to { margin-top: 58px; }
+  from { margin-top: -.5em; } to { margin-top: calc(64px - .5em); }
 }
 
 #PanelUI-button {
-  background-image: -moz-linear-gradient(hsla(0,0%,100%,0), hsla(0,0%,100%,.3) 30%, hsla(0,0%,100%,.3) 70%, hsla(0,0%,100%,0)),
-                    -moz-linear-gradient(hsla(210,54%,20%,0), hsla(210,54%,20%,.3) 30%, hsla(210,54%,20%,.3) 70%, hsla(210,54%,20%,0)),
-                    -moz-linear-gradient(hsla(0,0%,100%,0), hsla(0,0%,100%,.3) 30%, hsla(0,0%,100%,.3) 70%, hsla(0,0%,100%,0));
+  background-image: linear-gradient(to bottom, hsla(0,0%,100%,0), hsla(0,0%,100%,.3) 30%, hsla(0,0%,100%,.3) 70%, hsla(0,0%,100%,0)),
+                    linear-gradient(to bottom, hsla(210,54%,20%,0), hsla(210,54%,20%,.3) 30%, hsla(210,54%,20%,.3) 70%, hsla(210,54%,20%,0)),
+                    linear-gradient(to bottom, hsla(0,0%,100%,0), hsla(0,0%,100%,.3) 30%, hsla(0,0%,100%,.3) 70%, hsla(0,0%,100%,0));
   background-size: 1px calc(100% - 1px), 1px calc(100% - 1px), 1px  calc(100% - 1px) !important;
   background-position: 0px 0px, 1px 0px, 2px 0px;
   background-repeat: no-repeat;
@@ -220,7 +231,7 @@ panelview:not([mainview]) .toolbarbutton-text,
 
 #PanelUI-contents {
   display: block;
-  flex: auto;
+  flex: 1 0 auto;
   margin-left: auto;
   margin-right: auto;
   padding: .5em 0;
@@ -717,7 +728,7 @@ menuitem.subviewbutton@menuStateHover@,
   border-color: hsla(210,4%,10%,.11);
 }
 
-panelview .toolbarbutton-1@buttonStateActive@,
+panelview .toolbarbutton-1:-moz-any(@buttonStateActive@,[checked=true]),
 toolbarbutton.subviewbutton@buttonStateActive@,
 menu.subviewbutton@menuStateActive@,
 menuitem.subviewbutton@menuStateActive@,
@@ -785,7 +796,7 @@ menuitem.panel-subview-footer@menuStateActive@,
 }
 
 /* Popups with only one item don't have a footer */
-menupopup[placespopup=true][singleitempopup=true] > hbox > .popup-internal-box > .arrowscrollbox-scrollbox > .scrollbox-innerbox,
+#BMB_bookmarksPopup menupopup[placespopup=true][singleitempopup=true] > hbox > .popup-internal-box > .arrowscrollbox-scrollbox > .scrollbox-innerbox,
 /* These popups never have a footer */
 #BMB_bookmarksToolbarPopup > hbox > .popup-internal-box > .arrowscrollbox-scrollbox > .scrollbox-innerbox,
 #BMB_unsortedBookmarksPopup > hbox > .popup-internal-box > .arrowscrollbox-scrollbox > .scrollbox-innerbox {
@@ -1064,6 +1075,10 @@ toolbaritem[overflowedItem=true],
 
 .subviewbutton[checked="true"] {
   background: url("chrome://global/skin/menu/shared-menu-check.png") center left 7px / 11px 11px no-repeat transparent;
+}
+
+.subviewbutton[checked="true"]:-moz-locale-dir(rtl) {
+  background-position: center right 7px;
 }
 
 .subviewbutton > .menu-iconic-left {

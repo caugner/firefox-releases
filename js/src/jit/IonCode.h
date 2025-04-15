@@ -7,12 +7,14 @@
 #ifndef jit_IonCode_h
 #define jit_IonCode_h
 
+#include "mozilla/Atomics.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
 
 #include "jsinfer.h"
 #include "jstypes.h"
 
+#include "assembler/jit/ExecutableAllocator.h"
 #include "gc/Heap.h"
 #include "jit/IonOptimizationLevels.h"
 #include "jit/IonTypes.h"
@@ -27,14 +29,6 @@ class AsmJSModule;
 
 namespace jit {
 
-// The maximum size of any buffer associated with an assembler or code object.
-// This is chosen to not overflow a signed integer, leaving room for an extra
-// bit on offsets.
-static const uint32_t MAX_BUFFER_SIZE = (1 << 30) - 1;
-
-// Maximum number of scripted arg slots.
-static const uint32_t SNAPSHOT_MAX_NARGS = 127;
-
 class MacroAssembler;
 class CodeOffsetLabel;
 class PatchableBackedge;
@@ -44,13 +38,15 @@ class JitCode : public gc::BarrieredCell<JitCode>
   protected:
     uint8_t *code_;
     JSC::ExecutablePool *pool_;
-    uint32_t bufferSize_;             // Total buffer size.
+    uint32_t bufferSize_;             // Total buffer size. Does not include headerSize_.
     uint32_t insnSize_;               // Instruction stream size.
     uint32_t dataSize_;               // Size of the read-only data area.
     uint32_t jumpRelocTableBytes_;    // Size of the jump relocation table.
     uint32_t dataRelocTableBytes_;    // Size of the data relocation table.
     uint32_t preBarrierTableBytes_;   // Size of the prebarrier table.
-    bool invalidated_;                // Whether the code object has been invalidated.
+    uint8_t headerSize_ : 5;          // Number of bytes allocated before codeStart.
+    uint8_t kind_ : 3;                // JSC::CodeKind, for the memory reporters.
+    bool invalidated_ : 1;            // Whether the code object has been invalidated.
                                       // This is necessary to prevent GC tracing.
 
 #if JS_BITS_PER_WORD == 32
@@ -62,7 +58,8 @@ class JitCode : public gc::BarrieredCell<JitCode>
       : code_(nullptr),
         pool_(nullptr)
     { }
-    JitCode(uint8_t *code, uint32_t bufferSize, JSC::ExecutablePool *pool)
+    JitCode(uint8_t *code, uint32_t bufferSize, uint32_t headerSize, JSC::ExecutablePool *pool,
+            JSC::CodeKind kind)
       : code_(code),
         pool_(pool),
         bufferSize_(bufferSize),
@@ -71,8 +68,13 @@ class JitCode : public gc::BarrieredCell<JitCode>
         jumpRelocTableBytes_(0),
         dataRelocTableBytes_(0),
         preBarrierTableBytes_(0),
+        headerSize_(headerSize),
+        kind_(kind),
         invalidated_(false)
-    { }
+    {
+        MOZ_ASSERT(JSC::CodeKind(kind_) == kind);
+        MOZ_ASSERT(headerSize_ == headerSize);
+    }
 
     uint32_t dataOffset() const {
         return insnSize_;
@@ -133,7 +135,8 @@ class JitCode : public gc::BarrieredCell<JitCode>
     // object can be allocated, nullptr is returned. On failure, |pool| is
     // automatically released, so the code may be freed.
     template <AllowGC allowGC>
-    static JitCode *New(JSContext *cx, uint8_t *code, uint32_t bufferSize, JSC::ExecutablePool *pool);
+    static JitCode *New(JSContext *cx, uint8_t *code, uint32_t bufferSize, uint32_t headerSize,
+                        JSC::ExecutablePool *pool, JSC::CodeKind kind);
 
   public:
     static inline ThingRootKind rootKind() { return THING_ROOT_JIT_CODE; }
@@ -195,13 +198,13 @@ struct IonScript
     // Flag set when it is likely that one of our (transitive) call
     // targets is not compiled.  Used in ForkJoin.cpp to decide when
     // we should add call targets to the worklist.
-    bool hasUncompiledCallTarget_;
+    mozilla::Atomic<bool, mozilla::Relaxed> hasUncompiledCallTarget_;
 
     // Flag set if IonScript was compiled with SPS profiling enabled.
     bool hasSPSInstrumentation_;
 
     // Flag for if this script is getting recompiled.
-    bool recompiling_;
+    uint32_t recompiling_;
 
     // Any kind of data needed by the runtime, these can be either cache
     // information or profiling info.
@@ -354,6 +357,9 @@ struct IonScript
     static inline size_t offsetOfRefcount() {
         return offsetof(IonScript, refcount_);
     }
+    static inline size_t offsetOfRecompiling() {
+        return offsetof(IonScript, recompiling_);
+    }
 
   public:
     JitCode *method() const {
@@ -499,7 +505,7 @@ struct IonScript
         return (CacheLocation *) &runtimeData()[locIndex];
     }
     void toggleBarriers(bool enabled);
-    void purgeCaches(JS::Zone *zone);
+    void purgeCaches();
     void destroyCaches();
     void unlinkFromRuntime(FreeOp *fop);
     void copySnapshots(const SnapshotWriter *writer);
@@ -718,40 +724,23 @@ struct VMFunction;
 class JitCompartment;
 class JitRuntime;
 
-struct AutoFlushCache
+struct AutoFlushICache
 {
   private:
     uintptr_t start_;
     uintptr_t stop_;
     const char *name_;
-    JitRuntime *runtime_;
-    bool used_;
+    bool inhibit_;
+    AutoFlushICache *prev_;
 
   public:
-    void update(uintptr_t p, size_t len);
-    static void updateTop(uintptr_t p, size_t len);
-    ~AutoFlushCache();
-    AutoFlushCache(const char *nonce, JitRuntime *rt);
-    void flushAnyway();
+    static void setRange(uintptr_t p, size_t len);
+    static void flush(uintptr_t p, size_t len);
+    static void setInhibit();
+    ~AutoFlushICache();
+    AutoFlushICache(const char *nonce, bool inhibit=false);
 };
 
-// If you are currently in the middle of modifing Ion-compiled code, which
-// is going to be flushed at *some* point, but determine that you *must*
-// call a function *right* *now*, two things can go wrong:
-//   1)  The flusher that you were using is still active, but you are about to
-//       enter jitted code, so it needs to be flushed
-//   2) the called function can re-enter a compilation/modification path which
-//       will use your AFC, and thus not flush when his compilation is done
-
-struct AutoFlushInhibitor
-{
-  private:
-    JitRuntime *runtime_;
-    AutoFlushCache *afc;
-  public:
-    AutoFlushInhibitor(JitRuntime *rt);
-    ~AutoFlushInhibitor();
-};
 } // namespace jit
 
 namespace gc {

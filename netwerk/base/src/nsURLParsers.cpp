@@ -147,12 +147,13 @@ nsBaseURLParser::ParseURL(const char *spec, int32_t specLen,
         // spec = <path-no-slashes-or-colon>
         //
         SET_RESULT(scheme, 0, -1);
-        if (authorityLen || pathLen)
+        if (authorityLen || pathLen) {
             ParseAfterScheme(spec, specLen,
                              authorityPos, authorityLen,
                              pathPos, pathLen);
             OFFSET_RESULT(authority, offset);
             OFFSET_RESULT(path, offset);
+        }
     }
     return NS_OK;
 }
@@ -367,7 +368,7 @@ nsNoAuthURLParser::ParseAfterScheme(const char *spec, int32_t specLen,
             const char *p = nullptr;
             if (specLen > 2) {
                 // looks like there is an authority section
-#if defined(XP_WIN) || defined(XP_OS2)
+#if defined(XP_WIN)
                 // if the authority looks like a drive number then we
                 // really want to treat it as part of the path
                 // [a-zA-Z][:|]{/\}
@@ -400,7 +401,7 @@ nsNoAuthURLParser::ParseAfterScheme(const char *spec, int32_t specLen,
     SET_RESULT(path, pos, specLen - pos);
 }
 
-#if defined(XP_WIN) || defined(XP_OS2)
+#if defined(XP_WIN)
 NS_IMETHODIMP
 nsNoAuthURLParser::ParseFilePath(const char *filepath, int32_t filepathLen,
                                  uint32_t *directoryPos, int32_t *directoryLen,

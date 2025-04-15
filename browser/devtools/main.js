@@ -88,6 +88,14 @@ Tools.webConsole = {
   tooltip: l10n("ToolboxWebconsole.tooltip", webConsoleStrings),
   inMenu: true,
 
+  preventClosingOnKey: true,
+  onkey: function(panel, toolbox) {
+    if (toolbox.splitConsole)
+      return toolbox.focusConsoleInput();
+
+    panel.focusInput();
+  },
+
   isTargetSupported: function(target) {
     return true;
   },
@@ -231,7 +239,8 @@ Tools.netMonitor = {
   inMenu: true,
 
   isTargetSupported: function(target) {
-    return !target.isApp;
+    let root = target.client.mainRoot;
+    return root.traits.networkMonitor || !target.isApp;
   },
 
   build: function(iframeWindow, toolbox) {

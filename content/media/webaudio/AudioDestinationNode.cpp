@@ -23,6 +23,8 @@
 namespace mozilla {
 namespace dom {
 
+static uint8_t gWebAudioOutputKey;
+
 class OfflineDestinationNodeEngine : public AudioNodeEngine
 {
 public:
@@ -52,10 +54,10 @@ public:
     }
   }
 
-  virtual void ProduceAudioBlock(AudioNodeStream* aStream,
-                                 const AudioChunk& aInput,
-                                 AudioChunk* aOutput,
-                                 bool* aFinished) MOZ_OVERRIDE
+  virtual void ProcessBlock(AudioNodeStream* aStream,
+                            const AudioChunk& aInput,
+                            AudioChunk* aOutput,
+                            bool* aFinished) MOZ_OVERRIDE
   {
     // Do this just for the sake of political correctness; this output
     // will not go anywhere.
@@ -128,10 +130,11 @@ public:
     JSAutoRequest ar(cx);
 
     // Create the input buffer
-    nsRefPtr<AudioBuffer> renderedBuffer = new AudioBuffer(context,
-                                                           mLength,
-                                                           mSampleRate);
-    if (!renderedBuffer->InitializeBuffers(mInputChannels.Length(), cx)) {
+    ErrorResult rv;
+    nsRefPtr<AudioBuffer> renderedBuffer =
+      AudioBuffer::Create(context, mInputChannels.Length(),
+                          mLength, mSampleRate, cx, rv);
+    if (rv.Failed()) {
       return;
     }
     for (uint32_t i = 0; i < mInputChannels.Length(); ++i) {
@@ -165,10 +168,10 @@ public:
   {
   }
 
-  virtual void ProduceAudioBlock(AudioNodeStream* aStream,
-                                 const AudioChunk& aInput,
-                                 AudioChunk* aOutput,
-                                 bool* aFinished) MOZ_OVERRIDE
+  virtual void ProcessBlock(AudioNodeStream* aStream,
+                            const AudioChunk& aInput,
+                            AudioChunk* aOutput,
+                            bool* aFinished) MOZ_OVERRIDE
   {
     *aOutput = aInput;
     aOutput->mVolume *= mVolume;
@@ -233,6 +236,7 @@ AudioDestinationNode::AudioDestinationNode(AudioContext* aContext,
 
   mStream = graph->CreateAudioNodeStream(engine, MediaStreamGraph::EXTERNAL_STREAM);
   mStream->AddMainThreadListener(this);
+  mStream->AddAudioOutput(&gWebAudioOutputKey);
 
   if (!aIsOffline && UseAudioChannelService()) {
     nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(GetOwner());
@@ -380,6 +384,23 @@ AudioDestinationNode::CanPlayChanged(int32_t aCanPlay)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+AudioDestinationNode::WindowVolumeChanged()
+{
+  MOZ_ASSERT(mAudioChannelAgent);
+
+  if (!mStream) {
+    return NS_OK;
+  }
+
+  float volume;
+  nsresult rv = mAudioChannelAgent->GetWindowVolume(&volume);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  mStream->SetAudioOutputVolume(&gWebAudioOutputKey, volume);
+  return NS_OK;
+}
+
 AudioChannel
 AudioDestinationNode::MozAudioChannelType() const
 {
@@ -478,7 +499,7 @@ AudioDestinationNode::CreateAudioChannelAgent()
   }
 
   mAudioChannelAgent = new AudioChannelAgent();
-  mAudioChannelAgent->InitWithWeakCallback(type, this);
+  mAudioChannelAgent->InitWithWeakCallback(GetOwner(), type, this);
 
   nsCOMPtr<nsIDocShell> docshell = do_GetInterface(GetOwner());
   if (docshell) {
@@ -548,7 +569,6 @@ AudioDestinationNode::SetIsOnlyNodeForContext(bool aIsOnlyNode)
   if (aIsOnlyNode) {
     mStream->ChangeExplicitBlockerCount(1);
     mStartedBlockingDueToBeingOnlyNode = TimeStamp::Now();
-    mExtraCurrentTimeSinceLastStartedBlocking = 0;
     // Don't do an update of mExtraCurrentTimeSinceLastStartedBlocking until the next stable state.
     mExtraCurrentTimeUpdatedSinceLastStableState = true;
     ScheduleStableStateNotification();
@@ -556,6 +576,7 @@ AudioDestinationNode::SetIsOnlyNodeForContext(bool aIsOnlyNode)
     // Force update of mExtraCurrentTimeSinceLastStartedBlocking if necessary
     ExtraCurrentTime();
     mExtraCurrentTime += mExtraCurrentTimeSinceLastStartedBlocking;
+    mExtraCurrentTimeSinceLastStartedBlocking = 0;
     mStream->ChangeExplicitBlockerCount(-1);
     mStartedBlockingDueToBeingOnlyNode = TimeStamp();
   }

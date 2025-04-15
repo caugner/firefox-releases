@@ -1,6 +1,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+"use strict";
 
 Components.utils.import("resource://gre/modules/Services.jsm");
 
@@ -70,7 +71,11 @@ SpecialPowersObserverAPI.prototype = {
 
   _observe: function(aSubject, aTopic, aData) {
     function addDumpIDToMessage(propertyName) {
-      var id = aSubject.getPropertyAsAString(propertyName);
+      try {
+        var id = aSubject.getPropertyAsAString(propertyName);
+      } catch(ex) {
+        var id = null;
+      }
       if (id) {
         message.dumpIDs.push({id: id, extension: "dmp"});
         message.dumpIDs.push({id: id, extension: "extra"});
@@ -158,6 +163,48 @@ SpecialPowersObserverAPI.prototype = {
 
   _getURI: function (url) {
     return Services.io.newURI(url, null, null);
+  },
+
+  _readUrlAsString: function(aUrl) {
+    // Fetch script content as we can't use scriptloader's loadSubScript
+    // to evaluate http:// urls...
+    var scriptableStream = Cc["@mozilla.org/scriptableinputstream;1"]
+                             .getService(Ci.nsIScriptableInputStream);
+    var channel = Services.io.newChannel(aUrl, null, null);
+    var input = channel.open();
+    scriptableStream.init(input);
+
+    var str;
+    var buffer = [];
+
+    while ((str = scriptableStream.read(4096))) {
+      buffer.push(str);
+    }
+
+    var output = buffer.join("");
+
+    scriptableStream.close();
+    input.close();
+
+    var status;
+    try {
+      channel.QueryInterface(Ci.nsIHttpChannel);
+      status = channel.responseStatus;
+    } catch(e) {
+      /* The channel is not a nsIHttpCHannel, but that's fine */
+      dump("-*- _readUrlAsString: Got an error while fetching " +
+           "chrome script '" + aUrl + "': (" + e.name + ") " + e.message + ". " +
+           "Ignoring.\n");
+    }
+
+    if (status == 404) {
+      throw new SpecialPowersException(
+        "Error while executing chrome script '" + aUrl + "':\n" +
+        "The script doesn't exists. Ensure you have registered it in " +
+        "'support-files' in your mochitest.ini.");
+    }
+
+    return output;
   },
 
   /**
@@ -300,16 +347,7 @@ SpecialPowersObserverAPI.prototype = {
         var url = aMessage.json.url;
         var id = aMessage.json.id;
 
-        // Fetch script content as we can't use scriptloader's loadSubScript
-        // to evaluate http:// urls...
-        var scriptableStream = Cc["@mozilla.org/scriptableinputstream;1"]
-                                 .getService(Ci.nsIScriptableInputStream);
-        var channel = Services.io.newChannel(url, null, null);
-        var input = channel.open();
-        scriptableStream.init(input);
-        var jsScript = scriptableStream.read(input.available());
-        scriptableStream.close();
-        input.close();
+        var jsScript = this._readUrlAsString(url);
 
         // Setup a chrome sandbox that has access to sendAsyncMessage
         // and addMessageListener in order to communicate with
@@ -332,7 +370,8 @@ SpecialPowersObserverAPI.prototype = {
           Components.utils.evalInSandbox(jsScript, sb, "1.8", url, 1);
         } catch(e) {
           throw new SpecialPowersException("Error while executing chrome " +
-                                           "script '" + url + "':\n" + e);
+                                           "script '" + url + "':\n" + e + "\n" +
+                                           e.fileName + ":" + e.lineNumber);
         }
         return undefined;	// See comment at the beginning of this function.
 

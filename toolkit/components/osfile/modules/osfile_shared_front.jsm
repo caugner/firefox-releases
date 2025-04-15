@@ -25,10 +25,15 @@ let clone = SharedAll.clone;
  * Code shared by implementations of File.
  *
  * @param {*} fd An OS-specific file handle.
+ * @param {string} path File path of the file handle, used for error-reporting.
  * @constructor
  */
-let AbstractFile = function AbstractFile(fd) {
+let AbstractFile = function AbstractFile(fd, path) {
   this._fd = fd;
+  if (!path) {
+    throw new TypeError("path is expected");
+  }
+  this._path = path;
 };
 
 AbstractFile.prototype = {
@@ -41,7 +46,7 @@ AbstractFile.prototype = {
     if (this._fd) {
       return this._fd;
     }
-    throw OS.File.Error.closed();
+    throw OS.File.Error.closed("accessing file", this._path);
   },
   /**
    * Read bytes from this file to a new buffer.
@@ -183,7 +188,7 @@ AbstractFile.openUnique = function openUnique(path, options = {}) {
         // keep trying ...
       }
     }
-    throw OS.File.Error.exists("could not find an unused file name.");
+    throw OS.File.Error.exists("could not find an unused file name.", path);
   }
 };
 
@@ -326,14 +331,35 @@ AbstractFile.read = function read(path, bytes, options = {}) {
     options = bytes;
     bytes = options.bytes || null;
   }
+  if ("encoding" in options && typeof options.encoding != "string") {
+    throw new TypeError("Invalid type for option encoding");
+  }
+  if ("compression" in options && typeof options.compression != "string") {
+    throw new TypeError("Invalid type for option compression: " + options.compression);
+  }
+  if ("bytes" in options && typeof options.bytes != "number") {
+    throw new TypeError("Invalid type for option bytes");
+  }
   let file = exports.OS.File.open(path);
   try {
     let buffer = file.read(bytes, options);
-    if (options.compression == "lz4") {
-      return Lz4.decompressFileContent(buffer, options);
-    } else {
+    if ("compression" in options) {
+      if (options.compression == "lz4") {
+        buffer = Lz4.decompressFileContent(buffer, options);
+      } else {
+        throw OS.File.Error.invalidArgument("Compression");
+      }
+    }
+    if (!("encoding" in options)) {
       return buffer;
     }
+    let decoder;
+    try {
+      decoder = new TextDecoder(options.encoding);
+    } catch (ex if ex instanceof TypeError) {
+      throw OS.File.Error.invalidArgument("Decode");
+    }
+    return decoder.decode(buffer);
   } finally {
     file.close();
   }
@@ -378,6 +404,11 @@ AbstractFile.read = function read(path, bytes, options = {}) {
  * If "lz4", compress the contents of the file atomically using lz4. For the
  * time being, the container format is specific to Mozilla and cannot be read
  * by means other than OS.File.read(..., { compression: "lz4"})
+ * - {string} backupTo - If specified, backup the destination file as |backupTo|.
+ * Note that this function renames the destination file before overwriting it.
+ * If the process or the operating system freezes or crashes
+ * during the short window between these operations,
+ * the destination file will have been moved to its backup.
  *
  * @return {number} The number of bytes actually written.
  */
@@ -390,7 +421,7 @@ AbstractFile.writeAtomic =
   }
   let noOverwrite = options.noOverwrite;
   if (noOverwrite && OS.File.exists(path)) {
-    throw OS.File.Error.exists("writeAtomic");
+    throw OS.File.Error.exists("writeAtomic", path);
   }
 
   if (typeof buffer == "string") {
@@ -399,7 +430,7 @@ AbstractFile.writeAtomic =
     buffer = new TextEncoder(encoding).encode(buffer);
   }
 
-  if (options.compression == "lz4") {
+  if ("compression" in options && options.compression == "lz4") {
     buffer = Lz4.compressFileContent(buffer, options);
     options = Object.create(options);
     options.bytes = buffer.byteLength;
@@ -408,6 +439,13 @@ AbstractFile.writeAtomic =
   let bytesWritten = 0;
 
   if (!options.tmpPath) {
+    if (options.backupTo) {
+      try {
+        OS.File.move(path, options.backupTo, {noCopy: true});
+      } catch (ex if ex.becauseNoSuchFile) {
+        // The file doesn't exist, nothing to backup.
+      }
+    }
     // Just write, without any renaming trick
     let dest = OS.File.open(path, {write: true, truncate: true});
     try {
@@ -432,6 +470,14 @@ AbstractFile.writeAtomic =
     throw x;
   } finally {
     tmpFile.close();
+  }
+
+  if (options.backupTo) {
+    try {
+      OS.File.move(path, options.backupTo, {noCopy: true});
+    } catch (ex if ex.becauseNoSuchFile) {
+      // The file doesn't exist, nothing to backup.
+    }
   }
 
   OS.File.move(options.tmpPath, path, {noCopy: true});

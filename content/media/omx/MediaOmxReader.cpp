@@ -15,14 +15,29 @@
 #include "AbstractMediaDecoder.h"
 #include "OmxDecoder.h"
 #include "MPAPI.h"
+#include "gfx2DGlue.h"
+
+#ifdef MOZ_AUDIO_OFFLOAD
+#include <stagefright/Utils.h>
+#include <cutils/properties.h>
+#include <stagefright/MetaData.h>
+#endif
 
 #define MAX_DROPPED_FRAMES 25
 // Try not to spend more than this much time in a single call to DecodeVideoFrame.
 #define MAX_VIDEO_DECODE_SECONDS 3.0
 
+using namespace mozilla::gfx;
 using namespace android;
 
 namespace mozilla {
+
+#ifdef PR_LOGGING
+extern PRLogModuleInfo* gMediaDecoderLog;
+#define DECODER_LOG(type, msg) PR_LOG(gMediaDecoderLog, type, msg)
+#else
+#define DECODER_LOG(type, msg)
+#endif
 
 MediaOmxReader::MediaOmxReader(AbstractMediaDecoder *aDecoder) :
   MediaDecoderReader(aDecoder),
@@ -30,8 +45,14 @@ MediaOmxReader::MediaOmxReader(AbstractMediaDecoder *aDecoder) :
   mHasAudio(false),
   mVideoSeekTimeUs(-1),
   mAudioSeekTimeUs(-1),
-  mSkipCount(0)
+  mSkipCount(0),
+  mAudioChannelType(dom::AUDIO_CHANNEL_DEFAULT)
 {
+#ifdef PR_LOGGING
+  if (!gMediaDecoderLog) {
+    gMediaDecoderLog = PR_NewLogModule("MediaDecoder");
+  }
+#endif
 }
 
 MediaOmxReader::~MediaOmxReader()
@@ -122,6 +143,10 @@ nsresult MediaOmxReader::ReadMetadata(MediaInfo* aInfo,
     return NS_ERROR_FAILURE;
   }
 
+#ifdef MOZ_AUDIO_OFFLOAD
+  CheckAudioOffload();
+#endif
+
   if (IsWaitingMediaResources()) {
     return NS_OK;
   }
@@ -146,7 +171,7 @@ nsresult MediaOmxReader::ReadMetadata(MediaInfo* aInfo,
     // that our video frame creation code doesn't overflow.
     nsIntSize displaySize(width, height);
     nsIntSize frameSize(width, height);
-    if (!VideoInfo::ValidateVideoRegion(frameSize, pictureRect, displaySize)) {
+    if (!IsValidVideoRegion(frameSize, pictureRect, displaySize)) {
       return NS_ERROR_FAILURE;
     }
 
@@ -217,7 +242,7 @@ bool MediaOmxReader::DecodeVideoFrame(bool &aKeyframeSkip,
     mVideoSeekTimeUs = -1;
     aKeyframeSkip = false;
 
-    nsIntRect picture = mPicture;
+    IntRect picture = ToIntRect(mPicture);
     if (frame.Y.mWidth != mInitialFrame.width ||
         frame.Y.mHeight != mInitialFrame.height) {
 
@@ -312,33 +337,29 @@ bool MediaOmxReader::DecodeAudioData()
   int64_t pos = mDecoder->GetResource()->Tell();
 
   // Read next frame
-  MPAPI::AudioFrame frame;
-  if (!mOmxDecoder->ReadAudio(&frame, mAudioSeekTimeUs)) {
+  MPAPI::AudioFrame source;
+  if (!mOmxDecoder->ReadAudio(&source, mAudioSeekTimeUs)) {
     return false;
   }
   mAudioSeekTimeUs = -1;
 
   // Ignore empty buffer which stagefright media read will sporadically return
-  if (frame.mSize == 0) {
+  if (source.mSize == 0) {
     return true;
   }
 
-  nsAutoArrayPtr<AudioDataValue> buffer(new AudioDataValue[frame.mSize/2] );
-  memcpy(buffer.get(), frame.mData, frame.mSize);
+  uint32_t frames = source.mSize / (source.mAudioChannels *
+                                    sizeof(AudioDataValue));
 
-  uint32_t frames = frame.mSize / (2 * frame.mAudioChannels);
-  CheckedInt64 duration = FramesToUsecs(frames, frame.mAudioSampleRate);
-  if (!duration.isValid()) {
-    return false;
-  }
-
-  mAudioQueue.Push(new AudioData(pos,
-                                 frame.mTimeUs,
-                                 duration.value(),
-                                 frames,
-                                 buffer.forget(),
-                                 frame.mAudioChannels));
-  return true;
+  typedef AudioCompactor::NativeCopy OmxCopy;
+  return mAudioCompactor.Push(pos,
+                              source.mTimeUs,
+                              source.mAudioSampleRate,
+                              frames,
+                              source.mAudioChannels,
+                              OmxCopy(static_cast<uint8_t *>(source.mData),
+                                      source.mSize,
+                                      source.mAudioChannels));
 }
 
 nsresult MediaOmxReader::Seek(int64_t aTarget, int64_t aStartTime, int64_t aEndTime, int64_t aCurrentTime)
@@ -363,18 +384,56 @@ static uint64_t BytesToTime(int64_t offset, uint64_t length, uint64_t durationUs
   return uint64_t(double(durationUs) * perc);
 }
 
-void MediaOmxReader::OnDecodeThreadFinish() {
-  if (mOmxDecoder.get()) {
-    mOmxDecoder->Pause();
+void MediaOmxReader::SetIdle() {
+  if (!mOmxDecoder.get()) {
+    return;
   }
+  mOmxDecoder->Pause();
 }
 
-void MediaOmxReader::OnDecodeThreadStart() {
-  if (mOmxDecoder.get()) {
-    DebugOnly<nsresult> result = mOmxDecoder->Play();
-    NS_ASSERTION(result == NS_OK, "OmxDecoder should be in play state to continue decoding");
+void MediaOmxReader::SetActive() {
+  if (!mOmxDecoder.get()) {
+    return;
+  }
+  DebugOnly<nsresult> result = mOmxDecoder->Play();
+  NS_ASSERTION(result == NS_OK, "OmxDecoder should be in play state to continue decoding");
+}
+
+#ifdef MOZ_AUDIO_OFFLOAD
+void MediaOmxReader::CheckAudioOffload()
+{
+  NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
+
+  char offloadProp[128];
+  property_get("audio.offload.disable", offloadProp, "0");
+  bool offloadDisable =  atoi(offloadProp) != 0;
+  if (offloadDisable) {
+    return;
+  }
+
+  mAudioOffloadTrack = mOmxDecoder->GetAudioOffloadTrack();
+  sp<MetaData> meta = (mAudioOffloadTrack.get()) ?
+      mAudioOffloadTrack->getFormat() : nullptr;
+
+  // Supporting audio offload only when there is no video, no streaming
+  bool hasNoVideo = !mOmxDecoder->HasVideo();
+  bool isNotStreaming
+      = mDecoder->GetResource()->IsDataCachedToEndOfResource(0);
+
+  // Not much benefit in trying to offload other channel types. Most of them
+  // aren't supported and also duration would be less than a minute
+  bool isTypeMusic = mAudioChannelType == dom::AUDIO_CHANNEL_CONTENT;
+
+  DECODER_LOG(PR_LOG_DEBUG, ("%s meta %p, no video %d, no streaming %d,"
+      " channel type %d", __FUNCTION__, meta.get(), hasNoVideo,
+      isNotStreaming, mAudioChannelType));
+
+  if ((meta.get()) && hasNoVideo && isNotStreaming && isTypeMusic &&
+      canOffloadStream(meta, false, false, AUDIO_STREAM_MUSIC)) {
+    DECODER_LOG(PR_LOG_DEBUG, ("Can offload this audio stream"));
+    mDecoder->SetCanOffloadAudio(true);
   }
 }
+#endif
 
 } // namespace mozilla
-

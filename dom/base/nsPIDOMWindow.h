@@ -190,10 +190,22 @@ public:
 
   virtual NS_HIDDEN_(bool) IsRunningTimeout() = 0;
 
+  // Audio API
+  bool GetAudioMuted() const;
+  void SetAudioMuted(bool aMuted);
+
+  float GetAudioVolume() const;
+  nsresult SetAudioVolume(float aVolume);
+
+  float GetAudioGlobalVolume();
+
 protected:
   // Lazily instantiate an about:blank document if necessary, and if
   // we have what it takes to do so.
   void MaybeCreateDoc();
+
+  float GetAudioGlobalVolumeInternal(float aVolume);
+  void RefreshMediaElements();
 
 public:
   // Internal getter/setter for the frame element, this version of the
@@ -340,10 +352,11 @@ public:
   // keep the same document active but create a new window.
   bool HasActiveDocument()
   {
+    MOZ_ASSERT(IsInnerWindow());
     return IsCurrentInnerWindow() ||
-      (GetOuterWindow() &&
-       GetOuterWindow()->GetCurrentInnerWindow() &&
-       GetOuterWindow()->GetCurrentInnerWindow()->GetDoc() == mDoc);
+      (mOuterWindow &&
+       mOuterWindow->GetCurrentInnerWindow() &&
+       mOuterWindow->GetCurrentInnerWindow()->GetDoc() == mDoc);
   }
 
   bool IsOuterWindow() const
@@ -482,6 +495,25 @@ public:
   {
     mMayHaveMouseEnterLeaveEventListener = true;
   }
+
+  /**
+   * Call this to check whether some node (this window, its document,
+   * or content in that document) has a Pointerenter/leave event listener.
+   */
+  bool HasPointerEnterLeaveEventListeners()
+  {
+    return mMayHavePointerEnterLeaveEventListener;
+  }
+
+  /**
+   * Call this to indicate that some node (this window, its document,
+   * or content in that document) has a Pointerenter/leave event listener.
+   */
+  void SetHasPointerEnterLeaveEventListeners()
+  {
+    mMayHavePointerEnterLeaveEventListener = true;
+  }
+
 
   virtual JSObject* GetCachedXBLPrototypeHandler(nsXBLPrototypeHandler* aKey) = 0;
   virtual void CacheXBLPrototypeHandler(nsXBLPrototypeHandler* aKey,
@@ -733,6 +765,7 @@ protected:
   bool                   mMayHavePaintEventListener;
   bool                   mMayHaveTouchEventListener;
   bool                   mMayHaveMouseEnterLeaveEventListener;
+  bool                   mMayHavePointerEnterLeaveEventListener;
 
   // This variable is used on both inner and outer windows (and they
   // should match).
@@ -746,6 +779,9 @@ protected:
   // is false.  Too bad we have so many different concepts of
   // "active".  Only used on outer windows.
   bool                   mIsBackground;
+
+  bool                   mAudioMuted;
+  float                  mAudioVolume;
 
   // And these are the references between inner and outer windows.
   nsPIDOMWindow         *mInnerWindow;

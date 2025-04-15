@@ -30,15 +30,9 @@ XPCOMUtils.defineLazyGetter(this, "localFileCtor",
 
 this.PlacesBackups = {
   get _filenamesRegex() {
-    // Get the localized backup filename, will be used to clear out
-    // old backups with a localized name (bug 445704).
-    let localizedFilename =
-      PlacesUtils.getFormattedString("bookmarksArchiveFilename", [new Date()]);
-    let localizedFilenamePrefix =
-      localizedFilename.substr(0, localizedFilename.indexOf("-"));
     delete this._filenamesRegex;
     return this._filenamesRegex =
-      new RegExp("^(bookmarks|" + localizedFilenamePrefix + ")-([0-9-]+)(_[0-9]+)*\.(json|html)");
+      new RegExp("^(bookmarks)-([0-9-]+)(_[0-9]+)*\.(json|html)");
   },
 
   get folder() {
@@ -455,6 +449,7 @@ this.PlacesBackups = {
    *         The following properties exist only for a subset of bookmarks:
    *         * annos: array of annotations
    *         * uri: url
+   *         * iconuri: favicon's url
    *         * keyword: associated keyword
    *         * charset: last known charset
    *         * tags: csv string of tags
@@ -470,7 +465,8 @@ this.PlacesBackups = {
       try {
         rows = yield conn.execute(
           "SELECT b.id, h.url, IFNULL(b.title, '') AS title, b.parent, " +
-                 "b.position AS [index], b.type, b.dateAdded, b.lastModified, b.guid, " +
+                 "b.position AS [index], b.type, b.dateAdded, b.lastModified, " +
+                 "b.guid, f.url AS iconuri, " +
                  "( SELECT GROUP_CONCAT(t.title, ',') " +
                    "FROM moz_bookmarks b2 " +
                    "JOIN moz_bookmarks t ON t.id = +b2.parent AND t.parent = :tags_folder " +
@@ -484,6 +480,7 @@ this.PlacesBackups = {
           "FROM moz_bookmarks b " +
           "LEFT JOIN moz_bookmarks p ON p.id = b.parent " +
           "LEFT JOIN moz_places h ON h.id = b.fk " +
+          "LEFT JOIN moz_favicons f ON f.id = h.favicon_id " +
           "WHERE b.id <> :tags_folder AND b.parent <> :tags_folder AND p.parent <> :tags_folder " +
           "ORDER BY b.parent, b.position",
           { tags_folder: PlacesUtils.tagsFolderId,
@@ -505,7 +502,7 @@ this.PlacesBackups = {
             // Since children may be added before parents, we should merge with
             // the existing object.
             let original = itemsMap.get(id);
-            for (prop in bookmark) {
+            for (let prop of Object.getOwnPropertyNames(bookmark)) {
               original[prop] = bookmark[prop];
             }
             bookmark = original;
@@ -607,6 +604,9 @@ function sqliteRowToBookmarkObject(aRow) {
       let tags = aRow.getResultByName("tags");
       if (tags)
         bookmark.tags = tags;
+      let iconuri = aRow.getResultByName("iconuri");
+      if (iconuri)
+        bookmark.iconuri = iconuri;
       break;
     case Ci.nsINavBookmarksService.TYPE_FOLDER:
       bookmark.type = PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER;

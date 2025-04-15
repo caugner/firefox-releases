@@ -36,12 +36,14 @@
 #include "prdtoa.h"
 #include "prenv.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/unused.h"
 #include "nsContentUtils.h"
-#include "gfxPlatform.h"
+#include "gfxPrefs.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/MouseEvents.h"
 #include "GLConsts.h"
 #include "LayerScope.h"
+#include "mozilla/unused.h"
 
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
@@ -189,8 +191,8 @@ void nsBaseWidget::DestroyCompositor()
                                    mCompositorChild));
     // The DestroyCompositor task we just added to the MessageLoop will handle
     // releasing mCompositorParent and mCompositorChild.
-    mCompositorParent.forget();
-    mCompositorChild.forget();
+    unused << mCompositorParent.forget();
+    unused << mCompositorChild.forget();
   }
 }
 
@@ -266,6 +268,7 @@ void nsBaseWidget::BaseCreate(nsIWidget *aParent,
     mBorderStyle = aInitData->mBorderStyle;
     mPopupLevel = aInitData->mPopupLevel;
     mPopupType = aInitData->mPopupHint;
+    mRequireOffMainThreadCompositing = aInitData->mRequireOffMainThreadCompositing;
   }
 
   if (aParent) {
@@ -837,7 +840,7 @@ bool
 nsBaseWidget::ComputeShouldAccelerate(bool aDefault)
 {
 #if defined(XP_WIN) || defined(ANDROID) || \
-    defined(MOZ_GL_PROVIDER) || defined(XP_MACOSX)
+    defined(MOZ_GL_PROVIDER) || defined(XP_MACOSX) || defined(MOZ_WIDGET_QT)
   bool accelerateByDefault = true;
 #else
   bool accelerateByDefault = false;
@@ -858,8 +861,8 @@ nsBaseWidget::ComputeShouldAccelerate(bool aDefault)
 #endif
 
   // we should use AddBoolPrefVarCache
-  bool disableAcceleration = gfxPlatform::GetPrefLayersAccelerationDisabled();
-  mForceLayersAcceleration = gfxPlatform::GetPrefLayersAccelerationForceEnabled();
+  bool disableAcceleration = gfxPrefs::LayersAccelerationDisabled();
+  mForceLayersAcceleration = gfxPrefs::LayersAccelerationForceEnabled();
 
   const char *acceleratedEnv = PR_GetEnv("MOZ_ACCELERATED");
   accelerateByDefault = accelerateByDefault ||
@@ -942,8 +945,7 @@ CheckForBasicBackends(nsTArray<LayersBackend>& aHints)
 {
   for (size_t i = 0; i < aHints.Length(); ++i) {
     if (aHints[i] == LayersBackend::LAYERS_BASIC &&
-        !Preferences::GetBool("layers.offmainthreadcomposition.force-basic", false) &&
-        !BrowserTabsRemote()) {
+        !Preferences::GetBool("layers.offmainthreadcomposition.force-basic", false)) {
       // basic compositor is not stable enough for regular use
       aHints[i] = LayersBackend::LAYERS_NONE;
     }
@@ -972,11 +974,13 @@ void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
   mCompositorChild->Open(parentChannel, childMessageLoop, ipc::ChildSide);
 
   TextureFactoryIdentifier textureFactoryIdentifier;
-  PLayerTransactionChild* shadowManager;
+  PLayerTransactionChild* shadowManager = nullptr;
   nsTArray<LayersBackend> backendHints;
   GetPreferredCompositorBackends(backendHints);
 
-  CheckForBasicBackends(backendHints);
+  if (!mRequireOffMainThreadCompositing) {
+    CheckForBasicBackends(backendHints);
+  }
 
   bool success = false;
   if (!backendHints.IsEmpty()) {
@@ -1466,6 +1470,18 @@ nsBaseWidget::NotifySizeMoveDone()
   nsIPresShell* presShell = mWidgetListener->GetPresShell();
   if (presShell) {
     presShell->WindowSizeMoveDone();
+  }
+}
+
+void
+nsBaseWidget::NotifyWindowMoved(int32_t aX, int32_t aY)
+{
+  if (mWidgetListener) {
+    mWidgetListener->WindowMoved(this, aX, aY);
+  }
+
+  if (GetIMEUpdatePreference().WantPositionChanged()) {
+    NotifyIME(IMENotification(IMEMessage::NOTIFY_IME_OF_POSITION_CHANGE));
   }
 }
 

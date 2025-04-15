@@ -108,10 +108,8 @@ EnterBaseline(JSContext *cx, EnterJitData &data)
     data.result.setInt32(data.numActualArgs);
     {
         AssertCompartmentUnchanged pcc(cx);
-        IonContext ictx(cx, nullptr);
         JitActivation activation(cx, data.constructing);
         JSAutoResolveFlags rf(cx, RESOLVE_INFER);
-        AutoFlushInhibitor afi(cx->runtime()->jitRuntime());
 
         if (data.osrFrame)
             data.osrFrame->setRunningInJit();
@@ -218,7 +216,7 @@ jit::BaselineCompile(JSContext *cx, HandleScript script)
 {
     JS_ASSERT(!script->hasBaselineScript());
     JS_ASSERT(script->canBaselineCompile());
-
+    JS_ASSERT(IsBaselineEnabled(cx));
     LifoAlloc alloc(BASELINE_LIFO_ALLOC_PRIMARY_CHUNK_SIZE);
 
     script->ensureNonLazyCanonicalFunction(cx);
@@ -233,7 +231,6 @@ jit::BaselineCompile(JSContext *cx, HandleScript script)
     if (!compiler.init())
         return Method_Error;
 
-    AutoFlushCache afc("BaselineJIT", cx->runtime()->jitRuntime());
     MethodStatus status = compiler.compile();
 
     JS_ASSERT_IF(status == Method_Compiled, script->hasBaselineScript());
@@ -275,7 +272,7 @@ CanEnterBaselineJIT(JSContext *cx, HandleScript script, bool osr)
     // parallel execution. We want to avoid the situation of OSRing during
     // warmup and only gathering type information for the loop, and not the
     // rest of the function.
-    if (IsJSDEnabled(cx) || cx->runtime()->parallelWarmup > 0) {
+    if (IsJSDEnabled(cx) || cx->runtime()->forkJoinWarmup > 0) {
         if (osr)
             return Method_Skipped;
     } else if (script->incUseCount() <= js_JitOptions.baselineUsesBeforeCompile) {
@@ -285,7 +282,7 @@ CanEnterBaselineJIT(JSContext *cx, HandleScript script, bool osr)
     if (script->isCallsiteClone()) {
         // Ensure the original function is compiled too, so that bailouts from
         // Ion code have a BaselineScript to resume into.
-        RootedScript original(cx, script->originalFunction()->nonLazyScript());
+        RootedScript original(cx, script->donorFunction()->nonLazyScript());
         JS_ASSERT(original != script);
 
         if (!original->canBaselineCompile())
@@ -760,12 +757,6 @@ BaselineScript::toggleDebugTraps(JSScript *script, jsbytecode *pc)
         return;
 
     SrcNoteLineScanner scanner(script->notes(), script->lineno());
-
-    JSRuntime *rt = script->runtimeFromMainThread();
-    IonContext ictx(CompileRuntime::get(rt),
-                    CompileCompartment::get(script->compartment()),
-                    nullptr);
-    AutoFlushCache afc("DebugTraps", rt->jitRuntime());
 
     for (uint32_t i = 0; i < numPCMappingIndexEntries(); i++) {
         PCMappingIndexEntry &entry = pcMappingIndexEntry(i);

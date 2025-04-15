@@ -190,40 +190,38 @@ struct SuppressErrorsGuard
 {
     JSContext *cx;
     JSErrorReporter prevReporter;
-    JSExceptionState *prevState;
+    JS::AutoSaveExceptionState prevState;
 
     SuppressErrorsGuard(JSContext *cx)
       : cx(cx),
         prevReporter(JS_SetErrorReporter(cx, nullptr)),
-        prevState(JS_SaveExceptionState(cx))
+        prevState(cx)
     {}
 
     ~SuppressErrorsGuard()
     {
-        JS_RestoreExceptionState(cx, prevState);
         JS_SetErrorReporter(cx, prevReporter);
     }
 };
 
-static JSString *
-ComputeStackString(JSContext *cx)
+JSString *
+js::ComputeStackString(JSContext *cx)
 {
     StringBuffer sb(cx);
 
     {
         RootedAtom atom(cx);
         SuppressErrorsGuard seg(cx);
-        // We should get rid of the CURRENT_CONTEXT and STOP_AT_SAVED here.
-        // See bug 960820.
-        for (NonBuiltinScriptFrameIter i(cx, ScriptFrameIter::CURRENT_CONTEXT,
-                                         ScriptFrameIter::STOP_AT_SAVED,
-                                         cx->compartment()->principals);
-            !i.done(); ++i)
+        for (NonBuiltinFrameIter i(cx, FrameIter::ALL_CONTEXTS, FrameIter::GO_THROUGH_SAVED,
+                                   cx->compartment()->principals);
+             !i.done();
+             ++i)
         {
             /* First append the function name, if any. */
-            atom = nullptr;
-            if (i.isNonEvalFunctionFrame() && i.callee()->displayAtom())
-                atom = i.callee()->displayAtom();
+            if (i.isNonEvalFunctionFrame())
+                atom = i.functionDisplayAtom();
+            else
+                atom = nullptr;
             if (atom && !sb.append(atom))
                 return nullptr;
 
@@ -232,16 +230,21 @@ ComputeStackString(JSContext *cx)
                 return nullptr;
 
             /* Now the filename. */
-            RootedScript script(cx, i.script());
-            const char *cfilename = script->filename();
+            const char *cfilename = i.scriptFilename();
             if (!cfilename)
                 cfilename = "";
             if (!sb.appendInflated(cfilename, strlen(cfilename)))
                 return nullptr;
 
-            /* Finally, : followed by the line number and a newline. */
-            uint32_t line = PCToLineNumber(script, i.pc());
-            if (!sb.append(':') || !NumberValueToStringBuffer(cx, NumberValue(line), sb) ||
+            uint32_t column = 0;
+            uint32_t line = i.computeLine(&column);
+            // Now the line number
+            if (!sb.append(':') || !NumberValueToStringBuffer(cx, NumberValue(line), sb))
+                return nullptr;
+
+            // Finally, : followed by the column number (1-based, as in other browsers)
+            // and a newline.
+            if (!sb.append(':') || !NumberValueToStringBuffer(cx, NumberValue(column + 1), sb) ||
                 !sb.append('\n'))
             {
                 return nullptr;
@@ -301,17 +304,16 @@ Error(JSContext *cx, unsigned argc, Value *vp)
     }
 
     /* Find the scripted caller. */
-    NonBuiltinScriptFrameIter iter(cx);
+    NonBuiltinFrameIter iter(cx);
 
     /* Set the 'fileName' property. */
-    RootedScript script(cx, iter.done() ? nullptr : iter.script());
     RootedString fileName(cx);
     if (args.length() > 1) {
         fileName = ToString<CanGC>(cx, args[1]);
     } else {
         fileName = cx->runtime()->emptyString;
         if (!iter.done()) {
-            if (const char *cfilename = script->filename())
+            if (const char *cfilename = iter.scriptFilename())
                 fileName = JS_NewStringCopyZ(cx, cfilename);
         }
     }
@@ -324,7 +326,7 @@ Error(JSContext *cx, unsigned argc, Value *vp)
         if (!ToUint32(cx, args[2], &lineNumber))
             return false;
     } else {
-        lineNumber = iter.done() ? 0 : PCToLineNumber(script, iter.pc(), &columnNumber);
+        lineNumber = iter.done() ? 0 : iter.computeLine(&columnNumber);
     }
 
     Rooted<JSString*> stack(cx, ComputeStackString(cx));
@@ -557,7 +559,7 @@ ErrorObject::createProto(JSContext *cx, JS::Handle<GlobalObject*> global, JSExnT
     if (!LinkConstructorAndPrototype(cx, ctor, err))
         return nullptr;
 
-    if (!DefineConstructorAndPrototype(cx, global, key, ctor, err))
+    if (!GlobalObject::initBuiltinConstructor(cx, global, key, ctor, err))
         return nullptr;
 
     return err;
@@ -849,8 +851,8 @@ js_ReportUncaughtException(JSContext *cx)
             // done for duck-typed error objects.
             //
             // If only this stuff could get specced one day...
-            if (JSStableString *stable = str->ensureStable(cx))
-                report.ucmessage = stable->chars().get();
+            if (JSFlatString *flat = str->ensureFlat(cx))
+                report.ucmessage = flat->chars();
         }
     }
 

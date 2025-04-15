@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "TextComposition.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/Preferences.h"
@@ -29,7 +30,7 @@
 #include "nsIDOMNodeIterator.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMText.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsINode.h"
 #include "nsIPlaintextEditor.h"
 #include "nsISelection.h"
@@ -56,17 +57,28 @@ using namespace mozilla;
  ********************************************************/
 
 nsTextEditRules::nsTextEditRules()
-: mEditor(nullptr)
-, mPasswordText()
-, mPasswordIMEText()
-, mPasswordIMEIndex(0)
-, mActionNesting(0)
-, mLockRulesSniffing(false)
-, mDidExplicitlySetInterline(false)
-, mTheAction(EditAction::none)
-, mLastStart(0)
-, mLastLength(0)
 {
+  InitFields();
+}
+
+void
+nsTextEditRules::InitFields()
+{
+  mEditor = nullptr;
+  mPasswordText.Truncate();
+  mPasswordIMEText.Truncate();
+  mPasswordIMEIndex = 0;
+  mBogusNode = nullptr;
+  mCachedSelectionNode = nullptr;
+  mCachedSelectionOffset = 0;
+  mActionNesting = 0;
+  mLockRulesSniffing = false;
+  mDidExplicitlySetInterline = false;
+  mDeleteBidiImmediately = false;
+  mTheAction = EditAction::none;
+  mTimer = nullptr;
+  mLastStart = 0;
+  mLastLength = 0;
 }
 
 nsTextEditRules::~nsTextEditRules()
@@ -100,6 +112,8 @@ NS_IMETHODIMP
 nsTextEditRules::Init(nsPlaintextEditor *aEditor)
 {
   if (!aEditor) { return NS_ERROR_NULL_POINTER; }
+
+  InitFields();
 
   mEditor = aEditor;  // we hold a non-refcounted reference back to our editor
   nsCOMPtr<nsISelection> selection;
@@ -1208,7 +1222,8 @@ nsTextEditRules::TruncateInsertionIfNeeded(Selection* aSelection,
     nsContentUtils::GetSelectionInTextControl(aSelection, mEditor->GetRoot(),
                                               start, end);
 
-    int32_t oldCompStrLength = mEditor->GetIMEBufferLength();
+    TextComposition* composition = mEditor->GetComposition();
+    int32_t oldCompStrLength = composition ? composition->String().Length() : 0;
 
     const int32_t selectionLength = end - start;
     const int32_t resultingDocLength = docLength - selectionLength - oldCompStrLength;

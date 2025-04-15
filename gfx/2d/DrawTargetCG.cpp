@@ -12,6 +12,8 @@
 #include <algorithm>
 #include "MacIOSurface.h"
 #include "FilterNodeSoftware.h"
+#include "mozilla/Assertions.h"
+#include "mozilla/FloatingPoint.h"
 
 using namespace std;
 
@@ -349,6 +351,7 @@ static CGColorRef ColorToCGColor(CGColorSpaceRef aColorSpace, const Color& aColo
 class GradientStopsCG : public GradientStops
 {
   public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GradientStopsCG)
   //XXX: The skia backend uses a vector and passes in aNumStops. It should do better
   GradientStopsCG(GradientStop* aStops, uint32_t aNumStops, ExtendMode aExtendMode)
   {
@@ -412,6 +415,8 @@ UpdateLinearParametersToIncludePoint(double *min_t, double *max_t,
                                      double dx, double dy,
                                      double x, double y)
 {
+  MOZ_ASSERT(IsFinite(x) && IsFinite(y));
+
   /**
    * Compute a parameter t such that a line perpendicular to the (dx,dy)
    * vector, passing through (start->x + dx*t, start->y + dy*t), also
@@ -452,8 +457,8 @@ static void
 CalculateRepeatingGradientParams(CGPoint *aStart, CGPoint *aEnd,
                                  CGRect aExtents, int *aRepeatCount)
 {
-  double t_min = 0.;
-  double t_max = 0.;
+  double t_min = INFINITY;
+  double t_max = -INFINITY;
   double dx = aEnd->x - aStart->x;
   double dy = aEnd->y - aStart->y;
 
@@ -470,6 +475,9 @@ CalculateRepeatingGradientParams(CGPoint *aStart, CGPoint *aEnd,
                                        bounds_x2, bounds_y2);
   UpdateLinearParametersToIncludePoint(&t_min, &t_max, aStart, dx, dy,
                                        bounds_x1, bounds_y2);
+
+  MOZ_ASSERT(!isinf(t_min) && !isinf(t_max),
+             "The first call to UpdateLinearParametersToIncludePoint should have made t_min and t_max non-infinite.");
 
   // Move t_min and t_max to the nearest usable integer to try to avoid
   // subtle variations due to numerical instability, especially accidentally
@@ -605,6 +613,10 @@ DrawRadialRepeatingGradient(CGContextRef cg, const RadialGradientPattern &aPatte
 static void
 DrawGradient(CGContextRef cg, const Pattern &aPattern, const CGRect &aExtents)
 {
+  if (CGRectIsEmpty(aExtents)) {
+    return;
+  }
+
   if (aPattern.GetType() == PatternType::LINEAR_GRADIENT) {
     const LinearGradientPattern& pat = static_cast<const LinearGradientPattern&>(aPattern);
     GradientStopsCG *stops = static_cast<GradientStopsCG*>(pat.mStops.get());
@@ -842,7 +854,8 @@ DrawTargetCG::FillRect(const Rect &aRect,
 
   if (isGradient(aPattern)) {
     CGContextClipToRect(cg, RectToCGRect(aRect));
-    DrawGradient(cg, aPattern, RectToCGRect(aRect));
+    CGRect clipBounds = CGContextGetClipBoundingBox(cg);
+    DrawGradient(cg, aPattern, clipBounds);
   } else {
     if (aPattern.GetType() == PatternType::SURFACE && static_cast<const SurfacePattern&>(aPattern).mExtendMode != ExtendMode::REPEAT) {
       // SetFillFromPattern can handle this case but using CGContextDrawImage
@@ -1194,7 +1207,8 @@ DrawTargetCG::CopySurface(SourceSurface *aSurface,
   MarkChanged();
 
   if (aSurface->GetType() == SurfaceType::COREGRAPHICS_IMAGE ||
-      aSurface->GetType() == SurfaceType::COREGRAPHICS_CGCONTEXT) {
+      aSurface->GetType() == SurfaceType::COREGRAPHICS_CGCONTEXT ||
+      aSurface->GetType() == SurfaceType::DATA) {
     CGImageRef image = GetRetainedImageFromSourceSurface(aSurface);
 
     /* we have two options here:

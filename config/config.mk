@@ -61,6 +61,7 @@ _MOZBUILD_EXTERNAL_VARIABLES := \
   NO_DIST_INSTALL \
   PARALLEL_DIRS \
   PROGRAM \
+  RESOURCE_FILES \
   SDK_HEADERS \
   SIMPLE_PROGRAMS \
   TEST_DIRS \
@@ -72,8 +73,14 @@ _MOZBUILD_EXTERNAL_VARIABLES := \
 
 _DEPRECATED_VARIABLES := \
   ANDROID_RESFILES \
-  MOCHITEST_FILES_PARTS \
+  MOCHITEST_A11Y_FILES \
+  MOCHITEST_BROWSER_FILES \
   MOCHITEST_BROWSER_FILES_PARTS \
+  MOCHITEST_CHROME_FILES \
+  MOCHITEST_FILES \
+  MOCHITEST_FILES_PARTS \
+  MOCHITEST_METRO_FILES \
+  MOCHITEST_ROBOCOP_FILES \
   SHORT_LIBNAME \
   $(NULL)
 
@@ -333,9 +340,9 @@ _ENABLE_PIC=1
 # Determine if module being compiled is destined
 # to be merged into libxul
 
-ifeq ($(FINAL_LIBRARY),xul)
+ifneq (,$(filter xul,$(FINAL_LIBRARY) $(LIBRARY_NAME)))
   ifdef LIBXUL_LIBRARY
-    $(error FINAL_LIBRARY is "xul", LIBXUL_LIBRARY is implied)
+    $(error LIBRARY_NAME or FINAL_LIBRARY is "xul", LIBXUL_LIBRARY is implied)
   endif
   LIBXUL_LIBRARY := 1
 endif
@@ -344,7 +351,9 @@ ifdef LIBXUL_LIBRARY
 ifdef IS_COMPONENT
 $(error IS_COMPONENT is set, but is not compatible with LIBXUL_LIBRARY)
 endif
+ifneq (xul,$(LIBRARY_NAME))
 FORCE_STATIC_LIB=1
+endif
 endif
 
 # If we are building this component into an extension/xulapp, it cannot be
@@ -415,9 +424,11 @@ endif
 endif # MOZ_PROFILE_USE
 endif # NO_PROFILE_GUIDED_OPTIMIZE
 
+ifdef _MSC_VER
+OS_LDFLAGS += $(DELAYLOAD_LDFLAGS)
+endif # _MSC_VER
 
-# Does the makefile specifies the internal XPCOM API linkage?
-ifneq (,$(MOZILLA_INTERNAL_API)$(LIBXUL_LIBRARY))
+ifneq (,$(LIBXUL_LIBRARY))
 DEFINES += -DMOZILLA_INTERNAL_API
 endif
 
@@ -443,10 +454,6 @@ MAKE_JARS_FLAGS += -e
 endif
 
 TAR_CREATE_FLAGS = -chf
-
-ifeq ($(OS_ARCH),OS2)
-TAR_CREATE_FLAGS = -cf
-endif
 
 #
 # Personal makefile customizations go in these optional make include files.
@@ -482,7 +489,7 @@ include $(topsrcdir)/config/static-checking-config.mk
 
 CFLAGS		= $(OS_CPPFLAGS) $(OS_CFLAGS)
 CXXFLAGS	= $(OS_CPPFLAGS) $(OS_CXXFLAGS)
-LDFLAGS		= $(OS_LDFLAGS) $(MOZ_FIX_LINK_PATHS)
+LDFLAGS		= $(OS_LDFLAGS) $(MOZBUILD_LDFLAGS) $(MOZ_FIX_LINK_PATHS)
 
 # Allow each module to override the *default* optimization settings
 # by setting MODULE_OPTIMIZE_FLAGS if the developer has not given
@@ -588,10 +595,10 @@ OS_COMPILE_CMMFLAGS += -fobjc-abi-version=2 -fobjc-legacy-dispatch
 endif
 endif
 
-COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CFLAGS) $(CFLAGS) $(EXTRA_COMPILE_FLAGS)
-COMPILE_CXXFLAGS = $(STL_FLAGS) $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CXXFLAGS) $(CXXFLAGS) $(EXTRA_COMPILE_FLAGS)
-COMPILE_CMFLAGS = $(OS_COMPILE_CMFLAGS) $(EXTRA_COMPILE_FLAGS)
-COMPILE_CMMFLAGS = $(OS_COMPILE_CMMFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CFLAGS	= $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CFLAGS) $(CFLAGS) $(MOZBUILD_CFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CXXFLAGS = $(if $(DISABLE_STL_WRAPPING),,$(STL_FLAGS)) $(VISIBILITY_FLAGS) $(DEFINES) $(INCLUDES) $(DSO_CFLAGS) $(DSO_PIC_CFLAGS) $(RTL_FLAGS) $(OS_CPPFLAGS) $(OS_COMPILE_CXXFLAGS) $(CXXFLAGS) $(MOZBUILD_CXXFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CMFLAGS = $(OS_COMPILE_CMFLAGS) $(MOZBUILD_CMFLAGS) $(EXTRA_COMPILE_FLAGS)
+COMPILE_CMMFLAGS = $(OS_COMPILE_CMMFLAGS) $(MOZBUILD_CMMFLAGS) $(EXTRA_COMPILE_FLAGS)
 ASFLAGS += $(EXTRA_ASSEMBLER_FLAGS)
 
 ifndef CROSS_COMPILE
@@ -643,9 +650,6 @@ endif
 # Set link flags according to whether we want a console.
 ifdef MOZ_WINCONSOLE
 ifeq ($(MOZ_WINCONSOLE),1)
-ifeq ($(OS_ARCH),OS2)
-BIN_FLAGS	+= -Zlinker -PM:VIO
-endif
 ifeq ($(OS_ARCH),WINNT)
 ifdef GNU_CC
 WIN32_EXE_LDFLAGS	+= -mconsole
@@ -654,9 +658,6 @@ WIN32_EXE_LDFLAGS	+= -SUBSYSTEM:CONSOLE
 endif
 endif
 else # MOZ_WINCONSOLE
-ifeq ($(OS_ARCH),OS2)
-BIN_FLAGS	+= -Zlinker -PM:PM
-endif
 ifeq ($(OS_ARCH),WINNT)
 ifdef GNU_CC
 WIN32_EXE_LDFLAGS	+= -mwindows
@@ -711,19 +712,15 @@ NSINSTALL_NATIVECMD := %nsinstall nsinstall
 ifdef NSINSTALL_BIN
 NSINSTALL = $(NSINSTALL_BIN)
 else
-ifeq (OS2,$(CROSS_COMPILE)$(OS_ARCH))
-NSINSTALL = $(MOZ_TOOLS_DIR)/nsinstall
-else
 ifeq ($(HOST_OS_ARCH),WINNT)
 NSINSTALL = $(NSINSTALL_PY)
 else
 NSINSTALL = $(DIST)/bin/nsinstall$(HOST_BIN_SUFFIX)
 endif # WINNT
-endif # OS2
 endif # NSINSTALL_BIN
 
 
-ifeq (,$(CROSS_COMPILE)$(filter-out WINNT OS2, $(OS_ARCH)))
+ifeq (,$(CROSS_COMPILE)$(filter-out WINNT, $(OS_ARCH)))
 INSTALL = $(NSINSTALL) -t
 ifdef .PYMAKE
 install_cmd = $(NSINSTALL_NATIVECMD) -t $(1)
@@ -735,7 +732,7 @@ else
 # target-specific.
 INSTALL         = $(if $(filter copy, $(NSDISTMODE)), $(NSINSTALL) -t, $(if $(filter absolute_symlink, $(NSDISTMODE)), $(NSINSTALL) -L $(PWD), $(NSINSTALL) -R))
 
-endif # WINNT/OS2
+endif # WINNT
 
 # The default for install_cmd is simply INSTALL
 install_cmd ?= $(INSTALL) $(1)
@@ -792,13 +789,9 @@ MERGE_FILE = $(LOCALE_SRCDIR)/$(1)
 endif
 MERGE_FILES = $(foreach f,$(1),$(call MERGE_FILE,$(f)))
 
-ifeq (OS2,$(OS_ARCH))
-RUN_TEST_PROGRAM = $(topsrcdir)/build/os2/test_os2.cmd '$(LIBXUL_DIST)'
-else
 ifneq (WINNT,$(OS_ARCH))
 RUN_TEST_PROGRAM = $(LIBXUL_DIST)/bin/run-mozilla.sh
 endif # ! WINNT
-endif # ! OS2
 
 #
 # Java macros
@@ -841,7 +834,7 @@ HOST_EXTRA_LIBS += $(call EXPAND_LIBNAME_PATH,host_stdc++compat,$(DEPTH)/build/u
 endif
 endif
 
-ifeq (,$(filter $(OS_TARGET),WINNT Darwin OS2))
+ifeq (,$(filter $(OS_TARGET),WINNT Darwin))
 CHECK_TEXTREL = @$(TOOLCHAIN_PREFIX)readelf -d $(1) | grep TEXTREL > /dev/null && echo 'TEST-UNEXPECTED-FAIL | check_textrel | We do not want text relocations in libraries and programs' || true
 endif
 
@@ -856,7 +849,7 @@ OBJ_SUFFIX := $(_OBJ_SUFFIX)
 
 # PGO builds with GCC build objects with instrumentation in a first pass,
 # then objects optimized, without instrumentation, in a second pass. If
-# we overwrite the ojects from the first pass with those from the second,
+# we overwrite the objects from the first pass with those from the second,
 # we end up not getting instrumentation data for better optimization on
 # incremental builds. As a consequence, we use a different object suffix
 # for the first pass.
@@ -913,7 +906,7 @@ DEFINES += -DUNICODE -D_UNICODE
 LOCAL_INCLUDES += -I'$(MOZ_DIRECTX_SDK_PATH)/include'
 endif
 
-STL_FLAGS=
+DISABLE_STL_WRAPPING := 1
 # Skip most Mozilla-specific include locations.
 INCLUDES = -I. $(LOCAL_INCLUDES) -I$(DEPTH)/dist/include
 endif

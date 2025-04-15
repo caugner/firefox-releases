@@ -30,11 +30,6 @@ nsSVGElement::LengthInfo SVGFilterElement::sLengthInfo[4] =
   { &nsGkAtoms::height, 120, nsIDOMSVGLength::SVG_LENGTHTYPE_PERCENTAGE, SVGContentUtils::Y },
 };
 
-nsSVGElement::IntegerPairInfo SVGFilterElement::sIntegerPairInfo[1] =
-{
-  { &nsGkAtoms::filterRes, 0 }
-};
-
 nsSVGElement::EnumInfo SVGFilterElement::sEnumInfo[2] =
 {
   { &nsGkAtoms::filterUnits,
@@ -55,7 +50,7 @@ nsSVGElement::StringInfo SVGFilterElement::sStringInfo[1] =
 //----------------------------------------------------------------------
 // Implementation
 
-SVGFilterElement::SVGFilterElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+SVGFilterElement::SVGFilterElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
   : SVGFilterElementBase(aNodeInfo)
 {
 }
@@ -105,26 +100,6 @@ SVGFilterElement::PrimitiveUnits()
   return mEnumAttributes[PRIMITIVEUNITS].ToDOMAnimatedEnum(this);
 }
 
-already_AddRefed<SVGAnimatedInteger>
-SVGFilterElement::FilterResX()
-{
-  return mIntegerPairAttributes[FILTERRES].ToDOMAnimatedInteger(nsSVGIntegerPair::eFirst,
-                                                                this);
-}
-
-already_AddRefed<SVGAnimatedInteger>
-SVGFilterElement::FilterResY()
-{
-  return mIntegerPairAttributes[FILTERRES].ToDOMAnimatedInteger(nsSVGIntegerPair::eSecond,
-                                                                this);
-}
-
-void
-SVGFilterElement::SetFilterRes(uint32_t filterResX, uint32_t filterResY)
-{
-  mIntegerPairAttributes[FILTERRES].SetBaseValues(filterResX, filterResY, this);
-}
-
 already_AddRefed<SVGAnimatedString>
 SVGFilterElement::Href()
 {
@@ -160,7 +135,7 @@ SVGFilterElement::Invalidate()
     nsTObserverArray<nsIMutationObserver*>::ForwardIterator iter(*observers);
     while (iter.HasMore()) {
       nsCOMPtr<nsIMutationObserver> obs(iter.GetNext());
-      nsCOMPtr<nsISVGFilterProperty> filter = do_QueryInterface(obs);
+      nsCOMPtr<nsISVGFilterReference> filter = do_QueryInterface(obs);
       if (filter)
         filter->Invalidate();
     }
@@ -184,13 +159,6 @@ SVGFilterElement::GetLengthInfo()
 {
   return LengthAttributesInfo(mLengthAttributes, sLengthInfo,
                               ArrayLength(sLengthInfo));
-}
-
-nsSVGElement::IntegerPairAttributesInfo
-SVGFilterElement::GetIntegerPairInfo()
-{
-  return IntegerPairAttributesInfo(mIntegerPairAttributes, sIntegerPairInfo,
-                                   ArrayLength(sIntegerPairInfo));
 }
 
 nsSVGElement::EnumAttributesInfo

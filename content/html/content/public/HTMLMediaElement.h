@@ -50,6 +50,9 @@ class nsIRunnable;
 namespace mozilla {
 namespace dom {
 
+// Number of milliseconds between timeupdate events as defined by spec
+#define TIMEUPDATE_MS 250
+
 class MediaError;
 class MediaSource;
 class TextTrackList;
@@ -72,7 +75,7 @@ public:
     return mCORSMode;
   }
 
-  HTMLMediaElement(already_AddRefed<nsINodeInfo> aNodeInfo);
+  HTMLMediaElement(already_AddRefed<nsINodeInfo>& aNodeInfo);
   virtual ~HTMLMediaElement();
 
   /**

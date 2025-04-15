@@ -5,20 +5,20 @@
 
 package org.mozilla.gecko.db;
 
+import java.util.List;
+
 import org.mozilla.gecko.db.BrowserContract.Bookmarks;
 import org.mozilla.gecko.db.BrowserContract.ExpirePriority;
 import org.mozilla.gecko.favicons.decoders.LoadFaviconResult;
 import org.mozilla.gecko.mozglue.RobocopTarget;
 
 import android.content.ContentResolver;
+import android.content.ContentValues;
 import android.database.ContentObserver;
 import android.database.Cursor;
 import android.database.CursorWrapper;
-import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.util.SparseArray;
-
-import java.util.List;
 
 public class BrowserDB {
     private static boolean sAreContentProvidersEnabled = true;
@@ -41,8 +41,8 @@ public class BrowserDB {
         @RobocopTarget
         public Cursor filter(ContentResolver cr, CharSequence constraint, int limit);
 
-        // This should onlyl return frecent sites, BrowserDB.getTopSites will do the
-        // work to combine that list with the pinned sites list
+        // This should only return frecent sites. BrowserDB.getTopSites will do the
+        // work to combine that list with the pinned sites list.
         public Cursor getTopSites(ContentResolver cr, int limit);
 
         public void updateVisitedHistory(ContentResolver cr, String uri);
@@ -69,6 +69,8 @@ public class BrowserDB {
         @RobocopTarget
         public Cursor getBookmarksInFolder(ContentResolver cr, long folderId);
 
+        public Cursor getReadingList(ContentResolver cr);
+
         public boolean isVisited(ContentResolver cr, String uri);
 
         public int getReadingListCount(ContentResolver cr);
@@ -77,6 +79,12 @@ public class BrowserDB {
         public boolean isBookmark(ContentResolver cr, String uri);
 
         public boolean isReadingListItem(ContentResolver cr, String uri);
+
+        /**
+         * Return a combination of fields about the provided URI
+         * in a single hit on the DB.
+         */
+        public int getItemFlags(ContentResolver cr, String uri);
 
         public String getUrlForKeyword(ContentResolver cr, String keyword);
 
@@ -91,9 +99,11 @@ public class BrowserDB {
         @RobocopTarget
         public void updateBookmark(ContentResolver cr, int id, String uri, String title, String keyword);
 
-        public void addReadingListItem(ContentResolver cr, String title, String uri);
+        public void addReadingListItem(ContentResolver cr, ContentValues values);
 
         public void removeReadingListItemWithURL(ContentResolver cr, String uri);
+
+        public void removeReadingListItem(ContentResolver cr, int id);
 
         public LoadFaviconResult getFaviconForUrl(ContentResolver cr, String uri);
 
@@ -211,6 +221,11 @@ public class BrowserDB {
         return sDb.getBookmarksInFolder(cr, folderId);
     }
 
+    @RobocopTarget
+    public static Cursor getReadingList(ContentResolver cr) {
+        return sDb.getReadingList(cr);
+    }
+
     public static String getUrlForKeyword(ContentResolver cr, String keyword) {
         return sDb.getUrlForKeyword(cr, keyword);
     }
@@ -232,6 +247,13 @@ public class BrowserDB {
         return (sAreContentProvidersEnabled && sDb.isReadingListItem(cr, uri));
     }
 
+    public static int getItemFlags(ContentResolver cr, String uri) {
+        if (!sAreContentProvidersEnabled) {
+            return 0;
+        }
+        return sDb.getItemFlags(cr, uri);
+    }
+
     public static void addBookmark(ContentResolver cr, String title, String uri) {
         sDb.addBookmark(cr, title, uri);
     }
@@ -250,12 +272,16 @@ public class BrowserDB {
         sDb.updateBookmark(cr, id, uri, title, keyword);
     }
 
-    public static void addReadingListItem(ContentResolver cr, String title, String uri) {
-        sDb.addReadingListItem(cr, title, uri);
+    public static void addReadingListItem(ContentResolver cr, ContentValues values) {
+        sDb.addReadingListItem(cr, values);
     }
 
     public static void removeReadingListItemWithURL(ContentResolver cr, String uri) {
         sDb.removeReadingListItemWithURL(cr, uri);
+    }
+
+    public static void removeReadingListItem(ContentResolver cr, int id) {
+        sDb.removeReadingListItem(cr, id);
     }
 
     public static LoadFaviconResult getFaviconForFaviconUrl(ContentResolver cr, String faviconURL) {

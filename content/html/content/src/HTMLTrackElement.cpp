@@ -48,7 +48,7 @@ static PRLogModuleInfo* gTrackElementLog;
 // Replace the usual NS_IMPL_NS_NEW_HTML_ELEMENT(Track) so
 // we can return an UnknownElement instead when pref'd off.
 nsGenericHTMLElement*
-NS_NewHTMLTrackElement(already_AddRefed<nsINodeInfo> aNodeInfo,
+NS_NewHTMLTrackElement(already_AddRefed<nsINodeInfo>&& aNodeInfo,
                        mozilla::dom::FromParser aFromParser)
 {
   if (!mozilla::dom::HTMLTrackElement::IsWebVTTEnabled()) {
@@ -61,11 +61,21 @@ NS_NewHTMLTrackElement(already_AddRefed<nsINodeInfo> aNodeInfo,
 namespace mozilla {
 namespace dom {
 
+// Map html attribute string values to TextTrackKind enums.
+static MOZ_CONSTEXPR nsAttrValue::EnumTable kKindTable[] = {
+  { "subtitles", static_cast<int16_t>(TextTrackKind::Subtitles) },
+  { "captions", static_cast<int16_t>(TextTrackKind::Captions) },
+  { "descriptions", static_cast<int16_t>(TextTrackKind::Descriptions) },
+  { "chapters", static_cast<int16_t>(TextTrackKind::Chapters) },
+  { "metadata", static_cast<int16_t>(TextTrackKind::Metadata) },
+  { 0 }
+};
+
 // The default value for kKindTable is "subtitles"
 static MOZ_CONSTEXPR const char* kKindTableDefaultString = kKindTable->tag;
 
 /** HTMLTrackElement */
-HTMLTrackElement::HTMLTrackElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+HTMLTrackElement::HTMLTrackElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo)
 {
 #ifdef PR_LOGGING
@@ -123,9 +133,7 @@ TextTrack*
 HTMLTrackElement::Track()
 {
   if (!mTrack) {
-    // We're expected to always have an internal TextTrack so create
-    // an empty object to return if we don't already have one.
-    mTrack = new TextTrack(OwnerDoc()->GetParentObject(), mMediaParent);
+    CreateTextTrack();
   }
 
   return mTrack;
@@ -145,8 +153,9 @@ HTMLTrackElement::CreateTextTrack()
     kind = TextTrackKind::Subtitles;
   }
 
-  mTrack = new TextTrack(OwnerDoc()->GetParentObject(), mMediaParent, kind,
-                         label, srcLang);
+  mTrack = new TextTrack(OwnerDoc()->GetParentObject(), kind, label, srcLang,
+                         TextTrackSource::Track);
+  mTrack->SetTrackElement(this);
 
   if (mMediaParent) {
     mMediaParent->AddTextTrack(mTrack);

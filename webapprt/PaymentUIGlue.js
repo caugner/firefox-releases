@@ -14,20 +14,21 @@ XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
                                   "nsIMessageSender");
 
 function paymentSuccess(aRequestId) {
-  return paymentCallback(aRequestId, "Payment:Success");
+  return function(aResult) {
+    closePaymentWindow(aRequestId, function() {
+      cpmm.sendAsyncMessage("Payment:Success", { requestId: aRequestId,
+                                                 result: aResult });
+    });
+  };
 }
 
 function paymentFailed(aRequestId) {
-  return paymentCallback(aRequestId, "Payment:Failed");
-}
-
-function paymentCallback(aRequestId, aMsg) {
-  return function(aResult) {
-          closePaymentWindow(aRequestId, function() {
-            cpmm.sendAsyncMessage(aMsg, { result: aResult,
-                                          requestId: aRequestId });
-          });
-        };
+  return function(aErrorMsg) {
+    closePaymentWindow(aRequestId, function() {
+      cpmm.sendAsyncMessage("Payment:Failed", { requestId: aRequestId,
+                                                errorMsg: aErrorMsg });
+    });
+  };
 }
 
 let payments = {};
@@ -52,7 +53,7 @@ PaymentUI.prototype = {
     // If there's only one payment provider that will work, just move on
     // without prompting the user.
     if (aRequests.length == 1) {
-      aSuccessCb.onresult(aRequestId, aRequests[0].wrappedJSObject.type);
+      aSuccessCb.onresult(aRequestId, aRequests[0].type);
       return;
     }
 
@@ -60,7 +61,7 @@ PaymentUI.prototype = {
 
     // Otherwise, let the user select a payment provider from a list.
     for (let i = 0; i < aRequests.length; i++) {
-      let request = aRequests[i].wrappedJSObject;
+      let request = aRequests[i];
       let requestText = request.providerName;
       if (request.productPrice && Array.isArray(request.productPrice)) {
         // We should guess the user currency and use that instead.
@@ -80,7 +81,7 @@ PaymentUI.prototype = {
                           items.length, items, selected);
     if (result) {
       aSuccessCb.onresult(aRequestId,
-                          aRequests[selected.value].wrappedJSObject.type);
+                          aRequests[selected.value].type);
     } else {
       aErrorCb.onresult(aRequestId, "USER_CANCELLED");
     }

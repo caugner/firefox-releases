@@ -1220,7 +1220,7 @@ XULDocument::GetElementsByAttribute(const nsAString& aAttribute,
                                     const nsAString& aValue,
                                     nsIDOMNodeList** aReturn)
 {
-    *aReturn = GetElementsByAttribute(aAttribute, aValue).get();
+    *aReturn = GetElementsByAttribute(aAttribute, aValue).take();
     return NS_OK;
 }
 
@@ -1249,7 +1249,7 @@ XULDocument::GetElementsByAttributeNS(const nsAString& aNamespaceURI,
 {
     ErrorResult rv;
     *aReturn = GetElementsByAttributeNS(aNamespaceURI, aAttribute,
-                                        aValue, rv).get();
+                                        aValue, rv).take();
     return rv.ErrorCode();
 }
 
@@ -1720,6 +1720,7 @@ XULDocument::AddElementToDocumentPre(Element* aElement)
     // elements from prototypes.
     nsIAtom* id = aElement->GetID();
     if (id) {
+        // FIXME: Shouldn't BindToTree take care of this?
         nsAutoScriptBlocker scriptBlocker;
         AddToIdTable(aElement, id);
     }
@@ -1853,6 +1854,7 @@ XULDocument::RemoveSubtreeFromDocument(nsIContent* aContent)
     RemoveElementFromRefMap(aElement);
     nsIAtom* id = aElement->GetID();
     if (id) {
+        // FIXME: Shouldn't UnbindFromTree take care of this?
         nsAutoScriptBlocker scriptBlocker;
         RemoveFromIdTable(aElement, id);
     }
@@ -3533,7 +3535,7 @@ XULDocument::OnStreamComplete(nsIStreamLoader* aLoader,
             rv = mCurrentScriptProto->Compile(mOffThreadCompileString.get(),
                                               mOffThreadCompileString.Length(),
                                               uri, 1, this,
-                                              mCurrentPrototype,
+                                              mMasterPrototype,
                                               this);
             if (NS_SUCCEEDED(rv) && !mCurrentScriptProto->GetScriptObject()) {
                 // We will be notified via OnOffThreadCompileComplete when the
@@ -4776,7 +4778,7 @@ XULDocument::GetBoxObjectFor(nsIDOMElement* aElement, nsIBoxObject** aResult)
 {
     ErrorResult rv;
     nsCOMPtr<Element> el = do_QueryInterface(aElement);
-    *aResult = GetBoxObjectFor(el, rv).get();
+    *aResult = GetBoxObjectFor(el, rv).take();
     return rv.ErrorCode();
 }
 

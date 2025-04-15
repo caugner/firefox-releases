@@ -109,6 +109,7 @@ enum {
 class imgStatusTracker : public mozilla::SupportsWeakPtr<imgStatusTracker>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(imgStatusTracker)
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(imgStatusTracker)
 
   // aImage is the image that this status tracker will pass to the
@@ -292,7 +293,7 @@ public:
   nsIntRect GetInvalidRect() const { return mInvalidRect; }
 
 private:
-  typedef nsTObserverArray<mozilla::WeakPtr<imgRequestProxy> > ProxyArray;
+  typedef nsTObserverArray<mozilla::WeakPtr<imgRequestProxy>> ProxyArray;
   friend class imgStatusNotifyRunnable;
   friend class imgRequestNotifyRunnable;
   friend class imgStatusTrackerObserver;

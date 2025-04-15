@@ -34,15 +34,15 @@ public:
   virtual void Init(nsIContent* aContent,
                     nsIFrame*   aParent,
                     nsIFrame*   aPrevInFlow) MOZ_OVERRIDE;
-  virtual void DestroyFrom(nsIFrame* aDestructRoot);
+  virtual void DestroyFrom(nsIFrame* aDestructRoot) MOZ_OVERRIDE;
 
-  virtual bool IsFrameOfType(uint32_t aFlags) const
+  virtual bool IsFrameOfType(uint32_t aFlags) const MOZ_OVERRIDE
   {
     return SVGFEImageFrameBase::IsFrameOfType(aFlags & ~(nsIFrame::eSVG));
   }
 
 #ifdef DEBUG_FRAME_DUMP
-  NS_IMETHOD GetFrameName(nsAString& aResult) const
+  virtual nsresult GetFrameName(nsAString& aResult) const MOZ_OVERRIDE
   {
     return MakeFrameName(NS_LITERAL_STRING("SVGFEImage"), aResult);
   }
@@ -53,13 +53,13 @@ public:
    *
    * @see nsGkAtoms::svgFEImageFrame
    */
-  virtual nsIAtom* GetType() const;
+  virtual nsIAtom* GetType() const MOZ_OVERRIDE;
 
-  NS_IMETHOD AttributeChanged(int32_t  aNameSpaceID,
-                              nsIAtom* aAttribute,
-                              int32_t  aModType);
+  virtual nsresult AttributeChanged(int32_t  aNameSpaceID,
+                                    nsIAtom* aAttribute,
+                                    int32_t  aModType) MOZ_OVERRIDE;
 
-  virtual bool UpdateOverflow() {
+  virtual bool UpdateOverflow() MOZ_OVERRIDE {
     // We don't maintain a visual overflow rect
     return false;
   }
@@ -115,7 +115,7 @@ SVGFEImageFrame::GetType() const
   return nsGkAtoms::svgFEImageFrame;
 }
 
-NS_IMETHODIMP
+nsresult
 SVGFEImageFrame::AttributeChanged(int32_t  aNameSpaceID,
                                   nsIAtom* aAttribute,
                                   int32_t  aModType)

@@ -76,10 +76,7 @@ static const char kXPConnectServiceContractID[] = "@mozilla.org/js/xpc/XPConnect
 static const char kObserverServiceContractID[] = "@mozilla.org/observer-service;1";
 static const char kJSCachePrefix[] = "jsloader";
 
-/* Some platforms don't have an implementation of PR_MemMap(). */
-#ifndef XP_OS2
 #define HAVE_PR_MEMMAP
-#endif
 
 /**
  * Buffer sizes for serialization and deserialization of scripts.
@@ -812,8 +809,7 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
             ContextOptionsRef(cx).setDontReportUncaught(true);
 
         CompileOptions options(cx);
-        options.setPrincipals(nsJSPrincipals::get(mSystemPrincipal))
-               .setNoScriptRval(mReuseLoaderGlobal ? false : true)
+        options.setNoScriptRval(mReuseLoaderGlobal ? false : true)
                .setVersion(JSVERSION_LATEST)
                .setFileAndLine(nativePath.get(), 1)
                .setSourcePolicy(mReuseLoaderGlobal ?
@@ -875,7 +871,7 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
 #else  /* HAVE_PR_MEMMAP */
 
             /**
-             * No memmap implementation, so fall back to 
+             * No memmap implementation, so fall back to
              * reading in the file
              */
 
@@ -1021,7 +1017,7 @@ mozJSComponentLoader::ObjectForLocation(nsIFile *aComponentFile,
             ok = JS_ExecuteScriptVersion(cx, obj, script, nullptr, JSVERSION_LATEST);
         } else {
             RootedValue rval(cx);
-            ok = JS_CallFunction(cx, obj, function, 0, nullptr, rval.address());
+            ok = JS_CallFunction(cx, obj, function, JS::HandleValueArray::empty(), &rval);
         }
      }
 

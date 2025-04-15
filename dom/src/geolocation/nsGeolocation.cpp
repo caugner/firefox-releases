@@ -28,7 +28,7 @@
 
 class nsIPrincipal;
 
-#ifdef MOZ_ENABLE_QTMOBILITY
+#ifdef MOZ_ENABLE_QT5GEOPOSITION
 #include "QTMLocationProvider.h"
 #endif
 
@@ -86,7 +86,8 @@ class nsGeolocationRequest
 
   ~nsGeolocationRequest();
 
-  virtual bool Recv__delete__(const bool& allow) MOZ_OVERRIDE;
+  virtual bool Recv__delete__(const bool& allow,
+                              const InfallibleTArray<PermissionChoice>& choices) MOZ_OVERRIDE;
   virtual void IPDLRelease() MOZ_OVERRIDE { Release(); }
 
   bool IsWatch() { return mIsWatchPositionRequest; }
@@ -195,7 +196,7 @@ public:
 
   NS_IMETHOD Run() {
     if (mAllow) {
-      mRequest->Allow();
+      mRequest->Allow(JS::UndefinedHandleValue);
     } else {
       mRequest->Cancel();
     }
@@ -379,17 +380,13 @@ nsGeolocationRequest::GetPrincipal(nsIPrincipal * *aRequestingPrincipal)
 }
 
 NS_IMETHODIMP
-nsGeolocationRequest::GetType(nsACString & aType)
+nsGeolocationRequest::GetTypes(nsIArray** aTypes)
 {
-  aType = "geolocation";
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsGeolocationRequest::GetAccess(nsACString & aAccess)
-{
-  aAccess = "unused";
-  return NS_OK;
+  nsTArray<nsString> emptyOptions;
+  return CreatePermissionArray(NS_LITERAL_CSTRING("geolocation"),
+                               NS_LITERAL_CSTRING("unused"),
+                               emptyOptions,
+                               aTypes);
 }
 
 NS_IMETHODIMP
@@ -419,8 +416,10 @@ nsGeolocationRequest::Cancel()
 }
 
 NS_IMETHODIMP
-nsGeolocationRequest::Allow()
+nsGeolocationRequest::Allow(JS::HandleValue aChoices)
 {
+  MOZ_ASSERT(aChoices.isUndefined());
+
   // Kick off the geo device, if it isn't already running
   nsRefPtr<nsGeolocationService> gs = nsGeolocationService::GetGeolocationService();
   nsresult rv = gs->StartDevice(GetPrincipal());
@@ -606,10 +605,13 @@ nsGeolocationRequest::Shutdown()
   }
 }
 
-bool nsGeolocationRequest::Recv__delete__(const bool& allow)
+bool nsGeolocationRequest::Recv__delete__(const bool& allow,
+                                          const InfallibleTArray<PermissionChoice>& choices)
 {
+  MOZ_ASSERT(choices.IsEmpty(), "Geolocation doesn't support permission choice");
+
   if (allow) {
-    (void) Allow();
+    (void) Allow(JS::UndefinedHandleValue);
   } else {
     (void) Cancel();
   }
@@ -652,7 +654,7 @@ nsresult nsGeolocationService::Init()
 
   if (settings) {
     nsCOMPtr<nsISettingsServiceLock> settingsLock;
-    nsresult rv = settings->CreateLock(getter_AddRefs(settingsLock));
+    nsresult rv = settings->CreateLock(nullptr, getter_AddRefs(settingsLock));
     NS_ENSURE_SUCCESS(rv, rv);
 
     nsRefPtr<GeolocationSettingsCallback> callback = new GeolocationSettingsCallback();
@@ -673,7 +675,7 @@ nsresult nsGeolocationService::Init()
   obs->AddObserver(this, "quit-application", false);
   obs->AddObserver(this, "mozsettings-changed", false);
 
-#ifdef MOZ_ENABLE_QTMOBILITY
+#ifdef MOZ_ENABLE_QT5GEOPOSITION
   mProvider = new QTMLocationProvider();
 #endif
 
@@ -691,6 +693,10 @@ nsresult nsGeolocationService::Init()
     mProvider = new CoreLocationLocationProvider();
   }
 #endif
+
+  if (Preferences::GetBool("geo.provider.use_mls", false)) {
+    mProvider = do_GetService("@mozilla.org/geolocation/mls-provider;1");
+  }
 
   // Override platform-specific providers with the default (network)
   // provider while testing. Our tests are currently not meant to exercise
@@ -1367,7 +1373,7 @@ Geolocation::WatchPositionReady(nsGeolocationRequest* aRequest)
     return NS_ERROR_FAILURE;
   }
 
-  aRequest->Allow();
+  aRequest->Allow(JS::UndefinedHandleValue);
 
   return NS_OK;
 }
@@ -1477,12 +1483,17 @@ Geolocation::RegisterRequestWithPrompt(nsGeolocationRequest* request)
       return false;
     }
 
+    nsTArray<PermissionRequest> permArray;
+    nsTArray<nsString> emptyOptions;
+    permArray.AppendElement(PermissionRequest(NS_LITERAL_CSTRING("geolocation"),
+                                              NS_LITERAL_CSTRING("unused"),
+                                              emptyOptions));
+
     // Retain a reference so the object isn't deleted without IPDL's knowledge.
     // Corresponding release occurs in DeallocPContentPermissionRequest.
     request->AddRef();
     child->SendPContentPermissionRequestConstructor(request,
-                                                    NS_LITERAL_CSTRING("geolocation"),
-                                                    NS_LITERAL_CSTRING("unused"),
+                                                    permArray,
                                                     IPC::Principal(mPrincipal));
 
     request->Sendprompt();

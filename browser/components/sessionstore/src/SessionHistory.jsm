@@ -70,8 +70,26 @@ let SessionHistoryInternal = {
     let history = webNavigation.sessionHistory;
 
     if (history && history.count > 0) {
+      let oldest;
+      let maxSerializeBack =
+        Services.prefs.getIntPref("browser.sessionstore.max_serialize_back");
+      if (maxSerializeBack >= 0) {
+        oldest = Math.max(0, history.index - maxSerializeBack);
+      } else { // History.getEntryAtIndex(0, ...) is the oldest.
+        oldest = 0;
+      }
+
+      let newest;
+      let maxSerializeFwd =
+        Services.prefs.getIntPref("browser.sessionstore.max_serialize_forward");
+      if (maxSerializeFwd >= 0) {
+        newest = Math.min(history.count - 1, history.index + maxSerializeFwd);
+      } else { // History.getEntryAtIndex(history.count - 1, ...) is the newest.
+        newest = history.count - 1;
+      }
+
       try {
-        for (let i = 0; i < history.count; i++) {
+        for (let i = oldest; i <= newest; i++) {
           let shEntry = history.getEntryAtIndex(i, false);
           let entry = this.serializeEntry(shEntry, isPinned);
           data.entries.push(entry);
@@ -85,21 +103,23 @@ let SessionHistoryInternal = {
               "for the focused window/tab. See bug 669196.");
       }
 
-      // Ensure the index isn't out of bounds if an exception was thrown above.
-      data.index = Math.min(history.index + 1, data.entries.length);
+      // Set the one-based index of the currently active tab,
+      // ensuring it isn't out of bounds if an exception was thrown above.
+      data.index = Math.min(history.index - oldest + 1, data.entries.length);
     }
 
     // If either the session history isn't available yet or doesn't have any
     // valid entries, make sure we at least include the current page.
     if (data.entries.length == 0) {
       let uri = webNavigation.currentURI.spec;
+      let body = webNavigation.document.body;
       // We landed here because the history is inaccessible or there are no
       // history entries. In that case we should at least record the docShell's
       // current URL as a single history entry. If the URL is not about:blank
       // or it's a blank tab that was modified (like a custom newtab page),
       // record it. For about:blank we explicitly want an empty array without
       // an 'index' property to denote that there are no history entries.
-      if (uri != "about:blank" || webNavigation.document.body.hasChildNodes()) {
+      if (uri != "about:blank" || (body && body.hasChildNodes())) {
         data.entries.push({ url: uri });
         data.index = 1;
       }
@@ -164,6 +184,9 @@ let SessionHistoryInternal = {
 
     if (shEntry.isSrcdocEntry)
       entry.isSrcdocEntry = shEntry.isSrcdocEntry;
+
+    if (shEntry.baseURI)
+      entry.baseURI = shEntry.baseURI.spec;
 
     if (shEntry.contentType)
       entry.contentType = shEntry.contentType;
@@ -309,6 +332,8 @@ let SessionHistoryInternal = {
       shEntry.referrerURI = Utils.makeURI(entry.referrer);
     if (entry.isSrcdocEntry)
       shEntry.srcdocData = entry.srcdocData;
+    if (entry.baseURI)
+      shEntry.baseURI = Utils.makeURI(entry.baseURI);
 
     if (entry.cacheKey) {
       var cacheKey = Cc["@mozilla.org/supports-PRUint32;1"].

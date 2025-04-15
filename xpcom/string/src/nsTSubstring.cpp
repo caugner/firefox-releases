@@ -130,7 +130,8 @@ nsTSubstring_CharT::MutatePrep( size_type capacity, char_type** oldData, uint32_
         // make use of our F_OWNED or F_FIXED buffers because they are not
         // large enough.
 
-        nsStringBuffer* newHdr = nsStringBuffer::Alloc(storageSize).get();
+        nsStringBuffer* newHdr =
+          nsStringBuffer::Alloc(storageSize).take();
         if (!newHdr)
           return false; // we are still in a consistent state
 
@@ -304,7 +305,7 @@ nsTSubstring_CharT::Assign( const char_type* data, size_type length )
 bool
 nsTSubstring_CharT::Assign( const char_type* data, size_type length, const fallible_t& )
   {
-    if (!data)
+    if (!data || length == 0)
       {
         Truncate();
         return true;

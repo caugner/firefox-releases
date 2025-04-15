@@ -354,9 +354,9 @@ ExportFunction(JSContext *cx, unsigned argc, jsval *vp)
 static bool
 GetFilenameAndLineNumber(JSContext *cx, nsACString &filename, unsigned &lineno)
 {
-    JS::RootedScript script(cx);
-    if (JS_DescribeScriptedCaller(cx, &script, &lineno)) {
-        if (const char *cfilename = JS_GetScriptFilename(cx, script)) {
+    JS::AutoFilename scriptFilename;
+    if (JS::DescribeScriptedCaller(cx, &scriptFilename, &lineno)) {
+        if (const char *cfilename = scriptFilename.get()) {
             filename.Assign(nsDependentCString(cfilename));
             return true;
         }
@@ -392,8 +392,8 @@ CloneNonReflectorsRead(JSContext *cx, JSStructuredCloneReader *reader, uint32_t 
 
             if (!JS_WrapObject(cx, &reflector))
                 return nullptr;
-            JS_ASSERT(WrapperFactory::IsXrayWrapper(reflector) ||
-                      IsReflector(reflector));
+            MOZ_ASSERT(WrapperFactory::IsXrayWrapper(reflector) ||
+                       IsReflector(reflector));
 
             return reflector;
         }
@@ -510,6 +510,7 @@ EvalInWindow(JSContext *cx, const nsAString &source, HandleObject scope, Mutable
         lineNo = 0;
     }
 
+    RootedObject cxGlobal(cx, JS::CurrentGlobalOrNull(cx));
     {
         // CompileOptions must be created from the context
         // we will execute this script in.
@@ -548,8 +549,9 @@ EvalInWindow(JSContext *cx, const nsAString &source, HandleObject scope, Mutable
             rval.set(UndefinedValue());
 
             // Then clone the exception.
-            if (CloneNonReflectors(cx, &exn))
-                JS_SetPendingException(cx, exn);
+            JSAutoCompartment ac(wndCx, cxGlobal);
+            if (CloneNonReflectors(wndCx, &exn))
+                js::SetPendingExceptionCrossContext(cx, exn);
 
             return false;
         }
@@ -620,6 +622,20 @@ CreateObjectIn(JSContext *cx, unsigned argc, jsval *vp)
 
     return xpc::CreateObjectIn(cx, args[0], options, args.rval());
 }
+
+static bool
+CloneInto(JSContext *cx, unsigned argc, jsval *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() < 2) {
+        JS_ReportError(cx, "Function requires at least 2 arguments");
+        return false;
+    }
+
+    RootedValue options(cx, args.length() > 2 ? args[2] : UndefinedValue());
+    return xpc::CloneInto(cx, args[0], args[1], options, args.rval());
+}
+
 } /* namespace xpc */
 
 static bool
@@ -760,14 +776,14 @@ xpc::SandboxCallableProxyHandler::call(JSContext *cx, JS::Handle<JSObject*> prox
     // methods are always non-strict, we can just assume non-strict semantics
     // if the sandboxPrototype is an Xray Wrapper, which lets us appropriately
     // remap |this|.
-    JS::Value thisVal =
-      WrapperFactory::IsXrayWrapper(sandboxProxy) ? args.computeThis(cx) : args.thisv();
+    bool isXray = WrapperFactory::IsXrayWrapper(sandboxProxy);
+    RootedValue thisVal(cx, isXray ? args.computeThis(cx) : args.thisv());
     if (thisVal == ObjectValue(*sandboxGlobal)) {
         thisVal = ObjectValue(*js::GetProxyTargetObject(sandboxProxy));
     }
 
-    return JS::Call(cx, thisVal, js::GetProxyPrivate(proxy), args.length(), args.array(),
-                    args.rval());
+    RootedValue func(cx, js::GetProxyPrivate(proxy));
+    return JS::Call(cx, thisVal, func, args, args.rval());
 }
 
 xpc::SandboxCallableProxyHandler xpc::sandboxCallableProxyHandler;
@@ -1111,7 +1127,7 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
             new SandboxPrivate(principal, sandbox);
 
         // Pass on ownership of sbp to |sandbox|.
-        JS_SetPrivate(sandbox, sbp.forget().get());
+        JS_SetPrivate(sandbox, sbp.forget().take());
 
         bool allowComponents = nsContentUtils::IsSystemPrincipal(principal) ||
                                nsContentUtils::IsExpandedPrincipal(principal);
@@ -1129,6 +1145,7 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
             (!JS_DefineFunction(cx, sandbox, "exportFunction", ExportFunction, 3, 0) ||
              !JS_DefineFunction(cx, sandbox, "evalInWindow", EvalInWindow, 2, 0) ||
              !JS_DefineFunction(cx, sandbox, "createObjectIn", CreateObjectIn, 2, 0) ||
+             !JS_DefineFunction(cx, sandbox, "cloneInto", CloneInto, 3, 0) ||
              !JS_DefineFunction(cx, sandbox, "isProxy", IsProxy, 1, 0)))
             return NS_ERROR_XPC_UNEXPECTED;
 
@@ -1680,8 +1697,7 @@ xpc::EvalInSandbox(JSContext *cx, HandleObject sandboxArg, const nsAString& sour
         JSAutoCompartment ac(sandcx, sandbox);
 
         JS::CompileOptions options(sandcx);
-        options.setPrincipals(nsJSPrincipals::get(prin))
-               .setFileAndLine(filenameBuf.get(), lineNo);
+        options.setFileAndLine(filenameBuf.get(), lineNo);
         if (jsVersion != JSVERSION_DEFAULT)
                options.setVersion(jsVersion);
         JS::RootedObject rootedSandbox(sandcx, sandbox);
@@ -1744,11 +1760,11 @@ NonCloningFunctionForwarder(JSContext *cx, unsigned argc, Value *vp)
     RootedValue v(cx, js::GetFunctionNativeReserved(&args.callee(), 0));
     MOZ_ASSERT(v.isObject(), "weird function");
 
-    JSObject *obj = JS_THIS_OBJECT(cx, vp);
+    RootedObject obj(cx, JS_THIS_OBJECT(cx, vp));
     if (!obj) {
         return false;
     }
-    return JS_CallFunctionValue(cx, obj, v, args.length(), args.array(), vp);
+    return JS_CallFunctionValue(cx, obj, v, args, args.rval());
 }
 
 /*
@@ -1775,11 +1791,9 @@ CloningFunctionForwarder(JSContext *cx, unsigned argc, Value *vp)
 
         // JS API does not support any JSObject to JSFunction conversion,
         // so let's use JS_CallFunctionValue instead.
-        RootedValue functionVal(cx);
-        functionVal.setObject(*origFunObj);
+        RootedValue functionVal(cx, ObjectValue(*origFunObj));
 
-        if (!JS_CallFunctionValue(cx, nullptr, functionVal, args.length(), args.array(),
-                                  args.rval().address()))
+        if (!JS_CallFunctionValue(cx, JS::NullPtr(), functionVal, args, args.rval()))
             return false;
     }
 

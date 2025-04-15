@@ -22,6 +22,7 @@ namespace dom {
 
 class HTMLTrackElement;
 class TextTrack;
+class TextTrackRegion;
 
 class TextTrackCue MOZ_FINAL : public nsDOMEventTargetHelper
 {
@@ -124,20 +125,8 @@ public:
     CueChanged();
   }
 
-  void GetRegionId(nsAString& aRegionId) const
-  {
-    aRegionId = mRegionId;
-  }
-
-  void SetRegionId(const nsAString& aRegionId)
-  {
-    if (mRegionId == aRegionId) {
-      return;
-    }
-
-    mRegionId = aRegionId;
-    CueChanged();
-  }
+  TextTrackRegion* GetRegion();
+  void SetRegion(TextTrackRegion* aRegion);
 
   DirectionSetting Vertical() const
   {
@@ -322,6 +311,7 @@ public:
   void SetDisplayState(HTMLDivElement* aDisplayState)
   {
     mDisplayState = aDisplayState;
+    mReset = false;
   }
 
   bool HasBeenReset()
@@ -370,7 +360,7 @@ private:
   int32_t mSize;
   bool mPauseOnExit;
   bool mSnapToLines;
-  nsString mRegionId;
+  nsRefPtr<TextTrackRegion> mRegion;
   DirectionSetting mVertical;
   bool mLineIsAutoKeyword;
   long mLineLong;

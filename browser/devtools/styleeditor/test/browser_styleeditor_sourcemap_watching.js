@@ -7,10 +7,10 @@ let {devtools} = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
 let promise = devtools.require("sdk/core/promise");
 
 const TESTCASE_URI_HTML = TEST_BASE + "sourcemaps.html";
-const TESTCASE_URI_CSS = TEST_BASE + "sourcemaps.css";
+const TESTCASE_URI_CSS = TEST_BASE + "sourcemap-css/sourcemaps.css";
 const TESTCASE_URI_REG_CSS = TEST_BASE + "simple.css";
-const TESTCASE_URI_SCSS = TEST_BASE + "sourcemaps.scss";
-const TESTCASE_URI_MAP = TEST_BASE + "sourcemaps.css.map";
+const TESTCASE_URI_SCSS = TEST_BASE + "sourcemap-sass/sourcemaps.scss";
+const TESTCASE_URI_MAP = TEST_BASE + "sourcemap-css/sourcemaps.css.map";
 
 const PREF = "devtools.styleeditor.source-maps-enabled";
 
@@ -33,11 +33,11 @@ function test()
 
   Task.spawn(function() {
     // copy all our files over so we don't screw them up for other tests
-    let HTMLFile = yield copy(TESTCASE_URI_HTML, "sourcemaps.html");
-    let CSSFile = yield copy(TESTCASE_URI_CSS, "sourcemaps.css");
-    yield copy(TESTCASE_URI_SCSS, "sourcemaps.scss");
-    yield copy(TESTCASE_URI_MAP, "sourcemaps.css.map");
-    yield copy(TESTCASE_URI_REG_CSS, "simple.css");
+    let HTMLFile = yield copy(TESTCASE_URI_HTML, ["sourcemaps.html"]);
+    let CSSFile = yield copy(TESTCASE_URI_CSS, ["sourcemap-css", "sourcemaps.css"]);
+    yield copy(TESTCASE_URI_SCSS, ["sourcemap-sass", "sourcemaps.scss"]);
+    yield copy(TESTCASE_URI_MAP, ["sourcemap-css", "sourcemaps.css.map"]);
+    yield copy(TESTCASE_URI_REG_CSS, ["simple.css"]);
 
     let uri = Services.io.newFileURI(HTMLFile);
     let testcaseURI = uri.resolve("");
@@ -71,26 +71,19 @@ function test()
 function openEditor(testcaseURI) {
   let deferred = promise.defer();
 
-  addTabAndOpenStyleEditor((panel) => {
-    info("style editor panel opened");
-
+  addTabAndOpenStyleEditors(3, panel => {
     let UI = panel.UI;
-    let count = 0;
 
-    UI.on("editor-added", (event, editor) => {
-      if (++count == 3) {
-        // wait for 3 editors - 1 for first style sheet, 1 for the
-        // generated style sheet, and 1 for original source after it
-        // loads and replaces the generated style sheet.
-        let editor = UI.editors[1];
+    // wait for 3 editors - 1 for first style sheet, 1 for the
+    // generated style sheet, and 1 for original source after it
+    // loads and replaces the generated style sheet.
+    let editor = UI.editors[1];
 
-        let link = getStylesheetNameLinkFor(editor);
-        link.click();
+    let link = getStylesheetNameLinkFor(editor);
+    link.click();
 
-        editor.getSourceEditor().then(deferred.resolve);
-      }
-    });
-  })
+    editor.getSourceEditor().then(deferred.resolve);
+  });
   content.location = testcaseURI;
 
   return deferred.promise;
@@ -136,9 +129,9 @@ function getStylesheetNameLinkFor(editor) {
   return editor.summary.querySelector(".stylesheet-name");
 }
 
-function copy(aSrcChromeURL, aDestFileName)
+function copy(aSrcChromeURL, aDestFilePath)
 {
-  let destFile = FileUtils.getFile("ProfD", [aDestFileName]);
+  let destFile = FileUtils.getFile("ProfD", aDestFilePath);
   return write(read(aSrcChromeURL), destFile);
 }
 

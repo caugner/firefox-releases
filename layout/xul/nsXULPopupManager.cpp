@@ -12,7 +12,6 @@
 #include "nsMenuBarListener.h"
 #include "nsContentUtils.h"
 #include "nsIDOMDocument.h"
-#include "nsDOMEvent.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMXULElement.h"
 #include "nsIXULDocument.h"
@@ -37,6 +36,7 @@
 #include "nsFrameManager.h"
 #include "nsIObserverService.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/Event.h" // for nsIDOMEvent::InternalDOMEvent()
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/Services.h"
@@ -393,28 +393,32 @@ nsXULPopupManager::PopupMoved(nsIFrame* aFrame, nsIntPoint aPnt)
   if (!menuPopupFrame)
     return;
 
-  // Convert desired point to CSS pixels for comparison
-  nsPresContext* presContext = menuPopupFrame->PresContext();
-  aPnt.x = presContext->DevPixelsToIntCSSPixels(aPnt.x);
-  aPnt.y = presContext->DevPixelsToIntCSSPixels(aPnt.y);
+  nsView* view = menuPopupFrame->GetView();
+  if (!view)
+    return;
 
   // Don't do anything if the popup is already at the specified location. This
   // prevents recursive calls when a popup is positioned.
-  nsIntPoint currentPnt = menuPopupFrame->ScreenPosition();
+  nsIntRect curDevSize = view->CalcWidgetBounds(eWindowType_popup);
   nsIWidget* widget = menuPopupFrame->GetWidget();
-  if ((aPnt.x != currentPnt.x || aPnt.y != currentPnt.y) || (widget &&
-      widget->GetClientOffset() != menuPopupFrame->GetLastClientOffset())) {
-    // Update the popup's position using SetPopupPosition if the popup is
-    // anchored and at the parent level as these maintain their position
-    // relative to the parent window. Otherwise, just update the popup to
-    // the specified screen coordinates.
-    if (menuPopupFrame->IsAnchored() &&
-        menuPopupFrame->PopupLevel() == ePopupLevelParent) {
-      menuPopupFrame->SetPopupPosition(nullptr, true, false);
-    }
-    else {
-      menuPopupFrame->MoveTo(aPnt.x, aPnt.y, false);
-    }
+  if (curDevSize.x == aPnt.x && curDevSize.y == aPnt.y &&
+      (!widget || widget->GetClientOffset() == menuPopupFrame->GetLastClientOffset())) {
+    return;
+  }
+
+  // Update the popup's position using SetPopupPosition if the popup is
+  // anchored and at the parent level as these maintain their position
+  // relative to the parent window. Otherwise, just update the popup to
+  // the specified screen coordinates.
+  if (menuPopupFrame->IsAnchored() &&
+      menuPopupFrame->PopupLevel() == ePopupLevelParent) {
+    menuPopupFrame->SetPopupPosition(nullptr, true, false);
+  }
+  else {
+    nsPresContext* presContext = menuPopupFrame->PresContext();
+    aPnt.x = presContext->DevPixelsToIntCSSPixels(aPnt.x);
+    aPnt.y = presContext->DevPixelsToIntCSSPixels(aPnt.y);
+    menuPopupFrame->MoveTo(aPnt.x, aPnt.y, false);
   }
 }
 
@@ -1486,13 +1490,9 @@ nsXULPopupManager::MayShowPopup(nsMenuPopupFrame* aPopup)
   if (!baseWin)
     return false;
 
-  int32_t type = -1;
-  if (NS_FAILED(dsti->GetItemType(&type)))
-    return false;
-
   // chrome shells can always open popups, but other types of shells can only
   // open popups when they are focused and visible
-  if (type != nsIDocShellTreeItem::typeChrome) {
+  if (dsti->ItemType() != nsIDocShellTreeItem::typeChrome) {
     // only allow popups in active windows
     nsCOMPtr<nsIDocShellTreeItem> root;
     dsti->GetRootTreeItem(getter_AddRefs(root));
@@ -2038,7 +2038,6 @@ nsXULPopupManager::HandleKeyboardEventWithKeyCode(
       }
       break;
 
-    case nsIDOMKeyEvent::DOM_VK_ENTER:
     case nsIDOMKeyEvent::DOM_VK_RETURN: {
       // If there is a popup open, check if the current item needs to be opened.
       // Otherwise, tell the active menubar, if any, to activate the menu. The

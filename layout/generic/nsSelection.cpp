@@ -200,7 +200,7 @@ public:
     return NS_OK;
   }
 
-  NS_IMETHOD Notify(nsITimer *timer)
+  NS_IMETHOD Notify(nsITimer *timer) MOZ_OVERRIDE
   {
     if (mSelection && mPresContext)
     {
@@ -787,6 +787,7 @@ nsFrameSelection::MoveCaret(uint32_t          aKeycode,
         {
           const nsRange* anchorFocusRange = sel->GetAnchorFocusRange();
           if (anchorFocusRange) {
+            PostReason(nsISelectionListener::COLLAPSETOSTART_REASON);
             sel->Collapse(anchorFocusRange->GetStartParent(),
                           anchorFocusRange->StartOffset());
           }
@@ -802,6 +803,7 @@ nsFrameSelection::MoveCaret(uint32_t          aKeycode,
         {
           const nsRange* anchorFocusRange = sel->GetAnchorFocusRange();
           if (anchorFocusRange) {
+            PostReason(nsISelectionListener::COLLAPSETOEND_REASON);
             sel->Collapse(anchorFocusRange->GetEndParent(),
                           anchorFocusRange->EndOffset());
           }
@@ -3636,7 +3638,7 @@ Selection::GetRangesForInterval(nsIDOMNode* aBeginNode, int32_t aBeginOffset,
   NS_ENSURE_TRUE(*aResults, NS_ERROR_OUT_OF_MEMORY);
 
   for (uint32_t i = 0; i < *aResultCount; i++) {
-    (*aResults)[i] = results[i].forget().get(); // Already AddRefed
+    (*aResults)[i] = results[i].forget().take();
   }
   return NS_OK;
 }
@@ -5102,8 +5104,7 @@ Selection::Extend(nsINode& aParentNode, uint32_t aOffset, ErrorResult& aRv)
 #endif
   SetDirection(dir);
 #ifdef DEBUG_SELECTION
-  nsCOMPtr<nsIContent>content;
-  content = do_QueryInterface(aParentNode);
+  nsCOMPtr<nsIContent> content = do_QueryInterface(&aParentNode);
 
   printf ("Sel. Extend to %p %s %d\n", content.get(),
           nsAtomCString(content->Tag()).get(), aOffset);

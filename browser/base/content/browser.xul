@@ -406,14 +406,9 @@
         <image class="sync-panel-icon"/>
         <vbox class="sync-panel-inner">
           <description id="sync-start-panel-title"
-                       value="&syncStartPanel.heading;"/>
-          <description id="sync-start-panel-subtitle">
-#ifdef XP_UNIX
-            &syncStartPanel.subTitleUnix;
-#else
-            &syncStartPanel.subTitle;
-#endif
-          </description>
+                       value="&syncStartPanel2.heading;"/>
+          <description id="sync-start-panel-subtitle"
+                       value="&syncStartPanel2.subTitle;"/>
         </vbox>
       </hbox>
     </panel>
@@ -709,6 +704,8 @@
                 <image id="mixed-content-blocked-notification-icon" class="notification-anchor-icon" role="button"/>
                 <image id="webRTC-shareDevices-notification-icon" class="notification-anchor-icon" role="button"/>
                 <image id="webRTC-sharingDevices-notification-icon" class="notification-anchor-icon" role="button"/>
+                <image id="webRTC-shareMicrophone-notification-icon" class="notification-anchor-icon" role="button"/>
+                <image id="webRTC-sharingMicrophone-notification-icon" class="notification-anchor-icon" role="button"/>
                 <image id="pointerLock-notification-icon" class="notification-anchor-icon" role="button"/>
                 <image id="servicesInstall-notification-icon" class="notification-anchor-icon" role="button"/>
               </box>
@@ -808,6 +805,12 @@
                       oncommand="toggleSidebar('viewBookmarksSidebar');">
               <observes element="viewBookmarksSidebar" attribute="checked"/>
             </menuitem>
+            <!-- NB: temporary solution for bug 985024, this should go away soon. -->
+            <menuitem id="BMB_bookmarksShowAllTop"
+                      class="menuitem-iconic subviewbutton"
+                      label="&showAllBookmarks2.label;"
+                      command="Browser:ShowAllBookmarks"
+                      key="manBookmarkKb"/>
             <menuseparator/>
             <menuitem id="BMB_subscribeToPageMenuitem"
 #ifndef XP_MACOSX
@@ -1106,7 +1109,6 @@
                         command="Social:ToggleNotifications"
                         label="&social.toggleNotifications.label;"
                         accesskey="&social.toggleNotifications.accesskey;"/>
-              <menuitem class="social-toggle-menuitem" command="Social:Toggle"/>
               <menuseparator/>
               <menuseparator class="social-provider-menu" hidden="true"/>
               <menuitem class="social-addons-menuitem" command="Social:Addons"

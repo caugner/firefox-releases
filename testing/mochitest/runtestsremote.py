@@ -379,6 +379,14 @@ class MochiRemote(Mochitest):
         options.logFile = self.localLog
         return retVal
 
+    def buildTestPath(self, options):
+        if options.robocopIni != "":
+            # Skip over manifest building if we just want to run
+            # robocop tests.
+            return self.buildTestURL(options)
+        else:
+            return super(MochiRemote, self).buildTestPath(options)
+
     def installChromeFile(self, filename, options):
         parts = options.app.split('/')
         if (parts[0] == options.app):
@@ -563,6 +571,7 @@ def main():
         auto.setProduct(productPieces[0])
     else:
         auto.setProduct(options.remoteProductName)
+    auto.setAppName(options.remoteappname)
 
     mochitest = MochiRemote(auto, dm, options)
 
@@ -594,8 +603,7 @@ def main():
     options.dumpOutputDirectory = deviceRoot
 
     procName = options.app.split('/')[-1]
-    if (dm.processExist(procName)):
-        dm.killProcess(procName)
+    dm.killProcess(procName)
 
     if options.robocopIni != "":
         # sut may wait up to 300 s for a robocop am process before returning

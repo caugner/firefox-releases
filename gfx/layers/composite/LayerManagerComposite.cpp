@@ -11,6 +11,7 @@
 #include "Composer2D.h"                 // for Composer2D
 #include "CompositableHost.h"           // for CompositableHost
 #include "ContainerLayerComposite.h"    // for ContainerLayerComposite, etc
+#include "FPSCounter.h"                 // for FPSState, FPSCounter
 #include "FrameMetrics.h"               // for FrameMetrics
 #include "GeckoProfiler.h"              // for profiler_set_frame_number, etc
 #include "ImageLayerComposite.h"        // for ImageLayerComposite
@@ -20,7 +21,7 @@
 #include "Units.h"                      // for ScreenIntRect
 #include "gfx2DGlue.h"                  // for ToMatrix4x4
 #include "gfx3DMatrix.h"                // for gfx3DMatrix
-#include "gfxPlatform.h"                // for gfxPlatform
+#include "gfxPrefs.h"                   // for gfxPrefs
 #ifdef XP_MACOSX
 #include "gfxPlatformMac.h"
 #endif
@@ -50,6 +51,7 @@
 #include <android/log.h>
 #endif
 #include "GeckoProfiler.h"
+#include "TextRenderer.h"               // for TextRenderer
 
 class gfxASurface;
 class gfxContext;
@@ -102,7 +104,9 @@ LayerManagerComposite::LayerManagerComposite(Compositor* aCompositor)
 , mInTransaction(false)
 , mIsCompositorReady(false)
 , mDebugOverlayWantsNextFrame(false)
+, mGeometryChanged(true)
 {
+  mTextRenderer = new TextRenderer(aCompositor);
   MOZ_ASSERT(aCompositor);
 }
 
@@ -152,7 +156,8 @@ LayerManagerComposite::BeginTransaction()
   
   mIsCompositorReady = true;
 
-  if (Compositor::GetBackend() == LayersBackend::LAYERS_BASIC) {
+  if (Compositor::GetBackend() == LayersBackend::LAYERS_OPENGL ||
+      Compositor::GetBackend() == LayersBackend::LAYERS_BASIC) {
     mClonedLayerTreeProperties = LayerProperties::CloneFrom(GetRoot());
   }
 }
@@ -178,6 +183,7 @@ LayerManagerComposite::BeginTransactionWithDrawTarget(DrawTarget* aTarget)
 
   mIsCompositorReady = true;
   mCompositor->SetTargetContext(aTarget);
+  mTarget = aTarget;
 }
 
 bool
@@ -219,7 +225,8 @@ LayerManagerComposite::EndTransaction(DrawThebesLayerCallback aCallback,
   }
 
   if (mRoot && mClonedLayerTreeProperties) {
-    nsIntRegion invalid = mClonedLayerTreeProperties->ComputeDifferences(mRoot, nullptr);
+    nsIntRegion invalid =
+      mClonedLayerTreeProperties->ComputeDifferences(mRoot, nullptr, &mGeometryChanged);
     mClonedLayerTreeProperties = nullptr;
 
     mInvalidRegion.Or(mInvalidRegion, invalid);
@@ -239,9 +246,11 @@ LayerManagerComposite::EndTransaction(DrawThebesLayerCallback aCallback,
     mRoot->ComputeEffectiveTransforms(gfx::Matrix4x4());
 
     Render();
+    mGeometryChanged = false;
   }
 
   mCompositor->SetTargetContext(nullptr);
+  mTarget = nullptr;
 
 #ifdef MOZ_LAYERS_HAVE_LOG
   Log();
@@ -302,38 +311,129 @@ LayerManagerComposite::RootLayer() const
   return ToLayerComposite(mRoot);
 }
 
+// Size of the builtin font.
+static const float FontHeight = 7.f;
+static const float FontWidth = 4.f;
+static const float FontStride = 4.f;
+
+// Scale the font when drawing it to the viewport for better readability.
+static const float FontScaleX = 2.f;
+static const float FontScaleY = 3.f;
+
+static void DrawDigits(unsigned int aValue,
+		       int aOffsetX, int aOffsetY,
+                       Compositor* aCompositor,
+		       EffectChain& aEffectChain)
+{
+  if (aValue > 999) {
+    aValue = 999;
+  }
+
+  unsigned int divisor = 100;
+  float textureWidth = FontWidth * 10;
+  gfx::Float opacity = 1;
+  gfx::Matrix4x4 transform;
+  transform.Scale(FontScaleX, FontScaleY, 1);
+
+  for (size_t n = 0; n < 3; ++n) {
+    unsigned int digit = aValue % (divisor * 10) / divisor;
+    divisor /= 10;
+
+    RefPtr<TexturedEffect> texturedEffect = static_cast<TexturedEffect*>(aEffectChain.mPrimaryEffect.get());
+    texturedEffect->mTextureCoords = Rect(float(digit * FontWidth) / textureWidth, 0, FontWidth / textureWidth, 1.0f);
+
+    Rect drawRect = Rect(aOffsetX + n * FontWidth, aOffsetY, FontWidth, FontHeight);
+    Rect clipRect = Rect(0, 0, 300, 100);
+    aCompositor->DrawQuad(drawRect, clipRect,
+	aEffectChain, opacity, transform);
+  }
+}
+
+void FPSState::DrawFPS(TimeStamp aNow,
+                       unsigned int aFillRatio,
+                       Compositor* aCompositor)
+{
+  if (!mFPSTextureSource) {
+    const char *text =
+      "                                        "
+      " XXX XX  XXX XXX X X XXX XXX XXX XXX XXX"
+      " X X  X    X   X X X X   X     X X X X X"
+      " X X  X  XXX XXX XXX XXX XXX   X XXX XXX"
+      " X X  X  X     X   X   X X X   X X X   X"
+      " XXX XXX XXX XXX   X XXX XXX   X XXX   X"
+      "                                        ";
+
+    // Convert the text encoding above to RGBA.
+    int w = FontWidth * 10;
+    int h = FontHeight;
+    uint32_t* buf = (uint32_t *) malloc(w * h * sizeof(uint32_t));
+    for (int i = 0; i < h; i++) {
+      for (int j = 0; j < w; j++) {
+        uint32_t purple = 0xfff000ff;
+        uint32_t white  = 0xffffffff;
+        buf[i * w + j] = (text[i * w + j] == ' ') ? purple : white;
+      }
+    }
+
+   int bytesPerPixel = 4;
+    RefPtr<DataSourceSurface> fpsSurface = Factory::CreateWrappingDataSourceSurface(
+      reinterpret_cast<uint8_t*>(buf), w * bytesPerPixel, IntSize(w, h), SurfaceFormat::B8G8R8A8);
+    mFPSTextureSource = aCompositor->CreateDataTextureSource();
+    mFPSTextureSource->Update(fpsSurface);
+  }
+
+  EffectChain effectChain;
+  effectChain.mPrimaryEffect = CreateTexturedEffect(SurfaceFormat::B8G8R8A8, mFPSTextureSource, Filter::POINT);
+
+  unsigned int fps = unsigned(mCompositionFps.AddFrameAndGetFps(aNow));
+  unsigned int txnFps = unsigned(mTransactionFps.GetFpsAt(aNow));
+
+  DrawDigits(fps, 0, 0, aCompositor, effectChain);
+  DrawDigits(txnFps, FontWidth * 4, 0, aCompositor, effectChain);
+  DrawDigits(aFillRatio, FontWidth * 8, 0, aCompositor, effectChain);
+}
+
 static uint16_t sFrameCount = 0;
 void
 LayerManagerComposite::RenderDebugOverlay(const Rect& aBounds)
 {
-  if (!gfxPlatform::DrawFrameCounter()) {
-    return;
-  }
-
-  profiler_set_frame_number(sFrameCount);
-
-  uint16_t frameNumber = sFrameCount;
-  const uint16_t bitWidth = 3;
-  float opacity = 1.0;
-  gfx::Rect clip(0,0, bitWidth*16, bitWidth);
-  for (size_t i = 0; i < 16; i++) {
-
-    gfx::Color bitColor;
-    if ((frameNumber >> i) & 0x1) {
-      bitColor = gfx::Color(0, 0, 0, 1.0);
-    } else {
-      bitColor = gfx::Color(1.0, 1.0, 1.0, 1.0);
+  if (gfxPrefs::LayersDrawFPS()) {
+    if (!mFPS) {
+      mFPS = new FPSState();
     }
-    EffectChain effects;
-    effects.mPrimaryEffect = new EffectSolidColor(bitColor);
-    mCompositor->DrawQuad(gfx::Rect(bitWidth*i, 0, bitWidth, bitWidth),
-                          clip,
-                          effects,
-                          opacity,
-                          gfx::Matrix4x4());
+
+    float fillRatio = mCompositor->GetFillRatio();
+    mFPS->DrawFPS(TimeStamp::Now(), unsigned(fillRatio), mCompositor);
+  } else {
+    mFPS = nullptr;
   }
-  // We intentionally overflow at 2^16.
-  sFrameCount++;
+
+  if (gfxPrefs::DrawFrameCounter()) {
+    profiler_set_frame_number(sFrameCount);
+
+    uint16_t frameNumber = sFrameCount;
+    const uint16_t bitWidth = 3;
+    float opacity = 1.0;
+    gfx::Rect clip(0,0, bitWidth*16, bitWidth);
+    for (size_t i = 0; i < 16; i++) {
+
+      gfx::Color bitColor;
+      if ((frameNumber >> i) & 0x1) {
+        bitColor = gfx::Color(0, 0, 0, 1.0);
+      } else {
+        bitColor = gfx::Color(1.0, 1.0, 1.0, 1.0);
+      }
+      EffectChain effects;
+      effects.mPrimaryEffect = new EffectSolidColor(bitColor);
+      mCompositor->DrawQuad(gfx::Rect(bitWidth*i, 0, bitWidth, bitWidth),
+                            clip,
+                            effects,
+                            opacity,
+                            gfx::Matrix4x4());
+    }
+    // We intentionally overflow at 2^16.
+    sFrameCount++;
+  }
 }
 
 void
@@ -345,14 +445,20 @@ LayerManagerComposite::Render()
     return;
   }
 
-  if (gfxPlatform::GetPrefLayersDump()) {
+  if (gfxPrefs::LayersDump()) {
     this->Dump();
   }
 
   /** Our more efficient but less powerful alter ego, if one is available. */
   nsRefPtr<Composer2D> composer2D = mCompositor->GetWidget()->GetComposer2D();
 
-  if (composer2D && composer2D->TryRender(mRoot, mWorldMatrix)) {
+  if (!mTarget && composer2D && composer2D->TryRender(mRoot, mWorldMatrix, mGeometryChanged)) {
+    if (mFPS) {
+      double fps = mFPS->mCompositionFps.AddFrameAndGetFps(TimeStamp::Now());
+      if (gfxPrefs::LayersDrawFPS()) {
+        printf_stderr("HWComposer: FPS is %g\n", fps);
+      }
+    }
     mCompositor->EndFrameForExternalComposition(mWorldMatrix);
     return;
   }
@@ -395,6 +501,14 @@ LayerManagerComposite::Render()
   // Render our layers.
   RootLayer()->RenderLayer(clipRect);
 
+  if (!mRegionToClear.IsEmpty()) {
+    nsIntRegionRectIterator iter(mRegionToClear);
+    const nsIntRect *r;
+    while ((r = iter.Next())) {
+      mCompositor->ClearRect(Rect(r->x, r->y, r->width, r->height));
+    }
+  }
+
   // Allow widget to render a custom foreground.
   mCompositor->GetWidget()->DrawWindowOverlay(this, nsIntRect(actualBounds.x,
                                                               actualBounds.y,
@@ -407,6 +521,7 @@ LayerManagerComposite::Render()
   {
     PROFILER_LABEL("LayerManagerComposite", "EndFrame");
     mCompositor->EndFrame();
+    mCompositor->SetFBAcquireFence(mRoot);
   }
 
   mCompositor->GetWidget()->PostRender(this);
@@ -557,7 +672,7 @@ LayerManagerComposite::ComputeRenderIntegrity()
 {
   // We only ever have incomplete rendering when progressive tiles are enabled.
   Layer* root = GetRoot();
-  if (!gfxPlatform::UseProgressiveTilePainting() || !root) {
+  if (!gfxPrefs::UseProgressiveTilePainting() || !root) {
     return 1.f;
   }
 
@@ -584,8 +699,8 @@ LayerManagerComposite::ComputeRenderIntegrity()
 
     // Clip the screen rect to the document bounds
     gfxRect documentBounds =
-      transform.TransformBounds(gfxRect(metrics.mScrollableRect.x - metrics.mScrollOffset.x,
-                                        metrics.mScrollableRect.y - metrics.mScrollOffset.y,
+      transform.TransformBounds(gfxRect(metrics.mScrollableRect.x - metrics.GetScrollOffset().x,
+                                        metrics.mScrollableRect.y - metrics.GetScrollOffset().y,
                                         metrics.mScrollableRect.width,
                                         metrics.mScrollableRect.height));
     documentBounds.RoundOut();
@@ -764,7 +879,6 @@ LayerComposite::LayerComposite(LayerManagerComposite *aManager)
   , mShadowTransformSetByAnimation(false)
   , mDestroyed(false)
   , mLayerComposited(false)
-  , mClearFB(false)
 { }
 
 LayerComposite::~LayerComposite()
@@ -785,6 +899,14 @@ LayerManagerComposite::CanUseCanvasLayerForSize(const IntSize &aSize)
 {
   return mCompositor->CanUseCanvasLayerForSize(gfx::IntSize(aSize.width,
                                                             aSize.height));
+}
+
+void
+LayerManagerComposite::NotifyShadowTreeTransaction()
+{
+  if (mFPS) {
+    mFPS->NotifyShadowTreeTransaction();
+  }
 }
 
 #ifndef MOZ_HAVE_PLATFORM_SPECIFIC_LAYER_BUFFERS

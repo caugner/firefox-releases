@@ -60,6 +60,7 @@ class FilterNode;
 struct NativeSurface {
   NativeSurfaceType mType;
   SurfaceFormat mFormat;
+  gfx::IntSize mSize;
   void *mSurface;
 };
 
@@ -164,6 +165,7 @@ struct DrawSurfaceOptions {
 class GradientStops : public RefCounted<GradientStops>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GradientStops)
   virtual ~GradientStops() {}
 
   virtual BackendType GetBackendType() const = 0;
@@ -316,6 +318,7 @@ public:
 class SourceSurface : public RefCounted<SourceSurface>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(SourceSurface)
   virtual ~SourceSurface() {}
 
   virtual SurfaceType GetType() const = 0;
@@ -349,10 +352,18 @@ protected:
 class DataSourceSurface : public SourceSurface
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(DataSourceSurface)
   DataSourceSurface()
     : mIsMapped(false)
   {
   }
+
+#ifdef DEBUG
+  virtual ~DataSourceSurface()
+  {
+    MOZ_ASSERT(!mIsMapped, "Someone forgot to call Unmap()");
+  }
+#endif
 
   struct MappedSurface {
     uint8_t *mData;
@@ -406,6 +417,7 @@ public:
 class PathSink : public RefCounted<PathSink>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(PathSink)
   virtual ~PathSink() {}
 
   /* Move the current point in the path, any figure currently being drawn will
@@ -444,6 +456,7 @@ class FlattenedPath;
 class Path : public RefCounted<Path>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(Path)
   virtual ~Path();
   
   virtual BackendType GetBackendType() const = 0;
@@ -512,6 +525,7 @@ protected:
 class PathBuilder : public PathSink
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(PathBuilder)
   /* Finish writing to the path and return a Path object that can be used for
    * drawing. Future use of the builder results in a crash!
    */
@@ -543,6 +557,7 @@ struct GlyphBuffer
 class ScaledFont : public RefCounted<ScaledFont>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(ScaledFont)
   virtual ~ScaledFont() {}
 
   typedef void (*FontFileDataOutput)(const uint8_t *aData, uint32_t aLength, uint32_t aIndex, Float aGlyphSize, void *aBaton);
@@ -601,6 +616,7 @@ struct FontOptions
 class GlyphRenderingOptions : public RefCounted<GlyphRenderingOptions>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(GlyphRenderingOptions)
   virtual ~GlyphRenderingOptions() {}
 
   virtual FontType GetType() const = 0;
@@ -617,6 +633,7 @@ protected:
 class DrawTarget : public RefCounted<DrawTarget>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(DrawTarget)
   DrawTarget() : mTransformDirty(false), mPermitSubpixelAA(false) {}
   virtual ~DrawTarget() {}
 
@@ -972,15 +989,10 @@ public:
     return mPermitSubpixelAA;
   }
 
-  virtual GenericRefCountedBase* GetGLContext() const {
-    return nullptr;
-  }
-
 #ifdef USE_SKIA_GPU
-  virtual void InitWithGLContextAndGrGLInterface(GenericRefCountedBase* aGLContext,
-                                            GrGLInterface* aGrGLInterface,
-                                            const IntSize &aSize,
-                                            SurfaceFormat aFormat)
+  virtual bool InitWithGrContext(GrContext* aGrContext,
+                                 const IntSize &aSize,
+                                 SurfaceFormat aFormat)
   {
     MOZ_CRASH();
   }
@@ -999,6 +1011,7 @@ protected:
 class DrawEventRecorder : public RefCounted<DrawEventRecorder>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(DrawEventRecorder)
   virtual ~DrawEventRecorder() { }
 };
 
@@ -1014,10 +1027,6 @@ public:
   static bool CheckSurfaceSize(const IntSize &sz, int32_t limit = 0);
 
   static TemporaryRef<DrawTarget> CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSize& aSize);
-
-  static TemporaryRef<SourceSurface>
-    CreateSourceSurfaceForCairoSurface(cairo_surface_t* aSurface,
-                                       SurfaceFormat aFormat);
 
   static TemporaryRef<DrawTarget>
     CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFormat aFormat);
@@ -1085,13 +1094,9 @@ public:
 
 #ifdef USE_SKIA_GPU
   static TemporaryRef<DrawTarget>
-    CreateDrawTargetSkiaWithGLContextAndGrGLInterface(GenericRefCountedBase* aGLContext,
-                                                      GrGLInterface* aGrGLInterface,
-                                                      const IntSize &aSize,
-                                                      SurfaceFormat aFormat);
-
-  static void
-    SetGlobalSkiaCacheLimits(int aCount, int aSizeInBytes);
+    CreateDrawTargetSkiaWithGrContext(GrContext* aGrContext,
+                                      const IntSize &aSize,
+                                      SurfaceFormat aFormat);
 #endif
 
   static void PurgeAllCaches();

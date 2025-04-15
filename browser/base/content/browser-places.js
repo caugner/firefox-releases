@@ -63,6 +63,10 @@ var StarUI = {
           if (!this._element("editBookmarkPanelContent").hidden)
             this.quitEditMode();
 
+          if (this._anchorToolbarButton) {
+            this._anchorToolbarButton.removeAttribute("open");
+            this._anchorToolbarButton = null;
+          }
           this._restoreCommandsState();
           this._itemId = -1;
           if (this._batching) {
@@ -186,6 +190,21 @@ var StarUI = {
     this._itemId = aItemId !== undefined ? aItemId : this._itemId;
     this.beginBatch();
 
+    if (aAnchorElement) {
+      // Set the open=true attribute if the anchor is a
+      // descendent of a toolbarbutton.
+      let parent = aAnchorElement.parentNode;
+      while (parent) {
+        if (parent.localName == "toolbarbutton") {
+          break;
+        }
+        parent = parent.parentNode;
+      }
+      if (parent) {
+        this._anchorToolbarButton = parent;
+        parent.setAttribute("open", "true");
+      }
+    }
     this.panel.openPopup(aAnchorElement, aPosition);
 
     gEditItemOverlay.initPanel(this._itemId,
@@ -1322,7 +1341,7 @@ let BookmarkingUI = {
       return;
     }
 
-    this._pendingStmt = PlacesUtils.asyncGetBookmarkIds(this._uri, function (aItemIds, aURI) {
+    this._pendingStmt = PlacesUtils.asyncGetBookmarkIds(this._uri, (aItemIds, aURI) => {
       // Safety check that the bookmarked URI equals the tracked one.
       if (!aURI.equals(this._uri)) {
         Components.utils.reportError("BookmarkingUI did not receive current URI");
@@ -1349,7 +1368,7 @@ let BookmarkingUI = {
       }
 
       delete this._pendingStmt;
-    }, this);
+    });
   },
 
   _updateStar: function BUI__updateStar() {
@@ -1400,7 +1419,7 @@ let BookmarkingUI = {
       let widthDiff = referenceRect.width - rectToPosition.width;
       return [(leftDiff + .5 * widthDiff) + "px", (topDiff + .5 * heightDiff) + "px"];
     }
- 
+
     if (this._notificationTimeout) {
       clearTimeout(this._notificationTimeout);
     }
@@ -1447,8 +1466,8 @@ let BookmarkingUI = {
 
     this._notificationTimeout = setTimeout( () => {
       this.notifier.removeAttribute("notification");
-      this.button.removeAttribute("notification");
       this.dropmarkerNotifier.removeAttribute("notification");
+      this.button.removeAttribute("notification");
 
       this.dropmarkerNotifier.style.transform = '';
       this.notifier.style.transform = '';

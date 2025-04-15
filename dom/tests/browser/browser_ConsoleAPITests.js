@@ -40,23 +40,31 @@ function testConsoleData(aMessageObject) {
   is(aMessageObject.level, gLevel, "expected level received");
   ok(aMessageObject.arguments, "we have arguments");
 
-  if (gLevel == "trace") {
-    is(aMessageObject.arguments.length, 0, "arguments.length matches");
-    is(aMessageObject.stacktrace.toSource(), gArgs.toSource(),
-       "stack trace is correct");
-  }
-  else {
-    is(aMessageObject.arguments.length, gArgs.length, "arguments.length matches");
-    gArgs.forEach(function (a, i) {
-      // Waive Xray so that we don't get messed up by Xray ToString.
-      //
-      // It'd be nice to just use XPCNativeWrapper.unwrap here, but there are
-      // a number of dumb reasons we can't. See bug 868675.
-      var arg = aMessageObject.arguments[i];
-      if (Components.utils.isXrayWrapper(arg))
-        arg = arg.wrappedJSObject;
-      is(arg, a, "correct arg " + i);
-    });
+  switch (gLevel) {
+    case "trace": {
+      is(aMessageObject.arguments.length, 0, "arguments.length matches");
+      is(aMessageObject.stacktrace.toSource(), gArgs.toSource(),
+         "stack trace is correct");
+      break
+    }
+    case "count": {
+      is(aMessageObject.counter.label, gArgs[0].label, "label matches");
+      is(aMessageObject.counter.count, gArgs[0].count, "count matches");
+      break;
+    }
+    default: {
+      is(aMessageObject.arguments.length, gArgs.length, "arguments.length matches");
+      gArgs.forEach(function (a, i) {
+        // Waive Xray so that we don't get messed up by Xray ToString.
+        //
+        // It'd be nice to just use XPCNativeWrapper.unwrap here, but there are
+        // a number of dumb reasons we can't. See bug 868675.
+        var arg = aMessageObject.arguments[i];
+        if (Components.utils.isXrayWrapper(arg))
+          arg = arg.wrappedJSObject;
+        is(arg, a, "correct arg " + i);
+      });
+    }
   }
 
   gTestDriver.next();
@@ -132,7 +140,7 @@ function testConsoleGroup(aMessageObject) {
      "expected level received");
 
   is(aMessageObject.functionName, "testGroups", "functionName matches");
-  ok(aMessageObject.lineNumber >= 45 && aMessageObject.lineNumber <= 49,
+  ok(aMessageObject.lineNumber >= 46 && aMessageObject.lineNumber <= 50,
      "lineNumber matches");
   if (aMessageObject.level == "groupCollapsed") {
     is(aMessageObject.groupName, "a group", "groupCollapsed groupName matches");
@@ -158,10 +166,10 @@ function testConsoleGroup(aMessageObject) {
 function startTraceTest() {
   gLevel = "trace";
   gArgs = [
-    {filename: TEST_URI, lineNumber: 6, functionName: "window.foobar585956c", language: 2},
-    {filename: TEST_URI, lineNumber: 11, functionName: "foobar585956b", language: 2},
-    {filename: TEST_URI, lineNumber: 15, functionName: "foobar585956a", language: 2},
-    {filename: TEST_URI, lineNumber: 1, functionName: "onclick", language: 2}
+    {filename: TEST_URI, functionName: "window.foobar585956c", language: 2, lineNumber: 6},
+    {filename: TEST_URI, functionName: "foobar585956b", language: 2, lineNumber: 11},
+    {filename: TEST_URI, functionName: "foobar585956a", language: 2, lineNumber: 15},
+    {filename: TEST_URI, functionName: "onclick", language: 2, lineNumber: 1}
   ];
 
   let button = gWindow.document.getElementById("test-trace");
@@ -182,7 +190,7 @@ function startLocationTest() {
   };
   gLevel = "log";
   gArgs = [
-    {filename: TEST_URI, lineNumber: 19, functionName: "foobar646025", arguments: ["omg", "o", "d"]}
+    {filename: TEST_URI, functionName: "foobar646025", arguments: ["omg", "o", "d"], lineNumber: 19}
   ];
 
   let button = gWindow.document.getElementById("test-location");
@@ -205,10 +213,29 @@ function observeConsoleTest() {
   win.console.info("arg", "extra arg");
   yield undefined;
 
-  // We don't currently support width and precision qualifiers, but we don't
-  // choke on them either.
-  expect("warn", "Lesson 1: PI is approximately equal to 3.14159");
+  expect("warn", "Lesson 1: PI is approximately equal to 3");
+  win.console.warn("Lesson %d: %s is approximately equal to %1.0f",
+                   1,
+                   "PI",
+                   3.14159);
+  yield undefined;
+
+  expect("warn", "Lesson 1: PI is approximately equal to 3.14");
   win.console.warn("Lesson %d: %s is approximately equal to %1.2f",
+                   1,
+                   "PI",
+                   3.14159);
+  yield undefined;
+
+  expect("warn", "Lesson 1: PI is approximately equal to 3.141590");
+  win.console.warn("Lesson %d: %s is approximately equal to %f",
+                   1,
+                   "PI",
+                   3.14159);
+  yield undefined;
+
+  expect("warn", "Lesson 1: PI is approximately equal to 3.1415900");
+  win.console.warn("Lesson %d: %s is approximately equal to %0.7f",
                    1,
                    "PI",
                    3.14159);
@@ -262,6 +289,22 @@ function observeConsoleTest() {
   win.console.assert(false, "message");
   yield undefined;
 
+  expect("count", { label: "label a", count: 1 })
+  win.console.count("label a");
+  yield undefined;
+
+  expect("count", { label: "label b", count: 1 })
+  win.console.count("label b");
+  yield undefined;
+
+  expect("count", { label: "label a", count: 2 })
+  win.console.count("label a");
+  yield undefined;
+
+  expect("count", { label: "label b", count: 2 })
+  win.console.count("label b");
+  yield undefined;
+
   startTraceTest();
   yield undefined;
 
@@ -287,6 +330,7 @@ function consoleAPISanityTest() {
   ok(win.console.time, "console.time is here");
   ok(win.console.timeEnd, "console.timeEnd is here");
   ok(win.console.assert, "console.assert is here");
+  ok(win.console.count, "console.count is here");
 }
 
 function startTimeTest() {

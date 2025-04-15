@@ -242,23 +242,8 @@ CodeGeneratorARM::bailoutFrom(Label *label, LSnapshot *snapshot)
     // isn't properly aligned to the static frame size.
     JS_ASSERT_IF(frameClass_ != FrameSizeClass::None(),
                  frameClass_.frameSize() == masm.framePushed());
-    // This involves retargeting a label, which I've declared is always going
-    // to be a pc-relative branch to an absolute address!
-    // With no assurance that this is going to be a local branch, I am wary to
-    // implement this.  Moreover, If it isn't a local branch, it will be large
-    // and possibly slow.  I believe that the correct way to handle this is to
-    // subclass label into a fatlabel, where we generate enough room for a load
-    // before the branch
-#if 0
-    if (assignBailoutId(snapshot)) {
-        uint8_t *code = deoptTable_->raw() + snapshot->bailoutId() * BAILOUT_TABLE_ENTRY_SIZE;
-        masm.retarget(label, code, Relocation::HARDCODED);
-        return true;
-    }
-#endif
-    // We could not use a jump table, either because all bailout IDs were
-    // reserved, or a jump table is not optimal for this frame size or
-    // platform. Whatever, we will generate a lazy bailout.
+
+    // On ARM we don't use a bailout table.
     OutOfLineBailout *ool = new(alloc()) OutOfLineBailout(snapshot, masm.framePushed());
     if (!addOutOfLineCode(ool)) {
         return false;
@@ -531,7 +516,7 @@ CodeGeneratorARM::divICommon(MDiv *mir, Register lhs, Register rhs, Register out
         // The integer division will give INT32_MIN, but we want -(double)INT32_MIN.
         masm.ma_cmp(lhs, Imm32(INT32_MIN)); // sets EQ if lhs == INT32_MIN
         masm.ma_cmp(rhs, Imm32(-1), Assembler::Equal); // if EQ (LHS == INT32_MIN), sets EQ if rhs == -1
-        if (mir->isTruncated()) {
+        if (mir->canTruncateOverflow()) {
             // (-INT32_MIN)|0 = INT32_MIN
             Label skip;
             masm.ma_b(&skip, Assembler::NotEqual);
@@ -545,24 +530,11 @@ CodeGeneratorARM::divICommon(MDiv *mir, Register lhs, Register rhs, Register out
         }
     }
 
-    // 0/X (with X < 0) is bad because both of these values *should* be doubles, and
-    // the result should be -0.0, which cannot be represented in integers.
-    // X/0 is bad because it will give garbage (or abort), when it should give
-    // either \infty, -\infty or NAN.
-
-    // Prevent 0 / X (with X < 0) and X / 0
-    // testing X / Y.  Compare Y with 0.
-    // There are three cases: (Y < 0), (Y == 0) and (Y > 0)
-    // If (Y < 0), then we compare X with 0, and bail if X == 0
-    // If (Y == 0), then we simply want to bail.  Since this does not set
-    // the flags necessary for LT to trigger, we don't test X, and take the
-    // bailout because the EQ flag is set.
-    // if (Y > 0), we don't set EQ, and we don't trigger LT, so we don't take the bailout.
-    if (mir->canBeDivideByZero() || mir->canBeNegativeZero()) {
+    // Handle divide by zero.
+    if (mir->canBeDivideByZero()) {
         masm.ma_cmp(rhs, Imm32(0));
-        masm.ma_cmp(lhs, Imm32(0), Assembler::LessThan);
-        if (mir->isTruncated()) {
-            // Infinity|0 == 0 and -0|0 == 0
+        if (mir->canTruncateInfinities()) {
+            // Infinity|0 == 0
             Label skip;
             masm.ma_b(&skip, Assembler::NotEqual);
             masm.ma_mov(Imm32(0), output);
@@ -573,6 +545,18 @@ CodeGeneratorARM::divICommon(MDiv *mir, Register lhs, Register rhs, Register out
             if (!bailoutIf(Assembler::Equal, snapshot))
                 return false;
         }
+    }
+
+    // Handle negative 0.
+    if (!mir->canTruncateNegativeZero() && mir->canBeNegativeZero()) {
+        Label nonzero;
+        masm.ma_cmp(lhs, Imm32(0));
+        masm.ma_b(&nonzero, Assembler::NotEqual);
+        masm.ma_cmp(rhs, Imm32(0));
+        JS_ASSERT(mir->fallible());
+        if (!bailoutIf(Assembler::LessThan, snapshot))
+            return false;
+        masm.bind(&nonzero);
     }
 
     return true;
@@ -592,7 +576,7 @@ CodeGeneratorARM::visitDivI(LDivI *ins)
     if (!divICommon(mir, lhs, rhs, output, ins->snapshot(), done))
         return false;
 
-    if (mir->isTruncated()) {
+    if (mir->canTruncateRemainder()) {
         masm.ma_sdiv(lhs, rhs, output);
     } else {
         masm.ma_sdiv(lhs, rhs, ScratchRegister);
@@ -634,7 +618,7 @@ CodeGeneratorARM::visitSoftDivI(LSoftDivI *ins)
     else
         masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, __aeabi_idivmod));
     // idivmod returns the quotient in r0, and the remainder in r1.
-    if (!mir->isTruncated()) {
+    if (!mir->canTruncateRemainder()) {
         JS_ASSERT(mir->fallible());
         masm.ma_cmp(r1, Imm32(0));
         if (!bailoutIf(Assembler::NonZero, ins->snapshot()))
@@ -1016,7 +1000,7 @@ CodeGeneratorARM::visitPowHalfD(LPowHalfD *ins)
     Label done;
 
     // Masm.pow(-Infinity, 0.5) == Infinity.
-    masm.ma_vimm(NegativeInfinity(), ScratchFloatReg);
+    masm.ma_vimm(NegativeInfinity<double>(), ScratchFloatReg);
     masm.compareDouble(input, ScratchFloatReg);
     masm.ma_vneg(ScratchFloatReg, output, Assembler::Equal);
     masm.ma_b(&done, Assembler::Equal);
@@ -1239,6 +1223,21 @@ CodeGeneratorARM::visitRound(LRound *lir)
     // Output is either correct, or clamped.  All -0 cases have been translated to a clamped
     // case.a
     masm.round(input, output, &bail, tmp);
+    if (!bailoutFrom(&bail, lir->snapshot()))
+        return false;
+    return true;
+}
+
+bool
+CodeGeneratorARM::visitRoundF(LRoundF *lir)
+{
+    FloatRegister input = ToFloatRegister(lir->input());
+    Register output = ToRegister(lir->output());
+    FloatRegister tmp = ToFloatRegister(lir->temp());
+    Label bail;
+    // Output is either correct, or clamped.  All -0 cases have been translated to a clamped
+    // case.a
+    masm.roundf(input, output, &bail, tmp);
     if (!bailoutFrom(&bail, lir->snapshot()))
         return false;
     return true;
@@ -1646,14 +1645,6 @@ CodeGeneratorARM::visitNotD(LNotD *ins)
         masm.ma_mov(Imm32(0), dest);
         masm.ma_mov(Imm32(1), dest, NoSetCond, Assembler::Equal);
         masm.ma_mov(Imm32(1), dest, NoSetCond, Assembler::Overflow);
-#if 0
-        masm.as_vmrs(ToRegister(dest));
-        // Mask out just the two bits we care about.  If neither bit is set,
-        // the dest is already zero
-        masm.ma_and(Imm32(0x50000000), dest, dest, Assembler::SetCond);
-        // If it is non-zero, then force it to be 1.
-        masm.ma_mov(Imm32(1), dest, NoSetCond, Assembler::NotEqual);
-#endif
     }
     return true;
 }
@@ -1683,14 +1674,6 @@ CodeGeneratorARM::visitNotF(LNotF *ins)
         masm.ma_mov(Imm32(0), dest);
         masm.ma_mov(Imm32(1), dest, NoSetCond, Assembler::Equal);
         masm.ma_mov(Imm32(1), dest, NoSetCond, Assembler::Overflow);
-#if 0
-        masm.as_vmrs(ToRegister(dest));
-        // Mask out just the two bits we care about.  If neither bit is set,
-        // the dest is already zero
-        masm.ma_and(Imm32(0x50000000), dest, dest, Assembler::SetCond);
-        // If it is non-zero, then force it to be 1.
-        masm.ma_mov(Imm32(1), dest, NoSetCond, Assembler::NotEqual);
-#endif
     }
     return true;
 }
@@ -2309,4 +2292,16 @@ CodeGeneratorARM::visitNegF(LNegF *ins)
     FloatRegister input = ToFloatRegister(ins->input());
     masm.ma_vneg_f32(input, ToFloatRegister(ins->output()));
     return true;
+}
+
+bool
+CodeGeneratorARM::visitForkJoinGetSlice(LForkJoinGetSlice *ins)
+{
+    MOZ_ASSUME_UNREACHABLE("NYI");
+}
+
+JitCode *
+JitRuntime::generateForkJoinGetSliceStub(JSContext *cx)
+{
+    MOZ_ASSUME_UNREACHABLE("NYI");
 }

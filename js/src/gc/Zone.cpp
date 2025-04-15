@@ -41,6 +41,9 @@ JS::Zone::Zone(JSRuntime *rt)
     gcGrayRoots(),
     data(nullptr),
     types(this)
+#ifdef JS_ION
+    , jitZone_(nullptr)
+#endif
 {
     /* Ensure that there are no vtables to mess us up here. */
     JS_ASSERT(reinterpret_cast<JS::shadow::Zone *>(this) ==
@@ -53,6 +56,10 @@ Zone::~Zone()
 {
     if (this == runtimeFromMainThread()->systemZone)
         runtimeFromMainThread()->systemZone = nullptr;
+
+#ifdef JS_ION
+    js_delete(jitZone_);
+#endif
 }
 
 bool
@@ -105,7 +112,7 @@ Zone::onTooMuchMalloc()
 }
 
 void
-Zone::sweep(FreeOp *fop, bool releaseTypes)
+Zone::sweep(FreeOp *fop, bool releaseTypes, bool *oom)
 {
     /*
      * Periodically release observed types for all scripts. This is safe to
@@ -116,7 +123,7 @@ Zone::sweep(FreeOp *fop, bool releaseTypes)
 
     {
         gcstats::AutoPhase ap(fop->runtime()->gcStats, gcstats::PHASE_DISCARD_ANALYSIS);
-        types.sweep(fop, releaseTypes);
+        types.sweep(fop, releaseTypes, oom);
     }
 
     if (!fop->runtime()->debuggerList.isEmpty())
@@ -168,6 +175,9 @@ void
 Zone::discardJitCode(FreeOp *fop)
 {
 #ifdef JS_ION
+    if (!jitZone())
+        return;
+
     if (isPreservingCode()) {
         PurgeJITCaches(this);
     } else {
@@ -204,8 +214,7 @@ Zone::discardJitCode(FreeOp *fop)
             script->resetUseCount();
         }
 
-        for (CompartmentsInZoneIter comp(this); !comp.done(); comp.next())
-            jit::FinishDiscardJitCode(fop, comp);
+        jitZone()->optimizedStubSpace()->free();
     }
 #endif
 }
@@ -217,6 +226,20 @@ Zone::gcNumber()
     // them cannot access the main runtime's gcNumber without racing.
     return usedByExclusiveThread ? 0 : runtimeFromMainThread()->gcNumber;
 }
+
+#ifdef JS_ION
+js::jit::JitZone *
+Zone::createJitZone(JSContext *cx)
+{
+    MOZ_ASSERT(!jitZone_);
+
+    if (!cx->runtime()->getJitRuntime(cx))
+        return nullptr;
+
+    jitZone_ = cx->new_<js::jit::JitZone>();
+    return jitZone_;
+}
+#endif
 
 JS::Zone *
 js::ZoneOfObject(const JSObject &obj)

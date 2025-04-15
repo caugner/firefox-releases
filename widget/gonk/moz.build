@@ -57,7 +57,8 @@ SOURCES += [
     'nsWindow.cpp',
     'OrientationObserver.cpp',
     'ParentProcessController.cpp',
-    'ProcessOrientation.cpp'
+    'ProcessOrientation.cpp',
+    'WidgetTraceEvent.cpp'
 ]
 
 LIBRARY_NAME = 'widget_gonk'
@@ -70,8 +71,8 @@ LOCAL_INCLUDES += [
     '/content/media/omx/mediaresourcemanager',
     '/dom/events',
     '/dom/system/android',
-    '/gfx/skia/include/config',
-    '/gfx/skia/include/core',
+    '/gfx/skia/trunk/include/config',
+    '/gfx/skia/trunk/include/core',
     '/widget/shared',
     '/widget/xpwidgets',
 ]
@@ -81,3 +82,11 @@ DEFINES['SK_BUILD_FOR_ANDROID_NDK'] = True
 
 if CONFIG['MOZ_OMX_DECODER']:
     DEFINES['MOZ_OMX_DECODER'] = True
+
+CXXFLAGS += [
+    '-I%s/%s' % (CONFIG['ANDROID_SOURCE'], d) for d in [
+        'hardware/libhardware/include',
+        'hardware/libhardware_legacy/include',
+        'frameworks/native/opengl/include',
+    ]
+]

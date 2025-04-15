@@ -37,6 +37,10 @@ dictionary RTCInboundRTPStreamStats : RTCRTPStreamStats {
   unsigned long packetsReceived;
   unsigned long long bytesReceived;
   double jitter;
+  unsigned long packetsLost;
+  long mozAvSyncDelay;
+  long mozJitterBufferDelay;
+  long mozRtt;
 };
 
 dictionary RTCOutboundRTPStreamStats : RTCRTPStreamStats {
@@ -55,7 +59,6 @@ dictionary RTCMediaStreamTrackStats : RTCStats {
   unsigned long framesSent;
   unsigned long framesReceived;   // Only for remoteSource=true
   unsigned long framesDecoded;
-  unsigned long first;
 };
 
 dictionary RTCMediaStreamStats : RTCStats {
@@ -107,6 +110,8 @@ dictionary RTCIceCandidateStats : RTCStats {
   DOMString componentId;
   DOMString candidateId;
   DOMString ipAddress;
+  DOMString transport;
+  DOMString mozLocalTransport; // needs standardization
   long portNumber;
   RTCStatsIceCandidateType candidateType;
 };

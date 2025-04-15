@@ -26,14 +26,16 @@ static JSObject *trusted_fun = nullptr;
 static bool
 CallTrusted(JSContext *cx, unsigned argc, jsval *vp)
 {
+    JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+
     if (!JS_SaveFrameChain(cx))
         return false;
 
     bool ok = false;
     {
         JSAutoCompartment ac(cx, trusted_glob);
-        ok = JS_CallFunctionValue(cx, nullptr, JS::ObjectValue(*trusted_fun),
-                                  0, nullptr, vp);
+        JS::RootedValue funVal(cx, JS::ObjectValue(*trusted_fun));
+        ok = JS_CallFunctionValue(cx, JS::NullPtr(), funVal, JS::HandleValueArray::empty(), args.rval());
     }
     JS_RestoreFrameChain(cx);
     return ok;
@@ -49,7 +51,7 @@ BEGIN_TEST(testChromeBuffer)
     if (!JS_AddNamedObjectRoot(cx, &trusted_glob, "trusted-global"))
         return false;
 
-    JSFunction *fun;
+    JS::RootedFunction fun(cx);
 
     /*
      * Check that, even after untrusted content has exhausted the stack, code
@@ -63,8 +65,7 @@ BEGIN_TEST(testChromeBuffer)
             const char *bytes = "return x ? 1 + trusted(x-1) : 0";
             JS::HandleObject global = JS::HandleObject::fromMarkedLocation(&trusted_glob);
             JS::CompileOptions options(cx);
-            options.setFileAndLine("", 0)
-                   .setPrincipals(&system_principals);
+            options.setFileAndLine("", 0);
             CHECK(fun = JS_CompileFunction(cx, global, "trusted", 1, &paramName,
                                            bytes, strlen(bytes), options));
             trusted_fun = JS_GetFunctionObject(fun);
@@ -91,7 +92,7 @@ BEGIN_TEST(testChromeBuffer)
                                        bytes, strlen(bytes), options));
 
         JS::RootedValue rval(cx);
-        CHECK(JS_CallFunction(cx, nullptr, fun, 1, v.address(), rval.address()));
+        CHECK(JS_CallFunction(cx, JS::NullPtr(), fun, v, &rval));
         CHECK(JSVAL_TO_INT(rval) == 100);
     }
 
@@ -110,8 +111,7 @@ BEGIN_TEST(testChromeBuffer)
                                 "}                                      ";
             JS::HandleObject global = JS::HandleObject::fromMarkedLocation(&trusted_glob);
             JS::CompileOptions options(cx);
-            options.setFileAndLine("", 0)
-                   .setPrincipals(&system_principals);
+            options.setFileAndLine("", 0);
             CHECK(fun = JS_CompileFunction(cx, global, "trusted", 1, &paramName,
                                            bytes, strlen(bytes), options));
             trusted_fun = JS_GetFunctionObject(fun);
@@ -132,7 +132,7 @@ BEGIN_TEST(testChromeBuffer)
                                        bytes, strlen(bytes), options));
 
         JS::RootedValue rval(cx);
-        CHECK(JS_CallFunction(cx, nullptr, fun, 1, v.address(), rval.address()));
+        CHECK(JS_CallFunction(cx, JS::NullPtr(), fun, v, &rval));
         bool match;
         CHECK(JS_StringEqualsAscii(cx, JSVAL_TO_STRING(rval), "From trusted: InternalError: too much recursion", &match));
         CHECK(match);
@@ -148,8 +148,7 @@ BEGIN_TEST(testChromeBuffer)
             const char *bytes = "return 42";
             JS::HandleObject global = JS::HandleObject::fromMarkedLocation(&trusted_glob);
             JS::CompileOptions options(cx);
-            options.setFileAndLine("", 0)
-                   .setPrincipals(&system_principals);
+            options.setFileAndLine("", 0);
             CHECK(fun = JS_CompileFunction(cx, global, "trusted", 0, nullptr,
                                            bytes, strlen(bytes), options));
             trusted_fun = JS_GetFunctionObject(fun);
@@ -171,7 +170,7 @@ BEGIN_TEST(testChromeBuffer)
 
         JS::RootedValue arg(cx, JS::ObjectValue(*callTrusted));
         JS::RootedValue rval(cx);
-        CHECK(JS_CallFunction(cx, nullptr, fun, 1, arg.address(), rval.address()));
+        CHECK(JS_CallFunction(cx, JS::NullPtr(), fun, arg, &rval));
         CHECK(JSVAL_TO_INT(rval) == 42);
     }
 

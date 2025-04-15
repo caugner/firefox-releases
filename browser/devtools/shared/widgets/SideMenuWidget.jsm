@@ -9,7 +9,7 @@ const Ci = Components.interfaces;
 const Cu = Components.utils;
 
 Cu.import("resource:///modules/devtools/ViewHelpers.jsm");
-Cu.import("resource:///modules/devtools/shared/event-emitter.js");
+Cu.import("resource://gre/modules/devtools/event-emitter.js");
 
 this.EXPORTED_SYMBOLS = ["SideMenuWidget"];
 
@@ -423,7 +423,6 @@ function SideMenuGroup(aWidget, aName, aOptions={}) {
     let target = this._target = this.document.createElement("vbox");
     target.className = "side-menu-widget-group";
     target.setAttribute("name", aName);
-    target.setAttribute("tooltiptext", aName);
 
     let list = this._list = this.document.createElement("vbox");
     list.className = "side-menu-widget-group-list";

@@ -65,6 +65,10 @@ class B2GMochitest(MochitestUtilsMixin):
             test_url += "?" + "&".join(self.urlOpts)
         self.test_script_args.append(test_url)
 
+    def buildTestPath(self, options):
+        # Skip over the manifest building that happens on desktop.
+        return self.buildTestURL(options)
+
     def build_profile(self, options):
         # preferences
         prefs = {}
@@ -146,15 +150,10 @@ class B2GMochitest(MochitestUtilsMixin):
             log.info("runtests.py | Received keyboard interrupt.\n");
             status = -1
         except:
-            # XXX Bug 937684
-            time.sleep(5)
             traceback.print_exc()
             log.error("Automation Error: Received unexpected exception while running application\n")
             self.runner.check_for_crashes()
             status = 1
-
-        # XXX Bug 937684
-        time.sleep(5)
 
         self.stopWebServer(options)
         self.stopWebSocketServer(options)
@@ -310,13 +309,17 @@ def run_remote_mochitests(parser, options):
 
     marionette = Marionette.getMarionetteOrExit(**kwargs)
 
-    # create the DeviceManager
-    kwargs = {'adbPath': options.adbPath,
-              'deviceRoot': options.remoteTestRoot}
-    if options.deviceIP:
-        kwargs.update({'host': options.deviceIP,
-                       'port': options.devicePort})
-    dm = DeviceManagerADB(**kwargs)
+    if options.emulator:
+        dm = marionette.emulator.dm
+    else:
+        # create the DeviceManager
+        kwargs = {'adbPath': options.adbPath,
+                  'deviceRoot': options.remoteTestRoot}
+        if options.deviceIP:
+            kwargs.update({'host': options.deviceIP,
+                           'port': options.devicePort})
+        dm = DeviceManagerADB(**kwargs)
+
     options = parser.verifyRemoteOptions(options)
     if (options == None):
         print "ERROR: Invalid options specified, use --help for a list of valid options"

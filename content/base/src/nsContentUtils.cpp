@@ -39,10 +39,13 @@
 #include "mozilla/dom/HTMLTemplateElement.h"
 #include "mozilla/dom/HTMLContentElement.h"
 #include "mozilla/dom/TextDecoder.h"
+#include "mozilla/dom/TouchEvent.h"
 #include "mozilla/dom/ShadowRoot.h"
+#include "mozilla/EventListenerManager.h"
+#include "mozilla/IMEStateManager.h"
+#include "mozilla/InternalMutationEvent.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MouseEvents.h"
-#include "mozilla/MutationEvent.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Selection.h"
 #include "mozilla/TextEvents.h"
@@ -65,14 +68,13 @@
 #include "nsCycleCollector.h"
 #include "nsDataHashtable.h"
 #include "nsDocShellCID.h"
+#include "nsDocument.h"
 #include "nsDOMCID.h"
-#include "nsDOMDataTransfer.h"
+#include "mozilla/dom/DataTransfer.h"
 #include "nsDOMJSUtils.h"
 #include "nsDOMMutationObserver.h"
-#include "nsDOMTouchEvent.h"
 #include "nsError.h"
 #include "nsEventDispatcher.h"
-#include "nsEventListenerManager.h"
 #include "nsEventStateManager.h"
 #include "nsFocusManager.h"
 #include "nsGenericHTMLElement.h"
@@ -121,7 +123,6 @@
 #include "nsILineBreaker.h"
 #include "nsILoadContext.h"
 #include "nsILoadGroup.h"
-#include "nsIMEStateManager.h"
 #include "nsIMIMEService.h"
 #include "nsINode.h"
 #include "nsINodeInfo.h"
@@ -195,7 +196,7 @@ const char kLoadAsData[] = "loadAsData";
 nsIXPConnect *nsContentUtils::sXPConnect;
 nsIScriptSecurityManager *nsContentUtils::sSecurityManager;
 nsIParserService *nsContentUtils::sParserService = nullptr;
-nsINameSpaceManager *nsContentUtils::sNameSpaceManager;
+nsNameSpaceManager *nsContentUtils::sNameSpaceManager;
 nsIIOService *nsContentUtils::sIOService;
 nsIConsoleService *nsContentUtils::sConsoleService;
 nsDataHashtable<nsISupportsHashKey, EventNameMapping>* nsContentUtils::sAtomEventTable = nullptr;
@@ -264,7 +265,7 @@ public:
   NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
                             nsISupports* aData)
   {
-    // We don't measure the |nsEventListenerManager| objects pointed to by the
+    // We don't measure the |EventListenerManager| objects pointed to by the
     // entries because those references are non-owning.
     int64_t amount = sEventListenerManagersHash.ops
                    ? PL_DHashTableSizeOfExcludingThis(
@@ -297,7 +298,7 @@ protected:          // declared protected to silence clang warnings
   const void *mKey; // must be first, to look like PLDHashEntryStub
 
 public:
-  nsRefPtr<nsEventListenerManager> mListenerManager;
+  nsRefPtr<EventListenerManager> mListenerManager;
 };
 
 static bool
@@ -366,8 +367,8 @@ nsContentUtils::Init()
     return NS_OK;
   }
 
-  nsresult rv = NS_GetNameSpaceManager(&sNameSpaceManager);
-  NS_ENSURE_SUCCESS(rv, rv);
+  sNameSpaceManager = nsNameSpaceManager::GetInstance();
+  NS_ENSURE_TRUE(sNameSpaceManager, NS_ERROR_OUT_OF_MEMORY);
 
   sXPConnect = nsXPConnect::XPConnect();
 
@@ -379,7 +380,7 @@ nsContentUtils::Init()
   // Getting the first context can trigger GC, so do this non-lazily.
   sXPConnect->InitSafeJSContext();
 
-  rv = CallGetService(NS_IOSERVICE_CONTRACTID, &sIOService);
+  nsresult rv = CallGetService(NS_IOSERVICE_CONTRACTID, &sIOService);
   if (NS_FAILED(rv)) {
     // This makes life easier, but we can live without it.
 
@@ -408,12 +409,8 @@ nsContentUtils::Init()
       EventListenerManagerHashInitEntry
     };
 
-    if (!PL_DHashTableInit(&sEventListenerManagersHash, &hash_table_ops,
-                           nullptr, sizeof(EventListenerManagerMapEntry), 16)) {
-      sEventListenerManagersHash.ops = nullptr;
-
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
+    PL_DHashTableInit(&sEventListenerManagersHash, &hash_table_ops,
+                      nullptr, sizeof(EventListenerManagerMapEntry), 16);
 
     RegisterStrongMemoryReporter(new DOMEventListenerManagersHashReporter());
   }
@@ -1437,7 +1434,6 @@ nsContentUtils::Shutdown()
   NS_IF_RELEASE(sConsoleService);
   sXPConnect = nullptr;
   NS_IF_RELEASE(sSecurityManager);
-  NS_IF_RELEASE(sNameSpaceManager);
   NS_IF_RELEASE(sParserService);
   NS_IF_RELEASE(sIOService);
   NS_IF_RELEASE(sLineBreaker);
@@ -1492,8 +1488,6 @@ nsContentUtils::Shutdown()
   sModifierSeparator = nullptr;
 
   NS_IF_RELEASE(sSameOriginChecker);
-
-  nsTextEditorState::ShutDown();
 }
 
 /**
@@ -2395,6 +2389,39 @@ nsContentUtils::NewURIWithDocumentCharset(nsIURI** aResult,
 }
 
 // static
+bool
+nsContentUtils::IsCustomElementName(nsIAtom* aName)
+{
+  // The custom element name identifies a custom element and is a sequence of
+  // alphanumeric ASCII characters that must match the NCName production and
+  // contain a U+002D HYPHEN-MINUS character.
+  nsDependentAtomString str(aName);
+  const char16_t* colon;
+  if (NS_FAILED(nsContentUtils::CheckQName(str, false, &colon)) || colon ||
+      str.FindChar('-') == -1) {
+    return false;
+  }
+
+  // The custom element name must not be one of the following values:
+  //  annotation-xml
+  //  color-profile
+  //  font-face
+  //  font-face-src
+  //  font-face-uri
+  //  font-face-format
+  //  font-face-name
+  //  missing-glyph
+  return aName != nsGkAtoms::annotation_xml_ &&
+         aName != nsGkAtoms::colorProfile &&
+         aName != nsGkAtoms::font_face &&
+         aName != nsGkAtoms::font_face_src &&
+         aName != nsGkAtoms::font_face_uri &&
+         aName != nsGkAtoms::font_face_format &&
+         aName != nsGkAtoms::font_face_name &&
+         aName != nsGkAtoms::missingGlyph;
+}
+
+// static
 nsresult
 nsContentUtils::CheckQName(const nsAString& aQualifiedName,
                            bool aNamespaceAware,
@@ -2447,11 +2474,11 @@ nsContentUtils::SplitQName(const nsIContent* aNamespaceResolver,
     if (*aNamespace == kNameSpaceID_Unknown)
       return NS_ERROR_FAILURE;
 
-    *aLocalName = NS_NewAtom(Substring(colon + 1, end)).get();
+    *aLocalName = NS_NewAtom(Substring(colon + 1, end)).take();
   }
   else {
     *aNamespace = kNameSpaceID_None;
-    *aLocalName = NS_NewAtom(aQName).get();
+    *aLocalName = NS_NewAtom(aQName).take();
   }
   NS_ENSURE_TRUE(aLocalName, NS_ERROR_OUT_OF_MEMORY);
   return NS_OK;
@@ -2536,7 +2563,7 @@ nsContentUtils::SplitExpatName(const char16_t *aExpatName, nsIAtom **aPrefix,
     nameStart = (uriEnd + 1);
     if (nameEnd)  {
       const char16_t *prefixStart = nameEnd + 1;
-      *aPrefix = NS_NewAtom(Substring(prefixStart, pos)).get();
+      *aPrefix = NS_NewAtom(Substring(prefixStart, pos)).take();
     }
     else {
       nameEnd = pos;
@@ -2549,7 +2576,7 @@ nsContentUtils::SplitExpatName(const char16_t *aExpatName, nsIAtom **aPrefix,
     nameEnd = pos;
     *aPrefix = nullptr;
   }
-  *aLocalName = NS_NewAtom(Substring(nameStart, nameEnd)).get();
+  *aLocalName = NS_NewAtom(Substring(nameStart, nameEnd)).take();
 }
 
 // static
@@ -2833,7 +2860,7 @@ nsContentUtils::NameChanged(nsINodeInfo* aNodeInfo, nsIAtom* aName,
   *aResult = niMgr->GetNodeInfo(aName, aNodeInfo->GetPrefixAtom(),
                                 aNodeInfo->NamespaceID(),
                                 aNodeInfo->NodeType(),
-                                aNodeInfo->GetExtraName()).get();
+                                aNodeInfo->GetExtraName()).take();
   return NS_OK;
 }
 
@@ -3499,7 +3526,7 @@ nsContentUtils::HasMutationListeners(nsINode* aNode,
 
   // global object will be null for documents that don't have windows.
   nsPIDOMWindow* window = doc->GetInnerWindow();
-  // This relies on nsEventListenerManager::AddEventListener, which sets
+  // This relies on EventListenerManager::AddEventListener, which sets
   // all mutation bits when there is a listener for DOMSubtreeModified event.
   if (window && !window->HasMutationListeners(aType)) {
     return false;
@@ -3516,7 +3543,7 @@ nsContentUtils::HasMutationListeners(nsINode* aNode,
   if (aNode->IsInDoc()) {
     nsCOMPtr<EventTarget> piTarget(do_QueryInterface(window));
     if (piTarget) {
-      nsEventListenerManager* manager = piTarget->GetExistingListenerManager();
+      EventListenerManager* manager = piTarget->GetExistingListenerManager();
       if (manager && manager->HasMutationListeners()) {
         return true;
       }
@@ -3527,7 +3554,7 @@ nsContentUtils::HasMutationListeners(nsINode* aNode,
   // might not be in our chain.  If we don't have a window, we might have a
   // mutation listener.  Check quickly to see.
   while (aNode) {
-    nsEventListenerManager* manager = aNode->GetExistingListenerManager();
+    EventListenerManager* manager = aNode->GetExistingListenerManager();
     if (manager && manager->HasMutationListeners()) {
       return true;
     }
@@ -3554,7 +3581,7 @@ nsContentUtils::HasMutationListeners(nsIDocument* aDocument,
   nsPIDOMWindow* window = aDocument ?
     aDocument->GetInnerWindow() : nullptr;
 
-  // This relies on nsEventListenerManager::AddEventListener, which sets
+  // This relies on EventListenerManager::AddEventListener, which sets
   // all mutation bits when there is a listener for DOMSubtreeModified event.
   return !window || window->HasMutationListeners(aType);
 }
@@ -3648,7 +3675,7 @@ nsContentUtils::TraverseListenerManager(nsINode *aNode,
   }
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsContentUtils::GetListenerManagerForNode(nsINode *aNode)
 {
   if (!sEventListenerManagersHash.ops) {
@@ -3668,7 +3695,7 @@ nsContentUtils::GetListenerManagerForNode(nsINode *aNode)
   }
 
   if (!entry->mListenerManager) {
-    entry->mListenerManager = new nsEventListenerManager(aNode);
+    entry->mListenerManager = new EventListenerManager(aNode);
 
     aNode->SetFlags(NODE_HAS_LISTENERMANAGER);
   }
@@ -3676,7 +3703,7 @@ nsContentUtils::GetListenerManagerForNode(nsINode *aNode)
   return entry->mListenerManager;
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsContentUtils::GetExistingListenerManagerForNode(const nsINode *aNode)
 {
   if (!aNode->HasFlag(NODE_HAS_LISTENERMANAGER)) {
@@ -3711,7 +3738,7 @@ nsContentUtils::RemoveListenerManager(nsINode *aNode)
                  (PL_DHashTableOperate(&sEventListenerManagersHash, aNode,
                                           PL_DHASH_LOOKUP));
     if (PL_DHASH_ENTRY_IS_BUSY(entry)) {
-      nsRefPtr<nsEventListenerManager> listenerManager;
+      nsRefPtr<EventListenerManager> listenerManager;
       listenerManager.swap(entry->mListenerManager);
       // Remove the entry and *then* do operations that could cause further
       // modification of sEventListenerManagersHash.  See bug 334177.
@@ -3767,7 +3794,7 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
 {
   ErrorResult rv;
   *aReturn = CreateContextualFragment(aContextNode, aFragment,
-                                      aPreventScriptExecution, rv).get();
+                                      aPreventScriptExecution, rv).take();
   return rv.ErrorCode();
 }
 
@@ -4260,7 +4287,7 @@ nsContentUtils::DestroyAnonymousContent(nsCOMPtr<Element>* aElement)
 void
 nsContentUtils::NotifyInstalledMenuKeyboardListener(bool aInstalling)
 {
-  nsIMEStateManager::OnInstalledMenuKeyboardListener(aInstalling);
+  IMEStateManager::OnInstalledMenuKeyboardListener(aInstalling);
 }
 
 static bool SchemeIs(nsIURI* aURI, const char* aScheme)
@@ -4722,6 +4749,7 @@ nsContentUtils::LeaveMicroTask()
   MOZ_ASSERT(NS_IsMainThread());
   if (--sMicroTaskLevel == 0) {
     nsDOMMutationObserver::HandleMutations();
+    nsDocument::ProcessBaseElementQueue();
   }
 }
 
@@ -4904,16 +4932,20 @@ nsContentUtils::SetDataTransferInEvent(WidgetDragEvent* aDragEvent)
   nsCOMPtr<nsIDragSession> dragSession = GetDragSession();
   NS_ENSURE_TRUE(dragSession, NS_OK); // no drag in progress
 
-  nsCOMPtr<nsIDOMDataTransfer> initialDataTransfer;
-  dragSession->GetDataTransfer(getter_AddRefs(initialDataTransfer));
-  if (!initialDataTransfer) {
+  nsCOMPtr<nsIDOMDataTransfer> dataTransfer;
+  nsCOMPtr<DataTransfer> initialDataTransfer;
+  dragSession->GetDataTransfer(getter_AddRefs(dataTransfer));
+  if (dataTransfer) {
+    initialDataTransfer = do_QueryInterface(dataTransfer);
+    if (!initialDataTransfer) {
+      return NS_ERROR_FAILURE;
+    }
+  } else {
     // A dataTransfer won't exist when a drag was started by some other
     // means, for instance calling the drag service directly, or a drag
     // from another application. In either case, a new dataTransfer should
     // be created that reflects the data.
-    initialDataTransfer = new nsDOMDataTransfer(aDragEvent->message, true, -1);
-
-    NS_ENSURE_TRUE(initialDataTransfer, NS_ERROR_OUT_OF_MEMORY);
+    initialDataTransfer = new DataTransfer(aDragEvent->target, aDragEvent->message, true, -1);
 
     // now set it in the drag session so we don't need to create it again
     dragSession->SetDataTransfer(initialDataTransfer);
@@ -4926,7 +4958,7 @@ nsContentUtils::SetDataTransferInEvent(WidgetDragEvent* aDragEvent)
   }
 
   // each event should use a clone of the original dataTransfer.
-  initialDataTransfer->Clone(aDragEvent->message, aDragEvent->userCancelled,
+  initialDataTransfer->Clone(aDragEvent->target, aDragEvent->message, aDragEvent->userCancelled,
                              isCrossDomainSubFrameDrop,
                              getter_AddRefs(aDragEvent->dataTransfer));
   NS_ENSURE_TRUE(aDragEvent->dataTransfer, NS_ERROR_OUT_OF_MEMORY);
@@ -5637,7 +5669,7 @@ nsContentUtils::CreateBlobBuffer(JSContext* aCx,
     return NS_ERROR_OUT_OF_MEMORY;
   }
   JS::Rooted<JSObject*> scope(aCx, JS::CurrentGlobalOrNull(aCx));
-  return nsContentUtils::WrapNative(aCx, scope, blob, aBlob, true);
+  return nsContentUtils::WrapNative(aCx, scope, blob, aBlob);
 }
 
 void
@@ -5807,9 +5839,7 @@ nsContentUtils::IsUserFocusIgnored(nsINode* aNode)
       return true;
     }
     nsPIDOMWindow* win = aNode->OwnerDoc()->GetWindow();
-    if (win) {
-      aNode = win->GetFrameElementInternal();
-    }
+    aNode = win ? win->GetFrameElementInternal() : nullptr;
   }
 
   return false;

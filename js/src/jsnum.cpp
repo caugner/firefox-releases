@@ -14,12 +14,6 @@
 #include "mozilla/PodOperations.h"
 #include "mozilla/RangedPtr.h"
 
-#ifdef XP_OS2
-#define _PC_53  PC_53
-#define _MCW_EM MCW_EM
-#define _MCW_PC MCW_PC
-#endif
-
 #ifdef HAVE_LOCALECONV
 #include <locale.h>
 #endif
@@ -47,7 +41,7 @@ using namespace js;
 using namespace js::types;
 
 using mozilla::Abs;
-using mozilla::MinDoubleValue;
+using mozilla::MinNumberValue;
 using mozilla::NegativeInfinity;
 using mozilla::PodCopy;
 using mozilla::PositiveInfinity;
@@ -1138,10 +1132,10 @@ js::InitRuntimeNumberState(JSRuntime *rt)
      */
     number_constants[NC_NaN].dval = GenericNaN();
 
-    number_constants[NC_POSITIVE_INFINITY].dval = mozilla::PositiveInfinity();
-    number_constants[NC_NEGATIVE_INFINITY].dval = mozilla::NegativeInfinity();
+    number_constants[NC_POSITIVE_INFINITY].dval = mozilla::PositiveInfinity<double>();
+    number_constants[NC_NEGATIVE_INFINITY].dval = mozilla::NegativeInfinity<double>();
 
-    number_constants[NC_MIN_VALUE].dval = MinDoubleValue();
+    number_constants[NC_MIN_VALUE].dval = MinNumberValue<double>();
 
     // XXX If EXPOSE_INTL_API becomes true all the time at some point,
     //     js::InitRuntimeNumberState is no longer fallible, and we should
@@ -1249,15 +1243,15 @@ js_InitNumberClass(JSContext *cx, HandleObject obj)
     /* ES5 15.1.1.1, 15.1.1.2 */
     if (!DefineNativeProperty(cx, global, cx->names().NaN, valueNaN,
                               JS_PropertyStub, JS_StrictPropertyStub,
-                              JSPROP_PERMANENT | JSPROP_READONLY, 0, 0) ||
+                              JSPROP_PERMANENT | JSPROP_READONLY, 0) ||
         !DefineNativeProperty(cx, global, cx->names().Infinity, valueInfinity,
                               JS_PropertyStub, JS_StrictPropertyStub,
-                              JSPROP_PERMANENT | JSPROP_READONLY, 0, 0))
+                              JSPROP_PERMANENT | JSPROP_READONLY, 0))
     {
         return nullptr;
     }
 
-    if (!DefineConstructorAndPrototype(cx, global, JSProto_Number, ctor, numberProto))
+    if (!GlobalObject::initBuiltinConstructor(cx, global, JSProto_Number, ctor, numberProto))
         return nullptr;
 
     return numberProto;
@@ -1269,7 +1263,7 @@ FracNumberToCString(ThreadSafeContext *cx, ToCStringBuf *cbuf, double d, int bas
 #ifdef DEBUG
     {
         int32_t _;
-        JS_ASSERT(!mozilla::DoubleIsInt32(d, &_));
+        JS_ASSERT(!mozilla::NumberIsInt32(d, &_));
     }
 #endif
 
@@ -1298,7 +1292,7 @@ js::NumberToCString(JSContext *cx, ToCStringBuf *cbuf, double d, int base/* = 10
 {
     int32_t i;
     size_t len;
-    return mozilla::DoubleIsInt32(d, &i)
+    return mozilla::NumberIsInt32(d, &i)
            ? Int32ToCString(cbuf, i, &len, base)
            : FracNumberToCString(cx, cbuf, d, base);
 }
@@ -1323,7 +1317,7 @@ js_NumberToStringWithBase(ThreadSafeContext *cx, double d, int base)
                           : nullptr;
 
     int32_t i;
-    if (mozilla::DoubleIsInt32(d, &i)) {
+    if (mozilla::NumberIsInt32(d, &i)) {
         if (base == 10 && StaticStrings::hasInt(i))
             return cx->staticStrings().getInt(i);
         if (unsigned(i) < unsigned(base)) {
@@ -1384,7 +1378,7 @@ JSAtom *
 js::NumberToAtom(ExclusiveContext *cx, double d)
 {
     int32_t si;
-    if (mozilla::DoubleIsInt32(d, &si))
+    if (mozilla::NumberIsInt32(d, &si))
         return Int32ToAtom(cx, si);
 
     if (JSFlatString *str = LookupDtoaCache(cx, d))
@@ -1788,7 +1782,7 @@ js_strtod(ThreadSafeContext *cx, const jschar *s, const jschar *send,
     if ((negative = (*istr == '-')) != 0 || *istr == '+')
         istr++;
     if (*istr == 'I' && !strncmp(istr, "Infinity", 8)) {
-        d = negative ? NegativeInfinity() : PositiveInfinity();
+        d = negative ? NegativeInfinity<double>() : PositiveInfinity<double>();
         estr = istr + 8;
     } else {
         int err;

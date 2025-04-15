@@ -4,14 +4,6 @@
 
 package org.mozilla.gecko.preferences;
 
-import android.content.Context;
-import android.os.Bundle;
-import android.preference.Preference;
-import android.preference.PreferenceCategory;
-import android.text.TextUtils;
-import android.util.AttributeSet;
-import android.util.Log;
-
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,14 +12,17 @@ import org.mozilla.gecko.home.HomeConfig.PanelConfig;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.util.UiAsyncTask;
 
+import android.content.Context;
+import android.text.TextUtils;
+import android.util.AttributeSet;
+
 public class PanelsPreferenceCategory extends CustomListCategory {
     public static final String LOGTAG = "PanelsPrefCategory";
 
     protected HomeConfig mHomeConfig;
-    protected final List<PanelConfig> mPanelConfigs = new ArrayList<PanelConfig>();
+    protected HomeConfig.Editor mConfigEditor;
 
-    protected UiAsyncTask<Void, Void, List<PanelConfig>> mLoadTask;
-    protected UiAsyncTask<Void, Void, Void> mSaveTask;
+    protected UiAsyncTask<Void, Void, HomeConfig.State> mLoadTask;
 
     public PanelsPreferenceCategory(Context context) {
         super(context);
@@ -59,73 +54,80 @@ public class PanelsPreferenceCategory extends CustomListCategory {
      * Load the Home Panels config and populate the preferences screen and maintain local state.
      */
     private void loadHomeConfig() {
-        mLoadTask = new UiAsyncTask<Void, Void, List<PanelConfig>>(ThreadUtils.getBackgroundHandler()) {
+        mLoadTask = new UiAsyncTask<Void, Void, HomeConfig.State>(ThreadUtils.getBackgroundHandler()) {
             @Override
-            public List<PanelConfig> doInBackground(Void... params) {
+            public HomeConfig.State doInBackground(Void... params) {
                 return mHomeConfig.load();
             }
 
             @Override
-            public void onPostExecute(List<PanelConfig> panelConfigs) {
-                displayPanelConfig(panelConfigs);
+            public void onPostExecute(HomeConfig.State configState) {
+                mConfigEditor = configState.edit();
+                displayHomeConfig(configState);
             }
         };
         mLoadTask.execute();
     }
 
-    private void displayPanelConfig(List<PanelConfig> panelConfigs) {
-        for (PanelConfig panelConfig: panelConfigs) {
-            // Populate our local copy of the panels.
-            mPanelConfigs.add(panelConfig);
+    /**
+     * Reload the Home Panels list from HomeConfig.
+     */
+    public void refresh() {
+        removeAll();
+        loadHomeConfig();
+    }
+
+    private void displayHomeConfig(HomeConfig.State configState) {
+        for (PanelConfig panelConfig : configState) {
+            final boolean isRemovable = panelConfig.isDynamic();
 
             // Create and add the pref.
-            final PanelsPreference pref = new PanelsPreference(getContext(), PanelsPreferenceCategory.this);
+            final PanelsPreference pref = new PanelsPreference(getContext(), PanelsPreferenceCategory.this, isRemovable);
             pref.setTitle(panelConfig.getTitle());
             pref.setKey(panelConfig.getId());
             // XXX: Pull icon from PanelInfo.
             addPreference(pref);
 
-            if (panelConfig.isDefault()) {
-                mDefaultReference = pref;
-                pref.setIsDefault(true);
-            }
-
             if (panelConfig.isDisabled()) {
                 pref.setHidden(true);
             }
         }
+
+        setDefaultFromConfig();
     }
 
-    /**
-     * Update HomeConfig off the main thread.
-     *
-     * @param panelConfigs Configuration to be saved
-     */
-    private void saveHomeConfig() {
-        final List<PanelConfig> panelConfigs = makeConfigListDeepCopy();
-        mSaveTask = new UiAsyncTask<Void, Void, Void>(ThreadUtils.getBackgroundHandler()) {
-            @Override
-            public Void doInBackground(Void... params) {
-                mHomeConfig.save(panelConfigs);
-                return null;
-            }
-        };
-        mSaveTask.execute();
-    }
-
-    private List<PanelConfig> makeConfigListDeepCopy() {
-        List<PanelConfig> copiedList = new ArrayList<PanelConfig>();
-        for (PanelConfig panelConfig : mPanelConfigs) {
-            copiedList.add(new PanelConfig(panelConfig));
+    private void setDefaultFromConfig() {
+        final String defaultPanelId = mConfigEditor.getDefaultPanelId();
+        if (defaultPanelId == null) {
+            mDefaultReference = null;
+            return;
         }
-        return copiedList;
+
+        final int prefCount = getPreferenceCount();
+
+        for (int i = 0; i < prefCount; i++) {
+            final PanelsPreference pref = (PanelsPreference) getPreference(i);
+
+            if (defaultPanelId.equals(pref.getKey())) {
+                super.setDefault(pref);
+                break;
+            }
+        }
     }
 
     @Override
     public void setDefault(CustomListPreference pref) {
         super.setDefault(pref);
-        updateConfigDefault();
-        saveHomeConfig();
+
+        final String id = pref.getKey();
+
+        final String defaultPanelId = mConfigEditor.getDefaultPanelId();
+        if (defaultPanelId != null && defaultPanelId.equals(id)) {
+            return;
+        }
+
+        mConfigEditor.setDefault(id);
+        mConfigEditor.apply();
     }
 
     @Override
@@ -133,48 +135,14 @@ public class PanelsPreferenceCategory extends CustomListCategory {
         if (mLoadTask != null) {
             mLoadTask.cancel(true);
         }
-
-        if (mSaveTask != null) {
-            mSaveTask.cancel(true);
-        }
-     }
-
-    /**
-     * Update the local HomeConfig default state from mDefaultReference.
-     */
-    private void updateConfigDefault() {
-        String mId = null;
-        if (mDefaultReference != null) {
-            mId = mDefaultReference.getKey();
-        }
-
-        for (PanelConfig panelConfig : mPanelConfigs) {
-            if (TextUtils.equals(panelConfig.getId(), mId)) {
-                panelConfig.setIsDefault(true);
-                panelConfig.setIsDisabled(false);
-            } else {
-                panelConfig.setIsDefault(false);
-            }
-        }
     }
 
     @Override
     public void uninstall(CustomListPreference pref) {
+        mConfigEditor.uninstall(pref.getKey());
+        mConfigEditor.apply();
+
         super.uninstall(pref);
-        // This could change the default, so update the local version of the config.
-        updateConfigDefault();
-
-        final String mId = pref.getKey();
-        PanelConfig toRemove = null;
-        for (PanelConfig panelConfig : mPanelConfigs) {
-            if (TextUtils.equals(panelConfig.getId(), mId)) {
-                toRemove = panelConfig;
-                break;
-            }
-        }
-        mPanelConfigs.remove(toRemove);
-
-        saveHomeConfig();
     }
 
     /**
@@ -185,43 +153,11 @@ public class PanelsPreferenceCategory extends CustomListCategory {
      * @param toHide New hidden state of the preference
      */
     protected void setHidden(PanelsPreference pref, boolean toHide) {
+        mConfigEditor.setDisabled(pref.getKey(), toHide);
+        mConfigEditor.apply();
+
         pref.setHidden(toHide);
-        ensureDefaultForHide(pref, toHide);
-
-        final String mId = pref.getKey();
-        for (PanelConfig panelConfig : mPanelConfigs) {
-            if (TextUtils.equals(panelConfig.getId(), mId)) {
-                panelConfig.setIsDisabled(toHide);
-                break;
-            }
-        }
-
-        saveHomeConfig();
-    }
-
-    /**
-     * Ensure a default is set (if possible) for hiding/showing a pref.
-     * If hiding, try to find an enabled pref to set as the default.
-     * If showing, set it as the default if there is no default currently.
-     *
-     * This updates the local HomeConfig state.
-     *
-     * @param pref Preference getting updated
-     * @param toHide Boolean of the new hidden state
-     */
-    private void ensureDefaultForHide(PanelsPreference pref, boolean toHide) {
-        if (toHide) {
-            // Set a default if there is an enabled panel left.
-            if (pref == mDefaultReference) {
-                setFallbackDefault();
-                updateConfigDefault();
-            }
-        } else {
-            if (mDefaultReference == null) {
-                super.setDefault(pref);
-                updateConfigDefault();
-            }
-        }
+        setDefaultFromConfig();
     }
 
     /**
@@ -230,13 +166,6 @@ public class PanelsPreferenceCategory extends CustomListCategory {
      */
     @Override
     protected void setFallbackDefault() {
-        for (int i = 0; i < getPreferenceCount(); i++) {
-            final PanelsPreference pref = (PanelsPreference) getPreference(i);
-            if (!pref.isHidden()) {
-                super.setDefault(pref);
-                return;
-            }
-        }
-        mDefaultReference = null;
+        setDefaultFromConfig();
     }
 }

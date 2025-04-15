@@ -559,6 +559,12 @@ ConvertAndWrite(const nsAString& aString,
   startCharLength = charLength;
   NS_ENSURE_SUCCESS(rv, rv);
 
+  if (!charLength) {
+    // Nothing to write.  Besides, a length 0 string has an immutable buffer, so
+    // attempts to null-terminate it will crash.
+    return NS_OK;
+  }
+
   nsAutoCString charXferString;
   if (!charXferString.SetLength(charLength, fallible_t()))
     return NS_ERROR_OUT_OF_MEMORY;
@@ -1019,7 +1025,7 @@ nsDocumentEncoder::EncodeToString(nsAString& aOutputString)
   nsString output;
   static const size_t bufferSize = 2048;
   if (!mCachedBuffer) {
-    mCachedBuffer = nsStringBuffer::Alloc(bufferSize).get();
+    mCachedBuffer = nsStringBuffer::Alloc(bufferSize).take();
   }
   NS_ASSERTION(!mCachedBuffer->IsReadonly(),
                "DocumentEncoder shouldn't keep reference to non-readonly buffer!");

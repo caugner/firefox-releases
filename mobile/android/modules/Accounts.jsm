@@ -8,21 +8,9 @@ this.EXPORTED_SYMBOLS = ["Accounts"];
 
 const { utils: Cu } = Components;
 
+Cu.import("resource://gre/modules/Messaging.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/Promise.jsm");
-
-function sendMessageToJava(aMessage, aCallback) {
-  let data, error;
-  try {
-    data = Services.androidBridge.handleGeckoMessage(JSON.stringify(aMessage));
-  } catch (ex) {
-    error = ex;
-  }
-
-  if (aCallback) {
-    aCallback(data, error);
-  }
-}
 
 /**
  * A promise-based API for querying the existence of Sync accounts,
@@ -53,21 +41,9 @@ let Accounts = Object.freeze({
     }, (data, error) => {
       if (error) {
         deferred.reject(error);
-        return;
+      } else {
+        deferred.resolve(JSON.parse(data).exists);
       }
-
-      if (!data) {
-        deferred.resolve(null);
-        return;
-      }
-
-      let json = JSON.parse(data);
-      if (json.error) {
-        deferred.reject(json.error);
-        return;
-      }
-
-      deferred.resolve(json.exists);
     });
 
     return deferred.promise;

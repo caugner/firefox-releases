@@ -59,7 +59,7 @@ function nextTest() {
     // We really want each test to be self-contained. Make sure cache is
     // cleared and also let all operations finish before starting a new test
     syncWithCacheIOThread(function() {
-        evict_cache_entries();
+        get_cache_service().clear();
         syncWithCacheIOThread(runNextTest);
     });
 }
@@ -139,12 +139,6 @@ function TestCacheEntrySize(setSizeFunc, firstRequest, secondRequest, secondExpe
 
 function run_test()
 {
-    if (newCacheBackEndUsed()) {
-        // Test that "max_entry_size" prefs for disk- and memory-cache prevents caching resources with size out of bounds
-        do_check_true(true, "This test doesn't run with the new cache backend, the test or the cache needs to be fixed");
-        return;
-    }
-
     httpserver.registerPathHandler("/bug650995", handler);
     httpserver.start(-1);
 

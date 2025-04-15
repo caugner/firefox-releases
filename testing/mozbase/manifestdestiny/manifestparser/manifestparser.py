@@ -85,7 +85,7 @@ class neq_op_token(object):
 class not_op_token(object):
     "!"
     def nud(self, parser):
-        return not parser.expression()
+        return not parser.expression(100)
 
 class and_op_token(object):
     "&&"
@@ -318,7 +318,7 @@ def read_ini(fp, variables=None, default='DEFAULT',
         fp = file(fp)
 
     # read the lines
-    for line in fp.readlines():
+    for (linenum, line) in enumerate(fp.readlines(), start=1):
 
         stripped = line.strip()
 
@@ -379,13 +379,21 @@ def read_ini(fp, variables=None, default='DEFAULT',
                 value = '%s%s%s' % (value, os.linesep, stripped)
                 current_section[key] = value
             else:
-                # something bad happen!
-                raise Exception("Not sure what you're trying to do")
+                # something bad happened!
+                if hasattr(fp, 'name'):
+                    filename = fp.name
+                else:
+                    filename = 'unknown'
+                raise Exception("Error parsing manifest file '%s', line %s" %
+                                (filename, linenum))
 
     # interpret the variables
     def interpret_variables(global_dict, local_dict):
         variables = global_dict.copy()
+        if 'skip-if' in local_dict and 'skip-if' in variables:
+            local_dict['skip-if'] = "(%s) || (%s)" % (variables['skip-if'].split('#')[0], local_dict['skip-if'].split('#')[0])
         variables.update(local_dict)
+            
         return variables
 
     sections = [(i, interpret_variables(variables, j)) for i, j in sections]
@@ -400,6 +408,7 @@ class ManifestParser(object):
     def __init__(self, manifests=(), defaults=None, strict=True):
         self._defaults = defaults or {}
         self.tests = []
+        self.manifest_defaults = {}
         self.strict = strict
         self.rootdir = None
         self.relativeRoot = None
@@ -433,9 +442,13 @@ class ManifestParser(object):
 
         # read the configuration
         sections = read_ini(fp=fp, variables=defaults, strict=self.strict)
+        self.manifest_defaults[filename] = defaults
 
         # get the tests
         for section, data in sections:
+            subsuite = ''
+            if 'subsuite' in data:
+                subsuite = data['subsuite']
 
             # a file to include
             # TODO: keep track of included file structure:
@@ -488,6 +501,7 @@ class ManifestParser(object):
                 else:
                     _relpath = relpath(path, rootdir)
 
+            test['subsuite'] = subsuite
             test['path'] = path
             test['relpath'] = _relpath
 
@@ -514,7 +528,6 @@ class ManifestParser(object):
 
         # process each file
         for filename in filenames:
-
             # set the per file defaults
             defaults = _defaults.copy()
             here = None
@@ -594,7 +607,9 @@ class ManifestParser(object):
         return manifests in order in which they appear in the tests
         """
         if tests is None:
-            tests = self.tests
+            # Make sure to return all the manifests, even ones without tests.
+            return self.manifest_defaults.keys()
+
         manifests = []
         for test in tests:
             manifest = test.get('manifest')
@@ -1069,14 +1084,20 @@ class TestManifest(ManifestParser):
                 if parse(condition, **values):
                     test['expected'] = 'fail'
 
-    def active_tests(self, exists=True, disabled=True, **values):
+    def active_tests(self, exists=True, disabled=True, options=None, **values):
         """
         - exists : return only existing tests
         - disabled : whether to return disabled tests
         - tags : keys and values to filter on (e.g. `os = linux mac`)
         """
-
         tests = [i.copy() for i in self.tests] # shallow copy
+
+        # Filter on current subsuite
+        if options:
+            if  options.subsuite:
+                tests = [test for test in tests if options.subsuite == test['subsuite']]
+            else:
+                tests = [test for test in tests if not test['subsuite']]
 
         # mark all tests as passing unless indicated otherwise
         for test in tests:

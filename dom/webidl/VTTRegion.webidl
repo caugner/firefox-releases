@@ -9,9 +9,6 @@
 
 [Constructor, Func="TextTrackRegion::RegionsEnabled"]
 interface VTTRegion {
-  readonly attribute TextTrack? track;
-           attribute DOMString id;
-
            [SetterThrows]
            attribute double width;
 

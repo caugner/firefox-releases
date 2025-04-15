@@ -186,6 +186,13 @@ let gPermissionObject = {
 
   "desktop-notification": {},
 
+  "camera": {
+    states: [ SitePermissions.UNKNOWN, SitePermissions.BLOCK ]
+  },
+  "microphone": {
+    states: [ SitePermissions.UNKNOWN, SitePermissions.BLOCK ]
+  },
+
   "popup": {
     getDefault: function () {
       return Services.prefs.getBoolPref("dom.disable_open_during_load") ?

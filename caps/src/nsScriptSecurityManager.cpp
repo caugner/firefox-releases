@@ -395,9 +395,9 @@ nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
         unsigned lineNum = 0;
         NS_NAMED_LITERAL_STRING(scriptSample, "call to eval() or related function blocked by CSP");
 
-        JS::RootedScript script(cx);
-        if (JS_DescribeScriptedCaller(cx, &script, &lineNum)) {
-            if (const char *file = JS_GetScriptFilename(cx, script)) {
+        JS::AutoFilename scriptFilename;
+        if (JS::DescribeScriptedCaller(cx, &scriptFilename, &lineNum)) {
+            if (const char *file = scriptFilename.get()) {
                 CopyUTF8toUTF16(nsDependentCString(file), fileName);
             }
         }
@@ -486,71 +486,6 @@ nsScriptSecurityManager::CheckSameOriginURI(nsIURI* aSourceURI,
     return NS_OK;
 }
 
-/* static */
-nsresult
-nsScriptSecurityManager::CheckSameOriginPrincipal(nsIPrincipal* aSubject,
-                                                  nsIPrincipal* aObject)
-{
-    /*
-    ** Get origin of subject and object and compare.
-    */
-    if (aSubject == aObject)
-        return NS_OK;
-
-    if (!AppAttributesEqual(aSubject, aObject)) {
-        return NS_ERROR_DOM_PROP_ACCESS_DENIED;
-    }
-
-    // Default to false, and change if that turns out wrong.
-    bool subjectSetDomain = false;
-    bool objectSetDomain = false;
-    
-    nsCOMPtr<nsIURI> subjectURI;
-    nsCOMPtr<nsIURI> objectURI;
-
-    aSubject->GetDomain(getter_AddRefs(subjectURI));
-    if (!subjectURI) {
-        aSubject->GetURI(getter_AddRefs(subjectURI));
-    } else {
-        subjectSetDomain = true;
-    }
-
-    aObject->GetDomain(getter_AddRefs(objectURI));
-    if (!objectURI) {
-        aObject->GetURI(getter_AddRefs(objectURI));
-    } else {
-        objectSetDomain = true;
-    }
-
-    if (SecurityCompareURIs(subjectURI, objectURI))
-    {   // If either the subject or the object has changed its principal by
-        // explicitly setting document.domain then the other must also have
-        // done so in order to be considered the same origin. This prevents
-        // DNS spoofing based on document.domain (154930)
-
-        // If both or neither explicitly set their domain, allow the access
-        if (subjectSetDomain == objectSetDomain)
-            return NS_OK;
-    }
-
-    /*
-    ** Access tests failed, so now report error.
-    */
-    return NS_ERROR_DOM_PROP_ACCESS_DENIED;
-}
-
-// It's important that
-//
-//   CheckSameOriginPrincipal(A, B) == NS_OK
-//
-// imply
-//
-//   HashPrincipalByOrigin(A) == HashPrincipalByOrigin(B)
-//
-// if principals A and B could ever be used as keys in a hashtable.
-// Violation of this invariant leads to spurious failures of hashtable
-// lookups.  See bug 454850.
-
 /*static*/ uint32_t
 nsScriptSecurityManager::HashPrincipalByOrigin(nsIPrincipal* aPrincipal)
 {
@@ -579,33 +514,6 @@ nsScriptSecurityManager::AppAttributesEqual(nsIPrincipal* aFirst,
 
     return ((firstAppId == secondAppId) &&
             (aFirst->GetIsInBrowserElement() == aSecond->GetIsInBrowserElement()));
-}
-
-nsresult
-nsScriptSecurityManager::CheckSameOriginDOMProp(nsIPrincipal* aSubject,
-                                                nsIPrincipal* aObject,
-                                                uint32_t aAction)
-{
-    nsresult rv;
-    bool subsumes;
-    rv = aSubject->Subsumes(aObject, &subsumes);
-    if (NS_SUCCEEDED(rv) && !subsumes) {
-        rv = NS_ERROR_DOM_PROP_ACCESS_DENIED;
-    }
-    
-    if (NS_SUCCEEDED(rv))
-        return NS_OK;
-
-    /*
-    * Content can't ever touch chrome (we check for UniversalXPConnect later)
-    */
-    if (aObject == mSystemPrincipal)
-        return NS_ERROR_DOM_PROP_ACCESS_DENIED;
-
-    /*
-    ** Access tests failed, so now report error.
-    */
-    return NS_ERROR_DOM_PROP_ACCESS_DENIED;
 }
 
 NS_IMETHODIMP
@@ -872,6 +780,14 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
                              &hasFlags);
     NS_ENSURE_SUCCESS(rv, rv);
     if (hasFlags) {
+        // Allow domains that were whitelisted in the prefs. In 99.9% of cases,
+        // this array is empty.
+        for (size_t i = 0; i < mFileURIWhitelist.Length(); ++i) {
+            if (SecurityCompareURIs(mFileURIWhitelist[i], sourceURI)) {
+                return NS_OK;
+            }
+        }
+
         // resource: and chrome: are equivalent, securitywise
         // That's bogus!!  Fix this.  But watch out for
         // the view-source stylesheet?
@@ -1210,18 +1126,6 @@ nsScriptSecurityManager::GetSubjectPrincipal(JSContext *cx,
     return nsJSPrincipals::get(principals);
 }
 
-NS_IMETHODIMP
-nsScriptSecurityManager::GetObjectPrincipal(JS::Handle<JS::Value> aObjectVal,
-                                            JSContext *aCx,
-                                            nsIPrincipal **result)
-{
-    NS_ENSURE_TRUE(aObjectVal.isObject(), NS_ERROR_FAILURE);
-    JS::RootedObject obj(aCx, &aObjectVal.toObject());
-    nsCOMPtr<nsIPrincipal> principal = doGetObjectPrincipal(obj);
-    principal.forget(result);
-    return NS_OK;
-}
-
 // static
 nsIPrincipal*
 nsScriptSecurityManager::doGetObjectPrincipal(JSObject *aObj)
@@ -1372,6 +1276,7 @@ const char sFileOriginPolicyPrefName[] =
 static const char* kObservedPrefs[] = {
   sJSEnabledPrefName,
   sFileOriginPolicyPrefName,
+  "capability.policy.",
   nullptr
 };
 
@@ -1380,18 +1285,8 @@ NS_IMETHODIMP
 nsScriptSecurityManager::Observe(nsISupports* aObject, const char* aTopic,
                                  const char16_t* aMessage)
 {
-    nsresult rv = NS_OK;
-    NS_ConvertUTF16toUTF8 messageStr(aMessage);
-    const char *message = messageStr.get();
-
-    static const char jsPrefix[] = "javascript.";
-    static const char securityPrefix[] = "security.";
-    if ((PL_strncmp(message, jsPrefix, sizeof(jsPrefix)-1) == 0) ||
-        (PL_strncmp(message, securityPrefix, sizeof(securityPrefix)-1) == 0) )
-    {
-        ScriptSecurityPrefChanged();
-    }
-    return rv;
+    ScriptSecurityPrefChanged();
+    return NS_OK;
 }
 
 /////////////////////////////////////////////
@@ -1507,26 +1402,98 @@ nsScriptSecurityManager::SystemPrincipalSingletonConstructor()
     return static_cast<nsSystemPrincipal*>(sysprin);
 }
 
+struct IsWhitespace {
+    static bool Test(char aChar) { return NS_IsAsciiWhitespace(aChar); };
+};
+struct IsWhitespaceOrComma {
+    static bool Test(char aChar) { return aChar == ',' || NS_IsAsciiWhitespace(aChar); };
+};
+
+template <typename Predicate>
+uint32_t SkipPast(const nsCString& str, uint32_t base)
+{
+    while (base < str.Length() && Predicate::Test(str[base])) {
+        ++base;
+    }
+    return base;
+}
+
+template <typename Predicate>
+uint32_t SkipUntil(const nsCString& str, uint32_t base)
+{
+    while (base < str.Length() && !Predicate::Test(str[base])) {
+        ++base;
+    }
+    return base;
+}
+
 inline void
 nsScriptSecurityManager::ScriptSecurityPrefChanged()
 {
-    // JavaScript defaults to enabled in failure cases.
-    mIsJavaScriptEnabled = true;
-
-    sStrictFileOriginPolicy = true;
-
-    nsresult rv;
-    if (!mPrefInitialized) {
-        rv = InitPrefs();
-        if (NS_FAILED(rv))
-            return;
-    }
-
+    MOZ_ASSERT(mPrefInitialized);
     mIsJavaScriptEnabled =
         Preferences::GetBool(sJSEnabledPrefName, mIsJavaScriptEnabled);
-
     sStrictFileOriginPolicy =
         Preferences::GetBool(sFileOriginPolicyPrefName, false);
+
+    //
+    // Rebuild the set of principals for which we allow file:// URI loads. This
+    // implements a small subset of an old pref-based CAPS people that people
+    // have come to depend on. See bug 995943.
+    //
+
+    mFileURIWhitelist.Clear();
+    auto policies = mozilla::Preferences::GetCString("capability.policy.policynames");
+    for (uint32_t base = SkipPast<IsWhitespaceOrComma>(policies, 0), bound = 0;
+         base < policies.Length();
+         base = SkipPast<IsWhitespaceOrComma>(policies, bound))
+    {
+        // Grab the current policy name.
+        bound = SkipUntil<IsWhitespaceOrComma>(policies, base);
+        auto policyName = Substring(policies, base, bound - base);
+
+        // Figure out if this policy allows loading file:// URIs. If not, we can skip it.
+        nsCString checkLoadURIPrefName = NS_LITERAL_CSTRING("capability.policy.") +
+                                         policyName +
+                                         NS_LITERAL_CSTRING(".checkloaduri.enabled");
+        if (!Preferences::GetString(checkLoadURIPrefName.get()).LowerCaseEqualsLiteral("allaccess")) {
+            continue;
+        }
+
+        // Grab the list of domains associated with this policy.
+        nsCString domainPrefName = NS_LITERAL_CSTRING("capability.policy.") +
+                                   policyName +
+                                   NS_LITERAL_CSTRING(".sites");
+        auto siteList = Preferences::GetCString(domainPrefName.get());
+        AddSitesToFileURIWhitelist(siteList);
+    }
+}
+
+void
+nsScriptSecurityManager::AddSitesToFileURIWhitelist(const nsCString& aSiteList)
+{
+    for (uint32_t base = SkipPast<IsWhitespace>(aSiteList, 0), bound = 0;
+         base < aSiteList.Length();
+         base = SkipPast<IsWhitespace>(aSiteList, bound))
+    {
+        // Grab the current site.
+        bound = SkipUntil<IsWhitespace>(aSiteList, base);
+        auto site = Substring(aSiteList, base, bound - base);
+
+        // Convert it to a URI and add it to our list.
+        nsCOMPtr<nsIURI> uri;
+        nsresult rv = NS_NewURI(getter_AddRefs(uri), site, nullptr, nullptr, sIOService);
+        if (NS_SUCCEEDED(rv)) {
+            mFileURIWhitelist.AppendElement(uri);
+        } else {
+            nsCOMPtr<nsIConsoleService> console(do_GetService("@mozilla.org/consoleservice;1"));
+            if (console) {
+                nsAutoString msg = NS_LITERAL_STRING("Unable to to add site to file:// URI whitelist: ") +
+                                   NS_ConvertASCIItoUTF16(site);
+                console->LogStringMessage(msg.get());
+            }
+        }
+    }
 }
 
 nsresult

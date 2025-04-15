@@ -21,7 +21,7 @@ interface nsIX509CertList;
 
 typedef uint32_t AppTrustedRoot;
 
-[scriptable, function, uuid(e12aec59-7153-4e84-9376-2e851311b7a3)]
+[scriptable, function, uuid(0927baea-622d-4e41-a76d-255af426e7fb)]
 interface nsIOpenSignedAppFileCallback : nsISupports
 {
   void openSignedAppFileFinished(in nsresult rv,
@@ -33,7 +33,7 @@ interface nsIOpenSignedAppFileCallback : nsISupports
  * This represents a service to access and manipulate 
  * X.509 certificates stored in a database.
  */
-[scriptable, uuid(398dfa21-f29d-4530-bb42-136c6e7d9486)]
+[scriptable, uuid(7446a5b1-84ca-491f-a2fe-0bc60a71ffa5)]
 interface nsIX509CertDB : nsISupports {
 
   /**
@@ -198,6 +198,14 @@ interface nsIX509CertDB : nsISupports {
                     in unsigned long trust);
 
   /**
+   * @param cert        The certificate for which to modify trust.
+   * @param trustString decoded by CERT_DecodeTrustString. 3 comma separated
+   *                    characters, indicating SSL, Email, and Obj signing
+   *                    trust.
+   */
+  void setCertTrustFromString(in nsIX509Cert3 cert, in string trustString);
+
+  /**
    *  Query whether a certificate is trusted for a particular use.
    *
    *  @param cert Obtain the stored trust of this certificate.
@@ -350,4 +358,7 @@ interface nsIX509CertDB : nsISupports {
                   out nsIX509CertList verifiedChain,
                   out bool aHasEVPolicy);
 
+  // Clears the OCSP cache for the current certificate verification
+  // implementation.
+  void clearOCSPCache();
 };

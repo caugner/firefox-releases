@@ -1212,8 +1212,8 @@ bool nsStyleSVGPaint::operator==(const nsStyleSVGPaint& aOther) const
 // --------------------
 // nsStylePosition
 //
-nsStylePosition::nsStylePosition(void) 
-{ 
+nsStylePosition::nsStylePosition(void)
+{
   MOZ_COUNT_CTOR(nsStylePosition);
   // positioning values not inherited
   nsStyleCoord  autoCoord(eStyleUnit_Auto);
@@ -1228,6 +1228,19 @@ nsStylePosition::nsStylePosition(void)
   mMinHeight.SetCoordValue(0);
   mMaxHeight.SetNoneValue();
   mFlexBasis.SetAutoValue();
+
+  // The initial value of grid-auto-columns and grid-auto-rows is 'auto',
+  // which computes to 'minmax(min-content, max-content)'.
+  mGridAutoColumnsMin.SetIntValue(NS_STYLE_GRID_TRACK_BREADTH_MIN_CONTENT,
+                                  eStyleUnit_Enumerated);
+  mGridAutoColumnsMax.SetIntValue(NS_STYLE_GRID_TRACK_BREADTH_MAX_CONTENT,
+                                  eStyleUnit_Enumerated);
+  mGridAutoRowsMin.SetIntValue(NS_STYLE_GRID_TRACK_BREADTH_MIN_CONTENT,
+                               eStyleUnit_Enumerated);
+  mGridAutoRowsMax.SetIntValue(NS_STYLE_GRID_TRACK_BREADTH_MAX_CONTENT,
+                               eStyleUnit_Enumerated);
+
+  mGridAutoFlow = NS_STYLE_GRID_AUTO_FLOW_NONE;
   mBoxSizing = NS_STYLE_BOX_SIZING_CONTENT;
   mAlignContent = NS_STYLE_ALIGN_CONTENT_STRETCH;
   mAlignItems = NS_STYLE_ALIGN_ITEMS_INITIAL_VALUE;
@@ -1239,17 +1252,54 @@ nsStylePosition::nsStylePosition(void)
   mFlexGrow = 0.0f;
   mFlexShrink = 1.0f;
   mZIndex.SetAutoValue();
+  mGridAutoPositionColumn.SetToInteger(1);
+  mGridAutoPositionRow.SetToInteger(1);
+  // mGridTemplateRows, mGridTemplateColumns, and mGridTemplateAreas
+  // get their default constructors
+  // which initialize them to empty arrays,
+  // which represent the properties' initial value 'none'.
+
+  // mGrid{Column,Row}{Start,End} get their default constructor, 'auto'
 }
 
-nsStylePosition::~nsStylePosition(void) 
-{ 
+nsStylePosition::~nsStylePosition(void)
+{
   MOZ_COUNT_DTOR(nsStylePosition);
 }
 
 nsStylePosition::nsStylePosition(const nsStylePosition& aSource)
+  : mGridTemplateColumns(aSource.mGridTemplateColumns)
+  , mGridTemplateRows(aSource.mGridTemplateRows)
+  , mGridTemplateAreas(aSource.mGridTemplateAreas)
+  , mGridAutoPositionColumn(aSource.mGridAutoPositionColumn)
+  , mGridAutoPositionRow(aSource.mGridAutoPositionRow)
+  , mGridColumnStart(aSource.mGridColumnStart)
+  , mGridColumnEnd(aSource.mGridColumnEnd)
+  , mGridRowStart(aSource.mGridRowStart)
+  , mGridRowEnd(aSource.mGridRowEnd)
 {
   MOZ_COUNT_CTOR(nsStylePosition);
-  memcpy((nsStylePosition*)this, &aSource, sizeof(nsStylePosition));
+  // If you add any memcpy'able member vars,
+  // they should be declared before mGridTemplateColumns.
+  // If you add any non-memcpy'able member vars,
+  // they should be declared after mGridTemplateColumns,
+  // and you should invoke their copy constructor in the init list above
+  // and update this static-assert to include their "sizeof()"
+  static_assert(sizeof(nsStylePosition) ==
+                offsetof(nsStylePosition, mGridTemplateColumns) +
+                sizeof(mGridTemplateColumns) +
+                sizeof(mGridTemplateRows) +
+                sizeof(mGridTemplateAreas) +
+                sizeof(mGridAutoPositionColumn) +
+                sizeof(mGridAutoPositionRow) +
+                sizeof(mGridColumnStart) +
+                sizeof(mGridColumnEnd) +
+                sizeof(mGridRowStart) +
+                sizeof(mGridRowEnd),
+                "Unexpected size or offset in nsStylePosition");
+  memcpy((nsStylePosition*) this,
+         &aSource,
+         offsetof(nsStylePosition, mGridTemplateColumns));
 }
 
 static bool
@@ -1298,6 +1348,29 @@ nsChangeHint nsStylePosition::CalcDifference(const nsStylePosition& aOther) cons
     return NS_CombineHint(hint, nsChangeHint_AllReflowHints);
   }
 
+  // Properties that apply to grid containers:
+  // FIXME: only for grid containers
+  // (ie. 'display: grid' or 'display: inline-grid')
+  if (mGridTemplateColumns != aOther.mGridTemplateColumns ||
+      mGridTemplateRows != aOther.mGridTemplateRows ||
+      mGridTemplateAreas != aOther.mGridTemplateAreas ||
+      mGridAutoColumnsMin != aOther.mGridAutoColumnsMin ||
+      mGridAutoColumnsMax != aOther.mGridAutoColumnsMax ||
+      mGridAutoRowsMin != aOther.mGridAutoRowsMin ||
+      mGridAutoRowsMax != aOther.mGridAutoRowsMax ||
+      mGridAutoFlow != aOther.mGridAutoFlow) {
+    return NS_CombineHint(hint, nsChangeHint_AllReflowHints);
+  }
+
+  // Properties that apply to grid items:
+  // FIXME: only for grid items
+  // (ie. parent frame is 'display: grid' or 'display: inline-grid')
+  if (mGridColumnStart != aOther.mGridColumnStart ||
+      mGridColumnEnd != aOther.mGridColumnEnd ||
+      mGridRowStart != aOther.mGridRowStart ||
+      mGridRowEnd != aOther.mGridRowEnd) {
+    return NS_CombineHint(hint, nsChangeHint_AllReflowHints);
+  }
 
   // Changing justify-content on a flexbox might affect the positioning of its
   // children, but it won't affect any sizing.
@@ -1543,7 +1616,7 @@ nsStyleGradient::HasCalc()
       return true;
   }
   return mBgPosX.IsCalcUnit() || mBgPosY.IsCalcUnit() || mAngle.IsCalcUnit() ||
-         mRadiusX.IsCalcUnit() || mRadiusX.IsCalcUnit();
+         mRadiusX.IsCalcUnit() || mRadiusY.IsCalcUnit();
 }
 
 // --------------------
@@ -2230,7 +2303,7 @@ void nsTransition::SetInitialValues()
 void nsTransition::SetUnknownProperty(const nsAString& aUnknownProperty)
 {
   NS_ASSERTION(nsCSSProps::LookupProperty(aUnknownProperty,
-                                          nsCSSProps::eEnabled) ==
+                                          nsCSSProps::eEnabledForAllContent) ==
                  eCSSProperty_UNKNOWN,
                "should be unknown property");
   mProperty = eCSSProperty_UNKNOWN;
@@ -2289,7 +2362,7 @@ nsStyleDisplay::nsStyleDisplay()
   mTransformOrigin[2].SetCoordValue(0);
   mPerspectiveOrigin[0].SetPercentValue(0.5f);
   mPerspectiveOrigin[1].SetPercentValue(0.5f);
-  mChildPerspective.SetCoordValue(0);
+  mChildPerspective.SetNoneValue();
   mBackfaceVisibility = NS_STYLE_BACKFACE_VISIBILITY_VISIBLE;
   mTransformStyle = NS_STYLE_TRANSFORM_STYLE_FLAT;
   mOrient = NS_STYLE_ORIENT_AUTO;
@@ -2420,7 +2493,15 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
                                        nsChangeHint_RepaintFrame));
 
   if (mOpacity != aOther.mOpacity) {
-    NS_UpdateHint(hint, nsChangeHint_UpdateOpacityLayer);
+    // If we're going from the optimized >=0.99 opacity value to 1.0 or back, then
+    // repaint the frame because DLBI will not catch the invalidation.  Otherwise,
+    // just update the opacity layer.
+    if ((mOpacity >= 0.99f && mOpacity < 1.0f && aOther.mOpacity == 1.0f) ||
+        (aOther.mOpacity >= 0.99f && aOther.mOpacity < 1.0f && mOpacity == 1.0f)) {
+      NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
+    } else {
+      NS_UpdateHint(hint, nsChangeHint_UpdateOpacityLayer);
+    }
   }
 
   /* If we've added or removed the transform property, we need to reconstruct the frame to add
@@ -2470,7 +2551,13 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
       NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
   }
 
-  if (mWillChangeBitField != aOther.mWillChangeBitField) {
+  uint8_t willChangeBitsChanged =
+    mWillChangeBitField ^ aOther.mWillChangeBitField;
+  if (willChangeBitsChanged & NS_STYLE_WILL_CHANGE_STACKING_CONTEXT) {
+    NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
+  }
+  if (willChangeBitsChanged & ~uint8_t(NS_STYLE_WILL_CHANGE_STACKING_CONTEXT)) {
+    // FIXME (Bug 974125): Don't reconstruct the frame
     NS_UpdateHint(hint, nsChangeHint_ReconstructFrame);
   }
 
@@ -2973,6 +3060,7 @@ nsStyleText::nsStyleText(void)
   mTextSizeAdjust = NS_STYLE_TEXT_SIZE_ADJUST_AUTO;
   mTextOrientation = NS_STYLE_TEXT_ORIENTATION_AUTO;
   mTextCombineHorizontal = NS_STYLE_TEXT_COMBINE_HORIZ_NONE;
+  mControlCharacterVisibility = NS_STYLE_CONTROL_CHARACTER_VISIBILITY_HIDDEN;
 
   mLetterSpacing.SetNormalValue();
   mLineHeight.SetNormalValue();
@@ -2996,6 +3084,7 @@ nsStyleText::nsStyleText(const nsStyleText& aSource)
     mTextSizeAdjust(aSource.mTextSizeAdjust),
     mTextOrientation(aSource.mTextOrientation),
     mTextCombineHorizontal(aSource.mTextCombineHorizontal),
+    mControlCharacterVisibility(aSource.mControlCharacterVisibility),
     mTabSize(aSource.mTabSize),
     mWordSpacing(aSource.mWordSpacing),
     mLetterSpacing(aSource.mLetterSpacing),
@@ -3019,7 +3108,8 @@ nsChangeHint nsStyleText::CalcDifference(const nsStyleText& aOther) const
     return NS_STYLE_HINT_FRAMECHANGE;
   }
 
-  if (mTextCombineHorizontal != aOther.mTextCombineHorizontal) {
+  if (mTextCombineHorizontal != aOther.mTextCombineHorizontal ||
+      mControlCharacterVisibility != aOther.mControlCharacterVisibility) {
     return nsChangeHint_ReconstructFrame;
   }
 

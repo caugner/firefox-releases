@@ -70,6 +70,7 @@ public:
   bool UsingDisk() const;
   bool SetUsingDisk(bool aUsingDisk);
   bool IsReferenced() const;
+  bool IsFileDoomed();
 
   // Methods for entry management (eviction from memory),
   // called only on the management thread.
@@ -103,6 +104,10 @@ public:
   // Accessed only on the service management thread
   double mFrecency;
   uint32_t mSortingExpirationTime;
+
+  // Memory reporting
+  size_t SizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
+  size_t SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
 private:
   virtual ~CacheEntry();
@@ -224,7 +229,8 @@ private:
   // Called only from DoomAlreadyRemoved()
   void DoomFile();
 
-  already_AddRefed<CacheEntryHandle> ReopenTruncated(nsICacheEntryOpenCallback* aCallback);
+  already_AddRefed<CacheEntryHandle> ReopenTruncated(bool aMemoryOnly,
+                                                     nsICacheEntryOpenCallback* aCallback);
   void TransferCallbacks(CacheEntry & aFromEntry);
 
   mozilla::Mutex mLock;

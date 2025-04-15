@@ -29,7 +29,7 @@
 
 #include "nsMemoryImpl.h"
 #include "nsDebugImpl.h"
-#include "nsTraceRefcntImpl.h"
+#include "nsTraceRefcnt.h"
 #include "nsErrorService.h"
 
 #include "nsSupportsArray.h"
@@ -60,7 +60,7 @@
 
 #include "nsIFile.h"
 #include "nsLocalFile.h"
-#if defined(XP_UNIX) || defined(XP_OS2)
+#if defined(XP_UNIX)
 #include "nsNativeCharsetUtils.h"
 #endif
 #include "nsDirectoryService.h"
@@ -74,7 +74,7 @@ extern nsresult nsStringInputStreamConstructor(nsISupports *, REFNSIID, void **)
 
 #include "nsAtomService.h"
 #include "nsAtomTable.h"
-#include "nsTraceRefcnt.h"
+#include "nsISupportsImpl.h"
 
 #include "nsHashPropertyBag.h"
 
@@ -110,7 +110,6 @@ extern nsresult nsStringInputStreamConstructor(nsISupports *, REFNSIID, void **)
 
 #include "nsChromeRegistry.h"
 #include "nsChromeProtocolHandler.h"
-#include "mozilla/IOInterposer.h"
 #include "mozilla/PoisonIOInterposer.h"
 #include "mozilla/LateWriteChecks.h"
 
@@ -127,6 +126,11 @@ extern nsresult nsStringInputStreamConstructor(nsISupports *, REFNSIID, void **)
 
 #ifdef MOZ_VISUAL_EVENT_TRACER
 #include "mozilla/VisualEventTracer.h"
+#endif
+
+#include "ogg/ogg.h"
+#if defined(MOZ_VPX) && !defined(MOZ_VPX_NO_MEM_REPORTING)
+#include "vpx_mem/vpx_mem.h"
 #endif
 
 #include "GeckoProfiler.h"
@@ -324,14 +328,6 @@ NS_GetDebug(nsIDebug** result)
 }
 
 EXPORT_XPCOM_API(nsresult)
-NS_GetTraceRefcnt(nsITraceRefcnt** result)
-{
-    return nsTraceRefcntImpl::Create(nullptr,
-                                     NS_GET_IID(nsITraceRefcnt),
-                                     (void**) result);
-}
-
-EXPORT_XPCOM_API(nsresult)
 NS_InitXPCOM(nsIServiceManager* *result,
                              nsIFile* binDirectory)
 {
@@ -372,6 +368,48 @@ private:
 NS_IMPL_ISUPPORTS1(ICUReporter, nsIMemoryReporter)
 
 /* static */ template<> Atomic<size_t> CountingAllocatorBase<ICUReporter>::sAmount(0);
+
+class OggReporter MOZ_FINAL : public nsIMemoryReporter,
+                              public CountingAllocatorBase<OggReporter>
+{
+public:
+    NS_DECL_ISUPPORTS
+
+private:
+    NS_IMETHODIMP
+    CollectReports(nsIHandleReportCallback* aHandleReport, nsISupports* aData)
+    {
+        return MOZ_COLLECT_REPORT(
+            "explicit/media/libogg", KIND_HEAP, UNITS_BYTES, MemoryAllocated(),
+            "Memory allocated through libogg for Ogg, Theora, and related media files.");
+    }
+};
+
+NS_IMPL_ISUPPORTS1(OggReporter, nsIMemoryReporter)
+
+/* static */ template<> Atomic<size_t> CountingAllocatorBase<OggReporter>::sAmount(0);
+
+#ifdef MOZ_VPX
+class VPXReporter MOZ_FINAL : public nsIMemoryReporter,
+                              public CountingAllocatorBase<VPXReporter>
+{
+public:
+    NS_DECL_ISUPPORTS
+
+private:
+    NS_IMETHODIMP
+    CollectReports(nsIHandleReportCallback* aHandleReport, nsISupports* aData)
+    {
+        return MOZ_COLLECT_REPORT(
+            "explicit/media/libvpx", KIND_HEAP, UNITS_BYTES, MemoryAllocated(),
+            "Memory allocated through libvpx for WebM media files.");
+    }
+};
+
+NS_IMPL_ISUPPORTS1(VPXReporter, nsIMemoryReporter)
+
+/* static */ template<> Atomic<size_t> CountingAllocatorBase<VPXReporter>::sAmount(0);
+#endif /* MOZ_VPX */
 
 EXPORT_XPCOM_API(nsresult)
 NS_InitXPCOM2(nsIServiceManager* *result,
@@ -438,7 +476,7 @@ NS_InitXPCOM2(nsIServiceManager* *result,
         setlocale(LC_ALL, "");
 #endif
 
-#if defined(XP_UNIX) || defined(XP_OS2)
+#if defined(XP_UNIX)
     NS_StartupNativeCharsetUtils();
 #endif
 
@@ -524,10 +562,24 @@ NS_InitXPCOM2(nsIServiceManager* *result,
     // can't define the alloc/free functions in the JS engine, because it can't
     // depend on the XPCOM-based memory reporting goop.  So for now, we have
     // this oddness.
-    if (!JS_SetICUMemoryFunctions(ICUReporter::Alloc, ICUReporter::Realloc,
-                                  ICUReporter::Free)) {
-        NS_RUNTIMEABORT("JS_SetICUMemoryFunctions failed.");
-    }
+    mozilla::SetICUMemoryFunctions();
+
+    // Do the same for libogg.
+    ogg_set_mem_functions(OggReporter::CountingMalloc,
+                          OggReporter::CountingCalloc,
+                          OggReporter::CountingRealloc,
+                          OggReporter::CountingFree);
+
+#if defined(MOZ_VPX) && !defined(MOZ_VPX_NO_MEM_REPORTING)
+    // And for VPX.
+    vpx_mem_set_functions(VPXReporter::CountingMalloc,
+                          VPXReporter::CountingCalloc,
+                          VPXReporter::CountingRealloc,
+                          VPXReporter::CountingFree,
+                          memcpy,
+                          memset,
+                          memmove);
+#endif
 
     // Initialize the JS engine.
     if (!JS_Init()) {
@@ -576,9 +628,12 @@ NS_InitXPCOM2(nsIServiceManager* *result,
         mozilla::SystemMemoryReporter::Init();
     }
 
-    // The memory reporter manager is up and running -- register a reporter for
-    // ICU's memory usage.
+    // The memory reporter manager is up and running -- register our reporters.
     RegisterStrongMemoryReporter(new ICUReporter());
+    RegisterStrongMemoryReporter(new OggReporter());
+#ifdef MOZ_VPX
+    RegisterStrongMemoryReporter(new VPXReporter());
+#endif
 
     mozilla::Telemetry::Init();
 
@@ -627,6 +682,19 @@ NS_ShutdownXPCOM(nsIServiceManager* servMgr)
 }
 
 namespace mozilla {
+
+void
+SetICUMemoryFunctions()
+{
+    static bool sICUReporterInitialized = false;
+    if (!sICUReporterInitialized) {
+        if (!JS_SetICUMemoryFunctions(ICUReporter::Alloc, ICUReporter::Realloc,
+                                      ICUReporter::Free)) {
+            NS_RUNTIMEABORT("JS_SetICUMemoryFunctions failed.");
+        }
+        sICUReporterInitialized = true;
+    }
+}
 
 nsresult
 ShutdownXPCOM(nsIServiceManager* servMgr)
@@ -766,11 +834,6 @@ ShutdownXPCOM(nsIServiceManager* servMgr)
     PROFILER_MARKER("Shutdown xpcom");
     // If we are doing any shutdown checks, poison writes.
     if (gShutdownChecks != SCM_NOTHING) {
-        // Calling InitIOInterposer or InitPoisonIOInterposer twice doesn't
-        // cause any problems, they'll safely abort the initialization on their
-        // own initiative.
-        mozilla::IOInterposer::Init();
-        mozilla::InitPoisonIOInterposer();
 #ifdef XP_MACOSX
         mozilla::OnlyReportDirtyWrites();
 #endif /* XP_MACOSX */
@@ -791,6 +854,20 @@ ShutdownXPCOM(nsIServiceManager* servMgr)
     } else {
         NS_WARNING("Component Manager was never created ...");
     }
+
+#ifdef MOZ_ENABLE_PROFILER_SPS
+    // In optimized builds we don't do shutdown collections by default, so
+    // uncollected (garbage) objects may keep the nsXPConnect singleton alive,
+    // and its XPCJSRuntime along with it. However, we still destroy various
+    // bits of state in JS_ShutDown(), so we need to make sure the profiler
+    // can't access them when it shuts down. This call nulls out the
+    // JS pseudo-stack's internal reference to the main thread JSRuntime,
+    // duplicating the call in XPCJSRuntime::~XPCJSRuntime() in case that
+    // never fired.
+    if (PseudoStack *stack = mozilla_get_pseudo_stack()) {
+        stack->sampleRuntime(nullptr);
+    }
+#endif
 
     // Shut down the JS engine.
     JS_ShutDown();

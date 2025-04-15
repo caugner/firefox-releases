@@ -12,6 +12,7 @@ import traceback
 
 from application_cache import ApplicationCache
 from client import MarionetteClient
+from decorators import do_crash_check
 from emulator import Emulator
 from emulator_screen import EmulatorScreen
 from errors import *
@@ -420,6 +421,7 @@ class MultiActions(object):
         '''
         return self.marionette._send_message('multiAction', 'ok', value=self.multi_actions, max_length=self.max_length)
 
+
 class Marionette(object):
     """
     Represents a Marionette connection to a browser or device.
@@ -483,7 +485,8 @@ class Marionette(object):
                         KeyError):
                     instance_class = geckoinstance.GeckoInstance
             self.instance = instance_class(host=self.host, port=self.port,
-                                           bin=self.bin, profile=self.profile, app_args=app_args)
+                                           bin=self.bin, profile=self.profile,
+                                           app_args=app_args, symbols_path=symbols_path)
             self.instance.start()
             assert(self.wait_for_port()), "Timed out waiting for port!"
 
@@ -583,15 +586,16 @@ class Marionette(object):
             time.sleep(1)
         return False
 
-    def _send_message(self, command, response_key, **kwargs):
-        if not self.session and command not in ('newSession', 'getStatus'):
-            raise MarionetteException(message="Please start a session")
+    @do_crash_check
+    def _send_message(self, command, response_key="ok", **kwargs):
+        if not self.session and command != "newSession":
+            raise MarionetteException("Please start a session")
 
-        message = { 'name': command }
+        message = {"name": command}
         if self.session:
-            message['sessionId'] = self.session
+            message["sessionId"] = self.session
         if kwargs:
-            message['parameters'] = kwargs
+            message["parameters"] = kwargs
 
         try:
             response = self.client.send(message)
@@ -599,25 +603,43 @@ class Marionette(object):
             self.session = None
             self.window = None
             self.client.close()
-            raise TimeoutException(message='socket.timeout', status=ErrorCodes.TIMEOUT, stacktrace=None)
+            raise TimeoutException(
+                "Connection timed out", status=ErrorCodes.TIMEOUT)
 
         # Process any emulator commands that are sent from a script
         # while it's executing.
-        while response.get("emulator_cmd"):
-            response = self._handle_emulator_cmd(response)
+        while True:
+            if response.get("emulator_cmd"):
+                response = self._handle_emulator_cmd(response)
+                continue;
 
-        if (response_key == 'ok' and response.get('ok') ==  True) or response_key in response:
+            if response.get("emulator_shell"):
+                response = self._handle_emulator_shell(response)
+                continue;
+
+            break;
+
+        if response_key in response:
             return response[response_key]
-        else:
-            self._handle_error(response)
+        self._handle_error(response)
 
     def _handle_emulator_cmd(self, response):
         cmd = response.get("emulator_cmd")
         if not cmd or not self.emulator:
-            raise MarionetteException(message="No emulator in this test to run "
-                                      "command against.")
+            raise MarionetteException(
+                "No emulator in this test to run command against")
         cmd = cmd.encode("ascii")
         result = self.emulator._run_telnet(cmd)
+        return self.client.send({"name": "emulatorCmdResult",
+                                 "id": response.get("id"),
+                                 "result": result})
+
+    def _handle_emulator_shell(self, response):
+        args = response.get("emulator_shell")
+        if not isinstance(args, list) or not self.emulator:
+            raise MarionetteException(
+                "No emulator in this test to run shell command against")
+        result = self.emulator._run_shell(args)
         return self.client.send({"name": "emulatorCmdResult",
                                  "id": response.get("id"),
                                  "result": result})
@@ -686,9 +708,8 @@ class Marionette(object):
             if self.emulator.check_for_minidumps():
                 crashed = True
         elif self.instance:
-            # In the future, a check for crashed Firefox processes
-            # should be here.
-            pass
+            if self.instance.check_for_crashes():
+                crashed = True
         if returncode is not None:
             print ('PROCESS-CRASH | %s | abnormal termination with exit code %d' %
                 (name, returncode))
@@ -702,23 +723,20 @@ class Marionette(object):
         '''
         return "%s%s" % (self.baseurl, relative_url)
 
-    def status(self):
-        return self._send_message('getStatus', 'value')
-
     def start_session(self, desired_capabilities=None):
-        '''
-        Creates a new Marionette session.
+        """Create a new Marionette session.
 
-        You must call this method before performing any other action.
-        '''
-        try:
-            # We are ignoring desired_capabilities, at least for now.
-            self.session = self._send_message('newSession', 'value')
-        except:
-            exc, val, tb = sys.exc_info()
-            self.check_for_crash()
-            raise exc, val, tb
+        This method must be called before performing any other action.
 
+        :params desired_capabilities: An optional dict of desired
+            capabilities.  This is currently ignored.
+
+        :returns: A dict of the capabilities offered.
+
+        """
+
+        # We are ignoring desired_capabilities, at least for now.
+        self.session = self._send_message('newSession', 'value')
         self.b2g = 'b2g' in self.session
         return self.session
 
@@ -732,6 +750,9 @@ class Marionette(object):
             self._test_name = test_name
 
     def delete_session(self):
+        """
+        Close the current session and disconnect from the server.
+        """
         response = self._send_message('deleteSession', 'ok')
         self.session = None
         self.window = None

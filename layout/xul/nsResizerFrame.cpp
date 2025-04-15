@@ -10,7 +10,7 @@
 #include "nsIDocument.h"
 #include "nsIDOMNodeList.h"
 #include "nsGkAtoms.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsIDOMElementCSSInlineStyle.h"
 #include "nsIDOMCSSStyleDeclaration.h"
 
@@ -49,7 +49,7 @@ nsResizerFrame::nsResizerFrame(nsIPresShell* aPresShell, nsStyleContext* aContex
 {
 }
 
-NS_IMETHODIMP
+nsresult
 nsResizerFrame::HandleEvent(nsPresContext* aPresContext,
                             WidgetGUIEvent* aEvent,
                             nsEventStatus* aEventStatus)

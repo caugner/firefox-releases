@@ -127,6 +127,7 @@
 #include "nsToolkitCompsCID.h"
 #include "nsIAppStartup.h"
 #include "mozilla/WindowsVersion.h"
+#include "nsThemeConstants.h"
 
 #ifdef MOZ_ENABLE_D3D9_LAYER
 #include "LayerManagerD3D9.h"
@@ -283,6 +284,9 @@ static const int32_t kGlassMarginAdjustment = 2;
 // content.
 static const int32_t kResizableBorderMinSize = 3;
 
+// Cached pointer events enabler value, True if pointer events are enabled.
+static bool gIsPointerEventsEnabled = false;
+
 // We should never really try to accelerate windows bigger than this. In some
 // cases this might lead to no D3D9 acceleration where we could have had it
 // but D3D9 does not reliably report when it supports bigger windows. 8192
@@ -382,6 +386,10 @@ nsWindow::nsWindow() : nsWindowBase()
     // Init theme data
     nsUXThemeData::UpdateNativeThemeInfo();
     RedirectedKeyDownMessageManager::Forget();
+
+    Preferences::AddBoolVarCache(&gIsPointerEventsEnabled,
+                                 "dom.w3c_pointer_events.enabled",
+                                 gIsPointerEventsEnabled);
   } // !sInstanceCount
 
   mIdleService = nullptr;
@@ -1272,7 +1280,8 @@ void nsWindow::SetThemeRegion()
  **************************************************************/
 
 NS_METHOD nsWindow::RegisterTouchWindow() {
-  if (Preferences::GetInt("dom.w3c_touch_events.enabled", 0)) {
+  if (Preferences::GetInt("dom.w3c_touch_events.enabled", 0) ||
+      gIsPointerEventsEnabled) {
     mTouchWindow = true;
     mGesture.RegisterTouchWindow(mWnd);
     ::EnumChildWindows(mWnd, nsWindow::RegisterTouchForDescendants, 0);
@@ -2240,10 +2249,16 @@ nsWindow::SetNonClientMargins(nsIntMargin &margins)
       margins.right == -1 && margins.bottom == -1) {
     mCustomNonClient = false;
     mNonClientMargins = margins;
-    RemovePropW(mWnd, kManageWindowInfoProperty);
     // Force a reflow of content based on the new client
     // dimensions.
     ResetLayout();
+
+    int windowStatus =
+      reinterpret_cast<LONG_PTR>(GetPropW(mWnd, kManageWindowInfoProperty));
+    if (windowStatus) {
+      ::SendMessageW(mWnd, WM_NCACTIVATE, 1 != windowStatus, 0);
+    }
+
     return NS_OK;
   }
 
@@ -3549,6 +3564,28 @@ nsWindow::EndRemoteDrawing()
   mCompositeDC = nullptr;
 }
 
+void
+nsWindow::UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries)
+{
+  nsIntRegion clearRegion;
+  for (size_t i = 0; i < aThemeGeometries.Length(); i++) {
+    if ((aThemeGeometries[i].mWidgetType == NS_THEME_WINDOW_BUTTON_BOX ||
+         aThemeGeometries[i].mWidgetType == NS_THEME_WINDOW_BUTTON_BOX_MAXIMIZED) &&
+        nsUXThemeData::CheckForCompositor())
+    {
+      nsIntRect bounds = aThemeGeometries[i].mRect;
+      clearRegion = nsIntRect(bounds.X(), bounds.Y(), bounds.Width(), bounds.Height() - 2.0);
+      clearRegion.Or(clearRegion, nsIntRect(bounds.X() + 1.0, bounds.YMost() - 2.0, bounds.Width() - 1.0, 1.0));
+      clearRegion.Or(clearRegion, nsIntRect(bounds.X() + 2.0, bounds.YMost() - 1.0, bounds.Width() - 3.0, 1.0));
+    }
+  }
+
+  nsRefPtr<LayerManager> layerManager = GetLayerManager();
+  if (layerManager) {
+    layerManager->SetRegionToClear(clearRegion);
+  }
+}
+
 /**************************************************************
  **************************************************************
  **
@@ -3676,70 +3713,6 @@ bool nsWindow::DispatchWindowEvent(WidgetGUIEvent* event,
   return ConvertStatus(aStatus);
 }
 
-bool nsWindow::DispatchCommandEvent(uint32_t aEventCommand)
-{
-  nsCOMPtr<nsIAtom> command;
-  switch (aEventCommand) {
-    case APPCOMMAND_BROWSER_BACKWARD:
-      command = nsGkAtoms::Back;
-      break;
-    case APPCOMMAND_BROWSER_FORWARD:
-      command = nsGkAtoms::Forward;
-      break;
-    case APPCOMMAND_BROWSER_REFRESH:
-      command = nsGkAtoms::Reload;
-      break;
-    case APPCOMMAND_BROWSER_STOP:
-      command = nsGkAtoms::Stop;
-      break;
-    case APPCOMMAND_BROWSER_SEARCH:
-      command = nsGkAtoms::Search;
-      break;
-    case APPCOMMAND_BROWSER_FAVORITES:
-      command = nsGkAtoms::Bookmarks;
-      break;
-    case APPCOMMAND_BROWSER_HOME:
-      command = nsGkAtoms::Home;
-      break;
-    case APPCOMMAND_CLOSE:
-      command = nsGkAtoms::Close;
-      break;
-    case APPCOMMAND_FIND:
-      command = nsGkAtoms::Find;
-      break;
-    case APPCOMMAND_HELP:
-      command = nsGkAtoms::Help;
-      break;
-    case APPCOMMAND_NEW:
-      command = nsGkAtoms::New;
-      break;
-    case APPCOMMAND_OPEN:
-      command = nsGkAtoms::Open;
-      break;
-    case APPCOMMAND_PRINT:
-      command = nsGkAtoms::Print;
-      break;
-    case APPCOMMAND_SAVE:
-      command = nsGkAtoms::Save;
-      break;
-    case APPCOMMAND_FORWARD_MAIL:
-      command = nsGkAtoms::ForwardMail;
-      break;
-    case APPCOMMAND_REPLY_TO_MAIL:
-      command = nsGkAtoms::ReplyToMail;
-      break;
-    case APPCOMMAND_SEND_MAIL:
-      command = nsGkAtoms::SendMail;
-      break;
-    default:
-      return false;
-  }
-  WidgetCommandEvent event(true, nsGkAtoms::onAppCommand, command, this);
-
-  InitEvent(event);
-  return DispatchWindowEvent(&event);
-}
-
 // Recursively dispatch synchronous paints for nsIWidget
 // descendants with invalidated rectangles.
 BOOL CALLBACK nsWindow::DispatchStarvedPaints(HWND aWnd, LPARAM aMsg)
@@ -3857,6 +3830,10 @@ bool nsWindow::DispatchMouseEvent(uint32_t aEventType, WPARAM wParam,
   modifierKeyState.InitInputEvent(event);
   event.button    = aButton;
   event.inputSource = aInputSource;
+  // Convert Mouse events generated by pen device or if mouse not generated from touch
+  event.convertToPointer =
+    aInputSource == nsIDOMMouseEvent::MOZ_SOURCE_PEN ||
+    !(WinUtils::GetIsMouseFromTouch(aEventType) && mTouchWindow);
 
   nsIntPoint mpScreen = eventPoint + WidgetToScreenOffset();
 
@@ -4036,7 +4013,7 @@ bool nsWindow::DispatchMouseEvent(uint32_t aEventType, WPARAM wParam,
       nsToolkit::gMouseTrailer->Enable();
 
     // Release the widget with NS_IF_RELEASE() just in case
-    // the context menu key code in nsEventListenerManager::HandleEvent()
+    // the context menu key code in EventListenerManager::HandleEvent()
     // released it already.
     return result;
   }
@@ -4707,6 +4684,7 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
        * WM_NCACTIVATE paints nc areas. Avoid this and re-route painting
        * through WM_NCPAINT via InvalidateNonClientRegion.
        */
+      UpdateGetWindowInfoCaptionStatus(FALSE != wParam);
 
       if (!mCustomNonClient)
         break;
@@ -4719,7 +4697,6 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         // going active
         *aRetValue = FALSE; // ignored
         result = true;
-        UpdateGetWindowInfoCaptionStatus(true);
         // invalidate to trigger a paint
         InvalidateNonClientRegion();
         break;
@@ -4727,7 +4704,6 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         // going inactive
         *aRetValue = TRUE; // go ahead and deactive
         result = true;
-        UpdateGetWindowInfoCaptionStatus(false);
         // invalidate to trigger a paint
         InvalidateNonClientRegion();
         break;
@@ -5070,69 +5046,8 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
       break;
 
     case WM_APPCOMMAND:
-    {
-      uint32_t appCommand = GET_APPCOMMAND_LPARAM(lParam);
-      uint32_t contentCommandMessage = NS_EVENT_NULL;
-      // XXX After we implement KeyboardEvent.key, we should dispatch the
-      //     key event if (GET_DEVICE_LPARAM(lParam) == FAPPCOMMAND_KEY) is.
-      switch (appCommand)
-      {
-        case APPCOMMAND_BROWSER_BACKWARD:
-        case APPCOMMAND_BROWSER_FORWARD:
-        case APPCOMMAND_BROWSER_REFRESH:
-        case APPCOMMAND_BROWSER_STOP:
-        case APPCOMMAND_BROWSER_SEARCH:
-        case APPCOMMAND_BROWSER_FAVORITES:
-        case APPCOMMAND_BROWSER_HOME:
-        case APPCOMMAND_CLOSE:
-        case APPCOMMAND_FIND:
-        case APPCOMMAND_HELP:
-        case APPCOMMAND_NEW:
-        case APPCOMMAND_OPEN:
-        case APPCOMMAND_PRINT:
-        case APPCOMMAND_SAVE:
-        case APPCOMMAND_FORWARD_MAIL:
-        case APPCOMMAND_REPLY_TO_MAIL:
-        case APPCOMMAND_SEND_MAIL:
-          // We shouldn't consume the message always because if we don't handle
-          // the message, the sender (typically, utility of keyboard or mouse)
-          // may send other key messages which indicate well known shortcut key.
-          if (DispatchCommandEvent(appCommand)) {
-            // tell the driver that we handled the event
-            *aRetValue = 1;
-            result = true;
-          }
-          break;
-
-        // Use content command for following commands:
-        case APPCOMMAND_COPY:
-          contentCommandMessage = NS_CONTENT_COMMAND_COPY;
-          break;
-        case APPCOMMAND_CUT:
-          contentCommandMessage = NS_CONTENT_COMMAND_CUT;
-          break;
-        case APPCOMMAND_PASTE:
-          contentCommandMessage = NS_CONTENT_COMMAND_PASTE;
-          break;
-        case APPCOMMAND_REDO:
-          contentCommandMessage = NS_CONTENT_COMMAND_REDO;
-          break;
-        case APPCOMMAND_UNDO:
-          contentCommandMessage = NS_CONTENT_COMMAND_UNDO;
-          break;
-      }
-
-      if (contentCommandMessage) {
-        WidgetContentCommandEvent contentCommand(true, contentCommandMessage,
-                                                 this);
-        DispatchWindowEvent(&contentCommand);
-        // tell the driver that we handled the event
-        *aRetValue = 1;
-        result = true;
-      }
-      // default = false - tell the driver that the event was not handled
-    }
-    break;
+      result = HandleAppCommandMsg(wParam, lParam, aRetValue);
+      break;
 
     // The WM_ACTIVATE event is fired when a window is raised or lowered,
     // and the loword of wParam specifies which. But we don't want to tell
@@ -5302,7 +5217,6 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
     nsUXThemeData::CheckForCompositor(true);
 
     UpdateNonClientMargins();
-    RemovePropW(mWnd, kManageWindowInfoProperty);
     BroadcastMsg(mWnd, WM_DWMCOMPOSITIONCHANGED);
     NotifyThemeChanged();
     UpdateGlass();
@@ -5357,6 +5271,11 @@ nsWindow::ProcessMessage(UINT msg, WPARAM& wParam, LPARAM& lParam,
         // A GestureNotify event is dispatched to decide which single-finger panning
         // direction should be active (including none) and if pan feedback should
         // be displayed. Java and plugin windows can make their own calls.
+        if (gIsPointerEventsEnabled) {
+          result = false;
+          break;
+        }
+
         GESTURENOTIFYSTRUCT * gestureinfo = (GESTURENOTIFYSTRUCT*)lParam;
         nsPointWin touchPoint;
         touchPoint = gestureinfo->ptsLocation;
@@ -5907,10 +5826,10 @@ void nsWindow::OnWindowPosChanged(WINDOWPOS* wp)
         break;
       case nsSizeMode_Maximized:
           PR_LOG(gWindowsLog, PR_LOG_ALWAYS, 
-                 ("*** mSizeMode: nsSizeMode_Maximized\n");
+                 ("*** mSizeMode: nsSizeMode_Maximized\n"));
         break;
       default:
-          PR_LOG(gWindowsLog, PR_LOG_ALWAYS, ("*** mSizeMode: ??????\n");
+          PR_LOG(gWindowsLog, PR_LOG_ALWAYS, ("*** mSizeMode: ??????\n"));
         break;
     };
 #endif
@@ -5934,9 +5853,7 @@ void nsWindow::OnWindowPosChanged(WINDOWPOS* wp)
     mBounds.x = wp->x;
     mBounds.y = wp->y;
 
-    if (mWidgetListener) {
-      mWidgetListener->WindowMoved(this, wp->x, wp->y);
-    }
+    NotifyWindowMoved(wp->x, wp->y);
   }
 
   // Handle window size changes
@@ -6219,6 +6136,10 @@ static int32_t RoundDown(double aDouble)
 // Gesture event processing. Handles WM_GESTURE events.
 bool nsWindow::OnGesture(WPARAM wParam, LPARAM lParam)
 {
+  if (gIsPointerEventsEnabled) {
+    return false;
+  }
+
   // Treatment for pan events which translate into scroll events:
   if (mGesture.IsPanEvent(lParam)) {
     if ( !mGesture.ProcessPanMessage(mWnd, wParam, lParam) )
@@ -6257,7 +6178,7 @@ bool nsWindow::OnGesture(WPARAM wParam, LPARAM lParam)
   }
 
   // Other gestures translate into simple gesture events:
-  WidgetSimpleGestureEvent event(true, 0, this, 0, 0.0);
+  WidgetSimpleGestureEvent event(true, 0, this);
   if ( !mGesture.ProcessGestureMessage(mWnd, wParam, lParam, event) ) {
     return false; // fall through to DefWndProc
   }
@@ -6378,8 +6299,7 @@ CreateHRGNFromArray(const nsTArray<nsIntRect>& aRects)
 {
   int32_t size = sizeof(RGNDATAHEADER) + sizeof(RECT)*aRects.Length();
   nsAutoTArray<uint8_t,100> buf;
-  if (!buf.SetLength(size))
-    return nullptr;
+  buf.SetLength(size);
   RGNDATA* data = reinterpret_cast<RGNDATA*>(buf.Elements());
   RECT* rects = reinterpret_cast<RECT*>(data->Buffer);
   data->rdh.dwSize = sizeof(data->rdh);
@@ -6636,6 +6556,19 @@ nsWindow::StartAllowingD3D9(bool aReinitialize)
   }
 }
 
+bool
+nsWindow::ShouldUseOffMainThreadCompositing()
+{
+  // We don't currently support using an accelerated layer manager with
+  // transparent windows so don't even try. I'm also not sure if we even
+  // want to support this case. See bug 593471
+  if (mTransparencyMode == eTransparencyTransparent) {
+    return false;
+  }
+
+  return nsBaseWidget::ShouldUseOffMainThreadCompositing();
+}
+
 void
 nsWindow::GetPreferredCompositorBackends(nsTArray<LayersBackend>& aHints)
 {
@@ -6728,9 +6661,9 @@ nsWindow::OnSysColorChanged()
  **************************************************************/
 
 NS_IMETHODIMP
-nsWindow::NotifyIME(NotificationToIME aNotification)
+nsWindow::NotifyIME(const IMENotification& aIMENotification)
 {
-  return IMEHandler::NotifyIME(this, aNotification);
+  return IMEHandler::NotifyIME(this, aIMENotification);
 }
 
 NS_IMETHODIMP_(void)
@@ -6763,14 +6696,6 @@ nsWindow::GetToggledKeyState(uint32_t aKeyCode, bool* aLEDState)
   NS_ENSURE_ARG_POINTER(aLEDState);
   *aLEDState = (::GetKeyState(aKeyCode) & 1) != 0;
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsWindow::NotifyIMEOfTextChange(uint32_t aStart,
-                                uint32_t aOldEnd,
-                                uint32_t aNewEnd)
-{
-  return IMEHandler::NotifyIMEOfTextChange(aStart, aOldEnd, aNewEnd);
 }
 
 nsIMEUpdatePreference

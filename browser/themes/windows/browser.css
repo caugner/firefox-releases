@@ -6,6 +6,7 @@
 
 @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
 @namespace html url("http://www.w3.org/1999/xhtml");
+@namespace svg url("http://www.w3.org/2000/svg");
 
 %include ../shared/browser.inc
 %include windowsShared.inc
@@ -38,8 +39,8 @@
   margin-top: 3px;
 }
 
-#main-window[tabsintitlebar][sizemode="normal"][chromehidden~="menubar"] #toolbar-menubar ~ #TabsToolbar,
-#main-window[tabsintitlebar][sizemode="normal"] #toolbar-menubar[autohide="true"][inactive] ~ #TabsToolbar {
+#main-window[tabsintitlebar][sizemode="normal"]:not([inFullscreen])[chromehidden~="menubar"] #toolbar-menubar ~ #TabsToolbar,
+#main-window[tabsintitlebar][sizemode="normal"]:not([inFullscreen]) #toolbar-menubar[autohide="true"][inactive] ~ #TabsToolbar {
   margin-top: 15px;
 }
 
@@ -75,7 +76,8 @@
 }
 
 %ifdef WINDOWS_AERO
-@media not all and (-moz-windows-compositor) {
+@media not all and (-moz-windows-compositor),
+       not all and (-moz-windows-default-theme) {
 %endif
   #toolbar-menubar {
     background-color: transparent !important;
@@ -91,10 +93,20 @@
     color: InactiveCaptionText;
   }
 
+  #main-window[tabsintitlebar] #main-menubar > menu:not(:-moz-lwtheme) {
+    color: inherit;
+  }
+
   #TabsToolbar:-moz-lwtheme {
     background: linear-gradient(to top, @toolbarShadowColor@ 2px, transparent 2px);
   }
+%ifdef WINDOWS_AERO
+}
+%endif
 
+%ifdef WINDOWS_AERO
+@media not all and (-moz-windows-compositor) {
+%endif
   #main-window[tabsintitlebar] #titlebar:-moz-lwtheme {
     visibility: hidden;
   }
@@ -104,25 +116,6 @@
     visibility: visible;
   }
 %ifdef WINDOWS_AERO
-}
-%endif
-
-/* Make the menu inherit the toolbar's color. On non-compositor (Aero Basic, XP modern, classic)
- * this is defined above, but only for tabsintitlebar. Otherwise (Aero Glass, Windows 8),
- * this is hardcoded to black in browser-aero.css, even without tabsintitlebar. */
-%ifdef WINDOWS_AERO
-@media not all and (-moz-windows-compositor) {
-%endif
-  #main-window[tabsintitlebar] #main-menubar > menu:not(:-moz-lwtheme) {
-    color: inherit;
-  }
-%ifdef WINDOWS_AERO
-}
-
-@media (-moz-windows-compositor) {
-  #main-menubar > menu:not(:-moz-lwtheme) {
-    color: inherit;
-  }
 }
 %endif
 
@@ -729,6 +722,7 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
   border-color: hsla(210,4%,10%,.1);
 }
 
+#nav-bar .toolbarbutton-1:not([disabled=true]) > .toolbarbutton-menubutton-button[open] + .toolbarbutton-menubutton-dropmarker > .dropmarker-icon,
 #nav-bar .toolbarbutton-1:not([disabled=true]):-moz-any(:hover,[open]) > .toolbarbutton-menubutton-button > .toolbarbutton-icon,
 #nav-bar .toolbarbutton-1:not([disabled=true]):-moz-any(:hover,[open]) > .toolbarbutton-menubutton-dropmarker > .dropmarker-icon,
 #nav-bar .toolbarbutton-1:not([disabled=true]):not([checked]):not([open]):not(:active):hover > .toolbarbutton-icon,
@@ -772,6 +766,7 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
     border-bottom-left-radius: 0;
   }
 
+  #nav-bar .toolbarbutton-1:not([disabled=true]) > .toolbarbutton-menubutton-button[open] + .toolbarbutton-menubutton-dropmarker > .dropmarker-icon,
   #nav-bar .toolbarbutton-1:not([disabled]):-moz-any(:hover,[open]) > .toolbarbutton-menubutton-button > .toolbarbutton-icon,
   #nav-bar .toolbarbutton-1:not([disabled]):hover > .toolbarbutton-menubutton-dropmarker > .dropmarker-icon,
   #nav-bar .toolbarbutton-1:not([disabled]):not([checked]):not([open]):not(:active):hover > .toolbarbutton-icon,
@@ -798,7 +793,7 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
 }
 %endif
 
-#nav-bar .toolbarbutton-1 > .toolbarbutton-menubutton-button:not([disabled=true]):hover:active > .toolbarbutton-icon,
+#nav-bar .toolbarbutton-1 > .toolbarbutton-menubutton-button:not([disabled=true]):-moz-any(:hover:active, [open]) > .toolbarbutton-icon,
 #nav-bar .toolbarbutton-1[open] > .toolbarbutton-menubutton-dropmarker:not([disabled=true]) > .dropmarker-icon,
 #nav-bar .toolbarbutton-1:not([disabled=true]):-moz-any([open],[checked],:hover:active) > .toolbarbutton-icon,
 #nav-bar .toolbarbutton-1:not([disabled=true]):-moz-any([open],[checked],:hover:active) > .toolbarbutton-text,
@@ -814,7 +809,7 @@ toolbarbutton[sdk-button="true"][cui-areatype="toolbar"] > .toolbarbutton-icon {
        (-moz-os-version: windows-win7) {
 %endif
   /* < Win8 */
-  #nav-bar .toolbarbutton-1 > .toolbarbutton-menubutton-button:not([disabled]):hover:active > .toolbarbutton-icon,
+  #nav-bar .toolbarbutton-1 > .toolbarbutton-menubutton-button:not([disabled=true]):-moz-any(:hover:active, [open]) > .toolbarbutton-icon,
   #nav-bar .toolbarbutton-1[open] > .toolbarbutton-menubutton-dropmarker:not([disabled]) > .dropmarker-icon,
   #nav-bar .toolbarbutton-1:not([disabled]):-moz-any([open],[checked],:hover:active) > .toolbarbutton-icon,
   #nav-bar .toolbarbutton-1:not([disabled]):-moz-any([open],[checked],:hover:active) > .toolbarbutton-text,
@@ -1901,6 +1896,16 @@ toolbarbutton[type="socialmark"] > .toolbarbutton-icon {
   outline: 1px dotted;
 }
 
+/* Background tabs:
+ *
+ * Decrease the height of the hoverable region of background tabs whenever the tabs are at the top
+ * of the window (e.g. no menubar, tabs in titlebar, etc.) to make it easier to drag the window by
+ * the titlebar. We don't need this in fullscreen since window dragging is not an issue there.
+ */
+#main-window[tabsintitlebar][sizemode=normal] #toolbar-menubar[autohide="true"][inactive] + #TabsToolbar .tab-background-middle:not([selected=true]) {
+  clip-path: url(chrome://browser/content/browser.xul#tab-hover-clip-path);
+}
+
 /* Tab DnD indicator */
 .tab-drop-indicator {
   list-style-image: url(chrome://browser/skin/tabbrowser/tabDragIndicator.png);
@@ -2280,6 +2285,11 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
   list-style-image: url(chrome://browser/skin/webRTC-shareDevice-64.png);
 }
 
+.popup-notification-icon[popupid="webRTC-sharingMicrophone"],
+.popup-notification-icon[popupid="webRTC-shareMicrophone"] {
+  list-style-image: url(chrome://browser/skin/webRTC-shareMicrophone-64.png);
+}
+
 .popup-notification-icon[popupid="pointerLock"] {
   list-style-image: url(chrome://browser/skin/pointerLock-64.png);
 }
@@ -2411,6 +2421,16 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
   list-style-image: url(chrome://browser/skin/webRTC-sharingDevice-16.png);
 }
 
+.webRTC-shareMicrophone-notification-icon,
+#webRTC-shareMicrophone-notification-icon {
+  list-style-image: url(chrome://browser/skin/webRTC-shareMicrophone-16.png);
+}
+
+.webRTC-sharingMicrophone-notification-icon,
+#webRTC-sharingMicrophone-notification-icon {
+  list-style-image: url(chrome://browser/skin/webRTC-sharingMicrophone-16.png);
+}
+
 .web-notifications-notification-icon,
 #web-notifications-notification-icon {
   list-style-image: url(chrome://browser/skin/notification-16.png);
@@ -2511,6 +2531,7 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
 /* Sync Panel */
 
 .sync-panel-icon {
+  height:32px;
   width: 32px;
   background: url("chrome://browser/content/abouthome/sync.png") top left no-repeat;
 }
@@ -2526,7 +2547,9 @@ toolbarbutton.bookmark-item[dragover="true"][open="true"] {
 
 #sync-error-panel-title,
 #sync-start-panel-title {
+  font-size: 120%;
   font-weight: bold;
+  margin-bottom: 5px;
 }
 
 #sync-start-panel-subtitle,
@@ -2691,8 +2714,7 @@ toolbarpaletteitem[place="palette"] > #switch-to-metro-button {
 #servicesInstall-notification-icon {
   list-style-image: url(chrome://browser/skin/social/services-16.png);
 }
-#social-undoactivation-button,
-#servicesInstall-learnmore-link {
+#social-undoactivation-button {
   -moz-margin-start: 0; /* override default label margin to match description margin */
 }
 
@@ -2859,7 +2881,7 @@ chatbox {
   display: block;
 }
 
-#main-window[privatebrowsingmode=temporary]:not([tabsintitlebar]) #TabsToolbar > .private-browsing-indicator {
+#main-window[privatebrowsingmode=temporary]:-moz-any([inFullscreen],:not([tabsintitlebar])) #TabsToolbar > .private-browsing-indicator {
   display: -moz-box;
 }
 
@@ -2869,7 +2891,12 @@ chatbox {
   width: 48px;
 }
 
-#private-browsing-indicator-titlebar > .private-browsing-indicator {
+/* Bug 1008183: We're intentionally using the titlebar asset here for fullscreen
+ * mode, since the tabstrip "mimics" the titlebar in that case with its own
+ * min/max/close window buttons.
+ */
+#private-browsing-indicator-titlebar > .private-browsing-indicator,
+#main-window[inFullscreen] #TabsToolbar > .private-browsing-indicator {
   background: url("chrome://browser/skin/privatebrowsing-mask-titlebar.png") no-repeat center 0px;
   -moz-margin-end: 4px;
   width: 40px;
@@ -2887,6 +2914,14 @@ chatbox {
     background-image: url("chrome://browser/skin/privatebrowsing-mask-titlebar-XPVista7-tall.png");
     height: 28px;
   }
+
+  /* We're intentionally using the titlebar asset here for fullscreen mode.
+   * See bug 1008183.
+   */
+  #main-window[inFullscreen] #TabsToolbar > .private-browsing-indicator {
+    background-image: url("chrome://browser/skin/privatebrowsing-mask-titlebar-XPVista7.png");
+  }
+
   #main-window[sizemode="maximized"] > #titlebar > #titlebar-content > #titlebar-buttonbox-container > #private-browsing-indicator-titlebar > .private-browsing-indicator {
     top: -5px;
   }
@@ -2897,7 +2932,11 @@ chatbox {
 %endif
 
 @media (-moz-windows-classic) {
-  #private-browsing-indicator-titlebar > .private-browsing-indicator {
+  /* We're intentionally using the titlebar asset here for fullscreen mode.
+   * See bug 1008183.
+   */
+  #private-browsing-indicator-titlebar > .private-browsing-indicator,
+  #main-window[inFullscreen] #TabsToolbar > .private-browsing-indicator {
     background-image: url("chrome://browser/skin/privatebrowsing-mask-titlebar-XPVista7.png");
   }
   /**

@@ -12,6 +12,10 @@ const gAppRep = Cc["@mozilla.org/downloads/application-reputation-service;1"].
 let gHttpServ = null;
 let gTables = {};
 
+let ALLOW_LIST = 0;
+let BLOCK_LIST = 1;
+let NO_LIST = 2;
+
 function readFileToString(aFilename) {
   let f = do_get_file(aFilename);
   let stream = Cc["@mozilla.org/network/file-input-stream;1"]
@@ -60,86 +64,81 @@ function run_test() {
     Services.prefs.clearUserPref("browser.safebrowsing.malware.enabled");
   });
 
-  gHttpServ = new HttpServer();
-  gHttpServ.registerDirectory("/", do_get_cwd());
-
-  function createVerdict(aShouldBlock) {
-    // We can't programmatically create a protocol buffer here, so just
-    // hardcode some already serialized ones.
-    blob = String.fromCharCode(parseInt(0x08, 16));
-    if (aShouldBlock) {
-      // A safe_browsing::ClientDownloadRequest with a DANGEROUS verdict
-      blob += String.fromCharCode(parseInt(0x01, 16));
-    } else {
-      // A safe_browsing::ClientDownloadRequest with a SAFE verdict
-      blob += String.fromCharCode(parseInt(0x00, 16));
-    }
-    return blob;
-  }
-
-  gHttpServ.registerPathHandler("/download", function(request, response) {
-    response.setHeader("Content-Type", "application/octet-stream", false);
-    let buf = NetUtil.readInputStreamToString(
-      request.bodyInputStream,
-      request.bodyInputStream.available());
-    do_print("Request length: " + buf.length);
-    // A garbage response. By default this produces NS_CANNOT_CONVERT_DATA as
-    // the callback status.
-    let blob = "this is not a serialized protocol buffer";
-    // We can't actually parse the protocol buffer here, so just switch on the
-    // length instead of inspecting the contents.
-    if (buf.length == 35) {
-      // evil.com
-      blob = createVerdict(true);
-    } else if (buf.length == 38) {
-      // mozilla.com
-      blob = createVerdict(false);
-    }
-    response.bodyOutputStream.write(blob, blob.length);
+  // Set download_block_table explicitly.
+  Services.prefs.setCharPref("urlclassifier.downloadBlockTable",
+                             "goog-badbinurl-shavar");
+  do_register_cleanup(function() {
+    Services.prefs.clearUserPref("urlclassifier.downloadBlockTable");
   });
 
+  gHttpServ = new HttpServer();
+  gHttpServ.registerDirectory("/", do_get_cwd());
+  gHttpServ.registerPathHandler("/download", function(request, response) {
+    do_throw("This test should never make a remote lookup");
+  });
   gHttpServ.start(4444);
 
   run_next_test();
 }
 
-/*
-// Uncomment when remote lookups are enabled (bug 933432)
-add_test(function test_shouldBlock() {
-  gAppRep.queryReputation({
-    sourceURI: createURI("http://evil.com"),
-    fileSize: 12,
-  }, function onComplete(aShouldBlock, aStatus) {
-    do_check_true(aShouldBlock);
-    do_check_eq(Cr.NS_OK, aStatus);
-    run_next_test();
-  });
-});
+function check_telemetry(aCount,
+                         aShouldBlockCount,
+                         aListCounts) {
+  let count = Cc["@mozilla.org/base/telemetry;1"]
+                .getService(Ci.nsITelemetry)
+                .getHistogramById("APPLICATION_REPUTATION_COUNT")
+                .snapshot();
+  do_check_eq(count.counts[1], aCount);
+  let local = Cc["@mozilla.org/base/telemetry;1"]
+                .getService(Ci.nsITelemetry)
+                .getHistogramById("APPLICATION_REPUTATION_LOCAL")
+                .snapshot();
+  do_check_eq(local.counts[ALLOW_LIST], aListCounts[ALLOW_LIST]);
+  do_check_eq(local.counts[BLOCK_LIST], aListCounts[BLOCK_LIST]);
+  do_check_eq(local.counts[NO_LIST], aListCounts[NO_LIST]);
+  let shouldBlock = Cc["@mozilla.org/base/telemetry;1"]
+                .getService(Ci.nsITelemetry)
+                .getHistogramById("APPLICATION_REPUTATION_SHOULD_BLOCK")
+                .snapshot();
+  // SHOULD_BLOCK = true
+  do_check_eq(shouldBlock.counts[1], aShouldBlockCount);
+  // Sanity check that SHOULD_BLOCK total adds up to the COUNT.
+  do_check_eq(shouldBlock.counts[0] + shouldBlock.counts[1], aCount);
+}
 
-add_test(function test_shouldNotBlock() {
-  gAppRep.queryReputation({
-    sourceURI: createURI("http://mozilla.com"),
-    fileSize: 12,
-  }, function onComplete(aShouldBlock, aStatus) {
-    do_check_eq(Cr.NS_OK, aStatus);
-    do_check_false(aShouldBlock);
-    run_next_test();
-  });
-});
-*/
+function get_telemetry_counts() {
+  let count = Cc["@mozilla.org/base/telemetry;1"]
+                .getService(Ci.nsITelemetry)
+                .getHistogramById("APPLICATION_REPUTATION_COUNT")
+                .snapshot();
+  let local = Cc["@mozilla.org/base/telemetry;1"]
+                .getService(Ci.nsITelemetry)
+                .getHistogramById("APPLICATION_REPUTATION_LOCAL")
+                .snapshot();
+  let shouldBlock = Cc["@mozilla.org/base/telemetry;1"]
+                .getService(Ci.nsITelemetry)
+                .getHistogramById("APPLICATION_REPUTATION_SHOULD_BLOCK")
+                .snapshot();
+  return { total: count.counts[1],
+           shouldBlock: shouldBlock.counts[1],
+           listCounts: local.counts };
+}
 
 add_test(function test_nullSourceURI() {
+  let counts = get_telemetry_counts();
   gAppRep.queryReputation({
     // No source URI
     fileSize: 12,
   }, function onComplete(aShouldBlock, aStatus) {
     do_check_eq(Cr.NS_ERROR_UNEXPECTED, aStatus);
     do_check_false(aShouldBlock);
+    check_telemetry(counts.total + 1, counts.shouldBlock, counts.listCounts);
     run_next_test();
   });
 });
 
 add_test(function test_nullCallback() {
+  let counts = get_telemetry_counts();
   try {
     gAppRep.queryReputation({
       sourceURI: createURI("http://example.com"),
@@ -147,11 +146,14 @@ add_test(function test_nullCallback() {
     }, null);
     do_throw("Callback cannot be null");
   } catch (ex if ex.result == Cr.NS_ERROR_INVALID_POINTER) {
+    // We don't even increment the count here, because there's no callback.
+    check_telemetry(counts.total, counts.shouldBlock, counts.listCounts);
     run_next_test();
   }
 });
 
 add_test(function test_disabled() {
+  let counts = get_telemetry_counts();
   Services.prefs.setCharPref("browser.safebrowsing.appRepURL", "");
   gAppRep.queryReputation({
     sourceURI: createURI("http://example.com"),
@@ -160,26 +162,10 @@ add_test(function test_disabled() {
     // We should be getting NS_ERROR_NOT_AVAILABLE if the service is disabled
     do_check_eq(Cr.NS_ERROR_NOT_AVAILABLE, aStatus);
     do_check_false(aShouldBlock);
+    check_telemetry(counts.total + 1, counts.shouldBlock, counts.listCounts);
     run_next_test();
   });
 });
-
-/*
-// Uncomment when remote lookups are enabled (bug 933432)
-add_test(function test_garbage() {
-  Services.prefs.setCharPref("browser.safebrowsing.appRepURL",
-                             "http://localhost:4444/download");
-  gAppRep.queryReputation({
-    sourceURI: createURI("http://whitelisted.com"),
-    fileSize: 12,
-  }, function onComplete(aShouldBlock, aStatus) {
-    // We should be getting the garbage response.
-    do_check_eq(Cr.NS_ERROR_CANNOT_CONVERT_DATA, aStatus);
-    do_check_false(aShouldBlock);
-    run_next_test();
-  });
-});
-*/
 
 // Set up the local whitelist.
 add_test(function test_local_list() {
@@ -209,8 +195,10 @@ add_test(function test_local_list() {
     .getService(Ci.nsIUrlClassifierStreamUpdater);
   streamUpdater.updateUrl = "http://localhost:4444/downloads";
 
-  // Load up some update chunks for the safebrowsing server to serve. This
-  // particular chunk contains the hash of whitelisted.com/.
+  // Load up some update chunks for the safebrowsing server to serve.
+  // This chunk contains the hash of whitelisted.com/.
+  registerTableUpdate("goog-badbinurl-shavar", "data/block_digest.chunk");
+  // This chunk contains the hash of blocklisted.com/.
   registerTableUpdate("goog-downloadwhite-digest256", "data/digest.chunk");
 
   // Download some updates, and don't continue until the downloads are done.
@@ -226,22 +214,77 @@ add_test(function test_local_list() {
     do_throw("We didn't download or update correctly: " + aEvent);
   }
   streamUpdater.downloadUpdates(
-    "goog-downloadwhite-digest256",
-    "goog-downloadwhite-digest256;\n",
+    "goog-downloadwhite-digest256,goog-badbinurl-shavar",
+    "goog-downloadwhite-digest256,goog-badbinurl-shavar;\n",
     updateSuccess, handleError, handleError);
 });
 
-// After being whitelisted, we shouldn't throw.
-add_test(function test_local_whitelist() {
+add_test(function test_unlisted() {
   Services.prefs.setCharPref("browser.safebrowsing.appRepURL",
                              "http://localhost:4444/download");
+  let counts = get_telemetry_counts();
+  let listCounts = counts.listCounts;
+  listCounts[NO_LIST]++;
   gAppRep.queryReputation({
-    sourceURI: createURI("http://whitelisted.com"),
+    sourceURI: createURI("http://example.com"),
     fileSize: 12,
   }, function onComplete(aShouldBlock, aStatus) {
-    // We would get garbage if this query made it to the remote server.
     do_check_eq(Cr.NS_OK, aStatus);
     do_check_false(aShouldBlock);
+    check_telemetry(counts.total + 1, counts.shouldBlock, listCounts);
+    run_next_test();
+  });
+});
+
+add_test(function test_local_blacklist() {
+  Services.prefs.setCharPref("browser.safebrowsing.appRepURL",
+                             "http://localhost:4444/download");
+  let counts = get_telemetry_counts();
+  let listCounts = counts.listCounts;
+  listCounts[BLOCK_LIST]++;
+  gAppRep.queryReputation({
+    sourceURI: createURI("http://blocklisted.com"),
+    fileSize: 12,
+  }, function onComplete(aShouldBlock, aStatus) {
+    do_check_eq(Cr.NS_OK, aStatus);
+    do_check_true(aShouldBlock);
+    check_telemetry(counts.total + 1, counts.shouldBlock + 1, listCounts);
+    run_next_test();
+  });
+});
+
+add_test(function test_referer_blacklist() {
+  Services.prefs.setCharPref("browser.safebrowsing.appRepURL",
+                             "http://localhost:4444/download");
+  let counts = get_telemetry_counts();
+  let listCounts = counts.listCounts;
+  listCounts[BLOCK_LIST]++;
+  gAppRep.queryReputation({
+    sourceURI: createURI("http://example.com"),
+    referrerURI: createURI("http://blocklisted.com"),
+    fileSize: 12,
+  }, function onComplete(aShouldBlock, aStatus) {
+    do_check_eq(Cr.NS_OK, aStatus);
+    do_check_true(aShouldBlock);
+    check_telemetry(counts.total + 1, counts.shouldBlock + 1, listCounts);
+    run_next_test();
+  });
+});
+
+add_test(function test_blocklist_trumps_allowlist() {
+  Services.prefs.setCharPref("browser.safebrowsing.appRepURL",
+                             "http://localhost:4444/download");
+  let counts = get_telemetry_counts();
+  let listCounts = counts.listCounts;
+  listCounts[BLOCK_LIST]++;
+  gAppRep.queryReputation({
+    sourceURI: createURI("http://whitelisted.com"),
+    referrerURI: createURI("http://blocklisted.com"),
+    fileSize: 12,
+  }, function onComplete(aShouldBlock, aStatus) {
+    do_check_eq(Cr.NS_OK, aStatus);
+    do_check_true(aShouldBlock);
+    check_telemetry(counts.total + 1, counts.shouldBlock + 1, listCounts);
     run_next_test();
   });
 });

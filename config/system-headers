@@ -221,7 +221,6 @@ cairo-atsui.h
 cairo-beos.h
 cairo-ft.h
 cairo-glitz.h
-cairo-os2.h
 cairo-pdf.h
 cairo-ps.h
 cairo-tee.h
@@ -231,6 +230,7 @@ cairo-xlib.h
 cairo-xlib-xrender.h
 cairo-directfb.h
 cairo-qpainter.h
+cairo-qt.h
 #endif
 dfiff.h
 exception
@@ -690,7 +690,6 @@ oleidl.h
 OpenGL/OpenGL.h
 OpenTptInternet.h
 OpenTransport.h
-os2.h
 OS.h
 osreldate.h
 ostream
@@ -1104,6 +1103,7 @@ vpx/vpx_decoder.h
 vpx/vpx_encoder.h
 vpx/vp8cx.h
 vpx/vp8dx.h
+vpx_mem/vpx_mem.h
 #endif
 #ifdef GKMEDIAS_SHARED_LIBRARY
 vpx/vpx_codec.h
@@ -1111,6 +1111,7 @@ vpx/vpx_decoder.h
 vpx/vpx_encoder.h
 vpx/vp8cx.h
 vpx/vp8dx.h
+vpx_mem/vpx_mem.h
 vorbis/codec.h
 theora/theoradec.h
 tremor/ivorbiscodec.h

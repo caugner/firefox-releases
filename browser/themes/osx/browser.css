@@ -15,6 +15,7 @@
 
 @namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
 @namespace html url("http://www.w3.org/1999/xhtml");
+@namespace svg url("http://www.w3.org/2000/svg");
 
 #urlbar:-moz-lwtheme:not([focused="true"]),
 .searchbar-textbox:-moz-lwtheme:not([focused="true"]) {
@@ -141,6 +142,8 @@ toolbarseparator {
 
 #PersonalToolbar {
   padding: 0 4px 4px;
+  /* 4px padding ^  plus 19px personal-bookmarks (see below) */
+  min-height: 23px;
 }
 
 #navigator-toolbox > toolbar:not(#TabsToolbar):-moz-lwtheme {
@@ -156,7 +159,7 @@ toolbarseparator {
 /* ----- BOOKMARK TOOLBAR ----- */
 
 #personal-bookmarks {
-  min-height: 17px; /* 16px button height + 1px margin-bottom */
+  min-height: 19px; /* 16px button height + 2px padding + 1px margin-bottom */
 }
 
 toolbarbutton.chevron {
@@ -509,6 +512,7 @@ toolbar .toolbarbutton-1:not(:-moz-any([type="menu-button"],#back-button,#forwar
 }
 
 toolbar .toolbarbutton-1:not(:-moz-any([type="menu-button"],[disabled],[open],#back-button,#forward-button)):hover,
+toolbar .toolbarbutton-1[type="menu-button"]:not([disabled]) > .toolbarbutton-menubutton-button[open] + .toolbarbutton-menubutton-dropmarker,
 toolbar .toolbarbutton-1[type="menu-button"]:not([disabled]):-moz-any(:hover,[open]) > .toolbarbutton-menubutton-button,
 toolbar .toolbarbutton-1[type="menu-button"]:not([disabled]):-moz-any(:hover,[open]) > .toolbarbutton-menubutton-dropmarker,
 toolbar .toolbaritem-combined-buttons:hover > .toolbarbutton-combined {
@@ -524,6 +528,7 @@ toolbar .toolbarbutton-1[type="menu-button"]:not(:-moz-any([disabled],[open],[bu
 }
 
 toolbar .toolbarbutton-1:not(:-moz-any([type="menu-button"],[disabled],#back-button,#forward-button)):-moz-any(:hover:active,[open],[checked]),
+toolbar .toolbarbutton-1[type="menu-button"]:not([disabled]) > .toolbarbutton-menubutton-button[open],
 toolbar .toolbarbutton-1[type="menu-button"]:not(:-moz-any([disabled],[open]))[buttonover]:active > .toolbarbutton-menubutton-button,
 toolbar .toolbarbutton-1[type="menu-button"]:not(:-moz-any([disabled],[open],[buttonover])):hover:active > .toolbarbutton-menubutton-dropmarker,
 toolbar .toolbarbutton-1[type="menu-button"][open]:not([disabled]) > .toolbarbutton-menubutton-dropmarker {
@@ -760,6 +765,10 @@ toolbar .toolbarbutton-1 > .toolbarbutton-menubutton-dropmarker > .dropmarker-ic
 
   #email-link-button@toolbarButtonPressed@ {
     -moz-image-region: rect(18px, 666px, 36px, 648px);
+  }
+
+  #sidebar-button@toolbarButtonPressed@ {
+    -moz-image-region: rect(18px, 684px, 36px, 666px);
   }
 
   /**
@@ -1080,6 +1089,14 @@ toolbar .toolbarbutton-1 > .toolbarbutton-menubutton-dropmarker > .dropmarker-ic
     -moz-image-region: rect(36px, 1332px, 72px, 1296px);
   }
 
+  #sidebar-button[cui-areatype="toolbar"] {
+    -moz-image-region: rect(0, 1368px, 36px, 1332px);
+  }
+
+  #sidebar-button[cui-areatype="toolbar"]:hover:active:not([disabled="true"]) {
+    -moz-image-region: rect(36px, 1368px, 72px, 1332px);
+  }
+
   :-moz-any(@primaryToolbarButtons@) > .toolbarbutton-icon,
   :-moz-any(@primaryToolbarButtons@) > .toolbarbutton-menubutton-button > .toolbarbutton-icon {
     width: 18px;
@@ -1217,6 +1234,11 @@ toolbar .toolbarbutton-1 > .toolbarbutton-menubutton-dropmarker > .dropmarker-ic
   #email-link-button[cui-areatype="menu-panel"],
   toolbarpaletteitem[place="palette"] > #email-link-button {
     -moz-image-region: rect(0px, 1600px, 64px, 1536px);
+  }
+
+  #sidebar-button[cui-areatype="menu-panel"],
+  toolbarpaletteitem[place="palette"] > #sidebar-button {
+    -moz-image-region: rect(0px, 1728px, 64px, 1664px);
   }
 
   toolbaritem[sdkstylewidget="true"] > toolbarbutton {
@@ -2834,6 +2856,16 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
   padding: 6px 0 4px;
 }
 
+/* Background tabs:
+ *
+ * Decrease the height of the hoverable region of background tabs whenever the tabs are at the top
+ * of the window (e.g. no menubar, tabs in titlebar, etc.) to make it easier to drag the window by
+ * the titlebar. We don't need this in fullscreen since window dragging is not an issue there.
+ */
+#main-window[tabsintitlebar]:not([inFullscreen]) .tab-background-middle:not([selected=true]) {
+  clip-path: url(chrome://browser/content/browser.xul#tab-hover-clip-path);
+}
+
 /**
  * Tab Drag and Drop
  */
@@ -2871,10 +2903,6 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
 }
 
 @media (min-resolution: 2dppx) {
-  .tab-close-button > .toolbarbutton-icon {
-    width: 16px;
-  }
-
   .tab-close-button.close-icon:not([selected=true]):not(:hover):-moz-lwtheme-brighttext {
     -moz-image-region: rect(0, 128px, 32px, 96px);
   }
@@ -3422,10 +3450,6 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
   }
 }
 
-#geolocation-learnmore-link {
-  -moz-margin-start: 0; /* override default label margin to match description margin */
-}
-
 .indexedDB-notification-icon,
 #indexedDB-notification-icon {
   list-style-image: url(chrome://global/skin/icons/question-16.png);
@@ -3576,6 +3600,28 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
   }
 }
 
+.webRTC-shareMicrophone-notification-icon,
+#webRTC-shareMicrophone-notification-icon {
+  list-style-image: url(chrome://browser/skin/webRTC-shareMicrophone-16.png);
+}
+@media (min-resolution: 2dppx) {
+  .webRTC-shareMicrophone-notification-icon,
+  #webRTC-shareMicrophone-notification-icon {
+    list-style-image: url(chrome://browser/skin/webRTC-shareMicrophone-16@2x.png);
+  }
+}
+
+.webRTC-sharingMicrophone-notification-icon,
+#webRTC-sharingMicrophone-notification-icon {
+  list-style-image: url(chrome://browser/skin/webRTC-sharingMicrophone-16.png);
+}
+@media (min-resolution: 2dppx) {
+  .webRTC-sharingMicrophone-notification-icon,
+  #webRTC-sharingMicrophone-notification-icon {
+    list-style-image: url(chrome://browser/skin/webRTC-sharingMicrophone-16@2x.png);
+  }
+}
+
 .web-notifications-notification-icon,
 #web-notifications-notification-icon {
   list-style-image: url(chrome://browser/skin/notification-16.png);
@@ -3718,10 +3764,6 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
 }
 
 
-#mixed-content-blocked-helplink {
-  margin: 0px;
-}
-
 .popup-notification-icon[popupid="webRTC-sharingDevices"],
 .popup-notification-icon[popupid="webRTC-shareDevices"] {
   list-style-image: url(chrome://browser/skin/webRTC-shareDevice-64.png);
@@ -3730,6 +3772,17 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
   .popup-notification-icon[popupid="webRTC-sharingDevices"],
   .popup-notification-icon[popupid="webRTC-shareDevices"] {
     list-style-image: url(chrome://browser/skin/webRTC-shareDevice-64@2x.png);
+  }
+}
+
+.popup-notification-icon[popupid="webRTC-sharingMicrophone"],
+.popup-notification-icon[popupid="webRTC-shareMicrophone"] {
+  list-style-image: url(chrome://browser/skin/webRTC-shareMicrophone-64.png);
+}
+@media (min-resolution: 2dppx) {
+  .popup-notification-icon[popupid="webRTC-sharingMicrophone"],
+  .popup-notification-icon[popupid="webRTC-shareMicrophone"] {
+    list-style-image: url(chrome://browser/skin/webRTC-shareMicrophone-64@2x.png);
   }
 }
 
@@ -3815,6 +3868,7 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
 /* Sync Panels */
 
 .sync-panel-icon {
+  height:32px;
   width: 32px;
   background: url("chrome://browser/content/abouthome/sync.png") top left no-repeat;
 }
@@ -3852,7 +3906,9 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
 
 #sync-error-panel-title,
 #sync-start-panel-title {
+  font-size: 120%;
   font-weight: bold;
+  margin-bottom: 5px;
 }
 
 #sync-start-panel-subtitle,
@@ -4077,8 +4133,7 @@ toolbar[mode="icons"] > *|* > .toolbarbutton-badge[badge]:not([badge=""]):-moz-l
   }
 }
 
-#social-undoactivation-button,
-#servicesInstall-learnmore-link {
+#social-undoactivation-button {
   -moz-margin-start: 0; /* override default label margin to match description margin */
 }
 
@@ -4268,10 +4323,6 @@ window > chatbox {
 
   #customization-titlebar-visibility-button > .button-box > .button-icon {
     width: 24px;
-  }
-
-  .customization-tipPanel-closeBox > .close-icon > .toolbarbutton-icon {
-    width: 16px;
   }
 
   .customization-tipPanel-infoBox {

@@ -38,7 +38,7 @@
 #include "gfxPlatform.h"
 #include "nsCSSRules.h"
 #include "nsFontFaceLoader.h"
-#include "nsEventListenerManager.h"
+#include "mozilla/EventListenerManager.h"
 #include "prenv.h"
 #include "nsObjectFrame.h"
 #include "nsTransitionManager.h"
@@ -53,6 +53,7 @@
 #include "nsRefreshDriver.h"
 #include "Layers.h"
 #include "nsIDOMEvent.h"
+#include "gfxPrefs.h"
 
 #include "nsContentUtils.h"
 #include "nsCxPusher.h"
@@ -248,7 +249,7 @@ IsVisualCharset(const nsCString& aCharset)
   // bother initializing members to 0.
 
 nsPresContext::nsPresContext(nsIDocument* aDocument, nsPresContextType aType)
-  : mType(aType), mDocument(aDocument), mMinFontSize(0),
+  : mType(aType), mDocument(aDocument), mBaseMinFontSize(0),
     mTextZoom(1.0), mFullZoom(1.0), mLastFontInflationScreenWidth(-1.0),
     mPageSize(-1, -1), mPPScale(1.0f),
     mViewportStyleOverflow(NS_STYLE_OVERFLOW_AUTO, NS_STYLE_OVERFLOW_AUTO),
@@ -304,7 +305,7 @@ nsPresContext::nsPresContext(nsIDocument* aDocument, nsPresContextType aType)
 
   // if text perf logging enabled, init stats struct
   PRLogModuleInfo *log = gfxPlatform::GetLog(eGfxLog_textperf);
-  if (log && PR_LOG_TEST(log, PR_LOG_WARNING)) {
+  if (log && log->level >= PR_LOG_WARNING) {
     mTextPerf = new gfxTextPerfMetrics();
   }
 
@@ -690,14 +691,19 @@ nsPresContext::GetFontPrefsForLang(nsIAtom *aLanguage) const
 void
 nsPresContext::GetDocumentColorPreferences()
 {
+  // Make sure the preferences are initialized.  In the normal run,
+  // they would already be, because gfxPlatform would have been created,
+  // but in some reference tests, that is not the case.
+  gfxPrefs::GetSingleton();
+
   int32_t useAccessibilityTheme = 0;
   bool usePrefColors = true;
   bool isChromeDocShell = false;
 
   nsIDocument* doc = mDocument->GetDisplayDocument();
   if (doc && doc->GetDocShell()) {
-    isChromeDocShell = nsIDocShellTreeItem::typeChrome == 
-                    doc->GetDocShell()->ItemType();
+    isChromeDocShell = nsIDocShellTreeItem::typeChrome ==
+                       doc->GetDocShell()->ItemType();
   } else {
     nsCOMPtr<nsIDocShellTreeItem> docShell(mContainer);
     if (docShell) {
@@ -1564,7 +1570,7 @@ nsPresContext::SetContainer(nsIDocShell* aDocShell)
   } else {
     mContainer = WeakPtr<nsDocShell>();
   }
-  InvalidateIsChromeCache();
+  UpdateIsChrome();
   if (mContainer) {
     GetDocumentColorPreferences();
   }
@@ -1593,6 +1599,9 @@ nsPresContext::Detach()
 {
   SetContainer(nullptr);
   SetLinkHandler(nullptr);
+  if (mShell) {
+    mShell->CancelInvalidatePresShellIfHidden();
+  }
 }
 
 bool
@@ -2057,19 +2066,11 @@ nsPresContext::CountReflows(const char * aName, nsIFrame * aFrame)
 }
 #endif
 
-bool
-nsPresContext::IsChromeSlow() const
+void
+nsPresContext::UpdateIsChrome()
 {
   mIsChrome = mContainer &&
               nsIDocShellTreeItem::typeChrome == mContainer->ItemType();
-  mIsChromeIsCached = true;
-  return mIsChrome;
-}
-
-void
-nsPresContext::InvalidateIsChromeCacheExternal()
-{
-  InvalidateIsChromeCacheInternal();
 }
 
 /* virtual */ bool
@@ -2304,7 +2305,7 @@ MayHavePaintEventListener(nsPIDOMWindow* aInnerWindow)
   if (!parentTarget)
     return false;
 
-  nsEventListenerManager* manager = nullptr;
+  EventListenerManager* manager = nullptr;
   if ((manager = parentTarget->GetExistingListenerManager()) &&
       manager->MayHavePaintEventListener()) {
     return true;
@@ -2481,7 +2482,7 @@ public:
                "DOMPaintEvent requested for a detached pres context");
     mList.TakeFrom(aList);
   }
-  NS_IMETHOD Run()
+  NS_IMETHOD Run() MOZ_OVERRIDE
   {
     // The pres context might have been detached during the delay -
     // that's fine, just don't fire the event.

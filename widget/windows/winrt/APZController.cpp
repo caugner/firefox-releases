@@ -131,12 +131,12 @@ public:
         APZCCallbackHelper::UpdateRootFrame(utils, mFrameMetrics);
 
 #ifdef DEBUG_CONTROLLER
-        WinUtils::Log("APZController: %I64d mDisplayPort: %0.2f %0.2f %0.2f %0.2f",
+        WinUtils::Log("APZController: %I64d mDisplayPortMargins: %0.2f %0.2f %0.2f %0.2f",
           mFrameMetrics.mScrollId,
-          mFrameMetrics.mDisplayPort.x,
-          mFrameMetrics.mDisplayPort.y,
-          mFrameMetrics.mDisplayPort.width,
-          mFrameMetrics.mDisplayPort.height);
+          mFrameMetrics.GetDisplayPortMargins().left,
+          mFrameMetrics.GetDisplayPortMargins().top,
+          mFrameMetrics.GetDisplayPortMargins().right,
+          mFrameMetrics.GetDisplayPortMargins().bottom);
 #endif
       }
     }
@@ -193,22 +193,6 @@ APZController::ReceiveInputEvent(WidgetInputEvent* aEvent,
   return sAPZC->ReceiveInputEvent(*aEvent->AsInputEvent(), aOutTargetGuid);
 }
 
-nsEventStatus
-APZController::ReceiveInputEvent(WidgetInputEvent* aInEvent,
-                                 ScrollableLayerGuid* aOutTargetGuid,
-                                 WidgetInputEvent* aOutEvent)
-{
-  MOZ_ASSERT(aInEvent);
-  MOZ_ASSERT(aOutEvent);
-
-  if (!sAPZC) {
-    return nsEventStatus_eIgnore;
-  }
-  return sAPZC->ReceiveInputEvent(*aInEvent->AsInputEvent(),
-                                  aOutTargetGuid,
-                                  aOutEvent);
-}
-
 // APZC sends us this request when we need to update the display port on
 // the scrollable frame the apzc is managing.
 void
@@ -233,22 +217,41 @@ APZController::RequestContentRepaint(const FrameMetrics& aFrameMetrics)
 }
 
 void
-APZController::HandleDoubleTap(const CSSIntPoint& aPoint, int32_t aModifiers)
+APZController::AcknowledgeScrollUpdate(const FrameMetrics::ViewID& aScrollId,
+                                       const uint32_t& aScrollGeneration)
+{
+#ifdef DEBUG_CONTROLLER
+  WinUtils::Log("APZController::AcknowledgeScrollUpdate scrollid=%I64d gen=%lu",
+    aScrollId, aScrollGeneration);
+#endif
+  APZCCallbackHelper::AcknowledgeScrollUpdate(aScrollId, aScrollGeneration);
+}
+
+void
+APZController::HandleDoubleTap(const CSSPoint& aPoint,
+                               int32_t aModifiers,
+                               const ScrollableLayerGuid& aGuid)
 {
 }
 
 void
-APZController::HandleSingleTap(const CSSIntPoint& aPoint, int32_t aModifiers)
+APZController::HandleSingleTap(const CSSPoint& aPoint,
+                               int32_t aModifiers,
+                               const ScrollableLayerGuid& aGuid)
 {
 }
 
 void
-APZController::HandleLongTap(const CSSIntPoint& aPoint, int32_t aModifiers)
+APZController::HandleLongTap(const CSSPoint& aPoint,
+                             int32_t aModifiers,
+                             const ScrollableLayerGuid& aGuid)
 {
 }
 
 void
-APZController::HandleLongTapUp(const CSSIntPoint& aPoint, int32_t aModifiers)
+APZController::HandleLongTapUp(const CSSPoint& aPoint,
+                               int32_t aModifiers,
+                               const ScrollableLayerGuid& aGuid)
 {
 }
 
@@ -273,6 +276,7 @@ APZController::GetRootZoomConstraints(ZoomConstraints* aOutConstraints)
     // Until we support the meta-viewport tag properly allow zooming
     // from 1/4 to 4x by default.
     aOutConstraints->mAllowZoom = true;
+    aOutConstraints->mAllowDoubleTapZoom = false;
     aOutConstraints->mMinZoom = CSSToScreenScale(0.25f);
     aOutConstraints->mMaxZoom = CSSToScreenScale(4.0f);
     return true;

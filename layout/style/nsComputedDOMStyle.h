@@ -68,6 +68,8 @@ class gfx3DMatrix;
 class nsComputedDOMStyle MOZ_FINAL : public nsDOMCSSDeclaration
 {
 public:
+  typedef nsCSSProps::KTableValue KTableValue;
+
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS_AMBIGUOUS(nsComputedDOMStyle,
                                                                    nsICSSDeclaration)
@@ -143,7 +145,7 @@ private:
   // Helper method for DoGetTextAlign[Last].
   mozilla::dom::CSSValue* CreateTextAlignValue(uint8_t aAlign,
                                                bool aAlignTrue,
-                                               const int32_t aTable[]);
+                                               const KTableValue aTable[]);
   // This indicates error by leaving mStyleContextHolder null.
   void UpdateCurrentStyleSources(bool aNeedsLayoutFlush);
   void ClearCurrentStyleSources();
@@ -187,6 +189,12 @@ private:
 
   mozilla::dom::CSSValue* GetSVGPaintFor(bool aFill);
 
+  mozilla::dom::CSSValue* GetGridLineNames(const nsTArray<nsString>& aLineNames);
+  mozilla::dom::CSSValue* GetGridTrackSize(const nsStyleCoord& aMinSize,
+                                           const nsStyleCoord& aMaxSize);
+  mozilla::dom::CSSValue* GetGridTrackList(const nsStyleGridTrackList& aTrackList);
+  mozilla::dom::CSSValue* GetGridLine(const nsStyleGridLine& aGridLine);
+
   bool GetLineHeightCoord(nscoord& aCoord);
 
   mozilla::dom::CSSValue* GetCSSShadowArray(nsCSSShadowArray* aArray,
@@ -195,7 +203,7 @@ private:
 
   mozilla::dom::CSSValue* GetBackgroundList(uint8_t nsStyleBackground::Layer::* aMember,
                                             uint32_t nsStyleBackground::* aCount,
-                                            const int32_t aTable[]);
+                                            const KTableValue aTable[]);
 
   void GetCSSGradientString(const nsStyleGradient* aGradient,
                             nsAString& aString);
@@ -254,6 +262,19 @@ private:
   mozilla::dom::CSSValue* DoGetFontVariantNumeric();
   mozilla::dom::CSSValue* DoGetFontVariantPosition();
   mozilla::dom::CSSValue* DoGetFontWeight();
+
+  /* Grid properties */
+  mozilla::dom::CSSValue* DoGetGridAutoFlow();
+  mozilla::dom::CSSValue* DoGetGridAutoColumns();
+  mozilla::dom::CSSValue* DoGetGridAutoRows();
+  mozilla::dom::CSSValue* DoGetGridAutoPosition();
+  mozilla::dom::CSSValue* DoGetGridTemplateAreas();
+  mozilla::dom::CSSValue* DoGetGridTemplateColumns();
+  mozilla::dom::CSSValue* DoGetGridTemplateRows();
+  mozilla::dom::CSSValue* DoGetGridColumnStart();
+  mozilla::dom::CSSValue* DoGetGridColumnEnd();
+  mozilla::dom::CSSValue* DoGetGridRowStart();
+  mozilla::dom::CSSValue* DoGetGridRowEnd();
 
   /* Background properties */
   mozilla::dom::CSSValue* DoGetBackgroundAttachment();
@@ -529,7 +550,7 @@ private:
                        const nsStyleCoord& aCoord,
                        bool aClampNegativeCalc,
                        PercentageBaseGetter aPercentageBaseGetter = nullptr,
-                       const int32_t aTable[] = nullptr,
+                       const KTableValue aTable[] = nullptr,
                        nscoord aMinAppUnits = nscoord_MIN,
                        nscoord aMaxAppUnits = nscoord_MAX);
 

@@ -148,7 +148,7 @@ enum EvalJSONResult {
 
 static EvalJSONResult
 TryEvalJSON(JSContext *cx, JSScript *callerScript,
-            StableCharPtr chars, size_t length, MutableHandleValue rval)
+            ConstTwoByteChars chars, size_t length, MutableHandleValue rval)
 {
     // If the eval string starts with '(' or '[' and ends with ')' or ']', it may be JSON.
     // Try the JSON parser first because it's much faster.  If the eval string
@@ -280,14 +280,12 @@ EvalKernel(JSContext *cx, const CallArgs &args, EvalType evalType, AbstractFrame
         thisv = ObjectValue(*thisobj);
     }
 
-    Rooted<JSStableString*> stableStr(cx, str->ensureStable(cx));
-    if (!stableStr)
+    Rooted<JSFlatString*> flatStr(cx, str->ensureFlat(cx));
+    if (!flatStr)
         return false;
 
-    StableCharPtr chars = stableStr->chars();
-    size_t length = stableStr->length();
-
-    JSPrincipals *principals = PrincipalsForCompiledCode(args, cx);
+    size_t length = flatStr->length();
+    ConstTwoByteChars chars(flatStr->chars(), length);
 
     RootedScript callerScript(cx, caller ? caller.script() : nullptr);
     EvalJSONResult ejr = TryEvalJSON(cx, callerScript, chars, length, args.rval());
@@ -297,26 +295,34 @@ EvalKernel(JSContext *cx, const CallArgs &args, EvalType evalType, AbstractFrame
     EvalScriptGuard esg(cx);
 
     if (evalType == DIRECT_EVAL && caller.isNonEvalFunctionFrame())
-        esg.lookupInEvalCache(stableStr, callerScript, pc);
+        esg.lookupInEvalCache(flatStr, callerScript, pc);
 
     if (!esg.foundScript()) {
+        JSScript *maybeScript;
         unsigned lineno;
         const char *filename;
         JSPrincipals *originPrincipals;
-        CurrentScriptFileLineOrigin(cx, &filename, &lineno, &originPrincipals,
-                                    evalType == DIRECT_EVAL ? CALLED_FROM_JSOP_EVAL
-                                                            : NOT_CALLED_FROM_JSOP_EVAL);
+        uint32_t pcOffset;
+        DescribeScriptedCallerForCompilation(cx, &maybeScript, &filename, &lineno, &pcOffset,
+                                             &originPrincipals,
+                                             evalType == DIRECT_EVAL
+                                             ? CALLED_FROM_JSOP_EVAL
+                                             : NOT_CALLED_FROM_JSOP_EVAL);
+
+        const char *introducerFilename = filename;
+        if (maybeScript && maybeScript->scriptSource()->introducerFilename())
+            introducerFilename = maybeScript->scriptSource()->introducerFilename();
 
         CompileOptions options(cx);
-        options.setFileAndLine(filename, lineno)
+        options.setFileAndLine(filename, 1)
                .setCompileAndGo(true)
                .setForEval(true)
                .setNoScriptRval(false)
-               .setPrincipals(principals)
-               .setOriginPrincipals(originPrincipals);
+               .setOriginPrincipals(originPrincipals)
+               .setIntroductionInfo(introducerFilename, "eval", lineno, maybeScript, pcOffset);
         JSScript *compiled = frontend::CompileScript(cx, &cx->tempLifoAlloc(),
                                                      scopeobj, callerScript, options,
-                                                     chars.get(), length, stableStr, staticLevel);
+                                                     chars.get(), length, flatStr, staticLevel);
         if (!compiled)
             return false;
 
@@ -347,12 +353,12 @@ js::DirectEvalStringFromIon(JSContext *cx,
 
     unsigned staticLevel = callerScript->staticLevel() + 1;
 
-    Rooted<JSStableString*> stableStr(cx, str->ensureStable(cx));
-    if (!stableStr)
+    Rooted<JSFlatString*> flatStr(cx, str->ensureFlat(cx));
+    if (!flatStr)
         return false;
 
-    StableCharPtr chars = stableStr->chars();
-    size_t length = stableStr->length();
+    size_t length = flatStr->length();
+    ConstTwoByteChars chars(flatStr->chars(), length);
 
     EvalJSONResult ejr = TryEvalJSON(cx, callerScript, chars, length, vp);
     if (ejr != EvalJSON_NotJSON)
@@ -360,28 +366,31 @@ js::DirectEvalStringFromIon(JSContext *cx,
 
     EvalScriptGuard esg(cx);
 
-    // Ion will not perform cross compartment direct eval calls.
-    JSPrincipals *principals = cx->compartment()->principals;
-
-    esg.lookupInEvalCache(stableStr, callerScript, pc);
+    esg.lookupInEvalCache(flatStr, callerScript, pc);
 
     if (!esg.foundScript()) {
-        unsigned lineno;
+        JSScript *maybeScript;
         const char *filename;
+        unsigned lineno;
         JSPrincipals *originPrincipals;
-        CurrentScriptFileLineOrigin(cx, &filename, &lineno, &originPrincipals,
-                                    CALLED_FROM_JSOP_EVAL);
+        uint32_t pcOffset;
+        DescribeScriptedCallerForCompilation(cx, &maybeScript, &filename, &lineno, &pcOffset,
+                                              &originPrincipals, CALLED_FROM_JSOP_EVAL);
+
+        const char *introducerFilename = filename;
+        if (maybeScript && maybeScript->scriptSource()->introducerFilename())
+            introducerFilename = maybeScript->scriptSource()->introducerFilename();
 
         CompileOptions options(cx);
-        options.setFileAndLine(filename, lineno)
+        options.setFileAndLine(filename, 1)
                .setCompileAndGo(true)
                .setForEval(true)
                .setNoScriptRval(false)
-               .setPrincipals(principals)
-               .setOriginPrincipals(originPrincipals);
+               .setOriginPrincipals(originPrincipals)
+               .setIntroductionInfo(introducerFilename, "eval", lineno, maybeScript, pcOffset);
         JSScript *compiled = frontend::CompileScript(cx, &cx->tempLifoAlloc(),
                                                      scopeobj, callerScript, options,
-                                                     chars.get(), length, stableStr, staticLevel);
+                                                     chars.get(), length, flatStr, staticLevel);
         if (!compiled)
             return false;
 
@@ -443,28 +452,4 @@ bool
 js::IsAnyBuiltinEval(JSFunction *fun)
 {
     return fun->maybeNative() == IndirectEval;
-}
-
-JSPrincipals *
-js::PrincipalsForCompiledCode(const CallReceiver &call, JSContext *cx)
-{
-    JSObject &callee = call.callee();
-    JS_ASSERT(IsAnyBuiltinEval(&callee.as<JSFunction>()) ||
-              callee.as<JSFunction>().isBuiltinFunctionConstructor());
-
-    // To compute the principals of the compiled eval/Function code, we simply
-    // use the callee's principals. To see why the caller's principals are
-    // ignored, consider first that, in the capability-model we assume, the
-    // high-privileged eval/Function should never have escaped to the
-    // low-privileged caller. (For the Mozilla embedding, this is brute-enforced
-    // by explicit filtering by wrappers.) Thus, the caller's privileges should
-    // subsume the callee's.
-    //
-    // In the converse situation, where the callee has lower privileges than the
-    // caller, we might initially guess that the caller would want to retain
-    // their higher privileges in the generated code. However, since the
-    // compiled code will be run with the callee's scope chain, this would make
-    // fp->script()->compartment() != fp->compartment().
-
-    return callee.compartment()->principals;
 }

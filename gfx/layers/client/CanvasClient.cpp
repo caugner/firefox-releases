@@ -53,7 +53,7 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 {
   if (mBuffer &&
       (mBuffer->IsImmutable() || mBuffer->GetSize() != aSize)) {
-    GetForwarder()->AddForceRemovingTexture(mBuffer);
+    GetForwarder()->RemoveTextureFromCompositable(this, mBuffer);
     mBuffer = nullptr;
   }
 
@@ -76,11 +76,16 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
     return;
   }
 
-  nsRefPtr<gfxASurface> surface = mBuffer->AsTextureClientSurface()->GetAsSurface();
-  if (surface) {
-    aLayer->UpdateSurface(surface);
+  bool updated = false;
+  {
+    // Restrict drawTarget to a scope so that terminates before Unlock.
+    nsRefPtr<gfxASurface> surface =
+      mBuffer->AsTextureClientSurface()->GetAsSurface();
+    if (surface) {
+      aLayer->DeprecatedUpdateSurface(surface);
+      updated = true;
+    }
   }
-
   mBuffer->Unlock();
 
   if (bufferCreated && !AddTextureClient(mBuffer)) {
@@ -88,17 +93,10 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
     return;
   }
 
-  if (surface) {
+  if (updated) {
     GetForwarder()->UpdatedTexture(this, mBuffer, nullptr);
     GetForwarder()->UseTexture(this, mBuffer);
   }
-}
-
-TemporaryRef<BufferTextureClient>
-CanvasClient2D::CreateBufferTextureClient(gfx::SurfaceFormat aFormat, TextureFlags aFlags)
-{
-  return CompositableClient::CreateBufferTextureClient(aFormat,
-                                                       mTextureInfo.mTextureFlags | aFlags);
 }
 
 CanvasClientSurfaceStream::CanvasClientSurfaceStream(CompositableForwarder* aLayerForwarder,
@@ -110,8 +108,20 @@ CanvasClientSurfaceStream::CanvasClientSurfaceStream(CompositableForwarder* aLay
 void
 CanvasClientSurfaceStream::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 {
+  aLayer->mGLContext->MakeCurrent();
   GLScreenBuffer* screen = aLayer->mGLContext->Screen();
-  SurfaceStream* stream = screen->Stream();
+  SurfaceStream* stream = nullptr;
+
+  if (aLayer->mStream) {
+    stream = aLayer->mStream;
+
+    // Copy our current surface to the current producer surface in our stream, then
+    // call SwapProducer to make a new buffer ready.
+    stream->CopySurfaceToProducer(aLayer->mTextureSurface, aLayer->mFactory);
+    stream->SwapProducer(aLayer->mFactory, gfx::IntSize(aSize.width, aSize.height));
+  } else {
+    stream = screen->Stream();
+  }
 
   bool isCrossProcess = !(XRE_GetProcessType() == GeckoProcessType_Default);
   bool bufferCreated = false;
@@ -131,7 +141,7 @@ CanvasClientSurfaceStream::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 
     SharedSurface_Gralloc* grallocSurf = SharedSurface_Gralloc::Cast(surf);
 
-    GrallocTextureClientOGL* grallocTextureClient =
+    RefPtr<GrallocTextureClientOGL> grallocTextureClient =
       static_cast<GrallocTextureClientOGL*>(grallocSurf->GetTextureClient());
 
     // If IPDLActor is null means this TextureClient didn't AddTextureClient yet
@@ -215,7 +225,7 @@ DeprecatedCanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
   }
 
   gfxASurface* surface = mDeprecatedTextureClient->LockSurface();
-  aLayer->UpdateSurface(surface);
+  aLayer->DeprecatedUpdateSurface(surface);
   mDeprecatedTextureClient->Unlock();
 }
 
@@ -250,7 +260,15 @@ DeprecatedCanvasClientSurfaceStream::Update(gfx::IntSize aSize, ClientCanvasLaye
   mDeprecatedTextureClient->EnsureAllocated(aSize, gfxContentType::COLOR);
 
   GLScreenBuffer* screen = aLayer->mGLContext->Screen();
-  SurfaceStream* stream = screen->Stream();
+  SurfaceStream* stream = nullptr;
+
+  if (aLayer->mStream) {
+    stream = aLayer->mStream;
+    stream->CopySurfaceToProducer(aLayer->mTextureSurface, aLayer->mFactory);
+    stream->SwapProducer(aLayer->mFactory, gfx::IntSize(aSize.width, aSize.height));
+  } else {
+    stream = screen->Stream();
+  }
 
   bool isCrossProcess = !(XRE_GetProcessType() == GeckoProcessType_Default);
   if (isCrossProcess) {

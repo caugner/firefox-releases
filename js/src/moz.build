@@ -18,16 +18,22 @@ TEST_DIRS += ['jsapi-tests', 'tests', 'gdb']
 
 LOCAL_INCLUDES += ['../../mfbt/double-conversion']
 
-if CONFIG['JS_STANDALONE']:
-    LIBRARY_NAME = 'mozjs-%s' % CONFIG['MOZILLA_SYMBOLVERSION']
-    DEFINES['IMPL_MFBT'] = True
-else:
-    LIBRARY_NAME = 'mozjs'
+LIBRARY_NAME = CONFIG['JS_LIBRARY_NAME']
 
 CONFIGURE_SUBST_FILES += [
     'devtools/rootAnalysis/Makefile',
     'js-confdefs.h',
+    'js-config',
+    'js.pc',
 ]
+
+if CONFIG['JS_STANDALONE']:
+    DEFINES['IMPL_MFBT'] = True
+else:
+    CONFIGURE_SUBST_FILES += [
+        '../../config/autoconf-js.mk',
+        '../../config/emptyvars-js.mk',
+    ]
 
 CONFIGURE_DEFINE_FILES += [
     'js-config.h',
@@ -71,6 +77,7 @@ EXPORTS.js += [
     '../public/LegacyIntTypes.h',
     '../public/MemoryMetrics.h',
     '../public/OldDebugAPI.h',
+    '../public/Principals.h',
     '../public/ProfilingStack.h',
     '../public/PropertyKey.h',
     '../public/RequiredDefines.h',
@@ -82,6 +89,7 @@ EXPORTS.js += [
     '../public/Utility.h',
     '../public/Value.h',
     '../public/Vector.h',
+    '../public/WeakMapPtr.h',
 ]
 
 UNIFIED_SOURCES += [
@@ -149,6 +157,7 @@ UNIFIED_SOURCES += [
     'perf/jsperf.cpp',
     'prmjtime.cpp',
     'vm/ArgumentsObject.cpp',
+    'vm/ArrayBufferObject.cpp',
     'vm/CallNonGenericMethod.cpp',
     'vm/CharacterEncoding.cpp',
     'vm/Compression.cpp',
@@ -163,6 +172,7 @@ UNIFIED_SOURCES += [
     'vm/Monitor.cpp',
     'vm/ObjectImpl.cpp',
     'vm/OldDebugAPI.cpp',
+    'vm/PIC.cpp',
     'vm/Probes.cpp',
     'vm/PropertyKey.cpp',
     'vm/ProxyObject.cpp',
@@ -172,6 +182,7 @@ UNIFIED_SOURCES += [
     'vm/ScopeObject.cpp',
     'vm/SelfHosting.cpp',
     'vm/Shape.cpp',
+    'vm/SharedArrayObject.cpp',
     'vm/SPSProfiler.cpp',
     'vm/Stack.cpp',
     'vm/String.cpp',
@@ -181,6 +192,7 @@ UNIFIED_SOURCES += [
     'vm/TypedArrayObject.cpp',
     'vm/Unicode.cpp',
     'vm/Value.cpp',
+    'vm/WeakMapPtr.cpp',
     'vm/Xdr.cpp',
     'yarr/PageBlock.cpp',
     'yarr/YarrCanonicalizeUCS2.cpp',
@@ -276,8 +288,8 @@ if CONFIG['ENABLE_ION']:
         'jit/shared/Lowering-shared.cpp',
         'jit/Snapshots.cpp',
         'jit/StupidAllocator.cpp',
+        'jit/TypeDescrSet.cpp',
         'jit/TypePolicy.cpp',
-        'jit/TypeRepresentationSet.cpp',
         'jit/UnreachableCodeElimination.cpp',
         'jit/ValueNumbering.cpp',
         'jit/VMFunctions.cpp',
@@ -336,11 +348,8 @@ if CONFIG['OS_ARCH'] == 'WINNT':
         'assembler/jit/ExecutableAllocatorWin.cpp',
         'yarr/OSAllocatorWin.cpp',
     ]
-elif CONFIG['OS_ARCH'] == 'OS2':
-    SOURCES += [
-        'assembler/jit/ExecutableAllocatorOS2.cpp',
-        'yarr/OSAllocatorOS2.cpp',
-    ]
+    # _CRT_RAND_S must be #defined before #including stdlib.h to get rand_s()
+    DEFINES['_CRT_RAND_S'] = True
 else:
     SOURCES += [
         'assembler/jit/ExecutableAllocatorPosix.cpp',
@@ -368,6 +377,10 @@ if CONFIG['JS_HAS_CTYPES']:
         'ctypes/CTypes.cpp',
         'ctypes/Library.cpp',
     ]
+    if not CONFIG['MOZ_NATIVE_FFI']:
+        GENERATED_INCLUDES += [
+            'ctypes/libffi/include',
+        ]
 
 if CONFIG['MOZ_VTUNE']:
     SOURCES += [
@@ -378,6 +391,7 @@ if CONFIG['HAVE_LINUX_PERF_EVENT_H']:
     SOURCES += [
         'perf/pm_linux.cpp'
     ]
+    SOURCES['perf/pm_linux.cpp'].flags += [CONFIG['LINUX_HEADERS_INCLUDES']]
 else:
     SOURCES += [
         'perf/pm_stub.cpp'
@@ -410,10 +424,13 @@ if CONFIG['MOZ_ETW']:
     GENERATED_FILES = [
         'ETWProvider.h',
     ]
+    # This will get the ETW provider resources into the library mozjs.dll
+    RESFILE = 'ETWProvider.res'
 
 if CONFIG['NIGHTLY_BUILD']:
     DEFINES['ENABLE_PARALLEL_JS'] = True
     DEFINES['ENABLE_BINARYDATA'] = True
+    DEFINES['ENABLE_SHARED_ARRAY_BUFFER'] = True
 
 DEFINES['EXPORT_JS_API'] = True
 
@@ -433,3 +450,12 @@ if CONFIG['_MSC_VER']:
         SOURCES['builtin/RegExp.cpp'].no_pgo = True # Bug 772303
     elif CONFIG['CPU_ARCH'] == 'x86_64' and CONFIG['JS_HAS_CTYPES']:
         SOURCES['ctypes/CTypes.cpp'].no_pgo = True # Bug 810661
+
+# Needed to "configure" it correctly.  Unfortunately these
+# flags wind up being applied to all code in js/src, not just
+# the code in js/src/assembler.
+DEFINES['USE_SYSTEM_MALLOC'] = 1
+DEFINES['ENABLE_ASSEMBLER'] = 1
+
+if CONFIG['ENABLE_YARR_JIT']:
+    DEFINES['ENABLE_JIT'] = 1

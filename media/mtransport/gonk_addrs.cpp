@@ -18,6 +18,7 @@ extern "C" {
 #include "nsCOMPtr.h"
 #include "nsThreadUtils.h"
 #include "nsServiceManagerUtils.h"
+#include "mozilla/SyncRunnable.h"
 
 namespace {
 struct NetworkInterface {
@@ -40,7 +41,9 @@ GetInterfaces(std::vector<NetworkInterface>* aInterfaces)
 
   int32_t flags =
     nsINetworkInterfaceListService::LIST_NOT_INCLUDE_SUPL_INTERFACES |
-    nsINetworkInterfaceListService::LIST_NOT_INCLUDE_MMS_INTERFACES;
+    nsINetworkInterfaceListService::LIST_NOT_INCLUDE_MMS_INTERFACES |
+    nsINetworkInterfaceListService::LIST_NOT_INCLUDE_IMS_INTERFACES |
+    nsINetworkInterfaceListService::LIST_NOT_INCLUDE_DUN_INTERFACES;
   nsCOMPtr<nsINetworkInterfaceList> networkList;
   NS_ENSURE_SUCCESS(listService->GetDataInterfaceList(flags,
                                                       getter_AddRefs(networkList)),
@@ -104,12 +107,11 @@ nr_stun_get_addrs(nr_local_addr aAddrs[], int aMaxAddrs,
 
   // Get network interface list.
   std::vector<NetworkInterface> interfaces;
-  if (NS_FAILED(NS_DispatchToMainThread(
-                    mozilla::WrapRunnableNMRet(&GetInterfaces, &interfaces, &rv),
-                    NS_DISPATCH_SYNC))) {
-    return R_FAILED;
-  }
-
+  nsCOMPtr<nsIThread> mainThread = do_GetMainThread();
+  mozilla::SyncRunnable::DispatchToThread(
+    mainThread.get(),
+    mozilla::WrapRunnableNMRet(&GetInterfaces, &interfaces, &rv),
+    false);
   if (NS_FAILED(rv)) {
     return R_FAILED;
   }

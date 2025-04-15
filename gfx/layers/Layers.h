@@ -18,6 +18,7 @@
 #include "GraphicsFilter.h"             // for GraphicsFilter
 #include "gfxPoint.h"                   // for gfxPoint
 #include "gfxRect.h"                    // for gfxRect
+#include "gfx2DGlue.h"
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT_HELPER2, etc
 #include "mozilla/DebugOnly.h"          // for DebugOnly
 #include "mozilla/EventForwards.h"      // for nsPaintEvent
@@ -62,6 +63,7 @@ class GLContext;
 
 namespace gfx {
 class DrawTarget;
+class SurfaceStream;
 }
 
 namespace css {
@@ -594,11 +596,18 @@ public:
 
   bool IsInTransaction() const { return mInTransaction; }
 
+  virtual void SetRegionToClear(const nsIntRegion& aRegion)
+  {
+    mRegionToClear = aRegion;
+  }
+
 protected:
   nsRefPtr<Layer> mRoot;
   gfx::UserData mUserData;
   bool mDestroyed;
   bool mSnapEffectiveTransforms;
+
+  nsIntRegion mRegionToClear;
 
   // Print interesting information about this into aTo.  Internally
   // used to implement Dump*() and Log*().
@@ -786,7 +795,7 @@ public:
     }
   }
 
-  void SetMixBlendMode(gfxContext::GraphicsOperator aMixBlendMode)
+  void SetMixBlendMode(gfx::CompositionOp aMixBlendMode)
   {
     if (mMixBlendMode != aMixBlendMode) {
       MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) MixBlendMode", this));
@@ -795,6 +804,11 @@ public:
     }
   }
   
+  void DeprecatedSetMixBlendMode(gfxContext::GraphicsOperator aMixBlendMode)
+  {
+    SetMixBlendMode(gfx::CompositionOpForOp(aMixBlendMode));
+  }
+
   void SetForceIsolatedGroup(bool aForceIsolatedGroup)
   {
     if(mForceIsolatedGroup != aForceIsolatedGroup) {
@@ -936,16 +950,20 @@ public:
   }
 
   // Call AddAnimation to add a new animation to this layer from layout code.
-  // Caller must add segments to the returned animation.
-  // aStart represents the time at the *end* of the delay.
-  Animation* AddAnimation(mozilla::TimeStamp aStart, mozilla::TimeDuration aDuration,
-                          float aIterations, int aDirection,
-                          nsCSSProperty aProperty, const AnimationData& aData);
+  // Caller must fill in all the properties of the returned animation.
+  Animation* AddAnimation();
   // ClearAnimations clears animations on this layer.
   void ClearAnimations();
   // This is only called when the layer tree is updated. Do not call this from
   // layout code.  To add an animation to this layer, use AddAnimation.
   void SetAnimations(const AnimationArray& aAnimations);
+
+  // These are a parallel to AddAnimation and clearAnimations, except
+  // they add pending animations that apply only when the next
+  // transaction is begun.  (See also
+  // SetBaseTransformForNextTransaction.)
+  Animation* AddAnimationForNextTransaction();
+  void ClearAnimationsForNextTransaction();
 
   /**
    * CONSTRUCTION PHASE ONLY
@@ -1033,7 +1051,7 @@ public:
 
   // These getters can be used anytime.
   float GetOpacity() { return mOpacity; }
-  gfxContext::GraphicsOperator GetMixBlendMode() const { return mMixBlendMode; }
+  gfx::CompositionOp GetMixBlendMode() const { return mMixBlendMode; }
   const nsIntRect* GetClipRect() { return mUseClipRect ? &mClipRect : nullptr; }
   uint32_t GetContentFlags() { return mContentFlags; }
   const nsIntRegion& GetVisibleRegion() { return mVisibleRegion; }
@@ -1207,7 +1225,8 @@ public:
   /**
    * Returns the blendmode of this layer.
    */
-  gfxContext::GraphicsOperator GetEffectiveMixBlendMode();
+  gfx::CompositionOp GetEffectiveMixBlendMode();
+  gfxContext::GraphicsOperator DeprecatedGetEffectiveMixBlendMode();
   
   /**
    * This returns the effective transform computed by
@@ -1289,6 +1308,13 @@ public:
    */
   void LogSelf(const char* aPrefix="");
 
+  // Print interesting information about this into aTo.  Internally
+  // used to implement Dump*() and Log*().  If subclasses have
+  // additional interesting properties, they should override this with
+  // an implementation that first calls the base implementation then
+  // appends additional info to aTo.
+  virtual nsACString& PrintInfo(nsACString& aTo, const char* aPrefix);
+
   static bool IsLogEnabled() { return LayerManager::IsLogEnabled(); }
 
   /**
@@ -1323,20 +1349,14 @@ public:
 
   virtual LayerRenderState GetRenderState() { return LayerRenderState(); }
 
-protected:
-  Layer(LayerManager* aManager, void* aImplData);
 
   void Mutated()
   {
     mManager->Mutated(this);
   }
 
-  // Print interesting information about this into aTo.  Internally
-  // used to implement Dump*() and Log*().  If subclasses have
-  // additional interesting properties, they should override this with
-  // an implementation that first calls the base implementation then
-  // appends additional info to aTo.
-  virtual nsACString& PrintInfo(nsACString& aTo, const char* aPrefix);
+protected:
+  Layer(LayerManager* aManager, void* aImplData);
 
   /**
    * We can snap layer transforms for two reasons:
@@ -1406,9 +1426,11 @@ protected:
   float mPostYScale;
   gfx::Matrix4x4 mEffectiveTransform;
   AnimationArray mAnimations;
+  // See mPendingTransform above.
+  nsAutoPtr<AnimationArray> mPendingAnimations;
   InfallibleTArray<AnimData> mAnimationData;
   float mOpacity;
-  gfxContext::GraphicsOperator mMixBlendMode;
+  gfx::CompositionOp mMixBlendMode;
   bool mForceIsolatedGroup;
   nsIntRect mClipRect;
   nsIntRect mTileSourceRect;
@@ -1554,13 +1576,13 @@ public:
    * If aAfter is non-null, it must be a child of this container and
    * we insert after that layer. If it's null we insert at the start.
    */
-  virtual void InsertAfter(Layer* aChild, Layer* aAfter);
+  virtual bool InsertAfter(Layer* aChild, Layer* aAfter);
   /**
    * CONSTRUCTION PHASE ONLY
    * Remove aChild from the child list of this container. aChild must
    * be a child of this container.
    */
-  virtual void RemoveChild(Layer* aChild);
+  virtual bool RemoveChild(Layer* aChild);
   /**
    * CONSTRUCTION PHASE ONLY
    * Reposition aChild from the child list of this container. aChild must
@@ -1568,7 +1590,7 @@ public:
    * If aAfter is non-null, it must be a child of this container and we
    * reposition after that layer. If it's null, we reposition at the start.
    */
-  virtual void RepositionChild(Layer* aChild, Layer* aAfter);
+  virtual bool RepositionChild(Layer* aChild, Layer* aAfter);
 
   /**
    * CONSTRUCTION PHASE ONLY
@@ -1781,19 +1803,23 @@ class CanvasLayer : public Layer {
 public:
   struct Data {
     Data()
-      : mSurface(nullptr)
-      , mDrawTarget(nullptr)
+      : mDrawTarget(nullptr)
       , mGLContext(nullptr)
+      , mStream(nullptr)
+      , mTexID(0)
       , mSize(0,0)
       , mIsGLAlphaPremult(false)
     { }
 
     // One of these two must be specified for Canvas2D, but never both
-    gfxASurface* mSurface;  // a gfx Surface for the canvas contents
     mozilla::gfx::DrawTarget *mDrawTarget; // a DrawTarget for the canvas contents
+    mozilla::gl::GLContext* mGLContext; // or this, for GL.
 
-    // Or this, for GL.
-    mozilla::gl::GLContext* mGLContext;
+    // Canvas/SkiaGL uses this
+    mozilla::gfx::SurfaceStream* mStream;
+
+    // ID of the texture backing the canvas layer (defaults to 0)
+    uint32_t mTexID;
 
     // The size of the canvas content
     nsIntSize mSize;
@@ -1959,14 +1985,14 @@ class RefLayer : public ContainerLayer {
   friend class LayerManager;
 
 private:
-  virtual void InsertAfter(Layer* aChild, Layer* aAfter)
-  { MOZ_CRASH(); }
+  virtual bool InsertAfter(Layer* aChild, Layer* aAfter) MOZ_OVERRIDE
+  { MOZ_CRASH(); return false; }
 
-  virtual void RemoveChild(Layer* aChild)
-  { MOZ_CRASH(); }
+  virtual bool RemoveChild(Layer* aChild)
+  { MOZ_CRASH(); return false; }
 
-  virtual void RepositionChild(Layer* aChild, Layer* aAfter)
-  { MOZ_CRASH(); }
+  virtual bool RepositionChild(Layer* aChild, Layer* aAfter)
+  { MOZ_CRASH(); return false; }
 
   using ContainerLayer::SetFrameMetrics;
 

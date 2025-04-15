@@ -15,7 +15,6 @@
 #include "GLReadTexImageHelper.h"
 
 #include "gfxCrashReporterUtils.h"
-#include "gfxPlatform.h"
 #include "gfxUtils.h"
 #include "GLContextProvider.h"
 #include "GLTextureImage.h"
@@ -24,15 +23,16 @@
 #include "prenv.h"
 #include "prlink.h"
 #include "ScopedGLHelpers.h"
+#include "SharedSurfaceGL.h"
 #include "SurfaceStream.h"
 #include "GfxTexturesReporter.h"
 #include "TextureGarbageBin.h"
 #include "gfx2DGlue.h"
+#include "gfxPrefs.h"
 
 #include "OGLShaderProgram.h" // for ShaderProgramType
 
 #include "mozilla/DebugOnly.h"
-#include "mozilla/Preferences.h"
 
 #ifdef XP_MACOSX
 #include <CoreServices/CoreServices.h>
@@ -76,6 +76,7 @@ static const char *sExtensionNames[] = {
     "GL_IMG_read_format",
     "GL_EXT_read_format_bgra",
     "GL_APPLE_client_storage",
+    "GL_APPLE_texture_range",
     "GL_ARB_texture_non_power_of_two",
     "GL_ARB_pixel_buffer_object",
     "GL_ARB_ES2_compatibility",
@@ -84,7 +85,11 @@ static const char *sExtensionNames[] = {
     "GL_OES_texture_float_linear",
     "GL_ARB_texture_float",
     "GL_OES_texture_half_float",
+    "GL_OES_texture_half_float_linear",
     "GL_NV_half_float",
+    "GL_EXT_color_buffer_float",
+    "GL_EXT_color_buffer_half_float",
+    "GL_ARB_color_buffer_float",
     "GL_EXT_unpack_subimage",
     "GL_OES_standard_derivatives",
     "GL_EXT_texture_filter_anisotropic",
@@ -130,6 +135,10 @@ static const char *sExtensionNames[] = {
     "GL_ARB_framebuffer_sRGB",
     "GL_EXT_framebuffer_sRGB",
     "GL_KHR_debug",
+    "GL_ARB_half_float_pixel",
+    "GL_EXT_frag_depth",
+    "GL_OES_compressed_ETC1_RGB8_texture",
+    "GL_EXT_draw_range_elements",
     nullptr
 };
 
@@ -304,7 +313,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
         return true;
     }
 
-    mWorkAroundDriverBugs = gfxPlatform::GetPlatform()->WorkAroundDriverBugs();
+    mWorkAroundDriverBugs = gfxPrefs::WorkAroundDriverBugs();
 
     SymLoadStruct symbols[] = {
         { (PRFuncPtr*) &mSymbols.fActiveTexture, { "ActiveTexture", "ActiveTextureARB", nullptr } },
@@ -456,7 +465,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
     if (mInitialized) {
         unsigned int version = 0;
 
-        bool parseSuccess = ParseGLVersion(this, &version);
+        ParseGLVersion(this, &version);
 
 #ifdef DEBUG
         printf_stderr("OpenGL version detected: %u\n", version);
@@ -466,10 +475,10 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
 
         if (version >= mVersion) {
             mVersion = version;
-        } else if (parseSuccess) {
-            NS_WARNING("Parsed version less than expected.");
-            mInitialized = false;
         }
+        // Don't fail if version < mVersion, see bug 999445,
+        // Mac OSX 10.6/10.7 machines with Intel GPUs claim only OpenGL 1.4 but
+        // have all the GL2+ extensions that we need.
     }
 
     // Load OpenGL ES 2.0 symbols, or desktop if we aren't using ES 2.
@@ -495,6 +504,19 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                 { (PRFuncPtr*) &mSymbols.fUnmapBuffer, { "UnmapBuffer", nullptr } },
                 { (PRFuncPtr*) &mSymbols.fPointParameterf, { "PointParameterf", nullptr } },
                 { (PRFuncPtr*) &mSymbols.fDrawBuffer, { "DrawBuffer", nullptr } },
+                    // These functions are only used by Skia/GL in desktop mode.
+                    // Other parts of Gecko should avoid using these
+                    { (PRFuncPtr*) &mSymbols.fDrawBuffers, { "DrawBuffers", nullptr } },
+                    { (PRFuncPtr*) &mSymbols.fClientActiveTexture, { "ClientActiveTexture", nullptr } },
+                    { (PRFuncPtr*) &mSymbols.fDisableClientState, { "DisableClientState", nullptr } },
+                    { (PRFuncPtr*) &mSymbols.fEnableClientState, { "EnableClientState", nullptr } },
+                    { (PRFuncPtr*) &mSymbols.fLoadIdentity, { "LoadIdentity", nullptr } },
+                    { (PRFuncPtr*) &mSymbols.fLoadMatrixf, { "LoadMatrixf", nullptr } },
+                    { (PRFuncPtr*) &mSymbols.fMatrixMode, { "MatrixMode", nullptr } },
+                    { (PRFuncPtr*) &mSymbols.fTexGeni, { "TexGeni", nullptr } },
+                    { (PRFuncPtr*) &mSymbols.fTexGenf, { "TexGenf", nullptr } },
+                    { (PRFuncPtr*) &mSymbols.fTexGenfv, { "TexGenfv", nullptr } },
+                    { (PRFuncPtr*) &mSymbols.fVertexPointer, { "VertexPointer", nullptr } },
                 { nullptr, { nullptr } },
             };
 
@@ -522,7 +544,8 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                 "Qualcomm",
                 "Imagination",
                 "nouveau",
-                "Vivante"
+                "Vivante",
+                "VMware, Inc."
         };
 
         mVendor = GLVendor::Other;
@@ -547,7 +570,8 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                 "PowerVR SGX 530",
                 "PowerVR SGX 540",
                 "NVIDIA Tegra",
-                "Android Emulator"
+                "Android Emulator",
+                "Gallium 0.4 on llvmpipe"
         };
 
         mRenderer = GLRenderer::Other;
@@ -608,6 +632,12 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
             if (Vendor() == GLVendor::Vivante) {
                 // bug 958256
                 MarkUnsupported(GLFeature::standard_derivatives);
+            }
+
+            if (Vendor() == GLVendor::Imagination &&
+                Renderer() == GLRenderer::SGX540) {
+                // Bug 980048
+                MarkExtensionUnsupported(OES_EGL_sync);
             }
 
 #ifdef XP_MACOSX
@@ -752,6 +782,17 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                 MarkExtensionUnsupported(OES_EGL_image);
                 mSymbols.fEGLImageTargetTexture2D = nullptr;
                 mSymbols.fEGLImageTargetRenderbufferStorage = nullptr;
+            }
+        }
+
+        if (IsExtensionSupported(APPLE_texture_range)) {
+            SymLoadStruct vaoSymbols[] = {
+                { (PRFuncPtr*) &mSymbols.fTextureRangeAPPLE, { "TextureRangeAPPLE", nullptr } },
+                { nullptr, { nullptr } },
+            };
+
+            if (!LoadSymbols(&vaoSymbols[0], trygl, prefix)) {
+                mSymbols.fTextureRangeAPPLE = nullptr;
             }
         }
 
@@ -1033,6 +1074,20 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
             }
         }
 
+        if (IsSupported(GLFeature::draw_range_elements)) {
+            SymLoadStruct imageSymbols[] = {
+                { (PRFuncPtr*) &mSymbols.fDrawRangeElements, { "DrawRangeElementsEXT", "DrawRangeElements", nullptr } },
+                { nullptr, { nullptr } },
+            };
+
+            if (!LoadSymbols(&imageSymbols[0], trygl, prefix)) {
+                NS_ERROR("GL supports draw_range_elements without supplying its functions.");
+
+                MarkUnsupported(GLFeature::draw_range_elements);
+                mSymbols.fDrawRangeElements = nullptr;
+            }
+        }
+
         // Load developer symbols, don't fail if we can't find them.
         SymLoadStruct auxSymbols[] = {
                 { (PRFuncPtr*) &mSymbols.fGetTexImage, { "GetTexImage", nullptr } },
@@ -1070,7 +1125,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
                     mMaxTextureSize = std::min(mMaxTextureSize, 4096);
                     mMaxRenderbufferSize = std::min(mMaxRenderbufferSize, 4096);
                 }
-                
+
                 // Part of the bug 879656, but it also doesn't hurt the 877949
                 mNeedsTextureSizeChecks = true;
             }
@@ -1149,6 +1204,19 @@ GLContext::InitExtensions()
         // doesn't expose the OES_rgb8_rgba8 extension, but it seems to
         // support it (tautologically, as it only runs on desktop GL).
         MarkExtensionSupported(OES_rgb8_rgba8);
+    }
+
+    if (WorkAroundDriverBugs() &&
+        Vendor() == GLVendor::VMware &&
+        Renderer() == GLRenderer::GalliumLlvmpipe)
+    {
+        // The llvmpipe driver that is used on linux try servers appears to have
+        // buggy support for s3tc/dxt1 compressed textures.
+        // See Bug 975824.
+        MarkExtensionUnsupported(EXT_texture_compression_s3tc);
+        MarkExtensionUnsupported(EXT_texture_compression_dxt1);
+        MarkExtensionUnsupported(ANGLE_texture_compression_dxt3);
+        MarkExtensionUnsupported(ANGLE_texture_compression_dxt5);
     }
 
 #ifdef DEBUG
@@ -1305,7 +1373,7 @@ GLContext::ChooseGLFormats(const SurfaceCaps& caps) const
         }
     }
 
-    uint32_t msaaLevel = Preferences::GetUint("gl.msaa-level", 2);
+    uint32_t msaaLevel = gfxPrefs::MSAALevel();
     GLsizei samples = msaaLevel * msaaLevel;
     samples = std::min(samples, mMaxSamples);
 
@@ -1512,12 +1580,16 @@ GLContext::PublishFrame()
     return true;
 }
 
-SharedSurface*
+SharedSurface_GL*
 GLContext::RequestFrame()
 {
     MOZ_ASSERT(mScreen);
 
-    return mScreen->Stream()->SwapConsumer();
+    SharedSurface* ret = mScreen->Stream()->SwapConsumer();
+    if (!ret)
+        return nullptr;
+
+    return SharedSurface_GL::Cast(ret);
 }
 
 
@@ -1706,7 +1778,7 @@ GLContext::DeletedShader(GLContext *aOrigin, GLuint aName)
 }
 
 void
-GLContext::DeletedBuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames)
+GLContext::DeletedBuffers(GLContext *aOrigin, GLsizei aCount, const GLuint *aNames)
 {
     RemoveNamesFromArray(aOrigin, aCount, aNames, mTrackedBuffers);
 }
@@ -1718,19 +1790,19 @@ GLContext::DeletedQueries(GLContext *aOrigin, GLsizei aCount, const GLuint *aNam
 }
 
 void
-GLContext::DeletedTextures(GLContext *aOrigin, GLsizei aCount, GLuint *aNames)
+GLContext::DeletedTextures(GLContext *aOrigin, GLsizei aCount, const GLuint *aNames)
 {
     RemoveNamesFromArray(aOrigin, aCount, aNames, mTrackedTextures);
 }
 
 void
-GLContext::DeletedFramebuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames)
+GLContext::DeletedFramebuffers(GLContext *aOrigin, GLsizei aCount, const GLuint *aNames)
 {
     RemoveNamesFromArray(aOrigin, aCount, aNames, mTrackedFramebuffers);
 }
 
 void
-GLContext::DeletedRenderbuffers(GLContext *aOrigin, GLsizei aCount, GLuint *aNames)
+GLContext::DeletedRenderbuffers(GLContext *aOrigin, GLsizei aCount, const GLuint *aNames)
 {
     RemoveNamesFromArray(aOrigin, aCount, aNames, mTrackedRenderbuffers);
 }

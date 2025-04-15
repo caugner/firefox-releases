@@ -14,11 +14,23 @@
 #include "mozilla/layers/ISurfaceAllocator.h"  // for ISurfaceAllocator
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor, etc
+#include "mozilla/layers/TextureHostOGL.h"  // for TextureHostOGL
+#ifdef MOZ_X11
+#include "mozilla/layers/X11TextureHost.h"
+#endif
 #include "mozilla/layers/YCbCrImageDataSerializer.h"
 #include "nsAString.h"
 #include "nsAutoPtr.h"                  // for nsRefPtr
 #include "nsPrintfCString.h"            // for nsPrintfCString
 #include "mozilla/layers/PTextureParent.h"
+#include "mozilla/unused.h"
+#include <limits>
+
+#if 0
+#define RECYCLE_LOG(...) printf_stderr(__VA_ARGS__)
+#else
+#define RECYCLE_LOG(...) do { } while (0)
+#endif
 
 struct nsIntPoint;
 
@@ -39,6 +51,9 @@ public:
   bool Init(const SurfaceDescriptor& aSharedData,
             const TextureFlags& aFlags);
 
+  void CompositorRecycle();
+  virtual bool RecvClientRecycle() MOZ_OVERRIDE;
+
   virtual bool RecvRemoveTexture() MOZ_OVERRIDE;
 
   virtual bool RecvRemoveTextureSync() MOZ_OVERRIDE;
@@ -48,6 +63,7 @@ public:
   void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
 
   ISurfaceAllocator* mAllocator;
+  RefPtr<TextureHost> mWaitForClientRecycle;
   RefPtr<TextureHost> mTextureHost;
 };
 
@@ -57,9 +73,17 @@ TextureHost::CreateIPDLActor(ISurfaceAllocator* aAllocator,
                              const SurfaceDescriptor& aSharedData,
                              TextureFlags aFlags)
 {
+  if (aSharedData.type() == SurfaceDescriptor::TSurfaceDescriptorMemory &&
+      !aAllocator->IsSameProcess())
+  {
+    NS_ERROR("A client process is trying to peek at our address space using a MemoryTexture!");
+    return nullptr;
+  }
   TextureParent* actor = new TextureParent(aAllocator);
-  DebugOnly<bool> status = actor->Init(aSharedData, aFlags);
-  MOZ_ASSERT(status);
+  if (!actor->Init(aSharedData, aFlags)) {
+    delete actor;
+    return nullptr;
+  }
   return actor;
 }
 
@@ -83,6 +107,12 @@ TextureHost*
 TextureHost::AsTextureHost(PTextureParent* actor)
 {
   return actor? static_cast<TextureParent*>(actor)->mTextureHost : nullptr;
+}
+
+PTextureParent*
+TextureHost::GetIPDLActor()
+{
+  return mActor;
 }
 
 // implemented in TextureOGL.cpp
@@ -182,6 +212,13 @@ TextureHost::Create(const SurfaceDescriptor& aDesc,
       } else {
         return CreateTextureHostBasic(aDesc, aDeallocator, aFlags);
       }
+#ifdef MOZ_X11
+    case SurfaceDescriptor::TSurfaceDescriptorX11: {
+      const SurfaceDescriptorX11& desc = aDesc.get_SurfaceDescriptorX11();
+      RefPtr<TextureHost> result = new X11TextureHost(aFlags, desc);
+      return result;
+    }
+#endif
 #ifdef XP_WIN
     case SurfaceDescriptor::TSurfaceDescriptorD3D9:
     case SurfaceDescriptor::TSurfaceDescriptorDIB:
@@ -224,6 +261,15 @@ CreateBackendIndependentTextureHost(const SurfaceDescriptor& aDesc,
 }
 
 void
+TextureHost::CompositorRecycle()
+{
+  if (!mActor) {
+    return;
+  }
+  static_cast<TextureParent*>(mActor)->CompositorRecycle();
+}
+
+void
 TextureHost::SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData)
 {
     mCompositableBackendData = aBackendData;
@@ -231,7 +277,8 @@ TextureHost::SetCompositableBackendSpecificData(CompositableBackendSpecificData*
 
 
 TextureHost::TextureHost(TextureFlags aFlags)
-    : mFlags(aFlags)
+    : mActor(nullptr)
+    , mFlags(aFlags)
 {}
 
 TextureHost::~TextureHost()
@@ -240,8 +287,7 @@ TextureHost::~TextureHost()
 
 void TextureHost::Finalize()
 {
-  if (GetFlags() & TEXTURE_DEALLOCATE_DEFERRED) {
-    MOZ_ASSERT(!(GetFlags() & TEXTURE_DEALLOCATE_CLIENT));
+  if (!(GetFlags() & TEXTURE_DEALLOCATE_CLIENT)) {
     DeallocateSharedData();
     DeallocateDeviceData();
   }
@@ -484,7 +530,7 @@ BufferTextureHost::Upload(nsIntRegion *aRegion)
     NS_WARNING("BufferTextureHost: unsupported format!");
     return false;
   } else if (mFormat == gfx::SurfaceFormat::YUV) {
-    YCbCrImageDataDeserializer yuvDeserializer(GetBuffer());
+    YCbCrImageDataDeserializer yuvDeserializer(GetBuffer(), GetBufferSize());
     MOZ_ASSERT(yuvDeserializer.IsValid());
 
     if (!mCompositor->SupportsEffect(EFFECT_YCBCR)) {
@@ -548,9 +594,9 @@ BufferTextureHost::Upload(nsIntRegion *aRegion)
     if (!mFirstSource) {
       mFirstSource = mCompositor->CreateDataTextureSource();
     }
-    ImageDataDeserializer deserializer(GetBuffer());
+    ImageDataDeserializer deserializer(GetBuffer(), GetBufferSize());
     if (!deserializer.IsValid()) {
-      NS_WARNING("failed to open shmem surface");
+      NS_ERROR("Failed to deserialize image!");
       return false;
     }
 
@@ -575,14 +621,15 @@ BufferTextureHost::GetAsSurface()
     NS_WARNING("BufferTextureHost: unsupported format!");
     return nullptr;
   } else if (mFormat == gfx::SurfaceFormat::YUV) {
-    YCbCrImageDataDeserializer yuvDeserializer(GetBuffer());
+    YCbCrImageDataDeserializer yuvDeserializer(GetBuffer(), GetBufferSize());
     if (!yuvDeserializer.IsValid()) {
       return nullptr;
     }
     result = yuvDeserializer.ToDataSourceSurface();
   } else {
-    ImageDataDeserializer deserializer(GetBuffer());
+    ImageDataDeserializer deserializer(GetBuffer(), GetBufferSize());
     if (!deserializer.IsValid()) {
+      NS_ERROR("Failed to deserialize image!");
       return nullptr;
     }
     result = deserializer.GetAsSurface();
@@ -641,6 +688,11 @@ uint8_t* ShmemTextureHost::GetBuffer()
   return mShmem ? mShmem->get<uint8_t>() : nullptr;
 }
 
+size_t ShmemTextureHost::GetBufferSize()
+{
+  return mShmem ? mShmem->Size<uint8_t>() : 0;
+}
+
 MemoryTextureHost::MemoryTextureHost(uint8_t* aBuffer,
                                      gfx::SurfaceFormat aFormat,
                                      TextureFlags aFlags)
@@ -679,6 +731,15 @@ uint8_t* MemoryTextureHost::GetBuffer()
   return mBuffer;
 }
 
+size_t MemoryTextureHost::GetBufferSize()
+{
+  // MemoryTextureHost just trusts that the buffer size is large enough to read
+  // anything we need to. That's because MemoryTextureHost has to trust the buffer
+  // pointer anyway, so the security model here is just that MemoryTexture's
+  // are restricted to same-process clients.
+  return std::numeric_limits<size_t>::max();
+}
+
 TextureParent::TextureParent(ISurfaceAllocator* aAllocator)
 : mAllocator(aAllocator)
 {
@@ -688,7 +749,50 @@ TextureParent::TextureParent(ISurfaceAllocator* aAllocator)
 TextureParent::~TextureParent()
 {
   MOZ_COUNT_DTOR(TextureParent);
-  mTextureHost = nullptr;
+  if (mTextureHost) {
+    mTextureHost->ClearRecycleCallback();
+  }
+}
+
+static void RecycleCallback(TextureHost* textureHost, void* aClosure) {
+  TextureParent* tp = reinterpret_cast<TextureParent*>(aClosure);
+  tp->CompositorRecycle();
+}
+
+void
+TextureParent::CompositorRecycle()
+{
+  mTextureHost->ClearRecycleCallback();
+
+  MaybeFenceHandle handle = null_t();
+#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
+  if (mTextureHost) {
+    TextureHostOGL* hostOGL = mTextureHost->AsHostOGL();
+    android::sp<android::Fence> fence = hostOGL->GetAndResetReleaseFence();
+    if (fence.get() && fence->isValid()) {
+      handle = FenceHandle(fence);
+      // HWC might not provide Fence.
+      // In this case, HWC implicitly handles buffer's fence.
+    }
+  }
+#endif
+  mozilla::unused << SendCompositorRecycle(handle);
+
+  // Don't forget to prepare for the next reycle
+  mWaitForClientRecycle = mTextureHost;
+}
+
+bool
+TextureParent::RecvClientRecycle()
+{
+  // This will allow the RecycleCallback to be called once the compositor
+  // releases any external references to TextureHost.
+  mTextureHost->SetRecycleCallback(RecycleCallback, this);
+  if (!mWaitForClientRecycle) {
+    RECYCLE_LOG("Not a recycable tile");
+  }
+  mWaitForClientRecycle = nullptr;
+  return true;
 }
 
 bool
@@ -698,6 +802,14 @@ TextureParent::Init(const SurfaceDescriptor& aSharedData,
   mTextureHost = TextureHost::Create(aSharedData,
                                      mAllocator,
                                      aFlags);
+  if (mTextureHost) {
+    mTextureHost->mActor = this;
+    if (aFlags & TEXTURE_RECYCLE) {
+      mWaitForClientRecycle = mTextureHost;
+      RECYCLE_LOG("Setup recycling for tile %p\n", this);
+    }
+  }
+
   return !!mTextureHost;
 }
 
@@ -722,29 +834,29 @@ TextureParent::ActorDestroy(ActorDestroyReason why)
     return;
   }
 
-  bool isDeffered = mTextureHost->GetFlags() & TEXTURE_DEALLOCATE_DEFERRED;
   switch (why) {
   case AncestorDeletion:
-    NS_WARNING("PTexture deleted after ancestor");
-    // fall-through to deletion path
   case Deletion:
-    if (!(mTextureHost->GetFlags() & TEXTURE_DEALLOCATE_CLIENT) && !isDeffered) {
-      mTextureHost->DeallocateSharedData();
-    }
-    break;
-
   case NormalShutdown:
   case AbnormalShutdown:
-    mTextureHost->OnShutdown();
     break;
-
   case FailedConstructor:
     NS_RUNTIMEABORT("FailedConstructor isn't possible in PTexture");
   }
 
-  if (!isDeffered) {
+  if (mTextureHost->GetFlags() & TEXTURE_RECYCLE) {
+    RECYCLE_LOG("clear recycling for tile %p\n", this);
+    mTextureHost->ClearRecycleCallback();
+  }
+  if (mTextureHost->GetFlags() & TEXTURE_DEALLOCATE_CLIENT) {
     mTextureHost->ForgetSharedData();
   }
+
+  // Clear recycle callback.
+  mTextureHost->ClearRecycleCallback();
+  mWaitForClientRecycle = nullptr;
+
+  mTextureHost->mActor = nullptr;
   mTextureHost = nullptr;
 }
 

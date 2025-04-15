@@ -22,7 +22,6 @@
 #include "nsIDOMNodeList.h"
 #include "nsIDOMDocument.h"
 #include "nsIContentIterator.h"
-#include "nsEventListenerManager.h"
 #include "nsFocusManager.h"
 #include "nsILinkHandler.h"
 #include "nsIScriptGlobalObject.h"
@@ -41,7 +40,7 @@
 #include "nsIServiceManager.h"
 #include "nsIDOMCSSStyleDeclaration.h"
 #include "nsDOMCSSAttrDeclaration.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsContentList.h"
 #include "nsDOMTokenList.h"
 #include "nsXBLPrototypeBinding.h"
@@ -49,9 +48,11 @@
 #include "nsDOMString.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIDOMMutationEvent.h"
+#include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ContentEvents.h"
+#include "mozilla/EventListenerManager.h"
+#include "mozilla/InternalMutationEvent.h"
 #include "mozilla/MouseEvents.h"
-#include "mozilla/MutationEvent.h"
 #include "mozilla/TextEvents.h"
 #include "nsNodeUtils.h"
 #include "mozilla/dom/DirectionalityUtils.h"
@@ -99,7 +100,6 @@
 #include "mozilla/css/StyleRule.h" /* For nsCSSSelectorList */
 #include "nsCSSRuleProcessor.h"
 #include "nsRuleProcessorData.h"
-#include "nsAsyncDOMEvent.h"
 #include "nsTextNode.h"
 
 #ifdef MOZ_XUL
@@ -361,6 +361,22 @@ Element::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aScope)
     return nullptr;
   }
 
+  // Custom element prototype swizzling.
+  CustomElementData* data = GetCustomElementData();
+  if (obj && data) {
+    // If this is a registered custom element then fix the prototype.
+    JSAutoCompartment ac(aCx, obj);
+    nsDocument* document = static_cast<nsDocument*>(OwnerDoc());
+    JS::Rooted<JSObject*> prototype(aCx);
+    document->GetCustomPrototype(NodeInfo()->NamespaceID(), data->mType, &prototype);
+    if (prototype) {
+      if (!JS_WrapObject(aCx, &prototype) || !JS_SetPrototype(aCx, obj, prototype)) {
+        dom::Throw(aCx, NS_ERROR_FAILURE);
+        return nullptr;
+      }
+    }
+  }
+
   nsIDocument* doc;
   if (HasFlag(NODE_FORCE_XBL_BINDINGS)) {
     doc = OwnerDoc();
@@ -462,7 +478,7 @@ void
 Element::GetElementsByTagName(const nsAString& aLocalName,
                               nsIDOMHTMLCollection** aResult)
 {
-  *aResult = GetElementsByTagName(aLocalName).get();
+  *aResult = GetElementsByTagName(aLocalName).take();
 }
 
 nsIFrame*
@@ -703,23 +719,29 @@ void
 Element::RemoveFromIdTable()
 {
   if (HasID()) {
-    if (HasFlag(NODE_IS_IN_SHADOW_TREE)) {
-      ShadowRoot* containingShadow = GetContainingShadow();
-      // Check for containingShadow because it may have
-      // been deleted during unlinking.
-      if (containingShadow) {
-        containingShadow->RemoveFromIdTable(this, DoGetID());
-      }
-    } else {
-      nsIDocument* doc = GetCurrentDoc();
-      if (doc) {
-        nsIAtom* id = DoGetID();
-        // id can be null during mutation events evilness. Also, XUL elements
-        // loose their proto attributes during cc-unlink, so this can happen
-        // during cc-unlink too.
-        if (id) {
-          doc->RemoveFromIdTable(this, DoGetID());
-        }
+    RemoveFromIdTable(DoGetID());
+  }
+}
+
+void
+Element::RemoveFromIdTable(nsIAtom* aId)
+{
+  NS_ASSERTION(HasID(), "Node doesn't have an ID?");
+  if (HasFlag(NODE_IS_IN_SHADOW_TREE)) {
+    ShadowRoot* containingShadow = GetContainingShadow();
+    // Check for containingShadow because it may have
+    // been deleted during unlinking.
+    if (containingShadow) {
+      containingShadow->RemoveFromIdTable(this, aId);
+    }
+  } else {
+    nsIDocument* doc = GetCurrentDoc();
+    if (doc && (!IsInAnonymousSubtree() || doc->IsXUL())) {
+      // id can be null during mutation events evilness. Also, XUL elements
+      // loose their proto attributes during cc-unlink, so this can happen
+      // during cc-unlink too.
+      if (aId) {
+        doc->RemoveFromIdTable(this, aId);
       }
     }
   }
@@ -1030,7 +1052,8 @@ nsresult
 Element::GetElementsByClassName(const nsAString& aClassNames,
                                 nsIDOMHTMLCollection** aResult)
 {
-  *aResult = nsContentUtils::GetElementsByClassName(this, aClassNames).get();
+  *aResult =
+    nsContentUtils::GetElementsByClassName(this, aClassNames).take();
   return NS_OK;
 }
 
@@ -1141,6 +1164,11 @@ Element::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     // Being added to a document.
     SetInDocument();
 
+    if (GetCustomElementData()) {
+      // Enqueue an attached callback for the custom element.
+      aDocument->EnqueueLifecycleCallback(nsIDocument::eAttached, this);
+    }
+
     // Unset this flag since we now really are in a document.
     UnsetFlags(NODE_FORCE_XBL_BINDINGS |
                // And clear the lazy frame construction bits.
@@ -1237,7 +1265,17 @@ public:
 
   NS_IMETHOD Run()
   {
-    mManager->RemovedFromDocumentInternal(mElement, mDoc);
+    // It may be the case that the element was removed from the
+    // DOM, causing this runnable to be created, then inserted back
+    // into the document before the this runnable had a chance to
+    // tear down the binding. Only tear down the binding if the element
+    // is still no longer in the DOM. nsXBLService::LoadBinding tears
+    // down the old binding if the element is inserted back into the
+    // DOM and loads a different binding.
+    if (!mElement->IsInDoc()) {
+      mManager->RemovedFromDocumentInternal(mElement, mDoc);
+    }
+
     return NS_OK;
   }
 
@@ -1298,6 +1336,11 @@ Element::UnbindFromTree(bool aDeep, bool aNullParent)
     }
 
     document->ClearBoxObjectFor(this);
+
+    if (GetCustomElementData()) {
+      // Enqueue a detached callback for the custom element.
+      document->EnqueueLifecycleCallback(nsIDocument::eDetached, this);
+    }
   }
 
   // Ensure that CSS transitions don't continue on an element at a
@@ -1617,8 +1660,8 @@ Element::SetEventHandler(nsIAtom* aEventName,
 
   NS_PRECONDITION(aEventName, "Must have event name!");
   bool defer = true;
-  nsEventListenerManager* manager = GetEventListenerManagerForAttr(aEventName,
-                                                                   &defer);
+  EventListenerManager* manager =
+    GetEventListenerManagerForAttr(aEventName, &defer);
   if (!manager) {
     return NS_OK;
   }
@@ -1665,8 +1708,10 @@ Element::MaybeCheckSameAttrVal(int32_t aNamespaceID,
     nsAttrInfo info(GetAttrInfo(aNamespaceID, aName));
     if (info.mValue) {
       // Check whether the old value is the same as the new one.  Note that we
-      // only need to actually _get_ the old value if we have listeners.
-      if (*aHasListeners) {
+      // only need to actually _get_ the old value if we have listeners or
+      // if the element is a custom element (because it may have an
+      // attribute changed callback).
+      if (*aHasListeners || GetCustomElementData()) {
         // Need to store the old value.
         //
         // If the current attribute value contains a pointer to some other data
@@ -1852,6 +1897,20 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
 
   UpdateState(aNotify);
 
+  nsIDocument* ownerDoc = OwnerDoc();
+  if (ownerDoc && GetCustomElementData()) {
+    nsCOMPtr<nsIAtom> oldValueAtom = aOldValue.GetAsAtom();
+    nsCOMPtr<nsIAtom> newValueAtom = aValueForAfterSetAttr.GetAsAtom();
+    LifecycleCallbackArgs args = {
+      nsDependentAtomString(aName),
+      aModType == nsIDOMMutationEvent::ADDITION ?
+        NullString() : nsDependentAtomString(oldValueAtom),
+      nsDependentAtomString(newValueAtom)
+    };
+
+    ownerDoc->EnqueueLifecycleCallback(nsIDocument::eAttributeChanged, this, &args);
+  }
+
   if (aCallAfterSetAttr) {
     rv = AfterSetAttr(aNamespaceID, aName, &aValueForAfterSetAttr, aNotify);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -1887,7 +1946,7 @@ Element::SetAttrAndNotify(int32_t aNamespaceID,
     mutation.mAttrChange = aModType;
 
     mozAutoSubtreeModified subtree(OwnerDoc(), this);
-    (new nsAsyncDOMEvent(this, mutation))->RunDOMEventWhenSafe();
+    (new AsyncEventDispatcher(this, mutation))->RunDOMEventWhenSafe();
   }
 
   return NS_OK;
@@ -1912,7 +1971,7 @@ Element::SetMappedAttribute(nsIDocument* aDocument,
   return false;
 }
 
-nsEventListenerManager*
+EventListenerManager*
 Element::GetEventListenerManagerForAttr(nsIAtom* aAttrName,
                                         bool* aDefer)
 {
@@ -2035,6 +2094,18 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
 
   UpdateState(aNotify);
 
+  nsIDocument* ownerDoc = OwnerDoc();
+  if (ownerDoc && GetCustomElementData()) {
+    nsCOMPtr<nsIAtom> oldValueAtom = oldValue.GetAsAtom();
+    LifecycleCallbackArgs args = {
+      nsDependentAtomString(aName),
+      nsDependentAtomString(oldValueAtom),
+      NullString()
+    };
+
+    ownerDoc->EnqueueLifecycleCallback(nsIDocument::eAttributeChanged, this, &args);
+  }
+
   if (aNotify) {
     nsNodeUtils::AttributeChanged(this, aNameSpaceID, aName,
                                   nsIDOMMutationEvent::REMOVAL);
@@ -2060,7 +2131,7 @@ Element::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
     mutation.mAttrChange = nsIDOMMutationEvent::REMOVAL;
 
     mozAutoSubtreeModified subtree(OwnerDoc(), this);
-    (new nsAsyncDOMEvent(this, mutation))->RunDOMEventWhenSafe();
+    (new AsyncEventDispatcher(this, mutation))->RunDOMEventWhenSafe();
   }
 
   return NS_OK;
@@ -2078,30 +2149,35 @@ Element::GetAttrCount() const
   return mAttrsAndChildren.AttrCount();
 }
 
+void
+Element::DescribeAttribute(uint32_t index, nsAString& aOutDescription) const
+{
+  // name
+  mAttrsAndChildren.AttrNameAt(index)->GetQualifiedName(aOutDescription);
+
+  // value
+  aOutDescription.AppendLiteral("=\"");
+  nsAutoString value;
+  mAttrsAndChildren.AttrAt(index)->ToString(value);
+  for (int i = value.Length(); i >= 0; --i) {
+    if (value[i] == char16_t('"'))
+      value.Insert(char16_t('\\'), uint32_t(i));
+  }
+  aOutDescription.Append(value);
+  aOutDescription.AppendLiteral("\"");
+}
+
 #ifdef DEBUG
 void
 Element::ListAttributes(FILE* out) const
 {
   uint32_t index, count = mAttrsAndChildren.AttrCount();
   for (index = 0; index < count; index++) {
-    nsAutoString buffer;
-
-    // name
-    mAttrsAndChildren.AttrNameAt(index)->GetQualifiedName(buffer);
-
-    // value
-    buffer.AppendLiteral("=\"");
-    nsAutoString value;
-    mAttrsAndChildren.AttrAt(index)->ToString(value);
-    for (int i = value.Length(); i >= 0; --i) {
-      if (value[i] == char16_t('"'))
-        value.Insert(char16_t('\\'), uint32_t(i));
-    }
-    buffer.Append(value);
-    buffer.AppendLiteral("\"");
+    nsAutoString attributeDescription;
+    DescribeAttribute(index, attributeDescription);
 
     fputs(" ", out);
-    fputs(NS_LossyConvertUTF16toASCII(buffer).get(), out);
+    fputs(NS_LossyConvertUTF16toASCII(attributeDescription).get(), out);
   }
 }
 
@@ -2224,6 +2300,21 @@ Element::DumpContent(FILE* out, int32_t aIndent,
   if(aIndent) fputs("\n", out);
 }
 #endif
+
+void
+Element::Describe(nsAString& aOutDescription) const
+{
+  aOutDescription.Append(mNodeInfo->QualifiedName());
+  aOutDescription.AppendPrintf("@%p", (void *)this);
+
+  uint32_t index, count = mAttrsAndChildren.AttrCount();
+  for (index = 0; index < count; index++) {
+    aOutDescription.Append(' ');
+    nsAutoString attributeDescription;
+    DescribeAttribute(index, attributeDescription);
+    aOutDescription.Append(attributeDescription);
+  }
+}
 
 bool
 Element::CheckHandleEventForLinksPrecondition(nsEventChainVisitor& aVisitor,
@@ -2364,8 +2455,8 @@ Element::PostHandleEventForLinks(nsEventChainPostVisitor& aVisitor)
       if (shell) {
         // single-click
         nsEventStatus status = nsEventStatus_eIgnore;
-        InternalUIEvent actEvent(mouseEvent->mFlags.mIsTrusted,
-                                 NS_UI_ACTIVATE, 1);
+        InternalUIEvent actEvent(mouseEvent->mFlags.mIsTrusted, NS_UI_ACTIVATE);
+        actEvent.detail = 1;
 
         rv = shell->HandleDOMEventWithTarget(this, &actEvent, &status);
         if (NS_SUCCEEDED(rv)) {
@@ -2527,18 +2618,24 @@ Element::MozRequestFullScreen()
                                     NS_LITERAL_CSTRING("DOM"), OwnerDoc(),
                                     nsContentUtils::eDOM_PROPERTIES,
                                     error);
-    nsRefPtr<nsAsyncDOMEvent> e =
-      new nsAsyncDOMEvent(OwnerDoc(),
-                          NS_LITERAL_STRING("mozfullscreenerror"),
-                          true,
-                          false);
-    e->PostDOMEvent();
+    nsRefPtr<AsyncEventDispatcher> asyncDispatcher =
+      new AsyncEventDispatcher(OwnerDoc(),
+                               NS_LITERAL_STRING("mozfullscreenerror"),
+                               true,
+                               false);
+    asyncDispatcher->PostDOMEvent();
     return;
   }
 
   OwnerDoc()->AsyncRequestFullScreen(this);
 
   return;
+}
+
+void
+Element::MozRequestPointerLock()
+{
+  OwnerDoc()->RequestPointerLock(this);
 }
 
 NS_IMETHODIMP

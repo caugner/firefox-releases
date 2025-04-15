@@ -122,51 +122,6 @@ SettingsListener.observe('language.current', 'en-US', function(value) {
     });
   });
 
-  SettingsListener.observe('ril.mms.retrieval_mode', 'manual',
-    function(value) {
-      Services.prefs.setCharPref('dom.mms.retrieval_mode', value);
-  });
-
-  SettingsListener.observe('ril.sms.strict7BitEncoding.enabled', false,
-    function(value) {
-      Services.prefs.setBoolPref('dom.sms.strict7BitEncoding', value);
-  });
-
-  SettingsListener.observe('ril.sms.requestStatusReport.enabled', false,
-    function(value) {
-      Services.prefs.setBoolPref('dom.sms.requestStatusReport', value);
-  });
-
-  SettingsListener.observe('ril.mms.requestStatusReport.enabled', false,
-    function(value) {
-      Services.prefs.setBoolPref('dom.mms.requestStatusReport', value);
-  });
-
-  SettingsListener.observe('ril.mms.requestReadReport.enabled', true,
-    function(value) {
-      Services.prefs.setBoolPref('dom.mms.requestReadReport', value);
-  });
-
-  SettingsListener.observe('ril.cellbroadcast.disabled', false,
-    function(value) {
-      Services.prefs.setBoolPref('ril.cellbroadcast.disabled', value);
-  });
-
-  SettingsListener.observe('ril.radio.disabled', false,
-    function(value) {
-      Services.prefs.setBoolPref('ril.radio.disabled', value);
-  });
-
-  SettingsListener.observe('wap.UAProf.url', '',
-    function(value) {
-      Services.prefs.setCharPref('wap.UAProf.url', value);
-  });
-
-  SettingsListener.observe('wap.UAProf.tagname', 'x-wap-profile',
-    function(value) {
-      Services.prefs.setCharPref('wap.UAProf.tagname', value);
-  });
-
   // DSDS default service IDs
   ['mms', 'sms', 'telephony', 'voicemail'].forEach(function(key) {
     SettingsListener.observe('ril.' + key + '.defaultServiceId', 0,
@@ -219,18 +174,18 @@ Components.utils.import('resource://gre/modules/ctypes.jsm');
 
 // =================== DevTools ====================
 
-let devtoolsWidgetPanel;
+let developerHUD;
 SettingsListener.observe('devtools.overlay', false, (value) => {
   if (value) {
-    if (!devtoolsWidgetPanel) {
+    if (!developerHUD) {
       let scope = {};
-      Services.scriptloader.loadSubScript('chrome://browser/content/devtools.js', scope);
-      devtoolsWidgetPanel = scope.devtoolsWidgetPanel;
+      Services.scriptloader.loadSubScript('chrome://b2g/content/devtools.js', scope);
+      developerHUD = scope.developerHUD;
     }
-    devtoolsWidgetPanel.init();
+    developerHUD.init();
   } else {
-    if (devtoolsWidgetPanel) {
-      devtoolsWidgetPanel.uninit();
+    if (developerHUD) {
+      developerHUD.uninit();
     }
   }
 });
@@ -521,11 +476,6 @@ SettingsListener.observe('debugger.remote-mode', false, function(value) {
 #endif
 });
 
-
-SettingsListener.observe('debug.log-animations.enabled', false, function(value) {
-  Services.prefs.setBoolPref('layers.offmainthreadcomposition.log-animations', value);
-});
-
 // =================== Device Storage ====================
 SettingsListener.observe('device.storage.writable.name', 'sdcard', function(value) {
   if (Services.prefs.getPrefType('device.storage.writable.name') != Ci.nsIPrefBranch.PREF_STRING) {
@@ -537,10 +487,6 @@ SettingsListener.observe('device.storage.writable.name', 'sdcard', function(valu
 });
 
 // =================== Privacy ====================
-SettingsListener.observe('privacy.donottrackheader.enabled', false, function(value) {
-  Services.prefs.setBoolPref('privacy.donottrackheader.enabled', value);
-});
-
 SettingsListener.observe('privacy.donottrackheader.value', 1, function(value) {
   Services.prefs.setIntPref('privacy.donottrackheader.value', value);
   // If the user specifically disallows tracking, we set the value of
@@ -600,22 +546,7 @@ function setUpdateTrackingId() {
 }
 setUpdateTrackingId();
 
-SettingsListener.observe('app.update.interval', 86400, function(value) {
-  Services.prefs.setIntPref('app.update.interval', value);
-});
-
 // ================ Debug ================
-// XXX could factor out into a settings->pref map.
-SettingsListener.observe("debug.fps.enabled", false, function(value) {
-  Services.prefs.setBoolPref("layers.acceleration.draw-fps", value);
-});
-SettingsListener.observe("debug.paint-flashing.enabled", false, function(value) {
-  Services.prefs.setBoolPref("nglayout.debug.paint_flashing", value);
-});
-SettingsListener.observe("layers.draw-borders", false, function(value) {
-  Services.prefs.setBoolPref("layers.draw-borders", value);
-});
-
 (function Composer2DSettingToPref() {
   //layers.composer.enabled can be enabled in three ways
   //In order of precedence they are:
@@ -671,8 +602,121 @@ SettingsListener.observe("accessibility.screenreader", false, function(value) {
 })();
 
 // =================== AsyncPanZoom ======================
-
-SettingsListener.observe('apz.force-enable', false, function(value) {
-  Services.prefs.setBoolPref('dom.browser_frames.useAsyncPanZoom', value);
+SettingsListener.observe('apz.displayport.heuristics', 'default', function(value) {
+  // first reset everything to default
+  Services.prefs.clearUserPref('apz.velocity_bias');
+  Services.prefs.clearUserPref('apz.use_paint_duration');
+  Services.prefs.clearUserPref('apz.x_skate_size_multiplier');
+  Services.prefs.clearUserPref('apz.y_skate_size_multiplier');
+  Services.prefs.clearUserPref('apz.allow-checkerboarding');
+  // and then set the things that we want to change
+  switch (value) {
+  case 'default':
+    break;
+  case 'center-displayport':
+    Services.prefs.setCharPref('apz.velocity_bias', '0.0');
+    break;
+  case 'perfect-paint-times':
+    Services.prefs.setBoolPref('apz.use_paint_duration', false);
+    Services.prefs.setCharPref('apz.velocity_bias', '0.32'); // 16/50 (assumes 16ms paint times instead of 50ms)
+    break;
+  case 'taller-displayport':
+    Services.prefs.setCharPref('apz.y_skate_size_multiplier', '3.5');
+    break;
+  case 'faster-paint':
+    Services.prefs.setCharPref('apz.x_skate_size_multiplier', '1.0');
+    Services.prefs.setCharPref('apz.y_skate_size_multiplier', '1.5');
+    break;
+  case 'no-checkerboard':
+    Services.prefs.setBoolPref('apz.allow-checkerboarding', false);
+    break;
+  }
 });
+
+// =================== Various simple mapping  ======================
+let settingsToObserve = {
+  'ril.mms.retrieval_mode': {
+    prefName: 'dom.mms.retrieval_mode',
+    defaultValue: 'manual'
+  },
+  'ril.sms.strict7BitEncoding.enabled': {
+    prefName: 'dom.sms.strict7BitEncoding',
+    defaultValue: false
+  },
+  'ril.sms.requestStatusReport.enabled': {
+    prefName: 'dom.sms.requestStatusReport',
+    defaultValue: false
+  },
+  'ril.mms.requestStatusReport.enabled': {
+    prefName: 'dom.mms.requestStatusReport',
+    defaultValue: false
+  },
+  'ril.mms.requestReadReport.enabled': {
+    prefName: 'dom.mms.requestReadReport',
+    defaultValue: true
+  },
+  'ril.cellbroadcast.disabled': false,
+  'ril.radio.disabled': false,
+  'wap.UAProf.url': '',
+  'wap.UAProf.tagname': 'x-wap-profile',
+  'devtools.eventlooplag.threshold': 100,
+  'privacy.donottrackheader.enabled': false,
+  'apz.force-enable': {
+    prefName: 'dom.browser_frames.useAsyncPanZoom',
+    defaultValue: false
+  },
+  'layers.enable-tiles': true,
+  'layers.simple-tiles': false,
+  'layers.progressive-paint': false,
+  'layers.draw-tile-borders': false,
+  'layers.dump': false,
+  'debug.fps.enabled': {
+    prefName: 'layers.acceleration.draw-fps',
+    defaultValue: false
+  },
+  'debug.paint-flashing.enabled': {
+    prefName: 'nglayout.debug.paint_flashing',
+    defaultValue: false
+  },
+  'layers.draw-borders': false,
+  'app.update.interval': 86400,
+  'debug.log-animations.enabled': {
+    prefName: 'layers.offmainthreadcomposition.log-animations',
+    defaultValue: false
+  }
+};
+
+for (let key in settingsToObserve) {
+  let setting = settingsToObserve[key];
+
+  // By default, assume the setting name and the pref name are the same.
+  let prefName = key;
+  let defaultValue = setting;
+
+  // Check if the pref name has been overidden.
+  if (typeof setting == 'object') {
+    prefName = setting.prefName;
+    defaultValue = setting.defaultValue;
+  }
+
+  switch (typeof defaultValue) {
+    case 'boolean':
+      SettingsListener.observe(key, defaultValue, function(value) {
+        Services.prefs.setBoolPref(prefName, value);
+      });
+      break;
+
+    case 'string':
+      SettingsListener.observe(key, defaultValue, function(value) {
+        Services.prefs.setCharPref(prefName, value);
+      });
+      break;
+
+    case 'number':
+      SettingsListener.observe(key, defaultValue, function(value) {
+        Services.prefs.setIntPref(prefName, value);
+      });
+      break;
+  }
+};
 

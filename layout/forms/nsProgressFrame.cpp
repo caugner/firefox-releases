@@ -8,7 +8,7 @@
 #include "nsIContent.h"
 #include "nsPresContext.h"
 #include "nsGkAtoms.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsIDocument.h"
 #include "nsIPresShell.h"
 #include "nsNodeInfoManager.h"
@@ -96,7 +96,7 @@ nsProgressFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   BuildDisplayListForInline(aBuilder, aDirtyRect, aLists);
 }
 
-NS_IMETHODIMP nsProgressFrame::Reflow(nsPresContext*           aPresContext,
+nsresult nsProgressFrame::Reflow(nsPresContext*           aPresContext,
                                       nsHTMLReflowMetrics&     aDesiredSize,
                                       const nsHTMLReflowState& aReflowState,
                                       nsReflowStatus&          aStatus)
@@ -193,14 +193,14 @@ nsProgressFrame::ReflowBarFrame(nsIFrame*                aBarFrame,
   xoffset += reflowState.ComputedPhysicalMargin().left;
   yoffset += reflowState.ComputedPhysicalMargin().top;
 
-  nsHTMLReflowMetrics barDesiredSize(aReflowState.GetWritingMode());
+  nsHTMLReflowMetrics barDesiredSize(aReflowState);
   ReflowChild(aBarFrame, aPresContext, barDesiredSize, reflowState, xoffset,
               yoffset, 0, aStatus);
   FinishReflowChild(aBarFrame, aPresContext, barDesiredSize, &reflowState,
                     xoffset, yoffset, 0);
 }
 
-NS_IMETHODIMP
+nsresult
 nsProgressFrame::AttributeChanged(int32_t  aNameSpaceID,
                                   nsIAtom* aAttribute,
                                   int32_t  aModType)

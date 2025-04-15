@@ -21,7 +21,7 @@ class DOMSVGPointList;
 class nsSVGPolyElement : public nsSVGPolyElementBase
 {
 protected:
-  nsSVGPolyElement(already_AddRefed<nsINodeInfo> aNodeInfo);
+  nsSVGPolyElement(already_AddRefed<nsINodeInfo>& aNodeInfo);
 
 public:
   //interfaces
@@ -37,6 +37,9 @@ public:
   virtual nsIAtom* GetPointListAttrName() const {
     return nsGkAtoms::points;
   }
+
+  // nsSVGElement methods:
+  virtual bool HasValidDimensions() const MOZ_OVERRIDE;
 
   // nsSVGPathGeometryElement methods:
   virtual bool AttributeDefinesGeometry(const nsIAtom *aName) MOZ_OVERRIDE;

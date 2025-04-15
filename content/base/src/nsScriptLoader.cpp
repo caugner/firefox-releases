@@ -1006,6 +1006,7 @@ nsScriptLoader::FillCompileOptionsForRequest(nsScriptLoadRequest *aRequest,
   // aRequest ended up getting script data from, as the script filename.
   nsContentUtils::GetWrapperSafeScriptFilename(mDocument, aRequest->mURI, aRequest->mURL);
 
+  aOptions->setIntroductionType("scriptElement");
   aOptions->setFileAndLine(aRequest->mURL.get(), aRequest->mLineNo);
   aOptions->setVersion(JSVersion(aRequest->mJSVersion));
   aOptions->setCompileAndGo(JS_IsGlobalObject(aScopeChain));
@@ -1328,12 +1329,16 @@ nsScriptLoader::OnStreamComplete(nsIStreamLoader* aLoader,
     } else {
       mPreloads.RemoveElement(request, PreloadRequestComparator());
     }
+    rv = NS_OK;
+  } else {
+    NS_Free(const_cast<uint8_t *>(aString));
+    rv = NS_SUCCESS_ADOPTED_DATA;
   }
 
   // Process our request and/or any pending ones
   ProcessPendingRequests();
 
-  return NS_OK;
+  return rv;
 }
 
 void

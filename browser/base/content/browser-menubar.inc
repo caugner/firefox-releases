@@ -27,6 +27,14 @@
                           accesskey="&newPrivateWindow.accesskey;"
                           command="Tools:PrivateBrowsing"
                           key="key_privatebrowsing"/>
+                <menuitem id="menu_newRemoteWindow"
+                          label="New e10s Window"
+                          hidden="true"
+                          command="Tools:RemoteWindow"/>
+                <menuitem id="menu_newNonRemoteWindow"
+                          label="New Non-e10s Window"
+                          hidden="true"
+                          command="Tools:NonRemoteWindow"/>
                 <menuitem id="menu_openFile"
                           label="&openFileCmd.label;"
                           command="Browser:OpenFile"
@@ -464,6 +472,11 @@
                         accesskey="&syncSyncNowItem.accesskey;"
                         observes="sync-syncnow-state"
                         oncommand="gSyncUI.doSync(event);"/>
+              <menuitem id="sync-reauthitem"
+                        label="&syncReAuthItem.label;"
+                        accesskey="&syncReAuthItem.accesskey;"
+                        observes="sync-reauth-state"
+                        oncommand="gSyncUI.openSignInAgainPage();"/>
 #endif
               <menuseparator id="devToolsSeparator"/>
               <menu id="webDeveloperMenu"

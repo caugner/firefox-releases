@@ -402,6 +402,10 @@ Preferences::GetInstanceForService()
 bool
 Preferences::InitStaticMembers()
 {
+#ifndef MOZ_B2G
+  MOZ_ASSERT(NS_IsMainThread());
+#endif
+
   if (!sShutdown && !sPreferences) {
     nsCOMPtr<nsIPrefService> prefService =
       do_GetService(NS_PREFSERVICE_CONTRACTID);
@@ -1045,7 +1049,9 @@ pref_LoadPrefsInDir(nsIFile* aDir, char const *const *aSpecialFiles, uint32_t aS
   while (hasMoreElements && NS_SUCCEEDED(rv)) {
     nsAutoCString leafName;
 
-    rv = dirIterator->GetNext(getter_AddRefs(prefFile));
+    nsCOMPtr<nsISupports> supports;
+    rv = dirIterator->GetNext(getter_AddRefs(supports));
+    prefFile = do_QueryInterface(supports);
     if (NS_FAILED(rv)) {
       break;
     }
@@ -1252,8 +1258,6 @@ static nsresult pref_InitInitialObjects()
 #elif defined(_AIX)
     , "aix.js"
 #endif
-#elif defined(XP_OS2)
-    "os2pref.js"
 #elif defined(XP_BEOS)
     "beos.js"
 #endif

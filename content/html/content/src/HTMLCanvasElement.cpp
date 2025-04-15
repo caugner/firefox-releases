@@ -18,7 +18,6 @@
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
-#include "nsAsyncDOMEvent.h"
 #include "nsAttrValueInlines.h"
 #include "nsContentUtils.h"
 #include "nsDisplayList.h"
@@ -113,7 +112,7 @@ HTMLCanvasPrintState::NotifyDone()
 
 // ---------------------------------------------------------------------------
 
-HTMLCanvasElement::HTMLCanvasElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+HTMLCanvasElement::HTMLCanvasElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo),
     mWriteOnly(false)
 {
@@ -487,7 +486,7 @@ void
 HTMLCanvasElement::ToBlob(JSContext* aCx,
                           FileCallback& aCallback,
                           const nsAString& aType,
-                          const Optional<JS::Handle<JS::Value> >& aParams,
+                          JS::Handle<JS::Value> aParams,
                           ErrorResult& aRv)
 {
   // do a trust check if this is a write-only canvas
@@ -502,13 +501,9 @@ HTMLCanvasElement::ToBlob(JSContext* aCx,
     return;
   }
 
-  JS::Value encoderOptions = aParams.WasPassed()
-                             ? aParams.Value()
-                             : JS::UndefinedValue();
-
   nsAutoString params;
   bool usingCustomParseOptions;
-  aRv = ParseParams(aCx, type, encoderOptions, params, &usingCustomParseOptions);
+  aRv = ParseParams(aCx, type, aParams, params, &usingCustomParseOptions);
   if (aRv.Failed()) {
     return;
   }
@@ -677,7 +672,8 @@ HTMLCanvasElement::GetContext(const nsAString& aContextId,
                               nsISupports** aContext)
 {
   ErrorResult rv;
-  *aContext = GetContext(nullptr, aContextId, JS::NullHandleValue, rv).get();
+  *aContext =
+    GetContext(nullptr, aContextId, JS::NullHandleValue, rv).take();
   return rv.ErrorCode();
 }
 
@@ -784,7 +780,7 @@ HTMLCanvasElement::UpdateContext(JSContext* aCx, JS::Handle<JS::Value> aNewConte
 
   nsIntSize sz = GetWidthHeight();
 
-  nsresult rv = mCurrentContext->SetIsOpaque(GetIsOpaque());
+  nsresult rv = mCurrentContext->SetIsOpaque(HasAttr(kNameSpaceID_None, nsGkAtoms::moz_opaque));
   if (NS_FAILED(rv)) {
     mCurrentContext = nullptr;
     mCurrentContextId.Truncate();
@@ -906,6 +902,10 @@ HTMLCanvasElement::GetContextAtIndex(int32_t index)
 bool
 HTMLCanvasElement::GetIsOpaque()
 {
+  if (mCurrentContext) {
+    return mCurrentContext->GetIsOpaque();
+  }
+
   return HasAttr(kNameSpaceID_None, nsGkAtoms::moz_opaque);
 }
 

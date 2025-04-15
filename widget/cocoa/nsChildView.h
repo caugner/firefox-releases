@@ -517,10 +517,15 @@ public:
   NS_IMETHOD        ActivateNativeMenuItemAt(const nsAString& indexString);
   NS_IMETHOD        ForceUpdateNativeMenuAt(const nsAString& indexString);
 
-  NS_IMETHOD        NotifyIME(NotificationToIME aNotification) MOZ_OVERRIDE;
+  NS_IMETHOD        NotifyIME(const IMENotification& aIMENotification) MOZ_OVERRIDE;
   NS_IMETHOD_(void) SetInputContext(const InputContext& aContext,
                                     const InputContextAction& aAction);
   NS_IMETHOD_(InputContext) GetInputContext();
+  NS_IMETHOD_(bool) ExecuteNativeKeyBinding(
+                      NativeKeyBindingsType aType,
+                      const mozilla::WidgetKeyboardEvent& aEvent,
+                      DoCommandCallback aCallback,
+                      void* aCallbackData) MOZ_OVERRIDE;
   virtual nsIMEUpdatePreference GetIMEUpdatePreference() MOZ_OVERRIDE;
   NS_IMETHOD        GetToggledKeyState(uint32_t aKeyCode,
                                        bool* aLEDState);

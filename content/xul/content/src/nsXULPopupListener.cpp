@@ -32,6 +32,7 @@
 #include "nsHTMLReflowState.h"
 #include "nsIObjectLoadingContent.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/dom/Event.h" // for nsIDOMEvent::InternalDOMEvent()
 #include "mozilla/dom/EventTarget.h"
 #include "mozilla/dom/FragmentOrElement.h"
 
@@ -43,14 +44,13 @@
 #include "nsViewManager.h"
 #include "nsError.h"
 #include "nsMenuFrame.h"
-#include "nsDOMEvent.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
 
 // on win32 and os/2, context menus come up on mouse up. On other platforms,
 // they appear on mouse down. Certain bits of code care about this difference.
-#if defined(XP_WIN) || defined(XP_OS2)
+#if defined(XP_WIN)
 #define NS_CONTEXT_MENU_IS_MOUSEUP 1
 #endif
 
@@ -106,7 +106,7 @@ nsXULPopupListener::HandleEvent(nsIDOMEvent* aEvent)
        (eventType.EqualsLiteral("contextmenu") && mIsContext)))
     return NS_OK;
 
-  uint16_t button;
+  int16_t button;
 
   nsCOMPtr<nsIDOMMouseEvent> mouseEvent = do_QueryInterface(aEvent);
   if (!mouseEvent) {

@@ -160,11 +160,8 @@ public:
   NS_IMETHOD_(void) SetInputContext(const InputContext& aContext,
                                     const InputContextAction& aAction);
   NS_IMETHOD_(nsIWidget::InputContext) GetInputContext();
-  NS_IMETHOD    NotifyIME(NotificationToIME aNotification) MOZ_OVERRIDE;
+  NS_IMETHOD    NotifyIME(const IMENotification& aIMENotification) MOZ_OVERRIDE;
   NS_IMETHOD    GetToggledKeyState(uint32_t aKeyCode, bool* aLEDState);
-  NS_IMETHOD    NotifyIMEOfTextChange(uint32_t aStart,
-                                      uint32_t aOldEnd,
-                                      uint32_t aNewEnd) MOZ_OVERRIDE;
   virtual nsIMEUpdatePreference GetIMEUpdatePreference() MOZ_OVERRIDE;
 
   // FrameworkView helpers
@@ -224,9 +221,6 @@ public:
   // Input handling
   nsEventStatus ApzReceiveInputEvent(mozilla::WidgetInputEvent* aEvent,
                                      ScrollableLayerGuid* aOutTargetGuid);
-  nsEventStatus ApzReceiveInputEvent(mozilla::WidgetInputEvent* aInEvent,
-                                     ScrollableLayerGuid* aOutTargetGuid,
-                                     mozilla::WidgetInputEvent* aOutEvent);
 
 protected:
   friend class FrameworkView;

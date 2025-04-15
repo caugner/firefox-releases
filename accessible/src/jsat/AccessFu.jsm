@@ -118,8 +118,8 @@ this.AccessFu = {
     Output.start();
     TouchAdapter.start();
 
-    Services.obs.addObserver(this, 'remote-browser-frame-shown', false);
-    Services.obs.addObserver(this, 'in-process-browser-or-app-frame-shown', false);
+    Services.obs.addObserver(this, 'remote-browser-shown', false);
+    Services.obs.addObserver(this, 'inprocess-browser-shown', false);
     Services.obs.addObserver(this, 'Accessibility:NextObject', false);
     Services.obs.addObserver(this, 'Accessibility:PreviousObject', false);
     Services.obs.addObserver(this, 'Accessibility:Focus', false);
@@ -133,6 +133,11 @@ this.AccessFu = {
     if (this.readyCallback) {
       this.readyCallback();
       delete this.readyCallback;
+    }
+
+    if (Utils.MozBuildApp !== 'mobile/android') {
+      this.announce(
+        Utils.stringBundle.GetStringFromName('screenReaderStarted'));
     }
   },
 
@@ -149,6 +154,11 @@ this.AccessFu = {
 
     Utils.win.document.removeChild(this.stylesheet.get());
 
+    if (Utils.MozBuildApp !== 'mobile/android') {
+      this.announce(
+        Utils.stringBundle.GetStringFromName('screenReaderStopped'));
+    }
+
     for each (let mm in Utils.AllMessageManagers) {
       mm.sendAsyncMessage('AccessFu:Stop');
       this._removeMessageListeners(mm);
@@ -162,8 +172,8 @@ this.AccessFu = {
     Utils.win.removeEventListener('TabClose', this);
     Utils.win.removeEventListener('TabSelect', this);
 
-    Services.obs.removeObserver(this, 'remote-browser-frame-shown');
-    Services.obs.removeObserver(this, 'in-process-browser-or-app-frame-shown');
+    Services.obs.removeObserver(this, 'remote-browser-shown');
+    Services.obs.removeObserver(this, 'inprocess-browser-shown');
     Services.obs.removeObserver(this, 'Accessibility:NextObject');
     Services.obs.removeObserver(this, 'Accessibility:PreviousObject');
     Services.obs.removeObserver(this, 'Accessibility:Focus');
@@ -197,8 +207,9 @@ this.AccessFu = {
   },
 
   receiveMessage: function receiveMessage(aMessage) {
-    if (Logger.logLevel >= Logger.DEBUG)
-      Logger.debug('Recieved', aMessage.name, JSON.stringify(aMessage.json));
+    Logger.debug(() => {
+      return ['Recieved', aMessage.name, JSON.stringify(aMessage.json)];
+    });
 
     switch (aMessage.name) {
       case 'AccessFu:Ready':
@@ -298,17 +309,21 @@ this.AccessFu = {
       case 'Accessibility:Focus':
         this._focused = JSON.parse(aData);
         if (this._focused) {
-          this.showCurrent(true);
+          this.autoMove({ forcePresent: true, noOpIfOnScreen: true });
         }
         break;
       case 'Accessibility:MoveByGranularity':
         this.Input.moveByGranularity(JSON.parse(aData));
         break;
-      case 'remote-browser-frame-shown':
-      case 'in-process-browser-or-app-frame-shown':
+      case 'remote-browser-shown':
+      case 'inprocess-browser-shown':
       {
-        let mm = aSubject.QueryInterface(Ci.nsIFrameLoader).messageManager;
-        this._handleMessageManager(mm);
+        // Ignore notifications that aren't from a BrowserOrApp
+        let frameLoader = aSubject.QueryInterface(Ci.nsIFrameLoader);
+        if (!frameLoader.ownerIsBrowserOrAppFrame) {
+          return;
+        }
+        this._handleMessageManager(frameLoader.messageManager);
         break;
       }
     }
@@ -338,10 +353,11 @@ this.AccessFu = {
           // We delay this for half a second so the awesomebar could close,
           // and we could use the current coordinates for the content item.
           // XXX TODO figure out how to avoid magic wait here.
-          Utils.win.setTimeout(
-            function () {
-              this.showCurrent(false);
-            }.bind(this), 500);
+	  this.autoMove({
+	    delay: 500,
+	    forcePresent: true,
+	    noOpIfOnScreen: true,
+	    moveMethod: 'moveFirst' });
         }
         break;
       }
@@ -357,14 +373,13 @@ this.AccessFu = {
     }
   },
 
-  showCurrent: function showCurrent(aMove) {
+  autoMove: function autoMove(aOptions) {
     let mm = Utils.getMessageManager(Utils.CurrentBrowser);
-    mm.sendAsyncMessage('AccessFu:ShowCurrent', { move: aMove });
+    mm.sendAsyncMessage('AccessFu:AutoMove', aOptions);
   },
 
   announce: function announce(aAnnouncement) {
-    this._output(Presentation.announce(aAnnouncement),
-                 Utils.CurrentBrowser);
+    this._output(Presentation.announce(aAnnouncement), Utils.CurrentBrowser);
   },
 
   // So we don't enable/disable twice
@@ -510,7 +525,8 @@ var Output = {
 
     init: function init() {
       let window = Utils.win;
-      this.webspeechEnabled = !!window.speechSynthesis;
+      this.webspeechEnabled = !!window.speechSynthesis &&
+        !!window.SpeechSynthesisUtterance;
 
       let settingsToGet = 2;
       let settingsCallback = (aName, aSetting) => {
@@ -879,7 +895,6 @@ var Input = {
               JSON.stringify({ type: 'ToggleChrome:Focus' }));
         break;
       case aEvent.DOM_VK_RETURN:
-      case aEvent.DOM_VK_ENTER:
         if (this.editState.editing)
           return;
         this.activateCurrent();

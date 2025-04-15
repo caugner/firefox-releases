@@ -10,7 +10,9 @@ EXTRA_JS_MODULES += [
     'BrowserNewTabPreloader.jsm',
     'BrowserUITelemetry.jsm',
     'ContentClick.jsm',
+    'ContentLinkHandler.jsm',
     'CustomizationTabPreloader.jsm',
+    'Feeds.jsm',
     'NetworkPrioritizer.jsm',
     'offlineAppCache.jsm',
     'SharedFrame.jsm',
@@ -18,7 +20,7 @@ EXTRA_JS_MODULES += [
     'SitePermissions.jsm',
     'Social.jsm',
     'TabCrashReporter.jsm',
-    'webappsUI.jsm',
+    'WebappManager.jsm',
     'webrtcUI.jsm',
 ]
 

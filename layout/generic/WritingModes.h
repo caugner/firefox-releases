@@ -192,6 +192,21 @@ public:
     }
   }
 
+  // For unicode-bidi: plaintext, reset the direction of the writing mode from
+  // the bidi paragraph level of the content
+
+  //XXX change uint8_t to UBiDiLevel after bug 924851
+  void SetDirectionFromBidiLevel(uint8_t level)
+  {
+    if (level & 1) {
+      // odd level, set RTL
+      mWritingMode |= eBidiMask;
+    } else {
+      // even level, set LTR
+      mWritingMode &= ~eBidiMask;
+    }
+  }
+
   /**
    * Compare two WritingModes for equality.
    */
@@ -818,6 +833,12 @@ public:
       *this : LogicalMargin(aToMode, GetPhysicalMargin(aFromMode));
   }
 
+  bool IsEmpty() const
+  {
+    return (mMargin.left == 0 && mMargin.top == 0 &&
+            mMargin.right == 0 && mMargin.bottom == 0);
+  }
+
 private:
   friend class LogicalRect;
 
@@ -1106,6 +1127,17 @@ public:
   {
     CHECK_WRITING_MODE(aWritingMode);
     return aWritingMode.IsVertical() ? mRect.XMost() : mRect.YMost();
+  }
+
+  bool IsEmpty() const
+  {
+    return (mRect.x == 0 && mRect.y == 0 &&
+            mRect.width == 0 && mRect.height == 0);
+  }
+
+  bool IsZeroSize() const
+  {
+    return (mRect.width == 0 && mRect.height == 0);
   }
 
 /* XXX are these correct?

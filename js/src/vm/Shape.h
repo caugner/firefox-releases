@@ -581,7 +581,7 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
     };
 
   private:
-    const Class         *clasp;         /* Class of referring object. */
+    const Class         *clasp_;        /* Class of referring object. */
     HeapPtrObject       parent;         /* Parent of referring object. */
     HeapPtrObject       metadata;       /* Optional holder of metadata about
                                          * the referring object. */
@@ -618,7 +618,7 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
     {
         JS_ASSERT(!(objectFlags & ~OBJECT_FLAG_MASK));
         mozilla::PodZero(this);
-        this->clasp = clasp;
+        this->clasp_ = clasp;
         this->parent = parent;
         this->metadata = metadata;
         this->flags = objectFlags;
@@ -631,7 +631,7 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
     {
         JS_ASSERT(!(objectFlags & ~OBJECT_FLAG_MASK));
         mozilla::PodZero(this);
-        this->clasp = clasp;
+        this->clasp_ = clasp;
         this->parent = parent;
         this->metadata = metadata;
         this->flags = objectFlags;
@@ -654,7 +654,7 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
     ~BaseShape();
 
     BaseShape &operator=(const BaseShape &other) {
-        clasp = other.clasp;
+        clasp_ = other.clasp_;
         parent = other.parent;
         metadata = other.metadata;
         flags = other.flags;
@@ -678,6 +678,8 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
         compartment_ = other.compartment_;
         return *this;
     }
+
+    const Class *clasp() const { return clasp_; }
 
     bool isOwned() const { return !!(flags & OWNED_SHAPE); }
 
@@ -760,7 +762,7 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
 
   private:
     static void staticAsserts() {
-        JS_STATIC_ASSERT(offsetof(BaseShape, clasp) == offsetof(js::shadow::BaseShape, clasp));
+        JS_STATIC_ASSERT(offsetof(BaseShape, clasp_) == offsetof(js::shadow::BaseShape, clasp_));
     }
 };
 
@@ -817,7 +819,7 @@ struct StackBaseShape
 
     explicit StackBaseShape(BaseShape *base)
       : flags(base->flags & BaseShape::OBJECT_FLAG_MASK),
-        clasp(base->clasp),
+        clasp(base->clasp_),
         parent(base->parent),
         metadata(base->metadata),
         rawGetter(nullptr),
@@ -856,7 +858,7 @@ inline
 BaseShape::BaseShape(const StackBaseShape &base)
 {
     mozilla::PodZero(this);
-    this->clasp = base.clasp;
+    this->clasp_ = base.clasp;
     this->parent = base.parent;
     this->metadata = base.metadata;
     this->flags = base.flags;
@@ -920,7 +922,6 @@ class Shape : public gc::BarrieredCell<Shape>
     uint32_t            slotInfo;       /* mask of above info */
     uint8_t             attrs;          /* attributes, see jsapi.h JSPROP_* */
     uint8_t             flags;          /* flags, see below for defines */
-    int16_t             shortid_;       /* tinyid, or local arg/var index */
 
     HeapPtrShape        parent;        /* parent node, reverse for..in order */
     /* kids is valid when !inDictionary(), listp is valid when inDictionary(). */
@@ -1031,7 +1032,7 @@ class Shape : public gc::BarrieredCell<Shape>
     };
 
     const Class *getObjectClass() const {
-        return base()->clasp;
+        return base()->clasp_;
     }
     JSObject *getObjectParent() const { return base()->parent; }
     JSObject *getObjectMetadata() const { return base()->metadata; }
@@ -1083,17 +1084,9 @@ class Shape : public gc::BarrieredCell<Shape>
     bool hasMissingSlot() const { return maybeSlot() == SHAPE_INVALID_SLOT; }
 
   public:
-    /* Public bits stored in shape->flags. */
-    enum {
-        HAS_SHORTID     = 0x40,
-        PUBLIC_FLAGS    = HAS_SHORTID
-    };
-
     bool inDictionary() const {
         return (flags & IN_DICTIONARY) != 0;
     }
-    unsigned getFlags() const { return flags & PUBLIC_FLAGS; }
-    bool hasShortID() const { return (flags & HAS_SHORTID) != 0; }
 
     PropertyOp getter() const { return base()->rawGetter; }
     bool hasDefaultGetter() const {return !base()->rawGetter; }
@@ -1133,20 +1126,16 @@ class Shape : public gc::BarrieredCell<Shape>
 
     bool matches(const Shape *other) const {
         return propid_.get() == other->propid_.get() &&
-               matchesParamsAfterId(other->base(), other->maybeSlot(), other->attrs, other->flags,
-                                    other->shortid_);
+               matchesParamsAfterId(other->base(), other->maybeSlot(), other->attrs, other->flags);
     }
 
     inline bool matches(const StackShape &other) const;
 
-    bool matchesParamsAfterId(BaseShape *base, uint32_t aslot, unsigned aattrs, unsigned aflags,
-                              int ashortid) const
+    bool matchesParamsAfterId(BaseShape *base, uint32_t aslot, unsigned aattrs, unsigned aflags) const
     {
         return base->unowned() == this->base()->unowned() &&
                maybeSlot() == aslot &&
-               attrs == aattrs &&
-               ((flags ^ aflags) & PUBLIC_FLAGS) == 0 &&
-               shortid_ == ashortid;
+               attrs == aattrs;
     }
 
     bool get(JSContext* cx, HandleObject receiver, JSObject *obj, JSObject *pobj, MutableHandleValue vp);
@@ -1214,15 +1203,6 @@ class Shape : public gc::BarrieredCell<Shape>
         // Return the actual jsid, not an internal reference.
         return propid();
     }
-
-    int16_t shortid() const { JS_ASSERT(hasShortID()); return maybeShortid(); }
-    int16_t maybeShortid() const { return shortid_; }
-
-    /*
-     * If SHORTID is set in shape->flags, we use shape->shortid rather
-     * than id when calling shape's getter or setter.
-     */
-    inline bool getUserId(JSContext *cx, MutableHandleId idp) const;
 
     uint8_t attributes() const { return attrs; }
     bool configurable() const { return (attrs & JSPROP_PERMANENT) == 0; }
@@ -1474,16 +1454,14 @@ struct StackShape
     uint32_t         slot_;
     uint8_t          attrs;
     uint8_t          flags;
-    int16_t          shortid;
 
     explicit StackShape(UnownedBaseShape *base, jsid propid, uint32_t slot,
-                        unsigned attrs, unsigned flags, int shortid)
+                        unsigned attrs, unsigned flags)
       : base(base),
         propid(propid),
         slot_(slot),
         attrs(uint8_t(attrs)),
-        flags(uint8_t(flags)),
-        shortid(int16_t(shortid))
+        flags(uint8_t(flags))
     {
         JS_ASSERT(base);
         JS_ASSERT(!JSID_IS_VOID(propid));
@@ -1495,8 +1473,7 @@ struct StackShape
         propid(shape->propidRef()),
         slot_(shape->maybeSlot()),
         attrs(shape->attrs),
-        flags(shape->flags),
-        shortid(shape->shortid_)
+        flags(shape->flags)
     {}
 
     bool hasSlot() const { return (attrs & JSPROP_SHARED) == 0; }
@@ -1506,7 +1483,7 @@ struct StackShape
     uint32_t maybeSlot() const { return slot_; }
 
     uint32_t slotSpan() const {
-        uint32_t free = JSSLOT_FREE(base->clasp);
+        uint32_t free = JSSLOT_FREE(base->clasp_);
         return hasMissingSlot() ? free : (maybeSlot() + 1);
     }
 
@@ -1519,9 +1496,7 @@ struct StackShape
         HashNumber hash = uintptr_t(base);
 
         /* Accumulate from least to most random so the low bits are most random. */
-        hash = mozilla::RotateLeft(hash, 4) ^ (flags & Shape::PUBLIC_FLAGS);
         hash = mozilla::RotateLeft(hash, 4) ^ attrs;
-        hash = mozilla::RotateLeft(hash, 4) ^ shortid;
         hash = mozilla::RotateLeft(hash, 4) ^ slot_;
         hash = mozilla::RotateLeft(hash, 4) ^ JSID_BITS(propid);
         return hash;
@@ -1598,7 +1573,6 @@ Shape::Shape(const StackShape &other, uint32_t nfixed)
     slotInfo(other.maybeSlot() | (nfixed << FIXED_SLOTS_SHIFT)),
     attrs(other.attrs),
     flags(other.flags),
-    shortid_(other.shortid),
     parent(nullptr)
 {
     kids.setNull();
@@ -1611,7 +1585,6 @@ Shape::Shape(UnownedBaseShape *base, uint32_t nfixed)
     slotInfo(SHAPE_INVALID_SLOT | (nfixed << FIXED_SLOTS_SHIFT)),
     attrs(JSPROP_SHARED),
     flags(0),
-    shortid_(0),
     parent(nullptr)
 {
     JS_ASSERT(base);
@@ -1661,7 +1634,7 @@ inline bool
 Shape::matches(const StackShape &other) const
 {
     return propid_.get() == other.propid &&
-           matchesParamsAfterId(other.base, other.slot_, other.attrs, other.flags, other.shortid);
+           matchesParamsAfterId(other.base, other.slot_, other.attrs, other.flags);
 }
 
 template<> struct RootKind<Shape *> : SpecificRootKind<Shape *, THING_ROOT_SHAPE> {};
@@ -1681,21 +1654,15 @@ MarkNonNativePropertyFound(MutableHandleShape propp)
 
 template <AllowGC allowGC>
 static inline void
-MarkDenseElementFound(typename MaybeRooted<Shape*, allowGC>::MutableHandleType propp)
+MarkDenseOrTypedArrayElementFound(typename MaybeRooted<Shape*, allowGC>::MutableHandleType propp)
 {
     propp.set(reinterpret_cast<Shape*>(1));
 }
 
 static inline bool
-IsImplicitDenseElement(Shape *prop)
+IsImplicitDenseOrTypedArrayElement(Shape *prop)
 {
     return prop == reinterpret_cast<Shape*>(1);
-}
-
-static inline uint8_t
-GetShapeAttributes(HandleShape shape)
-{
-    return IsImplicitDenseElement(shape) ? JSPROP_ENUMERATE : shape->attributes();
 }
 
 } // namespace js

@@ -5,6 +5,7 @@
 
 var gPluginHandler = {
   PREF_NOTIFY_MISSING_FLASH: "plugins.notifyMissingFlash",
+  PREF_HIDE_MISSING_PLUGINS_NOTIFICATION: "plugins.hideMissingPluginsNotification",
   PREF_SESSION_PERSIST_MINUTES: "plugin.sessionPermissionNow.intervalInMinutes",
   PREF_PERSISTENT_DAYS: "plugin.persistentPermissionAlways.intervalInDays",
 
@@ -32,14 +33,9 @@ var gPluginHandler = {
     let fallbackType = null;
     let blocklistState = null;
 
-    if (pluginElement instanceof HTMLAppletElement) {
-      tagMimetype = "application/x-java-vm";
-    } else {
-      tagMimetype = pluginElement.actualType;
-
-      if (tagMimetype == "") {
-        tagMimetype = pluginElement.type;
-      }
+    tagMimetype = pluginElement.actualType;
+    if (tagMimetype == "") {
+      tagMimetype = pluginElement.type;
     }
 
     if (gPluginHandler.isKnownPlugin(pluginElement)) {
@@ -388,6 +384,14 @@ var gPluginHandler = {
       }
     }
 
+    let closeIcon = this.getPluginUI(plugin, "closeIcon");
+    if (closeIcon) {
+      closeIcon.addEventListener("click", function(aEvent) {
+        if (aEvent.button == 0 && aEvent.isTrusted)
+          gPluginHandler.hideClickToPlayOverlay(plugin);
+      }, true);
+    }
+
     if (shouldShowNotification) {
       this._showClickToPlayNotification(browser, plugin, false);
     }
@@ -508,6 +512,12 @@ var gPluginHandler = {
   },
 
   showInstallNotification: function (aPlugin) {
+    let hideMissingPluginsNotification =
+      Services.prefs.getBoolPref(this.PREF_HIDE_MISSING_PLUGINS_NOTIFICATION);
+    if (hideMissingPluginsNotification) {
+      return false;
+    }
+
     let browser = gBrowser.getBrowserForDocument(aPlugin.ownerDocument
                                                         .defaultView.top.document);
     if (!browser.missingPlugins)
@@ -588,11 +598,6 @@ var gPluginHandler = {
 
     if (overlay) {
       overlay.addEventListener("click", gPluginHandler._overlayClickListener, true);
-      let closeIcon = this.getPluginUI(aPlugin, "closeIcon");
-      closeIcon.addEventListener("click", function(aEvent) {
-        if (aEvent.button == 0 && aEvent.isTrusted)
-          gPluginHandler.hideClickToPlayOverlay(aPlugin);
-      }, true);
     }
   },
 
@@ -688,7 +693,7 @@ var gPluginHandler = {
       Services.telemetry.getHistogramById("PLUGINS_NOTIFICATION_SHOWN")
         .add(!this.options.primaryPlugin);
       // Histograms always start at 0, even though our data starts at 1
-      let histogramCount = this.options.centerActions.size - 1;
+      let histogramCount = this.options.pluginData.size - 1;
       if (histogramCount > 4) {
         histogramCount = 4;
       }
@@ -848,12 +853,12 @@ var gPluginHandler = {
       plugins = [aPlugin];
     }
 
-    // If this is a new notification, create a centerActions map, otherwise append
-    let centerActions;
+    // If this is a new notification, create a pluginData map, otherwise append
+    let pluginData;
     if (notification) {
-      centerActions = notification.options.centerActions;
+      pluginData = notification.options.pluginData;
     } else {
-      centerActions = new Map();
+      pluginData = new Map();
     }
 
     let principal = aBrowser.contentDocument.nodePrincipal;
@@ -865,7 +870,7 @@ var gPluginHandler = {
         Cu.reportError("No permission string for active plugin.");
         continue;
       }
-      if (centerActions.has(pluginInfo.permissionString)) {
+      if (pluginData.has(pluginInfo.permissionString)) {
         continue;
       }
 
@@ -892,8 +897,8 @@ var gPluginHandler = {
         url = Services.urlFormatter.formatURLPref("app.support.baseURL") + "clicktoplay";
       }
       pluginInfo.detailsLink = url;
-      
-      centerActions.set(pluginInfo.permissionString, pluginInfo);
+
+      pluginData.set(pluginInfo.permissionString, pluginInfo);
     }
 
     let primaryPluginPermission = null;
@@ -916,7 +921,7 @@ var gPluginHandler = {
       dismissed: !aShowNow,
       eventCallback: this._clickToPlayNotificationEventCallback,
       primaryPlugin: primaryPluginPermission,
-      centerActions: centerActions
+      pluginData: pluginData
     };
     PopupNotifications.show(aBrowser, "click-to-play-plugins",
                             "", "plugins-notification-icon",
@@ -938,7 +943,7 @@ var gPluginHandler = {
     // outdated plugins.
     let haveInsecure = false;
     let actions = new Map();
-    for (let action of notification.options.centerActions.values()) {
+    for (let action of notification.options.pluginData.values()) {
       switch (action.fallbackType) {
         // haveInsecure will trigger the red flashing icon and the infobar
         // styling below

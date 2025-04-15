@@ -26,6 +26,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "jwcrypto",
 
 // All properties exposed by the public FxAccounts API.
 let publicProperties = [
+  "getAccountsClient",
   "getAccountsSignInURI",
   "getAccountsSignUpURI",
   "getAssertion",
@@ -68,22 +69,22 @@ AccountState.prototype = {
   cert: null,
   keyPair: null,
   signedInUser: null,
-  whenVerifiedPromise: null,
-  whenKeysReadyPromise: null,
+  whenVerifiedDeferred: null,
+  whenKeysReadyDeferred: null,
 
   get isCurrent() this.fxaInternal && this.fxaInternal.currentAccountState === this,
 
   abort: function() {
-    if (this.whenVerifiedPromise) {
-      this.whenVerifiedPromise.reject(
+    if (this.whenVerifiedDeferred) {
+      this.whenVerifiedDeferred.reject(
         new Error("Verification aborted; Another user signing in"));
-      this.whenVerifiedPromise = null;
+      this.whenVerifiedDeferred = null;
     }
 
-    if (this.whenKeysReadyPromise) {
-      this.whenKeysReadyPromise.reject(
+    if (this.whenKeysReadyDeferred) {
+      this.whenKeysReadyDeferred.reject(
         new Error("Verification aborted; Another user signing in"));
-      this.whenKeysReadyPromise = null;
+      this.whenKeysReadyDeferred = null;
     }
     this.cert = null;
     this.keyPair = null;
@@ -99,7 +100,11 @@ AccountState.prototype = {
 
     return this.fxaInternal.signedInUserStorage.get().then(
       user => {
-        log.debug("getUserAccountData -> " + JSON.stringify(user));
+        if (logPII) {
+          // don't stringify unless it will be written. We should replace this
+          // check with param substitutions added in bug 966674
+          log.debug("getUserAccountData -> " + JSON.stringify(user));
+        }
         if (user && user.version == this.version) {
           log.debug("setting signed in user");
           this.signedInUser = user;
@@ -131,7 +136,11 @@ AccountState.prototype = {
 
 
   getCertificate: function(data, keyPair, mustBeValidUntil) {
-    log.debug("getCertificate" + JSON.stringify(this.signedInUser));
+    if (logPII) {
+      // don't stringify unless it will be written. We should replace this
+      // check with param substitutions added in bug 966674
+      log.debug("getCertificate" + JSON.stringify(this.signedInUser));
+    }
     // TODO: get the lifetime from the cert's .exp field
     if (this.cert && this.cert.validUntil > mustBeValidUntil) {
       log.debug(" getCertificate already had one");
@@ -143,6 +152,7 @@ AccountState.prototype = {
                                                  keyPair.serializedPublicKey,
                                                  CERT_LIFETIME).then(
       cert => {
+        log.debug("getCertificate got a new one: " + !!cert);
         this.cert = {
           cert: cert,
           validUntil: willBeValidUntil
@@ -285,6 +295,10 @@ FxAccountsInternal.prototype = {
     return this.fxAccountsClient.now();
   },
 
+  getAccountsClient: function() {
+    return this.fxAccountsClient;
+  },
+
   /**
    * Return clock offset in milliseconds, as reported by the fxAccountsClient.
    * This can be overridden for testing.
@@ -308,7 +322,10 @@ FxAccountsInternal.prototype = {
    * Once the user's email is verified, we can request the keys
    */
   fetchKeys: function fetchKeys(keyFetchToken) {
-    log.debug("fetchKeys: " + keyFetchToken);
+    log.debug("fetchKeys: " + !!keyFetchToken);
+    if (logPII) {
+      log.debug("fetchKeys - the token is " + keyFetchToken);
+    }
     return this.fxAccountsClient.accountKeys(keyFetchToken);
   },
 
@@ -336,6 +353,8 @@ FxAccountsInternal.prototype = {
    *          kA: An encryption key from the FxA server
    *          kB: An encryption key derived from the user's FxA password
    *          verified: email verification status
+   *          authAt: The time (seconds since epoch) that this record was
+   *                  authenticated
    *        }
    *        or null if no user is signed in.
    */
@@ -362,10 +381,14 @@ FxAccountsInternal.prototype = {
    *        The credentials object obtained by logging in or creating
    *        an account on the FxA server:
    *        {
+   *          authAt: The time (seconds since epoch) that this record was
+   *                  authenticated
    *          email: The users email address
-   *          uid: The user's unique id
+   *          keyFetchToken: a keyFetchToken which has not yet been used
    *          sessionToken: Session for the FxA server
-   *          keyFetchToken: an unused keyFetchToken
+   *          uid: The user's unique id
+   *          unwrapBKey: used to unwrap kB, derived locally from the
+   *                      password (not revealed to the FxA server)
    *          verified: true/false
    *        }
    * @return Promise
@@ -501,21 +524,29 @@ FxAccountsInternal.prototype = {
       if (data.kA && data.kB) {
         return data;
       }
-      if (!currentState.whenKeysReadyPromise) {
-        currentState.whenKeysReadyPromise = Promise.defer();
+      if (!currentState.whenKeysReadyDeferred) {
+        currentState.whenKeysReadyDeferred = Promise.defer();
         this.fetchAndUnwrapKeys(data.keyFetchToken).then(
           data => {
-            currentState.whenKeysReadyPromise.resolve(data);
+            if (!data.kA || !data.kB) {
+              currentState.whenKeysReadyDeferred.reject(
+                new Error("user data missing kA or kB")
+              );
+              return;
+            }
+            currentState.whenKeysReadyDeferred.resolve(data);
           },
-          err => currentState.whenKeysReadyPromise.reject(err)
+          err => currentState.whenKeysReadyDeferred.reject(err)
         );
       }
-      return currentState.whenKeysReadyPromise.promise;
+      return currentState.whenKeysReadyDeferred.promise;
     }).then(result => currentState.resolve(result));
    },
 
   fetchAndUnwrapKeys: function(keyFetchToken) {
-    log.debug("fetchAndUnwrapKeys: token: " + keyFetchToken);
+    if (logPII) {
+      log.debug("fetchAndUnwrapKeys: token: " + keyFetchToken);
+    }
     let currentState = this.currentAccountState;
     return Task.spawn(function* task() {
       // Sign out if we don't have a key fetch token.
@@ -538,13 +569,18 @@ FxAccountsInternal.prototype = {
       let kB_hex = CryptoUtils.xor(CommonUtils.hexToBytes(data.unwrapBKey),
                                    wrapKB);
 
-      log.debug("kB_hex: " + kB_hex);
+      if (logPII) {
+        log.debug("kB_hex: " + kB_hex);
+      }
       data.kA = CommonUtils.bytesAsHex(kA);
       data.kB = CommonUtils.bytesAsHex(kB_hex);
 
       delete data.keyFetchToken;
 
-      log.debug("Keys Obtained: kA=" + data.kA + ", kB=" + data.kB);
+      log.debug("Keys Obtained: kA=" + !!data.kA + ", kB=" + !!data.kB);
+      if (logPII) {
+        log.debug("Keys Obtained: kA=" + data.kA + ", kB=" + data.kB);
+      }
 
       yield currentState.setUserAccountData(data);
       // We are now ready for business. This should only be invoked once
@@ -572,7 +608,10 @@ FxAccountsInternal.prototype = {
         log.error("getAssertionFromCert: " + err);
         d.reject(err);
       } else {
-        log.debug("getAssertionFromCert returning signed: " + signed);
+        log.debug("getAssertionFromCert returning signed: " + !!signed);
+        if (logPII) {
+          log.debug("getAssertionFromCert returning signed: " + signed);
+        }
         d.resolve(signed);
       }
     });
@@ -580,7 +619,10 @@ FxAccountsInternal.prototype = {
   },
 
   getCertificateSigned: function(sessionToken, serializedPublicKey, lifetime) {
-    log.debug("getCertificateSigned: " + sessionToken + " " + serializedPublicKey);
+    log.debug("getCertificateSigned: " + !!sessionToken + " " + !!serializedPublicKey);
+    if (logPII) {
+      log.debug("getCertificateSigned: " + sessionToken + " " + serializedPublicKey);
+    }
     return this.fxAccountsClient.signCertificate(
       sessionToken,
       JSON.parse(serializedPublicKey),
@@ -628,11 +670,11 @@ FxAccountsInternal.prototype = {
       log.debug("already verified");
       return currentState.resolve(data);
     }
-    if (!currentState.whenVerifiedPromise) {
+    if (!currentState.whenVerifiedDeferred) {
       log.debug("whenVerified promise starts polling for verified email");
       this.pollEmailStatus(currentState, data.sessionToken, "start");
     }
-    return currentState.whenVerifiedPromise.promise.then(
+    return currentState.whenVerifiedDeferred.promise.then(
       result => currentState.resolve(result)
     );
   },
@@ -650,8 +692,8 @@ FxAccountsInternal.prototype = {
       // if the user requested the verification email to be resent while we
       // were already polling for receipt of an earlier email.
       this.pollTimeRemaining = this.POLL_SESSION;
-      if (!currentState.whenVerifiedPromise) {
-        currentState.whenVerifiedPromise = Promise.defer();
+      if (!currentState.whenVerifiedDeferred) {
+        currentState.whenVerifiedDeferred = Promise.defer();
       }
     }
 
@@ -668,9 +710,9 @@ FxAccountsInternal.prototype = {
             })
             .then((data) => {
               // Now that the user is verified, we can proceed to fetch keys
-              if (currentState.whenVerifiedPromise) {
-                currentState.whenVerifiedPromise.resolve(data);
-                delete currentState.whenVerifiedPromise;
+              if (currentState.whenVerifiedDeferred) {
+                currentState.whenVerifiedDeferred.resolve(data);
+                delete currentState.whenVerifiedDeferred;
               }
             });
         } else {
@@ -682,11 +724,11 @@ FxAccountsInternal.prototype = {
               this.pollEmailStatus(currentState, sessionToken, "timer")}, this.POLL_STEP);
             log.debug("started timer " + this.currentTimer);
           } else {
-            if (currentState.whenVerifiedPromise) {
-              currentState.whenVerifiedPromise.reject(
+            if (currentState.whenVerifiedDeferred) {
+              currentState.whenVerifiedDeferred.reject(
                 new Error("User email verification timed out.")
               );
-              delete currentState.whenVerifiedPromise;
+              delete currentState.whenVerifiedDeferred;
             }
           }
         }

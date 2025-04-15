@@ -34,12 +34,7 @@ XPCOMUtils.defineLazyServiceGetter(this, "etld",
 
 // Internal helper methods and state
 let SocialServiceInternal = {
-  _enabled: Services.prefs.getBoolPref("social.enabled"),
-  get enabled() this._enabled,
-  set enabled(val) {
-    this._enabled = !!val;
-    Services.prefs.setBoolPref("social.enabled", !!val);
-  },
+  get enabled() this.providerArray.length > 0,
 
   get providerArray() {
     return [p for ([, p] of Iterator(this.providers))];
@@ -142,6 +137,8 @@ XPCOMUtils.defineLazyGetter(SocialServiceInternal, "providers", function () {
   for (let manifest of this.manifests) {
     try {
       if (ActiveProviders.has(manifest.origin)) {
+        // enable the api when a provider is enabled
+        MozSocialAPI.enabled = true;
         let provider = new SocialProvider(manifest);
         providers[provider.origin] = provider;
       }
@@ -215,11 +212,14 @@ let ActiveProviders = {
 };
 
 function migrateSettings() {
-  let activeProviders;
+  let activeProviders, enabled;
   try {
     activeProviders = Services.prefs.getCharPref("social.activeProviders");
   } catch(e) {
     // not set, we'll check if we need to migrate older prefs
+  }
+  if (Services.prefs.prefHasUserValue("social.enabled")) {
+    enabled = Services.prefs.getBoolPref("social.enabled");
   }
   if (activeProviders) {
     // migration from fx21 to fx22 or later
@@ -273,7 +273,14 @@ function migrateSettings() {
         string.data = JSON.stringify(manifest);
         Services.prefs.setComplexValue(prefname, Ci.nsISupportsString, string);
       }
+      // as of fx 29, we no longer rely on social.enabled. migration from prior
+      // versions should disable all service addons if social.enabled=false
+      if (enabled === false) {
+        ActiveProviders.delete(origin);
+      }
     }
+    ActiveProviders.flush();
+    Services.prefs.clearUserPref("social.enabled");
     return;
   }
 
@@ -338,9 +345,6 @@ function initService() {
     // enabled providers are not migrated.
     Cu.reportError("Error migrating social settings: " + e);
   }
-  // Initialize the MozSocialAPI
-  if (SocialServiceInternal.enabled)
-    MozSocialAPI.enabled = true;
 }
 
 function schedule(callback) {
@@ -363,21 +367,7 @@ this.SocialService = {
     return SocialServiceInternal.enabled;
   },
   set enabled(val) {
-    let enable = !!val;
-
-    // Allow setting to the same value when in safe mode so the
-    // feature can be force enabled.
-    if (enable == SocialServiceInternal.enabled &&
-        !Services.appinfo.inSafeMode)
-      return;
-
-    // if disabling, ensure all providers are actually disabled
-    if (!enable)
-      SocialServiceInternal.providerArray.forEach(function (p) p.enabled = false);
-
-    SocialServiceInternal.enabled = enable;
-    MozSocialAPI.enabled = enable;
-    Services.telemetry.getHistogramById("SOCIAL_TOGGLED").add(enable);
+    throw new Error("not allowed to set SocialService.enabled");
   },
 
   // Adds and activates a builtin provider. The provider may or may not have
@@ -410,6 +400,8 @@ this.SocialService = {
     if (SocialServiceInternal.providers[manifest.origin])
       throw new Error("SocialService.addProvider: provider with this origin already exists");
 
+    // enable the api when a provider is enabled
+    MozSocialAPI.enabled = true;
     let provider = new SocialProvider(manifest);
     SocialServiceInternal.providers[provider.origin] = provider;
     ActiveProviders.add(provider.origin);
@@ -439,6 +431,8 @@ this.SocialService = {
     ActiveProviders.delete(provider.origin);
 
     delete SocialServiceInternal.providers[origin];
+    // disable the api if we have no enabled providers
+    MozSocialAPI.enabled = SocialServiceInternal.enabled;
 
     if (addon) {
       // we have to do this now so the addon manager ui will update an uninstall
@@ -507,7 +501,8 @@ this.SocialService = {
   },
 
   _manifestFromData: function(type, data, principal) {
-    let sameOriginRequired = ['workerURL', 'sidebarURL', 'shareURL', 'statusURL', 'markURL'];
+    let featureURLs = ['workerURL', 'sidebarURL', 'shareURL', 'statusURL', 'markURL'];
+    let resolveURLs = featureURLs.concat(['postActivationURL']);
 
     if (type == 'directory') {
       // directory provided manifests must have origin in manifest, use that
@@ -521,11 +516,10 @@ this.SocialService = {
     // force/fixup origin
     data.origin = principal.origin;
 
-    // workerURL, sidebarURL is required and must be same-origin
     // iconURL and name are required
     // iconURL may be a different origin (CDN or data url support) if this is
     // a whitelisted or directory listed provider
-    let providerHasFeatures = [url for (url of sameOriginRequired) if (data[url])].length > 0;
+    let providerHasFeatures = [url for (url of featureURLs) if (data[url])].length > 0;
     if (!providerHasFeatures) {
       Cu.reportError("SocialService.manifestFromData manifest missing required urls.");
       return null;
@@ -534,12 +528,17 @@ this.SocialService = {
       Cu.reportError("SocialService.manifestFromData manifest missing name or iconURL.");
       return null;
     }
-    for (let url of sameOriginRequired) {
+    for (let url of resolveURLs) {
       if (data[url]) {
         try {
-          data[url] = Services.io.newURI(principal.URI.resolve(data[url]), null, null).spec;
+          let resolved = Services.io.newURI(principal.URI.resolve(data[url]), null, null);
+          if (!(resolved.schemeIs("http") || resolved.schemeIs("https"))) {
+            Cu.reportError("SocialService.manifestFromData unsupported scheme '" + resolved.scheme + "' for " + principal.origin);
+            return null;
+          }
+          data[url] = resolved.spec;
         } catch(e) {
-          Cu.reportError("SocialService.manifestFromData same-origin missmatch in manifest for " + principal.origin);
+          Cu.reportError("SocialService.manifestFromData unable to resolve '" + url + "' for " + principal.origin);
           return null;
         }
       }
@@ -580,14 +579,13 @@ this.SocialService = {
       },
     };
 
-    let link = chromeWin.document.getElementById("servicesInstall-learnmore-link");
-    link.value = browserBundle.GetStringFromName("service.install.learnmore");
-    link.href = Services.urlFormatter.formatURLPref("app.support.baseURL") + "social-api";
-
+    let options = {
+                    learnMoreURL: Services.urlFormatter.formatURLPref("app.support.baseURL") + "social-api",
+                  };
     let anchor = "servicesInstall-notification-icon";
     let notificationid = "servicesInstall";
     chromeWin.PopupNotifications.show(browser, notificationid, message, anchor,
-                                      action, [], {});
+                                      action, [], options);
   },
 
   installProvider: function(aDOMDocument, data, installCallback) {
@@ -744,6 +742,7 @@ function SocialProvider(input) {
   this.markURL = input.markURL;
   this.markedIcon = input.markedIcon;
   this.unmarkedIcon = input.unmarkedIcon;
+  this.postActivationURL = input.postActivationURL;
   this.origin = input.origin;
   let originUri = Services.io.newURI(input.origin, null, null);
   this.principal = Services.scriptSecurityManager.getNoAppCodebasePrincipal(originUri);

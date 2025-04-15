@@ -24,10 +24,11 @@
 #include "js/Tracer.h"
 
 namespace js {
-namespace gc {
 
-extern void
-CrashAtUnhandlableOOM(const char *);
+void
+CrashAtUnhandlableOOM(const char *reason);
+
+namespace gc {
 
 /*
  * BufferableRef represents an abstract reference for use in the generational
@@ -115,6 +116,8 @@ class StoreBuffer
             return !storage_->isEmpty() && storage_->availableInCurrentChunk() < MinAvailableSize;
         }
 
+        void handleOverflow(StoreBuffer *owner);
+
         /* Compaction algorithms. */
         void compactRemoveDuplicates(StoreBuffer *owner);
 
@@ -135,11 +138,8 @@ class StoreBuffer
             if (!tp)
                 CrashAtUnhandlableOOM("Failed to allocate for MonoTypeBuffer::put.");
 
-            if (isAboutToOverflow()) {
-                compact(owner);
-                if (isAboutToOverflow())
-                    owner->setAboutToOverflow();
-            }
+            if (isAboutToOverflow())
+                handleOverflow(owner);
         }
 
         /* Mark the source of all edges in the store buffer. */

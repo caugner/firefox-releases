@@ -106,7 +106,6 @@ var tests = {
     // adding provider
     is(gBrowser.contentDocument.location.href, "about:blank");
     SocialService.addProvider(manifest, function(provider) {
-      Social.provider = provider;
       is(SocialUI.enabled, true, "SocialUI is enabled");
       checkSocialUI();
       // share should not be enabled since we only have about:blank page
@@ -125,7 +124,6 @@ var tests = {
     let testData = corpus[0];
     loadURLInTab(testData.url, function(tab) {
       SocialService.addProvider(manifest, function(provider) {
-        Social.provider = provider;
         is(SocialUI.enabled, true, "SocialUI is enabled");
         checkSocialUI();
         // share should not be enabled since we only have about:blank page
@@ -147,7 +145,7 @@ var tests = {
     let testTab;
     let testIndex = 0;
     let testData = corpus[testIndex++];
-    
+
     function runOneTest() {
       loadURLInTab(testData.url, function(tab) {
         testTab = tab;

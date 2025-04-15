@@ -11,6 +11,8 @@ const Cc = Components.classes;
 //   Services.prefs.clearUserPref("devtools.debugger.log");
 // });
 
+//Services.prefs.setBoolPref("devtools.dump.emit", true);
+
 let tempScope = {};
 Cu.import("resource://gre/modules/devtools/LayoutHelpers.jsm", tempScope);
 let LayoutHelpers = tempScope.LayoutHelpers;
@@ -25,18 +27,166 @@ let console = tempScope.console;
 let testDir = gTestPath.substr(0, gTestPath.lastIndexOf("/"));
 Services.scriptloader.loadSubScript(testDir + "../../../commandline/test/helpers.js", this);
 
+gDevTools.testing = true;
 SimpleTest.registerCleanupFunction(() => {
-  console.error("Here we are\n")
-  let {DebuggerServer} = Cu.import("resource://gre/modules/devtools/dbg-server.jsm", {});
-  console.error("DebuggerServer open connections: " + Object.getOwnPropertyNames(DebuggerServer._connections).length);
+  gDevTools.testing = false;
 });
 
-function openInspector(callback)
-{
+SimpleTest.registerCleanupFunction(() => {
+  console.error("Here we are\n");
+  let {DebuggerServer} = Cu.import("resource://gre/modules/devtools/dbg-server.jsm", {});
+  console.error("DebuggerServer open connections: " + Object.getOwnPropertyNames(DebuggerServer._connections).length);
+
+  Services.prefs.clearUserPref("devtools.dump.emit");
+  Services.prefs.clearUserPref("devtools.inspector.activeSidebar");
+});
+
+/**
+ * Simple DOM node accesor function that takes either a node or a string css
+ * selector as argument and returns the corresponding node
+ * @param {String|DOMNode} nodeOrSelector
+ * @return {DOMNode}
+ */
+function getNode(nodeOrSelector) {
+  return typeof nodeOrSelector === "string" ?
+    content.document.querySelector(nodeOrSelector) :
+    nodeOrSelector;
+}
+
+/**
+ * Set the inspector's current selection to a node or to the first match of the
+ * given css selector
+ * @param {InspectorPanel} inspector The instance of InspectorPanel currently
+ * loaded in the toolbox
+ * @param {String} reason Defaults to "test" which instructs the inspector not
+ * to highlight the node upon selection
+ * @param {String} reason Defaults to "test" which instructs the inspector not to highlight the node upon selection
+ * @return a promise that resolves when the inspector is updated with the new
+ * node
+ */
+function selectNode(nodeOrSelector, inspector, reason="test") {
+  info("Selecting the node " + nodeOrSelector);
+  let node = getNode(nodeOrSelector);
+  let updated = inspector.once("inspector-updated");
+  inspector.selection.setNode(node, reason);
+  return updated;
+}
+
+/**
+ * Open the toolbox, with the inspector tool visible.
+ * @param {Function} cb Optional callback, if you don't want to use the returned
+ * promise
+ * @return a promise that resolves when the inspector is ready
+ */
+let openInspector = Task.async(function*(cb) {
+  info("Opening the inspector");
   let target = TargetFactory.forTab(gBrowser.selectedTab);
-  gDevTools.showToolbox(target, "inspector").then(function(toolbox) {
-    callback(toolbox.getCurrentPanel(), toolbox);
-  }).then(null, console.error);
+
+  let inspector, toolbox;
+
+  // Checking if the toolbox and the inspector are already loaded
+  // The inspector-updated event should only be waited for if the inspector
+  // isn't loaded yet
+  toolbox = gDevTools.getToolbox(target);
+  if (toolbox) {
+    inspector = toolbox.getPanel("inspector");
+    if (inspector) {
+      info("Toolbox and inspector already open");
+      if (cb) {
+        return cb(inspector, toolbox);
+      } else {
+        return {
+          toolbox: toolbox,
+          inspector: inspector
+        };
+      }
+    }
+  }
+
+  info("Opening the toolbox");
+  toolbox = yield gDevTools.showToolbox(target, "inspector");
+  yield waitForToolboxFrameFocus(toolbox);
+  inspector = toolbox.getPanel("inspector");
+
+  info("Waiting for the inspector to update");
+  yield inspector.once("inspector-updated");
+
+  if (cb) {
+    return cb(inspector, toolbox);
+  } else {
+    return {
+      toolbox: toolbox,
+      inspector: inspector
+    };
+  }
+});
+
+/**
+ * Wait for the toolbox frame to receive focus after it loads
+ * @param {Toolbox} toolbox
+ * @return a promise that resolves when focus has been received
+ */
+function waitForToolboxFrameFocus(toolbox) {
+  info("Making sure that the toolbox's frame is focused");
+  let def = promise.defer();
+  let win = toolbox.frame.contentWindow;
+  waitForFocus(def.resolve, win);
+  return def.promise;
+}
+
+/**
+ * Open the toolbox, with the inspector tool visible, and the sidebar that
+ * corresponds to the given id selected
+ * @return a promise that resolves when the inspector is ready and the sidebar
+ * view is visible and ready
+ */
+let openInspectorSideBar = Task.async(function*(id) {
+  let {toolbox, inspector} = yield openInspector();
+
+  if (!hasSideBarTab(inspector, id)) {
+    info("Waiting for the " + id + " sidebar to be ready");
+    yield inspector.sidebar.once(id + "-ready");
+  }
+
+  info("Selecting the " + id + " sidebar");
+  inspector.sidebar.select(id);
+
+  return {
+    toolbox: toolbox,
+    inspector: inspector,
+    view: inspector.sidebar.getWindowForTab(id)[id].view
+  };
+});
+
+/**
+ * Open the toolbox, with the inspector tool visible, and the computed-view
+ * sidebar tab selected.
+ * @return a promise that resolves when the inspector is ready and the computed
+ * view is visible and ready
+ */
+function openComputedView() {
+  return openInspectorSideBar("computedview");
+}
+
+/**
+ * Open the toolbox, with the inspector tool visible, and the rule-view
+ * sidebar tab selected.
+ * @return a promise that resolves when the inspector is ready and the rule
+ * view is visible and ready
+ */
+function openRuleView() {
+  return openInspectorSideBar("ruleview");
+}
+
+/**
+ * Checks whether the inspector's sidebar corresponding to the given id already
+ * exists
+ * @param {InspectorPanel}
+ * @param {String}
+ * @return {Boolean}
+ */
+function hasSideBarTab(inspector, id) {
+  return !!inspector.sidebar.getWindowForTab(id);
 }
 
 function getActiveInspector()
@@ -56,61 +206,116 @@ function getHighlighter()
   return gBrowser.selectedBrowser.parentNode.querySelector(".highlighter-container");
 }
 
-function getHighlighterOutline()
-{
-  let h = getHighlighter();
-  if (h) {
-    return h.querySelector(".highlighter-outline");
-  }
+function getSimpleBorderRect() {
+  let {p1, p2, p3, p4} = getBoxModelStatus().border.points;
+
+  return {
+    top: p1.y,
+    left: p1.x,
+    width: p2.x - p1.x,
+    height: p4.y - p1.y
+  };
 }
 
-function getHighlighterOutlineRect() {
-  let helper = new LayoutHelpers(window.content);
-  let outline = getHighlighterOutline();
+function getBoxModelRoot() {
+  let highlighter = getHighlighter();
+  return highlighter.querySelector(".box-model-root");
+}
 
-  if (outline) {
-    let browserOffsetRect = helper.getDirtyRect(gBrowser.selectedBrowser);
-    let outlineRect = helper.getDirtyRect(outline);
-    outlineRect.top -= browserOffsetRect.top;
-    outlineRect.left -= browserOffsetRect.left;
+function getBoxModelStatus() {
+  let root = getBoxModelRoot();
+  let inspector = getActiveInspector();
 
-    return outlineRect;
-  }
+  return {
+    visible: !root.hasAttribute("hidden"),
+    currentNode: inspector.walker.currentNode,
+    margin: {
+      points: getPointsForRegion("margin"),
+      visible: isRegionHidden("margin")
+    },
+    border: {
+      points: getPointsForRegion("border"),
+      visible: isRegionHidden("border")
+    },
+    padding: {
+      points: getPointsForRegion("padding"),
+      visible: isRegionHidden("padding")
+    },
+    content: {
+      points: getPointsForRegion("content"),
+      visible: isRegionHidden("content")
+    },
+    guides: {
+      top: getGuideStatus("top"),
+      right: getGuideStatus("right"),
+      bottom: getGuideStatus("bottom"),
+      left: getGuideStatus("left")
+    }
+  };
+}
+
+function getGuideStatus(location) {
+  let root = getBoxModelRoot();
+  let guide = root.querySelector(".box-model-guide-" + location);
+
+  return {
+    visible: !guide.hasAttribute("hidden"),
+    x1: guide.getAttribute("x1"),
+    y1: guide.getAttribute("y1"),
+    x2: guide.getAttribute("x2"),
+    y2: guide.getAttribute("y2")
+  };
+}
+
+function getPointsForRegion(region) {
+  let root = getBoxModelRoot();
+  let box = root.querySelector(".box-model-" + region);
+  let points = box.getAttribute("points").split(/[, ]/);
+
+  // We multiply each value by 1 to cast it into a number
+  return {
+    p1: {
+      x: parseFloat(points[0]),
+      y: parseFloat(points[1])
+    },
+    p2: {
+      x: parseFloat(points[2]),
+      y: parseFloat(points[3])
+    },
+    p3: {
+      x: parseFloat(points[4]),
+      y: parseFloat(points[5])
+    },
+    p4: {
+      x: parseFloat(points[6]),
+      y: parseFloat(points[7])
+    }
+  };
+}
+
+function isRegionHidden(region) {
+  let root = getBoxModelRoot();
+  let box = root.querySelector(".box-model-" + region);
+
+  return !box.hasAttribute("hidden");
 }
 
 function isHighlighting()
 {
-  let outline = getHighlighterOutline();
-  return outline && !outline.hasAttribute("hidden");
+  let root = getBoxModelRoot();
+  return !root.hasAttribute("hidden");
 }
 
 function getHighlitNode()
 {
   if (isHighlighting()) {
     let helper = new LayoutHelpers(window.content);
-    let outlineRect = getHighlighterOutlineRect();
+    let points = getBoxModelStatus().content.points;
+    let x = (points.p1.x + points.p2.x + points.p3.x + points.p4.x) / 4;
+    let y = (points.p1.y + points.p2.y + points.p3.y + points.p4.y) / 4;
 
-    let a = {
-      x: outlineRect.left,
-      y: outlineRect.top
-    };
-
-    let b = {
-      x: a.x + outlineRect.width,
-      y: a.y + outlineRect.height
-    };
-
-    let {x, y} = getMidPoint(a, b);
     return helper.getElementFromPoint(window.content.document, x, y);
   }
-}
-
-function getMidPoint(aPointA, aPointB)
-{
-  let pointC = {};
-  pointC.x = (aPointB.x - aPointA.x) / 2 + aPointA.x;
-  pointC.y = (aPointB.y - aPointA.y) / 2 + aPointA.y;
-  return pointC;
 }
 
 function computedView()
@@ -135,6 +340,15 @@ function ruleView()
 function getComputedView() {
   let inspector = getActiveInspector();
   return inspector.sidebar.getWindowForTab("computedview").computedview.view;
+}
+
+function waitForView(aName, aCallback) {
+  let inspector = getActiveInspector();
+  if (inspector.sidebar.getTab(aName)) {
+    aCallback();
+  } else {
+    inspector.sidebar.once(aName + "-ready", aCallback);
+  }
 }
 
 function synthesizeKeyFromKeyTag(aKeyId) {

@@ -1600,4 +1600,4 @@ Function SetAsDefaultAppUser
 FunctionEnd
 !define SetAsDefaultAppUser "Call SetAsDefaultAppUser"
 
-!endif
+!endif ; NO_LOG

@@ -13,12 +13,16 @@
 #include "AccessCheck.h"
 #include "jsapi.h"
 #include "mozAutoDocUpdate.h"
+#include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/CORSMode.h"
+#include "mozilla/EventListenerManager.h"
+#include "mozilla/InternalMutationEvent.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/MutationEvent.h"
 #include "mozilla/Telemetry.h"
-#include "nsAsyncDOMEvent.h"
+#include "mozilla/dom/Element.h"
+#include "mozilla/dom/Event.h"
+#include "mozilla/dom/ShadowRoot.h"
 #include "nsAttrValueOrString.h"
 #include "nsBindingManager.h"
 #include "nsCCUncollectableMarker.h"
@@ -36,12 +40,10 @@
 #include "nsDOMString.h"
 #include "nsDOMTokenList.h"
 #include "nsEventDispatcher.h"
-#include "nsEventListenerManager.h"
 #include "nsEventStateManager.h"
 #include "nsFocusManager.h"
 #include "nsFrameManager.h"
 #include "nsFrameSelection.h"
-#include "mozilla/dom/Element.h"
 #include "nsGenericHTMLElement.h"
 #include "nsGkAtoms.h"
 #include "nsIAnonymousContentCreator.h"
@@ -61,7 +63,6 @@
 #include "nsIEditor.h"
 #include "nsIEditorIMESupport.h"
 #include "nsILinkHandler.h"
-#include "nsINameSpaceManager.h"
 #include "nsINodeInfo.h"
 #include "nsIPresShell.h"
 #include "nsIScriptError.h"
@@ -75,6 +76,7 @@
 #include "nsIWebNavigation.h"
 #include "nsIWidget.h"
 #include "nsLayoutUtils.h"
+#include "nsNameSpaceManager.h"
 #include "nsNetUtil.h"
 #include "nsNodeInfoManager.h"
 #include "nsNodeUtils.h"
@@ -96,11 +98,9 @@
 #include "nsCSSParser.h"
 #include "HTMLLegendElement.h"
 #include "nsWrapperCacheInlines.h"
-#include "mozilla/dom/ShadowRoot.h"
 #include "WrapperFactory.h"
 #include "DocumentType.h"
 #include <algorithm>
-#include "nsDOMEvent.h"
 #include "nsGlobalWindow.h"
 #include "nsDOMMutationObserver.h"
 
@@ -1066,7 +1066,7 @@ nsINode::AddEventListener(const nsAString& aType,
     aWantsUntrusted = true;
   }
 
-  nsEventListenerManager* listener_manager = GetOrCreateListenerManager();
+  EventListenerManager* listener_manager = GetOrCreateListenerManager();
   NS_ENSURE_STATE(listener_manager);
   listener_manager->AddEventListener(aType, aListener, aUseCapture,
                                      aWantsUntrusted);
@@ -1087,7 +1087,7 @@ nsINode::AddEventListener(const nsAString& aType,
     wantsUntrusted = aWantsUntrusted.Value();
   }
 
-  nsEventListenerManager* listener_manager = GetOrCreateListenerManager();
+  EventListenerManager* listener_manager = GetOrCreateListenerManager();
   if (!listener_manager) {
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return;
@@ -1123,7 +1123,7 @@ nsINode::RemoveEventListener(const nsAString& aType,
                              nsIDOMEventListener* aListener,
                              bool aUseCapture)
 {
-  nsEventListenerManager* elm = GetExistingListenerManager();
+  EventListenerManager* elm = GetExistingListenerManager();
   if (elm) {
     elm->RemoveEventListener(aType, aListener, aUseCapture);
   }
@@ -1184,13 +1184,13 @@ nsINode::DispatchDOMEvent(WidgetEvent* aEvent,
                                              aPresContext, aEventStatus);
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsINode::GetOrCreateListenerManager()
 {
   return nsContentUtils::GetListenerManagerForNode(this);
 }
 
-nsEventListenerManager*
+EventListenerManager*
 nsINode::GetExistingListenerManager() const
 {
   return nsContentUtils::GetExistingListenerManagerForNode(this);
@@ -1442,7 +1442,7 @@ nsINode::doInsertChildAt(nsIContent* aKid, uint32_t aIndex,
       mutation.mRelatedNode = do_QueryInterface(this);
 
       mozAutoSubtreeModified subtree(OwnerDoc(), this);
-      (new nsAsyncDOMEvent(aKid, mutation))->RunDOMEventWhenSafe();
+      (new AsyncEventDispatcher(aKid, mutation))->RunDOMEventWhenSafe();
     }
   }
 
@@ -2192,7 +2192,7 @@ nsINode::GetBoundMutationObservers(nsTArray<nsRefPtr<nsDOMMutationObserver> >& a
       nsCOMPtr<nsDOMMutationObserver> mo = do_QueryInterface(objects->ObjectAt(i));
       if (mo) {
         MOZ_ASSERT(!aResult.Contains(mo));
-        aResult.AppendElement(mo.forget());
+        aResult.AppendElement(mo);
       }
     }
   }
@@ -2202,7 +2202,7 @@ size_t
 nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t n = 0;
-  nsEventListenerManager* elm = GetExistingListenerManager();
+  EventListenerManager* elm = GetExistingListenerManager();
   if (elm) {
     n += elm->SizeOfIncludingThis(aMallocSizeOf);
   }
@@ -2220,13 +2220,13 @@ nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 
 #define EVENT(name_, id_, type_, struct_)                                    \
   EventHandlerNonNull* nsINode::GetOn##name_() {                             \
-    nsEventListenerManager *elm = GetExistingListenerManager();              \
+    EventListenerManager *elm = GetExistingListenerManager();                \
     return elm ? elm->GetEventHandler(nsGkAtoms::on##name_, EmptyString())   \
                : nullptr;                                                    \
   }                                                                          \
   void nsINode::SetOn##name_(EventHandlerNonNull* handler)                   \
   {                                                                          \
-    nsEventListenerManager *elm = GetOrCreateListenerManager();              \
+    EventListenerManager *elm = GetOrCreateListenerManager();                \
     if (elm) {                                                               \
       elm->SetEventHandler(nsGkAtoms::on##name_, EmptyString(), handler);    \
     }                                                                        \
@@ -2545,7 +2545,7 @@ nsresult
 nsINode::QuerySelectorAll(const nsAString& aSelector, nsIDOMNodeList **aReturn)
 {
   ErrorResult rv;
-  *aReturn = nsINode::QuerySelectorAll(aSelector, rv).get();
+  *aReturn = nsINode::QuerySelectorAll(aSelector, rv).take();
   return rv.ErrorCode();
 }
 
@@ -2633,7 +2633,7 @@ nsINode::GetAttributes()
 }
 
 bool
-EventTarget::DispatchEvent(nsDOMEvent& aEvent,
+EventTarget::DispatchEvent(Event& aEvent,
                            ErrorResult& aRv)
 {
   bool result = false;

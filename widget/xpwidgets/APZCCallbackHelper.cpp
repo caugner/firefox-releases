@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "APZCCallbackHelper.h"
-#include "gfxPlatform.h" // For gfxPlatform::GetPrefLayersEnableTiles
+#include "gfxPrefs.h" // For gfxPrefs::LayersTilesEnabled
 #include "mozilla/Preferences.h"
 #include "nsIScrollableFrame.h"
 #include "nsLayoutUtils.h"
@@ -67,29 +67,78 @@ MaybeAlignAndClampDisplayPort(mozilla::layers::FrameMetrics& aFrameMetrics,
 {
   // Correct the display-port by the difference between the requested scroll
   // offset and the resulting scroll offset after setting the requested value.
-  CSSRect& displayPort = aFrameMetrics.mDisplayPort;
-  displayPort += aFrameMetrics.mScrollOffset - aActualScrollOffset;
+  if (!aFrameMetrics.GetUseDisplayPortMargins()) {
+      CSSRect& displayPort = aFrameMetrics.mDisplayPort;
+      displayPort += aFrameMetrics.GetScrollOffset() - aActualScrollOffset;
 
-  // Expand the display port to the next tile boundaries, if tiled thebes layers
-  // are enabled.
-  if (gfxPlatform::GetPrefLayersEnableTiles()) {
-    displayPort =
-      ExpandDisplayPortToTileBoundaries(displayPort + aActualScrollOffset,
-                                        aFrameMetrics.LayersPixelsPerCSSPixel())
-      - aActualScrollOffset;
+      // Expand the display port to the next tile boundaries, if tiled thebes layers
+      // are enabled.
+      if (gfxPrefs::LayersTilesEnabled()) {
+        // We don't use LayersPixelsPerCSSPixel() here as mCumulativeResolution on
+        // this FrameMetrics may be incorrect (and is about to be reset by mZoom).
+        displayPort =
+          ExpandDisplayPortToTileBoundaries(displayPort + aActualScrollOffset,
+                                            aFrameMetrics.GetZoom() *
+                                            ScreenToLayerScale(1.0))
+          - aActualScrollOffset;
+      }
+
+      // Finally, clamp the display port to the expanded scrollable rect.
+      CSSRect scrollableRect = aFrameMetrics.GetExpandedScrollableRect();
+      displayPort = scrollableRect.Intersect(displayPort + aActualScrollOffset)
+        - aActualScrollOffset;
+  } else {
+      LayerPoint shift =
+          (aFrameMetrics.GetScrollOffset() - aActualScrollOffset) *
+          aFrameMetrics.LayersPixelsPerCSSPixel();
+      LayerMargin margins = aFrameMetrics.GetDisplayPortMargins();
+      margins.left -= shift.x;
+      margins.right += shift.x;
+      margins.top -= shift.y;
+      margins.bottom += shift.y;
+      aFrameMetrics.SetDisplayPortMargins(margins);
   }
+}
 
-  // Finally, clamp the display port to the expanded scrollable rect.
-  CSSRect scrollableRect = aFrameMetrics.GetExpandedScrollableRect();
-  displayPort = scrollableRect.Intersect(displayPort + aActualScrollOffset)
-    - aActualScrollOffset;
+static void
+RecenterDisplayPort(mozilla::layers::FrameMetrics& aFrameMetrics)
+{
+    if (!aFrameMetrics.GetUseDisplayPortMargins()) {
+        CSSRect compositionBounds(aFrameMetrics.CalculateCompositedRectInCssPixels());
+        aFrameMetrics.mDisplayPort.x = (compositionBounds.width - aFrameMetrics.mDisplayPort.width) / 2;
+        aFrameMetrics.mDisplayPort.y = (compositionBounds.height - aFrameMetrics.mDisplayPort.height) / 2;
+    } else {
+        LayerMargin margins = aFrameMetrics.GetDisplayPortMargins();
+        margins.right = margins.left = margins.LeftRight() / 2;
+        margins.top = margins.bottom = margins.TopBottom() / 2;
+        aFrameMetrics.SetDisplayPortMargins(margins);
+    }
 }
 
 static CSSPoint
-ScrollFrameTo(nsIScrollableFrame* aFrame, const CSSPoint& aPoint)
+ScrollFrameTo(nsIScrollableFrame* aFrame, const CSSPoint& aPoint, bool& aSuccessOut)
 {
+  aSuccessOut = false;
+
   if (!aFrame) {
-    return CSSPoint();
+    return aPoint;
+  }
+
+  CSSPoint targetScrollPosition = aPoint;
+
+  // If the frame is overflow:hidden on a particular axis, we don't want to allow
+  // user-driven scroll on that axis. Simply set the scroll position on that axis
+  // to whatever it already is. Note that this will leave the APZ's async scroll
+  // position out of sync with the gecko scroll position, but APZ can deal with that
+  // (by design). Note also that when we run into this case, even if both axes
+  // have overflow:hidden, we want to set aSuccessOut to true, so that the displayport
+  // follows the async scroll position rather than the gecko scroll position.
+  CSSPoint geckoScrollPosition = CSSPoint::FromAppUnits(aFrame->GetScrollPosition());
+  if (aFrame->GetScrollbarStyles().mVertical == NS_STYLE_OVERFLOW_HIDDEN) {
+    targetScrollPosition.y = geckoScrollPosition.y;
+  }
+  if (aFrame->GetScrollbarStyles().mHorizontal == NS_STYLE_OVERFLOW_HIDDEN) {
+    targetScrollPosition.x = geckoScrollPosition.x;
   }
 
   // If the scrollable frame is currently in the middle of an async or smooth
@@ -97,20 +146,16 @@ ScrollFrameTo(nsIScrollableFrame* aFrame, const CSSPoint& aPoint)
   // Also if the scrollable frame got a scroll request from something other than us
   // since the last layers update, then we don't want to push our scroll request
   // because we'll clobber that one, which is bad.
-  // Note that content may have just finished sending a layers update with a scroll
-  // offset update to the APZ, in which case the origin will be reset to null and we
-  // might actually be clobbering the content-side scroll offset with a stale APZ
-  // scroll offset. This is unavoidable because of the async communication between
-  // APZ and content; however the code in NotifyLayersUpdated should reissue a new
-  // repaint request to bring everything back into sync.
   if (!aFrame->IsProcessingAsyncScroll() &&
      (!aFrame->OriginOfLastScroll() || aFrame->OriginOfLastScroll() == nsGkAtoms::apz)) {
-    aFrame->ScrollToCSSPixelsApproximate(aPoint, nsGkAtoms::apz);
+    aFrame->ScrollToCSSPixelsApproximate(targetScrollPosition, nsGkAtoms::apz);
+    geckoScrollPosition = CSSPoint::FromAppUnits(aFrame->GetScrollPosition());
+    aSuccessOut = true;
   }
   // Return the final scroll position after setting it so that anything that relies
   // on it can have an accurate value. Note that even if we set it above re-querying it
   // is a good idea because it may have gotten clamped or rounded.
-  return CSSPoint::FromAppUnits(aFrame->GetScrollPosition());
+  return geckoScrollPosition;
 }
 
 void
@@ -130,18 +175,30 @@ APZCCallbackHelper::UpdateRootFrame(nsIDOMWindowUtils* aUtils,
     // be 1000 pixels long but the frame would still be 100 pixels, and so the maximum
     // scroll range would be 900. Therefore this calculation depends on the zoom applied
     // to the content relative to the container.
-    CSSSize scrollPort = aMetrics.CalculateCompositedRectInCssPixels().Size();
+    CSSSize scrollPort = CSSSize(aMetrics.CalculateCompositedRectInCssPixels().Size());
     aUtils->SetScrollPositionClampingScrollPortSize(scrollPort.width, scrollPort.height);
 
     // Scroll the window to the desired spot
     nsIScrollableFrame* sf = nsLayoutUtils::FindScrollableFrameFor(aMetrics.mScrollId);
-    CSSPoint actualScrollOffset = ScrollFrameTo(sf, aMetrics.mScrollOffset);
+    bool scrollUpdated = false;
+    CSSPoint actualScrollOffset = ScrollFrameTo(sf, aMetrics.GetScrollOffset(), scrollUpdated);
+
+    if (!scrollUpdated) {
+      // For whatever reason we couldn't update the scroll offset on the scroll frame,
+      // which means the data APZ used for its displayport calculation is stale. Fall
+      // back to a sane default behaviour. Note that we don't tile-align the recentered
+      // displayport because tile-alignment depends on the scroll position, and the
+      // scroll position here is out of our control. See bug 966507 comment 21 for a
+      // more detailed explanation.
+      RecenterDisplayPort(aMetrics);
+    }
 
     // Correct the display port due to the difference between mScrollOffset and the
     // actual scroll offset, possibly align it to tile boundaries (if tiled layers are
     // enabled), and clamp it to the scrollable rect.
     MaybeAlignAndClampDisplayPort(aMetrics, actualScrollOffset);
-    aMetrics.mScrollOffset = actualScrollOffset;
+
+    aMetrics.SetScrollOffset(actualScrollOffset);
 
     // The mZoom variable on the frame metrics stores the CSS-to-screen scale for this
     // frame. This scale includes all of the (cumulative) resolutions set on the presShells
@@ -151,8 +208,8 @@ APZCCallbackHelper::UpdateRootFrame(nsIDOMWindowUtils* aUtils,
     // Finally, we multiply by a ScreenToLayerScale of 1.0f because the goal here is to
     // take the async zoom calculated by the APZC and tell gecko about it (turning it into
     // a "sync" zoom) which will update the resolution at which the layer is painted.
-    mozilla::layers::ParentLayerToLayerScale presShellResolution =
-        aMetrics.mZoom
+    ParentLayerToLayerScale presShellResolution =
+        aMetrics.GetZoom()
         / aMetrics.mDevPixelsPerCSSPixel
         / aMetrics.GetParentResolution()
         * ScreenToLayerScale(1.0f);
@@ -167,11 +224,29 @@ APZCCallbackHelper::UpdateRootFrame(nsIDOMWindowUtils* aUtils,
     if (!element) {
         return;
     }
-    aUtils->SetDisplayPortForElement(aMetrics.mDisplayPort.x,
-                                     aMetrics.mDisplayPort.y,
-                                     aMetrics.mDisplayPort.width,
-                                     aMetrics.mDisplayPort.height,
-                                     element);
+    if (!aMetrics.GetUseDisplayPortMargins()) {
+        aUtils->SetDisplayPortForElement(aMetrics.mDisplayPort.x,
+                                         aMetrics.mDisplayPort.y,
+                                         aMetrics.mDisplayPort.width,
+                                         aMetrics.mDisplayPort.height,
+                                         element, 0);
+    } else {
+        uint32_t alignment = gfxPrefs::LayersTilesEnabled()
+            ? TILEDLAYERBUFFER_TILE_SIZE : 1;
+        LayerMargin margins = aMetrics.GetDisplayPortMargins();
+        aUtils->SetDisplayPortMarginsForElement(margins.left,
+                                                margins.top,
+                                                margins.right,
+                                                margins.bottom,
+                                                alignment,
+                                                element, 0);
+        CSSRect baseCSS = aMetrics.mCompositionBounds / aMetrics.GetZoomToParent();
+        nsRect base(baseCSS.x * nsPresContext::AppUnitsPerCSSPixel(),
+                    baseCSS.y * nsPresContext::AppUnitsPerCSSPixel(),
+                    baseCSS.width * nsPresContext::AppUnitsPerCSSPixel(),
+                    baseCSS.height * nsPresContext::AppUnitsPerCSSPixel());
+        nsLayoutUtils::SetDisplayPortBase(content, base);
+    }
 }
 
 void
@@ -193,19 +268,41 @@ APZCCallbackHelper::UpdateSubFrame(nsIContent* aContent,
     // be scrolled, so here we only have to set the scroll position and displayport.
 
     nsIScrollableFrame* sf = nsLayoutUtils::FindScrollableFrameFor(aMetrics.mScrollId);
-    CSSPoint actualScrollOffset = ScrollFrameTo(sf, aMetrics.mScrollOffset);
+    bool scrollUpdated = false;
+    CSSPoint actualScrollOffset = ScrollFrameTo(sf, aMetrics.GetScrollOffset(), scrollUpdated);
 
     nsCOMPtr<nsIDOMElement> element = do_QueryInterface(aContent);
     if (element) {
+        if (!scrollUpdated) {
+            RecenterDisplayPort(aMetrics);
+        }
         MaybeAlignAndClampDisplayPort(aMetrics, actualScrollOffset);
-        utils->SetDisplayPortForElement(aMetrics.mDisplayPort.x,
-                                        aMetrics.mDisplayPort.y,
-                                        aMetrics.mDisplayPort.width,
-                                        aMetrics.mDisplayPort.height,
-                                        element);
+        if (!aMetrics.GetUseDisplayPortMargins()) {
+            utils->SetDisplayPortForElement(aMetrics.mDisplayPort.x,
+                                            aMetrics.mDisplayPort.y,
+                                            aMetrics.mDisplayPort.width,
+                                            aMetrics.mDisplayPort.height,
+                                            element, 0);
+        } else {
+            uint32_t alignment = gfxPrefs::LayersTilesEnabled()
+                ? TILEDLAYERBUFFER_TILE_SIZE : 1;
+            LayerMargin margins = aMetrics.GetDisplayPortMargins();
+            utils->SetDisplayPortMarginsForElement(margins.left,
+                                                   margins.top,
+                                                   margins.right,
+                                                   margins.bottom,
+                                                   alignment,
+                                                   element, 0);
+            CSSRect baseCSS = aMetrics.mCompositionBounds / aMetrics.GetZoomToParent();
+            nsRect base(baseCSS.x * nsPresContext::AppUnitsPerCSSPixel(),
+                        baseCSS.y * nsPresContext::AppUnitsPerCSSPixel(),
+                        baseCSS.width * nsPresContext::AppUnitsPerCSSPixel(),
+                        baseCSS.height * nsPresContext::AppUnitsPerCSSPixel());
+            nsLayoutUtils::SetDisplayPortBase(aContent, base);
+        }
     }
 
-    aMetrics.mScrollOffset = actualScrollOffset;
+    aMetrics.SetScrollOffset(actualScrollOffset);
 }
 
 already_AddRefed<nsIDOMWindowUtils>
@@ -240,6 +337,102 @@ APZCCallbackHelper::GetScrollIdentifiers(const nsIContent* aContent,
     }
     nsCOMPtr<nsIDOMWindowUtils> utils = GetDOMWindowUtils(aContent);
     return utils && (utils->GetPresShellId(aPresShellIdOut) == NS_OK);
+}
+
+class AcknowledgeScrollUpdateEvent : public nsRunnable
+{
+    typedef mozilla::layers::FrameMetrics::ViewID ViewID;
+
+public:
+    AcknowledgeScrollUpdateEvent(const ViewID& aScrollId, const uint32_t& aScrollGeneration)
+        : mScrollId(aScrollId)
+        , mScrollGeneration(aScrollGeneration)
+    {
+    }
+
+    NS_IMETHOD Run() {
+        MOZ_ASSERT(NS_IsMainThread());
+
+        nsIScrollableFrame* sf = nsLayoutUtils::FindScrollableFrameFor(mScrollId);
+        if (sf) {
+            sf->ResetOriginIfScrollAtGeneration(mScrollGeneration);
+        }
+
+        return NS_OK;
+    }
+
+protected:
+    ViewID mScrollId;
+    uint32_t mScrollGeneration;
+};
+
+void
+APZCCallbackHelper::AcknowledgeScrollUpdate(const FrameMetrics::ViewID& aScrollId,
+                                            const uint32_t& aScrollGeneration)
+{
+    nsCOMPtr<nsIRunnable> r1 = new AcknowledgeScrollUpdateEvent(aScrollId, aScrollGeneration);
+    if (!NS_IsMainThread()) {
+        NS_DispatchToMainThread(r1);
+    } else {
+        r1->Run();
+    }
+}
+
+static void
+DestroyCSSPoint(void* aObject, nsIAtom* aPropertyName,
+                void* aPropertyValue, void* aData)
+{
+  CSSPoint* point = static_cast<CSSPoint*>(aPropertyValue);
+  delete point;
+}
+
+void
+APZCCallbackHelper::UpdateCallbackTransform(const FrameMetrics& aApzcMetrics, const FrameMetrics& aActualMetrics)
+{
+    nsCOMPtr<nsIContent> content = nsLayoutUtils::FindContentFor(aApzcMetrics.mScrollId);
+    if (!content) {
+        return;
+    }
+    CSSPoint scrollDelta = aApzcMetrics.GetScrollOffset() - aActualMetrics.GetScrollOffset();
+    content->SetProperty(nsGkAtoms::apzCallbackTransform, new CSSPoint(scrollDelta), DestroyCSSPoint);
+}
+
+CSSPoint
+APZCCallbackHelper::ApplyCallbackTransform(const CSSPoint& aInput, const ScrollableLayerGuid& aGuid)
+{
+    // XXX: technically we need to walk all the way up the layer tree from the layer
+    // represented by |aGuid.mScrollId| up to the root of the layer tree and apply
+    // the input transforms at each level in turn. However, it is quite difficult
+    // to do this given that the structure of the layer tree may be different from
+    // the structure of the content tree. Also it may be impossible to do correctly
+    // at this point because there are other CSS transforms and such interleaved in
+    // between so applying the inputTransforms all in a row at the end may leave
+    // some things transformed improperly. In practice we should rarely hit scenarios
+    // where any of this matters, so I'm skipping it for now and just doing the single
+    // transform for the layer that the input hit.
+
+    if (aGuid.mScrollId != FrameMetrics::NULL_SCROLL_ID) {
+        nsCOMPtr<nsIContent> content = nsLayoutUtils::FindContentFor(aGuid.mScrollId);
+        if (content) {
+            void* property = content->GetProperty(nsGkAtoms::apzCallbackTransform);
+            if (property) {
+                CSSPoint delta = (*static_cast<CSSPoint*>(property));
+                return aInput + delta;
+            }
+        }
+    }
+    return aInput;
+}
+
+nsIntPoint
+APZCCallbackHelper::ApplyCallbackTransform(const nsIntPoint& aPoint,
+                                        const ScrollableLayerGuid& aGuid,
+                                        const CSSToLayoutDeviceScale& aScale)
+{
+    LayoutDevicePoint point = LayoutDevicePoint(aPoint.x, aPoint.y);
+    point = ApplyCallbackTransform(point / aScale, aGuid) * aScale;
+    LayoutDeviceIntPoint ret = gfx::RoundedToInt(point);
+    return nsIntPoint(ret.x, ret.y);
 }
 
 }

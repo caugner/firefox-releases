@@ -13,6 +13,9 @@
 #include "md4.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/Preferences.h"
+
+static bool sNTLMv1Enabled = false;
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo *
@@ -754,6 +757,18 @@ nsNTLMAuthModule::~nsNTLMAuthModule()
 nsresult
 nsNTLMAuthModule::InitTest()
 {
+  static bool prefObserved = false;
+  if (!prefObserved) {
+    mozilla::Preferences::AddBoolVarCache(
+      &sNTLMv1Enabled, "network.negotiate-auth.allow-insecure-ntlm-v1", sNTLMv1Enabled);
+    prefObserved = true;
+  }
+
+  if (!sNTLMv1Enabled) {
+    // Unconditionally disallow usage of the generic module.
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   nsNSSShutDownPreventionLock locker;
   //
   // disable NTLM authentication when FIPS mode is enabled.

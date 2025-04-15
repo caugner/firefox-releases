@@ -166,13 +166,15 @@ VisualPresenter.prototype = {
   },
 
   pivotChanged: function VisualPresenter_pivotChanged(aContext, aReason) {
+    if (!aContext.accessible) {
+      // XXX: Don't hide because another vc may be using the highlight.
+      return null;
+    }
+
     this._displayedAccessibles.set(aContext.accessible.document.window,
                                    { accessible: aContext.accessibleForBounds,
                                      startOffset: aContext.startOffset,
                                      endOffset: aContext.endOffset });
-
-    if (!aContext.accessibleForBounds)
-      return {type: this.type, details: {method: 'hideBounds'}};
 
     try {
       aContext.accessibleForBounds.scrollTo(
@@ -497,6 +499,17 @@ SpeechPresenter.prototype = {
         }]
       }
     };
+  },
+
+  announce: function SpeechPresenter_announce(aAnnouncement) {
+    return {
+      type: this.type,
+      details: {
+        actions: [{
+          method: 'speak', data: aAnnouncement, options: { enqueue: false }
+        }]
+      }
+    };
   }
 };
 
@@ -511,10 +524,10 @@ HapticPresenter.prototype = {
 
   type: 'Haptic',
 
-  PIVOT_CHANGE_PATTHERN: [20],
+  PIVOT_CHANGE_PATTERN: [40],
 
   pivotChanged: function HapticPresenter_pivotChanged(aContext, aReason) {
-    return { type: this.type, details: { pattern: this.PIVOT_CHANGE_PATTHERN } };
+    return { type: this.type, details: { pattern: this.PIVOT_CHANGE_PATTERN } };
   }
 };
 

@@ -28,7 +28,7 @@ NS_IMPL_FRAMEARENA_HELPERS(nsSVGMarkerFrame)
 //----------------------------------------------------------------------
 // nsIFrame methods:
 
-NS_IMETHODIMP
+nsresult
 nsSVGMarkerFrame::AttributeChanged(int32_t  aNameSpaceID,
                                    nsIAtom* aAttribute,
                                    int32_t  aModType)
@@ -116,6 +116,9 @@ nsSVGMarkerFrame::PaintMark(nsRenderingContext *aContext,
   AutoMarkerReferencer markerRef(this, aMarkedFrame);
 
   SVGMarkerElement *marker = static_cast<SVGMarkerElement*>(mContent);
+  if (!marker->HasValidDimensions()) {
+    return NS_OK;
+  }
 
   const nsSVGViewBoxRect viewBox = marker->GetViewBoxRect();
 
@@ -171,6 +174,9 @@ nsSVGMarkerFrame::GetMarkBBoxContribution(const Matrix &aToBBoxUserspace,
   AutoMarkerReferencer markerRef(this, aMarkedFrame);
 
   SVGMarkerElement *content = static_cast<SVGMarkerElement*>(mContent);
+  if (!content->HasValidDimensions()) {
+    return bbox;
+  }
 
   const nsSVGViewBoxRect viewBox = content->GetViewBoxRect();
 

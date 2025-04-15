@@ -22,6 +22,10 @@
 #include <mach/mach.h>
 #endif
 
+#if defined(XP_LINUX)
+#include <signal.h>
+#endif
+
 class nsIFile;
 template<class KeyClass, class DataType> class nsDataHashtable;
 class nsCStringHashKey;
@@ -29,6 +33,20 @@ class nsCStringHashKey;
 namespace CrashReporter {
 nsresult SetExceptionHandler(nsIFile* aXREDirectory, bool force=false);
 nsresult UnsetExceptionHandler();
+
+/**
+ * Tell the crash reporter to recalculate where crash events files should go.
+ *
+ * This should be called during crash reporter initialization and when a
+ * profile is activated or deactivated.
+ */
+void UpdateCrashEventsDir();
+
+/**
+ * Get the path where crash event files should be written.
+ */
+bool     GetCrashEventsDir(nsAString& aPath);
+
 bool     GetEnabled();
 bool     GetServerURL(nsACString& aServerURL);
 nsresult SetServerURL(const nsACString& aServerURL);
@@ -44,6 +62,7 @@ nsresult AppendAppNotesToCrashReport(const nsACString& data);
 
 void AnnotateOOMAllocationSize(size_t size);
 nsresult SetGarbageCollecting(bool collecting);
+void SetEventloopNestingLevel(uint32_t level);
 
 nsresult SetRestartArgs(int argc, char** argv);
 nsresult SetupExtraData(nsIFile* aAppDataDirectory,
@@ -68,6 +87,9 @@ void RenameAdditionalHangMinidump(nsIFile* minidump, nsIFile* childMinidump,
 
 #ifdef XP_WIN32
   nsresult WriteMinidumpForException(EXCEPTION_POINTERS* aExceptionInfo);
+#endif
+#ifdef XP_LINUX
+  bool WriteMinidumpForSigInfo(int signo, siginfo_t* info, void* uc);
 #endif
 #ifdef XP_MACOSX
   nsresult AppendObjCExceptionInfoToAppNotes(void *inException);

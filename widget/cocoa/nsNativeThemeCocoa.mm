@@ -18,7 +18,7 @@
 #include "nsIFrame.h"
 #include "nsIAtom.h"
 #include "nsEventStates.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsPresContext.h"
 #include "nsGkAtoms.h"
 #include "nsCocoaFeatures.h"
@@ -80,6 +80,44 @@ extern "C" {
 }
 
 @end
+
+static void
+DrawCellIncludingFocusRing(NSCell* aCell, NSRect aWithFrame, NSView* aInView)
+{
+  [aCell drawWithFrame:aWithFrame inView:aInView];
+
+#if defined(MAC_OS_X_VERSION_10_8) && MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_8
+  // When building with the 10.8 SDK or higher, focus rings don't draw as part
+  // of -[NSCell drawWithFrame:inView:] and must be drawn by a separate call
+  // to -[NSCell drawFocusRingMaskWithFrame:inView:]; .
+  // See the NSButtonCell section under
+  // https://developer.apple.com/library/mac/releasenotes/AppKit/RN-AppKitOlderNotes/#X10_8Notes
+  if ([aCell showsFirstResponder]) {
+    CGContextRef cgContext = (CGContextRef)[[NSGraphicsContext currentContext] graphicsPort];
+    CGContextSaveGState(cgContext);
+
+    // It's important to set the focus ring style before we enter the
+    // transparency layer so that the transparency layer only contains
+    // the normal button mask without the focus ring, and the conversion
+    // to the focus ring shape happens only when the transparency layer is
+    // ended.
+    NSSetFocusRingStyle(NSFocusRingOnly);
+
+    // We need to draw the whole button into a transparency layer because
+    // many button types are composed of multiple parts, and if these parts
+    // were drawn while the focus ring style was active, each individual part
+    // would produce a focus ring for itself. But we only want one focus ring
+    // for the whole button. The transparency layer is a way to merge the
+    // individual button parts together before the focus ring shape is
+    // calculated.
+    CGContextBeginTransparencyLayerWithRect(cgContext, NSRectToCGRect(aWithFrame), 0);
+    [aCell drawFocusRingMaskWithFrame:aWithFrame inView:aInView];
+    CGContextEndTransparencyLayer(cgContext);
+
+    CGContextRestoreGState(cgContext);
+  }
+#endif
+}
 
 /**
  * NSProgressBarCell is used to draw progress bars of any size.
@@ -427,6 +465,11 @@ nsNativeThemeCocoa::nsNativeThemeCocoa()
   // before the main event-loop pool is in place
   nsAutoreleasePool pool;
 
+  mHelpButtonCell = [[NSButtonCell alloc] initTextCell:nil];
+  [mHelpButtonCell setBezelStyle:NSHelpButtonBezelStyle];
+  [mHelpButtonCell setButtonType:NSMomentaryPushInButton];
+  [mHelpButtonCell setHighlightsBy:NSPushInCellMask];
+
   mPushButtonCell = [[NSButtonCell alloc] initTextCell:nil];
   [mPushButtonCell setButtonType:NSMomentaryPushInButton];
   [mPushButtonCell setHighlightsBy:NSPushInCellMask];
@@ -471,6 +514,7 @@ nsNativeThemeCocoa::~nsNativeThemeCocoa()
 
   [mMeterBarCell release];
   [mProgressBarCell release];
+  [mHelpButtonCell release];
   [mPushButtonCell release];
   [mRadioButtonCell release];
   [mCheckboxCell release];
@@ -569,7 +613,7 @@ static void DrawCellWithScaling(NSCell *cell,
     NSGraphicsContext* savedContext = [NSGraphicsContext currentContext];
     [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithGraphicsPort:cgContext flipped:YES]];
 
-    [cell drawWithFrame:drawRect inView:view];
+    DrawCellIncludingFocusRing(cell, drawRect, view);
 
     [NSGraphicsContext setCurrentContext:savedContext];
   }
@@ -611,7 +655,7 @@ static void DrawCellWithScaling(NSCell *cell,
     CGContextScaleCTM(ctx, 1.0f, -1.0f);
     CGContextTranslateCTM(ctx, 0.0f, -(2.0 * tmpRect.origin.y + tmpRect.size.height));
 
-    [cell drawWithFrame:tmpRect inView:view];
+    DrawCellIncludingFocusRing(cell, tmpRect, view);
 
     [NSGraphicsContext setCurrentContext:savedContext];
 
@@ -922,6 +966,8 @@ nsNativeThemeCocoa::DrawSearchField(CGContextRef cgContext, const HIRect& inBoxR
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
+static const NSSize kHelpButtonSize = NSMakeSize(20, 20);
+
 static const CellRenderSettings pushButtonSettings = {
   {
     NSMakeSize(0, 16), // mini
@@ -949,30 +995,38 @@ static const CellRenderSettings pushButtonSettings = {
 
 void
 nsNativeThemeCocoa::DrawPushButton(CGContextRef cgContext, const HIRect& inBoxRect,
-                                   nsEventStates inState, nsIFrame* aFrame)
+                                   nsEventStates inState, uint8_t aWidgetType,
+                                   nsIFrame* aFrame)
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
 
   BOOL isActive = FrameIsInActiveWindow(aFrame);
   BOOL isDisabled = IsDisabled(aFrame, inState);
 
-  [mPushButtonCell setEnabled:!isDisabled];
-  [mPushButtonCell setHighlighted:isActive &&
-                                  inState.HasAllStates(NS_EVENT_STATE_ACTIVE | NS_EVENT_STATE_HOVER)];
-  [mPushButtonCell setShowsFirstResponder:inState.HasState(NS_EVENT_STATE_FOCUS) && !isDisabled && isActive];
+  NSButtonCell* cell = (aWidgetType == NS_THEME_MOZ_MAC_HELP_BUTTON) ? mHelpButtonCell : mPushButtonCell;
+  [cell setEnabled:!isDisabled];
+  [cell setHighlighted:isActive &&
+                       inState.HasAllStates(NS_EVENT_STATE_ACTIVE | NS_EVENT_STATE_HOVER)];
+  [cell setShowsFirstResponder:inState.HasState(NS_EVENT_STATE_FOCUS) && !isDisabled && isActive];
 
-  // If the button is tall enough, draw the square button style so that buttons with
-  // non-standard content look good. Otherwise draw normal rounded aqua buttons.
-  if (inBoxRect.size.height > DO_SQUARE_BUTTON_HEIGHT) {
-    [mPushButtonCell setBezelStyle:NSShadowlessSquareBezelStyle];
-    DrawCellWithScaling(mPushButtonCell, cgContext, inBoxRect, NSRegularControlSize,
-                        NSZeroSize, NSMakeSize(14, 0), NULL,
-                        mCellDrawView, IsFrameRTL(aFrame));
+  if (aWidgetType == NS_THEME_MOZ_MAC_HELP_BUTTON) {
+    DrawCellWithScaling(cell, cgContext, inBoxRect, NSRegularControlSize,
+                        NSZeroSize, kHelpButtonSize, NULL, mCellDrawView,
+                        false); // Don't mirror icon in RTL.
   } else {
-    [mPushButtonCell setBezelStyle:NSRoundedBezelStyle];
-
-    DrawCellWithSnapping(mPushButtonCell, cgContext, inBoxRect, pushButtonSettings,
-                         0.5f, mCellDrawView, IsFrameRTL(aFrame), 1.0f);
+    // If the button is tall enough, draw the square button style so that
+    // buttons with non-standard content look good. Otherwise draw normal
+    // rounded aqua buttons.
+    if (inBoxRect.size.height > DO_SQUARE_BUTTON_HEIGHT) {
+      [cell setBezelStyle:NSShadowlessSquareBezelStyle];
+      DrawCellWithScaling(cell, cgContext, inBoxRect, NSRegularControlSize,
+                          NSZeroSize, NSMakeSize(14, 0), NULL, mCellDrawView,
+                          IsFrameRTL(aFrame));
+    } else {
+      [cell setBezelStyle:NSRoundedBezelStyle];
+      DrawCellWithSnapping(cell, cgContext, inBoxRect, pushButtonSettings, 0.5f,
+                           mCellDrawView, IsFrameRTL(aFrame), 1.0f);
+    }
   }
 
 #if DRAW_IN_FRAME_DEBUG
@@ -2195,8 +2249,12 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
       } else if (IsButtonTypeMenu(aFrame)) {
         DrawDropdown(cgContext, macRect, eventState, aWidgetType, aFrame);
       } else {
-        DrawPushButton(cgContext, macRect, eventState, aFrame);
+        DrawPushButton(cgContext, macRect, eventState, aWidgetType, aFrame);
       }
+      break;
+
+    case NS_THEME_MOZ_MAC_HELP_BUTTON:
+      DrawPushButton(cgContext, macRect, eventState, aWidgetType, aFrame);
       break;
 
     case NS_THEME_BUTTON_BEVEL:
@@ -2776,6 +2834,7 @@ nsNativeThemeCocoa::GetWidgetOverflow(nsDeviceContext* aContext, nsIFrame* aFram
   int32_t p2a = aContext->AppUnitsPerDevPixel();
   switch (aWidgetType) {
     case NS_THEME_BUTTON:
+    case NS_THEME_MOZ_MAC_HELP_BUTTON:
     case NS_THEME_TOOLBAR_BUTTON:
     case NS_THEME_NUMBER_INPUT:
     case NS_THEME_TEXTFIELD:
@@ -2834,6 +2893,13 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsRenderingContext* aContext,
     {
       aResult->SizeTo(pushButtonSettings.minimumSizes[miniControlSize].width,
                       pushButtonSettings.naturalSizes[miniControlSize].height);
+      break;
+    }
+
+    case NS_THEME_MOZ_MAC_HELP_BUTTON:
+    {
+      aResult->SizeTo(kHelpButtonSize.width, kHelpButtonSize.height);
+      *aIsOverridable = false;
       break;
     }
 
@@ -3207,6 +3273,7 @@ nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFrame* a
     case NS_THEME_RADIO:
     case NS_THEME_RADIO_CONTAINER:
     case NS_THEME_GROUPBOX:
+    case NS_THEME_MOZ_MAC_HELP_BUTTON:
     case NS_THEME_BUTTON:
     case NS_THEME_BUTTON_BEVEL:
     case NS_THEME_TOOLBAR_BUTTON:
@@ -3300,6 +3367,7 @@ nsNativeThemeCocoa::WidgetIsContainer(uint8_t aWidgetType)
    case NS_THEME_PROGRESSBAR:
    case NS_THEME_METERBAR:
    case NS_THEME_RANGE:
+   case NS_THEME_MOZ_MAC_HELP_BUTTON:
     return false;
     break;
   }
@@ -3312,6 +3380,7 @@ nsNativeThemeCocoa::ThemeDrawsFocusForWidget(uint8_t aWidgetType)
   if (aWidgetType == NS_THEME_DROPDOWN ||
       aWidgetType == NS_THEME_DROPDOWN_TEXTFIELD ||
       aWidgetType == NS_THEME_BUTTON ||
+      aWidgetType == NS_THEME_MOZ_MAC_HELP_BUTTON ||
       aWidgetType == NS_THEME_RADIO ||
       aWidgetType == NS_THEME_RANGE ||
       aWidgetType == NS_THEME_CHECKBOX)

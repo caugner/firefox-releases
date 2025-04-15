@@ -249,11 +249,41 @@ private:
       nsRefPtr<DeviceStorageFile> mFile;
  };
 
+ class PostStatusResultEvent : public CancelableRunnable
+ {
+    public:
+      PostStatusResultEvent(DeviceStorageRequestParent* aParent, DeviceStorageFile* aFile);
+      virtual ~PostStatusResultEvent();
+      virtual nsresult CancelableRun();
+    private:
+      nsRefPtr<DeviceStorageFile> mFile;
+ };
+
  class PostFormatResultEvent : public CancelableRunnable
  {
     public:
       PostFormatResultEvent(DeviceStorageRequestParent* aParent, DeviceStorageFile* aFile);
       virtual ~PostFormatResultEvent();
+      virtual nsresult CancelableRun();
+    private:
+      nsRefPtr<DeviceStorageFile> mFile;
+ };
+
+ class PostMountResultEvent : public CancelableRunnable
+ {
+    public:
+      PostMountResultEvent(DeviceStorageRequestParent* aParent, DeviceStorageFile* aFile);
+      virtual ~PostMountResultEvent();
+      virtual nsresult CancelableRun();
+    private:
+      nsRefPtr<DeviceStorageFile> mFile;
+ };
+
+ class PostUnmountResultEvent : public CancelableRunnable
+ {
+    public:
+      PostUnmountResultEvent(DeviceStorageRequestParent* aParent, DeviceStorageFile* aFile);
+      virtual ~PostUnmountResultEvent();
       virtual nsresult CancelableRun();
     private:
       nsRefPtr<DeviceStorageFile> mFile;

@@ -35,6 +35,20 @@ class MacroAssemblerARM : public Assembler
     // baseline IC stubs rely on lr holding the return address.
     Register secondScratchReg_;
 
+    // higher level tag testing code
+    Operand ToPayload(Operand base) {
+        return Operand(Register::FromCode(base.base()), base.disp());
+    }
+    Address ToPayload(Address base) {
+        return ToPayload(Operand(base)).toAddress();
+    }
+    Operand ToType(Operand base) {
+        return Operand(Register::FromCode(base.base()), base.disp() + sizeof(void *));
+    }
+    Address ToType(Address base) {
+        return ToType(Operand(base)).toAddress();
+    }
+
   public:
     MacroAssemblerARM()
       : secondScratchReg_(lr)
@@ -445,18 +459,17 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     uint32_t passedArgs_;
     uint32_t passedArgTypes_;
 
-#ifdef JS_CODEGEN_ARM_HARDFP
-    uint32_t usedIntSlots_;
-    uint32_t usedFloatSlots_;
-    uint32_t padding_;
-#else
     // ARM treats arguments as a vector in registers/memory, that looks like:
     // { r0, r1, r2, r3, [sp], [sp,+4], [sp,+8] ... }
-    // usedSlots_ keeps track of how many of these have been used.
+    // usedIntSlots_ keeps track of how many of these have been used.
     // It bears a passing resemblance to passedArgs_, but a single argument
     // can effectively use between one and three slots depending on its size and
     // alignment requirements
-    uint32_t usedSlots_;
+    uint32_t usedIntSlots_;
+#if defined(JS_CODEGEN_ARM_HARDFP) || defined(JS_ARM_SIMULATOR)
+    uint32_t usedFloatSlots_;
+    bool usedFloat32_;
+    uint32_t padding_;
 #endif
     bool dynamicAlignment_;
 
@@ -1410,6 +1423,10 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void passABIArg(const FloatRegister &reg, MoveOp::Type type);
     void passABIArg(const ValueOperand &regs);
 
+  private:
+    void passHardFpABIArg(const MoveOperand &from, MoveOp::Type type);
+    void passSoftFpABIArg(const MoveOperand &from, MoveOp::Type type);
+
   protected:
     bool buildOOLFakeExitFrame(void *fakeReturnAddr);
 
@@ -1438,6 +1455,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void floor(FloatRegister input, Register output, Label *handleNotAnInt);
     void floorf(FloatRegister input, Register output, Label *handleNotAnInt);
     void round(FloatRegister input, Register output, Label *handleNotAnInt, FloatRegister tmp);
+    void roundf(FloatRegister input, Register output, Label *handleNotAnInt, FloatRegister tmp);
 
     void clampCheck(Register r, Label *handleNotAnInt) {
         // check explicitly for r == INT_MIN || r == INT_MAX
@@ -1489,7 +1507,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     }
 
     void moveFloat32(FloatRegister src, FloatRegister dest) {
-        as_vmov(VFPRegister(src).singleOverlay(), VFPRegister(dest).singleOverlay());
+        as_vmov(VFPRegister(dest).singleOverlay(), VFPRegister(src).singleOverlay());
     }
 };
 

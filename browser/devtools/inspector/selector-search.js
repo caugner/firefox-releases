@@ -267,7 +267,6 @@ SelectorSearch.prototype = {
   _onSearchKeypress: function(aEvent) {
     let query = this.searchBox.value;
     switch(aEvent.keyCode) {
-      case aEvent.DOM_VK_ENTER:
       case aEvent.DOM_VK_RETURN:
         if (query == this._lastSearched && this._searchResults) {
           this._searchIndex = (this._searchIndex + 1) % this._searchResults.length;
@@ -342,7 +341,6 @@ SelectorSearch.prototype = {
    */
   _onListBoxKeypress: function(aEvent) {
     switch(aEvent.keyCode || aEvent.button) {
-      case aEvent.DOM_VK_ENTER:
       case aEvent.DOM_VK_RETURN:
       case aEvent.DOM_VK_TAB:
       case 0: // left mouse button

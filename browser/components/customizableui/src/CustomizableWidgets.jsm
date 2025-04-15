@@ -93,6 +93,58 @@ function addShortcut(aNode, aDocument, aItem) {
   aItem.setAttribute("shortcut", ShortcutUtils.prettifyShortcut(shortcut));
 }
 
+function fillSubviewFromMenuItems(aMenuItems, aSubview) {
+  let attrs = ["oncommand", "onclick", "label", "key", "disabled",
+               "command", "observes", "hidden", "class", "origin",
+               "image", "checked"];
+
+  let doc = aSubview.ownerDocument;
+  let fragment = doc.createDocumentFragment();
+  for (let menuChild of aMenuItems) {
+    if (menuChild.hidden)
+      continue;
+
+    let subviewItem;
+    if (menuChild.localName == "menuseparator") {
+      // Don't insert duplicate or leading separators. This can happen if there are
+      // menus (which we don't copy) above the separator.
+      if (!fragment.lastChild || fragment.lastChild.localName == "menuseparator") {
+        continue;
+      }
+      subviewItem = doc.createElementNS(kNSXUL, "menuseparator");
+    } else if (menuChild.localName == "menuitem") {
+      subviewItem = doc.createElementNS(kNSXUL, "toolbarbutton");
+      addShortcut(menuChild, doc, subviewItem);
+    } else {
+      continue;
+    }
+    for (let attr of attrs) {
+      let attrVal = menuChild.getAttribute(attr);
+      if (attrVal)
+        subviewItem.setAttribute(attr, attrVal);
+    }
+    // We do this after so the .subviewbutton class doesn't get overriden.
+    if (menuChild.localName == "menuitem") {
+      subviewItem.classList.add("subviewbutton");
+    }
+    fragment.appendChild(subviewItem);
+  }
+  aSubview.appendChild(fragment);
+}
+
+function clearSubview(aSubview) {
+  let parent = aSubview.parentNode;
+  // We'll take the container out of the document before cleaning it out
+  // to avoid reflowing each time we remove something.
+  parent.removeChild(aSubview);
+
+  while (aSubview.firstChild) {
+    aSubview.firstChild.remove();
+  }
+
+  parent.appendChild(aSubview);
+}
+
 const CustomizableWidgets = [{
     id: "history-panelmenu",
     type: "view",
@@ -284,59 +336,46 @@ const CustomizableWidgets = [{
       let doc = aEvent.target.ownerDocument;
       let win = doc.defaultView;
 
-      let items = doc.getElementById("PanelUI-developerItems");
       let menu = doc.getElementById("menuWebDeveloperPopup");
-      let attrs = ["oncommand", "onclick", "label", "key", "disabled",
-                   "command", "observes"];
 
-      let fragment = doc.createDocumentFragment();
       let itemsToDisplay = [...menu.children];
       // Hardcode the addition of the "work offline" menuitem at the bottom:
       itemsToDisplay.push({localName: "menuseparator", getAttribute: () => {}});
       itemsToDisplay.push(doc.getElementById("goOfflineMenuitem"));
-      for (let node of itemsToDisplay) {
-        if (node.hidden)
-          continue;
-
-        let item;
-        if (node.localName == "menuseparator") {
-          // Don't insert duplicate or leading separators. This can happen if there are
-          // menus (which we don't copy) above the separator.
-          if (!fragment.lastChild || fragment.lastChild.localName == "menuseparator") {
-            continue;
-          }
-          item = doc.createElementNS(kNSXUL, "menuseparator");
-        } else if (node.localName == "menuitem") {
-          item = doc.createElementNS(kNSXUL, "toolbarbutton");
-          item.setAttribute("class", "subviewbutton");
-          addShortcut(node, doc, item);
-        } else {
-          continue;
-        }
-        for (let attr of attrs) {
-          let attrVal = node.getAttribute(attr);
-          if (attrVal)
-            item.setAttribute(attr, attrVal);
-        }
-        fragment.appendChild(item);
-      }
-      items.appendChild(fragment);
+      fillSubviewFromMenuItems(itemsToDisplay, doc.getElementById("PanelUI-developerItems"));
 
     },
     onViewHiding: function(aEvent) {
       let doc = aEvent.target.ownerDocument;
+      clearSubview(doc.getElementById("PanelUI-developerItems"));
+    }
+  }, {
+    id: "sidebar-button",
+    type: "view",
+    viewId: "PanelUI-sidebar",
+    onViewShowing: function(aEvent) {
+      // Largely duplicated from the developer-button above with a couple minor
+      // alterations.
+      // Populate the subview with whatever menuitems are in the
+      // sidebar menu. We skip menu elements, because the menu panel has no way
+      // of dealing with those right now.
+      let doc = aEvent.target.ownerDocument;
       let win = doc.defaultView;
-      let items = doc.getElementById("PanelUI-developerItems");
-      let parent = items.parentNode;
-      // We'll take the container out of the document before cleaning it out
-      // to avoid reflowing each time we remove something.
-      parent.removeChild(items);
+      let menu = doc.getElementById("viewSidebarMenu");
 
-      while (items.firstChild) {
-        items.firstChild.remove();
-      }
+      // First clear any existing menuitems then populate. Social sidebar
+      // options may not have been added yet, so we do that here. Add it to the
+      // standard menu first, then copy all sidebar options to the panel.
+      win.SocialSidebar.clearProviderMenus();
+      let providerMenuSeps = menu.getElementsByClassName("social-provider-menu");
+      if (providerMenuSeps.length > 0)
+        win.SocialSidebar.populateProviderMenu(providerMenuSeps[0]);
 
-      parent.appendChild(items);
+      fillSubviewFromMenuItems([...menu.children], doc.getElementById("PanelUI-sidebarItems"));
+    },
+    onViewHiding: function(aEvent) {
+      let doc = aEvent.target.ownerDocument;
+      clearSubview(doc.getElementById("PanelUI-sidebarItems"));
     }
   }, {
     id: "add-ons-button",
@@ -697,8 +736,8 @@ const CustomizableWidgets = [{
         let elem = aDocument.createElementNS(kNSXUL, "toolbarbutton");
         elem.setAttribute("label", item.label);
         elem.setAttribute("type", "checkbox");
-        elem.section = aSection == "detectors" ? "detectors" : "charsets";
-        elem.value = item.id;
+        elem.section = aSection;
+        elem.value = item.value;
         elem.setAttribute("class", "subviewbutton");
         containerElem.appendChild(elem);
       }
@@ -706,10 +745,7 @@ const CustomizableWidgets = [{
     updateCurrentCharset: function(aDocument) {
       let content = aDocument.defaultView.content;
       let currentCharset = content && content.document && content.document.characterSet;
-      if (currentCharset) {
-        currentCharset = aDocument.defaultView.FoldCharset(currentCharset);
-      }
-      currentCharset = currentCharset ? ("charset." + currentCharset) : "";
+      currentCharset = CharsetMenu.foldCharset(currentCharset);
 
       let pinnedContainer = aDocument.getElementById("PanelUI-characterEncodingView-pinned");
       let charsetContainer = aDocument.getElementById("PanelUI-characterEncodingView-charsets");
@@ -719,13 +755,11 @@ const CustomizableWidgets = [{
     },
     updateCurrentDetector: function(aDocument) {
       let detectorContainer = aDocument.getElementById("PanelUI-characterEncodingView-autodetect");
-      let detectorEnum = CharsetManager.GetCharsetDetectorList();
       let currentDetector;
       try {
         currentDetector = Services.prefs.getComplexValue(
           "intl.charset.detector", Ci.nsIPrefLocalizedString).data;
       } catch (e) {}
-      currentDetector = "chardet." + (currentDetector || "off");
 
       this._updateElements(detectorContainer.childNodes, currentDetector);
     },
@@ -781,13 +815,8 @@ const CustomizableWidgets = [{
       // The behavior as implemented here is directly based off of the
       // `MultiplexHandler()` method in browser.js.
       if (section != "detectors") {
-        let charset = value.substring(value.indexOf('charset.') + 'charset.'.length);
-        window.BrowserSetForcedCharacterSet(charset);
+        window.BrowserSetForcedCharacterSet(value);
       } else {
-        value = value.replace(/^chardet\./, "");
-        if (value == "off") {
-          value = "";
-        }
         // Set the detector pref.
         try {
           let str = Cc["@mozilla.org/supports-string;1"]
@@ -860,7 +889,7 @@ const CustomizableWidgets = [{
 
 #ifdef XP_WIN
 #ifdef MOZ_METRO
-if (Services.sysinfo.getProperty("hasWindowsTouchInterface")) {
+if (Services.metro && Services.metro.supported) {
   let widgetArgs = {tooltiptext: "switch-to-metro-button2.tooltiptext"};
   let brandShortName = BrandBundle.GetStringFromName("brandShortName");
   let metroTooltip = CustomizableUI.getLocalizedProperty(widgetArgs, "tooltiptext",

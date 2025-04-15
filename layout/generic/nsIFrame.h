@@ -35,6 +35,7 @@
 #include "nsITheme.h"
 #include "gfx3DMatrix.h"
 #include "nsLayoutUtils.h"
+#include "nsFrameState.h"
 
 #ifdef ACCESSIBILITY
 #include "mozilla/a11y/AccTypes.h"
@@ -128,230 +129,6 @@ typedef uint32_t nsSplittableType;
 
 //----------------------------------------------------------------------
 
-/**
- * Frame state bits. Any bits not listed here are reserved for future
- * extensions, but must be stored by the frames.
- */
-typedef uint64_t nsFrameState;
-
-#define NS_FRAME_STATE_BIT(n_) (nsFrameState(1) << (n_))
-
-#define NS_FRAME_IN_REFLOW                          NS_FRAME_STATE_BIT(0)
-
-// This bit is set when a frame is created. After it has been reflowed
-// once (during the DidReflow with a finished state) the bit is
-// cleared.
-#define NS_FRAME_FIRST_REFLOW                       NS_FRAME_STATE_BIT(1)
-
-// For a continuation frame, if this bit is set, then this a "fluid" 
-// continuation, i.e., across a line boundary. Otherwise it's a "hard"
-// continuation, e.g. a bidi continuation.
-#define NS_FRAME_IS_FLUID_CONTINUATION              NS_FRAME_STATE_BIT(2)
-
-// For nsIAnonymousContentCreator content that's created using ContentInfo.
-#define NS_FRAME_ANONYMOUSCONTENTCREATOR_CONTENT    NS_FRAME_STATE_BIT(3)
-
-// If this bit is set, then a reference to the frame is being held
-// elsewhere.  The frame may want to send a notification when it is
-// destroyed to allow these references to be cleared.
-#define NS_FRAME_EXTERNAL_REFERENCE                 NS_FRAME_STATE_BIT(4)
-
-// If this bit is set, this frame or one of its descendants has a
-// percentage height that depends on an ancestor of this frame.
-// (Or it did at one point in the past, since we don't necessarily clear
-// the bit when it's no longer needed; it's an optimization.)
-#define  NS_FRAME_CONTAINS_RELATIVE_HEIGHT          NS_FRAME_STATE_BIT(5)
-
-// If this bit is set, then the frame corresponds to generated content
-#define NS_FRAME_GENERATED_CONTENT                  NS_FRAME_STATE_BIT(6)
-
-// If this bit is set the frame is a continuation that is holding overflow,
-// i.e. it is a next-in-flow created to hold overflow after the box's
-// height has ended. This means the frame should be a) at the top of the
-// page and b) invisible: no borders, zero height, ignored in margin
-// collapsing, etc. See nsContainerFrame.h
-#define NS_FRAME_IS_OVERFLOW_CONTAINER              NS_FRAME_STATE_BIT(7)
-
-// If this bit is set, then the frame has been moved out of the flow,
-// e.g., it is absolutely positioned or floated
-#define NS_FRAME_OUT_OF_FLOW                        NS_FRAME_STATE_BIT(8)
-
-// Frame can be an abs/fixed pos. container, if its style says so.
-// MarkAs[Not]AbsoluteContainingBlock will assert that this bit is set.
-// NS_FRAME_HAS_ABSPOS_CHILDREN must not be set when this bit is unset.
-#define NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN           NS_FRAME_STATE_BIT(9)
-
-// If this bit is set, then the frame and _all_ of its descendant frames need
-// to be reflowed.
-// This bit is set when the frame is first created.
-// This bit is cleared by DidReflow after the required call to Reflow has
-// finished.
-// Do not set this bit yourself if you plan to pass the frame to
-// nsIPresShell::FrameNeedsReflow.  Pass the right arguments instead.
-#define NS_FRAME_IS_DIRTY                           NS_FRAME_STATE_BIT(10)
-
-// If this bit is set then the frame is too deep in the frame tree, and
-// we'll stop updating it and its children, to prevent stack overflow
-// and the like.
-#define NS_FRAME_TOO_DEEP_IN_FRAME_TREE             NS_FRAME_STATE_BIT(11)
-
-// If this bit is set, then either:
-//  1. the frame has at least one child that has the NS_FRAME_IS_DIRTY bit or
-//     NS_FRAME_HAS_DIRTY_CHILDREN bit set, or
-//  2. the frame has had at least one child removed since the last reflow, or
-//  3. the frame has had a style change that requires the frame to be reflowed
-//     but does not _necessarily_ require its descendants to be reflowed (e.g.,
-//     for a 'height', 'width', 'margin', etc. change, it's up to the
-//     applicable Reflow methods to decide whether the frame's children
-//     _actually_ need to be reflowed).
-// If this bit is set but the NS_FRAME_IS_DIRTY is not set, then Reflow still
-// needs to be called on the frame, but Reflow will likely not do as much work
-// as it would if NS_FRAME_IS_DIRTY were set. See the comment documenting
-// nsFrame::Reflow for more.
-// This bit is cleared by DidReflow after the required call to Reflow has
-// finished.
-// Do not set this bit yourself if you plan to pass the frame to
-// nsIPresShell::FrameNeedsReflow.  Pass the right arguments instead.
-#define NS_FRAME_HAS_DIRTY_CHILDREN                 NS_FRAME_STATE_BIT(12)
-
-// If this bit is set, the frame has an associated view
-#define NS_FRAME_HAS_VIEW                           NS_FRAME_STATE_BIT(13)
-
-// If this bit is set, the frame was created from anonymous content.
-#define NS_FRAME_INDEPENDENT_SELECTION              NS_FRAME_STATE_BIT(14)
-
-// If this bit is set, the frame is "special" (lame term, I know),
-// which means that it is part of the mangled frame hierarchy that
-// results when an inline has been split because of a nested block.
-// See the comments in nsCSSFrameConstructor::ConstructInline for
-// more details.
-#define NS_FRAME_IS_SPECIAL                         NS_FRAME_STATE_BIT(15)
-
-// If this bit is set, then transforms (e.g. CSS or SVG transforms) are allowed
-// to affect the frame, and a transform may currently be in affect. If this bit
-// is not set, then any transforms on the frame will be ignored.
-// This is used primarily in GetTransformMatrix to optimize for the
-// common case.
-#define  NS_FRAME_MAY_BE_TRANSFORMED                NS_FRAME_STATE_BIT(16)
-
-#ifdef IBMBIDI
-// If this bit is set, the frame itself is a bidi continuation,
-// or is incomplete (its next sibling is a bidi continuation)
-#define NS_FRAME_IS_BIDI                            NS_FRAME_STATE_BIT(17)
-#endif
-
-// If this bit is set the frame has descendant with a view
-#define NS_FRAME_HAS_CHILD_WITH_VIEW                NS_FRAME_STATE_BIT(18)
-
-// If this bit is set, then reflow may be dispatched from the current
-// frame instead of the root frame.
-#define NS_FRAME_REFLOW_ROOT                        NS_FRAME_STATE_BIT(19)
-
-// Bits 20-31 and 60-63 of the frame state are reserved for implementations.
-#define NS_FRAME_IMPL_RESERVED                      nsFrameState(0xF0000000FFF00000)
-#define NS_FRAME_RESERVED                           ~NS_FRAME_IMPL_RESERVED
-
-// This bit is set on floats whose parent does not contain their
-// placeholder.  This can happen for two reasons:  (1) the float was
-// split, and this piece is the continuation, or (2) the entire float
-// didn't fit on the page.
-// Note that this bit is also shared by text frames for
-// TEXT_IS_IN_TOKEN_MATHML.  That's OK because we only check the
-// NS_FRAME_IS_PUSHED_FLOAT bit on frames which we already know are
-// out-of-flow.
-#define NS_FRAME_IS_PUSHED_FLOAT                    NS_FRAME_STATE_BIT(32)
-
-// This bit acts as a loop flag for recursive paint server drawing.
-#define NS_FRAME_DRAWING_AS_PAINTSERVER             NS_FRAME_STATE_BIT(33)
-
-// Frame is a display root and the retained layer tree needs to be updated
-// at the next paint via display list construction.
-// Only meaningful for display roots, so we don't really need a global state
-// bit; we could free up this bit with a little extra complexity.
-#define NS_FRAME_UPDATE_LAYER_TREE                  NS_FRAME_STATE_BIT(36)
-
-// Frame can accept absolutely positioned children.
-#define NS_FRAME_HAS_ABSPOS_CHILDREN                NS_FRAME_STATE_BIT(37)
-
-// A display item for this frame has been painted as part of a ThebesLayer.
-#define NS_FRAME_PAINTED_THEBES                     NS_FRAME_STATE_BIT(38)
-
-// Frame is or is a descendant of something with a fixed height, unless that
-// ancestor is a body or html element, and has no closer ancestor that is
-// overflow:auto or overflow:scroll.
-#define NS_FRAME_IN_CONSTRAINED_HEIGHT              NS_FRAME_STATE_BIT(39)
-
-// This is only set during painting
-#define NS_FRAME_FORCE_DISPLAY_LIST_DESCEND_INTO    NS_FRAME_STATE_BIT(40)
-
-// Is this frame a container for font size inflation, i.e., is it a
-// frame whose width is used to determine the inflation factor for
-// everything whose nearest ancestor container for this frame?
-#define NS_FRAME_FONT_INFLATION_CONTAINER           NS_FRAME_STATE_BIT(41)
-
-// Does this frame manage a region in which we do font size inflation,
-// i.e., roughly, is it an element establishing a new block formatting
-// context?
-#define NS_FRAME_FONT_INFLATION_FLOW_ROOT           NS_FRAME_STATE_BIT(42)
-
-// This bit is set on SVG frames that are laid out using SVG's coordinate
-// system based layout (as opposed to any of the CSS layout models). Note that
-// this does not include nsSVGOuterSVGFrame since it takes part is CSS layout.
-#define NS_FRAME_SVG_LAYOUT                         NS_FRAME_STATE_BIT(43)
-
-// Is this frame allowed to have generated (::before/::after) content?
-#define NS_FRAME_MAY_HAVE_GENERATED_CONTENT         NS_FRAME_STATE_BIT(44)
-
-// This bit is set on frames that create ContainerLayers with component
-// alpha children. With BasicLayers we avoid creating these, so we mark
-// the frames for future reference.
-#define NS_FRAME_NO_COMPONENT_ALPHA                 NS_FRAME_STATE_BIT(45)
-
-// The frame is a descendant of SVGTextFrame and is thus used for SVG
-// text layout.
-#define NS_FRAME_IS_SVG_TEXT                        NS_FRAME_STATE_BIT(47)
-
-// Frame is marked as needing painting
-#define NS_FRAME_NEEDS_PAINT                        NS_FRAME_STATE_BIT(48)
-
-// Frame has a descendant frame that needs painting - This includes
-// cross-doc children.
-#define NS_FRAME_DESCENDANT_NEEDS_PAINT             NS_FRAME_STATE_BIT(49)
-
-// Frame is a descendant of a popup
-#define NS_FRAME_IN_POPUP                           NS_FRAME_STATE_BIT(50)
-
-// Frame has only descendant frames that needs painting - This includes
-// cross-doc children. This guarantees that all descendents have 
-// NS_FRAME_NEEDS_PAINT and NS_FRAME_ALL_DESCENDANTS_NEED_PAINT, or they 
-// have no display items.
-#define NS_FRAME_ALL_DESCENDANTS_NEED_PAINT         NS_FRAME_STATE_BIT(51)
-
-// Frame is marked as NS_FRAME_NEEDS_PAINT and also has an explicit
-// rect stored to invalidate.
-#define NS_FRAME_HAS_INVALID_RECT                   NS_FRAME_STATE_BIT(52)
-
-// Frame is not displayed directly due to it being, or being under, an SVG
-// <defs> element or an SVG resource element (<mask>, <pattern>, etc.)
-#define NS_FRAME_IS_NONDISPLAY                      NS_FRAME_STATE_BIT(53)
-
-// Frame has a LayerActivityProperty property
-#define NS_FRAME_HAS_LAYER_ACTIVITY_PROPERTY        NS_FRAME_STATE_BIT(54)
-
-// Set for all descendants of MathML sub/supscript elements (other than the
-// base frame) to indicate that the SSTY font feature should be used.
-#define NS_FRAME_MATHML_SCRIPT_DESCENDANT           NS_FRAME_STATE_BIT(58)
-
-// This state bit is set on token MathML elements if the token represents an
-// <mi> tag whose inner HTML consists of a single non-whitespace character
-// to allow special rendering behaviour.
-#define NS_FRAME_IS_IN_SINGLE_CHAR_MI               NS_FRAME_STATE_BIT(59)
-
-// Box layout bits
-#define NS_STATE_IS_HORIZONTAL                      NS_FRAME_STATE_BIT(22)
-#define NS_STATE_IS_DIRECTION_NORMAL                NS_FRAME_STATE_BIT(31)
-
-// Helper macros
 #define NS_SUBTREE_DIRTY(_frame)  \
   (((_frame)->GetStateBits() &      \
     (NS_FRAME_IS_DIRTY | NS_FRAME_HAS_DIRTY_CHILDREN)) != 0)
@@ -662,6 +439,19 @@ public:
    * removal and destruction.
    */
   void Destroy() { DestroyFrom(this); }
+ 
+  /** Flags for PeekOffsetCharacter, PeekOffsetNoAmount, PeekOffsetWord return values.
+    */
+  enum FrameSearchResult {
+    // Peek found a appropriate offset within frame.
+    FOUND = 0x00,
+    // try next frame for offset.
+    CONTINUE = 0x1,
+    // offset not found because the frame was empty of text.
+    CONTINUE_EMPTY = 0x2 | CONTINUE,
+    // offset not found because the frame didn't contain any text that could be selected.
+    CONTINUE_UNSELECTABLE = 0x4 | CONTINUE,
+  };
 
 protected:
   /**
@@ -706,8 +496,8 @@ public:
    *            child list.
    * @see     #Init()
    */
-  NS_IMETHOD  SetInitialChildList(ChildListID     aListID,
-                                  nsFrameList&    aChildList) = 0;
+  virtual nsresult  SetInitialChildList(ChildListID     aListID,
+                                        nsFrameList&    aChildList) = 0;
 
   /**
    * This method is responsible for appending frames to the frame
@@ -724,8 +514,8 @@ public:
    *            aFrameList in the process of moving the frames over to its own
    *            child list.
    */
-  NS_IMETHOD AppendFrames(ChildListID     aListID,
-                          nsFrameList&    aFrameList) = 0;
+  virtual nsresult AppendFrames(ChildListID     aListID,
+                                nsFrameList&    aFrameList) = 0;
 
   /**
    * This method is responsible for inserting frames into the frame
@@ -743,9 +533,9 @@ public:
    *            aFrameList in the process of moving the frames over to its own
    *            child list.
    */
-  NS_IMETHOD InsertFrames(ChildListID     aListID,
-                          nsIFrame*       aPrevFrame,
-                          nsFrameList&    aFrameList) = 0;
+  virtual nsresult InsertFrames(ChildListID     aListID,
+                                nsIFrame*       aPrevFrame,
+                                nsFrameList&    aFrameList) = 0;
 
   /**
    * This method is responsible for removing a frame in the frame
@@ -762,8 +552,8 @@ public:
    *          NS_ERROR_UNEXPECTED if the frame is an atomic frame,
    *          NS_OK otherwise
    */
-  NS_IMETHOD RemoveFrame(ChildListID     aListID,
-                         nsIFrame*       aOldFrame) = 0;
+  virtual nsresult RemoveFrame(ChildListID     aListID,
+                               nsIFrame*       aOldFrame) = 0;
 
   /**
    * Get the content object associated with this frame. Does not add a reference.
@@ -795,7 +585,7 @@ public:
    * Get the offsets of the frame. most will be 0,0
    *
    */
-  NS_IMETHOD GetOffsets(int32_t &start, int32_t &end) const = 0;
+  virtual nsresult GetOffsets(int32_t &start, int32_t &end) const = 0;
 
   /**
    * Reset the offsets when splitting frames during Bidi reordering
@@ -896,6 +686,15 @@ public:
   }
 
   /**
+   * Get the writing mode of this frame, but if it is styled with
+   * unicode-bidi: plaintext, reset the direction to the resolved paragraph
+   * level of the given subframe (typically the first frame on the line),
+   * not this frame's writing mode, because the container frame could be split
+   * by hard line breaks into multiple paragraphs with different base direction.
+   */
+  mozilla::WritingMode GetWritingMode(nsIFrame* aSubFrame) const;
+
+  /**
    * Bounding rect of the frame. The values are in app units, and the origin is
    * relative to the upper-left of the geometric parent. The size includes the
    * content area, borders, and padding.
@@ -908,6 +707,52 @@ public:
   nsSize GetSize() const { return mRect.Size(); }
   nsRect GetRectRelativeToSelf() const {
     return nsRect(nsPoint(0, 0), mRect.Size());
+  }
+  /**
+   * Dimensions and position in logical coordinates in the frame's writing mode
+   *  or another writing mode
+   */
+  mozilla::LogicalRect GetLogicalRect(nscoord aContainerWidth) const {
+    return GetLogicalRect(GetWritingMode(), aContainerWidth);
+  }
+  mozilla::LogicalPoint GetLogicalPosition(nscoord aContainerWidth) const {
+    return GetLogicalPosition(GetWritingMode(), aContainerWidth);
+  }
+  mozilla::LogicalSize GetLogicalSize() const {
+    return GetLogicalSize(GetWritingMode());
+  }
+  mozilla::LogicalRect GetLogicalRect(mozilla::WritingMode aWritingMode,
+                                      nscoord aContainerWidth) const {
+    return mozilla::LogicalRect(aWritingMode, GetRect(), aContainerWidth);
+  }
+  mozilla::LogicalPoint GetLogicalPosition(mozilla::WritingMode aWritingMode,
+                                           nscoord aContainerWidth) const {
+    return GetLogicalRect(aWritingMode, aContainerWidth).Origin(aWritingMode);
+  }
+  mozilla::LogicalSize GetLogicalSize(mozilla::WritingMode aWritingMode) const {
+    return mozilla::LogicalSize(aWritingMode, GetSize());
+  }
+  nscoord IStart(nscoord aContainerWidth) const {
+    return IStart(GetWritingMode(), aContainerWidth);
+  }
+  nscoord IStart(mozilla::WritingMode aWritingMode,
+                 nscoord aContainerWidth) const {
+    return GetLogicalPosition(aWritingMode, aContainerWidth).I(aWritingMode);
+  }
+  nscoord BStart(nscoord aContainerWidth) const {
+    return BStart(GetWritingMode(), aContainerWidth);
+  }
+  nscoord BStart(mozilla::WritingMode aWritingMode,
+                 nscoord aContainerWidth) const {
+    return GetLogicalPosition(aWritingMode, aContainerWidth).B(aWritingMode);
+  }
+  nscoord ISize() const { return ISize(GetWritingMode()); }
+  nscoord ISize(mozilla::WritingMode aWritingMode) const {
+    return GetLogicalSize(aWritingMode).ISize(aWritingMode);
+  }
+  nscoord BSize() const { return BSize(GetWritingMode()); }
+  nscoord BSize(mozilla::WritingMode aWritingMode) const {
+    return GetLogicalSize(aWritingMode).BSize(aWritingMode);
   }
 
   /**
@@ -925,6 +770,21 @@ public:
     } else {
       mRect = aRect;
     }
+  }
+  /**
+   * Set this frame's rect from a logical rect in its own writing direction
+   */
+  void SetRect(const mozilla::LogicalRect& aRect, nscoord aContainerWidth) {
+    SetRect(GetWritingMode(), aRect, aContainerWidth);
+  }
+  /**
+   * Set this frame's rect from a logical rect in a different writing direction
+   * (GetPhysicalRect will assert if the writing mode doesn't match)
+   */
+  void SetRect(mozilla::WritingMode aWritingMode,
+               const mozilla::LogicalRect& aRect,
+               nscoord aContainerWidth) {
+    SetRect(aRect.GetPhysicalRect(aWritingMode, aContainerWidth));
   }
   void SetSize(const nsSize& aSize) {
     SetRect(nsRect(mRect.TopLeft(), aSize));
@@ -1002,8 +862,8 @@ public:
     return &descriptor;                                                                        \
   }
 
-  NS_DECLARE_FRAME_PROPERTY(IBSplitSpecialSibling, nullptr)
-  NS_DECLARE_FRAME_PROPERTY(IBSplitSpecialPrevSibling, nullptr)
+  NS_DECLARE_FRAME_PROPERTY(IBSplitSibling, nullptr)
+  NS_DECLARE_FRAME_PROPERTY(IBSplitPrevSibling, nullptr)
 
   NS_DECLARE_FRAME_PROPERTY(NormalPositionProperty, DestroyPoint)
   NS_DECLARE_FRAME_PROPERTY(ComputedOffsetProperty, DestroyMargin)
@@ -1087,6 +947,8 @@ public:
    */
   void ApplySkipSides(nsMargin& aMargin,
                       const nsHTMLReflowState* aReflowState = nullptr) const;
+  void ApplyLogicalSkipSides(mozilla::LogicalMargin& aMargin,
+                             const nsHTMLReflowState* aReflowState = nullptr) const;
 
   /**
    * Like the frame's rect (see |GetRect|), which is the border rect,
@@ -1334,8 +1196,25 @@ public:
    * an SVG viewBox attribute).
    */
   bool IsTransformed() const;
-  
-  bool HasOpacity() const;
+
+  /**
+   * Returns true if the frame is translucent for the purposes of creating a
+   * stacking context.
+   */
+  bool HasOpacity() const
+  {
+    return HasOpacityInternal(1.0f);
+  }
+  /**
+   * Returns true if the frame is translucent for display purposes.
+   */
+  bool HasVisualOpacity() const
+  {
+    // Treat an opacity value of 0.99 and above as opaque.  This is an
+    // optimization aimed at Web content which use opacity:0.99 as a hint for
+    // creating a stacking context only.
+    return HasOpacityInternal(0.99f);
+  }
 
    /**
    * Return true if this frame might be using a transform getter.
@@ -1356,13 +1235,15 @@ public:
 
   /**
    * Returns whether this frame will attempt to preserve the 3d transforms of its
-   * children. This is a direct indicator of -moz-transform-style: preserve-3d.
+   * children. This requires transform-style: preserve-3d, as well as no clipping
+   * or svg effects.
    */
   bool Preserves3DChildren() const;
 
   /**
-   * Returns whether this frame has a parent that Preserves3DChildren() and
-   * can respect this. Returns false if the frame is clipped.
+   * Returns whether this frame has a parent that Preserves3DChildren() and has
+   * its own transform (or hidden backface) to be combined with the parent's
+   * transform.
    */
   bool Preserves3D() const;
 
@@ -1404,12 +1285,12 @@ public:
    * @see     WidgetGUIEvent
    * @see     nsEventStatus
    */
-  NS_IMETHOD  HandleEvent(nsPresContext* aPresContext,
-                          mozilla::WidgetGUIEvent* aEvent,
-                          nsEventStatus* aEventStatus) = 0;
+  virtual nsresult  HandleEvent(nsPresContext* aPresContext,
+                                mozilla::WidgetGUIEvent* aEvent,
+                                nsEventStatus* aEventStatus) = 0;
 
-  NS_IMETHOD  GetContentForEvent(mozilla::WidgetEvent* aEvent,
-                                 nsIContent** aContent) = 0;
+  virtual nsresult  GetContentForEvent(mozilla::WidgetEvent* aEvent,
+                                       nsIContent** aContent) = 0;
 
   // This structure keeps track of the content node and offsets associated with
   // a point; there is a primary and a secondary offset associated with any
@@ -1476,16 +1357,16 @@ public:
   /**
    * Get the cursor for a given frame.
    */
-  NS_IMETHOD  GetCursor(const nsPoint&  aPoint,
-                        Cursor&         aCursor) = 0;
+  virtual nsresult  GetCursor(const nsPoint&  aPoint,
+                              Cursor&         aCursor) = 0;
 
   /**
    * Get a point (in the frame's coordinate space) given an offset into
    * the content. This point should be on the baseline of text with
    * the correct horizontal offset
    */
-  NS_IMETHOD  GetPointFromOffset(int32_t                  inOffset,
-                                 nsPoint*                 outPoint) = 0;
+  virtual nsresult  GetPointFromOffset(int32_t                  inOffset,
+                                       nsPoint*                 outPoint) = 0;
   
   /**
    * Get the child frame of this frame which contains the given
@@ -1495,10 +1376,10 @@ public:
    * to stick to the end of the first found frame or the beginning of the 
    * next in case the offset falls on a boundary.
    */
-  NS_IMETHOD  GetChildFrameContainingOffset(int32_t       inContentOffset,
-                                 bool                     inHint,//false stick left
-                                 int32_t*                 outFrameContentOffset,
-                                 nsIFrame*                *outChildFrame) = 0;
+  virtual nsresult GetChildFrameContainingOffset(int32_t    inContentOffset,
+                                                 bool       inHint,//false stick left
+                                                 int32_t*   outFrameContentOffset,
+                                                 nsIFrame** outChildFrame) = 0;
 
  /**
    * Get the current frame-state value for this frame. aResult is
@@ -1515,18 +1396,24 @@ public:
   /**
    * Checks if the current frame-state includes all of the listed bits
    */
-  bool HasAllStateBits(nsFrameState aBits) { return (mState & aBits) == aBits; }
+  bool HasAllStateBits(nsFrameState aBits) const
+  {
+    return (mState & aBits) == aBits;
+  }
   
   /**
    * Checks if the current frame-state includes any of the listed bits
    */
-  bool HasAnyStateBits(nsFrameState aBits) { return mState & aBits; }
+  bool HasAnyStateBits(nsFrameState aBits) const
+  {
+    return mState & aBits;
+  }
 
   /**
    * This call is invoked on the primary frame for a character data content
    * node, when it is changed in the content tree.
    */
-  NS_IMETHOD  CharacterDataChanged(CharacterDataChangeInfo* aInfo) = 0;
+  virtual nsresult  CharacterDataChanged(CharacterDataChangeInfo* aInfo) = 0;
 
   /**
    * This call is invoked when the value of a content objects's attribute
@@ -1539,9 +1426,9 @@ public:
    * @param aModType Whether or not the attribute was added, changed, or removed.
    *   The constants are defined in nsIDOMMutationEvent.h.
    */
-  NS_IMETHOD  AttributeChanged(int32_t         aNameSpaceID,
-                               nsIAtom*        aAttribute,
-                               int32_t         aModType) = 0;
+  virtual nsresult  AttributeChanged(int32_t         aNameSpaceID,
+                                     nsIAtom*        aAttribute,
+                                     int32_t         aModType) = 0;
 
   /**
    * When the content states of a content object change, this method is invoked
@@ -1896,7 +1783,7 @@ public:
    * XXX Is this really the semantics we want? Because we have the NS_FRAME_IN_REFLOW
    * bit we can ensure we don't call it more than once...
    */
-  NS_IMETHOD  WillReflow(nsPresContext* aPresContext) = 0;
+  virtual nsresult  WillReflow(nsPresContext* aPresContext) = 0;
 
   /**
    * The frame is given an available size and asked for its desired
@@ -1941,10 +1828,10 @@ public:
    * @param aStatus a return value indicating whether the frame is complete
    *          and whether the next-in-flow is dirty and needs to be reflowed
    */
-  NS_IMETHOD Reflow(nsPresContext*          aPresContext,
-                    nsHTMLReflowMetrics&     aReflowMetrics,
-                    const nsHTMLReflowState& aReflowState,
-                    nsReflowStatus&          aStatus) = 0;
+  virtual nsresult Reflow(nsPresContext*          aPresContext,
+                          nsHTMLReflowMetrics&     aReflowMetrics,
+                          const nsHTMLReflowState& aReflowState,
+                          nsReflowStatus&          aStatus) = 0;
 
   /**
    * Post-reflow hook. After a frame is reflowed this method will be called
@@ -1961,9 +1848,9 @@ public:
    * XXX Don't we want the semantics to dictate that we only call this once for
    * a given reflow?
    */
-  NS_IMETHOD  DidReflow(nsPresContext*           aPresContext,
-                        const nsHTMLReflowState*  aReflowState,
-                        nsDidReflowStatus         aStatus) = 0;
+  virtual nsresult  DidReflow(nsPresContext*           aPresContext,
+                              const nsHTMLReflowState*  aReflowState,
+                              nsDidReflowStatus         aStatus) = 0;
 
   // XXX Maybe these three should be a separate interface?
 
@@ -2285,8 +2172,11 @@ public:
    * Try to update this frame's transform without invalidating any
    * content.  Return true iff successful.  If unsuccessful, the
    * caller is responsible for scheduling an invalidating paint.
+   *
+   * If the result is true, aLayerResult will be filled in with the
+   * transform layer for the frame.
    */
-  bool TryUpdateTransformOnly();
+  bool TryUpdateTransformOnly(Layer** aLayerResult);
 
   /**
    * Checks if a frame has had InvalidateFrame() called on it since the
@@ -2415,6 +2305,15 @@ public:
   nsOverflowAreas GetOverflowAreas() const;
 
   /**
+   * Same as GetOverflowAreas, except in this frame's coordinate
+   * system (before transforms are applied).
+   *
+   * @return the overflow areas relative to this frame, before any CSS transforms have
+   * been applied, i.e. in this frame's coordinate system
+   */
+  nsOverflowAreas GetOverflowAreasRelativeToSelf() const;
+
+  /**
    * Same as GetScrollableOverflowRect, except relative to the parent
    * frame.
    *
@@ -2422,6 +2321,15 @@ public:
    * coordinate system
    */
   nsRect GetScrollableOverflowRectRelativeToParent() const;
+
+  /**
+   * Same as GetScrollableOverflowRect, except in this frame's coordinate
+   * system (before transforms are applied).
+   *
+   * @return the rect relative to this frame, before any CSS transforms have
+   * been applied, i.e. in this frame's coordinate system
+   */
+  nsRect GetScrollableOverflowRectRelativeToSelf() const;
 
   /**
    * Like GetVisualOverflowRect, except in this frame's
@@ -2479,7 +2387,19 @@ public:
    *       passed in, indicating that it should be used to determine if sides
    *       should be skipped during reflow.
    */
-  virtual int GetSkipSides(const nsHTMLReflowState* aReflowState = nullptr) const { return 0; }
+#define LOGICAL_SIDE_B_START 1
+#define LOGICAL_SIDE_I_START 2
+#define LOGICAL_SIDE_B_END   4
+#define LOGICAL_SIDE_I_END   8
+#define LOGICAL_SIDES_I_BOTH (LOGICAL_SIDE_I_START | LOGICAL_SIDE_I_END)
+#define LOGICAL_SIDES_B_BOTH (LOGICAL_SIDE_B_START | LOGICAL_SIDE_B_END)
+#define LOGICAL_SIDES_ALL (LOGICAL_SIDE_I_START | LOGICAL_SIDE_I_END | \
+                           LOGICAL_SIDE_B_START | LOGICAL_SIDE_B_END)
+  int GetSkipSides(const nsHTMLReflowState* aReflowState = nullptr) const;
+  virtual int
+  GetLogicalSkipSides(const nsHTMLReflowState* aReflowState = nullptr) const {
+    return 0;
+  }
 
   /**
    * @returns true if this frame is selected.
@@ -2495,14 +2415,14 @@ public:
    *  @param aSelectStyle  out param. Returns the type of selection style found
    *                        (using values defined in nsStyleConsts.h).
    */
-  NS_IMETHOD  IsSelectable(bool* aIsSelectable, uint8_t* aSelectStyle) const = 0;
+  virtual nsresult  IsSelectable(bool* aIsSelectable, uint8_t* aSelectStyle) const = 0;
 
   /** 
    *  Called to retrieve the SelectionController associated with the frame.
    *  @param aSelCon will contain the selection controller associated with
    *  the frame.
    */
-  NS_IMETHOD  GetSelectionController(nsPresContext *aPresContext, nsISelectionController **aSelCon) = 0;
+  virtual nsresult  GetSelectionController(nsPresContext *aPresContext, nsISelectionController **aSelCon) = 0;
 
   /**
    *  Call to get nsFrameSelection for this frame.
@@ -2522,7 +2442,7 @@ public:
    *  return NS_ERROR_FAILURE
    *  @param aPOS is defined in nsFrameSelection
    */
-  NS_IMETHOD PeekOffset(nsPeekOffsetStruct *aPos);
+  virtual nsresult PeekOffset(nsPeekOffsetStruct *aPos);
 
   /**
    *  called to find the previous/next selectable leaf frame.
@@ -2550,7 +2470,7 @@ public:
    *  @param aFinished did this frame have the aEndIndex? or is there more work to do
    *  @param _retval  return value true or false. false = range is not rendered.
    */
-  NS_IMETHOD CheckVisibility(nsPresContext* aContext, int32_t aStartIndex, int32_t aEndIndex, bool aRecurse, bool *aFinished, bool *_retval)=0;
+  virtual nsresult CheckVisibility(nsPresContext* aContext, int32_t aStartIndex, int32_t aEndIndex, bool aRecurse, bool *aFinished, bool *_retval)=0;
 
   /**
    * Called to tell a frame that one of its child frames is dirty (i.e.,
@@ -2803,10 +2723,10 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
   }
   // Box methods.  Note that these do NOT just get the CSS border, padding,
   // etc.  They also talk to nsITheme.
-  NS_IMETHOD GetBorderAndPadding(nsMargin& aBorderAndPadding);
-  NS_IMETHOD GetBorder(nsMargin& aBorder)=0;
-  NS_IMETHOD GetPadding(nsMargin& aBorderAndPadding)=0;
-  NS_IMETHOD GetMargin(nsMargin& aMargin)=0;
+  virtual nsresult GetBorderAndPadding(nsMargin& aBorderAndPadding);
+  virtual nsresult GetBorder(nsMargin& aBorder)=0;
+  virtual nsresult GetPadding(nsMargin& aBorderAndPadding)=0;
+  virtual nsresult GetMargin(nsMargin& aMargin)=0;
   virtual void SetLayoutManager(nsBoxLayout* aLayout) { }
   virtual nsBoxLayout* GetLayoutManager() { return nullptr; }
   NS_HIDDEN_(nsresult) GetClientRect(nsRect& aContentRect);
@@ -2819,15 +2739,15 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
   bool IsNormalDirection() const { return (mState & NS_STATE_IS_DIRECTION_NORMAL) != 0; }
 
   NS_HIDDEN_(nsresult) Redraw(nsBoxLayoutState& aState);
-  NS_IMETHOD RelayoutChildAtOrdinal(nsBoxLayoutState& aState, nsIFrame* aChild)=0;
+  virtual nsresult RelayoutChildAtOrdinal(nsBoxLayoutState& aState, nsIFrame* aChild)=0;
   // XXX take this out after we've branched
   virtual bool GetMouseThrough() const { return false; }
 
 #ifdef DEBUG_LAYOUT
-  NS_IMETHOD SetDebug(nsBoxLayoutState& aState, bool aDebug)=0;
-  NS_IMETHOD GetDebug(bool& aDebug)=0;
+  virtual nsresult SetDebug(nsBoxLayoutState& aState, bool aDebug)=0;
+  virtual nsresult GetDebug(bool& aDebug)=0;
 
-  NS_IMETHOD DumpBox(FILE* out)=0;
+  virtual nsresult DumpBox(FILE* out)=0;
 #endif
 
   /**
@@ -2893,7 +2813,8 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
    * incremented during empty transactions.
    */  
   void AddPaintedPresShell(nsIPresShell* shell) { 
-    PaintedPresShellList()->AppendElement(do_GetWeakReference(shell)); 
+    nsWeakPtr weakShell = do_GetWeakReference(shell);
+    PaintedPresShellList()->AppendElement(weakShell);
   }
   
   /**
@@ -3031,8 +2952,8 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
    * continuations of the first inline in it.
    */
   bool FrameIsNonFirstInIBSplit() const {
-    return (GetStateBits() & NS_FRAME_IS_SPECIAL) &&
-      FirstContinuation()->Properties().Get(nsIFrame::IBSplitSpecialPrevSibling());
+    return (GetStateBits() & NS_FRAME_PART_OF_IBSPLIT) &&
+      FirstContinuation()->Properties().Get(nsIFrame::IBSplitPrevSibling());
   }
 
   /**
@@ -3040,8 +2961,8 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
    * continuations of the last inline in it.
    */
   bool FrameIsNonLastInIBSplit() const {
-    return (GetStateBits() & NS_FRAME_IS_SPECIAL) &&
-      FirstContinuation()->Properties().Get(nsIFrame::IBSplitSpecialSibling());
+    return (GetStateBits() & NS_FRAME_PART_OF_IBSPLIT) &&
+      FirstContinuation()->Properties().Get(nsIFrame::IBSplitSibling());
   }
 
   /**
@@ -3133,11 +3054,12 @@ protected:
    * @param  aForward [in] Are we moving forward (or backward) in content order.
    * @param  aOffset [in/out] At what offset into the frame to start looking.
    *         on output - what offset was reached (whether or not we found a place to stop).
-   * @return true: An appropriate offset was found within this frame,
+   * @return STOP: An appropriate offset was found within this frame,
    *         and is given by aOffset.
-   *         false: Not found within this frame, need to try the next frame.
+   *         CONTINUE: Not found within this frame, need to try the next frame.
+   *         see enum FrameSearchResult for more details.
    */
-  virtual bool PeekOffsetNoAmount(bool aForward, int32_t* aOffset) = 0;
+  virtual FrameSearchResult PeekOffsetNoAmount(bool aForward, int32_t* aOffset) = 0;
   
   /**
    * Search the frame for the next character
@@ -3147,11 +3069,12 @@ protected:
    * @param  aRespectClusters [in] Whether to restrict result to valid cursor locations
    *         (between grapheme clusters) - default TRUE maintains "normal" behavior,
    *         FALSE is used for selection by "code unit" (instead of "character")
-   * @return true: An appropriate offset was found within this frame,
+   * @return STOP: An appropriate offset was found within this frame,
    *         and is given by aOffset.
-   *         false: Not found within this frame, need to try the next frame.
+   *         CONTINUE: Not found within this frame, need to try the next frame.
+   *         see enum FrameSearchResult for more details.
    */
-  virtual bool PeekOffsetCharacter(bool aForward, int32_t* aOffset,
+  virtual FrameSearchResult PeekOffsetCharacter(bool aForward, int32_t* aOffset,
                                      bool aRespectClusters = true) = 0;
   
   /**
@@ -3205,7 +3128,7 @@ protected:
       mAtStart = false;
     }
   };
-  virtual bool PeekOffsetWord(bool aForward, bool aWordSelectEatSpace, bool aIsKeyboardSelect,
+  virtual FrameSearchResult PeekOffsetWord(bool aForward, bool aWordSelectEatSpace, bool aIsKeyboardSelect,
                                 int32_t* aOffset, PeekWordState* aState) = 0;
 
   /**
@@ -3246,6 +3169,8 @@ private:
   template<bool IsLessThanOrEqual(nsIFrame*, nsIFrame*)>
   static nsIFrame* MergeSort(nsIFrame *aSource);
 
+  bool HasOpacityInternal(float aThreshold) const;
+
 #ifdef DEBUG_FRAME_DUMP
 public:
   static void IndentBy(FILE* out, int32_t aIndent) {
@@ -3275,14 +3200,14 @@ public:
   virtual void DumpFrameTree();
   void DumpFrameTreeLimited();
 
-  NS_IMETHOD  GetFrameName(nsAString& aResult) const = 0;
+  virtual nsresult  GetFrameName(nsAString& aResult) const = 0;
 #endif
 
 #ifdef DEBUG
 public:
-  NS_IMETHOD_(nsFrameState)  GetDebugStateBits() const = 0;
-  NS_IMETHOD  DumpRegressionData(nsPresContext* aPresContext,
-                                 FILE* out, int32_t aIndent) = 0;
+  virtual nsFrameState  GetDebugStateBits() const = 0;
+  virtual nsresult  DumpRegressionData(nsPresContext* aPresContext,
+                                       FILE* out, int32_t aIndent) = 0;
 #endif
 };
 

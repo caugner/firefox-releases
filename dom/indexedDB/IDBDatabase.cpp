@@ -8,13 +8,13 @@
 
 #include "IDBDatabase.h"
 
-#include "DictionaryHelpers.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/storage.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/DOMStringList.h"
+#include "mozilla/dom/DOMStringListBinding.h"
 #include "mozilla/dom/quota/Client.h"
 #include "mozilla/dom/quota/QuotaManager.h"
-#include "nsDOMLists.h"
 #include "nsJSUtils.h"
 #include "nsProxyRelease.h"
 #include "nsThreadUtils.h"
@@ -274,6 +274,14 @@ IDBDatabase::Invalidate()
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 
+  InvalidateInternal(/* aIsDead */ false);
+}
+
+void
+IDBDatabase::InvalidateInternal(bool aIsDead)
+{
+  NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
+
   if (IsInvalidated()) {
     return;
   }
@@ -291,7 +299,13 @@ IDBDatabase::Invalidate()
     QuotaManager::CancelPromptsForWindow(owner);
   }
 
-  DatabaseInfo::Remove(mDatabaseId);
+  // We want to forcefully remove in the child when the parent has invalidated
+  // us in IPC mode because the database might no longer exist.
+  // We don't want to forcefully remove in the parent when a child dies since
+  // other child processes may be using the referenced DatabaseInfo.
+  if (!aIsDead) {
+    DatabaseInfo::Remove(mDatabaseId);
+  }
 
   // And let the child process know as well.
   if (mActorParent) {
@@ -330,9 +344,7 @@ IDBDatabase::CloseInternal(bool aIsDead)
       mDatabaseInfo.swap(previousInfo);
 
       if (!aIsDead) {
-        nsRefPtr<DatabaseInfo> clonedInfo = previousInfo->Clone();
-
-        clonedInfo.swap(mDatabaseInfo);
+        mDatabaseInfo = previousInfo->Clone();
       }
     }
 
@@ -394,7 +406,7 @@ IDBDatabase::OnUnlink()
 
   // No reason for the QuotaManager to track us any longer.
   QuotaManager* quotaManager = QuotaManager::Get();
-  if (quotaManager) {
+  if (mRegistered && quotaManager) {
     quotaManager->UnregisterStorage(this);
 
     // Don't try to unregister again in the destructor.
@@ -494,28 +506,18 @@ IDBDatabase::Version() const
   return info->version;
 }
 
-already_AddRefed<nsIDOMDOMStringList>
+already_AddRefed<DOMStringList>
 IDBDatabase::GetObjectStoreNames(ErrorResult& aRv) const
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 
   DatabaseInfo* info = Info();
 
-  nsAutoTArray<nsString, 10> objectStoreNames;
-  if (!info->GetObjectStoreNames(objectStoreNames)) {
+  nsRefPtr<DOMStringList> list(new DOMStringList());
+  if (!info->GetObjectStoreNames(list->StringArray())) {
     IDB_WARNING("Couldn't get names!");
     aRv.Throw(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
     return nullptr;
-  }
-
-  nsRefPtr<nsDOMStringList> list(new nsDOMStringList());
-  uint32_t count = objectStoreNames.Length();
-  for (uint32_t index = 0; index < count; index++) {
-    if (!list->Add(objectStoreNames[index])) {
-      IDB_WARNING("Failed to add element");
-      aRv.Throw(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
-      return nullptr;
-    }
   }
 
   return list.forget();
@@ -953,6 +955,5 @@ CreateFileHelper::GetSuccessResult(JSContext* aCx,
     IDBFileHandle::Create(mDatabase, mName, mType, mFileInfo.forget());
   IDB_ENSURE_TRUE(fileHandle, NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
 
-  return WrapNative(aCx, NS_ISUPPORTS_CAST(nsIDOMFileHandle*, fileHandle),
-                    aVal);
+  return WrapNative(aCx, NS_ISUPPORTS_CAST(EventTarget*, fileHandle), aVal);
 }

@@ -310,7 +310,7 @@ gfxDWriteFontFamily::LocalizedName(nsAString &aLocalizedName)
             idx = 0;
         }
     }
-    nsAutoTArray<WCHAR, 32> famName;
+    AutoFallibleTArray<WCHAR, 32> famName;
     UINT32 length;
     
     hr = names->GetStringLength(idx, &length);
@@ -999,7 +999,7 @@ gfxDWriteFontList::DelayedInitFontList()
             englishIdx = 0;
         }
 
-        nsAutoTArray<WCHAR, 32> enName;
+        AutoFallibleTArray<WCHAR, 32> enName;
         UINT32 length;
         
         hr = names->GetStringLength(englishIdx, &length);
@@ -1044,7 +1044,7 @@ gfxDWriteFontList::DelayedInitFontList()
 
         for (nameIndex = 0; nameIndex < nameCount; nameIndex++) {
             UINT32 nameLen;
-            nsAutoTArray<WCHAR, 32> localizedName;
+            AutoFallibleTArray<WCHAR, 32> localizedName;
 
             // only add other names
             if (nameIndex == englishIdx) {
@@ -1410,7 +1410,7 @@ static HRESULT GetFamilyName(IDWriteFont *aFont, nsString& aFamilyName)
         index = 0;
     }
 
-    nsAutoTArray<WCHAR, 32> name;
+    AutoFallibleTArray<WCHAR, 32> name;
     UINT32 length;
 
     hr = familyNames->GetStringLength(index, &length);
@@ -1583,7 +1583,7 @@ void
 DirectWriteFontInfo::LoadFontFamilyData(const nsAString& aFamilyName)
 {
     // lookup the family
-    nsAutoTArray<char16_t, 32> famName;
+    nsAutoTArray<wchar_t, 32> famName;
 
     uint32_t len = aFamilyName.Length();
     famName.SetLength(len + 1);

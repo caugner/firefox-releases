@@ -95,8 +95,11 @@
 #include "nsIPrintOptions.h"
 #include "nsISimpleEnumerator.h"
 
+#ifdef DEBUG
 // PrintOptions is now implemented by PrintSettingsService
-static const char sPrintOptionsContractID[]         = "@mozilla.org/gfx/printsettings-service;1";
+static const char sPrintOptionsContractID[] =
+  "@mozilla.org/gfx/printsettings-service;1";
+#endif // DEBUG
 
 #include "nsIPluginDocument.h"
 
@@ -112,6 +115,7 @@ static const char sPrintOptionsContractID[]         = "@mozilla.org/gfx/printset
 #include "nsISHistoryInternal.h"
 #include "nsIWebNavigation.h"
 #include "nsEventDispatcher.h"
+#include "nsXMLHttpRequest.h"
 
 //paint forcing
 #include <stdio.h>
@@ -443,7 +447,7 @@ public:
   nsDocumentShownDispatcher(nsCOMPtr<nsIDocument> aDocument)
   : mDocument(aDocument) {}
 
-  NS_IMETHOD Run();
+  NS_IMETHOD Run() MOZ_OVERRIDE;
 
 private:
   nsCOMPtr<nsIDocument> mDocument;
@@ -455,14 +459,11 @@ private:
 //------------------------------------------------------------------
 
 //------------------------------------------------------------------
-nsresult
-NS_NewContentViewer(nsIContentViewer** aResult)
+already_AddRefed<nsIContentViewer>
+NS_NewContentViewer()
 {
-  *aResult = new nsDocumentViewer();
-
-  NS_ADDREF(*aResult);
-
-  return NS_OK;
+  nsRefPtr<nsDocumentViewer> viewer = new nsDocumentViewer();
+  return viewer.forget();
 }
 
 void nsDocumentViewer::PrepareToStartLoad()
@@ -551,20 +552,14 @@ nsDocumentViewer::~nsDocumentViewer()
  * This method is also called when an out of band document.write() happens.
  * In that case, the document passed in is the same as the previous document.
  */
-NS_IMETHODIMP
-nsDocumentViewer::LoadStart(nsISupports *aDoc)
+/* virtual */ void
+nsDocumentViewer::LoadStart(nsIDocument* aDocument)
 {
-  nsresult rv = NS_OK;
-  if (!mDocument) {
-    mDocument = do_QueryInterface(aDoc, &rv);
-  }
-  else if (mDocument == aDoc) {
-    // Reset the document viewer's state back to what it was
-    // when the document load started.
-    PrepareToStartLoad();
-  }
+  MOZ_ASSERT(aDocument);
 
-  return rv;
+  if (!mDocument) {
+    mDocument = aDocument;
+  }
 }
 
 nsresult
@@ -684,7 +679,7 @@ nsDocumentViewer::InitPresentationStuff(bool aDoInitialReflow)
   mViewManager->SetWindowDimensions(width, height);
   mPresContext->SetTextZoom(mTextZoom);
   mPresContext->SetFullZoom(mPageZoom);
-  mPresContext->SetMinFontSize(mMinFontSize);
+  mPresContext->SetBaseMinFontSize(mMinFontSize);
 
   p2a = mPresContext->AppUnitsPerDevPixel();  // zoom may have changed it
   width = p2a * mBounds.width;
@@ -1074,6 +1069,8 @@ nsDocumentViewer::PermitUnloadInternal(bool aCallerClosesWindow,
                                        bool *aShouldPrompt,
                                        bool *aPermitUnload)
 {
+  AutoDontWarnAboutSyncXHR disableSyncXHRWarning;
+
   *aPermitUnload = true;
 
   if (!mDocument
@@ -1279,6 +1276,8 @@ nsDocumentViewer::ResetCloseWindow()
 NS_IMETHODIMP
 nsDocumentViewer::PageHide(bool aIsUnload)
 {
+  AutoDontWarnAboutSyncXHR disableSyncXHRWarning;
+
   mHidden = true;
 
   if (!mDocument) {
@@ -2802,7 +2801,7 @@ SetExtResourceMinFontSize(nsIDocument* aDocument, void* aClosure)
   if (shell) {
     nsPresContext* ctxt = shell->GetPresContext();
     if (ctxt) {
-      ctxt->SetMinFontSize(NS_PTR_TO_INT32(aClosure));
+      ctxt->SetBaseMinFontSize(NS_PTR_TO_INT32(aClosure));
     }
   }
 
@@ -2894,7 +2893,7 @@ nsDocumentViewer::SetMinFontSize(int32_t aMinFontSize)
   // Now change our own min font
   nsPresContext* pc = GetPresContext();
   if (pc && aMinFontSize != mPresContext->MinFontSize(nullptr)) {
-    pc->SetMinFontSize(aMinFontSize);
+    pc->SetBaseMinFontSize(aMinFontSize);
   }
 
   // And do the external resources
@@ -2909,7 +2908,7 @@ nsDocumentViewer::GetMinFontSize(int32_t* aMinFontSize)
 {
   NS_ENSURE_ARG_POINTER(aMinFontSize);
   nsPresContext* pc = GetPresContext();
-  *aMinFontSize = pc ? pc->MinFontSize(nullptr) : 0;
+  *aMinFontSize = pc ? pc->BaseMinFontSize() : 0;
   return NS_OK;
 }
 

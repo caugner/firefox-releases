@@ -1,3 +1,5 @@
+/* -*- js-indent-level: 4; tab-width: 4; indent-tabs-mode: nil -*- */
+/* vim:set ts=4 sw=4 sts=4 et: */
 /**
  * SimpleTest, a partial Test.Simple/Test.More API compatible test library.
  *
@@ -20,7 +22,8 @@ var parentRunner = null;
 // In normal test runs, the window that has a TestRunner in its parent is
 // the primary window.  In single test runs, if there is no parent and there
 // is no opener then it is the primary window.
-var isPrimaryTestWindow = !!parent.TestRunner || (parent == window && !opener);
+var isSingleTestRun = (parent == window && !opener)
+var isPrimaryTestWindow = !!parent.TestRunner || isSingleTestRun;
 
 // Finds the TestRunner for this test run and the SpecialPowers object (in
 // case it is not defined) from a parent/opener window.
@@ -310,25 +313,127 @@ SimpleTest._getCurrentTestURL = function() {
            "unknown test url";
 };
 
-SimpleTest._logResult = function(test, passString, failString) {
-    var isError = !test.result == !test.todo;
-    var resultString = test.result ? passString : failString;
-    var url = SimpleTest._getCurrentTestURL();
-    var diagnostic = test.name + (test.diag ? " - " + test.diag : "");
-    var msg = [resultString, url, diagnostic].join(" | ");
-    if (parentRunner) {
-        if (isError) {
-            parentRunner.addFailedTest(url);
-            parentRunner.error(msg);
-        } else {
-            parentRunner.log(msg);
-        }
-    } else if (typeof dump === "function") {
-        dump(msg + "\n");
-    } else {
-        // Non-Mozilla browser?  Just do nothing.
-    }
+SimpleTest._forceLogMessageOutput = false;
+
+/**
+ * Force all test messages to be displayed.  Only applies for the current test.
+ */
+SimpleTest.requestCompleteLog = function() {
+    if (SimpleTest._forceLogMessageOutput)
+        return;
+
+    SimpleTest._forceLogMessageOutput = true;
+    SimpleTest.registerCleanupFunction(function() {
+        SimpleTest._forceLogMessageOutput = false;
+    });
 };
+
+/**
+ * A circular buffer, managed by _logResult.  We explicitly manage the
+ * circularness of the buffer, rather than resorting to .shift()/.push()
+ * because explicit management is much faster.
+ */
+SimpleTest._bufferedMessages = [];
+SimpleTest._logResult = (function () {
+    var bufferingThreshold = 100;
+    var outputIndex = 0;
+
+    function logResult(test, passString, failString) {
+        var url = SimpleTest._getCurrentTestURL();
+        var resultString = test.result ? passString : failString;
+        var diagnostic = test.name + (test.diag ? " - " + test.diag : "");
+        var msg = [resultString, url, diagnostic].join(" | ");
+        var isError = !test.result == !test.todo;
+
+        // Due to JavaScript's name lookup rules, it is important that
+        // the second parameter here be named identically to the isError
+        // variable declared above.
+        function dumpMessage(msg, isError) {
+            if (parentRunner) {
+                if (isError) {
+                    parentRunner.addFailedTest(url);
+                    parentRunner.error(msg);
+                } else {
+                    parentRunner.log(msg);
+                }
+            } else if (typeof dump === "function") {
+                dump(msg + "\n");
+            } else {
+                // Non-Mozilla browser?  Just do nothing.
+            }
+        }
+
+        // Detect when SimpleTest.reset() has been called, so we can
+        // reset outputIndex.  We store outputIndex as local state to
+        // avoid adding even more state to SimpleTest.
+        if (SimpleTest._bufferedMessages.length == 0) {
+            outputIndex = 0;
+        }
+
+        // We want to eliminate mundane TEST-PASS/TEST-KNOWN-FAIL
+        // output, since some tests produce tens of thousands of of such
+        // messages.  These messages can consume a lot of memory to
+        // generate and take a significant amount of time to output.
+        // However, the reality is that TEST-PASS messages can also be
+        // used as a form of logging via constructs like:
+        //
+        // SimpleTest.ok(true, "some informative message");
+        //
+        // And eliding the logging can be very confusing when trying to
+        // debug test failures.
+        //
+        // Hence the compromise adopted here: We buffer messages up to
+        // some limit and dump the buffer when a test failure happens.
+        // This behavior ought to provide enough context for developers
+        // looking to understand where in the test things failed.
+        if (isError) {
+            // Display this message and all the messages we have buffered.
+            if (SimpleTest._bufferedMessages.length > 0) {
+                dumpMessage("TEST-INFO | dumping last " + SimpleTest._bufferedMessages.length + " message(s)");
+                dumpMessage("TEST-INFO | if you need more context, please use SimpleTest.requestCompleteLog() in your test");
+
+                function dumpBufferedMessage(m) {
+                    dumpMessage(m, false);
+                }
+                // The latest message is just before outputIndex.
+                // The earliest message is located at outputIndex.
+                var earliest = SimpleTest._bufferedMessages.slice(outputIndex);
+                var latest = SimpleTest._bufferedMessages.slice(0, outputIndex);
+                earliest.map(dumpBufferedMessage);
+                latest.map(dumpBufferedMessage);
+
+                SimpleTest._bufferedMessages = [];
+            }
+
+            dumpMessage(msg);
+            return;
+        }
+
+        var runningSingleTest = ((parentRunner &&
+                                  parentRunner._urls.length == 1) ||
+                                 isSingleTestRun);
+        var shouldLogImmediately = (runningSingleTest ||
+                                    SimpleTest._forceLogMessageOutput);
+
+        if (!shouldLogImmediately) {
+            // Buffer the message for possible later output.
+            if (SimpleTest._bufferedMessages.length >= bufferingThreshold) {
+                if (outputIndex >= bufferingThreshold) {
+                    outputIndex = 0;
+                }
+                SimpleTest._bufferedMessages[outputIndex] = msg;
+                outputIndex++;
+            } else {
+                SimpleTest._bufferedMessages.push(msg);
+            }
+            return;
+        }
+
+        dumpMessage(msg);
+    }
+
+    return logResult;
+})();
 
 SimpleTest.info = function(name, message) {
     SimpleTest._logResult({result:true, name:name, diag:message}, "TEST-INFO");
@@ -980,6 +1085,7 @@ SimpleTest.isIgnoringAllUncaughtExceptions = function () {
 SimpleTest.reset = function () {
     SimpleTest._ignoringAllUncaughtExceptions = false;
     SimpleTest._expectingUncaughtException = false;
+    SimpleTest._bufferedMessages = [];
 };
 
 if (isPrimaryTestWindow) {

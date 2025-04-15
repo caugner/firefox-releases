@@ -15,6 +15,7 @@
 #include <pthread.h>
 #include <alloca.h>
 #include <sys/epoll.h>
+#include <sys/mman.h>
 #include <sys/prctl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -141,7 +142,12 @@ TLSInfoList;
  * methods or do large allocations on the stack to avoid stack overflow.
  */
 #ifndef NUWA_STACK_SIZE
-#define NUWA_STACK_SIZE (1024 * 32)
+#ifndef PAGE_SIZE
+#warning "Hard-coding page size to 4096 byte
+#define PAGE_SIZE 4096ul
+#endif
+#define PAGE_ALIGN_MASK (~(PAGE_SIZE-1))
+#define NUWA_STACK_SIZE (1024 * 128)
 #endif
 
 #define NATIVE_THREAD_NAME_LENGTH 16
@@ -489,7 +495,18 @@ thread_info_new(void) {
   tinfo->recreatedThreadID = 0;
   tinfo->recreatedNativeThreadID = 0;
   tinfo->reacquireMutex = nullptr;
-  tinfo->stk = malloc(NUWA_STACK_SIZE);
+  tinfo->stk = malloc(NUWA_STACK_SIZE + PAGE_SIZE);
+
+  // We use a smaller stack size. Add protection to stack overflow: mprotect()
+  // stack top (the page at the lowest address) so we crash instead of corrupt
+  // other content that is malloc()'d.
+  unsigned long long pageGuard = ((unsigned long long)tinfo->stk);
+  pageGuard &= PAGE_ALIGN_MASK;
+  if (pageGuard != (unsigned long long) tinfo->stk) {
+    pageGuard += PAGE_SIZE; // Round up to be page-aligned.
+  }
+  mprotect((void*)pageGuard, PAGE_SIZE, PROT_READ);
+
   pthread_attr_init(&tinfo->threadAttr);
 
   REAL(pthread_mutex_lock)(&sThreadCountLock);
@@ -645,8 +662,6 @@ SaveTLSInfo(thread_info_t *tinfo) {
  */
 static void
 RestoreTLSInfo(thread_info_t *tinfo) {
-  int rv;
-
   for (TLSInfoList::const_iterator it = tinfo->tlsInfo.begin();
        it != tinfo->tlsInfo.end();
        it++) {
@@ -1521,6 +1536,17 @@ CloseAllProtoSockets(NuwaProtoFdInfo *aInfoList, int aInfoSize) {
   }
 }
 
+static void
+AfterForkHook()
+{
+  void (*AfterNuwaFork)();
+
+  // This is defined in dom/ipc/ContentChild.cpp
+  AfterNuwaFork = (void (*)())
+    dlsym(RTLD_DEFAULT, "AfterNuwaFork");
+  AfterNuwaFork();
+}
+
 /**
  * Fork a new process that is ready for running IPC.
  *
@@ -1547,10 +1573,11 @@ ForkIPCProcess() {
     CloseAllProtoSockets(sProtoFdInfos, sProtoFdInfosSize);
   } else {
     // in the child
-#ifdef NUWA_DEBUG_CHILD_PROCESS
-    fprintf(stderr, "\n\n DEBUG ME @%d\n\n", getpid());
-    sleep(15);
-#endif
+    if (getenv("MOZ_DEBUG_CHILD_PROCESS")) {
+      printf("\n\nNUWA CHILDCHILDCHILDCHILD\n  debug me @ %d\n\n", getpid());
+      sleep(30);
+    }
+    AfterForkHook();
     ReplaceSignalFds();
     ReplaceIPC(sProtoFdInfos, sProtoFdInfosSize);
     RecreateEpollFds();

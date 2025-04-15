@@ -26,16 +26,7 @@ LIBS += \
   -lsuspend \
   $(NULL)
 endif
-OS_LDFLAGS += -Wl,--export-dynamic
-LOCAL_INCLUDES += -I$(topsrcdir)/widget/gonk/libdisplay
 endif
-
-LOCAL_INCLUDES += -I$(topsrcdir)/toolkit/xre
-LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/base
-LOCAL_INCLUDES += -I$(topsrcdir)/xpcom/build
-LOCAL_INCLUDES += -I$(DEPTH)/build
-
-STL_FLAGS=
 
 LIBS += $(JEMALLOC_LIBS)
 
@@ -52,12 +43,6 @@ endif
 
 ifeq ($(OS_ARCH),WINNT)
 OS_LIBS += $(call EXPAND_LIBNAME,version)
-endif
-
-ifdef _MSC_VER
-# Always enter a Windows program through wmain, whether or not we're
-# a console application.
-WIN32_EXE_LDFLAGS += -ENTRY:wmainCRTStartup
 endif
 endif #LIBXUL_SDK
 

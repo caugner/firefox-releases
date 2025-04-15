@@ -49,8 +49,9 @@ using mozilla::Move;
 /*
  * A JSTracer that produces a map of the heap with edges reversed.
  *
- * HeapReversers must be allocated in a stack frame. (They contain an AutoArrayRooter,
- * and those must be allocated and destroyed in a stack-like order.)
+ * HeapReversers must be allocated in a stack frame. (They are derived from
+ * CustomAutoRooter, and those must be allocated and destroyed in a stack-like
+ * order.)
  *
  * HeapReversers keep all the roots they find in their traversal alive until
  * they are destroyed. So you don't need to worry about nodes going away while
@@ -154,15 +155,11 @@ class HeapReverser : public JSTracer, public JS::CustomAutoRooter
     /* Construct a HeapReverser for |context|'s heap. */
     HeapReverser(JSContext *cx)
       : JS::CustomAutoRooter(cx),
+        noggc(JS_GetRuntime(cx)),
         runtime(JS_GetRuntime(cx)),
         parent(nullptr)
     {
         JS_TracerInit(this, runtime, traverseEdgeWithThis);
-        JS::DisableGenerationalGC(runtime);
-    }
-
-    ~HeapReverser() {
-        JS::EnableGenerationalGC(runtime);
     }
 
     bool init() { return map.init(); }
@@ -171,6 +168,8 @@ class HeapReverser : public JSTracer, public JS::CustomAutoRooter
     bool reverseHeap();
 
   private:
+    JS::AutoDisableGenerationalGC noggc;
+
     /* A runtime pointer for use by the destructor. */
     JSRuntime *runtime;
 
@@ -396,7 +395,8 @@ class ReferenceFinder {
             /* Certain classes of object are for internal use only. */
             if (object->is<BlockObject>() ||
                 object->is<CallObject>() ||
-                object->is<WithObject>() ||
+                object->is<StaticWithObject>() ||
+                object->is<DynamicWithObject>() ||
                 object->is<DeclEnvObject>()) {
                 return JSVAL_VOID;
             }
@@ -509,7 +509,7 @@ ReferenceFinder::addReferrer(jsval referrerArg, Path *path)
         return false;
     if (v.isUndefined()) {
         /* Create an array to accumulate referents under this path. */
-        JSObject *array = JS_NewArrayObject(context, 1, referrer.address());
+        JSObject *array = JS_NewArrayObject(context, referrer);
         if (!array)
             return false;
         v.setObject(*array);

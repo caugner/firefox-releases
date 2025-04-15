@@ -104,12 +104,8 @@
 #endif
 @BINPATH@/application.ini
 @BINPATH@/platform.ini
-#ifndef XP_OS2
 #ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@mozsqlite3@DLL_SUFFIX@
-#endif
-#else
-@BINPATH@/mozsqlt3@DLL_SUFFIX@
 #endif
 @BINPATH@/blocklist.xml
 @BINPATH@/ua-update.json
@@ -171,7 +167,6 @@
 #ifdef MOZ_B2G_BT
 @BINPATH@/components/dom_bluetooth.xpt
 #endif
-@BINPATH@/components/dom_camera.xpt
 @BINPATH@/components/dom_canvas.xpt
 @BINPATH@/components/dom_contacts.xpt
 @BINPATH@/components/dom_alarm.xpt
@@ -302,6 +297,7 @@
 @BINPATH@/components/storage.xpt
 @BINPATH@/components/telemetry.xpt
 @BINPATH@/components/toolkit_finalizationwitness.xpt
+@BINPATH@/components/toolkit_osfile.xpt
 @BINPATH@/components/toolkitprofile.xpt
 #ifdef MOZ_ENABLE_XREMOTE
 @BINPATH@/components/toolkitremote.xpt
@@ -344,7 +340,7 @@
 
 ; JavaScript components
 @BINPATH@/components/ConsoleAPI.manifest
-@BINPATH@/components/ConsoleAPI.js
+@BINPATH@/components/ConsoleAPIStorage.js
 @BINPATH@/components/BrowserElementParent.manifest
 @BINPATH@/components/BrowserElementParent.js
 @BINPATH@/components/ContactManager.js
@@ -380,12 +376,12 @@
 @BINPATH@/components/nsLoginInfo.js
 @BINPATH@/components/nsLoginManager.js
 @BINPATH@/components/nsLoginManagerPrompter.js
+@BINPATH@/components/NetworkGeolocationProvider.manifest
+@BINPATH@/components/NetworkGeolocationProvider.js
 #ifdef MOZ_WEBRTC
 @BINPATH@/components/PeerConnection.js
 @BINPATH@/components/PeerConnection.manifest
 #endif
-@BINPATH@/components/HttpDataUsage.manifest
-@BINPATH@/components/HttpDataUsage.js
 @BINPATH@/components/SiteSpecificUserAgent.js
 @BINPATH@/components/SiteSpecificUserAgent.manifest
 @BINPATH@/components/storage-mozStorage.js
@@ -453,11 +449,7 @@
 @BINPATH@/components/nsSessionStore.js
 @BINPATH@/components/nsURLFormatter.manifest
 @BINPATH@/components/nsURLFormatter.js
-#ifndef XP_OS2
 @BINPATH@/components/@DLL_PREFIX@browsercomps@DLL_SUFFIX@
-#else
-@BINPATH@/components/brwsrcmp@DLL_SUFFIX@
-#endif
 @BINPATH@/components/txEXSLTRegExFunctions.manifest
 @BINPATH@/components/txEXSLTRegExFunctions.js
 @BINPATH@/components/toolkitplaces.manifest
@@ -564,7 +556,6 @@
 
 @BINPATH@/components/Payment.js
 @BINPATH@/components/PaymentFlowInfo.js
-@BINPATH@/components/PaymentRequestInfo.js
 @BINPATH@/components/Payment.manifest
 
 @BINPATH@/components/DownloadsAPI.js
@@ -573,6 +564,11 @@
 ; InputMethod API
 @BINPATH@/components/MozKeyboard.js
 @BINPATH@/components/InputMethod.manifest
+
+#ifdef MOZ_DEBUG
+@BINPATH@/components/TestInterfaceJS.js
+@BINPATH@/components/TestInterfaceJS.manifest
+#endif
 
 ; Modules
 @BINPATH@/modules/*
@@ -750,11 +746,6 @@ bin/libfreebl_32int64_3.so
 bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 #endif
 
-; [OS/2]
-#ifdef XP_OS2
-@BINPATH@/MozSounds.cmd
-#endif
-
 [b2g]
 #ifndef MOZ_WIDGET_GONK
 #ifdef XP_WIN32
@@ -792,15 +783,21 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/TelProtocolHandler.js
 @BINPATH@/components/B2GAboutRedirector.js
 @BINPATH@/components/FilePicker.js
-@BINPATH@/components/FxAccountsUIGlue.js
 @BINPATH@/components/HelperAppDialog.js
 @BINPATH@/components/DownloadsUI.js
+
+#ifndef MOZ_WIDGET_GONK
+@BINPATH@/components/SimulatorScreen.js
+#endif
+
+#ifdef MOZ_SERVICES_FXACCOUNTS
+@BINPATH@/components/FxAccountsUIGlue.js
+@BINPATH@/components/services_fxaccounts.xpt
+#endif
 
 @BINPATH@/components/DataStore.manifest
 @BINPATH@/components/DataStoreService.js
 @BINPATH@/components/dom_datastore.xpt
-
-@BINPATH@/components/services_fxaccounts.xpt
 
 #ifdef MOZ_WEBSPEECH
 @BINPATH@/components/dom_webspeechsynth.xpt

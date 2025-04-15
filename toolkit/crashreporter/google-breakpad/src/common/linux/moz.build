@@ -12,7 +12,7 @@ UNIFIED_SOURCES += [
     'safe_readlink.cc',
 ]
 
-# file_id.cc cannot be built in unified mode because it uses a custom STL_FLAGS
+# file_id.cc cannot be built in unified mode because it uses a custom DISABLE_STL_WRAPPING
 SOURCES += [
     'file_id.cc',
 ]
@@ -42,3 +42,8 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
     DEFINES['ELFSIZE'] = 32
 
 DEFINES['NO_STABS_SUPPORT'] = True
+
+LOCAL_INCLUDES += [
+    '/toolkit/crashreporter/google-breakpad/src',
+]
+

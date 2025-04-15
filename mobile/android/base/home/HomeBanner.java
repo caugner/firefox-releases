@@ -5,19 +5,17 @@
 
 package org.mozilla.gecko.home;
 
-import org.mozilla.gecko.animation.PropertyAnimator;
-import org.mozilla.gecko.animation.PropertyAnimator.Property;
-import org.mozilla.gecko.animation.PropertyAnimator.PropertyAnimationListener;
-import org.mozilla.gecko.animation.ViewHelper;
+import org.json.JSONException;
+import org.json.JSONObject;
 import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.GeckoEvent;
 import org.mozilla.gecko.R;
+import org.mozilla.gecko.animation.PropertyAnimator;
+import org.mozilla.gecko.animation.PropertyAnimator.Property;
+import org.mozilla.gecko.animation.ViewHelper;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.ThreadUtils;
-
-import org.json.JSONException;
-import org.json.JSONObject;
 
 import android.content.Context;
 import android.graphics.drawable.Drawable;
@@ -75,7 +73,7 @@ public class HomeBanner extends LinearLayout
     public HomeBanner(Context context, AttributeSet attrs) {
         super(context, attrs);
 
-        LayoutInflater.from(context).inflate(R.layout.home_banner, this);
+        LayoutInflater.from(context).inflate(R.layout.home_banner_content, this);
 
         mTextView = (TextView) findViewById(R.id.text);
         mIconView = (ImageView) findViewById(R.id.icon);

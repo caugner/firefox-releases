@@ -75,6 +75,9 @@ public:
     PLayerTransactionParent::DeallocShmem(aShmem);
   }
 
+  virtual LayersBackend GetCompositorBackendType() const MOZ_OVERRIDE;
+
+  virtual bool IsSameProcess() const MOZ_OVERRIDE;
 
 protected:
   virtual bool RecvUpdate(const EditArray& cset,
@@ -89,10 +92,14 @@ protected:
                                 const bool& scheduleComposite) MOZ_OVERRIDE;
 
   virtual bool RecvClearCachedResources() MOZ_OVERRIDE;
+  virtual bool RecvForceComposite() MOZ_OVERRIDE;
   virtual bool RecvGetOpacity(PLayerParent* aParent,
                               float* aOpacity) MOZ_OVERRIDE;
-  virtual bool RecvGetTransform(PLayerParent* aParent,
-                                gfx3DMatrix* aTransform) MOZ_OVERRIDE;
+  virtual bool RecvGetAnimationTransform(PLayerParent* aParent,
+                                         MaybeTransform* aTransform)
+                                         MOZ_OVERRIDE;
+  virtual bool RecvSetAsyncScrollOffset(PLayerParent* aLayer,
+                                        const int32_t& aX, const int32_t& aY) MOZ_OVERRIDE;
 
   virtual PGrallocBufferParent*
   AllocPGrallocBufferParent(const IntSize& aSize,
@@ -111,7 +118,7 @@ protected:
                                               const TextureFlags& aFlags) MOZ_OVERRIDE;
   virtual bool DeallocPTextureParent(PTextureParent* actor) MOZ_OVERRIDE;
 
-  void Attach(ShadowLayerParent* aLayerParent,
+  bool Attach(ShadowLayerParent* aLayerParent,
               CompositableParent* aCompositable,
               bool aIsAsyncVideo);
 

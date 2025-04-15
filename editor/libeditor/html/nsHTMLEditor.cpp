@@ -490,9 +490,10 @@ nsHTMLEditor::SetFlags(uint32_t aFlags)
 NS_IMETHODIMP
 nsHTMLEditor::InitRules()
 {
-  MOZ_ASSERT(!mRules);
-  // instantiate the rules for the html editor
-  mRules = new nsHTMLEditRules();
+  if (!mRules) {
+    // instantiate the rules for the html editor
+    mRules = new nsHTMLEditRules();
+  }
   return mRules->Init(static_cast<nsPlaintextEditor*>(this));
 }
 
@@ -669,7 +670,6 @@ nsHTMLEditor::HandleKeyPressEvent(nsIDOMKeyEvent* aKeyEvent)
       return TypedText(NS_LITERAL_STRING("\t"), eTypedText);
     }
     case nsIDOMKeyEvent::DOM_VK_RETURN:
-    case nsIDOMKeyEvent::DOM_VK_ENTER:
       if (nativeKeyEvent->IsControl() || nativeKeyEvent->IsAlt() ||
           nativeKeyEvent->IsMeta() || nativeKeyEvent->IsOS()) {
         return NS_OK;

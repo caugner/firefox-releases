@@ -115,25 +115,24 @@ function wrapPrivileged(obj) {
       var invocant = unwrapIfWrapped(this);
       var unwrappedArgs = Array.prototype.slice.call(arguments).map(unwrapIfWrapped);
 
-      return wrapPrivileged(doApply(obj, invocant, unwrappedArgs));
+      try {
+        return wrapPrivileged(doApply(obj, invocant, unwrappedArgs));
+      } catch (e) {
+        // Wrap exceptions and re-throw them.
+        throw wrapIfUnwrapped(e);
+      }
     };
     var constructTrap = function() {
       // The arguments may or may not be wrappers. Unwrap them if necessary.
       var unwrappedArgs = Array.prototype.slice.call(arguments).map(unwrapIfWrapped);
 
-      // Constructors are tricky, because we can't easily call apply on them.
-      // As a workaround, we create a wrapper constructor with the same
-      // |prototype| property. ES semantics dictate that the return value from
-      // |new| is the return value of the |new|-ed function i.f.f. the returned
-      // value is an object. We can thus mimic the behavior of |new|-ing the
-      // underlying constructor just be passing along its return value in our
-      // constructor.
-      var FakeConstructor = function() {
-        return doApply(obj, this, unwrappedArgs);
-      };
-      FakeConstructor.prototype = obj.prototype;
-
-      return wrapPrivileged(new FakeConstructor());
+      // We want to invoke "obj" as a constructor, but using unwrappedArgs as
+      // the arguments.  Make sure to wrap and re-throw exceptions!
+      try {
+        return wrapPrivileged(new obj(...unwrappedArgs));
+      } catch (e) {
+        throw wrapIfUnwrapped(e);
+      }
     };
 
     return Proxy.createFunction(handler, callTrap, constructTrap);
@@ -778,7 +777,7 @@ SpecialPowersAPI.prototype = {
     var transaction = this._pendingPermissions.shift();
     var pendingActions = transaction[0];
     var callback = transaction[1];
-    lastPermission = pendingActions[pendingActions.length-1];
+    var lastPermission = pendingActions[pendingActions.length-1];
 
     var self = this;
     var os = Cc["@mozilla.org/observer-service;1"].getService(Ci.nsIObserverService);

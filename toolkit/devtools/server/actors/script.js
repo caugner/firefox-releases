@@ -3,7 +3,6 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 "use strict";
 
 let TYPED_ARRAY_CLASSES = ["Uint8Array", "Uint8ClampedArray", "Uint16Array",
@@ -20,6 +19,8 @@ let OBJECT_PREVIEW_MAX_ITEMS = 10;
  * as after a refresh).
  */
 function BreakpointStore() {
+  this._size = 0;
+
   // If we have a whole-line breakpoint set at LINE in URL, then
   //
   //   this._wholeLineBreakpoints[URL][LINE]
@@ -44,6 +45,8 @@ function BreakpointStore() {
 }
 
 BreakpointStore.prototype = {
+  _size: null,
+  get size() { return this._size; },
 
   /**
    * Add a breakpoint to the breakpoint store.
@@ -75,6 +78,8 @@ BreakpointStore.prototype = {
       }
       this._wholeLineBreakpoints[url][line] = aBreakpoint;
     }
+
+    this._size++;
   },
 
   /**
@@ -91,23 +96,29 @@ BreakpointStore.prototype = {
     if (column != null) {
       if (this._breakpoints[url]) {
         if (this._breakpoints[url][line]) {
-          delete this._breakpoints[url][line][column];
+          if (this._breakpoints[url][line][column]) {
+            delete this._breakpoints[url][line][column];
+            this._size--;
 
-          // If this was the last breakpoint on this line, delete the line from
-          // `this._breakpoints[url]` as well. Otherwise `_iterLines` will yield
-          // this line even though we no longer have breakpoints on
-          // it. Furthermore, we use Object.keys() instead of just checking
-          // `this._breakpoints[url].length` directly, because deleting
-          // properties from sparse arrays doesn't update the `length` property
-          // like adding them does.
-          if (Object.keys(this._breakpoints[url][line]).length === 0) {
-            delete this._breakpoints[url][line];
+            // If this was the last breakpoint on this line, delete the line from
+            // `this._breakpoints[url]` as well. Otherwise `_iterLines` will yield
+            // this line even though we no longer have breakpoints on
+            // it. Furthermore, we use Object.keys() instead of just checking
+            // `this._breakpoints[url].length` directly, because deleting
+            // properties from sparse arrays doesn't update the `length` property
+            // like adding them does.
+            if (Object.keys(this._breakpoints[url][line]).length === 0) {
+              delete this._breakpoints[url][line];
+            }
           }
         }
       }
     } else {
       if (this._wholeLineBreakpoints[url]) {
-        delete this._wholeLineBreakpoints[url][line];
+        if (this._wholeLineBreakpoints[url][line]) {
+          delete this._wholeLineBreakpoints[url][line];
+          this._size--;
+        }
       }
     }
   },
@@ -175,7 +186,7 @@ BreakpointStore.prototype = {
    *          - line (optional; requires the url property)
    *          - column (optional; requires the line property)
    */
-  findBreakpoints: function (aSearchParams={}) {
+  findBreakpoints: function* (aSearchParams={}) {
     if (aSearchParams.column != null) {
       dbg_assert(aSearchParams.line != null);
     }
@@ -199,7 +210,7 @@ BreakpointStore.prototype = {
     }
   },
 
-  _iterUrls: function (aUrl) {
+  _iterUrls: function* (aUrl) {
     if (aUrl) {
       if (this._breakpoints[aUrl] || this._wholeLineBreakpoints[aUrl]) {
         yield aUrl;
@@ -217,7 +228,7 @@ BreakpointStore.prototype = {
     }
   },
 
-  _iterLines: function (aUrl, aLine) {
+  _iterLines: function* (aUrl, aLine) {
     if (aLine != null) {
       if ((this._wholeLineBreakpoints[aUrl]
            && this._wholeLineBreakpoints[aUrl][aLine])
@@ -245,7 +256,7 @@ BreakpointStore.prototype = {
     }
   },
 
-  _iterColumns: function (aUrl, aLine, aColumn) {
+  _iterColumns: function* (aUrl, aLine, aColumn) {
     if (!this._breakpoints[aUrl] || !this._breakpoints[aUrl][aLine]) {
       return;
     }
@@ -621,22 +632,49 @@ ThreadActor.prototype = {
    */
   globalManager: {
     findGlobals: function () {
+      const { gDevToolsExtensions: {
+        getContentGlobals
+      } } = Cu.import("resource://gre/modules/devtools/DevToolsExtensions.jsm", {});
+
       this.globalDebugObject = this._addDebuggees(this.global);
+
+      // global may not be a window
+      try {
+        getContentGlobals({
+          'inner-window-id': getInnerId(this.global)
+        }).forEach(this.addDebuggee.bind(this));
+      }
+      catch(e) {}
     },
 
     /**
-     * A function that the engine calls when a new global object has been
-     * created.
+     * A function that the engine calls when a new global object
+     * (for example a sandbox) has been created.
      *
      * @param aGlobal Debugger.Object
      *        The new global object that was created.
      */
     onNewGlobal: function (aGlobal) {
+      let useGlobal = (aGlobal.hostAnnotations &&
+                       aGlobal.hostAnnotations.type == "document" &&
+                       aGlobal.hostAnnotations.element === this.global);
+
+      // check if the global is a sdk page-mod sandbox
+      if (!useGlobal) {
+        let metadata = {};
+        let id = "";
+        try {
+          id = getInnerId(this.global);
+          metadata = Cu.getSandboxMetadata(aGlobal.unsafeDereference());
+        }
+        catch (e) {}
+
+        useGlobal = (metadata['inner-window-id'] && metadata['inner-window-id'] == id);
+      }
+
       // Content debugging only cares about new globals in the contant window,
       // like iframe children.
-      if (aGlobal.hostAnnotations &&
-          aGlobal.hostAnnotations.type == "document" &&
-          aGlobal.hostAnnotations.element === this.global) {
+      if (useGlobal) {
         this.addDebuggee(aGlobal);
         // Notify the client.
         this.conn.send({
@@ -1061,7 +1099,7 @@ ThreadActor.prototype = {
     }, error => {
       return error instanceof Error
         ? { error: "unknownError",
-            message: safeErrorString(error) }
+            message: DevToolsUtils.safeErrorString(error) }
         // It is a known error, and the promise was rejected with an error
         // packet.
         : error;
@@ -1321,7 +1359,13 @@ ThreadActor.prototype = {
       if (line == null ||
           line < 0 ||
           this.dbg.findScripts({ url: url }).length == 0) {
-        return { error: "noScript" };
+        return {
+          error: "noScript",
+          message: "Requested setting a breakpoint on "
+            + url + ":" + line
+            + (column != null ? ":" + column : "")
+            + " but there is no Debugger.Script at that location"
+        };
       }
 
       let response = this._createAndStoreBreakpoint({
@@ -1409,6 +1453,10 @@ ThreadActor.prototype = {
     if (scripts.length == 0) {
       return {
         error: "noScript",
+        message: "Requested setting a breakpoint on "
+          + aLocation.url + ":" + aLocation.line
+          + (aLocation.column != null ? ":" + aLocation.column : "")
+          + " but there is no Debugger.Script at that location",
         actor: actor.actorID
       };
     }
@@ -1877,8 +1925,7 @@ ThreadActor.prototype = {
    * @return The EnvironmentActor for aEnvironment or undefined for host
    *         functions or functions scoped to a non-debuggee global.
    */
-  createEnvironmentActor:
-  function (aEnvironment, aPool) {
+  createEnvironmentActor: function (aEnvironment, aPool) {
     if (!aEnvironment) {
       return undefined;
     }
@@ -1939,8 +1986,7 @@ ThreadActor.prototype = {
    * Return a protocol completion value representing the given
    * Debugger-provided completion value.
    */
-  createProtocolCompletionValue:
-  function (aCompletion) {
+  createProtocolCompletionValue: function (aCompletion) {
     let protoValue = {};
     if ("return" in aCompletion) {
       protoValue.return = this.createValueGrip(aCompletion.return);
@@ -2179,6 +2225,14 @@ ThreadActor.prototype = {
    */
   onNewScript: function (aScript, aGlobal) {
     this._addScript(aScript);
+
+    // |onNewScript| is only fired for top level scripts (AKA staticLevel == 0),
+    // so we have to make sure to call |_addScript| on every child script as
+    // well to restore breakpoints in those scripts.
+    for (let s of aScript.getChildScripts()) {
+      this._addScript(s);
+    }
+
     this.sources.sourcesForScript(aScript);
   },
 
@@ -2217,6 +2271,10 @@ ThreadActor.prototype = {
    * Restore any pre-existing breakpoints to the scripts that we have access to.
    */
   _restoreBreakpoints: function () {
+    if (this.breakpointStore.size === 0) {
+      return;
+    }
+
     for (let s of this.dbg.findScripts()) {
       this._addScript(s);
     }
@@ -2460,7 +2518,14 @@ SourceActor.prototype = {
     // XXX bug 865252: Don't load from the cache if this is a source mapped
     // source because we can't guarantee that the cache has the most up to date
     // content for this source like we can if it isn't source mapped.
-    return fetch(this._url, { loadFromCache: !this._sourceMap });
+    let sourceFetched = fetch(this._url, { loadFromCache: !this._sourceMap });
+
+    // Record the contentType we just learned during fetching
+    sourceFetched.then(({ contentType }) => {
+      this._contentType = contentType;
+    });
+
+    return sourceFetched;
   },
 
   /**
@@ -2483,7 +2548,7 @@ SourceActor.prototype = {
           "from": this.actorID,
           "error": "loadSourceError",
           "message": "Could not load the source for " + this._url + ".\n"
-            + safeErrorString(aError)
+            + DevToolsUtils.safeErrorString(aError)
         };
       });
   },
@@ -3282,6 +3347,41 @@ ObjectActor.prototype.requestTypes = {
  * information for the debugger object, or true otherwise.
  */
 DebuggerServer.ObjectActorPreviewers = {
+  String: [function({obj, threadActor}, aGrip) {
+    let result = genericObjectPreviewer("String", String, obj, threadActor);
+    if (result) {
+      let length = DevToolsUtils.getProperty(obj, "length");
+      if (typeof length != "number") {
+        return false;
+      }
+
+      aGrip.displayString = result.value;
+      return true;
+    }
+
+    return true;
+  }],
+
+  Boolean: [function({obj, threadActor}, aGrip) {
+    let result = genericObjectPreviewer("Boolean", Boolean, obj, threadActor);
+    if (result) {
+      aGrip.preview = result;
+      return true;
+    }
+
+    return false;
+  }],
+
+  Number: [function({obj, threadActor}, aGrip) {
+    let result = genericObjectPreviewer("Number", Number, obj, threadActor);
+    if (result) {
+      aGrip.preview = result;
+      return true;
+    }
+
+    return false;
+  }],
+
   Function: [function({obj, threadActor}, aGrip) {
     if (obj.name) {
       aGrip.name = obj.name;
@@ -3459,6 +3559,45 @@ DebuggerServer.ObjectActorPreviewers = {
   }], // DOMStringMap
 }; // DebuggerServer.ObjectActorPreviewers
 
+/**
+ * Generic previewer for "simple" classes like String, Number and Boolean.
+ *
+ * @param string aClassName
+ *        Class name to expect.
+ * @param object aClass
+ *        The class to expect, eg. String. The valueOf() method of the class is
+ *        invoked on the given object.
+ * @param Debugger.Object aObj
+ *        The debugger object we need to preview.
+ * @param object aThreadActor
+ *        The thread actor to use to create a value grip.
+ * @return object|null
+ *         An object with one property, "value", which holds the value grip that
+ *         represents the given object. Null is returned if we cant preview the
+ *         object.
+ */
+function genericObjectPreviewer(aClassName, aClass, aObj, aThreadActor) {
+  if (!aObj.proto || aObj.proto.class != aClassName) {
+    return null;
+  }
+
+  let raw = aObj.unsafeDereference();
+  let v = null;
+  try {
+    v = aClass.prototype.valueOf.call(raw);
+  } catch (ex) {
+    // valueOf() can throw if the raw JS object is "misbehaved".
+    return null;
+  }
+
+  if (v !== null) {
+    v = aThreadActor.createValueGrip(makeDebuggeeValueIfNeeded(aObj, v));
+    return { value: v };
+  }
+
+  return null;
+}
+
 // Preview functions that do not rely on the object class.
 DebuggerServer.ObjectActorPreviewers.Object = [
   function TypedArray({obj, threadActor}, aGrip) {
@@ -3570,11 +3709,11 @@ DebuggerServer.ObjectActorPreviewers.Object = [
 
   function ArrayLike({obj, threadActor}, aGrip, aRawObj) {
     if (!aRawObj ||
+        obj.class != "DOMStringList" &&
         obj.class != "DOMTokenList" &&
         !(aRawObj instanceof Ci.nsIDOMMozNamedAttrMap ||
           aRawObj instanceof Ci.nsIDOMCSSRuleList ||
           aRawObj instanceof Ci.nsIDOMCSSValueList ||
-          aRawObj instanceof Ci.nsIDOMDOMStringList ||
           aRawObj instanceof Ci.nsIDOMFileList ||
           aRawObj instanceof Ci.nsIDOMFontFaceList ||
           aRawObj instanceof Ci.nsIDOMMediaList ||
@@ -3630,7 +3769,7 @@ DebuggerServer.ObjectActorPreviewers.Object = [
   },
 
   function DOMNode({obj, threadActor}, aGrip, aRawObj) {
-    if (!aRawObj || !(aRawObj instanceof Ci.nsIDOMNode)) {
+    if (obj.class == "Object" || !aRawObj || !(aRawObj instanceof Ci.nsIDOMNode)) {
       return false;
     }
 
@@ -4456,6 +4595,96 @@ update(ChromeDebuggerActor.prototype, {
   }
 });
 
+/**
+ * Creates an actor for handling add-on debugging. AddonThreadActor is
+ * a thin wrapper over ThreadActor.
+ *
+ * @param aConnection object
+ *        The DebuggerServerConnection with which this AddonThreadActor
+ *        is associated. (Currently unused, but required to make this
+ *        constructor usable with addGlobalActor.)
+ *
+ * @param aHooks object
+ *        An object with preNest and postNest methods for calling
+ *        when entering and exiting a nested event loops.
+ *
+ * @param aAddonID string
+ *        ID of the add-on this actor will debug. It will be used to
+ *        filter out globals marked for debugging.
+ */
+
+function AddonThreadActor(aConnect, aHooks, aAddonID) {
+  this.addonID = aAddonID;
+  ThreadActor.call(this, aHooks);
+}
+
+AddonThreadActor.prototype = Object.create(ThreadActor.prototype);
+
+update(AddonThreadActor.prototype, {
+  constructor: AddonThreadActor,
+
+  // A constant prefix that will be used to form the actor ID by the server.
+  actorPrefix: "addonThread",
+
+  /**
+   * Override the eligibility check for scripts and sources to make
+   * sure every script and source with a URL is stored when debugging
+   * add-ons.
+   */
+  _allowSource: (aSourceURL) => !!aSourceURL,
+
+  /**
+   * An object that will be used by ThreadActors to tailor their
+   * behaviour depending on the debugging context being required (chrome,
+   * addon or content). The methods that this object provides must
+   * be bound to the ThreadActor before use.
+   */
+  globalManager: {
+    findGlobals: function ADA_findGlobals() {
+      for (let global of this.dbg.findAllGlobals()) {
+        if (this._checkGlobal(global)) {
+          this.dbg.addDebuggee(global);
+        }
+      }
+    },
+
+    /**
+     * A function that the engine calls when a new global object
+     * has been created.
+     *
+     * @param aGlobal Debugger.Object
+     *        The new global object that was created.
+     */
+    onNewGlobal: function ADA_onNewGlobal(aGlobal) {
+      if (this._checkGlobal(aGlobal)) {
+        this.addDebuggee(aGlobal);
+        // Notify the client.
+        this.conn.send({
+          from: this.actorID,
+          type: "newGlobal",
+          // TODO: after bug 801084 lands see if we need to JSONify this.
+          hostAnnotations: aGlobal.hostAnnotations
+        });
+      }
+    }
+  },
+
+  /**
+   * Checks if the provided global belongs to the debugged add-on.
+   *
+   * @param aGlobal Debugger.Object
+   */
+  _checkGlobal: function ADA_checkGlobal(aGlobal) {
+    let metadata;
+    try {
+      // This will fail for non-Sandbox objects, hence the try-catch block.
+      metadata = Cu.getSandboxMetadata(aGlobal.unsafeDereference());
+    } catch (e) {
+    }
+
+    return metadata && metadata.addonID === this.addonID;
+  }
+});
 
 /**
  * Manages the sources for a thread. Handles source maps, locations in the
@@ -4683,7 +4912,7 @@ ThreadSources.prototype = {
         })
         .then(null, error => {
           if (!DevToolsUtils.reportingDisabled) {
-            DevToolsUtils.reportException(error);
+            DevToolsUtils.reportException("ThreadSources.prototype.getOriginalLocation", error);
           }
           return { url: null, line: null, column: null };
         });
@@ -4812,7 +5041,7 @@ ThreadSources.prototype = {
     return base.spec;
   },
 
-  iter: function () {
+  iter: function* () {
     for (let url in this._sourceActors) {
       yield this._sourceActors[url];
     }
@@ -5129,3 +5358,8 @@ function makeDebuggeeValueIfNeeded(obj, value) {
   }
   return value;
 }
+
+function getInnerId(window) {
+  return window.QueryInterface(Ci.nsIInterfaceRequestor).
+                getInterface(Ci.nsIDOMWindowUtils).currentInnerWindowID;
+};

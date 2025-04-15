@@ -397,7 +397,7 @@ AudioManager::AudioManager()
     do_GetService("@mozilla.org/settingsService;1");
   NS_ENSURE_TRUE_VOID(settingsService);
   nsCOMPtr<nsISettingsServiceLock> lock;
-  nsresult rv = settingsService->CreateLock(getter_AddRefs(lock));
+  nsresult rv = settingsService->CreateLock(nullptr, getter_AddRefs(lock));
   NS_ENSURE_SUCCESS_VOID(rv);
   nsCOMPtr<nsISettingsServiceCallback> callback = new AudioChannelVolInitCallback();
   NS_ENSURE_TRUE_VOID(callback);
@@ -531,9 +531,9 @@ AudioManager::SetPhoneState(int32_t aState)
     MOZ_ASSERT(mPhoneAudioAgent);
     if (aState == PHONE_STATE_IN_CALL) {
       // Telephony doesn't be paused by any other channels.
-      mPhoneAudioAgent->Init(AUDIO_CHANNEL_TELEPHONY, nullptr);
+      mPhoneAudioAgent->Init(nullptr, AUDIO_CHANNEL_TELEPHONY, nullptr);
     } else {
-      mPhoneAudioAgent->Init(AUDIO_CHANNEL_RINGER, nullptr);
+      mPhoneAudioAgent->Init(nullptr, AUDIO_CHANNEL_RINGER, nullptr);
     }
 
     // Telephony can always play.

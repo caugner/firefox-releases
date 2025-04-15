@@ -183,6 +183,7 @@ destroying the MediaDecoder object.
 #include "nsIObserver.h"
 #include "nsAutoPtr.h"
 #include "MediaResource.h"
+#include "mozilla/gfx/Rect.h"
 #include "mozilla/ReentrantMonitor.h"
 #include "mozilla/TimeStamp.h"
 #include "MediaStreamGraph.h"
@@ -340,7 +341,9 @@ public:
   // of our audio.
   virtual void SetAudioCaptured(bool aCaptured);
 
-  void SetPlaybackRate(double aPlaybackRate);
+  virtual void NotifyWaitingForResourcesStatusChanged() MOZ_OVERRIDE;
+
+  virtual void SetPlaybackRate(double aPlaybackRate);
   void SetPreservesPitch(bool aPreservesPitch);
 
   // All MediaStream-related data is protected by mReentrantMonitor.
@@ -351,6 +354,8 @@ public:
   // not connected to streams created by captureStreamUntilEnded.
 
   struct DecodedStreamData {
+    typedef gfx::IntSize IntSize;
+
     DecodedStreamData(MediaDecoder* aDecoder,
                       int64_t aInitialTime, SourceMediaStream* aStream);
     ~DecodedStreamData();
@@ -375,7 +380,7 @@ public:
     // The last video image sent to the stream. Useful if we need to replicate
     // the image.
     nsRefPtr<layers::Image> mLastVideoImage;
-    gfxIntSize mLastVideoImageDisplaySize;
+    IntSize mLastVideoImageDisplaySize;
     // This is set to true when the stream is initialized (audio and
     // video tracks added).
     bool mStreamInitialized;
@@ -735,7 +740,7 @@ public:
   // Change to a new play state. This updates the mState variable and
   // notifies any thread blocking on this object's monitor of the
   // change. Call on the main thread only.
-  void ChangeState(PlayState aState);
+  virtual void ChangeState(PlayState aState);
 
   // Called by |ChangeState|, to update the state machine.
   // Call on the main thread only and the lock must be obtained.
@@ -747,7 +752,11 @@ public:
 
   // Called when the metadata from the media file has been loaded by the
   // state machine. Call on the main thread only.
-  void MetadataLoaded(int aChannels, int aRate, bool aHasAudio, bool aHasVideo, MetadataTags* aTags);
+  virtual void MetadataLoaded(int aChannels,
+                              int aRate,
+                              bool aHasAudio,
+                              bool aHasVideo,
+                              MetadataTags* aTags);
 
   // Called when the first frame has been loaded.
   // Call on the main thread only.
@@ -780,7 +789,7 @@ public:
 
   // Calls mElement->UpdateReadyStateForData, telling it whether we have
   // data for the next frame and if we're buffering. Main thread only.
-  void UpdateReadyStateForData();
+  virtual void UpdateReadyStateForData();
 
   // Find the end of the cached data starting at the current decoder
   // position.
@@ -813,10 +822,8 @@ public:
   static bool IsRawEnabled();
 #endif
 
-#ifdef MOZ_OGG
   static bool IsOggEnabled();
   static bool IsOpusEnabled();
-#endif
 
 #ifdef MOZ_WAVE
   static bool IsWaveEnabled();
@@ -892,7 +899,6 @@ public:
 
     FrameStatistics() :
         mReentrantMonitor("MediaDecoder::FrameStats"),
-        mTotalFrameDelay(0.0),
         mParsedFrames(0),
         mDecodedFrames(0),
         mPresentedFrames(0) {}
@@ -919,11 +925,6 @@ public:
       return mPresentedFrames;
     }
 
-    double GetTotalFrameDelay() {
-      ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-      return mTotalFrameDelay;
-    }
-
     // Increments the parsed and decoded frame counters by the passed in counts.
     // Can be called on any thread.
     void NotifyDecodedFrames(uint32_t aParsed, uint32_t aDecoded) {
@@ -941,21 +942,10 @@ public:
       ++mPresentedFrames;
     }
 
-    // Tracks the sum of display delay.
-    // Can be called on any thread.
-    void NotifyFrameDelay(double aFrameDelay) {
-      ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-      mTotalFrameDelay += aFrameDelay;
-    }
-
   private:
 
     // ReentrantMonitor to protect access of playback statistics.
     ReentrantMonitor mReentrantMonitor;
-
-    // Sum of displayed frame delays.
-    // Access protected by mReentrantMonitor.
-    double mTotalFrameDelay;
 
     // Number of frames parsed and demuxed from media.
     // Access protected by mReentrantMonitor.

@@ -24,7 +24,6 @@ class nsIDocument;
 class nsString;
 class nsIURI;
 class nsIPrincipal;
-class nsSupportsHashtable;
 class nsHashtable;
 
 namespace mozilla {
@@ -33,8 +32,8 @@ class EventTarget;
 }
 }
 
-class nsXBLService : public nsIObserver,
-                     public nsSupportsWeakReference
+class nsXBLService MOZ_FINAL : public nsIObserver,
+                               public nsSupportsWeakReference
 {
   NS_DECL_ISUPPORTS
 

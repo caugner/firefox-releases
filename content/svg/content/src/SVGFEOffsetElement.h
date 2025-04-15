@@ -11,7 +11,7 @@
 #include "nsSVGString.h"
 
 nsresult NS_NewSVGFEOffsetElement(nsIContent **aResult,
-                                  already_AddRefed<nsINodeInfo> aNodeInfo);
+                                  already_AddRefed<nsINodeInfo>&& aNodeInfo);
 
 namespace mozilla {
 namespace dom {
@@ -21,9 +21,9 @@ typedef nsSVGFE SVGFEOffsetElementBase;
 class SVGFEOffsetElement : public SVGFEOffsetElementBase
 {
   friend nsresult (::NS_NewSVGFEOffsetElement(nsIContent **aResult,
-                                              already_AddRefed<nsINodeInfo> aNodeInfo));
+                                              already_AddRefed<nsINodeInfo>&& aNodeInfo));
 protected:
-  SVGFEOffsetElement(already_AddRefed<nsINodeInfo> aNodeInfo)
+  SVGFEOffsetElement(already_AddRefed<nsINodeInfo>& aNodeInfo)
     : SVGFEOffsetElementBase(aNodeInfo)
   {
   }
@@ -49,8 +49,6 @@ public:
   already_AddRefed<SVGAnimatedNumber> Dy();
 
 protected:
-  nsIntPoint GetOffset(const nsSVGFilterInstance& aInstance);
-
   virtual NumberAttributesInfo GetNumberInfo() MOZ_OVERRIDE;
   virtual StringAttributesInfo GetStringInfo() MOZ_OVERRIDE;
 

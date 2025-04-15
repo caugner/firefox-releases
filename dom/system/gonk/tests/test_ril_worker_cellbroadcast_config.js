@@ -16,27 +16,28 @@ add_test(function test_ril_worker_cellbroadcast_activate() {
       // Do nothing
     }
   });
+  let context = worker.ContextPool._contexts[0];
 
   let parcelTypes = [];
-  let org_newParcel = worker.Buf.newParcel;
-  worker.Buf.newParcel = function(type, options) {
+  let org_newParcel = context.Buf.newParcel;
+  context.Buf.newParcel = function(type, options) {
     parcelTypes.push(type);
     org_newParcel.apply(this, arguments);
   };
 
   function setup(isCdma) {
-    worker.RIL._isCdma = isCdma;
-    worker.RIL.cellBroadcastDisabled = false;
-    worker.RIL.mergedCellBroadcastConfig = [1, 2, 4, 7];  // 1, 4-6
+    context.RIL._isCdma = isCdma;
+    context.RIL.cellBroadcastDisabled = false;
+    context.RIL.mergedCellBroadcastConfig = [1, 2, 4, 7];  // 1, 4-6
     parcelTypes = [];
   }
 
   function test(isCdma, expectedRequest) {
     setup(isCdma);
-    worker.RIL.setCellBroadcastDisabled({disabled: true});
+    context.RIL.setCellBroadcastDisabled({disabled: true});
     // Makesure that request parcel is sent out.
     do_check_neq(parcelTypes.indexOf(expectedRequest), -1);
-    do_check_eq(worker.RIL.cellBroadcastDisabled, true);
+    do_check_eq(context.RIL.cellBroadcastDisabled, true);
   }
 
   test(false, REQUEST_GSM_SMS_BROADCAST_ACTIVATION);
@@ -55,6 +56,7 @@ add_test(function test_ril_worker_cellbroadcast_config() {
       // Do nothing
     }
   });
+  let context = worker.ContextPool._contexts[0];
 
   function U32ArrayFromParcelArray(pa) {
     do_print(pa);
@@ -82,8 +84,8 @@ add_test(function test_ril_worker_cellbroadcast_config() {
       do_check_eq(u32Parcel.slice(3).toString(), expected);
     };
 
-    worker.RIL._isCdma = isCdma;
-    worker.RIL.setSmsBroadcastConfig(configs);
+    context.RIL._isCdma = isCdma;
+    context.RIL.setSmsBroadcastConfig(configs);
 
     // Makesure that request parcel is sent out.
     do_check_true(found);
@@ -113,12 +115,13 @@ add_test(function test_ril_worker_cellbroadcast_merge_config() {
       // Do nothing
     }
   });
+  let context = worker.ContextPool._contexts[0];
 
   function test(isCdma, configs, expected) {
-    worker.RIL._isCdma = isCdma;
-    worker.RIL.cellBroadcastConfigs = configs;
-    worker.RIL._mergeAllCellBroadcastConfigs();
-    do_check_eq(worker.RIL.mergedCellBroadcastConfig.toString(), expected);
+    context.RIL._isCdma = isCdma;
+    context.RIL.cellBroadcastConfigs = configs;
+    context.RIL._mergeAllCellBroadcastConfigs();
+    do_check_eq(context.RIL.mergedCellBroadcastConfig.toString(), expected);
   }
 
   let configs = {
@@ -134,3 +137,37 @@ add_test(function test_ril_worker_cellbroadcast_merge_config() {
   run_next_test();
 });
 
+add_test(function test_ril_worker_cellbroadcast_set_search_list() {
+  let worker = newWorker({
+    postRILMessage: function(id, parcel) {
+      // Do nothing
+    },
+    postMessage: function(message) {
+      // Do nothing
+    }
+  });
+
+  let context = worker.ContextPool._contexts[0];
+
+  function test(aIsCdma, aSearchList, aExpected) {
+    context.RIL._isCdma = aIsCdma;
+
+    let options = { searchList: aSearchList };
+    context.RIL.setCellBroadcastSearchList(options);
+    // Enforce the MMI result to string for comparison.
+    do_check_eq("" + context.RIL.cellBroadcastConfigs.MMI, aExpected);
+    do_check_eq(options.success, true);
+  }
+
+  let searchListStr = "1,2,3,4";
+  let searchList = { gsm: "1,2,3,4", cdma: "5,6,7,8" };
+
+  test(false, searchListStr, "1,2,2,3,3,4,4,5");
+  test(true, searchListStr, "1,2,2,3,3,4,4,5");
+  test(false, searchList, "1,2,2,3,3,4,4,5");
+  test(true, searchList, "5,6,6,7,7,8,8,9");
+  test(false, null, "null");
+  test(true, null, "null");
+
+  run_next_test();
+});

@@ -6,6 +6,7 @@
 #ifndef nsFieldSetFrame_h___
 #define nsFieldSetFrame_h___
 
+#include "mozilla/Attributes.h"
 #include "nsContainerFrame.h"
 
 class nsFieldSetFrame MOZ_FINAL : public nsContainerFrame
@@ -18,13 +19,13 @@ public:
   NS_HIDDEN_(nscoord)
     GetIntrinsicWidth(nsRenderingContext* aRenderingContext,
                       nsLayoutUtils::IntrinsicWidthType);
-  virtual nscoord GetMinWidth(nsRenderingContext* aRenderingContext);
-  virtual nscoord GetPrefWidth(nsRenderingContext* aRenderingContext);
+  virtual nscoord GetMinWidth(nsRenderingContext* aRenderingContext) MOZ_OVERRIDE;
+  virtual nscoord GetPrefWidth(nsRenderingContext* aRenderingContext) MOZ_OVERRIDE;
   virtual nsSize ComputeSize(nsRenderingContext *aRenderingContext,
                              nsSize aCBSize, nscoord aAvailableWidth,
                              nsSize aMargin, nsSize aBorder, nsSize aPadding,
                              uint32_t aFlags) MOZ_OVERRIDE;
-  virtual nscoord GetBaseline() const;
+  virtual nscoord GetBaseline() const MOZ_OVERRIDE;
 
   /**
    * The area to paint box-shadows around.  It's the border rect except
@@ -32,10 +33,10 @@ public:
    */
   virtual nsRect VisualBorderRectRelativeToSelf() const MOZ_OVERRIDE;
 
-  NS_IMETHOD Reflow(nsPresContext*           aPresContext,
-                    nsHTMLReflowMetrics&     aDesiredSize,
-                    const nsHTMLReflowState& aReflowState,
-                    nsReflowStatus&          aStatus);
+  virtual nsresult Reflow(nsPresContext*           aPresContext,
+                          nsHTMLReflowMetrics&     aDesiredSize,
+                          const nsHTMLReflowState& aReflowState,
+                          nsReflowStatus&          aStatus) MOZ_OVERRIDE;
                                
   virtual void BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                 const nsRect&           aDirtyRect,
@@ -44,16 +45,16 @@ public:
   void PaintBorderBackground(nsRenderingContext& aRenderingContext,
     nsPoint aPt, const nsRect& aDirtyRect, uint32_t aBGFlags);
 
-  NS_IMETHOD AppendFrames(ChildListID    aListID,
-                          nsFrameList&   aFrameList);
-  NS_IMETHOD InsertFrames(ChildListID    aListID,
-                          nsIFrame*      aPrevFrame,
-                          nsFrameList&   aFrameList);
-  NS_IMETHOD RemoveFrame(ChildListID    aListID,
-                         nsIFrame*      aOldFrame);
+  virtual nsresult AppendFrames(ChildListID    aListID,
+                                nsFrameList&   aFrameList) MOZ_OVERRIDE;
+  virtual nsresult InsertFrames(ChildListID    aListID,
+                                nsIFrame*      aPrevFrame,
+                                nsFrameList&   aFrameList) MOZ_OVERRIDE;
+  virtual nsresult RemoveFrame(ChildListID    aListID,
+                               nsIFrame*      aOldFrame) MOZ_OVERRIDE;
 
-  virtual nsIAtom* GetType() const;
-  virtual bool IsFrameOfType(uint32_t aFlags) const
+  virtual nsIAtom* GetType() const MOZ_OVERRIDE;
+  virtual bool IsFrameOfType(uint32_t aFlags) const MOZ_OVERRIDE
   {
     return nsContainerFrame::IsFrameOfType(aFlags &
              ~nsIFrame::eCanContainOverflowContainers);
@@ -68,12 +69,12 @@ public:
 #endif
 
 #ifdef DEBUG
-  NS_IMETHOD SetInitialChildList(ChildListID    aListID,
-                                 nsFrameList&   aChildList);
+  virtual nsresult SetInitialChildList(ChildListID    aListID,
+                                       nsFrameList&   aChildList) MOZ_OVERRIDE;
 #endif
 
 #ifdef DEBUG_FRAME_DUMP
-  NS_IMETHOD GetFrameName(nsAString& aResult) const {
+  virtual nsresult GetFrameName(nsAString& aResult) const MOZ_OVERRIDE {
     return MakeFrameName(NS_LITERAL_STRING("FieldSet"), aResult);
   }
 #endif

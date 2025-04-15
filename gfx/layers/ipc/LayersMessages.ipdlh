@@ -39,6 +39,7 @@ using mozilla::layers::ScaleMode from "mozilla/layers/LayersTypes.h";
 using mozilla::layers::EventRegions from "mozilla/layers/LayersTypes.h";
 using mozilla::layers::DiagnosticTypes from "mozilla/layers/CompositorTypes.h";
 using struct mozilla::layers::FrameMetrics from "FrameMetrics.h";
+using struct mozilla::layers::FenceHandle from "mozilla/layers/FenceUtils.h";
 
 namespace mozilla {
 namespace layers {
@@ -48,6 +49,7 @@ struct TargetConfig {
   ScreenRotation rotation;
   nsIntRect clientBounds;
   ScreenOrientation orientation;
+  nsIntRegion clearRegion;
 };
 
 // Create a shadow layer for |layer|
@@ -247,15 +249,48 @@ struct OpSetLayerAttributes {
 // Monkey with the tree structure
 struct OpSetRoot          { PLayer root; };
 struct OpInsertAfter      { PLayer container; PLayer childLayer; PLayer after; };
-struct OpAppendChild      { PLayer container; PLayer childLayer; };
+struct OpPrependChild     { PLayer container; PLayer childLayer; };
 struct OpRemoveChild      { PLayer container; PLayer childLayer; };
 struct OpRepositionChild  { PLayer container; PLayer childLayer; PLayer after; };
 struct OpRaiseToTopChild  { PLayer container; PLayer childLayer; };
 
 struct OpSetDiagnosticTypes { DiagnosticTypes diagnostics; };
 
-// Paint (buffer update)
-struct OpPaintTiledLayerBuffer {
+struct ShmemSection {
+  Shmem shmem;
+  uint32_t offset;
+  size_t size;
+};
+
+union TileLock {
+  ShmemSection;
+  uintptr_t;
+};
+
+struct TexturedTileDescriptor {
+  PTexture texture;
+  TileLock sharedLock;
+};
+
+struct PlaceholderTileDescriptor {
+};
+
+union TileDescriptor {
+  TexturedTileDescriptor;
+  PlaceholderTileDescriptor;
+};
+
+struct SurfaceDescriptorTiles {
+  nsIntRegion validRegion;
+  nsIntRegion paintedRegion;
+  TileDescriptor[] tiles;
+  int         retainedWidth;
+  int         retainedHeight;
+  float       resolution;
+  float       frameResolution;
+};
+
+struct OpUseTiledLayerBuffer {
   PCompositable compositable;
   SurfaceDescriptorTiles tileLayerDescriptor;
 };
@@ -304,12 +339,26 @@ struct OpUpdatePictureRect {
 };
 
 /**
+ * Tells the CompositableHost to remove the corresponding TextureHost
+ */
+struct OpRemoveTexture {
+  PCompositable compositable;
+  PTexture texture;
+};
+
+/**
  * Tells the compositor-side which texture to use (for example, as front buffer
  * if there is several textures for double buffering)
  */
 struct OpUseTexture {
   PCompositable compositable;
   PTexture texture;
+};
+
+struct OpUseComponentAlphaTextures {
+  PCompositable compositable;
+  PTexture textureOnBlack;
+  PTexture textureOnWhite;
 };
 
 union MaybeRegion {
@@ -334,10 +383,13 @@ union CompositableOperation {
   OpPaintTextureRegion;
   OpPaintTextureIncremental;
 
-  OpPaintTiledLayerBuffer;
+  OpUseTiledLayerBuffer;
+
+  OpRemoveTexture;
 
   OpUpdateTexture;
   OpUseTexture;
+  OpUseComponentAlphaTextures;
 };
 
 // A unit of a changeset; a set of these comprise a changeset
@@ -354,7 +406,7 @@ union Edit {
 
   OpSetRoot;
   OpInsertAfter;
-  OpAppendChild;
+  OpPrependChild;
   OpRemoveChild;
   OpRepositionChild;
   OpRaiseToTopChild;
@@ -379,11 +431,19 @@ struct OpTextureSwap {
   SurfaceDescriptor image;
 };
 
+struct ReturnReleaseFence {
+  PCompositable compositable;
+  PTexture texture;
+  FenceHandle fence;
+};
+
 // Unit of a "changeset reply".  This is a weird abstraction, probably
 // only to be used for buffer swapping.
 union EditReply {
   OpContentBufferSwap;
   OpTextureSwap;
+
+  ReturnReleaseFence;
 };
 
 } // namespace

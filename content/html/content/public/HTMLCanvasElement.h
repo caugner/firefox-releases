@@ -46,7 +46,7 @@ class HTMLCanvasElement MOZ_FINAL : public nsGenericHTMLElement,
   typedef layers::LayerManager LayerManager;
 
 public:
-  HTMLCanvasElement(already_AddRefed<nsINodeInfo> aNodeInfo);
+  HTMLCanvasElement(already_AddRefed<nsINodeInfo>& aNodeInfo);
   virtual ~HTMLCanvasElement();
 
   NS_IMPL_FROMCONTENT_HTML_WITH_TAG(HTMLCanvasElement, canvas)
@@ -83,18 +83,15 @@ public:
              JS::Handle<JS::Value> aContextOptions,
              ErrorResult& aRv);
   void ToDataURL(JSContext* aCx, const nsAString& aType,
-                 const Optional<JS::Handle<JS::Value> >& aParams,
+                 JS::Handle<JS::Value> aParams,
                  nsAString& aDataURL, ErrorResult& aRv)
   {
-    JS::Handle<JS::Value> params = aParams.WasPassed()
-                                 ? aParams.Value()
-                                 : JS::UndefinedHandleValue;
-    aRv = ToDataURL(aType, params, aCx, aDataURL);
+    aRv = ToDataURL(aType, aParams, aCx, aDataURL);
   }
   void ToBlob(JSContext* aCx,
               FileCallback& aCallback,
               const nsAString& aType,
-              const Optional<JS::Handle<JS::Value> >& aParams,
+              JS::Handle<JS::Value> aParams,
               ErrorResult& aRv);
 
   bool MozOpaque() const

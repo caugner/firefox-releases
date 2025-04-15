@@ -68,8 +68,7 @@ StoreBuffer::WholeCellEdges::mark(JSTracer *trc)
         JSObject *object = static_cast<JSObject *>(tenured);
         if (object->is<ArgumentsObject>())
             ArgumentsObject::trace(trc, object);
-        else
-            MarkChildren(trc, object);
+        MarkChildren(trc, object);
         return;
     }
 #ifdef JS_ION
@@ -81,6 +80,28 @@ StoreBuffer::WholeCellEdges::mark(JSTracer *trc)
 }
 
 /*** MonoTypeBuffer ***/
+
+template <typename T>
+void
+StoreBuffer::MonoTypeBuffer<T>::handleOverflow(StoreBuffer *owner)
+{
+    if (!owner->isAboutToOverflow()) {
+        /*
+         * Compact the buffer now, and if that fails to free enough space then
+         * trigger a minor collection.
+         */
+        compact(owner);
+        if (isAboutToOverflow())
+            owner->setAboutToOverflow();
+    } else {
+         /*
+          * A minor GC has already been triggered, so there's no point
+          * compacting unless the buffer is totally full.
+          */
+        if (storage_->availableInCurrentChunk() < sizeof(T))
+            maybeCompact(owner);
+    }
+}
 
 template <typename T>
 void
@@ -304,7 +325,7 @@ void
 StoreBuffer::setAboutToOverflow()
 {
     aboutToOverflow_ = true;
-    runtime_->triggerOperationCallback(JSRuntime::TriggerCallbackMainThread);
+    runtime_->requestInterrupt(JSRuntime::RequestInterruptMainThread);
 }
 
 bool

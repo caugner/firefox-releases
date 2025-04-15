@@ -12,7 +12,7 @@
 #include "nsButtonFrameRenderer.h"
 #include "nsCSSAnonBoxes.h"
 #include "nsFormControlFrame.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsStyleSet.h"
 #include "nsDisplayList.h"
 #include <algorithm>
@@ -76,7 +76,7 @@ nsHTMLButtonControlFrame::SetFocus(bool aOn, bool aRepaint)
 {
 }
 
-NS_IMETHODIMP
+nsresult
 nsHTMLButtonControlFrame::HandleEvent(nsPresContext* aPresContext, 
                                       WidgetGUIEvent* aEvent,
                                       nsEventStatus* aEventStatus)
@@ -162,7 +162,7 @@ nsHTMLButtonControlFrame::GetPrefWidth(nsRenderingContext* aRenderingContext)
   return result;
 }
 
-NS_IMETHODIMP 
+nsresult 
 nsHTMLButtonControlFrame::Reflow(nsPresContext* aPresContext,
                                nsHTMLReflowMetrics& aDesiredSize,
                                const nsHTMLReflowState& aReflowState,
@@ -283,7 +283,7 @@ nsHTMLButtonControlFrame::ReflowButtonContents(nsPresContext* aPresContext,
                                         aFirstKid, availSize);
 
   nsReflowStatus contentsReflowStatus;
-  nsHTMLReflowMetrics contentsDesiredSize(aButtonReflowState.GetWritingMode());
+  nsHTMLReflowMetrics contentsDesiredSize(aButtonReflowState);
   ReflowChild(aFirstKid, aPresContext,
               contentsDesiredSize, contentsReflowState,
               xoffset,
@@ -375,7 +375,7 @@ nsHTMLButtonControlFrame::SetAdditionalStyleContext(int32_t aIndex,
   mRenderer.SetStyleContext(aIndex, aStyleContext);
 }
 
-NS_IMETHODIMP 
+nsresult 
 nsHTMLButtonControlFrame::AppendFrames(ChildListID     aListID,
                                        nsFrameList&    aFrameList)
 {
@@ -383,7 +383,7 @@ nsHTMLButtonControlFrame::AppendFrames(ChildListID     aListID,
   return NS_ERROR_UNEXPECTED;
 }
 
-NS_IMETHODIMP
+nsresult
 nsHTMLButtonControlFrame::InsertFrames(ChildListID     aListID,
                                        nsIFrame*       aPrevFrame,
                                        nsFrameList&    aFrameList)
@@ -392,7 +392,7 @@ nsHTMLButtonControlFrame::InsertFrames(ChildListID     aListID,
   return NS_ERROR_UNEXPECTED;
 }
 
-NS_IMETHODIMP
+nsresult
 nsHTMLButtonControlFrame::RemoveFrame(ChildListID     aListID,
                                       nsIFrame*       aOldFrame)
 {

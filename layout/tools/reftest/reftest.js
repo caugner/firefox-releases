@@ -239,7 +239,7 @@ this.OnRefTestLoad = function OnRefTestLoad(win)
     var prefs = Components.classes["@mozilla.org/preferences-service;1"].
                 getService(Components.interfaces.nsIPrefBranch);
     try {
-        gBrowserIsRemote = prefs.getBoolPref("browser.tabs.remote");
+        gBrowserIsRemote = prefs.getBoolPref("browser.tabs.remote.autostart");
     } catch (e) {
         gBrowserIsRemote = false;
     }
@@ -267,6 +267,7 @@ this.OnRefTestLoad = function OnRefTestLoad(win)
     gBrowser.setAttribute("id", "browser");
     gBrowser.setAttribute("type", "content-primary");
     gBrowser.setAttribute("remote", gBrowserIsRemote ? "true" : "false");
+    gBrowser.setAttribute("mozasyncpanzoom", "true");
     // Make sure the browser element is exactly 800x1000, no matter
     // what size our window is
     gBrowser.setAttribute("style", "min-width: 800px; min-height: 1000px; max-width: 800px; max-height: 1000px");
@@ -629,6 +630,12 @@ function BuildConditionSandbox(aURL) {
     sandbox.AddressSanitizer = true;
 #else
     sandbox.AddressSanitizer = false;
+#endif
+
+#if MOZ_WEBRTC
+    sandbox.webrtc = true;
+#else
+    sandbox.webrtc = false;
 #endif
 
     var hh = CC[NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX + "http"].
@@ -1655,7 +1662,7 @@ function RecordResult(testRunTime, errorMsg, scriptResults)
                         result += "REFTEST   IMAGE 2 (REFERENCE): " + gCanvas2.toDataURL() + "\n";
                     } else {
                         result += "\n";
-                        gDumpLog("REFTEST   IMAGE: " + gCanvas1.toDataURL() + "\n");
+                        result += "REFTEST   IMAGE: " + gCanvas1.toDataURL() + "\n";
                     }
                 } else {
                     result += "\n";
@@ -1686,6 +1693,11 @@ function RecordResult(testRunTime, errorMsg, scriptResults)
 function LoadFailed(why)
 {
     ++gTestResults.FailedLoad;
+    // Once bug 896840 is fixed, this can go away, but for now it will give log
+    // output that is TBPL starable for bug 789751 and bug 720452.
+    if (!why) {
+        gDumpLog("REFTEST TEST-UNEXPECTED-FAIL | load failed with unknown reason\n");
+    }
     gDumpLog("REFTEST TEST-UNEXPECTED-FAIL | " +
          gURLs[0]["url" + gState].spec + " | load failed: " + why + "\n");
     FlushTestLog();

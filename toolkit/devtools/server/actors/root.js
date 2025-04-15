@@ -8,8 +8,6 @@
 
 /* Root actor for the remote debugging protocol. */
 
-Cu.import("resource://gre/modules/Services.jsm");
-
 /**
  * Methods shared between RootActor and BrowserTabActor.
  */
@@ -179,7 +177,16 @@ RootActor.prototype = {
         editOuterHTML: true,
         // Wether the server-side highlighter actor exists and can be used to
         // remotely highlight nodes (see server/actors/highlighter.js)
-        highlightable: true
+        highlightable: true,
+        // Wether the inspector actor implements the getImageDataFromURL
+        // method that returns data-uris for image URLs. This is used for image
+        // tooltips for instance
+        urlToImageDataResolver: true,
+        networkMonitor: true,
+        // Wether the storage inspector actor to inspect cookies, etc.
+        storageInspector: true,
+        // Wether storage inspector is read only
+        storageInspectorReadOnly: true,
       }
     };
   },

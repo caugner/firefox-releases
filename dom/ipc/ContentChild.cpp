@@ -23,6 +23,7 @@
 #include "mozilla/dom/PCrashReporterChild.h"
 #include "mozilla/dom/DOMStorageIPC.h"
 #include "mozilla/hal_sandbox/PHalChild.h"
+#include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
 #include "mozilla/ipc/TestShellChild.h"
 #include "mozilla/layers/CompositorChild.h"
@@ -30,18 +31,25 @@
 #include "mozilla/layers/PCompositorChild.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/Preferences.h"
-#if defined(MOZ_CONTENT_SANDBOX) && defined(XP_UNIX) && !defined(XP_MACOSX)
+
+#if defined(MOZ_CONTENT_SANDBOX)
+#if defined(XP_WIN)
+#define TARGET_SANDBOX_EXPORTS
+#include "mozilla/sandboxTarget.h"
+#elif defined(XP_LINUX)
 #include "mozilla/Sandbox.h"
 #endif
+#endif
+
 #include "mozilla/unused.h"
 
 #include "nsIConsoleListener.h"
+#include "nsIIPCBackgroundChildCreateCallback.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIMemoryReporter.h"
 #include "nsIMemoryInfoDumper.h"
 #include "nsIMutable.h"
 #include "nsIObserverService.h"
-#include "nsIObserver.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsServiceManagerUtils.h"
 #include "nsStyleSheetService.h"
@@ -92,6 +100,10 @@
 #define getpid _getpid
 #endif
 
+#ifdef MOZ_X11
+#include "mozilla/X11Util.h"
+#endif
+
 #ifdef ACCESSIBILITY
 #include "nsIAccessibilityService.h"
 #endif
@@ -104,6 +116,8 @@
 #include "mozilla/dom/indexedDB/PIndexedDBChild.h"
 #include "mozilla/dom/mobilemessage/SmsChild.h"
 #include "mozilla/dom/devicestorage/DeviceStorageRequestChild.h"
+#include "mozilla/dom/PFileSystemRequestChild.h"
+#include "mozilla/dom/FileSystemTaskBase.h"
 #include "mozilla/dom/bluetooth/PBluetoothChild.h"
 #include "mozilla/dom/PFMRadioChild.h"
 #include "mozilla/ipc/InputStreamUtils.h"
@@ -123,6 +137,7 @@
 #include "AudioChannelService.h"
 #include "JavaScriptChild.h"
 #include "mozilla/dom/telephony/PTelephonyChild.h"
+#include "mozilla/dom/time/DateCacheCleaner.h"
 #include "mozilla/net/NeckoMessageUtils.h"
 
 using namespace base;
@@ -159,14 +174,24 @@ static bool sNuwaForking = false;
 namespace mozilla {
 namespace dom {
 
-class MemoryReportRequestChild : public PMemoryReportRequestChild
+class MemoryReportRequestChild : public PMemoryReportRequestChild,
+                                 public nsIRunnable
 {
 public:
-    MemoryReportRequestChild();
+    NS_DECL_ISUPPORTS
+
+    MemoryReportRequestChild(uint32_t aGeneration, const nsAString& aDMDDumpIdent);
     virtual ~MemoryReportRequestChild();
+    NS_IMETHOD Run();
+private:
+    uint32_t mGeneration;
+    nsString mDMDDumpIdent;
 };
 
-MemoryReportRequestChild::MemoryReportRequestChild()
+NS_IMPL_ISUPPORTS1(MemoryReportRequestChild, nsIRunnable)
+
+MemoryReportRequestChild::MemoryReportRequestChild(uint32_t aGeneration, const nsAString& aDMDDumpIdent)
+: mGeneration(aGeneration), mDMDDumpIdent(aDMDDumpIdent)
 {
     MOZ_COUNT_CTOR(MemoryReportRequestChild);
 }
@@ -245,6 +270,16 @@ ConsoleListener::Observe(nsIConsoleMessage* aMessage)
         NS_ENSURE_SUCCESS(rv, rv);
         rv = scriptError->GetSourceLine(sourceLine);
         NS_ENSURE_SUCCESS(rv, rv);
+
+        // Before we send the error to the parent process (which
+        // involves copying the memory), truncate any long lines.  CSS
+        // errors in particular share the memory for long lines with
+        // repeated errors, but the IPC communication we're about to do
+        // will break that sharing, so we better truncate now.
+        if (sourceLine.Length() > 1000) {
+            sourceLine.Truncate(1000);
+        }
+
         rv = scriptError->GetCategory(getter_Copies(category));
         NS_ENSURE_SUCCESS(rv, rv);
         rv = scriptError->GetLineNumber(&lineNum);
@@ -298,7 +333,44 @@ SystemMessageHandledObserver::Observe(nsISupports* aSubject,
 
 NS_IMPL_ISUPPORTS1(SystemMessageHandledObserver, nsIObserver)
 
+class BackgroundChildPrimer MOZ_FINAL :
+  public nsIIPCBackgroundChildCreateCallback
+{
+public:
+    BackgroundChildPrimer()
+    { }
+
+    NS_DECL_ISUPPORTS
+
+private:
+    ~BackgroundChildPrimer()
+    { }
+
+    virtual void
+    ActorCreated(PBackgroundChild* aActor) MOZ_OVERRIDE
+    {
+        MOZ_ASSERT(aActor, "Failed to create a PBackgroundChild actor!");
+    }
+
+    virtual void
+    ActorFailed() MOZ_OVERRIDE
+    {
+        MOZ_CRASH("Failed to create a PBackgroundChild actor!");
+    }
+};
+
+NS_IMPL_ISUPPORTS1(BackgroundChildPrimer, nsIIPCBackgroundChildCreateCallback)
+
 ContentChild* ContentChild::sSingleton;
+
+// Performs initialization that is not fork-safe, i.e. that must be done after
+// forking from the Nuwa process.
+static void
+InitOnContentProcessCreated()
+{
+    // This will register cross-process observer.
+    mozilla::dom::time::InitializeDateCacheCleaner();
+}
 
 ContentChild::ContentChild()
  : mID(uint64_t(-1))
@@ -351,6 +423,13 @@ ContentChild::Init(MessageLoop* aIOLoop,
 
     Open(aChannel, aParentHandle, aIOLoop);
     sSingleton = this;
+
+#ifdef MOZ_X11
+    // Send the parent our X socket to act as a proxy reference for our X
+    // resources.
+    int xSocketFd = ConnectionNumber(DefaultXDisplay());
+    SendBackUpXResources(FileDescriptor(xSocketFd));
+#endif
 
 #ifdef MOZ_CRASHREPORTER
     SendPCrashReporterConstructor(CrashReporter::CurrentThreadId(),
@@ -423,6 +502,16 @@ ContentChild::AppendProcessId(nsACString& aName)
 void
 ContentChild::InitXPCOM()
 {
+    // Do this as early as possible to get the parent process to initialize the
+    // background thread since we'll likely need database information very soon.
+    BackgroundChild::Startup();
+
+    nsCOMPtr<nsIIPCBackgroundChildCreateCallback> callback =
+        new BackgroundChildPrimer();
+    if (!BackgroundChild::GetOrCreateForCurrentThread(callback)) {
+        MOZ_CRASH("Failed to create PBackgroundChild!");
+    }
+
     nsCOMPtr<nsIConsoleService> svc(do_GetService(NS_CONSOLESERVICE_CONTRACTID));
     if (!svc) {
         NS_WARNING("Couldn't acquire console service");
@@ -444,12 +533,20 @@ ContentChild::InitXPCOM()
     nsRefPtr<SystemMessageHandledObserver> sysMsgObserver =
         new SystemMessageHandledObserver();
     sysMsgObserver->Init();
+
+#ifndef MOZ_NUWA_PROCESS
+    InitOnContentProcessCreated();
+#endif
 }
 
 PMemoryReportRequestChild*
-ContentChild::AllocPMemoryReportRequestChild(const uint32_t& generation)
+ContentChild::AllocPMemoryReportRequestChild(const uint32_t& generation,
+                                             const bool &minimizeMemoryUsage,
+                                             const nsString& aDMDDumpIdent)
 {
-    return new MemoryReportRequestChild();
+    MemoryReportRequestChild *actor = new MemoryReportRequestChild(generation, aDMDDumpIdent);
+    actor->AddRef();
+    return actor;
 }
 
 // This is just a wrapper for InfallibleTArray<MemoryReport> that implements
@@ -496,25 +593,44 @@ NS_IMPL_ISUPPORTS1(
 bool
 ContentChild::RecvPMemoryReportRequestConstructor(
     PMemoryReportRequestChild* child,
-    const uint32_t& generation)
+    const uint32_t& generation,
+    const bool& minimizeMemoryUsage,
+    const nsString& aDMDDumpIdent)
 {
+    MemoryReportRequestChild *actor = static_cast<MemoryReportRequestChild*>(child);
+    nsresult rv;
+
+    if (minimizeMemoryUsage) {
+        nsCOMPtr<nsIMemoryReporterManager> mgr = do_GetService("@mozilla.org/memory-reporter-manager;1");
+        rv = mgr->MinimizeMemoryUsage(actor);
+        // mgr will eventually call actor->Run()
+    } else {
+        rv = actor->Run();
+    }
+
+    return !NS_WARN_IF(NS_FAILED(rv));
+}
+
+NS_IMETHODIMP MemoryReportRequestChild::Run()
+{
+    ContentChild *child = static_cast<ContentChild*>(Manager());
     nsCOMPtr<nsIMemoryReporterManager> mgr = do_GetService("@mozilla.org/memory-reporter-manager;1");
 
     InfallibleTArray<MemoryReport> reports;
 
     nsCString process;
-    GetProcessName(process);
-    AppendProcessId(process);
+    child->GetProcessName(process);
+    child->AppendProcessId(process);
 
     // Run the reporters.  The callback will turn each measurement into a
     // MemoryReport.
     nsRefPtr<MemoryReportsWrapper> wrappedReports =
         new MemoryReportsWrapper(&reports);
     nsRefPtr<MemoryReportCallback> cb = new MemoryReportCallback(process);
-    mgr->GetReportsForThisProcess(cb, wrappedReports);
+    mgr->GetReportsForThisProcessExtended(cb, wrappedReports, mDMDDumpIdent);
 
-    child->Send__delete__(child, generation, reports);
-    return true;
+    bool sent = Send__delete__(this, mGeneration, reports);
+    return sent ? NS_OK : NS_ERROR_FAILURE;
 }
 
 bool
@@ -531,19 +647,7 @@ ContentChild::RecvAudioChannelNotify()
 bool
 ContentChild::DeallocPMemoryReportRequestChild(PMemoryReportRequestChild* actor)
 {
-    delete actor;
-    return true;
-}
-
-bool
-ContentChild::RecvDumpMemoryInfoToTempDir(const nsString& aIdentifier,
-                                          const bool& aMinimizeMemoryUsage,
-                                          const bool& aDumpChildProcesses)
-{
-    nsCOMPtr<nsIMemoryInfoDumper> dumper = do_GetService("@mozilla.org/memory-info-dumper;1");
-
-    dumper->DumpMemoryInfoToTempDir(aIdentifier, aMinimizeMemoryUsage,
-                                    aDumpChildProcesses);
+    static_cast<MemoryReportRequestChild*>(actor)->Release();
     return true;
 }
 
@@ -574,20 +678,24 @@ ContentChild::AllocPImageBridgeChild(mozilla::ipc::Transport* aTransport,
     return ImageBridgeChild::StartUpInChildProcess(aTransport, aOtherProcess);
 }
 
-bool
-ContentChild::RecvSetProcessPrivileges(const ChildPrivileges& aPrivs)
+PBackgroundChild*
+ContentChild::AllocPBackgroundChild(Transport* aTransport,
+                                    ProcessId aOtherProcess)
 {
-  ChildPrivileges privs = (aPrivs == PRIVILEGES_DEFAULT) ?
-                          GeckoChildProcessHost::DefaultChildPrivileges() :
-                          aPrivs;
-  // If this fails, we die.
-  SetCurrentProcessPrivileges(privs);
-#if defined(MOZ_CONTENT_SANDBOX) && defined(XP_UNIX) && !defined(XP_MACOSX)
-  // SetCurrentProcessSandbox should be moved close to process initialization
-  // time if/when possible. SetCurrentProcessPrivileges should probably be
-  // moved as well. Right now this is set ONLY if we receive the
-  // RecvSetProcessPrivileges message. See bug 880808.
+    return BackgroundChild::Alloc(aTransport, aOtherProcess);
+}
+
+bool
+ContentChild::RecvSetProcessSandbox()
+{
+  // We may want to move the sandbox initialization somewhere else
+  // at some point; see bug 880808.
+#if defined(MOZ_CONTENT_SANDBOX)
+#if defined(XP_LINUX)
   SetCurrentProcessSandbox();
+#elif defined(XP_WIN)
+  mozilla::SandboxTarget::Instance()->StartSandbox();
+#endif
 #endif
   return true;
 }
@@ -659,7 +767,7 @@ ContentChild::AllocPBrowserChild(const IPCTabContext& aContext,
     nsRefPtr<TabChild> child = TabChild::Create(this, tc.GetTabContext(), aChromeFlags);
 
     // The ref here is released in DeallocPBrowserChild.
-    return child.forget().get();
+    return child.forget().take();
 }
 
 bool
@@ -931,6 +1039,24 @@ ContentChild::DeallocPDeviceStorageRequestChild(PDeviceStorageRequestChild* aDev
     return true;
 }
 
+PFileSystemRequestChild*
+ContentChild::AllocPFileSystemRequestChild(const FileSystemParams& aParams)
+{
+    NS_NOTREACHED("Should never get here!");
+    return nullptr;
+}
+
+bool
+ContentChild::DeallocPFileSystemRequestChild(PFileSystemRequestChild* aFileSystem)
+{
+    mozilla::dom::FileSystemTaskBase* child =
+      static_cast<mozilla::dom::FileSystemTaskBase*>(aFileSystem);
+    // The reference is increased in FileSystemTaskBase::Start of
+    // FileSystemTaskBase.cpp. We should decrease it after IPC.
+    NS_RELEASE(child);
+    return true;
+}
+
 PNeckoChild*
 ContentChild::AllocPNeckoChild()
 {
@@ -948,6 +1074,8 @@ PExternalHelperAppChild*
 ContentChild::AllocPExternalHelperAppChild(const OptionalURIParams& uri,
                                            const nsCString& aMimeContentType,
                                            const nsCString& aContentDisposition,
+                                           const uint32_t& aContentDispositionHint,
+                                           const nsString& aContentDispositionFilename,
                                            const bool& aForceSave,
                                            const int64_t& aContentLength,
                                            const OptionalURIParams& aReferrer,
@@ -1117,6 +1245,8 @@ ContentChild::ActorDestroy(ActorDestroyReason why)
     }
 
     mAlertObservers.Clear();
+
+    mIdleObservers.Clear();
 
     nsCOMPtr<nsIConsoleService> svc(do_GetService(NS_CONSOLESERVICE_CONTRACTID));
     if (svc) {
@@ -1475,31 +1605,7 @@ ContentChild::RecvMinimizeMemoryUsage()
         do_GetService("@mozilla.org/memory-reporter-manager;1");
     NS_ENSURE_TRUE(mgr, true);
 
-    nsCOMPtr<nsICancelableRunnable> runnable =
-        do_QueryReferent(mMemoryMinimizerRunnable);
-
-    // Cancel the previous task if it's still pending.
-    if (runnable) {
-        runnable->Cancel();
-        runnable = nullptr;
-    }
-
-    mgr->MinimizeMemoryUsage(/* callback = */ nullptr,
-                             getter_AddRefs(runnable));
-    mMemoryMinimizerRunnable = do_GetWeakReference(runnable);
-    return true;
-}
-
-bool
-ContentChild::RecvCancelMinimizeMemoryUsage()
-{
-    nsCOMPtr<nsICancelableRunnable> runnable =
-        do_QueryReferent(mMemoryMinimizerRunnable);
-    if (runnable) {
-        runnable->Cancel();
-        mMemoryMinimizerRunnable = nullptr;
-    }
-
+    mgr->MinimizeMemoryUsage(/* callback = */ nullptr);
     return true;
 }
 
@@ -1520,6 +1626,7 @@ ContentChild::AddIdleObserver(nsIObserver* aObserver, uint32_t aIdleTimeInS)
   // Make sure aObserver isn't released while we wait for the parent
   aObserver->AddRef();
   SendAddIdleObserver(reinterpret_cast<uint64_t>(aObserver), aIdleTimeInS);
+  mIdleObservers.PutEntry(aObserver);
 }
 
 void
@@ -1528,6 +1635,7 @@ ContentChild::RemoveIdleObserver(nsIObserver* aObserver, uint32_t aIdleTimeInS)
   MOZ_ASSERT(aObserver, "null idle observer");
   SendRemoveIdleObserver(reinterpret_cast<uint64_t>(aObserver), aIdleTimeInS);
   aObserver->Release();
+  mIdleObservers.RemoveEntry(aObserver);
 }
 
 bool
@@ -1536,7 +1644,11 @@ ContentChild::RecvNotifyIdleObserver(const uint64_t& aObserver,
                                      const nsString& aTimeStr)
 {
   nsIObserver* observer = reinterpret_cast<nsIObserver*>(aObserver);
-  observer->Observe(nullptr, aTopic.get(), aTimeStr.get());
+  if (mIdleObservers.Contains(observer)) {
+    observer->Observe(nullptr, aTopic.get(), aTimeStr.get());
+  } else {
+    NS_WARNING("Received notification for an idle observer that was removed.");
+  }
   return true;
 }
 
@@ -1598,6 +1710,10 @@ public:
 
             toplevel = toplevel->getNext();
         }
+
+        // Perform other after-fork initializations.
+        InitOnContentProcessCreated();
+
         return NS_OK;
     }
 };
@@ -1642,6 +1758,20 @@ ContentChild::RecvNuwaFork()
         return true;
     }
     sNuwaForking = true;
+
+    // We want to ensure that the PBackground actor gets cloned in the Nuwa
+    // process before we freeze. Also, we have to do this to avoid deadlock.
+    // Protocols that are "opened" (e.g. PBackground, PCompositor) block the
+    // main thread to wait for the IPC thread during the open operation.
+    // NuwaSpawnWait() blocks the IPC thread to wait for the main thread when
+    // the Nuwa process is forked. Unless we ensure that the two cannot happen
+    // at the same time then we risk deadlock. Spinning the event loop here
+    // guarantees the ordering is safe for PBackground.
+    while (!BackgroundChild::GetForCurrentThread()) {
+        if (NS_WARN_IF(!NS_ProcessNextEvent())) {
+            return false;
+        }
+    }
 
     MessageLoop* ioloop = XRE_GetIOMessageLoop();
     ioloop->PostTask(FROM_HERE, NewRunnableFunction(RunNuwaFork));
@@ -1746,6 +1876,13 @@ OnNuwaProcessReady()
         mozilla::dom::ContentChild::GetSingleton();
     content->SendNuwaReady();
 }
+
+NS_EXPORT void
+AfterNuwaFork()
+{
+    SetCurrentProcessPrivileges(base::PRIVILEGES_DEFAULT);
+}
+
 #endif // MOZ_NUWA_PROCESS
 
 }

@@ -92,15 +92,9 @@
 #elif MOZ_MSVC_REDIST == 1700
 @BINPATH@/msvcp110.dll
 @BINPATH@/msvcr110.dll
-#ifdef MOZ_METRO
-@BINPATH@/vccorlib110.dll
-#endif
 #elif MOZ_MSVC_REDIST == 1800
 @BINPATH@/msvcp120.dll
 @BINPATH@/msvcr120.dll
-#ifdef MOZ_METRO
-@BINPATH@/vccorlib120.dll
-#endif
 #endif
 #endif
 #endif
@@ -141,14 +135,10 @@
 @BINPATH@/update-settings.ini
 #endif
 @BINPATH@/platform.ini
-#ifndef XP_OS2
 #ifndef MOZ_NATIVE_SQLITE
 #ifndef MOZ_FOLD_LIBS
 @BINPATH@/@DLL_PREFIX@mozsqlite3@DLL_SUFFIX@
 #endif
-#endif
-#else
-@BINPATH@/mozsqlt3@DLL_SUFFIX@
 #endif
 @BINPATH@/browser/blocklist.xml
 #ifdef XP_UNIX
@@ -201,7 +191,6 @@
 #ifdef MOZ_B2G_BT
 @BINPATH@/components/dom_bluetooth.xpt
 #endif
-@BINPATH@/components/dom_camera.xpt
 @BINPATH@/components/dom_canvas.xpt
 @BINPATH@/components/dom_alarm.xpt
 @BINPATH@/components/dom_core.xpt
@@ -321,6 +310,7 @@
 @BINPATH@/components/spellchecker.xpt
 @BINPATH@/components/storage.xpt
 @BINPATH@/components/toolkit_finalizationwitness.xpt
+@BINPATH@/components/toolkit_osfile.xpt
 @BINPATH@/components/toolkitprofile.xpt
 #ifdef MOZ_ENABLE_XREMOTE
 @BINPATH@/components/toolkitremote.xpt
@@ -357,7 +347,7 @@
 
 ; JavaScript components
 @BINPATH@/components/ConsoleAPI.manifest
-@BINPATH@/components/ConsoleAPI.js
+@BINPATH@/components/ConsoleAPIStorage.js
 @BINPATH@/components/BrowserElementParent.manifest
 @BINPATH@/components/BrowserElementParent.js
 @BINPATH@/components/FeedProcessor.manifest
@@ -430,11 +420,7 @@
 @BINPATH@/browser/components/nsSessionStore.js
 @BINPATH@/components/nsURLFormatter.manifest
 @BINPATH@/components/nsURLFormatter.js
-#ifndef XP_OS2
 @BINPATH@/browser/components/@DLL_PREFIX@browsercomps@DLL_SUFFIX@
-#else
-@BINPATH@/browser/components/brwsrcmp@DLL_SUFFIX@
-#endif
 @BINPATH@/components/txEXSLTRegExFunctions.manifest
 @BINPATH@/components/txEXSLTRegExFunctions.js
 @BINPATH@/components/toolkitplaces.manifest
@@ -567,16 +553,12 @@
 
 @BINPATH@/components/Payment.js
 @BINPATH@/components/PaymentFlowInfo.js
-@BINPATH@/components/PaymentRequestInfo.js
 @BINPATH@/components/Payment.manifest
 
 #ifdef MOZ_WEBRTC
 @BINPATH@/components/PeerConnection.js
 @BINPATH@/components/PeerConnection.manifest
 #endif
-
-@BINPATH@/components/HttpDataUsage.manifest
-@BINPATH@/components/HttpDataUsage.js
 
 @BINPATH@/chrome/marionette@JAREXT@
 @BINPATH@/chrome/marionette.manifest
@@ -590,6 +572,11 @@
 ; InputMethod API
 @BINPATH@/components/MozKeyboard.js
 @BINPATH@/components/InputMethod.manifest
+
+#ifdef MOZ_DEBUG
+@BINPATH@/components/TestInterfaceJS.js
+@BINPATH@/components/TestInterfaceJS.manifest
+#endif
 
 ; Modules
 @BINPATH@/browser/modules/*
@@ -791,13 +778,6 @@ bin/libfreebl_32int64_3.so
 #endif
 #endif
 
-; [OS/2]
-#ifdef XP_OS2
-@BINPATH@/MozSounds.cmd
-@BINPATH@/*.xqs
-@BINPATH@/components/*.xqs
-#endif
-
 #ifdef MOZ_WEBAPP_RUNTIME
 [WebappRuntime]
 #ifdef XP_WIN
@@ -818,7 +798,7 @@ bin/libfreebl_32int64_3.so
 @BINPATH@/webapprt/defaults/preferences/prefs.js
 @BINPATH@/webapprt/modules/Startup.jsm
 @BINPATH@/webapprt/modules/WebappRT.jsm
-@BINPATH@/webapprt/modules/WebappsHandler.jsm
+@BINPATH@/webapprt/modules/WebappManager.jsm
 @BINPATH@/webapprt/modules/RemoteDebugger.jsm
 @BINPATH@/webapprt/modules/WebRTCHandler.jsm
 #endif

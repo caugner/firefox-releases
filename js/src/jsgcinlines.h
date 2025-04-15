@@ -97,7 +97,7 @@ GetGCThingTraceKind(const void *thing)
     JS_ASSERT(thing);
     const Cell *cell = static_cast<const Cell *>(thing);
 #ifdef JSGC_GENERATIONAL
-    if (IsInsideNursery(cell->runtimeFromMainThread(), cell))
+    if (IsInsideNursery(cell->runtimeFromAnyThread(), cell))
         return JSTRACE_OBJECT;
 #endif
     return MapAllocToTraceKind(cell->tenuredGetAllocKind());
@@ -413,8 +413,8 @@ CheckAllocatorState(ThreadSafeContext *cx, AllocKind kind)
         return true;
 
     JSContext *ncx = cx->asJSContext();
-#if defined(JS_GC_ZEAL) || defined(DEBUG)
     JSRuntime *rt = ncx->runtime();
+#if defined(JS_GC_ZEAL) || defined(DEBUG)
     JS_ASSERT_IF(rt->isAtomsCompartment(ncx->compartment()),
                  kind == FINALIZE_STRING ||
                  kind == FINALIZE_SHORT_STRING ||
@@ -423,16 +423,23 @@ CheckAllocatorState(ThreadSafeContext *cx, AllocKind kind)
     JS_ASSERT(!rt->noGCOrAllocationCheck);
 #endif
 
-    /* For testing out of memory conditions */
+    // For testing out of memory conditions
     JS_OOM_POSSIBLY_FAIL_REPORT(ncx);
 
+    if (allowGC) {
 #ifdef JS_GC_ZEAL
-    if (allowGC && rt->needZealousGC())
-        js::gc::RunDebugGC(ncx);
+        if (rt->needZealousGC())
+            js::gc::RunDebugGC(ncx);
 #endif
 
-    if (allowGC)
+        if (rt->interrupt) {
+            // Invoking the interrupt callback can fail and we can't usefully
+            // handle that here. Just check in case we need to collect instead.
+            js::gc::GCIfNeeded(ncx);
+        }
+
         MaybeCheckStackRoots(ncx);
+    }
 
     return true;
 }
@@ -514,6 +521,43 @@ AllocateNonObject(ThreadSafeContext *cx)
 
     CheckIncrementalZoneState(cx, t);
     return t;
+}
+
+/*
+ * When allocating for initialization from a cached object copy, we will
+ * potentially destroy the cache entry we want to copy if we allow GC. On the
+ * other hand, since these allocations are extremely common, we don't want to
+ * delay GC from these allocation sites. Instead we allow the GC, but still
+ * fail the allocation, forcing the non-cached path.
+ */
+template <AllowGC allowGC>
+inline JSObject *
+AllocateObjectForCacheHit(JSContext *cx, AllocKind kind, InitialHeap heap)
+{
+#ifdef JSGC_GENERATIONAL
+    if (ShouldNurseryAllocate(cx->nursery(), kind, heap)) {
+        size_t thingSize = Arena::thingSize(kind);
+
+        JS_ASSERT(thingSize == Arena::thingSize(kind));
+        if (!CheckAllocatorState<NoGC>(cx, kind))
+            return nullptr;
+
+        JSObject *obj = TryNewNurseryObject<NoGC>(cx, thingSize, 0);
+        if (!obj && allowGC) {
+            MinorGC(cx, JS::gcreason::OUT_OF_NURSERY);
+            return nullptr;
+        }
+        return obj;
+    }
+#endif
+
+    JSObject *obj = AllocateObject<NoGC>(cx, kind, 0, heap);
+    if (!obj && allowGC) {
+        MaybeGC(cx);
+        return nullptr;
+    }
+
+    return obj;
 }
 
 } /* namespace gc */

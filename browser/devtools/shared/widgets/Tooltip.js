@@ -9,7 +9,7 @@ const promise = require("sdk/core/promise");
 const IOService = Cc["@mozilla.org/network/io-service;1"]
   .getService(Ci.nsIIOService);
 const {Spectrum} = require("devtools/shared/widgets/Spectrum");
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("devtools/toolkit/event-emitter");
 const {colorUtils} = require("devtools/css-color");
 const Heritage = require("sdk/core/heritage");
 const {CSSTransformPreviewer} = require("devtools/shared/widgets/CSSTransformPreviewer");
@@ -25,16 +25,18 @@ XPCOMUtils.defineLazyModuleGetter(this, "VariablesView",
   "resource:///modules/devtools/VariablesView.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "VariablesViewController",
   "resource:///modules/devtools/VariablesViewController.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "Task",
+  "resource://gre/modules/Task.jsm");
 
 const GRADIENT_RE = /\b(repeating-)?(linear|radial)-gradient\(((rgb|hsl)a?\(.+?\)|[^\)])+\)/gi;
 const BORDERCOLOR_RE = /^border-[-a-z]*color$/ig;
 const BORDER_RE = /^border(-(top|bottom|left|right))?$/ig;
-const BACKGROUND_IMAGE_RE = /url\([\'\"]?(.*?)[\'\"]?\)/;
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const SPECTRUM_FRAME = "chrome://browser/content/devtools/spectrum-frame.xhtml";
 const ESCAPE_KEYCODE = Ci.nsIDOMKeyEvent.DOM_VK_ESCAPE;
-const ENTER_KEYCODE = Ci.nsIDOMKeyEvent.DOM_VK_RETURN;
+const RETURN_KEYCODE = Ci.nsIDOMKeyEvent.DOM_VK_RETURN;
 const POPUP_EVENTS = ["shown", "hidden", "showing", "hiding"];
+const FONT_FAMILY_PREVIEW_TEXT = "(ABCabc123&@%)";
 
 /**
  * Tooltip widget.
@@ -393,19 +395,35 @@ Tooltip.prototype = {
       this.hide();
       this._lastHovered = event.target;
       setNamedTimeout(this.uid, this._showDelay, () => {
-        this._showOnHover(event.target);
+        this.isValidHoverTarget(event.target).then(target => {
+          this.show(target);
+        });
       });
     }
   },
 
-  _showOnHover: function(target) {
+  /**
+   * Is the given target DOMNode a valid node for toggling the tooltip on hover.
+   * This delegates to the user-defined _targetNodeCb callback.
+   * @return a promise that resolves or rejects depending if the tooltip should
+   * be shown or not. If it resolves, it does to the actual anchor to be used
+   */
+  isValidHoverTarget: function(target) {
+    // Execute the user-defined callback which should return either true/false
+    // or a promise that resolves or rejects
     let res = this._targetNodeCb(target, this);
+
+    // The callback can additionally return a DOMNode to replace the anchor of
+    // the tooltip when shown
     if (res && res.then) {
-      res.then(() => {
-        this.show(target);
+      return res.then(arg => {
+        return arg instanceof Ci.nsIDOMNode ? arg : target;
+      }, () => {
+        return false;
       });
-    } else if (res) {
-      this.show(target);
+    } else {
+      let newTarget = res instanceof Ci.nsIDOMNode ? res : target;
+      return res ? promise.resolve(newTarget) : promise.reject(false);
     }
   },
 
@@ -569,9 +587,43 @@ Tooltip.prototype = {
   },
 
   /**
-   * Fill the tooltip with an image, displayed over a tiled background useful
-   * for transparent images. Also adds the image dimension as a label at the
-   * bottom.
+   * Uses the provided inspectorFront's getImageDataFromURL method to resolve
+   * the relative URL on the server-side, in the page context, and then sets the
+   * tooltip content with the resulting image just like |setImageContent| does.
+   * @return a promise that resolves when the image is shown in the tooltip or
+   * resolves when the broken image tooltip content is ready, but never rejects.
+   */
+  setRelativeImageContent: Task.async(function*(imageUrl, inspectorFront, maxDim) {
+    if (imageUrl.startsWith("data:")) {
+      // If the imageUrl already is a data-url, save ourselves a round-trip
+      this.setImageContent(imageUrl, {maxDim: maxDim});
+    } else if (inspectorFront) {
+      try {
+        let {data, size} = yield inspectorFront.getImageDataFromURL(imageUrl, maxDim);
+        size.maxDim = maxDim;
+        let str = yield data.string();
+        this.setImageContent(str, size);
+      } catch (e) {
+        this.setBrokenImageContent();
+      }
+    }
+  }),
+
+  /**
+   * Fill the tooltip with a message explaining the the image is missing
+   */
+  setBrokenImageContent: function() {
+    this.setTextContent({
+      messages: [l10n.strings.GetStringFromName("previewTooltip.image.brokenImage")]
+    });
+  },
+
+  /**
+   * Fill the tooltip with an image and add the image dimension at the bottom.
+   *
+   * Only use this for absolute URLs that can be queried from the devtools
+   * client-side. For relative URLs, use |setRelativeImageContent|.
+   *
    * @param {string} imageUrl
    *        The url to load the image from
    * @param {Object} options
@@ -585,6 +637,10 @@ Tooltip.prototype = {
    *        a number here
    */
   setImageContent: function(imageUrl, options={}) {
+    if (!imageUrl) {
+      return;
+    }
+
     // Main container
     let vbox = this.doc.createElement("vbox");
     vbox.setAttribute("align", "center");
@@ -622,19 +678,6 @@ Tooltip.prototype = {
   },
 
   _getImageDimensionLabel: (w, h) => w + " x " + h,
-
-  /**
-   * Exactly the same as the `image` function but takes a css background image
-   * value instead : url(....)
-   */
-  setCssBackgroundImageContent: function(cssBackground, sheetHref, maxDim=400) {
-    let uri = getBackgroundImageUri(cssBackground, sheetHref);
-    if (uri) {
-      this.setImageContent(uri, {
-        maxDim: maxDim
-      });
-    }
-  },
 
   /**
    * Fill the tooltip with a new instance of the spectrum color picker widget
@@ -691,37 +734,57 @@ Tooltip.prototype = {
    * @param {NodeActor} node
    *        The NodeActor for the currently selected node
    * @return A promise that resolves when the tooltip content is ready, or
-   *         rejects if no transform is provided or is invalid
+   *         rejects if no transform is provided or the transform is invalid
    */
-  setCssTransformContent: function(transform, pageStyle, node) {
-    let def = promise.defer();
-
-    if (transform) {
-      // Look into the computed styles to find the width and height and possibly
-      // the origin if it hadn't been provided
-      pageStyle.getComputed(node, {
-        filter: "user",
-        markMatched: false,
-        onlyMatched: false
-      }).then(styles => {
-        let origin = styles["transform-origin"].value;
-        let width = parseInt(styles["width"].value);
-        let height = parseInt(styles["height"].value);
-
-        let root = this.doc.createElementNS(XHTML_NS, "div");
-        let previewer = new CSSTransformPreviewer(root);
-        this.content = root;
-        if (!previewer.preview(transform, origin, width, height)) {
-          def.reject();
-        } else {
-          def.resolve();
-        }
-      });
-    } else {
-      def.reject();
+  setCssTransformContent: Task.async(function*(transform, pageStyle, node) {
+    if (!transform) {
+      throw "Missing transform";
     }
 
-    return def.promise;
+    // Look into the computed styles to find the width and height and possibly
+    // the origin if it hadn't been provided
+    let styles = yield pageStyle.getComputed(node, {
+      filter: "user",
+      markMatched: false,
+      onlyMatched: false
+    });
+
+    let origin = styles["transform-origin"].value;
+    let width = parseInt(styles["width"].value);
+    let height = parseInt(styles["height"].value);
+
+    let root = this.doc.createElementNS(XHTML_NS, "div");
+    let previewer = new CSSTransformPreviewer(root);
+    this.content = root;
+    if (!previewer.preview(transform, origin, width, height)) {
+      throw "Invalid transform";
+    }
+  }),
+
+  /**
+   * Set the content of the tooltip to display a font family preview.
+   * This is based on Lea Verou's Dablet. See https://github.com/LeaVerou/dabblet
+   * for more info.
+   * @param {String} font The font family value.
+   */
+  setFontFamilyContent: function(font) {
+    if (!font) {
+      return;
+    }
+
+    // Main container
+    let vbox = this.doc.createElement("vbox");
+    vbox.setAttribute("flex", "1");
+
+    // Display the font family previewer
+    let previewer = this.doc.createElement("description");
+    previewer.setAttribute("flex", "1");
+    previewer.style.fontFamily = font;
+    previewer.classList.add("devtools-tooltip-font-previewer-text");
+    previewer.textContent = FONT_FAMILY_PREVIEW_TEXT;
+    vbox.appendChild(previewer);
+
+    this.content = vbox;
   }
 };
 
@@ -738,7 +801,7 @@ function SwatchBasedEditorTooltip(doc) {
   // It will also close on <escape> and <enter>
   this.tooltip = new Tooltip(doc, {
     consumeOutsideClick: true,
-    closeOnKeys: [ESCAPE_KEYCODE, ENTER_KEYCODE],
+    closeOnKeys: [ESCAPE_KEYCODE, RETURN_KEYCODE],
     noAutoFocus: false
   });
 
@@ -747,7 +810,7 @@ function SwatchBasedEditorTooltip(doc) {
   this._onTooltipKeypress = (event, code) => {
     if (code === ESCAPE_KEYCODE) {
       this.revert();
-    } else if (code === ENTER_KEYCODE) {
+    } else if (code === RETURN_KEYCODE) {
       this.commit();
     }
   };
@@ -768,6 +831,7 @@ SwatchBasedEditorTooltip.prototype = {
   show: function() {
     if (this.activeSwatch) {
       this.tooltip.show(this.activeSwatch, "topcenter bottomleft");
+      this.tooltip.once("hidden", () => this.activeSwatch = null);
     }
   },
 
@@ -785,6 +849,13 @@ SwatchBasedEditorTooltip.prototype = {
    * @param {object} callbacks
    *        Callbacks that will be executed when the editor wants to preview a
    *        value change, or revert a change, or commit a change.
+   *        - onPreview: will be called when one of the sub-classes calls preview
+   *        - onRevert: will be called when the user ESCapes out of the tooltip
+   *        - onCommit: will be called when the user presses ENTER or clicks
+   *        outside the tooltip. If the user-defined onCommit returns a value,
+   *        it will be used to replace originalValue, so that the swatch-based
+   *        tooltip always knows what is the current originalValue and can use
+   *        it when reverting
    * @param {object} originalValue
    *        The original value before the editor in the tooltip makes changes
    *        This can be of any type, and will be passed, as is, in the revert
@@ -848,7 +919,10 @@ SwatchBasedEditorTooltip.prototype = {
   commit: function() {
     if (this.activeSwatch) {
       let swatch = this.swatches.get(this.activeSwatch);
-      swatch.callbacks.onCommit();
+      let newValue = swatch.callbacks.onCommit();
+      if (typeof newValue !== "undefined") {
+        swatch.originalValue = newValue;
+      }
     }
   },
 
@@ -890,6 +964,7 @@ SwatchColorPickerTooltip.prototype = Heritage.extend(SwatchBasedEditorTooltip.pr
     SwatchBasedEditorTooltip.prototype.show.call(this);
     // Then set spectrum's color and listen to color changes to preview them
     if (this.activeSwatch) {
+      this.currentSwatchColor = this.activeSwatch.nextSibling;
       let swatch = this.swatches.get(this.activeSwatch);
       let color = this.activeSwatch.style.backgroundColor;
       this.spectrum.then(spectrum => {
@@ -904,7 +979,7 @@ SwatchColorPickerTooltip.prototype = Heritage.extend(SwatchBasedEditorTooltip.pr
   _onSpectrumColorChange: function(event, rgba, cssColor) {
     if (this.activeSwatch) {
       this.activeSwatch.style.backgroundColor = cssColor;
-      this.activeSwatch.nextSibling.textContent = cssColor;
+      this.currentSwatchColor.textContent = cssColor;
       this.preview(cssColor);
     }
   },
@@ -917,6 +992,7 @@ SwatchColorPickerTooltip.prototype = Heritage.extend(SwatchBasedEditorTooltip.pr
 
   destroy: function() {
     SwatchBasedEditorTooltip.prototype.destroy.call(this);
+    this.currentSwatchColor = null;
     this.spectrum.then(spectrum => {
       spectrum.off("changed", this._onSpectrumColorChange);
       spectrum.destroy();
@@ -939,24 +1015,6 @@ function isColorOnly(property, value) {
   return property === "background-color" ||
          property === "color" ||
          property.match(BORDERCOLOR_RE);
-}
-
-/**
- * Internal util, returns the background image uri if any
- */
-function getBackgroundImageUri(value, sheetHref) {
-  let uriMatch = BACKGROUND_IMAGE_RE.exec(value);
-  let uri = null;
-
-  if (uriMatch && uriMatch[1]) {
-    uri = uriMatch[1];
-    if (sheetHref) {
-      let sheetUri = IOService.newURI(sheetHref, null, null);
-      uri = sheetUri.resolve(uri);
-    }
-  }
-
-  return uri;
 }
 
 /**

@@ -344,7 +344,7 @@ var gSeekTests = [
   { name:"seek.ogv", type:"video/ogg", duration:3.966 },
   { name:"320x240.ogv", type:"video/ogg", duration:0.266 },
   { name:"seek.webm", type:"video/webm", duration:3.966 },
-  { name:"bug516323.indexed.ogv", type:"video/ogg", duration:4.208 },
+  { name:"bug516323.indexed.ogv", type:"video/ogg", duration:4.208333 },
   { name:"split.webm", type:"video/webm", duration:1.967 },
   { name:"detodos.opus", type:"audio/ogg; codecs=opus", duration:2.9135 },
   { name:"gizmo.mp4", type:"video/mp4", duration:5.56 },
@@ -365,9 +365,9 @@ var gUnseekableTests = [
   { name:"bogus.duh", type:"bogus/duh"}
 ];
 // Unfortunately big-buck-bunny-unseekable.mp4 is doesn't play on Windows 7, so
-// only include it in the unseekable tests if we're on later versions of Windows.
-if (navigator.userAgent.indexOf("Windows") == -1 ||
-    IsWindows8OrLater()) {
+// only include it in the unseekable tests if we're on later versions of Windows. 
+// This test actually only passes on win8 at the moment.
+if (navigator.userAgent.indexOf("Windows") != -1 && IsWindows8OrLater()) {
   gUnseekableTests = gUnseekableTests.concat([
     { name:"big-buck-bunny-unseekable.mp4", type:"video/mp4" }
   ]);

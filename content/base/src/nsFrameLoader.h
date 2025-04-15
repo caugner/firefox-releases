@@ -431,7 +431,6 @@ private:
   // it may lose the flag.
   bool mNetworkCreated : 1;
 
-  bool mDelayRemoteDialogs : 1;
   bool mRemoteBrowserShown : 1;
   bool mRemoteFrame : 1;
   bool mClipSubdocument : 1;
@@ -460,7 +459,7 @@ private:
   // forwards some input events to out-of-process content.
   uint32_t mEventMode;
 
-  // Indicate if we have sent 'remote-browser-frame-pending'.
+  // Indicate if we have sent 'remote-browser-pending'.
   bool mPendingFrameSent;
 };
 

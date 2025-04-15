@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 include protocol PAsmJSCacheEntry;
+include protocol PBackground;
 include protocol PBlob;
 include protocol PBluetooth;
 include protocol PBrowser;
@@ -13,6 +14,7 @@ include protocol PCrashReporter;
 include protocol PExternalHelperApp;
 include protocol PDeviceStorageRequest;
 include protocol PFMRadio;
+include protocol PFileSystemRequest;
 include protocol PHal;
 include protocol PImageBridge;
 include protocol PIndexedDB;
@@ -80,7 +82,25 @@ struct DeviceStorageAvailableParams
   nsString storageName;
 };
 
+struct DeviceStorageStatusParams
+{
+  nsString type;
+  nsString storageName;
+};
+
 struct DeviceStorageFormatParams
+{
+  nsString type;
+  nsString storageName;
+};
+
+struct DeviceStorageMountParams
+{
+  nsString type;
+  nsString storageName;
+};
+
+struct DeviceStorageUnmountParams
 {
   nsString type;
   nsString storageName;
@@ -134,7 +154,10 @@ union DeviceStorageParams
   DeviceStorageFreeSpaceParams;
   DeviceStorageUsedSpaceParams;
   DeviceStorageAvailableParams;
+  DeviceStorageStatusParams;
   DeviceStorageFormatParams;
+  DeviceStorageMountParams;
+  DeviceStorageUnmountParams;
 };
 
 struct FMRadioRequestEnableParams
@@ -171,6 +194,24 @@ union FMRadioRequestParams
   FMRadioRequestCancelSeekParams;
 };
 
+struct FileSystemCreateDirectoryParams
+{
+  nsString filesystem;
+  nsString realPath;
+};
+
+struct FileSystemGetFileOrDirectoryParams
+{
+  nsString filesystem;
+  nsString realPath;
+};
+
+union FileSystemParams
+{
+  FileSystemCreateDirectoryParams;
+  FileSystemGetFileOrDirectoryParams;
+};
+
 union PrefValue {
   nsCString;
   int32_t;
@@ -192,6 +233,7 @@ intr protocol PContent
 {
     parent opens PCompositor;
     parent opens PImageBridge;
+    child opens PBackground;
 
     manages PAsmJSCacheEntry;
     manages PBlob;
@@ -199,6 +241,7 @@ intr protocol PContent
     manages PBrowser;
     manages PCrashReporter;
     manages PDeviceStorageRequest;
+    manages PFileSystemRequest;
     manages PExternalHelperApp;
     manages PFMRadio;
     manages PHal;
@@ -244,13 +287,13 @@ both:
 
 child:
     /**
-     * Update OS process privileges to |privs|.  Can usually only be
-     * performed zero or one times.  The child will abnormally exit if
-     * the privilege update fails.
+     * Enable system-level sandboxing features, if available.  Can
+     * usually only be performed zero or one times.  The child may
+     * abnormally exit if this fails; the details are OS-specific.
      */
-    async SetProcessPrivileges(ChildPrivileges privs);
+    async SetProcessSandbox();
 
-    PMemoryReportRequest(uint32_t generation);
+    PMemoryReportRequest(uint32_t generation, bool minimizeMemoryUsage, nsString DMDDumpIdent);
 
     /**
      * Notify the AudioChannelService in the child processes.
@@ -260,19 +303,10 @@ child:
     async SpeakerManagerNotify();
 
     /**
-     * Do a memory info dump to a file in our temp directory.
-     *
-     * For documentation on the args, see
-     * MemoryInfoDumper::dumpMemoryInfoToTempDir.
-     */
-    async DumpMemoryInfoToTempDir(nsString identifier,
-                                  bool minimizeMemoryUsage,
-                                  bool dumpChildProcesses);
-    /**
      * Dump this process's GC and CC logs.
      *
-     * For documentation on the args, see
-     * MemoryInfoDumper::dumpGCAndCCLogsToFile.
+     * For documentation on the args, see dumpGCAndCCLogsToFile in
+     * nsIMemoryInfoDumper.idl
      */
     async DumpGCAndCCLogsToFile(nsString identifier,
                                 bool dumpAllTraces,
@@ -325,7 +359,6 @@ child:
 
     NotifyProcessPriorityChanged(ProcessPriority priority);
     MinimizeMemoryUsage();
-    CancelMinimizeMemoryUsage();
 
     /**
      * Used to manage nsIStyleSheetService across processes.
@@ -358,6 +391,8 @@ parent:
 
     PDeviceStorageRequest(DeviceStorageParams params);
 
+    PFileSystemRequest(FileSystemParams params);
+
     sync PCrashReporter(NativeThreadId tid, uint32_t processType);
 
     sync GetRandomValues(uint32_t length)
@@ -388,12 +423,6 @@ parent:
     async StartVisitedQuery(URIParams uri);
     async VisitURI(URIParams uri, OptionalURIParams referrer, uint32_t flags);
     async SetURITitle(URIParams uri, nsString title);
-    
-    // filepicker remoting
-    sync ShowFilePicker(int16_t mode, int16_t selectedType, bool addToRecentDocs,
-                        nsString title, nsString defaultFile, nsString defaultExtension,
-                        nsString[] filters, nsString[] filterNames)
-        returns (nsString[] files, int16_t retValue, nsresult result);
 
     async LoadURIExternal(URIParams uri);
 
@@ -422,9 +451,14 @@ parent:
 
     CloseAlert(nsString name, Principal principal);
 
-    PExternalHelperApp(OptionalURIParams uri, nsCString aMimeContentType,
-                       nsCString aContentDisposition, bool aForceSave,
-                       int64_t aContentLength, OptionalURIParams aReferrer,
+    PExternalHelperApp(OptionalURIParams uri, 
+                       nsCString aMimeContentType,
+                       nsCString aContentDisposition, 
+                       uint32_t aContentDispositionHint, 
+                       nsString aContentDispositionFilename, 
+                       bool aForceSave,
+                       int64_t aContentLength,
+                       OptionalURIParams aReferrer,
                        nullable PBrowser aBrowser);
 
     AddGeolocationListener(Principal principal, bool highAccuracy);
@@ -439,13 +473,11 @@ parent:
     // nsIPermissionManager messages
     sync ReadPermissions() returns (Permission[] permissions);
 
-    // These clipboard methods are only really used on Android since
-    // the clipboard is not available in the content process.
     SetClipboardText(nsString text, bool isPrivateData, int32_t whichClipboard);
     sync GetClipboardText(int32_t whichClipboard)
         returns (nsString text);
-    EmptyClipboard();
-    sync ClipboardHasText()
+    EmptyClipboard(int32_t whichClipboard);
+    sync ClipboardHasText(int32_t whichClipboard)
         returns (bool hasText);
 
     sync GetSystemColors(uint32_t colorsCount)
@@ -519,6 +551,20 @@ parent:
 
     AddIdleObserver(uint64_t observerId, uint32_t idleTimeInS);
     RemoveIdleObserver(uint64_t observerId, uint32_t idleTimeInS);
+
+    /**
+     * This message is only used on X11 platforms.
+     *
+     * Send a dup of the plugin process's X socket to the parent
+     * process.  In theory, this scheme keeps the plugin's X resources
+     * around until after both the plugin process shuts down *and* the
+     * parent process closes the dup fd.  This is used to prevent the
+     * parent process from crashing on X errors if, e.g., the plugin
+     * crashes *just before* a repaint and the parent process tries to
+     * use the newly-invalid surface.
+     */
+    BackUpXResources(FileDescriptor aXSocketFd);
+
 both:
      AsyncMessage(nsString aMessage, ClonedMessageData aData,
                   CpowEntry[] aCpows, Principal aPrincipal);

@@ -25,7 +25,7 @@ using namespace js::jit;
 
 using mozilla::Abs;
 using mozilla::CountLeadingZeroes32;
-using mozilla::DoubleEqualsInt32;
+using mozilla::NumberEqualsInt32;
 using mozilla::ExponentComponent;
 using mozilla::FloorLog2;
 using mozilla::IsInfinite;
@@ -162,8 +162,8 @@ RangeAnalysis::addBetaNodes()
         MDefinition *left = compare->getOperand(0);
         MDefinition *right = compare->getOperand(1);
         double bound;
-        double conservativeLower = NegativeInfinity();
-        double conservativeUpper = PositiveInfinity();
+        double conservativeLower = NegativeInfinity<double>();
+        double conservativeUpper = PositiveInfinity<double>();
         MDefinition *val = nullptr;
 
         JSOp jsop = compare->jsop();
@@ -222,7 +222,7 @@ RangeAnalysis::addBetaNodes()
             // For integers, if x < c, the upper bound of x is c-1.
             if (val->type() == MIRType_Int32) {
                 int32_t intbound;
-                if (DoubleEqualsInt32(bound, &intbound) && SafeSub(intbound, 1, &intbound))
+                if (NumberEqualsInt32(bound, &intbound) && SafeSub(intbound, 1, &intbound))
                     bound = intbound;
             }
             comp.setDouble(conservativeLower, bound);
@@ -234,7 +234,7 @@ RangeAnalysis::addBetaNodes()
             // For integers, if x > c, the lower bound of x is c+1.
             if (val->type() == MIRType_Int32) {
                 int32_t intbound;
-                if (DoubleEqualsInt32(bound, &intbound) && SafeAdd(intbound, 1, &intbound))
+                if (NumberEqualsInt32(bound, &intbound) && SafeAdd(intbound, 1, &intbound))
                     bound = intbound;
             }
             comp.setDouble(bound, conservativeUpper);
@@ -1388,23 +1388,23 @@ MToInt32::computeRange(TempAllocator &alloc)
 static Range *GetTypedArrayRange(TempAllocator &alloc, int type)
 {
     switch (type) {
-      case ScalarTypeRepresentation::TYPE_UINT8_CLAMPED:
-      case ScalarTypeRepresentation::TYPE_UINT8:
+      case ScalarTypeDescr::TYPE_UINT8_CLAMPED:
+      case ScalarTypeDescr::TYPE_UINT8:
         return Range::NewUInt32Range(alloc, 0, UINT8_MAX);
-      case ScalarTypeRepresentation::TYPE_UINT16:
+      case ScalarTypeDescr::TYPE_UINT16:
         return Range::NewUInt32Range(alloc, 0, UINT16_MAX);
-      case ScalarTypeRepresentation::TYPE_UINT32:
+      case ScalarTypeDescr::TYPE_UINT32:
         return Range::NewUInt32Range(alloc, 0, UINT32_MAX);
 
-      case ScalarTypeRepresentation::TYPE_INT8:
+      case ScalarTypeDescr::TYPE_INT8:
         return Range::NewInt32Range(alloc, INT8_MIN, INT8_MAX);
-      case ScalarTypeRepresentation::TYPE_INT16:
+      case ScalarTypeDescr::TYPE_INT16:
         return Range::NewInt32Range(alloc, INT16_MIN, INT16_MAX);
-      case ScalarTypeRepresentation::TYPE_INT32:
+      case ScalarTypeDescr::TYPE_INT32:
         return Range::NewInt32Range(alloc, INT32_MIN, INT32_MAX);
 
-      case ScalarTypeRepresentation::TYPE_FLOAT32:
-      case ScalarTypeRepresentation::TYPE_FLOAT64:
+      case ScalarTypeDescr::TYPE_FLOAT32:
+      case ScalarTypeDescr::TYPE_FLOAT64:
         break;
     }
 
@@ -1424,7 +1424,7 @@ MLoadTypedArrayElementStatic::computeRange(TempAllocator &alloc)
 {
     // We don't currently use MLoadTypedArrayElementStatic for uint32, so we
     // don't have to worry about it returning a value outside our type.
-    JS_ASSERT(typedArray_->type() != ScalarTypeRepresentation::TYPE_UINT32);
+    JS_ASSERT(typedArray_->type() != ScalarTypeDescr::TYPE_UINT32);
 
     setRange(GetTypedArrayRange(alloc, typedArray_->type()));
 }
@@ -2050,8 +2050,8 @@ RangeAnalysis::addRangeAssertions()
     for (ReversePostorderIterator iter(graph_.rpoBegin()); iter != graph_.rpoEnd(); iter++) {
         MBasicBlock *block = *iter;
 
-        for (MInstructionIterator iter(block->begin()); iter != block->end(); iter++) {
-            MInstruction *ins = *iter;
+        for (MDefinitionIterator iter(block); iter; iter++) {
+            MDefinition *ins = *iter;
 
             // Perform range checking for all numeric and numeric-like types.
             if (!IsNumberType(ins->type()) &&
@@ -2069,12 +2069,19 @@ RangeAnalysis::addRangeAssertions()
 
             MAssertRange *guard = MAssertRange::New(alloc(), ins, new(alloc()) Range(r));
 
-            // The code that removes beta nodes assumes that it can find them
-            // in a contiguous run at the top of each block. Don't insert
-            // range assertions in between beta nodes.
-            MInstructionIterator insertIter = iter;
-            while (insertIter->isBeta())
+            // Beta nodes and interrupt checks are required to be located at the
+            // beginnings of basic blocks, so we must insert range assertions
+            // after any such instructions.
+            MInstructionIterator insertIter = ins->isPhi()
+                                            ? block->begin()
+                                            : block->begin(ins->toInstruction());
+            while (insertIter->isBeta() ||
+                   insertIter->isInterruptCheck() ||
+                   insertIter->isInterruptCheckPar() ||
+                   insertIter->isConstant())
+            {
                 insertIter++;
+            }
 
             if (*insertIter == *iter)
                 block->insertAfter(*insertIter,  guard);
@@ -2210,7 +2217,28 @@ bool
 MDiv::truncate()
 {
     // Remember analysis, needed to remove negative zero checks.
-    setTruncated(true);
+    setTruncatedIndirectly(true);
+
+    // Check if this division only flows in bitwise instructions.
+    if (!isTruncated()) {
+        bool allUsesExplictlyTruncate = true;
+        for (MUseDefIterator use(this); allUsesExplictlyTruncate && use; use++) {
+            switch (use.def()->op()) {
+              case MDefinition::Op_BitAnd:
+              case MDefinition::Op_BitOr:
+              case MDefinition::Op_BitXor:
+              case MDefinition::Op_Lsh:
+              case MDefinition::Op_Rsh:
+              case MDefinition::Op_Ursh:
+                break;
+              default:
+                allUsesExplictlyTruncate = false;
+            }
+        }
+
+        if (allUsesExplictlyTruncate)
+            setTruncated(true);
+    }
 
     // Divisions where the lhs and rhs are unsigned and the result is
     // truncated can be lowered more efficiently.
@@ -2334,13 +2362,21 @@ MCompare::truncate()
         return false;
 
     compareType_ = Compare_Int32;
+
+    // Truncating the operands won't change their value, but it will change
+    // their type, which we need because we now expect integer inputs.
+    truncateOperands_ = true;
+
     return true;
 }
 
 bool
 MCompare::isOperandTruncated(size_t index) const
 {
-    return compareType() == Compare_Int32;
+    // If we're doing an int32 comparison on operands which were previously
+    // floating-point, convert them!
+    JS_ASSERT_IF(truncateOperands_, isInt32Comparison());
+    return truncateOperands_;
 }
 
 // Ensure that all observables uses can work with a truncated

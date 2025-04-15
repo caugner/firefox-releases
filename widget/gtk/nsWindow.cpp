@@ -119,6 +119,7 @@ extern "C" {
 
 #include "nsIDOMWheelEvent.h"
 
+#include "NativeKeyBindings.h"
 #include "nsWindow.h"
 
 using namespace mozilla;
@@ -2050,9 +2051,7 @@ nsWindow::OnExposeEvent(cairo_t *cr)
         ? static_cast<ClientLayerManager*>(GetLayerManager())
         : nullptr;
 
-    if (clientLayers && mCompositorParent &&
-        !gdk_screen_is_composited(gdk_window_get_screen(mGdkWindow)))
-    {
+    if (clientLayers && mCompositorParent) {
         // We need to paint to the screen even if nothing changed, since if we
         // don't have a compositing window manager, our pixels could be stale.
         clientLayers->SetNeedsComposite(true);
@@ -2368,8 +2367,7 @@ nsWindow::OnConfigureEvent(GtkWidget *aWidget, GdkEventConfigure *aEvent)
 
     // XXX mozilla will invalidate the entire window after this move
     // complete.  wtf?
-    if (mWidgetListener)
-      mWidgetListener->WindowMoved(this, mBounds.x, mBounds.y);
+    NotifyWindowMoved(mBounds.x, mBounds.y);
 
     return FALSE;
 }
@@ -4904,7 +4902,12 @@ get_gtk_cursor(nsCursor aCursor)
     if ((gdkcursor = gCursorCache[aCursor])) {
         return gdkcursor;
     }
+    
+    GdkDisplay *defaultDisplay = gdk_display_get_default();
 
+    // The strategy here is to use standard GDK cursors, and, if not available,
+    // load by standard name with gdk_cursor_new_from_name.
+    // Spec is here: http://www.freedesktop.org/wiki/Specifications/cursor-spec/
     switch (aCursor) {
     case eCursor_standard:
         gdkcursor = gdk_cursor_new(GDK_LEFT_PTR);
@@ -4952,25 +4955,42 @@ get_gtk_cursor(nsCursor aCursor)
         gdkcursor = gdk_cursor_new(GDK_QUESTION_ARROW);
         break;
     case eCursor_copy: // CSS3
-        newType = MOZ_CURSOR_COPY;
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "copy");
+        if (!gdkcursor)
+            newType = MOZ_CURSOR_COPY;
         break;
     case eCursor_alias:
-        newType = MOZ_CURSOR_ALIAS;
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "alias");
+        if (!gdkcursor)
+            newType = MOZ_CURSOR_ALIAS;
         break;
     case eCursor_context_menu:
-        newType = MOZ_CURSOR_CONTEXT_MENU;
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "context-menu");
+        if (!gdkcursor)
+            newType = MOZ_CURSOR_CONTEXT_MENU;
         break;
     case eCursor_cell:
         gdkcursor = gdk_cursor_new(GDK_PLUS);
         break;
+    // Those two aren’t standardized. Trying both KDE’s and GNOME’s names
     case eCursor_grab:
-        newType = MOZ_CURSOR_HAND_GRAB;
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "openhand");
+        if (!gdkcursor)
+            gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "hand1");
+        if (!gdkcursor)
+            newType = MOZ_CURSOR_HAND_GRAB;
         break;
     case eCursor_grabbing:
-        newType = MOZ_CURSOR_HAND_GRABBING;
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "closedhand");
+        if (!gdkcursor)
+            gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "grabbing");
+        if (!gdkcursor)
+            newType = MOZ_CURSOR_HAND_GRABBING;
         break;
     case eCursor_spinning:
-        newType = MOZ_CURSOR_SPINNING;
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "progress");
+        if (!gdkcursor)
+            newType = MOZ_CURSOR_SPINNING;
         break;
     case eCursor_zoom_in:
         newType = MOZ_CURSOR_ZOOM_IN;
@@ -4979,8 +4999,20 @@ get_gtk_cursor(nsCursor aCursor)
         newType = MOZ_CURSOR_ZOOM_OUT;
         break;
     case eCursor_not_allowed:
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "not-allowed");
+        if (!gdkcursor) // nonstandard, yet common
+            gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "crossed_circle");
+        if (!gdkcursor)
+            newType = MOZ_CURSOR_NOT_ALLOWED;
+        break;
     case eCursor_no_drop:
-        newType = MOZ_CURSOR_NOT_ALLOWED;
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "no-drop");
+        if (!gdkcursor) // this nonstandard sequence makes it work on KDE and GNOME
+            gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "forbidden");
+        if (!gdkcursor)
+            gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "circle");
+        if (!gdkcursor)
+            newType = MOZ_CURSOR_NOT_ALLOWED;
         break;
     case eCursor_vertical_text:
         newType = MOZ_CURSOR_VERTICAL_TEXT;
@@ -4989,18 +5021,31 @@ get_gtk_cursor(nsCursor aCursor)
         gdkcursor = gdk_cursor_new(GDK_FLEUR);
         break;
     case eCursor_nesw_resize:
-        newType = MOZ_CURSOR_NESW_RESIZE;
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "size_bdiag");
+        if (!gdkcursor)
+            newType = MOZ_CURSOR_NESW_RESIZE;
         break;
     case eCursor_nwse_resize:
-        newType = MOZ_CURSOR_NWSE_RESIZE;
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "size_fdiag");
+        if (!gdkcursor)
+            newType = MOZ_CURSOR_NWSE_RESIZE;
         break;
     case eCursor_ns_resize:
-    case eCursor_row_resize:
         gdkcursor = gdk_cursor_new(GDK_SB_V_DOUBLE_ARROW);
         break;
     case eCursor_ew_resize:
-    case eCursor_col_resize:
         gdkcursor = gdk_cursor_new(GDK_SB_H_DOUBLE_ARROW);
+        break;
+    // Here, two better fitting cursors exist in some cursor themes. Try those first
+    case eCursor_row_resize:
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "split_v");
+        if (!gdkcursor)
+            gdkcursor = gdk_cursor_new(GDK_SB_V_DOUBLE_ARROW);
+        break;
+    case eCursor_col_resize:
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, "split_h");
+        if (!gdkcursor)
+            gdkcursor = gdk_cursor_new(GDK_SB_H_DOUBLE_ARROW);
         break;
     case eCursor_none:
         newType = MOZ_CURSOR_NONE;
@@ -5016,8 +5061,7 @@ get_gtk_cursor(nsCursor aCursor)
     // custom bitmap, as libXcursor has some magic to convert bitmapped cursors
     // to themed cursors
     if (newType != 0xFF && GtkCursors[newType].hash) {
-        gdkcursor = gdk_cursor_new_from_name(gdk_display_get_default(),
-                                             GtkCursors[newType].hash);
+        gdkcursor = gdk_cursor_new_from_name(defaultDisplay, GtkCursors[newType].hash);
     }
 
     // If we still don't have a xcursor, we now really create a bitmap cursor
@@ -5865,10 +5909,10 @@ nsChildWindow::~nsChildWindow()
 }
 
 NS_IMETHODIMP
-nsWindow::NotifyIME(NotificationToIME aNotification)
+nsWindow::NotifyIME(const IMENotification& aIMENotification)
 {
     if (MOZ_UNLIKELY(!mIMModule)) {
-        switch (aNotification) {
+        switch (aIMENotification.mMessage) {
             case NOTIFY_IME_OF_CURSOR_POS_CHANGED:
             case REQUEST_TO_COMMIT_COMPOSITION:
             case REQUEST_TO_CANCEL_COMPOSITION:
@@ -5879,7 +5923,7 @@ nsWindow::NotifyIME(NotificationToIME aNotification)
               break;
         }
     }
-    switch (aNotification) {
+    switch (aIMENotification.mMessage) {
         // TODO: We should replace NOTIFY_IME_OF_CURSOR_POS_CHANGED with
         //       NOTIFY_IME_OF_SELECTION_CHANGE.  The required behavior is
         //       really different from committing composition.
@@ -5928,6 +5972,16 @@ nsWindow::GetInputContext()
       context.mNativeIMEContext = mIMModule;
   }
   return context;
+}
+
+NS_IMETHODIMP_(bool)
+nsWindow::ExecuteNativeKeyBinding(NativeKeyBindingsType aType,
+                                  const WidgetKeyboardEvent& aEvent,
+                                  DoCommandCallback aCallback,
+                                  void* aCallbackData)
+{
+    NativeKeyBindings* keyBindings = NativeKeyBindings::GetInstance(aType);
+    return keyBindings->Execute(aEvent, aCallback, aCallbackData);
 }
 
 NS_IMETHODIMP

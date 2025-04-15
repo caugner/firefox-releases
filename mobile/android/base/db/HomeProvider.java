@@ -4,34 +4,30 @@
 
 package org.mozilla.gecko.db;
 
-import org.mozilla.gecko.R;
-import org.mozilla.gecko.db.BrowserContract.HomeItems;
-import org.mozilla.gecko.db.PerProfileDatabases.DatabaseHelperFactory;
-import org.mozilla.gecko.sqlite.SQLiteBridge;
+import java.io.IOException;
+import java.io.InputStream;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.mozilla.gecko.R;
+import org.mozilla.gecko.db.BrowserContract.HomeItems;
+import org.mozilla.gecko.db.DBUtils;
+import org.mozilla.gecko.sqlite.SQLiteBridge;
 
+import android.content.ContentResolver;
 import android.content.ContentValues;
-import android.content.Context;
 import android.content.UriMatcher;
 import android.database.Cursor;
 import android.database.MatrixCursor;
-import android.database.MatrixCursor.RowBuilder;
 import android.net.Uri;
-import android.os.Build;
-import android.text.TextUtils;
 import android.util.Log;
-
-import java.io.InputStream;
-import java.io.IOException;
 
 public class HomeProvider extends SQLiteBridgeContentProvider {
     private static final String LOGTAG = "GeckoHomeProvider";
 
     // This should be kept in sync with the db version in mobile/android/modules/HomeProvider.jsm
-    private static int DB_VERSION = 1;
+    private static int DB_VERSION = 2;
     private static String DB_FILENAME = "home.sqlite";
 
     private static final String TABLE_ITEMS = "items";
@@ -79,8 +75,28 @@ public class HomeProvider extends SQLiteBridgeContentProvider {
             return queryFakeItems(uri, projection, selection, selectionArgs, sortOrder);
         }
 
+        final String datasetId = uri.getQueryParameter(BrowserContract.PARAM_DATASET_ID);
+        if (datasetId == null) {
+            throw new IllegalArgumentException("All queries should contain a dataset ID parameter");
+        }
+
+        selection = DBUtils.concatenateWhere(selection, HomeItems.DATASET_ID + " = ?");
+        selectionArgs = DBUtils.appendSelectionArgs(selectionArgs,
+                                                    new String[] { datasetId });
+
         // Otherwise, let the SQLiteContentProvider implementation take care of this query for us!
-        return super.query(uri, projection, selection, selectionArgs, sortOrder);
+        Cursor c = super.query(uri, projection, selection, selectionArgs, sortOrder);
+
+        // SQLiteBridgeContentProvider may return a null Cursor if the database hasn't been created yet.
+        // However, we need a non-null cursor in order to listen for notifications.
+        if (c == null) {
+            c = new MatrixCursor(projection != null ? projection : HomeItems.DEFAULT_PROJECTION);
+        }
+
+        final ContentResolver cr = getContext().getContentResolver();
+        c.setNotificationUri(cr, getDatasetNotificationUri(datasetId));
+
+        return c;
     }
 
     /**
@@ -98,15 +114,7 @@ public class HomeProvider extends SQLiteBridgeContentProvider {
             return null;
         }
 
-        final String[] itemsColumns = new String[] {
-            HomeItems._ID,
-            HomeItems.DATASET_ID,
-            HomeItems.URL,
-            HomeItems.TITLE,
-            HomeItems.DESCRIPTION
-        };
-
-        final MatrixCursor c = new MatrixCursor(itemsColumns);
+        final MatrixCursor c = new MatrixCursor(HomeItems.DEFAULT_PROJECTION);
         for (int i = 0; i < items.length(); i++) {
             try {
                 final JSONObject item = items.getJSONObject(i);
@@ -115,7 +123,9 @@ public class HomeProvider extends SQLiteBridgeContentProvider {
                     item.getString("dataset_id"),
                     item.getString("url"),
                     item.getString("title"),
-                    item.getString("description")
+                    item.getString("description"),
+                    item.getString("image_url"),
+                    item.getString("filter")
                 });
             } catch (JSONException e) {
                 Log.e(LOGTAG, "Error creating cursor row for fake home item", e);
@@ -183,5 +193,7 @@ public class HomeProvider extends SQLiteBridgeContentProvider {
     @Override
     public void onPostQuery(Cursor cursor, Uri uri, SQLiteBridge db) { }
 
-
+    public static Uri getDatasetNotificationUri(String datasetId) {
+        return Uri.withAppendedPath(HomeItems.CONTENT_URI, datasetId);
+    }
 }

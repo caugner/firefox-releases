@@ -11,7 +11,9 @@
 #include "ImageContainer.h"
 #include "ImageTypes.h"
 #include "prmem.h"
+#include "nsContentUtils.h"
 
+#include "nsIFilePicker.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 
@@ -164,18 +166,38 @@ MediaEngineDefaultVideoSource::Snapshot(uint32_t aDuration, nsIDOMFile** aFile)
 #ifndef MOZ_WIDGET_ANDROID
   return NS_ERROR_NOT_IMPLEMENTED;
 #else
-  if (!AndroidBridge::Bridge()) {
-    return NS_ERROR_UNEXPECTED;
+  nsAutoString filePath;
+  nsCOMPtr<nsIFilePicker> filePicker = do_CreateInstance("@mozilla.org/filepicker;1");
+  if (!filePicker)
+    return NS_ERROR_FAILURE;
+
+  nsXPIDLString title;
+  nsContentUtils::GetLocalizedString(nsContentUtils::eFORMS_PROPERTIES, "Browse", title);
+  int16_t mode = static_cast<int16_t>(nsIFilePicker::modeOpen);
+
+  nsresult rv = filePicker->Init(nullptr, title, mode);
+  NS_ENSURE_SUCCESS(rv, rv);
+  filePicker->AppendFilters(nsIFilePicker::filterImages);
+
+  // XXX - This API should be made async
+  PRInt16 dialogReturn;
+  rv = filePicker->Show(&dialogReturn);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (dialogReturn == nsIFilePicker::returnCancel) {
+    *aFile = nullptr;
+    return NS_OK;
   }
 
-  nsAutoString filePath;
-  AndroidBridge::Bridge()->ShowFilePickerForMimeType(filePath, NS_LITERAL_STRING("image/*"));
+  nsCOMPtr<nsIFile> localFile;
+  filePicker->GetFile(getter_AddRefs(localFile));
 
-  nsCOMPtr<nsIFile> file;
-  nsresult rv = NS_NewLocalFile(filePath, false, getter_AddRefs(file));
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (!localFile) {
+    *aFile = nullptr;
+    return NS_OK;
+  }
 
-  NS_ADDREF(*aFile = new nsDOMFileFile(file));
+  nsCOMPtr<nsIDOMFile> domFile = new nsDOMFileFile(localFile);
+  domFile.forget(aFile);
   return NS_OK;
 #endif
 }
@@ -245,12 +267,8 @@ MediaEngineDefaultVideoSource::NotifyPull(MediaStreamGraph* aGraph,
 
   if (delta > 0) {
     // nullptr images are allowed
-    if (image) {
-      segment.AppendFrame(image.forget(), delta,
-                          gfxIntSize(mOpts.mWidth, mOpts.mHeight));
-    } else {
-      segment.AppendFrame(nullptr, delta, gfxIntSize(0,0));
-    }
+    IntSize size(image ? mOpts.mWidth : 0, image ? mOpts.mHeight : 0);
+    segment.AppendFrame(image.forget(), delta, size);
     // This can fail if either a) we haven't added the track yet, or b)
     // we've removed or finished the track.
     if (aSource->AppendToTrack(aID, &segment)) {
@@ -263,6 +281,7 @@ MediaEngineDefaultVideoSource::NotifyPull(MediaStreamGraph* aGraph,
 class SineWaveGenerator : public RefCounted<SineWaveGenerator>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(SineWaveGenerator)
   static const int bytesPerSample = 2;
   static const int millisecondsPerSecond = 1000;
   static const int frequency = 1000;
@@ -382,7 +401,7 @@ MediaEngineDefaultAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
 
   // 1 Audio frame per 10ms
   mTimer->InitWithCallback(this, MediaEngine::DEFAULT_AUDIO_TIMER_MS,
-                           nsITimer::TYPE_REPEATING_PRECISE);
+                           nsITimer::TYPE_REPEATING_PRECISE_CAN_SKIP);
   mState = kStarted;
 
   return NS_OK;

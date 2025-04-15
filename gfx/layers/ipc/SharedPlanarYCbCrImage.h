@@ -10,7 +10,7 @@
 #include "mozilla/ipc/Shmem.h"          // for Shmem
 #include "nsCOMPtr.h"                   // for already_AddRefed
 #include "nsDebug.h"                    // for NS_WARNING
-#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR
+#include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR
 
 class gfxASurface;
 
@@ -97,7 +97,7 @@ public:
   ~SharedPlanarYCbCrImage();
 
   virtual ISharedImage* AsSharedImage() MOZ_OVERRIDE { return this; }
-  virtual TextureClient* GetTextureClient() MOZ_OVERRIDE;
+  virtual TextureClient* GetTextureClient(CompositableClient* aClient) MOZ_OVERRIDE;
   virtual uint8_t* GetBuffer() MOZ_OVERRIDE;
 
   virtual already_AddRefed<gfxASurface> DeprecatedGetAsSurface() MOZ_OVERRIDE;

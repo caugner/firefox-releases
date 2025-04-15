@@ -19,7 +19,6 @@
 #include "gfx2DGlue.h"
 #include "mozilla/DebugOnly.h"          // for DebugOnly
 #include "mozilla/Telemetry.h"          // for Accumulate
-#include "mozilla/TelemetryHistogramEnums.h"
 #include "mozilla/gfx/2D.h"             // for DrawTarget
 #include "mozilla/gfx/BaseSize.h"       // for BaseSize
 #include "mozilla/gfx/Matrix.h"         // for Matrix4x4
@@ -118,7 +117,7 @@ LayerManager::CreateOptimalSurface(const gfx::IntSize &aSize,
                                    gfxImageFormat aFormat)
 {
   return gfxPlatform::GetPlatform()->
-    CreateOffscreenSurface(gfx::ThebesIntSize(aSize), gfxASurface::ContentFromFormat(aFormat));
+    CreateOffscreenSurface(aSize, gfxASurface::ContentFromFormat(aFormat));
 }
 
 already_AddRefed<gfxASurface>
@@ -169,7 +168,7 @@ Layer::Layer(LayerManager* aManager, void* aImplData) :
   mPostXScale(1.0f),
   mPostYScale(1.0f),
   mOpacity(1.0),
-  mMixBlendMode(gfxContext::OPERATOR_OVER),
+  mMixBlendMode(CompositionOp::OP_OVER),
   mForceIsolatedGroup(false),
   mContentFlags(0),
   mUseClipRect(false),
@@ -187,18 +186,13 @@ Layer::~Layer()
 {}
 
 Animation*
-Layer::AddAnimation(TimeStamp aStart, TimeDuration aDuration, float aIterations,
-                    int aDirection, nsCSSProperty aProperty, const AnimationData& aData)
+Layer::AddAnimation()
 {
   MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) AddAnimation", this));
 
+  MOZ_ASSERT(!mPendingAnimations, "should have called ClearAnimations first");
+
   Animation* anim = mAnimations.AppendElement();
-  anim->startTime() = aStart;
-  anim->duration() = aDuration;
-  anim->numIterations() = aIterations;
-  anim->direction() = aDirection;
-  anim->property() = aProperty;
-  anim->data() = aData;
 
   Mutated();
   return anim;
@@ -207,6 +201,8 @@ Layer::AddAnimation(TimeStamp aStart, TimeDuration aDuration, float aIterations,
 void
 Layer::ClearAnimations()
 {
+  mPendingAnimations = nullptr;
+
   if (mAnimations.IsEmpty() && mAnimationData.IsEmpty()) {
     return;
   }
@@ -215,6 +211,28 @@ Layer::ClearAnimations()
   mAnimations.Clear();
   mAnimationData.Clear();
   Mutated();
+}
+
+Animation*
+Layer::AddAnimationForNextTransaction()
+{
+  MOZ_ASSERT(mPendingAnimations,
+             "should have called ClearAnimationsForNextTransaction first");
+
+  Animation* anim = mPendingAnimations->AppendElement();
+
+  return anim;
+}
+
+void
+Layer::ClearAnimationsForNextTransaction()
+{
+  // Ensure we have a non-null mPendingAnimations to mark a future clear.
+  if (!mPendingAnimations) {
+    mPendingAnimations = new AnimationArray;
+  }
+
+  mPendingAnimations->Clear();
 }
 
 static nsCSSValueSharedList*
@@ -649,6 +667,13 @@ Layer::ApplyPendingUpdatesForThisTransaction()
     Mutated();
   }
   mPendingTransform = nullptr;
+
+  if (mPendingAnimations) {
+    MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) PendingUpdatesForThisTransaction", this));
+    mPendingAnimations->SwapElements(mAnimations);
+    mPendingAnimations = nullptr;
+    Mutated();
+  }
 }
 
 const float
@@ -670,18 +695,24 @@ Layer::GetEffectiveOpacity()
   return opacity;
 }
   
-gfxContext::GraphicsOperator
+CompositionOp
 Layer::GetEffectiveMixBlendMode()
 {
-  if(mMixBlendMode != gfxContext::OPERATOR_OVER)
+  if(mMixBlendMode != CompositionOp::OP_OVER)
     return mMixBlendMode;
   for (ContainerLayer* c = GetParent(); c && !c->UseIntermediateSurface();
     c = c->GetParent()) {
-    if(c->mMixBlendMode != gfxContext::OPERATOR_OVER)
+    if(c->mMixBlendMode != CompositionOp::OP_OVER)
       return c->mMixBlendMode;
   }
 
   return mMixBlendMode;
+}
+
+gfxContext::GraphicsOperator
+Layer::DeprecatedGetEffectiveMixBlendMode()
+{
+  return ThebesOp(GetEffectiveMixBlendMode());
 }
 
 void
@@ -715,19 +746,27 @@ ContainerLayer::ContainerLayer(LayerManager* aManager, void* aImplData)
 
 ContainerLayer::~ContainerLayer() {}
 
-void
+bool
 ContainerLayer::InsertAfter(Layer* aChild, Layer* aAfter)
 {
-  NS_ASSERTION(aChild->Manager() == Manager(),
-               "Child has wrong manager");
-  NS_ASSERTION(!aChild->GetParent(),
-               "aChild already in the tree");
-  NS_ASSERTION(!aChild->GetNextSibling() && !aChild->GetPrevSibling(),
-               "aChild already has siblings?");
-  NS_ASSERTION(!aAfter ||
-               (aAfter->Manager() == Manager() &&
-                aAfter->GetParent() == this),
-               "aAfter is not our child");
+  if(aChild->Manager() != Manager()) {
+    NS_ERROR("Child has wrong manager");
+    return false;
+  }
+  if(aChild->GetParent()) {
+    NS_ERROR("aChild already in the tree");
+    return false;
+  }
+  if (aChild->GetNextSibling() || aChild->GetPrevSibling()) {
+    NS_ERROR("aChild already has siblings?");
+    return false;
+  }
+  if (aAfter && (aAfter->Manager() != Manager() ||
+                 aAfter->GetParent() != this))
+  {
+    NS_ERROR("aAfter is not our child");
+    return false;
+  }
 
   aChild->SetParent(this);
   if (aAfter == mLastChild) {
@@ -741,7 +780,7 @@ ContainerLayer::InsertAfter(Layer* aChild, Layer* aAfter)
     mFirstChild = aChild;
     NS_ADDREF(aChild);
     DidInsertChild(aChild);
-    return;
+    return true;
   }
 
   Layer* next = aAfter->GetNextSibling();
@@ -753,15 +792,20 @@ ContainerLayer::InsertAfter(Layer* aChild, Layer* aAfter)
   aAfter->SetNextSibling(aChild);
   NS_ADDREF(aChild);
   DidInsertChild(aChild);
+  return true;
 }
 
-void
+bool
 ContainerLayer::RemoveChild(Layer *aChild)
 {
-  NS_ASSERTION(aChild->Manager() == Manager(),
-               "Child has wrong manager");
-  NS_ASSERTION(aChild->GetParent() == this,
-               "aChild not our child");
+  if (aChild->Manager() != Manager()) {
+    NS_ERROR("Child has wrong manager");
+    return false;
+  }
+  if (aChild->GetParent() != this) {
+    NS_ERROR("aChild not our child");
+    return false;
+  }
 
   Layer* prev = aChild->GetPrevSibling();
   Layer* next = aChild->GetNextSibling();
@@ -782,28 +826,37 @@ ContainerLayer::RemoveChild(Layer *aChild)
 
   this->DidRemoveChild(aChild);
   NS_RELEASE(aChild);
+  return true;
 }
 
 
-void
+bool
 ContainerLayer::RepositionChild(Layer* aChild, Layer* aAfter)
 {
-  NS_ASSERTION(aChild->Manager() == Manager(),
-               "Child has wrong manager");
-  NS_ASSERTION(aChild->GetParent() == this,
-               "aChild not our child");
-  NS_ASSERTION(!aAfter ||
-               (aAfter->Manager() == Manager() &&
-                aAfter->GetParent() == this),
-               "aAfter is not our child");
-  NS_ASSERTION(aChild != aAfter,
-               "aChild cannot be the same as aAfter");
+  if (aChild->Manager() != Manager()) {
+    NS_ERROR("Child has wrong manager");
+    return false;
+  }
+  if (aChild->GetParent() != this) {
+    NS_ERROR("aChild not our child");
+    return false;
+  }
+  if (aAfter && (aAfter->Manager() != Manager() ||
+                 aAfter->GetParent() != this))
+  {
+    NS_ERROR("aAfter is not our child");
+    return false;
+  }
+  if (aChild == aAfter) {
+    NS_ERROR("aChild cannot be the same as aAfter");
+    return false;
+  }
 
   Layer* prev = aChild->GetPrevSibling();
   Layer* next = aChild->GetNextSibling();
   if (prev == aAfter) {
     // aChild is already in the correct position, nothing to do.
-    return;
+    return true;
   }
   if (prev) {
     prev->SetNextSibling(next);
@@ -822,7 +875,7 @@ ContainerLayer::RepositionChild(Layer* aChild, Layer* aAfter)
       mFirstChild->SetPrevSibling(aChild);
     }
     mFirstChild = aChild;
-    return;
+    return true;
   }
 
   Layer* afterNext = aAfter->GetNextSibling();
@@ -834,6 +887,7 @@ ContainerLayer::RepositionChild(Layer* aChild, Layer* aAfter)
   aAfter->SetNextSibling(aChild);
   aChild->SetPrevSibling(aAfter);
   aChild->SetNextSibling(afterNext);
+  return true;
 }
 
 void
@@ -1024,10 +1078,7 @@ LayerManager::StartFrameTimeRecording(int32_t aBufferSize)
     mRecording.mIsPaused = false;
 
     if (!mRecording.mIntervals.Length()) { // Initialize recording buffers
-      if (!mRecording.mIntervals.SetLength(aBufferSize)) {
-        mRecording.mIsPaused = true; // OOM
-        mRecording.mIntervals.Clear();
-      }
+      mRecording.mIntervals.SetLength(aBufferSize);
     }
 
     // After being paused, recent values got invalid. Update them to now.
@@ -1083,11 +1134,12 @@ LayerManager::StopFrameTimeRecording(uint32_t         aStartIndex,
     length = 0;
   }
 
-  // Set length in advance to avoid possibly repeated reallocations (and OOM checks).
-  if (!length || !aFrameIntervals.SetLength(length)) {
+  if (!length) {
     aFrameIntervals.Clear();
-    return; // empty recording or OOM, return empty arrays.
+    return; // empty recording, return empty arrays.
   }
+  // Set length in advance to avoid possibly repeated reallocations
+  aFrameIntervals.SetLength(length);
 
   uint32_t cyclicPos = aStartIndex % bufferSize;
   for (uint32_t i = 0; i < length; i++, cyclicPos++) {

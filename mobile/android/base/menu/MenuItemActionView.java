@@ -5,29 +5,31 @@
 
 package org.mozilla.gecko.menu;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import org.mozilla.gecko.R;
 
 import android.annotation.TargetApi;
 import android.content.Context;
-import android.content.res.Resources;
+import android.content.res.TypedArray;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.widget.LinearLayout;
 import android.widget.ImageButton;
-
-import java.util.ArrayList;
-import java.util.List;
+import android.widget.LinearLayout;
+import android.os.Build;
 
 public class MenuItemActionView extends LinearLayout
-                                implements GeckoMenuItem.Layout {
+                                implements GeckoMenuItem.Layout,
+                                           View.OnClickListener {
     private static final String LOGTAG = "GeckoMenuItemActionView";
 
     private MenuItemDefault mMenuItem;
     private MenuItemActionBar mMenuButton;
     private List<ImageButton> mActionButtons;
-    private View.OnClickListener mActionButtonListener;
+    private List<View.OnClickListener> mActionButtonListeners = new ArrayList<View.OnClickListener>();
 
     public MenuItemActionView(Context context) {
         this(context, null);
@@ -37,9 +39,19 @@ public class MenuItemActionView extends LinearLayout
         this(context, attrs, R.attr.menuItemActionViewStyle);
     }
 
-    @TargetApi(11)
+    @TargetApi(14)
     public MenuItemActionView(Context context, AttributeSet attrs, int defStyle) {
-        super(context, attrs, defStyle);
+        super(context, attrs);
+
+        // Set these explicitly, since setting a style isn't supported for LinearLayouts until V11.
+        if (Build.VERSION.SDK_INT >= 11) {
+            setShowDividers(LinearLayout.SHOW_DIVIDER_MIDDLE);
+            setDividerDrawable(getResources().getDrawable(R.drawable.divider_vertical));
+        }
+
+        if (Build.VERSION.SDK_INT >= 14) {
+            setDividerPadding(0);
+        }
 
         LayoutInflater.from(context).inflate(R.layout.menu_item_action_view, this);
         mMenuItem = (MenuItemDefault) findViewById(R.id.menu_item);
@@ -50,7 +62,9 @@ public class MenuItemActionView extends LinearLayout
     @Override
     protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
         View parent = (View) getParent();
-        if ((right - left) < parent.getMeasuredWidth() || mActionButtons.size() != 0) {
+        final int padding = getPaddingLeft() + getPaddingRight();
+        final int parentPadding = parent.getPaddingLeft() + parent.getPaddingRight();
+        if ((right - left - padding) < (parent.getMeasuredWidth() - parentPadding) || mActionButtons.size() != 0) {
             // Use the icon.
             mMenuItem.setVisibility(View.GONE);
             mMenuButton.setVisibility(View.VISIBLE);
@@ -90,17 +104,32 @@ public class MenuItemActionView extends LinearLayout
         mMenuButton.setOnClickListener(listener);
     }
 
-    public void setActionButtonClickListener(View.OnClickListener listener) {
-        mActionButtonListener = listener;
-
-        for (ImageButton button : mActionButtons) {
-            button.setOnClickListener(listener);
-        }
+    public void addActionButtonClickListener(View.OnClickListener listener) {
+        mActionButtonListeners.add(listener);
     }
 
     @Override
     public void setShowIcon(boolean show) {
         mMenuItem.setShowIcon(show);
+    }
+
+    public void setIcon(Drawable icon) {
+        mMenuItem.setIcon(icon);
+        mMenuButton.setIcon(icon);
+    }
+
+    public void setIcon(int icon) {
+        mMenuItem.setIcon(icon);
+        mMenuButton.setIcon(icon);
+    }
+
+    public void setTitle(CharSequence title) {
+        mMenuItem.setTitle(title);
+        mMenuButton.setContentDescription(title);
+    }
+
+    public void setSubMenuIndicator(boolean hasSubMenu) {
+        mMenuItem.setSubMenuIndicator(hasSubMenu);
     }
 
     public void addActionButton(Drawable drawable) {
@@ -113,7 +142,7 @@ public class MenuItemActionView extends LinearLayout
         if (drawable != null) {
             ImageButton button = new ImageButton(getContext(), null, R.attr.menuItemShareActionButtonStyle);
             button.setImageDrawable(drawable);
-            button.setOnClickListener(mActionButtonListener);
+            button.setOnClickListener(this);
             button.setTag(count);
 
             final int height = (int) (getResources().getDimension(R.dimen.menu_item_row_height));
@@ -124,6 +153,13 @@ public class MenuItemActionView extends LinearLayout
             // Fill in the action-buttons to the left of the actual menu button.
             mActionButtons.add(button);
             addView(button, count);
+        }
+    }
+
+    @Override
+    public void onClick(View view) {
+        for (View.OnClickListener listener : mActionButtonListeners) {
+            listener.onClick(view);
         }
     }
 }

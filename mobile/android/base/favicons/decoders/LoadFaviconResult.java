@@ -21,46 +21,30 @@ import java.util.Iterator;
 public class LoadFaviconResult {
     private static final String LOGTAG = "LoadFaviconResult";
 
-    byte[] mFaviconBytes;
-    int mOffset;
-    int mLength;
+    byte[] faviconBytes;
+    int offset;
+    int length;
 
-    boolean mIsICO;
-    Iterator<Bitmap> mBitmapsDecoded;
+    boolean isICO;
+    Iterator<Bitmap> bitmapsDecoded;
 
     public Iterator<Bitmap> getBitmaps() {
-        return mBitmapsDecoded;
+        return bitmapsDecoded;
     }
 
     /**
      * Return a representation of this result suitable for storing in the database.
-     * For
      *
-     * @return A byte array containing the bytes from which this result was decoded.
+     * @return A byte array containing the bytes from which this result was decoded,
+     *         or null if re-encoding failed.
      */
     public byte[] getBytesForDatabaseStorage() {
         // Begin by normalising the buffer.
-        if (mOffset != 0 || mLength != mFaviconBytes.length) {
-            final byte[] normalised = new byte[mLength];
-            System.arraycopy(mFaviconBytes, mOffset, normalised, 0, mLength);
-            mOffset = 0;
-            mFaviconBytes = normalised;
-        }
-
-        // For results containing a single image, we re-encode the result as a PNG in an effort to
-        // save space.
-        if (!mIsICO) {
-            Bitmap favicon = ((FaviconDecoder.SingleBitmapIterator) mBitmapsDecoded).peek();
-            byte[] data = null;
-            ByteArrayOutputStream stream = new ByteArrayOutputStream();
-
-            if (favicon.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
-                data = stream.toByteArray();
-            } else {
-                Log.w(LOGTAG, "Favicon compression failed.");
-            }
-
-            return data;
+        if (offset != 0 || length != faviconBytes.length) {
+            final byte[] normalised = new byte[length];
+            System.arraycopy(faviconBytes, offset, normalised, 0, length);
+            offset = 0;
+            faviconBytes = normalised;
         }
 
         // For results containing multiple images, we store the result verbatim. (But cutting the
@@ -68,7 +52,25 @@ public class LoadFaviconResult {
         // We may instead want to consider re-encoding the entire ICO as a collection of efficiently
         // encoded PNGs. This may not be worth the CPU time (Indeed, the encoding of single-image
         // favicons may also not be worth the time/space tradeoff.).
-        return mFaviconBytes;
+        if (isICO) {
+            return faviconBytes;
+        }
+
+        // For results containing a single image, we re-encode the
+        // result as a PNG in an effort to save space.
+        final Bitmap favicon = ((FaviconDecoder.SingleBitmapIterator) bitmapsDecoded).peek();
+        final ByteArrayOutputStream stream = new ByteArrayOutputStream();
+
+        try {
+            if (favicon.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                return stream.toByteArray();
+            }
+        } catch (OutOfMemoryError e) {
+            Log.w(LOGTAG, "Out of memory re-compressing favicon.");
+        }
+
+        Log.w(LOGTAG, "Favicon re-compression failed.");
+        return null;
     }
 
 }

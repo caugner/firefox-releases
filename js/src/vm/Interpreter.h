@@ -129,7 +129,7 @@ Invoke(JSContext *cx, CallArgs args, MaybeConstruct construct = NO_CONSTRUCT);
  * arguments onto the stack.
  */
 extern bool
-Invoke(JSContext *cx, const Value &thisv, const Value &fval, unsigned argc, Value *argv,
+Invoke(JSContext *cx, const Value &thisv, const Value &fval, unsigned argc, const Value *argv,
        MutableHandleValue rval);
 
 /*
@@ -318,23 +318,24 @@ TypeOfValue(const Value &v);
 extern bool
 HasInstance(JSContext *cx, HandleObject obj, HandleValue v, bool *bp);
 
-/* Unwind block and scope chains to match the given depth. */
+// Unwind scope chain and iterator to match the static scope corresponding to
+// the given bytecode position.
 extern void
-UnwindScope(JSContext *cx, ScopeIter &si, uint32_t stackDepth);
+UnwindScope(JSContext *cx, ScopeIter &si, jsbytecode *pc);
 
 /*
  * Unwind for an uncatchable exception. This means not running finalizers, etc;
  * just preserving the basic engine stack invariants.
  */
 extern void
-UnwindForUncatchableException(JSContext *cx, const FrameRegs &regs);
+UnwindForUncatchableException(JSContext *cx, const InterpreterRegs &regs);
 
 extern bool
 OnUnknownMethod(JSContext *cx, HandleObject obj, Value idval, MutableHandleValue vp);
 
 class TryNoteIter
 {
-    const FrameRegs &regs;
+    const InterpreterRegs &regs;
     RootedScript script; /* TryNotIter is always stack allocated. */
     uint32_t pcOffset;
     JSTryNote *tn, *tnEnd;
@@ -342,7 +343,7 @@ class TryNoteIter
     void settle();
 
   public:
-    explicit TryNoteIter(JSContext *cx, const FrameRegs &regs);
+    explicit TryNoteIter(JSContext *cx, const InterpreterRegs &regs);
     bool done() const;
     void operator++();
     JSTryNote *operator*() const { return tn; }
@@ -387,22 +388,22 @@ InitElementArray(JSContext *cx, jsbytecode *pc,
                  HandleObject obj, uint32_t index, HandleValue value);
 
 bool
-AddValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
+AddValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, MutableHandleValue res);
 
 bool
-SubValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
+SubValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, MutableHandleValue res);
 
 bool
-MulValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
+MulValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, MutableHandleValue res);
 
 bool
-DivValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
+DivValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, MutableHandleValue res);
 
 bool
-ModValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
+ModValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, MutableHandleValue res);
 
 bool
-UrshValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
+UrshValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, MutableHandleValue res);
 
 template <bool strict>
 bool
@@ -449,6 +450,10 @@ InitGetterSetterOperation(JSContext *cx, jsbytecode *pc, HandleObject obj, Handl
 bool
 InitGetterSetterOperation(JSContext *cx, jsbytecode *pc, HandleObject obj, HandlePropertyName name,
                           HandleObject val);
+
+bool
+EnterWithOperation(JSContext *cx, AbstractFramePtr frame, HandleValue val, HandleObject staticWith);
+
 
 bool
 InitGetterSetterOperation(JSContext *cx, jsbytecode *pc, HandleObject obj, HandleValue idval,

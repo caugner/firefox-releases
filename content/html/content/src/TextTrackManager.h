@@ -19,6 +19,17 @@ namespace mozilla {
 namespace dom {
 
 class HTMLMediaElement;
+
+class CompareTextTracks {
+private:
+  HTMLMediaElement* mMediaElement;
+public:
+  CompareTextTracks(HTMLMediaElement* aMediaElement);
+  int32_t TrackChildPosition(TextTrack* aTrack) const;
+  bool Equals(TextTrack* aOne, TextTrack* aTwo) const;
+  bool LessThan(TextTrack* aOne, TextTrack* aTwo) const;
+};
+
 class TextTrack;
 class TextTrackCue;
 
@@ -34,7 +45,8 @@ public:
   TextTrackList* TextTracks() const;
   already_AddRefed<TextTrack> AddTextTrack(TextTrackKind aKind,
                                            const nsAString& aLabel,
-                                           const nsAString& aLanguage);
+                                           const nsAString& aLanguage,
+                                           TextTrackSource aTextTrackSource);
   void AddTextTrack(TextTrack* aTextTrack);
   void RemoveTextTrack(TextTrack* aTextTrack, bool aPendingListOnly);
   void DidSeek();
@@ -74,9 +86,9 @@ public:
 
   void PopulatePendingList();
 
-private:
   // The HTMLMediaElement that this TextTrackManager manages the TextTracks of.
   nsRefPtr<HTMLMediaElement> mMediaElement;
+private:
   // List of the TextTrackManager's owning HTMLMediaElement's TextTracks.
   nsRefPtr<TextTrackList> mTextTracks;
   // List of text track objects awaiting loading.

@@ -81,8 +81,8 @@ using mozilla::InjectCrashRunnable;
 #include <map>
 #include <vector>
 
+#include "mozilla/IOInterposer.h"
 #include "mozilla/mozalloc_oom.h"
-#include "mozilla/LateWriteChecks.h"
 #include "mozilla/WindowsDllBlocklist.h"
 
 #if defined(XP_MACOSX)
@@ -151,10 +151,15 @@ static const XP_CHAR dumpFileExtension[] = {'.', 'd', 'm', 'p',
 static const XP_CHAR extraFileExtension[] = {'.', 'e', 'x', 't',
                                              'r', 'a', '\0'}; // .extra
 
+static const char kCrashMainID[] = "crash.main.1\n";
+
 static google_breakpad::ExceptionHandler* gExceptionHandler = nullptr;
 
 static XP_CHAR* pendingDirectory;
 static XP_CHAR* crashReporterPath;
+
+// Where crash events should go.
+static XP_CHAR* eventsDirectory;
 
 // If this is false, we don't launch the crash reporter
 static bool doReport = true;
@@ -209,9 +214,17 @@ static const char kOOMAllocationSizeParameter[] = "OOMAllocationSize=";
 static const int kOOMAllocationSizeParameterLen =
   sizeof(kOOMAllocationSizeParameter)-1;
 
+static const char kTotalPageFileParameter[] = "TotalPageFile=";
+static const int kTotalPageFileParameterLen =
+  sizeof(kTotalPageFileParameter)-1;
+
 static const char kAvailablePageFileParameter[] = "AvailablePageFile=";
 static const int kAvailablePageFileParameterLen =
   sizeof(kAvailablePageFileParameter)-1;
+
+static const char kTotalPhysicalMemoryParameter[] = "TotalPhysicalMemory=";
+static const int kTotalPhysicalMemoryParameterLen =
+  sizeof(kTotalPhysicalMemoryParameter)-1;
 
 static const char kAvailablePhysicalMemoryParameter[] = "AvailablePhysicalMemory=";
 static const int kAvailablePhysicalMemoryParameterLen =
@@ -220,6 +233,10 @@ static const int kAvailablePhysicalMemoryParameterLen =
 static const char kIsGarbageCollectingParameter[] = "IsGarbageCollecting=";
 static const int kIsGarbageCollectingParameterLen =
   sizeof(kIsGarbageCollectingParameter)-1;
+
+static const char kEventLoopNestingLevelParameter[] = "EventLoopNestingLevel=";
+static const int kEventLoopNestingLevelParameterLen =
+  sizeof(kEventLoopNestingLevelParameter)-1;
 
 #ifdef XP_WIN
 static const char kBreakpadReserveAddressParameter[] = "BreakpadReserveAddress=";
@@ -238,6 +255,7 @@ static AnnotationTable* crashReporterAPIData_Hash;
 static nsCString* crashReporterAPIData = nullptr;
 static nsCString* notesField = nullptr;
 static bool isGarbageCollecting;
+static uint32_t eventloopNestingLevel = 0;
 
 // Avoid a race during application termination.
 static Mutex* dumpSafetyLock;
@@ -552,6 +570,63 @@ bool MinidumpCallback(
 #endif
   }
 
+  // Write crash event file.
+
+  // Minidump IDs are UUIDs (36) + NULL.
+  static char id_ascii[37];
+#ifdef XP_LINUX
+  const char * index = strrchr(descriptor.path(), '/');
+  MOZ_ASSERT(index);
+  MOZ_ASSERT(strlen(index) == 1 + 36 + 4); // "/" + UUID + ".dmp"
+  for (uint32_t i = 0; i < 36; i++) {
+    id_ascii[i] = *(index + 1 + i);
+  }
+#else
+  MOZ_ASSERT(XP_STRLEN(minidump_id) == 36);
+  for (uint32_t i = 0; i < 36; i++) {
+    id_ascii[i] = *((char *)(minidump_id + i));
+  }
+#endif
+
+  if (eventsDirectory) {
+    static XP_CHAR crashEventPath[XP_PATH_MAX];
+    int size = XP_PATH_MAX;
+    XP_CHAR* p;
+    p = Concat(crashEventPath, eventsDirectory, &size);
+    p = Concat(p, XP_PATH_SEPARATOR, &size);
+#ifdef XP_LINUX
+    p = Concat(p, id_ascii, &size);
+#else
+    p = Concat(p, minidump_id, &size);
+#endif
+
+#if defined(XP_WIN32)
+    HANDLE hFile = CreateFile(crashEventPath, GENERIC_WRITE, 0,
+                              nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL,
+                              nullptr);
+    if (hFile != INVALID_HANDLE_VALUE) {
+      DWORD nBytes;
+      WriteFile(hFile, kCrashMainID, sizeof(kCrashMainID) - 1, &nBytes,
+                nullptr);
+      WriteFile(hFile, crashTimeString, crashTimeStringLen, &nBytes, nullptr);
+      WriteFile(hFile, "\n", 1, &nBytes, nullptr);
+      WriteFile(hFile, id_ascii, strlen(id_ascii), &nBytes, nullptr);
+      CloseHandle(hFile);
+    }
+#elif defined(XP_UNIX)
+    int fd = sys_open(crashEventPath,
+                      O_WRONLY | O_CREAT | O_TRUNC,
+                      0600);
+    if (fd != -1) {
+      unused << sys_write(fd, kCrashMainID, sizeof(kCrashMainID) - 1);
+      unused << sys_write(fd, crashTimeString, crashTimeStringLen);
+      unused << sys_write(fd, "\n", 1);
+      unused << sys_write(fd, id_ascii, strlen(id_ascii));
+      sys_close(fd);
+    }
+#endif
+  }
+
 #if defined(XP_WIN32)
   if (!crashReporterAPIData->IsEmpty()) {
     // write out API data
@@ -582,6 +657,14 @@ bool MinidumpCallback(
 
       char buffer[128];
       int bufferLen;
+
+      if (eventloopNestingLevel > 0) {
+        WriteFile(hFile, kEventLoopNestingLevelParameter, kEventLoopNestingLevelParameterLen,
+                  &nBytes, nullptr);
+        _ultoa(eventloopNestingLevel, buffer, 10);
+        WriteFile(hFile, buffer, strlen(buffer), &nBytes, nullptr);
+        WriteFile(hFile, "\n", 1, &nBytes, nullptr);
+      }
 
       if (gBreakpadReservedVM) {
         WriteFile(hFile, kBreakpadReserveAddressParameter, kBreakpadReserveAddressParameterLen, &nBytes, nullptr);
@@ -614,7 +697,9 @@ bool MinidumpCallback(
         WRITE_STATEX_FIELD(dwMemoryLoad, SysMemory, ltoa);
         WRITE_STATEX_FIELD(ullTotalVirtual, TotalVirtualMemory, _ui64toa);
         WRITE_STATEX_FIELD(ullAvailVirtual, AvailableVirtualMemory, _ui64toa);
+        WRITE_STATEX_FIELD(ullTotalPageFile, TotalPageFile, _ui64toa);
         WRITE_STATEX_FIELD(ullAvailPageFile, AvailablePageFile, _ui64toa);
+        WRITE_STATEX_FIELD(ullTotalPhys, TotalPhysicalMemory, _ui64toa);
         WRITE_STATEX_FIELD(ullAvailPhys, AvailablePhysicalMemory, _ui64toa);
 
 #undef WRITE_STATEX_FIELD
@@ -683,6 +768,13 @@ bool MinidumpCallback(
       if (isGarbageCollecting) {
         unused << sys_write(fd, kIsGarbageCollectingParameter, kIsGarbageCollectingParameterLen);
         unused << sys_write(fd, isGarbageCollecting ? "1" : "0", 1);
+        unused << sys_write(fd, "\n", 1);
+      }
+      if (eventloopNestingLevel > 0) {
+        unused << sys_write(fd, kEventLoopNestingLevelParameter, kEventLoopNestingLevelParameterLen);
+        char buffer[16];
+        XP_TTOA(eventloopNestingLevel, buffer, 10);
+        unused << sys_write(fd, buffer, my_strlen(buffer));
         unused << sys_write(fd, "\n", 1);
       }
       if (oomAllocationSizeBufferLen) {
@@ -790,6 +882,7 @@ static bool FPEFilter(void* context, EXCEPTION_POINTERS* exinfo,
                       MDRawAssertionInfo* assertion)
 {
   if (!exinfo) {
+    mozilla::IOInterposer::Disable();
     FreeBreakpadVM();
     return true;
   }
@@ -807,6 +900,7 @@ static bool FPEFilter(void* context, EXCEPTION_POINTERS* exinfo,
     case STATUS_FLOAT_MULTIPLE_TRAPS:
       return false; // Don't write minidump, continue exception search
   }
+  mozilla::IOInterposer::Disable();
   FreeBreakpadVM();
   return true;
 }
@@ -831,7 +925,7 @@ static bool ShouldReport()
 
 namespace {
   bool Filter(void* context) {
-    mozilla::StopLateWriteChecks();
+    mozilla::IOInterposer::Disable();
     return true;
   }
 }
@@ -1251,6 +1345,19 @@ InitInstallTime(nsACString& aInstallTime)
   return NS_OK;
 }
 
+// Ensure a directory exists and create it if missing.
+static nsresult
+EnsureDirectoryExists(nsIFile* dir)
+{
+  nsresult rv = dir->Create(nsIFile::DIRECTORY_TYPE, 0700);
+
+  if (NS_WARN_IF(NS_FAILED(rv) && rv != NS_ERROR_FILE_ALREADY_EXISTS)) {
+	return rv;
+  }
+
+  return NS_OK;
+}
+
 // Annotate the crash report with a Unique User ID and time
 // since install.  Also do some prep work for recording
 // time since last crash, which must be calculated at
@@ -1266,14 +1373,7 @@ nsresult SetupExtraData(nsIFile* aAppDataDirectory,
   rv = dataDirectory->AppendNative(NS_LITERAL_CSTRING("Crash Reports"));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  bool exists;
-  rv = dataDirectory->Exists(&exists);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!exists) {
-    rv = dataDirectory->Create(nsIFile::DIRECTORY_TYPE, 0700);
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
+  EnsureDirectoryExists(dataDirectory);
 
 #if defined(XP_WIN32)
   nsAutoString dataDirEnv(NS_LITERAL_STRING("MOZ_CRASHREPORTER_DATA_DIRECTORY="));
@@ -1417,6 +1517,11 @@ nsresult UnsetExceptionHandler()
   if (crashReporterPath) {
     NS_Free(crashReporterPath);
     crashReporterPath = nullptr;
+  }
+
+  if (eventsDirectory) {
+    NS_Free(eventsDirectory);
+    eventsDirectory = nullptr;
   }
 
 #ifdef XP_MACOSX
@@ -1580,6 +1685,11 @@ nsresult SetGarbageCollecting(bool collecting)
   return NS_OK;
 }
 
+void SetEventloopNestingLevel(uint32_t level)
+{
+  eventloopNestingLevel = level;
+}
+
 nsresult AppendAppNotesToCrashReport(const nsACString& data)
 {
   if (!GetEnabled())
@@ -1736,6 +1846,13 @@ nsresult WriteMinidumpForException(EXCEPTION_POINTERS* aExceptionInfo)
     return NS_ERROR_NOT_INITIALIZED;
 
   return gExceptionHandler->WriteMinidumpForException(aExceptionInfo) ? NS_OK : NS_ERROR_FAILURE;
+}
+#endif
+
+#ifdef XP_LINUX
+bool WriteMinidumpForSigInfo(int signo, siginfo_t* info, void* uc)
+{
+  return gExceptionHandler->HandleSignal(signo, info, uc);
 }
 #endif
 
@@ -1962,6 +2079,68 @@ nsresult SetSubmitReports(bool aSubmitReports)
 
     obsServ->NotifyObservers(nullptr, "submit-reports-pref-changed", nullptr);
     return NS_OK;
+}
+
+void
+UpdateCrashEventsDir()
+{
+  nsCOMPtr<nsIFile> eventsDir;
+
+  // We prefer the following locations in order:
+  //
+  // 1. If environment variable is present, use it. We don't expect
+  //    the environment variable except for tests and other atypical setups.
+  // 2. Inside the profile directory.
+  // 3. Inside the user application data directory (no profile available).
+  // 4. A temporary directory (setup likely is invalid / application is buggy).
+  const char *env = PR_GetEnv("CRASHES_EVENTS_DIR");
+  if (env) {
+    eventsDir = do_CreateInstance(NS_LOCAL_FILE_CONTRACTID);
+    if (!eventsDir) {
+      return;
+    }
+    eventsDir->InitWithNativePath(nsDependentCString(env));
+    EnsureDirectoryExists(eventsDir);
+  } else {
+    nsresult rv = NS_GetSpecialDirectory("ProfD", getter_AddRefs(eventsDir));
+    if (NS_SUCCEEDED(rv)) {
+      eventsDir->Append(NS_LITERAL_STRING("crashes"));
+      EnsureDirectoryExists(eventsDir);
+      eventsDir->Append(NS_LITERAL_STRING("events"));
+      EnsureDirectoryExists(eventsDir);
+    } else {
+      rv = NS_GetSpecialDirectory("UAppData", getter_AddRefs(eventsDir));
+      if (NS_SUCCEEDED(rv)) {
+        eventsDir->Append(NS_LITERAL_STRING("Crash Reports"));
+        EnsureDirectoryExists(eventsDir);
+        eventsDir->Append(NS_LITERAL_STRING("events"));
+        EnsureDirectoryExists(eventsDir);
+      } else {
+        NS_WARNING("Couldn't get the user appdata directory. Crash events may not be produced.");
+        return;
+      }
+    }
+  }
+
+#ifdef XP_WIN
+  nsString path;
+  eventsDir->GetPath(path);
+  eventsDirectory = reinterpret_cast<wchar_t*>(ToNewUnicode(path));
+#else
+  nsCString path;
+  eventsDir->GetNativePath(path);
+  eventsDirectory = ToNewCString(path);
+#endif
+}
+
+bool GetCrashEventsDir(nsAString& aPath)
+{
+  if (!eventsDirectory) {
+    return false;
+  }
+
+  aPath = CONVERT_XP_CHAR_TO_UTF16(eventsDirectory);
+  return true;
 }
 
 static void
@@ -2304,7 +2483,7 @@ OOPInitialized()
 
 #ifdef XP_MACOSX
 static bool ChildFilter(void *context) {
-  mozilla::StopLateWriteChecks();
+  mozilla::IOInterposer::Disable();
   return true;
 }
 #endif
@@ -2374,6 +2553,7 @@ OOPInit()
   dumpMapLock = new Mutex("CrashReporter::dumpMapLock");
 
   FindPendingDir();
+  UpdateCrashEventsDir();
 }
 
 static void

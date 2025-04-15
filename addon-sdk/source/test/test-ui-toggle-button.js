@@ -26,7 +26,7 @@ function getWidget(buttonId, window = getMostRecentBrowserWindow()) {
   const { AREA_NAVBAR } = CustomizableUI;
 
   let widgets = CustomizableUI.getWidgetIdsInArea(AREA_NAVBAR).
-    filter((id) => id.startsWith('button--') && id.endsWith(buttonId));
+    filter((id) => id.startsWith('toggle-button--') && id.endsWith(buttonId));
 
   if (widgets.length === 0)
     throw new Error('Widget with id `' + id +'` not found.');
@@ -1018,6 +1018,44 @@ exports['test button click do not messing up states'] = function(assert) {
     'icon property for tab state, properly derived from window state');
 
   loader.unload();
+}
+
+exports['test buttons can have anchored panels'] = function(assert, done) {
+  let loader = Loader(module);
+  let { ToggleButton } = loader.require('sdk/ui');
+  let { Panel } = loader.require('sdk/panel');
+  let { identify } = loader.require('sdk/ui/id');
+  let { getActiveView } = loader.require('sdk/view/core');
+
+  let button = ToggleButton({
+    id: 'my-button-22',
+    label: 'my button',
+    icon: './icon.png',
+    onChange: ({checked}) => checked && panel.show({position: button})
+  });
+
+  let panel = Panel();
+
+  panel.once('show', () => {
+    let { document } = getMostRecentBrowserWindow();
+    let buttonNode = document.getElementById(identify(button));
+    let panelNode = getActiveView(panel);
+
+    assert.ok(button.state('window').checked,
+      'button is checked');
+
+    assert.equal(panelNode.getAttribute('type'), 'arrow',
+      'the panel is a arrow type');
+
+    assert.strictEqual(buttonNode, panelNode.anchorNode,
+      'the panel is anchored properly to the button');
+
+    loader.unload();
+
+    done();
+  });
+
+  button.click();
 }
 
 // If the module doesn't support the app we're being run in, require() will

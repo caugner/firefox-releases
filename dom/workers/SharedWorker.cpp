@@ -10,9 +10,9 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/SharedWorkerBinding.h"
 #include "nsContentUtils.h"
-#include "nsDOMEvent.h"
 #include "nsEventDispatcher.h"
 #include "nsIClassInfoImpl.h"
+#include "nsIDOMEvent.h"
 
 #include "MessagePort.h"
 #include "RuntimeService.h"
@@ -22,12 +22,6 @@ using mozilla::dom::Optional;
 using mozilla::dom::Sequence;
 
 USING_WORKERS_NAMESPACE
-
-namespace {
-
-const char kSharedWorkersEnabledPref[] = "dom.workers.sharedWorkers.enabled";
-
-} // anonymous namespace
 
 SharedWorker::SharedWorker(nsPIDOMWindow* aWindow,
                            WorkerPrivate* aWorkerPrivate)
@@ -46,15 +40,6 @@ SharedWorker::~SharedWorker()
 {
   AssertIsOnMainThread();
   MOZ_ASSERT(!mWorkerPrivate);
-}
-
-//static
-bool
-SharedWorker::PrefEnabled()
-{
-  AssertIsOnMainThread();
-
-  return mozilla::Preferences::GetBool(kSharedWorkersEnabledPref, false);
 }
 
 // static

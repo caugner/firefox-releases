@@ -12,6 +12,10 @@ UNIFIED_SOURCES += [
     'crashreporter.cpp',
 ]
 
+LOCAL_INCLUDES += [
+    '../google-breakpad/src',
+]
+
 if CONFIG['OS_ARCH'] == 'WINNT':
     UNIFIED_SOURCES += [
         'crashreporter_win.cpp',
@@ -20,8 +24,13 @@ if CONFIG['OS_ARCH'] == 'WINNT':
     DEFINES['_UNICODE'] = True
 elif CONFIG['OS_ARCH'] == 'Darwin':
     UNIFIED_SOURCES += [
+        'crashreporter_osx.mm',
         'crashreporter_unix_common.cpp',
     ]
+    LOCAL_INCLUDES += [
+        '../google-breakpad/src/common/mac',
+    ]
+    LDFLAGS += ['-framework Cocoa']
 elif CONFIG['OS_ARCH'] == 'SunOS':
     SOURCES += [
         'crashreporter_linux.cpp',
@@ -33,9 +42,10 @@ if CONFIG['MOZ_ENABLE_GTK']:
         'crashreporter_gtk_common.cpp',
         'crashreporter_linux.cpp',
         'crashreporter_unix_common.cpp'
-        ]
-
-if CONFIG['OS_ARCH'] == 'Darwin':
-    UNIFIED_SOURCES += [
-        'crashreporter_osx.mm',
     ]
+
+RCINCLUDE = 'crashreporter.rc'
+
+# Don't use the STL wrappers in the crashreporter clients; they don't
+# link with -lmozalloc, and it really doesn't matter here anyway.
+DISABLE_STL_WRAPPING = True

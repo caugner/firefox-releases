@@ -167,16 +167,17 @@ public:
     MOZ_COUNT_DTOR(nsDisplayTextOverflowMarker);
   }
 #endif
-  virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) {
+  virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder,
+                           bool* aSnap) MOZ_OVERRIDE {
     *aSnap = false;
     nsRect shadowRect =
       nsLayoutUtils::GetTextShadowRectsUnion(mRect, mFrame);
     return mRect.Union(shadowRect);
   }
   virtual void Paint(nsDisplayListBuilder* aBuilder,
-                     nsRenderingContext* aCtx);
+                     nsRenderingContext* aCtx) MOZ_OVERRIDE;
 
-  virtual uint32_t GetPerFrameKey() { 
+  virtual uint32_t GetPerFrameKey() MOZ_OVERRIDE { 
     return (mIndex << nsDisplayItem::TYPE_BITS) | nsDisplayItem::GetPerFrameKey(); 
   }
   void PaintTextToContext(nsRenderingContext* aCtx,
@@ -677,6 +678,12 @@ TextOverflow::CanHaveTextOverflow(nsDisplayListBuilder* aBuilder,
        style->mTextOverflow.mRight.mType == NS_STYLE_TEXT_OVERFLOW_CLIP) ||
       IsHorizontalOverflowVisible(aBlockFrame) ||
       aBuilder->IsForEventDelivery()) {
+    return false;
+  }
+
+  // Skip ComboboxControlFrame because it would clip the drop-down arrow.
+  // Its anon block inherits 'text-overflow' and does what is expected.
+  if (aBlockFrame->GetType() == nsGkAtoms::comboboxControlFrame) {
     return false;
   }
 

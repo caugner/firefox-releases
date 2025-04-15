@@ -23,7 +23,6 @@
 #include "mozilla/WeakPtr.h"
 #include "mozilla/Preferences.h"
 
-#include "EnableWebSpeechRecognitionCheck.h"
 #include "SpeechGrammarList.h"
 #include "SpeechRecognitionResultList.h"
 #include "SpeechStreamListener.h"
@@ -56,10 +55,10 @@ PRLogModuleInfo* GetSpeechRecognitionLog();
 
 class SpeechRecognition MOZ_FINAL : public nsDOMEventTargetHelper,
                                     public nsIObserver,
-                                    public EnableWebSpeechRecognitionCheck,
                                     public SupportsWeakPtr<SpeechRecognition>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(SpeechRecognition)
   SpeechRecognition(nsPIDOMWindow* aOwnerWindow);
   virtual ~SpeechRecognition() {};
 
@@ -131,8 +130,8 @@ public:
 
   void DispatchError(EventType aErrorType, SpeechRecognitionErrorCode aErrorCode, const nsAString& aMessage);
   uint32_t FillSamplesBuffer(const int16_t* aSamples, uint32_t aSampleCount);
-  uint32_t SplitSamplesBuffer(const int16_t* aSamplesBuffer, uint32_t aSampleCount, nsTArray<already_AddRefed<SharedBuffer> >& aResult);
-  AudioSegment* CreateAudioSegment(nsTArray<already_AddRefed<SharedBuffer> >& aChunks);
+  uint32_t SplitSamplesBuffer(const int16_t* aSamplesBuffer, uint32_t aSampleCount, nsTArray<nsRefPtr<SharedBuffer>>& aResult);
+  AudioSegment* CreateAudioSegment(nsTArray<nsRefPtr<SharedBuffer>>& aChunks);
   void FeedAudioData(already_AddRefed<SharedBuffer> aSamples, uint32_t aDuration, MediaStreamListener* aProvider);
 
   static struct TestConfig

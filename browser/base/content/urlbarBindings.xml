@@ -59,6 +59,7 @@
         this.timeout = this._prefs.getIntPref("delay");
         this._formattingEnabled = this._prefs.getBoolPref("formatting.enabled");
         this._mayTrimURLs = this._prefs.getBoolPref("trimURLs");
+        this._ignoreNextSelect = false;
 
         this.inputField.controllers.insertControllerAt(0, this._copyCutController);
         this.inputField.addEventListener("mousedown", this, false);
@@ -678,6 +679,15 @@
             this.setAttribute("actiontype", action.type);
         ]]></body>
       </method>
+
+      <method name="selectTextRange">
+        <parameter name="aStartIndex"/>
+        <parameter name="aEndIndex"/>
+        <body><![CDATA[
+          this._ignoreNextSelect = true;
+          this.inputField.setSelectionRange(aStartIndex, aEndIndex);
+        ]]></body>
+      </method>
     </implementation>
 
     <handlers>
@@ -739,6 +749,15 @@
       <handler event="dragover" phase="capturing" action="this.onDragOver(event, this);"/>
       <handler event="drop" phase="capturing" action="this.onDrop(event, this);"/>
       <handler event="select"><![CDATA[
+        if (this._ignoreNextSelect) {
+          // If this select event is coming from autocomplete's selectTextRange,
+          // then we don't need to adjust what's on the selection keyboard here,
+          // but make sure to reset the flag since this should be a one-time
+          // suppression.
+          this._ignoreNextSelect = false;
+          return;
+        }
+
         if (!Cc["@mozilla.org/widget/clipboard;1"]
                .getService(Ci.nsIClipboard)
                .supportsSelectionClipboard())
@@ -1564,7 +1583,7 @@
       <constructor><![CDATA[
         const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
         let sortedActions = [];
-        for (let action of this.notification.options.centerActions.values()) {
+        for (let action of this.notification.options.pluginData.values()) {
           sortedActions.push(action);
         }
         sortedActions.sort((a, b) => a.pluginName.localeCompare(b.pluginName));
@@ -1871,7 +1890,6 @@
     <handlers>
       <!-- The _accept method checks for .defaultPrevented so that if focus is in a button,
            enter activates the button and not this default action -->
-      <handler event="keypress" keycode="VK_ENTER" group="system" action="this._accept(event);"/>
       <handler event="keypress" keycode="VK_RETURN" group="system" action="this._accept(event);"/>
     </handlers>
   </binding>

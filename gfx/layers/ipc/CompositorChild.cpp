@@ -16,8 +16,8 @@
 #include "mozilla/mozalloc.h"           // for operator new, etc
 #include "nsDebug.h"                    // for NS_RUNTIMEABORT
 #include "nsIObserver.h"                // for nsIObserver
+#include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR, etc
 #include "nsTArray.h"                   // for nsTArray, nsTArray_Impl
-#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
 #include "nsXULAppAPI.h"                // for XRE_GetIOMessageLoop, etc
 #include "FrameLayerBuilder.h"
 
@@ -27,6 +27,8 @@ namespace mozilla {
 namespace layers {
 
 /*static*/ CompositorChild* CompositorChild::sCompositor;
+
+Atomic<int32_t> CompositableForwarder::sSerialCounter(0);
 
 CompositorChild::CompositorChild(ClientLayerManager *aLayerManager)
   : mLayerManager(aLayerManager)
@@ -82,7 +84,7 @@ CompositorChild::Create(Transport* aTransport, ProcessId aOtherProcess)
     return nullptr;
   }
   // We release this ref in ActorDestroy().
-  return sCompositor = child.forget().get();
+  return sCompositor = child.forget().take();
 }
 
 /*static*/ CompositorChild*

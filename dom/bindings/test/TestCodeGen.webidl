@@ -10,6 +10,7 @@ typedef TestInterface? NullableTestInterface;
 
 interface TestExternalInterface;
 
+[AvailableIn=PrivilegedApps, Pref="xyz"]
 interface TestRenamedInterface {
 };
 
@@ -29,6 +30,7 @@ callback interface TestCallbackInterface {
   sequence<TestCallbackInterface>? getNullableSequenceOfCallbackInterfaces();
   sequence<TestCallbackInterface?> getSequenceOfNullableCallbackInterfaces();
   sequence<TestCallbackInterface?>? getNullableSequenceOfNullableCallbackInterfaces();
+  Dict? getDictionary();
 };
 
 callback interface TestSingleOperationCallbackInterface {
@@ -104,6 +106,7 @@ interface OnlyForUseInConstructor {
  Constructor(long arg1, IndirectlyImplementedInterface iface),
  Constructor(Date arg1),
  // Constructor(long arg1, long arg2, (TestInterface or OnlyForUseInConstructor) arg3),
+ AvailableIn=CertifiedApps,
  NamedConstructor=Test,
  NamedConstructor=Test(DOMString str),
  NamedConstructor=Test2(DictForConstructor dict, any any1, object obj1,
@@ -233,6 +236,8 @@ interface TestInterface {
   void passNullableSelf(TestInterface? arg);
   attribute TestInterface nonNullSelf;
   attribute TestInterface? nullableSelf;
+  [Cached, Pure]
+  readonly attribute TestInterface cachedSelf;
   // Optional arguments
   void passOptionalSelf(optional TestInterface? arg);
   void passOptionalNonNullSelf(optional TestInterface arg);
@@ -470,6 +475,7 @@ interface TestInterface {
   void passUnion12(optional (EventInit or long) arg = 5);
   void passUnion13(optional (object or long?) arg = null);
   void passUnion14(optional (object or long?) arg = 5);
+  void passUnionWithCallback((EventHandler or long) arg);
 #endif
   void passUnionWithNullable((object? or long) arg);
   void passNullableUnion((object or long)? arg);
@@ -516,6 +522,7 @@ interface TestInterface {
   void passNullableUnionWithDefaultValue12(optional (unrestricted float or DOMString)? arg = null);
 
   void passSequenceOfUnions(sequence<(CanvasPattern or CanvasGradient)> arg);
+  void passSequenceOfUnions2(sequence<(object or long)> arg);
   void passVariadicUnion((CanvasPattern or CanvasGradient)... arg);
 
   void passSequenceOfNullableUnions(sequence<(CanvasPattern or CanvasGradient)?> arg);
@@ -549,6 +556,18 @@ interface TestInterface {
   attribute byte attributeRenamedFrom;
 
   void passDictionary(optional Dict x);
+  [Cached, Pure]
+  readonly attribute Dict readonlyDictionary;
+  [Cached, Pure]
+  readonly attribute Dict? readonlyNullableDictionary;
+  [Cached, Pure]
+  attribute Dict writableDictionary;
+  [Cached, Pure, Frozen]
+  readonly attribute Dict readonlyFrozenDictionary;
+  [Cached, Pure, Frozen]
+  readonly attribute Dict? readonlyFrozenNullableDictionary;
+  [Cached, Pure, Frozen]
+  attribute Dict writableFrozenDictionary;
   Dict receiveDictionary();
   Dict? receiveNullableDictionary();
   void passOtherDictionary(optional GrandparentDict x);
@@ -663,6 +682,16 @@ interface TestInterface {
   void prefable18();
   [Func="TestFuncControlledMember"]
   void prefable19();
+  [Pref="abc.def", Func="TestFuncControlledMember", ChromeOnly]
+  void prefable20();
+  [Func="TestFuncControlledMember", AvailableIn=CertifiedApps]
+  void prefable21();
+  [Func="TestFuncControlledMember", AvailableIn=CertifiedApps]
+  void prefable22();
+  [Pref="abc.def", Func="TestFuncControlledMember", AvailableIn=CertifiedApps]
+  void prefable23();
+  [Pref="abc.def", Func="TestFuncControlledMember", AvailableIn=PrivilegedApps]
+  void prefable24();
 
   // Miscellania
   [LenientThis] attribute long attrWithLenientThis;
@@ -849,6 +878,7 @@ dictionary DictForConstructor {
 interface TestIndexedGetterInterface {
   getter long item(unsigned long idx);
   readonly attribute unsigned long length;
+  legacycaller void();
 };
 
 interface TestNamedGetterInterface {

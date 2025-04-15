@@ -107,7 +107,8 @@ gTests.push({
     let autocompletePopup = document.getElementById("urlbar-autocomplete-scroll");
     yield waitForEvent(autocompletePopup, "transitionend");
 
-    SelectionHelperUI.attachEditSession(ChromeSelectionHandler, editCoords.x, editCoords.y);
+    SelectionHelperUI.attachEditSession(ChromeSelectionHandler, editCoords.x,
+        editCoords.y, edit);
     ok(SelectionHelperUI.isSelectionUIVisible, "selection enabled");
 
     let selection = edit.QueryInterface(Components.interfaces.nsIDOMXULTextBoxElement)
@@ -136,7 +137,8 @@ gTests.push({
     edit.value = "wikipedia.org";
     edit.select();
     let editCoords = logicalCoordsForElement(edit);
-    SelectionHelperUI.attachEditSession(ChromeSelectionHandler, editCoords.x, editCoords.y);
+    SelectionHelperUI.attachEditSession(ChromeSelectionHandler, editCoords.x,
+        editCoords.y, edit);
     edit.blur();
     ok(!SelectionHelperUI.isSelectionUIVisible, "selection no longer enabled");
     clearSelection(edit);
@@ -225,6 +227,182 @@ gTests.push({
     yield waitForCondition(function () {
       return !SelectionHelperUI.isSelectionUIVisible;
     });
+  }
+});
+
+gTests.push({
+  desc: "Bug 957646 - Selection monocles sometimes don't display when tapping" +
+        " text in the nav bar.",
+  run: function() {
+    yield showNavBar();
+
+    let edit = document.getElementById("urlbar-edit");
+    edit.value = "about:mozilla";
+
+    let editRectangle = edit.getBoundingClientRect();
+
+    // Tap outside the input but close enough for fluffing to take effect.
+    sendTap(window, editRectangle.left + 50, editRectangle.top - 2);
+
+    yield waitForCondition(function () {
+      return SelectionHelperUI.isSelectionUIVisible;
+    });
+  }
+});
+
+gTests.push({
+  desc: "Bug 972574 - Monocles not matching selection after double tap" +
+        " in URL text field.",
+  run: function() {
+    yield showNavBar();
+
+    let MARGIN_OF_ERROR = 15;
+    let EST_URLTEXT_WIDTH = 125;
+
+    let edit = document.getElementById("urlbar-edit");
+    edit.value = "http://www.wikipedia.org/";
+
+    // Determine a tap point centered on URL.
+    let editRectangle = edit.getBoundingClientRect();
+    let midX = editRectangle.left + Math.ceil(EST_URLTEXT_WIDTH / 2);
+    let midY = editRectangle.top + Math.ceil(editRectangle.height / 2);
+
+    // Tap inside the input for fluffing to take effect.
+    sendTap(window, midX, midY);
+
+    // Double-tap inside the input to selectALL.
+    sendDoubleTap(window, midX, midY);
+
+    // Check for start/end monocles positioned within accepted margins.
+    checkMonoclePositionRange("start",
+      Math.ceil(editRectangle.left - MARGIN_OF_ERROR),
+      Math.ceil(editRectangle.left + MARGIN_OF_ERROR),
+      Math.ceil(editRectangle.top + editRectangle.height - MARGIN_OF_ERROR),
+      Math.ceil(editRectangle.top + editRectangle.height + MARGIN_OF_ERROR));
+    checkMonoclePositionRange("end",
+      Math.ceil(editRectangle.left + EST_URLTEXT_WIDTH - MARGIN_OF_ERROR),
+      Math.ceil(editRectangle.left + EST_URLTEXT_WIDTH + MARGIN_OF_ERROR),
+      Math.ceil(editRectangle.top + editRectangle.height - MARGIN_OF_ERROR),
+      Math.ceil(editRectangle.top + editRectangle.height + MARGIN_OF_ERROR));
+  }
+});
+
+gTests.push({
+  desc: "Bug 972428 - grippers not appearing under the URL field when adding " +
+        "text.",
+  run: function() {
+    let inputField = document.getElementById("urlbar-edit").inputField;
+    let inputFieldRectangle = inputField.getBoundingClientRect();
+
+    let chromeHandlerSpy = spyOnMethod(ChromeSelectionHandler, "msgHandler");
+
+    // Reset URL to empty string
+    inputField.value = "";
+    inputField.blur();
+
+    // Activate URL input
+    sendTap(window, inputFieldRectangle.left + 50, inputFieldRectangle.top + 5);
+
+    // Wait until ChromeSelectionHandler tries to attach selection
+    yield waitForCondition(() => chromeHandlerSpy.argsForCall.some(
+        (args) => args[0] == "Browser:SelectionAttach"));
+
+    ok(!SelectHelperUI.isSelectionUIVisible && !SelectHelperUI.isCaretUIVisible,
+        "Neither CaretUI nor SelectionUI is visible on empty input.");
+
+    inputField.value = "Test text";
+
+    sendTap(window, inputFieldRectangle.left + 10, inputFieldRectangle.top + 5);
+
+    yield waitForCondition(() => SelectionHelperUI.isCaretUIVisible);
+    chromeHandlerSpy.restore();
+    inputField.blur();
+  }
+});
+
+gTests.push({
+  desc: "Bug 858206 - Drag selection monocles should not push other monocles " +
+        "out of the way.",
+  run: function test() {
+    yield showNavBar();
+
+    let edit = document.getElementById("urlbar-edit");
+    edit.value = "about:mozilla";
+
+    let editRectangle = edit.getBoundingClientRect();
+
+    sendTap(window, editRectangle.left, editRectangle.top);
+
+    yield waitForCondition(() => SelectionHelperUI.isSelectionUIVisible);
+
+    let selection = edit.QueryInterface(
+        Components.interfaces.nsIDOMXULTextBoxElement).editor.selection;
+    let selectionRectangle = selection.getRangeAt(0).getClientRects()[0];
+
+    // Place caret to the input start
+    sendTap(window, selectionRectangle.left + 2, selectionRectangle.top + 2);
+    yield waitForCondition(() => !SelectionHelperUI.isSelectionUIVisible &&
+        SelectionHelperUI.isCaretUIVisible);
+
+    let startXPos = SelectionHelperUI.caretMark.xPos;
+    let startYPos = SelectionHelperUI.caretMark.yPos + 10;
+    let touchDrag = new TouchDragAndHold();
+    yield touchDrag.start(gWindow, startXPos, startYPos, startXPos + 200,
+        startYPos);
+    yield waitForCondition(() => getTrimmedSelection(edit).toString() ==
+        "about:mozilla", kCommonWaitMs, kCommonPollMs);
+
+    touchDrag.end();
+    yield waitForCondition(() => !SelectionHelperUI.hasActiveDrag,
+        kCommonWaitMs, kCommonPollMs);
+
+    // Place caret to the input end
+    sendTap(window, selectionRectangle.right - 2, selectionRectangle.top + 2);
+    yield waitForCondition(() => !SelectionHelperUI.isSelectionUIVisible &&
+        SelectionHelperUI.isCaretUIVisible);
+
+    startXPos = SelectionHelperUI.caretMark.xPos;
+    startYPos = SelectionHelperUI.caretMark.yPos + 10;
+    yield touchDrag.start(gWindow, startXPos, startYPos, startXPos - 200,
+        startYPos);
+    yield waitForCondition(() => getTrimmedSelection(edit).toString() ==
+        "about:mozilla", kCommonWaitMs, kCommonPollMs);
+
+    touchDrag.end();
+    yield waitForCondition(() => !SelectionHelperUI.hasActiveDrag,
+        kCommonWaitMs, kCommonPollMs);
+
+    // Place caret in the middle
+    let midX = Math.ceil(((selectionRectangle.right - selectionRectangle.left) *
+        .5) + selectionRectangle.left);
+    let midY = Math.ceil(((selectionRectangle.bottom - selectionRectangle.top) *
+        .5) + selectionRectangle.top);
+
+    sendTap(window, midX, midY);
+    yield waitForCondition(() => !SelectionHelperUI.isSelectionUIVisible &&
+        SelectionHelperUI.isCaretUIVisible);
+
+    startXPos = SelectionHelperUI.caretMark.xPos;
+    startYPos = SelectionHelperUI.caretMark.yPos + 10;
+    yield touchDrag.start(gWindow, startXPos, startYPos, startXPos - 200,
+        startYPos);
+    yield waitForCondition(() => getTrimmedSelection(edit).toString() ==
+        "about:", kCommonWaitMs, kCommonPollMs);
+
+    touchDrag.end();
+    yield waitForCondition(() => !SelectionHelperUI.hasActiveDrag,
+        kCommonWaitMs, kCommonPollMs);
+
+    // Now try to swap monocles
+    startXPos = SelectionHelperUI.startMark.xPos;
+    startYPos = SelectionHelperUI.startMark.yPos + 10;
+    yield touchDrag.start(gWindow, startXPos, startYPos, startXPos + 200,
+        startYPos);
+    yield waitForCondition(() => getTrimmedSelection(edit).toString() ==
+        "mozilla", kCommonWaitMs, kCommonPollMs);
+      touchDrag.end();
+    yield waitForCondition(() => !SelectionHelperUI.hasActiveDrag &&
+        SelectionHelperUI.isSelectionUIVisible, kCommonWaitMs, kCommonPollMs);
   }
 });
 

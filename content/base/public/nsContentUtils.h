@@ -9,7 +9,7 @@
 #ifndef nsContentUtils_h___
 #define nsContentUtils_h___
 
-#if defined(XP_WIN) || defined(XP_OS2)
+#if defined(XP_WIN)
 #include <float.h>
 #endif
 
@@ -25,6 +25,7 @@
 #include "mozilla/TimeStamp.h"
 #include "nsContentListDeclarations.h"
 #include "nsMathUtils.h"
+#include "nsTArrayForwardDeclare.h"
 #include "Units.h"
 
 #if defined(XP_WIN)
@@ -39,7 +40,6 @@ class imgIRequest;
 class imgLoader;
 class imgRequestProxy;
 class nsAutoScriptBlockerSuppressNodeRemoved;
-class nsEventListenerManager;
 class nsHtml5StringParser;
 class nsIChannel;
 class nsIConsoleService;
@@ -68,7 +68,7 @@ class nsIInterfaceRequestor;
 class nsIIOService;
 class nsIJSRuntimeService;
 class nsILineBreaker;
-class nsINameSpaceManager;
+class nsNameSpaceManager;
 class nsINodeInfo;
 class nsIObserver;
 class nsIParser;
@@ -102,13 +102,13 @@ struct JSRuntime;
 struct nsIntMargin;
 
 template<class E> class nsCOMArray;
-template<class E> class nsTArray;
 template<class K, class V> class nsDataHashtable;
 template<class K, class V> class nsRefPtrHashtable;
 template<class T> class nsReadingIterator;
 
 namespace mozilla {
 class ErrorResult;
+class EventListenerManager;
 class Selection;
 
 namespace dom {
@@ -451,7 +451,7 @@ public:
 
   static nsIParserService* GetParserService();
 
-  static nsINameSpaceManager* NameSpaceManager()
+  static nsNameSpaceManager* NameSpaceManager()
   {
     return sNameSpaceManager;
   }
@@ -526,6 +526,12 @@ public:
    */
   static bool CheckForBOM(const unsigned char* aBuffer, uint32_t aLength,
                           nsACString& aCharset);
+
+  /**
+   * Returns true if |aName| is a valid name to be registered via
+   * document.registerElement.
+   */
+  static bool IsCustomElementName(nsIAtom* aName);
 
   static nsresult CheckQName(const nsAString& aQualifiedName,
                              bool aNamespaceAware = true,
@@ -1068,14 +1074,16 @@ public:
    *
    * @param aNode The node for which to get the eventlistener manager.
    */
-  static nsEventListenerManager* GetListenerManagerForNode(nsINode* aNode);
+  static mozilla::EventListenerManager*
+    GetListenerManagerForNode(nsINode* aNode);
   /**
    * Get the eventlistener manager for aNode, returning null if it does not
    * already exist.
    *
    * @param aNode The node for which to get the eventlistener manager.
    */
-  static nsEventListenerManager* GetExistingListenerManagerForNode(const nsINode* aNode);
+  static mozilla::EventListenerManager*
+    GetExistingListenerManagerForNode(const nsINode* aNode);
 
   static void UnmarkGrayJSListenersInCCGenerationDocuments(uint32_t aGeneration);
 
@@ -1314,6 +1322,14 @@ public:
    * Returns true if aPrincipal is an nsExpandedPrincipal.
    */
   static bool IsExpandedPrincipal(nsIPrincipal* aPrincipal);
+
+  /**
+   * Returns true if aPrincipal is the system or an nsExpandedPrincipal.
+   */
+  static bool IsSystemOrExpandedPrincipal(nsIPrincipal* aPrincipal)
+  {
+    return IsSystemPrincipal(aPrincipal) || IsExpandedPrincipal(aPrincipal);
+  }
 
   /**
    * Gets the system principal from the security manager.
@@ -1641,7 +1657,7 @@ public:
   static nsresult WrapNative(JSContext *cx, JS::Handle<JSObject*> scope,
                              nsISupports *native, const nsIID* aIID,
                              JS::MutableHandle<JS::Value> vp,
-                             bool aAllowWrapping = false)
+                             bool aAllowWrapping = true)
   {
     return WrapNative(cx, scope, native, nullptr, aIID, vp, aAllowWrapping);
   }
@@ -1650,7 +1666,7 @@ public:
   MOZ_WARN_UNUSED_RESULT
   static nsresult WrapNative(JSContext *cx, JS::Handle<JSObject*> scope,
                              nsISupports *native, JS::MutableHandle<JS::Value> vp,
-                             bool aAllowWrapping = false)
+                             bool aAllowWrapping = true)
   {
     return WrapNative(cx, scope, native, nullptr, nullptr, vp, aAllowWrapping);
   }
@@ -1659,7 +1675,7 @@ public:
   static nsresult WrapNative(JSContext *cx, JS::Handle<JSObject*> scope,
                              nsISupports *native, nsWrapperCache *cache,
                              JS::MutableHandle<JS::Value> vp,
-                             bool aAllowWrapping = false)
+                             bool aAllowWrapping = true)
   {
     return WrapNative(cx, scope, native, cache, nullptr, vp, aAllowWrapping);
   }
@@ -2150,7 +2166,7 @@ private:
 
   static nsIParserService *sParserService;
 
-  static nsINameSpaceManager *sNameSpaceManager;
+  static nsNameSpaceManager *sNameSpaceManager;
 
   static nsIIOService *sIOService;
 

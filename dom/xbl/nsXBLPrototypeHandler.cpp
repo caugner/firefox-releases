@@ -14,7 +14,7 @@
 #include "nsIAtom.h"
 #include "nsIDOMKeyEvent.h"
 #include "nsIDOMMouseEvent.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsIScriptContext.h"
 #include "nsIDocument.h"
 #include "nsIJSEventListener.h"
@@ -25,7 +25,6 @@
 #include "nsIDOMHTMLTextAreaElement.h"
 #include "nsIDOMHTMLInputElement.h"
 #include "nsFocusManager.h"
-#include "nsEventListenerManager.h"
 #include "nsIDOMEventListener.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIWindowRoot.h"
@@ -307,8 +306,7 @@ nsXBLPrototypeHandler::ExecuteHandler(EventTarget* aTarget,
   // scope if one doesn't already exist, and potentially wraps it cross-
   // compartment into our scope (via aAllowWrapping=true).
   JS::Rooted<JS::Value> targetV(cx, JS::UndefinedValue());
-  rv = nsContentUtils::WrapNative(cx, scopeObject, scriptTarget, &targetV,
-                                  /* aAllowWrapping = */ true);
+  rv = nsContentUtils::WrapNative(cx, scopeObject, scriptTarget, &targetV);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Next, clone the generic handler to be parented to the target.
@@ -645,7 +643,7 @@ nsXBLPrototypeHandler::MouseEventMatched(nsIDOMMouseEvent* aMouseEvent)
   if (mDetail == -1 && mMisc == 0 && (mKeyMask & cAllModifiers) == 0)
     return true; // No filters set up. It's generic.
 
-  uint16_t button;
+  int16_t button;
   aMouseEvent->GetButton(&button);
   if (mDetail != -1 && (button != mDetail))
     return false;

@@ -21,9 +21,11 @@
 #include "JoinElementTxn.h"             // for JoinElementTxn
 #include "PlaceholderTxn.h"             // for PlaceholderTxn
 #include "SplitElementTxn.h"            // for SplitElementTxn
+#include "TextComposition.h"            // for TextComposition
 #include "mozFlushType.h"               // for mozFlushType::Flush_Frames
 #include "mozISpellCheckingEngine.h"
 #include "mozInlineSpellChecker.h"      // for mozInlineSpellChecker
+#include "mozilla/IMEStateManager.h"    // for IMEStateManager
 #include "mozilla/Preferences.h"        // for Preferences
 #include "mozilla/Selection.h"          // for Selection, etc
 #include "mozilla/Services.h"           // for GetObserverService
@@ -74,13 +76,11 @@
 #include "nsIFrame.h"                   // for nsIFrame
 #include "nsIHTMLDocument.h"            // for nsIHTMLDocument
 #include "nsIInlineSpellChecker.h"      // for nsIInlineSpellChecker, etc
-#include "nsIMEStateManager.h"          // for nsIMEStateManager
-#include "nsINameSpaceManager.h"        // for kNameSpaceID_None, etc
+#include "nsNameSpaceManager.h"        // for kNameSpaceID_None, etc
 #include "nsINode.h"                    // for nsINode, etc
 #include "nsIObserverService.h"         // for nsIObserverService
 #include "nsIPlaintextEditor.h"         // for nsIPlaintextEditor, etc
 #include "nsIPresShell.h"               // for nsIPresShell
-#include "nsIPrivateTextRange.h"        // for nsIPrivateTextRange, etc
 #include "nsISelection.h"               // for nsISelection, etc
 #include "nsISelectionController.h"     // for nsISelectionController, etc
 #include "nsISelectionDisplay.h"        // for nsISelectionDisplay, etc
@@ -139,12 +139,9 @@ nsEditor::nsEditor()
 ,  mPlaceHolderBatch(0)
 ,  mAction(EditAction::none)
 ,  mIMETextOffset(0)
-,  mIMEBufferLength(0)
 ,  mDirection(eNone)
 ,  mDocDirtyState(-1)
 ,  mSpellcheckCheckboxState(eTriUnset)
-,  mInIMEMode(false)
-,  mIsIMEComposing(false)
 ,  mShouldTxnSetSelection(true)
 ,  mDidPreDestroy(false)
 ,  mDidPostCreate(false)
@@ -167,7 +164,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsEditor)
  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRootElement)
  NS_IMPL_CYCLE_COLLECTION_UNLINK(mInlineSpellChecker)
  NS_IMPL_CYCLE_COLLECTION_UNLINK(mTxnMgr)
- NS_IMPL_CYCLE_COLLECTION_UNLINK(mIMETextRangeList)
  NS_IMPL_CYCLE_COLLECTION_UNLINK(mIMETextNode)
  NS_IMPL_CYCLE_COLLECTION_UNLINK(mActionListeners)
  NS_IMPL_CYCLE_COLLECTION_UNLINK(mEditorObservers)
@@ -186,7 +182,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsEditor)
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRootElement)
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mInlineSpellChecker)
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTxnMgr)
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mIMETextRangeList)
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mIMETextNode)
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mActionListeners)
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEditorObservers)
@@ -248,8 +243,6 @@ nsEditor::Init(nsIDOMDocument *aDoc, nsIContent *aRoot, nsISelectionController *
   /* initialize IME stuff */
   mIMETextNode = nullptr;
   mIMETextOffset = 0;
-  mIMEBufferLength = 0;
-  
   /* Show the caret */
   selCon->SetCaretReadOnly(false);
   selCon->SetDisplaySelection(nsISelectionController::SELECTION_ON);
@@ -322,7 +315,7 @@ nsEditor::PostCreate()
     rv = GetPreferredIMEState(&newState);
     NS_ENSURE_SUCCESS(rv, NS_OK);
     nsCOMPtr<nsIContent> content = GetFocusedContentForIME();
-    nsIMEStateManager::UpdateIMEState(newState, content);
+    IMEStateManager::UpdateIMEState(newState, content);
   }
   return NS_OK;
 }
@@ -361,6 +354,10 @@ nsEditor::RemoveEventListeners()
     return;
   }
   reinterpret_cast<nsEditorEventListener*>(mEventListener.get())->Disconnect();
+  if (mComposition) {
+    mComposition->EndHandlingComposition(this);
+    mComposition = nullptr;
+  }
   mEventTarget = nullptr;
 }
 
@@ -499,7 +496,7 @@ nsEditor::SetFlags(uint32_t aFlags)
       // NOTE: When the enabled state isn't going to be modified, this method
       // is going to do nothing.
       nsCOMPtr<nsIContent> content = GetFocusedContentForIME();
-      nsIMEStateManager::UpdateIMEState(newState, content);
+      IMEStateManager::UpdateIMEState(newState, content);
     }
   }
 
@@ -966,7 +963,9 @@ nsEditor::EndPlaceHolderTransaction()
       }
       // notify editor observers of action but if composing, it's done by
       // text event handler.
-      if (!mInIMEMode) NotifyEditorObservers();
+      if (!mComposition) {
+        NotifyEditorObservers();
+      }
     }
   }
   mPlaceHolderBatch--;
@@ -2010,11 +2009,26 @@ nsEditor::StopPreservingSelection()
   mSavedSel.MakeEmpty();
 }
 
+void
+nsEditor::EnsureComposition(mozilla::WidgetGUIEvent* aEvent)
+{
+  if (mComposition) {
+    return;
+  }
+  // The compositionstart event must cause creating new TextComposition
+  // instance at being dispatched by IMEStateManager.
+  mComposition = IMEStateManager::GetTextCompositionFor(aEvent);
+  if (!mComposition) {
+    MOZ_CRASH("IMEStateManager doesn't return proper composition");
+  }
+  mComposition->StartHandlingComposition(this);
+}
 
 nsresult
-nsEditor::BeginIMEComposition()
+nsEditor::BeginIMEComposition(WidgetCompositionEvent* aCompositionEvent)
 {
-  mInIMEMode = true;
+  MOZ_ASSERT(!mComposition, "There is composition already");
+  EnsureComposition(aCompositionEvent);
   if (mPhonetic) {
     mPhonetic->Truncate(0);
   }
@@ -2024,7 +2038,7 @@ nsEditor::BeginIMEComposition()
 void
 nsEditor::EndIMEComposition()
 {
-  NS_ENSURE_TRUE_VOID(mInIMEMode); // nothing to do
+  NS_ENSURE_TRUE_VOID(mComposition); // nothing to do
 
   // commit the IME transaction..we can get at it via the transaction mgr.
   // Note that this means IME won't work without an undo stack!
@@ -2041,9 +2055,8 @@ nsEditor::EndIMEComposition()
   /* reset the data we need to construct a transaction */
   mIMETextNode = nullptr;
   mIMETextOffset = 0;
-  mIMEBufferLength = 0;
-  mInIMEMode = false;
-  mIsIMEComposing = false;
+  mComposition->EndHandlingComposition(this);
+  mComposition = nullptr;
 
   // notify editor observers of action
   NotifyEditorObservers();
@@ -2073,7 +2086,7 @@ nsEditor::ForceCompositionEnd()
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  if (!mInIMEMode) {
+  if (!mComposition) {
     // XXXmnakano see bug 558976, ResetInputState() has two meaning which are
     // "commit the composition" and "cursor is moved".  This method name is
     // "ForceCompositionEnd", so, ResetInputState() should be used only for the
@@ -2082,10 +2095,10 @@ nsEditor::ForceCompositionEnd()
     // Linux.  Currently, nsGtkIMModule can know the timing of the cursor move,
     // so, the latter meaning should be gone.
     // XXX This may commit a composition in another editor.
-    return nsIMEStateManager::NotifyIME(NOTIFY_IME_OF_CURSOR_POS_CHANGED, pc);
+    return IMEStateManager::NotifyIME(NOTIFY_IME_OF_CURSOR_POS_CHANGED, pc);
   }
 
-  return nsIMEStateManager::NotifyIME(REQUEST_TO_COMMIT_COMPOSITION, pc);
+  return IMEStateManager::NotifyIME(REQUEST_TO_COMMIT_COMPOSITION, pc);
 }
 
 NS_IMETHODIMP
@@ -2312,7 +2325,7 @@ nsEditor::InsertTextImpl(const nsAString& aStringToInsert,
 
   NS_ENSURE_TRUE(aInOutNode && *aInOutNode && aInOutOffset && aDoc,
                  NS_ERROR_NULL_POINTER);
-  if (!mInIMEMode && aStringToInsert.IsEmpty()) {
+  if (!mComposition && aStringToInsert.IsEmpty()) {
     return NS_OK;
   }
 
@@ -2352,7 +2365,7 @@ nsEditor::InsertTextImpl(const nsAString& aStringToInsert,
   }
 
   nsresult res;
-  if (mInIMEMode) {
+  if (mComposition) {
     if (!node->IsNodeOfType(nsINode::eTEXT)) {
       // create a text node
       nsCOMPtr<nsIDocument> doc = do_QueryInterface(aDoc);
@@ -2407,50 +2420,26 @@ nsresult nsEditor::InsertTextIntoTextNodeImpl(const nsAString& aStringToInsert,
   bool isIMETransaction = false;
   // aSuppressIME is used when editor must insert text, yet this text is not
   // part of current ime operation.  example: adjusting whitespace around an ime insertion.
-  if (mIMETextRangeList && mInIMEMode && !aSuppressIME)
-  {
-    if (!mIMETextNode)
-    {
+  if (mComposition && !aSuppressIME) {
+    if (!mIMETextNode) {
       mIMETextNode = aTextNode;
       mIMETextOffset = aOffset;
     }
-    uint16_t len ;
-    len = mIMETextRangeList->GetLength();
-    if (len > 0)
-    {
-      nsCOMPtr<nsIPrivateTextRange> range;
-      for (uint16_t i = 0; i < len; i++) 
-      {
-        range = mIMETextRangeList->Item(i);
-        if (range)
-        {
-          uint16_t type;
-          result = range->GetRangeType(&type);
-          if (NS_SUCCEEDED(result)) 
-          {
-            if (type == nsIPrivateTextRange::TEXTRANGE_RAWINPUT) 
-            {
-              uint16_t start, end;
-              result = range->GetRangeStart(&start);
-              if (NS_SUCCEEDED(result)) 
-              {
-                result = range->GetRangeEnd(&end);
-                if (NS_SUCCEEDED(result)) 
-                {
-                  if (!mPhonetic)
-                    mPhonetic = new nsString();
-                  if (mPhonetic)
-                  {
-                    nsAutoString tmp(aStringToInsert);                  
-                    tmp.Mid(*mPhonetic, start, end-start);
-                  }
-                }
-              }
-            } // if
-          }
-        } // if
-      } // for
-    } // if
+    // Modify mPhonetic with raw text input clauses.
+    const TextRangeArray* ranges = mComposition->GetRanges();
+    for (uint32_t i = 0; i < (ranges ? ranges->Length() : 0); ++i) {
+      const TextRange& textRange = ranges->ElementAt(i);
+      if (!textRange.Length() ||
+          textRange.mRangeType != NS_TEXTRANGE_RAWINPUT) {
+        continue;
+      }
+      if (!mPhonetic) {
+        mPhonetic = new nsString();
+      }
+      nsAutoString stringToInsert(aStringToInsert);
+      stringToInsert.Mid(*mPhonetic,
+                         textRange.mStartOffset, textRange.Length());
+    }
 
     nsRefPtr<IMETextTxn> imeTxn;
     result = CreateTxnForIMEText(aStringToInsert, getter_AddRefs(imeTxn));
@@ -4179,45 +4168,16 @@ nsEditor::DeleteSelectionAndCreateNode(const nsAString& aTag,
 
 /* Non-interface, protected methods */
 
-int32_t
-nsEditor::GetIMEBufferLength()
+TextComposition*
+nsEditor::GetComposition() const
 {
-  return mIMEBufferLength;
-}
-
-void
-nsEditor::SetIsIMEComposing(){  
-  // We set mIsIMEComposing according to mIMETextRangeList.
-  nsCOMPtr<nsIPrivateTextRange> rangePtr;
-  uint16_t listlen, type;
-
-  mIsIMEComposing = false;
-  listlen = mIMETextRangeList->GetLength();
-
-  for (uint16_t i = 0; i < listlen; i++)
-  {
-      rangePtr = mIMETextRangeList->Item(i);
-      if (!rangePtr) continue;
-      nsresult result = rangePtr->GetRangeType(&type);
-      if (NS_FAILED(result)) continue;
-      if ( type == nsIPrivateTextRange::TEXTRANGE_RAWINPUT ||
-           type == nsIPrivateTextRange::TEXTRANGE_CONVERTEDTEXT ||
-           type == nsIPrivateTextRange::TEXTRANGE_SELECTEDRAWTEXT ||
-           type == nsIPrivateTextRange::TEXTRANGE_SELECTEDCONVERTEDTEXT )
-      {
-        mIsIMEComposing = true;
-#ifdef DEBUG_IME
-        printf("nsEditor::mIsIMEComposing = true\n");
-#endif
-        break;
-      }
-  }
-  return;
+  return mComposition;
 }
 
 bool
-nsEditor::IsIMEComposing() {
-  return mIsIMEComposing;
+nsEditor::IsIMEComposing() const
+{
+  return mComposition && mComposition->IsComposing();
 }
 
 nsresult
@@ -4414,8 +4374,11 @@ nsEditor::CreateTxnForIMEText(const nsAString& aStringToInsert,
      
   nsRefPtr<IMETextTxn> txn = new IMETextTxn();
 
-  nsresult rv = txn->Init(mIMETextNode, mIMETextOffset, mIMEBufferLength,
-                          mIMETextRangeList, aStringToInsert, this);
+  // During handling IME composition, mComposition must have been initialized.
+  // TODO: We can simplify IMETextTxn::Init() with TextComposition class.
+  nsresult rv = txn->Init(mIMETextNode, mIMETextOffset,
+                          mComposition->String().Length(),
+                          mComposition->GetRanges(), aStringToInsert, this);
   if (NS_SUCCEEDED(rv))
   {
     txn.forget(aTxn);
@@ -5224,6 +5187,23 @@ nsEditor::IsAcceptableInputEvent(nsIDOMEvent* aEvent)
     nsCOMPtr<nsIContent> focusedContent = GetFocusedContent();
     if (!focusedContent) {
       return false;
+    }
+  } else {
+    nsAutoString eventType;
+    aEvent->GetType(eventType);
+    // If composition event or text event isn't dispatched via widget,
+    // we need to ignore them since they cannot be managed by TextComposition.
+    // E.g., the event was created by chrome JS.
+    // Note that if we allow to handle such events, editor may be confused by
+    // strange event order.
+    if (eventType.EqualsLiteral("text") ||
+        eventType.EqualsLiteral("compositionstart") ||
+        eventType.EqualsLiteral("compositionend")) {
+      WidgetGUIEvent* widgetGUIEvent =
+        aEvent->GetInternalNSEvent()->AsGUIEvent();
+      if (!widgetGUIEvent || !widgetGUIEvent->widget) {
+        return false;
+      }
     }
   }
 

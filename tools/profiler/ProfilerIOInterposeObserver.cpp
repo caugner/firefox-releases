@@ -10,6 +10,10 @@ using namespace mozilla;
 
 void ProfilerIOInterposeObserver::Observe(Observation& aObservation)
 {
+  if (!IsMainThread()) {
+    return;
+  }
+
   const char* str = nullptr;
 
   switch (aObservation.ObservedOperation()) {
@@ -35,7 +39,14 @@ void ProfilerIOInterposeObserver::Observe(Observation& aObservation)
       return;
   }
   ProfilerBacktrace* stack = profiler_get_backtrace();
+
+  nsCString filename;
+  if (aObservation.Filename()) {
+    filename = NS_ConvertUTF16toUTF8(aObservation.Filename());
+  }
+
   IOMarkerPayload* markerPayload = new IOMarkerPayload(aObservation.Reference(),
+                                                       filename.get(),
                                                        aObservation.Start(),
                                                        aObservation.End(),
                                                        stack);

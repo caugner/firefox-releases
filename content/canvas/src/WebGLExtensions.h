@@ -6,9 +6,17 @@
 #ifndef WEBGLEXTENSIONS_H_
 #define WEBGLEXTENSIONS_H_
 
+#include "jsapi.h"
+#include "mozilla/Attributes.h"
+#include "nsWrapperCache.h"
+#include "WebGLObjectModel.h"
+#include "WebGLTypes.h"
+
 namespace mozilla {
 
 class WebGLContext;
+class WebGLShader;
+class WebGLVertexArray;
 
 class WebGLExtensionBase
     : public nsWrapperCache
@@ -22,8 +30,13 @@ public:
         return Context();
     }
 
+    void MarkLost();
+
     NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(WebGLExtensionBase)
     NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(WebGLExtensionBase)
+
+protected:
+    bool mIsLost;
 };
 
 #define DECL_WEBGL_EXTENSION_GOOP                                           \
@@ -42,6 +55,16 @@ class WebGLExtensionCompressedTextureATC
 public:
     WebGLExtensionCompressedTextureATC(WebGLContext*);
     virtual ~WebGLExtensionCompressedTextureATC();
+
+    DECL_WEBGL_EXTENSION_GOOP
+};
+
+class WebGLExtensionCompressedTextureETC1
+    : public WebGLExtensionBase
+{
+public:
+    WebGLExtensionCompressedTextureETC1(WebGLContext*);
+    virtual ~WebGLExtensionCompressedTextureETC1();
 
     DECL_WEBGL_EXTENSION_GOOP
 };
@@ -76,6 +99,18 @@ public:
     DECL_WEBGL_EXTENSION_GOOP
 };
 
+class WebGLExtensionDebugShaders
+    : public WebGLExtensionBase
+{
+public:
+    WebGLExtensionDebugShaders(WebGLContext*);
+    virtual ~WebGLExtensionDebugShaders();
+
+    void GetTranslatedShaderSource(WebGLShader* shader, nsAString& retval);
+
+    DECL_WEBGL_EXTENSION_GOOP
+};
+
 class WebGLExtensionDepthTexture
     : public WebGLExtensionBase
 {
@@ -92,6 +127,18 @@ class WebGLExtensionElementIndexUint
 public:
     WebGLExtensionElementIndexUint(WebGLContext*);
     virtual ~WebGLExtensionElementIndexUint();
+
+    DECL_WEBGL_EXTENSION_GOOP
+};
+
+class WebGLExtensionFragDepth
+    : public WebGLExtensionBase
+{
+public:
+    WebGLExtensionFragDepth(WebGLContext*);
+    virtual ~WebGLExtensionFragDepth();
+
+    static bool IsSupported(const WebGLContext* context);
 
     DECL_WEBGL_EXTENSION_GOOP
 };
@@ -167,6 +214,40 @@ class WebGLExtensionTextureHalfFloat
 public:
     WebGLExtensionTextureHalfFloat(WebGLContext*);
     virtual ~WebGLExtensionTextureHalfFloat();
+
+    DECL_WEBGL_EXTENSION_GOOP
+};
+
+class WebGLExtensionTextureHalfFloatLinear
+    : public WebGLExtensionBase
+{
+public:
+    WebGLExtensionTextureHalfFloatLinear(WebGLContext*);
+    virtual ~WebGLExtensionTextureHalfFloatLinear();
+
+    DECL_WEBGL_EXTENSION_GOOP
+};
+
+class WebGLExtensionColorBufferFloat
+    : public WebGLExtensionBase
+{
+public:
+    WebGLExtensionColorBufferFloat(WebGLContext*);
+    virtual ~WebGLExtensionColorBufferFloat();
+
+    static bool IsSupported(const WebGLContext*);
+
+    DECL_WEBGL_EXTENSION_GOOP
+};
+
+class WebGLExtensionColorBufferHalfFloat
+    : public WebGLExtensionBase
+{
+public:
+    WebGLExtensionColorBufferHalfFloat(WebGLContext*);
+    virtual ~WebGLExtensionColorBufferHalfFloat();
+
+    static bool IsSupported(const WebGLContext*);
 
     DECL_WEBGL_EXTENSION_GOOP
 };

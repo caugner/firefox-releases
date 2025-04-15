@@ -5,7 +5,7 @@
 
 #include "nsAutoWindowStateHelper.h"
 
-#include "nsDOMEvent.h"
+#include "mozilla/dom/Event.h"
 #include "nsIDocument.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMWindow.h"
@@ -19,23 +19,19 @@ using namespace mozilla::dom;
  ****************** nsAutoWindowStateHelper *********************
  ****************************************************************/
 
-nsAutoWindowStateHelper::nsAutoWindowStateHelper(nsIDOMWindow *aWindow)
+nsAutoWindowStateHelper::nsAutoWindowStateHelper(nsPIDOMWindow *aWindow)
   : mWindow(aWindow),
     mDefaultEnabled(DispatchEventToChrome("DOMWillOpenModalDialog"))
 {
-  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(aWindow));
-
-  if (window) {
-    window->EnterModalState();
+  if (mWindow) {
+    mWindow->EnterModalState();
   }
 }
 
 nsAutoWindowStateHelper::~nsAutoWindowStateHelper()
 {
-  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mWindow));
-
-  if (window) {
-    window->LeaveModalState();
+  if (mWindow) {
+    mWindow->LeaveModalState();
   }
 
   if (mDefaultEnabled) {
@@ -46,20 +42,21 @@ nsAutoWindowStateHelper::~nsAutoWindowStateHelper()
 bool
 nsAutoWindowStateHelper::DispatchEventToChrome(const char *aEventName)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(mWindow);
-  if (!window || (window->IsInnerWindow() && !window->IsCurrentInnerWindow())) {
+  // XXXbz should we skip dispatching the event if the inner changed?
+  // That is, should we store both the inner and the outer?
+  if (!mWindow) {
     return true;
   }
 
   // The functions of nsContentUtils do not provide the required behavior,
   // so the following is inlined.
-  nsIDocument* doc = window->GetExtantDoc();
+  nsIDocument* doc = mWindow->GetExtantDoc();
   if (!doc) {
     return true;
   }
 
   ErrorResult rv;
-  nsRefPtr<nsDOMEvent> event = doc->CreateEvent(NS_LITERAL_STRING("Events"), rv);
+  nsRefPtr<Event> event = doc->CreateEvent(NS_LITERAL_STRING("Events"), rv);
   if (rv.Failed()) {
     return false;
   }
@@ -67,7 +64,7 @@ nsAutoWindowStateHelper::DispatchEventToChrome(const char *aEventName)
   event->SetTrusted(true);
   event->GetInternalNSEvent()->mFlags.mOnlyChromeDispatch = true;
 
-  nsCOMPtr<EventTarget> target = do_QueryInterface(window);
+  nsCOMPtr<EventTarget> target = do_QueryInterface(mWindow);
   bool defaultActionEnabled;
   target->DispatchEvent(event, &defaultActionEnabled);
   return defaultActionEnabled;

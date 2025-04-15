@@ -19,6 +19,7 @@
 #include "nsIDOMNavigatorUserMedia.h"
 #include "nsXULAppAPI.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/dom/MediaStreamTrackBinding.h"
 #include "prlog.h"
@@ -102,12 +103,16 @@ public:
   bool CapturingVideo()
   {
     NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
-    return mVideoSource && !mVideoSource->IsFake() && !mStopped;
+    return mVideoSource && !mStopped &&
+           (!mVideoSource->IsFake() ||
+            Preferences::GetBool("media.navigator.permission.fake"));
   }
   bool CapturingAudio()
   {
     NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
-    return mAudioSource && !mAudioSource->IsFake() && !mStopped;
+    return mAudioSource && !mStopped &&
+           (!mAudioSource->IsFake() ||
+            Preferences::GetBool("media.navigator.permission.fake"));
   }
 
   void SetStopped()
@@ -252,13 +257,15 @@ class ErrorCallbackRunnable : public nsRunnable
 {
 public:
   ErrorCallbackRunnable(
-    already_AddRefed<nsIDOMGetUserMediaSuccessCallback> aSuccess,
-    already_AddRefed<nsIDOMGetUserMediaErrorCallback> aError,
+    nsCOMPtr<nsIDOMGetUserMediaSuccessCallback>& aSuccess,
+    nsCOMPtr<nsIDOMGetUserMediaErrorCallback>& aError,
     const nsAString& aErrorMsg, uint64_t aWindowID);
   NS_IMETHOD Run();
 private:
-  already_AddRefed<nsIDOMGetUserMediaSuccessCallback> mSuccess;
-  already_AddRefed<nsIDOMGetUserMediaErrorCallback> mError;
+  ~ErrorCallbackRunnable();
+
+  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> mSuccess;
+  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
   const nsString mErrorMsg;
   uint64_t mWindowID;
   nsRefPtr<MediaManager> mManager; // get ref to this when creating the runnable
@@ -317,7 +324,8 @@ public:
     nsString log;
 
     log.AssignASCII(errorLog, strlen(errorLog));
-    NS_DispatchToMainThread(new ErrorCallbackRunnable(nullptr, mError.forget(),
+    nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> success;
+    NS_DispatchToMainThread(new ErrorCallbackRunnable(success, mError,
       log, mWindowID));
     return NS_OK;
   }
@@ -419,7 +427,7 @@ private:
   nsRefPtr<GetUserMediaCallbackMediaStreamListener> mListener; // threadsafe
   bool mFinish;
   uint64_t mWindowID;
-  nsRefPtr<nsIDOMGetUserMediaErrorCallback> mError;
+  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> mError;
 };
 
 typedef nsTArray<nsRefPtr<GetUserMediaCallbackMediaStreamListener> > StreamListeners;
@@ -515,9 +523,7 @@ private:
   // Make private because we want only one instance of this class
   MediaManager();
 
-  ~MediaManager() {
-    delete mBackend;
-  }
+  ~MediaManager() {}
 
   nsresult MediaCaptureWindowStateInternal(nsIDOMWindow* aWindow, bool* aVideo,
                                            bool* aAudio);
@@ -533,11 +539,11 @@ private:
 
   Mutex mMutex;
   // protected with mMutex:
-  MediaEngine* mBackend;
+  RefPtr<MediaEngine> mBackend;
 
   static StaticRefPtr<MediaManager> sSingleton;
 
-#ifdef MOZ_WIDGET_GONK
+#ifdef MOZ_B2G_CAMERA
   nsRefPtr<nsDOMCameraManager> mCameraManager;
 #endif
 };

@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+/* -*- Mode: C++; tab-width: 20; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -15,6 +15,7 @@
 #include "gfxFailure.h"
 #include "mozilla/layers/PCompositorParent.h"
 #include "mozilla/layers/LayerManagerComposite.h"
+#include "gfxPrefs.h"
 
 using namespace mozilla::gfx;
 
@@ -26,7 +27,7 @@ CompositorD3D9::CompositorD3D9(PCompositorParent* aParent, nsIWidget *aWidget)
   , mWidget(aWidget)
   , mDeviceResetCount(0)
 {
-  sBackend = LayersBackend::LAYERS_D3D9;
+  Compositor::SetBackend(LayersBackend::LAYERS_D3D9);
 }
 
 CompositorD3D9::~CompositorD3D9()
@@ -89,8 +90,7 @@ CompositorD3D9::GetMaxTextureSize() const
 TemporaryRef<DataTextureSource>
 CompositorD3D9::CreateDataTextureSource(TextureFlags aFlags)
 {
-  return new DataTextureSourceD3D9(SurfaceFormat::UNKNOWN, this,
-                                   !(aFlags & TEXTURE_DISALLOW_BIGIMAGE));
+  return new DataTextureSourceD3D9(SurfaceFormat::UNKNOWN, this, aFlags);
 }
 
 TemporaryRef<CompositingRenderTarget>
@@ -192,21 +192,35 @@ CompositorD3D9::SetRenderTarget(CompositingRenderTarget *aRenderTarget)
 }
 
 static DeviceManagerD3D9::ShaderMode
-ShaderModeForEffectType(EffectTypes aEffectType)
+ShaderModeForEffectType(EffectTypes aEffectType, gfx::SurfaceFormat aFormat)
 {
   switch (aEffectType) {
   case EFFECT_SOLID_COLOR:
     return DeviceManagerD3D9::SOLIDCOLORLAYER;
-  case EFFECT_BGRA:
   case EFFECT_RENDER_TARGET:
     return DeviceManagerD3D9::RGBALAYER;
-  case EFFECT_BGRX:
+  case EFFECT_RGB:
+    if (aFormat == SurfaceFormat::B8G8R8A8 || aFormat == SurfaceFormat::R8G8B8A8)
+      return DeviceManagerD3D9::RGBALAYER;
     return DeviceManagerD3D9::RGBLAYER;
   case EFFECT_YCBCR:
     return DeviceManagerD3D9::YCBCRLAYER;
   }
 
   MOZ_CRASH("Bad effect type");
+}
+
+void
+CompositorD3D9::ClearRect(const gfx::Rect& aRect)
+{
+  D3DRECT rect;
+  rect.x1 = aRect.X();
+  rect.y1 = aRect.Y();
+  rect.x2 = aRect.XMost();
+  rect.y2 = aRect.YMost();
+
+  device()->Clear(1, &rect, D3DCLEAR_TARGET,
+                  0x00000000, 0, 0);
 }
 
 void
@@ -288,8 +302,7 @@ CompositorD3D9::DrawQuad(const gfx::Rect &aRect,
     }
     break;
   case EFFECT_RENDER_TARGET:
-  case EFFECT_BGRX:
-  case EFFECT_BGRA:
+  case EFFECT_RGB:
     {
       TexturedEffect* texturedEffect =
         static_cast<TexturedEffect*>(aEffectChain.mPrimaryEffect.get());
@@ -309,7 +322,8 @@ CompositorD3D9::DrawQuad(const gfx::Rect &aRect,
       d3d9Device->SetTexture(0, source->GetD3D9Texture());
 
       maskTexture = mDeviceManager
-        ->SetShaderMode(ShaderModeForEffectType(aEffectChain.mPrimaryEffect->mType),
+        ->SetShaderMode(ShaderModeForEffectType(aEffectChain.mPrimaryEffect->mType,
+                                                texturedEffect->mTexture->GetFormat()),
                         maskType);
 
       isPremultiplied = texturedEffect->mPremultiplied;
@@ -403,7 +417,7 @@ CompositorD3D9::DrawQuad(const gfx::Rect &aRect,
     break;
   case EFFECT_COMPONENT_ALPHA:
     {
-      MOZ_ASSERT(gfxPlatform::ComponentAlphaEnabled());
+      MOZ_ASSERT(gfxPrefs::ComponentAlphaEnabled());
       EffectComponentAlpha* effectComponentAlpha =
         static_cast<EffectComponentAlpha*>(aEffectChain.mPrimaryEffect.get());
       TextureSourceD3D9* sourceOnWhite = effectComponentAlpha->mOnWhite->AsSourceD3D9();

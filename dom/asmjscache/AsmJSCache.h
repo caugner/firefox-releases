@@ -47,7 +47,13 @@ struct Metadata
     uint32_t mFastHash;
     uint32_t mNumChars;
     uint32_t mFullHash;
-    uint32_t mModuleIndex;
+    unsigned mModuleIndex;
+
+    void clear() {
+      mFastHash = -1;
+      mNumChars = -1;
+      mFullHash = -1;
+    }
   };
 
   Entry mEntries[kNumEntries];
@@ -60,12 +66,14 @@ struct WriteParams
   int64_t mFastHash;
   int64_t mNumChars;
   int64_t mFullHash;
+  bool mInstalled;
 
   WriteParams()
   : mSize(0),
     mFastHash(0),
     mNumChars(0),
-    mFullHash(0)
+    mFullHash(0),
+    mInstalled(false)
   { }
 };
 
@@ -107,6 +115,7 @@ CloseEntryForRead(JS::Handle<JSObject*> aGlobal,
                   intptr_t aHandle);
 bool
 OpenEntryForWrite(nsIPrincipal* aPrincipal,
+                  bool aInstalled,
                   const jschar* aBegin,
                   const jschar* aEnd,
                   size_t aSize,

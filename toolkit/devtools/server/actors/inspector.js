@@ -51,7 +51,7 @@
  */
 
 const {Cc, Ci, Cu, Cr} = require("chrome");
-
+const Services = require("Services");
 const protocol = require("devtools/server/protocol");
 const {Arg, Option, method, RetVal, types} = protocol;
 const {LongStringActor, ShortLongString} = require("devtools/server/actors/string");
@@ -65,6 +65,8 @@ const {HighlighterActor} = require("devtools/server/actors/highlighter");
 
 const PSEUDO_CLASSES = [":hover", ":active", ":focus"];
 const HIDDEN_CLASS = "__fx-devtools-hide-shortcut__";
+const XHTML_NS = "http://www.w3.org/1999/xhtml";
+const IMAGE_FETCHING_TIMEOUT = 500;
 // The possible completions to a ':' with added score to give certain values
 // some preference.
 const PSEUDO_SELECTORS = [
@@ -101,8 +103,9 @@ const PSEUDO_SELECTORS = [
 let HELPER_SHEET = ".__fx-devtools-hide-shortcut__ { visibility: hidden !important } ";
 HELPER_SHEET += ":-moz-devtools-highlighted { outline: 2px dashed #F06!important; outline-offset: -2px!important } ";
 
-Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/devtools/LayoutHelpers.jsm");
+
+loader.lazyImporter(this, "gDevTools", "resource:///modules/devtools/gDevTools.jsm");
 
 loader.lazyGetter(this, "DOMParser", function() {
   return Cc["@mozilla.org/xmlextras/domparser;1"].createInstance(Ci.nsIDOMParser);
@@ -288,58 +291,25 @@ var NodeActor = exports.NodeActor = protocol.ActorClass({
 
   /**
    * Get the node's image data if any (for canvas and img nodes).
-   * Returns a LongStringActor with the image or canvas' image data as png
-   * a data:image/png;base64,.... string
-   * A null return value means the node isn't an image
-   * An empty string return value means the node is an image but image data
-   * could not be retrieved (missing/broken image).
+   * Returns an imageData object with the actual data being a LongStringActor
+   * and a size json object.
+   * The image data is transmitted as a base64 encoded png data-uri.
+   * The method rejects if the node isn't an image or if the image is missing
    *
    * Accepts a maxDim request parameter to resize images that are larger. This
    * is important as the resizing occurs server-side so that image-data being
    * transfered in the longstring back to the client will be that much smaller
    */
   getImageData: method(function(maxDim) {
-    let isImg = this.rawNode.tagName.toLowerCase() === "img";
-    let isCanvas = this.rawNode.tagName.toLowerCase() === "canvas";
-
-    if (!isImg && !isCanvas) {
-      return null;
-    }
-
-    // Get the image resize ratio if a maxDim was provided
-    let resizeRatio = 1;
-    let imgWidth = isImg ? this.rawNode.naturalWidth : this.rawNode.width;
-    let imgHeight = isImg ? this.rawNode.naturalHeight : this.rawNode.height;
-    let imgMax = Math.max(imgWidth, imgHeight);
-    if (maxDim && imgMax > maxDim) {
-      resizeRatio = maxDim / imgMax;
-    }
-
-    // Create a canvas to copy the rawNode into and get the imageData from
-    let canvas = this.rawNode.ownerDocument.createElement("canvas");
-    canvas.width = imgWidth * resizeRatio;
-    canvas.height = imgHeight * resizeRatio;
-    let ctx = canvas.getContext("2d");
-
-    // Copy the rawNode image or canvas in the new canvas and extract data
-    let imageData;
-    // This may fail if the image is missing
+    // imageToImageData may fail if the node isn't an image
     try {
-      ctx.drawImage(this.rawNode, 0, 0, canvas.width, canvas.height);
-      imageData = canvas.toDataURL("image/png");
-    } catch (e) {
-      imageData = "";
-    }
-
-    return {
-      data: LongStringActor(this.conn, imageData),
-      size: {
-        naturalWidth: imgWidth,
-        naturalHeight: imgHeight,
-        width: canvas.width,
-        height: canvas.height,
-        resized: resizeRatio !== 1
-      }
+      let imageData = imageToImageData(this.rawNode, maxDim);
+      return promise.resolve({
+        data: LongStringActor(this.conn, imageData.data),
+        size: imageData.size
+      });
+    } catch(e) {
+      return promise.reject(new Error("Image not available"));
     }
   }, {
     request: {maxDim: Arg(0, "nullable:number")},
@@ -880,6 +850,12 @@ var WalkerActor = protocol.ActorClass({
     "picker-node-hovered" : {
       type: "pickerNodeHovered",
       node: Arg(0, "disconnectedNode")
+    },
+    "highlighter-ready" : {
+      type: "highlighter-ready"
+    },
+    "highlighter-hide" : {
+      type: "highlighter-hide"
     }
   },
 
@@ -1014,7 +990,7 @@ var WalkerActor = protocol.ActorClass({
     let node = actor.rawNode;
     // Create the observer on the node's actor.  The node will make sure
     // the observer is cleaned up when the actor is released.
-    actor.observer = actor.rawNode.defaultView.MutationObserver(this.onMutations);
+    actor.observer = new actor.rawNode.defaultView.MutationObserver(this.onMutations);
     actor.observer.observe(node, {
       attributes: true,
       characterData: true,
@@ -1225,7 +1201,7 @@ var WalkerActor = protocol.ActorClass({
     // make it easier.
     let filteredWalker = (node) => {
       return documentWalker(node, this.rootWin, options.whatToShow);
-    }
+    };
 
     // Need to know the first and last child.
     let rawNode = node.rawNode;
@@ -1357,8 +1333,7 @@ var WalkerActor = protocol.ActorClass({
    * Helper function for the `children` method: Read forward in the sibling
    * list into an array with `count` items, including the current node.
    */
-  _readForward: function(walker, count)
-  {
+  _readForward: function(walker, count) {
     let ret = [];
     let node = walker.currentNode;
     do {
@@ -1372,8 +1347,7 @@ var WalkerActor = protocol.ActorClass({
    * Helper function for the `children` method: Read backward in the sibling
    * list into an array with `count` items, including the current node.
    */
-  _readBackward: function(walker, count)
-  {
+  _readBackward: function(walker, count) {
     let ret = [];
     let node = walker.currentNode;
     do {
@@ -1418,7 +1392,15 @@ var WalkerActor = protocol.ActorClass({
    * @param string selector
    */
   querySelectorAll: method(function(baseNode, selector) {
-    return new NodeListActor(this, baseNode.rawNode.querySelectorAll(selector));
+    let nodeList = null;
+
+    try {
+      nodeList = baseNode.rawNode.querySelectorAll(selector);
+    } catch(e) {
+      // Bad selector. Do nothing as the selector can come from a searchbox.
+    }
+
+    return new NodeListActor(this, nodeList);
   }, {
     request: {
       node: Arg(0, "domnode"),
@@ -2084,12 +2066,52 @@ var WalkerActor = protocol.ActorClass({
   },
 
   /**
+   * Check if a node is attached to the DOM tree of the current page.
+   * @param {nsIDomNode} rawNode
+   * @return {Boolean} false if the node is removed from the tree or within a
+   * document fragment
+   */
+  _isInDOMTree: function(rawNode) {
+    let walker = documentWalker(rawNode, this.rootWin);
+    let current = walker.currentNode;
+
+    // Reaching the top of tree
+    while (walker.parentNode()) {
+      current = walker.currentNode;
+    }
+
+    // The top of the tree is a fragment or is not rootDoc, hence rawNode isn't
+    // attached
+    if (current.nodeType === Ci.nsIDOMNode.DOCUMENT_FRAGMENT_NODE ||
+        current !== this.rootDoc) {
+      return false;
+    }
+
+    // Otherwise the top of the tree is rootDoc, hence rawNode is in rootDoc
+    return true;
+  },
+
+  /**
+   * @see _isInDomTree
+   */
+  isInDOMTree: method(function(node) {
+    return node ? this._isInDOMTree(node.rawNode) : false;
+  }, {
+    request: { node: Arg(0, "domnode") },
+    response: { attached: RetVal("boolean") }
+  }),
+
+  /**
    * Given an ObjectActor (identified by its ID), commonly used in the debugger,
    * webconsole and variablesView, return the corresponding inspector's NodeActor
    */
   getNodeActorFromObjectActor: method(function(objectActorID) {
-    let debuggerObject = this.conn.poolFor(objectActorID).get(objectActorID).obj;
+    let debuggerObject = this.conn.getActor(objectActorID).obj;
     let rawNode = debuggerObject.unsafeDereference();
+
+    if (!this._isInDOMTree(rawNode)) {
+      return null;
+    }
 
     // This is a special case for the document object whereby it is considered
     // as document.documentElement (the <html> node)
@@ -2103,7 +2125,7 @@ var WalkerActor = protocol.ActorClass({
       objectActorID: Arg(0, "string")
     },
     response: {
-      nodeFront: RetVal("disconnectedNode")
+      nodeFront: RetVal("nullable:disconnectedNode")
     }
   }),
 });
@@ -2241,7 +2263,7 @@ var WalkerFront = exports.WalkerFront = protocol.FrontClass(WalkerActor, {
 
   getNodeActorFromObjectActor: protocol.custom(function(objectActorID) {
     return this._getNodeActorFromObjectActor(objectActorID).then(response => {
-      return response.node;
+      return response ? response.node : null;
     });
   }, {
     impl: "_getNodeActorFromObjectActor"
@@ -2398,7 +2420,7 @@ var WalkerFront = exports.WalkerFront = protocol.FrontClass(WalkerActor, {
 
   // XXX hack during transition to remote inspector: get a proper NodeFront
   // for a given local node.  Only works locally.
-  frontForRawNode: function(rawNode){
+  frontForRawNode: function(rawNode) {
     if (!this.isLocal()) {
       console.warn("Tried to use frontForRawNode on a remote connection.");
       return null;
@@ -2531,20 +2553,70 @@ var InspectorActor = protocol.ActorClass({
     }
   }),
 
-  getHighlighter: method(function () {
+  getHighlighter: method(function (autohide) {
     if (this._highlighterPromise) {
       return this._highlighterPromise;
     }
 
     this._highlighterPromise = this.getWalker().then(walker => {
-      return HighlighterActor(this);
+      return HighlighterActor(this, autohide);
     });
     return this._highlighterPromise;
   }, {
-    request: {},
+    request: { autohide: Arg(0, "boolean") },
     response: {
       highligter: RetVal("highlighter")
     }
+  }),
+
+  /**
+   * Get the node's image data if any (for canvas and img nodes).
+   * Returns an imageData object with the actual data being a LongStringActor
+   * and a size json object.
+   * The image data is transmitted as a base64 encoded png data-uri.
+   * The method rejects if the node isn't an image or if the image is missing
+   *
+   * Accepts a maxDim request parameter to resize images that are larger. This
+   * is important as the resizing occurs server-side so that image-data being
+   * transfered in the longstring back to the client will be that much smaller
+   */
+  getImageDataFromURL: method(function(url, maxDim) {
+    let deferred = promise.defer();
+    let img = new this.window.Image();
+
+    // On load, get the image data and send the response
+    img.onload = () => {
+      // imageToImageData throws an error if the image is missing
+      try {
+        let imageData = imageToImageData(img, maxDim);
+        deferred.resolve({
+          data: LongStringActor(this.conn, imageData.data),
+          size: imageData.size
+        });
+      } catch (e) {
+        deferred.reject(new Error("Image " + url+ " not available"));
+      }
+    }
+
+    // If the URL doesn't point to a resource, reject
+    img.onerror = () => {
+      deferred.reject(new Error("Image " + url+ " not available"));
+    }
+
+    // If the request hangs for too long, kill it to avoid queuing up other requests
+    // to the same actor, except if we're running tests
+    if (!gDevTools.testing) {
+      this.window.setTimeout(() => {
+        deferred.reject(new Error("Image " + url + " could not be retrieved in time"));
+      }, IMAGE_FETCHING_TIMEOUT);
+    }
+
+    img.src = url;
+
+    return deferred.promise;
+  }, {
+    request: {url: Arg(0), maxDim: Arg(1, "nullable:number")},
+    response: RetVal("imageData")
   })
 });
 
@@ -2610,8 +2682,7 @@ function nodeDocument(node) {
  *
  * See TreeWalker documentation for explanations of the methods.
  */
-function DocumentWalker(aNode, aRootWin, aShow, aFilter, aExpandEntityReferences)
-{
+function DocumentWalker(aNode, aRootWin, aShow, aFilter, aExpandEntityReferences) {
   let doc = nodeDocument(aNode);
   this.layoutHelpers = new LayoutHelpers(aRootWin);
   this.walker = doc.createTreeWalker(doc,
@@ -2632,7 +2703,7 @@ DocumentWalker.prototype = {
    * the current node, creates a new treewalker for the document we've
    * run in to.
    */
-  _reparentWalker: function DW_reparentWalker(aNewNode) {
+  _reparentWalker: function(aNewNode) {
     if (!aNewNode) {
       return null;
     }
@@ -2644,8 +2715,7 @@ DocumentWalker.prototype = {
     return aNewNode;
   },
 
-  parentNode: function DW_parentNode()
-  {
+  parentNode: function() {
     let currentNode = this.walker.currentNode;
     let parentNode = this.walker.parentNode();
 
@@ -2665,8 +2735,7 @@ DocumentWalker.prototype = {
     return parentNode;
   },
 
-  firstChild: function DW_firstChild()
-  {
+  firstChild: function() {
     let node = this.walker.currentNode;
     if (!node)
       return null;
@@ -2678,8 +2747,7 @@ DocumentWalker.prototype = {
     return this.walker.firstChild();
   },
 
-  lastChild: function DW_lastChild()
-  {
+  lastChild: function() {
     let node = this.walker.currentNode;
     if (!node)
       return null;
@@ -2693,19 +2761,72 @@ DocumentWalker.prototype = {
 
   previousSibling: function DW_previousSibling() this.walker.previousSibling(),
   nextSibling: function DW_nextSibling() this.walker.nextSibling()
-}
+};
 
 /**
  * A tree walker filter for avoiding empty whitespace text nodes.
  */
-function whitespaceTextFilter(aNode)
-{
+function whitespaceTextFilter(aNode) {
     if (aNode.nodeType == Ci.nsIDOMNode.TEXT_NODE &&
         !/[^\s]/.exec(aNode.nodeValue)) {
       return Ci.nsIDOMNodeFilter.FILTER_SKIP;
     } else {
       return Ci.nsIDOMNodeFilter.FILTER_ACCEPT;
     }
+}
+
+/**
+ * Given an image DOMNode, return the image data-uri.
+ * @param {DOMNode} node The image node
+ * @param {Number} maxDim Optionally pass a maximum size you want the longest
+ * side of the image to be resized to before getting the image data.
+ * @return {Object} An object containing the data-uri and size-related information
+ * {data: "...", size: {naturalWidth: 400, naturalHeight: 300, resized: true}}
+ * @throws an error if the node isn't an image or if the image is missing
+ */
+function imageToImageData(node, maxDim) {
+  let isImg = node.tagName.toLowerCase() === "img";
+  let isCanvas = node.tagName.toLowerCase() === "canvas";
+
+  if (!isImg && !isCanvas) {
+    return null;
+  }
+
+  // Get the image resize ratio if a maxDim was provided
+  let resizeRatio = 1;
+  let imgWidth = node.naturalWidth || node.width;
+  let imgHeight = node.naturalHeight || node.height;
+  let imgMax = Math.max(imgWidth, imgHeight);
+  if (maxDim && imgMax > maxDim) {
+    resizeRatio = maxDim / imgMax;
+  }
+
+  // Extract the image data
+  let imageData;
+  // The image may already be a data-uri, in which case, save ourselves the
+  // trouble of converting via the canvas.drawImage.toDataURL method
+  if (isImg && node.src.startsWith("data:")) {
+    imageData = node.src;
+  } else {
+    // Create a canvas to copy the rawNode into and get the imageData from
+    let canvas = node.ownerDocument.createElementNS(XHTML_NS, "canvas");
+    canvas.width = imgWidth * resizeRatio;
+    canvas.height = imgHeight * resizeRatio;
+    let ctx = canvas.getContext("2d");
+
+    // Copy the rawNode image or canvas in the new canvas and extract data
+    ctx.drawImage(node, 0, 0, canvas.width, canvas.height);
+    imageData = canvas.toDataURL("image/png");
+  }
+
+  return {
+    data: imageData,
+    size: {
+      naturalWidth: imgWidth,
+      naturalHeight: imgHeight,
+      resized: resizeRatio !== 1
+    }
+  }
 }
 
 loader.lazyGetter(this, "DOMUtils", function () {

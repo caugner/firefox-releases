@@ -97,7 +97,7 @@ private:
   void
   OnRequestFinished();
 
-  inline already_AddRefed<FileRequest>
+  already_AddRefed<FileRequest>
   GenerateFileRequest();
 
   nsresult

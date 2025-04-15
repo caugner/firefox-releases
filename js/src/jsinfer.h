@@ -25,7 +25,7 @@
 
 namespace js {
 
-class TypeRepresentation;
+class TypeDescr;
 
 class TaggedProto
 {
@@ -242,6 +242,10 @@ class Type
         return data > JSVAL_TYPE_UNKNOWN;
     }
 
+    bool isObjectUnchecked() const {
+        return data > JSVAL_TYPE_UNKNOWN;
+    }
+
     inline TypeObjectKey *objectKey() const;
 
     /* Accessors for JSObject types */
@@ -335,7 +339,7 @@ public:
      * If the data this constraint refers to is still live, copy it into the
      * zone's new allocator. Type constraints only hold weak references.
      */
-    virtual TypeConstraint *sweep(TypeZone &zone) = 0;
+    virtual bool sweep(TypeZone &zone, TypeConstraint **res) = 0;
 };
 
 /* Flags and other state stored in TypeSet::flags */
@@ -528,7 +532,7 @@ class TypeSet
     static TemporaryTypeSet *unionSets(TypeSet *a, TypeSet *b, LifoAlloc *alloc);
 
     /* Add a type to this set using the specified allocator. */
-    inline bool addType(Type type, LifoAlloc *alloc);
+    inline void addType(Type type, LifoAlloc *alloc);
 
     /* Get a list of all types in this set. */
     typedef Vector<Type, 1, SystemAllocPolicy> TypeList;
@@ -543,7 +547,6 @@ class TypeSet
     inline TypeObjectKey *getObject(unsigned i) const;
     inline JSObject *getSingleObject(unsigned i) const;
     inline TypeObject *getTypeObject(unsigned i) const;
-    inline bool getTypeOrSingleObject(JSContext *cx, unsigned i, TypeObject **obj) const;
 
     /* The Class of an object in this set. */
     inline const Class *getObjectClass(unsigned i) const;
@@ -568,11 +571,14 @@ class TypeSet
     bool isSubset(TypeSet *other);
 
     /* Forward all types in this set to the specified constraint. */
-    void addTypesToConstraint(JSContext *cx, TypeConstraint *constraint);
+    bool addTypesToConstraint(JSContext *cx, TypeConstraint *constraint);
 
     // Clone a type set into an arbitrary allocator.
     TemporaryTypeSet *clone(LifoAlloc *alloc) const;
     bool clone(LifoAlloc *alloc, TemporaryTypeSet *result) const;
+
+    // Create a new TemporaryTypeSet where undefined and/or null has been filtered out.
+    TemporaryTypeSet *filter(LifoAlloc *alloc, bool filterUndefined, bool filterNull) const;
 
   protected:
     uint32_t baseObjectCount() const {
@@ -599,9 +605,9 @@ class ConstraintTypeSet : public TypeSet
     inline void addType(ExclusiveContext *cx, Type type);
 
     /* Add a new constraint to this set. */
-    void add(JSContext *cx, TypeConstraint *constraint, bool callExisting = true);
+    bool addConstraint(JSContext *cx, TypeConstraint *constraint, bool callExisting = true);
 
-    inline void sweep(JS::Zone *zone);
+    inline void sweep(JS::Zone *zone, bool *oom);
 };
 
 class StackTypeSet : public ConstraintTypeSet
@@ -616,6 +622,7 @@ class HeapTypeSet : public ConstraintTypeSet
   public:
     /* Mark this type set as representing a non-data property. */
     inline void setNonDataProperty(ExclusiveContext *cx);
+    inline void setNonDataProperty(); // Variant for use during GC.
 
     /* Mark this type set as representing a non-writable property. */
     inline void setNonWritableProperty(ExclusiveContext *cx);
@@ -673,6 +680,21 @@ class TemporaryTypeSet : public TypeSet
     /* Get the class shared by all objects in this set, or nullptr. */
     const Class *getKnownClass();
 
+    /* Result returned from forAllClasses */
+    enum ForAllResult {
+        EMPTY=1,                // Set empty
+        ALL_TRUE,               // Set not empty and predicate returned true for all classes
+        ALL_FALSE,              // Set not empty and predicate returned false for all classes
+        MIXED,                  // Set not empty and predicate returned false for some classes
+                                // and true for others, or set contains an unknown or non-object
+                                // type
+    };
+
+    /* Apply func to the members of the set and return an appropriate result.
+     * The iteration may end early if the result becomes known early.
+     */
+    ForAllResult forAllClasses(bool (*func)(const Class *clasp));
+
     /* Get the prototype shared by all objects in this set, or nullptr. */
     JSObject *getCommonPrototype();
 
@@ -724,7 +746,7 @@ class TemporaryTypeSet : public TypeSet
 bool
 AddClearDefiniteGetterSetterForPrototypeChain(JSContext *cx, TypeObject *type, HandleId id);
 
-void
+bool
 AddClearDefiniteFunctionUsesInScript(JSContext *cx, TypeObject *type,
                                      JSScript *script, JSScript *calleeScript);
 
@@ -842,23 +864,17 @@ struct TypeNewScript : public TypeObjectAddendum
 
 struct TypeTypedObject : public TypeObjectAddendum
 {
-    enum Kind {
-        TypeDescriptor,
-        Datum,
-    };
+  private:
+    HeapPtrObject descr_;
 
-    TypeTypedObject(Kind kind, TypeRepresentation *repr);
+  public:
+    TypeTypedObject(Handle<TypeDescr*> descr);
 
-    const Kind kind;
-    TypeRepresentation *const typeRepr;
-
-    bool isTypeDescriptor() const {
-        return kind == TypeDescriptor;
+    HeapPtrObject &descrHeapPtr() {
+        return descr_;
     }
 
-    bool isDatum() const {
-        return kind == Datum;
-    }
+    TypeDescr &descr();
 };
 
 /*
@@ -991,9 +1007,7 @@ struct TypeObject : gc::BarrieredCell<TypeObject>
      * this addendum must already be associated with the same TypeRepresentation,
      * and the method has no effect.
      */
-    bool addTypedObjectAddendum(JSContext *cx,
-                                TypeTypedObject::Kind kind ,
-                                TypeRepresentation *repr);
+    bool addTypedObjectAddendum(JSContext *cx, Handle<TypeDescr*> descr);
 
   private:
     /*
@@ -1101,8 +1115,6 @@ struct TypeObject : gc::BarrieredCell<TypeObject>
     void addPrototype(JSContext *cx, TypeObject *proto);
     void addPropertyType(ExclusiveContext *cx, jsid id, Type type);
     void addPropertyType(ExclusiveContext *cx, jsid id, const Value &value);
-    void addPropertyType(ExclusiveContext *cx, const char *name, Type type);
-    void addPropertyType(ExclusiveContext *cx, const char *name, const Value &value);
     void markPropertyNonData(ExclusiveContext *cx, jsid id);
     void markPropertyNonWritable(ExclusiveContext *cx, jsid id);
     void markStateChange(ExclusiveContext *cx);
@@ -1111,13 +1123,14 @@ struct TypeObject : gc::BarrieredCell<TypeObject>
     void clearAddendum(ExclusiveContext *cx);
     void clearNewScriptAddendum(ExclusiveContext *cx);
     void clearTypedObjectAddendum(ExclusiveContext *cx);
+    void maybeClearNewScriptAddendumOnOOM();
     bool isPropertyNonData(jsid id);
     bool isPropertyNonWritable(jsid id);
 
     void print();
 
     inline void clearProperties();
-    inline void sweep(FreeOp *fop);
+    inline void sweep(FreeOp *fop, bool *oom);
 
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
@@ -1273,7 +1286,7 @@ class TypeScript
 
     static void Purge(JSContext *cx, HandleScript script);
 
-    static void Sweep(FreeOp *fop, JSScript *script);
+    static void Sweep(FreeOp *fop, JSScript *script, bool *oom);
     void destroy();
 
     size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
@@ -1352,7 +1365,7 @@ struct TypeObjectKey
     bool hasFlags(CompilerConstraintList *constraints, TypeObjectFlags flags);
     void watchStateChangeForInlinedCall(CompilerConstraintList *constraints);
     void watchStateChangeForNewScriptTemplate(CompilerConstraintList *constraints);
-    void watchStateChangeForTypedArrayBuffer(CompilerConstraintList *constraints);
+    void watchStateChangeForTypedArrayData(CompilerConstraintList *constraints);
     HeapTypeSetKey property(jsid id);
     void ensureTrackedProperty(JSContext *cx, jsid id);
 
@@ -1520,12 +1533,10 @@ struct TypeCompartment
     /* Get or make an object for an allocation site, and add to the allocation site table. */
     TypeObject *addAllocationSiteTypeObject(JSContext *cx, AllocationSiteKey key);
 
-    /* Mark all types as needing destruction once inference has 'finished'. */
-    void setPendingNukeTypes(ExclusiveContext *cx);
-
     /* Mark any type set containing obj as having a generic object type. */
     void markSetsUnknown(JSContext *cx, TypeObject *obj);
 
+    void clearTables();
     void sweep(FreeOp *fop);
     void finalizeObjects();
 
@@ -1555,12 +1566,6 @@ struct TypeZone
     /* Pending recompilations to perform before execution of JIT code can resume. */
     Vector<RecompileInfo> *pendingRecompiles;
 
-    /*
-     * Bit set if all current types must be marked as unknown, and all scripts
-     * recompiled. Caused by OOM failure within inference operations.
-     */
-    bool                         pendingNukeTypes;
-
     /* Whether type inference is enabled in this compartment. */
     bool                         inferenceEnabled;
 
@@ -1570,18 +1575,14 @@ struct TypeZone
 
     JS::Zone *zone() const { return zone_; }
 
-    void sweep(FreeOp *fop, bool releaseTypes);
-
-    /* Mark all types as needing destruction once inference has 'finished'. */
-    void setPendingNukeTypes();
+    void sweep(FreeOp *fop, bool releaseTypes, bool *oom);
+    void clearAllNewScriptAddendumsOnOOM();
 
     /* Mark a script as needing recompilation once inference has finished. */
     void addPendingRecompile(JSContext *cx, const RecompileInfo &info);
     void addPendingRecompile(JSContext *cx, JSScript *script);
 
     void processPendingRecompiles(FreeOp *fop);
-
-    void nukeTypes(FreeOp *fop);
 };
 
 enum SpewChannel {

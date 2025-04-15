@@ -26,6 +26,7 @@ const { merge } = require('../../util/object');
 const { Disposable } = require('../../core/disposable');
 const { on, off, emit, setListeners } = require('../../event/core');
 const { EventTarget } = require('../../event/target');
+const { getNodeView } = require('../../view/core');
 
 const view = require('./view');
 const { toggleButtonContract, toggleStateContract } = require('./contract');
@@ -37,7 +38,14 @@ const events = require('../../event/utils');
 
 const { getActiveTab } = require('../../tabs/utils');
 
+const { id: addonID } = require('../../self');
+const { identify } = require('../id');
+
 const buttons = new Map();
+
+const toWidgetId = id =>
+  ('toggle-button--' + addonID.toLowerCase()+ '-' + id).
+    replace(/[^a-z0-9_-]/g, '');
 
 const ToggleButton = Class({
   extends: EventTarget,
@@ -52,31 +60,40 @@ const ToggleButton = Class({
       checked: false
     }, toggleButtonContract(options));
 
+    let id = toWidgetId(options.id);
+
     register(this, state);
 
     // Setup listeners.
     setListeners(this, options);
 
-    buttons.set(options.id, this);
+    buttons.set(id, this);
 
-    view.create(merge({ type: 'checkbox' }, state));
+    view.create(merge({ type: 'checkbox' }, state, { id: id }));
   },
 
   dispose: function dispose() {
-    buttons.delete(this.id);
+    let id = toWidgetId(this.id);
+    buttons.delete(id);
 
     off(this);
 
-    view.dispose(this.id);
+    view.dispose(id);
 
     unregister(this);
   },
 
   get id() this.state().id,
 
-  click: function click() view.click(this.id)
+  click: function click() view.click(toWidgetId(this.id))
 });
 exports.ToggleButton = ToggleButton;
+
+identify.define(ToggleButton, ({id}) => toWidgetId(id));
+
+getNodeView.define(ToggleButton, button =>
+  view.nodeFor(toWidgetId(button.id))
+);
 
 let toggleButtonStateEvents = events.filter(stateEvents,
   e => e.target instanceof ToggleButton);
@@ -88,7 +105,8 @@ let clickEvents = events.filter(toggleButtonViewEvents, e => e.type === 'click')
 let updateEvents = events.filter(toggleButtonViewEvents, e => e.type === 'update');
 
 on(toggleButtonStateEvents, 'data', ({target, window, state}) => {
-  let { id } = target;
+  let id = toWidgetId(target.id);
+
   view.setIcon(id, window, state.icon);
   view.setLabel(id, window, state.label);
   view.setDisabled(id, window, state.disabled);

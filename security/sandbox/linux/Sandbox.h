@@ -9,7 +9,7 @@
 
 namespace mozilla {
 
-void SetCurrentProcessSandbox(void);
+void SetCurrentProcessSandbox();
 
 } // namespace mozilla
 

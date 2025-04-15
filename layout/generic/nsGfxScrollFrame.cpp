@@ -15,7 +15,7 @@
 #include "nsIScrollable.h"
 #include "nsContainerFrame.h"
 #include "nsGkAtoms.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsContentList.h"
 #include "nsIDocumentInlines.h"
 #include "nsFontMetrics.h"
@@ -115,7 +115,7 @@ nsHTMLScrollFrame::DestroyFrom(nsIFrame* aDestructRoot)
   nsContainerFrame::DestroyFrom(aDestructRoot);
 }
 
-NS_IMETHODIMP
+nsresult
 nsHTMLScrollFrame::SetInitialChildList(ChildListID  aListID,
                                        nsFrameList& aChildList)
 {
@@ -125,7 +125,7 @@ nsHTMLScrollFrame::SetInitialChildList(ChildListID  aListID,
 }
 
 
-NS_IMETHODIMP
+nsresult
 nsHTMLScrollFrame::AppendFrames(ChildListID  aListID,
                                 nsFrameList& aFrameList)
 {
@@ -135,7 +135,7 @@ nsHTMLScrollFrame::AppendFrames(ChildListID  aListID,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsHTMLScrollFrame::InsertFrames(ChildListID aListID,
                                 nsIFrame* aPrevFrame,
                                 nsFrameList& aFrameList)
@@ -148,7 +148,7 @@ nsHTMLScrollFrame::InsertFrames(ChildListID aListID,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 nsHTMLScrollFrame::RemoveFrame(ChildListID aListID,
                                nsIFrame* aOldFrame)
 {
@@ -714,7 +714,7 @@ nsHTMLScrollFrame::GetPrefWidth(nsRenderingContext *aRenderingContext)
   return NSCoordSaturatingAdd(result, GetIntrinsicVScrollbarWidth(aRenderingContext));
 }
 
-NS_IMETHODIMP
+nsresult
 nsHTMLScrollFrame::GetPadding(nsMargin& aMargin)
 {
   // Our padding hangs out on the inside of the scrollframe, but XUL doesn't
@@ -752,7 +752,7 @@ GetBrowserRoot(nsIContent* aContent)
   return nullptr;
 }
 
-NS_IMETHODIMP
+nsresult
 nsHTMLScrollFrame::Reflow(nsPresContext*           aPresContext,
                           nsHTMLReflowMetrics&     aDesiredSize,
                           const nsHTMLReflowState& aReflowState,
@@ -881,7 +881,7 @@ nsHTMLScrollFrame::Reflow(nsPresContext*           aPresContext,
 ////////////////////////////////////////////////////////////////////////////////
 
 #ifdef DEBUG_FRAME_DUMP
-NS_IMETHODIMP
+nsresult
 nsHTMLScrollFrame::GetFrameName(nsAString& aResult) const
 {
   return MakeFrameName(NS_LITERAL_STRING("HTMLScroll"), aResult);
@@ -1028,6 +1028,37 @@ ScrollFrameHelper::HandleScrollbarStyleSwitching()
   }
 }
 
+static bool IsFocused(nsIContent* aContent)
+{
+  // Some content elements, like the GetContent() of a scroll frame
+  // for a text input field, are inside anonymous subtrees, but the focus
+  // manager always reports a non-anonymous element as the focused one, so
+  // walk up the tree until we reach a non-anonymous element.
+  while (aContent && aContent->IsInAnonymousSubtree()) {
+    aContent = aContent->GetParent();
+  }
+
+  return aContent ? nsContentUtils::IsFocusedContent(aContent) : false;
+}
+
+bool
+ScrollFrameHelper::WantAsyncScroll() const
+{
+  nsRect scrollRange = GetScrollRange();
+  ScrollbarStyles styles = GetScrollbarStylesFromFrame();
+  bool isFocused = IsFocused(mOuter->GetContent());
+  bool isVScrollable = (scrollRange.height > 0)
+                    && (styles.mVertical != NS_STYLE_OVERFLOW_HIDDEN);
+  bool isHScrollable = (scrollRange.width > 0)
+                    && (styles.mHorizontal != NS_STYLE_OVERFLOW_HIDDEN);
+  // The check for scroll bars was added in bug 825692 to prevent layerization
+  // of text inputs for performance reasons. However, if a text input is
+  // focused we want to layerize it so we can async scroll it (bug 946408).
+  bool isVAsyncScrollable = isVScrollable && (mVScrollbarBox || isFocused);
+  bool isHAsyncScrollable = isHScrollable && (mHScrollbarBox || isFocused);
+  return isVAsyncScrollable || isHAsyncScrollable;
+}
+
 nsresult
 nsXULScrollFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
 {
@@ -1048,7 +1079,7 @@ nsXULScrollFrame::DestroyFrom(nsIFrame* aDestructRoot)
   nsBoxFrame::DestroyFrom(aDestructRoot);
 }
 
-NS_IMETHODIMP
+nsresult
 nsXULScrollFrame::SetInitialChildList(ChildListID     aListID,
                                       nsFrameList&    aChildList)
 {
@@ -1058,7 +1089,7 @@ nsXULScrollFrame::SetInitialChildList(ChildListID     aListID,
 }
 
 
-NS_IMETHODIMP
+nsresult
 nsXULScrollFrame::AppendFrames(ChildListID     aListID,
                                nsFrameList&    aFrameList)
 {
@@ -1067,7 +1098,7 @@ nsXULScrollFrame::AppendFrames(ChildListID     aListID,
   return rv;
 }
 
-NS_IMETHODIMP
+nsresult
 nsXULScrollFrame::InsertFrames(ChildListID     aListID,
                                nsIFrame*       aPrevFrame,
                                nsFrameList&    aFrameList)
@@ -1077,7 +1108,7 @@ nsXULScrollFrame::InsertFrames(ChildListID     aListID,
   return rv;
 }
 
-NS_IMETHODIMP
+nsresult
 nsXULScrollFrame::RemoveFrame(ChildListID     aListID,
                               nsIFrame*       aOldFrame)
 {
@@ -1092,7 +1123,7 @@ nsXULScrollFrame::GetSplittableType() const
   return NS_FRAME_NOT_SPLITTABLE;
 }
 
-NS_IMETHODIMP
+nsresult
 nsXULScrollFrame::GetPadding(nsMargin& aMargin)
 {
   aMargin.SizeTo(0,0,0,0);
@@ -1205,7 +1236,7 @@ nsXULScrollFrame::GetMaxSize(nsBoxLayoutState& aState)
 }
 
 #ifdef DEBUG_FRAME_DUMP
-NS_IMETHODIMP
+nsresult
 nsXULScrollFrame::GetFrameName(nsAString& aResult) const
 {
   return MakeFrameName(NS_LITERAL_STRING("XULScroll"), aResult);
@@ -1335,7 +1366,7 @@ public:
     return true;
   }
 
-  virtual void WillRefresh(mozilla::TimeStamp aTime) {
+  virtual void WillRefresh(mozilla::TimeStamp aTime) MOZ_OVERRIDE {
     // The callback may release "this".
     // We don't access members after returning, so no need for KungFuDeathGrip.
     ScrollFrameHelper::AsyncScrollCallback(mCallee, aTime);
@@ -1542,6 +1573,14 @@ public:
 
 static ScrollFrameActivityTracker *gScrollFrameActivityTracker = nullptr;
 
+// There are situations when a scroll frame is destroyed and then re-created
+// for the same content element. In this case we want to increment the scroll
+// generation between the old and new scrollframes. If the new one knew about
+// the old one then it could steal the old generation counter and increment it
+// but it doesn't have that reference so instead we use a static global to
+// ensure the new one gets a fresh value.
+static uint32_t sScrollGenerationCounter = 0;
+
 ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter,
                                              bool aIsRoot)
   : mHScrollbarBox(nullptr)
@@ -1552,6 +1591,7 @@ ScrollFrameHelper::ScrollFrameHelper(nsContainerFrame* aOuter,
   , mOuter(aOuter)
   , mAsyncScroll(nullptr)
   , mOriginOfLastScroll(nsGkAtoms::other)
+  , mScrollGeneration(++sScrollGenerationCounter)
   , mDestination(0, 0)
   , mScrollPosAtLastPaint(0, 0)
   , mRestorePos(-1, -1)
@@ -2067,6 +2107,7 @@ ScrollFrameHelper::ScrollToImpl(nsPoint aPt, const nsRect& aRange, nsIAtom* aOri
   // Update frame position for scrolling
   mScrolledFrame->SetPosition(mScrollPort.TopLeft() - pt);
   mOriginOfLastScroll = aOrigin;
+  mScrollGeneration = ++sScrollGenerationCounter;
 
   // We pass in the amount to move visually
   ScrollVisual(oldScrollFramePos);
@@ -2082,6 +2123,11 @@ ScrollFrameHelper::ScrollToImpl(nsPoint aPt, const nsRect& aRange, nsIAtom* aOri
   // notify the listeners.
   for (uint32_t i = 0; i < mListeners.Length(); i++) {
     mListeners[i]->ScrollPositionDidChange(pt.x, pt.y);
+  }
+
+  nsCOMPtr<nsIDocShell> docShell = presContext->GetDocShell();
+  if (docShell) {
+    docShell->NotifyScrollObservers();
   }
 }
 
@@ -2194,13 +2240,13 @@ public:
 
   virtual nsDisplayItem* WrapList(nsDisplayListBuilder* aBuilder,
                                   nsIFrame* aFrame,
-                                  nsDisplayList* aList) {
+                                  nsDisplayList* aList) MOZ_OVERRIDE {
     SetCount(++mCount);
     return new (aBuilder) nsDisplayScrollLayer(aBuilder, aList, mScrolledFrame, mScrolledFrame, mScrollFrame);
   }
 
   virtual nsDisplayItem* WrapItem(nsDisplayListBuilder* aBuilder,
-                                  nsDisplayItem* aItem) {
+                                  nsDisplayItem* aItem) MOZ_OVERRIDE {
 
     SetCount(++mCount);
     return new (aBuilder) nsDisplayScrollLayer(aBuilder, aItem, aItem->Frame(), mScrolledFrame, mScrollFrame);
@@ -2271,19 +2317,6 @@ ScrollFrameHelper::ExpandRect(const nsRect& aRect) const
   return rect;
 }
 
-static bool IsFocused(nsIContent* aContent)
-{
-  // Some content elements, like the GetContent() of a scroll frame
-  // for a text input field, are inside anonymous subtrees, but the focus
-  // manager always reports a non-anonymous element as the focused one, so
-  // walk up the tree until we reach a non-anonymous element.
-  while (aContent && aContent->IsInAnonymousSubtree()) {
-    aContent = aContent->GetParent();
-  }
-
-  return aContent ? nsContentUtils::IsFocusedContent(aContent) : false;
-}
-
 static bool
 ShouldBeClippedByFrame(nsIFrame* aClipFrame, nsIFrame* aClippedFrame)
 {
@@ -2348,6 +2381,28 @@ ClipListsExceptCaret(nsDisplayListCollection* aLists,
   ::ClipItemsExceptCaret(aLists->Content(), aBuilder, aClipFrame, aClip);
 }
 
+static bool
+DisplayportExceedsMaxTextureSize(nsPresContext* aPresContext, const nsRect& aDisplayPort)
+{
+#ifdef MOZ_WIDGET_GONK
+  // On B2G we actively run into max texture size limits because the displayport-sizing code
+  // in the AsyncPanZoomController code is slightly busted (bug 957668 will fix it properly).
+  // We sometimes end up requesting displayports for which the corresponding layer will be
+  // larger than the max GL texture size (which we assume to be 4096 here).
+  // If we run into this case, we should just not use the displayport at all and fall back to
+  // just making a ScrollInfoLayer so that we use the APZC's synchronous scrolling fallback
+  // mechanism.
+  // Note also that if we don't do this here, it is quite likely that the parent B2G process
+  // will kill this child process to prevent OOMs (see the patch that landed as part of bug
+  // 965945 for details).
+  gfxSize resolution = aPresContext->PresShell()->GetCumulativeResolution();
+  return (aPresContext->AppUnitsToDevPixels(aDisplayPort.width) * resolution.width > 4096) ||
+         (aPresContext->AppUnitsToDevPixels(aDisplayPort.height) * resolution.height > 4096);
+#else
+  return false;
+#endif
+}
+
 void
 ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                     const nsRect&           aDirtyRect,
@@ -2373,15 +2428,6 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     }
   }
 
-  if (aBuilder->GetIgnoreScrollFrame() == mOuter || IsIgnoringViewportClipping()) {
-    // Don't clip the scrolled child, and don't paint scrollbars/scrollcorner.
-    // The scrolled frame shouldn't have its own background/border, so we
-    // can just pass aLists directly.
-    mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame,
-                                     aDirtyRect, aLists);
-    return;
-  }
-
   // We put scrollbars in their own layers when this is the root scroll
   // frame and we are a toplevel content document. In this situation, the
   // scrollbar(s) would normally be assigned their own layer anyway, since
@@ -2392,6 +2438,47 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // scrollbar works around the problem.
   bool createLayersForScrollbars = mIsRoot &&
     mOuter->PresContext()->IsRootContentDocument();
+
+  if (aBuilder->GetIgnoreScrollFrame() == mOuter || IsIgnoringViewportClipping()) {
+
+    // If we are a root scroll frame that has a display port we want to add
+    // scrollbars, they will be children of the scrollable layer, but they get
+    // adjusted by the APZC automatically.
+    bool addScrollBars = mIsRoot &&
+      nsLayoutUtils::GetDisplayPort(mOuter->GetContent()) &&
+      !aBuilder->IsForEventDelivery();
+    // For now, don't add them for display root documents, cause we've never
+    // had them there.
+    if (aBuilder->RootReferenceFrame()->PresContext() == mOuter->PresContext()) {
+      addScrollBars = false;
+    }
+
+    if (addScrollBars) {
+      // Add classic scrollbars.
+      AppendScrollPartsTo(aBuilder, aDirtyRect, aLists, createLayersForScrollbars,
+                          false);
+    }
+
+    // Don't clip the scrolled child, and don't paint scrollbars/scrollcorner.
+    // The scrolled frame shouldn't have its own background/border, so we
+    // can just pass aLists directly.
+    mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame,
+                                     aDirtyRect, aLists);
+
+#ifdef MOZ_WIDGET_GONK
+    // TODO: only layerize the overlay scrollbars if this scrollframe can be
+    // panned asynchronously. For now just always layerize on B2G because.
+    // that's where we want the layerized scrollbars
+    createLayersForScrollbars = true;
+#endif
+    if (addScrollBars) {
+      // Add overlay scrollbars.
+      AppendScrollPartsTo(aBuilder, aDirtyRect, aLists, createLayersForScrollbars,
+                          true);
+    }
+
+    return;
+  }
 
   // Now display the scrollbars and scrollcorner. These parts are drawn
   // in the border-background layer, on top of our own background and
@@ -2413,13 +2500,31 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // dirty rect here.
   nsRect dirtyRect = aDirtyRect.Intersect(mScrollPort);
 
-  // Override the dirty rectangle if the displayport has been set.
   nsRect displayPort;
-  bool usingDisplayport =
-    nsLayoutUtils::GetDisplayPort(mOuter->GetContent(), &displayPort) &&
-    !aBuilder->IsForEventDelivery();
-  if (usingDisplayport) {
-    dirtyRect = displayPort;
+  bool usingDisplayport = false;
+  if (!aBuilder->IsForEventDelivery()) {
+    if (!mIsRoot) {
+      // For a non-root scroll frame, override the value of the display port
+      // base rect, and possibly create a display port if there isn't one
+      // already. For root scroll frame, nsLayoutUtils::PaintFrame or
+      // nsSubDocumentFrame::BuildDisplayList takes care of this.
+      nsRect displayportBase = dirtyRect;
+      usingDisplayport = nsLayoutUtils::GetOrMaybeCreateDisplayPort(
+          *aBuilder, mOuter, displayportBase, &displayPort);
+    } else {
+      // For a root frmae, just get the value of the existing of the display
+      // port, if any.
+      usingDisplayport = nsLayoutUtils::GetDisplayPort(mOuter->GetContent(), &displayPort);
+    }
+
+    if (usingDisplayport && DisplayportExceedsMaxTextureSize(mOuter->PresContext(), displayPort)) {
+      usingDisplayport = false;
+    }
+
+    // Override the dirty rectangle if the displayport has been set.
+    if (usingDisplayport) {
+      dirtyRect = displayPort;
+    }
   }
 
   if (aBuilder->IsForImageVisibility()) {
@@ -2506,28 +2611,9 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   if (mShouldBuildScrollableLayer) {
     shouldBuildLayer = true;
   } else {
-    nsRect scrollRange = GetScrollRange();
-    ScrollbarStyles styles = GetScrollbarStylesFromFrame();
-    bool isFocused = IsFocused(mOuter->GetContent());
-    bool isVScrollable = (scrollRange.height > 0)
-                      && (styles.mVertical != NS_STYLE_OVERFLOW_HIDDEN);
-    bool isHScrollable = (scrollRange.width > 0)
-                      && (styles.mHorizontal != NS_STYLE_OVERFLOW_HIDDEN);
-    // The check for scroll bars was added in bug 825692 to prevent layerization
-    // of text inputs for performance reasons. However, if a text input is
-    // focused we want to layerize it so we can async scroll it (bug 946408).
-    bool wantLayerV = isVScrollable && (mVScrollbarBox || isFocused);
-    bool wantLayerH = isHScrollable && (mHScrollbarBox || isFocused);
-    // TODO Turn this on for inprocess OMTC on all platforms
-    bool wantSubAPZC = (XRE_GetProcessType() == GeckoProcessType_Content);
-#ifdef XP_WIN
-    if (XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Metro) {
-      wantSubAPZC = true;
-    }
-#endif
     shouldBuildLayer =
-      wantSubAPZC &&
-      (wantLayerV || wantLayerH) &&
+      nsLayoutUtils::WantSubAPZC() &&
+      WantAsyncScroll() &&
       // If we are the root scroll frame for the display root then we don't need a scroll
       // info layer to make a RecordFrameMetrics call for us as
       // nsDisplayList::PaintForFrame already calls RecordFrameMetrics for us.
@@ -3978,6 +4064,7 @@ ScrollFrameHelper::UpdateOverflow()
     mSkippedScrollbarLayout = true;
     return false;  // reflowing will update overflow
   }
+  PostOverflowEvent();
   return mOuter->nsContainerFrame::UpdateOverflow();
 }
 

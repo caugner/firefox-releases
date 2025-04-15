@@ -7,6 +7,12 @@
 // HttpLog.h should generally be included first
 #include "HttpLog.h"
 
+// Log on level :5, instead of default :4.
+#undef LOG
+#define LOG(args) LOG5(args)
+#undef LOG_ENABLED
+#define LOG_ENABLED() LOG5_ENABLED()
+
 #include <algorithm>
 
 #include "Http2Session.h"
@@ -2587,6 +2593,18 @@ Http2Session::ConnectPushedStream(Http2Stream *stream)
 {
   mReadyForRead.Push(stream);
   ForceRecv();
+}
+
+nsresult
+Http2Session::BufferOutput(const char *buf,
+                           uint32_t count,
+                           uint32_t *countRead)
+{
+  nsAHttpSegmentReader *old = mSegmentReader;
+  mSegmentReader = nullptr;
+  nsresult rv = OnReadSegment(buf, count, countRead);
+  mSegmentReader = old;
+  return rv;
 }
 
 nsresult

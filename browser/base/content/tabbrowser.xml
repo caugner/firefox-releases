@@ -1049,7 +1049,7 @@
 
             if (!this._previewMode) {
               this.mCurrentTab.removeAttribute("unread");
-              this.selectedTab.lastAccessed = Date.now();
+              oldTab.lastAccessed = Date.now();
 
               let oldFindBar = oldTab._findBar;
               if (oldFindBar &&
@@ -3001,10 +3001,9 @@
               gContextMenuContentData = { event: aMessage.objects.event,
                                           browser: browser };
               let popup = browser.ownerDocument.getElementById("contentAreaContextMenu");
-              popup.openPopup(browser, "overlap",
-                              gContextMenuContentData.event.clientX,
-                              gContextMenuContentData.event.clientY,
-                              true, false, null);
+              let event = gContextMenuContentData.event;
+              let pos = browser.mapScreenCoordinatesFromContent(event.screenX, event.screenY);
+              popup.openPopupAtScreen(pos.x, pos.y, true);
               break;
             }
             case "DOMWebNotificationClicked": {
@@ -3051,24 +3050,18 @@
           filter.addProgressListener(tabListener, nsIWebProgress.NOTIFY_ALL);
           this.mTabListeners[0] = tabListener;
           this.mTabFilters[0] = filter;
-
-          try {
-            // We assume this can only fail because mCurrentBrowser's docShell
-            // hasn't been created, yet. This may be caused by code accessing
-            // gBrowser before the window has finished loading.
-            this._addProgressListenerForInitialTab();
-          } catch (e) {
-            // The binding was constructed too early, wait until the initial
-            // tab's document is ready, then add the progress listener.
-            this._waitForInitialContentDocument();
-          }
+          this.webProgress.addProgressListener(filter, nsIWebProgress.NOTIFY_ALL);
 
           this.style.backgroundColor =
             Services.prefs.getBoolPref("browser.display.use_system_colors") ?
               "-moz-default-background-color" :
               Services.prefs.getCharPref("browser.display.background_color");
 
-          if (Services.appinfo.browserTabsRemote) {
+          let remote = window.QueryInterface(Ci.nsIInterfaceRequestor)
+            .getInterface(Ci.nsIWebNavigation)
+            .QueryInterface(Ci.nsILoadContext)
+            .useRemoteTabs;
+          if (remote) {
             messageManager.addMessageListener("DOMTitleChanged", this);
             messageManager.addMessageListener("contextmenu", this);
           }
@@ -3093,31 +3086,6 @@
         ]]></body>
       </method>
 
-      <method name="_addProgressListenerForInitialTab">
-        <body><![CDATA[
-          this.webProgress.addProgressListener(this.mTabFilters[0], Ci.nsIWebProgress.NOTIFY_ALL);
-        ]]></body>
-      </method>
-
-      <method name="_waitForInitialContentDocument">
-        <body><![CDATA[
-          let obs = (subject, topic) => {
-            if (this.browsers[0].contentWindow == subject) {
-              Services.obs.removeObserver(obs, topic);
-              this._addProgressListenerForInitialTab();
-            }
-          };
-
-          // We use content-document-global-created as an approximation for
-          // "docShell is initialized". We can do this because in the
-          // mTabProgressListener we care most about the STATE_STOP notification
-          // that will reset mBlank. That means it's important to at least add
-          // the progress listener before the initial about:blank load stops
-          // if we can't do it before the load starts.
-          Services.obs.addObserver(obs, "content-document-global-created", false);
-        ]]></body>
-      </method>
-
       <destructor>
         <![CDATA[
           for (var i = 0; i < this.mTabListeners.length; ++i) {
@@ -3135,7 +3103,7 @@
           document.removeEventListener("keypress", this, false);
           window.removeEventListener("sizemodechange", this, false);
 
-          if (Services.appinfo.browserTabsRemote) {
+          if (gMultiProcessBrowser) {
             messageManager.removeMessageListener("DOMTitleChanged", this);
             messageManager.removeMessageListener("contextmenu", this);
           }
@@ -3792,8 +3760,6 @@
           if (this.getAttribute("movingtab") != "true") {
             this.setAttribute("movingtab", "true");
             this.selectedItem = draggedTab;
-            let tabdragevent = new CustomEvent("tabdragstart", {bubbles: true, detail: draggedTab});
-            this.dispatchEvent(tabdragevent);
           }
 
           if (!("animLastScreenX" in draggedTab._dragData))
@@ -3895,8 +3861,6 @@
             tab.style.transform = "";
 
           this.removeAttribute("movingtab");
-          let tabdragevent = new CustomEvent("tabdragstop", {bubbles: true});
-          this.dispatchEvent(tabdragevent);
 
           this._handleTabSelect();
         ]]></body>
@@ -4053,6 +4017,10 @@
               // and vice versa.
               if (PrivateBrowsingUtils.isWindowPrivate(window) !=
                   PrivateBrowsingUtils.isWindowPrivate(sourceNode.ownerDocument.defaultView))
+                return dt.effectAllowed = "none";
+
+              if (window.gMultiProcessBrowser !=
+                  sourceNode.ownerDocument.defaultView.gMultiProcessBrowser)
                 return dt.effectAllowed = "none";
 
 #ifdef XP_MACOSX
@@ -4764,10 +4732,19 @@
         </getter>
       </property>
 
+      <property name="lastAccessed">
+        <getter>
+          return this.selected ? Date.now() : this._lastAccessed;
+        </getter>
+        <setter>
+          this._lastAccessed = val;
+        </setter>
+      </property>
+      <field name="_lastAccessed">0</field>
+
       <field name="mOverCloseButton">false</field>
       <field name="mCorrespondingMenuitem">null</field>
       <field name="closing">false</field>
-      <field name="lastAccessed">0</field>
 
       <method name="_mouseenter">
         <body><![CDATA[

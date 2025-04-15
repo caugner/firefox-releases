@@ -11,7 +11,7 @@
 #include "nsPresContext.h"
 #include "nsStyleContext.h"
 #include "nsCSSRendering.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsViewManager.h"
 #include "nsWidgetsCID.h"
 #include "nsMenuFrame.h"
@@ -341,7 +341,7 @@ public:
   {
   }
 
-  NS_IMETHOD Run()
+  NS_IMETHOD Run() MOZ_OVERRIDE
   {
     WidgetMouseEvent event(true, NS_XUL_POPUP_SHOWN, nullptr,
                            WidgetMouseEvent::eReal);
@@ -353,7 +353,7 @@ private:
   nsRefPtr<nsPresContext> mPresContext;
 };
 
-NS_IMETHODIMP
+nsresult
 nsMenuPopupFrame::SetInitialChildList(ChildListID  aListID,
                                       nsFrameList& aChildList)
 {
@@ -1338,13 +1338,14 @@ nsMenuPopupFrame::SetPopupPosition(nsIFrame* aAnchorFrame, bool aIsMove, bool aS
                  "Popup is offscreen");
   }
 
+  // snap the popup's position in screen coordinates to device pixels,
+  // see bug 622507, bug 961431
+  screenPoint.x = presContext->RoundAppUnitsToNearestDevPixels(screenPoint.x);
+  screenPoint.y = presContext->RoundAppUnitsToNearestDevPixels(screenPoint.y);
+
   // determine the x and y position of the view by subtracting the desired
   // screen position from the screen position of the root frame.
   nsPoint viewPoint = screenPoint - rootScreenRect.TopLeft();
-
-  // snap the view's position to device pixels, see bug 622507
-  viewPoint.x = presContext->RoundAppUnitsToNearestDevPixels(viewPoint.x);
-  viewPoint.y = presContext->RoundAppUnitsToNearestDevPixels(viewPoint.y);
 
   nsView* view = GetView();
   NS_ASSERTION(view, "popup with no view");
@@ -1477,7 +1478,7 @@ bool nsMenuPopupFrame::ConsumeOutsideClicks()
     nsINodeInfo *ni = parentContent->NodeInfo();
     if (ni->Equals(nsGkAtoms::menulist, kNameSpaceID_XUL))
       return true;  // Consume outside clicks for combo boxes on all platforms
-#if defined(XP_WIN) || defined(XP_OS2)
+#if defined(XP_WIN)
     // Don't consume outside clicks for menus in Windows
     if (ni->Equals(nsGkAtoms::menu, kNameSpaceID_XUL) ||
         ni->Equals(nsGkAtoms::splitmenu, kNameSpaceID_XUL) ||
@@ -1821,7 +1822,7 @@ nsMenuPopupFrame::AttachedDismissalListener()
 
 // helpers /////////////////////////////////////////////////////////////
 
-NS_IMETHODIMP 
+nsresult 
 nsMenuPopupFrame::AttributeChanged(int32_t aNameSpaceID,
                                    nsIAtom* aAttribute,
                                    int32_t aModType)

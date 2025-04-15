@@ -58,7 +58,6 @@ class nsIEditorObserver;
 class nsIInlineSpellChecker;
 class nsINode;
 class nsIPresShell;
-class nsIPrivateTextRangeList;
 class nsISelection;
 class nsISupports;
 class nsITransaction;
@@ -69,8 +68,10 @@ class nsTransactionManager;
 
 namespace mozilla {
 class Selection;
+class TextComposition;
 
 namespace dom {
+class DataTransfer;
 class Element;
 class EventTarget;
 }  // namespace dom
@@ -242,9 +243,8 @@ public:
                              mozilla::dom::Element** aContent);
 
   // IME event handlers
-  virtual nsresult BeginIMEComposition();
-  virtual nsresult UpdateIMEComposition(const nsAString &aCompositionString,
-                                        nsIPrivateTextRangeList *aTextRange)=0;
+  virtual nsresult BeginIMEComposition(mozilla::WidgetCompositionEvent* aEvent);
+  virtual nsresult UpdateIMEComposition(nsIDOMEvent* aDOMTextEvent) = 0;
   void EndIMEComposition();
 
   void SwitchTextDirectionTo(uint32_t aDirection);
@@ -412,6 +412,13 @@ protected:
     // regardless of DOM. Also, check to see if spell check should be skipped or not.
     return !IsPasswordEditor() && !IsReadonly() && !IsDisabled() && !ShouldSkipSpellCheck();
   }
+
+  /**
+   * EnsureComposition() should be composition event handlers or text event
+   * handler.  This tries to get the composition for the event and set it to
+   * mComposition.
+   */
+  void EnsureComposition(mozilla::WidgetGUIEvent* aEvent);
 
 public:
 
@@ -592,9 +599,14 @@ public:
   /** Find the deep first and last children. */
   nsINode* GetFirstEditableNode(nsINode* aRoot);
 
-  int32_t GetIMEBufferLength();
-  bool IsIMEComposing();    /* test if IME is in composition state */
-  void SetIsIMEComposing(); /* call this before |IsIMEComposing()| */
+  /**
+   * Returns current composition.
+   */
+  mozilla::TextComposition* GetComposition() const;
+  /**
+   * Returns true if there is composition string and not fixed.
+   */
+  bool IsIMEComposing() const;
 
   /** from html rules code - migration in progress */
   static nsresult GetTagString(nsIDOMNode *aNode, nsAString& outString);
@@ -758,7 +770,7 @@ public:
   // Get the focused content, if we're focused.  Returns null otherwise.
   virtual already_AddRefed<nsIContent> GetFocusedContent();
 
-  // Get the focused content for the argument of some nsIMEStateManager's
+  // Get the focused content for the argument of some IMEStateManager's
   // methods.
   virtual already_AddRefed<nsIContent> GetFocusedContentForIME();
 
@@ -796,7 +808,7 @@ public:
   // Used to insert content from a data transfer into the editable area.
   // This is called for each item in the data transfer, with the index of
   // each item passed as aIndex.
-  virtual nsresult InsertFromDataTransfer(nsIDOMDataTransfer *aDataTransfer,
+  virtual nsresult InsertFromDataTransfer(mozilla::dom::DataTransfer *aDataTransfer,
                                           int32_t aIndex,
                                           nsIDOMDocument *aSourceDoc,
                                           nsIDOMNode *aDestinationNode,
@@ -820,7 +832,6 @@ protected:
 
   nsRefPtr<nsTransactionManager> mTxnMgr;
   nsCOMPtr<mozilla::dom::Element> mRootElement; // cached root node
-  nsCOMPtr<nsIPrivateTextRangeList> mIMETextRangeList; // IME special selection ranges
   nsCOMPtr<nsIDOMCharacterData>     mIMETextNode;      // current IME text node
   nsCOMPtr<mozilla::dom::EventTarget> mEventTarget; // The form field as an event receiver
   nsCOMPtr<nsIDOMEventListener> mEventListener;
@@ -830,6 +841,9 @@ protected:
   nsIAtom          *mPlaceHolderName;    // name of placeholder transaction
   nsSelectionState *mSelState;           // saved selection state for placeholder txn batching
   nsString         *mPhonetic;
+  // IME composition this is not null between compositionstart and
+  // compositionend.
+  nsRefPtr<mozilla::TextComposition> mComposition;
 
   // various listeners
   nsCOMArray<nsIEditActionListener> mActionListeners;  // listens to all low level actions on the doc
@@ -848,15 +862,10 @@ protected:
   EditAction        mAction;             // the current editor action
 
   uint32_t          mIMETextOffset;    // offset in text node where IME comp string begins
-  uint32_t          mIMEBufferLength;  // current length of IME comp string
 
   EDirection        mDirection;          // the current direction of editor action
   int8_t            mDocDirtyState;      // -1 = not initialized
   uint8_t           mSpellcheckCheckboxState; // a Tristate value
-
-  bool mInIMEMode;        // are we inside an IME composition?
-  bool mIsIMEComposing;   // is IME in composition state?
-                                                       // This is different from mInIMEMode. see Bug 98434.
 
   bool mShouldTxnSetSelection;  // turn off for conservative selection adjustment by txns
   bool mDidPreDestroy;    // whether PreDestroy has been called
