@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const stateBackup = ss.getBrowserState();
+const stateBackup = JSON.parse(ss.getBrowserState());
 const testState = {
   windows: [{
     tabs: [
@@ -76,8 +76,7 @@ function runNextTest() {
     });
   }
   else {
-    ss.setBrowserState(stateBackup);
-    finish();
+    waitForBrowserState(stateBackup, finish);
   }
 }
 
@@ -132,9 +131,8 @@ function test_duplicateTab() {
     busyEventCount++;
   }
 
-  // duplicateTab is "synchronous" in tab creation. Since restoreHistory is called
-  // via setTimeout, newTab will be assigned before the SSWindowStateReady event
   function onSSWindowStateReady(aEvent) {
+    newTab = gBrowser.tabs[2];
     readyEventCount++;
     is(ss.getTabValue(newTab, "foo"), "bar");
     ss.setTabValue(newTab, "baz", "qux");
@@ -173,9 +171,8 @@ function test_undoCloseTab() {
     busyEventCount++;
   }
 
-  // undoCloseTab is "synchronous" in tab creation. Since restoreHistory is called
-  // via setTimeout, reopenedTab will be assigned before the SSWindowStateReady event
   function onSSWindowStateReady(aEvent) {
+    reopenedTab = gBrowser.tabs[1];
     readyEventCount++;
     is(ss.getTabValue(reopenedTab, "foo"), "bar");
     ss.setTabValue(reopenedTab, "baz", "qux");
@@ -290,7 +287,8 @@ function test_setBrowserState() {
 
   waitForBrowserState(lameMultiWindowState, function() {
     let checkedWindows = 0;
-    for each (let [id, winEvents] in Iterator(windowEvents)) {
+    for (let id of Object.keys(windowEvents)) {
+      let winEvents = windowEvents[id];
       is(winEvents.busyEventCount, 1,
          "[test_setBrowserState] window" + id + " busy event count correct");
       is(winEvents.readyEventCount, 1,

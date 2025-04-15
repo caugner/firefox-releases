@@ -6,15 +6,14 @@
 #include "MacIOSurfaceTextureHostOGL.h"
 #include "mozilla/gfx/MacIOSurface.h"
 #include "mozilla/layers/CompositorOGL.h"
-#include "GLContext.h"
+#include "GLContextCGL.h"
 
 namespace mozilla {
 namespace layers {
 
-MacIOSurfaceTextureHostOGL::MacIOSurfaceTextureHostOGL(uint64_t aID,
-                                                       TextureFlags aFlags,
+MacIOSurfaceTextureHostOGL::MacIOSurfaceTextureHostOGL(TextureFlags aFlags,
                                                        const SurfaceDescriptorMacIOSurface& aDescriptor)
-  : TextureHost(aID, aFlags)
+  : TextureHost(aFlags)
 {
   mSurface = MacIOSurface::LookupSurface(aDescriptor.surface(),
                                          aDescriptor.scaleFactor(),
@@ -47,9 +46,9 @@ MacIOSurfaceTextureHostOGL::SetCompositor(Compositor* aCompositor)
 gfx::SurfaceFormat
 MacIOSurfaceTextureHostOGL::GetFormat() const {
   if (!mSurface) {
-    return gfx::FORMAT_UNKNOWN;
+    return gfx::SurfaceFormat::UNKNOWN;
   }
-  return mSurface->HasAlpha() ? gfx::FORMAT_R8G8B8A8 : gfx::FORMAT_B8G8R8X8;
+  return mSurface->HasAlpha() ? gfx::SurfaceFormat::R8G8B8A8 : gfx::SurfaceFormat::B8G8R8X8;
 }
 
 gfx::IntSize
@@ -81,7 +80,7 @@ MacIOSurfaceTextureSourceOGL::GetSize() const
 gfx::SurfaceFormat
 MacIOSurfaceTextureSourceOGL::GetFormat() const
 {
-  return mSurface->HasAlpha() ? gfx::FORMAT_R8G8B8A8 : gfx::FORMAT_B8G8R8X8;
+  return mSurface->HasAlpha() ? gfx::SurfaceFormat::R8G8B8A8 : gfx::SurfaceFormat::B8G8R8X8;
 }
 
 void
@@ -95,8 +94,14 @@ MacIOSurfaceTextureSourceOGL::BindTexture(GLenum aTextureUnit)
 
   gl()->fActiveTexture(aTextureUnit);
   gl()->fBindTexture(LOCAL_GL_TEXTURE_RECTANGLE_ARB, tex);
-  mSurface->CGLTexImageIOSurface2D(static_cast<CGLContextObj>(gl()->GetNativeData(gl::GLContext::NativeCGLContext)));
+  mSurface->CGLTexImageIOSurface2D(gl::GLContextCGL::Cast(gl())->GetCGLContext());
   gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
+}
+
+void
+MacIOSurfaceTextureSourceOGL::SetCompositor(Compositor* aCompositor)
+{
+  mCompositor = static_cast<CompositorOGL*>(aCompositor);
 }
 
 gl::GLContext*

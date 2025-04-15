@@ -227,7 +227,7 @@ BrowserTabList.prototype.getList = function() {
     // For each tab in this XUL window, ensure that we have an actor for
     // it, reusing existing actors where possible. We actually iterate
     // over 'browser' XUL elements, and BrowserTabActor uses
-    // browser.contentWindow.wrappedJSObject as the debuggee global.
+    // browser.contentWindow as the debuggee global.
     for (let browser of this._getChildren(win)) {
       // Do we have an existing actor for this browser? If not, create one.
       let actor = this._actorByBrowser.get(browser);
@@ -606,8 +606,7 @@ BrowserTabActor.prototype = {
       return;
     }
 
-    if (this.attached) {
-      this._detach();
+    if (this._detach()) {
       this.conn.send({ from: this.actorID,
                        type: "tabDetached" });
     }
@@ -656,7 +655,7 @@ BrowserTabActor.prototype = {
     this._contextPool = new ActorPool(this.conn);
     this.conn.addActorPool(this._contextPool);
 
-    this.threadActor = new ThreadActor(this, this.window.wrappedJSObject);
+    this.threadActor = new ThreadActor(this, this.window);
     this._contextPool.addActor(this.threadActor);
   },
 
@@ -675,10 +674,12 @@ BrowserTabActor.prototype = {
 
   /**
    * Does the actual work of detaching from a tab.
+   *
+   * @returns false if the tab wasn't attached or true of detahing succeeds.
    */
   _detach: function BTA_detach() {
     if (!this.attached) {
-      return;
+      return false;
     }
 
     if (this._progressListener) {
@@ -699,6 +700,7 @@ BrowserTabActor.prototype = {
     }
 
     this._attached = false;
+    return true;
   },
 
   // Protocol Request Handlers
@@ -710,15 +712,18 @@ BrowserTabActor.prototype = {
 
     this._attach();
 
-    return { type: "tabAttached", threadActor: this.threadActor.actorID };
+    return {
+      type: "tabAttached",
+      threadActor: this.threadActor.actorID,
+      cacheEnabled: this._getCacheEnabled(),
+      javascriptEnabled: this._getJavascriptEnabled()
+    };
   },
 
   onDetach: function BTA_onDetach(aRequest) {
-    if (!this.attached) {
+    if (!this._detach()) {
       return { error: "wrongState" };
     }
-
-    this._detach();
 
     return { type: "detached" };
   },
@@ -745,6 +750,108 @@ BrowserTabActor.prototype = {
       this.window.location = aRequest.url;
     }, "BrowserTabActor.prototype.onNavigateTo's delayed body"), 0);
     return {};
+  },
+
+  /**
+   * Reconfigure options.
+   */
+  onReconfigure: function (aRequest) {
+    let options = aRequest.options || {};
+
+    this._toggleJsOrCache(options);
+    return {};
+  },
+
+  /**
+   * Handle logic to enable/disable JS/cache.
+   */
+  _toggleJsOrCache: function(options) {
+    // Wait a tick so that the response packet can be dispatched before the
+    // subsequent navigation event packet.
+    let reload = false;
+
+    if (typeof options.javascriptEnabled !== "undefined" &&
+        options.javascriptEnabled !== this._getJavascriptEnabled()) {
+      this._setJavascriptEnabled(options.javascriptEnabled);
+      reload = true;
+    }
+    if (typeof options.cacheEnabled !== "undefined" &&
+        options.cacheEnabled !== this._getCacheEnabled()) {
+      this._setCacheEnabled(options.cacheEnabled);
+      reload = true;
+    }
+
+    // Reload if:
+    //  - there's an explicit `performReload` flag and it's true
+    //  - there's no `performReload` flag, but it makes sense to do so
+    let hasExplicitReloadFlag = "performReload" in options;
+    if ((hasExplicitReloadFlag && options.performReload) ||
+       (!hasExplicitReloadFlag && reload)) {
+      this.onReload();
+    }
+  },
+
+  /**
+   * Disable or enable the cache via docShell.
+   */
+  _setCacheEnabled: function(allow) {
+    let enable =  Ci.nsIRequest.LOAD_NORMAL;
+    let disable = Ci.nsIRequest.LOAD_BYPASS_CACHE |
+                  Ci.nsIRequest.INHIBIT_CACHING;
+    if (this.window) {
+      let docShell = this.window
+                         .QueryInterface(Ci.nsIInterfaceRequestor)
+                         .getInterface(Ci.nsIDocShell);
+
+      docShell.defaultLoadFlags = allow ? enable : disable;
+    }
+  },
+
+  /**
+   * Disable or enable JS via docShell.
+   */
+  _setJavascriptEnabled: function(allow) {
+    if (this.window) {
+      let docShell = this.window
+                         .QueryInterface(Ci.nsIInterfaceRequestor)
+                         .getInterface(Ci.nsIDocShell);
+
+      docShell.allowJavascript = allow;
+    }
+  },
+
+  /**
+   * Return cache allowed status.
+   */
+  _getCacheEnabled: function() {
+    if (!this.window) {
+      // The tab is already closed.
+      return null;
+    }
+
+    let disable = Ci.nsIRequest.LOAD_BYPASS_CACHE |
+                  Ci.nsIRequest.INHIBIT_CACHING;
+    let docShell = this.window
+                       .QueryInterface(Ci.nsIInterfaceRequestor)
+                       .getInterface(Ci.nsIDocShell);
+
+    return docShell.defaultLoadFlags !== disable;
+  },
+
+  /**
+   * Return JS allowed status.
+   */
+  _getJavascriptEnabled: function() {
+    if (!this.window) {
+      // The tab is already closed.
+      return null;
+    }
+
+    let docShell = this.window
+                       .QueryInterface(Ci.nsIInterfaceRequestor)
+                       .getInterface(Ci.nsIDocShell);
+
+    return docShell.allowJavascript;
   },
 
   /**
@@ -788,26 +895,24 @@ BrowserTabActor.prototype = {
    */
   onWindowCreated:
   makeInfallible(function BTA_onWindowCreated(evt) {
-    if (evt.target === this.browser.contentDocument) {
-      // pageshow events for non-persisted pages have already been handled by a
-      // prior DOMWindowCreated event.
-      if (evt.type == "pageshow" && !evt.persisted) {
-        return;
-      }
-      if (this._attached) {
-        this.threadActor.clearDebuggees();
-        if (this.threadActor.dbg) {
-          this.threadActor.dbg.enabled = true;
-          this.threadActor.maybePauseOnExceptions();
-        }
+    // pageshow events for non-persisted pages have already been handled by a
+    // prior DOMWindowCreated event.
+    if (!this._attached || (evt.type == "pageshow" && !evt.persisted)) {
+      return;
+    }
+    if (evt.target === this.browser.contentDocument ) {
+      this.threadActor.clearDebuggees();
+      if (this.threadActor.dbg) {
+        this.threadActor.dbg.enabled = true;
+        this.threadActor.global = evt.target.defaultView;
+        this.threadActor.maybePauseOnExceptions();
       }
     }
 
-    if (this._attached) {
-      this.threadActor.global = evt.target.defaultView.wrappedJSObject;
-      if (this.threadActor.attached) {
-        this.threadActor.findGlobals();
-      }
+    // Refresh the debuggee list when a new window object appears (top window or
+    // iframe).
+    if (this.threadActor.attached) {
+      this.threadActor.findGlobals();
     }
   }, "BrowserTabActor.prototype.onWindowCreated"),
 
@@ -838,7 +943,8 @@ BrowserTabActor.prototype.requestTypes = {
   "attach": BrowserTabActor.prototype.onAttach,
   "detach": BrowserTabActor.prototype.onDetach,
   "reload": BrowserTabActor.prototype.onReload,
-  "navigateTo": BrowserTabActor.prototype.onNavigateTo
+  "navigateTo": BrowserTabActor.prototype.onNavigateTo,
+  "reconfigure": BrowserTabActor.prototype.onReconfigure
 };
 
 function BrowserAddonList(aConnection)

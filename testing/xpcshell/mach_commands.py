@@ -17,6 +17,7 @@ from StringIO import StringIO
 from mozbuild.base import (
     MachCommandBase,
     MozbuildObject,
+    MachCommandConditions as conditions,
 )
 
 from mach.decorators import (
@@ -53,8 +54,13 @@ class XPCShellRunner(MozbuildObject):
     def run_test(self, test_file, interactive=False,
                  keep_going=False, sequential=False, shuffle=False,
                  debugger=None, debuggerArgs=None, debuggerInteractive=None,
-                 rerun_failures=False):
+                 rerun_failures=False,
+                 # ignore parameters from other platforms' options
+                 **kwargs):
         """Runs an individual xpcshell test."""
+        from mozbuild.testing import TestResolver
+        from manifestparser import TestManifest
+
         # TODO Bug 794506 remove once mach integrates with virtualenv.
         build_path = os.path.join(self.topobjdir, 'build')
         if build_path not in sys.path:
@@ -68,39 +74,30 @@ class XPCShellRunner(MozbuildObject):
                            rerun_failures=rerun_failures)
             return
 
-        path_arg = self._wrap_path_argument(test_file)
+        resolver = self._spawn(TestResolver)
+        tests = list(resolver.resolve_tests(path=test_file, flavor='xpcshell',
+            cwd=self.cwd))
 
-        test_obj_dir = os.path.join(self.topobjdir, '_tests', 'xpcshell',
-            path_arg.relpath())
-        if os.path.isfile(test_obj_dir):
-            test_obj_dir = mozpack.path.dirname(test_obj_dir)
+        if not tests:
+            raise InvalidTestPathError('We could not find an xpcshell test '
+                'for the passed test path. Please select a path that is '
+                'a test file or is a directory containing xpcshell tests.')
 
-        xpcshell_dirs = []
-        for base, dirs, files in os.walk(test_obj_dir):
-            if os.path.exists(mozpack.path.join(base, 'xpcshell.ini')):
-                xpcshell_dirs.append(base)
-
-        if not xpcshell_dirs:
-            raise InvalidTestPathError('An xpcshell.ini could not be found '
-                'for the passed test path. Please select a path whose '
-                'directory or subdirectories contain an xpcshell.ini file. '
-                'It is possible you received this error because the tree is '
-                'not built or tests are not enabled.')
+        # Dynamically write out a manifest holding all the discovered tests.
+        manifest = TestManifest()
+        manifest.tests.extend(tests)
 
         args = {
             'interactive': interactive,
             'keep_going': keep_going,
             'shuffle': shuffle,
             'sequential': sequential,
-            'test_dirs': xpcshell_dirs,
             'debugger': debugger,
             'debuggerArgs': debuggerArgs,
             'debuggerInteractive': debuggerInteractive,
-            'rerun_failures': rerun_failures
+            'rerun_failures': rerun_failures,
+            'manifest': manifest,
         }
-
-        if os.path.isfile(path_arg.srcdir_path()):
-            args['test_path'] = mozpack.path.basename(path_arg.srcdir_path())
 
         return self._run_xpcshell_harness(**args)
 
@@ -197,6 +194,90 @@ class XPCShellRunner(MozbuildObject):
                   "to make sure the failures were not caused by this.")
         return int(not result)
 
+class AndroidXPCShellRunner(MozbuildObject):
+    """Get specified DeviceManager"""
+    def get_devicemanager(self, devicemanager, ip, port, remote_test_root):
+        from mozdevice import devicemanagerADB, devicemanagerSUT
+        dm = None
+        if devicemanager == "adb":
+            if ip:
+                dm = devicemanagerADB.DeviceManagerADB(ip, port, packageName=None, deviceRoot=remote_test_root)
+            else:
+                dm = devicemanagerADB.DeviceManagerADB(packageName=None, deviceRoot=remote_test_root)
+        else:
+            if ip:
+                dm = devicemanagerSUT.DeviceManagerSUT(ip, port, deviceRoot=remote_test_root)
+            else:
+                raise Exception("You must provide a device IP to connect to via the --ip option")
+        return dm
+
+    """Run Android xpcshell tests."""
+    def run_test(self,
+                 test_file, keep_going,
+                 devicemanager, ip, port, remote_test_root, no_setup, local_apk,
+                 # ignore parameters from other platforms' options
+                 **kwargs):
+        # TODO Bug 794506 remove once mach integrates with virtualenv.
+        build_path = os.path.join(self.topobjdir, 'build')
+        if build_path not in sys.path:
+            sys.path.append(build_path)
+
+        import remotexpcshelltests
+
+        dm = self.get_devicemanager(devicemanager, ip, port, remote_test_root)
+
+        options = remotexpcshelltests.RemoteXPCShellOptions()
+        options.shuffle = False
+        options.sequential = True
+        options.interactive = False
+        options.debugger = None
+        options.debuggerArgs = None
+        options.setup = not no_setup
+        options.keepGoing = keep_going
+        options.objdir = self.topobjdir
+        options.localLib = os.path.join(self.topobjdir, 'dist/fennec')
+        options.localBin = os.path.join(self.topobjdir, 'dist/bin')
+        options.testingModulesDir = os.path.join(self.topobjdir, '_tests/modules')
+        options.mozInfo = os.path.join(self.topobjdir, 'mozinfo.json')
+        options.manifest = os.path.join(self.topobjdir, '_tests/xpcshell/xpcshell_android.ini')
+        options.symbolsPath = os.path.join(self.distdir, 'crashreporter-symbols')
+        if local_apk:
+            options.localAPK = local_apk
+        else:
+            for file in os.listdir(os.path.join(options.objdir, "dist")):
+                if file.endswith(".apk") and file.startswith("fennec"):
+                    options.localAPK = os.path.join(options.objdir, "dist")
+                    options.localAPK = os.path.join(options.localAPK, file)
+                    print ("using APK: " + options.localAPK)
+                    break
+            else:
+                raise Exception("You must specify an APK")
+
+        if test_file == 'all':
+            testdirs = []
+            options.testPath = None
+            options.verbose = False
+        else:
+            testdirs = test_file
+            options.testPath = test_file
+            options.verbose = True
+        dummy_log = StringIO()
+        xpcshell = remotexpcshelltests.XPCShellRemote(dm, options, args=testdirs, log=dummy_log)
+        self.log_manager.enable_unstructured()
+
+        xpcshell_filter = TestStartFilter()
+        self.log_manager.terminal_handler.addFilter(xpcshell_filter)
+
+        result = xpcshell.runTests(xpcshell='xpcshell',
+                      testClass=remotexpcshelltests.RemoteXPCShellTestThread,
+                      testdirs=testdirs,
+                      mobileArgs=xpcshell.mobileArgs,
+                      **options.__dict__)
+
+        self.log_manager.terminal_handler.removeFilter(xpcshell_filter)
+        self.log_manager.disable_unstructured()
+
+        return int(not result)
 
 @CommandProvider
 class MachCommands(MachCommandBase):
@@ -225,6 +306,18 @@ class MachCommands(MachCommandBase):
         help='Randomize the execution order of tests.')
     @CommandArgument('--rerun-failures', action='store_true',
         help='Reruns failures from last time.')
+    @CommandArgument('--devicemanager', default='adb', type=str,
+        help='(Android) Type of devicemanager to use for communication: adb or sut')
+    @CommandArgument('--ip', type=str, default=None,
+        help='(Android) IP address of device')
+    @CommandArgument('--port', type=int, default=20701,
+        help='(Android) Port of device')
+    @CommandArgument('--remote_test_root', type=str, default=None,
+        help='(Android) Remote test root such as /mnt/sdcard or /data/local')
+    @CommandArgument('--no-setup', action='store_true',
+        help='(Android) Do not copy files to device')
+    @CommandArgument('--local-apk', type=str, default=None,
+        help='(Android) Use specified Fennec APK')
     def run_xpcshell_test(self, **params):
         from mozbuild.controller.building import BuildDriver
 
@@ -236,7 +329,11 @@ class MachCommands(MachCommandBase):
         driver = self._spawn(BuildDriver)
         driver.install_tests(remove=False)
 
-        xpcshell = self._spawn(XPCShellRunner)
+        if conditions.is_android(self):
+            xpcshell = self._spawn(AndroidXPCShellRunner)
+        else:
+            xpcshell = self._spawn(XPCShellRunner)
+        xpcshell.cwd = self._mach_context.cwd
 
         try:
             return xpcshell.run_test(**params)

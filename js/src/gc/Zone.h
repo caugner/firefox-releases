@@ -79,7 +79,7 @@ namespace JS {
  * - Scripts are also compartment-local and cannot be shared. A script points to
  *   its compartment.
  *
- * - Type objects and IonCode objects belong to a compartment and cannot be
+ * - Type objects and JitCode objects belong to a compartment and cannot be
  *   shared. However, there is no mechanism to obtain their compartments.
  *
  * A zone remains alive as long as any GC things in the zone are alive. A
@@ -103,8 +103,6 @@ struct Zone : public JS::shadow::Zone,
     js::Allocator                allocator;
 
     js::CompartmentVector        compartments;
-
-    bool                         hold;
 
   private:
     bool                         ionUsingBarriers_;
@@ -293,7 +291,7 @@ struct Zone : public JS::shadow::Zone,
          * tolerate any thread races when updating gcMallocBytes.
          */
         gcMallocBytes -= ptrdiff_t(nbytes);
-        if (JS_UNLIKELY(isTooMuchMalloc()))
+        if (MOZ_UNLIKELY(isTooMuchMalloc()))
             onTooMuchMalloc();
     }
 
@@ -310,11 +308,11 @@ struct Zone : public JS::shadow::Zone,
         js_ReportAllocationOverflow(nullptr);
     }
 
-    void markTypes(JSTracer *trc);
-
     js::types::TypeZone types;
 
     void sweep(js::FreeOp *fop, bool releaseTypes);
+
+    bool hasMarkedCompartments();
 
   private:
     void sweepBreakpoints(js::FreeOp *fop);

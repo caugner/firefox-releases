@@ -9,6 +9,7 @@
 #define nsPresContext_h___
 
 #include "mozilla/Attributes.h"
+#include "mozilla/WeakPtr.h"
 #include "nsColor.h"
 #include "nsCoord.h"
 #include "nsCOMPtr.h"
@@ -42,6 +43,8 @@ class nsBidiPresUtils;
 
 class nsAString;
 class nsIPrintSettings;
+class nsDocShell;
+class nsIDocShell;
 class nsIDocument;
 class nsILanguageAtomService;
 class nsITheme;
@@ -62,13 +65,15 @@ struct nsFontFaceRuleContainer;
 class nsObjectFrame;
 class nsTransitionManager;
 class nsAnimationManager;
-class nsIDOMMediaQueryList;
 class nsRefreshDriver;
 class nsIWidget;
 class nsDeviceContext;
 
 namespace mozilla {
 class RestyleManager;
+namespace dom {
+class MediaQueryList;
+}
 namespace layers {
 class ContainerLayer;
 }
@@ -266,7 +271,7 @@ public:
   /**
    * Support for window.matchMedia()
    */
-  already_AddRefed<nsIDOMMediaQueryList>
+  already_AddRefed<mozilla::dom::MediaQueryList>
     MatchMedia(const nsAString& aMediaQueryList);
 
   /**
@@ -410,21 +415,30 @@ public:
   bool GetFocusRingOnAnything() const { return mFocusRingOnAnything; }
   uint8_t GetFocusRingStyle() const { return mFocusRingStyle; }
 
-  NS_HIDDEN_(void) SetContainer(nsISupports* aContainer);
+  NS_HIDDEN_(void) SetContainer(nsIDocShell* aContainer);
 
-  virtual NS_HIDDEN_(already_AddRefed<nsISupports>) GetContainerExternal() const;
-  NS_HIDDEN_(already_AddRefed<nsISupports>) GetContainerInternal() const;
+  virtual nsISupports* GetContainerWeakExternal() const;
+  nsISupports* GetContainerWeakInternal() const;
 #ifdef MOZILLA_INTERNAL_API
-  already_AddRefed<nsISupports> GetContainer() const
-  { return GetContainerInternal(); }
+  nsISupports* GetContainerWeak() const
+  { return GetContainerWeakInternal(); }
 #else
-  already_AddRefed<nsISupports> GetContainer() const
-  { return GetContainerExternal(); }
+  nsISupports* GetContainerWeak() const
+  { return GetContainerWeakExternal(); }
 #endif
+
+  nsIDocShell* GetDocShell() const;
 
   // XXX this are going to be replaced with set/get container
   void SetLinkHandler(nsILinkHandler* aHandler) { mLinkHandler = aHandler; }
   nsILinkHandler* GetLinkHandler() { return mLinkHandler; }
+
+  /**
+   * Detach this pres context - i.e. cancel relevant timers,
+   * SetLinkHandler(null), SetContainer(null) etc.
+   * Only to be used by the DocumentViewer.
+   */
+  virtual void Detach();
 
   /**
    * Get the visible area associated with this presentation context.
@@ -804,6 +818,8 @@ public:
     return mIsChromeIsCached ? mIsChrome : IsChromeSlow();
   }
 
+  bool IsChromeOriginImage() const { return mIsChromeOriginImage; }
+
   virtual void InvalidateIsChromeCacheExternal();
   void InvalidateIsChromeCacheInternal() { mIsChromeIsCached = false; }
 #ifdef MOZILLA_INTERNAL_API
@@ -819,7 +835,7 @@ public:
 
   // Is it OK to let the page specify colors and backgrounds?
   bool UseDocumentColors() const {
-    return GetCachedBoolPref(kPresContext_UseDocumentColors) || IsChrome();
+    return GetCachedBoolPref(kPresContext_UseDocumentColors) || IsChrome() || IsChromeOriginImage();
   }
 
   // Explicitly enable and disable paint flashing.
@@ -1021,7 +1037,7 @@ protected:
   NS_HIDDEN_(void) GetDocumentColorPreferences();
 
   NS_HIDDEN_(void) PreferenceChanged(const char* aPrefName);
-  static NS_HIDDEN_(int) PrefChangedCallback(const char*, void*);
+  static NS_HIDDEN_(void) PrefChangedCallback(const char*, void*);
 
   NS_HIDDEN_(void) UpdateAfterPreferencesChanged();
   static NS_HIDDEN_(void) PrefChangedUpdateTimerCallback(nsITimer *aTimer, void *aClosure);
@@ -1173,7 +1189,7 @@ public:
 
 protected:
 
-  nsWeakPtr             mContainer;
+  mozilla::WeakPtr<nsDocShell>             mContainer;
 
   PRCList               mDOMMediaQueryLists;
 
@@ -1305,6 +1321,7 @@ protected:
   // value the slow way.
   mutable unsigned      mIsChromeIsCached : 1;
   mutable unsigned      mIsChrome : 1;
+  unsigned              mIsChromeOriginImage : 1;
 
   // Should we paint flash in this context? Do not use this variable directly.
   // Use GetPaintFlashing() method instead.
@@ -1348,10 +1365,11 @@ public:
 
 };
 
-class nsRootPresContext : public nsPresContext {
+class nsRootPresContext MOZ_FINAL : public nsPresContext {
 public:
   nsRootPresContext(nsIDocument* aDocument, nsPresContextType aType) NS_HIDDEN;
   virtual ~nsRootPresContext();
+  virtual void Detach() MOZ_OVERRIDE;
 
   /**
    * Ensure that NotifyDidPaintForSubtree is eventually called on this

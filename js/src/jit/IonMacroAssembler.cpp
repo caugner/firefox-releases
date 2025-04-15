@@ -243,41 +243,41 @@ void
 MacroAssembler::PushRegsInMask(RegisterSet set)
 {
     int32_t diffF = set.fpus().size() * sizeof(double);
-    int32_t diffG = set.gprs().size() * STACK_SLOT_SIZE;
+    int32_t diffG = set.gprs().size() * sizeof(intptr_t);
 
-#if defined(JS_CPU_X86) || defined(JS_CPU_X64)
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
     // On x86, always use push to push the integer registers, as it's fast
     // on modern hardware and it's a small instruction.
     for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-        diffG -= STACK_SLOT_SIZE;
+        diffG -= sizeof(intptr_t);
         Push(*iter);
     }
-#elif defined(JS_CPU_ARM)
+#elif defined(JS_CODEGEN_ARM)
     if (set.gprs().size() > 1) {
         adjustFrame(diffG);
         startDataTransferM(IsStore, StackPointer, DB, WriteBack);
         for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-            diffG -= STACK_SLOT_SIZE;
+            diffG -= sizeof(intptr_t);
             transferReg(*iter);
         }
         finishDataTransfer();
     } else {
         reserveStack(diffG);
         for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-            diffG -= STACK_SLOT_SIZE;
+            diffG -= sizeof(intptr_t);
             storePtr(*iter, Address(StackPointer, diffG));
         }
     }
 #else
     reserveStack(diffG);
     for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-        diffG -= STACK_SLOT_SIZE;
+        diffG -= sizeof(intptr_t);
         storePtr(*iter, Address(StackPointer, diffG));
     }
 #endif
     JS_ASSERT(diffG == 0);
 
-#ifdef JS_CPU_ARM
+#ifdef JS_CODEGEN_ARM
     adjustFrame(diffF);
     diffF += transferMultipleByRuns(set.fpus(), IsStore, StackPointer, DB);
 #else
@@ -293,12 +293,12 @@ MacroAssembler::PushRegsInMask(RegisterSet set)
 void
 MacroAssembler::PopRegsInMaskIgnore(RegisterSet set, RegisterSet ignore)
 {
-    int32_t diffG = set.gprs().size() * STACK_SLOT_SIZE;
+    int32_t diffG = set.gprs().size() * sizeof(intptr_t);
     int32_t diffF = set.fpus().size() * sizeof(double);
     const int32_t reservedG = diffG;
     const int32_t reservedF = diffF;
 
-#ifdef JS_CPU_ARM
+#ifdef JS_CODEGEN_ARM
     // ARM can load multiple registers at once, but only if we want back all
     // the registers we previously saved to the stack.
     if (ignore.empty(true)) {
@@ -316,22 +316,22 @@ MacroAssembler::PopRegsInMaskIgnore(RegisterSet set, RegisterSet ignore)
     }
     JS_ASSERT(diffF == 0);
 
-#if defined(JS_CPU_X86) || defined(JS_CPU_X64)
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
     // On x86, use pop to pop the integer registers, if we're not going to
     // ignore any slots, as it's fast on modern hardware and it's a small
     // instruction.
     if (ignore.empty(false)) {
         for (GeneralRegisterForwardIterator iter(set.gprs()); iter.more(); iter++) {
-            diffG -= STACK_SLOT_SIZE;
+            diffG -= sizeof(intptr_t);
             Pop(*iter);
         }
     } else
 #endif
-#ifdef JS_CPU_ARM
+#ifdef JS_CODEGEN_ARM
     if (set.gprs().size() > 1 && ignore.empty(false)) {
         startDataTransferM(IsLoad, StackPointer, IA, WriteBack);
         for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-            diffG -= STACK_SLOT_SIZE;
+            diffG -= sizeof(intptr_t);
             transferReg(*iter);
         }
         finishDataTransfer();
@@ -340,7 +340,7 @@ MacroAssembler::PopRegsInMaskIgnore(RegisterSet set, RegisterSet ignore)
 #endif
     {
         for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); iter++) {
-            diffG -= STACK_SLOT_SIZE;
+            diffG -= sizeof(intptr_t);
             if (!ignore.has(*iter))
                 loadPtr(Address(StackPointer, diffG), *iter);
         }
@@ -377,14 +377,14 @@ StoreToTypedFloatArray(MacroAssembler &masm, int arrayType, const S &value, cons
     switch (arrayType) {
       case ScalarTypeRepresentation::TYPE_FLOAT32:
         if (LIRGenerator::allowFloat32Optimizations()) {
-            masm.storeFloat(value, dest);
+            masm.storeFloat32(value, dest);
         } else {
 #ifdef JS_MORE_DETERMINISTIC
             // See the comment in ToDoubleForTypedArray.
             masm.canonicalizeDouble(value);
 #endif
-            masm.convertDoubleToFloat(value, ScratchFloatReg);
-            masm.storeFloat(ScratchFloatReg, dest);
+            masm.convertDoubleToFloat32(value, ScratchFloatReg);
+            masm.storeFloat32(ScratchFloatReg, dest);
         }
         break;
       case ScalarTypeRepresentation::TYPE_FLOAT64:
@@ -450,7 +450,7 @@ MacroAssembler::loadFromTypedArray(int arrayType, const T &src, AnyRegister dest
         break;
       case ScalarTypeRepresentation::TYPE_FLOAT32:
         if (LIRGenerator::allowFloat32Optimizations()) {
-            loadFloat(src, dest.fpu());
+            loadFloat32(src, dest.fpu());
             canonicalizeFloat(dest.fpu());
         } else {
             loadFloatAsDouble(src, dest.fpu());
@@ -515,7 +515,7 @@ MacroAssembler::loadFromTypedArray(int arrayType, const T &src, const ValueOpera
         loadFromTypedArray(arrayType, src, AnyRegister(ScratchFloatReg), dest.scratchReg(),
                            nullptr);
         if (LIRGenerator::allowFloat32Optimizations())
-            convertFloatToDouble(ScratchFloatReg, ScratchFloatReg);
+            convertFloat32ToDouble(ScratchFloatReg, ScratchFloatReg);
         boxDouble(ScratchFloatReg, dest);
         break;
       case ScalarTypeRepresentation::TYPE_FLOAT64:
@@ -538,7 +538,7 @@ void
 MacroAssembler::clampDoubleToUint8(FloatRegister input, Register output)
 {
     JS_ASSERT(input != ScratchFloatReg);
-#ifdef JS_CPU_ARM
+#ifdef JS_CODEGEN_ARM
     ma_vimm(0.5, ScratchFloatReg);
     if (hasVFPv3()) {
         Label notSplit;
@@ -708,23 +708,23 @@ MacroAssembler::newGCShortString(const Register &result, Label *fail)
 }
 
 void
-MacroAssembler::newGCThingPar(const Register &result, const Register &slice,
+MacroAssembler::newGCThingPar(const Register &result, const Register &cx,
                               const Register &tempReg1, const Register &tempReg2,
                               gc::AllocKind allocKind, Label *fail)
 {
     // Similar to ::newGCThing(), except that it allocates from a custom
-    // Allocator in the ForkJoinSlice*, rather than being hardcoded to the
+    // Allocator in the ForkJoinContext*, rather than being hardcoded to the
     // compartment allocator.  This requires two temporary registers.
     //
     // Subtle: I wanted to reuse `result` for one of the temporaries, but the
-    // register allocator was assigning it to the same register as `slice`.
+    // register allocator was assigning it to the same register as `cx`.
     // Then we overwrite that register which messed up the OOL code.
 
     uint32_t thingSize = (uint32_t)gc::Arena::thingSize(allocKind);
 
     // Load the allocator:
-    // tempReg1 = (Allocator*) forkJoinSlice->allocator()
-    loadPtr(Address(slice, ThreadSafeContext::offsetOfAllocator()),
+    // tempReg1 = (Allocator*) forkJoinCx->allocator()
+    loadPtr(Address(cx, ThreadSafeContext::offsetOfAllocator()),
             tempReg1);
 
     // Get a pointer to the relevant free list:
@@ -756,30 +756,30 @@ MacroAssembler::newGCThingPar(const Register &result, const Register &slice,
 }
 
 void
-MacroAssembler::newGCThingPar(const Register &result, const Register &slice,
+MacroAssembler::newGCThingPar(const Register &result, const Register &cx,
                               const Register &tempReg1, const Register &tempReg2,
                               JSObject *templateObject, Label *fail)
 {
     gc::AllocKind allocKind = templateObject->tenuredGetAllocKind();
     JS_ASSERT(allocKind >= gc::FINALIZE_OBJECT0 && allocKind <= gc::FINALIZE_OBJECT_LAST);
 
-    newGCThingPar(result, slice, tempReg1, tempReg2, allocKind, fail);
+    newGCThingPar(result, cx, tempReg1, tempReg2, allocKind, fail);
 }
 
 void
-MacroAssembler::newGCStringPar(const Register &result, const Register &slice,
+MacroAssembler::newGCStringPar(const Register &result, const Register &cx,
                                const Register &tempReg1, const Register &tempReg2,
                                Label *fail)
 {
-    newGCThingPar(result, slice, tempReg1, tempReg2, js::gc::FINALIZE_STRING, fail);
+    newGCThingPar(result, cx, tempReg1, tempReg2, js::gc::FINALIZE_STRING, fail);
 }
 
 void
-MacroAssembler::newGCShortStringPar(const Register &result, const Register &slice,
+MacroAssembler::newGCShortStringPar(const Register &result, const Register &cx,
                                     const Register &tempReg1, const Register &tempReg2,
                                     Label *fail)
 {
-    newGCThingPar(result, slice, tempReg1, tempReg2, js::gc::FINALIZE_SHORT_STRING, fail);
+    newGCThingPar(result, cx, tempReg1, tempReg2, js::gc::FINALIZE_SHORT_STRING, fail);
 }
 
 void
@@ -818,7 +818,7 @@ MacroAssembler::initGCThing(const Register &obj, JSObject *templateObject)
 
         // Fixed slots of non-array objects are required to be initialized.
         // Use the values currently in the template object.
-        size_t nslots = Min(templateObject->numFixedSlotsForCompilation(),
+        size_t nslots = Min(templateObject->numFixedSlots(),
                             templateObject->lastProperty()->slotSpan(templateObject->getClass()));
         for (unsigned i = 0; i < nslots; i++) {
             storeValue(templateObject->getFixedSlot(i),
@@ -875,8 +875,7 @@ MacroAssembler::checkInterruptFlagsPar(const Register &tempReg,
                                             Label *fail)
 {
     movePtr(ImmPtr(GetIonContext()->runtime->addressOfInterrupt()), tempReg);
-    load32(Address(tempReg, 0), tempReg);
-    branchTest32(Assembler::NonZero, tempReg, tempReg, fail);
+    branch32(Assembler::NonZero, Address(tempReg, 0), Imm32(0), fail);
 }
 
 static void
@@ -990,7 +989,7 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
             // Discard exit frame.
             addPtr(Imm32(IonExitFrameLayout::SizeWithFooter()), StackPointer);
 
-#if defined(JS_CPU_X86) || defined(JS_CPU_X64)
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
             push(BaselineTailCallReg);
 #endif
             jump(Address(BaselineStubReg, ICStub::offsetOfStubCode()));
@@ -1046,7 +1045,7 @@ MacroAssembler::loadBaselineOrIonRaw(Register script, Register dest, ExecutionMo
         if (failure)
             branchPtr(Assembler::BelowOrEqual, dest, ImmPtr(ION_COMPILING_SCRIPT), failure);
         loadPtr(Address(dest, IonScript::offsetOfMethod()), dest);
-        loadPtr(Address(dest, IonCode::offsetOfCode()), dest);
+        loadPtr(Address(dest, JitCode::offsetOfCode()), dest);
     }
 }
 
@@ -1075,7 +1074,7 @@ MacroAssembler::loadBaselineOrIonNoArgCheck(Register script, Register dest, Exec
         load32(Address(script, IonScript::offsetOfSkipArgCheckEntryOffset()), offset);
 
         loadPtr(Address(dest, IonScript::offsetOfMethod()), dest);
-        loadPtr(Address(dest, IonCode::offsetOfCode()), dest);
+        loadPtr(Address(dest, JitCode::offsetOfCode()), dest);
         addPtr(offset, dest);
 
         Pop(offset);
@@ -1091,15 +1090,15 @@ MacroAssembler::loadBaselineFramePtr(Register framePtr, Register dest)
 }
 
 void
-MacroAssembler::loadForkJoinSlice(Register slice, Register scratch)
+MacroAssembler::loadForkJoinContext(Register cx, Register scratch)
 {
-    // Load the current ForkJoinSlice *. If we need a parallel exit frame,
+    // Load the current ForkJoinContext *. If we need a parallel exit frame,
     // chances are we are about to do something very slow anyways, so just
-    // call ForkJoinSlicePar again instead of using the cached version.
+    // call ForkJoinContextPar again instead of using the cached version.
     setupUnalignedABICall(0, scratch);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, ForkJoinSlicePar));
-    if (ReturnReg != slice)
-        movePtr(ReturnReg, slice);
+    callWithABI(JS_FUNC_TO_DATA_PTR(void *, ForkJoinContextPar));
+    if (ReturnReg != cx)
+        movePtr(ReturnReg, cx);
 }
 
 void
@@ -1111,7 +1110,7 @@ MacroAssembler::loadContext(Register cxReg, Register scratch, ExecutionMode exec
         loadJSContext(cxReg);
         break;
       case ParallelExecution:
-        loadForkJoinSlice(cxReg, scratch);
+        loadForkJoinContext(cxReg, scratch);
         break;
       default:
         MOZ_ASSUME_UNREACHABLE("No such execution mode");
@@ -1119,12 +1118,12 @@ MacroAssembler::loadContext(Register cxReg, Register scratch, ExecutionMode exec
 }
 
 void
-MacroAssembler::enterParallelExitFrameAndLoadSlice(const VMFunction *f, Register slice,
-                                                   Register scratch)
+MacroAssembler::enterParallelExitFrameAndLoadContext(const VMFunction *f, Register cx,
+                                                     Register scratch)
 {
-    loadForkJoinSlice(slice, scratch);
-    // Load the PerThreadData from from the slice.
-    loadPtr(Address(slice, offsetof(ForkJoinSlice, perThreadData)), scratch);
+    loadForkJoinContext(cx, scratch);
+    // Load the PerThreadData from from the cx.
+    loadPtr(Address(cx, offsetof(ForkJoinContext, perThreadData)), scratch);
     linkParallelExitFrame(scratch);
     // Push the ioncode.
     exitCodePatch_ = PushWithPatch(ImmWord(-1));
@@ -1133,11 +1132,11 @@ MacroAssembler::enterParallelExitFrameAndLoadSlice(const VMFunction *f, Register
 }
 
 void
-MacroAssembler::enterFakeParallelExitFrame(Register slice, Register scratch,
-                                           IonCode *codeVal)
+MacroAssembler::enterFakeParallelExitFrame(Register cx, Register scratch,
+                                           JitCode *codeVal)
 {
-    // Load the PerThreadData from from the slice.
-    loadPtr(Address(slice, offsetof(ForkJoinSlice, perThreadData)), scratch);
+    // Load the PerThreadData from from the cx.
+    loadPtr(Address(cx, offsetof(ForkJoinContext, perThreadData)), scratch);
     linkParallelExitFrame(scratch);
     Push(ImmPtr(codeVal));
     Push(ImmPtr(nullptr));
@@ -1154,7 +1153,7 @@ MacroAssembler::enterExitFrameAndLoadContext(const VMFunction *f, Register cxReg
         loadJSContext(cxReg);
         break;
       case ParallelExecution:
-        enterParallelExitFrameAndLoadSlice(f, cxReg, scratch);
+        enterParallelExitFrameAndLoadContext(f, cxReg, scratch);
         break;
       default:
         MOZ_ASSUME_UNREACHABLE("No such execution mode");
@@ -1164,7 +1163,7 @@ MacroAssembler::enterExitFrameAndLoadContext(const VMFunction *f, Register cxReg
 void
 MacroAssembler::enterFakeExitFrame(Register cxReg, Register scratch,
                                    ExecutionMode executionMode,
-                                   IonCode *codeVal)
+                                   JitCode *codeVal)
 {
     switch (executionMode) {
       case SequentialExecution:
@@ -1214,14 +1213,15 @@ IsCompilingAsmJS()
     IonContext *ictx = MaybeGetIonContext();
     return ictx && ictx->compartment == nullptr;
 }
-#endif
 
-static void assume_unreachable_(const char *output) {
+static void
+AssumeUnreachable_(const char *output) {
     MOZ_ReportAssertionFailure(output, __FILE__, __LINE__);
 }
+#endif
 
 void
-MacroAssembler::assume_unreachable(const char *output)
+MacroAssembler::assumeUnreachable(const char *output)
 {
 #ifdef DEBUG
     // AsmJS forbids use of ImmPtr.
@@ -1234,7 +1234,7 @@ MacroAssembler::assume_unreachable(const char *output)
         setupUnalignedABICall(1, temp);
         movePtr(ImmPtr(output), temp);
         passABIArg(temp);
-        callWithABI(JS_FUNC_TO_DATA_PTR(void *, assume_unreachable_));
+        callWithABINoProfiling(JS_FUNC_TO_DATA_PTR(void *, AssumeUnreachable_));
 
         PopRegsInMask(RegisterSet::Volatile());
     }
@@ -1243,7 +1243,8 @@ MacroAssembler::assume_unreachable(const char *output)
     breakpoint();
 }
 
-static void printf0_(const char *output) {
+static void
+Printf0_(const char *output) {
     printf("%s", output);
 }
 
@@ -1258,12 +1259,13 @@ MacroAssembler::printf(const char *output)
     setupUnalignedABICall(1, temp);
     movePtr(ImmPtr(output), temp);
     passABIArg(temp);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, printf0_));
+    callWithABI(JS_FUNC_TO_DATA_PTR(void *, Printf0_));
 
     PopRegsInMask(RegisterSet::Volatile());
 }
 
-static void printf1_(const char *output, uintptr_t value) {
+static void
+Printf1_(const char *output, uintptr_t value) {
     char *line = JS_sprintf_append(nullptr, output, value);
     printf("%s", line);
     js_free(line);
@@ -1283,7 +1285,7 @@ MacroAssembler::printf(const char *output, Register value)
     movePtr(ImmPtr(output), temp);
     passABIArg(temp);
     passABIArg(value);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, printf1_));
+    callWithABI(JS_FUNC_TO_DATA_PTR(void *, Printf1_));
 
     PopRegsInMask(RegisterSet::Volatile());
 }
@@ -1397,7 +1399,7 @@ MacroAssembler::convertValueToFloatingPoint(ValueOperand value, FloatRegister ou
     bind(&isDouble);
     unboxDouble(value, output);
     if (outputType == MIRType_Float32)
-        convertDoubleToFloat(output, output);
+        convertDoubleToFloat32(output, output);
     bind(&done);
 }
 
@@ -1512,10 +1514,10 @@ MacroAssembler::convertTypedOrValueToFloatingPoint(TypedOrValueRegister src, Flo
         break;
       case MIRType_Float32:
         if (outputIsDouble) {
-            convertFloatToDouble(src.typedReg().fpu(), output);
+            convertFloat32ToDouble(src.typedReg().fpu(), output);
         } else {
             if (src.typedReg().fpu() != output)
-                moveFloat(src.typedReg().fpu(), output);
+                moveFloat32(src.typedReg().fpu(), output);
         }
         break;
       case MIRType_Double:
@@ -1523,7 +1525,7 @@ MacroAssembler::convertTypedOrValueToFloatingPoint(TypedOrValueRegister src, Flo
             if (src.typedReg().fpu() != output)
                 moveDouble(src.typedReg().fpu(), output);
         } else {
-            convertDoubleToFloat(src.typedReg().fpu(), output);
+            convertDoubleToFloat32(src.typedReg().fpu(), output);
         }
         break;
       case MIRType_Object:
@@ -1746,7 +1748,7 @@ MacroAssembler::convertTypedOrValueToInt(TypedOrValueRegister src, FloatRegister
         break;
       case MIRType_Float32:
         // Conversion to Double simplifies implementation at the expense of performance.
-        convertFloatToDouble(src.typedReg().fpu(), temp);
+        convertFloat32ToDouble(src.typedReg().fpu(), temp);
         convertDoubleToInt(temp, output, temp, nullptr, fail, behavior);
         break;
       case MIRType_String:
@@ -1778,8 +1780,8 @@ MacroAssembler::branchIfNotInterpretedConstructor(Register fun, Register scratch
 {
     // 16-bit loads are slow and unaligned 32-bit loads may be too so
     // perform an aligned 32-bit load and adjust the bitmask accordingly.
-    JS_STATIC_ASSERT(offsetof(JSFunction, nargs) % sizeof(uint32_t) == 0);
-    JS_STATIC_ASSERT(offsetof(JSFunction, flags) == offsetof(JSFunction, nargs) + 2);
+    JS_ASSERT(JSFunction::offsetOfNargs() % sizeof(uint32_t) == 0);
+    JS_ASSERT(JSFunction::offsetOfFlags() == JSFunction::offsetOfNargs() + 2);
     JS_STATIC_ASSERT(IS_LITTLE_ENDIAN);
 
     // Emit code for the following test:
@@ -1790,7 +1792,7 @@ MacroAssembler::branchIfNotInterpretedConstructor(Register fun, Register scratch
     // }
 
     // First, ensure it's a scripted function.
-    load32(Address(fun, offsetof(JSFunction, nargs)), scratch);
+    load32(Address(fun, JSFunction::offsetOfNargs()), scratch);
     branchTest32(Assembler::Zero, scratch, Imm32(JSFunction::INTERPRETED << 16), label);
 
     // Common case: if both IS_FUN_PROTO and SELF_HOSTED are not set,

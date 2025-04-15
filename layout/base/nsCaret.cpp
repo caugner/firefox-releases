@@ -196,7 +196,7 @@ DrawCJKCaret(nsIFrame* aFrame, int32_t aOffset)
     return false;
   if (aOffset < 0 || uint32_t(aOffset) >= frag->GetLength())
     return false;
-  PRUnichar ch = frag->CharAt(aOffset);
+  char16_t ch = frag->CharAt(aOffset);
   return 0x2e80 <= ch && ch <= 0xd7ff;
 }
 
@@ -1071,7 +1071,7 @@ nsCaret::UpdateCaretRects(nsIFrame* aFrame, int32_t aFrameOffset)
        * without drawing the caret in the old position.
        */ 
       mKeyboardRTL = isCaretRTL;
-      nsCOMPtr<nsISelection> domSelection = do_QueryReferent(mDomSelectionWeak);
+      nsCOMPtr<nsISelectionPrivate> domSelection = do_QueryReferent(mDomSelectionWeak);
       if (!domSelection ||
           NS_SUCCEEDED(domSelection->SelectionLanguageChange(mKeyboardRTL)))
         return false;

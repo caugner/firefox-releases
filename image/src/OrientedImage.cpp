@@ -75,15 +75,14 @@ OrientedImage::GetIntrinsicRatio(nsSize* aRatio)
   return rv;
 }
 
-NS_IMETHODIMP
+NS_IMETHODIMP_(already_AddRefed<gfxASurface>)
 OrientedImage::GetFrame(uint32_t aWhichFrame,
-                        uint32_t aFlags,
-                        gfxASurface** _retval)
+                        uint32_t aFlags)
 {
   nsresult rv;
 
   if (mOrientation.IsIdentity()) {
-    return InnerImage()->GetFrame(aWhichFrame, aFlags, _retval);
+    return InnerImage()->GetFrame(aWhichFrame, aFlags);
   }
 
   // Get the underlying dimensions.
@@ -95,42 +94,42 @@ OrientedImage::GetFrame(uint32_t aWhichFrame,
     rv = InnerImage()->GetWidth(&width);
     rv = NS_FAILED(rv) ? rv : InnerImage()->GetHeight(&height);
   }
-  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_SUCCESS(rv, nullptr);
 
   // Determine an appropriate format for the surface.
   gfx::SurfaceFormat surfaceFormat;
   gfxImageFormat imageFormat;
   if (InnerImage()->FrameIsOpaque(aWhichFrame)) {
-    surfaceFormat = gfx::FORMAT_B8G8R8X8;
-    imageFormat = gfxImageFormatARGB32;
+    surfaceFormat = gfx::SurfaceFormat::B8G8R8X8;
+    imageFormat = gfxImageFormat::ARGB32;
   } else {
-    surfaceFormat = gfx::FORMAT_B8G8R8A8;
-    imageFormat = gfxImageFormatARGB32;
+    surfaceFormat = gfx::SurfaceFormat::B8G8R8A8;
+    imageFormat = gfxImageFormat::ARGB32;
   }
 
   // Create a surface to draw into.
   mozilla::RefPtr<mozilla::gfx::DrawTarget> target;
   target = gfxPlatform::GetPlatform()->
-    CreateOffscreenCanvasDrawTarget(gfx::IntSize(width, height), surfaceFormat);
-  nsRefPtr<gfxASurface> surface = gfxPlatform::GetPlatform()->
-    GetThebesSurfaceForDrawTarget(target);
+    CreateOffscreenContentDrawTarget(gfx::IntSize(width, height), surfaceFormat);
 
   // Create our drawable.
-  nsRefPtr<gfxASurface> innerSurface;
-  rv = InnerImage()->GetFrame(aWhichFrame, aFlags, getter_AddRefs(innerSurface));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsRefPtr<gfxASurface> innerSurface =
+    InnerImage()->GetFrame(aWhichFrame, aFlags);
+  NS_ENSURE_TRUE(innerSurface, nullptr);
   nsRefPtr<gfxDrawable> drawable =
     new gfxSurfaceDrawable(innerSurface, gfxIntSize(width, height));
 
   // Draw.
-  nsRefPtr<gfxContext> ctx = new gfxContext(surface);
+  nsRefPtr<gfxContext> ctx = new gfxContext(target);
   gfxRect imageRect(0, 0, width, height);
   gfxUtils::DrawPixelSnapped(ctx, drawable, OrientationMatrix(nsIntSize(width, height)),
                              imageRect, imageRect, imageRect, imageRect,
                              imageFormat, GraphicsFilter::FILTER_FAST);
+  
+  nsRefPtr<gfxASurface> surface = gfxPlatform::GetPlatform()->
+    GetThebesSurfaceForDrawTarget(target);
 
-  surface.forget(_retval);
-  return NS_OK;
+  return surface.forget();
 }
 
 NS_IMETHODIMP

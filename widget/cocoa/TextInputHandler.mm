@@ -221,7 +221,7 @@ GetCharacters(const NSString* aString)
 
   nsAutoString escapedStr;
   for (uint32_t i = 0; i < str.Length(); i++) {
-    PRUnichar ch = str[i];
+    char16_t ch = str[i];
     if (ch < 0x20) {
       nsPrintfCString utf8str("(U+%04X)", ch);
       escapedStr += NS_ConvertUTF8toUTF16(utf8str);
@@ -432,9 +432,9 @@ TISInputSourceWrapper::TranslateToString(UInt32 aKeyCode, UInt32 aModifiers,
     return true;
   }
   NS_ENSURE_TRUE(EnsureStringLength(aStr, len), false);
-  NS_ASSERTION(sizeof(PRUnichar) == sizeof(UniChar),
-               "size of PRUnichar and size of UniChar are different");
-  memcpy(aStr.BeginWriting(), chars, len * sizeof(PRUnichar));
+  NS_ASSERTION(sizeof(char16_t) == sizeof(UniChar),
+               "size of char16_t and size of UniChar are different");
+  memcpy(aStr.BeginWriting(), chars, len * sizeof(char16_t));
 
   PR_LOG(gLog, PR_LOG_ALWAYS,
     ("%p TISInputSourceWrapper::TranslateToString, aStr=\"%s\"",
@@ -526,6 +526,24 @@ TISInputSourceWrapper::InitByLayoutID(SInt32 aLayoutID,
       break;
     case 5:
       InitByInputSourceID("com.apple.keylayout.Thai");
+      break;
+    case 6:
+      InitByInputSourceID("com.apple.keylayout.Arabic");
+      break;
+    case 7:
+      InitByInputSourceID("com.apple.keylayout.French");
+      break;
+    case 8:
+      InitByInputSourceID("com.apple.keylayout.Hebrew");
+      break;
+    case 9:
+      InitByInputSourceID("com.apple.keylayout.Lithuanian");
+      break;
+    case 10:
+      InitByInputSourceID("com.apple.keylayout.Norwegian");
+      break;
+    case 11:
+      InitByInputSourceID("com.apple.keylayout.Spanish");
       break;
     default:
       Clear();
@@ -736,7 +754,7 @@ TISInputSourceWrapper::IsForRTLLanguage()
     nsAutoString str;
     bool ret = TranslateToString(kVK_ANSI_A, 0, eKbdType_ANSI, str);
     NS_ENSURE_TRUE(ret, ret);
-    PRUnichar ch = str.IsEmpty() ? PRUnichar(0) : str.CharAt(0);
+    char16_t ch = str.IsEmpty() ? char16_t(0) : str.CharAt(0);
     mIsRTL = UCS2_CHAR_IS_BIDI(ch) || ch == 0xD802 || ch == 0xD803;
   }
   return mIsRTL != 0;
@@ -782,8 +800,9 @@ TISInputSourceWrapper::InitKeyEvent(NSEvent *aNativeKeyEvent,
 
   PR_LOG(gLog, PR_LOG_ALWAYS,
     ("%p TISInputSourceWrapper::InitKeyEvent, aNativeKeyEvent=%p, "
-     "aKeyEvent.message=%s, aInsertString=%p",
-     this, aNativeKeyEvent, GetGeckoKeyEventType(aKeyEvent), aInsertString));
+     "aKeyEvent.message=%s, aInsertString=%p, IsOpenedIMEMode()=%s",
+     this, aNativeKeyEvent, GetGeckoKeyEventType(aKeyEvent), aInsertString,
+     TrueOrFalse(IsOpenedIMEMode())));
 
   NS_ENSURE_TRUE(aNativeKeyEvent, );
 
@@ -845,10 +864,10 @@ TISInputSourceWrapper::InitKeyEvent(NSEvent *aNativeKeyEvent,
     // If control key is pressed and the eventChars is a non-printable control
     // character, we should convert it to ASCII alphabet.
     if (aKeyEvent.IsControl() &&
-        !insertString.IsEmpty() && insertString[0] <= PRUnichar(26)) {
+        !insertString.IsEmpty() && insertString[0] <= char16_t(26)) {
       insertString = (aKeyEvent.IsShift() ^ aKeyEvent.IsCapsLocked()) ?
-        static_cast<PRUnichar>(insertString[0] + ('A' - 1)) :
-        static_cast<PRUnichar>(insertString[0] + ('a' - 1));
+        static_cast<char16_t>(insertString[0] + ('A' - 1)) :
+        static_cast<char16_t>(insertString[0] + ('a' - 1));
     }
     // If Meta key is pressed, it may cause to switch the keyboard layout like
     // Arabic, Russian, Hebrew, Greek and Dvorak-QWERTY.
@@ -968,28 +987,64 @@ TISInputSourceWrapper::InitKeyEvent(NSEvent *aNativeKeyEvent,
        this, aKeyEvent.keyCode));
   }
 
-  // Compute the key for non-printable keys and some special printable keys.
-  aKeyEvent.mKeyNameIndex = ComputeGeckoKeyNameIndex(nativeKeyCode);
-  if (isPrintableKey &&
-      aKeyEvent.mKeyNameIndex == KEY_NAME_INDEX_Unidentified) {
-    // If the key name isn't in the list and the key is a printable key but
-    // inserting no characters without control key nor command key, then,
-    // check if the key is dead key.
-    if (insertString.IsEmpty() &&
-        !aKeyEvent.IsControl() && !aKeyEvent.IsMeta()) {
-      UInt32 state =
-        nsCocoaUtils::ConvertToCarbonModifier([aNativeKeyEvent modifierFlags]);
-      uint32_t ch = TranslateToChar(nativeKeyCode, state, kbType);
-      if (ch) {
-        aKeyEvent.mKeyNameIndex =
-          WidgetUtils::GetDeadKeyNameIndex(static_cast<PRUnichar>(ch));
+  if (isPrintableKey) {
+    aKeyEvent.mKeyNameIndex = KEY_NAME_INDEX_USE_STRING;
+    // If insertText calls this method, let's use the string.
+    if (aInsertString && !aInsertString->IsEmpty() &&
+        !IsControlChar((*aInsertString)[0])) {
+      aKeyEvent.mKeyValue = *aInsertString;
+    }
+    // If meta key is pressed, the printable key layout may be switched from
+    // non-ASCII capable layout to ASCII capable, or from Dvorak to QWERTY.
+    // KeyboardEvent.key value should be the switched layout's character.
+    else if (aKeyEvent.IsMeta()) {
+      nsCocoaUtils::GetStringForNSString([aNativeKeyEvent characters],
+                                         aKeyEvent.mKeyValue);
+    }
+    // If control key is pressed, some keys may produce printable character via
+    // [aNativeKeyEvent characters].  Otherwise, translate input character of
+    // the key without control key.
+    else if (aKeyEvent.IsControl()) {
+      nsCocoaUtils::GetStringForNSString([aNativeKeyEvent characters],
+                                         aKeyEvent.mKeyValue);
+      if (aKeyEvent.mKeyValue.IsEmpty() ||
+          IsControlChar(aKeyEvent.mKeyValue[0])) {
+        NSUInteger cocoaState =
+          [aNativeKeyEvent modifierFlags] & ~NSControlKeyMask;
+        UInt32 carbonState = nsCocoaUtils::ConvertToCarbonModifier(cocoaState);
+        aKeyEvent.mKeyValue =
+          TranslateToChar(nativeKeyCode, carbonState, kbType);
       }
     }
-    // If the printable key isn't a dead key, we should set printable key name
-    // for now.
-    if (aKeyEvent.mKeyNameIndex == KEY_NAME_INDEX_Unidentified) {
-      aKeyEvent.mKeyNameIndex = KEY_NAME_INDEX_PrintableKey;
+    // Otherwise, KeyboardEvent.key expose
+    // [aNativeKeyEvent characters] value.  However, if IME is open and the
+    // keyboard layout isn't ASCII capable, exposing the non-ASCII character
+    // doesn't match with other platform's behavior.  For the compatibility
+    // with other platform's Gecko, we need to set a translated character.
+    else if (IsOpenedIMEMode()) {
+      UInt32 state =
+        nsCocoaUtils::ConvertToCarbonModifier([aNativeKeyEvent modifierFlags]);
+      aKeyEvent.mKeyValue = TranslateToChar(nativeKeyCode, state, kbType);
+    } else {
+      nsCocoaUtils::GetStringForNSString([aNativeKeyEvent characters],
+                                         aKeyEvent.mKeyValue);
     }
+
+    // Last resort.  If .key value becomes empty string, we should use
+    // charactersIgnoringModifiers, if it's available.
+    if (aKeyEvent.mKeyValue.IsEmpty() ||
+        IsControlChar(aKeyEvent.mKeyValue[0])) {
+      nsCocoaUtils::GetStringForNSString(
+        [aNativeKeyEvent charactersIgnoringModifiers], aKeyEvent.mKeyValue);
+      // But don't expose it if it's a control character.
+      if (!aKeyEvent.mKeyValue.IsEmpty() &&
+          IsControlChar(aKeyEvent.mKeyValue[0])) {
+        aKeyEvent.mKeyValue.Truncate();
+      }
+    }
+  } else {
+    // Compute the key for non-printable keys and some special printable keys.
+    aKeyEvent.mKeyNameIndex = ComputeGeckoKeyNameIndex(nativeKeyCode);
   }
 
   NS_OBJC_END_TRY_ABORT_BLOCK
@@ -997,7 +1052,7 @@ TISInputSourceWrapper::InitKeyEvent(NSEvent *aNativeKeyEvent,
 
 void
 TISInputSourceWrapper::InitKeyPressEvent(NSEvent *aNativeKeyEvent,
-                                         PRUnichar aInsertChar,
+                                         char16_t aInsertChar,
                                          WidgetKeyboardEvent& aKeyEvent,
                                          UInt32 aKbType)
 {
@@ -1011,7 +1066,7 @@ TISInputSourceWrapper::InitKeyPressEvent(NSEvent *aNativeKeyEvent,
     nsAutoString chars;
     nsCocoaUtils::GetStringForNSString([aNativeKeyEvent characters], chars);
     NS_ConvertUTF16toUTF8 utf8Chars(chars);
-    PRUnichar expectedChar = static_cast<PRUnichar>(aInsertChar);
+    char16_t expectedChar = static_cast<char16_t>(aInsertChar);
     NS_ConvertUTF16toUTF8 utf8ExpectedChar(&expectedChar, 1);
     PR_LOG(gLog, PR_LOG_ALWAYS,
       ("%p TISInputSourceWrapper::InitKeyPressEvent, aNativeKeyEvent=%p, "
@@ -3890,6 +3945,7 @@ PluginTextInputHandler::HandleKeyDownEventForPlugin(NSEvent* aNativeKeyEvent)
 
   ComplexTextInputPanel* ctiPanel =
     [ComplexTextInputPanel sharedComplexTextInputPanel];
+  [ctiPanel adjustTo:mView];
 
   // If a composition is in progress then simply let the input panel continue
   // it.
@@ -4412,7 +4468,7 @@ TextInputHandlerBase::SetSelection(NSRange& aRange)
 }
 
 /* static */ bool
-TextInputHandlerBase::IsPrintableChar(PRUnichar aChar)
+TextInputHandlerBase::IsPrintableChar(char16_t aChar)
 {
   return (aChar >= 0x20 && aChar <= 0x7E) || aChar >= 0xA0;
 }

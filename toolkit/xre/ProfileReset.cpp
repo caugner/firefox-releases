@@ -76,11 +76,11 @@ ProfileResetCleanup(nsIToolkitProfile* aOldProfile)
   if (!sb) return NS_ERROR_FAILURE;
 
   NS_ConvertUTF8toUTF16 appName(gAppData->name);
-  const PRUnichar* params[] = {appName.get(), appName.get()};
+  const char16_t* params[] = {appName.get(), appName.get()};
 
   nsXPIDLString resetBackupDirectoryName;
 
-  static const PRUnichar* kResetBackupDirectory = NS_LITERAL_STRING("resetBackupDirectory").get();
+  static const char16_t* kResetBackupDirectory = MOZ_UTF16("resetBackupDirectory");
   rv = sb->FormatStringFromName(kResetBackupDirectory, params, 2,
                                 getter_Copies(resetBackupDirectoryName));
 

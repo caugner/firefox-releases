@@ -552,7 +552,7 @@ SessionStore.prototype = {
 
   _getTabData: function(aWindow) {
     return aWindow.Browser.tabs
-      .filter(tab => tab.browser.__SS_data)
+      .filter(tab => !tab.isPrivate && tab.browser.__SS_data)
       .map(tab => {
         let browser = tab.browser;
         let tabData = browser.__SS_data;

@@ -65,10 +65,10 @@
 
 #include "nsIBaseWindow.h"
 #include "nsIDocShellTreeItem.h"
-#include "nsIDocShellTreeNode.h"
 
 #include "nsIMarkupDocumentViewer.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/DebugOnly.h"
 #include "mozilla/MouseEvents.h"
 
 #ifdef XP_MACOSX
@@ -89,7 +89,6 @@ nsWebShellWindow::nsWebShellWindow(uint32_t aChromeFlags)
   , mSPTimerLock("nsWebShellWindow.mSPTimerLock")
 {
 }
-
 
 nsWebShellWindow::~nsWebShellWindow()
 {
@@ -271,12 +270,6 @@ nsWebShellWindow::WindowMoved(nsIWidget* aWidget, int32_t x, int32_t y)
 bool
 nsWebShellWindow::WindowResized(nsIWidget* aWidget, int32_t aWidth, int32_t aHeight)
 {
-  nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
-  if (pm) {
-    nsCOMPtr<nsPIDOMWindow> window = do_GetInterface(mDocShell);
-    pm->AdjustPopupsOnWindowChange(window);
-  }
-
   nsCOMPtr<nsIBaseWindow> shellAsWin(do_QueryInterface(mDocShell));
   if (shellAsWin) {
     shellAsWin->SetPositionAndSize(0, 0, aWidth, aHeight, false);
@@ -300,7 +293,7 @@ nsWebShellWindow::RequestWindowClose(nsIWidget* aWidget)
   nsCOMPtr<nsIPresShell> presShell = mDocShell->GetPresShell();
 
   if (!presShell) {
-    bool dying;
+    mozilla::DebugOnly<bool> dying;
     MOZ_ASSERT(NS_SUCCEEDED(mDocShell->IsBeingDestroyed(&dying)) && dying,
                "No presShell, but window is not being destroyed");
   } else if (eventTarget) {
@@ -580,7 +573,7 @@ NS_IMETHODIMP
 nsWebShellWindow::OnStatusChange(nsIWebProgress* aWebProgress,
                                  nsIRequest* aRequest,
                                  nsresult aStatus,
-                                 const PRUnichar* aMessage)
+                                 const char16_t* aMessage)
 {
   NS_NOTREACHED("notification excluded in AddProgressListener(...)");
   return NS_OK;

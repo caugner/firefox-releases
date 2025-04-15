@@ -68,7 +68,7 @@ static const char *XAtomNames[] = {
   MOZILLA_PROGRAM_PROP,
   MOZILLA_COMMANDLINE_PROP
 };
-static Atom XAtoms[NS_ARRAY_LENGTH(XAtomNames)];
+static Atom XAtoms[MOZ_ARRAY_LENGTH(XAtomNames)];
 
 Atom nsXRemoteService::sMozVersionAtom;
 Atom nsXRemoteService::sMozLockAtom;
@@ -165,7 +165,7 @@ nsXRemoteService::HandleCommandsFor(Window aWindowId)
 NS_IMETHODIMP
 nsXRemoteService::Observe(nsISupports* aSubject,
                           const char *aTopic,
-                          const PRUnichar *aData)
+                          const char16_t *aData)
 {
   // This can be xpcom-shutdown or quit-application, but it's the same either
   // way.

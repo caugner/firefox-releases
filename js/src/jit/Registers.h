@@ -10,11 +10,11 @@
 #include "mozilla/Array.h"
 
 #include "jit/IonTypes.h"
-#if defined(JS_CPU_X86)
+#if defined(JS_CODEGEN_X86)
 # include "jit/x86/Architecture-x86.h"
-#elif defined(JS_CPU_X64)
+#elif defined(JS_CODEGEN_X64)
 # include "jit/x64/Architecture-x64.h"
-#elif defined(JS_CPU_ARM)
+#elif defined(JS_CODEGEN_ARM)
 # include "jit/arm/Architecture-arm.h"
 #endif
 
@@ -29,6 +29,11 @@ struct Register {
     static Register FromCode(uint32_t i) {
         JS_ASSERT(i < Registers::Total);
         Register r = { (Registers::Code)i };
+        return r;
+    }
+    static Register FromName(const char *name) {
+        Registers::Code code = Registers::FromName(name);
+        Register r = { code };
         return r;
     }
     Code code() const {
@@ -60,6 +65,11 @@ struct FloatRegister {
         FloatRegister r = { (FloatRegisters::Code)i };
         return r;
     }
+    static FloatRegister FromName(const char *name) {
+        FloatRegisters::Code code = FloatRegisters::FromName(name);
+        FloatRegister r = { code };
+        return r;
+    }
     Code code() const {
         JS_ASSERT((uint32_t)code_ < FloatRegisters::Total);
         return code_;
@@ -81,8 +91,8 @@ struct FloatRegister {
 class RegisterDump
 {
   protected: // Silence Clang warning.
-    uintptr_t regs_[Registers::Total];
-    double fpregs_[FloatRegisters::Total];
+    mozilla::Array<uintptr_t, Registers::Total> regs_;
+    mozilla::Array<double, FloatRegisters::Total> fpregs_;
 
   public:
     static size_t offsetOfRegister(Register reg) {
@@ -100,8 +110,8 @@ class MachineState
     mozilla::Array<double *, FloatRegisters::Total> fpregs_;
 
   public:
-    static MachineState FromBailout(uintptr_t regs[Registers::Total],
-                                    double fpregs[FloatRegisters::Total]);
+    static MachineState FromBailout(mozilla::Array<uintptr_t, Registers::Total> &regs,
+                                    mozilla::Array<double, FloatRegisters::Total> &fpregs);
 
     void setRegisterLocation(Register reg, uintptr_t *up) {
         regs_[reg.code()] = up;

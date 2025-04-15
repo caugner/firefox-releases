@@ -13,10 +13,8 @@
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
 
-#ifdef MOZ_PANGO
 #include <pango/pango.h>
 #include <pango/pango-fontmap.h>
-#endif
 
 #include <fontconfig/fontconfig.h>
 #include "gfxPlatformGtk.h"
@@ -664,7 +662,7 @@ nsLookAndFeel::GetIntImpl(IntID aID, int32_t &aResult)
         aResult = 0;
         break;
     case eIntID_ColorPickerAvailable:
-        aResult = 0;
+        aResult = 1;
         break;
     default:
         aResult = 0;
@@ -700,7 +698,6 @@ nsLookAndFeel::GetFloatImpl(FloatID aID, float &aResult)
     return res;
 }
 
-#ifdef MOZ_PANGO
 static void
 GetSystemFontInfo(GtkWidget *aWidget,
                   nsString *aFontName,
@@ -803,24 +800,6 @@ GetSystemFontInfo(LookAndFeel::FontID aID,
         g_object_unref(menu);
     }
 }
-
-#else // not MOZ_PANGO
-
-static void
-GetSystemFontInfo(LookAndFeel::FontID /*unused */,
-                  nsString *aFontName,
-                  gfxFontStyle *aFontStyle)
-{
-    /* FIXME: DFB FT2 Hardcoding the system font info for now. */
-    aFontStyle->style      = NS_FONT_STYLE_NORMAL;
-    aFontStyle->weight     = NS_FONT_WEIGHT_NORMAL;
-    aFontStyle->size       = 40/3;
-    aFontStyle->stretch    = NS_FONT_STRETCH_NORMAL;
-    aFontStyle->systemFont = true;
-    aFontName->AssignLiteral("\"Sans\"");
-}
-
-#endif // not MOZ_PANGO
 
 bool
 nsLookAndFeel::GetFontImpl(FontID aID, nsString& aFontName,
@@ -1213,7 +1192,7 @@ nsLookAndFeel::Init()
     // invisible character styles
     guint value;
     g_object_get (entry, "invisible-char", &value, nullptr);
-    sInvisibleCharacter = PRUnichar(value);
+    sInvisibleCharacter = char16_t(value);
 
     // caret styles
     gtk_widget_style_get(entry,
@@ -1224,7 +1203,7 @@ nsLookAndFeel::Init()
 }
 
 // virtual
-PRUnichar
+char16_t
 nsLookAndFeel::GetPasswordCharacterImpl()
 {
     return sInvisibleCharacter;

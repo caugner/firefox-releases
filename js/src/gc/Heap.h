@@ -73,8 +73,8 @@ enum AllocKind {
     FINALIZE_SHORT_STRING,
     FINALIZE_STRING,
     FINALIZE_EXTERNAL_STRING,
-    FINALIZE_IONCODE,
-    FINALIZE_LAST = FINALIZE_IONCODE
+    FINALIZE_JITCODE,
+    FINALIZE_LAST = FINALIZE_JITCODE
 };
 
 static const unsigned FINALIZE_LIMIT = FINALIZE_LAST + 1;
@@ -276,9 +276,9 @@ struct FreeSpan
         if (thing < last) {
             /* Bump-allocate from the current span. */
             first = thing + thingSize;
-        } else if (JS_LIKELY(thing == last)) {
+        } else if (MOZ_LIKELY(thing == last)) {
             /*
-             * Move to the next span. We use JS_LIKELY as without PGO
+             * Move to the next span. We use MOZ_LIKELY as without PGO
              * compilers mis-predict == here as unlikely to succeed.
              */
             *this = *reinterpret_cast<FreeSpan *>(thing);
@@ -993,12 +993,6 @@ Cell::shadowRuntimeFromAnyThread() const
     return reinterpret_cast<JS::shadow::Runtime*>(runtimeFromAnyThread());
 }
 
-AllocKind
-Cell::tenuredGetAllocKind() const
-{
-    return arenaHeader()->getAllocKind();
-}
-
 bool
 Cell::isMarked(uint32_t color /* = BLACK */) const
 {
@@ -1115,30 +1109,11 @@ InFreeList(ArenaHeader *aheader, void *thing)
 
 } /* namespace gc */
 
-// Ion compilation mainly occurs off the main thread, and may run while the
-// main thread is performing arbitrary VM operations, excepting GC activity.
-// The below class is used to mark functions and other operations which can
-// safely be performed off thread without racing. When running with thread
-// safety checking on, any access to a GC thing outside of AutoThreadSafeAccess
-// will cause an access violation.
-class AutoThreadSafeAccess
+gc::AllocKind
+gc::Cell::tenuredGetAllocKind() const
 {
-public:
-#if defined(DEBUG) && !defined(XP_WIN)
-    JSRuntime *runtime;
-    gc::ArenaHeader *arena;
-
-    AutoThreadSafeAccess(const gc::Cell *cell MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-    ~AutoThreadSafeAccess();
-#else
-    AutoThreadSafeAccess(const gc::Cell *cell MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-    {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-    ~AutoThreadSafeAccess() {}
-#endif
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
+    return arenaHeader()->getAllocKind();
+}
 
 } /* namespace js */
 

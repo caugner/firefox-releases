@@ -40,6 +40,7 @@
 #include "js/Vector.h"
 #include "vm/CommonPropertyNames.h"
 #include "vm/DateTime.h"
+#include "vm/MallocProvider.h"
 #include "vm/SPSProfiler.h"
 #include "vm/Stack.h"
 #include "vm/ThreadPool.h"
@@ -47,8 +48,6 @@
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable:4100) /* Silence unreferenced formal parameter warnings */
-#pragma warning(push)
-#pragma warning(disable:4355) /* Silence warning about "this" used in base member initializer list */
 #endif
 
 namespace js {
@@ -91,6 +90,8 @@ namespace jit {
 class JitRuntime;
 class JitActivation;
 struct PcScriptCache;
+class Simulator;
+class SimulatorRuntime;
 }
 
 /*
@@ -171,7 +172,7 @@ struct ConservativeGCData
 #endif
     }
 
-    JS_NEVER_INLINE void recordStackTop();
+    MOZ_NEVER_INLINE void recordStackTop();
 
 #ifdef JS_THREADSAFE
     void updateForRequestEnd() {
@@ -342,10 +343,8 @@ class NewObjectCache
     inline bool lookupGlobal(const Class *clasp, js::GlobalObject *global, gc::AllocKind kind,
                              EntryIndex *pentry);
 
-    bool lookupType(const Class *clasp, js::types::TypeObject *type, gc::AllocKind kind,
-                    EntryIndex *pentry)
-    {
-        return lookup(clasp, type, kind, pentry);
+    bool lookupType(js::types::TypeObject *type, gc::AllocKind kind, EntryIndex *pentry) {
+        return lookup(type->clasp(), type, kind, pentry);
     }
 
     /*
@@ -361,11 +360,11 @@ class NewObjectCache
     inline void fillGlobal(EntryIndex entry, const Class *clasp, js::GlobalObject *global,
                            gc::AllocKind kind, JSObject *obj);
 
-    void fillType(EntryIndex entry, const Class *clasp, js::types::TypeObject *type, gc::AllocKind kind,
+    void fillType(EntryIndex entry, js::types::TypeObject *type, gc::AllocKind kind,
                   JSObject *obj)
     {
         JS_ASSERT(obj->type() == type);
-        return fill(entry, clasp, type, kind, obj);
+        return fill(entry, type->clasp(), type, kind, obj);
     }
 
     /* Invalidate any entries which might produce an object with shape/proto. */
@@ -547,6 +546,11 @@ class PerThreadData : public PerThreadDataFriendFields,
     /* See AsmJSActivation comment. Protected by rt->operationCallbackLock. */
     js::AsmJSActivation *asmJSActivationStack_;
 
+#ifdef JS_ARM_SIMULATOR
+    js::jit::Simulator *simulator_;
+    uintptr_t simulatorStackLimit_;
+#endif
+
   public:
     js::Activation *const *addressOfActivation() const {
         return &activation_;
@@ -579,7 +583,7 @@ class PerThreadData : public PerThreadDataFriendFields,
      */
     int32_t suppressGC;
 
-    // Whether there is an active compilation on this thread.
+    // Number of active bytecode compilation on this thread.
     unsigned activeCompilations;
 
     PerThreadData(JSRuntime *runtime);
@@ -596,80 +600,13 @@ class PerThreadData : public PerThreadDataFriendFields,
     inline bool exclusiveThreadsPresent();
     inline void addActiveCompilation();
     inline void removeActiveCompilation();
-};
 
-template<class Client>
-struct MallocProvider
-{
-    void *malloc_(size_t bytes) {
-        Client *client = static_cast<Client *>(this);
-        client->updateMallocCounter(bytes);
-        void *p = js_malloc(bytes);
-        return JS_LIKELY(!!p) ? p : client->onOutOfMemory(nullptr, bytes);
-    }
-
-    void *calloc_(size_t bytes) {
-        Client *client = static_cast<Client *>(this);
-        client->updateMallocCounter(bytes);
-        void *p = js_calloc(bytes);
-        return JS_LIKELY(!!p) ? p : client->onOutOfMemory(reinterpret_cast<void *>(1), bytes);
-    }
-
-    void *realloc_(void *p, size_t oldBytes, size_t newBytes) {
-        Client *client = static_cast<Client *>(this);
-        /*
-         * For compatibility we do not account for realloc that decreases
-         * previously allocated memory.
-         */
-        if (newBytes > oldBytes)
-            client->updateMallocCounter(newBytes - oldBytes);
-        void *p2 = js_realloc(p, newBytes);
-        return JS_LIKELY(!!p2) ? p2 : client->onOutOfMemory(p, newBytes);
-    }
-
-    void *realloc_(void *p, size_t bytes) {
-        Client *client = static_cast<Client *>(this);
-        /*
-         * For compatibility we do not account for realloc that increases
-         * previously allocated memory.
-         */
-        if (!p)
-            client->updateMallocCounter(bytes);
-        void *p2 = js_realloc(p, bytes);
-        return JS_LIKELY(!!p2) ? p2 : client->onOutOfMemory(p, bytes);
-    }
-
-    template <class T>
-    T *pod_malloc() {
-        return (T *)malloc_(sizeof(T));
-    }
-
-    template <class T>
-    T *pod_calloc() {
-        return (T *)calloc_(sizeof(T));
-    }
-
-    template <class T>
-    T *pod_malloc(size_t numElems) {
-        if (numElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
-            Client *client = static_cast<Client *>(this);
-            client->reportAllocationOverflow();
-            return nullptr;
-        }
-        return (T *)malloc_(numElems * sizeof(T));
-    }
-
-    template <class T>
-    T *pod_calloc(size_t numElems, JSCompartment *comp = nullptr, JSContext *cx = nullptr) {
-        if (numElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
-            Client *client = static_cast<Client *>(this);
-            client->reportAllocationOverflow();
-            return nullptr;
-        }
-        return (T *)calloc_(numElems * sizeof(T));
-    }
-
-    JS_DECLARE_NEW_METHODS(new_, malloc_, JS_ALWAYS_INLINE)
+#ifdef JS_ARM_SIMULATOR
+    js::jit::Simulator *simulator() const;
+    void setSimulator(js::jit::Simulator *sim);
+    js::jit::SimulatorRuntime *simulatorRuntime() const;
+    uintptr_t *addressOfSimulatorStackLimit();
+#endif
 };
 
 namespace gc {
@@ -679,7 +616,6 @@ class MarkingValidator;
 typedef Vector<JS::Zone *, 4, SystemAllocPolicy> ZoneVector;
 
 class AutoLockForExclusiveAccess;
-class AutoProtectHeapForCompilation;
 
 void RecomputeStackLimit(JSRuntime *rt, StackKind kind);
 
@@ -812,14 +748,16 @@ struct JSRuntime : public JS::shadow::Runtime,
 
 #endif // JS_THREADSAFE
 
+#ifdef DEBUG
     bool currentThreadHasExclusiveAccess() {
-#if defined(JS_THREADSAFE) && defined(DEBUG)
+#ifdef JS_THREADSAFE
         return (!numExclusiveThreads && mainThreadHasExclusiveAccess) ||
-            exclusiveAccessOwner == PR_GetCurrentThread();
+               exclusiveAccessOwner == PR_GetCurrentThread();
 #else
         return true;
 #endif
     }
+#endif // DEBUG
 
     bool exclusiveThreadsPresent() const {
 #ifdef JS_THREADSAFE
@@ -973,6 +911,7 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     js::ActivityCallback  activityCallback;
     void                 *activityCallbackArg;
+    void triggerActivityCallback(bool active);
 
 #ifdef JS_THREADSAFE
     /* The request depth for this thread. */
@@ -1154,7 +1093,7 @@ struct JSRuntime : public JS::shadow::Runtime,
     /*
      * GGC can be enabled from the command line while testing.
      */
-    bool                gcGenerationalEnabled;
+    unsigned            gcGenerationalDisabled;
 
     /*
      * This is true if we are in the middle of a brain transplant (e.g.,
@@ -1222,6 +1161,10 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     int gcZeal() { return gcZeal_; }
 
+    bool upcomingZealousGC() {
+        return gcNextScheduled == 1;
+    }
+
     bool needZealousGC() {
         if (gcNextScheduled > 0 && --gcNextScheduled == 0) {
             if (gcZeal() == js::gc::ZealAllocValue ||
@@ -1237,6 +1180,7 @@ struct JSRuntime : public JS::shadow::Runtime,
     }
 #else
     int gcZeal() { return 0; }
+    bool upcomingZealousGC() { return false; }
     bool needZealousGC() { return false; }
 #endif
 
@@ -1265,6 +1209,10 @@ struct JSRuntime : public JS::shadow::Runtime,
      */
     mozilla::Atomic<uint32_t, mozilla::ReleaseAcquire> gcMallocGCTriggered;
 
+#ifdef JS_ARM_SIMULATOR
+    js::jit::SimulatorRuntime *simulatorRuntime_;
+#endif
+
   public:
     void setNeedsBarrier(bool needs) {
         needsBarrier_ = needs;
@@ -1281,6 +1229,11 @@ struct JSRuntime : public JS::shadow::Runtime,
           : op(op), data(data)
         {}
     };
+
+#ifdef JS_ARM_SIMULATOR
+    js::jit::SimulatorRuntime *simulatorRuntime() const;
+    void setSimulatorRuntime(js::jit::SimulatorRuntime *srt);
+#endif
 
     /*
      * The trace operations to trace embedding-specific GC roots. One is for
@@ -1432,18 +1385,6 @@ struct JSRuntime : public JS::shadow::Runtime,
     const char          *numGrouping;
 #endif
 
-    friend class js::AutoProtectHeapForCompilation;
-    friend class js::AutoThreadSafeAccess;
-    mozilla::DebugOnly<bool> heapProtected_;
-#ifdef DEBUG
-    js::Vector<js::gc::ArenaHeader *, 0, js::SystemAllocPolicy> unprotectedArenas;
-
-  public:
-    bool heapProtected() {
-        return heapProtected_;
-    }
-#endif
-
   private:
     js::MathCache *mathCache_;
     js::MathCache *createMathCache(JSContext *cx);
@@ -1576,16 +1517,11 @@ struct JSRuntime : public JS::shadow::Runtime,
     size_t              noGCOrAllocationCheck;
 #endif
 
-    bool                jitHardening;
-
     bool                jitSupportsFloatingPoint;
 
     // Used to reset stack limit after a signaled interrupt (i.e. ionStackLimit_ = -1)
     // has been noticed by Ion/Baseline.
-    void resetIonStackLimit() {
-        AutoLockForOperationCallback lock(this);
-        mainThread.setIonStackLimit(mainThread.nativeStackLimit[js::StackForUntrustedScript]);
-    }
+    void resetIonStackLimit();
 
     // Cache for jit::GetPcScript().
     js::jit::PcScriptCache *ionPcScriptCache;
@@ -1695,11 +1631,6 @@ struct JSRuntime : public JS::shadow::Runtime,
     };
 
     void triggerOperationCallback(OperationCallbackTrigger trigger);
-
-    void setJitHardening(bool enabled);
-    bool getJitHardening() const {
-        return jitHardening;
-    }
 
     void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::RuntimeSizes *runtime);
 
@@ -1959,64 +1890,64 @@ PerThreadData::removeActiveCompilation()
 
 /************************************************************************/
 
-static JS_ALWAYS_INLINE void
+static MOZ_ALWAYS_INLINE void
 MakeRangeGCSafe(Value *vec, size_t len)
 {
     mozilla::PodZero(vec, len);
 }
 
-static JS_ALWAYS_INLINE void
+static MOZ_ALWAYS_INLINE void
 MakeRangeGCSafe(Value *beg, Value *end)
 {
     mozilla::PodZero(beg, end - beg);
 }
 
-static JS_ALWAYS_INLINE void
+static MOZ_ALWAYS_INLINE void
 MakeRangeGCSafe(jsid *beg, jsid *end)
 {
     for (jsid *id = beg; id != end; ++id)
         *id = INT_TO_JSID(0);
 }
 
-static JS_ALWAYS_INLINE void
+static MOZ_ALWAYS_INLINE void
 MakeRangeGCSafe(jsid *vec, size_t len)
 {
     MakeRangeGCSafe(vec, vec + len);
 }
 
-static JS_ALWAYS_INLINE void
+static MOZ_ALWAYS_INLINE void
 MakeRangeGCSafe(Shape **beg, Shape **end)
 {
     mozilla::PodZero(beg, end - beg);
 }
 
-static JS_ALWAYS_INLINE void
+static MOZ_ALWAYS_INLINE void
 MakeRangeGCSafe(Shape **vec, size_t len)
 {
     mozilla::PodZero(vec, len);
 }
 
-static JS_ALWAYS_INLINE void
+static MOZ_ALWAYS_INLINE void
 SetValueRangeToUndefined(Value *beg, Value *end)
 {
     for (Value *v = beg; v != end; ++v)
         v->setUndefined();
 }
 
-static JS_ALWAYS_INLINE void
+static MOZ_ALWAYS_INLINE void
 SetValueRangeToUndefined(Value *vec, size_t len)
 {
     SetValueRangeToUndefined(vec, vec + len);
 }
 
-static JS_ALWAYS_INLINE void
+static MOZ_ALWAYS_INLINE void
 SetValueRangeToNull(Value *beg, Value *end)
 {
     for (Value *v = beg; v != end; ++v)
         v->setNull();
 }
 
-static JS_ALWAYS_INLINE void
+static MOZ_ALWAYS_INLINE void
 SetValueRangeToNull(Value *vec, size_t len)
 {
     SetValueRangeToNull(vec, vec + len);
@@ -2048,27 +1979,9 @@ class RuntimeAllocPolicy
 
 extern const JSSecurityCallbacks NullSecurityCallbacks;
 
-class AutoProtectHeapForCompilation
-{
-  public:
-#if defined(DEBUG) && !defined(XP_WIN)
-    JSRuntime *runtime;
-
-    AutoProtectHeapForCompilation(JSRuntime *rt MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-    ~AutoProtectHeapForCompilation();
-#else
-    AutoProtectHeapForCompilation(JSRuntime *rt MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-    {
-        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-    }
-#endif
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
-
 } /* namespace js */
 
 #ifdef _MSC_VER
-#pragma warning(pop)
 #pragma warning(pop)
 #endif
 

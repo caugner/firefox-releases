@@ -43,9 +43,12 @@ public:
       : gfxFontFamily(aName), mDWFamily(aFamily), mForceGDIClassic(false) {}
     virtual ~gfxDWriteFontFamily();
     
-    virtual void FindStyleVariations();
+    virtual void FindStyleVariations(FontInfoData *aFontInfoData = nullptr);
 
     virtual void LocalizedName(nsAString& aLocalizedName);
+
+    virtual void ReadFaceNames(gfxPlatformFontList *aPlatformFontList,
+                               bool aNeedFullnamePostscriptNames);
 
     void SetForceGDIClassic(bool aForce) { mForceGDIClassic = aForce; }
 
@@ -146,7 +149,7 @@ public:
 
     virtual hb_blob_t* GetFontTable(uint32_t aTableTag) MOZ_OVERRIDE;
 
-    nsresult ReadCMAP();
+    nsresult ReadCMAP(FontInfoData *aFontInfoData = nullptr);
 
     bool IsCJKFont();
 
@@ -403,6 +406,8 @@ private:
 
     bool mInitialized;
     virtual nsresult DelayedInitFontList();
+
+    virtual already_AddRefed<FontInfoData> CreateFontInfoData();
 
     gfxFloat mForceGDIClassicMaxFontSize;
 

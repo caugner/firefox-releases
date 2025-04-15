@@ -46,7 +46,7 @@ static void AppendNonAsciiToNCR(const nsAString& in, nsAFlatString& out)
       nsAutoString hex;
       hex.AppendInt(*start++, 16);
       out.Append(hex);
-      out.Append((PRUnichar)';');
+      out.Append((char16_t)';');
     }
   }
 }
@@ -533,13 +533,13 @@ nsIndexedToHTML::DoOnStartRequest(nsIRequest* request, nsISupports *aContext,
                                     unEscapeSpec.Length()));
 
     nsXPIDLString title;
-    const PRUnichar* formatTitle[] = {
+    const char16_t* formatTitle[] = {
         htmlEscSpec.get()
     };
 
-    rv = mBundle->FormatStringFromName(NS_LITERAL_STRING("DirTitle").get(),
+    rv = mBundle->FormatStringFromName(MOZ_UTF16("DirTitle"),
                                        formatTitle,
-                                       sizeof(formatTitle)/sizeof(PRUnichar*),
+                                       sizeof(formatTitle)/sizeof(char16_t*),
                                        getter_Copies(title));
     if (NS_FAILED(rv)) return rv;
 
@@ -590,13 +590,13 @@ nsIndexedToHTML::DoOnStartRequest(nsIRequest* request, nsISupports *aContext,
     buffer.Append(direction);
     buffer.AppendLiteral("\">\n<h1>");
     
-    const PRUnichar* formatHeading[] = {
+    const char16_t* formatHeading[] = {
         htmlEscSpec.get()
     };
 
-    rv = mBundle->FormatStringFromName(NS_LITERAL_STRING("DirTitle").get(),
+    rv = mBundle->FormatStringFromName(MOZ_UTF16("DirTitle"),
                                        formatHeading,
-                                       sizeof(formatHeading)/sizeof(PRUnichar*),
+                                       sizeof(formatHeading)/sizeof(char16_t*),
                                        getter_Copies(title));
     if (NS_FAILED(rv)) return rv;
     
@@ -605,7 +605,7 @@ nsIndexedToHTML::DoOnStartRequest(nsIRequest* request, nsISupports *aContext,
 
     if (!parentStr.IsEmpty()) {
         nsXPIDLString parentText;
-        rv = mBundle->GetStringFromName(NS_LITERAL_STRING("DirGoUp").get(),
+        rv = mBundle->GetStringFromName(MOZ_UTF16("DirGoUp"),
                                         getter_Copies(parentText));
         if (NS_FAILED(rv)) return rv;
 
@@ -622,7 +622,7 @@ nsIndexedToHTML::DoOnStartRequest(nsIRequest* request, nsISupports *aContext,
 
     if (isSchemeFile) {
         nsXPIDLString showHiddenText;
-        rv = mBundle->GetStringFromName(NS_LITERAL_STRING("ShowHidden").get(),
+        rv = mBundle->GetStringFromName(MOZ_UTF16("ShowHidden"),
                                         getter_Copies(showHiddenText));
         if (NS_FAILED(rv)) return rv;
 
@@ -639,21 +639,21 @@ nsIndexedToHTML::DoOnStartRequest(nsIRequest* request, nsISupports *aContext,
                          "  <tr>\n"
                          "   <th>");
 
-    rv = mBundle->GetStringFromName(NS_LITERAL_STRING("DirColName").get(),
+    rv = mBundle->GetStringFromName(MOZ_UTF16("DirColName"),
                                     getter_Copies(columnText));
     if (NS_FAILED(rv)) return rv;
     AppendNonAsciiToNCR(columnText, buffer);
     buffer.AppendLiteral("</th>\n"
                          "   <th>");
 
-    rv = mBundle->GetStringFromName(NS_LITERAL_STRING("DirColSize").get(),
+    rv = mBundle->GetStringFromName(MOZ_UTF16("DirColSize"),
                                     getter_Copies(columnText));
     if (NS_FAILED(rv)) return rv;
     AppendNonAsciiToNCR(columnText, buffer);
     buffer.AppendLiteral("</th>\n"
                          "   <th colspan=\"2\">");
 
-    rv = mBundle->GetStringFromName(NS_LITERAL_STRING("DirColMTime").get(),
+    rv = mBundle->GetStringFromName(MOZ_UTF16("DirColMTime"),
                                     getter_Copies(columnText));
     if (NS_FAILED(rv)) return rv;
     AppendNonAsciiToNCR(columnText, buffer);
@@ -698,7 +698,7 @@ nsIndexedToHTML::FormatInputStream(nsIRequest* aRequest, nsISupports *aContext, 
                                                           getter_AddRefs(mUnicodeEncoder));
         if (NS_SUCCEEDED(rv))
             rv = mUnicodeEncoder->SetOutputErrorBehavior(nsIUnicodeEncoder::kOnError_Replace, 
-                                                       nullptr, (PRUnichar)'?');
+                                                       nullptr, (char16_t)'?');
       }
     }
 
@@ -710,7 +710,7 @@ nsIndexedToHTML::FormatInputStream(nsIRequest* aRequest, nsISupports *aContext, 
       rv = mUnicodeEncoder->GetMaxLength(PromiseFlatString(aBuffer).get(), 
                                          unicharLength, &dstLength);
       if (NS_SUCCEEDED(rv)) {
-        buffer = (char *) nsMemory::Alloc(dstLength);
+        buffer = (char *) moz_malloc(dstLength);
         NS_ENSURE_TRUE(buffer, NS_ERROR_OUT_OF_MEMORY);
 
         rv = mUnicodeEncoder->Convert(PromiseFlatString(aBuffer).get(), &unicharLength, 
@@ -773,7 +773,7 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
 
     nsXPIDLString description;
     aIndex->GetDescription(getter_Copies(description));
-    if (description.First() == PRUnichar('.'))
+    if (description.First() == char16_t('.'))
         pushBuffer.AppendLiteral(" class=\"hidden-object\"");
 
     pushBuffer.AppendLiteral(">\n <td sortable-data=\"");
@@ -794,7 +794,7 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
             pushBuffer.AppendInt(2);
             break;
     }
-    PRUnichar* escaped = nsEscapeHTML2(description.get(), description.Length());
+    char16_t* escaped = nsEscapeHTML2(description.get(), description.Length());
     pushBuffer.Append(escaped);
 
     pushBuffer.AppendLiteral("\"><a class=\"");
@@ -903,7 +903,7 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
         if (NS_FAILED(rv)) {
             return rv;
         }
-        nsAutoArrayPtr<PRUnichar> outbuf(new PRUnichar[outlen]);
+        nsAutoArrayPtr<char16_t> outbuf(new char16_t[outlen]);
         rv = decoder->Convert(locEscaped.get(), &len, outbuf, &outlen);
         // Use the result only if the sequence is valid as UTF-8.
         if (rv == NS_OK) {
@@ -937,7 +937,7 @@ nsIndexedToHTML::OnIndexAvailable(nsIRequest *aRequest,
         pushBuffer.AppendLiteral("?size=16\" alt=\"");
 
         nsXPIDLString altText;
-        rv = mBundle->GetStringFromName(NS_LITERAL_STRING("DirFileLabel").get(),
+        rv = mBundle->GetStringFromName(MOZ_UTF16("DirFileLabel"),
                                         getter_Copies(altText));
         if (NS_FAILED(rv)) return rv;
         AppendNonAsciiToNCR(altText, pushBuffer);
@@ -1002,7 +1002,7 @@ nsIndexedToHTML::OnInformationAvailable(nsIRequest *aRequest,
                                         nsISupports *aCtxt,
                                         const nsAString& aInfo) {
     nsAutoString pushBuffer;
-    PRUnichar* escaped = nsEscapeHTML2(PromiseFlatString(aInfo).get());
+    char16_t* escaped = nsEscapeHTML2(PromiseFlatString(aInfo).get());
     if (!escaped)
         return NS_ERROR_OUT_OF_MEMORY;
     pushBuffer.AppendLiteral("<tr>\n <td>");

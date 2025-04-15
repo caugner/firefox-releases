@@ -17,6 +17,7 @@ function test()
   gBrowser.selectedBrowser.addEventListener("load", function onload() {
     gBrowser.selectedBrowser.removeEventListener("load", onload, true);
     doc = content.document;
+    node = doc.querySelector("h1");
     waitForFocus(setupKeyBindingsTest, content);
   }, true);
 
@@ -66,21 +67,18 @@ function test()
   function inspectorShouldBeOpenAndHighlighting(aInspector, aToolbox)
   {
     is (aToolbox.currentToolId, "inspector", "Correct tool has been loaded");
-    is (aInspector.highlighter.locked, true, "Highlighter should be locked");
 
-    aInspector.highlighter.once("unlocked", () => {
-      is (aInspector.highlighter.locked, false, "Highlighter should be unlocked");
+    aToolbox.once("picker-started", () => {
+      ok(true, "picker-started event received, highlighter started");
       keysetMap.inspector.synthesizeKey();
-      is (aInspector.highlighter.locked, true, "Highlighter should be locked");
-      keysetMap.inspector.synthesizeKey();
-      is (aInspector.highlighter.locked, false, "Highlighter should be unlocked");
-      keysetMap.inspector.synthesizeKey();
-      is (aInspector.highlighter.locked, true, "Highlighter should be locked");
 
-      aToolbox.once("webconsole-ready", (e, panel) => {
-        webconsoleShouldBeSelected(aToolbox, panel);
+      aToolbox.once("picker-stopped", () => {
+        ok(true, "picker-stopped event received, highlighter stopped");
+        aToolbox.once("webconsole-ready", (e, panel) => {
+          webconsoleShouldBeSelected(aToolbox, panel);
+        });
+        keysetMap.webconsole.synthesizeKey();
       });
-      keysetMap.webconsole.synthesizeKey();
     });
   }
 

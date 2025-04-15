@@ -53,7 +53,7 @@ FilterContainsLocation(HandleScript function)
         return false;
 
     const char *filename = function->filename();
-    const size_t line = function->lineno;
+    const size_t line = function->lineno();
     const size_t filelen = strlen(filename);
     const char *index = strstr(filter, filename);
     while (index) {
@@ -81,22 +81,8 @@ jit::EnableIonDebugLogging()
 void
 jit::IonSpewNewFunction(MIRGraph *graph, HandleScript func)
 {
-    if (GetIonContext()->runtime->onMainThread()) {
+    if (GetIonContext()->runtime->onMainThread())
         ionspewer.beginFunction(graph, func);
-        return;
-    }
-
-    if (!IonSpewEnabled(IonSpew_Logs))
-        return;
-
-    // Ionspewer isn't threads-safe. Therefore logging is disabled for
-    // off-thread spewing. Throw informative message when trying.
-    if (func) {
-        IonSpew(IonSpew_Logs, "Can't log script %s:%d. (Compiled on background thread.)",
-                              func->filename(), func->lineno);
-    } else {
-        IonSpew(IonSpew_Logs, "Can't log asm.js compilation. (Compiled on background thread.)");
-    }
 }
 
 void

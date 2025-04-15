@@ -114,123 +114,149 @@ function run_test() {
   // setup and start ocsp responder
   Services.prefs.setCharPref("network.dns.localDomains",
                              'www.example.com, crl.example.com');
-
+  add_tests_in_mode(true);
+  add_tests_in_mode(false);
   run_next_test();
 }
 
-add_test(function() {
-  clearOCSPCache();
-  let ocspResponder = start_ocsp_responder(
-                        isDebugBuild ? ["int-ev-valid", "ev-valid"]
-                                     : ["ev-valid"]);
-  check_ee_for_ev("ev-valid", isDebugBuild);
-  ocspResponder.stop(run_next_test);
-});
+function add_tests_in_mode(useInsanity)
+{
+  add_test(function () {
+    Services.prefs.setBoolPref("security.use_insanity_verification",
+                               useInsanity);
+    run_next_test();
+  });
 
-add_test(function() {
-  clearOCSPCache();
-  let ocspResponder = start_ocsp_responder(["non-ev-root"]);
-  check_ee_for_ev("non-ev-root", false);
-  ocspResponder.stop(run_next_test);
-});
+  add_test(function () {
+    clearOCSPCache();
+    let ocspResponder = start_ocsp_responder(
+                          isDebugBuild ? ["int-ev-valid", "ev-valid"]
+                                       : ["ev-valid"]);
+    check_ee_for_ev("ev-valid", isDebugBuild);
+    ocspResponder.stop(run_next_test);
+  });
 
-add_test(function() {
-  clearOCSPCache();
-  // libpkix will attempt to validate the intermediate, which does have an
-  // OCSP URL.
-  let ocspResponder = isDebugBuild ? start_ocsp_responder(["int-ev-valid"])
-                                   : failingOCSPResponder();
-  check_ee_for_ev("no-ocsp-url-cert", false);
-  ocspResponder.stop(run_next_test);
-});
+  add_test(function() {
+    clearOCSPCache();
+    let ocspResponder = start_ocsp_responder(["non-ev-root"]);
+    check_ee_for_ev("non-ev-root", false);
+    ocspResponder.stop(run_next_test);
+  });
 
-// bug 917380: Chcek that an untrusted EV root is untrusted.
-const nsIX509Cert = Ci.nsIX509Cert;
-add_test(function() {
-  let evRootCA = certdb.findCertByNickname(null, evrootnick);
-  certdb.setCertTrust(evRootCA, nsIX509Cert.CA_CERT, 0);
+  add_test(function() {
+    clearOCSPCache();
+    // libpkix will attempt to validate the intermediate, which does have an
+    // OCSP URL.
+    let ocspResponder = isDebugBuild ? start_ocsp_responder(["int-ev-valid"])
+                                     : failingOCSPResponder();
+    check_ee_for_ev("no-ocsp-url-cert", false);
+    ocspResponder.stop(run_next_test);
+  });
 
-  clearOCSPCache();
-  let ocspResponder = failingOCSPResponder();
-  check_cert_err("ev-valid", SEC_ERROR_UNTRUSTED_ISSUER);
-  ocspResponder.stop(run_next_test);
-});
+  // bug 917380: Chcek that an untrusted EV root is untrusted.
+  const nsIX509Cert = Ci.nsIX509Cert;
+  add_test(function() {
+    let evRootCA = certdb.findCertByNickname(null, evrootnick);
+    certdb.setCertTrust(evRootCA, nsIX509Cert.CA_CERT, 0);
 
-// bug 917380: Chcek that a trusted EV root is trusted after disabling and
-// re-enabling trust.
-add_test(function() {
-  let evRootCA = certdb.findCertByNickname(null, evrootnick);
-  certdb.setCertTrust(evRootCA, nsIX509Cert.CA_CERT,
-                      Ci.nsIX509CertDB.TRUSTED_SSL |
-                      Ci.nsIX509CertDB.TRUSTED_EMAIL |
-                      Ci.nsIX509CertDB.TRUSTED_OBJSIGN);
+    clearOCSPCache();
+    let ocspResponder = failingOCSPResponder();
+    check_cert_err("ev-valid",
+                   useInsanity ? SEC_ERROR_UNKNOWN_ISSUER
+                               : SEC_ERROR_UNTRUSTED_ISSUER);
+    ocspResponder.stop(run_next_test);
+  });
 
-  clearOCSPCache();
-  let ocspResponder = start_ocsp_responder(
-                        isDebugBuild ? ["int-ev-valid", "ev-valid"]
-                                     : ["ev-valid"]);
-  check_ee_for_ev("ev-valid", isDebugBuild);
-  ocspResponder.stop(run_next_test);
-});
+  // bug 917380: Chcek that a trusted EV root is trusted after disabling and
+  // re-enabling trust.
+  add_test(function() {
+    let evRootCA = certdb.findCertByNickname(null, evrootnick);
+    certdb.setCertTrust(evRootCA, nsIX509Cert.CA_CERT,
+                        Ci.nsIX509CertDB.TRUSTED_SSL |
+                        Ci.nsIX509CertDB.TRUSTED_EMAIL |
+                        Ci.nsIX509CertDB.TRUSTED_OBJSIGN);
 
-// bug 950240: add FLAG_NO_DV_FALLBACK_FOR_EV to CertVerifier::VerifyCert
+    clearOCSPCache();
+    let ocspResponder = start_ocsp_responder(
+                          isDebugBuild ? ["int-ev-valid", "ev-valid"]
+                                       : ["ev-valid"]);
+    check_ee_for_ev("ev-valid", isDebugBuild);
+    ocspResponder.stop(run_next_test);
+  });
+
+  add_test(function () {
+    check_no_ocsp_requests("ev-valid",
+      useInsanity ? SEC_ERROR_POLICY_VALIDATION_FAILED
+                  : (isDebugBuild ? SEC_ERROR_REVOKED_CERTIFICATE
+                                  : SEC_ERROR_EXTENSION_NOT_FOUND));
+  });
+
+  add_test(function () {
+    check_no_ocsp_requests("non-ev-root",
+      useInsanity ? SEC_ERROR_POLICY_VALIDATION_FAILED
+                  : (isDebugBuild ? SEC_ERROR_UNTRUSTED_ISSUER
+                                  : SEC_ERROR_EXTENSION_NOT_FOUND));
+  });
+
+  add_test(function () {
+    check_no_ocsp_requests("no-ocsp-url-cert",
+      useInsanity ? SEC_ERROR_POLICY_VALIDATION_FAILED
+                  : (isDebugBuild ? SEC_ERROR_REVOKED_CERTIFICATE
+                                  : SEC_ERROR_EXTENSION_NOT_FOUND));
+  });
+
+  // Test the EV continues to work with flags after successful EV verification
+  add_test(function () {
+    clearOCSPCache();
+    let ocspResponder = start_ocsp_responder(
+                          isDebugBuild ? ["int-ev-valid", "ev-valid"]
+                                       : ["ev-valid"]);
+    check_ee_for_ev("ev-valid", isDebugBuild);
+    ocspResponder.stop(function () {
+      // without net it must be able to EV verify
+      let failingOcspResponder = failingOCSPResponder();
+      let cert = certdb.findCertByNickname(null, "ev-valid");
+      let hasEVPolicy = {};
+      let verifiedChain = {};
+      let flags = Ci.nsIX509CertDB.FLAG_LOCAL_ONLY |
+                  Ci.nsIX509CertDB.FLAG_MUST_BE_EV;
+
+      let error = certdb.verifyCertNow(cert, certificateUsageSSLServer,
+                                       flags, verifiedChain, hasEVPolicy);
+      // XXX(bug 915932): Without an OCSP cache, local-only validation of EV
+      //                  certs will always fail due to lack of an OCSP.
+      do_check_eq(hasEVPolicy.value, isDebugBuild && !useInsanity);
+      do_check_eq(error,
+                  useInsanity ? SEC_ERROR_POLICY_VALIDATION_FAILED
+                              : (isDebugBuild ? 0
+                                              : SEC_ERROR_EXTENSION_NOT_FOUND));
+      failingOcspResponder.stop(run_next_test);
+    });
+  });
+}
+
+// bug 950240: add FLAG_MUST_BE_EV to CertVerifier::VerifyCert
 // to prevent spurious OCSP requests that race with OCSP stapling.
 // This has the side-effect of saying an EV certificate is not EV if
 // it hasn't already been verified (e.g. on the verification thread when
 // connecting to a site).
-function check_no_ocsp_requests(cert_name) {
+// This flag is mostly a hack that should be removed once FLAG_LOCAL_ONLY
+// works as intended.
+function check_no_ocsp_requests(cert_name, expected_error) {
   clearOCSPCache();
   let ocspResponder = failingOCSPResponder();
   let cert = certdb.findCertByNickname(null, cert_name);
   let hasEVPolicy = {};
   let verifiedChain = {};
   let flags = Ci.nsIX509CertDB.FLAG_LOCAL_ONLY |
-              Ci.nsIX509CertDB.FLAG_NO_DV_FALLBACK_FOR_EV;
+              Ci.nsIX509CertDB.FLAG_MUST_BE_EV;
   let error = certdb.verifyCertNow(cert, certificateUsageSSLServer, flags,
                                    verifiedChain, hasEVPolicy);
   // Since we're not doing OCSP requests, no certificate will be EV.
   do_check_eq(hasEVPolicy.value, false);
-  do_check_eq(0, error);
+  do_check_eq(expected_error, error);
   // Also check that isExtendedValidation doesn't cause OCSP requests.
   let identityInfo = cert.QueryInterface(Ci.nsIIdentityInfo);
   do_check_eq(identityInfo.isExtendedValidation, false);
   ocspResponder.stop(run_next_test);
 }
-
-add_test(function() {
-  check_no_ocsp_requests("ev-valid");
-});
-
-add_test(function() {
-  check_no_ocsp_requests("non-ev-root");
-});
-
-add_test(function() {
-  check_no_ocsp_requests("no-ocsp-url-cert");
-});
-
-
-// Test the EV continues to work with flags after successful EV verification
-add_test(function() {
-  clearOCSPCache();
-  let ocspResponder = start_ocsp_responder(
-                        isDebugBuild ? ["int-ev-valid", "ev-valid"]
-                                     : ["ev-valid"]);
-  check_ee_for_ev("ev-valid", isDebugBuild);
-  ocspResponder.stop(function() {
-    // without net it must be able to EV verify
-    let failingOcspResponder = failingOCSPResponder();
-    let cert = certdb.findCertByNickname(null, "ev-valid");
-    let hasEVPolicy = {};
-    let verifiedChain = {};
-    let flags = Ci.nsIX509CertDB.FLAG_LOCAL_ONLY |
-                Ci.nsIX509CertDB.FLAG_NO_DV_FALLBACK_FOR_EV;
-    
-    let error = certdb.verifyCertNow(cert, certificateUsageSSLServer,
-                                     flags, verifiedChain, hasEVPolicy);
-    do_check_eq(hasEVPolicy.value, isDebugBuild);
-    do_check_eq(error, 0);
-    failingOcspResponder.stop(run_next_test);
-  });
-});
-

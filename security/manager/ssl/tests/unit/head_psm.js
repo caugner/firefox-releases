@@ -23,41 +23,40 @@ const SSL_ERROR_BASE = Ci.nsINSSErrorsService.NSS_SSL_ERROR_BASE;
 
 // Sort in numerical order
 const SEC_ERROR_EXPIRED_CERTIFICATE                     = SEC_ERROR_BASE +  11;
-const SEC_ERROR_REVOKED_CERTIFICATE                     = SEC_ERROR_BASE +  12;
+const SEC_ERROR_REVOKED_CERTIFICATE                     = SEC_ERROR_BASE +  12; // -8180
 const SEC_ERROR_UNKNOWN_ISSUER                          = SEC_ERROR_BASE +  13;
 const SEC_ERROR_BAD_DATABASE                            = SEC_ERROR_BASE +  18;
-const SEC_ERROR_UNTRUSTED_ISSUER                        = SEC_ERROR_BASE +  20;
-const SEC_ERROR_UNTRUSTED_CERT                          = SEC_ERROR_BASE +  21;
-const SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE              = SEC_ERROR_BASE +  30;
+const SEC_ERROR_UNTRUSTED_ISSUER                        = SEC_ERROR_BASE +  20; // -8172
+const SEC_ERROR_UNTRUSTED_CERT                          = SEC_ERROR_BASE +  21; // -8171
+const SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE              = SEC_ERROR_BASE +  30; // -8162
+const SEC_ERROR_EXTENSION_NOT_FOUND                     = SEC_ERROR_BASE +  35; // -8157
 const SEC_ERROR_CA_CERT_INVALID                         = SEC_ERROR_BASE +  36;
-const SEC_ERROR_INADEQUATE_KEY_USAGE                    = SEC_ERROR_BASE +  90;
+const SEC_ERROR_INADEQUATE_KEY_USAGE                    = SEC_ERROR_BASE +  90; // -8102  
+const SEC_ERROR_CERT_NOT_IN_NAME_SPACE                  = SEC_ERROR_BASE + 112; // -8080
 const SEC_ERROR_OCSP_MALFORMED_REQUEST                  = SEC_ERROR_BASE + 120;
 const SEC_ERROR_OCSP_SERVER_ERROR                       = SEC_ERROR_BASE + 121;
 const SEC_ERROR_OCSP_TRY_SERVER_LATER                   = SEC_ERROR_BASE + 122;
 const SEC_ERROR_OCSP_REQUEST_NEEDS_SIG                  = SEC_ERROR_BASE + 123;
 const SEC_ERROR_OCSP_UNAUTHORIZED_REQUEST               = SEC_ERROR_BASE + 124;
-const SEC_ERROR_OCSP_UNKNOWN_CERT                       = SEC_ERROR_BASE + 126;
+const SEC_ERROR_OCSP_UNKNOWN_CERT                       = SEC_ERROR_BASE + 126; // -8066
 const SEC_ERROR_OCSP_MALFORMED_RESPONSE                 = SEC_ERROR_BASE + 129;
 const SEC_ERROR_OCSP_UNAUTHORIZED_RESPONSE              = SEC_ERROR_BASE + 130;
 const SEC_ERROR_OCSP_OLD_RESPONSE                       = SEC_ERROR_BASE + 132;
 const SEC_ERROR_OCSP_INVALID_SIGNING_CERT               = SEC_ERROR_BASE + 144;
+const SEC_ERROR_POLICY_VALIDATION_FAILED                = SEC_ERROR_BASE + 160; // -8032
 const SEC_ERROR_CERT_SIGNATURE_ALGORITHM_DISABLED       = SEC_ERROR_BASE + 176;
 
 const SSL_ERROR_BAD_CERT_DOMAIN                         = SSL_ERROR_BASE +  12;
 
-// Certificate Usages
+// Supported Certificate Usages
 const certificateUsageSSLClient              = 0x0001;
 const certificateUsageSSLServer              = 0x0002;
-const certificateUsageSSLServerWithStepUp    = 0x0004;
 const certificateUsageSSLCA                  = 0x0008;
 const certificateUsageEmailSigner            = 0x0010;
 const certificateUsageEmailRecipient         = 0x0020;
 const certificateUsageObjectSigner           = 0x0040;
-const certificateUsageUserCertImport         = 0x0080;
 const certificateUsageVerifyCA               = 0x0100;
-const certificateUsageProtectedObjectSigner  = 0x0200;
 const certificateUsageStatusResponder        = 0x0400;
-const certificateUsageAnyCA                  = 0x0800;
 
 const NO_FLAGS = 0;
 
@@ -80,6 +79,19 @@ function getXPCOMStatusFromNSS(statusNSS) {
   let nssErrorsService = Cc["@mozilla.org/nss_errors_service;1"]
                            .getService(Ci.nsINSSErrorsService);
   return nssErrorsService.getXPCOMFromNSSError(statusNSS);
+}
+
+function checkCertErrorGeneric(certdb, cert, expectedError, usage) {
+  let hasEVPolicy = {};
+  let verifiedChain = {};
+  let error = certdb.verifyCertNow(cert, usage, NO_FLAGS, verifiedChain,
+                                   hasEVPolicy);
+  // expected error == -1 is a special marker for any error is OK
+  if (expectedError != -1 ) {
+    do_check_eq(error, expectedError);
+  } else {
+    do_check_neq (error, 0);
+  }
 }
 
 function _getLibraryFunctionWithNoArguments(functionName, libraryName) {

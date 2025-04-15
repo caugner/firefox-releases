@@ -27,6 +27,11 @@ function tearDown() {
   PanelUI.hide();
   BookmarksTestHelper.restore();
   HistoryTestHelper.restore();
+  Browser.selectedTab
+         .browser
+         .contentWindow
+         .QueryInterface(Ci.nsIInterfaceRequestor)
+         .getInterface(Ci.nsIDOMWindowUtils).clearNativeTouchSequence();
 }
 
 /*
@@ -85,7 +90,7 @@ gTests.push({
     let domUtils = win.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
     var touchdrag = new TouchDragAndHold();
     touchdrag.useNativeEvents = true;
-    touchdrag.stepTimeout = 20;
+    touchdrag.stepTimeout = 5;
     touchdrag.numSteps = 20;
 
     stopwatch.start();
@@ -122,7 +127,7 @@ gTests.push({
     let domUtils = win.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
     var touchdrag = new TouchDragAndHold();
     touchdrag.useNativeEvents = true;
-    touchdrag.stepTimeout = 20;
+    touchdrag.stepTimeout = 5;
     touchdrag.numSteps = 10;
 
     let iterations = 3;
@@ -166,8 +171,8 @@ gTests.push({
                           "Displays the low, high, and average FTR frame intervals when flinging a page of text.");
     PerfTest.declareNumericalResults([
       { value: low, desc: "low" },
-      { value: high, desc: "high" },
-      { value: ave, desc: "average" }
+      { value: high, desc: "high", shareAxis: 0 },
+      { value: ave, desc: "average", shareAxis: 0 }
     ]);
   }
 });
@@ -213,8 +218,8 @@ gTests.push({
                           "Displays the low, high, and average FTR frame intervals for about:start.");
     PerfTest.declareNumericalResults([
       { value: results.low, desc: "low" },
-      { value: results.high, desc: "high" },
-      { value: results.ave, desc: "average" }
+      { value: results.high, desc: "high", shareAxis: 0 },
+      { value: results.ave, desc: "average", shareAxis: 0 }
     ]);
   }
 });

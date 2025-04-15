@@ -211,7 +211,7 @@ SpdySession31::IdleTime()
   return PR_IntervalNow() - mLastDataReadEpoch;
 }
 
-void
+uint32_t
 SpdySession31::ReadTimeoutTick(PRIntervalTime now)
 {
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
@@ -221,13 +221,15 @@ SpdySession31::ReadTimeoutTick(PRIntervalTime now)
        this, PR_IntervalToSeconds(now - mLastReadEpoch)));
 
   if (!mPingThreshold)
-    return;
+    return UINT32_MAX;
 
   if ((now - mLastReadEpoch) < mPingThreshold) {
     // recent activity means ping is not an issue
     if (mPingSentEpoch)
       mPingSentEpoch = 0;
-    return;
+
+    return PR_IntervalToSeconds(mPingThreshold) -
+      PR_IntervalToSeconds(now - mLastReadEpoch);
   }
 
   if (mPingSentEpoch) {
@@ -237,8 +239,9 @@ SpdySession31::ReadTimeoutTick(PRIntervalTime now)
            this));
       mPingSentEpoch = 0;
       Close(NS_ERROR_NET_TIMEOUT);
+      return UINT32_MAX;
     }
-    return;
+    return 1; // run the tick aggressively while ping is outstanding
   }
 
   LOG(("SpdySession31::ReadTimeoutTick %p generating ping 0x%X\n",
@@ -247,7 +250,7 @@ SpdySession31::ReadTimeoutTick(PRIntervalTime now)
   if (mNextPingID == 0xffffffff) {
     LOG(("SpdySession31::ReadTimeoutTick %p cannot form ping - ids exhausted\n",
          this));
-    return;
+    return UINT32_MAX;
   }
 
   mPingSentEpoch = PR_IntervalNow();
@@ -291,6 +294,7 @@ SpdySession31::ReadTimeoutTick(PRIntervalTime now)
          "ping ids exhausted marking goaway\n", this));
     mShouldGoAway = true;
   }
+  return 1; // run the tick aggressively while ping is outstanding
 }
 
 uint32_t
@@ -746,7 +750,7 @@ SpdySession31::GenerateSettings()
   // 2nd entry is bytes 20 to 27
   // 3rd entry is bytes 28 to 35
 
-  if (!gHttpHandler->AllowSpdyPush()) {
+  if (!gHttpHandler->AllowPush()) {
     // announcing that we accept 0 incoming streams is done to
     // disable server push
     packet[15 + 8 * numberOfEntries] = SETTINGS_TYPE_MAX_CONCURRENT;
@@ -803,7 +807,7 @@ SpdySession31::GenerateSettings()
 
   LOG3(("Session Window increase at start of session %p %u\n",
         this, PR_ntohl(sessionWindowBump)));
-  LogIO(this, nullptr, "Session Window Bump ", packet, 12);
+  LogIO(this, nullptr, "Session Window Bump ", packet, 16);
 
 generateSettings_complete:
   FlushOutputQueue();
@@ -1020,7 +1024,7 @@ SpdySession31::HandleSynStream(SpdySession31 *self)
     LOG3(("SpdySession31::HandleSynStream %p associated ID of 0 failed.\n", self));
     self->GenerateRstStream(RST_PROTOCOL_ERROR, streamID);
 
-  } else if (!gHttpHandler->AllowSpdyPush()) {
+  } else if (!gHttpHandler->AllowPush()) {
     // MAX_CONCURRENT_STREAMS of 0 in settings should have disabled push,
     // but some servers are buggy about that.. or the config could have
     // been updated after the settings frame was sent. In both cases just

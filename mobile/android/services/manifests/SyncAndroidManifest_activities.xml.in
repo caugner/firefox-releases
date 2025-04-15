@@ -69,8 +69,6 @@
             android:name="org.mozilla.gecko.sync.receivers.SyncAccountDeletedReceiver"
             android:permission="@MOZ_ANDROID_SHARED_ACCOUNT_TYPE@.permission.PER_ACCOUNT_TYPE">
             <intent-filter>
-                <!-- This needs to be kept the same as
-                     GlobalConstants.SYNC_ACCOUNT_DELETED_ACTION. -->
                 <action android:name="@MOZ_ANDROID_SHARED_ACCOUNT_TYPE@.accounts.SYNC_ACCOUNT_DELETED_ACTION"/>
             </intent-filter>
         </receiver>
@@ -78,6 +76,7 @@
         <activity
             android:theme="@style/SyncTheme"
             android:excludeFromRecents="true"
+            android:exported="true"
             android:icon="@drawable/icon"
             android:label="@string/sync_app_name"
             android:configChanges="keyboardHidden|orientation|screenSize"
@@ -85,9 +84,11 @@
             android:taskAffinity="org.mozilla.gecko.sync.setup"
             android:name="org.mozilla.gecko.sync.setup.activities.SendTabActivity" >
 
+#ifndef RELEASE_BUILD
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/*" />
+                <data android:mimeType="text/plain" />
             </intent-filter>
+#endif
         </activity>

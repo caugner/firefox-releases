@@ -54,6 +54,7 @@
 #include "nsHashPropertyBag.h"
 #include "nsLayoutStylesheetCache.h"
 #include "nsIJSRuntimeService.h"
+#include "nsThreadManager.h"
 
 #include "IHistory.h"
 #include "nsNetUtil.h"
@@ -287,7 +288,7 @@ void SystemMessageHandledObserver::Init()
 NS_IMETHODIMP
 SystemMessageHandledObserver::Observe(nsISupports* aSubject,
                                       const char* aTopic,
-                                      const PRUnichar* aData)
+                                      const char16_t* aData)
 {
     if (ContentChild::GetSingleton()) {
         ContentChild::GetSingleton()->SendSystemMessageHandled();
@@ -339,6 +340,14 @@ ContentChild::Init(MessageLoop* aIOLoop,
 #endif
 
     NS_ASSERTION(!sSingleton, "only one ContentChild per child");
+
+    // Once we start sending IPC messages, we need the thread manager to be
+    // initialized so we can deal with the responses. Do that here before we
+    // try to construct the crash reporter.
+    nsresult rv = nsThreadManager::get()->Init();
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+        return false;
+    }
 
     Open(aChannel, aParentHandle, aIOLoop);
     sSingleton = this;
@@ -497,19 +506,12 @@ ContentChild::RecvPMemoryReportRequestConstructor(
     GetProcessName(process);
     AppendProcessId(process);
 
-    // Run each reporter.  The callback will turn each measurement into a
+    // Run the reporters.  The callback will turn each measurement into a
     // MemoryReport.
-    nsCOMPtr<nsISimpleEnumerator> e;
-    mgr->EnumerateReporters(getter_AddRefs(e));
     nsRefPtr<MemoryReportsWrapper> wrappedReports =
         new MemoryReportsWrapper(&reports);
     nsRefPtr<MemoryReportCallback> cb = new MemoryReportCallback(process);
-    bool more;
-    while (NS_SUCCEEDED(e->HasMoreElements(&more)) && more) {
-      nsCOMPtr<nsIMemoryReporter> r;
-      e->GetNext(getter_AddRefs(r));
-      r->CollectReports(cb, wrappedReports);
-    }
+    mgr->GetReportsForThisProcess(cb, wrappedReports);
 
     child->Send__delete__(child, generation, reports);
     return true;
@@ -552,8 +554,9 @@ ContentChild::RecvDumpGCAndCCLogsToFile(const nsString& aIdentifier,
 {
     nsCOMPtr<nsIMemoryInfoDumper> dumper = do_GetService("@mozilla.org/memory-info-dumper;1");
 
+    nsString gcLogPath, ccLogPath;
     dumper->DumpGCAndCCLogsToFile(aIdentifier, aDumpAllTraces,
-                                  aDumpChildProcesses);
+                                  aDumpChildProcesses, gcLogPath, ccLogPath);
     return true;
 }
 
@@ -870,9 +873,10 @@ ContentChild::DeallocPIndexedDBChild(PIndexedDBChild* aActor)
 }
 
 asmjscache::PAsmJSCacheEntryChild*
-ContentChild::AllocPAsmJSCacheEntryChild(const asmjscache::OpenMode& aOpenMode,
-                                         const int64_t& aSizeToWrite,
-                                         const IPC::Principal& aPrincipal)
+ContentChild::AllocPAsmJSCacheEntryChild(
+                                    const asmjscache::OpenMode& aOpenMode,
+                                    const asmjscache::WriteParams& aWriteParams,
+                                    const IPC::Principal& aPrincipal)
 {
   NS_NOTREACHED("Should never get here!");
   return nullptr;
@@ -1506,6 +1510,33 @@ ContentChild::RecvNotifyPhoneStateChange(const nsString& aState)
   if (os) {
     os->NotifyObservers(nullptr, "phone-state-changed", aState.get());
   }
+  return true;
+}
+
+void
+ContentChild::AddIdleObserver(nsIObserver* aObserver, uint32_t aIdleTimeInS)
+{
+  MOZ_ASSERT(aObserver, "null idle observer");
+  // Make sure aObserver isn't released while we wait for the parent
+  aObserver->AddRef();
+  SendAddIdleObserver(reinterpret_cast<uint64_t>(aObserver), aIdleTimeInS);
+}
+
+void
+ContentChild::RemoveIdleObserver(nsIObserver* aObserver, uint32_t aIdleTimeInS)
+{
+  MOZ_ASSERT(aObserver, "null idle observer");
+  SendRemoveIdleObserver(reinterpret_cast<uint64_t>(aObserver), aIdleTimeInS);
+  aObserver->Release();
+}
+
+bool
+ContentChild::RecvNotifyIdleObserver(const uint64_t& aObserver,
+                                     const nsCString& aTopic,
+                                     const nsString& aTimeStr)
+{
+  nsIObserver* observer = reinterpret_cast<nsIObserver*>(aObserver);
+  observer->Observe(nullptr, aTopic.get(), aTimeStr.get());
   return true;
 }
 

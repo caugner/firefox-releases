@@ -43,6 +43,7 @@
 #ifdef MOZ_PEERCONNECTION
 #include "mtransport/runnable_utils.h"
 #endif
+#include "nsProxyRelease.h"
 
 #define DATACHANNEL_LOG(args) LOG(args)
 #include "DataChannel.h"
@@ -118,7 +119,7 @@ public:
     }
 
   NS_IMETHODIMP Observe(nsISupports* aSubject, const char* aTopic,
-                        const PRUnichar* aData) {
+                        const char16_t* aData) {
     if (strcmp(aTopic, "profile-change-net-teardown") == 0) {
       LOG(("Shutting down SCTP"));
       if (sctp_initialized) {
@@ -401,6 +402,10 @@ DataChannelConnection::Init(unsigned short aPort, uint16_t aNumStreams, bool aUs
     if (usrsctp_setsockopt(mMasterSocket, IPPROTO_SCTP, SCTP_REUSE_PORT,
                            (const void *)&on, (socklen_t)sizeof(on)) < 0) {
       LOG(("Couldn't set SCTP_REUSE_PORT on SCTP socket"));
+    }
+    if (usrsctp_setsockopt(mMasterSocket, IPPROTO_SCTP, SCTP_NODELAY,
+                           (const void *)&on, (socklen_t)sizeof(on)) < 0) {
+      LOG(("Couldn't set SCTP_NODELAY on SCTP socket"));
     }
   }
 
@@ -2334,18 +2339,17 @@ DataChannelConnection::ReadBlob(already_AddRefed<DataChannelConnection> aThis,
   // be deferred until buffer space is available.
   nsCString temp;
   uint64_t len;
-  aBlob->Available(&len);
-  nsresult rv = NS_ReadInputStreamToString(aBlob, temp, len);
-  if (NS_FAILED(rv)) {
+  nsCOMPtr<nsIThread> mainThread;
+  NS_GetMainThread(getter_AddRefs(mainThread));
+
+  if (NS_FAILED(aBlob->Available(&len)) ||
+      NS_FAILED(NS_ReadInputStreamToString(aBlob, temp, len))) {
     // Bug 966602:  Doesn't return an error to the caller via onerror.
-    // Let aThis (aka this) be released when we exit out of paranoia
-    // instead of calling Release()
-    nsRefPtr<DataChannelConnection> self(aThis);
+    // We must release DataChannelConnection on MainThread to avoid issues (bug 876167)
+    NS_ProxyRelease(mainThread, aThis.get());
     return;
   }
   aBlob->Close();
-  nsCOMPtr<nsIThread> mainThread;
-  NS_GetMainThread(getter_AddRefs(mainThread));
   RUN_ON_THREAD(mainThread, WrapRunnable(nsRefPtr<DataChannelConnection>(aThis),
                                &DataChannelConnection::SendBinaryMsg,
                                aStream, temp),

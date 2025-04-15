@@ -84,11 +84,11 @@ class RegExpObjectBuilder
     RegExpObject *build(HandleAtom source, RegExpShared &shared);
 
     /* Perform a VM-internal clone. */
-    RegExpObject *clone(Handle<RegExpObject*> other, Handle<RegExpObject*> proto);
+    RegExpObject *clone(Handle<RegExpObject*> other);
 };
 
 JSObject *
-CloneRegExpObject(JSContext *cx, JSObject *obj, JSObject *proto);
+CloneRegExpObject(JSContext *cx, JSObject *obj);
 
 /*
  * A RegExpShared is the compiled representation of a regexp. A RegExpShared is
@@ -318,6 +318,13 @@ class RegExpCompartment
     typedef HashSet<RegExpShared *, DefaultHasher<RegExpShared*>, RuntimeAllocPolicy> PendingSet;
     PendingSet inUse_;
 
+    /*
+     * This is the template object where the result of re.exec() is based on,
+     * if there is a result. This is used in CreateRegExpMatchResult to set
+     * the input/index properties faster.
+     */
+    ReadBarriered<JSObject> matchResultTemplateObject_;
+
   public:
     RegExpCompartment(JSRuntime *rt);
     ~RegExpCompartment();
@@ -330,6 +337,9 @@ class RegExpCompartment
 
     /* Like 'get', but compile 'maybeOpt' (if non-null). */
     bool get(JSContext *cx, HandleAtom source, JSString *maybeOpt, RegExpGuard *g);
+
+    /* Get or create template object used to base the result of .exec() on. */
+    JSObject *getOrCreateMatchResultTemplateObject(JSContext *cx);
 
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf);
 };

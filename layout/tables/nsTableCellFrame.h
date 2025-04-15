@@ -101,6 +101,11 @@ public:
                            const nsRect& aDirtyRect, nsPoint aPt,
                            uint32_t aFlags);
 
+ 
+  virtual nsresult ProcessBorders(nsTableFrame* aFrame,
+                                  nsDisplayListBuilder* aBuilder,
+                                  const nsDisplayListSet& aLists);
+
   virtual nscoord GetMinWidth(nsRenderingContext *aRenderingContext) MOZ_OVERRIDE;
   virtual nscoord GetPrefWidth(nsRenderingContext *aRenderingContext) MOZ_OVERRIDE;
   virtual IntrinsicWidthOffsetData
@@ -118,7 +123,7 @@ public:
    */
   virtual nsIAtom* GetType() const MOZ_OVERRIDE;
 
-#ifdef DEBUG
+#ifdef DEBUG_FRAME_DUMP
   NS_IMETHOD GetFrameName(nsAString& aResult) const MOZ_OVERRIDE;
 #endif
 
@@ -129,7 +134,7 @@ public:
    * table cell, which means the result is always
    * NS_STYLE_VERTICAL_ALIGN_{TOP,MIDDLE,BOTTOM,BASELINE}.
    */
-  uint8_t GetVerticalAlign() const;
+  virtual uint8_t GetVerticalAlign() const;
 
   bool HasVerticalAlignBaseline() const {
     return GetVerticalAlign() == NS_STYLE_VERTICAL_ALIGN_BASELINE;
@@ -251,8 +256,8 @@ inline nsSize nsTableCellFrame::GetDesiredSize()
 
 inline void nsTableCellFrame::SetDesiredSize(const nsHTMLReflowMetrics & aDesiredSize)
 {
-  mDesiredSize.width = aDesiredSize.width;
-  mDesiredSize.height = aDesiredSize.height;
+  mDesiredSize.width = aDesiredSize.Width();
+  mDesiredSize.height = aDesiredSize.Height();
 }
 
 inline bool nsTableCellFrame::GetContentEmpty()
@@ -311,7 +316,7 @@ public:
 
   virtual nsMargin GetBorderOverflow() MOZ_OVERRIDE;
 
-#ifdef DEBUG
+#ifdef DEBUG_FRAME_DUMP
   NS_IMETHOD GetFrameName(nsAString& aResult) const MOZ_OVERRIDE;
 #endif
 

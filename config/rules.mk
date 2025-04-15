@@ -124,9 +124,6 @@ libs:: $(CPP_UNIT_TEST_BINS) $(call mkdir_deps,$(DIST)/cppunittests)
 	$(NSINSTALL) $(CPP_UNIT_TEST_BINS) $(DIST)/cppunittests
 endif
 
-check::
-	@$(PYTHON) $(topsrcdir)/testing/runcppunittests.py --xre-path=$(DIST)/bin --symbols-path=$(DIST)/crashreporter-symbols $(subst .cpp,$(BIN_SUFFIX),$(CPP_UNIT_TESTS))
-
 cppunittests-remote: DM_TRANS?=adb
 cppunittests-remote:
 	@if [ '${TEST_DEVICE}' != '' -o '$(DM_TRANS)' = 'adb' ]; then \
@@ -367,6 +364,10 @@ ifdef MOZ_UPDATE_XTERM
 UPDATE_TITLE = printf '\033]0;%s in %s\007' $(1) $(relativesrcdir)/$(2) ;
 endif
 
+ifdef BUILDING_JS
+NO_BUILDSTATUS_MESSAGES=1
+endif
+
 ifdef MACH
 ifndef NO_BUILDSTATUS_MESSAGES
 define BUILDSTATUS
@@ -591,7 +592,6 @@ endif
 # of the tiers and because of libxul. Suppress the default rules in favor
 # of something else. Makefiles which use this var *must* provide a sensible
 # default rule before including rules.mk
-ifndef SUPPRESS_DEFAULT_RULES
 default all::
 	$(MAKE) export
 ifdef MOZ_PSEUDO_DERECURSE
@@ -601,7 +601,6 @@ endif
 endif
 	$(MAKE) libs
 	$(MAKE) tools
-endif # SUPPRESS_DEFAULT_RULES
 
 ifeq ($(findstring s,$(filter-out --%, $(MAKEFLAGS))),)
 ECHO := echo
@@ -642,7 +641,7 @@ tools::
 endif
 
 ##############################################
-ifndef NO_PROFILE_GUIDED_OPTIMIZE
+ifneq (1,$(NO_PROFILE_GUIDED_OPTIMIZE))
 ifdef MOZ_PROFILE_USE
 ifeq ($(OS_ARCH)_$(GNU_CC), WINNT_)
 # When building with PGO, we have to make sure to re-link
@@ -1284,8 +1283,6 @@ endif # SDK_BINARY
 ################################################################################
 # CHROME PACKAGING
 
-JAR_MANIFEST := $(srcdir)/jar.mn
-
 chrome::
 	$(MAKE) realchrome
 	$(LOOP_OVER_PARALLEL_DIRS)
@@ -1294,7 +1291,7 @@ chrome::
 
 $(FINAL_TARGET)/chrome: $(call mkdir_deps,$(FINAL_TARGET)/chrome)
 
-ifneq (,$(wildcard $(JAR_MANIFEST)))
+ifneq (,$(JAR_MANIFEST))
 ifndef NO_DIST_INSTALL
 
 ifdef XPI_NAME
@@ -1320,6 +1317,13 @@ libs realchrome:: $(FINAL_TARGET)/chrome
 	  $(MAKE_JARS_FLAGS) $(XULPPFLAGS) $(DEFINES) $(ACDEFINES) \
 	  $(JAR_MANIFEST))
 
+endif
+
+# This is a temporary check to ensure patches relying on the old behavior
+# of silently picking up jar.mn files continue to work.
+else # No JAR_MANIFEST
+ifneq (,$(wildcard $(srcdir)/jar.mn))
+$(error $(srcdir) contains a jar.mn file but this file is not declared in a JAR_MANIFESTS variable in a moz.build file)
 endif
 endif
 
@@ -1451,9 +1455,9 @@ endif
 # file would be $(DIST)/include/bar/baz/qux.h instead of $(DIST)/include/qux.h
 
 # If we're using binary nsinstall and it's not built yet, fallback to python nsinstall.
-ifneq (,$(filter $(CONFIG_TOOLS)/nsinstall$(HOST_BIN_SUFFIX),$(install_cmd)))
-ifeq (,$(wildcard $(CONFIG_TOOLS)/nsinstall$(HOST_BIN_SUFFIX)))
-nsinstall_is_usable = $(if $(wildcard $(CONFIG_TOOLS)/nsinstall$(HOST_BIN_SUFFIX)),yes)
+ifneq (,$(filter $(DIST)/bin/nsinstall$(HOST_BIN_SUFFIX),$(install_cmd)))
+ifeq (,$(wildcard $(DIST)/bin/nsinstall$(HOST_BIN_SUFFIX)))
+nsinstall_is_usable = $(if $(wildcard $(DIST)/bin/nsinstall$(HOST_BIN_SUFFIX)),yes)
 
 define install_cmd_override
 $(1): install_cmd = $$(if $$(nsinstall_is_usable),$$(INSTALL),$$(NSINSTALL_PY)) $$(1)

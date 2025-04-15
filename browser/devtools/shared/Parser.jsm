@@ -9,6 +9,7 @@ const Ci = Components.interfaces;
 const Cu = Components.utils;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+const { DevToolsUtils } = Cu.import("resource://gre/modules/devtools/DevToolsUtils.jsm", {});
 
 XPCOMUtils.defineLazyModuleGetter(this,
   "Reflect", "resource://gre/modules/reflect.jsm");
@@ -65,7 +66,7 @@ Parser.prototype = {
         syntaxTrees.push(new SyntaxTree(nodes, aUrl, length));
       } catch (e) {
         this.errors.push(e);
-        log(aUrl, e);
+        DevToolsUtils.reportException(aUrl, e);
       }
     }
     // Generate the AST nodes for each script.
@@ -79,12 +80,12 @@ Parser.prototype = {
           syntaxTrees.push(new SyntaxTree(nodes, aUrl, length, offset));
         } catch (e) {
           this.errors.push(e);
-          log(aUrl, e);
+          DevToolsUtils.reportException(aUrl, e);
         }
       }
     }
 
-    let pool = new SyntaxTreesPool(syntaxTrees);
+    let pool = new SyntaxTreesPool(syntaxTrees, aUrl);
 
     // Cache the syntax trees pool by the specified url. This is entirely
     // optional, but it's strongly encouraged to cache ASTs because
@@ -122,9 +123,12 @@ Parser.prototype = {
  *
  * @param object aSyntaxTrees
  *        A collection of AST nodes generated for a source.
+ * @param string aUrl [optional]
+ *        The source url.
  */
-function SyntaxTreesPool(aSyntaxTrees) {
+function SyntaxTreesPool(aSyntaxTrees, aUrl = "<unknown>") {
   this._trees = aSyntaxTrees;
+  this._url = aUrl;
   this._cache = new Map();
 }
 
@@ -132,15 +136,15 @@ SyntaxTreesPool.prototype = {
   /**
    * @see SyntaxTree.prototype.getIdentifierAt
    */
-  getIdentifierAt: function(aLine, aColumn) {
-    return this._first(this._call("getIdentifierAt", aLine, aColumn));
+  getIdentifierAt: function({ line, column, scriptIndex }) {
+    return this._call("getIdentifierAt", scriptIndex, line, column)[0];
   },
 
   /**
    * @see SyntaxTree.prototype.getNamedFunctionDefinitions
    */
   getNamedFunctionDefinitions: function(aSubstring) {
-    return this._call("getNamedFunctionDefinitions", aSubstring);
+    return this._call("getNamedFunctionDefinitions", -1, aSubstring);
   },
 
   /**
@@ -161,56 +165,60 @@ SyntaxTreesPool.prototype = {
    *         The offset and length relative to the enclosing script.
    */
   getScriptInfo: function(aOffset) {
+    let info = { start: -1, length: -1, index: -1 };
+
     for (let { offset, length } of this._trees) {
-      if (offset <= aOffset &&  offset + length >= aOffset) {
-        return { start: offset, length: length };
+      info.index++;
+      if (offset <= aOffset && offset + length >= aOffset) {
+        info.start = offset;
+        info.length = length;
+        return info;
       }
     }
-    return { start: -1, length: -1 };
+
+    info.index = -1;
+    return info;
   },
 
   /**
-   * Gets the first script results from a source results set.
-   * If no results are found, null is returned.
-   *
-   * @return array
-   *         A collection of parse results for the first script in a source.
-   */
-  _first: function(aSourceResults) {
-    let scriptResult = aSourceResults.filter(e => !!e.parseResults)[0];
-    return scriptResult ? scriptResult.parseResults : null;
-  },
-
-  /**
-   * Handles a request for all known syntax trees.
+   * Handles a request for a specific or all known syntax trees.
    *
    * @param string aFunction
    *        The function name to call on the SyntaxTree instances.
+   * @param number aSyntaxTreeIndex
+   *        The syntax tree for which to handle the request. If the tree at
+   *        the specified index isn't found, the accumulated results for all
+   *        syntax trees are returned.
    * @param any aParams
    *        Any kind params to pass to the request function.
    * @return array
    *         The results given by all known syntax trees.
    */
-  _call: function(aFunction, ...aParams) {
+  _call: function(aFunction, aSyntaxTreeIndex, ...aParams) {
     let results = [];
-    let requestId = aFunction + aParams.toSource(); // Cache all the things!
+    let requestId = [aFunction, aSyntaxTreeIndex, aParams].toSource();
 
     if (this._cache.has(requestId)) {
       return this._cache.get(requestId);
     }
-    for (let syntaxTree of this._trees) {
+
+    let requestedTree = this._trees[aSyntaxTreeIndex];
+    let targettedTrees = requestedTree ? [requestedTree] : this._trees;
+
+    for (let syntaxTree of targettedTrees) {
       try {
-        results.push({
-          sourceUrl: syntaxTree.url,
-          scriptLength: syntaxTree.length,
-          scriptOffset: syntaxTree.offset,
-          parseResults: syntaxTree[aFunction].apply(syntaxTree, aParams)
-        });
+        let parseResults = syntaxTree[aFunction].apply(syntaxTree, aParams);
+        if (parseResults) {
+          parseResults.sourceUrl = syntaxTree.url;
+          parseResults.scriptLength = syntaxTree.length;
+          parseResults.scriptOffset = syntaxTree.offset;
+          results.push(parseResults);
+        }
       } catch (e) {
         // Can't guarantee that the tree traversal logic is forever perfect :)
         // Language features may be added, in which case the recursive methods
         // need to be updated. If an exception is thrown here, file a bug.
-        log("syntax tree", e);
+        DevToolsUtils.reportException("Syntax tree visitor for " + aUrl, e);
       }
     }
     this._cache.set(requestId, results);
@@ -421,10 +429,26 @@ let ParserHelpers = {
         loc.end.line = loc.start.line;
         loc.end.column = loc.start.column + aNode.name.length;
         return loc;
-    }
+      }
       if (parentType == "MemberExpression") {
         // e.g. "foo.bar"
         // The location is unavailable for the identifier node "bar".
+        let loc = JSON.parse(JSON.stringify(parentLocation));
+        loc.start.line = loc.end.line;
+        loc.start.column = loc.end.column - aNode.name.length;
+        return loc;
+      }
+      if (parentType == "LabeledStatement") {
+        // e.g. label: ...
+        // The location is unavailable for the identifier node "label".
+        let loc = JSON.parse(JSON.stringify(parentLocation));
+        loc.end.line = loc.start.line;
+        loc.end.column = loc.start.column + aNode.name.length;
+        return loc;
+      }
+      if (parentType == "ContinueStatement") {
+        // e.g. continue label
+        // The location is unavailable for the identifier node "label".
         let loc = JSON.parse(JSON.stringify(parentLocation));
         loc.start.line = loc.end.line;
         loc.start.column = loc.end.column - aNode.name.length;
@@ -2308,20 +2332,6 @@ let SyntaxTreeVisitor = {
       aCallbacks.onLiteral(aNode);
     }
   }
-};
-
-/**
- * Logs a warning.
- *
- * @param string aStr
- *        The message to be displayed.
- * @param Exception aEx
- *        The thrown exception.
- */
-function log(aStr, aEx) {
-  let msg = "Warning: " + aStr + ", " + aEx + "\n" + aEx.stack;
-  Cu.reportError(msg);
-  dump(msg + "\n");
 };
 
 XPCOMUtils.defineLazyGetter(Parser, "reflectionAPI", () => Reflect);

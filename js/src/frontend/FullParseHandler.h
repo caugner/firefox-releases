@@ -246,12 +246,7 @@ class FullParseHandler
     bool addShorthandPropertyDefinition(ParseNode *literal, ParseNode *name) {
         JS_ASSERT(literal->isArity(PN_LIST));
         literal->pn_xflags |= PNX_DESTRUCT | PNX_NONCONST;  // XXX why PNX_DESTRUCT?
-
-        ParseNode *propdef = newBinary(PNK_COLON, name, name, JSOP_INITPROP);
-        if (!propdef)
-            return false;
-        literal->append(propdef);
-        return true;
+        return addPropertyDefinition(literal, name, name);
     }
 
     bool addAccessorPropertyDefinition(ParseNode *literal, ParseNode *name, ParseNode *fn, JSOp op)
@@ -603,9 +598,9 @@ FullParseHandler::addCatchBlock(ParseNode *catchList, ParseNode *letBlock,
 inline void
 FullParseHandler::setLeaveBlockResult(ParseNode *block, ParseNode *kid, bool leaveBlockExpr)
 {
-    JS_ASSERT(block->isOp(JSOP_LEAVEBLOCK));
+    JS_ASSERT(block->isOp(JSOP_POPN));
     if (leaveBlockExpr)
-        block->setOp(JSOP_LEAVEBLOCKEXPR);
+        block->setOp(JSOP_POPNV);
     block->pn_expr = kid;
 }
 
@@ -637,7 +632,7 @@ FullParseHandler::newLexicalScope(ObjectBox *blockbox)
     if (!pn)
         return nullptr;
 
-    pn->setOp(JSOP_LEAVEBLOCK);
+    pn->setOp(JSOP_POPN);
     pn->pn_objbox = blockbox;
     pn->pn_cookie.makeFree();
     pn->pn_dflags = 0;

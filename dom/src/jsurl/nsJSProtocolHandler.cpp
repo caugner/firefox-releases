@@ -180,6 +180,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
                                      NS_ConvertUTF8toUTF16(asciiSpec),
                                      NS_ConvertUTF8toUTF16(mURL),
                                      0,
+                                     EmptyString(),
                                      EmptyString());
         }
 
@@ -274,7 +275,8 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
         nsIXPConnect *xpc = nsContentUtils::XPConnect();
 
         nsCOMPtr<nsIXPConnectJSObjectHolder> sandbox;
-        rv = xpc->CreateSandbox(cx, principal, getter_AddRefs(sandbox));
+        // Important: Use a null principal here
+        rv = xpc->CreateSandbox(cx, nullptr, getter_AddRefs(sandbox));
         NS_ENSURE_SUCCESS(rv, rv);
 
         // The nsXPConnect sandbox API gives us a wrapper to the sandbox for
@@ -292,7 +294,7 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
         pusher.Push(cx);
         rv = xpc->EvalInSandboxObject(NS_ConvertUTF8toUTF16(script),
                                       /* filename = */ nullptr, cx,
-                                      sandboxObj, true, v.address());
+                                      sandboxObj, true, &v);
 
         // Propagate and report exceptions that happened in the
         // sandbox.

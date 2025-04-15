@@ -618,6 +618,7 @@ let ContentScroll =  {
     }
   }
 };
+this.ContentScroll = ContentScroll;
 
 ContentScroll.init();
 

@@ -34,10 +34,10 @@ NS_IMPL_ISUPPORTS_INHERITED3(nsMathMLElement, nsMathMLElementBase,
                              nsIDOMElement, nsIDOMNode, Link)
 
 static nsresult
-WarnDeprecated(const PRUnichar* aDeprecatedAttribute, 
-               const PRUnichar* aFavoredAttribute, nsIDocument* aDocument)
+WarnDeprecated(const char16_t* aDeprecatedAttribute, 
+               const char16_t* aFavoredAttribute, nsIDocument* aDocument)
 {
-  const PRUnichar *argv[] = 
+  const char16_t *argv[] = 
     { aDeprecatedAttribute, aFavoredAttribute };
   return nsContentUtils::
           ReportToConsole(nsIScriptError::warningFlag,
@@ -49,7 +49,7 @@ WarnDeprecated(const PRUnichar* aDeprecatedAttribute,
 static nsresult 
 ReportLengthParseError(const nsString& aValue, nsIDocument* aDocument)
 {
-  const PRUnichar *arg = aValue.get();
+  const char16_t *arg = aValue.get();
   return nsContentUtils::
          ReportToConsole(nsIScriptError::errorFlag,
                          NS_LITERAL_CSTRING("MathML"), aDocument,
@@ -62,7 +62,7 @@ ReportParseErrorNoTag(const nsString& aValue,
                       nsIAtom*        aAtom,
                       nsIDocument*    aDocument)
 {
-  const PRUnichar *argv[] = 
+  const char16_t *argv[] = 
     { aValue.get(), aAtom->GetUTF16String() };
   return nsContentUtils::
          ReportToConsole(nsIScriptError::errorFlag,
@@ -377,7 +377,7 @@ nsMathMLElement::ParseNumericValue(const nsString& aString,
 
   // see if the negative sign is there
   int32_t i = 0;
-  PRUnichar c = str[0];
+  char16_t c = str[0];
   if (c == '-') {
     number.Append(c);
     i++;
@@ -558,7 +558,7 @@ nsMathMLElement::MapMathMLAttributesInto(const nsMappedAttributes* aAttributes,
           // then it's a relative value and we store the nsCSSValue as an
           // Integer to indicate that. Otherwise we store it as a Number
           // to indicate that the scriptlevel is absolute.
-          PRUnichar ch = str.CharAt(0);
+          char16_t ch = str.CharAt(0);
           if (ch == '+' || ch == '-') {
             scriptLevel->SetIntValue(intValue, eCSSUnit_Integer);
           } else {
@@ -613,7 +613,7 @@ nsMathMLElement::MapMathMLAttributesInto(const nsMappedAttributes* aAttributes,
                              nullptr)
           && parseSizeKeywords) {
         static const char sizes[3][7] = { "small", "normal", "big" };
-        static const int32_t values[NS_ARRAY_LENGTH(sizes)] = {
+        static const int32_t values[MOZ_ARRAY_LENGTH(sizes)] = {
           NS_STYLE_FONT_SIZE_SMALL, NS_STYLE_FONT_SIZE_MEDIUM,
           NS_STYLE_FONT_SIZE_LARGE
         };
@@ -730,7 +730,7 @@ nsMathMLElement::MapMathMLAttributesInto(const nsMappedAttributes* aAttributes,
         "bold-sans-serif", "sans-serif-italic", "sans-serif-bold-italic",
         "monospace", "initial", "tailed", "looped", "stretched"
       };
-      static const int32_t values[NS_ARRAY_LENGTH(sizes)] = {
+      static const int32_t values[MOZ_ARRAY_LENGTH(sizes)] = {
         NS_MATHML_MATHVARIANT_NORMAL, NS_MATHML_MATHVARIANT_BOLD,
         NS_MATHML_MATHVARIANT_ITALIC, NS_MATHML_MATHVARIANT_BOLD_ITALIC,
         NS_MATHML_MATHVARIANT_SCRIPT, NS_MATHML_MATHVARIANT_BOLD_SCRIPT,
@@ -876,7 +876,7 @@ nsMathMLElement::MapMathMLAttributesInto(const nsMappedAttributes* aAttributes,
         direction->GetUnit() == eCSSUnit_Null) {
       nsAutoString str(value->GetStringValue());
       static const char dirs[][4] = { "ltr", "rtl" };
-      static const int32_t dirValues[NS_ARRAY_LENGTH(dirs)] = {
+      static const int32_t dirValues[MOZ_ARRAY_LENGTH(dirs)] = {
         NS_STYLE_DIRECTION_LTR, NS_STYLE_DIRECTION_RTL
       };
       for (uint32_t i = 0; i < ArrayLength(dirs); ++i) {
@@ -1074,8 +1074,8 @@ nsMathMLElement::SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
       (aNameSpaceID == kNameSpaceID_None ||
        aNameSpaceID == kNameSpaceID_XLink)) {
     if (aNameSpaceID == kNameSpaceID_XLink) {
-      WarnDeprecated(NS_LITERAL_STRING("xlink:href").get(),
-                     NS_LITERAL_STRING("href").get(), OwnerDoc());
+      WarnDeprecated(MOZ_UTF16("xlink:href"),
+                     MOZ_UTF16("href"), OwnerDoc());
     }
     Link::ResetLinkState(!!aNotify, true);
   }

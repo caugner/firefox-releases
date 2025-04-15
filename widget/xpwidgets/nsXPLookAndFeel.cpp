@@ -320,7 +320,7 @@ nsXPLookAndFeel::ColorPrefChanged (unsigned int index, const char *prefName)
   }
   if (!colorStr.IsEmpty()) {
     nscolor thecolor;
-    if (colorStr[0] == PRUnichar('#')) {
+    if (colorStr[0] == char16_t('#')) {
       if (NS_HexToRGB(nsDependentString(colorStr, 1), &thecolor)) {
         int32_t id = NS_PTR_TO_INT32(index);
         CACHE_COLOR(id, thecolor);
@@ -372,7 +372,7 @@ nsXPLookAndFeel::InitColorFromPref(int32_t i)
     return;
   }
   nscolor thecolor;
-  if (colorStr[0] == PRUnichar('#')) {
+  if (colorStr[0] == char16_t('#')) {
     nsAutoString hexString;
     colorStr.Right(hexString, colorStr.Length() - 1);
     if (NS_HexToRGB(hexString, &thecolor)) {
@@ -384,7 +384,7 @@ nsXPLookAndFeel::InitColorFromPref(int32_t i)
 }
 
 // static
-int
+void
 nsXPLookAndFeel::OnPrefChanged(const char* aPref, void* aClosure)
 {
 
@@ -395,25 +395,23 @@ nsXPLookAndFeel::OnPrefChanged(const char* aPref, void* aClosure)
   for (i = 0; i < ArrayLength(sIntPrefs); ++i) {
     if (prefName.Equals(sIntPrefs[i].name)) {
       IntPrefChanged(&sIntPrefs[i]);
-      return 0;
+      return;
     }
   }
 
   for (i = 0; i < ArrayLength(sFloatPrefs); ++i) {
     if (prefName.Equals(sFloatPrefs[i].name)) {
       FloatPrefChanged(&sFloatPrefs[i]);
-      return 0;
+      return;
     }
   }
 
   for (i = 0; i < ArrayLength(sColorPrefs); ++i) {
     if (prefName.Equals(sColorPrefs[i])) {
       ColorPrefChanged(i, sColorPrefs[i]);
-      return 0;
+      return;
     }
   }
-
-  return 0;
 }
 
 //
@@ -735,7 +733,7 @@ LookAndFeel::GetFont(FontID aID, nsString& aName, gfxFontStyle& aStyle,
 }
 
 // static
-PRUnichar
+char16_t
 LookAndFeel::GetPasswordCharacter()
 {
   return nsLookAndFeel::GetInstance()->GetPasswordCharacterImpl();

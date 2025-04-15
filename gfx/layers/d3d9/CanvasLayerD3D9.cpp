@@ -101,21 +101,20 @@ CanvasLayerD3D9::UpdateSurface()
 
     D3DLOCKED_RECT rect = textureLock.GetLockRect();
 
-    gfxImageSurface* frameData = shareSurf->GetData();
-    // Scope for gfxContext, so it's destroyed early.
+    DataSourceSurface* frameData = shareSurf->GetData();
+    // Scope for DrawTarget, so it's destroyed early.
     {
-      nsRefPtr<gfxImageSurface> mapSurf =
-          new gfxImageSurface((uint8_t*)rect.pBits,
-                              shareSurf->Size(),
-                              rect.Pitch,
-                              gfxImageFormatARGB32);
+      IntSize boundsSize(mBounds.width, mBounds.height);
+      RefPtr<DrawTarget> rectDt = Factory::CreateDrawTargetForData(BackendType::CAIRO,
+                                                                   (uint8_t*)rect.pBits,
+                                                                   boundsSize,
+                                                                   rect.Pitch,
+                                                                   SurfaceFormat::B8G8R8A8);
 
-      gfxContext ctx(mapSurf);
-      ctx.SetOperator(gfxContext::OPERATOR_SOURCE);
-      ctx.SetSource(frameData);
-      ctx.Paint();
-
-      mapSurf->Flush();
+      Rect drawRect(0, 0, frameData->GetSize().width, frameData->GetSize().height);
+      rectDt->DrawSurface(frameData, drawRect, drawRect,
+                          DrawSurfaceOptions(),  DrawOptions(1.0F, CompositionOp::OP_SOURCE));
+      rectDt->Flush();
     }
   } else {
     RECT r;
@@ -134,18 +133,18 @@ CanvasLayerD3D9::UpdateSurface()
 
     nsRefPtr<gfxImageSurface> sourceSurface;
 
-    if (mSurface->GetType() == gfxSurfaceTypeWin32) {
+    if (mSurface->GetType() == gfxSurfaceType::Win32) {
       sourceSurface = mSurface->GetAsImageSurface();
-    } else if (mSurface->GetType() == gfxSurfaceTypeImage) {
+    } else if (mSurface->GetType() == gfxSurfaceType::Image) {
       sourceSurface = static_cast<gfxImageSurface*>(mSurface.get());
-      if (sourceSurface->Format() != gfxImageFormatARGB32 &&
-          sourceSurface->Format() != gfxImageFormatRGB24)
+      if (sourceSurface->Format() != gfxImageFormat::ARGB32 &&
+          sourceSurface->Format() != gfxImageFormat::RGB24)
       {
         return;
       }
     } else {
       sourceSurface = new gfxImageSurface(gfxIntSize(mBounds.width, mBounds.height),
-                                          gfxImageFormatARGB32);
+                                          gfxImageFormat::ARGB32);
       nsRefPtr<gfxContext> ctx = new gfxContext(sourceSurface);
       ctx->SetOperator(gfxContext::OPERATOR_SOURCE);
       ctx->SetSource(mSurface);
@@ -155,7 +154,7 @@ CanvasLayerD3D9::UpdateSurface()
     uint8_t *startBits = sourceSurface->Data();
     uint32_t sourceStride = sourceSurface->Stride();
 
-    if (sourceSurface->Format() != gfxImageFormatARGB32) {
+    if (sourceSurface->Format() != gfxImageFormat::ARGB32) {
       mHasAlpha = false;
     } else {
       mHasAlpha = true;
@@ -190,7 +189,7 @@ CanvasLayerD3D9::RenderLayer()
     return;
 
   /*
-   * We flip the Y axis here, note we can only do this because we are in 
+   * We flip the Y axis here, note we can only do this because we are in
    * CULL_NONE mode!
    */
 

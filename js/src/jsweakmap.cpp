@@ -123,13 +123,13 @@ GetKeyArg(JSContext *cx, CallArgs &args)
     return &args[0].toObject();
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 IsWeakMap(HandleValue v)
 {
     return v.isObject() && v.toObject().is<WeakMapObject>();
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 WeakMap_has_impl(JSContext *cx, CallArgs args)
 {
     JS_ASSERT(IsWeakMap(args.thisv()));
@@ -161,7 +161,7 @@ WeakMap_has(JSContext *cx, unsigned argc, Value *vp)
     return CallNonGenericMethod<IsWeakMap, WeakMap_has_impl>(cx, args);
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 WeakMap_clear_impl(JSContext *cx, CallArgs args)
 {
     JS_ASSERT(IsWeakMap(args.thisv()));
@@ -182,7 +182,7 @@ WeakMap_clear(JSContext *cx, unsigned argc, Value *vp)
     return CallNonGenericMethod<IsWeakMap, WeakMap_clear_impl>(cx, args);
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 WeakMap_get_impl(JSContext *cx, CallArgs args)
 {
     JS_ASSERT(IsWeakMap(args.thisv()));
@@ -218,7 +218,7 @@ WeakMap_get(JSContext *cx, unsigned argc, Value *vp)
     return CallNonGenericMethod<IsWeakMap, WeakMap_get_impl>(cx, args);
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 WeakMap_delete_impl(JSContext *cx, CallArgs args)
 {
     JS_ASSERT(IsWeakMap(args.thisv()));
@@ -269,21 +269,30 @@ TryPreserveReflector(JSContext *cx, HandleObject obj)
 }
 
 static inline void
-WeakMapPostWriteBarrier(JSRuntime *rt, ObjectValueMap *map, JSObject *key)
+WeakMapPostWriteBarrier(JSRuntime *rt, ObjectValueMap *weakMap, JSObject *key)
 {
 #ifdef JSGC_GENERATIONAL
     /*
      * Strip the barriers from the type before inserting into the store buffer.
      * This will automatically ensure that barriers do not fire during GC.
+     *
+     * Some compilers complain about instantiating the WeakMap class for
+     * unbarriered type arguments, so we cast to a HashMap instead.  Because of
+     * WeakMap's multiple inheritace, We need to do this in two stages, first to
+     * the HashMap base class and then to the unbarriered version.
      */
-    typedef WeakMap<JSObject *, Value> UnbarrieredObjectValueMap;
-    typedef gc::HashKeyRef<UnbarrieredObjectValueMap, JSObject *> Ref;
+    ObjectValueMap::Base *baseHashMap = static_cast<ObjectValueMap::Base *>(weakMap);
+
+    typedef HashMap<JSObject *, Value> UnbarrieredMap;
+    UnbarrieredMap *unbarrieredMap = reinterpret_cast<UnbarrieredMap *>(baseHashMap);
+
+    typedef gc::HashKeyRef<UnbarrieredMap, JSObject *> Ref;
     if (key && IsInsideNursery(rt, key))
-        rt->gcStoreBuffer.putGeneric(Ref(reinterpret_cast<UnbarrieredObjectValueMap *>(map), key));
+        rt->gcStoreBuffer.putGeneric(Ref((unbarrieredMap), key));
 #endif
 }
 
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 WeakMap_set_impl(JSContext *cx, CallArgs args)
 {
     JS_ASSERT(IsWeakMap(args.thisv()));
@@ -360,7 +369,7 @@ JS_NondeterministicGetWeakMapKeys(JSContext *cx, JSObject *objArg, JSObject **re
             RootedObject key(cx, r.front().key());
             if (!cx->compartment()->wrap(cx, &key))
                 return false;
-            if (!js_NewbornArrayPush(cx, arr, ObjectValue(*key)))
+            if (!NewbornArrayPush(cx, arr, ObjectValue(*key)))
                 return false;
         }
     }
@@ -413,7 +422,6 @@ const Class WeakMapObject::class_ = {
     JS_ResolveStub,
     JS_ConvertStub,
     WeakMap_finalize,
-    nullptr,                 /* checkAccess */
     nullptr,                 /* call        */
     nullptr,                 /* construct   */
     nullptr,                 /* xdrObject   */

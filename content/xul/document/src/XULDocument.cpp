@@ -1307,7 +1307,7 @@ XULDocument::Persist(const nsAString& aID,
     }
     else {
         // Make sure that this QName is going to be valid.
-        const PRUnichar *colon;
+        const char16_t *colon;
         rv = nsContentUtils::CheckQName(PromiseFlatString(aAttr), true, &colon);
 
         if (NS_FAILED(rv)) {
@@ -2042,12 +2042,7 @@ XULDocument::StartLayout(void)
         if (! cx)
             return NS_ERROR_UNEXPECTED;
 
-        nsCOMPtr<nsISupports> container = cx->GetContainer();
-        NS_ASSERTION(container != nullptr, "pres context has no container");
-        if (! container)
-            return NS_ERROR_UNEXPECTED;
-
-        nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
+        nsCOMPtr<nsIDocShell> docShell = cx->GetDocShell();
         NS_ASSERTION(docShell != nullptr, "container is not a docshell");
         if (! docShell)
             return NS_ERROR_UNEXPECTED;
@@ -2297,7 +2292,7 @@ XULDocument::ApplyPersistentAttributesToElements(nsIRDFResource* aResource,
             continue;
         }
 
-        const PRUnichar* value;
+        const char16_t* value;
         rv = literal->GetValueConst(&value);
         if (NS_FAILED(rv)) return rv;
 
@@ -3086,7 +3081,7 @@ XULDocument::ResumeWalk()
                 if (piProto->mTarget.EqualsLiteral("xml-stylesheet") ||
                     piProto->mTarget.EqualsLiteral("xul-overlay")) {
 
-                    const PRUnichar* params[] = { piProto->mTarget.get() };
+                    const char16_t* params[] = { piProto->mTarget.get() };
 
                     nsContentUtils::ReportToConsole(
                                         nsIScriptError::warningFlag,
@@ -3382,7 +3377,7 @@ XULDocument::ReportMissingOverlay(nsIURI* aURI)
     aURI->GetSpec(spec);
 
     NS_ConvertUTF8toUTF16 utfSpec(spec);
-    const PRUnichar* params[] = { utfSpec.get() };
+    const char16_t* params[] = { utfSpec.get() };
     nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
                                     NS_LITERAL_CSTRING("XUL Document"), this,
                                     nsContentUtils::eXUL_PROPERTIES,
@@ -4740,7 +4735,7 @@ XULDocument::ResetDocumentDirection()
     DocumentStatesChanged(NS_DOCUMENT_STATE_RTL_LOCALE);
 }
 
-int
+void
 XULDocument::DirectionChanged(const char* aPrefName, void* aData)
 {
   // Reset the direction and restyle the document if necessary.
@@ -4748,8 +4743,6 @@ XULDocument::DirectionChanged(const char* aPrefName, void* aData)
   if (doc) {
       doc->ResetDocumentDirection();
   }
-
-  return 0;
 }
 
 int

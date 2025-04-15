@@ -5,6 +5,8 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.mozglue.JNITarget;
+
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -101,13 +103,15 @@ public class GeckoNetworkManager extends BroadcastReceiver {
     }
 
     private Context mApplicationContext;
-    private NetworkType  mNetworkType = NetworkType.NETWORK_NONE;
-    private IntentFilter mNetworkFilter = new IntentFilter();
+    private NetworkType mNetworkType = NetworkType.NETWORK_NONE;
+    private final IntentFilter mNetworkFilter = new IntentFilter();
+
     // Whether the manager should be listening to Network Information changes.
     private boolean mShouldBeListening = false;
+
     // Whether the manager should notify Gecko that a change in Network
     // Information happened.
-    private boolean mShouldNotify      = false;
+    private boolean mShouldNotify = false;
 
     public static GeckoNetworkManager getInstance() {
         return sInstance;
@@ -118,13 +122,14 @@ public class GeckoNetworkManager extends BroadcastReceiver {
         updateNetworkType();
     }
 
-    public void init(Context context) {
-        mApplicationContext = context.getApplicationContext();
-        mNetworkFilter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
-        mNetworkType = getNetworkType();
-    }
+    public void start(final Context context) {
+        // Note that this initialization clause only runs once.
+        if (mApplicationContext == null) {
+            mApplicationContext = context.getApplicationContext();
+            mNetworkFilter.addAction(ConnectivityManager.CONNECTIVITY_ACTION);
+            mNetworkType = getNetworkType();
+        }
 
-    public void start() {
         mShouldBeListening = true;
         updateNetworkType();
 
@@ -141,7 +146,7 @@ public class GeckoNetworkManager extends BroadcastReceiver {
         mShouldBeListening = false;
 
         if (mShouldNotify) {
-        stopListening();
+            stopListening();
         }
     }
 
@@ -220,7 +225,11 @@ public class GeckoNetworkManager extends BroadcastReceiver {
             return NetworkType.NETWORK_NONE;
         }
 
-        NetworkInfo ni = cm.getActiveNetworkInfo();
+        NetworkInfo ni = null;
+        try {
+            ni = cm.getActiveNetworkInfo();
+        } catch (SecurityException se) {} // if we don't have the permission, fall through to null check
+
         if (ni == null) {
             return NetworkType.NETWORK_NONE;
         }
@@ -348,10 +357,13 @@ public class GeckoNetworkManager extends BroadcastReceiver {
         return -1;
     }
 
+    /* These are called from javascript c-types. Avoid letting pro-guard delete them */
+    @JNITarget
     public static int getMCC() {
         return getNetworkOperator(InfoType.MCC);
     }
 
+    @JNITarget
     public static int getMNC() {
         return getNetworkOperator(InfoType.MNC);
     }

@@ -117,7 +117,7 @@ NS_IMPL_ISUPPORTS1(nsStandardURL::nsPrefObserver, nsIObserver)
 NS_IMETHODIMP nsStandardURL::
 nsPrefObserver::Observe(nsISupports *subject,
                         const char *topic,
-                        const PRUnichar *data)
+                        const char16_t *data)
 {
     if (!strcmp(topic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID)) {
         nsCOMPtr<nsIPrefBranch> prefBranch( do_QueryInterface(subject) );
@@ -516,7 +516,7 @@ nsStandardURL::BuildNormalizedSpec(const char *spec)
         if (mPassword.mLen >= 0)
             approxLen += 1 + encoder.EncodeSegmentCount(spec, mPassword,  esc_Password,      encPassword,  useEncPassword);
         // mHost is handled differently below due to encoding differences
-        NS_ABORT_IF_FALSE(mPort > 0 || mPort == -1, "Invalid negative mPort");
+        NS_ABORT_IF_FALSE(mPort >= -1, "Invalid negative mPort");
         if (mPort != -1 && mPort != mDefaultPort)
         {
             // :port
@@ -589,7 +589,7 @@ nsStandardURL::BuildNormalizedSpec(const char *spec)
     if (mHost.mLen > 0) {
         i = AppendSegmentToBuf(buf, i, spec, mHost, &encHost, useEncHost);
         net_ToLowerCase(buf + mHost.mPos, mHost.mLen);
-        NS_ABORT_IF_FALSE(mPort > 0 || mPort == -1, "Invalid negative mPort");
+        NS_ABORT_IF_FALSE(mPort >= -1, "Invalid negative mPort");
         if (mPort != -1 && mPort != mDefaultPort) {
             buf[i++] = ':';
             // Already formatted while building approxLen
@@ -1507,7 +1507,14 @@ nsStandardURL::SetHost(const nsACString &input)
         len = flat.Length();
 
     if (mHost.mLen < 0) {
-        mHost.mPos = mAuthority.mPos;
+        int port_length = 0;
+        if (mPort != -1) {
+            nsAutoCString buf;
+            buf.Assign(':');
+            buf.AppendInt(mPort);
+            port_length = buf.Length();
+        }
+        mHost.mPos = mAuthority.mPos + mAuthority.mLen - port_length;
         mHost.mLen = 0;
     }
 
@@ -1535,8 +1542,8 @@ nsStandardURL::SetPort(int32_t port)
     if ((port == mPort) || (mPort == -1 && port == mDefaultPort))
         return NS_OK;
 
-    // ports must be >= 0 (and 0 is pretty much garbage too, though legal per RFC)
-    if (port <= 0 && port != -1) // -1 == use default
+    // ports must be >= 0
+    if (port < -1) // -1 == use default
         return NS_ERROR_MALFORMED_URI;
 
     if (mURLType == URLTYPE_NO_AUTHORITY) {
@@ -1551,7 +1558,7 @@ nsStandardURL::SetPort(int32_t port)
         nsAutoCString buf;
         buf.Assign(':');
         buf.AppendInt(port);
-        mSpec.Insert(buf, mHost.mPos + mHost.mLen);
+        mSpec.Insert(buf, mAuthority.mPos + mAuthority.mLen);
         mAuthority.mLen += buf.Length();
         ShiftFromPath(buf.Length());
     }
@@ -1559,9 +1566,14 @@ nsStandardURL::SetPort(int32_t port)
         // Don't allow mPort == mDefaultPort
         port = -1;
 
+        // compute length of the current port
+        nsAutoCString buf;
+        buf.Assign(':');
+        buf.AppendInt(mPort);
+
         // need to remove the port number from the URL spec
-        uint32_t start = mHost.mPos + mHost.mLen;
-        int32_t lengthToCut = mPath.mPos - start;
+        uint32_t start = mAuthority.mPos + mAuthority.mLen - buf.Length();
+        int32_t lengthToCut = buf.Length();
         mSpec.Cut(start, lengthToCut);
         mAuthority.mLen -= lengthToCut;
         ShiftFromPath(-lengthToCut);
@@ -1569,9 +1581,13 @@ nsStandardURL::SetPort(int32_t port)
     else {
         // need to replace the existing port
         nsAutoCString buf;
+        buf.Assign(':');
+        buf.AppendInt(mPort);
+        uint32_t start = mAuthority.mPos + mAuthority.mLen - buf.Length();
+        uint32_t length = buf.Length();
+
+        buf.Assign(':');
         buf.AppendInt(port);
-        uint32_t start = mHost.mPos + mHost.mLen + 1;
-        uint32_t length = mPath.mPos - start;
         mSpec.Replace(start, length, buf);
         if (buf.Length() != length) {
             mAuthority.mLen += buf.Length() - length;

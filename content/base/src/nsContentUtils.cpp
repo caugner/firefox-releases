@@ -85,8 +85,6 @@
 #include "nsICategoryManager.h"
 #include "nsIChannelEventSink.h"
 #include "nsIChannelPolicy.h"
-#include "nsICharsetDetectionObserver.h"
-#include "nsICharsetDetector.h"
 #include "nsIChromeRegistry.h"
 #include "nsIConsoleService.h"
 #include "nsIContent.h"
@@ -134,7 +132,6 @@
 #include "nsIParser.h"
 #include "nsIParserService.h"
 #include "nsIPermissionManager.h"
-#include "nsIPlatformCharset.h"
 #include "nsIPluginHost.h"
 #include "nsIRunnable.h"
 #include "nsIScriptContext.h"
@@ -182,7 +179,7 @@
 #endif
 
 extern "C" int MOZ_XMLTranslateEntity(const char* ptr, const char* end,
-                                      const char** next, PRUnichar* result);
+                                      const char** next, char16_t* result);
 extern "C" int MOZ_XMLCheckQName(const char* ptr, const char* end,
                                  int ns_aware, const char** colon);
 
@@ -200,10 +197,6 @@ nsIScriptSecurityManager *nsContentUtils::sSecurityManager;
 nsIParserService *nsContentUtils::sParserService = nullptr;
 nsINameSpaceManager *nsContentUtils::sNameSpaceManager;
 nsIIOService *nsContentUtils::sIOService;
-imgLoader *nsContentUtils::sImgLoader;
-imgLoader *nsContentUtils::sPrivateImgLoader;
-imgICache *nsContentUtils::sImgCache;
-imgICache *nsContentUtils::sPrivateImgCache;
 nsIConsoleService *nsContentUtils::sConsoleService;
 nsDataHashtable<nsISupportsHashKey, EventNameMapping>* nsContentUtils::sAtomEventTable = nullptr;
 nsDataHashtable<nsStringHashKey, EventNameMapping>* nsContentUtils::sStringEventTable = nullptr;
@@ -261,28 +254,31 @@ static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
 
 static PLDHashTable sEventListenerManagersHash;
 
-class DOMEventListenerManagersHashReporter MOZ_FINAL : public MemoryUniReporter
+class DOMEventListenerManagersHashReporter MOZ_FINAL : public nsIMemoryReporter
 {
-public:
-  DOMEventListenerManagersHashReporter()
-    : MemoryUniReporter(
-        "explicit/dom/event-listener-managers-hash",
-        KIND_HEAP,
-        UNITS_BYTES,
-        "Memory used by the event listener manager's hash table.")
-  {}
+  MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf)
 
-private:
-  int64_t Amount()
+public:
+  NS_DECL_ISUPPORTS
+
+  NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
+                            nsISupports* aData)
   {
     // We don't measure the |nsEventListenerManager| objects pointed to by the
     // entries because those references are non-owning.
-    return sEventListenerManagersHash.ops
-         ? PL_DHashTableSizeOfExcludingThis(&sEventListenerManagersHash,
-                                            nullptr, MallocSizeOf)
-         : 0;
+    int64_t amount = sEventListenerManagersHash.ops
+                   ? PL_DHashTableSizeOfExcludingThis(
+                       &sEventListenerManagersHash, nullptr, MallocSizeOf)
+                   : 0;
+
+    return MOZ_COLLECT_REPORT(
+      "explicit/dom/event-listener-managers-hash", KIND_HEAP, UNITS_BYTES,
+      amount,
+      "Memory used by the event listener manager's hash table.");
   }
 };
+
+NS_IMPL_ISUPPORTS1(DOMEventListenerManagersHashReporter, nsIMemoryReporter)
 
 class EventListenerManagerMapEntry : public PLDHashEntryHdr
 {
@@ -531,12 +527,12 @@ nsContentUtils::InitializeModifierStrings()
   nsXPIDLString modifierSeparator;
   if (bundle) {
     //macs use symbols for each modifier key, so fetch each from the bundle, which also covers i18n
-    bundle->GetStringFromName(NS_LITERAL_STRING("VK_SHIFT").get(), getter_Copies(shiftModifier));
-    bundle->GetStringFromName(NS_LITERAL_STRING("VK_META").get(), getter_Copies(metaModifier));
-    bundle->GetStringFromName(NS_LITERAL_STRING("VK_WIN").get(), getter_Copies(osModifier));
-    bundle->GetStringFromName(NS_LITERAL_STRING("VK_ALT").get(), getter_Copies(altModifier));
-    bundle->GetStringFromName(NS_LITERAL_STRING("VK_CONTROL").get(), getter_Copies(controlModifier));
-    bundle->GetStringFromName(NS_LITERAL_STRING("MODIFIER_SEPARATOR").get(), getter_Copies(modifierSeparator));
+    bundle->GetStringFromName(MOZ_UTF16("VK_SHIFT"), getter_Copies(shiftModifier));
+    bundle->GetStringFromName(MOZ_UTF16("VK_META"), getter_Copies(metaModifier));
+    bundle->GetStringFromName(MOZ_UTF16("VK_WIN"), getter_Copies(osModifier));
+    bundle->GetStringFromName(MOZ_UTF16("VK_ALT"), getter_Copies(altModifier));
+    bundle->GetStringFromName(MOZ_UTF16("VK_CONTROL"), getter_Copies(controlModifier));
+    bundle->GetStringFromName(MOZ_UTF16("MODIFIER_SEPARATOR"), getter_Copies(modifierSeparator));
   }
   //if any of these don't exist, we get  an empty string
   sShiftText = new nsString(shiftModifier);
@@ -545,26 +541,6 @@ nsContentUtils::InitializeModifierStrings()
   sAltText = new nsString(altModifier);
   sControlText = new nsString(controlModifier);
   sModifierSeparator = new nsString(modifierSeparator);  
-}
-
-bool nsContentUtils::sImgLoaderInitialized;
-
-void
-nsContentUtils::InitImgLoader()
-{
-  sImgLoaderInitialized = true;
-
-  // Ignore failure and just don't load images
-  sImgLoader = imgLoader::Create();
-  NS_ABORT_IF_FALSE(sImgLoader, "Creation should have succeeded");
-
-  sPrivateImgLoader = imgLoader::Create();
-  NS_ABORT_IF_FALSE(sPrivateImgLoader, "Creation should have succeeded");
-
-  NS_ADDREF(sImgCache = sImgLoader);
-  NS_ADDREF(sPrivateImgCache = sPrivateImgLoader);
-
-  sPrivateImgCache->RespectPrivacyNotifications();
 }
 
 bool
@@ -626,7 +602,7 @@ nsContentUtils::InitializeTouchEventTable()
 static bool
 Is8bit(const nsAString& aString)
 {
-  static const PRUnichar EIGHT_BIT = PRUnichar(~0x00FF);
+  static const char16_t EIGHT_BIT = char16_t(~0x00FF);
 
   nsAString::const_iterator done_reading;
   aString.EndReading(done_reading);
@@ -637,8 +613,8 @@ Is8bit(const nsAString& aString)
   for (aString.BeginReading(iter); iter != done_reading;
        iter.advance(int32_t(fragmentLength))) {
     fragmentLength = uint32_t(iter.size_forward());
-    const PRUnichar* c = iter.get();
-    const PRUnichar* fragmentEnd = c + fragmentLength;
+    const char16_t* c = iter.get();
+    const char16_t* fragmentEnd = c + fragmentLength;
 
     // for each character in this chunk...
     while (c < fragmentEnd) {
@@ -672,8 +648,8 @@ nsContentUtils::Atob(const nsAString& aAsciiBase64String,
     return NS_ERROR_DOM_INVALID_CHARACTER_ERR;
   }
 
-  const PRUnichar* start = aAsciiBase64String.BeginReading();
-  const PRUnichar* end = aAsciiBase64String.EndReading();
+  const char16_t* start = aAsciiBase64String.BeginReading();
+  const char16_t* end = aAsciiBase64String.EndReading();
   nsString trimmedString;
   if (!trimmedString.SetCapacity(aAsciiBase64String.Length(), fallible_t())) {
     return NS_ERROR_DOM_INVALID_CHARACTER_ERR;
@@ -732,9 +708,9 @@ nsContentUtils::GetPseudoAttributeValue(const nsString& aSource, nsIAtom *aName,
 {
   aValue.Truncate();
 
-  const PRUnichar *start = aSource.get();
-  const PRUnichar *end = start + aSource.Length();
-  const PRUnichar *iter;
+  const char16_t *start = aSource.get();
+  const char16_t *end = start + aSource.Length();
+  const char16_t *iter;
 
   while (start != end) {
     SKIP_WHITESPACE(start, end, false)
@@ -760,7 +736,7 @@ nsContentUtils::GetPseudoAttributeValue(const nsString& aSource, nsIAtom *aName,
     // Have to skip the value.
     ++start;
     SKIP_WHITESPACE(start, end, false)
-    PRUnichar q = *start;
+    char16_t q = *start;
     if (q != kQuote && q != kApostrophe) {
       // Not a valid quoted value, so bail.
       return false;
@@ -785,7 +761,7 @@ nsContentUtils::GetPseudoAttributeValue(const nsString& aSource, nsIAtom *aName,
       // We'll accumulate as many characters as possible (until we hit either
       // the end of the string or the beginning of an entity). Chunks will be
       // delimited by start and chunkEnd.
-      const PRUnichar *chunkEnd = start;
+      const char16_t *chunkEnd = start;
       while (chunkEnd != iter) {
         if (*chunkEnd == kLessThan) {
           aValue.Truncate();
@@ -799,8 +775,8 @@ nsContentUtils::GetPseudoAttributeValue(const nsString& aSource, nsIAtom *aName,
           // Point to first character after the ampersand.
           ++chunkEnd;
 
-          const PRUnichar *afterEntity = nullptr;
-          PRUnichar result[2];
+          const char16_t *afterEntity = nullptr;
+          char16_t result[2];
           uint32_t count =
             MOZ_XMLTranslateEntity(reinterpret_cast<const char*>(chunkEnd),
                                   reinterpret_cast<const char*>(iter),
@@ -878,7 +854,7 @@ nsContentUtils::SplitMimeType(const nsAString& aValue, nsString& aType,
 {
   aType.Truncate();
   aParams.Truncate();
-  int32_t semiIndex = aValue.FindChar(PRUnichar(';'));
+  int32_t semiIndex = aValue.FindChar(char16_t(';'));
   if (-1 != semiIndex) {
     aType = Substring(aValue, 0, semiIndex);
     aParams = Substring(aValue, semiIndex + 1,
@@ -932,53 +908,40 @@ nsContentUtils::GetParserService()
  * A helper function that parses a sandbox attribute (of an <iframe> or
  * a CSP directive) and converts it to the set of flags used internally.
  *
- * @param aAttribute    the value of the sandbox attribute
- * @return              the set of flags
+ * @param sandboxAttr   the sandbox attribute
+ * @return              the set of flags (0 if sandboxAttr is null)
  */
 uint32_t
-nsContentUtils::ParseSandboxAttributeToFlags(const nsAString& aSandboxAttrValue)
+nsContentUtils::ParseSandboxAttributeToFlags(const nsAttrValue* sandboxAttr)
 {
-  // If there's a sandbox attribute at all (and there is if this is being
-  // called), start off by setting all the restriction flags.
-  uint32_t out = SANDBOXED_NAVIGATION |
-                 SANDBOXED_AUXILIARY_NAVIGATION |
-                 SANDBOXED_TOPLEVEL_NAVIGATION |
-                 SANDBOXED_PLUGINS |
-                 SANDBOXED_ORIGIN |
-                 SANDBOXED_FORMS |
-                 SANDBOXED_SCRIPTS |
-                 SANDBOXED_AUTOMATIC_FEATURES |
-                 SANDBOXED_POINTER_LOCK |
-                 SANDBOXED_DOMAIN;
+  // No sandbox attribute, no sandbox flags.
+  if (!sandboxAttr) { return 0; }
 
-  if (!aSandboxAttrValue.IsEmpty()) {
-    // The separator optional flag is used because the HTML5 spec says any
-    // whitespace is ok as a separator, which is what this does.
-    HTMLSplitOnSpacesTokenizer tokenizer(aSandboxAttrValue, ' ',
-      nsCharSeparatedTokenizerTemplate<nsContentUtils::IsHTMLWhitespace>::SEPARATOR_OPTIONAL);
+  //  Start off by setting all the restriction flags.
+  uint32_t out = SANDBOXED_NAVIGATION
+               | SANDBOXED_AUXILIARY_NAVIGATION
+               | SANDBOXED_TOPLEVEL_NAVIGATION
+               | SANDBOXED_PLUGINS
+               | SANDBOXED_ORIGIN
+               | SANDBOXED_FORMS
+               | SANDBOXED_SCRIPTS
+               | SANDBOXED_AUTOMATIC_FEATURES
+               | SANDBOXED_POINTER_LOCK
+               | SANDBOXED_DOMAIN;
 
-    while (tokenizer.hasMoreTokens()) {
-      nsDependentSubstring token = tokenizer.nextToken();
-      if (token.LowerCaseEqualsLiteral("allow-same-origin")) {
-        out &= ~SANDBOXED_ORIGIN;
-      } else if (token.LowerCaseEqualsLiteral("allow-forms")) {
-        out &= ~SANDBOXED_FORMS;
-      } else if (token.LowerCaseEqualsLiteral("allow-scripts")) {
-        // allow-scripts removes both SANDBOXED_SCRIPTS and
-        // SANDBOXED_AUTOMATIC_FEATURES.
-        out &= ~SANDBOXED_SCRIPTS;
-        out &= ~SANDBOXED_AUTOMATIC_FEATURES;
-      } else if (token.LowerCaseEqualsLiteral("allow-top-navigation")) {
-        out &= ~SANDBOXED_TOPLEVEL_NAVIGATION;
-      } else if (token.LowerCaseEqualsLiteral("allow-pointer-lock")) {
-        out &= ~SANDBOXED_POINTER_LOCK;
-      } else if (token.LowerCaseEqualsLiteral("allow-popups")) {
-        out &= ~SANDBOXED_AUXILIARY_NAVIGATION;
-      }
-    }
-  }
+// Macro for updating the flag according to the keywords
+#define IF_KEYWORD(atom, flags) \
+  if (sandboxAttr->Contains(nsGkAtoms::atom, eIgnoreCase)) { out &= ~(flags); }
+
+  IF_KEYWORD(allowsameorigin, SANDBOXED_ORIGIN)
+  IF_KEYWORD(allowforms,  SANDBOXED_FORMS)
+  IF_KEYWORD(allowscripts, SANDBOXED_SCRIPTS | SANDBOXED_AUTOMATIC_FEATURES)
+  IF_KEYWORD(allowtopnavigation, SANDBOXED_TOPLEVEL_NAVIGATION)
+  IF_KEYWORD(allowpointerlock, SANDBOXED_POINTER_LOCK)
+  IF_KEYWORD(allowpopups, SANDBOXED_AUXILIARY_NAVIGATION)
 
   return out;
+#undef IF_KEYWORD
 }
 
 #ifdef IBMBIDI
@@ -1095,15 +1058,15 @@ class CopyNormalizeNewlines
 uint32_t
 nsContentUtils::CopyNewlineNormalizedUnicodeTo(const nsAString& aSource,
                                                uint32_t aSrcOffset,
-                                               PRUnichar* aDest,
+                                               char16_t* aDest,
                                                uint32_t aLength,
                                                bool& aLastCharCR)
 {
-  typedef NormalizeNewlinesCharTraits<PRUnichar*> sink_traits;
+  typedef NormalizeNewlinesCharTraits<char16_t*> sink_traits;
 
   sink_traits dest_traits(aDest);
   CopyNormalizeNewlines<sink_traits> normalizer(&dest_traits,aLastCharCR);
-  nsReadingIterator<PRUnichar> fromBegin, fromEnd;
+  nsReadingIterator<char16_t> fromBegin, fromEnd;
   copy_string(aSource.BeginReading(fromBegin).advance( int32_t(aSrcOffset) ),
               aSource.BeginReading(fromEnd).advance( int32_t(aSrcOffset+aLength) ),
               normalizer);
@@ -1113,9 +1076,9 @@ nsContentUtils::CopyNewlineNormalizedUnicodeTo(const nsAString& aSource,
 
 // static
 uint32_t
-nsContentUtils::CopyNewlineNormalizedUnicodeTo(nsReadingIterator<PRUnichar>& aSrcStart, const nsReadingIterator<PRUnichar>& aSrcEnd, nsAString& aDest)
+nsContentUtils::CopyNewlineNormalizedUnicodeTo(nsReadingIterator<char16_t>& aSrcStart, const nsReadingIterator<char16_t>& aSrcEnd, nsAString& aDest)
 {
-  typedef nsWritingIterator<PRUnichar> WritingIterator;
+  typedef nsWritingIterator<char16_t> WritingIterator;
   typedef NormalizeNewlinesCharTraits<WritingIterator> sink_traits;
 
   WritingIterator iter;
@@ -1150,12 +1113,12 @@ nsContentUtils::IsFirstLetterPunctuation(uint32_t aChar)
 bool
 nsContentUtils::IsFirstLetterPunctuationAt(const nsTextFragment* aFrag, uint32_t aOffset)
 {
-  PRUnichar h = aFrag->CharAt(aOffset);
+  char16_t h = aFrag->CharAt(aOffset);
   if (!IS_SURROGATE(h)) {
     return IsFirstLetterPunctuation(h);
   }
   if (NS_IS_HIGH_SURROGATE(h) && aOffset + 1 < aFrag->GetLength()) {
-    PRUnichar l = aFrag->CharAt(aOffset + 1);
+    char16_t l = aFrag->CharAt(aOffset + 1);
     if (NS_IS_LOW_SURROGATE(l)) {
       return IsFirstLetterPunctuation(SURROGATE_TO_UCS4(h, l));
     }
@@ -1174,12 +1137,12 @@ bool nsContentUtils::IsAlphanumeric(uint32_t aChar)
 // static
 bool nsContentUtils::IsAlphanumericAt(const nsTextFragment* aFrag, uint32_t aOffset)
 {
-  PRUnichar h = aFrag->CharAt(aOffset);
+  char16_t h = aFrag->CharAt(aOffset);
   if (!IS_SURROGATE(h)) {
     return IsAlphanumeric(h);
   }
   if (NS_IS_HIGH_SURROGATE(h) && aOffset + 1 < aFrag->GetLength()) {
-    PRUnichar l = aFrag->CharAt(aOffset + 1);
+    char16_t l = aFrag->CharAt(aOffset + 1);
     if (NS_IS_LOW_SURROGATE(l)) {
       return IsAlphanumeric(SURROGATE_TO_UCS4(h, l));
     }
@@ -1189,20 +1152,20 @@ bool nsContentUtils::IsAlphanumericAt(const nsTextFragment* aFrag, uint32_t aOff
 
 /* static */
 bool
-nsContentUtils::IsHTMLWhitespace(PRUnichar aChar)
+nsContentUtils::IsHTMLWhitespace(char16_t aChar)
 {
-  return aChar == PRUnichar(0x0009) ||
-         aChar == PRUnichar(0x000A) ||
-         aChar == PRUnichar(0x000C) ||
-         aChar == PRUnichar(0x000D) ||
-         aChar == PRUnichar(0x0020);
+  return aChar == char16_t(0x0009) ||
+         aChar == char16_t(0x000A) ||
+         aChar == char16_t(0x000C) ||
+         aChar == char16_t(0x000D) ||
+         aChar == char16_t(0x0020);
 }
 
 /* static */
 bool
-nsContentUtils::IsHTMLWhitespaceOrNBSP(PRUnichar aChar)
+nsContentUtils::IsHTMLWhitespaceOrNBSP(char16_t aChar)
 {
-  return IsHTMLWhitespace(aChar) || aChar == PRUnichar(0xA0);
+  return IsHTMLWhitespace(aChar) || aChar == char16_t(0xA0);
 }
 
 /* static */
@@ -1337,24 +1300,24 @@ nsContentUtils::ParseLegacyFontSize(const nsAString& aValue)
 
   bool relative = false;
   bool negate = false;
-  if (*iter == PRUnichar('-')) {
+  if (*iter == char16_t('-')) {
     relative = true;
     negate = true;
     ++iter;
-  } else if (*iter == PRUnichar('+')) {
+  } else if (*iter == char16_t('+')) {
     relative = true;
     ++iter;
   }
 
-  if (*iter < PRUnichar('0') || *iter > PRUnichar('9')) {
+  if (*iter < char16_t('0') || *iter > char16_t('9')) {
     return 0;
   }
 
   // We don't have to worry about overflow, since we can bail out as soon as
   // we're bigger than 7.
   int32_t value = 0;
-  while (iter != end && *iter >= PRUnichar('0') && *iter <= PRUnichar('9')) {
-    value = 10*value + (*iter - PRUnichar('0'));
+  while (iter != end && *iter >= char16_t('0') && *iter <= char16_t('9')) {
+    value = 10*value + (*iter - char16_t('0'));
     if (value >= 7) {
       break;
     }
@@ -1479,10 +1442,6 @@ nsContentUtils::Shutdown()
   NS_IF_RELEASE(sIOService);
   NS_IF_RELEASE(sLineBreaker);
   NS_IF_RELEASE(sWordBreaker);
-  NS_IF_RELEASE(sImgLoader);
-  NS_IF_RELEASE(sPrivateImgLoader);
-  NS_IF_RELEASE(sImgCache);
-  NS_IF_RELEASE(sPrivateImgCache);
 #ifdef IBMBIDI
   NS_IF_RELEASE(sBidiKeyboard);
 #endif
@@ -2105,11 +2064,11 @@ nsContentUtils::ComparePoints(nsIDOMNode* aParent1, int32_t aOffset1,
 
 inline bool
 IsCharInSet(const char* aSet,
-            const PRUnichar aChar)
+            const char16_t aChar)
 {
-  PRUnichar ch;
+  char16_t ch;
   while ((ch = *aSet)) {
-    if (aChar == PRUnichar(ch)) {
+    if (aChar == char16_t(ch)) {
       return true;
     }
     ++aSet;
@@ -2158,7 +2117,7 @@ nsContentUtils::TrimCharsInSet(const char* aSet,
  */
 
 // static
-template<bool IsWhitespace(PRUnichar)>
+template<bool IsWhitespace(char16_t)>
 const nsDependentSubstring
 nsContentUtils::TrimWhitespace(const nsAString& aStr, bool aTrimTrailing)
 {
@@ -2439,11 +2398,11 @@ nsContentUtils::NewURIWithDocumentCharset(nsIURI** aResult,
 nsresult
 nsContentUtils::CheckQName(const nsAString& aQualifiedName,
                            bool aNamespaceAware,
-                           const PRUnichar** aColon)
+                           const char16_t** aColon)
 {
   const char* colon = nullptr;
-  const PRUnichar* begin = aQualifiedName.BeginReading();
-  const PRUnichar* end = aQualifiedName.EndReading();
+  const char16_t* begin = aQualifiedName.BeginReading();
+  const char16_t* end = aQualifiedName.EndReading();
   
   int result = MOZ_XMLCheckQName(reinterpret_cast<const char*>(begin),
                                  reinterpret_cast<const char*>(end),
@@ -2451,7 +2410,7 @@ nsContentUtils::CheckQName(const nsAString& aQualifiedName,
 
   if (!result) {
     if (aColon) {
-      *aColon = reinterpret_cast<const PRUnichar*>(colon);
+      *aColon = reinterpret_cast<const char16_t*>(colon);
     }
 
     return NS_OK;
@@ -2471,12 +2430,12 @@ nsContentUtils::SplitQName(const nsIContent* aNamespaceResolver,
                            const nsAFlatString& aQName,
                            int32_t *aNamespace, nsIAtom **aLocalName)
 {
-  const PRUnichar* colon;
+  const char16_t* colon;
   nsresult rv = nsContentUtils::CheckQName(aQName, true, &colon);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (colon) {
-    const PRUnichar* end;
+    const char16_t* end;
     aQName.EndReading(end);
     nsAutoString nameSpace;
     rv = aNamespaceResolver->LookupNamespaceURIInternal(Substring(aQName.get(),
@@ -2507,14 +2466,14 @@ nsContentUtils::GetNodeInfoFromQName(const nsAString& aNamespaceURI,
                                      nsINodeInfo** aNodeInfo)
 {
   const nsAFlatString& qName = PromiseFlatString(aQualifiedName);
-  const PRUnichar* colon;
+  const char16_t* colon;
   nsresult rv = nsContentUtils::CheckQName(qName, true, &colon);
   NS_ENSURE_SUCCESS(rv, rv);
 
   int32_t nsID;
   sNameSpaceManager->RegisterNameSpace(aNamespaceURI, nsID);
   if (colon) {
-    const PRUnichar* end;
+    const char16_t* end;
     qName.EndReading(end);
 
     nsCOMPtr<nsIAtom> prefix = do_GetAtom(Substring(qName.get(), colon));
@@ -2536,7 +2495,7 @@ nsContentUtils::GetNodeInfoFromQName(const nsAString& aNamespaceURI,
 
 // static
 void
-nsContentUtils::SplitExpatName(const PRUnichar *aExpatName, nsIAtom **aPrefix,
+nsContentUtils::SplitExpatName(const char16_t *aExpatName, nsIAtom **aPrefix,
                                nsIAtom **aLocalName, int32_t* aNameSpaceID)
 {
   /**
@@ -2549,9 +2508,9 @@ nsContentUtils::SplitExpatName(const PRUnichar *aExpatName, nsIAtom **aPrefix,
    *
    */
 
-  const PRUnichar *uriEnd = nullptr;
-  const PRUnichar *nameEnd = nullptr;
-  const PRUnichar *pos;
+  const char16_t *uriEnd = nullptr;
+  const char16_t *nameEnd = nullptr;
+  const char16_t *pos;
   for (pos = aExpatName; *pos; ++pos) {
     if (*pos == 0xFFFF) {
       if (uriEnd) {
@@ -2563,7 +2522,7 @@ nsContentUtils::SplitExpatName(const PRUnichar *aExpatName, nsIAtom **aPrefix,
     }
   }
 
-  const PRUnichar *nameStart;
+  const char16_t *nameStart;
   if (uriEnd) {
     if (sNameSpaceManager) {
       sNameSpaceManager->RegisterNameSpace(nsDependentSubstring(aExpatName,
@@ -2576,7 +2535,7 @@ nsContentUtils::SplitExpatName(const PRUnichar *aExpatName, nsIAtom **aPrefix,
 
     nameStart = (uriEnd + 1);
     if (nameEnd)  {
-      const PRUnichar *prefixStart = nameEnd + 1;
+      const char16_t *prefixStart = nameEnd + 1;
       *aPrefix = NS_NewAtom(Substring(prefixStart, pos)).get();
     }
     else {
@@ -2675,10 +2634,8 @@ nsContentUtils::CanLoadImage(nsIURI* aURI, nsISupports* aContext,
 imgLoader*
 nsContentUtils::GetImgLoaderForDocument(nsIDocument* aDoc)
 {
-  if (!sImgLoaderInitialized)
-    InitImgLoader();
   if (!aDoc)
-    return sImgLoader;
+    return imgLoader::Singleton();
   bool isPrivate = false;
   nsCOMPtr<nsILoadGroup> loadGroup = aDoc->GetDocumentLoadGroup();
   nsCOMPtr<nsIInterfaceRequestor> callbacks;
@@ -2692,29 +2649,24 @@ nsContentUtils::GetImgLoaderForDocument(nsIDocument* aDoc)
     nsCOMPtr<nsIChannel> channel = aDoc->GetChannel();
     isPrivate = channel && NS_UsePrivateBrowsing(channel);
   }
-  return isPrivate ? sPrivateImgLoader : sImgLoader;
+  return isPrivate ? imgLoader::PBSingleton() : imgLoader::Singleton();
 }
 
 // static
 imgLoader*
 nsContentUtils::GetImgLoaderForChannel(nsIChannel* aChannel)
 {
-  if (!sImgLoaderInitialized)
-    InitImgLoader();
   if (!aChannel)
-    return sImgLoader;
+    return imgLoader::Singleton();
   nsCOMPtr<nsILoadContext> context;
   NS_QueryNotificationCallbacks(aChannel, context);
-  return context && context->UsePrivateBrowsing() ? sPrivateImgLoader : sImgLoader;
+  return context && context->UsePrivateBrowsing() ? imgLoader::PBSingleton() : imgLoader::Singleton();
 }
 
 // static
 bool
 nsContentUtils::IsImageInCache(nsIURI* aURI, nsIDocument* aDocument)
 {
-    if (!sImgLoaderInitialized)
-        InitImgLoader();
-
     imgILoader* loader = GetImgLoaderForDocument(aDocument);
     nsCOMPtr<imgICache> cache = do_QueryInterface(loader);
 
@@ -3016,7 +2968,7 @@ nsresult nsContentUtils::GetLocalizedString(PropertiesFile aFile,
 /* static */
 nsresult nsContentUtils::FormatLocalizedString(PropertiesFile aFile,
                                                const char* aKey,
-                                               const PRUnichar **aParams,
+                                               const char16_t **aParams,
                                                uint32_t aParamsLength,
                                                nsXPIDLString& aResult)
 {
@@ -3053,7 +3005,7 @@ nsContentUtils::ReportToConsole(uint32_t aErrorFlags,
                                 nsIDocument* aDocument,
                                 PropertiesFile aFile,
                                 const char *aMessageName,
-                                const PRUnichar **aParams,
+                                const char16_t **aParams,
                                 uint32_t aParamsLength,
                                 nsIURI* aURI,
                                 const nsAFlatString& aSourceLine,
@@ -3232,13 +3184,12 @@ nsContentUtils::IsInChromeDocshell(nsIDocument *aDocument)
     return IsInChromeDocshell(aDocument->GetDisplayDocument());
   }
 
-  nsCOMPtr<nsIDocShellTreeItem> docShell(aDocument->GetDocShell());
-  int32_t itemType = nsIDocShellTreeItem::typeContent;
-  if (docShell) {
-    docShell->GetItemType(&itemType);
+  nsCOMPtr<nsIDocShellTreeItem> docShell = aDocument->GetDocShell();
+  if (!docShell) {
+    return false;
   }
 
-  return itemType == nsIDocShellTreeItem::typeChrome;
+  return docShell->ItemType() == nsIDocShellTreeItem::typeChrome;
 }
 
 // static
@@ -3258,7 +3209,7 @@ nsContentUtils::GetContentPolicy()
 bool
 nsContentUtils::IsEventAttributeName(nsIAtom* aName, int32_t aType)
 {
-  const PRUnichar* name = aName->GetUTF16String();
+  const char16_t* name = aName->GetUTF16String();
   if (name[0] != 'o' || name[1] != 'n')
     return false;
 
@@ -3454,26 +3405,23 @@ nsContentUtils::MatchElementId(nsIContent *aContent, const nsAString& aId)
   return MatchElementId(aContent, id);
 }
 
-// Convert the string from the given charset to Unicode.
+// Convert the string from the given encoding to Unicode.
 /* static */
 nsresult
-nsContentUtils::ConvertStringFromCharset(const nsACString& aCharset,
-                                         const nsACString& aInput,
-                                         nsAString& aOutput)
+nsContentUtils::ConvertStringFromEncoding(const nsACString& aEncoding,
+                                          const nsACString& aInput,
+                                          nsAString& aOutput)
 {
-  if (aCharset.IsEmpty()) {
-    // Treat the string as UTF8
-    CopyUTF8toUTF16(aInput, aOutput);
-    return NS_OK;
+  nsAutoCString encoding;
+  if (aEncoding.IsEmpty()) {
+    encoding.AssignLiteral("UTF-8");
+  } else {
+    encoding.Assign(aEncoding);
   }
 
   ErrorResult rv;
   nsAutoPtr<TextDecoder> decoder(new TextDecoder());
-  decoder->Init(NS_ConvertUTF8toUTF16(aCharset), false, rv);
-  if (rv.Failed()) {
-    rv.ClearMessage();
-    return rv.ErrorCode();
-  }
+  decoder->InitWithEncoding(encoding, false);
 
   decoder->Decode(aInput.BeginReading(), aInput.Length(), false,
                   aOutput, rv);
@@ -3505,80 +3453,6 @@ nsContentUtils::CheckForBOM(const unsigned char* aBuffer, uint32_t aLength,
   }
 
   return found;
-}
-
-NS_IMPL_ISUPPORTS1(CharsetDetectionObserver,
-                   nsICharsetDetectionObserver)
-
-/* static */
-nsresult
-nsContentUtils::GuessCharset(const char *aData, uint32_t aDataLen,
-                             nsACString &aCharset)
-{
-  // First try the universal charset detector
-  nsCOMPtr<nsICharsetDetector> detector =
-    do_CreateInstance(NS_CHARSET_DETECTOR_CONTRACTID_BASE
-                      "universal_charset_detector");
-  if (!detector) {
-    // No universal charset detector, try the default charset detector
-    const nsAdoptingCString& detectorName =
-      Preferences::GetLocalizedCString("intl.charset.detector");
-    if (!detectorName.IsEmpty()) {
-      nsAutoCString detectorContractID;
-      detectorContractID.AssignLiteral(NS_CHARSET_DETECTOR_CONTRACTID_BASE);
-      detectorContractID += detectorName;
-      detector = do_CreateInstance(detectorContractID.get());
-    }
-  }
-
-  nsresult rv;
-
-  // The charset detector doesn't work for empty (null) aData. Testing
-  // aDataLen instead of aData so that we catch potential errors.
-  if (detector && aDataLen) {
-    nsRefPtr<CharsetDetectionObserver> observer =
-      new CharsetDetectionObserver();
-
-    rv = detector->Init(observer);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    bool dummy;
-    rv = detector->DoIt(aData, aDataLen, &dummy);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    rv = detector->Done();
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    aCharset = observer->GetResult();
-  } else {
-    // no charset detector available, check the BOM
-    unsigned char sniffBuf[3];
-    uint32_t numRead =
-      (aDataLen >= sizeof(sniffBuf) ? sizeof(sniffBuf) : aDataLen);
-    memcpy(sniffBuf, aData, numRead);
-
-    CheckForBOM(sniffBuf, numRead, aCharset);
-  }
-
-  if (aCharset.IsEmpty()) {
-    // no charset detected, default to the system charset
-    nsCOMPtr<nsIPlatformCharset> platformCharset =
-      do_GetService(NS_PLATFORMCHARSET_CONTRACTID, &rv);
-    if (NS_SUCCEEDED(rv)) {
-      rv = platformCharset->GetCharset(kPlatformCharsetSel_PlainTextInFile,
-                                       aCharset);
-      if (NS_FAILED(rv)) {
-        NS_WARNING("Failed to get the system charset!");
-      }
-    }
-  }
-
-  if (aCharset.IsEmpty()) {
-    // no sniffed or default charset, assume UTF-8
-    aCharset.AssignLiteral("UTF-8");
-  }
-
-  return NS_OK;
 }
 
 /* static */
@@ -3979,7 +3853,7 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
           // really want something like nsXMLContentSerializer::SerializeAttr
           tagName.Append(NS_LITERAL_STRING(" xmlns")); // space important
           if (name->GetPrefix()) {
-            tagName.Append(PRUnichar(':'));
+            tagName.Append(char16_t(':'));
             name->LocalName()->ToString(nameStr);
             tagName.Append(nameStr);
           } else {
@@ -4585,14 +4459,14 @@ nsContentUtils::GetTopLevelWidget(nsIWidget* aWidget)
 const nsDependentString
 nsContentUtils::GetLocalizedEllipsis()
 {
-  static PRUnichar sBuf[4] = { 0, 0, 0, 0 };
+  static char16_t sBuf[4] = { 0, 0, 0, 0 };
   if (!sBuf[0]) {
     nsAdoptingString tmp = Preferences::GetLocalizedString("intl.ellipsis");
     uint32_t len = std::min(uint32_t(tmp.Length()),
                           uint32_t(ArrayLength(sBuf) - 1));
     CopyUnicodeTo(tmp, 0, sBuf, len);
     if (!sBuf[0])
-      sBuf[0] = PRUnichar(0x2026);
+      sBuf[0] = char16_t(0x2026);
   }
   return nsDependentString(sBuf);
 }
@@ -4613,14 +4487,14 @@ CharsCaseInsensitiveEqual(uint32_t aChar1, uint32_t aChar2)
 {
   return aChar1 == aChar2 ||
          (IS_IN_BMP(aChar1) && IS_IN_BMP(aChar2) &&
-          ToLowerCase(PRUnichar(aChar1)) == ToLowerCase(PRUnichar(aChar2)));
+          ToLowerCase(char16_t(aChar1)) == ToLowerCase(char16_t(aChar2)));
 }
 
 static bool
 IsCaseChangeableChar(uint32_t aChar)
 {
   return IS_IN_BMP(aChar) &&
-         ToLowerCase(PRUnichar(aChar)) != ToUpperCase(PRUnichar(aChar));
+         ToLowerCase(char16_t(aChar)) != ToUpperCase(char16_t(aChar));
 }
 
 /* static */
@@ -4740,7 +4614,7 @@ nsContentUtils::GetAccessKeyCandidates(WidgetKeyboardEvent* aNativeKeyEvent,
   if (aNativeKeyEvent->charCode) {
     uint32_t ch = aNativeKeyEvent->charCode;
     if (IS_IN_BMP(ch))
-      ch = ToLowerCase(PRUnichar(ch));
+      ch = ToLowerCase(char16_t(ch));
     aCandidates.AppendElement(ch);
   }
   for (uint32_t i = 0;
@@ -4752,7 +4626,7 @@ nsContentUtils::GetAccessKeyCandidates(WidgetKeyboardEvent* aNativeKeyEvent,
       if (!ch[j])
         continue;
       if (IS_IN_BMP(ch[j]))
-        ch[j] = ToLowerCase(PRUnichar(ch[j]));
+        ch[j] = ToLowerCase(char16_t(ch[j]));
       // Don't append the charCode that was already appended.
       if (aCandidates.IndexOf(ch[j]) == aCandidates.NoIndex)
         aCandidates.AppendElement(ch[j]);
@@ -5132,13 +5006,8 @@ nsContentUtils::CheckForSubFrameDrop(nsIDragSession* aDragSession,
     return true;
   }
 
-  int32_t type = -1;
-  if (NS_FAILED(tdsti->GetItemType(&type))) {
-    return true;
-  }
-
   // Always allow dropping onto chrome shells.
-  if (type == nsIDocShellTreeItem::typeChrome) {
+  if (tdsti->ItemType() == nsIDocShellTreeItem::typeChrome) {
     return false;
   }
 
@@ -5259,16 +5128,27 @@ nsContentUtils::GetDefaultJSContextForThread()
 }
 
 /* static */
+JSContext *
+nsContentUtils::GetCurrentJSContextForThread()
+{
+  if (MOZ_LIKELY(NS_IsMainThread())) {
+    return GetCurrentJSContext();
+  } else {
+    return workers::GetCurrentThreadJSContext();
+  }
+}
+
+/* static */
 nsresult
 nsContentUtils::ASCIIToLower(nsAString& aStr)
 {
-  PRUnichar* iter = aStr.BeginWriting();
-  PRUnichar* end = aStr.EndWriting();
+  char16_t* iter = aStr.BeginWriting();
+  char16_t* end = aStr.EndWriting();
   if (MOZ_UNLIKELY(!iter || !end)) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
   while (iter != end) {
-    PRUnichar c = *iter;
+    char16_t c = *iter;
     if (c >= 'A' && c <= 'Z') {
       *iter = c + ('a' - 'A');
     }
@@ -5284,14 +5164,14 @@ nsContentUtils::ASCIIToLower(const nsAString& aSource, nsAString& aDest)
   uint32_t len = aSource.Length();
   aDest.SetLength(len);
   if (aDest.Length() == len) {
-    PRUnichar* dest = aDest.BeginWriting();
+    char16_t* dest = aDest.BeginWriting();
     if (MOZ_UNLIKELY(!dest)) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-    const PRUnichar* iter = aSource.BeginReading();
-    const PRUnichar* end = aSource.EndReading();
+    const char16_t* iter = aSource.BeginReading();
+    const char16_t* end = aSource.EndReading();
     while (iter != end) {
-      PRUnichar c = *iter;
+      char16_t c = *iter;
       *dest = (c >= 'A' && c <= 'Z') ?
          c + ('a' - 'A') : c;
       ++iter;
@@ -5306,13 +5186,13 @@ nsContentUtils::ASCIIToLower(const nsAString& aSource, nsAString& aDest)
 nsresult
 nsContentUtils::ASCIIToUpper(nsAString& aStr)
 {
-  PRUnichar* iter = aStr.BeginWriting();
-  PRUnichar* end = aStr.EndWriting();
+  char16_t* iter = aStr.BeginWriting();
+  char16_t* end = aStr.EndWriting();
   if (MOZ_UNLIKELY(!iter || !end)) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
   while (iter != end) {
-    PRUnichar c = *iter;
+    char16_t c = *iter;
     if (c >= 'a' && c <= 'z') {
       *iter = c + ('A' - 'a');
     }
@@ -5328,14 +5208,14 @@ nsContentUtils::ASCIIToUpper(const nsAString& aSource, nsAString& aDest)
   uint32_t len = aSource.Length();
   aDest.SetLength(len);
   if (aDest.Length() == len) {
-    PRUnichar* dest = aDest.BeginWriting();
+    char16_t* dest = aDest.BeginWriting();
     if (MOZ_UNLIKELY(!dest)) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
-    const PRUnichar* iter = aSource.BeginReading();
-    const PRUnichar* end = aSource.EndReading();
+    const char16_t* iter = aSource.BeginReading();
+    const char16_t* end = aSource.EndReading();
     while (iter != end) {
-      PRUnichar c = *iter;
+      char16_t c = *iter;
       *dest = (c >= 'a' && c <= 'z') ?
          c + ('A' - 'a') : c;
       ++iter;
@@ -5356,13 +5236,13 @@ nsContentUtils::EqualsIgnoreASCIICase(const nsAString& aStr1,
     return false;
   }
 
-  const PRUnichar* str1 = aStr1.BeginReading();
-  const PRUnichar* str2 = aStr2.BeginReading();
-  const PRUnichar* end = str1 + len;
+  const char16_t* str1 = aStr1.BeginReading();
+  const char16_t* str2 = aStr2.BeginReading();
+  const char16_t* end = str1 + len;
 
   while (str1 < end) {
-    PRUnichar c1 = *str1++;
-    PRUnichar c2 = *str2++;
+    char16_t c1 = *str1++;
+    char16_t c2 = *str2++;
 
     // First check if any bits other than the 0x0020 differs
     if ((c1 ^ c2) & 0xffdf) {
@@ -5374,7 +5254,7 @@ nsContentUtils::EqualsIgnoreASCIICase(const nsAString& aStr1,
     if (c1 != c2) {
       // They do differ, but since it's only in the 0x0020 bit, check if it's
       // the same ascii char, but just differing in case
-      PRUnichar c1Upper = c1 & 0xffdf;
+      char16_t c1Upper = c1 & 0xffdf;
       if (!('A' <= c1Upper && c1Upper <= 'Z')) {
         return false;
       }
@@ -5388,10 +5268,10 @@ nsContentUtils::EqualsIgnoreASCIICase(const nsAString& aStr1,
 bool
 nsContentUtils::StringContainsASCIIUpper(const nsAString& aStr)
 {
-  const PRUnichar* iter = aStr.BeginReading();
-  const PRUnichar* end = aStr.EndReading();
+  const char16_t* iter = aStr.BeginReading();
+  const char16_t* end = aStr.EndReading();
   while (iter != end) {
-    PRUnichar c = *iter;
+    char16_t c = *iter;
     if (c >= 'A' && c <= 'Z') {
       return true;
     }
@@ -5692,12 +5572,9 @@ nsresult
 nsContentUtils::WrapNative(JSContext *cx, JS::Handle<JSObject*> scope,
                            nsISupports *native, nsWrapperCache *cache,
                            const nsIID* aIID, JS::MutableHandle<JS::Value> vp,
-                           nsIXPConnectJSObjectHolder **aHolder,
                            bool aAllowWrapping)
 {
   if (!native) {
-    NS_ASSERTION(!aHolder || !*aHolder, "*aHolder should be null!");
-
     vp.setNull();
 
     return NS_OK;
@@ -5717,7 +5594,7 @@ nsContentUtils::WrapNative(JSContext *cx, JS::Handle<JSObject*> scope,
   nsresult rv = NS_OK;
   AutoPushJSContext context(cx);
   rv = sXPConnect->WrapNativeToJSVal(context, scope, native, cache, aIID,
-                                     aAllowWrapping, vp.address(), aHolder);
+                                     aAllowWrapping, vp);
   return rv;
 }
 
@@ -5760,7 +5637,7 @@ nsContentUtils::CreateBlobBuffer(JSContext* aCx,
     return NS_ERROR_OUT_OF_MEMORY;
   }
   JS::Rooted<JSObject*> scope(aCx, JS::CurrentGlobalOrNull(aCx));
-  return nsContentUtils::WrapNative(aCx, scope, blob, aBlob, nullptr, true);
+  return nsContentUtils::WrapNative(aCx, scope, blob, aBlob, true);
 }
 
 void
@@ -5963,14 +5840,13 @@ nsContentUtils::FlushLayoutForTree(nsIDOMWindow* aWindow)
         doc->FlushPendingNotifications(Flush_Layout);
     }
 
-    nsCOMPtr<nsIDocShellTreeNode> node =
-        do_QueryInterface(piWin->GetDocShell());
-    if (node) {
+    nsCOMPtr<nsIDocShell> docShell = piWin->GetDocShell();
+    if (docShell) {
         int32_t i = 0, i_end;
-        node->GetChildCount(&i_end);
+        docShell->GetChildCount(&i_end);
         for (; i < i_end; ++i) {
             nsCOMPtr<nsIDocShellTreeItem> item;
-            node->GetChildAt(i, getter_AddRefs(item));
+            docShell->GetChildAt(i, getter_AddRefs(item));
             nsCOMPtr<nsIDOMWindow> win = do_GetInterface(item);
             if (win) {
                 FlushLayoutForTree(win);
@@ -5989,14 +5865,14 @@ void nsContentUtils::RemoveNewlines(nsString &aString)
 void
 nsContentUtils::PlatformToDOMLineBreaks(nsString &aString)
 {
-  if (aString.FindChar(PRUnichar('\r')) != -1) {
+  if (aString.FindChar(char16_t('\r')) != -1) {
     // Windows linebreaks: Map CRLF to LF:
-    aString.ReplaceSubstring(NS_LITERAL_STRING("\r\n").get(),
-                             NS_LITERAL_STRING("\n").get());
+    aString.ReplaceSubstring(MOZ_UTF16("\r\n"),
+                             MOZ_UTF16("\n"));
 
     // Mac linebreaks: Map any remaining CR to LF:
-    aString.ReplaceSubstring(NS_LITERAL_STRING("\r").get(),
-                             NS_LITERAL_STRING("\n").get());
+    aString.ReplaceSubstring(MOZ_UTF16("\r"),
+                             MOZ_UTF16("\n"));
   }
 }
 
@@ -6006,14 +5882,14 @@ nsContentUtils::PopulateStringFromStringBuffer(nsStringBuffer* aBuf,
 {
   MOZ_ASSERT(aBuf, "Expecting a non-null string buffer");
 
-  uint32_t stringLen = NS_strlen(static_cast<PRUnichar*>(aBuf->Data()));
+  uint32_t stringLen = NS_strlen(static_cast<char16_t*>(aBuf->Data()));
 
   // SANITY CHECK: In case the nsStringBuffer isn't correctly
   // null-terminated, let's clamp its length using the allocated size, to be
   // sure the resulting string doesn't sample past the end of the the buffer.
   // (Note that StorageSize() is in units of bytes, so we have to convert that
   // to units of PRUnichars, and subtract 1 for the null-terminator.)
-  uint32_t allocStringLen = (aBuf->StorageSize() / sizeof(PRUnichar)) - 1;
+  uint32_t allocStringLen = (aBuf->StorageSize() / sizeof(char16_t)) - 1;
   MOZ_ASSERT(stringLen <= allocStringLen,
              "string buffer lacks null terminator!");
   stringLen = std::min(stringLen, allocStringLen);
@@ -6525,9 +6401,9 @@ nsContentUtils::GetSelectionInTextControl(Selection* aSelection,
   }
 
   nsCOMPtr<nsINode> anchorNode = aSelection->GetAnchorNode();
-  int32_t anchorOffset = aSelection->GetAnchorOffset();
+  uint32_t anchorOffset = aSelection->AnchorOffset();
   nsCOMPtr<nsINode> focusNode = aSelection->GetFocusNode();
-  int32_t focusOffset = aSelection->GetFocusOffset();
+  uint32_t focusOffset = aSelection->FocusOffset();
 
   // We have at most two children, consisting of an optional text node followed
   // by an optional <br>.
@@ -6566,8 +6442,7 @@ nsContentUtils::GetSelectionInTextControl(Selection* aSelection,
 nsIEditor*
 nsContentUtils::GetHTMLEditor(nsPresContext* aPresContext)
 {
-  nsCOMPtr<nsISupports> container = aPresContext->GetContainer();
-  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
+  nsCOMPtr<nsIDocShell> docShell(aPresContext->GetDocShell());
   bool isEditable;
   if (!docShell ||
       NS_FAILED(docShell->GetEditable(&isEditable)) || !isEditable)

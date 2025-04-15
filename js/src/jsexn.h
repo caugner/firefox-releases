@@ -16,6 +16,9 @@
 
 namespace js {
 class ErrorObject;
+
+extern JSErrorReport *
+CopyErrorReport(JSContext *cx, JSErrorReport *report);
 }
 
 /*
@@ -23,8 +26,26 @@ class ErrorObject;
  * the error number.  If there is, then create an appropriate exception object,
  * set it as the pending exception, and set the JSREPORT_EXCEPTION flag on the
  * error report.  Exception-aware host error reporters should probably ignore
- * error reports so flagged.  Returns true if an associated exception is
- * found and set, false otherwise.
+ * error reports so flagged.
+ *
+ * Return true if cx->throwing and cx->exception were set.
+ *
+ * This means that:
+ *
+ *   - If the error is successfully converted to an exception and stored in
+ *     cx->exception, the return value is true. This is the "normal", happiest
+ *     case for the caller.
+ *
+ *   - If we try to convert, but fail with OOM or some other error that ends up
+ *     setting cx->throwing to true and setting cx->exception, then we also
+ *     return true (because callers want to treat that case the same way).
+ *     The original error described by *reportp typically won't be reported
+ *     anywhere; instead OOM is reported.
+ *
+ *   - If *reportp is just a warning, or the error code is unrecognized, or if
+ *     we decided to do nothing in order to avoid recursion, then return
+ *     false. In those cases, this error is just being swept under the rug
+ *     unless the caller decides to call CallErrorReporter explicitly.
  */
 extern bool
 js_ErrorToException(JSContext *cx, const char *message, JSErrorReport *reportp,
@@ -50,7 +71,7 @@ extern bool
 js_ReportUncaughtException(JSContext *cx);
 
 extern JSErrorReport *
-js_ErrorFromException(jsval exn);
+js_ErrorFromException(JSContext *cx, js::HandleObject obj);
 
 extern const JSErrorFormatString *
 js_GetLocalizedErrorMessage(js::ExclusiveContext *cx, void *userRef, const char *locale,

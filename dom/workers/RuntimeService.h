@@ -11,18 +11,13 @@
 
 #include "nsIObserver.h"
 
-#include "mozilla/Attributes.h"
-#include "mozilla/Mutex.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/dom/BindingDeclarations.h"
-#include "nsAutoPtr.h"
 #include "nsClassHashtable.h"
-#include "nsCOMPtr.h"
-#include "nsCycleCollectionParticipant.h"
 #include "nsHashKeys.h"
-#include "nsString.h"
 #include "nsTArray.h"
 
+class nsIRunnable;
 class nsIThread;
 class nsITimer;
 class nsPIDOMWindow;
@@ -34,15 +29,19 @@ class WorkerPrivate;
 
 class RuntimeService MOZ_FINAL : public nsIObserver
 {
+public:
+  class WorkerThread;
+
+private:
   struct SharedWorkerInfo
   {
     WorkerPrivate* mWorkerPrivate;
     nsCString mScriptSpec;
-    nsString mName;
+    nsCString mName;
 
     SharedWorkerInfo(WorkerPrivate* aWorkerPrivate,
                      const nsACString& aScriptSpec,
-                     const nsAString& aName)
+                     const nsACString& aName)
     : mWorkerPrivate(aWorkerPrivate), mScriptSpec(aScriptSpec), mName(aName)
     { }
   };
@@ -68,7 +67,7 @@ class RuntimeService MOZ_FINAL : public nsIObserver
 
   struct IdleThreadInfo
   {
-    nsCOMPtr<nsIThread> mThread;
+    nsRefPtr<WorkerThread> mThread;
     mozilla::TimeStamp mExpirationTime;
   };
 
@@ -97,14 +96,11 @@ class RuntimeService MOZ_FINAL : public nsIObserver
   // Only used on the main thread.
   nsCOMPtr<nsITimer> mIdleThreadTimer;
 
-  nsCString mDetectorName;
-  nsCString mSystemCharset;
-
   static JSSettings sDefaultJSSettings;
   static bool sDefaultPreferences[WORKERPREF_COUNT];
 
 public:
-  struct NavigatorStrings
+  struct NavigatorProperties
   {
     nsString mAppName;
     nsString mAppVersion;
@@ -113,12 +109,12 @@ public:
   };
 
 private:
-  NavigatorStrings mNavigatorStrings;
+  NavigatorProperties mNavigatorProperties;
 
   // True when the observer service holds a reference to this object.
   bool mObserved;
   bool mShuttingDown;
-  bool mNavigatorStringsLoaded;
+  bool mNavigatorPropertiesLoaded;
 
 public:
   NS_DECL_ISUPPORTS
@@ -148,32 +144,20 @@ public:
   nsresult
   CreateSharedWorker(const GlobalObject& aGlobal,
                      const nsAString& aScriptURL,
-                     const nsAString& aName,
+                     const nsACString& aName,
                      SharedWorker** aSharedWorker);
 
   void
   ForgetSharedWorker(WorkerPrivate* aWorkerPrivate);
 
-  const nsACString&
-  GetDetectorName() const
+  const NavigatorProperties&
+  GetNavigatorProperties() const
   {
-    return mDetectorName;
-  }
-
-  const nsACString&
-  GetSystemCharset() const
-  {
-    return mSystemCharset;
-  }
-
-  const NavigatorStrings&
-  GetNavigatorStrings() const
-  {
-    return mNavigatorStrings;
+    return mNavigatorProperties;
   }
 
   void
-  NoteIdleThread(nsIThread* aThread);
+  NoteIdleThread(WorkerThread* aThread);
 
   static void
   GetDefaultJSSettings(JSSettings& aSettings)
@@ -194,8 +178,8 @@ public:
                              const JS::ContextOptions& aChromeOptions)
   {
     AssertIsOnMainThread();
-    sDefaultJSSettings.content.options = aContentOptions;
-    sDefaultJSSettings.chrome.options = aChromeOptions;
+    sDefaultJSSettings.content.contextOptions = aContentOptions;
+    sDefaultJSSettings.chrome.contextOptions = aChromeOptions;
   }
 
   void
@@ -239,21 +223,14 @@ public:
   UpdateAllWorkerGCZeal();
 #endif
 
-  static void
-  SetDefaultJITHardening(bool aJITHardening)
-  {
-    AssertIsOnMainThread();
-    sDefaultJSSettings.jitHardening = aJITHardening;
-  }
-
-  void
-  UpdateAllWorkerJITHardening(bool aJITHardening);
-
   void
   GarbageCollectAllWorkers(bool aShrinking);
 
   void
   CycleCollectAllWorkers();
+
+  void
+  SendOfflineStatusChangeEventToAllWorkers(bool aIsOffline);
 
 private:
   RuntimeService();
@@ -293,8 +270,11 @@ private:
   static void
   ShutdownIdleThreads(nsITimer* aTimer, void* aClosure);
 
-  static int
+  static void
   WorkerPrefChanged(const char* aPrefName, void* aClosure);
+
+  static void
+  JSVersionChanged(const char* aPrefName, void* aClosure);
 };
 
 END_WORKERS_NAMESPACE

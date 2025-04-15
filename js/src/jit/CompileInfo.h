@@ -37,7 +37,7 @@ CountArgSlots(JSScript *script, JSFunction *fun)
     // Slot x + n: Argument n.
 
     // Note: when updating this, please also update the assert in SnapshotWriter::startFrame
-    return StartArgSlot(script) + (fun ? fun->nargs + 1 : 0);
+    return StartArgSlot(script) + (fun ? fun->nargs() + 1 : 0);
 }
 
 // Contains information about the compilation source for IR being generated.
@@ -45,30 +45,32 @@ class CompileInfo
 {
   public:
     CompileInfo(JSScript *script, JSFunction *fun, jsbytecode *osrPc, bool constructing,
-                ExecutionMode executionMode)
+                ExecutionMode executionMode, bool scriptNeedsArgsObj)
       : script_(script), fun_(fun), osrPc_(osrPc), constructing_(constructing),
-        executionMode_(executionMode)
+        executionMode_(executionMode), scriptNeedsArgsObj_(scriptNeedsArgsObj)
     {
         JS_ASSERT_IF(osrPc, JSOp(*osrPc) == JSOP_LOOPENTRY);
 
-        // The function here can flow in from anywhere so look up the canonical function to ensure that
-        // we do not try to embed a nursery pointer in jit-code.
+        // The function here can flow in from anywhere so look up the canonical
+        // function to ensure that we do not try to embed a nursery pointer in
+        // jit-code. Precisely because it can flow in from anywhere, it's not
+        // guaranteed to be non-lazy. Hence, don't access its script!
         if (fun_) {
-            fun_ = fun_->nonLazyScript()->function();
+            fun_ = fun_->nonLazyScript()->functionNonDelazifying();
             JS_ASSERT(fun_->isTenured());
         }
 
         nimplicit_ = StartArgSlot(script)                   /* scope chain and argument obj */
                    + (fun ? 1 : 0);                         /* this */
-        nargs_ = fun ? fun->nargs : 0;
-        nlocals_ = script->nfixed;
-        nstack_ = script->nslots - script->nfixed;
+        nargs_ = fun ? fun->nargs() : 0;
+        nlocals_ = script->nfixed();
+        nstack_ = script->nslots() - script->nfixed();
         nslots_ = nimplicit_ + nargs_ + nlocals_ + nstack_;
     }
 
     CompileInfo(unsigned nlocals, ExecutionMode executionMode)
       : script_(nullptr), fun_(nullptr), osrPc_(nullptr), constructing_(false),
-        executionMode_(executionMode)
+        executionMode_(executionMode), scriptNeedsArgsObj_(false)
     {
         nimplicit_ = 0;
         nargs_ = 0;
@@ -80,7 +82,7 @@ class CompileInfo
     JSScript *script() const {
         return script_;
     }
-    JSFunction *fun() const {
+    JSFunction *funMaybeLazy() const {
         return fun_;
     }
     bool constructing() const {
@@ -107,7 +109,7 @@ class CompileInfo
     }
 
     unsigned lineno() const {
-        return script_->lineno;
+        return script_->lineno();
     }
     unsigned lineno(jsbytecode *pc) const {
         return PCToLineNumber(script_, pc);
@@ -174,7 +176,7 @@ class CompileInfo
         return 2;
     }
     uint32_t thisSlot() const {
-        JS_ASSERT(fun());
+        JS_ASSERT(funMaybeLazy());
         JS_ASSERT(nimplicit_ > 0);
         return nimplicit_ - 1;
     }
@@ -213,16 +215,16 @@ class CompileInfo
     }
     uint32_t endArgSlot() const {
         JS_ASSERT(script());
-        return CountArgSlots(script(), fun());
+        return CountArgSlots(script(), funMaybeLazy());
     }
 
     uint32_t totalSlots() const {
-        JS_ASSERT(script() && fun());
+        JS_ASSERT(script() && funMaybeLazy());
         return nimplicit() + nargs() + nlocals();
     }
 
     bool isSlotAliased(uint32_t index) const {
-        if (fun() && index == thisSlot())
+        if (funMaybeLazy() && index == thisSlot())
             return false;
 
         uint32_t arg = index - firstArgSlot();
@@ -250,10 +252,10 @@ class CompileInfo
         return script()->argumentsAliasesFormals();
     }
     bool needsArgsObj() const {
-        return script()->needsArgsObj();
+        return scriptNeedsArgsObj_;
     }
     bool argsObjAliasesFormals() const {
-        return script()->argsObjAliasesFormals();
+        return scriptNeedsArgsObj_ && !script()->strict();
     }
 
     ExecutionMode executionMode() const {
@@ -275,6 +277,11 @@ class CompileInfo
     jsbytecode *osrPc_;
     bool constructing_;
     ExecutionMode executionMode_;
+
+    // Whether a script needs an arguments object is unstable over compilation
+    // since the arguments optimization could be marked as failed on the main
+    // thread, so cache a value here and use it throughout for consistency.
+    bool scriptNeedsArgsObj_;
 };
 
 } // namespace jit

@@ -1,11 +1,13 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sw=4 et tw=78:
+ * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Class used to manage the wrapped native objects within a JS scope. */
 
 #include "xpcprivate.h"
+#include "XPCWrapper.h"
 #include "nsContentUtils.h"
 #include "nsCycleCollectionNoteRootCallback.h"
 #include "nsPrincipal.h"
@@ -131,27 +133,58 @@ JSObject*
 XPCWrappedNativeScope::GetComponentsJSObject()
 {
     AutoJSContext cx;
-    if (!mComponents)
-        mComponents = new nsXPCComponents(this);
+    if (!mComponents) {
+        nsIPrincipal *p = GetPrincipal();
+        bool system = XPCWrapper::GetSecurityManager()->IsSystemPrincipal(p);
+        mComponents = system ? new nsXPCComponents(this)
+                             : new nsXPCComponentsBase(this);
+    }
 
-    AutoMarkingNativeInterfacePtr iface(cx);
-    iface = XPCNativeInterface::GetNewOrUsed(&NS_GET_IID(nsIXPCComponents));
-    if (!iface)
+    RootedValue val(cx);
+    xpcObjectHelper helper(mComponents);
+    bool ok = XPCConvert::NativeInterface2JSObject(&val, nullptr, helper,
+                                                   nullptr, nullptr, false,
+                                                   nullptr);
+    if (NS_WARN_IF(!ok))
         return nullptr;
 
-    nsCOMPtr<nsIXPCComponents> cholder(mComponents);
-    xpcObjectHelper helper(cholder);
-    nsCOMPtr<XPCWrappedNative> wrapper;
-    XPCWrappedNative::GetNewOrUsed(helper, this, iface, getter_AddRefs(wrapper));
-    if (!wrapper)
+    if (NS_WARN_IF(!val.isObject()))
         return nullptr;
 
     // The call to wrap() here is necessary even though the object is same-
     // compartment, because it applies our security wrapper.
-    JS::RootedObject obj(cx, wrapper->GetFlatJSObject());
-    if (!JS_WrapObject(cx, &obj))
+    JS::RootedObject obj(cx, &val.toObject());
+    if (NS_WARN_IF(!JS_WrapObject(cx, &obj)))
         return nullptr;
     return obj;
+}
+
+void
+XPCWrappedNativeScope::ForcePrivilegedComponents()
+{
+    // This may only be called on unprivileged scopes during automation where
+    // we allow insecure things.
+    MOZ_RELEASE_ASSERT(Preferences::GetBool("security.turn_off_all_security_so_"
+                                            "that_viruses_can_take_over_this_"
+                                            "computer"));
+    nsCOMPtr<nsIXPCComponents> c = do_QueryInterface(mComponents);
+    if (!c)
+        mComponents = new nsXPCComponents(this);
+}
+
+bool
+XPCWrappedNativeScope::AttachComponentsObject(JSContext* aCx)
+{
+    RootedObject components(aCx, GetComponentsJSObject());
+    if (!components)
+        return false;
+
+    RootedObject global(aCx, GetGlobalJSObject());
+    MOZ_ASSERT(js::IsObjectInContextCompartment(global, aCx));
+
+    RootedId id(aCx, XPCJSRuntime::Get()->GetStringID(XPCJSRuntime::IDX_COMPONENTS));
+    return JS_DefinePropertyById(aCx, global, id, ObjectValue(*components),
+                                 nullptr, nullptr, JSPROP_PERMANENT | JSPROP_READONLY);
 }
 
 JSObject*
@@ -546,27 +579,6 @@ XPCWrappedNativeScope::SystemIsBeingShutDown()
 /***************************************************************************/
 
 static PLDHashOperator
-WNProtoSecPolicyClearer(PLDHashTable *table, PLDHashEntryHdr *hdr,
-                        uint32_t number, void *arg)
-{
-    XPCWrappedNativeProto* proto =
-        ((ClassInfo2WrappedNativeProtoMap::Entry*)hdr)->value;
-    *(proto->GetSecurityInfoAddr()) = nullptr;
-    return PL_DHASH_NEXT;
-}
-
-// static
-nsresult
-XPCWrappedNativeScope::ClearAllWrappedNativeSecurityPolicies()
-{
-    for (XPCWrappedNativeScope* cur = gScopes; cur; cur = cur->mNext) {
-        cur->mWrappedNativeProtoMap->Enumerate(WNProtoSecPolicyClearer, nullptr);
-    }
-
-    return NS_OK;
-}
-
-static PLDHashOperator
 WNProtoRemover(PLDHashTable *table, PLDHashEntryHdr *hdr,
                uint32_t number, void *arg)
 {
@@ -663,27 +675,29 @@ XPCWrappedNativeScope::DebugDump(int16_t depth)
 #endif
 }
 
-size_t
-XPCWrappedNativeScope::SizeOfAllScopesIncludingThis(MallocSizeOf mallocSizeOf)
+void
+XPCWrappedNativeScope::AddSizeOfAllScopesIncludingThis(ScopeSizeInfo* scopeSizeInfo)
 {
-    size_t n = 0;
-    for (XPCWrappedNativeScope *cur = gScopes; cur; cur = cur->mNext) {
-        n += cur->SizeOfIncludingThis(mallocSizeOf);
-    }
-    return n;
+    for (XPCWrappedNativeScope *cur = gScopes; cur; cur = cur->mNext)
+        cur->AddSizeOfIncludingThis(scopeSizeInfo);
 }
 
-size_t
-XPCWrappedNativeScope::SizeOfIncludingThis(MallocSizeOf mallocSizeOf)
+void
+XPCWrappedNativeScope::AddSizeOfIncludingThis(ScopeSizeInfo* scopeSizeInfo)
 {
-    size_t n = 0;
-    n += mallocSizeOf(this);
-    n += mWrappedNativeMap->SizeOfIncludingThis(mallocSizeOf);
-    n += mWrappedNativeProtoMap->SizeOfIncludingThis(mallocSizeOf);
+    scopeSizeInfo->mScopeAndMapSize += scopeSizeInfo->mMallocSizeOf(this);
+    scopeSizeInfo->mScopeAndMapSize +=
+        mWrappedNativeMap->SizeOfIncludingThis(scopeSizeInfo->mMallocSizeOf);
+    scopeSizeInfo->mScopeAndMapSize +=
+        mWrappedNativeProtoMap->SizeOfIncludingThis(scopeSizeInfo->mMallocSizeOf);
+
+    if (dom::HasProtoAndIfaceArray(mGlobalJSObject)) {
+        dom::ProtoAndIfaceArray* cache = dom::GetProtoAndIfaceArray(mGlobalJSObject);
+        scopeSizeInfo->mProtoAndIfaceCacheSize +=
+            cache->SizeOfIncludingThis(scopeSizeInfo->mMallocSizeOf);
+    }
 
     // There are other XPCWrappedNativeScope members that could be measured;
     // the above ones have been seen by DMD to be worth measuring.  More stuff
     // may be added later.
-
-    return n;
 }

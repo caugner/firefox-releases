@@ -5,174 +5,219 @@
 
 let gTestTab;
 let gContentAPI;
+let gContentWindow;
 
 Components.utils.import("resource:///modules/UITour.jsm");
 
-function is_hidden(element) {
-  var style = element.ownerDocument.defaultView.getComputedStyle(element, "");
-  if (style.display == "none")
-    return true;
-  if (style.visibility != "visible")
-    return true;
-
-  // Hiding a parent element will hide all its children
-  if (element.parentNode != element.ownerDocument)
-    return is_hidden(element.parentNode);
-
-  return false;
-}
-
-function is_element_visible(element, msg) {
-  isnot(element, null, "Element should not be null, when checking visibility");
-  ok(!is_hidden(element), msg);
-}
-
-function is_element_hidden(element, msg) {
-  isnot(element, null, "Element should not be null, when checking visibility");
-  ok(is_hidden(element), msg);
-}
-
-function loadTestPage(callback, host = "https://example.com/") {
-   if (gTestTab)
-    gBrowser.removeTab(gTestTab);
-
-  let url = getRootDirectory(gTestPath) + "uitour.html";
-  url = url.replace("chrome://mochitests/content/", host);
-
-  gTestTab = gBrowser.addTab(url);
-  gBrowser.selectedTab = gTestTab;
-
-  gTestTab.linkedBrowser.addEventListener("load", function onLoad() {
-    gTestTab.linkedBrowser.removeEventListener("load", onLoad);
-
-    let contentWindow = Components.utils.waiveXrays(gTestTab.linkedBrowser.contentDocument.defaultView);
-    gContentAPI = contentWindow.Mozilla.UITour;
-
-    waitForFocus(callback, contentWindow);
-  }, true);
-}
-
 function test() {
-  Services.prefs.setBoolPref("browser.uitour.enabled", true);
-  let testUri = Services.io.newURI("http://example.com", null, null);
-  Services.perms.add(testUri, "uitour", Services.perms.ALLOW_ACTION);
-
-  waitForExplicitFinish();
-
-  registerCleanupFunction(function() {
-    delete window.UITour;
-    delete window.gContentAPI;
-    if (gTestTab)
-      gBrowser.removeTab(gTestTab);
-    delete window.gTestTab;
-    Services.prefs.clearUserPref("browser.uitour.enabled", true);
-    Services.perms.remove("example.com", "uitour");
-  });
-
-  function done() {
-    if (gTestTab)
-      gBrowser.removeTab(gTestTab);
-    gTestTab = null;
-
-    let highlight = document.getElementById("UITourHighlight");
-    is_element_hidden(highlight, "Highlight should be hidden after UITour tab is closed");
-
-    let popup = document.getElementById("UITourTooltip");
-    isnot(["hidding","closed"].indexOf(popup.state), -1, "Popup should be closed/hidding after UITour tab is closed");
-
-    is(UITour.pinnedTabs.get(window), null, "Any pinned tab should be closed after UITour tab is closed");
-
-    executeSoon(nextTest);
-  }
-
-  function nextTest() {
-    if (tests.length == 0) {
-      finish();
-      return;
-    }
-    let test = tests.shift();
-
-    loadTestPage(function() {
-      test(done);
-    });
-  }
-  nextTest();
+  UITourTest();
 }
 
 let tests = [
   function test_untrusted_host(done) {
-    loadTestPage(function() {
-      let highlight = document.getElementById("UITourHighlight");
-      is_element_hidden(highlight, "Highlight should initially be hidden");
+    loadUITourTestPage(function() {
+      let bookmarksMenu = document.getElementById("bookmarks-menu-button");
+      ise(bookmarksMenu.open, false, "Bookmark menu should initially be closed");
 
-      gContentAPI.showHighlight("urlbar");
-      is_element_hidden(highlight, "Highlight should not be shown on a untrusted host");
+      gContentAPI.showMenu("bookmarks");
+      ise(bookmarksMenu.open, false, "Bookmark menu should not open on a untrusted host");
 
       done();
     }, "http://mochi.test:8888/");
   },
   function test_unsecure_host(done) {
-    loadTestPage(function() {
-      let highlight = document.getElementById("UITourHighlight");
-      is_element_hidden(highlight, "Highlight should initially be hidden");
+    loadUITourTestPage(function() {
+      let bookmarksMenu = document.getElementById("bookmarks-menu-button");
+      ise(bookmarksMenu.open, false, "Bookmark menu should initially be closed");
 
-      gContentAPI.showHighlight("urlbar");
-      is_element_hidden(highlight, "Highlight should not be shown on a unsecure host");
+      gContentAPI.showMenu("bookmarks");
+      ise(bookmarksMenu.open, false, "Bookmark menu should not open on a unsecure host");
 
       done();
     }, "http://example.com/");
   },
   function test_unsecure_host_override(done) {
     Services.prefs.setBoolPref("browser.uitour.requireSecure", false);
-    loadTestPage(function() {
+    loadUITourTestPage(function() {
       let highlight = document.getElementById("UITourHighlight");
       is_element_hidden(highlight, "Highlight should initially be hidden");
 
       gContentAPI.showHighlight("urlbar");
-      is_element_visible(highlight, "Highlight should be shown on a unsecure host when override pref is set");
+      waitForElementToBeVisible(highlight, done, "Highlight should be shown on a unsecure host when override pref is set");
 
       Services.prefs.setBoolPref("browser.uitour.requireSecure", true);
-      done();
     }, "http://example.com/");
   },
   function test_disabled(done) {
     Services.prefs.setBoolPref("browser.uitour.enabled", false);
 
-    let highlight = document.getElementById("UITourHighlight");
-    is_element_hidden(highlight, "Highlight should initially be hidden");
+    let bookmarksMenu = document.getElementById("bookmarks-menu-button");
+    ise(bookmarksMenu.open, false, "Bookmark menu should initially be closed");
 
-    gContentAPI.showHighlight("urlbar");
-    is_element_hidden(highlight, "Highlight should not be shown when feature is disabled");
+    gContentAPI.showMenu("bookmarks");
+    ise(bookmarksMenu.open, false, "Bookmark menu should not open when feature is disabled");
 
     Services.prefs.setBoolPref("browser.uitour.enabled", true);
     done();
   },
   function test_highlight(done) {
+    function test_highlight_2() {
+      let highlight = document.getElementById("UITourHighlight");
+      gContentAPI.hideHighlight();
+      is_element_hidden(highlight, "Highlight should be hidden after hideHighlight()");
+
+      gContentAPI.showHighlight("urlbar");
+      waitForElementToBeVisible(highlight, test_highlight_3, "Highlight should be shown after showHighlight()");
+    }
+    function test_highlight_3() {
+      let highlight = document.getElementById("UITourHighlight");
+      gContentAPI.showHighlight("backForward");
+      waitForElementToBeVisible(highlight, done, "Highlight should be shown after showHighlight()");
+    }
+
     let highlight = document.getElementById("UITourHighlight");
     is_element_hidden(highlight, "Highlight should initially be hidden");
 
     gContentAPI.showHighlight("urlbar");
-    is_element_visible(highlight, "Highlight should be shown after showHighlight()");
+    waitForElementToBeVisible(highlight, test_highlight_2, "Highlight should be shown after showHighlight()");
+  },
+  function test_highlight_circle(done) {
+    function check_highlight_size() {
+      let panel = highlight.parentElement;
+      let anchor = panel.anchorNode;
+      let anchorRect = anchor.getBoundingClientRect();
+      info("addons target: width: " + anchorRect.width + " height: " + anchorRect.height);
+      let maxDimension = Math.round(Math.max(anchorRect.width, anchorRect.height));
+      let highlightRect = highlight.getBoundingClientRect();
+      info("highlight: width: " + highlightRect.width + " height: " + highlightRect.height);
+      is(Math.round(highlightRect.width), maxDimension, "The width of the highlight should be equal to the largest dimension of the target");
+      is(Math.round(highlightRect.height), maxDimension, "The height of the highlight should be equal to the largest dimension of the target");
+      is(Math.round(highlightRect.height), Math.round(highlightRect.width), "The height and width of the highlight should be the same to create a circle");
+      is(highlight.style.borderRadius, "100%", "The border-radius should be 100% to create a circle");
+      done();
+    }
+    let highlight = document.getElementById("UITourHighlight");
+    is_element_hidden(highlight, "Highlight should initially be hidden");
 
-    gContentAPI.hideHighlight();
-    is_element_hidden(highlight, "Highlight should be hidden after hideHighlight()");
+    gContentAPI.showHighlight("addons");
+    waitForElementToBeVisible(highlight, check_highlight_size, "Highlight should be shown after showHighlight()");
+  },
+  function test_highlight_customize_auto_open_close(done) {
+    let highlight = document.getElementById("UITourHighlight");
+    gContentAPI.showHighlight("customize");
+    waitForElementToBeVisible(highlight, function checkPanelIsOpen() {
+      isnot(PanelUI.panel.state, "closed", "Panel should have opened");
+
+      // Move the highlight outside which should close the app menu.
+      gContentAPI.showHighlight("appMenu");
+      waitForElementToBeVisible(highlight, function checkPanelIsClosed() {
+        isnot(PanelUI.panel.state, "open",
+              "Panel should have closed after the highlight moved elsewhere.");
+        done();
+      }, "Highlight should move to the appMenu button");
+    }, "Highlight should be shown after showHighlight() for fixed panel items");
+  },
+  function test_highlight_customize_manual_open_close(done) {
+    let highlight = document.getElementById("UITourHighlight");
+    // Manually open the app menu then show a highlight there. The menu should remain open.
+    gContentAPI.showMenu("appMenu");
+    isnot(PanelUI.panel.state, "closed", "Panel should have opened");
+    gContentAPI.showHighlight("customize");
+
+    waitForElementToBeVisible(highlight, function checkPanelIsStillOpen() {
+      isnot(PanelUI.panel.state, "closed", "Panel should still be open");
+
+      // Move the highlight outside which shouldn't close the app menu since it was manually opened.
+      gContentAPI.showHighlight("appMenu");
+      waitForElementToBeVisible(highlight, function () {
+        isnot(PanelUI.panel.state, "closed",
+              "Panel should remain open since UITour didn't open it in the first place");
+        gContentAPI.hideMenu("appMenu");
+        done();
+      }, "Highlight should move to the appMenu button");
+    }, "Highlight should be shown after showHighlight() for fixed panel items");
+  },
+  function test_highlight_effect(done) {
+    function waitForHighlightWithEffect(highlightEl, effect, next, error) {
+      return waitForCondition(() => highlightEl.getAttribute("active") == effect,
+                              next,
+                              error);
+    }
+    function checkDefaultEffect() {
+      is(highlight.getAttribute("active"), "none", "The default should be no effect");
+
+      gContentAPI.showHighlight("urlbar", "none");
+      waitForHighlightWithEffect(highlight, "none", checkZoomEffect, "There should be no effect");
+    }
+    function checkZoomEffect() {
+      gContentAPI.showHighlight("urlbar", "zoom");
+      waitForHighlightWithEffect(highlight, "zoom", () => {
+        let style = window.getComputedStyle(highlight);
+        is(style.animationName, "uitour-zoom", "The animation-name should be uitour-zoom");
+        checkSameEffectOnDifferentTarget();
+      }, "There should be a zoom effect");
+    }
+    function checkSameEffectOnDifferentTarget() {
+      gContentAPI.showHighlight("appMenu", "wobble");
+      waitForHighlightWithEffect(highlight, "wobble", () => {
+        highlight.addEventListener("animationstart", function onAnimationStart(aEvent) {
+          highlight.removeEventListener("animationstart", onAnimationStart);
+          ok(true, "Animation occurred again even though the effect was the same");
+          checkRandomEffect();
+        });
+        gContentAPI.showHighlight("backForward", "wobble");
+      }, "There should be a wobble effect");
+    }
+    function checkRandomEffect() {
+      function waitForActiveHighlight(highlightEl, next, error) {
+        return waitForCondition(() => highlightEl.hasAttribute("active"),
+                                next,
+                                error);
+      }
+
+      gContentAPI.hideHighlight();
+      gContentAPI.showHighlight("urlbar", "random");
+      waitForActiveHighlight(highlight, () => {
+        ok(highlight.hasAttribute("active"), "The highlight should be active");
+        isnot(highlight.getAttribute("active"), "none", "A random effect other than none should have been chosen");
+        isnot(highlight.getAttribute("active"), "random", "The random effect shouldn't be 'random'");
+        isnot(UITour.highlightEffects.indexOf(highlight.getAttribute("active")), -1, "Check that a supported effect was randomly chosen");
+        done();
+      }, "There should be an active highlight with a random effect");
+    }
+
+    let highlight = document.getElementById("UITourHighlight");
+    is_element_hidden(highlight, "Highlight should initially be hidden");
 
     gContentAPI.showHighlight("urlbar");
-    is_element_visible(highlight, "Highlight should be shown after showHighlight()");
-    gContentAPI.showHighlight("backforward");
-    is_element_visible(highlight, "Highlight should be shown after showHighlight()");
+    waitForElementToBeVisible(highlight, checkDefaultEffect, "Highlight should be shown after showHighlight()");
+  },
+  function test_highlight_effect_unsupported(done) {
+    function checkUnsupportedEffect() {
+      is(highlight.getAttribute("active"), "none", "No effect should be used when an unsupported effect is requested");
+      done();
+    }
 
-    done();
+    let highlight = document.getElementById("UITourHighlight");
+    is_element_hidden(highlight, "Highlight should initially be hidden");
+
+    gContentAPI.showHighlight("urlbar", "__UNSUPPORTED__");
+    waitForElementToBeVisible(highlight, checkUnsupportedEffect, "Highlight should be shown after showHighlight()");
   },
   function test_info_1(done) {
     let popup = document.getElementById("UITourTooltip");
     let title = document.getElementById("UITourTooltipTitle");
     let desc = document.getElementById("UITourTooltipDescription");
+    let icon = document.getElementById("UITourTooltipIcon");
+    let buttons = document.getElementById("UITourTooltipButtons");
+
     popup.addEventListener("popupshown", function onPopupShown() {
       popup.removeEventListener("popupshown", onPopupShown);
       is(popup.popupBoxObject.anchorNode, document.getElementById("urlbar"), "Popup should be anchored to the urlbar");
       is(title.textContent, "test title", "Popup should have correct title");
       is(desc.textContent, "test text", "Popup should have correct description text");
+      is(icon.src, "", "Popup should have no icon");
+      is(buttons.hasChildNodes(), false, "Popup should have no buttons");
 
       popup.addEventListener("popuphidden", function onPopupHidden() {
         popup.removeEventListener("popuphidden", onPopupHidden);
@@ -194,11 +239,16 @@ let tests = [
     let popup = document.getElementById("UITourTooltip");
     let title = document.getElementById("UITourTooltipTitle");
     let desc = document.getElementById("UITourTooltipDescription");
+    let icon = document.getElementById("UITourTooltipIcon");
+    let buttons = document.getElementById("UITourTooltipButtons");
+
     popup.addEventListener("popupshown", function onPopupShown() {
       popup.removeEventListener("popupshown", onPopupShown);
       is(popup.popupBoxObject.anchorNode, document.getElementById("urlbar"), "Popup should be anchored to the urlbar");
       is(title.textContent, "urlbar title", "Popup should have correct title");
       is(desc.textContent, "urlbar text", "Popup should have correct description text");
+      is(icon.src, "", "Popup should have no icon");
+      is(buttons.hasChildNodes(), false, "Popup should have no buttons");
 
       gContentAPI.showInfo("search", "search title", "search text");
       executeSoon(function() {
@@ -211,28 +261,5 @@ let tests = [
     });
 
     gContentAPI.showInfo("urlbar", "urlbar title", "urlbar text");
-  },
-  function test_pinnedTab(done) {
-    is(UITour.pinnedTabs.get(window), null, "Should not already have a pinned tab");
-
-    gContentAPI.addPinnedTab();
-    let tabInfo = UITour.pinnedTabs.get(window);
-    isnot(tabInfo, null, "Should have recorded data about a pinned tab after addPinnedTab()");
-    isnot(tabInfo.tab, null, "Should have added a pinned tab after addPinnedTab()");
-    is(tabInfo.tab.pinned, true, "Tab should be marked as pinned");
-
-    let tab = tabInfo.tab;
-
-    gContentAPI.removePinnedTab();
-    isnot(gBrowser.tabs[0], tab, "First tab should not be the pinned tab");
-    let tabInfo = UITour.pinnedTabs.get(window);
-    is(tabInfo, null, "Should not have any data about the removed pinned tab after removePinnedTab()");
-
-    gContentAPI.addPinnedTab();
-    gContentAPI.addPinnedTab();
-    gContentAPI.addPinnedTab();
-    is(gBrowser.tabs[1].pinned, false, "After multiple calls of addPinnedTab, should still only have one pinned tab");
-
-    done();
   },
 ];

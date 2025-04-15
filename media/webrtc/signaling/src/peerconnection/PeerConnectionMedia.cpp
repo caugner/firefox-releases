@@ -148,7 +148,7 @@ nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_serv
 {
   // TODO(ekr@rtfm.com): need some way to set not offerer later
   // Looks like a bug in the NrIceCtx API.
-  mIceCtx = NrIceCtx::Create("PC:" + mParent->GetHandle(), true);
+  mIceCtx = NrIceCtx::Create("PC:" + mParent->GetName(), true);
   if(!mIceCtx) {
     CSFLogError(logTag, "%s: Failed to create Ice Context", __FUNCTION__);
     return NS_ERROR_FAILURE;
@@ -191,11 +191,11 @@ nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_serv
   // One each for audio, video and DataChannel
   // TODO: this will be re-visited
   RefPtr<NrIceMediaStream> audioStream =
-    mIceCtx->CreateStream((mParent->GetHandle()+"/stream1/audio").c_str(), 2);
+    mIceCtx->CreateStream((mParent->GetName()+": stream1/audio").c_str(), 2);
   RefPtr<NrIceMediaStream> videoStream =
-    mIceCtx->CreateStream((mParent->GetHandle()+"/stream2/video").c_str(), 2);
+    mIceCtx->CreateStream((mParent->GetName()+": stream2/video").c_str(), 2);
   RefPtr<NrIceMediaStream> dcStream =
-    mIceCtx->CreateStream((mParent->GetHandle()+"/stream3/data").c_str(), 2);
+    mIceCtx->CreateStream((mParent->GetName()+": stream3/data").c_str(), 2);
 
   if (!audioStream) {
     CSFLogError(logTag, "%s: audio stream is NULL", __FUNCTION__);
@@ -450,73 +450,6 @@ PeerConnectionMedia::IceStreamReady(NrIceMediaStream *aStream)
   MOZ_ASSERT(aStream);
 
   CSFLogDebug(logTag, "%s: %s", __FUNCTION__, aStream->name().c_str());
-}
-
-// This method exists for the unittests.
-// It allows visibility into the pipelines and flows.
-// It returns nullptr if no pipeline exists for this track number.
-mozilla::RefPtr<mozilla::MediaPipeline>
-SourceStreamInfo::GetPipeline(int aTrack) {
-  std::map<int, mozilla::RefPtr<mozilla::MediaPipeline> >::iterator it =
-    mPipelines.find(aTrack);
-
-  if (it == mPipelines.end()) {
-    return nullptr;
-  }
-
-  return it->second;
-}
-
-// This methods gathers statistics for the getStats API.
-// aTrack == 0 means gather stats for all tracks.
-
-nsresult
-SourceStreamInfo::GetPipelineStats(DOMHighResTimeStamp now, int aTrack,
-                                   Sequence<RTCInboundRTPStreamStats > *inbound,
-                                   Sequence<RTCOutboundRTPStreamStats > *outbound)
-{
-#ifdef MOZILLA_INTERNAL_API
-  ASSERT_ON_THREAD(mParent->GetSTSThread());
-  // walk through all the MediaPipelines and gather stats
-  for (std::map<int, RefPtr<MediaPipeline> >::iterator it = mPipelines.begin();
-       it != mPipelines.end();
-       ++it) {
-    if (!aTrack || aTrack == it->first) {
-      const MediaPipeline &mp = *it->second;
-      nsString idstr = (mp.Conduit()->type() == MediaSessionConduit::AUDIO) ?
-          NS_LITERAL_STRING("audio_") : NS_LITERAL_STRING("video_");
-      idstr.AppendInt(mp.trackid());
-
-      switch (mp.direction()) {
-        case MediaPipeline::TRANSMIT: {
-          RTCOutboundRTPStreamStats s;
-          s.mTimestamp.Construct(now);
-          s.mId.Construct(NS_LITERAL_STRING("outbound_rtp_") + idstr);
-          s.mType.Construct(RTCStatsType::Outboundrtp);
-          // TODO: Get SSRC
-          // int channel = mp.Conduit()->GetChannel();
-          s.mSsrc.Construct(NS_LITERAL_STRING("123457"));
-          s.mPacketsSent.Construct(mp.rtp_packets_sent());
-          s.mBytesSent.Construct(mp.rtp_bytes_sent());
-          outbound->AppendElement(s);
-          break;
-        }
-        case MediaPipeline::RECEIVE: {
-          RTCInboundRTPStreamStats s;
-          s.mTimestamp.Construct(now);
-          s.mId.Construct(NS_LITERAL_STRING("inbound_rtp_") + idstr);
-          s.mType.Construct(RTCStatsType::Inboundrtp);
-          s.mSsrc.Construct(NS_LITERAL_STRING("123457"));
-          s.mPacketsReceived.Construct(mp.rtp_packets_received());
-          s.mBytesReceived.Construct(mp.rtp_bytes_received());
-          inbound->AppendElement(s);
-          break;
-        }
-      }
-    }
-  }
-#endif
-  return NS_OK;
 }
 
 void

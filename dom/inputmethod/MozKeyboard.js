@@ -10,7 +10,6 @@ const Cu = Components.utils;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://gre/modules/ObjectWrapper.jsm");
 Cu.import("resource://gre/modules/DOMRequestHelper.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
@@ -175,7 +174,7 @@ MozKeyboard.prototype = {
       };
 
       let evt = new this._window.CustomEvent("focuschanged",
-          ObjectWrapper.wrap(detail, this._window));
+          Cu.cloneInto(detail, this._window));
       handler.handleEvent(evt);
     } else if (msg.name == "Keyboard:SelectionChange") {
       let msgJson = msg.json;
@@ -188,7 +187,7 @@ MozKeyboard.prototype = {
         return;
 
       let evt = new this._window.CustomEvent("selectionchange",
-          ObjectWrapper.wrap({}, this._window));
+          Cu.cloneInto({}, this._window));
       handler.handleEvent(evt);
     }
   },
@@ -378,10 +377,6 @@ MozInputMethod.prototype = {
   },
 
   get mgmt() {
-    if (!WindowMap.isActive(this._window)) {
-      return null;
-    }
-
     return this._mgmt;
   },
 
@@ -417,7 +412,7 @@ MozInputMethod.prototype = {
     }
 
     let event = new this._window.Event("inputcontextchange",
-                                       ObjectWrapper.wrap({}, this._window));
+                                       Cu.cloneInto({}, this._window));
     this.__DOM_IMPL__.dispatchEvent(event);
   },
 
@@ -498,6 +493,7 @@ MozInputContext.prototype = {
        "Keyboard:SetSelectionRange:Result:OK",
        "Keyboard:ReplaceSurroundingText:Result:OK",
        "Keyboard:SendKey:Result:OK",
+       "Keyboard:SendKey:Result:Error",
        "Keyboard:SetComposition:Result:OK",
        "Keyboard:EndComposition:Result:OK",
        "Keyboard:SequenceError"]);
@@ -543,6 +539,9 @@ MozInputContext.prototype = {
       case "Keyboard:SendKey:Result:OK":
         resolver.resolve();
         break;
+      case "Keyboard:SendKey:Result:Error":
+        resolver.reject(json.error);
+        break;
       case "Keyboard:GetText:Result:OK":
         resolver.resolve(json.text);
         break;
@@ -552,7 +551,7 @@ MozInputContext.prototype = {
       case "Keyboard:SetSelectionRange:Result:OK":
       case "Keyboard:ReplaceSurroundingText:Result:OK":
         resolver.resolve(
-          ObjectWrapper.wrap(json.selectioninfo, this._window));
+          Cu.cloneInto(json.selectioninfo, this._window));
         break;
       case "Keyboard:SequenceError":
         // Occurs when a new element got focus, but the inputContext was
@@ -606,7 +605,7 @@ MozInputContext.prototype = {
     };
 
     let event = new this._window.Event(eventName,
-                                       ObjectWrapper.wrap(aDetail, this._window));
+                                       Cu.cloneInto(aDetail, this._window));
     this.__DOM_IMPL__.dispatchEvent(event);
   },
 
@@ -691,8 +690,8 @@ MozInputContext.prototype = {
         contextId: self._contextId,
         requestId: resolverId,
         text: text,
-        beforeLength: offset || 0,
-        afterLength: length || 0
+        offset: offset || 0,
+        length: length || 0
       });
     });
   },

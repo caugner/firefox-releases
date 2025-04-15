@@ -73,7 +73,7 @@ public class FennecNativeActions implements Actions {
                 public void handleMessage(final String event, final JSONObject message) {
                     FennecNativeDriver.log(FennecNativeDriver.LogLevel.DEBUG,
                             "handleMessage called for: " + event + "; expecting: " + mGeckoEvent);
-                    mAsserter.is(event, mGeckoEvent, "Given message occurred for registered event");
+                    mAsserter.is(event, mGeckoEvent, "Given message occurred for registered event: " + message);
 
                     expecter.notifyOfEvent(message);
                 }
@@ -87,7 +87,7 @@ public class FennecNativeActions implements Actions {
             blockForEvent(MAX_WAIT_MS, true);
         }
 
-        private void blockForEvent(long millis, boolean failOnTimeout) {
+        public void blockForEvent(long millis, boolean failOnTimeout) {
             if (!mIsRegistered) {
                 throw new IllegalStateException("listener not registered");
             }
@@ -236,7 +236,7 @@ public class FennecNativeActions implements Actions {
             this.notifyAll();
         }
 
-        private synchronized void blockForEvent(long millis, boolean failOnTimeout) {
+        public synchronized void blockForEvent(long millis, boolean failOnTimeout) {
             if (!mListening) {
                 throw new IllegalStateException("draw listener not registered");
             }

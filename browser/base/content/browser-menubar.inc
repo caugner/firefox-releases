@@ -27,12 +27,6 @@
                           accesskey="&newPrivateWindow.accesskey;"
                           command="Tools:PrivateBrowsing"
                           key="key_privatebrowsing"/>
-                <menuitem id="menu_openLocation"
-                          class="show-only-for-keyboard"
-                          label="&openLocationCmd.label;"
-                          command="Browser:OpenLocation"
-                          key="focusURLBar"
-                          accesskey="&openLocationCmd.accesskey;"/>
                 <menuitem id="menu_openFile"
                           label="&openFileCmd.label;"
                           command="Browser:OpenFile"
@@ -194,11 +188,6 @@
                       accesskey="&viewToolbarsMenu.accesskey;">
                   <menupopup onpopupshowing="onViewToolbarsPopupShowing(event);">
                     <menuseparator/>
-                    <menuitem id="menu_tabsOnTop"
-                              command="cmd_ToggleTabsOnTop"
-                              type="checkbox"
-                              label="&viewTabsOnTop.label;"
-                              accesskey="&viewTabsOnTop.accesskey;"/>
                     <menuitem id="menu_customizeToolbars"
                               label="&viewCustomizeToolbar.label;"
                               accesskey="&viewCustomizeToolbar.accesskey;"
@@ -216,10 +205,9 @@
                               key="key_gotoHistory"
                               observes="viewHistorySidebar"
                               label="&historyButton.label;"/>
-                    <menuitem id="menu_socialSidebar"
-                              type="checkbox"
-                              autocheck="false"
-                              command="Social:ToggleSidebar"/>
+                    <!-- Service providers with sidebars are inserted between these two menuseperators -->
+                    <menuseparator hidden="true"/>
+                    <menuseparator class="social-provider-menu" hidden="true"/>
                   </menupopup>
                 </menu>
                 <menuseparator/>
@@ -383,7 +371,7 @@
                openInTabs="children"
                oncommand="BookmarksEventHandler.onCommand(event, this.parentNode._placesView);"
                onclick="BookmarksEventHandler.onClick(event, this.parentNode._placesView);"
-               onpopupshowing="PlacesCommandHook.updateBookmarkAllTabsCommand();
+               onpopupshowing="BookmarkingUI.onMainMenuPopupShowing(event);
                                if (!this.parentNode._placesView)
                                  new PlacesMenu(event, 'place:folder=BOOKMARKS_MENU');"
                tooltip="bhTooltip" popupsinherittooltip="true">
@@ -393,8 +381,8 @@
                 key="manBookmarkKb"/>
       <menuseparator id="organizeBookmarksSeparator"/>
       <menuitem id="menu_bookmarkThisPage"
-                label="&bookmarkThisPageCmd.label;"
                 command="Browser:AddBookmarkAs"
+                observes="bookmarkThisPageBroadcaster"
                 key="addBookmarkAsKb"/>
       <menuitem id="subscribeToPageMenuitem"
 #ifndef XP_MACOSX
@@ -448,7 +436,10 @@
                   accesskey="&toolsMenu.accesskey;">
               <menupopup id="menu_ToolsPopup"
 #ifdef MOZ_SERVICES_SYNC
-                         onpopupshowing="gSyncUI.updateUI();"
+# We have to use setTimeout() here to avoid a flickering menu bar when opening
+# the Tools menu, see bug 970769. This can be removed once we got rid of the
+# event loop spinning in Weave.Status._authManager.
+                         onpopupshowing="setTimeout(() => gSyncUI.updateUI());"
 #endif
                          >
               <menuitem id="menu_openDownloads"
@@ -461,49 +452,6 @@
                         accesskey="&addons.accesskey;"
                         key="key_openAddons"
                         command="Tools:Addons"/>
-              <menu id="menu_socialAmbientMenu"
-                    observes="socialActiveBroadcaster">
-                <menupopup id="menu_social-statusarea-popup">
-                  <menuitem class="social-statusarea-user menuitem-iconic" pack="start" align="center"
-                            observes="socialBroadcaster_userDetails"
-                            oncommand="SocialUI.showProfile(); document.getElementById('social-statusarea-popup').hidePopup();">
-                    <image class="social-statusarea-user-portrait"
-                           observes="socialBroadcaster_userDetails"/>
-                    <vbox>
-                      <label class="social-statusarea-loggedInStatus"
-                             observes="socialBroadcaster_userDetails"/>
-                    </vbox>
-                  </menuitem>
-#ifndef XP_WIN
-                  <menuseparator class="social-statusarea-separator"/>
-#endif
-                  <menuseparator id="socialAmbientMenuSeparator"
-                                 hidden="true"/>
-                  <menuitem class="social-toggle-sidebar-menuitem"
-                            type="checkbox"
-                            autocheck="false"
-                            command="Social:ToggleSidebar"
-                            label="&social.toggleSidebar.label;"
-                            accesskey="&social.toggleSidebar.accesskey;"/>
-                  <menuitem class="social-toggle-notifications-menuitem"
-                            type="checkbox"
-                            autocheck="false"
-                            command="Social:ToggleNotifications"
-                            label="&social.toggleNotifications.label;"
-                            accesskey="&social.toggleNotifications.accesskey;"/>
-                  <menuitem id="menu_focusChatBar"
-                            label="&social.chatBar.label;"
-                            accesskey="&social.chatBar.accesskey;"
-                            key="focusChatBar"
-                            command="Social:FocusChat"
-                            class="show-only-for-keyboard"/>
-                  <menuitem class="social-toggle-menuitem" command="Social:Toggle"/>
-                  <menuseparator class="social-statusarea-separator"/>
-                  <menuseparator class="social-provider-menu" hidden="true"/>
-                  <menuitem class="social-addons-menuitem" command="Social:Addons"
-                            label="&social.addons.label;"/>
-                </menupopup>
-              </menu>
 #ifdef MOZ_SERVICES_SYNC
               <!-- only one of sync-setup or sync-menu will be showing at once -->
               <menuitem id="sync-setup"

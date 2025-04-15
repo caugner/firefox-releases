@@ -396,7 +396,6 @@ let FormAssistant = {
         range = getSelectionRange(this.focusedElement);
         if (range[0] !== this.selectionStart ||
             range[1] !== this.selectionEnd) {
-          this.sendKeyboardState(this.focusedElement);
           this.updateSelection();
         }
         break;
@@ -416,7 +415,7 @@ let FormAssistant = {
           this.scrollIntoViewTimeout = content.setTimeout(function () {
             this.scrollIntoViewTimeout = null;
             if (this.focusedElement && !FormVisibility.isVisible(this.focusedElement)) {
-              this.focusedElement.scrollIntoView(false);
+              scrollSelectionOrElementIntoView(this.focusedElement);
             }
           }.bind(this), RESIZE_SCROLL_DELAY);
         }
@@ -522,9 +521,15 @@ let FormAssistant = {
                                   json.charCode, json.modifiers);
         this._editing = false;
 
-        if (json.requestId) {
+        if (json.requestId && doKeypress) {
           sendAsyncMessage("Forms:SendKey:Result:OK", {
             requestId: json.requestId
+          });
+        }
+        else if (json.requestId && !doKeypress) {
+          sendAsyncMessage("Forms:SendKey:Result:Error", {
+            requestId: json.requestId,
+            error: "Keydown event got canceled"
           });
         }
         break;
@@ -580,13 +585,13 @@ let FormAssistant = {
       case "Forms:ReplaceSurroundingText": {
         CompositionManager.endComposition('');
 
-        let text = json.text;
-        let beforeLength = json.beforeLength;
-        let afterLength = json.afterLength;
         let selectionRange = getSelectionRange(target);
-
-        replaceSurroundingText(target, text, selectionRange[0], beforeLength,
-                               afterLength);
+        replaceSurroundingText(target,
+                               json.text,
+                               selectionRange[0],
+                               selectionRange[1],
+                               json.offset,
+                               json.length);
 
         if (json.requestId) {
           sendAsyncMessage("Forms:ReplaceSurroundingText:Result:OK", {
@@ -1018,6 +1023,23 @@ function setSelectionRange(element, start, end) {
   }
 }
 
+/**
+ * Scroll the given element into view.
+ *
+ * Calls scrollSelectionIntoView for contentEditable elements.
+ */
+function scrollSelectionOrElementIntoView(element) {
+  let editor = getPlaintextEditor(element);
+  if (editor) {
+    editor.selectionController.scrollSelectionIntoView(
+      Ci.nsISelectionController.SELECTION_NORMAL,
+      Ci.nsISelectionController.SELECTION_FOCUS_REGION,
+      Ci.nsISelectionController.SCROLL_SYNCHRONOUS);
+  } else {
+      element.scrollIntoView(false);
+  }
+}
+
 // Get nsIPlaintextEditor object from an input field
 function getPlaintextEditor(element) {
   let editor = null;
@@ -1042,25 +1064,24 @@ function getPlaintextEditor(element) {
   return editor;
 }
 
-function replaceSurroundingText(element, text, selectionStart, beforeLength,
-                                afterLength) {
+function replaceSurroundingText(element, text, selectionStart, selectionEnd,
+                                offset, length) {
   let editor = FormAssistant.editor;
   if (!editor) {
     return;
   }
 
   // Check the parameters.
-  if (beforeLength < 0) {
-    beforeLength = 0;
+  let start = selectionStart + offset;
+  if (start < 0) {
+    start = 0;
   }
-  if (afterLength < 0) {
-    afterLength = 0;
+  if (length < 0) {
+    length = 0;
   }
+  let end = start + length;
 
-  let start = selectionStart - beforeLength;
-  let end = selectionStart + afterLength;
-
-  if (beforeLength != 0 || afterLength != 0) {
+  if (selectionStart != start || selectionEnd != end) {
     // Change selection range before replacing.
     setSelectionRange(element, start, end);
   }

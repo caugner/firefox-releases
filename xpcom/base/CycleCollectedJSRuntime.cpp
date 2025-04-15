@@ -56,9 +56,11 @@
 
 #include "mozilla/CycleCollectedJSRuntime.h"
 #include <algorithm>
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/DOMJSClass.h"
+#include "mozilla/dom/ScriptSettings.h"
 #include "jsprf.h"
 #include "nsCycleCollectionNoteRootCallback.h"
 #include "nsCycleCollectionParticipant.h"
@@ -441,6 +443,8 @@ CycleCollectedJSRuntime::CycleCollectedJSRuntime(uint32_t aMaxbytes,
     mJSRuntime(nullptr),
     mJSHolders(512)
 {
+  mozilla::dom::InitScriptSettings();
+
   mJSRuntime = JS_NewRuntime(aMaxbytes, aUseHelperThreads);
   if (!mJSRuntime) {
     MOZ_CRASH();
@@ -470,6 +474,8 @@ CycleCollectedJSRuntime::~CycleCollectedJSRuntime()
   JS_DestroyRuntime(mJSRuntime);
   mJSRuntime = nullptr;
   nsCycleCollector_forgetJSRuntime();
+
+  mozilla::dom::DestroyScriptSettings();
 }
 
 size_t
@@ -542,7 +548,7 @@ CycleCollectedJSRuntime::DescribeGCThing(bool aIsMarked, void* aThing,
       "BaseShape",
       "TypeObject",
     };
-    JS_STATIC_ASSERT(NS_ARRAY_LENGTH(trace_types) == JSTRACE_LAST + 1);
+    JS_STATIC_ASSERT(MOZ_ARRAY_LENGTH(trace_types) == JSTRACE_LAST + 1);
     JS_snprintf(name, sizeof(name), "JS %s", trace_types[aTraceKind]);
   }
 
@@ -745,6 +751,9 @@ struct JsGcTracer : public TraceCallbacks
   virtual void Trace(JS::Heap<JSScript *> *p, const char *name, void *closure) const MOZ_OVERRIDE {
     JS_CallHeapScriptTracer(static_cast<JSTracer*>(closure), p, name);
   }
+  virtual void Trace(JS::Heap<JSFunction *> *p, const char *name, void *closure) const MOZ_OVERRIDE {
+    JS_CallHeapFunctionTracer(static_cast<JSTracer*>(closure), p, name);
+  }
 };
 
 static PLDHashOperator
@@ -794,6 +803,11 @@ struct ClearJSHolder : TraceCallbacks
   }
 
   virtual void Trace(JS::Heap<JSScript*>* aPtr, const char*, void*) const MOZ_OVERRIDE
+  {
+    *aPtr = nullptr;
+  }
+
+  virtual void Trace(JS::Heap<JSFunction*>* aPtr, const char*, void*) const MOZ_OVERRIDE
   {
     *aPtr = nullptr;
   }
@@ -859,7 +873,7 @@ CycleCollectedJSRuntime::ZoneParticipant()
 }
 
 nsresult
-CycleCollectedJSRuntime::BeginCycleCollection(nsCycleCollectionNoteRootCallback &aCb)
+CycleCollectedJSRuntime::TraverseRoots(nsCycleCollectionNoteRootCallback &aCb)
 {
   static bool gcHasRun = false;
   if (!gcHasRun) {

@@ -258,6 +258,7 @@ BrowserElementParent.prototype = {
       "loadend": this._fireEventFromMsg,
       "titlechange": this._fireEventFromMsg,
       "iconchange": this._fireEventFromMsg,
+      "metachange": this._fireEventFromMsg,
       "close": this._fireEventFromMsg,
       "resize": this._fireEventFromMsg,
       "activitydone": this._fireEventFromMsg,
@@ -586,18 +587,33 @@ BrowserElementParent.prototype = {
   _sendTouchEvent: function(type, identifiers, touchesX, touchesY,
                             radiisX, radiisY, rotationAngles, forces,
                             count, modifiers) {
-    this._sendAsyncMsg("send-touch-event", {
-      "type": type,
-      "identifiers": identifiers,
-      "touchesX": touchesX,
-      "touchesY": touchesY,
-      "radiisX": radiisX,
-      "radiisY": radiisY,
-      "rotationAngles": rotationAngles,
-      "forces": forces,
-      "count": count,
-      "modifiers": modifiers
-    });
+
+    let tabParent = this._frameLoader.tabParent;
+    if (tabParent && tabParent.useAsyncPanZoom) {
+      tabParent.injectTouchEvent(type,
+                                 identifiers,
+                                 touchesX,
+                                 touchesY,
+                                 radiisX,
+                                 radiisY,
+                                 rotationAngles,
+                                 forces,
+                                 count,
+                                 modifiers);
+    } else {
+      this._sendAsyncMsg("send-touch-event", {
+        "type": type,
+        "identifiers": identifiers,
+        "touchesX": touchesX,
+        "touchesY": touchesY,
+        "radiisX": radiisX,
+        "radiisY": radiisY,
+        "rotationAngles": rotationAngles,
+        "forces": forces,
+        "count": count,
+        "modifiers": modifiers
+      });
+    }
   },
 
   _goBack: function() {
@@ -616,9 +632,11 @@ BrowserElementParent.prototype = {
     this._sendAsyncMsg('stop');
   },
 
-  _getScreenshot: function(_width, _height) {
+  _getScreenshot: function(_width, _height, _mimeType) {
     let width = parseInt(_width);
     let height = parseInt(_height);
+    let mimeType = (typeof _mimeType === 'string') ?
+      _mimeType.trim().toLowerCase() : 'image/jpeg';
     if (isNaN(width) || isNaN(height) || width < 0 || height < 0) {
       throw Components.Exception("Invalid argument",
                                  Cr.NS_ERROR_INVALID_ARG);
@@ -632,7 +650,8 @@ BrowserElementParent.prototype = {
     }
 
     return this._sendDOMRequest('get-screenshot',
-                                {width: width, height: height});
+                                {width: width, height: height,
+                                 mimeType: mimeType});
   },
 
   _recvNextPaint: function(data) {

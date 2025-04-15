@@ -44,7 +44,7 @@ typedef bool
 
 /* Typedef for native functions that may be called in parallel. */
 typedef bool
-(* JSParallelNative)(js::ForkJoinSlice *slice, unsigned argc, JS::Value *vp);
+(* JSParallelNative)(js::ForkJoinContext *cx, unsigned argc, JS::Value *vp);
 
 /*
  * Typedef for native functions that may be called either in parallel or
@@ -63,7 +63,7 @@ JSNativeThreadSafeWrapper(JSContext *cx, unsigned argc, JS::Value *vp);
 
 template <JSThreadSafeNative threadSafeNative>
 inline bool
-JSParallelNativeThreadSafeWrapper(js::ForkJoinSlice *slice, unsigned argc, JS::Value *vp);
+JSParallelNativeThreadSafeWrapper(js::ForkJoinContext *cx, unsigned argc, JS::Value *vp);
 
 /*
  * Compute |this| for the |vp| inside a JSNative, either boxing primitives or
@@ -118,7 +118,7 @@ extern JS_PUBLIC_DATA(const HandleValue) UndefinedHandleValue;
 
 namespace detail {
 
-#ifdef DEBUG
+#ifdef JS_DEBUG
 extern JS_PUBLIC_API(void)
 CheckIsValidConstructible(Value v);
 #endif
@@ -147,7 +147,7 @@ class MOZ_STACK_CLASS UsedRvalBase<NoUsedRval>
 
 template<UsedRval WantUsedRval>
 class MOZ_STACK_CLASS CallReceiverBase : public UsedRvalBase<
-#ifdef DEBUG
+#ifdef JS_DEBUG
         WantUsedRval
 #else
         NoUsedRval
@@ -197,7 +197,7 @@ class MOZ_STACK_CLASS CallReceiverBase : public UsedRvalBase<
     }
 
     bool isConstructing() const {
-#ifdef DEBUG
+#ifdef JS_DEBUG
         if (this->usedRval_)
             CheckIsValidConstructible(calleev());
 #endif

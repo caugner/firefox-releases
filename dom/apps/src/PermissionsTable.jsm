@@ -227,8 +227,6 @@ this.PermissionsTable =  { geolocation: {
                              certified: ALLOW_ACTION,
                              substitute: [
                                "indexedDB-unlimited",
-                               "offline-app",
-                               "pin-app",
                                "default-persistent-storage"
                              ]
                            },
@@ -316,6 +314,11 @@ this.PermissionsTable =  { geolocation: {
                            "speaker-control": {
                              app: DENY_ACTION,
                              privileged: ALLOW_ACTION,
+                             certified: ALLOW_ACTION
+                           },
+                           "downloads": {
+                             app: DENY_ACTION,
+                             privileged: DENY_ACTION,
                              certified: ALLOW_ACTION
                            },
                          };

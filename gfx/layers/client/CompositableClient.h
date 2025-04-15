@@ -9,12 +9,10 @@
 #include <stdint.h>                     // for uint64_t
 #include <vector>                       // for vector
 #include <map>                          // for map
-#include "ipc/FenceUtils.h"
 #include "mozilla/Assertions.h"         // for MOZ_CRASH
 #include "mozilla/RefPtr.h"             // for TemporaryRef, RefCounted
 #include "mozilla/gfx/Types.h"          // for SurfaceFormat
 #include "mozilla/layers/CompositorTypes.h"
-#include "mozilla/layers/TextureClient.h"  // for TextureClient, etc
 #include "mozilla/layers/LayersTypes.h"  // for LayersBackend
 #include "mozilla/layers/PCompositableChild.h"  // for PCompositableChild
 #include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
@@ -24,11 +22,14 @@ namespace mozilla {
 namespace layers {
 
 class CompositableClient;
+class DeprecatedTextureClient;
+class TextureClient;
 class BufferTextureClient;
 class ImageBridgeChild;
 class CompositableForwarder;
 class CompositableChild;
 class SurfaceDescriptor;
+class TextureClientData;
 
 /**
  * CompositableClient manages the texture-specific logic for composite layers,
@@ -81,7 +82,7 @@ public:
 
   TemporaryRef<DeprecatedTextureClient>
   CreateDeprecatedTextureClient(DeprecatedTextureClientType aDeprecatedTextureClientType,
-                                gfxContentType aContentType = GFX_CONTENT_SENTINEL);
+                                gfxContentType aContentType = gfxContentType::SENTINEL);
 
   virtual TemporaryRef<BufferTextureClient>
   CreateBufferTextureClient(gfx::SurfaceFormat aFormat,
@@ -132,18 +133,6 @@ public:
   virtual bool AddTextureClient(TextureClient* aClient);
 
   /**
-   * Tells the Compositor to delete the TextureHost corresponding to this
-   * TextureClient.
-   */
-  virtual void RemoveTextureClient(TextureClient* aClient);
-
-  // XXX: this function is only needed until Bug 897452 is fixed.
-  virtual TemporaryRef<TextureClient> GetAddedTextureClient(uint64_t aTextureID);
-
-  // XXX: this function is only needed until Bug 897452 is fixed.
-  virtual TextureClientData* GetRemovingTextureClientData(uint64_t aTextureID);
-
-  /**
    * A hook for the Compositable to execute whatever it held off for next transaction.
    */
   virtual void OnTransaction();
@@ -153,58 +142,11 @@ public:
    */
   virtual void OnDetach() {}
 
-  /**
-   * When texture deallocation must happen on the client side, we need to first
-   * ensure that the compositor has already let go of the data in order
-   * to safely deallocate it.
-   *
-   * This is implemented by registering a callback to postpone deallocation or
-   * recycling of the shared data.
-   *
-   * This hook is called when the compositor notifies the client that it is not
-   * holding any more references to the shared data so that this compositable
-   * can run the corresponding callback.
-   */
-  void OnReplyTextureRemoved(uint64_t aTextureID);
-
-  /**
-   * Run all he registered callbacks (see the comment for OnReplyTextureRemoved).
-   * Only call this if you know what you are doing.
-   */
-  void FlushTexturesToRemoveCallbacks();
-
-  /**
-   * Our IPDL actor is being destroyed, get rid of any shmem resources now.
-   */
-  virtual void OnActorDestroy() = 0;
-
-  /**
-   * If a fence is valid, wait until the fence is completed.
-   * After the wait, clear it.
-   */
-  virtual void WaitAndResetReleaseFence() {}
-
-  virtual void SetReleaseFence(FenceHandle aReleaseFenceHandle) {}
-
 protected:
-  // return the next texture ID
-  uint64_t NextTextureID();
-
-  struct TextureIDAndFlags {
-    TextureIDAndFlags(uint64_t aID, TextureFlags aFlags)
-    : mID(aID), mFlags(aFlags) {}
-    uint64_t mID;
-    TextureFlags mFlags;
-  };
-
-  // XXX map is necessary on the code that Bug 897452 is not fixed.
-  std::map<uint64_t, RefPtr<TextureClient>> mAddedTextures;
-  // The textures to destroy in the next transaction;
-  nsTArray<TextureIDAndFlags> mTexturesToRemove;
-  std::map<uint64_t, TextureClientData*> mTexturesToRemoveCallbacks;
-  uint64_t mNextTextureID;
   CompositableChild* mCompositableChild;
   CompositableForwarder* mForwarder;
+
+  friend class CompositableChild;
 };
 
 /**
@@ -238,7 +180,11 @@ public:
     return mCompositableClient;
   }
 
-  virtual void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
+  virtual void ActorDestroy(ActorDestroyReason) MOZ_OVERRIDE {
+    if (mCompositableClient) {
+      mCompositableClient->mCompositableChild = nullptr;
+    }
+  }
 
   void SetAsyncID(uint64_t aID) { mID = aID; }
   uint64_t GetAsyncID() const

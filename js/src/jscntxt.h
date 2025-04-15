@@ -17,8 +17,6 @@
 #ifdef _MSC_VER
 #pragma warning(push)
 #pragma warning(disable:4100) /* Silence unreferenced formal parameter warnings */
-#pragma warning(push)
-#pragma warning(disable:4355) /* Silence warning about "this" used in base member initializer list */
 #endif
 
 struct DtoaState;
@@ -34,7 +32,10 @@ js_ReportOverRecursed(js::ThreadSafeContext *cx);
 
 namespace js {
 
-namespace jit { class IonContext; }
+namespace jit {
+class IonContext;
+class CompileCompartment;
+}
 
 struct CallsiteCloneKey {
     /* The original function that we are cloning. */
@@ -105,10 +106,9 @@ TraceCycleDetectionSet(JSTracer *trc, ObjectSet &set);
 
 struct AutoResolving;
 class DtoaCache;
-class ForkJoinSlice;
+class ForkJoinContext;
 class RegExpCompartment;
 class RegExpStatics;
-class ForkJoinSlice;
 
 namespace frontend { struct CompileError; }
 
@@ -138,7 +138,7 @@ namespace frontend { struct CompileError; }
  * to an ExclusiveContext or ThreadSafeContext.
  *
  * Contexts which are a ThreadSafeContext but not an ExclusiveContext are used
- * to represent a ForkJoinSlice, the per-thread parallel context used in PJS.
+ * to represent a ForkJoinContext, the per-thread parallel context used in PJS.
  */
 
 struct ThreadSafeContext : ContextFriendFields,
@@ -212,8 +212,8 @@ struct ThreadSafeContext : ContextFriendFields,
         return maybeExclusiveContext();
     }
 
-    bool isForkJoinSlice() const;
-    ForkJoinSlice *asForkJoinSlice();
+    bool isForkJoinContext() const;
+    ForkJoinContext *asForkJoinContext();
 
     // The generational GC nursery may only be used on the main thread.
 #ifdef JSGC_GENERATIONAL
@@ -286,6 +286,7 @@ struct ThreadSafeContext : ContextFriendFields,
     size_t workerThreadCount() { return runtime_->workerThreadCount(); }
     void *runtimeAddressForJit() { return runtime_; }
     void *stackLimitAddress(StackKind kind) { return &runtime_->mainThread.nativeStackLimit[kind]; }
+    void *stackLimitAddressForJitCode(StackKind kind);
     size_t gcSystemPageSize() { return runtime_->gcSystemPageSize; }
     bool signalHandlersInstalled() const { return runtime_->signalHandlersInstalled(); }
     bool jitSupportsFloatingPoint() const { return runtime_->jitSupportsFloatingPoint; }
@@ -425,7 +426,7 @@ struct JSContext : public js::ExclusiveContext,
   private:
     /* Exception state -- the exception member is a GC root by definition. */
     bool                throwing;            /* is there a pending exception? */
-    js::Value           exception;           /* most-recently-thrown exception */
+    js::Value           unwrappedException_; /* most-recently-thrown exception */
 
     /* Per-context options. */
     JS::ContextOptions  options_;
@@ -466,9 +467,6 @@ struct JSContext : public js::ExclusiveContext,
         JS_ASSERT(!options().noDefaultCompartmentObject());
         return defaultCompartmentObject_;
     }
-
-    /* Wrap cx->exception for the current compartment. */
-    void wrapPendingException();
 
     /* State for object and array toSource conversion. */
     js::ObjectSet       cycleDetectorSet;
@@ -582,16 +580,14 @@ struct JSContext : public js::ExclusiveContext,
         return throwing;
     }
 
-    js::Value getPendingException() {
-        JS_ASSERT(throwing);
-        return exception;
-    }
+    MOZ_WARN_UNUSED_RESULT
+    bool getPendingException(JS::MutableHandleValue rval);
 
     void setPendingException(js::Value v);
 
     void clearPendingException() {
         throwing = false;
-        exception.setUndefined();
+        unwrappedException_.setUndefined();
     }
 
 #ifdef DEBUG
@@ -786,14 +782,14 @@ ReportUsageError(JSContext *cx, HandleObject callee, const char *msg);
 extern bool
 PrintError(JSContext *cx, FILE *file, const char *message, JSErrorReport *report,
            bool reportWarnings);
-} /* namespace js */
 
 /*
- * Report an exception using a previously composed JSErrorReport.
- * XXXbe remove from "friend" API
+ * Send a JSErrorReport to the errorReporter callback.
  */
-extern JS_FRIEND_API(void)
-js_ReportErrorAgain(JSContext *cx, const char *message, JSErrorReport *report);
+void
+CallErrorReporter(JSContext *cx, const char *message, JSErrorReport *report);
+
+} /* namespace js */
 
 extern void
 js_ReportIsNotDefined(JSContext *cx, const char *name);
@@ -923,13 +919,19 @@ class AutoValueArray : public AutoGCRooter
     Value *start() { return start_; }
     unsigned length() const { return length_; }
 
-    MutableHandleValue handleAt(unsigned i)
-    {
+    MutableHandleValue handleAt(unsigned i) {
         JS_ASSERT(i < length_);
         return MutableHandleValue::fromMarkedLocation(&start_[i]);
     }
-    HandleValue handleAt(unsigned i) const
-    {
+    HandleValue handleAt(unsigned i) const {
+        JS_ASSERT(i < length_);
+        return HandleValue::fromMarkedLocation(&start_[i]);
+    }
+    MutableHandleValue operator[](unsigned i) {
+        JS_ASSERT(i < length_);
+        return MutableHandleValue::fromMarkedLocation(&start_[i]);
+    }
+    HandleValue operator[](unsigned i) const {
         JS_ASSERT(i < length_);
         return HandleValue::fromMarkedLocation(&start_[i]);
     }
@@ -1040,7 +1042,9 @@ class AutoLockForExclusiveAccess
         if (runtime->numExclusiveThreads) {
             runtime->assertCanLock(JSRuntime::ExclusiveAccessLock);
             PR_Lock(runtime->exclusiveAccessLock);
+#ifdef DEBUG
             runtime->exclusiveAccessOwner = PR_GetCurrentThread();
+#endif
         } else {
             JS_ASSERT(!runtime->mainThreadHasExclusiveAccess);
             runtime->mainThreadHasExclusiveAccess = true;
@@ -1059,9 +1063,7 @@ class AutoLockForExclusiveAccess
     ~AutoLockForExclusiveAccess() {
         if (runtime->numExclusiveThreads) {
             JS_ASSERT(runtime->exclusiveAccessOwner == PR_GetCurrentThread());
-#ifdef DEBUG
             runtime->exclusiveAccessOwner = nullptr;
-#endif
             PR_Unlock(runtime->exclusiveAccessLock);
         } else {
             JS_ASSERT(runtime->mainThreadHasExclusiveAccess);
@@ -1088,7 +1090,6 @@ class AutoLockForExclusiveAccess
 } /* namespace js */
 
 #ifdef _MSC_VER
-#pragma warning(pop)
 #pragma warning(pop)
 #endif
 

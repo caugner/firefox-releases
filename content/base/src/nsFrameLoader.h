@@ -32,7 +32,6 @@ class AutoResetInShow;
 class nsITabParent;
 class nsIDocShellTreeItem;
 class nsIDocShellTreeOwner;
-class nsIDocShellTreeNode;
 class mozIApplication;
 
 namespace mozilla {
@@ -185,7 +184,8 @@ public:
   /**
    * MessageManagerCallback methods that we override.
    */
-  virtual bool DoLoadFrameScript(const nsAString& aURL) MOZ_OVERRIDE;
+  virtual bool DoLoadFrameScript(const nsAString& aURL,
+                                 bool aRunInGlobalScope) MOZ_OVERRIDE;
   virtual bool DoSendAsyncMessage(JSContext* aCx,
                                   const nsAString& aMessage,
                                   const mozilla::dom::StructuredCloneData& aData,
@@ -387,7 +387,7 @@ private:
   bool AddTreeItemToTreeOwner(nsIDocShellTreeItem* aItem,
                               nsIDocShellTreeOwner* aOwner,
                               int32_t aParentType,
-                              nsIDocShellTreeNode* aParentNode);
+                              nsIDocShell* aParentNode);
 
   nsIAtom* TypeAttrName() const {
     return mOwnerContent->IsXUL() ? nsGkAtoms::type : nsGkAtoms::mozframetype;

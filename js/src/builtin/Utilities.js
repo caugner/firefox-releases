@@ -42,6 +42,7 @@ var std_Array_indexOf = ArrayIndexOf;
 var std_Array_iterator = Array.prototype.iterator;
 var std_Array_join = Array.prototype.join;
 var std_Array_push = Array.prototype.push;
+var std_Array_pop = Array.prototype.pop;
 var std_Array_shift = Array.prototype.shift;
 var std_Array_slice = Array.prototype.slice;
 var std_Array_sort = Array.prototype.sort;
@@ -64,6 +65,7 @@ var std_Object_getOwnPropertyNames = Object.getOwnPropertyNames;
 var std_Object_hasOwnProperty = Object.prototype.hasOwnProperty;
 var std_RegExp_test = RegExp.prototype.test;
 var Std_String = String;
+var std_String_fromCharCode = String.fromCharCode;
 var std_String_charCodeAt = String.prototype.charCodeAt;
 var std_String_indexOf = String.prototype.indexOf;
 var std_String_lastIndexOf = String.prototype.lastIndexOf;
@@ -197,3 +199,33 @@ function testWrappersForbidAccess(o, operation) {
 
 MakeWrappable(testWrappersAllowUseAsKey);
 MakeWrappable(testWrappersForbidAccess);
+
+#ifdef ENABLE_PARALLEL_JS
+
+/**
+ * Internal debugging tool: checks that the given `mode` permits
+ * sequential execution
+ */
+function AssertSequentialIsOK(mode) {
+  if (mode && mode.mode && mode.mode !== "seq" && ParallelTestsShouldPass())
+    ThrowError(JSMSG_WRONG_VALUE, "parallel execution", "sequential was forced");
+}
+
+function ForkJoinMode(mode) {
+  // WARNING: this must match the enum ForkJoinMode in ForkJoin.cpp
+  if (!mode || !mode.mode) {
+    return 0;
+  } else if (mode.mode === "compile") {
+    return 1;
+  } else if (mode.mode === "par") {
+    return 2;
+  } else if (mode.mode === "recover") {
+    return 3;
+  } else if (mode.mode === "bailout") {
+    return 4;
+  }
+  ThrowError(JSMSG_PAR_ARRAY_BAD_ARG);
+  return undefined;
+}
+
+#endif

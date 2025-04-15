@@ -44,7 +44,6 @@
 #include "nsIPrompt.h"
 #include "nsIWindowWatcher.h"
 #include "nsIConsoleService.h"
-#include "nsISecurityCheckedComponent.h"
 #include "nsIJSRuntimeService.h"
 #include "nsIObserverService.h"
 #include "nsIContent.h"
@@ -79,18 +78,6 @@ nsIStringBundle *nsScriptSecurityManager::sStrBundle = nullptr;
 JSRuntime       *nsScriptSecurityManager::sRuntime   = 0;
 bool nsScriptSecurityManager::sStrictFileOriginPolicy = true;
 
-// Lazily initialized. Use the getter below.
-static jsid sEnabledID = JSID_VOID;
-static JS::HandleId
-EnabledID()
-{
-    if (sEnabledID != JSID_VOID)
-        return JS::HandleId::fromMarkedLocation(&sEnabledID);
-    AutoSafeJSContext cx;
-    sEnabledID = INTERNED_STRING_TO_JSID(cx, JS_InternString(cx, "enabled"));
-    return JS::HandleId::fromMarkedLocation(&sEnabledID);
-}
-
 bool
 nsScriptSecurityManager::SubjectIsPrivileged()
 {
@@ -105,7 +92,7 @@ nsScriptSecurityManager::SubjectIsPrivileged()
 // Convenience Functions //
 ///////////////////////////
 // Result of this function should not be freed.
-static inline const PRUnichar *
+static inline const char16_t *
 IDToString(JSContext *cx, jsid id_)
 {
     JS::RootedId id(cx, id_);
@@ -113,7 +100,7 @@ IDToString(JSContext *cx, jsid id_)
         return JS_GetInternedStringChars(JSID_TO_STRING(id));
 
     JS::Rooted<JS::Value> idval(cx);
-    if (!JS_IdToValue(cx, id, idval.address()))
+    if (!JS_IdToValue(cx, id, &idval))
         return nullptr;
     JSString *str = JS::ToString(cx, idval);
     if(!str)
@@ -190,13 +177,10 @@ inline void SetPendingException(JSContext *cx, const char *aMsg)
     JS_ReportError(cx, "%s", aMsg);
 }
 
-inline void SetPendingException(JSContext *cx, const PRUnichar *aMsg)
+inline void SetPendingException(JSContext *cx, const char16_t *aMsg)
 {
     JS_ReportError(cx, "%hs", aMsg);
 }
-
-// DomainPolicy members
-uint32_t DomainPolicy::sGeneration = 0;
 
 // Helper class to get stuff from the ClassInfo and not waste extra time with
 // virtual method calls for things it has already gotten
@@ -348,71 +332,6 @@ nsScriptSecurityManager::GetCxSubjectPrincipal(JSContext *cx)
     return principal;
 }
 
-////////////////////
-// Policy Storage //
-////////////////////
-
-// Table of security levels
-static bool
-DeleteCapability(nsHashKey *aKey, void *aData, void* closure)
-{
-    NS_Free(aData);
-    return true;
-}
-
-//-- Per-Domain Policy - applies to one or more protocols or hosts
-struct DomainEntry
-{
-    DomainEntry(const char* aOrigin,
-                DomainPolicy* aDomainPolicy) : mOrigin(aOrigin),
-                                               mDomainPolicy(aDomainPolicy),
-                                               mNext(nullptr)
-    {
-        mDomainPolicy->Hold();
-    }
-
-    ~DomainEntry()
-    {
-        mDomainPolicy->Drop();
-    }
-
-    bool Matches(const char *anOrigin)
-    {
-        int len = strlen(anOrigin);
-        int thisLen = mOrigin.Length();
-        if (len < thisLen)
-            return false;
-        if (mOrigin.RFindChar(':', thisLen-1, 1) != -1)
-        //-- Policy applies to all URLs of this scheme, compare scheme only
-            return mOrigin.EqualsIgnoreCase(anOrigin, thisLen);
-
-        //-- Policy applies to a particular host; compare domains
-        if (!mOrigin.Equals(anOrigin + (len - thisLen)))
-            return false;
-        if (len == thisLen)
-            return true;
-        char charBefore = anOrigin[len-thisLen-1];
-        return (charBefore == '.' || charBefore == ':' || charBefore == '/');
-    }
-
-    nsCString         mOrigin;
-    DomainPolicy*     mDomainPolicy;
-    DomainEntry*      mNext;
-};
-
-static bool
-DeleteDomainEntry(nsHashKey *aKey, void *aData, void* closure)
-{
-    DomainEntry *entry = (DomainEntry*) aData;
-    do
-    {
-        DomainEntry *next = entry->mNext;
-        delete entry;
-        entry = next;
-    } while (entry);
-    return true;
-}
-
 /////////////////////////////
 // nsScriptSecurityManager //
 /////////////////////////////
@@ -486,47 +405,11 @@ nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
                                  fileName,
                                  scriptSample,
                                  lineNum,
+                                 EmptyString(),
                                  EmptyString());
     }
 
     return evalOK;
-}
-
-bool
-nsScriptSecurityManager::CheckObjectAccess(JSContext *cx, JS::Handle<JSObject*> obj,
-                                           JS::Handle<jsid> id, JSAccessMode mode,
-                                           JS::MutableHandle<JS::Value> vp)
-{
-    // Get the security manager
-    nsScriptSecurityManager *ssm =
-        nsScriptSecurityManager::GetScriptSecurityManager();
-
-    NS_WARN_IF_FALSE(ssm, "Failed to get security manager service");
-    if (!ssm)
-        return false;
-
-    // Get the object being accessed.  We protect these cases:
-    // 1. The Function.prototype.caller property's value, which might lead
-    //    an attacker up a call-stack to a function or another object from
-    //    a different trust domain.
-    // 2. A user-defined getter or setter function accessible on another
-    //    trust domain's window or document object.
-    // vp can be a primitive, in that case, we use obj as the target
-    // object.
-    JSObject* target = JSVAL_IS_PRIMITIVE(vp) ? obj : JSVAL_TO_OBJECT(vp);
-
-    // Do the same-origin check -- this sets a JS exception if the check fails.
-    // Pass the parent object's class name, as we have no class-info for it.
-    nsresult rv =
-        ssm->CheckPropertyAccess(cx, target, js::GetObjectClass(obj)->name, id,
-                                 (mode & JSACC_WRITE) ?
-                                 (int32_t)nsIXPCSecurityManager::ACCESS_SET_PROPERTY :
-                                 (int32_t)nsIXPCSecurityManager::ACCESS_GET_PROPERTY);
-
-    if (NS_FAILED(rv))
-        return false; // Security check failed (XXX was an error reported?)
-
-    return true;
 }
 
 // static
@@ -535,19 +418,6 @@ nsScriptSecurityManager::JSPrincipalsSubsume(JSPrincipals *first,
                                              JSPrincipals *second)
 {
     return nsJSPrincipals::get(first)->Subsumes(nsJSPrincipals::get(second));
-}
-
-
-NS_IMETHODIMP
-nsScriptSecurityManager::CheckPropertyAccess(JSContext* cx,
-                                             JSObject* aJSObject,
-                                             const char* aClassName,
-                                             jsid aProperty,
-                                             uint32_t aAction)
-{
-    return CheckPropertyAccessImpl(aAction, nullptr, cx, aJSObject,
-                                   nullptr, nullptr,
-                                   aClassName, aProperty, nullptr);
 }
 
 NS_IMETHODIMP
@@ -614,254 +484,6 @@ nsScriptSecurityManager::CheckSameOriginURI(nsIURI* aSourceURI,
          return NS_ERROR_DOM_BAD_URI;
     }
     return NS_OK;
-}
-
-nsresult
-nsScriptSecurityManager::CheckPropertyAccessImpl(uint32_t aAction,
-                                                 nsAXPCNativeCallContext* aCallContext,
-                                                 JSContext* cx, JSObject* aJSObject,
-                                                 nsISupports* aObj,
-                                                 nsIClassInfo* aClassInfo,
-                                                 const char* aClassName, jsid aProperty,
-                                                 void** aCachedClassPolicy)
-{
-    nsresult rv;
-    JS::RootedObject jsObject(cx, aJSObject);
-    JS::RootedId property(cx, aProperty);
-    nsIPrincipal* subjectPrincipal = GetSubjectPrincipal(cx, &rv);
-    if (NS_FAILED(rv))
-        return rv;
-
-    if (!subjectPrincipal || subjectPrincipal == mSystemPrincipal)
-        // We have native code or the system principal: just allow access
-        return NS_OK;
-
-    nsCOMPtr<nsIPrincipal> objectPrincipal;
-
-    // Hold the class info data here so we don't have to go back to virtual
-    // methods all the time
-    ClassInfoData classInfoData(aClassInfo, aClassName);
-
-    //-- Look up the security policy for this class and subject domain
-    SecurityLevel securityLevel;
-    rv = LookupPolicy(subjectPrincipal, classInfoData, property, aAction,
-                      (ClassPolicy**)aCachedClassPolicy, &securityLevel);
-    if (NS_FAILED(rv))
-        return rv;
-
-    if (securityLevel.level == SCRIPT_SECURITY_UNDEFINED_ACCESS)
-    {
-        // No policy found for this property so use the default of last resort.
-        // If we were called from somewhere other than XPConnect
-        // (no XPC call context), assume this is a DOM class. Otherwise,
-        // ask the ClassInfo.
-        if (!aCallContext || classInfoData.IsDOMClass())
-            securityLevel.level = SCRIPT_SECURITY_SAME_ORIGIN_ACCESS;
-        else
-            securityLevel.level = SCRIPT_SECURITY_NO_ACCESS;
-    }
-
-    if (SECURITY_ACCESS_LEVEL_FLAG(securityLevel))
-    // This flag means securityLevel is allAccess, noAccess, or sameOrigin
-    {
-        switch (securityLevel.level)
-        {
-        case SCRIPT_SECURITY_NO_ACCESS:
-            rv = NS_ERROR_DOM_PROP_ACCESS_DENIED;
-            break;
-
-        case SCRIPT_SECURITY_ALL_ACCESS:
-            rv = NS_OK;
-            break;
-
-        case SCRIPT_SECURITY_SAME_ORIGIN_ACCESS:
-            {
-                nsCOMPtr<nsIPrincipal> principalHolder;
-                if (jsObject)
-                {
-                    objectPrincipal = doGetObjectPrincipal(jsObject);
-                    if (!objectPrincipal)
-                        rv = NS_ERROR_DOM_SECURITY_ERR;
-                }
-                else
-                {
-                    NS_ERROR("CheckPropertyAccessImpl called without a target object or URL");
-                    return NS_ERROR_FAILURE;
-                }
-                if(NS_SUCCEEDED(rv))
-                    rv = CheckSameOriginDOMProp(subjectPrincipal, objectPrincipal,
-                                                aAction);
-                break;
-            }
-        default:
-            NS_ERROR("Bad Security Level Value");
-            return NS_ERROR_FAILURE;
-        }
-    }
-    else // if SECURITY_ACCESS_LEVEL_FLAG is false, securityLevel is a capability
-    {
-        rv = SubjectIsPrivileged() ? NS_OK : NS_ERROR_DOM_SECURITY_ERR;
-    }
-
-    if (NS_SUCCEEDED(rv))
-    {
-        return rv;
-    }
-
-    //--See if the object advertises a non-default level of access
-    //  using nsISecurityCheckedComponent
-    nsCOMPtr<nsISecurityCheckedComponent> checkedComponent =
-        do_QueryInterface(aObj);
-
-    nsXPIDLCString objectSecurityLevel;
-    if (checkedComponent)
-    {
-        nsCOMPtr<nsIXPConnectWrappedNative> wrapper;
-        nsCOMPtr<nsIInterfaceInfo> interfaceInfo;
-        const nsIID* objIID = nullptr;
-        rv = aCallContext->GetCalleeWrapper(getter_AddRefs(wrapper));
-        if (NS_SUCCEEDED(rv) && wrapper)
-            rv = wrapper->FindInterfaceWithMember(property, getter_AddRefs(interfaceInfo));
-        if (NS_SUCCEEDED(rv) && interfaceInfo)
-            rv = interfaceInfo->GetIIDShared(&objIID);
-        if (NS_SUCCEEDED(rv) && objIID)
-        {
-            switch (aAction)
-            {
-            case nsIXPCSecurityManager::ACCESS_GET_PROPERTY:
-                checkedComponent->CanGetProperty(objIID,
-                                                 IDToString(cx, property),
-                                                 getter_Copies(objectSecurityLevel));
-                break;
-            case nsIXPCSecurityManager::ACCESS_SET_PROPERTY:
-                checkedComponent->CanSetProperty(objIID,
-                                                 IDToString(cx, property),
-                                                 getter_Copies(objectSecurityLevel));
-                break;
-            case nsIXPCSecurityManager::ACCESS_CALL_METHOD:
-                checkedComponent->CanCallMethod(objIID,
-                                                IDToString(cx, property),
-                                                getter_Copies(objectSecurityLevel));
-            }
-        }
-    }
-    rv = CheckXPCPermissions(cx, aObj, jsObject, subjectPrincipal,
-                             objectSecurityLevel);
-
-    if (NS_FAILED(rv)) //-- Security tests failed, access is denied, report error
-    {
-        nsAutoString stringName;
-        switch(aAction)
-        {
-        case nsIXPCSecurityManager::ACCESS_GET_PROPERTY:
-            stringName.AssignLiteral("GetPropertyDeniedOrigins");
-            break;
-        case nsIXPCSecurityManager::ACCESS_SET_PROPERTY:
-            stringName.AssignLiteral("SetPropertyDeniedOrigins");
-            break;
-        case nsIXPCSecurityManager::ACCESS_CALL_METHOD:
-            stringName.AssignLiteral("CallMethodDeniedOrigins");
-        }
-
-        // Null out objectPrincipal for now, so we don't leak information about
-        // it.  Whenever we can report different error strings to content and
-        // the UI we can take this out again.
-        objectPrincipal = nullptr;
-
-        NS_ConvertUTF8toUTF16 className(classInfoData.GetName());
-        nsAutoCString subjectOrigin;
-        nsAutoCString subjectDomain;
-        if (!nsAutoInPrincipalDomainOriginSetter::sInPrincipalDomainOrigin) {
-            nsCOMPtr<nsIURI> uri, domain;
-            subjectPrincipal->GetURI(getter_AddRefs(uri));
-            if (uri) { // Object principal might be expanded
-                GetOriginFromURI(uri, subjectOrigin);
-            }
-            subjectPrincipal->GetDomain(getter_AddRefs(domain));
-            if (domain) {
-                GetOriginFromURI(domain, subjectDomain);
-            }
-        } else {
-            subjectOrigin.AssignLiteral("the security manager");
-        }
-        NS_ConvertUTF8toUTF16 subjectOriginUnicode(subjectOrigin);
-        NS_ConvertUTF8toUTF16 subjectDomainUnicode(subjectDomain);
-
-        nsAutoCString objectOrigin;
-        nsAutoCString objectDomain;
-        if (!nsAutoInPrincipalDomainOriginSetter::sInPrincipalDomainOrigin &&
-            objectPrincipal) {
-            nsCOMPtr<nsIURI> uri, domain;
-            objectPrincipal->GetURI(getter_AddRefs(uri));
-            if (uri) { // Object principal might be system
-                GetOriginFromURI(uri, objectOrigin);
-            }
-            objectPrincipal->GetDomain(getter_AddRefs(domain));
-            if (domain) {
-                GetOriginFromURI(domain, objectDomain);
-            }
-        }
-        NS_ConvertUTF8toUTF16 objectOriginUnicode(objectOrigin);
-        NS_ConvertUTF8toUTF16 objectDomainUnicode(objectDomain);
-
-        nsXPIDLString errorMsg;
-        const PRUnichar *formatStrings[] =
-        {
-            subjectOriginUnicode.get(),
-            className.get(),
-            IDToString(cx, property),
-            objectOriginUnicode.get(),
-            subjectDomainUnicode.get(),
-            objectDomainUnicode.get()
-        };
-
-        uint32_t length = ArrayLength(formatStrings);
-
-        // XXXbz Our localization system is stupid and can't handle not showing
-        // some strings that get passed in.  Which means that we have to get
-        // our length precisely right: it has to be exactly the number of
-        // strings our format string wants.  This means we'll have to move
-        // strings in the array as needed, sadly...
-        if (nsAutoInPrincipalDomainOriginSetter::sInPrincipalDomainOrigin ||
-            !objectPrincipal) {
-            stringName.AppendLiteral("OnlySubject");
-            length -= 3;
-        } else {
-            // default to a length that doesn't include the domains, then
-            // increase it as needed.
-            length -= 2;
-            if (!subjectDomainUnicode.IsEmpty()) {
-                stringName.AppendLiteral("SubjectDomain");
-                length += 1;
-            }
-            if (!objectDomainUnicode.IsEmpty()) {
-                stringName.AppendLiteral("ObjectDomain");
-                length += 1;
-                if (length != ArrayLength(formatStrings)) {
-                    // We have an object domain but not a subject domain.
-                    // Scoot our string over one slot.  See the XXX comment
-                    // above for why we need to do this.
-                    formatStrings[length-1] = formatStrings[length];
-                }
-            }
-        }
-        
-        // We need to keep our existing failure rv and not override it
-        // with a likely success code from the following string bundle
-        // call in order to throw the correct security exception later.
-        nsresult rv2 = sStrBundle->FormatStringFromName(stringName.get(),
-                                                        formatStrings,
-                                                        length,
-                                                        getter_Copies(errorMsg));
-        if (NS_FAILED(rv2)) {
-            // Might just be missing the string...  Do our best
-            errorMsg = stringName;
-        }
-
-        SetPendingException(cx, errorMsg.get());
-    }
-
-    return rv;
 }
 
 /* static */
@@ -985,202 +607,6 @@ nsScriptSecurityManager::CheckSameOriginDOMProp(nsIPrincipal* aSubject,
     */
     return NS_ERROR_DOM_PROP_ACCESS_DENIED;
 }
-
-nsresult
-nsScriptSecurityManager::LookupPolicy(nsIPrincipal* aPrincipal,
-                                      ClassInfoData& aClassData,
-                                      JS::Handle<jsid> aProperty,
-                                      uint32_t aAction,
-                                      ClassPolicy** aCachedClassPolicy,
-                                      SecurityLevel* result)
-{
-    AutoJSContext cx;
-    nsresult rv;
-    JS::RootedId property(cx, aProperty);
-    result->level = SCRIPT_SECURITY_UNDEFINED_ACCESS;
-
-    DomainPolicy* dpolicy = nullptr;
-    //-- Initialize policies if necessary
-    if (mPolicyPrefsChanged)
-    {
-        if (!mPrefInitialized) {
-            rv = InitPrefs();
-            NS_ENSURE_SUCCESS(rv, rv);
-        }
-        rv = InitPolicies();
-        if (NS_FAILED(rv))
-            return rv;
-    }
-    else
-    {
-        aPrincipal->GetSecurityPolicy((void**)&dpolicy);
-    }
-
-    if (!dpolicy && mOriginToPolicyMap)
-    {
-        //-- Look up the relevant domain policy, if any
-        if (nsCOMPtr<nsIExpandedPrincipal> exp = do_QueryInterface(aPrincipal)) 
-        {
-            // For expanded principals domain origin is not defined so let's just
-            // use the default policy
-            dpolicy = mDefaultPolicy;
-        }
-        else
-        {
-            nsAutoCString origin;
-            rv = GetPrincipalDomainOrigin(aPrincipal, origin);
-            NS_ENSURE_SUCCESS(rv, rv);
- 
-            char *start = origin.BeginWriting();
-            const char *nextToLastDot = nullptr;
-            const char *lastDot = nullptr;
-            const char *colon = nullptr;
-            char *p = start;
-
-            //-- search domain (stop at the end of the string or at the 3rd slash)
-            for (uint32_t slashes=0; *p; p++)
-            {
-                if (*p == '/' && ++slashes == 3) 
-                {
-                    *p = '\0'; // truncate at 3rd slash
-                    break;
-                }
-                if (*p == '.')
-                {
-                    nextToLastDot = lastDot;
-                    lastDot = p;
-                } 
-                else if (!colon && *p == ':')
-                    colon = p;
-            }
-
-            nsCStringKey key(nextToLastDot ? nextToLastDot+1 : start);
-            DomainEntry *de = (DomainEntry*) mOriginToPolicyMap->Get(&key);
-            if (!de)
-            {
-                nsAutoCString scheme(start, colon-start+1);
-                nsCStringKey schemeKey(scheme);
-                de = (DomainEntry*) mOriginToPolicyMap->Get(&schemeKey);
-            }
-
-            while (de)
-            {
-                if (de->Matches(start))
-                {
-                    dpolicy = de->mDomainPolicy;
-                    break;
-                }
-                de = de->mNext;
-            }
-
-            if (!dpolicy)
-                dpolicy = mDefaultPolicy;
-        }
-
-        aPrincipal->SetSecurityPolicy((void*)dpolicy);
-    }
-
-    ClassPolicy* cpolicy = nullptr;
-
-    if ((dpolicy == mDefaultPolicy) && aCachedClassPolicy)
-    {
-        // No per-domain policy for this principal (the more common case)
-        // so look for a cached class policy from the object wrapper
-        cpolicy = *aCachedClassPolicy;
-    }
-
-    if (!cpolicy)
-    { //-- No cached policy for this class, need to look it up
-        cpolicy = static_cast<ClassPolicy*>
-                             (PL_DHashTableOperate(dpolicy,
-                                                      aClassData.GetName(),
-                                                      PL_DHASH_LOOKUP));
-
-        if (PL_DHASH_ENTRY_IS_FREE(cpolicy))
-            cpolicy = NO_POLICY_FOR_CLASS;
-
-        if ((dpolicy == mDefaultPolicy) && aCachedClassPolicy)
-            *aCachedClassPolicy = cpolicy;
-    }
-
-    NS_ASSERTION(JSID_IS_INT(property) || JSID_IS_OBJECT(property) ||
-                 JSID_IS_STRING(property), "Property must be a valid id");
-
-    // Only atomized strings are stored in the policies' hash tables.
-    if (!JSID_IS_STRING(property))
-        return NS_OK;
-
-    JS::RootedString propertyKey(cx, JSID_TO_STRING(property));
-
-    // We look for a PropertyPolicy in the following places:
-    // 1)  The ClassPolicy for our class we got from our DomainPolicy
-    // 2)  The mWildcardPolicy of our DomainPolicy
-    // 3)  The ClassPolicy for our class we got from mDefaultPolicy
-    // 4)  The mWildcardPolicy of our mDefaultPolicy
-    PropertyPolicy* ppolicy = nullptr;
-    if (cpolicy != NO_POLICY_FOR_CLASS)
-    {
-        ppolicy = static_cast<PropertyPolicy*>
-                             (PL_DHashTableOperate(cpolicy->mPolicy,
-                                                      propertyKey,
-                                                      PL_DHASH_LOOKUP));
-    }
-
-    // If there is no class policy for this property, and we have a wildcard
-    // policy, try that.
-    if (dpolicy->mWildcardPolicy &&
-        (!ppolicy || PL_DHASH_ENTRY_IS_FREE(ppolicy)))
-    {
-        ppolicy =
-            static_cast<PropertyPolicy*>
-                       (PL_DHashTableOperate(dpolicy->mWildcardPolicy->mPolicy,
-                                                propertyKey,
-                                                PL_DHASH_LOOKUP));
-    }
-
-    // If dpolicy is not the defauly policy and there's no class or wildcard
-    // policy for this property, check the default policy for this class and
-    // the default wildcard policy
-    if (dpolicy != mDefaultPolicy &&
-        (!ppolicy || PL_DHASH_ENTRY_IS_FREE(ppolicy)))
-    {
-        cpolicy = static_cast<ClassPolicy*>
-                             (PL_DHashTableOperate(mDefaultPolicy,
-                                                      aClassData.GetName(),
-                                                      PL_DHASH_LOOKUP));
-
-        if (PL_DHASH_ENTRY_IS_BUSY(cpolicy))
-        {
-            ppolicy =
-                static_cast<PropertyPolicy*>
-                           (PL_DHashTableOperate(cpolicy->mPolicy,
-                                                    propertyKey,
-                                                    PL_DHASH_LOOKUP));
-        }
-
-        if ((!ppolicy || PL_DHASH_ENTRY_IS_FREE(ppolicy)) &&
-            mDefaultPolicy->mWildcardPolicy)
-        {
-            ppolicy =
-              static_cast<PropertyPolicy*>
-                         (PL_DHashTableOperate(mDefaultPolicy->mWildcardPolicy->mPolicy,
-                                                  propertyKey,
-                                                  PL_DHASH_LOOKUP));
-        }
-    }
-
-    if (!ppolicy || PL_DHASH_ENTRY_IS_FREE(ppolicy))
-        return NS_OK;
-
-    // Get the correct security level from the property policy
-    if (aAction == nsIXPCSecurityManager::ACCESS_SET_PROPERTY)
-        *result = ppolicy->mSet;
-    else
-        *result = ppolicy->mGet;
-
-    return NS_OK;
-}
-
 
 NS_IMETHODIMP
 nsScriptSecurityManager::CheckLoadURIFromScript(JSContext *cx, nsIURI *aURI)
@@ -1458,20 +884,6 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
             return NS_OK;
         }
 
-        // Now check capability policies
-        static const char loadURIPrefGroup[] = "checkloaduri";
-        ClassInfoData nameData(nullptr, loadURIPrefGroup);
-
-        SecurityLevel secLevel;
-        rv = LookupPolicy(aPrincipal, nameData, EnabledID(),
-                          nsIXPCSecurityManager::ACCESS_GET_PROPERTY,
-                          nullptr, &secLevel);
-        if (NS_SUCCEEDED(rv) && secLevel.level == SCRIPT_SECURITY_ALL_ACCESS)
-        {
-            // OK for this site!
-            return NS_OK;
-        }
-
         if (reportErrors) {
             ReportError(nullptr, errorTag, sourceURI, aTargetURI);
         }
@@ -1489,9 +901,9 @@ nsScriptSecurityManager::CheckLoadURIWithPrincipal(nsIPrincipal* aPrincipal,
     if (!hasFlags) {
         nsXPIDLString message;
         NS_ConvertASCIItoUTF16 ucsTargetScheme(targetScheme);
-        const PRUnichar* formatStrings[] = { ucsTargetScheme.get() };
+        const char16_t* formatStrings[] = { ucsTargetScheme.get() };
         rv = sStrBundle->
-            FormatStringFromName(NS_LITERAL_STRING("ProtocolFlagError").get(),
+            FormatStringFromName(MOZ_UTF16("ProtocolFlagError"),
                                  formatStrings,
                                  ArrayLength(formatStrings),
                                  getter_Copies(message));
@@ -1528,7 +940,7 @@ nsScriptSecurityManager::ReportError(JSContext* cx, const nsAString& messageTag,
     nsXPIDLString message;
     NS_ConvertASCIItoUTF16 ucsSourceSpec(sourceSpec);
     NS_ConvertASCIItoUTF16 ucsTargetSpec(targetSpec);
-    const PRUnichar *formatStrings[] = { ucsSourceSpec.get(), ucsTargetSpec.get() };
+    const char16_t *formatStrings[] = { ucsSourceSpec.get(), ucsTargetSpec.get() };
     rv = sStrBundle->FormatStringFromName(PromiseFlatString(messageTag).get(),
                                           formatStrings,
                                           ArrayLength(formatStrings),
@@ -1582,6 +994,7 @@ nsScriptSecurityManager::CheckLoadURIStrWithPrincipal(nsIPrincipal* aPrincipal,
 
     uint32_t flags[] = {
         nsIURIFixup::FIXUP_FLAG_NONE,
+        nsIURIFixup::FIXUP_FLAG_FIX_SCHEME_TYPOS,
         nsIURIFixup::FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP,
         nsIURIFixup::FIXUP_FLAGS_MAKE_ALTERNATE_URI,
         nsIURIFixup::FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP |
@@ -1614,29 +1027,7 @@ nsScriptSecurityManager::ScriptAllowed(JSObject *aGlobal)
     JS::RootedObject global(cx, js::UncheckedUnwrap(aGlobal, /* stopAtOuter = */ false));
 
     // Check the bits on the compartment private.
-    xpc::Scriptability& scriptability = xpc::Scriptability::Get(aGlobal);
-    if (!scriptability.Allowed()) {
-        return false;
-    }
-
-    // If the compartment is immune to script policy, we're done.
-    if (scriptability.IsImmuneToScriptPolicy()) {
-        return true;
-    }
-
-    // Check for a per-site policy.
-    static const char jsPrefGroupName[] = "javascript";
-    ClassInfoData nameData(nullptr, jsPrefGroupName);
-    SecurityLevel secLevel;
-    nsresult rv = LookupPolicy(doGetObjectPrincipal(global), nameData,
-                               EnabledID(),
-                               nsIXPCSecurityManager::ACCESS_GET_PROPERTY,
-                               nullptr, &secLevel);
-    if (NS_FAILED(rv) || secLevel.level == SCRIPT_SECURITY_NO_ACCESS) {
-        return false;
-    }
-
-    return true;
+    return xpc::Scriptability::Get(aGlobal).Allowed();
 }
 
 ///////////////// Principals ///////////////////////
@@ -1820,14 +1211,14 @@ nsScriptSecurityManager::GetSubjectPrincipal(JSContext *cx,
 }
 
 NS_IMETHODIMP
-nsScriptSecurityManager::GetObjectPrincipal(JSContext *aCx, JSObject *aObj,
+nsScriptSecurityManager::GetObjectPrincipal(JS::Handle<JS::Value> aObjectVal,
+                                            JSContext *aCx,
                                             nsIPrincipal **result)
 {
-    JS::Rooted<JSObject*> obj(aCx, aObj);
-    *result = doGetObjectPrincipal(obj);
-    if (!*result)
-        return NS_ERROR_FAILURE;
-    NS_ADDREF(*result);
+    NS_ENSURE_TRUE(aObjectVal.isObject(), NS_ERROR_FAILURE);
+    JS::RootedObject obj(aCx, &aObjectVal.toObject());
+    nsCOMPtr<nsIPrincipal> principal = doGetObjectPrincipal(obj);
+    principal.forget(result);
     return NS_OK;
 }
 
@@ -1848,8 +1239,7 @@ NS_IMETHODIMP
 nsScriptSecurityManager::CanCreateWrapper(JSContext *cx,
                                           const nsIID &aIID,
                                           nsISupports *aObj,
-                                          nsIClassInfo *aClassInfo,
-                                          void **aPolicy)
+                                          nsIClassInfo *aClassInfo)
 {
 // XXX Special case for nsIXPCException ?
     ClassInfoData objClassInfo = ClassInfoData(aClassInfo, nullptr);
@@ -1864,166 +1254,76 @@ nsScriptSecurityManager::CanCreateWrapper(JSContext *cx,
         return NS_OK;
     }
 
-    //--See if the object advertises a non-default level of access
-    //  using nsISecurityCheckedComponent
-    nsCOMPtr<nsISecurityCheckedComponent> checkedComponent =
-        do_QueryInterface(aObj);
-
-    nsXPIDLCString objectSecurityLevel;
-    if (checkedComponent)
-        checkedComponent->CanCreateWrapper((nsIID *)&aIID, getter_Copies(objectSecurityLevel));
-
-    nsresult rv = CheckXPCPermissions(cx, aObj, nullptr, nullptr, objectSecurityLevel);
-    if (NS_FAILED(rv))
+    if (SubjectIsPrivileged())
     {
-        //-- Access denied, report an error
-        NS_ConvertUTF8toUTF16 strName("CreateWrapperDenied");
-        nsAutoCString origin;
-        nsresult rv2;
-        nsIPrincipal* subjectPrincipal = doGetSubjectPrincipal(&rv2);
-        if (NS_SUCCEEDED(rv2) && subjectPrincipal) {
-            GetPrincipalDomainOrigin(subjectPrincipal, origin);
-        }
-        NS_ConvertUTF8toUTF16 originUnicode(origin);
-        NS_ConvertUTF8toUTF16 className(objClassInfo.GetName());
-        const PRUnichar* formatStrings[] = {
-            className.get(),
-            originUnicode.get()
-        };
-        uint32_t length = ArrayLength(formatStrings);
-        if (originUnicode.IsEmpty()) {
-            --length;
-        } else {
-            strName.AppendLiteral("ForOrigin");
-        }
-        nsXPIDLString errorMsg;
-        // We need to keep our existing failure rv and not override it
-        // with a likely success code from the following string bundle
-        // call in order to throw the correct security exception later.
-        rv2 = sStrBundle->FormatStringFromName(strName.get(),
-                                               formatStrings,
-                                               length,
-                                               getter_Copies(errorMsg));
-        NS_ENSURE_SUCCESS(rv2, rv2);
-
-        SetPendingException(cx, errorMsg.get());
+        return NS_OK;
     }
 
-    return rv;
+    //-- Access denied, report an error
+    NS_ConvertUTF8toUTF16 strName("CreateWrapperDenied");
+    nsAutoCString origin;
+    nsresult rv2;
+    nsIPrincipal* subjectPrincipal = doGetSubjectPrincipal(&rv2);
+    if (NS_SUCCEEDED(rv2) && subjectPrincipal) {
+        GetPrincipalDomainOrigin(subjectPrincipal, origin);
+    }
+    NS_ConvertUTF8toUTF16 originUnicode(origin);
+    NS_ConvertUTF8toUTF16 classInfoName(objClassInfo.GetName());
+    const char16_t* formatStrings[] = {
+        classInfoName.get(),
+        originUnicode.get()
+    };
+    uint32_t length = ArrayLength(formatStrings);
+    if (originUnicode.IsEmpty()) {
+        --length;
+    } else {
+        strName.AppendLiteral("ForOrigin");
+    }
+    nsXPIDLString errorMsg;
+    // We need to keep our existing failure rv and not override it
+    // with a likely success code from the following string bundle
+    // call in order to throw the correct security exception later.
+    rv2 = sStrBundle->FormatStringFromName(strName.get(),
+                                           formatStrings,
+                                           length,
+                                           getter_Copies(errorMsg));
+    NS_ENSURE_SUCCESS(rv2, rv2);
+
+    SetPendingException(cx, errorMsg.get());
+    return NS_ERROR_DOM_XPCONNECT_ACCESS_DENIED;
 }
 
 NS_IMETHODIMP
 nsScriptSecurityManager::CanCreateInstance(JSContext *cx,
                                            const nsCID &aCID)
 {
-    nsresult rv = CheckXPCPermissions(cx, nullptr, nullptr, nullptr, nullptr);
-    if (NS_FAILED(rv))
-    {
-        //-- Access denied, report an error
-        nsAutoCString errorMsg("Permission denied to create instance of class. CID=");
-        char cidStr[NSID_LENGTH];
-        aCID.ToProvidedString(cidStr);
-        errorMsg.Append(cidStr);
-        SetPendingException(cx, errorMsg.get());
+    if (SubjectIsPrivileged()) {
+        return NS_OK;
     }
-    return rv;
+
+    //-- Access denied, report an error
+    nsAutoCString errorMsg("Permission denied to create instance of class. CID=");
+    char cidStr[NSID_LENGTH];
+    aCID.ToProvidedString(cidStr);
+    errorMsg.Append(cidStr);
+    SetPendingException(cx, errorMsg.get());
+    return NS_ERROR_DOM_XPCONNECT_ACCESS_DENIED;
 }
 
 NS_IMETHODIMP
 nsScriptSecurityManager::CanGetService(JSContext *cx,
                                        const nsCID &aCID)
 {
-    nsresult rv = CheckXPCPermissions(cx, nullptr, nullptr, nullptr, nullptr);
-    if (NS_FAILED(rv))
-    {
-        //-- Access denied, report an error
-        nsAutoCString errorMsg("Permission denied to get service. CID=");
-        char cidStr[NSID_LENGTH];
-        aCID.ToProvidedString(cidStr);
-        errorMsg.Append(cidStr);
-        SetPendingException(cx, errorMsg.get());
-    }
-
-    return rv;
-}
-
-
-NS_IMETHODIMP
-nsScriptSecurityManager::CanAccess(uint32_t aAction,
-                                   nsAXPCNativeCallContext* aCallContext,
-                                   JSContext* cx,
-                                   JSObject* aJSObject,
-                                   nsISupports* aObj,
-                                   nsIClassInfo* aClassInfo,
-                                   jsid aPropertyName,
-                                   void** aPolicy)
-{
-    return CheckPropertyAccessImpl(aAction, aCallContext, cx,
-                                   aJSObject, aObj, aClassInfo,
-                                   nullptr, aPropertyName, aPolicy);
-}
-
-nsresult
-nsScriptSecurityManager::CheckXPCPermissions(JSContext* cx,
-                                             nsISupports* aObj, JSObject* aJSObject,
-                                             nsIPrincipal* aSubjectPrincipal,
-                                             const char* aObjectSecurityLevel)
-{
-    MOZ_ASSERT(cx);
-    JS::RootedObject jsObject(cx, aJSObject);
-    // Check if the subject is privileged.
-    if (SubjectIsPrivileged())
+    if (SubjectIsPrivileged()) {
         return NS_OK;
-
-    //-- If the object implements nsISecurityCheckedComponent, it has a non-default policy.
-    if (aObjectSecurityLevel)
-    {
-        if (PL_strcasecmp(aObjectSecurityLevel, "allAccess") == 0)
-            return NS_OK;
-        if (cx && PL_strcasecmp(aObjectSecurityLevel, "sameOrigin") == 0)
-        {
-            nsresult rv;
-            if (!jsObject)
-            {
-                nsCOMPtr<nsIXPConnectWrappedJS> xpcwrappedjs =
-                    do_QueryInterface(aObj);
-                if (xpcwrappedjs)
-                {
-                    jsObject = xpcwrappedjs->GetJSObject();
-                    NS_ENSURE_STATE(jsObject);
-                }
-            }
-
-            if (!aSubjectPrincipal)
-            {
-                // No subject principal passed in. Compute it.
-                aSubjectPrincipal = GetSubjectPrincipal(cx, &rv);
-                NS_ENSURE_SUCCESS(rv, rv);
-            }
-            if (aSubjectPrincipal && jsObject)
-            {
-                nsIPrincipal* objectPrincipal = doGetObjectPrincipal(jsObject);
-
-                // Only do anything if we have both a subject and object
-                // principal.
-                if (objectPrincipal)
-                {
-                    bool subsumes;
-                    rv = aSubjectPrincipal->Subsumes(objectPrincipal, &subsumes);
-                    NS_ENSURE_SUCCESS(rv, rv);
-                    if (subsumes)
-                        return NS_OK;
-                }
-            }
-        }
-        else if (PL_strcasecmp(aObjectSecurityLevel, "noAccess") != 0)
-        {
-            if (SubjectIsPrivileged())
-                return NS_OK;
-        }
     }
 
-    //-- Access tests failed
+    //-- Access denied, report an error
+    nsAutoCString errorMsg("Permission denied to get service. CID=");
+    char cidStr[NSID_LENGTH];
+    aCID.ToProvidedString(cidStr);
+    errorMsg.Append(cidStr);
+    SetPendingException(cx, errorMsg.get());
     return NS_ERROR_DOM_XPCONNECT_ACCESS_DENIED;
 }
 
@@ -2068,19 +1368,17 @@ nsScriptSecurityManager::AsyncOnChannelRedirect(nsIChannel* oldChannel,
 const char sJSEnabledPrefName[] = "javascript.enabled";
 const char sFileOriginPolicyPrefName[] =
     "security.fileuri.strict_origin_policy";
-static const char sPolicyPrefix[] = "capability.policy.";
 
 static const char* kObservedPrefs[] = {
   sJSEnabledPrefName,
   sFileOriginPolicyPrefName,
-  sPolicyPrefix,
   nullptr
 };
 
 
 NS_IMETHODIMP
 nsScriptSecurityManager::Observe(nsISupports* aObject, const char* aTopic,
-                                 const PRUnichar* aMessage)
+                                 const char16_t* aMessage)
 {
     nsresult rv = NS_OK;
     NS_ConvertUTF16toUTF8 messageStr(aMessage);
@@ -2093,11 +1391,6 @@ nsScriptSecurityManager::Observe(nsISupports* aObject, const char* aTopic,
     {
         ScriptSecurityPrefChanged();
     }
-    else if (PL_strncmp(message, sPolicyPrefix, sizeof(sPolicyPrefix)-1) == 0)
-    {
-        // This will force re-initialization of the pref table
-        mPolicyPrefsChanged = true;
-    }
     return rv;
 }
 
@@ -2105,12 +1398,8 @@ nsScriptSecurityManager::Observe(nsISupports* aObject, const char* aTopic,
 // Constructor, Destructor, Initialization //
 /////////////////////////////////////////////
 nsScriptSecurityManager::nsScriptSecurityManager(void)
-    : mOriginToPolicyMap(nullptr),
-      mDefaultPolicy(nullptr),
-      mCapabilities(nullptr),
-      mPrefInitialized(false),
-      mIsJavaScriptEnabled(false),
-      mPolicyPrefsChanged(true)
+    : mPrefInitialized(false)
+    , mIsJavaScriptEnabled(false)
 {
     static_assert(sizeof(intptr_t) == sizeof(void*),
                   "intptr_t and void* have different lengths on this platform. "
@@ -2144,7 +1433,6 @@ nsresult nsScriptSecurityManager::Init()
     NS_ENSURE_SUCCESS(rv, rv);
 
     static const JSSecurityCallbacks securityCallbacks = {
-        CheckObjectAccess,
         ContentSecurityPolicyPermitsJSAction,
         JSPrincipalsSubsume,
     };
@@ -2163,10 +1451,6 @@ static StaticRefPtr<nsScriptSecurityManager> gScriptSecMan;
 nsScriptSecurityManager::~nsScriptSecurityManager(void)
 {
     Preferences::RemoveObservers(this, kObservedPrefs);
-    delete mOriginToPolicyMap;
-    if(mDefaultPolicy)
-        mDefaultPolicy->Drop();
-    delete mCapabilities;
     if (mDomainPolicy)
         mDomainPolicy->Deactivate();
     MOZ_ASSERT(!mDomainPolicy);
@@ -2180,7 +1464,6 @@ nsScriptSecurityManager::Shutdown()
         JS_SetTrustedPrincipals(sRuntime, nullptr);
         sRuntime = nullptr;
     }
-    sEnabledID = JSID_VOID;
 
     NS_IF_RELEASE(sIOService);
     NS_IF_RELEASE(sStrBundle);
@@ -2222,299 +1505,6 @@ nsScriptSecurityManager::SystemPrincipalSingletonConstructor()
     if (gScriptSecMan)
         NS_ADDREF(sysprin = gScriptSecMan->mSystemPrincipal);
     return static_cast<nsSystemPrincipal*>(sysprin);
-}
-
-nsresult
-nsScriptSecurityManager::InitPolicies()
-{
-    // Clear any policies cached on XPConnect wrappers
-    nsresult rv =
-        nsXPConnect::XPConnect()->ClearAllWrappedNativeSecurityPolicies();
-    if (NS_FAILED(rv)) return rv;
-
-    //-- Clear mOriginToPolicyMap: delete mapped DomainEntry items,
-    //-- whose dtor decrements refcount of stored DomainPolicy object
-    delete mOriginToPolicyMap;
-    
-    //-- Marks all the survivor DomainPolicy objects (those cached
-    //-- by nsPrincipal objects) as invalid: they will be released
-    //-- on first nsPrincipal::GetSecurityPolicy() attempt.
-    DomainPolicy::InvalidateAll();
-    
-    //-- Release old default policy
-    if(mDefaultPolicy) {
-        mDefaultPolicy->Drop();
-        mDefaultPolicy = nullptr;
-    }
-    
-    //-- Initialize a new mOriginToPolicyMap
-    mOriginToPolicyMap =
-      new nsObjectHashtable(nullptr, nullptr, DeleteDomainEntry, nullptr);
-    if (!mOriginToPolicyMap)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    //-- Create, refcount and initialize a new default policy 
-    mDefaultPolicy = new DomainPolicy();
-    if (!mDefaultPolicy)
-        return NS_ERROR_OUT_OF_MEMORY;
-
-    mDefaultPolicy->Hold();
-    if (!mDefaultPolicy->Init())
-        return NS_ERROR_UNEXPECTED;
-
-    //-- Initialize the table of security levels
-    if (!mCapabilities)
-    {
-        mCapabilities = 
-          new nsObjectHashtable(nullptr, nullptr, DeleteCapability, nullptr);
-        if (!mCapabilities)
-            return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    // Get a JS context - we need it to create internalized strings later.
-    AutoSafeJSContext cx;
-    rv = InitDomainPolicy(cx, "default", mDefaultPolicy);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsAdoptingCString policyNames =
-        Preferences::GetCString("capability.policy.policynames");
-
-    nsAdoptingCString defaultPolicyNames =
-        Preferences::GetCString("capability.policy.default_policynames");
-    policyNames += NS_LITERAL_CSTRING(" ") + defaultPolicyNames;
-
-    //-- Initialize domain policies
-    char* policyCurrent = policyNames.BeginWriting();
-    bool morePolicies = true;
-    while (morePolicies)
-    {
-        while(*policyCurrent == ' ' || *policyCurrent == ',')
-            policyCurrent++;
-        if (*policyCurrent == '\0')
-            break;
-        char* nameBegin = policyCurrent;
-
-        while(*policyCurrent != '\0' && *policyCurrent != ' ' && *policyCurrent != ',')
-            policyCurrent++;
-
-        morePolicies = (*policyCurrent != '\0');
-        *policyCurrent = '\0';
-        policyCurrent++;
-
-        nsAutoCString sitesPrefName(
-            NS_LITERAL_CSTRING(sPolicyPrefix) +
-            nsDependentCString(nameBegin) +
-            NS_LITERAL_CSTRING(".sites"));
-        nsAdoptingCString domainList =
-            Preferences::GetCString(sitesPrefName.get());
-        if (!domainList) {
-            continue;
-        }
-
-        DomainPolicy* domainPolicy = new DomainPolicy();
-        if (!domainPolicy)
-            return NS_ERROR_OUT_OF_MEMORY;
-
-        if (!domainPolicy->Init())
-        {
-            delete domainPolicy;
-            return NS_ERROR_UNEXPECTED;
-        }
-        domainPolicy->Hold();
-        //-- Parse list of sites and create an entry in mOriginToPolicyMap for each
-        char* domainStart = domainList.BeginWriting();
-        char* domainCurrent = domainStart;
-        char* lastDot = nullptr;
-        char* nextToLastDot = nullptr;
-        bool moreDomains = true;
-        while (moreDomains)
-        {
-            if (*domainCurrent == ' ' || *domainCurrent == '\0')
-            {
-                moreDomains = (*domainCurrent != '\0');
-                *domainCurrent = '\0';
-                nsCStringKey key(nextToLastDot ? nextToLastDot+1 : domainStart);
-                DomainEntry *newEntry = new DomainEntry(domainStart, domainPolicy);
-                if (!newEntry)
-                {
-                    domainPolicy->Drop();
-                    return NS_ERROR_OUT_OF_MEMORY;
-                }
-                DomainEntry *existingEntry = (DomainEntry *)
-                    mOriginToPolicyMap->Get(&key);
-                if (!existingEntry)
-                    mOriginToPolicyMap->Put(&key, newEntry);
-                else
-                {
-                    if (existingEntry->Matches(domainStart))
-                    {
-                        newEntry->mNext = existingEntry;
-                        mOriginToPolicyMap->Put(&key, newEntry);
-                    }
-                    else
-                    {
-                        while (existingEntry->mNext)
-                        {
-                            if (existingEntry->mNext->Matches(domainStart))
-                            {
-                                newEntry->mNext = existingEntry->mNext;
-                                existingEntry->mNext = newEntry;
-                                break;
-                            }
-                            existingEntry = existingEntry->mNext;
-                        }
-                        if (!existingEntry->mNext)
-                            existingEntry->mNext = newEntry;
-                    }
-                }
-                domainStart = domainCurrent + 1;
-                lastDot = nextToLastDot = nullptr;
-            }
-            else if (*domainCurrent == '.')
-            {
-                nextToLastDot = lastDot;
-                lastDot = domainCurrent;
-            }
-            domainCurrent++;
-        }
-
-        rv = InitDomainPolicy(cx, nameBegin, domainPolicy);
-        domainPolicy->Drop();
-        if (NS_FAILED(rv))
-            return rv;
-    }
-
-    // Reset the "dirty" flag
-    mPolicyPrefsChanged = false;
-
-    return NS_OK;
-}
-
-
-nsresult
-nsScriptSecurityManager::InitDomainPolicy(JSContext* cx,
-                                          const char* aPolicyName,
-                                          DomainPolicy* aDomainPolicy)
-{
-    nsresult rv;
-    nsAutoCString policyPrefix(NS_LITERAL_CSTRING(sPolicyPrefix) +
-                               nsDependentCString(aPolicyName) +
-                               NS_LITERAL_CSTRING("."));
-    uint32_t prefixLength = policyPrefix.Length() - 1; // subtract the '.'
-
-    uint32_t prefCount;
-    char** prefNames;
-    nsIPrefBranch* branch = Preferences::GetRootBranch();
-    NS_ASSERTION(branch, "failed to get the root pref branch");
-    rv = branch->GetChildList(policyPrefix.get(), &prefCount, &prefNames);
-    if (NS_FAILED(rv)) return rv;
-    if (prefCount == 0)
-        return NS_OK;
-
-    //-- Populate the policy
-    uint32_t currentPref = 0;
-    for (; currentPref < prefCount; currentPref++)
-    {
-        // Get the class name
-        const char* start = prefNames[currentPref] + prefixLength + 1;
-        char* end = PL_strchr(start, '.');
-        if (!end) // malformed pref, bail on this one
-            continue;
-        static const char sitesStr[] = "sites";
-
-        // We dealt with "sites" in InitPolicies(), so no need to do
-        // that again...
-        if (PL_strncmp(start, sitesStr, sizeof(sitesStr)-1) == 0)
-            continue;
-
-        // Get the pref value
-        nsAdoptingCString prefValue =
-            Preferences::GetCString(prefNames[currentPref]);
-        if (!prefValue) {
-            continue;
-        }
-
-        SecurityLevel secLevel;
-        if (PL_strcasecmp(prefValue, "noAccess") == 0)
-            secLevel.level = SCRIPT_SECURITY_NO_ACCESS;
-        else if (PL_strcasecmp(prefValue, "allAccess") == 0)
-            secLevel.level = SCRIPT_SECURITY_ALL_ACCESS;
-        else if (PL_strcasecmp(prefValue, "sameOrigin") == 0)
-            secLevel.level = SCRIPT_SECURITY_SAME_ORIGIN_ACCESS;
-        else 
-        {  //-- pref value is the name of a capability
-            nsCStringKey secLevelKey(prefValue);
-            secLevel.capability =
-                reinterpret_cast<char*>(mCapabilities->Get(&secLevelKey));
-            if (!secLevel.capability)
-            {
-                secLevel.capability = NS_strdup(prefValue);
-                if (!secLevel.capability)
-                    break;
-                mCapabilities->Put(&secLevelKey, 
-                                   secLevel.capability);
-            }
-        }
-
-        *end = '\0';
-        // Find or store this class in the classes table
-        ClassPolicy* cpolicy = 
-          static_cast<ClassPolicy*>
-                     (PL_DHashTableOperate(aDomainPolicy, start,
-                                              PL_DHASH_ADD));
-        if (!cpolicy)
-            break;
-
-        // If this is the wildcard class (class '*'), save it in mWildcardPolicy
-        // (we leave it stored in the hashtable too to take care of the cleanup)
-        if ((*start == '*') && (end == start + 1)) {
-            aDomainPolicy->mWildcardPolicy = cpolicy;
-
-            // Make sure that cpolicy knows about aDomainPolicy so it can reset
-            // the mWildcardPolicy pointer as needed if it gets moved in the
-            // hashtable.
-            cpolicy->mDomainWeAreWildcardFor = aDomainPolicy;
-        }
-
-        // Get the property name
-        start = end + 1;
-        end = PL_strchr(start, '.');
-        if (end)
-            *end = '\0';
-
-        JSString* propertyKey = ::JS_InternString(cx, start);
-        if (!propertyKey)
-            return NS_ERROR_OUT_OF_MEMORY;
-
-        // Store this property in the class policy
-        PropertyPolicy* ppolicy = 
-          static_cast<PropertyPolicy*>
-                     (PL_DHashTableOperate(cpolicy->mPolicy, propertyKey,
-                                              PL_DHASH_ADD));
-        if (!ppolicy)
-            break;
-
-        if (end) // The pref specifies an access mode
-        {
-            start = end + 1;
-            if (PL_strcasecmp(start, "set") == 0)
-                ppolicy->mSet = secLevel;
-            else
-                ppolicy->mGet = secLevel;
-        }
-        else
-        {
-            if (ppolicy->mGet.level == SCRIPT_SECURITY_UNDEFINED_ACCESS)
-                ppolicy->mGet = secLevel;
-            if (ppolicy->mSet.level == SCRIPT_SECURITY_UNDEFINED_ACCESS)
-                ppolicy->mSet = secLevel;
-        }
-    }
-
-    NS_FREE_XPCOM_ALLOCATED_POINTER_ARRAY(prefCount, prefNames);
-    if (currentPref < prefCount) // Loop exited early because of out-of-memory error
-        return NS_ERROR_OUT_OF_MEMORY;
-    return NS_OK;
 }
 
 inline void
@@ -2612,7 +1602,7 @@ nsScriptSecurityManager::ActivateDomainPolicy(nsIDomainPolicy** aRv)
         return NS_ERROR_SERVICE_NOT_AVAILABLE;
     }
 
-    mDomainPolicy = new mozilla::hotness::DomainPolicy();
+    mDomainPolicy = new DomainPolicy();
     nsCOMPtr<nsIDomainPolicy> ptr = mDomainPolicy;
     ptr.forget(aRv);
     return NS_OK;

@@ -5,7 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsNSSCallbacks.h"
-
+#include "insanity/pkixtypes.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 #include "nsNSSComponent.h"
@@ -17,7 +17,6 @@
 #include "nsIPrompt.h"
 #include "nsProxyRelease.h"
 #include "PSMRunnable.h"
-#include "ScopedNSSTypes.h"
 #include "nsContentUtils.h"
 #include "nsIHttpChannelInternal.h"
 #include "nsISupportsPriority.h"
@@ -793,7 +792,7 @@ void PK11PasswordPromptRunnable::RunOnTargetThread()
 
   nsNSSShutDownPreventionLock locker;
   nsresult rv = NS_OK;
-  PRUnichar *password = nullptr;
+  char16_t *password = nullptr;
   bool value = false;
   nsCOMPtr<nsIPrompt> prompt;
 
@@ -827,13 +826,13 @@ void PK11PasswordPromptRunnable::RunOnTargetThread()
   if (NS_FAILED(rv))
     return; 
 
-  const PRUnichar* formatStrings[1] = { 
+  const char16_t* formatStrings[1] = { 
     ToNewUnicode(NS_ConvertUTF8toUTF16(PK11_GetTokenName(mSlot)))
   };
   rv = nssComponent->PIPBundleFormatStringFromName("CertPassPrompt",
                                       formatStrings, 1,
                                       promptString);
-  nsMemory::Free(const_cast<PRUnichar*>(formatStrings[0]));
+  nsMemory::Free(const_cast<char16_t*>(formatStrings[0]));
 
   if (NS_FAILED(rv))
     return;
@@ -881,13 +880,19 @@ PreliminaryHandshakeDone(PRFileDesc* fd)
 
   infoObject->SetPreliminaryHandshakeDone();
 
+  SSLChannelInfo channelInfo;
+  if (SSL_GetChannelInfo(fd, &channelInfo, sizeof(channelInfo)) == SECSuccess) {
+    infoObject->SetSSLVersionUsed(channelInfo.protocolVersion);
+  }
+
   // Get the NPN value.
   SSLNextProtoState state;
   unsigned char npnbuf[256];
   unsigned int npnlen;
 
   if (SSL_GetNextProto(fd, &state, npnbuf, &npnlen, 256) == SECSuccess) {
-    if (state == SSL_NEXT_PROTO_NEGOTIATED) {
+    if (state == SSL_NEXT_PROTO_NEGOTIATED ||
+        state == SSL_NEXT_PROTO_SELECTED) {
       infoObject->SetNegotiatedNPN(reinterpret_cast<char *>(npnbuf), npnlen);
     }
     else {
@@ -1184,7 +1189,7 @@ void HandshakeCallback(PRFileDesc* fd, void* client_data) {
     nsContentUtils::LogSimpleConsoleError(msg, "SSL");
   }
 
-  ScopedCERTCertificate serverCert(SSL_PeerCertificate(fd));
+  insanity::pkix::ScopedCERTCertificate serverCert(SSL_PeerCertificate(fd));
 
   /* Set the SSL Status information */
   RefPtr<nsSSLStatus> status(infoObject->SSLStatus());
@@ -1196,7 +1201,7 @@ void HandshakeCallback(PRFileDesc* fd, void* client_data) {
   RememberCertErrorsTable::GetInstance().LookupCertErrorBits(infoObject,
                                                              status);
 
-  RefPtr<nsNSSCertificate> nssc(nsNSSCertificate::Create(serverCert));
+  RefPtr<nsNSSCertificate> nssc(nsNSSCertificate::Create(serverCert.get()));
   nsCOMPtr<nsIX509Cert> prevcert;
   infoObject->GetPreviousCert(getter_AddRefs(prevcert));
 

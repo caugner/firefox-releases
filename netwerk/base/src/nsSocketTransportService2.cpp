@@ -356,6 +356,11 @@ nsSocketTransportService::PollTimeout()
         if (r < minR)
             minR = r;
     }
+    // nsASocketHandler defines UINT16_MAX as do not timeout
+    if (minR == UINT16_MAX) {
+        SOCKET_LOG(("poll timeout: none\n"));
+        return NS_SOCKET_POLL_TIMEOUT;
+    }
     SOCKET_LOG(("poll timeout: %lu\n", minR));
     return PR_SecondsToInterval(minR);
 }
@@ -631,7 +636,8 @@ nsSocketTransportService::OnProcessNextEvent(nsIThreadInternal *thread,
 
 NS_IMETHODIMP
 nsSocketTransportService::AfterProcessNextEvent(nsIThreadInternal* thread,
-                                                uint32_t depth)
+                                                uint32_t depth,
+                                                bool eventWasProcessed)
 {
     return NS_OK;
 }
@@ -911,7 +917,7 @@ nsSocketTransportService::UpdatePrefs()
 NS_IMETHODIMP
 nsSocketTransportService::Observe(nsISupports *subject,
                                   const char *topic,
-                                  const PRUnichar *data)
+                                  const char16_t *data)
 {
     if (!strcmp(topic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID)) {
         UpdatePrefs();
@@ -1128,5 +1134,3 @@ nsSocketTransportService::GetSocketConnections(nsTArray<SocketInfo> *data)
     for (uint32_t i = 0; i < mIdleCount; i++)
         AnalyzeConnection(data, &mIdleList[i], false);
 }
-
-

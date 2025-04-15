@@ -18,6 +18,7 @@
 #include "frontend/BytecodeCompiler.h"
 #include "jit/AsmJSModule.h"
 #include "jit/Ion.h"
+#include "jit/JitCommon.h"
 #ifdef JS_ION_PERF
 # include "jit/PerfSpewer.h"
 #endif
@@ -70,10 +71,17 @@ ValidateGlobalVariable(JSContext *cx, const AsmJSModule &module, AsmJSModule::Gl
     switch (global.varInitKind()) {
       case AsmJSModule::Global::InitConstant: {
         const Value &v = global.varInitConstant();
-        if (v.isInt32())
+        switch (global.varInitCoercion()) {
+          case AsmJS_ToInt32:
             *(int32_t *)datum = v.toInt32();
-        else
+            break;
+          case AsmJS_ToNumber:
             *(double *)datum = v.toDouble();
+            break;
+          case AsmJS_FRound:
+            *(float *)datum = static_cast<float>(v.toDouble());
+            break;
+        }
         break;
       }
       case AsmJSModule::Global::InitImport: {
@@ -82,13 +90,17 @@ ValidateGlobalVariable(JSContext *cx, const AsmJSModule &module, AsmJSModule::Gl
         if (!GetDataProperty(cx, importVal, field, &v))
             return false;
 
-        switch (global.varImportCoercion()) {
+        switch (global.varInitCoercion()) {
           case AsmJS_ToInt32:
             if (!ToInt32(cx, v, (int32_t *)datum))
                 return false;
             break;
           case AsmJS_ToNumber:
             if (!ToNumber(cx, v, (double *)datum))
+                return false;
+            break;
+          case AsmJS_FRound:
+            if (!RoundFloat32(cx, v, (float *)datum))
                 return false;
             break;
         }
@@ -157,6 +169,7 @@ ValidateMathBuiltin(JSContext *cx, AsmJSModule::Global &global, HandleValue glob
       case AsmJSMathBuiltin_abs: native = js_math_abs; break;
       case AsmJSMathBuiltin_atan2: native = math_atan2; break;
       case AsmJSMathBuiltin_imul: native = math_imul; break;
+      case AsmJSMathBuiltin_fround: native = math_fround; break;
     }
 
     if (!IsNativeFunction(v, native))
@@ -364,6 +377,10 @@ CallAsmJS(JSContext *cx, unsigned argc, Value *vp)
             if (!ToNumber(cx, v, (double*)&coercedArgs[i]))
                 return false;
             break;
+          case AsmJS_FRound:
+            if (!RoundFloat32(cx, v, (float *)&coercedArgs[i]))
+                return false;
+            break;
         }
     }
 
@@ -381,7 +398,8 @@ CallAsmJS(JSContext *cx, unsigned argc, Value *vp)
         JitActivation jitActivation(cx, /* firstFrameIsConstructing = */ false, /* active */ false);
 
         // Call the per-exported-function trampoline created by GenerateEntry.
-        if (!module.entryTrampoline(func)(coercedArgs.begin(), module.globalData()))
+        AsmJSModule::CodePtr enter = module.entryTrampoline(func);
+        if (!CALL_GENERATED_ASMJS(enter, coercedArgs.begin(), module.globalData()))
             return false;
     }
 
@@ -666,7 +684,7 @@ JSFunction *
 js::NewAsmJSModuleFunction(ExclusiveContext *cx, JSFunction *origFun, HandleObject moduleObj)
 {
     RootedPropertyName name(cx, origFun->name());
-    JSFunction *moduleFun = NewFunction(cx, NullPtr(), LinkAsmJS, origFun->nargs,
+    JSFunction *moduleFun = NewFunction(cx, NullPtr(), LinkAsmJS, origFun->nargs(),
                                         JSFunction::NATIVE_FUN, NullPtr(), name,
                                         JSFunction::ExtendedFinalizeKind, TenuredObject);
     if (!moduleFun)

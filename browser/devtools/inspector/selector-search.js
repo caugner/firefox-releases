@@ -4,7 +4,6 @@
 
 "use strict";
 
-const EventEmitter = require("devtools/shared/event-emitter");
 const promise = require("sdk/core/promise");
 
 loader.lazyGetter(this, "AutocompletePopup", () => require("devtools/shared/autocomplete-popup").AutocompletePopup);
@@ -19,16 +18,12 @@ const MAX_SUGGESTIONS = 15;
  * @param InspectorPanel aInspector
  *        The InspectorPanel whose `walker` attribute should be used for
  *        document traversal.
- * @param nsIDOMDocument aContentDocument
- *        The content document which inspector is attached to, or null if
- *        a remote document.
  * @param nsiInputElement aInputNode
  *        The input element to which the panel will be attached and from where
  *        search input will be taken.
  */
-function SelectorSearch(aInspector, aContentDocument, aInputNode) {
+function SelectorSearch(aInspector, aInputNode) {
   this.inspector = aInspector;
-  this.doc = aContentDocument;
   this.searchBox = aInputNode;
   this.panelDoc = this.searchBox.ownerDocument;
 
@@ -50,12 +45,12 @@ function SelectorSearch(aInspector, aContentDocument, aInputNode) {
   let options = {
     panelId: "inspector-searchbox-panel",
     listBoxId: "searchbox-panel-listbox",
-    fixedWidth: true,
     autoSelect: true,
     position: "before_start",
     direction: "ltr",
+    theme: "auto",
     onClick: this._onListBoxKeypress,
-    onKeypress: this._onListBoxKeypress,
+    onKeypress: this._onListBoxKeypress
   };
   this.searchPopup = new AutocompletePopup(this.panelDoc, options);
 
@@ -66,8 +61,6 @@ function SelectorSearch(aInspector, aContentDocument, aInputNode) {
   // For testing, we need to be able to wait for the most recent node request
   // to finish.  Tests can watch this promise for that.
   this._lastQuery = promise.resolve(null);
-
-  EventEmitter.decorate(this);
 }
 
 exports.SelectorSearch = SelectorSearch;
@@ -165,23 +158,21 @@ SelectorSearch.prototype = {
   /**
    * Removes event listeners and cleans up references.
    */
-  destroy: function SelectorSearch_destroy() {
+  destroy: function() {
     // event listeners.
     this.searchBox.removeEventListener("command", this._onHTMLSearch, true);
     this.searchBox.removeEventListener("keypress", this._onSearchKeypress, true);
     this.searchPopup.destroy();
     this.searchPopup = null;
     this.searchBox = null;
-    this.doc = null;
     this.panelDoc = null;
     this._searchResults = null;
     this._searchSuggestions = null;
-    EventEmitter.decorate(this);
   },
 
   _selectResult: function(index) {
     return this._searchResults.item(index).then(node => {
-      this.emit("node-selected", node);
+      this.inspector.selection.setNodeFront(node, "selectorsearch");
     });
   },
 
@@ -189,7 +180,7 @@ SelectorSearch.prototype = {
    * The command callback for the input box. This function is automatically
    * invoked as the user is typing if the input box type is search.
    */
-  _onHTMLSearch: function SelectorSearch__onHTMLSearch() {
+  _onHTMLSearch: function() {
     let query = this.searchBox.value;
     if (query == this._lastSearched) {
       return;
@@ -250,33 +241,30 @@ SelectorSearch.prototype = {
           if (this.searchPopup.isOpen) {
             this.searchPopup.hidePopup();
           }
-        }
-        else {
-          this.showSuggestions();
-        }
-        this.searchBox.classList.remove("devtools-no-search-result");
+          this.searchBox.classList.remove("devtools-no-search-result");
 
-        return this._selectResult(0);
-      }
-      else {
-        if (query.match(/[\s>+]$/)) {
-          this._lastValidSearch = query + "*";
+          return this._selectResult(0);
         }
-        else if (query.match(/[\s>+][\.#a-zA-Z][\.#>\s+]*$/)) {
-          let lastPart = query.match(/[\s+>][\.#a-zA-Z][^>\s+]*$/)[0];
-          this._lastValidSearch = query.slice(0, -1 * lastPart.length + 1) + "*";
-        }
-        this.searchBox.classList.add("devtools-no-search-result");
-        this.showSuggestions();
+        return this._selectResult(0).then(() => {
+          this.searchBox.classList.remove("devtools-no-search-result");
+        }).then(() => this.showSuggestions());
       }
-      return undefined;
+      if (query.match(/[\s>+]$/)) {
+        this._lastValidSearch = query + "*";
+      }
+      else if (query.match(/[\s>+][\.#a-zA-Z][\.#>\s+]*$/)) {
+        let lastPart = query.match(/[\s+>][\.#a-zA-Z][^>\s+]*$/)[0];
+        this._lastValidSearch = query.slice(0, -1 * lastPart.length + 1) + "*";
+      }
+      this.searchBox.classList.add("devtools-no-search-result");
+      return this.showSuggestions();
     });
   },
 
   /**
    * Handles keypresses inside the input box.
    */
-  _onSearchKeypress: function SelectorSearch__onSearchKeypress(aEvent) {
+  _onSearchKeypress: function(aEvent) {
     let query = this.searchBox.value;
     switch(aEvent.keyCode) {
       case aEvent.DOM_VK_ENTER:
@@ -352,7 +340,7 @@ SelectorSearch.prototype = {
   /**
    * Handles keypress and mouse click on the suggestions richlistbox.
    */
-  _onListBoxKeypress: function SelectorSearch__onListBoxKeypress(aEvent) {
+  _onListBoxKeypress: function(aEvent) {
     switch(aEvent.keyCode || aEvent.button) {
       case aEvent.DOM_VK_ENTER:
       case aEvent.DOM_VK_RETURN:
@@ -409,18 +397,10 @@ SelectorSearch.prototype = {
     }
   },
 
-  
   /**
    * Populates the suggestions list and show the suggestion popup.
    */
-  _showPopup: function SelectorSearch__showPopup(aList, aFirstPart) {
-    // Sort alphabetically in increaseing order.
-    aList = aList.sort();
-    // Sort based on count= in decreasing order.
-    aList = aList.sort(function([a1,a2], [b1,b2]) {
-      return a2 < b2;
-    });
-
+  _showPopup: function(aList, aFirstPart) {
     let total = 0;
     let query = this.searchBox.value;
     let toLowerCase = false;
@@ -470,112 +450,45 @@ SelectorSearch.prototype = {
    * Suggests classes,ids and tags based on the user input as user types in the
    * searchbox.
    */
-  showSuggestions: function SelectorSearch_showSuggestions() {
-    if (!this.walker.isLocal()) {
-      return;
-    }
+  showSuggestions: function() {
     let query = this.searchBox.value;
-    if (this._lastValidSearch != "" &&
-        this._lastToLastValidSearch != this._lastValidSearch) {
-      this._searchSuggestions = {
-        ids: new Map(),
-        classes: new Map(),
-        tags: new Map(),
-      };
-
-      let nodes = [];
-      try {
-        nodes = this.doc.querySelectorAll(this._lastValidSearch);
-      } catch (ex) {}
-      for (let node of nodes) {
-        this._searchSuggestions.ids.set(node.id, 1);
-        this._searchSuggestions.tags
-            .set(node.tagName,
-                 (this._searchSuggestions.tags.get(node.tagName) || 0) + 1);
-        for (let className of node.classList) {
-          this._searchSuggestions.classes
-            .set(className,
-                 (this._searchSuggestions.classes.get(className) || 0) + 1);
-        }
-      }
-      this._lastToLastValidSearch = this._lastValidSearch;
-    }
-    else if (this._lastToLastValidSearch != this._lastValidSearch) {
-      this._searchSuggestions = {
-        ids: new Map(),
-        classes: new Map(),
-        tags: new Map(),
-      };
-
-      if (query.length == 0) {
-        return;
-      }
-
-      let nodes = null;
-      if (this.state == this.States.CLASS) {
-        nodes = this.doc.querySelectorAll("[class]");
-        for (let node of nodes) {
-          for (let className of node.classList) {
-            this._searchSuggestions.classes
-              .set(className,
-                   (this._searchSuggestions.classes.get(className) || 0) + 1);
-          }
-        }
-      }
-      else if (this.state == this.States.ID) {
-        nodes = this.doc.querySelectorAll("[id]");
-        for (let node of nodes) {
-          this._searchSuggestions.ids.set(node.id, 1);
-        }
-      }
-      else if (this.state == this.States.TAG) {
-        nodes = this.doc.getElementsByTagName("*");
-        for (let node of nodes) {
-          this._searchSuggestions.tags
-              .set(node.tagName,
-                   (this._searchSuggestions.tags.get(node.tagName) || 0) + 1);
-        }
-      }
-      else {
-        return;
-      }
-      this._lastToLastValidSearch = this._lastValidSearch;
-    }
-
-    // Filter the suggestions based on search box value.
-    let result = [];
     let firstPart = "";
     if (this.state == this.States.TAG) {
       // gets the tag that is being completed. For ex. 'div.foo > s' returns 's',
       // 'di' returns 'di' and likewise.
-      firstPart = (query.match(/[\s>+]?([a-zA-Z]*)$/) || ["",query])[1];
-      for (let [tag, count] of this._searchSuggestions.tags) {
-        if (tag.toLowerCase().startsWith(firstPart.toLowerCase())) {
-          result.push([tag, count]);
-        }
-      }
+      firstPart = (query.match(/[\s>+]?([a-zA-Z]*)$/) || ["", query])[1];
+      query = query.slice(0, query.length - firstPart.length);
     }
     else if (this.state == this.States.CLASS) {
       // gets the class that is being completed. For ex. '.foo.b' returns 'b'
       firstPart = query.match(/\.([^\.]*)$/)[1];
-      for (let [className, count] of this._searchSuggestions.classes) {
-        if (className.startsWith(firstPart)) {
-          result.push(["." + className, count]);
-        }
-      }
-      firstPart = "." + firstPart;
+      query = query.slice(0, query.length - firstPart.length - 1);
     }
     else if (this.state == this.States.ID) {
       // gets the id that is being completed. For ex. '.foo#b' returns 'b'
       firstPart = query.match(/#([^#]*)$/)[1];
-      for (let [id, count] of this._searchSuggestions.ids) {
-        if (id.startsWith(firstPart)) {
-          result.push(["#" + id, 1]);
-        }
-      }
-      firstPart = "#" + firstPart;
+      query = query.slice(0, query.length - firstPart.length - 1);
     }
-
-    this._showPopup(result, firstPart);
-  },
+    // TODO: implement some caching so that over the wire request is not made
+    // everytime.
+    if (/[\s+>~]$/.test(query)) {
+      query += "*";
+    }
+    this._currentSuggesting = query;
+    return this.walker.getSuggestionsForQuery(query, firstPart, this.state).then(result => {
+      if (this._currentSuggesting != result.query) {
+        // This means that this response is for a previous request and the user
+        // as since typed something extra leading to a new request.
+        return;
+      }
+      this._lastToLastValidSearch = this._lastValidSearch;
+      if (this.state == this.States.CLASS) {
+        firstPart = "." + firstPart;
+      }
+      else if (this.state == this.States.ID) {
+        firstPart = "#" + firstPart;
+      }
+      this._showPopup(result.suggestions, firstPart);
+    });
+  }
 };

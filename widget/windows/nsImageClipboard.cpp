@@ -116,10 +116,9 @@ nsImageToClipboard::CreateFromImage ( imgIContainer* inImage, HANDLE* outBitmap 
     nsresult rv;
     *outBitmap = nullptr;
 
-    nsRefPtr<gfxASurface> surface;
-    inImage->GetFrame(imgIContainer::FRAME_CURRENT,
-                      imgIContainer::FLAG_SYNC_DECODE,
-                      getter_AddRefs(surface));
+    nsRefPtr<gfxASurface> surface =
+      inImage->GetFrame(imgIContainer::FRAME_CURRENT,
+                        imgIContainer::FLAG_SYNC_DECODE);
     NS_ENSURE_TRUE(surface, NS_ERROR_FAILURE);
 
     nsRefPtr<gfxImageSurface> frame(surface->GetAsReadableARGB32ImageSurface());
@@ -136,11 +135,11 @@ nsImageToClipboard::CreateFromImage ( imgIContainer* inImage, HANDLE* outBitmap 
       options.AppendLiteral("version=3;bpp=");
     }
     switch (frame->Format()) {
-    case gfxImageFormatARGB32:
+    case gfxImageFormat::ARGB32:
         format = imgIEncoder::INPUT_FORMAT_HOSTARGB;
         options.AppendInt(32);
         break;
-    case gfxImageFormatRGB24:
+    case gfxImageFormat::RGB24:
         format = imgIEncoder::INPUT_FORMAT_RGB;
         options.AppendInt(24);
         break;

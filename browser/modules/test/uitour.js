@@ -25,7 +25,6 @@ if (typeof Mozilla == 'undefined') {
 		}
 	}
 
-
 	function _sendEvent(action, data) {
 		var event = new CustomEvent('mozUITour', {
 			bubbles: true,
@@ -34,15 +33,43 @@ if (typeof Mozilla == 'undefined') {
 				data: data || {}
 			}
 		});
-		console.log("Sending mozUITour event: ", event);
+
 		document.dispatchEvent(event);
+	}
+
+	function _generateCallbackID() {
+		return Math.random().toString(36).replace(/[^a-z]+/g, '');
+	}
+
+	function _waitForCallback(callback) {
+		var id = _generateCallbackID();
+
+		function listener(event) {
+			if (typeof event.detail != "object")
+				return;
+			if (event.detail.callbackID != id)
+				return;
+
+			document.removeEventListener("mozUITourResponse", listener);
+			callback(event.detail.data);
+		}
+		document.addEventListener("mozUITourResponse", listener);
+
+		return id;
 	}
 
 	Mozilla.UITour.DEFAULT_THEME_CYCLE_DELAY = 10 * 1000;
 
-	Mozilla.UITour.showHighlight = function(target) {
+	Mozilla.UITour.registerPageID = function(pageID) {
+		_sendEvent('registerPageID', {
+			pageID: pageID
+		});
+	};
+
+	Mozilla.UITour.showHighlight = function(target, effect) {
 		_sendEvent('showHighlight', {
-			target: target
+			target: target,
+			effect: effect
 		});
 	};
 
@@ -50,11 +77,33 @@ if (typeof Mozilla == 'undefined') {
 		_sendEvent('hideHighlight');
 	};
 
-	Mozilla.UITour.showInfo = function(target, title, text) {
+	Mozilla.UITour.showInfo = function(target, title, text, icon, buttons, options) {
+		var buttonData = [];
+		if (Array.isArray(buttons)) {
+			for (var i = 0; i < buttons.length; i++) {
+				buttonData.push({
+					label: buttons[i].label,
+					icon: buttons[i].icon,
+					style: buttons[i].style,
+					callbackID: _waitForCallback(buttons[i].callback)
+			});
+			}
+		}
+
+		var closeButtonCallbackID, targetCallbackID;
+		if (options && options.closeButtonCallback)
+			closeButtonCallbackID = _waitForCallback(options.closeButtonCallback);
+		if (options && options.targetCallback)
+			targetCallbackID = _waitForCallback(options.targetCallback);
+
 		_sendEvent('showInfo', {
 			target: target,
 			title: title,
-			text: text
+			text: text,
+			icon: icon,
+			buttons: buttonData,
+			closeButtonCallbackID: closeButtonCallbackID,
+			targetCallbackID: targetCallbackID
 		});
 	};
 
@@ -110,6 +159,19 @@ if (typeof Mozilla == 'undefined') {
 	Mozilla.UITour.showMenu = function(name) {
 		_sendEvent('showMenu', {
 			name: name
+		});
+	};
+
+	Mozilla.UITour.hideMenu = function(name) {
+		_sendEvent('hideMenu', {
+			name: name
+		});
+	};
+
+	Mozilla.UITour.getConfiguration = function(configName, callback) {
+		_sendEvent('getConfiguration', {
+			callbackID: _waitForCallback(callback),
+			configuration: configName,
 		});
 	};
 })();

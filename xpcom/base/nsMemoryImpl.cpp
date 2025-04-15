@@ -48,7 +48,7 @@ nsMemoryImpl::Free(void* ptr)
 NS_IMETHODIMP
 nsMemoryImpl::HeapMinimize(bool aImmediate)
 {
-    return FlushMemory(NS_LITERAL_STRING("heap-minimize").get(), aImmediate);
+    return FlushMemory(MOZ_UTF16("heap-minimize"), aImmediate);
 }
 
 NS_IMETHODIMP
@@ -99,7 +99,7 @@ nsMemoryImpl::Create(nsISupports* outer, const nsIID& aIID, void **aResult)
 }
 
 nsresult
-nsMemoryImpl::FlushMemory(const PRUnichar* aReason, bool aImmediate)
+nsMemoryImpl::FlushMemory(const char16_t* aReason, bool aImmediate)
 {
     nsresult rv = NS_OK;
 
@@ -137,7 +137,7 @@ nsMemoryImpl::FlushMemory(const PRUnichar* aReason, bool aImmediate)
 }
 
 nsresult
-nsMemoryImpl::RunFlushers(const PRUnichar* aReason)
+nsMemoryImpl::RunFlushers(const char16_t* aReason)
 {
     nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
     if (os) {

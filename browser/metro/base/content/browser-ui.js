@@ -88,6 +88,8 @@ var BrowserUI = {
     Services.prefs.addObserver(debugServerStateChanged, this, false);
     Services.prefs.addObserver(debugServerPortChanged, this, false);
     Services.prefs.addObserver("app.crashreporter.autosubmit", this, false);
+    Services.prefs.addObserver("metro.private_browsing.enabled", this, false);
+    this.updatePrivateBrowsingUI();
 
     Services.obs.addObserver(this, "handle-xul-text-link", false);
 
@@ -117,6 +119,9 @@ var BrowserUI = {
     SettingsCharm.init();
     NavButtonSlider.init();
     SelectionHelperUI.init();
+#ifdef NIGHTLY_BUILD
+    ShumwayUtils.init();
+#endif
 
     // We can delay some initialization until after startup.  We wait until
     // the first page is shown, then dispatch a UIReadyDelayed event.
@@ -139,6 +144,15 @@ var BrowserUI = {
       return IndexedDB.receiveMessage(aMessage);
     });
 
+    // hook up telemetry ping for UI data
+    try {
+      UITelemetry.addSimpleMeasureFunction("metro-ui",
+                                           BrowserUI._getMeasures.bind(BrowserUI));
+    } catch (ex) {
+      // swallow exception that occurs if metro-appbar measure is already set up
+      dump("Failed to addSimpleMeasureFunction in browser-ui: " + ex.message + "\n");
+    }
+
     // Delay the panel UI and Sync initialization
     window.addEventListener("UIReadyDelayed", function delayedInit(aEvent) {
       Util.dumpLn("* delay load started...");
@@ -153,6 +167,9 @@ var BrowserUI = {
         DialogUI.init();
         FormHelperUI.init();
         FindHelperUI.init();
+#ifdef NIGHTLY_BUILD
+        PdfJs.init();
+#endif
       } catch(ex) {
         Util.dumpLn("Exception in delay load module:", ex.message);
       }
@@ -184,6 +201,12 @@ var BrowserUI = {
     messageManager.removeMessageListener("Content:StateChange", this);
 
     messageManager.removeMessageListener("Browser:MozApplicationManifest", OfflineApps);
+
+    Services.prefs.removeObserver(debugServerStateChanged, this);
+    Services.prefs.removeObserver(debugServerPortChanged, this);
+    Services.prefs.removeObserver("app.crashreporter.autosubmit", this);
+    Services.prefs.removeObserver("metro.private_browsing.enabled", this);
+
     Services.obs.removeObserver(this, "handle-xul-text-link");
 
     PanelUI.uninit();
@@ -358,12 +381,16 @@ var BrowserUI = {
 
     Task.spawn(function() {
       let postData = {};
+      let webNav = Ci.nsIWebNavigation;
+      let flags = webNav.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP |
+                  webNav.LOAD_FLAGS_FIXUP_SCHEME_TYPOS;
       aURI = yield Browser.getShortcutOrURI(aURI, postData);
-      Browser.loadURI(aURI, { flags: Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP, postData: postData });
+      Browser.loadURI(aURI, { flags: flags, postData: postData });
 
       // Delay doing the fixup so the raw URI is passed to loadURIWithFlags
       // and the proper third-party fixup can be done
-      let fixupFlags = Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP;
+      let fixupFlags = Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP |
+                       Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS;
       let uri = gURIFixup.createFixupURI(aURI, fixupFlags);
       gHistSvc.markPageAsTyped(uri);
 
@@ -402,9 +429,26 @@ var BrowserUI = {
    * Open a new tab in the foreground in response to a user action.
    * See Browser.addTab for more documentation.
    */
-  addAndShowTab: function (aURI, aOwner) {
+  addAndShowTab: function (aURI, aOwner, aParams) {
     ContextUI.peekTabs(kForegroundTabAnimationDelay);
-    return Browser.addTab(aURI || kStartURI, true, aOwner);
+    return Browser.addTab(aURI || kStartURI, true, aOwner, aParams);
+  },
+
+  addAndShowPrivateTab: function (aURI, aOwner) {
+    return this.addAndShowTab(aURI, aOwner, { private: true });
+  },
+
+  get isPrivateBrowsingEnabled() {
+    return Services.prefs.getBoolPref("metro.private_browsing.enabled");
+  },
+
+  updatePrivateBrowsingUI: function () {
+    let command = document.getElementById("cmd_newPrivateTab");
+    if (this.isPrivateBrowsingEnabled) {
+      command.removeAttribute("disabled");
+    } else {
+      command.setAttribute("disabled", "true");
+    }
   },
 
   /**
@@ -600,8 +644,9 @@ var BrowserUI = {
             BrowserUI.submitLastCrashReportOrShowPrompt;
 #endif
             break;
-
-
+          case "metro.private_browsing.enabled":
+            this.updatePrivateBrowsingUI();
+            break;
         }
         break;
     }
@@ -709,6 +754,14 @@ var BrowserUI = {
       StyleSheetSvc.loadAndRegisterSheet(uri,
                                          Ci.nsIStyleSheetService.AGENT_SHEET);
     }
+  },
+
+  _getMeasures: function() {
+    let dimensions = {
+      "window-width": ContentAreaObserver.width,
+      "window-height": ContentAreaObserver.height
+    };
+    return dimensions;
   },
 
   /*********************************
@@ -839,29 +892,33 @@ var BrowserUI = {
           referrerURI = Services.io.newURI(json.referrer, null, null);
         this.goToURI(json.uri);
         break;
-      case "Content:StateChange":
-        let currBrowser = Browser.selectedBrowser;
-        if (this.shouldCaptureThumbnails(currBrowser)) {
-          PageThumbs.captureAndStore(currBrowser);
-          let currPage = currBrowser.currentURI.spec;
+      case "Content:StateChange": {
+        let tab = Browser.selectedTab;
+        if (this.shouldCaptureThumbnails(tab)) {
+          PageThumbs.captureAndStore(tab.browser);
+          let currPage = tab.browser.currentURI.spec;
           Services.obs.notifyObservers(null, "Metro:RefreshTopsiteThumbnail", currPage);
         }
         break;
+      }
     }
 
     return {};
   },
 
-  // Private Browsing is not supported on metro at this time, when it is added
-  //  this function must be updated to skip capturing those pages
-  shouldCaptureThumbnails: function shouldCaptureThumbnails(aBrowser) {
+  shouldCaptureThumbnails: function shouldCaptureThumbnails(aTab) {
     // Capture only if it's the currently selected tab.
-    if (aBrowser != Browser.selectedBrowser) {
+    if (aTab != Browser.selectedTab) {
+      return false;
+    }
+    // Skip private tabs
+    if (aTab.isPrivate) {
       return false;
     }
     // FIXME Bug 720575 - Don't capture thumbnails for SVG or XML documents as
     //       that currently regresses Talos SVG tests.
-    let doc = aBrowser.contentDocument;
+    let browser = aTab.browser;
+    let doc = browser.contentDocument;
     if (doc instanceof SVGDocument || doc instanceof XMLDocument) {
       return false;
     }
@@ -874,17 +931,17 @@ var BrowserUI = {
       return false;
     }
     // There's no point in taking screenshot of loading pages.
-    if (aBrowser.docShell.busyFlags != Ci.nsIDocShell.BUSY_FLAGS_NONE) {
+    if (browser.docShell.busyFlags != Ci.nsIDocShell.BUSY_FLAGS_NONE) {
       return false;
     }
 
     // Don't take screenshots of about: pages.
-    if (aBrowser.currentURI.schemeIs("about")) {
+    if (browser.currentURI.schemeIs("about")) {
       return false;
     }
 
     // No valid document channel. We shouldn't take a screenshot.
-    let channel = aBrowser.docShell.currentDocumentChannel;
+    let channel = browser.docShell.currentDocumentChannel;
     if (!channel) {
       return false;
     }
@@ -1086,12 +1143,13 @@ var BrowserUI = {
 
   confirmSanitizeDialog: function () {
     let bundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
-    let title = bundle.GetStringFromName("clearPrivateData.title");
-    let message = bundle.GetStringFromName("clearPrivateData.message");
+    let title = bundle.GetStringFromName("clearPrivateData.title2");
+    let options = bundle.GetStringFromName("optionsCharm");
+    let message = bundle.GetStringFromName("clearPrivateData.message2").replace("#1", options);
     let clearbutton = bundle.GetStringFromName("clearPrivateData.clearButton");
 
     let prefsClearButton = document.getElementById("prefs-clear-data");
-    prefsClearButton.disabled = true; 
+    prefsClearButton.disabled = true;
 
     let buttonPressed = Services.prompt.confirmEx(
                           null,

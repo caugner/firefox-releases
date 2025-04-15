@@ -42,11 +42,13 @@
 #include "GonkRecorderProfiles.h"
 #include "GonkCameraControl.h"
 #include "CameraCommon.h"
+#include "DeviceStorageFileDescriptor.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::layers;
 using namespace android;
+using mozilla::gfx::IntSize;
 
 /**
  * See bug 783682.  Most camera implementations, despite claiming they
@@ -1043,7 +1045,7 @@ nsGonkCameraControl::TakePictureImpl(TakePictureTask* aTakePicture)
   // is meant to be stored as a local time.  Since we are given seconds from
   // Epoch GMT, we use localtime_r() to handle the conversion.
   time_t time = aTakePicture->mDateTime;
-  if (time != aTakePicture->mDateTime) {
+  if ((uint64_t)time != aTakePicture->mDateTime) {
     DOM_CAMERA_LOGE("picture date/time '%llu' is too far in the future\n", aTakePicture->mDateTime);
   } else {
     struct tm t;
@@ -1117,42 +1119,24 @@ nsGonkCameraControl::StartRecordingImpl(StartRecordingTask* aStartRecording)
    * The camera app needs to provide the file extension '.3gp' for now.
    * See bug 795202.
    */
-  nsCOMPtr<nsIFile> filename = aStartRecording->mFolder;
-  filename->AppendRelativePath(aStartRecording->mFilename);
-
-  nsString fullpath;
-  filename->GetPath(fullpath);
-
-  nsCOMPtr<nsIVolumeService> vs = do_GetService(NS_VOLUMESERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(vs, NS_ERROR_FAILURE);
-
-  nsCOMPtr<nsIVolume> vol;
-  nsresult rv = vs->GetVolumeByPath(fullpath, getter_AddRefs(vol));
-  NS_ENSURE_SUCCESS(rv, NS_ERROR_INVALID_ARG);
-
-  nsString volName;
-  vol->GetName(volName);
-
-  mVideoFile = new DeviceStorageFile(NS_LITERAL_STRING("videos"),
-                                     volName,
-                                     aStartRecording->mFilename);
-
-  nsAutoCString nativeFilename;
-  filename->GetNativePath(nativeFilename);
-  DOM_CAMERA_LOGI("Video filename is '%s'\n", nativeFilename.get());
+  nsRefPtr<DeviceStorageFileDescriptor> dsfd = aStartRecording->mDSFileDescriptor;
+  NS_ENSURE_TRUE(dsfd, NS_ERROR_FAILURE);
+  nsAutoString fullPath;
+  mVideoFile = dsfd->mDSFile;
+  mVideoFile->GetFullPath(fullPath);
+  DOM_CAMERA_LOGI("Video filename is '%s'\n",
+                  NS_LossyConvertUTF16toASCII(fullPath).get());
 
   if (!mVideoFile->IsSafePath()) {
     DOM_CAMERA_LOGE("Invalid video file name\n");
     return NS_ERROR_INVALID_ARG;
   }
 
-  ScopedClose fd(open(nativeFilename.get(), O_RDWR | O_CREAT, 0644));
-  if (fd < 0) {
-    DOM_CAMERA_LOGE("Couldn't create file '%s': (%d) %s\n", nativeFilename.get(), errno, strerror(errno));
-    return NS_ERROR_FAILURE;
-  }
-
-  rv = SetupRecording(fd, aStartRecording->mOptions.rotation, aStartRecording->mOptions.maxFileSizeBytes, aStartRecording->mOptions.maxVideoLengthMs);
+  nsresult rv;
+  rv = SetupRecording(dsfd->mFileDescriptor.PlatformHandle(),
+                      aStartRecording->mOptions.rotation,
+                      aStartRecording->mOptions.maxFileSizeBytes,
+                      aStartRecording->mOptions.maxVideoLengthMs);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (mRecorder->start() != OK) {
@@ -1179,7 +1163,7 @@ public:
     MOZ_ASSERT(NS_IsMainThread());
 
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
-    obs->NotifyObservers(mFile, "file-watcher-notify", NS_LITERAL_STRING("modified").get());
+    obs->NotifyObservers(mFile, "file-watcher-notify", MOZ_UTF16("modified"));
     return NS_OK;
   }
 
@@ -1707,16 +1691,14 @@ GonkFrameBuilder(Image* aImage, void* aBuffer, uint32_t aWidth, uint32_t aHeight
   GrallocImage* videoImage = static_cast<GrallocImage*>(aImage);
   GrallocImage::GrallocData data;
   data.mGraphicBuffer = static_cast<layers::GraphicBufferLocked*>(aBuffer);
-  data.mPicSize = gfxIntSize(aWidth, aHeight);
+  data.mPicSize = IntSize(aWidth, aHeight);
   videoImage->SetData(data);
 }
 
 void
 ReceiveFrame(nsGonkCameraControl* gc, layers::GraphicBufferLocked* aBuffer)
 {
-  if (!gc->ReceiveFrame(aBuffer, ImageFormat::GRALLOC_PLANAR_YCBCR, GonkFrameBuilder)) {
-    aBuffer->Unlock();
-  }
+  gc->ReceiveFrame(aBuffer, ImageFormat::GRALLOC_PLANAR_YCBCR, GonkFrameBuilder);
 }
 
 void

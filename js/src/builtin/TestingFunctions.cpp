@@ -25,6 +25,7 @@
 #include "vm/ProxyObject.h"
 
 #include "jscntxtinlines.h"
+#include "jsobjinlines.h"
 
 using namespace js;
 using namespace JS;
@@ -38,7 +39,7 @@ static bool fuzzingSafe = false;
 static bool
 GetBuildConfiguration(JSContext *cx, unsigned argc, jsval *vp)
 {
-    RootedObject info(cx, JS_NewObject(cx, nullptr, nullptr, nullptr));
+    RootedObject info(cx, JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr()));
     if (!info)
         return false;
     RootedValue value(cx);
@@ -245,14 +246,14 @@ GC(JSContext *cx, unsigned argc, jsval *vp)
 static bool
 MinorGC(JSContext *cx, unsigned argc, jsval *vp)
 {
-#ifdef JSGC_GENERATIONAL
     CallArgs args = CallArgsFromVp(argc, vp);
-
+#ifdef JSGC_GENERATIONAL
     if (args.get(0) == BooleanValue(true))
         cx->runtime()->gcStoreBuffer.setAboutToOverflow();
 
     MinorGC(cx, gcreason::API);
 #endif
+    args.rval().setUndefined();
     return true;
 }
 
@@ -831,7 +832,7 @@ MakeFinalizeObserver(JSContext *cx, unsigned argc, jsval *vp)
     if (!scope)
         return false;
 
-    JSObject *obj = JS_NewObjectWithGivenProto(cx, &FinalizeCounterClass, nullptr, scope);
+    JSObject *obj = JS_NewObjectWithGivenProto(cx, &FinalizeCounterClass, JS::NullPtr(), scope);
     if (!obj)
         return false;
 
@@ -872,15 +873,17 @@ DumpHeapComplete(JSContext *cx, unsigned argc, jsval *vp)
     if (argc > i) {
         Value v = args[i];
         if (v.isString()) {
-            JSString *str = v.toString();
-            JSAutoByteString fileNameBytes;
-            if (!fileNameBytes.encodeLatin1(cx, str))
-                return false;
-            const char *fileName = fileNameBytes.ptr();
-            dumpFile = fopen(fileName, "w");
-            if (!dumpFile) {
-                JS_ReportError(cx, "can't open %s", fileName);
-                return false;
+            if (!fuzzingSafe) {
+                JSString *str = v.toString();
+                JSAutoByteString fileNameBytes;
+                if (!fileNameBytes.encodeLatin1(cx, str))
+                    return false;
+                const char *fileName = fileNameBytes.ptr();
+                dumpFile = fopen(fileName, "w");
+                if (!dumpFile) {
+                    JS_ReportError(cx, "can't open %s", fileName);
+                    return false;
+                }
             }
             ++i;
         }
@@ -946,7 +949,7 @@ static bool
 EnableOsiPointRegisterChecks(JSContext *, unsigned, jsval *vp)
 {
 #if defined(JS_ION) && defined(CHECK_OSIPOINT_REGISTERS)
-    jit::js_IonOptions.checkOsiPointRegisters = true;
+    jit::js_JitOptions.checkOsiPointRegisters = true;
 #endif
     JS_SET_RVAL(cx, vp, JSVAL_VOID);
     return true;
@@ -978,22 +981,45 @@ js::testingFunc_inParallelSection(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
-static const char *ObjectMetadataPropertyName = "__objectMetadataFunction__";
-
 static bool
 ShellObjectMetadataCallback(JSContext *cx, JSObject **pmetadata)
 {
-    RootedValue fun(cx);
-    if (!JS_GetProperty(cx, cx->global(), ObjectMetadataPropertyName, &fun))
+    RootedObject obj(cx, NewBuiltinClassInstance(cx, &JSObject::class_));
+    if (!obj)
         return false;
 
-    RootedValue rval(cx);
-    if (!Invoke(cx, UndefinedValue(), fun, 0, nullptr, &rval))
+    RootedObject stack(cx, NewDenseEmptyArray(cx));
+    if (!stack)
         return false;
 
-    if (rval.isObject())
-        *pmetadata = &rval.toObject();
+    static int createdIndex = 0;
+    createdIndex++;
 
+    if (!JS_DefineProperty(cx, obj, "index", Int32Value(createdIndex),
+                           JS_PropertyStub, JS_StrictPropertyStub, 0))
+    {
+        return false;
+    }
+
+    if (!JS_DefineProperty(cx, obj, "stack", ObjectValue(*stack),
+                           JS_PropertyStub, JS_StrictPropertyStub, 0))
+    {
+        return false;
+    }
+
+    int stackIndex = 0;
+    for (NonBuiltinScriptFrameIter iter(cx); !iter.done(); ++iter) {
+        if (iter.isFunctionFrame() && iter.compartment() == cx->compartment()) {
+            if (!JS_DefinePropertyById(cx, stack, INT_TO_JSID(stackIndex), ObjectValue(*iter.callee()),
+                                       JS_PropertyStub, JS_StrictPropertyStub, 0))
+            {
+                return false;
+            }
+            stackIndex++;
+        }
+    }
+
+    *pmetadata = obj;
     return true;
 }
 
@@ -1002,19 +1028,10 @@ SetObjectMetadataCallback(JSContext *cx, unsigned argc, jsval *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
+    bool enabled = argc ? ToBoolean(args[0]) : false;
+    SetObjectMetadataCallback(cx, enabled ? ShellObjectMetadataCallback : nullptr);
+
     args.rval().setUndefined();
-
-    if (argc == 0 || !args[0].isObject() || !args[0].toObject().is<JSFunction>()) {
-        if (!JS_DeleteProperty(cx, cx->global(), ObjectMetadataPropertyName))
-            return false;
-        js::SetObjectMetadataCallback(cx, nullptr);
-        return true;
-    }
-
-    if (!JS_DefineProperty(cx, cx->global(), ObjectMetadataPropertyName, args[0], nullptr, nullptr, 0))
-        return false;
-
-    js::SetObjectMetadataCallback(cx, ShellObjectMetadataCallback);
     return true;
 }
 
@@ -1106,7 +1123,31 @@ SetJitCompilerOption(JSContext *cx, unsigned argc, jsval *vp)
 
     JS_SetGlobalJitCompilerOption(cx, opt, uint32_t(number));
 
-    args.rval().setBoolean(true);
+    args.rval().setUndefined();
+    return true;
+}
+
+static bool
+GetJitCompilerOptions(JSContext *cx, unsigned argc, jsval *vp)
+{
+    RootedObject info(cx, JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr()));
+    if (!info)
+        return false;
+
+    RootedValue value(cx);
+
+#define JIT_COMPILER_MATCH(key, string)                         \
+    opt = JSJITCOMPILER_ ## key;                                \
+    value.setInt32(JS_GetGlobalJitCompilerOption(cx, opt));     \
+    if (!JS_SetProperty(cx, info, string, value))               \
+        return false;
+
+    JSJitCompilerOption opt = JSJITCOMPILER_NOT_AN_OPTION;
+    JIT_COMPILER_OPTIONS(JIT_COMPILER_MATCH);
+#undef JIT_COMPILER_MATCH
+
+    *vp = ObjectValue(*info);
+
     return true;
 }
 
@@ -1115,7 +1156,7 @@ SetIonCheckGraphCoherency(JSContext *cx, unsigned argc, jsval *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 #ifdef JS_ION
-    jit::js_IonOptions.checkGraphConsistency = ToBoolean(args.get(0));
+    jit::js_JitOptions.checkGraphConsistency = ToBoolean(args.get(0));
 #endif
     args.rval().setUndefined();
     return true;
@@ -1131,7 +1172,7 @@ class CloneBufferObject : public JSObject {
     static const Class class_;
 
     static CloneBufferObject *Create(JSContext *cx) {
-        RootedObject obj(cx, JS_NewObject(cx, Jsvalify(&class_), nullptr, nullptr));
+        RootedObject obj(cx, JS_NewObject(cx, Jsvalify(&class_), JS::NullPtr(), JS::NullPtr()));
         if (!obj)
             return nullptr;
         obj->setReservedSlot(DATA_SLOT, PrivateValue(nullptr));
@@ -1268,7 +1309,6 @@ const Class CloneBufferObject::class_ = {
     JS_ResolveStub,
     JS_ConvertStub,
     Finalize,
-    nullptr,                  /* checkAccess */
     nullptr,                  /* call */
     nullptr,                  /* hasInstance */
     nullptr,                  /* construct */
@@ -1437,7 +1477,7 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "   10: Incremental GC in multiple slices\n"
 "   11: Verify post write barriers between instructions\n"
 "   12: Verify post write barriers between paints\n"
-"   13: Purge analysis state when memory is allocated\n"
+"   13: Check internal hashtables on minor GC\n"
 "  Period specifies that collection happens every n allocations.\n"),
 
     JS_FN_HELP("schedulegc", ScheduleGC, 1, 0,
@@ -1529,13 +1569,17 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "  Returns whether asm.js compilation is currently available or whether it is disabled\n"
 "  (e.g., by the debugger)."),
 
+    JS_FN_HELP("getJitCompilerOptions", GetJitCompilerOptions, 0, 0,
+"getCompilerOptions()",
+"Return an object describing some of the JIT compiler options.\n"),
+
     JS_FN_HELP("isAsmJSModule", IsAsmJSModule, 1, 0,
 "isAsmJSModule(fn)",
 "  Returns whether the given value is a function containing \"use asm\" that has been\n"
 "  validated according to the asm.js spec."),
 
     JS_FN_HELP("isAsmJSModuleLoadedFromCache", IsAsmJSModuleLoadedFromCache, 1, 0,
-"isAsmJSModule(fn)",
+"isAsmJSModuleLoadedFromCache(fn)",
 "  Return whether the given asm.js module function has been loaded directly\n"
 "  from the cache. This function throws an error if fn is not a validated asm.js\n"
 "  module."),

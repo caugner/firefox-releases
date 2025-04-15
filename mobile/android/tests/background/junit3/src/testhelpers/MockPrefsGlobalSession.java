@@ -8,6 +8,7 @@ import java.io.IOException;
 import org.json.simple.parser.ParseException;
 import org.mozilla.gecko.sync.GlobalSession;
 import org.mozilla.gecko.sync.NonObjectJSONException;
+import org.mozilla.gecko.sync.SyncConfiguration;
 import org.mozilla.gecko.sync.SyncConfigurationException;
 import org.mozilla.gecko.sync.crypto.KeyBundle;
 import org.mozilla.gecko.sync.delegates.ClientsDataDelegate;
@@ -26,36 +27,39 @@ public class MockPrefsGlobalSession extends GlobalSession {
 
   public MockSharedPreferences prefs;
 
-  public MockPrefsGlobalSession(String serverURL,
-      String username, String password, String prefsPath,
+  public MockPrefsGlobalSession(
+      SyncConfiguration config, GlobalSessionCallback callback, Context context,
+      Bundle extras, ClientsDataDelegate clientsDelegate)
+      throws SyncConfigurationException, IllegalArgumentException, IOException,
+      ParseException, NonObjectJSONException {
+    super(config, callback, context, extras, clientsDelegate, callback);
+  }
+
+  public static MockPrefsGlobalSession getSession(
+      String username, String password,
       KeyBundle syncKeyBundle, GlobalSessionCallback callback, Context context,
       Bundle extras, ClientsDataDelegate clientsDelegate)
       throws SyncConfigurationException, IllegalArgumentException, IOException,
       ParseException, NonObjectJSONException {
-    this(serverURL, username, new BasicAuthHeaderProvider(username, password), prefsPath, syncKeyBundle, callback, context, extras, clientsDelegate);
+    return getSession(username, new BasicAuthHeaderProvider(username, password), null,
+         syncKeyBundle, callback, context, extras, clientsDelegate);
   }
 
-  public MockPrefsGlobalSession(String serverURL,
+  public static MockPrefsGlobalSession getSession(
       String username, AuthHeaderProvider authHeaderProvider, String prefsPath,
       KeyBundle syncKeyBundle, GlobalSessionCallback callback, Context context,
       Bundle extras, ClientsDataDelegate clientsDelegate)
       throws SyncConfigurationException, IllegalArgumentException, IOException,
       ParseException, NonObjectJSONException {
-    super(serverURL, username, authHeaderProvider, prefsPath, syncKeyBundle,
-        callback, context, extras, clientsDelegate);
-  }
 
-  @Override
-  public SharedPreferences getPrefs(String name, int mode) {
-    if (prefs == null) {
-      prefs = new MockSharedPreferences();
-    }
-    return prefs;
+    final SharedPreferences prefs = new MockSharedPreferences();
+    final SyncConfiguration config = new SyncConfiguration(username, authHeaderProvider, prefs);
+    config.syncKeyBundle = syncKeyBundle;
+    return new MockPrefsGlobalSession(config, callback, context, extras, clientsDelegate);
   }
 
   @Override
   public Context getContext() {
     return null;
   }
-
 }

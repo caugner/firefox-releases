@@ -13,6 +13,7 @@
 #include "nsIFrame.h"
 #include "ImageLayers.h"
 #include "DisplayItemClip.h"
+#include "mozilla/layers/LayersTypes.h"
 
 class nsDisplayListBuilder;
 class nsDisplayList;
@@ -30,6 +31,7 @@ class ThebesLayer;
 
 class FrameLayerBuilder;
 class LayerManagerData;
+class ThebesLayerData;
 
 enum LayerState {
   LAYER_NONE,
@@ -144,6 +146,7 @@ public:
   typedef layers::ImageLayer ImageLayer;
   typedef layers::LayerManager LayerManager;
   typedef layers::BasicLayerManager BasicLayerManager;
+  typedef layers::EventRegions EventRegions;
 
   FrameLayerBuilder() :
     mRetainingManager(nullptr),
@@ -162,7 +165,8 @@ public:
 
   static void Shutdown();
 
-  void Init(nsDisplayListBuilder* aBuilder, LayerManager* aManager);
+  void Init(nsDisplayListBuilder* aBuilder, LayerManager* aManager,
+            ThebesLayerData* aLayerData = nullptr);
 
   /**
    * Call this to notify that we have just started a transaction on the
@@ -288,7 +292,7 @@ public:
    * aItem must have an underlying frame.
    * @param aTopLeft offset from active scrolled root to reference frame
    */
-  void AddThebesDisplayItem(ThebesLayer* aLayer,
+  void AddThebesDisplayItem(ThebesLayerData* aLayer,
                             nsDisplayItem* aItem,
                             const DisplayItemClip& aClip,
                             nsIFrame* aContainerLayerFrame,
@@ -583,6 +587,11 @@ public:
     return mThebesLayerItems.GetEntry(aLayer);
   }
 
+  ThebesLayerData* GetContainingThebesLayerData()
+  {
+    return mContainingThebesLayer;
+  }
+
   /**
    * Attempt to build the most compressed layer tree possible, even if it means
    * throwing away existing retained buffers.
@@ -629,6 +638,13 @@ protected:
    * clipping data) to be rendered in the layer.
    */
   nsTHashtable<ThebesLayerItemsEntry> mThebesLayerItems;
+
+  /**
+   * When building layers for an inactive layer, this is where the
+   * inactive layer will be placed.
+   */
+  ThebesLayerData*                    mContainingThebesLayer;
+
   /**
    * Saved generation counter so we can detect DOM changes.
    */

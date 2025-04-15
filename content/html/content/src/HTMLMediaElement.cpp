@@ -75,10 +75,10 @@
 
 #include "nsCSSParser.h"
 #include "nsIMediaList.h"
-#include "nsIDOMWakeLock.h"
+#include "mozilla/dom/power/PowerManagerService.h"
+#include "mozilla/dom/WakeLock.h"
 
 #include "ImageContainer.h"
-#include "nsIPowerManagerService.h"
 #include "nsRange.h"
 #include <algorithm>
 
@@ -271,7 +271,7 @@ NS_IMPL_ISUPPORTS5(HTMLMediaElement::MediaLoadListener, nsIRequestObserver,
 
 NS_IMETHODIMP
 HTMLMediaElement::MediaLoadListener::Observe(nsISupports* aSubject,
-                                             const char* aTopic, const PRUnichar* aData)
+                                             const char* aTopic, const char16_t* aData)
 {
   nsContentUtils::UnregisterShutdownObserver(this);
 
@@ -281,7 +281,7 @@ HTMLMediaElement::MediaLoadListener::Observe(nsISupports* aSubject,
 }
 
 void HTMLMediaElement::ReportLoadError(const char* aMsg,
-                                       const PRUnichar** aParams,
+                                       const char16_t** aParams,
                                        uint32_t aParamCount)
 {
   nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
@@ -335,7 +335,7 @@ NS_IMETHODIMP HTMLMediaElement::MediaLoadListener::OnStartRequest(nsIRequest* aR
     code.AppendInt(responseStatus);
     nsAutoString src;
     element->GetCurrentSrc(src);
-    const PRUnichar* params[] = { code.get(), src.get() };
+    const char16_t* params[] = { code.get(), src.get() };
     element->ReportLoadError("MediaLoadHttpError", params, ArrayLength(params));
     return NS_BINDING_ABORTED;
   }
@@ -743,9 +743,13 @@ NS_IMETHODIMP HTMLMediaElement::Load()
 void HTMLMediaElement::ResetState()
 {
   mMediaSize = nsIntSize(-1, -1);
-  VideoFrameContainer* container = GetVideoFrameContainer();
-  if (container) {
-    container->Reset();
+  // There might be a pending MediaDecoder::PlaybackPositionChanged() which
+  // will overwrite |mMediaSize| in UpdateMediaSize() to give staled videoWidth
+  // and videoHeight. We have to call ForgetElement() here such that the staled
+  // callbacks won't reach us.
+  if (mVideoFrameContainer) {
+    mVideoFrameContainer->ForgetElement();
+    mVideoFrameContainer = nullptr;
   }
 }
 
@@ -819,7 +823,7 @@ void HTMLMediaElement::SelectResource()
         return;
       }
     } else {
-      const PRUnichar* params[] = { src.get() };
+      const char16_t* params[] = { src.get() };
       ReportLoadError("MediaLoadInvalidURI", params, ArrayLength(params));
     }
     NoSupportedMediaSourceError();
@@ -901,7 +905,7 @@ void HTMLMediaElement::LoadFromSourceChildren()
     if (child->GetAttr(kNameSpaceID_None, nsGkAtoms::type, type) &&
         GetCanPlay(type) == CANPLAY_NO) {
       DispatchAsyncSourceError(child);
-      const PRUnichar* params[] = { type.get(), src.get() };
+      const char16_t* params[] = { type.get(), src.get() };
       ReportLoadError("MediaLoadUnsupportedTypeAttribute", params, ArrayLength(params));
       continue;
     }
@@ -913,7 +917,7 @@ void HTMLMediaElement::LoadFromSourceChildren()
       nsIPresShell* presShell = OwnerDoc()->GetShell();
       if (presShell && !mediaList->Matches(presShell->GetPresContext(), nullptr)) {
         DispatchAsyncSourceError(child);
-        const PRUnichar* params[] = { media.get(), src.get() };
+        const char16_t* params[] = { media.get(), src.get() };
         ReportLoadError("MediaLoadSourceMediaNotMatched", params, ArrayLength(params));
         continue;
       }
@@ -926,7 +930,7 @@ void HTMLMediaElement::LoadFromSourceChildren()
     NewURIFromString(src, getter_AddRefs(uri));
     if (!uri) {
       DispatchAsyncSourceError(child);
-      const PRUnichar* params[] = { src.get() };
+      const char16_t* params[] = { src.get() };
       ReportLoadError("MediaLoadInvalidURI", params, ArrayLength(params));
       continue;
     }
@@ -1121,7 +1125,7 @@ nsresult HTMLMediaElement::LoadResource()
       nsCString specUTF8;
       mLoadingSrc->GetSpec(specUTF8);
       NS_ConvertUTF8toUTF16 spec(specUTF8);
-      const PRUnichar* params[] = { spec.get() };
+      const char16_t* params[] = { spec.get() };
       ReportLoadError("MediaLoadInvalidURI", params, ArrayLength(params));
       return rv;
     }
@@ -1136,7 +1140,7 @@ nsresult HTMLMediaElement::LoadResource()
       nsCString specUTF8;
       mLoadingSrc->GetSpec(specUTF8);
       NS_ConvertUTF8toUTF16 spec(specUTF8);
-      const PRUnichar* params[] = { spec.get() };
+      const char16_t* params[] = { spec.get() };
       ReportLoadError("MediaLoadInvalidURI", params, ArrayLength(params));
       return rv;
     }
@@ -1623,7 +1627,7 @@ HTMLMediaElement::MozGetMetadata(JSContext* cx, ErrorResult& aRv)
     return nullptr;
   }
 
-  JS::Rooted<JSObject*> tags(cx, JS_NewObject(cx, nullptr, nullptr, nullptr));
+  JS::Rooted<JSObject*> tags(cx, JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr()));
   if (!tags) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
@@ -1642,14 +1646,14 @@ HTMLMediaElement::MozGetMetadata(JSContext* cx, ErrorResult& aRv)
 }
 
 NS_IMETHODIMP
-HTMLMediaElement::MozGetMetadata(JSContext* cx, JS::Value* aValue)
+HTMLMediaElement::MozGetMetadata(JSContext* cx, JS::MutableHandle<JS::Value> aValue)
 {
   ErrorResult rv;
 
   JSObject* obj = MozGetMetadata(cx, rv);
   if (!rv.Failed()) {
     MOZ_ASSERT(obj);
-    *aValue = JS::ObjectValue(*obj);
+    aValue.setObject(*obj);
   }
 
   return rv.ErrorCode();
@@ -2015,8 +2019,6 @@ HTMLMediaElement::HTMLMediaElement(already_AddRefed<nsINodeInfo> aNodeInfo)
 
   RegisterFreezableElement();
   NotifyOwnerDocumentActivityChanged();
-
-  mTextTrackManager = new TextTrackManager(this);
 }
 
 HTMLMediaElement::~HTMLMediaElement()
@@ -2245,13 +2247,14 @@ void
 HTMLMediaElement::WakeLockCreate()
 {
   if (!mWakeLock) {
-    nsCOMPtr<nsIPowerManagerService> pmService =
-      do_GetService(POWERMANAGERSERVICE_CONTRACTID);
+    nsRefPtr<power::PowerManagerService> pmService =
+      power::PowerManagerService::GetInstance();
     NS_ENSURE_TRUE_VOID(pmService);
 
-    pmService->NewWakeLock(NS_LITERAL_STRING("cpu"),
-                           OwnerDoc()->GetWindow(),
-                           getter_AddRefs(mWakeLock));
+    ErrorResult rv;
+    mWakeLock = pmService->NewWakeLock(NS_LITERAL_STRING("cpu"),
+                                       OwnerDoc()->GetInnerWindow(),
+                                       rv);
   }
 }
 
@@ -2259,7 +2262,9 @@ void
 HTMLMediaElement::WakeLockRelease()
 {
   if (mWakeLock) {
-    mWakeLock->Unlock();
+    ErrorResult rv;
+    mWakeLock->Unlock(rv);
+    NS_WARN_IF_FALSE(!rv.Failed(), "Failed to unlock the wakelock.");
     mWakeLock = nullptr;
   }
 }
@@ -2548,7 +2553,7 @@ nsresult HTMLMediaElement::InitializeDecoderForChannel(nsIChannel* aChannel,
     nsAutoString src;
     GetCurrentSrc(src);
     NS_ConvertUTF8toUTF16 mimeUTF16(mimeType);
-    const PRUnichar* params[] = { mimeUTF16.get(), src.get() };
+    const char16_t* params[] = { mimeUTF16.get(), src.get() };
     ReportLoadError("MediaLoadUnsupportedMimeType", params, ArrayLength(params));
     return NS_ERROR_FAILURE;
   }
@@ -2855,7 +2860,10 @@ void HTMLMediaElement::MetadataLoaded(int aChannels,
   // If this element had a video track, but consists only of an audio track now,
   // delete the VideoFrameContainer. This happens when the src is changed to an
   // audio only file.
-  if (!aHasVideo) {
+  if (!aHasVideo && mVideoFrameContainer) {
+    // call ForgetElement() such that callbacks from |mVideoFrameContainer|
+    // won't reach us anymore.
+    mVideoFrameContainer->ForgetElement();
     mVideoFrameContainer = nullptr;
   }
 }
@@ -2921,7 +2929,7 @@ void HTMLMediaElement::DecodeError()
 {
   nsAutoString src;
   GetCurrentSrc(src);
-  const PRUnichar* params[] = { src.get() };
+  const char16_t* params[] = { src.get() };
   ReportLoadError("MediaLoadDecodeError", params, ArrayLength(params));
 
   if (mDecoder) {
@@ -3223,11 +3231,6 @@ VideoFrameContainer* HTMLMediaElement::GetVideoFrameContainer()
   if (mVideoFrameContainer)
     return mVideoFrameContainer;
 
-  // If we have a print surface, this is just a static image so
-  // no image container is required
-  if (mPrintSurface)
-    return nullptr;
-
   // Only video frames need an image container.
   nsCOMPtr<nsIDOMHTMLVideoElement> video = do_QueryObject(this);
   if (!video)
@@ -3295,6 +3298,13 @@ nsresult HTMLMediaElement::DispatchAsyncEvent(const nsAString& aName)
 {
   LOG_EVENT(PR_LOG_DEBUG, ("%p Queuing event %s", this,
             NS_ConvertUTF16toUTF8(aName).get()));
+
+  // Save events that occur while in the bfcache. These will be dispatched
+  // if the page comes out of the bfcache.
+  if (mEventDeliveryPaused) {
+    mPendingEvents.AppendElement(aName);
+    return NS_OK;
+  }
 
   nsCOMPtr<nsIRunnable> event = new nsAsyncEventRunner(aName, this);
   NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
@@ -3465,7 +3475,7 @@ void HTMLMediaElement::DoRemoveSelfReference()
 }
 
 nsresult HTMLMediaElement::Observe(nsISupports* aSubject,
-                                   const char* aTopic, const PRUnichar* aData)
+                                   const char* aTopic, const char16_t* aData)
 {
   NS_ENSURE_TRUE(nsContentUtils::IsCallerChrome(), NS_ERROR_NOT_AVAILABLE);
 
@@ -3604,26 +3614,7 @@ HTMLMediaElement::CopyInnerTo(Element* aDest)
   NS_ENSURE_SUCCESS(rv, rv);
   if (aDest->OwnerDoc()->IsStaticDocument()) {
     HTMLMediaElement* dest = static_cast<HTMLMediaElement*>(aDest);
-    if (mPrintSurface) {
-      dest->mPrintSurface = mPrintSurface;
-      dest->mMediaSize = mMediaSize;
-    } else {
-      nsIFrame* frame = GetPrimaryFrame();
-      Element* element;
-      if (frame && frame->GetType() == nsGkAtoms::HTMLVideoFrame &&
-          static_cast<nsVideoFrame*>(frame)->ShouldDisplayPoster()) {
-        nsIContent* content = static_cast<nsVideoFrame*>(frame)->GetPosterImage();
-        element = content ? content->AsElement() : nullptr;
-      } else {
-        element = const_cast<HTMLMediaElement*>(this);
-      }
-
-      nsLayoutUtils::SurfaceFromElementResult res =
-        nsLayoutUtils::SurfaceFromElement(element,
-                                          nsLayoutUtils::SFE_WANT_NEW_SURFACE);
-      dest->mPrintSurface = res.mSurface;
-      dest->mMediaSize = nsIntSize(res.mSize.width, res.mSize.height);
-    }
+    dest->mMediaSize = mMediaSize;
   }
   return rv;
 }
@@ -3698,12 +3689,12 @@ void HTMLMediaElement::FireTimeUpdate(bool aPeriodic)
     mDecoder->SetFragmentEndTime(mFragmentEnd);
   }
 
-  // Update visible text tracks.
+  // Update the cues displaying on the video.
   // Here mTextTrackManager can be null if the cycle collector has unlinked
   // us before our parent. In that case UnbindFromTree will call us
   // when our parent is unlinked.
   if (mTextTrackManager) {
-    mTextTrackManager->Update(time);
+    mTextTrackManager->UpdateCueDisplay();
   }
 }
 
@@ -3934,9 +3925,9 @@ NS_IMETHODIMP HTMLMediaElement::CanPlayChanged(int32_t canPlay)
 
 /* readonly attribute TextTrackList textTracks; */
 TextTrackList*
-HTMLMediaElement::TextTracks() const
+HTMLMediaElement::TextTracks()
 {
-  return mTextTrackManager ? mTextTrackManager->TextTracks() : nullptr;
+  return GetOrCreateTextTrackManager()->TextTracks();
 }
 
 already_AddRefed<TextTrack>
@@ -3944,9 +3935,7 @@ HTMLMediaElement::AddTextTrack(TextTrackKind aKind,
                                const nsAString& aLabel,
                                const nsAString& aLanguage)
 {
-  return mTextTrackManager ? mTextTrackManager->AddTextTrack(aKind, aLabel,
-                                                             aLanguage)
-                           : nullptr;
+  return GetOrCreateTextTrackManager()->AddTextTrack(aKind, aLabel, aLanguage);
 }
 
 void
@@ -3955,6 +3944,15 @@ HTMLMediaElement::PopulatePendingTextTrackList()
   if (mTextTrackManager) {
     mTextTrackManager->PopulatePendingList();
   }
+}
+
+TextTrackManager*
+HTMLMediaElement::GetOrCreateTextTrackManager()
+{
+  if (!mTextTrackManager) {
+    mTextTrackManager = new TextTrackManager(this);
+  }
+  return mTextTrackManager;
 }
 
 AudioChannel

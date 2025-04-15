@@ -51,7 +51,8 @@ struct DllBlockInfo {
 
   enum {
     FLAGS_DEFAULT = 0,
-    BLOCK_WIN8PLUS_ONLY = 1
+    BLOCK_WIN8PLUS_ONLY = 1,
+    BLOCK_XP_ONLY = 2
   } flags;
 };
 
@@ -140,6 +141,9 @@ static DllBlockInfo sWindowsDllBlocklist[] = {
   // Topcrash with Conduit SearchProtect, bug 944542
   { "spvc32.dll", ALL_VERSIONS },
 
+  // XP topcrash with F-Secure, bug 970362
+  { "fs_ccf_ni_umh32.dll", MAKE_VERSION(1, 42, 101, 0), DllBlockInfo::BLOCK_XP_ONLY },
+
   { nullptr, 0 }
 };
 
@@ -167,7 +171,7 @@ static bool sBlocklistInitFailed;
 static bool sUser32BeforeBlocklist;
 
 // Duplicated from xpcom glue. Ideally this should be shared.
-static void
+void
 printf_stderr(const char *fmt, ...)
 {
   if (IsDebuggerPresent()) {
@@ -372,7 +376,7 @@ DllBlockSet::Write(HANDLE file)
 
   // Because this method is called after a crash occurs, and uses heap memory,
   // protect this entire block with a structured exception handler.
-  __try {
+  MOZ_SEH_TRY {
     for (DllBlockSet* b = gFirst; b; b = b->mNext) {
       // write name[,v.v.v.v];
       WriteFile(file, b->mName, strlen(b->mName), &nBytes, nullptr);
@@ -395,7 +399,7 @@ DllBlockSet::Write(HANDLE file)
       WriteFile(file, ";", 1, &nBytes, nullptr);
     }
   }
-  __except (EXCEPTION_EXECUTE_HANDLER) { }
+  MOZ_SEH_EXCEPT (EXCEPTION_EXECUTE_HANDLER) { }
 }
 
 static
@@ -529,6 +533,11 @@ patched_LdrLoadDll (PWCHAR filePath, PULONG flags, PUNICODE_STRING moduleFileNam
       goto continue_loading;
     }
 
+    if ((info->flags == DllBlockInfo::BLOCK_XP_ONLY) &&
+        IsWin2003OrLater()) {
+      goto continue_loading;
+    }
+
     unsigned long long fVersion = ALL_VERSIONS;
 
     if (info->maxVersion != ALL_VERSIONS) {
@@ -614,7 +623,10 @@ DllBlocklist_Initialize()
 
   ReentrancySentinel::InitializeStatics();
 
-  bool ok = NtDllIntercept.AddHook("LdrLoadDll", reinterpret_cast<intptr_t>(patched_LdrLoadDll), (void**) &stub_LdrLoadDll);
+  // We specifically use a detour, because there are cases where external
+  // code also tries to hook LdrLoadDll, and doesn't know how to relocate our
+  // nop space patches. (Bug 951827)
+  bool ok = NtDllIntercept.AddDetour("LdrLoadDll", reinterpret_cast<intptr_t>(patched_LdrLoadDll), (void**) &stub_LdrLoadDll);
 
   if (!ok) {
     sBlocklistInitFailed = true;

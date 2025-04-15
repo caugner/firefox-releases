@@ -15,7 +15,7 @@
 #include <locale.h>
 #include <string.h>
 
-#if defined(DEBUG) && !defined(XP_WIN)
+#ifdef JS_CAN_CHECK_THREADSAFE_ACCESSES
 # include <sys/mman.h>
 #endif
 
@@ -32,6 +32,7 @@
 #if defined(JS_ION)
 # include "assembler/assembler/MacroAssembler.h"
 #endif
+#include "jit/arm/Simulator-arm.h"
 #include "jit/AsmJSSignalHandlers.h"
 #include "jit/JitCompartment.h"
 #include "jit/PcScriptCache.h"
@@ -73,6 +74,10 @@ PerThreadData::PerThreadData(JSRuntime *runtime)
     ionStackLimit(0),
     activation_(nullptr),
     asmJSActivationStack_(nullptr),
+#ifdef JS_ARM_SIMULATOR
+    simulator_(nullptr),
+    simulatorStackLimit_(0),
+#endif
     dtoaState(nullptr),
     suppressGC(0),
     activeCompilations(0)
@@ -85,6 +90,10 @@ PerThreadData::~PerThreadData()
 
     if (isInList())
         removeFromThreadList();
+
+#ifdef JS_ARM_SIMULATOR
+    js_delete(simulator_);
+#endif
 }
 
 bool
@@ -137,6 +146,8 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     exclusiveAccessOwner(nullptr),
     mainThreadHasExclusiveAccess(false),
     numExclusiveThreads(0),
+#else
+    operationCallbackLockTaken(false),
 #endif
     systemZone(nullptr),
     numCompartments(0),
@@ -221,7 +232,7 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcInterFrameGC(0),
     gcSliceBudget(SliceBudget::Unlimited),
     gcIncrementalEnabled(true),
-    gcGenerationalEnabled(true),
+    gcGenerationalDisabled(0),
     gcManipulatingDeadZones(false),
     gcObjectsMarkedInDeadZones(0),
     gcPoke(false),
@@ -244,6 +255,9 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcFinalizeCallback(nullptr),
     gcMallocBytes(0),
     gcMallocGCTriggered(false),
+#ifdef JS_ARM_SIMULATOR
+    simulatorRuntime_(nullptr),
+#endif
     scriptAndCountsVector(nullptr),
     NaNValue(DoubleNaNValue()),
     negativeInfinityValue(DoubleValue(NegativeInfinity())),
@@ -273,7 +287,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     decimalSeparator(0),
     numGrouping(0),
 #endif
-    heapProtected_(false),
     mathCache_(nullptr),
     activeCompilations_(0),
     keepAtoms_(0),
@@ -285,7 +298,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
 #ifdef DEBUG
     noGCOrAllocationCheck(0),
 #endif
-    jitHardening(false),
     jitSupportsFloatingPoint(false),
     ionPcScriptCache(nullptr),
     threadPool(this),
@@ -368,6 +380,9 @@ JSRuntime::init(uint32_t maxbytes)
     js::TlsPerThreadData.set(&mainThread);
     mainThread.addToThreadList();
 
+    if (!threadPool.init())
+        return false;
+
     if (!js_InitGC(this, maxbytes))
         return false;
 
@@ -410,6 +425,12 @@ JSRuntime::init(uint32_t maxbytes)
 
     if (!evalCache.init())
         return false;
+
+#ifdef JS_ARM_SIMULATOR
+    simulatorRuntime_ = js::jit::CreateSimulatorRuntime();
+    if (!simulatorRuntime_)
+        return false;
+#endif
 
     nativeStackBase = GetNativeStackBase();
 
@@ -481,7 +502,7 @@ JSRuntime::~JSRuntime()
     // Avoid bogus asserts during teardown.
     JS_ASSERT(!numExclusiveThreads);
     mainThreadHasExclusiveAccess = true;
-    
+
     JS_ASSERT(!operationCallbackOwner);
     if (operationCallbackLock)
         PR_DestroyLock(operationCallbackLock);
@@ -537,6 +558,10 @@ JSRuntime::~JSRuntime()
     gcNursery.disable();
 #endif
 
+#ifdef JS_ARM_SIMULATOR
+    js::jit::DestroySimulatorRuntime(simulatorRuntime_);
+#endif
+
     DebugOnly<size_t> oldCount = liveRuntimesCount--;
     JS_ASSERT(oldCount > 0);
 
@@ -561,6 +586,17 @@ NewObjectCache::clearNurseryObjects(JSRuntime *rt)
 }
 
 void
+JSRuntime::resetIonStackLimit()
+{
+    AutoLockForOperationCallback lock(this);
+    mainThread.setIonStackLimit(mainThread.nativeStackLimit[js::StackForUntrustedScript]);
+
+#ifdef JS_ARM_SIMULATOR
+    mainThread.setIonStackLimit(js::jit::Simulator::StackLimit());
+#endif
+ }
+
+void
 JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::RuntimeSizes *rtSizes)
 {
     // Several tables in the runtime enumerated below can be used off thread.
@@ -577,9 +613,20 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
 
     rtSizes->temporary += tempLifoAlloc.sizeOfExcludingThis(mallocSizeOf);
 
+    rtSizes->regexpData += bumpAlloc_ ? bumpAlloc_->sizeOfNonHeapData() : 0;
+
+    rtSizes->interpreterStack += interpreterStack_.sizeOfExcludingThis(mallocSizeOf);
+
+    rtSizes->mathCache += mathCache_ ? mathCache_->sizeOfIncludingThis(mallocSizeOf) : 0;
+
+    rtSizes->sourceDataCache += sourceDataCache.sizeOfExcludingThis(mallocSizeOf);
+
+    rtSizes->scriptData += scriptDataTable().sizeOfExcludingThis(mallocSizeOf);
+    for (ScriptDataTable::Range r = scriptDataTable().all(); !r.empty(); r.popFront())
+        rtSizes->scriptData += mallocSizeOf(r.front());
+
     if (execAlloc_)
         execAlloc_->addSizeOfCode(&rtSizes->code);
-
 #ifdef JS_ION
     {
         AutoLockForOperationCallback lock(this);
@@ -590,17 +637,11 @@ JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, JS::Runtim
     }
 #endif
 
-    rtSizes->regexpData += bumpAlloc_ ? bumpAlloc_->sizeOfNonHeapData() : 0;
-
-    rtSizes->interpreterStack += interpreterStack_.sizeOfExcludingThis(mallocSizeOf);
-
-    rtSizes->gcMarker += gcMarker.sizeOfExcludingThis(mallocSizeOf);
-
-    rtSizes->mathCache += mathCache_ ? mathCache_->sizeOfIncludingThis(mallocSizeOf) : 0;
-
-    rtSizes->scriptData += scriptDataTable().sizeOfExcludingThis(mallocSizeOf);
-    for (ScriptDataTable::Range r = scriptDataTable().all(); !r.empty(); r.popFront())
-        rtSizes->scriptData += mallocSizeOf(r.front());
+    rtSizes->gc.marker += gcMarker.sizeOfExcludingThis(mallocSizeOf);
+#ifdef JSGC_GENERATIONAL
+    rtSizes->gc.nursery += gcNursery.sizeOfHeap();
+    gcStoreBuffer.addSizeOfExcludingThis(mallocSizeOf, &rtSizes->gc);
+#endif
 }
 
 static bool
@@ -638,23 +679,13 @@ JSRuntime::triggerOperationCallback(OperationCallbackTrigger trigger)
 #endif
 }
 
-void
-JSRuntime::setJitHardening(bool enabled)
-{
-    jitHardening = enabled;
-    if (execAlloc_)
-        execAlloc_->setRandomize(enabled);
-}
-
 JSC::ExecutableAllocator *
 JSRuntime::createExecutableAllocator(JSContext *cx)
 {
     JS_ASSERT(!execAlloc_);
     JS_ASSERT(cx->runtime() == this);
 
-    JSC::AllocationBehavior randomize =
-        jitHardening ? JSC::AllocationCanRandomize : JSC::AllocationDeterministic;
-    execAlloc_ = js_new<JSC::ExecutableAllocator>(randomize);
+    execAlloc_ = js_new<JSC::ExecutableAllocator>();
     if (!execAlloc_)
         js_ReportOutOfMemory(cx);
     return execAlloc_;
@@ -733,6 +764,24 @@ JSRuntime::getDefaultLocale()
 }
 
 void
+JSRuntime::triggerActivityCallback(bool active)
+{
+    if (!activityCallback)
+        return;
+
+    /*
+     * The activity callback must not trigger a GC: it would create a cirular
+     * dependency between entering a request and Rooted's requirement of being
+     * in a request. In practice this callback already cannot trigger GC. The
+     * suppression serves to inform the exact rooting hazard analysis of this
+     * property and ensures that it remains true in the future.
+     */
+    AutoSuppressGC suppress(this);
+
+    activityCallback(activityCallbackArg, active);
+}
+
+void
 JSRuntime::setGCMaxMallocBytes(size_t value)
 {
     /*
@@ -756,7 +805,7 @@ JSRuntime::updateMallocCounter(JS::Zone *zone, size_t nbytes)
 {
     /* We tolerate any thread races when updating gcMallocBytes. */
     gcMallocBytes -= ptrdiff_t(nbytes);
-    if (JS_UNLIKELY(gcMallocBytes <= 0))
+    if (MOZ_UNLIKELY(gcMallocBytes <= 0))
         onTooMuchMalloc();
     else if (zone)
         zone->updateMallocCounter(nbytes);
@@ -810,76 +859,6 @@ JSRuntime::activeGCInAtomsZone()
     return zone->needsBarrier() || zone->isGCScheduled() || zone->wasGCStarted();
 }
 
-#if defined(DEBUG) && !defined(XP_WIN)
-
-AutoProtectHeapForCompilation::AutoProtectHeapForCompilation(JSRuntime *rt MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-  : runtime(rt)
-{
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-
-    JS_ASSERT(!runtime->heapProtected_);
-    runtime->heapProtected_ = true;
-
-    for (GCChunkSet::Range r(rt->gcChunkSet.all()); !r.empty(); r.popFront()) {
-        Chunk *chunk = r.front();
-        // Note: Don't protect the last page in the chunk, which stores
-        // immutable info and needs to be accessible for runtimeFromAnyThread()
-        // in AutoThreadSafeAccess.
-        if (mprotect(chunk, ChunkSize - sizeof(Arena), PROT_NONE))
-            MOZ_CRASH();
-    }
-}
-
-AutoProtectHeapForCompilation::~AutoProtectHeapForCompilation()
-{
-    JS_ASSERT(runtime->heapProtected_);
-    JS_ASSERT(runtime->unprotectedArenas.empty());
-    runtime->heapProtected_ = false;
-
-    for (GCChunkSet::Range r(runtime->gcChunkSet.all()); !r.empty(); r.popFront()) {
-        Chunk *chunk = r.front();
-        if (mprotect(chunk, ChunkSize - sizeof(Arena), PROT_READ | PROT_WRITE))
-            MOZ_CRASH();
-    }
-}
-
-AutoThreadSafeAccess::AutoThreadSafeAccess(const Cell *cell MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-  : runtime(cell->runtimeFromAnyThread()), arena(nullptr)
-{
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-
-    if (!runtime->heapProtected_)
-        return;
-
-    ArenaHeader *base = cell->arenaHeader();
-    for (size_t i = 0; i < runtime->unprotectedArenas.length(); i++) {
-        if (base == runtime->unprotectedArenas[i])
-            return;
-    }
-
-    arena = base;
-
-    if (mprotect(arena, sizeof(Arena), PROT_READ))
-        MOZ_CRASH();
-
-    if (!runtime->unprotectedArenas.append(arena))
-        MOZ_CRASH();
-}
-
-AutoThreadSafeAccess::~AutoThreadSafeAccess()
-{
-    if (!arena)
-        return;
-
-    if (mprotect(arena, sizeof(Arena), PROT_NONE))
-        MOZ_CRASH();
-
-    JS_ASSERT(arena == runtime->unprotectedArenas.back());
-    runtime->unprotectedArenas.popBack();
-}
-
-#endif // DEBUG && !XP_WIN
-
 #ifdef JS_THREADSAFE
 
 void
@@ -928,7 +907,7 @@ js::CurrentThreadCanAccessZone(Zone *zone)
     return true;
 }
 
-#endif
+#endif // JS_THREADSAFE
 
 #ifdef DEBUG
 

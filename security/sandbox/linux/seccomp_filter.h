@@ -81,6 +81,8 @@
   ALLOW_SYSCALL(fstat64), \
   ALLOW_SYSCALL(stat64), \
   ALLOW_SYSCALL(lstat64), \
+  ALLOW_SYSCALL(socketpair), \
+  ALLOW_SYSCALL(sendmsg), \
   ALLOW_SYSCALL(sigprocmask),
 #elif defined(__i386__)
 #define SECCOMP_WHITELIST_ARCH_TOREMOVE \
@@ -89,7 +91,9 @@
   ALLOW_SYSCALL(lstat64), \
   ALLOW_SYSCALL(sigprocmask),
 #else
-#define SECCOMP_WHITELIST_ARCH_TOREMOVE
+#define SECCOMP_WHITELIST_ARCH_TOREMOVE \
+  ALLOW_SYSCALL(socketpair), \
+  ALLOW_SYSCALL(sendmsg),
 #endif
 
 /* Architecture-specific syscalls for desktop linux */
@@ -154,7 +158,6 @@
   ALLOW_SYSCALL(readlink), \
   ALLOW_SYSCALL(getsockname), \
   ALLOW_SYSCALL(recvmsg), \
-  ALLOW_SYSCALL(uname), \
   /* duplicate rt_sigaction in SECCOMP_WHITELIST_PROFILING */ \
   ALLOW_SYSCALL(rt_sigaction), \
   ALLOW_SYSCALL(getuid), \
@@ -252,10 +255,11 @@
   ALLOW_SYSCALL(access), \
   ALLOW_SYSCALL(unlink), \
   ALLOW_SYSCALL(fsync), \
-  ALLOW_SYSCALL(socketpair), \
-  ALLOW_SYSCALL(sendmsg), \
+  ALLOW_SYSCALL(msync), \
   /* Should remove all of the following in the future, if possible */ \
   ALLOW_SYSCALL(getpriority), \
+  ALLOW_SYSCALL(sched_get_priority_min), \
+  ALLOW_SYSCALL(sched_get_priority_max), \
   ALLOW_SYSCALL(setpriority), \
   SECCOMP_WHITELIST_PROFILING \
   SECCOMP_WHITELIST_B2G_LOW \
@@ -266,6 +270,9 @@
   /* linux desktop is not as performance critical as B2G */ \
   /* we can place desktop syscalls at the end */ \
   SECCOMP_WHITELIST_DESKTOP_LINUX \
+  /* nsSystemInfo uses uname (and we cache an instance, so */ \
+  /* the info remains present even if we block the syscall) */ \
+  ALLOW_SYSCALL(uname), \
   ALLOW_SYSCALL(exit_group), \
   ALLOW_SYSCALL(exit)
 

@@ -68,12 +68,20 @@ void
 PathBuilderCG::Arc(const Point &aOrigin, Float aRadius, Float aStartAngle,
                  Float aEndAngle, bool aAntiClockwise)
 {
+  // Core Graphic's initial coordinate system is y-axis up, whereas Moz2D's is
+  // y-axis down. Core Graphics therefore considers "clockwise" to mean "sweep
+  // in the direction of decreasing angle" whereas Moz2D considers it to mean
+  // "sweep in the direction of increasing angle". In other words if this
+  // Moz2D method is instructed to sweep anti-clockwise we need to tell
+  // CGPathAddArc to sweep clockwise, and vice versa. Hence why we pass the
+  // value of aAntiClockwise directly to CGPathAddArc's "clockwise" bool
+  // parameter.
   CGPathAddArc(mCGPath, nullptr,
                aOrigin.x, aOrigin.y,
                aRadius,
                aStartAngle,
                aEndAngle,
-               !aAntiClockwise);
+               aAntiClockwise);
 }
 
 Point
@@ -225,7 +233,7 @@ PathCG::ContainsPoint(const Point &aPoint, const Matrix &aTransform) const
 
   // The transform parameter of CGPathContainsPoint doesn't seem to work properly on OS X 10.5
   // so we transform aPoint ourselves.
-  return CGPathContainsPoint(mPath, nullptr, point, mFillRule == FILL_EVEN_ODD);
+  return CGPathContainsPoint(mPath, nullptr, point, mFillRule == FillRule::FILL_EVEN_ODD);
 }
 
 static size_t

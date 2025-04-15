@@ -38,9 +38,7 @@ public:
 
   virtual void DeallocateDeviceData() MOZ_OVERRIDE { }
 
-  void SetCompositor(BasicCompositor* aCompositor) {
-    mCompositor = aCompositor;
-  }
+  virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
 
 protected:
   BasicCompositor* mCompositor;
@@ -56,9 +54,8 @@ protected:
 class MacIOSurfaceTextureHostBasic : public TextureHost
 {
 public:
-  MacIOSurfaceTextureHostBasic(uint64_t aID,
-                             TextureFlags aFlags,
-                             const SurfaceDescriptorMacIOSurface& aDescriptor);
+  MacIOSurfaceTextureHostBasic(TextureFlags aFlags,
+                               const SurfaceDescriptorMacIOSurface& aDescriptor);
 
   virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
 

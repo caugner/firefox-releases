@@ -214,7 +214,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
   }
 
   ClientLayerManager *clientLayerManager =
-      (GetLayerManager()->GetBackendType() == LAYERS_CLIENT)
+      (GetLayerManager()->GetBackendType() == LayersBackend::LAYERS_CLIENT)
       ? static_cast<ClientLayerManager*>(GetLayerManager())
       : nullptr;
 
@@ -260,9 +260,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
 #endif // WIDGET_DEBUG_OUTPUT
 
   HDC hDC = aDC ? aDC : (::BeginPaint(mWnd, &ps));
-  if (!IsRenderMode(gfxWindowsPlatform::RENDER_DIRECT2D)) {
-    mPaintDC = hDC;
-  }
+  mPaintDC = hDC;
 
 #ifdef MOZ_XUL
   bool forceRepaint = aDC || (eTransparencyTransparent == mTransparencyMode);
@@ -308,7 +306,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
 #endif // WIDGET_DEBUG_OUTPUT
 
     switch (GetLayerManager()->GetBackendType()) {
-      case LAYERS_BASIC:
+      case LayersBackend::LAYERS_BASIC:
         {
           nsRefPtr<gfxASurface> targetSurface;
 
@@ -320,27 +318,6 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
             if (mTransparentSurface == nullptr)
               SetupTranslucentWindowMemoryBitmap(mTransparencyMode);
             targetSurface = mTransparentSurface;
-          }
-#endif
-
-#ifdef CAIRO_HAS_D2D_SURFACE
-          if (!targetSurface &&
-              IsRenderMode(gfxWindowsPlatform::RENDER_DIRECT2D))
-          {
-            if (!mD2DWindowSurface) {
-              gfxContentType content = GFX_CONTENT_COLOR;
-#if defined(MOZ_XUL)
-              if (mTransparencyMode != eTransparencyOpaque) {
-                content = GFX_CONTENT_COLOR_ALPHA;
-              }
-#endif
-              mD2DWindowSurface = new gfxD2DSurface(mWnd, content);
-            }
-            if (!mD2DWindowSurface->CairoStatus()) {
-              targetSurface = mD2DWindowSurface;
-            } else {
-              mD2DWindowSurface = nullptr;
-            }
           }
 #endif
 
@@ -373,7 +350,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
             targetSurfaceImage = new gfxImageSurface(sSharedSurfaceData.get(),
                                                      surfaceSize,
                                                      surfaceSize.width * 4,
-                                                     gfxImageFormatRGB24);
+                                                     gfxImageFormat::RGB24);
 
             if (targetSurfaceImage && !targetSurfaceImage->CairoStatus()) {
               targetSurfaceImage->SetDeviceOffset(gfxPoint(-ps.rcPaint.left, -ps.rcPaint.top));
@@ -387,7 +364,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
           }
 
           nsRefPtr<gfxContext> thebesContext;
-          if (gfxPlatform::GetPlatform()->SupportsAzureContentForType(mozilla::gfx::BACKEND_CAIRO)) {
+          if (gfxPlatform::GetPlatform()->SupportsAzureContentForType(mozilla::gfx::BackendType::CAIRO)) {
             RECT paintRect;
             ::GetClientRect(mWnd, &paintRect);
             RefPtr<mozilla::gfx::DrawTarget> dt =
@@ -399,28 +376,17 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
             thebesContext = new gfxContext(targetSurface);
           }
 
-          if (IsRenderMode(gfxWindowsPlatform::RENDER_DIRECT2D)) {
-            const nsIntRect* r;
-            for (nsIntRegionRectIterator iter(region);
-                 (r = iter.Next()) != nullptr;) {
-              thebesContext->Rectangle(gfxRect(r->x, r->y, r->width, r->height), true);
-            }
-            thebesContext->Clip();
-            thebesContext->SetOperator(gfxContext::OPERATOR_CLEAR);
-            thebesContext->Paint();
-            thebesContext->SetOperator(gfxContext::OPERATOR_OVER);
-          }
-
           // don't need to double buffer with anything but GDI
-          BufferMode doubleBuffering = mozilla::layers::BUFFER_NONE;
-          if (IsRenderMode(gfxWindowsPlatform::RENDER_GDI)) {
+          BufferMode doubleBuffering = mozilla::layers::BufferMode::BUFFER_NONE;
+          if (IsRenderMode(gfxWindowsPlatform::RENDER_GDI) ||
+              IsRenderMode(gfxWindowsPlatform::RENDER_DIRECT2D)) {
 #ifdef MOZ_XUL
             switch (mTransparencyMode) {
               case eTransparencyGlass:
               case eTransparencyBorderlessGlass:
               default:
                 // If we're not doing translucency, then double buffer
-                doubleBuffering = mozilla::layers::BUFFER_BUFFERED;
+                doubleBuffering = mozilla::layers::BufferMode::BUFFERED;
                 break;
               case eTransparencyTransparent:
                 // If we're rendering with translucency, we're going to be
@@ -431,7 +397,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
                 break;
             }
 #else
-            doubleBuffering = mozilla::layers::BUFFER_BUFFERED;
+            doubleBuffering = mozilla::layers::BufferMode::BUFFERED;
 #endif
           }
 
@@ -451,13 +417,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
             UpdateTranslucentWindow();
           } else
 #endif
-#ifdef CAIRO_HAS_D2D_SURFACE
-          if (result) {
-            if (mD2DWindowSurface) {
-              mD2DWindowSurface->Present();
-            }
-          }
-#endif
+
           if (result) {
             if (IsRenderMode(gfxWindowsPlatform::RENDER_IMAGE_STRETCH24) ||
                 IsRenderMode(gfxWindowsPlatform::RENDER_IMAGE_STRETCH32))
@@ -551,7 +511,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
         }
         break;
 #ifdef MOZ_ENABLE_D3D9_LAYER
-      case LAYERS_D3D9:
+      case LayersBackend::LAYERS_D3D9:
         {
           nsRefPtr<LayerManagerD3D9> layerManagerD3D9 =
             static_cast<mozilla::layers::LayerManagerD3D9*>(GetLayerManager());
@@ -569,7 +529,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
         break;
 #endif
 #ifdef MOZ_ENABLE_D3D10_LAYER
-      case LAYERS_D3D10:
+      case LayersBackend::LAYERS_D3D10:
         {
           gfxWindowsPlatform::GetPlatform()->UpdateRenderMode();
           LayerManagerD3D10 *layerManagerD3D10 = static_cast<mozilla::layers::LayerManagerD3D10*>(GetLayerManager());
@@ -581,7 +541,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
         }
         break;
 #endif
-      case LAYERS_CLIENT:
+      case LayersBackend::LAYERS_CLIENT:
         result = listener->PaintWindow(this, region);
         break;
       default:
@@ -647,10 +607,9 @@ nsresult nsWindowGfx::CreateIcon(imgIContainer *aContainer,
                                   HICON *aIcon) {
 
   // Get the image data
-  nsRefPtr<gfxASurface> surface;
-  aContainer->GetFrame(imgIContainer::FRAME_CURRENT,
-                       imgIContainer::FLAG_SYNC_DECODE,
-                       getter_AddRefs(surface));
+  nsRefPtr<gfxASurface> surface =
+    aContainer->GetFrame(imgIContainer::FRAME_CURRENT,
+                         imgIContainer::FLAG_SYNC_DECODE);
   NS_ENSURE_TRUE(surface, NS_ERROR_NOT_AVAILABLE);
 
   nsRefPtr<gfxImageSurface> frame(surface->GetAsReadableARGB32ImageSurface());
@@ -673,7 +632,7 @@ nsresult nsWindowGfx::CreateIcon(imgIContainer *aContainer,
     NS_ENSURE_ARG(aScaledSize.width > 0);
     NS_ENSURE_ARG(aScaledSize.height > 0);
     // Draw a scaled version of the image to a temporary surface
-    dest = new gfxImageSurface(aScaledSize, gfxImageFormatARGB32);
+    dest = new gfxImageSurface(aScaledSize, gfxImageFormat::ARGB32);
     if (!dest)
       return NS_ERROR_OUT_OF_MEMORY;
 

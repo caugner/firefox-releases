@@ -163,7 +163,7 @@ public:
   ChangeGroup(TelephonyCallGroup* aGroup);
 
 private:
-  TelephonyCall();
+  TelephonyCall(nsPIDOMWindow* aOwner);
 
   ~TelephonyCall();
 

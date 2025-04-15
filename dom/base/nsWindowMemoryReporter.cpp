@@ -166,10 +166,50 @@ AppendWindowURI(nsGlobalWindow *aWindow, nsACString& aStr)
   }
 }
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(WindowsMallocSizeOf)
+MOZ_DEFINE_MALLOC_SIZE_OF(WindowsMallocSizeOf)
 
 // The key is the window ID.
 typedef nsDataHashtable<nsUint64HashKey, nsCString> WindowPaths;
+
+static nsresult
+ReportAmount(const nsCString& aBasePath, const char* aPathTail,
+             size_t aAmount, const nsCString& aDescription,
+             uint32_t aKind, uint32_t aUnits,
+             nsIMemoryReporterCallback* aCb,
+             nsISupports* aClosure)
+{
+  if (aAmount == 0) {
+    return NS_OK;
+  }
+
+  nsAutoCString path(aBasePath);
+  path += aPathTail;
+
+  return aCb->Callback(EmptyCString(), path, aKind, aUnits,
+                       aAmount, aDescription, aClosure);
+}
+
+static nsresult
+ReportSize(const nsCString& aBasePath, const char* aPathTail,
+           size_t aAmount, const nsCString& aDescription,
+           nsIMemoryReporterCallback* aCb,
+           nsISupports* aClosure)
+{
+  return ReportAmount(aBasePath, aPathTail, aAmount, aDescription,
+                      nsIMemoryReporter::KIND_HEAP,
+                      nsIMemoryReporter::UNITS_BYTES, aCb, aClosure);
+}
+
+static nsresult
+ReportCount(const nsCString& aBasePath, const char* aPathTail,
+            size_t aAmount, const nsCString& aDescription,
+            nsIMemoryReporterCallback* aCb,
+            nsISupports* aClosure)
+{
+  return ReportAmount(aBasePath, aPathTail, aAmount, aDescription,
+                      nsIMemoryReporter::KIND_OTHER,
+                      nsIMemoryReporter::UNITS_COUNT, aCb, aClosure);
+}
 
 static nsresult
 CollectWindowReports(nsGlobalWindow *aWindow,
@@ -242,28 +282,16 @@ CollectWindowReports(nsGlobalWindow *aWindow,
 
 #define REPORT_SIZE(_pathTail, _amount, _desc)                                \
   do {                                                                        \
-    if (_amount > 0) {                                                        \
-      nsAutoCString path(windowPath);                                         \
-      path += _pathTail;                                                      \
-      nsresult rv;                                                            \
-      rv = aCb->Callback(EmptyCString(), path, nsIMemoryReporter::KIND_HEAP,  \
-                    nsIMemoryReporter::UNITS_BYTES, _amount,                  \
-                    NS_LITERAL_CSTRING(_desc), aClosure);                     \
-      NS_ENSURE_SUCCESS(rv, rv);                                              \
-    }                                                                         \
+    nsresult rv = ReportSize(windowPath, _pathTail, _amount,                  \
+                             NS_LITERAL_CSTRING(_desc), aCb, aClosure);       \
+    NS_ENSURE_SUCCESS(rv, rv);                                                \
   } while (0)
 
 #define REPORT_COUNT(_pathTail, _amount, _desc)                               \
   do {                                                                        \
-    if (_amount > 0) {                                                        \
-      nsAutoCString path(censusWindowPath);                                   \
-      path += _pathTail;                                                      \
-      nsresult rv;                                                            \
-      rv = aCb->Callback(EmptyCString(), path, nsIMemoryReporter::KIND_OTHER, \
-                    nsIMemoryReporter::UNITS_COUNT, _amount,                  \
-                    NS_LITERAL_CSTRING(_desc), aClosure);                     \
-      NS_ENSURE_SUCCESS(rv, rv);                                              \
-    }                                                                         \
+    nsresult rv = ReportCount(censusWindowPath, _pathTail, _amount,           \
+                              NS_LITERAL_CSTRING(_desc), aCb, aClosure);      \
+    NS_ENSURE_SUCCESS(rv, rv);                                                \
   } while (0)
 
   nsWindowSizes windowSizes(WindowsMallocSizeOf);
@@ -306,11 +334,6 @@ CollectWindowReports(nsGlobalWindow *aWindow,
               "Memory used by a window's DOM that isn't measured by the "
               "other 'dom/' numbers.");
   aWindowTotalSizes->mDOMOtherSize += windowSizes.mDOMOtherSize;
-
-  REPORT_SIZE("/proto-iface-cache", windowSizes.mProtoIfaceCacheSize,
-              "Memory used for prototype and interface binding caches "
-              "with a window.");
-  aWindowTotalSizes->mProtoIfaceCacheSize += windowSizes.mProtoIfaceCacheSize;
 
   REPORT_SIZE("/property-tables",
               windowSizes.mPropertyTablesSize,
@@ -502,8 +525,7 @@ nsWindowMemoryReporter::CollectReports(nsIMemoryReporterCallback* aCb,
   do {                                                                        \
     nsresult rv;                                                              \
     rv = aCb->Callback(EmptyCString(), NS_LITERAL_CSTRING(_path),             \
-                       nsIMemoryReporter::KIND_OTHER,                         \
-                       nsIMemoryReporter::UNITS_BYTES, _amount,               \
+                       KIND_OTHER, UNITS_BYTES, _amount,                      \
                        NS_LITERAL_CSTRING(_desc), aClosure);                  \
     NS_ENSURE_SUCCESS(rv, rv);                                                \
   } while (0)
@@ -525,9 +547,6 @@ nsWindowMemoryReporter::CollectReports(nsIMemoryReporterCallback* aCb,
 
   REPORT("window-objects/dom/other", windowTotalSizes.mDOMOtherSize,
          "This is the sum of all windows' 'dom/other' numbers.");
-
-  REPORT("window-objects/proto-iface-cache", windowTotalSizes.mProtoIfaceCacheSize,
-         "This is the sum of all windows' 'proto-iface-cache' numbers.");
 
   REPORT("window-objects/property-tables",
          windowTotalSizes.mPropertyTablesSize,
@@ -583,7 +602,7 @@ nsWindowMemoryReporter::GetGhostTimeout()
 
 NS_IMETHODIMP
 nsWindowMemoryReporter::Observe(nsISupports *aSubject, const char *aTopic,
-                                const PRUnichar *aData)
+                                const char16_t *aData)
 {
   if (!strcmp(aTopic, DOM_WINDOW_DESTROYED_TOPIC)) {
     ObserveDOMWindowDetached(aSubject);
@@ -805,6 +824,9 @@ nsWindowMemoryReporter::CheckForGhostWindows(
   mDetachedWindows.Enumerate(CheckForGhostWindowsEnumerator,
                              &ghostEnumData);
 }
+
+NS_IMPL_ISUPPORTS1(nsWindowMemoryReporter::GhostWindowsReporter,
+                   nsIMemoryReporter)
 
 /* static */ int64_t
 nsWindowMemoryReporter::GhostWindowsReporter::DistinguishedAmount()

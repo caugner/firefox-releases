@@ -8,6 +8,7 @@
 #include "GLUploadHelpers.h"
 #include "DecomposeIntoNoRepeatTriangles.h"
 #include "GLContext.h"
+#include "ScopedGLHelpers.h"
 #include "nsRect.h"
 #include "gfx2DGlue.h"
 #include "gfxUtils.h"
@@ -43,8 +44,8 @@ GLBlitTextureImageHelper::BlitTextureImage(TextureImage *aSrc, const nsIntRect& 
     int savedFb = 0;
     mGL->fGetIntegerv(LOCAL_GL_FRAMEBUFFER_BINDING, &savedFb);
 
-    mGL->fDisable(LOCAL_GL_SCISSOR_TEST);
-    mGL->fDisable(LOCAL_GL_BLEND);
+    ScopedGLState scopedScissorTestState(mGL, LOCAL_GL_SCISSOR_TEST, false);
+    ScopedGLState scopedBlendState(mGL, LOCAL_GL_BLEND, false);
 
     // 2.0 means scale up by two
     float blitScaleX = float(aDstRect.width) / float(aSrcRect.width);
@@ -112,7 +113,7 @@ GLBlitTextureImageHelper::BlitTextureImage(TextureImage *aSrc, const nsIntRect& 
             float dy0 = 2.0f * float(srcSubInDstRect.y) / float(dstSize.height) - 1.0f;
             float dx1 = 2.0f * float(srcSubInDstRect.x + srcSubInDstRect.width) / float(dstSize.width) - 1.0f;
             float dy1 = 2.0f * float(srcSubInDstRect.y + srcSubInDstRect.height) / float(dstSize.height) - 1.0f;
-            mGL->PushViewportRect(nsIntRect(0, 0, dstSize.width, dstSize.height));
+            ScopedViewportRect autoViewportRect(mGL, 0, 0, dstSize.width, dstSize.height);
 
             RectTriangles rects;
 
@@ -143,7 +144,8 @@ GLBlitTextureImageHelper::BlitTextureImage(TextureImage *aSrc, const nsIntRect& 
                 }
             }
 
-            TextureImage::ScopedBindTexture texBind(aSrc, LOCAL_GL_TEXTURE0);
+            ScopedBindTextureUnit autoTexUnit(mGL, LOCAL_GL_TEXTURE0);
+            ScopedBindTexture autoTex(mGL, aSrc->GetTextureID());
 
             mGL->fBindBuffer(LOCAL_GL_ARRAY_BUFFER, 0);
 
@@ -158,7 +160,6 @@ GLBlitTextureImageHelper::BlitTextureImage(TextureImage *aSrc, const nsIntRect& 
             mGL->fDisableVertexAttribArray(0);
             mGL->fDisableVertexAttribArray(1);
 
-            mGL->PopViewportRect();
         } while (aSrc->NextTile());
     } while (aDst->NextTile());
 
@@ -169,9 +170,6 @@ GLBlitTextureImageHelper::BlitTextureImage(TextureImage *aSrc, const nsIntRect& 
     SetBlitFramebufferForDestTexture(0);
 
     mGL->fBindFramebuffer(LOCAL_GL_FRAMEBUFFER, savedFb);
-
-    mGL->fEnable(LOCAL_GL_SCISSOR_TEST);
-    mGL->fEnable(LOCAL_GL_BLEND);
 }
 
 void

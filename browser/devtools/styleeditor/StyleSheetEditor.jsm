@@ -14,48 +14,62 @@ const Cu = Components.utils;
 const require = Cu.import("resource://gre/modules/devtools/Loader.jsm", {}).devtools.require;
 const Editor  = require("devtools/sourceeditor/editor");
 const promise = require("sdk/core/promise");
+const {CssLogic} = require("devtools/styleinspector/css-logic");
+const AutoCompleter = require("devtools/sourceeditor/autocomplete");
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
+Cu.import("resource://gre/modules/osfile.jsm");
 Cu.import("resource:///modules/devtools/shared/event-emitter.js");
 Cu.import("resource:///modules/devtools/StyleEditorUtil.jsm");
 
+const LOAD_ERROR = "error-load";
 const SAVE_ERROR = "error-save";
 
 // max update frequency in ms (avoid potential typing lag and/or flicker)
 // @see StyleEditor.updateStylesheet
 const UPDATE_STYLESHEET_THROTTLE_DELAY = 500;
 
+// Pref which decides if CSS autocompletion is enabled in Style Editor or not.
+const AUTOCOMPLETION_PREF = "devtools.styleeditor.autocompletion-enabled";
+
+// How long to wait to update linked CSS file after original source was saved
+// to disk. Time in ms.
+const CHECK_LINKED_SHEET_DELAY=500;
+
+// How many times to check for linked file changes
+const MAX_CHECK_COUNT=10;
+
 /**
  * StyleSheetEditor controls the editor linked to a particular StyleSheet
  * object.
  *
  * Emits events:
- *   'source-load': The source of the stylesheet has been fetched
  *   'property-change': A property on the underlying stylesheet has changed
  *   'source-editor-load': The source editor for this editor has been loaded
  *   'error': An error has occured
  *
- * @param {StyleSheet}  styleSheet
+ * @param {StyleSheet|OriginalSource}  styleSheet
+ *        Stylesheet or original source to show
  * @param {DOMWindow}  win
  *        panel window for style editor
  * @param {nsIFile}  file
  *        Optional file that the sheet was imported from
  * @param {boolean} isNew
  *        Optional whether the sheet was created by the user
+ * @param {Walker} walker
+ *        Optional walker used for selectors autocompletion
  */
-function StyleSheetEditor(styleSheet, win, file, isNew) {
+function StyleSheetEditor(styleSheet, win, file, isNew, walker) {
   EventEmitter.decorate(this);
 
   this.styleSheet = styleSheet;
   this._inputElement = null;
-  this._sourceEditor = null;
+  this.sourceEditor = null;
   this._window = win;
   this._isNew = isNew;
-  this.savedFile = file;
-
-  this.errorMessage = null;
+  this.walker = walker;
 
   this._state = {   // state to use when inputElement attaches
     text: "",
@@ -63,8 +77,7 @@ function StyleSheetEditor(styleSheet, win, file, isNew) {
       start: {line: 0, ch: 0},
       end: {line: 0, ch: 0}
     },
-    readOnly: false,
-    topIndex: 0,              // the first visible line
+    topIndex: 0              // the first visible line
   };
 
   this._styleSheetFilePath = null;
@@ -73,30 +86,30 @@ function StyleSheetEditor(styleSheet, win, file, isNew) {
     this._styleSheetFilePath = this.styleSheet.href;
   }
 
-  this._onSourceLoad = this._onSourceLoad.bind(this);
   this._onPropertyChange = this._onPropertyChange.bind(this);
   this._onError = this._onError.bind(this);
+  this.checkLinkedFileForChanges = this.checkLinkedFileForChanges.bind(this);
+  this.markLinkedFileBroken = this.markLinkedFileBroken.bind(this);
 
   this._focusOnSourceEditorReady = false;
 
-  this.styleSheet.once("source-load", this._onSourceLoad);
+  let relatedSheet = this.styleSheet.relatedStyleSheet;
+  if (relatedSheet) {
+    relatedSheet.on("property-change", this._onPropertyChange);
+  }
   this.styleSheet.on("property-change", this._onPropertyChange);
   this.styleSheet.on("error", this._onError);
+
+  this.savedFile = file;
+  this.linkCSSFile();
 }
 
 StyleSheetEditor.prototype = {
   /**
-   * This editor's source editor
-   */
-  get sourceEditor() {
-    return this._sourceEditor;
-  },
-
-  /**
    * Whether there are unsaved changes in the editor
    */
   get unsaved() {
-    return this._sourceEditor && !this._sourceEditor.isClean();
+    return this.sourceEditor && !this.sourceEditor.isClean();
   },
 
   /**
@@ -107,43 +120,39 @@ StyleSheetEditor.prototype = {
     return this._isNew;
   },
 
+  get savedFile() {
+    return this._savedFile;
+  },
+
+  set savedFile(name) {
+    this._savedFile = name;
+
+    this.linkCSSFile();
+  },
+
   /**
    * Get a user-friendly name for the style sheet.
    *
    * @return string
    */
   get friendlyName() {
-    if (this.savedFile) { // reuse the saved filename if any
+    if (this.savedFile) {
       return this.savedFile.leafName;
     }
 
     if (this._isNew) {
-      let index = this.styleSheet.styleSheetIndex + 1; // 0-indexing only works for devs
+      let index = this.styleSheet.styleSheetIndex + 1;
       return _("newStyleSheet", index);
     }
 
     if (!this.styleSheet.href) {
-      let index = this.styleSheet.styleSheetIndex + 1; // 0-indexing only works for devs
+      let index = this.styleSheet.styleSheetIndex + 1;
       return _("inlineStyleSheet", index);
     }
 
     if (!this._friendlyName) {
       let sheetURI = this.styleSheet.href;
-      let contentURI = this.styleSheet.debuggee.baseURI;
-      let contentURIScheme = contentURI.scheme;
-      let contentURILeafIndex = contentURI.specIgnoringRef.lastIndexOf("/");
-      contentURI = contentURI.specIgnoringRef;
-
-      // get content base URI without leaf name (if any)
-      if (contentURILeafIndex > contentURIScheme.length) {
-        contentURI = contentURI.substring(0, contentURILeafIndex + 1);
-      }
-
-      // avoid verbose repetition of absolute URI when the style sheet URI
-      // is relative to the content URI
-      this._friendlyName = (sheetURI.indexOf(contentURI) == 0)
-                           ? sheetURI.substring(contentURI.length)
-                           : sheetURI;
+      this._friendlyName = CssLogic.shortSource({ href: sheetURI });
       try {
         this._friendlyName = decodeURI(this._friendlyName);
       } catch (ex) {
@@ -153,24 +162,61 @@ StyleSheetEditor.prototype = {
   },
 
   /**
-   * Start fetching the full text source for this editor's sheet.
+   * If this is an original source, get the path of the CSS file it generated.
    */
-  fetchSource: function() {
-    this.styleSheet.fetchSource();
+  linkCSSFile: function() {
+    if (!this.styleSheet.isOriginalSource) {
+      return;
+    }
+
+    let relatedSheet = this.styleSheet.relatedStyleSheet;
+
+    let path;
+    var uri = NetUtil.newURI(relatedSheet.href);
+
+    if (uri.scheme == "file") {
+      var file = uri.QueryInterface(Ci.nsIFileURL).file;
+      path = file.path;
+    }
+    else if (this.savedFile) {
+      let origUri = NetUtil.newURI(this.styleSheet.href);
+      path = findLinkedFilePath(uri, origUri, this.savedFile);
+    }
+    else {
+      // we can't determine path to generated file on disk
+      return;
+    }
+
+    if (this.linkedCSSFile == path) {
+      return;
+    }
+
+    this.linkedCSSFile = path;
+
+    this.linkedCSSFileError = null;
+
+    // save last file change time so we can compare when we check for changes.
+    OS.File.stat(path).then((info) => {
+      this._fileModDate = info.lastModificationDate.getTime();
+    }, this.markLinkedFileBroken);
+
+    this.emit("linked-css-file");
   },
 
   /**
-   * Handle source fetched event. Forward source-load event.
-   *
-   * @param  {string} event
-   *         Event type
-   * @param  {string} source
-   *         Full-text source of the stylesheet
+   * Start fetching the full text source for this editor's sheet.
    */
-  _onSourceLoad: function(event, source) {
-    this._state.text = prettifyCSS(source);
-    this.sourceLoaded = true;
-    this.emit("source-load");
+  fetchSource: function(callback) {
+    this.styleSheet.getText().then((longStr) => {
+      longStr.string().then((source) => {
+        this._state.text = prettifyCSS(source);
+        this.sourceLoaded = true;
+
+        callback(source);
+      });
+    }, e => {
+      this.emit("error", LOAD_ERROR, this.styleSheet.href);
+    })
   },
 
   /**
@@ -181,8 +227,8 @@ StyleSheetEditor.prototype = {
    * @param  {string} property
    *         Property that has changed on sheet
    */
-  _onPropertyChange: function(event, property) {
-    this.emit("property-change", property);
+  _onPropertyChange: function(property, value) {
+    this.emit("property-change", property, value);
   },
 
   /**
@@ -208,7 +254,7 @@ StyleSheetEditor.prototype = {
       value: this._state.text,
       lineNumbers: true,
       mode: Editor.modes.css,
-      readOnly: this._state.readOnly,
+      readOnly: false,
       autoCloseBrackets: "{}()[]",
       extraKeys: this._getKeyBindings(),
       contextMenu: "sourceEditorContextMenu"
@@ -216,11 +262,21 @@ StyleSheetEditor.prototype = {
     let sourceEditor = new Editor(config);
 
     sourceEditor.appendTo(inputElement).then(() => {
-      sourceEditor.on("change", () => {
-        this.updateStyleSheet();
+      if (Services.prefs.getBoolPref(AUTOCOMPLETION_PREF)) {
+        sourceEditor.extend(AutoCompleter);
+        sourceEditor.setupAutoCompletion(this.walker);
+      }
+      sourceEditor.on("save", () => {
+        this.saveToFile();
       });
 
-      this._sourceEditor = sourceEditor;
+      if (this.styleSheet.update) {
+        sourceEditor.on("change", () => {
+          this.updateStyleSheet();
+        });
+      }
+
+      this.sourceEditor = sourceEditor;
 
       if (this._focusOnSourceEditorReady) {
         this._focusOnSourceEditorReady = false;
@@ -259,8 +315,8 @@ StyleSheetEditor.prototype = {
    * Focus the Style Editor input.
    */
   focus: function() {
-    if (this._sourceEditor) {
-      this._sourceEditor.focus();
+    if (this.sourceEditor) {
+      this.sourceEditor.focus();
     } else {
       this._focusOnSourceEditorReady = true;
     }
@@ -270,8 +326,8 @@ StyleSheetEditor.prototype = {
    * Event handler for when the editor is shown.
    */
   onShow: function() {
-    if (this._sourceEditor) {
-      this._sourceEditor.setFirstVisibleLine(this._state.topIndex);
+    if (this.sourceEditor) {
+      this.sourceEditor.setFirstVisibleLine(this._state.topIndex);
     }
     this.focus();
   },
@@ -320,7 +376,7 @@ StyleSheetEditor.prototype = {
       this._state.text = this.sourceEditor.getText();
     }
 
-    this.styleSheet.update(this._state.text);
+    this.styleSheet.update(this._state.text, true);
   },
 
   /**
@@ -347,8 +403,8 @@ StyleSheetEditor.prototype = {
         return;
       }
 
-      if (this._sourceEditor) {
-        this._state.text = this._sourceEditor.getText();
+      if (this.sourceEditor) {
+        this._state.text = this.sourceEditor.getText();
       }
 
       let ostream = FileUtils.openSafeFileOutputStream(returnFile);
@@ -366,18 +422,95 @@ StyleSheetEditor.prototype = {
           return;
         }
         FileUtils.closeSafeFileOutputStream(ostream);
-        // remember filename for next save if any
-        this._friendlyName = null;
-        this.savedFile = returnFile;
+
+        this.onFileSaved(returnFile);
 
         if (callback) {
           callback(returnFile);
         }
-        this.sourceEditor.setClean();
       }.bind(this));
     };
 
-    showFilePicker(file || this._styleSheetFilePath, true, this._window, onFile);
+    let defaultName;
+    if (this._friendlyName) {
+      defaultName = OS.Path.basename(this._friendlyName);
+    }
+    showFilePicker(file || this._styleSheetFilePath, true, this._window,
+                   onFile, defaultName);
+  },
+
+  /**
+   * Called when this source has been successfully saved to disk.
+   */
+  onFileSaved: function(returnFile) {
+    this._friendlyName = null;
+    this.savedFile = returnFile;
+
+    this.sourceEditor.setClean();
+
+    this.emit("property-change");
+
+    // TODO: replace with file watching
+    this._modCheckCount = 0;
+    this._window.clearTimeout(this._timeout);
+
+    if (this.linkedCSSFile && !this.linkedCSSFileError) {
+      this._timeout = this._window.setTimeout(this.checkLinkedFileForChanges,
+                                              CHECK_LINKED_SHEET_DELAY);
+    }
+  },
+
+  /**
+   * Check to see if our linked CSS file has changed on disk, and
+   * if so, update the live style sheet.
+   */
+  checkLinkedFileForChanges: function() {
+    OS.File.stat(this.linkedCSSFile).then((info) => {
+      let lastChange = info.lastModificationDate.getTime();
+
+      if (this._fileModDate && lastChange != this._fileModDate) {
+        this._fileModDate = lastChange;
+        this._modCheckCount = 0;
+
+        this.updateLinkedStyleSheet();
+        return;
+      }
+
+      if (++this._modCheckCount > MAX_CHECK_COUNT) {
+        this.updateLinkedStyleSheet();
+        return;
+      }
+
+      // try again in a bit
+      this._timeout = this._window.setTimeout(this.checkLinkedFileForChanges,
+                                              CHECK_LINKED_SHEET_DELAY);
+    }, this.markLinkedFileBroken);
+  },
+
+  /**
+   * Notify that the linked CSS file (if this is an original source)
+   * doesn't exist on disk in the place we think it does.
+   *
+   * @param string error
+   *        The error we got when trying to access the file.
+   */
+  markLinkedFileBroken: function(error) {
+    this.linkedCSSFileError = error || true;
+    this.emit("linked-css-file-error");
+  },
+
+  /**
+   * For original sources (e.g. Sass files). Fetch contents of linked CSS
+   * file from disk and live update the stylesheet object with the contents.
+   */
+  updateLinkedStyleSheet: function() {
+    OS.File.read(this.linkedCSSFile).then((array) => {
+      let decoder = new TextDecoder();
+      let text = decoder.decode(array);
+
+      let relatedSheet = this.styleSheet.relatedStyleSheet;
+      relatedSheet.update(text, true);
+    }, this.markLinkedFileBroken);
   },
 
   /**
@@ -404,7 +537,9 @@ StyleSheetEditor.prototype = {
    * Clean up for this editor.
    */
   destroy: function() {
-    this.styleSheet.off("source-load", this._onSourceLoad);
+    if (this.sourceEditor) {
+      this.sourceEditor.destroy();
+    }
     this.styleSheet.off("property-change", this._onPropertyChange);
     this.styleSheet.off("error", this._onError);
   }
@@ -413,8 +548,8 @@ StyleSheetEditor.prototype = {
 
 const TAB_CHARS = "\t";
 
-const OS = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULRuntime).OS;
-const LINE_SEPARATOR = OS === "WINNT" ? "\r\n" : "\n";
+const CURRENT_OS = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULRuntime).OS;
+const LINE_SEPARATOR = CURRENT_OS === "WINNT" ? "\r\n" : "\n";
 
 /**
  * Prettify minified CSS text.
@@ -477,3 +612,73 @@ function prettifyCSS(text)
   return parts.join(LINE_SEPARATOR);
 }
 
+/**
+ * Find a path on disk for a file given it's hosted uri, the uri of the
+ * original resource that generated it (e.g. Sass file), and the location of the
+ * local file for that source.
+ */
+function findLinkedFilePath(uri, origUri, file) {
+  let project = findProjectPath(origUri, file);
+  let branch = findUnsharedBranch(origUri, uri);
+
+  let parts = project.concat(branch);
+  let path = OS.Path.join.apply(this, parts);
+
+  return path;
+}
+
+/**
+ * Find the path of a project given a file in the project and the uri
+ * of that resource. e.g.:
+ * "http://localhost/src/a.css" and "/Users/moz/proj/src/a.css"
+ * would yeild ["Users", "moz", "proj"]
+ *
+ * @param {nsIURI} uri
+ *        uri of hosted resource
+ * @param {nsIFile} file
+ *        file for that resource on disk
+ * @return {array}
+ *        array of path parts
+ */
+function findProjectPath(uri, file) {
+  let uri = OS.Path.split(uri.path).components;
+  let path = OS.Path.split(file.path).components;
+
+  // don't care about differing leaf names
+  uri.pop();
+  path.pop();
+
+  let dir = path.pop();
+  while(dir) {
+    let serverDir = uri.pop();
+    if (serverDir != dir) {
+      return path.concat([dir]);
+    }
+    dir = path.pop();
+  }
+  return [];
+}
+
+/**
+ * Find the part of a uri past the root it shares with another uri. e.g:
+ * "http://localhost/built/a.scss" and "http://localhost/src/a.css"
+ * would yeild ["built", "a.scss"];
+ *
+ * @param {nsIURI} origUri
+ *        uri to find unshared branch of
+ * @param {nsIURI} origUri
+ *        uri to compare against to get a shared root
+ * @return {array}
+ *         array of path parts for branch
+ */
+function findUnsharedBranch(origUri, uri) {
+  origUri = OS.Path.split(origUri.path).components;
+  uri = OS.Path.split(uri.path).components;
+
+  for (var i = 0; i < uri.length - 1; i++) {
+    if (uri[i] != origUri[i]) {
+      return uri.slice(i);
+    }
+  }
+  return uri;
+}

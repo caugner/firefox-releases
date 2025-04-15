@@ -15,7 +15,6 @@
 
 #include "jsanalyze.h"
 
-#include "builtin/ParallelArray.h"
 #include "jit/ExecutionModeInlines.h"
 #include "vm/ArrayObject.h"
 #include "vm/BooleanObject.h"
@@ -23,63 +22,7 @@
 #include "vm/StringObject.h"
 #include "vm/TypedArrayObject.h"
 
-#include "jsanalyzeinlines.h"
 #include "jscntxtinlines.h"
-
-inline bool
-js::TaggedProto::isObject() const
-{
-    /* Skip nullptr and Proxy::LazyProto. */
-    return uintptr_t(proto) > uintptr_t(Proxy::LazyProto);
-}
-
-inline bool
-js::TaggedProto::isLazy() const
-{
-    return proto == Proxy::LazyProto;
-}
-
-inline JSObject *
-js::TaggedProto::toObject() const
-{
-    JS_ASSERT(isObject());
-    return proto;
-}
-
-inline JSObject *
-js::TaggedProto::toObjectOrNull() const
-{
-    JS_ASSERT(!proto || isObject());
-    return proto;
-}
-
-template<class Outer>
-inline bool
-js::TaggedProtoOperations<Outer>::isLazy() const
-{
-    return value()->isLazy();
-}
-
-template<class Outer>
-inline bool
-js::TaggedProtoOperations<Outer>::isObject() const
-{
-    return value()->isObject();
-}
-
-template<class Outer>
-inline JSObject *
-js::TaggedProtoOperations<Outer>::toObject() const
-{
-    return value()->toObject();
-}
-
-template<class Outer>
-inline JSObject *
-js::TaggedProtoOperations<Outer>::toObjectOrNull() const
-{
-    return value()->toObjectOrNull();
-}
 
 namespace js {
 namespace types {
@@ -104,17 +47,29 @@ CompilerOutput::ion() const
 }
 
 inline CompilerOutput*
-RecompileInfo::compilerOutput(TypeCompartment &types) const
+RecompileInfo::compilerOutput(TypeZone &types) const
 {
-    if (!types.constrainedOutputs || outputIndex >= types.constrainedOutputs->length())
+    if (!types.compilerOutputs || outputIndex >= types.compilerOutputs->length())
         return nullptr;
-    return &(*types.constrainedOutputs)[outputIndex];
+    return &(*types.compilerOutputs)[outputIndex];
 }
 
 inline CompilerOutput*
 RecompileInfo::compilerOutput(JSContext *cx) const
 {
-    return compilerOutput(cx->compartment()->types);
+    return compilerOutput(cx->zone()->types);
+}
+
+inline bool
+RecompileInfo::shouldSweep(TypeZone &types)
+{
+    CompilerOutput *output = compilerOutput(types);
+    if (!output || !output->isValid())
+        return true;
+
+    // Update this info for the output's new index in the zone's compiler outputs.
+    outputIndex = output->sweepIndex();
+    return false;
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -132,8 +87,8 @@ Type::ObjectType(JSObject *obj)
 /* static */ inline Type
 Type::ObjectType(TypeObject *obj)
 {
-    if (obj->singleton)
-        return Type(uintptr_t(obj->singleton.get()) | 1);
+    if (obj->singleton())
+        return Type(uintptr_t(obj->singleton()) | 1);
     return Type(uintptr_t(obj));
 }
 
@@ -221,9 +176,9 @@ IdToTypeId(jsid id)
      * and overflowing integers.
      */
     if (JSID_IS_STRING(id)) {
-        JSFlatString *str = JSID_TO_FLAT_STRING(id);
-        JS::TwoByteChars cp = str->range();
-        if (JS7_ISDEC(cp[0]) || cp[0] == '-') {
+        JSAtom *atom = JSID_TO_ATOM(id);
+        JS::TwoByteChars cp = atom->range();
+        if (cp.length() > 0 && (JS7_ISDEC(cp[0]) || cp[0] == '-')) {
             for (size_t i = 1; i < cp.length(); ++i) {
                 if (!JS7_ISDEC(cp[i]))
                     return id;
@@ -288,14 +243,13 @@ struct AutoEnterAnalysis
          * If there are no more type inference activations on the stack,
          * process any triggered recompilations. Note that we should not be
          * invoking any scripted code while type inference is running.
-         * :TODO: assert this.
          */
         if (!compartment->activeAnalysis) {
-            TypeCompartment *types = &compartment->types;
-            if (compartment->zone()->types.pendingNukeTypes)
-                compartment->zone()->types.nukeTypes(freeOp);
-            else if (types->pendingRecompiles)
-                types->processPendingRecompiles(freeOp);
+            TypeZone &types = compartment->zone()->types;
+            if (types.pendingNukeTypes)
+                types.nukeTypes(freeOp);
+            else if (types.pendingRecompiles)
+                types.processPendingRecompiles(freeOp);
         }
     }
 
@@ -353,9 +307,6 @@ GetClassForProtoKey(JSProtoKey key)
 
       case JSProto_DataView:
         return &DataViewObject::class_;
-
-      case JSProto_ParallelArray:
-        return &ParallelArrayObject::class_;
 
       default:
         MOZ_ASSUME_UNREACHABLE("Bad proto key");
@@ -434,8 +385,10 @@ EnsureTrackPropertyTypes(JSContext *cx, JSObject *obj, jsid id)
             cx->clearPendingException();
             return;
         }
-        if (!obj->type()->unknownProperties())
-            obj->type()->getProperty(cx, id);
+        if (!obj->type()->unknownProperties() && !obj->type()->getProperty(cx, id)) {
+            cx->compartment()->types.setPendingNukeTypes(cx);
+            return;
+        }
     }
 
     JS_ASSERT(obj->type()->unknownProperties() || TrackPropertyTypes(cx, obj, id));
@@ -527,29 +480,41 @@ MarkTypeObjectUnknownProperties(JSContext *cx, TypeObject *obj,
     if (cx->typeInferenceEnabled()) {
         if (!obj->unknownProperties())
             obj->markUnknown(cx);
-        if (markSetsUnknown && !(obj->flags & OBJECT_FLAG_SETS_MARKED_UNKNOWN))
+        if (markSetsUnknown && !(obj->flags() & OBJECT_FLAG_SETS_MARKED_UNKNOWN))
             cx->compartment()->types.markSetsUnknown(cx, obj);
     }
 }
 
-/*
- * Mark any property which has been deleted or configured to be non-writable or
- * have a getter/setter.
- */
 inline void
-MarkTypePropertyConfigured(ExclusiveContext *cx, JSObject *obj, jsid id)
+MarkTypePropertyNonData(ExclusiveContext *cx, JSObject *obj, jsid id)
 {
     if (cx->typeInferenceEnabled()) {
         id = IdToTypeId(id);
         if (TrackPropertyTypes(cx, obj, id))
-            obj->type()->markPropertyConfigured(cx, id);
+            obj->type()->markPropertyNonData(cx, id);
+    }
+}
+
+inline void
+MarkTypePropertyNonWritable(ExclusiveContext *cx, JSObject *obj, jsid id)
+{
+    if (cx->typeInferenceEnabled()) {
+        id = IdToTypeId(id);
+        if (TrackPropertyTypes(cx, obj, id))
+            obj->type()->markPropertyNonWritable(cx, id);
     }
 }
 
 inline bool
-IsTypePropertyIdMarkedConfigured(JSObject *obj, jsid id)
+IsTypePropertyIdMarkedNonData(JSObject *obj, jsid id)
 {
-    return obj->type()->isPropertyConfigured(id);
+    return obj->type()->isPropertyNonData(id);
+}
+
+inline bool
+IsTypePropertyIdMarkedNonWritable(JSObject *obj, jsid id)
+{
+    return obj->type()->isPropertyNonWritable(id);
 }
 
 /* Mark a state change on a particular object. */
@@ -592,13 +557,13 @@ extern void TypeDynamicResult(JSContext *cx, JSScript *script, jsbytecode *pc,
 /* static */ inline unsigned
 TypeScript::NumTypeSets(JSScript *script)
 {
-    return script->nTypeSets + analyze::LocalSlot(script, 0);
+    return script->nTypeSets() + analyze::LocalSlot(script, 0);
 }
 
 /* static */ inline StackTypeSet *
 TypeScript::ThisTypes(JSScript *script)
 {
-    return script->types->typeArray() + script->nTypeSets + js::analyze::ThisSlot();
+    return script->types->typeArray() + script->nTypeSets() + analyze::ThisSlot();
 }
 
 /*
@@ -610,8 +575,8 @@ TypeScript::ThisTypes(JSScript *script)
 /* static */ inline StackTypeSet *
 TypeScript::ArgTypes(JSScript *script, unsigned i)
 {
-    JS_ASSERT(i < script->function()->nargs);
-    return script->types->typeArray() + script->nTypeSets + js::analyze::ArgSlot(i);
+    JS_ASSERT(i < script->functionNonDelazifying()->nargs());
+    return script->types->typeArray() + script->nTypeSets() + analyze::ArgSlot(i);
 }
 
 template <typename TYPESET>
@@ -628,7 +593,7 @@ TypeScript::BytecodeTypes(JSScript *script, jsbytecode *pc, uint32_t *hint, TYPE
     uint32_t offset = script->pcToOffset(pc);
 
     // See if this pc is the next typeset opcode after the last one looked up.
-    if (bytecodeMap[*hint + 1] == offset && (*hint + 1) < script->nTypeSets) {
+    if (bytecodeMap[*hint + 1] == offset && (*hint + 1) < script->nTypeSets()) {
         (*hint)++;
         return typeArray + *hint;
     }
@@ -639,7 +604,7 @@ TypeScript::BytecodeTypes(JSScript *script, jsbytecode *pc, uint32_t *hint, TYPE
 
     // Fall back to a binary search.
     size_t bottom = 0;
-    size_t top = script->nTypeSets - 1;
+    size_t top = script->nTypeSets() - 1;
     size_t mid = bottom + (top - bottom) / 2;
     while (mid < top) {
         if (bytecodeMap[mid] < offset)
@@ -665,7 +630,7 @@ TypeScript::BytecodeTypes(JSScript *script, jsbytecode *pc)
 {
     JS_ASSERT(CurrentThreadCanAccessRuntime(script->runtimeFromMainThread()));
 #ifdef JS_ION
-    uint32_t *hint = script->baselineScript()->bytecodeTypeMap() + script->nTypeSets;
+    uint32_t *hint = script->baselineScript()->bytecodeTypeMap() + script->nTypeSets();
 #else
     uint32_t *hint = nullptr;
     MOZ_CRASH();
@@ -707,7 +672,7 @@ TypeScript::InitObject(JSContext *cx, JSScript *script, jsbytecode *pc, JSProtoK
     /* :XXX: Limit script->length so we don't need to check the offset up front? */
     uint32_t offset = script->pcToOffset(pc);
 
-    if (!cx->typeInferenceEnabled() || !script->compileAndGo || offset >= AllocationSiteKey::OFFSET_LIMIT)
+    if (!cx->typeInferenceEnabled() || !script->compileAndGo() || offset >= AllocationSiteKey::OFFSET_LIMIT)
         return GetTypeNewObject(cx, kind);
 
     AllocationSiteKey key;
@@ -850,50 +815,6 @@ inline JSCompartment *
 TypeCompartment::compartment()
 {
     return (JSCompartment *)((char *)this - offsetof(JSCompartment, types));
-}
-
-inline void
-TypeCompartment::addPending(JSContext *cx, TypeConstraint *constraint,
-                            ConstraintTypeSet *source, Type type)
-{
-    JS_ASSERT(this == &cx->compartment()->types);
-    JS_ASSERT(!cx->runtime()->isHeapBusy());
-
-    InferSpew(ISpewOps, "pending: %sC%p%s %s",
-              InferSpewColor(constraint), constraint, InferSpewColorReset(),
-              TypeString(type));
-
-    if ((pendingCount == pendingCapacity) && !growPendingArray(cx))
-        return;
-
-    PendingWork &pending = pendingArray[pendingCount++];
-    pending.constraint = constraint;
-    pending.source = source;
-    pending.type = type;
-}
-
-inline void
-TypeCompartment::resolvePending(JSContext *cx)
-{
-    JS_ASSERT(this == &cx->compartment()->types);
-
-    if (resolving) {
-        /* There is an active call further up resolving the worklist. */
-        return;
-    }
-
-    resolving = true;
-
-    /* Handle all pending type registrations. */
-    while (pendingCount) {
-        const PendingWork &pending = pendingArray[--pendingCount];
-        InferSpew(ISpewOps, "resolve: %sC%p%s %s",
-                  InferSpewColor(pending.constraint), pending.constraint,
-                  InferSpewColorReset(), TypeString(pending.type));
-        pending.constraint->newType(cx, pending.source, pending.type);
-    }
-
-    resolving = false;
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -1131,10 +1052,8 @@ TypeSet::clearObjects()
 }
 
 bool
-TypeSet::addType(Type type, LifoAlloc *alloc, bool *padded)
+TypeSet::addType(Type type, LifoAlloc *alloc)
 {
-    JS_ASSERT_IF(padded, !*padded);
-
     if (unknown())
         return true;
 
@@ -1142,8 +1061,6 @@ TypeSet::addType(Type type, LifoAlloc *alloc, bool *padded)
         flags |= TYPE_FLAG_BASE_MASK;
         clearObjects();
         JS_ASSERT(unknown());
-        if (padded)
-            *padded = true;
         return true;
     }
 
@@ -1157,8 +1074,6 @@ TypeSet::addType(Type type, LifoAlloc *alloc, bool *padded)
             flag |= TYPE_FLAG_INT32;
 
         flags |= flag;
-        if (padded)
-            *padded = true;
         return true;
     }
 
@@ -1186,7 +1101,7 @@ TypeSet::addType(Type type, LifoAlloc *alloc, bool *padded)
 
     if (type.isTypeObject()) {
         TypeObject *nobject = type.typeObject();
-        JS_ASSERT(!nobject->singleton);
+        JS_ASSERT(!nobject->singleton());
         if (nobject->unknownProperties())
             goto unknownObject;
     }
@@ -1198,8 +1113,6 @@ TypeSet::addType(Type type, LifoAlloc *alloc, bool *padded)
         clearObjects();
     }
 
-    if (padded)
-        *padded = true;
     return true;
 }
 
@@ -1208,13 +1121,13 @@ ConstraintTypeSet::addType(ExclusiveContext *cxArg, Type type)
 {
     JS_ASSERT(cxArg->compartment()->activeAnalysis);
 
-    bool added = false;
-    if (!TypeSet::addType(type, &cxArg->typeLifoAlloc(), &added)) {
+    if (hasType(type))
+        return;
+
+    if (!TypeSet::addType(type, &cxArg->typeLifoAlloc())) {
         cxArg->compartment()->types.setPendingNukeTypes(cxArg);
         return;
     }
-    if (!added)
-        return;
 
     InferSpew(ISpewOps, "addType: %sT%p%s %s",
               InferSpewColor(this), this, InferSpewColorReset(),
@@ -1224,23 +1137,17 @@ ConstraintTypeSet::addType(ExclusiveContext *cxArg, Type type)
     if (JSContext *cx = cxArg->maybeJSContext()) {
         TypeConstraint *constraint = constraintList;
         while (constraint) {
-            cx->compartment()->types.addPending(cx, constraint, this, type);
+            constraint->newType(cx, this, type);
             constraint = constraint->next;
         }
-        cx->compartment()->types.resolvePending(cx);
     } else {
         JS_ASSERT(!constraintList);
     }
 }
 
 inline void
-HeapTypeSet::setConfiguredProperty(ExclusiveContext *cxArg)
+HeapTypeSet::newPropertyState(ExclusiveContext *cxArg)
 {
-    if (flags & TYPE_FLAG_CONFIGURED_PROPERTY)
-        return;
-
-    flags |= TYPE_FLAG_CONFIGURED_PROPERTY;
-
     /* Propagate the change to all constraints. */
     if (JSContext *cx = cxArg->maybeJSContext()) {
         TypeConstraint *constraint = constraintList;
@@ -1251,6 +1158,26 @@ HeapTypeSet::setConfiguredProperty(ExclusiveContext *cxArg)
     } else {
         JS_ASSERT(!constraintList);
     }
+}
+
+inline void
+HeapTypeSet::setNonDataProperty(ExclusiveContext *cx)
+{
+    if (flags & TYPE_FLAG_NON_DATA_PROPERTY)
+        return;
+
+    flags |= TYPE_FLAG_NON_DATA_PROPERTY;
+    newPropertyState(cx);
+}
+
+inline void
+HeapTypeSet::setNonWritableProperty(ExclusiveContext *cx)
+{
+    if (flags & TYPE_FLAG_NON_WRITABLE_PROPERTY)
+        return;
+
+    flags |= TYPE_FLAG_NON_WRITABLE_PROPERTY;
+    newPropertyState(cx);
 }
 
 inline unsigned
@@ -1318,7 +1245,7 @@ TypeSet::getObjectClass(unsigned i) const
     if (JSObject *object = getSingleObject(i))
         return object->getClass();
     if (TypeObject *object = getTypeObject(i))
-        return object->clasp;
+        return object->clasp();
     return nullptr;
 }
 
@@ -1326,18 +1253,16 @@ TypeSet::getObjectClass(unsigned i) const
 // TypeObject
 /////////////////////////////////////////////////////////////////////
 
-inline TypeObject::TypeObject(const Class *clasp, TaggedProto proto, bool unknown)
+inline TypeObject::TypeObject(const Class *clasp, TaggedProto proto, TypeObjectFlags initialFlags)
 {
     mozilla::PodZero(this);
 
     /* Inner objects may not appear on prototype chains. */
     JS_ASSERT_IF(proto.isObject(), !proto.toObject()->getClass()->ext.outerObject);
 
-    this->clasp = clasp;
-    this->proto = proto.raw();
-
-    if (unknown)
-        flags |= OBJECT_FLAG_UNKNOWN_MASK;
+    this->clasp_ = clasp;
+    this->proto_ = proto.raw();
+    this->flags_ = initialFlags;
 
     InferSpew(ISpewOps, "newObject: %s", TypeObjectString(this));
 }
@@ -1345,15 +1270,16 @@ inline TypeObject::TypeObject(const Class *clasp, TaggedProto proto, bool unknow
 inline uint32_t
 TypeObject::basePropertyCount() const
 {
-    return (flags & OBJECT_FLAG_PROPERTY_COUNT_MASK) >> OBJECT_FLAG_PROPERTY_COUNT_SHIFT;
+    return (flags() & OBJECT_FLAG_PROPERTY_COUNT_MASK) >> OBJECT_FLAG_PROPERTY_COUNT_SHIFT;
 }
 
 inline void
 TypeObject::setBasePropertyCount(uint32_t count)
 {
+    // Note: Callers must ensure they are performing threadsafe operations.
     JS_ASSERT(count <= OBJECT_FLAG_PROPERTY_COUNT_LIMIT);
-    flags = (flags & ~OBJECT_FLAG_PROPERTY_COUNT_MASK)
-          | (count << OBJECT_FLAG_PROPERTY_COUNT_SHIFT);
+    flags_ = (flags() & ~OBJECT_FLAG_PROPERTY_COUNT_MASK)
+           | (count << OBJECT_FLAG_PROPERTY_COUNT_SHIFT);
 }
 
 inline HeapTypeSet *
@@ -1365,6 +1291,9 @@ TypeObject::getProperty(ExclusiveContext *cx, jsid id)
     JS_ASSERT_IF(!JSID_IS_EMPTY(id), id == IdToTypeId(id));
     JS_ASSERT(!unknownProperties());
 
+    if (HeapTypeSet *types = maybeGetProperty(id))
+        return types;
+
     uint32_t propertyCount = basePropertyCount();
     Property **pprop = HashSetInsert<jsid,Property,Property>
         (cx->typeLifoAlloc(), propertySet, propertyCount, id);
@@ -1373,28 +1302,29 @@ TypeObject::getProperty(ExclusiveContext *cx, jsid id)
         return nullptr;
     }
 
-    if (!*pprop) {
-        setBasePropertyCount(propertyCount);
-        if (!addProperty(cx, id, pprop)) {
-            setBasePropertyCount(0);
-            propertySet = nullptr;
-            return nullptr;
-        }
-        if (propertyCount == OBJECT_FLAG_PROPERTY_COUNT_LIMIT) {
-            markUnknown(cx);
+    JS_ASSERT(!*pprop);
 
-            /*
-             * Return an arbitrary property in the object, as all have unknown
-             * type and are treated as configured.
-             */
-            unsigned count = getPropertyCount();
-            for (unsigned i = 0; i < count; i++) {
-                if (Property *prop = getProperty(i))
-                    return &prop->types;
-            }
+    setBasePropertyCount(propertyCount);
+    if (!addProperty(cx, id, pprop)) {
+        setBasePropertyCount(0);
+        propertySet = nullptr;
+        return nullptr;
+    }
 
-            MOZ_ASSUME_UNREACHABLE("Missing property");
+    if (propertyCount == OBJECT_FLAG_PROPERTY_COUNT_LIMIT) {
+        markUnknown(cx);
+
+        /*
+         * Return an arbitrary property in the object, as all have unknown
+         * type and are treated as non-data properties.
+         */
+        unsigned count = getPropertyCount();
+        for (unsigned i = 0; i < count; i++) {
+            if (Property *prop = getProperty(i))
+                return &prop->types;
         }
+
+        MOZ_ASSUME_UNREACHABLE("Missing property");
     }
 
     return &(*pprop)->types;
@@ -1482,7 +1412,7 @@ JSScript::ensureRanAnalysis(JSContext *cx)
         return false;
     if (!hasAnalysis() && !makeAnalysis(cx))
         return false;
-    JS_ASSERT(analysis()->ranBytecode());
+    JS_ASSERT(hasAnalysis());
     return true;
 }
 

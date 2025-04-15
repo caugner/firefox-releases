@@ -20,12 +20,14 @@ class Function;
 BEGIN_WORKERS_NAMESPACE
 
 class WorkerPrivate;
+class WorkerConsole;
 class WorkerLocation;
 class WorkerNavigator;
 
 class WorkerGlobalScope : public nsDOMEventTargetHelper,
                           public nsIGlobalObject
 {
+  nsRefPtr<WorkerConsole> mConsole;
   nsRefPtr<WorkerLocation> mLocation;
   nsRefPtr<WorkerNavigator> mNavigator;
 
@@ -40,8 +42,7 @@ public:
   WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   virtual JSObject*
-  WrapGlobalObject(JSContext* aCx, JS::CompartmentOptions& aOptions,
-                   JSPrincipals* aPrincipal) = 0;
+  WrapGlobalObject(JSContext* aCx) = 0;
 
   virtual JSObject*
   GetGlobalJSObject(void) MOZ_OVERRIDE
@@ -59,10 +60,18 @@ public:
     return nsRefPtr<WorkerGlobalScope>(this).forget();
   }
 
+  WorkerConsole*
+  Console();
+
   already_AddRefed<WorkerLocation>
   Location();
+
   already_AddRefed<WorkerNavigator>
   Navigator();
+
+  already_AddRefed<WorkerNavigator>
+  GetExistingNavigator() const;
+
   void
   Close(JSContext* aCx);
 
@@ -100,6 +109,8 @@ public:
   void
   Btoa(const nsAString& aBtoa, nsAString& aOutput, ErrorResult& aRv) const;
 
+  IMPL_EVENT_HANDLER(online)
+  IMPL_EVENT_HANDLER(offline)
   IMPL_EVENT_HANDLER(close)
 
   void
@@ -117,8 +128,7 @@ public:
   Visible(JSContext* aCx, JSObject* aObj);
 
   virtual JSObject*
-  WrapGlobalObject(JSContext* aCx, JS::CompartmentOptions& aOptions,
-                   JSPrincipals* aPrincipal) MOZ_OVERRIDE;
+  WrapGlobalObject(JSContext* aCx) MOZ_OVERRIDE;
 
   void
   PostMessage(JSContext* aCx, JS::Handle<JS::Value> aMessage,
@@ -130,22 +140,22 @@ public:
 
 class SharedWorkerGlobalScope MOZ_FINAL : public WorkerGlobalScope
 {
-  const nsString mName;
+  const nsCString mName;
 
   ~SharedWorkerGlobalScope() { }
 
 public:
-  SharedWorkerGlobalScope(WorkerPrivate* aWorkerPrivate, const nsString& aName);
+  SharedWorkerGlobalScope(WorkerPrivate* aWorkerPrivate,
+                          const nsCString& aName);
 
   static bool
   Visible(JSContext* aCx, JSObject* aObj);
 
   virtual JSObject*
-  WrapGlobalObject(JSContext* aCx, JS::CompartmentOptions& aOptions,
-                   JSPrincipals* aPrincipal) MOZ_OVERRIDE;
+  WrapGlobalObject(JSContext* aCx) MOZ_OVERRIDE;
 
   void GetName(DOMString& aName) const {
-    aName.AsAString() = mName;
+    aName.AsAString() = NS_ConvertUTF8toUTF16(mName);
   }
 
   IMPL_EVENT_HANDLER(connect)

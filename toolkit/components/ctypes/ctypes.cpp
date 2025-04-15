@@ -27,7 +27,7 @@ static char*
 UnicodeToNative(JSContext *cx, const jschar *source, size_t slen)
 {
   nsAutoCString native;
-  nsDependentString unicode(reinterpret_cast<const PRUnichar*>(source), slen);
+  nsDependentString unicode(reinterpret_cast<const char16_t*>(source), slen);
   nsresult rv = NS_CopyUnicodeToNative(unicode, native);
   if (NS_FAILED(rv)) {
     JS_ReportError(cx, "could not convert string to native charset");
@@ -65,7 +65,7 @@ Module::~Module()
 #include "xpc_map_end.h"
 
 static bool
-SealObjectAndPrototype(JSContext* cx, JSObject* parent, const char* name)
+SealObjectAndPrototype(JSContext* cx, JS::Handle<JSObject *> parent, const char* name)
 {
   JS::Rooted<JS::Value> prop(cx);
   if (!JS_GetProperty(cx, parent, name, &prop))

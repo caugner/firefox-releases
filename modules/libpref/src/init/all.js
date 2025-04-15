@@ -100,17 +100,16 @@ pref("dom.workers.enabled", true);
 pref("dom.workers.maxPerDomain", 20);
 
 // Whether or not Shared Web Workers are enabled.
-pref("dom.workers.sharedWorkers.enabled", false);
+pref("dom.workers.sharedWorkers.enabled", true);
 
 // Whether nonzero values can be returned from performance.timing.*
 pref("dom.enable_performance", true);
 
 // Whether the Gamepad API is enabled
+pref("dom.gamepad.enabled", true);
 #ifdef RELEASE_BUILD
-pref("dom.gamepad.enabled", false);
 pref("dom.gamepad.non_standard_events.enabled", false);
 #else
-pref("dom.gamepad.enabled", true);
 pref("dom.gamepad.non_standard_events.enabled", true);
 #endif
 
@@ -161,13 +160,6 @@ pref("browser.helperApps.alwaysAsk.force",  false);
 pref("browser.helperApps.neverAsk.saveToDisk", "");
 pref("browser.helperApps.neverAsk.openFile", "");
 pref("browser.helperApps.deleteTempFileOnExit", false);
-
-#ifdef XP_WIN
-// By default, security zone information is stored in the Alternate Data Stream
-// of downloaded executable files on Windows.  This preference allows disabling
-// this feature, and thus the associated system-level execution prompts.
-pref("browser.download.saveZoneInformation", true);
-#endif
 
 // xxxbsmedberg: where should prefs for the toolkit go?
 pref("browser.chrome.toolbar_tips",         true);
@@ -238,7 +230,7 @@ pref("media.navigator.video.default_fps",30);
 pref("media.navigator.video.default_minfps",10);
 #ifdef MOZ_WIDGET_GONK
 pref("media.peerconnection.enabled", true);
-pref("media.peerconnection.video.enabled", false);
+pref("media.peerconnection.video.enabled", true);
 pref("media.navigator.video.max_fs", 1200); // 640x480 == 1200mb
 pref("media.navigator.video.max_fr", 30);
 #else
@@ -261,6 +253,19 @@ pref("media.peerconnection.agc_enabled", false);
 pref("media.peerconnection.agc", 1);
 pref("media.peerconnection.noise_enabled", false);
 pref("media.peerconnection.noise", 1);
+// Adjustments for OS mediastream+output+OS+input delay (lower bound)
+#if defined(XP_MACOSX)
+pref("media.peerconnection.capture_delay", 50);
+#elif defined(XP_WIN)
+pref("media.peerconnection.capture_delay", 50);
+#elif defined(ANDROID)
+pref("media.peerconnection.capture_delay", 100);
+#elif defined(XP_LINUX)
+pref("media.peerconnection.capture_delay", 70);
+#else
+// *BSD, others - merely a guess for now
+pref("media.peerconnection.capture_delay", 50);
+#endif
 #else
 #ifdef ANDROID
 pref("media.navigator.enabled", true);
@@ -273,12 +278,19 @@ pref("media.tabstreaming.time_per_frame", 40);
 
 // TextTrack support
 pref("media.webvtt.enabled", false);
+pref("media.webvtt.regions.enabled", false);
 
 // Whether to enable MediaSource support
 pref("media.mediasource.enabled", false);
 
 #ifdef MOZ_WEBSPEECH
 pref("media.webspeech.recognition.enable", false);
+#endif
+#ifdef MOZ_WEBM_ENCODER
+pref("media.encoder.webm.enabled", true);
+#endif
+#ifdef MOZ_OMX_ENCODER
+pref("media.encoder.omx.enabled", true);
 #endif
 
 // Whether to enable Web Audio support
@@ -367,17 +379,9 @@ pref("gfx.font_rendering.graphite.enabled", true);
 // (see http://mxr.mozilla.org/mozilla-central/ident?i=ShapingType)
 // Scripts not listed are grouped in the default category.
 // Set the pref to 255 to have all text shaped via the harfbuzz backend.
-#ifdef XP_WIN
-// Use harfbuzz for everything except Hangul (0x08). Harfbuzz doesn't yet
-// have a Hangul shaper, which means that the marks U+302E/302F would not
-// reorder properly in Malgun Gothic or similar fonts.
-pref("gfx.font_rendering.harfbuzz.scripts", 247);
-#else
-// Use harfbuzz for all scripts (except when using AAT fonts on OS X).
-// AFAICT, Core Text doesn't support full OpenType Hangul shaping anyway,
-// so there's no benefit to excluding it here.
+// Default setting:
+// We use harfbuzz for all scripts (except when using AAT fonts on OS X).
 pref("gfx.font_rendering.harfbuzz.scripts", 255);
-#endif
 
 #ifdef XP_WIN
 pref("gfx.font_rendering.directwrite.enabled", false);
@@ -438,6 +442,7 @@ pref("accessibility.tabfocus_applies_to_xul", true);
 
 // provide ability to turn on support for canvas focus rings
 pref("canvas.focusring.enabled", false);
+pref("canvas.customfocusring.enabled", false);
 
 // We want the ability to forcibly disable platform a11y, because
 // some non-a11y-related components attempt to bring it up.  See bug
@@ -663,177 +668,8 @@ pref("editor.css.default_length_unit",       "px");
 pref("editor.resizing.preserve_ratio",       true);
 pref("editor.positioning.offset",            0);
 
-
-// Default Capability Preferences: Security-Critical! 
-// Editing these may create a security risk - be sure you know what you're doing
-//pref("capability.policy.default.barprop.visible.set", "UniversalXPConnect");
-
-pref("capability.policy.default_policynames", "mailnews");
-
-pref("capability.policy.default.DOMException.code", "allAccess");
-pref("capability.policy.default.DOMException.message", "allAccess");
-pref("capability.policy.default.DOMException.name", "allAccess");
-pref("capability.policy.default.DOMException.result", "allAccess");
-pref("capability.policy.default.DOMException.toString.get", "allAccess");
-
-pref("capability.policy.default.History.back.get", "allAccess");
-pref("capability.policy.default.History.current", "UniversalXPConnect");
-pref("capability.policy.default.History.forward.get", "allAccess");
-pref("capability.policy.default.History.go.get", "allAccess");
-pref("capability.policy.default.History.item", "UniversalXPConnect");
-pref("capability.policy.default.History.next", "UniversalXPConnect");
-pref("capability.policy.default.History.previous", "UniversalXPConnect");
-pref("capability.policy.default.History.toString", "UniversalXPConnect");
-
-pref("capability.policy.default.Location.hash.set", "allAccess");
-pref("capability.policy.default.Location.href.set", "allAccess");
-pref("capability.policy.default.Location.replace.get", "allAccess");
-
-pref("capability.policy.default.Window.blur.get", "allAccess");
-pref("capability.policy.default.Window.close.get", "allAccess");
-pref("capability.policy.default.Window.closed.get", "allAccess");
-pref("capability.policy.default.Window.focus.get", "allAccess");
-pref("capability.policy.default.Window.frames.get", "allAccess");
-pref("capability.policy.default.Window.history.get", "allAccess");
-pref("capability.policy.default.Window.length.get", "allAccess");
-pref("capability.policy.default.Window.location", "allAccess");
-pref("capability.policy.default.Window.opener.get", "allAccess");
-pref("capability.policy.default.Window.parent.get", "allAccess");
-pref("capability.policy.default.Window.postMessage.get", "allAccess");
-pref("capability.policy.default.Window.self.get", "allAccess");
-pref("capability.policy.default.Window.top.get", "allAccess");
-pref("capability.policy.default.Window.window.get", "allAccess");
-
-pref("capability.policy.default.Selection.addSelectionListener", "UniversalXPConnect");
-pref("capability.policy.default.Selection.removeSelectionListener", "UniversalXPConnect");
-
-// Restrictions on the DOM for mail/news - see bugs 66938 and 84545
-pref("capability.policy.mailnews.sites", "mailbox: imap: news:");
-
-pref("capability.policy.mailnews.*.attributes.get", "noAccess");
-pref("capability.policy.mailnews.*.baseURI.get", "noAccess");
-pref("capability.policy.mailnews.*.data.get", "noAccess");
-pref("capability.policy.mailnews.*.getAttribute", "noAccess");
-pref("capability.policy.mailnews.HTMLDivElement.getAttribute", "sameOrigin");
-pref("capability.policy.mailnews.*.getAttributeNS", "noAccess");
-pref("capability.policy.mailnews.*.getAttributeNode", "noAccess");
-pref("capability.policy.mailnews.*.getAttributeNodeNS", "noAccess");
-pref("capability.policy.mailnews.*.getNamedItem", "noAccess");
-pref("capability.policy.mailnews.*.getNamedItemNS", "noAccess");
-pref("capability.policy.mailnews.*.host.get", "noAccess");
-pref("capability.policy.mailnews.*.hostname.get", "noAccess");
-pref("capability.policy.mailnews.*.href.get", "noAccess");
-pref("capability.policy.mailnews.*.innerHTML.get", "noAccess");
-pref("capability.policy.mailnews.*.lowSrc.get", "noAccess");
-pref("capability.policy.mailnews.*.nodeValue.get", "noAccess");
-pref("capability.policy.mailnews.*.pathname.get", "noAccess");
-pref("capability.policy.mailnews.*.protocol.get", "noAccess");
-pref("capability.policy.mailnews.*.src.get", "noAccess");
-pref("capability.policy.mailnews.*.substringData.get", "noAccess");
-pref("capability.policy.mailnews.*.text.get", "noAccess");
-pref("capability.policy.mailnews.*.textContent", "noAccess");
-pref("capability.policy.mailnews.*.title.get", "noAccess");
-pref("capability.policy.mailnews.*.wholeText", "noAccess");
-pref("capability.policy.mailnews.DOMException.toString", "noAccess");
-pref("capability.policy.mailnews.HTMLAnchorElement.toString", "noAccess");
-pref("capability.policy.mailnews.HTMLDocument.domain", "noAccess");
-pref("capability.policy.mailnews.HTMLDocument.URL", "noAccess");
-pref("capability.policy.mailnews.*.documentURI", "noAccess");
-pref("capability.policy.mailnews.Location.toString", "noAccess");
-pref("capability.policy.mailnews.Range.toString", "noAccess");
-pref("capability.policy.mailnews.Window.blur", "noAccess");
-pref("capability.policy.mailnews.Window.focus", "noAccess");
-pref("capability.policy.mailnews.Window.innerWidth.set", "noAccess");
-pref("capability.policy.mailnews.Window.innerHeight.set", "noAccess");
-pref("capability.policy.mailnews.Window.moveBy", "noAccess");
-pref("capability.policy.mailnews.Window.moveTo", "noAccess");
-pref("capability.policy.mailnews.Window.name.set", "noAccess");
-pref("capability.policy.mailnews.Window.outerHeight.set", "noAccess");
-pref("capability.policy.mailnews.Window.outerWidth.set", "noAccess");
-pref("capability.policy.mailnews.Window.resizeBy", "noAccess");
-pref("capability.policy.mailnews.Window.resizeTo", "noAccess");
-pref("capability.policy.mailnews.Window.screenX.set", "noAccess");
-pref("capability.policy.mailnews.Window.screenY.set", "noAccess");
-pref("capability.policy.mailnews.Window.sizeToContent", "noAccess");
-pref("capability.policy.mailnews.document.load", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.channel", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.getInterface", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.responseXML", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.responseText", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.status", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.statusText", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.abort", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.getAllResponseHeaders", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.getResponseHeader", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.open", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.send", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.setRequestHeader", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.readyState", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.overrideMimeType", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.onload", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.onerror", "noAccess");
-pref("capability.policy.mailnews.XMLHttpRequest.onreadystatechange", "noAccess");
-pref("capability.policy.mailnews.XMLSerializer.serializeToString", "noAccess");
-pref("capability.policy.mailnews.XMLSerializer.serializeToStream", "noAccess");
-pref("capability.policy.mailnews.DOMParser.parseFromString", "noAccess");
-pref("capability.policy.mailnews.DOMParser.parseFromStream", "noAccess");
-pref("capability.policy.mailnews.SOAPCall.transportURI", "noAccess");
-pref("capability.policy.mailnews.SOAPCall.verifySourceHeader", "noAccess");
-pref("capability.policy.mailnews.SOAPCall.invoke", "noAccess");
-pref("capability.policy.mailnews.SOAPCall.asyncInvoke", "noAccess");
-pref("capability.policy.mailnews.SOAPResponse.fault", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.styleURI", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.getAssociatedEncoding", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.setEncoder", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.getEncoder", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.setDecoder", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.setDecoder", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.getDecoder", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.defaultEncoder", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.defaultDecoder", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.schemaCollection", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.encode", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.decode", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.mapSchemaURI", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.unmapSchemaURI", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.getInternalSchemaURI", "noAccess");
-pref("capability.policy.mailnews.SOAPEncoding.getExternalSchemaURI", "noAccess");
-pref("capability.policy.mailnews.SOAPFault.element", "noAccess");
-pref("capability.policy.mailnews.SOAPFault.faultNamespaceURI", "noAccess");
-pref("capability.policy.mailnews.SOAPFault.faultCode", "noAccess");
-pref("capability.policy.mailnews.SOAPFault.faultString", "noAccess");
-pref("capability.policy.mailnews.SOAPFault.faultActor", "noAccess");
-pref("capability.policy.mailnews.SOAPFault.detail", "noAccess");
-pref("capability.policy.mailnews.SOAPHeaderBlock.actorURI", "noAccess");
-pref("capability.policy.mailnews.SOAPHeaderBlock.mustUnderstand", "noAccess");
-pref("capability.policy.mailnews.SOAPParameter", "noAccess");
-pref("capability.policy.mailnews.SOAPPropertyBagMutator.propertyBag", "noAccess");
-pref("capability.policy.mailnews.SOAPPropertyBagMutator.addProperty", "noAccess");
-pref("capability.policy.mailnews.SchemaLoader.load", "noAccess");
-pref("capability.policy.mailnews.SchemaLoader.loadAsync", "noAccess");
-pref("capability.policy.mailnews.SchemaLoader.processSchemaElement", "noAccess");
-pref("capability.policy.mailnews.SchemaLoader.onLoad", "noAccess");
-pref("capability.policy.mailnews.SchemaLoader.onError", "noAccess");
-pref("capability.policy.mailnews.WSDLLoader.load", "noAccess");
-pref("capability.policy.mailnews.WSDLLoader.loadAsync", "noAccess");
-pref("capability.policy.mailnews.WSDLLoader.onLoad", "noAccess");
-pref("capability.policy.mailnews.WSDLLoader.onError", "noAccess");
-pref("capability.policy.mailnews.WebServiceProxyFactory.createProxy", "noAccess");
-pref("capability.policy.mailnews.WebServiceProxyFactory.createProxyAsync", "noAccess");
-pref("capability.policy.mailnews.WebServiceProxyFactory.onLoad", "noAccess");
-pref("capability.policy.mailnews.WebServiceProxyFactory.onError", "noAccess");
-
-// XMLExtras
-pref("capability.policy.default.XMLHttpRequest.channel", "noAccess");
-pref("capability.policy.default.XMLHttpRequest.getInterface", "noAccess");
-pref("capability.policy.default.XMLHttpRequest.open-uri", "allAccess");
-pref("capability.policy.default.DOMParser.parseFromStream", "noAccess");
-
-// Clipboard
-pref("capability.policy.default.Clipboard.cutcopy", "noAccess");
-pref("capability.policy.default.Clipboard.paste", "noAccess");
-
 // Scripts & Windows prefs
+pref("dom.disable_beforeunload",            false);
 pref("dom.disable_image_src_set",           false);
 pref("dom.disable_window_flip",             false);
 pref("dom.disable_window_move_resize",      false);
@@ -870,17 +706,20 @@ pref("dom.min_background_timeout_value", 1000);
 // Don't use new input types
 pref("dom.experimental_forms", false);
 
-// Disable <input type=number>:
-pref("dom.forms.number", false);
+// Enable <input type=number>:
+pref("dom.forms.number", true);
 
-// Don't enable <input type=color> yet:
-pref("dom.forms.color", false);
+// Enable <input type=color> by default. It will be turned off for remaining
+// platforms which don't have a color picker implemented yet.
+pref("dom.forms.color", true);
 
 // Enables system messages and activities
 pref("dom.sysmsg.enabled", false);
 
 // Enable pre-installed applications.
 pref("dom.webapps.useCurrentProfile", false);
+
+pref("dom.cycle_collector.incremental", false);
 
 // Parsing perf prefs. For now just mimic what the old code did.
 #ifndef XP_WIN
@@ -916,7 +755,6 @@ pref("javascript.options.ion.chrome",       false);
 pref("javascript.options.asmjs",            true);
 pref("javascript.options.parallel_parsing", true);
 pref("javascript.options.ion.parallel_compilation", true);
-pref("javascript.options.jit_hardening", true);
 pref("javascript.options.typeinference.content", true);
 pref("javascript.options.typeinference.chrome", false);
 // This preference limits the memory usage of javascript.
@@ -1044,6 +882,9 @@ pref("network.http.default-socket-type", "");
 // the packet is lost or delayed on the route.
 pref("network.http.keep-alive.timeout", 115);
 
+// Timeout connections if an initial response is not received after 10 mins.
+pref("network.http.response.timeout", 300);
+
 // Limit the absolute number of http connections.
 // Note: the socket transport service will clamp the number below 256 if the OS
 // cannot allocate that many FDs, and it also always tries to reserve up to 250
@@ -1162,6 +1003,8 @@ pref("network.http.bypass-cachelock-threshold", 250);
 pref("network.http.spdy.enabled", true);
 pref("network.http.spdy.enabled.v3", true);
 pref("network.http.spdy.enabled.v3-1", true);
+pref("network.http.spdy.enabled.http2draft", false);
+pref("network.http.spdy.enforce-tls-profile", true);
 pref("network.http.spdy.chunk-size", 4096);
 pref("network.http.spdy.timeout", 180);
 pref("network.http.spdy.coalesce-hostnames", true);
@@ -1170,7 +1013,7 @@ pref("network.http.spdy.ping-threshold", 58);
 pref("network.http.spdy.ping-timeout", 8);
 pref("network.http.spdy.send-buffer-size", 131072);
 pref("network.http.spdy.allow-push", true);
-pref("network.http.spdy.push-allowance", 65536);
+pref("network.http.spdy.push-allowance", 131072);
 
 pref("network.http.diagnostics", false);
 
@@ -1391,10 +1234,15 @@ pref("network.dns.ipv4OnlyDomains", "");
 // This preference can be used to turn off IPv6 name lookups. See bug 68796.
 pref("network.dns.disableIPv6", false);
 
+// This is the number of dns cache entries allowed
+pref("network.dnsCacheEntries", 400);
+
+// In the absence of OS TTLs, the DNS cache TTL value
+pref("network.dnsCacheExpiration", 60);
+
 // The grace period allows the DNS cache to use expired entries, while kicking off
 // a revalidation in the background. In seconds, but rounded to minutes in gecko.
-// Default to 30 days. (basically forever)
-pref("network.dnsCacheExpirationGracePeriod", 2592000);
+pref("network.dnsCacheExpirationGracePeriod", 60);
 
 // This preference can be used to turn off DNS prefetch.
 pref("network.dns.disablePrefetch", false);
@@ -1420,7 +1268,7 @@ pref("network.dir.format", 2);
 pref("network.prefetch-next", true);
 
 // enables the predictive service
-pref("network.seer.enabled", false);
+pref("network.seer.enabled", true);
 pref("network.seer.enable-hover-on-ssl", false);
 pref("network.seer.page-degradation.day", 0);
 pref("network.seer.page-degradation.week", 5);
@@ -1436,6 +1284,8 @@ pref("network.seer.preconnect-min-confidence", 90);
 pref("network.seer.preresolve-min-confidence", 60);
 pref("network.seer.redirect-likely-confidence", 75);
 pref("network.seer.max-queue-size", 50);
+pref("network.seer.max-db-size", 157286400); // bytes
+pref("network.seer.preserve", 80); // percentage of seer data to keep when cleaning up
 
 
 // The following prefs pertain to the negotiate-auth extension (see bug 17578),
@@ -1570,6 +1420,7 @@ pref("font.language.group",                 "chrome://global/locale/intl.propert
 pref("intl.uidirection.ar", "rtl");
 pref("intl.uidirection.he", "rtl");
 pref("intl.uidirection.fa", "rtl");
+pref("intl.uidirection.ug", "rtl");
 pref("intl.uidirection.ur", "rtl");
 
 // use en-US hyphenation by default for content tagged with plain lang="en"
@@ -1923,6 +1774,9 @@ pref("layout.css.sticky.enabled", false);
 pref("layout.css.sticky.enabled", true);
 #endif
 
+// Is support for CSS "will-change" enabled?
+pref("layout.css.will-change.enabled", false);
+
 // Is support for CSS "text-align: true X" enabled?
 pref("layout.css.text-align-true-value.enabled", false);
 
@@ -1979,6 +1833,16 @@ pref("layout.css.unset-value.enabled", true);
 // Is support for the "all" shorthand enabled?
 pref("layout.css.all-shorthand.enabled", true);
 
+// Is support for CSS variables enabled?
+#ifdef RELEASE_BUILD
+pref("layout.css.variables.enabled", false);
+#else
+pref("layout.css.variables.enabled", true);
+#endif
+
+// Is support for CSS overflow-clip-box enabled for non-UA sheets?
+pref("layout.css.overflow-clip-box.enabled", false);
+
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
 // 1 = end-side in document/content direction
@@ -2029,13 +1893,6 @@ pref("dom.max_script_run_time", 10);
 
 // If true, ArchiveReader will be enabled
 pref("dom.archivereader.enabled", false);
-
-// If true, Promise will be enabled
-#ifdef RELEASE_BUILD
-pref("dom.promise.enabled", false);
-#else
-pref("dom.promise.enabled", true);
-#endif
 
 // Hang monitor timeout after which we kill the browser, in seconds
 // (0 is disabled)
@@ -2164,7 +2021,6 @@ pref("font.minimum-size.tr", 0);
 pref("font.minimum-size.x-cans", 0);
 pref("font.minimum-size.x-western", 0);
 pref("font.minimum-size.x-unicode", 0);
-pref("font.minimum-size.x-user-def", 0);
 
 /*
  * A value greater than zero enables font size inflation for
@@ -2718,11 +2574,19 @@ pref("intl.keyboard.per_window_layout", false);
 
 #ifdef NS_ENABLE_TSF
 // Enable/Disable TSF support
-pref("intl.enable_tsf_support", false);
+pref("intl.tsf.enable", false);
+
+// Support IMEs implemented with IMM in TSF mode.
+pref("intl.tsf.support_imm", true);
 
 // We need to notify the layout change to TSF, but we cannot check the actual
 // change now, therefore, we always notify it by this fequency.
 pref("intl.tsf.on_layout_change_interval", 100);
+
+// Enables/Disables hack for specific TIP.
+
+// Whether creates native caret for ATOK or not.
+pref("intl.tsf.hack.atok.create_native_caret", true);
 #endif
 
 // See bug 448927, on topmost panel, some IMEs are not usable on Windows.
@@ -3187,6 +3051,9 @@ pref("ui.panel.default_level_parent", false);
 
 pref("ui.plugin.cancel_composition_at_input_source_changed", false);
 
+// The min width of composition window for plugins
+pref("ui.plugin.panel.min-width", 500);
+
 pref("mousewheel.system_scroll_override_on_root_content.enabled", false);
 
 // Macbook touchpad two finger pixel scrolling
@@ -3488,10 +3355,6 @@ pref("font.name.serif.x-unicode", "Charis SIL Compact");
 pref("font.name.sans-serif.x-unicode", "Fira Sans OT");
 pref("font.name.monospace.x-unicode", "Fira Mono OT");
 
-pref("font.name.serif.x-user-def", "Charis SIL Compact");
-pref("font.name.sans-serif.x-user-def", "Fira Sans OT");
-pref("font.name.monospace.x-user-def", "Fira Mono OT");
-
 pref("font.name.serif.x-western", "Charis SIL Compact");
 pref("font.name.sans-serif.x-western", "Fira Sans OT");
 pref("font.name.monospace.x-western", "Fira Mono OT");
@@ -3573,12 +3436,6 @@ pref("font.name.monospace.x-unicode", "Droid Sans Mono");
 pref("font.name-list.serif.x-unicode", "Droid Serif");
 pref("font.name-list.sans-serif.x-unicode", "Clear Sans, Roboto, Droid Sans");
 
-pref("font.name.serif.x-user-def", "Charis SIL Compact");
-pref("font.name.sans-serif.x-user-def", "Clear Sans");
-pref("font.name.monospace.x-user-def", "Droid Sans Mono");
-pref("font.name-list.serif.x-user-def", "Droid Serif");
-pref("font.name-list.sans-serif.x-user-def", "Clear Sans, Roboto, Droid Sans");
-
 pref("font.name.serif.x-western", "Charis SIL Compact");
 pref("font.name.sans-serif.x-western", "Clear Sans");
 pref("font.name.monospace.x-western", "Droid Sans Mono");
@@ -3654,10 +3511,6 @@ pref("font.size.fixed.x-cyrillic", 12);
 pref("font.default.x-unicode", "sans-serif");
 pref("font.size.variable.x-unicode", 16);
 pref("font.size.fixed.x-unicode", 12);
-
-pref("font.default.x-user-def", "sans-serif");
-pref("font.size.variable.x-user-def", 16);
-pref("font.size.fixed.x-user-def", 12);
 
 pref("font.default.x-western", "sans-serif");
 pref("font.size.variable.x-western", 16);
@@ -3851,10 +3704,6 @@ pref("font.name.serif.x-unicode", "serif");
 pref("font.name.sans-serif.x-unicode", "sans-serif");
 pref("font.name.monospace.x-unicode", "monospace");
 
-pref("font.name.serif.x-user-def", "serif");
-pref("font.name.sans-serif.x-user-def", "sans-serif");
-pref("font.name.monospace.x-user-def", "monospace");
-
 pref("font.name.serif.x-western", "serif");
 pref("font.name.sans-serif.x-western", "sans-serif");
 pref("font.name.monospace.x-western", "monospace");
@@ -3915,10 +3764,6 @@ pref("font.size.fixed.x-cyrillic", 12);
 pref("font.default.x-unicode", "serif");
 pref("font.size.variable.x-unicode", 16);
 pref("font.size.fixed.x-unicode", 12);
-
-pref("font.default.x-user-def", "serif");
-pref("font.size.variable.x-user-def", 16);
-pref("font.size.fixed.x-user-def", 12);
 
 pref("font.default.x-western", "serif");
 pref("font.size.variable.x-western", 16);
@@ -4019,6 +3864,12 @@ pref("ui.panel.default_level_parent", true);
 
 pref("mousewheel.system_scroll_override_on_root_content.enabled", false);
 
+#if MOZ_WIDGET_GTK == 2
+pref("intl.ime.use_simple_context_on_password_field", true);
+#else
+pref("intl.ime.use_simple_context_on_password_field", false);
+#endif
+
 # XP_UNIX
 #endif
 #endif
@@ -4057,7 +3908,8 @@ pref("signon.rememberSignons",              true);
 pref("signon.autofillForms",                true);
 pref("signon.autologin.proxy",              false);
 pref("signon.debug",                        false);
-pref("signon.useDOMFormHasPassword",        true);
+// Override autocomplete=false for password manager
+pref("signon.overrideAutocomplete",         false);
 
 // Satchel (Form Manager) prefs
 pref("browser.formfill.debug",            false);
@@ -4255,6 +4107,11 @@ pref("layers.scroll-graph", false);
 
 // Set the default values, and then override per-platform as needed
 pref("layers.offmainthreadcomposition.enabled", false);
+// Compositor target frame rate. NOTE: If vsync is enabled the compositor
+// frame rate will still be capped.
+// -1 -> default (match layout.frame_rate or 60 FPS)
+// 0  -> full-tilt mode: Recomposite even if not transaction occured.
+pref("layers.offmainthreadcomposition.frame-rate", -1);
 // Whether to use the deprecated texture architecture rather than the new one.
 pref("layers.use-deprecated-textures", true);
 #ifndef XP_WIN
@@ -4262,6 +4119,12 @@ pref("layers.use-deprecated-textures", true);
 // requires off-main-thread compositing.
 // Never works on Windows, so no point pref'ing it on.
 pref("layers.async-video.enabled",false);
+#endif
+
+#ifdef MOZ_X11
+// OMTC off by default on Linux, but if activated, use new textures and async-video.
+pref("layers.use-deprecated-textures", false);
+pref("layers.async-video.enabled", true);
 #endif
 
 #ifdef XP_MACOSX
@@ -4286,8 +4149,6 @@ pref("layers.offmainthreadcomposition.force-basic", false);
 
 // Whether to animate simple opacity and transforms on the compositor
 pref("layers.offmainthreadcomposition.async-animations", false);
-// Whether to prefer normal memory over shared memory. Ignored with cross-process compositing
-pref("layers.prefer-memory-over-shmem", true);
 
 pref("layers.bufferrotation.enabled", true);
 
@@ -4420,6 +4281,9 @@ pref("dom.w3c_touch_events.enabled", 2);
 // W3C draft pointer events
 pref("dom.w3c_pointer_events.enabled", false);
 
+// W3C touch-action css property (related to touch and pointer events)
+pref("layout.css.touch_action.enabled", false);
+
 // enable JS dump() function.
 pref("browser.dom.window.dump.enabled", false);
 
@@ -4459,6 +4323,14 @@ pref("memory.ghost_window_timeout_seconds", 60);
 // Disable freeing dirty pages when minimizing memory.
 pref("memory.free_dirty_pages", false);
 
+// Disable the Linux-specific, system-wide memory reporter.
+#ifdef XP_LINUX
+pref("memory.system_memory_reporter", false);
+#endif
+
+// Number of stack frames to capture in createObjectURL for about:memory.
+pref("memory.blob_report.stack_frames", 0);
+
 pref("social.enabled", false);
 // comma separated list of domain origins (e.g. https://domain.com) for
 // providers that can install from their own website without user warnings.
@@ -4466,7 +4338,7 @@ pref("social.enabled", false);
 pref("social.whitelist", "https://mozsocial.cliqz.com,https://now.msn.com,https://mixi.jp");
 // comma separated list of domain origins (e.g. https://domain.com) for
 // directory websites (e.g. AMO) that can install providers for other sites
-pref("social.directories", "https://activations.mozilla.org");
+pref("social.directories", "https://activations.cdn.mozilla.net");
 // remote-install allows any website to activate a provider, with extended UI
 // notifying user of installation. we can later pref off remote install if
 // necessary. This does not affect whitelisted and directory installs.

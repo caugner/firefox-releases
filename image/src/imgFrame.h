@@ -53,8 +53,8 @@ public:
   void GetPaletteData(uint32_t **aPalette, uint32_t *length) const;
   uint32_t* GetPaletteData() const;
 
-  int32_t GetTimeout() const;
-  void SetTimeout(int32_t aTimeout);
+  int32_t GetRawTimeout() const;
+  void SetRawTimeout(int32_t aTimeout);
 
   int32_t GetFrameDisposalMethod() const;
   void SetFrameDisposalMethod(int32_t aFrameDisposalMethod);
@@ -171,7 +171,6 @@ private: // data
   uint8_t      mPaletteDepth;
   int8_t       mBlendMethod;
   bool mSinglePixel;
-  bool mNeverUseDeviceSurface;
   bool mFormatChanged;
   bool mCompositingFailed;
   bool mNonPremult;
@@ -179,9 +178,6 @@ private: // data
   /** Have we called DiscardTracker::InformAllocation()? */
   bool mInformedDiscardTracker;
 
-#ifdef XP_WIN
-  bool mIsDDBSurface;
-#endif
   bool mDirty;
 };
 

@@ -48,12 +48,12 @@
 using namespace mozilla;
 using namespace mozilla::image;
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(ImagesMallocSizeOf)
+MOZ_DEFINE_MALLOC_SIZE_OF(ImagesMallocSizeOf)
 
-class imgMemoryReporter MOZ_FINAL : public MemoryMultiReporter
+class imgMemoryReporter MOZ_FINAL : public nsIMemoryReporter
 {
 public:
-  imgMemoryReporter() {}
+  NS_DECL_ISUPPORTS
 
   NS_IMETHOD CollectReports(nsIMemoryReporterCallback *callback,
                             nsISupports *closure)
@@ -70,57 +70,57 @@ public:
     do {                                                                      \
       nsresult rv;                                                            \
       rv = callback->Callback(EmptyCString(), NS_LITERAL_CSTRING(_path),      \
-                              _kind, nsIMemoryReporter::UNITS_BYTES, _amount, \
+                              _kind, UNITS_BYTES, _amount,                    \
                               NS_LITERAL_CSTRING(_desc), closure);            \
       NS_ENSURE_SUCCESS(rv, rv);                                              \
     } while (0)
 
     REPORT("explicit/images/chrome/used/raw",
-           nsIMemoryReporter::KIND_HEAP, chrome.mUsedRaw,
+           KIND_HEAP, chrome.mUsedRaw,
            "Memory used by in-use chrome images (compressed data).");
 
     REPORT("explicit/images/chrome/used/uncompressed-heap",
-           nsIMemoryReporter::KIND_HEAP, chrome.mUsedUncompressedHeap,
+           KIND_HEAP, chrome.mUsedUncompressedHeap,
            "Memory used by in-use chrome images (uncompressed data).");
 
     REPORT("explicit/images/chrome/used/uncompressed-nonheap",
-           nsIMemoryReporter::KIND_NONHEAP, chrome.mUsedUncompressedNonheap,
+           KIND_NONHEAP, chrome.mUsedUncompressedNonheap,
            "Memory used by in-use chrome images (uncompressed data).");
 
     REPORT("explicit/images/chrome/unused/raw",
-           nsIMemoryReporter::KIND_HEAP, chrome.mUnusedRaw,
+           KIND_HEAP, chrome.mUnusedRaw,
            "Memory used by not in-use chrome images (compressed data).");
 
     REPORT("explicit/images/chrome/unused/uncompressed-heap",
-           nsIMemoryReporter::KIND_HEAP, chrome.mUnusedUncompressedHeap,
+           KIND_HEAP, chrome.mUnusedUncompressedHeap,
            "Memory used by not in-use chrome images (uncompressed data).");
 
     REPORT("explicit/images/chrome/unused/uncompressed-nonheap",
-           nsIMemoryReporter::KIND_NONHEAP, chrome.mUnusedUncompressedNonheap,
+           KIND_NONHEAP, chrome.mUnusedUncompressedNonheap,
            "Memory used by not in-use chrome images (uncompressed data).");
 
     REPORT("explicit/images/content/used/raw",
-           nsIMemoryReporter::KIND_HEAP, content.mUsedRaw,
+           KIND_HEAP, content.mUsedRaw,
            "Memory used by in-use content images (compressed data).");
 
     REPORT("explicit/images/content/used/uncompressed-heap",
-           nsIMemoryReporter::KIND_HEAP, content.mUsedUncompressedHeap,
+           KIND_HEAP, content.mUsedUncompressedHeap,
            "Memory used by in-use content images (uncompressed data).");
 
     REPORT("explicit/images/content/used/uncompressed-nonheap",
-           nsIMemoryReporter::KIND_NONHEAP, content.mUsedUncompressedNonheap,
+           KIND_NONHEAP, content.mUsedUncompressedNonheap,
            "Memory used by in-use content images (uncompressed data).");
 
     REPORT("explicit/images/content/unused/raw",
-           nsIMemoryReporter::KIND_HEAP, content.mUnusedRaw,
+           KIND_HEAP, content.mUnusedRaw,
            "Memory used by not in-use content images (compressed data).");
 
     REPORT("explicit/images/content/unused/uncompressed-heap",
-           nsIMemoryReporter::KIND_HEAP, content.mUnusedUncompressedHeap,
+           KIND_HEAP, content.mUnusedUncompressedHeap,
            "Memory used by not in-use content images (uncompressed data).");
 
     REPORT("explicit/images/content/unused/uncompressed-nonheap",
-           nsIMemoryReporter::KIND_NONHEAP, content.mUnusedUncompressedNonheap,
+           KIND_NONHEAP, content.mUnusedUncompressedNonheap,
            "Memory used by not in-use content images (uncompressed data).");
 
 #undef REPORT
@@ -212,10 +212,12 @@ private:
   }
 };
 
+NS_IMPL_ISUPPORTS1(imgMemoryReporter, nsIMemoryReporter)
+
 NS_IMPL_ISUPPORTS3(nsProgressNotificationProxy,
-                     nsIProgressEventSink,
-                     nsIChannelEventSink,
-                     nsIInterfaceRequestor)
+                   nsIProgressEventSink,
+                   nsIChannelEventSink,
+                   nsIInterfaceRequestor)
 
 NS_IMETHODIMP
 nsProgressNotificationProxy::OnProgress(nsIRequest* request,
@@ -240,7 +242,7 @@ NS_IMETHODIMP
 nsProgressNotificationProxy::OnStatus(nsIRequest* request,
                                       nsISupports* ctxt,
                                       nsresult status,
-                                      const PRUnichar* statusArg)
+                                      const char16_t* statusArg)
 {
   nsCOMPtr<nsILoadGroup> loadGroup;
   request->GetLoadGroup(getter_AddRefs(loadGroup));
@@ -662,7 +664,7 @@ public:
 NS_IMPL_ISUPPORTS1(imgCacheObserver, nsIObserver)
 
 NS_IMETHODIMP
-imgCacheObserver::Observe(nsISupports* aSubject, const char* aTopic, const PRUnichar* aSomeData)
+imgCacheObserver::Observe(nsISupports* aSubject, const char* aTopic, const char16_t* aSomeData)
 {
   if (strcmp(aTopic, "memory-pressure") == 0) {
     DiscardTracker::DiscardAll();
@@ -717,6 +719,27 @@ uint32_t imgLoader::sCacheMaxSize;
 imgMemoryReporter* imgLoader::sMemReporter;
 
 NS_IMPL_ISUPPORTS5(imgLoader, imgILoader, nsIContentSniffer, imgICache, nsISupportsWeakReference, nsIObserver)
+
+static imgLoader* gSingleton = nullptr;
+static imgLoader* gPBSingleton = nullptr;
+
+imgLoader*
+imgLoader::Singleton()
+{
+  if (!gSingleton)
+    gSingleton = imgLoader::Create();
+  return gSingleton;
+}
+
+imgLoader*
+imgLoader::PBSingleton()
+{
+  if (!gPBSingleton) {
+    gPBSingleton = imgLoader::Create();
+    gPBSingleton->RespectPrivacyNotifications();
+  }
+  return gPBSingleton;
+}
 
 imgLoader::imgLoader()
 : mRespectPrivacy(false)
@@ -859,7 +882,7 @@ imgLoader::RespectPrivacyNotifications()
 }
 
 NS_IMETHODIMP
-imgLoader::Observe(nsISupports* aSubject, const char* aTopic, const PRUnichar* aData)
+imgLoader::Observe(nsISupports* aSubject, const char* aTopic, const char16_t* aData)
 {
   // We listen for pref change notifications...
   if (!strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID)) {
@@ -944,6 +967,8 @@ NS_IMETHODIMP imgLoader::FindEntryProperties(nsIURI *uri, nsIProperties **_retva
 
 void imgLoader::Shutdown()
 {
+  NS_IF_RELEASE(gSingleton);
+  NS_IF_RELEASE(gPBSingleton);
   NS_RELEASE(gCacheObserver);
 }
 

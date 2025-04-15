@@ -39,7 +39,7 @@ class MediaRecorder : public nsDOMEventTargetHelper
   class Session;
 
 public:
-  MediaRecorder(DOMMediaStream&);
+  MediaRecorder(DOMMediaStream&, nsPIDOMWindow* aOwnerWindow);
   virtual ~MediaRecorder();
 
   // nsWrapperCache
@@ -83,11 +83,9 @@ public:
   IMPL_EVENT_HANDLER(warning)
 
 protected:
-  void Init(nsPIDOMWindow* aOwnerWindow);
-
   MediaRecorder& operator = (const MediaRecorder& x) MOZ_DELETE;
   // Create dataavailable event with Blob data and it runs in main thread
-  nsresult CreateAndDispatchBlobEvent(Session *session);
+  nsresult CreateAndDispatchBlobEvent(const already_AddRefed<nsIDOMBlob> &aBlob);
   // Creating a simple event to notify UA simple event.
   void DispatchSimpleEvent(const nsAString & aStr);
   // Creating a error event with message.
@@ -104,7 +102,7 @@ protected:
   // The current state of the MediaRecorder object.
   RecordingState mState;
   // Current recording session.
-  Session *mSession;
+  nsRefPtr<Session> mSession;
   // Thread safe for mMimeType.
   Mutex mMutex;
   // It specifies the container format as well as the audio and video capture formats.

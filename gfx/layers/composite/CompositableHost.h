@@ -8,7 +8,6 @@
 
 #include <stdint.h>                     // for uint64_t
 #include <stdio.h>                      // for FILE
-#include "gfxPoint.h"                   // for gfxSize
 #include "gfxRect.h"                    // for gfxRect
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
@@ -20,7 +19,6 @@
 #include "mozilla/layers/CompositorTypes.h"  // for TextureInfo, etc
 #include "mozilla/layers/LayersTypes.h"  // for LayerRenderState, etc
 #include "mozilla/layers/PCompositableParent.h"
-#include "mozilla/layers/TextureHost.h" // for TextureHostCommon
 #include "mozilla/mozalloc.h"           // for operator delete
 #include "nsCOMPtr.h"                   // for already_AddRefed
 #include "nsRegion.h"                   // for nsIntRegion
@@ -71,45 +69,7 @@ public:
     MOZ_COUNT_DTOR(CompositableBackendSpecificData);
   }
   virtual void SetCompositor(Compositor* aCompositor) {}
-  virtual void ClearData()
-  {
-    mCurrentReleaseFenceTexture = nullptr;
-    ClearPendingReleaseFenceTextureList();
-  }
-
-  /**
-   * Store a texture currently used for Composition.
-   * This function is called when the texutre might receive ReleaseFence
-   * as a result of Composition.
-   */
-  void SetCurrentReleaseFenceTexture(TextureHostCommon* aTexture)
-  {
-    if (mCurrentReleaseFenceTexture) {
-      mPendingReleaseFenceTextures.push_back(mCurrentReleaseFenceTexture);
-    }
-    mCurrentReleaseFenceTexture = aTexture;
-  }
-
-  virtual std::vector< RefPtr<TextureHostCommon> >& GetPendingReleaseFenceTextureList()
-  {
-    return mPendingReleaseFenceTextures;
-  }
-
-  virtual void ClearPendingReleaseFenceTextureList()
-  {
-    return mPendingReleaseFenceTextures.clear();
-  }
-protected:
-  /**
-   * Store a TextureHost currently used for Composition
-   * and it might receive ReleaseFence for the texutre.
-   */
-  RefPtr<TextureHostCommon> mCurrentReleaseFenceTexture;
-  /**
-   * Store TextureHosts that might have ReleaseFence to be delivered
-   * to TextureClient by CompositableHost.
-   */
-  std::vector< RefPtr<TextureHostCommon> > mPendingReleaseFenceTextures;
+  virtual void ClearData() {}
 };
 
 /**
@@ -146,12 +106,6 @@ public:
   {
     mBackendData = aBackendData;
   }
-
-  /**
-   * Our IPDL actor is being destroyed, get rid of any shmem resources now and
-   * don't worry about compositing anymore.
-   */
-  virtual void OnActorDestroy();
 
   // If base class overrides, it should still call the parent implementation
   virtual void SetCompositor(Compositor* aCompositor);
@@ -333,23 +287,13 @@ public:
 
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix) { }
 
-  void AddTextureHost(TextureHost* aTexture);
-  virtual void UseTextureHost(TextureHost* aTexture) {}
-  // If a texture host is flagged for deferred removal, the compositable will
-  // get an option to run any cleanup code early, that is when it would have
-  // been run if the texture host was not marked deferred.
-  // If the compositable does not cleanup the texture host now, it is the
-  // compositable's responsibility to cleanup the texture host before the
-  // texture host dies.
-  virtual void RemoveTextureHost(TextureHost* aTexture);
-  TextureHost* GetTextureHost(uint64_t aTextureID);
+  virtual void UseTextureHost(TextureHost* aTexture);
 
 protected:
   TextureInfo mTextureInfo;
   Compositor* mCompositor;
   Layer* mLayer;
   RefPtr<CompositableBackendSpecificData> mBackendData;
-  RefPtr<TextureHost> mFirstTexture;
   bool mAttached;
   bool mKeepAttached;
 };

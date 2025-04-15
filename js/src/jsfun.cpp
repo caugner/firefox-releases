@@ -118,7 +118,7 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
 
         /* Callsite clones should never escape to script. */
         JSObject &maybeClone = iter.calleev().toObject();
-        if (maybeClone.is<JSFunction>() && maybeClone.as<JSFunction>().nonLazyScript()->isCallsiteClone)
+        if (maybeClone.is<JSFunction>() && maybeClone.as<JSFunction>().nonLazyScript()->isCallsiteClone())
             vp.setObject(*maybeClone.as<JSFunction>().nonLazyScript()->originalFunction());
         else
             vp.set(iter.calleev());
@@ -130,7 +130,7 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
          * Censor the caller if we don't have full access to it.
          */
         RootedObject caller(cx, &vp.toObject());
-        if (caller->is<WrapperObject>() && !Wrapper::wrapperHandler(caller)->isSafeToUnwrap()) {
+        if (caller->is<WrapperObject>() && Wrapper::wrapperHandler(caller)->hasSecurityPolicy()) {
             vp.setNull();
         } else if (caller->is<JSFunction>()) {
             JSFunction *callerFun = &caller->as<JSFunction>();
@@ -208,9 +208,10 @@ ResolveInterpretedFunctionPrototype(JSContext *cx, HandleObject obj)
     // that case, per the 15 July 2013 ES6 draft, section 15.19.3, its parent is
     // the GeneratorObjectPrototype singleton.
     bool isStarGenerator = obj->as<JSFunction>().isStarGenerator();
+    Rooted<GlobalObject*> global(cx, &obj->global());
     JSObject *objProto;
     if (isStarGenerator)
-        objProto = obj->global().getOrCreateStarGeneratorObjectPrototype(cx);
+        objProto = GlobalObject::getOrCreateStarGeneratorObjectPrototype(cx, global);
     else
         objProto = obj->global().getOrCreateObjectPrototype(cx);
     if (!objProto)
@@ -301,8 +302,8 @@ js::fun_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
         if (JSID_IS_ATOM(id, cx->names().length)) {
             if (fun->isInterpretedLazy() && !fun->getOrCreateScript(cx))
                 return false;
-            uint16_t length = fun->hasScript() ? fun->nonLazyScript()->funLength :
-                fun->nargs - fun->hasRest();
+            uint16_t length = fun->hasScript() ? fun->nonLazyScript()->funLength() :
+                fun->nargs() - fun->hasRest();
             v.setInt32(length);
         } else {
             v.setString(fun->atom() == nullptr ? cx->runtime()->emptyString : fun->atom());
@@ -379,25 +380,24 @@ js::XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope, Han
             }
             return false;
         }
-        if (fun->atom())
+        if (fun->atom() || fun->hasGuessedAtom())
             firstword |= HasAtom;
         if (fun->isStarGenerator())
             firstword |= IsStarGenerator;
         script = fun->getOrCreateScript(cx);
         if (!script)
             return false;
-        atom = fun->atom();
-        flagsword = (fun->nargs << 16) | fun->flags;
+        atom = fun->displayAtom();
+        flagsword = (fun->nargs() << 16) | fun->flags();
+    }
 
-        if (!xdr->codeUint32(&firstword))
-            return false;
-    } else {
-        if (!xdr->codeUint32(&firstword))
-            return false;
+    if (!xdr->codeUint32(&firstword))
+        return false;
 
+    if (mode == XDR_DECODE) {
         JSObject *proto = nullptr;
         if (firstword & IsStarGenerator) {
-            proto = cx->global()->getOrCreateStarGeneratorFunctionPrototype(cx);
+            proto = GlobalObject::getOrCreateStarGeneratorFunctionPrototype(cx, cx->global());
             if (!proto)
                 return false;
         }
@@ -419,16 +419,14 @@ js::XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope, Han
         return false;
 
     if (mode == XDR_DECODE) {
-        fun->nargs = flagsword >> 16;
-        fun->flags = uint16_t(flagsword);
+        fun->setArgCount(flagsword >> 16);
+        fun->setFlags(uint16_t(flagsword));
         fun->initAtom(atom);
         fun->initScript(script);
         script->setFunction(fun);
         if (!JSFunction::setTypeForScriptedFunction(cx, fun))
             return false;
-        JS_ASSERT(fun->nargs == fun->nonLazyScript()->bindings.numArgs());
-        RootedScript script(cx, fun->nonLazyScript());
-        CallNewScriptHook(cx, script, fun);
+        JS_ASSERT(fun->nargs() == fun->nonLazyScript()->bindings.numArgs());
         objp.set(fun);
     }
 
@@ -447,7 +445,7 @@ js::CloneFunctionAndScript(JSContext *cx, HandleObject enclosingScope, HandleFun
     /* NB: Keep this in sync with XDRInterpretedFunction. */
     JSObject *cloneProto = nullptr;
     if (srcFun->isStarGenerator()) {
-        cloneProto = cx->global()->getOrCreateStarGeneratorFunctionPrototype(cx);
+        cloneProto = GlobalObject::getOrCreateStarGeneratorFunctionPrototype(cx, cx->global());
         if (!cloneProto)
             return nullptr;
     }
@@ -458,13 +456,15 @@ js::CloneFunctionAndScript(JSContext *cx, HandleObject enclosingScope, HandleFun
     if (!clone)
         return nullptr;
 
-    RootedScript srcScript(cx, srcFun->nonLazyScript());
+    RootedScript srcScript(cx, srcFun->getOrCreateScript(cx));
+    if (!srcScript)
+        return nullptr;
     RootedScript clonedScript(cx, CloneScript(cx, enclosingScope, clone, srcScript));
     if (!clonedScript)
         return nullptr;
 
-    clone->nargs = srcFun->nargs;
-    clone->flags = srcFun->flags;
+    clone->setArgCount(srcFun->nargs());
+    clone->setFlags(srcFun->flags());
     clone->initAtom(srcFun->displayAtom());
     clone->initScript(clonedScript);
     clonedScript->setFunction(clone);
@@ -525,11 +525,32 @@ JSFunction::trace(JSTracer *trc)
     if (isInterpreted()) {
         // Functions can be be marked as interpreted despite having no script
         // yet at some points when parsing, and can be lazy with no lazy script
-        // for self hosted code.
-        if (hasScript() && u.i.s.script_)
-            MarkScriptUnbarriered(trc, &u.i.s.script_, "script");
-        else if (isInterpretedLazy() && u.i.s.lazy_)
+        // for self-hosted code.
+        if (hasScript() && u.i.s.script_) {
+            // Functions can be relazified under the following conditions:
+            // - their compartment isn't currently executing scripts or being
+            //   debugged
+            // - they are not in the self-hosting compartment
+            // - their 'arguments' object can't escape
+            // - they aren't generators
+            // - they don't have JIT code attached
+            // - they haven't ever been inlined
+            // - they don't have child functions
+            // - they have information for un-lazifying them again later
+            // This information can either be a LazyScript, or the name of a
+            // self-hosted function which can be cloned over again. The latter
+            // is stored in the first extended slot.
+            if (IS_GC_MARKING_TRACER(trc) && !compartment()->hasBeenEntered() &&
+                !compartment()->debugMode() && !compartment()->isSelfHosting &&
+                u.i.s.script_->isRelazifiable() && (!isSelfHostedBuiltin() || isExtended()))
+            {
+                relazify(trc);
+            } else {
+                MarkScriptUnbarriered(trc, &u.i.s.script_, "script");
+            }
+        } else if (isInterpretedLazy() && u.i.s.lazy_) {
             MarkLazyScriptUnbarriered(trc, &u.i.s.lazy_, "lazyScript");
+        }
         if (u.i.env_)
             MarkObjectUnbarriered(trc, &u.i.env_, "fun_callscope");
     }
@@ -553,7 +574,6 @@ const Class JSFunction::class_ = {
     (JSResolveOp)js::fun_resolve,
     JS_ConvertStub,
     nullptr,                 /* finalize    */
-    nullptr,                 /* checkAccess */
     nullptr,                 /* call        */
     fun_hasInstance,
     nullptr,                 /* construct   */
@@ -640,7 +660,7 @@ js::FunctionToString(JSContext *cx, HandleFunction fun, bool bodyOnly, bool lamb
 
     if (fun->hasScript()) {
         script = fun->nonLazyScript();
-        if (script->isGeneratorExp) {
+        if (script->isGeneratorExp()) {
             if ((!bodyOnly && !out.append("function genexp() {")) ||
                 !out.append("\n    [generator expression]\n") ||
                 (!bodyOnly && !out.append("}")))
@@ -687,8 +707,8 @@ js::FunctionToString(JSContext *cx, HandleFunction fun, bool bodyOnly, bool lamb
         // asserted below, that in Function("function f() {}"), the inner
         // function's sourceStart points to the '(', not the 'f'.
         bool funCon = !fun->isArrow() &&
-                      script->sourceStart == 0 &&
-                      script->sourceEnd == script->scriptSource()->length() &&
+                      script->sourceStart() == 0 &&
+                      script->sourceEnd() == script->scriptSource()->length() &&
                       script->scriptSource()->argumentsNotIncluded();
 
         // Functions created with the constructor can't be arrow functions or
@@ -701,7 +721,7 @@ js::FunctionToString(JSContext *cx, HandleFunction fun, bool bodyOnly, bool lamb
         // have "use strict", we insert "use strict" into the body of the
         // function. This ensures that if the result of toString is evaled, the
         // resulting function will have the same semantics.
-        bool addUseStrict = script->strict && !script->explicitUseStrict && !fun->isArrow();
+        bool addUseStrict = script->strict() && !script->explicitUseStrict() && !fun->isArrow();
 
         bool buildBody = funCon && !bodyOnly;
         if (buildBody) {
@@ -717,9 +737,9 @@ js::FunctionToString(JSContext *cx, HandleFunction fun, bool bodyOnly, bool lamb
             ScopedJSDeletePtr<BindingVector> freeNames(localNames);
             if (!FillBindingVector(script, localNames))
                 return nullptr;
-            for (unsigned i = 0; i < fun->nargs; i++) {
+            for (unsigned i = 0; i < fun->nargs(); i++) {
                 if ((i && !out.append(", ")) ||
-                    (i == unsigned(fun->nargs - 1) && fun->hasRest() && !out.append("...")) ||
+                    (i == unsigned(fun->nargs() - 1) && fun->hasRest() && !out.append("...")) ||
                     !out.append((*localNames)[i].name())) {
                     return nullptr;
                 }
@@ -1037,6 +1057,12 @@ js_fun_apply(JSContext *cx, unsigned argc, Value *vp)
         args.setCallee(fval);
         args.setThis(vp[2]);
 
+        // Make sure the function is delazified before querying its arguments.
+        if (args.callee().is<JSFunction>()) {
+            JSFunction *fun = &args.callee().as<JSFunction>();
+            if (fun->isInterpreted() && !fun->getOrCreateScript(cx))
+                return false;
+        }
         /* Steps 7-8. */
         if (!GetElements(cx, aobj, length, args.array()))
             return false;
@@ -1113,7 +1139,7 @@ JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFuncti
 {
     JS_ASSERT(fun->isInterpretedLazy());
 
-    LazyScript *lazy = fun->lazyScriptOrNull();
+    Rooted<LazyScript*> lazy(cx, fun->lazyScriptOrNull());
     if (lazy) {
         // Trigger a pre barrier on the lazy script being overwritten.
         if (cx->zone()->needsBarrier())
@@ -1124,25 +1150,26 @@ JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFuncti
         // THING_ROOT_LAZY_SCRIPT).
         AutoSuppressGC suppressGC(cx);
 
-        fun->flags &= ~INTERPRETED_LAZY;
-        fun->flags |= INTERPRETED;
-
         RootedScript script(cx, lazy->maybeScript());
 
         if (script) {
-            fun->initScript(script);
+            fun->setUnlazifiedScript(script);
+            // Remember the lazy script on the compiled script, so it can be
+            // stored on the function again in case of re-lazification.
+            // Only functions without inner functions are re-lazified.
+            if (!lazy->numInnerFunctions())
+                script->setLazyScript(lazy);
             return true;
         }
 
-        fun->initScript(nullptr);
-
-        if (fun != lazy->function()) {
-            script = lazy->function()->getOrCreateScript(cx);
-            if (!script) {
-                fun->initLazyScript(lazy);
+        if (fun != lazy->functionNonDelazifying()) {
+            if (!lazy->functionDelazifying(cx))
                 return false;
-            }
-            fun->initScript(script);
+            script = lazy->functionNonDelazifying()->nonLazyScript();
+            if (!script)
+                return false;
+
+            fun->setUnlazifiedScript(script);
             return true;
         }
 
@@ -1162,66 +1189,108 @@ JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFuncti
         if (script) {
             RootedObject enclosingScope(cx, lazy->enclosingScope());
             RootedScript clonedScript(cx, CloneScript(cx, enclosingScope, fun, script));
-            if (!clonedScript) {
-                fun->initLazyScript(lazy);
+            if (!clonedScript)
                 return false;
-            }
 
             clonedScript->setSourceObject(lazy->sourceObject());
 
-            fun->initAtom(script->function()->displayAtom());
-            fun->initScript(clonedScript);
+            fun->initAtom(script->functionNonDelazifying()->displayAtom());
             clonedScript->setFunction(fun);
+
+            fun->setUnlazifiedScript(clonedScript);
 
             CallNewScriptHook(cx, clonedScript, fun);
 
-            lazy->initScript(clonedScript);
+            if (!lazy->maybeScript())
+                lazy->initScript(clonedScript);
             return true;
         }
 
         JS_ASSERT(lazy->source()->hasSourceData());
 
         // Parse and compile the script from source.
-        SourceDataCache::AutoSuppressPurge asp(cx);
-        const jschar *chars = lazy->source()->chars(cx, asp);
-        if (!chars) {
-            fun->initLazyScript(lazy);
+        SourceDataCache::AutoHoldEntry holder;
+        const jschar *chars = lazy->source()->chars(cx, holder);
+        if (!chars)
             return false;
-        }
 
         const jschar *lazyStart = chars + lazy->begin();
         size_t lazyLength = lazy->end() - lazy->begin();
 
-        if (!frontend::CompileLazyFunction(cx, lazy, lazyStart, lazyLength)) {
-            fun->initLazyScript(lazy);
+        if (!frontend::CompileLazyFunction(cx, lazy, lazyStart, lazyLength))
             return false;
-        }
 
         script = fun->nonLazyScript();
+
+        // Remember the compiled script on the lazy script itself, in case
+        // there are clones of the function still pointing to the lazy script.
+        if (!lazy->maybeScript())
+            lazy->initScript(script);
 
         // Try to insert the newly compiled script into the lazy script cache.
         if (!lazy->numInnerFunctions()) {
             // A script's starting column isn't set by the bytecode emitter, so
             // specify this from the lazy script so that if an identical lazy
             // script is encountered later a match can be determined.
-            script->column = lazy->column();
+            script->setColumn(lazy->column());
 
             LazyScriptCache::Lookup lookup(cx, lazy);
             cx->runtime()->lazyScriptCache.insert(lookup, script);
-        }
 
-        // Remember the compiled script on the lazy script itself, in case
-        // there are clones of the function still pointing to the lazy script.
-        lazy->initScript(script);
+            // Remember the lazy script on the compiled script, so it can be
+            // stored on the function again in case of re-lazification.
+            // Only functions without inner functions are re-lazified.
+            script->setLazyScript(lazy);
+        }
         return true;
     }
 
-    /* Lazily cloned self hosted script. */
+    /* Lazily cloned self-hosted script. */
+    JS_ASSERT(fun->isSelfHostedBuiltin());
     RootedAtom funAtom(cx, &fun->getExtendedSlot(0).toString()->asAtom());
     if (!funAtom)
         return false;
     Rooted<PropertyName *> funName(cx, funAtom->asPropertyName());
     return cx->runtime()->cloneSelfHostedFunctionScript(cx, funName, fun);
+}
+
+void
+JSFunction::relazify(JSTracer *trc)
+{
+    JSScript *script = nonLazyScript();
+    JS_ASSERT(script->isRelazifiable());
+    JS_ASSERT(!compartment()->hasBeenEntered());
+    JS_ASSERT(!compartment()->debugMode());
+
+    // If the script's canonical function isn't lazy, we have to mark the
+    // script. Otherwise, the following scenario would leave it unmarked
+    // and cause it to be swept while a function is still expecting it to be
+    // valid:
+    // 1. an incremental GC slice causes the canonical function to relazify
+    // 2. a clone is used and delazifies the canonical function
+    // 3. another GC slice causes the clone to relazify
+    // The result is that no function marks the script, but the canonical
+    // function expects it to be valid.
+    if (script->functionNonDelazifying()->hasScript())
+        MarkScriptUnbarriered(trc, &u.i.s.script_, "script");
+
+    flags_ &= ~INTERPRETED;
+    flags_ |= INTERPRETED_LAZY;
+    LazyScript *lazy = script->maybeLazyScript();
+    u.i.s.lazy_ = lazy;
+    if (lazy) {
+        JS_ASSERT(!isSelfHostedBuiltin());
+        // If this is the script stored in the lazy script to be cloned
+        // for un-lazifying other functions, reset it so the script can
+        // be freed.
+        if (lazy->maybeScript() == script)
+            lazy->resetScript();
+        MarkLazyScriptUnbarriered(trc, &u.i.s.lazy_, "lazyScript");
+    } else {
+        JS_ASSERT(isSelfHostedBuiltin());
+        JS_ASSERT(isExtended());
+        JS_ASSERT(getExtendedSlot(0).toString()->isAtom());
+    }
 }
 
 /* ES5 15.3.4.5.1 and 15.3.4.5.2. */
@@ -1239,7 +1308,8 @@ js::CallOrConstructBoundFunction(JSContext *cx, unsigned argc, Value *vp)
          * So before anything else, if we are an arrow function, make sure we
          * don't even get here. You never saw me. Burn this comment.
          */
-        return ReportIsNotFunction(cx, ObjectValue(*fun), -1, CONSTRUCT);
+        RootedValue v(cx, ObjectValue(*fun));
+        return ReportIsNotFunction(cx, v, -1, CONSTRUCT);
     }
 
     /* 15.3.4.5.1 step 1, 15.3.4.5.2 step 3. */
@@ -1333,7 +1403,7 @@ js_fun_bind(JSContext *cx, HandleObject target, HandleValue thisArg,
     /* Steps 15-16. */
     unsigned length = 0;
     if (target->is<JSFunction>()) {
-        unsigned nargs = target->as<JSFunction>().nargs;
+        unsigned nargs = target->as<JSFunction>().nargs();
         if (nargs > argslen)
             length = nargs - argslen;
     }
@@ -1582,7 +1652,7 @@ FunctionConstructor(JSContext *cx, unsigned argc, Value *vp, GeneratorKind gener
     RootedAtom anonymousAtom(cx, cx->names().anonymous);
     JSObject *proto = nullptr;
     if (isStarGenerator) {
-        proto = global->getOrCreateStarGeneratorFunctionPrototype(cx);
+        proto = GlobalObject::getOrCreateStarGeneratorFunctionPrototype(cx, global);
         if (!proto)
             return false;
     }
@@ -1591,6 +1661,9 @@ FunctionConstructor(JSContext *cx, unsigned argc, Value *vp, GeneratorKind gener
                                                 anonymousAtom, proto,
                                                 JSFunction::FinalizeKind, TenuredObject));
     if (!fun)
+        return false;
+
+    if (!JSFunction::setTypeForScriptedFunction(cx, fun))
         return false;
 
     if (hasRest)
@@ -1662,9 +1735,12 @@ js::NewFunctionWithProto(ExclusiveContext *cx, HandleObject funobjArg, Native na
     }
     RootedFunction fun(cx, &funobj->as<JSFunction>());
 
+    if (allocKind == JSFunction::ExtendedFinalizeKind)
+        flags = JSFunction::Flags(flags | JSFunction::EXTENDED);
+
     /* Initialize all function members. */
-    fun->nargs = uint16_t(nargs);
-    fun->flags = flags;
+    fun->setArgCount(uint16_t(nargs));
+    fun->setFlags(flags);
     if (fun->isInterpreted()) {
         JS_ASSERT(!native);
         fun->mutableScript().init(nullptr);
@@ -1674,10 +1750,8 @@ js::NewFunctionWithProto(ExclusiveContext *cx, HandleObject funobjArg, Native na
         JS_ASSERT(native);
         fun->initNative(native, nullptr);
     }
-    if (allocKind == JSFunction::ExtendedFinalizeKind) {
-        fun->flags |= JSFunction::EXTENDED;
+    if (allocKind == JSFunction::ExtendedFinalizeKind)
         fun->initializeExtended();
-    }
     fun->initAtom(atom);
 
     return fun;
@@ -1700,7 +1774,7 @@ js::CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent, 
     NewObjectKind newKind = useSameScript ? newKindArg : SingletonObject;
     JSObject *cloneProto = nullptr;
     if (fun->isStarGenerator()) {
-        cloneProto = cx->global()->getOrCreateStarGeneratorFunctionPrototype(cx);
+        cloneProto = GlobalObject::getOrCreateStarGeneratorFunctionPrototype(cx, cx->global());
         if (!cloneProto)
             return nullptr;
     }
@@ -1710,8 +1784,12 @@ js::CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent, 
         return nullptr;
     RootedFunction clone(cx, &cloneobj->as<JSFunction>());
 
-    clone->nargs = fun->nargs;
-    clone->flags = fun->flags & ~JSFunction::EXTENDED;
+    uint16_t flags = fun->flags() & ~JSFunction::EXTENDED;
+    if (allocKind == JSFunction::ExtendedFinalizeKind)
+        flags |= JSFunction::EXTENDED;
+
+    clone->setArgCount(fun->nargs());
+    clone->setFlags(flags);
     if (fun->hasScript()) {
         clone->initScript(fun->nonLazyScript());
         clone->initEnvironment(parent);
@@ -1725,7 +1803,6 @@ js::CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent, 
     clone->initAtom(fun->displayAtom());
 
     if (allocKind == JSFunction::ExtendedFinalizeKind) {
-        clone->flags |= JSFunction::EXTENDED;
         if (fun->isExtended() && fun->compartment() == cx->compartment()) {
             for (unsigned i = 0; i < FunctionExtended::NUM_EXTENDED_SLOTS; i++)
                 clone->initExtendedSlot(i, fun->getExtendedSlot(i));

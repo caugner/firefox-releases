@@ -5,6 +5,7 @@
 
 /* a presentation of a document, part 1 */
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/DebugOnly.h"
 
 #include "base/basictypes.h"
@@ -12,7 +13,7 @@
 #include "nsCOMPtr.h"
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
-#include "nsIDocShell.h"
+#include "nsDocShell.h"
 #include "nsIContentViewer.h"
 #include "nsPIDOMWindow.h"
 #include "nsStyleSet.h"
@@ -45,7 +46,7 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/Element.h"
 #include "nsIMessageManager.h"
-#include "nsDOMMediaQueryList.h"
+#include "mozilla/dom/MediaQueryList.h"
 #include "nsSMILAnimationController.h"
 #include "mozilla/css/ImageLoader.h"
 #include "mozilla/dom/TabChild.h"
@@ -66,9 +67,24 @@
 #include "nsBidiUtils.h"
 #include "nsServiceManagerUtils.h"
 
+#include "URL.h"
+
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::layers;
+
+// BEGIN temporary diagnostic stuff for bug 946929
+struct PCLink;
+static PCLink* sTopPCLink;
+struct PCLink {
+  PCLink(const char* w, nsPresContext* aPC)
+    : prev(sTopPCLink), pc(aPC), where(w) { sTopPCLink = this; }
+  ~PCLink() { sTopPCLink = prev; }
+  PCLink* prev;
+  nsPresContext* pc;
+  const char* where;
+};
+// END temporary diagnostic stuff for bug 946929
 
 uint8_t gNotifySubDocInvalidationData;
 
@@ -123,11 +139,63 @@ nsPresContext::MakeColorPref(const nsString& aColor)
     : NS_RGB(0, 0, 0);
 }
 
+static void DumpPresContextState(nsPresContext* aPC)
+{
+  printf_stderr("PresContext(%p) %s", aPC, aPC->IsRoot()?"ROOT ":"");
+  nsIURI* uri = aPC->Document()->GetDocumentURI();
+  if (uri) {
+    nsAutoCString uriSpec;
+    nsresult rv = uri->GetSpec(uriSpec);
+    if (NS_SUCCEEDED(rv)) {
+      printf_stderr("%s ", uriSpec.get());
+    }
+  }
+  nsIPresShell* shell = aPC->GetPresShell();
+  if (shell) {
+    printf_stderr("PresShell - IsDestroying(%i) IsFrozen(%i) IsActive(%i) IsVisible(%i) IsNeverPainting(%i) GetRootFrame(%p)",
+                  shell->IsDestroying(),
+                  shell->IsFrozen(),
+                  shell->IsActive(),
+                  shell->IsVisible(),
+                  shell->IsNeverPainting(),
+                  shell->GetRootFrame());
+  }
+  printf_stderr("\n");
+}
+
 bool
 nsPresContext::IsDOMPaintEventPending() 
 {
   if (mFireAfterPaintEvents) {
     return true;
+  }
+  if (!GetDisplayRootPresContext() ||
+      !GetDisplayRootPresContext()->GetRootPresContext()) {
+    printf_stderr("Failed to find root pres context, dumping pres context and ancestors\n");
+    for (PCLink* p = sTopPCLink; p; p = p->prev) {
+      printf_stderr("%s %p ", p->where, p->pc);
+    }
+    if (sTopPCLink) printf_stderr("\n");
+    nsPresContext* pc = this;
+    for (;;) {
+      DumpPresContextState(pc);
+      nsPresContext* parent = pc->GetParentPresContext();
+      if (!parent) {
+        nsIDocument* doc = pc->Document();
+        if (doc) {
+          doc = doc->GetParentDocument();
+          if (doc) {
+            nsIPresShell* shell = doc->GetShell();
+            if (shell) {
+              parent = shell->GetPresContext();
+            }
+          }
+        }
+      }
+      if (!parent || parent == pc)
+        break;
+      pc = parent;
+    }
   }
   if (GetDisplayRootPresContext()->GetRootPresContext()->mRefreshDriver->ViewManagerFlushIsPending()) {
     // Since we're promising that there will be a MozAfterPaint event
@@ -140,7 +208,7 @@ nsPresContext::IsDOMPaintEventPending()
   return false;
 }
 
-int
+void
 nsPresContext::PrefChangedCallback(const char* aPrefName, void* instance_data)
 {
   nsRefPtr<nsPresContext>  presContext =
@@ -150,7 +218,6 @@ nsPresContext::PrefChangedCallback(const char* aPrefName, void* instance_data)
   if (nullptr != presContext) {
     presContext->PreferenceChanged(aPrefName);
   }
-  return 0;  // PREF_OK
 }
 
 
@@ -246,6 +313,9 @@ nsPresContext::nsPresContext(nsIDocument* aDocument, nsPresContextType aType)
 
 nsPresContext::~nsPresContext()
 {
+  if (sTopPCLink) {
+    printf_stderr("~nsPresContext %p %p\n", this, mShell);
+  }
   NS_PRECONDITION(!mShell, "Presshell forgot to clear our mShell pointer");
   SetShell(nullptr);
 
@@ -346,7 +416,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsPresContext)
   // methods.
   for (PRCList *l = PR_LIST_HEAD(&tmp->mDOMMediaQueryLists);
        l != &tmp->mDOMMediaQueryLists; l = PR_NEXT_LINK(l)) {
-    nsDOMMediaQueryList *mql = static_cast<nsDOMMediaQueryList*>(l);
+    MediaQueryList *mql = static_cast<MediaQueryList*>(l);
     if (mql->HasListeners()) {
       NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mDOMMediaQueryLists item");
       cb.NoteXPCOMChild(mql);
@@ -375,7 +445,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsPresContext)
   for (PRCList *l = PR_LIST_HEAD(&tmp->mDOMMediaQueryLists);
        l != &tmp->mDOMMediaQueryLists; ) {
     PRCList *next = PR_NEXT_LINK(l);
-    nsDOMMediaQueryList *mql = static_cast<nsDOMMediaQueryList*>(l);
+    MediaQueryList *mql = static_cast<MediaQueryList*>(l);
     mql->RemoveAllListeners();
     l = next;
   }
@@ -533,7 +603,7 @@ nsPresContext::GetFontPrefsForLang(nsIAtom *aLanguage) const
     &prefs->mDefaultCursiveFont,
     &prefs->mDefaultFantasyFont
   };
-  static_assert(NS_ARRAY_LENGTH(fontTypes) == eDefaultFont_COUNT,
+  static_assert(MOZ_ARRAY_LENGTH(fontTypes) == eDefaultFont_COUNT,
                 "FontTypes array count is not correct");
 
   // Get attributes specific to each generic font. We do not get the user's
@@ -622,19 +692,28 @@ nsPresContext::GetDocumentColorPreferences()
 {
   int32_t useAccessibilityTheme = 0;
   bool usePrefColors = true;
-  nsCOMPtr<nsIDocShellTreeItem> docShell(do_QueryReferent(mContainer));
-  if (docShell) {
-    int32_t docShellType;
-    docShell->GetItemType(&docShellType);
-    if (nsIDocShellTreeItem::typeChrome == docShellType) {
-      usePrefColors = false;
-    }
-    else {
-      useAccessibilityTheme =
-        LookAndFeel::GetInt(LookAndFeel::eIntID_UseAccessibilityTheme, 0);
-      usePrefColors = !useAccessibilityTheme;
-    }
+  bool isChromeDocShell = false;
 
+  nsIDocument* doc = mDocument->GetDisplayDocument();
+  if (doc && doc->GetDocShell()) {
+    isChromeDocShell = nsIDocShellTreeItem::typeChrome == 
+                    doc->GetDocShell()->ItemType();
+  } else {
+    nsCOMPtr<nsIDocShellTreeItem> docShell(mContainer);
+    if (docShell) {
+      isChromeDocShell = nsIDocShellTreeItem::typeChrome == docShell->ItemType();
+    }
+  }
+
+  mIsChromeOriginImage = mDocument->IsBeingUsedAsImage() &&
+                         IsChromeURI(mDocument->GetDocumentURI());
+
+  if (isChromeDocShell || mIsChromeOriginImage) {
+    usePrefColors = false;
+  } else {
+    useAccessibilityTheme =
+      LookAndFeel::GetInt(LookAndFeel::eIntID_UseAccessibilityTheme, 0);
+    usePrefColors = !useAccessibilityTheme;
   }
   if (usePrefColors) {
     usePrefColors =
@@ -895,12 +974,9 @@ nsPresContext::UpdateAfterPreferencesChanged()
 {
   mPrefChangedTimer = nullptr;
 
-  nsCOMPtr<nsIDocShellTreeItem> docShell(do_QueryReferent(mContainer));
-  if (docShell) {
-    int32_t docShellType;
-    docShell->GetItemType(&docShellType);
-    if (nsIDocShellTreeItem::typeChrome == docShellType)
-      return;
+  nsCOMPtr<nsIDocShellTreeItem> docShell(mContainer);
+  if (docShell && nsIDocShellTreeItem::typeChrome == docShell->ItemType()) {
+    return;
   }
 
   // Initialize our state from the user preferences
@@ -1174,7 +1250,7 @@ nsPresContext::UpdateCharSet(const nsCString& aCharSet)
 NS_IMETHODIMP
 nsPresContext::Observe(nsISupports* aSubject, 
                         const char* aTopic,
-                        const PRUnichar* aData)
+                        const char16_t* aData)
 {
   if (!nsCRT::strcmp(aTopic, "charset")) {
     nsRefPtr<CharSetChangingRunnable> runnable =
@@ -1481,26 +1557,42 @@ nsPresContext::ScreenWidthInchesForFontInflation(bool* aChanged)
 }
 
 void
-nsPresContext::SetContainer(nsISupports* aHandler)
+nsPresContext::SetContainer(nsIDocShell* aDocShell)
 {
-  mContainer = do_GetWeakReference(aHandler);
+  if (aDocShell) {
+    mContainer = static_cast<nsDocShell*>(aDocShell)->asWeakPtr();
+  } else {
+    mContainer = WeakPtr<nsDocShell>();
+  }
   InvalidateIsChromeCache();
   if (mContainer) {
     GetDocumentColorPreferences();
   }
 }
 
-already_AddRefed<nsISupports>
-nsPresContext::GetContainerInternal() const
+nsISupports*
+nsPresContext::GetContainerWeakInternal() const
 {
-  nsCOMPtr<nsISupports> result = do_QueryReferent(mContainer);
-  return result.forget();
+  return static_cast<nsIDocShell*>(mContainer);
 }
 
-already_AddRefed<nsISupports>
-nsPresContext::GetContainerExternal() const
+nsISupports*
+nsPresContext::GetContainerWeakExternal() const
 {
-  return GetContainerInternal();
+  return GetContainerWeakInternal();
+}
+
+nsIDocShell*
+nsPresContext::GetDocShell() const
+{
+  return mContainer;
+}
+
+/* virtual */ void
+nsPresContext::Detach()
+{
+  SetContainer(nullptr);
+  SetLinkHandler(nullptr);
 }
 
 bool
@@ -1612,7 +1704,7 @@ nsPresContext::GetBidi() const
 bool
 nsPresContext::IsTopLevelWindowInactive()
 {
-  nsCOMPtr<nsIDocShellTreeItem> treeItem(do_QueryReferent(mContainer));
+  nsCOMPtr<nsIDocShellTreeItem> treeItem(mContainer);
   if (!treeItem)
     return false;
 
@@ -1849,10 +1941,10 @@ nsPresContext::MediaFeatureValuesChanged(StyleRebuildType aShouldRebuild,
     // Note that we intentionally send the notifications to media query
     // list in the order they were created and, for each list, to the
     // listeners in the order added.
-    nsDOMMediaQueryList::NotifyList notifyList;
+    MediaQueryList::NotifyList notifyList;
     for (PRCList *l = PR_LIST_HEAD(&mDOMMediaQueryLists);
          l != &mDOMMediaQueryLists; l = PR_NEXT_LINK(l)) {
-      nsDOMMediaQueryList *mql = static_cast<nsDOMMediaQueryList*>(l);
+      MediaQueryList *mql = static_cast<MediaQueryList*>(l);
       mql->MediumFeaturesChanged(notifyList);
     }
 
@@ -1864,8 +1956,9 @@ nsPresContext::MediaFeatureValuesChanged(StyleRebuildType aShouldRebuild,
       for (uint32_t i = 0, i_end = notifyList.Length(); i != i_end; ++i) {
         if (pusher.RePush(et)) {
           nsAutoMicroTask mt;
-          nsDOMMediaQueryList::HandleChangeData &d = notifyList[i];
-          d.listener->HandleChange(d.mql);
+          MediaQueryList::HandleChangeData &d = notifyList[i];
+          ErrorResult result;
+          d.callback->Call(*d.mql, result);
         }
       }
     }
@@ -1900,11 +1993,10 @@ nsPresContext::HandleMediaFeatureValuesChangedEvent()
   }
 }
 
-already_AddRefed<nsIDOMMediaQueryList>
+already_AddRefed<MediaQueryList>
 nsPresContext::MatchMedia(const nsAString& aMediaQueryList)
 {
-  nsRefPtr<nsDOMMediaQueryList> result =
-    new nsDOMMediaQueryList(this, aMediaQueryList);
+  nsRefPtr<MediaQueryList> result = new MediaQueryList(this, aMediaQueryList);
 
   // Insert the new item at the end of the linked list.
   PR_INSERT_BEFORE(result, &mDOMMediaQueryLists);
@@ -1935,7 +2027,7 @@ nsPresContext::SetPrintSettings(nsIPrintSettings *aPrintSettings)
 bool
 nsPresContext::EnsureVisible()
 {
-  nsCOMPtr<nsIDocShell> docShell(do_QueryReferent(mContainer));
+  nsCOMPtr<nsIDocShell> docShell(mContainer);
   if (docShell) {
     nsCOMPtr<nsIContentViewer> cv;
     docShell->GetContentViewer(getter_AddRefs(cv));
@@ -1968,20 +2060,8 @@ nsPresContext::CountReflows(const char * aName, nsIFrame * aFrame)
 bool
 nsPresContext::IsChromeSlow() const
 {
-  bool isChrome = false;
-  nsCOMPtr<nsISupports> container = GetContainer();
-  if (container) {
-    nsresult result;
-    nsCOMPtr<nsIDocShellTreeItem> docShell(do_QueryInterface(container, &result));
-    if (NS_SUCCEEDED(result) && docShell) {
-      int32_t docShellType;
-      result = docShell->GetItemType(&docShellType);
-      if (NS_SUCCEEDED(result)) {
-        isChrome = nsIDocShellTreeItem::typeChrome == docShellType;
-      }
-    }
-  }
-  mIsChrome = isChrome;
+  mIsChrome = mContainer &&
+              nsIDocShellTreeItem::typeChrome == mContainer->ItemType();
   mIsChromeIsCached = true;
   return mIsChrome;
 }
@@ -2296,6 +2376,8 @@ nsPresContext::NotifyInvalidation(const nsIntRect& aRect, uint32_t aFlags)
 void
 nsPresContext::NotifyInvalidation(const nsRect& aRect, uint32_t aFlags)
 {
+  MOZ_ASSERT(GetContainerWeak(), "Invalidation in detached pres context");
+
   // If there is no paint event listener, then we don't need to fire
   // the asynchronous event. We don't even need to record invalidation.
   // MayHavePaintEventListener is pretty cheap and we could make it
@@ -2379,6 +2461,7 @@ NotifyDidPaintSubdocumentCallback(nsIDocument* aDocument, void* aData)
   if (shell) {
     nsPresContext* pc = shell->GetPresContext();
     if (pc) {
+      PCLink pcl("NotifyDidPaintSubdocumentCallback", pc);
       pc->NotifyDidPaintForSubtree(closure->mFlags);
       if (pc->IsDOMPaintEventPending()) {
         closure->mNeedsAnotherDidPaintNotification = true;
@@ -2394,11 +2477,17 @@ public:
                            nsInvalidateRequestList* aList)
     : mPresContext(aPresContext)
   {
+    MOZ_ASSERT(mPresContext->GetContainerWeak(),
+               "DOMPaintEvent requested for a detached pres context");
     mList.TakeFrom(aList);
   }
   NS_IMETHOD Run()
   {
-    mPresContext->FireDOMPaintEvent(&mList);
+    // The pres context might have been detached during the delay -
+    // that's fine, just don't fire the event.
+    if (mPresContext->GetContainerWeak()) {
+      mPresContext->FireDOMPaintEvent(&mList);
+    }
     return NS_OK;
   }
 
@@ -2713,7 +2802,7 @@ bool
 nsPresContext::IsDeviceSizePageSize()
 {
   bool isDeviceSizePageSize = false;
-  nsCOMPtr<nsIDocShell> docShell(do_QueryReferent(mContainer));
+  nsCOMPtr<nsIDocShell> docShell(mContainer);
   if (docShell) {
     isDeviceSizePageSize = docShell->GetDeviceSizeIsPageSize();
   }
@@ -2733,6 +2822,14 @@ nsRootPresContext::~nsRootPresContext()
                "All plugins should have been unregistered");
   CancelDidPaintTimer();
   CancelApplyPluginGeometryTimer();
+}
+
+/* virtual */ void
+nsRootPresContext::Detach()
+{
+  CancelDidPaintTimer();
+  // XXXmats maybe also CancelApplyPluginGeometryTimer(); ?
+  nsPresContext::Detach();
 }
 
 void
@@ -2961,6 +3058,7 @@ NotifyDidPaintForSubtreeCallback(nsITimer *aTimer, void *aClosure)
   nsAutoScriptBlocker blockScripts;
   // This is a fallback if we don't get paint events for some reason
   // so we'll just pretend both layer painting and compositing happened.
+  PCLink pcl("NotifyDidPaintForSubtreeCallback", presContext);
   presContext->NotifyDidPaintForSubtree(
       nsIPresShell::PAINT_LAYERS | nsIPresShell::PAINT_COMPOSITE);
 }

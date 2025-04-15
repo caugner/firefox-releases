@@ -624,16 +624,12 @@ function findLocation(pre, line, node, offset, interlinePosition, result)
 function wrapLongLines()
 {
   var myWrap = window.content.document.body;
-
-  if (myWrap.className == '')
-    myWrap.className = 'wrap';
-  else
-    myWrap.className = '';
+  myWrap.classList.toggle("wrap");
 
   // Since multiple viewsource windows are possible, another window could have
   // affected the pref, so instead of determining the new pref value via the current
-  // pref value, we use myWrap.className.
-  Services.prefs.setBoolPref("view_source.wrap_long_lines", myWrap.className != '');
+  // pref value, we use myWrap.classList.
+  Services.prefs.setBoolPref("view_source.wrap_long_lines", myWrap.classList.contains("wrap"));
 }
 
 // Toggles syntax highlighting and sets the view_source.syntax_highlight
@@ -701,8 +697,19 @@ function SelectDetector(event)
   }
 }
 
+function FoldCharset(charset) {
+  // For substantially similar encodings, treat two encodings as the same
+  // for the purpose of the check mark.
+  if (charset == "ISO-8859-8-I") {
+    return "windows-1255";
+  } else if (charset == "gb18030") {
+    return "gbk";
+  }
+  return charset;
+}
+
 function UpdateCurrentCharset() {
-  var menuitem = document.getElementById("charset." + content.document.characterSet);
+  var menuitem = document.getElementById("charset." + FoldCharset(content.document.characterSet));
   if (menuitem)
     menuitem.setAttribute("checked", "true");
 }

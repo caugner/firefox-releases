@@ -264,8 +264,12 @@ public:
     int GetRemoteRTCP_CNAME(char cName[256]);
     int GetRemoteRTCPData(unsigned int& NTPHigh, unsigned int& NTPLow,
                           unsigned int& timestamp,
-                          unsigned int& playoutTimestamp, unsigned int* jitter,
-                          unsigned short* fractionLost);
+                          unsigned int& playoutTimestamp,
+                          unsigned int& sendPacketCount,
+                          unsigned int& sendOctetCount,
+                          unsigned int* jitter,
+                          unsigned short* fractionLost,
+                          unsigned int* cumulativeLost);
     int SendApplicationDefinedRTCPPacket(unsigned char subType,
                                          unsigned int name, const char* data,
                                          unsigned short dataLengthInBytes);
@@ -431,7 +435,7 @@ private:
                              int packet_length,
                              const RTPHeader& header);
     bool IsPacketInOrder(const RTPHeader& header) const;
-    bool IsPacketRetransmitted(const RTPHeader& header) const;
+    bool IsPacketRetransmitted(const RTPHeader& header, bool in_order) const;
     int ResendPackets(const uint16_t* sequence_numbers, int length);
     int InsertInbandDtmfTone();
     int32_t MixOrReplaceAudioWithFile(int mixingFrequency);

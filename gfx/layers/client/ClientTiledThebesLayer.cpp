@@ -8,7 +8,6 @@
 #include "ClientLayerManager.h"         // for ClientLayerManager, etc
 #include "gfx3DMatrix.h"                // for gfx3DMatrix
 #include "gfxPlatform.h"                // for gfxPlatform
-#include "gfxPoint.h"                   // for gfxSize
 #include "gfxRect.h"                    // for gfxRect
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/gfx/BaseSize.h"       // for BaseSize
@@ -83,12 +82,14 @@ ClientTiledThebesLayer::BeginPaint()
 
   // Calculate the transform required to convert screen space into transformed
   // layout device space.
-  gfx3DMatrix layoutToScreen = GetEffectiveTransform();
+  gfx::Matrix4x4 effectiveTransform = GetEffectiveTransform();
   for (ContainerLayer* parent = GetParent(); parent; parent = parent->GetParent()) {
     if (parent->UseIntermediateSurface()) {
-      layoutToScreen *= parent->GetEffectiveTransform();
+      effectiveTransform = effectiveTransform * parent->GetEffectiveTransform();
     }
   }
+  gfx3DMatrix layoutToScreen;
+  gfx::To3DMatrix(effectiveTransform, layoutToScreen);
   layoutToScreen.ScalePost(metrics.mCumulativeResolution.scale,
                            metrics.mCumulativeResolution.scale,
                            1.f);

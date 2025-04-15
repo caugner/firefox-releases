@@ -22,14 +22,15 @@
 #include "mozilla/Telemetry.h"
 #include "nsISupportsPriority.h"
 #include "nsHttpPipeline.h"
+#include <algorithm>
 
 #ifdef DEBUG
 // defined by the socket transport service while active
 extern PRThread *gSocketThread;
 #endif
 
-using namespace mozilla;
-using namespace mozilla::net;
+namespace mozilla {
+namespace net {
 
 //-----------------------------------------------------------------------------
 // nsHttpConnection <public>
@@ -69,6 +70,7 @@ nsHttpConnection::nsHttpConnection()
     , mEverUsedSpdy(false)
     , mLastHttpResponseVersion(NS_HTTP_VERSION_1_1)
     , mTransactionCaps(0)
+    , mResponseTimeoutEnabled(false)
 {
     LOG(("Creating nsHttpConnection @%x\n", this));
 }
@@ -272,8 +274,8 @@ nsHttpConnection::EnsureNPNComplete()
     if (NS_FAILED(rv))
         goto npnComplete;
 
-    LOG(("nsHttpConnection::EnsureNPNComplete %p negotiated to '%s'\n",
-         this, negotiatedNPN.get()));
+    LOG(("nsHttpConnection::EnsureNPNComplete %p [%s] negotiated to '%s'\n",
+         this, mConnInfo->Host(), negotiatedNPN.get()));
 
     uint8_t spdyVersion;
     rv = gHttpHandler->SpdyInfo()->GetNPNVersionIndex(negotiatedNPN,
@@ -343,6 +345,9 @@ nsHttpConnection::Activate(nsAHttpTransaction *trans, uint32_t caps, int32_t pri
 
     // The overflow state is not needed between activations
     mInputOverflow = nullptr;
+
+    mResponseTimeoutEnabled = mHttpHandler->ResponseTimeout() > 0 &&
+                              mTransaction->ResponseTimeoutEnabled();
 
     rv = OnOutputStreamReady(mSocketOut);
 
@@ -937,23 +942,43 @@ nsHttpConnection::TakeTransport(nsISocketTransport  **aTransport,
     return NS_OK;
 }
 
-void
+uint32_t
 nsHttpConnection::ReadTimeoutTick(PRIntervalTime now)
 {
     MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 
     // make sure timer didn't tick before Activate()
     if (!mTransaction)
-        return;
+        return UINT32_MAX;
 
     // Spdy implements some timeout handling using the SPDY ping frame.
     if (mSpdySession) {
-        mSpdySession->ReadTimeoutTick(now);
-        return;
+        return mSpdySession->ReadTimeoutTick(now);
+    }
+
+    uint32_t nextTickAfter = UINT32_MAX;
+
+    // Timeout if the response is taking too long to arrive.
+    if (mResponseTimeoutEnabled) {
+        PRIntervalTime initialResponseDelta = now - mLastWriteTime;
+        if (initialResponseDelta > gHttpHandler->ResponseTimeout()) {
+            LOG(("canceling transaction: no response for %ums: timeout is %dms\n",
+                 PR_IntervalToMilliseconds(initialResponseDelta),
+                 PR_IntervalToMilliseconds(gHttpHandler->ResponseTimeout())));
+
+            mResponseTimeoutEnabled = false;
+
+            // This will also close the connection
+            CloseTransaction(mTransaction, NS_ERROR_NET_TIMEOUT);
+            return UINT32_MAX;
+        }
+        nextTickAfter = PR_IntervalToSeconds(gHttpHandler->ResponseTimeout()) -
+            PR_IntervalToSeconds(initialResponseDelta);
+        nextTickAfter = std::max(nextTickAfter, 1U);
     }
 
     if (!gHttpHandler->GetPipelineRescheduleOnTimeout())
-        return;
+        return nextTickAfter;
 
     PRIntervalTime delta = now - mLastReadTime;
 
@@ -967,6 +992,11 @@ nsHttpConnection::ReadTimeoutTick(PRIntervalTime now)
     // be the place to add general read timeout handling if it is desired.
 
     uint32_t pipelineDepth = mTransaction->PipelineDepth();
+    if (pipelineDepth > 1) {
+        // if we have pipelines outstanding (not just an idle connection)
+        // then get a fairly quick tick
+        nextTickAfter = 1;
+    }
 
     if (delta >= gHttpHandler->GetPipelineRescheduleTimeout() &&
         pipelineDepth > 1) {
@@ -989,10 +1019,10 @@ nsHttpConnection::ReadTimeoutTick(PRIntervalTime now)
     }
 
     if (delta < gHttpHandler->GetPipelineTimeout())
-        return;
+        return nextTickAfter;
 
     if (pipelineDepth <= 1 && !mTransaction->PipelinePosition())
-        return;
+        return nextTickAfter;
 
     // nothing has transpired on this pipelined socket for many
     // seconds. Call that a total stall and close the transaction.
@@ -1007,6 +1037,7 @@ nsHttpConnection::ReadTimeoutTick(PRIntervalTime now)
 
     // This will also close the connection
     CloseTransaction(mTransaction, NS_ERROR_NET_TIMEOUT);
+    return UINT32_MAX;
 }
 
 void
@@ -1361,6 +1392,9 @@ nsHttpConnection::OnSocketReadable()
     PRIntervalTime now = PR_IntervalNow();
     PRIntervalTime delta = now - mLastReadTime;
 
+    // Reset mResponseTimeoutEnabled to stop response timeout checks.
+    mResponseTimeoutEnabled = false;
+
     if (mKeepAliveMask && (delta >= mMaxHangTime)) {
         LOG(("max hang time exceeded!\n"));
         // give the handler a chance to create a new persistent connection to
@@ -1650,3 +1684,6 @@ nsHttpConnection::GetInterface(const nsIID &iid, void **result)
         return callbacks->GetInterface(iid, result);
     return NS_ERROR_NO_INTERFACE;
 }
+
+} // namespace mozilla::net
+} // namespace mozilla

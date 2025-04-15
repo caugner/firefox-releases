@@ -44,6 +44,7 @@ namespace layers {
 class Composer2D;
 class CompositorChild;
 class LayerManager;
+class LayerManagerComposite;
 class PLayerTransactionChild;
 }
 namespace gfx {
@@ -213,36 +214,46 @@ enum nsTopLevelWidgetZPlacement { // for PlaceBehind()
  * If the IME implementation on a particular platform doesn't care about
  * NotifyIMEOfTextChange() and/or NotifyIME(NOTIFY_IME_OF_SELECTION_CHANGE),
  * they should set mWantUpdates to NOTIFY_NOTHING to avoid the cost.
- *
- * If mWantHints is true, PuppetWidget will forward the content of text fields
- * to the chrome process to be cached. This way we return the cached content
- * during query events. (see comments in bug 583976). This only makes sense
- * for IME implementations that do use query events, otherwise there's a
- * significant overhead. Platforms that don't use query events should set
- * mWantHints to false.
+ * If the IME implementation needs notifications even while our process is
+ * deactive, it should also set NOTIFY_DURING_DEACTIVE.
  */
 struct nsIMEUpdatePreference {
 
-  typedef int8_t Notifications;
+  typedef uint8_t Notifications;
 
   enum
   {
-    NOTIFY_NOTHING           = 0x0000,
-    NOTIFY_SELECTION_CHANGE  = 0x0001,
-    NOTIFY_TEXT_CHANGE       = 0x0002
+    NOTIFY_NOTHING           = 0x00,
+    NOTIFY_SELECTION_CHANGE  = 0x01,
+    NOTIFY_TEXT_CHANGE       = 0x02,
+    NOTIFY_DURING_DEACTIVE   = 0x80
   };
 
   nsIMEUpdatePreference()
-    : mWantUpdates(NOTIFY_NOTHING), mWantHints(false)
+    : mWantUpdates(NOTIFY_NOTHING)
   {
   }
-  nsIMEUpdatePreference(Notifications aWantUpdates, bool aWantHints)
-    : mWantUpdates(aWantUpdates), mWantHints(aWantHints)
+  nsIMEUpdatePreference(Notifications aWantUpdates)
+    : mWantUpdates(aWantUpdates)
   {
   }
 
+  bool WantSelectionChange() const
+  {
+    return !!(mWantUpdates & NOTIFY_SELECTION_CHANGE);
+  }
+
+  bool WantTextChange() const
+  {
+    return !!(mWantUpdates & NOTIFY_TEXT_CHANGE);
+  }
+
+  bool WantDuringDeactive() const
+  {
+    return !!(mWantUpdates & NOTIFY_DURING_DEACTIVE);
+  }
+
   Notifications mWantUpdates;
-  bool mWantHints;
 };
 
 
@@ -449,7 +460,9 @@ enum NotificationToIME {
   // Selection in the focused editable content is changed
   NOTIFY_IME_OF_SELECTION_CHANGE,
   REQUEST_TO_COMMIT_COMPOSITION,
-  REQUEST_TO_CANCEL_COMPOSITION
+  REQUEST_TO_CANCEL_COMPOSITION,
+  // Composition string has been updated
+  NOTIFY_IME_OF_COMPOSITION_UPDATE
 };
 
 } // namespace widget
@@ -467,6 +480,7 @@ class nsIWidget : public nsISupports {
     typedef mozilla::layers::Composer2D Composer2D;
     typedef mozilla::layers::CompositorChild CompositorChild;
     typedef mozilla::layers::LayerManager LayerManager;
+    typedef mozilla::layers::LayerManagerComposite LayerManagerComposite;
     typedef mozilla::layers::LayersBackend LayersBackend;
     typedef mozilla::layers::PLayerTransactionChild PLayerTransactionChild;
     typedef mozilla::widget::NotificationToIME NotificationToIME;
@@ -502,7 +516,7 @@ class nsIWidget : public nsISupports {
     /**
      * Create and initialize a widget. 
      *
-     * All the arguments can be NULL in which case a top level window
+     * All the arguments can be null in which case a top level window
      * with size 0 is created. The event callback function has to be
      * provided only if the caller wants to deal with the events this
      * widget receives.  The event callback is basically a preprocess
@@ -728,6 +742,14 @@ class nsIWidget : public nsISupports {
      *
      */
     NS_IMETHOD SetModal(bool aModal) = 0;
+
+    /**
+     * The maximum number of simultaneous touch contacts supported by the device.
+     * In the case of devices with multiple digitizers (e.g. multiple touch screens),
+     * the value will be the maximum of the set of maximum supported contacts by
+     * each individual digitizer.
+     */
+    virtual uint32_t GetMaxTouchPoints() const = 0;
 
     /**
      * Returns whether the window is visible
@@ -1150,6 +1172,13 @@ class nsIWidget : public nsISupports {
      */
     virtual void SetWindowAnimationType(WindowAnimationType aType) = 0;
 
+    /**
+     * Specifies whether the window title should be drawn even if the window
+     * contents extend into the titlebar. Ignored on windows that don't draw
+     * in the titlebar. Only implemented on OS X.
+     */
+    virtual void SetDrawsTitle(bool aDrawTitle) {}
+
     /** 
      * Hide window chrome (borders, buttons) for this widget.
      *
@@ -1183,21 +1212,21 @@ class nsIWidget : public nsISupports {
      */
     inline LayerManager* GetLayerManager(bool* aAllowRetaining = nullptr)
     {
-        return GetLayerManager(nullptr, mozilla::layers::LAYERS_NONE,
+        return GetLayerManager(nullptr, mozilla::layers::LayersBackend::LAYERS_NONE,
                                LAYER_MANAGER_CURRENT, aAllowRetaining);
     }
 
     inline LayerManager* GetLayerManager(LayerManagerPersistence aPersistence,
                                          bool* aAllowRetaining = nullptr)
     {
-        return GetLayerManager(nullptr, mozilla::layers::LAYERS_NONE,
+        return GetLayerManager(nullptr, mozilla::layers::LayersBackend::LAYERS_NONE,
                                aPersistence, aAllowRetaining);
     }
 
     /**
      * Like GetLayerManager(), but prefers creating a layer manager of
      * type |aBackendHint| instead of what would normally be created.
-     * LAYERS_NONE means "no hint".
+     * LayersBackend::LAYERS_NONE means "no hint".
      */
     virtual LayerManager* GetLayerManager(PLayerTransactionChild* aShadowManager,
                                           LayersBackend aBackendHint,
@@ -1221,38 +1250,36 @@ class nsIWidget : public nsISupports {
     virtual void CleanupWindowEffects() = 0;
 
     /**
-     * Called before rendering using OpenGL. Returns false when the widget is
+     * Called before rendering using OMTC. Returns false when the widget is
      * not ready to be rendered (for example while the window is closed).
      *
      * Always called from the compositing thread, which may be the main-thread if
      * OMTC is not enabled.
      */
-    virtual bool PreRender(LayerManager* aManager) = 0;
+    virtual bool PreRender(LayerManagerComposite* aManager) = 0;
 
     /**
-     * Called after rendering using OpenGL. Not called when rendering was
+     * Called after rendering using OMTC. Not called when rendering was
      * cancelled by a negative return value from PreRender.
      *
      * Always called from the compositing thread, which may be the main-thread if
      * OMTC is not enabled.
      */
-    virtual void PostRender(LayerManager* aManager) = 0;
+    virtual void PostRender(LayerManagerComposite* aManager) = 0;
 
     /**
      * Called before the LayerManager draws the layer tree.
      *
-     * Always called from the compositing thread, which may be the main-thread if
-     * OMTC is not enabled.
+     * Always called from the compositing thread.
      */
-    virtual void DrawWindowUnderlay(LayerManager* aManager, nsIntRect aRect) = 0;
+    virtual void DrawWindowUnderlay(LayerManagerComposite* aManager, nsIntRect aRect) = 0;
 
     /**
      * Called after the LayerManager draws the layer tree
      *
-     * Always called from the compositing thread, which may be the main-thread if
-     * OMTC is not enabled.
+     * Always called from the compositing thread.
      */
-    virtual void DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect) = 0;
+    virtual void DrawWindowOverlay(LayerManagerComposite* aManager, nsIntRect aRect) = 0;
 
     /**
      * Return a DrawTarget for the window which can be composited into.

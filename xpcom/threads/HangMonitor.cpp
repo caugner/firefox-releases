@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/HangMonitor.h"
+#include "mozilla/BackgroundHangMonitor.h"
 #include "mozilla/Monitor.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
@@ -70,7 +71,7 @@ static const int32_t MAX_CALL_STACK_PCS = 400;
 #endif
 
 // PrefChangedFunc
-int
+void
 PrefChanged(const char*, void*)
 {
   int32_t newval = Preferences::GetInt(kHangMonitorPrefName);
@@ -88,8 +89,6 @@ PrefChanged(const char*, void*)
     gTimeout = newval;
     lock.Notify();
   }
-
-  return 0;
 }
 
 void
@@ -127,7 +126,9 @@ ChromeStackWalker(void *aPC, void *aSP, void *aClosure)
 }
 
 static void
-GetChromeHangReport(Telemetry::ProcessedStack &aStack)
+GetChromeHangReport(Telemetry::ProcessedStack &aStack,
+                    int32_t &aSystemUptime,
+                    int32_t &aFirefoxUptime)
 {
   MOZ_ASSERT(winMainThreadHandle);
 
@@ -145,6 +146,19 @@ GetChromeHangReport(Telemetry::ProcessedStack &aStack)
   if (ret == -1)
     return;
   aStack = Telemetry::GetStackAndModules(rawStack);
+
+  // Record system uptime (in minutes) at the time of the hang
+  aSystemUptime = ((GetTickCount() / 1000) - (gTimeout * 2)) / 60;
+
+  // Record Firefox uptime (in minutes) at the time of the hang
+  bool error;
+  TimeStamp processCreation = TimeStamp::ProcessCreation(error);
+  if (!error) {
+    TimeDuration td = TimeStamp::Now() - processCreation;
+    aFirefoxUptime = (static_cast<int32_t>(td.ToSeconds()) - (gTimeout * 2)) / 60;
+  } else {
+    aFirefoxUptime = -1;
+  }
 }
 #endif
 
@@ -163,6 +177,8 @@ ThreadMain(void*)
 
 #ifdef REPORT_CHROME_HANGS
   Telemetry::ProcessedStack stack;
+  int32_t systemUptime = -1;
+  int32_t firefoxUptime = -1;
 #endif
 
   while (true) {
@@ -185,24 +201,31 @@ ThreadMain(void*)
         timestamp == lastTimestamp &&
         gTimeout > 0) {
       ++waitCount;
-      if (waitCount >= 2) {
 #ifdef REPORT_CHROME_HANGS
-        GetChromeHangReport(stack);
+      // Capture the chrome-hang stack + Firefox & system uptimes after
+      // the minimum hang duration has been reached (not when the hang ends)
+      if (waitCount == 2) {
+        GetChromeHangReport(stack, systemUptime, firefoxUptime);
+      }
 #else
+      // This is the crash-on-hang feature.
+      // See bug 867313 for the quirk in the waitCount comparison
+      if (waitCount >= 2) {
         int32_t delay =
           int32_t(PR_IntervalToSeconds(now - timestamp));
         if (delay >= gTimeout) {
           MonitorAutoUnlock unlock(*gMonitor);
           Crash();
         }
-#endif
       }
+#endif
     }
     else {
 #ifdef REPORT_CHROME_HANGS
       if (waitCount >= 2) {
         uint32_t hangDuration = PR_IntervalToSeconds(now - lastTimestamp);
-        Telemetry::RecordChromeHang(hangDuration, stack);
+        Telemetry::RecordChromeHang(hangDuration, stack,
+                                    systemUptime, firefoxUptime);
         stack.Clear();
       }
 #endif
@@ -346,6 +369,10 @@ NotifyActivity(ActivityType activityType)
     }
     cumulativeUILagMS = 0;
   }
+
+  if (gThread && !gShutdown) {
+    mozilla::BackgroundHangMonitor().NotifyActivity();
+  }
 }
 
 void
@@ -356,6 +383,10 @@ Suspend()
 
   // Because gTimestamp changes this resets the wait count.
   gTimestamp = PR_INTERVAL_NO_WAIT;
+
+  if (gThread && !gShutdown) {
+    mozilla::BackgroundHangMonitor().NotifyWait();
+  }
 }
 
 } } // namespace mozilla::HangMonitor

@@ -9,23 +9,30 @@
 namespace mozilla {
 namespace dom {
 
-static const PRUnichar kReplacementChar = static_cast<PRUnichar>(0xFFFD);
+static const char16_t kReplacementChar = static_cast<char16_t>(0xFFFD);
 
 void
-TextDecoder::Init(const nsAString& aEncoding, const bool aFatal,
+TextDecoder::Init(const nsAString& aLabel, const bool aFatal,
                   ErrorResult& aRv)
 {
-  nsAutoString label(aEncoding);
+  nsAutoString label(aLabel);
   EncodingUtils::TrimSpaceCharacters(label);
 
+  nsAutoCString encoding;
   // Let encoding be the result of getting an encoding from label.
   // If encoding is failure or replacement, throw a TypeError.
-  if (!EncodingUtils::FindEncodingForLabel(label, mEncoding) ||
-      mEncoding.EqualsLiteral("replacement")) {
+  if (!EncodingUtils::FindEncodingForLabel(label, encoding) ||
+      encoding.EqualsLiteral("replacement")) {
     aRv.ThrowTypeError(MSG_ENCODING_NOT_SUPPORTED, &label);
     return;
   }
+  InitWithEncoding(encoding, aFatal);
+}
 
+void
+TextDecoder::InitWithEncoding(const nsACString& aEncoding, const bool aFatal)
+{
+  mEncoding = aEncoding;
   // If the constructor is called with an options argument,
   // and the fatal property of the dictionary is set,
   // set the internal fatal flag of the decoder object.
@@ -56,7 +63,7 @@ TextDecoder::Decode(const char* aInput, const int32_t aLength,
   // Need a fallible allocator because the caller may be a content
   // and the content can specify the length of the string.
   static const fallible_t fallible = fallible_t();
-  nsAutoArrayPtr<PRUnichar> buf(new (fallible) PRUnichar[outLen + 1]);
+  nsAutoArrayPtr<char16_t> buf(new (fallible) char16_t[outLen + 1]);
   if (!buf) {
     aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
     return;

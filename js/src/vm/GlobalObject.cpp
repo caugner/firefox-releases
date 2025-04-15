@@ -12,6 +12,7 @@
 #include "jsfriendapi.h"
 #include "jsmath.h"
 #include "json.h"
+#include "jsprototypes.h"
 #include "jsweakmap.h"
 
 #include "builtin/Eval.h"
@@ -31,6 +32,19 @@
 #include "vm/ObjectImpl-inl.h"
 
 using namespace js;
+
+#define DECLARE_PROTOTYPE_CLASS_INIT(name,code,init,clasp) \
+    extern JSObject *init(JSContext *cx, Handle<JSObject*> obj);
+JS_FOR_EACH_PROTOTYPE(DECLARE_PROTOTYPE_CLASS_INIT)
+#undef DECLARE_PROTOTYPE_CLASS_INIT
+
+static const ClassInitializerOp class_init_functions[JSProto_LIMIT] = {
+#define INIT_FUNC(name,code,init,clasp) init,
+#define INIT_FUNC_DUMMY(name,code,init,clasp) nullptr,
+    JS_FOR_PROTOTYPES(INIT_FUNC, INIT_FUNC_DUMMY)
+#undef INIT_FUNC_DUMMY
+#undef INIT_FUNC
+};
 
 // This method is not in the header file to avoid having to include
 // TypedObject.h from GlobalObject.h. It is not generally perf
@@ -68,7 +82,7 @@ ThrowTypeError(JSContext *cx, unsigned argc, Value *vp)
 }
 
 static bool
-TestProtoGetterThis(HandleValue v)
+TestProtoThis(HandleValue v)
 {
     return !v.isNullOrUndefined();
 }
@@ -76,20 +90,17 @@ TestProtoGetterThis(HandleValue v)
 static bool
 ProtoGetterImpl(JSContext *cx, CallArgs args)
 {
-    JS_ASSERT(TestProtoGetterThis(args.thisv()));
+    JS_ASSERT(TestProtoThis(args.thisv()));
 
     HandleValue thisv = args.thisv();
     if (thisv.isPrimitive() && !BoxNonStrictThis(cx, args))
         return false;
 
-    unsigned dummy;
     RootedObject obj(cx, &args.thisv().toObject());
-    RootedId nid(cx, NameToId(cx->names().proto));
-    RootedValue v(cx);
-    if (!CheckAccess(cx, obj, nid, JSACC_PROTO, &v, &dummy))
+    RootedObject proto(cx);
+    if (!JSObject::getProto(cx, obj, &proto))
         return false;
-
-    args.rval().set(v);
+    args.rval().setObjectOrNull(proto);
     return true;
 }
 
@@ -97,7 +108,7 @@ static bool
 ProtoGetter(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    return CallNonGenericMethod(cx, TestProtoGetterThis, ProtoGetterImpl, args);
+    return CallNonGenericMethod(cx, TestProtoThis, ProtoGetterImpl, args);
 }
 
 namespace js {
@@ -105,23 +116,9 @@ size_t sSetProtoCalled = 0;
 } // namespace js
 
 static bool
-TestProtoSetterThis(HandleValue v)
-{
-    if (v.isNullOrUndefined())
-        return false;
-
-    /* These will work as if on a boxed primitive; dumb, but whatever. */
-    if (!v.isObject())
-        return true;
-
-    /* Otherwise, only accept non-proxies. */
-    return !v.toObject().is<ProxyObject>();
-}
-
-static bool
 ProtoSetterImpl(JSContext *cx, CallArgs args)
 {
-    JS_ASSERT(TestProtoSetterThis(args.thisv()));
+    JS_ASSERT(TestProtoThis(args.thisv()));
 
     HandleValue thisv = args.thisv();
     if (thisv.isPrimitive()) {
@@ -137,28 +134,6 @@ ProtoSetterImpl(JSContext *cx, CallArgs args)
 
     Rooted<JSObject*> obj(cx, &args.thisv().toObject());
 
-    /* ES5 8.6.2 forbids changing [[Prototype]] if not [[Extensible]]. */
-    bool extensible;
-    if (!JSObject::isExtensible(cx, obj, &extensible))
-        return false;
-    if (!extensible) {
-        obj->reportNotExtensible(cx);
-        return false;
-    }
-
-    /*
-     * Disallow mutating the [[Prototype]] of a proxy that wasn't simply
-     * wrapping some other object.  Also disallow it on ArrayBuffer objects,
-     * which due to their complicated delegate-object shenanigans can't easily
-     * have a mutable [[Prototype]].
-     */
-    if (obj->is<ProxyObject>() || obj->is<ArrayBufferObject>()) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_INCOMPATIBLE_PROTO,
-                             "Object", "__proto__ setter",
-                             obj->is<ProxyObject>() ? "Proxy" : "ArrayBuffer");
-        return false;
-    }
-
     /* Do nothing if __proto__ isn't being set to an object or null. */
     if (args.length() == 0 || !args[0].isObjectOrNull()) {
         args.rval().setUndefined();
@@ -167,14 +142,14 @@ ProtoSetterImpl(JSContext *cx, CallArgs args)
 
     Rooted<JSObject*> newProto(cx, args[0].toObjectOrNull());
 
-    unsigned dummy;
-    RootedId nid(cx, NameToId(cx->names().proto));
-    RootedValue v(cx);
-    if (!CheckAccess(cx, obj, nid, JSAccessMode(JSACC_PROTO | JSACC_WRITE), &v, &dummy))
+    bool success;
+    if (!JSObject::setProto(cx, obj, newProto, &success))
         return false;
 
-    if (!SetClassAndProto(cx, obj, obj->getClass(), newProto, true))
+    if (!success) {
+        js_ReportValueError(cx, JSMSG_SETPROTOTYPEOF_FAIL, JSDVG_IGNORE_STACK, thisv, js::NullPtr());
         return false;
+    }
 
     args.rval().setUndefined();
     return true;
@@ -184,7 +159,15 @@ static bool
 ProtoSetter(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    return CallNonGenericMethod(cx, TestProtoSetterThis, ProtoSetterImpl, args);
+
+    // Do this here, rather than in |ProtoSetterImpl|, so even likely-buggy
+    // use of the __proto__ setter on unacceptable values, where no subsequent
+    // use occurs on an acceptable value, will trigger a warning.
+    RootedObject callee(cx, &args.callee());
+    if (!GlobalObject::warnOnceAboutPrototypeMutation(cx, callee))
+        return false;
+
+    return CallNonGenericMethod(cx, TestProtoThis, ProtoSetterImpl, args);
 }
 
 JSObject *
@@ -438,6 +421,17 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
     return functionProto;
 }
 
+bool
+GlobalObject::ensureConstructor(JSContext *cx, JSProtoKey key)
+{
+    if (getConstructor(key).isObject())
+        return true;
+    MOZ_ASSERT(getConstructor(key).isUndefined());
+    RootedObject self(cx, this);
+    ClassInitializerOp init = class_init_functions[key];
+    return !init || init(cx, self);
+}
+
 GlobalObject *
 GlobalObject::create(JSContext *cx, const Class *clasp)
 {
@@ -471,15 +465,15 @@ GlobalObject::getOrCreateEval(JSContext *cx, Handle<GlobalObject*> global,
 {
     if (!global->getOrCreateObjectPrototype(cx))
         return false;
-    eval.set(&global->getSlotRefForCompilation(EVAL).toObject());
+    eval.set(&global->getSlot(EVAL).toObject());
     return true;
 }
 
 bool
 GlobalObject::valueIsEval(Value val)
 {
-    HeapSlot &eval = getSlotRef(EVAL);
-    return eval.isObject() && eval.get() == val;
+    Value eval = getSlot(EVAL);
+    return eval.isObject() && eval == val;
 }
 
 /* static */ bool
@@ -493,34 +487,11 @@ GlobalObject::initStandardClasses(JSContext *cx, Handle<GlobalObject*> global)
         return false;
     }
 
-    if (!global->initFunctionAndObjectClasses(cx))
-        return false;
-
-    /* Initialize the rest of the standard objects and functions. */
-    return js_InitArrayClass(cx, global) &&
-           js_InitBooleanClass(cx, global) &&
-           js_InitExceptionClasses(cx, global) &&
-           js_InitMathClass(cx, global) &&
-           js_InitNumberClass(cx, global) &&
-           js_InitJSONClass(cx, global) &&
-           js_InitRegExpClass(cx, global) &&
-           js_InitStringClass(cx, global) &&
-           js_InitTypedArrayClasses(cx, global) &&
-           js_InitIteratorClasses(cx, global) &&
-           js_InitDateClass(cx, global) &&
-           js_InitWeakMapClass(cx, global) &&
-           js_InitProxyClass(cx, global) &&
-           js_InitMapClass(cx, global) &&
-           GlobalObject::initMapIteratorProto(cx, global) &&
-           js_InitSetClass(cx, global) &&
-           GlobalObject::initSetIteratorProto(cx, global) &&
-#if EXPOSE_INTL_API
-           js_InitIntlClass(cx, global) &&
-#endif
-#if ENABLE_PARALLEL_JS
-           js_InitParallelArrayClass(cx, global) &&
-#endif
-           true;
+    for (size_t k = 0; k < JSProto_LIMIT; ++k) {
+        if (!global->ensureConstructor(cx, static_cast<JSProtoKey>(k)))
+            return false;
+    }
+    return true;
 }
 
 /* static */ bool
@@ -540,18 +511,17 @@ GlobalObject::isRuntimeCodeGenEnabled(JSContext *cx, Handle<GlobalObject*> globa
 }
 
 /* static */ bool
-GlobalObject::warnOnceAboutWatch(JSContext *cx, HandleObject obj)
+GlobalObject::warnOnceAbout(JSContext *cx, HandleObject obj, uint32_t slot, unsigned errorNumber)
 {
     Rooted<GlobalObject*> global(cx, &obj->global());
-    HeapSlot &v = global->getSlotRef(WARNED_WATCH_DEPRECATED);
+    HeapSlot &v = global->getSlotRef(slot);
     if (v.isUndefined()) {
-        // Warn only once per global object.
         if (!JS_ReportErrorFlagsAndNumber(cx, JSREPORT_WARNING, js_GetErrorMessage, nullptr,
-                                          JSMSG_OBJECT_WATCH_DEPRECATED))
+                                          errorNumber))
         {
             return false;
         }
-        v.init(global, HeapSlot::Slot, WARNED_WATCH_DEPRECATED, BooleanValue(true));
+        v.init(global, HeapSlot::Slot, slot, BooleanValue(true));
     }
     return true;
 }
@@ -691,7 +661,7 @@ GlobalObject::getSelfHostedFunction(JSContext *cx, HandleAtom selfHostedName, Ha
     RootedId shId(cx, AtomToId(selfHostedName));
     RootedObject holder(cx, cx->global()->intrinsicsHolder());
 
-    if (HasDataProperty(cx, holder, shId, funVal.address()))
+    if (cx->global()->maybeGetIntrinsicValue(shId, funVal.address()))
         return true;
 
     if (!cx->runtime()->maybeWrappedSelfHostedFunction(cx, shId, funVal))
@@ -707,5 +677,26 @@ GlobalObject::getSelfHostedFunction(JSContext *cx, HandleAtom selfHostedName, Ha
     fun->setExtendedSlot(0, StringValue(selfHostedName));
     funVal.setObject(*fun);
 
-    return JSObject::defineGeneric(cx, holder, shId, funVal, nullptr, nullptr, 0);
+    return cx->global()->addIntrinsicValue(cx, shId, funVal);
+}
+
+bool
+GlobalObject::addIntrinsicValue(JSContext *cx, HandleId id, HandleValue value)
+{
+    RootedObject holder(cx, intrinsicsHolder());
+
+    uint32_t slot = holder->slotSpan();
+    RootedShape last(cx, holder->lastProperty());
+    Rooted<UnownedBaseShape*> base(cx, last->base()->unowned());
+
+    StackShape child(base, id, slot, 0, 0, 0);
+    RootedShape shape(cx, cx->compartment()->propertyTree.getChild(cx, last, child));
+    if (!shape)
+        return false;
+
+    if (!JSObject::setLastProperty(cx, holder, shape))
+        return false;
+
+    holder->setSlot(shape->slot(), value);
+    return true;
 }

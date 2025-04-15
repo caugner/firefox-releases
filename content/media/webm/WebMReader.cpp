@@ -11,6 +11,7 @@
 #include "WebMBufferedParser.h"
 #include "mozilla/dom/TimeRanges.h"
 #include "VorbisUtils.h"
+#include <algorithm>
 
 #define VPX_DONT_DEFINE_STDINT_TYPES
 #include "vpx/vp8dx.h"
@@ -147,6 +148,7 @@ WebMReader::WebMReader(AbstractMediaDecoder* aDecoder)
   mOpusParser(nullptr),
   mOpusDecoder(nullptr),
   mSkip(0),
+  mSeekPreroll(0),
 #endif
   mVideoTrack(0),
   mAudioTrack(0),
@@ -218,10 +220,20 @@ nsresult WebMReader::ResetDecode()
     res = NS_ERROR_FAILURE;
   }
 
-  // Ignore failed results from vorbis_synthesis_restart. They
-  // aren't fatal and it fails when ResetDecode is called at a
-  // time when no vorbis data has been read.
-  vorbis_synthesis_restart(&mVorbisDsp);
+  if (mAudioCodec == NESTEGG_CODEC_VORBIS) {
+    // Ignore failed results from vorbis_synthesis_restart. They
+    // aren't fatal and it fails when ResetDecode is called at a
+    // time when no vorbis data has been read.
+    vorbis_synthesis_restart(&mVorbisDsp);
+#ifdef MOZ_OPUS
+  } else if (mAudioCodec == NESTEGG_CODEC_OPUS) {
+    if (mOpusDecoder) {
+      // Reset the decoder.
+      opus_multistream_decoder_ctl(mOpusDecoder, OPUS_RESET_STATE);
+      mSkip = mOpusParser->mPreSkip;
+    }
+#endif
+  }
 
   mVideoPackets.Reset();
   mAudioPackets.Reset();
@@ -332,19 +344,19 @@ nsresult WebMReader::ReadMetadata(MediaInfo* aInfo,
 
       switch (params.stereo_mode) {
       case NESTEGG_VIDEO_MONO:
-        mInfo.mVideo.mStereoMode = STEREO_MODE_MONO;
+        mInfo.mVideo.mStereoMode = StereoMode::MONO;
         break;
       case NESTEGG_VIDEO_STEREO_LEFT_RIGHT:
-        mInfo.mVideo.mStereoMode = STEREO_MODE_LEFT_RIGHT;
+        mInfo.mVideo.mStereoMode = StereoMode::LEFT_RIGHT;
         break;
       case NESTEGG_VIDEO_STEREO_BOTTOM_TOP:
-        mInfo.mVideo.mStereoMode = STEREO_MODE_BOTTOM_TOP;
+        mInfo.mVideo.mStereoMode = StereoMode::BOTTOM_TOP;
         break;
       case NESTEGG_VIDEO_STEREO_TOP_BOTTOM:
-        mInfo.mVideo.mStereoMode = STEREO_MODE_TOP_BOTTOM;
+        mInfo.mVideo.mStereoMode = StereoMode::TOP_BOTTOM;
         break;
       case NESTEGG_VIDEO_STEREO_RIGHT_LEFT:
-        mInfo.mVideo.mStereoMode = STEREO_MODE_RIGHT_LEFT;
+        mInfo.mVideo.mStereoMode = StereoMode::RIGHT_LEFT;
         break;
       }
     }
@@ -360,7 +372,7 @@ nsresult WebMReader::ReadMetadata(MediaInfo* aInfo,
       mHasAudio = true;
       mInfo.mAudio.mHasAudio = true;
       mAudioCodec = nestegg_track_codec_id(mContext, track);
-      mCodecDelay = params.codec_delay;
+      mCodecDelay = params.codec_delay / NS_PER_USEC;
 
       if (mAudioCodec == NESTEGG_CODEC_VORBIS) {
         // Get the Vorbis header data
@@ -427,10 +439,18 @@ nsresult WebMReader::ReadMetadata(MediaInfo* aInfo,
           return NS_ERROR_FAILURE;
         }
 
+        if (static_cast<int64_t>(mCodecDelay) != FramesToUsecs(mOpusParser->mPreSkip, mOpusParser->mRate).value()) {
+          LOG(PR_LOG_WARNING,
+              ("Invalid Opus header: CodecDelay and pre-skip do not match!\n"));
+          Cleanup();
+          return NS_ERROR_FAILURE;
+        }
+
         mInfo.mAudio.mRate = mOpusParser->mRate;
 
         mInfo.mAudio.mChannels = mOpusParser->mChannels;
-        mInfo.mAudio.mChannels = mInfo.mAudio.mChannels > 2 ? 2 : mInfo.mAudio.mChannels;
+        mChannels = mInfo.mAudio.mChannels;
+        mSeekPreroll = params.seek_preroll;
 #endif
       } else {
         Cleanup();
@@ -627,6 +647,7 @@ bool WebMReader::DecodeAudioPacket(nestegg_packet* aPacket, int64_t aOffset)
       if (ret < 0)
         return false;
       NS_ASSERTION(ret == frames, "Opus decoded too few audio samples");
+      CheckedInt64 startTime = tstamp_usecs;
 
       // Trim the initial frames while the decoder is settling.
       if (mSkip > 0) {
@@ -643,7 +664,7 @@ bool WebMReader::DecodeAudioPacket(nestegg_packet* aPacket, int64_t aOffset)
         nsAutoArrayPtr<AudioDataValue> trimBuffer(new AudioDataValue[samples]);
         for (int i = 0; i < samples; i++)
           trimBuffer[i] = buffer[skipFrames*channels + i];
-
+        startTime = startTime + FramesToUsecs(skipFrames, rate);
         frames = keepFrames;
         buffer = trimBuffer;
 
@@ -694,13 +715,9 @@ bool WebMReader::DecodeAudioPacket(nestegg_packet* aPacket, int64_t aOffset)
       }
 #endif
 
-      // More than 2 decoded channels must be downmixed to stereo.
-      if (channels > 2) {
-        // Opus doesn't provide a channel mapping for more than 8 channels,
-        // so we can't downmix more than that.
-        if (channels > 8)
-          return false;
-        OggReader::DownmixToStereo(buffer, channels, frames);
+      // No channel mapping for more than 8 channels.
+      if (channels > 8) {
+        return false;
       }
 
       CheckedInt64 duration = FramesToUsecs(frames, rate);
@@ -708,14 +725,12 @@ bool WebMReader::DecodeAudioPacket(nestegg_packet* aPacket, int64_t aOffset)
         NS_WARNING("Int overflow converting WebM audio duration");
         return false;
       }
-
-      CheckedInt64 time = tstamp_usecs;
+      CheckedInt64 time = startTime - mCodecDelay;
       if (!time.isValid()) {
-        NS_WARNING("Int overflow adding total_duration and tstamp_usecs");
+        NS_WARNING("Int overflow shifting tstamp by codec delay");
         nestegg_free_packet(aPacket);
         return false;
       };
-
       AudioQueue().Push(new AudioData(mDecoder->GetResource()->Tell(),
                                      time.value(),
                                      duration.value(),
@@ -982,7 +997,11 @@ nsresult WebMReader::Seek(int64_t aTarget, int64_t aStartTime, int64_t aEndTime,
     return NS_ERROR_FAILURE;
   }
   uint32_t trackToSeek = mHasVideo ? mVideoTrack : mAudioTrack;
-  int r = nestegg_track_seek(mContext, trackToSeek, aTarget * NS_PER_USEC);
+  uint64_t target = aTarget * NS_PER_USEC;
+  if (mSeekPreroll) {
+    target = std::max(static_cast<uint64_t>(aStartTime * NS_PER_USEC), target - mSeekPreroll);
+  }
+  int r = nestegg_track_seek(mContext, trackToSeek, target);
   if (r != 0) {
     return NS_ERROR_FAILURE;
   }

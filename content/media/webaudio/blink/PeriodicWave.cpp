@@ -164,8 +164,8 @@ void PeriodicWave::createBandLimitedTables(const float* realData, const float* i
     for (unsigned rangeIndex = 0; rangeIndex < m_numberOfRanges; ++rangeIndex) {
         // This FFTBlock is used to cull partials (represented by frequency bins).
         FFTBlock frame(fftSize);
-        float* realP = new float[halfSize];
-        float* imagP = new float[halfSize];
+        nsAutoArrayPtr<float> realP(new float[halfSize]);
+        nsAutoArrayPtr<float> imagP(new float[halfSize]);
 
         // Copy from loaded frequency data and scale.
         float scale = fftSize;
@@ -182,7 +182,7 @@ void PeriodicWave::createBandLimitedTables(const float* realData, const float* i
         // Generate complex conjugate because of the way the
         // inverse FFT is defined.
         float minusOne = -1;
-        AudioBufferInPlaceScale(imagP, 1, minusOne, halfSize);
+        AudioBufferInPlaceScale(imagP, minusOne, halfSize);
 
         // Find the starting bin where we should start culling.
         // We need to clear out the highest frequencies to band-limit
@@ -224,7 +224,7 @@ void PeriodicWave::createBandLimitedTables(const float* realData, const float* i
         }
 
         // Apply normalization scale.
-        AudioBufferInPlaceScale(data, 1, normalizationScale, m_periodicWaveSize);
+        AudioBufferInPlaceScale(data, normalizationScale, m_periodicWaveSize);
     }
 }
 

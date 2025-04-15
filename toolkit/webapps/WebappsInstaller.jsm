@@ -223,14 +223,14 @@ NativeApp.prototype = {
    * This function retrieves the icon for an app.
    * If the retrieving fails, it uses the default chrome icon.
    */
-  getIcon: function() {
+  getIcon: function(aZipPath) {
     try {
       // If the icon is in the zip package, we should modify the url
       // to point to the zip file (we can't use the app protocol yet
       // because the app isn't installed yet).
       if (this.iconURI.scheme == "app") {
-        let zipFile = getFile(this.tmpInstallDir, "application.zip");
-        let zipUrl = Services.io.newFileURI(zipFile).spec;
+        let zipUrl = OS.Path.toFileURI(OS.Path.join(this.tmpInstallDir,
+                                                    aZipPath));
 
         let filePath = this.iconURI.QueryInterface(Ci.nsIURL).filePath;
 
@@ -340,7 +340,7 @@ WinNativeApp.prototype = {
    */
   install: function(aZipPath) {
     return Task.spawn(function() {
-      this._getInstallDir();
+      yield this._getInstallDir();
 
       try {
         yield this._createDirectoryStructure();
@@ -352,7 +352,7 @@ WinNativeApp.prototype = {
                                                     "application.zip"));
         }
 
-        yield this.getIcon();
+        yield this.getIcon("application.zip");
 
         // Remove previously installed app
         this._removeInstallation(true);
@@ -400,9 +400,9 @@ WinNativeApp.prototype = {
 
       // Check in both directories to see if a shortcut with the same name
       // already exists.
-      this.shortcutName = getAvailableFileName([ PROGS_DIR, DESKTOP_DIR ],
-                                               this.appNameAsFilename,
-                                               ".lnk");
+      this.shortcutName = yield getAvailableFileName([ PROGS_DIR, DESKTOP_DIR ],
+                                                     this.appNameAsFilename,
+                                                     ".lnk");
     }
   },
 
@@ -663,6 +663,7 @@ function MacNativeApp(aData) {
   this.macOSDir = OS.Path.join(this.contentsDir, "MacOS");
   this.resourcesDir = OS.Path.join(this.contentsDir, "Resources");
   this.iconFile = OS.Path.join(this.resourcesDir, "appicon.icns");
+  this.zipFile = OS.Path.join(this.resourcesDir, "application.zip");
 }
 
 MacNativeApp.prototype = {
@@ -670,7 +671,7 @@ MacNativeApp.prototype = {
 
   install: function(aZipPath) {
     return Task.spawn(function() {
-      this._getInstallDir();
+      yield this._getInstallDir();
 
       try {
         yield this._createDirectoryStructure();
@@ -679,10 +680,10 @@ MacNativeApp.prototype = {
 
         if (aZipPath) {
           yield OS.File.move(aZipPath, OS.Path.join(this.tmpInstallDir,
-                                                    "application.zip"));
+                                                    this.zipFile));
         }
 
-        yield this.getIcon();
+        yield this.getIcon(this.zipFile);
 
         // Remove previously installed app
         this._removeInstallation(true);
@@ -712,12 +713,14 @@ MacNativeApp.prototype = {
         throw("Updates for apps installed with the old naming scheme unsupported");
       }
     } else {
-      let destinationName = getAvailableFileName([ LOCAL_APP_DIR ],
-                                                 this.appNameAsFilename,
-                                                ".app");
-      if (!destinationName) {
-        throw("No available filename");
+      let localAppDir = getFile(LOCAL_APP_DIR);
+      if (!localAppDir.isWritable()) {
+        throw("Not enough privileges to install apps");
       }
+
+      let destinationName = yield getAvailableFileName([ LOCAL_APP_DIR ],
+                                                       this.appNameAsFilename,
+                                                       ".app");
 
       this.installDir = OS.Path.join(LOCAL_APP_DIR, destinationName);
     }
@@ -884,7 +887,7 @@ LinuxNativeApp.prototype = {
                                                     "application.zip"));
         }
 
-        yield this.getIcon();
+        yield this.getIcon("application.zip");
 
         // Remove previously installed app
         this._removeInstallation(true);
@@ -1128,58 +1131,37 @@ function stripStringForFilename(aPossiblyBadFilenameString) {
  *         was not available
  */
 function getAvailableFileName(aPathSet, aName, aExtension) {
-  let fileSet = [];
-  let name = aName + aExtension;
-  let isUnique = true;
+  return Task.spawn(function*() {
+    let name = aName + aExtension;
 
-  // Check if the plain name is a unique name in all the directories.
-  for (let path of aPathSet) {
-    let folder = getFile(path);
+    function checkUnique(aName) {
+      return Task.spawn(function*() {
+        for (let path of aPathSet) {
+          if (yield OS.File.exists(OS.Path.join(path, aName))) {
+            return false;
+          }
+        }
 
-    folder.followLinks = false;
-    if (!folder.isDirectory() || !folder.isWritable()) {
-      return null;
+        return true;
+      });
     }
 
-    let file = folder.clone();
-    file.append(name);
-    // Avoid exists() call if we already know this file name is not unique in
-    // one of the directories.
-    if (isUnique && file.exists()) {
-      isUnique = false;
+    if (yield checkUnique(name)) {
+      return name;
     }
 
-    fileSet.push(file);
-  }
+    // If we're here, the plain name wasn't enough. Let's try modifying the name
+    // by adding "(" + num + ")".
+    for (let i = 2; i < 100; i++) {
+      name = aName + " (" + i + ")" + aExtension;
 
-  if (isUnique) {
-    return name;
-  }
-
-
-  function checkUnique(aName) {
-    for (let file of fileSet) {
-      file.leafName = aName;
-
-      if (file.exists()) {
-        return false;
+      if (yield checkUnique(name)) {
+        return name;
       }
     }
 
-    return true;
-  }
-
-  // If we're here, the plain name wasn't enough. Let's try modifying the name
-  // by adding "(" + num + ")".
-  for (let i = 2; i < 100; i++) {
-    name = aName + " (" + i + ")" + aExtension;
-
-    if (checkUnique(name)) {
-      return name;
-    }
-  }
-
-  return null;
+    throw "No available filename";
+  });
 }
 
 /**

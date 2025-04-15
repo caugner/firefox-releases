@@ -38,22 +38,23 @@ InnermostStaticScope(JSScript *script, jsbytecode *pc)
     JS_ASSERT(script->containsPC(pc));
     JS_ASSERT(JOF_OPTYPE(*pc) == JOF_SCOPECOORD);
 
-    StaticBlockObject *block = GetBlockChainAtPC(script, pc);
+    StaticBlockObject *block = script->getBlockScope(pc);
     if (block)
         return block;
-    return script->function();
+    return script->functionNonDelazifying();
 }
 
 Shape *
 js::ScopeCoordinateToStaticScopeShape(JSScript *script, jsbytecode *pc)
 {
     StaticScopeIter<NoGC> ssi(InnermostStaticScope(script, pc));
-    ScopeCoordinate sc(pc);
+    uint32_t hops = ScopeCoordinate(pc).hops();
     while (true) {
+        JS_ASSERT(!ssi.done());
         if (ssi.hasDynamicScopeObject()) {
-            if (!sc.hops)
+            if (!hops)
                 break;
-            sc.hops--;
+            hops--;
         }
         ssi++;
     }
@@ -92,13 +93,13 @@ js::ScopeCoordinateName(ScopeCoordinateNameCache &cache, JSScript *script, jsbyt
     jsid id;
     ScopeCoordinate sc(pc);
     if (shape == cache.shape) {
-        ScopeCoordinateNameCache::Map::Ptr p = cache.map.lookup(sc.slot);
+        ScopeCoordinateNameCache::Map::Ptr p = cache.map.lookup(sc.slot());
         id = p->value();
     } else {
         Shape::Range<NoGC> r(shape);
-        while (r.front().slot() != sc.slot)
+        while (r.front().slot() != sc.slot())
             r.popFront();
-        id = r.front().propid();
+        id = r.front().propidRaw();
     }
 
     /* Beware nameless destructuring formal. */
@@ -111,12 +112,12 @@ JSScript *
 js::ScopeCoordinateFunctionScript(JSScript *script, jsbytecode *pc)
 {
     StaticScopeIter<NoGC> ssi(InnermostStaticScope(script, pc));
-    ScopeCoordinate sc(pc);
+    uint32_t hops = ScopeCoordinate(pc).hops();
     while (true) {
         if (ssi.hasDynamicScopeObject()) {
-            if (!sc.hops)
+            if (!hops)
                 break;
-            sc.hops--;
+            hops--;
         }
         ssi++;
     }
@@ -146,12 +147,12 @@ CallObject::create(JSContext *cx, HandleScript script, HandleShape shape, Handle
     JS_ASSERT(CanBeFinalizedInBackground(kind, &CallObject::class_));
     kind = gc::GetBackgroundAllocKind(kind);
 
-    gc::InitialHeap heap = script->treatAsRunOnce ? gc::TenuredHeap : gc::DefaultHeap;
+    gc::InitialHeap heap = script->treatAsRunOnce() ? gc::TenuredHeap : gc::DefaultHeap;
     JSObject *obj = JSObject::create(cx, kind, heap, shape, type, slots);
     if (!obj)
         return nullptr;
 
-    if (script->treatAsRunOnce) {
+    if (script->treatAsRunOnce()) {
         RootedObject nobj(cx, obj);
         if (!JSObject::setSingletonType(cx, nobj))
             return nullptr;
@@ -196,7 +197,7 @@ CallObject::createTemplateObject(JSContext *cx, HandleScript script, gc::Initial
 CallObject *
 CallObject::create(JSContext *cx, HandleScript script, HandleObject enclosing, HandleFunction callee)
 {
-    gc::InitialHeap heap = script->treatAsRunOnce ? gc::TenuredHeap : gc::DefaultHeap;
+    gc::InitialHeap heap = script->treatAsRunOnce() ? gc::TenuredHeap : gc::DefaultHeap;
     CallObject *callobj = CallObject::createTemplateObject(cx, script, heap);
     if (!callobj)
         return nullptr;
@@ -204,7 +205,7 @@ CallObject::create(JSContext *cx, HandleScript script, HandleObject enclosing, H
     callobj->as<ScopeObject>().setEnclosingScope(enclosing);
     callobj->initFixedSlot(CALLEE_SLOT, ObjectOrNullValue(callee));
 
-    if (script->treatAsRunOnce) {
+    if (script->treatAsRunOnce()) {
         Rooted<CallObject*> ncallobj(cx, callobj);
         if (!JSObject::setSingletonType(cx, ncallobj))
             return nullptr;
@@ -395,7 +396,7 @@ with_LookupElement(JSContext *cx, HandleObject obj, uint32_t index,
                    MutableHandleObject objp, MutableHandleShape propp)
 {
     RootedId id(cx);
-    if (!IndexToId(cx, index, id.address()))
+    if (!IndexToId(cx, index, &id))
         return false;
     return with_LookupGeneric(cx, obj, id, objp, propp);
 }
@@ -404,7 +405,7 @@ static bool
 with_LookupSpecial(JSContext *cx, HandleObject obj, HandleSpecialId sid,
                    MutableHandleObject objp, MutableHandleShape propp)
 {
-    Rooted<jsid> id(cx, SPECIALID_TO_JSID(sid));
+    RootedId id(cx, SPECIALID_TO_JSID(sid));
     return with_LookupGeneric(cx, obj, id, objp, propp);
 }
 
@@ -420,7 +421,7 @@ static bool
 with_GetProperty(JSContext *cx, HandleObject obj, HandleObject receiver, HandlePropertyName name,
                  MutableHandleValue vp)
 {
-    Rooted<jsid> id(cx, NameToId(name));
+    RootedId id(cx, NameToId(name));
     return with_GetGeneric(cx, obj, receiver, id, vp);
 }
 
@@ -429,7 +430,7 @@ with_GetElement(JSContext *cx, HandleObject obj, HandleObject receiver, uint32_t
                 MutableHandleValue vp)
 {
     RootedId id(cx);
-    if (!IndexToId(cx, index, id.address()))
+    if (!IndexToId(cx, index, &id))
         return false;
     return with_GetGeneric(cx, obj, receiver, id, vp);
 }
@@ -438,7 +439,7 @@ static bool
 with_GetSpecial(JSContext *cx, HandleObject obj, HandleObject receiver, HandleSpecialId sid,
                 MutableHandleValue vp)
 {
-    Rooted<jsid> id(cx, SPECIALID_TO_JSID(sid));
+    RootedId id(cx, SPECIALID_TO_JSID(sid));
     return with_GetGeneric(cx, obj, receiver, id, vp);
 }
 
@@ -538,7 +539,6 @@ const Class WithObject::class_ = {
     JS_ResolveStub,
     JS_ConvertStub,
     nullptr,                 /* finalize */
-    nullptr,                 /* checkAccess */
     nullptr,                 /* call        */
     nullptr,                 /* hasInstance */
     nullptr,                 /* construct   */
@@ -556,7 +556,6 @@ const Class WithObject::class_ = {
         with_GetGeneric,
         with_GetProperty,
         with_GetElement,
-        nullptr,             /* getElementIfPresent */
         with_GetSpecial,
         with_SetGeneric,
         with_SetProperty,
@@ -567,7 +566,8 @@ const Class WithObject::class_ = {
         with_DeleteProperty,
         with_DeleteElement,
         with_DeleteSpecial,
-        nullptr, nullptr, /* watch/unwatch */
+        nullptr, nullptr,    /* watch/unwatch */
+        nullptr,             /* slice */
         with_Enumerate,
         with_ThisObject,
     }
@@ -610,7 +610,7 @@ ClonedBlockObject::create(JSContext *cx, Handle<StaticBlockObject *> block, Abst
      * any fixup since the initial value is 'undefined'.
      */
     unsigned nslots = block->slotCount();
-    unsigned base = frame.script()->nfixed + block->stackDepth();
+    unsigned base = frame.script()->nfixed() + block->stackDepth();
     for (unsigned i = 0; i < nslots; ++i) {
         if (block->isAliased(i))
             obj->as<ClonedBlockObject>().setVar(i, frame.unaliasedLocal(base + i));
@@ -625,7 +625,7 @@ void
 ClonedBlockObject::copyUnaliasedValues(AbstractFramePtr frame)
 {
     StaticBlockObject &block = staticBlock();
-    unsigned base = frame.script()->nfixed + block.stackDepth();
+    unsigned base = frame.script()->nfixed() + block.stackDepth();
     for (unsigned i = 0; i < slotCount(); ++i) {
         if (!block.isAliased(i))
             setVar(i, frame.unaliasedLocal(base + i), DONT_CHECK_ALIASING);
@@ -654,9 +654,10 @@ StaticBlockObject::create(ExclusiveContext *cx)
 
 /* static */ Shape *
 StaticBlockObject::addVar(ExclusiveContext *cx, Handle<StaticBlockObject*> block, HandleId id,
-                          int index, bool *redeclared)
+                          unsigned index, bool *redeclared)
 {
-    JS_ASSERT(JSID_IS_ATOM(id) || (JSID_IS_INT(id) && JSID_TO_INT(id) == index));
+    JS_ASSERT(JSID_IS_ATOM(id) || (JSID_IS_INT(id) && JSID_TO_INT(id) == (int)index));
+    JS_ASSERT(index < VAR_INDEX_LIMIT);
 
     *redeclared = false;
 
@@ -873,65 +874,28 @@ ScopeIter::ScopeIter(JSObject &enclosingScope, JSContext *cx
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 }
 
-ScopeIter::ScopeIter(AbstractFramePtr frame, JSContext *cx
+ScopeIter::ScopeIter(AbstractFramePtr frame, jsbytecode *pc, JSContext *cx
                      MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
   : cx(cx),
     frame_(frame),
     cur_(cx, frame.scopeChain()),
-    block_(cx, frame.maybeBlockChain())
+    block_(cx, frame.script()->getBlockScope(pc))
 {
     assertSameCompartment(cx, frame);
     settle();
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 }
 
-ScopeIter::ScopeIter(const ScopeIter &si, AbstractFramePtr frame, JSContext *cx
-                     MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-  : cx(si.cx),
-    frame_(frame),
-    cur_(cx, si.cur_),
-    block_(cx, si.block_),
-    type_(si.type_),
-    hasScopeObject_(si.hasScopeObject_)
-{
-    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-}
-
-ScopeIter::ScopeIter(AbstractFramePtr frame, ScopeObject &scope, JSContext *cx
+ScopeIter::ScopeIter(const ScopeIterVal &val, JSContext *cx
                      MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
   : cx(cx),
-    frame_(frame),
-    cur_(cx, &scope),
-    block_(cx)
+    frame_(val.frame_),
+    cur_(cx, val.cur_),
+    block_(cx, val.block_),
+    type_(val.type_),
+    hasScopeObject_(val.hasScopeObject_)
 {
-    /*
-     * Find the appropriate static block for this iterator, given 'scope'. We
-     * know that 'scope' is a (non-optimized) scope on fp's scope chain. We do
-     * not, however, know whether fp->maybeScopeChain() encloses 'scope'. E.g.:
-     *
-     *   let (x = 1) {
-     *     g = function() { eval('debugger') };
-     *     let (y = 1) g();
-     *   }
-     *
-     * g will have x's block in its enclosing scope but not y's. However, at
-     * the debugger statement, both the x's and y's blocks will be on
-     * fp->blockChain. Fortunately, we can compare scope object stack depths to
-     * determine the block (if any) that encloses 'scope'.
-     */
-    if (cur_->is<NestedScopeObject>()) {
-        block_ = frame.maybeBlockChain();
-        while (block_) {
-            if (block_->stackDepth() <= cur_->as<NestedScopeObject>().stackDepth())
-                break;
-            block_ = block_->enclosingBlock();
-        }
-        JS_ASSERT_IF(cur_->is<ClonedBlockObject>(),
-                     cur_->as<ClonedBlockObject>().staticBlock() == *block_);
-    } else {
-        block_ = nullptr;
-    }
-    settle();
+    assertSameCompartment(cx, val.frame_);
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 }
 
@@ -1063,6 +1027,20 @@ ScopeIterKey::match(ScopeIterKey si1, ScopeIterKey si2)
              si1.type_  == si2.type_));
 }
 
+// Live ScopeIter values may be added to DebugScopes::liveScopes, as
+// ScopeIterVal instances.  They need to have write barriers when they are added
+// to the hash table, but no barriers when rehashing inside GC.  It's a nasty
+// hack, but the important thing is that ScopeIterKey and ScopeIterVal need to
+// alias each other.
+void ScopeIterVal::staticAsserts() {
+    static_assert(sizeof(ScopeIterVal) == sizeof(ScopeIterKey),
+                  "ScopeIterVal must be same size of ScopeIterKey");
+    static_assert(offsetof(ScopeIterVal, cur_) == offsetof(ScopeIterKey, cur_),
+                  "ScopeIterVal.cur_ must alias ScopeIterKey.cur_");
+    static_assert(offsetof(ScopeIterVal, block_) == offsetof(ScopeIterKey, block_),
+                  "ScopeIterVal.block_ must alias ScopeIterKey.block_");
+}
+
 /*****************************************************************************/
 
 namespace {
@@ -1095,8 +1073,7 @@ class DebugScopeProxy : public BaseProxyHandler
      * the normal Call/BlockObject scope objects and thus must be recovered
      * from somewhere else:
      *  + if the invocation for which the scope was created is still executing,
-     *    there is a StackFrame (either live on the stack or floating in a
-     *    generator object) holding the values;
+     *    there is a StackFrame live on the stack holding the values;
      *  + if the invocation for which the scope was created finished executing:
      *     - and there was a DebugScopeObject associated with scope, then the
      *       DebugScopes::onPop(Call|Block) handler copied out the unaliased
@@ -1116,7 +1093,7 @@ class DebugScopeProxy : public BaseProxyHandler
                                jsid id, Action action, MutableHandleValue vp)
     {
         JS_ASSERT(&debugScope->scope() == scope);
-        AbstractFramePtr maybeframe = DebugScopes::hasLiveFrame(*scope);
+        ScopeIterVal *maybeLiveScope = DebugScopes::hasLiveScope(*scope);
 
         /* Handle unaliased formals, vars, and consts at function scope. */
         if (scope->is<CallObject>() && !scope->as<CallObject>().isForEval()) {
@@ -1133,15 +1110,16 @@ class DebugScopeProxy : public BaseProxyHandler
                 return false;
 
             if (bi->kind() == VARIABLE || bi->kind() == CONSTANT) {
-                unsigned i = bi.frameIndex();
+                uint32_t i = bi.frameIndex();
                 if (script->varIsAliased(i))
                     return false;
 
-                if (maybeframe) {
+                if (maybeLiveScope) {
+                    AbstractFramePtr frame = maybeLiveScope->frame();
                     if (action == GET)
-                        vp.set(maybeframe.unaliasedVar(i));
+                        vp.set(frame.unaliasedVar(i));
                     else
-                        maybeframe.unaliasedVar(i) = vp;
+                        frame.unaliasedVar(i) = vp;
                 } else if (JSObject *snapshot = debugScope->maybeSnapshot()) {
                     if (action == GET)
                         vp.set(snapshot->getDenseElement(bindings.numArgs() + i));
@@ -1158,17 +1136,18 @@ class DebugScopeProxy : public BaseProxyHandler
                 if (script->formalIsAliased(i))
                     return false;
 
-                if (maybeframe) {
-                    if (script->argsObjAliasesFormals() && maybeframe.hasArgsObj()) {
+                if (maybeLiveScope) {
+                    AbstractFramePtr frame = maybeLiveScope->frame();
+                    if (script->argsObjAliasesFormals() && frame.hasArgsObj()) {
                         if (action == GET)
-                            vp.set(maybeframe.argsObj().arg(i));
+                            vp.set(frame.argsObj().arg(i));
                         else
-                            maybeframe.argsObj().setArg(i, vp);
+                            frame.argsObj().setArg(i, vp);
                     } else {
                         if (action == GET)
-                            vp.set(maybeframe.unaliasedFormal(i, DONT_CHECK_ALIASING));
+                            vp.set(frame.unaliasedFormal(i, DONT_CHECK_ALIASING));
                         else
-                            maybeframe.unaliasedFormal(i, DONT_CHECK_ALIASING) = vp;
+                            frame.unaliasedFormal(i, DONT_CHECK_ALIASING) = vp;
                     }
                 } else if (JSObject *snapshot = debugScope->maybeSnapshot()) {
                     if (action == GET)
@@ -1199,13 +1178,14 @@ class DebugScopeProxy : public BaseProxyHandler
             if (block->staticBlock().isAliased(i))
                 return false;
 
-            if (maybeframe) {
-                JSScript *script = maybeframe.script();
-                unsigned local = block->slotToLocalIndex(script->bindings, shape->slot());
+            if (maybeLiveScope) {
+                AbstractFramePtr frame = maybeLiveScope->frame();
+                JSScript *script = frame.script();
+                uint32_t local = block->slotToLocalIndex(script->bindings, shape->slot());
                 if (action == GET)
-                    vp.set(maybeframe.unaliasedLocal(local));
+                    vp.set(frame.unaliasedLocal(local));
                 else
-                    maybeframe.unaliasedLocal(local) = vp;
+                    frame.unaliasedLocal(local) = vp;
                 JS_ASSERT(analyze::LocalSlot(script, local) >= analyze::TotalSlots(script));
             } else {
                 if (action == GET)
@@ -1262,14 +1242,14 @@ class DebugScopeProxy : public BaseProxyHandler
         if (scope.as<CallObject>().callee().nonLazyScript()->needsArgsObj())
             return true;
 
-        AbstractFramePtr maybeframe = DebugScopes::hasLiveFrame(scope);
-        if (!maybeframe) {
+        ScopeIterVal *maybeScope = DebugScopes::hasLiveScope(scope);
+        if (!maybeScope) {
             JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_DEBUG_NOT_LIVE,
                                  "Debugger scope");
             return false;
         }
 
-        *maybeArgsObj = ArgumentsObject::createUnexpected(cx, maybeframe);
+        *maybeArgsObj = ArgumentsObject::createUnexpected(cx, maybeScope->frame());
         return true;
     }
 
@@ -1527,7 +1507,7 @@ js_IsDebugScopeSlow(ProxyObject *proxy)
 
 /*****************************************************************************/
 
-/* static */ JS_ALWAYS_INLINE void
+/* static */ MOZ_ALWAYS_INLINE void
 DebugScopes::proxiedScopesPostWriteBarrier(JSRuntime *rt, ObjectWeakMap *map,
                                            const EncapsulatedPtr<JSObject> &key)
 {
@@ -1535,20 +1515,67 @@ DebugScopes::proxiedScopesPostWriteBarrier(JSRuntime *rt, ObjectWeakMap *map,
     /*
      * Strip the barriers from the type before inserting into the store buffer.
      * This will automatically ensure that barriers do not fire during GC.
+     *
+     * Some compilers complain about instantiating the WeakMap class for
+     * unbarriered type arguments, so we cast to a HashMap instead.  Because of
+     * WeakMap's multiple inheritace, We need to do this in two stages, first to
+     * the HashMap base class and then to the unbarriered version.
      */
-    typedef WeakMap<JSObject *, JSObject *> UnbarrieredMap;
+    ObjectWeakMap::Base *baseHashMap = static_cast<ObjectWeakMap::Base *>(map);
+
+    typedef HashMap<JSObject *, JSObject *> UnbarrieredMap;
+    UnbarrieredMap *unbarrieredMap = reinterpret_cast<UnbarrieredMap *>(baseHashMap);
+
     typedef gc::HashKeyRef<UnbarrieredMap, JSObject *> Ref;
     if (key && IsInsideNursery(rt, key))
-        rt->gcStoreBuffer.putGeneric(Ref(reinterpret_cast<UnbarrieredMap *>(map), key.get()));
+        rt->gcStoreBuffer.putGeneric(Ref(unbarrieredMap, key.get()));
 #endif
 }
 
-/* static */ JS_ALWAYS_INLINE void
+#ifdef JSGC_GENERATIONAL
+class DebugScopes::MissingScopesRef : public gc::BufferableRef
+{
+    MissingScopeMap *map;
+    ScopeIterKey key;
+
+  public:
+    MissingScopesRef(MissingScopeMap *m, const ScopeIterKey &k) : map(m), key(k) {}
+
+    void mark(JSTracer *trc) {
+        ScopeIterKey prior = key;
+        MissingScopeMap::Ptr p = map->lookup(key);
+        if (!p)
+            return;
+        JS_SET_TRACING_LOCATION(trc, &const_cast<ScopeIterKey &>(p->key()).enclosingScope());
+        Mark(trc, &key.enclosingScope(), "MissingScopesRef");
+        map->rekeyIfMoved(prior, key);
+    }
+};
+#endif
+
+/* static */ MOZ_ALWAYS_INLINE void
+DebugScopes::missingScopesPostWriteBarrier(JSRuntime *rt, MissingScopeMap *map,
+                                           const ScopeIterKey &key)
+{
+#ifdef JSGC_GENERATIONAL
+    if (key.enclosingScope() && IsInsideNursery(rt, key.enclosingScope()))
+        rt->gcStoreBuffer.putGeneric(MissingScopesRef(map, key));
+#endif
+}
+
+/* static */ MOZ_ALWAYS_INLINE void
 DebugScopes::liveScopesPostWriteBarrier(JSRuntime *rt, LiveScopeMap *map, ScopeObject *key)
 {
 #ifdef JSGC_GENERATIONAL
+    // As above.  Otherwise, barriers could fire during GC when moving the
+    // value.
+    typedef HashMap<ScopeObject *,
+                    ScopeIterKey,
+                    DefaultHasher<ScopeObject *>,
+                    RuntimeAllocPolicy> UnbarrieredLiveScopeMap;
+    typedef gc::HashKeyRef<UnbarrieredLiveScopeMap, ScopeObject *> Ref;
     if (key && IsInsideNursery(rt, key))
-        rt->gcStoreBuffer.putGeneric(gc::HashKeyRef<LiveScopeMap, ScopeObject *>(map, key));
+        rt->gcStoreBuffer.putGeneric(Ref(reinterpret_cast<UnbarrieredLiveScopeMap *>(map), key));
 #endif
 }
 
@@ -1586,18 +1613,36 @@ void
 DebugScopes::sweep(JSRuntime *rt)
 {
     /*
-     * Note: missingScopes points to debug scopes weakly not just so that debug
-     * scopes can be released more eagerly, but, more importantly, to avoid
-     * creating an uncollectable cycle with suspended generator frames.
+     * missingScopes points to debug scopes weakly so that debug scopes can be
+     * released more eagerly.
      */
     for (MissingScopeMap::Enum e(missingScopes); !e.empty(); e.popFront()) {
-        if (IsObjectAboutToBeFinalized(e.front().value().unsafeGet()))
+        DebugScopeObject **debugScope = e.front().value().unsafeGet();
+        if (IsObjectAboutToBeFinalized(debugScope)) {
+            /*
+             * Note that onPopCall and onPopBlock rely on missingScopes to find
+             * scope objects that we synthesized for the debugger's sake, and
+             * clean up the synthetic scope objects' entries in liveScopes. So
+             * if we remove an entry frcom missingScopes here, we must also
+             * remove the corresponding liveScopes entry.
+             *
+             * Since the DebugScopeObject is the only thing using its scope
+             * object, and the DSO is about to be finalized, you might assume
+             * that the synthetic SO is also about to be finalized too, and thus
+             * the loop below will take care of things. But complex GC behavior
+             * means that marks are only conservative approximations of
+             * liveness; we should assume that anything could be marked.
+             *
+             * Thus, we must explicitly remove the entries from both liveScopes
+             * and missingScopes here.
+             */
+            liveScopes.remove(&(*debugScope)->scope());
             e.removeFront();
+        }
     }
 
     for (LiveScopeMap::Enum e(liveScopes); !e.empty(); e.popFront()) {
         ScopeObject *scope = e.front().key();
-        AbstractFramePtr frame = e.front().value();
 
         /*
          * Scopes can be finalized when a debugger-synthesized ScopeObject is
@@ -1607,21 +1652,35 @@ DebugScopes::sweep(JSRuntime *rt)
             e.removeFront();
             continue;
         }
-
-        /*
-         * As explained in onGeneratorFrameChange, liveScopes includes
-         * suspended generator frames. Since a generator can be finalized while
-         * its scope is live, we must explicitly detect finalized generators.
-         */
-        if (JSGenerator *gen = frame.maybeSuspendedGenerator(rt)) {
-            JS_ASSERT(gen->state == JSGEN_NEWBORN || gen->state == JSGEN_OPEN);
-            if (IsObjectAboutToBeFinalized(&gen->obj)) {
-                e.removeFront();
-                continue;
-            }
-        }
     }
 }
+
+#if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
+void
+DebugScopes::checkHashTablesAfterMovingGC(JSRuntime *runtime)
+{
+    /*
+     * This is called at the end of StoreBuffer::mark() to check that our
+     * postbarriers have worked and that no hashtable keys (or values) are left
+     * pointing into the nursery.
+     */
+    JS::shadow::Runtime *rt = JS::shadow::Runtime::asShadowRuntime(runtime);
+    for (ObjectWeakMap::Range r = proxiedScopes.all(); !r.empty(); r.popFront()) {
+        JS_ASSERT(!IsInsideNursery(rt, r.front().key().get()));
+        JS_ASSERT(!IsInsideNursery(rt, r.front().value().get()));
+    }
+    for (MissingScopeMap::Range r = missingScopes.all(); !r.empty(); r.popFront()) {
+        JS_ASSERT(!IsInsideNursery(rt, r.front().key().cur()));
+        JS_ASSERT(!IsInsideNursery(rt, r.front().key().block()));
+        JS_ASSERT(!IsInsideNursery(rt, r.front().value().get()));
+    }
+    for (LiveScopeMap::Range r = liveScopes.all(); !r.empty(); r.popFront()) {
+        JS_ASSERT(!IsInsideNursery(rt, r.front().key()));
+        JS_ASSERT(!IsInsideNursery(rt, r.front().value().cur_.get()));
+        JS_ASSERT(!IsInsideNursery(rt, r.front().value().block_.get()));
+    }
+}
+#endif
 
 /*
  * Unfortunately, GetDebugScopeForFrame needs to work even outside debug mode
@@ -1710,6 +1769,7 @@ DebugScopes::addDebugScope(JSContext *cx, const ScopeIter &si, DebugScopeObject 
 {
     JS_ASSERT(!si.hasScopeObject());
     JS_ASSERT(cx->compartment() == debugScope.compartment());
+    JS_ASSERT_IF(si.frame().isFunctionFrame(), !si.frame().callee()->isGenerator());
 
     if (!CanUseDebugScopeMaps(cx))
         return true;
@@ -1723,9 +1783,10 @@ DebugScopes::addDebugScope(JSContext *cx, const ScopeIter &si, DebugScopeObject 
         js_ReportOutOfMemory(cx);
         return false;
     }
+    missingScopesPostWriteBarrier(cx->runtime(), &scopes->missingScopes, si);
 
     JS_ASSERT(!scopes->liveScopes.has(&debugScope.scope()));
-    if (!scopes->liveScopes.put(&debugScope.scope(), si.frame())) {
+    if (!scopes->liveScopes.put(&debugScope.scope(), si)) {
         js_ReportOutOfMemory(cx);
         return false;
     }
@@ -1759,7 +1820,7 @@ DebugScopes::onPopCall(AbstractFramePtr frame, JSContext *cx)
         if (ObjectWeakMap::Ptr p = scopes->proxiedScopes.lookup(&callobj))
             debugScope = &p->value()->as<DebugScopeObject>();
     } else {
-        ScopeIter si(frame, cx);
+        ScopeIter si(frame, frame.script()->main(), cx);
         if (MissingScopeMap::Ptr p = scopes->missingScopes.lookup(si)) {
             debugScope = p->value();
             scopes->liveScopes.remove(&debugScope->scope().as<CallObject>());
@@ -1814,7 +1875,7 @@ DebugScopes::onPopCall(AbstractFramePtr frame, JSContext *cx)
 }
 
 void
-DebugScopes::onPopBlock(JSContext *cx, AbstractFramePtr frame)
+DebugScopes::onPopBlock(JSContext *cx, AbstractFramePtr frame, jsbytecode *pc)
 {
     assertSameCompartment(cx, frame);
 
@@ -1822,16 +1883,27 @@ DebugScopes::onPopBlock(JSContext *cx, AbstractFramePtr frame)
     if (!scopes)
         return;
 
-    StaticBlockObject &staticBlock = *frame.maybeBlockChain();
-    if (staticBlock.needsClone()) {
-        ClonedBlockObject &clone = frame.scopeChain()->as<ClonedBlockObject>();
-        clone.copyUnaliasedValues(frame);
+    ScopeIter si(frame, pc, cx);
+    onPopBlock(cx, si);
+}
+
+void
+DebugScopes::onPopBlock(JSContext *cx, const ScopeIter &si)
+{
+    DebugScopes *scopes = cx->compartment()->debugScopes;
+    if (!scopes)
+        return;
+
+    JS_ASSERT(si.type() == ScopeIter::Block);
+
+    if (si.staticBlock().needsClone()) {
+        ClonedBlockObject &clone = si.scope().as<ClonedBlockObject>();
+        clone.copyUnaliasedValues(si.frame());
         scopes->liveScopes.remove(&clone);
     } else {
-        ScopeIter si(frame, cx);
         if (MissingScopeMap::Ptr p = scopes->missingScopes.lookup(si)) {
             ClonedBlockObject &clone = p->value()->scope().as<ClonedBlockObject>();
-            clone.copyUnaliasedValues(frame);
+            clone.copyUnaliasedValues(si.frame());
             scopes->liveScopes.remove(&clone);
             scopes->missingScopes.remove(p);
         }
@@ -1859,43 +1931,6 @@ DebugScopes::onPopStrictEvalScope(AbstractFramePtr frame)
      */
     if (frame.hasCallObj())
         scopes->liveScopes.remove(&frame.scopeChain()->as<CallObject>());
-}
-
-void
-DebugScopes::onGeneratorFrameChange(AbstractFramePtr from, AbstractFramePtr to, JSContext *cx)
-{
-    for (ScopeIter toIter(to, cx); !toIter.done(); ++toIter) {
-        DebugScopes *scopes = ensureCompartmentData(cx);
-        if (!scopes)
-            return;
-
-        if (toIter.hasScopeObject()) {
-            /*
-             * Not only must we correctly replace mappings [scope -> from] with
-             * mappings [scope -> to], but we must add [scope -> to] if it
-             * doesn't already exist so that if we need to proxy a generator's
-             * scope while it is suspended, we can find its frame (which would
-             * otherwise not be found by AllFramesIter).
-             */
-            JS_ASSERT(toIter.scope().compartment() == cx->compartment());
-            LiveScopeMap::AddPtr livePtr = scopes->liveScopes.lookupForAdd(&toIter.scope());
-            if (livePtr) {
-                livePtr->value() = to;
-            } else {
-                scopes->liveScopes.add(livePtr, &toIter.scope(), to);  // OOM here?
-                liveScopesPostWriteBarrier(cx->runtime(), &scopes->liveScopes, &toIter.scope());
-            }
-        } else {
-            ScopeIter si(toIter, from, cx);
-            JS_ASSERT(si.frame().scopeChain()->compartment() == cx->compartment());
-            if (MissingScopeMap::Ptr p = scopes->missingScopes.lookup(si)) {
-                DebugScopeObject &debugScope = *p->value();
-                scopes->liveScopes.lookup(&debugScope.scope())->value() = to;
-                scopes->missingScopes.remove(p);
-                scopes->missingScopes.put(toIter, &debugScope);  // OOM here?
-            }
-        }
-    }
 }
 
 void
@@ -1937,13 +1972,16 @@ DebugScopes::updateLiveScopes(JSContext *cx)
         if (frame.scopeChain()->compartment() != cx->compartment())
             continue;
 
-        for (ScopeIter si(frame, cx); !si.done(); ++si) {
+        if (frame.isFunctionFrame() && frame.callee()->isGenerator())
+            continue;
+
+        for (ScopeIter si(frame, i.pc(), cx); !si.done(); ++si) {
             if (si.hasScopeObject()) {
                 JS_ASSERT(si.scope().compartment() == cx->compartment());
                 DebugScopes *scopes = ensureCompartmentData(cx);
                 if (!scopes)
                     return false;
-                if (!scopes->liveScopes.put(&si.scope(), frame))
+                if (!scopes->liveScopes.put(&si.scope(), si))
                     return false;
                 liveScopesPostWriteBarrier(cx->runtime(), &scopes->liveScopes, &si.scope());
             }
@@ -1958,33 +1996,17 @@ DebugScopes::updateLiveScopes(JSContext *cx)
     return true;
 }
 
-AbstractFramePtr
-DebugScopes::hasLiveFrame(ScopeObject &scope)
+ScopeIterVal*
+DebugScopes::hasLiveScope(ScopeObject &scope)
 {
     DebugScopes *scopes = scope.compartment()->debugScopes;
     if (!scopes)
-        return NullFramePtr();
+        return nullptr;
 
-    if (LiveScopeMap::Ptr p = scopes->liveScopes.lookup(&scope)) {
-        AbstractFramePtr frame = p->value();
+    if (LiveScopeMap::Ptr p = scopes->liveScopes.lookup(&scope))
+        return &p->value();
 
-        /*
-         * Since liveScopes is effectively a weak pointer, we need a read
-         * barrier. The scenario where this is necessary is:
-         *  1. GC starts, a suspended generator is not live
-         *  2. hasLiveFrame returns a StackFrame* to the (soon to be dead)
-         *     suspended generator
-         *  3. stack frame values (which will neve be marked) are read from the
-         *     StackFrame
-         *  4. GC completes, live objects may now point to values that weren't
-         *     marked and thus may point to swept GC things
-         */
-        if (JSGenerator *gen = frame.maybeSuspendedGenerator(scope.compartment()->runtimeFromMainThread()))
-            JSObject::readBarrier(gen->obj);
-
-        return frame;
-    }
-    return NullFramePtr();
+    return nullptr;
 }
 
 /*****************************************************************************/
@@ -2045,6 +2067,8 @@ GetDebugScopeForMissing(JSContext *cx, const ScopeIter &si)
     DebugScopeObject *debugScope = nullptr;
     switch (si.type()) {
       case ScopeIter::Call: {
+        // Generators should always reify their scopes.
+        JS_ASSERT(!si.frame().callee()->isGenerator());
         Rooted<CallObject*> callobj(cx, CallObject::createForFunction(cx, si.frame()));
         if (!callobj)
             return nullptr;
@@ -2061,6 +2085,8 @@ GetDebugScopeForMissing(JSContext *cx, const ScopeIter &si)
         break;
       }
       case ScopeIter::Block: {
+        // Generators should always reify their scopes.
+        JS_ASSERT_IF(si.frame().isFunctionFrame(), !si.frame().callee()->isGenerator());
         Rooted<StaticBlockObject *> staticBlock(cx, &si.staticBlock());
         ClonedBlockObject *block = ClonedBlockObject::create(cx, staticBlock, si.frame());
         if (!block)
@@ -2101,8 +2127,8 @@ GetDebugScope(JSContext *cx, JSObject &obj)
     }
 
     Rooted<ScopeObject*> scope(cx, &obj.as<ScopeObject>());
-    if (AbstractFramePtr frame = DebugScopes::hasLiveFrame(*scope)) {
-        ScopeIter si(frame, *scope, cx);
+    if (ScopeIterVal *maybeLiveScope = DebugScopes::hasLiveScope(*scope)) {
+        ScopeIter si(*maybeLiveScope, cx);
         return GetDebugScope(cx, si);
     }
     ScopeIter si(scope->enclosingScope(), cx);
@@ -2137,12 +2163,12 @@ js::GetDebugScopeForFunction(JSContext *cx, HandleFunction fun)
 }
 
 JSObject *
-js::GetDebugScopeForFrame(JSContext *cx, AbstractFramePtr frame)
+js::GetDebugScopeForFrame(JSContext *cx, AbstractFramePtr frame, jsbytecode *pc)
 {
     assertSameCompartment(cx, frame);
     if (CanUseDebugScopeMaps(cx) && !DebugScopes::updateLiveScopes(cx))
         return nullptr;
-    ScopeIter si(frame, cx);
+    ScopeIter si(frame, pc, cx);
     return GetDebugScope(cx, si);
 }
 
@@ -2236,19 +2262,19 @@ AnalyzeEntrainedVariablesInScript(JSContext *cx, HandleScript script, HandleScri
 
         buf.printf("Script ");
 
-        if (JSAtom *name = script->function()->displayAtom()) {
+        if (JSAtom *name = script->functionNonDelazifying()->displayAtom()) {
             buf.putString(name);
             buf.printf(" ");
         }
 
-        buf.printf("(%s:%d) has variables entrained by ", script->filename(), script->lineno);
+        buf.printf("(%s:%d) has variables entrained by ", script->filename(), script->lineno());
 
-        if (JSAtom *name = innerScript->function()->displayAtom()) {
+        if (JSAtom *name = innerScript->functionNonDelazifying()->displayAtom()) {
             buf.putString(name);
             buf.printf(" ");
         }
 
-        buf.printf("(%s:%d) ::", innerScript->filename(), innerScript->lineno);
+        buf.printf("(%s:%d) ::", innerScript->filename(), innerScript->lineno());
 
         for (PropertyNameSet::Range r = remainingNames.all(); !r.empty(); r.popFront()) {
             buf.printf(" ");
@@ -2264,9 +2290,12 @@ AnalyzeEntrainedVariablesInScript(JSContext *cx, HandleScript script, HandleScri
             JSObject *obj = objects->vector[i];
             if (obj->is<JSFunction>() && obj->as<JSFunction>().isInterpreted()) {
                 JSFunction *fun = &obj->as<JSFunction>();
-                RootedScript innerInnerScript(cx, fun->nonLazyScript());
-                if (!AnalyzeEntrainedVariablesInScript(cx, script, innerInnerScript))
+                RootedScript innerInnerScript(cx, fun->getOrCreateScript(cx));
+                if (!innerInnerScript ||
+                    !AnalyzeEntrainedVariablesInScript(cx, script, innerInnerScript))
+                {
                     return false;
+                }
             }
         }
     }
@@ -2300,7 +2329,7 @@ js::AnalyzeEntrainedVariables(JSContext *cx, HandleScript script)
             if (!innerScript)
                 return false;
 
-            if (script->function() && script->function()->isHeavyweight()) {
+            if (script->functionDelazifying() && script->functionDelazifying()->isHeavyweight()) {
                 if (!AnalyzeEntrainedVariablesInScript(cx, script, innerScript))
                     return false;
             }

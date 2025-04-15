@@ -85,6 +85,7 @@
 #include "mozilla/Mutex.h"
 
 #include "nsIGfxInfo.h"
+#include "nsIXULRuntime.h"
 
 using namespace mozilla;
 using namespace mozilla::layers;
@@ -136,18 +137,6 @@ public:
 
 NS_IMPL_ISUPPORTS2(SRGBOverrideObserver, nsIObserver, nsISupportsWeakReference)
 
-NS_IMETHODIMP
-SRGBOverrideObserver::Observe(nsISupports *aSubject,
-                              const char *aTopic,
-                              const PRUnichar *someData)
-{
-    NS_ASSERTION(NS_strcmp(someData,
-                   NS_LITERAL_STRING("gfx.color_mangement.force_srgb").get()),
-                 "Restarting CMS on wrong pref!");
-    ShutdownCMS();
-    return NS_OK;
-}
-
 #define GFX_DOWNLOADABLE_FONTS_ENABLED "gfx.downloadable_fonts.enabled"
 
 #define GFX_PREF_HARFBUZZ_SCRIPTS "gfx.font_rendering.harfbuzz.scripts"
@@ -163,10 +152,29 @@ SRGBOverrideObserver::Observe(nsISupports *aSubject,
 
 #define BIDI_NUMERAL_PREF "bidi.numeral"
 
+#define GFX_PREF_CMS_RENDERING_INTENT "gfx.color_management.rendering_intent"
+#define GFX_PREF_CMS_DISPLAY_PROFILE "gfx.color_management.display_profile"
+#define GFX_PREF_CMS_ENABLED_OBSOLETE "gfx.color_management.enabled"
+#define GFX_PREF_CMS_FORCE_SRGB "gfx.color_management.force_srgb"
+#define GFX_PREF_CMS_ENABLEV4 "gfx.color_management.enablev4"
+#define GFX_PREF_CMS_MODE "gfx.color_management.mode"
+
+NS_IMETHODIMP
+SRGBOverrideObserver::Observe(nsISupports *aSubject,
+                              const char *aTopic,
+                              const char16_t* someData)
+{
+    NS_ASSERTION(NS_strcmp(someData,
+                           MOZ_UTF16(GFX_PREF_CMS_FORCE_SRGB)) == 0,
+                 "Restarting CMS on wrong pref!");
+    ShutdownCMS();
+    return NS_OK;
+}
+
 static const char* kObservedPrefs[] = {
     "gfx.downloadable_fonts.",
     "gfx.font_rendering.",
-    "bidi.numeral",
+    BIDI_NUMERAL_PREF,
     nullptr
 };
 
@@ -182,7 +190,7 @@ NS_IMPL_ISUPPORTS1(FontPrefsObserver, nsIObserver)
 NS_IMETHODIMP
 FontPrefsObserver::Observe(nsISupports *aSubject,
                            const char *aTopic,
-                           const PRUnichar *someData)
+                           const char16_t *someData)
 {
     if (!someData) {
         NS_ERROR("font pref observer code broken");
@@ -206,7 +214,7 @@ NS_IMPL_ISUPPORTS1(OrientationSyncPrefsObserver, nsIObserver)
 NS_IMETHODIMP
 OrientationSyncPrefsObserver::Observe(nsISupports *aSubject,
                                       const char *aTopic,
-                                      const PRUnichar *someData)
+                                      const char16_t *someData)
 {
     if (!someData) {
         NS_ERROR("orientation sync pref observer broken");
@@ -230,7 +238,7 @@ NS_IMPL_ISUPPORTS1(MemoryPressureObserver, nsIObserver)
 NS_IMETHODIMP
 MemoryPressureObserver::Observe(nsISupports *aSubject,
                                 const char *aTopic,
-                                const PRUnichar *someData)
+                                const char16_t *someData)
 {
     NS_ASSERTION(strcmp(aTopic, "memory-pressure") == 0, "unexpected event topic");
     Factory::PurgeAllCaches();
@@ -271,7 +279,6 @@ static const char *gPrefLangNames[] = {
     "x-sinh",
     "x-tibt",
     "x-unicode",
-    "x-user-def"
 };
 
 gfxPlatform::gfxPlatform()
@@ -291,12 +298,16 @@ gfxPlatform::gfxPlatform()
     mOpenTypeSVGEnabled = UNINITIALIZED_VALUE;
     mBidiNumeralOption = UNINITIALIZED_VALUE;
 
-    mLayersPreferMemoryOverShmem =
-        XRE_GetProcessType() == GeckoProcessType_Default &&
-        Preferences::GetBool("layers.prefer-memory-over-shmem", true);
+    mLayersPreferMemoryOverShmem = XRE_GetProcessType() == GeckoProcessType_Default;
 
+#ifdef XP_WIN
+    // XXX - When 957560 is fixed, the pref can go away entirely
     mLayersUseDeprecated =
-        Preferences::GetBool("layers.use-deprecated-textures", true);
+        Preferences::GetBool("layers.use-deprecated-textures", true)
+        && !Preferences::GetBool("layers.prefer-opengl", false);
+#else
+    mLayersUseDeprecated = false;
+#endif
 
     Preferences::AddBoolVarCache(&mDrawLayerBorders,
                                  "layers.draw-borders",
@@ -308,10 +319,10 @@ gfxPlatform::gfxPlatform()
                                  "layers.draw-bigimage-borders",
                                  false);
 
-    uint32_t canvasMask = (1 << BACKEND_CAIRO) | (1 << BACKEND_SKIA);
-    uint32_t contentMask = 1 << BACKEND_CAIRO;
-    InitBackendPrefs(canvasMask, BACKEND_CAIRO,
-                     contentMask, BACKEND_CAIRO);
+    uint32_t canvasMask = BackendTypeBit(BackendType::CAIRO) | BackendTypeBit(BackendType::SKIA);
+    uint32_t contentMask = BackendTypeBit(BackendType::CAIRO);
+    InitBackendPrefs(canvasMask, BackendType::CAIRO,
+                     contentMask, BackendType::CAIRO);
 }
 
 gfxPlatform*
@@ -323,7 +334,7 @@ gfxPlatform::GetPlatform()
     return gPlatform;
 }
 
-int RecordingPrefChanged(const char *aPrefName, void *aClosure)
+void RecordingPrefChanged(const char *aPrefName, void *aClosure)
 {
   if (Preferences::GetBool("gfx.2d.recording", false)) {
     nsAutoCString fileName;
@@ -334,17 +345,17 @@ int RecordingPrefChanged(const char *aPrefName, void *aClosure)
     } else {
       nsCOMPtr<nsIFile> tmpFile;
       if (NS_FAILED(NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(tmpFile)))) {
-        return 0;
+        return;
       }
       fileName.AppendPrintf("moz2drec_%i_%i.aer", XRE_GetProcessType(), getpid());
 
       nsresult rv = tmpFile->AppendNative(fileName);
       if (NS_FAILED(rv))
-        return 0;
+        return;
 
       rv = tmpFile->GetNativePath(fileName);
       if (NS_FAILED(rv))
-        return 0;
+        return;
     }
 
     gPlatform->mRecorder = Factory::CreateEventRecorderForFile(fileName.BeginReading());
@@ -353,8 +364,6 @@ int RecordingPrefChanged(const char *aPrefName, void *aClosure)
   } else {
     Factory::SetGlobalEventRecorder(nullptr);
   }
-
-  return 0;
 }
 
 void
@@ -432,7 +441,7 @@ gfxPlatform::Init()
 
     gPlatform->mScreenReferenceSurface =
         gPlatform->CreateOffscreenSurface(gfxIntSize(1,1),
-                                          GFX_CONTENT_COLOR_ALPHA);
+                                          gfxContentType::COLOR_ALPHA);
     if (!gPlatform->mScreenReferenceSurface) {
         NS_RUNTIMEABORT("Could not initialize mScreenReferenceSurface");
     }
@@ -440,7 +449,7 @@ gfxPlatform::Init()
     if (gPlatform->SupportsAzureContent()) {
         gPlatform->mScreenReferenceDrawTarget =
             gPlatform->CreateOffscreenContentDrawTarget(IntSize(1, 1),
-                                                        FORMAT_B8G8R8A8);
+                                                        SurfaceFormat::B8G8R8A8);
       if (!gPlatform->mScreenReferenceDrawTarget) {
         NS_RUNTIMEABORT("Could not initialize mScreenReferenceDrawTarget");
       }
@@ -456,7 +465,7 @@ gfxPlatform::Init()
 
     /* Create and register our CMS Override observer. */
     gPlatform->mSRGBOverrideObserver = new SRGBOverrideObserver();
-    Preferences::AddWeakObserver(gPlatform->mSRGBOverrideObserver, "gfx.color_management.force_srgb");
+    Preferences::AddWeakObserver(gPlatform->mSRGBOverrideObserver, GFX_PREF_CMS_FORCE_SRGB);
 
     gPlatform->mFontPrefsObserver = new FontPrefsObserver();
     Preferences::AddStrongObservers(gPlatform->mFontPrefsObserver, kObservedPrefs);
@@ -475,11 +484,6 @@ gfxPlatform::Init()
     // Texture pool init
     mozilla::gl::TexturePoolOGL::Init();
 #endif
-
-    // Force registration of the gfx component, thus arranging for
-    // ::Shutdown to be called.
-    nsCOMPtr<nsISupports> forceReg
-        = do_CreateInstance("@mozilla.org/gfx/init;1");
 
     Preferences::RegisterCallbackAndCall(RecordingPrefChanged, "gfx.2d.recording", nullptr);
 
@@ -526,7 +530,7 @@ gfxPlatform::Shutdown()
     if (gPlatform) {
         /* Unregister our CMS Override callback. */
         NS_ASSERTION(gPlatform->mSRGBOverrideObserver, "mSRGBOverrideObserver has alreay gone");
-        Preferences::RemoveObserver(gPlatform->mSRGBOverrideObserver, "gfx.color_management.force_srgb");
+        Preferences::RemoveObserver(gPlatform->mSRGBOverrideObserver, GFX_PREF_CMS_FORCE_SRGB);
         gPlatform->mSRGBOverrideObserver = nullptr;
 
         NS_ASSERTION(gPlatform->mFontPrefsObserver, "mFontPrefsObserver has alreay gone");
@@ -663,7 +667,7 @@ gfxPlatform::CreateDrawTargetForUpdateSurface(gfxASurface *aSurface, const IntSi
 #ifdef XP_MACOSX
   // this is a bit of a hack that assumes that the buffer associated with the CGContext
   // will live around long enough that nothing bad will happen.
-  if (aSurface->GetType() == gfxSurfaceTypeQuartz) {
+  if (aSurface->GetType() == gfxSurfaceType::Quartz) {
     return Factory::CreateDrawTargetForCairoCGContext(static_cast<gfxQuartzSurface*>(aSurface)->GetCGContext(), aSize);
   }
 #endif
@@ -692,6 +696,18 @@ void SourceBufferDestroy(void *srcSurfUD)
   delete static_cast<SourceSurfaceUserData*>(srcSurfUD);
 }
 
+UserDataKey kThebesSurface;
+
+struct DependentSourceSurfaceUserData
+{
+  nsRefPtr<gfxASurface> mSurface;
+};
+
+void SourceSurfaceDestroyed(void *aData)
+{
+  delete static_cast<DependentSourceSurfaceUserData*>(aData);
+}
+
 #if MOZ_TREE_CAIRO
 void SourceSnapshotDetached(cairo_surface_t *nullSurf)
 {
@@ -714,11 +730,47 @@ gfxPlatform::ClearSourceSurfaceForSurface(gfxASurface *aSurface)
   aSurface->SetData(&kSourceSurface, nullptr, nullptr);
 }
 
+static TemporaryRef<DataSourceSurface>
+CopySurface(gfxASurface* aSurface)
+{
+  const nsIntSize size = aSurface->GetSize();
+  gfxImageFormat format = gfxPlatform::GetPlatform()->OptimalFormatForContent(aSurface->GetContentType());
+  RefPtr<DataSourceSurface> data =
+    Factory::CreateDataSourceSurface(ToIntSize(size),
+                                     ImageFormatToSurfaceFormat(format));
+  if (!data) {
+    return nullptr;
+  }
+
+  DataSourceSurface::MappedSurface map;
+  DebugOnly<bool> result = data->Map(DataSourceSurface::WRITE, &map);
+  MOZ_ASSERT(result, "Should always succeed mapping raw data surfaces!");
+
+  nsRefPtr<gfxImageSurface> image = new gfxImageSurface(map.mData, size, map.mStride, format);
+  nsRefPtr<gfxContext> ctx = new gfxContext(image);
+
+  ctx->SetSource(aSurface);
+  ctx->SetOperator(gfxContext::OPERATOR_SOURCE);
+  ctx->Paint();
+
+  data->Unmap();
+
+  return data;
+}
+
 RefPtr<SourceSurface>
 gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurface)
 {
   if (!aSurface->CairoSurface() || aSurface->CairoStatus()) {
     return nullptr;
+  }
+
+  if (!aTarget) {
+    if (ScreenReferenceDrawTarget()) {
+      aTarget = ScreenReferenceDrawTarget();
+    } else {
+      return nullptr;
+    }
   }
 
   void *userData = aSurface->GetData(&kSourceSurface);
@@ -734,22 +786,22 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
   }
 
   SurfaceFormat format;
-  if (aSurface->GetContentType() == GFX_CONTENT_ALPHA) {
-    format = FORMAT_A8;
-  } else if (aSurface->GetContentType() == GFX_CONTENT_COLOR) {
-    format = FORMAT_B8G8R8X8;
+  if (aSurface->GetContentType() == gfxContentType::ALPHA) {
+    format = SurfaceFormat::A8;
+  } else if (aSurface->GetContentType() == gfxContentType::COLOR) {
+    format = SurfaceFormat::B8G8R8X8;
   } else {
-    format = FORMAT_B8G8R8A8;
+    format = SurfaceFormat::B8G8R8A8;
   }
 
   RefPtr<SourceSurface> srcBuffer;
 
 #ifdef XP_WIN
-  if (aSurface->GetType() == gfxSurfaceTypeD2D &&
-      format != FORMAT_A8) {
+  if (aSurface->GetType() == gfxSurfaceType::D2D &&
+      format != SurfaceFormat::A8) {
     NativeSurface surf;
     surf.mFormat = format;
-    surf.mType = NATIVE_SURFACE_D3D10_TEXTURE;
+    surf.mType = NativeSurfaceType::D3D10_TEXTURE;
     surf.mSurface = static_cast<gfxD2DSurface*>(aSurface)->GetTexture();
     mozilla::gfx::DrawTarget *dt = static_cast<mozilla::gfx::DrawTarget*>(aSurface->GetData(&kDrawTarget));
     if (dt) {
@@ -758,12 +810,12 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
     srcBuffer = aTarget->CreateSourceSurfaceFromNativeSurface(surf);
   } else
 #endif
-  if (aSurface->CairoSurface() && aTarget->GetType() == BACKEND_CAIRO) {
+  if (aSurface->CairoSurface() && aTarget->GetType() == BackendType::CAIRO) {
     // If this is an xlib cairo surface we don't want to fetch it into memory
     // because this is a major slow down.
     NativeSurface surf;
     surf.mFormat = format;
-    surf.mType = NATIVE_SURFACE_CAIRO_SURFACE;
+    surf.mType = NativeSurfaceType::CAIRO_SURFACE;
     surf.mSurface = aSurface->CairoSurface();
     srcBuffer = aTarget->CreateSourceSurfaceFromNativeSurface(surf);
 
@@ -774,33 +826,39 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
     }
   }
 
+  bool dependsOnData = false;
   if (!srcBuffer) {
     nsRefPtr<gfxImageSurface> imgSurface = aSurface->GetAsImageSurface();
 
-    bool isWin32ImageSurf = imgSurface &&
-                            aSurface->GetType() == gfxSurfaceTypeWin32;
-
+    RefPtr<DataSourceSurface> copy;
     if (!imgSurface) {
-      imgSurface = new gfxImageSurface(aSurface->GetSize(), OptimalFormatForContent(aSurface->GetContentType()));
-      nsRefPtr<gfxContext> ctx = new gfxContext(imgSurface);
-      ctx->SetSource(aSurface);
-      ctx->SetOperator(gfxContext::OPERATOR_SOURCE);
-      ctx->Paint();
+      copy = CopySurface(aSurface);
+
+      if (!copy) {
+        return nullptr;
+      }
+
+      DataSourceSurface::MappedSurface map;
+      DebugOnly<bool> result = copy->Map(DataSourceSurface::WRITE, &map);
+      MOZ_ASSERT(result, "Should always succeed mapping raw data surfaces!");
+
+      imgSurface = new gfxImageSurface(map.mData, aSurface->GetSize(), map.mStride,
+                                       SurfaceFormatToImageFormat(copy->GetFormat()));
     }
 
     gfxImageFormat cairoFormat = imgSurface->Format();
     switch(cairoFormat) {
-      case gfxImageFormatARGB32:
-        format = FORMAT_B8G8R8A8;
+      case gfxImageFormat::ARGB32:
+        format = SurfaceFormat::B8G8R8A8;
         break;
-      case gfxImageFormatRGB24:
-        format = FORMAT_B8G8R8X8;
+      case gfxImageFormat::RGB24:
+        format = SurfaceFormat::B8G8R8X8;
         break;
-      case gfxImageFormatA8:
-        format = FORMAT_A8;
+      case gfxImageFormat::A8:
+        format = SurfaceFormat::A8;
         break;
-      case gfxImageFormatRGB16_565:
-        format = FORMAT_R5G6B5;
+      case gfxImageFormat::RGB16_565:
+        format = SurfaceFormat::R5G6B5;
         break;
       default:
         NS_RUNTIMEABORT("Invalid surface format!");
@@ -812,38 +870,56 @@ gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurfa
                                                      imgSurface->Stride(),
                                                      format);
 
-    if (!srcBuffer) {
-      // We need to check if our gfxASurface will keep the underlying data
-      // alive. This is true if gfxASurface actually -is- an ImageSurface or
-      // if it is a gfxWindowsSurface which supports GetAsImageSurface.
-      if (imgSurface != aSurface && !isWin32ImageSurf) {
-        return nullptr;
-      }
-
-      srcBuffer = Factory::CreateWrappingDataSourceSurface(imgSurface->Data(),
-                                                           imgSurface->Stride(),
-                                                           size, format);
-
+    if (copy) {
+      copy->Unmap();
     }
 
+    if (!srcBuffer) {
+      // If we had to make a copy, then just return that. Otherwise aSurface
+      // must have supported GetAsImageSurface, so we can just wrap that data.
+      if (copy) {
+        srcBuffer = copy;
+      } else {
+        srcBuffer = Factory::CreateWrappingDataSourceSurface(imgSurface->Data(),
+                                                             imgSurface->Stride(),
+                                                             size, format);
+        dependsOnData = true;
+      }
+    }
+
+    if (!srcBuffer) {
+      return nullptr;
+    }
+
+    if (!dependsOnData) {
 #if MOZ_TREE_CAIRO
-    cairo_surface_t *nullSurf =
-	cairo_null_surface_create(CAIRO_CONTENT_COLOR_ALPHA);
-    cairo_surface_set_user_data(nullSurf,
-                                &kSourceSurface,
-                                imgSurface,
-                                nullptr);
-    cairo_surface_attach_snapshot(imgSurface->CairoSurface(), nullSurf, SourceSnapshotDetached);
-    cairo_surface_destroy(nullSurf);
+      cairo_surface_t *nullSurf =
+      cairo_null_surface_create(CAIRO_CONTENT_COLOR_ALPHA);
+      cairo_surface_set_user_data(nullSurf,
+                                  &kSourceSurface,
+                                  imgSurface,
+                                  nullptr);
+      cairo_surface_attach_snapshot(imgSurface->CairoSurface(), nullSurf, SourceSnapshotDetached);
+      cairo_surface_destroy(nullSurf);
 #else
-    cairo_surface_set_mime_data(imgSurface->CairoSurface(), "mozilla/magic", (const unsigned char*) "data", 4, SourceSnapshotDetached, imgSurface.get());
+      cairo_surface_set_mime_data(imgSurface->CairoSurface(), "mozilla/magic", (const unsigned char*) "data", 4, SourceSnapshotDetached, imgSurface.get());
 #endif
+    }
   }
 
-  SourceSurfaceUserData *srcSurfUD = new SourceSurfaceUserData;
-  srcSurfUD->mBackendType = aTarget->GetType();
-  srcSurfUD->mSrcSurface = srcBuffer;
-  aSurface->SetData(&kSourceSurface, srcSurfUD, SourceBufferDestroy);
+  if (dependsOnData) {
+    // If we wrapped the underlying data of aSurface, then we need to add user data
+    // to make sure aSurface stays alive until we are done with the data.
+    DependentSourceSurfaceUserData *srcSurfUD = new DependentSourceSurfaceUserData;
+    srcSurfUD->mSurface = aSurface;
+    srcBuffer->AddUserData(&kThebesSurface, srcSurfUD, SourceSurfaceDestroyed);
+  } else {
+    // Otherwise add user data to aSurface so we can cache lookups in the future.
+    SourceSurfaceUserData *srcSurfUD = new SourceSurfaceUserData;
+    srcSurfUD->mBackendType = aTarget->GetType();
+    srcSurfUD->mSrcSurface = srcBuffer;
+    aSurface->SetData(&kSourceSurface, srcSurfUD, SourceBufferDestroy);
+  }
 
   return srcBuffer;
 }
@@ -852,7 +928,7 @@ TemporaryRef<ScaledFont>
 gfxPlatform::GetScaledFontForFont(DrawTarget* aTarget, gfxFont *aFont)
 {
   NativeFont nativeFont;
-  nativeFont.mType = NATIVE_FONT_CAIRO_FONT_FACE;
+  nativeFont.mType = NativeFontType::CAIRO_FONT_FACE;
   nativeFont.mFont = aFont->GetCairoScaledFont();
   RefPtr<ScaledFont> scaledFont =
     Factory::CreateScaledFontForNativeFont(nativeFont,
@@ -888,7 +964,7 @@ bool
 gfxPlatform::UseAcceleratedSkiaCanvas()
 {
   return Preferences::GetBool("gfx.canvas.azure.accelerated", false) &&
-         mPreferredCanvasBackend == BACKEND_SKIA;
+         mPreferredCanvasBackend == BackendType::SKIA;
 }
 
 void
@@ -927,9 +1003,9 @@ gfxPlatform::InitializeSkiaCaches()
 already_AddRefed<gfxASurface>
 gfxPlatform::GetThebesSurfaceForDrawTarget(DrawTarget *aTarget)
 {
-  if (aTarget->GetType() == BACKEND_CAIRO) {
+  if (aTarget->GetType() == BackendType::CAIRO) {
     cairo_surface_t* csurf =
-      static_cast<cairo_surface_t*>(aTarget->GetNativeSurface(NATIVE_SURFACE_CAIRO_SURFACE));
+      static_cast<cairo_surface_t*>(aTarget->GetNativeSurface(NativeSurfaceType::CAIRO_SURFACE));
     if (csurf) {
       return gfxASurface::Wrap(csurf);
     }
@@ -974,7 +1050,7 @@ gfxPlatform::CreateDrawTargetForBackend(BackendType aBackend, const IntSize& aSi
   // now, but this might need to change in the future (using
   // CreateOffscreenSurface() and CreateDrawTargetForSurface() for all
   // backends).
-  if (aBackend == BACKEND_CAIRO) {
+  if (aBackend == BackendType::CAIRO) {
     nsRefPtr<gfxASurface> surf = CreateOffscreenSurface(ThebesIntSize(aSize),
                                                         ContentForFormat(aFormat));
     if (!surf || surf->CairoStatus()) {
@@ -990,10 +1066,10 @@ gfxPlatform::CreateDrawTargetForBackend(BackendType aBackend, const IntSize& aSi
 RefPtr<DrawTarget>
 gfxPlatform::CreateOffscreenCanvasDrawTarget(const IntSize& aSize, SurfaceFormat aFormat)
 {
-  NS_ASSERTION(mPreferredCanvasBackend, "No backend.");
+  NS_ASSERTION(mPreferredCanvasBackend != BackendType::NONE, "No backend.");
   RefPtr<DrawTarget> target = CreateDrawTargetForBackend(mPreferredCanvasBackend, aSize, aFormat);
   if (target ||
-      mFallbackCanvasBackend == BACKEND_NONE) {
+      mFallbackCanvasBackend == BackendType::NONE) {
     return target;
   }
 
@@ -1003,15 +1079,15 @@ gfxPlatform::CreateOffscreenCanvasDrawTarget(const IntSize& aSize, SurfaceFormat
 RefPtr<DrawTarget>
 gfxPlatform::CreateOffscreenContentDrawTarget(const IntSize& aSize, SurfaceFormat aFormat)
 {
-  NS_ASSERTION(mContentBackend, "No backend.");
+  NS_ASSERTION(mPreferredCanvasBackend != BackendType::NONE, "No backend.");
   return CreateDrawTargetForBackend(mContentBackend, aSize, aFormat);
 }
 
 RefPtr<DrawTarget>
 gfxPlatform::CreateDrawTargetForData(unsigned char* aData, const IntSize& aSize, int32_t aStride, SurfaceFormat aFormat)
 {
-  NS_ASSERTION(mContentBackend, "No backend.");
-  if (mContentBackend == BACKEND_CAIRO) {
+  NS_ASSERTION(mContentBackend != BackendType::NONE, "No backend.");
+  if (mContentBackend == BackendType::CAIRO) {
     nsRefPtr<gfxImageSurface> image = new gfxImageSurface(aData, gfxIntSize(aSize.width, aSize.height), aStride, SurfaceFormatToImageFormat(aFormat)); 
     return Factory::CreateDrawTargetForCairoSurface(image->CairoSurface(), aSize);
   }
@@ -1022,14 +1098,14 @@ gfxPlatform::CreateDrawTargetForData(unsigned char* aData, const IntSize& aSize,
 gfxPlatform::BackendTypeForName(const nsCString& aName)
 {
   if (aName.EqualsLiteral("cairo"))
-    return BACKEND_CAIRO;
+    return BackendType::CAIRO;
   if (aName.EqualsLiteral("skia"))
-    return BACKEND_SKIA;
+    return BackendType::SKIA;
   if (aName.EqualsLiteral("direct2d"))
-    return BACKEND_DIRECT2D;
+    return BackendType::DIRECT2D;
   if (aName.EqualsLiteral("cg"))
-    return BACKEND_COREGRAPHICS;
-  return BACKEND_NONE;
+    return BackendType::COREGRAPHICS;
+  return BackendType::NONE;
 }
 
 nsresult
@@ -1505,20 +1581,20 @@ gfxPlatform::InitBackendPrefs(uint32_t aCanvasBitmask, BackendType aCanvasDefaul
                               uint32_t aContentBitmask, BackendType aContentDefault)
 {
     mPreferredCanvasBackend = GetCanvasBackendPref(aCanvasBitmask);
-    if (!mPreferredCanvasBackend) {
+    if (mPreferredCanvasBackend == BackendType::NONE) {
         mPreferredCanvasBackend = aCanvasDefault;
     }
     mFallbackCanvasBackend =
-        GetCanvasBackendPref(aCanvasBitmask & ~(1 << mPreferredCanvasBackend));
+        GetCanvasBackendPref(aCanvasBitmask & ~BackendTypeBit(mPreferredCanvasBackend));
 
     mContentBackendBitmask = aContentBitmask;
     mContentBackend = GetContentBackendPref(mContentBackendBitmask);
-    if (!mContentBackend) {
+    if (mContentBackend == BackendType::NONE) {
         mContentBackend = aContentDefault;
         // mContentBackendBitmask is our canonical reference for supported
         // backends so we need to add the default if we are using it and
         // overriding the prefs.
-        mContentBackendBitmask |= 1 << aContentDefault;
+        mContentBackendBitmask |= BackendTypeBit(aContentDefault);
     }
 }
 
@@ -1544,12 +1620,12 @@ gfxPlatform::GetBackendPref(const char* aBackendPrefName, uint32_t &aBackendBitm
     }
 
     uint32_t allowedBackends = 0;
-    BackendType result = BACKEND_NONE;
+    BackendType result = BackendType::NONE;
     for (uint32_t i = 0; i < backendList.Length(); ++i) {
         BackendType type = BackendTypeForName(backendList[i]);
-        if ((1 << type) & aBackendBitmask) {
-            allowedBackends |= (1 << type);
-            if (result == BACKEND_NONE) {
+        if (BackendTypeBit(type) & aBackendBitmask) {
+            allowedBackends |= BackendTypeBit(type);
+            if (result == BackendType::NONE) {
                 result = type;
             }
         }
@@ -1625,13 +1701,13 @@ gfxPlatform::GetCMSMode()
         nsresult rv;
 
         int32_t mode;
-        rv = Preferences::GetInt("gfx.color_management.mode", &mode);
+        rv = Preferences::GetInt(GFX_PREF_CMS_MODE, &mode);
         if (NS_SUCCEEDED(rv) && (mode >= 0) && (mode < eCMSMode_AllCount)) {
             gCMSMode = static_cast<eCMSMode>(mode);
         }
 
         bool enableV4;
-        rv = Preferences::GetBool("gfx.color_management.enablev4", &enableV4);
+        rv = Preferences::GetBool(GFX_PREF_CMS_ENABLEV4, &enableV4);
         if (NS_SUCCEEDED(rv) && enableV4) {
             qcms_enable_iccv4();
         }
@@ -1646,7 +1722,7 @@ gfxPlatform::GetRenderingIntent()
 
         /* Try to query the pref system for a rendering intent. */
         int32_t pIntent;
-        if (NS_SUCCEEDED(Preferences::GetInt("gfx.color_management.rendering_intent", &pIntent))) {
+        if (NS_SUCCEEDED(Preferences::GetInt(GFX_PREF_CMS_RENDERING_INTENT, &pIntent))) {
             /* If the pref is within range, use it as an override. */
             if ((pIntent >= QCMS_INTENT_MIN) && (pIntent <= QCMS_INTENT_MAX)) {
                 gCMSIntent = pIntent;
@@ -1694,10 +1770,23 @@ gfxPlatform::TransformPixel(const gfxRGBA& in, gfxRGBA& out, qcms_transform *tra
         out = in;
 }
 
-qcms_profile *
-gfxPlatform::GetPlatformCMSOutputProfile()
+void
+gfxPlatform::GetPlatformCMSOutputProfile(void *&mem, size_t &size)
 {
-    return nullptr;
+    mem = nullptr;
+    size = 0;
+}
+
+void
+gfxPlatform::GetCMSOutputProfileData(void *&mem, size_t &size)
+{
+    nsAdoptingCString fname = Preferences::GetCString("gfx.color_management.display_profile");
+    if (!fname.IsEmpty()) {
+        qcms_data_from_path(fname, &mem, &size);
+    }
+    else {
+        gfxPlatform::GetPlatform()->GetPlatformCMSOutputProfile(mem, size);
+    }
 }
 
 void
@@ -1711,20 +1800,19 @@ gfxPlatform::CreateCMSOutputProfile()
            default value of this preference, which means nsIPrefBranch::GetBoolPref
            will typically throw (and leave its out-param untouched).
          */
-        if (Preferences::GetBool("gfx.color_management.force_srgb", false)) {
+        if (Preferences::GetBool(GFX_PREF_CMS_FORCE_SRGB, false)) {
             gCMSOutputProfile = GetCMSsRGBProfile();
         }
 
         if (!gCMSOutputProfile) {
-            nsAdoptingCString fname = Preferences::GetCString("gfx.color_management.display_profile");
-            if (!fname.IsEmpty()) {
-                gCMSOutputProfile = qcms_profile_from_path(fname);
-            }
-        }
+            void* mem = nullptr;
+            size_t size = 0;
 
-        if (!gCMSOutputProfile) {
-            gCMSOutputProfile =
-                gfxPlatform::GetPlatform()->GetPlatformCMSOutputProfile();
+            GetCMSOutputProfileData(mem, size);
+            if ((mem != nullptr) && (size > 0)) {
+                gCMSOutputProfile = qcms_profile_from_memory(mem, size);
+                free(mem);
+            }
         }
 
         /* Determine if the profile looks bogus. If so, close the profile
@@ -1858,18 +1946,18 @@ static void MigratePrefs()
 {
     /* Migrate from the boolean color_management.enabled pref - we now use
        color_management.mode. */
-    if (Preferences::HasUserValue("gfx.color_management.enabled")) {
-        if (Preferences::GetBool("gfx.color_management.enabled", false)) {
-            Preferences::SetInt("gfx.color_management.mode", static_cast<int32_t>(eCMSMode_All));
+    if (Preferences::HasUserValue(GFX_PREF_CMS_ENABLED_OBSOLETE)) {
+        if (Preferences::GetBool(GFX_PREF_CMS_ENABLED_OBSOLETE, false)) {
+            Preferences::SetInt(GFX_PREF_CMS_MODE, static_cast<int32_t>(eCMSMode_All));
         }
-        Preferences::ClearUser("gfx.color_management.enabled");
+        Preferences::ClearUser(GFX_PREF_CMS_ENABLED_OBSOLETE);
     }
 }
 
 // default SetupClusterBoundaries, based on Unicode properties;
 // platform subclasses may override if they wish
 void
-gfxPlatform::SetupClusterBoundaries(gfxTextRun *aTextRun, const PRUnichar *aString)
+gfxPlatform::SetupClusterBoundaries(gfxTextRun *aTextRun, const char16_t *aString)
 {
     if (aTextRun->GetFlags() & gfxTextRunFactory::TEXT_IS_8BIT) {
         // 8-bit text doesn't have clusters.
@@ -1976,25 +2064,25 @@ mozilla::gfx::SurfaceFormat
 gfxPlatform::Optimal2DFormatForContent(gfxContentType aContent)
 {
   switch (aContent) {
-  case GFX_CONTENT_COLOR:
+  case gfxContentType::COLOR:
     switch (GetOffscreenFormat()) {
-    case gfxImageFormatARGB32:
-      return mozilla::gfx::FORMAT_B8G8R8A8;
-    case gfxImageFormatRGB24:
-      return mozilla::gfx::FORMAT_B8G8R8X8;
-    case gfxImageFormatRGB16_565:
-      return mozilla::gfx::FORMAT_R5G6B5;
+    case gfxImageFormat::ARGB32:
+      return mozilla::gfx::SurfaceFormat::B8G8R8A8;
+    case gfxImageFormat::RGB24:
+      return mozilla::gfx::SurfaceFormat::B8G8R8X8;
+    case gfxImageFormat::RGB16_565:
+      return mozilla::gfx::SurfaceFormat::R5G6B5;
     default:
-      NS_NOTREACHED("unknown gfxImageFormat for GFX_CONTENT_COLOR");
-      return mozilla::gfx::FORMAT_B8G8R8A8;
+      NS_NOTREACHED("unknown gfxImageFormat for gfxContentType::COLOR");
+      return mozilla::gfx::SurfaceFormat::B8G8R8A8;
     }
-  case GFX_CONTENT_ALPHA:
-    return mozilla::gfx::FORMAT_A8;
-  case GFX_CONTENT_COLOR_ALPHA:
-    return mozilla::gfx::FORMAT_B8G8R8A8;
+  case gfxContentType::ALPHA:
+    return mozilla::gfx::SurfaceFormat::A8;
+  case gfxContentType::COLOR_ALPHA:
+    return mozilla::gfx::SurfaceFormat::B8G8R8A8;
   default:
     NS_NOTREACHED("unknown gfxContentType");
-    return mozilla::gfx::FORMAT_B8G8R8A8;
+    return mozilla::gfx::SurfaceFormat::B8G8R8A8;
   }
 }
 
@@ -2002,15 +2090,15 @@ gfxImageFormat
 gfxPlatform::OptimalFormatForContent(gfxContentType aContent)
 {
   switch (aContent) {
-  case GFX_CONTENT_COLOR:
+  case gfxContentType::COLOR:
     return GetOffscreenFormat();
-  case GFX_CONTENT_ALPHA:
-    return gfxImageFormatA8;
-  case GFX_CONTENT_COLOR_ALPHA:
-    return gfxImageFormatARGB32;
+  case gfxContentType::ALPHA:
+    return gfxImageFormat::A8;
+  case gfxContentType::COLOR_ALPHA:
+    return gfxImageFormat::ARGB32;
   default:
     NS_NOTREACHED("unknown gfxContentType");
-    return gfxImageFormatARGB32;
+    return gfxImageFormat::ARGB32;
   }
 }
 
@@ -2045,6 +2133,7 @@ static bool sPrefLayersScrollGraph = false;
 static bool sPrefLayersEnableTiles = false;
 static bool sLayersSupportsD3D9 = false;
 static int  sPrefLayoutFrameRate = -1;
+static int  sPrefLayersCompositionFrameRate = -1;
 static bool sBufferRotationEnabled = false;
 static bool sComponentAlphaEnabled = true;
 static bool sPrefBrowserTabsRemote = false;
@@ -2073,9 +2162,10 @@ InitLayersAccelerationPrefs()
     sPrefLayersScrollGraph = Preferences::GetBool("layers.scroll-graph", false);
     sPrefLayersEnableTiles = Preferences::GetBool("layers.enable-tiles", false);
     sPrefLayoutFrameRate = Preferences::GetInt("layout.frame_rate", -1);
+    sPrefLayersCompositionFrameRate = Preferences::GetInt("layers.offmainthreadcomposition.frame-rate", -1);
     sBufferRotationEnabled = Preferences::GetBool("layers.bufferrotation.enabled", true);
     sComponentAlphaEnabled = Preferences::GetBool("layers.componentalpha.enabled", true);
-    sPrefBrowserTabsRemote = Preferences::GetBool("browser.tabs.remote", false);
+    sPrefBrowserTabsRemote = BrowserTabsRemote();
 
 #ifdef XP_WIN
     if (sPrefLayersAccelerationForceEnabled) {
@@ -2192,6 +2282,13 @@ gfxPlatform::GetPrefLayersEnableTiles()
   return sPrefLayersEnableTiles;
 }
 
+int
+gfxPlatform::GetPrefLayersCompositionFrameRate()
+{
+  InitLayersAccelerationPrefs();
+  return sPrefLayersCompositionFrameRate;
+}
+
 bool
 gfxPlatform::BufferRotationEnabled()
 {
@@ -2228,4 +2325,17 @@ gfxPlatform::AsyncVideoEnabled()
 #else
   return Preferences::GetBool("layers.async-video.enabled", false);
 #endif
+}
+
+TemporaryRef<ScaledFont>
+gfxPlatform::GetScaledFontForFontWithCairoSkia(DrawTarget* aTarget, gfxFont* aFont)
+{
+    NativeFont nativeFont;
+    if (aTarget->GetType() == BackendType::CAIRO || aTarget->GetType() == BackendType::SKIA) {
+        nativeFont.mType = NativeFontType::CAIRO_FONT_FACE;
+        nativeFont.mFont = aFont->GetCairoScaledFont();
+        return Factory::CreateScaledFontForNativeFont(nativeFont, aFont->GetAdjustedSize());
+    }
+
+    return nullptr;
 }

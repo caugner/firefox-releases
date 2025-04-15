@@ -953,8 +953,9 @@ GstFlowReturn GStreamerReader::AllocateVideoBufferFull(GstPad* aPad,
     // element.
     return GST_FLOW_NOT_SUPPORTED;
   }
-  ImageFormat format = PLANAR_YCBCR;
-  PlanarYCbCrImage* img = reinterpret_cast<PlanarYCbCrImage*>(container->CreateImage(&format, 1).get());
+  PlanarYCbCrImage* img =
+    reinterpret_cast<PlanarYCbCrImage*>(
+      container->CreateImage(ImageFormat::PLANAR_YCBCR).get());
   nsRefPtr<PlanarYCbCrImage> image = dont_AddRef(img);
 
   /* prepare a GstBuffer pointing to the underlying PlanarYCbCrImage buffer */

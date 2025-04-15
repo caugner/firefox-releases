@@ -15,9 +15,6 @@
 #include <stagefright/OMXClient.h>
 #include <stagefright/OMXCodec.h>
 #include <OMX.h>
-#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
-#include <ui/Fence.h>
-#endif
 
 #include "mozilla/Preferences.h"
 #include "mozilla/Types.h"
@@ -41,8 +38,28 @@ PRLogModuleInfo *gOmxDecoderLog;
 
 using namespace MPAPI;
 using namespace mozilla;
+using namespace mozilla::gfx;
 
 namespace mozilla {
+
+class ReleaseOmxDecoderRunnable : public nsRunnable
+{
+public:
+  ReleaseOmxDecoderRunnable(const android::sp<android::OmxDecoder>& aOmxDecoder)
+  : mOmxDecoder(aOmxDecoder)
+  {
+  }
+
+  NS_METHOD Run() MOZ_OVERRIDE
+  {
+    MOZ_ASSERT(NS_IsMainThread());
+    mOmxDecoder = nullptr; // release OmxDecoder
+    return NS_OK;
+  }
+
+private:
+  android::sp<android::OmxDecoder> mOmxDecoder;
+};
 
 class OmxDecoderProcessCachedDataTask : public Task
 {
@@ -56,7 +73,13 @@ public:
   {
     MOZ_ASSERT(!NS_IsMainThread());
     MOZ_ASSERT(mOmxDecoder.get());
-    mOmxDecoder->ProcessCachedData(mOffset, false);
+    int64_t rem = mOmxDecoder->ProcessCachedData(mOffset, false);
+
+    if (rem <= 0) {
+      ReleaseOmxDecoderRunnable* r = new ReleaseOmxDecoderRunnable(mOmxDecoder);
+      mOmxDecoder.clear();
+      NS_DispatchToMainThread(r);
+    }
   }
 
 private:
@@ -178,18 +201,7 @@ VideoGraphicBuffer::VideoGraphicBuffer(const android::wp<android::OmxDecoder> aO
 
 VideoGraphicBuffer::~VideoGraphicBuffer()
 {
-  android::sp<android::OmxDecoder> omxDecoder = mOmxDecoder.promote();
-  if (mMediaBuffer && omxDecoder.get()) {
-    // Post kNotifyPostReleaseVideoBuffer message to OmxDecoder via ALooper.
-    // The message is delivered to OmxDecoder on ALooper thread.
-    // MediaBuffer::release() could take a very long time.
-    // PostReleaseVideoBuffer() prevents long time locking.
-    omxDecoder->PostReleaseVideoBuffer(mMediaBuffer, mReleaseFenceHandle);
-  } else if (mMediaBuffer) {
-    NS_WARNING("OmxDecoder is not present");
-    mMediaBuffer->release();
-  }
-  mMediaBuffer = nullptr;
+  MOZ_ASSERT(!mMediaBuffer);
 }
 
 void
@@ -201,7 +213,7 @@ VideoGraphicBuffer::Unlock()
     // The message is delivered to OmxDecoder on ALooper thread.
     // MediaBuffer::release() could take a very long time.
     // PostReleaseVideoBuffer() prevents long time locking.
-    omxDecoder->PostReleaseVideoBuffer(mMediaBuffer, mReleaseFenceHandle);
+    omxDecoder->PostReleaseVideoBuffer(mMediaBuffer);
   } else {
     NS_WARNING("OmxDecoder is not present");
     if (mMediaBuffer) {
@@ -304,6 +316,8 @@ OmxDecoder::OmxDecoder(MediaResource *aResource,
 
 OmxDecoder::~OmxDecoder()
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   ReleaseMediaResources();
 
   // unregister AMessage handler from ALooper.
@@ -410,7 +424,7 @@ bool OmxDecoder::TryLoad() {
       // Feed MP3 parser with cached data. Local files will be fully
       // cached already, network streams will update with sucessive
       // calls to NotifyDataArrived.
-      if (ProcessCachedData(0, true)) {
+      if (ProcessCachedData(0, true) >= 0) {
         durationUs = mMP3FrameParser.GetDuration();
         if (durationUs > totalDurationUs) {
           totalDurationUs = durationUs;
@@ -486,6 +500,13 @@ bool OmxDecoder::IsWaitingMediaResources()
   return false;
 }
 
+static bool isInEmulator()
+{
+  char propQemu[PROPERTY_VALUE_MAX];
+  property_get("ro.kernel.qemu", propQemu, "");
+  return !strncmp(propQemu, "1", 1);
+}
+
 bool OmxDecoder::AllocateMediaResources()
 {
   // OMXClient::connect() always returns OK and abort's fatally if
@@ -510,9 +531,7 @@ bool OmxDecoder::AllocateMediaResources()
     // up.
     int flags = kHardwareCodecsOnly;
 
-    char propQemu[PROPERTY_VALUE_MAX];
-    property_get("ro.kernel.qemu", propQemu, "");
-    if (!strncmp(propQemu, "1", 1)) {
+    if (isInEmulator()) {
       // If we are in emulator, allow to fall back to software.
       flags = 0;
     }
@@ -775,7 +794,7 @@ bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aTimeUs,
     {
       Mutex::Autolock autoLock(mSeekLock);
       mIsVideoSeeking = false;
-      PostReleaseVideoBuffer(nullptr, FenceHandle());
+      ReleaseAllPendingVideoBuffersLocked();
     }
 
     aDoSeek = false;
@@ -813,7 +832,7 @@ bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aTimeUs,
       // GraphicBuffer's size and actual video size is different.
       // See Bug 850566.
       mozilla::layers::SurfaceDescriptorGralloc newDescriptor = descriptor->get_SurfaceDescriptorGralloc();
-      newDescriptor.size() = nsIntSize(mVideoWidth, mVideoHeight);
+      newDescriptor.size() = IntSize(mVideoWidth, mVideoHeight);
 
       mozilla::layers::SurfaceDescriptor descWrapper(newDescriptor);
       aFrame->mGraphicBuffer = new mozilla::layers::VideoGraphicBuffer(this, mVideoBuffer, descWrapper);
@@ -822,11 +841,6 @@ bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aTimeUs,
       aFrame->mKeyFrame = keyFrame;
       aFrame->Y.mWidth = mVideoWidth;
       aFrame->Y.mHeight = mVideoHeight;
-      // MediaBuffer's reference count is already incremented by VideoGraphicBuffer's constructor.
-      // By calling ReleaseVideoBuffer(), MediaBuffer's ref count is changed from 2 to 1.
-      // It is necessary to ensure to return MediaBuffer to OMXCodec
-      // in OmxDecoder::ReleaseAllPendingVideoBuffersLocked().
-      ReleaseVideoBuffer();
     } else if (mVideoBuffer->range_length() > 0) {
       char *data = static_cast<char *>(mVideoBuffer->data()) + mVideoBuffer->range_offset();
       size_t length = mVideoBuffer->range_length();
@@ -957,6 +971,16 @@ nsresult OmxDecoder::Play()
 // We need to fix it until it is really happened.
 void OmxDecoder::Pause()
 {
+  /* The implementation of OMXCodec::pause is flawed.
+   * OMXCodec::start will not restore from the paused state and result in
+   * buffer timeout which causes timeouts in mochitests.
+   * Since there is not power consumption problem in emulator, we will just
+   * return when running in emulator to fix timeouts in mochitests.
+   */
+  if (isInEmulator()) {
+    return;
+  }
+
   if (mVideoPaused || mAudioPaused) {
     return;
   }
@@ -998,13 +1022,11 @@ void OmxDecoder::onMessageReceived(const sp<AMessage> &msg)
   }
 }
 
-void OmxDecoder::PostReleaseVideoBuffer(MediaBuffer *aBuffer, const FenceHandle& aReleaseFenceHandle)
+void OmxDecoder::PostReleaseVideoBuffer(MediaBuffer *aBuffer)
 {
   {
     Mutex::Autolock autoLock(mPendingVideoBuffersLock);
-    if (aBuffer) {
-      mPendingVideoBuffers.push(BufferItem(aBuffer, aReleaseFenceHandle));
-    }
+    mPendingVideoBuffers.push(aBuffer);
   }
 
   sp<AMessage> notify =
@@ -1015,13 +1037,14 @@ void OmxDecoder::PostReleaseVideoBuffer(MediaBuffer *aBuffer, const FenceHandle&
 
 void OmxDecoder::ReleaseAllPendingVideoBuffersLocked()
 {
-  Vector<BufferItem> releasingVideoBuffers;
+  Vector<MediaBuffer *> releasingVideoBuffers;
   {
     Mutex::Autolock autoLock(mPendingVideoBuffersLock);
 
     int size = mPendingVideoBuffers.size();
     for (int i = 0; i < size; i++) {
-      releasingVideoBuffers.push(mPendingVideoBuffers[i]);
+      MediaBuffer *buffer = mPendingVideoBuffers[i];
+      releasingVideoBuffers.push(buffer);
     }
     mPendingVideoBuffers.clear();
   }
@@ -1029,34 +1052,13 @@ void OmxDecoder::ReleaseAllPendingVideoBuffersLocked()
   int size = releasingVideoBuffers.size();
   for (int i = 0; i < size; i++) {
     MediaBuffer *buffer;
-    buffer = releasingVideoBuffers[i].mMediaBuffer;
-#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 18
-    android::sp<Fence> fence;
-    int fenceFd = -1;
-    fence = releasingVideoBuffers[i].mReleaseFenceHandle.mFence;
-    if (fence.get() && fence->isValid()) {
-      fenceFd = fence->dup();
-    }
-    MOZ_ASSERT(buffer->refcount() == 1);
-    // This code expect MediaBuffer's ref count is 1.
-    // Return gralloc buffer to ANativeWindow
-    ANativeWindow* window = static_cast<ANativeWindow*>(mNativeWindowClient.get());
-    window->cancelBuffer(window,
-                         buffer->graphicBuffer().get(),
-                         fenceFd);
-    // Mark MediaBuffer as rendered.
-    // When gralloc buffer is directly returned to ANativeWindow,
-    // this mark is necesary.
-    sp<MetaData> metaData = buffer->meta_data();
-    metaData->setInt32(kKeyRendered, 1);
-#endif
-    // Return MediaBuffer to OMXCodec.
+    buffer = releasingVideoBuffers[i];
     buffer->release();
   }
   releasingVideoBuffers.clear();
 }
 
-bool OmxDecoder::ProcessCachedData(int64_t aOffset, bool aWaitForCompletion)
+int64_t OmxDecoder::ProcessCachedData(int64_t aOffset, bool aWaitForCompletion)
 {
   // We read data in chunks of 32 KiB. We can reduce this
   // value if media, such as sdcards, is too slow.
@@ -1069,10 +1071,10 @@ bool OmxDecoder::ProcessCachedData(int64_t aOffset, bool aWaitForCompletion)
   MOZ_ASSERT(mResource);
 
   int64_t resourceLength = mResource->GetCachedDataEnd(0);
-  NS_ENSURE_TRUE(resourceLength >= 0, false);
+  NS_ENSURE_TRUE(resourceLength >= 0, -1);
 
   if (aOffset >= resourceLength) {
-    return true; // Cache is empty, nothing to do
+    return 0; // Cache is empty, nothing to do
   }
 
   int64_t bufferLength = std::min<int64_t>(resourceLength-aOffset, sReadSize);
@@ -1080,7 +1082,7 @@ bool OmxDecoder::ProcessCachedData(int64_t aOffset, bool aWaitForCompletion)
   nsAutoArrayPtr<char> buffer(new char[bufferLength]);
 
   nsresult rv = mResource->ReadFromCache(buffer.get(), aOffset, bufferLength);
-  NS_ENSURE_SUCCESS(rv, false);
+  NS_ENSURE_SUCCESS(rv, -1);
 
   nsRefPtr<OmxDecoderNotifyDataArrivedRunnable> runnable(
     new OmxDecoderNotifyDataArrivedRunnable(this,
@@ -1090,11 +1092,11 @@ bool OmxDecoder::ProcessCachedData(int64_t aOffset, bool aWaitForCompletion)
                                             resourceLength));
 
   rv = NS_DispatchToMainThread(runnable.get());
-  NS_ENSURE_SUCCESS(rv, false);
+  NS_ENSURE_SUCCESS(rv, -1);
 
   if (aWaitForCompletion) {
     runnable->WaitForCompletion();
   }
 
-  return true;
+  return resourceLength - aOffset - bufferLength;
 }

@@ -123,6 +123,7 @@ extern nsresult nsStringInputStreamConstructor(nsISupports *, REFNSIID, void **)
 #include "mozilla/ipc/BrowserProcessSubThread.h"
 #include "mozilla/AvailableMemoryTracker.h"
 #include "mozilla/ClearOnShutdown.h"
+#include "mozilla/SystemMemoryReporter.h"
 
 #ifdef MOZ_VISUAL_EVENT_TRACER
 #include "mozilla/VisualEventTracer.h"
@@ -145,6 +146,7 @@ static AtExitManager* sExitManager;
 static MessageLoop* sMessageLoop;
 static bool sCommandLineWasInitialized;
 static BrowserProcessSubThread* sIOThread;
+static BackgroundHangMonitor* sMainHangMonitor;
 
 } /* anonymous namespace */
 
@@ -336,58 +338,40 @@ NS_InitXPCOM(nsIServiceManager* *result,
     return NS_InitXPCOM2(result, binDirectory, nullptr);
 }
 
-class ICUReporter MOZ_FINAL : public MemoryUniReporter
+class ICUReporter MOZ_FINAL : public nsIMemoryReporter,
+                              public CountingAllocatorBase<ICUReporter>
 {
 public:
-    ICUReporter()
-      : MemoryUniReporter("explicit/icu", KIND_HEAP, UNITS_BYTES,
-"Memory used by ICU, a Unicode and globalization support library.")
-    {
-#ifdef DEBUG
-        // There must be only one instance of this class, due to |sAmount|
-        // being static.
-        static bool hasRun = false;
-        MOZ_ASSERT(!hasRun);
-        hasRun = true;
-#endif
-        sAmount = 0;
-    }
+    NS_DECL_ISUPPORTS
 
     static void* Alloc(const void*, size_t size)
     {
-        void* p = malloc(size);
-        sAmount += MallocSizeOfOnAlloc(p);
-        return p;
+        return CountingMalloc(size);
     }
 
     static void* Realloc(const void*, void* p, size_t size)
     {
-        sAmount -= MallocSizeOfOnFree(p);
-        void *pnew = realloc(p, size);
-        if (pnew) {
-            sAmount += MallocSizeOfOnAlloc(pnew);
-        } else {
-            // realloc failed;  undo the decrement from above
-            sAmount += MallocSizeOfOnAlloc(p);
-        }
-        return pnew;
+        return CountingRealloc(p, size);
     }
 
     static void Free(const void*, void* p)
     {
-        sAmount -= MallocSizeOfOnFree(p);
-        free(p);
+        return CountingFree(p);
     }
 
 private:
-    // |sAmount| can be (implicitly) accessed by multiple JSRuntimes, so it
-    // must be thread-safe.
-    static Atomic<size_t> sAmount;
-
-    int64_t Amount() MOZ_OVERRIDE { return sAmount; }
+    NS_IMETHODIMP
+    CollectReports(nsIHandleReportCallback* aHandleReport, nsISupports* aData)
+    {
+        return MOZ_COLLECT_REPORT(
+            "explicit/icu", KIND_HEAP, UNITS_BYTES, MemoryAllocated(),
+            "Memory used by ICU, a Unicode and globalization support library.");
+    }
 };
 
-/* static */ Atomic<size_t> ICUReporter::sAmount;
+NS_IMPL_ISUPPORTS1(ICUReporter, nsIMemoryReporter)
+
+/* static */ template<> Atomic<size_t> CountingAllocatorBase<ICUReporter>::sAmount(0);
 
 EXPORT_XPCOM_API(nsresult)
 NS_InitXPCOM2(nsIServiceManager* *result,
@@ -418,6 +402,10 @@ NS_InitXPCOM2(nsIServiceManager* *result,
 
     if (!MessageLoop::current()) {
         sMessageLoop = new MessageLoopForUI(MessageLoop::TYPE_MOZILLA_UI);
+        sMessageLoop->set_thread_name("Gecko");
+        // Set experimental values for main thread hangs:
+        // 512ms for transient hangs and 8192ms for permanent hangs
+        sMessageLoop->set_hang_timeouts(512, 8192);
     }
 
     if (XRE_GetProcessType() == GeckoProcessType_Default &&
@@ -581,6 +569,13 @@ NS_InitXPCOM2(nsIServiceManager* *result,
     CreateAnonTempFileRemover();
 #endif
 
+    // We only want the SystemMemoryReporter running in one process, because it
+    // profiles the entire system.  The main process is the obvious place for
+    // it.
+    if (XRE_GetProcessType() == GeckoProcessType_Default) {
+        mozilla::SystemMemoryReporter::Init();
+    }
+
     // The memory reporter manager is up and running -- register a reporter for
     // ICU's memory usage.
     RegisterStrongMemoryReporter(new ICUReporter());
@@ -589,6 +584,12 @@ NS_InitXPCOM2(nsIServiceManager* *result,
 
     mozilla::HangMonitor::Startup();
     mozilla::BackgroundHangMonitor::Startup();
+
+    const MessageLoop* const loop = MessageLoop::current();
+    sMainHangMonitor = new mozilla::BackgroundHangMonitor(
+        loop->thread_name().c_str(),
+        loop->transient_hang_timeout(),
+        loop->permanent_hang_timeout());
 
 #ifdef MOZ_VISUAL_EVENT_TRACER
     mozilla::eventtracer::Init();
@@ -834,6 +835,11 @@ ShutdownXPCOM(nsIServiceManager* servMgr)
     Omnijar::CleanUp();
 
     HangMonitor::Shutdown();
+
+    if (sMainHangMonitor) {
+        delete sMainHangMonitor;
+        sMainHangMonitor = nullptr;
+    }
     BackgroundHangMonitor::Shutdown();
 
 #ifdef MOZ_VISUAL_EVENT_TRACER

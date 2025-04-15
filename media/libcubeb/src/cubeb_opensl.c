@@ -279,7 +279,7 @@ opensl_get_preferred_sample_rate(cubeb * ctx, uint32_t * rate)
    * a non-error return value, especially if the audio system is not
    * ready/shutting down (i.e. when we can't get our hand on the AudioFlinger
    * thread). */
-  if (rate == 0) {
+  if (*rate == 0) {
     return CUBEB_ERROR;
   }
 
@@ -509,11 +509,13 @@ opensl_stream_destroy(cubeb_stream * stm)
 static int
 opensl_stream_start(cubeb_stream * stm)
 {
+  /* To refill the queues before starting playback in order to avoid racing
+  * with refills started by SetPlayState on OpenSLES ndk threads. */
+  bufferqueue_callback(NULL, stm);
   SLresult res = (*stm->play)->SetPlayState(stm->play, SL_PLAYSTATE_PLAYING);
   if (res != SL_RESULT_SUCCESS)
     return CUBEB_ERROR;
   stm->state_callback(stm, stm->user_ptr, CUBEB_STATE_STARTED);
-  bufferqueue_callback(NULL, stm);
   return CUBEB_OK;
 }
 

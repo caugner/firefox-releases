@@ -2,30 +2,36 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-/* Test applying an update by staging an update and launching an application */
-
 /**
- * The MAR file used for this test should not contain a version 2 update
- * manifest file (e.g. updatev2.manifest).
+ * Test applying an update by staging an update and launching an application to
+ * apply it.
  */
 
 function run_test() {
+  if (MOZ_APP_NAME == "xulrunner") {
+    logTestInfo("Unable to run this test on xulrunner");
+    return;
+  }
+
   if (!shouldRunServiceTest()) {
     return;
   }
 
-  setupTestCommon(false);
-  do_register_cleanup(end_test);
+  setupTestCommon();
+  gTestFiles = gTestFilesCompleteSuccess;
+  gTestDirs = gTestDirsCompleteSuccess;
+  setupUpdaterTest(FILE_COMPLETE_MAR, false, false);
 
-  removeUpdateDirsAndFiles();
-
-  if (!gAppBinPath) {
-    do_throw("Main application binary not found... expected: " +
-             APP_BIN_NAME + APP_BIN_SUFFIX);
-    return;
+  // For Mac OS X set the last modified time for the root directory to a date in
+  // the past to test that the last modified time is updated on a successful
+  // update (bug 600098).
+  if (IS_MACOSX) {
+    let now = Date.now();
+    let yesterday = now - (1000 * 60 * 60 * 24);
+    let applyToDir = getApplyDirFile();
+    applyToDir.lastModifiedTime = yesterday;
   }
 
-  gEnvSKipUpdateDirHashing = true;
   let channel = Services.prefs.getCharPref(PREF_APP_UPDATE_CHANNEL);
   let patches = getLocalPatchString(null, null, null, null, null, "true",
                                     STATE_PENDING);
@@ -33,135 +39,14 @@ function run_test() {
                                      null, null, null, null, null, null,
                                      null, "true", channel);
   writeUpdatesToXMLFile(getLocalUpdatesXMLString(updates), true);
+  writeVersionFile(getAppVersion());
+  writeStatusFile(STATE_PENDING_SVC);
 
-  // Read the application.ini and use its application version
-  let processDir = getCurrentProcessDir();
-  let file = processDir.clone();
-  file.append("application.ini");
-  let ini = AUS_Cc["@mozilla.org/xpcom/ini-parser-factory;1"].
-            getService(AUS_Ci.nsIINIParserFactory).
-            createINIParser(file);
-  let version = ini.getString("App", "Version");
-  writeVersionFile(version);
-
-  // This is the directory where the update files will be located
-  let updateTestDir = getUpdateTestDir();
-  try {
-    removeDirRecursive(updateTestDir);
-  }
-  catch (e) {
-    logTestInfo("unable to remove directory - path: " + updateTestDir.path +
-                ", exception: " + e);
-  }
-
-  // Add the directory where the update files will be added and add files that
-  // will be removed.
-  if (!updateTestDir.exists()) {
-    updateTestDir.create(AUS_Ci.nsIFile.DIRECTORY_TYPE, PERMS_DIRECTORY);
-  }
-  logTestInfo("update test directory path: " + updateTestDir.path);
-
-  file = updateTestDir.clone();
-  file.append("UpdateTestRemoveFile");
-  writeFile(file, "ToBeRemoved");
-
-  file = updateTestDir.clone();
-  file.append("UpdateTestAddFile");
-  writeFile(file, "ToBeReplaced");
-
-  file = updateTestDir.clone();
-  file.append("removed-files");
-  writeFile(file, "ToBeReplaced");
-
-  let updatesRootDir = processDir.clone();
-  updatesRootDir.append("updates");
-  updatesRootDir.append("0");
-  let mar = getTestDirFile(FILE_SIMPLE_MAR);
-  mar.copyTo(updatesRootDir, FILE_UPDATE_ARCHIVE);
-
-  // Backup the updater.ini file if it exists by moving it. This prevents the
-  // post update executable from being launched if it is specified.
-  let updaterIni = processDir.clone();
-  updaterIni.append(FILE_UPDATER_INI);
-  if (updaterIni.exists()) {
-    updaterIni.moveTo(processDir, FILE_UPDATER_INI_BAK);
-  }
-
-  getUpdatesDir = function() {
-    var updatesDir = processDir.clone();
-    updatesDir.append("updates");
-    return updatesDir;
-  }
-  getApplyDirPath = function() {
-    return processDir.path;
-  }
-  getApplyDirFile = function (aRelPath, allowNonexistent) {
-    let base = AUS_Cc["@mozilla.org/file/local;1"].
-               createInstance(AUS_Ci.nsILocalFile);
-    base.initWithPath(getApplyDirPath());
-    let path = (aRelPath ? aRelPath : "");
-    let bits = path.split("/");
-    for (let i = 0; i < bits.length; i++) {
-      if (bits[i]) {
-        if (bits[i] == "..")
-          base = base.parent;
-        else
-          base.append(bits[i]);
-      }
-    }
-
-    if (!allowNonexistent && !base.exists()) {
-      _passed = false;
-      var stack = Components.stack.caller;
-      _dump("TEST-UNEXPECTED-FAIL | " + stack.filename + " | [" +
-            stack.name + " : " + stack.lineNumber + "] " + base.path +
-            " does not exist\n");
-    }
-
-    return base;
-  }
-  runUpdateUsingService(STATE_PENDING_SVC, STATE_SUCCEEDED, checkUpdateFinished, updatesRootDir);
+  setupAppFilesAsync();
 }
 
-function end_test() {
-  resetEnvironment();
-
-  let processDir = getCurrentProcessDir();
-  // Restore the backup of the updater.ini if it exists.
-  let updaterIni = processDir.clone();
-  updaterIni.append(FILE_UPDATER_INI_BAK);
-  if (updaterIni.exists()) {
-    updaterIni.moveTo(processDir, FILE_UPDATER_INI);
-  }
-
-  // Remove the files added by the update.
-  let updateTestDir = getUpdateTestDir();
-  try {
-    logTestInfo("removing update test directory " + updateTestDir.path);
-    removeDirRecursive(updateTestDir);
-  }
-  catch (e) {
-    logTestInfo("unable to remove directory - path: " + updateTestDir.path +
-                ", exception: " + e);
-  }
-
-  // This will delete the app console log file if it exists.
-  getAppConsoleLogPath();
-
-  cleanupTestCommon();
-}
-
-/**
- * Gets the directory where the update adds / removes the files contained in the
- * update.
- *
- * @return  nsIFile for the directory where the update adds / removes the files
- *          contained in the update mar.
- */
-function getUpdateTestDir() {
-  let updateTestDir = getCurrentProcessDir();
-  updateTestDir.append("update_test");
-  return updateTestDir;
+function setupAppFilesFinished() {
+  runUpdateUsingService(STATE_PENDING_SVC, STATE_SUCCEEDED);
 }
 
 /**
@@ -169,90 +54,92 @@ function getUpdateTestDir() {
  * the test.
  */
 function checkUpdateFinished() {
-  // Don't proceed until the update.log has been created.
-  let log = getUpdatesDir();
-  log.append("0");
-  log.append(FILE_UPDATE_LOG);
-  if (!log.exists()) {
-    if (++gTimeoutRuns > MAX_TIMEOUT_RUNS)
-      do_throw("Exceeded MAX_TIMEOUT_RUNS whilst waiting for updates log to be created at " + log.path);
-    else
+  gTimeoutRuns++;
+  // Don't proceed until the update's status state is the expected value.
+  let state = readStatusState();
+  if (state != STATE_SUCCEEDED) {
+    if (gTimeoutRuns > MAX_TIMEOUT_RUNS) {
+      do_throw("Exceeded MAX_TIMEOUT_RUNS while waiting for the update " +
+               "status state to equal: " + STATE_SUCCEEDED +
+               ", current status state: " + state);
+    } else {
       do_timeout(TEST_CHECK_TIMEOUT, checkUpdateFinished);
+    }
     return;
   }
 
-  // Log the contents of the update.log so it is simpler to diagnose a test
-  // failure. For example, on Windows if the application binary is in use the
-  // updater will not apply the update.
-  let contents = readFile(log);
-  logTestInfo("contents of " + log.path + ":\n" +  
-              contents.replace(/\r\n/g, "\n"));
-
-  if (contents.indexOf("NS_main: file in use") != -1) {
-    do_throw("the application can't be in use when running this test");
+  // Don't proceed until the update log has been created.
+  let log = getUpdatesPatchDir();
+  log.append(FILE_UPDATE_LOG);
+  if (!log.exists()) {
+    if (gTimeoutRuns > MAX_TIMEOUT_RUNS) {
+      do_throw("Exceeded MAX_TIMEOUT_RUNS while waiting for the update log " +
+               "to be created. Path: " + log.path);
+    } else {
+      do_timeout(TEST_CHECK_TIMEOUT, checkUpdateFinished);
+    }
+    return;
   }
+
+  if (IS_WIN) {
+    // Don't proceed until the updater binary is no longer in use.
+    let updater = getUpdatesPatchDir();
+    updater.append(FILE_UPDATER_BIN);
+    if (updater.exists()) {
+      if (gTimeoutRuns > MAX_TIMEOUT_RUNS) {
+        do_throw("Exceeded while waiting for updater binary to no longer be " +
+                 "in use");
+      } else {
+        try {
+          updater.remove(false);
+        } catch (e) {
+          do_timeout(TEST_CHECK_TIMEOUT, checkUpdateFinished);
+          return;
+        }
+      }
+    }
+  }
+
+  if (IS_MACOSX) {
+    logTestInfo("testing last modified time on the apply to directory has " +
+                "changed after a successful update (bug 600098)");
+    let now = Date.now();
+    let applyToDir = getApplyDirFile();
+    let timeDiff = Math.abs(applyToDir.lastModifiedTime - now);
+    do_check_true(timeDiff < MAC_MAX_TIME_DIFFERENCE);
+  }
+
+  checkFilesAfterUpdateSuccess();
+  // Sorting on Linux is different so skip this check for now.
+  if (!IS_UNIX) {
+    checkUpdateLogContents(LOG_COMPLETE_SUCCESS);
+  }
+
+  checkCallbackAppLog();
 
   standardInit();
 
   let update = gUpdateManager.getUpdateAt(0);
   do_check_eq(update.state, STATE_SUCCEEDED);
 
-  let updateTestDir = getUpdateTestDir();
-
-  let file = updateTestDir.clone();
-  file.append("UpdateTestRemoveFile");
-  do_check_false(file.exists());
-
-  file = updateTestDir.clone();
-  file.append("UpdateTestAddFile");
-  do_check_true(file.exists());
-  do_check_eq(readFileBytes(file), "UpdateTestAddFile\n");
-
-  file = updateTestDir.clone();
-  file.append("removed-files");
-  do_check_true(file.exists());
-  do_check_eq(readFileBytes(file), "update_test/UpdateTestRemoveFile\n");
-
-  let updatesDir = getUpdatesDir();
-  log = updatesDir.clone();
-  log.append("0");
+  log = getUpdatesPatchDir();
   log.append(FILE_UPDATE_LOG);
   logTestInfo("testing " + log.path + " shouldn't exist");
   do_check_false(log.exists());
 
-  log = updatesDir.clone();
+  log = getUpdatesDir();
   log.append(FILE_LAST_LOG);
   logTestInfo("testing " + log.path + " should exist");
   do_check_true(log.exists());
 
-  log = updatesDir.clone();
+  log = getUpdatesDir();
   log.append(FILE_BACKUP_LOG);
   logTestInfo("testing " + log.path + " shouldn't exist");
   do_check_false(log.exists());
 
-  updatesDir.append("0");
-  logTestInfo("testing " + updatesDir.path + " should exist");
-  do_check_true(updatesDir.exists());
+  let updatesPatchDir = getUpdatesPatchDir();
+  logTestInfo("testing " + updatesPatchDir.path + " should exist");
+  do_check_true(updatesPatchDir.exists());
 
-  Services.dirsvc.unregisterProvider(gDirProvider);
-  removeCallbackCopy();
+  waitForFilesInUse();
 }
-
-// On Vista XRE_UPDATE_ROOT_DIR can be a directory other than the one in the
-// application directory. This will reroute it back to the one in the
-// application directory.
-var gDirProvider = {
-  getFile: function DP_getFile(prop, persistent) {
-    persistent.value = true;
-    if (prop == XRE_UPDATE_ROOT_DIR)
-      return getCurrentProcessDir();
-    return null;
-  },
-  QueryInterface: function(iid) {
-    if (iid.equals(AUS_Ci.nsIDirectoryServiceProvider) ||
-        iid.equals(AUS_Ci.nsISupports))
-      return this;
-    throw AUS_Cr.NS_ERROR_NO_INTERFACE;
-  }
-};
-Services.dirsvc.QueryInterface(AUS_Ci.nsIDirectoryService).registerProvider(gDirProvider);

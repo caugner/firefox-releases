@@ -8,6 +8,7 @@
 #include "gmock/gmock.h"
 
 using namespace mozilla;
+using namespace mozilla::gfx;
 using namespace mozilla::layers;
 
 class TestLayerManager: public LayerManager {
@@ -19,7 +20,7 @@ public:
   virtual bool EndEmptyTransaction(EndTransactionFlags aFlags = END_DEFAULT) { return false; }
   virtual already_AddRefed<ContainerLayer> CreateContainerLayer() { return nullptr; }
   virtual void GetBackendName(nsAString& aName) {}
-  virtual LayersBackend GetBackendType() { return LAYERS_BASIC; }
+  virtual LayersBackend GetBackendType() { return LayersBackend::LAYERS_BASIC; }
   virtual void BeginTransaction() {}
   virtual already_AddRefed<ImageLayer> CreateImageLayer() { return nullptr; }
   virtual void SetRoot(Layer* aLayer) {}
@@ -47,7 +48,7 @@ public:
     return TYPE_CONTAINER;
   }
 
-  virtual void ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToSurface) {
+  virtual void ComputeEffectiveTransforms(const Matrix4x4& aTransformToSurface) {
     DefaultComputeEffectiveTransforms(aTransformToSurface);
   }
 };
@@ -97,7 +98,7 @@ TEST(Layers, Defaults) {
 TEST(Layers, Transform) {
   TestContainerLayer layer(nullptr);
 
-  gfx3DMatrix identity;
+  Matrix4x4 identity;
   ASSERT_EQ(true, identity.IsIdentity());
 
   ASSERT_EQ(identity, layer.GetTransform());
@@ -193,7 +194,9 @@ already_AddRefed<Layer> CreateLayerTree(
         layer->SetVisibleRegion(aVisibleRegions[layerNumber]);
       }
       if (aTransforms) {
-        layer->SetBaseTransform(aTransforms[layerNumber]);
+        Matrix4x4 transform;
+        ToMatrix4x4(aTransforms[layerNumber], transform);
+        layer->SetBaseTransform(transform);
       }
       aLayersOut.AppendElement(layer);
       layerNumber++;
@@ -211,7 +214,7 @@ already_AddRefed<Layer> CreateLayerTree(
     }
   }
   if (rootLayer) {
-    rootLayer->ComputeEffectiveTransforms(gfx3DMatrix());
+    rootLayer->ComputeEffectiveTransforms(Matrix4x4());
   }
   return rootLayer.forget();
 }

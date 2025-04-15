@@ -543,7 +543,6 @@ MarionetteServerConnection.prototype = {
           'handlesAlerts': false,
           'javascriptEnabled': true,
           'nativeEvents': false,
-          'platform': Services.appinfo.OS,
           'platformName': Services.appinfo.OS,
           'platformVersion': Services.appinfo.platformVersion,
           'secureSsl': false,
@@ -1198,6 +1197,7 @@ MarionetteServerConnection.prototype = {
     for (let i in this.browsers) {
       if (this.curBrowser == this.browsers[i]) {
         this.sendResponse(i, this.command_id);
+        return;
       }
     }
   },
@@ -2577,7 +2577,7 @@ BrowserObj.prototype = {
    *        frame to load the script in
    */
   loadFrameScript: function BO_loadFrameScript(script, frame) {
-    frame.window.messageManager.loadFrameScript(script, true);
+    frame.window.messageManager.loadFrameScript(script, true, true);
     Services.prefs.setBoolPref("marionette.contentListener", true);
   },
 

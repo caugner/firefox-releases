@@ -242,6 +242,7 @@ public:
       nsCSSValueTriplet* mCSSValueTriplet;
       nsCSSRect* mCSSRect;
       nsCSSValueList* mCSSValueList;
+      nsCSSValueSharedList* mCSSValueSharedList;
       nsCSSValuePairList* mCSSValuePairList;
       nsStringBuffer* mString;
     } mValue;
@@ -297,11 +298,15 @@ public:
       NS_ASSERTION(IsCSSValueListUnit(mUnit), "unit mismatch");
       return mValue.mCSSValueList;
     }
+    nsCSSValueSharedList* GetCSSValueSharedListValue() const {
+      NS_ASSERTION(IsCSSValueSharedListValue(mUnit), "unit mismatch");
+      return mValue.mCSSValueSharedList;
+    }
     nsCSSValuePairList* GetCSSValuePairListValue() const {
       NS_ASSERTION(IsCSSValuePairListUnit(mUnit), "unit mismatch");
       return mValue.mCSSValuePairList;
     }
-    const PRUnichar* GetStringBufferValue() const {
+    const char16_t* GetStringBufferValue() const {
       NS_ASSERTION(IsStringUnit(mUnit), "unit mismatch");
       return GetBufferValue(mValue.mString);
     }
@@ -351,6 +356,8 @@ public:
     void SetAndAdoptCSSValueListValue(nsCSSValueList *aValue, Unit aUnit);
     void SetAndAdoptCSSValuePairListValue(nsCSSValuePairList *aValue);
 
+    void SetTransformValue(nsCSSValueSharedList* aList);
+
     Value& operator=(const Value& aOther);
 
     bool operator==(const Value& aOther) const;
@@ -360,8 +367,8 @@ public:
   private:
     void FreeValue();
 
-    static const PRUnichar* GetBufferValue(nsStringBuffer* aBuffer) {
-      return static_cast<PRUnichar*>(aBuffer->Data());
+    static const char16_t* GetBufferValue(nsStringBuffer* aBuffer) {
+      return static_cast<char16_t*>(aBuffer->Data());
     }
 
     static bool IsIntUnit(Unit aUnit) {
@@ -382,8 +389,11 @@ public:
     }
     static bool IsCSSValueListUnit(Unit aUnit) {
       return aUnit == eUnit_Dasharray || aUnit == eUnit_Filter ||
-             aUnit == eUnit_Shadow || aUnit == eUnit_Transform ||
+             aUnit == eUnit_Shadow ||
              aUnit == eUnit_BackgroundPosition;
+    }
+    static bool IsCSSValueSharedListValue(Unit aUnit) {
+      return aUnit == eUnit_Transform;
     }
     static bool IsCSSValuePairListUnit(Unit aUnit) {
       return aUnit == eUnit_CSSValuePairList;

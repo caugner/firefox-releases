@@ -9,6 +9,7 @@ TEST_DIRS += ['test']
 # Public stuff.
 EXPORTS.mozilla.dom += [
     'WorkerPrivate.h',
+    'WorkerRunnable.h',
     'WorkerScope.h',
 ]
 
@@ -18,6 +19,7 @@ EXPORTS.mozilla.dom.workers += [
 
 # Stuff needed for the bindings, not really public though.
 EXPORTS.mozilla.dom.workers.bindings += [
+    'Console.h',
     'FileReaderSync.h',
     'Location.h',
     'MessagePort.h',
@@ -31,6 +33,7 @@ EXPORTS.mozilla.dom.workers.bindings += [
 
 SOURCES += [
     'ChromeWorkerScope.cpp',
+    'Console.cpp',
     'File.cpp',
     'FileReaderSync.cpp',
     'Location.cpp',
@@ -43,6 +46,7 @@ SOURCES += [
     'SharedWorker.cpp',
     'URL.cpp',
     'WorkerPrivate.cpp',
+    'WorkerRunnable.cpp',
     'WorkerScope.cpp',
     'XMLHttpRequest.cpp',
     'XMLHttpRequestUpload.cpp',
@@ -56,8 +60,11 @@ LOCAL_INCLUDES += [
     '../base',
     '../system',
     '/content/base/src',
-    '/content/events/src',
+    '/dom/events',
     '/xpcom/build',
+    '/xpcom/threads',
 ]
+
+include('/ipc/chromium/chromium-config.mozbuild')
 
 FINAL_LIBRARY = 'gklayout'

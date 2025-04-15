@@ -145,21 +145,58 @@ struct UserInputData {
             ::Touch touches[MAX_POINTERS];
         } motion;
     };
+
+    Modifiers DOMModifiers() const;
 };
 
+Modifiers
+UserInputData::DOMModifiers() const
+{
+    Modifiers result = 0;
+    if (metaState & (AMETA_ALT_ON | AMETA_ALT_LEFT_ON | AMETA_ALT_RIGHT_ON)) {
+        result |= MODIFIER_ALT;
+    }
+    if (metaState & (AMETA_SHIFT_ON |
+                     AMETA_SHIFT_LEFT_ON | AMETA_SHIFT_RIGHT_ON)) {
+        result |= MODIFIER_SHIFT;
+    }
+    if (metaState & AMETA_FUNCTION_ON) {
+        result |= MODIFIER_FN;
+    }
+    if (metaState & (AMETA_CTRL_ON |
+                     AMETA_CTRL_LEFT_ON | AMETA_CTRL_RIGHT_ON)) {
+        result |= MODIFIER_CONTROL;
+    }
+    if (metaState & (AMETA_META_ON |
+                     AMETA_META_LEFT_ON | AMETA_META_RIGHT_ON)) {
+        result |= MODIFIER_META;
+    }
+    if (metaState & AMETA_CAPS_LOCK_ON) {
+        result |= MODIFIER_CAPSLOCK;
+    }
+    if (metaState & AMETA_NUM_LOCK_ON) {
+        result |= MODIFIER_NUMLOCK;
+    }
+    if (metaState & AMETA_SCROLL_LOCK_ON) {
+        result |= MODIFIER_SCROLLLOCK;
+    }
+    return result;
+}
+
 static void
-sendMouseEvent(uint32_t msg, uint64_t timeMs, int x, int y, bool forwardToChildren)
+sendMouseEvent(uint32_t msg, UserInputData& data, bool forwardToChildren)
 {
     WidgetMouseEvent event(true, msg, nullptr,
                            WidgetMouseEvent::eReal, WidgetMouseEvent::eNormal);
 
-    event.refPoint.x = x;
-    event.refPoint.y = y;
-    event.time = timeMs;
+    event.refPoint.x = data.motion.touches[0].coords.getX();
+    event.refPoint.y = data.motion.touches[0].coords.getY();
+    event.time = data.timeMs;
     event.button = WidgetMouseEvent::eLeftButton;
     event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_TOUCH;
     if (msg != NS_MOUSE_MOVE)
         event.clickCount = 1;
+    event.modifiers = data.DOMModifiers();
 
     event.mFlags.mNoCrossProcessBoundaryForwarding = !forwardToChildren;
 
@@ -172,7 +209,7 @@ addDOMTouch(UserInputData& data, WidgetTouchEvent& event, int i)
     const ::Touch& touch = data.motion.touches[i];
     event.touches.AppendElement(
         new dom::Touch(touch.id,
-                       nsIntPoint(touch.coords.getX(), touch.coords.getY()),
+                       nsIntPoint(floor(touch.coords.getX() + 0.5), floor(touch.coords.getY() + 0.5)),
                        nsIntPoint(touch.coords.getAxisValue(AMOTION_EVENT_AXIS_SIZE),
                                   touch.coords.getAxisValue(AMOTION_EVENT_AXIS_SIZE)),
                        0,
@@ -206,6 +243,7 @@ sendTouchEvent(UserInputData& data, bool* captured)
     WidgetTouchEvent event(true, msg, nullptr);
 
     event.time = data.timeMs;
+    event.modifiers = data.DOMModifiers();
 
     int32_t i;
     if (msg == NS_TOUCH_END) {
@@ -220,40 +258,152 @@ sendTouchEvent(UserInputData& data, bool* captured)
     return nsWindow::DispatchInputEvent(event, captured);
 }
 
-static nsEventStatus
-sendKeyEventWithMsg(uint32_t keyCode,
-                    int16_t charCode,
-                    KeyNameIndex keyNameIndex,
-                    uint32_t msg,
-                    uint64_t timeMs,
-                    bool isRepeat)
+class MOZ_STACK_CLASS KeyEventDispatcher
 {
-    WidgetKeyboardEvent event(true, msg, nullptr);
-    if (msg == NS_KEY_PRESS && charCode >= ' ') {
-        event.charCode = charCode;
+public:
+    KeyEventDispatcher(const UserInputData& aData,
+                       KeyCharacterMap* aKeyCharMap);
+    void Dispatch();
+
+private:
+    const UserInputData& mData;
+    sp<KeyCharacterMap> mKeyCharMap;
+
+    char16_t mChar;
+    char16_t mUnmodifiedChar;
+
+    uint32_t mDOMKeyCode;
+    KeyNameIndex mDOMKeyNameIndex;
+    char16_t mDOMPrintableKeyValue;
+
+    bool IsKeyPress() const
+    {
+        return mData.action == AKEY_EVENT_ACTION_DOWN;
+    }
+    bool IsRepeat() const
+    {
+        return IsKeyPress() && (mData.flags & AKEY_EVENT_FLAG_LONG_PRESS);
+    }
+
+    char16_t PrintableKeyValue() const;
+
+    int32_t UnmodifiedMetaState() const
+    {
+        return mData.metaState &
+            ~(AMETA_ALT_ON | AMETA_ALT_LEFT_ON | AMETA_ALT_RIGHT_ON |
+              AMETA_CTRL_ON | AMETA_CTRL_LEFT_ON | AMETA_CTRL_RIGHT_ON |
+              AMETA_META_ON | AMETA_META_LEFT_ON | AMETA_META_RIGHT_ON);
+    }
+
+    static bool IsControlChar(char16_t aChar)
+    {
+        return (aChar < ' ' || aChar == 0x7F);
+    }
+
+    void DispatchKeyDownEvent();
+    void DispatchKeyUpEvent();
+    nsEventStatus DispatchKeyEventInternal(uint32_t aEventMessage);
+};
+
+KeyEventDispatcher::KeyEventDispatcher(const UserInputData& aData,
+                                       KeyCharacterMap* aKeyCharMap) :
+    mData(aData), mKeyCharMap(aKeyCharMap), mChar(0), mUnmodifiedChar(0),
+    mDOMPrintableKeyValue(0)
+{
+    // XXX Printable key's keyCode value should be computed with actual
+    //     input character.
+    mDOMKeyCode = (mData.key.keyCode < ArrayLength(kKeyMapping)) ?
+        kKeyMapping[mData.key.keyCode] : 0;
+    mDOMKeyNameIndex = GetKeyNameIndex(mData.key.keyCode);
+
+    if (!mKeyCharMap.get()) {
+        return;
+    }
+
+    mChar = mKeyCharMap->getCharacter(mData.key.keyCode, mData.metaState);
+    if (IsControlChar(mChar)) {
+        mChar = 0;
+    }
+    int32_t unmodifiedMetaState = UnmodifiedMetaState();
+    if (mData.metaState == unmodifiedMetaState) {
+        mUnmodifiedChar = mChar;
     } else {
-        event.keyCode = keyCode;
+        mUnmodifiedChar = mKeyCharMap->getCharacter(mData.key.keyCode,
+                                                    unmodifiedMetaState);
+        if (IsControlChar(mUnmodifiedChar)) {
+            mUnmodifiedChar = 0;
+        }
+    }
+
+    mDOMPrintableKeyValue = PrintableKeyValue();
+}
+
+char16_t
+KeyEventDispatcher::PrintableKeyValue() const
+{
+    if (mDOMKeyNameIndex != KEY_NAME_INDEX_USE_STRING) {
+        return 0;
+    }
+    return mChar ? mChar : mUnmodifiedChar;
+}
+
+nsEventStatus
+KeyEventDispatcher::DispatchKeyEventInternal(uint32_t aEventMessage)
+{
+    WidgetKeyboardEvent event(true, aEventMessage, nullptr);
+    if (aEventMessage == NS_KEY_PRESS) {
+        // XXX If the charCode is not a printable character, the charCode
+        //     should be computed without Ctrl/Alt/Meta modifiers.
+        event.charCode = static_cast<uint32_t>(mChar);
+    }
+    if (!event.charCode) {
+        event.keyCode = mDOMKeyCode;
     }
     event.isChar = !!event.charCode;
-    event.mIsRepeat = isRepeat;
-    event.mKeyNameIndex = keyNameIndex;
+    event.mIsRepeat = IsRepeat();
+    event.mKeyNameIndex = mDOMKeyNameIndex;
+    if (mDOMPrintableKeyValue) {
+        event.mKeyValue = mDOMPrintableKeyValue;
+    }
+    event.modifiers = mData.DOMModifiers();
     event.location = nsIDOMKeyEvent::DOM_KEY_LOCATION_MOBILE;
-    event.time = timeMs;
+    event.time = mData.timeMs;
     return nsWindow::DispatchInputEvent(event);
 }
 
-static void
-sendKeyEvent(uint32_t keyCode, int16_t charCode, KeyNameIndex keyNameIndex,
-             bool down, uint64_t timeMs, bool isRepeat)
+void
+KeyEventDispatcher::Dispatch()
 {
-    EventFlags extraFlags;
-    nsEventStatus status =
-        sendKeyEventWithMsg(keyCode, charCode, keyNameIndex,
-                            down ? NS_KEY_DOWN : NS_KEY_UP, timeMs, isRepeat);
-    if (down && status != nsEventStatus_eConsumeNoDefault) {
-        sendKeyEventWithMsg(keyCode, charCode, keyNameIndex, NS_KEY_PRESS,
-                            timeMs, isRepeat);
+    // XXX Even if unknown key is pressed, DOM key event should be
+    //     dispatched since Gecko for the other platforms are implemented
+    //     as so.
+    if (!mDOMKeyCode && mDOMKeyNameIndex == KEY_NAME_INDEX_Unidentified) {
+        VERBOSE_LOG("Got unknown key event code. "
+                    "type 0x%04x code 0x%04x value %d",
+                    mData.action, mData.key.keyCode, IsKeyPress());
+        return;
     }
+
+    if (IsKeyPress()) {
+        DispatchKeyDownEvent();
+    } else {
+        DispatchKeyUpEvent();
+    }
+}
+
+void
+KeyEventDispatcher::DispatchKeyDownEvent()
+{
+    nsEventStatus status = DispatchKeyEventInternal(NS_KEY_DOWN);
+    if (status != nsEventStatus_eConsumeNoDefault) {
+        DispatchKeyEventInternal(NS_KEY_PRESS);
+    }
+}
+
+void
+KeyEventDispatcher::DispatchKeyUpEvent()
+{
+    DispatchKeyEventInternal(NS_KEY_UP);
 }
 
 class SwitchEventRunnable : public nsRunnable {
@@ -538,42 +688,17 @@ GeckoInputDispatcher::dispatchOnce()
             msg = NS_MOUSE_BUTTON_UP;
             break;
         }
-        sendMouseEvent(msg,
-                       data.timeMs,
-                       data.motion.touches[0].coords.getX(),
-                       data.motion.touches[0].coords.getY(),
-                       status != nsEventStatus_eConsumeNoDefault);
+        sendMouseEvent(msg, data, status != nsEventStatus_eConsumeNoDefault);
         break;
     }
     case UserInputData::KEY_DATA: {
-        uint32_t DOMKeyCode =
-            (data.key.keyCode < ArrayLength(kKeyMapping)) ?
-            kKeyMapping[data.key.keyCode] : 0;
-        KeyNameIndex DOMKeyNameIndex = GetKeyNameIndex(data.key.keyCode);
-        if (!DOMKeyCode && DOMKeyNameIndex == KEY_NAME_INDEX_Unidentified) {
-            VERBOSE_LOG("Got unknown key event code. "
-                        "type 0x%04x code 0x%04x value %d",
-                        keyCode, pressed);
-            break;
-        }
-
-        bool isPress = data.action == AKEY_EVENT_ACTION_DOWN;
-        bool isRepeat = isPress && (data.flags & AKEY_EVENT_FLAG_LONG_PRESS);
-        int16_t charCode = 0;
         sp<KeyCharacterMap> kcm = mEventHub->getKeyCharacterMap(data.deviceId);
-        if (kcm.get())
-            charCode = kcm->getCharacter(data.key.keyCode, data.metaState);
-        sendKeyEvent(DOMKeyCode,
-                     charCode,
-                     DOMKeyNameIndex,
-                     isPress,
-                     data.timeMs,
-                     isRepeat);
+        KeyEventDispatcher dispatcher(data, kcm.get());
+        dispatcher.Dispatch();
         break;
     }
     }
 }
-
 
 void
 GeckoInputDispatcher::notifyConfigurationChanged(const NotifyConfigurationChangedArgs*)
@@ -749,10 +874,14 @@ nsAppShell::Init()
 #ifdef MOZ_OMX_DECODER
         android::MediaResourceManagerService::instantiate();
 #endif
-#if ANDROID_VERSION >= 18
+#if ANDROID_VERSION >= 18 && (defined(MOZ_OMX_DECODER) || defined(MOZ_B2G_CAMERA))
         android::FakeSurfaceComposer::instantiate();
 #endif
         GonkPermissionService::instantiate();
+
+        // Causes the kernel timezone to be set, which in turn causes the
+        // timestamps on SD cards to have the local time rather than UTC time.
+        hal::SetTimezone(hal::GetTimezone());
     }
 
     nsCOMPtr<nsIObserverService> obsServ = GetObserverService();
@@ -773,7 +902,7 @@ nsAppShell::Init()
 NS_IMETHODIMP
 nsAppShell::Observe(nsISupports* aSubject,
                     const char* aTopic,
-                    const PRUnichar* aData)
+                    const char16_t* aData)
 {
     if (strcmp(aTopic, "browser-ui-startup-complete")) {
         return nsBaseAppShell::Observe(aSubject, aTopic, aData);

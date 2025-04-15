@@ -209,23 +209,21 @@ ClippedImage::GetIntrinsicRatio(nsSize* aRatio)
   return NS_OK;
 }
 
-NS_IMETHODIMP
+NS_IMETHODIMP_(already_AddRefed<gfxASurface>)
 ClippedImage::GetFrame(uint32_t aWhichFrame,
-                       uint32_t aFlags,
-                       gfxASurface** _retval)
+                       uint32_t aFlags)
 {
-  return GetFrameInternal(mClip.Size(), nullptr, aWhichFrame, aFlags, _retval);
+  return GetFrameInternal(mClip.Size(), nullptr, aWhichFrame, aFlags);
 }
 
-nsresult
+already_AddRefed<gfxASurface>
 ClippedImage::GetFrameInternal(const nsIntSize& aViewportSize,
                                const SVGImageContext* aSVGContext,
                                uint32_t aWhichFrame,
-                               uint32_t aFlags,
-                               gfxASurface** _retval)
+                               uint32_t aFlags)
 {
   if (!ShouldClip()) {
-    return InnerImage()->GetFrame(aWhichFrame, aFlags, _retval);
+    return InnerImage()->GetFrame(aWhichFrame, aFlags);
   }
 
   float frameToDraw = InnerImage()->GetFrameIndex(aWhichFrame);
@@ -240,12 +238,12 @@ ClippedImage::GetFrameInternal(const nsIntSize& aViewportSize,
     if (gfxPlatform::GetPlatform()->SupportsAzureContent()) {
       target = gfxPlatform::GetPlatform()->
         CreateOffscreenContentDrawTarget(gfx::IntSize(mClip.width, mClip.height),
-                                        gfx::FORMAT_B8G8R8A8);
+                                        gfx::SurfaceFormat::B8G8R8A8);
       ctx = new gfxContext(target);
     } else {
       target = gfxPlatform::GetPlatform()->
         CreateOffscreenCanvasDrawTarget(gfx::IntSize(mClip.width, mClip.height),
-                                        gfx::FORMAT_B8G8R8A8);
+                                        gfx::SurfaceFormat::B8G8R8A8);
       nsRefPtr<gfxASurface> surface = gfxPlatform::GetPlatform()->
         GetThebesSurfaceForDrawTarget(target);
       ctx = new gfxContext(surface);
@@ -261,7 +259,7 @@ ClippedImage::GetFrameInternal(const nsIntSize& aViewportSize,
     gfxRect imageRect(0, 0, mClip.width, mClip.height);
     gfxUtils::DrawPixelSnapped(ctx, drawable, gfxMatrix(),
                                imageRect, imageRect, imageRect, imageRect,
-                               gfxImageFormatARGB32,
+                               gfxImageFormat::ARGB32,
                                GraphicsFilter::FILTER_FAST);
 
     // Cache the resulting surface.
@@ -273,9 +271,7 @@ ClippedImage::GetFrameInternal(const nsIntSize& aViewportSize,
   }
 
   MOZ_ASSERT(mCachedSurface, "Should have a cached surface now");
-  nsRefPtr<gfxASurface> surf = mCachedSurface->Surface();
-  surf.forget(_retval);
-  return NS_OK;
+  return mCachedSurface->Surface();
 }
 
 NS_IMETHODIMP
@@ -335,8 +331,8 @@ ClippedImage::Draw(gfxContext* aContext,
   if (MustCreateSurface(aContext, aUserSpaceToImageSpace, sourceRect, aSubimage, aFlags)) {
     // Create a temporary surface containing a single tile of this image.
     // GetFrame will call DrawSingleTile internally.
-    nsRefPtr<gfxASurface> surface;
-    GetFrameInternal(aViewportSize, aSVGContext, aWhichFrame, aFlags, getter_AddRefs(surface));
+    nsRefPtr<gfxASurface> surface =
+      GetFrameInternal(aViewportSize, aSVGContext, aWhichFrame, aFlags);
     NS_ENSURE_TRUE(surface, NS_ERROR_FAILURE);
 
     // Create a drawable from that surface.
@@ -348,7 +344,7 @@ ClippedImage::Draw(gfxContext* aContext,
     gfxRect subimage(aSubimage.x, aSubimage.y, aSubimage.width, aSubimage.height);
     gfxUtils::DrawPixelSnapped(aContext, drawable, aUserSpaceToImageSpace,
                                subimage, sourceRect, imageRect, aFill,
-                               gfxImageFormatARGB32, aFilter);
+                               gfxImageFormat::ARGB32, aFilter);
 
     return NS_OK;
   }

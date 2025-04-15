@@ -94,6 +94,8 @@ class MessageChannel : HasResultCodes
     // Make an Interrupt call to the other side of the channel
     bool Call(Message* aMsg, Message* aReply);
 
+    bool CanSend() const;
+
     void SetReplyTimeoutMs(int32_t aTimeoutMs);
 
     bool IsOnCxxStack() const {
@@ -314,6 +316,11 @@ class MessageChannel : HasResultCodes
         return mDispatchingSyncMessage;
     }
 
+    // Returns true if we're dispatching an urgent message's callback.
+    bool DispatchingUrgentMessage() const {
+        return mDispatchingUrgentMessageCount > 0;
+    }
+
     bool Connected() const;
 
   private:
@@ -505,6 +512,9 @@ class MessageChannel : HasResultCodes
 
     // Set while we are dispatching a synchronous message.
     bool mDispatchingSyncMessage;
+
+    // Count of the recursion depth of dispatching urgent messages.
+    size_t mDispatchingUrgentMessageCount;
 
     // Queue of all incoming messages, except for replies to sync and urgent
     // messages, which are delivered directly to mRecvd, and any pending urgent

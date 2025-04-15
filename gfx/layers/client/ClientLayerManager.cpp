@@ -6,7 +6,6 @@
 #include "ClientLayerManager.h"
 #include "CompositorChild.h"            // for CompositorChild
 #include "GeckoProfiler.h"              // for PROFILER_LABEL
-#include "gfx3DMatrix.h"                // for gfx3DMatrix
 #include "gfxASurface.h"                // for gfxASurface, etc
 #include "ipc/AutoOpenSurface.h"        // for AutoOpenSurface
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
@@ -183,7 +182,7 @@ ClientLayerManager::EndTransactionInternal(DrawThebesLayerCallback aCallback,
   mThebesLayerCallback = aCallback;
   mThebesLayerCallbackData = aCallbackData;
 
-  GetRoot()->ComputeEffectiveTransforms(gfx3DMatrix());
+  GetRoot()->ComputeEffectiveTransforms(Matrix4x4());
 
   root->RenderLayer();
   
@@ -209,7 +208,7 @@ ClientLayerManager::EndTransaction(DrawThebesLayerCallback aCallback,
     mWidget->PrepareWindowEffects();
   }
   EndTransactionInternal(aCallback, aCallbackData, aFlags);
-  ForwardTransaction();
+  ForwardTransaction(!(aFlags & END_NO_REMOTE_COMPOSITE));
 
   if (mRepeatTransaction) {
     mRepeatTransaction = false;
@@ -239,7 +238,7 @@ ClientLayerManager::EndEmptyTransaction(EndTransactionFlags aFlags)
   if (mWidget) {
     mWidget->PrepareWindowEffects();
   }
-  ForwardTransaction();
+  ForwardTransaction(!(aFlags & END_NO_REMOTE_COMPOSITE));
   MakeSnapshotIfRequired();
   return true;
 }
@@ -254,6 +253,14 @@ ClientLayerManager::GetRemoteRenderer()
   return mWidget->GetRemoteRenderer();
 }
 
+void
+ClientLayerManager::Composite()
+{
+  if (CompositorChild* remoteRenderer = GetRemoteRenderer()) {
+    remoteRenderer->SendForceComposite();
+  }
+}
+
 void 
 ClientLayerManager::MakeSnapshotIfRequired()
 {
@@ -265,8 +272,8 @@ ClientLayerManager::MakeSnapshotIfRequired()
       nsIntRect bounds;
       mWidget->GetBounds(bounds);
       SurfaceDescriptor inSnapshot, snapshot;
-      if (mForwarder->AllocSurfaceDescriptor(bounds.Size(),
-                                             GFX_CONTENT_COLOR_ALPHA,
+      if (mForwarder->AllocSurfaceDescriptor(bounds.Size().ToIntSize(),
+                                             gfxContentType::COLOR_ALPHA,
                                              &inSnapshot) &&
           // The compositor will usually reuse |snapshot| and return
           // it through |outSnapshot|, but if it doesn't, it's
@@ -328,14 +335,14 @@ ClientLayerManager::StopFrameTimeRecording(uint32_t         aStartIndex,
 }
 
 void
-ClientLayerManager::ForwardTransaction()
+ClientLayerManager::ForwardTransaction(bool aScheduleComposite)
 {
   mPhase = PHASE_FORWARD;
 
   // forward this transaction's changeset to our LayerManagerComposite
   bool sent;
   AutoInfallibleTArray<EditReply, 10> replies;
-  if (HasShadowManager() && mForwarder->EndTransaction(&replies, &sent)) {
+  if (HasShadowManager() && mForwarder->EndTransaction(&replies, aScheduleComposite, &sent)) {
     for (nsTArray<EditReply>::size_type i = 0; i < replies.Length(); ++i) {
       const EditReply& reply = replies[i];
 
@@ -368,28 +375,7 @@ ClientLayerManager::ForwardTransaction()
           ->SetDescriptorFromReply(ots.textureId(), ots.image());
         break;
       }
-      case EditReply::TReplyTextureRemoved: {
-        // XXX - to manage reuse of gralloc buffers, we'll need to add some
-        // glue code here to find the TextureClient and invoke a callback to
-        // let the camera know that the gralloc buffer is not used anymore on
-        // the compositor side and that it can reuse it.
-        const ReplyTextureRemoved& rep = reply.get_ReplyTextureRemoved();
-        CompositableClient* compositable
-          = static_cast<CompositableChild*>(rep.compositableChild())->GetCompositableClient();
-        compositable->OnReplyTextureRemoved(rep.textureId());
-        break;
-      }
-      case EditReply::TReturnReleaseFence: {
-        const ReturnReleaseFence& rep = reply.get_ReturnReleaseFence();
-        FenceHandle fence = rep.fence();
-        if (!fence.IsValid()) {
-          break;
-        }
-        CompositableClient* compositable
-          = static_cast<CompositableChild*>(rep.compositableChild())->GetCompositableClient();
-        compositable->SetReleaseFence(fence);
-        break;
-      }
+
       default:
         NS_RUNTIMEABORT("not reached");
       }
@@ -402,6 +388,7 @@ ClientLayerManager::ForwardTransaction()
     NS_WARNING("failed to forward Layers transaction");
   }
 
+  mForwarder->ForceRemoveTexturesIfNecessary();
   mPhase = PHASE_NONE;
 
   // this may result in Layers being deleted, which results in
@@ -464,11 +451,11 @@ void
 ClientLayerManager::GetBackendName(nsAString& aName)
 {
   switch (mForwarder->GetCompositorBackendType()) {
-    case LAYERS_BASIC: aName.AssignLiteral("Basic"); return;
-    case LAYERS_OPENGL: aName.AssignLiteral("OpenGL"); return;
-    case LAYERS_D3D9: aName.AssignLiteral("Direct3D 9"); return;
-    case LAYERS_D3D10: aName.AssignLiteral("Direct3D 10"); return;
-    case LAYERS_D3D11: aName.AssignLiteral("Direct3D 11"); return;
+    case LayersBackend::LAYERS_BASIC: aName.AssignLiteral("Basic"); return;
+    case LayersBackend::LAYERS_OPENGL: aName.AssignLiteral("OpenGL"); return;
+    case LayersBackend::LAYERS_D3D9: aName.AssignLiteral("Direct3D 9"); return;
+    case LayersBackend::LAYERS_D3D10: aName.AssignLiteral("Direct3D 10"); return;
+    case LayersBackend::LAYERS_D3D11: aName.AssignLiteral("Direct3D 11"); return;
     default: NS_RUNTIMEABORT("Invalid backend");
   }
 }

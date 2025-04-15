@@ -43,6 +43,23 @@ public:
   {
   }
 
+  virtual WidgetEvent* Duplicate() const MOZ_OVERRIDE
+  {
+    // XXX Looks like this event is handled only in PostHandleEvent() of
+    //     EventStateManager.  Therefore, it might be possible to handle this
+    //     in PreHandleEvent() and not to dispatch as a DOM event into the DOM
+    //     tree like ContentQueryEvent.  Then, this event doesn't need to
+    //     support Duplicate().
+    MOZ_ASSERT(eventStructType == NS_GESTURENOTIFY_EVENT,
+               "Duplicate() must be overridden by sub class");
+    // Not copying widget, it is a weak reference.
+    WidgetGestureNotifyEvent* result =
+      new WidgetGestureNotifyEvent(false, message, nullptr);
+    result->AssignGestureNotifyEventData(*this, true);
+    result->mFlags = mFlags;
+    return result;
+  }
+
   enum ePanDirection
   {
     ePanNone,
@@ -54,7 +71,6 @@ public:
   ePanDirection panDirection;
   bool displayPanFeedback;
 
-  // XXX Not tested by test_assign_event_data.html
   void AssignGestureNotifyEventData(const WidgetGestureNotifyEvent& aEvent,
                                     bool aCopyTargets)
   {
@@ -93,6 +109,18 @@ public:
     allowedDirections(aOther.allowedDirections), direction(aOther.direction),
     delta(aOther.delta), clickCount(0)
   {
+  }
+
+  virtual WidgetEvent* Duplicate() const MOZ_OVERRIDE
+  {
+    MOZ_ASSERT(eventStructType == NS_SIMPLE_GESTURE_EVENT,
+               "Duplicate() must be overridden by sub class");
+    // Not copying widget, it is a weak reference.
+    WidgetSimpleGestureEvent* result =
+      new WidgetSimpleGestureEvent(false, message, nullptr, direction, delta);
+    result->AssignSimpleGestureEventData(*this, true);
+    result->mFlags = mFlags;
+    return result;
   }
 
   // See nsIDOMSimpleGestureEvent for values
@@ -140,7 +168,7 @@ public:
     MOZ_COUNT_CTOR(WidgetTouchEvent);
   }
 
-  WidgetTouchEvent(bool aIsTrusted, WidgetTouchEvent* aEvent) :
+  WidgetTouchEvent(bool aIsTrusted, const WidgetTouchEvent* aEvent) :
     WidgetInputEvent(aIsTrusted, aEvent->message, aEvent->widget,
                      NS_TOUCH_EVENT)
   {
@@ -159,6 +187,17 @@ public:
   virtual ~WidgetTouchEvent()
   {
     MOZ_COUNT_DTOR(WidgetTouchEvent);
+  }
+
+  virtual WidgetEvent* Duplicate() const MOZ_OVERRIDE
+  {
+    MOZ_ASSERT(eventStructType == NS_TOUCH_EVENT,
+               "Duplicate() must be overridden by sub class");
+    // XXX Why does only WidgetTouchEvent copy the widget?
+    WidgetTouchEvent* result = new WidgetTouchEvent(false, this);
+    result->AssignTouchEventData(*this, true);
+    result->mFlags = mFlags;
+    return result;
   }
 
   nsTArray<nsRefPtr<mozilla::dom::Touch>> touches;

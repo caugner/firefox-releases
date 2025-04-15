@@ -26,7 +26,7 @@ class nsAdoptingString;
 class nsAdoptingCString;
 
 #ifndef have_PrefChangedFunc_typedef
-typedef int (*PrefChangedFunc)(const char *, void *);
+typedef void (*PrefChangedFunc)(const char *, void *);
 #define have_PrefChangedFunc_typedef
 #endif
 
@@ -204,7 +204,7 @@ public:
   }
   static nsresult SetCString(const char* aPref, const char* aValue);
   static nsresult SetCString(const char* aPref, const nsACString &aValue);
-  static nsresult SetString(const char* aPref, const PRUnichar* aValue);
+  static nsresult SetString(const char* aPref, const char16_t* aValue);
   static nsresult SetString(const char* aPref, const nsAString &aValue);
 
   static nsresult SetComplex(const char* aPref, const nsIID &aType,

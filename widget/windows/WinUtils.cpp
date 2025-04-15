@@ -714,16 +714,16 @@ AsyncFaviconDataReady::OnComplete(nsIURI *aFaviconURI,
                                 getter_AddRefs(container));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsRefPtr<gfxASurface> imgFrame;
-  rv = container->GetFrame(imgIContainer::FRAME_FIRST, 0, getter_AddRefs(imgFrame));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsRefPtr<gfxASurface> imgFrame =
+    container->GetFrame(imgIContainer::FRAME_FIRST, 0);
+  NS_ENSURE_TRUE(imgFrame, NS_ERROR_FAILURE);
 
   nsRefPtr<gfxImageSurface> imageSurface;
   gfxIntSize size;
   if (mURLShortcut) {
     imageSurface =
       new gfxImageSurface(gfxIntSize(48, 48),
-                          gfxImageFormatARGB32);
+                          gfxImageFormat::ARGB32);
     gfxContext context(imageSurface);
     context.SetOperator(gfxContext::OPERATOR_SOURCE);
     context.SetColor(gfxRGBA(1, 1, 1, 1));

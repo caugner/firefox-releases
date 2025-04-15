@@ -173,19 +173,18 @@ nsPluginInstanceOwner::GetImageContainer()
 
   // NotifySize() causes Flash to do a bunch of stuff like ask for surfaces to render
   // into, set y-flip flags, etc, so we do this at the beginning.
-  gfxSize resolution = static_cast<nsIPresShell_MOZILLA27*>(mObjectFrame->PresContext()->PresShell())->GetCumulativeResolution();
+  gfxSize resolution = mObjectFrame->PresContext()->PresShell()->GetCumulativeResolution();
   ScreenSize screenSize = (r * LayoutDeviceToScreenScale(resolution.width, resolution.height)).Size();
   mInstance->NotifySize(nsIntSize(screenSize.width, screenSize.height));
   
   container = LayerManager::CreateImageContainer();
 
-  ImageFormat format = ImageFormat::SHARED_TEXTURE;
-  nsRefPtr<Image> img = container->CreateImage(&format, 1);
+  nsRefPtr<Image> img = container->CreateImage(ImageFormat::SHARED_TEXTURE);
 
   SharedTextureImage::Data data;
-  data.mSize = gfxIntSize(r.width, r.height);
+  data.mSize = gfx::IntSize(r.width, r.height);
   data.mHandle = mInstance->CreateSharedHandle();
-  data.mShareType = mozilla::gl::SameProcess;
+  data.mShareType = mozilla::gl::SharedTextureShareType::SameProcess;
   data.mInverted = mInstance->Inverted();
 
   SharedTextureImage* pluginImage = static_cast<SharedTextureImage*>(img.get());
@@ -499,7 +498,7 @@ NS_IMETHODIMP nsPluginInstanceOwner::GetURL(const char *aURL,
   }
 
   // the container of the pres context will give us the link handler
-  nsCOMPtr<nsISupports> container = presContext->GetContainer();
+  nsCOMPtr<nsISupports> container = presContext->GetContainerWeak();
   NS_ENSURE_TRUE(container,NS_ERROR_FAILURE);
   nsCOMPtr<nsILinkHandler> lh = do_QueryInterface(container);
   NS_ENSURE_TRUE(lh, NS_ERROR_FAILURE);
@@ -548,19 +547,14 @@ NS_IMETHODIMP nsPluginInstanceOwner::ShowStatus(const char *aStatusMsg)
   return rv;
 }
 
-NS_IMETHODIMP nsPluginInstanceOwner::ShowStatus(const PRUnichar *aStatusMsg)
+NS_IMETHODIMP nsPluginInstanceOwner::ShowStatus(const char16_t *aStatusMsg)
 {
   nsresult  rv = NS_ERROR_FAILURE;
 
   if (!mObjectFrame) {
     return rv;
   }
-  nsCOMPtr<nsISupports> cont = mObjectFrame->PresContext()->GetContainer();
-  if (!cont) {
-    return NS_OK;
-  }
-
-  nsCOMPtr<nsIDocShellTreeItem> docShellItem(do_QueryInterface(cont, &rv));
+  nsCOMPtr<nsIDocShellTreeItem> docShellItem = mObjectFrame->PresContext()->GetDocShell();
   if (NS_FAILED(rv) || !docShellItem) {
     return rv;
   }
@@ -1504,21 +1498,20 @@ already_AddRefed<ImageContainer> nsPluginInstanceOwner::GetImageContainerForVide
 {
   nsRefPtr<ImageContainer> container = LayerManager::CreateImageContainer();
 
-  ImageFormat format = ImageFormat::SHARED_TEXTURE;
-  nsRefPtr<Image> img = container->CreateImage(&format, 1);
+  nsRefPtr<Image> img = container->CreateImage(ImageFormat::SHARED_TEXTURE);
 
   SharedTextureImage::Data data;
 
-  data.mShareType = gl::SameProcess;
+  data.mShareType = gl::SharedTextureShareType::SameProcess;
   data.mHandle = gl::CreateSharedHandle(mInstance->GLContext(),
                                         data.mShareType,
                                         aVideoInfo->mSurfaceTexture,
-                                        gl::SurfaceTexture);
+                                        gl::SharedTextureBufferType::SurfaceTexture);
 
   // The logic below for Honeycomb is just a guess, but seems to work. We don't have a separate
   // inverted flag for video.
   data.mInverted = AndroidBridge::Bridge()->IsHoneycomb() ? true : mInstance->Inverted();
-  data.mSize = gfxIntSize(aVideoInfo->mDimensions.width, aVideoInfo->mDimensions.height);
+  data.mSize = gfx::IntSize(aVideoInfo->mDimensions.width, aVideoInfo->mDimensions.height);
 
   SharedTextureImage* pluginImage = static_cast<SharedTextureImage*>(img.get());
   pluginImage->SetData(data);
@@ -1574,10 +1567,10 @@ void nsPluginInstanceOwner::ExitFullScreen() {
 void nsPluginInstanceOwner::ExitFullScreen(jobject view) {
   JNIEnv* env = AndroidBridge::GetJNIEnv();
 
-  if (env && sFullScreenInstance && sFullScreenInstance->mInstance &&
+  if (sFullScreenInstance && sFullScreenInstance->mInstance &&
       env->IsSameObject(view, (jobject)sFullScreenInstance->mInstance->GetJavaSurface())) {
     sFullScreenInstance->ExitFullScreen();
-  } 
+  }
 }
 
 #endif
@@ -2512,7 +2505,7 @@ void nsPluginInstanceOwner::Paint(gfxContext* aContext,
       aFrameRect.height != pluginSurface->Height()) {
 
     pluginSurface = new gfxImageSurface(gfxIntSize(aFrameRect.width, aFrameRect.height), 
-                                        gfxImageFormatARGB32);
+                                        gfxImageFormat::ARGB32);
     if (!pluginSurface)
       return;
   }

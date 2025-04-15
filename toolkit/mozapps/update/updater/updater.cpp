@@ -11,11 +11,7 @@
  *  CRLF     = "\r\n"
  *  LWS      = 1*( " " | "\t" )
  *
- *  Available methods for the different manifest files:
- *
- *  update.manifest
- *  ---------------
- *  method   = "add" | "add-if" | "patch" | "patch-if" | "remove"
+ *  Available methods for the manifest file:
  *
  *  updatev2.manifest
  *  -----------------
@@ -25,6 +21,13 @@
  *  'type' is the update type (e.g. complete or partial) and when present MUST
  *  be the first entry in the update manifest. The type is used to support
  *  downgrades by causing the actions defined in precomplete to be performed.
+ *
+ *  updatev3.manifest
+ *  -----------------
+ *  method   = "add" | "add-if" | "add-if-not" | "patch" | "patch-if" |
+ *             "remove" | "rmdir" | "rmrfdir" | type
+ *
+ *  'add-if-not' adds a file if it doesn't exist.
  *
  *  precomplete
  *  -----------
@@ -298,7 +301,7 @@ static NS_tchar* gSourcePath;
 static NS_tchar gDestinationPath[MAXPATHLEN];
 static ArchiveReader gArchiveReader;
 static bool gSucceeded = false;
-static bool sBackgroundUpdate = false;
+static bool sStagedUpdate = false;
 static bool sReplaceRequest = false;
 static bool sUsingService = false;
 static bool sIsOSUpdate = false;
@@ -906,7 +909,7 @@ static int backup_discard(const NS_tchar *path)
 
   int rv = ensure_remove(backup);
 #if defined(XP_WIN)
-  if (rv && !sBackgroundUpdate && !sReplaceRequest) {
+  if (rv && !sStagedUpdate && !sReplaceRequest) {
     LOG(("backup_discard: unable to remove: " LOG_S, backup));
     NS_tchar path[MAXPATHLEN];
     GetTempFileNameW(DELETE_DIR, L"moz", 0, path);
@@ -1615,6 +1618,67 @@ AddIfFile::Finish(int status)
   AddFile::Finish(status);
 }
 
+class AddIfNotFile : public AddFile
+{
+public:
+  AddIfNotFile() : mTestFile(NULL) { }
+
+  virtual int Parse(NS_tchar *line);
+  virtual int Prepare();
+  virtual int Execute();
+  virtual void Finish(int status);
+
+protected:
+  const NS_tchar *mTestFile;
+};
+
+int
+AddIfNotFile::Parse(NS_tchar *line)
+{
+  // format "<testfile>" "<newfile>"
+
+  mTestFile = get_valid_path(&line);
+  if (!mTestFile)
+    return PARSE_ERROR;
+
+  // consume whitespace between args
+  NS_tchar *q = mstrtok(kQuote, &line);
+  if (!q)
+    return PARSE_ERROR;
+
+  return AddFile::Parse(line);
+}
+
+int
+AddIfNotFile::Prepare()
+{
+  // If the test file exists, then skip this action.
+  if (!NS_taccess(mTestFile, F_OK)) {
+    mTestFile = NULL;
+    return OK;
+  }
+
+  return AddFile::Prepare();
+}
+
+int
+AddIfNotFile::Execute()
+{
+  if (!mTestFile)
+    return OK;
+
+  return AddFile::Execute();
+}
+
+void
+AddIfNotFile::Finish(int status)
+{
+  if (!mTestFile)
+    return;
+
+  AddFile::Finish(status);
+}
+
 class PatchIfFile : public PatchFile
 {
 public:
@@ -1769,7 +1833,7 @@ WriteStatusFile(int status)
 
   char buf[32];
   if (status == OK) {
-    if (sBackgroundUpdate) {
+    if (sStagedUpdate) {
       text = "applied\n";
     } else {
       text = "succeeded\n";
@@ -1858,7 +1922,7 @@ static bool
 GetInstallationDir(NS_tchar (&installDir)[N])
 {
   NS_tsnprintf(installDir, N, NS_T("%s"), gDestinationPath);
-  if (!sBackgroundUpdate && !sReplaceRequest) {
+  if (!sStagedUpdate && !sReplaceRequest) {
     // no need to do any further processing
     return true;
   }
@@ -1916,7 +1980,7 @@ CopyInstallDirToDestDir()
 
 /*
  * Replace the application installation directory with the destination
- * directory in order to finish a background update task
+ * directory in order to finish a staged update task
  *
  * @return 0 if successful, an error code otherwise.
  */
@@ -2200,7 +2264,7 @@ UpdateThreadFunc(void *param)
 
     if (rv == OK) {
       NS_tchar installDir[MAXPATHLEN];
-      if (sBackgroundUpdate) {
+      if (sStagedUpdate) {
         if (!GetInstallationDir(installDir)) {
           rv = NO_INSTALLDIR_ERROR;
         }
@@ -2225,7 +2289,7 @@ UpdateThreadFunc(void *param)
     }
 #endif
 
-    if (rv == OK && sBackgroundUpdate && !sIsOSUpdate) {
+    if (rv == OK && sStagedUpdate && !sIsOSUpdate) {
       rv = CopyInstallDirToDestDir();
     }
 
@@ -2402,12 +2466,12 @@ int NS_main(int argc, NS_tchar **argv)
     pid = atoi(argv[3]);
 #endif
     if (pid == -1) {
-      // This is a signal from the parent process that the updater should work
-      // in the background.
-      sBackgroundUpdate = true;
+      // This is a signal from the parent process that the updater should stage
+      // the update.
+      sStagedUpdate = true;
     } else if (NS_tstrstr(argv[3], NS_T("/replace"))) {
-      // We're processing a request to replace a version of the application
-      // with an updated version applied in the background.
+      // We're processing a request to replace the application with a staged
+      // update.
       sReplaceRequest = true;
     }
   }
@@ -2419,7 +2483,7 @@ int NS_main(int argc, NS_tchar **argv)
 
   if (sReplaceRequest) {
     // If we're attempting to replace the application, try to append to the
-    // log generated when staging the background update.
+    // log generated when staging the staged update.
     NS_tchar installDir[MAXPATHLEN];
     if (!GetInstallationDir(installDir)) {
       fprintf(stderr, "Could not get the installation directory\n");
@@ -2449,8 +2513,8 @@ int NS_main(int argc, NS_tchar **argv)
     return 1;
   }
 
-  if (sBackgroundUpdate) {
-    LOG(("Performing a background update"));
+  if (sStagedUpdate) {
+    LOG(("Performing a staged update"));
   } else if (sReplaceRequest) {
     LOG(("Performing a replace request"));
   }
@@ -2539,10 +2603,10 @@ int NS_main(int argc, NS_tchar **argv)
   HANDLE updateLockFileHandle = INVALID_HANDLE_VALUE;
   NS_tchar elevatedLockFilePath[MAXPATHLEN] = {NS_T('\0')};
   if (!sUsingService &&
-      (argc > callbackIndex || sBackgroundUpdate || sReplaceRequest)) {
+      (argc > callbackIndex || sStagedUpdate || sReplaceRequest)) {
     NS_tchar updateLockFilePath[MAXPATHLEN];
-    if (sBackgroundUpdate) {
-      // When updating in the background, the lock file is:
+    if (sStagedUpdate) {
+      // When staging an update, the lock file is:
       // $INSTALLDIR\updated.update_in_progress.lock
       NS_tsnprintf(updateLockFilePath,
                    sizeof(updateLockFilePath)/sizeof(updateLockFilePath[0]),
@@ -2560,7 +2624,7 @@ int NS_main(int argc, NS_tchar **argv)
                    sizeof(updateLockFilePath)/sizeof(updateLockFilePath[0]),
                    NS_T("%s\\moz_update_in_progress.lock"), installDir);
     } else {
-      // In the old non-background update case, the lock file is:
+      // In the non-staging update case, the lock file is:
       // $INSTALLDIR\$APPNAME.exe.update_in_progress.lock
       NS_tsnprintf(updateLockFilePath,
                    sizeof(updateLockFilePath)/sizeof(updateLockFilePath[0]),
@@ -2572,9 +2636,9 @@ int NS_main(int argc, NS_tchar **argv)
     // simultaneous updates occurring.
     if (!_waccess(updateLockFilePath, F_OK) &&
         NS_tremove(updateLockFilePath) != 0) {
-      // Try to fall back to the old way of doing updates if a background
+      // Try to fall back to the old way of doing updates if a staged
       // update fails.
-      if (sBackgroundUpdate || sReplaceRequest) {
+      if (sStagedUpdate || sReplaceRequest) {
         // Note that this could fail, but if it does, there isn't too much we
         // can do in order to recover anyways.
         WriteStatusFile("pending");
@@ -2634,7 +2698,7 @@ int NS_main(int argc, NS_tchar **argv)
         return 1;
       }
 
-      PRUnichar *cmdLine = MakeCommandLine(argc - 1, argv + 1);
+      char16_t *cmdLine = MakeCommandLine(argc - 1, argv + 1);
       if (!cmdLine) {
         CloseHandle(elevatedFileHandle);
         return 1;
@@ -2705,8 +2769,8 @@ int NS_main(int argc, NS_tchar **argv)
         // If the command was launched then wait for the service to be done.
         if (useService) {
           bool showProgressUI = false;
-          // Never show the progress UI for background updates
-          if (!sBackgroundUpdate) {
+          // Never show the progress UI when staging updates.
+          if (!sStagedUpdate) {
             // We need to call this separately instead of allowing ShowProgressUI
             // to initialize the strings because the service will move the
             // ini file out of the way when running updater.
@@ -2737,11 +2801,10 @@ int NS_main(int argc, NS_tchar **argv)
         }
       }
 
-      // If we could not use the service in the background update case,
-      // we need to make sure that we will never show a UAC prompt!
-      // In this case, we would just set the status to pending and will
-      // apply the update at the next startup.
-      if (!useService && sBackgroundUpdate) {
+      // If the service can't be used when staging and update, make sure that
+      // the UAC prompt is not shown! In this case, just set the status to
+      // pending and the update will be applied during the next startup.
+      if (!useService && sStagedUpdate) {
         if (updateLockFileHandle != INVALID_HANDLE_VALUE) {
           CloseHandle(updateLockFileHandle);
         }
@@ -2754,10 +2817,9 @@ int NS_main(int argc, NS_tchar **argv)
       // we need to manually start the PostUpdate process from the
       // current user's session of this unelevated updater.exe the
       // current process is running as.
-      // Note that we don't need to do this if we're just staging the
-      // update in the background, as the PostUpdate step runs when
-      // performing the replacing in that case.
-      if (useService && !sBackgroundUpdate) {
+      // Note that we don't need to do this if we're just staging the update,
+      // as the PostUpdate step runs when performing the replacing in that case.
+      if (useService && !sStagedUpdate) {
         bool updateStatusSucceeded = false;
         if (IsUpdateStatusSucceeded(updateStatusSucceeded) && 
             updateStatusSucceeded) {
@@ -2852,9 +2914,9 @@ int NS_main(int argc, NS_tchar **argv)
     }
 #endif
 
-  if (sBackgroundUpdate) {
-    // For background updates, we want to blow away the old installation
-    // directory and create it from scratch.
+  if (sStagedUpdate) {
+    // When staging updates, blow away the old installation directory and create
+    // it from scratch.
     ensure_remove_recursive(gDestinationPath);
   }
   if (!sReplaceRequest) {
@@ -3022,7 +3084,7 @@ int NS_main(int argc, NS_tchar **argv)
           break;
 
         lastWriteError = GetLastError();
-        LOG(("NS_main: callback app open attempt %d failed. " \
+        LOG(("NS_main: callback app file open attempt %d failed. " \
              "File: " LOG_S ". Last error: %d", retries,
              targetPath, lastWriteError));
 
@@ -3030,15 +3092,12 @@ int NS_main(int argc, NS_tchar **argv)
       } while (++retries <= max_retries);
 
       // CreateFileW will fail if the callback executable is already in use.
-      // We don't fail the update though.
       if (callbackFile == INVALID_HANDLE_VALUE) {
-        LOG(("NS_main: file in use - failed to exclusively open executable " \
-             "file: " LOG_S, argv[callbackIndex]));
-        LogFinish();
-
-        if (lastWriteError == ERROR_SHARING_VIOLATION) {
-          LOG(("NS_main: callback in use, continuing without exclusive access"));
-        } else {
+        // Only fail the update if the last error was not a sharing violation.
+        if (lastWriteError != ERROR_SHARING_VIOLATION) {
+          LOG(("NS_main: callback app file in use, failed to exclusively open " \
+               "executable file: " LOG_S, argv[callbackIndex]));
+          LogFinish();
           if (lastWriteError == ERROR_ACCESS_DENIED) {
             WriteStatusFile(WRITE_ERROR_ACCESS_DENIED);
           } else {
@@ -3053,12 +3112,15 @@ int NS_main(int argc, NS_tchar **argv)
                             sUsingService);
           return 1;
         }
+        LOG(("NS_main: callback app file in use, continuing without " \
+             "exclusive access for executable file: " LOG_S,
+             argv[callbackIndex]));
       }
     }
   }
 
-  // DELETE_DIR is not required in the case of background updates.
-  if (!sBackgroundUpdate && !sReplaceRequest) {
+  // DELETE_DIR is not required when staging an update.
+  if (!sStagedUpdate && !sReplaceRequest) {
     // The directory to move files that are in use to on Windows. This directory
     // will be deleted after the update is finished or on OS reboot using
     // MoveFileEx if it contains files that are in use.
@@ -3070,10 +3132,10 @@ int NS_main(int argc, NS_tchar **argv)
 
   // Run update process on a background thread.  ShowProgressUI may return
   // before QuitProgressUI has been called, so wait for UpdateThreadFunc to
-  // terminate.  Avoid showing the progress UI for background updates.
+  // terminate.  Avoid showing the progress UI when staging an update.
   Thread t;
   if (t.Run(UpdateThreadFunc, nullptr) == 0) {
-    if (!sBackgroundUpdate && !sReplaceRequest) {
+    if (!sStagedUpdate && !sReplaceRequest) {
       ShowProgressUI();
     }
   }
@@ -3088,7 +3150,7 @@ int NS_main(int argc, NS_tchar **argv)
     NS_tremove(gCallbackBackupPath);
   }
 
-  if (!sBackgroundUpdate && !sReplaceRequest && _wrmdir(DELETE_DIR)) {
+  if (!sStagedUpdate && !sReplaceRequest && _wrmdir(DELETE_DIR)) {
     LOG(("NS_main: unable to remove directory: " LOG_S ", err: %d",
          DELETE_DIR, errno));
     // The directory probably couldn't be removed due to it containing files
@@ -3145,10 +3207,12 @@ int NS_main(int argc, NS_tchar **argv)
     }
 #endif /* XP_MACOSX */
 
-    LaunchCallbackApp(argv[4], 
-                      argc - callbackIndex, 
-                      argv + callbackIndex, 
-                      sUsingService);
+    if (getenv("MOZ_PROCESS_UPDATES") == nullptr) {
+      LaunchCallbackApp(argv[4], 
+                        argc - callbackIndex, 
+                        argv + callbackIndex, 
+                        sUsingService);
+    }
   }
 
   return gSucceeded ? 0 : 1;
@@ -3605,7 +3669,8 @@ int AddPreCompleteActions(ActionList *list)
   if (rb == nullptr) {
     LOG(("AddPreCompleteActions: error getting contents of precomplete " \
          "manifest"));
-    // Applications aren't required to have a precomplete manifest yet.
+    // Applications aren't required to have a precomplete manifest. The mar
+    // generation scripts enforce the presence of a precomplete manifest.
     return OK;
   }
 
@@ -3658,9 +3723,9 @@ int DoUpdate()
   ensure_parent_dir(manifest);
 
   // extract the manifest
-  int rv = gArchiveReader.ExtractFile("updatev2.manifest", manifest);
+  int rv = gArchiveReader.ExtractFile("updatev3.manifest", manifest);
   if (rv) {
-    rv = gArchiveReader.ExtractFile("update.manifest", manifest);
+    rv = gArchiveReader.ExtractFile("updatev2.manifest", manifest);
     if (rv) {
       LOG(("DoUpdate: error extracting manifest file"));
       return rv;
@@ -3690,25 +3755,27 @@ int DoUpdate()
       return PARSE_ERROR;
     }
 
-    if (isFirstAction && NS_tstrcmp(token, NS_T("type")) == 0) {
-      const NS_tchar *type = mstrtok(kQuote, &line);
-      LOG(("UPDATE TYPE " LOG_S, type));
-      if (NS_tstrcmp(type, NS_T("complete")) == 0) {
-        rv = AddPreCompleteActions(&list);
-        if (rv)
-          return rv;
-      }
+    if (isFirstAction) {
       isFirstAction = false;
-      continue;
+      // The update manifest isn't required to have a type declaration. The mar
+      // generation scripts enforce the presence of the type declaration.
+      if (NS_tstrcmp(token, NS_T("type")) == 0) {
+        const NS_tchar *type = mstrtok(kQuote, &line);
+        LOG(("UPDATE TYPE " LOG_S, type));
+        if (NS_tstrcmp(type, NS_T("complete")) == 0) {
+          rv = AddPreCompleteActions(&list);
+          if (rv)
+            return rv;
+        }
+        continue;
+      }
     }
-
-    isFirstAction = false;
 
     Action *action = nullptr;
     if (NS_tstrcmp(token, NS_T("remove")) == 0) { // rm file
       action = new RemoveFile();
     }
-    else if (NS_tstrcmp(token, NS_T("rmdir")) == 0) { // rmdir if  empty
+    else if (NS_tstrcmp(token, NS_T("rmdir")) == 0) { // rmdir if empty
       action = new RemoveDir();
     }
     else if (NS_tstrcmp(token, NS_T("rmrfdir")) == 0) { // rmdir recursive
@@ -3734,11 +3801,11 @@ int DoUpdate()
     else if (NS_tstrcmp(token, NS_T("add-if")) == 0) { // Add if exists
       action = new AddIfFile();
     }
+    else if (NS_tstrcmp(token, NS_T("add-if-not")) == 0) { // Add if not exists
+      action = new AddIfNotFile();
+    }
     else if (NS_tstrcmp(token, NS_T("patch-if")) == 0) { // Patch if exists
       action = new PatchIfFile();
-    }
-    else if (NS_tstrcmp(token, NS_T("add-cc")) == 0) { // no longer supported
-      continue;
     }
     else {
       LOG(("DoUpdate: unknown token: " LOG_S, token));

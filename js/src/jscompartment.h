@@ -127,6 +127,7 @@ struct JSCompartment
   public:
     JSPrincipals                 *principals;
     bool                         isSystem;
+    bool                         isSelfHosting;
     bool                         marked;
 
 #ifdef DEBUG
@@ -187,8 +188,6 @@ struct JSCompartment
      */
     void adoptWorkerAllocator(js::Allocator *workerAllocator);
 
-
-    int64_t                      lastCodeRelease;
     bool                         activeAnalysis;
 
     /* Type information about the scripts and objects in this compartment. */
@@ -221,7 +220,6 @@ struct JSCompartment
 
   public:
     void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
-                                size_t *tiPendingArrays,
                                 size_t *tiAllocationSiteTables,
                                 size_t *tiArrayTypeTables,
                                 size_t *tiObjectTypeTables,
@@ -244,12 +242,16 @@ struct JSCompartment
     /* Set of initial shapes in the compartment. */
     js::InitialShapeSet          initialShapes;
     void sweepInitialShapeTable();
-    void markAllInitialShapeTableEntries(JSTracer *trc);
 
     /* Set of default 'new' or lazy types in the compartment. */
-    js::types::TypeObjectSet     newTypeObjects;
-    js::types::TypeObjectSet     lazyTypeObjects;
-    void sweepNewTypeObjectTable(js::types::TypeObjectSet &table);
+    js::types::TypeObjectWithNewScriptSet newTypeObjects;
+    js::types::TypeObjectWithNewScriptSet lazyTypeObjects;
+    void sweepNewTypeObjectTable(js::types::TypeObjectWithNewScriptSet &table);
+#if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
+    void checkNewTypeObjectTableAfterMovingGC();
+    void checkInitialShapesTableAfterMovingGC();
+    void checkWrapperMapAfterMovingGC();
+#endif
 
     /*
      * Hash table of all manually call site-cloned functions from within
@@ -296,7 +298,6 @@ struct JSCompartment
 
     /* Mark cross-compartment wrappers. */
     void markCrossCompartmentWrappers(JSTracer *trc);
-    void markAllCrossCompartmentWrappers(JSTracer *trc);
 
     inline bool wrap(JSContext *cx, JS::MutableHandleValue vp,
                      JS::HandleObject existing = js::NullPtr());
@@ -311,7 +312,7 @@ struct JSCompartment
     bool wrap(JSContext *cx, JS::MutableHandle<js::PropertyDescriptor> desc);
     bool wrap(JSContext *cx, js::AutoIdVector &props);
 
-    bool putWrapper(const js::CrossCompartmentKey& wrapped, const js::Value& wrapper);
+    bool putWrapper(JSContext *cx, const js::CrossCompartmentKey& wrapped, const js::Value& wrapper);
 
     js::WrapperMap::Ptr lookupWrapper(const js::Value& wrapped) {
         return crossCompartmentWrappers.lookup(wrapped);
@@ -325,7 +326,7 @@ struct JSCompartment
         WrapperEnum(JSCompartment *c) : js::WrapperMap::Enum(c->crossCompartmentWrappers) {}
     };
 
-    void mark(JSTracer *trc);
+    void markRoots(JSTracer *trc);
     bool isDiscardingJitCode(JSTracer *trc);
     void sweep(js::FreeOp *fop, bool releaseTypes);
     void sweepCrossCompartmentWrappers();
@@ -502,7 +503,7 @@ class js::AutoDebugModeInvalidation
         // must all agree on the toggle. This is so we can decide if we need
         // to invalidate on-stack scripts.
         MOZ_ASSERT_IF(needInvalidation_ != NoNeed,
-                      needInvalidation_ == debugMode ? ToggledOn : ToggledOff);
+                      needInvalidation_ == (debugMode ? ToggledOn : ToggledOff));
         needInvalidation_ = debugMode ? ToggledOn : ToggledOff;
     }
 };

@@ -7,6 +7,7 @@
 
 #include "XPCModule.h"
 #include "mozilla/ModuleUtils.h"
+#include "nsImageModule.h"
 #include "nsLayoutStatics.h"
 #include "nsContentCID.h"
 #include "nsContentDLF.h"
@@ -70,6 +71,7 @@
 #include "nsDOMBlobBuilder.h"
 #include "nsDOMFileReader.h"
 
+#include "gfxPlatform.h"
 #include "nsFormData.h"
 #include "nsHostObjectProtocolHandler.h"
 #include "nsHostObjectURI.h"
@@ -84,10 +86,8 @@
 #include "nsZipArchive.h"
 #include "mozIApplicationClearPrivateDataParams.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/dom/Activity.h"
 #include "mozilla/dom/DOMException.h"
 #include "mozilla/dom/DOMRequest.h"
-#include "mozilla/dom/EventSource.h"
 #include "mozilla/dom/indexedDB/IndexedDatabaseManager.h"
 #include "mozilla/dom/network/TCPSocketChild.h"
 #include "mozilla/dom/network/TCPSocketParent.h"
@@ -270,8 +270,6 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(XPathEvaluator)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(txNodeSetAdaptor, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsDOMSerializer)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsXMLHttpRequest, Init)
-NS_GENERIC_FACTORY_CONSTRUCTOR(EventSource)
-NS_GENERIC_FACTORY_CONSTRUCTOR(Activity)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsDOMFileReader, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsFormData)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsBlobProtocolHandler)
@@ -356,35 +354,6 @@ NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsITelephonyProvider,
 
 //-----------------------------------------------------------------------------
 
-// Per bug 209804, it is necessary to observe the "xpcom-shutdown" event and
-// perform shutdown of the layout modules at that time instead of waiting for
-// our module destructor to run.  If we do not do this, then we risk holding
-// references to objects in other component libraries that have already been
-// shutdown (and possibly unloaded if 60709 is ever fixed).
-
-class LayoutShutdownObserver MOZ_FINAL : public nsIObserver
-{
-public:
-  NS_DECL_ISUPPORTS
-  NS_DECL_NSIOBSERVER
-};
-
-NS_IMPL_ISUPPORTS1(LayoutShutdownObserver, nsIObserver)
-
-NS_IMETHODIMP
-LayoutShutdownObserver::Observe(nsISupports *aSubject,
-                                const char *aTopic,
-                                const PRUnichar *someData)
-{
-  if (!strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID)) {
-    Shutdown();
-    nsContentUtils::XPCOMShutdown();
-  }
-  return NS_OK;
-}
-
-//-----------------------------------------------------------------------------
-
 static bool gInitialized = false;
 
 // Perform our one-time intialization for this module
@@ -415,23 +384,9 @@ Initialize()
     return rv;
   }
 
-  // Add our shutdown observer.
-  nsCOMPtr<nsIObserverService> observerService =
-    mozilla::services::GetObserverService();
-
-  if (observerService) {
-    LayoutShutdownObserver* observer = new LayoutShutdownObserver();
-
-    if (!observer) {
-      Shutdown();
-
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    observerService->AddObserver(observer, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);
-  } else {
-    NS_WARNING("Could not get an observer service.  We will leak on shutdown.");
-  }
+#ifdef DEBUG
+  nsStyleContext::AssertStyleStructMaxDifferenceValid();
+#endif
 
   return NS_OK;
 }
@@ -747,8 +702,6 @@ NS_DEFINE_NAMED_CID(NS_MEDIASOURCEPROTOCOLHANDLER_CID);
 NS_DEFINE_NAMED_CID(NS_FONTTABLEPROTOCOLHANDLER_CID);
 NS_DEFINE_NAMED_CID(NS_HOSTOBJECTURI_CID);
 NS_DEFINE_NAMED_CID(NS_XMLHTTPREQUEST_CID);
-NS_DEFINE_NAMED_CID(NS_EVENTSOURCE_CID);
-NS_DEFINE_NAMED_CID(NS_DOMACTIVITY_CID);
 NS_DEFINE_NAMED_CID(NS_DOMPARSER_CID);
 NS_DEFINE_NAMED_CID(NS_DOMSESSIONSTORAGEMANAGER_CID);
 NS_DEFINE_NAMED_CID(NS_DOMLOCALSTORAGEMANAGER_CID);
@@ -1036,8 +989,6 @@ static const mozilla::Module::CIDEntry kLayoutCIDs[] = {
   { &kNS_FONTTABLEPROTOCOLHANDLER_CID, false, nullptr, nsFontTableProtocolHandlerConstructor },
   { &kNS_HOSTOBJECTURI_CID, false, nullptr, nsHostObjectURIConstructor },
   { &kNS_XMLHTTPREQUEST_CID, false, nullptr, nsXMLHttpRequestConstructor },
-  { &kNS_EVENTSOURCE_CID, false, nullptr, EventSourceConstructor },
-  { &kNS_DOMACTIVITY_CID, false, nullptr, ActivityConstructor },
   { &kNS_DOMPARSER_CID, false, nullptr, DOMParserConstructor },
   { &kNS_XPCEXCEPTION_CID, false, nullptr, ExceptionConstructor },
   { &kNS_DOMSESSIONSTORAGEMANAGER_CID, false, nullptr, DOMSessionStorageManagerConstructor },
@@ -1146,7 +1097,6 @@ static const mozilla::Module::ContractIDEntry kLayoutContracts[] = {
   { "@mozilla.org/content/post-content-iterator;1", &kNS_CONTENTITERATOR_CID },
   { "@mozilla.org/content/pre-content-iterator;1", &kNS_PRECONTENTITERATOR_CID },
   { "@mozilla.org/content/subtree-content-iterator;1", &kNS_SUBTREEITERATOR_CID },
-  { "@mozilla.org/content/canvas-rendering-context;1?id=moz-webgl", &kNS_CANVASRENDERINGCONTEXTWEBGL_CID },
   { "@mozilla.org/content/canvas-rendering-context;1?id=experimental-webgl", &kNS_CANVASRENDERINGCONTEXTWEBGL_CID },
 #ifdef MOZ_WEBGL_CONFORMANT
   { "@mozilla.org/content/canvas-rendering-context;1?id=webgl", &kNS_CANVASRENDERINGCONTEXTWEBGL_CID },
@@ -1193,8 +1143,6 @@ static const mozilla::Module::ContractIDEntry kLayoutContracts[] = {
   { NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX MEDIASOURCEURI_SCHEME, &kNS_MEDIASOURCEPROTOCOLHANDLER_CID },
   { NS_NETWORK_PROTOCOL_CONTRACTID_PREFIX FONTTABLEURI_SCHEME, &kNS_FONTTABLEPROTOCOLHANDLER_CID },
   { NS_XMLHTTPREQUEST_CONTRACTID, &kNS_XMLHTTPREQUEST_CID },
-  { NS_EVENTSOURCE_CONTRACTID, &kNS_EVENTSOURCE_CID },
-  { NS_DOMACTIVITY_CONTRACTID, &kNS_DOMACTIVITY_CID },
   { NS_DOMPARSER_CONTRACTID, &kNS_DOMPARSER_CID },
   { XPC_EXCEPTION_CONTRACTID, &kNS_XPCEXCEPTION_CID },
   { "@mozilla.org/dom/localStorage-manager;1", &kNS_DOMLOCALSTORAGEMANAGER_CID },
@@ -1304,6 +1252,14 @@ static const mozilla::Module::CategoryEntry kLayoutCategories[] = {
 static void
 LayoutModuleDtor()
 {
+  Shutdown();
+  nsContentUtils::XPCOMShutdown();
+
+  // Layout depends heavily on gfx and imagelib, so we want to make sure that
+  // these modules are shut down after all the layout cleanup runs.
+  mozilla::image::ShutdownModule();
+  gfxPlatform::Shutdown();
+
   nsScriptSecurityManager::Shutdown();
   xpcModuleDtor();
 }

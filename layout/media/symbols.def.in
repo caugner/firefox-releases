@@ -29,7 +29,18 @@ nestegg_tstamp_scale
 nestegg_has_cues
 nestegg_sniff
 #endif
-#ifdef MOZ_VP8
+#ifdef MOZ_WEBM_ENCODER
+writeSimpleBlock
+writeHeader
+writeSegmentInformation
+writeVideoTrack
+writeAudioTrack
+Ebml_Serialize
+Ebml_SerializeUnsigned
+Ebml_StartSubElement
+Ebml_EndSubElement
+#endif
+#ifdef MOZ_VPX
 #ifndef MOZ_NATIVE_LIBVPX
 vpx_codec_control_
 vpx_codec_dec_init_ver
@@ -42,10 +53,8 @@ vpx_codec_vp9_dx
 vpx_img_free
 vpx_codec_enc_config_set
 vpx_codec_enc_init_ver
-#ifdef MOZ_VP8_ENCODER
 vpx_codec_vp8_cx
 vpx_codec_vp9_cx
-#endif
 vpx_img_set_rect
 vpx_img_wrap
 vpx_codec_get_cx_data
@@ -259,6 +268,8 @@ jpeg_abort_decompress
 jpeg_read_raw_data
 #endif
 qcms_enable_iccv4
+qcms_data_from_unicode_path
+qcms_data_from_path
 qcms_profile_create_rgb_with_gamma
 qcms_profile_from_memory
 qcms_profile_from_path
@@ -485,6 +496,30 @@ _moz_pixman_image_set_transform
 _moz_pixman_image_unref
 _moz_pixman_transform_from_pixman_f_transform
 _moz_pixman_transform_invert
+_moz_pixman_region32_reset
+_moz_pixman_region32_init
+_moz_pixman_region32_init_rect
+_moz_pixman_region32_init_rects
+_moz_pixman_region32_init_with_extents
+_moz_pixman_region32_fini
+_moz_pixman_region32_translate
+_moz_pixman_region32_copy
+_moz_pixman_region32_intersect
+_moz_pixman_region32_intersect_rect
+_moz_pixman_region32_union
+_moz_pixman_region32_union_rect
+_moz_pixman_region32_subtract
+_moz_pixman_region32_inverse
+_moz_pixman_region32_contains_point
+_moz_pixman_region32_contains_rectangle
+_moz_pixman_region32_not_empty
+_moz_pixman_region32_extents
+_moz_pixman_region32_n_rects
+_moz_pixman_region32_rectangles
+_moz_pixman_region32_equal
+_moz_pixman_region32_selfcheck
+_moz_pixman_region32_reset
+_moz_pixman_region32_clear
 #endif
 cairo_d2d_create_device
 cairo_d2d_create_device_from_d3d10device
@@ -560,6 +595,7 @@ hb_ot_layout_script_get_language_tags
 hb_ot_layout_table_choose_script
 hb_ot_layout_table_get_script_tags
 hb_ot_tag_to_language
+hb_ot_tag_to_script
 hb_ot_tags_from_script
 hb_set_add
 hb_set_clear

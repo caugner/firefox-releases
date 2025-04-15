@@ -13,6 +13,10 @@
 #include "jit/IonAnalysis.h"
 #include "jit/MIR.h"
 
+// windows.h defines those, which messes with the definitions below.
+#undef min
+#undef max
+
 namespace js {
 namespace jit {
 
@@ -92,6 +96,7 @@ class RangeAnalysis
     bool analyze();
     bool addRangeAssertions();
     bool removeBetaNodes();
+    bool prepareForUCE(bool *shouldRemoveDeadCode);
     bool truncate();
 
   private:

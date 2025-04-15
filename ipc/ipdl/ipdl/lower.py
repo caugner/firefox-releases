@@ -2484,7 +2484,6 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
         self.ns = None
         self.cls = None
         self.includedActorTypedefs = [ ]
-        self.includedActorUsings = [ ]
         self.protocolCxxIncludes = [ ]
         self.actorForwardDecls = [ ]
         self.usingDecls = [ ]
@@ -2665,8 +2664,6 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
             self.includedActorTypedefs.append(Typedef(
                 Type(_actorName(ip.decl.fullname, self.prettyside)),
                 _actorName(ip.decl.shortname, self.prettyside)))
-            self.includedActorUsings.append(Using(
-                Type(_actorName(ip.decl.fullname, self.prettyside))))
 
 
     def visitProtocol(self, p):
@@ -3709,6 +3706,10 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
             #   Message descriptor = UnShare(subprocess, mId, descriptor)
             #   mShmemMap.Remove(id)
             #   Shmem::Dealloc(rawmem)
+            #   if (!mChannel.CanSend()) {
+            #     delete descriptor;
+            #     return true;
+            #   }
             #   return descriptor && Send(descriptor)
             destroyshmem.addstmts([
                 StmtDecl(Decl(_shmemIdType(), idvar.name),
@@ -3719,8 +3720,14 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
 
             failif = StmtIf(ExprNot(rawvar))
             failif.addifstmt(StmtReturn.FALSE)
+            cansend = ExprCall(ExprSelect(p.channelVar(), '.', 'CanSend'), [])
+            returnif = StmtIf(ExprNot(cansend))
+            returnif.addifstmts([
+                    StmtExpr(ExprDelete(descriptorvar)),
+                    StmtReturn.TRUE])
             destroyshmem.addstmts([
                 failif,
+                Whitespace.NL,
                 StmtDecl(Decl(Type('Message', ptr=1), descriptorvar.name),
                          init=_shmemUnshareFrom(
                              shmemvar,
@@ -3729,6 +3736,8 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
                 Whitespace.NL,
                 StmtExpr(p.removeShmemId(idvar)),
                 StmtExpr(_shmemDealloc(rawvar)),
+                Whitespace.NL,
+                returnif,
                 Whitespace.NL,
                 StmtReturn(ExprBinary(
                     descriptorvar, '&&',
@@ -4149,7 +4158,7 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
         msgvar = self.msgvar
         tdvar = ExprVar('td')
         pidvar = ExprVar('pid')
-        pvar = ExprVar('p')
+        pvar = ExprVar('protocolid')
         iffail = StmtIf(ExprNot(ExprCall(
             ExprVar('mozilla::ipc::UnpackChannelOpened'),
             args=[ _backstagePass(),
@@ -4201,7 +4210,7 @@ class _GenerateProtocolActorCode(ipdl.ast.Visitor):
                 StmtBreak()
             ])
             label = _messageStartName(actor.ptype)
-            if actor.side is 'child':
+            if actor.side == 'child':
                 label += 'Child'
             return CaseLabel(label), case
 

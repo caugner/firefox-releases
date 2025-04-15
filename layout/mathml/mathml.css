@@ -24,13 +24,22 @@ math {
   font-family: MathJax_Main, STIXGeneral, DejaVu Serif, DejaVu Sans, Cambria, Cambria Math, Times, Lucida Sans Unicode, OpenSymbol, Standard Symbols L, serif;
   text-rendering: optimizeLegibility;
   -moz-float-edge: margin-box;
+  -moz-math-display: inline;
 }
 math[mode="display"], math[display="block"] {
   display: block;
   text-align: -moz-center;
+  -moz-math-display: block;
 }
 math[display="inline"] {
   display: inline;
+  -moz-math-display: inline;
+}
+math[displaystyle="false"] {
+  -moz-math-display: inline;
+}
+math[displaystyle="true"] {
+  -moz-math-display: block;
 }
 
 /**************************************************************************/
@@ -143,53 +152,6 @@ mlabeledtr > mtd:first-child {
     display: none;
 }
 
-/***********************/
-/* -- mtd: columnalign */
-
-mtd[_moz-math-columnalign="left"],
-mtd[columnalign="left"] {
-  text-align: left;
-}
-mtd[_moz-math-columnalign="right"],
-mtd[columnalign="right"] {
-  text-align: right;
-}
-mtd[_moz-math-columnalign="center"],
-mtd[columnalign="center"] {
-  text-align: -moz-center;
-}
-
-/*************************/
-/* -- mtr, mtd: rowalign */
-
-mtr[_moz-math-rowalign="top"],
-mtr[rowalign="top"],
-mtd[rowalign="top"] {
-  vertical-align: top;
-}
-mtr[_moz-math-rowalign="bottom"],
-mtr[rowalign="bottom"],
-mtd[rowalign="bottom"] {
-  vertical-align: bottom;
-}
-mtr[_moz-math-rowalign="center"],
-mtr[rowalign="center"],
-mtd[rowalign="center"] {
-  vertical-align: middle;
-}
-mtr[_moz-math-rowalign="baseline"],
-mtr[rowalign="baseline"],
-mtd[rowalign="baseline"] {
-  vertical-align: baseline;
-}
-/* -- not yet supported --
-mtr[_moz-math-rowalign="axis"],
-mtr[rowalign="axis"],
-mtd[rowalign="axis"] {
-  vertical-align: mathline;
-}
-*/
-
 /**********************************************************************/
 /* rules to achieve the default spacing between cells. The back-end code
    will set the internal attributes depending on the cell's position.
@@ -232,32 +194,6 @@ mtable[frame="solid"] > mtr > mtd:last-child,
 mtable[frame="dashed"] > mtr > mtd:last-child {
   padding-right: 0.4em; /* framespacing.right */
 }
-
-/**********************************************************************/
-/* internal settings to support 'rowlines' and 'columnlines'. To
-   achieve the recommended behavior, the back-end code will avoid setting
-   unsuitable rules on the cells on the first row and the first column.
-   In general, however, authors can use the 'border' property of CSS to
-   achieve varying effects down to the level of the table cell. */
-mtr[_moz-math-rowline="none"] > mtd {
-  border-top: none;
-}
-mtr[_moz-math-rowline="solid"] > mtd {
-  border-top: solid thin;
-}
-mtr[_moz-math-rowline="dashed"] > mtd {
-  border-top: dashed thin;
-}
-mtd[_moz-math-columnline="none"] {
-  border-left: none;
-}
-mtd[_moz-math-columnline="solid"] {
-  border-left: solid thin;
-}
-mtd[_moz-math-columnline="dashed"] {
-  border-left: dashed thin;
-}
-
 
 /**************************************************************************/
 /* Style used for stretchy symbols *must* be normal to avoid misaligments */
@@ -309,20 +245,111 @@ mtd[_moz-math-columnline="dashed"] {
   text-indent: 0;
 }
 
-/*****************************************/
-/* Controlling scriptlevel               */
-/*****************************************/
+/**************************************************************************/
+/* Controlling Displaystyle and Scriptlevel                               */
+/**************************************************************************/
 
-/* mfrac, munder, mover and munderover change the scriptlevels of their children using
-   -moz-math-increment-script-level because regular CSS rules are insufficient to
-   control when the scriptlevel should be incremented */
-:-moz-math-increment-script-level { -moz-script-level:+1; }
+/*
+  http://www.w3.org/Math/draft-spec/chapter3.html#presm.scriptlevel
 
-/* all other cases can be described using regular CSS, so we do it this way because it's
-   more efficient and less code */
-mroot > :not(:first-child) { -moz-script-level:+2; }
+  The determination of -moz-math-display for <math> involves the displaystyle
+  and display attributes. See the <math> section above.
+*/
 
+/*
+  Map mstyle@displaystyle to -moz-math-display.
+*/
+mstyle[displaystyle="false"] {
+  -moz-math-display: inline;
+}
+mstyle[displaystyle="true"] {
+  -moz-math-display: block;
+}
+
+/*  munder, mover and munderover change the scriptlevels of their children
+   using -moz-math-increment-script-level because regular CSS rules are
+   insufficient to control when the scriptlevel should be incremented. All other
+   cases can be described using regular CSS, so we do it this way because it's
+   more efficient and less code. */
+:-moz-math-increment-script-level { -moz-script-level: +1; }
+
+/*
+   The mfrac element sets displaystyle to "false", or if it was already false
+   increments scriptlevel by 1, within numerator and denominator.
+*/   
+mfrac > * {
+    -moz-script-level: auto;
+    -moz-math-display: inline;
+}
+
+/*
+   The mroot element increments scriptlevel by 2, and sets displaystyle to
+   "false", within index, but leaves both attributes unchanged within base.
+   The msqrt element leaves both attributes unchanged within its argument.
+*/
+mroot > :not(:first-child) {
+    -moz-script-level: +2;
+    -moz-math-display: inline;
+}
+
+/*
+   The msub element [...] increments scriptlevel by 1, and sets displaystyle to
+   "false", within subscript, but leaves both attributes unchanged within base.
+
+   The msup element [...] increments scriptlevel by 1, and sets displaystyle to
+   "false", within superscript, but leaves both attributes unchanged within
+   base.
+
+   The msubsup element [...] increments scriptlevel by 1, and sets displaystyle
+   to "false", within subscript and superscript, but leaves both attributes
+   unchanged within base.
+
+   The mmultiscripts element increments scriptlevel by 1, and sets displaystyle
+   to "false", within each of its arguments except base, but leaves both
+   attributes unchanged within base.
+ */
 msub > :not(:first-child),
 msup > :not(:first-child),
 msubsup > :not(:first-child),
-mmultiscripts > :not(:first-child) { -moz-script-level:+1; }
+mmultiscripts > :not(:first-child) {
+    -moz-script-level: +1;
+    -moz-math-display: inline;
+}
+
+/*
+   The munder element [...] always sets displaystyle to "false" within the
+   underscript, but increments scriptlevel by 1 only when accentunder is
+   "false". Within base, it always leaves both attributes unchanged.
+
+   The mover element [...] always sets displaystyle to "false" within
+   overscript, but increments scriptlevel by 1 only when accent is "false".
+   Within base, it always leaves both attributes unchanged.
+
+   The munderover [..] always sets displaystyle to "false" within underscript
+   and overscript, but increments scriptlevel by 1 only when accentunder or
+   accent, respectively, are "false". Within base, it always leaves both
+   attributes unchanged.
+*/
+munder > :not(:first-child),
+mover > :not(:first-child),
+munderover > :not(:first-child) {
+    -moz-math-display: inline;
+}
+
+/*
+   The displaystyle attribute is allowed on the mtable element to set the
+   inherited value of the attribute. If the attribute is not present, the
+   mtable element sets displaystyle to "false" within the table elements.
+*/
+mtable { -moz-math-display: inline; }
+mtable[displaystyle="true"] { -moz-math-display: block; }
+
+/*
+   The mscarries element sets displaystyle to "false", and increments
+   scriptlevel by 1, so the children are typically displayed in a smaller font.
+   XXXfredw: This element is not implemented yet. See bug 534967.
+mscarries {
+  -moz-script-level: +1;
+  -moz-math-display: inline;
+}
+*/

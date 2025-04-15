@@ -19,6 +19,7 @@ interface StyleSheetList;
 interface WindowProxy;
 interface nsISupports;
 interface URI;
+interface nsIDocShell;
 
 enum VisibilityState { "hidden", "visible" };
 
@@ -65,9 +66,7 @@ interface Document : Node {
   ProcessingInstruction createProcessingInstruction(DOMString target, DOMString data);
 
   [Throws]
-  Node importNode(Node node, boolean deep);
-  [Throws]
-  Node importNode(Node node);
+  Node importNode(Node node, optional boolean deep = false);
   [Throws]
   Node adoptNode(Node node);
 
@@ -340,6 +339,10 @@ partial interface Document {
   void obsoleteSheet(URI sheetURI);
   [ChromeOnly, Throws]
   void obsoleteSheet(DOMString sheetURI);
+
+  [ChromeOnly] readonly attribute nsIDocShell? docShell;
+
+  [ChromeOnly] readonly attribute DOMString contentLanguage;
 };
 
 // Extension to give chrome JS the ability to determine when a document was

@@ -15,7 +15,7 @@
 
 bool
 gfxGDIShaper::ShapeText(gfxContext      *aContext,
-                        const PRUnichar *aText,
+                        const char16_t *aText,
                         uint32_t         aOffset,
                         uint32_t         aLength,
                         int32_t          aScript,
@@ -31,7 +31,7 @@ gfxGDIShaper::ShapeText(gfxContext      *aContext,
     }
     WORD *glyphs = glyphArray.Elements();
 
-    DWORD ret = ::GetGlyphIndicesW(dc, aText, length,
+    DWORD ret = ::GetGlyphIndicesW(dc, char16ptr_t(aText), length,
                                    glyphs, GGI_MARK_NONEXISTING_GLYPHS);
     if (ret == GDI_ERROR) {
         return false;

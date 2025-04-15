@@ -5,9 +5,9 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.SiteIdentity.SecurityMode;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.gfx.Layer;
-import org.mozilla.gecko.home.HomePager;
 import org.mozilla.gecko.util.ThreadUtils;
 
 import org.json.JSONException;
@@ -45,13 +45,12 @@ public class Tab {
     private int mFaviconSize;
     private boolean mHasFeeds;
     private boolean mHasOpenSearch;
-    private JSONObject mIdentityData;
+    private SiteIdentity mSiteIdentity;
     private boolean mReaderEnabled;
     private BitmapDrawable mThumbnail;
     private int mHistoryIndex;
     private int mHistorySize;
     private int mParentId;
-    private HomePager.Page mAboutHomePage;
     private boolean mExternal;
     private boolean mBookmark;
     private boolean mReadingListItem;
@@ -70,11 +69,18 @@ public class Tab {
     private Context mAppContext;
     private ErrorType mErrorType = ErrorType.NONE;
     private static final int MAX_HISTORY_LIST_SIZE = 50;
+    private volatile int mLoadProgress;
 
     public static final int STATE_DELAYED = 0;
     public static final int STATE_LOADING = 1;
     public static final int STATE_SUCCESS = 2;
     public static final int STATE_ERROR = 3;
+
+    public static final int LOAD_PROGRESS_INIT = 10;
+    public static final int LOAD_PROGRESS_START = 20;
+    public static final int LOAD_PROGRESS_LOCATION_CHANGE = 60;
+    public static final int LOAD_PROGRESS_LOADED = 80;
+    public static final int LOAD_PROGRESS_STOP = 100;
 
     private static final int DEFAULT_BACKGROUND_COLOR = Color.WHITE;
 
@@ -94,14 +100,13 @@ public class Tab {
         mUserSearch = "";
         mExternal = external;
         mParentId = parentId;
-        mAboutHomePage = HomePager.Page.TOP_SITES;
         mTitle = title == null ? "" : title;
         mFavicon = null;
         mFaviconUrl = null;
         mFaviconSize = 0;
         mHasFeeds = false;
         mHasOpenSearch = false;
-        mIdentityData = null;
+        mSiteIdentity = new SiteIdentity();
         mReaderEnabled = false;
         mEnteringReaderMode = false;
         mThumbnail = null;
@@ -115,6 +120,7 @@ public class Tab {
         mPluginViews = new ArrayList<View>();
         mPluginLayers = new HashMap<Object, Layer>();
         mState = shouldShowProgress(url) ? STATE_SUCCESS : STATE_LOADING;
+        mLoadProgress = LOAD_PROGRESS_INIT;
 
         // At startup, the background is set to a color specified by LayerView
         // when the LayerView is created. Shortly after, this background color
@@ -145,15 +151,6 @@ public class Tab {
     public int getParentId() {
         return mParentId;
     }
-
-    public HomePager.Page getAboutHomePage() {
-        return mAboutHomePage;
-    }
-
-    private void setAboutHomePage(HomePager.Page page) {
-        mAboutHomePage = page;
-    }
-
 
     // may be null if user-entered query hasn't yet been resolved to a URI
     public synchronized String getURL() {
@@ -218,7 +215,7 @@ public class Tab {
             public void run() {
                 if (b != null) {
                     try {
-                        mThumbnail = new BitmapDrawable(b);
+                        mThumbnail = new BitmapDrawable(mAppContext.getResources(), b);
                         if (mState == Tab.STATE_SUCCESS)
                             saveThumbnailToDB();
                     } catch (OutOfMemoryError oom) {
@@ -246,17 +243,8 @@ public class Tab {
         return mHasOpenSearch;
     }
 
-    public String getSecurityMode() {
-        try {
-            return mIdentityData.getString("mode");
-        } catch (Exception e) {
-            // If mIdentityData is null, or we get a JSONException
-            return SiteIdentityPopup.UNKNOWN;
-        }
-    }
-
-    public JSONObject getIdentityData() {
-        return mIdentityData;
+    public SiteIdentity getSiteIdentity() {
+        return mSiteIdentity;
     }
 
     public boolean getReaderEnabled() {
@@ -415,7 +403,7 @@ public class Tab {
     }
 
     public void updateIdentityData(JSONObject identityData) {
-        mIdentityData = identityData;
+        mSiteIdentity.update(identityData);
     }
 
     public void setReaderEnabled(boolean readerEnabled) {
@@ -661,11 +649,7 @@ public class Tab {
         setHasTouchListeners(false);
         setBackgroundColor(DEFAULT_BACKGROUND_COLOR);
         setErrorType(ErrorType.NONE);
-
-        final String homePage = message.getString("aboutHomePage");
-        if (!TextUtils.isEmpty(homePage)) {
-            setAboutHomePage(HomePager.Page.valueOf(homePage));
-        }
+        setLoadProgressIfLoading(LOAD_PROGRESS_LOCATION_CHANGE);
 
         Tabs.getInstance().notifyListeners(this, Tabs.TabEvents.LOCATION_CHANGE, oldUrl);
     }
@@ -676,6 +660,7 @@ public class Tab {
     }
 
     void handleDocumentStart(boolean showProgress, String url) {
+        setLoadProgress(LOAD_PROGRESS_START);
         setState(showProgress ? STATE_LOADING : STATE_SUCCESS);
         updateIdentityData(null);
         setReaderEnabled(false);
@@ -686,6 +671,7 @@ public class Tab {
 
         final String oldURL = getURL();
         final Tab tab = this;
+        tab.setLoadProgress(LOAD_PROGRESS_STOP);
         ThreadUtils.getBackgroundHandler().postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -696,7 +682,11 @@ public class Tab {
                 ThumbnailHelper.getInstance().getAndProcessThumbnailFor(tab);
             }
         }, 500);
-     }
+    }
+
+    void handleContentLoaded() {
+        setLoadProgressIfLoading(LOAD_PROGRESS_LOADED);
+    }
 
     protected void saveThumbnailToDB() {
         try {
@@ -788,5 +778,39 @@ public class Tab {
 
     public boolean isPrivate() {
         return false;
+    }
+
+    /**
+     * Sets the tab load progress to the given percentage.
+     *
+     * @param progressPercentage Percentage to set progress to (0-100)
+     */
+    void setLoadProgress(int progressPercentage) {
+        mLoadProgress = progressPercentage;
+    }
+
+    /**
+     * Sets the tab load progress to the given percentage only if the tab is
+     * currently loading.
+     *
+     * about:neterror can trigger a STOP before other page load events (bug
+     * 976426), so any post-START events should make sure the page is loading
+     * before updating progress.
+     *
+     * @param progressPercentage Percentage to set progress to (0-100)
+     */
+    void setLoadProgressIfLoading(int progressPercentage) {
+        if (getState() == STATE_LOADING) {
+            setLoadProgress(progressPercentage);
+        }
+    }
+
+    /**
+     * Gets the tab load progress percentage.
+     *
+     * @return Current progress percentage
+     */
+    public int getLoadProgress() {
+        return mLoadProgress;
     }
 }

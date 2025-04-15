@@ -16,7 +16,6 @@ const { classes: Cc, interfaces: Ci, utils: Cu, results: Cr } = Components;
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/DOMRequestHelper.jsm");
-Cu.import("resource://gre/modules/ObjectWrapper.jsm");
 
 const DEBUG = false;
 function debug(aMsg) {
@@ -58,7 +57,10 @@ InterAppMessagePort.prototype = {
 
     let principal = aWindow.document.nodePrincipal;
     this._manifestURL = appsService.getManifestURLByLocalId(principal.appId);
-    this._pageURL = principal.URI.spec;
+    this._pageURL = principal.URI.specIgnoringRef;
+
+    // Remove query string.
+    this._pageURL = this._pageURL.split("?")[0];
 
     this._started = false;
     this._closed = false;
@@ -172,7 +174,7 @@ InterAppMessagePort.prototype = {
   },
 
   _dispatchMessage: function _dispatchMessage(aMessage) {
-    let wrappedMessage = ObjectWrapper.wrap(aMessage, this._window);
+    let wrappedMessage = Cu.cloneInto(aMessage, this._window);
     if (DEBUG) {
       debug("_dispatchMessage: wrappedMessage: " +
             JSON.stringify(wrappedMessage));

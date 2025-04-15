@@ -53,7 +53,7 @@ UpdategDisableXULCache()
     
 }
 
-static int
+static void
 DisableXULCacheChangedCallback(const char* aPref, void* aClosure)
 {
     UpdategDisableXULCache();
@@ -62,8 +62,6 @@ DisableXULCacheChangedCallback(const char* aPref, void* aClosure)
     nsXULPrototypeCache* cache = nsXULPrototypeCache::GetInstance();
     if (cache)
         cache->Flush();
-
-    return 0;
 }
 
 //----------------------------------------------------------------------
@@ -113,7 +111,7 @@ nsXULPrototypeCache::GetInstance()
 NS_IMETHODIMP
 nsXULPrototypeCache::Observe(nsISupports* aSubject,
                              const char *aTopic,
-                             const PRUnichar *aData)
+                             const char16_t *aData)
 {
     if (!strcmp(aTopic, "chrome-flush-skin-caches")) {
         FlushSkinFiles();
@@ -461,7 +459,7 @@ nsXULPrototypeCache::HasData(nsIURI* uri, bool* exists)
     return NS_OK;
 }
 
-static int
+static void
 CachePrefChangedCallback(const char* aPref, void* aClosure)
 {
     bool wasEnabled = !gDisableXULDiskCache;
@@ -475,7 +473,6 @@ CachePrefChangedCallback(const char* aPref, void* aClosure)
         if (cache)
             cache->AbortCaching();
     }
-    return 0;
 }
 
 nsresult

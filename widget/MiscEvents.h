@@ -35,6 +35,15 @@ public:
   {
   }
 
+  virtual WidgetEvent* Duplicate() const MOZ_OVERRIDE
+  {
+    // This event isn't an internal event of any DOM event.
+    NS_ASSERTION(!IsAllowedToDispatchDOMEvent(),
+      "WidgetQueryContentEvent needs to support Duplicate()");
+    MOZ_CRASH("WidgetQueryContentEvent doesn't support Duplicate()");
+    return nullptr;
+  }
+
   // NS_CONTENT_COMMAND_PASTE_TRANSFERABLE
   nsCOMPtr<nsITransferable> mTransferable; // [in]
 
@@ -99,6 +108,18 @@ public:
     userType = aEventType;
   }
 
+  virtual WidgetEvent* Duplicate() const MOZ_OVERRIDE
+  {
+    MOZ_ASSERT(eventStructType == NS_COMMAND_EVENT,
+               "Duplicate() must be overridden by sub class");
+    // Not copying widget, it is a weak reference.
+    WidgetCommandEvent* result =
+      new WidgetCommandEvent(false, userType, command, nullptr);
+    result->AssignCommandEventData(*this, true);
+    result->mFlags = mFlags;
+    return result;
+  }
+
   nsCOMPtr<nsIAtom> command;
 
   // XXX Not tested by test_assign_event_data.html
@@ -128,9 +149,30 @@ public:
   {
   }
 
+  virtual WidgetEvent* Duplicate() const MOZ_OVERRIDE
+  {
+    // NOTE: PluginEvent has to be dispatched to nsIFrame::HandleEvent().
+    //       So, this event needs to support Duplicate().
+    MOZ_ASSERT(eventStructType == NS_PLUGIN_EVENT,
+               "Duplicate() must be overridden by sub class");
+    // Not copying widget, it is a weak reference.
+    WidgetPluginEvent* result = new WidgetPluginEvent(false, message, nullptr);
+    result->AssignPluginEventData(*this, true);
+    result->mFlags = mFlags;
+    return result;
+  }
+
   // If true, this event needs to be retargeted to focused document.
   // Otherwise, never retargeted. Defaults to false.
   bool retargetToFocusedDocument;
+
+  void AssignPluginEventData(const WidgetPluginEvent& aEvent,
+                             bool aCopyTargets)
+  {
+    AssignGUIEventData(aEvent, aCopyTargets);
+
+    retargetToFocusedDocument = aEvent.retargetToFocusedDocument;
+  }
 };
 
 } // namespace mozilla

@@ -6,6 +6,7 @@
 #include "MediaPluginReader.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/dom/TimeRanges.h"
+#include "mozilla/gfx/Point.h"
 #include "MediaResource.h"
 #include "VideoUtils.h"
 #include "MediaPluginDecoder.h"
@@ -15,6 +16,8 @@
 #include "AbstractMediaDecoder.h"
 
 namespace mozilla {
+
+using namespace mozilla::gfx;
 
 typedef mozilla::layers::Image Image;
 typedef mozilla::layers::PlanarYCbCrImage PlanarYCbCrImage;
@@ -173,7 +176,7 @@ bool MediaPluginReader::DecodeVideoFrame(bool &aKeyframeSkip,
 
     nsAutoPtr<VideoData> v;
     if (currentImage) {
-      gfxIntSize frameSize = currentImage->GetSize();
+      gfx::IntSize frameSize = currentImage->GetSize();
       if (frameSize.width != mInitialFrame.width ||
           frameSize.height != mInitialFrame.height) {
         // Frame size is different from what the container reports. This is legal,
@@ -350,7 +353,7 @@ MediaPluginReader::ImageBufferCallback::operator()(size_t aWidth, size_t aHeight
     case MPAPI::RGB565:
       image = mozilla::layers::CreateSharedRGBImage(mImageContainer,
                                                     nsIntSize(aWidth, aHeight),
-                                                    gfxImageFormatRGB16_565);
+                                                    gfxImageFormat::RGB16_565);
       if (!image) {
         NS_WARNING("Could not create rgb image");
         return nullptr;
@@ -370,9 +373,7 @@ uint8_t *
 MediaPluginReader::ImageBufferCallback::CreateI420Image(size_t aWidth,
                                                         size_t aHeight)
 {
-  ImageFormat format = PLANAR_YCBCR;
-
-  mImage = mImageContainer->CreateImage(&format, 1 /* numFormats */);
+  mImage = mImageContainer->CreateImage(ImageFormat::PLANAR_YCBCR);
   PlanarYCbCrImage *yuvImage = static_cast<PlanarYCbCrImage *>(mImage.get());
 
   if (!yuvImage) {
@@ -392,8 +393,8 @@ MediaPluginReader::ImageBufferCallback::CreateI420Image(size_t aWidth,
   frameDesc.mCbChannel = buffer + frameSize;
   frameDesc.mCrChannel = buffer + frameSize * 5 / 4;
 
-  frameDesc.mYSize = gfxIntSize(aWidth, aHeight);
-  frameDesc.mCbCrSize = gfxIntSize(aWidth / 2, aHeight / 2);
+  frameDesc.mYSize = IntSize(aWidth, aHeight);
+  frameDesc.mCbCrSize = IntSize(aWidth / 2, aHeight / 2);
 
   frameDesc.mYStride = aWidth;
   frameDesc.mCbCrStride = aWidth / 2;
@@ -404,7 +405,7 @@ MediaPluginReader::ImageBufferCallback::CreateI420Image(size_t aWidth,
 
   frameDesc.mPicX = 0;
   frameDesc.mPicY = 0;
-  frameDesc.mPicSize = gfxIntSize(aWidth, aHeight);
+  frameDesc.mPicSize = IntSize(aWidth, aHeight);
 
   yuvImage->SetDataNoCopy(frameDesc);
 

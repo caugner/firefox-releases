@@ -8,7 +8,6 @@
 
 #include <stddef.h>                     // for size_t
 #include <stdint.h>                     // for uint32_t, uint64_t
-#include "gfxPoint.h"                   // for gfxIntSize
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
 #include "mozilla/RefPtr.h"             // for TemporaryRef
 #include "mozilla/ipc/SharedMemory.h"   // for SharedMemory, etc
@@ -189,17 +188,23 @@ public:
   ~ImageBridgeChild();
 
   virtual PGrallocBufferChild*
-  AllocPGrallocBufferChild(const gfxIntSize&, const uint32_t&, const uint32_t&,
+  AllocPGrallocBufferChild(const gfx::IntSize&, const uint32_t&, const uint32_t&,
                            MaybeMagicGrallocBufferHandle*) MOZ_OVERRIDE;
 
   virtual bool
   DeallocPGrallocBufferChild(PGrallocBufferChild* actor) MOZ_OVERRIDE;
 
+  virtual PTextureChild*
+  AllocPTextureChild(const SurfaceDescriptor& aSharedData, const TextureFlags& aFlags) MOZ_OVERRIDE;
+
+  virtual bool
+  DeallocPTextureChild(PTextureChild* actor) MOZ_OVERRIDE;
+
   /**
    * Allocate a gralloc SurfaceDescriptor remotely.
    */
   bool
-  AllocSurfaceDescriptorGralloc(const gfxIntSize& aSize,
+  AllocSurfaceDescriptorGralloc(const gfx::IntSize& aSize,
                                 const uint32_t& aFormat,
                                 const uint32_t& aUsage,
                                 SurfaceDescriptor* aBuffer);
@@ -212,7 +217,7 @@ public:
    * Must be called from the ImageBridgeChild thread.
    */
   bool
-  AllocSurfaceDescriptorGrallocNow(const gfxIntSize& aSize,
+  AllocSurfaceDescriptorGrallocNow(const gfx::IntSize& aSize,
                                    const uint32_t& aFormat,
                                    const uint32_t& aUsage,
                                    SurfaceDescriptor* aBuffer);
@@ -255,19 +260,6 @@ public:
   virtual void Connect(CompositableClient* aCompositable) MOZ_OVERRIDE;
 
   /**
-   * See CompositableForwarder::AddTexture
-   */
-  virtual bool AddTexture(CompositableClient* aCompositable,
-                          TextureClient* aClient) MOZ_OVERRIDE;
-
-  /**
-   * See CompositableForwarder::RemoveTexture
-   */
-  virtual void RemoveTexture(CompositableClient* aCompositable,
-                             uint64_t aTextureID,
-                             TextureFlags aFlags) MOZ_OVERRIDE;
-
-  /**
    * See CompositableForwarder::UpdatedTexture
    */
   virtual void UpdatedTexture(CompositableClient* aCompositable,
@@ -279,6 +271,8 @@ public:
    */
   virtual void UseTexture(CompositableClient* aCompositable,
                           TextureClient* aClient) MOZ_OVERRIDE;
+
+  virtual void RemoveTexture(TextureClient* aTexture) MOZ_OVERRIDE;
 
   virtual void PaintedTiledLayerBuffer(CompositableClient* aCompositable,
                                        const SurfaceDescriptorTiles& aTileLayerDescriptor) MOZ_OVERRIDE
@@ -378,6 +372,9 @@ public:
    */
   virtual void DeallocShmem(mozilla::ipc::Shmem& aShmem);
 
+  virtual PTextureChild* CreateTexture(const SurfaceDescriptor& aSharedData,
+                                       TextureFlags aFlags) MOZ_OVERRIDE;
+
 protected:
   ImageBridgeChild();
   bool DispatchAllocShmemInternal(size_t aSize,
@@ -388,7 +385,7 @@ protected:
   CompositableTransaction* mTxn;
 
   // ISurfaceAllocator
-  virtual PGrallocBufferChild* AllocGrallocBuffer(const gfxIntSize& aSize,
+  virtual PGrallocBufferChild* AllocGrallocBuffer(const gfx::IntSize& aSize,
                                                   uint32_t aFormat, uint32_t aUsage,
                                                   MaybeMagicGrallocBufferHandle* aHandle) MOZ_OVERRIDE;
 };

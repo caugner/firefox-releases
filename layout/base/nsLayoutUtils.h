@@ -23,7 +23,6 @@ class nsBlockFrame;
 class gfxASurface;
 class gfxDrawable;
 class nsView;
-class imgIContainer;
 class nsIFrame;
 class nsStyleCoord;
 class nsStyleCorners;
@@ -51,6 +50,8 @@ struct nsOverflowAreas;
 #include "nsStyleConsts.h"
 #include "nsGkAtoms.h"
 #include "nsRuleNode.h"
+#include "imgIContainer.h"
+#include "mozilla/gfx/2D.h"
 
 #include <limits>
 #include <algorithm>
@@ -69,6 +70,12 @@ class HTMLVideoElement;
 namespace layers {
 class Layer;
 }
+
+template <class AnimationsOrTransitions>
+extern AnimationsOrTransitions* HasAnimationOrTransition(nsIContent* aContent,
+                                                         nsIAtom* aAnimationProperty,
+                                                         nsCSSProperty aProperty);
+
 } // namespace mozilla
 
 /**
@@ -82,6 +89,8 @@ class nsLayoutUtils
   typedef mozilla::dom::DOMRectList DOMRectList;
   typedef mozilla::layers::Layer Layer;
   typedef mozilla::ContainerLayerParameters ContainerLayerParameters;
+  typedef mozilla::gfx::SourceSurface SourceSurface;
+  typedef mozilla::gfx::DrawTarget DrawTarget;
 
 public:
   typedef mozilla::layers::FrameMetrics FrameMetrics;
@@ -848,7 +857,7 @@ public:
    */
   static bool
   BinarySearchForPosition(nsRenderingContext* acx,
-                          const PRUnichar* aText,
+                          const char16_t* aText,
                           int32_t    aBaseWidth,
                           int32_t    aBaseInx,
                           int32_t    aStartInx,
@@ -1181,14 +1190,14 @@ public:
 
   static void DrawString(const nsIFrame*       aFrame,
                          nsRenderingContext*   aContext,
-                         const PRUnichar*      aString,
+                         const char16_t*      aString,
                          int32_t               aLength,
                          nsPoint               aPoint,
                          nsStyleContext*       aStyleContext = nullptr);
 
   static nscoord GetStringWidth(const nsIFrame*      aFrame,
                                 nsRenderingContext* aContext,
-                                const PRUnichar*     aString,
+                                const char16_t*     aString,
                                 int32_t              aLength);
 
   /**
@@ -1569,19 +1578,29 @@ public:
    */
 
   enum {
-    /* Always create a new surface for the result */
-    SFE_WANT_NEW_SURFACE   = 1 << 0,
     /* When creating a new surface, create an image surface */
-    SFE_WANT_IMAGE_SURFACE = 1 << 1,
+    SFE_WANT_IMAGE_SURFACE = 1 << 0,
     /* Whether to extract the first frame (as opposed to the
        current frame) in the case that the element is an image. */
-    SFE_WANT_FIRST_FRAME = 1 << 2,
+    SFE_WANT_FIRST_FRAME = 1 << 1,
     /* Whether we should skip colorspace/gamma conversion */
-    SFE_NO_COLORSPACE_CONVERSION = 1 << 3,
+    SFE_NO_COLORSPACE_CONVERSION = 1 << 2,
     /* Whether we should skip premultiplication -- the resulting
        image will always be an image surface, and must not be given to
        Thebes for compositing! */
-    SFE_NO_PREMULTIPLY_ALPHA = 1 << 4
+    SFE_NO_PREMULTIPLY_ALPHA = 1 << 3,
+    /* Whether we should skip getting a surface for vector images and
+       return a DirectDrawInfo containing an imgIContainer instead. */
+    SFE_NO_RASTERIZING_VECTORS = 1 << 4
+  };
+
+  struct DirectDrawInfo {
+    /* imgIContainer to directly draw to a context */
+    nsCOMPtr<imgIContainer> mImgContainer;
+    /* which frame to draw */
+    uint32_t mWhichFrame;
+    /* imgIContainer flags to use when drawing */
+    uint32_t mDrawingFlags;
   };
 
   struct SurfaceFromElementResult {
@@ -1589,6 +1608,10 @@ public:
 
     /* mSurface will contain the resulting surface, or will be nullptr on error */
     nsRefPtr<gfxASurface> mSurface;
+    mozilla::RefPtr<SourceSurface> mSourceSurface;
+    /* Contains info for drawing when there is no mSourceSurface. */
+    DirectDrawInfo mDrawInfo;
+
     /* The size of the surface */
     gfxIntSize mSize;
     /* The principal associated with the element whose surface was returned.
@@ -1606,18 +1629,23 @@ public:
   };
 
   static SurfaceFromElementResult SurfaceFromElement(mozilla::dom::Element *aElement,
-                                                     uint32_t aSurfaceFlags = 0);
+                                                     uint32_t aSurfaceFlags = 0,
+                                                     DrawTarget *aTarget = nullptr);
   static SurfaceFromElementResult SurfaceFromElement(nsIImageLoadingContent *aElement,
-                                                     uint32_t aSurfaceFlags = 0);
+                                                     uint32_t aSurfaceFlags = 0,
+                                                     DrawTarget *aTarget = nullptr);
   // Need an HTMLImageElement overload, because otherwise the
   // nsIImageLoadingContent and mozilla::dom::Element overloads are ambiguous
   // for HTMLImageElement.
   static SurfaceFromElementResult SurfaceFromElement(mozilla::dom::HTMLImageElement *aElement,
-                                                     uint32_t aSurfaceFlags = 0);
+                                                     uint32_t aSurfaceFlags = 0,
+                                                     DrawTarget *aTarget = nullptr);
   static SurfaceFromElementResult SurfaceFromElement(mozilla::dom::HTMLCanvasElement *aElement,
-                                                     uint32_t aSurfaceFlags = 0);
+                                                     uint32_t aSurfaceFlags = 0,
+                                                     DrawTarget *aTarget = nullptr);
   static SurfaceFromElementResult SurfaceFromElement(mozilla::dom::HTMLVideoElement *aElement,
-                                                     uint32_t aSurfaceFlags = 0);
+                                                     uint32_t aSurfaceFlags = 0,
+                                                     DrawTarget *aTarget = nullptr);
 
   /**
    * When the document is editable by contenteditable attribute of its root
@@ -1744,6 +1772,14 @@ public:
    * 'true' value is enabled.
    */
   static bool IsTextAlignTrueValueEnabled();
+
+  /**
+   * Checks if CSS variables are currently enabled.
+   */
+  static bool CSSVariablesEnabled()
+  {
+    return sCSSVariablesEnabled;
+  }
 
   /**
    * Unions the overflow areas of all non-popup children of aFrame with
@@ -1972,6 +2008,7 @@ private:
   static bool sFontSizeInflationForceEnabled;
   static bool sFontSizeInflationDisabledInMasterProcess;
   static bool sInvalidationDebuggingIsEnabled;
+  static bool sCSSVariablesEnabled;
 };
 
 template<typename PointType, typename RectType, typename CoordType>

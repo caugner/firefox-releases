@@ -6,7 +6,7 @@
 #include "mozilla/layers/ContentHost.h"
 #include "LayersLogging.h"              // for AppendToString
 #include "gfx2DGlue.h"                  // for ContentForFormat
-#include "gfxPoint.h"                   // for gfxIntSize
+#include "mozilla/gfx/Point.h"          // for IntSize
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/gfx/BaseRect.h"       // for BaseRect
 #include "mozilla/layers/Compositor.h"  // for Compositor
@@ -32,8 +32,6 @@ ContentHostBase::ContentHostBase(const TextureInfo& aTextureInfo)
 
 ContentHostBase::~ContentHostBase()
 {
-  DestroyTextureHost();
-  DestroyTextureHostOnWhite();
 }
 
 TextureHost*
@@ -41,76 +39,6 @@ ContentHostBase::GetAsTextureHost()
 {
   return mTextureHost;
 }
-
-void
-ContentHostBase::DestroyTextureHost()
-{
-  // The third clause in the if statement checks that we are in fact done with
-  // this texture. We don't want to prematurely deallocate a texture we might
-  // use again or double deallocate. Deallocation will happen in
-  // RemoveTextureHost.
-  // Note that GetTextureHost is linear in the number of texture hosts, but as
-  // long as that number is small (I expect a maximum of 6 for now) then it
-  // should be ok.
-  if (mTextureHost &&
-      mTextureHost->GetFlags() & TEXTURE_DEALLOCATE_DEFERRED &&
-      !GetTextureHost(mTextureHost->GetID())) {
-    MOZ_ASSERT(!(mTextureHost->GetFlags() & TEXTURE_DEALLOCATE_CLIENT));
-    mTextureHost->DeallocateSharedData();
-  }
-  mTextureHost = nullptr;
-}
-
-void
-ContentHostBase::DestroyTextureHostOnWhite()
-{
-  if (mTextureHostOnWhite &&
-      mTextureHostOnWhite->GetFlags() & TEXTURE_DEALLOCATE_DEFERRED &&
-      !GetTextureHost(mTextureHostOnWhite->GetID())) {
-    MOZ_ASSERT(!(mTextureHostOnWhite->GetFlags() & TEXTURE_DEALLOCATE_CLIENT));
-    mTextureHostOnWhite->DeallocateSharedData();
-  }
-  mTextureHostOnWhite = nullptr;
-}
-
-void
-ContentHostBase::RemoveTextureHost(TextureHost* aTexture)
-{
-  if ((aTexture->GetFlags() & TEXTURE_DEALLOCATE_DEFERRED) &&
-      !(mTextureHost && mTextureHost == aTexture) &&
-      !(mTextureHostOnWhite && mTextureHostOnWhite == aTexture)) {
-    MOZ_ASSERT(!(aTexture->GetFlags() & TEXTURE_DEALLOCATE_CLIENT));
-    aTexture->DeallocateSharedData();
-  }
-
-  CompositableHost::RemoveTextureHost(aTexture);
-}
-
-class MOZ_STACK_CLASS AutoLockTextureHost
-{
-public:
-  AutoLockTextureHost(TextureHost* aHost)
-    : mHost(aHost)
-  {
-    mLockSuccess = mHost ? mHost->Lock() : true;
-  }
-
-  ~AutoLockTextureHost()
-  {
-    if (mHost) {
-      mHost->Unlock();
-    }
-  }
-
-  bool IsValid()
-  {
-    return mLockSuccess;
-  }
-
-private:
-  TextureHost* mHost;
-  bool mLockSuccess;
-};
 
 void
 ContentHostBase::Composite(EffectChain& aEffectChain,
@@ -123,12 +51,15 @@ ContentHostBase::Composite(EffectChain& aEffectChain,
 {
   NS_ASSERTION(aVisibleRegion, "Requires a visible region");
 
+  if (!mTextureHost) {
+    NS_WARNING("Missing TextureHost");
+    return;
+  }
+
   AutoLockTextureHost lock(mTextureHost);
   AutoLockTextureHost lockOnWhite(mTextureHostOnWhite);
 
-  if (!mTextureHost ||
-      !lock.IsValid() ||
-      !lockOnWhite.IsValid()) {
+  if (lock.Failed() || lockOnWhite.Failed()) {
     return;
   }
 
@@ -141,6 +72,10 @@ ContentHostBase::Composite(EffectChain& aEffectChain,
   }
   RefPtr<TexturedEffect> effect =
     CreateTexturedEffect(source, sourceOnWhite, aFilter);
+
+  if (!effect) {
+    return;
+  }
 
   aEffectChain.mPrimaryEffect = effect;
 
@@ -192,7 +127,7 @@ ContentHostBase::Composite(EffectChain& aEffectChain,
     tileIter->BeginTileIteration();
   }
 
-  if (mTextureHostOnWhite) {
+  if (sourceOnWhite) {
     iterOnWhite = sourceOnWhite->AsTileIterator();
     MOZ_ASSERT(!tileIter || tileIter->GetTileCount() == iterOnWhite->GetTileCount(),
                "Tile count mismatch on component alpha texture");
@@ -286,11 +221,11 @@ void
 ContentHostBase::UseTextureHost(TextureHost* aTexture)
 {
   if (aTexture->GetFlags() & TEXTURE_ON_WHITE) {
-    DestroyTextureHost();
     mTextureHostOnWhite = aTexture;
+    mTextureHostOnWhite->SetCompositor(GetCompositor());
   } else {
-    DestroyTextureHostOnWhite();
     mTextureHost = aTexture;
+    mTextureHost->SetCompositor(GetCompositor());
   }
 }
 
@@ -335,18 +270,6 @@ ContentHostBase::Dump(FILE* aFile,
 }
 #endif
 
-void
-ContentHostBase::OnActorDestroy()
-{
-  if (mTextureHost) {
-    mTextureHost->OnActorDestroy();
-  }
-  if (mTextureHostOnWhite) {
-    mTextureHostOnWhite->OnActorDestroy();
-  }
-  CompositableHost::OnActorDestroy();
-}
-
 DeprecatedContentHostBase::DeprecatedContentHostBase(const TextureInfo& aTextureInfo)
   : ContentHost(aTextureInfo)
   , mPaintWillResample(false)
@@ -371,23 +294,6 @@ DeprecatedContentHostBase::DestroyFrontHost()
              "We won't be able to destroy our SurfaceDescriptor");
   mDeprecatedTextureHost = nullptr;
   mDeprecatedTextureHostOnWhite = nullptr;
-}
-
-void
-DeprecatedContentHostBase::OnActorDestroy()
-{
-  if (mDeprecatedTextureHost) {
-    mDeprecatedTextureHost->OnActorDestroy();
-  }
-  if (mDeprecatedTextureHostOnWhite) {
-    mDeprecatedTextureHostOnWhite->OnActorDestroy();
-  }
-  if (mNewFrontHost) {
-    mNewFrontHost->OnActorDestroy();
-  }
-  if (mNewFrontHostOnWhite) {
-    mNewFrontHostOnWhite->OnActorDestroy();
-  }
 }
 
 void
@@ -619,7 +525,7 @@ ContentHostSingleBuffered::UpdateThebes(const ThebesBufferData& aData,
   // Correct for rotation
   destRegion.MoveBy(aData.rotation());
 
-  gfxIntSize size = aData.rect().Size();
+  IntSize size = aData.rect().Size().ToIntSize();
   nsIntRect destBounds = destRegion.GetBounds();
   destRegion.MoveBy((destBounds.x >= size.width) ? -size.width : 0,
                     (destBounds.y >= size.height) ? -size.height : 0);
@@ -699,7 +605,6 @@ DeprecatedContentHostSingleBuffered::UpdateThebes(const ThebesBufferData& aData,
   if (mNewFrontHost) {
     DestroyFrontHost();
     mDeprecatedTextureHost = mNewFrontHost;
-    mDeprecatedTextureHost->SetCompositableBackendSpecificData(GetCompositableBackendSpecificData());
     mNewFrontHost = nullptr;
     if (mNewFrontHostOnWhite) {
       mDeprecatedTextureHostOnWhite = mNewFrontHostOnWhite;
@@ -717,7 +622,7 @@ DeprecatedContentHostSingleBuffered::UpdateThebes(const ThebesBufferData& aData,
   // Correct for rotation
   destRegion.MoveBy(aData.rotation());
 
-  gfxIntSize size = aData.rect().Size();
+  IntSize size = aData.rect().Size().ToIntSize();
   nsIntRect destBounds = destRegion.GetBounds();
   destRegion.MoveBy((destBounds.x >= size.width) ? -size.width : 0,
                     (destBounds.y >= size.height) ? -size.height : 0);
@@ -850,29 +755,6 @@ DeprecatedContentHostDoubleBuffered::DestroyTextures()
 }
 
 void
-DeprecatedContentHostDoubleBuffered::OnActorDestroy()
-{
-  if (mDeprecatedTextureHost) {
-    mDeprecatedTextureHost->OnActorDestroy();
-  }
-  if (mDeprecatedTextureHostOnWhite) {
-    mDeprecatedTextureHostOnWhite->OnActorDestroy();
-  }
-  if (mNewFrontHost) {
-    mNewFrontHost->OnActorDestroy();
-  }
-  if (mNewFrontHostOnWhite) {
-    mNewFrontHostOnWhite->OnActorDestroy();
-  }
-  if (mBackHost) {
-    mBackHost->OnActorDestroy();
-  }
-  if (mBackHostOnWhite) {
-    mBackHostOnWhite->OnActorDestroy();
-  }
-}
-
-void
 DeprecatedContentHostDoubleBuffered::UpdateThebes(const ThebesBufferData& aData,
                                         const nsIntRegion& aUpdated,
                                         const nsIntRegion& aOldValidRegionBack,
@@ -901,7 +783,6 @@ DeprecatedContentHostDoubleBuffered::UpdateThebes(const ThebesBufferData& aData,
 
   RefPtr<DeprecatedTextureHost> oldFront = mDeprecatedTextureHost;
   mDeprecatedTextureHost = mBackHost;
-  mDeprecatedTextureHost->SetCompositableBackendSpecificData(GetCompositableBackendSpecificData());
   mBackHost = oldFront;
 
   oldFront = mDeprecatedTextureHostOnWhite;

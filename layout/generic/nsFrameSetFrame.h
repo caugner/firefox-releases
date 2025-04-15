@@ -104,7 +104,7 @@ public:
                     nsReflowStatus&          aStatus) MOZ_OVERRIDE;
 
   virtual nsIAtom* GetType() const MOZ_OVERRIDE;
-#ifdef DEBUG
+#ifdef DEBUG_FRAME_DUMP
   NS_IMETHOD GetFrameName(nsAString& aResult) const MOZ_OVERRIDE;
 #endif
 
@@ -185,7 +185,7 @@ protected:
   
   void SetBorderResize(nsHTMLFramesetBorderFrame* aBorderFrame);
 
-  static int FrameResizePrefCallback(const char* aPref, void* aClosure);
+  static void FrameResizePrefCallback(const char* aPref, void* aClosure);
 
   nsFramesetDrag   mDrag;
   nsBorderColor    mEdgeColors;

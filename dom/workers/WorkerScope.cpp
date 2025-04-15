@@ -6,11 +6,6 @@
 
 #include "WorkerScope.h"
 
-#include "Location.h"
-#include "Navigator.h"
-#include "ScriptLoader.h"
-#include "WorkerPrivate.h"
-
 #include "jsapi.h"
 #include "mozilla/dom/FunctionBinding.h"
 #include "mozilla/dom/DedicatedWorkerGlobalScopeBinding.h"
@@ -20,7 +15,13 @@
 #include <android/log.h>
 #endif
 
-#include "RuntimeService.h" // For WorkersDumpEnabled().
+#include "Console.h"
+#include "Location.h"
+#include "Navigator.h"
+#include "Principal.h"
+#include "RuntimeService.h"
+#include "ScriptLoader.h"
+#include "WorkerPrivate.h"
 
 #define UNWRAP_WORKER_OBJECT(Interface, obj, value)                           \
   UnwrapObject<prototypes::id::Interface##_workers,                           \
@@ -76,6 +77,19 @@ WorkerGlobalScope::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
   MOZ_CRASH("We should never get here!");
 }
 
+WorkerConsole*
+WorkerGlobalScope::Console()
+{
+  mWorkerPrivate->AssertIsOnWorkerThread();
+
+  if (!mConsole) {
+    mConsole = WorkerConsole::Create();
+    MOZ_ASSERT(mConsole);
+  }
+
+  return mConsole;
+}
+
 already_AddRefed<WorkerLocation>
 WorkerGlobalScope::Location()
 {
@@ -98,9 +112,18 @@ WorkerGlobalScope::Navigator()
   mWorkerPrivate->AssertIsOnWorkerThread();
 
   if (!mNavigator) {
-    mNavigator = WorkerNavigator::Create();
+    mNavigator = WorkerNavigator::Create(mWorkerPrivate->OnLine());
     MOZ_ASSERT(mNavigator);
   }
+
+  nsRefPtr<WorkerNavigator> navigator = mNavigator;
+  return navigator.forget();
+}
+
+already_AddRefed<WorkerNavigator>
+WorkerGlobalScope::GetExistingNavigator() const
+{
+  mWorkerPrivate->AssertIsOnWorkerThread();
 
   nsRefPtr<WorkerNavigator> navigator = mNavigator;
   return navigator.forget();
@@ -264,19 +287,20 @@ DedicatedWorkerGlobalScope::Visible(JSContext* aCx, JSObject* aObj)
 }
 
 JSObject*
-DedicatedWorkerGlobalScope::WrapGlobalObject(JSContext* aCx,
-                                             JS::CompartmentOptions& aOptions,
-                                             JSPrincipals* aPrincipal)
+DedicatedWorkerGlobalScope::WrapGlobalObject(JSContext* aCx)
 {
   mWorkerPrivate->AssertIsOnWorkerThread();
   MOZ_ASSERT(!mWorkerPrivate->IsSharedWorker());
+
+  JS::CompartmentOptions options;
+  mWorkerPrivate->CopyJSCompartmentOptions(options);
 
   // We're wrapping the global, so the scope is undefined.
   JS::Rooted<JSObject*> scope(aCx);
 
   return DedicatedWorkerGlobalScopeBinding_workers::Wrap(aCx, scope, this,
-                                                         this, aOptions,
-                                                         aPrincipal);
+                                                         this, options,
+                                                         GetWorkerPrincipal());
 }
 
 void
@@ -290,7 +314,7 @@ DedicatedWorkerGlobalScope::PostMessage(JSContext* aCx,
 }
 
 SharedWorkerGlobalScope::SharedWorkerGlobalScope(WorkerPrivate* aWorkerPrivate,
-                                                 const nsString& aName)
+                                                 const nsCString& aName)
 : WorkerGlobalScope(aWorkerPrivate), mName(aName)
 {
 }
@@ -304,18 +328,20 @@ SharedWorkerGlobalScope::Visible(JSContext* aCx, JSObject* aObj)
 }
 
 JSObject*
-SharedWorkerGlobalScope::WrapGlobalObject(JSContext* aCx,
-                                          JS::CompartmentOptions& aOptions,
-                                          JSPrincipals* aPrincipal)
+SharedWorkerGlobalScope::WrapGlobalObject(JSContext* aCx)
 {
   mWorkerPrivate->AssertIsOnWorkerThread();
   MOZ_ASSERT(mWorkerPrivate->IsSharedWorker());
+
+  JS::CompartmentOptions options;
+  mWorkerPrivate->CopyJSCompartmentOptions(options);
 
   // We're wrapping the global, so the scope is undefined.
   JS::Rooted<JSObject*> scope(aCx);
 
   return SharedWorkerGlobalScopeBinding_workers::Wrap(aCx, scope, this, this,
-                                                      aOptions, aPrincipal);
+                                                      options,
+                                                      GetWorkerPrincipal());
 }
 
 bool

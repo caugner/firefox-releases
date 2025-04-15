@@ -164,22 +164,22 @@ nsHTTPIndex::OnFTPControlLog(bool server, const char *msg)
     JS::Rooted<JSObject*> global(cx, JS::CurrentGlobalOrNull(cx));
     NS_ENSURE_TRUE(global, NS_OK);
 
-    JS::Value params[2];
-
     nsString unicodeMsg;
     unicodeMsg.AssignWithConversion(msg);
     JSString* jsMsgStr = JS_NewUCStringCopyZ(cx, unicodeMsg.get());
     NS_ENSURE_TRUE(jsMsgStr, NS_ERROR_OUT_OF_MEMORY);
 
-    params[0] = BOOLEAN_TO_JSVAL(server);
-    params[1] = STRING_TO_JSVAL(jsMsgStr);
+    JS::AutoValueVector params(cx);
+    MOZ_ALWAYS_TRUE(params.resize(2));
+    params[0].setBoolean(server);
+    params[1].setString(jsMsgStr);
 
     JS::Rooted<JS::Value> val(cx);
     JS_CallFunctionName(cx,
                         global,
                         "OnFTPControlLog",
                         2,
-                        params,
+                        params.begin(),
                         val.address());
     return NS_OK;
 }
@@ -461,16 +461,16 @@ nsHTTPIndex::OnIndexAvailable(nsIRequest* aRequest, nsISupports *aContext,
       rv = aIndex->GetType(&type);
       switch (type) {
       case nsIDirIndex::TYPE_UNKNOWN:
-        rv = mDirRDF->GetLiteral(NS_LITERAL_STRING("UNKNOWN").get(), getter_AddRefs(lit));
+        rv = mDirRDF->GetLiteral(MOZ_UTF16("UNKNOWN"), getter_AddRefs(lit));
         break;
       case nsIDirIndex::TYPE_DIRECTORY:
-        rv = mDirRDF->GetLiteral(NS_LITERAL_STRING("DIRECTORY").get(), getter_AddRefs(lit));
+        rv = mDirRDF->GetLiteral(MOZ_UTF16("DIRECTORY"), getter_AddRefs(lit));
         break;
       case nsIDirIndex::TYPE_FILE:
-        rv = mDirRDF->GetLiteral(NS_LITERAL_STRING("FILE").get(), getter_AddRefs(lit));
+        rv = mDirRDF->GetLiteral(MOZ_UTF16("FILE"), getter_AddRefs(lit));
         break;
       case nsIDirIndex::TYPE_SYMLINK:
-        rv = mDirRDF->GetLiteral(NS_LITERAL_STRING("SYMLINK").get(), getter_AddRefs(lit));
+        rv = mDirRDF->GetLiteral(MOZ_UTF16("SYMLINK"), getter_AddRefs(lit));
         break;
       }
       
@@ -588,9 +588,9 @@ nsHTTPIndex::CommonInit()
     mDirRDF->GetResource(NS_LITERAL_CSTRING(NC_NAMESPACE_URI "IsContainer"),
                          getter_AddRefs(kNC_IsContainer));
 
-    rv = mDirRDF->GetLiteral(NS_LITERAL_STRING("true").get(), getter_AddRefs(kTrueLiteral));
+    rv = mDirRDF->GetLiteral(MOZ_UTF16("true"), getter_AddRefs(kTrueLiteral));
     if (NS_FAILED(rv)) return(rv);
-    rv = mDirRDF->GetLiteral(NS_LITERAL_STRING("false").get(), getter_AddRefs(kFalseLiteral));
+    rv = mDirRDF->GetLiteral(MOZ_UTF16("false"), getter_AddRefs(kFalseLiteral));
     if (NS_FAILED(rv)) return(rv);
 
     rv = NS_NewISupportsArray(getter_AddRefs(mConnectionList));
@@ -708,7 +708,7 @@ void nsHTTPIndex::GetDestination(nsIRDFResource* r, nsXPIDLCString& dest) {
      r->GetValueConst(&temp);
      dest.Adopt(temp ? strdup(temp) : 0);
   } else {
-    const PRUnichar* uri;
+    const char16_t* uri;
     url->GetValueConst(&uri);
     dest.Adopt(ToNewUTF8String(nsDependentString(uri)));
   }

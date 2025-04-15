@@ -123,7 +123,7 @@ NS_IMPL_ISUPPORTS1(PrivateBrowsingObserver, nsIObserver)
 NS_IMETHODIMP
 PrivateBrowsingObserver::Observe(nsISupports     *aSubject,
                                  const char      *aTopic,
-                                 const PRUnichar *aData)
+                                 const char16_t *aData)
 {
   if (!nsCRT::strcmp(aTopic, "last-pb-context-exited")) {
     mOwner->ResetStoredData();
@@ -136,7 +136,6 @@ SharedSSLState::SharedSSLState()
 , mMutex("SharedSSLState::mMutex")
 , mSocketCreated(false)
 , mOCSPStaplingEnabled(false)
-, mOCSPFetchingEnabled(false)
 {
   mIOLayerHelpers.Init();
   mClientAuthRemember->Init();

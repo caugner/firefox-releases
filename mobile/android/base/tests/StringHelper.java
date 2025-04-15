@@ -52,6 +52,13 @@ public class StringHelper {
         "Add to Home Screen"
     };
 
+    public static final String[] CONTEXT_MENU_ITEMS_IN_URL_BAR = new String[] {
+        "Share",
+        "Copy Address",
+        "Edit Site Settings",
+        "Add to Home Screen"
+    };
+
     public static final String TITLE_PLACE_HOLDER = "Enter Search or Address";
 
     // Robocop page urls
@@ -68,6 +75,7 @@ public class StringHelper {
     public static final String ROBOCOP_PICTURE_LINK_URL = "/robocop/robocop_picture_link.html";
     public static final String ROBOCOP_SEARCH_URL = "/robocop/robocop_search.html";
     public static final String ROBOCOP_TEXT_PAGE_URL = "/robocop/robocop_text_page.html";
+    public static final String ROBOCOP_ADOBE_FLASH_URL = "/robocop/robocop_adobe_flash.html";
 
     // Robocop page titles
     public static final String ROBOCOP_BIG_LINK_TITLE = "Big Link";
@@ -104,11 +112,15 @@ public class StringHelper {
     public static final String TEXT_REFLOW_LABEL = "Text reflow";
     public static final String CHARACTER_ENCODING_LABEL = "Character encoding";
     public static final String PLUGINS_LABEL = "Plugins";
+ 
+    // Title bar
+    public static final String SHOW_PAGE_TITLE_LABEL = "Show page title";
+    public static final String SHOW_PAGE_ADDRESS_LABEL = "Show page address";
 
     // Privacy
     public static final String TRACKING_LABEL = "Tracking";
     public static final String COOKIES_LABEL = "Cookies";
-    public static final String REMEMBER_PASSWORDS_LABEL = "Remeber passwords";
+    public static final String REMEMBER_PASSWORDS_LABEL = "Remember passwords";
     public static final String MASTER_PASWSWORD_LABEL = "Use master password";
     public static final String CLEAR_PRIVATE_DATA_LABEL = "Clear private data";
 

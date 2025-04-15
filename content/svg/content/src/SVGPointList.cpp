@@ -27,13 +27,13 @@ void
 SVGPointList::GetValueAsString(nsAString& aValue) const
 {
   aValue.Truncate();
-  PRUnichar buf[50];
+  char16_t buf[50];
   uint32_t last = mItems.Length() - 1;
   for (uint32_t i = 0; i < mItems.Length(); ++i) {
     // Would like to use aValue.AppendPrintf("%f,%f", item.mX, item.mY),
     // but it's not possible to always avoid trailing zeros.
     nsTextFormatter::snprintf(buf, ArrayLength(buf),
-                              NS_LITERAL_STRING("%g,%g").get(),
+                              MOZ_UTF16("%g,%g"),
                               double(mItems[i].mX), double(mItems[i].mY));
     // We ignore OOM, since it's not useful for us to return an error.
     aValue.Append(buf);
@@ -62,9 +62,9 @@ SVGPointList::SetValueFromString(const nsAString& aValue)
 
     const nsAString& token = tokenizer.nextToken();
 
-    RangedPtr<const PRUnichar> iter =
+    RangedPtr<const char16_t> iter =
       SVGContentUtils::GetStartRangedPtr(token);
-    const RangedPtr<const PRUnichar> end =
+    const RangedPtr<const char16_t> end =
       SVGContentUtils::GetEndRangedPtr(token);
 
     float x;

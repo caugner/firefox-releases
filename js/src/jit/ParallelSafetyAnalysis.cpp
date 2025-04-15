@@ -69,7 +69,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
 {
     MIRGraph &graph_;
     bool unsafe_;
-    MDefinition *slice_;
+    MDefinition *cx_;
 
     bool insertWriteGuard(MInstruction *writeInstruction, MDefinition *valueBeingWritten);
 
@@ -95,15 +95,15 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     ParallelSafetyVisitor(MIRGraph &graph)
       : graph_(graph),
         unsafe_(false),
-        slice_(nullptr)
+        cx_(nullptr)
     { }
 
     void clearUnsafe() { unsafe_ = false; }
     bool unsafe() { return unsafe_; }
-    MDefinition *forkJoinSlice() {
-        if (!slice_)
-            slice_ = graph_.forkJoinSlice();
-        return slice_;
+    MDefinition *ForkJoinContext() {
+        if (!cx_)
+            cx_ = graph_.forkJoinContext();
+        return cx_;
     }
 
     bool convertToBailout(MBasicBlock *block, MInstruction *ins);
@@ -112,6 +112,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     // obviously safe for now.  We can loosen as we need.
 
     SAFE_OP(Constant)
+    UNSAFE_OP(CloneLiteral)
     SAFE_OP(Parameter)
     SAFE_OP(Callee)
     SAFE_OP(TableSwitch)
@@ -135,8 +136,6 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(GetArgumentsObjectArg)
     UNSAFE_OP(SetArgumentsObjectArg)
     UNSAFE_OP(ComputeThis)
-    SAFE_OP(PrepareCall)
-    SAFE_OP(PassArg)
     CUSTOM_OP(Call)
     UNSAFE_OP(ApplyArgs)
     UNSAFE_OP(Bail)
@@ -145,8 +144,8 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(FilterArgumentsOrEval)
     UNSAFE_OP(CallDirectEval)
     SAFE_OP(BitNot)
-    UNSAFE_OP(TypeOf)
-    SAFE_OP(ToId)
+    SAFE_OP(TypeOf)
+    UNSAFE_OP(ToId)
     SAFE_OP(BitAnd)
     SAFE_OP(BitOr)
     SAFE_OP(BitXor)
@@ -184,10 +183,10 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     CUSTOM_OP(NewArray)
     CUSTOM_OP(NewObject)
     CUSTOM_OP(NewCallObject)
-    CUSTOM_OP(NewParallelArray)
     UNSAFE_OP(NewDerivedTypedObject)
     UNSAFE_OP(InitElem)
     UNSAFE_OP(InitElemGetterSetter)
+    UNSAFE_OP(MutateProto)
     UNSAFE_OP(InitProp)
     UNSAFE_OP(InitPropGetterSetter)
     SAFE_OP(Start)
@@ -267,7 +266,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(Round)
     UNSAFE_OP(InstanceOf)
     CUSTOM_OP(InterruptCheck)
-    SAFE_OP(ForkJoinSlice)
+    SAFE_OP(ForkJoinContext)
     SAFE_OP(NewPar)
     SAFE_OP(NewDenseArrayPar)
     SAFE_OP(NewCallObjectPar)
@@ -282,13 +281,16 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(Pow)
     UNSAFE_OP(PowHalf)
     UNSAFE_OP(RegExpTest)
+    UNSAFE_OP(RegExpExec)
+    UNSAFE_OP(RegExpReplace)
+    UNSAFE_OP(StringReplace)
     UNSAFE_OP(CallInstanceOf)
     UNSAFE_OP(FunctionBoundary)
     UNSAFE_OP(GuardString)
     UNSAFE_OP(NewDeclEnvObject)
     UNSAFE_OP(In)
     UNSAFE_OP(InArray)
-    SAFE_OP(GuardThreadLocalObject)
+    SAFE_OP(GuardThreadExclusive)
     SAFE_OP(CheckInterruptPar)
     SAFE_OP(CheckOverRecursedPar)
     SAFE_OP(FunctionDispatch)
@@ -311,6 +313,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(AsmJSParameter)
     UNSAFE_OP(AsmJSCall)
     UNSAFE_OP(AsmJSCheckOverRecursed)
+    DROP_OP(RecompileCheck)
 
     // It looks like this could easily be made safe:
     UNSAFE_OP(ConvertElementsToDoubles)
@@ -518,15 +521,9 @@ ParallelSafetyVisitor::visitCreateThisWithTemplate(MCreateThisWithTemplate *ins)
 }
 
 bool
-ParallelSafetyVisitor::visitNewParallelArray(MNewParallelArray *ins)
-{
-    return replaceWithNewPar(ins, ins->templateObject());
-}
-
-bool
 ParallelSafetyVisitor::visitNewCallObject(MNewCallObject *ins)
 {
-    replace(ins, MNewCallObjectPar::New(alloc(), forkJoinSlice(), ins));
+    replace(ins, MNewCallObjectPar::New(alloc(), ForkJoinContext(), ins));
     return true;
 }
 
@@ -539,7 +536,7 @@ ParallelSafetyVisitor::visitLambda(MLambda *ins)
     }
 
     // fast path: replace with LambdaPar op
-    replace(ins, MLambdaPar::New(alloc(), forkJoinSlice(), ins));
+    replace(ins, MLambdaPar::New(alloc(), ForkJoinContext(), ins));
     return true;
 }
 
@@ -568,7 +565,7 @@ ParallelSafetyVisitor::visitNewArray(MNewArray *newInstruction)
 bool
 ParallelSafetyVisitor::visitRest(MRest *ins)
 {
-    return replace(ins, MRestPar::New(alloc(), forkJoinSlice(), ins));
+    return replace(ins, MRestPar::New(alloc(), ForkJoinContext(), ins));
 }
 
 bool
@@ -580,7 +577,7 @@ ParallelSafetyVisitor::visitMathFunction(MMathFunction *ins)
 bool
 ParallelSafetyVisitor::visitConcat(MConcat *ins)
 {
-    return replace(ins, MConcatPar::New(alloc(), forkJoinSlice(), ins));
+    return replace(ins, MConcatPar::New(alloc(), ForkJoinContext(), ins));
 }
 
 bool
@@ -596,7 +593,7 @@ bool
 ParallelSafetyVisitor::replaceWithNewPar(MInstruction *newInstruction,
                                          JSObject *templateObject)
 {
-    replace(newInstruction, MNewPar::New(alloc(), forkJoinSlice(), templateObject));
+    replace(newInstruction, MNewPar::New(alloc(), ForkJoinContext(), templateObject));
     return true;
 }
 
@@ -662,6 +659,10 @@ ParallelSafetyVisitor::insertWriteGuard(MInstruction *writeInstruction,
             object = valueBeingWritten->toTypedArrayElements()->object();
             break;
 
+          case MDefinition::Op_TypedObjectElements:
+            object = valueBeingWritten->toTypedObjectElements()->object();
+            break;
+
           default:
             SpewMIR(writeInstruction, "cannot insert write guard for %s",
                     valueBeingWritten->opName());
@@ -688,8 +689,8 @@ ParallelSafetyVisitor::insertWriteGuard(MInstruction *writeInstruction,
     }
 
     MBasicBlock *block = writeInstruction->block();
-    MGuardThreadLocalObject *writeGuard =
-        MGuardThreadLocalObject::New(alloc(), forkJoinSlice(), object);
+    MGuardThreadExclusive *writeGuard =
+        MGuardThreadExclusive::New(alloc(), ForkJoinContext(), object);
     block->insertBefore(writeInstruction, writeGuard);
     writeGuard->adjustInputs(alloc(), writeGuard);
     return true;
@@ -705,7 +706,7 @@ bool
 ParallelSafetyVisitor::visitCall(MCall *ins)
 {
     // DOM? Scary.
-    if (ins->isDOMFunction()) {
+    if (ins->isCallDOMNative()) {
         SpewMIR(ins, "call to dom function");
         return markUnsafe();
     }
@@ -739,13 +740,13 @@ ParallelSafetyVisitor::visitCall(MCall *ins)
 bool
 ParallelSafetyVisitor::visitCheckOverRecursed(MCheckOverRecursed *ins)
 {
-    return replace(ins, MCheckOverRecursedPar::New(alloc(), forkJoinSlice()));
+    return replace(ins, MCheckOverRecursedPar::New(alloc(), ForkJoinContext()));
 }
 
 bool
 ParallelSafetyVisitor::visitInterruptCheck(MInterruptCheck *ins)
 {
-    return replace(ins, MCheckInterruptPar::New(alloc(), forkJoinSlice()));
+    return replace(ins, MCheckInterruptPar::New(alloc(), ForkJoinContext()));
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -872,7 +873,7 @@ GetPossibleCallees(JSContext *cx,
         if (!rootedScript)
             return false;
 
-        if (rootedScript->shouldCloneAtCallsite) {
+        if (rootedScript->shouldCloneAtCallsite()) {
             rootedFun = CloneFunctionAtCallsite(cx, rootedFun, script, pc);
             if (!rootedFun)
                 return false;

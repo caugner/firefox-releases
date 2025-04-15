@@ -315,7 +315,7 @@ class IDLUnresolvedIdentifier(IDLObject):
 
         assert len(name) > 0
 
-        if name[:2] == "__" and not allowDoubleUnderscore:
+        if name[:2] == "__" and name != "__content" and name != "___noSuchMethod__"  and not allowDoubleUnderscore:
             raise WebIDLError("Identifiers beginning with __ are reserved",
                               [location])
         if name[0] == '_' and not allowDoubleUnderscore:
@@ -2799,6 +2799,10 @@ class IDLAttribute(IDLInterfaceMember):
                 raise WebIDLError("[LenientThis] is not allowed in combination "
                                   "with [%s]" % identifier,
                                   [attr.location, self.location])
+        elif identifier == "Frozen":
+            if not self.type.isSequence():
+                raise WebIDLError("[Frozen] is only allowed on sequence-valued "
+                                  "attributes", [attr.location, self.location])
         elif (identifier == "Pref" or
               identifier == "SetterThrows" or
               identifier == "Pure" or
@@ -2848,6 +2852,7 @@ class IDLArgument(IDLObjectWithIdentifier):
         self._isComplete = False
         self.enforceRange = False
         self.clamp = False
+        self._allowTreatNonCallableAsNull = False
 
         assert not variadic or optional
 
@@ -2874,6 +2879,8 @@ class IDLArgument(IDLObjectWithIdentifier):
                     raise WebIDLError("[EnforceRange] and [Clamp] are mutually exclusive",
                                       [self.location]);
                 self.enforceRange = True
+            elif identifier == "TreatNonCallableAsNull":
+                self._allowTreatNonCallableAsNull = True
             else:
                 raise WebIDLError("Unhandled extended attribute on an argument",
                                   [attribute.location])
@@ -2907,6 +2914,9 @@ class IDLArgument(IDLObjectWithIdentifier):
             self.defaultValue = self.defaultValue.coerceToType(self.type,
                                                                self.location)
             assert self.defaultValue
+
+    def allowTreatNonCallableAsNull(self):
+        return self._allowTreatNonCallableAsNull
 
     def _getDependentObjects(self):
         deps = set([self.type])
@@ -3145,7 +3155,7 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
         return self._hasOverloads
 
     def isIdentifierLess(self):
-        return self.identifier.name[:2] == "__"
+        return self.identifier.name[:2] == "__" and self.identifier.name != "__noSuchMethod__"
 
     def resolve(self, parentScope):
         assert isinstance(parentScope, IDLScope)

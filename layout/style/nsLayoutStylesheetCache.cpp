@@ -8,6 +8,7 @@
 
 #include "nsAppDirectoryServiceDefs.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/Preferences.h"
 #include "mozilla/css/Loader.h"
 #include "nsIFile.h"
 #include "nsNetUtil.h"
@@ -16,13 +17,19 @@
 #include "nsIXULRuntime.h"
 #include "nsCSSStyleSheet.h"
 
-NS_IMPL_ISUPPORTS_INHERITED1(
-  nsLayoutStylesheetCache, MemoryUniReporter, nsIObserver)
+using namespace mozilla;
+
+static bool sNumberControlEnabled;
+
+#define NUMBER_CONTROL_PREF "dom.forms.number"
+
+NS_IMPL_ISUPPORTS2(
+  nsLayoutStylesheetCache, nsIObserver, nsIMemoryReporter)
 
 nsresult
 nsLayoutStylesheetCache::Observe(nsISupports* aSubject,
                             const char* aTopic,
-                            const PRUnichar* aData)
+                            const char16_t* aData)
 {
   if (!strcmp(aTopic, "profile-before-change")) {
     mUserContentSheet = nullptr;
@@ -35,6 +42,7 @@ nsLayoutStylesheetCache::Observe(nsISupports* aSubject,
            strcmp(aTopic, "chrome-flush-caches") == 0) {
     mScrollbarsSheet = nullptr;
     mFormsSheet = nullptr;
+    mNumberControlSheet = nullptr;
   }
   else {
     NS_NOTREACHED("Unexpected observer topic.");
@@ -83,6 +91,31 @@ nsLayoutStylesheetCache::FormsSheet()
   }
 
   return gStyleCache->mFormsSheet;
+}
+
+nsCSSStyleSheet*
+nsLayoutStylesheetCache::NumberControlSheet()
+{
+  EnsureGlobal();
+  if (!gStyleCache)
+    return nullptr;
+
+  if (!sNumberControlEnabled) {
+    return nullptr;
+  }
+
+  if (!gStyleCache->mNumberControlSheet) {
+    nsCOMPtr<nsIURI> sheetURI;
+    NS_NewURI(getter_AddRefs(sheetURI),
+              NS_LITERAL_CSTRING("resource://gre-resources/number-control.css"));
+
+    if (sheetURI)
+      LoadSheet(sheetURI, gStyleCache->mNumberControlSheet, false);
+
+    NS_ASSERTION(gStyleCache->mNumberControlSheet, "Could not load number-control.css");
+  }
+
+  return gStyleCache->mNumberControlSheet;
 }
 
 nsCSSStyleSheet*
@@ -142,11 +175,18 @@ nsLayoutStylesheetCache::Shutdown()
   NS_IF_RELEASE(gStyleCache);
 }
 
-int64_t
-nsLayoutStylesheetCache::Amount()
+MOZ_DEFINE_MALLOC_SIZE_OF(LayoutStylesheetCacheMallocSizeOf)
+
+NS_IMETHODIMP
+nsLayoutStylesheetCache::CollectReports(nsIHandleReportCallback* aHandleReport,
+                                        nsISupports* aData)
 {
-  return SizeOfIncludingThis(MallocSizeOf);
+  return MOZ_COLLECT_REPORT(
+    "explicit/layout/style-sheet-cache", KIND_HEAP, UNITS_BYTES,
+    SizeOfIncludingThis(LayoutStylesheetCacheMallocSizeOf),
+    "Memory used for some built-in style sheets.");
 }
+
 
 size_t
 nsLayoutStylesheetCache::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
@@ -157,6 +197,7 @@ nsLayoutStylesheetCache::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf
 
   MEASURE(mScrollbarsSheet);
   MEASURE(mFormsSheet);
+  MEASURE(mNumberControlSheet);
   MEASURE(mUserContentSheet);
   MEASURE(mUserChromeSheet);
   MEASURE(mUASheet);
@@ -171,9 +212,6 @@ nsLayoutStylesheetCache::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf
 }
 
 nsLayoutStylesheetCache::nsLayoutStylesheetCache()
-  : MemoryUniReporter("explicit/layout/style-sheet-cache",
-                      KIND_HEAP, UNITS_BYTES,
-                      "Memory used for some built-in style sheets.")
 {
   nsCOMPtr<nsIObserverService> obsSvc =
     mozilla::services::GetObserverService();
@@ -212,14 +250,14 @@ nsLayoutStylesheetCache::nsLayoutStylesheetCache()
 
 nsLayoutStylesheetCache::~nsLayoutStylesheetCache()
 {
-  UnregisterWeakMemoryReporter(this);
+  mozilla::UnregisterWeakMemoryReporter(this);
   gStyleCache = nullptr;
 }
 
 void
 nsLayoutStylesheetCache::InitMemoryReporter()
 {
-  RegisterWeakMemoryReporter(this);
+  mozilla::RegisterWeakMemoryReporter(this);
 }
 
 void
@@ -233,6 +271,9 @@ nsLayoutStylesheetCache::EnsureGlobal()
   NS_ADDREF(gStyleCache);
 
   gStyleCache->InitMemoryReporter();
+
+  Preferences::AddBoolVarCache(&sNumberControlEnabled, NUMBER_CONTROL_PREF,
+                               true);
 }
 
 void

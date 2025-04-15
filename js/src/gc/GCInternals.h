@@ -130,7 +130,7 @@ class AutoStopVerifyingBarriers
       : runtime(rt)
     {
         restartPreVerifier = !isShutdown && rt->gcVerifyPreData;
-        restartPostVerifier = !isShutdown && rt->gcVerifyPostData && rt->gcGenerationalEnabled;
+        restartPostVerifier = !isShutdown && rt->gcVerifyPostData && JS::IsGenerationalGCEnabled(rt);
         if (rt->gcVerifyPreData)
             EndVerifyPreBarriers(rt);
         if (rt->gcVerifyPostData)
@@ -151,6 +151,9 @@ struct AutoStopVerifyingBarriers
     AutoStopVerifyingBarriers(JSRuntime *, bool) {}
 };
 #endif /* JS_GC_ZEAL */
+
+void
+CrashAtUnhandlableOOM(const char *reason);
 
 } /* namespace gc */
 } /* namespace js */

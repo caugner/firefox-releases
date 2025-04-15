@@ -31,6 +31,7 @@
 
 class nsAttrAndChildArray;
 class nsChildContentList;
+class nsCSSSelectorList;
 class nsDOMAttributeMap;
 class nsIContent;
 class nsIDocument;
@@ -55,7 +56,7 @@ namespace dom {
  * @return true if aChar is what the DOM spec defines as 'space character'.
  * http://dom.spec.whatwg.org/#space-character
  */
-inline bool IsSpaceCharacter(PRUnichar aChar) {
+inline bool IsSpaceCharacter(char16_t aChar) {
   return aChar == ' ' || aChar == '\t' || aChar == '\n' || aChar == '\r' ||
          aChar == '\f';
 }
@@ -311,11 +312,6 @@ public:
   friend class nsAttrAndChildArray;
 
 #ifdef MOZILLA_INTERNAL_API
-#ifdef _MSC_VER
-#pragma warning(push)
-// Disable annoying warning about 'this' in initializers.
-#pragma warning(disable:4355)
-#endif
   nsINode(already_AddRefed<nsINodeInfo> aNodeInfo)
   : mNodeInfo(aNodeInfo),
     mParent(nullptr),
@@ -323,15 +319,11 @@ public:
     mNextSibling(nullptr),
     mPreviousSibling(nullptr),
     mFirstChild(nullptr),
-    mSubtreeRoot(this),
+    mSubtreeRoot(MOZ_THIS_IN_INITIALIZER_LIST()),
     mSlots(nullptr)
   {
     SetIsDOMBinding();
   }
-
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
 #endif
 
   virtual ~nsINode();
@@ -1315,6 +1307,9 @@ private:
     NodeHandlingClick,
     // Set if the node has had :hover selectors matched against it
     NodeHasRelevantHoverRules,
+    // Set if the element has a parser insertion mode other than "in body",
+    // per the HTML5 "Parse state" section.
+    ElementHasWeirdParserInsertionMode,
     // Guard value
     BooleanFlagCount
   };
@@ -1474,6 +1469,9 @@ protected:
   void ClearHasLockedStyleStates() { ClearBoolFlag(ElementHasLockedStyleStates); }
   bool HasLockedStyleStates() const
     { return GetBoolFlag(ElementHasLockedStyleStates); }
+  void SetHasWeirdParserInsertionMode() { SetBoolFlag(ElementHasWeirdParserInsertionMode); }
+  bool HasWeirdParserInsertionMode() const
+  { return GetBoolFlag(ElementHasWeirdParserInsertionMode); }
   bool HandlingClick() const { return GetBoolFlag(NodeHandlingClick); }
   void SetHandlingClick() { SetBoolFlag(NodeHandlingClick); }
   void ClearHandlingClick() { ClearBoolFlag(NodeHandlingClick); }
@@ -1548,7 +1546,6 @@ public:
     return ReplaceOrInsertBefore(true, &aNode, &aChild, aError);
   }
   nsINode* RemoveChild(nsINode& aChild, mozilla::ErrorResult& aError);
-  already_AddRefed<nsINode> CloneNode(mozilla::ErrorResult& aError);
   already_AddRefed<nsINode> CloneNode(bool aDeep, mozilla::ErrorResult& aError);
   bool IsEqualNode(nsINode* aNode);
   void GetNamespaceURI(nsAString& aNamespaceURI) const
@@ -1706,6 +1703,17 @@ protected:
    */
   nsresult doInsertChildAt(nsIContent* aKid, uint32_t aIndex,
                            bool aNotify, nsAttrAndChildArray& aChildArray);
+
+  /**
+   * Parse the given selector string into an nsCSSSelectorList.
+   *
+   * A null return value with a non-failing aRv means the string only
+   * contained pseudo-element selectors.
+   *
+   * A failing aRv means the string was not a valid selector.
+   */
+  nsCSSSelectorList* ParseSelectorList(const nsAString& aSelectorString,
+                                       mozilla::ErrorResult& aRv);
 
 public:
   /* Event stuff that documents and elements share.  This needs to be

@@ -52,7 +52,8 @@ AudioNode::AudioNode(AudioContext* aContext,
                      uint32_t aChannelCount,
                      ChannelCountMode aChannelCountMode,
                      ChannelInterpretation aChannelInterpretation)
-  : mContext(aContext)
+  : nsDOMEventTargetHelper(aContext->GetParentObject())
+  , mContext(aContext)
   , mChannelCount(aChannelCount)
   , mChannelCountMode(aChannelCountMode)
   , mChannelInterpretation(aChannelInterpretation)

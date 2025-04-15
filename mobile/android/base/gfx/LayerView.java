@@ -119,6 +119,10 @@ public class LayerView extends FrameLayout implements Tabs.OnTabsChangedListener
         Tabs.registerOnTabsChangedListener(this);
     }
 
+    public LayerView(Context context) {
+        this(context, null);
+    }
+
     public void initializeView(EventDispatcher eventDispatcher) {
         mLayerClient = new GeckoLayerClient(getContext(), this, eventDispatcher);
         if (mOverscroll != null) {
@@ -494,10 +498,6 @@ public class LayerView extends FrameLayout implements Tabs.OnTabsChangedListener
         Context context = getContext();
         int resId = context.getResources().getIdentifier(name, "drawable", context.getPackageName());
         return BitmapUtils.decodeResource(context, resId, options);
-    }
-
-    Bitmap getShadowPattern() {
-        return getDrawable("shadow");
     }
 
     Bitmap getScrollbarImage() {

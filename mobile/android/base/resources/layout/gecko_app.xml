@@ -8,11 +8,10 @@
                 android:layout_width="fill_parent"
                 android:layout_height="fill_parent">
 
-    <org.mozilla.gecko.TabsPanel android:id="@+id/tabs_panel"
-                                 android:layout_width="fill_parent"
-                                 android:layout_height="fill_parent"
-                                 android:background="@color/background_tabs"
-                                 android:visibility="invisible"/>
+    <ViewStub android:id="@+id/tabs_panel"
+              android:layout="@layout/tabs_panel_view"
+              android:layout_width="fill_parent"
+              android:layout_height="fill_parent"/>
 
    <view class="org.mozilla.gecko.GeckoApp$MainLayout"
          android:id="@+id/main_layout"
@@ -29,13 +28,24 @@
 
             <FrameLayout android:id="@+id/home_pager_container"
                          android:layout_width="fill_parent"
-                         android:layout_height="fill_parent">
+                         android:layout_height="fill_parent"
+                         android:visibility="gone">
 
                 <ViewStub android:id="@+id/home_pager_stub"
                           android:layout="@layout/home_pager"
                           android:layout_width="fill_parent"
                           android:layout_height="fill_parent"/>
 
+                <org.mozilla.gecko.home.HomeBanner android:id="@+id/home_banner"
+                                                   style="@style/Widget.HomeBanner"
+                                                   android:layout_width="fill_parent"
+                                                   android:layout_height="@dimen/home_banner_height"
+                                                   android:background="@drawable/home_banner"
+                                                   android:layout_gravity="bottom"
+                                                   android:gravity="center_vertical"
+                                                   android:visibility="gone"
+                                                   android:clickable="true"
+                                                   android:focusable="true"/>
 
             </FrameLayout>
 
@@ -48,12 +58,12 @@
                                          style="@style/FindBar"
                                          android:visibility="gone"/>
 
-        <RelativeLayout android:id="@+id/camera_layout"
-                        android:layout_height="wrap_content"
-                        android:layout_width="wrap_content"
-                        android:layout_alignParentRight="true"
-                        android:layout_alignParentBottom="true">
-        </RelativeLayout>
+        <org.mozilla.gecko.MediaCastingBar android:id="@+id/media_casting"
+                                           android:layout_width="fill_parent"
+                                           android:layout_height="wrap_content"
+                                           android:layout_alignParentBottom="true"
+                                           style="@style/FindBar"
+                                           android:visibility="gone"/>
 
         <FrameLayout android:id="@+id/search_container"
                      android:layout_width="fill_parent"
@@ -89,6 +99,15 @@
                                                     style="@style/GeckoActionBar"/>
 
         </org.mozilla.gecko.widget.GeckoViewFlipper>
+
+        <org.mozilla.gecko.toolbar.ToolbarProgressView android:id="@+id/progress"
+                                                       android:layout_width="fill_parent"
+                                                       android:layout_height="14dp"
+                                                       android:layout_marginTop="-8dp"
+                                                       android:layout_below="@id/browser_actionbar"
+                                                       android:src="@drawable/progress"
+                                                       android:background="@null"
+                                                       android:visibility="gone" />
 
     </view>
 

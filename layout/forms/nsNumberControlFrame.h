@@ -44,11 +44,15 @@ public:
 
   virtual void DestroyFrom(nsIFrame* aDestructRoot) MOZ_OVERRIDE;
   virtual void ContentStatesChanged(nsEventStates aStates);
-  virtual bool IsLeaf() const MOZ_OVERRIDE { return false; }
+  virtual bool IsLeaf() const MOZ_OVERRIDE { return true; }
 
 #ifdef ACCESSIBILITY
   virtual mozilla::a11y::AccType AccessibleType() MOZ_OVERRIDE;
 #endif
+
+  virtual nscoord GetMinWidth(nsRenderingContext* aRenderingContext) MOZ_OVERRIDE;
+
+  virtual nscoord GetPrefWidth(nsRenderingContext* aRenderingContext) MOZ_OVERRIDE;
 
   NS_IMETHOD Reflow(nsPresContext*           aPresContext,
                     nsHTMLReflowMetrics&     aDesiredSize,
@@ -64,7 +68,7 @@ public:
   virtual void AppendAnonymousContentTo(nsBaseContentList& aElements,
                                         uint32_t aFilter) MOZ_OVERRIDE;
 
-#ifdef NS_DEBUG
+#ifdef DEBUG_FRAME_DUMP
   NS_IMETHOD GetFrameName(nsAString& aResult) const MOZ_OVERRIDE {
     return MakeFrameName(NS_LITERAL_STRING("NumberControl"), aResult);
   }
@@ -79,10 +83,23 @@ public:
   }
 
   /**
-   * When our HTMLInputElement's value changes, it calls this method to tell
-   * us to sync up our anonymous text input field child.
+   * This method attempts to localizes aValue and then sets the result as the
+   * value of our anonymous text control. It's called when our
+   * HTMLInputElement's value changes, when we need to sync up the value
+   * displayed in our anonymous text control.
    */
-  void UpdateForValueChange(const nsAString& aValue);
+  void SetValueOfAnonTextControl(const nsAString& aValue);
+
+  /**
+   * This method gets the string value of our anonymous text control,
+   * attempts to normalizes (de-localizes) it, then sets the outparam aValue to
+   * the result. It's called when user input changes the text value of our
+   * anonymous text control so that we can sync up the internal value of our
+   * HTMLInputElement.
+   */
+  void GetValueOfAnonTextControl(nsAString& aValue);
+
+  bool AnonTextControlIsEmpty();
 
   /**
    * Called to notify this frame that its HTMLInputElement is currently
@@ -145,11 +162,6 @@ private:
                                 nsIAtom* aTagName,
                                 nsCSSPseudoElements::Type aPseudoType,
                                 nsStyleContext* aParentContext);
-
-  nsresult ReflowAnonymousContent(nsPresContext* aPresContext,
-                                  nsHTMLReflowMetrics& aWrappersDesiredSize,
-                                  const nsHTMLReflowState& aReflowState,
-                                  nsIFrame* aOuterWrapperFrame);
 
   class SyncDisabledStateEvent;
   friend class SyncDisabledStateEvent;

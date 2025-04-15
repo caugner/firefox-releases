@@ -25,7 +25,6 @@ const BrowserElementIsPreloaded = true;
   Cu.import("resource://gre/modules/Geometry.jsm");
   Cu.import("resource://gre/modules/IndexedDBHelper.jsm");
   Cu.import("resource://gre/modules/NetUtil.jsm");
-  Cu.import("resource://gre/modules/ObjectWrapper.jsm");
   Cu.import("resource://gre/modules/Services.jsm");
   Cu.import("resource://gre/modules/SettingsDB.jsm");
   Cu.import("resource://gre/modules/SettingsQueue.jsm");
@@ -94,11 +93,6 @@ const BrowserElementIsPreloaded = true;
   } catch (e) {
   }
 
-  // Those are produc-specific files that's sometimes unavailable.
-  try {
-    Services.scriptloader.loadSubScript("chrome://browser/content/ErrorPage.js", global);
-  } catch (e) {
-  }
   Services.scriptloader.loadSubScript("chrome://global/content/BrowserElementPanning.js", global);
   Services.scriptloader.loadSubScript("chrome://global/content/BrowserElementChildPreload.js", global);
 

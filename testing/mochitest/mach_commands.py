@@ -97,7 +97,7 @@ class MochitestRunner(MozbuildObject):
 
         self.tests_dir = os.path.join(self.topobjdir, '_tests')
         self.mochitest_dir = os.path.join(self.tests_dir, 'testing', 'mochitest')
-        self.lib_dir = os.path.join(self.topobjdir, 'dist', 'lib')
+        self.bin_dir = os.path.join(self.topobjdir, 'dist', 'bin')
 
     def run_b2g_test(self, test_file=None, b2g_home=None, xre_path=None,
                      total_chunks=None, this_chunk=None, no_window=None,
@@ -198,7 +198,7 @@ class MochitestRunner(MozbuildObject):
         chunk_by_dir=0, total_chunks=None, this_chunk=None, jsdebugger=False,
         debug_on_failure=False, start_at=None, end_at=None, e10s=False,
         dmd=False, dump_output_directory=None, dump_about_memory_after_test=False,
-        dump_dmd_after_test=False, **kwargs):
+        dump_dmd_after_test=False, install_extension=None, **kwargs):
         """Runs a mochitest.
 
         test_file is a path to a test file. It can be a relative path from the
@@ -286,7 +286,7 @@ class MochitestRunner(MozbuildObject):
             raise Exception('None or unrecognized mochitest suite type.')
 
         if dmd:
-            options.dmdPath = self.lib_dir
+            options.dmdPath = self.bin_dir
 
         options.autorun = not no_autorun
         options.closeWhenDone = not keep_open
@@ -312,6 +312,8 @@ class MochitestRunner(MozbuildObject):
         mozinfo.update({"e10s": e10s}) # for test manifest parsing.
 
         options.failureFile = failure_file_path
+        if install_extension != None:
+            options.extensionsToInstall = [os.path.join(self.topsrcdir,install_extension)]
 
         for k, v in kwargs.iteritems():
             setattr(options, k, v)
@@ -487,6 +489,11 @@ def MochitestCommand(func):
             'directory, or omitted. If omitted, the entire test suite is ' \
             'executed.')
     func = path(func)
+
+    install_extension = CommandArgument('--install-extension',
+        help='Install given extension before running selected tests. ' \
+            'Parameter is a path to xpi file.')
+    func = install_extension(func)
 
     return func
 

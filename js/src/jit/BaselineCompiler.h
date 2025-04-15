@@ -10,9 +10,9 @@
 #ifdef JS_ION
 
 #include "jit/FixedList.h"
-#if defined(JS_CPU_X86)
+#if defined(JS_CODEGEN_X86)
 # include "jit/x86/BaselineCompiler-x86.h"
-#elif defined(JS_CPU_X64)
+#elif defined(JS_CODEGEN_X64)
 # include "jit/x64/BaselineCompiler-x64.h"
 #else
 # include "jit/arm/BaselineCompiler-arm.h"
@@ -24,9 +24,9 @@ namespace jit {
 #define OPCODE_LIST(_)         \
     _(JSOP_NOP)                \
     _(JSOP_LABEL)              \
-    _(JSOP_NOTEARG)            \
     _(JSOP_POP)                \
     _(JSOP_POPN)               \
+    _(JSOP_POPNV)              \
     _(JSOP_DUP)                \
     _(JSOP_DUP2)               \
     _(JSOP_SWAP)               \
@@ -90,6 +90,7 @@ namespace jit {
     _(JSOP_INITELEM)           \
     _(JSOP_INITELEM_GETTER)    \
     _(JSOP_INITELEM_SETTER)    \
+    _(JSOP_MUTATEPROTO)        \
     _(JSOP_INITPROP)           \
     _(JSOP_INITPROP_GETTER)    \
     _(JSOP_INITPROP_SETTER)    \
@@ -97,7 +98,6 @@ namespace jit {
     _(JSOP_GETELEM)            \
     _(JSOP_SETELEM)            \
     _(JSOP_CALLELEM)           \
-    _(JSOP_ENUMELEM)           \
     _(JSOP_DELELEM)            \
     _(JSOP_IN)                 \
     _(JSOP_GETGNAME)           \
@@ -145,13 +145,9 @@ namespace jit {
     _(JSOP_FINALLY)            \
     _(JSOP_GOSUB)              \
     _(JSOP_RETSUB)             \
-    _(JSOP_ENTERBLOCK)         \
-    _(JSOP_ENTERLET0)          \
-    _(JSOP_ENTERLET1)          \
-    _(JSOP_ENTERLET2)          \
-    _(JSOP_LEAVEBLOCK)         \
-    _(JSOP_LEAVEBLOCKEXPR)     \
-    _(JSOP_LEAVEFORLETIN)      \
+    _(JSOP_PUSHBLOCKSCOPE)     \
+    _(JSOP_POPBLOCKSCOPE)      \
+    _(JSOP_DEBUGLEAVEBLOCK)    \
     _(JSOP_EXCEPTION)          \
     _(JSOP_DEBUGGER)           \
     _(JSOP_ARGUMENTS)          \
@@ -190,7 +186,7 @@ class BaselineCompiler : public BaselineCompilerSpecific
     // early stack check.
     static const unsigned EARLY_STACK_CHECK_SLOT_COUNT = 128;
     bool needsEarlyStackCheck() const {
-        return script->nslots > EARLY_STACK_CHECK_SLOT_COUNT;
+        return script->nslots() > EARLY_STACK_CHECK_SLOT_COUNT;
     }
 
   public:
@@ -253,9 +249,6 @@ class BaselineCompiler : public BaselineCompilerSpecific
     bool emitInitElemGetterSetter();
 
     bool emitFormalArgAccess(uint32_t arg, bool get);
-
-    bool emitEnterBlock();
-    bool emitLeaveBlock();
 
     bool addPCMappingEntry(bool addIndexEntry);
 

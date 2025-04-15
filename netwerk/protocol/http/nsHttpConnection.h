@@ -17,16 +17,13 @@
 #include "nsIAsyncOutputStream.h"
 #include "nsIInterfaceRequestor.h"
 
-class nsHttpRequestHead;
-class nsHttpResponseHead;
-class nsHttpHandler;
 class nsISocketTransport;
 
 namespace mozilla {
 namespace net {
+
+class nsHttpHandler;
 class ASpdySession;
-}
-}
 
 //-----------------------------------------------------------------------------
 // nsHttpConnection - represents a connection to a HTTP server (or proxy)
@@ -145,8 +142,11 @@ public:
     // authoritatively whether UsingSpdy() or not.
     bool ReportedNPN() { return mReportedSpdy; }
 
-    // When the connection is active this is called every 1 second
-    void  ReadTimeoutTick(PRIntervalTime now);
+    // When the connection is active this is called up to once every 1 second
+    // return the interval (in seconds) that the connection next wants to
+    // have this invoked. It might happen sooner depending on the needs of
+    // other connections.
+    uint32_t  ReadTimeoutTick(PRIntervalTime now);
 
     nsAHttpTransaction::Classifier Classification() { return mClassification; }
     void Classify(nsAHttpTransaction::Classifier newclass)
@@ -213,7 +213,7 @@ private:
 
     nsRefPtr<nsHttpHandler>         mHttpHandler; // keep gHttpHandler alive
 
-    mozilla::Mutex                  mCallbacksLock;
+    Mutex                           mCallbacksLock;
     nsMainThreadPtrHandle<nsIInterfaceRequestor> mCallbacks;
 
     nsRefPtr<nsHttpConnectionInfo> mConnInfo;
@@ -266,7 +266,7 @@ private:
     // version level in use, 0 if unused
     uint8_t                         mUsingSpdyVersion;
 
-    nsRefPtr<mozilla::net::ASpdySession> mSpdySession;
+    nsRefPtr<ASpdySession>          mSpdySession;
     int32_t                         mPriority;
     bool                            mReportedSpdy;
 
@@ -278,6 +278,10 @@ private:
 
     // The capabailities associated with the most recent transaction
     uint32_t                        mTransactionCaps;
+
+    bool                            mResponseTimeoutEnabled;
 };
+
+}} // namespace mozilla::net
 
 #endif // nsHttpConnection_h__

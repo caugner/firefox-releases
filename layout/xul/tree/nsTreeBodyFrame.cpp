@@ -363,7 +363,7 @@ nsTreeBodyFrame::EnsureView()
       mTreeBoxObject->GetView(getter_AddRefs(treeView));
       if (treeView && weakFrame.IsAlive()) {
         nsXPIDLString rowStr;
-        box->GetProperty(NS_LITERAL_STRING("topRow").get(),
+        box->GetProperty(MOZ_UTF16("topRow"),
                          getter_Copies(rowStr));
         nsAutoString rowStr2(rowStr);
         nsresult error;
@@ -380,7 +380,7 @@ nsTreeBodyFrame::EnsureView()
 
         // Clear out the property info for the top row, but we always keep the
         // view current.
-        box->RemoveProperty(NS_LITERAL_STRING("topRow").get());
+        box->RemoveProperty(MOZ_UTF16("topRow"));
       }
     }
   }
@@ -1399,7 +1399,7 @@ nsTreeBodyFrame::AdjustForCellText(nsAutoString& aText,
           uint32_t length = aText.Length();
           uint32_t i;
           for (i = 0; i < length; ++i) {
-            PRUnichar ch = aText[i];
+            char16_t ch = aText[i];
             // XXX this is horrible and doesn't handle clusters
             cwidth = aRenderingContext.GetWidth(ch);
             if (twidth + cwidth > width)
@@ -1418,7 +1418,7 @@ nsTreeBodyFrame::AdjustForCellText(nsAutoString& aText,
           int32_t length = aText.Length();
           int32_t i;
           for (i=length-1; i >= 0; --i) {
-            PRUnichar ch = aText[i];
+            char16_t ch = aText[i];
             cwidth = aRenderingContext.GetWidth(ch);
             if (twidth + cwidth > width)
               break;
@@ -1440,7 +1440,7 @@ nsTreeBodyFrame::AdjustForCellText(nsAutoString& aText,
           int32_t length = aText.Length();
           int32_t rightPos = length - 1;
           for (int32_t leftPos = 0; leftPos < rightPos; ++leftPos) {
-            PRUnichar ch = aText[leftPos];
+            char16_t ch = aText[leftPos];
             cwidth = aRenderingContext.GetWidth(ch);
             twidth += cwidth;
             if (twidth > width)
@@ -3524,7 +3524,7 @@ nsTreeBodyFrame::PaintImage(int32_t              aRowIndex,
 
     gfxContext* ctx = aRenderingContext.ThebesContext();
     if (opacity != 1.0f) {
-      ctx->PushGroup(GFX_CONTENT_COLOR_ALPHA);
+      ctx->PushGroup(gfxContentType::COLOR_ALPHA);
     }
 
     nsLayoutUtils::DrawImage(&aRenderingContext, image,
@@ -3639,7 +3639,7 @@ nsTreeBodyFrame::PaintText(int32_t              aRowIndex,
 
   gfxContext* ctx = aRenderingContext.ThebesContext();
   if (opacity != 1.0f) {
-    ctx->PushGroup(GFX_CONTENT_COLOR_ALPHA);
+    ctx->PushGroup(gfxContentType::COLOR_ALPHA);
   }
 
   nsLayoutUtils::DrawString(this, &aRenderingContext, text.get(), text.Length(),

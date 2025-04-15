@@ -26,6 +26,7 @@
 #include "mozilla/dom/XMLHttpRequestBinding.h"
 #include "mozilla/dom/XMLHttpRequestUploadBinding.h"
 #include "mozilla/dom/URLBinding.h"
+#include "mozilla/dom/URLSearchParamsBinding.h"
 #include "mozilla/dom/WorkerBinding.h"
 #include "mozilla/dom/WorkerLocationBinding.h"
 #include "mozilla/dom/WorkerNavigatorBinding.h"
@@ -63,13 +64,13 @@ WorkerPrivate::RegisterBindings(JSContext* aCx, JS::Handle<JSObject*> aGlobal)
       !ImageDataBinding::GetConstructorObject(aCx, aGlobal) ||
       !MessageEventBinding::GetConstructorObject(aCx, aGlobal) ||
       !MessagePortBinding::GetConstructorObject(aCx, aGlobal) ||
-      (PromiseEnabled() &&
-        !PromiseBinding::GetConstructorObject(aCx, aGlobal)) ||
+      !PromiseBinding::GetConstructorObject(aCx, aGlobal) ||
       !TextDecoderBinding::GetConstructorObject(aCx, aGlobal) ||
       !TextEncoderBinding::GetConstructorObject(aCx, aGlobal) ||
       !XMLHttpRequestBinding_workers::GetConstructorObject(aCx, aGlobal) ||
       !XMLHttpRequestUploadBinding_workers::GetConstructorObject(aCx, aGlobal) ||
       !URLBinding_workers::GetConstructorObject(aCx, aGlobal) ||
+      !URLSearchParamsBinding::GetConstructorObject(aCx, aGlobal) ||
       !WorkerBinding::GetConstructorObject(aCx, aGlobal) ||
       !WorkerLocationBinding_workers::GetConstructorObject(aCx, aGlobal) ||
       !WorkerNavigatorBinding_workers::GetConstructorObject(aCx, aGlobal)) {

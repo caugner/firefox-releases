@@ -54,7 +54,7 @@ class nsAutoCauseReflowNotifier;
 // to get the pref for any reason.
 #define PAINTLOCK_EVENT_DELAY 250
 
-class PresShell : public nsIPresShell_MOZILLA27,
+class PresShell : public nsIPresShell,
                   public nsStubDocumentObserver,
                   public nsISelectionController, public nsIObserver,
                   public nsSupportsWeakReference
@@ -162,14 +162,16 @@ public:
                                               nscolor aBackgroundColor,
                                               gfxContext* aThebesContext) MOZ_OVERRIDE;
 
-  virtual already_AddRefed<gfxASurface> RenderNode(nsIDOMNode* aNode,
-                                                   nsIntRegion* aRegion,
-                                                   nsIntPoint& aPoint,
-                                                   nsIntRect* aScreenRect) MOZ_OVERRIDE;
+  virtual mozilla::TemporaryRef<SourceSurface>
+  RenderNode(nsIDOMNode* aNode,
+             nsIntRegion* aRegion,
+             nsIntPoint& aPoint,
+             nsIntRect* aScreenRect) MOZ_OVERRIDE;
 
-  virtual already_AddRefed<gfxASurface> RenderSelection(nsISelection* aSelection,
-                                                        nsIntPoint& aPoint,
-                                                        nsIntRect* aScreenRect) MOZ_OVERRIDE;
+  virtual mozilla::TemporaryRef<SourceSurface>
+  RenderSelection(nsISelection* aSelection,
+                  nsIntPoint& aPoint,
+                  nsIntRect* aScreenRect) MOZ_OVERRIDE;
 
   virtual already_AddRefed<nsPIDOMWindow> GetRootWindow() MOZ_OVERRIDE;
 
@@ -180,7 +182,7 @@ public:
   virtual void SetDisplayPort(const nsRect& aDisplayPort);
 
   virtual nsresult SetResolution(float aXResolution, float aYResolution) MOZ_OVERRIDE;
-  virtual gfxSize GetCumulativeResolution() MOZ_OVERRIDE; // nsIPresShell_MOZILLA27
+  virtual gfxSize GetCumulativeResolution() MOZ_OVERRIDE;
 
   //nsIViewObserver interface
 
@@ -504,7 +506,7 @@ protected:
    * aScreenRect - [out] set to the area of the screen the painted area should
    *               be displayed at
    */
-  already_AddRefed<gfxASurface>
+  mozilla::TemporaryRef<SourceSurface>
   PaintRangePaintInfo(nsTArray<nsAutoPtr<RangePaintInfo> >* aItems,
                       nsISelection* aSelection,
                       nsIntRegion* aRegion,
@@ -691,6 +693,9 @@ protected:
   virtual void SysColorChanged() MOZ_OVERRIDE { mPresContext->SysColorChanged(); }
   virtual void ThemeChanged() MOZ_OVERRIDE { mPresContext->ThemeChanged(); }
   virtual void BackingScaleFactorChanged() MOZ_OVERRIDE { mPresContext->UIResolutionChanged(); }
+
+  virtual void PausePainting() MOZ_OVERRIDE;
+  virtual void ResumePainting() MOZ_OVERRIDE;
 
   void UpdateImageVisibility();
 

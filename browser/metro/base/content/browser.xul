@@ -6,7 +6,7 @@
 
 <?xml-stylesheet href="chrome://browser/skin/platform.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/skin/browser.css" type="text/css"?>
-<?xml-stylesheet href="chrome://browser/content/browser.css" type="text/css"?>
+<?xml-stylesheet href="chrome://browser/content/bindings.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/skin/cssthrobber.css" type="text/css"?>
 <?xml-stylesheet href="chrome://browser/skin/tiles.css" type="text/css"?>
 <?xml-stylesheet href="chrome://branding/content/metro-about.css" type="text/css"?>
@@ -89,6 +89,7 @@
 #ifdef MOZ_SERVICES_SYNC
     <command id="cmd_remoteTabs" oncommand="CommandUpdater.doCommand(this.id);"/>
 #endif
+    <command id="cmd_newPrivateTab" oncommand="BrowserUI.addAndShowPrivateTab();"/>
 
     <!-- misc -->
     <command id="cmd_close" oncommand="CommandUpdater.doCommand(this.id);"/>
@@ -166,6 +167,7 @@ Desktop browser's sync prefs.
     <key id="key_closeTab" key="&closeTab.key;" modifiers="accel" command="cmd_closeTab"/>
     <key id="key_closeTab2" keycode="VK_F4" modifiers="accel" command="cmd_closeTab"/>
     <key id="key_undoCloseTab" key="&newTab.key;" modifiers="accel,shift" command="cmd_undoCloseTab"/>
+    <key id="key_newPrivateTab" key="&newPrivateTab.key;" modifiers="accel,shift" command="cmd_newPrivateTab"/>
 
     <!-- tab selection -->
     <key id="key_nextTab" oncommand="BrowserUI.selectNextTab();" keycode="VK_TAB" modifiers="accel"/>
@@ -231,7 +233,7 @@ Desktop browser's sync prefs.
 
       <vbox id="toolbar-overlay" flex="1">
         <!-- Autocomplete -->
-        <scrollbox flex="1">
+        <scrollbox flex="1" id="urlbar-autocomplete-scroll" observes="bcast_urlbarState">
           <hbox id="urlbar-autocomplete" observes="bcast_windowState"/>
         </scrollbox>
 
@@ -819,6 +821,9 @@ Desktop browser's sync prefs.
           </richlistitem>
 
           <!-- standard buttons -->
+          <richlistitem id="context-newprivatetab" type="private-browsing" onclick="BrowserUI.addAndShowPrivateTab()">
+            <label value="&newPrivateTab.label;"/>
+          </richlistitem>
           <richlistitem id="context-findinpage" type="find-in-page" onclick="ContextCommands.findInPage();">
             <label value="&appbarFindInPage2.label;"/>
           </richlistitem>

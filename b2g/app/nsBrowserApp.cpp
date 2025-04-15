@@ -50,7 +50,7 @@ static void Output(const char *fmt, ... )
   va_start(ap, fmt);
 
 #if defined(XP_WIN) && !MOZ_WINCONSOLE
-  PRUnichar msg[2048];
+  char16_t msg[2048];
   _vsnwprintf(msg, sizeof(msg)/sizeof(msg[0]), NS_ConvertUTF8toUTF16(fmt).get(), ap);
   MessageBoxW(nullptr, msg, L"XULRunner", MB_OK | MB_ICONERROR);
 #else
@@ -205,6 +205,10 @@ int main(int argc, char* argv[])
   gotCounters = GetProcessIoCounters(GetCurrentProcess(), &ioCounters);
 #endif
 
+#ifdef HAS_DLL_BLOCKLIST
+  DllBlocklist_Initialize();
+#endif
+
   // We do this because of data in bug 771745
   XPCOMGlueEnablePreload();
 
@@ -221,10 +225,6 @@ int main(int argc, char* argv[])
     Output("Couldn't load XRE functions.\n");
     return 255;
   }
-
-#ifdef HAS_DLL_BLOCKLIST
-  DllBlocklist_Initialize();
-#endif
 
   if (gotCounters) {
 #if defined(XP_WIN)

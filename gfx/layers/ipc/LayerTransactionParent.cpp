@@ -39,6 +39,7 @@
 #include "nsTArray.h"                   // for nsTArray, nsTArray_Impl, etc
 #include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
 #include "GeckoProfiler.h"
+#include "mozilla/layers/TextureHost.h"
 
 typedef std::vector<mozilla::layers::EditReply> EditReplyVector;
 
@@ -177,15 +178,17 @@ LayerTransactionParent::Destroy()
 bool
 LayerTransactionParent::RecvUpdateNoSwap(const InfallibleTArray<Edit>& cset,
                                          const TargetConfig& targetConfig,
-                                         const bool& isFirstPaint)
+                                         const bool& isFirstPaint,
+                                         const bool& scheduleComposite)
 {
-  return RecvUpdate(cset, targetConfig, isFirstPaint, nullptr);
+  return RecvUpdate(cset, targetConfig, isFirstPaint, scheduleComposite, nullptr);
 }
 
 bool
 LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
                                    const TargetConfig& targetConfig,
                                    const bool& isFirstPaint,
+                                   const bool& scheduleComposite,
                                    InfallibleTArray<EditReply>* reply)
 {
   profiler_tracing("Paint", "Composite", TRACING_INTERVAL_START);
@@ -199,9 +202,6 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
   if (mDestroyed || !layer_manager() || layer_manager()->IsDestroyed()) {
     return true;
   }
-
-  // Clear ReleaseFence handles used in previous transaction.
-  ClearPrevReleaseFenceHandles();
 
   EditReplyVector replyv;
 
@@ -269,6 +269,7 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
 
       const CommonLayerAttributes& common = attrs.common();
       layer->SetVisibleRegion(common.visibleRegion());
+      layer->SetEventRegions(common.eventRegions());
       layer->SetContentFlags(common.contentFlags());
       layer->SetOpacity(common.opacity());
       layer->SetClipRect(common.useClipRect() ? &common.clipRect() : nullptr);
@@ -452,7 +453,7 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
   // other's buffer contents.
   LayerManagerComposite::PlatformSyncBeforeReplyUpdate();
 
-  mShadowLayersManager->ShadowLayersUpdated(this, targetConfig, isFirstPaint);
+  mShadowLayersManager->ShadowLayersUpdated(this, targetConfig, isFirstPaint, scheduleComposite);
 
 #ifdef COMPOSITOR_PERFORMANCE_WARNING
   int compositeTime = (int)(mozilla::TimeStamp::Now() - updateStart).ToMilliseconds();
@@ -488,7 +489,7 @@ LayerTransactionParent::RecvGetTransform(PLayerParent* aParent,
   // from the shadow transform by undoing the translations in
   // AsyncCompositionManager::SampleValue.
   Layer* layer = cast(aParent)->AsLayer();
-  *aTransform = layer->AsLayerComposite()->GetShadowTransform();
+  gfx::To3DMatrix(layer->AsLayerComposite()->GetShadowTransform(), *aTransform);
   if (ContainerLayer* c = layer->AsContainerLayer()) {
     aTransform->ScalePost(1.0f/c->GetInheritedXScale(),
                           1.0f/c->GetInheritedYScale(),
@@ -550,10 +551,10 @@ LayerTransactionParent::RecvClearCachedResources()
 }
 
 PGrallocBufferParent*
-LayerTransactionParent::AllocPGrallocBufferParent(const gfxIntSize& aSize,
-                                            const uint32_t& aFormat,
-                                            const uint32_t& aUsage,
-                                            MaybeMagicGrallocBufferHandle* aOutHandle)
+LayerTransactionParent::AllocPGrallocBufferParent(const IntSize& aSize,
+                                                  const uint32_t& aFormat,
+                                                  const uint32_t& aUsage,
+                                                  MaybeMagicGrallocBufferHandle* aOutHandle)
 {
 #ifdef MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
   return GrallocBufferActor::Create(aSize, aFormat, aUsage, aOutHandle);
@@ -599,6 +600,19 @@ LayerTransactionParent::DeallocPCompositableParent(PCompositableParent* actor)
 {
   delete actor;
   return true;
+}
+
+PTextureParent*
+LayerTransactionParent::AllocPTextureParent(const SurfaceDescriptor& aSharedData,
+                                            const TextureFlags& aFlags)
+{
+  return TextureHost::CreateIPDLActor(this, aSharedData, aFlags);
+}
+
+bool
+LayerTransactionParent::DeallocPTextureParent(PTextureParent* actor)
+{
+  return TextureHost::DestroyIPDLActor(actor);
 }
 
 } // namespace layers

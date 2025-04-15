@@ -34,6 +34,7 @@
 #include "ConvolverNode.h"
 #include "OscillatorNode.h"
 #include "nsNetUtil.h"
+#include "AudioStream.h"
 
 namespace mozilla {
 namespace dom {
@@ -65,21 +66,30 @@ NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
 
 static uint8_t gWebAudioOutputKey;
 
+static float GetSampleRateForAudioContext(bool aIsOffline, float aSampleRate)
+{
+  if (aIsOffline) {
+    return aSampleRate;
+  } else {
+    AudioStream::InitPreferredSampleRate();
+    return static_cast<float>(AudioStream::PreferredSampleRate());
+  }
+}
+
 AudioContext::AudioContext(nsPIDOMWindow* aWindow,
                            bool aIsOffline,
                            uint32_t aNumberOfChannels,
                            uint32_t aLength,
                            float aSampleRate)
-  : mSampleRate(aIsOffline ? aSampleRate : IdealAudioRate())
+  : nsDOMEventTargetHelper(aWindow)
+  , mSampleRate(GetSampleRateForAudioContext(aIsOffline, aSampleRate))
   , mNumberOfChannels(aNumberOfChannels)
   , mNodeCount(0)
   , mIsOffline(aIsOffline)
   , mIsStarted(!aIsOffline)
   , mIsShutDown(false)
 {
-  nsDOMEventTargetHelper::BindToOwner(aWindow);
   aWindow->AddAudioContext(this);
-  SetIsDOMBinding();
 
   // Note: AudioDestinationNode needs an AudioContext that must already be
   // bound to the window.
@@ -98,6 +108,8 @@ AudioContext::~AudioContext()
   if (window) {
     window->RemoveAudioContext(this);
   }
+
+  UnregisterWeakMemoryReporter(this);
 }
 
 JSObject*
@@ -121,6 +133,9 @@ AudioContext::Constructor(const GlobalObject& aGlobal,
   }
 
   nsRefPtr<AudioContext> object = new AudioContext(window, false);
+
+  RegisterWeakMemoryReporter(object);
+
   return object.forget();
 }
 
@@ -152,6 +167,9 @@ AudioContext::Constructor(const GlobalObject& aGlobal,
                                                    aNumberOfChannels,
                                                    aLength,
                                                    aSampleRate);
+
+  RegisterWeakMemoryReporter(object);
+
   return object.forget();
 }
 
@@ -168,8 +186,8 @@ AudioContext::CreateBuffer(JSContext* aJSContext, uint32_t aNumberOfChannels,
                            uint32_t aLength, float aSampleRate,
                            ErrorResult& aRv)
 {
-  if (aSampleRate < 8000 || aSampleRate > 96000 || !aLength) {
-    aRv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
+  if (aSampleRate < 8000 || aSampleRate > 192000 || !aLength || !aNumberOfChannels) {
+    aRv.Throw(NS_ERROR_DOM_INDEX_SIZE_ERR);
     return nullptr;
   }
 
@@ -647,6 +665,36 @@ void
 AudioContext::SetMozAudioChannelType(AudioChannel aValue, ErrorResult& aRv)
 {
   mDestination->SetMozAudioChannelType(aValue, aRv);
+}
+
+size_t
+AudioContext::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const
+{
+  // AudioNodes are tracked separately because we do not want the AudioContext
+  // to track all of the AudioNodes it creates, so we wouldn't be able to
+  // traverse them from here.
+
+  size_t amount = aMallocSizeOf(this);
+  if (mListener) {
+    amount += mListener->SizeOfIncludingThis(aMallocSizeOf);
+  }
+  amount += mDecoder.SizeOfExcludingThis(aMallocSizeOf);
+  amount += mDecodeJobs.SizeOfExcludingThis(aMallocSizeOf);
+  for (uint32_t i = 0; i < mDecodeJobs.Length(); ++i) {
+    amount += mDecodeJobs[i]->SizeOfExcludingThis(aMallocSizeOf);
+  }
+  amount += mActiveNodes.SizeOfExcludingThis(nullptr, aMallocSizeOf);
+  amount += mPannerNodes.SizeOfExcludingThis(nullptr, aMallocSizeOf);
+  return amount;
+}
+
+NS_IMETHODIMP
+AudioContext::CollectReports(nsIHandleReportCallback* aHandleReport,
+                             nsISupports* aData)
+{
+  int64_t amount = SizeOfIncludingThis(MallocSizeOf);
+  return MOZ_COLLECT_REPORT("explicit/webaudio/audiocontext", KIND_HEAP, UNITS_BYTES,
+                            amount, "Memory used by AudioContext objects (Web Audio).");
 }
 
 double

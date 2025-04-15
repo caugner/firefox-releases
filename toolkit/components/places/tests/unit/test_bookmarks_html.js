@@ -330,23 +330,14 @@ function checkItem(aExpected, aNode)
                       aExpected.lastModified);
           break;
         case "url":
-          let (deferred = Promise.defer()) {
-            PlacesUtils.livemarks.getLivemark(
-              { id: id },
-              function (aStatus, aLivemark) {
-                deferred.resolve();
-              });
-            let status = yield deferred.promise;
-            if (!Components.isSuccessCode(status)) {
-              do_check_eq(aNode.uri, aExpected.url);
-            }
-          }
+          if (!("feedUrl" in aExpected))
+            do_check_eq(aNode.uri, aExpected.url)
           break;
         case "icon":
           let (deferred = Promise.defer(), data) {
             PlacesUtils.favicons.getFaviconDataForPage(
               NetUtil.newURI(aExpected.url),
-                function (aURI, aDataLen, aData, aMimeType) {
+              function (aURI, aDataLen, aData, aMimeType) {
                 deferred.resolve(aData);
               });
             data = yield deferred.promise;
@@ -372,17 +363,13 @@ function checkItem(aExpected, aNode)
           do_check_eq((yield PlacesUtils.getCharsetForURI(testURI)), aExpected.charset);
           break;
         case "feedUrl":
-          let (deferred = Promise.defer(), data) {
-            PlacesUtils.livemarks.getLivemark(
-              { id: id },
-              function (aStatus, aLivemark) {
-                deferred.resolve({ status: aStatus, livemark: aLivemark });
-              });
-            data = yield deferred.promise;
-            do_check_true(Components.isSuccessCode(data.status));
-            do_check_eq(data.livemark.siteURI.spec, aExpected.url);
-            do_check_eq(data.livemark.feedURI.spec, aExpected.feedUrl);
-          }
+          yield PlacesUtils.livemarks.getLivemark(
+            { id: id },
+            (aStatus, aLivemark) => {
+              do_check_true(Components.isSuccessCode(aStatus));
+              do_check_eq(aLivemark.siteURI.spec, aExpected.url);
+              do_check_eq(aLivemark.feedURI.spec, aExpected.feedUrl);
+            });
           break;
         case "children":
           let folder = aNode.QueryInterface(Ci.nsINavHistoryContainerResultNode);

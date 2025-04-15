@@ -11,7 +11,6 @@
 #include <stddef.h>                     // for size_t
 #include <stdint.h>                     // for uint64_t
 #include "gfxTypes.h"
-#include "gfxPoint.h"                   // for gfxIntSize
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
 #include "mozilla/WidgetUtils.h"        // for ScreenRotation
 #include "mozilla/dom/ScreenOrientation.h"  // for ScreenOrientation
@@ -149,6 +148,9 @@ public:
    */
   void Connect(CompositableClient* aCompositable);
 
+  virtual PTextureChild* CreateTexture(const SurfaceDescriptor& aSharedData,
+                                       TextureFlags aFlags) MOZ_OVERRIDE;
+
   virtual void CreatedSingleBuffer(CompositableClient* aCompositable,
                                    const SurfaceDescriptor& aDescriptor,
                                    const TextureInfo& aTextureInfo,
@@ -277,6 +279,8 @@ public:
                              TextureIdentifier aTextureId,
                              SurfaceDescriptor* aDescriptor) MOZ_OVERRIDE;
 
+  virtual void RemoveTexture(TextureClient* aTexture) MOZ_OVERRIDE;
+
   /**
    * Same as above, but performs an asynchronous layer transaction
    */
@@ -306,19 +310,6 @@ public:
                          const nsIntRect& aRect);
 
   /**
-   * See CompositableForwarder::AddTexture
-   */
-  virtual bool AddTexture(CompositableClient* aCompositable,
-                          TextureClient* aClient) MOZ_OVERRIDE;
-
-  /**
-   * See CompositableForwarder::RemoveTexture
-   */
-  virtual void RemoveTexture(CompositableClient* aCompositable,
-                             uint64_t aTextureID,
-                             TextureFlags aFlags) MOZ_OVERRIDE;
-
-  /**
    * See CompositableForwarder::UpdatedTexture
    */
   virtual void UpdatedTexture(CompositableClient* aCompositable,
@@ -336,7 +327,7 @@ public:
    * |aReplies| are directions from the LayerManagerComposite to the
    * caller of EndTransaction().
    */
-  bool EndTransaction(InfallibleTArray<EditReply>* aReplies, bool* aSent);
+  bool EndTransaction(InfallibleTArray<EditReply>* aReplies, bool aScheduleComposite, bool* aSent);
 
   /**
    * Set an actor through which layer updates will be pushed.
@@ -424,7 +415,7 @@ protected:
 
 #ifdef MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
   // from ISurfaceAllocator
-  virtual PGrallocBufferChild* AllocGrallocBuffer(const gfxIntSize& aSize,
+  virtual PGrallocBufferChild* AllocGrallocBuffer(const gfx::IntSize& aSize,
                                                   uint32_t aFormat,
                                                   uint32_t aUsage,
                                                   MaybeMagicGrallocBufferHandle* aHandle) MOZ_OVERRIDE;
@@ -450,17 +441,17 @@ private:
                                           gfxContentType* aContent,
                                           gfxASurface** aSurface);
   // (Same as above, but for surface size.)
-  static gfxIntSize
+  static gfx::IntSize
   GetDescriptorSurfaceSize(const SurfaceDescriptor& aDescriptor,
                            OpenMode aMode,
                            gfxASurface** aSurface);
   static bool
   PlatformGetDescriptorSurfaceSize(const SurfaceDescriptor& aDescriptor,
                                    OpenMode aMode,
-                                   gfxIntSize* aSize,
+                                   gfx::IntSize* aSize,
                                    gfxASurface** aSurface);
   // And again, for the image format.
-  // This function will return gfxImageFormatUnknown only if |aDescriptor|
+  // This function will return gfxImageFormat::Unknown only if |aDescriptor|
   // describes a non-ImageSurface.
   static gfxImageFormat
   GetDescriptorSurfaceImageFormat(const SurfaceDescriptor& aDescriptor,

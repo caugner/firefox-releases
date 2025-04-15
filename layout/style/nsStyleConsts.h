@@ -212,6 +212,11 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_COLOR_CONTEXT_STROKE                 -8
 
 // See nsStyleDisplay
+#define NS_STYLE_WILL_CHANGE_TRANSFORM          (1<<0)
+#define NS_STYLE_WILL_CHANGE_SCROLL             (1<<1)
+#define NS_STYLE_WILL_CHANGE_OPACITY            (1<<2)
+
+// See nsStyleDisplay
 #define NS_STYLE_ANIMATION_DIRECTION_NORMAL       0
 #define NS_STYLE_ANIMATION_DIRECTION_REVERSE      1
 #define NS_STYLE_ANIMATION_DIRECTION_ALTERNATE    2
@@ -554,20 +559,24 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_MATHML_MATHVARIANT_LOOPED                  17
 #define NS_MATHML_MATHVARIANT_STRETCHED               18
 
+// See nsStyleFont::mMathDisplay
+#define NS_MATHML_DISPLAYSTYLE_INLINE           0
+#define NS_MATHML_DISPLAYSTYLE_BLOCK            1
+
 // See nsStylePosition::mWidth, mMinWidth, mMaxWidth
 #define NS_STYLE_WIDTH_MAX_CONTENT              0
 #define NS_STYLE_WIDTH_MIN_CONTENT              1
 #define NS_STYLE_WIDTH_FIT_CONTENT              2
 #define NS_STYLE_WIDTH_AVAILABLE                3
 
-// See nsStylePosition.mPosition
+// See nsStyleDisplay.mPosition
 #define NS_STYLE_POSITION_STATIC                0
 #define NS_STYLE_POSITION_RELATIVE              1
 #define NS_STYLE_POSITION_ABSOLUTE              2
 #define NS_STYLE_POSITION_FIXED                 3
 #define NS_STYLE_POSITION_STICKY                4
 
-// See nsStylePosition.mClip
+// See nsStyleDisplay.mClip
 #define NS_STYLE_CLIP_AUTO                      0x00
 #define NS_STYLE_CLIP_RECT                      0x01
 #define NS_STYLE_CLIP_TYPE_MASK                 0x0F
@@ -588,7 +597,7 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_FRAME_SCROLL                   7
 #define NS_STYLE_FRAME_NOSCROLL                 8
 
-// See nsStylePosition.mOverflow
+// See nsStyleDisplay.mOverflow
 #define NS_STYLE_OVERFLOW_VISIBLE               0
 #define NS_STYLE_OVERFLOW_HIDDEN                1
 #define NS_STYLE_OVERFLOW_SCROLL                2
@@ -596,6 +605,10 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_OVERFLOW_CLIP                  4
 #define NS_STYLE_OVERFLOW_SCROLLBARS_HORIZONTAL 5
 #define NS_STYLE_OVERFLOW_SCROLLBARS_VERTICAL   6
+
+// See nsStyleDisplay.mOverflowClipBox
+#define NS_STYLE_OVERFLOW_CLIP_BOX_PADDING_BOX  0
+#define NS_STYLE_OVERFLOW_CLIP_BOX_CONTENT_BOX  1
 
 // See nsStyleList
 #define NS_STYLE_LIST_STYLE_NONE                  0
@@ -741,6 +754,12 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_TEXT_TRANSFORM_LOWERCASE       2
 #define NS_STYLE_TEXT_TRANSFORM_UPPERCASE       3
 #define NS_STYLE_TEXT_TRANSFORM_FULLWIDTH       4
+
+// See nsStyleDisplay
+#define NS_STYLE_TOUCH_ACTION_NONE            (1 << 0)
+#define NS_STYLE_TOUCH_ACTION_AUTO            (1 << 1)
+#define NS_STYLE_TOUCH_ACTION_PAN_X           (1 << 2)
+#define NS_STYLE_TOUCH_ACTION_PAN_Y           (1 << 3)
 
 // See nsStyleDisplay
 #define NS_STYLE_TRANSITION_TIMING_FUNCTION_EASE         0

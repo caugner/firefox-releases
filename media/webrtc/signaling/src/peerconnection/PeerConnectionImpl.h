@@ -55,6 +55,7 @@ class NrIceCtx;
 class NrIceMediaStream;
 class NrIceStunServer;
 class NrIceTurnServer;
+class MediaPipeline;
 
 #ifdef USE_FAKE_MEDIA_STREAMS
 typedef Fake_DOMMediaStream DOMMediaStream;
@@ -222,6 +223,9 @@ public:
   // Handle system to allow weak references to be passed through C code
   virtual const std::string& GetHandle();
 
+  // Name suitable for exposing to content
+  virtual const std::string& GetName();
+
   // ICE events
   void IceConnectionStateChange(NrIceCtx* ctx,
                                 NrIceCtx::ConnectionState state);
@@ -245,7 +249,10 @@ public:
   }
 
   // Get the DTLS identity
-  mozilla::RefPtr<DtlsIdentity> const GetIdentity();
+  mozilla::RefPtr<DtlsIdentity> const GetIdentity() const;
+  std::string GetFingerprint() const;
+  std::string GetFingerprintAlgorithm() const;
+  std::string GetFingerprintHexValue() const;
 
   // Create a fake media stream
   nsresult CreateFakeMediaStream(uint32_t hint, nsIDOMMediaStream** retval);
@@ -336,10 +343,14 @@ public:
   }
 
   NS_IMETHODIMP_TO_ERRORRESULT(AddStream, ErrorResult &rv,
-                               DOMMediaStream& aMediaStream)
+                               DOMMediaStream& aMediaStream,
+                               const MediaConstraintsInternal& aConstraints)
   {
-    rv = AddStream(aMediaStream);
+    rv = AddStream(aMediaStream, aConstraints);
   }
+
+  NS_IMETHODIMP AddStream(DOMMediaStream & aMediaStream,
+                          const MediaConstraintsExternal& aConstraints);
 
   NS_IMETHODIMP_TO_ERRORRESULT(RemoveStream, ErrorResult &rv,
                                DOMMediaStream& aMediaStream)
@@ -515,6 +526,7 @@ private:
 
 #ifdef MOZILLA_INTERNAL_API
   void virtualDestroyNSSReference() MOZ_FINAL;
+  void destructorSafeDestroyNSSReference();
   nsresult GetTimeSinceEpoch(DOMHighResTimeStamp *result);
 #endif
 
@@ -527,28 +539,56 @@ private:
   nsresult IceGatheringStateChange_m(
       mozilla::dom::PCImplIceGatheringState aState);
 
-#ifdef MOZILLA_INTERNAL_API
-  // Fills in an RTCStatsReportInternal. Must be run on STS.
-  void GetStats_s(mozilla::TrackID trackId,
-                  bool internalStats,
-                  DOMHighResTimeStamp now);
+  NS_IMETHOD FingerprintSplitHelper(
+      std::string& fingerprint, size_t& spaceIdx) const;
 
-  nsresult GetStatsImpl_s(mozilla::TrackID trackId,
-                          bool internalStats,
-                          DOMHighResTimeStamp now,
-                          mozilla::dom::RTCStatsReportInternal *report);
+
+#ifdef MOZILLA_INTERNAL_API
+  // TODO(bcampen@mozilla.com): Once the dust settles on this stuff, it
+  // probably makes sense to make these static in PeerConnectionImpl.cpp
+  // (ie; stop exporting them)
+
+  // Fills in an RTCStatsReportInternal. Must be run on STS.
+  static void GetStats_s(
+      const std::string& pcHandle,
+      const std::string& pcName,
+      nsCOMPtr<nsIThread> callbackThread,
+      bool internalStats,
+      const std::vector<mozilla::RefPtr<mozilla::MediaPipeline>> &pipelines,
+      const mozilla::RefPtr<NrIceCtx> &iceCtx,
+      const std::vector<mozilla::RefPtr<NrIceMediaStream>> &streams,
+      DOMHighResTimeStamp now);
+
+  static nsresult GetStatsImpl_s(
+      bool internalStats,
+      const std::vector<mozilla::RefPtr<mozilla::MediaPipeline>> &pipelines,
+      const mozilla::RefPtr<NrIceCtx> &iceCtx,
+      const std::vector<mozilla::RefPtr<NrIceMediaStream>> &streams,
+      DOMHighResTimeStamp now,
+      mozilla::dom::RTCStatsReportInternal *report);
+
+  static void FillStatsReport_s(
+      NrIceMediaStream& stream,
+      bool internalStats,
+      DOMHighResTimeStamp now,
+      mozilla::dom::RTCStatsReportInternal* stats);
 
   // Sends an RTCStatsReport to JS. Must run on main thread.
-  void OnStatsReport_m(mozilla::TrackID trackId,
-                       nsresult result,
-                       nsAutoPtr<mozilla::dom::RTCStatsReportInternal> report);
+  static void OnStatsReport_m(
+      const std::string& pcHandle,
+      nsresult result,
+      const std::vector<mozilla::RefPtr<mozilla::MediaPipeline>> &pipelines,
+      nsAutoPtr<mozilla::dom::RTCStatsReportInternal> report);
 
   // Fetches logs matching pattern from RLogRingBuffer. Must be run on STS.
-  void GetLogging_s(const std::string& pattern);
+  static void GetLogging_s(const std::string& pcHandle,
+                           nsCOMPtr<nsIThread> callbackThread,
+                           const std::string& pattern);
 
   // Sends logging to JS. Must run on main thread.
-  void OnGetLogging_m(const std::string& pattern,
-                      const std::deque<std::string>& logging);
+  static void OnGetLogging_m(const std::string& pcHandle,
+                             const std::string& pattern,
+                             nsAutoPtr<std::deque<std::string>> logging);
 #endif
 
   // Timecard used to measure processing time. This should be the first class
@@ -587,6 +627,9 @@ private:
 
   // A handle to refer to this PC with
   std::string mHandle;
+
+  // A name for this PC that we are willing to expose to content.
+  std::string mName;
 
   // The target to run stuff on
   nsCOMPtr<nsIEventTarget> mSTSThread;

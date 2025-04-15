@@ -132,7 +132,7 @@ public:
   NS_IMETHOD              MakeFullScreen(bool aFullScreen);
   virtual nsDeviceContext* GetDeviceContext();
   virtual LayerManager*   GetLayerManager(PLayerTransactionChild* aShadowManager = nullptr,
-                                          LayersBackend aBackendHint = mozilla::layers::LAYERS_NONE,
+                                          LayersBackend aBackendHint = mozilla::layers::LayersBackend::LAYERS_NONE,
                                           LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT,
                                           bool* aAllowRetaining = nullptr);
 
@@ -141,16 +141,17 @@ public:
   virtual void            CreateCompositor(int aWidth, int aHeight);
   virtual void            PrepareWindowEffects() {}
   virtual void            CleanupWindowEffects() {}
-  virtual bool            PreRender(LayerManager* aManager) { return true; }
-  virtual void            PostRender(LayerManager* aManager) {}
-  virtual void            DrawWindowUnderlay(LayerManager* aManager, nsIntRect aRect) {}
-  virtual void            DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect) {}
+  virtual bool            PreRender(LayerManagerComposite* aManager) { return true; }
+  virtual void            PostRender(LayerManagerComposite* aManager) {}
+  virtual void            DrawWindowUnderlay(LayerManagerComposite* aManager, nsIntRect aRect) {}
+  virtual void            DrawWindowOverlay(LayerManagerComposite* aManager, nsIntRect aRect) {}
   virtual mozilla::TemporaryRef<mozilla::gfx::DrawTarget> StartRemoteDrawing();
   virtual void            EndRemoteDrawing() { };
   virtual void            CleanupRemoteDrawing() { };
   virtual void            UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries) {}
   virtual gfxASurface*    GetThebesSurface();
-  NS_IMETHOD              SetModal(bool aModal); 
+  NS_IMETHOD              SetModal(bool aModal);
+  virtual uint32_t        GetMaxTouchPoints() const;
   NS_IMETHOD              SetWindowClass(const nsAString& xulWinType);
   // Return whether this widget interprets parameters to Move and Resize APIs
   // as "global display pixels" rather than "device pixels", and therefore

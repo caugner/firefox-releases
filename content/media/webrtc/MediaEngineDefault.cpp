@@ -25,6 +25,8 @@
 #define AUDIO_FRAME_LENGTH ((AUDIO_RATE * MediaEngine::DEFAULT_AUDIO_TIMER_MS) / 1000)
 namespace mozilla {
 
+using namespace mozilla::gfx;
+
 NS_IMPL_ISUPPORTS1(MediaEngineDefaultVideoSource, nsITimerCallback)
 /**
  * Default video source.
@@ -92,16 +94,16 @@ static void AllocateSolidColorFrame(layers::PlanarYCbCrData& aData,
   memset(frame+yLen+cbLen, aCr, crLen);
 
   aData.mYChannel = frame;
-  aData.mYSize = gfxIntSize(aWidth, aHeight);
+  aData.mYSize = IntSize(aWidth, aHeight);
   aData.mYStride = aWidth;
   aData.mCbCrStride = aWidth>>1;
   aData.mCbChannel = frame + yLen;
   aData.mCrChannel = aData.mCbChannel + cbLen;
-  aData.mCbCrSize = gfxIntSize(aWidth>>1, aHeight>>1);
+  aData.mCbCrSize = IntSize(aWidth>>1, aHeight>>1);
   aData.mPicX = 0;
   aData.mPicY = 0;
-  aData.mPicSize = gfxIntSize(aWidth, aHeight);
-  aData.mStereoMode = STEREO_MODE_MONO;
+  aData.mPicSize = IntSize(aWidth, aHeight);
+  aData.mStereoMode = StereoMode::MONO;
 }
 
 static void ReleaseFrame(layers::PlanarYCbCrData& aData)
@@ -205,8 +207,7 @@ MediaEngineDefaultVideoSource::Notify(nsITimer* aTimer)
   }
 
   // Allocate a single solid color image
-  ImageFormat format = PLANAR_YCBCR;
-  nsRefPtr<layers::Image> image = mImageContainer->CreateImage(&format, 1);
+  nsRefPtr<layers::Image> image = mImageContainer->CreateImage(ImageFormat::PLANAR_YCBCR);
   nsRefPtr<layers::PlanarYCbCrImage> ycbcr_image =
       static_cast<layers::PlanarYCbCrImage*>(image.get());
   layers::PlanarYCbCrData data;

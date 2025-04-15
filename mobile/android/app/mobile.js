@@ -31,7 +31,7 @@ pref("browser.tabs.remote", false);
 // If a tab has not been active for this long (seconds), then it may be
 // turned into a zombie tab to preemptively free up memory. -1 disables time-based
 // expiration (but low-memory conditions may still require the tab to be zombified).
-pref("browser.tabs.expireTime", 3600);
+pref("browser.tabs.expireTime", 900);
 
 // From libpref/src/init/all.js, extended to allow a slightly wider zoom range.
 pref("zoom.minPercent", 20);
@@ -101,6 +101,10 @@ pref("network.http.spdy.push-allowance", 32768);
 // See bug 545869 for details on why these are set the way they are
 pref("network.buffer.cache.count", 24);
 pref("network.buffer.cache.size",  16384);
+
+// predictive actions
+pref("network.seer.max-db-size", 2097152); // bytes
+pref("network.seer.preserve", 50); // percentage of seer data to keep when cleaning up
 
 /* history max results display */
 pref("browser.display.history.maxresults", 100);
@@ -230,7 +234,6 @@ pref("accessibility.browsewithcaret_shortcut.enabled", false);
 // Whether the character encoding menu is under the main Firefox button. This
 // preference is a string so that localizers can alter it.
 pref("browser.menu.showCharacterEncoding", "chrome://browser/locale/browser.properties");
-pref("intl.charsetmenu.browser.static", "chrome://browser/locale/browser.properties");
 
 // pointer to the default engine name
 pref("browser.search.defaultenginename", "chrome://browser/locale/region.properties");
@@ -266,6 +269,9 @@ pref("browser.search.noCurrentEngine", true);
 // {moz:official} expands to "official"
 pref("browser.search.official", true);
 #endif
+
+// Control media casting feature
+pref("browser.casting.enabled", false);
 
 // Enable sparse localization by setting a few package locale overrides
 pref("chrome.override_package.global", "browser");
@@ -571,6 +577,11 @@ pref("media.preload.auto", 2);    // preload metadata if preload=auto
 pref("image.mem.decodeondraw", true);
 pref("image.mem.min_discard_timeout_ms", 10000);
 
+#ifdef NIGHTLY_BUILD
+// Shumway component (SWF player) is disabled by default. Also see bug 904346.
+pref("shumway.disabled", true);
+#endif
+
 // enable touch events interfaces
 pref("dom.w3c_touch_events.enabled", 1);
 
@@ -579,17 +590,16 @@ pref("browser.safebrowsing.enabled", true);
 pref("browser.safebrowsing.malware.enabled", true);
 pref("browser.safebrowsing.debug", false);
 
-pref("browser.safebrowsing.updateURL", "http://safebrowsing.clients.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
-pref("browser.safebrowsing.keyURL", "https://sb-ssl.google.com/safebrowsing/newkey?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
-pref("browser.safebrowsing.gethashURL", "http://safebrowsing.clients.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
-pref("browser.safebrowsing.reportURL", "http://safebrowsing.clients.google.com/safebrowsing/report?");
+pref("browser.safebrowsing.updateURL", "https://safebrowsing.google.com/safebrowsing/downloads?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2&key=%GOOGLE_API_KEY%");
+pref("browser.safebrowsing.gethashURL", "https://safebrowsing.google.com/safebrowsing/gethash?client=SAFEBROWSING_ID&appver=%VERSION%&pver=2.2");
+pref("browser.safebrowsing.reportURL", "https://safebrowsing.google.com/safebrowsing/report?");
 pref("browser.safebrowsing.reportGenericURL", "http://%LOCALE%.phish-generic.mozilla.com/?hl=%LOCALE%");
 pref("browser.safebrowsing.reportErrorURL", "http://%LOCALE%.phish-error.mozilla.com/?hl=%LOCALE%");
 pref("browser.safebrowsing.reportPhishURL", "http://%LOCALE%.phish-report.mozilla.com/?hl=%LOCALE%");
 pref("browser.safebrowsing.reportMalwareURL", "http://%LOCALE%.malware-report.mozilla.com/?hl=%LOCALE%");
 pref("browser.safebrowsing.reportMalwareErrorURL", "http://%LOCALE%.malware-error.mozilla.com/?hl=%LOCALE%");
 
-pref("browser.safebrowsing.malware.reportURL", "http://safebrowsing.clients.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
+pref("browser.safebrowsing.malware.reportURL", "https://safebrowsing.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
 
 pref("browser.safebrowsing.id", @MOZ_APP_UA_NAME@);
 
@@ -802,5 +812,33 @@ pref("browser.snippets.geoUrl", "https://geo.mozilla.org/country.json");
 // URL used to ping metrics with stats about which snippets have been shown
 pref("browser.snippets.statsUrl", "https://snippets-stats.mozilla.org/mobile");
 
-// This pref requires a restart to take effect.
-pref("browser.snippets.enabled", false);
+// These prefs require a restart to take effect.
+pref("browser.snippets.enabled", true);
+pref("browser.snippets.syncPromo.enabled", true);
+
+#ifdef MOZ_ANDROID_SYNTHAPKS
+// The URL of the APK factory from which we obtain APKs for webapps.
+pref("browser.webapps.apkFactoryUrl", "https://controller.apk.firefox.com/application.apk");
+
+// How frequently to check for webapp updates, in seconds (86400 is daily).
+pref("browser.webapps.updateInterval", 86400);
+
+// Whether or not to check for updates.  Enabled by default, but the runtime
+// disables it for webapp profiles on firstrun, so only the main Fennec process
+// checks for updates (to avoid duplicate update notifications).
+//
+// In the future, we might want to make each webapp process check for updates
+// for its own webapp, in which case we'll need to have a third state for this
+// preference.  Thus it's an integer rather than a boolean.
+//
+// Possible values:
+//   0: don't check for updates
+//   1: do check for updates
+pref("browser.webapps.checkForUpdates", 1);
+
+// The URL of the service that checks for updates.
+// To test updates, set this to http://apk-update-checker.paas.allizom.org,
+// which is a test server that always reports all apps as having updates.
+pref("browser.webapps.updateCheckUrl", "https://controller.apk.firefox.com/app_updates");
+
+#endif

@@ -54,7 +54,7 @@ probes::EnterScript(JSContext *cx, JSScript *script, JSFunction *maybeFun,
 
     JSRuntime *rt = cx->runtime();
     if (rt->spsProfiler.enabled()) {
-        rt->spsProfiler.enter(cx, script, maybeFun);
+        rt->spsProfiler.enter(script, maybeFun);
         JS_ASSERT_IF(!fp->isGeneratorFrame(), !fp->hasPushedSPSFrame());
         fp->setPushedSPSFrame();
     }
@@ -76,7 +76,7 @@ probes::ExitScript(JSContext *cx, JSScript *script, JSFunction *maybeFun, bool p
 #endif
 
     if (popSPSFrame)
-        cx->runtime()->spsProfiler.exit(cx, script, maybeFun);
+        cx->runtime()->spsProfiler.exit(script, maybeFun);
 
     return ok;
 }
@@ -89,7 +89,7 @@ probes::StartExecution(JSScript *script)
 #ifdef INCLUDE_MOZILLA_DTRACE
     if (JAVASCRIPT_EXECUTE_START_ENABLED())
         JAVASCRIPT_EXECUTE_START((script->filename() ? (char *)script->filename() : nullName),
-                                 script->lineno);
+                                 script->lineno());
 #endif
 
     return ok;
@@ -103,7 +103,7 @@ probes::StopExecution(JSScript *script)
 #ifdef INCLUDE_MOZILLA_DTRACE
     if (JAVASCRIPT_EXECUTE_DONE_ENABLED())
         JAVASCRIPT_EXECUTE_DONE((script->filename() ? (char *)script->filename() : nullName),
-                                script->lineno);
+                                script->lineno());
 #endif
 
     return ok;

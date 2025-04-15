@@ -45,6 +45,7 @@ ABIArgGenerator::next(MIRType type)
         current_ = ABIArg(Register::FromCode(intRegIndex_));
         intRegIndex_++;
         break;
+      case MIRType_Float32:
       case MIRType_Double:
         if (floatRegIndex_ == NumFloatArgRegs) {
             static const int align = sizeof(double) - 1;
@@ -590,7 +591,7 @@ Assembler::actualIndex(uint32_t idx_) const
 }
 
 uint8_t *
-Assembler::PatchableJumpAddress(IonCode *code, uint32_t pe_)
+Assembler::PatchableJumpAddress(JitCode *code, uint32_t pe_)
 {
     return code->raw() + pe_;
 }
@@ -766,21 +767,21 @@ Assembler::getPtr32Target(Iter *start, Register *dest, RelocStyle *style)
     MOZ_ASSUME_UNREACHABLE("unsupported relocation");
 }
 
-static IonCode *
+static JitCode *
 CodeFromJump(InstructionIterator *jump)
 {
     uint8_t *target = (uint8_t *)Assembler::getCF32Target(jump);
-    return IonCode::FromExecutable(target);
+    return JitCode::FromExecutable(target);
 }
 
 void
-Assembler::TraceJumpRelocations(JSTracer *trc, IonCode *code, CompactBufferReader &reader)
+Assembler::TraceJumpRelocations(JSTracer *trc, JitCode *code, CompactBufferReader &reader)
 {
     RelocationIterator iter(reader);
     while (iter.read()) {
         InstructionIterator institer((Instruction *) (code->raw() + iter.offset()));
-        IonCode *child = CodeFromJump(&institer);
-        MarkIonCodeUnbarriered(trc, &child, "rel32");
+        JitCode *child = CodeFromJump(&institer);
+        MarkJitCodeUnbarriered(trc, &child, "rel32");
     }
 }
 
@@ -811,7 +812,7 @@ TraceDataRelocations(JSTracer *trc, ARMBuffer *buffer,
 
 }
 void
-Assembler::TraceDataRelocations(JSTracer *trc, IonCode *code, CompactBufferReader &reader)
+Assembler::TraceDataRelocations(JSTracer *trc, JitCode *code, CompactBufferReader &reader)
 {
     ::TraceDataRelocations(trc, code->raw(), reader);
 }
@@ -842,10 +843,10 @@ Assembler::trace(JSTracer *trc)
 {
     for (size_t i = 0; i < jumps_.length(); i++) {
         RelativePatch &rp = jumps_[i];
-        if (rp.kind == Relocation::IONCODE) {
-            IonCode *code = IonCode::FromExecutable((uint8_t*)rp.target);
-            MarkIonCodeUnbarriered(trc, &code, "masmrel32");
-            JS_ASSERT(code == IonCode::FromExecutable((uint8_t*)rp.target));
+        if (rp.kind == Relocation::JITCODE) {
+            JitCode *code = JitCode::FromExecutable((uint8_t*)rp.target);
+            MarkJitCodeUnbarriered(trc, &code, "masmrel32");
+            JS_ASSERT(code == JitCode::FromExecutable((uint8_t*)rp.target));
         }
     }
 
@@ -1865,6 +1866,10 @@ Assembler::as_b(Label *l, Condition c, bool isPatchable)
         old = l->offset();
         // This will currently throw an assertion if we couldn't actually
         // encode the offset of the branch.
+        if (!BOffImm::isInRange(old)) {
+            m_buffer.bail();
+            return ret;
+        }
         ret = as_b(BOffImm(old), c, isPatchable);
     } else {
         old = LabelBase::INVALID_OFFSET;
@@ -1923,6 +1928,10 @@ Assembler::as_bl(Label *l, Condition c)
         // This will currently throw an assertion if we couldn't actually
         // encode the offset of the branch.
         old = l->offset();
+        if (!BOffImm::isInRange(old)) {
+            m_buffer.bail();
+            return ret;
+        }
         ret = as_bl(BOffImm(old), c);
     } else {
         old = LabelBase::INVALID_OFFSET;
@@ -2168,7 +2177,7 @@ Assembler::as_vcvtFixed(VFPRegister vd, bool isSigned, uint32_t fixedPoint, bool
     int32_t imm5 = fixedPoint;
     imm5 = (sx ? 32 : 16) - imm5;
     JS_ASSERT(imm5 >= 0);
-    imm5 = imm5 >> 1 | (imm5 & 1) << 6;
+    imm5 = imm5 >> 1 | (imm5 & 1) << 5;
     return writeVFPInst(sf, 0x02BA0040 | VD(vd) | toFixed << 18 | sx << 7 |
                         (!isSigned) << 16 | imm5 | c);
 }
@@ -2748,6 +2757,20 @@ void Assembler::updateBoundsCheck(uint32_t heapSize, Instruction *inst)
     // within AsmJSModule::patchHeapAccesses, which does that for us.  Don't call this!
 }
 
+static uintptr_t
+PageStart(uintptr_t p)
+{
+    static const size_t PageSize = 4096;
+    return p & ~(PageSize - 1);
+}
+
+static bool
+OnSamePage(uintptr_t start1, uintptr_t stop1, uintptr_t start2, uintptr_t stop2)
+{
+    // Return true if (parts of) the two ranges are on the same memory page.
+    return PageStart(stop1) == PageStart(start2) || PageStart(stop2) == PageStart(start1);
+}
+
 void
 AutoFlushCache::update(uintptr_t newStart, size_t len)
 {
@@ -2760,12 +2783,16 @@ AutoFlushCache::update(uintptr_t newStart, size_t len)
         return;
     }
 
-    if (newStop < start_ - 4096 || newStart > stop_ + 4096) {
-        // If this would add too many pages to the range, bail and just do the flush now.
+    if (!OnSamePage(start_, stop_, newStart, newStop)) {
+        // Flush now if the two ranges have no memory page in common, to avoid
+        // problems on Linux where the kernel only flushes the first VMA that
+        // covers the range. This also ensures we don't add too many pages to
+        // the range.
         IonSpewCont(IonSpew_CacheFlush, "*");
         JSC::ExecutableAllocator::cacheFlush((void*)newStart, len);
         return;
     }
+
     start_ = Min(start_, newStart);
     stop_ = Max(stop_, newStop);
     IonSpewCont(IonSpew_CacheFlush, ".");

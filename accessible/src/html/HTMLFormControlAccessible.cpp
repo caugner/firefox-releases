@@ -14,7 +14,6 @@
 #include "States.h"
 
 #include "nsContentList.h"
-#include "nsCxPusher.h"
 #include "mozilla/dom/HTMLInputElement.h"
 #include "nsIAccessibleRelation.h"
 #include "nsIDOMNSEditableElement.h"
@@ -26,6 +25,7 @@
 #include "nsISelectionController.h"
 #include "nsIServiceManager.h"
 #include "nsITextControlFrame.h"
+#include "mozilla/dom/ScriptSettings.h"
 
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Preferences.h"
@@ -377,6 +377,10 @@ HTMLTextFieldAccessible::NativeState()
 {
   uint64_t state = HyperTextAccessibleWrap::NativeState();
 
+  // Text fields are always editable, even if they are also read only or
+  // disabled.
+  state |= states::EDITABLE;
+
   // can be focusable, focused, protected. readonly, unavailable, selected
   if (mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::type,
                             nsGkAtoms::password, eIgnoreCase)) {
@@ -392,8 +396,8 @@ HTMLTextFieldAccessible::NativeState()
   state |= input && input->IsSingleLineTextControl() ?
     states::SINGLE_LINE : states::MULTI_LINE;
 
-  if (!(state & states::EDITABLE) ||
-      (state & (states::PROTECTED | states::MULTI_LINE)))
+  if (state & (states::PROTECTED | states::MULTI_LINE | states::READONLY |
+               states::UNAVAILABLE))
     return state;
 
   // Expose autocomplete states if this input is part of autocomplete widget.
@@ -468,8 +472,7 @@ HTMLTextFieldAccessible::GetEditor() const
   // nsGenericHTMLElement::GetEditor has a security check.
   // Make sure we're not restricted by the permissions of
   // whatever script is currently running.
-  nsCxPusher pusher;
-  pusher.PushNull();
+  mozilla::dom::AutoSystemCaller asc;
 
   nsCOMPtr<nsIEditor> editor;
   editableElt->GetEditor(getter_AddRefs(editor));

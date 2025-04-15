@@ -21,6 +21,10 @@ XPCOMUtils.defineLazyGetter(this, "libcutils", function () {
 });
 #endif
 
+XPCOMUtils.defineLazyServiceGetter(this, "uuidgen",
+                                   "@mozilla.org/uuid-generator;1",
+                                   "nsIUUIDGenerator");
+
 // Once Bug 731746 - Allow chrome JS object to implement nsIDOMEventTarget
 // is resolved this helper could be removed.
 var SettingsListener = {
@@ -213,6 +217,24 @@ Components.utils.import('resource://gre/modules/ctypes.jsm');
   window.navigator.mozSettings.createLock().set(setting);
 })();
 
+// =================== DevTools ====================
+
+let devtoolsWidgetPanel;
+SettingsListener.observe('devtools.overlay', false, (value) => {
+  if (value) {
+    if (!devtoolsWidgetPanel) {
+      let scope = {};
+      Services.scriptloader.loadSubScript('chrome://browser/content/devtools.js', scope);
+      devtoolsWidgetPanel = scope.devtoolsWidgetPanel;
+    }
+    devtoolsWidgetPanel.init();
+  } else {
+    if (devtoolsWidgetPanel) {
+      devtoolsWidgetPanel.uninit();
+    }
+  }
+});
+
 // =================== Debugger / ADB ====================
 
 #ifdef MOZ_WIDGET_GONK
@@ -378,8 +400,7 @@ let AdbController = {
 
     // Check if we have a remote debugging session going on. If so, we won't
     // disable adb even if the screen is locked.
-    let isDebugging = DebuggerServer._connections &&
-                      Object.keys(DebuggerServer._connections).length > 0;
+    let isDebugging = RemoteDebugger.isDebugging;
     if (this.DEBUG) {
       this.debug("isDebugging=" + isDebugging);
     }
@@ -460,6 +481,8 @@ SettingsListener.observe("lockscreen.enabled", false,
                          AdbController.setLockscreenEnabled.bind(AdbController));
 #endif
 
+// Keep the old setting to not break people that won't have updated
+// gaia and gecko.
 SettingsListener.observe('devtools.debugger.remote-enabled', false, function(value) {
   Services.prefs.setBoolPref('devtools.debugger.remote-enabled', value);
   // This preference is consulted during startup
@@ -474,6 +497,30 @@ SettingsListener.observe('devtools.debugger.remote-enabled', false, function(val
   AdbController.setRemoteDebuggerState(value);
 #endif
 });
+
+SettingsListener.observe('debugger.remote-mode', false, function(value) {
+  if (['disabled', 'adb-only', 'adb-devtools'].indexOf(value) == -1) {
+    dump('Illegal value for debugger.remote-mode: ' + value + '\n');
+    return;
+  }
+
+  Services.prefs.setBoolPref('devtools.debugger.remote-enabled',
+                             value == 'adb-devtools');
+  // This preference is consulted during startup
+  Services.prefs.savePrefFile(null);
+
+  try {
+    (value == 'adb-devtools') ? RemoteDebugger.start()
+                              : RemoteDebugger.stop();
+  } catch(e) {
+    dump("Error while initializing devtools: " + e + "\n" + e.stack + "\n");
+  }
+
+#ifdef MOZ_WIDGET_GONK
+  AdbController.setRemoteDebuggerState(value != 'disabled');
+#endif
+});
+
 
 SettingsListener.observe('debug.log-animations.enabled', false, function(value) {
   Services.prefs.setBoolPref('layers.offmainthreadcomposition.log-animations', value);
@@ -496,6 +543,14 @@ SettingsListener.observe('privacy.donottrackheader.enabled', false, function(val
 
 SettingsListener.observe('privacy.donottrackheader.value', 1, function(value) {
   Services.prefs.setIntPref('privacy.donottrackheader.value', value);
+  // If the user specifically disallows tracking, we set the value of
+  // app.update.custom (update tracking ID) to an empty string.
+  if (value == 1) {
+    Services.prefs.setCharPref('app.update.custom', '');
+    return;
+  }
+  // Otherwise, we assure that the update tracking ID exists.
+  setUpdateTrackingId();
 });
 
 // =================== Crash Reporting ====================
@@ -512,6 +567,39 @@ SettingsListener.observe('app.reportCrashes', 'ask', function(value) {
 });
 
 // ================ Updates ================
+/**
+ * For tracking purposes some partners require us to add an UUID to the
+ * update URL. The update tracking ID will be an empty string if the
+ * do-not-track feature specifically disallows tracking and it is reseted
+ * to a different ID if the do-not-track value changes from disallow to allow.
+ */
+function setUpdateTrackingId() {
+  try {
+    let dntEnabled = Services.prefs.getBoolPref('privacy.donottrackheader.enabled');
+    let dntValue =  Services.prefs.getIntPref('privacy.donottrackheader.value');
+    // If the user specifically decides to disallow tracking (1), we just bail out.
+    if (dntEnabled && (dntValue == 1)) {
+      return;
+    }
+
+    let trackingId =
+      Services.prefs.getPrefType('app.update.custom') ==
+      Ci.nsIPrefBranch.PREF_STRING &&
+      Services.prefs.getCharPref('app.update.custom');
+
+    // If there is no previous registered tracking ID, we generate a new one.
+    // This should only happen on first usage or after changing the
+    // do-not-track value from disallow to allow.
+    if (!trackingId) {
+      trackingId = uuidgen.generateUUID().toString().replace(/[{}]/g, "");
+      Services.prefs.setCharPref('app.update.custom', trackingId);
+    }
+  } catch(e) {
+    dump('Error getting tracking ID ' + e + '\n');
+  }
+}
+setUpdateTrackingId();
+
 SettingsListener.observe('app.update.interval', 86400, function(value) {
   Services.prefs.setIntPref('app.update.interval', value);
 });
@@ -529,31 +617,25 @@ SettingsListener.observe("layers.draw-borders", false, function(value) {
 });
 
 (function Composer2DSettingToPref() {
-  //layers.composer.enabled can be toggled in three ways
+  //layers.composer.enabled can be enabled in three ways
   //In order of precedence they are:
-  //First: layers.composer.enabled mozSetting
-  //Second: layers.composer.enabled gecko pref
-  //Third: ro.display.colorfill gonk prop
+  //
+  //1. mozSettings "layers.composer.enabled"
+  //2. a gecko pref "layers.composer.enabled"
+  //3. presence of ro.display.colorfill at the Gonk level
 
   var req = navigator.mozSettings.createLock().get('layers.composer2d.enabled');
   req.onsuccess = function() {
-    if(typeof(req.result['layers.composer2d.enabled']) == 'undefined') {
+    if (typeof(req.result['layers.composer2d.enabled']) === 'undefined') {
       var enabled = false;
       if (Services.prefs.getPrefType('layers.composer2d.enabled') == Ci.nsIPrefBranch.PREF_BOOL) {
         enabled = Services.prefs.getBoolPref('layers.composer2d.enabled');
-      }
-      else {
+      } else {
 #ifdef MOZ_WIDGET_GONK
-        if (libcutils.property_get('ro.display.colorfill') == 1) {
-          enabled = true;
-        }
-        else {
-          enabled = false;
-        }
+        enabled = (libcutils.property_get('ro.display.colorfill') === '1');
 #endif
       }
-      navigator.mozSettings.createLock().set(
-        {'layers.composer2d.enabled': enabled});
+      navigator.mozSettings.createLock().set({'layers.composer2d.enabled': enabled });
     }
 
     SettingsListener.observe("layers.composer2d.enabled", true, function(value) {
@@ -564,6 +646,28 @@ SettingsListener.observe("layers.draw-borders", false, function(value) {
     dump("Error configuring layers.composer2d.enabled setting");
   };
 
+})();
+
+// ================ Accessibility ============
+SettingsListener.observe("accessibility.screenreader", false, function(value) {
+  if (value && !("AccessFu" in this)) {
+    Cu.import('resource://gre/modules/accessibility/AccessFu.jsm');
+    AccessFu.attach(window);
+  }
+});
+
+// ================ Theming ============
+(function themingSettingsListener() {
+  let themingPrefs = ['ui.menu', 'ui.menutext', 'ui.infobackground', 'ui.infotext',
+                      'ui.window', 'ui.windowtext', 'ui.highlight'];
+
+  themingPrefs.forEach(function(pref) {
+    SettingsListener.observe('gaia.' + pref, null, function(value) {
+      if (value) {
+        Services.prefs.setCharPref(pref, value);
+      }
+    });
+  });
 })();
 
 // =================== AsyncPanZoom ======================

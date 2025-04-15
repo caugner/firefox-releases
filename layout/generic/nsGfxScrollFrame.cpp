@@ -8,6 +8,7 @@
 #include "nsGfxScrollFrame.h"
 
 #include "base/compiler_specific.h"
+#include "DisplayItemClip.h"
 #include "nsCOMPtr.h"
 #include "nsPresContext.h"
 #include "nsView.h"
@@ -214,18 +215,18 @@ static nsSize ComputeInsideBorderSize(ScrollReflowState* aState,
   nscoord contentWidth = aState->mReflowState.ComputedWidth();
   if (contentWidth == NS_UNCONSTRAINEDSIZE) {
     contentWidth = aDesiredInsideBorderSize.width -
-      aState->mReflowState.mComputedPadding.LeftRight();
+      aState->mReflowState.ComputedPhysicalPadding().LeftRight();
   }
   nscoord contentHeight = aState->mReflowState.ComputedHeight();
   if (contentHeight == NS_UNCONSTRAINEDSIZE) {
     contentHeight = aDesiredInsideBorderSize.height -
-      aState->mReflowState.mComputedPadding.TopBottom();
+      aState->mReflowState.ComputedPhysicalPadding().TopBottom();
   }
 
   contentWidth  = aState->mReflowState.ApplyMinMaxWidth(contentWidth);
   contentHeight = aState->mReflowState.ApplyMinMaxHeight(contentHeight);
-  return nsSize(contentWidth + aState->mReflowState.mComputedPadding.LeftRight(),
-                contentHeight + aState->mReflowState.mComputedPadding.TopBottom());
+  return nsSize(contentWidth + aState->mReflowState.ComputedPhysicalPadding().LeftRight(),
+                contentHeight + aState->mReflowState.ComputedPhysicalPadding().TopBottom());
 }
 
 static void
@@ -329,9 +330,9 @@ nsHTMLScrollFrame::TryLayout(ScrollReflowState* aState,
   // XXXldb Can we depend more on ComputeSize here?
   nsSize desiredInsideBorderSize;
   desiredInsideBorderSize.width = vScrollbarDesiredWidth +
-    std::max(aKidMetrics->width, hScrollbarMinWidth);
+    std::max(aKidMetrics->Width(), hScrollbarMinWidth);
   desiredInsideBorderSize.height = hScrollbarDesiredHeight +
-    std::max(aKidMetrics->height, vScrollbarMinHeight);
+    std::max(aKidMetrics->Height(), vScrollbarMinHeight);
   aState->mInsideBorderSize =
     ComputeInsideBorderSize(aState, desiredInsideBorderSize);
   nsSize scrollPortSize = nsSize(std::max(0, aState->mInsideBorderSize.width - vScrollbarDesiredWidth),
@@ -388,8 +389,8 @@ nsHTMLScrollFrame::ScrolledContentDependsOnHeight(ScrollReflowState* aState)
   // based on the presence of a horizontal scrollbar.
   return (mHelper.mScrolledFrame->GetStateBits() & NS_FRAME_CONTAINS_RELATIVE_HEIGHT) ||
     aState->mReflowState.ComputedHeight() != NS_UNCONSTRAINEDSIZE ||
-    aState->mReflowState.mComputedMinHeight > 0 ||
-    aState->mReflowState.mComputedMaxHeight != NS_UNCONSTRAINEDSIZE;
+    aState->mReflowState.ComputedMinHeight() > 0 ||
+    aState->mReflowState.ComputedMaxHeight() != NS_UNCONSTRAINEDSIZE;
 }
 
 nsresult
@@ -401,13 +402,12 @@ nsHTMLScrollFrame::ReflowScrolledFrame(ScrollReflowState* aState,
 {
   // these could be NS_UNCONSTRAINEDSIZE ... std::min arithmetic should
   // be OK
-  nscoord paddingLR = aState->mReflowState.mComputedPadding.LeftRight();
-
-  nscoord availWidth = aState->mReflowState.ComputedWidth() + paddingLR;
+  const nsMargin& padding = aState->mReflowState.ComputedPhysicalPadding();
+  nscoord availWidth = aState->mReflowState.ComputedWidth() + padding.LeftRight();
 
   nscoord computedHeight = aState->mReflowState.ComputedHeight();
-  nscoord computedMinHeight = aState->mReflowState.mComputedMinHeight;
-  nscoord computedMaxHeight = aState->mReflowState.mComputedMaxHeight;
+  nscoord computedMinHeight = aState->mReflowState.ComputedMinHeight();
+  nscoord computedMaxHeight = aState->mReflowState.ComputedMaxHeight();
   if (!ShouldPropagateComputedHeightToScrolledContent()) {
     computedHeight = NS_UNCONSTRAINEDSIZE;
     computedMinHeight = 0;
@@ -417,11 +417,13 @@ nsHTMLScrollFrame::ReflowScrolledFrame(ScrollReflowState* aState,
     nsSize hScrollbarPrefSize;
     GetScrollbarMetrics(aState->mBoxState, mHelper.mHScrollbarBox,
                         nullptr, &hScrollbarPrefSize, false);
-    if (computedHeight != NS_UNCONSTRAINEDSIZE)
+    if (computedHeight != NS_UNCONSTRAINEDSIZE) {
       computedHeight = std::max(0, computedHeight - hScrollbarPrefSize.height);
+    }
     computedMinHeight = std::max(0, computedMinHeight - hScrollbarPrefSize.height);
-    if (computedMaxHeight != NS_UNCONSTRAINEDSIZE)
+    if (computedMaxHeight != NS_UNCONSTRAINEDSIZE) {
       computedMaxHeight = std::max(0, computedMaxHeight - hScrollbarPrefSize.height);
+    }
   }
 
   if (aAssumeVScroll) {
@@ -439,12 +441,12 @@ nsHTMLScrollFrame::ReflowScrolledFrame(ScrollReflowState* aState,
                                    nsSize(availWidth, NS_UNCONSTRAINEDSIZE),
                                    -1, -1, nsHTMLReflowState::CALLER_WILL_INIT);
   kidReflowState.Init(presContext, -1, -1, nullptr,
-                      &aState->mReflowState.mComputedPadding);
+                      &padding);
   kidReflowState.mFlags.mAssumingHScrollbar = aAssumeHScroll;
   kidReflowState.mFlags.mAssumingVScrollbar = aAssumeVScroll;
   kidReflowState.SetComputedHeight(computedHeight);
-  kidReflowState.mComputedMinHeight = computedMinHeight;
-  kidReflowState.mComputedMaxHeight = computedMaxHeight;
+  kidReflowState.ComputedMinHeight() = computedMinHeight;
+  kidReflowState.ComputedMaxHeight() = computedMaxHeight;
 
   // Temporarily set mHasHorizontalScrollbar/mHasVerticalScrollbar to
   // reflect our assumptions while we reflow the child.
@@ -467,7 +469,7 @@ nsHTMLScrollFrame::ReflowScrolledFrame(ScrollReflowState* aState,
   // which will usually be different from the scrollport height;
   // invalidating the difference will cause unnecessary repainting.
   FinishReflowChild(mHelper.mScrolledFrame, presContext,
-                    &kidReflowState, *aMetrics, 0, 0,
+                    *aMetrics, &kidReflowState, 0, 0,
                     NS_FRAME_NO_MOVE_FRAME | NS_FRAME_NO_SIZE_VIEW);
 
   // XXX Some frames (e.g., nsObjectFrame, nsFrameFrame, nsTextFrame) don't bother
@@ -478,6 +480,18 @@ nsHTMLScrollFrame::ReflowScrolledFrame(ScrollReflowState* aState,
   // check HasOverflowRect() because it could be set even though the
   // overflow area doesn't include the frame bounds.
   aMetrics->UnionOverflowAreasWithDesiredBounds();
+
+  if (MOZ_UNLIKELY(StyleDisplay()->mOverflowClipBox ==
+                     NS_STYLE_OVERFLOW_CLIP_BOX_CONTENT_BOX)) {
+    nsOverflowAreas childOverflow;
+    nsLayoutUtils::UnionChildOverflow(mHelper.mScrolledFrame, childOverflow);
+    nsRect childScrollableOverflow = childOverflow.ScrollableOverflow();
+    childScrollableOverflow.Inflate(padding);
+    nsRect contentArea = nsRect(0, 0, availWidth, computedHeight);
+    if (!contentArea.Contains(childScrollableOverflow)) {
+      aMetrics->mOverflowAreas.ScrollableOverflow() = childScrollableOverflow;
+    }
+  }
 
   aState->mContentsOverflowAreas = aMetrics->mOverflowAreas;
   aState->mReflowedContentsWithHScrollbar = aAssumeHScroll;
@@ -552,7 +566,7 @@ nsresult
 nsHTMLScrollFrame::ReflowContents(ScrollReflowState* aState,
                                   const nsHTMLReflowMetrics& aDesiredSize)
 {
-  nsHTMLReflowMetrics kidDesiredSize(aDesiredSize.mFlags);
+  nsHTMLReflowMetrics kidDesiredSize(aDesiredSize.GetWritingMode(), aDesiredSize.mFlags);
   nsresult rv = ReflowScrolledFrame(aState, GuessHScrollbarNeeded(*aState),
       GuessVScrollbarNeeded(*aState), &kidDesiredSize, true);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -581,7 +595,7 @@ nsHTMLScrollFrame::ReflowContents(ScrollReflowState* aState,
       aState->mStyles.mHorizontal != NS_STYLE_OVERFLOW_SCROLL) {
     nsSize insideBorderSize =
       ComputeInsideBorderSize(aState,
-                              nsSize(kidDesiredSize.width, kidDesiredSize.height));
+                              nsSize(kidDesiredSize.Width(), kidDesiredSize.Height()));
     nsRect scrolledRect =
       mHelper.GetScrolledRectInternal(kidDesiredSize.ScrollableOverflow(),
                                      insideBorderSize);
@@ -789,8 +803,8 @@ nsHTMLScrollFrame::Reflow(nsPresContext*           aPresContext,
     mHelper.mScrolledFrame->GetScrollableOverflowRectRelativeToParent();
   nsPoint oldScrollPosition = mHelper.GetScrollPosition();
 
-  state.mComputedBorder = aReflowState.mComputedBorderPadding -
-    aReflowState.mComputedPadding;
+  state.mComputedBorder = aReflowState.ComputedPhysicalBorderPadding() -
+    aReflowState.ComputedPhysicalPadding();
 
   nsresult rv = ReflowContents(&state, aDesiredSize);
   if (NS_FAILED(rv))
@@ -835,9 +849,9 @@ nsHTMLScrollFrame::Reflow(nsPresContext*           aPresContext,
     }
   }
 
-  aDesiredSize.width = state.mInsideBorderSize.width +
+  aDesiredSize.Width() = state.mInsideBorderSize.width +
     state.mComputedBorder.LeftRight();
-  aDesiredSize.height = state.mInsideBorderSize.height +
+  aDesiredSize.Height() = state.mInsideBorderSize.height +
     state.mComputedBorder.TopBottom();
 
   aDesiredSize.SetOverflowAreasToDesiredBounds();
@@ -866,7 +880,7 @@ nsHTMLScrollFrame::Reflow(nsPresContext*           aPresContext,
 
 ////////////////////////////////////////////////////////////////////////////////
 
-#ifdef DEBUG
+#ifdef DEBUG_FRAME_DUMP
 NS_IMETHODIMP
 nsHTMLScrollFrame::GetFrameName(nsAString& aResult) const
 {
@@ -1190,7 +1204,7 @@ nsXULScrollFrame::GetMaxSize(nsBoxLayoutState& aState)
   return maxSize;
 }
 
-#ifdef DEBUG
+#ifdef DEBUG_FRAME_DUMP
 NS_IMETHODIMP
 nsXULScrollFrame::GetFrameName(nsAString& aResult) const
 {
@@ -1804,6 +1818,11 @@ bool ScrollFrameHelper::IsAlwaysActive() const
     return true;
   }
 
+  const nsStyleDisplay* disp = mOuter->StyleDisplay();
+  if (disp && (disp->mWillChangeBitField & NS_STYLE_WILL_CHANGE_SCROLL)) {
+    return true;
+  }
+
   // Unless this is the root scrollframe for a non-chrome document
   // which is the direct child of a chrome document, we default to not
   // being "active".
@@ -2265,10 +2284,74 @@ static bool IsFocused(nsIContent* aContent)
   return aContent ? nsContentUtils::IsFocusedContent(aContent) : false;
 }
 
+static bool
+ShouldBeClippedByFrame(nsIFrame* aClipFrame, nsIFrame* aClippedFrame)
+{
+  return nsLayoutUtils::IsProperAncestorFrame(aClipFrame, aClippedFrame);
+}
+
+static void
+ClipItemsExceptCaret(nsDisplayList* aList, nsDisplayListBuilder* aBuilder,
+                     nsIFrame* aClipFrame, const DisplayItemClip& aClip)
+{
+  nsDisplayItem* i = aList->GetBottom();
+  for (; i; i = i->GetAbove()) {
+    if (!::ShouldBeClippedByFrame(aClipFrame, i->Frame())) {
+      continue;
+    }
+
+    bool unused;
+    nsRect bounds = i->GetBounds(aBuilder, &unused);
+    bool isAffectedByClip = aClip.IsRectAffectedByClip(bounds);
+    if (isAffectedByClip && nsDisplayItem::TYPE_CARET == i->GetType()) {
+      // Don't clip the caret if it overflows vertically only, and by half
+      // its height at most.  This is to avoid clipping it when the line-height
+      // is small.
+      auto half = bounds.height / 2;
+      bounds.y += half;
+      bounds.height -= half;
+      isAffectedByClip = aClip.IsRectAffectedByClip(bounds);
+      if (isAffectedByClip) {
+        // Don't clip the caret if it's just outside on the right side.
+        nsRect rightSide(bounds.x - 1, bounds.y, 1, bounds.height);
+        isAffectedByClip = aClip.IsRectAffectedByClip(rightSide);
+        // Also, avoid clipping it in a zero-height line box (heuristic only).
+        if (isAffectedByClip) {
+          isAffectedByClip = i->Frame()->GetRect().height != 0;
+        }
+      }
+    }
+    if (isAffectedByClip) {
+      DisplayItemClip newClip;
+      newClip.IntersectWith(i->GetClip());
+      newClip.IntersectWith(aClip);
+      i->SetClip(aBuilder, newClip);
+    }
+    nsDisplayList* children = i->GetSameCoordinateSystemChildren();
+    if (children) {
+      ClipItemsExceptCaret(children, aBuilder, aClipFrame, aClip);
+    }
+  }
+}
+
+static void
+ClipListsExceptCaret(nsDisplayListCollection* aLists,
+                     nsDisplayListBuilder* aBuilder,
+                     nsIFrame* aClipFrame,
+                     const DisplayItemClip& aClip)
+{
+  ::ClipItemsExceptCaret(aLists->BorderBackground(), aBuilder, aClipFrame, aClip);
+  ::ClipItemsExceptCaret(aLists->BlockBorderBackgrounds(), aBuilder, aClipFrame, aClip);
+  ::ClipItemsExceptCaret(aLists->Floats(), aBuilder, aClipFrame, aClip);
+  ::ClipItemsExceptCaret(aLists->PositionedDescendants(), aBuilder, aClipFrame, aClip);
+  ::ClipItemsExceptCaret(aLists->Outlines(), aBuilder, aClipFrame, aClip);
+  ::ClipItemsExceptCaret(aLists->Content(), aBuilder, aClipFrame, aClip);
+}
+
 void
 ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
-                                        const nsRect&           aDirtyRect,
-                                        const nsDisplayListSet& aLists)
+                                    const nsRect&           aDirtyRect,
+                                    const nsDisplayListSet& aLists)
 {
   if (aBuilder->IsForImageVisibility()) {
     mLastUpdateImagesPos = GetScrollPosition();
@@ -2323,13 +2406,12 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   // Overflow clipping can never clip frames outside our subtree, so there
   // is no need to worry about whether we are a moving frame that might clip
   // non-moving frames.
-  nsRect dirtyRect;
   // Not all our descendants will be clipped by overflow clipping, but all
   // the ones that aren't clipped will be out of flow frames that have already
   // had dirty rects saved for them by their parent frames calling
   // MarkOutOfFlowChildrenForDisplayList, so it's safe to restrict our
   // dirty rect here.
-  dirtyRect.IntersectRect(aDirtyRect, mScrollPort);
+  nsRect dirtyRect = aDirtyRect.Intersect(mScrollPort);
 
   // Override the dirty rectangle if the displayport has been set.
   nsRect displayPort;
@@ -2389,6 +2471,25 @@ ScrollFrameHelper::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     }
 
     mOuter->BuildDisplayListForChild(aBuilder, mScrolledFrame, dirtyRect, scrolledContent);
+  }
+
+  if (MOZ_UNLIKELY(mOuter->StyleDisplay()->mOverflowClipBox ==
+                     NS_STYLE_OVERFLOW_CLIP_BOX_CONTENT_BOX)) {
+    // We only clip if there is *scrollable* overflow, to avoid clipping
+    // *visual* overflow unnecessarily.
+    nsRect clipRect = mScrollPort + aBuilder->ToReferenceFrame(mOuter);
+    nsRect so = mScrolledFrame->GetScrollableOverflowRect();
+    if (clipRect.width != so.width || clipRect.height != so.height ||
+        so.x < 0 || so.y < 0) {
+      // The 'scrolledContent' items are clipped to the padding-box at this point.
+      // Now clip them again to the content-box, except the nsDisplayCaret item
+      // which we allow to overflow the content-box in various situations --
+      // see ::ClipItemsExceptCaret.
+      clipRect.Deflate(mOuter->GetUsedPadding());
+      DisplayItemClip clip;
+      clip.SetTo(clipRect);
+      ::ClipListsExceptCaret(&scrolledContent, aBuilder, mScrolledFrame, clip);
+    }
   }
 
   // Since making new layers is expensive, only use nsDisplayScrollLayer
@@ -2523,7 +2624,7 @@ ScrollFrameHelper::GetScrollbarStylesFromFrame() const
   }
 
   ScrollbarStyles result = presContext->GetViewportOverflowOverride();
-  nsCOMPtr<nsISupports> container = presContext->GetContainer();
+  nsCOMPtr<nsISupports> container = presContext->GetContainerWeak();
   nsCOMPtr<nsIScrollable> scrollable = do_QueryInterface(container);
   if (scrollable) {
     HandleScrollPref(scrollable, nsIScrollable::ScrollOrientation_X,

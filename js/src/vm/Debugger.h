@@ -37,8 +37,12 @@ class Breakpoint;
  * swept in the same group as the debugger.  This is a conservative approach,
  * and compartments may be unnecessarily grouped, however it results in a
  * simpler and faster implementation.
+ *
+ * If InvisibleKeysOk is true, then the map can have keys in invisible-to-
+ * debugger compartments. If it is false, we assert that such entries are never
+ * created.
  */
-template <class Key, class Value>
+template <class Key, class Value, bool InvisibleKeysOk=false>
 class DebuggerWeakMap : private WeakMap<Key, Value, DefaultHasher<Key> >
 {
   private:
@@ -76,20 +80,11 @@ class DebuggerWeakMap : private WeakMap<Key, Value, DefaultHasher<Key> >
     }
 
     template<typename KeyInput, typename ValueInput>
-    bool putNew(const KeyInput &k, const ValueInput &v) {
-        JS_ASSERT(v->compartment() == Base::compartment);
-        if (!incZoneCount(k->zone()))
-            return false;
-        bool ok = Base::putNew(k, v);
-        if (!ok)
-            decZoneCount(k->zone());
-        return ok;
-    }
-
-    template<typename KeyInput, typename ValueInput>
     bool relookupOrAdd(AddPtr &p, const KeyInput &k, const ValueInput &v) {
         JS_ASSERT(v->compartment() == Base::compartment);
-        JS_ASSERT(!p.found());
+        JS_ASSERT(!k->compartment()->options_.mergeable());
+        JS_ASSERT_IF(!InvisibleKeysOk, !k->compartment()->options_.invisibleToDebugger());
+        JS_ASSERT(!Base::has(k));
         if (!incZoneCount(k->zone()))
             return false;
         bool ok = Base::relookupOrAdd(p, k, v);
@@ -228,7 +223,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
     ScriptWeakMap scripts;
 
     /* The map from debuggee source script objects to their Debugger.Source instances. */
-    typedef DebuggerWeakMap<EncapsulatedPtrObject, RelocatablePtrObject> SourceWeakMap;
+    typedef DebuggerWeakMap<EncapsulatedPtrObject, RelocatablePtrObject, true> SourceWeakMap;
     SourceWeakMap sources;
 
     /* The map from debuggee objects to their Debugger.Object instances. */
@@ -536,7 +531,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger>
      * pending exception. (This ordinarily returns true even if the ok argument
      * is false.)
      */
-    bool receiveCompletionValue(mozilla::Maybe<AutoCompartment> &ac, bool ok, Value val,
+    bool receiveCompletionValue(mozilla::Maybe<AutoCompartment> &ac, bool ok,
+                                HandleValue val,
                                 MutableHandleValue vp);
 
     /*
@@ -710,14 +706,14 @@ Debugger::onExceptionUnwind(JSContext *cx, MutableHandleValue vp)
 void
 Debugger::onNewScript(JSContext *cx, HandleScript script, GlobalObject *compileAndGoGlobal)
 {
-    JS_ASSERT_IF(script->compileAndGo, compileAndGoGlobal);
-    JS_ASSERT_IF(script->compileAndGo, compileAndGoGlobal == &script->uninlinedGlobal());
+    JS_ASSERT_IF(script->compileAndGo(), compileAndGoGlobal);
+    JS_ASSERT_IF(script->compileAndGo(), compileAndGoGlobal == &script->uninlinedGlobal());
     // We early return in slowPathOnNewScript for self-hosted scripts, so we can
     // ignore those in our assertion here.
     JS_ASSERT_IF(!script->compartment()->options().invisibleToDebugger() &&
-                 !script->selfHosted,
+                 !script->selfHosted(),
                  script->compartment()->firedOnNewGlobalObject);
-    JS_ASSERT_IF(!script->compileAndGo, !compileAndGoGlobal);
+    JS_ASSERT_IF(!script->compileAndGo(), !compileAndGoGlobal);
     if (!script->compartment()->getDebuggees().empty())
         slowPathOnNewScript(cx, script, compileAndGoGlobal);
 }

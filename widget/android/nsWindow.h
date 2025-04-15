@@ -146,15 +146,15 @@ public:
     virtual nsIMEUpdatePreference GetIMEUpdatePreference();
 
     LayerManager* GetLayerManager (PLayerTransactionChild* aShadowManager = nullptr,
-                                   LayersBackend aBackendHint = mozilla::layers::LAYERS_NONE,
+                                   LayersBackend aBackendHint = mozilla::layers::LayersBackend::LAYERS_NONE,
                                    LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT,
                                    bool* aAllowRetaining = nullptr);
 
     NS_IMETHOD ReparentNativeWidget(nsIWidget* aNewParent);
 
     virtual bool NeedsPaint();
-    virtual void DrawWindowUnderlay(LayerManager* aManager, nsIntRect aRect);
-    virtual void DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect);
+    virtual void DrawWindowUnderlay(LayerManagerComposite* aManager, nsIntRect aRect);
+    virtual void DrawWindowOverlay(LayerManagerComposite* aManager, nsIntRect aRect);
 
     virtual mozilla::layers::CompositorParent* NewCompositorParent(int aSurfaceWidth, int aSurfaceHeight) MOZ_OVERRIDE;
 

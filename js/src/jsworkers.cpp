@@ -77,7 +77,7 @@ js::StartOffThreadAsmJSCompile(ExclusiveContext *cx, AsmJSParallelTask *asmData)
     if (!state.asmJSWorklist.append(asmData))
         return false;
 
-    state.notifyAll(WorkerThreadState::PRODUCER);
+    state.notifyOne(WorkerThreadState::PRODUCER);
     return true;
 }
 
@@ -188,22 +188,24 @@ ParseTask::ParseTask(ExclusiveContext *cx, JSObject *exclusiveContextGlobal, JSC
                      const jschar *chars, size_t length, JSObject *scopeChain,
                      JS::OffThreadCompileCallback callback, void *callbackData)
   : cx(cx), options(initCx), chars(chars), length(length),
-    alloc(JSRuntime::TEMP_LIFO_ALLOC_PRIMARY_CHUNK_SIZE), scopeChain(scopeChain),
-    exclusiveContextGlobal(exclusiveContextGlobal), callback(callback),
+    alloc(JSRuntime::TEMP_LIFO_ALLOC_PRIMARY_CHUNK_SIZE), scopeChain(initCx, scopeChain),
+    exclusiveContextGlobal(initCx, exclusiveContextGlobal), optionsElement(initCx), callback(callback),
     callbackData(callbackData), script(nullptr), errors(cx), overRecursed(false)
 {
-    JSRuntime *rt = scopeChain->runtimeFromMainThread();
-
-    if (!AddObjectRoot(rt, &this->scopeChain, "ParseTask::scopeChain"))
-        MOZ_CRASH();
-    if (!AddObjectRoot(rt, &this->exclusiveContextGlobal, "ParseTask::exclusiveContextGlobal"))
-        MOZ_CRASH();
 }
 
 bool
 ParseTask::init(JSContext *cx, const ReadOnlyCompileOptions &options)
 {
-    return this->options.copy(cx, options);
+    if (!this->options.copy(cx, options))
+        return false;
+
+    // Save those compilation options that the ScriptSourceObject can't
+    // point at while it's in the compilation's temporary compartment.
+    optionsElement = this->options.element();
+    this->options.setElement(nullptr);
+
+    return true;
 }
 
 void
@@ -213,13 +215,19 @@ ParseTask::activate(JSRuntime *rt)
     cx->enterCompartment(exclusiveContextGlobal->compartment());
 }
 
+void
+ParseTask::finish()
+{
+    if (script) {
+        // Initialize the ScriptSourceObject slots that we couldn't while the SSO
+        // was in the temporary compartment.
+        ScriptSourceObject &sso = script->sourceObject()->as<ScriptSourceObject>();
+        sso.initElement(optionsElement);
+    }
+}
+
 ParseTask::~ParseTask()
 {
-    JSRuntime *rt = scopeChain->runtimeFromMainThread();
-
-    JS_RemoveObjectRootRT(rt, &scopeChain);
-    JS_RemoveObjectRootRT(rt, &exclusiveContextGlobal);
-
     // ParseTask takes over ownership of its input exclusive context.
     js_delete(cx);
 
@@ -255,6 +263,8 @@ js::StartOffThreadParseScript(JSContext *cx, const ReadOnlyCompileOptions &optio
 
     JS::CompartmentOptions compartmentOptions(cx->compartment()->options());
     compartmentOptions.setZone(JS::FreshZone);
+    compartmentOptions.setInvisibleToDebugger(true);
+    compartmentOptions.setMergeable(true);
 
     JSObject *global = JS_NewGlobalObject(cx, &workerGlobalClass, nullptr,
                                           JS::FireOnNewGlobalHook, compartmentOptions);
@@ -269,19 +279,19 @@ js::StartOffThreadParseScript(JSContext *cx, const ReadOnlyCompileOptions &optio
     // Initialize all classes needed for parsing while we are still on the main
     // thread. Do this for both the target and the new global so that prototype
     // pointers can be changed infallibly after parsing finishes.
-    if (!js_GetClassObject(cx, cx->global(), JSProto_Function, &obj) ||
-        !js_GetClassObject(cx, cx->global(), JSProto_Array, &obj) ||
-        !js_GetClassObject(cx, cx->global(), JSProto_RegExp, &obj) ||
-        !js_GetClassObject(cx, cx->global(), JSProto_GeneratorFunction, &obj))
+    if (!js_GetClassObject(cx, JSProto_Function, &obj) ||
+        !js_GetClassObject(cx, JSProto_Array, &obj) ||
+        !js_GetClassObject(cx, JSProto_RegExp, &obj) ||
+        !js_GetClassObject(cx, JSProto_Iterator, &obj))
     {
         return false;
     }
     {
         AutoCompartment ac(cx, global);
-        if (!js_GetClassObject(cx, global, JSProto_Function, &obj) ||
-            !js_GetClassObject(cx, global, JSProto_Array, &obj) ||
-            !js_GetClassObject(cx, global, JSProto_RegExp, &obj) ||
-            !js_GetClassObject(cx, global, JSProto_GeneratorFunction, &obj))
+        if (!js_GetClassObject(cx, JSProto_Function, &obj) ||
+            !js_GetClassObject(cx, JSProto_Array, &obj) ||
+            !js_GetClassObject(cx, JSProto_RegExp, &obj) ||
+            !js_GetClassObject(cx, JSProto_Iterator, &obj))
         {
             return false;
         }
@@ -515,6 +525,13 @@ WorkerThreadState::notifyAll(CondVar which)
     PR_NotifyAllCondVar((which == CONSUMER) ? consumerWakeup : producerWakeup);
 }
 
+void
+WorkerThreadState::notifyOne(CondVar which)
+{
+    JS_ASSERT(isLocked());
+    PR_NotifyCondVar((which == CONSUMER) ? consumerWakeup : producerWakeup);
+}
+
 bool
 WorkerThreadState::canStartAsmJSCompile()
 {
@@ -585,7 +602,7 @@ CallNewScriptHookForAllScripts(JSContext *cx, HandleScript script)
     }
 
     // The global new script hook is called on every script that was compiled.
-    RootedFunction function(cx, script->function());
+    RootedFunction function(cx, script->functionNonDelazifying());
     CallNewScriptHook(cx, script, function);
 }
 
@@ -622,7 +639,7 @@ WorkerThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void *toke
          iter.next())
     {
         types::TypeObject *object = iter.get<types::TypeObject>();
-        TaggedProto proto(object->proto);
+        TaggedProto proto(object->proto());
         if (!proto.isObject())
             continue;
 
@@ -633,11 +650,12 @@ WorkerThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void *toke
         JSObject *newProto = GetClassPrototypePure(&parseTask->scopeChain->global(), key);
         JS_ASSERT(newProto);
 
-        object->proto = newProto;
+        object->setProtoUnchecked(newProto);
     }
 
     // Move the parsed script and all its contents into the desired compartment.
     gc::MergeCompartments(parseTask->cx->compartment(), parseTask->scopeChain->compartment());
+    parseTask->finish();
 
     RootedScript script(rt, parseTask->script);
 
@@ -653,7 +671,7 @@ WorkerThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void *toke
         if (script) {
             // The Debugger only needs to be told about the topmost script that was compiled.
             GlobalObject *compileAndGoGlobal = nullptr;
-            if (script->compileAndGo)
+            if (script->compileAndGo())
                 compileAndGoGlobal = &script->global();
             Debugger::onNewScript(maybecx, script, compileAndGoGlobal);
 
@@ -758,7 +776,6 @@ WorkerThread::handleIonWorkload(WorkerThreadState &state)
     ionBuilder = state.ionWorklist.popCopy();
 
     DebugOnly<ExecutionMode> executionMode = ionBuilder->info().executionMode();
-    JS_ASSERT(jit::GetIonScript(ionBuilder->script(), executionMode) == ION_COMPILING_SCRIPT);
 
 #if JS_TRACE_LOGGING
     AutoTraceLog logger(TraceLogging::getLogger(TraceLogging::ION_BACKGROUND_COMPILER),
@@ -779,14 +796,14 @@ WorkerThread::handleIonWorkload(WorkerThreadState &state)
     FinishOffThreadIonCompile(ionBuilder);
     ionBuilder = nullptr;
 
-    // Notify the main thread in case it is waiting for the compilation to finish.
-    state.notifyAll(WorkerThreadState::CONSUMER);
-
     // Ping the main thread so that the compiled code can be incorporated
     // at the next operation callback. Don't interrupt Ion code for this, as
     // this incorporation can be delayed indefinitely without affecting
     // performance as long as the main thread is actually executing Ion code.
     runtime->triggerOperationCallback(JSRuntime::TriggerCallbackAnyThreadDontStopIon);
+
+    // Notify the main thread in case it is waiting for the compilation to finish.
+    state.notifyAll(WorkerThreadState::CONSUMER);
 #else
     MOZ_CRASH();
 #endif // JS_ION
@@ -860,7 +877,7 @@ WorkerThread::handleCompressionWorkload(WorkerThreadState &state)
 
     {
         AutoUnlockWorkerThreadState unlock(runtime);
-        if (!compressionTask->compress())
+        if (!compressionTask->work())
             compressionTask->setOOM();
     }
 
@@ -974,6 +991,7 @@ ScriptSource::getOffThreadCompressionChars(ExclusiveContext *cx)
 void
 WorkerThread::threadLoop()
 {
+    JS::AutoAssertNoGC nogc;
     WorkerThreadState &state = *runtime->workerThreadState;
     AutoLockWorkerThreadState lock(state);
 

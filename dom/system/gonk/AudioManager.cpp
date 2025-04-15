@@ -31,8 +31,7 @@
 #include "base/message_loop.h"
 
 #include "BluetoothCommon.h"
-#include "BluetoothProfileManagerBase.h"
-#include "BluetoothHfpManager.h"
+#include "BluetoothHfpManagerBase.h"
 
 #include "nsJSUtils.h"
 #include "nsCxPusher.h"
@@ -48,10 +47,10 @@ using namespace mozilla::dom::bluetooth;
 
 #define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "AudioManager" , ## args)
 
-#define HEADPHONES_STATUS_HEADSET   NS_LITERAL_STRING("headset").get()
-#define HEADPHONES_STATUS_HEADPHONE NS_LITERAL_STRING("headphone").get()
-#define HEADPHONES_STATUS_OFF       NS_LITERAL_STRING("off").get()
-#define HEADPHONES_STATUS_UNKNOWN   NS_LITERAL_STRING("unknown").get()
+#define HEADPHONES_STATUS_HEADSET   MOZ_UTF16("headset")
+#define HEADPHONES_STATUS_HEADPHONE MOZ_UTF16("headphone")
+#define HEADPHONES_STATUS_OFF       MOZ_UTF16("off")
+#define HEADPHONES_STATUS_UNKNOWN   MOZ_UTF16("unknown")
 #define HEADPHONES_STATUS_CHANGED   "headphones-status-changed"
 #define MOZ_SETTINGS_CHANGE_ID      "mozsettings-changed"
 
@@ -122,7 +121,7 @@ public:
 
   AudioChannelVolInitCallback() {}
 
-  NS_IMETHOD Handle(const nsAString& aName, const JS::Value& aResult)
+  NS_IMETHOD Handle(const nsAString& aName, JS::Handle<JS::Value> aResult)
   {
     nsCOMPtr<nsIAudioManager> audioManager =
       do_GetService(NS_AUDIOMANAGER_CONTRACTID);
@@ -230,8 +229,8 @@ AudioManager::HandleBluetoothStatusChanged(nsISupports* aSubject,
 #ifdef MOZ_B2G_BT
   bool status;
   if (!strcmp(aTopic, BLUETOOTH_SCO_STATUS_CHANGED_ID)) {
-    BluetoothHfpManager* hfp =
-      static_cast<BluetoothHfpManager*>(aSubject);
+    BluetoothHfpManagerBase* hfp =
+      static_cast<BluetoothHfpManagerBase*>(aSubject);
     status = hfp->IsScoConnected();
   } else {
     BluetoothProfileManagerBase* profile =
@@ -281,7 +280,7 @@ AudioManager::HandleBluetoothStatusChanged(nsISupports* aSubject,
 nsresult
 AudioManager::Observe(nsISupports* aSubject,
                       const char* aTopic,
-                      const PRUnichar* aData)
+                      const char16_t* aData)
 {
   if ((strcmp(aTopic, BLUETOOTH_SCO_STATUS_CHANGED_ID) == 0) ||
       (strcmp(aTopic, BLUETOOTH_HFP_STATUS_CHANGED_ID) == 0) ||

@@ -34,6 +34,15 @@ gfxSurfaceDrawable::gfxSurfaceDrawable(DrawTarget* aDrawTarget,
 {
 }
 
+gfxSurfaceDrawable::gfxSurfaceDrawable(SourceSurface* aSurface,
+                                       const gfxIntSize aSize,
+                                       const gfxMatrix aTransform)
+ : gfxDrawable(aSize)
+ , mSourceSurface(aSurface)
+ , mTransform(aTransform)
+{
+}
+
 static gfxMatrix
 DeviceToImageTransform(gfxContext* aContext,
                        const gfxMatrix& aUserSpaceToImageSpace)
@@ -66,7 +75,7 @@ PreparePatternForUntiledDrawing(gfxPattern* aPattern,
     switch (currentTarget->GetType()) {
 
 #ifdef MOZ_X11
-        case gfxSurfaceTypeXlib:
+        case gfxSurfaceType::Xlib:
         {
             // See bugs 324698, 422179, and 468496.  This is a workaround for
             // XRender's RepeatPad not being implemented correctly on old X
@@ -128,6 +137,8 @@ gfxSurfaceDrawable::Draw(gfxContext* aContext,
         RefPtr<SourceSurface> source = mDrawTarget->Snapshot();
         pattern = new gfxPattern(source, Matrix());
       }
+    } else if (mSourceSurface) {
+      pattern = new gfxPattern(mSourceSurface, Matrix());
     } else {
       pattern = new gfxPattern(mSurface);
     }
@@ -164,7 +175,7 @@ gfxSurfaceDrawable::Draw(gfxContext* aContext,
 already_AddRefed<gfxImageSurface>
 gfxSurfaceDrawable::GetAsImageSurface()
 {
-    if (mDrawTarget) {
+    if (mDrawTarget || mSourceSurface) {
       // TODO: Find a way to implement this. The caller really wants a 'sub-image' of
       // the original, without having to do a copy. GetDataSurface() might just copy,
       // which isn't useful.
@@ -185,7 +196,7 @@ already_AddRefed<gfxSurfaceDrawable>
 gfxCallbackDrawable::MakeSurfaceDrawable(const GraphicsFilter aFilter)
 {
     nsRefPtr<gfxASurface> surface =
-        gfxPlatform::GetPlatform()->CreateOffscreenSurface(mSize, GFX_CONTENT_COLOR_ALPHA);
+        gfxPlatform::GetPlatform()->CreateOffscreenSurface(mSize, gfxContentType::COLOR_ALPHA);
     if (!surface || surface->CairoStatus() != 0)
         return nullptr;
 

@@ -105,7 +105,7 @@ END_INDEXEDDB_NAMESPACE
 
 namespace {
 
-mozilla::StaticRefPtr<IndexedDatabaseManager> gInstance;
+mozilla::StaticRefPtr<IndexedDatabaseManager> gDBManager;
 
 mozilla::Atomic<int32_t> gInitialized(0);
 mozilla::Atomic<int32_t> gClosed(0);
@@ -204,7 +204,7 @@ IndexedDatabaseManager::GetOrCreate()
     return nullptr;
   }
 
-  if (!gInstance) {
+  if (!gDBManager) {
     sIsMainProcess = XRE_GetProcessType() == GeckoProcessType_Default;
 
     if (sIsMainProcess) {
@@ -234,12 +234,12 @@ IndexedDatabaseManager::GetOrCreate()
       NS_ERROR("Initialized more than once?!");
     }
 
-    gInstance = instance;
+    gDBManager = instance;
 
-    ClearOnShutdown(&gInstance);
+    ClearOnShutdown(&gDBManager);
   }
 
-  return gInstance;
+  return gDBManager;
 }
 
 // static
@@ -247,7 +247,7 @@ IndexedDatabaseManager*
 IndexedDatabaseManager::Get()
 {
   // Does not return an owning reference.
-  return gInstance;
+  return gDBManager;
 }
 
 // static
@@ -458,7 +458,7 @@ IndexedDatabaseManager::IsClosed()
 bool
 IndexedDatabaseManager::IsMainProcess()
 {
-  NS_ASSERTION(gInstance,
+  NS_ASSERTION(gDBManager,
                "IsMainProcess() called before indexedDB has been initialized!");
   NS_ASSERTION((XRE_GetProcessType() == GeckoProcessType_Default) ==
                sIsMainProcess, "XRE_GetProcessType changed its tune!");
@@ -469,7 +469,7 @@ IndexedDatabaseManager::IsMainProcess()
 bool
 IndexedDatabaseManager::InLowDiskSpaceMode()
 {
-  NS_ASSERTION(gInstance,
+  NS_ASSERTION(gDBManager,
                "InLowDiskSpaceMode() called before indexedDB has been "
                "initialized!");
   return !!sLowDiskSpaceMode;
@@ -646,7 +646,7 @@ NS_IMPL_QUERY_INTERFACE2(IndexedDatabaseManager, nsIIndexedDatabaseManager,
                                                  nsIObserver)
 
 NS_IMETHODIMP
-IndexedDatabaseManager::InitWindowless(const jsval& aGlobal, JSContext* aCx)
+IndexedDatabaseManager::InitWindowless(JS::Handle<JS::Value> aGlobal, JSContext* aCx)
 {
   NS_ENSURE_TRUE(nsContentUtils::IsCallerChrome(), NS_ERROR_NOT_AVAILABLE);
 
@@ -675,7 +675,7 @@ IndexedDatabaseManager::InitWindowless(const jsval& aGlobal, JSContext* aCx)
 
 NS_IMETHODIMP
 IndexedDatabaseManager::Observe(nsISupports* aSubject, const char* aTopic,
-                                const PRUnichar* aData)
+                                const char16_t* aData)
 {
   NS_ASSERTION(IsMainProcess(), "Wrong process!");
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");

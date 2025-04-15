@@ -7,12 +7,12 @@
 // HttpLog.h should generally be included first
 #include "HttpLog.h"
 
+#include "mozilla/Endian.h"
 #include "mozilla/Telemetry.h"
 #include "nsHttp.h"
 #include "nsHttpHandler.h"
 #include "nsILoadGroup.h"
 #include "prprf.h"
-#include "prnetdb.h"
 #include "SpdyPush3.h"
 #include "SpdySession3.h"
 #include "SpdyStream3.h"
@@ -207,7 +207,7 @@ SpdySession3::IdleTime()
   return PR_IntervalNow() - mLastDataReadEpoch;
 }
 
-void
+uint32_t
 SpdySession3::ReadTimeoutTick(PRIntervalTime now)
 {
     MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
@@ -217,13 +217,15 @@ SpdySession3::ReadTimeoutTick(PRIntervalTime now)
          this, PR_IntervalToSeconds(now - mLastReadEpoch)));
 
     if (!mPingThreshold)
-      return;
+      return UINT32_MAX;
 
     if ((now - mLastReadEpoch) < mPingThreshold) {
       // recent activity means ping is not an issue
       if (mPingSentEpoch)
         mPingSentEpoch = 0;
-      return;
+
+      return PR_IntervalToSeconds(mPingThreshold) -
+        PR_IntervalToSeconds(now - mLastReadEpoch);
     }
 
     if (mPingSentEpoch) {
@@ -233,8 +235,9 @@ SpdySession3::ReadTimeoutTick(PRIntervalTime now)
              this));
         mPingSentEpoch = 0;
         Close(NS_ERROR_NET_TIMEOUT);
+        return UINT32_MAX;
       }
-      return;
+      return 1; // run the tick aggressively while ping is outstanding
     }
 
     LOG(("SpdySession3::ReadTimeoutTick %p generating ping 0x%X\n",
@@ -243,7 +246,7 @@ SpdySession3::ReadTimeoutTick(PRIntervalTime now)
     if (mNextPingID == 0xffffffff) {
       LOG(("SpdySession3::ReadTimeoutTick %p cannot form ping - ids exhausted\n",
            this));
-      return;
+      return UINT32_MAX;
     }
 
     mPingSentEpoch = PR_IntervalNow();
@@ -287,6 +290,7 @@ SpdySession3::ReadTimeoutTick(PRIntervalTime now)
            "ping ids exhausted marking goaway\n", this));
       mShouldGoAway = true;
     }
+    return 1; // run the tick aggressively while ping is outstanding
 }
 
 uint32_t
@@ -652,8 +656,7 @@ SpdySession3::GeneratePing(uint32_t aID)
   packet[6] = 0;
   packet[7] = 4;                                  /* length */
 
-  aID = PR_htonl(aID);
-  memcpy(packet + 8, &aID, 4);
+  NetworkEndian::writeUint32(packet + 8, aID);
 
   LogIO(this, nullptr, "Generate Ping", packet, 12);
   FlushOutputQueue();
@@ -679,10 +682,8 @@ SpdySession3::GenerateRstStream(uint32_t aStatusCode, uint32_t aID)
   packet[6] = 0;
   packet[7] = 8;                                  /* length */
 
-  aID = PR_htonl(aID);
-  memcpy(packet + 8, &aID, 4);
-  aStatusCode = PR_htonl(aStatusCode);
-  memcpy(packet + 12, &aStatusCode, 4);
+  NetworkEndian::writeUint32(packet + 8, aID);
+  NetworkEndian::writeUint32(packet + 12, aStatusCode);
 
   LogIO(this, nullptr, "Generate Reset", packet, 16);
   FlushOutputQueue();
@@ -709,8 +710,7 @@ SpdySession3::GenerateGoAway(uint32_t aStatusCode)
   // need to be set non zero
 
   // bytes 12-15 are the status code.
-  aStatusCode = PR_htonl(aStatusCode);
-  memcpy(packet + 12, &aStatusCode, 4);
+  NetworkEndian::writeUint32(packet + 12, aStatusCode);
 
   LogIO(this, nullptr, "Generate GoAway", packet, 16);
   FlushOutputQueue();
@@ -739,7 +739,7 @@ SpdySession3::GenerateSettings()
   // 2nd entry is bytes 20 to 27
   // 3rd entry is bytes 28 to 35
 
-  if (!gHttpHandler->AllowSpdyPush()) {
+  if (!gHttpHandler->AllowPush()) {
   // announcing that we accept 0 incoming streams is done to
   // disable server push
     packet[15 + 8 * numberOfEntries] = SETTINGS_TYPE_MAX_CONCURRENT;
@@ -756,8 +756,7 @@ SpdySession3::GenerateSettings()
     packet[12 + 8 * numberOfEntries] = PERSISTED_VALUE;
     packet[15 + 8 * numberOfEntries] = SETTINGS_TYPE_CWND;
     LOG(("SpdySession3::GenerateSettings %p sending CWND %u\n", this, cwnd));
-    cwnd = PR_htonl(cwnd);
-    memcpy(packet + 16 + 8 * numberOfEntries, &cwnd, 4);
+    NetworkEndian::writeUint32(packet + 16 + 8 * numberOfEntries, cwnd);
     numberOfEntries++;
   }
 
@@ -765,8 +764,7 @@ SpdySession3::GenerateSettings()
   // a window update with it in order to use larger initial windows with pulled
   // streams.
   packet[15 + 8 * numberOfEntries] = SETTINGS_TYPE_INITIAL_WINDOW;
-  uint32_t rwin = PR_htonl(mPushAllowance);
-  memcpy(packet + 16 + 8 * numberOfEntries, &rwin, 4);
+  NetworkEndian::writeUint32(packet + 16 + 8 * numberOfEntries, mPushAllowance);
   numberOfEntries++;
 
   uint32_t dataLen = 4 + 8 * numberOfEntries;
@@ -946,9 +944,9 @@ SpdySession3::HandleSynStream(SpdySession3 *self)
   }
 
   uint32_t streamID =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[2]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 2 * sizeof(uint32_t));
   uint32_t associatedID =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[3]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 3 * sizeof(uint32_t));
   uint8_t flags = reinterpret_cast<uint8_t *>(self->mInputFrameBuffer.get())[4];
 
   LOG3(("SpdySession3::HandleSynStream %p recv SYN_STREAM (push) "
@@ -989,7 +987,7 @@ SpdySession3::HandleSynStream(SpdySession3 *self)
     LOG3(("SpdySession3::HandleSynStream %p associated ID of 0 failed.\n", self));
     self->GenerateRstStream(RST_PROTOCOL_ERROR, streamID);
 
-  } else if (!gHttpHandler->AllowSpdyPush()) {
+  } else if (!gHttpHandler->AllowPush()) {
     // MAX_CONCURRENT_STREAMS of 0 in settings should have disabled push,
     // but some servers are buggy about that.. or the config could have
     // been updated after the settings frame was sent. In both cases just
@@ -1127,7 +1125,7 @@ SpdySession3::HandleSynReply(SpdySession3 *self)
   LOG3(("SpdySession3::HandleSynReply %p lookup via streamID in syn_reply.\n",
         self));
   uint32_t streamID =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[2]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 2 * sizeof(uint32_t));
   nsresult rv = self->SetInputFrameDataStream(streamID);
   if (NS_FAILED(rv))
     return rv;
@@ -1259,10 +1257,10 @@ SpdySession3::HandleRstStream(SpdySession3 *self)
   uint8_t flags = reinterpret_cast<uint8_t *>(self->mInputFrameBuffer.get())[4];
 
   uint32_t streamID =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[2]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 2 * sizeof(uint32_t));
 
   self->mDownstreamRstReason =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[3]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 3 * sizeof(uint32_t));
 
   LOG3(("SpdySession3::HandleRstStream %p RST_STREAM Reason Code %u ID %x "
         "flags %x", self, self->mDownstreamRstReason, streamID, flags));
@@ -1322,7 +1320,7 @@ SpdySession3::HandleSettings(SpdySession3 *self)
   }
 
   uint32_t numEntries =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[2]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 2 * sizeof(uint32_t));
 
   // Ensure frame is large enough for supplied number of entries
   // Each entry is 8 bytes, frame data is reduced by 4 to account for
@@ -1341,8 +1339,8 @@ SpdySession3::HandleSettings(SpdySession3 *self)
       (self->mInputFrameBuffer.get()) + 12 + index * 8;
 
     uint32_t flags = setting[0];
-    uint32_t id = PR_ntohl(reinterpret_cast<uint32_t *>(setting)[0]) & 0xffffff;
-    uint32_t value =  PR_ntohl(reinterpret_cast<uint32_t *>(setting)[1]);
+    uint32_t id = NetworkEndian::readUint32(setting) & 0xffffff;
+    uint32_t value = NetworkEndian::readUint32(setting + 1 * sizeof(uint32_t));
 
     LOG3(("Settings ID %d, Flags %X, Value %d", id, flags, value));
 
@@ -1428,7 +1426,7 @@ SpdySession3::HandlePing(SpdySession3 *self)
   }
 
   uint32_t pingID =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[2]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 2 * sizeof(uint32_t));
 
   LOG3(("SpdySession3::HandlePing %p PING ID 0x%X.", self, pingID));
 
@@ -1458,7 +1456,7 @@ SpdySession3::HandleGoAway(SpdySession3 *self)
 
   self->mShouldGoAway = true;
   self->mGoAwayID =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[2]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 2 * sizeof(uint32_t));
   self->mCleanShutdown = true;
 
   // Find streams greater than the last-good ID and mark them for deletion
@@ -1491,7 +1489,8 @@ SpdySession3::HandleGoAway(SpdySession3 *self)
 
   LOG3(("SpdySession3::HandleGoAway %p GOAWAY Last-Good-ID 0x%X status 0x%X "
         "live streams=%d\n", self, self->mGoAwayID,
-        PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[3]),
+        NetworkEndian::readUint32(self->mInputFrameBuffer +
+                                  3 * sizeof(uint32_t)),
         self->mStreamTransactionHash.Count()));
 
   self->ResetDownstreamState();
@@ -1510,7 +1509,7 @@ SpdySession3::HandleHeaders(SpdySession3 *self)
   }
 
   uint32_t streamID =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[2]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 2 * sizeof(uint32_t));
   LOG3(("SpdySession3::HandleHeaders %p HEADERS for Stream 0x%X.\n",
         self, streamID));
   nsresult rv = self->SetInputFrameDataStream(streamID);
@@ -1588,10 +1587,10 @@ SpdySession3::HandleWindowUpdate(SpdySession3 *self)
   }
 
   uint32_t delta =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[3]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 3 * sizeof(uint32_t));
   delta &= 0x7fffffff;
   uint32_t streamID =
-    PR_ntohl(reinterpret_cast<uint32_t *>(self->mInputFrameBuffer.get())[2]);
+    NetworkEndian::readUint32(self->mInputFrameBuffer + 2 * sizeof(uint32_t));
   streamID &= 0x7fffffff;
 
   LOG3(("SpdySession3::HandleWindowUpdate %p len=%d for Stream 0x%X.\n",
@@ -1901,7 +1900,7 @@ SpdySession3::WriteSegments(nsAHttpSegmentWriter *writer,
     // For both control and data frames the second 32 bit word of the header
     // is 8-flags, 24-length. (network byte order)
     mInputFrameDataSize =
-      PR_ntohl(reinterpret_cast<uint32_t *>(mInputFrameBuffer.get())[1]);
+      NetworkEndian::readUint32(mInputFrameBuffer + 1 * sizeof(uint32_t));
     mInputFrameDataSize &= 0x00ffffff;
     mInputFrameDataRead = 0;
 
@@ -1912,12 +1911,11 @@ SpdySession3::WriteSegments(nsAHttpSegmentWriter *writer,
 
       // The first 32 bit word of the header is
       // 1 ctrl - 15 version - 16 type
-      uint16_t version =
-        PR_ntohs(reinterpret_cast<uint16_t *>(mInputFrameBuffer.get())[0]);
+      uint16_t version = NetworkEndian::readUint16(mInputFrameBuffer);
       version &= 0x7fff;
 
       mFrameControlType =
-        PR_ntohs(reinterpret_cast<uint16_t *>(mInputFrameBuffer.get())[1]);
+        NetworkEndian::readUint16(mInputFrameBuffer + sizeof(uint16_t));
 
       LOG3(("SpdySession3::WriteSegments %p - Control Frame Identified "
             "type %d version %d data len %d",
@@ -1937,8 +1935,7 @@ SpdySession3::WriteSegments(nsAHttpSegmentWriter *writer,
                             mInputFrameDataSize >> 10);
       mLastDataReadEpoch = mLastReadEpoch;
 
-      uint32_t streamID =
-        PR_ntohl(reinterpret_cast<uint32_t *>(mInputFrameBuffer.get())[0]);
+      uint32_t streamID = NetworkEndian::readUint32(mInputFrameBuffer);
       rv = SetInputFrameDataStream(streamID);
       if (NS_FAILED(rv)) {
         LOG(("SpdySession3::WriteSegments %p lookup streamID 0x%X failed. "
@@ -2197,10 +2194,8 @@ SpdySession3::UpdateLocalRwin(SpdyStream3 *stream,
   packet[3] = CONTROL_TYPE_WINDOW_UPDATE;
   packet[7] = dataLen;
 
-  uint32_t id = PR_htonl(stream->StreamID());
-  memcpy(packet + 8, &id, 4);
-  toack = PR_htonl(toack);
-  memcpy(packet + 12, &toack, 4);
+  NetworkEndian::writeUint32(packet + 8, stream->StreamID());
+  NetworkEndian::writeUint32(packet + 12, toack);
 
   LogIO(this, stream, "Window Update", packet, 8 + dataLen);
   FlushOutputQueue();

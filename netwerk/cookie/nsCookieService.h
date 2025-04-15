@@ -16,6 +16,7 @@
 #include "nsString.h"
 #include "nsAutoPtr.h"
 #include "nsHashKeys.h"
+#include "nsIMemoryReporter.h"
 #include "nsTHashtable.h"
 #include "mozIStorageStatement.h"
 #include "mozIStorageAsyncStatement.h"
@@ -24,6 +25,8 @@
 #include "mozIStorageRow.h"
 #include "mozIStorageCompletionCallback.h"
 #include "mozIStorageStatementCallback.h"
+
+#include "mozilla/MemoryReporting.h"
 
 class nsICookiePermission;
 class nsIEffectiveTLDService;
@@ -101,6 +104,8 @@ public:
     return mozilla::HashString(temp);
   }
 
+  size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+
   enum { ALLOW_MEMMOVE = true };
 
   nsCString   mBaseDomain;
@@ -133,6 +138,8 @@ class nsCookieEntry : public nsCookieKey
 
     inline ArrayType& GetCookies() { return mCookies; }
 
+    size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+
   private:
     ArrayType mCookies;
 };
@@ -142,6 +149,8 @@ struct CookieDomainTuple
 {
   nsCookieKey key;
   nsRefPtr<nsCookie> cookie;
+
+  size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 };
 
 // encapsulates in-memory and on-disk DB states, so we can
@@ -153,6 +162,8 @@ struct DBState
   }
 
   NS_INLINE_DECL_REFCOUNTING(DBState)
+
+  size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
   // State of the database connection.
   enum CorruptFlag {
@@ -224,14 +235,18 @@ class nsCookieService : public nsICookieService
                       , public nsICookieManager2
                       , public nsIObserver
                       , public nsSupportsWeakReference
+                      , public nsIMemoryReporter
 {
+  private:
+    size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
+
   public:
-    // nsISupports
     NS_DECL_ISUPPORTS
     NS_DECL_NSIOBSERVER
     NS_DECL_NSICOOKIESERVICE
     NS_DECL_NSICOOKIEMANAGER
     NS_DECL_NSICOOKIEMANAGER2
+    NS_DECL_NSIMEMORYREPORTER
 
     nsCookieService();
     virtual ~nsCookieService();
@@ -288,7 +303,7 @@ class nsCookieService : public nsICookieService
     static void                   FindStaleCookie(nsCookieEntry *aEntry, int64_t aCurrentTime, nsListIter &aIter);
     void                          NotifyRejected(nsIURI *aHostURI);
     void                          NotifyThirdParty(nsIURI *aHostURI, bool aAccepted, nsIChannel *aChannel);
-    void                          NotifyChanged(nsISupports *aSubject, const PRUnichar *aData);
+    void                          NotifyChanged(nsISupports *aSubject, const char16_t *aData);
     void                          NotifyPurged(nsICookie2* aCookie);
     already_AddRefed<nsIArray>    CreatePurgeList(nsICookie2* aCookie);
 

@@ -12,7 +12,7 @@
 #define nsStyleStruct_h___
 
 #include "mozilla/Attributes.h"
-
+#include "mozilla/CSSVariableValues.h"
 #include "nsColor.h"
 #include "nsCoord.h"
 #include "nsMargin.h"
@@ -40,27 +40,27 @@ class imgIContainer;
 
 // Bits for each struct.
 // NS_STYLE_INHERIT_BIT defined in nsStyleStructFwd.h
-#define NS_STYLE_INHERIT_MASK             0x007fffff
+#define NS_STYLE_INHERIT_MASK              0x000ffffff
 
 // Additional bits for nsStyleContext's mBits:
 // See nsStyleContext::HasTextDecorationLines
-#define NS_STYLE_HAS_TEXT_DECORATION_LINES 0x00800000
+#define NS_STYLE_HAS_TEXT_DECORATION_LINES 0x001000000
 // See nsStyleContext::HasPseudoElementData.
-#define NS_STYLE_HAS_PSEUDO_ELEMENT_DATA  0x01000000
+#define NS_STYLE_HAS_PSEUDO_ELEMENT_DATA   0x002000000
 // See nsStyleContext::RelevantLinkIsVisited
-#define NS_STYLE_RELEVANT_LINK_VISITED    0x02000000
+#define NS_STYLE_RELEVANT_LINK_VISITED     0x004000000
 // See nsStyleContext::IsStyleIfVisited
-#define NS_STYLE_IS_STYLE_IF_VISITED      0x04000000
+#define NS_STYLE_IS_STYLE_IF_VISITED       0x008000000
 // See nsStyleContext::GetPseudoEnum
-#define NS_STYLE_CONTEXT_TYPE_MASK        0xf8000000
-#define NS_STYLE_CONTEXT_TYPE_SHIFT       27
+#define NS_STYLE_CONTEXT_TYPE_MASK         0x1f0000000
+#define NS_STYLE_CONTEXT_TYPE_SHIFT        28
 
 // Additional bits for nsRuleNode's mDependentBits:
-#define NS_RULE_NODE_GC_MARK              0x02000000
-#define NS_RULE_NODE_USED_DIRECTLY        0x04000000
-#define NS_RULE_NODE_IS_IMPORTANT         0x08000000
-#define NS_RULE_NODE_LEVEL_MASK           0xf0000000
-#define NS_RULE_NODE_LEVEL_SHIFT          28
+#define NS_RULE_NODE_GC_MARK                0x02000000
+#define NS_RULE_NODE_USED_DIRECTLY          0x04000000
+#define NS_RULE_NODE_IS_IMPORTANT           0x08000000
+#define NS_RULE_NODE_LEVEL_MASK             0xf0000000
+#define NS_RULE_NODE_LEVEL_SHIFT            28
 
 // The lifetime of these objects is managed by the presshell's arena.
 
@@ -78,6 +78,12 @@ public:
   nsChangeHint CalcDifference(const nsStyleFont& aOther) const;
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_REFLOW;
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
   }
   static nsChangeHint CalcFontDifference(const nsFont& aFont1, const nsFont& aFont2);
 
@@ -103,6 +109,8 @@ public:
   int8_t  mScriptLevel;          // [inherited]
   // MathML  mathvariant support
   uint8_t mMathVariant;          // [inherited]
+  // MathML displaystyle support
+  uint8_t mMathDisplay;         // [inherited]
 
   // was mLanguage set based on a lang attribute in the document?
   bool mExplicitLanguage;        // [inherited]
@@ -176,10 +184,6 @@ enum nsStyleImageType {
  * (*) Optionally a crop rect can be set to paint a partial (rectangular)
  * region of an image. (Currently, this feature is only supported with an
  * image of type (1)).
- *
- * This struct is currently used only for 'background-image', but it may be
- * used by other CSS properties such as 'border-image', 'list-style-image', and
- * 'content' in the future (bug 507052).
  */
 struct nsStyleImage {
   nsStyleImage();
@@ -192,7 +196,7 @@ struct nsStyleImage {
   void TrackImage(nsPresContext* aContext);
   void UntrackImage(nsPresContext* aContext);
   void SetGradientData(nsStyleGradient* aGradient);
-  void SetElementId(const PRUnichar* aElementId);
+  void SetElementId(const char16_t* aElementId);
   void SetCropRect(nsStyleSides* aCropRect);
 
   nsStyleImageType GetType() const {
@@ -208,7 +212,7 @@ struct nsStyleImage {
     NS_ASSERTION(mType == eStyleImageType_Gradient, "Data is not a gradient!");
     return mGradient;
   }
-  const PRUnichar* GetElementId() const {
+  const char16_t* GetElementId() const {
     NS_ASSERTION(mType == eStyleImageType_Element, "Data is not an element!");
     return mElementId;
   }
@@ -278,14 +282,22 @@ struct nsStyleImage {
            GetImageData() == aOther.GetImageData();
   }
 
+  // These methods are used for the caller to caches the sub images created
+  // during a border-image paint operation
+  inline void SetSubImage(uint8_t aIndex, imgIContainer* aSubImage) const;
+  inline imgIContainer* GetSubImage(uint8_t aIndex) const;
+
 private:
   void DoCopy(const nsStyleImage& aOther);
+
+  // Cache for border-image painting.
+  nsCOMArray<imgIContainer> mSubImages;
 
   nsStyleImageType mType;
   union {
     imgIRequest* mImage;
     nsStyleGradient* mGradient;
-    PRUnichar* mElementId;
+    char16_t* mElementId;
   };
   // This is _currently_ used only in conjunction with eStyleImageType_Image.
   nsAutoPtr<nsStyleSides> mCropRect;
@@ -304,6 +316,11 @@ struct nsStyleColor {
   nsChangeHint CalcDifference(const nsStyleColor& aOther) const;
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_VISUAL;
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics at all.
+    return nsChangeHint(0);
   }
 
   void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW {
@@ -332,6 +349,11 @@ struct nsStyleBackground {
   nsChangeHint CalcDifference(const nsStyleBackground& aOther) const;
   static nsChangeHint MaxDifference() {
     return NS_CombineHint(nsChangeHint_UpdateEffects, NS_STYLE_HINT_VISUAL);
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics at all.
+    return nsChangeHint(0);
   }
 
   struct Position;
@@ -561,6 +583,11 @@ struct nsStyleMargin {
                            NS_CombineHint(nsChangeHint_ClearDescendantIntrinsics,
                                           nsChangeHint_NeedDirtyReflow));
   }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference can return both nsChangeHint_ClearAncestorIntrinsics and
+    // nsChangeHint_NeedReflow as inherited hints.
+    return nsChangeHint(0);
+  }
 
   nsStyleSides  mMargin;          // [reset] coord, percent, calc, auto
 
@@ -595,6 +622,11 @@ struct nsStylePadding {
   static nsChangeHint MaxDifference() {
     return NS_SubtractHint(NS_STYLE_HINT_REFLOW,
                            nsChangeHint_ClearDescendantIntrinsics);
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference can return nsChangeHint_ClearAncestorIntrinsics as an
+    // inherited hint.
+    return nsChangeHint(0);
   }
 
   nsStyleSides  mPadding;         // [reset] coord, percent, calc
@@ -773,6 +805,12 @@ struct nsStyleBorder {
     return NS_CombineHint(NS_STYLE_HINT_REFLOW,
                           nsChangeHint_BorderStyleNoneChange);
   }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
+  }
 
   void EnsureBorderColors() {
     if (!mBorderColors) {
@@ -820,7 +858,7 @@ struct nsStyleBorder {
 
   bool HasBorder() const
   {
-    return mComputedBorder != nsMargin(0,0,0,0) || mBorderImageSource;
+    return mComputedBorder != nsMargin(0,0,0,0) || !mBorderImageSource.IsEmpty();
   }
 
   // Get the actual border width for a particular side, in appunits.  Note that
@@ -847,8 +885,12 @@ struct nsStyleBorder {
       (HasVisibleStyle(aSide) ? mBorder.Side(aSide) : 0);
   }
 
+  inline bool IsBorderImageLoaded() const
+  {
+    return mBorderImageSource.IsLoaded();
+  }
+
   // Defined in nsStyleStructInlines.h
-  inline bool IsBorderImageLoaded() const;
   inline nsresult RequestDecode();
 
   void GetBorderColor(mozilla::css::Side aSide, nscolor& aColor,
@@ -871,21 +913,20 @@ struct nsStyleBorder {
     mBorderStyle[aSide] &= ~BORDER_COLOR_SPECIAL;
   }
 
-  // These are defined in nsStyleStructInlines.h
-  inline void SetBorderImage(imgRequestProxy* aImage);
-  inline imgRequestProxy* GetBorderImage() const;
-
-  bool HasBorderImage() {return !!mBorderImageSource;}
-
-  void TrackImage(nsPresContext* aContext);
-  void UntrackImage(nsPresContext* aContext);
+  void TrackImage(nsPresContext* aContext)
+  {
+    if (mBorderImageSource.GetType() == eStyleImageType_Image) {
+      mBorderImageSource.TrackImage(aContext);
+    }
+  }
+  void UntrackImage(nsPresContext* aContext)
+  {
+    if (mBorderImageSource.GetType() == eStyleImageType_Image) {
+      mBorderImageSource.UntrackImage(aContext);
+    }
+  }
 
   nsMargin GetImageOutset() const;
-
-  // These methods are used for the caller to caches the sub images created during
-  // a border-image paint operation
-  inline void SetSubImage(uint8_t aIndex, imgIContainer* aSubImage) const;
-  inline imgIContainer* GetSubImage(uint8_t aIndex) const;
 
   void GetCompositeColors(int32_t aIndex, nsBorderColors** aColors) const
   {
@@ -917,19 +958,21 @@ struct nsStyleBorder {
     mBorderStyle[aSide] |= BORDER_COLOR_FOREGROUND;
   }
 
+  imgIRequest* GetBorderImageRequest() const
+  {
+    if (mBorderImageSource.GetType() == eStyleImageType_Image) {
+      return mBorderImageSource.GetImageData();
+    }
+    return nullptr;
+  }
+
 public:
   nsBorderColors** mBorderColors;        // [reset] composite (stripe) colors
   nsRefPtr<nsCSSShadowArray> mBoxShadow; // [reset] nullptr for 'none'
 
-#ifdef DEBUG
-  bool mImageTracked;
-#endif
-
-protected:
-  nsRefPtr<imgRequestProxy> mBorderImageSource; // [reset]
-
 public:
   nsStyleCorners mBorderRadius;       // [reset] coord, percent
+  nsStyleImage   mBorderImageSource;  // [reset]
   nsStyleSides   mBorderImageSlice;   // [reset] factor, percent
   nsStyleSides   mBorderImageWidth;   // [reset] length, factor, percent, auto
   nsStyleSides   mBorderImageOutset;  // [reset] length, factor
@@ -965,9 +1008,6 @@ protected:
   nscolor       mBorderColor[4];  // [reset] the colors to use for a simple
                                   // border.  not used for -moz-border-colors
 private:
-  // Cache used by callers for border-image painting
-  nsCOMArray<imgIContainer> mSubImages;
-
   nscoord       mTwipsPerPixel;
 
   nsStyleBorder& operator=(const nsStyleBorder& aOther) MOZ_DELETE;
@@ -994,6 +1034,12 @@ struct nsStyleOutline {
   static nsChangeHint MaxDifference() {
     return NS_CombineHint(nsChangeHint_AllReflowHints,
                           nsChangeHint_RepaintFrame);
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
   }
 
   nsStyleCorners  mOutlineRadius; // [reset] coord, percent, calc
@@ -1080,6 +1126,12 @@ struct nsStyleList {
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_FRAMECHANGE;
   }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
+  }
 
   imgRequestProxy* GetListStyleImage() const { return mListStyleImage; }
   void SetListStyleImage(imgRequestProxy* aReq)
@@ -1118,6 +1170,11 @@ struct nsStylePosition {
     return NS_CombineHint(NS_STYLE_HINT_REFLOW,
                           nsChangeHint(nsChangeHint_RecomputePosition |
                                        nsChangeHint_UpdateOverflow));
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference can return both nsChangeHint_ClearAncestorIntrinsics and
+    // nsChangeHint_NeedReflow as inherited hints.
+    return nsChangeHint(0);
   }
 
   nsStyleSides  mOffset;                // [reset] coord, percent, calc, auto
@@ -1284,6 +1341,12 @@ struct nsStyleTextReset {
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_REFLOW;
   }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
+  }
 
   nsStyleCoord  mVerticalAlign;         // [reset] coord, percent, calc, enum (see nsStyleConsts.h)
   nsStyleTextOverflow mTextOverflow;    // [reset] enum, string
@@ -1312,6 +1375,12 @@ struct nsStyleText {
   nsChangeHint CalcDifference(const nsStyleText& aOther) const;
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_FRAMECHANGE;
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
   }
 
   uint8_t mTextAlign;                   // [inherited] see nsStyleConsts.h
@@ -1370,13 +1439,13 @@ struct nsStyleText {
   }
 
   // These are defined in nsStyleStructInlines.h.
+  inline bool HasTextShadow() const;
+  inline nsCSSShadowArray* GetTextShadow() const;
 
   // The aContextFrame argument on each of these is the frame this
   // style struct is for.  If the frame is for SVG text, the return
   // value will be massaged to be something that makes sense for
   // SVG text.
-  inline bool HasTextShadow(const nsIFrame* aContextFrame) const;
-  inline nsCSSShadowArray* GetTextShadow(const nsIFrame* aContextFrame) const;
   inline bool WhiteSpaceCanWrap(const nsIFrame* aContextFrame) const;
   inline bool WordCanWrap(const nsIFrame* aContextFrame) const;
 };
@@ -1487,6 +1556,12 @@ struct nsStyleVisibility {
   nsChangeHint CalcDifference(const nsStyleVisibility& aOther) const;
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_FRAMECHANGE;
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
   }
 
   nsStyleImageOrientation mImageOrientation;  // [inherited]
@@ -1695,6 +1770,11 @@ struct nsStyleDisplay {
                         nsChangeHint_UpdateOverflow |
                         nsChangeHint_AddOrRemoveTransform);
   }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference can return both nsChangeHint_ClearAncestorIntrinsics and
+    // nsChangeHint_NeedReflow as inherited hints.
+    return nsChangeHint(0);
+  }
 
   // We guarantee that if mBinding is non-null, so are mBinding->GetURI() and
   // mBinding->mOriginPrincipal.
@@ -1716,18 +1796,26 @@ struct nsStyleDisplay {
   bool mBreakAfter;     // [reset]
   uint8_t mOverflowX;           // [reset] see nsStyleConsts.h
   uint8_t mOverflowY;           // [reset] see nsStyleConsts.h
+  uint8_t mOverflowClipBox;     // [reset] see nsStyleConsts.h
   uint8_t mResize;              // [reset] see nsStyleConsts.h
   uint8_t mClipFlags;           // [reset] see nsStyleConsts.h
   uint8_t mOrient;              // [reset] see nsStyleConsts.h
   uint8_t mMixBlendMode;        // [reset] see nsStyleConsts.h
+  uint8_t mWillChangeBitField;  // [reset] see nsStyleConsts.h. Stores a bitfield
+                                // representation of the property that
+                                // are frequently queried. This should match
+                                // mWillChange
+  nsAutoTArray<nsString, 1> mWillChange;
+
+  uint8_t mTouchAction;         // [reset] see nsStyleConsts.h
 
   // mSpecifiedTransform is the list of transform functions as
   // specified, or null to indicate there is no transform.  (inherit or
   // initial are replaced by an actual list of transform functions, or
-  // null, as appropriate.) (owned by the style rule)
+  // null, as appropriate.)
   uint8_t mBackfaceVisibility;
   uint8_t mTransformStyle;
-  const nsCSSValueList *mSpecifiedTransform; // [reset]
+  nsRefPtr<nsCSSValueSharedList> mSpecifiedTransform; // [reset]
   nsStyleCoord mTransformOrigin[3]; // [reset] percent, coord, calc, 3rd param is coord, calc only
   nsStyleCoord mChildPerspective; // [reset] coord
   nsStyleCoord mPerspectiveOrigin[2]; // [reset] percent, coord, calc
@@ -1821,9 +1909,10 @@ struct nsStyleDisplay {
   /* Returns whether the element has the -moz-transform property
    * or a related property. */
   bool HasTransformStyle() const {
-    return mSpecifiedTransform != nullptr || 
+    return mSpecifiedTransform != nullptr ||
            mTransformStyle == NS_STYLE_TRANSFORM_STYLE_PRESERVE_3D ||
-           mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN;
+           mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN ||
+           (mWillChangeBitField & NS_STYLE_WILL_CHANGE_TRANSFORM);
   }
 
   // These are defined in nsStyleStructInlines.h.
@@ -1864,6 +1953,12 @@ struct nsStyleTable {
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_FRAMECHANGE;
   }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
+  }
 
   uint8_t       mLayoutStrategy;// [reset] see nsStyleConsts.h NS_STYLE_TABLE_LAYOUT_*
   uint8_t       mFrame;         // [reset] see nsStyleConsts.h NS_STYLE_TABLE_FRAME_*
@@ -1887,6 +1982,12 @@ struct nsStyleTableBorder {
   nsChangeHint CalcDifference(const nsStyleTableBorder& aOther) const;
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_FRAMECHANGE;
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
   }
 
   nscoord       mBorderSpacingX;// [inherited]
@@ -1913,7 +2014,7 @@ enum nsStyleContentType {
 struct nsStyleContentData {
   nsStyleContentType  mType;
   union {
-    PRUnichar *mString;
+    char16_t *mString;
     imgRequestProxy *mImage;
     nsCSSValue::Array* mCounters;
   } mContent;
@@ -1977,6 +2078,12 @@ struct nsStyleQuotes {
   nsChangeHint CalcDifference(const nsStyleQuotes& aOther) const;
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_FRAMECHANGE;
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
   }
 
   uint32_t  QuotesCount(void) const { return mQuotesCount; } // [inherited]
@@ -2044,6 +2151,12 @@ struct nsStyleContent {
   nsChangeHint CalcDifference(const nsStyleContent& aOther) const;
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_FRAMECHANGE;
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
   }
 
   uint32_t  ContentCount(void) const  { return mContentCount; } // [reset]
@@ -2149,6 +2262,12 @@ struct nsStyleUIReset {
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_FRAMECHANGE;
   }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
+  }
 
   uint8_t   mUserSelect;      // [reset] (selection-style)
   uint8_t   mForceBrokenImageIcon; // [reset]  (0 if not forcing, otherwise forcing)
@@ -2202,6 +2321,12 @@ struct nsStyleUserInterface {
   static nsChangeHint MaxDifference() {
     return nsChangeHint(nsChangeHint_UpdateCursor | NS_STYLE_HINT_FRAMECHANGE);
   }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
+  }
 
   uint8_t   mUserInput;       // [inherited]
   uint8_t   mUserModify;      // [inherited] (modify-content)
@@ -2237,6 +2362,12 @@ struct nsStyleXUL {
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_FRAMECHANGE;
   }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
+  }
 
   float         mBoxFlex;               // [reset] see nsStyleConsts.h
   uint32_t      mBoxOrdinal;            // [reset] see nsStyleConsts.h
@@ -2263,6 +2394,12 @@ struct nsStyleColumn {
   nsChangeHint CalcDifference(const nsStyleColumn& aOther) const;
   static nsChangeHint MaxDifference() {
     return NS_STYLE_HINT_FRAMECHANGE;
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
   }
 
   /**
@@ -2348,6 +2485,11 @@ struct nsStyleSVG {
     return NS_CombineHint(NS_CombineHint(nsChangeHint_UpdateEffects,
              NS_CombineHint(nsChangeHint_NeedReflow, nsChangeHint_NeedDirtyReflow)), // XXX remove nsChangeHint_NeedDirtyReflow: bug 876085
                                          nsChangeHint_RepaintFrame);
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow as an inherited hint
+    // and never returns nsChangeHint_ClearAncestorIntrinsics at all.
+    return nsChangeHint_NeedReflow;
   }
 
   nsStyleSVGPaint  mFill;             // [inherited]
@@ -2477,6 +2619,12 @@ struct nsStyleSVGReset {
     return NS_CombineHint(nsChangeHint_UpdateEffects,
             NS_CombineHint(nsChangeHint_UpdateOverflow, NS_STYLE_HINT_REFLOW));
   }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics as inherited hints.
+    return NS_CombineHint(nsChangeHint_NeedReflow,
+                          nsChangeHint_ClearAncestorIntrinsics);
+  }
 
   // The backend only supports one SVG reference right now.
   // Eventually, it will support multiple chained SVG reference filters and CSS
@@ -2500,6 +2648,32 @@ struct nsStyleSVGReset {
   uint8_t          mDominantBaseline; // [reset] see nsStyleConsts.h
   uint8_t          mVectorEffect;     // [reset] see nsStyleConsts.h
   uint8_t          mMaskType;         // [reset] see nsStyleConsts.h
+};
+
+struct nsStyleVariables {
+  nsStyleVariables();
+  nsStyleVariables(const nsStyleVariables& aSource);
+  ~nsStyleVariables();
+
+  void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW {
+    return aContext->AllocateFromShell(sz);
+  }
+  void Destroy(nsPresContext* aContext) {
+    this->~nsStyleVariables();
+    aContext->FreeToShell(sizeof(nsStyleVariables), this);
+  }
+
+  nsChangeHint CalcDifference(const nsStyleVariables& aOther) const;
+  static nsChangeHint MaxDifference() {
+    return nsChangeHint(0);
+  }
+  static nsChangeHint MaxDifferenceNeverInherited() {
+    // CalcDifference never returns nsChangeHint_NeedReflow or
+    // nsChangeHint_ClearAncestorIntrinsics at all.
+    return nsChangeHint(0);
+  }
+
+  mozilla::CSSVariableValues mVariables;
 };
 
 #endif /* nsStyleStruct_h___ */

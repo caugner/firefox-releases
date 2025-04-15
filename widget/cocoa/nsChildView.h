@@ -130,6 +130,14 @@ class GLManager;
 // outside a call to -[NSView drawRect:].
 - (NSRect)_dirtyRect;
 
+// Undocumented method of one or more of NSFrameView's subclasses.  Called
+// when one or more of the titlebar buttons needs to be repositioned, to
+// disappear, or to reappear (say if the window's style changes).  If
+// 'redisplay' is true, the entire titlebar (the window's top 22 pixels) is
+// marked as needing redisplay.  This method has been present in the same
+// format since at least OS X 10.5.
+- (void)_tileTitlebarAndRedisplay:(BOOL)redisplay;
+
 @end
 
 // Support for pixel scroll deltas, not part of NSEvent.h
@@ -176,6 +184,14 @@ enum {
   NSEventPhaseCancelled   = 0x1 << 4,
 };
 typedef NSUInteger NSEventPhase;
+
+enum {
+   NSFullScreenWindowMask = 1 << 14
+};
+
+@interface NSWindow (LionWindowFeatures)
+- (NSRect)convertRectToScreen:(NSRect)aRect;
+@end
 
 #ifdef __LP64__
 enum {
@@ -553,9 +569,9 @@ public:
   virtual gfxASurface* GetThebesSurface();
   virtual void PrepareWindowEffects() MOZ_OVERRIDE;
   virtual void CleanupWindowEffects() MOZ_OVERRIDE;
-  virtual bool PreRender(LayerManager* aManager) MOZ_OVERRIDE;
-  virtual void PostRender(LayerManager* aManager) MOZ_OVERRIDE;
-  virtual void DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect) MOZ_OVERRIDE;
+  virtual bool PreRender(LayerManagerComposite* aManager) MOZ_OVERRIDE;
+  virtual void PostRender(LayerManagerComposite* aManager) MOZ_OVERRIDE;
+  virtual void DrawWindowOverlay(LayerManagerComposite* aManager, nsIntRect aRect) MOZ_OVERRIDE;
 
   virtual void UpdateThemeGeometries(const nsTArray<ThemeGeometry>& aThemeGeometries);
 
@@ -668,6 +684,7 @@ protected:
   bool mHasRoundedBottomCorners;
   int mDevPixelCornerRadius;
   bool mIsCoveringTitlebar;
+  bool mIsFullscreen;
   nsIntRect mTitlebarRect;
 
   // The area of mTitlebarCGContext that needs to be redrawn during the next

@@ -14,15 +14,18 @@ const Cu = Components.utils;
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/PluralForm.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
+Cu.import("resource://gre/modules/osfile.jsm");
 let promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js").Promise;
 Cu.import("resource:///modules/devtools/shared/event-emitter.js");
+Cu.import("resource:///modules/devtools/gDevTools.jsm");
 Cu.import("resource:///modules/devtools/StyleEditorUtil.jsm");
 Cu.import("resource:///modules/devtools/SplitView.jsm");
 Cu.import("resource:///modules/devtools/StyleSheetEditor.jsm");
 
+const require = Cu.import("resource://gre/modules/devtools/Loader.jsm", {}).devtools.require;
+const { PrefObserver, PREF_ORIG_SOURCES } = require("devtools/styleeditor/utils");
 
 const LOAD_ERROR = "error-load";
-
 const STYLE_EDITOR_TEMPLATE = "stylesheet";
 
 /**
@@ -34,15 +37,18 @@ const STYLE_EDITOR_TEMPLATE = "stylesheet";
  *   'editor-selected': An editor was selected
  *   'error': An error occured
  *
- * @param {StyleEditorDebuggee} debuggee
- *        Debuggee of whose stylesheets should be shown in the UI
+ * @param {StyleEditorFront} debuggee
+ *        Client-side front for interacting with the page's stylesheets
+ * @param {Target} target
+ *        Interface for the page we're debugging
  * @param {Document} panelDoc
  *        Document of the toolbox panel to populate UI in.
  */
-function StyleEditorUI(debuggee, panelDoc) {
+function StyleEditorUI(debuggee, target, panelDoc) {
   EventEmitter.decorate(this);
 
   this._debuggee = debuggee;
+  this._target = target;
   this._panelDoc = panelDoc;
   this._window = this._panelDoc.defaultView;
   this._root = this._panelDoc.getElementById("style-editor-chrome");
@@ -50,15 +56,14 @@ function StyleEditorUI(debuggee, panelDoc) {
   this.editors = [];
   this.selectedEditor = null;
 
+  this._updateSourcesLabel = this._updateSourcesLabel.bind(this);
   this._onStyleSheetCreated = this._onStyleSheetCreated.bind(this);
-  this._onStyleSheetsCleared = this._onStyleSheetsCleared.bind(this);
-  this._onDocumentLoad = this._onDocumentLoad.bind(this);
+  this._onNewDocument = this._onNewDocument.bind(this);
+  this._clear = this._clear.bind(this);
   this._onError = this._onError.bind(this);
 
-  debuggee.on("document-load", this._onDocumentLoad);
-  debuggee.on("stylesheets-cleared", this._onStyleSheetsCleared);
-
-  this.createUI();
+  this._prefObserver = new PrefObserver("devtools.styleeditor.");
+  this._prefObserver.on(PREF_ORIG_SOURCES, this._onNewDocument);
 }
 
 StyleEditorUI.prototype = {
@@ -67,8 +72,7 @@ StyleEditorUI.prototype = {
    *
    * @return boolean
    */
-  get isDirty()
-  {
+  get isDirty() {
     if (this._markedDirty === true) {
       return true;
     }
@@ -93,6 +97,24 @@ StyleEditorUI.prototype = {
   },
 
   /**
+   * Initiates the style editor ui creation and the inspector front to get
+   * reference to the walker.
+   */
+  initialize: function() {
+    let toolbox = gDevTools.getToolbox(this._target);
+    return toolbox.initInspector().then(() => {
+      this._walker = toolbox.walker;
+    }).then(() => this.createUI())
+      .then(() => this._debuggee.getStyleSheets())
+      .then((styleSheets) => {
+      this._resetStyleSheetList(styleSheets);
+
+      this._target.on("will-navigate", this._clear);
+      this._target.on("navigate", this._onNewDocument);
+    });
+  },
+
+  /**
    * Build the initial UI and wire buttons with event handlers.
    */
   createUI: function() {
@@ -101,12 +123,143 @@ StyleEditorUI.prototype = {
     this._view = new SplitView(viewRoot);
 
     wire(this._view.rootElement, ".style-editor-newButton", function onNew() {
-      this._debuggee.createStyleSheet(null, this._onStyleSheetCreated);
+      this._debuggee.addStyleSheet(null).then(this._onStyleSheetCreated);
     }.bind(this));
 
     wire(this._view.rootElement, ".style-editor-importButton", function onImport() {
       this._importFromFile(this._mockImportFile || null, this._window);
     }.bind(this));
+
+    this._contextMenu = this._panelDoc.getElementById("sidebar-context");
+    this._contextMenu.addEventListener("popupshowing",
+                                       this._updateSourcesLabel);
+
+    this._sourcesItem = this._panelDoc.getElementById("context-origsources");
+    this._sourcesItem.addEventListener("command",
+                                       this._toggleOrigSources);
+  },
+
+  /**
+   * Update text of context menu option to reflect whether we're showing
+   * original sources (e.g. Sass files) or not.
+   */
+  _updateSourcesLabel: function() {
+    let string = "showOriginalSources";
+    if (Services.prefs.getBoolPref(PREF_ORIG_SOURCES)) {
+      string = "showCSSSources";
+    }
+    this._sourcesItem.setAttribute("label", _(string + ".label"));
+    this._sourcesItem.setAttribute("accesskey", _(string + ".accesskey"));
+  },
+
+  /**
+   * Refresh editors to reflect the stylesheets in the document.
+   *
+   * @param {string} event
+   *        Event name
+   * @param {StyleSheet} styleSheet
+   *        StyleSheet object for new sheet
+   */
+  _onNewDocument: function() {
+    this._debuggee.getStyleSheets().then((styleSheets) => {
+      this._resetStyleSheetList(styleSheets);
+    })
+  },
+
+  /**
+   * Remove all editors and add loading indicator.
+   */
+  _clear: function() {
+    // remember selected sheet and line number for next load
+    if (this.selectedEditor && this.selectedEditor.sourceEditor) {
+      let href = this.selectedEditor.styleSheet.href;
+      let {line, ch} = this.selectedEditor.sourceEditor.getCursor();
+
+      this._styleSheetToSelect = {
+        href: href,
+        line: line,
+        col: ch
+      };
+    }
+
+    this._clearStyleSheetEditors();
+    this._view.removeAll();
+
+    this.selectedEditor = null;
+
+    this._root.classList.add("loading");
+  },
+
+  /**
+   * Add editors for all the given stylesheets to the UI.
+   *
+   * @param  {array} styleSheets
+   *         Array of StyleSheetFront
+   */
+  _resetStyleSheetList: function(styleSheets) {
+    this._clear();
+
+    for (let sheet of styleSheets) {
+      this._addStyleSheet(sheet);
+    }
+
+    this._root.classList.remove("loading");
+
+    this.emit("stylesheets-reset");
+  },
+
+  /**
+   * Add an editor for this stylesheet. Add editors for its original sources
+   * instead (e.g. Sass sources), if applicable.
+   *
+   * @param  {StyleSheetFront} styleSheet
+   *         Style sheet to add to style editor
+   */
+  _addStyleSheet: function(styleSheet) {
+    let editor = this._addStyleSheetEditor(styleSheet);
+
+    if (!Services.prefs.getBoolPref(PREF_ORIG_SOURCES)) {
+      return;
+    }
+
+    styleSheet.getOriginalSources().then((sources) => {
+      if (sources && sources.length) {
+        this._removeStyleSheetEditor(editor);
+        sources.forEach((source) => {
+          // set so the first sheet will be selected, even if it's a source
+          source.styleSheetIndex = styleSheet.styleSheetIndex;
+          source.relatedStyleSheet = styleSheet;
+
+          this._addStyleSheetEditor(source);
+        });
+      }
+    });
+  },
+
+  /**
+   * Add a new editor to the UI for a source.
+   *
+   * @param {StyleSheet}  styleSheet
+   *        Object representing stylesheet
+   * @param {nsIfile}  file
+   *         Optional file object that sheet was imported from
+   * @param {Boolean} isNew
+   *         Optional if stylesheet is a new sheet created by user
+   */
+  _addStyleSheetEditor: function(styleSheet, file, isNew) {
+    let editor =
+      new StyleSheetEditor(styleSheet, this._window, file, isNew, this._walker);
+
+    editor.on("property-change", this._summaryChange.bind(this, editor));
+    editor.on("style-applied", this._summaryChange.bind(this, editor));
+    editor.on("linked-css-file", this._summaryChange.bind(this, editor));
+    editor.on("linked-css-file-error", this._summaryChange.bind(this, editor));
+    editor.on("error", this._onError);
+
+    this.editors.push(editor);
+
+    editor.fetchSource(this._sourceLoaded.bind(this, editor));
+    return editor;
   },
 
   /**
@@ -119,11 +272,10 @@ StyleEditorUI.prototype = {
    * @param {nsIWindow} parentWindow
    *        Optional parent window for the file picker.
    */
-  _importFromFile: function(file, parentWindow)
-  {
+  _importFromFile: function(file, parentWindow) {
     let onFileSelected = function(file) {
       if (!file) {
-        this.emit("error", LOAD_ERROR);
+        // nothing selected
         return;
       }
       NetUtil.asyncFetch(file, (stream, status) => {
@@ -134,7 +286,7 @@ StyleEditorUI.prototype = {
         let source = NetUtil.readInputStreamToString(stream, stream.available());
         stream.close();
 
-        this._debuggee.createStyleSheet(source, (styleSheet) => {
+        this._debuggee.addStyleSheet(source).then((styleSheet) => {
           this._onStyleSheetCreated(styleSheet, file);
         });
       });
@@ -144,24 +296,6 @@ StyleEditorUI.prototype = {
     showFilePicker(file, false, parentWindow, onFileSelected);
   },
 
-  /**
-   * Handler for debuggee's 'stylesheets-cleared' event. Remove all editors.
-   */
-  _onStyleSheetsCleared: function() {
-    // remember selected sheet and line number for next load
-    if (this.selectedEditor && this.selectedEditor.sourceEditor) {
-      let href = this.selectedEditor.styleSheet.href;
-      let {line, ch} = this.selectedEditor.sourceEditor.getCursor();
-      this.selectStyleSheet(href, line, ch);
-    }
-
-    this._clearStyleSheetEditors();
-    this._view.removeAll();
-
-    this.selectedEditor = null;
-
-    this._root.classList.add("loading");
-  },
 
   /**
    * When a new or imported stylesheet has been added to the document.
@@ -172,69 +306,49 @@ StyleEditorUI.prototype = {
   },
 
   /**
-   * Handler for debuggee's 'document-load' event. Add editors
-   * for all style sheets in the document
-   *
-   * @param {string} event
-   *        Event name
-   * @param {StyleSheet} styleSheet
-   *        StyleSheet object for new sheet
-   */
-  _onDocumentLoad: function(event, styleSheets) {
-    if (this._styleSheetToSelect) {
-      // if selected stylesheet from previous load isn't here,
-      // just set first stylesheet to be selected instead
-      let selectedExists = styleSheets.some((sheet) => {
-        return this._styleSheetToSelect.href == sheet.href;
-      })
-      if (!selectedExists) {
-        this._styleSheetToSelect = null;
-      }
-    }
-    for (let sheet of styleSheets) {
-      this._addStyleSheetEditor(sheet);
-    }
-
-    this._root.classList.remove("loading");
-
-    this.emit("document-load");
-  },
-
-  /**
    * Forward any error from a stylesheet.
    *
    * @param  {string} event
    *         Event name
    * @param  {string} errorCode
    *         Code represeting type of error
+   * @param  {string} message
+   *         The full error message
    */
-  _onError: function(event, errorCode) {
-    this.emit("error", errorCode);
+  _onError: function(event, errorCode, message) {
+    this.emit("error", errorCode, message);
   },
 
   /**
-   * Add a new editor to the UI for a stylesheet.
-   *
-   * @param {StyleSheet}  styleSheet
-   *        Object representing stylesheet
-   * @param {nsIfile}  file
-   *         Optional file object that sheet was imported from
-   * @param {Boolean} isNew
-   *         Optional if stylesheet is a new sheet created by user
+   *  Toggle the original sources pref.
    */
-  _addStyleSheetEditor: function(styleSheet, file, isNew) {
-    let editor = new StyleSheetEditor(styleSheet, this._window, file, isNew);
+  _toggleOrigSources: function() {
+    let isEnabled = Services.prefs.getBoolPref(PREF_ORIG_SOURCES);
+    Services.prefs.setBoolPref(PREF_ORIG_SOURCES, !isEnabled);
+  },
 
-    editor.once("source-load", this._sourceLoaded.bind(this, editor));
-    editor.on("property-change", this._summaryChange.bind(this, editor));
-    editor.on("style-applied", this._summaryChange.bind(this, editor));
-    editor.on("error", this._onError);
+  /**
+   * Remove a particular stylesheet editor from the UI
+   *
+   * @param {StyleSheetEditor}  editor
+   *        The editor to remove.
+   */
+  _removeStyleSheetEditor: function(editor) {
+    if (editor.summary) {
+      this._view.removeItem(editor.summary);
+    }
+    else {
+      let self = this;
+      this.on("editor-added", function onAdd(event, added) {
+        if (editor == added) {
+          self.off("editor-added", onAdd);
+          self._view.removeItem(editor.summary);
+        }
+      })
+    }
 
-    this.editors.push(editor);
-
-    // Queue editor loading. This helps responsivity during loading when
-    // there are many heavy stylesheets.
-    this._window.setTimeout(editor.fetchSource.bind(editor), 0);
+    editor.destroy();
+    this.editors.splice(this.editors.indexOf(editor), 1);
   },
 
   /**
@@ -248,8 +362,8 @@ StyleEditorUI.prototype = {
   },
 
   /**
-   * Handler for an StyleSheetEditor's 'source-load' event.
-   * Create a summary UI for the editor.
+   * Called when a StyleSheetEditor's source has been fetched. Create a
+   * summary UI for the editor.
    *
    * @param  {StyleSheetEditor} editor
    *         Editor to create UI for.
@@ -309,9 +423,9 @@ StyleEditorUI.prototype = {
           this.switchToSelectedSheet();
         }
 
-        // If this is the first stylesheet, select it
-        if (this.selectedStyleSheetIndex == -1
-            && !this._styleSheetToSelect
+        // If this is the first stylesheet and there is no pending request to
+        // select a particular style sheet, select this sheet.
+        if (!this.selectedEditor && !this._styleSheetBoundToSelect
             && editor.styleSheet.styleSheetIndex == 0) {
           this._selectEditor(editor);
         }
@@ -322,7 +436,6 @@ StyleEditorUI.prototype = {
       onShow: function(summary, details, data) {
         let editor = data.editor;
         this.selectedEditor = editor;
-        this._styleSheetToSelect = null;
 
         if (!editor.sourceEditor) {
           // only initialize source editor when we switch to this view
@@ -344,8 +457,14 @@ StyleEditorUI.prototype = {
 
     for each (let editor in this.editors) {
       if (editor.styleSheet.href == sheet.href) {
+        // The _styleSheetBoundToSelect will always hold the latest pending
+        // requested style sheet (with line and column) which is not yet
+        // selected by the source editor. Only after we select that particular
+        // editor and go the required line and column, it will become null.
+        this._styleSheetBoundToSelect = this._styleSheetToSelect;
         this._selectEditor(editor, sheet.line, sheet.col);
-        break;
+        this._styleSheetToSelect = null;
+        return;
       }
     }
   },
@@ -366,9 +485,30 @@ StyleEditorUI.prototype = {
 
     editor.getSourceEditor().then(() => {
       editor.sourceEditor.setCursor({line: line, ch: col});
+      this._styleSheetBoundToSelect = null;
     });
 
-    this._view.activeSummary = editor.summary;
+    this.getEditorSummary(editor).then((summary) => {
+      this._view.activeSummary = summary;
+    })
+  },
+
+  getEditorSummary: function(editor) {
+    if (editor.summary) {
+      return promise.resolve(editor.summary);
+    }
+
+    let deferred = promise.defer();
+    let self = this;
+
+    this.on("editor-added", function onAdd(e, selected) {
+      if (selected == editor) {
+        self.off("editor-added", onAdd);
+        deferred.resolve(editor.summary);
+      }
+    });
+
+    return deferred.promise;
   },
 
   /**
@@ -384,32 +524,12 @@ StyleEditorUI.prototype = {
    * @param {Number} [col]
    *        Column to which the caret should be moved (zero-indexed).
    */
-  selectStyleSheet: function(href, line, col)
-  {
-    let alreadyCalled = !!this._styleSheetToSelect;
-    let originalHref;
-
-    if (alreadyCalled) {
-      originalHref = this._styleSheetToSelect.href;
-    }
-
+  selectStyleSheet: function(href, line, col) {
     this._styleSheetToSelect = {
       href: href,
       line: line,
       col: col,
     };
-
-    if (alreadyCalled) {
-      // Just switch to the correct line and columns if the editor is already
-      // selected for the requested stylesheet.
-      for each (let editor in this.editors) {
-        if (editor.styleSheet.href == originalHref) {
-          editor.sourceEditor.setCursor({line: line, ch: col})
-          break;
-        }
-      }
-      return;
-    }
 
     /* Switch to the editor for this sheet, if it exists yet.
        Otherwise each editor will be checked when it's created. */
@@ -441,9 +561,13 @@ StyleEditorUI.prototype = {
     if (!summary) {
       return;
     }
-    let ruleCount = "-";
-    if (editor.styleSheet.ruleCount !== undefined) {
-      ruleCount = editor.styleSheet.ruleCount;
+
+    let ruleCount = editor.styleSheet.ruleCount;
+    if (editor.styleSheet.relatedStyleSheet) {
+      ruleCount = editor.styleSheet.relatedStyleSheet.ruleCount;
+    }
+    if (ruleCount === undefined) {
+      ruleCount = "-";
     }
 
     var flags = [];
@@ -453,21 +577,28 @@ StyleEditorUI.prototype = {
     if (editor.unsaved) {
       flags.push("unsaved");
     }
+    if (editor.linkedCSSFileError) {
+      flags.push("linked-file-error");
+    }
     this._view.setItemClassName(summary, flags.join(" "));
 
     let label = summary.querySelector(".stylesheet-name > label");
     label.setAttribute("value", editor.friendlyName);
 
+    let linkedCSSFile = "";
+    if (editor.linkedCSSFile) {
+      linkedCSSFile = OS.Path.basename(editor.linkedCSSFile);
+    }
+    text(summary, ".stylesheet-linked-file", linkedCSSFile);
     text(summary, ".stylesheet-title", editor.styleSheet.title || "");
     text(summary, ".stylesheet-rule-count",
       PluralForm.get(ruleCount, _("ruleCount.label")).replace("#1", ruleCount));
-    text(summary, ".stylesheet-error-message", editor.errorMessage);
   },
 
   destroy: function() {
     this._clearStyleSheetEditors();
 
-    this._debuggee.off("document-load", this._onDocumentLoad);
-    this._debuggee.off("stylesheets-cleared", this._onStyleSheetsCleared);
+    this._prefObserver.off(PREF_ORIG_SOURCES, this._onNewDocument);
+    this._prefObserver.destroy();
   }
 }

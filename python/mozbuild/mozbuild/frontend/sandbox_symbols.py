@@ -384,18 +384,6 @@ VARIABLES = {
         populated by calling add_tier_dir().
         """, None),
 
-    'EXTERNAL_MAKE_DIRS': (list, list,
-        """Directories that build with make but don't use moz.build files.
-
-        This is like ``DIRS`` except it implies that ``make`` is used to build the
-        directory and that the directory does not define itself with moz.build
-        files.
-        """, None),
-
-    'PARALLEL_EXTERNAL_MAKE_DIRS': (list, list,
-        """Parallel version of ``EXTERNAL_MAKE_DIRS``.
-        """, None),
-
     'CONFIGURE_SUBST_FILES': (StrictOrderingOnAppendList, list,
         """Output files that will be generated using configure-like substitution.
 
@@ -451,6 +439,14 @@ VARIABLES = {
         If present, some files defined by other variables won't be
         distributed/shipped with the produced build.
         """, None),
+
+    'JAR_MANIFESTS': (StrictOrderingOnAppendList, list,
+        """JAR manifest files that should be processed as part of the build.
+
+        JAR manifests are files in the tree that define how to package files
+        into JARs and how chrome registration is performed. For more info,
+        see :ref:`jar_manifests`.
+        """, 'libs'),
 
     # IDL Generation.
     'XPIDL_SOURCES': (StrictOrderingOnAppendList, list,
@@ -514,6 +510,14 @@ VARIABLES = {
          These will be preprocessed before being parsed and converted.
          """, 'export'),
 
+    'WEBIDL_EXAMPLE_INTERFACES': (StrictOrderingOnAppendList, list,
+        """Names of example WebIDL interfaces to build as part of the build.
+
+        Names in this list correspond to WebIDL interface names defined in
+        WebIDL files included in the build from one of the \*WEBIDL_FILES
+        variables.
+        """, 'export'),
+
     # Test declaration.
     'A11Y_MANIFESTS': (StrictOrderingOnAppendList, list,
         """List of manifest files defining a11y tests.
@@ -572,6 +576,51 @@ VARIABLES = {
         result is dist/xpi-stage/$(XPI_NAME). If DIST_SUBDIR is present, then
         the $(DIST_SUBDIR) directory of the otherwise default value is used.
         """, 'libs'),
+
+    'GYP_DIRS': (StrictOrderingOnAppendListWithFlagsFactory({
+            'variables': dict,
+            'input': unicode,
+            'sandbox_vars': dict,
+            'non_unified_sources': StrictOrderingOnAppendList,
+        }), list,
+        """Defines a list of object directories handled by gyp configurations.
+
+        Elements of this list give the relative object directory. For each
+        element of the list, GYP_DIRS may be accessed as a dictionary
+        (GYP_DIRS[foo]). The object this returns has attributes that need to be
+        set to further specify gyp processing:
+            - input, gives the path to the root gyp configuration file for that
+              object directory.
+            - variables, a dictionary containing variables and values to pass
+              to the gyp processor.
+            - sandbox_vars, a dictionary containing variables and values to
+              pass to the mozbuild processor on top of those derived from gyp
+              configuration.
+            - non_unified_sources, a list containing sources files, relative to
+              the current moz.build, that should be excluded from source file
+              unification.
+
+        Typical use looks like:
+            GYP_DIRS += ['foo', 'bar']
+            GYP_DIRS['foo'].input = 'foo/foo.gyp'
+            GYP_DIRS['foo'].variables = {
+                'foo': 'bar',
+                (...)
+            }
+            (...)
+        """, None),
+
+    'SPHINX_TREES': (dict, dict,
+        """Describes what the Sphinx documentation tree will look like.
+
+        Keys are relative directories inside the final Sphinx documentation
+        tree to install files into. Values are directories (relative to this
+        file) whose content to copy into the Sphinx documentation tree.
+        """, None),
+
+    'SPHINX_PYTHON_PACKAGE_DIRS': (StrictOrderingOnAppendList, list,
+        """Directories containing Python packages that Sphinx documents.
+        """, None),
 }
 
 # The set of functions exposed to the sandbox.

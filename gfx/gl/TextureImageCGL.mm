@@ -108,13 +108,13 @@ TextureImageCGL::FinishedSurfaceUpload()
 
 already_AddRefed<TextureImage>
 CreateTextureImageCGL(GLContext* gl,
-                      const nsIntSize& aSize,
+                      const gfx::IntSize& aSize,
                       TextureImage::ContentType aContentType,
                       GLenum aWrapMode,
                       TextureImage::Flags aFlags,
                       TextureImage::ImageFormat aImageFormat)
 {
-    if (!gl->IsOffscreenSizeAllowed(gfxIntSize(aSize.width, aSize.height)) &&
+    if (!gl->IsOffscreenSizeAllowed(aSize) &&
         gfxPlatform::OffMainThreadCompositingEnabled()) {
       NS_ASSERTION(aWrapMode == LOCAL_GL_CLAMP_TO_EDGE, "Can't support wrapping with tiles!");
       nsRefPtr<TextureImage> t = new gl::TiledTextureImage(gl, aSize, aContentType,

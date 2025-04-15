@@ -298,10 +298,10 @@ Section "Uninstall"
                                            "FirefoxURL" \
                                            "FirefoxHTML"
   ${EndIf}
-  ${ResetWin8PromptKeys}
+  ${ResetWin8PromptKeys} "HKCU" ""
   ${ResetWin8MetroSplash}
 !else
-  ; The metro browser is not enabled by mozconfig.
+  ; The metro browser is not enabled by the mozconfig.
   ${If} ${AtLeastWin8}
     ${RemoveDEHRegistration} ${DELEGATE_EXECUTE_HANDLER_ID} \
                              $AppUserModelID \
@@ -694,6 +694,10 @@ Function un.onInit
   StrCpy $LANGUAGE 0
 
   ${un.UninstallUnOnInitCommon}
+
+  ${If} ${AtLeastWinVista}
+    System::Call 'user32::SetProcessDPIAware()'
+  ${EndIf}
 
   !insertmacro InitInstallOptionsFile "unconfirm.ini"
 FunctionEnd

@@ -92,11 +92,6 @@ extern bool gBluetoothDebugFlag;
  */
 #define PAIRED_STATUS_CHANGED_ID             "pairedstatuschanged"
 
- /**
- * This event would be fired when discovery procedure starts or stops.
- */
-#define DISCOVERY_STATE_CHANGED_ID           "discoverystatechanged"
-
 /**
  * When receiving a query about current play status from remote device, we'll
  * dispatch an event.
@@ -107,6 +102,9 @@ extern bool gBluetoothDebugFlag;
 #define BLUETOOTH_ADDRESS_LENGTH 17
 #define BLUETOOTH_ADDRESS_NONE   "00:00:00:00:00:00"
 #define BLUETOOTH_ADDRESS_BYTES  6
+
+// Bluetooth stack internal error, such as I/O error
+#define ERR_INTERNAL_ERROR "InternalError"
 
 BEGIN_BLUETOOTH_NAMESPACE
 

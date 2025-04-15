@@ -57,7 +57,7 @@ public:
                               void* aCallbackData,
                               EndTransactionFlags aFlags = END_DEFAULT);
 
-  virtual LayersBackend GetBackendType() { return LAYERS_CLIENT; }
+  virtual LayersBackend GetBackendType() { return LayersBackend::LAYERS_CLIENT; }
   virtual void GetBackendName(nsAString& name);
   virtual const char* Name() const { return "Client"; }
 
@@ -73,7 +73,7 @@ public:
   virtual already_AddRefed<ColorLayer> CreateColorLayer();
   virtual already_AddRefed<RefLayer> CreateRefLayer();
 
-  virtual TextureFactoryIdentifier GetTextureFactoryIdentifier() MOZ_OVERRIDE
+  TextureFactoryIdentifier GetTextureFactoryIdentifier()
   {
     return mForwarder->GetTextureFactoryIdentifier();
   }
@@ -152,6 +152,8 @@ public:
   }
   bool NeedsComposite() const { return mNeedsComposite; }
 
+  virtual void Composite() MOZ_OVERRIDE;
+
 protected:
   enum TransactionPhase {
     PHASE_NONE, PHASE_CONSTRUCTION, PHASE_DRAWING, PHASE_FORWARD
@@ -162,7 +164,7 @@ private:
   /**
    * Forward transaction results to the parent context.
    */
-  void ForwardTransaction();
+  void ForwardTransaction(bool aScheduleComposite);
 
   /**
    * Take a snapshot of the parent context, and copy

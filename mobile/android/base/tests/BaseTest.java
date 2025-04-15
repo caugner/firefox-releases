@@ -58,6 +58,7 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
     private static final int MAX_WAIT_HOME_PAGER_HIDDEN_MS = 15000;
     public static final int MAX_WAIT_MS = 4500;
     public static final int LONG_PRESS_TIME = 6000;
+    private static final int GECKO_READY_WAIT_MS = 180000;
 
     // IDs for UI views
     private static final String BROWSER_TOOLBAR_ID = "browser_toolbar";
@@ -82,11 +83,21 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         try {
             Actions.EventExpecter geckoReadyExpector = mActions.expectGeckoEvent("Gecko:Ready");
             if (!GeckoThread.checkLaunchState(LaunchState.GeckoRunning)) {
-                geckoReadyExpector.blockForEvent();
+                geckoReadyExpector.blockForEvent(GECKO_READY_WAIT_MS, true);
             }
             geckoReadyExpector.unregisterListener();
         } catch (Exception e) {
             mAsserter.dumpLog("Exception in blockForGeckoReady", e);
+        }
+    }
+
+    protected void blockForGeckoDelayedStartup() {
+        try {
+            Actions.EventExpecter geckoReadyExpector = mActions.expectGeckoEvent("Gecko:DelayedStartup");
+            geckoReadyExpector.blockForEvent();
+            geckoReadyExpector.unregisterListener();
+        } catch (Exception e) {
+            mAsserter.dumpLog("Exception in blockForGeckoDelayedStartup", e);
         }
     }
 
@@ -192,11 +203,11 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         boolean success = waitForCondition(new Condition() {
             @Override
             public boolean isSatisfied() {
-                EditText urlEditText = mSolo.getEditText(0);
+                EditText urlEditText = (EditText) mSolo.getView(R.id.url_edit_text);
                 if (urlEditText.isInputMethodTarget()) {
                     return true;
                 } else {
-                    mSolo.clickOnEditText(0);
+                    mSolo.clickOnView(urlEditText);
                     return false;
                 }
             }
@@ -488,12 +499,12 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
     }
 
     public final void verifyHomePagerHidden() {
-        final View homePagerView = mSolo.getView("home_pager");
+        final View homePagerContainer = mSolo.getView(R.id.home_pager_container);
 
         boolean rc = waitForCondition(new Condition() {
             @Override
             public boolean isSatisfied() {
-                return homePagerView.getVisibility() != View.VISIBLE;
+                return homePagerContainer.getVisibility() != View.VISIBLE;
             }
         }, MAX_WAIT_HOME_PAGER_HIDDEN_MS);
 

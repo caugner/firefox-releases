@@ -56,11 +56,11 @@ static inline QImage::Format
 _gfximage_to_qformat(gfxImageFormat aFormat)
 {
     switch (aFormat) {
-    case gfxImageFormatARGB32:
+    case gfxImageFormat::ARGB32:
         return QImage::Format_ARGB32_Premultiplied;
-    case gfxImageFormatRGB24:
+    case gfxImageFormat::RGB24:
         return QImage::Format_ARGB32;
-    case gfxImageFormatRGB16_565:
+    case gfxImageFormat::RGB16_565:
         return QImage::Format_RGB16;
     default:
         return QImage::Format_Invalid;
@@ -176,10 +176,9 @@ nsClipboard::SetNativeClipboardData( nsITransferable *aTransferable,
                 if (!image)  // Not getting an image for an image mime type!?
                    continue;
 
-                nsRefPtr<gfxASurface> surface;
-                image->GetFrame(imgIContainer::FRAME_CURRENT,
-                                imgIContainer::FLAG_SYNC_DECODE,
-                                getter_AddRefs(surface));
+                nsRefPtr<gfxASurface> surface =
+                  image->GetFrame(imgIContainer::FRAME_CURRENT,
+                                  imgIContainer::FLAG_SYNC_DECODE);
                 if (!surface)
                   continue;
 

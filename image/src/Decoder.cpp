@@ -155,7 +155,7 @@ Decoder::Finish(RasterImage::eShutdownIntent aShutdownIntent)
       }
     }
 
-    bool usable = true;
+    bool usable = !HasDecoderError();
     if (aShutdownIntent != RasterImage::eShutdownIntent_NotNeeded && !HasDecoderError()) {
       // If we only have a data error, we're usable if we have at least one complete frame.
       if (GetCompleteFrameCount() == 0) {
@@ -353,7 +353,7 @@ Decoder::PostFrameStop(FrameBlender::FrameAlpha aFrameAlpha /* = FrameBlender::k
   }
 
   mCurrentFrame->SetFrameDisposalMethod(aDisposalMethod);
-  mCurrentFrame->SetTimeout(aTimeout);
+  mCurrentFrame->SetRawTimeout(aTimeout);
   mCurrentFrame->SetBlendMethod(aBlendMethod);
   mCurrentFrame->ImageUpdated(mCurrentFrame->GetRect());
 

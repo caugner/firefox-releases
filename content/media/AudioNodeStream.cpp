@@ -272,8 +272,7 @@ AudioNodeStream::ObtainInputBlock(AudioChunk& aTmpChunk, uint32_t aPortIndex)
     MediaStream* s = mInputs[i]->GetSource();
     AudioNodeStream* a = static_cast<AudioNodeStream*>(s);
     MOZ_ASSERT(a == s->AsAudioNodeStream());
-    if (a->IsFinishedOnGraphThread() ||
-        a->IsAudioParamStream()) {
+    if (a->IsAudioParamStream()) {
       continue;
     }
 
@@ -402,30 +401,25 @@ AudioNodeStream::UpMixDownMixChunk(const AudioChunk* aChunk,
 // The MediaStreamGraph guarantees that this is actually one block, for
 // AudioNodeStreams.
 void
-AudioNodeStream::ProduceOutput(GraphTime aFrom, GraphTime aTo)
+AudioNodeStream::ProduceOutput(GraphTime aFrom, GraphTime aTo, uint32_t aFlags)
 {
-  if (mMarkAsFinishedAfterThisBlock) {
-    // This stream was finished the last time that we looked at it, and all
-    // of the depending streams have finished their output as well, so now
-    // it's time to mark this stream as finished.
-    FinishOutput();
-  }
-
   EnsureTrack(AUDIO_TRACK, mSampleRate);
+  // No more tracks will be coming
+  mBuffer.AdvanceKnownTracksTime(STREAM_TIME_MAX);
 
   uint16_t outputCount = std::max(uint16_t(1), mEngine->OutputCount());
   mLastChunks.SetLength(outputCount);
 
-  bool blocked = mBlocked.GetAt(aFrom);
+  // Consider this stream blocked if it has already finished output. Normally
+  // mBlocked would reflect this, but due to rounding errors our audio track may
+  // appear to extend slightly beyond aFrom, so we might not be blocked yet.
+  bool blocked = mFinished || mBlocked.GetAt(aFrom);
+  // If the stream has finished at this time, it will be blocked.
   if (mMuted || blocked) {
     for (uint16_t i = 0; i < outputCount; ++i) {
       mLastChunks[i].SetNull(WEBAUDIO_BLOCK_SIZE);
     }
   } else {
-    for (uint16_t i = 0; i < outputCount; ++i) {
-      mLastChunks[i].SetNull(0);
-    }
-
     // We need to generate at least one input
     uint16_t maxInputs = std::max(uint16_t(1), mEngine->InputCount());
     OutputChunks inputChunks;
@@ -434,10 +428,21 @@ AudioNodeStream::ProduceOutput(GraphTime aFrom, GraphTime aTo)
       ObtainInputBlock(inputChunks[i], i);
     }
     bool finished = false;
+#ifdef DEBUG
+    for (uint16_t i = 0; i < outputCount; ++i) {
+      // Alter mDuration so we can detect if ProduceAudioBlock fails to set
+      // chunks.
+      mLastChunks[i].mDuration--;
+    }
+#endif
     if (maxInputs <= 1 && mEngine->OutputCount() <= 1) {
       mEngine->ProduceAudioBlock(this, inputChunks[0], &mLastChunks[0], &finished);
     } else {
       mEngine->ProduceAudioBlocksOnPorts(this, inputChunks, mLastChunks, &finished);
+    }
+    for (uint16_t i = 0; i < outputCount; ++i) {
+      NS_ASSERTION(mLastChunks[i].GetDuration() == WEBAUDIO_BLOCK_SIZE,
+                   "Invalid WebAudio chunk size");
     }
     if (finished) {
       mMarkAsFinishedAfterThisBlock = true;
@@ -451,7 +456,14 @@ AudioNodeStream::ProduceOutput(GraphTime aFrom, GraphTime aTo)
   }
 
   if (!blocked) {
+    // Don't output anything while blocked
     AdvanceOutputSegment();
+    if (mMarkAsFinishedAfterThisBlock && (aFlags & ALLOW_FINISH)) {
+      // This stream was finished the last time that we looked at it, and all
+      // of the depending streams have finished their output as well, so now
+      // it's time to mark this stream as finished.
+      FinishOutput();
+    }
   }
 }
 

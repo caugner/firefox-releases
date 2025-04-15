@@ -19,7 +19,6 @@ from mach.mixin.process import ProcessExecutionMixin
 from mozfile.mozfile import rmtree
 
 from .backend.configenvironment import ConfigEnvironment
-from .config import BuildConfig
 from .mozconfig import (
     MozconfigFindException,
     MozconfigLoadException,
@@ -78,7 +77,6 @@ class MozbuildObject(ProcessExecutionMixin):
         """
         self.topsrcdir = topsrcdir
         self.settings = settings
-        self.config = BuildConfig(settings)
 
         self.populate_logger()
         self.log_manager = log_manager
@@ -276,6 +274,10 @@ class MozbuildObject(ProcessExecutionMixin):
         return os.path.join(self.topobjdir, 'dist', 'bin')
 
     @property
+    def includedir(self):
+        return os.path.join(self.topobjdir, 'dist', 'include')
+
+    @property
     def statedir(self):
         return os.path.join(self.topobjdir, '.mozbuild')
 
@@ -466,6 +468,20 @@ class MozbuildObject(ProcessExecutionMixin):
 
     def _make_path(self, force_pymake=False):
         if self._is_windows() and not force_pymake:
+            # Use gnumake if it's available and we can verify it's a working
+            # version.
+            baseconfig = os.path.join(self.topsrcdir, 'config', 'baseconfig.mk')
+            if os.path.exists(baseconfig):
+                try:
+                    make = which.which('gnumake')
+                    subprocess.check_call([make, '-f', baseconfig, 'HOST_OS_ARCH=WINNT'],
+                        stdout=open(os.devnull, 'wb'), stderr=subprocess.STDOUT)
+                    return [make]
+                except subprocess.CalledProcessError:
+                    pass
+                except which.WhichError:
+                    pass
+
             # Use mozmake if it's available.
             try:
                 return [which.which('mozmake')]
@@ -586,6 +602,13 @@ class MachCommandConditions(object):
         if hasattr(cls, 'substs'):
             return cls.substs.get('MOZ_BUILD_APP') == 'b2g' and \
                    cls.substs.get('MOZ_WIDGET_TOOLKIT') != 'gonk'
+        return False
+
+    @staticmethod
+    def is_android(cls):
+        """Must have an Android build."""
+        if hasattr(cls, 'substs'):
+            return cls.substs.get('MOZ_WIDGET_TOOLKIT') == 'android'
         return False
 
 

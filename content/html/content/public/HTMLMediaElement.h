@@ -39,6 +39,7 @@ class VideoFrameContainer;
 namespace dom {
 class TextTrack;
 class TimeRanges;
+class WakeLock;
 }
 }
 
@@ -206,10 +207,6 @@ public:
   // ImageContainer containing the video data.
   virtual VideoFrameContainer* GetVideoFrameContainer() MOZ_FINAL MOZ_OVERRIDE;
   layers::ImageContainer* GetImageContainer();
-
-  // Called by the video frame to get the print surface, if this is
-  // a static document and we're not actually playing video
-  gfxASurface* GetPrintSurface() { return mPrintSurface; }
 
   // Dispatch events
   using nsGenericHTMLElement::DispatchEvent;
@@ -521,21 +518,25 @@ public:
   AudioChannel MozAudioChannelType() const;
   void SetMozAudioChannelType(AudioChannel aValue, ErrorResult& aRv);
 
-  TextTrackList* TextTracks() const;
+  TextTrackList* TextTracks();
 
   already_AddRefed<TextTrack> AddTextTrack(TextTrackKind aKind,
                                            const nsAString& aLabel,
                                            const nsAString& aLanguage);
 
   void AddTextTrack(TextTrack* aTextTrack) {
-    if (mTextTrackManager) {
-      mTextTrackManager->AddTextTrack(aTextTrack);
-    }
+    GetOrCreateTextTrackManager()->AddTextTrack(aTextTrack);
   }
 
   void RemoveTextTrack(TextTrack* aTextTrack, bool aPendingListOnly = false) {
     if (mTextTrackManager) {
       mTextTrackManager->RemoveTextTrack(aTextTrack, aPendingListOnly);
+    }
+  }
+
+  void AddCue(TextTrackCue& aCue) {
+    if (mTextTrackManager) {
+      mTextTrackManager->AddCue(aCue);
     }
   }
 
@@ -586,7 +587,7 @@ protected:
    */
   virtual void WakeLockCreate();
   virtual void WakeLockRelease();
-  nsCOMPtr<nsIDOMMozWakeLock> mWakeLock;
+  nsRefPtr<WakeLock> mWakeLock;
 
   /**
    * Logs a warning message to the web console to report various failures.
@@ -595,7 +596,7 @@ protected:
    * of parameters in aParams.
    */
   void ReportLoadError(const char* aMsg,
-                       const PRUnichar** aParams = nullptr,
+                       const char16_t** aParams = nullptr,
                        uint32_t aParamCount = 0);
 
   /**
@@ -868,6 +869,10 @@ protected:
   // and whose text track readiness state is loading.
   void PopulatePendingTextTrackList();
 
+  // Gets a reference to the MediaElement's TextTrackManager. If the
+  // MediaElement doesn't yet have one then it will create it.
+  TextTrackManager* GetOrCreateTextTrackManager();
+
   // The current decoder. Load() has been called on this decoder.
   // At most one of mDecoder and mSrcStream can be non-null.
   nsRefPtr<MediaDecoder> mDecoder;
@@ -1012,8 +1017,6 @@ protected:
   // True if pitch correction is applied when playbackRate is set to a
   // non-intrinsic value.
   bool mPreservesPitch;
-
-  nsRefPtr<gfxASurface> mPrintSurface;
 
   // Reference to the source element last returned by GetNextSource().
   // This is the child source element which we're trying to load from.

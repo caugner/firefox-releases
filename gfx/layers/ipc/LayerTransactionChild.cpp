@@ -13,6 +13,7 @@
 #include "mozilla/mozalloc.h"           // for operator delete, etc
 #include "nsDebug.h"                    // for NS_RUNTIMEABORT, etc
 #include "nsTArray.h"                   // for nsTArray
+#include "mozilla/layers/TextureClient.h"
 
 namespace mozilla {
 namespace layers {
@@ -29,10 +30,10 @@ LayerTransactionChild::Destroy()
 }
 
 PGrallocBufferChild*
-LayerTransactionChild::AllocPGrallocBufferChild(const gfxIntSize&,
-                                           const uint32_t&,
-                                           const uint32_t&,
-                                           MaybeMagicGrallocBufferHandle*)
+LayerTransactionChild::AllocPGrallocBufferChild(const IntSize&,
+                                                const uint32_t&,
+                                                const uint32_t&,
+                                                MaybeMagicGrallocBufferHandle*)
 {
 #ifdef MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
   return GrallocBufferActor::Create();
@@ -94,6 +95,19 @@ LayerTransactionChild::ActorDestroy(ActorDestroyReason why)
     NS_RUNTIMEABORT("ActorDestroy by IPC channel failure at LayerTransactionChild");
   }
 #endif
+}
+
+PTextureChild*
+LayerTransactionChild::AllocPTextureChild(const SurfaceDescriptor&,
+                                          const TextureFlags&)
+{
+  return TextureClient::CreateIPDLActor();
+}
+
+bool
+LayerTransactionChild::DeallocPTextureChild(PTextureChild* actor)
+{
+  return TextureClient::DestroyIPDLActor(actor);
 }
 
 }  // namespace layers

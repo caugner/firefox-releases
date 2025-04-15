@@ -29,14 +29,14 @@ SVGPathSegUtils::GetValueAsString(const float* aSeg, nsAString& aValue)
                 "Add another case to the switch below.");
 
   uint32_t type = DecodeType(aSeg[0]);
-  PRUnichar typeAsChar = GetPathSegTypeAsLetter(type);
+  char16_t typeAsChar = GetPathSegTypeAsLetter(type);
 
   // Special case arcs:
   if (IsArcType(type)) {
     bool largeArcFlag = aSeg[4] != 0.0f;
     bool sweepFlag = aSeg[5] != 0.0f;
     nsTextFormatter::ssprintf(aValue,
-                              NS_LITERAL_STRING("%c%g,%g %g %d,%d %g,%g").get(),
+                              MOZ_UTF16("%c%g,%g %g %d,%d %g,%g"),
                               typeAsChar, aSeg[1], aSeg[2], aSeg[3],
                               largeArcFlag, sweepFlag, aSeg[6], aSeg[7]);
   } else {
@@ -47,30 +47,30 @@ SVGPathSegUtils::GetValueAsString(const float* aSeg, nsAString& aValue)
       break;
 
     case 1:
-      nsTextFormatter::ssprintf(aValue, NS_LITERAL_STRING("%c%g").get(),
+      nsTextFormatter::ssprintf(aValue, MOZ_UTF16("%c%g"),
                                 typeAsChar, aSeg[1]);
       break;
 
     case 2:
-      nsTextFormatter::ssprintf(aValue, NS_LITERAL_STRING("%c%g,%g").get(),
+      nsTextFormatter::ssprintf(aValue, MOZ_UTF16("%c%g,%g"),
                                 typeAsChar, aSeg[1], aSeg[2]);
       break;
 
     case 4:
-      nsTextFormatter::ssprintf(aValue, NS_LITERAL_STRING("%c%g,%g %g,%g").get(),
+      nsTextFormatter::ssprintf(aValue, MOZ_UTF16("%c%g,%g %g,%g"),
                                 typeAsChar, aSeg[1], aSeg[2], aSeg[3], aSeg[4]);
       break;
 
     case 6:
       nsTextFormatter::ssprintf(aValue,
-                                NS_LITERAL_STRING("%c%g,%g %g,%g %g,%g").get(),
+                                MOZ_UTF16("%c%g,%g %g,%g %g,%g"),
                                 typeAsChar, aSeg[1], aSeg[2], aSeg[3], aSeg[4],
                                 aSeg[5], aSeg[6]);
       break;
 
     default:
       NS_ABORT_IF_FALSE(false, "Unknown segment type");
-      aValue = NS_LITERAL_STRING("<unknown-segment-type>").get();
+      aValue = MOZ_UTF16("<unknown-segment-type>");
       return;
     }
   }
@@ -80,7 +80,7 @@ SVGPathSegUtils::GetValueAsString(const float* aSeg, nsAString& aValue)
   // of the output string is one too long. We need to manually remove that '\0'
   // until nsTextFormatter is fixed.
   //
-  if (aValue[aValue.Length() - 1] == PRUnichar('\0')) {
+  if (aValue[aValue.Length() - 1] == char16_t('\0')) {
     aValue.SetLength(aValue.Length() - 1);
   }
 }

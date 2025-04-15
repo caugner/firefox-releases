@@ -144,7 +144,7 @@ XPC_WN_DoubleWrappedGetter(JSContext *cx, unsigned argc, jsval *vp)
     XPCWrappedNative* wrapper = ccx.GetWrapper();
     THROW_AND_RETURN_IF_BAD_WRAPPER(cx, wrapper);
 
-    MOZ_ASSERT(JS_TypeOfValue(cx, JS_CALLEE(cx, vp)) == JSTYPE_FUNCTION, "bad function");
+    MOZ_ASSERT(JS_TypeOfValue(cx, args.calleev()) == JSTYPE_FUNCTION, "bad function");
 
     RootedObject realObject(cx, GetDoubleWrappedJSObject(ccx, wrapper));
     if (!realObject) {
@@ -155,32 +155,12 @@ XPC_WN_DoubleWrappedGetter(JSContext *cx, unsigned argc, jsval *vp)
         return true;
     }
 
-    // It is a double wrapped object. Figure out if the caller
-    // is allowed to see it.
-
-    nsIXPCSecurityManager* sm = nsXPConnect::XPConnect()->GetDefaultSecurityManager();
-    if (sm) {
-        AutoMarkingNativeInterfacePtr iface(ccx);
-        iface = XPCNativeInterface::GetNewOrUsed(&NS_GET_IID(nsIXPCWrappedJSObjectGetter));
-
-        if (iface) {
-            jsid id = ccx.GetRuntime()->
-                        GetStringID(XPCJSRuntime::IDX_WRAPPED_JSOBJECT);
-
-            ccx.SetCallInfo(iface, iface->GetMemberAt(1), false);
-            if (NS_FAILED(sm->
-                          CanAccess(nsIXPCSecurityManager::ACCESS_GET_PROPERTY,
-                                    &ccx, ccx,
-                                    ccx.GetFlattenedJSObject(),
-                                    wrapper->GetIdentityObject(),
-                                    wrapper->GetClassInfo(), id,
-                                    wrapper->GetSecurityInfoAddr()))) {
-                // The SecurityManager should have set an exception.
-                return false;
-            }
-        }
+    // It is a double wrapped object. This should really never appear in
+    // content these days, but addons still do it - see bug 965921.
+    if (MOZ_UNLIKELY(!nsContentUtils::IsCallerChrome())) {
+        JS_ReportError(cx, "Attempt to use .wrappedJSObject in untrusted code");
+        return false;
     }
-
     args.rval().setObject(*realObject);
     return JS_WrapValue(cx, args.rval());
 }
@@ -693,7 +673,6 @@ const XPCWrappedNativeJSClass XPC_WN_NoHelper_JSClass = {
     XPC_WN_NoHelper_Finalize,          // finalize
 
     /* Optionally non-null members start here. */
-    nullptr,                         // checkAccess
     nullptr,                         // call
     nullptr,                         // construct
     nullptr,                         // hasInstance
@@ -720,7 +699,6 @@ const XPCWrappedNativeJSClass XPC_WN_NoHelper_JSClass = {
         nullptr, // getGeneric
         nullptr, // getProperty
         nullptr, // getElement
-        nullptr, // getElementIfPresent
         nullptr, // getSpecial
         nullptr, // setGeneric
         nullptr, // setProperty
@@ -732,6 +710,7 @@ const XPCWrappedNativeJSClass XPC_WN_NoHelper_JSClass = {
         nullptr, // deleteElement
         nullptr, // deleteSpecial
         nullptr, nullptr, // watch/unwatch
+        nullptr, // slice
         XPC_WN_JSOp_Enumerate,
         XPC_WN_JSOp_ThisObject,
     }
@@ -837,15 +816,6 @@ XPC_WN_Helper_Convert(JSContext *cx, HandleObject obj, JSType type, MutableHandl
 {
     PRE_HELPER_STUB
     Convert(wrapper, cx, obj, type, vp.address(), &retval);
-    POST_HELPER_STUB
-}
-
-static bool
-XPC_WN_Helper_CheckAccess(JSContext *cx, HandleObject obj, HandleId id,
-                          JSAccessMode mode, MutableHandleValue vp)
-{
-    PRE_HELPER_STUB
-    CheckAccess(wrapper, cx, obj, id, mode, vp.address(), &retval);
     POST_HELPER_STUB
 }
 
@@ -1201,8 +1171,24 @@ XPCNativeScriptableShared::PopulateJSClass()
     // We have to figure out resolve strategy at call time
     mJSClass.base.resolve = (JSResolveOp) XPC_WN_Helper_NewResolve;
 
+    // We need to respect content-defined toString() hooks on Window objects.
+    // In particular, js::DefaultValue checks for a convert stub, and the one
+    // we would install below ignores anything implemented in JS.
+    //
+    // We've always had this behavior for most XPCWrappedNative-implemented
+    // objects. However, Window was special, because the outer-window proxy
+    // had a null convert hook, which means that we'd end up with the default
+    // JS-engine behavior (which respects toString() overrides). We've fixed
+    // the convert hook on the outer-window proxy to invoke the defaultValue
+    // hook on the proxy, which in this case invokes js::DefaultValue on the
+    // target. So now we need to special-case this for Window to maintain
+    // consistent behavior. This can go away once Window is on WebIDL bindings.
+    //
+    // Note that WantOuterObject() is true if and only if this is a Window object.
     if (mFlags.WantConvert())
         mJSClass.base.convert = XPC_WN_Helper_Convert;
+    else if (mFlags.WantOuterObject())
+        mJSClass.base.convert = JS_ConvertStub;
     else
         mJSClass.base.convert = XPC_WN_Shared_Convert;
 
@@ -1210,10 +1196,6 @@ XPCNativeScriptableShared::PopulateJSClass()
         mJSClass.base.finalize = XPC_WN_Helper_Finalize;
     else
         mJSClass.base.finalize = XPC_WN_NoHelper_Finalize;
-
-    // We let the rest default to nullptr unless the helper wants them...
-    if (mFlags.WantCheckAccess())
-        mJSClass.base.checkAccess = XPC_WN_Helper_CheckAccess;
 
     js::ObjectOps *ops = &mJSClass.base.ops;
     ops->enumerate = XPC_WN_JSOp_Enumerate;
@@ -1279,8 +1261,9 @@ FixUpThisIfBroken(JSObject *obj, JSObject *funobj)
 bool
 XPC_WN_CallMethod(JSContext *cx, unsigned argc, jsval *vp)
 {
-    MOZ_ASSERT(JS_TypeOfValue(cx, JS_CALLEE(cx, vp)) == JSTYPE_FUNCTION, "bad function");
-    RootedObject funobj(cx, JSVAL_TO_OBJECT(JS_CALLEE(cx, vp)));
+    JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(JS_TypeOfValue(cx, args.calleev()) == JSTYPE_FUNCTION, "bad function");
+    RootedObject funobj(cx, &args.callee());
 
     RootedObject obj(cx, JS_THIS_OBJECT(cx, vp));
     if (!obj)
@@ -1304,8 +1287,9 @@ XPC_WN_CallMethod(JSContext *cx, unsigned argc, jsval *vp)
 bool
 XPC_WN_GetterSetter(JSContext *cx, unsigned argc, jsval *vp)
 {
-    MOZ_ASSERT(JS_TypeOfValue(cx, JS_CALLEE(cx, vp)) == JSTYPE_FUNCTION, "bad function");
-    RootedObject funobj(cx, JSVAL_TO_OBJECT(JS_CALLEE(cx, vp)));
+    JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+    MOZ_ASSERT(JS_TypeOfValue(cx, args.calleev()) == JSTYPE_FUNCTION, "bad function");
+    RootedObject funobj(cx, &args.callee());
 
     RootedObject obj(cx, JS_THIS_OBJECT(cx, vp));
     if (!obj)
@@ -1327,7 +1311,7 @@ XPC_WN_GetterSetter(JSContext *cx, unsigned argc, jsval *vp)
         ccx.SetCallInfo(iface, member, true);
         bool retval = XPCWrappedNative::SetAttribute(ccx);
         if (retval)
-            *vp = JS_ARGV(cx, vp)[0];
+            args.rval().set(args[0]);
         return retval;
     }
     // else...
@@ -1441,7 +1425,6 @@ const js::Class XPC_WN_ModsAllowed_WithCall_Proto_JSClass = {
     XPC_WN_Shared_Proto_Finalize,   // finalize;
 
     /* Optionally non-null members start here. */
-    nullptr,                         // checkAccess;
     nullptr,                         // call;
     nullptr,                         // construct;
     nullptr,                         // hasInstance;
@@ -1466,7 +1449,6 @@ const js::Class XPC_WN_ModsAllowed_NoCall_Proto_JSClass = {
     XPC_WN_Shared_Proto_Finalize,   // finalize;
 
     /* Optionally non-null members start here. */
-    nullptr,                         // checkAccess;
     nullptr,                         // call;
     nullptr,                         // construct;
     nullptr,                         // hasInstance;
@@ -1553,7 +1535,6 @@ const js::Class XPC_WN_NoMods_WithCall_Proto_JSClass = {
     XPC_WN_Shared_Proto_Finalize,              // finalize;
 
     /* Optionally non-null members start here. */
-    nullptr,                         // checkAccess;
     nullptr,                         // call;
     nullptr,                         // construct;
     nullptr,                         // hasInstance;
@@ -1578,7 +1559,6 @@ const js::Class XPC_WN_NoMods_NoCall_Proto_JSClass = {
     XPC_WN_Shared_Proto_Finalize,              // finalize;
 
     /* Optionally non-null members start here. */
-    nullptr,                         // checkAccess;
     nullptr,                         // call;
     nullptr,                         // construct;
     nullptr,                         // hasInstance;

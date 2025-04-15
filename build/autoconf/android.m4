@@ -259,7 +259,7 @@ MOZ_ARG_WITH_STRING(android-sdk,
                           location where the Android SDK can be found (base directory, e.g. .../android/platforms/android-6)],
     android_sdk=$withval)
 
-android_sdk_root=$withval/../../
+android_sdk_root=${withval%/platforms/android-*}
 
 case "$target" in
 *-android*|*-linuxandroid*)
@@ -294,7 +294,7 @@ case "$target" in
     # The build tools got moved around to different directories in
     # SDK Tools r22.  Try to locate them.
     android_build_tools=""
-    for suffix in android-4.3 19.0.0 18.1.0 18.0.1 18.0.0 17.0.0 android-4.2.2; do
+    for suffix in android-4.4 android-4.3 android-4.2.2 19.0.0 18.1.0 18.0.1 18.0.0 17.0.0; do
         tools_directory="$android_sdk_root/build-tools/$suffix"
         if test -d "$tools_directory" ; then
             android_build_tools="$tools_directory"

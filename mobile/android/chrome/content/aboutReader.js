@@ -7,6 +7,9 @@ let Ci = Components.interfaces, Cc = Components.classes, Cu = Components.utils;
 Cu.import("resource://gre/modules/Services.jsm")
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
+// Panel ID defined in HomeConfig.java.
+const READING_LIST_PANEL_ID = "20f4549a-64ad-4c32-93e4-1dcef792733b";
+
 XPCOMUtils.defineLazyGetter(window, "gChromeWin", function ()
   window.QueryInterface(Ci.nsIInterfaceRequestor)
     .getInterface(Ci.nsIWebNavigation)
@@ -266,8 +269,9 @@ AboutReader.prototype = {
         break;
       case "scroll":
         if (!this._scrolled) {
-          this._scrolled = true;
-          this._setToolbarVisibility(false);
+          let isScrollingUp = this._scrollOffset > aEvent.pageY;
+          this._setToolbarVisibility(isScrollingUp);
+          this._scrollOffset = aEvent.pageY;
         }
         break;
       case "popstate":
@@ -365,7 +369,7 @@ AboutReader.prototype = {
     if (!this._article || this._readingListCount < 1)
       return;
 
-    gChromeWin.sendMessageToJava({ type: "Reader:GoToReadingList" });
+    gChromeWin.BrowserApp.loadURI("about:home?page=" + READING_LIST_PANEL_ID);
   },
 
   _onShare: function Reader_onShare() {
@@ -501,6 +505,7 @@ AboutReader.prototype = {
       return;
 
     this._toolbarElement.classList.toggle("toolbar-hidden");
+    this._setSystemUIVisibility(visible);
 
     if (!visible && !this._hasUsedToolbar) {
       this._hasUsedToolbar = Services.prefs.getBoolPref("reader.has_used_toolbar");
@@ -515,6 +520,13 @@ AboutReader.prototype = {
 
   _toggleToolbarVisibility: function Reader_toggleToolbarVisibility(visible) {
     this._setToolbarVisibility(!this._getToolbarVisibility());
+  },
+
+  _setSystemUIVisibility: function Reader_setSystemUIVisibility(visible) {
+    gChromeWin.sendMessageToJava({
+      type: "SystemUI:Visibility",
+      visible: visible
+    });
   },
 
   _loadFromURL: function Reader_loadFromURL(url) {

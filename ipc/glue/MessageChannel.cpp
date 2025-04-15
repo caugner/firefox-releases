@@ -202,6 +202,7 @@ MessageChannel::MessageChannel(MessageListener *aListener)
     mPendingRPCReplies(0),
     mCurrentRPCTransaction(0),
     mDispatchingSyncMessage(false),
+    mDispatchingUrgentMessageCount(0),
     mRemoteStackDepthGuess(false),
     mSawInterruptOutMsg(false)
 {
@@ -249,6 +250,13 @@ MessageChannel::Connected() const
     // The transport layer allows us to send messages before
     // receiving the "connected" ack from the remote side.
     return (ChannelOpening == mChannelState || ChannelConnected == mChannelState);
+}
+
+bool
+MessageChannel::CanSend() const
+{
+    MonitorAutoLock lock(*mMonitor);
+    return Connected();
 }
 
 void
@@ -559,6 +567,7 @@ MessageChannel::Send(Message* aMsg, Message* aReply)
 
     IPC_ASSERT(aMsg->is_sync(), "can only Send() sync messages here");
     IPC_ASSERT(!DispatchingSyncMessage(), "violation of sync handler invariant");
+    IPC_ASSERT(!DispatchingUrgentMessage(), "sync messages forbidden while handling urgent message");
     IPC_ASSERT(!AwaitingSyncReply(), "nested sync messages are not supported");
 
     AutoEnterPendingReply replies(mPendingSyncReplies);
@@ -1077,7 +1086,11 @@ MessageChannel::DispatchUrgentMessage(const Message& aMsg)
 
     Message *reply = nullptr;
 
-    if (!MaybeHandleError(mListener->OnCallReceived(aMsg, reply), "DispatchUrgentMessage")) {
+    mDispatchingUrgentMessageCount++;
+    Result rv = mListener->OnCallReceived(aMsg, reply);
+    mDispatchingUrgentMessageCount--;
+
+    if (!MaybeHandleError(rv, "DispatchUrgentMessage")) {
         delete reply;
         reply = new Message();
         reply->set_urgent();
@@ -1419,6 +1432,9 @@ MessageChannel::ReportMessageRouteError(const char* channelName) const
 void
 MessageChannel::ReportConnectionError(const char* aChannelName) const
 {
+    AssertWorkerThread();
+    mMonitor->AssertCurrentThreadOwns();
+
     const char* errorMsg = nullptr;
     switch (mChannelState) {
       case ChannelClosed:
@@ -1442,6 +1458,8 @@ MessageChannel::ReportConnectionError(const char* aChannelName) const
     }
 
     PrintErrorMessage(mSide, aChannelName, errorMsg);
+
+    MonitorAutoUnlock unlock(*mMonitor);
     mListener->OnProcessingError(MsgDropped);
 }
 

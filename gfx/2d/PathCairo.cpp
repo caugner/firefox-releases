@@ -113,7 +113,7 @@ void
 PathBuilderCairo::Arc(const Point &aOrigin, float aRadius, float aStartAngle,
                      float aEndAngle, bool aAntiClockwise)
 {
-  ArcToBezier(this, aOrigin, aRadius, aStartAngle, aEndAngle, aAntiClockwise);
+  ArcToBezier(this, aOrigin, Size(aRadius, aRadius), aStartAngle, aEndAngle, aAntiClockwise);
 }
 
 Point
@@ -137,7 +137,7 @@ PathCairo::PathCairo(FillRule aFillRule, std::vector<cairo_path_data_t> &aPathDa
 }
 
 PathCairo::PathCairo(cairo_t *aContext)
-  : mFillRule(FILL_WINDING)
+  : mFillRule(FillRule::FILL_WINDING)
   , mContainingContext(nullptr)
 {
   cairo_path_t *path = cairo_copy_path(aContext);

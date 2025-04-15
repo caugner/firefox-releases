@@ -4,10 +4,11 @@
 
 package org.mozilla.gecko.tests.helpers;
 
+import java.util.Arrays;
+
 import org.mozilla.gecko.Assert;
 import org.mozilla.gecko.tests.UITestContext;
 
-// TODO: Add ispixel assertions.
 /**
  * Provides assertions in a JUnit-like API that wraps the robocop Assert interface.
  */
@@ -19,15 +20,45 @@ public final class AssertionHelper {
 
     private AssertionHelper() { /* To disallow instantation. */ }
 
-    public static void init(final UITestContext context) {
+    protected static void init(final UITestContext context) {
         sAsserter = context.getAsserter();
     }
 
-    public static void assertEquals(final String message, final Object expected, final Object actual) {
+    public static void assertArrayEquals(final String message, final byte[] expecteds, final byte[] actuals) {
+        sAsserter.ok(Arrays.equals(expecteds, actuals), message, DIAG_STRING);
+    }
+
+    public static void assertArrayEquals(final String message, final char[] expecteds, final char[] actuals) {
+        sAsserter.ok(Arrays.equals(expecteds, actuals), message, DIAG_STRING);
+    }
+
+    public static void assertArrayEquals(final String message, final short[] expecteds, final short[] actuals) {
+        sAsserter.ok(Arrays.equals(expecteds, actuals), message, DIAG_STRING);
+    }
+
+    public static void assertArrayEquals(final String message, final int[] expecteds, final int[] actuals) {
+        sAsserter.ok(Arrays.equals(expecteds, actuals), message, DIAG_STRING);
+    }
+
+    public static void assertArrayEquals(final String message, final long[] expecteds, final long[] actuals) {
+        sAsserter.ok(Arrays.equals(expecteds, actuals), message, DIAG_STRING);
+    }
+
+    public static void assertArrayEquals(final String message, final Object[] expecteds, final Object[] actuals) {
+        sAsserter.ok(Arrays.equals(expecteds, actuals), message, DIAG_STRING);
+    }
+
+    public static void assertEquals(final String message, final double expected, final double actual, final double delta) {
+        if (Double.compare(expected, actual) != 0) {
+            sAsserter.ok(Math.abs(expected - actual) <= delta, message, DIAG_STRING);
+        }
+    }
+
+    public static void assertEquals(final String message, final long expected, final long actual) {
         sAsserter.is(actual, expected, message);
     }
 
-    public static void assertEquals(final String message, final int expected, final int actual) {
+    public static void assertEquals(final String message, final Object expected, final Object actual) {
         sAsserter.is(actual, expected, message);
     }
 
@@ -39,12 +70,28 @@ public final class AssertionHelper {
         sAsserter.isnot(actual, null, message);
     }
 
+    public static void assertNotSame(final String message, final Object unexpected, final Object actual) {
+        sAsserter.ok(unexpected != actual, message, DIAG_STRING);
+    }
+
     public static void assertNull(final String message, final Object actual) {
         sAsserter.is(actual, null, message);
     }
 
+    public static void assertSame(final String message, final Object expected, final Object actual) {
+        sAsserter.ok(expected == actual, message, DIAG_STRING);
+    }
+
     public static void assertTrue(final String message, final boolean actual) {
         sAsserter.ok(actual, message, DIAG_STRING);
+    }
+
+    public static void assertIsPixel(final String message, final int actual, final int r, final int g, final int b) {
+	sAsserter.ispixel(actual, r, g, b, message);
+    }
+
+    public static void assertIsNotPixel(final String message, final int actual, final int r, final int g, final int b) {
+	sAsserter.isnotpixel(actual, r, g, b, message);
     }
 
     public static void fail(final String message) {

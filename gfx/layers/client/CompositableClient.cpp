@@ -24,8 +24,7 @@ namespace mozilla {
 namespace layers {
 
 CompositableClient::CompositableClient(CompositableForwarder* aForwarder)
-: mNextTextureID(1)
-, mCompositableChild(nullptr)
+: mCompositableChild(nullptr)
 , mForwarder(aForwarder)
 {
   MOZ_COUNT_CTOR(CompositableClient);
@@ -36,23 +35,6 @@ CompositableClient::~CompositableClient()
 {
   MOZ_COUNT_DTOR(CompositableClient);
   Destroy();
-
-  FlushTexturesToRemoveCallbacks();
-  MOZ_ASSERT(mTexturesToRemove.Length() == 0, "would leak textures pending for deletion");
-}
-
-void
-CompositableClient::FlushTexturesToRemoveCallbacks()
-{
-  std::map<uint64_t,TextureClientData*>::iterator it
-    = mTexturesToRemoveCallbacks.begin();
-  std::map<uint64_t,TextureClientData*>::iterator stop
-    = mTexturesToRemoveCallbacks.end();
-  for (; it != stop; ++it) {
-    it->second->DeallocateSharedData(GetForwarder());
-    delete it->second;
-  }
-  mTexturesToRemoveCallbacks.clear();
 }
 
 LayersBackend
@@ -120,35 +102,35 @@ CompositableClient::CreateDeprecatedTextureClient(DeprecatedTextureClientType aD
 
   switch (aDeprecatedTextureClientType) {
   case TEXTURE_SHARED_GL:
-    if (parentBackend == LAYERS_OPENGL) {
+    if (parentBackend == LayersBackend::LAYERS_OPENGL) {
       result = new DeprecatedTextureClientSharedOGL(GetForwarder(), GetTextureInfo());
     }
      break;
   case TEXTURE_SHARED_GL_EXTERNAL:
-    if (parentBackend == LAYERS_OPENGL) {
+    if (parentBackend == LayersBackend::LAYERS_OPENGL) {
       result = new DeprecatedTextureClientSharedOGLExternal(GetForwarder(), GetTextureInfo());
     }
     break;
   case TEXTURE_STREAM_GL:
-    if (parentBackend == LAYERS_OPENGL) {
+    if (parentBackend == LayersBackend::LAYERS_OPENGL) {
       result = new DeprecatedTextureClientStreamOGL(GetForwarder(), GetTextureInfo());
     }
     break;
   case TEXTURE_YCBCR:
-    if (parentBackend == LAYERS_OPENGL ||
-        parentBackend == LAYERS_D3D9 ||
-        parentBackend == LAYERS_D3D11 ||
-        parentBackend == LAYERS_BASIC) {
+    if (parentBackend == LayersBackend::LAYERS_OPENGL ||
+        parentBackend == LayersBackend::LAYERS_D3D9 ||
+        parentBackend == LayersBackend::LAYERS_D3D11 ||
+        parentBackend == LayersBackend::LAYERS_BASIC) {
       result = new DeprecatedTextureClientShmemYCbCr(GetForwarder(), GetTextureInfo());
     }
     break;
   case TEXTURE_CONTENT:
 #ifdef XP_WIN
-    if (parentBackend == LAYERS_D3D11 && gfxWindowsPlatform::GetPlatform()->GetD2DDevice()) {
+    if (parentBackend == LayersBackend::LAYERS_D3D11 && gfxWindowsPlatform::GetPlatform()->GetD2DDevice()) {
       result = new DeprecatedTextureClientD3D11(GetForwarder(), GetTextureInfo());
       break;
     }
-    if (parentBackend == LAYERS_D3D9 &&
+    if (parentBackend == LayersBackend::LAYERS_D3D9 &&
         !GetForwarder()->ForwardsToDifferentProcess()) {
       // We can't use a d3d9 texture for an RGBA surface because we cannot get a DC for
       // for a gfxWindowsSurface.
@@ -156,7 +138,7 @@ CompositableClient::CreateDeprecatedTextureClient(DeprecatedTextureClientType aD
       // can create d3d9 textures on the main thread (because we need to reset on the
       // compositor thread, and the d3d9 device must be reset on the same thread it was
       // created on).
-      if (aContentType == GFX_CONTENT_COLOR_ALPHA ||
+      if (aContentType == gfxContentType::COLOR_ALPHA ||
           !gfxWindowsPlatform::GetPlatform()->GetD3D9Device()) {
         result = new DeprecatedTextureClientDIB(GetForwarder(), GetTextureInfo());
       } else {
@@ -171,8 +153,8 @@ CompositableClient::CreateDeprecatedTextureClient(DeprecatedTextureClientType aD
     break;
   case TEXTURE_FALLBACK:
 #ifdef XP_WIN
-    if (parentBackend == LAYERS_D3D11 ||
-        parentBackend == LAYERS_D3D9) {
+    if (parentBackend == LayersBackend::LAYERS_D3D11 ||
+        parentBackend == LayersBackend::LAYERS_D3D9) {
       result = new DeprecatedTextureClientShmem(GetForwarder(), GetTextureInfo());
     }
 #endif
@@ -225,19 +207,18 @@ CompositableClient::CreateTextureClientForDrawing(SurfaceFormat aFormat,
 
 #ifdef XP_WIN
   LayersBackend parentBackend = GetForwarder()->GetCompositorBackendType();
-  // XXX[nrc] uncomment once we have new texture clients for windows
-  if (parentBackend == LAYERS_D3D11 && gfxWindowsPlatform::GetPlatform()->GetD2DDevice() &&
+  if (parentBackend == LayersBackend::LAYERS_D3D11 && gfxWindowsPlatform::GetPlatform()->GetD2DDevice() &&
       !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
-    //result = new TextureClientD3D11(GetForwarder(), GetTextureInfo());
+    result = new TextureClientD3D11(aFormat, aTextureFlags);
   }
-  if (parentBackend == LAYERS_D3D9 &&
+  if (parentBackend == LayersBackend::LAYERS_D3D9 &&
       !GetForwarder()->ForwardsToDifferentProcess() &&
       !(aTextureFlags & TEXTURE_ALLOC_FALLBACK)) {
     // non-DIB textures don't work with alpha, see notes in TextureD3D9.
-    if (ContentForFormat(aFormat) == GFX_CONTENT_COLOR_ALPHA) {
-      //result = new TextureClientDIB(GetForwarder(), GetTextureInfo());
+    if (ContentForFormat(aFormat) != gfxContentType::COLOR) {
+      result = new DIBTextureClientD3D9(aFormat, aTextureFlags);
     } else {
-      //result = new TextureClientD3D9(GetForwarder(), GetTextureInfo());
+      result = new CairoTextureClientD3D9(aFormat, aTextureFlags);
     }
   }
 #endif
@@ -251,100 +232,16 @@ CompositableClient::CreateTextureClientForDrawing(SurfaceFormat aFormat,
   return result;
 }
 
-uint64_t
-CompositableClient::NextTextureID()
-{
-  ++mNextTextureID;
-  // 0 is always an invalid ID
-  if (mNextTextureID == 0) {
-    ++mNextTextureID;
-  }
-
-  return mNextTextureID;
-}
-
 bool
 CompositableClient::AddTextureClient(TextureClient* aClient)
 {
-  aClient->SetID(NextTextureID());
-  mAddedTextures[aClient->GetID()] = aClient;
-  return mForwarder->AddTexture(this, aClient);
-}
-
-void
-CompositableClient::RemoveTextureClient(TextureClient* aClient)
-{
-  MOZ_ASSERT(aClient);
-  mTexturesToRemove.AppendElement(TextureIDAndFlags(aClient->GetID(),
-                                                    aClient->GetFlags()));
-  if (aClient->GetFlags() & TEXTURE_DEALLOCATE_CLIENT) {
-    TextureClientData* data = aClient->DropTextureData();
-    if (data) {
-      mTexturesToRemoveCallbacks[aClient->GetID()] = data;
-    }
-  }
-  {
-    std::map<uint64_t, RefPtr<TextureClient>>::iterator it
-      = mAddedTextures.find(aClient->GetID());
-    if (it != mAddedTextures.end()) {
-      mAddedTextures.erase(it);
-    }
-  }
-  aClient->ClearID();
-  aClient->MarkInvalid();
-}
-
-TemporaryRef<TextureClient>
-CompositableClient::GetAddedTextureClient(uint64_t aTextureID)
-{
-  std::map<uint64_t, RefPtr<TextureClient>>::iterator it
-    = mAddedTextures.find(aTextureID);
-  if (it != mAddedTextures.end()) {
-    return mAddedTextures[aTextureID];
-  }
-  return nullptr;
-}
-
-TextureClientData*
-CompositableClient::GetRemovingTextureClientData(uint64_t aTextureID)
-{
-  std::map<uint64_t,TextureClientData*>::iterator it
-    = mTexturesToRemoveCallbacks.find(aTextureID);
-  if (it != mTexturesToRemoveCallbacks.end()) {
-    return mTexturesToRemoveCallbacks[aTextureID];
-  }
-  return nullptr;
-}
-
-void
-CompositableClient::OnReplyTextureRemoved(uint64_t aTextureID)
-{
-  std::map<uint64_t,TextureClientData*>::iterator it
-    = mTexturesToRemoveCallbacks.find(aTextureID);
-  if (it != mTexturesToRemoveCallbacks.end()) {
-    it->second->DeallocateSharedData(GetForwarder());
-    delete it->second;
-    mTexturesToRemoveCallbacks.erase(it);
-  }
+  return aClient->InitIPDLActor(mForwarder);
 }
 
 void
 CompositableClient::OnTransaction()
 {
-  for (unsigned i = 0; i < mTexturesToRemove.Length(); ++i) {
-    const TextureIDAndFlags& texture = mTexturesToRemove[i];
-    mForwarder->RemoveTexture(this, texture.mID, texture.mFlags);
-  }
-  mTexturesToRemove.Clear();
 }
 
-
-void
-CompositableChild::ActorDestroy(ActorDestroyReason why)
-{
-  if (mCompositableClient && why == AbnormalShutdown) {
-    mCompositableClient->OnActorDestroy();
-  }
-}
 } // namespace layers
 } // namespace mozilla

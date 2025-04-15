@@ -46,11 +46,6 @@
   }
 #endif
 
-// 1 MB should be enough for everyone.
-static const uint32_t MAX_PREF_LENGTH = 1 * 1024 * 1024;
-// Actually, 4kb should be enough for everyone.
-static const uint32_t MAX_ADVISABLE_PREF_LENGTH = 4 * 1024;
-
 // Definitions
 struct EnumerateData {
   const char  *parent;
@@ -371,7 +366,7 @@ nsresult nsPrefBranch::CheckSanityOfStringLength(const char* aPrefName, const ns
 
 nsresult nsPrefBranch::CheckSanityOfStringLength(const char* aPrefName, const uint32_t aLength) {
   if (aLength > MAX_PREF_LENGTH) {
-    return NS_ERROR_OUT_OF_MEMORY;
+    return NS_ERROR_ILLEGAL_VALUE;
   }
   if (aLength <= MAX_ADVISABLE_PREF_LENGTH) {
     return NS_OK;
@@ -671,7 +666,7 @@ NS_IMETHODIMP nsPrefBranch::RemoveObserver(const char *aDomain, nsIObserver *aOb
   return rv;
 }
 
-NS_IMETHODIMP nsPrefBranch::Observe(nsISupports *aSubject, const char *aTopic, const PRUnichar *someData)
+NS_IMETHODIMP nsPrefBranch::Observe(nsISupports *aSubject, const char *aTopic, const char16_t *someData)
 {
   // watch for xpcom shutdown and free our observers to eliminate any cyclic references
   if (!nsCRT::strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID)) {
@@ -681,7 +676,7 @@ NS_IMETHODIMP nsPrefBranch::Observe(nsISupports *aSubject, const char *aTopic, c
 }
 
 /* static */
-nsresult nsPrefBranch::NotifyObserver(const char *newpref, void *data)
+void nsPrefBranch::NotifyObserver(const char *newpref, void *data)
 {
   PrefCallback *pCallback = (PrefCallback *)data;
 
@@ -689,7 +684,7 @@ nsresult nsPrefBranch::NotifyObserver(const char *newpref, void *data)
   if (!observer) {
     // The observer has expired.  Let's remove this callback.
     pCallback->GetPrefBranch()->RemoveExpiredCallback(pCallback);
-    return NS_OK;
+    return;
   }
 
   // remove any root this string may contain so as to not confuse the observer
@@ -700,7 +695,6 @@ nsresult nsPrefBranch::NotifyObserver(const char *newpref, void *data)
   observer->Observe(static_cast<nsIPrefBranch *>(pCallback->GetPrefBranch()),
                     NS_PREFBRANCH_PREFCHANGE_TOPIC_ID,
                     NS_ConvertASCIItoUTF16(suffix).get());
-  return NS_OK;
 }
 
 PLDHashOperator
@@ -739,7 +733,7 @@ nsPrefBranch::RemoveExpiredCallback(PrefCallback *aCallback)
   mObservers.Remove(aCallback);
 }
 
-nsresult nsPrefBranch::GetDefaultFromPropertiesFile(const char *aPrefName, PRUnichar **return_buf)
+nsresult nsPrefBranch::GetDefaultFromPropertiesFile(const char *aPrefName, char16_t **return_buf)
 {
   nsresult rv;
 
@@ -829,7 +823,7 @@ nsresult nsPrefLocalizedString::Init()
 }
 
 NS_IMETHODIMP
-nsPrefLocalizedString::GetData(PRUnichar **_retval)
+nsPrefLocalizedString::GetData(char16_t **_retval)
 {
   nsAutoString data;
 
@@ -845,7 +839,7 @@ nsPrefLocalizedString::GetData(PRUnichar **_retval)
 }
 
 NS_IMETHODIMP
-nsPrefLocalizedString::SetData(const PRUnichar *aData)
+nsPrefLocalizedString::SetData(const char16_t *aData)
 {
   if (!aData)
     return SetData(EmptyString());
@@ -854,7 +848,7 @@ nsPrefLocalizedString::SetData(const PRUnichar *aData)
 
 NS_IMETHODIMP
 nsPrefLocalizedString::SetDataWithLength(uint32_t aLength,
-                                         const PRUnichar *aData)
+                                         const char16_t *aData)
 {
   if (!aData)
     return SetData(EmptyString());

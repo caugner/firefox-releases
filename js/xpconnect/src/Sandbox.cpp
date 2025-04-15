@@ -55,7 +55,7 @@ class nsXPCComponents_utils_Sandbox : public nsIXPCComponents_utils_Sandbox,
 {
 public:
     // Aren't macros nice?
-    NS_DECL_THREADSAFE_ISUPPORTS
+    NS_DECL_ISUPPORTS
     NS_DECL_NSIXPCCOMPONENTS_UTILS_SANDBOX
     NS_DECL_NSIXPCSCRIPTABLE
 
@@ -170,7 +170,7 @@ SandboxImport(JSContext *cx, unsigned argc, Value *vp)
     }
 
     RootedId id(cx);
-    if (!JS_ValueToId(cx, StringValue(funname), id.address()))
+    if (!JS_ValueToId(cx, StringValue(funname), &id))
         return false;
 
     // We need to resolve the this object, because this function is used
@@ -243,17 +243,20 @@ IsProxy(JSContext *cx, unsigned argc, jsval *vp)
 namespace xpc {
 
 bool
-ExportFunction(JSContext *cx, HandleValue vfunction, HandleValue vscope, HandleValue vname,
+ExportFunction(JSContext *cx, HandleValue vfunction, HandleValue vscope, HandleValue voptions,
                MutableHandleValue rval)
 {
-    if (!vscope.isObject() || !vfunction.isObject() || !vname.isString()) {
+    bool hasOptions = !voptions.isUndefined();
+    if (!vscope.isObject() || !vfunction.isObject() || (hasOptions && !voptions.isObject())) {
         JS_ReportError(cx, "Invalid argument");
         return false;
     }
 
     RootedObject funObj(cx, &vfunction.toObject());
     RootedObject targetScope(cx, &vscope.toObject());
-    RootedString funName(cx, vname.toString());
+    ExportOptions options(cx, hasOptions ? &voptions.toObject() : nullptr);
+    if (hasOptions && !options.Parse())
+        return false;
 
     // We can only export functions to scopes those are transparent for us,
     // so if there is a security wrapper around targetScope we must throw.
@@ -265,11 +268,6 @@ ExportFunction(JSContext *cx, HandleValue vfunction, HandleValue vscope, HandleV
 
     if (js::IsScriptedProxy(targetScope)) {
         JS_ReportError(cx, "Defining property on proxy object is not allowed");
-        return false;
-    }
-
-    if (JS_GetStringLength(funName) == 0) {
-        JS_ReportError(cx, "3rd argument should be a non-empty string");
         return false;
     }
 
@@ -285,14 +283,26 @@ ExportFunction(JSContext *cx, HandleValue vfunction, HandleValue vscope, HandleV
             return false;
         }
 
+        RootedId id(cx, options.defineAs);
+        if (JSID_IS_VOID(id)) {
+            // If there wasn't any function name specified,
+            // copy the name from the function being imported.
+            JSFunction *fun = JS_GetObjectFunction(funObj);
+            RootedString funName(cx, JS_GetFunctionId(fun));
+            if (!funName)
+                funName = JS_InternString(cx, "");
+
+            RootedValue vname(cx);
+            vname.setString(funName);
+            if (!JS_ValueToId(cx, vname, &id))
+                return false;
+        }
+        MOZ_ASSERT(JSID_IS_STRING(id));
+
         // The function forwarder will live in the target compartment. Since
         // this function will be referenced from its private slot, to avoid a
         // GC hazard, we must wrap it to the same compartment.
         if (!JS_WrapObject(cx, &funObj))
-            return false;
-
-        RootedId id(cx);
-        if (!JS_ValueToId(cx, vname, id.address()))
             return false;
 
         // And now, let's create the forwarder function in the target compartment
@@ -302,12 +312,16 @@ ExportFunction(JSContext *cx, HandleValue vfunction, HandleValue vscope, HandleV
             return false;
         }
 
-        // We have the forwarder function in the target compartment, now
-        // we have to add it to the target scope as a property.
-        if (!JS_DefinePropertyById(cx, targetScope, id, rval,
-                                   JS_PropertyStub, JS_StrictPropertyStub,
-                                   JSPROP_ENUMERATE))
-            return false;
+        // We have the forwarder function in the target compartment. If
+        // defineAs was set, we also need to define it as a property on
+        // the target.
+        if (!JSID_IS_VOID(options.defineAs)) {
+            if (!JS_DefinePropertyById(cx, targetScope, id, rval,
+                                       JS_PropertyStub, JS_StrictPropertyStub,
+                                       JSPROP_ENUMERATE)) {
+                return false;
+            }
+        }
     }
 
     // Finally we have to re-wrap the exported function back to the caller compartment.
@@ -321,19 +335,19 @@ ExportFunction(JSContext *cx, HandleValue vfunction, HandleValue vscope, HandleV
  * Expected type of the arguments and the return value:
  * function exportFunction(function funToExport,
  *                         object targetScope,
- *                         string name)
+ *                         [optional] object options)
  */
 static bool
 ExportFunction(JSContext *cx, unsigned argc, jsval *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    if (args.length() < 3) {
-        JS_ReportError(cx, "Function requires at least 3 arguments");
+    if (args.length() < 2) {
+        JS_ReportError(cx, "Function requires at least 2 arguments");
         return false;
     }
 
-    return ExportFunction(cx, args[0], args[1],
-                          args[2], args.rval());
+    RootedValue options(cx, args.length() > 2 ? args[2] : UndefinedValue());
+    return ExportFunction(cx, args[0], args[1], options, args.rval());
 }
 } /* namespace xpc */
 
@@ -650,7 +664,7 @@ static const JSClass SandboxClass = {
     XPCONNECT_GLOBAL_FLAGS_WITH_EXTRA_SLOTS(1),
     JS_PropertyStub,   JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     sandbox_enumerate, sandbox_resolve, sandbox_convert,  sandbox_finalize,
-    nullptr, nullptr, nullptr, nullptr, TraceXPCGlobal
+    nullptr, nullptr, nullptr, TraceXPCGlobal
 };
 
 static const JSFunctionSpec SandboxFunctions[] = {
@@ -679,7 +693,7 @@ NS_INTERFACE_MAP_BEGIN(nsXPCComponents_utils_Sandbox)
   NS_INTERFACE_MAP_ENTRY(nsIXPCComponents_utils_Sandbox)
   NS_INTERFACE_MAP_ENTRY(nsIXPCScriptable)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIXPCComponents_utils_Sandbox)
-NS_INTERFACE_MAP_END_THREADSAFE
+NS_INTERFACE_MAP_END
 
 NS_IMPL_ADDREF(nsXPCComponents_utils_Sandbox)
 NS_IMPL_RELEASE(nsXPCComponents_utils_Sandbox)
@@ -775,7 +789,7 @@ WrapCallable(JSContext *cx, JSObject *callable, JSObject *sandboxProtoProxy)
 
     RootedValue priv(cx, ObjectValue(*callable));
     js::ProxyOptions options;
-    options.setCallable(true);
+    options.selectDefaultClass(true);
     return js::NewProxyObject(cx, &xpc::sandboxCallableProxyHandler,
                               priv, nullptr,
                               sandboxProtoProxy, options);
@@ -1102,7 +1116,7 @@ xpc::CreateSandboxObject(JSContext *cx, MutableHandleValue vp, nsISupports *prin
         bool allowComponents = nsContentUtils::IsSystemPrincipal(principal) ||
                                nsContentUtils::IsExpandedPrincipal(principal);
         if (options.wantComponents && allowComponents &&
-            !nsXPCComponents::AttachComponentsObject(cx, GetObjectScope(sandbox)))
+            !GetObjectScope(sandbox)->AttachComponentsObject(cx))
             return NS_ERROR_XPC_UNEXPECTED;
 
         if (!XPCNativeWrapper::AttachNewConstructorObject(cx, sandbox))
@@ -1433,7 +1447,7 @@ OptionsBase::ParseId(const char *name, MutableHandleId prop)
     if (!found)
         return true;
 
-    return JS_ValueToId(mCx, value, prop.address());
+    return JS_ValueToId(mCx, value, prop);
 }
 
 /*
@@ -1501,7 +1515,7 @@ AssembleSandboxMemoryReporterName(JSContext *cx, nsCString &sandboxName)
     if (frame) {
         nsCString location;
         int32_t lineNumber = 0;
-        frame->GetFilename(getter_Copies(location));
+        frame->GetFilename(location);
         frame->GetLineNumber(&lineNumber);
 
         sandboxName.AppendLiteral(" (from: ");
@@ -1620,7 +1634,7 @@ ContextHolder::~ContextHolder()
 
 nsresult
 xpc::EvalInSandbox(JSContext *cx, HandleObject sandboxArg, const nsAString& source,
-                   const char *filename, int32_t lineNo,
+                   const nsACString& filename, int32_t lineNo,
                    JSVersion jsVersion, bool returnStringOnly, MutableHandleValue rval)
 {
     JS_AbortIfWrongThread(JS_GetRuntime(cx));
@@ -1639,10 +1653,11 @@ xpc::EvalInSandbox(JSContext *cx, HandleObject sandboxArg, const nsAString& sour
     NS_ENSURE_TRUE(prin, NS_ERROR_FAILURE);
 
     nsAutoCString filenameBuf;
-    if (!filename) {
+    if (!filename.IsVoid()) {
+        filenameBuf.Assign(filename);
+    } else {
         // Default to the spec of the principal.
         nsJSPrincipals::get(prin)->GetScriptLocation(filenameBuf);
-        filename = filenameBuf.get();
         lineNo = 1;
     }
 
@@ -1666,7 +1681,7 @@ xpc::EvalInSandbox(JSContext *cx, HandleObject sandboxArg, const nsAString& sour
 
         JS::CompileOptions options(sandcx);
         options.setPrincipals(nsJSPrincipals::get(prin))
-               .setFileAndLine(filename, lineNo);
+               .setFileAndLine(filenameBuf.get(), lineNo);
         if (jsVersion != JSVERSION_DEFAULT)
                options.setVersion(jsVersion);
         JS::RootedObject rootedSandbox(sandcx, sandbox);
@@ -1794,7 +1809,7 @@ xpc::NewFunctionForwarder(JSContext *cx, HandleObject callable, bool doclone,
                           MutableHandleValue vp)
 {
     RootedId emptyId(cx);
-    if (!JS_ValueToId(cx, JS_GetEmptyStringValue(cx), emptyId.address()))
+    if (!JS_ValueToId(cx, JS_GetEmptyStringValue(cx), &emptyId))
         return false;
 
     return NewFunctionForwarder(cx, emptyId, callable, doclone, vp);

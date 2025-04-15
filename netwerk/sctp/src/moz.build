@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-XPIDL_MODULE = 'necko_sctp'
-
 EXPORTS.mozilla.net += [
     'usrsctp.h',
 ]
@@ -52,7 +50,7 @@ FINAL_LIBRARY = 'necko'
 LOCAL_INCLUDES += [
     '../../base/src',
     '/content/base/src',
-    '/content/events/src',
+    '/dom/events',
     '/xpcom/ds',
 ]
 
@@ -80,3 +78,5 @@ if CONFIG['OS_TARGET'] == 'Darwin':
 if CONFIG['OS_TARGET'] in ('Linux', 'Android'):
     # to make sure that in6_pktinfo gets defined on all distros
     DEFINES['_GNU_SOURCE'] = True
+
+NO_PGO = True # Don't PGO

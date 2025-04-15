@@ -129,6 +129,19 @@ IsDOMClass(const js::Class* clasp)
   return IsDOMClass(Jsvalify(clasp));
 }
 
+// Return true if the JSClass is used for non-proxy DOM objects.
+inline bool
+IsNonProxyDOMClass(const js::Class* clasp)
+{
+  return IsDOMClass(clasp) && !clasp->isProxy();
+}
+
+inline bool
+IsNonProxyDOMClass(const JSClass* clasp)
+{
+  return IsNonProxyDOMClass(js::Valueify(clasp));
+}
+
 // Returns true if the JSClass is used for DOM interface and interface 
 // prototype objects.
 inline bool
@@ -150,7 +163,7 @@ template <class T>
 inline T*
 UnwrapDOMObject(JSObject* obj)
 {
-  MOZ_ASSERT(IsDOMClass(js::GetObjectClass(obj)) || IsDOMProxy(obj),
+  MOZ_ASSERT(IsDOMClass(js::GetObjectClass(obj)),
              "Don't pass non-DOM objects to this function");
 
   JS::Value val = js::GetReservedSlot(obj, DOM_OBJECT_SLOT);
@@ -164,14 +177,6 @@ GetDOMClass(JSObject* obj)
   if (IsDOMClass(clasp)) {
     return &DOMJSClass::FromJSClass(clasp)->mClass;
   }
-
-  if (js::IsProxyClass(clasp)) {
-    js::BaseProxyHandler* handler = js::GetProxyHandler(obj);
-    if (handler->family() == ProxyFamily()) {
-      return &static_cast<DOMProxyHandler*>(handler)->mClass;
-    }
-  }
-
   return nullptr;
 }
 
@@ -189,8 +194,7 @@ UnwrapDOMObjectToISupports(JSObject* aObject)
 inline bool
 IsDOMObject(JSObject* obj)
 {
-  const js::Class* clasp = js::GetObjectClass(obj);
-  return IsDOMClass(clasp) || IsDOMProxy(obj, clasp);
+  return IsDOMClass(js::GetObjectClass(obj));
 }
 
 #define UNWRAP_OBJECT(Interface, obj, value)                                 \
@@ -507,14 +511,14 @@ CouldBeDOMBinding(nsWrapperCache* aCache)
 inline const JS::Value&
 GetSystemOnlyWrapperSlot(JSObject* obj)
 {
-  MOZ_ASSERT(IsDOMClass(js::GetObjectJSClass(obj)) &&
+  MOZ_ASSERT(IsNonProxyDOMClass(js::GetObjectJSClass(obj)) &&
              !(js::GetObjectJSClass(obj)->flags & JSCLASS_DOM_GLOBAL));
   return js::GetReservedSlot(obj, DOM_OBJECT_SLOT_SOW);
 }
 inline void
 SetSystemOnlyWrapperSlot(JSObject* obj, const JS::Value& v)
 {
-  MOZ_ASSERT(IsDOMClass(js::GetObjectJSClass(obj)) &&
+  MOZ_ASSERT(IsNonProxyDOMClass(js::GetObjectJSClass(obj)) &&
              !(js::GetObjectJSClass(obj)->flags & JSCLASS_DOM_GLOBAL));
   js::SetReservedSlot(obj, DOM_OBJECT_SLOT_SOW, v);
 }
@@ -524,7 +528,9 @@ GetSameCompartmentWrapperForDOMBinding(JSObject*& obj)
 {
   const js::Class* clasp = js::GetObjectClass(obj);
   if (dom::IsDOMClass(clasp)) {
-    if (!(clasp->flags & JSCLASS_DOM_GLOBAL)) {
+    if (!clasp->isProxy() &&
+        !(clasp->flags & JSCLASS_DOM_GLOBAL))
+    {
       JS::Value v = GetSystemOnlyWrapperSlot(obj);
       if (v.isObject()) {
         obj = &v.toObject();
@@ -532,7 +538,7 @@ GetSameCompartmentWrapperForDOMBinding(JSObject*& obj)
     }
     return true;
   }
-  return IsDOMProxy(obj, clasp);
+  return false;
 }
 
 inline void
@@ -909,7 +915,7 @@ inline bool
 EnumValueNotFound<true>(JSContext* cx, const jschar* chars, size_t length,
                         const char* type, const char* sourceDescription)
 {
-  NS_LossyConvertUTF16toASCII deflated(static_cast<const PRUnichar*>(chars),
+  NS_LossyConvertUTF16toASCII deflated(static_cast<const char16_t*>(chars),
                                        length);
   return ThrowErrorMessage(cx, MSG_INVALID_ENUM_VALUE, sourceDescription,
                            deflated.get(), type);
@@ -1315,6 +1321,25 @@ WrapCallThisObject(JSContext* cx, JS::Handle<JSObject*> scope, const T& p)
   return obj;
 }
 
+/*
+ * This specialized function simply wraps a JS::Rooted<> since
+ * WrapNativeParent() is not applicable for JS objects.
+ */
+template<>
+inline JSObject*
+WrapCallThisObject<JS::Rooted<JSObject*>>(JSContext* cx,
+                                          JS::Handle<JSObject*> scope,
+                                          const JS::Rooted<JSObject*>& p)
+{
+  JS::Rooted<JSObject*> obj(cx, p);
+
+  if (!JS_WrapObject(cx, &obj)) {
+    return nullptr;
+  }
+
+  return obj;
+}
+
 // Helper for calling WrapNewBindingObject with smart pointers
 // (nsAutoPtr/nsRefPtr/nsCOMPtr) or references.
 template <class T, bool isSmartPtr=HasgetMember<T>::Value>
@@ -1455,6 +1480,8 @@ AppendNamedPropertyIds(JSContext* cx, JS::Handle<JSObject*> proxy,
                        nsTArray<nsString>& names,
                        bool shadowPrototypeProperties, JS::AutoIdVector& props);
 
+namespace binding_detail {
+
 // A struct that has the same layout as an nsDependentString but much
 // faster constructor and destructor behavior
 struct FakeDependentString {
@@ -1532,6 +1559,8 @@ private:
   };
 };
 
+} // namespace binding_detail
+
 enum StringificationBehavior {
   eStringify,
   eEmpty,
@@ -1544,7 +1573,7 @@ ConvertJSValueToString(JSContext* cx, JS::Handle<JS::Value> v,
                        JS::MutableHandle<JS::Value> pval,
                        StringificationBehavior nullBehavior,
                        StringificationBehavior undefinedBehavior,
-                       FakeDependentString& result)
+                       binding_detail::FakeDependentString& result)
 {
   JSString *s;
   if (v.isString()) {
@@ -1596,6 +1625,8 @@ template<typename T>
 void DoTraceSequence(JSTracer* trc, InfallibleTArray<T>& seq);
 
 // Class for simple sequence arguments, only used internally by codegen.
+namespace binding_detail {
+
 template<typename T>
 class AutoSequence : public AutoFallibleTArray<T, 16>
 {
@@ -1608,6 +1639,8 @@ public:
     return *reinterpret_cast<const Sequence<T>*>(this);
   }
 };
+
+} // namespace binding_detail
 
 // Class used to trace sequences, with specializations for various
 // sequence types.
@@ -1926,7 +1959,6 @@ UseDOMXray(JSObject* obj)
 {
   const js::Class* clasp = js::GetObjectClass(obj);
   return IsDOMClass(clasp) ||
-         IsDOMProxy(obj, clasp) ||
          JS_IsNativeFunction(obj, Constructor) ||
          IsDOMIfaceAndProtoClass(clasp);
 }
@@ -2039,6 +2071,39 @@ T& NonNullHelper(OwningNonNull<T>& aArg)
 
 template<typename T>
 const T& NonNullHelper(const OwningNonNull<T>& aArg)
+{
+  return aArg;
+}
+
+inline
+void NonNullHelper(NonNull<binding_detail::FakeDependentString>& aArg)
+{
+  // This overload is here to make sure that we never end up applying
+  // NonNullHelper to a NonNull<binding_detail::FakeDependentString>. If we
+  // try to, it should fail to compile, since presumably the caller will try to
+  // use our nonexistent return value.
+}
+
+inline
+void NonNullHelper(const NonNull<binding_detail::FakeDependentString>& aArg)
+{
+  // This overload is here to make sure that we never end up applying
+  // NonNullHelper to a NonNull<binding_detail::FakeDependentString>. If we
+  // try to, it should fail to compile, since presumably the caller will try to
+  // use our nonexistent return value.
+}
+
+inline
+void NonNullHelper(binding_detail::FakeDependentString& aArg)
+{
+  // This overload is here to make sure that we never end up applying
+  // NonNullHelper to a FakeDependentString before we've constified it.  If we
+  // try to, it should fail to compile, since presumably the caller will try to
+  // use our nonexistent return value.
+}
+
+MOZ_ALWAYS_INLINE
+const nsAString& NonNullHelper(const binding_detail::FakeDependentString& aArg)
 {
   return aArg;
 }
@@ -2296,7 +2361,7 @@ FinalizeGlobal(JSFreeOp* aFop, JSObject* aObj);
 
 bool
 ResolveGlobal(JSContext* aCx, JS::Handle<JSObject*> aObj,
-              JS::MutableHandle<jsid> aId, unsigned aFlags,
+              JS::Handle<jsid> aId, unsigned aFlags,
               JS::MutableHandle<JSObject*> aObjp);
 
 bool
@@ -2350,6 +2415,35 @@ CreateGlobal(JSContext* aCx, T* aObject, nsWrapperCache* aCache,
 
   return global;
 }
+
+/*
+ * Holds a jsid that is initialized to an interned string, with conversion to
+ * Handle<jsid>.
+ */
+class InternedStringId
+{
+  jsid id;
+
+ public:
+  InternedStringId() : id(JSID_VOID) {}
+
+  bool init(JSContext *cx, const char *string) {
+    JSString* str = JS_InternString(cx, string);
+    if (!str)
+      return false;
+    id = INTERNED_STRING_TO_JSID(cx, str);
+    return true;
+  }
+
+  operator const jsid& () {
+    return id;
+  }
+
+  operator JS::Handle<jsid> () {
+    /* This is safe because we have interned the string. */
+    return JS::Handle<jsid>::fromMarkedLocation(&id);
+  }
+};
 
 } // namespace dom
 } // namespace mozilla

@@ -16,10 +16,12 @@
 using namespace js;
 using namespace js::jit;
 
-MIRGenerator::MIRGenerator(CompileCompartment *compartment,
-                           TempAllocator *alloc, MIRGraph *graph, CompileInfo *info)
+MIRGenerator::MIRGenerator(CompileCompartment *compartment, const JitCompileOptions &options,
+                           TempAllocator *alloc, MIRGraph *graph, CompileInfo *info,
+                           const OptimizationInfo *optimizationInfo)
   : compartment(compartment),
     info_(info),
+    optimizationInfo_(optimizationInfo),
     alloc_(alloc),
     graph_(graph),
     error_(false),
@@ -29,7 +31,8 @@ MIRGenerator::MIRGenerator(CompileCompartment *compartment,
     asmJSHeapAccesses_(*alloc),
     asmJSGlobalAccesses_(*alloc),
     minAsmJSHeapLength_(AsmJSAllocationGranularity),
-    modifiesFrameArguments_(false)
+    modifiesFrameArguments_(false),
+    options(options)
 { }
 
 bool
@@ -127,34 +130,34 @@ MIRGraph::unmarkBlocks()
 }
 
 MDefinition *
-MIRGraph::forkJoinSlice()
+MIRGraph::forkJoinContext()
 {
-    // Search the entry block to find a par slice instruction.  If we do not
-    // find one, add one after the Start instruction.
+    // Search the entry block to find a ForkJoinContext instruction. If we do
+    // not find one, add one after the Start instruction.
     //
     // Note: the original design used a field in MIRGraph to cache the
-    // forkJoinSlice rather than searching for it again.  However, this could
-    // become out of date due to DCE.  Given that we do not generally have to
-    // search very far to find the par slice instruction if it exists, and
-    // that we don't look for it that often, I opted to simply eliminate the
-    // cache and search anew each time, so that it is that much easier to keep
-    // the IR coherent. - nmatsakis
+    // forkJoinContext rather than searching for it again.  However, this
+    // could become out of date due to DCE.  Given that we do not generally
+    // have to search very far to find the ForkJoinContext instruction if it
+    // exists, and that we don't look for it that often, I opted to simply
+    // eliminate the cache and search anew each time, so that it is that much
+    // easier to keep the IR coherent. - nmatsakis
 
     MBasicBlock *entry = entryBlock();
     JS_ASSERT(entry->info().executionMode() == ParallelExecution);
 
     MInstruction *start = nullptr;
     for (MInstructionIterator ins(entry->begin()); ins != entry->end(); ins++) {
-        if (ins->isForkJoinSlice())
+        if (ins->isForkJoinContext())
             return *ins;
         else if (ins->isStart())
             start = *ins;
     }
     JS_ASSERT(start);
 
-    MForkJoinSlice *slice = MForkJoinSlice::New(alloc());
-    entry->insertAfter(start, slice);
-    return slice;
+    MForkJoinContext *cx = MForkJoinContext::New(alloc());
+    entry->insertAfter(start, cx);
+    return cx;
 }
 
 MBasicBlock *
@@ -252,11 +255,18 @@ MBasicBlock::NewAsmJS(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred, Kin
         block->stackPosition_ = pred->stackPosition_;
 
         if (block->kind_ == PENDING_LOOP_HEADER) {
-            for (size_t i = 0; i < block->stackPosition_; i++) {
+            size_t nphis = block->stackPosition_;
+
+            TempAllocator &alloc = graph.alloc();
+            MPhi *phis = (MPhi*)alloc.allocateArray<sizeof(MPhi)>(nphis);
+            if (!phis)
+                return nullptr;
+
+            for (size_t i = 0; i < nphis; i++) {
                 MDefinition *predSlot = pred->getSlot(i);
 
                 JS_ASSERT(predSlot->type() != MIRType_Value);
-                MPhi *phi = MPhi::New(graph.alloc(), i, predSlot->type());
+                MPhi *phi = new(phis + i) MPhi(alloc, i, predSlot->type());
 
                 JS_ALWAYS_TRUE(phi->reserveLength(2));
                 phi->addInput(predSlot);
@@ -276,7 +286,7 @@ MBasicBlock::NewAsmJS(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred, Kin
 }
 
 MBasicBlock::MBasicBlock(MIRGraph &graph, CompileInfo &info, jsbytecode *pc, Kind kind)
-  : earlyAbort_(false),
+  : unreachable_(false),
     graph_(graph),
     info_(info),
     predecessors_(graph.alloc()),
@@ -764,6 +774,7 @@ MBasicBlock::discardAllResumePoints(bool discardEntry)
 void
 MBasicBlock::insertBefore(MInstruction *at, MInstruction *ins)
 {
+    JS_ASSERT(at->block() == this);
     ins->setBlock(this);
     graph().allocDefinitionId(ins);
     instructions_.insertBefore(at, ins);
@@ -773,6 +784,7 @@ MBasicBlock::insertBefore(MInstruction *at, MInstruction *ins)
 void
 MBasicBlock::insertAfter(MInstruction *at, MInstruction *ins)
 {
+    JS_ASSERT(at->block() == this);
     ins->setBlock(this);
     graph().allocDefinitionId(ins);
     instructions_.insertAfter(at, ins);
@@ -912,6 +924,15 @@ MBasicBlock::dominates(MBasicBlock *other)
     uint32_t high = domIndex() + numDominated();
     uint32_t low  = domIndex();
     return other->domIndex() >= low && other->domIndex() <= high;
+}
+
+void
+MBasicBlock::setUnreachable()
+{
+    unreachable_ = true;
+    size_t numDom = numImmediatelyDominatedBlocks();
+    for (size_t d = 0; d < numDom; d++)
+        getImmediatelyDominatedBlock(d)->unreachable_ = true;
 }
 
 AbortReason

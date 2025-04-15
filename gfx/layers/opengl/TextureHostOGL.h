@@ -12,12 +12,12 @@
 #include "GLContextTypes.h"             // for GLContext
 #include "GLDefs.h"                     // for GLenum, LOCAL_GL_CLAMP_TO_EDGE, etc
 #include "GLTextureImage.h"             // for TextureImage
-#include "gfx3DMatrix.h"                // for gfx3DMatrix
 #include "gfxTypes.h"
 #include "mozilla/GfxMessageUtils.h"    // for gfxContentType
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
 #include "mozilla/RefPtr.h"             // for RefPtr
+#include "mozilla/gfx/Matrix.h"         // for Matrix4x4
 #include "mozilla/gfx/Point.h"          // for IntSize, IntPoint
 #include "mozilla/gfx/Types.h"          // for SurfaceFormat, etc
 #include "mozilla/layers/CompositorTypes.h"  // for TextureFlags
@@ -32,9 +32,6 @@
 #include "OGLShaderProgram.h"           // for ShaderProgramType, etc
 #ifdef MOZ_WIDGET_GONK
 #include <ui/GraphicBuffer.h>
-#if ANDROID_VERSION >= 18
-#include <ui/Fence.h>
-#endif
 #endif
 
 class gfxImageSurface;
@@ -100,13 +97,13 @@ inline ShaderProgramType
 GetProgramTypeForSurfaceFormat(gfx::SurfaceFormat aFormat)
  {
   switch (aFormat) {
-  case gfx::FORMAT_B8G8R8A8:
+  case gfx::SurfaceFormat::B8G8R8A8:
     return BGRALayerProgramType;;
-  case gfx::FORMAT_B8G8R8X8:
+  case gfx::SurfaceFormat::B8G8R8X8:
     return BGRXLayerProgramType;;
-  case gfx::FORMAT_R8G8B8X8:
+  case gfx::SurfaceFormat::R8G8B8X8:
     return RGBXLayerProgramType;;
-  case gfx::FORMAT_R8G8B8A8:
+  case gfx::SurfaceFormat::R8G8B8A8:
     return RGBALayerProgramType;;
   default:
     MOZ_CRASH("unhandled program type");
@@ -130,8 +127,6 @@ public:
 
   virtual void BindTexture(GLenum aTextureUnit) = 0;
 
-  virtual void UnbindTexture() = 0;
-
   virtual gfx::IntSize GetSize() const = 0;
 
   virtual GLenum GetTextureTarget() const { return LOCAL_GL_TEXTURE_2D; }
@@ -140,32 +135,9 @@ public:
 
   virtual GLenum GetWrapMode() const = 0;
 
-  virtual gfx3DMatrix GetTextureTransform() { return gfx3DMatrix(); }
+  virtual gfx::Matrix4x4 GetTextureTransform() { return gfx::Matrix4x4(); }
 
   virtual TextureImageDeprecatedTextureHostOGL* AsTextureImageDeprecatedTextureHost() { return nullptr; }
-};
-
-/**
- * TextureHostOGL provides the necessary API for platform specific composition.
- */
-class TextureHostOGL
-{
-public:
-#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
-
-  /**
-   * Store a fence that will signal when the current buffer is no longer being read.
-   * Similar to android's GLConsumer::setReleaseFence()
-   */
-  virtual bool SetReleaseFence(const android::sp<android::Fence>& aReleaseFence);
-
-  /**
-   * Return a releaseFence's Fence and clear a reference to the Fence.
-   */
-  virtual android::sp<android::Fence> GetAndResetReleaseFence();
-protected:
-  android::sp<android::Fence> mReleaseFence;
-#endif
 };
 
 /**
@@ -182,16 +154,16 @@ class TextureImageTextureSourceOGL : public DataTextureSource
                                    , public TileIterator
 {
 public:
-  TextureImageTextureSourceOGL(gl::GLContext* aGL, bool aAllowBiImage = true)
+  TextureImageTextureSourceOGL(gl::GLContext* aGL,
+                               TextureFlags aFlags = TEXTURE_FLAGS_DEFAULT)
     : mGL(aGL)
-    , mAllowBigImage(aAllowBiImage)
+    , mFlags(aFlags)
     , mIterating(false)
   {}
 
   // DataTextureSource
 
   virtual bool Update(gfx::DataSourceSurface* aSurface,
-                      TextureFlags aFlags,
                       nsIntRegion* aDestRegion = nullptr,
                       gfx::IntPoint* aSrcOffset = nullptr) MOZ_OVERRIDE;
 
@@ -213,10 +185,7 @@ public:
 
   virtual bool IsValid() const MOZ_OVERRIDE { return !!mTexImage; }
 
-  virtual void UnbindTexture() MOZ_OVERRIDE
-  {
-    mTexImage->ReleaseTexture();
-  }
+  virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
 
   virtual GLenum GetWrapMode() const MOZ_OVERRIDE
   {
@@ -253,7 +222,7 @@ public:
 protected:
   nsRefPtr<gl::TextureImage> mTexImage;
   gl::GLContext* mGL;
-  bool mAllowBigImage;
+  TextureFlags mFlags;
   bool mIterating;
 };
 
@@ -289,20 +258,18 @@ public:
 
   virtual gfx::SurfaceFormat GetFormat() const MOZ_OVERRIDE { return mFormat; }
 
-  virtual gfx3DMatrix GetTextureTransform() MOZ_OVERRIDE;
+  virtual gfx::Matrix4x4 GetTextureTransform() MOZ_OVERRIDE;
 
   virtual GLenum GetTextureTarget() const { return mTextureTarget; }
 
   virtual GLenum GetWrapMode() const MOZ_OVERRIDE { return mWrapMode; }
-
-  virtual void UnbindTexture() MOZ_OVERRIDE {}
 
   // SharedTextureSource doesn't own any gl texture
   virtual void DeallocateDeviceData() {}
 
   void DetachSharedHandle();
 
-  void SetCompositor(CompositorOGL* aCompositor);
+  virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
 
   gl::GLContext* gl() const;
 
@@ -324,8 +291,7 @@ protected:
 class SharedTextureHostOGL : public TextureHost
 {
 public:
-  SharedTextureHostOGL(uint64_t aID,
-                       TextureFlags aFlags,
+  SharedTextureHostOGL(TextureFlags aFlags,
                        gl::SharedTextureShareType aShareType,
                        gl::SharedTextureHandle aSharedhandle,
                        gfx::IntSize aSize,
@@ -367,6 +333,108 @@ protected:
   gl::SharedTextureShareType mShareType;
 
   RefPtr<SharedTextureSourceOGL> mTextureSource;
+};
+
+/**
+ * A texture source meant for use with StreamTextureHostOGL.
+ *
+ * It does not own any texture, we get texture from SurfaceStream.
+ */
+class StreamTextureSourceOGL : public NewTextureSource
+                             , public TextureSourceOGL
+{
+public:
+  StreamTextureSourceOGL(CompositorOGL* aCompositor,
+                         gfx::SurfaceStream* aStream)
+    : mCompositor(aCompositor)
+    , mStream(aStream)
+    , mTextureHandle(0)
+    , mTextureTarget(LOCAL_GL_TEXTURE_2D)
+    , mUploadTexture(0)
+    , mFormat(gfx::SurfaceFormat::UNKNOWN)
+  {
+    MOZ_COUNT_CTOR(StreamTextureSourceOGL);
+  }
+
+  ~StreamTextureSourceOGL()
+  {
+    MOZ_COUNT_DTOR(StreamTextureSourceOGL);
+  }
+
+  virtual TextureSourceOGL* AsSourceOGL() { return this; }
+
+  virtual void BindTexture(GLenum activetex) MOZ_OVERRIDE;
+
+  virtual bool IsValid() const MOZ_OVERRIDE { return !!gl(); }
+
+  virtual gfx::IntSize GetSize() const MOZ_OVERRIDE { return mSize; }
+
+  virtual gfx::SurfaceFormat GetFormat() const MOZ_OVERRIDE { return mFormat; }
+
+  virtual GLenum GetTextureTarget() const { return mTextureTarget; }
+
+  virtual GLenum GetWrapMode() const MOZ_OVERRIDE { return LOCAL_GL_CLAMP_TO_EDGE; }
+
+  virtual void DeallocateDeviceData();
+
+  bool RetrieveTextureFromStream();
+
+  virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
+
+protected:
+  gl::GLContext* gl() const;
+
+  CompositorOGL* mCompositor;
+  gfx::SurfaceStream* mStream;
+  GLuint mTextureHandle;
+  GLenum mTextureTarget;
+  GLuint mUploadTexture;
+  gfx::IntSize mSize;
+  gfx::SurfaceFormat mFormat;
+};
+
+/**
+ * A TextureHost for shared SurfaceStream
+ */
+class StreamTextureHostOGL : public TextureHost
+{
+public:
+  StreamTextureHostOGL(TextureFlags aFlags,
+                       const SurfaceStreamDescriptor& aDesc);
+
+  virtual ~StreamTextureHostOGL();
+
+  // SharedTextureHostOGL doesn't own any GL texture
+  virtual void DeallocateDeviceData() MOZ_OVERRIDE {}
+
+  virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
+
+  virtual bool Lock() MOZ_OVERRIDE;
+
+  virtual void Unlock() MOZ_OVERRIDE;
+
+  virtual gfx::SurfaceFormat GetFormat() const MOZ_OVERRIDE;
+
+  virtual NewTextureSource* GetTextureSources() MOZ_OVERRIDE
+  {
+    return mTextureSource;
+  }
+
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE
+  {
+    return nullptr; // XXX - implement this (for MOZ_DUMP_PAINTING)
+  }
+
+  virtual gfx::IntSize GetSize() const MOZ_OVERRIDE;
+
+#ifdef MOZ_LAYERS_HAVE_LOG
+  virtual const char* Name() { return "StreamTextureHostOGL"; }
+#endif
+
+protected:
+  CompositorOGL* mCompositor;
+  gfx::SurfaceStream* mStream;
+  RefPtr<StreamTextureSourceOGL> mTextureSource;
 };
 
 /**
@@ -431,11 +499,6 @@ public:
   void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE
   {
     mTexture->BindTexture(aTextureUnit);
-  }
-
-  void UnbindTexture() MOZ_OVERRIDE
-  {
-    mTexture->ReleaseTexture();
   }
 
   gfx::IntSize GetSize() const MOZ_OVERRIDE;
@@ -519,7 +582,7 @@ public:
     mYTexture  = new Channel;
     mCbTexture = new Channel;
     mCrTexture = new Channel;
-    mFormat = gfx::FORMAT_YUV;
+    mFormat = gfx::SurfaceFormat::YUV;
   }
 
   ~YCbCrDeprecatedTextureHostOGL()
@@ -555,10 +618,6 @@ public:
     {
       mTexImage->BindTexture(aUnit);
     }
-    void UnbindTexture() MOZ_OVERRIDE
-    {
-      mTexImage->ReleaseTexture();
-    }
     virtual bool IsValid() const MOZ_OVERRIDE
     {
       return !!mTexImage;
@@ -573,7 +632,7 @@ public:
     }
     virtual gfx::SurfaceFormat GetFormat() const MOZ_OVERRIDE
     {
-      return gfx::FORMAT_A8;
+      return gfx::SurfaceFormat::A8;
     }
   };
 
@@ -623,7 +682,7 @@ public:
     , mTextureHandle(0)
     , mWrapMode(LOCAL_GL_CLAMP_TO_EDGE)
     , mSharedHandle(0)
-    , mShareType(gl::SameProcess)
+    , mShareType(gl::SharedTextureShareType::SameProcess)
   {}
 
   virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
@@ -677,16 +736,15 @@ public:
     // Lock already bound us!
     MOZ_ASSERT(activetex == LOCAL_GL_TEXTURE0);
   }
-  void UnbindTexture() MOZ_OVERRIDE {}
   GLuint GetTextureID() { return mTextureHandle; }
   ContentType GetContentType()
   {
-    return (mFormat == gfx::FORMAT_B8G8R8A8) ?
-             GFX_CONTENT_COLOR_ALPHA :
-             GFX_CONTENT_COLOR;
+    return (mFormat == gfx::SurfaceFormat::B8G8R8A8) ?
+             gfxContentType::COLOR_ALPHA :
+             gfxContentType::COLOR;
   }
 
-  virtual gfx3DMatrix GetTextureTransform() MOZ_OVERRIDE;
+  virtual gfx::Matrix4x4 GetTextureTransform() MOZ_OVERRIDE;
 
   virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
@@ -758,13 +816,11 @@ public:
 
   void BindTexture(GLenum activetex) MOZ_OVERRIDE;
 
-  void UnbindTexture() MOZ_OVERRIDE {}
-
   GLuint GetTextureID() { return mTextureHandle; }
   ContentType GetContentType() {
-    return (mFormat == gfx::FORMAT_B8G8R8A8) ?
-             GFX_CONTENT_COLOR_ALPHA :
-             GFX_CONTENT_COLOR;
+    return (mFormat == gfx::SurfaceFormat::B8G8R8A8) ?
+             gfxContentType::COLOR_ALPHA :
+             gfxContentType::COLOR;
   }
 
   virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
@@ -819,7 +875,6 @@ public:
   virtual bool IsValid() const MOZ_OVERRIDE { return true; }
   virtual GLenum GetWrapMode() const MOZ_OVERRIDE { return LOCAL_GL_CLAMP_TO_EDGE; }
   virtual void BindTexture(GLenum aTextureUnit);
-  virtual void UnbindTexture() MOZ_OVERRIDE {}
   virtual gfx::IntSize GetSize() const MOZ_OVERRIDE
   {
     return mSize;
@@ -862,9 +917,6 @@ private:
 class GrallocDeprecatedTextureHostOGL
   : public DeprecatedTextureHost
   , public TextureSourceOGL
-#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
-  , public TextureHostOGL
-#endif
 {
 public:
   GrallocDeprecatedTextureHostOGL();
@@ -905,21 +957,11 @@ public:
   virtual const char* Name() { return "GrallocDeprecatedTextureHostOGL"; }
 
   void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE;
-  void UnbindTexture() MOZ_OVERRIDE {}
 
   virtual TextureSourceOGL* AsSourceOGL() MOZ_OVERRIDE
   {
     return this;
   }
-
-#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
-  virtual TextureHostOGL* AsHostOGL() MOZ_OVERRIDE
-  {
-    return this;
-  }
-#endif
-
-  virtual void SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData);
 
   // only overridden for hacky fix in gecko 23 for bug 862324
   // see bug 865908 about fixing this.

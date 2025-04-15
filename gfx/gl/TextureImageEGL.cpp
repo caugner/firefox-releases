@@ -8,6 +8,7 @@
 #include "GLContext.h"
 #include "GLUploadHelpers.h"
 #include "gfxPlatform.h"
+#include "gfx2DGlue.h"
 #include "mozilla/gfx/Types.h"
 
 namespace mozilla {
@@ -17,13 +18,13 @@ static GLenum
 GLFormatForImage(gfxImageFormat aFormat)
 {
     switch (aFormat) {
-    case gfxImageFormatARGB32:
-    case gfxImageFormatRGB24:
+    case gfxImageFormat::ARGB32:
+    case gfxImageFormat::RGB24:
         // Thebes only supports RGBX, not packed RGB.
         return LOCAL_GL_RGBA;
-    case gfxImageFormatRGB16_565:
+    case gfxImageFormat::RGB16_565:
         return LOCAL_GL_RGB;
-    case gfxImageFormatA8:
+    case gfxImageFormat::A8:
         return LOCAL_GL_LUMINANCE;
     default:
         NS_WARNING("Unknown GL format for Image format");
@@ -35,11 +36,11 @@ static GLenum
 GLTypeForImage(gfxImageFormat aFormat)
 {
     switch (aFormat) {
-    case gfxImageFormatARGB32:
-    case gfxImageFormatRGB24:
-    case gfxImageFormatA8:
+    case gfxImageFormat::ARGB32:
+    case gfxImageFormat::RGB24:
+    case gfxImageFormat::A8:
         return LOCAL_GL_UNSIGNED_BYTE;
-    case gfxImageFormatRGB16_565:
+    case gfxImageFormat::RGB16_565:
         return LOCAL_GL_UNSIGNED_SHORT_5_6_5;
     default:
         NS_WARNING("Unknown GL format for Image format");
@@ -65,19 +66,19 @@ TextureImageEGL::TextureImageEGL(GLuint aTexture,
     , mTextureState(aTextureState)
     , mBound(false)
 {
-    if (mUpdateFormat == gfxImageFormatUnknown) {
+    if (mUpdateFormat == gfxImageFormat::Unknown) {
         mUpdateFormat = gfxPlatform::GetPlatform()->OptimalFormatForContent(GetContentType());
     }
 
-    if (mUpdateFormat == gfxImageFormatRGB16_565) {
-        mTextureFormat = gfx::FORMAT_R8G8B8X8;
-    } else if (mUpdateFormat == gfxImageFormatRGB24) {
+    if (mUpdateFormat == gfxImageFormat::RGB16_565) {
+        mTextureFormat = gfx::SurfaceFormat::R8G8B8X8;
+    } else if (mUpdateFormat == gfxImageFormat::RGB24) {
         // RGB24 means really RGBX for Thebes, which means we have to
         // use the right shader and ignore the uninitialized alpha
         // value.
-        mTextureFormat = gfx::FORMAT_B8G8R8X8;
+        mTextureFormat = gfx::SurfaceFormat::B8G8R8X8;
     } else {
-        mTextureFormat = gfx::FORMAT_B8G8R8A8;
+        mTextureFormat = gfx::SurfaceFormat::B8G8R8A8;
     }
 }
 
@@ -103,7 +104,7 @@ TextureImageEGL::GetUpdateRegion(nsIntRegion& aForRegion)
     if (mTextureState != Valid) {
         // if the texture hasn't been initialized yet, force the
         // client to paint everything
-        aForRegion = nsIntRect(nsIntPoint(0, 0), mSize);
+        aForRegion = nsIntRect(nsIntPoint(0, 0), gfx::ThebesIntSize(mSize));
     }
 
     // We can only draw a rectangle, not subregions due to
@@ -123,7 +124,7 @@ TextureImageEGL::BeginUpdate(nsIntRegion& aRegion)
     mUpdateRect = aRegion.GetBounds();
 
     //printf_stderr("BeginUpdate with updateRect [%d %d %d %d]\n", mUpdateRect.x, mUpdateRect.y, mUpdateRect.width, mUpdateRect.height);
-    if (!nsIntRect(nsIntPoint(0, 0), mSize).Contains(mUpdateRect)) {
+    if (!nsIntRect(nsIntPoint(0, 0), gfx::ThebesIntSize(mSize)).Contains(mUpdateRect)) {
         NS_ERROR("update outside of image");
         return nullptr;
     }
@@ -158,7 +159,7 @@ TextureImageEGL::EndUpdate()
     nsRefPtr<gfxImageSurface> uploadImage = nullptr;
     gfxIntSize updateSize(mUpdateRect.width, mUpdateRect.height);
 
-    NS_ASSERTION(mUpdateSurface->GetType() == gfxSurfaceTypeImage &&
+    NS_ASSERTION(mUpdateSurface->GetType() == gfxSurfaceType::Image &&
                   mUpdateSurface->GetSize() == updateSize,
                   "Upload image isn't an image surface when one is expected, or is wrong size!");
 
@@ -173,7 +174,7 @@ TextureImageEGL::EndUpdate()
 
     if (mTextureState != Valid) {
         NS_ASSERTION(mUpdateRect.x == 0 && mUpdateRect.y == 0 &&
-                      mUpdateRect.Size() == mSize,
+                      mUpdateRect.Size() == gfx::ThebesIntSize(mSize),
                       "Bad initial update on non-created texture!");
 
         mGLContext->fTexImage2D(LOCAL_GL_TEXTURE_2D,
@@ -242,7 +243,7 @@ TextureImageEGL::BindTexture(GLenum aTextureUnit)
 }
 
 void
-TextureImageEGL::Resize(const nsIntSize& aSize)
+TextureImageEGL::Resize(const gfx::IntSize& aSize)
 {
     NS_ASSERTION(!mUpdateSurface, "Resize() while in update?");
 
@@ -311,15 +312,9 @@ TextureImageEGL::DestroyEGLSurface(void)
     mSurface = nullptr;
 }
 
-void
-TextureImageEGL::ApplyFilter()
-{
-    mGLContext->ApplyFilterToBoundTexture(mFilter);
-}
-
 already_AddRefed<TextureImage>
 CreateTextureImageEGL(GLContext *gl,
-                      const nsIntSize& aSize,
+                      const gfx::IntSize& aSize,
                       TextureImage::ContentType aContentType,
                       GLenum aWrapMode,
                       TextureImage::Flags aFlags,

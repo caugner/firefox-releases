@@ -21,27 +21,48 @@
 
 #downloads-indicator-icon {
   background: -moz-image-rect(url("chrome://browser/skin/Toolbar.png"),
-                              0, 108, 18, 90) center no-repeat;
+                              0, 198, 18, 180) center no-repeat;
   min-width: 18px;
   min-height: 18px;
 }
 
 #downloads-indicator-icon:-moz-lwtheme-brighttext {
   background: -moz-image-rect(url("chrome://browser/skin/Toolbar-inverted.png"),
-                              0, 108, 18, 90) center no-repeat;
+                              0, 198, 18, 180) center no-repeat;
 }
 
 #downloads-button[attention] > #downloads-indicator-anchor > #downloads-indicator-icon {
   background-image: url("chrome://browser/skin/downloads/download-glow.png");
 }
 
+#downloads-button[cui-areatype="menu-panel"][attention] {
+  list-style-image: url("chrome://browser/skin/downloads/download-glow-menuPanel.png");
+  -moz-image-region: auto;
+}
+
+%ifdef WINDOWS_AERO
+@media (-moz-os-version: windows-vista),
+       (-moz-os-version: windows-win7) {
+%endif
+  #downloads-button[cui-areatype="menu-panel"][attention] {
+    list-style-image: url("chrome://browser/skin/downloads/download-glow-menuPanel-XPVista7.png");
+  }
+%ifdef WINDOWS_AERO
+}
+%endif
+
 /* In the next few rules, we use :not([counter]) as a shortcut that is
    equivalent to -moz-any([progress], [paused]). */
 
 #downloads-button:not([counter]) > #downloads-indicator-anchor > #downloads-indicator-progress-area > #downloads-indicator-counter {
   background: -moz-image-rect(url("chrome://browser/skin/Toolbar.png"),
-                              0, 108, 18, 90) center no-repeat;
+                              0, 198, 18, 180) center no-repeat;
   background-size: 12px;
+}
+
+#downloads-button:not([counter]) > #downloads-indicator-anchor >
+#downloads-button-progress-area > #downloads-indicator-counter:-moz-lwtheme-brighttext {
+  background-image: -moz-image-rect(url("chrome://browser/skin/Toolbar-inverted.png"), 0, 198, 18, 180);
 }
 
 #downloads-button:not([counter])[attention] > #downloads-indicator-anchor > #downloads-indicator-progress-area > #downloads-indicator-counter {
@@ -152,9 +173,4 @@
 
 #downloads-button[paused] > #downloads-indicator-anchor > #downloads-indicator-progress-area > #downloads-indicator-progress > .progress-remainder {
   background-image: linear-gradient(#4b5000, #515700);
-}
-
-toolbar[mode="full"] > #downloads-button[indicator] > .toolbarbutton-text {
-  margin: 0;
-  text-align: center;
 }

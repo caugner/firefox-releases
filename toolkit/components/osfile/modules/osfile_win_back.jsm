@@ -39,7 +39,7 @@
      let SysAll = require("resource://gre/modules/osfile/osfile_win_allthreads.jsm");
      let LOG = SharedAll.LOG.bind(SharedAll, "Unix", "back");
      let libc = SysAll.libc;
-     let advapi32 = ctypes.open("advapi32.dll");
+     let advapi32 = new SharedAll.Library("advapi32", "advapi32.dll");
      let Const = SharedAll.Constants.Win;
 
      /**
@@ -379,7 +379,7 @@
                      /*fileName*/       Type.path,
                      /*fileAttributes*/ Type.DWORD);
 
-        declareLazyFFI(SysFile, "GetNamedSecurityInfo", advapi32,
+        advapi32.declareLazyFFI(SysFile, "GetNamedSecurityInfo",
           "GetNamedSecurityInfoW", ctypes.winapi_abi,
                      /*return*/       Type.DWORD,
                      /*objectName*/   Type.path,
@@ -391,7 +391,7 @@
                      /*sacl*/         Type.PACL.out_ptr,
                      /*securityDesc*/ Type.PSECURITY_DESCRIPTOR.out_ptr);
 
-        declareLazyFFI(SysFile, "SetNamedSecurityInfo", advapi32,
+        advapi32.declareLazyFFI(SysFile, "SetNamedSecurityInfo",
           "SetNamedSecurityInfoW", ctypes.winapi_abi,
                      /*return*/       Type.DWORD,
                      /*objectName*/   Type.path,

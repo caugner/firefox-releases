@@ -11,7 +11,7 @@
 #include "base/process_util.h"          // for OpenProcessHandle
 #include "base/task.h"                  // for CancelableTask, DeleteTask, etc
 #include "base/tracked.h"               // for FROM_HERE
-#include "gfxPoint.h"                   // for gfxIntSize
+#include "mozilla/gfx/Point.h"          // for IntSize
 #include "mozilla/ipc/MessageChannel.h" // for MessageChannel, etc
 #include "mozilla/ipc/ProtocolUtils.h"
 #include "mozilla/ipc/Transport.h"      // for Transport
@@ -30,9 +30,11 @@
 #include "nsTArray.h"                   // for nsTArray, nsTArray_Impl
 #include "nsTArrayForwardDeclare.h"     // for InfallibleTArray
 #include "nsXULAppAPI.h"                // for XRE_GetIOMessageLoop
+#include "mozilla/layers/TextureHost.h"
 
 using namespace base;
 using namespace mozilla::ipc;
+using namespace mozilla::gfx;
 
 namespace mozilla {
 namespace layers {
@@ -69,12 +71,9 @@ ImageBridgeParent::RecvUpdate(const EditArray& aEdits, EditReplyArray* aReply)
 {
   // If we don't actually have a compositor, then don't bother
   // creating any textures.
-  if (Compositor::GetBackend() == LAYERS_NONE) {
+  if (Compositor::GetBackend() == LayersBackend::LAYERS_NONE) {
     return true;
   }
-
-  // Clear ReleaseFence handles used in previous transaction.
-  ClearPrevReleaseFenceHandles();
 
   EditReplyVector replyv;
   for (EditArray::index_type i = 0; i < aEdits.Length(); ++i) {
@@ -130,6 +129,16 @@ ImageBridgeParent::Create(Transport* aTransport, ProcessId aOtherProcess)
 
 bool ImageBridgeParent::RecvStop()
 {
+  // If there is any texture still alive we have to force it to deallocate the
+  // device data (GL textures, etc.) now because shortly after SenStop() returns
+  // on the child side the widget will be destroyed along with it's associated
+  // GL context.
+  InfallibleTArray<PTextureParent*> textures;
+  ManagedPTextureParent(textures);
+  for (unsigned int i = 0; i < textures.Length(); ++i) {
+    RefPtr<TextureHost> tex = TextureHost::AsTextureHost(textures[i]);
+    tex->DeallocateDeviceData();
+  }
   return true;
 }
 
@@ -141,7 +150,7 @@ static  uint64_t GenImageContainerID() {
 }
 
 PGrallocBufferParent*
-ImageBridgeParent::AllocPGrallocBufferParent(const gfxIntSize& aSize,
+ImageBridgeParent::AllocPGrallocBufferParent(const IntSize& aSize,
                                              const uint32_t& aFormat,
                                              const uint32_t& aUsage,
                                              MaybeMagicGrallocBufferHandle* aOutHandle)
@@ -179,6 +188,19 @@ bool ImageBridgeParent::DeallocPCompositableParent(PCompositableParent* aActor)
 {
   delete aActor;
   return true;
+}
+
+PTextureParent*
+ImageBridgeParent::AllocPTextureParent(const SurfaceDescriptor& aSharedData,
+                                       const TextureFlags& aFlags)
+{
+  return TextureHost::CreateIPDLActor(this, aSharedData, aFlags);
+}
+
+bool
+ImageBridgeParent::DeallocPTextureParent(PTextureParent* actor)
+{
+  return TextureHost::DestroyIPDLActor(actor);
 }
 
 MessageLoop * ImageBridgeParent::GetMessageLoop() {

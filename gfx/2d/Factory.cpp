@@ -238,7 +238,7 @@ Factory::CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFor
   RefPtr<DrawTarget> retVal;
   switch (aBackend) {
 #ifdef WIN32
-  case BACKEND_DIRECT2D:
+  case BackendType::DIRECT2D:
     {
       RefPtr<DrawTargetD2D> newTarget;
       newTarget = new DrawTargetD2D();
@@ -248,7 +248,7 @@ Factory::CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFor
       break;
     }
 #ifdef USE_D2D1_1
-  case BACKEND_DIRECT2D1_1:
+  case BackendType::DIRECT2D1_1:
     {
       RefPtr<DrawTargetD2D1> newTarget;
       newTarget = new DrawTargetD2D1();
@@ -259,8 +259,8 @@ Factory::CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFor
     }
 #endif
 #elif defined XP_MACOSX
-  case BACKEND_COREGRAPHICS:
-  case BACKEND_COREGRAPHICS_ACCELERATED:
+  case BackendType::COREGRAPHICS:
+  case BackendType::COREGRAPHICS_ACCELERATED:
     {
       RefPtr<DrawTargetCG> newTarget;
       newTarget = new DrawTargetCG();
@@ -271,7 +271,7 @@ Factory::CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFor
     }
 #endif
 #ifdef USE_SKIA
-  case BACKEND_SKIA:
+  case BackendType::SKIA:
     {
       RefPtr<DrawTargetSkia> newTarget;
       newTarget = new DrawTargetSkia();
@@ -282,7 +282,7 @@ Factory::CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFor
     }
 #endif
 #ifdef USE_CAIRO
-  case BACKEND_CAIRO:
+  case BackendType::CAIRO:
     {
       RefPtr<DrawTargetCairo> newTarget;
       newTarget = new DrawTargetCairo();
@@ -305,7 +305,7 @@ Factory::CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFor
 
   if (!retVal) {
     // Failed
-    gfxDebug() << "Failed to create DrawTarget, Type: " << aBackend << " Size: " << aSize;
+    gfxDebug() << "Failed to create DrawTarget, Type: " << int(aBackend) << " Size: " << aSize;
   }
   
   return retVal;
@@ -332,7 +332,7 @@ Factory::CreateDrawTargetForData(BackendType aBackend,
 
   switch (aBackend) {
 #ifdef USE_SKIA
-  case BACKEND_SKIA:
+  case BackendType::SKIA:
     {
       RefPtr<DrawTargetSkia> newTarget;
       newTarget = new DrawTargetSkia();
@@ -341,7 +341,7 @@ Factory::CreateDrawTargetForData(BackendType aBackend,
     }
 #endif
 #ifdef XP_MACOSX
-  case BACKEND_COREGRAPHICS:
+  case BackendType::COREGRAPHICS:
     {
       RefPtr<DrawTargetCG> newTarget = new DrawTargetCG();
       if (newTarget->Init(aBackend, aData, aSize, aStride, aFormat))
@@ -350,7 +350,7 @@ Factory::CreateDrawTargetForData(BackendType aBackend,
     }
 #endif
 #ifdef USE_CAIRO
-  case BACKEND_CAIRO:
+  case BackendType::CAIRO:
     {
       RefPtr<DrawTargetCairo> newTarget;
       newTarget = new DrawTargetCairo();
@@ -371,7 +371,7 @@ Factory::CreateDrawTargetForData(BackendType aBackend,
   }
 
   if (!retVal) {
-    gfxDebug() << "Failed to create DrawTarget, Type: " << aBackend << " Size: " << aSize;
+    gfxDebug() << "Failed to create DrawTarget, Type: " << int(aBackend) << " Size: " << aSize;
   }
 
   return retVal;
@@ -382,25 +382,25 @@ Factory::CreateScaledFontForNativeFont(const NativeFont &aNativeFont, Float aSiz
 {
   switch (aNativeFont.mType) {
 #ifdef WIN32
-  case NATIVE_FONT_DWRITE_FONT_FACE:
+  case NativeFontType::DWRITE_FONT_FACE:
     {
       return new ScaledFontDWrite(static_cast<IDWriteFontFace*>(aNativeFont.mFont), aSize);
     }
 #if defined(USE_CAIRO) || defined(USE_SKIA)
-  case NATIVE_FONT_GDI_FONT_FACE:
+  case NativeFontType::GDI_FONT_FACE:
     {
       return new ScaledFontWin(static_cast<LOGFONT*>(aNativeFont.mFont), aSize);
     }
 #endif
 #endif
 #ifdef XP_MACOSX
-  case NATIVE_FONT_MAC_FONT_FACE:
+  case NativeFontType::MAC_FONT_FACE:
     {
       return new ScaledFontMac(static_cast<CGFontRef>(aNativeFont.mFont), aSize);
     }
 #endif
 #if defined(USE_CAIRO) || defined(USE_SKIA_FREETYPE)
-  case NATIVE_FONT_CAIRO_FONT_FACE:
+  case NativeFontType::CAIRO_FONT_FACE:
     {
       return new ScaledFontCairo(static_cast<cairo_scaled_font_t*>(aNativeFont.mFont), aSize);
     }
@@ -418,7 +418,7 @@ Factory::CreateScaledFontForTrueTypeData(uint8_t *aData, uint32_t aSize,
 {
   switch (aType) {
 #ifdef WIN32
-  case FONT_DWRITE:
+  case FontType::DWRITE:
     {
       return new ScaledFontDWrite(aData, aSize, aFaceIndex, aGlyphSize);
     }
@@ -704,6 +704,23 @@ Factory::CreateDataSourceSurface(const IntSize &aSize,
 
   RefPtr<SourceSurfaceAlignedRawData> newSurf = new SourceSurfaceAlignedRawData();
   if (newSurf->Init(aSize, aFormat)) {
+    return newSurf;
+  }
+
+  return nullptr;
+}
+
+TemporaryRef<DataSourceSurface>
+Factory::CreateDataSourceSurfaceWithStride(const IntSize &aSize,
+                                           SurfaceFormat aFormat,
+                                           int32_t aStride)
+{
+  if (aStride < aSize.width * BytesPerPixel(aFormat)) {
+    return nullptr;
+  }
+
+  RefPtr<SourceSurfaceAlignedRawData> newSurf = new SourceSurfaceAlignedRawData();
+  if (newSurf->InitWithStride(aSize, aFormat, aStride)) {
     return newSurf;
   }
 

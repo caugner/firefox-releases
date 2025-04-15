@@ -537,7 +537,7 @@ ImageDocument::OnStopRequest(imgIRequest *aRequest,
     nsAutoCString src;
     mDocumentURI->GetSpec(src);
     NS_ConvertUTF8toUTF16 srcString(src);
-    const PRUnichar* formatString[] = { srcString.get() };
+    const char16_t* formatString[] = { srcString.get() };
     nsXPIDLString errorMsg;
     NS_NAMED_LITERAL_STRING(str, "InvalidImage");
     mStringBundle->FormatStringFromName(str.get(), formatString, 1,
@@ -743,8 +743,8 @@ ImageDocument::UpdateTitleAndCharset()
     nsAutoString ratioStr;
     ratioStr.AppendInt(NSToCoordFloor(GetRatio() * 100));
 
-    const PRUnichar* formatString[1] = { ratioStr.get() };
-    mStringBundle->FormatStringFromName(NS_LITERAL_STRING("ScaledImage").get(),
+    const char16_t* formatString[1] = { ratioStr.get() };
+    mStringBundle->FormatStringFromName(MOZ_UTF16("ScaledImage"),
                                         formatString, 1,
                                         getter_Copies(status));
   }

@@ -11,7 +11,7 @@
 #include <hardware/bt_hf.h>
 
 #include "BluetoothCommon.h"
-#include "BluetoothProfileManagerBase.h"
+#include "BluetoothHfpManagerBase.h"
 #include "BluetoothRilListener.h"
 #include "BluetoothSocketObserver.h"
 #include "mozilla/ipc/UnixSocket.h"
@@ -71,31 +71,31 @@ public:
   bthf_call_addrtype_t mType;
 };
 
-class BluetoothHfpManager : public BluetoothProfileManagerBase
+class BluetoothHfpManager : public BluetoothHfpManagerBase
                           , public BatteryObserver
 {
 public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIOBSERVER
-  BT_DECL_PROFILE_MGR_BASE
+  BT_DECL_HFP_MGR_BASE
   virtual void GetName(nsACString& aName)
   {
     aName.AssignLiteral("HFP/HSP");
   }
 
   static BluetoothHfpManager* Get();
-  ~BluetoothHfpManager();
+  virtual ~BluetoothHfpManager();
 
   bool ConnectSco();
   bool DisconnectSco();
-  bool IsScoConnected();
 
   /**
    * @param aSend A boolean indicates whether we need to notify headset or not
    */
   void HandleCallStateChanged(uint32_t aCallIndex, uint16_t aCallState,
                               const nsAString& aError, const nsAString& aNumber,
-                              const bool aIsOutgoing, bool aSend);
+                              const bool aIsOutgoing, const bool aIsConference,
+                              bool aSend);
   void HandleIccInfoChanged(uint32_t aClientId);
   void HandleVoiceConnectionChanged(uint32_t aClientId);
 

@@ -358,7 +358,7 @@ nsresult nsCocoaUtils::CreateNSImageFromImageContainer(imgIContainer *aImage, ui
     int scaledWidth = (int)ceilf(width * scaleFactor);
     int scaledHeight = (int)ceilf(height * scaleFactor);
 
-    frame = new gfxImageSurface(gfxIntSize(scaledWidth, scaledHeight), gfxImageFormatARGB32);
+    frame = new gfxImageSurface(gfxIntSize(scaledWidth, scaledHeight), gfxImageFormat::ARGB32);
     NS_ENSURE_TRUE(frame, NS_ERROR_FAILURE);
 
     nsRefPtr<gfxContext> context = new gfxContext(frame);
@@ -372,10 +372,8 @@ nsresult nsCocoaUtils::CreateNSImageFromImageContainer(imgIContainer *aImage, ui
   }
 
   else {
-    nsRefPtr<gfxASurface> surface;
-    aImage->GetFrame(aWhichFrame,
-                     imgIContainer::FLAG_SYNC_DECODE,
-                     getter_AddRefs(surface));
+    nsRefPtr<gfxASurface> surface =
+      aImage->GetFrame(aWhichFrame, imgIContainer::FLAG_SYNC_DECODE);
     NS_ENSURE_TRUE(surface, NS_ERROR_FAILURE);
 
     frame = surface->GetAsReadableARGB32ImageSurface();

@@ -8,7 +8,7 @@
 #define mozilla_dom_bluetooth_bluetoothhfpmanager_h__
 
 #include "BluetoothCommon.h"
-#include "BluetoothProfileManagerBase.h"
+#include "BluetoothHfpManagerBase.h"
 #ifdef MOZ_B2G_RIL
 #include "BluetoothRilListener.h"
 #endif
@@ -68,19 +68,20 @@ public:
 
   uint16_t mState;
   bool mDirection; // true: incoming call; false: outgoing call
+  bool mIsConference;
   nsString mNumber;
   int mType;
 };
 #endif // MOZ_B2G_RIL
 
 class BluetoothHfpManager : public BluetoothSocketObserver
-                          , public BluetoothProfileManagerBase
+                          , public BluetoothHfpManagerBase
                           , public BatteryObserver
 {
 public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIOBSERVER
-  BT_DECL_PROFILE_MGR_BASE
+  BT_DECL_HFP_MGR_BASE
   virtual void GetName(nsACString& aName)
   {
     aName.AssignLiteral("HFP/HSP");
@@ -113,7 +114,6 @@ public:
   bool ConnectSco(BluetoothReplyRunnable* aRunnable = nullptr);
   bool DisconnectSco();
   bool ListenSco();
-  bool IsScoConnected();
 
 #ifdef MOZ_B2G_RIL
   /**
@@ -121,7 +121,8 @@ public:
    */
   void HandleCallStateChanged(uint32_t aCallIndex, uint16_t aCallState,
                               const nsAString& aError, const nsAString& aNumber,
-                              const bool aIsOutgoing, bool aSend);
+                              const bool aIsOutgoing, const bool aIsConference,
+                              bool aSend);
   void HandleIccInfoChanged(uint32_t aClientId);
   void HandleVoiceConnectionChanged(uint32_t aClientId);
 

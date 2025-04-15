@@ -10,6 +10,7 @@
 
 #include "mozilla/FileUtils.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/StaticPtr.h"
 
 #include "xptiprivate.h"
 #include "nsDependentString.h"
@@ -21,15 +22,12 @@
 
 using namespace mozilla;
 
-NS_IMPL_ISUPPORTS_INHERITED1(
+NS_IMPL_ISUPPORTS2(
   XPTInterfaceInfoManager,
-  MemoryUniReporter,
-  nsIInterfaceInfoManager)
+  nsIInterfaceInfoManager,
+  nsIMemoryReporter)
 
-static XPTInterfaceInfoManager* gInterfaceInfoManager = nullptr;
-#ifdef DEBUG
-static int gCallCount = 0;
-#endif
+static StaticRefPtr<XPTInterfaceInfoManager> gInterfaceInfoManager;
 
 size_t
 XPTInterfaceInfoManager::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf)
@@ -43,17 +41,22 @@ XPTInterfaceInfoManager::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf
     return n;
 }
 
-int64_t
-XPTInterfaceInfoManager::Amount()
+MOZ_DEFINE_MALLOC_SIZE_OF(XPTIMallocSizeOf)
+
+NS_IMETHODIMP
+XPTInterfaceInfoManager::CollectReports(nsIHandleReportCallback* aHandleReport,
+                                        nsISupports* aData)
 {
-    size_t n = SizeOfIncludingThis(MallocSizeOf);
+    size_t amount = SizeOfIncludingThis(XPTIMallocSizeOf);
 
     // Measure gXPTIStructArena here, too.  This is a bit grotty because it
     // doesn't belong to the XPTIInterfaceInfoManager, but there's no
     // obviously better place to measure it.
-    n += XPT_SizeOfArena(gXPTIStructArena, MallocSizeOf);
+    amount += XPT_SizeOfArena(gXPTIStructArena, XPTIMallocSizeOf);
 
-    return n;
+    return MOZ_COLLECT_REPORT(
+        "explicit/xpti-working-set", KIND_HEAP, UNITS_BYTES, amount,
+        "Memory used by the XPCOM typelib system.");
 }
 
 // static
@@ -62,7 +65,6 @@ XPTInterfaceInfoManager::GetSingleton()
 {
     if (!gInterfaceInfoManager) {
         gInterfaceInfoManager = new XPTInterfaceInfoManager();
-        NS_ADDREF(gInterfaceInfoManager);
         gInterfaceInfoManager->InitMemoryReporter();
     }
     return gInterfaceInfoManager;
@@ -71,13 +73,11 @@ XPTInterfaceInfoManager::GetSingleton()
 void
 XPTInterfaceInfoManager::FreeInterfaceInfoManager()
 {
-    NS_IF_RELEASE(gInterfaceInfoManager);
+    gInterfaceInfoManager = nullptr;
 }
 
 XPTInterfaceInfoManager::XPTInterfaceInfoManager()
-    :   MemoryUniReporter("explicit/xpti-working-set", KIND_HEAP, UNITS_BYTES,
-                          "Memory used by the XPCOM typelib system."),
-        mWorkingSet(),
+    :   mWorkingSet(),
         mResolveLock("XPTInterfaceInfoManager.mResolveLock")
 {
 }
@@ -88,11 +88,6 @@ XPTInterfaceInfoManager::~XPTInterfaceInfoManager()
     mWorkingSet.InvalidateInterfaceInfos();
 
     UnregisterWeakMemoryReporter(this);
-
-    gInterfaceInfoManager = nullptr;
-#ifdef DEBUG
-    gCallCount = 0;
-#endif
 }
 
 void

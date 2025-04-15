@@ -323,8 +323,8 @@ nsresult NrIceMediaStream::GetCandidatePairs(std::vector<NrIceCandidatePair>*
 
     pair.priority = p1->priority;
     pair.nominated = p1->peer_nominated || p1->nominated;
-    pair.selected = p1->local->component &&
-                    p1->local->component->active == p1;
+    pair.selected = p1->remote->component &&
+                    p1->remote->component->active == p1;
     pair.codeword = p1->codeword;
 
     if (!ToNrIceCandidate(*(p1->local), &pair.local) ||
@@ -403,6 +403,49 @@ std::vector<std::string> NrIceMediaStream::GetCandidates() const {
 
   return ret;
 }
+
+static nsresult GetCandidatesFromStream(
+    nr_ice_media_stream *stream,
+    std::vector<NrIceCandidate> *candidates) {
+  MOZ_ASSERT(candidates);
+  nr_ice_component* comp=STAILQ_FIRST(&stream->components);
+  while(comp){
+    if (comp->state != NR_ICE_COMPONENT_DISABLED) {
+      nr_ice_candidate *cand = TAILQ_FIRST(&comp->candidates);
+      while(cand){
+        NrIceCandidate new_cand;
+        // This can fail if the candidate is server reflexive or relayed, and
+        // has not yet received a response (ie; it doesn't know its address
+        // yet). For the purposes of this code, this isn't a candidate we're
+        // interested in, since it is not fully baked yet.
+        if (ToNrIceCandidate(*cand, &new_cand)) {
+          candidates->push_back(new_cand);
+        }
+        cand=TAILQ_NEXT(cand,entry_comp);
+      }
+    }
+    comp=STAILQ_NEXT(comp,entry);
+  }
+
+  return NS_OK;
+}
+
+nsresult NrIceMediaStream::GetLocalCandidates(
+    std::vector<NrIceCandidate>* candidates) const {
+  return GetCandidatesFromStream(stream_, candidates);
+}
+
+nsresult NrIceMediaStream::GetRemoteCandidates(
+    std::vector<NrIceCandidate>* candidates) const {
+  nr_ice_media_stream* peer_stream;
+  int r = nr_ice_peer_ctx_find_pstream(ctx_->peer(), stream_, &peer_stream);
+  if (r != 0) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return GetCandidatesFromStream(peer_stream, candidates);
+}
+
 
 nsresult NrIceMediaStream::DisableComponent(int component_id) {
   if (!stream_)

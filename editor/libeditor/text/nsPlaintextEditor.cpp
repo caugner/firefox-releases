@@ -146,7 +146,7 @@ NS_IMETHODIMP nsPlaintextEditor::Init(nsIDOMDocument *aDoc,
 static int32_t sNewlineHandlingPref = -1,
                sCaretStylePref = -1;
 
-static int
+static void
 EditorPrefsChangedCallback(const char *aPrefName, void *)
 {
   if (nsCRT::strcmp(aPrefName, "editor.singleLine.pasteNewlines") == 0) {
@@ -163,7 +163,6 @@ EditorPrefsChangedCallback(const char *aPrefName, void *)
                                                  0);
 #endif
   }
-  return 0;
 }
 
 // static
@@ -1380,8 +1379,8 @@ nsPlaintextEditor::InsertAsQuotation(const nsAString& aQuotedText,
 
   // It's best to put a blank line after the quoted text so that mails
   // written without thinking won't be so ugly.
-  if (!aQuotedText.IsEmpty() && (aQuotedText.Last() != PRUnichar('\n')))
-    quotedStuff.Append(PRUnichar('\n'));
+  if (!aQuotedText.IsEmpty() && (aQuotedText.Last() != char16_t('\n')))
+    quotedStuff.Append(char16_t('\n'));
 
   // get selection
   nsRefPtr<Selection> selection = GetSelection();

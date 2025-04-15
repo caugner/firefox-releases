@@ -53,7 +53,7 @@ input {
   /* The sum of border-top, border-bottom, padding-top, padding-bottom
      must be the same here, for buttons, and for <select> (including its
      internal padding magic) */
-  padding: 1px 0 1px 0;
+  padding: 1px;
   border: 2px inset ThreeDFace;
   background-color: -moz-Field;
   color: -moz-FieldText;
@@ -69,6 +69,7 @@ input {
   text-indent: 0;
   -moz-user-select: text;
   text-shadow: none;
+  overflow-clip-box: content-box;
 }
 
 input > .anonymous-div,
@@ -86,9 +87,8 @@ input::-moz-placeholder {
 
   /* Make sure that the location bar's alignment in RTL mode changes according
      to the input box direction if the user switches the text direction using
-     cmd_switchTextDirection (which applies a dir attribute to the input box's
-     anonymous div). */
-  input.uri-element-right-align:-moz-locale-dir(rtl) > .anonymous-div[dir=ltr] {
+     cmd_switchTextDirection (which applies a dir attribute to the <input>). */
+  input.uri-element-right-align[dir=ltr]:-moz-locale-dir(rtl) {
     text-align: left !important;
   }
 }
@@ -96,6 +96,8 @@ input::-moz-placeholder {
 textarea {
   margin: 1px 0 1px 0;
   border: 2px inset ThreeDFace;
+  /* The 1px horizontal padding is for parity with Win/IE */
+  padding: 0px 1px;
   background-color: -moz-Field;
   color: -moz-FieldText;
   font: medium -moz-fixed;
@@ -113,6 +115,7 @@ textarea {
   -moz-user-select: text;
   text-shadow: none;
   word-wrap: break-word;
+  overflow-clip-box: content-box;
 }
 
 textarea > scrollbar {
@@ -126,12 +129,7 @@ textarea::-moz-placeholder {
   white-space: pre;
   overflow: auto;
   border: 0px !important;
-  /*
-   * The 1px horizontal padding is for parity with Win/IE.
-   * We need to mark it !important to make sure it can't be changed on the
-   * placeholder.
-   */
-  padding: 0px 1px !important;
+  padding: inherit !important;
   margin: 0px;
   text-decoration: inherit;
   -moz-text-decoration-color: inherit;
@@ -139,6 +137,7 @@ textarea::-moz-placeholder {
   display: inline-block;
   ime-mode: inherit;
   resize: inherit;
+  overflow-clip-box: inherit;
 }
 
 textarea > .anonymous-div.wrap,
@@ -209,6 +208,7 @@ select {
   text-shadow: none;
   /* No text-decoration reaching inside, by default */
   display: inline-block;
+  page-break-inside: avoid;
 }
 
 /* Need the "select[size][multiple]" selector to override the settings on
@@ -416,6 +416,7 @@ input[type="file"] {
   display: inline-block;
   white-space: nowrap;
   overflow: hidden;
+  overflow-clip-box: padding-box;
   color: inherit;
 
   /* Revert rules which apply on all inputs. */
@@ -571,6 +572,7 @@ input[type="submit"] {
   white-space: pre;
   text-align: center;
   text-shadow: none;
+  overflow-clip-box: padding-box;
 }
 
 input[type="color"]:-moz-system-metric(color-picker-available) {
@@ -885,15 +887,9 @@ input[type=range]::-moz-range-thumb {
   -moz-user-select: none ! important;
 }
 
-/* the pref doesn't work properly in v28 - we just disable this on non-mobile */
-%if defined(ANDROID) || defined(MOZ_WIDGET_GONK)
-input[type="number"] {
-  -moz-appearance: number-input;
-  /* Has to revert some properties applied by the generic input rule. */
-  -moz-binding: none;
-  width: 149px; /* to match type=text */
-}
-%endif
+/* As a temporary workaround until bug 677302 the rule for input[type=number]
+ * has moved to number-control.css
+ */
 
 input[type=number]::-moz-number-wrapper {
   /* Prevent styling that would change the type of frame we construct. */

@@ -54,9 +54,12 @@ function shouldLoadURI(aURI) {
 
 function resolveURIInternal(aCmdLine, aArgument) {
   var uri = aCmdLine.resolveURI(aArgument);
+  var urifixup = Components.classes["@mozilla.org/docshell/urifixup;1"]
+                           .getService(nsIURIFixup);
 
   if (!(uri instanceof nsIFileURL)) {
-    return uri;
+    return urifixup.createFixupURI(aArgument,
+                                   urifixup.FIXUP_FLAG_FIX_SCHEME_TYPOS);
   }
 
   try {
@@ -71,9 +74,6 @@ function resolveURIInternal(aCmdLine, aArgument) {
   // doesn't exist. Try URI fixup heuristics: see bug 290782.
  
   try {
-    var urifixup = Components.classes["@mozilla.org/docshell/urifixup;1"]
-                             .getService(nsIURIFixup);
-
     uri = urifixup.createFixupURI(aArgument, 0);
   }
   catch (e) {
@@ -479,11 +479,22 @@ nsBrowserContentHandler.prototype = {
     }
     if (cmdLine.handleFlag("silent", false))
       cmdLine.preventDefault = true;
-    if (cmdLine.handleFlag("private-window", false)) {
-      openWindow(null, this.chromeURL, "_blank",
-        "chrome,dialog=no,private,all" + this.getFeatures(cmdLine),
-        "about:privatebrowsing");
-      cmdLine.preventDefault = true;
+
+    try {
+      var privateWindowParam = cmdLine.handleFlagWithParam("private-window", false);
+      if (privateWindowParam) {
+        var uri = resolveURIInternal(cmdLine, privateWindowParam);
+        handURIToExistingBrowser(uri, nsIBrowserDOMWindow.OPEN_NEWTAB, cmdLine, true);
+        cmdLine.preventDefault = true;
+      }
+    } catch (e if e.result == Components.results.NS_ERROR_INVALID_ARG) {
+      // NS_ERROR_INVALID_ARG is thrown when flag exists, but has no param.
+      if (cmdLine.handleFlag("private-window", false)) {
+        openWindow(null, this.chromeURL, "_blank",
+          "chrome,dialog=no,private,all" + this.getFeatures(cmdLine),
+          "about:privatebrowsing");
+        cmdLine.preventDefault = true;
+      }
     }
 
     var searchParam = cmdLine.handleFlagWithParam("search", false);
@@ -562,6 +573,8 @@ nsBrowserContentHandler.prototype = {
       } catch (ex) {}
       let override = needHomepageOverride(prefb);
       if (override != OVERRIDE_NONE) {
+        let locale = "en-US";
+
         switch (override) {
           case OVERRIDE_NEW_PROFILE:
             // New profile.
@@ -578,11 +591,45 @@ nsBrowserContentHandler.prototype = {
             willRestoreSession = ss.isAutomaticRestoreEnabled();
 
             overridePage = Services.urlFormatter.formatURLPref("startup.homepage_override_url");
+
+#if MOZ_UPDATE_CHANNEL == aurora
+            // Temporary Australis whatsnew page for Aurora (bug 966014)
+            try {
+              locale = Services.prefs.getCharPref("general.useragent.locale");
+            } catch (e) {}
+
+            if (locale == "en-US") {
+              let url = "https://www.mozilla.org/%LOCALE%/firefox/%VERSION%/whatsnew/?oldversion=%OLD_VERSION%";
+              overridePage = Services.urlFormatter.formatURL(url);
+            }
+#endif
+
             if (prefb.prefHasUserValue("app.update.postupdate"))
               overridePage = getPostUpdateOverridePage(overridePage);
 
             overridePage = overridePage.replace("%OLD_VERSION%", old_mstone);
             break;
+
+#if MOZ_UPDATE_CHANNEL == aurora
+          case OVERRIDE_NEW_BUILD_ID:
+            try {
+              locale = Services.prefs.getCharPref("general.useragent.locale");
+            } catch (e) {}
+
+            let showedAustralisWhatsNew = false;
+            try {
+              showedAustralisWhatsNew = Services.prefs.
+                getBoolPref("browser.showedAustralisWhatsNew");
+            } catch (e) {}
+
+            // Show the Australis survey page for en-US if we haven't shown it.
+            if (!showedAustralisWhatsNew && locale == "en-US") {
+              Services.prefs.setBoolPref("browser.showedAustralisWhatsNew", true);
+              overridePage = "https://www.mozilla.org/en-US/firefox/aurora/up-to-date/"
+            }
+
+            break;
+#endif
         }
       }
     } catch (ex) {}
@@ -685,19 +732,22 @@ nsBrowserContentHandler.prototype = {
 };
 var gBrowserContentHandler = new nsBrowserContentHandler();
 
-function handURIToExistingBrowser(uri, location, cmdLine)
+function handURIToExistingBrowser(uri, location, cmdLine, forcePrivate)
 {
   if (!shouldLoadURI(uri))
     return;
 
-  // Do not open external links in private windows, unless we're in perma-private mode
-  var allowPrivate = PrivateBrowsingUtils.permanentPrivateBrowsing;
+  // Unless using a private window is forced, open external links in private
+  // windows only if we're in perma-private mode.
+  var allowPrivate = forcePrivate || PrivateBrowsingUtils.permanentPrivateBrowsing;
   var navWin = RecentWindow.getMostRecentBrowserWindow({private: allowPrivate});
   if (!navWin) {
     // if we couldn't load it in an existing window, open a new one
-    openWindow(null, gBrowserContentHandler.chromeURL, "_blank",
-               "chrome,dialog=no,all" + gBrowserContentHandler.getFeatures(cmdLine),
-               uri.spec);
+    var features = "chrome,dialog=no,all" + gBrowserContentHandler.getFeatures(cmdLine);
+    if (forcePrivate) {
+      features += ",private";
+    }
+    openWindow(null, gBrowserContentHandler.chromeURL, "_blank", features, uri.spec);
     return;
   }
 

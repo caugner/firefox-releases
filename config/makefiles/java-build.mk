@@ -30,20 +30,23 @@ classes.dex: $(JAVAFILES)
 	$(DX) --dex --output=$@ classes $(ANDROID_EXTRA_JARS)
 
 # R.java and $(ANDROID_APK_NAME).ap_ are both produced by aapt.  To
-# save an aapt invocation, we produce them both at the same time.
+# save an aapt invocation, we produce them both at the same time.  The
+# trailing semi-colon defines an empty recipe; defining no recipe at
+# all causes Make to treat the target differently, in a way that
+# defeats our dependencies.
 
-R.java: .aapt.deps
-$(ANDROID_APK_NAME).ap_: .aapt.deps
+R.java: .aapt.deps ;
+$(ANDROID_APK_NAME).ap_: .aapt.deps ;
 
 # This uses the fact that Android resource directories list all
 # resource files one subdirectory below the parent resource directory.
 android_res_files := $(wildcard $(addsuffix /*,$(wildcard $(addsuffix /*,$(android_res_dirs)))))
 
 .aapt.deps: AndroidManifest.xml $(android_res_files) $(wildcard $(ANDROID_ASSETS_DIR))
+	@$(TOUCH) $@
 	$(AAPT) package -f -M $< -I $(ANDROID_SDK)/android.jar $(_ANDROID_RES_FLAG) $(_ANDROID_ASSETS_FLAG) \
 		-J ${@D} \
 		-F $(ANDROID_APK_NAME).ap_
-	@$(TOUCH) $@
 
 $(ANDROID_APK_NAME)-unsigned-unaligned.apk: $(ANDROID_APK_NAME).ap_ classes.dex
 	cp $< $@
@@ -83,9 +86,17 @@ ifdef JAVA_JAR_TARGETS #{
 # Arg 3: List of extra jars to link against.  We do not use VPATH so
 #        jars must be relative to $(CURDIR).
 # Arg 4: Additional JAVAC_FLAGS.
+
+# Note: Proguard fails when stale .class files corresponding to
+# removed inner classes are present in the object directory.  These
+# stale class files get packaged into the .jar file, which then gets
+# processed by Proguard.  To work around this, we always delete any
+# existing jarfile-classes directory and start fresh.
+
 define java_jar_template
 $(1): $(2) $(3)
 	$$(REPORT_BUILD)
+	@$$(RM) -rf $(1:.jar=)-classes
 	@$$(NSINSTALL) -D $(1:.jar=)-classes
 	@$$(if $$(filter-out .,$$(@D)),$$(NSINSTALL) -D $$(@D))
 	$$(JAVAC) $$(JAVAC_FLAGS)\

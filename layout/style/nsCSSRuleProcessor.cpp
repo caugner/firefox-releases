@@ -81,7 +81,7 @@ struct RuleSelectorPair {
 };
 
 #define NS_IS_ANCESTOR_OPERATOR(ch) \
-  ((ch) == PRUnichar(' ') || (ch) == PRUnichar('>'))
+  ((ch) == char16_t(' ') || (ch) == char16_t('>'))
 
 /**
  * A struct representing a particular rule in an ordered list of rules
@@ -1243,27 +1243,6 @@ InitSystemMetrics()
   }
 #endif
 
-  // os version metrics, currently only defined for Windows.
-  if (NS_SUCCEEDED(
-        LookAndFeel::GetInt(LookAndFeel::eIntID_OperatingSystemVersionIdentifier,
-                            &metricResult))) {
-    switch(metricResult) {
-      case LookAndFeel::eOperatingSystemVersion_WindowsXP:
-        sSystemMetrics->AppendElement(nsGkAtoms::windows_version_xp);
-        break;
-      case LookAndFeel::eOperatingSystemVersion_WindowsVista:
-        sSystemMetrics->AppendElement(nsGkAtoms::windows_version_vista);
-        break;
-      case LookAndFeel::eOperatingSystemVersion_Windows7:
-        sSystemMetrics->AppendElement(nsGkAtoms::windows_version_win7);
-        break;
-      case LookAndFeel::eOperatingSystemVersion_Windows8:
-        sSystemMetrics->AppendElement(nsGkAtoms::windows_version_win8);
-        break;
-      // don't add anything for future versions
-    }
-  }
-
   return true;
 }
 
@@ -1404,7 +1383,7 @@ static bool ValueIncludes(const nsSubstring& aValueList,
                             const nsSubstring& aValue,
                             const nsStringComparator& aComparator)
 {
-  const PRUnichar *p = aValueList.BeginReading(),
+  const char16_t *p = aValueList.BeginReading(),
               *p_end = aValueList.EndReading();
 
   while (p < p_end) {
@@ -1412,13 +1391,13 @@ static bool ValueIncludes(const nsSubstring& aValueList,
     while (p != p_end && nsContentUtils::IsHTMLWhitespace(*p))
       ++p;
 
-    const PRUnichar *val_start = p;
+    const char16_t *val_start = p;
 
     // look for space or end
     while (p != p_end && !nsContentUtils::IsHTMLWhitespace(*p))
       ++p;
 
-    const PRUnichar *val_end = p;
+    const char16_t *val_end = p;
 
     if (val_start < val_end &&
         aValue.Equals(Substring(val_start, val_end), aComparator))
@@ -1627,7 +1606,7 @@ static const nsEventStates sPseudoClassStates[] = {
   nsEventStates(),
   nsEventStates()
 };
-static_assert(NS_ARRAY_LENGTH(sPseudoClassStates) ==
+static_assert(MOZ_ARRAY_LENGTH(sPseudoClassStates) ==
               nsCSSPseudoClasses::ePseudoClass_NotPseudoClass + 1,
               "ePseudoClass_NotPseudoClass is no longer at the end of"
               "sPseudoClassStates");
@@ -1892,7 +1871,7 @@ static bool SelectorMatches(Element* aElement,
             int32_t begin = 0;
             int32_t len = language.Length();
             while (begin < len) {
-              int32_t end = language.FindChar(PRUnichar(','), begin);
+              int32_t end = language.FindChar(char16_t(','), begin);
               if (end == kNotFound) {
                 end = len;
               }
@@ -2298,7 +2277,7 @@ static bool SelectorMatches(Element* aElement,
 //   '~', the indirect adjacent sibling combinator, is greedy
 //   '+' and '>', the direct adjacent sibling and child combinators, are not
 #define NS_IS_GREEDY_OPERATOR(ch) \
-  ((ch) == PRUnichar(' ') || (ch) == PRUnichar('~'))
+  ((ch) == char16_t(' ') || (ch) == char16_t('~'))
 
 static bool SelectorMatchesTree(Element* aPrevElement,
                                   nsCSSSelector* aSelector,
@@ -2310,7 +2289,7 @@ static bool SelectorMatchesTree(Element* aPrevElement,
   Element* prevElement = aPrevElement;
   while (selector) { // check compound selectors
     NS_ASSERTION(!selector->mNext ||
-                 selector->mNext->mOperator != PRUnichar(0),
+                 selector->mNext->mOperator != char16_t(0),
                  "compound selector without combinator");
 
     // If after the previous selector match we are now outside the
@@ -2323,8 +2302,8 @@ static bool SelectorMatchesTree(Element* aPrevElement,
     // for adjacent sibling combinators, the content to test against the
     // selector is the previous sibling *element*
     Element* element = nullptr;
-    if (PRUnichar('+') == selector->mOperator ||
-        PRUnichar('~') == selector->mOperator) {
+    if (char16_t('+') == selector->mOperator ||
+        char16_t('~') == selector->mOperator) {
       // The relevant link must be an ancestor of the node being matched.
       aLookForRelevantLink = false;
       nsIContent* parent = prevElement->GetParent();
@@ -2332,14 +2311,7 @@ static bool SelectorMatchesTree(Element* aPrevElement,
         if (aTreeMatchContext.mForStyling)
           parent->SetFlags(NODE_HAS_SLOW_SELECTOR_LATER_SIBLINGS);
 
-        int32_t index = parent->IndexOf(prevElement);
-        while (0 <= --index) {
-          nsIContent* content = parent->GetChildAt(index);
-          if (content->IsElement()) {
-            element = content->AsElement();
-            break;
-          }
-        }
+        element = prevElement->GetPreviousElementSibling();
       }
     }
     // for descendant combinators and child combinators, the element
@@ -2463,6 +2435,19 @@ void ContentEnumFunc(const RuleValue& value, nsCSSSelector* aSelector,
   if (selector->IsPseudoElement()) {
     PseudoElementRuleProcessorData* pdata =
       static_cast<PseudoElementRuleProcessorData*>(data);
+    if (!pdata->mPseudoElement && selector->mPseudoClassList) {
+      // We can get here when calling getComputedStyle(aElt, aPseudo) if:
+      //
+      //   * aPseudo is a pseudo-element that supports a user action
+      //     pseudo-class, like "::-moz-placeholder";
+      //   * there is a style rule that uses a pseudo-class on this
+      //     pseudo-element in the document, like ::-moz-placeholder:hover; and
+      //   * aElt does not have such a pseudo-element.
+      //
+      // We know that the selector can't match, since there is no element for
+      // the user action pseudo-class to match against.
+      return;
+    }
     if (!StateSelectorMatches(pdata->mPseudoElement, aSelector, nodeContext,
                               data->mTreeMatchContext)) {
       return;
@@ -2556,13 +2541,13 @@ nsCSSRuleProcessor::RulesMatching(XULTreeRuleProcessorData* aData)
 }
 #endif
 
-static inline nsRestyleHint RestyleHintForOp(PRUnichar oper)
+static inline nsRestyleHint RestyleHintForOp(char16_t oper)
 {
-  if (oper == PRUnichar('+') || oper == PRUnichar('~')) {
+  if (oper == char16_t('+') || oper == char16_t('~')) {
     return eRestyle_LaterSiblings;
   }
 
-  if (oper != PRUnichar(0)) {
+  if (oper != char16_t(0)) {
     return eRestyle_Subtree;
   }
 

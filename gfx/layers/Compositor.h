@@ -104,12 +104,12 @@
  */
 
 class nsIWidget;
-struct gfxMatrix;
 struct nsIntSize;
 class nsIntRegion;
 
 namespace mozilla {
 namespace gfx {
+class Matrix;
 class Matrix4x4;
 class DrawTarget;
 }
@@ -329,7 +329,7 @@ public:
    */
   virtual void BeginFrame(const nsIntRegion& aInvalidRegion,
                           const gfx::Rect* aClipRectIn,
-                          const gfxMatrix& aTransform,
+                          const gfx::Matrix& aTransform,
                           const gfx::Rect& aRenderBounds,
                           gfx::Rect* aClipRectOut = nullptr,
                           gfx::Rect* aRenderBoundsOut = nullptr) = 0;
@@ -344,7 +344,7 @@ public:
    * e.g., by Composer2D.
    * aTransform is the transform from user space to window space.
    */
-  virtual void EndFrameForExternalComposition(const gfxMatrix& aTransform) = 0;
+  virtual void EndFrameForExternalComposition(const gfx::Matrix& aTransform) = 0;
 
   /**
    * Tidy up if BeginFrame has been called, but EndFrame won't be.
@@ -362,7 +362,7 @@ public:
    * coordinate space.
    */
   virtual void PrepareViewport(const gfx::IntSize& aSize,
-                               const gfxMatrix& aWorldTransform) = 0;
+                               const gfx::Matrix& aWorldTransform) = 0;
 
   /**
    * Whether textures created by this compositor can receive partial updates.
@@ -436,13 +436,6 @@ public:
   // XXX I expect we will want to move mWidget into this class and implement
   // these methods properly.
   virtual nsIWidget* GetWidget() const { return nullptr; }
-  virtual const nsIntSize& GetWidgetSize() = 0;
-
-  // Call before and after any rendering not done by this compositor but which
-  // might affect the compositor's internal state or the state of any APIs it
-  // uses. For example, internal GL state.
-  virtual void SaveState() {}
-  virtual void RestoreState() {}
 
   /**
    * Debug-build assertion that can be called to ensure code is running on the

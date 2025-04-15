@@ -20,6 +20,7 @@ EXPORTS += [
     'gfxFont.h',
     'gfxFontConstants.h',
     'gfxFontFeatures.h',
+    'gfxFontInfoLoader.h',
     'gfxFontTest.h',
     'gfxFontUtils.h',
     'gfxGradientCache.h',
@@ -103,6 +104,7 @@ elif CONFIG['MOZ_WIDGET_GTK']:
     EXPORTS += [
         'gfxFT2FontBase.h',
         'gfxGdkNativeRenderer.h',
+        'gfxPangoFonts.h',
         'gfxPDFSurface.h',
         'gfxPlatformGtk.h',
         'gfxPSSurface.h',
@@ -113,6 +115,7 @@ elif CONFIG['MOZ_WIDGET_GTK']:
         'gfxFT2FontBase.cpp',
         'gfxFT2Utils.cpp',
         'gfxGdkNativeRenderer.cpp',
+        'gfxPangoFonts.cpp',
         'gfxPDFSurface.cpp',
         'gfxPlatformGtk.cpp',
         'gfxPSSurface.cpp',
@@ -129,16 +132,6 @@ elif CONFIG['MOZ_WIDGET_GTK']:
             'gfxXlibSurface.cpp',
         ]
 
-    if CONFIG['MOZ_PANGO']:
-        EXPORTS += ['gfxPangoFonts.h']
-        SOURCES += [
-            'gfxPangoFonts.cpp',
-        ]
-    else:
-        EXPORTS += ['gfxFT2Fonts.h']
-        SOURCES += [
-            'gfxPangoFonts.cpp',
-        ]
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'os2':
     EXPORTS += [
         'gfxOS2Fonts.h',
@@ -157,6 +150,7 @@ elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'os2':
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'qt':
     EXPORTS += [
         'gfxFT2FontBase.h',
+        'gfxPangoFonts.h',
         'gfxPDFSurface.h',
         'gfxQPainterSurface.h',
         'gfxQtNativeRenderer.h',
@@ -166,6 +160,7 @@ elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'qt':
         'gfxFontconfigUtils.cpp',
         'gfxFT2FontBase.cpp',
         'gfxFT2Utils.cpp',
+        'gfxPangoFonts.cpp',
         'gfxPDFSurface.cpp',
         'gfxQPainterSurface.cpp',
         'gfxQtPlatform.cpp',
@@ -181,16 +176,6 @@ elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'qt':
             'gfxXlibSurface.cpp',
         ]
 
-    if CONFIG['MOZ_PANGO']:
-        EXPORTS += ['gfxPangoFonts.h']
-        SOURCES += [
-            'gfxPangoFonts.cpp',
-        ]
-    else:
-        EXPORTS += ['gfxFT2Fonts.h']
-        SOURCES += [
-            'gfxFT2Fonts.cpp',
-        ]
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
     EXPORTS += [
         'gfxD2DSurface.h',
@@ -260,6 +245,7 @@ UNIFIED_SOURCES += [
     'gfxCachedTempSurface.cpp',
     'gfxContext.cpp',
     'gfxFontFeatures.cpp',
+    'gfxFontInfoLoader.cpp',
     'gfxFontMissingGlyphs.cpp',
     'gfxFontTest.cpp',
     'gfxGradientCache.cpp',
@@ -317,7 +303,6 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android':
     # top of the android java runtime.
     DEFINES['MOZ_USING_ANDROID_JAVA_WIDGETS'] = True
 
-DEFINES['MOZ_OTS_REPORT_ERRORS'] = True
 DEFINES['GRAPHITE2_STATIC'] = True
 
 if CONFIG['OS_TARGET'] == 'WINNT':

@@ -110,10 +110,12 @@ const DownloadsButton = {
 
     indicator.open = this._anchorRequested;
 
-    // Determine if we're located on an invisible toolbar.
-    if (!isElementVisible(indicator.parentNode)) {
-      return null;
-    }
+    let widget = CustomizableUI.getWidget("downloads-button")
+                               .forWindow(window);
+     // Determine if the indicator is located on an invisible toolbar.
+     if (!isElementVisible(indicator.parentNode) && !widget.overflowed) {
+       return null;
+     }
 
     return DownloadsIndicatorView.indicatorAnchor;
   },
@@ -296,6 +298,19 @@ const DownloadsIndicatorView = {
   _notificationTimeout: null,
 
   /**
+   * Check if the panel containing aNode is open.
+   * @param aNode
+   *        the node whose panel we're interested in.
+   */
+  _isAncestorPanelOpen: function DIV_isAncestorPanelOpen(aNode)
+  {
+    while (aNode && aNode.localName != "panel") {
+      aNode = aNode.parentNode;
+    }
+    return aNode && aNode.state == "open";
+  },
+
+  /**
    * If the status indicator is visible in its assigned position, shows for a
    * brief time a visual notification of a relevant event, like a new download.
    *
@@ -317,10 +332,22 @@ const DownloadsIndicatorView = {
       return;
     }
 
-    // If the anchor is not there or its container is hidden, don't show
-    // a notification
     let anchor = DownloadsButton._placeholder;
+    let widgetGroup = CustomizableUI.getWidget("downloads-button");
+    let widget = widgetGroup.forWindow(window);
+    if (widget.overflowed || widgetGroup.areaType == CustomizableUI.TYPE_MENU_PANEL) {
+      if (anchor && this._isAncestorPanelOpen(anchor)) {
+        // If the containing panel is open, don't do anything, because the
+        // notification would appear under the open panel. See
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=984023
+        return;
+      }
+
+      // Otherwise, try to use the anchor of the panel:
+      anchor = widget.anchor;
+    }
     if (!anchor || !isElementVisible(anchor.parentNode)) {
+      // Our container isn't visible, so can't show the animation:
       return;
     }
 
@@ -481,7 +508,14 @@ const DownloadsIndicatorView = {
 
   onCommand: function DIV_onCommand(aEvent)
   {
-    DownloadsPanel.showPanel();
+    // If the downloads button is in the menu panel, open the Library
+    let widgetGroup = CustomizableUI.getWidget("downloads-button");
+    if (widgetGroup.areaType == CustomizableUI.TYPE_MENU_PANEL) {
+      DownloadsPanel.showDownloadsHistory();
+    } else {
+      DownloadsPanel.showPanel();
+    }
+
     aEvent.stopPropagation();
   },
 
@@ -512,7 +546,6 @@ const DownloadsIndicatorView = {
   },
 
   _indicator: null,
-  _indicatorAnchor: null,
   __indicatorCounter: null,
   __indicatorProgress: null,
 
@@ -536,8 +569,12 @@ const DownloadsIndicatorView = {
 
   get indicatorAnchor()
   {
-    return this._indicatorAnchor ||
-      (this._indicatorAnchor = document.getElementById("downloads-indicator-anchor"));
+    let widget = CustomizableUI.getWidget("downloads-button")
+                               .forWindow(window);
+    if (widget.overflowed) {
+      return widget.anchor;
+    }
+    return document.getElementById("downloads-indicator-anchor");
   },
 
   get _indicatorCounter()
@@ -560,7 +597,6 @@ const DownloadsIndicatorView = {
 
   _onCustomizedAway: function() {
     this._indicator = null;
-    this._indicatorAnchor = null;
     this.__indicatorCounter = null;
     this.__indicatorProgress = null;
   },

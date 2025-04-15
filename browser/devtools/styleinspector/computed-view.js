@@ -13,6 +13,7 @@ let promise = require("sdk/core/promise");
 let {EventEmitter} = require("devtools/shared/event-emitter");
 const {OutputParser} = require("devtools/output-parser");
 const {Tooltip} = require("devtools/shared/widgets/Tooltip");
+const {PrefObserver, PREF_ORIG_SOURCES} = require("devtools/styleeditor/utils");
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/PluralForm.jsm");
@@ -25,6 +26,7 @@ const FILTER_CHANGED_TIMEOUT = 300;
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
+
 
 /**
  * Helper for long-running processes that should yield occasionally to
@@ -168,6 +170,11 @@ function CssHtmlTree(aStyleInspector, aPageStyle)
   this._handlePrefChange = this._handlePrefChange.bind(this);
   gDevTools.on("pref-changed", this._handlePrefChange);
 
+  // Refresh panel when pref for showing original sources changes
+  this._updateSourceLinks = this._updateSourceLinks.bind(this);
+  this._prefObserver = new PrefObserver("devtools.");
+  this._prefObserver.on(PREF_ORIG_SOURCES, this._updateSourceLinks);
+
   CssHtmlTree.processTemplate(this.templateRoot, this.root, this);
 
   // The element that we're inspecting, and the document that it comes from.
@@ -268,7 +275,8 @@ CssHtmlTree.prototype = {
   },
 
   _handlePrefChange: function(event, data) {
-    if (data.pref == "devtools.defaultColorUnit" && this._computed) {
+    if (this._computed && (data.pref == "devtools.defaultColorUnit" ||
+        data.pref == PREF_ORIG_SOURCES)) {
       this.refreshPanel();
     }
   },
@@ -294,6 +302,8 @@ CssHtmlTree.prototype = {
       }
       return promise.resolve(undefined);
     }
+
+    this.tooltip.hide();
 
     if (aElement === this.viewedElement) {
       return promise.resolve(undefined);
@@ -387,9 +397,6 @@ CssHtmlTree.prototype = {
         onItem: (aPropView) => {
           aPropView.refresh();
         },
-        onCancel: () => {
-          deferred.reject("refresh cancelled");
-        },
         onDone: () => {
           this._refreshProcess = null;
           this.noResults.hidden = this.numVisibleProperties > 0;
@@ -445,6 +452,13 @@ CssHtmlTree.prototype = {
     this._sourceFilter = this.includeBrowserStyles ?
                                  CssLogic.FILTER.UA :
                                  CssLogic.FILTER.USER;
+  },
+
+  _updateSourceLinks: function CssHtmlTree__updateSourceLinks()
+  {
+    for (let propView of this.propertyViews) {
+      propView.updateSourceLinks();
+    }
   },
 
   /**
@@ -505,21 +519,27 @@ CssHtmlTree.prototype = {
    */
   _buildTooltipContent: function(target)
   {
-    // If the hovered element is not a property view and is not a background
-    // image, then don't show a tooltip
-    let isPropertyValue = target.classList.contains("property-value");
-    if (!isPropertyValue) {
-      return false;
-    }
-    let propName = target.parentNode.querySelector(".property-name");
-    let isBackgroundImage = propName.textContent === "background-image";
-    if (!isBackgroundImage) {
-      return false;
+    // Test for image url
+    if (target.classList.contains("theme-link")) {
+      let propValue = target.parentNode;
+      let propName = propValue.parentNode.querySelector(".property-name");
+      if (propName.textContent === "background-image") {
+        this.tooltip.setCssBackgroundImageContent(propValue.textContent);
+        return true;
+      }
     }
 
-    // Fill some content
-    this.tooltip.setCssBackgroundImageContent(target.textContent);
-    return true;
+    // Test for css transform
+    if (target.classList.contains("property-value")) {
+      let def = promise.defer();
+      let propValue = target;
+      let propName = target.parentNode.querySelector(".property-name");
+      if (propName.textContent === "transform") {
+        this.tooltip.setCssTransformContent(propValue.textContent,
+          this.pageStyle, this.viewedElement).then(def.resolve);
+        return def.promise;
+      }
+    }
   },
 
   /**
@@ -547,6 +567,13 @@ CssHtmlTree.prototype = {
       command: this._onCopy
     });
 
+    // Show Original Sources
+    this.menuitemSources= createMenuItem(this._contextmenu, {
+      label: "ruleView.contextmenu.showOrigSources",
+      accesskey: "ruleView.contextmenu.showOrigSources.accessKey",
+      command: this._onToggleOrigSources
+    });
+
     let popupset = doc.documentElement.querySelector("popupset");
     if (!popupset) {
       popupset = doc.createElementNS(XUL_NS, "popupset");
@@ -564,6 +591,17 @@ CssHtmlTree.prototype = {
     let win = this.styleDocument.defaultView;
     let disable = win.getSelection().isCollapsed;
     this.menuitemCopy.disabled = disable;
+
+    let label = "ruleView.contextmenu.showOrigSources";
+    if (Services.prefs.getBoolPref(PREF_ORIG_SOURCES)) {
+      label = "ruleView.contextmenu.showCSSSources";
+    }
+    this.menuitemSources.setAttribute("label",
+                                      CssHtmlTree.l10n(label));
+
+    let accessKey = label + ".accessKey";
+    this.menuitemSources.setAttribute("accesskey",
+                                      CssHtmlTree.l10n(accessKey));
   },
 
   /**
@@ -651,6 +689,15 @@ CssHtmlTree.prototype = {
   },
 
   /**
+   *  Toggle the original sources pref.
+   */
+  _onToggleOrigSources: function()
+  {
+    let isEnabled = Services.prefs.getBoolPref(PREF_ORIG_SOURCES);
+    Services.prefs.setBoolPref(PREF_ORIG_SOURCES, !isEnabled);
+  },
+
+  /**
    * Destructor for CssHtmlTree.
    */
   destroy: function CssHtmlTree_destroy()
@@ -663,6 +710,9 @@ CssHtmlTree.prototype = {
       this.includeBrowserStylesChanged);
     this.searchField.removeEventListener("command", this.filterChanged);
     gDevTools.off("pref-changed", this._handlePrefChange);
+
+    this._prefObserver.off(PREF_ORIG_SOURCES, this._updateSourceLinks);
+    this._prefObserver.destroy();
 
     // Cancel tree construction
     if (this._createViewsProcess) {
@@ -1036,6 +1086,20 @@ PropertyView.prototype = {
   },
 
   /**
+   * Update all the selector source links to reflect whether we're linking to
+   * original sources (e.g. Sass files).
+   */
+  updateSourceLinks: function PropertyView_updateSourceLinks()
+  {
+    if (!this._matchedSelectorViews) {
+      return;
+    }
+    for (let view of this._matchedSelectorViews) {
+      view.updateSourceLink();
+    }
+  },
+
+  /**
    * The action when a user expands matched selectors.
    *
    * @param {Event} aEvent Used to determine the class name of the targets click
@@ -1092,14 +1156,7 @@ function SelectorView(aTree, aSelectorInfo)
   this.selectorInfo = aSelectorInfo;
   this._cacheStatusNames();
 
-  let rule = this.selectorInfo.rule;
-  if (rule && rule.parentStyleSheet) {
-    this.sheet = rule.parentStyleSheet;
-    this.source = CssLogic.shortSource(this.sheet) + ":" + rule.line;
-  } else {
-    this.source = CssLogic.l10n("rule.sourceElement");
-    this.href = "#";
-  }
+  this.updateSourceLink();
 }
 
 /**
@@ -1195,6 +1252,64 @@ SelectorView.prototype = {
     return frag;
   },
 
+  /**
+   * Update the text of the source link to reflect whether we're showing
+   * original sources or not.
+   */
+  updateSourceLink: function()
+  {
+    this.updateSource().then((oldSource) => {
+      if (oldSource != this.source && this.tree.propertyContainer) {
+        let selector = '[sourcelocation="' + oldSource + '"]';
+        let link = this.tree.propertyContainer.querySelector(selector);
+        if (link) {
+          link.textContent = this.source;
+          link.setAttribute("sourcelocation", this.source);
+        }
+      }
+    });
+  },
+
+  /**
+   * Update the 'source' store based on our original sources preference.
+   */
+  updateSource: function()
+  {
+    let rule = this.selectorInfo.rule;
+    this.sheet = rule.parentStyleSheet;
+
+    if (!rule || !this.sheet) {
+      let oldSource = this.source;
+      this.source = CssLogic.l10n("rule.sourceElement");
+      this.href = "#";
+      return promise.resolve(oldSource);
+    }
+
+    let showOrig = Services.prefs.getBoolPref(PREF_ORIG_SOURCES);
+
+    if (showOrig && rule.type != ELEMENT_STYLE) {
+      let deferred = promise.defer();
+
+      // set as this first so we show something while we're fetching
+      this.source = CssLogic.shortSource(this.sheet) + ":" + rule.line;
+
+      rule.getOriginalLocation().then(({href, line, column}) => {
+        let oldSource = this.source;
+        this.source = CssLogic.shortSource({href: href}) + ":" + line;
+        deferred.resolve(oldSource);
+      });
+
+      return deferred.promise;
+    }
+
+    let oldSource = this.source;
+    this.source = CssLogic.shortSource(this.sheet) + ":" + rule.line;
+    return promise.resolve(oldSource);
+  },
+
+  /**
+   * Open the style editor if the RETURN key was pressed.
+   */
   maybeOpenStyleEditor: function(aEvent)
   {
     let keyEvent = Ci.nsIDOMKeyEvent;
@@ -1217,37 +1332,42 @@ SelectorView.prototype = {
   {
     let inspector = this.tree.styleInspector.inspector;
     let rule = this.selectorInfo.rule;
-    let line = rule.line || 0;
 
     // The style editor can only display stylesheets coming from content because
     // chrome stylesheets are not listed in the editor's stylesheet selector.
     //
     // If the stylesheet is a content stylesheet we send it to the style
     // editor else we display it in the view source window.
-    //
-
-    let href = rule.href;
     let sheet = rule.parentStyleSheet;
-    if (sheet && href && !sheet.isSystem) {
+    if (!sheet || sheet.isSystem) {
+      let contentDoc = null;
+      if (this.tree.viewedElement.isLocal_toBeDeprecated()) {
+        let rawNode = this.tree.viewedElement.rawNode();
+        if (rawNode) {
+          contentDoc = rawNode.ownerDocument;
+        }
+      }
+      let viewSourceUtils = inspector.viewSourceUtils;
+      viewSourceUtils.viewSource(rule.href, null, contentDoc, rule.line);
+      return;
+    }
+
+    let location = promise.resolve({
+      href: rule.href,
+      line: rule.line
+    });
+    if (rule.href && Services.prefs.getBoolPref(PREF_ORIG_SOURCES)) {
+      location = rule.getOriginalLocation();
+    }
+
+    location.then(({href, line}) => {
       let target = inspector.target;
       if (ToolDefinitions.styleEditor.isTargetSupported(target)) {
         gDevTools.showToolbox(target, "styleeditor").then(function(toolbox) {
           toolbox.getCurrentPanel().selectStyleSheet(href, line);
         });
       }
-      return;
-    }
-
-    let contentDoc = null;
-    if (this.tree.viewedElement.isLocal_toBeDeprecated()) {
-      let rawNode = this.tree.viewedElement.rawNode();
-      if (rawNode) {
-        contentDoc = rawNode.ownerDocument;
-      }
-    }
-
-    let viewSourceUtils = inspector.viewSourceUtils;
-    viewSourceUtils.viewSource(href, null, contentDoc, line);
+    });
   }
 };
 

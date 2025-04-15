@@ -244,7 +244,7 @@ nsComputedDOMStyle::nsComputedDOMStyle(dom::Element* aElement,
   mContent = aElement;
 
   if (!DOMStringIsNull(aPseudoElt) && !aPseudoElt.IsEmpty() &&
-      aPseudoElt.First() == PRUnichar(':')) {
+      aPseudoElt.First() == char16_t(':')) {
     // deal with two-colon forms of aPseudoElt
     nsAString::const_iterator start, end;
     aPseudoElt.BeginReading(start);
@@ -252,7 +252,7 @@ nsComputedDOMStyle::nsComputedDOMStyle(dom::Element* aElement,
     NS_ASSERTION(start != end, "aPseudoElt is not empty!");
     ++start;
     bool haveTwoColons = true;
-    if (start == end || *start != PRUnichar(':')) {
+    if (start == end || *start != char16_t(':')) {
       --start;
       haveTwoColons = false;
     }
@@ -369,7 +369,18 @@ nsComputedDOMStyle::GetLength(uint32_t* aLength)
 {
   NS_PRECONDITION(aLength, "Null aLength!  Prepare to die!");
 
-  *aLength = GetComputedStyleMap()->Length();
+  uint32_t length = GetComputedStyleMap()->Length();
+
+  // Make sure we have up to date style so that we can include custom
+  // properties.
+  UpdateCurrentStyleSources(false);
+  if (mStyleContextHolder) {
+    length += StyleVariables()->mVariables.Count();
+  }
+
+  *aLength = length;
+
+  ClearCurrentStyleSources();
 
   return NS_OK;
 }
@@ -404,6 +415,15 @@ nsComputedDOMStyle::GetPropertyValue(const nsAString& aPropertyName,
   }
 
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsComputedDOMStyle::GetAuthoredPropertyValue(const nsAString& aPropertyName,
+                                             nsAString& aReturn)
+{
+  // Authored style doesn't make sense to return from computed DOM style,
+  // so just return whatever GetPropertyValue() returns.
+  return GetPropertyValue(aPropertyName, aReturn);
 }
 
 /* static */
@@ -586,62 +606,31 @@ nsComputedDOMStyle::GetCSSParsingEnvironment(CSSParsingEnvironment& aCSSParseEnv
   aCSSParseEnv.mPrincipal = nullptr;
 }
 
-already_AddRefed<CSSValue>
-nsComputedDOMStyle::GetPropertyCSSValue(const nsAString& aPropertyName, ErrorResult& aRv)
+void
+nsComputedDOMStyle::UpdateCurrentStyleSources(bool aNeedsLayoutFlush)
 {
-  NS_ASSERTION(!mStyleContextHolder, "bad state");
+  MOZ_ASSERT(!mStyleContextHolder);
 
   nsCOMPtr<nsIDocument> document = do_QueryReferent(mDocumentWeak);
   if (!document) {
-    aRv.Throw(NS_ERROR_NOT_AVAILABLE);
-    return nullptr;
+    return;
   }
 
   document->FlushPendingLinkUpdates();
-
-  nsCSSProperty prop = nsCSSProps::LookupProperty(aPropertyName,
-                                                  nsCSSProps::eEnabled);
-
-  // We don't (for now, anyway, though it may make sense to change it
-  // for all aliases, including those in nsCSSPropAliasList) want
-  // aliases to be enumerable (via GetLength and IndexedGetter), so
-  // handle them here rather than adding entries to
-  // the nsComputedStyleMap.
-  if (prop != eCSSProperty_UNKNOWN &&
-      nsCSSProps::PropHasFlags(prop, CSS_PROPERTY_IS_ALIAS)) {
-    const nsCSSProperty* subprops = nsCSSProps::SubpropertyEntryFor(prop);
-    NS_ABORT_IF_FALSE(subprops[1] == eCSSProperty_UNKNOWN,
-                      "must have list of length 1");
-    prop = subprops[0];
-  }
-
-  const nsComputedStyleMap::Entry* propEntry =
-    GetComputedStyleMap()->FindEntryForProperty(prop);
-
-  if (!propEntry) {
-#ifdef DEBUG_ComputedDOMStyle
-    NS_WARNING(PromiseFlatCString(NS_ConvertUTF16toUTF8(aPropertyName) +
-                                  NS_LITERAL_CSTRING(" is not queryable!")).get());
-#endif
-
-    // NOTE:  For branches, we should flush here for compatibility!
-    return nullptr;
-  }
 
   // Flush _before_ getting the presshell, since that could create a new
   // presshell.  Also note that we want to flush the style on the document
   // we're computing style in, not on the document mContent is in -- the two
   // may be different.
   document->FlushPendingNotifications(
-    propEntry->IsLayoutFlushNeeded() ? Flush_Layout : Flush_Style);
+    aNeedsLayoutFlush ? Flush_Layout : Flush_Style);
 #ifdef DEBUG
-  mFlushedPendingReflows = propEntry->IsLayoutFlushNeeded();
+  mFlushedPendingReflows = aNeedsLayoutFlush;
 #endif
 
   mPresShell = document->GetShell();
   if (!mPresShell || !mPresShell->GetPresContext()) {
-    aRv.Throw(NS_ERROR_NOT_AVAILABLE);
-    return nullptr;
+    return;
   }
 
   if (!mPseudo && mStyleType == eAll) {
@@ -693,8 +682,7 @@ nsComputedDOMStyle::GetPropertyCSSValue(const nsAString& aPropertyName, ErrorRes
                                                     mPresShell,
                                                     mStyleType);
     if (!mStyleContextHolder) {
-      aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
-      return nullptr;
+      return;
     }
 
     NS_ASSERTION(mPseudo || !mStyleContextHolder->HasPseudoElementData(),
@@ -712,10 +700,11 @@ nsComputedDOMStyle::GetPropertyCSSValue(const nsAString& aPropertyName, ErrorRes
       mStyleContextHolder = styleIfVisited;
     }
   }
+}
 
-  // Call our pointer-to-member-function.
-  nsRefPtr<CSSValue> val = (this->*(propEntry->mGetter))();
-
+void
+nsComputedDOMStyle::ClearCurrentStyleSources()
+{
   mOuterFrame = nullptr;
   mInnerFrame = nullptr;
   mPresShell = nullptr;
@@ -723,6 +712,66 @@ nsComputedDOMStyle::GetPropertyCSSValue(const nsAString& aPropertyName, ErrorRes
   // Release the current style context for it should be re-resolved
   // whenever a frame is not available.
   mStyleContextHolder = nullptr;
+}
+
+already_AddRefed<CSSValue>
+nsComputedDOMStyle::GetPropertyCSSValue(const nsAString& aPropertyName, ErrorResult& aRv)
+{
+  nsCSSProperty prop = nsCSSProps::LookupProperty(aPropertyName,
+                                                  nsCSSProps::eEnabled);
+
+  bool needsLayoutFlush;
+  nsComputedStyleMap::Entry::ComputeMethod getter;
+
+  if (prop == eCSSPropertyExtra_variable) {
+    needsLayoutFlush = false;
+    getter = nullptr;
+  } else {
+    // We don't (for now, anyway, though it may make sense to change it
+    // for all aliases, including those in nsCSSPropAliasList) want
+    // aliases to be enumerable (via GetLength and IndexedGetter), so
+    // handle them here rather than adding entries to
+    // GetQueryablePropertyMap.
+    if (prop != eCSSProperty_UNKNOWN &&
+        nsCSSProps::PropHasFlags(prop, CSS_PROPERTY_IS_ALIAS)) {
+      const nsCSSProperty* subprops = nsCSSProps::SubpropertyEntryFor(prop);
+      NS_ABORT_IF_FALSE(subprops[1] == eCSSProperty_UNKNOWN,
+                        "must have list of length 1");
+      prop = subprops[0];
+    }
+
+    const nsComputedStyleMap::Entry* propEntry =
+      GetComputedStyleMap()->FindEntryForProperty(prop);
+
+    if (!propEntry) {
+#ifdef DEBUG_ComputedDOMStyle
+      NS_WARNING(PromiseFlatCString(NS_ConvertUTF16toUTF8(aPropertyName) +
+                                    NS_LITERAL_CSTRING(" is not queryable!")).get());
+#endif
+
+      // NOTE:  For branches, we should flush here for compatibility!
+      return nullptr;
+    }
+
+    needsLayoutFlush = propEntry->IsLayoutFlushNeeded();
+    getter = propEntry->mGetter;
+  }
+
+  UpdateCurrentStyleSources(needsLayoutFlush);
+  if (!mStyleContextHolder) {
+    aRv.Throw(NS_ERROR_NOT_AVAILABLE);
+    return nullptr;
+  }
+
+  nsRefPtr<CSSValue> val;
+  if (prop == eCSSPropertyExtra_variable) {
+    val = DoGetCustomProperty(aPropertyName);
+  } else {
+    // Call our pointer-to-member-function.
+    val = (this->*getter)();
+  }
+
+  ClearCurrentStyleSources();
 
   return val.forget();
 }
@@ -766,11 +815,32 @@ nsComputedDOMStyle::IndexedGetter(uint32_t aIndex, bool& aFound,
                                   nsAString& aPropName)
 {
   nsComputedStyleMap* map = GetComputedStyleMap();
-  aFound = aIndex < map->Length();
-  if (aFound) {
+  uint32_t length = map->Length();
+
+  if (aIndex < length) {
+    aFound = true;
     CopyASCIItoUTF16(nsCSSProps::GetStringValue(map->PropertyAt(aIndex)),
                      aPropName);
+    return;
   }
+
+  // Custom properties are exposed with indexed properties just after all
+  // of the built-in properties.
+  UpdateCurrentStyleSources(false);
+  if (!mStyleContextHolder) {
+    aFound = false;
+    return;
+  }
+
+  const nsStyleVariables* variables = StyleVariables();
+  if (aIndex - length < variables->mVariables.Count()) {
+    aFound = true;
+    variables->mVariables.GetVariableAt(aIndex - length, aPropName);
+  } else {
+    aFound = false;
+  }
+
+  ClearCurrentStyleSources();
 }
 
 // Property getters...
@@ -1037,7 +1107,7 @@ nsComputedDOMStyle::DoGetContent()
               str);
           }
 
-          str.Append(PRUnichar(')'));
+          str.Append(char16_t(')'));
           val->SetString(str, nsIDOMCSSPrimitiveValue::CSS_COUNTER);
         }
         break;
@@ -1232,7 +1302,7 @@ nsComputedDOMStyle::DoGetTransform()
 
    bool dummy;
    gfx3DMatrix matrix =
-     nsStyleTransformMatrix::ReadTransforms(display->mSpecifiedTransform,
+     nsStyleTransformMatrix::ReadTransforms(display->mSpecifiedTransform->mHead,
                                             mStyleContextHolder,
                                             mStyleContextHolder->PresContext(),
                                             dummy,
@@ -3264,15 +3334,9 @@ nsComputedDOMStyle::DoGetBorderImageSource()
 {
   const nsStyleBorder* border = StyleBorder();
 
-  imgIRequest* imgSrc = border->GetBorderImage();
   nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
-  if (imgSrc) {
-    nsCOMPtr<nsIURI> uri;
-    imgSrc->GetURI(getter_AddRefs(uri));
-    val->SetURI(uri);
-  } else {
-    val->SetIdent(eCSSKeyword_none);
-  }
+  const nsStyleImage& image = border->mBorderImageSource;
+  SetValueToStyleImage(image, val);
 
   return val;
 }
@@ -3630,6 +3694,28 @@ nsComputedDOMStyle::DoGetClip()
 }
 
 CSSValue*
+nsComputedDOMStyle::DoGetWillChange()
+{
+  const nsTArray<nsString>& willChange = StyleDisplay()->mWillChange;
+
+  if (willChange.IsEmpty()) {
+    nsROCSSPrimitiveValue *val = new nsROCSSPrimitiveValue;
+    val->SetIdent(eCSSKeyword_auto);
+    return val;
+  }
+
+  nsDOMCSSValueList *valueList = GetROCSSValueList(true);
+  for (size_t i = 0; i < willChange.Length(); i++) {
+    const nsString& willChangeIdentifier = willChange[i];
+    nsROCSSPrimitiveValue* property = new nsROCSSPrimitiveValue;
+    valueList->AppendCSSValue(property);
+    property->SetString(willChangeIdentifier);
+  }
+
+  return valueList;
+}
+
+CSSValue*
 nsComputedDOMStyle::DoGetOverflow()
 {
   const nsStyleDisplay* display = StyleDisplay();
@@ -3663,6 +3749,16 @@ nsComputedDOMStyle::DoGetOverflowY()
   val->SetIdent(
     nsCSSProps::ValueToKeywordEnum(StyleDisplay()->mOverflowY,
                                    nsCSSProps::kOverflowSubKTable));
+  return val;
+}
+
+CSSValue*
+nsComputedDOMStyle::DoGetOverflowClipBox()
+{
+  nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
+  val->SetIdent(
+    nsCSSProps::ValueToKeywordEnum(StyleDisplay()->mOverflowClipBox,
+                                   nsCSSProps::kOverflowClipBoxKTable));
   return val;
 }
 
@@ -3718,6 +3814,30 @@ nsComputedDOMStyle::DoGetPageBreakInside()
 }
 
 CSSValue*
+nsComputedDOMStyle::DoGetTouchAction()
+{
+  nsROCSSPrimitiveValue *val = new nsROCSSPrimitiveValue;
+
+  int32_t intValue = StyleDisplay()->mTouchAction;
+
+  // None and Auto values aren't allowed to be in conjunction with
+  // other values.
+  if (NS_STYLE_TOUCH_ACTION_AUTO == intValue) {
+    val->SetIdent(eCSSKeyword_auto);
+  } else if (NS_STYLE_TOUCH_ACTION_NONE == intValue) {
+    val->SetIdent(eCSSKeyword_none);
+  } else {
+    nsAutoString valueStr;
+    nsStyleUtil::AppendBitmaskCSSValue(eCSSProperty_touch_action,
+      intValue, NS_STYLE_TOUCH_ACTION_PAN_X,
+      NS_STYLE_TOUCH_ACTION_PAN_Y, valueStr);
+    val->SetString(valueStr);
+  }
+
+  return val;
+}
+
+CSSValue*
 nsComputedDOMStyle::DoGetHeight()
 {
   nsROCSSPrimitiveValue *val = new nsROCSSPrimitiveValue;
@@ -3729,7 +3849,10 @@ nsComputedDOMStyle::DoGetHeight()
 
     const nsStyleDisplay* displayData = StyleDisplay();
     if (displayData->mDisplay == NS_STYLE_DISPLAY_INLINE &&
-        !(mInnerFrame->IsFrameOfType(nsIFrame::eReplaced))) {
+        !(mInnerFrame->IsFrameOfType(nsIFrame::eReplaced)) &&
+        // An outer SVG frame should behave the same as eReplaced in this case
+        mInnerFrame->GetType() != nsGkAtoms::svgOuterSVGFrame) {
+      
       calcHeight = false;
     }
   }
@@ -3770,7 +3893,10 @@ nsComputedDOMStyle::DoGetWidth()
 
     const nsStyleDisplay *displayData = StyleDisplay();
     if (displayData->mDisplay == NS_STYLE_DISPLAY_INLINE &&
-        !(mInnerFrame->IsFrameOfType(nsIFrame::eReplaced))) {
+        !(mInnerFrame->IsFrameOfType(nsIFrame::eReplaced)) &&
+        // An outer SVG frame should behave the same as eReplaced in this case
+        mInnerFrame->GetType() != nsGkAtoms::svgOuterSVGFrame) {
+      
       calcWidth = false;
     }
   }
@@ -5205,11 +5331,29 @@ nsComputedDOMStyle::DoGetAnimationPlayState()
   return valueList;
 }
 
-static int
+static void
 MarkComputedStyleMapDirty(const char* aPref, void* aData)
 {
   static_cast<nsComputedStyleMap*>(aData)->MarkDirty();
-  return 0;
+}
+
+CSSValue*
+nsComputedDOMStyle::DoGetCustomProperty(const nsAString& aPropertyName)
+{
+  MOZ_ASSERT(nsCSSProps::IsCustomPropertyName(aPropertyName));
+
+  const nsStyleVariables* variables = StyleVariables();
+
+  nsString variableValue;
+  const nsAString& name = Substring(aPropertyName, 4);
+  if (!variables->mVariables.Get(name, variableValue)) {
+    return nullptr;
+  }
+
+  nsROCSSPrimitiveValue* val = new nsROCSSPrimitiveValue;
+  val->SetString(variableValue);
+
+  return val;
 }
 
 /* static */ nsComputedStyleMap*

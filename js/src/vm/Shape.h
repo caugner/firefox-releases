@@ -9,6 +9,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/GuardObjects.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/TemplateLib.h"
@@ -560,6 +561,9 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
          * be unset (except during object densification of sparse indexes), and
          * are transferred from shape to shape as the object's last property
          * changes.
+         *
+         * If you add a new flag here, please add appropriate code to
+         * JSObject::dump to dump it as part of object representation.
          */
 
         DELEGATE            =    0x8,
@@ -711,7 +715,7 @@ class BaseShape : public gc::BarrieredCell<BaseShape>
      * Lookup base shapes from the compartment's baseShapes table, adding if
      * not already found.
      */
-    static UnownedBaseShape* getUnowned(ExclusiveContext *cx, const StackBaseShape &base);
+    static UnownedBaseShape* getUnowned(ExclusiveContext *cx, StackBaseShape &base);
 
     /*
      * Lookup base shapes from the compartment's baseShapes table, returning
@@ -843,19 +847,9 @@ struct StackBaseShape
     static inline HashNumber hash(const StackBaseShape *lookup);
     static inline bool match(UnownedBaseShape *key, const StackBaseShape *lookup);
 
-    class AutoRooter : private JS::CustomAutoRooter
-    {
-      public:
-        inline AutoRooter(ThreadSafeContext *cx, const StackBaseShape *base_
-                          MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-
-      private:
-        virtual void trace(JSTracer *trc);
-
-        const StackBaseShape *base;
-        SkipRoot skip;
-        MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-    };
+    // For RootedGeneric<StackBaseShape*>
+    static inline js::ThingRootKind rootKind() { return js::THING_ROOT_CUSTOM; }
+    void trace(JSTracer *trc);
 };
 
 inline
@@ -956,10 +950,8 @@ class Shape : public gc::BarrieredCell<Shape>
         insertIntoDictionary(dictp);
     }
 
-    Shape *getChildBinding(ExclusiveContext *cx, const StackShape &child);
-
     /* Replace the base shape of the last shape in a non-dictionary lineage with base. */
-    static Shape *replaceLastProperty(ExclusiveContext *cx, const StackBaseShape &base,
+    static Shape *replaceLastProperty(ExclusiveContext *cx, StackBaseShape &base,
                                       TaggedProto proto, HandleShape shape);
 
     /*
@@ -1038,7 +1030,9 @@ class Shape : public gc::BarrieredCell<Shape>
         }
     };
 
-    const Class *getObjectClass() const { return base()->clasp; }
+    const Class *getObjectClass() const {
+        return base()->clasp;
+    }
     JSObject *getObjectParent() const { return base()->parent; }
     JSObject *getObjectMetadata() const { return base()->metadata; }
 
@@ -1095,12 +1089,14 @@ class Shape : public gc::BarrieredCell<Shape>
         PUBLIC_FLAGS    = HAS_SHORTID
     };
 
-    bool inDictionary() const   { return (flags & IN_DICTIONARY) != 0; }
-    unsigned getFlags() const  { return flags & PUBLIC_FLAGS; }
+    bool inDictionary() const {
+        return (flags & IN_DICTIONARY) != 0;
+    }
+    unsigned getFlags() const { return flags & PUBLIC_FLAGS; }
     bool hasShortID() const { return (flags & HAS_SHORTID) != 0; }
 
     PropertyOp getter() const { return base()->rawGetter; }
-    bool hasDefaultGetter() const  { return !base()->rawGetter; }
+    bool hasDefaultGetter() const {return !base()->rawGetter; }
     PropertyOp getterOp() const { JS_ASSERT(!hasGetterValue()); return base()->rawGetter; }
     JSObject *getterObject() const { JS_ASSERT(hasGetterValue()); return base()->getterObj; }
 
@@ -1137,8 +1133,8 @@ class Shape : public gc::BarrieredCell<Shape>
 
     bool matches(const Shape *other) const {
         return propid_.get() == other->propid_.get() &&
-               matchesParamsAfterId(other->base(), other->maybeSlot(), other->attrs,
-                                    other->flags, other->shortid_);
+               matchesParamsAfterId(other->base(), other->maybeSlot(), other->attrs, other->flags,
+                                    other->shortid_);
     }
 
     inline bool matches(const StackShape &other) const;
@@ -1158,9 +1154,13 @@ class Shape : public gc::BarrieredCell<Shape>
 
     BaseShape *base() const { return base_.get(); }
 
-    bool hasSlot() const { return (attrs & JSPROP_SHARED) == 0; }
+    bool hasSlot() const {
+        return (attrs & JSPROP_SHARED) == 0;
+    }
     uint32_t slot() const { JS_ASSERT(hasSlot() && !hasMissingSlot()); return maybeSlot(); }
-    uint32_t maybeSlot() const { return slotInfo & SLOT_MASK; }
+    uint32_t maybeSlot() const {
+        return slotInfo & SLOT_MASK;
+    }
 
     bool isEmptyShape() const {
         JS_ASSERT_IF(JSID_IS_EMPTY(propid_), hasMissingSlot());
@@ -1210,6 +1210,10 @@ class Shape : public gc::BarrieredCell<Shape>
         return propid_;
     }
     EncapsulatedId &propidRef() { JS_ASSERT(!JSID_IS_VOID(propid_)); return propid_; }
+    jsid propidRaw() const {
+        // Return the actual jsid, not an internal reference.
+        return propid();
+    }
 
     int16_t shortid() const { JS_ASSERT(hasShortID()); return maybeShortid(); }
     int16_t maybeShortid() const { return shortid_; }
@@ -1224,7 +1228,6 @@ class Shape : public gc::BarrieredCell<Shape>
     bool configurable() const { return (attrs & JSPROP_PERMANENT) == 0; }
     bool enumerable() const { return (attrs & JSPROP_ENUMERATE) != 0; }
     bool writable() const {
-        // JS_ASSERT(isDataDescriptor());
         return (attrs & JSPROP_READONLY) == 0;
     }
     bool hasGetterValue() const { return attrs & JSPROP_GETTER; }
@@ -1261,10 +1264,6 @@ class Shape : public gc::BarrieredCell<Shape>
     uint32_t entryCount() {
         if (hasTable())
             return table().entryCount;
-        return entryCountForCompilation();
-    }
-
-    uint32_t entryCountForCompilation() {
         uint32_t count = 0;
         for (Shape::Range<NoGC> r(this); !r.empty(); r.popFront())
             ++count;
@@ -1419,16 +1418,40 @@ struct InitialShapeEntry
     /* State used to determine a match on an initial shape. */
     struct Lookup {
         const Class *clasp;
-        TaggedProto proto;
-        JSObject *parent;
-        JSObject *metadata;
+        TaggedProto hashProto;
+        TaggedProto matchProto;
+        JSObject *hashParent;
+        JSObject *matchParent;
+        JSObject *hashMetadata;
+        JSObject *matchMetadata;
         uint32_t nfixed;
         uint32_t baseFlags;
         Lookup(const Class *clasp, TaggedProto proto, JSObject *parent, JSObject *metadata,
                uint32_t nfixed, uint32_t baseFlags)
-          : clasp(clasp), proto(proto), parent(parent), metadata(metadata),
+          : clasp(clasp),
+            hashProto(proto), matchProto(proto),
+            hashParent(parent), matchParent(parent),
+            hashMetadata(metadata), matchMetadata(metadata),
             nfixed(nfixed), baseFlags(baseFlags)
         {}
+
+#ifdef JSGC_GENERATIONAL
+        /*
+         * For use by generational GC post barriers. Look up an entry whose
+         * parent and metadata fields may have been moved, but was hashed with
+         * the original values.
+         */
+        Lookup(const Class *clasp, TaggedProto proto,
+               JSObject *hashParent, JSObject *matchParent,
+               JSObject *hashMetadata, JSObject *matchMetadata,
+               uint32_t nfixed, uint32_t baseFlags)
+          : clasp(clasp),
+            hashProto(proto), matchProto(proto),
+            hashParent(hashParent), matchParent(matchParent),
+            hashMetadata(hashMetadata), matchMetadata(matchMetadata),
+            nfixed(nfixed), baseFlags(baseFlags)
+        {}
+#endif
     };
 
     inline InitialShapeEntry();
@@ -1454,7 +1477,7 @@ struct StackShape
     int16_t          shortid;
 
     explicit StackShape(UnownedBaseShape *base, jsid propid, uint32_t slot,
-                        uint32_t nfixed, unsigned attrs, unsigned flags, int shortid)
+                        unsigned attrs, unsigned flags, int shortid)
       : base(base),
         propid(propid),
         slot_(slot),
@@ -1470,7 +1493,7 @@ struct StackShape
     StackShape(Shape *shape)
       : base(shape->base()->unowned()),
         propid(shape->propidRef()),
-        slot_(shape->slotInfo & Shape::SLOT_MASK),
+        slot_(shape->maybeSlot()),
         attrs(shape->attrs),
         flags(shape->flags),
         shortid(shape->shortid_)
@@ -1496,27 +1519,17 @@ struct StackShape
         HashNumber hash = uintptr_t(base);
 
         /* Accumulate from least to most random so the low bits are most random. */
-        hash = JS_ROTATE_LEFT32(hash, 4) ^ (flags & Shape::PUBLIC_FLAGS);
-        hash = JS_ROTATE_LEFT32(hash, 4) ^ attrs;
-        hash = JS_ROTATE_LEFT32(hash, 4) ^ shortid;
-        hash = JS_ROTATE_LEFT32(hash, 4) ^ slot_;
-        hash = JS_ROTATE_LEFT32(hash, 4) ^ JSID_BITS(propid);
+        hash = mozilla::RotateLeft(hash, 4) ^ (flags & Shape::PUBLIC_FLAGS);
+        hash = mozilla::RotateLeft(hash, 4) ^ attrs;
+        hash = mozilla::RotateLeft(hash, 4) ^ shortid;
+        hash = mozilla::RotateLeft(hash, 4) ^ slot_;
+        hash = mozilla::RotateLeft(hash, 4) ^ JSID_BITS(propid);
         return hash;
     }
 
-    class AutoRooter : private JS::CustomAutoRooter
-    {
-      public:
-        inline AutoRooter(ThreadSafeContext *cx, const StackShape *shape_
-                          MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-
-      private:
-        virtual void trace(JSTracer *trc);
-
-        const StackShape *shape;
-        SkipRoot skip;
-        MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-    };
+    // For RootedGeneric<StackShape*>
+    static inline js::ThingRootKind rootKind() { return js::THING_ROOT_CUSTOM; }
+    void trace(JSTracer *trc);
 };
 
 } /* namespace js */
@@ -1616,9 +1629,10 @@ Shape::searchLinear(jsid id)
      */
     JS_ASSERT(!inDictionary());
 
-    for (Shape *shape = this; shape; shape = shape->parent) {
+    for (Shape *shape = this; shape; ) {
         if (shape->propidRef() == id)
             return shape;
+        shape = shape->parent;
     }
 
     return nullptr;

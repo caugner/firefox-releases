@@ -35,6 +35,7 @@ jfieldID AndroidGeckoEvent::jNativeWindowField = 0;
 jfieldID AndroidGeckoEvent::jCharactersField = 0;
 jfieldID AndroidGeckoEvent::jCharactersExtraField = 0;
 jfieldID AndroidGeckoEvent::jDataField = 0;
+jfieldID AndroidGeckoEvent::jDOMPrintableKeyValueField = 0;
 jfieldID AndroidGeckoEvent::jKeyCodeField = 0;
 jfieldID AndroidGeckoEvent::jMetaStateField = 0;
 jfieldID AndroidGeckoEvent::jDomKeyLocationField = 0;
@@ -146,6 +147,7 @@ AndroidGeckoEvent::InitGeckoEventClass(JNIEnv *jEnv)
     jFlagsField = getField("mFlags", "I");
     jUnicodeCharField = getField("mUnicodeChar", "I");
     jBaseUnicodeCharField = getField("mBaseUnicodeChar", "I");
+    jDOMPrintableKeyValueField = getField("mDOMPrintableKeyValue", "I");
     jRepeatCountField = getField("mRepeatCount", "I");
     jCountField = getField("mCount", "I");
     jStartField = getField("mStart", "I");
@@ -424,6 +426,8 @@ AndroidGeckoEvent::Init(JNIEnv *jenv, jobject jobj)
             mKeyCode = jenv->GetIntField(jobj, jKeyCodeField);
             mUnicodeChar = jenv->GetIntField(jobj, jUnicodeCharField);
             mBaseUnicodeChar = jenv->GetIntField(jobj, jBaseUnicodeCharField);
+            mDOMPrintableKeyValue =
+                jenv->GetIntField(jobj, jDOMPrintableKeyValueField);
             mRepeatCount = jenv->GetIntField(jobj, jRepeatCountField);
             ReadCharactersField(jenv);
             break;
@@ -663,12 +667,8 @@ AndroidGeckoEvent::MakeTouchEvent(nsIWidget* widget)
         return event;
     }
 
-    event.modifiers = 0;
+    event.modifiers = DOMModifiers();
     event.time = Time();
-    event.InitBasicModifiers(IsCtrlPressed(),
-                             IsAltPressed(),
-                             IsShiftPressed(),
-                             IsMetaPressed());
 
     const nsIntPoint& offset = widget->WidgetToScreenOffset();
     event.touches.SetCapacity(endIndex - startIndex);
@@ -729,18 +729,7 @@ AndroidGeckoEvent::MakeMultiTouchInput(nsIWidget* widget)
     }
 
     MultiTouchInput event(type, Time(), 0);
-    if (IsCtrlPressed()) {
-      event.modifiers |= MODIFIER_CONTROL;
-    }
-    if (IsAltPressed()) {
-      event.modifiers |= MODIFIER_ALT;
-    }
-    if (IsShiftPressed()) {
-      event.modifiers |= MODIFIER_SHIFT;
-    }
-    if (IsMetaPressed()) {
-      event.modifiers |= MODIFIER_META;
-    }
+    event.modifiers = DOMModifiers();
 
     if (type < 0) {
         // An event we don't know about
@@ -798,7 +787,7 @@ AndroidGeckoEvent::MakeMouseEvent(nsIWidget* widget)
     if (msg != NS_MOUSE_MOVE) {
         event.clickCount = 1;
     }
-    event.modifiers = 0;
+    event.modifiers = DOMModifiers();
     event.time = Time();
 
     // We are dispatching this event directly into Gecko (as opposed to going
@@ -810,6 +799,37 @@ AndroidGeckoEvent::MakeMouseEvent(nsIWidget* widget)
                                           (Points()[0].y * scale.scale) - offset.y);
 
     return event;
+}
+
+Modifiers
+AndroidGeckoEvent::DOMModifiers() const
+{
+    Modifiers result = 0;
+    if (mMetaState & AMETA_ALT_MASK) {
+        result |= MODIFIER_ALT;
+    }
+    if (mMetaState & AMETA_SHIFT_MASK) {
+        result |= MODIFIER_SHIFT;
+    }
+    if (mMetaState & AMETA_CTRL_MASK) {
+        result |= MODIFIER_CONTROL;
+    }
+    if (mMetaState & AMETA_META_MASK) {
+        result |= MODIFIER_META;
+    }
+    if (mMetaState & AMETA_FUNCTION_ON) {
+        result |= MODIFIER_FN;
+    }
+    if (mMetaState & AMETA_CAPS_LOCK_ON) {
+        result |= MODIFIER_CAPSLOCK;
+    }
+    if (mMetaState & AMETA_NUM_LOCK_ON) {
+        result |= MODIFIER_NUMLOCK;
+    }
+    if (mMetaState & AMETA_SCROLL_LOCK_ON) {
+        result |= MODIFIER_SCROLLLOCK;
+    }
+    return result;
 }
 
 void
@@ -948,10 +968,6 @@ nsJNIString::nsJNIString(jstring jstr, JNIEnv *jenv)
     JNIEnv *jni = jenv;
     if (!jni) {
         jni = AndroidBridge::GetJNIEnv();
-        if (!jni) {
-            SetIsVoid(true);
-            return;
-        }
     }
     const jchar* jCharPtr = jni->GetStringChars(jstr, nullptr);
 
@@ -965,7 +981,7 @@ nsJNIString::nsJNIString(jstring jstr, JNIEnv *jenv)
     if (len <= 0) {
         SetIsVoid(true);
     } else {
-        Assign(reinterpret_cast<const PRUnichar*>(jCharPtr), len);
+        Assign(reinterpret_cast<const char16_t*>(jCharPtr), len);
     }
     jni->ReleaseStringChars(jstr, jCharPtr);
 }

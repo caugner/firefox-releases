@@ -9,7 +9,7 @@ interface nsIDOMNode;
 
 /**
  * nsISessionStore keeps track of the current browsing state - i.e.
- * tab history, cookies, scroll state, form data, POSTDATA and window features
+ * tab history, cookies, scroll state, form data, and window features
  * - and allows to restore everything into one browser window.
  *
  * The nsISessionStore API operates mostly on browser windows and the tabbrowser
@@ -25,7 +25,7 @@ interface nsIDOMNode;
  * |gBrowser.tabContainer| such as e.g. |gBrowser.selectedTab|.
  */
 
-[scriptable, uuid(6fdf7a49-c6ac-4bfe-a5da-aad6c4116168)]
+[scriptable, uuid(0c99811f-6c5f-4a78-9c31-2d266d714175)]
 interface nsISessionStore : nsISupports
 {
   /**

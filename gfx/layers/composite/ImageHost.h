@@ -6,7 +6,7 @@
 #ifndef MOZILLA_GFX_IMAGEHOST_H
 #define MOZILLA_GFX_IMAGEHOST_H
 
-#include <stdio.h>                      // for FILE, NULL
+#include <stdio.h>                      // for FILE
 #include "CompositableHost.h"           // for CompositableHost
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
 #include "mozilla/RefPtr.h"             // for RefPtr
@@ -55,9 +55,9 @@ public:
 
   virtual void UseTextureHost(TextureHost* aTexture) MOZ_OVERRIDE;
 
-  virtual void RemoveTextureHost(TextureHost* aTexture) MOZ_OVERRIDE;
-
   virtual TextureHost* GetAsTextureHost() MOZ_OVERRIDE;
+
+  virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
 
   virtual void SetPictureRect(const nsIntRect& aPictureRect) MOZ_OVERRIDE
   {
@@ -67,19 +67,12 @@ public:
 
   virtual LayerRenderState GetRenderState() MOZ_OVERRIDE;
 
-  virtual void OnActorDestroy() MOZ_OVERRIDE
-  {
-    if (mFrontBuffer) {
-      mFrontBuffer->OnActorDestroy();
-    }
-  }
-
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix);
 
 #ifdef MOZ_DUMP_PAINTING
-  virtual void Dump(FILE* aFile=NULL,
-                    const char* aPrefix="",
-                    bool aDumpHtml=false) MOZ_OVERRIDE;
+  virtual void Dump(FILE* aFile = nullptr,
+                    const char* aPrefix = "",
+                    bool aDumpHtml = false) MOZ_OVERRIDE;
 
   virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 #endif
@@ -133,13 +126,6 @@ public:
   virtual LayerRenderState GetRenderState() MOZ_OVERRIDE;
 
   virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
-
-  virtual void OnActorDestroy() MOZ_OVERRIDE
-  {
-    if (mDeprecatedTextureHost) {
-      mDeprecatedTextureHost->OnActorDestroy();
-    }
-  }
 
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix);
 

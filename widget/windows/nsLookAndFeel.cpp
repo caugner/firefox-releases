@@ -375,11 +375,7 @@ nsLookAndFeel::GetIntImpl(IntID aID, int32_t &aResult)
         // High contrast is a misnomer under Win32 -- any theme can be used with it, 
         // e.g. normal contrast with large fonts, low contrast, etc.
         // The high contrast flag really means -- use this theme and don't override it.
-        HIGHCONTRAST contrastThemeInfo;
-        contrastThemeInfo.cbSize = sizeof(contrastThemeInfo);
-        ::SystemParametersInfo(SPI_GETHIGHCONTRAST, 0, &contrastThemeInfo, 0);
-
-        aResult = ((contrastThemeInfo.dwFlags & HCF_HIGHCONTRASTON) != 0);
+        aResult = nsUXThemeData::IsHighContrastOn();
         break;
     case eIntID_ScrollArrowStyle:
         aResult = eScrollArrowStyle_Single;
@@ -507,7 +503,8 @@ nsLookAndFeel::GetIntImpl(IntID aID, int32_t &aResult)
         aResult = 0;
         break;
     case eIntID_ColorPickerAvailable:
-        aResult = 0;
+        // We don't have a color picker implemented on Metro yet (bug 895464)
+        aResult = (XRE_GetWindowsEnvironment() != WindowsEnvironmentType_Metro);
         break;
     case eIntID_UseOverlayScrollbars:
         aResult = (XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Metro);
@@ -562,7 +559,7 @@ GetSysFontInfo(HDC aHDC, LookAndFeel::FontID anID,
   LOGFONTW logFont;
   NONCLIENTMETRICSW ncm;
   HGDIOBJ hGDI;
-  PRUnichar name[LF_FACESIZE];
+  char16_t name[LF_FACESIZE];
 
   // Depending on which stock font we want, there are three different
   // places we might have to look it up.
@@ -676,7 +673,7 @@ GetSysFontInfo(HDC aHDC, LookAndFeel::FontID anID,
   aFontStyle.systemFont = true;
 
   name[0] = 0;
-  memcpy(name, ptrLogFont->lfFaceName, LF_FACESIZE*sizeof(PRUnichar));
+  memcpy(name, ptrLogFont->lfFaceName, LF_FACESIZE*sizeof(char16_t));
   aFontName = name;
 
   return true;
@@ -696,7 +693,7 @@ nsLookAndFeel::GetFontImpl(FontID anID, nsString &aFontName,
 }
 
 /* virtual */
-PRUnichar
+char16_t
 nsLookAndFeel::GetPasswordCharacterImpl()
 {
 #define UNICODE_BLACK_CIRCLE_CHAR 0x25cf

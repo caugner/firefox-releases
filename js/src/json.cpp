@@ -688,7 +688,7 @@ Walk(JSContext *cx, HandleObject holder, HandleId name, HandleValue reviver, Mut
             RootedId id(cx);
             RootedValue newElement(cx);
             for (uint32_t i = 0; i < length; i++) {
-                if (!IndexToId(cx, i, id.address()))
+                if (!IndexToId(cx, i, &id))
                     return false;
 
                 /* Step 2a(iii)(1). */
@@ -870,7 +870,7 @@ js_InitJSONClass(JSContext *cx, HandleObject obj)
      * reserved slot on the global object; see js::BooleanGetPrimitiveValueSlow
      * called from PreprocessValue above.
      */
-    if (!global->getOrCreateBooleanPrototype(cx))
+    if (!GlobalObject::getOrCreateBooleanPrototype(cx, global))
         return nullptr;
 
     RootedObject proto(cx, obj->as<GlobalObject>().getOrCreateObjectPrototype(cx));

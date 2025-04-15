@@ -3,6 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/ArrayUtils.h"
+
 #include "inDOMUtils.h"
 #include "inLayoutUtils.h"
 
@@ -388,6 +390,11 @@ inDOMUtils::IsInheritedProperty(const nsAString &aPropertyName, bool *_retval)
     return NS_OK;
   }
 
+  if (prop == eCSSPropertyExtra_variable) {
+    *_retval = true;
+    return NS_OK;
+  }
+
   if (nsCSSProps::IsShorthand(prop)) {
     prop = nsCSSProps::SubpropertyEntryFor(prop)[0];
   }
@@ -401,7 +408,7 @@ extern const char* const kCSSRawProperties[];
 
 NS_IMETHODIMP
 inDOMUtils::GetCSSPropertyNames(uint32_t aFlags, uint32_t* aCount,
-                                PRUnichar*** aProps)
+                                char16_t*** aProps)
 {
   // maxCount is the largest number of properties we could have; our actual
   // number might be smaller because properties might be disabled.
@@ -416,8 +423,8 @@ inDOMUtils::GetCSSPropertyNames(uint32_t aFlags, uint32_t* aCount,
     maxCount += (eCSSProperty_COUNT_with_aliases - eCSSProperty_COUNT);
   }
 
-  PRUnichar** props =
-    static_cast<PRUnichar**>(nsMemory::Alloc(maxCount * sizeof(PRUnichar*)));
+  char16_t** props =
+    static_cast<char16_t**>(nsMemory::Alloc(maxCount * sizeof(char16_t*)));
 
 #define DO_PROP(_prop)                                                  \
   PR_BEGIN_MACRO                                                        \
@@ -554,7 +561,7 @@ static void GetOtherValuesForProperty(const uint32_t aParserVariant,
 NS_IMETHODIMP
 inDOMUtils::GetCSSValuesForProperty(const nsAString& aProperty,
                                     uint32_t* aLength,
-                                    PRUnichar*** aValues)
+                                    char16_t*** aValues)
 {
   nsCSSProperty propertyID = nsCSSProps::LookupProperty(aProperty,
                                                         nsCSSProps::eEnabled);
@@ -565,7 +572,9 @@ inDOMUtils::GetCSSValuesForProperty(const nsAString& aProperty,
   nsTArray<nsString> array;
   // We start collecting the values, BUT colors need to go in first, because array
   // needs to stay sorted, and the colors are sorted, so we just append them.
-  if (!nsCSSProps::IsShorthand(propertyID)) {
+  if (propertyID == eCSSPropertyExtra_variable) {
+    // No other values we can report.
+  } else if (!nsCSSProps::IsShorthand(propertyID)) {
     // Property is longhand.
     uint32_t propertyParserVariant = nsCSSProps::ParserVariant(propertyID);
     // Get colors first.
@@ -598,8 +607,8 @@ inDOMUtils::GetCSSValuesForProperty(const nsAString& aProperty,
   InsertNoDuplicates(array, NS_LITERAL_STRING("unset"));
 
   *aLength = array.Length();
-  PRUnichar** ret =
-    static_cast<PRUnichar**>(NS_Alloc(*aLength * sizeof(PRUnichar*)));
+  char16_t** ret =
+    static_cast<char16_t**>(NS_Alloc(*aLength * sizeof(char16_t*)));
   for (uint32_t i = 0; i < *aLength; ++i) {
     ret[i] = ToNewUnicode(array[i]);
   }
@@ -609,7 +618,7 @@ inDOMUtils::GetCSSValuesForProperty(const nsAString& aProperty,
 
 NS_IMETHODIMP
 inDOMUtils::ColorNameToRGB(const nsAString& aColorName, JSContext* aCx,
-                           JS::Value* aValue)
+                           JS::MutableHandle<JS::Value> aValue)
 {
   nscolor color;
   if (!NS_ColorNameToRGB(aColorName, &color)) {
@@ -621,8 +630,7 @@ inDOMUtils::ColorNameToRGB(const nsAString& aColorName, JSContext* aCx,
   triple.mG = NS_GET_G(color);
   triple.mB = NS_GET_B(color);
 
-  if (!triple.ToObject(aCx, JS::NullPtr(),
-                       JS::MutableHandle<JS::Value>::fromMarkedLocation(aValue))) {
+  if (!triple.ToObject(aCx, JS::NullPtr(), aValue)) {
     return NS_ERROR_FAILURE;
   }
 
@@ -755,7 +763,7 @@ GetStatesForPseudoClass(const nsAString& aStatePseudo)
     nsEventStates(),
     nsEventStates()
   };
-  static_assert(NS_ARRAY_LENGTH(sPseudoClassStates) ==
+  static_assert(MOZ_ARRAY_LENGTH(sPseudoClassStates) ==
                 nsCSSPseudoClasses::ePseudoClass_NotPseudoClass + 1,
                 "Length of PseudoClassStates array is incorrect");
 

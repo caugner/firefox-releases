@@ -334,25 +334,6 @@ js::ObjectImpl::nativeLookupPure(jsid id)
     return Shape::searchNoHashify(lastProperty(), id);
 }
 
-uint32_t
-js::ObjectImpl::numFixedSlotsForCompilation() const
-{
-    // This is an alternative method for getting the number of fixed slots
-    // in an object. It requires more logic and memory accesses than
-    // numFixedSlots() but is safe to be called from the compilation thread,
-    // even if the main thread is actively mutating the VM.
-    if (static_cast<const JSObject *>(this)->is<ArrayObject>())
-        return 0;
-#ifdef JSGC_GENERATIONAL
-    // The compiler does not have access to nursery things, so if this object
-    // is in the nursery we can fall back to numFixedSlots().
-    if (IsInsideNursery(GetGCThingRuntime(this), this))
-        return numFixedSlots();
-#endif
-    gc::AllocKind kind = tenuredGetAllocKind();
-    return gc::GetGCKindSlots(kind, getClass());
-}
-
 void
 js::ObjectImpl::markChildren(JSTracer *trc)
 {
@@ -360,7 +341,7 @@ js::ObjectImpl::markChildren(JSTracer *trc)
 
     MarkShape(trc, &shape_, "shape");
 
-    const Class *clasp = type_->clasp;
+    const Class *clasp = type_->clasp();
     JSObject *obj = asObjectPtr();
     if (clasp->trace)
         clasp->trace(trc, obj);
@@ -538,7 +519,7 @@ js::ArrayBufferDelegate(JSContext *cx, Handle<ObjectImpl*> obj)
     if (obj->getPrivate())
         return static_cast<JSObject *>(obj->getPrivate());
     JSObject *delegate = NewObjectWithGivenProto(cx, &JSObject::class_,
-                                                 obj->getProto(), nullptr);
+                                                 obj->getTaggedProto(), nullptr);
     obj->setPrivateGCThing(delegate);
     return delegate;
 }
@@ -684,7 +665,7 @@ js::GetProperty(JSContext *cx, Handle<ObjectImpl*> obj, Handle<ObjectImpl*> rece
 
         /* No property?  Recur or bottom out. */
         if (desc.isUndefined()) {
-            current = current->getProto();
+            current = current->getTaggedProto().toObjectOrNull();
             if (current)
                 continue;
 
@@ -746,7 +727,7 @@ js::GetElement(JSContext *cx, Handle<ObjectImpl*> obj, Handle<ObjectImpl*> recei
 
         /* No property?  Recur or bottom out. */
         if (desc.isUndefined()) {
-            current = current->getProto();
+            current = current->getTaggedProto().toObjectOrNull();
             if (current)
                 continue;
 
@@ -811,7 +792,7 @@ js::HasElement(JSContext *cx, Handle<ObjectImpl*> obj, uint32_t index, unsigned 
             return true;
         }
 
-        current = current->getProto();
+        current = current->getTaggedProto().toObjectOrNull();
         if (current)
             continue;
 
@@ -1009,7 +990,7 @@ js::SetElement(JSContext *cx, Handle<ObjectImpl*> obj, Handle<ObjectImpl*> recei
             MOZ_ASSUME_UNREACHABLE("NYI: setting PropertyOp-based property");
         }
 
-        current = current->getProto();
+        current = current->getTaggedProto().toObjectOrNull();
         if (current)
             continue;
 

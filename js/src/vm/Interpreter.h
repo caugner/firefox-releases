@@ -18,6 +18,8 @@
 
 namespace js {
 
+class ScopeIter;
+
 /*
  * Announce to the debugger that the thread has entered a new JavaScript frame,
  * |frame|. Call whatever hooks have been registered to observe new frames, and
@@ -36,7 +38,7 @@ namespace js {
  *   has set |frame|'s return value appropriately.
  */
 extern JSTrapStatus
-ScriptDebugPrologue(JSContext *cx, AbstractFramePtr frame);
+ScriptDebugPrologue(JSContext *cx, AbstractFramePtr frame, jsbytecode *pc);
 
 /*
  * Announce to the debugger that the thread has exited a JavaScript frame, |frame|.
@@ -54,7 +56,7 @@ ScriptDebugPrologue(JSContext *cx, AbstractFramePtr frame);
  * alternative path, containing its own call to ScriptDebugEpilogue.)
  */
 extern bool
-ScriptDebugEpilogue(JSContext *cx, AbstractFramePtr frame, bool ok);
+ScriptDebugEpilogue(JSContext *cx, AbstractFramePtr frame, jsbytecode *pc, bool ok);
 
 /*
  * Announce to the debugger that an exception has been thrown and propagated
@@ -106,12 +108,12 @@ enum MaybeConstruct {
  * before it reaches |v|. If it's -1, the decompiler will search the stack.
  */
 extern bool
-ReportIsNotFunction(JSContext *cx, const Value &v, int numToSkip = -1,
+ReportIsNotFunction(JSContext *cx, HandleValue v, int numToSkip = -1,
                     MaybeConstruct construct = NO_CONSTRUCT);
 
 /* See ReportIsNotFunction comment for the meaning of numToSkip. */
 extern JSObject *
-ValueToCallable(JSContext *cx, const Value &vp, int numToSkip = -1,
+ValueToCallable(JSContext *cx, HandleValue v, int numToSkip = -1,
                 MaybeConstruct construct = NO_CONSTRUCT);
 
 /*
@@ -318,7 +320,7 @@ HasInstance(JSContext *cx, HandleObject obj, HandleValue v, bool *bp);
 
 /* Unwind block and scope chains to match the given depth. */
 extern void
-UnwindScope(JSContext *cx, AbstractFramePtr frame, uint32_t stackDepth);
+UnwindScope(JSContext *cx, ScopeIter &si, uint32_t stackDepth);
 
 /*
  * Unwind for an uncatchable exception. This means not running finalizers, etc;

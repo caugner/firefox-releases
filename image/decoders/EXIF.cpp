@@ -5,6 +5,8 @@
 
 #include "EXIF.h"
 
+#include "mozilla/Endian.h"
+
 namespace mozilla {
 namespace image {
 
@@ -78,14 +80,11 @@ bool
 EXIFParser::ParseTIFFHeader(uint32_t& aIFD0OffsetOut)
 {
   // Determine byte order.
-  if (MatchString("MM", 2))
+  if (MatchString("MM\0*", 4))
     mByteOrder = ByteOrder::BigEndian;
-  else if (MatchString("II", 2))
+  else if (MatchString("II*\0", 4))
     mByteOrder = ByteOrder::LittleEndian;
   else
-    return false;
-
-  if (!MatchString("\0*", 2))
     return false;
 
   // Determine offset of the 0th IFD. (It shouldn't be greater than 64k, which
@@ -237,16 +236,13 @@ EXIFParser::MatchUInt16(const uint16_t aValue)
   if (mRemainingLength < 2)
     return false;
   
-  const uint8_t low = aValue & 0xFF;
-  const uint8_t high = aValue >> 8;
-
   bool matched;
   switch (mByteOrder) {
     case ByteOrder::LittleEndian:
-      matched = mCurrent[0] == low && mCurrent[1] == high;
+      matched = LittleEndian::readUint16(mCurrent) == aValue;
       break;
     case ByteOrder::BigEndian:
-      matched = mCurrent[0] == high && mCurrent[1] == low;
+      matched = BigEndian::readUint16(mCurrent) == aValue;
       break;
     default:
       NS_NOTREACHED("Should know the byte order by now");
@@ -268,12 +264,10 @@ EXIFParser::ReadUInt16(uint16_t& aValue)
   bool matched = true;
   switch (mByteOrder) {
     case ByteOrder::LittleEndian:
-      aValue = (uint32_t(mCurrent[1]) << 8) |
-               (uint32_t(mCurrent[0]));
+      aValue = LittleEndian::readUint16(mCurrent);
       break;
     case ByteOrder::BigEndian:
-      aValue = (uint32_t(mCurrent[0]) << 8) |
-               (uint32_t(mCurrent[1]));
+      aValue = BigEndian::readUint16(mCurrent);
       break;
     default:
       NS_NOTREACHED("Should know the byte order by now");
@@ -295,16 +289,10 @@ EXIFParser::ReadUInt32(uint32_t& aValue)
   bool matched = true;
   switch (mByteOrder) {
     case ByteOrder::LittleEndian:
-      aValue = (uint32_t(mCurrent[3]) << 24) |
-               (uint32_t(mCurrent[2]) << 16) |
-               (uint32_t(mCurrent[1]) << 8)  |
-               (uint32_t(mCurrent[0]));
+      aValue = LittleEndian::readUint32(mCurrent);
       break;
     case ByteOrder::BigEndian:
-      aValue = (uint32_t(mCurrent[0]) << 24) |
-               (uint32_t(mCurrent[1]) << 16) |
-               (uint32_t(mCurrent[2]) << 8)  |
-               (uint32_t(mCurrent[3]));
+      aValue = BigEndian::readUint32(mCurrent);
       break;
     default:
       NS_NOTREACHED("Should know the byte order by now");

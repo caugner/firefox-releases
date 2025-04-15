@@ -1334,10 +1334,9 @@ NS_IMETHODIMP nsWindow::SetCursor(imgIContainer* aCursor,
     return NS_OK;
   }
 
-  nsRefPtr<gfxASurface> surface;
-  aCursor->GetFrame(imgIContainer::FRAME_CURRENT,
-                    imgIContainer::FLAG_SYNC_DECODE,
-                    getter_AddRefs(surface));
+  nsRefPtr<gfxASurface> surface =
+    aCursor->GetFrame(imgIContainer::FRAME_CURRENT,
+                      imgIContainer::FLAG_SYNC_DECODE);
   NS_ENSURE_TRUE(surface, NS_ERROR_NOT_AVAILABLE);
 
   nsRefPtr<gfxImageSurface> frame(surface->GetAsReadableARGB32ImageSurface());
@@ -1495,7 +1494,7 @@ HBITMAP nsWindow::CreateTransparencyMask(gfxImageFormat format,
 
   // Non-alpha formats are already taken care of
   // by initializing the XOR and AND masks to zero
-  if (format == gfxImageFormatARGB32) {
+  if (format == gfxImageFormat::ARGB32) {
 
     // make the AND mask the inverse of the 8-bit alpha data
     int32_t* pSrc = (int32_t*)aImageData;
@@ -2087,7 +2086,7 @@ do {
   // Init the Layers manager then dispatch the event.
   // If it returns false there's nothing to paint, so exit.
   AutoLayerManagerSetup
-      setupLayerManager(this, thebesContext, BasicLayerManager::BUFFER_NONE);
+      setupLayerManager(this, thebesContext, BasicLayerManager::BufferMode::BUFFER_NONE);
   if (!DispatchWindowEvent(&event, eventStatus)) {
     break;
   }

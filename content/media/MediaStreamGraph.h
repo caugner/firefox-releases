@@ -445,6 +445,10 @@ public:
   {
     mConsumers.RemoveElement(aPort);
   }
+  uint32_t ConsumerCount()
+  {
+    return mConsumers.Length();
+  }
   const StreamBuffer& GetStreamBuffer() { return mBuffer; }
   GraphTime GetStreamBufferStartTime() { return mBufferStartTime; }
   /**
@@ -944,16 +948,31 @@ public:
   {
     return mInputs.Contains(aPort);
   }
+  uint32_t InputPortCount()
+  {
+    return mInputs.Length();
+  }
   virtual void DestroyImpl();
   /**
    * This gets called after we've computed the blocking states for all
    * streams (mBlocked is up to date up to mStateComputedTime).
    * Also, we've produced output for all streams up to this one. If this stream
    * is not in a cycle, then all its source streams have produced data.
-   * Generate output up to mStateComputedTime.
-   * This is called only on streams that have not finished.
+   * Generate output from aFrom to aTo.
+   * This will be called on streams that have finished. Most stream types should
+   * just return immediately if IsFinishedOnGraphThread(), but some may wish to
+   * update internal state (see AudioNodeStream).
+   * ProduceOutput is allowed to call FinishOnGraphThread only if ALLOW_FINISH
+   * is in aFlags. (This flag will be set when aTo >= mStateComputedTime, i.e.
+   * when we've producing the last block of data we need to produce.) Otherwise
+   * we can get into a situation where we've determined the stream should not
+   * block before mStateComputedTime, but the stream finishes before
+   * mStateComputedTime, violating the invariant that finished streams are blocked.
    */
-  virtual void ProduceOutput(GraphTime aFrom, GraphTime aTo) = 0;
+  enum {
+    ALLOW_FINISH = 0x01
+  };
+  virtual void ProduceOutput(GraphTime aFrom, GraphTime aTo, uint32_t aFlags) = 0;
   void SetAutofinishImpl(bool aAutofinish) { mAutofinish = aAutofinish; }
 
   /**
@@ -1039,7 +1058,7 @@ public:
   /**
    * Start processing non-realtime for a specific number of ticks.
    */
-  void StartNonRealtimeProcessing(uint32_t aTicksToProcess);
+  void StartNonRealtimeProcessing(TrackRate aRate, uint32_t aTicksToProcess);
 
   /**
    * Media graph thread only.

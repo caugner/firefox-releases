@@ -252,8 +252,12 @@ static void str_escape(const char * original, nsAFlatCString& aResult)
 nsresult
 PREF_SetCharPref(const char *pref_name, const char *value, bool set_default)
 {
+    if ((uint32_t)strlen(value) > MAX_PREF_LENGTH) {
+        return NS_ERROR_ILLEGAL_VALUE;
+    }
+
     PrefValue pref;
-    pref.stringVal = (char*) value;
+    pref.stringVal = (char*)value;
 
     return pref_HashPref(pref_name, pref, PREF_STRING, set_default ? kPrefSetDefault : 0);
 }
@@ -953,9 +957,7 @@ static nsresult pref_DoCallback(const char* changed_pref)
                         node->domain,
                         strlen(node->domain)) == 0 )
         {
-            nsresult rv2 = (*node->func) (changed_pref, node->data);
-            if (NS_FAILED(rv2))
-                rv = rv2;
+            (*node->func) (changed_pref, node->data);
         }
     }
 

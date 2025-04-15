@@ -50,6 +50,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "NewTabUtils",
 XPCOMUtils.defineLazyModuleGetter(this, "BrowserNewTabPreloader",
                                   "resource:///modules/BrowserNewTabPreloader.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "CustomizationTabPreloader",
+                                  "resource:///modules/CustomizationTabPreloader.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "PdfJs",
                                   "resource://pdf.js/PdfJs.jsm");
 
@@ -82,16 +85,20 @@ XPCOMUtils.defineLazyModuleGetter(this, "SessionStore",
 XPCOMUtils.defineLazyModuleGetter(this, "BrowserUITelemetry",
                                   "resource:///modules/BrowserUITelemetry.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "AsyncShutdown",
+                                  "resource://gre/modules/AsyncShutdown.jsm");
+
 const PREF_PLUGINS_NOTIFYUSER = "plugins.update.notifyUser";
 const PREF_PLUGINS_UPDATEURL  = "plugins.update.url";
 
-// We try to backup bookmarks at idle times, to avoid doing that at shutdown.
-// Number of idle seconds before trying to backup bookmarks.  10 minutes.
-const BOOKMARKS_BACKUP_IDLE_TIME = 10 * 60;
-// Minimum interval in milliseconds between backups.
-const BOOKMARKS_BACKUP_INTERVAL = 86400 * 1000;
-// Maximum number of backups to create.  Old ones will be purged.
-const BOOKMARKS_BACKUP_MAX_BACKUPS = 10;
+// Seconds of idle before trying to create a bookmarks backup.
+const BOOKMARKS_BACKUP_IDLE_TIME_SEC = 10 * 60;
+// Minimum interval between backups.  We try to not create more than one backup
+// per interval.
+const BOOKMARKS_BACKUP_MIN_INTERVAL_DAYS = 1;
+// Maximum interval between backups.  If the last backup is older than these
+// days we will try to create a new one more aggressively.
+const BOOKMARKS_BACKUP_MAX_INTERVAL_DAYS = 5;
 
 // Factory object
 const BrowserGlueServiceFactory = {
@@ -134,7 +141,6 @@ function BrowserGlue() {
 
 BrowserGlue.prototype = {
   _saveSession: false,
-  _isIdleObserver: false,
   _isPlacesInitObserver: false,
   _isPlacesLockedObserver: false,
   _isPlacesShutdownObserver: false,
@@ -262,8 +268,7 @@ BrowserGlue.prototype = {
         this._onPlacesShutdown();
         break;
       case "idle":
-        if (this._idleService.idleTime > BOOKMARKS_BACKUP_IDLE_TIME * 1000)
-          this._backupBookmarks();
+        this._backupBookmarks();
         break;
       case "distribution-customization-complete":
         Services.obs.removeObserver(this, "distribution-customization-complete");
@@ -422,8 +427,10 @@ BrowserGlue.prototype = {
     os.removeObserver(this, "weave:engine:clients:display-uri");
 #endif
     os.removeObserver(this, "session-save");
-    if (this._isIdleObserver)
-      this._idleService.removeIdleObserver(this, BOOKMARKS_BACKUP_IDLE_TIME);
+    if (this._bookmarksBackupIdleTime) {
+      this._idleService.removeIdleObserver(this, this._bookmarksBackupIdleTime);
+      delete this._bookmarksBackupIdleTime;
+    }
     if (this._isPlacesInitObserver)
       os.removeObserver(this, "places-init-complete");
     if (this._isPlacesLockedObserver)
@@ -481,7 +488,7 @@ BrowserGlue.prototype = {
     SessionStore.init();
     BrowserUITelemetry.init();
 
-    if (Services.prefs.getBoolPref("browser.tabs.remote"))
+    if (Services.appinfo.browserTabsRemote)
       ContentClick.init();
 
     Services.obs.notifyObservers(null, "browser-ui-startup-complete", "");
@@ -625,7 +632,11 @@ BrowserGlue.prototype = {
     // Offer to reset a user's profile if it hasn't been used for 60 days.
     const OFFER_PROFILE_RESET_INTERVAL_MS = 60 * 24 * 60 * 60 * 1000;
     let lastUse = Services.appinfo.replacedLockTime;
-    if (lastUse &&
+    let disableResetPrompt = false;
+    try {
+      disableResetPrompt = Services.prefs.getBoolPref("browser.disableResetPrompt");
+    } catch(e) {}
+    if (!disableResetPrompt && lastUse &&
         Date.now() - lastUse >= OFFER_PROFILE_RESET_INTERVAL_MS) {
       this._resetUnusedProfileNotification();
     }
@@ -1046,6 +1057,20 @@ BrowserGlue.prototype = {
         importBookmarks = true;
     } catch(ex) {}
 
+    // Support legacy bookmarks.html format for apps that depend on that format.
+    let autoExportHTML = false;
+    try {
+      autoExportHTML = Services.prefs.getBoolPref("browser.bookmarks.autoExportHTML");
+    } catch (ex) {} // Do not export.
+    if (autoExportHTML) {
+      // Sqlite.jsm and Places shutdown happen at profile-before-change, thus,
+      // to be on the safe side, this should run earlier.
+      AsyncShutdown.profileChangeTeardown.addBlocker(
+        "Places: export bookmarks.html",
+        () => BookmarkHTMLUtils.exportToFile(Services.dirsvc.get("BMarks",
+                                                                 Ci.nsIFile)));
+    }
+
     Task.spawn(function() {
       // Check if Safe Mode or the user has required to restore bookmarks from
       // default profile's bookmarks.html
@@ -1060,14 +1085,18 @@ BrowserGlue.prototype = {
         }
       } catch(ex) {}
 
+      // This may be reused later, check for "=== undefined" to see if it has
+      // been populated already.
+      let lastBackupFile;
+
       // If the user did not require to restore default bookmarks, or import
       // from bookmarks.html, we will try to restore from JSON
       if (importBookmarks && !restoreDefaultBookmarks && !importBookmarksHTML) {
         // get latest JSON backup
-        var bookmarksBackupFile = yield PlacesBackups.getMostRecent("json");
-        if (bookmarksBackupFile) {
+        lastBackupFile = yield PlacesBackups.getMostRecentBackup("json");
+        if (lastBackupFile) {
           // restore from JSON backup
-          yield BookmarkJSONUtils.importFromFile(bookmarksBackupFile, true);
+          yield BookmarkJSONUtils.importFromFile(lastBackupFile, true);
           importBookmarks = false;
         }
         else {
@@ -1102,10 +1131,6 @@ BrowserGlue.prototype = {
         // An import operation is about to run.
         // Don't try to recreate smart bookmarks if autoExportHTML is true or
         // smart bookmarks are disabled.
-        var autoExportHTML = false;
-        try {
-          autoExportHTML = Services.prefs.getBoolPref("browser.bookmarks.autoExportHTML");
-        } catch(ex) {}
         var smartBookmarksVersion = 0;
         try {
           smartBookmarksVersion = Services.prefs.getIntPref("browser.places.smartBookmarksVersion");
@@ -1162,10 +1187,39 @@ BrowserGlue.prototype = {
       }
 
       // Initialize bookmark archiving on idle.
-      // Once a day, either on idle or shutdown, bookmarks are backed up.
-      if (!this._isIdleObserver) {
-        this._idleService.addIdleObserver(this, BOOKMARKS_BACKUP_IDLE_TIME);
-        this._isIdleObserver = true;
+      if (!this._bookmarksBackupIdleTime) {
+        this._bookmarksBackupIdleTime = BOOKMARKS_BACKUP_IDLE_TIME_SEC;
+
+        // If there is no backup, or the last bookmarks backup is too old, use
+        // a more aggressive idle observer.
+        if (lastBackupFile === undefined)
+          lastBackupFile = yield PlacesBackups.getMostRecentBackup();
+        if (!lastBackupFile) {
+            this._bookmarksBackupIdleTime /= 2;
+        }
+        else {
+          let lastBackupTime = PlacesBackups.getDateForFile(lastBackupFile);
+          let profileLastUse = Services.appinfo.replacedLockTime || Date.now();
+
+          // If there is a backup after the last profile usage date it's fine,
+          // regardless its age.  Otherwise check how old is the last
+          // available backup compared to that session.
+          if (profileLastUse > lastBackupTime) {
+            let backupAge = Math.round((profileLastUse - lastBackupTime) / 86400000);
+            // Report the age of the last available backup.
+            try {
+              Services.telemetry
+                      .getHistogramById("PLACES_BACKUPS_DAYSFROMLAST")
+                      .add(backupAge);
+            } catch (ex) {
+              Components.utils.reportError("Unable to report telemetry.");
+            }
+
+            if (backupAge > BOOKMARKS_BACKUP_MAX_INTERVAL_DAYS)
+              this._bookmarksBackupIdleTime /= 2;
+          }
+        }
+        this._idleService.addIdleObserver(this, this._bookmarksBackupIdleTime);
       }
 
       Services.obs.notifyObservers(null, "places-browser-init-complete", "");
@@ -1174,63 +1228,21 @@ BrowserGlue.prototype = {
 
   /**
    * Places shut-down tasks
-   * - back up bookmarks if needed.
-   * - export bookmarks as HTML, if so configured.
    * - finalize components depending on Places.
+   * - export bookmarks as HTML, if so configured.
    */
   _onPlacesShutdown: function BG__onPlacesShutdown() {
     this._sanitizer.onShutdown();
     PageThumbs.uninit();
 
-    if (this._isIdleObserver) {
-      this._idleService.removeIdleObserver(this, BOOKMARKS_BACKUP_IDLE_TIME);
-      this._isIdleObserver = false;
-    }
-
-    let waitingForBackupToComplete = true;
-    this._backupBookmarks().then(
-      function onSuccess() {
-        waitingForBackupToComplete = false;
-      },
-      function onFailure() {
-        Cu.reportError("Unable to backup bookmarks.");
-        waitingForBackupToComplete = false;
-      }
-    );
-
-    // Backup bookmarks to bookmarks.html to support apps that depend
-    // on the legacy format.
-    let waitingForHTMLExportToComplete = false;
-    // If this fails to get the preference value, we don't export.
-    if (Services.prefs.getBoolPref("browser.bookmarks.autoExportHTML")) {
-      // Exceptionally, since this is a non-default setting and HTML format is
-      // discouraged in favor of the JSON backups, we spin the event loop on
-      // shutdown, to wait for the export to finish.  We cannot safely spin
-      // the event loop on shutdown until we include a watchdog to prevent
-      // potential hangs (bug 518683).  The asynchronous shutdown operations
-      // will then be handled by a shutdown service (bug 435058).
-      waitingForHTMLExportToComplete = true;
-      BookmarkHTMLUtils.exportToFile(Services.dirsvc.get("BMarks", Ci.nsIFile)).then(
-        function onSuccess() {
-          waitingForHTMLExportToComplete = false;
-        },
-        function onFailure() {
-          Cu.reportError("Unable to auto export html.");
-          waitingForHTMLExportToComplete = false;
-        }
-      );
-    }
-
-    // The events loop should spin at least once because waitingForBackupToComplete
-    // is true before checking whether backup should be made.
-    let thread = Services.tm.currentThread;
-    while (waitingForBackupToComplete || waitingForHTMLExportToComplete) {
-      thread.processNextEvent(true);
+    if (this._bookmarksBackupIdleTime) {
+      this._idleService.removeIdleObserver(this, this._bookmarksBackupIdleTime);
+      delete this._bookmarksBackupIdleTime;
     }
   },
 
   /**
-   * Backup bookmarks.
+   * If a backup for today doesn't exist, this creates one.
    */
   _backupBookmarks: function BG__backupBookmarks() {
     return Task.spawn(function() {
@@ -1238,14 +1250,9 @@ BrowserGlue.prototype = {
       // Should backup bookmarks if there are no backups or the maximum
       // interval between backups elapsed.
       if (!lastBackupFile ||
-          new Date() - PlacesBackups.getDateForFile(lastBackupFile) > BOOKMARKS_BACKUP_INTERVAL) {
-        let maxBackups = BOOKMARKS_BACKUP_MAX_BACKUPS;
-        try {
-          maxBackups = Services.prefs.getIntPref("browser.bookmarks.max_backups");
-        }
-        catch(ex) { /* Use default. */ }
-
-        yield PlacesBackups.create(maxBackups); // Don't force creation.
+          new Date() - PlacesBackups.getDateForFile(lastBackupFile) > BOOKMARKS_BACKUP_MIN_INTERVAL_DAYS * 86400000) {
+        let maxBackups = Services.prefs.getIntPref("browser.bookmarks.max_backups");
+        yield PlacesBackups.create(maxBackups);
       }
     });
   },
@@ -1289,78 +1296,17 @@ BrowserGlue.prototype = {
   },
 
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 15;
+    const UI_VERSION = 22;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul#";
-
-    let wasCustomizedAndOnAustralis = Services.prefs.prefHasUserValue("browser.uiCustomization.state");
     let currentUIVersion = 0;
     try {
       currentUIVersion = Services.prefs.getIntPref("browser.migration.version");
     } catch(ex) {}
-    if (!wasCustomizedAndOnAustralis && currentUIVersion >= UI_VERSION)
+    if (currentUIVersion >= UI_VERSION)
       return;
 
     this._rdf = Cc["@mozilla.org/rdf/rdf-service;1"].getService(Ci.nsIRDFService);
     this._dataSource = this._rdf.GetDataSource("rdf:local-store");
-
-    function migrateDetector() {
-      let detector = null;    
-      try {
-        detector = Services.prefs.getComplexValue("intl.charset.detector",
-                                                  Ci.nsIPrefLocalizedString).data;
-      } catch (ex) {}
-      if (!(detector == "" ||
-            detector == "ja_parallel_state_machine" ||
-            detector == "ruprob" ||
-            detector == "ukprob")) {
-        // If the encoding detector pref value is not reachable from the UI,
-        // reset to default (varies by localization).
-        Services.prefs.clearUserPref("intl.charset.detector");
-      }
-    }
-
-    // No version check for this as this code should run until we have Australis everywhere:
-    if (wasCustomizedAndOnAustralis) {
-      // This profile's been on australis! If it's missing the back/fwd button
-      // or go/stop/reload button, then put them back:
-      let currentsetResource = this._rdf.GetResource("currentset");
-      let toolbarResource = this._rdf.GetResource(BROWSER_DOCURL + "nav-bar");
-      let currentset = this._getPersist(toolbarResource, currentsetResource);
-      let oldCurrentset = currentset;
-      if (currentset) {
-        if (currentset.indexOf("unified-back-forward-button") == -1) {
-          currentset = currentset.replace("urlbar-container",
-                                          "unified-back-forward-button,urlbar-container");
-        }
-        if (currentset.indexOf("reload-button") == -1) {
-          currentset = currentset.replace("urlbar-container", "urlbar-container,reload-button");
-        }
-        if (currentset.indexOf("stop-button") == -1) {
-          currentset = currentset.replace("reload-button", "reload-button,stop-button");
-        }
-      }
-      Services.prefs.clearUserPref("browser.uiCustomization.state");
-
-      if (oldCurrentset != currentset) {
-        this._setPersist(toolbarResource, currentsetResource, currentset);
-      }
-
-      // Taking the opportunity to do the version 15 action here as well to
-      // address profiles that have been on Australis.
-      migrateDetector();
-
-      // If we don't have anything else to do, we can bail here:
-      if (currentUIVersion >= UI_VERSION) {
-        if (this._dirty) {
-          this._dataSource.QueryInterface(Ci.nsIRDFRemoteDataSource).Flush();
-        }
-        delete this._rdf;
-        delete this._dataSource;
-        return;
-      }
-    }
-
-
     this._dirty = false;
 
     if (currentUIVersion < 2) {
@@ -1544,12 +1490,98 @@ BrowserGlue.prototype = {
       OS.File.remove(path);
     }
 
-    // Reusing the version 15, which is no longer in use on m-c, on Holly.
-    // This fails if the user has used Australis with this profile without
-    // customization and then gone back no the non-Australis version stream.
-    // However, the situation will fix itself once Australis reaches the user.
-    if (currentUIVersion < 15) {
-      migrateDetector();
+    // Version 15 was obsoleted in favour of 18.
+
+    if (currentUIVersion < 16) {
+      let toolbarResource = this._rdf.GetResource(BROWSER_DOCURL + "nav-bar");
+      let collapsedResource = this._rdf.GetResource("collapsed");
+      let isCollapsed = this._getPersist(toolbarResource, collapsedResource);
+      if (isCollapsed == "true") {
+        this._setPersist(toolbarResource, collapsedResource, "false");
+      }
+    }
+
+    // Insert the bookmarks-menu-button into the nav-bar if it isn't already
+    // there.
+    if (currentUIVersion < 17) {
+      let currentsetResource = this._rdf.GetResource("currentset");
+      let toolbarResource = this._rdf.GetResource(BROWSER_DOCURL + "nav-bar");
+      let currentset = this._getPersist(toolbarResource, currentsetResource);
+      // Need to migrate only if toolbar is customized.
+      if (currentset) {
+        if (!currentset.contains("bookmarks-menu-button")) {
+          // The button isn't in the nav-bar, so let's look for an appropriate
+          // place to put it.
+          if (currentset.contains("downloads-button")) {
+            currentset = currentset.replace(/(^|,)downloads-button($|,)/,
+                                            "$1bookmarks-menu-button,downloads-button$2");
+          } else if (currentset.contains("home-button")) {
+            currentset = currentset.replace(/(^|,)home-button($|,)/,
+                                            "$1bookmarks-menu-button,home-button$2");
+          } else {
+            // Just append.
+            currentset = currentset.replace(/(^|,)window-controls($|,)/,
+                                            "$1bookmarks-menu-button,window-controls$2")
+          }
+          this._setPersist(toolbarResource, currentsetResource, currentset);
+        }
+      }
+    }
+
+    if (currentUIVersion < 18) {
+      // Remove iconsize and mode from all the toolbars
+      let toolbars = ["navigator-toolbox", "nav-bar", "PersonalToolbar",
+                      "addon-bar", "TabsToolbar", "toolbar-menubar"];
+      for (let resourceName of ["mode", "iconsize"]) {
+        let resource = this._rdf.GetResource(resourceName);
+        for (let toolbarId of toolbars) {
+          let toolbar = this._rdf.GetResource(BROWSER_DOCURL + toolbarId);
+          if (this._getPersist(toolbar, resource)) {
+            this._setPersist(toolbar, resource);
+          }
+        }
+      }
+    }
+
+    if (currentUIVersion < 19) {
+      let detector = null;    
+      try {
+        detector = Services.prefs.getComplexValue("intl.charset.detector",
+                                                  Ci.nsIPrefLocalizedString).data;
+      } catch (ex) {}
+      if (!(detector == "" ||
+            detector == "ja_parallel_state_machine" ||
+            detector == "ruprob" ||
+            detector == "ukprob")) {
+        // If the encoding detector pref value is not reachable from the UI,
+        // reset to default (varies by localization).
+        Services.prefs.clearUserPref("intl.charset.detector");
+      }
+    }
+
+    if (currentUIVersion < 20) {
+      // Remove persisted collapsed state from TabsToolbar.
+      let resource = this._rdf.GetResource("collapsed");
+      let toolbar = this._rdf.GetResource(BROWSER_DOCURL + "TabsToolbar");
+      if (this._getPersist(toolbar, resource)) {
+        this._setPersist(toolbar, resource);
+      }
+    }
+
+    if (currentUIVersion < 21) {
+      // Make sure the 'toolbarbutton-1' class will always be present from here
+      // on out.
+      let button = this._rdf.GetResource(BROWSER_DOCURL + "bookmarks-menu-button");
+      let classResource = this._rdf.GetResource("class");
+      if (this._getPersist(button, classResource)) {
+        this._setPersist(button, classResource);
+      }
+    }
+
+    if (currentUIVersion < 22) {
+      // Reset the Sync promobox count to promote the new FxAccount-based Sync.
+      Services.prefs.clearUserPref("browser.syncPromoViewsLeft");
+      Services.prefs.clearUserPref("browser.syncPromoViewsLeftMap");
     }
 
     if (this._dirty)

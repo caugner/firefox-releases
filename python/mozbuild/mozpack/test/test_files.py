@@ -16,6 +16,7 @@ from mozpack.files import (
     JarFinder,
     ManifestFile,
     MinifiedProperties,
+    PreprocessedFile,
     XPTFile,
 )
 from mozpack.mozjar import (
@@ -327,6 +328,128 @@ class TestAbsoluteSymlinkFile(TestWithTmpDir):
         link = os.readlink(dest)
         self.assertEqual(link, source)
 
+class TestPreprocessedFile(TestWithTmpDir):
+    def test_preprocess(self):
+        '''
+        Test that copying the file invokes the preprocessor
+        '''
+        src = self.tmppath('src')
+        dest = self.tmppath('dest')
+
+        with open(src, 'wb') as tmp:
+            tmp.write('#ifdef FOO\ntest\n#endif')
+
+        f = PreprocessedFile(src, depfile_path=None, marker='#', defines={'FOO': True})
+        self.assertTrue(f.copy(dest))
+
+        self.assertEqual('test\n', open(dest, 'rb').read())
+
+    def test_preprocess_file_no_write(self):
+        '''
+        Test various conditions where PreprocessedFile.copy is expected not to
+        write in the destination file.
+        '''
+        src = self.tmppath('src')
+        dest = self.tmppath('dest')
+        depfile = self.tmppath('depfile')
+
+        with open(src, 'wb') as tmp:
+            tmp.write('#ifdef FOO\ntest\n#endif')
+
+        # Initial copy
+        f = PreprocessedFile(src, depfile_path=depfile, marker='#', defines={'FOO': True})
+        self.assertTrue(f.copy(dest))
+
+        # Ensure subsequent copies won't trigger writes
+        self.assertFalse(f.copy(DestNoWrite(dest)))
+        self.assertEqual('test\n', open(dest, 'rb').read())
+
+        # When the source file is older than the destination file, even with
+        # different content, no copy should occur.
+        with open(src, 'wb') as tmp:
+            tmp.write('#ifdef FOO\nfooo\n#endif')
+        time = os.path.getmtime(dest) - 1
+        os.utime(src, (time, time))
+        self.assertFalse(f.copy(DestNoWrite(dest)))
+        self.assertEqual('test\n', open(dest, 'rb').read())
+
+        # skip_if_older=False is expected to force a copy in this situation.
+        self.assertTrue(f.copy(dest, skip_if_older=False))
+        self.assertEqual('fooo\n', open(dest, 'rb').read())
+
+    def test_preprocess_file_dependencies(self):
+        '''
+        Test that the preprocess runs if the dependencies of the source change
+        '''
+        src = self.tmppath('src')
+        dest = self.tmppath('dest')
+        incl = self.tmppath('incl')
+        deps = self.tmppath('src.pp')
+
+        with open(src, 'wb') as tmp:
+            tmp.write('#ifdef FOO\ntest\n#endif')
+
+        with open(incl, 'wb') as tmp:
+            tmp.write('foo bar')
+
+        # Initial copy
+        f = PreprocessedFile(src, depfile_path=deps, marker='#', defines={'FOO': True})
+        self.assertTrue(f.copy(dest))
+
+        # Update the source so it #includes the include file.
+        with open(src, 'wb') as tmp:
+            tmp.write('#include incl\n')
+        time = os.path.getmtime(dest) + 1
+        os.utime(src, (time, time))
+        self.assertTrue(f.copy(dest))
+        self.assertEqual('foo bar', open(dest, 'rb').read())
+
+        # If one of the dependencies changes, the file should be updated. The
+        # mtime of the dependency is set after the destination file, to avoid
+        # both files having the same time.
+        with open(incl, 'wb') as tmp:
+            tmp.write('quux')
+        time = os.path.getmtime(dest) + 1
+        os.utime(incl, (time, time))
+        self.assertTrue(f.copy(dest))
+        self.assertEqual('quux', open(dest, 'rb').read())
+
+        # Perform one final copy to confirm that we don't run the preprocessor
+        # again. We update the mtime of the destination so it's newer than the
+        # input files. This would "just work" if we weren't changing
+        time = os.path.getmtime(incl) + 1
+        os.utime(dest, (time, time))
+        self.assertFalse(f.copy(DestNoWrite(dest)))
+
+    def test_replace_symlink(self):
+        '''
+        Test that if the destination exists, and is a symlink, the target of
+        the symlink is not overwritten by the preprocessor output.
+        '''
+        if not self.symlink_supported:
+            return
+
+        source = self.tmppath('source')
+        dest = self.tmppath('dest')
+        pp_source = self.tmppath('pp_in')
+        deps = self.tmppath('deps')
+
+        with open(source, 'a'):
+            pass
+
+        os.symlink(source, dest)
+        self.assertTrue(os.path.islink(dest))
+
+        with open(pp_source, 'wb') as tmp:
+            tmp.write('#define FOO\nPREPROCESSED')
+
+        f = PreprocessedFile(pp_source, depfile_path=deps, marker='#',
+            defines={'FOO': True})
+        self.assertTrue(f.copy(dest))
+
+        self.assertEqual('PREPROCESSED', open(dest, 'rb').read())
+        self.assertFalse(os.path.islink(dest))
+        self.assertEqual('', open(source, 'rb').read())
 
 class TestExistingFile(TestWithTmpDir):
     def test_required_missing_dest(self):
@@ -723,6 +846,48 @@ class TestFileFinder(MatchTestTemplate, TestWithTmpDir):
         self.finder = FileFinder(self.tmpdir)
         self.do_match_test()
         self.do_finder_test(self.finder)
+
+    def test_ignored_dirs(self):
+        """Ignored directories should not have results returned."""
+        self.prepare_match_test()
+        self.add('fooz')
+
+        # Present to ensure prefix matching doesn't exclude.
+        self.add('foo/quxz')
+
+        self.finder = FileFinder(self.tmpdir, ignore=['foo/qux'])
+
+        self.do_check('**', ['bar', 'foo/bar', 'foo/baz', 'foo/quxz', 'fooz'])
+        self.do_check('foo/*', ['foo/bar', 'foo/baz', 'foo/quxz'])
+        self.do_check('foo/**', ['foo/bar', 'foo/baz', 'foo/quxz'])
+        self.do_check('foo/qux/**', [])
+        self.do_check('foo/qux/*', [])
+        self.do_check('foo/qux/bar', [])
+        self.do_check('foo/quxz', ['foo/quxz'])
+        self.do_check('fooz', ['fooz'])
+
+    def test_ignored_files(self):
+        """Ignored files should not have results returned."""
+        self.prepare_match_test()
+
+        # Be sure prefix match doesn't get ignored.
+        self.add('barz')
+
+        self.finder = FileFinder(self.tmpdir, ignore=['foo/bar', 'bar'])
+        self.do_check('**', ['barz', 'foo/baz', 'foo/qux/1', 'foo/qux/2/test',
+            'foo/qux/2/test2', 'foo/qux/bar'])
+        self.do_check('foo/**', ['foo/baz', 'foo/qux/1', 'foo/qux/2/test',
+            'foo/qux/2/test2', 'foo/qux/bar'])
+
+    def test_ignored_patterns(self):
+        """Ignore entries with patterns should be honored."""
+        self.prepare_match_test()
+
+        self.add('foo/quxz')
+
+        self.finder = FileFinder(self.tmpdir, ignore=['foo/qux/*'])
+        self.do_check('**', ['foo/bar', 'foo/baz', 'foo/quxz', 'bar'])
+        self.do_check('foo/**', ['foo/bar', 'foo/baz', 'foo/quxz'])
 
 
 class TestJarFinder(MatchTestTemplate, TestWithTmpDir):

@@ -20,6 +20,7 @@
 #include "nsICategoryManager.h"
 #include "nsIJSRuntimeService.h"
 #include "nsIThreadInternal.h"
+#include "nsIScriptError.h"
 #include "nsTArray.h"
 #include "nsThreadUtils.h"
 #include "nsMemory.h"
@@ -36,10 +37,11 @@
 #include "SandboxPrivate.h"
 #include "nsJSPrincipals.h"
 #include "nsContentUtils.h"
-#include "nsCxPusher.h"
+#include "mozilla/dom/ScriptSettings.h"
 
 using mozilla::AutoSafeJSContext;
 using mozilla::AutoPushJSContext;
+using mozilla::dom::AutoSystemCaller;
 
 /*
  * defining CAUTIOUS_SCRIPTHOOK makes jsds disable GC while calling out to the
@@ -977,7 +979,7 @@ jsdScript::CreatePPLineMap()
 {
     AutoSafeJSContext cx;
     JSAutoCompartment ac(cx, JSD_GetDefaultGlobal (mCx)); // Just in case.
-    JS::RootedObject obj(cx, JS_NewObject(cx, nullptr, nullptr, nullptr));
+    JS::RootedObject obj(cx, JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr()));
     if (!obj)
         return nullptr;
     JS::RootedFunction fun(cx, JSD_GetJSFunction (mCx, mScript));
@@ -1212,7 +1214,7 @@ jsdScript::GetFunctionName(nsACString &_rval)
 }
 
 NS_IMETHODIMP
-jsdScript::GetParameterNames(uint32_t* count, PRUnichar*** paramNames)
+jsdScript::GetParameterNames(uint32_t* count, char16_t*** paramNames)
 {
     ASSERT_VALID_EPHEMERAL;
     AutoSafeJSContext cx;
@@ -1233,8 +1235,8 @@ jsdScript::GetParameterNames(uint32_t* count, PRUnichar*** paramNames)
         return NS_OK;
     }
 
-    PRUnichar **ret =
-        static_cast<PRUnichar**>(NS_Alloc(nargs * sizeof(PRUnichar*)));
+    char16_t **ret =
+        static_cast<char16_t**>(NS_Alloc(nargs * sizeof(char16_t*)));
     if (!ret)
         return NS_ERROR_OUT_OF_MEMORY;
 
@@ -2363,16 +2365,14 @@ jsdValue::Refresh()
 }
 
 NS_IMETHODIMP
-jsdValue::GetWrappedValue(JSContext* aCx, JS::Value* aRetval)
+jsdValue::GetWrappedValue(JSContext* aCx, JS::MutableHandle<JS::Value> aRetval)
 {
     ASSERT_VALID_EPHEMERAL;
 
-    JS::RootedValue value(aCx, JSD_GetValueWrappedJSVal(mCx, mValue));
-    if (!JS_WrapValue(aCx, &value)) {
+    aRetval.set(JSD_GetValueWrappedJSVal(mCx, mValue));
+    if (!JS_WrapValue(aCx, aRetval))
         return NS_ERROR_FAILURE;
-    }
 
-    *aRetval = value;
     return NS_OK;
 }
 
@@ -2464,11 +2464,30 @@ jsdService::AsyncOn (jsdIActivationCallback *activationCallback)
 {
     nsresult  rv;
 
+    // Warn that JSD is deprecated, unless the caller has told us
+    // that they know already.
+    if (mDeprecationAcknowledged) {
+        mDeprecationAcknowledged = false;
+    } else if (!mWarnedAboutDeprecation) {
+        // In any case, warn only once.
+        mWarnedAboutDeprecation = true;
+
+        // Ignore errors: simply being unable to print the message
+        // shouldn't (effectively) disable JSD.
+        nsContentUtils::ReportToConsoleNonLocalized(
+            NS_LITERAL_STRING("\
+The jsdIDebuggerService and its associated interfaces are deprecated. \
+Please use Debugger, via IJSDebugger, instead."),
+            nsIScriptError::warningFlag,
+            NS_LITERAL_CSTRING("JSD"),
+            nullptr);
+    }
+
     nsCOMPtr<nsIXPConnect> xpc = do_GetService(nsIXPConnect::GetCID(), &rv);
     if (NS_FAILED(rv)) return rv;
 
     mActivationCallback = activationCallback;
-    
+
     return xpc->SetDebugModeWhenPossible(true, true);
 }
 
@@ -2986,7 +3005,7 @@ jsdService::ClearAllBreakpoints (void)
 }
 
 NS_IMETHODIMP
-jsdService::WrapValue(const JS::Value &value, jsdIValue **_rval)
+jsdService::WrapValue(JS::Handle<JS::Value> value, jsdIValue **_rval)
 {
     ASSERT_VALID_CONTEXT;
     JSDValue *jsdv = JSD_NewValue(mCx, value);
@@ -3004,8 +3023,7 @@ jsdService::EnterNestedEventLoop (jsdINestCallback *callback, uint32_t *_rval)
     // Nesting event queues is a thing of the past.  Now, we just spin the
     // current event loop.
     nsresult rv = NS_OK;
-    nsCxPusher pusher;
-    pusher.PushNull();
+    AutoSystemCaller asc;
     uint32_t nestLevel = ++mNestedLoopLevel;
     nsCOMPtr<nsIThread> thread = do_GetCurrentThread();
 
@@ -3040,6 +3058,13 @@ jsdService::ExitNestedEventLoop (uint32_t *_rval)
     *_rval = mNestedLoopLevel;    
     return NS_OK;
 }    
+
+NS_IMETHODIMP
+jsdService::AcknowledgeDeprecation()
+{
+    mDeprecationAcknowledged = true;
+    return NS_OK;
+}
 
 /* hook attribute get/set functions */
 
@@ -3329,7 +3354,7 @@ NS_IMPL_ISUPPORTS1(jsdASObserver, nsIObserver)
 
 NS_IMETHODIMP
 jsdASObserver::Observe (nsISupports *aSubject, const char *aTopic,
-                        const PRUnichar *aData)
+                        const char16_t *aData)
 {
     nsresult rv;
 

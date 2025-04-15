@@ -302,6 +302,7 @@ public:
     return rcFrame.height;
   }
 
+  static nsIAtom*** PropertiesToTraverseAndUnlink();
 protected:
   // These methods are used to implement element-specific behavior of Get/SetItemValue
   // when an element has @itemprop but no @itemscope.
@@ -319,8 +320,10 @@ public:
 
   /**
    * Get width and height, using given image request if attributes are unset.
+   * Pass a reference to the image request, since the method may change the
+   * value and we want to use the updated value.
    */
-  nsSize GetWidthHeightForImage(imgIRequest *aImageRequest);
+  nsSize GetWidthHeightForImage(nsRefPtr<imgRequestProxy>& aImageRequest);
 
   // XPIDL methods
   NS_FORWARD_NSIDOMNODE_TO_NSINODE
@@ -753,7 +756,6 @@ public:
   static const MappedAttributeEntry sDivAlignAttributeMap[];
   static const MappedAttributeEntry sBackgroundAttributeMap[];
   static const MappedAttributeEntry sBackgroundColorAttributeMap[];
-  static const MappedAttributeEntry sScrollingAttributeMap[];
   
   /**
    * Helper to map the align attribute into a style struct.
@@ -1786,6 +1788,7 @@ NS_DECLARE_NS_NEW_HTML_ELEMENT(Pre)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Progress)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Script)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Select)
+NS_DECLARE_NS_NEW_HTML_ELEMENT(Shadow)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Source)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Span)
 NS_DECLARE_NS_NEW_HTML_ELEMENT(Style)

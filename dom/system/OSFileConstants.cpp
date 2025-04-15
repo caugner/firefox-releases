@@ -47,6 +47,7 @@
 #include "nsString.h"
 #include "nsAutoPtr.h"
 #include "nsDirectoryServiceDefs.h"
+#include "nsXULAppAPI.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "mozJSComponentLoader.h"
 
@@ -92,6 +93,21 @@ struct Paths {
    * the same as homeDir.
    */
   nsString desktopDir;
+  /**
+   * The user's 'application data' directory.
+   * Windows:
+   *   HOME = Documents and Settings\$USER\Application Data
+   *   UAppData = $HOME[\$vendor]\$name
+   *
+   * Unix:
+   *   HOME = ~
+   *   UAppData = $HOME/.[$vendor/]$name
+   *
+   * Mac:
+   *   HOME = ~
+   *   UAppData = $HOME/Library/Application Support/$name
+   */
+  nsString userApplicationDataDir;
 
 #if defined(XP_WIN)
   /**
@@ -124,6 +140,7 @@ struct Paths {
     localProfileDir.SetIsVoid(true);
     homeDir.SetIsVoid(true);
     desktopDir.SetIsVoid(true);
+    userApplicationDataDir.SetIsVoid(true);
 
 #if defined(XP_WIN)
     winAppDataDir.SetIsVoid(true);
@@ -183,7 +200,7 @@ class DelayedPathSetter MOZ_FINAL: public nsIObserver
 NS_IMPL_ISUPPORTS1(DelayedPathSetter, nsIObserver)
 
 NS_IMETHODIMP
-DelayedPathSetter::Observe(nsISupports*, const char * aTopic, const PRUnichar*)
+DelayedPathSetter::Observe(nsISupports*, const char * aTopic, const char16_t*)
 {
   if (gPaths == nullptr) {
     // Initialization of gPaths has not taken place, something is wrong,
@@ -219,7 +236,7 @@ nsresult InitOSFileConstants()
 
   // Initialize paths->libDir
   nsCOMPtr<nsIFile> file;
-  nsresult rv = NS_GetSpecialDirectory("XpcomLib", getter_AddRefs(file));
+  nsresult rv = NS_GetSpecialDirectory(NS_XPCOM_LIBRARY_FILE, getter_AddRefs(file));
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -263,6 +280,7 @@ nsresult InitOSFileConstants()
   GetPathToSpecialDir(NS_OS_TEMP_DIR, paths->tmpDir);
   GetPathToSpecialDir(NS_OS_HOME_DIR, paths->homeDir);
   GetPathToSpecialDir(NS_OS_DESKTOP_DIR, paths->desktopDir);
+  GetPathToSpecialDir(XRE_USER_APP_DATA_DIR, paths->userApplicationDataDir);
 
 #if defined(XP_WIN)
   GetPathToSpecialDir(NS_WIN_APPDATA_DIR, paths->winAppDataDir);
@@ -817,22 +835,24 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
   // Locate libxul
   // Note that we don't actually provide the full path, only the name of the
   // library, which is sufficient to link to the library using js-ctypes.
-  {
+
 #if defined(XP_MACOSX)
-    // Under MacOS X, for some reason, libxul is called simply "XUL"
-    nsAutoString xulPath(NS_LITERAL_STRING("XUL"));
+  // Under MacOS X, for some reason, libxul is called simply "XUL",
+  // and we need to provide the full path.
+  nsAutoString libxul;
+  libxul.Append(gPaths->libDir);
+  libxul.Append(NS_LITERAL_STRING("/XUL"));
 #else
-    // On other platforms, libxul is a library "xul" with regular
-    // library prefix/suffix
-    nsAutoString xulPath;
-    xulPath.Append(NS_LITERAL_STRING(DLL_PREFIX));
-    xulPath.Append(NS_LITERAL_STRING("xul"));
-    xulPath.Append(NS_LITERAL_STRING(DLL_SUFFIX));
+  // On other platforms, libxul is a library "xul" with regular
+  // library prefix/suffix.
+  nsAutoString libxul;
+  libxul.Append(NS_LITERAL_STRING(DLL_PREFIX));
+  libxul.Append(NS_LITERAL_STRING("xul"));
+  libxul.Append(NS_LITERAL_STRING(DLL_SUFFIX));
 #endif // defined(XP_MACOSX)
 
-    if (!SetStringProperty(cx, objPath, "libxul", xulPath)) {
-      return false;
-    }
+  if (!SetStringProperty(cx, objPath, "libxul", libxul)) {
+    return false;
   }
 
   if (!SetStringProperty(cx, objPath, "libDir", gPaths->libDir)) {
@@ -863,6 +883,10 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
     return false;
   }
 
+  if (!SetStringProperty(cx, objPath, "userApplicationDataDir", gPaths->userApplicationDataDir)) {
+    return false;
+  }
+
 #if defined(XP_WIN)
   if (!SetStringProperty(cx, objPath, "winAppDataDir", gPaths->winAppDataDir)) {
     return false;
@@ -882,6 +906,27 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
     return false;
   }
 #endif // defined(XP_MACOSX)
+
+  // sqlite3 is linked from different places depending on the platform
+  nsAutoString libsqlite3;
+#if defined(ANDROID)
+  // On Android, we use the system's libsqlite3
+  libsqlite3.Append(NS_LITERAL_STRING(DLL_PREFIX));
+  libsqlite3.Append(NS_LITERAL_STRING("sqlite3"));
+  libsqlite3.Append(NS_LITERAL_STRING(DLL_SUFFIX));
+#elif defined(XP_WIN)
+  // On Windows, for some reason, this is part of nss3.dll
+  libsqlite3.Append(NS_LITERAL_STRING(DLL_PREFIX));
+  libsqlite3.Append(NS_LITERAL_STRING("nss3"));
+  libsqlite3.Append(NS_LITERAL_STRING(DLL_SUFFIX));
+#else
+    // On other platforms, we link sqlite3 into libxul
+  libsqlite3 = libxul;
+#endif // defined(ANDROID) || defined(XP_WIN)
+
+  if (!SetStringProperty(cx, objPath, "libsqlite3", libsqlite3)) {
+    return false;
+  }
 
   return true;
 }

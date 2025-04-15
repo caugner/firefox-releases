@@ -13,13 +13,6 @@
 
 #include "ElfLoader.h"
 
-#ifdef MOZ_MEMORY
-// libc's free().
-extern "C" void __real_free(void *);
-#else
-#define __real_free(a) free(a)
-#endif
-
 #ifdef DEBUG
 #define LOG(x...) __android_log_print(ANDROID_LOG_INFO, "GeckoJNI", x)
 #else
@@ -54,7 +47,7 @@ setup_nss_functions(void *nss_handle,
     return FAILURE;
   }
 #define GETFUNC(name) f_ ## name = (name ## _t) (uintptr_t) __wrap_dlsym(nss_handle, #name); \
-                      if (!f_ ##name) return FAILURE;
+  if (!f_ ##name) { __android_log_print(ANDROID_LOG_ERROR, "GeckoJNI", "missing %s", #name);  return FAILURE; }
   GETFUNC(NSS_Initialize);
   GETFUNC(NSS_Shutdown);
   GETFUNC(PK11SDR_Encrypt);
@@ -65,13 +58,13 @@ setup_nss_functions(void *nss_handle,
   GETFUNC(SECITEM_ZfreeItem);
 #undef GETFUNC
 #define NSPRFUNC(name) f_ ## name = (name ## _t) (uintptr_t) __wrap_dlsym(nspr_handle, #name); \
-                       if (!f_ ##name) return FAILURE;
+  if (!f_ ##name) { __android_log_print(ANDROID_LOG_ERROR, "GeckoJNI", "missing %s", #name);  return FAILURE; }
   NSPRFUNC(PR_ErrorToString);
   NSPRFUNC(PR_GetError);
   NSPRFUNC(PR_Free);
 #undef NSPRFUNC
 #define PLCFUNC(name) f_ ## name = (name ## _t) (uintptr_t) __wrap_dlsym(plc_handle, #name); \
-                      if (!f_ ##name) return FAILURE;
+  if (!f_ ##name) { __android_log_print(ANDROID_LOG_ERROR, "GeckoJNI", "missing %s", #name);  return FAILURE; }
   PLCFUNC(PL_Base64Encode);
   PLCFUNC(PL_Base64Decode);
   PLCFUNC(PL_strfree);
@@ -91,8 +84,7 @@ throwError(JNIEnv* jenv, const char * funcString) {
     LOG("Throwing error: %s\n", msg);
 
     JNI_Throw(jenv, "java/lang/Exception", msg);
-    // msg is allocated by asprintf, it needs to be freed by libc.
-    __real_free(msg);
+    free(msg);
     LOG("Error thrown\n");
 }
 

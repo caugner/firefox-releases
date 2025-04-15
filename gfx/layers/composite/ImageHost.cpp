@@ -38,17 +38,8 @@ ImageHost::~ImageHost() {}
 void
 ImageHost::UseTextureHost(TextureHost* aTexture)
 {
+  CompositableHost::UseTextureHost(aTexture);
   mFrontBuffer = aTexture;
-  mFrontBuffer->SetCompositableBackendSpecificData(GetCompositableBackendSpecificData());
-}
-
-void
-ImageHost::RemoveTextureHost(TextureHost* aTexture)
-{
-  CompositableHost::RemoveTextureHost(aTexture);
-  if (mFrontBuffer && mFrontBuffer->GetID() == aTexture->GetID()) {
-    mFrontBuffer = nullptr;
-  }
 }
 
 TextureHost*
@@ -75,7 +66,12 @@ ImageHost::Composite(EffectChain& aEffectChain,
   if (!mFrontBuffer) {
     return;
   }
-  if (!mFrontBuffer->Lock()) {
+
+  // Make sure the front buffer has a compositor
+  mFrontBuffer->SetCompositor(GetCompositor());
+
+  AutoLockTextureHost autoLock(mFrontBuffer);
+  if (autoLock.Failed()) {
     NS_WARNING("failed to lock front buffer");
     return;
   }
@@ -152,7 +148,15 @@ ImageHost::Composite(EffectChain& aEffectChain,
                                      rect, aClipRect,
                                      aTransform);
   }
-  mFrontBuffer->Unlock();
+}
+
+void
+ImageHost::SetCompositor(Compositor* aCompositor)
+{
+  if (mFrontBuffer && mCompositor != aCompositor) {
+    mFrontBuffer->SetCompositor(aCompositor);
+  }
+  CompositableHost::SetCompositor(aCompositor);
 }
 
 void

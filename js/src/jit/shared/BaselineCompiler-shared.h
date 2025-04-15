@@ -78,7 +78,7 @@ class BaselineCompilerShared
         // Create the entry and add it to the vector.
         if (!icEntries_.append(ICEntry(script->pcToOffset(pc), isForOp)))
             return nullptr;
-        ICEntry &vecEntry = icEntries_[icEntries_.length() - 1];
+        ICEntry &vecEntry = icEntries_.back();
 
         // Set the first stub for the IC entry to the fallback stub
         vecEntry.setFirstStub(stub);
@@ -96,7 +96,9 @@ class BaselineCompilerShared
     }
 
     JSFunction *function() const {
-        return script->function();
+        // Not delazifying here is ok as the function is guaranteed to have
+        // been delazified before compilation started.
+        return script->functionNonDelazifying();
     }
 
     PCMappingSlotInfo getStackTopSlotInfo() {

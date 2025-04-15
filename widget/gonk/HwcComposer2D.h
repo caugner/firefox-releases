@@ -23,9 +23,6 @@
 #include <list>
 
 #include <hardware/hwcomposer.h>
-#if ANDROID_VERSION >= 18
-#include <ui/Fence.h>
-#endif
 
 namespace mozilla {
 
@@ -61,7 +58,7 @@ public:
     // Returns TRUE if the container has been succesfully rendered
     // Returns FALSE if the container cannot be fully rendered
     // by this composer so nothing was rendered at all
-    bool TryRender(layers::Layer* aRoot, const gfxMatrix& aGLWorldTransform) MOZ_OVERRIDE;
+    bool TryRender(layers::Layer* aRoot, const gfx::Matrix& aGLWorldTransform) MOZ_OVERRIDE;
 
     bool Render(EGLDisplay dpy, EGLSurface sur);
 
@@ -85,10 +82,8 @@ private:
     //Holds all the dynamically allocated RectVectors needed
     //to render the current frame
     std::list<RectVector>   mVisibleRegions;
-#if ANDROID_VERSION >= 18
-    android::sp<android::Fence>       mPrevRetireFence;
-    android::sp<android::Fence>       mPrevDisplayFence;
-#endif
+    nsTArray<int>           mPrevReleaseFds;
+    int                     mPrevRetireFence;
     nsTArray<layers::LayerComposite*> mHwcLayerMap;
     bool                    mPrepared;
 };

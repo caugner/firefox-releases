@@ -155,7 +155,7 @@ NS_IMPL_ISUPPORTS1(ValueObserver, nsIObserver)
 NS_IMETHODIMP
 ValueObserver::Observe(nsISupports     *aSubject,
                        const char      *aTopic,
-                       const PRUnichar *aData)
+                       const char16_t *aData)
 {
   NS_ASSERTION(!nsCRT::strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID),
                "invalid topic");
@@ -223,13 +223,11 @@ Preferences::SizeOfIncludingThisAndOtherStuff(mozilla::MallocSizeOf aMallocSizeO
   return n;
 }
 
-class PreferenceServiceReporter MOZ_FINAL : public MemoryMultiReporter
+class PreferenceServiceReporter MOZ_FINAL : public nsIMemoryReporter
 {
 public:
-  PreferenceServiceReporter() {}
-
-  NS_IMETHOD CollectReports(nsIMemoryReporterCallback* aCallback,
-                            nsISupports* aData);
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIMEMORYREPORTER
 
 protected:
   static const uint32_t kSuspectReferentCount = 1000;
@@ -237,6 +235,8 @@ protected:
                                         nsAutoPtr<PrefCallback>& aCallback,
                                         void* aClosure);
 };
+
+NS_IMPL_ISUPPORTS1(PreferenceServiceReporter, nsIMemoryReporter)
 
 struct PreferencesReferentCount {
   PreferencesReferentCount() : numStrong(0), numWeakAlive(0), numWeakDead(0) {}
@@ -285,6 +285,8 @@ PreferenceServiceReporter::CountReferents(PrefCallback* aKey,
   return PL_DHASH_NEXT;
 }
 
+MOZ_DEFINE_MALLOC_SIZE_OF(PreferenceServiceMallocSizeOf)
+
 NS_IMETHODIMP
 PreferenceServiceReporter::CollectReports(nsIMemoryReporterCallback* aCb,
                                           nsISupports* aClosure)
@@ -299,8 +301,8 @@ PreferenceServiceReporter::CollectReports(nsIMemoryReporterCallback* aCb,
     } while (0)
 
   REPORT(NS_LITERAL_CSTRING("explicit/preferences"),
-         nsIMemoryReporter::KIND_HEAP, nsIMemoryReporter::UNITS_BYTES,
-         Preferences::SizeOfIncludingThisAndOtherStuff(MallocSizeOf),
+         KIND_HEAP, UNITS_BYTES,
+         Preferences::SizeOfIncludingThisAndOtherStuff(PreferenceServiceMallocSizeOf),
          "Memory used by the preferences system.");
 
   nsPrefBranch* rootBranch =
@@ -321,26 +323,22 @@ PreferenceServiceReporter::CollectReports(nsIMemoryReporterCallback* aCb,
                                 "referent(pref=%s)", suspect.get());
 
     REPORT(suspectPath,
-           nsIMemoryReporter::KIND_OTHER, nsIMemoryReporter::UNITS_COUNT,
-           totalReferentCount,
+           KIND_OTHER, UNITS_COUNT, totalReferentCount,
            "A preference with a suspiciously large number "
            "referents (symptom of a leak).");
   }
 
   REPORT(NS_LITERAL_CSTRING("preference-service/referent/strong"),
-         nsIMemoryReporter::KIND_OTHER, nsIMemoryReporter::UNITS_COUNT,
-         referentCount.numStrong,
+         KIND_OTHER, UNITS_COUNT, referentCount.numStrong,
          "The number of strong referents held by the preference service.");
 
   REPORT(NS_LITERAL_CSTRING("preference-service/referent/weak/alive"),
-         nsIMemoryReporter::KIND_OTHER, nsIMemoryReporter::UNITS_COUNT,
-         referentCount.numWeakAlive,
+         KIND_OTHER, UNITS_COUNT, referentCount.numWeakAlive,
          "The number of weak referents held by the preference service "
          "that are still alive.");
 
   REPORT(NS_LITERAL_CSTRING("preference-service/referent/weak/dead"),
-         nsIMemoryReporter::KIND_OTHER, nsIMemoryReporter::UNITS_COUNT,
-         referentCount.numWeakDead,
+         KIND_OTHER, UNITS_COUNT, referentCount.numWeakDead,
          "The number of weak referents held by the preference service "
          "that are dead.");
 
@@ -540,7 +538,7 @@ Preferences::ResetAndReadUserPrefs()
 
 NS_IMETHODIMP
 Preferences::Observe(nsISupports *aSubject, const char *aTopic,
-                     const PRUnichar *someData)
+                     const char16_t *someData)
 {
   if (XRE_GetProcessType() == GeckoProcessType_Content)
     return NS_ERROR_NOT_AVAILABLE;
@@ -548,7 +546,7 @@ Preferences::Observe(nsISupports *aSubject, const char *aTopic,
   nsresult rv = NS_OK;
 
   if (!nsCRT::strcmp(aTopic, "profile-before-change")) {
-    if (!nsCRT::strcmp(someData, NS_LITERAL_STRING("shutdown-cleanse").get())) {
+    if (!nsCRT::strcmp(someData, MOZ_UTF16("shutdown-cleanse"))) {
       if (mCurrentFile) {
         mCurrentFile->Remove(false);
         mCurrentFile = nullptr;
@@ -1466,7 +1464,7 @@ Preferences::SetCString(const char* aPref, const nsACString &aValue)
 
 // static
 nsresult
-Preferences::SetString(const char* aPref, const PRUnichar* aValue)
+Preferences::SetString(const char* aPref, const char16_t* aValue)
 {
   ENSURE_MAIN_PROCESS("Cannot SetString from content process:", aPref);
   NS_ENSURE_TRUE(InitStaticMembers(), NS_ERROR_NOT_AVAILABLE);
@@ -1670,12 +1668,11 @@ Preferences::UnregisterCallback(PrefChangedFunc aCallback,
   return NS_OK;
 }
 
-static int BoolVarChanged(const char* aPref, void* aClosure)
+static void BoolVarChanged(const char* aPref, void* aClosure)
 {
   CacheData* cache = static_cast<CacheData*>(aClosure);
   *((bool*)cache->cacheLocation) =
     Preferences::GetBool(aPref, cache->defaultValueBool);
-  return 0;
 }
 
 // static
@@ -1693,12 +1690,11 @@ Preferences::AddBoolVarCache(bool* aCache,
   return RegisterCallback(BoolVarChanged, aPref, data);
 }
 
-static int IntVarChanged(const char* aPref, void* aClosure)
+static void IntVarChanged(const char* aPref, void* aClosure)
 {
   CacheData* cache = static_cast<CacheData*>(aClosure);
   *((int32_t*)cache->cacheLocation) =
     Preferences::GetInt(aPref, cache->defaultValueInt);
-  return 0;
 }
 
 // static
@@ -1716,12 +1712,11 @@ Preferences::AddIntVarCache(int32_t* aCache,
   return RegisterCallback(IntVarChanged, aPref, data);
 }
 
-static int UintVarChanged(const char* aPref, void* aClosure)
+static void UintVarChanged(const char* aPref, void* aClosure)
 {
   CacheData* cache = static_cast<CacheData*>(aClosure);
   *((uint32_t*)cache->cacheLocation) =
     Preferences::GetUint(aPref, cache->defaultValueUint);
-  return 0;
 }
 
 // static
@@ -1739,12 +1734,11 @@ Preferences::AddUintVarCache(uint32_t* aCache,
   return RegisterCallback(UintVarChanged, aPref, data);
 }
 
-static int FloatVarChanged(const char* aPref, void* aClosure)
+static void FloatVarChanged(const char* aPref, void* aClosure)
 {
   CacheData* cache = static_cast<CacheData*>(aClosure);
   *((float*)cache->cacheLocation) =
     Preferences::GetFloat(aPref, cache->defaultValueFloat);
-  return 0;
 }
 
 // static

@@ -683,8 +683,8 @@ nsIOService::SetOffline(bool offline)
         if (observerService) {
             (void)observerService->NotifyObservers(nullptr,
                 NS_IPC_IOSERVICE_SET_OFFLINE_TOPIC, offline ? 
-                NS_LITERAL_STRING("true").get() :
-                NS_LITERAL_STRING("false").get());
+                MOZ_UTF16("true") :
+                MOZ_UTF16("false"));
         }
     }
 
@@ -762,6 +762,11 @@ nsIOService::AllowPort(int32_t inPort, const char *scheme, bool *_retval)
     int16_t port = inPort;
     if (port == -1) {
         *_retval = true;
+        return NS_OK;
+    }
+
+    if (port == 0) {
+        *_retval = false;
         return NS_OK;
     }
         
@@ -900,7 +905,7 @@ nsIOService::GetPrefBranch(nsIPrefBranch **result)
 NS_IMETHODIMP
 nsIOService::Observe(nsISupports *subject,
                      const char *topic,
-                     const PRUnichar *data)
+                     const char16_t *data)
 {
     if (!strcmp(topic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID)) {
         nsCOMPtr<nsIPrefBranch> prefBranch = do_QueryInterface(subject);

@@ -20,7 +20,7 @@
 #define VARIANT_KEYWORD         0x000001  // K
 #define VARIANT_LENGTH          0x000002  // L
 #define VARIANT_PERCENT         0x000004  // P
-#define VARIANT_COLOR           0x000008  // C eCSSUnit_Color, eCSSUnit_Ident (e.g.  "red")
+#define VARIANT_COLOR           0x000008  // C eCSSUnit_*Color, eCSSUnit_Ident (e.g.  "red")
 #define VARIANT_URL             0x000010  // U
 #define VARIANT_NUMBER          0x000020  // N
 #define VARIANT_INTEGER         0x000040  // I
@@ -191,6 +191,13 @@ static_assert((CSS_PROPERTY_PARSE_PROPERTY_MASK &
 // flushed.
 #define CSS_PROPERTY_GETCS_NEEDS_LAYOUT_FLUSH     (1<<20)
 
+// This property is always enabled in UA sheets.  This is meant to be used
+// together with a pref that enables the property for non-UA sheets.
+// Note that if such a property has an alias, then any use of that alias
+// in an UA sheet will still be ignored unless the pref is enabled.
+// In other words, this bit has no effect on the use of aliases.
+#define CSS_PROPERTY_ALWAYS_ENABLED_IN_UA_SHEETS  (1<<22)
+
 /**
  * Types of animatable values.
  */
@@ -249,18 +256,30 @@ public:
   // Given a property string, return the enum value
   enum EnabledState {
     eEnabled,
+    eEnabledInUASheets,
     eAny
   };
+  // Looks up the property with name aProperty and returns its corresponding
+  // nsCSSProperty value.  If aProperty is the name of a custom property,
+  // then eCSSPropertyExtra_variable will be returned.
   static nsCSSProperty LookupProperty(const nsAString& aProperty,
                                       EnabledState aEnabled);
   static nsCSSProperty LookupProperty(const nsACString& aProperty,
                                       EnabledState aEnabled);
+  // Returns whether aProperty is a custom property name, i.e. begins with
+  // "var-" and has at least one more character.  This assumes that
+  // the CSS Variables pref has been enabled.
+  static bool IsCustomPropertyName(const nsAString& aProperty);
+  static bool IsCustomPropertyName(const nsACString& aProperty);
 
   static inline bool IsShorthand(nsCSSProperty aProperty) {
     NS_ABORT_IF_FALSE(0 <= aProperty && aProperty < eCSSProperty_COUNT,
                  "out of range");
     return (aProperty >= eCSSProperty_COUNT_no_shorthands);
   }
+
+  // Must be given a longhand property.
+  static bool IsInherited(nsCSSProperty aProperty);
 
   // Same but for @font-face descriptors
   static nsCSSFontDesc LookupFontDesc(const nsAString& aProperty);
@@ -419,6 +438,13 @@ public:
     return gPropertyEnabled[aProperty];
   }
 
+  static bool IsEnabled(nsCSSProperty aProperty, EnabledState aEnabled) {
+    return IsEnabled(aProperty) ||
+      (aEnabled == eEnabledInUASheets &&
+       PropHasFlags(aProperty, CSS_PROPERTY_ALWAYS_ENABLED_IN_UA_SHEETS)) ||
+      aEnabled == eAny;
+  }
+
 public:
 
 #define CSSPROPS_FOR_SHORTHAND_SUBPROPERTIES(iter_, prop_)                    \
@@ -511,6 +537,7 @@ public:
   static const int32_t kListStyleKTable[];
   static const int32_t kMaskTypeKTable[];
   static const int32_t kMathVariantKTable[];
+  static const int32_t kMathDisplayKTable[];
   static const int32_t kContextOpacityKTable[];
   static const int32_t kContextPatternKTable[];
   static const int32_t kOrientKTable[];
@@ -518,6 +545,7 @@ public:
   static const int32_t kOutlineColorKTable[];
   static const int32_t kOverflowKTable[];
   static const int32_t kOverflowSubKTable[];
+  static const int32_t kOverflowClipBoxKTable[];
   static const int32_t kPageBreakKTable[];
   static const int32_t kPageBreakInsideKTable[];
   static const int32_t kPageMarksKTable[];
@@ -548,6 +576,7 @@ public:
   static const int32_t kTextOrientationKTable[];
   static const int32_t kTextOverflowKTable[];
   static const int32_t kTextTransformKTable[];
+  static const int32_t kTouchActionKTable[];
   static const int32_t kTransitionTimingFunctionKTable[];
   static const int32_t kUnicodeBidiKTable[];
   static const int32_t kUserFocusKTable[];

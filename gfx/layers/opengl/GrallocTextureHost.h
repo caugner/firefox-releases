@@ -32,8 +32,6 @@ public:
 
   virtual void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE;
 
-  virtual void UnbindTexture() MOZ_OVERRIDE {}
-
   virtual gfx::IntSize GetSize() const MOZ_OVERRIDE;
 
   virtual TextureSourceOGL* AsSourceOGL() MOZ_OVERRIDE { return this; }
@@ -53,7 +51,7 @@ public:
 
   gl::GLContext* gl() const;
 
-  void SetCompositor(CompositorOGL* aCompositor);
+  virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
 
   void ForgetBuffer()
   {
@@ -69,17 +67,14 @@ protected:
   android::sp<android::GraphicBuffer> mGraphicBuffer;
   EGLImage mEGLImage;
   gfx::SurfaceFormat mFormat;
+  bool mNeedsReset;
 };
 
 class GrallocTextureHostOGL : public TextureHost
-#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
-                            , public TextureHostOGL
-#endif
 {
   friend class GrallocBufferActor;
 public:
-  GrallocTextureHostOGL(uint64_t aID,
-                        TextureFlags aFlags,
+  GrallocTextureHostOGL(TextureFlags aFlags,
                         const NewSurfaceDescriptorGralloc& aDescriptor);
 
   virtual ~GrallocTextureHostOGL();
@@ -94,6 +89,8 @@ public:
 
   virtual void DeallocateSharedData() MOZ_OVERRIDE;
 
+  virtual void ForgetSharedData() MOZ_OVERRIDE;
+
   virtual void DeallocateDeviceData() MOZ_OVERRIDE;
 
   virtual gfx::SurfaceFormat GetFormat() const;
@@ -106,13 +103,6 @@ public:
   {
     return mTextureSource;
   }
-
-#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
-  virtual TextureHostOGL* AsHostOGL() MOZ_OVERRIDE
-  {
-    return this;
-  }
-#endif
 
   virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 

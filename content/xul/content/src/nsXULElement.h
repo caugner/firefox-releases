@@ -229,7 +229,7 @@ public:
     nsresult DeserializeOutOfLine(nsIObjectInputStream* aInput,
                                   nsXULPrototypeDocument* aProtoDoc);
 
-    nsresult Compile(const PRUnichar* aText, int32_t aTextLength,
+    nsresult Compile(const char16_t* aText, int32_t aTextLength,
                      nsIURI* aURI, uint32_t aLineNo,
                      nsIDocument* aDocument,
                      nsXULPrototypeDocument* aProtoDoc,
@@ -680,6 +680,7 @@ protected:
     void SetTitlebarColor(nscolor aColor, bool aActive);
 
     void SetDrawsInTitlebar(bool aState);
+    void SetDrawsTitle(bool aState);
 
     void RemoveBroadcaster(const nsAString & broadcasterId);
 

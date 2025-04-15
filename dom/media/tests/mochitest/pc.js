@@ -1071,8 +1071,20 @@ function PeerConnectionWrapper(label, configuration) {
   var self = this;
   // This enables tests to validate that the next ice state is the one they expect to happen
   this.next_ice_state = ""; // in most cases, the next state will be "checking", but in some tests "closed"
+  // This allows test to register their own callbacks for ICE connection state changes
+  this.ice_connection_callbacks = [ ];
+
   this._pc.oniceconnectionstatechange = function() {
       ok(self._pc.iceConnectionState != undefined, "iceConnectionState should not be undefined");
+      info(self + ": oniceconnectionstatechange fired, new state is: " + self._pc.iceConnectionState);
+      if (Object.keys(self.ice_connection_callbacks).length >= 1) {
+        var it = Iterator(self.ice_connection_callbacks);
+        var name = "";
+        var callback = "";
+        for ([name, callback] in it) {
+          callback();
+        }
+      }
       if (self.next_ice_state != "") {
         is(self._pc.iceConnectionState, self.next_ice_state, "iceConnectionState changed to '" +
            self.next_ice_state + "'");
@@ -1176,12 +1188,20 @@ PeerConnectionWrapper.prototype = {
   },
 
   /**
-   * Returns the remote signaling state.
+   * Returns the signaling state.
    *
    * @returns {object} The local description
    */
   get signalingState() {
     return this._pc.signalingState;
+  },
+  /**
+   * Returns the ICE connection state.
+   *
+   * @returns {object} The local description
+   */
+  get iceConnectionState() {
+    return this._pc.iceConnectionState;
   },
 
   /**
@@ -1236,7 +1256,7 @@ PeerConnectionWrapper.prototype = {
           self.attachMedia(stream, type, 'local');
 
           _getAllUserMedia(constraintsList, index + 1);
-        }, unexpectedCallbackAndFinish());
+        }, generateErrorCallback());
       } else {
         onSuccess();
       }
@@ -1285,7 +1305,7 @@ PeerConnectionWrapper.prototype = {
       info("Got offer: " + JSON.stringify(offer));
       self._last_offer = offer;
       onSuccess(offer);
-    }, unexpectedCallbackAndFinish(), this.offerConstraints);
+    }, generateErrorCallback(), this.offerConstraints);
   },
 
   /**
@@ -1301,7 +1321,7 @@ PeerConnectionWrapper.prototype = {
       info(self + ": Got answer: " + JSON.stringify(answer));
       self._last_answer = answer;
       onSuccess(answer);
-    }, unexpectedCallbackAndFinish());
+    }, generateErrorCallback());
   },
 
   /**
@@ -1317,7 +1337,7 @@ PeerConnectionWrapper.prototype = {
     this._pc.setLocalDescription(desc, function () {
       info(self + ": Successfully set the local description");
       onSuccess();
-    }, unexpectedCallbackAndFinish());
+    }, generateErrorCallback());
   },
 
   /**
@@ -1332,7 +1352,7 @@ PeerConnectionWrapper.prototype = {
   setLocalDescriptionAndFail : function PCW_setLocalDescriptionAndFail(desc, onFailure) {
     var self = this;
     this._pc.setLocalDescription(desc,
-      unexpectedCallbackAndFinish("setLocalDescription should have failed."),
+      generateErrorCallback("setLocalDescription should have failed."),
       function (err) {
         info(self + ": As expected, failed to set the local description");
         onFailure(err);
@@ -1352,7 +1372,7 @@ PeerConnectionWrapper.prototype = {
     this._pc.setRemoteDescription(desc, function () {
       info(self + ": Successfully set remote description");
       onSuccess();
-    }, unexpectedCallbackAndFinish());
+    }, generateErrorCallback());
   },
 
   /**
@@ -1367,7 +1387,7 @@ PeerConnectionWrapper.prototype = {
   setRemoteDescriptionAndFail : function PCW_setRemoteDescriptionAndFail(desc, onFailure) {
     var self = this;
     this._pc.setRemoteDescription(desc,
-      unexpectedCallbackAndFinish("setRemoteDescription should have failed."),
+      generateErrorCallback("setRemoteDescription should have failed."),
       function (err) {
         info(self + ": As expected, failed to set the remote description");
         onFailure(err);
@@ -1388,7 +1408,7 @@ PeerConnectionWrapper.prototype = {
     this._pc.addIceCandidate(candidate, function () {
       info(self + ": Successfully added an ICE candidate");
       onSuccess();
-    }, unexpectedCallbackAndFinish());
+    }, generateErrorCallback());
   },
 
   /**
@@ -1404,11 +1424,68 @@ PeerConnectionWrapper.prototype = {
     var self = this;
 
     this._pc.addIceCandidate(candidate,
-      unexpectedCallbackAndFinish("addIceCandidate should have failed."),
+      generateErrorCallback("addIceCandidate should have failed."),
       function (err) {
         info(self + ": As expected, failed to add an ICE candidate");
         onFailure(err);
     }) ;
+  },
+
+  /**
+   * Returns if the ICE the connection state is "connected".
+   *
+   * @returns {boolean} True is the connection state is "connected", otherwise false.
+   */
+  isIceConnected : function PCW_isIceConnected() {
+    info("iceConnectionState: " + this.iceConnectionState);
+    return this.iceConnectionState === "connected";
+  },
+
+  /**
+   * Returns if the ICE the connection state is "checking".
+   *
+   * @returns {boolean} True is the connection state is "checking", otherwise false.
+   */
+  isIceChecking : function PCW_isIceChecking() {
+    return this.iceConnectionState === "checking";
+  },
+
+  /**
+   * Returns if the ICE the connection state is "new".
+   *
+   * @returns {boolean} True is the connection state is "new", otherwise false.
+   */
+  isIceNew : function PCW_isIceNew() {
+    return this.iceConnectionState === "new";
+  },
+
+  /**
+   * Registers a callback for the ICE connection state change and
+   * reports success (=connected) or failure via the callbacks.
+   * States "new" and "checking" are ignored.
+   *
+   * @param {function} onSuccess
+   *        Callback if ICE connection status is "connected".
+   * @param {function} onFailure
+   *        Callback if ICE connection reaches a different state than
+   *        "new", "checking" or "connected".
+   */
+  waitForIceConnected : function PCW_waitForIceConnected(onSuccess, onFailure) {
+    var self = this;
+    var mySuccess = onSuccess;
+    var myFailure = onFailure;
+
+    function iceConnectedChanged () {
+      if (self.isIceConnected()) {
+        delete self.ice_connection_callbacks["waitForIceConnected"];
+        mySuccess();
+      } else if (! (self.isIceChecking() || self.isIceNew())) {
+        delete self.ice_connection_callbacks["waitForIceConnected"];
+        myFailure();
+      }
+    };
+
+    self.ice_connection_callbacks["waitForIceConnected"] = (function() {iceConnectedChanged()});
   },
 
   /**
@@ -1448,6 +1525,79 @@ PeerConnectionWrapper.prototype = {
     }
 
     _checkMediaFlowPresent(0, onSuccess);
+  },
+
+  /**
+   * Check that stats are present by checking for known stats.
+   *
+   * @param {Function} onSuccess the success callback to return stats to
+   */
+  getStats : function PCW_getStats(selector, onSuccess) {
+    var self = this;
+
+    this._pc.getStats(selector, function(stats) {
+      info(self + ": Got stats: " + JSON.stringify(stats));
+      self._last_stats = stats;
+      onSuccess(stats);
+    }, generateErrorCallback());
+  },
+
+  /**
+   * Checks that we are getting the media streams we expect.
+   *
+   * @param {object} stats
+   *        The stats to check from this PeerConnectionWrapper
+   */
+  checkStats : function PCW_checkStats(stats) {
+    function toNum(obj) {
+      return obj? obj : 0;
+    }
+    function numTracks(streams) {
+      var n = 0;
+      streams.forEach(function(stream) {
+          n += stream.getAudioTracks().length + stream.getVideoTracks().length;
+        });
+      return n;
+    }
+
+    // Use spec way of enumerating stats
+    var counters = {};
+    for (var key in stats) {
+      if (stats.hasOwnProperty(key)) {
+        var res = stats[key];
+        if (!res.isRemote) {
+          counters[res.type] = toNum(counters[res.type]) + 1;
+        }
+      }
+    }
+    // Use MapClass way of enumerating stats
+    var counters2 = {};
+    stats.forEach(function(res) {
+        if (!res.isRemote) {
+          counters2[res.type] = toNum(counters2[res.type]) + 1;
+        }
+      });
+    is(JSON.stringify(counters), JSON.stringify(counters2),
+       "Spec and MapClass variant of RTCStatsReport enumeration agree");
+    var nin = numTracks(this._pc.getRemoteStreams());
+    var nout = numTracks(this._pc.getLocalStreams());
+
+    // TODO(Bug 957145): Restore stronger inboundrtp test once Bug 948249 is fixed
+    //is(toNum(counters["inboundrtp"]), nin, "Have " + nin + " inboundrtp stat(s)");
+    ok(toNum(counters["inboundrtp"]) >= nin, "Have at least " + nin + " inboundrtp stat(s) *");
+
+    is(toNum(counters["outboundrtp"]), nout, "Have " + nout + " outboundrtp stat(s)");
+
+    var numLocalCandidates  = toNum(counters["localcandidate"]);
+    var numRemoteCandidates = toNum(counters["remotecandidate"]);
+    // If there are no tracks, there will be no stats either.
+    if (nin + nout > 0) {
+      ok(numLocalCandidates, "Have localcandidate stat(s)");
+      ok(numRemoteCandidates, "Have remotecandidate stat(s)");
+    } else {
+      is(numLocalCandidates, 0, "Have no localcandidate stats");
+      is(numRemoteCandidates, 0, "Have no remotecandidate stats");
+    }
   },
 
   /**

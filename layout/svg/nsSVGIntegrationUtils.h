@@ -9,7 +9,9 @@
 #include "gfxMatrix.h"
 #include "GraphicsFilter.h"
 #include "gfxRect.h"
+#include "nsAutoPtr.h"
 
+class gfxDrawable;
 class nsDisplayList;
 class nsDisplayListBuilder;
 class nsIFrame;
@@ -82,7 +84,7 @@ public:
    * frame's continuations' border boxes, converted to SVG user units (equal to
    * CSS px units), as required by the SVG code.
    */
-  static gfxSize
+  static mozilla::gfx::Size
   GetSVGCoordContextForNonSVGFrame(nsIFrame* aNonSVGFrame);
 
   /**
@@ -184,17 +186,14 @@ public:
   enum {
     FLAG_SYNC_DECODE_IMAGES = 0x01,
   };
-  static void
-  DrawPaintServer(nsRenderingContext* aRenderingContext,
-                  nsIFrame*            aTarget,
-                  nsIFrame*            aPaintServer,
-                  GraphicsFilter aFilter,
-                  const nsRect&        aDest,
-                  const nsRect&        aFill,
-                  const nsPoint&       aAnchor,
-                  const nsRect&        aDirty,
-                  const nsSize&        aPaintServerSize,
-                  uint32_t             aFlags);
+
+  static already_AddRefed<gfxDrawable>
+  DrawableFromPaintServer(nsIFrame*         aFrame,
+                          nsIFrame*         aTarget,
+                          const nsSize&     aPaintServerSize,
+                          const gfxIntSize& aRenderSize,
+                          const gfxMatrix&  aContextMatrix,
+                          uint32_t          aFlags);
 };
 
 #endif /*NSSVGINTEGRATIONUTILS_H_*/

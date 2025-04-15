@@ -224,7 +224,8 @@ nsResizerFrame::HandleEvent(nsPresContext* aPresContext,
         nsIFrame* rootFrame = aPresContext->PresShell()->FrameManager()->GetRootFrame();
         nsRect rootScreenRect = rootFrame->GetScreenRectInAppUnits();
 
-        nsRect screenRect = menuPopupFrame->GetConstraintRect(frameRect, rootScreenRect);
+        nsPopupLevel popupLevel = menuPopupFrame->PopupLevel();
+        nsRect screenRect = menuPopupFrame->GetConstraintRect(frameRect, rootScreenRect, popupLevel);
         // round using ToInsidePixels as it's better to be a pixel too small
         // than be too large. If the popup is too large it could get flipped
         // to the opposite side of the anchor point while resizing.
@@ -337,16 +338,8 @@ nsResizerFrame::GetContentToResize(nsIPresShell* aPresShell, nsIBaseWindow** aWi
     }
 
     // don't allow resizing windows in content shells
-    bool isChromeShell = false;
-    nsCOMPtr<nsISupports> cont = aPresShell->GetPresContext()->GetContainer();
-    nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(cont);
-    if (dsti) {
-      int32_t type = -1;
-      isChromeShell = (NS_SUCCEEDED(dsti->GetItemType(&type)) &&
-                       type == nsIDocShellTreeItem::typeChrome);
-    }
-
-    if (!isChromeShell) {
+    nsCOMPtr<nsIDocShellTreeItem> dsti = aPresShell->GetPresContext()->GetDocShell();
+    if (!dsti || dsti->ItemType() != nsIDocShellTreeItem::typeChrome) {
       // don't allow resizers in content shells, except for the viewport
       // scrollbar which doesn't have a parent
       nsIContent* nonNativeAnon = mContent->FindFirstNonChromeOnlyAccessContent();

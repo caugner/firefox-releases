@@ -52,6 +52,7 @@
     macro(defineSetter, defineSetter, "__defineSetter__") \
     macro(delete, delete_, "delete") \
     macro(deleteProperty, deleteProperty, "deleteProperty") \
+    macro(displayURL, displayURL, "displayURL") \
     macro(done, done, "done") \
     macro(each, each, "each") \
     macro(elementType, elementType, "elementType") \
@@ -128,8 +129,14 @@
     macro(NumberFormat, NumberFormat, "NumberFormat") \
     macro(NumberFormatFormatGet, NumberFormatFormatGet, "Intl_NumberFormat_format_get") \
     macro(numeric, numeric, "numeric") \
+    macro(objectArray, objectArray, "[object Array]") \
+    macro(objectFunction, objectFunction, "[object Function]") \
     macro(objectNull, objectNull, "[object Null]") \
+    macro(objectNumber, objectNumber, "[object Number]") \
+    macro(objectObject, objectObject, "[object Object]") \
+    macro(objectString, objectString, "[object String]") \
     macro(objectUndefined, objectUndefined, "[object Undefined]") \
+    macro(objectWindow, objectWindow, "[object Window]") \
     macro(of, of, "of") \
     macro(offset, offset, "offset") \
     macro(outOfMemory, outOfMemory, "out of memory") \

@@ -51,9 +51,9 @@ function processCSU(csuName, csu)
     }
 }
 
-function findVirtualFunctions(csu, field, suppressed)
+function findVirtualFunctions(initialCSU, field, suppressed)
 {
-    var worklist = [csu];
+    var worklist = [initialCSU];
 
     // Virtual call targets on subclasses of nsISupports may be incomplete,
     // if the interface is scriptable. Just treat all indirect calls on
@@ -61,13 +61,13 @@ function findVirtualFunctions(csu, field, suppressed)
     // which should never enter the JS engine (even when calling dtors).
     while (worklist.length) {
         var csu = worklist.pop();
-        if (csu == "nsISupports") {
-            if (field == "AddRef" || field == "Release") {
-                suppressed[0] = true;
-                return [];
-            }
-            return null;
+        if (csu == "nsISupports" && (field == "AddRef" || field == "Release")) {
+            suppressed[0] = true;
+            return [];
         }
+        if (isOverridableField(initialCSU, csu, field))
+            return null;
+
         if (csu in superclasses) {
             for (var superclass of superclasses[csu])
                 worklist.push(superclass);
@@ -123,12 +123,7 @@ function getCallees(edge)
     var callees = [];
     if (callee.Kind == "Var") {
         assert(callee.Variable.Kind == "Func");
-        var origName = callee.Variable.Name[0];
-        var names = [ origName, otherDestructorName(origName) ];
-        for (var name of names) {
-            if (name)
-                callees.push({'kind': 'direct', 'name': name});
-        }
+        callees.push({'kind': 'direct', 'name': callee.Variable.Name[0]});
     } else {
         assert(callee.Kind == "Drf");
         if (callee.Exp[0].Kind == "Fld") {
@@ -258,6 +253,8 @@ for (var csuIndex = minStream; csuIndex <= maxStream; csuIndex++) {
 
 xdb.open("src_body.xdb");
 
+printErr("Finished loading data structures");
+
 var minStream = xdb.min_data_stream();
 var maxStream = xdb.max_data_stream();
 
@@ -275,8 +272,9 @@ for (var nameIndex = minStream; nameIndex <= maxStream; nameIndex++) {
     seenCallees = {};
     seenSuppressedCallees = {};
 
+    var functionName = name.readString();
     for (var body of functionBodies)
-        processBody(name.readString(), body);
+        processBody(functionName, body);
 
     xdb.free_string(name);
     xdb.free_string(data);

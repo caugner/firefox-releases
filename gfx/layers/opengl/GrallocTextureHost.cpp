@@ -10,7 +10,8 @@
 #include "GrallocImages.h"  // for GrallocImage
 #include "mozilla/layers/GrallocTextureHost.h"
 #include "mozilla/layers/CompositorOGL.h"
-#include "GLContextUtils.h"
+#include "EGLImageHelpers.h"
+#include "GLReadTexImageHelper.h"
 
 namespace mozilla {
 namespace layers {
@@ -23,26 +24,24 @@ SurfaceFormatForAndroidPixelFormat(android::PixelFormat aFormat,
 {
   switch (aFormat) {
   case android::PIXEL_FORMAT_BGRA_8888:
-    return swapRB ? gfx::FORMAT_R8G8B8A8 : gfx::FORMAT_B8G8R8A8;
+    return swapRB ? gfx::SurfaceFormat::R8G8B8A8 : gfx::SurfaceFormat::B8G8R8A8;
   case android::PIXEL_FORMAT_RGBA_8888:
-    return swapRB ? gfx::FORMAT_B8G8R8A8 : gfx::FORMAT_R8G8B8A8;
+    return swapRB ? gfx::SurfaceFormat::B8G8R8A8 : gfx::SurfaceFormat::R8G8B8A8;
   case android::PIXEL_FORMAT_RGBX_8888:
-    return swapRB ? gfx::FORMAT_B8G8R8X8 : gfx::FORMAT_R8G8B8X8;
+    return swapRB ? gfx::SurfaceFormat::B8G8R8X8 : gfx::SurfaceFormat::R8G8B8X8;
   case android::PIXEL_FORMAT_RGB_565:
-    return gfx::FORMAT_R5G6B5;
-  case android::PIXEL_FORMAT_A_8:
-    return gfx::FORMAT_A8;
+    return gfx::SurfaceFormat::R5G6B5;
   case HAL_PIXEL_FORMAT_YCbCr_422_SP:
   case HAL_PIXEL_FORMAT_YCrCb_420_SP:
   case HAL_PIXEL_FORMAT_YCbCr_422_I:
   case GrallocImage::HAL_PIXEL_FORMAT_YCbCr_420_SP_TILED:
   case GrallocImage::HAL_PIXEL_FORMAT_YCbCr_420_SP_VENUS:
   case HAL_PIXEL_FORMAT_YV12:
-    return gfx::FORMAT_B8G8R8A8; // yup, use FORMAT_B8G8R8A8 even though it's a YUV texture. This is an external texture.
+    return gfx::SurfaceFormat::B8G8R8A8; // yup, use SurfaceFormat::B8G8R8A8 even though it's a YUV texture. This is an external texture.
   default:
     if (aFormat >= 0x100 && aFormat <= 0x1FF) {
       // Reserved range for HAL specific formats.
-      return gfx::FORMAT_B8G8R8A8;
+      return gfx::SurfaceFormat::B8G8R8A8;
     } else {
       // This is not super-unreachable, there's a bunch of hypothetical pixel
       // formats we don't deal with.
@@ -51,7 +50,7 @@ SurfaceFormatForAndroidPixelFormat(android::PixelFormat aFormat,
       // like undesirable behaviour. We'd rather have a subtle artifact.
       printf_stderr(" xxxxx unknow android format %i\n", (int)aFormat);
       MOZ_ASSERT(false, "Unknown Android pixel format.");
-      return gfx::FORMAT_UNKNOWN;
+      return gfx::SurfaceFormat::UNKNOWN;
     }
   }
 }
@@ -70,7 +69,6 @@ TextureTargetForAndroidPixelFormat(android::PixelFormat aFormat)
   case android::PIXEL_FORMAT_RGBA_8888:
   case android::PIXEL_FORMAT_RGBX_8888:
   case android::PIXEL_FORMAT_RGB_565:
-  case android::PIXEL_FORMAT_A_8:
     return LOCAL_GL_TEXTURE_2D;
   default:
     if (aFormat >= 0x100 && aFormat <= 0x1FF) {
@@ -95,6 +93,7 @@ GrallocTextureSourceOGL::GrallocTextureSourceOGL(CompositorOGL* aCompositor,
   , mGraphicBuffer(aGraphicBuffer)
   , mEGLImage(0)
   , mFormat(aFormat)
+  , mNeedsReset(true)
 {
   MOZ_ASSERT(mGraphicBuffer.get());
 }
@@ -112,7 +111,7 @@ void GrallocTextureSourceOGL::BindTexture(GLenum aTextureUnit)
    * android::GraphicBuffer, so that texturing will source the GraphicBuffer.
    *
    * To this effect we create an EGLImage wrapping this GraphicBuffer,
-   * using CreateEGLImageForNativeBuffer, and then we tie this EGLImage to our
+   * using EGLImageCreateFromNativeBuffer, and then we tie this EGLImage to our
    * texture using fEGLImageTargetTexture2D.
    */
   MOZ_ASSERT(gl());
@@ -123,6 +122,10 @@ void GrallocTextureSourceOGL::BindTexture(GLenum aTextureUnit)
 
   gl()->fActiveTexture(aTextureUnit);
   gl()->fBindTexture(textureTarget, tex);
+  if (!mEGLImage) {
+    mEGLImage = EGLImageCreateFromNativeBuffer(gl(), mGraphicBuffer->getNativeBuffer());
+  }
+  gl()->fEGLImageTargetTexture2D(textureTarget, mEGLImage);
   gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
 }
 
@@ -139,12 +142,12 @@ GrallocTextureSourceOGL::gl() const
 }
 
 void
-GrallocTextureSourceOGL::SetCompositor(CompositorOGL* aCompositor)
+GrallocTextureSourceOGL::SetCompositor(Compositor* aCompositor)
 {
   if (mCompositor && !aCompositor) {
     DeallocateDeviceData();
   }
-  mCompositor = aCompositor;
+  mCompositor = static_cast<CompositorOGL*>(aCompositor);
 }
 
 
@@ -158,10 +161,10 @@ GrallocTextureSourceOGL::GetTextureTarget() const
 gfx::SurfaceFormat
 GrallocTextureSourceOGL::GetFormat() const {
   if (!mGraphicBuffer.get()) {
-    return gfx::FORMAT_UNKNOWN;
+    return gfx::SurfaceFormat::UNKNOWN;
   }
   if (GetTextureTarget() == LOCAL_GL_TEXTURE_EXTERNAL) {
-    return gfx::FORMAT_R8G8B8A8;
+    return gfx::SurfaceFormat::R8G8B8A8;
   }
   return mFormat;
 }
@@ -169,6 +172,21 @@ GrallocTextureSourceOGL::GetFormat() const {
 void
 GrallocTextureSourceOGL::SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData)
 {
+  if (mCompositableBackendData != aBackendData) {
+    mNeedsReset = true;
+  }
+
+  if (!mNeedsReset) {
+    // Update binding to the EGLImage
+    gl()->MakeCurrent();
+    GLuint tex = GetGLTexture();
+    GLuint textureTarget = GetTextureTarget();
+    gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
+    gl()->fBindTexture(textureTarget, tex);
+    gl()->fEGLImageTargetTexture2D(textureTarget, mEGLImage);
+    return;
+  }
+
   mCompositableBackendData = aBackendData;
 
   if (!mCompositor) {
@@ -178,10 +196,6 @@ GrallocTextureSourceOGL::SetCompositableBackendSpecificData(CompositableBackendS
   // delete old EGLImage
   DeallocateDeviceData();
 
-  if (!aBackendData) {
-    return;
-  }
-
   gl()->MakeCurrent();
   GLuint tex = GetGLTexture();
   GLuint textureTarget = GetTextureTarget();
@@ -189,8 +203,9 @@ GrallocTextureSourceOGL::SetCompositableBackendSpecificData(CompositableBackendS
   gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
   gl()->fBindTexture(textureTarget, tex);
   // create new EGLImage
-  mEGLImage = gl()->CreateEGLImageForNativeBuffer(mGraphicBuffer->getNativeBuffer());
+  mEGLImage = EGLImageCreateFromNativeBuffer(gl(), mGraphicBuffer->getNativeBuffer());
   gl()->fEGLImageTargetTexture2D(textureTarget, mEGLImage);
+  mNeedsReset = false;
 }
 
 gfx::IntSize
@@ -209,15 +224,14 @@ GrallocTextureSourceOGL::DeallocateDeviceData()
   if (mEGLImage) {
     MOZ_ASSERT(gl());
     gl()->MakeCurrent();
-    gl()->DestroyEGLImage(mEGLImage);
-    mEGLImage = 0;
+    EGLImageDestroy(gl(), mEGLImage);
+    mEGLImage = EGL_NO_IMAGE;
   }
 }
 
-GrallocTextureHostOGL::GrallocTextureHostOGL(uint64_t aID,
-                                             TextureFlags aFlags,
+GrallocTextureHostOGL::GrallocTextureHostOGL(TextureFlags aFlags,
                                              const NewSurfaceDescriptorGralloc& aDescriptor)
-  : TextureHost(aID, aFlags)
+  : TextureHost(aFlags)
 {
   mGrallocActor =
     static_cast<GrallocBufferActor*>(aDescriptor.bufferParent());
@@ -278,6 +292,14 @@ GrallocTextureHostOGL::DeallocateSharedData()
 }
 
 void
+GrallocTextureHostOGL::ForgetSharedData()
+{
+  if (mTextureSource) {
+    mTextureSource->ForgetBuffer();
+  }
+}
+
+void
 GrallocTextureHostOGL::DeallocateDeviceData()
 {
   mTextureSource->DeallocateDeviceData();
@@ -296,8 +318,7 @@ GrallocTextureHostOGL::GetRenderState()
     }
     return LayerRenderState(mTextureSource->mGraphicBuffer.get(),
                             gfx::ThebesIntSize(mSize),
-                            flags,
-                            this);
+                            flags);
   }
 
   return LayerRenderState();
@@ -318,7 +339,7 @@ GrallocTextureSourceOGL::GetAsSurface() {
   gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
   gl()->fBindTexture(GetTextureTarget(), tex);
   if (!mEGLImage) {
-    mEGLImage = gl()->CreateEGLImageForNativeBuffer(mGraphicBuffer->getNativeBuffer());
+    mEGLImage = EGLImageCreateFromNativeBuffer(gl(), mGraphicBuffer->getNativeBuffer());
   }
   gl()->fEGLImageTargetTexture2D(GetTextureTarget(), mEGLImage);
 
@@ -343,11 +364,6 @@ GrallocTextureHostOGL::SetCompositableBackendSpecificData(CompositableBackendSpe
   mCompositableBackendData = aBackendData;
   if (mTextureSource) {
     mTextureSource->SetCompositableBackendSpecificData(aBackendData);
-  }
-  // Register this object to CompositableBackendSpecificData
-  // as current TextureHost.
-  if (aBackendData) {
-    aBackendData->SetCurrentReleaseFenceTexture(this);
   }
 }
 

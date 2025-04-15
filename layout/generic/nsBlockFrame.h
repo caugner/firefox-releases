@@ -171,10 +171,13 @@ public:
   virtual void InvalidateFrame(uint32_t aDisplayItemKey = 0) MOZ_OVERRIDE;
   virtual void InvalidateFrameWithRect(const nsRect& aRect, uint32_t aDisplayItemKey = 0) MOZ_OVERRIDE;
 
-#ifdef DEBUG
-  void List(FILE* out, int32_t aIndent, uint32_t aFlags = 0) const MOZ_OVERRIDE;
-  NS_IMETHOD_(nsFrameState) GetDebugStateBits() const MOZ_OVERRIDE;
+#ifdef DEBUG_FRAME_DUMP
+  void List(FILE* out = stderr, const char* aPrefix = "", uint32_t aFlags = 0) const MOZ_OVERRIDE;
   NS_IMETHOD GetFrameName(nsAString& aResult) const MOZ_OVERRIDE;
+#endif
+
+#ifdef DEBUG
+  NS_IMETHOD_(nsFrameState) GetDebugStateBits() const MOZ_OVERRIDE;
 #endif
 
 #ifdef ACCESSIBILITY
@@ -313,6 +316,14 @@ public:
   virtual void DeleteNextInFlowChild(nsPresContext* aPresContext,
                                      nsIFrame*      aNextInFlow,
                                      bool           aDeletingEmptyFrames) MOZ_OVERRIDE;
+
+  /**
+    * This is a special method that allows a child class of nsBlockFrame to
+    * return a special, customized nsStyleText object to the nsLineLayout
+    * constructor. It is used when the nsBlockFrame child needs to specify its
+    * custom rendering style.
+    */
+  virtual const nsStyleText* StyleTextForLineLayout();
 
   /**
    * Determines whether the collapsed margin carried out of the last

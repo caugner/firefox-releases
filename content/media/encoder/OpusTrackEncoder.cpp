@@ -17,6 +17,11 @@
 
 namespace mozilla {
 
+// The Opus format supports up to 8 channels, and supports multitrack audio up
+// to 255 channels, but the current implementation supports only mono and
+// stereo, and downmixes any more than that.
+static const int MAX_SUPPORTED_AUDIO_CHANNELS = 8;
+
 // http://www.opus-codec.org/docs/html_api-1.0.2/group__opus__encoder.html
 // In section "opus_encoder_init", channels must be 1 or 2 of input signal.
 static const int MAX_CHANNELS = 2;
@@ -31,6 +36,11 @@ static const int kOpusSamplingRate = 48000;
 
 // The duration of an Opus frame, and it must be 2.5, 5, 10, 20, 40 or 60 ms.
 static const int kFrameDurationMs  = 20;
+
+// The supported sampling rate of input signal (Hz),
+// must be one of the following. Will resampled to 48kHz otherwise.
+static const int kOpusSupportedInputSamplingRates[5] =
+                   {8000, 12000, 16000, 24000, 48000};
 
 namespace {
 
@@ -138,20 +148,22 @@ OpusTrackEncoder::Init(int aChannels, int aSamplingRate)
   // This monitor is used to wake up other methods that are waiting for encoder
   // to be completely initialized.
   ReentrantMonitorAutoEnter mon(mReentrantMonitor);
+
+  NS_ENSURE_TRUE((aChannels <= MAX_SUPPORTED_AUDIO_CHANNELS) && (aChannels > 0),
+                 NS_ERROR_FAILURE);
+
   // This version of encoder API only support 1 or 2 channels,
   // So set the mChannels less or equal 2 and
   // let InterleaveTrackData downmix pcm data.
   mChannels = aChannels > MAX_CHANNELS ? MAX_CHANNELS : aChannels;
 
-  if (aChannels <= 0) {
-    return NS_ERROR_FAILURE;
-  }
-  // The granule position is required to be incremented at a rate of 48KHz, and
-  // it is simply calculated as |granulepos = samples * (48000/source_rate)|,
-  // that is, the source sampling rate must divide 48000 evenly.
-  // If this constraint is not satisfied, we resample the input to 48kHz.
-  if (!((aSamplingRate >= 8000) && (kOpusSamplingRate / aSamplingRate) *
-         aSamplingRate == kOpusSamplingRate)) {
+  // According to www.opus-codec.org, creating an opus encoder requires the
+  // sampling rate of source signal be one of 8000, 12000, 16000, 24000, or
+  // 48000. If this constraint is not satisfied, we resample the input to 48kHz.
+  nsTArray<int> supportedSamplingRates;
+  supportedSamplingRates.AppendElements(kOpusSupportedInputSamplingRates,
+                         MOZ_ARRAY_LENGTH(kOpusSupportedInputSamplingRates));
+  if (!supportedSamplingRates.Contains(aSamplingRate)) {
     int error;
     mResampler = speex_resampler_init(mChannels,
                                       aSamplingRate,
@@ -164,6 +176,7 @@ OpusTrackEncoder::Init(int aChannels, int aSamplingRate)
     }
   }
   mSamplingRate = aSamplingRate;
+  NS_ENSURE_TRUE(mSamplingRate > 0, NS_ERROR_FAILURE);
 
   int error = 0;
   mEncoder = opus_encoder_create(GetOutputSampleRate(), mChannels,
@@ -274,8 +287,8 @@ OpusTrackEncoder::GetEncodedTrack(EncodedFrameContainer& aData)
 
     if (!chunk.IsNull()) {
       // Append the interleaved data to the end of pcm buffer.
-      InterleaveTrackData(chunk, frameToCopy, mChannels,
-                          pcm.Elements() + frameCopied * mChannels);
+      AudioTrackEncoder::InterleaveTrackData(chunk, frameToCopy, mChannels,
+        pcm.Elements() + frameCopied * mChannels);
     } else {
       memset(pcm.Elements() + frameCopied * mChannels, 0,
              frameToCopy * mChannels * sizeof(AudioDataValue));
@@ -361,7 +374,7 @@ OpusTrackEncoder::GetEncodedTrack(EncodedFrameContainer& aData)
     }
   }
 
-  audiodata->SetFrameData(&frameData);
+  audiodata->SwapInFrameData(frameData);
   aData.AppendEncodedFrame(audiodata);
   return result >= 0 ? NS_OK : NS_ERROR_FAILURE;
 }

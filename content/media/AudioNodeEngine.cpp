@@ -15,10 +15,15 @@ namespace mozilla {
 void
 AllocateAudioBlock(uint32_t aChannelCount, AudioChunk* aChunk)
 {
+  CheckedInt<size_t> size = WEBAUDIO_BLOCK_SIZE;
+  size *= aChannelCount;
+  size *= sizeof(float);
+  if (!size.isValid()) {
+    MOZ_CRASH();
+  }
   // XXX for SIMD purposes we should do something here to make sure the
   // channel buffers are 16-byte aligned.
-  nsRefPtr<SharedBuffer> buffer =
-    SharedBuffer::Create(WEBAUDIO_BLOCK_SIZE*aChannelCount*sizeof(float));
+  nsRefPtr<SharedBuffer> buffer = SharedBuffer::Create(size.value());
   aChunk->mDuration = WEBAUDIO_BLOCK_SIZE;
   aChunk->mChannelData.SetLength(aChannelCount);
   float* data = static_cast<float*>(buffer->Data());
@@ -155,16 +160,14 @@ AudioBlockCopyChannelWithScale(const float aInput[WEBAUDIO_BLOCK_SIZE],
 }
 
 void
-AudioBufferInPlaceScale(float aBlock[WEBAUDIO_BLOCK_SIZE],
-                        uint32_t aChannelCount,
-                        float aScale)
+AudioBlockInPlaceScale(float aBlock[WEBAUDIO_BLOCK_SIZE],
+                       float aScale)
 {
-  AudioBufferInPlaceScale(aBlock, aChannelCount, aScale, WEBAUDIO_BLOCK_SIZE);
+  AudioBufferInPlaceScale(aBlock, aScale, WEBAUDIO_BLOCK_SIZE);
 }
 
 void
 AudioBufferInPlaceScale(float* aBlock,
-                        uint32_t aChannelCount,
                         float aScale,
                         uint32_t aSize)
 {
@@ -173,11 +176,11 @@ AudioBufferInPlaceScale(float* aBlock,
   }
 #ifdef BUILD_ARM_NEON
   if (mozilla::supports_neon()) {
-    AudioBufferInPlaceScale_NEON(aBlock, aChannelCount, aScale, aSize);
+    AudioBufferInPlaceScale_NEON(aBlock, aScale, aSize);
     return;
   }
 #endif
-  for (uint32_t i = 0; i < aSize * aChannelCount; ++i) {
+  for (uint32_t i = 0; i < aSize; ++i) {
     *aBlock++ *= aScale;
   }
 }

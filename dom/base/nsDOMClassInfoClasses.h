@@ -9,9 +9,6 @@ DOMCI_CLASS(Location)
 DOMCI_CLASS(DOMPrototype)
 DOMCI_CLASS(DOMConstructor)
 
-DOMCI_CLASS(DeviceAcceleration)
-DOMCI_CLASS(DeviceRotationRate)
-
 // CSS classes
 DOMCI_CLASS(CSSStyleRule)
 DOMCI_CLASS(CSSCharsetRule)
@@ -22,9 +19,6 @@ DOMCI_CLASS(CSSRuleList)
 DOMCI_CLASS(StyleSheetList)
 DOMCI_CLASS(CSSStyleSheet)
 
-// Range classes
-DOMCI_CLASS(Selection)
-
 // XUL classes
 #ifdef MOZ_XUL
 DOMCI_CLASS(XULCommandDispatcher)
@@ -34,11 +28,6 @@ DOMCI_CLASS(BoxObject)
 #ifdef MOZ_XUL
 DOMCI_CLASS(TreeSelection)
 DOMCI_CLASS(TreeContentView)
-#endif
-
-// Crypto classes
-#ifndef MOZ_DISABLE_CRYPTOLEGACY
-DOMCI_CLASS(CRMFObject)
 #endif
 
 // DOM Chrome Window class, almost identical to Window
@@ -83,8 +72,6 @@ DOMCI_CLASS(File)
 // DOM modal content window class, almost identical to Window
 DOMCI_CLASS(ModalContentWindow)
 
-DOMCI_CLASS(MozWakeLock)
-
 DOMCI_CLASS(MozMobileMessageManager)
 DOMCI_CLASS(MozSmsMessage)
 DOMCI_CLASS(MozMmsMessage)
@@ -92,7 +79,6 @@ DOMCI_CLASS(MozSmsFilter)
 DOMCI_CLASS(MozSmsSegmentInfo)
 DOMCI_CLASS(MozMobileMessageThread)
 
-DOMCI_CLASS(MozConnection)
 #ifdef MOZ_B2G_RIL
 DOMCI_CLASS(MozMobileConnection)
 #endif
@@ -113,14 +99,8 @@ DOMCI_CLASS(MozCSSKeyframesRule)
 
 DOMCI_CLASS(CSSPageRule)
 
-DOMCI_CLASS(MediaQueryList)
-
 #ifdef MOZ_B2G_RIL
 DOMCI_CLASS(MozIccManager)
-#endif
-
-#ifdef MOZ_B2G_BT
-DOMCI_CLASS(BluetoothDevice)
 #endif
 
 DOMCI_CLASS(CameraCapabilities)
@@ -130,7 +110,6 @@ DOMCI_CLASS(LockedFile)
 DOMCI_CLASS(CSSFontFeatureValuesRule)
 
 DOMCI_CLASS(UserDataHandler)
-DOMCI_CLASS(LoadStatus)
 DOMCI_CLASS(XPathNamespace)
 DOMCI_CLASS(XULControlElement)
 DOMCI_CLASS(XULLabeledControlElement)

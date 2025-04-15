@@ -12,7 +12,7 @@
 #include "nsIWidget.h"
 #include "nsMenuPopupFrame.h"
 #include "nsPresContext.h"
-#include "nsIDocShellTreeItem.h"
+#include "nsIDocShell.h"
 #include "nsPIDOMWindow.h"
 #include "nsEventDispatcher.h"
 #include "nsDisplayList.h"
@@ -72,12 +72,9 @@ nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
    case NS_MOUSE_BUTTON_DOWN:  {
        if (aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton) {
          // titlebar has no effect in non-chrome shells
-         nsCOMPtr<nsISupports> cont = aPresContext->GetContainer();
-         nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(cont);
+         nsCOMPtr<nsIDocShellTreeItem> dsti = aPresContext->GetDocShell();
          if (dsti) {
-           int32_t type = -1;
-           if (NS_SUCCEEDED(dsti->GetItemType(&type)) &&
-               type == nsIDocShellTreeItem::typeChrome) {
+           if (dsti->ItemType() == nsIDocShellTreeItem::typeChrome) {
              // we're tracking.
              mTrackingMouseMove = true;
 

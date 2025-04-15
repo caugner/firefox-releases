@@ -24,14 +24,18 @@ class Loader;
 }
 
 class nsLayoutStylesheetCache MOZ_FINAL
- : public mozilla::MemoryUniReporter
- , public nsIObserver
+ : public nsIObserver
+ , public nsIMemoryReporter
 {
   NS_DECL_ISUPPORTS
   NS_DECL_NSIOBSERVER
+  NS_DECL_NSIMEMORYREPORTER
 
   static nsCSSStyleSheet* ScrollbarsSheet();
   static nsCSSStyleSheet* FormsSheet();
+  // This function is expected to return nullptr when the dom.forms.number
+  // pref is disabled.
+  static nsCSSStyleSheet* NumberControlSheet();
   static nsCSSStyleSheet* UserContentSheet();
   static nsCSSStyleSheet* UserChromeSheet();
   static nsCSSStyleSheet* UASheet();
@@ -40,7 +44,6 @@ class nsLayoutStylesheetCache MOZ_FINAL
 
   static void Shutdown();
 
-  int64_t Amount() MOZ_OVERRIDE;
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
 private:
@@ -58,6 +61,7 @@ private:
   static mozilla::css::Loader* gCSSLoader;
   nsRefPtr<nsCSSStyleSheet> mScrollbarsSheet;
   nsRefPtr<nsCSSStyleSheet> mFormsSheet;
+  nsRefPtr<nsCSSStyleSheet> mNumberControlSheet;
   nsRefPtr<nsCSSStyleSheet> mUserContentSheet;
   nsRefPtr<nsCSSStyleSheet> mUserChromeSheet;
   nsRefPtr<nsCSSStyleSheet> mUASheet;

@@ -70,6 +70,7 @@
 #include "certdb.h"
 #include "secmod.h"
 #include "ScopedNSSTypes.h"
+#include "insanity/pkixtypes.h"
 
 #include "ssl.h" // For SSL_ClearSessionCache
 
@@ -78,6 +79,9 @@
 #include "nsNSSCertHelper.h"
 #include <algorithm>
 #include "nsWrapperCacheInlines.h"
+#endif
+#ifndef MOZ_DISABLE_CRYPTOLEGACY
+#include "mozilla/dom/CRMFObjectBinding.h"
 #endif
 
 using namespace mozilla;
@@ -213,16 +217,6 @@ NS_INTERFACE_MAP_END_INHERITING(mozilla::dom::Crypto)
 
 NS_IMPL_ADDREF_INHERITED(nsCrypto, mozilla::dom::Crypto)
 NS_IMPL_RELEASE_INHERITED(nsCrypto, mozilla::dom::Crypto)
- 
-// QueryInterface implementation for nsCRMFObject
-NS_INTERFACE_MAP_BEGIN(nsCRMFObject)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMCRMFObject)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(CRMFObject)
-NS_INTERFACE_MAP_END
-
-NS_IMPL_ADDREF(nsCRMFObject)
-NS_IMPL_RELEASE(nsCRMFObject)
 
 // QueryInterface implementation for nsPkcs11
 #endif // MOZ_DISABLE_CRYPTOLEGACY
@@ -1048,12 +1042,12 @@ nsSetEscrowAuthority(CRMFCertRequest *certReq, nsKeyPairInfo *keyInfo,
       CRMF_CertRequestIsControlPresent(certReq, crmfPKIArchiveOptionsControl)){
     return NS_ERROR_FAILURE;
   }
-  ScopedCERTCertificate cert(wrappingCert->GetCert());
+  insanity::pkix::ScopedCERTCertificate cert(wrappingCert->GetCert());
   if (!cert)
     return NS_ERROR_FAILURE;
 
   CRMFEncryptedKey *encrKey = 
-      CRMF_CreateEncryptedKeyWithEncryptedValue(keyInfo->privKey, cert);
+      CRMF_CreateEncryptedKeyWithEncryptedValue(keyInfo->privKey, cert.get());
   if (!encrKey)
     return NS_ERROR_FAILURE;
 
@@ -1858,7 +1852,7 @@ GetISupportsFromContext(JSContext *cx)
 
 //The top level method which is a member of nsIDOMCrypto
 //for generate a base64 encoded CRMF request.
-already_AddRefed<nsIDOMCRMFObject>
+CRMFObject*
 nsCrypto::GenerateCRMFRequest(JSContext* aContext,
                               const nsCString& aReqDN,
                               const nsCString& aRegToken,
@@ -1869,7 +1863,6 @@ nsCrypto::GenerateCRMFRequest(JSContext* aContext,
                               ErrorResult& aRv)
 {
   nsNSSShutDownPreventionLock locker;
-  nsCOMPtr<nsIDOMCRMFObject> crmf;
   nsresult nrv;
 
   uint32_t argc = aArgs.Length();
@@ -1925,6 +1918,7 @@ nsCrypto::GenerateCRMFRequest(JSContext* aContext,
                              NS_ConvertASCIItoUTF16(fileName),
                              scriptSample,
                              lineNum,
+                             EmptyString(),
                              EmptyString());
   }
 
@@ -1948,15 +1942,15 @@ nsCrypto::GenerateCRMFRequest(JSContext* aContext,
       aRv.Throw(NS_ERROR_FAILURE);
       return nullptr;
     }
-    ScopedCERTCertificate cert(CERT_NewTempCertificate(CERT_GetDefaultCertDB(),
-                                                       &certDer, nullptr,
-                                                       false, true));
+    insanity::pkix::ScopedCERTCertificate cert(
+      CERT_NewTempCertificate(CERT_GetDefaultCertDB(),
+                              &certDer, nullptr, false, true));
     if (!cert) {
       aRv.Throw(NS_ERROR_FAILURE);
       return nullptr;
     }
 
-    escrowCert = nsNSSCertificate::Create(cert);
+    escrowCert = nsNSSCertificate::Create(cert.get());
     nssCert = escrowCert;
     if (!nssCert) {
       aRv.Throw(NS_ERROR_OUT_OF_MEMORY);
@@ -2028,9 +2022,8 @@ nsCrypto::GenerateCRMFRequest(JSContext* aContext,
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }
-  nsCRMFObject *newObject = new nsCRMFObject();
+  CRMFObject* newObject = new CRMFObject();
   newObject->SetCRMFRequest(encodedRequest);
-  crmf = newObject;
   nsFreeKeyPairInfo(keyids, numRequests);
 
   // Post an event on the UI queue so that the JS gets called after
@@ -2079,7 +2072,7 @@ nsCrypto::GenerateCRMFRequest(JSContext* aContext,
     delete cryptoRunnable;
   }
 
-  return crmf.forget();
+  return newObject;
 }
 
 // Reminder that we inherit the memory passed into us here.
@@ -2124,10 +2117,10 @@ nsP12Runnable::Run()
   //Build up the message that let's the user know we're trying to 
   //make PKCS12 backups of the new certs.
   nssComponent->GetPIPNSSBundleString("ForcedBackup1", final);
-  final.Append(NS_LITERAL_STRING("\n\n").get());
+  final.Append(MOZ_UTF16("\n\n"));
   nssComponent->GetPIPNSSBundleString("ForcedBackup2", temp);
   final.Append(temp.get());
-  final.Append(NS_LITERAL_STRING("\n\n").get());
+  final.Append(MOZ_UTF16("\n\n"));
 
   nssComponent->GetPIPNSSBundleString("ForcedBackup3", temp);
 
@@ -2230,12 +2223,13 @@ nsCertAlreadyExists(SECItem *derCert)
   CERTCertDBHandle *handle = CERT_GetDefaultCertDB();
   bool retVal = false;
 
-  ScopedCERTCertificate cert(CERT_FindCertByDERCert(handle, derCert));
+  insanity::pkix::ScopedCERTCertificate cert(
+    CERT_FindCertByDERCert(handle, derCert));
   if (cert) {
     if (cert->isperm && !cert->nickname && !cert->emailAddr) {
       //If the cert doesn't have a nickname or email addr, it is
       //bogus cruft, so delete it.
-      SEC_DeletePermCertificate(cert);
+      SEC_DeletePermCertificate(cert.get());
     } else if (cert->isperm) {
       retVal = true;
     }
@@ -2391,9 +2385,10 @@ nsCrypto::ImportUserCertificates(const nsAString& aNickname,
 
   //Import the root chain into the cert db.
  {
-  ScopedCERTCertList caPubs(CMMF_CertRepContentGetCAPubs(certRepContent));
+  insanity::pkix::ScopedCERTCertList
+    caPubs(CMMF_CertRepContentGetCAPubs(certRepContent));
   if (caPubs) {
-    int32_t numCAs = nsCertListCount(caPubs);
+    int32_t numCAs = nsCertListCount(caPubs.get());
     
     NS_ASSERTION(numCAs > 0, "Invalid number of CA's");
     if (numCAs > 0) {
@@ -2624,14 +2619,14 @@ nsCrypto::SignText(JSContext* aContext,
   NS_ASSERTION(nicknames->numnicknames == numberOfCerts,
                "nicknames->numnicknames != numberOfCerts");
 
-  nsAutoArrayPtr<PRUnichar*> certNicknameList(new PRUnichar*[nicknames->numnicknames * 2]);
+  nsAutoArrayPtr<char16_t*> certNicknameList(new char16_t*[nicknames->numnicknames * 2]);
   if (!certNicknameList) {
     aReturn.Append(internalError);
 
     return;
   }
 
-  PRUnichar** certDetailsList = certNicknameList.get() + nicknames->numnicknames;
+  char16_t** certDetailsList = certNicknameList.get() + nicknames->numnicknames;
 
   int32_t certsToUse;
   for (node = CERT_LIST_HEAD(certList), certsToUse = 0;
@@ -2672,8 +2667,8 @@ nsCrypto::SignText(JSContext* aContext,
     // of the selected cert.
     int32_t selectedIndex = -1;
     rv = fsd->ConfirmSignText(uiContext, utf16Host, aStringToSign,
-                              const_cast<const PRUnichar**>(certNicknameList.get()),
-                              const_cast<const PRUnichar**>(certDetailsList),
+                              const_cast<const char16_t**>(certNicknameList.get()),
+                              const_cast<const char16_t**>(certDetailsList),
                               certsToUse, &selectedIndex, password,
                               &canceled);
     if (NS_FAILED(rv) || canceled) {
@@ -2853,29 +2848,31 @@ nsCrypto::DisableRightClick(ErrorResult& aRv)
   aRv.Throw(NS_ERROR_NOT_IMPLEMENTED);
 }
 
-nsCRMFObject::nsCRMFObject()
+CRMFObject::CRMFObject()
 {
+  MOZ_COUNT_CTOR(CRMFObject);
 }
 
-nsCRMFObject::~nsCRMFObject()
+CRMFObject::~CRMFObject()
 {
+  MOZ_COUNT_DTOR(CRMFObject);
 }
 
-nsresult
-nsCRMFObject::init()
+JSObject*
+CRMFObject::WrapObject(JSContext *aCx, JS::Handle<JSObject*> aScope,
+                       bool* aTookOwnership)
 {
-  return NS_OK;
+  return CRMFObjectBinding::Wrap(aCx, aScope, this, aTookOwnership);
 }
 
-NS_IMETHODIMP
-nsCRMFObject::GetRequest(nsAString& aRequest)
+void
+CRMFObject::GetRequest(nsAString& aRequest)
 {
   aRequest.Assign(mBase64Request);
-  return NS_OK;
 }
 
 nsresult
-nsCRMFObject::SetCRMFRequest(char *inRequest)
+CRMFObject::SetCRMFRequest(char *inRequest)
 {
   mBase64Request.AssignWithConversion(inRequest);  
   return NS_OK;

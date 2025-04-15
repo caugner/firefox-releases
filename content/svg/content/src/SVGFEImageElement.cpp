@@ -212,9 +212,9 @@ SVGFEImageElement::GetPrimitiveDescription(nsSVGFilterInstance* aInstance,
 
   nsRefPtr<gfxASurface> currentFrame;
   if (imageContainer) {
-    imageContainer->GetFrame(imgIContainer::FRAME_CURRENT,
-                             imgIContainer::FLAG_SYNC_DECODE,
-                             getter_AddRefs(currentFrame));
+    currentFrame =
+      imageContainer->GetFrame(imgIContainer::FRAME_CURRENT,
+                               imgIContainer::FLAG_SYNC_DECODE);
   }
 
   if (!currentFrame) {
@@ -230,12 +230,12 @@ SVGFEImageElement::GetPrimitiveDescription(nsSVGFilterInstance* aInstance,
   imageContainer->GetWidth(&nativeSize.width);
   imageContainer->GetHeight(&nativeSize.height);
 
-  gfxMatrix viewBoxTM =
+  Matrix viewBoxTM =
     SVGContentUtils::GetViewBoxTransform(aFilterSubregion.width, aFilterSubregion.height,
                                          0, 0, nativeSize.width, nativeSize.height,
                                          mPreserveAspectRatio);
   Matrix xyTM = Matrix().Translate(aFilterSubregion.x, aFilterSubregion.y);
-  Matrix TM = ToMatrix(viewBoxTM) * xyTM;
+  Matrix TM = viewBoxTM * xyTM;
 
   Filter filter = ToFilter(nsLayoutUtils::GetGraphicsFilterForFrame(frame));
 

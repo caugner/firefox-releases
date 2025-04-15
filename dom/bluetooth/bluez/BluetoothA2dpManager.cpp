@@ -31,7 +31,7 @@ namespace {
 NS_IMETHODIMP
 BluetoothA2dpManager::Observe(nsISupports* aSubject,
                               const char* aTopic,
-                              const PRUnichar* aData)
+                              const char16_t* aData)
 {
   MOZ_ASSERT(sBluetoothA2dpManager);
 
@@ -257,6 +257,14 @@ BluetoothA2dpManager::HandleSinkPropertyChanged(const BluetoothSignal& aSignal)
   MOZ_ASSERT(aSignal.value().type() == BluetoothValue::TArrayOfBluetoothNamedValue);
 
   const nsString& address = aSignal.path();
+  /**
+   * Update sink property only if
+   * - mDeviceAddress is empty (A2dp is disconnected), or
+   * - this property change is from the connected sink.
+   */
+  NS_ENSURE_TRUE_VOID(mDeviceAddress.IsEmpty() ||
+                      mDeviceAddress.Equals(address));
+
   const InfallibleTArray<BluetoothNamedValue>& arr =
     aSignal.value().get_ArrayOfBluetoothNamedValue();
   MOZ_ASSERT(arr.Length() == 1);

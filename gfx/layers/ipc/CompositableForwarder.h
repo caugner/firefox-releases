@@ -13,6 +13,7 @@
 #include "mozilla/layers/CompositorTypes.h"
 #include "mozilla/layers/ISurfaceAllocator.h"  // for ISurfaceAllocator
 #include "mozilla/layers/LayersTypes.h"  // for LayersBackend
+#include "mozilla/layers/TextureClient.h"  // for TextureClient
 #include "nsRegion.h"                   // for nsIntRegion
 
 struct nsIntPoint;
@@ -27,8 +28,8 @@ class SurfaceDescriptor;
 class SurfaceDescriptorTiles;
 class ThebesBufferData;
 class DeprecatedTextureClient;
-class TextureClient;
 class BasicTiledLayerBuffer;
+class PTextureChild;
 
 /**
  * A transaction is a set of changes that happenned on the content side, that
@@ -94,6 +95,11 @@ public:
                                        const SurfaceDescriptorTiles& aTiledDescriptor) = 0;
 
   /**
+   * Create a TextureChild/Parent pair as as well as the TextureHost on the parent side.
+   */
+  virtual PTextureChild* CreateTexture(const SurfaceDescriptor& aSharedData, TextureFlags aFlags) = 0;
+
+  /**
    * Communicate to the compositor that the texture identified by aCompositable
    * and aTextureId has been updated to aImage.
    */
@@ -150,25 +156,33 @@ public:
   virtual void DestroyedThebesBuffer(const SurfaceDescriptor& aBackBufferToDestroy) = 0;
 
   /**
-   * Tell the compositor side to create a TextureHost that corresponds to
-   * aClient.
+   * Tell the compositor side to delete the TextureHost corresponding to the
+   * TextureClient passed in parameter.
    */
-  virtual bool AddTexture(CompositableClient* aCompositable,
-                          TextureClient* aClient) = 0;
+  virtual void RemoveTexture(TextureClient* aTexture) = 0;
 
   /**
-   * Tell the compositor side to delete the TextureHost corresponding to
-   * aTextureID.
-   * By default the shared Data is deallocated along with the TextureHost, but
-   * this behaviour can be overriden by the TextureFlags passed here.
-   * XXX - This is kind of bad, but for now we have to do this, because of some
-   * edge cases caused by the lifetime of the TextureHost being limited by the
-   * lifetime of the CompositableHost. We should be able to remove this flags
-   * parameter when we remove the lifetime constraint.
+   * Forcibly remove texture data from TextureClient
+   * after a tansaction with Compositor.
    */
-  virtual void RemoveTexture(CompositableClient* aCompositable,
-                             uint64_t aTextureID,
-                             TextureFlags aFlags) = 0;
+  virtual void AddForceRemovingTexture(TextureClient* aClient)
+  {
+    if (aClient) {
+      mForceRemovingTextures.AppendElement(aClient);
+    }
+  }
+
+  /**
+   * Forcibly remove texture data from TextureClient
+   * This function needs to be called after a tansaction with Compositor.
+   */
+  virtual void ForceRemoveTexturesIfNecessary()
+  {
+    for (uint32_t i = 0; i < mForceRemovingTextures.Length(); i++) {
+       mForceRemovingTextures[i]->ForceRemove();
+    }
+    mForceRemovingTextures.Clear();
+  }
 
   /**
    * Tell the CompositableHost on the compositor side what texture to use for
@@ -227,6 +241,7 @@ public:
 protected:
   TextureFactoryIdentifier mTextureFactoryIdentifier;
   bool mMultiProcess;
+  nsTArray<RefPtr<TextureClient> > mForceRemovingTextures;
 };
 
 } // namespace

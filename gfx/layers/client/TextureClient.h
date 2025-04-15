@@ -11,7 +11,6 @@
 #include "GLContextTypes.h"             // for GLContext (ptr only), etc
 #include "GLTextureImage.h"             // for TextureImage
 #include "ImageTypes.h"                 // for StereoMode
-#include "gfxipc/FenceUtils.h"             // for FenceHandle
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
 #include "mozilla/RefPtr.h"             // for RefPtr, RefCounted
@@ -19,6 +18,7 @@
 #include "mozilla/gfx/Point.h"          // for IntSize
 #include "mozilla/gfx/Types.h"          // for SurfaceFormat
 #include "mozilla/ipc/Shmem.h"          // for Shmem
+#include "mozilla/layers/AtomicRefCountedWithFinalize.h"
 #include "mozilla/layers/CompositorTypes.h"  // for TextureFlags, etc
 #include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor
 #include "mozilla/mozalloc.h"           // for operator delete
@@ -40,6 +40,8 @@ class CompositableClient;
 class PlanarYCbCrImage;
 class PlanarYCbCrData;
 class Image;
+class PTextureChild;
+class TextureChild;
 
 /**
  * TextureClient is the abstraction that allows us to share data between the
@@ -112,19 +114,17 @@ public:
  * host side, there is nothing to do.
  * On the other hand, if the client data must be deallocated on the client
  * side, the CompositableClient will ask the TextureClient to drop its shared
- * data in the form of a TextureClientData object. The compositable will keep
- * this object until it has received from the host side the confirmation that
- * the compositor is not using the texture and that it is completely safe to
- * deallocate the shared data.
+ * data in the form of a TextureClientData object. This data will be kept alive
+ * until the host side confirms that it is not using the data anymore and that
+ * it is completely safe to deallocate the shared data.
  *
  * See:
- *  - CompositableClient::RemoveTextureClient
- *  - CompositableClient::OnReplyTextureRemoved
+ *  - The PTexture IPDL protocol
+ *  - CompositableChild in TextureClient.cpp
  */
 class TextureClientData {
 public:
   virtual void DeallocateSharedData(ISurfaceAllocator* allocator) = 0;
-  virtual void SetReleaseFenceHandle(FenceHandle aReleaseFenceHandle) {}
   virtual ~TextureClientData() {}
 };
 
@@ -151,7 +151,8 @@ public:
  * In order to send several different buffers to the compositor side, use
  * several TextureClients.
  */
-class TextureClient : public AtomicRefCounted<TextureClient>
+class TextureClient
+  : public AtomicRefCountedWithFinalize<TextureClient>
 {
 public:
   TextureClient(TextureFlags aFlags = TEXTURE_FLAGS_DEFAULT);
@@ -171,6 +172,8 @@ public:
 
   virtual void Unlock() {}
 
+  virtual bool IsLocked() const = 0;
+
   /**
    * Returns true if this texture has a lock/unlock mechanism.
    * Textures that do not implement locking should be immutable or should
@@ -179,28 +182,15 @@ public:
   virtual bool ImplementsLocking() const { return false; }
 
   /**
-   * Sets this texture's ID.
+   * Allocate and deallocate a TextureChild actor.
    *
-   * This ID is used to match a texture client with his corresponding TextureHost.
-   * Only the CompositableClient should be allowed to set or clear the ID.
-   * Zero is always an invalid ID.
-   * For a given compositableClient, there can never be more than one texture
-   * client with the same non-zero ID.
-   * Texture clients from different compositables may have the same ID.
+   * TextureChild is an implementation detail of TextureHost that is not
+   * exposed to the rest of the code base. CreateIPDLActor and DestroyIPDLActor
+   * are for use with the maging IPDL protocols only (so that they can
+   * implement AllocPextureChild and DeallocPTextureChild).
    */
-  void SetID(uint64_t aID)
-  {
-    MOZ_ASSERT(mID == 0 && aID != 0);
-    mID = aID;
-    mShared = true;
-  }
-  void ClearID()
-  {
-    MOZ_ASSERT(mID != 0);
-    mID = 0;
-  }
-
-  uint64_t GetID() const { return mID; }
+  static PTextureChild* CreateIPDLActor();
+  static bool DestroyIPDLActor(PTextureChild* actor);
 
   virtual bool IsAllocated() const = 0;
 
@@ -251,11 +241,36 @@ public:
    */
   void MarkInvalid() { mValid = false; }
 
-  // If a texture client holds a reference to shmem, it should override this
-  // method to forget about the shmem _without_ releasing it.
-  virtual void OnActorDestroy() {}
+  /**
+   * Create and init the TextureChild/Parent IPDL actor pair.
+   *
+   * Should be called only once per TextureClient.
+   */
+  bool InitIPDLActor(CompositableForwarder* aForwarder);
 
-  virtual void SetReleaseFenceHandle(FenceHandle aReleaseFenceHandle) {}
+  /**
+   * Return a pointer to the IPDLActor.
+   *
+   * This is to be used with IPDL messages only. Do not store the returned
+   * pointer.
+   */
+  PTextureChild* GetIPDLActor();
+
+  /**
+   * TODO[nical] doc!
+   */
+  void ForceRemove();
+
+private:
+  /**
+   * Called once, just before the destructor.
+   *
+   * Here goes the shut-down code that uses virtual methods.
+   * Must only be called by Release().
+   */
+  void Finalize();
+
+  friend class AtomicRefCountedWithFinalize<TextureClient>;
 
 protected:
   void AddFlags(TextureFlags  aFlags)
@@ -264,10 +279,12 @@ protected:
     mFlags |= aFlags;
   }
 
-  uint64_t mID;
+  RefPtr<TextureChild> mActor;
   TextureFlags mFlags;
   bool mShared;
   bool mValid;
+
+  friend class TextureChild;
 };
 
 /**
@@ -293,6 +310,12 @@ public:
   virtual uint8_t* GetBuffer() const = 0;
 
   virtual gfx::IntSize GetSize() const { return mSize; }
+
+  virtual bool Lock(OpenMode aMode) MOZ_OVERRIDE;
+
+  virtual void Unlock() MOZ_OVERRIDE;
+
+  virtual bool IsLocked() const MOZ_OVERRIDE { return mLocked; }
 
   // TextureClientSurface
 
@@ -332,9 +355,13 @@ public:
   virtual size_t GetBufferSize() const = 0;
 
 protected:
+  RefPtr<gfx::DrawTarget> mDrawTarget;
   CompositableClient* mCompositable;
   gfx::SurfaceFormat mFormat;
   gfx::IntSize mSize;
+  OpenMode mOpenMode;
+  bool mUsingFallbackDrawTarget;
+  bool mLocked;
 };
 
 /**
@@ -363,15 +390,10 @@ public:
 
   ISurfaceAllocator* GetAllocator() const;
 
-  ipc::Shmem& GetShmem() { return mShmem; }
-
-  virtual void OnActorDestroy() MOZ_OVERRIDE
-  {
-    mShmem = ipc::Shmem();
-  }
+  mozilla::ipc::Shmem& GetShmem() { return mShmem; }
 
 protected:
-  ipc::Shmem mShmem;
+  mozilla::ipc::Shmem mShmem;
   RefPtr<ISurfaceAllocator> mAllocator;
   bool mAllocated;
 };
@@ -479,7 +501,7 @@ public:
   // The type of draw target returned by LockDrawTarget.
   virtual gfx::BackendType BackendType()
   {
-    return gfx::BACKEND_NONE;
+    return gfx::BackendType::NONE;
   }
 
   virtual void ReleaseResources() {}
@@ -546,8 +568,6 @@ public:
 
   virtual gfxContentType GetContentType() = 0;
 
-  void OnActorDestroy();
-
 protected:
   DeprecatedTextureClient(CompositableForwarder* aForwarder,
                 const TextureInfo& aTextureInfo);
@@ -574,7 +594,7 @@ public:
   virtual gfx::DrawTarget* LockDrawTarget();
   virtual gfx::BackendType BackendType() MOZ_OVERRIDE
   {
-    return gfx::BACKEND_CAIRO;
+    return gfx::BackendType::CAIRO;
   }
   virtual void Unlock() MOZ_OVERRIDE;
   virtual bool EnsureAllocated(gfx::IntSize aSize, gfxContentType aType) MOZ_OVERRIDE;
@@ -609,7 +629,7 @@ public:
   virtual void SetDescriptorFromReply(const SurfaceDescriptor& aDescriptor) MOZ_OVERRIDE;
   virtual void SetDescriptor(const SurfaceDescriptor& aDescriptor) MOZ_OVERRIDE;
   virtual void ReleaseResources();
-  virtual gfxContentType GetContentType() MOZ_OVERRIDE { return GFX_CONTENT_COLOR_ALPHA; }
+  virtual gfxContentType GetContentType() MOZ_OVERRIDE { return gfxContentType::COLOR_ALPHA; }
 };
 
 class DeprecatedTextureClientTile : public DeprecatedTextureClient

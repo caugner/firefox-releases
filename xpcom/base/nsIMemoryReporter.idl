@@ -136,16 +136,17 @@ interface nsIMemoryReporterCallback : nsISupports
  * aboutMemory.js is the most important consumer of memory reports.  It
  * places the following constraints on reports.
  *
- * - There must be an "explicit" tree.  It represents non-overlapping
- *   regions of memory that have been explicitly allocated with an
- *   OS-level allocation (e.g. mmap/VirtualAlloc/vm_allocate) or a
- *   heap-level allocation (e.g. malloc/calloc/operator new).  Reporters
- *   in this tree must have kind HEAP or NONHEAP, units BYTES, and a
- *   description that is a sentence (i.e. starts with a capital letter and
- *   ends with a period, or similar).
+ * - All reports within a single sub-tree must have the same units.
  *
- * - All other reports are unconstrained except that they must have a
- *   description that is a sentence.
+ * - There may be an "explicit" tree.  If present, it represents
+ *   non-overlapping regions of memory that have been explicitly allocated with
+ *   an OS-level allocation (e.g. mmap/VirtualAlloc/vm_allocate) or a
+ *   heap-level allocation (e.g. malloc/calloc/operator new).  Reporters in
+ *   this tree must have kind HEAP or NONHEAP, units BYTES.
+ *
+ * It is preferred, but not required, that report descriptions use complete
+ * sentences (i.e. start with a capital letter and end with a period, or
+ * similar).
  */
 [scriptable, uuid(0884cd0f-5829-4381-979b-0f53904030ed)]
 interface nsIMemoryReporter : nsISupports
@@ -178,7 +179,7 @@ interface nsIFinishReportingCallback : nsISupports
   void callback(in nsISupports data);
 };
 
-[scriptable, builtinclass, uuid(9245d89e-6523-45f9-bc15-a69789e33cbb)]
+[scriptable, builtinclass, uuid(e4e4ca56-13e0-46f1-b3c5-62d2c09fc98e)]
 interface nsIMemoryReporterManager : nsISupports
 {
   /*
@@ -187,19 +188,29 @@ interface nsIMemoryReporterManager : nsISupports
   void init();
 
   /*
-   * Register the given nsIMemoryReporter.  After a reporter is registered,
-   * it will be available via enumerateReporters().  The Manager service
-   * will hold a strong reference to the given reporter, and will be
-   * responsible for freeing the reporter at shutdown.
+   * Register the given nsIMemoryReporter.  The Manager service will hold a
+   * strong reference to the given reporter, and will be responsible for freeing
+   * the reporter at shutdown.  You may manually unregister the reporter with
+   * unregisterStrongReporter() at any point.
    */
   void registerStrongReporter(in nsIMemoryReporter reporter);
 
   /*
    * Like registerReporter, but the Manager service will hold a weak reference
-   * to the given reporter.  The reporter should be unregistered before
-   * shutdown.
+   * via a raw pointer to the given reporter.  The reporter should be
+   * unregistered before shutdown.
+   * You cannot register JavaScript components with this function!  Always
+   * register your JavaScript components with registerStrongReporter().
    */
   void registerWeakReporter(in nsIMemoryReporter reporter);
+
+  /*
+   * Unregister the given memory reporter, which must have been registered with
+   * registerStrongReporter().  You normally don't need to unregister your
+   * strong reporters, as nsIMemoryReporterManager will take care of that at
+   * shutdown.
+   */
+  void unregisterStrongReporter(in nsIMemoryReporter reporter);
 
   /*
    * Unregister the given memory reporter, which must have been registered with
@@ -213,14 +224,6 @@ interface nsIMemoryReporterManager : nsISupports
   void blockRegistrationAndHideExistingReporters();
   void unblockRegistrationAndRestoreOriginalReporters();
   void registerStrongReporterEvenIfBlocked(in nsIMemoryReporter aReporter);
-
-  /*
-   * Return an enumerator of nsIMemoryReporters that are currently registered
-   * in the current process.  WARNING: this does not do anything with child
-   * processes.  Use getReports() if you want measurements from child
-   * processes.
-   */
-  nsISimpleEnumerator enumerateReporters();
 
   /*
    * Get memory reports for the current process and all child processes.
@@ -241,6 +244,13 @@ interface nsIMemoryReporterManager : nsISupports
                   in nsISupports finishReportingData);
 
   /*
+   * Get memory reports in the current process only.  |handleReport| is called
+   * for each report.
+   */
+  void getReportsForThisProcess(in nsIMemoryReporterCallback handleReport,
+                                in nsISupports handleReportData);
+
+  /*
    * The memory reporter manager, for the most part, treats reporters
    * registered with it as a black box.  However, there are some
    * "distinguished" amounts (as could be reported by a memory reporter) that
@@ -248,8 +258,9 @@ interface nsIMemoryReporterManager : nsISupports
    * interesting that we want external code (e.g. telemetry) to be able to rely
    * on them.
    *
-   * Note that these are not reporters and so enumerateReporters() does not
-   * look at them.  However, they can be embedded in a reporter.
+   * Note that these are not reporters and so getReports() and
+   * getReportsForThisProcess() do not look at them.  However, distinguished
+   * amounts can be embedded in a reporter.
    *
    * Access to these attributes can fail.  In particular, some of them are not
    * available on all platforms.
@@ -366,6 +377,7 @@ interface nsIMemoryReporterManager : nsISupports
 #include "js/TypeDecls.h"
 #include "nsStringGlue.h"
 #include "nsTArray.h"
+#include "mozilla/Atomics.h"
 
 class nsPIDOMWindow;
 
@@ -441,7 +453,7 @@ namespace dmd {
 // This runs all the memory reporters in the current process but does nothing
 // with the results;  i.e. it does the minimal amount of work possible for DMD
 // to do its thing.  It does nothing with child processes.
-void RunReporters();
+void RunReportersForThisProcess();
 }
 }
 
@@ -466,13 +478,12 @@ void RunReporters();
 // will always be zero on some obscure platforms.
 //
 // You might be wondering why we have a macro that creates multiple functions
-// that differ only in their name, instead of a single
-// MemoryReporterMallocSizeOf function.  It's mostly to help with DMD
-// integration, though it sometimes also helps with debugging and temporary ad
-// hoc profiling.  The function name chosen doesn't matter greatly, but it's
-// best to make it similar to the path used by the relevant memory
-// reporter(s).
-#define NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(fn)                              \
+// that differ only in their name, instead of a single MallocSizeOf function.
+// It's mostly to help with DMD integration, though it sometimes also helps
+// with debugging and temporary ad hoc profiling.  The function name chosen
+// doesn't matter greatly, but it's best to make it similar to the path used by
+// the relevant memory reporter(s).
+#define MOZ_DEFINE_MALLOC_SIZE_OF(fn)                                         \
   static size_t fn(const void* aPtr)                                          \
   {                                                                           \
       MOZ_REPORT(aPtr);                                                       \
@@ -484,13 +495,13 @@ void RunReporters();
 // unreport them as soon as they are freed.  Such allocators are used in cases
 // where we have third-party code that we cannot modify.  The two functions
 // must always be used in tandem.
-#define NS_MEMORY_REPORTER_MALLOC_SIZEOF_ON_ALLOC_FUN(fn)                     \
+#define MOZ_DEFINE_MALLOC_SIZE_OF_ON_ALLOC(fn)                                \
   static size_t fn(const void* aPtr)                                          \
   {                                                                           \
       MOZ_REPORT_ON_ALLOC(aPtr);                                              \
       return moz_malloc_size_of(aPtr);                                        \
   }
-#define NS_MEMORY_REPORTER_MALLOC_SIZEOF_ON_FREE_FUN(fn)                      \
+#define MOZ_DEFINE_MALLOC_SIZE_OF_ON_FREE(fn)                                 \
   static size_t fn(const void* aPtr)                                          \
   {                                                                           \
       return moz_malloc_size_of(aPtr);                                        \
@@ -498,103 +509,119 @@ void RunReporters();
 
 namespace mozilla {
 
-// The following base class reduces the amount of boilerplate code required for
-// memory uni-reporters.  You just need to provide the following.
-// - The constant values: path, kind, units, and description.  They are
-//   arguments to the MemoryUniReporter constructor.
-// - A private Amount() or public GetAmount() method.  It can use the
-//   MallocSizeOf method if necessary.  (There is also
-//   MallocSizeOfOn{Alloc,Free}, which can be useful.)  Use Amount() if the
-//   reporter is infallible, and GetAmount() otherwise.  (If you fail to
-//   provide one or the other, you'll get assertion failures when the memory
-//   reporter runs.)
+// This CRTP class handles several details of wrapping allocators and should
+// be preferred to manually counting with MOZ_DEFINE_MALLOC_SIZE_OF_ON_ALLOC
+// and MOZ_DEFINE_MALLOC_SIZE_OF_ON_FREE.  The typical use is in a memory
+// reporter for a particular third party library:
 //
-// The class name of subclasses should match the path, minus the "explicit" (if
-// present), and with "Reporter" at the end.  For example:
-// - path == "explicit/dom/xyzzy"     --> DOMXyzzyReporter
-// - path == "js-compartments/system" --> JSCompartmentsSystemReporter
+//   class MyMemoryReporter : public CountingAllocatorBase<MyMemoryReporter>
+//   {
+//     ...
+//     NS_IMETHODIMP
+//     CollectReports(nsIHandleReportCallback* aHandleReport, nsISupports* aData)
+//     {
+//        return MOZ_COLLECT_REPORTER(
+//          "explicit/path/to/somewhere", KIND_HEAP, UNITS_BYTES,
+//          MemoryAllocated(),
+//          "A description of what we are reporting."
+//     }
+//   };
 //
-class MemoryUniReporter : public nsIMemoryReporter
+//   ...somewhere later in the code...
+//   SetThirdPartyMemoryFunctions(MyMemoryReporter::CountingAlloc,
+//                                MyMemoryReporter::CountingFree);
+template<typename T>
+class CountingAllocatorBase
 {
 public:
-  MemoryUniReporter(const char* aPath, int32_t aKind, int32_t aUnits,
-                    const char* aDescription)
-    : mPath(aPath)
-    , mKind(aKind)
-    , mUnits(aUnits)
-    , mDescription(aDescription)
-  {}
-
-  virtual ~MemoryUniReporter() {}
-
-  NS_DECL_THREADSAFE_ISUPPORTS
-
-  NS_IMETHOD CollectReports(nsIMemoryReporterCallback* aCallback,
-                            nsISupports* aData)
+  CountingAllocatorBase()
   {
-    int64_t amount;
-    nsresult rv = GetAmount(&amount);
-    if (NS_WARN_IF(NS_FAILED(rv)))
-      return rv;
-
-    return aCallback->Callback(EmptyCString(), mPath, mKind, mUnits,
-                               amount, mDescription, aData);
+#ifdef DEBUG
+    // There must be only one instance of this class, due to |sAmount| being
+    // static.
+    static bool hasRun = false;
+    MOZ_ASSERT(!hasRun);
+    hasRun = true;
+#endif
   }
 
-protected:
-  NS_IMETHOD GetAmount(int64_t* aAmount)
+  static size_t
+  MemoryAllocated()
   {
-    *aAmount = Amount();
-    return NS_OK;
+    return sAmount;
   }
 
-  virtual int64_t Amount()
+  static void*
+  CountingMalloc(size_t size)
   {
-    // We only reach here if neither GetAmount() nor Amount() was overridden.
-    MOZ_ASSERT(false);
-    return 0;
+    void* p = malloc(size);
+    sAmount += MallocSizeOfOnAlloc(p);
+    return p;
   }
 
-  NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(MallocSizeOf)
-  NS_MEMORY_REPORTER_MALLOC_SIZEOF_ON_ALLOC_FUN(MallocSizeOfOnAlloc)
-  NS_MEMORY_REPORTER_MALLOC_SIZEOF_ON_FREE_FUN(MallocSizeOfOnFree)
+  static void*
+  CountingCalloc(size_t nmemb, size_t size)
+  {
+    void* p = calloc(nmemb, size);
+    sAmount += MallocSizeOfOnAlloc(p);
+    return p;
+  }
 
-  const nsCString mPath;
-  const int32_t   mKind;
-  const int32_t   mUnits;
-  const nsCString mDescription;
+  static void*
+  CountingRealloc(void* p, size_t size)
+  {
+    size_t oldsize = MallocSizeOfOnFree(p);
+    void *pnew = realloc(p, size);
+    if (pnew) {
+      size_t newsize = MallocSizeOfOnAlloc(pnew);
+      sAmount += newsize - oldsize;
+    } else if (size == 0) {
+      // We asked for a 0-sized (re)allocation of some existing pointer
+      // and received NULL in return.  0-sized allocations are permitted
+      // to either return NULL or to allocate a unique object per call (!).
+      // For a malloc implementation that chooses the second strategy,
+      // that allocation may fail (unlikely, but possible).
+      //
+      // Given a NULL return value and an allocation size of 0, then, we
+      // don't know if that means the original pointer was freed or if
+      // the allocation of the unique object failed.  If the original
+      // pointer was freed, then we have nothing to do here.  If the
+      // allocation of the unique object failed, the original pointer is
+      // still valid and we ought to undo the decrement from above.
+      // However, we have no way of knowing how the underlying realloc
+      // implementation is behaving.  Assuming that the original pointer
+      // was freed is the safest course of action.  We do, however, need
+      // to note that we freed memory.
+      sAmount -= oldsize;
+    } else {
+      // realloc failed.  The amount allocated hasn't changed.
+    }
+    return pnew;
+  }
+
+  static void
+  CountingFree(void* p)
+  {
+    sAmount -= MallocSizeOfOnFree(p);
+    free(p);
+  }
+
+private:
+  // |sAmount| can be (implicitly) accessed by multiple threads, so it
+  // must be thread-safe.
+  static Atomic<size_t> sAmount;
+
+  MOZ_DEFINE_MALLOC_SIZE_OF_ON_ALLOC(MallocSizeOfOnAlloc)
+  MOZ_DEFINE_MALLOC_SIZE_OF_ON_FREE(MallocSizeOfOnFree)
 };
 
-// The following base class reduces the amount of boilerplate code required for
-// memory multi-reporters.  You just need to provide the following.
-// - The constant value: name.  It is an argument to the MemoryMultiReporter
-//   constructor.  The name of each multi-reporter should be unique.
-// - A public CollectReports() method.  It can use the MallocSizeOf method if
-//   necessary.  (There is also MallocSizeOfOn{Alloc,Free}, which can be
-//   useful.)
-//
-// The class name of subclasses should match the name, with "Reporter" at
-// the end.  For example:
-// - name == "foo" --> FooMultiReporter
-//
-class MemoryMultiReporter : public nsIMemoryReporter
-{
-public:
-  MemoryMultiReporter() {}
+}
 
-  virtual ~MemoryMultiReporter() {}
-
-  NS_DECL_THREADSAFE_ISUPPORTS
-
-  NS_IMETHOD CollectReports(nsIMemoryReporterCallback* aCb,
-                            nsISupports* aClosure) = 0;
-
-protected:
-  NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(MallocSizeOf)
-  NS_MEMORY_REPORTER_MALLOC_SIZEOF_ON_ALLOC_FUN(MallocSizeOfOnAlloc)
-  NS_MEMORY_REPORTER_MALLOC_SIZEOF_ON_FREE_FUN(MallocSizeOfOnFree)
-};
-
-} // namespace mozilla
+// This macro assumes the presence of appropriate |aHandleReport| and |aData|
+// variables.
+#define MOZ_COLLECT_REPORT(path, kind, units, amount, description)            \
+  aHandleReport->Callback(EmptyCString(), NS_LITERAL_CSTRING(path),           \
+                          kind, units, amount,                                \
+                          NS_LITERAL_CSTRING(description), aData)
 
 %}

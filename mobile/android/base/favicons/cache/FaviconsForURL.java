@@ -43,9 +43,17 @@ public class FaviconsForURL {
         FaviconCacheElement c = new FaviconCacheElement(favicon, isPrimary, imageSize, this);
 
         int index = Collections.binarySearch(mFavicons, c);
-        if (index < 0) {
-            index = 0;
+
+        // We've already got an equivalent one. We don't care about this new one. This only occurs in certain obscure
+        // case conditions.
+        if (index >= 0) {
+            return mFavicons.get(index);
         }
+
+        // binarySearch returns -x - 1 where x is the insertion point of the element. Convert
+        // this to the actual insertion point..
+        index++;
+        index = -index;
         mFavicons.add(index, c);
 
         return c;
@@ -106,8 +114,11 @@ public class FaviconsForURL {
 
             if (element.mIsPrimary) {
                 if (element.mInvalidated) {
-                    // TODO: Replace with `return null` when ICO decoder is introduced.
-                    break;
+                    // We return null here, despite the possible existence of other primaries,
+                    // because we know the most suitable primary for this request exists, but is
+                    // no longer in the cache. By returning null, we cause the caller to load the
+                    // missing primary from the database and call again.
+                    return null;
                 }
                 return element;
             }

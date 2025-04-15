@@ -5,23 +5,25 @@ package org.mozilla.gecko.background.sync;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
-import java.net.URI;
 
 import org.json.simple.parser.ParseException;
 import org.mozilla.gecko.background.helpers.AndroidSyncTestCase;
+import org.mozilla.gecko.background.testhelpers.DefaultGlobalSessionCallback;
 import org.mozilla.gecko.background.testhelpers.MockGlobalSession;
+import org.mozilla.gecko.background.testhelpers.MockSharedPreferences;
 import org.mozilla.gecko.db.BrowserContract;
 import org.mozilla.gecko.sync.GlobalSession;
 import org.mozilla.gecko.sync.NonObjectJSONException;
+import org.mozilla.gecko.sync.SyncConfiguration;
 import org.mozilla.gecko.sync.SyncConfigurationException;
 import org.mozilla.gecko.sync.SyncConstants;
 import org.mozilla.gecko.sync.crypto.CryptoException;
 import org.mozilla.gecko.sync.crypto.KeyBundle;
 import org.mozilla.gecko.sync.delegates.GlobalSessionCallback;
+import org.mozilla.gecko.sync.net.BasicAuthHeaderProvider;
 import org.mozilla.gecko.sync.setup.Constants;
 import org.mozilla.gecko.sync.setup.SyncAccounts;
 import org.mozilla.gecko.sync.setup.SyncAccounts.SyncAccountParameters;
-import org.mozilla.gecko.sync.stage.GlobalSyncStage.Stage;
 import org.mozilla.gecko.sync.syncadapter.SyncAdapter;
 
 import android.accounts.Account;
@@ -163,16 +165,17 @@ public class TestUpgradeRequired extends AndroidSyncTestCase {
    */
   public void testUpgradeResponse() throws SyncConfigurationException, IllegalArgumentException, NonObjectJSONException, IOException, ParseException, CryptoException {
     final Result calledUpgradeRequired = new Result();
-    final GlobalSessionCallback callback = new BlankGlobalSessionCallback() {
+    final GlobalSessionCallback callback = new DefaultGlobalSessionCallback() {
       @Override
       public void informUpgradeRequiredResponse(final GlobalSession session) {
         calledUpgradeRequired.called = true;
       }
     };
 
-    final GlobalSession session = new MockGlobalSession(
-        TEST_SERVER, TEST_USERNAME, TEST_PASSWORD,
-        new KeyBundle(TEST_USERNAME, TEST_SYNC_KEY), callback);
+    MockSharedPreferences prefs = new MockSharedPreferences();
+    SyncConfiguration config = new SyncConfiguration(TEST_USERNAME, new BasicAuthHeaderProvider(TEST_USERNAME, TEST_PASSWORD), prefs);
+    config.syncKeyBundle = new KeyBundle(TEST_USERNAME, TEST_SYNC_KEY);
+    final GlobalSession session = new MockGlobalSession(config, callback);
 
     session.interpretHTTPFailure(simulate400());
     assertTrue(calledUpgradeRequired.called);
@@ -181,56 +184,5 @@ public class TestUpgradeRequired extends AndroidSyncTestCase {
   @Override
   public void tearDown() {
     deleteTestAccount();
-  }
-
-  public abstract class BlankGlobalSessionCallback implements GlobalSessionCallback {
-    public BlankGlobalSessionCallback() {
-    }
-
-    @Override
-    public void requestBackoff(long backoff) {
-    }
-
-    @Override
-    public boolean wantNodeAssignment() {
-      return false;
-    }
-
-    @Override
-    public void informUnauthorizedResponse(GlobalSession globalSession,
-                                           URI oldClusterURL) {
-    }
-
-    @Override
-    public void informNodeAssigned(GlobalSession globalSession,
-                                   URI oldClusterURL, URI newClusterURL) {
-    }
-
-    @Override
-    public void informNodeAuthenticationFailed(GlobalSession globalSession,
-                                               URI failedClusterURL) {
-    }
-
-    @Override
-    public void handleAborted(GlobalSession globalSession, String reason) {
-    }
-
-    @Override
-    public void handleError(GlobalSession globalSession, Exception ex) {
-    }
-
-    @Override
-    public void handleSuccess(GlobalSession globalSession) {
-    }
-
-    @Override
-    public void handleStageCompleted(Stage currentState,
-                                     GlobalSession globalSession) {
-    }
-
-    @Override
-    public boolean shouldBackOff() {
-      return false;
-    }
   }
 }

@@ -460,6 +460,16 @@ js::math_imul(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
+// Implements Math.fround (20.2.2.16) up to step 3
+bool
+js::RoundFloat32(JSContext *cx, Handle<Value> v, float *out)
+{
+    double d;
+    bool success = ToNumber(cx, v, &d);
+    *out = static_cast<float>(d);
+    return success;
+}
+
 bool
 js::math_fround(JSContext *cx, unsigned argc, Value *vp)
 {
@@ -470,11 +480,10 @@ js::math_fround(JSContext *cx, unsigned argc, Value *vp)
         return true;
     }
 
-    double x;
-    if (!ToNumber(cx, args[0], &x))
+    float f;
+    if (!RoundFloat32(cx, args[0], &f))
         return false;
 
-    float f = x;
     args.rval().setDouble(static_cast<double>(f));
     return true;
 }
@@ -616,9 +625,21 @@ js::ecmaPow(double x, double y)
      */
     if (!IsFinite(y) && (x == 1.0 || x == -1.0))
         return GenericNaN();
+
     /* pow(x, +-0) is always 1, even for x = NaN (MSVC gets this wrong). */
     if (y == 0)
         return 1;
+
+    /*
+     * Special case for square roots. Note that pow(x, 0.5) != sqrt(x)
+     * when x = -0.0, so we have to guard for this.
+     */
+    if (IsFinite(x) && x != 0.0) {
+        if (y == 0.5)
+            return sqrt(x);
+        if (y == -0.5)
+            return 1.0 / sqrt(x);
+    }
     return pow(x, y);
 }
 #if defined(_MSC_VER)
@@ -642,29 +663,7 @@ js_math_pow(JSContext *cx, unsigned argc, Value *vp)
     if (!ToNumber(cx, args.get(1), &y))
         return false;
 
-    /*
-     * Special case for square roots. Note that pow(x, 0.5) != sqrt(x)
-     * when x = -0.0, so we have to guard for this.
-     */
-    if (IsFinite(x) && x != 0.0) {
-        if (y == 0.5) {
-            args.rval().setNumber(sqrt(x));
-            return true;
-        }
-        if (y == -0.5) {
-            args.rval().setNumber(1.0/sqrt(x));
-            return true;
-        }
-    }
-
-    /* pow(x, +-0) is always 1, even for x = NaN. */
-    if (y == 0) {
-        args.rval().setInt32(1);
-        return true;
-    }
-
     double z = ecmaPow(x, y);
-
     args.rval().setNumber(z);
     return true;
 }

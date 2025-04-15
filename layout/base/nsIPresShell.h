@@ -22,6 +22,7 @@
 
 #include "mozilla/EventForwards.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/WeakPtr.h"
 #include "gfxPoint.h"
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
@@ -42,6 +43,7 @@
 #include "nsMargin.h"
 
 class nsIContent;
+class nsDocShell;
 class nsIDocument;
 class nsIFrame;
 class nsPresContext;
@@ -101,9 +103,13 @@ class Touch;
 class ShadowRoot;
 } // namespace dom
 
-namespace layers{
+namespace layers {
 class LayerManager;
 } // namespace layers
+
+namespace gfx {
+class SourceSurface;
+} // namespace gfx
 } // namespace mozilla
 
 // Flags to pass to SetCapturingContent
@@ -126,11 +132,10 @@ typedef struct CapturingContentInfo {
   nsIContent* mContent;
 } CapturingContentInfo;
 
-
-// f5b542a9-eaf0-4560-a656-37a9d379864c
+//bccc1c01-5123-4f49-9572-c0bf506b6418
 #define NS_IPRESSHELL_IID \
-{ 0xf5b542a9, 0xeaf0, 0x4560, \
-  { 0x37, 0xa9, 0xd3, 0x79, 0x86, 0x4c } }
+{ 0xbccc1c01, 0x5123, 0x4f49, \
+  {0x95, 0x72, 0xc0, 0xbf, 0x50, 0x6b, 0x64, 0x18}}
 
 // debug VerifyReflow flags
 #define VERIFY_REFLOW_ON                    0x01
@@ -176,6 +181,7 @@ class nsIPresShell : public nsIPresShell_base
 {
 protected:
   typedef mozilla::layers::LayerManager LayerManager;
+  typedef mozilla::gfx::SourceSurface SourceSurface;
 
   enum eRenderFlag {
     STATE_IGNORING_VIEWPORT_SCROLLING = 0x1,
@@ -835,6 +841,20 @@ public:
   bool IsPaintingSuppressed() const { return mPaintingSuppressed; }
 
   /**
+   * Pause painting by freezing the refresh driver of this and all parent
+   * presentations. This may not have the desired effect if this pres shell
+   * has its own refresh driver.
+   */
+  virtual void PausePainting() = 0;
+
+  /**
+   * Resume painting by thawing the refresh driver of this and all parent
+   * presentations. This may not have the desired effect if this pres shell
+   * has its own refresh driver.
+   */
+  virtual void ResumePainting() = 0;
+
+  /**
    * Unsuppress painting.
    */
   virtual NS_HIDDEN_(void) UnsuppressPainting() = 0;
@@ -956,7 +976,7 @@ public:
    * user events at the docshell's parent.  This pointer allows us to do that.
    * It should not be used for any other purpose.
    */
-  void SetForwardingContainer(nsWeakPtr aContainer)
+  void SetForwardingContainer(const mozilla::WeakPtr<nsDocShell> &aContainer)
   {
     mForwardingContainer = aContainer;
   }
@@ -1015,10 +1035,11 @@ public:
    * edge of the presshell area. The aPoint, aScreenRect and aSurface
    * arguments function in a similar manner as RenderSelection.
    */
-  virtual already_AddRefed<gfxASurface> RenderNode(nsIDOMNode* aNode,
-                                                   nsIntRegion* aRegion,
-                                                   nsIntPoint& aPoint,
-                                                   nsIntRect* aScreenRect) = 0;
+  virtual mozilla::TemporaryRef<SourceSurface>
+  RenderNode(nsIDOMNode* aNode,
+             nsIntRegion* aRegion,
+             nsIntPoint& aPoint,
+             nsIntRect* aScreenRect) = 0;
 
   /**
    * Renders a selection to a surface and returns it. This method is primarily
@@ -1035,9 +1056,10 @@ public:
    * the original. When scaling does not occur, the mouse point isn't used
    * as the position can be determined from the displayed frames.
    */
-  virtual already_AddRefed<gfxASurface> RenderSelection(nsISelection* aSelection,
-                                                        nsIntPoint& aPoint,
-                                                        nsIntRect* aScreenRect) = 0;
+  virtual mozilla::TemporaryRef<SourceSurface>
+  RenderSelection(nsISelection* aSelection,
+                  nsIntPoint& aPoint,
+                  nsIntRect* aScreenRect) = 0;
 
   void AddWeakFrameInternal(nsWeakFrame* aWeakFrame);
   virtual void AddWeakFrameExternal(nsWeakFrame* aWeakFrame);
@@ -1239,6 +1261,7 @@ public:
   gfxSize GetResolution() { return gfxSize(mXResolution, mYResolution); }
   float GetXResolution() { return mXResolution; }
   float GetYResolution() { return mYResolution; }
+  virtual gfxSize GetCumulativeResolution() = 0;
 
   /**
    * Returns whether we are in a DrawWindow() call that used the
@@ -1515,7 +1538,7 @@ protected:
   // Pointer into mFrameConstructor - this is purely so that FrameManager() and
   // GetRootFrame() can be inlined:
   nsFrameManagerBase*       mFrameManager;
-  nsWeakPtr                 mForwardingContainer;
+  mozilla::WeakPtr<nsDocShell>                 mForwardingContainer;
   nsRefreshDriver*          mHiddenInvalidationObserverRefreshDriver;
 #ifdef ACCESSIBILITY
   mozilla::a11y::DocAccessible* mDocAccessible;
@@ -1606,6 +1629,7 @@ protected:
   bool mFontSizeInflationForceEnabled;
   bool mFontSizeInflationDisabledInMasterProcess;
   bool mFontSizeInflationEnabled;
+  bool mPaintingIsFrozen;
 
   // Dirty bit indicating that mFontSizeInflationEnabled needs to be recomputed.
   bool mFontSizeInflationEnabledIsDirty;
@@ -1622,11 +1646,6 @@ protected:
   // to true, so we can avoid any paint calls for widget related to this
   // presshell.
   bool mIsNeverPainting;
-};
-
-class nsIPresShell_MOZILLA27 : public nsIPresShell {
-public:
-  virtual gfxSize GetCumulativeResolution() = 0;
 };
 
 #endif /* nsIPresShell_h___ */

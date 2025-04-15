@@ -208,6 +208,7 @@ function checkSocialUI(win) {
   let enabled = win.SocialUI.enabled;
   let active = Social.providers.length > 0 && !win.SocialUI._chromeless &&
                !PrivateBrowsingUtils.isWindowPrivate(win);
+  let sidebarEnabled = provider && provider.sidebarURL ? enabled : false;
 
   // if we have enabled providers, we should also have instances of those
   // providers
@@ -236,25 +237,14 @@ function checkSocialUI(win) {
   function isbool(a, b, msg) {
     _is(!!a, !!b, msg);
   }
-  isbool(win.SocialSidebar.canShow, enabled, "social sidebar active?");
-  if (enabled)
-    isbool(win.SocialSidebar.opened, enabled, "social sidebar open?");
+  isbool(win.SocialSidebar.canShow, sidebarEnabled, "social sidebar active?");
+  if (sidebarEnabled)
+    isbool(win.SocialSidebar.opened, sidebarEnabled, "social sidebar open?");
   isbool(win.SocialChatBar.isAvailable, enabled, "chatbar available?");
   isbool(!win.SocialChatBar.chatbar.hidden, enabled, "chatbar visible?");
 
-  isbool(!doc.getElementById("social-toolbar-item").hidden, active, "toolbar items visible?");
-  if (active) {
-    if (!enabled || (Social.defaultProvider.statusURL && Social.allowMultipleWorkers)) {
-      _ok(!win.SocialToolbar.button.style.listStyleImage, "toolbar button is default icon");
-    } else {
-      _is(win.SocialToolbar.button.style.listStyleImage, 'url("' + Social.defaultProvider.iconURL + '")', "toolbar button has provider icon");
-    }
-  }
   // the menus should always have the provider name
   if (provider) {
-    for (let id of ["menu_socialSidebar", "menu_socialAmbientMenu"])
-      _is(document.getElementById(id).getAttribute("label"), Social.provider.name, "element has the provider name");
-
     let contextMenus = [
       {
         type: "link",
@@ -294,13 +284,11 @@ function checkSocialUI(win) {
 
   // and for good measure, check all the social commands.
   isbool(!doc.getElementById("Social:Toggle").hidden, active, "Social:Toggle visible?");
-  isbool(!doc.getElementById("Social:ToggleSidebar").hidden, enabled, "Social:ToggleSidebar visible?");
+  isbool(!doc.getElementById("Social:ToggleSidebar").hidden, sidebarEnabled, "Social:ToggleSidebar visible?");
   isbool(!doc.getElementById("Social:ToggleNotifications").hidden, enabled, "Social:ToggleNotifications visible?");
   isbool(!doc.getElementById("Social:FocusChat").hidden, enabled, "Social:FocusChat visible?");
   isbool(doc.getElementById("Social:FocusChat").getAttribute("disabled"), enabled ? "false" : "true", "Social:FocusChat disabled?");
 
-  // broadcasters.
-  isbool(!doc.getElementById("socialActiveBroadcaster").hidden, active, "socialActiveBroadcaster hidden?");
   // and report on overall success of failure of the various checks here.
   is(numGoodTests, numTests, "The Social UI tests succeeded.")
 }

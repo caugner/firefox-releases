@@ -17,6 +17,8 @@
 #include "nsPIDOMWindow.h"
 #include "js/TypeDecls.h"
 
+#include "mozilla/dom/workers/bindings/WorkerFeature.h"
+
 namespace mozilla {
 namespace dom {
 
@@ -25,6 +27,23 @@ class PromiseCallback;
 class PromiseInit;
 class PromiseNativeHandler;
 
+class Promise;
+class PromiseReportRejectFeature : public workers::WorkerFeature
+{
+  // The Promise that owns this feature.
+  Promise* mPromise;
+
+public:
+  PromiseReportRejectFeature(Promise* aPromise)
+    : mPromise(aPromise)
+  {
+    MOZ_ASSERT(mPromise);
+  }
+
+  virtual bool
+  Notify(JSContext* aCx, workers::Status aStatus) MOZ_OVERRIDE;
+};
+
 class Promise MOZ_FINAL : public nsISupports,
                           public nsWrapperCache
 {
@@ -32,6 +51,7 @@ class Promise MOZ_FINAL : public nsISupports,
   friend class PromiseResolverMixin;
   friend class PromiseResolverTask;
   friend class PromiseTask;
+  friend class PromiseReportRejectFeature;
   friend class RejectPromiseCallback;
   friend class ResolvePromiseCallback;
   friend class WorkerPromiseResolverTask;
@@ -44,8 +64,6 @@ public:
 
   Promise(nsPIDOMWindow* aWindow);
   ~Promise();
-
-  static bool EnabledForScope(JSContext* aCx, JSObject* /* unused */);
 
   void MaybeResolve(JSContext* aCx,
                     JS::Handle<JS::Value> aValue);
@@ -71,16 +89,32 @@ public:
           const Optional<JS::Handle<JS::Value>>& aValue, ErrorResult& aRv);
 
   static already_AddRefed<Promise>
+  Resolve(nsPIDOMWindow* aWindow, JSContext* aCx,
+          JS::Handle<JS::Value> aValue, ErrorResult& aRv);
+
+  static already_AddRefed<Promise>
   Reject(const GlobalObject& aGlobal, JSContext* aCx,
          const Optional<JS::Handle<JS::Value>>& aValue, ErrorResult& aRv);
 
-  already_AddRefed<Promise>
-  Then(const Optional<nsRefPtr<AnyCallback>>& aResolveCallback,
-       const Optional<nsRefPtr<AnyCallback>>& aRejectCallback);
+  static already_AddRefed<Promise>
+  Reject(nsPIDOMWindow* aWindow, JSContext* aCx,
+         JS::Handle<JS::Value> aValue, ErrorResult& aRv);
 
+  already_AddRefed<Promise>
+  Then(AnyCallback* aResolveCallback, AnyCallback* aRejectCallback);
 
   already_AddRefed<Promise>
-  Catch(const Optional<nsRefPtr<AnyCallback>>& aRejectCallback);
+  Catch(AnyCallback* aRejectCallback);
+
+  // FIXME(nsm): Bug 956197
+  static already_AddRefed<Promise>
+  All(const GlobalObject& aGlobal, JSContext* aCx,
+      const Sequence<JS::Value>& aIterable, ErrorResult& aRv);
+
+  // FIXME(nsm): Bug 956197
+  static already_AddRefed<Promise>
+  Race(const GlobalObject& aGlobal, JSContext* aCx,
+       const Sequence<JS::Value>& aIterable, ErrorResult& aRv);
 
   void AppendNativeHandler(PromiseNativeHandler* aRunnable);
 
@@ -123,7 +157,14 @@ private:
 
   // If we have been rejected and our mResult is a JS exception,
   // report it to the error console.
+  // Use MaybeReportRejectedOnce() for actual calls.
   void MaybeReportRejected();
+
+  void MaybeReportRejectedOnce() {
+    MaybeReportRejected();
+    RemoveFeature();
+    mResult = JS::UndefinedValue();
+  }
 
   void MaybeResolveInternal(JSContext* aCx,
                             JS::Handle<JS::Value> aValue,
@@ -143,9 +184,25 @@ private:
   // Static methods for the PromiseInit functions.
   static bool
   JSCallback(JSContext *aCx, unsigned aArgc, JS::Value *aVp);
+
+  static bool
+  ThenableResolverCommon(JSContext* aCx, uint32_t /* PromiseCallback::Task */ aTask,
+                         unsigned aArgc, JS::Value* aVp);
+  static bool
+  JSCallbackThenableResolver(JSContext *aCx, unsigned aArgc, JS::Value *aVp);
+  static bool
+  JSCallbackThenableRejecter(JSContext *aCx, unsigned aArgc, JS::Value *aVp);
+
   static JSObject*
   CreateFunction(JSContext* aCx, JSObject* aParent, Promise* aPromise,
                 int32_t aTask);
+
+  static JSObject*
+  CreateThenableFunction(JSContext* aCx, Promise* aPromise, uint32_t aTask);
+
+  void HandleException(JSContext* aCx);
+
+  void RemoveFeature();
 
   nsRefPtr<nsPIDOMWindow> mWindow;
 
@@ -158,6 +215,12 @@ private:
   bool mHadRejectCallback;
 
   bool mResolvePending;
+
+  // If a rejected promise on a worker has no reject callbacks attached, it
+  // needs to know when the worker is shutting down, to report the error on the
+  // console before the worker's context is deleted. This feature is used for
+  // that purpose.
+  nsAutoPtr<PromiseReportRejectFeature> mFeature;
 };
 
 } // namespace dom

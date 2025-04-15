@@ -22,9 +22,10 @@
   <script type="text/javascript" src="sidebar.js"/>
   <box flex="1" id="profiler-chrome"
     class="devtools-responsive-container theme-body">
-    <vbox class="profiler-sidebar">
+    <vbox class="profiler-sidebar theme-sidebar">
       <toolbar class="devtools-toolbar">
-        <hbox id="profiler-controls">
+        <hbox id="profiler-controls"
+              class="devtools-toolbarbutton-group">
           <toolbarbutton id="profiler-start"
             tooltiptext="&startProfiler.tooltip;"
             class="devtools-toolbarbutton"
@@ -40,18 +41,13 @@
       </vbox>
     </vbox>
 
-    <splitter class="devtools-side-splitter"/>
+    <splitter class="devtools-side-splitter devtools-invisible-splitter"/>
 
-    <vbox flex="1">
-      <toolbar class="devtools-toolbar">
-      </toolbar>
-
-      <vbox flex="1" id="profiler-report">
-        <!-- Example:
-        <iframe id="profiler-cleo-1"
-          src="devtools/cleopatra.html" flex="1"></iframe>
-        -->
-      </vbox>
+    <vbox flex="1" id="profiler-report">
+      <!-- Example:
+      <iframe id="profiler-cleo-1"
+        src="devtools/cleopatra.html" flex="1"></iframe>
+      -->
     </vbox>
   </box>
 </window>
