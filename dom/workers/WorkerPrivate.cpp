@@ -106,10 +106,10 @@ class AutoPtrComparator
   typedef T* B;
 
 public:
-  PRBool Equals(const A& a, const B& b) const {
+  bool Equals(const A& a, const B& b) const {
     return a && b ? *a == *b : !a && !b ? true : false;
   }
-  PRBool LessThan(const A& a, const B& b) const {
+  bool LessThan(const A& a, const B& b) const {
     return a && b ? *a < *b : b ? true : false;
   }
 };
@@ -242,7 +242,7 @@ struct WorkerStructuredCloneCallbacks
         {
           // File should not be mutable.
           nsCOMPtr<nsIMutable> mutableFile = do_QueryInterface(file);
-          PRBool isMutable;
+          bool isMutable;
           NS_ASSERTION(NS_SUCCEEDED(mutableFile->GetMutable(&isMutable)) &&
                        !isMutable,
                        "Only immutable file should be passed to worker");
@@ -267,7 +267,7 @@ struct WorkerStructuredCloneCallbacks
         {
           // Blob should not be mutable.
           nsCOMPtr<nsIMutable> mutableBlob = do_QueryInterface(blob);
-          PRBool isMutable;
+          bool isMutable;
           NS_ASSERTION(NS_SUCCEEDED(mutableBlob->GetMutable(&isMutable)) &&
                        !isMutable,
                        "Only immutable blob should be passed to worker");
@@ -312,7 +312,7 @@ struct WorkerStructuredCloneCallbacks
       nsIDOMBlob* blob = file::GetDOMBlobFromJSObject(aCx, aObj);
       if (blob) {
         nsCOMPtr<nsIMutable> mutableBlob = do_QueryInterface(blob);
-        if (mutableBlob && NS_SUCCEEDED(mutableBlob->SetMutable(PR_FALSE)) &&
+        if (mutableBlob && NS_SUCCEEDED(mutableBlob->SetMutable(false)) &&
             JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_BLOB, 0) &&
             JS_WriteBytes(aWriter, &blob, sizeof(blob))) {
           clonedObjects->AppendElement(blob);
@@ -358,7 +358,7 @@ struct MainThreadWorkerStructuredCloneCallbacks
         {
           // File should not be mutable.
           nsCOMPtr<nsIMutable> mutableFile = do_QueryInterface(file);
-          PRBool isMutable;
+          bool isMutable;
           NS_ASSERTION(NS_SUCCEEDED(mutableFile->GetMutable(&isMutable)) &&
                        !isMutable,
                        "Only immutable file should be passed to worker");
@@ -391,7 +391,7 @@ struct MainThreadWorkerStructuredCloneCallbacks
         {
           // Blob should not be mutable.
           nsCOMPtr<nsIMutable> mutableBlob = do_QueryInterface(blob);
-          PRBool isMutable;
+          bool isMutable;
           NS_ASSERTION(NS_SUCCEEDED(mutableBlob->GetMutable(&isMutable)) &&
                        !isMutable,
                        "Only immutable blob should be passed to worker");
@@ -449,7 +449,7 @@ struct MainThreadWorkerStructuredCloneCallbacks
       nsCOMPtr<nsIDOMFile> file = do_QueryInterface(wrappedObject);
       if (file) {
         nsCOMPtr<nsIMutable> mutableFile = do_QueryInterface(file);
-        if (mutableFile && NS_SUCCEEDED(mutableFile->SetMutable(PR_FALSE))) {
+        if (mutableFile && NS_SUCCEEDED(mutableFile->SetMutable(false))) {
           nsIDOMFile* filePtr = file;
           if (JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_FILE, 0) &&
               JS_WriteBytes(aWriter, &filePtr, sizeof(filePtr))) {
@@ -463,7 +463,7 @@ struct MainThreadWorkerStructuredCloneCallbacks
       nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(wrappedObject);
       if (blob) {
         nsCOMPtr<nsIMutable> mutableBlob = do_QueryInterface(blob);
-        if (mutableBlob && NS_SUCCEEDED(mutableBlob->SetMutable(PR_FALSE))) {
+        if (mutableBlob && NS_SUCCEEDED(mutableBlob->SetMutable(false))) {
           nsIDOMBlob* blobPtr = blob;
           if (JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_BLOB, 0) &&
               JS_WriteBytes(aWriter, &blobPtr, sizeof(blobPtr))) {
@@ -538,6 +538,13 @@ struct MainThreadChromeWorkerStructuredCloneCallbacks
     AssertIsOnMainThread();
 
     JSObject* clone =
+      MainThreadWorkerStructuredCloneCallbacks::Read(aCx, aReader, aTag, aData,
+                                                     aClosure);
+    if (clone) {
+      return clone;
+    }
+
+    clone =
       ChromeWorkerStructuredCloneCallbacks::Read(aCx, aReader, aTag, aData,
                                                  aClosure);
     if (clone) {
@@ -554,14 +561,15 @@ struct MainThreadChromeWorkerStructuredCloneCallbacks
   {
     AssertIsOnMainThread();
 
-    JSBool ok =
-      ChromeWorkerStructuredCloneCallbacks::Write(aCx, aWriter, aObj, aClosure);
-    if (ok) {
-      return ok;
+    if (MainThreadWorkerStructuredCloneCallbacks::Write(aCx, aWriter, aObj,
+                                                        aClosure) ||
+        ChromeWorkerStructuredCloneCallbacks::Write(aCx, aWriter, aObj,
+                                                    aClosure) ||
+        NS_DOMWriteStructuredClone(aCx, aWriter, aObj, nsnull)) {
+      return true;
     }
 
-    JS_ClearPendingException(aCx);
-    return NS_DOMWriteStructuredClone(aCx, aWriter, aObj, nsnull);
+    return false;
   }
 
   static void
@@ -1217,7 +1225,7 @@ public:
   }
 
   NS_IMETHOD
-  IsOnCurrentThread(PRBool* aIsOnCurrentThread)
+  IsOnCurrentThread(bool* aIsOnCurrentThread)
   {
     *aIsOnCurrentThread = false;
     return NS_OK;
@@ -2239,10 +2247,10 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
     nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
     NS_ASSERTION(ssm, "This should never be null!");
 
-    PRBool isChrome;
+    bool isChrome;
     if (NS_FAILED(ssm->IsCapabilityEnabled("UniversalXPConnect", &isChrome))) {
       NS_WARNING("IsCapabilityEnabled failed!");
-      isChrome = PR_FALSE;
+      isChrome = false;
     }
 
     // First check to make sure the caller has permission to make a
@@ -2315,7 +2323,7 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
 
         NS_NAMED_LITERAL_CSTRING(file, "file");
 
-        PRBool isFile;
+        bool isFile;
         if (NS_FAILED(codebase->SchemeIs(file.get(), &isFile))) {
           JS_ReportError(aCx, "Could not determine if codebase is file!");
           return nsnull;
@@ -2326,7 +2334,7 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
           domain = file;
         }
         else {
-          nsCOMPtr<mozIThirdPartyUtil_BRANCH> thirdPartyUtil =
+          nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil =
             do_GetService(THIRDPARTYUTIL_CONTRACTID);
           if (!thirdPartyUtil) {
             JS_ReportError(aCx, "Could not get third party helper service!");
@@ -3568,7 +3576,7 @@ void
 WorkerPrivate::AssertIsOnWorkerThread() const
 {
   if (mThread) {
-    PRBool current;
+    bool current;
     if (NS_FAILED(mThread->IsOnCurrentThread(&current)) || !current) {
       NS_ERROR("Wrong thread!");
     }

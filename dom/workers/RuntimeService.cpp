@@ -37,6 +37,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+#include "mozilla/Util.h"
+
 #include "RuntimeService.h"
 
 #include "nsIDOMChromeWindow.h"
@@ -54,7 +56,7 @@
 #include "mozilla/Preferences.h"
 #include "nsContentUtils.h"
 #include "nsDOMJSUtils.h"
-#include "nsGlobalWindow.h"
+#include <Navigator.h>
 #include "nsNetUtil.h"
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
@@ -66,6 +68,8 @@
 #include "EventTarget.h"
 #include "Worker.h"
 #include "WorkerPrivate.h"
+
+using namespace mozilla;
 
 USING_WORKERS_NAMESPACE
 
@@ -215,7 +219,7 @@ PrefCallback(const char* aPrefName, void* aClosure)
 #ifdef JS_GC_ZEAL
   else if (!strcmp(aPrefName, gPrefsToWatch[PREF_gczeal])) {
     PRInt32 gczeal = Preferences::GetInt(gPrefsToWatch[PREF_gczeal]);
-    RuntimeService::SetDefaultGCZeal(PRUint8(NS_MIN(NS_MAX(gczeal, 0), 3)));
+    RuntimeService::SetDefaultGCZeal(PRUint8(clamped(gczeal, 0, 3)));
     rts->UpdateAllWorkerGCZeal();
   }
 #endif
@@ -382,10 +386,10 @@ ResolveWorkerClasses(JSContext* aCx, JSObject* aObj, jsid aId, uintN aFlags,
       nsIScriptSecurityManager* ssm = nsContentUtils::GetSecurityManager();
       NS_ASSERTION(ssm, "This should never be null!");
 
-      PRBool enabled;
+      bool enabled;
       if (NS_FAILED(ssm->IsCapabilityEnabled("UniversalXPConnect", &enabled))) {
         NS_WARNING("IsCapabilityEnabled failed!");
-        isChrome = PR_FALSE;
+        isChrome = false;
       }
 
       isChrome = !!enabled;
@@ -821,7 +825,7 @@ RuntimeService::Init()
   mIdleThreadTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
   NS_ENSURE_STATE(mIdleThreadTimer);
 
-  PRBool ok = mDomainMap.Init();
+  bool ok = mDomainMap.Init();
   NS_ENSURE_STATE(ok);
 
   ok = mWindowMap.Init();
@@ -832,12 +836,12 @@ RuntimeService::Init()
     do_GetService(NS_OBSERVERSERVICE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = obs->AddObserver(this, NS_XPCOM_SHUTDOWN_THREADS_OBSERVER_ID, PR_FALSE);
+  rv = obs->AddObserver(this, NS_XPCOM_SHUTDOWN_THREADS_OBSERVER_ID, false);
   NS_ENSURE_SUCCESS(rv, rv);
 
   mObserved = true;
 
-  for (PRUint32 index = 0; index < NS_ARRAY_LENGTH(gPrefsToWatch); index++) {
+  for (PRUint32 index = 0; index < ArrayLength(gPrefsToWatch); index++) {
     if (NS_FAILED(Preferences::RegisterCallback(PrefCallback,
                                                 gPrefsToWatch[index], this))) {
       NS_WARNING("Failed to register pref callback?!");
@@ -952,7 +956,7 @@ RuntimeService::Cleanup()
   }
 
   if (mObserved) {
-    for (PRUint32 index = 0; index < NS_ARRAY_LENGTH(gPrefsToWatch); index++) {
+    for (PRUint32 index = 0; index < ArrayLength(gPrefsToWatch); index++) {
       Preferences::UnregisterCallback(PrefCallback, gPrefsToWatch[index], this);
     }
 
@@ -1042,7 +1046,7 @@ RuntimeService::SuspendWorkersForWindow(JSContext* aCx,
   GetWorkersForWindow(aWindow, workers);
 
   if (!workers.IsEmpty()) {
-    JSAutoRequest ar(aCx);
+    AutoSafeJSContext cx(aCx);
     for (PRUint32 index = 0; index < workers.Length(); index++) {
       if (!workers[index]->Suspend(aCx)) {
         NS_WARNING("Failed to cancel worker!");
@@ -1061,7 +1065,7 @@ RuntimeService::ResumeWorkersForWindow(JSContext* aCx,
   GetWorkersForWindow(aWindow, workers);
 
   if (!workers.IsEmpty()) {
-    JSAutoRequest ar(aCx);
+    AutoSafeJSContext cx(aCx);
     for (PRUint32 index = 0; index < workers.Length(); index++) {
       if (!workers[index]->Resume(aCx)) {
         NS_WARNING("Failed to cancel worker!");
