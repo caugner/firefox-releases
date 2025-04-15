@@ -11,7 +11,7 @@
 
 #include "jsapi.h"
 #include "jsproxy.h"
-#include "nsStringGlue.h"
+#include "nsString.h"
 
 #define DOM_PROXY_OBJECT_SLOT js::PROXY_PRIVATE_SLOT
 
@@ -27,13 +27,14 @@ enum {
 
 template<typename T> struct Prefable;
 
-extern int HandlerFamily;
-inline void* ProxyFamily() { return &HandlerFamily; }
+// This variable exists solely to provide a unique address for use as an identifier.
+extern const char HandlerFamily;
+inline const void* ProxyFamily() { return &HandlerFamily; }
 
 inline bool IsDOMProxy(JSObject *obj, const js::Class* clasp)
 {
     MOZ_ASSERT(js::GetObjectClass(obj) == clasp);
-    return (js::IsObjectProxyClass(clasp) || js::IsFunctionProxyClass(clasp)) &&
+    return js::IsProxyClass(clasp) &&
            js::GetProxyHandler(obj)->family() == ProxyFamily();
 }
 
@@ -45,7 +46,7 @@ inline bool IsDOMProxy(JSObject *obj)
 class BaseDOMProxyHandler : public js::BaseProxyHandler
 {
 public:
-  BaseDOMProxyHandler(void* aProxyFamily)
+  BaseDOMProxyHandler(const void* aProxyFamily)
     : js::BaseProxyHandler(aProxyFamily)
   {}
 
@@ -57,6 +58,11 @@ public:
                              JS::Handle<jsid> id,
                              JS::MutableHandle<JSPropertyDescriptor> desc,
                              unsigned flags) MOZ_OVERRIDE;
+
+  bool watch(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id,
+             JS::Handle<JSObject*> callable) MOZ_OVERRIDE;
+  bool unwatch(JSContext* cx, JS::Handle<JSObject*> proxy,
+               JS::Handle<jsid> id) MOZ_OVERRIDE;
 };
 
 class DOMProxyHandler : public BaseDOMProxyHandler

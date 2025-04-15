@@ -31,6 +31,7 @@
 #include "mozilla/layers/ShadowLayers.h"  // for ShadowableLayer
 #include "mozilla/layers/TextureClient.h"  // for DeprecatedTextureClient
 #include "nsSize.h"                     // for nsIntSize
+#include "gfx2DGlue.h"
 
 namespace mozilla {
 
@@ -47,6 +48,27 @@ RotatedBuffer::GetQuadrantRectangle(XSide aXSide, YSide aYSide) const
   quadrantTranslation.x += aXSide == LEFT ? mBufferRect.width : 0;
   quadrantTranslation.y += aYSide == TOP ? mBufferRect.height : 0;
   return mBufferRect + quadrantTranslation;
+}
+
+Rect
+RotatedBuffer::GetSourceRectangle(XSide aXSide, YSide aYSide) const
+{
+  Rect result;
+  if (aXSide == LEFT) {
+    result.x = 0;
+    result.width = mBufferRotation.x;
+  } else {
+    result.x = mBufferRotation.x;
+    result.width = mBufferRect.width - mBufferRotation.x;
+  }
+  if (aYSide == TOP) {
+    result.y = 0;
+    result.height = mBufferRotation.y;
+  } else {
+    result.y = mBufferRotation.y;
+    result.height = mBufferRect.height - mBufferRotation.y;
+  }
+  return result;
 }
 
 /**
@@ -108,7 +130,7 @@ RotatedBuffer::DrawBufferQuadrant(gfxContext* aTarget,
   nsRefPtr<gfxPattern> pattern = new gfxPattern(source);
 
 #ifdef MOZ_GFX_OPTIMIZE_MOBILE
-  gfxPattern::GraphicsFilter filter = gfxPattern::FILTER_NEAREST;
+  GraphicsFilter filter = GraphicsFilter::FILTER_NEAREST;
   pattern->SetFilter(filter);
 #endif
 
@@ -126,7 +148,7 @@ RotatedBuffer::DrawBufferQuadrant(gfxContext* aTarget,
       aTarget->SetMatrix(*aMaskTransform);
       aTarget->Mask(aMask);
     } else {
-      aTarget->PushGroup(gfxASurface::CONTENT_COLOR_ALPHA);
+      aTarget->PushGroup(GFX_CONTENT_COLOR_ALPHA);
       aTarget->Paint(aOpacity);
       aTarget->PopGroupToSource();
       aTarget->SetMatrix(*aMaskTransform);
@@ -177,6 +199,19 @@ RotatedBuffer::DrawBufferQuadrant(gfx::DrawTarget* aTarget,
 
   gfx::Point quadrantTranslation(quadrantRect.x, quadrantRect.y);
 
+  MOZ_ASSERT(aOperator == OP_OVER || aOperator == OP_SOURCE);
+  // direct2d is much slower when using OP_SOURCE so use OP_OVER and
+  // (maybe) a clear instead. Normally we need to draw in a single operation
+  // (to avoid flickering) but direct2d is ok since it defers rendering.
+  // We should try abstract this logic in a helper when we have other use
+  // cases.
+  if (aTarget->GetType() == BACKEND_DIRECT2D && aOperator == OP_SOURCE) {
+    aOperator = OP_OVER;
+    if (mDTBuffer->GetFormat() == FORMAT_B8G8R8A8) {
+      aTarget->ClearRect(ToRect(fillRect));
+    }
+  }
+
   RefPtr<SourceSurface> snapshot;
   if (aSource == BUFFER_BLACK) {
     snapshot = mDTBuffer->Snapshot();
@@ -184,16 +219,6 @@ RotatedBuffer::DrawBufferQuadrant(gfx::DrawTarget* aTarget,
     MOZ_ASSERT(aSource == BUFFER_WHITE);
     snapshot = mDTBufferOnWhite->Snapshot();
   }
-
-  // Transform from user -> buffer space.
-  Matrix transform;
-  transform.Translate(quadrantTranslation.x, quadrantTranslation.y);
-
-#ifdef MOZ_GFX_OPTIMIZE_MOBILE
-  SurfacePattern source(snapshot, EXTEND_CLAMP, transform, FILTER_POINT);
-#else
-  SurfacePattern source(snapshot, EXTEND_CLAMP, transform);
-#endif
 
   if (aOperator == OP_SOURCE) {
     // OP_SOURCE is unbounded in Azure, and we really don't want that behaviour here.
@@ -204,13 +229,30 @@ RotatedBuffer::DrawBufferQuadrant(gfx::DrawTarget* aTarget,
   }
 
   if (aMask) {
-    SurfacePattern mask(aMask, EXTEND_CLAMP, *aMaskTransform);
+    // Transform from user -> buffer space.
+    Matrix transform;
+    transform.Translate(quadrantTranslation.x, quadrantTranslation.y);
 
-    aTarget->Mask(source, mask, DrawOptions(aOpacity, aOperator));
+#ifdef MOZ_GFX_OPTIMIZE_MOBILE
+    SurfacePattern source(snapshot, EXTEND_CLAMP, transform, FILTER_POINT);
+#else
+    SurfacePattern source(snapshot, EXTEND_CLAMP, transform);
+#endif
+
+    Matrix oldTransform = aTarget->GetTransform();
+    aTarget->SetTransform(*aMaskTransform);
+    aTarget->MaskSurface(source, aMask, Point(0, 0), DrawOptions(aOpacity, aOperator));
+    aTarget->SetTransform(oldTransform);
   } else {
-    aTarget->FillRect(gfx::Rect(fillRect.x, fillRect.y,
-                                fillRect.width, fillRect.height),
-                      source, DrawOptions(aOpacity, aOperator));
+#ifdef MOZ_GFX_OPTIMIZE_MOBILE
+    DrawSurfaceOptions options(FILTER_POINT);
+#else
+    DrawSurfaceOptions options;
+#endif
+    aTarget->DrawSurface(snapshot, ToRect(fillRect),
+                         GetSourceRectangle(aXSide, aYSide),
+                         options,
+                         DrawOptions(aOpacity, aOperator));
   }
 
   if (aOperator == OP_SOURCE) {
@@ -399,7 +441,7 @@ ThebesLayerBuffer::GetContextForQuadrantUpdate(const nsIntRect& aBounds, Context
   return ctx.forget();
 }
 
-gfxASurface::gfxContentType
+gfxContentType
 ThebesLayerBuffer::BufferContentType()
 {
   if (mBuffer) {
@@ -411,15 +453,15 @@ ThebesLayerBuffer::BufferContentType()
   if (mDTBuffer) {
     switch (mDTBuffer->GetFormat()) {
     case FORMAT_A8:
-      return gfxASurface::CONTENT_ALPHA;
+      return GFX_CONTENT_ALPHA;
     case FORMAT_B8G8R8A8:
     case FORMAT_R8G8B8A8:
-      return gfxASurface::CONTENT_COLOR_ALPHA;
+      return GFX_CONTENT_COLOR_ALPHA;
     default:
-      return gfxASurface::CONTENT_COLOR;
+      return GFX_CONTENT_COLOR;
     }
   }
-  return gfxASurface::CONTENT_SENTINEL;
+  return GFX_CONTENT_SENTINEL;
 }
 
 bool
@@ -576,7 +618,7 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
           !gfxPlatform::ComponentAlphaEnabled()) {
         mode = Layer::SURFACE_SINGLE_CHANNEL_ALPHA;
       } else {
-        contentType = gfxASurface::CONTENT_COLOR;
+        contentType = GFX_CONTENT_COLOR;
       }
 #endif
     }
@@ -586,7 +628,7 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
          neededRegion.GetNumRects() > 1)) {
       // The area we add to neededRegion might not be painted opaquely
       if (mode == Layer::SURFACE_OPAQUE) {
-        contentType = gfxASurface::CONTENT_COLOR_ALPHA;
+        contentType = GFX_CONTENT_COLOR_ALPHA;
         mode = Layer::SURFACE_SINGLE_CHANNEL_ALPHA;
       }
 
@@ -599,7 +641,7 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
     // have transitioned into/out of component alpha, then we need to recreate it.
     if (HaveBuffer() &&
         (contentType != BufferContentType() ||
-         mode == Layer::SURFACE_COMPONENT_ALPHA) != (HaveBufferOnWhite())) {
+        (mode == Layer::SURFACE_COMPONENT_ALPHA) != HaveBufferOnWhite())) {
 
       // We're effectively clearing the valid region, so we need to draw
       // the entire needed region now.
@@ -656,17 +698,13 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
           nsIntPoint dest = mBufferRect.TopLeft() - destBufferRect.TopLeft();
           if (IsAzureBuffer()) {
             MOZ_ASSERT(mDTBuffer);
-            RefPtr<SourceSurface> source = mDTBuffer->Snapshot();
-            mDTBuffer->CopySurface(source,
-                                   IntRect(srcRect.x, srcRect.y, srcRect.width, srcRect.height),
-                                   IntPoint(dest.x, dest.y));
+            mDTBuffer->CopyRect(IntRect(srcRect.x, srcRect.y, srcRect.width, srcRect.height),
+                                IntPoint(dest.x, dest.y));
             if (mode == Layer::SURFACE_COMPONENT_ALPHA) {
               EnsureBufferOnWhite();
               MOZ_ASSERT(mDTBufferOnWhite);
-              RefPtr<SourceSurface> sourceOnWhite = mDTBufferOnWhite->Snapshot();
-              mDTBufferOnWhite->CopySurface(sourceOnWhite,
-                                            IntRect(srcRect.x, srcRect.y, srcRect.width, srcRect.height),
-                                            IntPoint(dest.x, dest.y));
+              mDTBufferOnWhite->CopyRect(IntRect(srcRect.x, srcRect.y, srcRect.width, srcRect.height),
+                                         IntPoint(dest.x, dest.y));
             }
           } else {
             MOZ_ASSERT(mBuffer);
@@ -836,7 +874,7 @@ ThebesLayerBuffer::BeginPaint(ThebesLayer* aLayer, ContentType aContentType,
       FillSurface(mBuffer, result.mRegionToDraw, topLeft, gfxRGBA(0.0, 0.0, 0.0, 1.0));
       FillSurface(mBufferOnWhite, result.mRegionToDraw, topLeft, gfxRGBA(1.0, 1.0, 1.0, 1.0));
     }
-  } else if (contentType == gfxASurface::CONTENT_COLOR_ALPHA && !isClear) {
+  } else if (contentType == GFX_CONTENT_COLOR_ALPHA && !isClear) {
     if (IsAzureBuffer()) {
       nsIntRegionRectIterator iter(result.mRegionToDraw);
       const nsIntRect *iterRect;

@@ -11,7 +11,7 @@
 #include "nsGfxCIID.h"
 #include "nsView.h"
 #include "nsCOMPtr.h"
-#include "nsGUIEvent.h"
+#include "mozilla/MouseEvents.h"
 #include "nsRegion.h"
 #include "nsCOMArray.h"
 #include "nsIPluginWidget.h"
@@ -27,6 +27,7 @@
 #include "nsLayoutUtils.h"
 #include "Layers.h"
 #include "gfxPlatform.h"
+#include "nsIDocument.h"
 
 /**
    XXX TODO XXX
@@ -44,6 +45,7 @@
    we ask for a specific z-order, we don't assume that widget z-ordering actually works.
 */
 
+using namespace mozilla;
 using namespace mozilla::layers;
 
 #define NSCOORD_NONE      INT32_MIN
@@ -294,6 +296,10 @@ void nsViewManager::Refresh(nsView *aView, const nsIntRegion& aRegion)
 {
   NS_ASSERTION(aView->GetViewManager() == this, "wrong view manager");
 
+  if (mPresShell && mPresShell->IsNeverPainting()) {
+    return;
+  }
+
   // damageRegion is the damaged area, in twips, relative to the view origin
   nsRegion damageRegion = aRegion.ToAppUnits(AppUnitsPerDevPixel());
   // move region from widget coordinates into view coordinates
@@ -369,6 +375,10 @@ void nsViewManager::ProcessPendingUpdatesForView(nsView* aView,
     return;
   }
 
+  if (mPresShell && mPresShell->IsNeverPainting()) {
+    return;
+  }
+
   if (aView->HasWidget()) {
     aView->ResetWidgetBounds(false, true);
   }
@@ -414,6 +424,7 @@ void nsViewManager::ProcessPendingUpdatesForView(nsView* aView,
         printf("---- PAINT END ----\n");
       }
 #endif
+
       aView->SetForcedRepaint(false);
       SetPainting(false);
       FlushDirtyRegionToWidget(aView);
@@ -686,27 +697,30 @@ void nsViewManager::DidPaintWindow()
 }
 
 void
-nsViewManager::DispatchEvent(nsGUIEvent *aEvent, nsView* aView, nsEventStatus* aStatus)
+nsViewManager::DispatchEvent(WidgetGUIEvent *aEvent,
+                             nsView* aView,
+                             nsEventStatus* aStatus)
 {
   PROFILER_LABEL("event", "nsViewManager::DispatchEvent");
 
-  if ((NS_IS_MOUSE_EVENT(aEvent) &&
+  WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent();
+  if ((mouseEvent &&
        // Ignore mouse events that we synthesize.
-       static_cast<nsMouseEvent*>(aEvent)->reason == nsMouseEvent::eReal &&
+       mouseEvent->reason == WidgetMouseEvent::eReal &&
        // Ignore mouse exit and enter (we'll get moves if the user
        // is really moving the mouse) since we get them when we
        // create and destroy widgets.
-       aEvent->message != NS_MOUSE_EXIT &&
-       aEvent->message != NS_MOUSE_ENTER) ||
-      NS_IS_KEY_EVENT(aEvent) ||
-      NS_IS_IME_EVENT(aEvent) ||
+       mouseEvent->message != NS_MOUSE_EXIT &&
+       mouseEvent->message != NS_MOUSE_ENTER) ||
+      aEvent->HasKeyEventMessage() ||
+      aEvent->HasIMEEventMessage() ||
       aEvent->message == NS_PLUGIN_INPUT_EVENT) {
     gLastUserEventTime = PR_IntervalToMicroseconds(PR_IntervalNow());
   }
 
   // Find the view whose coordinates system we're in.
   nsView* view = aView;
-  bool dispatchUsingCoordinates = NS_IsEventUsingCoordinates(aEvent);
+  bool dispatchUsingCoordinates = aEvent->IsUsingCoordinates();
   if (dispatchUsingCoordinates) {
     // Will dispatch using coordinates. Pretty bogus but it's consistent
     // with what presshell does.
@@ -716,11 +730,10 @@ nsViewManager::DispatchEvent(nsGUIEvent *aEvent, nsView* aView, nsEventStatus* a
   // If the view has no frame, look for a view that does.
   nsIFrame* frame = view->GetFrame();
   if (!frame &&
-      (dispatchUsingCoordinates || NS_IS_KEY_EVENT(aEvent) ||
-       NS_IS_IME_RELATED_EVENT(aEvent) ||
-       NS_IS_NON_RETARGETED_PLUGIN_EVENT(aEvent) ||
-       aEvent->message == NS_PLUGIN_ACTIVATE ||
-       aEvent->message == NS_PLUGIN_FOCUS ||
+      (dispatchUsingCoordinates || aEvent->HasKeyEventMessage() ||
+       aEvent->IsIMERelatedEvent() ||
+       aEvent->IsNonRetargetedNativeEventDelivererForPlugin() ||
+       aEvent->HasPluginActivationEventMessage() ||
        aEvent->message == NS_PLUGIN_RESOLUTION_CHANGED)) {
     while (view && !view->GetFrame()) {
       view = view->GetParent();

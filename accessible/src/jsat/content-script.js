@@ -164,9 +164,20 @@ function forwardToChild(aMessage, aListener, aVCPosition) {
 function activateCurrent(aMessage) {
   Logger.debug('activateCurrent');
   function activateAccessible(aAccessible) {
+    if (aMessage.json.activateIfKey &&
+        aAccessible.role != Ci.nsIAccessibleRole.ROLE_KEY) {
+      // Only activate keys, don't do anything on other objects.
+      return;
+    }
+
     if (aAccessible.actionCount > 0) {
       aAccessible.doAction(0);
     } else {
+      let control = Utils.getEmbeddedControl(aAccessible);
+      if (control && control.actionCount > 0) {
+        control.doAction(0);
+      }
+
       // XXX Some mobile widget sets do not expose actions properly
       // (via ARIA roles, etc.), so we need to generate a click.
       // Could possibly be made simpler in the future. Maybe core

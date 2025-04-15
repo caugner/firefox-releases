@@ -51,7 +51,7 @@ _SUBDIR_CONFIG_ARGS="$ac_configure_args"
 dnl Set the version number of the libs included with mozilla
 dnl ========================================================
 MOZJPEG=62
-MOZPNG=10517
+MOZPNG=10606
 NSPR_VERSION=4
 NSS_VERSION=3
 
@@ -71,7 +71,7 @@ GCONF_VERSION=1.2.1
 GIO_VERSION=2.20
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.7.17
+SQLITE_VERSION=3.8.0.2
 
 MSMANIFEST_TOOL=
 
@@ -86,27 +86,41 @@ dnl ========================================================
 MOZ_USE_PTHREADS=
 _PTHREAD_LDFLAGS=""
 
-dnl Do not allow a separate objdir build if a srcdir build exists.
+dnl Do not allow objdir == srcdir builds.
 dnl ==============================================================
 _topsrcdir=`cd \`dirname $0\`; pwd`
 _objdir=`pwd`
 
-if test "$_topsrcdir" != "$_objdir"
-then
-  # Check for a couple representative files in the source tree
-  _conflict_files=
-  for file in $_topsrcdir/Makefile $_topsrcdir/config/autoconf.mk; do
-    if test -f $file; then
-      _conflict_files="$_conflict_files $file"
-    fi
+
+
+dnl TODO Don't exempt L10N builds once bug 842760 is resolved.
+if test "$_topsrcdir" = "$_objdir" -a "${with_l10n_base+set}" != set; then
+  echo "  ***"
+  echo "  * Building directly in the main source directory is not allowed."
+  echo "  *"
+  echo "  * To build, you must run configure from a separate directory"
+  echo "  * (referred to as an object directory)."
+  echo "  *"
+  echo "  * If you are building with a mozconfig, you will need to change your"
+  echo "  * mozconfig to point to a different object directory."
+  echo "  ***"
+  exit 1
+fi
+
+# Check for a couple representative files in the source tree
+_conflict_files=
+for file in $_topsrcdir/Makefile $_topsrcdir/config/autoconf.mk; do
+  if test -f $file; then
+    _conflict_files="$_conflict_files $file"
+  fi
+done
+if test "$_conflict_files"; then
+  echo "***"
+  echo "*   Your source tree contains these files:"
+  for file in $_conflict_files; do
+    echo "*         $file"
   done
-  if test "$_conflict_files"; then
-    echo "***"
-    echo "*   Your source tree contains these files:"
-    for file in $_conflict_files; do
-      echo "*         $file"
-    done
-    cat 1>&2 <<-EOF
+  cat 1>&2 <<-EOF
 	*   This indicates that you previously built in the source tree.
 	*   A source tree build can confuse the separate objdir build.
 	*
@@ -115,9 +129,8 @@ then
 	*     2. gmake distclean
 	***
 	EOF
-    exit 1
-    break
-  fi
+  exit 1
+  break
 fi
 MOZ_BUILD_ROOT=`pwd`
 
@@ -209,16 +222,23 @@ if test -n "$gonkdir" ; then
     15)
         GONK_INCLUDES="-I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/frameworks/base/include -I$gonkdir/frameworks/base/services/camera -I$gonkdir/frameworks/base/include/media/stagefright -I$gonkdir/frameworks/base/include/media/stagefright/openmax -I$gonkdir/frameworks/base/media/libstagefright/rtsp -I$gonkdir/frameworks/base/media/libstagefright/include -I$gonkdir/external/dbus -I$gonkdir/external/bluetooth/bluez/lib -I$gonkdir/dalvik/libnativehelper/include/nativehelper"
         MOZ_B2G_BT=1
+        MOZ_B2G_BT_BLUEZ=1
         MOZ_B2G_CAMERA=1
         MOZ_OMX_DECODER=1
         AC_SUBST(MOZ_OMX_DECODER)
+        MOZ_RTSP=1
         ;;
     17|18)
         GONK_INCLUDES="-I$gonkdir/frameworks/native/include -I$gonkdir/frameworks/av/include -I$gonkdir/frameworks/av/include/media -I$gonkdir/frameworks/av/include/camera -I$gonkdir/frameworks/native/include/media/openmax -I$gonkdir/frameworks/av/media/libstagefright/include"
         if test -d "$gonkdir/external/bluetooth/bluez"; then
-            GONK_INCLUDES+=" -I$gonkdir/external/dbus -I$gonkdir/external/bluetooth/bluez/lib"
+          GONK_INCLUDES="$GONK_INCLUDES -I$gonkdir/external/dbus -I$gonkdir/external/bluetooth/bluez/lib"
             MOZ_B2G_BT=1
+            MOZ_B2G_BT_BLUEZ=1
+        elif test -d "$gonkdir/external/bluetooth/bluedroid"; then
+            MOZ_B2G_BT=1
+            MOZ_B2G_BT_BLUEDROID=1
         fi
+
         MOZ_B2G_CAMERA=1
         MOZ_OMX_DECODER=1
         AC_SUBST(MOZ_OMX_DECODER)
@@ -490,29 +510,13 @@ case "$target" in
 
         INCREMENTAL_LINKER=1
 
-        # Check midl version
-        _MIDL_FULL_VERSION=`"${MIDL}" -v 2>&1 | sed -nre "$_MSVC_VER_FILTER"`
-        _MIDL_MAJOR_VERSION=`echo ${_MIDL_FULL_VERSION} | $AWK -F\. '{ print $1 }'`
-        _MIDL_MINOR_VERSION=`echo ${_MIDL_FULL_VERSION} | $AWK -F\. '{ print $2 }'`
-        _MIDL_REV_VERSION=`echo ${_MIDL_FULL_VERSION} | $AWK -F\. '{ print $3 }'`
-        # Add flags if necessary
-        AC_MSG_CHECKING([for midl flags])
+        # Set midl environment
         case "$target" in
         i*86-*)
-            if test \( "$_MIDL_MAJOR_VERSION" = "7" -a "$_MIDL_MINOR_VERSION" = "00" -a "$_MIDL_REV_VERSION" = "0499" \); then
-                # MIDL version 7.00.0499 defaults /env win64 on x64 platforms.
-                # MIDL version 7.00.0500 or later has no problem.
-                MIDL_FLAGS="${MIDL_FLAGS} -env win32"
-                AC_MSG_RESULT([need -env win32])
-            else
-                AC_MSG_RESULT([none needed])
-            fi
+            MIDL_FLAGS="${MIDL_FLAGS} -env win32"
             ;;
         x86_64-*)
             MIDL_FLAGS="${MIDL_FLAGS} -env x64"
-            ;;
-        *)
-            AC_MSG_RESULT([none needed])
             ;;
         esac
 
@@ -910,9 +914,8 @@ MOZ_PNG_LIBS='$(call EXPAND_LIBNAME_PATH,mozpng,$(DEPTH)/media/libpng)'
 
 MOZ_JS_STATIC_LIBS='$(call EXPAND_LIBNAME_PATH,js_static,$(LIBXUL_DIST)/lib)'
 MOZ_JS_SHARED_LIBS='$(call EXPAND_LIBNAME_PATH,mozjs,$(LIBXUL_DIST)/lib)'
-DYNAMIC_XPCOM_LIBS='-L$(LIBXUL_DIST)/bin -lxul -lxpcom_core -lmozalloc'
 MOZ_FIX_LINK_PATHS='-Wl,-rpath-link,$(LIBXUL_DIST)/bin -Wl,-rpath-link,$(prefix)/lib'
-XPCOM_FROZEN_LDOPTS='-L$(LIBXUL_DIST)/bin -lxul -lmozalloc'
+XPCOM_FROZEN_LDOPTS='$(call EXPAND_LIBNAME_PATH,xul mozalloc,$(LIBXUL_DIST)/bin)'
 LIBXUL_LIBS='$(XPCOM_FROZEN_LDOPTS)'
 XPCOM_GLUE_LDOPTS='$(LIBXUL_DIST)/lib/$(LIB_PREFIX)xpcomglue_s.$(LIB_SUFFIX) $(XPCOM_FROZEN_LDOPTS)'
 XPCOM_STANDALONE_GLUE_LDOPTS='$(LIBXUL_DIST)/lib/$(LIB_PREFIX)xpcomglue.$(LIB_SUFFIX)'
@@ -1237,7 +1240,12 @@ dnl ========================================================
 if test "$GNU_CC"; then
     # Per bug 719659 comment 2, some of the headers on ancient build machines
     # may require gnu89 inline semantics.  But otherwise, we use C99.
-    CFLAGS="$CFLAGS -std=gnu99 -fgnu89-inline"
+    # But on OS X we just use C99 plus GNU extensions, in order to fix
+    # bug 917526.
+    CFLAGS="$CFLAGS -std=gnu99"
+    if test "${OS_ARCH}" != Darwin; then
+        CFLAGS="$CFLAGS -fgnu89-inline"
+    fi
     # FIXME: Let us build with strict aliasing. bug 414641.
     CFLAGS="$CFLAGS -fno-strict-aliasing"
     MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-h,$(notdir $@) -o $@'
@@ -1991,6 +1999,7 @@ ia64*-hpux*)
     MC=mc.exe
     # certain versions of cygwin's makedepend barf on the
     # #include <string> vs -I./dist/include/string issue so don't use it
+    XPCOM_FROZEN_LDOPTS='$(call EXPAND_LIBNAME_PATH,xul mozalloc,$(LIBXUL_DIST)/lib)'
     if test -n "$GNU_CC" -o -n "$CLANG_CC"; then
         CC="$CC -mwindows"
         CXX="$CXX -mwindows"
@@ -2009,8 +2018,6 @@ ia64*-hpux*)
         # mingw doesn't require kernel32, user32, and advapi32 explicitly
         LIBS="$LIBS -luuid -lgdi32 -lwinmm -lwsock32 -luserenv -lsecur32 -lnetapi32"
         MOZ_FIX_LINK_PATHS=
-        DYNAMIC_XPCOM_LIBS='-L$(LIBXUL_DIST)/lib -lxul -lxpcom_core -lmozalloc'
-        XPCOM_FROZEN_LDOPTS='-L$(LIBXUL_DIST)/lib -lxul -lmozalloc'
         DLL_PREFIX=
         IMPORT_LIB_SUFFIX=dll.a
 
@@ -2085,9 +2092,6 @@ ia64*-hpux*)
         WARNINGS_AS_ERRORS='-WX'
         MOZ_OPTIMIZE_FLAGS='-O1'
         MOZ_FIX_LINK_PATHS=
-        DYNAMIC_XPCOM_LIBS='$(LIBXUL_DIST)/lib/xul.lib $(LIBXUL_DIST)/lib/xpcom_core.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
-        XPCOM_FROZEN_LDOPTS='$(LIBXUL_DIST)/lib/xul.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
-        LIBXUL_LIBS='$(LIBXUL_DIST)/lib/xul.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
         MOZ_COMPONENT_NSPR_LIBS='$(NSPR_LIBS)'
         LDFLAGS="$LDFLAGS -LARGEADDRESSAWARE -NXCOMPAT"
         if test -z "$DEVELOPER_OPTIONS"; then
@@ -2259,7 +2263,6 @@ ia64*-hpux*)
     MOZ_DEBUG_FLAGS="-g -fno-inline"
     MOZ_OPTIMIZE_FLAGS="-O2"
     MOZ_OPTIMIZE_LDFLAGS="-s -Zlinker /EXEPACK:2 -Zlinker /PACKCODE -Zlinker /PACKDATA"
-    DYNAMIC_XPCOM_LIBS='-L$(LIBXUL_DIST)/lib $(LIBXUL_DIST)/lib/xul.lib $(LIBXUL_DIST)/lib/xpcom_core.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
     LIBXUL_LIBS='-L$(LIBXUL_DIST)/lib $(LIBXUL_DIST)/lib/xul.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
     TARGET_MD_ARCH=os2
     _PLATFORM_DEFAULT_TOOLKIT="cairo-os2"
@@ -2517,155 +2520,9 @@ else
   AC_MSG_RESULT(no)
 fi
 
-dnl Check for int64, uint, and uint_t.
-dnl ========================================================
-AC_MSG_CHECKING(for int64)
-AC_CACHE_VAL(ac_cv_int64,
- [AC_TRY_COMPILE([#include <stdio.h>
-                  #include <sys/types.h>],
-                 [int64 foo = 0;],
-                 [ac_cv_int64=true],
-                 [ac_cv_int64=false])])
-if test "$ac_cv_int64" = true ; then
-  AC_DEFINE(HAVE_INT64)
-  AC_MSG_RESULT(yes)
-else
-  AC_MSG_RESULT(no)
-fi
-AC_MSG_CHECKING(for uint)
-AC_CACHE_VAL(ac_cv_uint,
- [AC_TRY_COMPILE([#include <stdio.h>
-                  #include <sys/types.h>],
-                 [uint foo = 0;],
-                 [ac_cv_uint=true],
-                 [ac_cv_uint=false])])
-if test "$ac_cv_uint" = true ; then
-  AC_DEFINE(HAVE_UINT)
-  AC_MSG_RESULT(yes)
-else
-  AC_MSG_RESULT(no)
-fi
-AC_MSG_CHECKING(for uint_t)
-AC_CACHE_VAL(ac_cv_uint_t,
- [AC_TRY_COMPILE([#include <stdio.h>
-                  #include <sys/types.h>],
-                 [uint_t foo = 0;],
-                 [ac_cv_uint_t=true],
-                 [ac_cv_uint_t=false])])
-if test "$ac_cv_uint_t" = true ; then
-  AC_DEFINE(HAVE_UINT_T)
-  AC_MSG_RESULT(yes)
-else
-  AC_MSG_RESULT(no)
-fi
-
-dnl On the gcc trunk (as of 2001-02-09) _GNU_SOURCE, and thus __USE_GNU,
-dnl are defined when compiling C++ but not C.  Since the result of this
-dnl test is used only in C++, do it in C++.
 AC_LANG_CPLUSPLUS
-
-AC_MSG_CHECKING(for uname.domainname)
-AC_CACHE_VAL(ac_cv_have_uname_domainname_field,
-    [AC_TRY_COMPILE([#include <sys/utsname.h>],
-        [ struct utsname *res; char *domain;
-            (void)uname(res);  if (res != 0) { domain = res->domainname; } ],
-        [ac_cv_have_uname_domainname_field=true],
-        [ac_cv_have_uname_domainname_field=false])])
-
-if test "$ac_cv_have_uname_domainname_field" = "true"; then
-    AC_DEFINE(HAVE_UNAME_DOMAINNAME_FIELD)
-    AC_MSG_RESULT(yes)
-else
-    AC_MSG_RESULT(no)
-fi
-
-AC_MSG_CHECKING(for uname.__domainname)
-AC_CACHE_VAL(ac_cv_have_uname_us_domainname_field,
-    [AC_TRY_COMPILE([#include <sys/utsname.h>],
-        [ struct utsname *res; char *domain;
-            (void)uname(res);  if (res != 0) { domain = res->__domainname; } ],
-        [ac_cv_have_uname_us_domainname_field=true],
-        [ac_cv_have_uname_us_domainname_field=false])])
-
-if test "$ac_cv_have_uname_us_domainname_field" = "true"; then
-    AC_DEFINE(HAVE_UNAME_US_DOMAINNAME_FIELD)
-    AC_MSG_RESULT(yes)
-else
-    AC_MSG_RESULT(no)
-fi
 
 MOZ_CXX11
-
-AC_LANG_CPLUSPLUS
-
-dnl Check for usable char16_t (2 bytes, unsigned)
-dnl (we might not need the unsignedness check anymore)
-AC_CACHE_CHECK(for usable char16_t (2 bytes, unsigned),
-    ac_cv_have_usable_char16_t,
-    [AC_TRY_COMPILE([$configure_static_assert_macros],
-                    [CONFIGURE_STATIC_ASSERT(sizeof(char16_t) == 2);
-                     CONFIGURE_STATIC_ASSERT(char16_t(-1) > char16_t(0));
-                     CONFIGURE_STATIC_ASSERT(sizeof((u"hello")[0]) == 2);
-                     CONFIGURE_STATIC_ASSERT(sizeof(u'a') == 2);
-                     CONFIGURE_STATIC_ASSERT(u'\xFFFF' > u'\x0')],
-                    ac_cv_have_usable_char16_t="yes",
-                    ac_cv_have_usable_char16_t="no")])
-if test "$ac_cv_have_usable_char16_t" = "yes"; then
-    AC_DEFINE(HAVE_CPP_CHAR16_T)
-    HAVE_CPP_CHAR16_T=1
-elif test "$GNU_CXX"; then
-    CXXFLAGS="$_SAVE_CXXFLAGS"
-fi
-
-dnl Check for usable wchar_t (2 bytes, unsigned)
-dnl (we really don't need the unsignedness check anymore)
-dnl ========================================================
-
-AC_CACHE_CHECK(for usable wchar_t (2 bytes, unsigned),
-    ac_cv_have_usable_wchar_v2,
-    [AC_TRY_COMPILE([#include <stddef.h>
-                     $configure_static_assert_macros],
-                    [CONFIGURE_STATIC_ASSERT(sizeof(wchar_t) == 2);
-                     CONFIGURE_STATIC_ASSERT((wchar_t)-1 > (wchar_t) 0)],
-                    ac_cv_have_usable_wchar_v2="yes",
-                    ac_cv_have_usable_wchar_v2="no")])
-if test "$ac_cv_have_usable_wchar_v2" = "yes"; then
-    AC_DEFINE(HAVE_CPP_2BYTE_WCHAR_T)
-    HAVE_CPP_2BYTE_WCHAR_T=1
-elif test "$ac_cv_have_usable_char16_t" != "yes"; then
-dnl This is really gcc-only
-dnl Do this test using CXX only since some versions of gcc
-dnl 2.95-2.97 have a signed wchar_t in c++ only and some versions
-dnl only have short-wchar support for c++.
-dnl Note that we assume that mac & win32 have short wchar (see nscore.h)
-
-    _SAVE_CXXFLAGS=$CXXFLAGS
-    CXXFLAGS="$CXXFLAGS -fshort-wchar"
-
-    AC_CACHE_CHECK(for compiler -fshort-wchar option,
-        ac_cv_have_usable_wchar_option_v2,
-        [AC_TRY_LINK([#include <stddef.h>
-                      $configure_static_assert_macros],
-                     [CONFIGURE_STATIC_ASSERT(sizeof(wchar_t) == 2);
-                      CONFIGURE_STATIC_ASSERT((wchar_t)-1 > (wchar_t) 0)],
-                     ac_cv_have_usable_wchar_option_v2="yes",
-                     ac_cv_have_usable_wchar_option_v2="no")])
-
-    if test "$ac_cv_have_usable_wchar_option_v2" = "yes"; then
-        AC_DEFINE(HAVE_CPP_2BYTE_WCHAR_T)
-        HAVE_CPP_2BYTE_WCHAR_T=1
-        if test "$OS_TARGET" = Android; then
-            WCHAR_CFLAGS="-fshort-wchar -Wl,--no-wchar-size-warning"
-            CXXFLAGS="$CXXFLAGS -Wl,--no-wchar-size-warning"
-            CFLAGS="$CFLAGS -Wl,--no-wchar-size-warning"
-            DSO_LDOPTS="$DSO_LDOPTS -Wl,--no-wchar-size-warning"
-        else
-            WCHAR_CFLAGS="-fshort-wchar"
-        fi
-    else
-        CXXFLAGS=$_SAVE_CXXFLAGS
-    fi
-fi
 
 AC_LANG_C
 
@@ -3159,7 +3016,7 @@ dnl Checks for library functions.
 dnl ========================================================
 AC_PROG_GCC_TRADITIONAL
 AC_FUNC_MEMCMP
-AC_CHECK_FUNCS(random strerror lchown fchmod snprintf memmove rint stat64 lstat64 truncate64 setbuf isatty)
+AC_CHECK_FUNCS(random strerror lchown fchmod snprintf memmove stat64 lstat64 truncate64 setbuf isatty)
 AC_CHECK_FUNCS(statvfs64 statvfs statfs64 statfs)
 AC_CHECK_FUNCS(flockfile getpagesize)
 AC_CHECK_FUNCS(localtime_r strtok_r)
@@ -3236,23 +3093,6 @@ dnl        AC_CHECK_LIB(resolv, res_ninit, AC_DEFINE(HAVE_RES_NINIT)))
 fi
 
 AC_LANG_CPLUSPLUS
-AC_CACHE_CHECK(
-    [for gnu_get_libc_version()],
-    ac_cv_func_gnu_get_libc_version,
-    [AC_TRY_LINK([
-        #ifdef HAVE_GNU_LIBC_VERSION_H
-        #include <gnu/libc-version.h>
-        #endif
-        ],
-        [const char *glibc_version = gnu_get_libc_version();],
-        [ac_cv_func_gnu_get_libc_version=yes],
-        [ac_cv_func_gnu_get_libc_version=no]
-        )]
-    )
-
-if test "$ac_cv_func_gnu_get_libc_version" = "yes"; then
-    AC_DEFINE(HAVE_GNU_GET_LIBC_VERSION)
-fi
 
 case $target_os in
     darwin*|mingw*|os2*)
@@ -3282,7 +3122,6 @@ AC_CACHE_CHECK(
     )
 if test "$ac_cv_func_iconv" = "yes"; then
     AC_DEFINE(HAVE_ICONV)
-    DYNAMIC_XPCOM_LIBS="$DYNAMIC_XPCOM_LIBS $_ICONV_LIBS"
     LIBXUL_LIBS="$LIBXUL_LIBS $_ICONV_LIBS"
     LIBICONV="$_ICONV_LIBS"
     AC_CACHE_CHECK(
@@ -3595,7 +3434,6 @@ for file in $MALLOC_HEADERS; do
   fi
 done
 
-MOZ_ALLOCATING_FUNCS="strndup posix_memalign memalign valloc"
 AC_CHECK_FUNCS(strndup posix_memalign memalign valloc)
 
 AC_CHECK_FUNCS(malloc_usable_size)
@@ -3838,7 +3676,7 @@ MOZ_ARG_WITH_BOOL(system-nss,
     _USE_SYSTEM_NSS=1 )
 
 if test -n "$_USE_SYSTEM_NSS"; then
-    AM_PATH_NSS(3.15, [MOZ_NATIVE_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
+    AM_PATH_NSS(3.15.4, [MOZ_NATIVE_NSS=1], [AC_MSG_ERROR([you don't have NSS installed or your version is too old])])
 fi
 
 if test -n "$MOZ_NATIVE_NSS"; then
@@ -4106,7 +3944,6 @@ MOZ_WEBRTC=1
 MOZ_PEERCONNECTION=
 MOZ_SRTP=
 MOZ_WEBRTC_SIGNALING=
-MOZ_WEBRTC_IN_LIBXUL=
 MOZ_WEBRTC_ASSERT_ALWAYS=1
 MOZ_SCTP=
 MOZ_MEDIA_PLUGINS=
@@ -4513,8 +4350,7 @@ cairo-cocoa)
     TK_CFLAGS="-DNO_X11"
     CFLAGS="$CFLAGS $TK_CFLAGS"
     CXXFLAGS="$CXXFLAGS $TK_CFLAGS"
-    DYNAMIC_XPCOM_LIBS='$(LIBXUL_DIST)/bin/XUL -lxpcom_core -lmozalloc'
-    XPCOM_FROZEN_LDOPTS='$(LIBXUL_DIST)/bin/XUL -lmozalloc'
+    XPCOM_FROZEN_LDOPTS='$(LIBXUL_DIST)/bin/XUL $(call EXPAND_LIBNAME_PATH,mozalloc,$(LIBXUL_DIST)/bin)'
     MOZ_USER_DIR="Mozilla"
     MOZ_FS_LAYOUT=bundle
     MOZ_WEBGL=1
@@ -4529,8 +4365,7 @@ cairo-uikit)
     TK_LIBS='-framework Foundation -framework CoreFoundation -framework CoreGraphics -framework CoreText'
     CFLAGS="$CFLAGS $TK_CFLAGS"
     CXXFLAGS="$CXXFLAGS $TK_CFLAGS"
-    DYNAMIC_XPCOM_LIBS='$(LIBXUL_DIST)/bin/XUL -lxpcom_core -lmozalloc'
-    XPCOM_FROZEN_LDOPTS='$(LIBXUL_DIST)/bin/XUL -lmozalloc'
+    XPCOM_FROZEN_LDOPTS='$(LIBXUL_DIST)/bin/XUL $(call EXPAND_LIBNAME_PATH,mozalloc,$(LIBXUL_DIST)/bin)'
     MOZ_USER_DIR="Mozilla"
     MOZ_FS_LAYOUT=bundle
     ;;
@@ -4546,6 +4381,7 @@ cairo-android)
     ;;
 
 cairo-gonk)
+    XPCOM_FROZEN_LDOPTS='$(call EXPAND_LIBNAME_PATH,xul mozalloc,$(LIBXUL_DIST)/lib)'
     AC_DEFINE(MOZ_WIDGET_GONK)
     AC_DEFINE(MOZ_TOUCH)
     MOZ_WIDGET_TOOLKIT=gonk
@@ -5284,9 +5120,6 @@ if test -n "$MOZ_WEBRTC"; then
 dnl enable once Signaling lands
     MOZ_WEBRTC_SIGNALING=1
     AC_DEFINE(MOZ_WEBRTC_SIGNALING)
-    if test "${OS_TARGET}" = "WINNT"; then
-        MOZ_WEBRTC_IN_LIBXUL=1
-    fi
 dnl enable once PeerConnection lands
     MOZ_PEERCONNECTION=1
     AC_DEFINE(MOZ_PEERCONNECTION)
@@ -5300,7 +5133,6 @@ AC_SUBST(MOZ_WEBRTC)
 AC_SUBST(MOZ_WEBRTC_LEAKING_TESTS)
 AC_SUBST(MOZ_WEBRTC_SIGNALING)
 AC_SUBST(MOZ_PEERCONNECTION)
-AC_SUBST(MOZ_WEBRTC_IN_LIBXUL)
 AC_SUBST(MOZ_WEBRTC_ASSERT_ALWAYS)
 AC_SUBST(MOZ_SCTP)
 AC_SUBST(MOZ_SRTP)
@@ -5545,7 +5377,7 @@ AC_SUBST(MOZ_NATIVE_LIBVPX)
 AC_SUBST(MOZ_LIBVPX_CFLAGS)
 AC_SUBST(MOZ_LIBVPX_LIBS)
 
-if test "$MOZ_WEBM"; then
+if test "$MOZ_WEBM" -o "$MOZ_OGG"; then
     MOZ_CUBEB=1
     if test "$MOZ_SAMPLE_TYPE_FLOAT32"; then
         MOZ_VORBIS=1
@@ -5667,8 +5499,21 @@ if test -n "$MOZ_CUBEB"; then
     AC_DEFINE(MOZ_CUBEB)
 fi
 
+if test -n "$MOZ_OPUS" -a -z "$MOZ_OGG"; then
+    AC_MSG_ERROR([MOZ_OPUS requires MOZ_OGG which is disabled.])
+fi
+
+if test -n "$MOZ_VORBIS" -a -z "$MOZ_OGG"; then
+    AC_MSG_ERROR([MOZ_VORBIS requires MOZ_OGG which is disabled.
+Note that you need vorbis support for WebM playback.])
+fi
+
 if test -n "$MOZ_VORBIS" -a -n "$MOZ_TREMOR"; then
     AC_MSG_ERROR([MOZ_VORBIS and MOZ_TREMOR are mutually exclusive!  The build system should not allow them both to be set, but they are.  Please file a bug at https://bugzilla.mozilla.org/])
+fi
+
+if test -n "$MOZ_WEBRTC" -a -z "$MOZ_OPUS"; then
+    AC_MSG_ERROR([MOZ_WEBRTC requires MOZ_OPUS which is disabled.])
 fi
 
 if test -n "$MOZ_VORBIS"; then
@@ -7076,28 +6921,6 @@ if test -z "$MOZ_MEMORY"; then
       ;;
   esac
 else
-  dnl Don't try to run compiler tests on Windows
-  if test "$OS_ARCH" = "WINNT"; then
-    if test -z "$HAVE_64BIT_OS"; then
-      AC_DEFINE_UNQUOTED([MOZ_MEMORY_SIZEOF_PTR_2POW], 2)
-    else
-      AC_DEFINE_UNQUOTED([MOZ_MEMORY_SIZEOF_PTR_2POW], 3)
-    fi
-  else
-    AC_CHECK_SIZEOF([int *], [4])
-    case "${ac_cv_sizeof_int_p}" in
-    4)
-      AC_DEFINE_UNQUOTED([MOZ_MEMORY_SIZEOF_PTR_2POW], 2)
-      ;;
-    8)
-      AC_DEFINE_UNQUOTED([MOZ_MEMORY_SIZEOF_PTR_2POW], 3)
-      ;;
-    *)
-      AC_MSG_ERROR([Unexpected pointer size])
-      ;;
-    esac
-  fi
-
   AC_DEFINE(MOZ_MEMORY)
   if test -n "$MOZ_JEMALLOC3"; then
     AC_DEFINE(MOZ_JEMALLOC3)
@@ -7179,6 +7002,9 @@ if test "$OS_TARGET" = Android; then
         WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=fork,--wrap=pthread_atfork,--wrap=raise"
         WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=memccpy,--wrap=memchr,--wrap=memrchr,--wrap=memcmp,--wrap=memcpy,--wrap=memmove,--wrap=memset,--wrap=memmem,--wrap=memswap,--wrap=index,--wrap=strchr,--wrap=strrchr,--wrap=strlen,--wrap=strcmp,--wrap=strcpy,--wrap=strcat,--wrap=strcasecmp,--wrap=strncasecmp,--wrap=strstr,--wrap=strcasestr,--wrap=strtok,--wrap=strtok_r,--wrap=strerror,--wrap=strerror_r,--wrap=strnlen,--wrap=strncat,--wrap=strncmp,--wrap=strncpy,--wrap=strlcat,--wrap=strlcpy,--wrap=strcspn,--wrap=strpbrk,--wrap=strsep,--wrap=strspn,--wrap=strcoll,--wrap=strxfrm"
     fi
+    if test "$MOZ_WIDGET_TOOLKIT" = gonk -a -n "$MOZ_NUWA_PROCESS"; then
+        WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=pthread_create,--wrap=epoll_wait,--wrap=poll,--wrap=pthread_cond_timedwait,--wrap=__pthread_cond_timedwait,--wrap=pthread_cond_wait,--wrap=epoll_create,--wrap=epoll_ctl,--wrap=close,--wrap=pthread_key_create,--wrap=pthread_key_delete,--wrap=socketpair,--wrap=pthread_self,--wrap=pthread_mutex_lock,--wrap=pthread_join,--wrap=pipe,--wrap=pipe2"
+    fi
 fi
 
 dnl ========================================================
@@ -7242,7 +7068,7 @@ MOZ_ARG_ENABLE_BOOL(gczeal,
 [  --enable-gczeal         Enable zealous JavaScript GCing],
     JS_GC_ZEAL=1,
     JS_GC_ZEAL= )
-if test -n "$JS_GC_ZEAL"; then
+if test -n "$JS_GC_ZEAL" -o -n "$MOZ_DEBUG"; then
     AC_DEFINE(JS_GC_ZEAL)
 fi
 
@@ -7465,6 +7291,14 @@ fi
 AC_SUBST(MOZ_B2G_FM)
 
 dnl ========================================================
+dnl = Enable Rtsp Protocol for B2G (Gonk usually)
+dnl ========================================================
+if test -n "$MOZ_RTSP"; then
+    AC_DEFINE(MOZ_RTSP)
+fi
+AC_SUBST(MOZ_RTSP)
+
+dnl ========================================================
 dnl = Enable Bluetooth Interface for B2G (Gonk usually)
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(b2g-bt,
@@ -7475,6 +7309,8 @@ if test -n "$MOZ_B2G_BT"; then
     AC_DEFINE(MOZ_B2G_BT)
 fi
 AC_SUBST(MOZ_B2G_BT)
+AC_SUBST(MOZ_B2G_BT_BLUEZ)
+AC_SUBST(MOZ_B2G_BT_BLUEDROID)
 
 dnl ========================================================
 dnl = Enable Pico Speech Synthesis (Gonk usually)
@@ -8678,6 +8514,14 @@ COMPILE_CXXFLAGS=`echo \
 	$_DEPEND_CFLAGS \
     $COMPILE_CXXFLAGS`
 
+HOST_CFLAGS=`echo \
+    $HOST_CFLAGS \
+    $_DEPEND_CFLAGS`
+
+HOST_CXXFLAGS=`echo \
+    $HOST_CXXFLAGS \
+    $_DEPEND_CFLAGS`
+
 AC_SUBST(SYSTEM_LIBXUL)
 AC_SUBST(MOZ_NATIVE_JPEG)
 AC_SUBST(MOZ_NATIVE_PNG)
@@ -8689,6 +8533,12 @@ AC_SUBST(MOZ_BZ2_CFLAGS)
 AC_SUBST(MOZ_BZ2_LIBS)
 AC_SUBST(MOZ_PNG_CFLAGS)
 AC_SUBST(MOZ_PNG_LIBS)
+
+if test "$MOZ_WIDGET_TOOLKIT" = gonk -a -n "$MOZ_NUWA_PROCESS"; then
+    export MOZ_NUWA_PROCESS
+    AC_DEFINE(MOZ_NUWA_PROCESS)
+fi
+AC_SUBST(MOZ_NUWA_PROCESS)
 
 AC_SUBST(NSPR_CFLAGS)
 AC_SUBST(NSPR_LIBS)
@@ -8904,9 +8754,7 @@ dnl ========================================================
 dnl The following defines are used by xpcom
 _NON_GLOBAL_ACDEFINES="$_NON_GLOBAL_ACDEFINES
 CPP_THROW_NEW
-HAVE_CPP_2BYTE_WCHAR_T
 HAVE_CPP_AMBIGUITY_RESOLVING_USING
-HAVE_CPP_CHAR16_T
 HAVE_CPP_DYNAMIC_CAST_TO_VOID_PTR
 HAVE_CPP_PARTIAL_SPECIALIZATION
 HAVE_CPP_TROUBLE_COMPARING_TO_ZERO
@@ -9296,15 +9144,18 @@ MOZ_ARG_WITH_STRING(intl-api,
     ICU at all.],
     WITH_INTL="--with-intl-api=$withval"
 ])
+
+# NOTE: If you update anything below, you also must update the "Intl" entry in
+#       dom/tests/mochitest/general/test_interfaces.html!
 if test -z "$WITH_INTL"; then
-if test "$NIGHTLY_BUILD" = "1" -a "$MOZ_BUILD_APP" = "browser"; then
-    # In desktop nightlies the Internationalization API is disabled, but all
-    # code for it is still built.  Bug 853301 will remove this so that it's
-    # built and the API is enabled.
-    WITH_INTL="--with-intl-api=build"
+if test "$MOZ_BUILD_APP" = "browser"; then
+    # Don't build the Intl API til we can update ICU (bug 924839).  Don't take
+    # the smaller step of building but not exposing it, either, as we also
+    # don't want dead code in shipping builds.
+    WITH_INTL="--without-intl-api"
 else
-    # Internationalization isn't built or exposed by default in non-desktop and
-    # non-nightly builds.  Bugs to enable:
+    # Internationalization isn't built or exposed by default in non-desktop
+    # builds.  Bugs to enable:
     #
     #   Android:  bug 864843
     #   B2G:      bug 866301
@@ -9319,6 +9170,9 @@ if test "$BUILD_CTYPES"; then
 fi
 if test -z "$JS_SHARED_LIBRARY" ; then
     ac_configure_args="$ac_configure_args --disable-shared-js"
+    if test -n "$MOZ_DISABLE_EXPORT_JS"; then
+        ac_configure_args="$ac_configure_args --disable-export-js"
+    fi
 fi
 if test -z "$MOZ_NATIVE_NSPR"; then
     ac_configure_args="$ac_configure_args --with-nspr-cflags='$NSPR_CFLAGS'"
@@ -9349,6 +9203,7 @@ export STLPORT_CPPFLAGS
 export STLPORT_LDFLAGS
 export STLPORT_LIBS
 export JS_STANDALONE=no
+export MOZ_LINKER
 
 if ! test -e js; then
     mkdir js

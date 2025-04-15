@@ -10,7 +10,6 @@
 #include "nsIScriptContext.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIXPConnect.h"
-#include "nsGUIEvent.h"
 #include "nsIMutableArray.h"
 #include "nsVariant.h"
 #include "nsIDOMBeforeUnloadEvent.h"
@@ -18,6 +17,7 @@
 #include "xpcpublic.h"
 #include "nsJSEnvironment.h"
 #include "nsDOMJSUtils.h"
+#include "mozilla/ContentEvents.h"
 #include "mozilla/Likely.h"
 #include "mozilla/dom/UnionTypes.h"
 #include "nsDOMEvent.h"
@@ -176,11 +176,9 @@ nsJSEventListener::HandleEvent(nsIDOMEvent* aEvent)
     Optional<uint32_t> columnNumber;
 
     NS_ENSURE_TRUE(aEvent, NS_ERROR_UNEXPECTED);
-    nsEvent* event = aEvent->GetInternalNSEvent();
-    if (event->message == NS_LOAD_ERROR &&
-        event->eventStructType == NS_SCRIPT_ERROR_EVENT) {
-      nsScriptErrorEvent *scriptEvent =
-        static_cast<nsScriptErrorEvent*>(event);
+    InternalScriptErrorEvent* scriptEvent =
+      aEvent->GetInternalNSEvent()->AsScriptErrorEvent();
+    if (scriptEvent && scriptEvent->message == NS_LOAD_ERROR) {
       errorMsg = scriptEvent->errorMsg;
       msgOrEvent.SetAsString() = static_cast<nsAString*>(&errorMsg);
 
@@ -211,8 +209,8 @@ nsJSEventListener::HandleEvent(nsIDOMEvent* aEvent)
   if (mHandler.Type() == nsEventHandler::eOnBeforeUnload) {
     MOZ_ASSERT(mEventName == nsGkAtoms::onbeforeunload);
 
-    nsRefPtr<BeforeUnloadEventHandlerNonNull> handler =
-      mHandler.BeforeUnloadEventHandler();
+    nsRefPtr<OnBeforeUnloadEventHandlerNonNull> handler =
+      mHandler.OnBeforeUnloadEventHandler();
     ErrorResult rv;
     nsString retval;
     handler->Call(mTarget, *(aEvent->InternalDOMEvent()), retval, rv);

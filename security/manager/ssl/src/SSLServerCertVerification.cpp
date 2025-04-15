@@ -95,6 +95,9 @@
  */
 
 #include "SSLServerCertVerification.h"
+
+#include <cstring>
+
 #include "CertVerifier.h"
 #include "nsIBadCertListener2.h"
 #include "nsICertOverrideService.h"
@@ -113,9 +116,9 @@
 #include "nsXPCOMCIDInternal.h"
 #include "nsComponentManagerUtils.h"
 #include "nsServiceManagerUtils.h"
-#include "nsIConsoleService.h"
 #include "PSMRunnable.h"
 #include "SharedSSLState.h"
+#include "nsContentUtils.h"
 
 #include "ssl.h"
 #include "secerr.h"
@@ -144,6 +147,9 @@ nsIThreadPool * gCertVerificationThreadPool = nullptr;
 // the code, since performance in the error case is not important.
 Mutex *gSSLVerificationTelemetryMutex = nullptr;
 
+// We add a mutex to serialize PKCS11 database operations
+Mutex *gSSLVerificationPK11Mutex = nullptr;
+
 } // unnamed namespace
 
 // Called when the socket transport thread starts, to initialize the SSL cert
@@ -160,6 +166,7 @@ void
 InitializeSSLServerCertVerificationThreads()
 {
   gSSLVerificationTelemetryMutex = new Mutex("SSLVerificationTelemetryMutex");
+  gSSLVerificationPK11Mutex = new Mutex("SSLVerificationPK11Mutex");
   // TODO: tuning, make parameters preferences
   // XXX: instantiate nsThreadPool directly, to make this more bulletproof.
   // Currently, the nsThreadPool.h header isn't exported for us to do so.
@@ -196,6 +203,10 @@ void StopSSLServerCertVerificationThreads()
     delete gSSLVerificationTelemetryMutex;
     gSSLVerificationTelemetryMutex = nullptr;
   }
+  if (gSSLVerificationPK11Mutex) {
+    delete gSSLVerificationPK11Mutex;
+    gSSLVerificationPK11Mutex = nullptr;
+  }
 }
 
 namespace {
@@ -213,11 +224,7 @@ LogInvalidCertError(TransportSecurityInfo *socketInfo,
   socketInfo->GetErrorLogMessage(errorCode, errorMessageType, message);
   
   if (!message.IsEmpty()) {
-    nsCOMPtr<nsIConsoleService> console;
-    console = do_GetService(NS_CONSOLESERVICE_CONTRACTID);
-    if (console) {
-      console->LogStringMessage(message.get());
-    }
+    nsContentUtils::LogSimpleConsoleError(message, "SSL");
   }
 }
 
@@ -437,6 +444,35 @@ CertErrorRunnable::RunOnTargetThread()
   MOZ_ASSERT(mResult);
 }
 
+// Converts a PRErrorCode into one of
+//   nsICertOverrideService::ERROR_UNTRUSTED,
+//   nsICertOverrideService::ERROR_MISMATCH,
+//   nsICertOverrideService::ERROR_TIME
+// if the given error code is an overridable error.
+// If it is not, then 0 is returned.
+uint32_t
+PRErrorCodeToOverrideType(PRErrorCode errorCode)
+{
+  switch (errorCode)
+  {
+    case SEC_ERROR_UNKNOWN_ISSUER:
+    case SEC_ERROR_CA_CERT_INVALID:
+    case SEC_ERROR_UNTRUSTED_ISSUER:
+    case SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE:
+    case SEC_ERROR_UNTRUSTED_CERT:
+    case SEC_ERROR_INADEQUATE_KEY_USAGE:
+    case SEC_ERROR_CERT_SIGNATURE_ALGORITHM_DISABLED:
+      // We group all these errors as "cert not trusted"
+      return nsICertOverrideService::ERROR_UNTRUSTED;
+    case SSL_ERROR_BAD_CERT_DOMAIN:
+      return nsICertOverrideService::ERROR_MISMATCH;
+    case SEC_ERROR_EXPIRED_CERTIFICATE:
+      return nsICertOverrideService::ERROR_TIME;
+    default:
+      return 0;
+  }
+}
+
 // Returns null with the error code (PR_GetError()) set if it does not create
 // the CertErrorRunnable.
 CertErrorRunnable *
@@ -450,9 +486,11 @@ CreateCertErrorRunnable(PRErrorCode defaultErrorCodeToReport,
   MOZ_ASSERT(infoObject);
   MOZ_ASSERT(cert);
   
-  // cert was revoked, don't do anything else
-  if (defaultErrorCodeToReport == SEC_ERROR_REVOKED_CERTIFICATE) {
-    PR_SetError(SEC_ERROR_REVOKED_CERTIFICATE, 0);
+  // We only allow overrides for certain errors. Return early if the error
+  // is not one of them. This is to avoid doing revocation fetching in the
+  // case of OCSP stapling and probably for other reasons.
+  if (PRErrorCodeToOverrideType(defaultErrorCodeToReport) == 0) {
+    PR_SetError(defaultErrorCodeToReport, 0);
     return nullptr;
   }
 
@@ -522,36 +560,23 @@ CreateCertErrorRunnable(PRErrorCode defaultErrorCodeToReport,
   CERTVerifyLogNode *i_node;
   for (i_node = verify_log->head; i_node; i_node = i_node->next)
   {
-    switch (i_node->error)
-    {
-      case SEC_ERROR_UNKNOWN_ISSUER:
-      case SEC_ERROR_CA_CERT_INVALID:
-      case SEC_ERROR_UNTRUSTED_ISSUER:
-      case SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE:
-      case SEC_ERROR_UNTRUSTED_CERT:
-      case SEC_ERROR_INADEQUATE_KEY_USAGE:
-      case SEC_ERROR_CERT_SIGNATURE_ALGORITHM_DISABLED:
-        // We group all these errors as "cert not trusted"
-        collected_errors |= nsICertOverrideService::ERROR_UNTRUSTED;
-        if (errorCodeTrust == SECSuccess) {
-          errorCodeTrust = i_node->error;
-        }
-        break;
-      case SSL_ERROR_BAD_CERT_DOMAIN:
-        collected_errors |= nsICertOverrideService::ERROR_MISMATCH;
-        if (errorCodeMismatch == SECSuccess) {
-          errorCodeMismatch = i_node->error;
-        }
-        break;
-      case SEC_ERROR_EXPIRED_CERTIFICATE:
-        collected_errors |= nsICertOverrideService::ERROR_TIME;
-        if (errorCodeExpired == SECSuccess) {
-          errorCodeExpired = i_node->error;
-        }
-        break;
-      default:
-        PR_SetError(i_node->error, 0);
-        return nullptr;
+    uint32_t overrideType = PRErrorCodeToOverrideType(i_node->error);
+    // If this isn't an overridable error, set the error and return.
+    if (overrideType == 0) {
+      PR_SetError(i_node->error, 0);
+      return nullptr;
+    }
+    collected_errors |= overrideType;
+    if (overrideType == nsICertOverrideService::ERROR_UNTRUSTED) {
+      errorCodeTrust = (errorCodeTrust == 0 ? i_node->error : errorCodeTrust);
+    } else if (overrideType == nsICertOverrideService::ERROR_MISMATCH) {
+      errorCodeMismatch = (errorCodeMismatch == 0 ? i_node->error
+                                                  : errorCodeMismatch);
+    } else if (overrideType == nsICertOverrideService::ERROR_TIME) {
+      errorCodeExpired = (errorCodeExpired == 0 ? i_node->error
+                                                : errorCodeExpired);
+    } else {
+      MOZ_CRASH("unexpected return value from PRErrorCodeToOverrideType");
     }
   }
 
@@ -611,7 +636,7 @@ class SSLServerCertVerificationJob : public nsRunnable
 public:
   // Must be called only on the socket transport thread
   static SECStatus Dispatch(const void * fdForLogging,
-                            TransportSecurityInfo * infoObject,
+                            nsNSSSocketInfo * infoObject,
                             CERTCertificate * serverCert,
                             SECItem * stapledOCSPResponse,
                             uint32_t providerFlags);
@@ -620,12 +645,12 @@ private:
 
   // Must be called only on the socket transport thread
   SSLServerCertVerificationJob(const void * fdForLogging,
-                               TransportSecurityInfo * infoObject, 
+                               nsNSSSocketInfo * infoObject,
                                CERTCertificate * cert,
                                SECItem * stapledOCSPResponse,
                                uint32_t providerFlags);
   const void * const mFdForLogging;
-  const RefPtr<TransportSecurityInfo> mInfoObject;
+  const RefPtr<nsNSSSocketInfo> mInfoObject;
   const ScopedCERTCertificate mCert;
   const uint32_t mProviderFlags;
   const TimeStamp mJobStartTime;
@@ -633,7 +658,7 @@ private:
 };
 
 SSLServerCertVerificationJob::SSLServerCertVerificationJob(
-    const void * fdForLogging, TransportSecurityInfo * infoObject,
+    const void * fdForLogging, nsNSSSocketInfo * infoObject,
     CERTCertificate * cert, SECItem * stapledOCSPResponse,
     uint32_t providerFlags)
   : mFdForLogging(fdForLogging)
@@ -833,7 +858,7 @@ BlockServerCertChangeForSpdy(nsNSSSocketInfo *infoObject,
 }
 
 SECStatus
-AuthCertificate(TransportSecurityInfo * infoObject, CERTCertificate * cert,
+AuthCertificate(nsNSSSocketInfo * infoObject, CERTCertificate * cert,
                 SECItem * stapledOCSPResponse, uint32_t providerFlags)
 {
   if (cert->serialNumber.data &&
@@ -881,8 +906,45 @@ AuthCertificate(TransportSecurityInfo * infoObject, CERTCertificate * cert,
                                                stapledOCSPResponse,
                                                infoObject);
     if (rv != SECSuccess) {
-      return rv;
+      // Due to buggy servers that will staple expired OCSP responses
+      // (see for example http://trac.nginx.org/nginx/ticket/425),
+      // don't terminate the connection if the stapled response is expired.
+      // We will fall back to fetching revocation information.
+      PRErrorCode ocspErrorCode = PR_GetError();
+      if (ocspErrorCode != SEC_ERROR_OCSP_OLD_RESPONSE) {
+        // stapled OCSP response present but invalid for some reason
+        Telemetry::Accumulate(Telemetry::SSL_OCSP_STAPLING, 4);
+        return rv;
+      } else {
+        // stapled OCSP response present but expired
+        Telemetry::Accumulate(Telemetry::SSL_OCSP_STAPLING, 3);
+      }
+    } else {
+      // stapled OCSP response present and good
+      Telemetry::Accumulate(Telemetry::SSL_OCSP_STAPLING, 1);
     }
+  } else {
+    // no stapled OCSP response
+    Telemetry::Accumulate(Telemetry::SSL_OCSP_STAPLING, 2);
+
+    uint32_t reasonsForNotFetching = 0;
+
+    char* ocspURI = CERT_GetOCSPAuthorityInfoAccessLocation(cert);
+    if (!ocspURI) {
+      reasonsForNotFetching |= 1; // invalid/missing OCSP URI
+    } else {
+      if (std::strncmp(ocspURI, "http://", 7)) { // approximation
+        reasonsForNotFetching |= 1; // invalid/missing OCSP URI
+      }
+      PORT_Free(ocspURI);
+    }
+
+    if (!infoObject->SharedState().IsOCSPFetchingEnabled()) {
+      reasonsForNotFetching |= 2;
+    }
+
+    Telemetry::Accumulate(Telemetry::SSL_OCSP_MAY_FETCH,
+                          reasonsForNotFetching);
   }
 
   CERTCertList *verifyCertChain = nullptr;
@@ -958,6 +1020,10 @@ AuthCertificate(TransportSecurityInfo * infoObject, CERTCertificate * cert,
         // We have found a signer cert that we want to remember.
         char* nickname = nsNSSCertificate::defaultServerNickname(node->cert);
         if (nickname && *nickname) {
+          // There is a suspicion that there is some thread safety issues
+          // in PK11_importCert and the mutex is a way to serialize until
+          // this issue has been cleared.
+          MutexAutoLock PK11Mutex(*gSSLVerificationPK11Mutex);
           ScopedPK11SlotInfo slot(PK11_GetInternalKeySlot());
           if (slot) {
             PK11_ImportCert(slot, node->cert, CK_INVALID_HANDLE, 
@@ -1000,7 +1066,7 @@ AuthCertificate(TransportSecurityInfo * infoObject, CERTCertificate * cert,
 
 /*static*/ SECStatus
 SSLServerCertVerificationJob::Dispatch(const void * fdForLogging,
-                                       TransportSecurityInfo * infoObject,
+                                       nsNSSSocketInfo * infoObject,
                                        CERTCertificate * serverCert,
                                        SECItem * stapledOCSPResponse,
                                        uint32_t providerFlags)

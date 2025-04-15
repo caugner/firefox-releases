@@ -8,6 +8,7 @@ var SelectionHandler = {
   init: function init() {
     this.type = kContentSelector;
     this.snap = true;
+    this.lastYPos = this.lastXPos = null;
     addMessageListener("Browser:SelectionStart", this);
     addMessageListener("Browser:SelectionAttach", this);
     addMessageListener("Browser:SelectionEnd", this);
@@ -322,17 +323,6 @@ var SelectionHandler = {
    * whether the browser deck needs repositioning.
    */
   _repositionInfoRequest: function _repositionInfoRequest(aJsonMsg) {
-    if (!this.isActive) {
-      Util.dumpLn("unexpected: repositionInfoRequest but selection isn't active.");
-      this.sendAsync("Content:RepositionInfoResponse", { reposition: false });
-      return;
-    }
-    
-    if (!this.targetIsEditable) {
-      Util.dumpLn("unexpected: repositionInfoRequest but targetIsEditable is false.");
-      this.sendAsync("Content:RepositionInfoResponse", { reposition: false });
-    }
-    
     let result = this._calcNewContentPosition(aJsonMsg.viewHeight);
 
     // no repositioning needed
@@ -349,6 +339,11 @@ var SelectionHandler = {
 
   _onPing: function _onPing(aId) {
     this.sendAsync("Content:SelectionHandlerPong", { id: aId });
+  },
+
+  onClickCoords: function (xPos, yPos) {
+    this.lastXPos = xPos;
+    this.lastYPos = yPos;
   },
 
   /*************************************************
@@ -422,37 +417,18 @@ var SelectionHandler = {
    * distance content should be raised to center the target element.
    */
   _calcNewContentPosition: function _calcNewContentPosition(aNewViewHeight) {
-    // We don't support this on non-editable elements
-    if (!this._targetIsEditable) {
+    // We have no target element but the keyboard is up
+    // so lets not cover content that is below the keyboard
+    if (!this._cache || !this._cache.element) {
+      if (this.lastYPos != null && this.lastYPos > aNewViewHeight) {
+        return Services.metro.keyboardHeight;
+      }
       return 0;
     }
 
-    // If the bottom of the target bounds is higher than the new height,
-    // there's no need to adjust. It will be above the keyboard.
-    if (this._cache.element.bottom <= aNewViewHeight) {
-      return 0;
-    }
-    
-    // height of the target element
-    let targetHeight = this._cache.element.bottom - this._cache.element.top;
-    // height of the browser view.
-    let viewBottom = content.innerHeight;
-
-    // If the target is shorter than the new content height, we can go ahead
-    // and center it.
-    if (targetHeight <= aNewViewHeight) {
-      // Try to center the element vertically in the new content area, but
-      // don't position such that the bottom of the browser view moves above
-      // the top of the chrome. We purposely do not resize the browser window
-      // by making it taller when trying to center elements that are near the
-      // lower bounds. This would trigger reflow which can cause content to
-      // shift around. 
-      let splitMargin = Math.round((aNewViewHeight - targetHeight) * .5);
-      let distanceToPageBounds = viewBottom - this._cache.element.bottom;
-      let distanceFromChromeTop = this._cache.element.bottom - aNewViewHeight;
-      let distanceToCenter =
-        distanceFromChromeTop + Math.min(distanceToPageBounds, splitMargin);
-      return distanceToCenter;
+    let position = Util.centerElementInView(aNewViewHeight, this._cache.element);
+    if (position !== undefined) {
+      return position;
     }
 
     // Special case: we are dealing with an input that is taller than the
@@ -556,7 +532,12 @@ var SelectionHandler = {
         break;
 
       case "Browser:RepositionInfoRequest":
-        this._repositionInfoRequest(json);
+        // This message is sent simultaneously with a tap event.
+        // Wait a bit to make sure we have the most up-to-date tap co-ordinates
+        // before a call to _calcNewContentPosition() which accesses them.
+        content.setTimeout (function () {
+          SelectionHandler._repositionInfoRequest(json);
+        }, 50);
         break;
 
       case "Browser:SelectionHandlerPing":

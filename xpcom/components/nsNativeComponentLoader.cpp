@@ -32,6 +32,7 @@
 #include "nsTraceRefcntImpl.h"
 
 #include "nsIFile.h"
+#include "mozilla/WindowsDllBlocklist.h"
 
 #ifdef XP_WIN
 #include <windows.h>
@@ -61,8 +62,6 @@ GetNativeModuleLoaderLog()
     return sLog;
 }
 
-bool gInXPCOMLoadOnMainThread = false;
-
 #define LOG(level, args) PR_LOG(GetNativeModuleLoaderLog(), level, args)
 
 NS_IMPL_QUERY_INTERFACE1(nsNativeModuleLoader,
@@ -88,7 +87,7 @@ public:
                                  FileLocation &file)
         : mLoader(loader)
         , mFile(file)
-        , mResult(NULL)
+        , mResult(nullptr)
     { }
 
     NS_IMETHOD Run()
@@ -107,7 +106,7 @@ nsNativeModuleLoader::LoadModule(FileLocation &aFile)
 {
     if (aFile.IsZip()) {
         NS_ERROR("Binary components cannot be loaded from JARs");
-        return NULL;
+        return nullptr;
     }
     nsCOMPtr<nsIFile> file = aFile.GetBaseFile();
     nsresult rv;
@@ -123,7 +122,7 @@ nsNativeModuleLoader::LoadModule(FileLocation &aFile)
     nsCOMPtr<nsIHashable> hashedFile(do_QueryInterface(file));
     if (!hashedFile) {
         NS_ERROR("nsIFile is not nsIHashable");
-        return NULL;
+        return nullptr;
     }
 
     nsAutoCString filePath;
@@ -140,10 +139,12 @@ nsNativeModuleLoader::LoadModule(FileLocation &aFile)
     }
 
     // We haven't loaded this module before
-
-    gInXPCOMLoadOnMainThread = true;
-    rv = file->Load(&data.library);
-    gInXPCOMLoadOnMainThread = false;
+    {
+#ifdef HAS_DLL_BLOCKLIST
+      AutoSetXPCOMLoadOnMainThread guard;
+#endif
+      rv = file->Load(&data.library);
+    }
 
     if (NS_FAILED(rv)) {
         char errorMsg[1024] = "<unknown; can't get error from NSPR>";
@@ -154,7 +155,7 @@ nsNativeModuleLoader::LoadModule(FileLocation &aFile)
         LogMessage("Failed to load native module at path '%s': (%lx) %s",
                    filePath.get(), rv, errorMsg);
 
-        return NULL;
+        return nullptr;
     }
 
 #ifdef IMPLEMENT_BREAK_AFTER_LOAD
@@ -180,7 +181,7 @@ nsNativeModuleLoader::LoadModule(FileLocation &aFile)
         LogMessage("Native module at path '%s' doesn't export symbol `NSModule`.",
                    filePath.get());
         PR_UnloadLibrary(data.library);
-        return NULL;
+        return nullptr;
     }
 
     data.module = *(mozilla::Module const *const *) module;
@@ -189,7 +190,7 @@ nsNativeModuleLoader::LoadModule(FileLocation &aFile)
                    filePath.get(), data.module->mVersion,
                    mozilla::Module::kVersion);
         PR_UnloadLibrary(data.library);
-        return NULL;
+        return nullptr;
     }
         
     mLibraries.Put(hashedFile, data); // infallible

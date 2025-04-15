@@ -65,7 +65,7 @@ def process(input_dir, inc_paths, cache_dir, header_dir, xpt_dir, deps_dir, modu
         mk.dump(fh)
 
 
-if __name__ == '__main__':
+def main(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('--cache-dir',
         help='Directory in which to find or write cached lexer data.')
@@ -84,6 +84,9 @@ if __name__ == '__main__':
     parser.add_argument('-I', dest='incpath', action='append', default=[],
         help='Extra directories where to look for included .idl files.')
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     process(args.inputdir, args.incpath, args.cache_dir, args.headerdir,
         args.xptdir, args.depsdir, args.module, args.idls)
+
+if __name__ == '__main__':
+    main(sys.argv[1:])

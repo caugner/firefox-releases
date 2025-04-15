@@ -8,16 +8,15 @@
 #include "HttpLog.h"
 
 #include "mozilla/Telemetry.h"
-#include "mozilla/Preferences.h"
 #include "nsHttp.h"
 #include "nsHttpHandler.h"
-#include "nsHttpConnection.h"
 #include "nsILoadGroup.h"
 #include "prprf.h"
 #include "prnetdb.h"
 #include "SpdyPush3.h"
 #include "SpdySession3.h"
 #include "SpdyStream3.h"
+#include "PSpdyPush.h"
 
 #include <algorithm>
 
@@ -860,7 +859,10 @@ SpdySession3::CleanupStream(SpdyStream3 *aStream, nsresult aResult,
 {
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
   LOG3(("SpdySession3::CleanupStream %p %p 0x%X %X\n",
-        this, aStream, aStream->StreamID(), aResult));
+        this, aStream, aStream ? aStream->StreamID() : 0, aResult));
+  if (!aStream) {
+    return;
+  }
 
   SpdyPushedStream3 *pushSource = nullptr;
 
@@ -989,7 +991,7 @@ SpdySession3::HandleSynStream(SpdySession3 *self)
     self->mShouldGoAway = true;
 
   bool resetStream = true;
-  SpdyPushCache3 *cache = nullptr;
+  SpdyPushCache *cache = nullptr;
 
   if (!(flags & kFlag_Data_UNI)) {
     // pushed streams require UNIDIRECTIONAL flag
@@ -1018,10 +1020,10 @@ SpdySession3::HandleSynStream(SpdySession3 *self)
   } else {
     nsILoadGroupConnectionInfo *loadGroupCI = associatedStream->LoadGroupConnectionInfo();
     if (loadGroupCI) {
-      loadGroupCI->GetSpdyPushCache3(&cache);
+      loadGroupCI->GetSpdyPushCache(&cache);
       if (!cache) {
-        cache = new SpdyPushCache3();
-        if (!cache || NS_FAILED(loadGroupCI->SetSpdyPushCache3(cache))) {
+        cache = new SpdyPushCache();
+        if (!cache || NS_FAILED(loadGroupCI->SetSpdyPushCache(cache))) {
           delete cache;
           cache = nullptr;
         }
@@ -1102,7 +1104,7 @@ SpdySession3::HandleSynStream(SpdySession3 *self)
     return NS_OK;
   }
 
-  if (!cache->RegisterPushedStream(key, pushedStream)) {
+  if (!cache->RegisterPushedStreamSpdy3(key, pushedStream)) {
     LOG(("SpdySession3::HandleSynStream registerPushedStream Failed\n"));
     self->CleanupStream(pushedStream, NS_ERROR_FAILURE, RST_INVALID_STREAM);
     self->ResetDownstreamState();
@@ -2593,7 +2595,7 @@ SpdySession3::RequestHead()
   MOZ_ASSERT(false,
              "SpdySession3::RequestHead() "
              "should not be called after SPDY is setup");
-  return NULL;
+  return nullptr;
 }
 
 uint32_t

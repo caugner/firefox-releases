@@ -163,34 +163,15 @@ MediaDocument::StartDocumentLoad(const char*         aCommand,
   // not being able to set the charset is not critical.
   NS_ENSURE_TRUE(docShell, NS_OK); 
 
-  // Temporary copy-paste code for branches. Copied from nsHTMLDocument.cpp.
-  nsCOMPtr<nsIDocShellTreeItem> parentAsItem;
-  docShell->GetSameTypeParent(getter_AddRefs(parentAsItem));
-
-  nsCOMPtr<nsIDocShell> parent(do_QueryInterface(parentAsItem));
-  nsCOMPtr<nsIDocument> parentDocument;
-  nsCOMPtr<nsIContentViewer> parentContentViewer;
-  if (parent) {
-    rv = parent->GetContentViewer(getter_AddRefs(parentContentViewer));
-    NS_ENSURE_SUCCESS(rv, rv);
-    if (parentContentViewer) {
-      parentDocument = parentContentViewer->GetDocument();
-    }
-  }
-
-  if (!parentDocument) {
-    return NS_OK;
-  }
-
   nsAutoCString charset;
   int32_t source;
+  nsCOMPtr<nsIPrincipal> principal;
   // opening in a new tab
-  docShell->GetParentCharset(charset);
-  docShell->GetParentCharsetSource(&source);
+  docShell->GetParentCharset(charset, &source, getter_AddRefs(principal));
 
   if (!charset.IsEmpty() &&
       !charset.Equals("UTF-8") &&
-      NodePrincipal()->Equals(parentDocument->NodePrincipal())) {
+      NodePrincipal()->Equals(principal)) {
     SetDocumentCharacterSetSource(source);
     SetDocumentCharacterSet(charset);
   }

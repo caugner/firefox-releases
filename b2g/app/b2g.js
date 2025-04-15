@@ -25,6 +25,8 @@ pref("browser.cache.disk.smart_size.first_run", false);
 pref("browser.cache.memory.enable", true);
 pref("browser.cache.memory.capacity", 1024); // kilobytes
 
+pref("browser.cache.memory_limit", 2048); // 2 MB
+
 /* image cache prefs */
 pref("image.cache.size", 1048576); // bytes
 pref("image.high_quality_downscaling.enabled", false);
@@ -94,7 +96,6 @@ pref("browser.helperApps.deleteTempFileOnExit", false);
 /* password manager */
 pref("signon.rememberSignons", true);
 pref("signon.expireMasterPassword", false);
-pref("signon.SignonFileName", "signons.txt");
 
 /* autocomplete */
 pref("browser.formfill.enable", true);
@@ -261,6 +262,8 @@ pref("layers.acceleration.disabled", false);
 pref("layers.offmainthreadcomposition.async-animations", true);
 pref("layers.async-video.enabled", true);
 pref("layers.async-pan-zoom.enabled", true);
+pref("gfx.content.azure.enabled", true);
+pref("gfx.content.azure.backends", "cairo");
 #endif
 
 // Web Notifications
@@ -280,7 +283,7 @@ pref("media.video-queue.default-size", 3);
 
 // optimize images' memory usage
 pref("image.mem.decodeondraw", true);
-pref("content.image.allow_locking", false); /* don't allow image locking */
+pref("image.mem.allow_locking_in_content_processes", false); /* don't allow image locking */
 pref("image.mem.min_discard_timeout_ms", 86400000); /* 24h, we rely on the out of memory hook */
 pref("image.mem.max_decoded_image_kb", 30000); /* 30MB seems reasonable */
 pref("image.onload.decode.limit", 24); /* don't decode more than 24 images eagerly */
@@ -320,7 +323,6 @@ pref("browser.safebrowsing.provider.0.reportMalwareURL", "http://{moz:locale}.ma
 pref("browser.safebrowsing.provider.0.reportMalwareErrorURL", "http://{moz:locale}.malware-error.mozilla.com/?hl={moz:locale}");
 
 // FAQ URLs
-pref("browser.safebrowsing.warning.infoURL", "http://www.mozilla.com/%LOCALE%/%APP%/phishing-protection/");
 pref("browser.geolocation.warning.infoURL", "http://www.mozilla.com/%LOCALE%/%APP%/geolocation/");
 
 // Name of the about: page contributed by safebrowsing to handle display of error
@@ -329,9 +331,6 @@ pref("urlclassifier.alternate_error_page", "blocked");
 
 // The number of random entries to send with a gethash request.
 pref("urlclassifier.gethashnoise", 4);
-
-// The list of tables that use the gethash request to confirm partial results.
-pref("urlclassifier.gethashtables", "goog-phish-shavar,goog-malware-shavar");
 
 // If an urlclassifier table has not been updated in this number of seconds,
 // a gethash request will be forced to check that the result is still in
@@ -391,6 +390,9 @@ pref("dom.ipc.browser_frames.oop_by_default", false);
 // SMS/MMS
 pref("dom.sms.enabled", true);
 
+//The waiting time in network manager.
+pref("network.gonk.ms-release-mms-connection", 30000);
+
 // WebContacts
 pref("dom.mozContacts.enabled", true);
 pref("dom.navigator-property.disable.mozContacts", false);
@@ -407,6 +409,8 @@ pref("dom.mozAlarms.enabled", true);
 
 // SimplePush
 pref("services.push.enabled", true);
+// Debugging enabled.
+pref("services.push.debug", false);
 // Is the network connection allowed to be up?
 // This preference should be used in UX to enable/disable push.
 pref("services.push.connection.enabled", true);
@@ -442,6 +446,9 @@ pref("media.realtime_decoder.enabled", true);
 
 // TCPSocket
 pref("dom.mozTCPSocket.enabled", true);
+
+// WebPayment
+pref("dom.mozPay.enabled", true);
 
 // "Preview" landing of bug 710563, which is bogged down in analysis
 // of talos regression.  This is a needed change for higher-framerate
@@ -549,6 +556,7 @@ pref("dom.webapps.useCurrentProfile", true);
 pref("dom.sysmsg.enabled", true);
 pref("media.plugins.enabled", false);
 pref("media.omx.enabled", true);
+pref("media.rtsp.enabled", true);
 
 // Disable printing (particularly, window.print())
 pref("dom.disable_window_print", true);
@@ -590,6 +598,11 @@ pref("ui.showHideScrollbars", 1);
 pref("dom.ipc.processPriorityManager.enabled", true);
 pref("dom.ipc.processPriorityManager.backgroundGracePeriodMS", 1000);
 pref("dom.ipc.processPriorityManager.temporaryPriorityLockMS", 5000);
+
+// Number of different background levels for background processes.  We use
+// these different levels to force the low-memory killer to kill processes in
+// a LRU order.
+pref("dom.ipc.processPriorityManager.backgroundLRUPoolLevels", 5);
 
 // Kernel parameters for process priorities.  These affect how processes are
 // killed on low-memory and their relative CPU priorities.
@@ -715,6 +728,7 @@ pref("font.size.inflation.disabledInMasterProcess", true);
 pref("memory.free_dirty_pages", true);
 
 pref("layout.imagevisibility.enabled", false);
+pref("layout.imagevisibility.enabled_for_browser_elements_only", true);
 pref("layout.imagevisibility.numscrollportwidths", 1);
 pref("layout.imagevisibility.numscrollportheights", 1);
 
@@ -774,11 +788,15 @@ pref("network.sntp.timeout", 30); // In seconds.
 // Enable promise
 pref("dom.promise.enabled", false);
 
-// DOM Inter-App Communication API.
-#ifdef MOZ_WIDGET_GONK
-// Enable this only for gonk-specific build but not for desktop build.
-pref("dom.inter-app-communication-api.enabled", true);
+// Enable dataStore
+#ifdef RELEASE_BUILD
+pref("dom.datastore.enabled", false);
+#else
+pref("dom.datastore.enabled", true);
 #endif
+
+// DOM Inter-App Communication API.
+pref("dom.inter-app-communication-api.enabled", true);
 
 // Allow ADB to run for this many hours before disabling
 // (only applies when marionette is disabled)
@@ -796,6 +814,9 @@ pref("devtools.debugger.unix-domain-socket", "/data/local/debugger-socket");
 // falling back to Skia/software for smaller canvases
 pref("gfx.canvas.azure.backends", "skia");
 pref("gfx.canvas.azure.accelerated", true);
+
+// Turn on dynamic cache size for Skia
+pref("gfx.canvas.skiagl.dynamic-cache", true);
 
 // enable fence with readpixels for SurfaceStream
 pref("gfx.gralloc.fence-with-readpixels", true);
@@ -815,3 +836,9 @@ pref("dom.mobileconnection.enabled", true);
 
 // Voice Mail API
 pref("dom.voicemail.enabled", true);
+
+// The url of the page used to display network error details.
+pref("b2g.neterror.url", "app://system.gaiamobile.org/net_error.html");
+
+// Enable Web Speech synthesis API
+pref("media.webspeech.synth.enabled", true);

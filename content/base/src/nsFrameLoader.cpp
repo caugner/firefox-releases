@@ -19,7 +19,7 @@
 #include "nsIDOMMozBrowserFrame.h"
 #include "nsIDOMWindow.h"
 #include "nsIPresShell.h"
-#include "nsIContent.h"
+#include "nsIContentInlines.h"
 #include "nsIContentViewer.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
@@ -45,7 +45,6 @@
 #include "nsIScrollableFrame.h"
 #include "nsSubDocumentFrame.h"
 #include "nsError.h"
-#include "nsGUIEvent.h"
 #include "nsEventDispatcher.h"
 #include "nsISHistory.h"
 #include "nsISHistoryInternal.h"
@@ -1451,11 +1450,9 @@ nsFrameLoader::GetOwnApp()
   nsCOMPtr<nsIAppsService> appsService = do_GetService(APPS_SERVICE_CONTRACTID);
   NS_ENSURE_TRUE(appsService, nullptr);
 
-  nsCOMPtr<mozIDOMApplication> domApp;
-  appsService->GetAppByManifestURL(manifest, getter_AddRefs(domApp));
+  nsCOMPtr<mozIApplication> app;
+  appsService->GetAppByManifestURL(manifest, getter_AddRefs(app));
 
-  nsCOMPtr<mozIApplication> app = do_QueryInterface(domApp);
-  MOZ_ASSERT_IF(domApp, app);
   return app.forget();
 }
 
@@ -1474,12 +1471,9 @@ nsFrameLoader::GetContainingApp()
   nsCOMPtr<nsIAppsService> appsService = do_GetService(APPS_SERVICE_CONTRACTID);
   NS_ENSURE_TRUE(appsService, nullptr);
 
-  nsCOMPtr<mozIDOMApplication> domApp;
-  appsService->GetAppByLocalId(appId, getter_AddRefs(domApp));
-  MOZ_ASSERT(domApp);
+  nsCOMPtr<mozIApplication> app;
+  appsService->GetAppByLocalId(appId, getter_AddRefs(app));
 
-  nsCOMPtr<mozIApplication> app = do_QueryInterface(domApp);
-  MOZ_ASSERT_IF(domApp, app);
   return app.forget();
 }
 

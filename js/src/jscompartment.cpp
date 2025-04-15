@@ -10,6 +10,7 @@
 #include "mozilla/MemoryReporting.h"
 
 #include "jscntxt.h"
+#include "jsfriendapi.h"
 #include "jsgc.h"
 #include "jsiter.h"
 #include "jsproxy.h"
@@ -18,7 +19,7 @@
 
 #include "gc/Marking.h"
 #ifdef JS_ION
-#include "jit/IonCompartment.h"
+#include "jit/JitCompartment.h"
 #endif
 #include "js/RootingAPI.h"
 #include "vm/StopIterationObject.h"
@@ -28,6 +29,7 @@
 #include "jsfuninlines.h"
 #include "jsgcinlines.h"
 #include "jsinferinlines.h"
+#include "jsobjinlines.h"
 
 using namespace js;
 using namespace js::gc;
@@ -38,34 +40,35 @@ JSCompartment::JSCompartment(Zone *zone, const JS::CompartmentOptions &options =
   : options_(options),
     zone_(zone),
     runtime_(zone->runtimeFromMainThread()),
-    principals(NULL),
+    principals(nullptr),
     isSystem(false),
     marked(true),
 #ifdef DEBUG
     firedOnNewGlobalObject(false),
 #endif
-    global_(NULL),
+    global_(nullptr),
     enterCompartmentDepth(0),
     lastCodeRelease(0),
-    data(NULL),
-    objectMetadataCallback(NULL),
+    data(nullptr),
+    objectMetadataCallback(nullptr),
     lastAnimationTime(0),
     regExps(runtime_),
     typeReprs(runtime_),
+    globalWriteBarriered(false),
     propertyTree(thisForCtor()),
-    gcIncomingGrayPointers(NULL),
-    gcLiveArrayBuffers(NULL),
-    gcWeakMapList(NULL),
+    gcIncomingGrayPointers(nullptr),
+    gcLiveArrayBuffers(nullptr),
+    gcWeakMapList(nullptr),
     debugModeBits(runtime_->debugMode ? DebugFromC : 0),
     rngState(0),
-    watchpointMap(NULL),
-    scriptCountsMap(NULL),
-    debugScriptMap(NULL),
-    debugScopes(NULL),
-    enumerators(NULL),
-    compartmentStats(NULL)
+    watchpointMap(nullptr),
+    scriptCountsMap(nullptr),
+    debugScriptMap(nullptr),
+    debugScopes(nullptr),
+    enumerators(nullptr),
+    compartmentStats(nullptr)
 #ifdef JS_ION
-    , ionCompartment_(NULL)
+    , jitCompartment_(nullptr)
 #endif
 {
     runtime_->numCompartments++;
@@ -74,7 +77,7 @@ JSCompartment::JSCompartment(Zone *zone, const JS::CompartmentOptions &options =
 JSCompartment::~JSCompartment()
 {
 #ifdef JS_ION
-    js_delete(ionCompartment_);
+    js_delete(jitCompartment_);
 #endif
 
     js_delete(watchpointMap);
@@ -117,57 +120,59 @@ JSCompartment::init(JSContext *cx)
 }
 
 #ifdef JS_ION
-jit::IonRuntime *
-JSRuntime::createIonRuntime(JSContext *cx)
+jit::JitRuntime *
+JSRuntime::createJitRuntime(JSContext *cx)
 {
     // The runtime will only be created on its owning thread, but reads of a
-    // runtime's ionRuntime() can occur when another thread is triggering an
+    // runtime's jitRuntime() can occur when another thread is triggering an
     // operation callback.
     AutoLockForOperationCallback lock(this);
 
-    JS_ASSERT(!ionRuntime_);
+    JS_ASSERT(!jitRuntime_);
 
-    ionRuntime_ = cx->new_<jit::IonRuntime>();
+    jitRuntime_ = cx->new_<jit::JitRuntime>();
 
-    if (!ionRuntime_)
-        return NULL;
+    if (!jitRuntime_)
+        return nullptr;
 
-    if (!ionRuntime_->initialize(cx)) {
-        js_delete(ionRuntime_);
-        ionRuntime_ = NULL;
+    if (!jitRuntime_->initialize(cx)) {
+        js_delete(jitRuntime_);
+        jitRuntime_ = nullptr;
+
+        AutoLockForExclusiveAccess atomsLock(cx);
 
         JSCompartment *comp = cx->runtime()->atomsCompartment();
-        if (comp->ionCompartment_) {
-            js_delete(comp->ionCompartment_);
-            comp->ionCompartment_ = NULL;
+        if (comp->jitCompartment_) {
+            js_delete(comp->jitCompartment_);
+            comp->jitCompartment_ = nullptr;
         }
 
-        return NULL;
+        return nullptr;
     }
 
-    return ionRuntime_;
+    return jitRuntime_;
 }
 
 bool
-JSCompartment::ensureIonCompartmentExists(JSContext *cx)
+JSCompartment::ensureJitCompartmentExists(JSContext *cx)
 {
     using namespace js::jit;
-    if (ionCompartment_)
+    if (jitCompartment_)
         return true;
 
-    IonRuntime *ionRuntime = cx->runtime()->getIonRuntime(cx);
-    if (!ionRuntime)
+    JitRuntime *jitRuntime = cx->runtime()->getJitRuntime(cx);
+    if (!jitRuntime)
         return false;
 
     /* Set the compartment early, so linking works. */
-    ionCompartment_ = cx->new_<IonCompartment>(ionRuntime);
+    jitCompartment_ = cx->new_<JitCompartment>(jitRuntime);
 
-    if (!ionCompartment_)
+    if (!jitCompartment_)
         return false;
 
-    if (!ionCompartment_->initialize(cx)) {
-        js_delete(ionCompartment_);
-        ionCompartment_ = NULL;
+    if (!jitCompartment_->initialize(cx)) {
+        js_delete(jitCompartment_);
+        jitCompartment_ = nullptr;
         return false;
     }
 
@@ -277,7 +282,7 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
 
     /*
      * Wrappers should really be parented to the wrapped parent of the wrapped
-     * object, but in that case a wrapped global object would have a NULL
+     * object, but in that case a wrapped global object would have a nullptr
      * parent without being a proper global object (JSCLASS_IS_GLOBAL). Instead,
      * we parent all wrappers to the global object in their home compartment.
      * This loses us some transparency, and is generally very cheesy.
@@ -338,11 +343,11 @@ JSCompartment::wrap(JSContext *cx, MutableHandleObject obj, HandleObject existin
         /* Is it possible to reuse |existing|? */
         if (!existing->getTaggedProto().isLazy() ||
             // Note: don't use is<ObjectProxyObject>() here -- it also matches subclasses!
-            existing->getClass() != &ObjectProxyObject::class_ ||
+            existing->getClass() != &ProxyObject::uncallableClass_ ||
             existing->getParent() != global ||
             obj->isCallable())
         {
-            existing = NULL;
+            existing = nullptr;
         }
     }
 
@@ -483,8 +488,8 @@ JSCompartment::mark(JSTracer *trc)
     JS_ASSERT(!trc->runtime->isHeapMinorCollecting());
 
 #ifdef JS_ION
-    if (ionCompartment_)
-        ionCompartment_->mark(trc, this);
+    if (jitCompartment_)
+        jitCompartment_->mark(trc, this);
 #endif
 
     /*
@@ -517,11 +522,11 @@ JSCompartment::sweep(FreeOp *fop, bool releaseTypes)
         sweepCallsiteClones();
 
         if (global_ && IsObjectAboutToBeFinalized(global_.unsafeGet()))
-            global_ = NULL;
+            global_ = nullptr;
 
 #ifdef JS_ION
-        if (ionCompartment_)
-            ionCompartment_->sweep(fop);
+        if (jitCompartment_)
+            jitCompartment_->sweep(fop);
 #endif
 
         /*
@@ -592,7 +597,7 @@ JSCompartment::purge()
 void
 JSCompartment::clearTables()
 {
-    global_ = NULL;
+    global_ = nullptr;
 
     regExps.clearTables();
 
@@ -602,7 +607,7 @@ JSCompartment::clearTables()
     JS_ASSERT(crossCompartmentWrappers.empty());
     JS_ASSERT_IF(callsiteClones.initialized(), callsiteClones.empty());
 #ifdef JS_ION
-    JS_ASSERT(!ionCompartment_);
+    JS_ASSERT(!jitCompartment_);
 #endif
     JS_ASSERT(!debugScopes);
     JS_ASSERT(!gcWeakMapList);
@@ -616,6 +621,24 @@ JSCompartment::clearTables()
         newTypeObjects.clear();
     if (lazyTypeObjects.initialized())
         lazyTypeObjects.clear();
+}
+
+void
+JSCompartment::setObjectMetadataCallback(js::ObjectMetadataCallback callback)
+{
+    // Clear any jitcode in the runtime, which behaves differently depending on
+    // whether there is a creation callback.
+    ReleaseAllJITCode(runtime_->defaultFreeOp());
+
+    // Turn off GGC while the metadata hook is present, to prevent
+    // nursery-allocated metadata from being used as a lookup key in
+    // InitialShapeTable entries.
+    if (callback)
+        JS::DisableGenerationalGC(runtime_);
+    else
+        JS::EnableGenerationalGC(runtime_);
+
+    objectMetadataCallback = callback;
 }
 
 bool
@@ -650,20 +673,20 @@ CreateLazyScriptsForCompartment(JSContext *cx)
 {
     AutoObjectVector lazyFunctions(cx);
 
-    // Find all root lazy functions in the compartment: those which have not been
-    // compiled and which have a source object, indicating that their parent has
-    // been compiled.
-    for (gc::CellIter i(cx->zone(), JSFunction::FinalizeKind); !i.done(); i.next()) {
-        JSObject *obj = i.get<JSObject>();
-        if (obj->compartment() == cx->compartment() && obj->is<JSFunction>()) {
-            JSFunction *fun = &obj->as<JSFunction>();
-            if (fun->isInterpretedLazy()) {
-                LazyScript *lazy = fun->lazyScriptOrNull();
-                if (lazy && lazy->sourceObject() && !lazy->maybeScript()) {
-                    if (!lazyFunctions.append(fun))
-                        return false;
-                }
-            }
+    // Find all live lazy scripts in the compartment, and via them all root
+    // lazy functions in the compartment: those which have not been compiled
+    // and which have a source object, indicating that their parent has been
+    // compiled.
+    for (gc::CellIter i(cx->zone(), gc::FINALIZE_LAZY_SCRIPT); !i.done(); i.next()) {
+        LazyScript *lazy = i.get<LazyScript>();
+        JSFunction *fun = lazy->function();
+        if (fun->compartment() == cx->compartment() &&
+            lazy->sourceObject() && !lazy->maybeScript())
+        {
+            MOZ_ASSERT(fun->isInterpretedLazy());
+            MOZ_ASSERT(lazy == fun->lazyScriptOrNull());
+            if (!lazyFunctions.append(fun))
+                return false;
         }
     }
 
@@ -685,27 +708,24 @@ CreateLazyScriptsForCompartment(JSContext *cx)
             return false;
     }
 
-    // Repoint any clones of the original functions to their new script.
-    for (gc::CellIter i(cx->zone(), JSFunction::FinalizeKind); !i.done(); i.next()) {
-        JSObject *obj = i.get<JSObject>();
-        if (obj->compartment() == cx->compartment() && obj->is<JSFunction>()) {
-            JSFunction *fun = &obj->as<JSFunction>();
-            if (fun->isInterpretedLazy()) {
-                LazyScript *lazy = fun->lazyScriptOrNull();
-                if (lazy && lazy->maybeScript())
-                    fun->existingScript();
-            }
-        }
-    }
-
     return true;
 }
 
 bool
-JSCompartment::setDebugModeFromC(JSContext *cx, bool b, AutoDebugModeGC &dmgc)
+JSCompartment::ensureDelazifyScriptsForDebugMode(JSContext *cx)
+{
+    MOZ_ASSERT(cx->compartment() == this);
+    if ((debugModeBits & DebugNeedDelazification) && !CreateLazyScriptsForCompartment(cx))
+        return false;
+    debugModeBits &= ~DebugNeedDelazification;
+    return true;
+}
+
+bool
+JSCompartment::setDebugModeFromC(JSContext *cx, bool b, AutoDebugModeInvalidation &invalidate)
 {
     bool enabledBefore = debugMode();
-    bool enabledAfter = (debugModeBits & ~unsigned(DebugFromC)) || b;
+    bool enabledAfter = (debugModeBits & DebugModeFromMask & ~DebugFromC) || b;
 
     // Debug mode can be enabled only when no scripts from the target
     // compartment are on the stack. It would even be incorrect to discard just
@@ -721,17 +741,15 @@ JSCompartment::setDebugModeFromC(JSContext *cx, bool b, AutoDebugModeGC &dmgc)
     if (enabledBefore != enabledAfter) {
         onStack = hasScriptsOnStack();
         if (b && onStack) {
-            JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_DEBUG_NOT_IDLE);
+            JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_DEBUG_NOT_IDLE);
             return false;
         }
-        if (enabledAfter && !CreateLazyScriptsForCompartment(cx))
-            return false;
     }
 
-    debugModeBits = (debugModeBits & ~unsigned(DebugFromC)) | (b ? DebugFromC : 0);
+    debugModeBits = (debugModeBits & ~DebugFromC) | (b ? DebugFromC : 0);
     JS_ASSERT(debugMode() == enabledAfter);
     if (enabledBefore != enabledAfter) {
-        updateForDebugMode(cx->runtime()->defaultFreeOp(), dmgc);
+        updateForDebugMode(cx->runtime()->defaultFreeOp(), invalidate);
         if (!enabledAfter)
             DebugScopes::onCompartmentLeaveDebugMode(this);
     }
@@ -739,7 +757,7 @@ JSCompartment::setDebugModeFromC(JSContext *cx, bool b, AutoDebugModeGC &dmgc)
 }
 
 void
-JSCompartment::updateForDebugMode(FreeOp *fop, AutoDebugModeGC &dmgc)
+JSCompartment::updateForDebugMode(FreeOp *fop, AutoDebugModeInvalidation &invalidate)
 {
     JSRuntime *rt = runtimeFromMainThread();
 
@@ -749,52 +767,42 @@ JSCompartment::updateForDebugMode(FreeOp *fop, AutoDebugModeGC &dmgc)
     }
 
 #ifdef JS_ION
+    MOZ_ASSERT(invalidate.isFor(this));
     JS_ASSERT_IF(debugMode(), !hasScriptsOnStack());
 
-    // When we change a compartment's debug mode, whether we're turning it
-    // on or off, we must always throw away all analyses: debug mode
-    // affects various aspects of the analysis, which then get baked into
-    // SSA results, which affects code generation in complicated ways. We
-    // must also throw away all JIT code, as its soundness depends on the
-    // analyses.
+    // Invalidate all JIT code since debug mode invalidates assumptions made
+    // by the JIT.
     //
-    // It suffices to do a garbage collection cycle or to finish the
-    // ongoing GC cycle. The necessary cleanup happens in
-    // JSCompartment::sweep.
-    //
-    // dmgc makes sure we can't forget to GC, but it is also important not
-    // to run any scripts in this compartment until the dmgc is destroyed.
-    // That is the caller's responsibility.
-    if (!rt->isHeapBusy())
-        dmgc.scheduleGC(zone());
+    // The AutoDebugModeInvalidation argument makes sure we can't forget to
+    // invalidate, but it is also important not to run any scripts in this
+    // compartment until the invalidate is destroyed.  That is the caller's
+    // responsibility.
+    invalidate.scheduleInvalidation(debugMode());
 #endif
 }
 
 bool
 JSCompartment::addDebuggee(JSContext *cx, js::GlobalObject *global)
 {
-    AutoDebugModeGC dmgc(cx->runtime());
-    return addDebuggee(cx, global, dmgc);
+    AutoDebugModeInvalidation invalidate(this);
+    return addDebuggee(cx, global, invalidate);
 }
 
 bool
 JSCompartment::addDebuggee(JSContext *cx,
                            GlobalObject *globalArg,
-                           AutoDebugModeGC &dmgc)
+                           AutoDebugModeInvalidation &invalidate)
 {
     Rooted<GlobalObject*> global(cx, globalArg);
 
     bool wasEnabled = debugMode();
-    if (!wasEnabled && !CreateLazyScriptsForCompartment(cx))
-        return false;
     if (!debuggees.put(global)) {
         js_ReportOutOfMemory(cx);
         return false;
     }
     debugModeBits |= DebugFromJS;
-    if (!wasEnabled) {
-        updateForDebugMode(cx->runtime()->defaultFreeOp(), dmgc);
-    }
+    if (!wasEnabled)
+        updateForDebugMode(cx->runtime()->defaultFreeOp(), invalidate);
     return true;
 }
 
@@ -803,14 +811,14 @@ JSCompartment::removeDebuggee(FreeOp *fop,
                               js::GlobalObject *global,
                               js::GlobalObjectSet::Enum *debuggeesEnum)
 {
-    AutoDebugModeGC dmgc(fop->runtime());
-    return removeDebuggee(fop, global, dmgc, debuggeesEnum);
+    AutoDebugModeInvalidation invalidate(this);
+    return removeDebuggee(fop, global, invalidate, debuggeesEnum);
 }
 
 void
 JSCompartment::removeDebuggee(FreeOp *fop,
                               js::GlobalObject *global,
-                              AutoDebugModeGC &dmgc,
+                              AutoDebugModeInvalidation &invalidate,
                               js::GlobalObjectSet::Enum *debuggeesEnum)
 {
     bool wasEnabled = debugMode();
@@ -824,7 +832,7 @@ JSCompartment::removeDebuggee(FreeOp *fop,
         debugModeBits &= ~DebugFromJS;
         if (wasEnabled && !debugMode()) {
             DebugScopes::onCompartmentLeaveDebugMode(this);
-            updateForDebugMode(fop, dmgc);
+            updateForDebugMode(fop, invalidate);
         }
     }
 }
@@ -851,26 +859,33 @@ JSCompartment::clearTraps(FreeOp *fop)
 }
 
 void
-JSCompartment::sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, size_t *compartmentObject,
-                                   JS::TypeInferenceSizes *tiSizes, size_t *shapesCompartmentTables,
-                                   size_t *crossCompartmentWrappersArg, size_t *regexpCompartment,
-                                   size_t *debuggeesSet, size_t *baselineStubsOptimized)
+JSCompartment::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
+                                      size_t *tiPendingArrays,
+                                      size_t *tiAllocationSiteTables,
+                                      size_t *tiArrayTypeTables,
+                                      size_t *tiObjectTypeTables,
+                                      size_t *compartmentObject,
+                                      size_t *shapesCompartmentTables,
+                                      size_t *crossCompartmentWrappersArg,
+                                      size_t *regexpCompartment,
+                                      size_t *debuggeesSet,
+                                      size_t *baselineStubsOptimized)
 {
-    *compartmentObject = mallocSizeOf(this);
-    sizeOfTypeInferenceData(tiSizes, mallocSizeOf);
-    *shapesCompartmentTables = baseShapes.sizeOfExcludingThis(mallocSizeOf)
-                             + initialShapes.sizeOfExcludingThis(mallocSizeOf)
-                             + newTypeObjects.sizeOfExcludingThis(mallocSizeOf)
-                             + lazyTypeObjects.sizeOfExcludingThis(mallocSizeOf);
-    *crossCompartmentWrappersArg = crossCompartmentWrappers.sizeOfExcludingThis(mallocSizeOf);
-    *regexpCompartment = regExps.sizeOfExcludingThis(mallocSizeOf);
-    *debuggeesSet = debuggees.sizeOfExcludingThis(mallocSizeOf);
+    *compartmentObject += mallocSizeOf(this);
+    types.addSizeOfExcludingThis(mallocSizeOf, tiPendingArrays, tiAllocationSiteTables,
+                                 tiArrayTypeTables, tiObjectTypeTables);
+    *shapesCompartmentTables += baseShapes.sizeOfExcludingThis(mallocSizeOf)
+                              + initialShapes.sizeOfExcludingThis(mallocSizeOf)
+                              + newTypeObjects.sizeOfExcludingThis(mallocSizeOf)
+                              + lazyTypeObjects.sizeOfExcludingThis(mallocSizeOf);
+    *crossCompartmentWrappersArg += crossCompartmentWrappers.sizeOfExcludingThis(mallocSizeOf);
+    *regexpCompartment += regExps.sizeOfExcludingThis(mallocSizeOf);
+    *debuggeesSet += debuggees.sizeOfExcludingThis(mallocSizeOf);
 #ifdef JS_ION
-    *baselineStubsOptimized = ionCompartment()
-        ? ionCompartment()->optimizedStubSpace()->sizeOfExcludingThis(mallocSizeOf)
-        : 0;
-#else
-    *baselineStubsOptimized = 0;
+    if (jitCompartment()) {
+        *baselineStubsOptimized +=
+            jitCompartment()->optimizedStubSpace()->sizeOfExcludingThis(mallocSizeOf);
+    }
 #endif
 }
 

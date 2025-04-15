@@ -11,6 +11,7 @@
 #include "nsIWidget.h"
 #include "nsPIDOMWindow.h"
 #include "nsView.h"
+#include "mozilla/TextEvents.h"
 
 namespace mozilla {
 namespace dom {
@@ -81,7 +82,7 @@ CompositionStringSynthesizer::AppendClause(uint32_t aLength,
     case ATTR_SELECTEDRAWTEXT:
     case ATTR_CONVERTEDTEXT:
     case ATTR_SELECTEDCONVERTEDTEXT: {
-      nsTextRange textRange;
+      TextRange textRange;
       textRange.mStartOffset =
         mClauses.IsEmpty() ? 0 : mClauses[mClauses.Length() - 1].mEndOffset;
       textRange.mEndOffset = textRange.mStartOffset + aLength;
@@ -133,7 +134,7 @@ CompositionStringSynthesizer::DispatchEvent(bool* aDefaultPrevented)
     mClauses.AppendElement(mCaret);
   }
 
-  nsTextEvent textEvent(true, NS_TEXT_TEXT, widget);
+  WidgetTextEvent textEvent(true, NS_TEXT_TEXT, widget);
   textEvent.time = PR_IntervalNow();
   textEvent.theText = mString;
   textEvent.rangeCount = mClauses.Length();

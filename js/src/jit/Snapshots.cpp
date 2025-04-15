@@ -6,14 +6,11 @@
 
 #include "jsscript.h"
 
-#include "jit/IonFrames.h"
-#include "jit/IonLinker.h"
 #include "jit/IonSpewer.h"
 #ifdef TRACK_SNAPSHOTS
 #include "jit/LIR.h"
 #include "jit/MIR.h"
 #endif
-#include "jit/MIRGenerator.h"
 #include "jit/SnapshotReader.h"
 #include "jit/SnapshotWriter.h"
 
@@ -304,7 +301,10 @@ SnapshotWriter::startSnapshot(uint32_t frameCount, BailoutKind kind, bool resume
 void
 SnapshotWriter::startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32_t exprStack)
 {
-    JS_ASSERT(CountArgSlots(script, fun) < SNAPSHOT_MAX_NARGS);
+    // Test if we honor the maximum of arguments at all times.
+    // This is a sanity check and not an algorithm limit. So check might be a bit too loose.
+    // +4 to account for scope chain, return value, this value and maybe arguments_object.
+    JS_ASSERT(CountArgSlots(script, fun) < SNAPSHOT_MAX_NARGS + 4);
 
     uint32_t implicit = StartArgSlot(script, fun);
     uint32_t formalArgs = CountArgSlots(script, fun);

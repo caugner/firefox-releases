@@ -13,11 +13,11 @@
 #include "jit/FixedList.h"
 #include "jit/IonAllocPolicy.h"
 #include "jit/MIR.h"
-#include "jit/MIRGenerator.h"
 
 namespace js {
 namespace jit {
 
+class BytecodeAnalysis;
 class MBasicBlock;
 class MIRGraph;
 class MStart;
@@ -46,7 +46,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     MBasicBlock(MIRGraph &graph, CompileInfo &info, jsbytecode *pc, Kind kind);
     bool init();
     void copySlots(MBasicBlock *from);
-    bool inherit(MBasicBlock *pred, uint32_t popped);
+    bool inherit(BytecodeAnalysis *analysis, MBasicBlock *pred, uint32_t popped);
     bool inheritResumePoint(MBasicBlock *pred);
     void assertUsesAreNotWithin(MUseIterator use, MUseIterator end);
 
@@ -65,9 +65,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     ////////// BEGIN GRAPH BUILDING INSTRUCTIONS //////////
     ///////////////////////////////////////////////////////
 
-    // Creates a new basic block for a MIR generator. If |pred| is not NULL,
+    // Creates a new basic block for a MIR generator. If |pred| is not nullptr,
     // its slots and stack depth are initialized from |pred|.
-    static MBasicBlock *New(MIRGraph &graph, CompileInfo &info,
+    static MBasicBlock *New(MIRGraph &graph, BytecodeAnalysis *analysis, CompileInfo &info,
                             MBasicBlock *pred, jsbytecode *entryPc, Kind kind);
     static MBasicBlock *NewPopN(MIRGraph &graph, CompileInfo &info,
                                 MBasicBlock *pred, jsbytecode *entryPc, Kind kind, uint32_t popn);
@@ -149,8 +149,8 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     MDefinition *pop();
     void popn(uint32_t n);
 
-    // Adds an instruction to this block's instruction list. |ins| may be NULL
-    // to simplify OOM checking.
+    // Adds an instruction to this block's instruction list. |ins| may be
+    // nullptr to simplify OOM checking.
     void add(MInstruction *ins);
 
     // Marks the last instruction of the block; no further instructions
@@ -550,19 +550,14 @@ class MIRGraph
   public:
     MIRGraph(TempAllocator *alloc)
       : alloc_(alloc),
-        exitAccumulator_(NULL),
+        exitAccumulator_(nullptr),
         blockIdGen_(0),
         idGen_(0),
-        osrBlock_(NULL),
-        osrStart_(NULL),
+        osrBlock_(nullptr),
+        osrStart_(nullptr),
         numBlocks_(0),
         hasTryBlock_(false)
     { }
-
-    template <typename T>
-    T * allocate(size_t count = 1) {
-        return reinterpret_cast<T *>(alloc_->allocate(sizeof(T) * count));
-    }
 
     void addBlock(MBasicBlock *block);
     void insertBlockAfter(MBasicBlock *at, MBasicBlock *block);

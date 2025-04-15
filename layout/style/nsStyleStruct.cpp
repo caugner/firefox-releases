@@ -28,6 +28,7 @@
 
 #include "mozilla/Likely.h"
 #include "nsIURI.h"
+#include "nsIDocument.h"
 #include <algorithm>
 
 static_assert((((1 << nsStyleStructID_Length) - 1) &
@@ -2584,7 +2585,7 @@ nsStyleContentData::TrackImage(nsPresContext* aContext)
   // Sanity
   NS_ABORT_IF_FALSE(!mImageTracked, "Already tracking image!");
   NS_ABORT_IF_FALSE(mType == eStyleContentType_Image,
-                    "Tryingto do image tracking on non-image!");
+                    "Trying to do image tracking on non-image!");
   NS_ABORT_IF_FALSE(mContent.mImage,
                     "Can't track image when there isn't one!");
 
@@ -2934,6 +2935,8 @@ nsStyleText::nsStyleText(void)
   MOZ_COUNT_CTOR(nsStyleText);
   mTextAlign = NS_STYLE_TEXT_ALIGN_DEFAULT;
   mTextAlignLast = NS_STYLE_TEXT_ALIGN_AUTO;
+  mTextAlignTrue = false;
+  mTextAlignLastTrue = false;
   mTextTransform = NS_STYLE_TEXT_TRANSFORM_NONE;
   mWhiteSpace = NS_STYLE_WHITESPACE_NORMAL;
   mWordBreak = NS_STYLE_WORDBREAK_NORMAL;
@@ -2955,6 +2958,8 @@ nsStyleText::nsStyleText(void)
 nsStyleText::nsStyleText(const nsStyleText& aSource)
   : mTextAlign(aSource.mTextAlign),
     mTextAlignLast(aSource.mTextAlignLast),
+    mTextAlignTrue(false),
+    mTextAlignLastTrue(false),
     mTextTransform(aSource.mTextTransform),
     mWhiteSpace(aSource.mWhiteSpace),
     mWordBreak(aSource.mWordBreak),
@@ -2992,6 +2997,8 @@ nsChangeHint nsStyleText::CalcDifference(const nsStyleText& aOther) const
 
   if ((mTextAlign != aOther.mTextAlign) ||
       (mTextAlignLast != aOther.mTextAlignLast) ||
+      (mTextAlignTrue != aOther.mTextAlignTrue) ||
+      (mTextAlignLastTrue != aOther.mTextAlignLastTrue) ||
       (mTextTransform != aOther.mTextTransform) ||
       (mWhiteSpace != aOther.mWhiteSpace) ||
       (mWordBreak != aOther.mWordBreak) ||

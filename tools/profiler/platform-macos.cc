@@ -349,12 +349,19 @@ pid_t gettid()
   return (pid_t) syscall(SYS_thread_selfid);
 }
 
+/* static */ Thread::tid_t
+Thread::GetCurrentId()
+{
+  return gettid();
+}
+
 bool Sampler::RegisterCurrentThread(const char* aName,
                                     PseudoStack* aPseudoStack,
                                     bool aIsMainThread, void* stackTop)
 {
   if (!Sampler::sRegisteredThreadsMutex)
     return false;
+
 
   mozilla::MutexAutoLock lock(*Sampler::sRegisteredThreadsMutex);
 
@@ -368,6 +375,8 @@ bool Sampler::RegisterCurrentThread(const char* aName,
       return false;
     }
   }
+
+  set_tls_stack_top(stackTop);
 
   ThreadInfo* info = new ThreadInfo(aName, id,
     aIsMainThread, aPseudoStack, stackTop);
@@ -387,6 +396,8 @@ void Sampler::UnregisterCurrentThread()
   if (!Sampler::sRegisteredThreadsMutex)
     return;
 
+  tlsStackTop.set(nullptr);
+
   mozilla::MutexAutoLock lock(*Sampler::sRegisteredThreadsMutex);
 
   int id = gettid();
@@ -400,3 +411,37 @@ void Sampler::UnregisterCurrentThread()
     }
   }
 }
+
+void TickSample::PopulateContext(void* aContext)
+{
+  // Note that this asm changes if PopulateContext's parameter list is altered
+#if defined(SPS_PLAT_amd64_darwin)
+  asm (
+      // Compute caller's %rsp by adding to %rbp:
+      // 8 bytes for previous %rbp, 8 bytes for return address
+      "leaq 0x10(%%rbp), %0\n\t"
+      // Dereference %rbp to get previous %rbp
+      "movq (%%rbp), %1\n\t"
+      :
+      "=r"(sp),
+      "=r"(fp)
+  );
+#elif defined(SPS_PLAT_x86_darwin)
+  asm (
+      // Compute caller's %esp by adding to %ebp:
+      // 4 bytes for aContext + 4 bytes for return address +
+      // 4 bytes for previous %ebp
+      "leal 0xc(%%ebp), %0\n\t"
+      // Dereference %ebp to get previous %ebp
+      "movl (%%ebp), %1\n\t"
+      :
+      "=r"(sp),
+      "=r"(fp)
+  );
+#else
+# error "Unsupported architecture"
+#endif
+  pc = reinterpret_cast<Address>(__builtin_extract_return_addr(
+                                    __builtin_return_address(0)));
+}
+

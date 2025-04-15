@@ -7,7 +7,9 @@
 #include "mozilla/ModuleUtils.h"
 #include "nsMimeTypes.h"
 
+#include "ImageFactory.h"
 #include "RasterImage.h"
+#include "SurfaceCache.h"
 
 #include "imgLoader.h"
 #include "imgRequest.h"
@@ -81,7 +83,9 @@ static nsresult
 imglib_Initialize()
 {
   mozilla::image::DiscardTracker::Initialize();
+  mozilla::image::ImageFactory::Initialize();
   mozilla::image::RasterImage::Initialize();
+  mozilla::image::SurfaceCache::Initialize();
   imgLoader::GlobalInit();
   return NS_OK;
 }
@@ -90,6 +94,7 @@ static void
 imglib_Shutdown()
 {
   imgLoader::Shutdown();
+  mozilla::image::SurfaceCache::Shutdown();
   mozilla::image::DiscardTracker::Shutdown();
 }
 

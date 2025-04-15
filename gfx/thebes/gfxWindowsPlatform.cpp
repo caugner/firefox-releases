@@ -40,6 +40,7 @@
 
 #include "gfxUserFontSet.h"
 #include "nsWindowsHelpers.h"
+#include "gfx2DGlue.h"
 
 #include <string>
 
@@ -506,7 +507,7 @@ gfxWindowsPlatform::UpdateRenderMode()
 #endif
 
     uint32_t canvasMask = 1 << BACKEND_CAIRO;
-    uint32_t contentMask = 0;
+    uint32_t contentMask = 1 << BACKEND_CAIRO;
     if (mRenderMode == RENDER_DIRECT2D) {
       canvasMask |= 1 << BACKEND_DIRECT2D;
       contentMask |= 1 << BACKEND_DIRECT2D;
@@ -676,7 +677,7 @@ gfxWindowsPlatform::CreatePlatformFontList()
 
 already_AddRefed<gfxASurface>
 gfxWindowsPlatform::CreateOffscreenSurface(const gfxIntSize& size,
-                                           gfxASurface::gfxContentType contentType)
+                                           gfxContentType contentType)
 {
     nsRefPtr<gfxASurface> surf = nullptr;
 
@@ -699,7 +700,7 @@ gfxWindowsPlatform::CreateOffscreenSurface(const gfxIntSize& size,
 
 already_AddRefed<gfxASurface>
 gfxWindowsPlatform::CreateOffscreenImageSurface(const gfxIntSize& aSize,
-                                                gfxASurface::gfxContentType aContentType)
+                                                gfxContentType aContentType)
 {
 #ifdef CAIRO_HAS_D2D_SURFACE
     if (mRenderMode == RENDER_DIRECT2D) {

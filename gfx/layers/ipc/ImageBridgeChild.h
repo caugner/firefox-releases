@@ -237,6 +237,7 @@ public:
   TemporaryRef<ImageClient> CreateImageClientNow(CompositableType aType);
 
   static void DispatchReleaseImageClient(ImageClient* aClient);
+  static void DispatchReleaseTextureClient(TextureClient* aClient);
   static void DispatchImageClientUpdate(ImageClient* aClient, ImageContainer* aContainer);
 
   /**
@@ -256,7 +257,7 @@ public:
   /**
    * See CompositableForwarder::AddTexture
    */
-  virtual void AddTexture(CompositableClient* aCompositable,
+  virtual bool AddTexture(CompositableClient* aCompositable,
                           TextureClient* aClient) MOZ_OVERRIDE;
 
   /**

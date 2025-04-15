@@ -20,6 +20,7 @@
 #include "nsXREAppData.h"
 
 #include "mozilla/Services.h"
+#include "prtime.h"
 
 extern const nsXREAppData* gAppData;
 
@@ -139,7 +140,7 @@ ProfileResetCleanup(nsIToolkitProfile* aOldProfile)
                                  kResetProgressURL,
                                  "_blank",
                                  "centerscreen,chrome,titlebar",
-                                 NULL,
+                                 nullptr,
                                  getter_AddRefs(progressWindow));
   if (NS_FAILED(rv)) return rv;
 

@@ -150,19 +150,6 @@ static const char *kMinimumRegistryVersion = "0.9";
 static NS_DEFINE_IID(kIPluginTagInfoIID, NS_IPLUGINTAGINFO_IID);
 static const char kDirectoryServiceContractID[] = "@mozilla.org/file/directory_service;1";
 
-// Registry keys for caching plugin info
-static const char kPluginsRootKey[] = "software/plugins";
-static const char kPluginsNameKey[] = "name";
-static const char kPluginsDescKey[] = "description";
-static const char kPluginsFilenameKey[] = "filename";
-static const char kPluginsFullpathKey[] = "fullpath";
-static const char kPluginsModTimeKey[] = "lastModTimeStamp";
-static const char kPluginsCanUnload[] = "canUnload";
-static const char kPluginsVersionKey[] = "version";
-static const char kPluginsMimeTypeKey[] = "mimetype";
-static const char kPluginsMimeDescKey[] = "description";
-static const char kPluginsMimeExtKey[] = "extension";
-
 #define kPluginRegistryFilename NS_LITERAL_CSTRING("pluginreg.dat")
 
 #ifdef PLUGIN_LOGGING
@@ -1280,7 +1267,7 @@ static nsresult CreateNPAPIPlugin(nsPluginTag *aPluginTag,
     nsCOMPtr<nsIFile> file = do_CreateInstance("@mozilla.org/file/local;1");
     file->InitWithPath(NS_ConvertUTF8toUTF16(aPluginTag->mFullPath));
     nsPluginFile pluginFile(file);
-    PRLibrary* pluginLibrary = NULL;
+    PRLibrary* pluginLibrary = nullptr;
 
     if (NS_FAILED(pluginFile.LoadPlugin(&pluginLibrary)) || !pluginLibrary)
       return NS_ERROR_FAILURE;
@@ -1310,7 +1297,7 @@ nsresult nsPluginHost::EnsurePluginLoaded(nsPluginTag* aPluginTag)
 nsresult nsPluginHost::GetPlugin(const char *aMimeType, nsNPAPIPlugin** aPlugin)
 {
   nsresult rv = NS_ERROR_FAILURE;
-  *aPlugin = NULL;
+  *aPlugin = nullptr;
 
   if (!aMimeType)
     return NS_ERROR_ILLEGAL_VALUE;
@@ -1523,7 +1510,7 @@ nsPluginHost::ClearSiteData(nsIPluginTag* plugin, const nsACString& domain,
 
   // If 'domain' is the null string, clear everything.
   if (domain.IsVoid()) {
-    return library->NPP_ClearSiteData(NULL, flags, maxAge);
+    return library->NPP_ClearSiteData(nullptr, flags, maxAge);
   }
 
   // Get the list of sites from the plugin.
@@ -2121,8 +2108,8 @@ nsresult nsPluginHost::FindPlugins(bool aCreatePluginList, bool * aPluginsChange
 
       invalidPlugins = invalidPlugin->mNext;
 
-      invalidPlugin->mPrev = NULL;
-      invalidPlugin->mNext = NULL;
+      invalidPlugin->mPrev = nullptr;
+      invalidPlugin->mNext = nullptr;
     }
     else {
       invalidPlugins->mSeen = false;
@@ -2547,7 +2534,7 @@ nsPluginHost::ReadPluginInfo()
         file->GetNativeLeafName(derivedFileName);
         filename = derivedFileName.get();
       } else {
-        filename = NULL;
+        filename = nullptr;
       }
 
       // skip the next line, useless in this version
@@ -2664,6 +2651,8 @@ nsPluginHost::ReadPluginInfo()
     mCachedPlugins = tag;
   }
 
+// On Android we always want to try to load a plugin again (Flash). Bug 935676.
+#ifndef MOZ_WIDGET_ANDROID
   if (hasInvalidPlugins) {
     if (!ReadSectionHeader(reader, "INVALID")) {
       return rv;
@@ -2687,6 +2676,7 @@ nsPluginHost::ReadPluginInfo()
       mInvalidPlugins = invalidTag;
     }
   }
+#endif
 
   // flip the pref so we don't import the legacy flags again
   Preferences::SetBool("plugin.importedState", true);

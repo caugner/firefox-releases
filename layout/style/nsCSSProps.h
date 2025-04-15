@@ -34,7 +34,7 @@
 #define VARIANT_IDENTIFIER_NO_INHERIT 0x004000 // like above, but excluding
 // 'inherit' and 'initial'
 #define VARIANT_AUTO            0x010000  // A
-#define VARIANT_INHERIT         0x020000  // H eCSSUnit_Initial, eCSSUnit_Inherit
+#define VARIANT_INHERIT         0x020000  // H eCSSUnit_Initial, eCSSUnit_Inherit, eCSSUnit_Unset
 #define VARIANT_NONE            0x040000  // O
 #define VARIANT_NORMAL          0x080000  // M
 #define VARIANT_SYSFONT         0x100000  // eCSSUnit_System_Font
@@ -172,10 +172,10 @@ static_assert((CSS_PROPERTY_PARSE_PROPERTY_MASK &
 // should enforce that the value of this property must be 1 or larger.
 #define CSS_PROPERTY_VALUE_AT_LEAST_ONE           (2<<13)
 
-// Does this property suppor the hashless hex color quirk in quirks mode?
+// Does this property support the hashless hex color quirk in quirks mode?
 #define CSS_PROPERTY_HASHLESS_COLOR_QUIRK         (1<<15)
 
-// Does this property suppor the unitless length quirk in quirks mode?
+// Does this property support the unitless length quirk in quirks mode?
 #define CSS_PROPERTY_UNITLESS_LENGTH_QUIRK        (1<<16)
 
 // Is this property (which must be a shorthand) really an alias?
@@ -186,6 +186,10 @@ static_assert((CSS_PROPERTY_PARSE_PROPERTY_MASK &
 
 // This property is allowed in an @page rule.
 #define CSS_PROPERTY_APPLIES_TO_PAGE_RULE         (1<<19)
+
+// This property's getComputedStyle implementation requires layout to be
+// flushed.
+#define CSS_PROPERTY_GETCS_NEEDS_LAYOUT_FLUSH     (1<<20)
 
 /**
  * Types of animatable values.
@@ -533,8 +537,10 @@ public:
   static const int32_t kSpeechRateKTable[];
   static const int32_t kStackSizingKTable[];
   static const int32_t kTableLayoutKTable[];
-  static const int32_t kTextAlignKTable[];
-  static const int32_t kTextAlignLastKTable[];
+  // Not const because we modify its entries when the pref
+  // "layout.css.text-align-true-value.enabled" changes:
+  static int32_t kTextAlignKTable[];
+  static int32_t kTextAlignLastKTable[];
   static const int32_t kTextCombineHorizontalKTable[];
   static const int32_t kTextDecorationLineKTable[];
   static const int32_t kTextDecorationStyleKTable[];

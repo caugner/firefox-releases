@@ -4,10 +4,6 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 var gPluginHandler = {
-  PLUGIN_SCRIPTED_STATE_NONE: 0,
-  PLUGIN_SCRIPTED_STATE_FIRED: 1,
-  PLUGIN_SCRIPTED_STATE_DONE: 2,
-
   PREF_NOTIFY_MISSING_FLASH: "plugins.notifyMissingFlash",
   PREF_SESSION_PERSIST_MINUTES: "plugin.sessionPermissionNow.intervalInMinutes",
   PREF_PERSISTENT_DAYS: "plugin.persistentPermissionAlways.intervalInDays",
@@ -429,7 +425,7 @@ var gPluginHandler = {
   // Callback for user clicking on the link in a click-to-play plugin
   // (where the plugin has an update)
   openPluginUpdatePage: function (aEvent) {
-    openURL(Services.urlFormatter.formatURLPref("plugins.update.url"));
+    openUILinkIn(Services.urlFormatter.formatURLPref("plugins.update.url"), "tab");
   },
 
 #ifdef MOZ_CRASHREPORTER
@@ -734,6 +730,7 @@ var gPluginHandler = {
                                       permission, expireType, expireTime);
 
       if (aNewState == "block") {
+        this._setPluginNotificationIcon(browser);
         return;
       }
     }
@@ -768,6 +765,8 @@ var gPluginHandler = {
     if (!pluginFound) {
       browser.reload();
     }
+
+    this._setPluginNotificationIcon(browser);
   },
 
   _showClickToPlayNotification: function PH_showClickToPlayNotification(aBrowser, aPlugin, aShowNow) {

@@ -12,10 +12,12 @@
 #include "nsDataHashtable.h"
 #include "nsWeakReference.h"
 #include "nsAutoPtr.h"
+#include "mozilla/Attributes.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/PodOperations.h"
 #include "mozilla/TimeStamp.h"
 #include "nsArenaMemoryStats.h"
-#include "mozilla/Attributes.h"
 
 // This should be used for any nsINode sub-class that has fields of its own
 // that it needs to measure;  any sub-class that doesn't use it will inherit
@@ -25,25 +27,50 @@
   virtual size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
 class nsWindowSizes {
+#define FOR_EACH_SIZE(macro) \
+  macro(DOM,   mDOMElementNodesSize) \
+  macro(DOM,   mDOMTextNodesSize) \
+  macro(DOM,   mDOMCDATANodesSize) \
+  macro(DOM,   mDOMCommentNodesSize) \
+  macro(DOM,   mDOMEventTargetsSize) \
+  macro(DOM,   mDOMOtherSize) \
+  macro(Style, mStyleSheetsSize) \
+  macro(Other, mLayoutPresShellSize) \
+  macro(Style, mLayoutStyleSetsSize) \
+  macro(Other, mLayoutTextRunsSize) \
+  macro(Other, mLayoutPresContextSize) \
+  macro(Other, mPropertyTablesSize) \
+
 public:
-  nsWindowSizes(mozilla::MallocSizeOf aMallocSizeOf) {
-    memset(this, 0, sizeof(nsWindowSizes));
-    mMallocSizeOf = aMallocSizeOf;
+  nsWindowSizes(mozilla::MallocSizeOf aMallocSizeOf)
+    :
+      #define ZERO_SIZE(kind, mSize)  mSize(0),
+      FOR_EACH_SIZE(ZERO_SIZE)
+      #undef ZERO_SIZE
+      mDOMEventTargetsCount(0),
+      mDOMEventListenersCount(0),
+      mArenaStats(),
+      mMallocSizeOf(aMallocSizeOf)
+  {}
+
+  void addToTabSizes(nsTabSizes *sizes) const {
+    #define ADD_TO_TAB_SIZES(kind, mSize) sizes->add(nsTabSizes::kind, mSize);
+    FOR_EACH_SIZE(ADD_TO_TAB_SIZES)
+    #undef ADD_TO_TAB_SIZES
+    mArenaStats.addToTabSizes(sizes);
   }
-  mozilla::MallocSizeOf mMallocSizeOf;
+
+  #define DECL_SIZE(kind, mSize) size_t mSize;
+  FOR_EACH_SIZE(DECL_SIZE);
+  #undef DECL_SIZE
+
+  uint32_t mDOMEventTargetsCount;
+  uint32_t mDOMEventListenersCount;
+
   nsArenaMemoryStats mArenaStats;
-  size_t mDOMElementNodes;
-  size_t mDOMTextNodes;
-  size_t mDOMCDATANodes;
-  size_t mDOMCommentNodes;
-  size_t mDOMEventTargets;
-  size_t mDOMOther;
-  size_t mStyleSheets;
-  size_t mLayoutPresShell;
-  size_t mLayoutStyleSets;
-  size_t mLayoutTextRuns;
-  size_t mLayoutPresContext;
-  size_t mPropertyTables;
+  mozilla::MallocSizeOf mMallocSizeOf;
+
+#undef FOR_EACH_SIZE
 };
 
 /**
@@ -121,30 +148,13 @@ public:
 
 private:
   /**
-   * GhostURLsReporter generates the list of all ghost windows' URLs.  If
-   * you're only interested in this list, running this report is faster than
-   * running nsWindowMemoryReporter.
-   */
-  class GhostURLsReporter MOZ_FINAL : public nsIMemoryReporter
-  {
-  public:
-    GhostURLsReporter(nsWindowMemoryReporter* aWindowReporter);
-
-    NS_DECL_ISUPPORTS
-    NS_DECL_NSIMEMORYREPORTER
-
-  private:
-    nsRefPtr<nsWindowMemoryReporter> mWindowReporter;
-  };
-
-  /**
    * nsGhostWindowReporter generates the "ghost-windows" report, which counts
    * the number of ghost windows present.
    */
-  class NumGhostsReporter MOZ_FINAL : public mozilla::MemoryUniReporter
+  class GhostWindowsReporter MOZ_FINAL : public mozilla::MemoryUniReporter
   {
   public:
-    NumGhostsReporter(nsWindowMemoryReporter* aWindowReporter)
+    GhostWindowsReporter()
       : MemoryUniReporter("ghost-windows", KIND_OTHER, UNITS_COUNT,
 "The number of ghost windows present (the number of nodes underneath "
 "explicit/window-objects/top(none)/ghost, modulo race conditions).  A ghost "
@@ -154,13 +164,12 @@ private:
 "about:memory's minimize memory usage button.\n\n"
 "Ghost windows can happen legitimately, but they are often indicative of "
 "leaks in the browser or add-ons.")
-      , mWindowReporter(aWindowReporter)
     {}
 
-  private:
-    int64_t Amount() MOZ_OVERRIDE;
+    static int64_t DistinguishedAmount();
 
-    nsRefPtr<nsWindowMemoryReporter> mWindowReporter;
+  private:
+    int64_t Amount() MOZ_OVERRIDE { return DistinguishedAmount(); }
   };
 
   // Protect ctor, use Init() instead.

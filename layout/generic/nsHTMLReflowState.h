@@ -10,7 +10,6 @@
 
 #include "nsMargin.h"
 #include "nsStyleCoord.h"
-#include "nsStyleStructInlines.h"
 #include "nsIFrame.h"
 #include "mozilla/Assertions.h"
 #include <algorithm>
@@ -228,7 +227,7 @@ struct nsHTMLReflowState : public nsCSSOffsetState {
   // pointer to the float manager associated with this area
   nsFloatManager* mFloatManager;
 
-  // LineLayout object (only for inline reflow; set to NULL otherwise)
+  // LineLayout object (only for inline reflow; set to nullptr otherwise)
   nsLineLayout*    mLineLayout;
 
   // The appropriate reflow state for the containing block (for
@@ -311,13 +310,9 @@ public:
   const nsStylePadding*    mStylePadding;
   const nsStyleText*       mStyleText;
 
-  bool IsFloating() const {
-    return mStyleDisplay->IsFloating(frame);
-  }
+  bool IsFloating() const;
 
-  uint8_t GetDisplay() const {
-    return mStyleDisplay->GetDisplay(frame);
-  }
+  uint8_t GetDisplay() const;
 
   // a frame (e.g. nsTableCellFrame) which may need to generate a special 
   // reflow for percent height calculations 

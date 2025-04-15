@@ -6,11 +6,13 @@
 
 MODULE = 'dbus'
 
-CPP_SOURCES += [
+SOURCES += [
     'nsDBusModule.cpp',
     'nsDBusService.cpp',
     'nsNetworkManagerListener.cpp',
 ]
 
 LIBRARY_NAME = 'dbusservice'
+
+IS_COMPONENT = True
 

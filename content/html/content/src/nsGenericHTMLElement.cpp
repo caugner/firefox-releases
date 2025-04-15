@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/MouseEvents.h"
 #include "mozilla/Util.h"
 #include "mozilla/Likely.h"
 
@@ -12,6 +13,7 @@
 #include "nsAttrValueInlines.h"
 #include "nsCOMPtr.h"
 #include "nsIAtom.h"
+#include "nsIContentInlines.h"
 #include "nsIContentViewer.h"
 #include "mozilla/css/StyleRule.h"
 #include "nsIDocument.h"
@@ -33,7 +35,7 @@
 #include "nsIURL.h"
 #include "nsNetUtil.h"
 #include "nsEscape.h"
-#include "nsIFrame.h"
+#include "nsIFrameInlines.h"
 #include "nsIScrollableFrame.h"
 #include "nsView.h"
 #include "nsViewManager.h"
@@ -67,7 +69,7 @@
 #include "nsFocusManager.h"
 #include "nsAttrValueOrString.h"
 
-#include "nsMutationEvent.h"
+#include "mozilla/MutationEvent.h"
 #include "nsDOMStringMap.h"
 
 #include "nsIEditor.h"
@@ -99,6 +101,7 @@
 #include "nsDOMTouchEvent.h"
 #include "nsGlobalWindow.h"
 #include "mozilla/dom/HTMLBodyElement.h"
+#include "imgIContainer.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -839,7 +842,7 @@ nsGenericHTMLElement::GetEventListenerManagerForAttr(nsIAtom* aAttrName,
     if ((win = document->GetInnerWindow())) {
       nsCOMPtr<EventTarget> piTarget(do_QueryInterface(win));
 
-      return piTarget->GetListenerManager(true);
+      return piTarget->GetOrCreateListenerManager();
     }
 
     return nullptr;
@@ -868,8 +871,7 @@ nsGenericHTMLElement::GetOn##name_()                                          \
   return nsINode::GetOn##name_();                                             \
 }                                                                             \
 void                                                                          \
-nsGenericHTMLElement::SetOn##name_(EventHandlerNonNull* handler,              \
-                                   ErrorResult& error)                        \
+nsGenericHTMLElement::SetOn##name_(EventHandlerNonNull* handler)              \
 {                                                                             \
   if (Tag() == nsGkAtoms::body || Tag() == nsGkAtoms::frameset) {             \
     nsPIDOMWindow* win = OwnerDoc()->GetInnerWindow();                        \
@@ -879,10 +881,10 @@ nsGenericHTMLElement::SetOn##name_(EventHandlerNonNull* handler,              \
                                                                               \
     nsCOMPtr<nsISupports> supports = do_QueryInterface(win);                  \
     nsGlobalWindow* globalWin = nsGlobalWindow::FromSupports(supports);       \
-    return globalWin->SetOn##name_(handler, error);                           \
+    return globalWin->SetOn##name_(handler);                                  \
   }                                                                           \
                                                                               \
-  return nsINode::SetOn##name_(handler, error);                               \
+  return nsINode::SetOn##name_(handler);                                      \
 }
 #define ERROR_EVENT(name_, id_, type_, struct_)                               \
 already_AddRefed<EventHandlerNonNull>                                         \
@@ -908,8 +910,7 @@ nsGenericHTMLElement::GetOn##name_()                                          \
   return handler.forget();                                                    \
 }                                                                             \
 void                                                                          \
-nsGenericHTMLElement::SetOn##name_(EventHandlerNonNull* handler,              \
-                                   ErrorResult& error)                        \
+nsGenericHTMLElement::SetOn##name_(EventHandlerNonNull* handler)              \
 {                                                                             \
   if (Tag() == nsGkAtoms::body || Tag() == nsGkAtoms::frameset) {             \
     nsPIDOMWindow* win = OwnerDoc()->GetInnerWindow();                        \
@@ -923,10 +924,10 @@ nsGenericHTMLElement::SetOn##name_(EventHandlerNonNull* handler,              \
     if (handler) {                                                            \
       errorHandler = new OnErrorEventHandlerNonNull(handler);                 \
     }                                                                         \
-    return globalWin->SetOn##name_(errorHandler, error);                      \
+    return globalWin->SetOn##name_(errorHandler);                             \
   }                                                                           \
                                                                               \
-  return nsINode::SetOn##name_(handler, error);                               \
+  return nsINode::SetOn##name_(handler);                                      \
 }
 #include "nsEventNameList.h" // IWYU pragma: keep
 #undef ERROR_EVENT
@@ -1008,8 +1009,7 @@ nsGenericHTMLElement::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aAttribute,
       UnsetFlags(NODE_HAS_ACCESSKEY);
     }
     else if (IsEventAttributeName(aAttribute)) {
-      nsEventListenerManager* manager = GetListenerManager(false);
-      if (manager) {
+      if (nsEventListenerManager* manager = GetExistingListenerManager()) {
         manager->RemoveEventHandler(aAttribute, EmptyString());
       }
     }
@@ -2731,8 +2731,8 @@ nsGenericHTMLElement::Click()
   // Click() is never called from native code, but it may be
   // called from chrome JS. Mark this event trusted if Click()
   // is called from chrome code.
-  nsMouseEvent event(nsContentUtils::IsCallerChrome(),
-                     NS_MOUSE_CLICK, nullptr, nsMouseEvent::eReal);
+  WidgetMouseEvent event(nsContentUtils::IsCallerChrome(),
+                         NS_MOUSE_CLICK, nullptr, WidgetMouseEvent::eReal);
   event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN;
 
   nsEventDispatcher::Dispatch(static_cast<nsIContent*>(this), context, &event);
@@ -2834,8 +2834,8 @@ nsGenericHTMLElement::PerformAccesskey(bool aKeyCausesActivation,
 
   if (aKeyCausesActivation) {
     // Click on it if the users prefs indicate to do so.
-    nsMouseEvent event(aIsTrustedEvent, NS_MOUSE_CLICK,
-                       nullptr, nsMouseEvent::eReal);
+    WidgetMouseEvent event(aIsTrustedEvent, NS_MOUSE_CLICK, nullptr,
+                           WidgetMouseEvent::eReal);
     event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_KEYBOARD;
 
     nsAutoPopupStatePusher popupStatePusher(aIsTrustedEvent ?
@@ -3154,7 +3154,7 @@ nsGenericHTMLElement::GetItemValue(JSContext* aCx, JSObject* aScope,
 
   nsString string;
   GetItemValueText(string);
-  JS::Value v;
+  JS::Rooted<JS::Value> v(aCx);
   if (!xpc::NonVoidStringToJsval(aCx, string, &v)) {
     aError.Throw(NS_ERROR_FAILURE);
     return JS::UndefinedValue();

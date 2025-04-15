@@ -18,6 +18,7 @@
 #include "mozilla/StaticPtr.h"
 #include "nsIAudioManager.h"
 #include "nsIObserverService.h"
+#include "MainThreadUtils.h"
 
 
 using namespace mozilla;
@@ -335,8 +336,7 @@ BluetoothA2dpManager::NotifyConnectionStatusChanged()
   MOZ_ASSERT(NS_IsMainThread());
 
   // Notify Gecko observers
-  nsCOMPtr<nsIObserverService> obs =
-    do_GetService("@mozilla.org/observer-service;1");
+  nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
   NS_ENSURE_TRUE_VOID(obs);
 
   if (NS_FAILED(obs->NotifyObservers(this,

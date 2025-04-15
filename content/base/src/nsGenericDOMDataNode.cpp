@@ -17,7 +17,7 @@
 #include "nsEventListenerManager.h"
 #include "nsIDOMDocument.h"
 #include "nsReadableUtils.h"
-#include "nsMutationEvent.h"
+#include "mozilla/MutationEvent.h"
 #include "nsINameSpaceManager.h"
 #include "nsIURI.h"
 #include "nsIDOMEvent.h"
@@ -363,7 +363,7 @@ nsGenericDOMDataNode::SetTextInternal(uint32_t aOffset, uint32_t aCount,
     nsNodeUtils::CharacterDataChanged(this, &info);
 
     if (haveMutationListeners) {
-      nsMutationEvent mutation(true, NS_MUTATION_CHARACTERDATAMODIFIED);
+      InternalMutationEvent mutation(true, NS_MUTATION_CHARACTERDATAMODIFIED);
 
       mutation.mPrevAttrValue = oldValue;
       if (aLength > 0) {

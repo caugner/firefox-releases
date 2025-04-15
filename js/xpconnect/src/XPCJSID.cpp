@@ -158,8 +158,8 @@ const nsID&
 nsJSID::GetInvalidIID() const
 {
     // {BB1F47B0-D137-11d2-9841-006008962422}
-    static nsID invalid = {0xbb1f47b0, 0xd137, 0x11d2,
-                            {0x98, 0x41, 0x0, 0x60, 0x8, 0x96, 0x24, 0x22}};
+    static const nsID invalid = {0xbb1f47b0, 0xd137, 0x11d2,
+                                  {0x98, 0x41, 0x0, 0x60, 0x8, 0x96, 0x24, 0x22}};
     return invalid;
 }
 
@@ -266,7 +266,7 @@ NS_IMPL_CLASSINFO(nsJSIID, GetSharedScriptableHelperForJSIID,
                   nsIClassInfo::THREADSAFE, NULL_CID)
 
 NS_DECL_CI_INTERFACE_GETTER(nsJSCID)
-NS_IMPL_CLASSINFO(nsJSCID, NULL, nsIClassInfo::THREADSAFE, NULL_CID)
+NS_IMPL_CLASSINFO(nsJSCID, nullptr, nsIClassInfo::THREADSAFE, NULL_CID)
 
 void xpc_DestroyJSxIDClassObjects()
 {
@@ -707,9 +707,9 @@ GetIIDArg(uint32_t argc, const JS::Value& val, JSContext* cx)
 static void
 GetWrapperObject(MutableHandleObject obj)
 {
-    obj.set(NULL);
+    obj.set(nullptr);
     nsXPConnect* xpc = nsXPConnect::XPConnect();
-    nsAXPCNativeCallContext *ccxp = NULL;
+    nsAXPCNativeCallContext *ccxp = nullptr;
     xpc->GetCurrentNativeCallContext(&ccxp);
     if (!ccxp)
         return;

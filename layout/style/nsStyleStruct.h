@@ -630,7 +630,7 @@ struct nsBorderColors {
       c1 = c1->mNext;
       c2 = c2->mNext;
     }
-    // both should be NULL if these are equal, otherwise one
+    // both should be nullptr if these are equal, otherwise one
     // has more colors than another
     return !c1 && !c2;
   }
@@ -915,7 +915,7 @@ struct nsStyleBorder {
 
 public:
   nsBorderColors** mBorderColors;        // [reset] composite (stripe) colors
-  nsRefPtr<nsCSSShadowArray> mBoxShadow; // [reset] NULL for 'none'
+  nsRefPtr<nsCSSShadowArray> mBoxShadow; // [reset] nullptr for 'none'
 
 #ifdef DEBUG
   bool mImageTracked;
@@ -1310,6 +1310,8 @@ struct nsStyleText {
 
   uint8_t mTextAlign;                   // [inherited] see nsStyleConsts.h
   uint8_t mTextAlignLast;               // [inherited] see nsStyleConsts.h
+  bool mTextAlignTrue : 1;              // [inherited] see nsStyleConsts.h
+  bool mTextAlignLastTrue : 1;          // [inherited] see nsStyleConsts.h
   uint8_t mTextTransform;               // [inherited] see nsStyleConsts.h
   uint8_t mWhiteSpace;                  // [inherited] see nsStyleConsts.h
   uint8_t mWordBreak;                   // [inherited] see nsStyleConsts.h
@@ -1325,7 +1327,7 @@ struct nsStyleText {
   nsStyleCoord  mLineHeight;            // [inherited] coord, factor, normal
   nsStyleCoord  mTextIndent;            // [inherited] coord, percent, calc
 
-  nsRefPtr<nsCSSShadowArray> mTextShadow; // [inherited] NULL in case of a zero-length
+  nsRefPtr<nsCSSShadowArray> mTextShadow; // [inherited] nullptr in case of a zero-length
 
   bool WhiteSpaceIsSignificant() const {
     return mWhiteSpace == NS_STYLE_WHITESPACE_PRE ||
@@ -1887,7 +1889,8 @@ enum nsStyleContentType {
   eStyleContentType_CloseQuote    = 41,
   eStyleContentType_NoOpenQuote   = 42,
   eStyleContentType_NoCloseQuote  = 43,
-  eStyleContentType_AltContent    = 50
+  eStyleContentType_AltContent    = 50,
+  eStyleContentType_Uninitialized
 };
 
 struct nsStyleContentData {
@@ -1902,7 +1905,7 @@ struct nsStyleContentData {
 #endif
 
   nsStyleContentData()
-    : mType(nsStyleContentType(0))
+    : mType(eStyleContentType_Uninitialized)
 #ifdef DEBUG
     , mImageTracked(false)
 #endif
@@ -2435,8 +2438,9 @@ private:
 };
 
 template<>
-struct nsTArray_CopyElements<nsStyleFilter>
-  : public nsTArray_CopyWithConstructors<nsStyleFilter> {};
+struct nsTArray_CopyChooser<nsStyleFilter> {
+  typedef nsTArray_CopyWithConstructors<nsStyleFilter> Type;
+};
 
 struct nsStyleSVGReset {
   nsStyleSVGReset();

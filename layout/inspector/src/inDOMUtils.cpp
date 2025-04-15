@@ -7,6 +7,7 @@
 #include "inLayoutUtils.h"
 
 #include "nsIServiceManager.h"
+#include "nsISupportsArray.h"
 #include "nsString.h"
 #include "nsIDOMElement.h"
 #include "nsIDocument.h"
@@ -534,8 +535,6 @@ static void GetOtherValuesForProperty(const uint32_t aParserVariant,
   if (aParserVariant & VARIANT_COLOR) {
     InsertNoDuplicates(aArray, NS_LITERAL_STRING("rgb"));
     InsertNoDuplicates(aArray, NS_LITERAL_STRING("hsl"));
-    InsertNoDuplicates(aArray, NS_LITERAL_STRING("-moz-rgba"));
-    InsertNoDuplicates(aArray, NS_LITERAL_STRING("-moz-hsla"));
     InsertNoDuplicates(aArray, NS_LITERAL_STRING("rgba"));
     InsertNoDuplicates(aArray, NS_LITERAL_STRING("hsla"));
   }
@@ -593,9 +592,10 @@ inDOMUtils::GetCSSValuesForProperty(const nsAString& aProperty,
       GetOtherValuesForProperty(propertyParserVariant, array);
     }
   }
-  // All CSS properties take initial and inherit.
-  InsertNoDuplicates(array, NS_LITERAL_STRING("-moz-initial"));
+  // All CSS properties take initial, inherit and unset.
+  InsertNoDuplicates(array, NS_LITERAL_STRING("initial"));
   InsertNoDuplicates(array, NS_LITERAL_STRING("inherit"));
+  InsertNoDuplicates(array, NS_LITERAL_STRING("unset"));
 
   *aLength = array.Length();
   PRUnichar** ret =

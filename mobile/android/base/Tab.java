@@ -359,8 +359,15 @@ public class Tab {
         return mFaviconLoadId;
     }
 
-    public void updateFavicon(Bitmap favicon) {
+    /**
+     * Returns true if the favicon changed.
+     */
+    public boolean updateFavicon(Bitmap favicon) {
+        if (mFavicon == favicon) {
+            return false;
+        }
         mFavicon = favicon;
+        return true;
     }
 
     public synchronized void updateFaviconURL(String faviconUrl, int size) {
@@ -460,11 +467,11 @@ public class Tab {
     }
 
     public void toggleReaderMode() {
-        if (ReaderModeUtils.isAboutReader(mUrl)) {
+        if (AboutPages.isAboutReader(mUrl)) {
             Tabs.getInstance().loadUrl(ReaderModeUtils.getUrlFromAboutReader(mUrl));
         } else if (mReaderEnabled) {
             mEnteringReaderMode = true;
-            Tabs.getInstance().loadUrl(ReaderModeUtils.getAboutReaderForUrl(mUrl, mId, mReadingListItem));
+            Tabs.getInstance().loadUrl(ReaderModeUtils.getAboutReaderForUrl(mUrl, mId));
         }
     }
 
@@ -603,6 +610,12 @@ public class Tab {
         final String uri = message.getString("uri");
         final String oldUrl = getURL();
         mEnteringReaderMode = ReaderModeUtils.isEnteringReaderMode(oldUrl, uri);
+
+        if (TextUtils.equals(oldUrl, uri)) {
+            Log.d(LOGTAG, "Ignoring location change event: URIs are the same.");
+            return;
+        }
+
         updateURL(uri);
         updateUserSearch(message.getString("userSearch"));
 
@@ -615,7 +628,13 @@ public class Tab {
         }
 
         setContentType(message.getString("contentType"));
+
+        // We can unconditionally clear the favicon here: we already
+        // short-circuited for both cases in which this was a (pseudo-)
+        // spurious location change, so we're definitely loading a new page.
+        // The same applies to all of the other fields we're wiping out.
         clearFavicon();
+
         setFeedsEnabled(false);
         updateTitle(null);
         updateIdentityData(null);
@@ -633,8 +652,9 @@ public class Tab {
         Tabs.getInstance().notifyListeners(this, Tabs.TabEvents.LOCATION_CHANGE, oldUrl);
     }
 
-    private boolean shouldShowProgress(String url) {
-        return "about:home".equals(url) || ReaderModeUtils.isAboutReader(url);
+    private static boolean shouldShowProgress(final String url) {
+        return AboutPages.isAboutHome(url) ||
+               AboutPages.isAboutReader(url);
     }
 
     void handleDocumentStart(boolean showProgress, String url) {

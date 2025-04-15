@@ -7,7 +7,7 @@
 #include "jit/BytecodeAnalysis.h"
 
 #include "jsopcode.h"
-
+#include "jit/IonSpewer.h"
 #include "jsopcodeinlines.h"
 
 using namespace js;
@@ -15,7 +15,10 @@ using namespace js::jit;
 
 BytecodeAnalysis::BytecodeAnalysis(JSScript *script)
   : script_(script),
-    infos_()
+    infos_(),
+    usesScopeChain_(false),
+    hasTryFinally_(false),
+    hasSetArg_(false)
 {
 }
 
@@ -37,7 +40,7 @@ struct CatchFinallyRange
 };
 
 bool
-BytecodeAnalysis::init(JSContext *cx)
+BytecodeAnalysis::init(GSNCache &gsn)
 {
     if (!infos_.growByUninitialized(script_->length))
         return false;
@@ -118,7 +121,7 @@ BytecodeAnalysis::init(JSContext *cx)
 
             // Get the pc of the last instruction in the try block. It's a JSOP_GOTO to
             // jump over the catch/finally blocks.
-            jssrcnote *sn = js_GetSrcNote(cx, script_, pc);
+            jssrcnote *sn = GetSrcNote(gsn, script_, pc);
             JS_ASSERT(SN_TYPE(sn) == SRC_TRY);
 
             jsbytecode *endOfTry = pc + js_GetSrcNoteOffset(sn, 0);
@@ -142,6 +145,30 @@ BytecodeAnalysis::init(JSContext *cx)
                 if (catchFinallyRanges[i].contains(offset))
                     infos_[offset].loopEntryInCatchOrFinally = true;
             }
+            break;
+
+          case JSOP_NAME:
+          case JSOP_CALLNAME:
+          case JSOP_BINDNAME:
+          case JSOP_SETNAME:
+          case JSOP_DELNAME:
+          case JSOP_GETALIASEDVAR:
+          case JSOP_CALLALIASEDVAR:
+          case JSOP_SETALIASEDVAR:
+          case JSOP_LAMBDA:
+          case JSOP_DEFFUN:
+          case JSOP_DEFVAR:
+          case JSOP_DEFCONST:
+          case JSOP_SETCONST:
+            usesScopeChain_ = true;
+            break;
+
+          case JSOP_FINALLY:
+            hasTryFinally_ = true;
+            break;
+
+          case JSOP_SETARG:
+            hasSetArg_ = true;
             break;
 
           default:

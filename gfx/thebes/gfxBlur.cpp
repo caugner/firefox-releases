@@ -4,6 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "gfxBlur.h"
+#include "gfxContext.h"
+#include "gfxImageSurface.h"
 
 #include "mozilla/gfx/Blur.h"
 
@@ -57,7 +59,7 @@ gfxAlphaBoxBlur::Init(const gfxRect& aRect,
     // Make an alpha-only surface to draw on. We will play with the data after
     // everything is drawn to create a blur effect.
     mImageSurface = new gfxImageSurface(gfxIntSize(size.width, size.height),
-                                        gfxASurface::ImageFormatA8,
+                                        gfxImageFormatA8,
                                         mBlur->GetStride(),
                                         blurDataSize,
                                         true);

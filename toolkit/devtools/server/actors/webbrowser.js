@@ -7,6 +7,7 @@
 "use strict";
 
 let promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", {}).Promise;
+XPCOMUtils.defineLazyModuleGetter(this, "Services", "resource://gre/modules/Services.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "AddonManager", "resource://gre/modules/AddonManager.jsm");
 
 /**
@@ -20,7 +21,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "AddonManager", "resource://gre/modules/
  */
 function allAppShellDOMWindows(aWindowType)
 {
-  let e = windowMediator.getEnumerator(aWindowType);
+  let e = Services.wm.getEnumerator(aWindowType);
   while (e.hasMoreElements()) {
     yield e.getNext();
   }
@@ -66,9 +67,6 @@ function createRootActor(aConnection)
                          onShutdown: sendShutdownEvent
                        });
 }
-
-var windowMediator = Cc["@mozilla.org/appshell/window-mediator;1"]
-                     .getService(Ci.nsIWindowMediator);
 
 /**
  * A live list of BrowserTabActors representing the current browser tabs,
@@ -188,8 +186,18 @@ function BrowserTabList(aConnection)
 BrowserTabList.prototype.constructor = BrowserTabList;
 
 
+/**
+ * Get the selected browser for the given navigator:browser window.
+ * @private
+ * @param aWindow nsIChromeWindow
+ *        The navigator:browser window for which you want the selected browser.
+ * @return nsIDOMElement|null
+ *         The currently selected xul:browser element, if any. Note that the
+ *         browser window might not be loaded yet - the function will return
+ *         |null| in such cases.
+ */
 BrowserTabList.prototype._getSelectedBrowser = function(aWindow) {
-  return aWindow.gBrowser.selectedBrowser;
+  return aWindow.gBrowser ? aWindow.gBrowser.selectedBrowser : null;
 };
 
 BrowserTabList.prototype._getChildren = function(aWindow) {
@@ -197,7 +205,7 @@ BrowserTabList.prototype._getChildren = function(aWindow) {
 };
 
 BrowserTabList.prototype.getList = function() {
-  let topXULWindow = windowMediator.getMostRecentWindow(DebuggerServer.chromeWindowType);
+  let topXULWindow = Services.wm.getMostRecentWindow(DebuggerServer.chromeWindowType);
 
   // As a sanity check, make sure all the actors presently in our map get
   // picked up when we iterate over all windows' tabs.
@@ -212,6 +220,9 @@ BrowserTabList.prototype.getList = function() {
   // Iterate over all navigator:browser XUL windows.
   for (let win of allAppShellDOMWindows(DebuggerServer.chromeWindowType)) {
     let selectedBrowser = this._getSelectedBrowser(win);
+    if (!selectedBrowser) {
+      continue;
+    }
 
     // For each tab in this XUL window, ensure that we have an actor for
     // it, reusing existing actors where possible. We actually iterate
@@ -371,7 +382,7 @@ BrowserTabList.prototype.handleEvent = makeInfallible(function(aEvent) {
 BrowserTabList.prototype._listenToMediatorIf = function(aShouldListen) {
   if (!aShouldListen !== !this._listeningToMediator) {
     let op = aShouldListen ? "addListener" : "removeListener";
-    windowMediator[op](this);
+    Services.wm[op](this);
     this._listeningToMediator = aShouldListen;
   }
 };

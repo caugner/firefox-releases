@@ -23,6 +23,7 @@ from mochitest_options import MochitestOptions
 import devicemanager
 import droid
 import manifestparser
+import mozinfo
 import mozlog
 
 log = mozlog.getLogger('Mochi-Remote')
@@ -31,7 +32,8 @@ class RemoteOptions(MochitestOptions):
 
     def __init__(self, automation, **kwargs):
         defaults = {}
-        MochitestOptions.__init__(self, automation)
+        self._automation = automation or Automation()
+        MochitestOptions.__init__(self)
 
         self.add_option("--remote-app-path", action="store",
                     type = "string", dest = "remoteAppPath",
@@ -227,9 +229,10 @@ class MochiRemote(Mochitest):
 
     def __init__(self, automation, devmgr, options):
         self._automation = automation
-        Mochitest.__init__(self, self._automation)
+        Mochitest.__init__(self)
         self._dm = devmgr
         self.runSSLTunnel = False
+        self.environment = self._automation.environment
         self.remoteProfile = options.remoteTestRoot + "/profile"
         self._automation.setRemoteProfile(self.remoteProfile)
         self.remoteLog = options.remoteLogFile
@@ -313,7 +316,7 @@ class MochiRemote(Mochitest):
             sys.exit(1)
 
         options.profilePath = tempfile.mkdtemp()
-        self.server = MochitestServer(localAutomation, options)
+        self.server = MochitestServer(options)
         self.server.start()
 
         if (options.pidFile != ""):
@@ -344,10 +347,6 @@ class MochiRemote(Mochitest):
             shutil.rmtree(os.path.join(options.profilePath, 'extensions', 'staged', 'worker-test@mozilla.org'))
             shutil.rmtree(os.path.join(options.profilePath, 'extensions', 'staged', 'workerbootstrap-test@mozilla.org'))
             os.remove(os.path.join(options.profilePath, 'userChrome.css'))
-            if os.path.exists(os.path.join(options.profilePath, 'tests.jar')):
-                os.remove(os.path.join(options.profilePath, 'tests.jar'))
-            if os.path.exists(os.path.join(options.profilePath, 'tests.manifest')):
-                os.remove(os.path.join(options.profilePath, 'tests.manifest'))
 
         try:
             self._dm.pushDir(options.profilePath, self.remoteProfile)
@@ -462,15 +461,26 @@ class MochiRemote(Mochitest):
             return 1
         return 0
 
-    def printScreenshot(self):
-        try:
-            image = self._dm.pullFile("/mnt/sdcard/Robotium-Screenshots/robocop-screenshot.jpg")
-            encoded = base64.b64encode(image)
-            log.info("SCREENSHOT: data:image/jpg;base64,%s", encoded)
-        except:
-            # If the test passes, no screenshot will be generated and
-            # pullFile will fail -- continue silently.
-            pass
+    def printScreenshots(self, screenShotDir):
+        # TODO: This can be re-written after completion of bug 749421
+        if not self._dm.dirExists(screenShotDir):
+            log.info("SCREENSHOT: No ScreenShots directory available: " + screenShotDir)
+            return
+
+        printed = 0
+        for name in self._dm.listFiles(screenShotDir):
+            fullName = screenShotDir + "/" + name
+            log.info("SCREENSHOT: FOUND: [%s]", fullName)
+            try:
+                image = self._dm.pullFile(fullName)
+                encoded = base64.b64encode(image)
+                log.info("SCREENSHOT: data:image/jpg;base64,%s", encoded)
+                printed += 1
+            except:
+                log.info("SCREENSHOT: Could not be parsed")
+                pass
+
+        log.info("SCREENSHOT: TOTAL PRINTED: [%s]", printed)
 
     def printDeviceInfo(self, printLogcat=False):
         try:
@@ -499,7 +509,8 @@ class MochiRemote(Mochitest):
             for key, value in browserEnv.items():
                 try:
                     value.index(',')
-                    log.error("Found a ',' in our value, unable to process value.")
+                    log.error("buildRobotiumConfig: browserEnv - Found a ',' in our value, unable to process value. key=%s,value=%s", key, value)
+                    log.error("browserEnv=%s", browserEnv)
                 except ValueError, e:
                     envstr += "%s%s=%s" % (delim, key, value)
                     delim = ","
@@ -516,7 +527,16 @@ class MochiRemote(Mochitest):
         self.buildRobotiumConfig(options, browserEnv)
         return browserEnv
 
-        
+    def runApp(self, *args, **kwargs):
+        """front-end automation.py's `runApp` functionality until FennecRunner is written"""
+
+        # automation.py/remoteautomation `runApp` takes the profile path,
+        # whereas runtest.py's `runApp` takes a mozprofile object.
+        if 'profileDir' not in kwargs and 'profile' in kwargs:
+            kwargs['profileDir'] = kwargs.pop('profile').profile
+
+        return self._automation.runApp(*args, **kwargs)
+
 def main():
     auto = RemoteAutomation(None, "fennec")
     parser = RemoteOptions(auto)
@@ -554,6 +574,12 @@ def main():
 
     mochitest.printDeviceInfo()
 
+    # Add Android version (SDK level) to mozinfo so that manifest entries
+    # can be conditional on android_version.
+    androidVersion = dm.shellCheckOutput(['getprop', 'ro.build.version.sdk'])
+    log.info("Android sdk version '%s'; will use this to filter manifests" % str(androidVersion))
+    mozinfo.info['android_version'] = androidVersion
+
     procName = options.app.split('/')[-1]
     if (dm.processExist(procName)):
         dm.killProcess(procName)
@@ -564,7 +590,7 @@ def main():
         mp = manifestparser.TestManifest(strict=False)
         # TODO: pull this in dynamically
         mp.read(options.robocopIni)
-        robocop_tests = mp.active_tests(exists=False)
+        robocop_tests = mp.active_tests(exists=False, **mozinfo.info)
         tests = []
         my_tests = tests
         for test in robocop_tests:
@@ -585,14 +611,13 @@ def main():
         if not os.path.exists(fennec_ids) and options.robocopIds:
             fennec_ids = options.robocopIds
         dm.pushFile(fennec_ids, os.path.join(deviceRoot, "fennec_ids.txt"))
-        options.extraPrefs.append('robocop.logfile="%s/robocop.log"' % deviceRoot)
         options.extraPrefs.append('browser.search.suggest.enabled=true')
         options.extraPrefs.append('browser.search.suggest.prompted=true')
-        options.extraPrefs.append('layout.css.devPixelsPerPx="1.0"')
+        options.extraPrefs.append('layout.css.devPixelsPerPx=1.0')
         options.extraPrefs.append('browser.chrome.dynamictoolbar=false')
 
         if (options.dm_trans == 'adb' and options.robocopApk):
-          dm._checkCmd(["install", "-r", options.robocopApk])
+            dm._checkCmd(["install", "-r", options.robocopApk])
 
         retVal = None
         for test in robocop_tests:
@@ -600,6 +625,10 @@ def main():
                 continue
 
             if not test['name'] in my_tests:
+                continue
+
+            if 'disabled' in test:
+                log.info('TEST-INFO | skipping %s | %s' % (test['name'], test['disabled']))
                 continue
 
             # When running in a loop, we need to create a fresh profile for each cycle
@@ -621,10 +650,6 @@ def main():
                 osInfo = dm.getInfo("os")
                 devOS = " ".join(osInfo['os'])
 
-                # Bug 900664: stock browser db not available on x86 emulator
-                if ("sdk_x86" in devOS):
-                    continue
-
                 if ("pandaboard" in devOS):
                     delete = ['execsu', 'sqlite3', "/data/data/com.android.browser/databases/browser2.db \'delete from bookmarks where _id > 14;\'"]
                 else:
@@ -642,7 +667,8 @@ def main():
                    if (options.dm_trans == "sut"):
                        dm._runCmds([{"cmd": " ".join(cmd)}])
             try:
-                dm.removeDir("/mnt/sdcard/Robotium-Screenshots")
+                screenShotDir = "/mnt/sdcard/Robotium-Screenshots"
+                dm.removeDir(screenShotDir)
                 dm.recordLogcat()
                 result = mochitest.runTests(options)
                 if result != 0:
@@ -650,7 +676,7 @@ def main():
                 log_result = mochitest.addLogData()
                 if result != 0 or log_result != 0:
                     mochitest.printDeviceInfo(printLogcat=True)
-                    mochitest.printScreenshot()
+                    mochitest.printScreenshots(screenShotDir)
                 # Ensure earlier failures aren't overwritten by success on this run
                 if retVal is None or retVal == 0:
                     retVal = result

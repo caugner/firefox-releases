@@ -7,7 +7,7 @@
 
 #include "mozilla/Attributes.h"
 #include "nsCaseTreatment.h" // for enum, cannot be forward-declared
-#include "nsIDocument.h"
+#include "nsINode.h"
 
 // Forward declarations
 class nsAString;
@@ -170,7 +170,7 @@ public:
   bool IsRootOfNativeAnonymousSubtree() const
   {
     NS_ASSERTION(!HasFlag(NODE_IS_NATIVE_ANONYMOUS_ROOT) ||
-                 (HasFlag(NODE_IS_ANONYMOUS) &&
+                 (HasFlag(NODE_IS_ANONYMOUS_ROOT) &&
                   HasFlag(NODE_IS_IN_ANONYMOUS_SUBTREE)),
                  "Some flags seem to be missing!");
     return HasFlag(NODE_IS_NATIVE_ANONYMOUS_ROOT);
@@ -186,9 +186,9 @@ public:
    * Makes this content anonymous
    * @see nsIAnonymousContentCreator
    */
-  void SetNativeAnonymous()
+  void SetIsNativeAnonymousRoot()
   {
-    SetFlags(NODE_IS_ANONYMOUS | NODE_IS_IN_ANONYMOUS_SUBTREE |
+    SetFlags(NODE_IS_ANONYMOUS_ROOT | NODE_IS_IN_ANONYMOUS_SUBTREE |
              NODE_IS_NATIVE_ANONYMOUS_ROOT);
   }
 
@@ -210,7 +210,7 @@ public:
                  "to binding parent");
     NS_ASSERTION(!GetParent() ||
                  ((GetBindingParent() == GetParent()) ==
-                  HasFlag(NODE_IS_ANONYMOUS)) ||
+                  HasFlag(NODE_IS_ANONYMOUS_ROOT)) ||
                  // Unfortunately default content for XBL insertion points is
                  // anonymous content that is bound with the parent of the
                  // insertion point as the parent but the bound element for the
@@ -218,10 +218,10 @@ public:
                  // the assert a bit here.
                  (GetBindingParent() &&
                   (GetBindingParent() == GetParent()->GetBindingParent()) ==
-                  HasFlag(NODE_IS_ANONYMOUS)),
+                  HasFlag(NODE_IS_ANONYMOUS_ROOT)),
                  "For nodes with parent, flag and GetBindingParent() check "
                  "should match");
-    return HasFlag(NODE_IS_ANONYMOUS);
+    return HasFlag(NODE_IS_ANONYMOUS_ROOT);
   }
 
   /**
@@ -243,10 +243,7 @@ public:
    * Return true iff this node is in an HTML document (in the HTML5 sense of
    * the term, i.e. not in an XHTML/XML document).
    */
-  inline bool IsInHTMLDocument() const
-  {
-    return OwnerDoc()->IsHTML();
-  }
+  inline bool IsInHTMLDocument() const;
 
   /**
    * Get the namespace that this element's tag is defined in

@@ -5,11 +5,13 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.favicons.OnFaviconLoadedListener;
 import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.gfx.GeckoLayerClient;
 import org.mozilla.gecko.gfx.GfxInfoThread;
 import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.gfx.PanZoomController;
+import org.mozilla.gecko.prompts.PromptService;
 import org.mozilla.gecko.mozglue.GeckoLoader;
 import org.mozilla.gecko.mozglue.GeneratableAndroidBridgeTarget;
 import org.mozilla.gecko.mozglue.OptionalGeneratedParameter;
@@ -254,6 +256,21 @@ public class GeckoAppShell
     public static native SurfaceBits getSurfaceBits(Surface surface);
 
     public static native void onFullScreenPluginHidden(View view);
+
+    public static class CreateShortcutFaviconLoadedListener implements OnFaviconLoadedListener {
+        private final String title;
+        private final String url;
+
+        public CreateShortcutFaviconLoadedListener(final String url, final String title) {
+            this.url = url;
+            this.title = title;
+        }
+
+        @Override
+        public void onFaviconLoaded(String pageUrl, String faviconURL, Bitmap favicon) {
+            GeckoAppShell.createShortcut(title, url, url, favicon, "");
+        }
+    }
 
     private static final class GeckoMediaScannerClient implements MediaScannerConnectionClient {
         private final String mFile;
@@ -1330,12 +1347,6 @@ public class GeckoAppShell
                 return;
             }
         }
-
-        // Also send a notification to the observer service
-        // New listeners should register for these notifications since they will be called even if
-        // Gecko has been killed and restared between when your notification was shown and when the
-        // user clicked on it.
-        sendEventToGecko(GeckoEvent.createBroadcastEvent("Notification:Clicked", aAlertCookie));
         closeNotification(aAlertName);
     }
 
@@ -1346,6 +1357,11 @@ public class GeckoAppShell
         }
 
         return sDensityDpi;
+    }
+
+    @GeneratableAndroidBridgeTarget()
+    public static float getDensity() {
+        return getContext().getResources().getDisplayMetrics().density;
     }
 
     private static boolean isHighMemoryDevice() {

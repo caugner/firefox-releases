@@ -48,7 +48,6 @@ const TextureFlags TEXTURE_COMPONENT_ALPHA    = 1 << 5;
 // (for example, with GL), a BGRA shader should be used.
 const TextureFlags TEXTURE_RB_SWAPPED         = 1 << 6;
 
-// A texture host that supports tiling
 const TextureFlags TEXTURE_FRONT              = 1 << 12;
 // A texture host on white for component alpha
 const TextureFlags TEXTURE_ON_WHITE           = 1 << 13;
@@ -60,12 +59,11 @@ const TextureFlags TEXTURE_TILE               = 1 << 15;
 // from the previous texture.
 const TextureFlags TEXTURE_COPY_PREVIOUS      = 1 << 24;
 // Who is responsible for deallocating the shared data.
-// if none of the following two flags is set, the shared data will not be
-// deallocated by the layers system. It is not necessarily a leak, it could
-// be a choice from another part of gecko that wants to keep the data alive
-// for some reason. The default behaviour is to deallocate on the host side.
+// if TEXTURE_DEALLOCATE_CLIENT is set, the shared data is deallocated on the
+// client side and requires some extra synchronizaion to ensure race-free
+// deallocation.
+// The default behaviour is to deallocate on the host side.
 const TextureFlags TEXTURE_DEALLOCATE_CLIENT  = 1 << 25;
-const TextureFlags TEXTURE_DEALLOCATE_HOST    = 1 << 26;
 // After being shared ith the compositor side, an immutable texture is never
 // modified, it can only be read. It is safe to not Lock/Unlock immutable
 // textures.
@@ -80,8 +78,7 @@ const TextureFlags TEXTURE_IMMEDIATE_UPLOAD   = 1 << 28;
 const TextureFlags TEXTURE_DOUBLE_BUFFERED    = 1 << 29;
 
 // the default flags
-const TextureFlags TEXTURE_FLAGS_DEFAULT = TEXTURE_DEALLOCATE_HOST
-                                         | TEXTURE_FRONT;
+const TextureFlags TEXTURE_FLAGS_DEFAULT = TEXTURE_FRONT;
 
 static inline bool
 TextureRequiresLocking(TextureFlags aFlags)
@@ -115,6 +112,7 @@ const DiagnosticFlags DIAGNOSTIC_CONTAINER  = 1 << 4;
 const DiagnosticFlags DIAGNOSTIC_TILE       = 1 << 5;
 const DiagnosticFlags DIAGNOSTIC_BIGIMAGE   = 1 << 6;
 const DiagnosticFlags DIAGNOSTIC_COMPONENT_ALPHA = 1 << 7;
+const DiagnosticFlags DIAGNOSTIC_REGION_RECT = 1 << 8;
 
 /**
  * See gfx/layers/Effects.h

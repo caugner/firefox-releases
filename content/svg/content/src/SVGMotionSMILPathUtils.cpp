@@ -76,10 +76,10 @@ SVGMotionSMILPathUtils::PathGenerator::
   return true;
 }
 
-already_AddRefed<gfxFlattenedPath>
+already_AddRefed<gfxPath>
 SVGMotionSMILPathUtils::PathGenerator::GetResultingPath()
 {
-  return mGfxContext.GetFlattenedPath();
+  return mGfxContext.CopyPath();
 }
 
 //----------------------------------------------------------------------
@@ -106,7 +106,7 @@ SVGMotionSMILPathUtils::PathGenerator::
     return false;
   }
 
-  if (tokenizer.lastTokenEndedWithSeparator() || // Trailing comma.
+  if (tokenizer.separatorAfterCurrentToken() ||  // Trailing comma.
       tokenizer.hasMoreTokens()) {               // More text remains
     return false;
   }

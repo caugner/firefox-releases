@@ -6,12 +6,12 @@
 
 MODULE = 'transformiix'
 
-CPP_SOURCES += [
+SOURCES += [
     'txBufferingHandler.cpp',
     'txCurrentFunctionCall.cpp',
     'txDocumentFunctionCall.cpp',
-    'txEXSLTFunctions.cpp',
     'txExecutionState.cpp',
+    'txEXSLTFunctions.cpp',
     'txFormatNumberFunctionCall.cpp',
     'txGenerateIdFunctionCall.cpp',
     'txInstructions.cpp',
@@ -50,3 +50,12 @@ FAIL_ON_WARNINGS = True
 
 LIBXUL_LIBRARY = True
 
+# For nsDependentJSString
+LOCAL_INCLUDES += ["/dom/base"]
+
+LOCAL_INCLUDES += [
+    '../base',
+    '../xml',
+    '../xpath',
+    '/content/base/src',
+]

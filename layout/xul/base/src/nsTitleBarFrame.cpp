@@ -14,10 +14,10 @@
 #include "nsPresContext.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsPIDOMWindow.h"
-#include "nsGUIEvent.h"
 #include "nsEventDispatcher.h"
 #include "nsDisplayList.h"
 #include "nsContentUtils.h"
+#include "mozilla/MouseEvents.h"
 
 using namespace mozilla;
 
@@ -57,8 +57,8 @@ nsTitleBarFrame::BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
 
 NS_IMETHODIMP
 nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
-                                      nsGUIEvent* aEvent,
-                                      nsEventStatus* aEventStatus)
+                             WidgetGUIEvent* aEvent,
+                             nsEventStatus* aEventStatus)
 {
   NS_ENSURE_ARG_POINTER(aEventStatus);
   if (nsEventStatus_eConsumeNoDefault == *aEventStatus) {
@@ -70,10 +70,7 @@ nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
   switch (aEvent->message) {
 
    case NS_MOUSE_BUTTON_DOWN:  {
-       if (aEvent->eventStructType == NS_MOUSE_EVENT &&
-           static_cast<nsMouseEvent*>(aEvent)->button ==
-             nsMouseEvent::eLeftButton)
-       {
+       if (aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton) {
          // titlebar has no effect in non-chrome shells
          nsCOMPtr<nsISupports> cont = aPresContext->GetContainer();
          nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(cont);
@@ -100,10 +97,8 @@ nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
 
 
    case NS_MOUSE_BUTTON_UP: {
-       if(mTrackingMouseMove && aEvent->eventStructType == NS_MOUSE_EVENT &&
-          static_cast<nsMouseEvent*>(aEvent)->button ==
-            nsMouseEvent::eLeftButton)
-       {
+       if (mTrackingMouseMove &&
+           aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton) {
          // we're done tracking.
          mTrackingMouseMove = false;
 
@@ -153,14 +148,13 @@ nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
      }
      break;
 
-
-
-    case NS_MOUSE_CLICK:
-      if (NS_IS_MOUSE_LEFT_CLICK(aEvent))
-      {
-        MouseClicked(aPresContext, aEvent);
+    case NS_MOUSE_CLICK: {
+      WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent();
+      if (mouseEvent->IsLeftClickEvent()) {
+        MouseClicked(aPresContext, mouseEvent);
       }
       break;
+    }
   }
 
   if ( doDefault )
@@ -170,7 +164,8 @@ nsTitleBarFrame::HandleEvent(nsPresContext* aPresContext,
 }
 
 void
-nsTitleBarFrame::MouseClicked(nsPresContext* aPresContext, nsGUIEvent* aEvent)
+nsTitleBarFrame::MouseClicked(nsPresContext* aPresContext,
+                              WidgetMouseEvent* aEvent)
 {
   // Execute the oncommand event handler.
   nsContentUtils::DispatchXULCommand(mContent,

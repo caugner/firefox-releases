@@ -901,6 +901,7 @@ void MediaDecoder::PlaybackEnded()
 
   PlaybackPositionChanged();
   ChangeState(PLAY_STATE_ENDED);
+  InvalidateWithFlags(VideoFrameContainer::INVALIDATE_FORCE);
 
   UpdateReadyStateForData();
   if (mOwner)  {
@@ -1046,15 +1047,17 @@ void MediaDecoder::NotifyPrincipalChanged()
   }
 }
 
-void MediaDecoder::NotifyBytesConsumed(int64_t aBytes)
+void MediaDecoder::NotifyBytesConsumed(int64_t aBytes, int64_t aOffset)
 {
   ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
   NS_ENSURE_TRUE_VOID(mDecoderStateMachine);
-  MOZ_ASSERT(OnStateMachineThread() || OnDecodeThread());
-  if (!mIgnoreProgressData) {
-    mDecoderPosition += aBytes;
+  if (mIgnoreProgressData) {
+    return;
+  }
+  if (aOffset >= mDecoderPosition) {
     mPlaybackStatistics.AddBytes(aBytes);
   }
+  mDecoderPosition = aOffset + aBytes;
 }
 
 void MediaDecoder::UpdateReadyStateForData()
@@ -1169,20 +1172,8 @@ void MediaDecoder::ChangeState(PlayState aState)
     }
   }
   mPlayState = aState;
-  if (mDecoderStateMachine) {
-    switch (aState) {
-    case PLAY_STATE_PLAYING:
-      mDecoderStateMachine->Play();
-      break;
-    case PLAY_STATE_SEEKING:
-      mDecoderStateMachine->Seek(mRequestedSeekTime);
-      mRequestedSeekTime = -1.0;
-      break;
-    default:
-      /* No action needed */
-      break;
-    }
-  }
+
+  ApplyStateToStateMachine(mPlayState);
 
   if (aState!= PLAY_STATE_LOADING) {
     mIsDormant = false;
@@ -1190,6 +1181,27 @@ void MediaDecoder::ChangeState(PlayState aState)
   }
 
   GetReentrantMonitor().NotifyAll();
+}
+
+void MediaDecoder::ApplyStateToStateMachine(PlayState aState)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  GetReentrantMonitor().AssertCurrentThreadIn();
+
+  if (mDecoderStateMachine) {
+    switch (aState) {
+      case PLAY_STATE_PLAYING:
+        mDecoderStateMachine->Play();
+        break;
+      case PLAY_STATE_SEEKING:
+        mDecoderStateMachine->Seek(mRequestedSeekTime);
+        mRequestedSeekTime = -1.0;
+        break;
+      default:
+        /* No action needed */
+        break;
+    }
+  }
 }
 
 void MediaDecoder::PlaybackPositionChanged()
@@ -1464,6 +1476,13 @@ ImageContainer* MediaDecoder::GetImageContainer()
   return mVideoFrameContainer ? mVideoFrameContainer->GetImageContainer() : nullptr;
 }
 
+void MediaDecoder::InvalidateWithFlags(uint32_t aFlags)
+{
+  if (mVideoFrameContainer) {
+    mVideoFrameContainer->InvalidateWithFlags(aFlags);
+  }
+}
+
 void MediaDecoder::Invalidate()
 {
   if (mVideoFrameContainer) {
@@ -1684,6 +1703,15 @@ bool
 MediaDecoder::IsWebMEnabled()
 {
   return Preferences::GetBool("media.webm.enabled");
+}
+#endif
+
+#ifdef MOZ_RTSP
+bool
+MediaDecoder::IsRtspEnabled()
+{
+  //Currently the Rtsp decoded by omx.
+  return (Preferences::GetBool("media.rtsp.enabled", false) && IsOmxEnabled());
 }
 #endif
 

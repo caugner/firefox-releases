@@ -704,7 +704,9 @@ Connection::databaseElementExists(enum DatabaseElementType aElementType,
 {
   if (!mDBConn) return NS_ERROR_NOT_INITIALIZED;
 
-  nsAutoCString query("SELECT name FROM sqlite_master WHERE type = '");
+  nsCString query("SELECT name FROM (SELECT * FROM sqlite_master UNION ALL "
+                                    "SELECT * FROM sqlite_temp_master) "
+                  "WHERE type = '");
   switch (aElementType) {
     case INDEX:
       query.Append("index");
@@ -839,7 +841,7 @@ Connection::internalClose()
   if (srv == SQLITE_BUSY) {
     // We still have non-finalized statements. Finalize them.
 
-    sqlite3_stmt *stmt = NULL;
+    sqlite3_stmt *stmt = nullptr;
     while ((stmt = ::sqlite3_next_stmt(dbConn, stmt))) {
       PR_LOG(gStorageLog, PR_LOG_NOTICE,
              ("Auto-finalizing SQL statement '%s' (%x)",
@@ -869,7 +871,7 @@ Connection::internalClose()
       // Ensure that the loop continues properly, whether closing has succeeded
       // or not.
       if (srv == SQLITE_OK) {
-        stmt = NULL;
+        stmt = nullptr;
       }
     }
 

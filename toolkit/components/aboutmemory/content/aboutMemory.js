@@ -50,10 +50,8 @@ let gMgr = Cc["@mozilla.org/memory-reporter-manager;1"]
 
 // We need to know about "child-memory-reporter-update" events from child
 // processes.
-let gOs = Cc["@mozilla.org/observer-service;1"]
-            .getService(Ci.nsIObserverService);
-gOs.addObserver(updateAboutMemoryFromReporters,
-                "child-memory-reporter-update", false);
+Services.obs.addObserver(updateAboutMemoryFromReporters,
+                         "child-memory-reporter-update", false);
 
 let gUnnamedProcessStr = "Main Process";
 
@@ -122,8 +120,8 @@ function debug(x)
 
 function onUnload()
 {
-  gOs.removeObserver(updateAboutMemoryFromReporters,
-                     "child-memory-reporter-update");
+  Services.obs.removeObserver(updateAboutMemoryFromReporters,
+                              "child-memory-reporter-update");
 }
 
 //---------------------------------------------------------------------------
@@ -131,32 +129,21 @@ function onUnload()
 /**
  * Iterates over each reporter.
  *
- * @param aIgnoreReporter
- *        Function that indicates if we should skip an entire reporter, based
- *        on its name.
- * @param aIgnoreReport
- *        Function that indicates if we should skip a single report from a
- *        reporter, based on its path.
  * @param aHandleReport
  *        The function that's called for each non-skipped report.
  */
-function processMemoryReporters(aIgnoreReporter, aIgnoreReport, aHandleReport)
+function processMemoryReporters(aHandleReport)
 {
   let handleReport = function(aProcess, aUnsafePath, aKind, aUnits,
                               aAmount, aDescription) {
-    if (!aIgnoreReport(aUnsafePath)) {
-      aHandleReport(aProcess, aUnsafePath, aKind, aUnits, aAmount,
-                    aDescription, /* presence = */ undefined);
-    }
+    aHandleReport(aProcess, aUnsafePath, aKind, aUnits, aAmount,
+                  aDescription, /* presence = */ undefined);
   }
 
   let e = gMgr.enumerateReporters();
   while (e.hasMoreElements()) {
     let mr = e.getNext().QueryInterface(Ci.nsIMemoryReporter);
-    if (!aIgnoreReporter(mr.name)) {
-      // |collectReports| never passes in a |presence| argument.
-      mr.collectReports(handleReport, null);
-    }
+    mr.collectReports(handleReport, null);
   }
 }
 
@@ -165,19 +152,25 @@ function processMemoryReporters(aIgnoreReporter, aIgnoreReport, aHandleReport)
  *
  * @param aReports
  *        Array of reports, read from a file or the clipboard.
- * @param aIgnoreReport
- *        Function that indicates if we should skip a single report, based
- *        on its path.
  * @param aHandleReport
  *        The function that's called for each report.
  */
-function processMemoryReportsFromFile(aReports, aIgnoreReport, aHandleReport)
+function processMemoryReportsFromFile(aReports, aHandleReport)
 {
   // Process each memory reporter with aHandleReport.
 
   for (let i = 0; i < aReports.length; i++) {
     let r = aReports[i];
-    if (!aIgnoreReport(r.path)) {
+
+    // A hack: for a brief time (late in the FF26 and early in the FF27
+    // cycle) we were dumping memory report files that contained reports
+    // whose path began with "redundant/".  Such reports were ignored by
+    // about:memory.  These reports are no longer produced, but some older
+    // builds are still floating around and producing files that contain
+    // them, so we need to still handle them (i.e. ignore them).  This hack
+    // can be removed once FF26 and associated products (e.g. B2G 1.2) are
+    // no longer in common use.
+    if (!r.path.startsWith("redundant/")) {
       aHandleReport(r.process, r.path, r.kind, r.units, r.amount,
                     r.description, r._presence);
     }
@@ -199,7 +192,6 @@ let gVerbose;
 // Values for the second argument to updateMainAndFooter.
 let HIDE_FOOTER = 0;
 let SHOW_FOOTER = 1;
-let IGNORE_FOOTER = 2;
 
 function updateMainAndFooter(aMsg, aFooterAction, aClassName)
 {
@@ -226,7 +218,6 @@ function updateMainAndFooter(aMsg, aFooterAction, aClassName)
   switch (aFooterAction) {
    case HIDE_FOOTER:   gFooter.classList.add('hidden');    break;
    case SHOW_FOOTER:   gFooter.classList.remove('hidden'); break;
-   case IGNORE_FOOTER:                                     break;
    default: assertInput(false, "bad footer action in updateMainAndFooter");
   }
 }
@@ -429,9 +420,7 @@ function onLoad()
 function doGC()
 {
   Cu.forceGC();
-  let os = Cc["@mozilla.org/observer-service;1"]
-             .getService(Ci.nsIObserverService);
-  os.notifyObservers(null, "child-gc-request", null);
+  Services.obs.notifyObservers(null, "child-gc-request", null);
   updateMainAndFooter("Garbage collection completed", HIDE_FOOTER);
 }
 
@@ -440,9 +429,7 @@ function doCC()
   window.QueryInterface(Ci.nsIInterfaceRequestor)
         .getInterface(Ci.nsIDOMWindowUtils)
         .cycleCollect();
-  let os = Cc["@mozilla.org/observer-service;1"]
-             .getService(Ci.nsIObserverService);
-  os.notifyObservers(null, "child-cc-request", null);
+  Services.obs.notifyObservers(null, "child-cc-request", null);
   updateMainAndFooter("Cycle collection completed", HIDE_FOOTER);
 }
 
@@ -458,7 +445,7 @@ function doMeasure()
   // update the page.  If any reports come back from children,
   // updateAboutMemoryFromReporters() will be called again and the page will
   // regenerate.
-  gOs.notifyObservers(null, "child-memory-reporter-request", null);
+  Services.obs.notifyObservers(null, "child-memory-reporter-request", null);
   updateAboutMemoryFromReporters();
 }
 
@@ -484,8 +471,6 @@ function updateAboutMemoryFromReporters()
 
 // Increment this if the JSON format changes.
 //
-// If/when this changes to 2, the beLenient() function and its use can be
-// removed.
 var gCurrentFileFormatVersion = 1;
 
 /**
@@ -504,8 +489,8 @@ function updateAboutMemoryFromJSONObject(aObj)
                 "missing 'hasMozMallocUsableSize' property");
     assertInput(aObj.reports && aObj.reports instanceof Array,
                 "missing or non-array 'reports' property");
-    let process = function(aIgnoreReporter, aIgnoreReport, aHandleReport) {
-      processMemoryReportsFromFile(aObj.reports, aIgnoreReport, aHandleReport);
+    let process = function(aHandleReport) {
+      processMemoryReportsFromFile(aObj.reports, aHandleReport);
     }
     appendAboutMemoryMain(process, aObj.hasMozMallocUsableSize);
   } catch (ex) {
@@ -634,8 +619,6 @@ function updateAboutMemoryFromTwoFiles(aFilename1, aFilename2)
 function updateAboutMemoryFromClipboard()
 {
   // Get the clipboard's contents.
-  let cb = Cc["@mozilla.org/widget/clipboard;1"].
-           getService(Components.interfaces.nsIClipboard);
   let transferable = Cc["@mozilla.org/widget/transferable;1"]
                        .createInstance(Ci.nsITransferable);
   let loadContext = window.QueryInterface(Ci.nsIInterfaceRequestor)
@@ -643,7 +626,7 @@ function updateAboutMemoryFromClipboard()
                           .QueryInterface(Ci.nsILoadContext);
   transferable.init(loadContext);
   transferable.addDataFlavor('text/unicode');
-  cb.getData(transferable, Ci.nsIClipboard.kGlobalClipboard);
+  Services.clipboard.getData(transferable, Ci.nsIClipboard.kGlobalClipboard);
 
   var cbData = {};
   try {
@@ -911,7 +894,7 @@ function appendAboutMemoryMain(aProcessReports, aHasMozMallocUsableSize)
     let process = processes[i];
     let section = appendElement(gMain, 'div', 'section');
 
-    appendProcessAboutMemoryElements(section, process,
+    appendProcessAboutMemoryElements(section, i, process,
                                      pcollsByProcess[process]._trees,
                                      pcollsByProcess[process]._degenerates,
                                      pcollsByProcess[process]._heapTotal,
@@ -932,24 +915,6 @@ function getPCollsByProcess(aProcessReports)
 {
   let pcollsByProcess = {};
 
-  // This regexp matches sentences and sentence fragments, i.e. strings that
-  // start with a capital letter and ends with a '.'.  (The final sentence may
-  // be in parentheses, so a ')' might appear after the '.'.)
-  const gSentenceRegExp = /^[A-Z].*\.\)?$/m;
-
-  // Ignore any "redundant/"-prefixed reporters and reports, which are only
-  // used by telemetry.
-
-  function ignoreReporter(aName)
-  {
-    return aName.startsWith("redundant/");
-  }
-
-  function ignoreReport(aUnsafePath)
-  {
-    return aUnsafePath.startsWith("redundant/");
-  }
-
   function handleReport(aProcess, aUnsafePath, aKind, aUnits, aAmount,
                         aDescription, aPresence)
   {
@@ -957,38 +922,12 @@ function getPCollsByProcess(aProcessReports)
       assertInput(aKind === KIND_HEAP || aKind === KIND_NONHEAP,
                   "bad explicit kind");
       assertInput(aUnits === UNITS_BYTES, "bad explicit units");
-      assertInput(gSentenceRegExp.test(aDescription),
-                  "non-sentence explicit description");
-
-    } else {
-      const kLenientPrefixes =
-        ['rss/', 'pss/', 'size/', 'swap/', 'compartments/', 'ghost-windows/'];
-      let beLenient = function(aUnsafePath) {
-        for (let i = 0; i < kLenientPrefixes.length; i++) {
-          if (aUnsafePath.startsWith(kLenientPrefixes[i])) {
-            return true;
-          }
-        }
-        return false;
-      }
-
-      // In general, non-explicit reports should have a description that is a
-      // complete sentence.  However, we want to be able to read old saved
-      // reports, so we are lenient in a couple of situations where we used to
-      // allow non-sentence descriptions:
-      // - smaps reports (which were removed in bug 912165);
-      // - compartment and ghost-window reports (which had empty descriptions
-      //   prior to bug 911641).
-      if (!beLenient(aUnsafePath)) {
-        assertInput(gSentenceRegExp.test(aDescription),
-                    "non-sentence other description: " + aUnsafePath + ", " +
-                    aDescription);
-      }
     }
 
     assert(aPresence === undefined ||
            aPresence == DReport.PRESENT_IN_FIRST_ONLY ||
-           aPresence == DReport.PRESENT_IN_SECOND_ONLY);
+           aPresence == DReport.PRESENT_IN_SECOND_ONLY,
+           "bad presence");
 
     let process = aProcess === "" ? gUnnamedProcessStr : aProcess;
     let unsafeNames = aUnsafePath.split('/');
@@ -1046,7 +985,7 @@ function getPCollsByProcess(aProcessReports)
     }
   }
 
-  aProcessReports(ignoreReporter, ignoreReport, handleReport);
+  aProcessReports(handleReport);
 
   return pcollsByProcess;
 }
@@ -1346,6 +1285,8 @@ function appendWarningElements(aP, aHasKnownHeapAllocated,
  *
  * @param aP
  *        The parent DOM node.
+ * @param aN
+ *        The number of the process, starting at 0.
  * @param aProcess
  *        The name of the process.
  * @param aTrees
@@ -1356,10 +1297,34 @@ function appendWarningElements(aP, aHasKnownHeapAllocated,
  *        Boolean indicating if moz_malloc_usable_size works.
  * @return The generated text.
  */
-function appendProcessAboutMemoryElements(aP, aProcess, aTrees, aDegenerates,
-                                          aHeapTotal, aHasMozMallocUsableSize)
+function appendProcessAboutMemoryElements(aP, aN, aProcess, aTrees,
+                                          aDegenerates, aHeapTotal,
+                                          aHasMozMallocUsableSize)
 {
-  appendElementWithText(aP, "h1", "", aProcess + "\n\n");
+  const kUpwardsArrow   = "\u2191",
+        kDownwardsArrow = "\u2193";
+
+  let appendLink = function(aHere, aThere, aArrow) {
+    let link = appendElementWithText(aP, "a", "upDownArrow", aArrow);
+    link.href = "#" + aThere + aN;
+    link.id = aHere + aN;
+    link.title = "Go to the " + aThere + " of " + aProcess;
+    link.style = "text-decoration: none";
+
+    // This jumps to the anchor without the page location getting the anchor
+    // name tacked onto its end, which is what happens with a vanilla link.
+    link.addEventListener("click", function(event) {
+      document.documentElement.scrollTop =
+        document.querySelector(event.target.href).offsetTop;
+      event.preventDefault();
+    }, false);
+
+    // This gives nice spacing when we copy and paste.
+    appendElementWithText(aP, "span", "", "\n");
+  }
+
+  appendElementWithText(aP, "h1", "", aProcess);
+  appendLink("start", "end", kDownwardsArrow);
 
   // We'll fill this in later.
   let warningsDiv = appendElement(aP, "div", "accuracyWarning");
@@ -1372,6 +1337,11 @@ function appendProcessAboutMemoryElements(aP, aProcess, aTrees, aDegenerates,
     let t = aTrees[treeName];
     if (t) {
       fillInTree(t);
+      // Using the "heap-allocated" reporter here instead of
+      // nsMemoryReporterManager.heapAllocated goes against the usual pattern.
+      // But the "heap-allocated" node will go in the tree like the others, so
+      // we have to deal with it, and once we're dealing with it, it's easier
+      // to keep doing so rather than switching to the distinguished amount.
       hasKnownHeapAllocated =
         aDegenerates &&
         addHeapUnclassifiedNode(t, aDegenerates["heap-allocated"], aHeapTotal);
@@ -1380,7 +1350,7 @@ function appendProcessAboutMemoryElements(aP, aProcess, aTrees, aDegenerates,
       appendTreeElements(pre, t, aProcess, "");
       delete aTrees[treeName];
     }
-    appendTextNode(aP, "\n");  // gives nice spacing when we cut and paste
+    appendTextNode(aP, "\n");  // gives nice spacing when we copy and paste
   }
 
   // Fill in and sort all the non-degenerate other trees.
@@ -1421,13 +1391,16 @@ function appendProcessAboutMemoryElements(aP, aProcess, aTrees, aDegenerates,
     let padText = pad("", maxStringLength - t.toString().length, ' ');
     appendTreeElements(pre, t, aProcess, padText);
   }
-  appendTextNode(aP, "\n");  // gives nice spacing when we cut and paste
+  appendTextNode(aP, "\n");  // gives nice spacing when we copy and paste
 
   // Add any warnings about inaccuracies due to platform limitations.
   // These must be computed after generating all the text.  The newlines give
-  // nice spacing if we cut+paste into a text buffer.
+  // nice spacing if we copy+paste into a text buffer.
   appendWarningElements(warningsDiv, hasKnownHeapAllocated,
                         aHasMozMallocUsableSize);
+
+  appendElementWithText(aP, "h3", "", "End of " + aProcess);
+  appendLink("end", "start", kUpwardsArrow);
 }
 
 /**
@@ -1550,7 +1523,7 @@ function pad(aS, aN, aC)
 
 // There's a subset of the Unicode "light" box-drawing chars that is widely
 // implemented in terminals, and this code sticks to that subset to maximize
-// the chance that cutting and pasting about:memory output to a terminal will
+// the chance that copying and pasting about:memory output to a terminal will
 // work correctly.
 const kHorizontal                   = "\u2500",
       kVertical                     = "\u2502",
@@ -1761,7 +1734,9 @@ function appendTreeElements(aP, aRoot, aProcess, aPadText)
       tIsInvalid = true;
       let unsafePath = aUnsafeNames.join("/");
       gUnsafePathsWithInvalidValuesForThisProcess.push(unsafePath);
-      reportAssertionFailure("Invalid value for " + flipBackslashes(unsafePath));
+      reportAssertionFailure("Invalid value (" + aT._amount + " / " +
+                             aRoot._amount + ") for " +
+                             flipBackslashes(unsafePath));
     }
 
     // For non-leaf nodes, the entire sub-tree is put within a span so it can

@@ -6,6 +6,11 @@
 
 if not CONFIG['MOZ_PROFILE_GENERATE']:
     PROGRAM = 'spacetrace'
+    SOURCES += [
+        'formdata.c',
+        'spacecategory.c',
+        'spacetrace.c',
+    ]
 
 bin_suffix = CONFIG['BIN_SUFFIX']
 
@@ -15,8 +20,11 @@ simple_c_sources = [
     'tmstats',
 ]
 
-CSRCS += [
+SOURCES += [
     '%s.c' % s for s in simple_c_sources
+]
+SOURCES += [
+    'tmreader.c',
 ]
 
 SIMPLE_PROGRAMS += [
@@ -29,7 +37,7 @@ simple_cpp_sources = [
     'leaksoup',
 ]
 
-CPP_SOURCES += [
+SOURCES += [
     '%s.cpp' % s for s in simple_cpp_sources
 ]
 

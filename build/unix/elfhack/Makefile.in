@@ -12,13 +12,11 @@ VPATH += $(topsrcdir)/build
 
 OS_CXXFLAGS := $(filter-out -fno-exceptions,$(OS_CXXFLAGS)) -fexceptions
 
-ifndef CROSS_COMPILE
-CSRCS += dummy.c
-endif
-
 WRAP_LDFLAGS=
 
 include $(topsrcdir)/config/rules.mk
+
+DEFINES += -DELFHACK_BUILD
 
 test-array$(DLL_SUFFIX) test-ctors$(DLL_SUFFIX): %$(DLL_SUFFIX): %.$(OBJ_SUFFIX) elfhack $(filter inject/%,$(CSRCS:.c=.$(OBJ_SUFFIX)))
 	$(MKSHLIB) $(LDFLAGS) $< -nostartfiles
@@ -58,4 +56,3 @@ GARBAGE += dummy
 endif
 
 test.$(OBJ_SUFFIX): CFLAGS := -O0
-host_elf.$(OBJ_SUFFIX) host_elfhack.$(OBJ_SUFFIX): elfxx.h

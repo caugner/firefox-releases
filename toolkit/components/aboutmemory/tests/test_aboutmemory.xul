@@ -150,14 +150,6 @@
   // the largest).  Processes without a |resident| memory reporter are saved
   // for the end.
   let fakeReporters2 = [
-    { name: "redundant/foobar",
-      collectReports: function(aCbObj, aClosure) {
-        // Shouldn't reach here;  aboutMemory.js should skip the reporter.
-        // (Nb: this must come after |mgr.explicit| is accessed, otherwise it
-        // *will* be run by nsMemoryReporterManager::GetExplicit()).
-        ok(false, "'redundant/foobar' reporter was run");
-      }
-    },
     { name: "fake3",
       collectReports: function(aCbObj, aClosure) {
         function f(aP1, aP2, aK, aU, aA) {
@@ -174,7 +166,6 @@
                                     HEAP,    BYTES,200 * MB);
         f("2nd", "other0",          OTHER,   BYTES,666 * MB);
         f("2nd", "other1",          OTHER,   BYTES,111 * MB);
-        f("2nd", "redundant/blah",  NONHEAP, BYTES,24*4*KB); // ignored!
 
         // Check that we can handle "heap-allocated" not being present.
         f("3rd", "explicit/a/b",    HEAP,    BYTES,333 * MB);
@@ -288,6 +279,7 @@ Other Measurements\n\
    45.67% ── perc1\n\
   100.00% ── perc2\n\
 \n\
+End of Main Process\n\
 4th\n\
 \n\
 WARNING: the following values are negative or unreasonably large.\n\
@@ -323,6 +315,7 @@ Other Measurements\n\
    666.66% ── other6\n\
  200.00 MB ── resident\n\
 \n\
+End of 4th\n\
 3rd\n\
 \n\
 WARNING: the 'heap-allocated' memory reporter does not work for this platform and/or configuration. This means that 'heap-unclassified' is not shown and the 'explicit' tree shows less memory than it should.\n\
@@ -338,6 +331,7 @@ Other Measurements\n\
   1.00 MB ── other1\n\
 100.00 MB ── resident\n\
 \n\
+End of 3rd\n\
 2nd\n\
 Explicit Allocations\n\
 \n\
@@ -354,6 +348,7 @@ Other Measurements\n\
   666.00 MB ── other0\n\
   111.00 MB ── other1\n\
 \n\
+End of 2nd\n\
 5th\n\
 \n\
 WARNING: the following values are negative or unreasonably large.\n\
@@ -386,6 +381,7 @@ Other Measurements\n\
 \n\
 100.00 MB ── heap-allocated\n\
 \n\
+End of 5th\n\
 ";
 
   let amvExpectedText =
@@ -455,6 +451,7 @@ Other Measurements\n\
        45.67% ── perc1\n\
       100.00% ── perc2\n\
 \n\
+End of Main Process\n\
 4th\n\
 \n\
 WARNING: the following values are negative or unreasonably large.\n\
@@ -488,6 +485,7 @@ Other Measurements\n\
        666.66% ── other6\n\
  209,715,200 B ── resident\n\
 \n\
+End of 4th\n\
 3rd\n\
 \n\
 WARNING: the 'heap-allocated' memory reporter does not work for this platform and/or configuration. This means that 'heap-unclassified' is not shown and the 'explicit' tree shows less memory than it should.\n\
@@ -503,6 +501,7 @@ Other Measurements\n\
   1,048,576 B ── other1\n\
 104,857,600 B ── resident\n\
 \n\
+End of 3rd\n\
 2nd\n\
 Explicit Allocations\n\
 \n\
@@ -519,6 +518,7 @@ Other Measurements\n\
   698,351,616 B ── other0\n\
   116,391,936 B ── other1\n\
 \n\
+End of 2nd\n\
 5th\n\
 \n\
 WARNING: the following values are negative or unreasonably large.\n\
@@ -550,7 +550,8 @@ Other Measurements\n\
 \n\
 104,857,600 B ── heap-allocated\n\
 \n\
-"
+End of 5th\n\
+";
 
   function finish()
   {
@@ -576,7 +577,7 @@ Other Measurements\n\
       let mostRecentActual;
       let frame = document.getElementById(aFrameId);
       frame.focus();
-        
+
       // Set the verbose checkbox value and click the go button.
       let doc = frame.contentWindow.document;
       let measureButton = doc.getElementById("measureButton");
@@ -597,9 +598,9 @@ Other Measurements\n\
         function() {
           ok(false, "pasted text doesn't match for " + aFrameId);
           dump("******EXPECTED******\n");
-          dump(aExpected);
+          dump("<<<" + aExpected + ">>>\n");
           dump("*******ACTUAL*******\n");
-          dump(mostRecentActual);
+          dump("<<<" + mostRecentActual + ">>>\n");
           dump("********************\n");
           finish();
         }

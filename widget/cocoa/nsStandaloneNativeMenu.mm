@@ -9,8 +9,6 @@
 #include "nsMenuUtilsX.h"
 #include "nsIDOMElement.h"
 #include "nsIMutationObserver.h"
-#include "nsEvent.h"
-#include "nsGUIEvent.h"
 #include "nsGkAtoms.h"
 #include "nsObjCExceptions.h"
 
@@ -135,7 +133,8 @@ nsStandaloneNativeMenu::ActivateNativeMenuItemAt(const nsAString& indexString)
   if (!mMenu)
     return NS_ERROR_NOT_INITIALIZED;
 
-  NSString * locationString = [NSString stringWithCharacters:indexString.BeginReading() length:indexString.Length()];
+  NSString * locationString = [NSString stringWithCharacters:reinterpret_cast<const unichar*>(indexString.BeginReading())
+                                                      length:indexString.Length()];
   NSMenu * menu = static_cast<NSMenu *> (mMenu->NativeData());
   NSMenuItem * item = NativeMenuItemWithLocation(menu, locationString);
 
@@ -162,7 +161,8 @@ nsStandaloneNativeMenu::ForceUpdateNativeMenuAt(const nsAString& indexString)
   if (!mMenu)
     return NS_ERROR_NOT_INITIALIZED;
 
-  NSString* locationString = [NSString stringWithCharacters:indexString.BeginReading() length:indexString.Length()];
+  NSString* locationString = [NSString stringWithCharacters:reinterpret_cast<const unichar*>(indexString.BeginReading())
+                                                     length:indexString.Length()];
   NSArray* indexes = [locationString componentsSeparatedByString:@"|"];
   unsigned int indexCount = [indexes count];
   if (indexCount == 0)

@@ -9,7 +9,6 @@
 
 #include "mozilla/MemoryReporting.h"
 #include "jsapi.h"
-#include "js/Class.h"
 
 #include "nsCycleCollector.h"
 #include "nsCycleCollectionParticipant.h"
@@ -18,27 +17,27 @@
 #include "nsTArray.h"
 
 class nsCycleCollectionNoteRootCallback;
-class nsScriptObjectTracer;
 class nsIException;
+
+namespace js {
+class Class;
+}
 
 namespace mozilla {
 
 class JSGCThingParticipant: public nsCycleCollectionParticipant
 {
 public:
-  NS_IMETHOD Root(void *n)
+  NS_IMETHOD_(void) Root(void *n)
   {
-    return NS_OK;
   }
 
-  NS_IMETHOD Unlink(void *n)
+  NS_IMETHOD_(void) Unlink(void *n)
   {
-    return NS_OK;
   }
 
-  NS_IMETHOD Unroot(void *n)
+  NS_IMETHOD_(void) Unroot(void *n)
   {
-    return NS_OK;
   }
 
   NS_IMETHOD_(void) DeleteCycleCollectable(void *n)
@@ -53,19 +52,16 @@ class JSZoneParticipant : public nsCycleCollectionParticipant
 public:
   MOZ_CONSTEXPR JSZoneParticipant(): nsCycleCollectionParticipant() {}
 
-  NS_IMETHOD Root(void *p)
+  NS_IMETHOD_(void) Root(void *p)
   {
-    return NS_OK;
   }
 
-  NS_IMETHOD Unlink(void *p)
+  NS_IMETHOD_(void) Unlink(void *p)
   {
-    return NS_OK;
   }
 
-  NS_IMETHOD Unroot(void *p)
+  NS_IMETHOD_(void) Unroot(void *p)
   {
-    return NS_OK;
   }
 
   NS_IMETHOD_(void) DeleteCycleCollectable(void *n)
@@ -86,6 +82,10 @@ protected:
   CycleCollectedJSRuntime(uint32_t aMaxbytes,
                           JSUseHelperThreads aUseHelperThreads);
   virtual ~CycleCollectedJSRuntime();
+
+  // Idempotent. Subclasses may destroy their runtimes earlier in execution if
+  // they so desire.
+  void DestroyRuntime();
 
   size_t SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
   void UnmarkSkippableJSHolders();
@@ -168,7 +168,6 @@ public:
   void RemoveJSHolder(void* aHolder);
 #ifdef DEBUG
   bool IsJSHolder(void* aHolder);
-  void SetObjectToUnlink(void* aObject) { mObjectToUnlink = aObject; }
   void AssertNoObjectsToTrace(void* aPossibleJSHolder);
 #endif
 
@@ -223,10 +222,6 @@ private:
   nsRefPtr<IncrementalFinalizeRunnable> mFinalizeRunnable;
 
   nsCOMPtr<nsIException> mPendingException;
-
-#ifdef DEBUG
-  void* mObjectToUnlink;
-#endif
 };
 
 } // namespace mozilla

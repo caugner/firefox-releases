@@ -15,6 +15,8 @@ XPCOMUtils.defineLazyModuleGetter(this,
   "InsecurePasswordUtils", "resource://gre/modules/InsecurePasswordUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
   "resource://gre/modules/PrivateBrowsingUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "UITour",
+  "resource:///modules/UITour.jsm");
 
 // Creates a new nsIURI object.
 function makeURI(uri, originCharset, baseURI) {
@@ -49,6 +51,15 @@ if (Services.prefs.getBoolPref("browser.tabs.remote")) {
   addEventListener("blur", function(event) {
     LoginManagerContent.onUsernameInput(event);
   });
+
+  addEventListener("mozUITour", function(event) {
+    if (!Services.prefs.getBoolPref("browser.uitour.enabled"))
+      return;
+
+    let handled = UITour.onPageEvent(event);
+    if (handled)
+      addEventListener("pagehide", UITour);
+  }, false, true);
 }
 
 let AboutHomeListener = {
@@ -88,7 +99,7 @@ let AboutHomeListener = {
     if (aData.showKnowYourRights)
       docElt.setAttribute("showKnowYourRights", "true");
     docElt.setAttribute("snippetsVersion", aData.snippetsVersion);
-    docElt.setAttribute("searchEngineName", Services.search.defaultEngine.name);
+    docElt.setAttribute("searchEngineName", aData.defaultEngineName);
   },
 
   onPageLoad: function() {
@@ -99,14 +110,14 @@ let AboutHomeListener = {
     }
 
     doc.documentElement.setAttribute("hasBrowserHandlers", "true");
-    let updateListener = this;
-    addMessageListener("AboutHome:Update", updateListener);
+    let self = this;
+    addMessageListener("AboutHome:Update", self);
     addEventListener("click", this.onClick, true);
     addEventListener("pagehide", function onPageHide(event) {
       if (event.target.defaultView.frameElement)
         return;
-      removeMessageListener("AboutHome:Update", updateListener);
-      removeEventListener("click", this.onClick, true);
+      removeMessageListener("AboutHome:Update", self);
+      removeEventListener("click", self.onClick, true);
       removeEventListener("pagehide", onPageHide, true);
       if (event.target.documentElement)
         event.target.documentElement.removeAttribute("hasBrowserHandlers");
@@ -133,6 +144,11 @@ let AboutHomeListener = {
 
     let originalTarget = aEvent.originalTarget;
     let ownerDoc = originalTarget.ownerDocument;
+    if (ownerDoc.documentURI != "about:home") {
+      // This shouldn't happen, but we're being defensive.
+      return;
+    }
+
     let elmId = originalTarget.getAttribute("id");
 
     switch (elmId) {
@@ -173,8 +189,14 @@ let AboutHomeListener = {
 };
 AboutHomeListener.init(this);
 
-
 var global = this;
+
+// Lazily load the finder code
+addMessageListener("Finder:Initialize", function () {
+  let {RemoteFinderListener} = Cu.import("resource://gre/modules/RemoteFinder.jsm", {});
+  new RemoteFinderListener(global);
+});
+
 
 let ClickEventHandler = {
   init: function init() {

@@ -12,7 +12,6 @@
 
 #include <string.h>
 
-#include "jsapi.h"
 #include "jscntxt.h"
 #include "jsfun.h"
 #include "jsgc.h"
@@ -27,7 +26,6 @@
 #include "frontend/SourceNotes.h"
 #include "jit/AsmJSModule.h"
 #include "vm/Debugger.h"
-#include "vm/Interpreter.h"
 #include "vm/Shape.h"
 
 #include "jsatominlines.h"
@@ -172,13 +170,16 @@ js::DebugExceptionUnwind(JSContext *cx, AbstractFramePtr frame, jsbytecode *pc)
 JS_FRIEND_API(bool)
 JS_SetDebugModeForAllCompartments(JSContext *cx, bool debug)
 {
-    AutoDebugModeGC dmgc(cx->runtime());
-
-    for (CompartmentsIter c(cx->runtime()); !c.done(); c.next()) {
-        // Ignore special compartments (atoms, JSD compartments)
-        if (c->principals) {
-            if (!c->setDebugModeFromC(cx, !!debug, dmgc))
-                return false;
+    for (ZonesIter zone(cx->runtime()); !zone.done(); zone.next()) {
+        // Invalidate a zone at a time to avoid doing a zone-wide CellIter
+        // per compartment.
+        AutoDebugModeInvalidation invalidate(zone);
+        for (CompartmentsInZoneIter c(zone); !c.done(); c.next()) {
+            // Ignore special compartments (atoms, JSD compartments)
+            if (c->principals) {
+                if (!c->setDebugModeFromC(cx, !!debug, invalidate))
+                    return false;
+            }
         }
     }
     return true;
@@ -187,8 +188,8 @@ JS_SetDebugModeForAllCompartments(JSContext *cx, bool debug)
 JS_FRIEND_API(bool)
 JS_SetDebugModeForCompartment(JSContext *cx, JSCompartment *comp, bool debug)
 {
-    AutoDebugModeGC dmgc(cx->runtime());
-    return comp->setDebugModeFromC(cx, !!debug, dmgc);
+    AutoDebugModeInvalidation invalidate(comp);
+    return comp->setDebugModeFromC(cx, !!debug, invalidate);
 }
 
 static bool
@@ -202,7 +203,7 @@ CheckDebugMode(JSContext *cx)
      */
     if (!debugMode) {
         JS_ReportErrorFlagsAndNumber(cx, JSREPORT_ERROR, js_GetErrorMessage,
-                                     NULL, JSMSG_NEED_DEBUG_MODE);
+                                     nullptr, JSMSG_NEED_DEBUG_MODE);
     }
     return debugMode;
 }
@@ -244,7 +245,7 @@ JS_ClearTrap(JSContext *cx, JSScript *script, jsbytecode *pc,
         site->clearTrap(cx->runtime()->defaultFreeOp(), handlerp, closurep);
     } else {
         if (handlerp)
-            *handlerp = NULL;
+            *handlerp = nullptr;
         if (closurep)
             *closurep = JSVAL_VOID;
     }
@@ -310,7 +311,7 @@ JS_SetWatchPoint(JSContext *cx, JSObject *obj_, jsid id_,
     if (JSID_IS_INT(id)) {
         propid = id;
     } else if (JSID_IS_OBJECT(id)) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_CANT_WATCH_PROP);
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_CANT_WATCH_PROP);
         return false;
     } else {
         RootedValue val(cx, IdToValue(id));
@@ -326,7 +327,7 @@ JS_SetWatchPoint(JSContext *cx, JSObject *obj_, jsid id_,
         return false;
 
     if (!obj->isNative()) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_CANT_WATCH,
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_CANT_WATCH,
                              obj->getClass()->name);
         return false;
     }
@@ -370,16 +371,6 @@ JS_ClearWatchPointsForObject(JSContext *cx, JSObject *obj)
 
     if (WatchpointMap *wpmap = cx->compartment()->watchpointMap)
         wpmap->unwatchObject(obj);
-    return true;
-}
-
-JS_PUBLIC_API(bool)
-JS_ClearAllWatchPoints(JSContext *cx)
-{
-    if (JSCompartment *comp = cx->compartment()) {
-        if (WatchpointMap *wpmap = comp->watchpointMap)
-            wpmap->clear();
-    }
     return true;
 }
 
@@ -472,7 +463,7 @@ JS_GetFunctionLocalNameArray(JSContext *cx, JSFunction *fun, void **memp)
     RootedScript script(cx, fun->nonLazyScript());
     BindingVector bindings(cx);
     if (!FillBindingVector(script, &bindings))
-        return NULL;
+        return nullptr;
 
     LifoAlloc &lifo = cx->tempLifoAlloc();
 
@@ -481,7 +472,7 @@ JS_GetFunctionLocalNameArray(JSContext *cx, JSFunction *fun, void **memp)
     void *mem = lifo.alloc(sizeof(LifoAlloc::Mark) + bindings.length() * sizeof(uintptr_t));
     if (!mem) {
         js_ReportOutOfMemory(cx);
-        return NULL;
+        return nullptr;
     }
     *memp = mem;
     *reinterpret_cast<LifoAlloc::Mark*>(mem) = mark;
@@ -516,7 +507,7 @@ JS_PUBLIC_API(JSScript *)
 JS_GetFunctionScript(JSContext *cx, JSFunction *fun)
 {
     if (fun->isNative())
-        return NULL;
+        return nullptr;
     if (fun->isInterpretedLazy()) {
         RootedFunction rootedFun(cx, fun);
         AutoCompartment funCompartment(cx, rootedFun);
@@ -581,7 +572,7 @@ JS_GetScriptSourceMap(JSContext *cx, JSScript *script)
 {
     ScriptSource *source = script->scriptSource();
     JS_ASSERT(source);
-    return source->hasSourceMap() ? source->sourceMap() : NULL;
+    return source->hasSourceMapURL() ? source->sourceMapURL() : nullptr;
 }
 
 JS_PUBLIC_API(unsigned)
@@ -677,7 +668,7 @@ JS_GetPropertyDescArray(JSContext *cx, JSObject *obj_, JSPropertyDescArray *pda)
 
     assertSameCompartment(cx, obj);
     uint32_t i = 0;
-    JSPropertyDesc *pd = NULL;
+    JSPropertyDesc *pd = nullptr;
 
     if (obj->is<DebugScopeObject>()) {
         AutoIdVector props(cx);
@@ -691,10 +682,10 @@ JS_GetPropertyDescArray(JSContext *cx, JSObject *obj_, JSPropertyDescArray *pda)
         for (i = 0; i < props.length(); ++i) {
             pd[i].id = JSVAL_NULL;
             pd[i].value = JSVAL_NULL;
-            if (!AddValueRoot(cx, &pd[i].id, NULL))
+            if (!AddValueRoot(cx, &pd[i].id, nullptr))
                 goto bad;
             pd[i].id = IdToValue(props[i]);
-            if (!AddValueRoot(cx, &pd[i].value, NULL))
+            if (!AddValueRoot(cx, &pd[i].value, nullptr))
                 goto bad;
             if (!Proxy::get(cx, obj, obj, props.handleAt(i), MutableHandleValue::fromMarkedLocation(&pd[i].value)))
                 goto bad;
@@ -708,7 +699,7 @@ JS_GetPropertyDescArray(JSContext *cx, JSObject *obj_, JSPropertyDescArray *pda)
     const Class *clasp;
     clasp = obj->getClass();
     if (!obj->isNative() || (clasp->flags & JSCLASS_NEW_ENUMERATE)) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr,
                              JSMSG_CANT_DESCRIBE_PROPS, clasp->name);
         return false;
     }
@@ -718,7 +709,7 @@ JS_GetPropertyDescArray(JSContext *cx, JSObject *obj_, JSPropertyDescArray *pda)
     /* Return an empty pda early if obj has no own properties. */
     if (obj->nativeEmpty()) {
         pda->length = 0;
-        pda->array = NULL;
+        pda->array = nullptr;
         return true;
     }
 
@@ -733,14 +724,14 @@ JS_GetPropertyDescArray(JSContext *cx, JSObject *obj_, JSPropertyDescArray *pda)
             pd[i].id = JSVAL_NULL;
             pd[i].value = JSVAL_NULL;
             pd[i].alias = JSVAL_NULL;
-            if (!AddValueRoot(cx, &pd[i].id, NULL))
+            if (!AddValueRoot(cx, &pd[i].id, nullptr))
                 goto bad;
-            if (!AddValueRoot(cx, &pd[i].value, NULL))
+            if (!AddValueRoot(cx, &pd[i].value, nullptr))
                 goto bad;
             shape = const_cast<Shape *>(&r.front());
             if (!GetPropertyDesc(cx, obj, shape, &pd[i]))
                 goto bad;
-            if ((pd[i].flags & JSPD_ALIAS) && !AddValueRoot(cx, &pd[i].alias, NULL))
+            if ((pd[i].flags & JSPD_ALIAS) && !AddValueRoot(cx, &pd[i].alias, nullptr))
                 goto bad;
             if (++i == obj->propertyCount())
                 break;
@@ -772,7 +763,7 @@ JS_PutPropertyDescArray(JSContext *cx, JSPropertyDescArray *pda)
             js_RemoveRoot(cx->runtime(), &pd[i].alias);
     }
     js_free(pd);
-    pda->array = NULL;
+    pda->array = nullptr;
     pda->length = 0;
 }
 
@@ -983,14 +974,14 @@ JS::DescribeStack(JSContext *cx, unsigned maxFrames)
         desc.lineno = PCToLineNumber(i.script(), i.pc());
         desc.fun = i.maybeCallee();
         if (!frames.append(desc))
-            return NULL;
+            return nullptr;
         if (frames.length() == maxFrames)
             break;
     }
 
     JS::StackDescription *desc = js_new<JS::StackDescription>();
     if (!desc)
-        return NULL;
+        return nullptr;
 
     desc->nframes = frames.length();
     desc->frames = frames.extractRawBuffer();
@@ -1026,7 +1017,7 @@ class AutoPropertyDescArray
     void fetch(JSObject *obj) {
         JS_ASSERT(!descArray_.array);
         if (!JS_GetPropertyDescArray(cx_, obj, &descArray_))
-            descArray_.array = NULL;
+            descArray_.array = nullptr;
     }
 
     JSPropertyDescArray * operator ->() {
@@ -1040,12 +1031,17 @@ static const char *
 FormatValue(JSContext *cx, const Value &vArg, JSAutoByteString &bytes)
 {
     RootedValue v(cx, vArg);
+
+    mozilla::Maybe<AutoCompartment> ac;
+    if (v.isObject())
+        ac.construct(cx, &v.toObject());
+
     JSString *str = ToString<CanGC>(cx, v);
     if (!str)
-        return NULL;
+        return nullptr;
     const char *buf = bytes.encodeLatin1(cx, str);
     if (!buf)
-        return NULL;
+        return nullptr;
     const char *found = strstr(buf, "function ");
     if (found && (found - buf <= 2))
         return "[function]";
@@ -1070,16 +1066,6 @@ FormatFrame(JSContext *cx, const NonBuiltinScriptFrameIter &iter, char *buf, int
     if (fun)
         funname = fun->atom();
 
-    RootedObject callObj(cx);
-    AutoPropertyDescArray callProps(cx);
-
-    if (!iter.isJit() && (showArgs || showLocals)) {
-        JSAbstractFramePtr frame(Jsvalify(iter.abstractFramePtr()));
-        callObj = frame.callObject(cx);
-        if (callObj)
-            callProps.fetch(callObj);
-    }
-
     RootedValue thisVal(cx);
     AutoPropertyDescArray thisProps(cx);
     if (iter.computeThis(cx)) {
@@ -1100,74 +1086,61 @@ FormatFrame(JSContext *cx, const NonBuiltinScriptFrameIter &iter, char *buf, int
     if (!buf)
         return buf;
 
-    // print the function arguments
-    if (showArgs && callObj) {
-        uint32_t namedArgCount = 0;
-        for (uint32_t i = 0; i < callProps->length; i++) {
-            JSPropertyDesc* desc = &callProps->array[i];
-            JSAutoByteString nameBytes;
-            const char *name = NULL;
-            bool hasName = JSVAL_IS_STRING(desc->id);
-            if (hasName)
-                name = FormatValue(cx, desc->id, nameBytes);
-            JSAutoByteString valueBytes;
-            const char *value = FormatValue(cx, desc->value, valueBytes);
-
-            if (value && (name || !hasName)) {
-                buf = JS_sprintf_append(buf, "%s%s%s%s%s%s",
-                                        namedArgCount ? ", " : "",
-                                        name ? name :"",
-                                        name ? " = " : "",
-                                        desc->value.isString() ? "\"" : "",
-                                        value ? value : "?unknown?",
-                                        desc->value.isString() ? "\"" : "");
-                if (!buf)
-                    return buf;
-            } else {
-                buf = JS_sprintf_append(buf, "    <Failed to get named argument while inspecting stack frame>\n");
-                cx->clearPendingException();
-
-            }
-            namedArgCount++;
+    if (showArgs && iter.hasArgs()) {
+        BindingVector bindings(cx);
+        if (fun && fun->isInterpreted()) {
+            if (!FillBindingVector(script, &bindings))
+                return buf;
         }
 
-        // print any unnamed trailing args (found in 'arguments' object)
-        RootedValue val(cx);
-        if (JS_GetProperty(cx, callObj, "arguments", &val) && val.isObject()) {
-            uint32_t argCount;
-            RootedObject argsObj(cx, &val.toObject());
-            if (JS_GetProperty(cx, argsObj, "length", &val) &&
-                ToUint32(cx, val, &argCount) &&
-                argCount > namedArgCount)
-            {
-                for (uint32_t k = namedArgCount; k < argCount; k++) {
-                    char number[8];
-                    JS_snprintf(number, 8, "%d", (int) k);
 
-                    JSAutoByteString valueBytes;
-                    const char *value = NULL;
-                    if (JS_GetProperty(cx, argsObj, number, &val) &&
-                        (value = FormatValue(cx, val, valueBytes)))
-                    {
-                        buf = JS_sprintf_append(buf, "%s%s%s%s",
-                                                k ? ", " : "",
-                                                val.isString() ? "\"" : "",
-                                                value ? value : "?unknown?",
-                                                val.isString() ? "\"" : "");
-                        if (!buf)
-                            return buf;
-                    } else {
-                        buf = JS_sprintf_append(buf, "    <Failed to get argument while inspecting stack frame>\n");
-                        cx->clearPendingException();
+        bool first = true;
+        for (unsigned i = 0; i < iter.numActualArgs(); i++) {
+            RootedValue arg(cx);
+            if (i < iter.numFormalArgs() && script->formalIsAliased(i)) {
+                for (AliasedFormalIter fi(script); ; fi++) {
+                    if (fi.frameIndex() == i) {
+                        arg = iter.callObj().aliasedVar(fi);
+                        break;
                     }
                 }
+            } else if (script->argsObjAliasesFormals() && iter.hasArgsObj()) {
+                arg = iter.argsObj().arg(i);
             } else {
-                buf = JS_sprintf_append(buf, "    <Failed to get 'length' while inspecting stack frame>\n");
-                cx->clearPendingException();
+                arg = iter.unaliasedActual(i, DONT_CHECK_ALIASING);
             }
-        } else {
-            buf = JS_sprintf_append(buf, "    <Failed to get 'arguments' while inspecting stack frame>\n");
-            cx->clearPendingException();
+
+            JSAutoByteString valueBytes;
+            const char *value = FormatValue(cx, arg, valueBytes);
+
+            JSAutoByteString nameBytes;
+            const char *name = nullptr;
+
+            if (i < bindings.length()) {
+                name = nameBytes.encodeLatin1(cx, bindings[i].name());
+                if (!buf)
+                    return NULL;
+            }
+
+            if (value) {
+                buf = JS_sprintf_append(buf, "%s%s%s%s%s%s",
+                                        !first ? ", " : "",
+                                        name ? name :"",
+                                        name ? " = " : "",
+                                        arg.isString() ? "\"" : "",
+                                        value ? value : "?unknown?",
+                                        arg.isString() ? "\"" : "");
+                if (!buf)
+                    return buf;
+
+                first = false;
+            } else {
+                buf = JS_sprintf_append(buf, "    <Failed to get argument while inspecting stack frame>\n");
+                if (!buf)
+                    return buf;
+                cx->clearPendingException();
+
+            }
         }
     }
 
@@ -1179,36 +1152,16 @@ FormatFrame(JSContext *cx, const NonBuiltinScriptFrameIter &iter, char *buf, int
     if (!buf)
         return buf;
 
-    // print local variables
-    if (showLocals && callProps->array) {
-        for (uint32_t i = 0; i < callProps->length; i++) {
-            JSPropertyDesc* desc = &callProps->array[i];
-            JSAutoByteString nameBytes;
-            JSAutoByteString valueBytes;
-            const char *name = FormatValue(cx, desc->id, nameBytes);
-            const char *value = FormatValue(cx, desc->value, valueBytes);
 
-            if (name && value) {
-                buf = JS_sprintf_append(buf, "    %s = %s%s%s\n",
-                                        name,
-                                        desc->value.isString() ? "\"" : "",
-                                        value,
-                                        desc->value.isString() ? "\"" : "");
-                if (!buf)
-                    return buf;
-            } else {
-                buf = JS_sprintf_append(buf, "    <Failed to get local while inspecting stack frame>\n");
-                cx->clearPendingException();
-            }
-        }
-    }
+    // Note: Right now we don't dump the local variables anymore, because
+    // that is hard to support across all the JITs etc.
 
     // print the value of 'this'
     if (showLocals) {
         if (!thisVal.isUndefined()) {
             JSAutoByteString thisValBytes;
             RootedString thisValStr(cx, ToString<CanGC>(cx, thisVal));
-            const char *str = NULL;
+            const char *str = nullptr;
             if (thisValStr &&
                 (str = thisValBytes.encodeLatin1(cx, thisValStr)))
             {
@@ -1285,7 +1238,7 @@ JSAbstractFramePtr::callObject(JSContext *cx)
 {
     AbstractFramePtr frame = Valueify(*this);
     if (!frame.isFunctionFrame())
-        return NULL;
+        return nullptr;
 
     JSObject *o = GetDebugScopeForFrame(cx, frame);
 
@@ -1303,7 +1256,7 @@ JSAbstractFramePtr::callObject(JSContext *cx)
             return o;
         o = o->enclosingScope();
     }
-    return NULL;
+    return nullptr;
 }
 
 JSFunction *
@@ -1391,7 +1344,11 @@ JSAbstractFramePtr::evaluateUCInStackFrame(JSContext *cx,
 
 JSBrokenFrameIterator::JSBrokenFrameIterator(JSContext *cx)
 {
-    NonBuiltinScriptFrameIter iter(cx);
+    // Show all frames on the stack whose principal is subsumed by the current principal.
+    NonBuiltinScriptFrameIter iter(cx,
+                                   ScriptFrameIter::ALL_CONTEXTS,
+                                   ScriptFrameIter::GO_THROUGH_SAVED,
+                                   cx->compartment()->principals);
     data_ = iter.copyData();
 }
 

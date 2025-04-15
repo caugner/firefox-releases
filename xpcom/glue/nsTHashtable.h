@@ -162,14 +162,14 @@ public:
   {
     EntryType* e = PutEntry(aKey, fallible_t());
     if (!e)
-      NS_RUNTIMEABORT("OOM");
+      NS_ABORT_OOM(mTable.entrySize * mTable.entryCount);
     return e;
   }
 
   EntryType* PutEntry(KeyType aKey, const fallible_t&) NS_WARN_UNUSED_RESULT
   {
     NS_ASSERTION(mTable.entrySize, "nsTHashtable was not initialized properly.");
-    
+
     return static_cast<EntryType*>
                       (PL_DHashTableOperate(
                             &mTable,
@@ -254,8 +254,8 @@ public:
 
   /**
    * Measure the size of the table's entry storage, and if
-   * |sizeOfEntryExcludingThis| is non-NULL, measure the size of things pointed
-   * to by entries.
+   * |sizeOfEntryExcludingThis| is non-nullptr, measure the size of things
+   * pointed to by entries.
    * 
    * @param     sizeOfEntryExcludingThis the
    *            <code>SizeOfEntryExcludingThisFun</code> function to call
@@ -265,13 +265,14 @@ public:
    * @return    the summed size of all the entries
    */
   size_t SizeOfExcludingThis(SizeOfEntryExcludingThisFun sizeOfEntryExcludingThis,
-                             mozilla::MallocSizeOf mallocSizeOf, void *userArg = NULL) const
+                             mozilla::MallocSizeOf mallocSizeOf,
+                             void *userArg = nullptr) const
   {
     if (sizeOfEntryExcludingThis) {
       s_SizeOfArgs args = { sizeOfEntryExcludingThis, userArg };
       return PL_DHashTableSizeOfExcludingThis(&mTable, s_SizeOfStub, mallocSizeOf, &args);
     }
-    return PL_DHashTableSizeOfExcludingThis(&mTable, NULL, mallocSizeOf);
+    return PL_DHashTableSizeOfExcludingThis(&mTable, nullptr, mallocSizeOf);
   }
 
 #ifdef DEBUG
@@ -408,7 +409,7 @@ nsTHashtable<EntryType>::Init(uint32_t aInitSize)
   }
   
   if (!PL_DHashTableInit(&mTable, &sOps, nullptr, sizeof(EntryType), aInitSize)) {
-    NS_RUNTIMEABORT("OOM");
+    NS_ABORT_OOM(sizeof(EntryType) * aInitSize);
   }
 }
 
@@ -488,6 +489,58 @@ nsTHashtable<EntryType>::s_SizeOfStub(PLDHashEntryHdr *entry,
     reinterpret_cast<EntryType*>(entry),
     mallocSizeOf,
     reinterpret_cast<s_SizeOfArgs*>(arg)->userArg);
+}
+
+class nsCycleCollectionTraversalCallback;
+
+struct MOZ_STACK_CLASS nsTHashtableCCTraversalData
+{
+  nsTHashtableCCTraversalData(nsCycleCollectionTraversalCallback& aCallback,
+                              const char* aName,
+                              uint32_t aFlags)
+  : mCallback(aCallback),
+    mName(aName),
+    mFlags(aFlags)
+  {
+  }
+
+  nsCycleCollectionTraversalCallback& mCallback;
+  const char* mName;
+  uint32_t mFlags;
+};
+
+template <class EntryType>
+PLDHashOperator
+ImplCycleCollectionTraverse_EnumFunc(EntryType *aEntry,
+                                     void* aUserData)
+{
+  auto userData = static_cast<nsTHashtableCCTraversalData*>(aUserData);
+
+  ImplCycleCollectionTraverse(userData->mCallback,
+                              *aEntry,
+                              userData->mName,
+                              userData->mFlags);
+  return PL_DHASH_NEXT;
+}
+
+template <class EntryType>
+inline void
+ImplCycleCollectionUnlink(nsTHashtable<EntryType>& aField)
+{
+  aField.Clear();
+}
+
+template <class EntryType>
+inline void
+ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
+                            nsTHashtable<EntryType>& aField,
+                            const char* aName,
+                            uint32_t aFlags = 0)
+{
+  nsTHashtableCCTraversalData userData(aCallback, aName, aFlags);
+
+  aField.EnumerateEntries(ImplCycleCollectionTraverse_EnumFunc<EntryType>,
+                          &userData);
 }
 
 #endif // nsTHashtable_h__

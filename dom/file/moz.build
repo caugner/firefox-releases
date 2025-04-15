@@ -35,7 +35,7 @@ EXPORTS.mozilla.dom.file += [
     'LockedFile.h',
 ]
 
-CPP_SOURCES += [
+SOURCES += [
     'ArchiveEvent.cpp',
     'ArchiveReader.cpp',
     'ArchiveRequest.cpp',
@@ -61,3 +61,6 @@ LIBXUL_LIBRARY = True
 
 LIBRARY_NAME = 'domfile_s'
 
+LOCAL_INCLUDES += [
+    '../base',
+]

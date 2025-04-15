@@ -7,9 +7,10 @@
 #define nsProxyRelease_h__
 
 #include "nsIEventTarget.h"
+#include "nsIThread.h"
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
-#include "nsThreadUtils.h"
+#include "MainThreadUtils.h"
 #include "mozilla/Likely.h"
 
 #ifdef XPCOM_GLUE_AVOID_NSPR
@@ -110,7 +111,7 @@ public:
   // off-main-thread. But some consumers need to use the same pointer for
   // multiple classes, some of which are main-thread-only and some of which
   // aren't. So we allow them to explicitly disable this strict checking.
-  nsMainThreadPtrHolder(T* ptr, bool strict = true) : mRawPtr(NULL), mStrict(strict) {
+  nsMainThreadPtrHolder(T* ptr, bool strict = true) : mRawPtr(nullptr), mStrict(strict) {
     // We can only AddRef our pointer on the main thread, which means that the
     // holder must be constructed on the main thread.
     MOZ_ASSERT(!mStrict || NS_IsMainThread());
@@ -122,7 +123,8 @@ public:
     if (NS_IsMainThread()) {
       NS_IF_RELEASE(mRawPtr);
     } else if (mRawPtr) {
-      nsCOMPtr<nsIThread> mainThread = do_GetMainThread();
+      nsCOMPtr<nsIThread> mainThread;
+      NS_GetMainThread(getter_AddRefs(mainThread));
       if (!mainThread) {
         NS_WARNING("Couldn't get main thread! Leaking pointer.");
         return;
@@ -163,7 +165,7 @@ class nsMainThreadPtrHandle
   nsRefPtr<nsMainThreadPtrHolder<T> > mPtr;
 
   public:
-  nsMainThreadPtrHandle() : mPtr(NULL) {}
+  nsMainThreadPtrHandle() : mPtr(nullptr) {}
   nsMainThreadPtrHandle(nsMainThreadPtrHolder<T> *aHolder) : mPtr(aHolder) {}
   nsMainThreadPtrHandle(const nsMainThreadPtrHandle& aOther) : mPtr(aOther.mPtr) {}
   nsMainThreadPtrHandle& operator=(const nsMainThreadPtrHandle& aOther) {

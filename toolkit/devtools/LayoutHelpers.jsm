@@ -19,7 +19,7 @@ this.LayoutHelpers = LayoutHelpers = function(aTopLevelWindow) {
   this._topDocShell = aTopLevelWindow.QueryInterface(Ci.nsIInterfaceRequestor)
                                      .getInterface(Ci.nsIWebNavigation)
                                      .QueryInterface(Ci.nsIDocShell);
-}
+};
 
 LayoutHelpers.prototype = {
 
@@ -366,28 +366,19 @@ LayoutHelpers.prototype = {
 
   /**
    * like win.frameElement, but goes through mozbrowsers and mozapps iframes.
+   *
+   * @param DOMWindow win The window to get the frame for
+   * @return DOMElement The element in which the window is embedded.
    */
   getFrameElement: function LH_getFrameElement(win) {
     if (this.isTopLevelWindow(win)) {
       return null;
     }
 
-    let docShell = win.QueryInterface(Ci.nsIInterfaceRequestor)
-                   .getInterface(Ci.nsIWebNavigation)
-                   .QueryInterface(Ci.nsIDocShell);
+    let winUtils = win.
+      QueryInterface(Components.interfaces.nsIInterfaceRequestor).
+      getInterface(Components.interfaces.nsIDOMWindowUtils);
 
-    if (docShell.isBrowserOrApp) {
-      let parentDocShell = docShell.getSameTypeParentIgnoreBrowserAndAppBoundaries();
-      let parentDoc = parentDocShell.contentViewer.DOMDocument;
-      let allIframes = parentDoc.querySelectorAll("iframe");
-      for (let f of allIframes) {
-        if (f.contentWindow === win) {
-          return f;
-        }
-      }
-      return null;
-    } else {
-      return win.frameElement;
-    }
+    return winUtils.containerElement;
   },
 };

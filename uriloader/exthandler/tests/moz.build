@@ -6,6 +6,8 @@
 
 DIRS += ['mochitest']
 
+FAIL_ON_WARNINGS = True
+
 MODULE = 'test_uriloader_exthandler'
 
 XPCSHELL_TESTS_MANIFESTS += ['unit/xpcshell.ini']
@@ -21,7 +23,7 @@ sources = [
     'WriteArgument',
 ]
 
-CPP_SOURCES += [
+SOURCES += [
     '%s.cpp' % s for s in sources
 ]
 

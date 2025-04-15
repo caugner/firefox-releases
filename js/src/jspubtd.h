@@ -11,6 +11,7 @@
  * JS public API typedefs.
  */
 
+#include "mozilla/NullPtr.h"
 #include "mozilla/PodOperations.h"
 
 #include "jsprototypes.h"
@@ -71,7 +72,7 @@ typedef enum JSType {
 typedef enum JSProtoKey {
 #define PROTOKEY_AND_INITIALIZER(name,code,init) JSProto_##name = code,
     JS_FOR_EACH_PROTOTYPE(PROTOKEY_AND_INITIALIZER)
-#undef JS_PROTO
+#undef PROTOKEY_AND_INITIALIZER
     JSProto_LIMIT
 } JSProtoKey;
 
@@ -201,14 +202,14 @@ struct Runtime
   public:
     Runtime(
 #ifdef JSGC_GENERATIONAL
-        js::gc::StoreBuffer *gcStoreBufferPtr
+        js::gc::StoreBuffer *storeBuffer
 #endif
     )
       : needsBarrier_(false)
 #ifdef JSGC_GENERATIONAL
       , gcNurseryStart_(0)
       , gcNurseryEnd_(0)
-      , gcStoreBufferPtr_(gcStoreBufferPtr)
+      , gcStoreBufferPtr_(storeBuffer)
 #endif
     {}
 
@@ -312,13 +313,13 @@ struct ContextFriendFields
 
   public:
     explicit ContextFriendFields(JSRuntime *rt)
-      : runtime_(rt), compartment_(NULL), zone_(NULL), autoGCRooters(NULL)
+      : runtime_(rt), compartment_(nullptr), zone_(nullptr), autoGCRooters(nullptr)
     {
 #ifdef JSGC_TRACK_EXACT_ROOTS
         mozilla::PodArrayZero(thingGCRooters);
 #endif
 #if defined(DEBUG) && defined(JS_GC_ZEAL) && defined(JSGC_ROOT_ANALYSIS) && !defined(JS_THREADSAFE)
-        skipGCRooters = NULL;
+        skipGCRooters = nullptr;
 #endif
     }
 

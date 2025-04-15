@@ -74,10 +74,11 @@ DocAccessible::
   DocAccessible(nsIDocument* aDocument, nsIContent* aRootContent,
                   nsIPresShell* aPresShell) :
   HyperTextAccessibleWrap(aRootContent, this),
-  mDocumentNode(aDocument), mScrollPositionChangedTicks(0),
   // XXX aaronl should we use an algorithm for the initial cache size?
   mAccessibleCache(kDefaultCacheSize),
   mNodeToAccessibleMap(kDefaultCacheSize),
+  mDocumentNode(aDocument),
+  mScrollPositionChangedTicks(0),
   mLoadState(eTreeConstructionPending), mDocFlags(0), mLoadEventType(0),
   mVirtualCursor(nullptr),
   mPresShell(aPresShell)
@@ -799,6 +800,9 @@ NS_IMETHODIMP
 DocAccessible::Observe(nsISupports* aSubject, const char* aTopic,
                        const PRUnichar* aData)
 {
+  if (IsDefunct())
+    return NS_OK;
+
   if (!nsCRT::strcmp(aTopic,"obs_documentCreated")) {    
     // State editable will now be set, readonly is now clear
     // Normally we only fire delayed events created from the node, not an
@@ -1309,13 +1313,10 @@ DocAccessible::GetAccessibleOrDescendant(nsINode* aNode) const
   return nullptr;
 }
 
-bool
+void
 DocAccessible::BindToDocument(Accessible* aAccessible,
                               nsRoleMapEntry* aRoleMapEntry)
 {
-  if (!aAccessible)
-    return false;
-
   // Put into DOM node cache.
   if (aAccessible->IsNodeMapEntry())
     mNodeToAccessibleMap.Put(aAccessible->GetNode(), aAccessible);
@@ -1328,8 +1329,6 @@ DocAccessible::BindToDocument(Accessible* aAccessible,
   nsIContent* content = aAccessible->GetContent();
   if (content && content->IsElement())
     AddDependentIDsFor(content->AsElement());
-
-  return true;
 }
 
 void

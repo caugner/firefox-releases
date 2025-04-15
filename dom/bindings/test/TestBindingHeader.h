@@ -490,17 +490,33 @@ public:
   void PassUnion(JSContext*, const ObjectOrLong& arg);
   void PassUnionWithNullable(JSContext* cx, const ObjectOrNullOrLong& arg)
   {
-    ObjectOrLong returnValue;
+    OwningObjectOrLong returnValue;
     if (arg.IsNull()) {
     } else if (arg.IsObject()) {
       JS::Rooted<JSObject*> obj(cx, arg.GetAsObject());
       JS_GetClass(obj);
-      //returnValue.SetAsObject(&obj);
+      returnValue.SetAsObject() = obj;
     } else {
       int32_t i = arg.GetAsLong();
       i += 1;
+      returnValue.SetAsLong() = i;
     }
   }
+#ifdef DEBUG
+  void PassUnion2(const LongOrBoolean& arg);
+  void PassUnion3(JSContext*, const ObjectOrLongOrBoolean& arg);
+  void PassUnion4(const NodeOrLongOrBoolean& arg);
+  void PassUnion5(JSContext*, const ObjectOrBoolean& arg);
+  void PassUnion6(JSContext*, const ObjectOrString& arg);
+  void PassUnion7(JSContext*, const ObjectOrStringOrLong& arg);
+  void PassUnion8(JSContext*, const ObjectOrStringOrBoolean& arg);
+  void PassUnion9(JSContext*, const ObjectOrStringOrLongOrBoolean& arg);
+  void PassUnion10(const EventInitOrLong& arg);
+  void PassUnion11(JSContext*, const CustomEventInitOrLong& arg);
+  void PassUnion12(const EventInitOrLong& arg);
+  void PassUnion13(JSContext*, const ObjectOrLongOrNull& arg);
+  void PassUnion14(JSContext*, const ObjectOrLongOrNull& arg);
+#endif
   void PassNullableUnion(JSContext*, const Nullable<ObjectOrLong>&);
   void PassOptionalUnion(JSContext*, const Optional<ObjectOrLong>&);
   void PassOptionalNullableUnion(JSContext*, const Optional<Nullable<ObjectOrLong> >&);
@@ -541,16 +557,16 @@ public:
   void PassNullableUnionWithDefaultValue11(const Nullable<UnrestrictedFloatOrString>& arg);
   void PassNullableUnionWithDefaultValue12(const Nullable<UnrestrictedFloatOrString>& arg);
 
-  void ReceiveUnion(CanvasPatternOrCanvasGradientReturnValue&);
-  void ReceiveUnion2(JSContext*, ObjectOrLongReturnValue&);
-  void ReceiveUnionContainingNull(CanvasPatternOrNullOrCanvasGradientReturnValue&);
-  void ReceiveNullableUnion(Nullable<CanvasPatternOrCanvasGradientReturnValue>&);
-  void ReceiveNullableUnion2(JSContext*, Nullable<ObjectOrLongReturnValue>&);
-  void GetWritableUnion(CanvasPatternOrCanvasGradientReturnValue&);
+  void ReceiveUnion(OwningCanvasPatternOrCanvasGradient&);
+  void ReceiveUnion2(JSContext*, OwningObjectOrLong&);
+  void ReceiveUnionContainingNull(OwningCanvasPatternOrNullOrCanvasGradient&);
+  void ReceiveNullableUnion(Nullable<OwningCanvasPatternOrCanvasGradient>&);
+  void ReceiveNullableUnion2(JSContext*, Nullable<OwningObjectOrLong>&);
+  void GetWritableUnion(OwningCanvasPatternOrCanvasGradient&);
   void SetWritableUnion(const CanvasPatternOrCanvasGradient&);
-  void GetWritableUnionContainingNull(CanvasPatternOrNullOrCanvasGradientReturnValue&);
+  void GetWritableUnionContainingNull(OwningCanvasPatternOrNullOrCanvasGradient&);
   void SetWritableUnionContainingNull(const CanvasPatternOrNullOrCanvasGradient&);
-  void GetWritableNullableUnion(Nullable<CanvasPatternOrCanvasGradientReturnValue>&);
+  void GetWritableNullableUnion(Nullable<OwningCanvasPatternOrCanvasGradient>&);
   void SetWritableNullableUnion(const Nullable<CanvasPatternOrCanvasGradient>&);
 
   // Date types
@@ -574,7 +590,7 @@ public:
   // Dictionary tests
   void PassDictionary(JSContext*, const Dict&);
   void ReceiveDictionary(JSContext*, Dict&);
-  void ReceiveNullableDictionary(JSContext*, Nullable<DictInitializer>&);
+  void ReceiveNullableDictionary(JSContext*, Nullable<Dict>&);
   void PassOtherDictionary(const GrandparentDict&);
   void PassSequenceOfDictionaries(JSContext*, const Sequence<Dict>&);
   void PassDictionaryOrLong(JSContext*, const Dict&);

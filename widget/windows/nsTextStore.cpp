@@ -19,6 +19,7 @@
 #include "nsPrintfCString.h"
 #include "WinUtils.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/TextEvents.h"
 
 #define INPUTSCOPE_INIT_GUID
 #include "nsTextStore.h"
@@ -79,7 +80,7 @@ public:
 
   STDMETHODIMP QueryInterface(REFIID riid, void** ppv)
   {
-    *ppv=NULL;
+    *ppv=nullptr;
     if ( (IID_IUnknown == riid) || (IID_ITfInputScope == riid) ) {
       *ppv = static_cast<ITfInputScope*>(this);
     }
@@ -129,15 +130,15 @@ private:
 /* nsTextStore                                                    */
 /******************************************************************/
 
-ITfThreadMgr*           nsTextStore::sTsfThreadMgr   = NULL;
-ITfMessagePump*         nsTextStore::sMessagePump    = NULL;
-ITfKeystrokeMgr*        nsTextStore::sKeystrokeMgr   = NULL;
-ITfDisplayAttributeMgr* nsTextStore::sDisplayAttrMgr = NULL;
-ITfCategoryMgr*         nsTextStore::sCategoryMgr    = NULL;
-ITfDocumentMgr*         nsTextStore::sTsfDisabledDocumentMgr = NULL;
-ITfContext*             nsTextStore::sTsfDisabledContext = NULL;
+ITfThreadMgr*           nsTextStore::sTsfThreadMgr   = nullptr;
+ITfMessagePump*         nsTextStore::sMessagePump    = nullptr;
+ITfKeystrokeMgr*        nsTextStore::sKeystrokeMgr   = nullptr;
+ITfDisplayAttributeMgr* nsTextStore::sDisplayAttrMgr = nullptr;
+ITfCategoryMgr*         nsTextStore::sCategoryMgr    = nullptr;
+ITfDocumentMgr*         nsTextStore::sTsfDisabledDocumentMgr = nullptr;
+ITfContext*             nsTextStore::sTsfDisabledContext = nullptr;
 DWORD         nsTextStore::sTsfClientId  = 0;
-nsTextStore*  nsTextStore::sTsfTextStore = NULL;
+nsTextStore*  nsTextStore::sTsfTextStore = nullptr;
 
 UINT nsTextStore::sFlushTIPInputMessage  = 0;
 
@@ -559,7 +560,7 @@ nsTextStore::Create(nsWindowBase* aWidget)
     PR_LOG(sTextStoreLog, PR_LOG_ERROR,
       ("TSF: 0x%p   nsTextStore::Create() FAILED to create the context "
        "(0x%08X)", this, hr));
-    mDocumentMgr = NULL;
+    mDocumentMgr = nullptr;
     return false;
   }
 
@@ -569,8 +570,8 @@ nsTextStore::Create(nsWindowBase* aWidget)
       ("TSF: 0x%p   nsTextStore::Create() FAILED to push the context (0x%08X)",
        this, hr));
     // XXX Why don't we use NS_IF_RELEASE() here??
-    mContext = NULL;
-    mDocumentMgr = NULL;
+    mContext = nullptr;
+    mDocumentMgr = nullptr;
     return false;
   }
 
@@ -603,12 +604,12 @@ nsTextStore::Destroy(void)
       ::DispatchMessageW(&msg);
     }
   }
-  mContext = NULL;
+  mContext = nullptr;
   if (mDocumentMgr) {
     mDocumentMgr->Pop(TF_POPF_ALL);
-    mDocumentMgr = NULL;
+    mDocumentMgr = nullptr;
   }
-  mSink = NULL;
+  mSink = nullptr;
   mWidget = nullptr;
 
   PR_LOG(sTextStoreLog, PR_LOG_ALWAYS,
@@ -620,7 +621,7 @@ STDMETHODIMP
 nsTextStore::QueryInterface(REFIID riid,
                             void** ppv)
 {
-  *ppv=NULL;
+  *ppv=nullptr;
   if ( (IID_IUnknown == riid) || (IID_ITextStoreACP == riid) ) {
     *ppv = static_cast<ITextStoreACP*>(this);
   } else if (IID_ITfContextOwnerCompositionSink == riid) {
@@ -733,7 +734,7 @@ nsTextStore::UnadviseSink(IUnknown *punk)
        "the sink being different from the stored sink", this));
     return CONNECT_E_NOCONNECTION;
   }
-  mSink = NULL;
+  mSink = nullptr;
   mSinkMask = 0;
   return S_OK;
 }
@@ -850,7 +851,7 @@ nsTextStore::FlushPendingActions()
         MOZ_ASSERT(mComposition.mLastData.IsEmpty());
 
         // Select composition range so the new composition replaces the range
-        nsSelectionEvent selectionSet(true, NS_SELECTION_SET, mWidget);
+        WidgetSelectionEvent selectionSet(true, NS_SELECTION_SET, mWidget);
         mWidget->InitEvent(selectionSet);
         selectionSet.mOffset = static_cast<uint32_t>(action.mSelectionStart);
         selectionSet.mLength = static_cast<uint32_t>(action.mSelectionLength);
@@ -865,8 +866,8 @@ nsTextStore::FlushPendingActions()
         PR_LOG(sTextStoreLog, PR_LOG_DEBUG,
                ("TSF: 0x%p   nsTextStore::FlushPendingActions() "
                 "dispatching compositionstart event...", this));
-        nsCompositionEvent compositionStart(true, NS_COMPOSITION_START,
-                                            mWidget);
+        WidgetCompositionEvent compositionStart(true, NS_COMPOSITION_START,
+                                                mWidget);
         mWidget->InitEvent(compositionStart);
         mWidget->DispatchWindowEvent(&compositionStart);
         if (!mWidget || mWidget->Destroyed()) {
@@ -884,7 +885,7 @@ nsTextStore::FlushPendingActions()
                 action.mRanges.Length()));
 
         if (action.mRanges.IsEmpty()) {
-          nsTextRange wholeRange;
+          TextRange wholeRange;
           wholeRange.mStartOffset = 0;
           wholeRange.mEndOffset = action.mData.Length();
           wholeRange.mRangeType = NS_TEXTRANGE_RAWINPUT;
@@ -893,10 +894,10 @@ nsTextStore::FlushPendingActions()
           // Adjust offsets in the ranges for XP linefeed character (only \n).
           // XXX Following code is the safest approach.  However, it wastes
           //     a little performance.  For ensuring the clauses do not
-          //     overlap each other, we should redesign nsTextRange later.
+          //     overlap each other, we should redesign TextRange later.
           for (uint32_t i = 0; i < action.mRanges.Length(); ++i) {
-            nsTextRange& range = action.mRanges[i];
-            nsTextRange nativeRange = range;
+            TextRange& range = action.mRanges[i];
+            TextRange nativeRange = range;
             if (nativeRange.mStartOffset > 0) {
               nsAutoString preText(
                 Substring(action.mData, 0, nativeRange.mStartOffset));
@@ -924,8 +925,8 @@ nsTextStore::FlushPendingActions()
           PR_LOG(sTextStoreLog, PR_LOG_DEBUG,
                  ("TSF: 0x%p   nsTextStore::FlushPendingActions(), "
                   "dispatching compositionupdate event...", this));
-          nsCompositionEvent compositionUpdate(true, NS_COMPOSITION_UPDATE,
-                                               mWidget);
+          WidgetCompositionEvent compositionUpdate(true, NS_COMPOSITION_UPDATE,
+                                                   mWidget);
           mWidget->InitEvent(compositionUpdate);
           compositionUpdate.data = action.mData;
           mComposition.mLastData = compositionUpdate.data;
@@ -940,11 +941,11 @@ nsTextStore::FlushPendingActions()
         PR_LOG(sTextStoreLog, PR_LOG_DEBUG,
                ("TSF: 0x%p   nsTextStore::FlushPendingActions(), "
                 "dispatching text event...", this));
-        nsTextEvent textEvent(true, NS_TEXT_TEXT, mWidget);
+        WidgetTextEvent textEvent(true, NS_TEXT_TEXT, mWidget);
         mWidget->InitEvent(textEvent);
         textEvent.theText = mComposition.mLastData;
         if (action.mRanges.IsEmpty()) {
-          nsTextRange wholeRange;
+          TextRange wholeRange;
           wholeRange.mStartOffset = 0;
           wholeRange.mEndOffset = textEvent.theText.Length();
           wholeRange.mRangeType = NS_TEXTRANGE_RAWINPUT;
@@ -970,8 +971,8 @@ nsTextStore::FlushPendingActions()
           PR_LOG(sTextStoreLog, PR_LOG_DEBUG,
                  ("TSF: 0x%p   nsTextStore::FlushPendingActions(), "
                   "dispatching compositionupdate event...", this));
-          nsCompositionEvent compositionUpdate(true, NS_COMPOSITION_UPDATE,
-                                               mWidget);
+          WidgetCompositionEvent compositionUpdate(true, NS_COMPOSITION_UPDATE,
+                                                   mWidget);
           mWidget->InitEvent(compositionUpdate);
           compositionUpdate.data = action.mData;
           mComposition.mLastData = compositionUpdate.data;
@@ -986,7 +987,7 @@ nsTextStore::FlushPendingActions()
         PR_LOG(sTextStoreLog, PR_LOG_DEBUG,
                ("TSF: 0x%p   nsTextStore::FlushPendingActions(), "
                 "dispatching text event...", this));
-        nsTextEvent textEvent(true, NS_TEXT_TEXT, mWidget);
+        WidgetTextEvent textEvent(true, NS_TEXT_TEXT, mWidget);
         mWidget->InitEvent(textEvent);
         textEvent.theText = mComposition.mLastData;
         mWidget->DispatchWindowEvent(&textEvent);
@@ -997,7 +998,8 @@ nsTextStore::FlushPendingActions()
         PR_LOG(sTextStoreLog, PR_LOG_DEBUG,
                ("TSF: 0x%p   nsTextStore::FlushPendingActions(), "
                 "dispatching compositionend event...", this));
-        nsCompositionEvent compositionEnd(true, NS_COMPOSITION_END, mWidget);
+        WidgetCompositionEvent compositionEnd(true, NS_COMPOSITION_END,
+                                              mWidget);
         compositionEnd.data = mComposition.mLastData;
         mWidget->InitEvent(compositionEnd);
         mWidget->DispatchWindowEvent(&compositionEnd);
@@ -1015,7 +1017,7 @@ nsTextStore::FlushPendingActions()
                 this, action.mSelectionStart, action.mSelectionLength,
                 GetBoolName(action.mSelectionReversed)));
 
-        nsSelectionEvent selectionSet(true, NS_SELECTION_SET, mWidget);
+        WidgetSelectionEvent selectionSet(true, NS_SELECTION_SET, mWidget);
         selectionSet.mOffset = 
           static_cast<uint32_t>(action.mSelectionStart);
         selectionSet.mLength =
@@ -1184,7 +1186,7 @@ nsTextStore::CurrentContent()
   if (!mContent.IsInitialized()) {
     MOZ_ASSERT(mWidget && !mWidget->Destroyed());
 
-    nsQueryContentEvent queryText(true, NS_QUERY_TEXT_CONTENT, mWidget);
+    WidgetQueryContentEvent queryText(true, NS_QUERY_TEXT_CONTENT, mWidget);
     queryText.InitForQueryTextContent(0, UINT32_MAX);
     mWidget->InitEvent(queryText);
     mWidget->DispatchWindowEvent(&queryText);
@@ -1211,7 +1213,8 @@ nsTextStore::CurrentSelection()
       MOZ_CRASH();
     }
 
-    nsQueryContentEvent querySelection(true, NS_QUERY_SELECTED_TEXT, mWidget);
+    WidgetQueryContentEvent querySelection(true, NS_QUERY_SELECTED_TEXT,
+                                           mWidget);
     mWidget->InitEvent(querySelection);
     mWidget->DispatchWindowEvent(&querySelection);
     NS_ENSURE_TRUE(querySelection.mSucceeded, mSelection);
@@ -1316,7 +1319,7 @@ nsTextStore::GetDisplayAttribute(ITfProperty* aAttrProperty,
   NS_ENSURE_TRUE(sDisplayAttrMgr, E_FAIL);
   nsRefPtr<ITfDisplayAttributeInfo> info;
   hr = sDisplayAttrMgr->GetDisplayAttributeInfo(guid, getter_AddRefs(info),
-                                                NULL);
+                                                nullptr);
   if (FAILED(hr) || !info) {
     PR_LOG(sTextStoreLog, PR_LOG_ERROR,
            ("TSF: 0x%p   nsTextStore::GetDisplayAttribute() FAILED due to "
@@ -1425,19 +1428,19 @@ GetLineStyle(TF_DA_LINESTYLE aTSFLineStyle, uint8_t &aTextRangeLineStyle)
 {
   switch (aTSFLineStyle) {
     case TF_LS_NONE:
-      aTextRangeLineStyle = nsTextRangeStyle::LINESTYLE_NONE;
+      aTextRangeLineStyle = TextRangeStyle::LINESTYLE_NONE;
       return true;
     case TF_LS_SOLID:
-      aTextRangeLineStyle = nsTextRangeStyle::LINESTYLE_SOLID;
+      aTextRangeLineStyle = TextRangeStyle::LINESTYLE_SOLID;
       return true;
     case TF_LS_DOT:
-      aTextRangeLineStyle = nsTextRangeStyle::LINESTYLE_DOTTED;
+      aTextRangeLineStyle = TextRangeStyle::LINESTYLE_DOTTED;
       return true;
     case TF_LS_DASH:
-      aTextRangeLineStyle = nsTextRangeStyle::LINESTYLE_DASHED;
+      aTextRangeLineStyle = TextRangeStyle::LINESTYLE_DASHED;
       return true;
     case TF_LS_SQUIGGLE:
-      aTextRangeLineStyle = nsTextRangeStyle::LINESTYLE_WAVY;
+      aTextRangeLineStyle = TextRangeStyle::LINESTYLE_WAVY;
       return true;
     default:
       return false;
@@ -1465,7 +1468,7 @@ nsTextStore::RecordCompositionUpdateAction()
   // attributes, but since a big range can have a variety of values for
   // the attribute, we have to find out all the ranges that have distinct
   // attribute values. Then we query for what the value represents through
-  // the display attribute manager and translate that to nsTextRange to be
+  // the display attribute manager and translate that to TextRange to be
   // sent in NS_TEXT_TEXT
 
   nsRefPtr<ITfProperty> attrPropetry;
@@ -1508,13 +1511,13 @@ nsTextStore::RecordCompositionUpdateAction()
 
   PendingAction* action = GetPendingCompositionUpdate();
   action->mData = mComposition.mString;
-  nsTArray<nsTextRange>& textRanges = action->mRanges;
+  nsTArray<TextRange>& textRanges = action->mRanges;
   // The ranges might already have been initialized already, however, if this
   // is called again, that means we need to overwrite the ranges with current
   // information.
   textRanges.Clear();
 
-  nsTextRange newRange;
+  TextRange newRange;
   // No matter if we have display attribute info or not,
   // we always pass in at least one range to NS_TEXT_TEXT
   newRange.mStartOffset = 0;
@@ -1523,13 +1526,13 @@ nsTextStore::RecordCompositionUpdateAction()
   textRanges.AppendElement(newRange);
 
   nsRefPtr<ITfRange> range;
-  while (S_OK == enumRanges->Next(1, getter_AddRefs(range), NULL) && range) {
+  while (S_OK == enumRanges->Next(1, getter_AddRefs(range), nullptr) && range) {
 
     LONG start = 0, length = 0;
     if (FAILED(GetRangeExtent(range, &start, &length)))
       continue;
 
-    nsTextRange newRange;
+    TextRange newRange;
     newRange.mStartOffset = uint32_t(start - mComposition.mStart);
     // The end of the last range in the array is
     // always kept at the end of composition
@@ -1543,24 +1546,24 @@ nsTextStore::RecordCompositionUpdateAction()
       newRange.mRangeType = GetGeckoSelectionValue(attr);
       if (GetColor(attr.crText, newRange.mRangeStyle.mForegroundColor)) {
         newRange.mRangeStyle.mDefinedStyles |=
-                               nsTextRangeStyle::DEFINED_FOREGROUND_COLOR;
+                               TextRangeStyle::DEFINED_FOREGROUND_COLOR;
       }
       if (GetColor(attr.crBk, newRange.mRangeStyle.mBackgroundColor)) {
         newRange.mRangeStyle.mDefinedStyles |=
-                               nsTextRangeStyle::DEFINED_BACKGROUND_COLOR;
+                               TextRangeStyle::DEFINED_BACKGROUND_COLOR;
       }
       if (GetColor(attr.crLine, newRange.mRangeStyle.mUnderlineColor)) {
         newRange.mRangeStyle.mDefinedStyles |=
-                               nsTextRangeStyle::DEFINED_UNDERLINE_COLOR;
+                               TextRangeStyle::DEFINED_UNDERLINE_COLOR;
       }
       if (GetLineStyle(attr.lsStyle, newRange.mRangeStyle.mLineStyle)) {
         newRange.mRangeStyle.mDefinedStyles |=
-                               nsTextRangeStyle::DEFINED_LINESTYLE;
+                               TextRangeStyle::DEFINED_LINESTYLE;
         newRange.mRangeStyle.mIsBoldLine = attr.fBoldLine != 0;
       }
     }
 
-    nsTextRange& lastRange = textRanges[textRanges.Length() - 1];
+    TextRange& lastRange = textRanges[textRanges.Length() - 1];
     if (lastRange.mStartOffset == newRange.mStartOffset) {
       // Replace range if last range is the same as this one
       // So that ranges don't overlap and confuse the editor
@@ -1580,7 +1583,7 @@ nsTextStore::RecordCompositionUpdateAction()
   // doesn't support XOR drawing), unfortunately.  For now, we should change
   // the range style to undefined.
   if (!currentSel.IsCollapsed() && textRanges.Length() == 1) {
-    nsTextRange& range = textRanges[0];
+    TextRange& range = textRanges[0];
     LONG start = currentSel.MinOffset();
     LONG end = currentSel.MaxOffset();
     if ((LONG)range.mStartOffset == start - mComposition.mStart &&
@@ -1595,7 +1598,7 @@ nsTextStore::RecordCompositionUpdateAction()
   // The caret position has to be collapsed.
   LONG caretPosition = currentSel.MaxOffset();
   caretPosition -= mComposition.mStart;
-  nsTextRange caretRange;
+  TextRange caretRange;
   caretRange.mStartOffset = caretRange.mEndOffset = uint32_t(caretPosition);
   caretRange.mRangeType = NS_TEXTRANGE_CARETPOSITION;
   textRanges.AppendElement(caretRange);
@@ -2258,7 +2261,7 @@ nsTextStore::GetTextExt(TsViewCookie vcView,
   }
 
   // use NS_QUERY_TEXT_RECT to get rect in system, screen coordinates
-  nsQueryContentEvent event(true, NS_QUERY_TEXT_RECT, mWidget);
+  WidgetQueryContentEvent event(true, NS_QUERY_TEXT_RECT, mWidget);
   mWidget->InitEvent(event);
   event.InitForQueryTextRect(acpStart, acpEnd - acpStart);
   mWidget->DispatchWindowEvent(&event);
@@ -2361,7 +2364,7 @@ nsTextStore::GetScreenExtInternal(RECT &aScreenExt)
          ("TSF: 0x%p   nsTextStore::GetScreenExtInternal()", this));
 
   // use NS_QUERY_EDITOR_RECT to get rect in system, screen coordinates
-  nsQueryContentEvent event(true, NS_QUERY_EDITOR_RECT, mWidget);
+  WidgetQueryContentEvent event(true, NS_QUERY_EDITOR_RECT, mWidget);
   mWidget->InitEvent(event);
   mWidget->DispatchWindowEvent(&event);
   if (!event.mSucceeded) {
@@ -2904,7 +2907,7 @@ nsTextStore::OnFocusChange(bool aGotFocus,
     if (ThinksHavingFocus()) {
       DebugOnly<HRESULT> hr = sTsfThreadMgr->AssociateFocus(
                                 sTsfTextStore->mWidget->GetWindowHandle(),
-                                NULL, getter_AddRefs(prevFocusedDocumentMgr));
+                                nullptr, getter_AddRefs(prevFocusedDocumentMgr));
       NS_ASSERTION(SUCCEEDED(hr), "Disassociating focus failed");
       NS_ASSERTION(prevFocusedDocumentMgr == sTsfTextStore->mDocumentMgr,
                    "different documentMgr has been associated with the window");
@@ -3075,7 +3078,7 @@ nsTextStore::CommitCompositionInternal(bool aDiscard)
                ("TSF: 0x%p   nsTextStore::CommitCompositionInternal(), "
                 "requesting TerminateComposition() for the context 0x%p...",
                 this, context.get()));
-        services->TerminateComposition(NULL);
+        services->TerminateComposition(nullptr);
       }
     }
     if (context != mContext)
@@ -3098,7 +3101,7 @@ GetCompartment(IUnknown* pUnk,
   if (!compMgr) return false;
 
   return SUCCEEDED(compMgr->GetCompartment(aID, aCompartment)) &&
-         (*aCompartment) != NULL;
+         (*aCompartment) != nullptr;
 }
 
 // static
@@ -3247,7 +3250,7 @@ nsTextStore::Initialize(void)
   }
 
   if (!sTsfThreadMgr) {
-    if (SUCCEEDED(CoCreateInstance(CLSID_TF_ThreadMgr, NULL,
+    if (SUCCEEDED(CoCreateInstance(CLSID_TF_ThreadMgr, nullptr,
           CLSCTX_INPROC_SERVER, IID_ITfThreadMgr,
           reinterpret_cast<void**>(&sTsfThreadMgr)))) {
       DebugOnly<HRESULT> hr =
@@ -3289,7 +3292,7 @@ nsTextStore::Initialize(void)
       ("TSF:   nsTextStore::Initialize() is creating "
        "a display attribute manager instance..."));
     HRESULT hr =
-      ::CoCreateInstance(CLSID_TF_DisplayAttributeMgr, NULL,
+      ::CoCreateInstance(CLSID_TF_DisplayAttributeMgr, nullptr,
                          CLSCTX_INPROC_SERVER, IID_ITfDisplayAttributeMgr,
                          reinterpret_cast<void**>(&sDisplayAttrMgr));
     if (FAILED(hr) || !sDisplayAttrMgr) {
@@ -3303,7 +3306,7 @@ nsTextStore::Initialize(void)
       ("TSF:   nsTextStore::Initialize() is creating "
        "a category manager instance..."));
     HRESULT hr =
-      ::CoCreateInstance(CLSID_TF_CategoryMgr, NULL,
+      ::CoCreateInstance(CLSID_TF_CategoryMgr, nullptr,
                          CLSCTX_INPROC_SERVER, IID_ITfCategoryMgr,
                          reinterpret_cast<void**>(&sCategoryMgr));
     if (FAILED(hr) || !sCategoryMgr) {
@@ -3326,7 +3329,7 @@ nsTextStore::Initialize(void)
     }
     if (sTsfDisabledDocumentMgr) {
       DWORD editCookie = 0;
-      hr = sTsfDisabledDocumentMgr->CreateContext(sTsfClientId, 0, NULL,
+      hr = sTsfDisabledDocumentMgr->CreateContext(sTsfClientId, 0, nullptr,
                                                   &sTsfDisabledContext,
                                                   &editCookie);
       if (FAILED(hr) || !sTsfDisabledContext) {
@@ -3582,7 +3585,7 @@ nsTextStore::CurrentKeyboardLayoutHasIME()
   //     ITfInputProcessorProfileMgr instance without ITfInputProcessorProfiles
   //     instance.
   nsRefPtr<ITfInputProcessorProfiles> profiles;
-  HRESULT hr = ::CoCreateInstance(CLSID_TF_InputProcessorProfiles, NULL,
+  HRESULT hr = ::CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr,
                                   CLSCTX_INPROC_SERVER,
                                   IID_ITfInputProcessorProfiles,
                                   getter_AddRefs(profiles));

@@ -8,12 +8,12 @@
 #define mozilla_TextComposition_h
 
 #include "nsCOMPtr.h"
-#include "nsEvent.h"
 #include "nsINode.h"
 #include "nsIWidget.h"
 #include "nsTArray.h"
 #include "nsThreadUtils.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/EventForwards.h"
 
 class nsDispatchingCallback;
 class nsIMEStateManager;
@@ -33,7 +33,7 @@ class TextComposition MOZ_FINAL
 public:
   TextComposition(nsPresContext* aPresContext,
                   nsINode* aNode,
-                  nsGUIEvent* aEvent);
+                  WidgetGUIEvent* aEvent);
 
   TextComposition(const TextComposition& aOther);
 
@@ -92,7 +92,7 @@ private:
    * DispatchEvent() dispatches the aEvent to the mContent synchronously.
    * The caller must ensure that it's safe to dispatch the event.
    */
-  void DispatchEvent(nsGUIEvent* aEvent,
+  void DispatchEvent(WidgetGUIEvent* aEvent,
                      nsEventStatus* aStatus,
                      nsDispatchingCallback* aCallBack);
 

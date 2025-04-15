@@ -7,8 +7,9 @@ ifndef .PYMAKE
 ifeq (,$(MAKE_VERSION))
 $(error GNU Make is required)
 endif
-ifeq (,$(filter-out 3.78 3.79,$(MAKE_VERSION)))
-$(error GNU Make 3.80 or higher is required)
+make_min_ver := 3.81
+ifneq ($(make_min_ver),$(firstword $(sort $(make_min_ver) $(MAKE_VERSION))))
+$(error GNU Make $(make_min_ver) or higher is required)
 endif
 endif
 
@@ -23,7 +24,7 @@ endif
 
 include $(topsrcdir)/config/config.mk
 
-GARBAGE_DIRS += dist _javagen _profile _tests staticlib
+GARBAGE_DIRS += dist _javagen _profile staticlib
 DIST_GARBAGE = config.cache config.log config.status* config-defs.h \
    config/autoconf.mk \
    mozilla-config.h \
@@ -31,34 +32,12 @@ DIST_GARBAGE = config.cache config.log config.status* config-defs.h \
    .mozconfig.mk
 
 ifndef MOZ_PROFILE_USE
-# One of the first things we do in the build is purge "unknown" files
-# from the object directory. This serves two purposes:
-#
-#   1) Remove files from a previous build no longer accounted for in
-#      this build configuration.
-#
-#   2) Work around poor build system dependencies by forcing some
-#      rebuilds.
-#
-# Ideally #2 does not exist. Our reliance on this aspect should diminish
-# over time.
-#
-# moz.build backend generation simply installs a set of "manifests" into
-# a common directory. Each manifest is responsible for defining files in
-# a specific subdirectory of the object directory. The invoked Python
-# script simply iterates over all the manifests, purging files as
-# necessary. To manage new directories or add files to the manifests,
-# modify the backend generator.
-#
 # We need to explicitly put backend.RecursiveMakeBackend.built here
 # otherwise the rule in rules.mk doesn't run early enough.
-libs export tools:: CLOBBER $(topsrcdir)/configure config.status backend.RecursiveMakeBackend.built
+libs binaries export tools:: CLOBBER $(topsrcdir)/configure config.status backend.RecursiveMakeBackend.built
 ifndef LIBXUL_SDK
-	$(call SUBMAKE,backend.RecursiveMakeBackend.built,js/src,1)
+libs binaries export tools:: js-config-status
 endif
-
-export::
-	$(call py_action,purge_manifests,-d _build_manifests/purge .)
 endif
 
 CLOBBER: $(topsrcdir)/CLOBBER
@@ -81,19 +60,71 @@ config.status: $(topsrcdir)/configure
 	@echo "but your build might not succeed."
 	@exit 1
 
-export::
-	$(RM) -r $(DIST)/sdk
+ifndef LIBXUL_SDK
+.PHONY: js-config-status
+js-config-status:
+	$(call SUBMAKE,backend.RecursiveMakeBackend.built,js/src,1)
+endif
+
+install_manifests := bin idl include public private sdk
+install_manifest_depends = \
+  CLOBBER \
+  $(topsrcdir)/configure \
+  config.status \
+  backend.RecursiveMakeBackend.built \
+  $(NULL)
+
+ifndef LIBXUL_SDK
+install_manifest_depends += js-config-status
+endif
+
+.PHONY: install-manifests
+install-manifests: $(addprefix install-dist-,$(install_manifests))
+
+.PHONY: $(addprefix install-dist-,$(install_manifests))
+$(addprefix install-dist-,$(install_manifests)): install-dist-%: $(install_manifest_depends)
+	$(call py_action,process_install_manifest,$(if $(NO_REMOVE),--no-remove )$(DIST)/$* _build_manifests/install/dist_$* $(if $(LIBXUL_SDK),,js/src/_build_manifests/install/dist_$*))
+
+.PHONY: install-tests
+install-manifests: install-tests
+install-tests: $(install_manifest_depends)
+	$(call py_action,process_install_manifest,$(if $(NO_REMOVE),--no-remove )_tests _build_manifests/install/tests $(if $(LIBXUL_SDK),,js/src/_build_manifests/install/tests))
+
+
+# _tests should be purged during cleaning. However, we don't want it purged
+# during PGO builds because it contains some auto-generated files.
+ifneq ($(filter-out maybe_clobber_profiledbuild,$(MAKECMDGOALS)),)
+GARBAGE_DIRS += _tests
+endif
+
+# Windows PGO builds don't perform a clean before the 2nd pass. So, we want
+# to preserve content for the 2nd pass on Windows. Everywhere else, we always
+# process the install manifests as part of export.
+ifdef MOZ_PROFILE_USE
+ifndef NO_PROFILE_GUIDED_OPTIMIZE
+ifneq ($(OS_ARCH)_$(GNU_CC), WINNT_)
+export:: install-manifests
+binaries::
+	@$(MAKE) install-manifests NO_REMOVE=1
+endif
+endif
+else # !MOZ_PROFILE_USE (normal build)
+export:: install-manifests
+binaries::
+	@$(MAKE) install-manifests NO_REMOVE=1
+endif
+
+# For historical reasons that are unknown, $(DIST)/sdk is always blown away
+# with no regard for PGO passes. This decision could probably be revisited.
+export:: install-dist-sdk
 
 ifdef ENABLE_TESTS
 # Additional makefile targets to call automated test suites
 include $(topsrcdir)/testing/testsuite-targets.mk
 endif
 
-export::
-	$(call py_action,process_install_manifest,$(DIST)/include _build_manifests/install/dist_include $(if $(LIBXUL_SDK),,js/src/_build_manifests/install/dist_include))
-
 default all::
-	$(call BUILDSTATUS,TIERS export compile libs tools)
+	$(call BUILDSTATUS,TIERS export $(if $(MOZ_PSEUDO_DERECURSE),compile )libs tools)
 
 include $(topsrcdir)/config/rules.mk
 
@@ -168,7 +199,10 @@ ifdef MOZ_CRASHREPORTER
 	$(SHELL) $(topsrcdir)/toolkit/crashreporter/tools/upload_symbols.sh $(SYMBOL_INDEX_NAME) "$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip"
 endif
 
-# defined in package-name.mk
+# MOZ_SOURCE_STAMP is defined in package-name.mk with a deferred assignment.
+# exporting it makes make run its $(shell) command for each invoked submake,
+# so transform it to an immediate assignment.
+MOZ_SOURCE_STAMP := $(MOZ_SOURCE_STAMP)
 export MOZ_SOURCE_STAMP
 
 #XXX: this is a hack, since we don't want to clobber for MSVC
@@ -203,5 +237,15 @@ ifdef ENABLE_TESTS
 # into moz.build files someday.
 check::
 	$(call SUBMAKE,$@,js/src)
+endif
+
+ifdef MOZ_PSEUDO_DERECURSE
+# Interdependencies for parallel export.
+js/xpconnect/src/export: dom/bindings/export
+accessible/src/xpcom/export: xpcom/xpidl/export
+js/src/export: mfbt/export
+ifdef ENABLE_CLANG_PLUGIN
+js/src/export config/export: build/clang-plugin/export
+endif
 endif
 endif

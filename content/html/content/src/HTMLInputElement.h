@@ -17,6 +17,7 @@
 #include "nsCOMPtr.h"
 #include "nsIConstraintValidation.h"
 #include "mozilla/dom/HTMLFormElement.h" // for HasEverTriedInvalidSubmit()
+#include "mozilla/dom/HTMLInputElementBinding.h"
 #include "nsIFilePicker.h"
 #include "nsIContentPrefService2.h"
 #include "mozilla/Decimal.h"
@@ -31,6 +32,7 @@ namespace mozilla {
 namespace dom {
 
 class Date;
+class DirPickerFileListBuilderTask;
 
 class UploadLastDir MOZ_FINAL : public nsIObserver, public nsSupportsWeakReference {
 public:
@@ -86,6 +88,8 @@ class HTMLInputElement MOZ_FINAL : public nsGenericHTMLFormElementWithState,
                                    public nsITimerCallback,
                                    public nsIConstraintValidation
 {
+  friend class DirPickerFileListBuilderTask;
+
 public:
   using nsIConstraintValidation::GetValidationMessage;
   using nsIConstraintValidation::CheckValidity;
@@ -146,8 +150,8 @@ public:
   virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
   virtual nsresult PostHandleEvent(nsEventChainPostVisitor& aVisitor) MOZ_OVERRIDE;
   void PostHandleEventForRangeThumb(nsEventChainPostVisitor& aVisitor);
-  void StartRangeThumbDrag(nsGUIEvent* aEvent);
-  void FinishRangeThumbDrag(nsGUIEvent* aEvent = nullptr);
+  void StartRangeThumbDrag(WidgetGUIEvent* aEvent);
+  void FinishRangeThumbDrag(WidgetGUIEvent* aEvent = nullptr);
   void CancelRangeThumbDrag(bool aIsForUserEvent = true);
   void SetValueOfRangeForUserEvent(Decimal aValue);
 
@@ -401,12 +405,8 @@ public:
   nsDOMFileList* GetFiles();
 
   void OpenDirectoryPicker(ErrorResult& aRv);
+  void CancelDirectoryPickerScanIfRunning();
 
-  void ResetProgressCounters()
-  {
-    mFileListProgress = 0;
-    mLastFileListProgress = 0;
-  }
   void StartProgressEventTimer();
   void MaybeDispatchProgressEvent(bool aFinalProgress);
   void DispatchProgressEvent(const nsAString& aType,
@@ -641,6 +641,13 @@ public:
                          const Optional< nsAString >& direction,
                          ErrorResult& aRv);
 
+  void SetRangeText(const nsAString& aReplacement, ErrorResult& aRv);
+
+  void SetRangeText(const nsAString& aReplacement, uint32_t aStart,
+                    uint32_t aEnd, const SelectionMode& aSelectMode,
+                    ErrorResult& aRv, int32_t aSelectionStart = -1,
+                    int32_t aSelectionEnd = -1);
+
   // XPCOM GetAlign() is OK
   void SetAlign(const nsAString& aValue, ErrorResult& aRv)
   {
@@ -668,13 +675,6 @@ public:
   // XPCOM SetUserInput() is OK
 
   // XPCOM GetPhonetic() is OK
-
-  void SetFileListProgress(uint32_t mFileCount)
-  {
-    MOZ_ASSERT(!NS_IsMainThread(),
-               "Why are we calling this on the main thread?");
-    mFileListProgress = mFileCount;
-  }
 
 protected:
   virtual JSObject* WrapNode(JSContext* aCx,
@@ -1154,6 +1154,8 @@ protected:
 
   nsRefPtr<nsDOMFileList>  mFileList;
 
+  nsRefPtr<DirPickerFileListBuilderTask> mDirPickerFileListBuilderTask;
+
   nsString mStaticDocFileList;
   
   /** 
@@ -1195,19 +1197,6 @@ protected:
   static const Decimal kStepAny;
 
   /**
-   * The number of files added to the FileList being built off-main-thread when
-   * mType == NS_FORM_INPUT_FILE and the user selects a directory. This is set
-   * off the main thread, read on main thread.
-   */
-  mozilla::Atomic<uint32_t> mFileListProgress;
-
-  /**
-   * The number of files added to the FileList at the time the last progress
-   * event was fired.
-   */
-  uint32_t mLastFileListProgress;
-
-  /**
    * The type of this input (<input type=...>) as an integer.
    * @see nsIFormControl.h (specifically NS_FORM_INPUT_*)
    */
@@ -1237,6 +1226,15 @@ private:
    */
   bool MayFireChangeOnBlur() const {
     return MayFireChangeOnBlur(mType);
+  }
+
+  /**
+   * Returns true if setRangeText can be called on element
+   */
+  bool SupportsSetRangeText() const {
+    return mType == NS_FORM_INPUT_TEXT || mType == NS_FORM_INPUT_SEARCH ||
+           mType == NS_FORM_INPUT_URL || mType == NS_FORM_INPUT_TEL ||
+           mType == NS_FORM_INPUT_PASSWORD;
   }
 
   static bool MayFireChangeOnBlur(uint8_t aType) {

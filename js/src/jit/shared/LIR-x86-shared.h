@@ -32,7 +32,7 @@ class LDivI : public LBinaryMath<1>
         }
         if (mir()->canBeNegativeZero())
             return mir()->canBeNegativeOverflow() ? "NegativeZero_NegativeOverflow" : "NegativeZero";
-        return mir()->canBeNegativeOverflow() ? "NegativeOverflow" : NULL;
+        return mir()->canBeNegativeOverflow() ? "NegativeOverflow" : nullptr;
     }
 
     const LDefinition *remainder() {
@@ -103,7 +103,7 @@ class LModI : public LBinaryMath<1>
     }
 
     const char *extraName() const {
-        return mir()->isTruncated() ? "Truncated" : NULL;
+        return mir()->isTruncated() ? "Truncated" : nullptr;
     }
 
     const LDefinition *remainder() {
@@ -195,11 +195,11 @@ class LTableSwitch : public LInstructionHelper<0, 1, 2>
     const LAllocation *index() {
         return getOperand(0);
     }
-    const LAllocation *tempInt() {
-        return getTemp(0)->output();
+    const LDefinition *tempInt() {
+        return getTemp(0);
     }
-    const LAllocation *tempPointer() {
-        return getTemp(1)->output();
+    const LDefinition *tempPointer() {
+        return getTemp(1);
     }
 };
 
@@ -224,14 +224,14 @@ class LTableSwitchV : public LInstructionHelper<0, BOX_PIECES, 3>
 
     static const size_t InputValue = 0;
 
-    const LAllocation *tempInt() {
-        return getTemp(0)->output();
+    const LDefinition *tempInt() {
+        return getTemp(0);
     }
-    const LAllocation *tempFloat() {
-        return getTemp(1)->output();
+    const LDefinition *tempFloat() {
+        return getTemp(1);
     }
-    const LAllocation *tempPointer() {
-        return getTemp(2)->output();
+    const LDefinition *tempPointer() {
+        return getTemp(2);
     }
 };
 
@@ -281,7 +281,7 @@ class LMulI : public LBinaryMath<0, 1>
     const char *extraName() const {
         return (mir()->mode() == MMul::Integer)
                ? "Integer"
-               : (mir()->canBeNegativeZero() ? "CanBeNegativeZero" : NULL);
+               : (mir()->canBeNegativeZero() ? "CanBeNegativeZero" : nullptr);
     }
 
     MMul *mir() const {

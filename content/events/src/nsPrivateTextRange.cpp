@@ -4,9 +4,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsPrivateTextRange.h"
+#include "mozilla/TextEvents.h"
 
+using namespace mozilla;
 
-nsPrivateTextRange::nsPrivateTextRange(const nsTextRange &aTextRange)
+nsPrivateTextRange::nsPrivateTextRange(const TextRange &aTextRange)
   : mRangeStart(uint16_t(aTextRange.mStartOffset)),
     mRangeEnd(uint16_t(aTextRange.mEndOffset)),
     mRangeType(uint16_t(aTextRange.mRangeType)),
@@ -38,7 +40,7 @@ NS_METHOD nsPrivateTextRange::GetRangeType(uint16_t* aRangeType)
 	return NS_OK;
 }
 
-NS_METHOD nsPrivateTextRange::GetRangeStyle(nsTextRangeStyle* aTextRangeStyle)
+NS_METHOD nsPrivateTextRange::GetRangeStyle(TextRangeStyle* aTextRangeStyle)
 {
 	NS_ENSURE_ARG_POINTER(aTextRangeStyle);
 	*aTextRangeStyle = mRangeStyle;

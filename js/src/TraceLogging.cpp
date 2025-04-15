@@ -13,7 +13,6 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "jsapi.h"
 #include "jsscript.h"
 
 using namespace js;
@@ -76,6 +75,10 @@ const char* const TraceLogging::typeName[] = {
     "0,G",  // stop major GC
     "1,g",  // start minor GC
     "0,g",  // stop minor GC
+    "1,gS", // start GC sweeping
+    "0,gS", // stop GC sweeping
+    "1,gA", // start GC allocating
+    "0,gA", // stop GC allocating
     "1,ps", // start script parsing
     "0,ps", // stop script parsing
     "1,pl", // start lazy parsing
@@ -86,18 +89,17 @@ const char* const TraceLogging::typeName[] = {
     "e,b",  // engine baseline
     "e,o"   // engine ionmonkey
 };
-TraceLogging* TraceLogging::loggers[] = {NULL, NULL};
+TraceLogging* TraceLogging::loggers[] = {nullptr, nullptr, nullptr};
 bool TraceLogging::atexitSet = false;
 uint64_t TraceLogging::startupTime = 0;
 
 TraceLogging::TraceLogging(Logger id)
-  : loggingTime(0),
-    nextTextId(1),
-    entries(NULL),
+  : nextTextId(1),
+    entries(nullptr),
     curEntry(0),
     numEntries(1000000),
     fileno(0),
-    out(NULL),
+    out(nullptr),
     id(id)
 {
     textMap.init();
@@ -105,15 +107,15 @@ TraceLogging::TraceLogging(Logger id)
 
 TraceLogging::~TraceLogging()
 {
-    if (out) {
-        fclose(out);
-        out = NULL;
-    }
-
     if (entries) {
         flush();
         free(entries);
-        entries = NULL;
+        entries = nullptr;
+    }
+
+    if (out) {
+        fclose(out);
+        out = nullptr;
     }
 }
 
@@ -134,7 +136,7 @@ TraceLogging::grow()
 }
 
 void
-TraceLogging::log(Type type, const char* text /* = NULL */, unsigned int number /* = 0 */)
+TraceLogging::log(Type type, const char* text /* = nullptr */, unsigned int number /* = 0 */)
 {
     uint64_t now = rdtsc() - startupTime;
 
@@ -146,7 +148,7 @@ TraceLogging::log(Type type, const char* text /* = NULL */, unsigned int number 
     }
 
     uint32_t textId = 0;
-    char *text_ = NULL;
+    char *text_ = nullptr;
 
     if (text) {
         TextHashMap::AddPtr p = textMap.lookupForAdd(text);
@@ -163,16 +165,11 @@ TraceLogging::log(Type type, const char* text /* = NULL */, unsigned int number 
         }
     }
 
-    entries[curEntry++] = Entry(now - loggingTime, text_, textId, number, type);
+    entries[curEntry++] = Entry(now, text_, textId, number, type);
 
     // Increase length when not enough place in the array
     if (curEntry >= numEntries)
         grow();
-
-    // Save the time spend logging the information in order to discard this
-    // time from the logged time. Especially needed when increasing the array
-    // or flushing the information.
-    loggingTime += rdtsc() - startupTime - now;
 }
 
 void
@@ -204,6 +201,9 @@ TraceLogging::flush()
             break;
           case ION_BACKGROUND_COMPILER:
             out = fopen(TRACE_LOG_DIR "tracelogging-compile.log", "w");
+            break;
+          case GC_BACKGROUND:
+            out = fopen(TRACE_LOG_DIR "tracelogging-gc.log", "w");
             break;
           default:
             MOZ_ASSUME_UNREACHABLE("Bad trigger");
@@ -247,9 +247,9 @@ TraceLogging::flush()
             exit(-1);
         }
 
-        if (entries[i].text() != NULL) {
+        if (entries[i].text() != nullptr) {
             free(entries[i].text());
-            entries[i].text_ = NULL;
+            entries[i].text_ = nullptr;
         }
     }
     curEntry = 0;
@@ -278,7 +278,7 @@ TraceLogging::releaseLoggers()
             continue;
 
         delete loggers[i];
-        loggers[i] = NULL;
+        loggers[i] = nullptr;
     }
 }
 

@@ -15,7 +15,9 @@
 #include "TimeVarying.h"
 #include "VideoFrameContainer.h"
 #include "VideoSegment.h"
-#include "nsThreadUtils.h"
+#include "MainThreadUtils.h"
+
+class nsIRunnable;
 
 namespace mozilla {
 
@@ -972,7 +974,7 @@ protected:
 };
 
 // Returns ideal audio rate for processing
-inline TrackRate IdealAudioRate() { return 48000; }
+inline TrackRate IdealAudioRate() { return AudioStream::PreferredSampleRate(); }
 
 /**
  * Initially, at least, we will have a singleton MediaStreamGraph per

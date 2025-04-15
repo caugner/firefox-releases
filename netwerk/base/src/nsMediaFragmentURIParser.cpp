@@ -7,6 +7,7 @@
 #include "nsTArray.h"
 #include "nsCharSeparatedTokenizer.h"
 #include "nsEscape.h"
+#include "nsIURI.h"
 #include <utility>
 
 #include "nsMediaFragmentURIParser.h"
@@ -22,6 +23,12 @@ nsMediaFragmentURIParser::nsMediaFragmentURIParser(nsIURI* aURI)
   nsAutoCString ref;
   aURI->GetRef(ref);
   Parse(ref);
+}
+
+nsMediaFragmentURIParser::nsMediaFragmentURIParser(nsCString& aRef)
+  : mClipUnit(eClipUnit_Pixel)
+{
+  Parse(aRef);
 }
 
 bool nsMediaFragmentURIParser::ParseNPT(nsDependentSubstring aString)

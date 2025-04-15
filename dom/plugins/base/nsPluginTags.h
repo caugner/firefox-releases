@@ -13,7 +13,7 @@
 #include "nsCOMArray.h"
 #include "nsIPluginTag.h"
 #include "nsITimer.h"
-#include "nsStringGlue.h"
+#include "nsString.h"
 
 class nsPluginHost;
 struct PRLibrary;
@@ -98,6 +98,7 @@ private:
                 const char* const* aExtensions,
                 uint32_t aVariantCount);
   nsresult EnsureMembersAreUTF8();
+  void FixupVersion();
 };
 
 #endif // nsPluginTags_h_

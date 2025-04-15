@@ -7,20 +7,26 @@
 
 #include "gfxFontUtils.h"
 #include "nsString.h"
-#include "nsIDocument.h"
 #include "nsAutoPtr.h"
-#include "nsIContentViewer.h"
-#include "nsIPresShell.h"
 #include "nsClassHashtable.h"
 #include "nsBaseHashtable.h"
 #include "nsHashKeys.h"
 #include "gfxPattern.h"
-#include "gfxFont.h"
 #include "mozilla/gfx/UserData.h"
 #include "nsRefreshDriver.h"
- 
-class gfxSVGGlyphs;
+#include "DrawMode.h"
 
+class nsIDocument;
+class nsIContentViewer;
+class nsIPresShell;
+class gfxSVGGlyphs;
+class gfxTextContextPaint;
+
+namespace mozilla {
+namespace dom {
+class Element;
+}
+}
 
 /**
  * Wraps an SVG document contained in the SVG table of an OpenType font.
@@ -33,7 +39,6 @@ class gfxSVGGlyphs;
 class gfxSVGGlyphsDocument MOZ_FINAL : public nsAPostRefreshObserver
 {
     typedef mozilla::dom::Element Element;
-    typedef gfxFont::DrawMode DrawMode;
 
 public:
     gfxSVGGlyphsDocument(const uint8_t *aBuffer, uint32_t aBufLen,
@@ -75,7 +80,6 @@ class gfxSVGGlyphs
 {
 private:
     typedef mozilla::dom::Element Element;
-    typedef gfxFont::DrawMode DrawMode;
 
 public:
     /**
@@ -111,7 +115,7 @@ public:
 
     /**
      * Render the SVG glyph for |aGlyphId|
-     * @param aDrawMode Whether to fill or stroke or both; see gfxFont::DrawMode
+     * @param aDrawMode Whether to fill or stroke or both; see DrawMode
      * @param aContextPaint Information on text context paints.
      *   See |gfxTextContextPaint|.
      */

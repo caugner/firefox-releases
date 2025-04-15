@@ -6,10 +6,10 @@ const Cu = Components.utils;
 
 let {devtools} = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
 let TargetFactory = devtools.TargetFactory;
+let {console} = Cu.import("resource://gre/modules/devtools/Console.jsm", {});
 
 // Clear preferences that may be set during the course of tests.
-function clearUserPrefs()
-{
+function clearUserPrefs() {
   Services.prefs.clearUserPref("devtools.inspector.htmlPanelOpen");
   Services.prefs.clearUserPref("devtools.inspector.sidebarOpen");
   Services.prefs.clearUserPref("devtools.inspector.activeSidebar");
@@ -27,28 +27,3 @@ function getContainerForRawNode(markupView, rawNode) {
   let container = markupView.getContainer(front);
   return container;
 }
-
-
-Services.prefs.setBoolPref("devtools.debugger.log", true);
-SimpleTest.registerCleanupFunction(() => {
-  Services.prefs.clearUserPref("devtools.debugger.log");
-});
-
-function getContainerForRawNode(markupView, rawNode) {
-  let front = markupView.walker.frontForRawNode(rawNode);
-  let container = markupView.getContainer(front);
-  return container;
-}
-
-
-Services.prefs.setBoolPref("devtools.debugger.log", true);
-SimpleTest.registerCleanupFunction(() => {
-  Services.prefs.clearUserPref("devtools.debugger.log");
-});
-
-function getContainerForRawNode(markupView, rawNode) {
-  let front = markupView.walker.frontForRawNode(rawNode);
-  let container = markupView.getContainer(front);
-  return container;
-}
-

@@ -10,6 +10,8 @@
 #include "nsStyleConsts.h"
 #include "nsCocoaFeatures.h"
 #include "gfxFont.h"
+#include "gfxFontConstants.h"
+#include "mozilla/gfx/2D.h"
 
 #import <Cocoa/Cocoa.h>
 
@@ -249,7 +251,7 @@ nsLookAndFeel::NativeGetColor(ColorID aID, nscolor &aColor)
       aColor = GetColorFromNSColor([NSColor selectedMenuItemTextColor]);
       break;      
     case eColorID__moz_mac_disabledtoolbartext:
-      aColor = NS_RGB(0x3F,0x3F,0x3F);
+      aColor = GetColorFromNSColor([NSColor disabledControlTextColor]);
       break;
     case eColorID__moz_mac_menuselect:
       aColor = GetColorFromNSColor([NSColor alternateSelectedControlColor]);
@@ -497,7 +499,7 @@ bool nsLookAndFeel::AllowOverlayScrollbarsOverlap()
 static void GetStringForNSString(const NSString *aSrc, nsAString& aDest)
 {
     aDest.SetLength([aSrc length]);
-    [aSrc getCharacters:aDest.BeginWriting()];
+    [aSrc getCharacters:reinterpret_cast<unichar*>(aDest.BeginWriting())];
 }
 
 bool

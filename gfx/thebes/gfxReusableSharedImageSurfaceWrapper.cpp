@@ -4,6 +4,7 @@
 
 #include "gfxReusableSharedImageSurfaceWrapper.h"
 #include "gfxSharedImageSurface.h"
+#include "mozilla/layers/ISurfaceAllocator.h"
 
 using mozilla::ipc::Shmem;
 using mozilla::layers::ISurfaceAllocator;
@@ -75,7 +76,7 @@ gfxReusableSharedImageSurfaceWrapper::GetReadOnlyData() const
   return mSurface->Data();
 }
 
-gfxASurface::gfxImageFormat
+gfxImageFormat
 gfxReusableSharedImageSurfaceWrapper::Format()
 {
   return mSurface->Format();

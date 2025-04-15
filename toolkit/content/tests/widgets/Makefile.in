@@ -4,10 +4,8 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 MOCHITEST_FILES =	\
-		test_contextmenu_nested.xul \
 		tree_shared.js \
 		test_mousecapture_area.html \
-		popup_shared.js \
 		test_videocontrols.html \
 		test_videocontrols_audio.html \
 		test_videocontrols_video_direction.html \
@@ -27,27 +25,8 @@ MOCHITEST_FILES =	\
 		videocontrols_direction-2e.html \
 		videocontrols_direction_test.js \
 		$(topsrcdir)/content/media/test/audio.wav \
-		$(topsrcdir)/browser/base/content/test/audio.ogg \
+		$(topsrcdir)/browser/base/content/test/general/audio.ogg \
 		$(topsrcdir)/content/media/test/seek_with_sound.ogg \
 		videomask.css \
 		test_bug898940.html \
 		$(NULL)
-
-MOCHITEST_CHROME_FILES = \
-		tree_shared.js \
-		test_tree_column_reorder.xul \
-		test_editor_currentURI.xul \
-		test_popupreflows.xul \
-		$(NULL)
-
-ifneq (cocoa,$(MOZ_WIDGET_TOOLKIT))
-MOCHITEST_FILES += test_menubar.xul \
-               window_menubar.xul
-endif
-
-# popup anchor tests don't work on android.
-ifneq (android,$(MOZ_WIDGET_TOOLKIT))
-MOCHITEST_FILES += \
-		test_popupanchor.xul \
-		$(NULL)
-endif

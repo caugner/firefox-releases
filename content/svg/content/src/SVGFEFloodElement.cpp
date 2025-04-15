@@ -5,6 +5,8 @@
 
 #include "mozilla/dom/SVGFEFloodElement.h"
 #include "mozilla/dom/SVGFEFloodElementBinding.h"
+#include "gfxContext.h"
+#include "gfxColor.h"
 
 NS_IMPL_NS_NEW_NAMESPACED_SVG_ELEMENT(FEFlood)
 

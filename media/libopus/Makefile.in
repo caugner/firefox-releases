@@ -2,13 +2,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-FORCE_STATIC_LIB= 1
-
 DEFINES += \
   -DOPUS_BUILD \
-  -DOPUS_VERSION='"draft-11-mozilla"' \
+  -DOPUS_VERSION='"v1.1-beta-23-gf2446c2-mozilla"' \
   -DUSE_ALLOCA \
-  -Drestrict= \
   $(NULL)
 
 ifneq ($(filter $(OS_ARCH),Linux Darwin DragonFly FreeBSD NetBSD OpenBSD),)
@@ -62,5 +59,6 @@ CSRCS += $(notdir $(SILK_SOURCES_FIXED))
 else
 LOCAL_INCLUDES += -I$(srcdir)/silk/float
 VPATH += $(srcdir)/silk/float
-CSRCS += $(notdir $(SILK_SOURCES_FLOAT))
+CSRCS += $(notdir $(SILK_SOURCES_FLOAT)) \
+         $(notdir $(OPUS_SOURCES_FLOAT))
 endif

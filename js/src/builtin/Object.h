@@ -7,7 +7,9 @@
 #ifndef builtin_Object_h
 #define builtin_Object_h
 
-#include "jsobj.h"
+#include "jsapi.h"
+
+namespace JS { class Value; }
 
 namespace js {
 
@@ -16,13 +18,17 @@ extern const JSFunctionSpec object_static_methods[];
 
 // Object constructor native. Exposed only so the JIT can know its address.
 bool
-obj_construct(JSContext *cx, unsigned argc, js::Value *vp);
+obj_construct(JSContext *cx, unsigned argc, JS::Value *vp);
 
 #if JS_HAS_TOSOURCE
 // Object.prototype.toSource. Function.prototype.toSource and uneval use this.
 JSString *
-ObjectToSource(JSContext *cx, HandleObject obj);
+ObjectToSource(JSContext *cx, JS::HandleObject obj);
 #endif // JS_HAS_TOSOURCE
+
+extern bool
+WatchHandler(JSContext *cx, JSObject *obj, jsid id, JS::Value old,
+             JS::Value *nvp, void *closure);
 
 } /* namespace js */
 

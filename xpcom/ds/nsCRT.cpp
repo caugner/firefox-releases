@@ -20,9 +20,7 @@
 
 
 #include "nsCRT.h"
-#include "nsIServiceManager.h"
-#include "nsCharTraits.h"
-#include "nsUTF8Utils.h"
+#include "nsDebug.h"
 
 //----------------------------------------------------------------------
 
@@ -67,7 +65,7 @@ char* nsCRT::strtok(char* string, const char* delims, char* *newStr)
   }
   *newStr = str;
 
-  return str == result ? NULL : result;
+  return str == result ? nullptr : result;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -75,7 +73,7 @@ char* nsCRT::strtok(char* string, const char* delims, char* *newStr)
 /**
  * Compare unichar string ptrs, stopping at the 1st null 
  * NOTE: If both are null, we return 0.
- * NOTE: We terminate the search upon encountering a NULL
+ * NOTE: We terminate the search upon encountering a nullptr
  *
  * @update  gess 11/10/99
  * @param   s1 and s2 both point to unichar strings
@@ -105,7 +103,7 @@ int32_t nsCRT::strcmp(const PRUnichar* s1, const PRUnichar* s2) {
 /**
  * Compare unichar string ptrs, stopping at the 1st null or nth char.
  * NOTE: If either is null, we return 0.
- * NOTE: We DO NOT terminate the search upon encountering NULL's before N
+ * NOTE: We DO NOT terminate the search upon encountering nullptr's before N
  *
  * @update  gess 11/10/99
  * @param   s1 and s2 both point to unichar strings
@@ -133,7 +131,7 @@ const char* nsCRT::memmem(const char* haystack, uint32_t haystackLen,
   // Sanity checking
   if (!(haystack && needle && haystackLen && needleLen &&
         needleLen <= haystackLen))
-    return NULL;
+    return nullptr;
 
 #ifdef HAVE_MEMMEM
   return (const char*)::memmem(haystack, haystackLen, needle, needleLen);
@@ -146,7 +144,7 @@ const char* nsCRT::memmem(const char* haystack, uint32_t haystackLen,
       return haystack + i;
   }
 #endif
-  return NULL;
+  return nullptr;
 }
 
 // This should use NSPR but NSPR isn't exporting its PR_strtoll function

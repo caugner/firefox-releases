@@ -76,18 +76,37 @@ void MediaOmxReader::ReleaseDecoder()
   }
 }
 
-nsresult MediaOmxReader::ReadMetadata(VideoInfo* aInfo,
+nsresult MediaOmxReader::InitOmxDecoder()
+{
+  if (!mOmxDecoder.get()) {
+    //register sniffers, if they are not registered in this process.
+    DataSource::RegisterDefaultSniffers();
+    mDecoder->GetResource()->SetReadMode(MediaCacheStream::MODE_METADATA);
+
+    sp<DataSource> dataSource = new MediaStreamSource(mDecoder->GetResource(), mDecoder);
+    dataSource->initCheck();
+
+    sp<MediaExtractor> extractor = MediaExtractor::Create(dataSource);
+
+    mOmxDecoder = new OmxDecoder(mDecoder->GetResource(), mDecoder);
+    if (!mOmxDecoder->Init(extractor)) {
+      return NS_ERROR_FAILURE;
+    }
+  }
+  return NS_OK;
+}
+
+nsresult MediaOmxReader::ReadMetadata(MediaInfo* aInfo,
                                       MetadataTags** aTags)
 {
   NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
 
   *aTags = nullptr;
 
-  if (!mOmxDecoder.get()) {
-    mOmxDecoder = new OmxDecoder(mDecoder->GetResource(), mDecoder);
-    if (!mOmxDecoder->Init()) {
-      return NS_ERROR_FAILURE;
-    }
+  // Initialize the internal OMX Decoder.
+  nsresult rv = InitOmxDecoder();
+  if (NS_FAILED(rv)) {
+    return rv;
   }
 
   if (!mOmxDecoder->TryLoad()) {
@@ -120,8 +139,8 @@ nsresult MediaOmxReader::ReadMetadata(VideoInfo* aInfo,
     }
 
     // Video track's frame sizes will not overflow. Activate the video track.
-    mHasVideo = mInfo.mHasVideo = true;
-    mInfo.mDisplay = displaySize;
+    mHasVideo = mInfo.mVideo.mHasVideo = true;
+    mInfo.mVideo.mDisplay = displaySize;
     mPicture = pictureRect;
     mInitialFrame = frameSize;
     VideoFrameContainer* container = mDecoder->GetVideoFrameContainer();
@@ -135,9 +154,9 @@ nsresult MediaOmxReader::ReadMetadata(VideoInfo* aInfo,
   if (mOmxDecoder->HasAudio()) {
     int32_t numChannels, sampleRate;
     mOmxDecoder->GetAudioParameters(&numChannels, &sampleRate);
-    mHasAudio = mInfo.mHasAudio = true;
-    mInfo.mAudioChannels = numChannels;
-    mInfo.mAudioRate = sampleRate;
+    mHasAudio = mInfo.mAudio.mHasAudio = true;
+    mInfo.mAudio.mChannels = numChannels;
+    mInfo.mAudio.mRate = sampleRate;
   }
 
  *aInfo = mInfo;
@@ -239,21 +258,21 @@ bool MediaOmxReader::DecodeVideoFrame(bool &aKeyframeSkip,
       b.mPlanes[2].mOffset = frame.Cr.mOffset;
       b.mPlanes[2].mSkip = frame.Cr.mSkip;
 
-      v = VideoData::Create(mInfo,
+      v = VideoData::Create(mInfo.mVideo,
                             mDecoder->GetImageContainer(),
                             pos,
                             frame.mTimeUs,
-                            frame.mTimeUs+1, // We don't know the end time.
+                            1, // We don't know the duration.
                             b,
                             frame.mKeyFrame,
                             -1,
                             picture);
     } else {
-      v = VideoData::Create(mInfo,
+      v = VideoData::Create(mInfo.mVideo,
                             mDecoder->GetImageContainer(),
                             pos,
                             frame.mTimeUs,
-                            frame.mTimeUs+1, // We don't know the end time.
+                            1, // We don't know the duration.
                             frame.mGraphicBuffer,
                             frame.mKeyFrame,
                             -1,

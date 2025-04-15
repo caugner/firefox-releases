@@ -12,6 +12,7 @@
 #endif
 #include "nsIChannel.h"
 #include "nsIURI.h"
+#include "nsIStreamingProtocolController.h"
 #include "nsIStreamListener.h"
 #include "nsIChannelEventSink.h"
 #include "nsIInterfaceRequestor.h"
@@ -182,6 +183,7 @@ inline MediaByteRange::MediaByteRange(TimestampedMediaByteRange& aByteRange)
   NS_ASSERTION(mStart < mEnd, "Range should end after start!");
 }
 
+class RtspMediaResource;
 
 /**
  * Provides a thread-safe, seek/read interface to resources
@@ -391,6 +393,18 @@ public:
   // nsIChannel when the MediaResource is created. Safe to call from
   // any thread.
   virtual const nsCString& GetContentType() const = 0;
+
+  // Get the RtspMediaResource pointer if this MediaResource really is a
+  // RtspMediaResource. For calling Rtsp specific functions.
+  virtual RtspMediaResource* GetRtspPointer() {
+    return nullptr;
+  }
+
+  // Return true if the stream is a live stream
+  virtual bool IsRealTime() {
+    return false;
+  }
+
 protected:
   virtual ~MediaResource() {};
 };
@@ -428,6 +442,10 @@ protected:
   // load group, the request is removed from the group, the flags are set, and
   // then the request is added back to the load group.
   void ModifyLoadFlags(nsLoadFlags aFlags);
+
+  // Dispatches an event to call MediaDecoder::NotifyBytesConsumed(aNumBytes, aOffset)
+  // on the main thread. This is called automatically after every read.
+  void DispatchBytesConsumed(int64_t aNumBytes, int64_t aOffset);
 
   // This is not an nsCOMPointer to prevent a circular reference
   // between the decoder to the media stream object. The stream never

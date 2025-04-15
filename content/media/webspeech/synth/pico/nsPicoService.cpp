@@ -9,6 +9,7 @@
 #include "nsPrintfCString.h"
 #include "nsIWeakReferenceUtils.h"
 #include "SharedBuffer.h"
+#include "nsISimpleEnumerator.h"
 
 #include "mozilla/dom/nsSynthVoiceRegistry.h"
 #include "mozilla/dom/nsSpeechTask.h"
@@ -698,6 +699,10 @@ nsPicoService*
 nsPicoService::GetInstance()
 {
   MOZ_ASSERT(NS_IsMainThread());
+  if (XRE_GetProcessType() != GeckoProcessType_Default) {
+    MOZ_ASSERT(false, "nsPicoService can only be started on main gecko process");
+    return nullptr;
+  }
 
   if (!sSingleton) {
     sSingleton = new nsPicoService();

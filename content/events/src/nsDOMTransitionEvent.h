@@ -7,6 +7,7 @@
 
 #include "nsDOMEvent.h"
 #include "nsIDOMTransitionEvent.h"
+#include "mozilla/EventForwards.h"
 #include "mozilla/dom/TransitionEventBinding.h"
 
 class nsAString;
@@ -17,8 +18,7 @@ class nsDOMTransitionEvent : public nsDOMEvent,
 public:
   nsDOMTransitionEvent(mozilla::dom::EventTarget* aOwner,
                        nsPresContext *aPresContext,
-                       nsTransitionEvent *aEvent);
-  ~nsDOMTransitionEvent();
+                       mozilla::InternalTransitionEvent* aEvent);
 
   NS_DECL_ISUPPORTS_INHERITED
   NS_FORWARD_TO_NSDOMEVENT
@@ -40,17 +40,7 @@ public:
   // GetPropertyName(nsAString& aPropertyName)
   // GetPseudoElement(nsAString& aPreudoElement)
 
-  float ElapsedTime()
-  {
-    return TransitionEvent()->elapsedTime;
-  }
-
-private:
-  nsTransitionEvent* TransitionEvent() {
-    NS_ABORT_IF_FALSE(mEvent->eventStructType == NS_TRANSITION_EVENT,
-                      "unexpected struct type");
-    return static_cast<nsTransitionEvent*>(mEvent);
-  }
+  float ElapsedTime();
 };
 
 #endif /* !defined(nsDOMTransitionEvent_h_) */

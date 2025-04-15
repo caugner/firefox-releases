@@ -15,7 +15,7 @@
 #include "nsString.h"
 #include "nsRegion.h"
 
-#include "nsThreadUtils.h"
+#include "nsIRunnable.h"
 #include "nsICryptoHash.h"
 #ifdef MOZ_PLACES
 #include "nsIFaviconService.h"
@@ -30,6 +30,7 @@ class nsWindow;
 class nsWindowBase;
 struct KeyPair;
 struct nsIntRect;
+class nsIThread;
 
 namespace mozilla {
 namespace widget {
@@ -142,8 +143,8 @@ public:
                               bool aStopIfNotPopup = true);
 
   /**
-   * SetNSWindowBasePtr() associates an nsWindowBase to aWnd.  If aWidget is NULL,
-   * it dissociate any nsBaseWidget pointer from aWnd.
+   * SetNSWindowBasePtr() associates an nsWindowBase to aWnd.  If aWidget is
+   * nullptr, it dissociate any nsBaseWidget pointer from aWnd.
    * GetNSWindowBasePtr() returns an nsWindowBase pointer which was associated by
    * SetNSWindowBasePtr().
    * GetNSWindowPtr() is a legacy api for win32 nsWindow and should be avoided
@@ -167,9 +168,9 @@ public:
   /**
    * FindOurProcessWindow() returns the nearest ancestor window which
    * belongs to our process.  If it fails to find our process's window by the
-   * top level window, returns NULL.  And note that this is using ::GetParent()
-   * for climbing the window hierarchy, therefore, it gives up at an owned top
-   * level window except popup window (e.g., dialog).
+   * top level window, returns nullptr.  And note that this is using
+   * ::GetParent() for climbing the window hierarchy, therefore, it gives
+   * up at an owned top level window except popup window (e.g., dialog).
    */
   static HWND FindOurProcessWindow(HWND aWnd);
 

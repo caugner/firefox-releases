@@ -16,64 +16,9 @@ $(error Do not include rules.mk twice!)
 endif
 INCLUDED_RULES_MK = 1
 
-# Integrate with mozbuild-generated make files. We first verify that no
-# variables provided by the automatically generated .mk files are
-# present. If they are, this is a violation of the separation of
-# responsibility between Makefile.in and mozbuild files.
-_MOZBUILD_EXTERNAL_VARIABLES := \
-  CMMSRCS \
-  CPP_UNIT_TESTS \
-  DIRS \
-  EXTRA_PP_COMPONENTS \
-  EXTRA_PP_JS_MODULES \
-  GTEST_CMMSRCS \
-  GTEST_CPPSRCS \
-  GTEST_CSRCS \
-  HOST_CSRCS \
-  HOST_LIBRARY_NAME \
-  LIBRARY_NAME \
-  LIBXUL_LIBRARY \
-  MODULE \
-  MSVC_ENABLE_PGO \
-  NO_DIST_INSTALL \
-  PARALLEL_DIRS \
-  SIMPLE_PROGRAMS \
-  TEST_DIRS \
-  TIERS \
-  TOOL_DIRS \
-  XPCSHELL_TESTS \
-  XPIDL_MODULE \
-  $(NULL)
-
-_DEPRECATED_VARIABLES := \
-  XPIDL_FLAGS \
-  $(NULL)
-
-ifndef EXTERNALLY_MANAGED_MAKE_FILE
-# Using $(firstword) may not be perfect. But it should be good enough for most
-# scenarios.
-_current_makefile = $(CURDIR)/$(firstword $(MAKEFILE_LIST))
-
-$(foreach var,$(_MOZBUILD_EXTERNAL_VARIABLES),$(if $(filter file override,$(subst $(NULL) ,_,$(origin $(var)))),\
-    $(error Variable $(var) is defined in $(_current_makefile). It should only be defined in moz.build files),\
-    ))
-
-$(foreach var,$(_DEPRECATED_VARIABLES),$(if $(filter file override,$(subst $(NULL) ,_,$(origin $(var)))),\
-    $(error Variable $(var) is defined in $(_current_makefile). This variable has been deprecated. It does nothing. It must be removed in order to build)\
-    ))
-
-ifneq (,$(XPIDLSRCS)$(SDK_XPIDLSRCS))
-    $(error XPIDLSRCS and SDK_XPIDLSRCS have been merged and moved to moz.build files as the XPIDL_SOURCES variable. You must move these variables out of $(_current_makefile))
-endif
-
-# Import the automatically generated backend file. If this file doesn't exist,
-# the backend hasn't been properly configured. We want this to be a fatal
-# error, hence not using "-include".
-ifndef STANDALONE_MAKEFILE
-GLOBAL_DEPS += backend.mk
-include backend.mk
-endif
-endif
+# Make sure that anything that needs to be defined in moz.build wasn't
+# overwritten.
+_eval_for_side_effects := $(CHECK_MOZBUILD_VARIABLES)
 
 ifndef MOZILLA_DIR
 MOZILLA_DIR = $(topsrcdir)
@@ -99,11 +44,6 @@ automatically use pymake or invoke pymake directly via \
 |python build/pymake/make.py|.)
 endif
 endif
-endif
-
-ifdef SDK_HEADERS
-_EXTRA_EXPORTS := $(filter-out $(EXPORTS),$(SDK_HEADERS))
-EXPORTS += $(_EXTRA_EXPORTS)
 endif
 
 ifdef REBUILD_CHECK
@@ -163,10 +103,6 @@ ifdef ENABLE_TESTS
 # locally against non-current test code.
 DIRS += $(TEST_DIRS)
 
-ifndef INCLUDED_TESTS_XPCSHELL_MK #{
-  include $(topsrcdir)/config/makefiles/xpcshell.mk
-endif #}
-
 ifndef INCLUDED_TESTS_MOCHITEST_MK #{
   include $(topsrcdir)/config/makefiles/mochitest.mk
 endif #}
@@ -223,13 +159,13 @@ endif # CPP_UNIT_TESTS
 
 ifdef PYTHON_UNIT_TESTS
 
-RUN_PYTHON_UNIT_TESTS := $(addprefix run-,$(PYTHON_UNIT_TESTS))
+RUN_PYTHON_UNIT_TESTS := $(addsuffix -run,$(PYTHON_UNIT_TESTS))
 
 .PHONY: $(RUN_PYTHON_UNIT_TESTS)
 
 check:: $(RUN_PYTHON_UNIT_TESTS)
 
-$(RUN_PYTHON_UNIT_TESTS): run-%: %
+$(RUN_PYTHON_UNIT_TESTS): %-run: %
 	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $<
 
 endif # PYTHON_UNIT_TESTS
@@ -363,11 +299,12 @@ endif
 
 # Don't build SIMPLE_PROGRAMS during the MOZ_PROFILE_GENERATE pass
 ifdef MOZ_PROFILE_GENERATE
+EXCLUDED_OBJS := $(SIMPLE_PROGRAMS:$(BIN_SUFFIX)=.$(OBJ_SUFFIX))
 SIMPLE_PROGRAMS :=
 endif
 
 ifndef TARGETS
-TARGETS			= $(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(HOST_LIBRARY) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS) $(JAVA_LIBRARY)
+TARGETS			= $(LIBRARY) $(SHARED_LIBRARY) $(PROGRAM) $(SIMPLE_PROGRAMS) $(HOST_LIBRARY) $(HOST_PROGRAM) $(HOST_SIMPLE_PROGRAMS)
 endif
 
 COBJS = $(notdir $(CSRCS:.c=.$(OBJ_SUFFIX)))
@@ -382,13 +319,13 @@ _OBJS = $(COBJS) $(SOBJS) $(CPPOBJS) $(CMOBJS) $(CMMOBJS) $(ASOBJS)
 OBJS = $(strip $(_OBJS))
 endif
 
-HOST_COBJS = $(addprefix host_,$(HOST_CSRCS:.c=.$(OBJ_SUFFIX)))
-HOST_CCOBJS = $(addprefix host_,$(patsubst %.cc,%.$(OBJ_SUFFIX),$(filter %.cc,$(HOST_CPPSRCS))))
-HOST_CPPOBJS = $(addprefix host_,$(patsubst %.cpp,%.$(OBJ_SUFFIX),$(filter %.cpp,$(HOST_CPPSRCS))))
-HOST_CMOBJS = $(addprefix host_,$(HOST_CMSRCS:.m=.$(OBJ_SUFFIX)))
-HOST_CMMOBJS = $(addprefix host_,$(HOST_CMMSRCS:.mm=.$(OBJ_SUFFIX)))
+HOST_COBJS = $(addprefix host_,$(notdir $(HOST_CSRCS:.c=.$(OBJ_SUFFIX))))
+# HOST_CPPOBJS can have different extensions (eg: .cpp, .cc)
+HOST_CPPOBJS = $(addprefix host_,$(notdir $(addsuffix .$(OBJ_SUFFIX),$(basename $(HOST_CPPSRCS)))))
+HOST_CMOBJS = $(addprefix host_,$(notdir $(HOST_CMSRCS:.m=.$(OBJ_SUFFIX))))
+HOST_CMMOBJS = $(addprefix host_,$(notdir $(HOST_CMMSRCS:.mm=.$(OBJ_SUFFIX))))
 ifndef HOST_OBJS
-_HOST_OBJS = $(HOST_COBJS) $(HOST_CCOBJS) $(HOST_CPPOBJS) $(HOST_CMOBJS) $(HOST_CMMOBJS)
+_HOST_OBJS = $(HOST_COBJS) $(HOST_CPPOBJS) $(HOST_CMOBJS) $(HOST_CMMOBJS)
 HOST_OBJS = $(strip $(_HOST_OBJS))
 endif
 
@@ -692,7 +629,9 @@ SUBMAKEFILES += $(addsuffix /Makefile, $(DIRS) $(TOOL_DIRS) $(PARALLEL_DIRS))
 ifndef SUPPRESS_DEFAULT_RULES
 default all::
 	$(MAKE) export
+ifdef MOZ_PSEUDO_DERECURSE
 	$(MAKE) compile
+endif
 	$(MAKE) libs
 	$(MAKE) tools
 endif # SUPPRESS_DEFAULT_RULES
@@ -731,9 +670,18 @@ GLOBAL_DEPS += Makefile.in
 endif
 
 ##############################################
-compile:: $(OBJS) $(HOST_OBJS)
+OBJ_TARGETS = $(OBJS) $(PROGOBJS) $(HOST_OBJS) $(HOST_PROGOBJS)
+
+compile:: $(OBJ_TARGETS)
 
 include $(topsrcdir)/config/makefiles/target_libs.mk
+
+ifdef IS_TOOL_DIR
+# One would think "tools:: libs" would work, but it turns out that combined with
+# bug 907365, this makes make forget to run some rules sometimes.
+tools::
+	@$(MAKE) libs
+endif
 
 ##############################################
 ifndef NO_PROFILE_GUIDED_OPTIMIZE
@@ -856,7 +804,7 @@ ifdef MOZ_PROFILE_GENERATE
 endif
 else # !WINNT || GNU_CC
 	$(EXPAND_CCC) -o $@ $(CXXFLAGS) $(PROGOBJS) $(RESFILE) $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(WRAP_LDFLAGS) $(LIBS_DIR) $(LIBS) $(MOZ_GLUE_PROGRAM_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(BIN_FLAGS) $(EXE_DEF_FILE) $(STLPORT_LIBS)
-	@$(call CHECK_STDCXX,$@)
+	$(call CHECK_BINARY,$@)
 endif # WINNT && !GNU_CC
 
 ifdef ENABLE_STRIP
@@ -869,7 +817,7 @@ endif
 $(HOST_PROGRAM): $(HOST_PROGOBJS) $(HOST_LIBS_DEPS) $(HOST_EXTRA_DEPS) $(GLOBAL_DEPS)
 	$(REPORT_BUILD)
 ifeq (_WINNT,$(GNU_CC)_$(HOST_OS_ARCH))
-	$(HOST_LD) -NOLOGO -OUT:$@ -PDB:$(HOST_PDBFILE) $(HOST_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(EXPAND_LIBS_EXEC) -- $(HOST_LD) -NOLOGO -OUT:$@ -PDB:$(HOST_PDBFILE) $(HOST_OBJS) $(WIN32_EXE_LDFLAGS) $(HOST_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 ifdef MSMANIFEST_TOOL
 	@if test -f $@.manifest; then \
 		if test -f "$(srcdir)/$@.manifest"; then \
@@ -886,9 +834,9 @@ ifdef MSMANIFEST_TOOL
 endif	# MSVC with manifest tool
 else
 ifeq ($(HOST_CPP_PROG_LINK),1)
-	$(HOST_CXX) -o $@ $(HOST_CXXFLAGS) $(HOST_LDFLAGS) $(HOST_PROGOBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(EXPAND_LIBS_EXEC) -- $(HOST_CXX) -o $@ $(HOST_CXXFLAGS) $(HOST_LDFLAGS) $(HOST_PROGOBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
-	$(HOST_CC) -o $@ $(HOST_CFLAGS) $(HOST_LDFLAGS) $(HOST_PROGOBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(EXPAND_LIBS_EXEC) -- $(HOST_CC) -o $@ $(HOST_CFLAGS) $(HOST_LDFLAGS) $(HOST_PROGOBJS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 endif # HOST_CPP_PROG_LINK
 endif
 
@@ -912,7 +860,7 @@ ifdef MSMANIFEST_TOOL
 endif	# MSVC with manifest tool
 else
 	$(EXPAND_CCC) $(CXXFLAGS) -o $@ $< $(WIN32_EXE_LDFLAGS) $(LDFLAGS) $(WRAP_LDFLAGS) $(LIBS_DIR) $(LIBS) $(MOZ_GLUE_PROGRAM_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(BIN_FLAGS) $(STLPORT_LIBS)
-	@$(call CHECK_STDCXX,$@)
+	$(call CHECK_BINARY,$@)
 endif # WINNT && !GNU_CC
 
 ifdef ENABLE_STRIP
@@ -925,12 +873,12 @@ endif
 $(HOST_SIMPLE_PROGRAMS): host_%$(HOST_BIN_SUFFIX): host_%.$(OBJ_SUFFIX) $(HOST_LIBS_DEPS) $(HOST_EXTRA_DEPS) $(GLOBAL_DEPS)
 	$(REPORT_BUILD)
 ifeq (WINNT_,$(HOST_OS_ARCH)_$(GNU_CC))
-	$(HOST_LD) -NOLOGO -OUT:$@ -PDB:$(HOST_PDBFILE) $< $(WIN32_EXE_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(EXPAND_LIBS_EXEC) -- $(HOST_LD) -NOLOGO -OUT:$@ -PDB:$(HOST_PDBFILE) $< $(WIN32_EXE_LDFLAGS) $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
 ifneq (,$(HOST_CPPSRCS)$(USE_HOST_CXX))
-	$(HOST_CXX) $(HOST_OUTOPTION)$@ $(HOST_CXXFLAGS) $(INCLUDES) $< $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(EXPAND_LIBS_EXEC) -- $(HOST_CXX) $(HOST_OUTOPTION)$@ $(HOST_CXXFLAGS) $(INCLUDES) $< $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 else
-	$(HOST_CC) $(HOST_OUTOPTION)$@ $(HOST_CFLAGS) $(INCLUDES) $< $(HOST_LIBS) $(HOST_EXTRA_LIBS)
+	$(EXPAND_LIBS_EXEC) -- $(HOST_CC) $(HOST_OUTOPTION)$@ $(HOST_CFLAGS) $(INCLUDES) $< $(HOST_LIBS) $(HOST_EXTRA_LIBS)
 endif
 endif
 
@@ -983,7 +931,7 @@ endif # OS/2
 $(HOST_LIBRARY): $(HOST_OBJS) Makefile
 	$(REPORT_BUILD)
 	$(RM) $@
-	$(HOST_AR) $(HOST_AR_FLAGS) $(HOST_OBJS)
+	$(EXPAND_LIBS_EXEC) --extract -- $(HOST_AR) $(HOST_AR_FLAGS) $(HOST_OBJS)
 	$(HOST_RANLIB) $@
 
 ifdef HAVE_DTRACE
@@ -1017,7 +965,7 @@ endif
 else # ! DTRACE_LIB_DEPENDENT
 	$(EXPAND_MKSHLIB) $(SHLIB_LDSTARTFILE) $(OBJS) $(SUB_SHLOBJS) $(RESFILE) $(LDFLAGS) $(WRAP_LDFLAGS) $(SHARED_LIBRARY_LIBS) $(EXTRA_DSO_LDOPTS) $(MOZ_GLUE_LDFLAGS) $(OS_LIBS) $(EXTRA_LIBS) $(DEF_FILE) $(SHLIB_LDENDFILE) $(if $(LIB_IS_C_ONLY),,$(STLPORT_LIBS))
 endif # DTRACE_LIB_DEPENDENT
-	@$(call CHECK_STDCXX,$@)
+	$(call CHECK_BINARY,$@)
 
 ifeq (_WINNT,$(GNU_CC)_$(OS_ARCH))
 ifdef MSMANIFEST_TOOL
@@ -1066,30 +1014,27 @@ endif # Sun Studio on Solaris
 # rules that have commands for these targets must not list any other
 # prerequisites, or they will override the $< variable.
 define src_objdep
-$(basename $(notdir $1)).$(OBJ_SUFFIX): $1 $(call mkdir_deps,$(MDDEPDIR))
+$(basename $2$(notdir $1)).$(OBJ_SUFFIX): $1 $$(call mkdir_deps,$$(MDDEPDIR))
 endef
 $(foreach f,$(CSRCS) $(SSRCS) $(CPPSRCS) $(CMSRCS) $(CMMSRCS) $(ASFILES),$(eval $(call src_objdep,$(f))))
+$(foreach f,$(HOST_CSRCS) $(HOST_CPPSRCS) $(HOST_CMSRCS) $(HOST_CMMSRCS),$(eval $(call src_objdep,$(f),host_)))
 
 $(OBJS) $(HOST_OBJS) $(PROGOBJS) $(HOST_PROGOBJS): $(GLOBAL_DEPS)
 
 # Rules for building native targets must come first because of the host_ prefix
-$(HOST_COBJS): host_%.$(OBJ_SUFFIX): %.c
+$(HOST_COBJS):
 	$(REPORT_BUILD)
 	$(ELOG) $(HOST_CC) $(HOST_OUTOPTION)$@ -c $(HOST_CFLAGS) $(INCLUDES) $(NSPR_CFLAGS) $(_VPATH_SRCS)
 
-$(HOST_CPPOBJS): host_%.$(OBJ_SUFFIX): %.cpp
+$(HOST_CPPOBJS):
 	$(REPORT_BUILD)
 	$(ELOG) $(HOST_CXX) $(HOST_OUTOPTION)$@ -c $(HOST_CXXFLAGS) $(INCLUDES) $(NSPR_CFLAGS) $(_VPATH_SRCS)
 
-$(HOST_CCOBJS): host_%.$(OBJ_SUFFIX): %.cc
-	$(REPORT_BUILD)
-	$(ELOG) $(HOST_CXX) $(HOST_OUTOPTION)$@ -c $(HOST_CXXFLAGS) $(INCLUDES) $(NSPR_CFLAGS) $(_VPATH_SRCS)
-
-$(HOST_CMOBJS): host_%.$(OBJ_SUFFIX): %.m
+$(HOST_CMOBJS):
 	$(REPORT_BUILD)
 	$(ELOG) $(HOST_CC) $(HOST_OUTOPTION)$@ -c $(HOST_CFLAGS) $(HOST_CMFLAGS) $(INCLUDES) $(NSPR_CFLAGS) $(_VPATH_SRCS)
 
-$(HOST_CMMOBJS): host_%.$(OBJ_SUFFIX): %.mm
+$(HOST_CMMOBJS):
 	$(REPORT_BUILD)
 	$(ELOG) $(HOST_CXX) $(HOST_OUTOPTION)$@ -c $(HOST_CXXFLAGS) $(HOST_CMMFLAGS) $(INCLUDES) $(NSPR_CFLAGS) $(_VPATH_SRCS)
 
@@ -1213,7 +1158,7 @@ endif
 ###############################################################################
 # Java rules
 ###############################################################################
-ifneq (,$(value JAVAFILES)$(value RESFILES))
+ifneq (,$(JAVAFILES)$(ANDROID_RESFILES)$(ANDROID_APKNAME)$(JAVA_JAR_TARGETS))
   include $(topsrcdir)/config/makefiles/java-build.mk
 endif
 
@@ -1249,35 +1194,12 @@ $(DEPTH)/config/autoconf.mk: $(topsrcdir)/config/autoconf.mk.in
 # Bunch of things that extend the 'export' rule (in order):
 ###############################################################################
 
-################################################################################
-# Copy each element of EXPORTS to $(DIST)/include
-
 ifneq ($(XPI_NAME),)
 $(FINAL_TARGET):
 	$(NSINSTALL) -D $@
 
 export:: $(FINAL_TARGET)
 endif
-
-ifndef NO_DIST_INSTALL
-ifneq (,$(EXPORTS))
-EXPORTS_FILES := $(EXPORTS)
-EXPORTS_DEST := $(DIST)/include
-EXPORTS_TARGET := export
-INSTALL_TARGETS += EXPORTS
-endif
-endif # NO_DIST_INSTALL
-
-define EXPORT_NAMESPACE_RULE
-ifndef NO_DIST_INSTALL
-EXPORTS_$(namespace)_FILES := $$(EXPORTS_$(namespace))
-EXPORTS_$(namespace)_DEST := $$(DIST)/include/$(namespace)
-EXPORTS_$(namespace)_TARGET := export
-INSTALL_TARGETS += EXPORTS_$(namespace)
-endif # NO_DIST_INSTALL
-endef
-
-$(foreach namespace,$(EXPORTS_NAMESPACES),$(eval $(EXPORT_NAMESPACE_RULE)))
 
 ################################################################################
 # Copy each element of PREF_JS_EXPORTS
@@ -1329,8 +1251,8 @@ INSTALL_TARGETS += _XPT_NAME
 
 ifndef NO_INTERFACES_MANIFEST
 libs:: $(call mkdir_deps,$(FINAL_TARGET)/components)
-	@$(PYTHON) $(MOZILLA_DIR)/config/buildlist.py $(FINAL_TARGET)/components/interfaces.manifest "interfaces $(XPT_NAME)"
-	@$(PYTHON) $(MOZILLA_DIR)/config/buildlist.py $(FINAL_TARGET)/chrome.manifest "manifest components/interfaces.manifest"
+	$(call py_action,buildlist,$(FINAL_TARGET)/components/interfaces.manifest "interfaces $(XPT_NAME)")
+	$(call py_action,buildlist,$(FINAL_TARGET)/chrome.manifest "manifest components/interfaces.manifest")
 endif
 endif
 
@@ -1366,7 +1288,7 @@ endif
 EXTRA_MANIFESTS = $(filter %.manifest,$(EXTRA_COMPONENTS) $(EXTRA_PP_COMPONENTS))
 ifneq (,$(EXTRA_MANIFESTS))
 libs:: $(call mkdir_deps,$(FINAL_TARGET))
-	$(PYTHON) $(MOZILLA_DIR)/config/buildlist.py $(FINAL_TARGET)/chrome.manifest $(patsubst %,"manifest components/%",$(notdir $(EXTRA_MANIFESTS)))
+	$(call py_action,buildlist,$(FINAL_TARGET)/chrome.manifest $(patsubst %,"manifest components/%",$(notdir $(EXTRA_MANIFESTS))))
 endif
 
 ################################################################################
@@ -1466,10 +1388,10 @@ endif
 endif
 
 libs realchrome:: $(CHROME_DEPS) $(FINAL_TARGET)/chrome
-	$(PYTHON) $(MOZILLA_DIR)/config/JarMaker.py \
+	$(call py_action,jar_maker,\
 	  $(QUIET) -j $(FINAL_TARGET)/chrome \
 	  $(MAKE_JARS_FLAGS) $(XULPPFLAGS) $(DEFINES) $(ACDEFINES) \
-	  $(JAR_MANIFEST)
+	  $(JAR_MANIFEST))
 
 endif
 endif
@@ -1545,8 +1467,8 @@ endif
 #   dependency directory in the object directory, where we really need
 #   it.
 
-ifneq (,$(filter-out all chrome default export realchrome tools clean clobber clobber_all distclean realclean,$(MAKECMDGOALS)))
-MDDEPEND_FILES		:= $(strip $(wildcard $(foreach file,$(sort $(OBJS) $(PROGOBJS) $(HOST_OBJS) $(HOST_PROGOBJS) $(TARGETS)),$(MDDEPDIR)/$(notdir $(file)).pp) $(addprefix $(MDDEPDIR)/,$(EXTRA_MDDEPEND_FILES))))
+ifneq (,$(filter-out all chrome default export realchrome clean clobber clobber_all distclean realclean,$(MAKECMDGOALS)))
+MDDEPEND_FILES		:= $(strip $(wildcard $(addprefix $(MDDEPDIR)/,$(EXTRA_MDDEPEND_FILES) $(addsuffix .pp,$(notdir $(sort $(OBJS) $(PROGOBJS) $(HOST_OBJS) $(HOST_PROGOBJS))) $(TARGETS)))))
 
 ifneq (,$(MDDEPEND_FILES))
 $(call include_deps,$(MDDEPEND_FILES))
@@ -1739,14 +1661,11 @@ FREEZE_VARIABLES = \
   EXTRA_COMPONENTS \
   EXTRA_PP_COMPONENTS \
   MOCHITEST_FILES \
-  MOCHITEST_FILES_PARTS \
   MOCHITEST_CHROME_FILES \
   MOCHITEST_BROWSER_FILES \
-  MOCHITEST_BROWSER_FILES_PARTS \
   MOCHITEST_A11Y_FILES \
   MOCHITEST_METRO_FILES \
   MOCHITEST_ROBOCOP_FILES \
-  MOCHITEST_WEBAPPRT_CHROME_FILES \
   $(NULL)
 
 $(foreach var,$(FREEZE_VARIABLES),$(eval $(var)_FROZEN := '$($(var))'))

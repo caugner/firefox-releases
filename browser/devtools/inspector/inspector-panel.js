@@ -27,6 +27,33 @@ const LAYOUT_CHANGE_TIMER = 250;
  * The inspector controls the highlighter, the breadcrumbs,
  * the markup view, and the sidebar (computed view, rule view
  * and layout view).
+ *
+ * Events:
+ * - ready
+ *      Fired when the inspector panel is opened for the first time and ready to
+ *      use
+ * - new-root
+ *      Fired after a new root (navigation to a new page) event was fired by
+ *      the walker, and taken into account by the inspector (after the markup
+ *      view has been reloaded)
+ * - markuploaded
+ *      Fired when the markup-view frame has loaded
+ * - layout-change
+ *      Fired when the layout of the inspector changes
+ * - breadcrumbs-updated
+ *      Fired when the breadcrumb widget updates to a new node
+ * - layoutview-updated
+ *      Fired when the layoutview (box model) updates to a new node
+ * - markupmutation
+ *      Fired after markup mutations have been processed by the markup-view
+ * - computed-view-refreshed
+ *      Fired when the computed rules view updates to a new node
+ * - computed-view-property-expanded
+ *      Fired when a property is expanded in the computed rules view
+ * - computed-view-property-collapsed
+ *      Fired when a property is collapsed in the computed rules view
+ * - rule-view-refreshed
+ *      Fired when the rule view updates to a new node
  */
 function InspectorPanel(iframeWindow, toolbox) {
   this._toolbox = toolbox;
@@ -70,6 +97,8 @@ InspectorPanel.prototype = {
 
   _deferredOpen: function(defaultSelection) {
     let deferred = promise.defer();
+
+    this.outerHTMLEditable = this._target.client.traits.editOuterHTML;
 
     this.onNewRoot = this.onNewRoot.bind(this);
     this.walker.on("new-root", this.onNewRoot);
@@ -189,7 +218,7 @@ InspectorPanel.prototype = {
     // as default selected, else set documentElement
     return walker.getRootNode().then(aRootNode => {
       rootNode = aRootNode;
-      return walker.querySelector(aRootNode, this.selectionCssSelector);
+      return walker.querySelector(rootNode, this.selectionCssSelector);
     }).then(front => {
       if (front) {
         return front;
@@ -334,6 +363,7 @@ InspectorPanel.prototype = {
         }
         this.markup.expandNode(this.selection.nodeFront);
         this.setupSearchBox();
+        this.emit("new-root");
       });
     });
   },
@@ -423,7 +453,7 @@ InspectorPanel.prototype = {
           }
 
           self._updateProgress = null;
-          self.emit("inspector-updated");
+          self.emit("inspector-updated", name);
         },
       };
     }
@@ -456,7 +486,9 @@ InspectorPanel.prototype = {
   },
 
   /**
-   * When a node is deleted, select its parent node.
+   * When a node is deleted, select its parent node or the defaultNode if no
+   * parent is found (may happen when deleting an iframe inside which the
+   * node was selected).
    */
   onDetached: function InspectorPanel_onDetached(event, parentNode) {
     this.cancelLayoutChange();
@@ -585,7 +617,8 @@ InspectorPanel.prototype = {
     let unique = this.panelDoc.getElementById("node-menu-copyuniqueselector");
     let copyInnerHTML = this.panelDoc.getElementById("node-menu-copyinner");
     let copyOuterHTML = this.panelDoc.getElementById("node-menu-copyouter");
-    if (this.selection.isElementNode()) {
+    let selectionIsElement = this.selection.isElementNode();
+    if (selectionIsElement) {
       unique.removeAttribute("disabled");
       copyInnerHTML.removeAttribute("disabled");
       copyOuterHTML.removeAttribute("disabled");
@@ -593,6 +626,13 @@ InspectorPanel.prototype = {
       unique.setAttribute("disabled", "true");
       copyInnerHTML.setAttribute("disabled", "true");
       copyOuterHTML.setAttribute("disabled", "true");
+    }
+
+    let editHTML = this.panelDoc.getElementById("node-menu-edithtml");
+    if (this.outerHTMLEditable && selectionIsElement) {
+      editHTML.removeAttribute("disabled");
+    } else {
+      editHTML.setAttribute("disabled", "true");
     }
   },
 
@@ -700,6 +740,19 @@ InspectorPanel.prototype = {
   },
 
   /**
+   * Edit the outerHTML of the selected Node.
+   */
+  editHTML: function InspectorPanel_editHTML()
+  {
+    if (!this.selection.isNode()) {
+      return;
+    }
+    if (this.markup) {
+      this.markup.beginEditingOuterHTML(this.selection.nodeFront);
+    }
+  },
+
+  /**
    * Copy the innerHTML of the selected Node to the clipboard.
    */
   copyInnerHTML: function InspectorPanel_copyInnerHTML()
@@ -763,6 +816,15 @@ InspectorPanel.prototype = {
       // remove the node from content
       this.walker.removeNode(this.selection.nodeFront);
     }
+  },
+
+  /**
+  * Trigger a high-priority layout change for things that need to be
+  * updated immediately
+  */
+  immediateLayoutChange: function Inspector_immediateLayoutChange()
+  {
+    this.emit("layout-change");
   },
 
   /**

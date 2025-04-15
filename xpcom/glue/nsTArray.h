@@ -63,7 +63,7 @@ class Heap;
 //   T MAY define operator== for searching.
 //
 // (Note that the memmove requirement may be relaxed for certain types - see
-// nsTArray_CopyElements below.)
+// nsTArray_CopyChooser below.)
 //
 // For methods taking a Comparator instance, the Comparator must be a class
 // defining the following methods:
@@ -191,7 +191,7 @@ struct nsTArrayFallibleAllocator : nsTArrayFallibleAllocatorBase
     moz_free(ptr);
   }
 
-  static void SizeTooBig() {
+  static void SizeTooBig(size_t) {
   }
 };
 
@@ -209,8 +209,8 @@ struct nsTArrayInfallibleAllocator : nsTArrayInfallibleAllocatorBase
     moz_free(ptr);
   }
 
-  static void SizeTooBig() {
-    mozalloc_abort("Trying to allocate an infallible array that's too big");
+  static void SizeTooBig(size_t size) {
+    NS_ABORT_OOM(size);
   }
 };
 
@@ -231,7 +231,7 @@ struct nsTArrayFallibleAllocator : nsTArrayFallibleAllocatorBase
     free(ptr);
   }
 
-  static void SizeTooBig() {
+  static void SizeTooBig(size_t) {
   }
 };
 
@@ -240,7 +240,7 @@ struct nsTArrayInfallibleAllocator : nsTArrayInfallibleAllocatorBase
   static void* Malloc(size_t size) {
     void* ptr = malloc(size);
     if (MOZ_UNLIKELY(!ptr)) {
-      HandleOOM();
+      NS_ABORT_OOM(size);
     }
     return ptr;
   }
@@ -248,7 +248,7 @@ struct nsTArrayInfallibleAllocator : nsTArrayInfallibleAllocatorBase
   static void* Realloc(void* ptr, size_t size) {
     void* newptr = realloc(ptr, size);
     if (MOZ_UNLIKELY(!ptr && size)) {
-      HandleOOM();
+      NS_ABORT_OOM(size);
     }
     return newptr;
   }
@@ -257,14 +257,8 @@ struct nsTArrayInfallibleAllocator : nsTArrayInfallibleAllocatorBase
     free(ptr);
   }
 
-  static void SizeTooBig() {
-    HandleOOM();
-  }
-
-private:
-  static void HandleOOM() {
-    fputs("Out of memory allocating nsTArray buffer.\n", stderr);
-    MOZ_CRASH();
+  static void SizeTooBig(size_t size) {
+    NS_ABORT_OOM(size);
   }
 };
 
@@ -573,7 +567,7 @@ struct AssignRangeAlgorithm<true, true> {
 
 //
 // Normally elements are copied with memcpy and memmove, but for some element
-// types that is problematic.  The nsTArray_CopyElements template class can be
+// types that is problematic.  The nsTArray_CopyChooser template class can be
 // specialized to ensure that copying calls constructors and destructors
 // instead, as is done below for JS::Heap<E> elements.
 //
@@ -658,14 +652,18 @@ struct nsTArray_CopyWithConstructors
 // The default behaviour is to use memcpy/memmove for everything.
 //
 template <class E>
-struct nsTArray_CopyElements : public nsTArray_CopyWithMemutils {};
+struct nsTArray_CopyChooser {
+  typedef nsTArray_CopyWithMemutils Type;
+};
 
 //
 // JS::Heap<E> elements require constructors/destructors to be called and so is
 // specialized here.
 //
 template <class E>
-struct nsTArray_CopyElements<JS::Heap<E> > : public nsTArray_CopyWithConstructors<E> {};
+struct nsTArray_CopyChooser<JS::Heap<E> > {
+  typedef nsTArray_CopyWithConstructors<E> Type;
+};
 
 //
 // Base class for nsTArray_Impl that is templated on element type and derived
@@ -717,11 +715,11 @@ struct nsTArray_TypedBase<JS::Heap<E>, Derived>
 // TArrays can be cast to |const nsTArray&|.
 //
 template<class E, class Alloc>
-class nsTArray_Impl : public nsTArray_base<Alloc, nsTArray_CopyElements<E> >,
+class nsTArray_Impl : public nsTArray_base<Alloc, typename nsTArray_CopyChooser<E>::Type>,
                       public nsTArray_TypedBase<E, nsTArray_Impl<E, Alloc> >
 {
 public:
-  typedef nsTArray_CopyElements<E>                   copy_type;
+  typedef typename nsTArray_CopyChooser<E>::Type     copy_type;
   typedef nsTArray_base<Alloc, copy_type>            base_type;
   typedef typename base_type::size_type              size_type;
   typedef typename base_type::index_type             index_type;

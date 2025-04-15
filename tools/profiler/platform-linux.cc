@@ -49,6 +49,7 @@
 #else
 #define __android_log_print(a, ...)
 #endif
+#include <ucontext.h>
 // Ubuntu Dapper requires memory pages to be marked as
 // executable. Otherwise, OS raises an exception when executing code
 // in that page.
@@ -65,7 +66,7 @@
 #include <errno.h>
 #include <stdarg.h>
 #include "platform.h"
-#include "GeckoProfilerImpl.h"
+#include "GeckoProfiler.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/Atomics.h"
 #include "ProfileEntry.h"
@@ -92,6 +93,12 @@ pid_t gettid()
   return (pid_t) syscall(SYS_gettid);
 }
 #endif
+
+/* static */ Thread::tid_t
+Thread::GetCurrentId()
+{
+  return gettid();
+}
 
 #if !defined(ANDROID)
 // Keep track of when any of our threads calls fork(), so we can
@@ -134,10 +141,6 @@ static void* setup_atfork() {
 }
 #endif /* !defined(ANDROID) */
 
-#ifdef ANDROID
-#include "android-signal-defs.h"
-#endif
-
 struct SamplerRegistry {
   static void AddActiveSampler(Sampler *sampler) {
     ASSERT(!SamplerRegistry::sampler);
@@ -156,6 +159,42 @@ static sem_t sSignalHandlingDone;
 
 static void ProfilerSaveSignalHandler(int signal, siginfo_t* info, void* context) {
   Sampler::GetActiveSampler()->RequestSave();
+}
+
+static void SetSampleContext(TickSample* sample, void* context)
+{
+  // Extracting the sample from the context is extremely machine dependent.
+  ucontext_t* ucontext = reinterpret_cast<ucontext_t*>(context);
+  mcontext_t& mcontext = ucontext->uc_mcontext;
+#if V8_HOST_ARCH_IA32
+  sample->pc = reinterpret_cast<Address>(mcontext.gregs[REG_EIP]);
+  sample->sp = reinterpret_cast<Address>(mcontext.gregs[REG_ESP]);
+  sample->fp = reinterpret_cast<Address>(mcontext.gregs[REG_EBP]);
+#elif V8_HOST_ARCH_X64
+  sample->pc = reinterpret_cast<Address>(mcontext.gregs[REG_RIP]);
+  sample->sp = reinterpret_cast<Address>(mcontext.gregs[REG_RSP]);
+  sample->fp = reinterpret_cast<Address>(mcontext.gregs[REG_RBP]);
+#elif V8_HOST_ARCH_ARM
+// An undefined macro evaluates to 0, so this applies to Android's Bionic also.
+#if !defined(ANDROID) && (__GLIBC__ < 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ <= 3))
+  sample->pc = reinterpret_cast<Address>(mcontext.gregs[R15]);
+  sample->sp = reinterpret_cast<Address>(mcontext.gregs[R13]);
+  sample->fp = reinterpret_cast<Address>(mcontext.gregs[R11]);
+#ifdef ENABLE_ARM_LR_SAVING
+  sample->lr = reinterpret_cast<Address>(mcontext.gregs[R14]);
+#endif
+#else
+  sample->pc = reinterpret_cast<Address>(mcontext.arm_pc);
+  sample->sp = reinterpret_cast<Address>(mcontext.arm_sp);
+  sample->fp = reinterpret_cast<Address>(mcontext.arm_fp);
+#ifdef ENABLE_ARM_LR_SAVING
+  sample->lr = reinterpret_cast<Address>(mcontext.arm_lr);
+#endif
+#endif
+#elif V8_HOST_ARCH_MIPS
+  // Implement this on MIPS.
+  UNIMPLEMENTED();
+#endif
 }
 
 #ifdef ANDROID
@@ -178,38 +217,7 @@ static void ProfilerSignalHandler(int signal, siginfo_t* info, void* context) {
 #ifdef ENABLE_SPS_LEAF_DATA
   // If profiling, we extract the current pc and sp.
   if (Sampler::GetActiveSampler()->IsProfiling()) {
-    // Extracting the sample from the context is extremely machine dependent.
-    ucontext_t* ucontext = reinterpret_cast<ucontext_t*>(context);
-    mcontext_t& mcontext = ucontext->uc_mcontext;
-#if V8_HOST_ARCH_IA32
-    sample->pc = reinterpret_cast<Address>(mcontext.gregs[REG_EIP]);
-    sample->sp = reinterpret_cast<Address>(mcontext.gregs[REG_ESP]);
-    sample->fp = reinterpret_cast<Address>(mcontext.gregs[REG_EBP]);
-#elif V8_HOST_ARCH_X64
-    sample->pc = reinterpret_cast<Address>(mcontext.gregs[REG_RIP]);
-    sample->sp = reinterpret_cast<Address>(mcontext.gregs[REG_RSP]);
-    sample->fp = reinterpret_cast<Address>(mcontext.gregs[REG_RBP]);
-#elif V8_HOST_ARCH_ARM
-// An undefined macro evaluates to 0, so this applies to Android's Bionic also.
-#if !defined(ANDROID) && (__GLIBC__ < 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ <= 3))
-    sample->pc = reinterpret_cast<Address>(mcontext.gregs[R15]);
-    sample->sp = reinterpret_cast<Address>(mcontext.gregs[R13]);
-    sample->fp = reinterpret_cast<Address>(mcontext.gregs[R11]);
-#ifdef ENABLE_ARM_LR_SAVING
-    sample->lr = reinterpret_cast<Address>(mcontext.gregs[R14]);
-#endif
-#else
-    sample->pc = reinterpret_cast<Address>(mcontext.arm_pc);
-    sample->sp = reinterpret_cast<Address>(mcontext.arm_sp);
-    sample->fp = reinterpret_cast<Address>(mcontext.arm_fp);
-#ifdef ENABLE_ARM_LR_SAVING
-    sample->lr = reinterpret_cast<Address>(mcontext.arm_lr);
-#endif
-#endif
-#elif V8_HOST_ARCH_MIPS
-    // Implement this on MIPS.
-    UNIMPLEMENTED();
-#endif
+    SetSampleContext(sample, context);
   }
 #endif
   sample->threadProfile = sCurrentThreadProfile;
@@ -406,6 +414,8 @@ bool Sampler::RegisterCurrentThread(const char* aName,
     }
   }
 
+  set_tls_stack_top(stackTop);
+
   ThreadInfo* info = new ThreadInfo(aName, id,
     aIsMainThread, aPseudoStack, stackTop);
 
@@ -423,6 +433,8 @@ void Sampler::UnregisterCurrentThread()
 {
   if (!Sampler::sRegisteredThreadsMutex)
     return;
+
+  tlsStackTop.set(nullptr);
 
   mozilla::MutexAutoLock lock(*Sampler::sRegisteredThreadsMutex);
 
@@ -444,39 +456,93 @@ void Sampler::UnregisterCurrentThread()
 static struct sigaction old_sigstart_signal_handler;
 const int SIGSTART = SIGUSR2;
 
-static void StartSignalHandler(int signal, siginfo_t* info, void* context) {
+static void freeArray(const char** array, int size) {
+  for (int i = 0; i < size; i++) {
+    free((void*) array[i]);
+  }
+}
 
+static uint32_t readCSVArray(char* csvList, const char** buffer) {
+  uint32_t count;
+  char* savePtr;
+  int newlinePos = strlen(csvList) - 1;
+  if (csvList[newlinePos] == '\n') {
+    csvList[newlinePos] = '\0';
+  }
+
+  char* item = strtok_r(csvList, ",", &savePtr);
+  for (count = 0; item; item = strtok_r(NULL, ",", &savePtr)) {
+    int length = strlen(item) + 1;  // Include \0
+    char* newBuf = (char*) malloc(sizeof(char) * length);
+    buffer[count] = newBuf;
+    strncpy(newBuf, item, length);
+    count++;
+  }
+
+  return count;
+}
+
+// Currently support only the env variables
+// reported in read_profiler_env
+static void ReadProfilerVars(const char* fileName, const char** features,
+                            uint32_t* featureCount, const char** threadNames, uint32_t* threadCount) {
+  FILE* file = fopen(fileName, "r");
+  const int bufferSize = 1024;
+  char line[bufferSize];
+  char* feature;
+  char* value;
+  char* savePtr;
+
+  if (file) {
+    while (fgets(line, bufferSize, file) != NULL) {
+      feature = strtok_r(line, "=", &savePtr);
+      value = strtok_r(NULL, "", &savePtr);
+
+      if (strncmp(feature, PROFILER_MODE, bufferSize) == 0) {
+        set_profiler_mode(value);
+      } else if (strncmp(feature, PROFILER_INTERVAL, bufferSize) == 0) {
+        set_profiler_interval(value);
+      } else if (strncmp(feature, PROFILER_ENTRIES, bufferSize) == 0) {
+        set_profiler_entries(value);
+      } else if (strncmp(feature, PROFILER_STACK, bufferSize) == 0) {
+        set_profiler_scan(value);
+      } else if (strncmp(feature, PROFILER_FEATURES, bufferSize) == 0) {
+        *featureCount = readCSVArray(value, features);
+      } else if (strncmp(feature, "threads", bufferSize) == 0) {
+        *threadCount = readCSVArray(value, threadNames);
+      }
+    }
+
+    fclose(file);
+  }
+}
+
+
+static void StartSignalHandler(int signal, siginfo_t* info, void* context) {
   // XXX: Everything we do here is NOT async signal safe. We risk nasty things
   // like deadlocks but we typically only do this once so it tends to be ok.
   // See bug 909403
-  const char* threadName = NULL;
-  uint32_t threadCount = 0;
-  char thread[256];
-
-  // TODO support selecting features from profiler.options
-  const char* features[3] = {NULL, NULL, NULL};
   uint32_t featureCount = 0;
-  features[0] = "leaf";
-  featureCount++;
-  features[1] = "js";
-  featureCount++;
-  const char* threadFeature = "threads";
+  uint32_t threadCount = 0;
 
-  std::ifstream infile;
-  infile.open("/data/local/tmp/profiler.options");
-  if (infile.is_open()) {
-    infile.getline(thread, 256);
-    threadName = thread;
-    threadCount = 1;
-    features[featureCount] = threadFeature;
-    featureCount++;
-    printf_stderr("Profiling only %s\n", threadName);
-  }
-  infile.close();
+  // Just allocate 10 features for now
+  // FIXME: these don't really point to const chars*
+  // So we free them later, but we don't want to change the const char**
+  // declaration in profiler_start. Annoying but ok for now.
+  const char* threadNames[10];
+  const char* features[10];
+  const char* profilerConfigFile = "/data/local/tmp/profiler.options";
+
+  ReadProfilerVars(profilerConfigFile, features, &featureCount, threadNames, &threadCount);
+  MOZ_ASSERT(featureCount < 10);
+  MOZ_ASSERT(threadCount < 10);
 
   profiler_start(PROFILE_DEFAULT_ENTRY, 1,
-                 features, featureCount,
-                 &threadName, threadCount);
+      features, featureCount,
+      threadNames, threadCount);
+
+  freeArray(threadNames, threadCount);
+  freeArray(features, featureCount);
 }
 
 void OS::RegisterStartHandler()
@@ -491,6 +557,16 @@ void OS::RegisterStartHandler()
   }
 }
 #endif
+
+void TickSample::PopulateContext(void* aContext)
+{
+  MOZ_ASSERT(aContext);
+  ucontext_t* pContext = reinterpret_cast<ucontext_t*>(aContext);
+  if (!getcontext(pContext)) {
+    context = pContext;
+    SetSampleContext(this, aContext);
+  }
+}
 
 void OS::SleepMicro(int microseconds)
 {

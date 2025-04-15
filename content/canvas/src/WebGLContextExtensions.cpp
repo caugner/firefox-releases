@@ -105,8 +105,12 @@ bool WebGLContext::IsExtensionSupported(WebGLExtensionID ext) const
         case WEBGL_compressed_texture_pvrtc:
             return gl->IsExtensionSupported(GLContext::IMG_texture_compression_pvrtc);
         case WEBGL_depth_texture:
-            return gl->IsSupported(GLFeature::packed_depth_stencil) &&
-            gl->IsSupported(GLFeature::depth_texture);
+            // WEBGL_depth_texture supports DEPTH_STENCIL textures
+            if (!gl->IsSupported(GLFeature::packed_depth_stencil)) {
+                return false;
+            }
+            return gl->IsSupported(GLFeature::depth_texture) ||
+                   gl->IsExtensionSupported(GLContext::ANGLE_depth_texture);
         case ANGLE_instanced_arrays:
             return WebGLExtensionInstancedArrays::IsSupported(this);
         default:
@@ -175,6 +179,13 @@ WebGLContext::GetExtension(JSContext *cx, const nsAString& aName, ErrorResult& r
         }
         else if (CompareWebGLExtensionName(name, "MOZ_WEBGL_depth_texture")) {
             ext = WEBGL_depth_texture;
+        }
+
+        if (ext != WebGLExtensionID_unknown_extension) {
+            GenerateWarning("getExtension('%s'): MOZ_ prefixed WebGL extension strings are deprecated. "
+                            "Support for them will be removed in the future. Use unprefixed extension strings. "
+                            "To get draft extensions, set the webgl.enable-draft-extensions preference.",
+                            name.get());
         }
     }
 

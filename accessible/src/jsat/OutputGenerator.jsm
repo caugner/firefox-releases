@@ -11,8 +11,9 @@ const Cr = Components.results;
 
 const INCLUDE_DESC = 0x01;
 const INCLUDE_NAME = 0x02;
-const INCLUDE_CUSTOM = 0x04;
-const NAME_FROM_SUBTREE_RULE = 0x08;
+const INCLUDE_VALUE = 0x04;
+const INCLUDE_CUSTOM = 0x08;
+const NAME_FROM_SUBTREE_RULE = 0x10;
 
 const OUTPUT_DESC_FIRST = 0;
 const OUTPUT_DESC_LAST = 1;
@@ -64,8 +65,9 @@ this.OutputGenerator = {
       let nameRule = self.roleRuleMap[roleString] || 0;
       // Ignore subtree if the name is explicit and the role's name rule is the
       // NAME_FROM_SUBTREE_RULE.
-      return (nameRule & NAME_FROM_SUBTREE_RULE) &&
-        (Utils.getAttributes(aAccessible)['explicit-name'] === 'true');
+      return (((nameRule & INCLUDE_VALUE) && aAccessible.value) ||
+              ((nameRule & NAME_FROM_SUBTREE_RULE) &&
+               Utils.getAttributes(aAccessible)['explicit-name'] === 'true'));
     };
 
     let contextStart = this._getContextStart(aContext);
@@ -202,6 +204,25 @@ this.OutputGenerator = {
       landmark);
   },
 
+  /**
+   * Adds an entry type attribute to the description if available.
+   * @param {Array} aDesc Description array.
+   * @param {nsIAccessible} aAccessible current accessible object.
+   * @param {String} aRoleStr aAccessible's role string.
+   */
+  _addType: function _addType(aDesc, aAccessible, aRoleStr) {
+    if (aRoleStr !== 'entry') {
+      return;
+    }
+
+    let typeName = Utils.getAttributes(aAccessible)['text-input-type'];
+    // Ignore the the input type="text" case.
+    if (!typeName || typeName === 'text') {
+      return;
+    }
+    aDesc.push(gStringBundle.GetStringFromName('textInputType_' + typeName));
+  },
+
   get outputOrder() {
     if (!this._utteranceOrder) {
       this._utteranceOrder = new PrefCache('accessibility.accessfu.utterance');
@@ -256,9 +277,9 @@ this.OutputGenerator = {
     'buttondropdown': NAME_FROM_SUBTREE_RULE,
     'combobox': INCLUDE_DESC,
     'droplist': INCLUDE_DESC,
-    'progressbar': INCLUDE_DESC,
-    'slider': INCLUDE_DESC,
-    'spinbutton': INCLUDE_DESC,
+    'progressbar': INCLUDE_DESC | INCLUDE_VALUE,
+    'slider': INCLUDE_DESC | INCLUDE_VALUE,
+    'spinbutton': INCLUDE_DESC | INCLUDE_VALUE,
     'diagram': INCLUDE_DESC,
     'animation': INCLUDE_DESC,
     'equation': INCLUDE_DESC,
@@ -278,14 +299,14 @@ this.OutputGenerator = {
     'parent menuitem': NAME_FROM_SUBTREE_RULE,
     'header': INCLUDE_DESC,
     'footer': INCLUDE_DESC,
-    'entry': INCLUDE_DESC | INCLUDE_NAME,
+    'entry': INCLUDE_DESC | INCLUDE_NAME | INCLUDE_VALUE,
     'caption': INCLUDE_DESC,
     'document frame': INCLUDE_DESC,
     'heading': INCLUDE_DESC,
     'calendar': INCLUDE_DESC | INCLUDE_NAME,
     'combobox list': INCLUDE_DESC,
     'combobox option': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
-    'listbox option': NAME_FROM_SUBTREE_RULE,
+    'listbox option': INCLUDE_DESC | NAME_FROM_SUBTREE_RULE,
     'listbox rich option': NAME_FROM_SUBTREE_RULE,
     'gridcell': NAME_FROM_SUBTREE_RULE,
     'check rich option': NAME_FROM_SUBTREE_RULE,
@@ -304,9 +325,19 @@ this.OutputGenerator = {
       if (aFlags & INCLUDE_DESC) {
         let desc = this._getLocalizedStates(aStates);
         let roleStr = this._getLocalizedRole(aRoleStr);
-        if (roleStr)
+        if (roleStr) {
+          this._addType(desc, aAccessible, aRoleStr);
           desc.push(roleStr);
+        }
         output.push(desc.join(' '));
+      }
+
+      if (aFlags & INCLUDE_VALUE) {
+        let value = aAccessible.value;
+        if (value) {
+          output[this.outputOrder === OUTPUT_DESC_FIRST ?
+                 'push' : 'unshift'](value);
+        }
       }
 
       this._addName(output, aAccessible, aFlags);
@@ -315,19 +346,22 @@ this.OutputGenerator = {
       return output;
     },
 
+    label: function label(aAccessible, aRoleStr, aStates, aFlags, aContext) {
+      if (aContext.isNestedControl ||
+          aContext.accessible == Utils.getEmbeddedControl(aAccessible)) {
+        // If we are on a nested control, or a nesting label,
+        // we don't need the context.
+        return [];
+      }
+
+      return this.objectOutputFunctions.defaultFunc.apply(this, arguments);
+    },
+
     entry: function entry(aAccessible, aRoleStr, aStates, aFlags) {
-      let output = [];
-      let desc = this._getLocalizedStates(aStates);
-      desc.push(this._getLocalizedRole(
-                  (aStates.ext & Ci.nsIAccessibleStates.EXT_STATE_MULTI_LINE) ?
-                    'textarea' : 'entry'));
-
-      output.push(desc.join(' '));
-
-      this._addName(output, aAccessible, aFlags);
-      this._addLandmark(output, aAccessible);
-
-      return output;
+      let rolestr = (aStates.ext & Ci.nsIAccessibleStates.EXT_STATE_MULTI_LINE) ?
+            'textarea' : 'entry';
+      return this.objectOutputFunctions.defaultFunc.apply(
+        this, [aAccessible, rolestr, aStates, aFlags]);
     },
 
     pagetab: function pagetab(aAccessible, aRoleStr, aStates, aFlags) {

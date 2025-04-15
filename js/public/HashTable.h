@@ -14,6 +14,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Move.h"
+#include "mozilla/NullPtr.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/ReentrancyGuard.h"
 #include "mozilla/TemplateLib.h"
@@ -213,7 +214,7 @@ class HashMap
     /************************************************** Shorthand operations */
 
     bool has(const Lookup &l) const {
-        return impl.lookup(l) != NULL;
+        return impl.lookup(l) != nullptr;
     }
 
     // Overwrite existing value with v. Return false on oom.
@@ -249,12 +250,17 @@ class HashMap
             remove(p);
     }
 
+    // Infallibly rekey one entry, if necessary.
+    // Requires template parameters Key and HashPolicy::Lookup to be the same type.
+    void rekeyIfMoved(const Key &old_key, const Key &new_key) {
+        if (old_key != new_key)
+            rekeyAs(old_key, new_key, new_key);
+    }
+
     // Infallibly rekey one entry, if present.
-    void rekey(const Lookup &old_key, const Key &new_key) {
-        if (old_key != new_key) {
-            if (Ptr p = lookup(old_key))
-                impl.rekeyAndMaybeRehash(p, new_key, new_key);
-        }
+    void rekeyAs(const Lookup &old_lookup, const Lookup &new_lookup, const Key &new_key) {
+        if (Ptr p = lookup(old_lookup))
+            impl.rekeyAndMaybeRehash(p, new_lookup, new_key);
     }
 
     // HashMap is movable
@@ -322,6 +328,10 @@ class HashSet
     // Also see the definition of Ptr in HashTable above.
     typedef typename Impl::Ptr Ptr;
     Ptr lookup(const Lookup &l) const                 { return impl.lookup(l); }
+
+    // Like lookup, but does not assert if two threads call lookup at the same
+    // time. Only use this method when none of the threads will modify the map.
+    Ptr readonlyThreadsafeLookup(const Lookup &l) const { return impl.readonlyThreadsafeLookup(l); }
 
     // Assuming |p.found()|, remove |*p|.
     void remove(Ptr p)                                { impl.remove(p); }
@@ -425,7 +435,7 @@ class HashSet
     /************************************************** Shorthand operations */
 
     bool has(const Lookup &l) const {
-        return impl.lookup(l) != NULL;
+        return impl.lookup(l) != nullptr;
     }
 
     // Overwrite existing value with v. Return false on oom.
@@ -449,11 +459,16 @@ class HashSet
     }
 
     // Infallibly rekey one entry, if present.
-    void rekey(const Lookup &old_key, const T &new_key) {
-        if (old_key != new_key) {
-            if (Ptr p = lookup(old_key))
-                impl.rekeyAndMaybeRehash(p, new_key, new_key);
-        }
+    // Requires template parameters T and HashPolicy::Lookup to be the same type.
+    void rekeyIfMoved(const Lookup &old_value, const T &new_value) {
+        if (old_value != new_value)
+            rekeyAs(old_value, new_value, new_value);
+    }
+
+    // Infallibly rekey one entry, if present.
+    void rekeyAs(const Lookup &old_lookup, const Lookup &new_lookup, const T &new_value) {
+        if (Ptr p = lookup(old_lookup))
+            impl.rekeyAndMaybeRehash(p, new_lookup, new_value);
     }
 
     // HashSet is movable
@@ -505,7 +520,7 @@ struct PointerHasher
         JS_ASSERT(!JS::IsPoisonedPtr(l));
         size_t word = reinterpret_cast<size_t>(l) >> zeroBits;
         JS_STATIC_ASSERT(sizeof(HashNumber) == 4);
-#if JS_BYTES_PER_WORD == 4
+#if JS_BITS_PER_WORD == 32
         return HashNumber(word);
 #else
         JS_STATIC_ASSERT(sizeof word == 8);
@@ -561,6 +576,19 @@ struct DefaultHasher<double>
     }
     static bool match(double lhs, double rhs) {
         return mozilla::BitwiseCast<uint64_t>(lhs) == mozilla::BitwiseCast<uint64_t>(rhs);
+    }
+};
+
+template <>
+struct DefaultHasher<float>
+{
+    typedef float Lookup;
+    static HashNumber hash(float f) {
+        JS_STATIC_ASSERT(sizeof(HashNumber) == 4);
+        return HashNumber(mozilla::BitwiseCast<uint32_t>(f));
+    }
+    static bool match(float lhs, float rhs) {
+        return mozilla::BitwiseCast<uint32_t>(lhs) == mozilla::BitwiseCast<uint32_t>(rhs);
     }
 };
 
@@ -756,7 +784,7 @@ class HashTable : private AllocPolicy
         mozilla::DebugOnly<bool> validEntry;
 
       public:
-        Range() : cur(NULL), end(NULL), validEntry(false) {}
+        Range() : cur(nullptr), end(nullptr), validEntry(false) {}
 
         bool empty() const {
             return cur == end;
@@ -840,13 +868,13 @@ class HashTable : private AllocPolicy
       : AllocPolicy(*rhs)
     {
         mozilla::PodAssign(this, &*rhs);
-        rhs->table = NULL;
+        rhs->table = nullptr;
     }
     void operator=(mozilla::MoveRef<HashTable> rhs) {
         if (table)
             destroyTable(*this, table, capacity());
         mozilla::PodAssign(this, &*rhs);
-        rhs->table = NULL;
+        rhs->table = nullptr;
     }
 
   private:
@@ -947,7 +975,7 @@ class HashTable : private AllocPolicy
         entryCount(0),
         gen(0),
         removedCount(0),
-        table(NULL),
+        table(nullptr),
         entered(false),
         mutationCount(0)
     {}
@@ -1073,7 +1101,7 @@ class HashTable : private AllocPolicy
         DoubleHash dh = hash2(keyHash);
 
         // Save the first removed entry pointer so we can recycle later.
-        Entry *firstRemoved = NULL;
+        Entry *firstRemoved = nullptr;
 
         while(true) {
             if (JS_UNLIKELY(entry->isRemoved())) {
@@ -1313,7 +1341,7 @@ class HashTable : private AllocPolicy
             return;
 
         destroyTable(*this, table, capacity());
-        table = NULL;
+        table = nullptr;
         gen++;
         entryCount = 0;
         removedCount = 0;

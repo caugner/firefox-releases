@@ -10,13 +10,14 @@ EXTRA_JS_MODULES += [
     'BrowserNewTabPreloader.jsm',
     'ContentClick.jsm',
     'NetworkPrioritizer.jsm',
+    'offlineAppCache.jsm',
+    'openLocationLastURL.jsm',
     'SharedFrame.jsm',
     'SignInToWebsite.jsm',
     'SitePermissions.jsm',
     'Social.jsm',
     'TabCrashReporter.jsm',
-    'offlineAppCache.jsm',
-    'openLocationLastURL.jsm',
+    'UITour.jsm',
     'webappsUI.jsm',
     'webrtcUI.jsm',
 ]
@@ -29,6 +30,7 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
 
 EXTRA_PP_JS_MODULES += [
     'AboutHome.jsm',
+    'BrowserUITelemetry.jsm',
     'RecentWindow.jsm',
 ]
 

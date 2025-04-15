@@ -20,16 +20,18 @@
 #include "nsIMozBrowserFrame.h"
 #include "nsDOMClassInfoID.h"
 #include "mozilla/dom/StructuredCloneUtils.h"
+#include "js/StructuredClone.h"
 
 using mozilla::dom::StructuredCloneData;
 using mozilla::dom::StructuredCloneClosure;
 
 bool
-nsInProcessTabChildGlobal::DoSendSyncMessage(JSContext* aCx,
-                                             const nsAString& aMessage,
-                                             const mozilla::dom::StructuredCloneData& aData,
-                                             JS::Handle<JSObject *> aCpows,
-                                             InfallibleTArray<nsString>* aJSONRetVal)
+nsInProcessTabChildGlobal::DoSendBlockingMessage(JSContext* aCx,
+                                                 const nsAString& aMessage,
+                                                 const mozilla::dom::StructuredCloneData& aData,
+                                                 JS::Handle<JSObject *> aCpows,
+                                                 InfallibleTArray<nsString>* aJSONRetVal,
+                                                 bool aIsSync)
 {
   nsTArray<nsCOMPtr<nsIRunnable> > asyncMessages;
   asyncMessages.SwapElements(mASyncMessages);

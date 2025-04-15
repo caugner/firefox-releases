@@ -16,7 +16,6 @@ using nsIntPoint;
 using nsIntRect;
 using nsIntRegion;
 using nsIntSize;
-using mozilla::gfxContentType;
 using mozilla::GraphicsFilterType;
 using mozilla::layers::FrameMetrics;
 using mozilla::layers::MagicGrallocBufferHandle;
@@ -42,8 +41,19 @@ struct SurfaceDescriptorD3D9 {
   uintptr_t texture;
 };
 
+struct SurfaceDescriptorDIB {
+  // gfxWindowsSurface*
+  uintptr_t surface;
+};
+
 struct SurfaceDescriptorD3D10 {
   WindowsHandle handle;
+  bool hasAlpha;
+};
+
+struct SurfaceDescriptorMacIOSurface {
+  uint32_t surface;
+  double scaleFactor;
   bool hasAlpha;
 };
 
@@ -167,10 +177,12 @@ union SurfaceDescriptor {
   SurfaceDescriptorShmem;
   SurfaceDescriptorMemory;
   SurfaceDescriptorD3D9;
+  SurfaceDescriptorDIB;
   SurfaceDescriptorD3D10;
   SurfaceDescriptorX11;
   SharedTextureDescriptor;
   SurfaceStreamDescriptor;
+  SurfaceDescriptorMacIOSurface;
   NewSurfaceDescriptorGralloc;
   YCbCrImage;                 // XXX - deprecated
   SurfaceDescriptorGralloc;   // XXX - deprecated

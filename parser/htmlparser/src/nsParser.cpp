@@ -1635,20 +1635,6 @@ nsParser::OnStartRequest(nsIRequest *request, nsISupports* aContext)
   return rv;
 }
 
-
-static inline bool IsSecondMarker(unsigned char aChar)
-{
-  switch (aChar) {
-    case '!':
-    case '?':
-    case 'h':
-    case 'H':
-      return true;
-    default:
-      return false;
-  }
-}
-
 static bool
 ExtractCharsetFromXmlDeclaration(const unsigned char* aBytes, int32_t aLen,
                                  nsCString& oCharset)
@@ -1983,13 +1969,11 @@ nsresult nsParser::Tokenize(bool aIsFinalChunk)
   if (NS_SUCCEEDED(result)) {
     bool flushTokens = false;
 
-    mParserContext->mNumConsumed = 0;
-
     bool killSink = false;
 
     WillTokenize(aIsFinalChunk);
     while (NS_SUCCEEDED(result)) {
-      mParserContext->mNumConsumed += mParserContext->mScanner->Mark();
+      mParserContext->mScanner->Mark();
       result = theTokenizer->ConsumeToken(*mParserContext->mScanner,
                                           flushTokens);
       if (NS_FAILED(result)) {
@@ -2007,7 +1991,7 @@ nsresult nsParser::Tokenize(bool aIsFinalChunk)
         // Flush tokens on seeing </SCRIPT> -- Ref: Bug# 22485 --
         // Also remember to update the marked position.
         mFlags |= NS_PARSER_FLAG_FLUSH_TOKENS;
-        mParserContext->mNumConsumed += mParserContext->mScanner->Mark();
+        mParserContext->mScanner->Mark();
         break;
       }
     }

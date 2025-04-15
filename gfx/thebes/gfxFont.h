@@ -6,7 +6,6 @@
 #ifndef GFX_FONT_H
 #define GFX_FONT_H
 
-#include "nsAlgorithm.h"
 #include "gfxTypes.h"
 #include "nsString.h"
 #include "gfxPoint.h"
@@ -17,20 +16,18 @@
 #include "gfxSkipChars.h"
 #include "gfxRect.h"
 #include "nsExpirationTracker.h"
-#include "gfxFontConstants.h"
 #include "gfxPlatform.h"
 #include "nsIAtom.h"
-#include "nsISupportsImpl.h"
-#include "gfxPattern.h"
 #include "mozilla/HashFunctions.h"
 #include "nsIMemoryReporter.h"
 #include "nsIObserver.h"
 #include "gfxFontFeatures.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/gfx/Types.h"
 #include "mozilla/Attributes.h"
 #include <algorithm>
-#include "nsUnicodeProperties.h"
+#include "DrawMode.h"
+#include "nsUnicodeScriptCodes.h"
+#include "nsDataHashtable.h"
 #include "harfbuzz/hb.h"
 
 typedef struct _cairo_scaled_font cairo_scaled_font_t;
@@ -60,6 +57,12 @@ class nsILanguageAtomService;
 
 struct FontListSizes;
 struct gfxTextRunDrawCallbacks;
+
+namespace mozilla {
+namespace gfx {
+class GlyphRenderingOptions;
+}
+}
 
 struct gfxFontStyle {
     gfxFontStyle();
@@ -407,12 +410,12 @@ public:
     // Called to notify that aFont is being destroyed. Needed when we're tracking
     // the fonts belonging to this font entry.
     void NotifyFontDestroyed(gfxFont* aFont);
-    
+
     // For memory reporting
-    virtual void SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                                     FontListSizes*    aSizes) const;
-    virtual void SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                                     FontListSizes*    aSizes) const;
+    virtual void AddSizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                                        FontListSizes* aSizes) const;
+    virtual void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                                        FontListSizes* aSizes) const;
 
     nsString         mName;
     nsString         mFamilyName;
@@ -612,8 +615,8 @@ private:
 
         static size_t
         SizeOfEntryExcludingThis(FontTableHashEntry *aEntry,
-                                 mozilla::MallocSizeOf   aMallocSizeOf,
-                                 void*               aUserArg);
+                                 mozilla::MallocSizeOf aMallocSizeOf,
+                                 void* aUserArg);
 
     private:
         static void DeleteFontTableBlobData(void *aBlobData);
@@ -773,10 +776,10 @@ public:
     void CheckForSimpleFamily();
 
     // For memory reporter
-    virtual void SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                                     FontListSizes*    aSizes) const;
-    virtual void SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                                     FontListSizes*    aSizes) const;
+    virtual void AddSizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                                        FontListSizes* aSizes) const;
+    virtual void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                                        FontListSizes* aSizes) const;
 
     // Only used for debugging checks - does a linear search
     bool ContainsFace(gfxFontEntry* aFontEntry) {
@@ -941,10 +944,10 @@ public:
         mFonts.EnumerateEntries(ClearCachedWordsForFont, nullptr);
     }
 
-    void SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                             FontCacheSizes*   aSizes) const;
-    void SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                             FontCacheSizes*   aSizes) const;
+    void AddSizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                                FontCacheSizes* aSizes) const;
+    void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                                FontCacheSizes* aSizes) const;
 
 protected:
     class MemoryReporter MOZ_FINAL
@@ -996,9 +999,9 @@ protected:
         gfxFont* mFont;
     };
 
-    static size_t SizeOfFontEntryExcludingThis(HashEntry*        aHashEntry,
-                                               mozilla::MallocSizeOf aMallocSizeOf,
-                                               void*             aUserArg);
+    static size_t AddSizeOfFontEntryExcludingThis(HashEntry* aHashEntry,
+                                                  mozilla::MallocSizeOf aMallocSizeOf,
+                                                  void* aUserArg);
 
     nsTHashtable<HashEntry> mFonts;
 
@@ -1323,21 +1326,6 @@ public:
         kAntialiasGrayscale,
         kAntialiasSubpixel
     } AntialiasOption;
-
-    // Options for how the text should be drawn
-    typedef enum {
-        // GLYPH_FILL and GLYPH_STROKE draw into the current context
-        //  and may be used together with bitwise OR.
-        GLYPH_FILL = 1,
-        // Note: using GLYPH_STROKE will destroy the current path.
-        GLYPH_STROKE = 2,
-        // Appends glyphs to the current path. Can NOT be used with
-        //  GLYPH_FILL or GLYPH_STROKE.
-        GLYPH_PATH = 4,
-        // When GLYPH_FILL and GLYPH_STROKE are both set, draws the
-        //  stroke underneath the fill.
-        GLYPH_STROKE_UNDERNEATH = 8
-    } DrawMode;
 
 protected:
     nsAutoRefCnt mRefCnt;
@@ -1682,10 +1670,10 @@ public:
     // Glyph rendering/geometry has changed, so invalidate data as necessary.
     void NotifyGlyphsChanged();
 
-    virtual void SizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                                     FontCacheSizes*   aSizes) const;
-    virtual void SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                                     FontCacheSizes*   aSizes) const;
+    virtual void AddSizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                                        FontCacheSizes* aSizes) const;
+    virtual void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                                        FontCacheSizes* aSizes) const;
 
     typedef enum {
         FONT_TYPE_DWRITE,
@@ -2630,7 +2618,7 @@ private:
 
 /**
  * Callback for Draw() to use when drawing text with mode
- * gfxFont::GLYPH_PATH.
+ * DrawMode::GLYPH_PATH.
  */
 struct gfxTextRunDrawCallbacks {
 
@@ -2842,7 +2830,7 @@ public:
      * if they overlap (perhaps due to negative spacing).
      */
     void Draw(gfxContext *aContext, gfxPoint aPt,
-              gfxFont::DrawMode aDrawMode,
+              DrawMode aDrawMode,
               uint32_t aStart, uint32_t aLength,
               PropertyProvider *aProvider,
               gfxFloat *aAdvanceWidth, gfxTextContextPaint *aContextPaint,
@@ -3271,7 +3259,7 @@ private:
 
     // **** drawing helper ****
     void DrawGlyphs(gfxFont *aFont, gfxContext *aContext,
-                    gfxFont::DrawMode aDrawMode, gfxPoint *aPt,
+                    DrawMode aDrawMode, gfxPoint *aPt,
                     gfxTextContextPaint *aContextPaint, uint32_t aStart,
                     uint32_t aEnd, PropertyProvider *aProvider,
                     uint32_t aSpacingStart, uint32_t aSpacingEnd,
@@ -3447,6 +3435,9 @@ public:
     // with no @font-face rule, this always returns 0.
     uint64_t GetGeneration();
 
+    // This will call UpdateFontList() if the user font set is changed.
+    void SetUserFontSet(gfxUserFontSet *aUserFontSet);
+
     // If there is a user font set, check to see whether the font list or any
     // caches need updating.
     virtual void UpdateFontList();
@@ -3473,7 +3464,7 @@ protected:
     nsTArray<FamilyFace> mFonts;
     gfxFloat mUnderlineOffset;
 
-    gfxUserFontSet* mUserFontSet;
+    nsRefPtr<gfxUserFontSet> mUserFontSet;
     uint64_t mCurrGeneration;  // track the current user font set generation, rebuild font list if needed
 
     // Cache a textrun representing an ellipsis (useful for CSS text-overflow)
@@ -3499,10 +3490,6 @@ protected:
     gfxTextRun *MakeSpaceTextRun(const Parameters *aParams, uint32_t aFlags);
     gfxTextRun *MakeBlankTextRun(uint32_t aLength,
                                  const Parameters *aParams, uint32_t aFlags);
-
-    // Used for construction/destruction.  Not intended to change the font set
-    // as invalidation of font lists and caches is not considered.
-    void SetUserFontSet(gfxUserFontSet *aUserFontSet);
 
     // Initialize the list of fonts
     void BuildFontList();

@@ -10,7 +10,7 @@ EXPORTS.mozilla.dom += [
     'Activity.h',
 ]
 
-CPP_SOURCES += [
+SOURCES += [
     'Activity.cpp',
 ]
 
@@ -34,3 +34,6 @@ LIBXUL_LIBRARY = True
 
 LIBRARY_NAME = 'dom_activities_s'
 
+LOCAL_INCLUDES += [
+    '/dom/base',
+]

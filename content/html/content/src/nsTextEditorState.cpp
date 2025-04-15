@@ -41,6 +41,8 @@
 #include "nsCxPusher.h"
 #include "mozilla/Preferences.h"
 #include "nsTextNode.h"
+#include "nsIController.h"
+#include "mozilla/TextEvents.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -773,7 +775,7 @@ nsTextInputListener::NotifySelectionChanged(nsIDOMDocument* aDoc, nsISelection* 
         if (presShell) 
         {
           nsEventStatus status = nsEventStatus_eIgnore;
-          nsEvent event(true, NS_FORM_SELECTED);
+          WidgetEvent event(true, NS_FORM_SELECTED);
 
           presShell->HandleEventWithTarget(&event, mFrame, content, &status);
         }
@@ -850,9 +852,9 @@ nsTextInputListener::HandleEvent(nsIDOMEvent* aEvent)
     return NS_OK;
   }
 
-  nsKeyEvent* keyEvent =
-    static_cast<nsKeyEvent*>(aEvent->GetInternalNSEvent());
-  if (keyEvent->eventStructType != NS_KEY_EVENT) {
+  WidgetKeyboardEvent* keyEvent =
+    aEvent->GetInternalNSEvent()->AsKeyboardEvent();
+  if (!keyEvent) {
     return NS_ERROR_UNEXPECTED;
   }
 
@@ -1560,8 +1562,7 @@ nsTextEditorState::UnbindFromFrame(nsTextControlFrame* aFrame)
     mTextListener->SetFrame(nullptr);
 
     nsCOMPtr<EventTarget> target = do_QueryInterface(mTextCtrlElement);
-    nsEventListenerManager* manager =
-      target->GetListenerManager(false);
+    nsEventListenerManager* manager = target->GetExistingListenerManager();
     if (manager) {
       manager->RemoveEventListenerByType(mTextListener,
         NS_LITERAL_STRING("keydown"),
@@ -1968,7 +1969,7 @@ nsTextEditorState::InitializeKeyboardEventListeners()
 {
   //register key listeners
   nsCOMPtr<EventTarget> target = do_QueryInterface(mTextCtrlElement);
-  nsEventListenerManager* manager = target->GetListenerManager(true);
+  nsEventListenerManager* manager = target->GetOrCreateListenerManager();
   if (manager) {
     manager->AddEventListenerByType(mTextListener,
                                     NS_LITERAL_STRING("keydown"),

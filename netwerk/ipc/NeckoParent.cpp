@@ -12,6 +12,9 @@
 #include "mozilla/net/WyciwygChannelParent.h"
 #include "mozilla/net/FTPChannelParent.h"
 #include "mozilla/net/WebSocketChannelParent.h"
+#ifdef MOZ_RTSP
+#include "mozilla/net/RtspControllerParent.h"
+#endif
 #include "mozilla/net/RemoteOpenFileParent.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/TabParent.h"
@@ -303,6 +306,28 @@ NeckoParent::DeallocPWebSocketParent(PWebSocketParent* actor)
   return true;
 }
 
+PRtspControllerParent*
+NeckoParent::AllocPRtspControllerParent()
+{
+#ifdef MOZ_RTSP
+  RtspControllerParent* p = new RtspControllerParent();
+  p->AddRef();
+  return p;
+#else
+  return nullptr;
+#endif
+}
+
+bool
+NeckoParent::DeallocPRtspControllerParent(PRtspControllerParent* actor)
+{
+#ifdef MOZ_RTSP
+  RtspControllerParent* p = static_cast<RtspControllerParent*>(actor);
+  p->Release();
+#endif
+  return true;
+}
+
 PTCPSocketParent*
 NeckoParent::AllocPTCPSocketParent()
 {
@@ -348,7 +373,8 @@ NeckoParent::DeallocPTCPServerSocketParent(PTCPServerSocketParent* actor)
 }
 
 PRemoteOpenFileParent*
-NeckoParent::AllocPRemoteOpenFileParent(const URIParams& aURI)
+NeckoParent::AllocPRemoteOpenFileParent(const URIParams& aURI,
+                                        const OptionalURIParams& aAppURI)
 {
   nsCOMPtr<nsIURI> uri = DeserializeURI(aURI);
   nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(uri);
@@ -370,13 +396,8 @@ NeckoParent::AllocPRemoteOpenFileParent(const URIParams& aURI)
       nsRefPtr<TabParent> tabParent =
         static_cast<TabParent*>(Manager()->ManagedPBrowserParent()[i]);
       uint32_t appId = tabParent->OwnOrContainingAppId();
-      nsCOMPtr<mozIDOMApplication> domApp;
-      nsresult rv = appsService->GetAppByLocalId(appId, getter_AddRefs(domApp));
-      if (!domApp) {
-        continue;
-      }
-      mozApp = do_QueryInterface(domApp);
-      if (!mozApp) {
+      nsresult rv = appsService->GetAppByLocalId(appId, getter_AddRefs(mozApp));
+      if (NS_FAILED(rv) || !mozApp) {
         continue;
       }
       hasManage = false;
@@ -396,7 +417,21 @@ NeckoParent::AllocPRemoteOpenFileParent(const URIParams& aURI)
     fileURL->GetPath(requestedPath);
     NS_UnescapeURL(requestedPath);
 
-    if (hasManage) {
+    // Check if we load the whitelisted app uri for the neterror page.
+    bool netErrorWhiteList = false;
+
+    nsCOMPtr<nsIURI> appUri = DeserializeURI(aAppURI);
+    if (appUri) {
+      nsAdoptingString netErrorURI;
+      netErrorURI = Preferences::GetString("b2g.neterror.url");
+      if (netErrorURI) {
+        nsAutoCString spec;
+        appUri->GetSpec(spec);
+        netErrorWhiteList = spec.Equals(NS_ConvertUTF16toUTF8(netErrorURI).get());
+      }
+    }
+
+    if (hasManage || netErrorWhiteList) {
       // webapps-manage permission means allow reading any application.zip file
       // in either the regular webapps directory, or the core apps directory (if
       // we're using one).
@@ -447,8 +482,8 @@ NeckoParent::AllocPRemoteOpenFileParent(const URIParams& aURI)
         printf_stderr("NeckoParent::AllocPRemoteOpenFile: "
                       "FATAL error: app without webapps-manage permission is "
                       "requesting file '%s' but is only allowed to open its "
-                      "own application.zip: KILLING CHILD PROCESS\n",
-                      requestedPath.get());
+                      "own application.zip at %s: KILLING CHILD PROCESS\n",
+                      requestedPath.get(), mustMatch.get());
         return nullptr;
       }
     }
@@ -460,7 +495,8 @@ NeckoParent::AllocPRemoteOpenFileParent(const URIParams& aURI)
 
 bool
 NeckoParent::RecvPRemoteOpenFileConstructor(PRemoteOpenFileParent* aActor,
-                                            const URIParams& aFileURI)
+                                            const URIParams& aFileURI,
+                                            const OptionalURIParams& aAppURI)
 {
   return static_cast<RemoteOpenFileParent*>(aActor)->OpenSendCloseDelete();
 }
@@ -487,6 +523,26 @@ NeckoParent::RecvCancelHTMLDNSPrefetch(const nsString& hostname,
 {
   nsHTMLDNSPrefetch::CancelPrefetch(hostname, flags, reason);
   return true;
+}
+
+void
+NeckoParent::CloneManagees(ProtocolBase* aSource,
+                         mozilla::ipc::ProtocolCloneContext* aCtx)
+{
+  aCtx->SetNeckoParent(this); // For cloning protocols managed by this.
+  PNeckoParent::CloneManagees(aSource, aCtx);
+}
+
+mozilla::ipc::IProtocol*
+NeckoParent::CloneProtocol(Channel* aChannel,
+                           mozilla::ipc::ProtocolCloneContext* aCtx)
+{
+  ContentParent* contentParent = aCtx->GetContentParent();
+  nsAutoPtr<PNeckoParent> actor(contentParent->AllocPNeckoParent());
+  if (!actor || !contentParent->RecvPNeckoConstructor(actor)) {
+    return nullptr;
+  }
+  return actor.forget();
 }
 
 }} // mozilla::net

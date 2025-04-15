@@ -9,11 +9,8 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/PContentChild.h"
-#include "mozilla/dom/TabContext.h"
 #include "mozilla/dom/ipc/Blob.h"
-
-#include "nsTArray.h"
-#include "nsIConsoleListener.h"
+#include "nsWeakPtr.h"
 
 struct ChromePackage;
 class nsIDOMBlob;
@@ -218,6 +215,8 @@ public:
                                       const int32_t& aMountGeneration,
                                       const bool& aIsMediaPresent,
                                       const bool& aIsSharing);
+
+    virtual bool RecvNuwaFork() MOZ_OVERRIDE;
 
     virtual bool RecvNotifyProcessPriorityChanged(const hal::ProcessPriority& aPriority);
     virtual bool RecvMinimizeMemoryUsage();

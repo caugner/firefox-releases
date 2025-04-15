@@ -18,7 +18,6 @@
 #include "nsIDOMMouseEvent.h"
 #include "nsFontMetrics.h"
 #include "nsIScrollableFrame.h"
-#include "nsGUIEvent.h"
 #include "nsCSSRendering.h"
 #include "nsIDOMEventListener.h"
 #include "nsLayoutUtils.h"
@@ -28,7 +27,9 @@
 #include "mozilla/dom/HTMLOptionsCollection.h"
 #include "mozilla/dom/HTMLSelectElement.h"
 #include "mozilla/LookAndFeel.h"
+#include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/TextEvents.h"
 #include <algorithm>
 
 using namespace mozilla;
@@ -847,8 +848,8 @@ nsListControlFrame::CaptureMouseEvents(bool aGrabMouseEvents)
 
 //---------------------------------------------------------
 NS_IMETHODIMP 
-nsListControlFrame::HandleEvent(nsPresContext* aPresContext, 
-                                nsGUIEvent*    aEvent,
+nsListControlFrame::HandleEvent(nsPresContext* aPresContext,
+                                WidgetGUIEvent* aEvent,
                                 nsEventStatus* aEventStatus)
 {
   NS_ENSURE_ARG_POINTER(aEventStatus);
@@ -1234,12 +1235,17 @@ nsListControlFrame::SetOptionsSelectedFromFrame(int32_t aStartIndex,
 {
   nsRefPtr<dom::HTMLSelectElement> selectElement =
     dom::HTMLSelectElement::FromContent(mContent);
-  return selectElement->SetOptionsSelectedByIndex(aStartIndex,
-                                                  aEndIndex,
-                                                  aValue,
-                                                  aClearAll,
-                                                  false,
-                                                  true);
+
+  uint32_t mask = dom::HTMLSelectElement::NOTIFY;
+  if (aValue) {
+    mask |= dom::HTMLSelectElement::IS_SELECTED;
+  }
+
+  if (aClearAll) {
+    mask |= dom::HTMLSelectElement::CLEAR_ALL;
+  }
+
+  return selectElement->SetOptionsSelectedByIndex(aStartIndex, aEndIndex, mask);
 }
 
 bool
@@ -1252,12 +1258,12 @@ nsListControlFrame::ToggleOptionSelectedFromFrame(int32_t aIndex)
   nsRefPtr<dom::HTMLSelectElement> selectElement =
     dom::HTMLSelectElement::FromContent(mContent);
 
-  return selectElement->SetOptionsSelectedByIndex(aIndex,
-                                                  aIndex,
-                                                  !option->Selected(),
-                                                  false,
-                                                  false,
-                                                  true);
+  uint32_t mask = dom::HTMLSelectElement::NOTIFY;
+  if (!option->Selected()) {
+    mask |= dom::HTMLSelectElement::IS_SELECTED;
+  }
+
+  return selectElement->SetOptionsSelectedByIndex(aIndex, aIndex, mask);
 }
 
 
@@ -1601,8 +1607,8 @@ nsListControlFrame::MouseUp(nsIDOMEvent* aMouseEvent)
     // depeneding on whether the clickCount is non-zero.
     // So we cheat here by either setting or unsetting the clcikCount in the native event
     // so the right thing happens for the onclick event
-    nsMouseEvent * mouseEvent;
-    mouseEvent = (nsMouseEvent *) aMouseEvent->GetInternalNSEvent();
+    WidgetMouseEvent* mouseEvent =
+      aMouseEvent->GetInternalNSEvent()->AsMouseEvent();
 
     int32_t selectedIndex;
     if (NS_SUCCEEDED(GetIndexFromDOMEvent(aMouseEvent, selectedIndex))) {
@@ -2072,11 +2078,10 @@ nsListControlFrame::KeyDown(nsIDOMEvent* aKeyEvent)
   // Don't check defaultPrevented value because other browsers don't prevent
   // the key navigation of list control even if preventDefault() is called.
 
-  const nsKeyEvent* keyEvent =
-    static_cast<nsKeyEvent*>(aKeyEvent->GetInternalNSEvent());
-  MOZ_ASSERT(keyEvent, "DOM event must have internal event");
-  MOZ_ASSERT(keyEvent->eventStructType == NS_KEY_EVENT,
-             "The keydown event's internal event struct must be nsKeyEvent");
+  const WidgetKeyboardEvent* keyEvent =
+    aKeyEvent->GetInternalNSEvent()->AsKeyboardEvent();
+  MOZ_ASSERT(keyEvent,
+    "DOM event must have WidgetKeyboardEvent for its internal event");
 
   if (keyEvent->IsAlt()) {
     if (keyEvent->keyCode == NS_VK_UP || keyEvent->keyCode == NS_VK_DOWN) {
@@ -2213,11 +2218,10 @@ nsListControlFrame::KeyPress(nsIDOMEvent* aKeyEvent)
     return NS_OK;
   }
 
-  const nsKeyEvent* keyEvent =
-    static_cast<nsKeyEvent*>(aKeyEvent->GetInternalNSEvent());
-  MOZ_ASSERT(keyEvent, "DOM event must have internal event");
-  MOZ_ASSERT(keyEvent->eventStructType == NS_KEY_EVENT,
-             "The keydown event's internal event struct must be nsKeyEvent");
+  const WidgetKeyboardEvent* keyEvent =
+    aKeyEvent->GetInternalNSEvent()->AsKeyboardEvent();
+  MOZ_ASSERT(keyEvent,
+    "DOM event must have WidgetKeyboardEvent for its internal event");
 
   // Select option with this as the first character
   // XXX Not I18N compliant
@@ -2325,7 +2329,7 @@ nsListControlFrame::KeyPress(nsIDOMEvent* aKeyEvent)
     uint32_t index = (i + startIndex) % numOptions;
     nsRefPtr<dom::HTMLOptionElement> optionElement =
       options->ItemAsOption(index);
-    if (!optionElement) {
+    if (!optionElement || !optionElement->GetPrimaryFrame()) {
       continue;
     }
 

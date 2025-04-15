@@ -69,6 +69,7 @@ typedef struct nr_ice_peer_ctx_ nr_ice_peer_ctx;
 typedef struct nr_ice_media_stream_ nr_ice_media_stream;
 typedef struct nr_ice_handler_ nr_ice_handler;
 typedef struct nr_ice_handler_vtbl_ nr_ice_handler_vtbl;
+typedef struct nr_ice_candidate_ nr_ice_candidate;
 typedef struct nr_ice_cand_pair_ nr_ice_cand_pair;
 typedef struct nr_ice_stun_server_ nr_ice_stun_server;
 typedef struct nr_ice_turn_server_ nr_ice_turn_server;
@@ -79,6 +80,9 @@ typedef void* NR_SOCKET;
 namespace mozilla {
 
 class NrIceMediaStream;
+
+const std::string kNrIceTransportUdp("udp");
+const std::string kNrIceTransportTcp("tcp");
 
 class NrIceStunServer {
  public:
@@ -133,7 +137,9 @@ class NrIceTurnServer : public NrIceStunServer {
  public:
   static NrIceTurnServer *Create(const std::string& addr, uint16_t port,
                                  const std::string& username,
-                                 const std::vector<unsigned char>& password) {
+                                 const std::vector<unsigned char>& password,
+                                 const std::string& transport = kNrIceTransportUdp) {
+    // TODO: Bug 906968 - Support TCP
     ScopedDeletePtr<NrIceTurnServer> server(
         new NrIceTurnServer(username, password));
 
@@ -221,6 +227,9 @@ class NrIceCtx {
   // more forking.
   nsresult Finalize();
 
+  // Are we trickling?
+  bool generating_trickle() const { return trickle_; }
+
   // Signals to indicate events. API users can (and should)
   // register for these.
   // TODO(ekr@rtfm.com): refactor this to be state change instead
@@ -244,8 +253,8 @@ class NrIceCtx {
     ctx_(nullptr),
     peer_(nullptr),
     ice_handler_vtbl_(nullptr),
-    ice_handler_(nullptr)
-  {
+    ice_handler_(nullptr),
+    trickle_(true) {
     // XXX: offerer_ will be used eventually;  placate clang in the meantime.
     (void)offerer_;
   }
@@ -265,10 +274,8 @@ class NrIceCtx {
   static int msg_recvd(void *obj, nr_ice_peer_ctx *pctx,
                        nr_ice_media_stream *stream, int component_id,
                        unsigned char *msg, int len);
-
-  // Iterate through all media streams and emit the candidates
-  // Note that we don't do trickle ICE yet
-  void EmitAllCandidates();
+  static void trickle_cb(void *arg, nr_ice_ctx *ctx, nr_ice_media_stream *stream,
+                         int component_id, nr_ice_candidate *candidate);
 
   // Find a media stream by stream ptr. Gross
   RefPtr<NrIceMediaStream> FindStream(nr_ice_media_stream *stream);
@@ -284,6 +291,7 @@ class NrIceCtx {
   nr_ice_peer_ctx *peer_;
   nr_ice_handler_vtbl* ice_handler_vtbl_;  // Must be pointer
   nr_ice_handler* ice_handler_;  // Must be pointer
+  bool trickle_;
   nsCOMPtr<nsIEventTarget> sts_target_; // The thread to run on
 };
 

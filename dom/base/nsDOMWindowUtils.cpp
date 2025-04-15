@@ -29,10 +29,14 @@
 
 #include "nsIFrame.h"
 #include "nsIWidget.h"
-#include "nsGUIEvent.h"
 #include "nsCharsetSource.h"
 #include "nsJSEnvironment.h"
 #include "nsJSUtils.h"
+
+#include "mozilla/MiscEvents.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/TextEvents.h"
+#include "mozilla/TouchEvents.h"
 
 #include "nsViewManager.h"
 
@@ -48,7 +52,7 @@
 #include "nsIDocShell.h"
 #include "nsIContentViewer.h"
 #include "nsIMarkupDocumentViewer.h"
-#include "nsClientRect.h"
+#include "mozilla/dom/DOMRect.h"
 #include <algorithm>
 
 #if defined(MOZ_X11) && defined(MOZ_WIDGET_GTK)
@@ -78,6 +82,7 @@
 #include "nsIBaseWindow.h"
 #include "nsIDocShellTreeOwner.h"
 #include "nsIInterfaceRequestorUtils.h"
+#include "GeckoProfiler.h"
 
 #ifdef XP_WIN
 #undef GetClassName
@@ -635,16 +640,16 @@ static inline int16_t
 GetButtonsFlagForButton(int32_t aButton)
 {
   switch (aButton) {
-    case nsMouseEvent::eLeftButton:
-      return nsMouseEvent::eLeftButtonFlag;
-    case nsMouseEvent::eMiddleButton:
-      return nsMouseEvent::eMiddleButtonFlag;
-    case nsMouseEvent::eRightButton:
-      return nsMouseEvent::eRightButtonFlag;
+    case WidgetMouseEvent::eLeftButton:
+      return WidgetMouseEvent::eLeftButtonFlag;
+    case WidgetMouseEvent::eMiddleButton:
+      return WidgetMouseEvent::eMiddleButtonFlag;
+    case WidgetMouseEvent::eRightButton:
+      return WidgetMouseEvent::eRightButtonFlag;
     case 4:
-      return nsMouseEvent::e4thButtonFlag;
+      return WidgetMouseEvent::e4thButtonFlag;
     case 5:
-      return nsMouseEvent::e5thButtonFlag;
+      return WidgetMouseEvent::e5thButtonFlag;
     default:
       NS_ERROR("Button not known.");
       return 0;
@@ -698,9 +703,9 @@ nsDOMWindowUtils::SendMouseEventCommon(const nsAString& aType,
     aInputSourceArg = nsIDOMMouseEvent::MOZ_SOURCE_MOUSE;
   }
 
-  nsMouseEvent event(true, msg, widget, nsMouseEvent::eReal,
-                     contextMenuKey ?
-                       nsMouseEvent::eContextMenuKey : nsMouseEvent::eNormal);
+  WidgetMouseEvent event(true, msg, widget, WidgetMouseEvent::eReal,
+                         contextMenuKey ? WidgetMouseEvent::eContextMenuKey :
+                                          WidgetMouseEvent::eNormal);
   event.modifiers = GetWidgetModifiers(aModifiers);
   event.button = aButton;
   event.buttons = GetButtonsFlagForButton(aButton);
@@ -762,7 +767,7 @@ nsDOMWindowUtils::SendWheelEvent(float aX,
     return NS_ERROR_NULL_POINTER;
   }
 
-  WheelEvent wheelEvent(true, NS_WHEEL_WHEEL, widget);
+  WidgetWheelEvent wheelEvent(true, NS_WHEEL_WHEEL, widget);
   wheelEvent.modifiers = GetWidgetModifiers(aModifiers);
   wheelEvent.deltaX = aDeltaX;
   wheelEvent.deltaY = aDeltaY;
@@ -872,7 +877,7 @@ nsDOMWindowUtils::SendTouchEvent(const nsAString& aType,
   } else {
     return NS_ERROR_UNEXPECTED;
   }
-  nsTouchEvent event(true, msg, widget);
+  WidgetTouchEvent event(true, msg, widget);
   event.modifiers = GetWidgetModifiers(aModifiers);
   event.widget = widget;
   event.time = PR_Now();
@@ -926,7 +931,7 @@ nsDOMWindowUtils::SendKeyEvent(const nsAString& aType,
   else
     return NS_ERROR_FAILURE;
 
-  nsKeyEvent event(true, msg, widget);
+  WidgetKeyboardEvent event(true, msg, widget);
   event.modifiers = GetWidgetModifiers(aModifiers);
 
   if (msg == NS_KEY_PRESS) {
@@ -1259,7 +1264,7 @@ nsDOMWindowUtils::SendSimpleGestureEvent(const nsAString& aType,
   else
     return NS_ERROR_FAILURE;
  
-  nsSimpleGestureEvent event(true, msg, widget, aDirection, aDelta);
+  WidgetSimpleGestureEvent event(true, msg, widget, aDirection, aDelta);
   event.modifiers = GetWidgetModifiers(aModifiers);
   event.clickCount = aClickCount;
   event.time = PR_IntervalNow();
@@ -1509,6 +1514,23 @@ nsDOMWindowUtils::GetScrollXY(bool aFlushLayout, int32_t* aScrollX, int32_t* aSc
 }
 
 NS_IMETHODIMP
+nsDOMWindowUtils::ScrollToCSSPixelsApproximate(float aX, float aY, bool* aRetVal)
+{
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(window);
+
+  nsIScrollableFrame* sf = static_cast<nsGlobalWindow*>(window.get())->GetScrollFrame();
+  if (sf) {
+    sf->ScrollToCSSPixelsApproximate(CSSPoint(aX, aY));
+  }
+  if (aRetVal) {
+    *aRetVal = (sf != nullptr);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDOMWindowUtils::GetScrollbarSize(bool aFlushLayout, int32_t* aWidth,
                                                       int32_t* aHeight)
 {
@@ -1557,7 +1579,7 @@ nsDOMWindowUtils::GetBoundsWithoutFlushing(nsIDOMElement *aElement,
   nsCOMPtr<nsIContent> content = do_QueryInterface(aElement, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsRefPtr<nsClientRect> rect = new nsClientRect(window);
+  nsRefPtr<DOMRect> rect = new DOMRect(window);
   nsIFrame* frame = content->GetPrimaryFrame();
 
   if (frame) {
@@ -1597,7 +1619,7 @@ nsDOMWindowUtils::GetRootBounds(nsIDOMClientRect** aResult)
     }
   }
 
-  nsRefPtr<nsClientRect> rect = new nsClientRect(window);
+  nsRefPtr<DOMRect> rect = new DOMRect(window);
   rect->SetRect(nsPresContext::AppUnitsToFloatCSSPixels(bounds.x),
                 nsPresContext::AppUnitsToFloatCSSPixels(bounds.y),
                 nsPresContext::AppUnitsToFloatCSSPixels(bounds.width),
@@ -1746,7 +1768,7 @@ nsDOMWindowUtils::DispatchDOMEventViaPresShell(nsIDOMNode* aTarget,
 
   NS_ENSURE_STATE(aEvent);
   aEvent->SetTrusted(aTrusted);
-  nsEvent* internalEvent = aEvent->GetInternalNSEvent();
+  WidgetEvent* internalEvent = aEvent->GetInternalNSEvent();
   NS_ENSURE_STATE(internalEvent);
   nsCOMPtr<nsIContent> content = do_QueryInterface(aTarget);
   NS_ENSURE_STATE(content);
@@ -1768,7 +1790,7 @@ nsDOMWindowUtils::DispatchDOMEventViaPresShell(nsIDOMNode* aTarget,
 }
 
 static void
-InitEvent(nsGUIEvent& aEvent, LayoutDeviceIntPoint* aPt = nullptr)
+InitEvent(WidgetGUIEvent& aEvent, LayoutDeviceIntPoint* aPt = nullptr)
 {
   if (aPt) {
     aEvent.refPoint = *aPt;
@@ -1802,7 +1824,7 @@ nsDOMWindowUtils::SendCompositionEvent(const nsAString& aType,
     return NS_ERROR_FAILURE;
   }
 
-  nsCompositionEvent compositionEvent(true, msg, widget);
+  WidgetCompositionEvent compositionEvent(true, msg, widget);
   InitEvent(compositionEvent);
   if (msg != NS_COMPOSITION_START) {
     compositionEvent.data = aData;
@@ -1879,7 +1901,7 @@ nsDOMWindowUtils::SendQueryContentEvent(uint32_t aType,
 
   if (aType == QUERY_CHARACTER_AT_POINT) {
     // Looking for the widget at the point.
-    nsQueryContentEvent dummyEvent(true, NS_QUERY_CONTENT_STATE, widget);
+    WidgetQueryContentEvent dummyEvent(true, NS_QUERY_CONTENT_STATE, widget);
     InitEvent(dummyEvent, &pt);
     nsIFrame* popupFrame =
       nsLayoutUtils::GetPopupFrameForEventCoordinates(presContext->GetRootPresContext(), &dummyEvent);
@@ -1904,7 +1926,7 @@ nsDOMWindowUtils::SendQueryContentEvent(uint32_t aType,
   pt += LayoutDeviceIntPoint::FromUntyped(
     widget->WidgetToScreenOffset() - targetWidget->WidgetToScreenOffset());
 
-  nsQueryContentEvent queryEvent(true, aType, targetWidget);
+  WidgetQueryContentEvent queryEvent(true, aType, targetWidget);
   InitEvent(queryEvent, &pt);
 
   switch (aType) {
@@ -1948,7 +1970,7 @@ nsDOMWindowUtils::SendSelectionSetEvent(uint32_t aOffset,
     return NS_ERROR_FAILURE;
   }
 
-  nsSelectionEvent selectionEvent(true, NS_SELECTION_SET, widget);
+  WidgetSelectionEvent selectionEvent(true, NS_SELECTION_SET, widget);
   InitEvent(selectionEvent);
 
   selectionEvent.mOffset = aOffset;
@@ -1994,7 +2016,7 @@ nsDOMWindowUtils::SendContentCommandEvent(const nsAString& aType,
   else
     return NS_ERROR_FAILURE;
 
-  nsContentCommandEvent event(true, msg, widget);
+  WidgetContentCommandEvent event(true, msg, widget);
   if (msg == NS_CONTENT_COMMAND_PASTE_TRANSFERABLE) {
     event.mTransferable = aTransferable;
   }
@@ -2363,8 +2385,9 @@ nsDOMWindowUtils::GetIsTestControllingRefreshes(bool *aResult)
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
+  nsPresContext* pc = GetPresContext();
   *aResult =
-    GetPresContext()->RefreshDriver()->IsTestControllingRefreshesEnabled();
+    pc ? pc->RefreshDriver()->IsTestControllingRefreshesEnabled() : false;
 
   return NS_OK;
 }
@@ -2518,6 +2541,23 @@ nsDOMWindowUtils::GetOuterWindowWithId(uint64_t aWindowID,
 }
 
 NS_IMETHODIMP
+nsDOMWindowUtils::GetContainerElement(nsIDOMElement** aResult)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_STATE(window);
+
+  nsCOMPtr<nsIDOMElement> element =
+    do_QueryInterface(window->GetFrameElementInternal());
+
+  element.forget(aResult);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 nsDOMWindowUtils::WrapDOMFile(nsIFile *aFile,
                               nsIDOMFile **aDOMFile)
 {
@@ -2641,10 +2681,8 @@ nsDOMWindowUtils::CheckAndClearPaintedState(nsIDOMElement* aElement, bool* aResu
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::PreventFurtherDialogs()
+nsDOMWindowUtils::EnableDialogs()
 {
-  // Permanently disable further dialogs for this window.
-
   if (!nsContentUtils::IsCallerChrome()) {
     return NS_ERROR_DOM_SECURITY_ERR;
   }
@@ -2652,7 +2690,35 @@ nsDOMWindowUtils::PreventFurtherDialogs()
   nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
   NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
 
-  static_cast<nsGlobalWindow*>(window.get())->PreventFurtherDialogs(true);
+  static_cast<nsGlobalWindow*>(window.get())->EnableDialogs();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::DisableDialogs()
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
+
+  static_cast<nsGlobalWindow*>(window.get())->DisableDialogs();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::AreDialogsEnabled(bool* aResult)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+  NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
+
+  *aResult = static_cast<nsGlobalWindow*>(window.get())->AreDialogsEnabled();
   return NS_OK;
 }
 

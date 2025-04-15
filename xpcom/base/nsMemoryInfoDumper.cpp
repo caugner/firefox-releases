@@ -6,11 +6,9 @@
 
 #include "mozilla/nsMemoryInfoDumper.h"
 
-#include "mozilla/Atomics.h"
-#include "mozilla/ClearOnShutdown.h"
-#include "mozilla/FileUtils.h"
+#ifdef XP_LINUX
 #include "mozilla/Preferences.h"
-#include "mozilla/StaticPtr.h"
+#endif
 #include "mozilla/unused.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ContentChild.h"
@@ -21,7 +19,10 @@
 #include "nsGZFileWriter.h"
 #include "nsJSEnvironment.h"
 #include "nsPrintfCString.h"
-#include "pratom.h"
+#include "nsISimpleEnumerator.h"
+#include "nsServiceManagerUtils.h"
+#include "nsIFile.h"
+#include <errno.h>
 
 #ifdef XP_WIN
 #include <process.h>
@@ -609,18 +610,19 @@ namespace mozilla {
   } while (0)
 
 static nsresult
-DumpReport(nsIGZFileWriter *aWriter, bool aIsFirst,
+DumpReport(nsIGZFileWriter *aWriter, bool *aIsFirstPtr,
   const nsACString &aProcess, const nsACString &aPath, int32_t aKind,
   int32_t aUnits, int64_t aAmount, const nsACString &aDescription)
 {
-  DUMP(aWriter, aIsFirst ? "[" : ",");
-
   // We only want to dump reports for this process.  If |aProcess| is
-  // non-NULL that means we've received it from another process in response
+  // non-nullptr that means we've received it from another process in response
   // to a "child-memory-reporter-request" event;  ignore such reports.
   if (!aProcess.IsEmpty()) {
     return NS_OK;
   }
+
+  DUMP(aWriter, *aIsFirstPtr ? "[" : ",");
+  *aIsFirstPtr = false;
 
   // Generate the process identifier, which is of the form "$PROCESS_NAME
   // (pid $PID)", or just "(pid $PID)" if we don't have a process name.  If
@@ -677,7 +679,7 @@ class DumpReporterCallback MOZ_FINAL : public nsIMemoryReporterCallback
 public:
   NS_DECL_ISUPPORTS
 
-  DumpReporterCallback(bool* aIsFirstPtr) : mIsFirstPtr(aIsFirstPtr) {}
+  DumpReporterCallback() : mIsFirst(true) {}
 
   NS_IMETHOD Callback(const nsACString &aProcess, const nsACString &aPath,
       int32_t aKind, int32_t aUnits, int64_t aAmount,
@@ -687,17 +689,12 @@ public:
     nsCOMPtr<nsIGZFileWriter> writer = do_QueryInterface(aData);
     NS_ENSURE_TRUE(writer, NS_ERROR_FAILURE);
 
-    // The |isFirst = false| assumes that at least one single reporter is
-    // present and so will have been processed in
-    // DumpProcessMemoryReportsToGZFileWriter() below.
-    bool isFirst = *mIsFirstPtr;
-    *mIsFirstPtr = false;
-    return DumpReport(writer, isFirst, aProcess, aPath, aKind, aUnits, aAmount,
-                      aDescription);
+    return DumpReport(writer, &mIsFirst, aProcess, aPath, aKind, aUnits,
+                      aAmount, aDescription);
   }
 
 private:
-  bool* mIsFirstPtr;
+  bool mIsFirst;
 };
 
 NS_IMPL_ISUPPORTS1(DumpReporterCallback, nsIMemoryReporterCallback)
@@ -816,11 +813,10 @@ DumpProcessMemoryReportsToGZFileWriter(nsIGZFileWriter *aWriter)
   DUMP(aWriter, "  \"reports\": ");
 
   // Process reporters.
-  bool isFirst = true;
   bool more;
   nsCOMPtr<nsISimpleEnumerator> e;
   mgr->EnumerateReporters(getter_AddRefs(e));
-  nsRefPtr<DumpReporterCallback> cb = new DumpReporterCallback(&isFirst);
+  nsRefPtr<DumpReporterCallback> cb = new DumpReporterCallback();
   while (NS_SUCCEEDED(e->HasMoreElements(&more)) && more) {
     nsCOMPtr<nsIMemoryReporter> r;
     e->GetNext(getter_AddRefs(r));

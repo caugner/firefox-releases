@@ -4,7 +4,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-TEST_DIRS += ['httpserver', 'browser', 'mochitests']
+TEST_TOOL_DIRS += ['httpserver', 'browser', 'mochitests']
+
+FAIL_ON_WARNINGS = True
 
 MODULE = 'test_necko'
 
@@ -28,8 +30,8 @@ sources = [
     'TestServ',
     'TestStandardURL',
     'TestStreamLoader',
-    'TestURLParser',
     'TestUpload',
+    'TestURLParser',
     'urltest',
 ]
 
@@ -45,7 +47,7 @@ sources = [
 #    TestUDPSocketProvider',
 #]
 
-CPP_SOURCES += [
+SOURCES += [
     '%s.cpp' % s for s in sources
 ]
 

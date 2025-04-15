@@ -6,7 +6,7 @@
 
 MODULE = 'dom'
 
-CPP_SOURCES += [
+SOURCES += [
     'nsJSEventListener.cpp',
 ]
 
@@ -18,3 +18,7 @@ LIBXUL_LIBRARY = True
 
 MSVC_ENABLE_PGO = True
 
+LOCAL_INCLUDES += [
+    "/content/base/src",
+    "/dom/base",
+]

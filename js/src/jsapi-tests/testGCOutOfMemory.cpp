@@ -6,8 +6,6 @@
  * Contributor: Igor Bukanov
  */
 
-#include "jscntxt.h"
-
 #include "jsapi-tests/tests.h"
 
 static unsigned errorCount = 0;
@@ -57,7 +55,7 @@ BEGIN_TEST(testGCOutOfMemory)
 virtual JSRuntime * createRuntime() {
     JSRuntime *rt = JS_NewRuntime(768 * 1024, JS_USE_HELPER_THREADS);
     if (!rt)
-        return NULL;
+        return nullptr;
     setNativeStackQuota(rt);
     return rt;
 }

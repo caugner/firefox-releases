@@ -4,22 +4,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/DebugOnly.h"
 #include "nsIOService.h"
 #include "nsInputStreamPump.h"
-#include "nsIServiceManager.h"
 #include "nsIStreamTransportService.h"
-#include "nsIInterfaceRequestorUtils.h"
 #include "nsISeekableStream.h"
 #include "nsITransport.h"
 #include "nsIThreadRetargetableStreamListener.h"
-#include "nsStreamUtils.h"
-#include "nsNetUtil.h"
 #include "nsThreadUtils.h"
 #include "nsCOMPtr.h"
 #include "prlog.h"
-#include "nsPrintfCString.h"
 #include "GeckoProfiler.h"
+#include "nsIStreamListener.h"
+#include "nsILoadGroup.h"
+#include "nsNetCID.h"
 #include <algorithm>
 
 static NS_DEFINE_CID(kStreamTransportServiceCID, NS_STREAMTRANSPORTSERVICE_CID);
@@ -201,6 +198,8 @@ nsInputStreamPump::GetStatus(nsresult *status)
 NS_IMETHODIMP
 nsInputStreamPump::Cancel(nsresult status)
 {
+    MOZ_ASSERT(NS_IsMainThread());
+
     ReentrantMonitorAutoEnter mon(mMonitor);
 
     LOG(("nsInputStreamPump::Cancel [this=%p status=%x]\n",

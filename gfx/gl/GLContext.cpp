@@ -23,12 +23,14 @@
 #include "SurfaceStream.h"
 #include "GfxTexturesReporter.h"
 #include "TextureGarbageBin.h"
+#include "gfx2DGlue.h"
 
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Preferences.h"
 
 #ifdef XP_MACOSX
 #include <CoreServices/CoreServices.h>
+#include "gfxColor.h"
 #endif
 
 #if defined(MOZ_WIDGET_COCOA)
@@ -113,6 +115,8 @@ static const char *sExtensionNames[] = {
     "GL_ARB_occlusion_query2",
     "GL_EXT_transform_feedback",
     "GL_NV_transform_feedback",
+    "GL_ANGLE_depth_texture",
+    "GL_KHR_debug",
     nullptr
 };
 
@@ -458,7 +462,8 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
         if (version >= mVersion) {
             mVersion = version;
         } else if (parseSuccess) {
-            MOZ_ASSERT(false, "Parsed version less than expected.");
+            NS_WARNING("Parsed version less than expected.");
+            mInitialized = false;
         }
     }
 
@@ -970,6 +975,39 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
             }
         }
 
+        if (IsExtensionSupported(KHR_debug)) {
+            SymLoadStruct extSymbols[] = {
+                { (PRFuncPtr*) &mSymbols.fDebugMessageControl,  { "DebugMessageControl",  "DebugMessageControlKHR",  nullptr } },
+                { (PRFuncPtr*) &mSymbols.fDebugMessageInsert,   { "DebugMessageInsert",   "DebugMessageInsertKHR",   nullptr } },
+                { (PRFuncPtr*) &mSymbols.fDebugMessageCallback, { "DebugMessageCallback", "DebugMessageCallbackKHR", nullptr } },
+                { (PRFuncPtr*) &mSymbols.fGetDebugMessageLog,   { "GetDebugMessageLog",   "GetDebugMessageLogKHR",   nullptr } },
+                { (PRFuncPtr*) &mSymbols.fGetPointerv,          { "GetPointerv",          "GetPointervKHR",          nullptr } },
+                { (PRFuncPtr*) &mSymbols.fPushDebugGroup,       { "PushDebugGroup",       "PushDebugGroupKHR",       nullptr } },
+                { (PRFuncPtr*) &mSymbols.fPopDebugGroup,        { "PopDebugGroup",        "PopDebugGroupKHR",        nullptr } },
+                { (PRFuncPtr*) &mSymbols.fObjectLabel,          { "ObjectLabel",          "ObjectLabelKHR",          nullptr } },
+                { (PRFuncPtr*) &mSymbols.fGetObjectLabel,       { "GetObjectLabel",       "GetObjectLabelKHR",       nullptr } },
+                { (PRFuncPtr*) &mSymbols.fObjectPtrLabel,       { "ObjectPtrLabel",       "ObjectPtrLabelKHR",       nullptr } },
+                { (PRFuncPtr*) &mSymbols.fGetObjectPtrLabel,    { "GetObjectPtrLabel",    "GetObjectPtrLabelKHR",    nullptr } },
+                { nullptr, { nullptr } },
+            };
+
+            if (!LoadSymbols(&extSymbols[0], trygl, prefix)) {
+                NS_ERROR("GL supports KHR_debug without supplying its functions.");
+
+                MarkExtensionUnsupported(KHR_debug);
+                mSymbols.fDebugMessageControl  = nullptr;
+                mSymbols.fDebugMessageInsert   = nullptr;
+                mSymbols.fDebugMessageCallback = nullptr;
+                mSymbols.fGetDebugMessageLog   = nullptr;
+                mSymbols.fGetPointerv          = nullptr;
+                mSymbols.fPushDebugGroup       = nullptr;
+                mSymbols.fPopDebugGroup        = nullptr;
+                mSymbols.fObjectLabel          = nullptr;
+                mSymbols.fGetObjectLabel       = nullptr;
+                mSymbols.fObjectPtrLabel       = nullptr;
+                mSymbols.fGetObjectPtrLabel    = nullptr;
+            }
+        }
 
         // Load developer symbols, don't fail if we can't find them.
         SymLoadStruct auxSymbols[] = {
@@ -1267,15 +1305,15 @@ GLContext::CreateTextureImage(const nsIntSize& aSize,
                                    aFlags, aImageFormat);
 }
 
-void GLContext::ApplyFilterToBoundTexture(gfxPattern::GraphicsFilter aFilter)
+void GLContext::ApplyFilterToBoundTexture(GraphicsFilter aFilter)
 {
     ApplyFilterToBoundTexture(LOCAL_GL_TEXTURE_2D, aFilter);
 }
 
 void GLContext::ApplyFilterToBoundTexture(GLuint aTarget,
-                                          gfxPattern::GraphicsFilter aFilter)
+                                          GraphicsFilter aFilter)
 {
-    if (aFilter == gfxPattern::FILTER_NEAREST) {
+    if (aFilter == GraphicsFilter::FILTER_NEAREST) {
         fTexParameteri(aTarget, LOCAL_GL_TEXTURE_MIN_FILTER, LOCAL_GL_NEAREST);
         fTexParameteri(aTarget, LOCAL_GL_TEXTURE_MAG_FILTER, LOCAL_GL_NEAREST);
     } else {
@@ -1863,7 +1901,7 @@ GLContext::GetTexImage(GLuint aTexture, bool aYInvert, SurfaceFormat aFormat)
     fGetTexLevelParameteriv(LOCAL_GL_TEXTURE_2D, 0, LOCAL_GL_TEXTURE_WIDTH, &size.width);
     fGetTexLevelParameteriv(LOCAL_GL_TEXTURE_2D, 0, LOCAL_GL_TEXTURE_HEIGHT, &size.height);
 
-    nsRefPtr<gfxImageSurface> surf = new gfxImageSurface(size, gfxASurface::ImageFormatARGB32);
+    nsRefPtr<gfxImageSurface> surf = new gfxImageSurface(size, gfxImageFormatARGB32);
     if (!surf || surf->CairoStatus()) {
         return nullptr;
     }
@@ -1987,7 +2025,7 @@ GLContext::ReadTextureImage(GLuint aTexture,
     fDisableVertexAttribArray(1);
     fDisableVertexAttribArray(0);
 
-    isurf = new gfxImageSurface(aSize, gfxASurface::ImageFormatARGB32);
+    isurf = new gfxImageSurface(aSize, gfxImageFormatARGB32);
     if (!isurf || isurf->CairoStatus()) {
         isurf = nullptr;
         goto cleanup;
@@ -2085,37 +2123,54 @@ GLContext::ReadScreenIntoImageSurface(gfxImageSurface* dest)
     ReadPixelsIntoImageSurface(dest);
 }
 
+TemporaryRef<SourceSurface>
+GLContext::ReadPixelsToSourceSurface(const gfx::IntSize &aSize)
+{
+    // XXX we should do this properly one day without using the gfxImageSurface
+    RefPtr<DataSourceSurface> dataSourceSurface =
+        Factory::CreateDataSourceSurface(aSize, gfx::FORMAT_B8G8R8A8);
+    nsRefPtr<gfxImageSurface> surf =
+        new gfxImageSurface(dataSourceSurface->GetData(),
+                            gfxIntSize(aSize.width, aSize.height),
+                            dataSourceSurface->Stride(),
+                            gfxImageFormatARGB32);
+    ReadPixelsIntoImageSurface(surf);
+    dataSourceSurface->MarkDirty();
+
+    return dataSourceSurface;
+}
+
 void
 GLContext::ReadPixelsIntoImageSurface(gfxImageSurface* dest)
 {
     MakeCurrent();
     MOZ_ASSERT(dest->GetSize() != gfxIntSize(0, 0));
 
-    /* ImageFormatARGB32:
+    /* gfxImageFormatARGB32:
      * RGBA+UByte: be[RGBA], le[ABGR]
      * RGBA+UInt: le[RGBA]
      * BGRA+UInt: le[BGRA]
      * BGRA+UIntRev: le[ARGB]
      *
-     * ImageFormatRGB16_565:
+     * gfxImageFormatRGB16_565:
      * RGB+UShort: le[rrrrrggg,gggbbbbb]
      */
-    bool hasAlpha = dest->Format() == gfxASurface::ImageFormatARGB32;
+    bool hasAlpha = dest->Format() == gfxImageFormatARGB32;
 
     int destPixelSize;
     GLenum destFormat;
     GLenum destType;
 
     switch (dest->Format()) {
-        case gfxASurface::ImageFormatRGB24: // XRGB
-        case gfxASurface::ImageFormatARGB32:
+        case gfxImageFormatRGB24: // XRGB
+        case gfxImageFormatARGB32:
             destPixelSize = 4;
             // Needs host (little) endian ARGB.
             destFormat = LOCAL_GL_BGRA;
             destType = LOCAL_GL_UNSIGNED_INT_8_8_8_8_REV;
             break;
 
-        case gfxASurface::ImageFormatRGB16_565:
+        case gfxImageFormatRGB16_565:
             destPixelSize = 2;
             destFormat = LOCAL_GL_RGB;
             destType = LOCAL_GL_UNSIGNED_SHORT_5_6_5_REV;
@@ -2144,14 +2199,14 @@ GLContext::ReadPixelsIntoImageSurface(gfxImageSurface* dest)
         switch (readFormat) {
             case LOCAL_GL_RGBA:
             case LOCAL_GL_BGRA: {
-                readFormatGFX = hasAlpha ? gfxASurface::ImageFormatARGB32
-                                         : gfxASurface::ImageFormatRGB24;
+                readFormatGFX = hasAlpha ? gfxImageFormatARGB32
+                                         : gfxImageFormatRGB24;
                 break;
             }
             case LOCAL_GL_RGB: {
                 MOZ_ASSERT(readPixelSize == 2);
                 MOZ_ASSERT(readType == LOCAL_GL_UNSIGNED_SHORT_5_6_5_REV);
-                readFormatGFX = gfxASurface::ImageFormatRGB16_565;
+                readFormatGFX = gfxImageFormatRGB16_565;
                 break;
             }
             default: {
@@ -2227,7 +2282,7 @@ GLContext::ReadPixelsIntoImageSurface(gfxImageSurface* dest)
 #ifdef XP_MACOSX
     if (WorkAroundDriverBugs() &&
         mVendor == VendorNVIDIA &&
-        dest->Format() == gfxASurface::ImageFormatARGB32 &&
+        dest->Format() == gfxImageFormatARGB32 &&
         width && height)
     {
         GLint alphaBits = 0;
@@ -2397,7 +2452,7 @@ GLContext::BlitTextureImage(TextureImage *aSrc, const nsIntRect& aSrcRect,
 }
 
 static unsigned int
-DataOffset(const nsIntPoint &aPoint, int32_t aStride, gfxASurface::gfxImageFormat aFormat)
+DataOffset(const nsIntPoint &aPoint, int32_t aStride, gfxImageFormat aFormat)
 {
   unsigned int data = aPoint.y * aStride;
   data += aPoint.x * gfxASurface::BytePerPixelFromFormat(aFormat);
@@ -2407,7 +2462,7 @@ DataOffset(const nsIntPoint &aPoint, int32_t aStride, gfxASurface::gfxImageForma
 GLContext::SurfaceFormat
 GLContext::UploadImageDataToTexture(unsigned char* aData,
                                     int32_t aStride,
-                                    gfxASurface::gfxImageFormat aFormat,
+                                    gfxImageFormat aFormat,
                                     const nsIntRegion& aDstRegion,
                                     GLuint& aTexture,
                                     bool aOverwrite,
@@ -2455,7 +2510,7 @@ GLContext::UploadImageDataToTexture(unsigned char* aData,
     MOZ_ASSERT(GetPreferredARGB32Format() == LOCAL_GL_BGRA ||
                GetPreferredARGB32Format() == LOCAL_GL_RGBA);
     switch (aFormat) {
-        case gfxASurface::ImageFormatARGB32:
+        case gfxImageFormatARGB32:
             if (GetPreferredARGB32Format() == LOCAL_GL_BGRA) {
               format = LOCAL_GL_BGRA;
               surfaceFormat = FORMAT_R8G8B8A8;
@@ -2467,7 +2522,7 @@ GLContext::UploadImageDataToTexture(unsigned char* aData,
             }
             internalFormat = LOCAL_GL_RGBA;
             break;
-        case gfxASurface::ImageFormatRGB24:
+        case gfxImageFormatRGB24:
             // Treat RGB24 surfaces as RGBA32 except for the surface
             // format used.
             if (GetPreferredARGB32Format() == LOCAL_GL_BGRA) {
@@ -2481,12 +2536,12 @@ GLContext::UploadImageDataToTexture(unsigned char* aData,
             }
             internalFormat = LOCAL_GL_RGBA;
             break;
-        case gfxASurface::ImageFormatRGB16_565:
+        case gfxImageFormatRGB16_565:
             internalFormat = format = LOCAL_GL_RGB;
             type = LOCAL_GL_UNSIGNED_SHORT_5_6_5;
             surfaceFormat = FORMAT_R5G6B5;
             break;
-        case gfxASurface::ImageFormatA8:
+        case gfxImageFormatA8:
             internalFormat = format = LOCAL_GL_LUMINANCE;
             type = LOCAL_GL_UNSIGNED_BYTE;
             // We don't have a specific luminance shader
@@ -2561,15 +2616,15 @@ GLContext::UploadSurfaceToTexture(gfxASurface *aSurface,
     unsigned char* data = nullptr;
 
     if (!imageSurface ||
-        (imageSurface->Format() != gfxASurface::ImageFormatARGB32 &&
-         imageSurface->Format() != gfxASurface::ImageFormatRGB24 &&
-         imageSurface->Format() != gfxASurface::ImageFormatRGB16_565 &&
-         imageSurface->Format() != gfxASurface::ImageFormatA8)) {
+        (imageSurface->Format() != gfxImageFormatARGB32 &&
+         imageSurface->Format() != gfxImageFormatRGB24 &&
+         imageSurface->Format() != gfxImageFormatRGB16_565 &&
+         imageSurface->Format() != gfxImageFormatA8)) {
         // We can't get suitable pixel data for the surface, make a copy
         nsIntRect bounds = aDstRegion.GetBounds();
         imageSurface =
           new gfxImageSurface(gfxIntSize(bounds.width, bounds.height),
-                              gfxASurface::ImageFormatARGB32);
+                              gfxImageFormatARGB32);
 
         nsRefPtr<gfxContext> context = new gfxContext(imageSurface);
 
@@ -2599,20 +2654,20 @@ GLContext::UploadSurfaceToTexture(gfxASurface *aSurface,
                                     aPixelBuffer, aTextureUnit, aTextureTarget);
 }
 
-static gfxASurface::gfxImageFormat
+static gfxImageFormat
 ImageFormatForSurfaceFormat(gfx::SurfaceFormat aFormat)
 {
     switch (aFormat) {
         case gfx::FORMAT_B8G8R8A8:
-            return gfxASurface::ImageFormatARGB32;
+            return gfxImageFormatARGB32;
         case gfx::FORMAT_B8G8R8X8:
-            return gfxASurface::ImageFormatRGB24;
+            return gfxImageFormatRGB24;
         case gfx::FORMAT_R5G6B5:
-            return gfxASurface::ImageFormatRGB16_565;
+            return gfxImageFormatRGB16_565;
         case gfx::FORMAT_A8:
-            return gfxASurface::ImageFormatA8;
+            return gfxImageFormatA8;
         default:
-            return gfxASurface::ImageFormatUnknown;
+            return gfxImageFormatUnknown;
     }
 }
 
@@ -2628,7 +2683,7 @@ GLContext::UploadSurfaceToTexture(gfx::DataSourceSurface *aSurface,
 {
     unsigned char* data = aPixelBuffer ? nullptr : aSurface->GetData();
     int32_t stride = aSurface->Stride();
-    gfxASurface::gfxImageFormat format =
+    gfxImageFormat format =
         ImageFormatForSurfaceFormat(aSurface->GetFormat());
     data += DataOffset(aSrcPoint, stride, format);
     return UploadImageDataToTexture(data, stride, format,

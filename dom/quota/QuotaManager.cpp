@@ -925,27 +925,6 @@ GetTemporaryStorageLimit(nsIFile* aDirectory, uint64_t aCurrentUsage,
   return NS_OK;
 }
 
-void
-GetInfoForChrome(nsACString* aGroup, nsACString* aASCIIOrigin,
-                 StoragePrivilege* aPrivilege,
-                 PersistenceType* aDefaultPersistenceType)
-{
-  static const char kChromeOrigin[] = "chrome";
-
-  if (aGroup) {
-    aGroup->AssignLiteral(kChromeOrigin);
-  }
-  if (aASCIIOrigin) {
-    aASCIIOrigin->AssignLiteral(kChromeOrigin);
-  }
-  if (aPrivilege) {
-    *aPrivilege = Chrome;
-  }
-  if (aDefaultPersistenceType) {
-    *aDefaultPersistenceType = PERSISTENCE_TYPE_PERSISTENT;
-  }
-}
-
 } // anonymous namespace
 
 QuotaManager::QuotaManager()
@@ -1361,9 +1340,7 @@ QuotaManager::GetQuotaObject(PersistenceType aPersistenceType,
     fileSize = 0;
   }
 
-  // We need this extra raw pointer because we can't assign to the smart
-  // pointer directly since QuotaObject::AddRef needs to acquire the same mutex.
-  QuotaObject* quotaObject;
+  nsRefPtr<QuotaObject> result;
   {
     MutexAutoLock lock(mQuotaMutex);
 
@@ -1384,16 +1361,26 @@ QuotaManager::GetQuotaObject(PersistenceType aPersistenceType,
       return nullptr;
     }
 
+    // We need this extra raw pointer because we can't assign to the smart
+    // pointer directly since QuotaObject::AddRef would try to acquire the same
+    // mutex.
+    QuotaObject* quotaObject;
     if (!originInfo->mQuotaObjects.Get(path, &quotaObject)) {
+      // Create a new QuotaObject.
       quotaObject = new QuotaObject(originInfo, path, fileSize);
+
+      // Put it to the hashtable. The hashtable is not responsible to delete
+      // the QuotaObject.
       originInfo->mQuotaObjects.Put(path, quotaObject);
-      // The hashtable is not responsible to delete the QuotaObject.
     }
+
+    // Addref the QuotaObject and move the ownership to the result. This must
+    // happen before we unlock!
+    result = quotaObject->LockedAddRef();
   }
 
   // The caller becomes the owner of the QuotaObject, that is, the caller is
   // is responsible to delete it when the last reference is removed.
-  nsRefPtr<QuotaObject> result = quotaObject;
   return result.forget();
 }
 
@@ -2163,13 +2150,7 @@ QuotaManager::GetInfoFromWindow(nsPIDOMWindow* aWindow,
 {
   NS_ASSERTION(NS_IsMainThread(),
                "We're about to touch a window off the main thread!");
-
-  if (!aWindow) {
-    NS_ASSERTION(nsContentUtils::IsCallerChrome(),
-                 "Null window but not chrome!");
-    GetInfoForChrome(aGroup, aASCIIOrigin, aPrivilege, aDefaultPersistenceType);
-    return NS_OK;
-  }
+  NS_ASSERTION(aWindow, "Don't hand me a null window!");
 
   nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryInterface(aWindow);
   NS_ENSURE_TRUE(sop, NS_ERROR_FAILURE);
@@ -2182,6 +2163,31 @@ QuotaManager::GetInfoFromWindow(nsPIDOMWindow* aWindow,
   NS_ENSURE_SUCCESS(rv, rv);
 
   return NS_OK;
+}
+
+// static
+void
+QuotaManager::GetInfoForChrome(nsACString* aGroup,
+                               nsACString* aASCIIOrigin,
+                               StoragePrivilege* aPrivilege,
+                               PersistenceType* aDefaultPersistenceType)
+{
+  NS_ASSERTION(nsContentUtils::IsCallerChrome(), "Only for chrome!");
+
+  static const char kChromeOrigin[] = "chrome";
+
+  if (aGroup) {
+    aGroup->AssignLiteral(kChromeOrigin);
+  }
+  if (aASCIIOrigin) {
+    aASCIIOrigin->AssignLiteral(kChromeOrigin);
+  }
+  if (aPrivilege) {
+    *aPrivilege = Chrome;
+  }
+  if (aDefaultPersistenceType) {
+    *aDefaultPersistenceType = PERSISTENCE_TYPE_PERSISTENT;
+  }
 }
 
 NS_IMPL_ISUPPORTS2(QuotaManager, nsIQuotaManager, nsIObserver)

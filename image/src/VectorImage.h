@@ -11,6 +11,7 @@
 #include "mozilla/MemoryReporting.h"
 
 class nsIRequest;
+class gfxDrawable;
 
 namespace mozilla {
 namespace layers {
@@ -19,10 +20,11 @@ class ImageContainer;
 }
 namespace image {
 
-class SVGDocumentWrapper;
-class SVGRootRenderingObserver;
-class SVGLoadEventListener;
-class SVGParseCompleteListener;
+struct SVGDrawingParameters;
+class  SVGDocumentWrapper;
+class  SVGRootRenderingObserver;
+class  SVGLoadEventListener;
+class  SVGParseCompleteListener;
 
 class VectorImage : public ImageResource,
                     public nsIStreamListener
@@ -75,11 +77,15 @@ public:
   void OnSVGDocumentError();
 
 protected:
-  VectorImage(imgStatusTracker* aStatusTracker = nullptr, nsIURI* aURI = nullptr);
+  VectorImage(imgStatusTracker* aStatusTracker = nullptr,
+              ImageURL* aURI = nullptr);
 
   virtual nsresult StartAnimation();
   virtual nsresult StopAnimation();
   virtual bool     ShouldAnimate();
+
+  void CreateDrawableAndShow(const SVGDrawingParameters& aParams);
+  void Show(gfxDrawable* aDrawable, const SVGDrawingParameters& aParams);
 
 private:
   void CancelAllListeners();
@@ -96,6 +102,9 @@ private:
                                           // (Only set after mIsFullyLoaded.)
   bool           mHasPendingInvalidation; // Invalidate observers next refresh
                                           // driver tick.
+
+  // Initializes imgStatusTracker and resets it on RasterImage destruction.
+  nsAutoPtr<imgStatusTrackerInit> mStatusTrackerInit;
 
   friend class ImageFactory;
 };

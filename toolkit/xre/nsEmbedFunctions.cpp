@@ -77,6 +77,11 @@
 using mozilla::_ipdltest::IPDLUnitTestProcessChild;
 #endif  // ifdef MOZ_IPDL_TESTS
 
+#ifdef MOZ_NUWA_PROCESS
+#include "nsITimer.h"
+#define NUWA_PREPARATION_TIME 1000
+#endif
+
 using namespace mozilla;
 
 using mozilla::ipc::BrowserProcessSubThread;
@@ -100,6 +105,13 @@ static NS_DEFINE_CID(kAppShellCID, NS_APPSHELL_CID);
 
 #ifdef XP_WIN
 static const PRUnichar kShellLibraryName[] =  L"shell32.dll";
+#endif
+
+#ifdef MOZ_NUWA_PROCESS
+extern "C" {
+void PrepareNuwaProcess() __attribute__((weak));
+void MakeNuwaProcess() __attribute__((weak));
+};
 #endif
 
 nsresult
@@ -265,6 +277,16 @@ SetTaskbarGroupId(const nsString& aId)
 }
 #endif
 
+#ifdef MOZ_NUWA_PROCESS
+void
+OnFinishNuwaPreparation(nsITimer *aTimer, void *aClosure)
+{
+    NS_ASSERTION(MakeNuwaProcess != nullptr,
+		 "MakeNuwaProcess() is not available!");
+    MakeNuwaProcess();
+}
+#endif
+
 nsresult
 XRE_InitChildProcess(int aArgc,
                      char* aArgv[],
@@ -372,7 +394,7 @@ XRE_InitChildProcess(int aArgc,
   // on POSIX, |crashReporterArg| is "true" if crash reporting is
   // enabled, false otherwise
   if (0 != strcmp("false", crashReporterArg) && 
-      !XRE_SetRemoteExceptionHandler(NULL)) {
+      !XRE_SetRemoteExceptionHandler(nullptr)) {
     // Bug 684322 will add better visibility into this condition
     NS_WARNING("Could not setup crash reporting\n");
   }
@@ -385,7 +407,7 @@ XRE_InitChildProcess(int aArgc,
   gArgc = aArgc;
 
 #if defined(MOZ_WIDGET_GTK)
-  g_thread_init(NULL);
+  g_thread_init(nullptr);
 #endif
 
 #if defined(MOZ_WIDGET_QT)
@@ -511,6 +533,19 @@ XRE_InitChildProcess(int aArgc,
         NS_LogTerm();
         return NS_ERROR_FAILURE;
       }
+
+#ifdef MOZ_NUWA_PROCESS
+      nsCOMPtr<nsITimer> timer;
+      if (aProcess == GeckoProcessType_Content &&
+          CommandLine::ForCurrentProcess()->HasSwitch(L"nuwa")) {
+        // Wait the Nuwa process for NUWA_PREPARATION_TIME ms.
+        timer = do_CreateInstance(NS_TIMER_CONTRACTID);
+        rv = timer->InitWithFuncCallback(OnFinishNuwaPreparation,
+                                         nullptr,
+                                         NUWA_PREPARATION_TIME,
+                                         nsITimer::TYPE_ONE_SHOT);
+      }
+#endif
 
       // Run the UI event loop on the main thread.
       uiMessageLoop.MessageLoop::Run();

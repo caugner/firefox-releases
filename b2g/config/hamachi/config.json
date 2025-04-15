@@ -20,17 +20,16 @@
     ],
     "env": {
         "VARIANT": "user",
-        "MOZILLA_OFFICIAL": "1",
-        "B2GUPDATER": "1"
+        "MOZILLA_OFFICIAL": "1"
     },
     "b2g_manifest": "hamachi.xml",
-    "b2g_manifest_branch": "v1.2",
+    "b2g_manifest_branch": "master",
     "additional_source_tarballs": ["backup-hamachi.tar.xz"],
-    "gecko_l10n_root": "https://hg.mozilla.org/releases/l10n/mozilla-aurora",
+    "gecko_l10n_root": "http://hg.mozilla.org/l10n-central",
     "gaia": {
         "l10n": {
             "vcs": "hgtool",
-            "root": "https://hg.mozilla.org/releases/gaia-l10n/v1_2"
+            "root": "http://hg.mozilla.org/gaia-l10n"
         }
     }
 }

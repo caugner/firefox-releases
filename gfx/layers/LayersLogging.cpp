@@ -31,17 +31,17 @@ AppendToString(nsACString& s, const void* p,
 }
 
 nsACString&
-AppendToString(nsACString& s, const gfxPattern::GraphicsFilter& f,
+AppendToString(nsACString& s, const GraphicsFilter& f,
                const char* pfx, const char* sfx)
 {
   s += pfx;
   switch (f) {
-  case gfxPattern::FILTER_FAST:      s += "fast"; break;
-  case gfxPattern::FILTER_GOOD:      s += "good"; break;
-  case gfxPattern::FILTER_BEST:      s += "best"; break;
-  case gfxPattern::FILTER_NEAREST:   s += "nearest"; break;
-  case gfxPattern::FILTER_BILINEAR:  s += "bilinear"; break;
-  case gfxPattern::FILTER_GAUSSIAN:  s += "gaussian"; break;
+  case GraphicsFilter::FILTER_FAST:      s += "fast"; break;
+  case GraphicsFilter::FILTER_GOOD:      s += "good"; break;
+  case GraphicsFilter::FILTER_BEST:      s += "best"; break;
+  case GraphicsFilter::FILTER_NEAREST:   s += "nearest"; break;
+  case GraphicsFilter::FILTER_BILINEAR:  s += "bilinear"; break;
+  case GraphicsFilter::FILTER_GAUSSIAN:  s += "gaussian"; break;
   default:
     NS_ERROR("unknown filter type");
     s += "???";
@@ -225,7 +225,6 @@ AppendToString(nsACString& s, TextureFlags flags,
     AppendFlag(TEXTURE_DISALLOW_BIGIMAGE);
     AppendFlag(TEXTURE_ALLOW_REPEAT);
     AppendFlag(TEXTURE_NEW_TILE);
-    AppendFlag(TEXTURE_DEALLOCATE_HOST);
 
 #undef AppendFlag
   }

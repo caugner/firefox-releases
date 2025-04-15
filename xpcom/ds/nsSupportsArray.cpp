@@ -7,7 +7,6 @@
 #include "prbit.h"
 #include "nsSupportsArray.h"
 #include "nsSupportsArrayEnumerator.h"
-#include "nsAString.h"
 #include "nsIObjectInputStream.h"
 #include "nsIObjectOutputStream.h"
 
@@ -604,7 +603,7 @@ nsresult
 NS_NewISupportsArray(nsISupportsArray** aInstancePtrResult)
 {
   nsresult rv;
-  rv = nsSupportsArray::Create(NULL, NS_GET_IID(nsISupportsArray),
+  rv = nsSupportsArray::Create(nullptr, NS_GET_IID(nsISupportsArray),
                                (void**)aInstancePtrResult);
   return rv;
 }

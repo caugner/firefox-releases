@@ -26,7 +26,6 @@ class AbstractMediaDecoder;
 class MediaOmxReader : public MediaDecoderReader
 {
   nsCString mType;
-  android::sp<android::OmxDecoder> mOmxDecoder;
   bool mHasVideo;
   bool mHasAudio;
   nsIntRect mPicture;
@@ -34,6 +33,16 @@ class MediaOmxReader : public MediaDecoderReader
   int64_t mVideoSeekTimeUs;
   int64_t mAudioSeekTimeUs;
   int32_t mSkipCount;
+
+protected:
+  android::sp<android::OmxDecoder> mOmxDecoder;
+
+  // Called by ReadMetadata() during MediaDecoderStateMachine::DecodeMetadata()
+  // on decode thread. It create and initialize the OMX decoder including
+  // setting up custom extractor. The extractor provide the essential
+  // information used for creating OMX decoder such as video/audio codec.
+  virtual nsresult InitOmxDecoder();
+
 public:
   MediaOmxReader(AbstractMediaDecoder* aDecoder);
   ~MediaOmxReader();
@@ -64,7 +73,7 @@ public:
 
   virtual void ReleaseDecoder() MOZ_OVERRIDE;
 
-  virtual nsresult ReadMetadata(VideoInfo* aInfo,
+  virtual nsresult ReadMetadata(MediaInfo* aInfo,
                                 MetadataTags** aTags);
   virtual nsresult Seek(int64_t aTime, int64_t aStartTime, int64_t aEndTime, int64_t aCurrentTime);
   virtual nsresult GetBuffered(mozilla::dom::TimeRanges* aBuffered, int64_t aStartTime);

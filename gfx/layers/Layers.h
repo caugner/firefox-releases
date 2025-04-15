@@ -12,14 +12,16 @@
 #include "FrameMetrics.h"               // for FrameMetrics
 #include "Units.h"                      // for LayerMargin, LayerPoint
 #include "gfx3DMatrix.h"                // for gfx3DMatrix
-#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxContext.h"                 // for GraphicsOperator
+#include "gfxTypes.h"
 #include "gfxColor.h"                   // for gfxRGBA
 #include "gfxMatrix.h"                  // for gfxMatrix
-#include "gfxPattern.h"                 // for gfxPattern, etc
+#include "GraphicsFilter.h"             // for GraphicsFilter
 #include "gfxPoint.h"                   // for gfxPoint, gfxIntSize
 #include "gfxRect.h"                    // for gfxRect
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT_HELPER2, etc
 #include "mozilla/DebugOnly.h"          // for DebugOnly
+#include "mozilla/EventForwards.h"      // for nsPaintEvent
 #include "mozilla/RefPtr.h"             // for TemporaryRef
 #include "mozilla/TimeStamp.h"          // for TimeStamp, TimeDuration
 #include "mozilla/gfx/BaseMargin.h"     // for BaseMargin
@@ -44,9 +46,8 @@
 #include "nscore.h"                     // for nsACString, nsAString
 #include "prlog.h"                      // for PRLogModuleInfo
 
-
+class gfxASurface;
 class gfxContext;
-class nsPaintEvent;
 
 extern uint8_t gLayerManagerLayerBuilder;
 
@@ -396,7 +397,7 @@ public:
    */
   virtual already_AddRefed<gfxASurface>
     CreateOptimalSurface(const gfxIntSize &aSize,
-                         gfxASurface::gfxImageFormat imageFormat);
+                         gfxImageFormat imageFormat);
 
   /**
    * Creates a surface for alpha masks which is optimized for inter-operating
@@ -733,6 +734,29 @@ public:
     }
   }
 
+  void SetMixBlendMode(gfxContext::GraphicsOperator aMixBlendMode)
+  {
+    if (mMixBlendMode != aMixBlendMode) {
+      MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) MixBlendMode", this));
+      mMixBlendMode = aMixBlendMode;
+      Mutated();
+    }
+  }
+  
+  void SetForceIsolatedGroup(bool aForceIsolatedGroup)
+  {
+    if(mForceIsolatedGroup != aForceIsolatedGroup) {
+      MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) ForceIsolatedGroup", this));
+      mForceIsolatedGroup = aForceIsolatedGroup;
+      Mutated();
+    }
+  }
+  
+  bool GetForceIsolatedGroup() const
+  {
+    return mForceIsolatedGroup;
+  }
+
   /**
    * CONSTRUCTION PHASE ONLY
    * Set a clip rect which will be applied to this layer as it is
@@ -938,6 +962,7 @@ public:
 
   // These getters can be used anytime.
   float GetOpacity() { return mOpacity; }
+  gfxContext::GraphicsOperator GetMixBlendMode() const { return mMixBlendMode; }
   const nsIntRect* GetClipRect() { return mUseClipRect ? &mClipRect : nullptr; }
   uint32_t GetContentFlags() { return mContentFlags; }
   const nsIntRegion& GetVisibleRegion() { return mVisibleRegion; }
@@ -1103,11 +1128,18 @@ public:
   // accounting for this layer possibly being a shadow.
   const nsIntRect* GetEffectiveClipRect();
   const nsIntRegion& GetEffectiveVisibleRegion();
+
   /**
    * Returns the product of the opacities of this layer and all ancestors up
    * to and excluding the nearest ancestor that has UseIntermediateSurface() set.
    */
   float GetEffectiveOpacity();
+  
+  /**
+   * Returns the blendmode of this layer.
+   */
+  gfxContext::GraphicsOperator GetEffectiveMixBlendMode();
+  
   /**
    * This returns the effective transform computed by
    * ComputeEffectiveTransforms. Typically this is a transform that transforms
@@ -1305,6 +1337,8 @@ protected:
   AnimationArray mAnimations;
   InfallibleTArray<AnimData> mAnimationData;
   float mOpacity;
+  gfxContext::GraphicsOperator mMixBlendMode;
+  bool mForceIsolatedGroup;
   nsIntRect mClipRect;
   nsIntRect mTileSourceRect;
   nsIntRegion mInvalidRegion;
@@ -1764,7 +1798,7 @@ public:
    * CONSTRUCTION PHASE ONLY
    * Set the filter used to resample this image (if necessary).
    */
-  void SetFilter(gfxPattern::GraphicsFilter aFilter)
+  void SetFilter(GraphicsFilter aFilter)
   {
     if (mFilter != aFilter) {
       MOZ_LAYERS_LOG_IF_SHADOWABLE(this, ("Layer::Mutated(%p) Filter", this));
@@ -1772,7 +1806,7 @@ public:
       Mutated();
     }
   }
-  gfxPattern::GraphicsFilter GetFilter() const { return mFilter; }
+  GraphicsFilter GetFilter() const { return mFilter; }
 
   MOZ_LAYER_DECL_NAME("CanvasLayer", TYPE_CANVAS)
 
@@ -1796,7 +1830,7 @@ protected:
     , mPreTransCallbackData(nullptr)
     , mPostTransCallback(nullptr)
     , mPostTransCallbackData(nullptr)
-    , mFilter(gfxPattern::FILTER_GOOD)
+    , mFilter(GraphicsFilter::FILTER_GOOD)
     , mDirty(false)
   {}
 
@@ -1817,7 +1851,7 @@ protected:
   void* mPreTransCallbackData;
   DidTransactionCallback mPostTransCallback;
   void* mPostTransCallbackData;
-  gfxPattern::GraphicsFilter mFilter;
+  GraphicsFilter mFilter;
 
 private:
   /**
@@ -1927,7 +1961,7 @@ protected:
 #ifdef MOZ_DUMP_PAINTING
 void WriteSnapshotToDumpFile(Layer* aLayer, gfxASurface* aSurf);
 void WriteSnapshotToDumpFile(LayerManager* aManager, gfxASurface* aSurf);
-void WriteSnapshotToDumpFile(Compositor* aCompositor, gfxASurface* aSurf);
+void WriteSnapshotToDumpFile(Compositor* aCompositor, gfx::DrawTarget* aTarget);
 #endif
 
 }

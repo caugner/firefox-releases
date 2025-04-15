@@ -349,7 +349,7 @@ CompositorD3D11::GetTextureFactoryIdentifier()
 }
 
 bool
-CompositorD3D11::CanUseCanvasLayerForSize(const gfxIntSize& aSize)
+CompositorD3D11::CanUseCanvasLayerForSize(const gfx::IntSize& aSize)
 {
   int32_t maxTextureSize = GetMaxTextureSize();
 
@@ -750,17 +750,15 @@ CompositorD3D11::VerifyBufferSize()
 
   mDefaultRT = nullptr;
 
-  if (gfxWindowsPlatform::IsOptimus()) {
-    mSwapChain->ResizeBuffers(1, mSize.width, mSize.height,
-                              DXGI_FORMAT_B8G8R8A8_UNORM,
-                              0);
-#ifdef MOZ_METRO
-  } else if (IsRunningInWindowsMetro()) {
+  if (IsRunningInWindowsMetro()) {
     mSwapChain->ResizeBuffers(2, mSize.width, mSize.height,
                               DXGI_FORMAT_B8G8R8A8_UNORM,
                               0);
     mDisableSequenceForNextFrame = true;
-#endif
+  } else if (gfxWindowsPlatform::IsOptimus()) {
+    mSwapChain->ResizeBuffers(1, mSize.width, mSize.height,
+                              DXGI_FORMAT_B8G8R8A8_UNORM,
+                              0);
   } else {
     mSwapChain->ResizeBuffers(1, mSize.width, mSize.height,
                               DXGI_FORMAT_B8G8R8A8_UNORM,
@@ -909,17 +907,15 @@ CompositorD3D11::PaintToTarget()
 
   D3D11_MAPPED_SUBRESOURCE map;
   mContext->Map(readTexture, 0, D3D11_MAP_READ, 0, &map);
-
-  nsRefPtr<gfxImageSurface> tmpSurface =
-    new gfxImageSurface((unsigned char*)map.pData,
-                        gfxIntSize(bbDesc.Width, bbDesc.Height),
-                        map.RowPitch,
-                        gfxASurface::ImageFormatARGB32);
-
-  mTarget->SetSource(tmpSurface);
-  mTarget->SetOperator(gfxContext::OPERATOR_SOURCE);
-  mTarget->Paint();
-
+  RefPtr<DataSourceSurface> sourceSurface =
+    Factory::CreateWrappingDataSourceSurface((uint8_t*)map.pData,
+                                             map.RowPitch,
+                                             IntSize(bbDesc.Width, bbDesc.Height),
+                                             FORMAT_B8G8R8A8);
+  mTarget->CopySurface(sourceSurface,
+                       IntRect(0, 0, bbDesc.Width, bbDesc.Height),
+                       IntPoint());
+  mTarget->Flush();
   mContext->Unmap(readTexture, 0);
 }
 

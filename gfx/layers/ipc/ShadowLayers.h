@@ -10,7 +10,7 @@
 
 #include <stddef.h>                     // for size_t
 #include <stdint.h>                     // for uint64_t
-#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxTypes.h"
 #include "gfxPoint.h"                   // for gfxIntSize
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
 #include "mozilla/WidgetUtils.h"        // for ScreenRotation
@@ -24,6 +24,7 @@
  
 struct nsIntPoint;
 struct nsIntRect;
+class gfxASurface;
 
 namespace mozilla {
 namespace layers {
@@ -136,8 +137,6 @@ class ShadowLayerForwarder : public CompositableForwarder
   friend class AutoOpenSurface;
   friend class DeprecatedTextureClientShmem;
   friend class ContentClientIncremental;
-
-  typedef gfxASurface::gfxImageFormat gfxImageFormat;
 
 public:
   virtual ~ShadowLayerForwarder();
@@ -307,7 +306,7 @@ public:
   /**
    * See CompositableForwarder::AddTexture
    */
-  virtual void AddTexture(CompositableClient* aCompositable,
+  virtual bool AddTexture(CompositableClient* aCompositable,
                           TextureClient* aClient) MOZ_OVERRIDE;
 
   /**
@@ -335,7 +334,7 @@ public:
    * |aReplies| are directions from the LayerManagerComposite to the
    * caller of EndTransaction().
    */
-  bool EndTransaction(InfallibleTArray<EditReply>* aReplies);
+  bool EndTransaction(InfallibleTArray<EditReply>* aReplies, bool* aSent);
 
   /**
    * Set an actor through which layer updates will be pushed.
@@ -414,6 +413,12 @@ public:
 protected:
   ShadowLayerForwarder();
 
+#ifdef DEBUG
+  void CheckSurfaceDescriptor(const SurfaceDescriptor* aDescriptor) const;
+#else
+  void CheckSurfaceDescriptor(const SurfaceDescriptor* aDescriptor) const {}
+#endif
+
   PLayerTransactionChild* mShadowManager;
 
 #ifdef MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
@@ -454,7 +459,7 @@ private:
                                    gfxIntSize* aSize,
                                    gfxASurface** aSurface);
   // And again, for the image format.
-  // This function will return ImageFormatUnknown only if |aDescriptor|
+  // This function will return gfxImageFormatUnknown only if |aDescriptor|
   // describes a non-ImageSurface.
   static gfxImageFormat
   GetDescriptorSurfaceImageFormat(const SurfaceDescriptor& aDescriptor,

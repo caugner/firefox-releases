@@ -47,6 +47,7 @@
 #include "nsCExternalHandlerService.h"
 #include "nsIPermissionManager.h"
 #include "nsIStringBundle.h"
+#include "nsIDocument.h"
 #include <algorithm>
 
 #include "mozilla/dom/DeviceStorageBinding.h"
@@ -761,10 +762,16 @@ DeviceStorageFile::GetRootDirectoryForType(const nsAString& aStorageType,
   // crash reports directory.
   else if (aStorageType.EqualsLiteral(DEVICESTORAGE_CRASHES)) {
     f = sDirs->crashes;
+  } else {
+    // Not a storage type that we recognize. Return null
+    return;
   }
 
-  // in testing, we default all device storage types to a temp directory
-  if (f && sDirs->temp) {
+  // In testing, we default all device storage types to a temp directory.
+  // sDirs->temp will only have been initialized (in InitDirs) if the
+  // preference device.storage.testing was set to true. We can't test the
+  // preference directly here, since we may not be on the main thread.
+  if (sDirs->temp) {
     f = sDirs->temp;
   }
 
@@ -1367,17 +1374,14 @@ InterfaceToJsval(nsPIDOMWindow* aWindow,
     return JSVAL_NULL;
   }
 
-  JS::RootedObject scopeObj(cx, sgo->GetGlobalJSObject());
+  JS::Rooted<JSObject*> scopeObj(cx, sgo->GetGlobalJSObject());
   NS_ENSURE_TRUE(scopeObj, JSVAL_NULL);
   JSAutoCompartment ac(cx, scopeObj);
 
 
   JS::Rooted<JS::Value> someJsVal(cx);
-  nsresult rv = nsContentUtils::WrapNative(cx,
-                                           scopeObj,
-                                           aObject,
-                                           aIID,
-                                           someJsVal.address());
+  nsresult rv =
+    nsContentUtils::WrapNative(cx, scopeObj, aObject, aIID, &someJsVal);
   if (NS_FAILED(rv)) {
     return JSVAL_NULL;
   }
@@ -1436,7 +1440,7 @@ JS::Value StringToJsval(nsPIDOMWindow* aWindow, nsAString& aString)
     return JSVAL_NULL;
   }
 
-  JS::Value result = JSVAL_NULL;
+  JS::Rooted<JS::Value> result(cx);
   if (!xpc::StringToJsval(cx, aString, &result)) {
     return JSVAL_NULL;
   }
@@ -3351,7 +3355,7 @@ nsDOMDeviceStorage::AddEventListener(const nsAString & aType,
 
 void
 nsDOMDeviceStorage::AddEventListener(const nsAString & aType,
-                                     nsIDOMEventListener *aListener,
+                                     EventListener *aListener,
                                      bool aUseCapture,
                                      const Nullable<bool>& aWantsUntrusted,
                                      ErrorResult& aRv)
@@ -3407,7 +3411,7 @@ nsDOMDeviceStorage::RemoveEventListener(const nsAString & aType,
 
 void
 nsDOMDeviceStorage::RemoveEventListener(const nsAString& aType,
-                                        nsIDOMEventListener* aListener,
+                                        EventListener* aListener,
                                         bool aCapture,
                                         ErrorResult& aRv)
 {
@@ -3466,10 +3470,10 @@ nsDOMDeviceStorage::PostHandleEvent(nsEventChainPostVisitor & aVisitor)
 }
 
 nsresult
-nsDOMDeviceStorage::DispatchDOMEvent(nsEvent *aEvent,
-                                     nsIDOMEvent *aDOMEvent,
-                                     nsPresContext *aPresContext,
-                                     nsEventStatus *aEventStatus)
+nsDOMDeviceStorage::DispatchDOMEvent(WidgetEvent* aEvent,
+                                     nsIDOMEvent* aDOMEvent,
+                                     nsPresContext* aPresContext,
+                                     nsEventStatus* aEventStatus)
 {
   return nsDOMEventTargetHelper::DispatchDOMEvent(aEvent,
                                                   aDOMEvent,
@@ -3478,9 +3482,15 @@ nsDOMDeviceStorage::DispatchDOMEvent(nsEvent *aEvent,
 }
 
 nsEventListenerManager *
-nsDOMDeviceStorage::GetListenerManager(bool aMayCreate)
+nsDOMDeviceStorage::GetOrCreateListenerManager()
 {
-  return nsDOMEventTargetHelper::GetListenerManager(aMayCreate);
+  return nsDOMEventTargetHelper::GetOrCreateListenerManager();
+}
+
+nsEventListenerManager *
+nsDOMDeviceStorage::GetExistingListenerManager() const
+{
+  return nsDOMEventTargetHelper::GetExistingListenerManager();
 }
 
 nsIScriptContext *

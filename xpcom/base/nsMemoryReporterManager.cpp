@@ -8,21 +8,21 @@
 #include "nsAutoPtr.h"
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
-#include "nsDirectoryServiceUtils.h"
 #include "nsServiceManagerUtils.h"
 #include "nsMemoryReporterManager.h"
-#include "nsArrayEnumerator.h"
 #include "nsISimpleEnumerator.h"
-#include "nsIFile.h"
-#include "nsIFileStreams.h"
-#include "nsPrintfCString.h"
 #include "nsThreadUtils.h"
+#include "nsIDOMWindow.h"
+#include "nsPIDOMWindow.h"
 #include "nsIObserverService.h"
-#include "nsThread.h"
+#include "nsIGlobalObject.h"
+#if defined(XP_LINUX)
 #include "nsMemoryInfoDumper.h"
-#include "mozilla/Telemetry.h"
+#endif
 #include "mozilla/Attributes.h"
+#include "mozilla/PodOperations.h"
 #include "mozilla/Services.h"
+#include "mozilla/Telemetry.h"
 
 #ifndef XP_WIN
 #include <unistd.h>
@@ -37,7 +37,6 @@ using namespace mozilla;
 
 #if defined(XP_LINUX)
 
-#include <unistd.h>
 static nsresult GetProcSelfStatmField(int aField, int64_t* aN)
 {
     // There are more than two fields, but we're only interested in the first
@@ -58,19 +57,22 @@ static nsresult GetProcSelfStatmField(int aField, int64_t* aN)
 }
 
 #define HAVE_VSIZE_AND_RESIDENT_REPORTERS 1
-static nsresult GetVsize(int64_t* aN)
+static nsresult
+VsizeDistinguishedAmount(int64_t* aN)
 {
     return GetProcSelfStatmField(0, aN);
 }
 
-static nsresult GetResident(int64_t* aN)
+static nsresult
+ResidentDistinguishedAmount(int64_t* aN)
 {
     return GetProcSelfStatmField(1, aN);
 }
 
-static nsresult GetResidentFast(int64_t* aN)
+static nsresult
+ResidentFastDistinguishedAmount(int64_t* aN)
 {
-    return GetResident(aN);
+    return ResidentDistinguishedAmount(aN);
 }
 
 #define HAVE_RESIDENT_UNIQUE_REPORTER
@@ -164,14 +166,15 @@ static nsresult GetKinfoProcSelf(KINFO_PROC* aProc)
     };
     u_int miblen = sizeof(mib) / sizeof(mib[0]);
     size_t size = sizeof(KINFO_PROC);
-    if (sysctl(mib, miblen, aProc, &size, NULL, 0))
+    if (sysctl(mib, miblen, aProc, &size, nullptr, 0))
         return NS_ERROR_FAILURE;
 
     return NS_OK;
 }
 
 #define HAVE_VSIZE_AND_RESIDENT_REPORTERS 1
-static nsresult GetVsize(int64_t* aN)
+static nsresult
+VsizeDistinguishedAmount(int64_t* aN)
 {
     KINFO_PROC proc;
     nsresult rv = GetKinfoProcSelf(&proc);
@@ -181,7 +184,8 @@ static nsresult GetVsize(int64_t* aN)
     return rv;
 }
 
-static nsresult GetResident(int64_t* aN)
+static nsresult
+ResidentDistinguishedAmount(int64_t* aN)
 {
     KINFO_PROC proc;
     nsresult rv = GetKinfoProcSelf(&proc);
@@ -191,9 +195,10 @@ static nsresult GetResident(int64_t* aN)
     return rv;
 }
 
-static nsresult GetResidentFast(int64_t* aN)
+static nsresult
+ResidentFastDistinguishedAmount(int64_t* aN)
 {
-    return GetResident(aN);
+    return ResidentDistinguishedAmount(aN);
 }
 
 #elif defined(SOLARIS)
@@ -208,7 +213,7 @@ static void XMappingIter(int64_t& vsize, int64_t& resident)
     resident = -1;
     int mapfd = open("/proc/self/xmap", O_RDONLY);
     struct stat st;
-    prxmap_t* prmapp = NULL;
+    prxmap_t* prmapp = nullptr;
     if (mapfd >= 0) {
         if (!fstat(mapfd, &st)) {
             int nmap = st.st_size / sizeof(prxmap_t);
@@ -244,7 +249,8 @@ static void XMappingIter(int64_t& vsize, int64_t& resident)
 }
 
 #define HAVE_VSIZE_AND_RESIDENT_REPORTERS 1
-static nsresult GetVsize(int64_t* aN)
+static nsresult
+VsizeDistinguishedAmount(int64_t* aN)
 {
     int64_t vsize, resident;
     XMappingIter(vsize, resident);
@@ -255,7 +261,8 @@ static nsresult GetVsize(int64_t* aN)
     return NS_OK;
 }
 
-static nsresult GetResident(int64_t* aN)
+static nsresult
+ResidentDistinguishedAmount(int64_t* aN)
 {
     int64_t vsize, resident;
     XMappingIter(vsize, resident);
@@ -266,9 +273,10 @@ static nsresult GetResident(int64_t* aN)
     return NS_OK;
 }
 
-static nsresult GetResidentFast(int64_t* aN)
+static nsresult
+ResidentFastDistinguishedAmount(int64_t* aN)
 {
-    return GetResident(aN);
+    return ResidentDistinguishedAmount(aN);
 }
 
 #elif defined(XP_MACOSX)
@@ -288,7 +296,8 @@ static bool GetTaskBasicInfo(struct task_basic_info* aTi)
 // absurdly high, eg. 2GB+ even at start-up.  But both 'top' and 'ps' report
 // it, so we might as well too.
 #define HAVE_VSIZE_AND_RESIDENT_REPORTERS 1
-static nsresult GetVsize(int64_t* aN)
+static nsresult
+VsizeDistinguishedAmount(int64_t* aN)
 {
     task_basic_info ti;
     if (!GetTaskBasicInfo(&ti))
@@ -305,7 +314,7 @@ static nsresult GetVsize(int64_t* aN)
 //
 // Purging these pages can take a long time for some users (see bug 789975),
 // so we provide the option to get the RSS without purging first.
-static nsresult GetResident(int64_t* aN, bool aDoPurge)
+static nsresult ResidentDistinguishedAmountHelper(int64_t* aN, bool aDoPurge)
 {
 #ifdef HAVE_JEMALLOC_STATS
     if (aDoPurge) {
@@ -322,23 +331,27 @@ static nsresult GetResident(int64_t* aN, bool aDoPurge)
     return NS_OK;
 }
 
-static nsresult GetResidentFast(int64_t* aN)
+static nsresult
+ResidentFastDistinguishedAmount(int64_t* aN)
 {
-    return GetResident(aN, /* doPurge = */ false);
+    return ResidentDistinguishedAmountHelper(aN, /* doPurge = */ false);
 }
 
-static nsresult GetResident(int64_t* aN)
+static nsresult
+ResidentDistinguishedAmount(int64_t* aN)
 {
-    return GetResident(aN, /* doPurge = */ true);
+    return ResidentDistinguishedAmountHelper(aN, /* doPurge = */ true);
 }
 
 #elif defined(XP_WIN)
 
 #include <windows.h>
 #include <psapi.h>
+#include <algorithm>
 
 #define HAVE_VSIZE_AND_RESIDENT_REPORTERS 1
-static nsresult GetVsize(int64_t* aN)
+static nsresult
+VsizeDistinguishedAmount(int64_t* aN)
 {
     MEMORYSTATUSEX s;
     s.dwLength = sizeof(s);
@@ -351,7 +364,8 @@ static nsresult GetVsize(int64_t* aN)
     return NS_OK;
 }
 
-static nsresult GetResident(int64_t* aN)
+static nsresult
+ResidentDistinguishedAmount(int64_t* aN)
 {
     PROCESS_MEMORY_COUNTERS pmc;
     pmc.cb = sizeof(PROCESS_MEMORY_COUNTERS);
@@ -364,10 +378,54 @@ static nsresult GetResident(int64_t* aN)
     return NS_OK;
 }
 
-static nsresult GetResidentFast(int64_t* aN)
+static nsresult
+ResidentFastDistinguishedAmount(int64_t* aN)
 {
-    return GetResident(aN);
+    return ResidentDistinguishedAmount(aN);
 }
+
+#define HAVE_VSIZE_MAX_CONTIGUOUS_REPORTER 1
+static nsresult
+VsizeMaxContiguousDistinguishedAmount(int64_t* aN)
+{
+    SIZE_T biggestRegion = 0;
+    MEMORY_BASIC_INFORMATION vmemInfo = {0};
+    for (size_t currentAddress = 0; ; ) {
+        if (!VirtualQuery((LPCVOID)currentAddress, &vmemInfo, sizeof(vmemInfo))) {
+            // Something went wrong, just return whatever we've got already.
+            break;
+        }
+
+        if (vmemInfo.State == MEM_FREE) {
+            biggestRegion = std::max(biggestRegion, vmemInfo.RegionSize);
+        }
+
+        SIZE_T lastAddress = currentAddress;
+        currentAddress += vmemInfo.RegionSize;
+
+        // If we overflow, we've examined all of the address space.
+        if (currentAddress < lastAddress) {
+            break;
+        }
+    }
+
+    *aN = biggestRegion;
+    return NS_OK;
+}
+
+class VsizeMaxContiguousReporter MOZ_FINAL : public MemoryUniReporter
+{
+public:
+    VsizeMaxContiguousReporter()
+      : MemoryUniReporter("vsize-max-contiguous", KIND_OTHER, UNITS_BYTES,
+"Size of the maximum contiguous block of available virtual memory.")
+    {}
+
+    NS_IMETHOD GetAmount(int64_t* aAmount)
+    {
+        return VsizeMaxContiguousDistinguishedAmount(aAmount);
+    }
+};
 
 #define HAVE_PRIVATE_REPORTER
 class PrivateReporter MOZ_FINAL : public MemoryUniReporter
@@ -413,7 +471,10 @@ public:
 "resources used by the process.")
     {}
 
-    NS_IMETHOD GetAmount(int64_t* aAmount) { return GetVsize(aAmount); }
+    NS_IMETHOD GetAmount(int64_t* aAmount)
+    {
+        return VsizeDistinguishedAmount(aAmount);
+    }
 };
 
 class ResidentReporter MOZ_FINAL : public MemoryUniReporter
@@ -429,33 +490,15 @@ public:
 "time.")
     {}
 
-    NS_IMETHOD GetAmount(int64_t* aAmount) { return GetResident(aAmount); }
-};
-
-// This is a "redundant/"-prefixed reporter, which means it's ignored by
-// about:memory.  This is good because the "resident" reporter can purge pages
-// on MacOS, which affects the "resident-fast" results, and we don't want the
-// measurements shown in about:memory to be affected by the (arbitrary) order
-// of memory reporter execution.  This reporter is used by telemetry.
-class ResidentFastReporter MOZ_FINAL : public MemoryUniReporter
-{
-public:
-    ResidentFastReporter()
-      : MemoryUniReporter("redundant/resident-fast", KIND_OTHER, UNITS_BYTES,
-"This is the same measurement as 'resident', but it tries to be as fast as "
-"possible at the expense of accuracy.  On most platforms this is identical to "
-"the 'resident' measurement, but on Mac it may over-count.  You should use "
-"'resident-fast' where you care about latency of collection (e.g. in "
-"telemetry).  Otherwise you should use 'resident'.")
-    {}
-
-    NS_IMETHOD GetAmount(int64_t* aAmount) { return GetResidentFast(aAmount); }
+    NS_IMETHOD GetAmount(int64_t* aAmount)
+    {
+        return ResidentDistinguishedAmount(aAmount);
+    }
 };
 #endif  // HAVE_VSIZE_AND_RESIDENT_REPORTERS
 
 #ifdef XP_UNIX
 
-#include <sys/time.h>
 #include <sys/resource.h>
 
 #define HAVE_PAGE_FAULT_REPORTERS 1
@@ -489,6 +532,18 @@ public:
     }
 };
 
+static nsresult
+PageFaultsHardDistinguishedAmount(int64_t* aAmount)
+{
+    struct rusage usage;
+    int err = getrusage(RUSAGE_SELF, &usage);
+    if (err != 0) {
+        return NS_ERROR_FAILURE;
+    }
+    *aAmount = usage.ru_majflt;
+    return NS_OK;
+}
+
 class PageFaultsHardReporter MOZ_FINAL : public MemoryUniReporter
 {
 public:
@@ -508,13 +563,7 @@ public:
 
     NS_IMETHOD GetAmount(int64_t* aAmount)
     {
-        struct rusage usage;
-        int err = getrusage(RUSAGE_SELF, &usage);
-        if (err != 0) {
-            return NS_ERROR_FAILURE;
-        }
-        *aAmount = usage.ru_majflt;
-        return NS_OK;
+        return PageFaultsHardDistinguishedAmount(aAmount);
     }
 };
 #endif  // HAVE_PAGE_FAULT_REPORTERS
@@ -527,6 +576,25 @@ public:
 
 #ifdef HAVE_JEMALLOC_STATS
 
+static int64_t
+HeapAllocated()
+{
+    jemalloc_stats_t stats;
+    jemalloc_stats(&stats);
+    return (int64_t) stats.allocated;
+}
+
+// This has UNITS_PERCENTAGE, so it is multiplied by 100x.
+static int64_t
+HeapOverheadRatio()
+{
+    jemalloc_stats_t stats;
+    jemalloc_stats(&stats);
+    return (int64_t) 10000 *
+      (stats.waste + stats.bookkeeping + stats.page_cache) /
+      ((double)stats.allocated);
+}
+
 class HeapAllocatedReporter MOZ_FINAL : public MemoryUniReporter
 {
 public:
@@ -538,12 +606,7 @@ public:
 "exact amount requested is not recorded.)")
     {}
 private:
-    int64_t Amount() MOZ_OVERRIDE
-    {
-        jemalloc_stats_t stats;
-        jemalloc_stats(&stats);
-        return (int64_t) stats.allocated;
-    }
+    int64_t Amount() MOZ_OVERRIDE { return HeapAllocated(); }
 };
 
 class HeapOverheadWasteReporter MOZ_FINAL : public MemoryUniReporter
@@ -562,7 +625,7 @@ public:
 "fragmented, or that allocator is performing poorly for some other reason.")
     {}
 private:
-    int64_t Amount()
+    int64_t Amount() MOZ_OVERRIDE
     {
         jemalloc_stats_t stats;
         jemalloc_stats(&stats);
@@ -579,7 +642,7 @@ public:
 "Committed bytes which the heap allocator uses for internal data structures.")
     {}
 private:
-    int64_t Amount()
+    int64_t Amount() MOZ_OVERRIDE
     {
         jemalloc_stats_t stats;
         jemalloc_stats(&stats);
@@ -599,7 +662,7 @@ public:
 "is typically not larger than a few megabytes.")
     {}
 private:
-    int64_t Amount()
+    int64_t Amount() MOZ_OVERRIDE
     {
         jemalloc_stats_t stats;
         jemalloc_stats(&stats);
@@ -619,7 +682,7 @@ public:
 "exactly.")
     {}
 private:
-    int64_t Amount()
+    int64_t Amount() MOZ_OVERRIDE
     {
         jemalloc_stats_t stats;
         jemalloc_stats(&stats);
@@ -639,14 +702,7 @@ public:
 "the heap allocator relative to amount of memory allocated.")
     {}
 private:
-    int64_t Amount()
-    {
-        jemalloc_stats_t stats;
-        jemalloc_stats(&stats);
-        return (int64_t) 10000 *
-          (stats.waste + stats.bookkeeping + stats.page_cache) /
-          ((double)stats.allocated);
-    }
+    int64_t Amount() MOZ_OVERRIDE { return HeapOverheadRatio(); }
 };
 #endif  // HAVE_JEMALLOC_STATS
 
@@ -663,7 +719,10 @@ public:
 "Memory used by the dynamic and static atoms tables.")
     {}
 private:
-    int64_t Amount() { return NS_SizeOfAtomTablesIncludingThis(MallocSizeOf); }
+    int64_t Amount() MOZ_OVERRIDE
+    {
+        return NS_SizeOfAtomTablesIncludingThis(MallocSizeOf);
+    }
 };
 
 #ifdef MOZ_DMD
@@ -758,7 +817,10 @@ nsMemoryReporterManager::Init()
 #ifdef HAVE_VSIZE_AND_RESIDENT_REPORTERS
     RegisterReporter(new VsizeReporter);
     RegisterReporter(new ResidentReporter);
-    RegisterReporter(new ResidentFastReporter);
+#endif
+
+#ifdef HAVE_VSIZE_MAX_CONTIGUOUS_REPORTER
+    RegisterReporter(new VsizeMaxContiguousReporter);
 #endif
 
 #ifdef HAVE_RESIDENT_UNIQUE_REPORTER
@@ -854,6 +916,8 @@ nsMemoryReporterManager::nsMemoryReporterManager()
   : mMutex("nsMemoryReporterManager::mMutex"),
     mIsRegistrationBlocked(false)
 {
+    PodZero(&mAmountFns);
+    PodZero(&mSizeOfTabFns);
 }
 
 nsMemoryReporterManager::~nsMemoryReporterManager()
@@ -970,17 +1034,6 @@ nsMemoryReporterManager::UnblockRegistration()
     return NS_OK;
 }
 
-NS_IMETHODIMP
-nsMemoryReporterManager::GetResident(int64_t* aResident)
-{
-#ifdef HAVE_VSIZE_AND_RESIDENT_REPORTERS
-    return ::GetResident(aResident);
-#else
-    *aResident = 0;
-    return NS_ERROR_NOT_AVAILABLE;
-#endif
-}
-
 // This is just a wrapper for int64_t that implements nsISupports, so it can be
 // passed to nsIMemoryReporter::CollectReports.
 class Int64Wrapper MOZ_FINAL : public nsISupports {
@@ -1001,6 +1054,12 @@ public:
                         const nsACString& aDescription,
                         nsISupports* aWrappedExplicit)
     {
+        // Using the "heap-allocated" reporter here instead of
+        // nsMemoryReporterManager.heapAllocated goes against the usual
+        // pattern.  But it's for a good reason:  in tests, we can easily
+        // create artificial (i.e. deterministic) reporters -- which allows us
+        // to precisely test nsMemoryReporterManager.explicit -- but we can't
+        // do that for distinguished amounts.
         if (aPath.Equals("heap-allocated") ||
             (aKind == nsIMemoryReporter::KIND_NONHEAP &&
              PromiseFlatCString(aPath).Find("explicit") == 0))
@@ -1015,14 +1074,13 @@ public:
 NS_IMPL_ISUPPORTS1(ExplicitCallback, nsIMemoryReporterCallback)
 
 NS_IMETHODIMP
-nsMemoryReporterManager::GetExplicit(int64_t* aExplicit)
+nsMemoryReporterManager::GetExplicit(int64_t* aAmount)
 {
-    NS_ENSURE_ARG_POINTER(aExplicit);
-    *aExplicit = 0;
+    NS_ENSURE_ARG_POINTER(aAmount);
+    *aAmount = 0;
 #ifndef HAVE_JEMALLOC_STATS
     return NS_ERROR_NOT_AVAILABLE;
 #else
-    nsresult rv;
     bool more;
 
     // For each reporter we call CollectReports and filter out the
@@ -1042,10 +1100,158 @@ nsMemoryReporterManager::GetExplicit(int64_t* aExplicit)
         r->CollectReports(cb, wrappedExplicitSize);
     }
 
-    *aExplicit = wrappedExplicitSize->mValue;
+    *aAmount = wrappedExplicitSize->mValue;
 
     return NS_OK;
 #endif // HAVE_JEMALLOC_STATS
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetVsize(int64_t* aVsize)
+{
+#ifdef HAVE_VSIZE_AND_RESIDENT_REPORTERS
+    return VsizeDistinguishedAmount(aVsize);
+#else
+    *aResident = 0;
+    return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetVsizeMaxContiguous(int64_t* aAmount)
+{
+#ifdef HAVE_VSIZE_MAX_CONTIGUOUS_REPORTER
+    return VsizeMaxContiguousDistinguishedAmount(aAmount);
+#else
+    *aAmount = 0;
+    return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetResident(int64_t* aAmount)
+{
+#ifdef HAVE_VSIZE_AND_RESIDENT_REPORTERS
+    return ResidentDistinguishedAmount(aAmount);
+#else
+    *aAmount = 0;
+    return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetResidentFast(int64_t* aAmount)
+{
+#ifdef HAVE_VSIZE_AND_RESIDENT_REPORTERS
+    return ResidentFastDistinguishedAmount(aAmount);
+#else
+    *aAmount = 0;
+    return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetHeapAllocated(int64_t* aAmount)
+{
+#ifdef HAVE_JEMALLOC_STATS
+    *aAmount = HeapAllocated();
+    return NS_OK;
+#else
+    *aAmount = 0;
+    return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+// This has UNITS_PERCENTAGE, so it is multiplied by 100x.
+NS_IMETHODIMP
+nsMemoryReporterManager::GetHeapOverheadRatio(int64_t* aAmount)
+{
+#ifdef HAVE_JEMALLOC_STATS
+    *aAmount = HeapOverheadRatio();
+    return NS_OK;
+#else
+    *aAmount = 0;
+    return NS_ERROR_NOT_AVAILABLE;
+#endif
+}
+
+static nsresult
+GetInfallibleAmount(InfallibleAmountFn aAmountFn, int64_t* aAmount)
+{
+    if (aAmountFn) {
+        *aAmount = aAmountFn();
+        return NS_OK;
+    }
+    *aAmount = 0;
+    return NS_ERROR_NOT_AVAILABLE;
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetJSMainRuntimeGCHeap(int64_t* aAmount)
+{
+    return GetInfallibleAmount(mAmountFns.mJSMainRuntimeGCHeap, aAmount);
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetJSMainRuntimeTemporaryPeak(int64_t* aAmount)
+{
+    return GetInfallibleAmount(mAmountFns.mJSMainRuntimeTemporaryPeak, aAmount);
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetJSMainRuntimeCompartmentsSystem(int64_t* aAmount)
+{
+    return GetInfallibleAmount(mAmountFns.mJSMainRuntimeCompartmentsSystem,
+                               aAmount);
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetJSMainRuntimeCompartmentsUser(int64_t* aAmount)
+{
+    return GetInfallibleAmount(mAmountFns.mJSMainRuntimeCompartmentsUser,
+                               aAmount);
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetImagesContentUsedUncompressed(int64_t* aAmount)
+{
+    return GetInfallibleAmount(mAmountFns.mImagesContentUsedUncompressed,
+                               aAmount);
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetStorageSQLite(int64_t* aAmount)
+{
+    return GetInfallibleAmount(mAmountFns.mStorageSQLite, aAmount);
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetLowMemoryEventsVirtual(int64_t* aAmount)
+{
+    return GetInfallibleAmount(mAmountFns.mLowMemoryEventsVirtual, aAmount);
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetLowMemoryEventsPhysical(int64_t* aAmount)
+{
+    return GetInfallibleAmount(mAmountFns.mLowMemoryEventsPhysical, aAmount);
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetGhostWindows(int64_t* aAmount)
+{
+    return GetInfallibleAmount(mAmountFns.mGhostWindows, aAmount);
+}
+
+NS_IMETHODIMP
+nsMemoryReporterManager::GetPageFaultsHard(int64_t* aAmount)
+{
+#ifdef HAVE_PAGE_FAULT_REPORTERS
+    return PageFaultsHardDistinguishedAmount(aAmount);
+#else
+    *aAmount = 0;
+    return NS_ERROR_NOT_AVAILABLE;
+#endif
 }
 
 NS_IMETHODIMP
@@ -1145,6 +1351,56 @@ nsMemoryReporterManager::MinimizeMemoryUsage(nsIRunnable* aCallback,
   return NS_DispatchToMainThread(runnable);
 }
 
+NS_IMETHODIMP
+nsMemoryReporterManager::SizeOfTab(nsIDOMWindow* aTopWindow,
+                                   int64_t* aJSObjectsSize,
+                                   int64_t* aJSStringsSize,
+                                   int64_t* aJSOtherSize,
+                                   int64_t* aDomSize,
+                                   int64_t* aStyleSize,
+                                   int64_t* aOtherSize,
+                                   int64_t* aTotalSize,
+                                   double*  aJSMilliseconds,
+                                   double*  aNonJSMilliseconds)
+{
+    nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aTopWindow);
+    nsCOMPtr<nsPIDOMWindow> piWindow = do_QueryInterface(aTopWindow);
+    NS_ENSURE_TRUE(!!global && !!piWindow, NS_ERROR_FAILURE);
+
+    TimeStamp t1 = TimeStamp::Now();
+
+    // Measure JS memory consumption (and possibly some non-JS consumption, via
+    // |jsPrivateSize|).
+    size_t jsObjectsSize, jsStringsSize, jsPrivateSize, jsOtherSize;
+    nsresult rv = mSizeOfTabFns.mJS(global->GetGlobalJSObject(),
+                                    &jsObjectsSize, &jsStringsSize,
+                                    &jsPrivateSize, &jsOtherSize);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    TimeStamp t2 = TimeStamp::Now();
+
+    // Measure non-JS memory consumption.
+    size_t domSize, styleSize, otherSize;
+    mSizeOfTabFns.mNonJS(piWindow, &domSize, &styleSize, &otherSize);
+
+    TimeStamp t3 = TimeStamp::Now();
+
+    *aTotalSize = 0;
+    #define DO(aN, n) { *aN = (n); *aTotalSize += (n); }
+    DO(aJSObjectsSize, jsObjectsSize);
+    DO(aJSStringsSize, jsStringsSize);
+    DO(aJSOtherSize,   jsOtherSize);
+    DO(aDomSize,       jsPrivateSize + domSize);
+    DO(aStyleSize,     styleSize);
+    DO(aOtherSize,     otherSize);
+    #undef DO
+
+    *aJSMilliseconds    = (t2 - t1).ToMilliseconds();
+    *aNonJSMilliseconds = (t3 - t2).ToMilliseconds();
+
+    return NS_OK;
+}
+
 // Most memory reporters don't need thread safety, but some do.  Make them all
 // thread-safe just to be safe.  Memory reporters are created and destroyed
 // infrequently enough that the performance cost should be negligible.
@@ -1168,6 +1424,73 @@ NS_UnregisterMemoryReporter(nsIMemoryReporter* aReporter)
         return NS_ERROR_FAILURE;
     }
     return mgr->UnregisterReporter(aReporter);
+}
+
+namespace mozilla {
+
+#define GET_MEMORY_REPORTER_MANAGER(mgr)                                      \
+    nsCOMPtr<nsIMemoryReporterManager> imgr =                                 \
+        do_GetService("@mozilla.org/memory-reporter-manager;1");              \
+    nsRefPtr<nsMemoryReporterManager> mgr =                                   \
+        static_cast<nsMemoryReporterManager*>(imgr.get());                    \
+    if (!mgr) {                                                               \
+        return NS_ERROR_FAILURE;                                              \
+    }
+
+// Macro for generating functions that register distinguished amount functions
+// with the memory reporter manager.
+#define DEFINE_REGISTER_DISTINGUISHED_AMOUNT(kind, name)                      \
+    nsresult                                                                  \
+    Register##name##DistinguishedAmount(kind##AmountFn aAmountFn)             \
+    {                                                                         \
+        GET_MEMORY_REPORTER_MANAGER(mgr)                                      \
+        mgr->mAmountFns.m##name = aAmountFn;                                  \
+        return NS_OK;                                                         \
+    }
+
+#define DEFINE_UNREGISTER_DISTINGUISHED_AMOUNT(name)                          \
+    nsresult                                                                  \
+    Unregister##name##DistinguishedAmount()                                   \
+    {                                                                         \
+        GET_MEMORY_REPORTER_MANAGER(mgr)                                      \
+        mgr->mAmountFns.m##name = nullptr;                                    \
+        return NS_OK;                                                         \
+    }
+
+DEFINE_REGISTER_DISTINGUISHED_AMOUNT(Infallible, JSMainRuntimeGCHeap)
+DEFINE_REGISTER_DISTINGUISHED_AMOUNT(Infallible, JSMainRuntimeTemporaryPeak)
+DEFINE_REGISTER_DISTINGUISHED_AMOUNT(Infallible, JSMainRuntimeCompartmentsSystem)
+DEFINE_REGISTER_DISTINGUISHED_AMOUNT(Infallible, JSMainRuntimeCompartmentsUser)
+
+DEFINE_REGISTER_DISTINGUISHED_AMOUNT(Infallible, ImagesContentUsedUncompressed)
+
+DEFINE_REGISTER_DISTINGUISHED_AMOUNT(Infallible, StorageSQLite)
+DEFINE_UNREGISTER_DISTINGUISHED_AMOUNT(StorageSQLite)
+
+DEFINE_REGISTER_DISTINGUISHED_AMOUNT(Infallible, LowMemoryEventsVirtual)
+DEFINE_REGISTER_DISTINGUISHED_AMOUNT(Infallible, LowMemoryEventsPhysical)
+
+DEFINE_REGISTER_DISTINGUISHED_AMOUNT(Infallible, GhostWindows)
+
+#undef DEFINE_REGISTER_DISTINGUISHED_AMOUNT
+#undef DEFINE_UNREGISTER_DISTINGUISHED_AMOUNT
+
+#define DEFINE_REGISTER_SIZE_OF_TAB(name)                                     \
+    nsresult                                                                  \
+    Register##name##SizeOfTab(name##SizeOfTabFn aSizeOfTabFn)                 \
+    {                                                                         \
+        GET_MEMORY_REPORTER_MANAGER(mgr)                                      \
+        mgr->mSizeOfTabFns.m##name = aSizeOfTabFn;                            \
+        return NS_OK;                                                         \
+    }
+
+DEFINE_REGISTER_SIZE_OF_TAB(JS);
+DEFINE_REGISTER_SIZE_OF_TAB(NonJS);
+
+#undef DEFINE_REGISTER_SIZE_OF_TAB
+
+#undef GET_MEMORY_REPORTER_MANAGER
+
 }
 
 #if defined(MOZ_DMD)

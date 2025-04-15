@@ -213,7 +213,7 @@ nsJARChannel::~nsJARChannel()
 {
     // release owning reference to the jar handler
     nsJARProtocolHandler *handler = gJarHandler;
-    NS_RELEASE(handler); // NULL parameter
+    NS_RELEASE(handler); // nullptr parameter
 }
 
 NS_IMPL_ISUPPORTS_INHERITED7(nsJARChannel,
@@ -349,7 +349,7 @@ nsJARChannel::LookupFile()
         rv = mJarBaseURI->GetScheme(scheme);
         if (NS_SUCCEEDED(rv) && scheme.EqualsLiteral("remoteopenfile")) {
             nsRefPtr<RemoteOpenFileChild> remoteFile = new RemoteOpenFileChild();
-            rv = remoteFile->Init(mJarBaseURI);
+            rv = remoteFile->Init(mJarBaseURI, mAppURI);
             NS_ENSURE_SUCCESS(rv, rv);
             mJarFile = remoteFile;
 

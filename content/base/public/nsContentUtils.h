@@ -9,7 +9,6 @@
 #ifndef nsContentUtils_h___
 #define nsContentUtils_h___
 
-#include <math.h>
 #if defined(XP_WIN) || defined(XP_OS2)
 #include <float.h>
 #endif
@@ -19,8 +18,9 @@
 #endif
 
 #include "js/TypeDecls.h"
+#include "js/Value.h"
 #include "js/RootingAPI.h"
-#include "mozilla/Assertions.h"
+#include "mozilla/EventForwards.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/TimeStamp.h"
 #include "nsContentListDeclarations.h"
@@ -34,8 +34,6 @@ class imgIRequest;
 class imgLoader;
 class imgRequestProxy;
 class nsAutoScriptBlockerSuppressNodeRemoved;
-class nsDragEvent;
-class nsEvent;
 class nsEventListenerManager;
 class nsHtml5StringParser;
 class nsIChannel;
@@ -84,7 +82,6 @@ class nsIWidget;
 class nsIWordBreaker;
 class nsIXPConnect;
 class nsIXPConnectJSObjectHolder;
-class nsKeyEvent;
 class nsNodeInfoManager;
 class nsPIDOMWindow;
 class nsPresContext;
@@ -740,6 +737,14 @@ public:
   }
 
   /**
+   * Report simple error message to the browser console
+   *   @param aErrorText the error message
+   *   @param classification Name of the module reporting error
+   */
+  static void LogSimpleConsoleError(const nsAString& aErrorText,
+                                    const char * classification);
+
+  /**
    * Report a non-localized error message to the error console.
    *   @param aErrorText the error message
    *   @param aErrorFlags See nsIScriptError.
@@ -1054,15 +1059,19 @@ public:
                                       nsCycleCollectionTraversalCallback &cb);
 
   /**
-   * Get the eventlistener manager for aNode. If a new eventlistener manager
-   * was created, aCreated is set to true.
+   * Get the eventlistener manager for aNode, creating it if it does not
+   * already exist.
    *
    * @param aNode The node for which to get the eventlistener manager.
-   * @param aCreateIfNotFound If false, returns a listener manager only if
-   *                          one already exists.
    */
-  static nsEventListenerManager* GetListenerManager(nsINode* aNode,
-                                                    bool aCreateIfNotFound);
+  static nsEventListenerManager* GetListenerManagerForNode(nsINode* aNode);
+  /**
+   * Get the eventlistener manager for aNode, returning null if it does not
+   * already exist.
+   *
+   * @param aNode The node for which to get the eventlistener manager.
+   */
+  static nsEventListenerManager* GetExistingListenerManagerForNode(const nsINode* aNode);
 
   static void UnmarkGrayJSListenersInCCGenerationDocuments(uint32_t aGeneration);
 
@@ -1362,13 +1371,6 @@ public:
   static const nsDependentString GetLocalizedEllipsis();
 
   /**
-   * The routine GetNativeEvent returns the result of
-   * aDOMEvent->GetInternalNSEvent().
-   * XXX Is this necessary?
-   */
-  static nsEvent* GetNativeEvent(nsIDOMEvent* aDOMEvent);
-
-  /**
    * Get the candidates for accelkeys for aDOMKeyEvent.
    *
    * @param aDOMKeyEvent [in] the key event for accelkey handling.
@@ -1385,8 +1387,9 @@ public:
    * @param aCandidates [out] the candidate access key list.
    *                          the first item is most preferred.
    */
-  static void GetAccessKeyCandidates(nsKeyEvent* aNativeKeyEvent,
-                                     nsTArray<uint32_t>& aCandidates);
+  static void GetAccessKeyCandidates(
+                mozilla::WidgetKeyboardEvent* aNativeKeyEvent,
+                nsTArray<uint32_t>& aCandidates);
 
   /**
    * Hide any XUL popups associated with aDocument, including any documents
@@ -1400,9 +1403,9 @@ public:
   static already_AddRefed<nsIDragSession> GetDragSession();
 
   /*
-   * Initialize and set the dataTransfer field of an nsDragEvent.
+   * Initialize and set the dataTransfer field of an WidgetDragEvent.
    */
-  static nsresult SetDataTransferInEvent(nsDragEvent* aDragEvent);
+  static nsresult SetDataTransferInEvent(mozilla::WidgetDragEvent* aDragEvent);
 
   // filters the drag and drop action to fit within the effects allowed and
   // returns it.
@@ -1413,7 +1416,7 @@ public:
    * an ancestor of the document for the source of the drag.
    */
   static bool CheckForSubFrameDrop(nsIDragSession* aDragSession,
-                                   nsDragEvent* aDropEvent);
+                                   mozilla::WidgetDragEvent* aDropEvent);
 
   /**
    * Return true if aURI is a local file URI (i.e. file://).
@@ -1630,7 +1633,7 @@ public:
 
   static nsresult WrapNative(JSContext *cx, JS::Handle<JSObject*> scope,
                              nsISupports *native, const nsIID* aIID,
-                             JS::Value *vp,
+                             JS::MutableHandle<JS::Value> vp,
                              // If non-null aHolder will keep the Value alive
                              // while there's a ref to it
                              nsIXPConnectJSObjectHolder** aHolder = nullptr,
@@ -1642,7 +1645,7 @@ public:
 
   // Same as the WrapNative above, but use this one if aIID is nsISupports' IID.
   static nsresult WrapNative(JSContext *cx, JS::Handle<JSObject*> scope,
-                             nsISupports *native, JS::Value *vp,
+                             nsISupports *native, JS::MutableHandle<JS::Value> vp,
                              // If non-null aHolder will keep the Value alive
                              // while there's a ref to it
                              nsIXPConnectJSObjectHolder** aHolder = nullptr,
@@ -1653,7 +1656,7 @@ public:
   }
   static nsresult WrapNative(JSContext *cx, JS::Handle<JSObject*> scope,
                              nsISupports *native, nsWrapperCache *cache,
-                             JS::Value *vp,
+                             JS::MutableHandle<JS::Value> vp,
                              // If non-null aHolder will keep the Value alive
                              // while there's a ref to it
                              nsIXPConnectJSObjectHolder** aHolder = nullptr,
@@ -2084,7 +2087,7 @@ private:
 
   static nsresult WrapNative(JSContext *cx, JS::Handle<JSObject*> scope,
                              nsISupports *native, nsWrapperCache *cache,
-                             const nsIID* aIID, JS::Value *vp,
+                             const nsIID* aIID, JS::MutableHandle<JS::Value> vp,
                              nsIXPConnectJSObjectHolder** aHolder,
                              bool aAllowWrapping);
 
@@ -2186,14 +2189,6 @@ private:
   static bool sDOMWindowDumpEnabled;
 #endif
 };
-
-#define NS_HOLD_JS_OBJECTS(obj, clazz)                                         \
-  nsContentUtils::HoldJSObjects(NS_CYCLE_COLLECTION_UPCAST(obj, clazz),        \
-                                NS_CYCLE_COLLECTION_PARTICIPANT(clazz))
-
-#define NS_DROP_JS_OBJECTS(obj, clazz)                                         \
-  nsContentUtils::DropJSObjects(NS_CYCLE_COLLECTION_UPCAST(obj, clazz))
-
 
 class MOZ_STACK_CLASS nsAutoScriptBlocker {
 public:

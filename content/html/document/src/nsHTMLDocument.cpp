@@ -117,10 +117,6 @@ using namespace mozilla::dom;
 
 #include "prtime.h"
 
-// Find/Search Includes
-const int32_t kForward  = 0;
-const int32_t kBackward = 1;
-
 //#define DEBUG_charset
 
 static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
@@ -399,22 +395,8 @@ nsHTMLDocument::TryCacheCharset(nsICachingChannel* aCachingChannel,
   }
 }
 
-static bool
-CheckSameOrigin(nsINode* aNode1, nsINode* aNode2)
-{
-  NS_PRECONDITION(aNode1, "Null node?");
-  NS_PRECONDITION(aNode2, "Null node?");
-
-  bool equal;
-  return
-    NS_SUCCEEDED(aNode1->NodePrincipal()->
-                   Equals(aNode2->NodePrincipal(), &equal)) &&
-    equal;
-}
-
 void
 nsHTMLDocument::TryParentCharset(nsIDocShell*  aDocShell,
-                                 nsIDocument* aParentDocument,
                                  int32_t& aCharsetSource,
                                  nsACString& aCharset)
 {
@@ -427,11 +409,13 @@ nsHTMLDocument::TryParentCharset(nsIDocShell*  aDocShell,
 
   int32_t parentSource;
   nsAutoCString parentCharset;
-  aDocShell->GetParentCharset(parentCharset);
+  nsCOMPtr<nsIPrincipal> parentPrincipal;
+  aDocShell->GetParentCharset(parentCharset,
+                              &parentSource,
+                              getter_AddRefs(parentPrincipal));
   if (parentCharset.IsEmpty()) {
     return;
   }
-  aDocShell->GetParentCharsetSource(&parentSource);
   if (kCharsetFromParentForced == parentSource ||
       kCharsetFromUserForced == parentSource) {
     if (WillIgnoreCharsetOverride() ||
@@ -450,8 +434,7 @@ nsHTMLDocument::TryParentCharset(nsIDocShell*  aDocShell,
 
   if (kCharsetFromCache <= parentSource) {
     // Make sure that's OK
-    if (!aParentDocument ||
-        !CheckSameOrigin(this, aParentDocument) ||
+    if (!NodePrincipal()->Equals(parentPrincipal) ||
         !EncodingUtils::IsAsciiCompatible(parentCharset)) {
       return;
     }
@@ -618,26 +601,19 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
   }
 
   nsCOMPtr<nsIDocShell> parent(do_QueryInterface(parentAsItem));
-  nsCOMPtr<nsIDocument> parentDocument;
   nsCOMPtr<nsIContentViewer> parentContentViewer;
   if (parent) {
     rv = parent->GetContentViewer(getter_AddRefs(parentContentViewer));
     NS_ENSURE_SUCCESS(rv, rv);
-    if (parentContentViewer) {
-      parentDocument = parentContentViewer->GetDocument();
-    }
   }
 
-  //
-  // The following logic is mirrored in nsWebShell::Embed!
-  //
   nsCOMPtr<nsIMarkupDocumentViewer> muCV;
   nsCOMPtr<nsIContentViewer> cv;
   if (docShell) {
     docShell->GetContentViewer(getter_AddRefs(cv));
   }
   if (cv) {
-    muCV = do_QueryInterface(cv);
+     muCV = do_QueryInterface(cv);
   } else {
     muCV = do_QueryInterface(parentContentViewer);
   }
@@ -701,7 +677,7 @@ nsHTMLDocument::StartDocumentLoad(const char* aCommand,
     TryUserForcedCharset(muCV, docShell, charsetSource, charset);
 
     TryHintCharset(muCV, charsetSource, charset); // XXX mailnews-only
-    TryParentCharset(docShell, parentDocument, charsetSource, charset);
+    TryParentCharset(docShell, charsetSource, charset);
 
     if (cachingChan && !urlSpec.IsEmpty()) {
       TryCacheCharset(cachingChan, charsetSource, charset);
@@ -3686,9 +3662,9 @@ nsHTMLDocument::RemovedFromDocShell()
 }
 
 /* virtual */ void
-nsHTMLDocument::DocSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const
+nsHTMLDocument::DocAddSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const
 {
-  nsDocument::DocSizeOfExcludingThis(aWindowSizes);
+  nsDocument::DocAddSizeOfExcludingThis(aWindowSizes);
 
   // Measurement of the following members may be added later if DMD finds it is
   // worthwhile:

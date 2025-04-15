@@ -5,25 +5,19 @@
 
 #include "nsCOMPtr.h"
 #include "nsDOMMutationEvent.h"
+#include "mozilla/MutationEvent.h"
+
+using namespace mozilla;
 
 class nsPresContext;
 
 nsDOMMutationEvent::nsDOMMutationEvent(mozilla::dom::EventTarget* aOwner,
                                        nsPresContext* aPresContext,
-                                       nsMutationEvent* aEvent)
+                                       InternalMutationEvent* aEvent)
   : nsDOMEvent(aOwner, aPresContext,
-               aEvent ? aEvent : new nsMutationEvent(false, 0))
+               aEvent ? aEvent : new InternalMutationEvent(false, 0))
 {
   mEventIsInternal = (aEvent == nullptr);
-}
-
-nsDOMMutationEvent::~nsDOMMutationEvent()
-{
-  if (mEventIsInternal) {
-    nsMutationEvent* mutation = static_cast<nsMutationEvent*>(mEvent);
-    delete mutation;
-    mEvent = nullptr;
-  }
 }
 
 NS_INTERFACE_MAP_BEGIN(nsDOMMutationEvent)
@@ -32,6 +26,14 @@ NS_INTERFACE_MAP_END_INHERITING(nsDOMEvent)
 
 NS_IMPL_ADDREF_INHERITED(nsDOMMutationEvent, nsDOMEvent)
 NS_IMPL_RELEASE_INHERITED(nsDOMMutationEvent, nsDOMEvent)
+
+already_AddRefed<nsINode>
+nsDOMMutationEvent::GetRelatedNode()
+{
+  nsCOMPtr<nsINode> n =
+    do_QueryInterface(mEvent->AsMutationEvent()->mRelatedNode);
+  return n.forget();
+}
 
 NS_IMETHODIMP
 nsDOMMutationEvent::GetRelatedNode(nsIDOMNode** aRelatedNode)
@@ -45,7 +47,7 @@ nsDOMMutationEvent::GetRelatedNode(nsIDOMNode** aRelatedNode)
 NS_IMETHODIMP
 nsDOMMutationEvent::GetPrevValue(nsAString& aPrevValue)
 {
-  nsMutationEvent* mutation = static_cast<nsMutationEvent*>(mEvent);
+  InternalMutationEvent* mutation = mEvent->AsMutationEvent();
   if (mutation->mPrevAttrValue)
     mutation->mPrevAttrValue->ToString(aPrevValue);
   return NS_OK;
@@ -54,7 +56,7 @@ nsDOMMutationEvent::GetPrevValue(nsAString& aPrevValue)
 NS_IMETHODIMP
 nsDOMMutationEvent::GetNewValue(nsAString& aNewValue)
 {
-  nsMutationEvent* mutation = static_cast<nsMutationEvent*>(mEvent);
+  InternalMutationEvent* mutation = mEvent->AsMutationEvent();
   if (mutation->mNewAttrValue)
       mutation->mNewAttrValue->ToString(aNewValue);
   return NS_OK;
@@ -63,10 +65,16 @@ nsDOMMutationEvent::GetNewValue(nsAString& aNewValue)
 NS_IMETHODIMP
 nsDOMMutationEvent::GetAttrName(nsAString& aAttrName)
 {
-  nsMutationEvent* mutation = static_cast<nsMutationEvent*>(mEvent);
+  InternalMutationEvent* mutation = mEvent->AsMutationEvent();
   if (mutation->mAttrName)
       mutation->mAttrName->ToString(aAttrName);
   return NS_OK;
+}
+
+uint16_t
+nsDOMMutationEvent::AttrChange()
+{
+  return mEvent->AsMutationEvent()->mAttrChange;
 }
 
 NS_IMETHODIMP
@@ -81,8 +89,8 @@ nsDOMMutationEvent::InitMutationEvent(const nsAString& aTypeArg, bool aCanBubble
 {
   nsresult rv = nsDOMEvent::InitEvent(aTypeArg, aCanBubbleArg, aCancelableArg);
   NS_ENSURE_SUCCESS(rv, rv);
-  
-  nsMutationEvent* mutation = static_cast<nsMutationEvent*>(mEvent);
+
+  InternalMutationEvent* mutation = mEvent->AsMutationEvent();
   mutation->mRelatedNode = aRelatedNodeArg;
   if (!aPrevValueArg.IsEmpty())
     mutation->mPrevAttrValue = do_GetAtom(aPrevValueArg);
@@ -99,7 +107,7 @@ nsDOMMutationEvent::InitMutationEvent(const nsAString& aTypeArg, bool aCanBubble
 nsresult NS_NewDOMMutationEvent(nsIDOMEvent** aInstancePtrResult,
                                 mozilla::dom::EventTarget* aOwner,
                                 nsPresContext* aPresContext,
-                                nsMutationEvent *aEvent) 
+                                InternalMutationEvent* aEvent) 
 {
   nsDOMMutationEvent* it = new nsDOMMutationEvent(aOwner, aPresContext, aEvent);
 

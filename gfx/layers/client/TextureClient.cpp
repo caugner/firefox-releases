@@ -21,6 +21,8 @@
 #include "mozilla/layers/YCbCrImageDataSerializer.h"
 #include "nsDebug.h"                    // for NS_ASSERTION, NS_WARNING, etc
 #include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
+#include "ImageContainer.h"             // for PlanarYCbCrImage, etc
+#include "mozilla/gfx/2D.h"
 
 #ifdef MOZ_ANDROID_OMTC
 #  include "gfxReusableImageSurfaceWrapper.h"
@@ -31,6 +33,7 @@
 #endif
 
 using namespace mozilla::gl;
+using namespace mozilla::gfx;
 
 namespace mozilla {
 namespace layers {
@@ -210,7 +213,12 @@ bool
 MemoryTextureClient::Allocate(uint32_t aSize)
 {
   MOZ_ASSERT(!mBuffer);
-  mBuffer = new uint8_t[aSize];
+  static const fallible_t fallible = fallible_t();
+  mBuffer = new(fallible) uint8_t[aSize];
+  if (!mBuffer) {
+    NS_WARNING("Failed to allocate buffer");
+    return false;
+  }
   mBufSize = aSize;
   return true;
 }
@@ -258,15 +266,23 @@ BufferTextureClient::UpdateSurface(gfxASurface* aSurface)
     return false;
   }
 
-  RefPtr<gfxImageSurface> surf = serializer.GetAsThebesSurface();
-  if (!surf) {
-    return false;
+  if (gfxPlatform::GetPlatform()->SupportsAzureContent()) {
+    RefPtr<DrawTarget> dt = serializer.GetAsDrawTarget();
+    RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
+
+    dt->CopySurface(source, IntRect(IntPoint(), serializer.GetSize()), IntPoint());
+  } else {
+    RefPtr<gfxImageSurface> surf = serializer.GetAsThebesSurface();
+    if (!surf) {
+      return false;
+    }
+
+    nsRefPtr<gfxContext> tmpCtx = new gfxContext(surf.get());
+    tmpCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
+    tmpCtx->DrawSurface(aSurface, gfxSize(serializer.GetSize().width,
+                                          serializer.GetSize().height));
   }
 
-  nsRefPtr<gfxContext> tmpCtx = new gfxContext(surf.get());
-  tmpCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
-  tmpCtx->DrawSurface(aSurface, gfxSize(serializer.GetSize().width,
-                                        serializer.GetSize().height));
 
   if (TextureRequiresLocking(mFlags) && !ImplementsLocking()) {
     // We don't have support for proper locking yet, so we'll
@@ -309,7 +325,7 @@ BufferTextureClient::AllocateForSurface(gfx::IntSize aSize)
 }
 
 bool
-BufferTextureClient::UpdateYCbCr(const PlanarYCbCrImage::Data& aData)
+BufferTextureClient::UpdateYCbCr(const PlanarYCbCrData& aData)
 {
   MOZ_ASSERT(mFormat == gfx::FORMAT_YUV, "This textureClient can only use YCbCr data");
   MOZ_ASSERT(!IsImmutable());
@@ -383,6 +399,11 @@ DeprecatedTextureClientShmem::DeprecatedTextureClientShmem(CompositableForwarder
 {
 }
 
+DeprecatedTextureClientShmem::~DeprecatedTextureClientShmem()
+{
+  ReleaseResources();
+}
+
 void
 DeprecatedTextureClientShmem::ReleaseResources()
 {
@@ -393,7 +414,7 @@ DeprecatedTextureClientShmem::ReleaseResources()
     ShadowLayerForwarder::CloseDescriptor(mDescriptor);
   }
 
-  if (mTextureInfo.mTextureFlags & TEXTURE_DEALLOCATE_HOST) {
+  if (!(mTextureInfo.mTextureFlags & TEXTURE_DEALLOCATE_CLIENT)) {
     mDescriptor = SurfaceDescriptor();
     return;
   }
@@ -406,7 +427,7 @@ DeprecatedTextureClientShmem::ReleaseResources()
 
 bool
 DeprecatedTextureClientShmem::EnsureAllocated(gfx::IntSize aSize,
-                                    gfxASurface::gfxContentType aContentType)
+                                    gfxContentType aContentType)
 {
   if (aSize != mSize ||
       aContentType != mContentType ||
@@ -420,7 +441,7 @@ DeprecatedTextureClientShmem::EnsureAllocated(gfx::IntSize aSize,
                                             mContentType, &mDescriptor)) {
       NS_WARNING("creating SurfaceDescriptor failed!");
     }
-    if (mContentType == gfxASurface::CONTENT_COLOR_ALPHA) {
+    if (mContentType == GFX_CONTENT_COLOR_ALPHA) {
       gfxASurface* surface = GetSurface();
       if (!surface) {
         return false;
@@ -555,7 +576,7 @@ DeprecatedTextureClientShmemYCbCr::SetDescriptorFromReply(const SurfaceDescripto
 
 bool
 DeprecatedTextureClientShmemYCbCr::EnsureAllocated(gfx::IntSize aSize,
-                                         gfxASurface::gfxContentType aType)
+                                         gfxContentType aType)
 {
   NS_RUNTIMEABORT("not enough arguments to do this (need both Y and CbCr sizes)");
   return false;
@@ -572,7 +593,7 @@ DeprecatedTextureClientTile::DeprecatedTextureClientTile(CompositableForwarder* 
 }
 
 bool
-DeprecatedTextureClientTile::EnsureAllocated(gfx::IntSize aSize, gfxASurface::gfxContentType aType)
+DeprecatedTextureClientTile::EnsureAllocated(gfx::IntSize aSize, gfxContentType aType)
 {
   if (!mSurface ||
       mSurface->Format() != gfxPlatform::GetPlatform()->OptimalFormatForContent(aType)) {
@@ -582,7 +603,7 @@ DeprecatedTextureClientTile::EnsureAllocated(gfx::IntSize aSize, gfxASurface::gf
     // performance regression.
     gfxImageSurface* tmpTile = new gfxImageSurface(gfxIntSize(aSize.width, aSize.height),
                                                    gfxPlatform::GetPlatform()->OptimalFormatForContent(aType),
-                                                   aType != gfxASurface::CONTENT_COLOR);
+                                                   aType != GFX_CONTENT_COLOR);
     mSurface = new gfxReusableImageSurfaceWrapper(tmpTile);
 #else
     nsRefPtr<gfxSharedImageSurface> sharedImage =
@@ -621,11 +642,11 @@ bool AutoLockShmemClient::Update(Image* aImage,
 
   gfxIntSize size = aImage->GetSize();
 
-  gfxASurface::gfxContentType contentType = aSurface->GetContentType();
+  gfxContentType contentType = aSurface->GetContentType();
   bool isOpaque = (aContentFlags & Layer::CONTENT_OPAQUE);
-  if (contentType != gfxASurface::CONTENT_ALPHA &&
+  if (contentType != GFX_CONTENT_ALPHA &&
       isOpaque) {
-    contentType = gfxASurface::CONTENT_COLOR;
+    contentType = GFX_CONTENT_COLOR;
   }
   mDeprecatedTextureClient->EnsureAllocated(gfx::IntSize(size.width, size.height), contentType);
 
@@ -651,7 +672,7 @@ AutoLockYCbCrClient::Update(PlanarYCbCrImage* aImage)
   MOZ_ASSERT(aImage);
   MOZ_ASSERT(mDescriptor);
 
-  const PlanarYCbCrImage::Data *data = aImage->GetData();
+  const PlanarYCbCrData *data = aImage->GetData();
   NS_ASSERTION(data, "Must be able to retrieve yuv data from image!");
   if (!data) {
     return false;
@@ -681,7 +702,7 @@ bool AutoLockYCbCrClient::EnsureDeprecatedTextureClient(PlanarYCbCrImage* aImage
     return false;
   }
 
-  const PlanarYCbCrImage::Data *data = aImage->GetData();
+  const PlanarYCbCrData *data = aImage->GetData();
   NS_ASSERTION(data, "Must be able to retrieve yuv data from image!");
   if (!data) {
     return false;

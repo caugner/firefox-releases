@@ -2030,7 +2030,7 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
     case NS_THEME_MENUITEM: {
       bool isTransparent;
       if (thebesCtx->IsCairo()) {
-        isTransparent = thebesCtx->OriginalSurface()->GetContentType() == gfxASurface::CONTENT_COLOR_ALPHA;
+        isTransparent = thebesCtx->OriginalSurface()->GetContentType() == GFX_CONTENT_COLOR_ALPHA;
       } else {
         SurfaceFormat format  = thebesCtx->GetDrawTarget()->GetFormat();
         isTransparent = (format == FORMAT_R8G8B8A8) ||
@@ -2960,6 +2960,7 @@ nsNativeThemeCocoa::WidgetStateChanged(nsIFrame* aFrame, uint8_t aWidgetType,
 {
   // Some widget types just never change state.
   switch (aWidgetType) {
+    case NS_THEME_WINDOW_TITLEBAR:
     case NS_THEME_TOOLBOX:
     case NS_THEME_TOOLBAR:
     case NS_THEME_MOZ_MAC_UNIFIED_TOOLBAR:
@@ -3162,6 +3163,32 @@ bool
 nsNativeThemeCocoa::ThemeNeedsComboboxDropmarker()
 {
   return false;
+}
+
+bool
+nsNativeThemeCocoa::WidgetAppearanceDependsOnWindowFocus(uint8_t aWidgetType)
+{
+  switch (aWidgetType) {
+    case NS_THEME_DIALOG:
+    case NS_THEME_GROUPBOX:
+    case NS_THEME_TAB_PANELS:
+    case NS_THEME_MENUPOPUP:
+    case NS_THEME_MENUITEM:
+    case NS_THEME_MENUSEPARATOR:
+    case NS_THEME_TOOLTIP:
+    case NS_THEME_SPINNER:
+    case NS_THEME_TOOLBAR_SEPARATOR:
+    case NS_THEME_TOOLBOX:
+    case NS_THEME_TEXTFIELD:
+    case NS_THEME_TREEVIEW:
+    case NS_THEME_TREEVIEW_LINE:
+    case NS_THEME_TEXTFIELD_MULTILINE:
+    case NS_THEME_LISTBOX:
+    case NS_THEME_RESIZER:
+      return false;
+    default:
+      return true;
+  }
 }
 
 nsITheme::Transparency

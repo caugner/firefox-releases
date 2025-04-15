@@ -127,8 +127,8 @@ struct Zone : public JS::shadow::Zone,
 
     void setNeedsBarrier(bool needs, ShouldUpdateIon updateIon);
 
-    static size_t OffsetOfNeedsBarrier() {
-        return offsetof(Zone, needsBarrier_);
+    const bool *AddressOfNeedsBarrier() const {
+        return &needsBarrier_;
     }
 
   public:
@@ -261,9 +261,9 @@ struct Zone : public JS::shadow::Zone,
 
     void findOutgoingEdges(js::gc::ComponentFinder<JS::Zone> &finder);
 
-    void discardJitCode(js::FreeOp *fop, bool discardConstraints);
+    void discardJitCode(js::FreeOp *fop);
 
-    void sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, size_t *typePool);
+    void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, size_t *typePool);
 
     void setGCLastBytes(size_t lastBytes, js::JSGCInvocationKind gckind);
     void reduceGCTriggerBytes(size_t amount);
@@ -292,7 +292,7 @@ struct Zone : public JS::shadow::Zone,
         return runtimeFromMainThread()->onOutOfMemory(p, nbytes);
     }
     void reportAllocationOverflow() {
-        js_ReportAllocationOverflow(NULL);
+        js_ReportAllocationOverflow(nullptr);
     }
 
     void markTypes(JSTracer *trc);

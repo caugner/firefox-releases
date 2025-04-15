@@ -737,7 +737,7 @@ nsresult nsPluginStreamListenerPeer::ServeStreamAsFile(nsIRequest *request,
   if (owner) {
     NPWindow* window = nullptr;
     owner->GetWindow(window);
-#if defined(MOZ_WIDGET_GTK2) || defined(MOZ_WIDGET_QT)
+#if (MOZ_WIDGET_GTK == 2) || defined(MOZ_WIDGET_QT)
     // Should call GetPluginPort() here.
     // This part is copied from nsPluginInstanceOwner::GetPluginPort(). 
     nsCOMPtr<nsIWidget> widget;
@@ -788,9 +788,11 @@ NS_IMETHODIMP nsPluginStreamListenerPeer::OnDataAvailable(nsIRequest *request,
                                                           uint64_t sourceOffset,
                                                           uint32_t aLength)
 {
-  NS_ASSERTION(mRequests.IndexOfObject(GetBaseRequest(request)) != -1,
-               "Received OnDataAvailable for untracked request.");
-  
+  if (mRequests.IndexOfObject(GetBaseRequest(request)) == -1) {
+    MOZ_ASSERT(false, "Received OnDataAvailable for untracked request.");
+    return NS_ERROR_UNEXPECTED;
+  }
+
   if (mRequestFailed)
     return NS_ERROR_FAILURE;
   

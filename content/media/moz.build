@@ -4,11 +4,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-PARALLEL_DIRS += ['encoder']
-
-PARALLEL_DIRS += ['mediasource']
-
-PARALLEL_DIRS += ['webaudio']
+PARALLEL_DIRS += [
+  'encoder',
+  'mediasource',
+  'webaudio',
+  'webvtt'
+]
 
 if CONFIG['MOZ_RAW']:
     PARALLEL_DIRS += ['raw']
@@ -65,11 +66,11 @@ EXPORTS += [
     'AudioStream.h',
     'BufferDecoder.h',
     'BufferMediaResource.h',
-    'DOMMediaStream.h',
     'DecoderTraits.h',
+    'DOMMediaStream.h',
     'EncodedBufferCache.h',
     'FileBlockCache.h',
-    'MP3FrameParser.h',
+    'Latency.h',
     'MediaCache.h',
     'MediaDecoder.h',
     'MediaDecoderOwner.h',
@@ -80,6 +81,8 @@ EXPORTS += [
     'MediaResource.h',
     'MediaSegment.h',
     'MediaStreamGraph.h',
+    'MP3FrameParser.h',
+    'RtspMediaResource.h',
     'SharedBuffer.h',
     'StreamBuffer.h',
     'TimeVarying.h',
@@ -103,7 +106,7 @@ EXPORTS.mozilla.dom += [
     'VideoStreamTrack.h',
 ]
 
-CPP_SOURCES += [
+SOURCES += [
     'AudioAvailableEventManager.cpp',
     'AudioChannelFormat.cpp',
     'AudioNodeEngine.cpp',
@@ -113,11 +116,11 @@ CPP_SOURCES += [
     'AudioStream.cpp',
     'AudioStreamTrack.cpp',
     'BufferDecoder.cpp',
-    'DOMMediaStream.cpp',
     'DecoderTraits.cpp',
+    'DOMMediaStream.cpp',
     'EncodedBufferCache.cpp',
     'FileBlockCache.cpp',
-    'MP3FrameParser.cpp',
+    'Latency.cpp',
     'MediaCache.cpp',
     'MediaDecoder.cpp',
     'MediaDecoderReader.cpp',
@@ -126,6 +129,8 @@ CPP_SOURCES += [
     'MediaResource.cpp',
     'MediaStreamGraph.cpp',
     'MediaStreamTrack.cpp',
+    'MP3FrameParser.cpp',
+    'RtspMediaResource.cpp',
     'StreamBuffer.cpp',
     'TextTrack.cpp',
     'TextTrackCue.cpp',
@@ -138,13 +143,13 @@ CPP_SOURCES += [
     'VideoSegment.cpp',
     'VideoStreamTrack.cpp',
     'VideoUtils.cpp',
-    'WebVTTLoadListener.cpp',
+    'WebVTTListener.cpp',
 ]
 
 FAIL_ON_WARNINGS = True
 
 if CONFIG['CPU_ARCH'] == 'arm' and CONFIG['BUILD_ARM_NEON']:
-    CPP_SOURCES += [
+    SOURCES += [
         'AudioNodeEngineNEON.cpp',
     ]
 
@@ -153,4 +158,6 @@ LIBXUL_LIBRARY = True
 MSVC_ENABLE_PGO = True
 
 LIBRARY_NAME = 'gkconmedia_s'
+
+include('/ipc/chromium/chromium-config.mozbuild')
 

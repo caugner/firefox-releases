@@ -6,6 +6,18 @@ dnl Add compiler specific options
 
 AC_DEFUN([MOZ_DEFAULT_COMPILER],
 [
+dnl set DEVELOPER_OPTIONS early; MOZ_DEFAULT_COMPILER is usually the first non-setup directive
+  if test -z "$MOZILLA_OFFICIAL"; then
+    DEVELOPER_OPTIONS=1
+  fi
+  MOZ_ARG_ENABLE_BOOL(release,
+  [  --enable-release        Build with more conservative, release engineering-oriented options.
+                          This may slow down builds.],
+      DEVELOPER_OPTIONS=,
+      DEVELOPER_OPTIONS=1)
+
+  AC_SUBST(DEVELOPER_OPTIONS)
+
 dnl Default to MSVC for win32 and gcc-4.2 for darwin
 dnl ==============================================================
 if test -z "$CROSS_COMPILE"; then
@@ -160,16 +172,11 @@ fi
 dnl A high level macro for selecting compiler options.
 AC_DEFUN([MOZ_COMPILER_OPTS],
 [
-  if test -z "$MOZILLA_OFFICIAL"; then
-    DEVELOPER_OPTIONS=1
+  if test "${MOZ_PSEUDO_DERECURSE-unset}" = unset; then
+    dnl Don't enable on pymake, because of bug 918652. Bug 912979 is an annoyance
+    dnl with pymake, too.
+    MOZ_PSEUDO_DERECURSE=no-pymake
   fi
-  MOZ_ARG_ENABLE_BOOL(release,
-  [  --enable-release        Build with more conservative, release engineering-oriented options.
-                          This may slow down builds.],
-      DEVELOPER_OPTIONS=,
-      DEVELOPER_OPTIONS=1)
-
-  AC_SUBST(DEVELOPER_OPTIONS)
 
   MOZ_DEBUGGING_OPTS
   MOZ_RTTI
@@ -194,7 +201,17 @@ if test -z "$GNU_CC"; then
     esac
 fi
 
-if test "$GNU_CC" -a -n "$DEVELOPER_OPTIONS"; then
+if test -n "$DEVELOPER_OPTIONS"; then
+    MOZ_FORCE_GOLD=1
+fi
+
+MOZ_ARG_ENABLE_BOOL(gold,
+[  --enable-gold           Enable GNU Gold Linker when it is not already the default],
+    MOZ_FORCE_GOLD=1,
+    MOZ_FORCE_GOLD=
+    )
+
+if test "$GNU_CC" -a -n "$MOZ_FORCE_GOLD"; then
     dnl if the default linker is BFD ld, check if gold is available and try to use it
     dnl for local builds only.
     if $CC -Wl,--version 2>&1 | grep -q "GNU ld"; then
@@ -208,6 +225,7 @@ if test "$GNU_CC" -a -n "$DEVELOPER_OPTIONS"; then
         esac
         if test -n "$GOLD"; then
             mkdir -p $_objdir/build/unix/gold
+            rm -f $_objdir/build/unix/gold/ld
             ln -s "$GOLD" $_objdir/build/unix/gold/ld
             if $CC -B $_objdir/build/unix/gold -Wl,--version 2>&1 | grep -q "GNU gold"; then
                 LDFLAGS="$LDFLAGS -B $_objdir/build/unix/gold"

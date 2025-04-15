@@ -9,10 +9,11 @@ MODULE = 'tlsserver'
 FAIL_ON_WARNINGS = True
 
 sources = [
+    'GenerateOCSPResponse',
     'OCSPStaplingServer',
 ]
 
-CPP_SOURCES += [
+SOURCES += [
     '%s.cpp' % s for s in sources
 ]
 

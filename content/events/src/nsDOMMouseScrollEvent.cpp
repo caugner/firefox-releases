@@ -5,12 +5,16 @@
 
 #include "nsDOMMouseScrollEvent.h"
 #include "prtime.h"
+#include "mozilla/MouseEvents.h"
+
+using namespace mozilla;
 
 nsDOMMouseScrollEvent::nsDOMMouseScrollEvent(mozilla::dom::EventTarget* aOwner,
                                              nsPresContext* aPresContext,
-                                             nsInputEvent* aEvent)
+                                             WidgetMouseScrollEvent* aEvent)
   : nsDOMMouseEvent(aOwner, aPresContext,
-                    aEvent ? aEvent : new nsMouseScrollEvent(false, 0, nullptr))
+                    aEvent ? aEvent :
+                             new WidgetMouseScrollEvent(false, 0, nullptr))
 {
   if (aEvent) {
     mEventIsInternal = false;
@@ -18,28 +22,11 @@ nsDOMMouseScrollEvent::nsDOMMouseScrollEvent(mozilla::dom::EventTarget* aOwner,
     mEventIsInternal = true;
     mEvent->time = PR_Now();
     mEvent->refPoint.x = mEvent->refPoint.y = 0;
-    static_cast<nsMouseEvent*>(mEvent)->inputSource = nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN;
+    static_cast<WidgetMouseEventBase*>(mEvent)->inputSource =
+      nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN;
   }
 
-  if(mEvent->eventStructType == NS_MOUSE_SCROLL_EVENT) {
-    mDetail = static_cast<nsMouseScrollEvent*>(mEvent)->delta;
-  }
-}
-
-nsDOMMouseScrollEvent::~nsDOMMouseScrollEvent()
-{
-  if (mEventIsInternal && mEvent) {
-    switch (mEvent->eventStructType)
-    {
-      case NS_MOUSE_SCROLL_EVENT:
-        delete static_cast<nsMouseScrollEvent*>(mEvent);
-        break;
-      default:
-        delete mEvent;
-        break;
-    }
-    mEvent = nullptr;
-  }
+  mDetail = mEvent->AsMouseScrollEvent()->delta;
 }
 
 NS_IMPL_ADDREF_INHERITED(nsDOMMouseScrollEvent, nsDOMMouseEvent)
@@ -61,12 +48,7 @@ nsDOMMouseScrollEvent::InitMouseScrollEvent(const nsAString & aType, bool aCanBu
                                                 aScreenX, aScreenY, aClientX, aClientY, aCtrlKey,
                                                 aAltKey, aShiftKey, aMetaKey, aButton, aRelatedTarget);
   NS_ENSURE_SUCCESS(rv, rv);
-  
-  if (mEvent->eventStructType == NS_MOUSE_SCROLL_EVENT) {
-    static_cast<nsMouseScrollEvent*>(mEvent)->isHorizontal =
-                                                (aAxis == HORIZONTAL_AXIS);
-  }
-
+  mEvent->AsMouseScrollEvent()->isHorizontal = (aAxis == HORIZONTAL_AXIS);
   return NS_OK;
 }
 
@@ -82,18 +64,15 @@ nsDOMMouseScrollEvent::GetAxis(int32_t* aResult)
 int32_t
 nsDOMMouseScrollEvent::Axis()
 {
-  if (mEvent->eventStructType == NS_MOUSE_SCROLL_EVENT) {
-    return static_cast<nsMouseScrollEvent*>(mEvent)->isHorizontal ?
-             static_cast<int32_t>(HORIZONTAL_AXIS) :
-             static_cast<int32_t>(VERTICAL_AXIS);
-  }
-  return 0;
+  return mEvent->AsMouseScrollEvent()->isHorizontal ?
+           static_cast<int32_t>(HORIZONTAL_AXIS) :
+           static_cast<int32_t>(VERTICAL_AXIS);
 }
 
 nsresult NS_NewDOMMouseScrollEvent(nsIDOMEvent** aInstancePtrResult,
                                    mozilla::dom::EventTarget* aOwner,
                                    nsPresContext* aPresContext,
-                                   nsInputEvent *aEvent) 
+                                   WidgetMouseScrollEvent* aEvent) 
 {
   nsDOMMouseScrollEvent* it =
     new nsDOMMouseScrollEvent(aOwner, aPresContext, aEvent);

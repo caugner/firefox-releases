@@ -32,10 +32,14 @@ public:
 
     bool HasEverBeenBound() { return mHasEverBeenBound; }
     void SetHasEverBeenBound(bool x) { mHasEverBeenBound = x; }
-    GLuint GLName() const { return mGLName; }
 
-    bool Initialized() const { return mInitialized; }
-    void SetInitialized(bool aInitialized) { mInitialized = aInitialized; }
+    bool HasUninitializedImageData() const { return mImageDataStatus == WebGLImageDataStatus::UninitializedImageData; }
+    void SetImageDataStatus(WebGLImageDataStatus x) {
+        // there is no way to go from having image data to not having any
+        MOZ_ASSERT(x != WebGLImageDataStatus::NoImageData ||
+                   mImageDataStatus == WebGLImageDataStatus::NoImageData);
+        mImageDataStatus = x;
+    }
 
     GLenum InternalFormat() const { return mInternalFormat; }
     void SetInternalFormat(GLenum aInternalFormat) { mInternalFormat = aInternalFormat; }
@@ -49,6 +53,12 @@ public:
         return Context();
     }
 
+    void BindRenderbuffer() const;
+    void RenderbufferStorage(GLenum internalFormat, GLsizei width, GLsizei height) const;
+    void FramebufferRenderbuffer(GLenum attachment) const;
+    // Only handles a subset of `pname`s.
+    GLint GetRenderbufferParameter(GLenum target, GLenum pname) const;
+
     virtual JSObject* WrapObject(JSContext *cx,
                                  JS::Handle<JSObject*> scope) MOZ_OVERRIDE;
 
@@ -56,12 +66,12 @@ public:
     NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(WebGLRenderbuffer)
 
 protected:
-
-    GLuint mGLName;
+    GLuint mPrimaryRB;
+    GLuint mSecondaryRB;
     GLenum mInternalFormat;
     GLenum mInternalFormatForGL;
     bool mHasEverBeenBound;
-    bool mInitialized;
+    WebGLImageDataStatus mImageDataStatus;
 
     friend class WebGLFramebuffer;
 };

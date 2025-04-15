@@ -8,7 +8,6 @@
 #include "HttpLog.h"
 
 #include "mozilla/Telemetry.h"
-#include "nsAlgorithm.h"
 #include "nsHttp.h"
 #include "nsHttpHandler.h"
 #include "nsHttpRequestHead.h"
@@ -18,6 +17,7 @@
 #include "SpdyPush3.h"
 #include "SpdySession3.h"
 #include "SpdyStream3.h"
+#include "PSpdyPush.h"
 
 #include <algorithm>
 
@@ -285,16 +285,16 @@ SpdyStream3::ParseHttpRequestHeaders(const char *buf,
   if (mTransaction->RequestHead()->Method() == nsHttp::Get) {
     // from :scheme, :host, :path
     nsILoadGroupConnectionInfo *loadGroupCI = mTransaction->LoadGroupConnectionInfo();
-    SpdyPushCache3 *cache = nullptr;
+    SpdyPushCache *cache = nullptr;
     if (loadGroupCI)
-      loadGroupCI->GetSpdyPushCache3(&cache);
+      loadGroupCI->GetSpdyPushCache(&cache);
 
     SpdyPushedStream3 *pushedStream = nullptr;
     // we remove the pushedstream from the push cache so that
     // it will not be used for another GET. This does not destroy the
     // stream itself - that is done when the transactionhash is done with it.
     if (cache)
-      pushedStream = cache->RemovePushedStream(hashkey);
+      pushedStream = cache->RemovePushedStreamSpdy3(hashkey);
 
     if (pushedStream) {
       LOG3(("Pushed Stream Match located id=0x%X key=%s\n",
@@ -1218,7 +1218,7 @@ SpdyStream3::ConvertHeaders(nsACString &aHeadersOut)
         aHeadersOut.Append(nameString);
         aHeadersOut.Append(NS_LITERAL_CSTRING(": "));
 
-        // expand NULL bytes in the value string
+        // expand nullptr bytes in the value string
         for (char *cPtr = valueString.BeginWriting();
              cPtr && cPtr < valueString.EndWriting();
              ++cPtr) {

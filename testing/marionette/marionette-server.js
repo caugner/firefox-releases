@@ -7,8 +7,8 @@
 const FRAME_SCRIPT = "chrome://marionette/content/marionette-listener.js";
 
 // import logger
-Cu.import("resource://gre/modules/services-common/log4moz.js");
-let logger = Log4Moz.repository.getLogger("Marionette");
+Cu.import("resource://gre/modules/Log.jsm");
+let logger = Log.repository.getLogger("Marionette");
 logger.info('marionette-server.js loaded');
 
 let loader = Cc["@mozilla.org/moz/jssubscript-loader;1"]
@@ -134,7 +134,8 @@ function MarionetteServerConnection(aPrefix, aTransport, aServer)
   this.command_id = null;
   this.mainFrame = null; //topmost chrome frame
   this.curFrame = null; // chrome iframe that currently has focus
-  this.importedScripts = FileUtils.getFile('TmpD', ['marionettescriptchrome']);
+  this.importedScripts = FileUtils.getFile('TmpD', ['marionetteChromeScripts']);
+  this.importedScriptHashes = {"chrome" : [], "content": []};
   this.currentFrameElement = null;
   this.testName = null;
   this.mozBrowserClose = null;
@@ -463,6 +464,16 @@ MarionetteServerConnection.prototype = {
 
   getCommandId: function MDA_getCommandId() {
     return this.uuidGen.generateUUID().toString();
+  },
+
+  /**
+    * Given a file name, this will delete the file from the temp directory if it exists
+    */
+  deleteFile: function(filename) {
+    let file = FileUtils.getFile('TmpD', [filename.toString()]);
+    if (file.exists()) {
+      file.remove(true);
+    }
   },
 
   /**
@@ -1697,6 +1708,22 @@ MarionetteServerConnection.prototype = {
   },
 
   /**
+   * Submit a form on a content page by either using form or element in a form
+   * @param object aRequest
+   *               'id' member holds the reference id to
+   *               the element that will be checked
+  */
+  submitElement: function MDA_submitElement(aRequest) {
+    let command_id = this.command_id = this.getCommandId();
+    if (this.context == "chrome") {
+      this.sendError("Command 'submitElement' is not available in chrome context", 500, null, this.command_id);
+    }
+    else {
+      this.sendAsync("submitElement", {id: aRequest.parameters.id}, command_id);
+    }
+  },
+
+  /**
    * Check if element is enabled
    *
    * @param object aRequest
@@ -1931,7 +1958,13 @@ MarionetteServerConnection.prototype = {
 
       // if there is only 1 window left, delete the session
       if (numOpenWindows === 1){
-        this.sessionTearDown();
+        try {
+          this.sessionTearDown();
+        }
+        catch (e) {
+          this.sendError("Could not clear session", 500, e.name + ": " + e.message, command_id);
+          return;
+        }
         this.sendOk(command_id);
         return;
       }
@@ -1988,20 +2021,23 @@ MarionetteServerConnection.prototype = {
     if (this.mainFrame) {
       this.mainFrame.focus();
     }
-    try {
-      this.importedScripts.remove(false);
-    }
-    catch (e) {
-    }
+    this.deleteFile('marionetteChromeScripts');
+    this.deleteFile('marionetteContentScripts');
   },
 
   /**
    * Processes the 'deleteSession' request from the client by tearing down
    * the session and responding 'ok'.
    */
-  deleteSession: function MDA_sessionTearDown() {
+  deleteSession: function MDA_deleteSession() {
     let command_id = this.command_id = this.getCommandId();
-    this.sessionTearDown();
+    try {
+      this.sessionTearDown();
+    }
+    catch (e) {
+      this.sendError("Could not delete session", 500, e.name + ": " + e.message, command_id);
+      return;
+    }
     this.sendOk(command_id);
   },
 
@@ -2052,6 +2088,23 @@ MarionetteServerConnection.prototype = {
   
   importScript: function MDA_importScript(aRequest) {
     let command_id = this.command_id = this.getCommandId();
+    let converter =
+      Components.classes["@mozilla.org/intl/scriptableunicodeconverter"].
+          createInstance(Components.interfaces.nsIScriptableUnicodeConverter);
+    converter.charset = "UTF-8";
+    let result = {};
+    let data = converter.convertToByteArray(aRequest.parameters.script, result);
+    let ch = Components.classes["@mozilla.org/security/hash;1"]
+                       .createInstance(Components.interfaces.nsICryptoHash);
+    ch.init(ch.MD5);
+    ch.update(data, data.length);
+    let hash = ch.finish(true);
+    if (this.importedScriptHashes[this.context].indexOf(hash) > -1) {
+        //we have already imported this script
+        this.sendOk(command_id);
+        return;
+    }
+    this.importedScriptHashes[this.context].push(hash);
     if (this.context == "chrome") {
       let file;
       if (this.importedScripts.exists()) {
@@ -2075,6 +2128,23 @@ MarionetteServerConnection.prototype = {
                      { script: aRequest.parameters.script },
                      command_id);
     }
+  },
+
+  clearImportedScripts: function MDA_clearImportedScripts(aRequest) {
+    let command_id = this.command_id = this.getCommandId();
+    try {
+      if (this.context == "chrome") {
+        this.deleteFile('marionetteChromeScripts');
+      }
+      else {
+        this.deleteFile('marionetteContentScripts');
+      }
+    }
+    catch (e) {
+      this.sendError("Could not clear imported scripts", 500, e.name + ": " + e.message, command_id);
+      return;
+    }
+    this.sendOk(command_id);
   },
 
   /**
@@ -2165,7 +2235,7 @@ MarionetteServerConnection.prototype = {
                             Services.wm.getOuterWindowWithId(message.json.value);
 
         //go in here if we're already in a remote frame.
-        if (!listenerWindow || (listenerWindow.location.href != message.json.href) &&
+        if ((!listenerWindow || listenerWindow.location.href != message.json.href) &&
             (this.curBrowser.frameManager.currentRemoteFrame !== null)) {
           // The outerWindowID from an OOP frame will not be meaningful to
           // the parent process here, since each process maintains its own
@@ -2194,7 +2264,6 @@ MarionetteServerConnection.prototype = {
                                             listenerWindow);
         }
         this.curBrowser.elementManager.seenItems[reg.id] = Cu.getWeakReference(listenerWindow);
-        reg.importedScripts = this.importedScripts.path;
         if (nullPrevious && (this.curBrowser.curFrameId != null)) {
           if (!this.sendAsync("newSession",
                               { B2G: (appName == "B2G") },
@@ -2237,6 +2306,7 @@ MarionetteServerConnection.prototype.requestTypes = {
   "getElementTagName": MarionetteServerConnection.prototype.getElementTagName,
   "isElementDisplayed": MarionetteServerConnection.prototype.isElementDisplayed,
   "getElementValueOfCssProperty": MarionetteServerConnection.prototype.getElementValueOfCssProperty,
+  "submitElement": MarionetteServerConnection.prototype.submitElement,
   "getElementSize": MarionetteServerConnection.prototype.getElementSize,
   "isElementEnabled": MarionetteServerConnection.prototype.isElementEnabled,
   "isElementSelected": MarionetteServerConnection.prototype.isElementSelected,
@@ -2259,6 +2329,7 @@ MarionetteServerConnection.prototype.requestTypes = {
   "deleteSession": MarionetteServerConnection.prototype.deleteSession,
   "emulatorCmdResult": MarionetteServerConnection.prototype.emulatorCmdResult,
   "importScript": MarionetteServerConnection.prototype.importScript,
+  "clearImportedScripts": MarionetteServerConnection.prototype.clearImportedScripts,
   "getAppCacheStatus": MarionetteServerConnection.prototype.getAppCacheStatus,
   "closeWindow": MarionetteServerConnection.prototype.closeWindow,
   "setTestName": MarionetteServerConnection.prototype.setTestName,

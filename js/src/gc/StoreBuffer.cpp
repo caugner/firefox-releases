@@ -25,11 +25,11 @@ StoreBuffer::SlotEdge::slotLocation() const
 {
     if (kind == HeapSlot::Element) {
         if (offset >= object->getDenseInitializedLength())
-            return NULL;
+            return nullptr;
         return (HeapSlot *)&object->getDenseElement(offset);
     }
     if (offset >= object->slotSpan())
-        return NULL;
+        return nullptr;
     return &object->getSlotRef(offset);
 }
 
@@ -37,7 +37,7 @@ JS_ALWAYS_INLINE void *
 StoreBuffer::SlotEdge::deref() const
 {
     HeapSlot *loc = slotLocation();
-    return (loc && loc->isGCThing()) ? loc->toGCThing() : NULL;
+    return (loc && loc->isGCThing()) ? loc->toGCThing() : nullptr;
 }
 
 JS_ALWAYS_INLINE void *
@@ -121,25 +121,6 @@ StoreBuffer::MonoTypeBuffer<T>::mark(JSTracer *trc)
 
     }
 }
-
-namespace js {
-namespace gc {
-class AccumulateEdgesTracer : public JSTracer
-{
-    EdgeSet *edges;
-
-    static void tracer(JSTracer *jstrc, void **thingp, JSGCTraceKind kind) {
-        AccumulateEdgesTracer *trc = static_cast<AccumulateEdgesTracer *>(jstrc);
-        trc->edges->put(thingp);
-    }
-
-  public:
-    AccumulateEdgesTracer(JSRuntime *rt, EdgeSet *edgesArg) : edges(edgesArg) {
-        JS_TracerInit(this, rt, AccumulateEdgesTracer::tracer);
-    }
-};
-} /* namespace gc */
-} /* namespace js */
 
 /*** RelocatableMonoTypeBuffer ***/
 

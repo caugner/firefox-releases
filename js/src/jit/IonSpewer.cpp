@@ -54,14 +54,14 @@ FilterContainsLocation(HandleScript function)
 
     const char *filename = function->filename();
     const size_t line = function->lineno;
-    static size_t filelen = strlen(filename);
+    const size_t filelen = strlen(filename);
     const char *index = strstr(filter, filename);
     while (index) {
         if (index == filter || index[-1] == ',') {
             if (index[filelen] == 0 || index[filelen] == ',')
                 return true;
             if (index[filelen] == ':' && line != size_t(-1)) {
-                size_t read_line = strtoul(&index[filelen + 1], NULL, 10);
+                size_t read_line = strtoul(&index[filelen + 1], nullptr, 10);
                 if (read_line == line)
                     return true;
             }
@@ -83,15 +83,19 @@ jit::IonSpewNewFunction(MIRGraph *graph, HandleScript func)
 {
     if (!OffThreadIonCompilationEnabled(GetIonContext()->runtime)) {
         ionspewer.beginFunction(graph, func);
+        return;
+    }
+
+    if (!IonSpewEnabled(IonSpew_Logs))
+        return;
+
+    // Ionspewer isn't threads-safe. Therefore logging is disabled for
+    // off-thread spewing. Throw informative message when trying.
+    if (func) {
+        IonSpew(IonSpew_Logs, "Can't log script %s:%d. (Compiled on background thread.)",
+                              func->filename(), func->lineno);
     } else {
-        if (func) {
-            IonSpew(IonSpew_Logs,
-                    "Can't log script %s:%d. (Compiled on background thread.)",
-                    func->filename(), func->lineno);
-        } else {
-            IonSpew(IonSpew_Logs,
-                    "Can't log asm.js compilation. (Compiled on background thread.)");
-        }
+        IonSpew(IonSpew_Logs, "Can't log asm.js compilation. (Compiled on background thread.)");
     }
 }
 
@@ -161,7 +165,7 @@ IonSpewer::beginFunction(MIRGraph *graph, HandleScript function)
     }
 
     this->graph = graph;
-    this->function = function;
+    this->function.repoint(function);
 
     c1Spewer.beginFunction(graph, function);
     jsonSpewer.beginFunction(function);
@@ -209,11 +213,11 @@ IonSpewer::endFunction()
     c1Spewer.endFunction();
     jsonSpewer.endFunction();
 
-    this->graph = NULL;
+    this->graph = nullptr;
 }
 
 
-FILE *jit::IonSpewFile = NULL;
+FILE *jit::IonSpewFile = nullptr;
 
 static bool
 ContainsFlag(const char *str, const char *flag)
@@ -238,7 +242,7 @@ jit::CheckLogging()
     if (!env)
         return;
     if (strstr(env, "help")) {
-        fflush(NULL);
+        fflush(nullptr);
         printf(
             "\n"
             "usage: IONFLAGS=option,option,option,... where options can be:\n"
@@ -341,9 +345,6 @@ jit::CheckLogging()
         EnableChannel(IonSpew_BaselineOSR);
         EnableChannel(IonSpew_BaselineBailouts);
     }
-
-    if (LoggingBits != 0)
-        EnableIonDebugLogging();
 
     IonSpewFile = stderr;
 }

@@ -104,25 +104,15 @@ nsXBLProtoImplMethod::InstallMember(JSContext* aCx,
   MOZ_ASSERT(js::IsObjectInContextCompartment(aTargetClassObject, aCx));
 
   JS::Rooted<JSObject*> globalObject(aCx, JS_GetGlobalForObject(aCx, aTargetClassObject));
-  JS::Rooted<JSObject*> scopeObject(aCx, xpc::GetXBLScope(aCx, globalObject));
-  NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
+  MOZ_ASSERT(xpc::IsInXBLScope(globalObject) ||
+             globalObject == xpc::GetXBLScope(aCx, globalObject));
 
   JS::Rooted<JSObject*> jsMethodObject(aCx, GetCompiledMethod());
   if (jsMethodObject) {
     nsDependentString name(mName);
 
-    // First, make the function in the compartment of the scope object.
-    JSAutoCompartment ac(aCx, scopeObject);
-    JS::Rooted<JSObject*> method(aCx, ::JS_CloneFunctionObject(aCx, jsMethodObject, scopeObject));
-    if (!method) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    // Then, enter the content compartment, wrap the method pointer, and define
-    // the wrapped version on the class object.
-    JSAutoCompartment ac2(aCx, aTargetClassObject);
-    if (!JS_WrapObject(aCx, method.address()))
-      return NS_ERROR_OUT_OF_MEMORY;
+    JS::Rooted<JSObject*> method(aCx, JS_CloneFunctionObject(aCx, jsMethodObject, globalObject));
+    NS_ENSURE_TRUE(method, NS_ERROR_OUT_OF_MEMORY);
 
     JS::Rooted<JS::Value> value(aCx, JS::ObjectValue(*method));
     if (!::JS_DefineUCProperty(aCx, aTargetClassObject,
@@ -309,7 +299,7 @@ nsXBLProtoImplAnonymousMethod::Execute(nsIContent* aBoundElement)
   nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
   JS::Rooted<JS::Value> v(cx);
   nsresult rv =
-    nsContentUtils::WrapNative(cx, globalObject, aBoundElement, v.address(),
+    nsContentUtils::WrapNative(cx, globalObject, aBoundElement, &v,
                                getter_AddRefs(wrapper));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -327,7 +317,7 @@ nsXBLProtoImplAnonymousMethod::Execute(nsIContent* aBoundElement)
   NS_ENSURE_TRUE(scopeObject, NS_ERROR_OUT_OF_MEMORY);
 
   JSAutoCompartment ac(cx, scopeObject);
-  if (!JS_WrapObject(cx, thisObject.address()))
+  if (!JS_WrapObject(cx, &thisObject))
       return NS_ERROR_OUT_OF_MEMORY;
 
   // Clone the function object, using thisObject as the parent so "this" is in

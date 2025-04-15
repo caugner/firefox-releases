@@ -12,6 +12,8 @@ endif
 
 endif #if OS_ARCH == WINNT
 
+NO_PROFILE_GUIDED_OPTIMIZE = nsDebugImpl.cpp
+
 INSTALL_TARGETS += errorlist
 errorlist_FILES := \
   ErrorListCDefines.h \
@@ -21,7 +23,6 @@ errorlist_DEST = $(DIST)/include
 errorlist_TARGET := export
 
 include $(topsrcdir)/config/rules.mk
-include $(topsrcdir)/ipc/chromium/chromium-config.mk
 
 ifdef MOZ_WIDGET_GTK
 CXXFLAGS        += $(TK_CFLAGS)

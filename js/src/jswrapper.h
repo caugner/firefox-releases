@@ -66,6 +66,8 @@ class JS_FRIEND_API(Wrapper) : public DirectProxyHandler
 
     virtual ~Wrapper();
 
+    virtual bool finalizeInBackground(Value priv) MOZ_OVERRIDE;
+
     static Wrapper singleton;
     static Wrapper singletonWithPrototype;
 };
@@ -77,8 +79,6 @@ class JS_FRIEND_API(CrossCompartmentWrapper) : public Wrapper
     CrossCompartmentWrapper(unsigned flags, bool hasPrototype = false);
 
     virtual ~CrossCompartmentWrapper();
-
-    virtual bool finalizeInBackground(Value priv) MOZ_OVERRIDE;
 
     /* ES5 Harmony fundamental wrapper traps. */
     virtual bool preventExtensions(JSContext *cx, HandleObject wrapper) MOZ_OVERRIDE;
@@ -169,7 +169,8 @@ typedef SecurityWrapper<CrossCompartmentWrapper> CrossCompartmentSecurityWrapper
 class JS_FRIEND_API(DeadObjectProxy) : public BaseProxyHandler
 {
   public:
-    static int sDeadObjectFamily;
+    // This variable exists solely to provide a unique address for use as an identifier.
+    static const char sDeadObjectFamily;
 
     explicit DeadObjectProxy();
 
@@ -219,7 +220,8 @@ TransparentObjectWrapper(JSContext *cx, HandleObject existing, HandleObject obj,
 
 // Proxy family for wrappers. Public so that IsWrapper() can be fully inlined by
 // jsfriendapi users.
-extern JS_FRIEND_DATA(int) sWrapperFamily;
+// This variable exists solely to provide a unique address for use as an identifier.
+extern JS_FRIEND_DATA(const char) sWrapperFamily;
 
 inline bool
 IsWrapper(JSObject *obj)
@@ -232,7 +234,7 @@ IsWrapper(JSObject *obj)
 // previously wrapped. Otherwise, this returns the first object for
 // which JSObject::isWrapper returns false.
 JS_FRIEND_API(JSObject *)
-UncheckedUnwrap(JSObject *obj, bool stopAtOuter = true, unsigned *flagsp = NULL);
+UncheckedUnwrap(JSObject *obj, bool stopAtOuter = true, unsigned *flagsp = nullptr);
 
 // Given a JSObject, returns that object stripped of wrappers. At each stage,
 // the security wrapper has the opportunity to veto the unwrap. Since checked
@@ -253,7 +255,8 @@ bool
 IsDeadProxyObject(JSObject *obj);
 
 JSObject *
-NewDeadProxyObject(JSContext *cx, JSObject *parent);
+NewDeadProxyObject(JSContext *cx, JSObject *parent,
+                   const ProxyOptions &options = ProxyOptions());
 
 void
 NukeCrossCompartmentWrapper(JSContext *cx, JSObject *wrapper);

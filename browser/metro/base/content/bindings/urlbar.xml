@@ -485,6 +485,17 @@
             return;
         ]]>
       </handler>
+
+      <handler event="keypress" phase="capturing" keycode="VK_UP">
+        <![CDATA[
+          if (!this.popup.hasSelection) {
+            // Treat the first up as a down key to trick handleKeyNavigation() to start
+            // keyboard navigation on autocomplete popup.
+            this.mController.handleKeyNavigation(KeyEvent.DOM_VK_DOWN);
+            event.preventDefault();
+          }
+        ]]>
+      </handler>
     </handlers>
   </binding>
 
@@ -494,13 +505,13 @@
         <xul:label class="meta-section-title"
                    value="&autocompleteResultsHeader.label;"/>
         <richgrid anonid="results" rows="3" flex="1"
-                  seltype="single" deferlayout="true"/>
+                  seltype="single" nocontext="true" deferlayout="true"/>
       </xul:vbox>
 
       <xul:vbox class="meta-section" flex="1">
         <xul:label anonid="searches-header" class="meta-section-title"/>
         <richgrid anonid="searches" rows="3" flex="1"
-                  seltype="single" deferlayout="true"/>
+                  seltype="single" nocontext="true" deferlayout="true"/>
       </xul:vbox>
     </content>
 
@@ -508,7 +519,6 @@
       <constructor>
         <![CDATA[
           this.hidden = true;
-
           Services.obs.addObserver(this, "browser-search-engine-modified", false);
 
           this._results.controller = this;
@@ -555,6 +565,19 @@
             return this._isGridBound(this._results) ? this._results.selectedIndex : -1;
           ]]>
         </setter>
+      </property>
+
+      <property name="hasSelection">
+        <getter>
+          <![CDATA[
+            if (!this._isGridBound(this._results) ||
+              !this._isGridBound(this._searches))
+              return false;
+
+            return (this._results.selectedIndex >= 0 ||
+              this._searches.selectedIndex >= 0);
+          ]]>
+        </getter>
       </property>
 
       <method name="openAutocompletePopup">
@@ -652,6 +675,7 @@
             this._resultsContainer.hidden = haveNoResults;
 
             if (haveNoResults) {
+              this._results.clearAll();
               return;
             }
 

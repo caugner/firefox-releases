@@ -45,6 +45,10 @@
 #include "nsIPrincipal.h"
 #include "mozilla/dom/HTMLMediaElement.h"
 #endif
+#ifdef MOZ_RTSP
+#include "RtspOmxDecoder.h"
+#include "RtspOmxReader.h"
+#endif
 #ifdef MOZ_DASH
 #include "DASHDecoder.h"
 #endif
@@ -243,6 +247,29 @@ static char const *const gMpegAudioCodecs[2] = {
 };
 #endif
 
+#ifdef MOZ_RTSP
+static const char* const gRtspTypes[2] = {
+    "RTSP",
+    nullptr
+};
+
+static bool
+IsRtspSupportedType(const nsACString& aMimeType)
+{
+  return MediaDecoder::IsRtspEnabled() &&
+    CodecListContains(gRtspTypes, aMimeType);
+}
+#endif
+
+/* static */
+bool DecoderTraits::DecoderWaitsForOnConnected(const nsACString& aMimeType) {
+#ifdef MOZ_RTSP
+  return CodecListContains(gRtspTypes, aMimeType);
+#else
+  return false;
+#endif
+}
+
 #ifdef MOZ_MEDIA_PLUGINS
 static bool
 IsMediaPluginsType(const nsACString& aType)
@@ -432,7 +459,7 @@ DecoderTraits::CanHandleMediaType(const char* aMIMEType,
       // Totally unsupported codec
       return CANPLAY_NO;
     }
-    expectMoreTokens = tokenizer.lastTokenEndedWithSeparator();
+    expectMoreTokens = tokenizer.separatorAfterCurrentToken();
   }
   if (expectMoreTokens) {
     // Last codec name was empty
@@ -487,8 +514,14 @@ DecoderTraits::CreateDecoder(const nsACString& aType, MediaDecoderOwner* aOwner)
     decoder = new MediaOmxDecoder();
   }
 #endif
+#ifdef MOZ_RTSP
+  if (IsRtspSupportedType(aType)) {
+    decoder = new RtspOmxDecoder();
+  }
+#endif
 #ifdef MOZ_MEDIA_PLUGINS
-  if (MediaDecoder::IsMediaPluginsEnabled() && GetMediaPluginHost()->FindDecoder(aType, NULL)) {
+  if (MediaDecoder::IsMediaPluginsEnabled() &&
+      GetMediaPluginHost()->FindDecoder(aType, nullptr)) {
     decoder = new MediaPluginDecoder(aType);
   }
 #endif

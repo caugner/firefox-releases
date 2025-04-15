@@ -7,8 +7,6 @@
 #ifndef jsapi_tests_tests_h
 #define jsapi_tests_tests_h
 
-#include "mozilla/Util.h"
-
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -61,7 +59,8 @@ class JSAPITest
     JSAPITestString msgs;
     JSCompartment *oldCompartment;
 
-    JSAPITest() : rt(NULL), cx(NULL), global(NULL), knownFail(false), oldCompartment(NULL) {
+    JSAPITest() : rt(nullptr), cx(nullptr), global(nullptr),
+                  knownFail(false), oldCompartment(nullptr) {
         next = list;
         list = this;
     }
@@ -73,18 +72,18 @@ class JSAPITest
     virtual void uninit() {
         if (oldCompartment) {
             JS_LeaveCompartment(cx, oldCompartment);
-            oldCompartment = NULL;
+            oldCompartment = nullptr;
         }
         if (cx) {
             JS_RemoveObjectRoot(cx, &global);
-            JS_LeaveCompartment(cx, NULL);
+            JS_LeaveCompartment(cx, nullptr);
             JS_EndRequest(cx);
             JS_DestroyContext(cx);
-            cx = NULL;
+            cx = nullptr;
         }
         if (rt) {
             destroyRuntime();
-            rt = NULL;
+            rt = nullptr;
         }
     }
 
@@ -209,7 +208,7 @@ class JSAPITest
         if (JS_IsExceptionPending(cx)) {
             js::gc::AutoSuppressGC gcoff(cx);
             JS::RootedValue v(cx);
-            JS_GetPendingException(cx, v.address());
+            JS_GetPendingException(cx, &v);
             JS_ClearPendingException(cx);
             JSString *s = JS_ValueToString(cx, v);
             if (s) {
@@ -279,7 +278,7 @@ class JSAPITest
     virtual JSRuntime * createRuntime() {
         JSRuntime *rt = JS_NewRuntime(8L * 1024 * 1024, JS_USE_HELPER_THREADS);
         if (!rt)
-            return NULL;
+            return nullptr;
         setNativeStackQuota(rt);
         return rt;
     }
@@ -300,8 +299,8 @@ class JSAPITest
     virtual JSContext * createContext() {
         JSContext *cx = JS_NewContext(rt, 8192);
         if (!cx)
-            return NULL;
-        JS_SetOptions(cx, JSOPTION_VAROBJFIX);
+            return nullptr;
+        JS::ContextOptionsRef(cx).setVarObjFix(true);
         JS_SetErrorReporter(cx, &reportError);
         return cx;
     }
@@ -310,7 +309,7 @@ class JSAPITest
         return basicGlobalClass();
     }
 
-    virtual JSObject * createGlobal(JSPrincipals *principals = NULL);
+    virtual JSObject * createGlobal(JSPrincipals *principals = nullptr);
 };
 
 #define BEGIN_TEST(testname)                                            \
@@ -386,7 +385,7 @@ class TempFile {
                     name, strerror(errno));
             exit(1);
         }
-        stream = NULL;
+        stream = nullptr;
     }
 
     /* Delete the temporary file. */
@@ -396,7 +395,7 @@ class TempFile {
                     name, strerror(errno));
             exit(1);
         }
-        name = NULL;
+        name = nullptr;
     }
 };
 

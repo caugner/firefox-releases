@@ -7,6 +7,7 @@
 #ifndef AudioContext_h_
 #define AudioContext_h_
 
+#include "mozilla/dom/AudioContextBinding.h"
 #include "EnableWebAudioCheck.h"
 #include "MediaBufferDecoder.h"
 #include "mozilla/Attributes.h"
@@ -206,7 +207,7 @@ public:
                        const Optional<OwningNonNull<DecodeErrorCallback> >& aFailureCallback);
 
   // OfflineAudioContext methods
-  void StartRendering();
+  void StartRendering(ErrorResult& aRv);
   IMPL_EVENT_HANDLER(complete)
 
   bool IsOffline() const { return mIsOffline; }
@@ -229,8 +230,6 @@ public:
 
   void UnregisterAudioBufferSourceNode(AudioBufferSourceNode* aNode);
   void UnregisterPannerNode(PannerNode* aNode);
-  void UnregisterOscillatorNode(OscillatorNode* aNode);
-  void UnregisterScriptProcessorNode(ScriptProcessorNode* aNode);
   void UpdatePannerSource();
 
   uint32_t MaxChannelCount() const;
@@ -239,6 +238,9 @@ public:
   void Unmute() const;
 
   JSContext* GetJSContext() const;
+
+  AudioChannel MozAudioChannelType() const;
+  void SetMozAudioChannelType(AudioChannel aValue, ErrorResult& aRv);
 
 private:
   void RemoveFromDecodeQueue(WebAudioDecodeJob* aDecodeJob);
@@ -257,18 +259,14 @@ private:
   // See RegisterActiveNode.  These will keep the AudioContext alive while it
   // is rendering and the window remains alive.
   nsTHashtable<nsRefPtrHashKey<AudioNode> > mActiveNodes;
-  // Two hashsets containing all the PannerNodes and AudioBufferSourceNodes,
-  // to compute the doppler shift, and also to stop AudioBufferSourceNodes.
-  // These are all weak pointers.
+  // Hashsets containing all the PannerNodes, to compute the doppler shift.
+  // These are weak pointers.
   nsTHashtable<nsPtrHashKey<PannerNode> > mPannerNodes;
-  nsTHashtable<nsPtrHashKey<AudioBufferSourceNode> > mAudioBufferSourceNodes;
-  nsTHashtable<nsPtrHashKey<OscillatorNode> > mOscillatorNodes;
-  // Hashset containing all ScriptProcessorNodes in order to stop them.
-  // These are all weak pointers.
-  nsTHashtable<nsPtrHashKey<ScriptProcessorNode> > mScriptProcessorNodes;
   // Number of channels passed in the OfflineAudioContext ctor.
   uint32_t mNumberOfChannels;
   bool mIsOffline;
+  bool mIsStarted;
+  bool mIsShutDown;
 };
 
 }

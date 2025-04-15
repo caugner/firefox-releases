@@ -10,6 +10,7 @@
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/TabParent.h"
 #include "mozilla/unused.h"
+#include "nsComponentManagerUtils.h"
 
 using mozilla::unused;          // <snicker>
 using namespace mozilla::dom;

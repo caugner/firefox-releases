@@ -16,10 +16,10 @@ let { Task } = Cu.import("resource://gre/modules/Task.jsm", {});
 let { Promise: promise } = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js", {});
 let { gDevTools } = Cu.import("resource:///modules/devtools/gDevTools.jsm", {});
 let { devtools } = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
+let { DevToolsUtils } = Cu.import("resource://gre/modules/devtools/DevToolsUtils.jsm", {});
 let { BrowserDebuggerProcess } = Cu.import("resource:///modules/devtools/DebuggerProcess.jsm", {});
 let { DebuggerServer } = Cu.import("resource://gre/modules/devtools/dbg-server.jsm", {});
 let { DebuggerClient } = Cu.import("resource://gre/modules/devtools/dbg-client.jsm", {});
-let { SourceEditor } = Cu.import("resource:///modules/source-editor.jsm", {});
 let { AddonManager } = Cu.import("resource://gre/modules/AddonManager.jsm", {});
 let TargetFactory = devtools.TargetFactory;
 let Toolbox = devtools.Toolbox;
@@ -35,6 +35,10 @@ registerCleanupFunction(function() {
 
   // Properly shut down the server to avoid memory leaks.
   DebuggerServer.destroy();
+
+  // Debugger tests use a lot of memory, so force a GC to help fragmentation.
+  info("Forcing GC after debugger test.");
+  Cu.forceGC();
 });
 
 // Import the GCLI test helper
@@ -73,6 +77,7 @@ function addTab(aUrl, aWindow) {
 
   linkedBrowser.addEventListener("load", function onLoad() {
     linkedBrowser.removeEventListener("load", onLoad, true);
+    info("Tab added and finished loading: " + aUrl);
     deferred.resolve(tab);
   }, true);
 
@@ -89,6 +94,7 @@ function removeTab(aTab, aWindow) {
 
   tabContainer.addEventListener("TabClose", function onClose(aEvent) {
     tabContainer.removeEventListener("TabClose", onClose, false);
+    info("Tab removed and finished closing.");
     deferred.resolve();
   }, false);
 
@@ -211,6 +217,12 @@ function waitForTick() {
   return deferred.promise;
 }
 
+function waitForTime(aDelay) {
+  let deferred = promise.defer();
+  setTimeout(deferred.resolve, aDelay);
+  return deferred.promise;
+}
+
 function waitForSourceShown(aPanel, aUrl) {
   return waitForDebuggerEvents(aPanel, aPanel.panelWin.EVENTS.SOURCE_SHOWN).then(aSource => {
     let sourceUrl = aSource.url;
@@ -237,9 +249,9 @@ function ensureSourceIs(aPanel, aUrl, aWaitFlag = false) {
 }
 
 function waitForCaretUpdated(aPanel, aLine, aCol = 1) {
-  return waitForEditorEvents(aPanel, SourceEditor.EVENTS.SELECTION).then(() => {
-    let caret = aPanel.panelWin.DebuggerView.editor.getCaretPosition();
-    info("Caret updated: " + (caret.line + 1) + ", " + (caret.col + 1));
+  return waitForEditorEvents(aPanel, "cursorActivity").then(() => {
+    let cursor = aPanel.panelWin.DebuggerView.editor.getCursor();
+    info("Caret updated: " + (cursor.line + 1) + ", " + (cursor.ch + 1));
 
     if (!isCaretPos(aPanel, aLine, aCol)) {
       return waitForCaretUpdated(aPanel, aLine, aCol);
@@ -263,16 +275,19 @@ function ensureCaretAt(aPanel, aLine, aCol = 1, aWaitFlag = false) {
 
 function isCaretPos(aPanel, aLine, aCol = 1) {
   let editor = aPanel.panelWin.DebuggerView.editor;
-  let caret = editor.getCaretPosition();
+  let cursor = editor.getCursor();
 
   // Source editor starts counting line and column numbers from 0.
-  info("Current editor caret position: " + (caret.line + 1) + ", " + (caret.col + 1));
-  return caret.line == (aLine - 1) && caret.col == (aCol - 1);
+  info("Current editor caret position: " + (cursor.line + 1) + ", " + (cursor.ch + 1));
+  return cursor.line == (aLine - 1) && cursor.ch == (aCol - 1);
 }
 
 function isEditorSel(aPanel, [start, end]) {
   let editor = aPanel.panelWin.DebuggerView.editor;
-  let range = editor.getSelection();
+  let range = {
+    start: editor.getOffset(editor.getCursor("start")),
+    end:   editor.getOffset(editor.getCursor())
+  };
 
   // Source editor starts counting line and column numbers from 0.
   info("Current editor selection: " + (range.start + 1) + ", " + (range.end + 1));
@@ -327,12 +342,12 @@ function waitForEditorEvents(aPanel, aEventName, aEventRepeat = 1) {
   let editor = aPanel.panelWin.DebuggerView.editor;
   let count = 0;
 
-  editor.addEventListener(aEventName, function onEvent(...aArgs) {
+  editor.on(aEventName, function onEvent(...aArgs) {
     info("Editor event '" + aEventName + "' fired: " + (++count) + " time(s).");
 
     if (count == aEventRepeat) {
       ok(true, "Enough '" + aEventName + "' editor events have been fired.");
-      editor.removeEventListener(aEventName, onEvent);
+      editor.off(aEventName, onEvent);
       deferred.resolve.apply(deferred, aArgs);
     }
   });
@@ -511,4 +526,30 @@ function resumeDebuggerThenCloseAndFinish(aPanel, aFlags = {}) {
   let thread = aPanel.panelWin.gThreadClient;
   thread.resume(() => closeDebuggerAndFinish(aPanel, aFlags).then(deferred.resolve));
   return deferred.promise;
+}
+
+function getBlackBoxButton(aPanel) {
+  return aPanel.panelWin.document.getElementById("black-box");
+}
+
+function toggleBlackBoxing(aPanel, aSource = null) {
+  function clickBlackBoxButton() {
+    getBlackBoxButton(aPanel).click();
+  }
+
+  const blackBoxChanged = waitForThreadEvents(aPanel, "blackboxchange");
+
+  if (aSource) {
+    aPanel.panelWin.DebuggerView.Sources.selectedValue = aSource;
+    ensureSourceIs(aPanel, aSource, true).then(clickBlackBoxButton);
+  } else {
+    clickBlackBoxButton();
+  }
+  return blackBoxChanged;
+}
+
+function selectSourceAndGetBlackBoxButton(aPanel, aSource) {
+  aPanel.panelWin.DebuggerView.Sources.selectedValue = aSource;
+  return ensureSourceIs(aPanel, aSource, true)
+    .then(getBlackBoxButton.bind(null, aPanel));
 }

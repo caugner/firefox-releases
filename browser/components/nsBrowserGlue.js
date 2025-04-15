@@ -53,6 +53,11 @@ XPCOMUtils.defineLazyModuleGetter(this, "BrowserNewTabPreloader",
 XPCOMUtils.defineLazyModuleGetter(this, "PdfJs",
                                   "resource://pdf.js/PdfJs.jsm");
 
+#ifdef NIGHTLY_BUILD
+XPCOMUtils.defineLazyModuleGetter(this, "ShumwayUtils",
+                                  "resource://shumway/ShumwayUtils.jsm");
+#endif
+
 XPCOMUtils.defineLazyModuleGetter(this, "webrtcUI",
                                   "resource:///modules/webrtcUI.jsm");
 
@@ -74,12 +79,15 @@ XPCOMUtils.defineLazyModuleGetter(this, "OS",
 XPCOMUtils.defineLazyModuleGetter(this, "SessionStore",
                                   "resource:///modules/sessionstore/SessionStore.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "BrowserUITelemetry",
+                                  "resource:///modules/BrowserUITelemetry.jsm");
+
 const PREF_PLUGINS_NOTIFYUSER = "plugins.update.notifyUser";
 const PREF_PLUGINS_UPDATEURL  = "plugins.update.url";
 
 // We try to backup bookmarks at idle times, to avoid doing that at shutdown.
-// Number of idle seconds before trying to backup bookmarks.  15 minutes.
-const BOOKMARKS_BACKUP_IDLE_TIME = 15 * 60;
+// Number of idle seconds before trying to backup bookmarks.  10 minutes.
+const BOOKMARKS_BACKUP_IDLE_TIME = 10 * 60;
 // Minimum interval in milliseconds between backups.
 const BOOKMARKS_BACKUP_INTERVAL = 86400 * 1000;
 // Maximum number of backups to create.  Old ones will be purged.
@@ -254,8 +262,7 @@ BrowserGlue.prototype = {
         this._onPlacesShutdown();
         break;
       case "idle":
-        if ((this._idleService.idleTime > BOOKMARKS_BACKUP_IDLE_TIME * 1000) &&
-             this._shouldBackupBookmarks())
+        if (this._idleService.idleTime > BOOKMARKS_BACKUP_IDLE_TIME * 1000)
           this._backupBookmarks();
         break;
       case "distribution-customization-complete":
@@ -316,9 +323,8 @@ BrowserGlue.prototype = {
 
         reporter.onInit().then(function record() {
           try {
-            let name = subject.QueryInterface(Ci.nsISearchEngine).name;
-            reporter.getProvider("org.mozilla.searches").recordSearch(name,
-                                                                      "urlbar");
+            let engine = subject.QueryInterface(Ci.nsISearchEngine);
+            reporter.getProvider("org.mozilla.searches").recordSearch(engine, "urlbar");
           } catch (ex) {
             Cu.reportError(ex);
           }
@@ -467,9 +473,13 @@ BrowserGlue.prototype = {
     BrowserNewTabPreloader.init();
     SignInToWebsiteUX.init();
     PdfJs.init();
+#ifdef NIGHTLY_BUILD
+    ShumwayUtils.init();
+#endif
     webrtcUI.init();
     AboutHome.init();
     SessionStore.init();
+    BrowserUITelemetry.init();
 
     if (Services.prefs.getBoolPref("browser.tabs.remote"))
       ContentClick.init();
@@ -1045,8 +1055,7 @@ BrowserGlue.prototype = {
           Services.prefs.getBoolPref("browser.bookmarks.restore_default_bookmarks");
         if (restoreDefaultBookmarks) {
           // Ensure that we already have a bookmarks backup for today.
-          if (this._shouldBackupBookmarks())
-            yield this._backupBookmarks();
+          yield this._backupBookmarks();
           importBookmarks = true;
         }
       } catch(ex) {}
@@ -1055,7 +1064,7 @@ BrowserGlue.prototype = {
       // from bookmarks.html, we will try to restore from JSON
       if (importBookmarks && !restoreDefaultBookmarks && !importBookmarksHTML) {
         // get latest JSON backup
-        var bookmarksBackupFile = PlacesBackups.getMostRecent("json");
+        var bookmarksBackupFile = yield PlacesBackups.getMostRecent("json");
         if (bookmarksBackupFile) {
           // restore from JSON backup
           yield BookmarkJSONUtils.importFromFile(bookmarksBackupFile, true);
@@ -1179,22 +1188,19 @@ BrowserGlue.prototype = {
     }
 
     let waitingForBackupToComplete = true;
-    if (this._shouldBackupBookmarks()) {
-      waitingForBackupToComplete = false;
-      this._backupBookmarks().then(
-        function onSuccess() {
-          waitingForBackupToComplete = true;
-        },
-        function onFailure() {
-          Cu.reportError("Unable to backup bookmarks.");
-          waitingForBackupToComplete = true;
-        }
-      );
-    }
+    this._backupBookmarks().then(
+      function onSuccess() {
+        waitingForBackupToComplete = false;
+      },
+      function onFailure() {
+        Cu.reportError("Unable to backup bookmarks.");
+        waitingForBackupToComplete = false;
+      }
+    );
 
     // Backup bookmarks to bookmarks.html to support apps that depend
     // on the legacy format.
-    let waitingForHTMLExportToComplete = true;
+    let waitingForHTMLExportToComplete = false;
     // If this fails to get the preference value, we don't export.
     if (Services.prefs.getBoolPref("browser.bookmarks.autoExportHTML")) {
       // Exceptionally, since this is a non-default setting and HTML format is
@@ -1203,35 +1209,24 @@ BrowserGlue.prototype = {
       // the event loop on shutdown until we include a watchdog to prevent
       // potential hangs (bug 518683).  The asynchronous shutdown operations
       // will then be handled by a shutdown service (bug 435058).
-      waitingForHTMLExportToComplete = false;
+      waitingForHTMLExportToComplete = true;
       BookmarkHTMLUtils.exportToFile(Services.dirsvc.get("BMarks", Ci.nsIFile)).then(
         function onSuccess() {
-          waitingForHTMLExportToComplete = true;
+          waitingForHTMLExportToComplete = false;
         },
         function onFailure() {
           Cu.reportError("Unable to auto export html.");
-          waitingForHTMLExportToComplete = true;
+          waitingForHTMLExportToComplete = false;
         }
       );
     }
 
+    // The events loop should spin at least once because waitingForBackupToComplete
+    // is true before checking whether backup should be made.
     let thread = Services.tm.currentThread;
-    while (!waitingForBackupToComplete || !waitingForHTMLExportToComplete) {
+    while (waitingForBackupToComplete || waitingForHTMLExportToComplete) {
       thread.processNextEvent(true);
     }
-  },
-
-  /**
-   * Determine whether to backup bookmarks or not.
-   * @return true if bookmarks should be backed up, false if not.
-   */
-  _shouldBackupBookmarks: function BG__shouldBackupBookmarks() {
-    let lastBackupFile = PlacesBackups.getMostRecent();
-
-    // Should backup bookmarks if there are no backups or the maximum interval between
-    // backups elapsed.
-    return (!lastBackupFile ||
-            new Date() - PlacesBackups.getDateForFile(lastBackupFile) > BOOKMARKS_BACKUP_INTERVAL);
   },
 
   /**
@@ -1239,15 +1234,19 @@ BrowserGlue.prototype = {
    */
   _backupBookmarks: function BG__backupBookmarks() {
     return Task.spawn(function() {
-      // Backup bookmarks if there are no backups or the maximum interval between
-      // backups elapsed.
-      let maxBackups = BOOKMARKS_BACKUP_MAX_BACKUPS;
-      try {
-        maxBackups = Services.prefs.getIntPref("browser.bookmarks.max_backups");
-      }
-      catch(ex) { /* Use default. */ }
+      let lastBackupFile = yield PlacesBackups.getMostRecentBackup();
+      // Should backup bookmarks if there are no backups or the maximum
+      // interval between backups elapsed.
+      if (!lastBackupFile ||
+          new Date() - PlacesBackups.getDateForFile(lastBackupFile) > BOOKMARKS_BACKUP_INTERVAL) {
+        let maxBackups = BOOKMARKS_BACKUP_MAX_BACKUPS;
+        try {
+          maxBackups = Services.prefs.getIntPref("browser.bookmarks.max_backups");
+        }
+        catch(ex) { /* Use default. */ }
 
-      yield PlacesBackups.create(maxBackups); // Don't force creation.
+        yield PlacesBackups.create(maxBackups); // Don't force creation.
+      }
     });
   },
 
@@ -1292,15 +1291,55 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     const UI_VERSION = 14;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul#";
+
+    let wasCustomizedAndOnAustralis = Services.prefs.prefHasUserValue("browser.uiCustomization.state");
     let currentUIVersion = 0;
     try {
       currentUIVersion = Services.prefs.getIntPref("browser.migration.version");
     } catch(ex) {}
-    if (currentUIVersion >= UI_VERSION)
+    if (!wasCustomizedAndOnAustralis && currentUIVersion >= UI_VERSION)
       return;
 
     this._rdf = Cc["@mozilla.org/rdf/rdf-service;1"].getService(Ci.nsIRDFService);
     this._dataSource = this._rdf.GetDataSource("rdf:local-store");
+
+    // No version check for this as this code should run until we have Australis everywhere:
+    if (wasCustomizedAndOnAustralis) {
+      // This profile's been on australis! If it's missing the back/fwd button
+      // or go/stop/reload button, then put them back:
+      let currentsetResource = this._rdf.GetResource("currentset");
+      let toolbarResource = this._rdf.GetResource(BROWSER_DOCURL + "nav-bar");
+      let currentset = this._getPersist(toolbarResource, currentsetResource);
+      let oldCurrentset = currentset;
+      if (currentset) {
+        if (currentset.indexOf("unified-back-forward-button") == -1) {
+          currentset = currentset.replace("urlbar-container",
+                                          "unified-back-forward-button,urlbar-container");
+        }
+        if (currentset.indexOf("reload-button") == -1) {
+          currentset = currentset.replace("urlbar-container", "urlbar-container,reload-button");
+        }
+        if (currentset.indexOf("stop-button") == -1) {
+          currentset = currentset.replace("reload-button", "reload-button,stop-button");
+        }
+      }
+      Services.prefs.clearUserPref("browser.uiCustomization.state");
+
+      if (oldCurrentset != currentset) {
+        this._setPersist(toolbarResource, currentsetResource, currentset);
+      }
+      // If we don't have anything else to do, we can bail here:
+      if (currentUIVersion >= UI_VERSION) {
+        if (this._dirty) {
+          this._dataSource.QueryInterface(Ci.nsIRDFRemoteDataSource).Flush();
+        }
+        delete this._rdf;
+        delete this._dataSource;
+        return;
+      }
+    }
+
+
     this._dirty = false;
 
     if (currentUIVersion < 2) {

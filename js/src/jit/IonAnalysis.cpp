@@ -9,6 +9,7 @@
 #include "jsanalyze.h"
 
 #include "jit/BaselineInspector.h"
+#include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
 #include "jit/IonBuilder.h"
 #include "jit/LIR.h"
@@ -16,6 +17,7 @@
 #include "jit/MIRGraph.h"
 
 #include "jsinferinlines.h"
+#include "jsobjinlines.h"
 
 using namespace js;
 using namespace js::jit;
@@ -86,7 +88,7 @@ jit::EliminateDeadResumePointOperands(MIRGenerator *mir, MIRGraph &graph)
             // parameter passing might be live. Rewriting uses of these terms
             // in resume points may affect the interpreter's behavior. Rather
             // than doing a more sophisticated analysis, just ignore these.
-            if (ins->isUnbox() || ins->isParameter() || ins->isTypeBarrier())
+            if (ins->isUnbox() || ins->isParameter() || ins->isTypeBarrier() || ins->isComputeThis())
                 continue;
 
             // If the instruction's behavior has been constant folded into a
@@ -210,16 +212,25 @@ IsPhiObservable(MPhi *phi, Observability observe)
         break;
     }
 
-    // If the Phi is of the |this| value, it must always be observable.
     uint32_t slot = phi->slot();
     CompileInfo &info = phi->block()->info();
-    if (info.fun() && slot == info.thisSlot())
+    JSFunction *fun = info.fun();
+
+    // If the Phi is of the |this| value, it must always be observable.
+    if (fun && slot == info.thisSlot())
+        return true;
+
+    // If the function is heavyweight, and the Phi is of the |scopeChain|
+    // value, and the function may need an arguments object, then make sure
+    // to preserve the scope chain, because it may be needed to construct the
+    // arguments object during bailout.
+    if (fun && fun->isHeavyweight() && info.hasArguments() && slot == info.scopeChainSlot())
         return true;
 
     // If the Phi is one of the formal argument, and we are using an argument
     // object in the function. The phi might be observable after a bailout.
     // For inlined frames this is not needed, as they are captured in the inlineResumePoint.
-    if (info.fun() && info.hasArguments()) {
+    if (fun && info.hasArguments()) {
         uint32_t first = info.firstArgSlot();
         if (first <= slot && slot - first < info.nargs()) {
             // If arguments obj aliases formals, then the arg slots will never be used.
@@ -234,12 +245,12 @@ IsPhiObservable(MPhi *phi, Observability observe)
 // Handles cases like:
 //    x is phi(a, x) --> a
 //    x is phi(a, a) --> a
-inline MDefinition *
+static inline MDefinition *
 IsPhiRedundant(MPhi *phi)
 {
     MDefinition *first = phi->operandIfRedundant();
-    if (first == NULL)
-        return NULL;
+    if (first == nullptr)
+        return nullptr;
 
     // Propagate the Folded flag if |phi| is replaced with another phi.
     if (phi->isFolded())
@@ -979,20 +990,20 @@ IntersectDominators(MBasicBlock *block1, MBasicBlock *block2)
     // For this function to be called, the block must have multiple predecessors.
     // If a finger is then found to be self-dominating, it must therefore be
     // reachable from multiple roots through non-intersecting control flow.
-    // NULL is returned in this case, to denote an empty intersection.
+    // nullptr is returned in this case, to denote an empty intersection.
 
     while (finger1->id() != finger2->id()) {
         while (finger1->id() > finger2->id()) {
             MBasicBlock *idom = finger1->immediateDominator();
             if (idom == finger1)
-                return NULL; // Empty intersection.
+                return nullptr; // Empty intersection.
             finger1 = idom;
         }
 
         while (finger2->id() > finger1->id()) {
             MBasicBlock *idom = finger2->immediateDominator();
             if (idom == finger2)
-                return NULL; // Empty intersection.
+                return nullptr; // Empty intersection.
             finger2 = idom;
         }
     }
@@ -1030,13 +1041,13 @@ ComputeImmediateDominators(MIRGraph &graph)
             // Find the first common dominator.
             for (size_t i = 1; i < block->numPredecessors(); i++) {
                 MBasicBlock *pred = block->getPredecessor(i);
-                if (pred->immediateDominator() == NULL)
+                if (pred->immediateDominator() == nullptr)
                     continue;
 
                 newIdom = IntersectDominators(pred, newIdom);
 
                 // If there is no common dominator, the block self-dominates.
-                if (newIdom == NULL) {
+                if (newIdom == nullptr) {
                     block->setImmediateDominator(*block);
                     changed = true;
                     break;
@@ -1053,7 +1064,7 @@ ComputeImmediateDominators(MIRGraph &graph)
 #ifdef DEBUG
     // Assert that all blocks have dominator information.
     for (MBasicBlockIterator block(graph.begin()); block != graph.end(); block++) {
-        JS_ASSERT(block->immediateDominator() != NULL);
+        JS_ASSERT(block->immediateDominator() != nullptr);
     }
 #endif
 }
@@ -1170,19 +1181,6 @@ jit::BuildPhiReverseMapping(MIRGraph &graph)
     return true;
 }
 
-static inline MBasicBlock *
-SkipContainedLoop(MBasicBlock *block, MBasicBlock *header)
-{
-    while (block->loopHeader() || block->isLoopHeader()) {
-        if (block->loopHeader())
-            block = block->loopHeader();
-        if (block == header)
-            break;
-        block = block->loopPredecessor();
-    }
-    return block;
-}
-
 #ifdef DEBUG
 static bool
 CheckSuccessorImpliesPredecessor(MBasicBlock *A, MBasicBlock *B)
@@ -1287,6 +1285,8 @@ void
 jit::AssertGraphCoherency(MIRGraph &graph)
 {
 #ifdef DEBUG
+    if (!js_IonOptions.assertGraphConsistency)
+        return;
     AssertBasicGraphCoherency(graph);
     AssertReversePostOrder(graph);
 #endif
@@ -1300,6 +1300,8 @@ jit::AssertExtendedGraphCoherency(MIRGraph &graph)
     // are split)
 
 #ifdef DEBUG
+    if (!js_IonOptions.assertGraphConsistency)
+        return;
     AssertGraphCoherency(graph);
 
     uint32_t idx = 0;
@@ -1333,13 +1335,13 @@ jit::AssertExtendedGraphCoherency(MIRGraph &graph)
                 successorWithPhis++;
 
         JS_ASSERT(successorWithPhis <= 1);
-        JS_ASSERT_IF(successorWithPhis, block->successorWithPhis() != NULL);
+        JS_ASSERT_IF(successorWithPhis, block->successorWithPhis() != nullptr);
 
         // I'd like to assert this, but it's not necc. true.  Sometimes we set this
-        // flag to non-NULL just because a successor has multiple preds, even if it
+        // flag to non-nullptr just because a successor has multiple preds, even if it
         // does not actually have any phis.
         //
-        // JS_ASSERT_IF(!successorWithPhis, block->successorWithPhis() == NULL);
+        // JS_ASSERT_IF(!successorWithPhis, block->successorWithPhis() == nullptr);
     }
 #endif
 }
@@ -1379,7 +1381,7 @@ FindDominatingBoundsCheck(BoundsCheckMap &checks, MBoundsCheck *check, size_t in
         info.validUntil = index + check->block()->numDominated();
 
         if(!checks.put(hash, info))
-            return NULL;
+            return nullptr;
 
         return check;
     }
@@ -1400,7 +1402,7 @@ jit::ExtractLinearSum(MDefinition *ins)
     if (ins->isConstant()) {
         const Value &v = ins->toConstant()->value();
         JS_ASSERT(v.isInt32());
-        return SimpleLinearSum(NULL, v.toInt32());
+        return SimpleLinearSum(nullptr, v.toInt32());
     } else if (ins->isAdd() || ins->isSub()) {
         MDefinition *lhs = ins->getOperand(0);
         MDefinition *rhs = ins->getOperand(1);
@@ -1522,7 +1524,7 @@ TryEliminateBoundsCheck(BoundsCheckMap &checks, size_t blockIndex, MBoundsCheck 
     SimpleLinearSum sumA = ExtractLinearSum(dominating->index());
     SimpleLinearSum sumB = ExtractLinearSum(dominated->index());
 
-    // Both terms should be NULL or the same definition.
+    // Both terms should be nullptr or the same definition.
     if (sumA.term != sumB.term)
         return true;
 
@@ -1730,7 +1732,7 @@ jit::EliminateRedundantChecks(MIRGraph &graph)
 }
 
 // If the given block contains a goto and nothing interesting before that,
-// return the goto. Return NULL otherwise.
+// return the goto. Return nullptr otherwise.
 static LGoto *
 FindLeadingGoto(LBlock *bb)
 {
@@ -1746,7 +1748,7 @@ FindLeadingGoto(LBlock *bb)
             return ins->toGoto();
         break;
     }
-    return NULL;
+    return nullptr;
 }
 
 // Eliminate blocks containing nothing interesting besides gotos. These are
@@ -1906,12 +1908,21 @@ LinearSum::print(Sprinter &sp) const
         sp.printf("%d", constant_);
 }
 
+void
+LinearSum::dump(FILE *fp) const
+{
+    Sprinter sp(GetIonContext()->cx);
+    sp.init();
+    print(sp);
+    fprintf(fp, "%s\n", sp.string());
+}
+
 static bool
 AnalyzePoppedThis(JSContext *cx, types::TypeObject *type,
                   MDefinition *thisValue, MInstruction *ins, bool definitelyExecuted,
                   HandleObject baseobj,
                   Vector<types::TypeNewScript::Initializer> *initializerList,
-                  Vector<jsid> *accessedProperties,
+                  Vector<PropertyName *> *accessedProperties,
                   bool *phandled)
 {
     // Determine the effect that a use of the |this| value when calling |new|
@@ -1920,23 +1931,21 @@ AnalyzePoppedThis(JSContext *cx, types::TypeObject *type,
     if (ins->isCallSetProperty()) {
         MCallSetProperty *setprop = ins->toCallSetProperty();
 
-        if (setprop->obj() != thisValue)
+        if (setprop->object() != thisValue)
             return true;
 
         // Don't use GetAtomId here, we need to watch for SETPROP on
         // integer properties and bail out. We can't mark the aggregate
         // JSID_VOID type property as being in a definite slot.
-        RootedId id(cx, NameToId(setprop->name()));
-        if (types::IdToTypeId(id) != id ||
-            id == NameToId(cx->names().classPrototype) ||
-            id == NameToId(cx->names().proto) ||
-            id == NameToId(cx->names().constructor))
+        if (setprop->name() == cx->names().prototype ||
+            setprop->name() == cx->names().proto ||
+            setprop->name() == cx->names().constructor)
         {
             return true;
         }
 
         // Ignore assignments to properties that were already written to.
-        if (baseobj->nativeLookup(cx, id)) {
+        if (baseobj->nativeLookup(cx, NameToId(setprop->name()))) {
             *phandled = true;
             return true;
         }
@@ -1944,7 +1953,7 @@ AnalyzePoppedThis(JSContext *cx, types::TypeObject *type,
         // Don't add definite properties for properties that were already
         // read in the constructor.
         for (size_t i = 0; i < accessedProperties->length(); i++) {
-            if ((*accessedProperties)[i] == id)
+            if ((*accessedProperties)[i] == setprop->name())
                 return true;
         }
 
@@ -1957,15 +1966,16 @@ AnalyzePoppedThis(JSContext *cx, types::TypeObject *type,
         if (!definitelyExecuted)
             return true;
 
-        if (!types::AddClearDefiniteGetterSetterForPrototypeChain(cx, type, id)) {
+        if (!types::AddClearDefiniteGetterSetterForPrototypeChain(cx, type, NameToId(setprop->name()))) {
             // The prototype chain already contains a getter/setter for this
             // property, or type information is too imprecise.
             return true;
         }
 
         DebugOnly<unsigned> slotSpan = baseobj->slotSpan();
+        RootedId id(cx, NameToId(setprop->name()));
         RootedValue value(cx, UndefinedValue());
-        if (!DefineNativeProperty(cx, baseobj, id, value, NULL, NULL,
+        if (!DefineNativeProperty(cx, baseobj, id, value, nullptr, nullptr,
                                   JSPROP_ENUMERATE, 0, 0, DNP_SKIP_TYPE))
         {
             return false;
@@ -2019,9 +2029,7 @@ AnalyzePoppedThis(JSContext *cx, types::TypeObject *type,
          *   definite property before it is assigned could incorrectly hit.
          */
         RootedId id(cx, NameToId(get->name()));
-        if (types::IdToTypeId(id) != id)
-            return true;
-        if (!baseobj->nativeLookup(cx, id) && !accessedProperties->append(id.get()))
+        if (!baseobj->nativeLookup(cx, id) && !accessedProperties->append(get->name()))
             return false;
 
         if (!types::AddClearDefiniteGetterSetterForPrototypeChain(cx, type, id)) {
@@ -2050,7 +2058,7 @@ CmpInstructions(const void *a, const void *b)
 }
 
 bool
-jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
+jit::AnalyzeNewScriptProperties(JSContext *cx, HandleFunction fun,
                                 types::TypeObject *type, HandleObject baseobj,
                                 Vector<types::TypeNewScript::Initializer> *initializerList)
 {
@@ -2058,19 +2066,19 @@ jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
     // which will definitely be added to the created object before it has a
     // chance to escape and be accessed elsewhere.
 
-    if (fun->isInterpretedLazy() && !fun->getOrCreateScript(cx)) {
+    if (fun->isInterpretedLazy() && !fun->getOrCreateScript(cx))
         return false;
-    }
 
-    if (!fun->nonLazyScript()->compileAndGo)
+    RootedScript script(cx, fun->nonLazyScript());
+
+    if (!script->compileAndGo || !script->canBaselineCompile())
         return true;
 
-    if (!fun->nonLazyScript()->ensureHasTypes(cx))
-        return false;
+    static const uint32_t MAX_SCRIPT_SIZE = 2000;
+    if (script->length > MAX_SCRIPT_SIZE)
+        return true;
 
-    types::TypeScript::SetThis(cx, fun->nonLazyScript(), types::Type::ObjectType(type));
-
-    Vector<jsid> accessedProperties(cx);
+    Vector<PropertyName *> accessedProperties(cx);
 
     LifoAlloc alloc(types::TypeZone::TYPE_LIFO_ALLOC_PRIMARY_CHUNK_SIZE);
 
@@ -2079,24 +2087,38 @@ jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
 
     types::AutoEnterAnalysis enter(cx);
 
-    if (!fun->nonLazyScript()->ensureRanAnalysis(cx))
-        return false;
+    if (!cx->compartment()->ensureJitCompartmentExists(cx))
+        return Method_Error;
+
+    if (!script->hasBaselineScript()) {
+        MethodStatus status = BaselineCompile(cx, script);
+        if (status == Method_Error)
+            return false;
+        if (status != Method_Compiled)
+            return true;
+    }
+
+    types::TypeScript::SetThis(cx, script, types::Type::ObjectType(type));
 
     MIRGraph graph(&temp);
-    CompileInfo info(fun->nonLazyScript(), fun,
-                     /* osrPc = */ NULL, /* constructing = */ false,
+    CompileInfo info(script, fun,
+                     /* osrPc = */ nullptr, /* constructing = */ false,
                      DefinitePropertiesAnalysis);
 
     AutoTempAllocatorRooter root(cx, &temp);
 
-    BaselineInspector inspector(cx, fun->nonLazyScript());
-    IonBuilder builder(cx, &temp, &graph, &inspector, &info, /* baselineFrame = */ NULL);
+    types::CompilerConstraintList *constraints = types::NewCompilerConstraintList();
+    BaselineInspector inspector(script);
+    IonBuilder builder(cx, &temp, &graph, constraints,
+                       &inspector, &info, /* baselineFrame = */ nullptr);
 
     if (!builder.build()) {
         if (builder.abortReason() == AbortReason_Alloc)
             return false;
         return true;
     }
+
+    types::FinishDefinitePropertiesAnalysis(cx, constraints);
 
     if (!SplitCriticalEdges(graph))
         return false;
@@ -2156,6 +2178,13 @@ jit::AnalyzeNewScriptProperties(JSContext *cx, JSFunction *fun,
                 }
             }
         }
+
+        // Also check to see if the instruction is inside a loop body. Even if
+        // an access will always execute in the script, if it executes multiple
+        // times then we can get confused when rolling back objects while
+        // clearing the new script information.
+        if (ins->block()->loopDepth() != 0)
+            definitelyExecuted = false;
 
         bool handled = false;
         if (!AnalyzePoppedThis(cx, type, thisValue, ins, definitelyExecuted,

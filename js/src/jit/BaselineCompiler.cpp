@@ -12,7 +12,9 @@
 #include "jit/FixedList.h"
 #include "jit/IonLinker.h"
 #include "jit/IonSpewer.h"
-#include "jit/PerfSpewer.h"
+#ifdef JS_ION_PERF
+# include "jit/PerfSpewer.h"
+#endif
 #include "jit/VMFunctions.h"
 
 #include "jsscriptinlines.h"
@@ -31,7 +33,7 @@ BaselineCompiler::BaselineCompiler(JSContext *cx, HandleScript script)
 bool
 BaselineCompiler::init()
 {
-    if (!analysis_.init(cx))
+    if (!analysis_.init(cx->runtime()->gsnCache))
         return false;
 
     if (!labels_.init(script->length))
@@ -72,7 +74,7 @@ BaselineCompiler::compile()
     IonSpew(IonSpew_Codegen, "# Emitting baseline code for script %s:%d",
             script->filename(), script->lineno);
 
-    if (cx->typeInferenceEnabled() && !script->ensureHasBytecodeTypeMap(cx))
+    if (cx->typeInferenceEnabled() && !script->ensureHasTypes(cx))
         return Method_Error;
 
     // Only need to analyze scripts which are marked |argumensHasVarBinding|, to
@@ -85,13 +87,14 @@ BaselineCompiler::compile()
     // Pin analysis info during compilation.
     types::AutoEnterAnalysis autoEnterAnalysis(cx);
 
+    JS_ASSERT(!script->hasBaselineScript());
+
     if (!emitPrologue())
         return Method_Error;
 
     MethodStatus status = emitBody();
     if (status != Method_Compiled)
         return status;
-
 
     if (!emitEpilogue())
         return Method_Error;
@@ -109,7 +112,22 @@ BaselineCompiler::compile()
     if (!code)
         return Method_Error;
 
-    JS_ASSERT(!script->hasBaselineScript());
+    JSObject *templateScope = nullptr;
+    if (script->function()) {
+        RootedFunction fun(cx, script->function());
+        if (fun->isHeavyweight()) {
+            templateScope = CallObject::createTemplateObject(cx, script, gc::TenuredHeap);
+            if (!templateScope)
+                return Method_Error;
+
+            if (fun->isNamedLambda()) {
+                RootedObject declEnvObject(cx, DeclEnvObject::createTemplateObject(cx, fun, gc::TenuredHeap));
+                if (!declEnvObject)
+                    return Method_Error;
+                templateScope->as<ScopeObject>().setEnclosingScope(declEnvObject);
+            }
+        }
+    }
 
     // Encode the pc mapping table. See PCMappingIndexEntry for
     // more information.
@@ -153,15 +171,20 @@ BaselineCompiler::compile()
     prologueOffset_.fixup(&masm);
     spsPushToggleOffset_.fixup(&masm);
 
+    // Note: There is an extra entry in the bytecode type map for the search hint, see below.
+    size_t bytecodeTypeMapEntries = cx->typeInferenceEnabled() ? script->nTypeSets + 1 : 0;
+
     BaselineScript *baselineScript = BaselineScript::New(cx, prologueOffset_.offset(),
                                                          spsPushToggleOffset_.offset(),
                                                          icEntries_.length(),
                                                          pcMappingIndexEntries.length(),
-                                                         pcEntries.length());
+                                                         pcEntries.length(),
+                                                         bytecodeTypeMapEntries);
     if (!baselineScript)
         return Method_Error;
 
     baselineScript->setMethod(code);
+    baselineScript->setTemplateScope(templateScope);
 
     script->setBaselineScript(baselineScript);
 
@@ -208,6 +231,29 @@ BaselineCompiler::compile()
     if (cx->runtime()->spsProfiler.enabled())
         baselineScript->toggleSPS(true);
 
+    if (cx->typeInferenceEnabled()) {
+        uint32_t *bytecodeMap = baselineScript->bytecodeTypeMap();
+
+        uint32_t added = 0;
+        for (jsbytecode *pc = script->code; pc < script->code + script->length; pc += GetBytecodeLength(pc)) {
+            JSOp op = JSOp(*pc);
+            if (js_CodeSpec[op].format & JOF_TYPESET) {
+                bytecodeMap[added++] = pc - script->code;
+                if (added == script->nTypeSets)
+                    break;
+            }
+        }
+
+        JS_ASSERT(added == script->nTypeSets);
+
+        // The last entry in the last index found, and is used to avoid binary
+        // searches for the sought entry when queries are in linear order.
+        bytecodeMap[script->nTypeSets] = 0;
+    }
+
+    if (script->compartment()->debugMode())
+        baselineScript->setDebugMode();
+
     return Method_Compiled;
 }
 
@@ -236,10 +282,10 @@ BaselineCompiler::emitPrologue()
     // Handle scope chain pre-initialization (in case GC gets run
     // during stack check).  For global and eval scripts, the scope
     // chain is in R1.  For function scripts, the scope chain is in
-    // the callee, NULL is stored for now so that GC doesn't choke on
-    // a bogus ScopeChain value in the frame.
+    // the callee, nullptr is stored for now so that GC doesn't choke
+    // on a bogus ScopeChain value in the frame.
     if (function())
-        masm.storePtr(ImmPtr(NULL), frame.addressOfScopeChain());
+        masm.storePtr(ImmPtr(nullptr), frame.addressOfScopeChain());
     else
         masm.storePtr(R1.scratchReg(), frame.addressOfScopeChain());
 
@@ -576,7 +622,7 @@ BaselineCompiler::emitDebugTrap()
     bool enabled = script->stepModeEnabled() || script->hasBreakpointsAt(pc);
 
     // Emit patchable call to debug trap handler.
-    IonCode *handler = cx->runtime()->ionRuntime()->debugTrapHandler(cx);
+    IonCode *handler = cx->runtime()->jitRuntime()->debugTrapHandler(cx);
     mozilla::DebugOnly<CodeOffsetLabel> offset = masm.toggledCall(handler, enabled);
 
 #ifdef DEBUG
@@ -1381,7 +1427,7 @@ BaselineCompiler::emit_JSOP_NEWARRAY()
 
     uint32_t length = GET_UINT24(pc);
     RootedTypeObject type(cx);
-    if (!types::UseNewTypeForInitializer(cx, script, pc, JSProto_Array)) {
+    if (!types::UseNewTypeForInitializer(script, pc, JSProto_Array)) {
         type = types::TypeScript::InitObject(cx, script, pc, JSProto_Array);
         if (!type)
             return false;
@@ -1391,7 +1437,12 @@ BaselineCompiler::emit_JSOP_NEWARRAY()
     masm.move32(Imm32(length), R0.scratchReg());
     masm.movePtr(ImmGCPtr(type), R1.scratchReg());
 
-    ICNewArray_Fallback::Compiler stubCompiler(cx);
+    JSObject *templateObject = NewDenseUnallocatedArray(cx, length, nullptr, TenuredObject);
+    if (!templateObject)
+        return false;
+    templateObject->setType(type);
+
+    ICNewArray_Fallback::Compiler stubCompiler(cx, templateObject);
     if (!emitOpIC(stubCompiler.getStub(&stubSpace_)))
         return false;
 
@@ -1425,7 +1476,7 @@ BaselineCompiler::emit_JSOP_NEWOBJECT()
     frame.syncStack(0);
 
     RootedTypeObject type(cx);
-    if (!types::UseNewTypeForInitializer(cx, script, pc, JSProto_Object)) {
+    if (!types::UseNewTypeForInitializer(script, pc, JSProto_Object)) {
         type = types::TypeScript::InitObject(cx, script, pc, JSProto_Object);
         if (!type)
             return false;
@@ -1443,10 +1494,7 @@ BaselineCompiler::emit_JSOP_NEWOBJECT()
             return false;
     }
 
-    // Pass base object in R0.
-    masm.movePtr(ImmGCPtr(templateObject), R0.scratchReg());
-
-    ICNewObject_Fallback::Compiler stubCompiler(cx);
+    ICNewObject_Fallback::Compiler stubCompiler(cx, templateObject);
     if (!emitOpIC(stubCompiler.getStub(&stubSpace_)))
         return false;
 
@@ -1461,7 +1509,7 @@ BaselineCompiler::emit_JSOP_NEWINIT()
     JSProtoKey key = JSProtoKey(GET_UINT8(pc));
 
     RootedTypeObject type(cx);
-    if (!types::UseNewTypeForInitializer(cx, script, pc, key)) {
+    if (!types::UseNewTypeForInitializer(script, pc, key)) {
         type = types::TypeScript::InitObject(cx, script, pc, key);
         if (!type)
             return false;
@@ -1472,7 +1520,12 @@ BaselineCompiler::emit_JSOP_NEWINIT()
         masm.move32(Imm32(0), R0.scratchReg());
         masm.movePtr(ImmGCPtr(type), R1.scratchReg());
 
-        ICNewArray_Fallback::Compiler stubCompiler(cx);
+        JSObject *templateObject = NewDenseUnallocatedArray(cx, 0, nullptr, TenuredObject);
+        if (!templateObject)
+            return false;
+        templateObject->setType(type);
+
+        ICNewArray_Fallback::Compiler stubCompiler(cx, templateObject);
         if (!emitOpIC(stubCompiler.getStub(&stubSpace_)))
             return false;
     } else {
@@ -1490,10 +1543,7 @@ BaselineCompiler::emit_JSOP_NEWINIT()
                 return false;
         }
 
-        // Pass base object in R0.
-        masm.movePtr(ImmGCPtr(templateObject), R0.scratchReg());
-
-        ICNewObject_Fallback::Compiler stubCompiler(cx);
+        ICNewObject_Fallback::Compiler stubCompiler(cx, templateObject);
         if (!emitOpIC(stubCompiler.getStub(&stubSpace_)))
             return false;
     }
@@ -1823,7 +1873,7 @@ BaselineCompiler::emit_JSOP_GETALIASEDVAR()
     Address address = getScopeCoordinateAddress(R0.scratchReg());
     masm.loadValue(address, R0);
 
-    ICTypeMonitor_Fallback::Compiler compiler(cx, (ICMonitoredFallbackStub *) NULL);
+    ICTypeMonitor_Fallback::Compiler compiler(cx, (ICMonitoredFallbackStub *) nullptr);
     if (!emitOpIC(compiler.getStub(&stubSpace_)))
         return false;
 
@@ -2255,7 +2305,7 @@ BaselineCompiler::emitCall()
     uint32_t argc = GET_ARGC(pc);
 
     frame.syncStack(0);
-    masm.mov(Imm32(argc), R0.scratchReg());
+    masm.mov(ImmWord(argc), R0.scratchReg());
 
     // Call IC
     ICCall_Fallback::Compiler stubCompiler(cx, /* isConstructing = */ JSOp(*pc) == JSOP_NEW);
@@ -2463,6 +2513,12 @@ BaselineCompiler::emit_JSOP_ENTERLET0()
 
 bool
 BaselineCompiler::emit_JSOP_ENTERLET1()
+{
+    return emitEnterBlock();
+}
+
+bool
+BaselineCompiler::emit_JSOP_ENTERLET2()
 {
     return emitEnterBlock();
 }
@@ -2812,7 +2868,7 @@ DoCreateRestParameter(JSContext *cx, BaselineFrame *frame, MutableHandleValue re
     unsigned numRest = numActuals > numFormals ? numActuals - numFormals : 0;
     Value *rest = frame->argv() + numFormals;
 
-    JSObject *obj = NewDenseCopiedArray(cx, numRest, rest, NULL);
+    JSObject *obj = NewDenseCopiedArray(cx, numRest, rest, nullptr);
     if (!obj)
         return false;
     types::FixRestArgumentsType(cx, obj);

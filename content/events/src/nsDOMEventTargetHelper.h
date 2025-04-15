@@ -13,7 +13,7 @@
 #include "nsIScriptGlobalObject.h"
 #include "nsEventListenerManager.h"
 #include "nsIScriptContext.h"
-#include "nsThreadUtils.h"
+#include "MainThreadUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/EventTarget.h"
 
@@ -44,9 +44,15 @@ public:
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS(nsDOMEventTargetHelper)
 
   NS_DECL_NSIDOMEVENTTARGET
+
+  virtual nsEventListenerManager*
+  GetExistingListenerManager() const MOZ_OVERRIDE;
+  virtual nsEventListenerManager*
+  GetOrCreateListenerManager() MOZ_OVERRIDE;
+
   using mozilla::dom::EventTarget::RemoveEventListener;
   virtual void AddEventListener(const nsAString& aType,
-                                nsIDOMEventListener* aListener,
+                                mozilla::dom::EventListener* aListener,
                                 bool aCapture,
                                 const mozilla::dom::Nullable<bool>& aWantsUntrusted,
                                 mozilla::ErrorResult& aRv) MOZ_OVERRIDE;
@@ -174,15 +180,12 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsDOMEventTargetHelper,
     }                                                                     \
     return GetEventHandler(nullptr, NS_LITERAL_STRING(#_event));          \
   }                                                                       \
-  inline void SetOn##_event(mozilla::dom::EventHandlerNonNull* aCallback, \
-                            mozilla::ErrorResult& aRv)                    \
+  inline void SetOn##_event(mozilla::dom::EventHandlerNonNull* aCallback) \
   {                                                                       \
     if (NS_IsMainThread()) {                                              \
-      SetEventHandler(nsGkAtoms::on##_event, EmptyString(),               \
-                      aCallback, aRv);                                    \
+      SetEventHandler(nsGkAtoms::on##_event, EmptyString(), aCallback);   \
     } else {                                                              \
-      SetEventHandler(nullptr, NS_LITERAL_STRING(#_event),                \
-                      aCallback, aRv);                                    \
+      SetEventHandler(nullptr, NS_LITERAL_STRING(#_event), aCallback);    \
     }                                                                     \
   }
 
@@ -219,11 +222,14 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsDOMEventTargetHelper,
   virtual nsresult PostHandleEvent(nsEventChainPostVisitor & aVisitor) { \
     return _to PostHandleEvent(aVisitor); \
   } \
-  virtual nsresult DispatchDOMEvent(nsEvent *aEvent, nsIDOMEvent *aDOMEvent, nsPresContext *aPresContext, nsEventStatus *aEventStatus) { \
+  virtual nsresult DispatchDOMEvent(mozilla::WidgetEvent* aEvent, nsIDOMEvent* aDOMEvent, nsPresContext* aPresContext, nsEventStatus* aEventStatus) { \
     return _to DispatchDOMEvent(aEvent, aDOMEvent, aPresContext, aEventStatus); \
   } \
-  virtual nsEventListenerManager * GetListenerManager(bool aMayCreate) { \
-    return _to GetListenerManager(aMayCreate); \
+  virtual nsEventListenerManager * GetOrCreateListenerManager() { \
+    return _to GetOrCreateListenerManager(); \
+  } \
+  virtual nsEventListenerManager * GetExistingListenerManager() const { \
+    return _to GetExistingListenerManager(); \
   } \
   virtual nsIScriptContext * GetContextForEventHandlers(nsresult *aRv) { \
     return _to GetContextForEventHandlers(aRv); \
@@ -235,6 +241,14 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsDOMEventTargetHelper,
 #define NS_REALLY_FORWARD_NSIDOMEVENTTARGET(_class) \
   using _class::AddEventListener;                   \
   using _class::RemoveEventListener;                \
-  NS_FORWARD_NSIDOMEVENTTARGET(_class::)
+  NS_FORWARD_NSIDOMEVENTTARGET(_class::)            \
+  virtual nsEventListenerManager*                   \
+  GetOrCreateListenerManager() {                    \
+    return _class::GetOrCreateListenerManager();    \
+  }                                                 \
+  virtual nsEventListenerManager*                   \
+  GetExistingListenerManager() const {              \
+    return _class::GetExistingListenerManager();    \
+  }
 
 #endif // nsDOMEventTargetHelper_h_

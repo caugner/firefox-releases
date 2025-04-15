@@ -53,7 +53,7 @@ SurfaceToTexture(ID3D10Device *aDevice,
     return nullptr;
   }
 
-  if (aSurface->GetType() == gfxASurface::SurfaceTypeD2D) {
+  if (aSurface->GetType() == gfxSurfaceTypeD2D) {
     void *data = aSurface->GetData(&gKeyD3D10Texture);
     if (data) {
       nsRefPtr<ID3D10Texture2D> texture = static_cast<ID3D10Texture2D*>(data);
@@ -69,7 +69,7 @@ SurfaceToTexture(ID3D10Device *aDevice,
 
   if (!imageSurface) {
     imageSurface = new gfxImageSurface(aSize,
-                                       gfxASurface::ImageFormatARGB32);
+                                       gfxImageFormatARGB32);
 
     nsRefPtr<gfxContext> context = new gfxContext(imageSurface);
     context->SetSource(aSurface);
@@ -137,7 +137,7 @@ ImageLayerD3D10::GetImageSRView(Image* aImage, bool& aHasAlpha, IDXGIKeyedMutex 
       }
     }
 
-    aHasAlpha = cairoImage->mSurface->GetContentType() == gfxASurface::CONTENT_COLOR_ALPHA;
+    aHasAlpha = cairoImage->mSurface->GetContentType() == GFX_CONTENT_COLOR_ALPHA;
   } else if (aImage->GetFormat() == ImageFormat::D3D9_RGB32_TEXTURE) {
     if (!aImage->GetBackendData(mozilla::layers::LAYERS_D3D10)) {
       // Use resource sharing to open the D3D9 texture as a D3D10 texture,
@@ -215,7 +215,7 @@ ImageLayerD3D10::RenderLayer()
       image->GetFormat() == ImageFormat::D3D9_RGB32_TEXTURE) {
     NS_ASSERTION(image->GetFormat() != ImageFormat::CAIRO_SURFACE ||
                  !static_cast<CairoImage*>(image)->mSurface ||
-                 static_cast<CairoImage*>(image)->mSurface->GetContentType() != gfxASurface::CONTENT_ALPHA,
+                 static_cast<CairoImage*>(image)->mSurface->GetContentType() != GFX_CONTENT_ALPHA,
                  "Image layer has alpha image");
     bool hasAlpha = false;
 
@@ -228,7 +228,7 @@ ImageLayerD3D10::RenderLayer()
     shaderFlags |= LoadMaskTexture();
     shaderFlags |= hasAlpha
                   ? SHADER_RGBA : SHADER_RGB;
-    shaderFlags |= mFilter == gfxPattern::FILTER_NEAREST
+    shaderFlags |= mFilter == GraphicsFilter::FILTER_NEAREST
                   ? SHADER_POINT : SHADER_LINEAR;
     technique = SelectShader(shaderFlags);
 
@@ -352,7 +352,7 @@ void ImageLayerD3D10::AllocateTexturesYCbCr(PlanarYCbCrImage *aImage)
   nsAutoPtr<PlanarYCbCrD3D10BackendData> backendData(
     new PlanarYCbCrD3D10BackendData);
 
-  const PlanarYCbCrImage::Data *data = aImage->GetData();
+  const PlanarYCbCrData *data = aImage->GetData();
 
   D3D10_SUBRESOURCE_DATA dataY;
   D3D10_SUBRESOURCE_DATA dataCb;
@@ -466,8 +466,8 @@ RemoteDXGITextureImage::GetAsSurface()
 
   nsRefPtr<gfxImageSurface> surface =
     new gfxImageSurface(mSize, mFormat == RemoteImageData::BGRX32 ?
-                                          gfxASurface::ImageFormatRGB24 :
-                                          gfxASurface::ImageFormatARGB32);
+                                          gfxImageFormatRGB24 :
+                                          gfxImageFormatARGB32);
 
   if (!surface->CairoSurface() || surface->CairoStatus()) {
     NS_WARNING("Failed to created image surface for DXGI texture.");

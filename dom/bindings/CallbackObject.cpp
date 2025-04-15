@@ -141,8 +141,8 @@ CallbackObject::CallSetup::CallSetup(JS::Handle<JSObject*> aCallback,
   // Make sure the JS engine doesn't report exceptions we want to re-throw
   if (mExceptionHandling == eRethrowContentExceptions ||
       mExceptionHandling == eRethrowExceptions) {
-    mSavedJSContextOptions = JS_GetOptions(cx);
-    JS_SetOptions(cx, mSavedJSContextOptions | JSOPTION_DONT_REPORT_UNCAUGHT);
+    mSavedJSContextOptions = JS::ContextOptionsRef(cx);
+    JS::ContextOptionsRef(cx).setDontReportUncaught(true);
   }
 }
 
@@ -182,11 +182,11 @@ CallbackObject::CallSetup::~CallSetup()
     if (mExceptionHandling == eRethrowContentExceptions ||
         mExceptionHandling == eRethrowExceptions) {
       // Restore the old context options
-      JS_SetOptions(mCx, mSavedJSContextOptions);
+      JS::ContextOptionsRef(mCx) = mSavedJSContextOptions;
       mErrorResult.MightThrowJSException();
       if (JS_IsExceptionPending(mCx)) {
         JS::Rooted<JS::Value> exn(mCx);
-        if (JS_GetPendingException(mCx, exn.address()) &&
+        if (JS_GetPendingException(mCx, &exn) &&
             ShouldRethrowException(exn)) {
           mErrorResult.ThrowJSException(mCx, exn);
           JS_ClearPendingException(mCx);
@@ -239,8 +239,7 @@ CallbackObjectHolderBase::ToXPCOMCallback(CallbackObject* aCallback,
   JSAutoCompartment ac(cx, callback);
   nsRefPtr<nsXPCWrappedJS> wrappedJS;
   nsresult rv =
-    nsXPCWrappedJS::GetNewOrUsed(callback, aIID,
-                                 nullptr, getter_AddRefs(wrappedJS));
+    nsXPCWrappedJS::GetNewOrUsed(callback, aIID, getter_AddRefs(wrappedJS));
   if (NS_FAILED(rv) || !wrappedJS) {
     return nullptr;
   }

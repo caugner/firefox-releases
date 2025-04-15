@@ -2,11 +2,26 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+"use strict";
+
 function debug(msg) {
   Services.console.logStringMessage("SessionStoreContent: " + msg);
 }
 
+let Cu = Components.utils;
+
 Cu.import("resource://gre/modules/XPCOMUtils.jsm", this);
+
+XPCOMUtils.defineLazyModuleGetter(this, "DocShellCapabilities",
+  "resource:///modules/sessionstore/DocShellCapabilities.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "PageStyle",
+  "resource:///modules/sessionstore/PageStyle.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "SessionHistory",
+  "resource:///modules/sessionstore/SessionHistory.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "SessionStorage",
+  "resource:///modules/sessionstore/SessionStorage.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "TextAndScrollData",
+  "resource:///modules/sessionstore/TextAndScrollData.jsm");
 
 /**
  * Listens for and handles content events that we need for the
@@ -55,7 +70,55 @@ let EventListener = {
     }
   }
 };
-EventListener.init();
+
+/**
+ * Listens for and handles messages sent by the session store service.
+ */
+let MessageListener = {
+
+  MESSAGES: [
+    "SessionStore:collectSessionHistory",
+    "SessionStore:collectSessionStorage",
+    "SessionStore:collectDocShellCapabilities",
+    "SessionStore:collectPageStyle"
+  ],
+
+  init: function () {
+    this.MESSAGES.forEach(m => addMessageListener(m, this));
+  },
+
+  receiveMessage: function ({name, data: {id}}) {
+    switch (name) {
+      case "SessionStore:collectSessionHistory":
+        let history = SessionHistory.read(docShell);
+        if ("index" in history) {
+          let tabIndex = history.index - 1;
+          // Don't include private data. It's only needed when duplicating
+          // tabs, which collects data synchronously.
+          TextAndScrollData.updateFrame(history.entries[tabIndex],
+                                        content,
+                                        docShell.isAppTab);
+        }
+        sendAsyncMessage(name, {id: id, data: history});
+        break;
+      case "SessionStore:collectSessionStorage":
+        let storage = SessionStorage.serialize(docShell);
+        sendAsyncMessage(name, {id: id, data: storage});
+        break;
+      case "SessionStore:collectDocShellCapabilities":
+        let disallow = DocShellCapabilities.collect(docShell);
+        sendAsyncMessage(name, {id: id, data: disallow});
+        break;
+      case "SessionStore:collectPageStyle":
+        let pageStyle = PageStyle.collect(docShell);
+        sendAsyncMessage(name, {id: id, data: pageStyle});
+        break;
+      default:
+        debug("received unknown message '" + name + "'");
+        break;
+    }
+  }
+};
 
 let ProgressListener = {
   init: function() {
@@ -74,4 +137,7 @@ let ProgressListener = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIWebProgressListener,
                                          Ci.nsISupportsWeakReference])
 };
+
+EventListener.init();
+MessageListener.init();
 ProgressListener.init();

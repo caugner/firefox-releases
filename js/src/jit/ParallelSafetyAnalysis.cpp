@@ -10,10 +10,12 @@
 #include "jit/IonAnalysis.h"
 #include "jit/IonSpewer.h"
 #include "jit/MIR.h"
+#include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
 #include "jit/UnreachableCodeElimination.h"
 
 #include "jsinferinlines.h"
+#include "jsobjinlines.h"
 
 using namespace js;
 using namespace jit;
@@ -89,7 +91,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     ParallelSafetyVisitor(MIRGraph &graph)
       : graph_(graph),
         unsafe_(false),
-        slice_(NULL)
+        slice_(nullptr)
     { }
 
     void clearUnsafe() { unsafe_ = false; }
@@ -116,12 +118,14 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(Beta)
     UNSAFE_OP(OsrValue)
     UNSAFE_OP(OsrScopeChain)
+    UNSAFE_OP(OsrReturnValue)
+    UNSAFE_OP(OsrArgumentsObject)
     UNSAFE_OP(ReturnFromCtor)
     CUSTOM_OP(CheckOverRecursed)
     UNSAFE_OP(DefVar)
     UNSAFE_OP(DefFun)
     UNSAFE_OP(CreateThis)
-    UNSAFE_OP(CreateThisWithTemplate)
+    CUSTOM_OP(CreateThisWithTemplate)
     UNSAFE_OP(CreateThisWithProto)
     UNSAFE_OP(CreateArgumentsObject)
     UNSAFE_OP(GetArgumentsObjectArg)
@@ -134,7 +138,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(Bail)
     UNSAFE_OP(AssertFloat32)
     UNSAFE_OP(GetDynamicName)
-    UNSAFE_OP(FilterArguments)
+    UNSAFE_OP(FilterArgumentsOrEval)
     UNSAFE_OP(CallDirectEval)
     SAFE_OP(BitNot)
     UNSAFE_OP(TypeOf)
@@ -175,6 +179,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     CUSTOM_OP(NewObject)
     CUSTOM_OP(NewCallObject)
     CUSTOM_OP(NewParallelArray)
+    UNSAFE_OP(NewDerivedTypedObject)
     UNSAFE_OP(InitElem)
     UNSAFE_OP(InitElemGetterSetter)
     UNSAFE_OP(InitProp)
@@ -198,7 +203,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(GetPropertyPolymorphic)
     UNSAFE_OP(SetPropertyPolymorphic)
     SAFE_OP(GetElementCache)
-    UNSAFE_OP(SetElementCache)
+    WRITE_GUARDED_OP(SetElementCache, object)
     UNSAFE_OP(BindNameCache)
     SAFE_OP(GuardShape)
     SAFE_OP(GuardObjectType)
@@ -207,6 +212,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(ArrayLength)
     SAFE_OP(TypedArrayLength)
     SAFE_OP(TypedArrayElements)
+    SAFE_OP(TypedObjectElements)
     SAFE_OP(InitializedLength)
     WRITE_GUARDED_OP(SetInitializedLength, elements)
     SAFE_OP(Not)
@@ -232,19 +238,20 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     UNSAFE_OP(CallGetIntrinsicValue)
     UNSAFE_OP(CallsiteCloneCache)
     UNSAFE_OP(CallGetElement)
-    UNSAFE_OP(CallSetElement)
+    WRITE_GUARDED_OP(CallSetElement, object)
     UNSAFE_OP(CallInitElementArray)
-    UNSAFE_OP(CallSetProperty)
+    WRITE_GUARDED_OP(CallSetProperty, object)
     UNSAFE_OP(DeleteProperty)
     UNSAFE_OP(DeleteElement)
-    UNSAFE_OP(SetPropertyCache)
+    WRITE_GUARDED_OP(SetPropertyCache, object)
     UNSAFE_OP(IteratorStart)
     UNSAFE_OP(IteratorNext)
     UNSAFE_OP(IteratorMore)
     UNSAFE_OP(IteratorEnd)
     SAFE_OP(StringLength)
     SAFE_OP(ArgumentsLength)
-    SAFE_OP(GetArgument)
+    SAFE_OP(GetFrameArgument)
+    UNSAFE_OP(SetFrameArgument)
     UNSAFE_OP(RunOncePrologue)
     CUSTOM_OP(Rest)
     SAFE_OP(RestPar)
@@ -281,6 +288,7 @@ class ParallelSafetyVisitor : public MInstructionVisitor
     SAFE_OP(HaveSameClass)
     UNSAFE_OP(EffectiveAddress)
     UNSAFE_OP(AsmJSUnsignedToDouble)
+    UNSAFE_OP(AsmJSUnsignedToFloat32)
     UNSAFE_OP(AsmJSNeg)
     UNSAFE_OP(AsmJSUDiv)
     UNSAFE_OP(AsmJSUMod)
@@ -323,7 +331,7 @@ ParallelSafetyAnalysis::analyze()
             // if we encounter an inherently unsafe operation, in
             // which case we will transform this block into a bailout
             // block.
-            MInstruction *instr = NULL;
+            MInstruction *instr = nullptr;
             for (MInstructionIterator ins(block->begin());
                  ins != block->end() && !visitor.unsafe();)
             {
@@ -408,14 +416,14 @@ ParallelSafetyAnalysis::removeResumePointOperands()
     // But the call to foo() is dead and has been removed, leading to
     // an inconsistent IR and assertions at codegen time.
 
-    MConstant *udef = NULL;
+    MConstant *udef = nullptr;
     for (ReversePostorderIterator block(graph_.rpoBegin()); block != graph_.rpoEnd(); block++) {
         if (udef)
             replaceOperandsOnResumePoint(block->entryResumePoint(), udef);
 
         for (MInstructionIterator ins(block->begin()); ins != block->end(); ins++) {
             if (ins->isStart()) {
-                JS_ASSERT(udef == NULL);
+                JS_ASSERT(udef == nullptr);
                 udef = MConstant::New(UndefinedValue());
                 block->insertAfter(*ins, udef);
             } else if (udef) {
@@ -470,7 +478,7 @@ ParallelSafetyVisitor::convertToBailout(MBasicBlock *block, MInstruction *ins)
 
         // if `block` had phis, we are replacing it with `bailBlock` which does not
         if (pred->successorWithPhis() == block)
-            pred->setSuccessorWithPhis(NULL, 0);
+            pred->setSuccessorWithPhis(nullptr, 0);
 
         // redirect the predecessor to the bailout block
         uint32_t succIdx = pred->getSuccessorIndex(block);
@@ -497,10 +505,15 @@ ParallelSafetyVisitor::convertToBailout(MBasicBlock *block, MInstruction *ins)
 // These allocations will take place using per-helper-thread arenas.
 
 bool
+ParallelSafetyVisitor::visitCreateThisWithTemplate(MCreateThisWithTemplate *ins)
+{
+    return replaceWithNewPar(ins, ins->templateObject());
+}
+
+bool
 ParallelSafetyVisitor::visitNewParallelArray(MNewParallelArray *ins)
 {
-    replace(ins, new MNewPar(forkJoinSlice(), ins->templateObject()));
-    return true;
+    return replaceWithNewPar(ins, ins->templateObject());
 }
 
 bool
@@ -513,9 +526,7 @@ ParallelSafetyVisitor::visitNewCallObject(MNewCallObject *ins)
 bool
 ParallelSafetyVisitor::visitLambda(MLambda *ins)
 {
-    if (ins->fun()->hasSingletonType() ||
-        types::UseNewTypeForClone(ins->fun()))
-    {
+    if (ins->info().singletonType || ins->info().useNewTypeForClone) {
         // slow path: bail on parallel execution.
         return markUnsafe();
     }
@@ -556,7 +567,7 @@ ParallelSafetyVisitor::visitRest(MRest *ins)
 bool
 ParallelSafetyVisitor::visitMathFunction(MMathFunction *ins)
 {
-    return replace(ins, MMathFunction::New(ins->input(), ins->function(), NULL));
+    return replace(ins, MMathFunction::New(ins->input(), ins->function(), nullptr));
 }
 
 bool
@@ -779,10 +790,8 @@ static bool
 AddCallTarget(HandleScript script, CallTargetVector &targets);
 
 bool
-jit::AddPossibleCallees(MIRGraph &graph, CallTargetVector &targets)
+jit::AddPossibleCallees(JSContext *cx, MIRGraph &graph, CallTargetVector &targets)
 {
-    JSContext *cx = GetIonContext()->cx;
-
     for (ReversePostorderIterator block(graph.rpoBegin()); block != graph.rpoEnd(); block++) {
         for (MInstructionIterator ins(block->begin()); ins != block->end(); ins++)
         {
@@ -796,8 +805,8 @@ jit::AddPossibleCallees(MIRGraph &graph, CallTargetVector &targets)
                 JS_ASSERT_IF(!target->isInterpreted(), target->hasParallelNative());
 
                 if (target->isInterpreted()) {
-                    RootedScript script(cx, target->nonLazyScript());
-                    if (!AddCallTarget(script, targets))
+                    RootedScript script(cx, target->getOrCreateScript(cx));
+                    if (!script || !AddCallTarget(script, targets))
                         return false;
                 }
 

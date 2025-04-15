@@ -62,15 +62,18 @@ public:
                                   int64_t aTimeThreshold);
 
   virtual bool HasAudio() {
-    return (mVorbisState != 0 && mVorbisState->mActive) ||
-           (mOpusState != 0 && mOpusState->mActive);
+    return (mVorbisState != 0 && mVorbisState->mActive)
+#ifdef MOZ_OPUS
+      || (mOpusState != 0 && mOpusState->mActive)
+#endif /* MOZ_OPUS */
+      ;
   }
 
   virtual bool HasVideo() {
     return mTheoraState != 0 && mTheoraState->mActive;
   }
 
-  virtual nsresult ReadMetadata(VideoInfo* aInfo,
+  virtual nsresult ReadMetadata(MediaInfo* aInfo,
                                 MetadataTags** aTags);
   virtual nsresult Seek(int64_t aTime, int64_t aStartTime, int64_t aEndTime, int64_t aCurrentTime);
   virtual nsresult GetBuffered(dom::TimeRanges* aBuffered, int64_t aStartTime);
@@ -268,6 +271,7 @@ private:
   // Decode state of the Vorbis bitstream we're decoding, if we have audio.
   VorbisState* mVorbisState;
 
+#ifdef MOZ_OPUS
   // Decode state of the Opus bitstream we're decoding, if we have one.
   OpusState *mOpusState;
 
@@ -275,6 +279,7 @@ private:
   // contructor was called. We can't check it dynamically because
   // we're not on the main thread;
   bool mOpusEnabled;
+#endif /* MOZ_OPUS */
 
   // Decode state of the Skeleton bitstream.
   SkeletonState* mSkeletonState;

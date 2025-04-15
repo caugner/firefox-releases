@@ -18,7 +18,8 @@ class nsDOMXULCommandEvent : public nsDOMUIEvent,
 {
 public:
   nsDOMXULCommandEvent(mozilla::dom::EventTarget* aOwner,
-                       nsPresContext* aPresContext, nsInputEvent* aEvent);
+                       nsPresContext* aPresContext,
+                       mozilla::WidgetInputEvent* aEvent);
 
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsDOMXULCommandEvent, nsDOMUIEvent)
@@ -33,25 +34,10 @@ public:
     return mozilla::dom::XULCommandEventBinding::Wrap(aCx, aScope, this);
   }
 
-  bool AltKey()
-  {
-    return Event()->IsAlt();
-  }
-
-  bool CtrlKey()
-  {
-    return Event()->IsControl();
-  }
-
-  bool ShiftKey()
-  {
-    return Event()->IsShift();
-  }
-
-  bool MetaKey()
-  {
-    return Event()->IsMeta();
-  }
+  bool AltKey();
+  bool CtrlKey();
+  bool ShiftKey();
+  bool MetaKey();
 
   already_AddRefed<nsDOMEvent> GetSourceEvent()
   {
@@ -75,11 +61,6 @@ public:
   }
 
 protected:
-  // Convenience accessor for the event
-  nsInputEvent* Event() {
-    return static_cast<nsInputEvent*>(mEvent);
-  }
-
   nsCOMPtr<nsIDOMEvent> mSourceEvent;
 };
 

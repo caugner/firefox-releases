@@ -9,7 +9,7 @@
 #include "nsISupports.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
-#include "nsGUIEvent.h"
+#include "mozilla/EventForwards.h"
 
 #define NS_IPRIVATETEXTRANGE_IID \
 { 0xf795a44d, 0x413a, 0x4c63, \
@@ -32,7 +32,7 @@ public:
   NS_IMETHOD    GetRangeStart(uint16_t* aRangeStart)=0;
   NS_IMETHOD    GetRangeEnd(uint16_t* aRangeEnd)=0;
   NS_IMETHOD    GetRangeType(uint16_t* aRangeType)=0;
-  NS_IMETHOD    GetRangeStyle(nsTextRangeStyle* aTextRangeStyle)=0;
+  NS_IMETHOD    GetRangeStyle(mozilla::TextRangeStyle* aTextRangeStyle)=0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIPrivateTextRange, NS_IPRIVATETEXTRANGE_IID)

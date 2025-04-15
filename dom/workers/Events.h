@@ -32,8 +32,11 @@ CreateErrorEvent(JSContext* aCx, JS::Handle<JSString*> aMessage,
                  uint32_t aLineNumber, bool aMainRuntime);
 
 JSObject*
-CreateProgressEvent(JSContext* aCx, JSString* aType, bool aLengthComputable,
-                    double aLoaded, double aTotal);
+CreateProgressEvent(JSContext* aCx, JS::Handle<JSString*> aType,
+                    bool aLengthComputable, double aLoaded, double aTotal);
+
+JSObject*
+CreateConnectEvent(JSContext* aCx, JS::Handle<JSObject*> aMessagePort);
 
 bool
 IsSupportedEventClass(JSObject* aEvent);

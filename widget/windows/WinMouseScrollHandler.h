@@ -9,8 +9,8 @@
 
 #include "nscore.h"
 #include "nsDebug.h"
-#include "nsEvent.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/EventForwards.h"
 #include "mozilla/TimeStamp.h"
 #include <windows.h>
 
@@ -72,14 +72,14 @@ private:
    *
    * @return TRUE if the event was consumed.  Otherwise, FALSE.
    */
-  static bool DispatchEvent(nsWindowBase* aWidget, nsGUIEvent& aEvent);
+  static bool DispatchEvent(nsWindowBase* aWidget, WidgetGUIEvent& aEvent);
 
   /**
    * InitEvent() initializes the aEvent.  If aPoint is null, the result of
    * GetCurrentMessagePos() will be used.
    */
   static void InitEvent(nsWindowBase* aWidget,
-                        nsGUIEvent& aEvent,
+                        WidgetGUIEvent& aEvent,
                         nsIntPoint* aPoint = nullptr);
 
   /**
@@ -260,7 +260,7 @@ private:
      *                          Otherwise, FALSE.
      */
     bool InitWheelEvent(nsWindowBase* aWidget,
-                        WheelEvent& aWheelEvent,
+                        WidgetWheelEvent& aWheelEvent,
                         const ModifierKeyState& aModKeyState);
 
   private:
@@ -352,7 +352,7 @@ private:
   class SynthesizingEvent {
   public:
     SynthesizingEvent() :
-      mWnd(NULL), mMessage(0), mWParam(0), mLParam(0),
+      mWnd(nullptr), mMessage(0), mWParam(0), mLParam(0),
       mStatus(NOT_SYNTHESIZING)
     {
     }

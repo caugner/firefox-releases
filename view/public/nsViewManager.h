@@ -8,11 +8,11 @@
 
 #include "nscore.h"
 #include "nsView.h"
-#include "nsEvent.h"
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
 #include "nsVoidArray.h"
 #include "nsDeviceContext.h"
+#include "mozilla/EventForwards.h"
 
 class nsIWidget;
 struct nsRect;
@@ -121,8 +121,9 @@ public:
    * @param aViewTarget dispatch the event to this view
    * @param aStatus event handling status
    */
-  void DispatchEvent(nsGUIEvent *aEvent,
-      nsView* aViewTarget, nsEventStatus* aStatus);
+  void DispatchEvent(mozilla::WidgetGUIEvent *aEvent,
+                     nsView* aViewTarget,
+                     nsEventStatus* aStatus);
 
   /**
    * Given a parent view, insert another view as its child.

@@ -7,18 +7,15 @@
 #define nsInputStreamPump_h__
 
 #include "nsIInputStreamPump.h"
-#include "nsIInputStream.h"
-#include "nsIURI.h"
-#include "nsILoadGroup.h"
-#include "nsIStreamListener.h"
-#include "nsIInterfaceRequestor.h"
-#include "nsIProgressEventSink.h"
 #include "nsIAsyncInputStream.h"
-#include "nsIThread.h"
 #include "nsIThreadRetargetableRequest.h"
 #include "nsCOMPtr.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/ReentrantMonitor.h"
+
+class nsIInputStream;
+class nsILoadGroup;
+class nsIStreamListener;
 
 class nsInputStreamPump MOZ_FINAL : public nsIInputStreamPump
                                   , public nsIInputStreamCallback

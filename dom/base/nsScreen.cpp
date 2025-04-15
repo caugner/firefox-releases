@@ -5,7 +5,9 @@
 
 #include "mozilla/Hal.h"
 #include "nsScreen.h"
+#include "nsIDocument.h"
 #include "nsIDocShell.h"
+#include "nsIDocument.h"
 #include "nsPresContext.h"
 #include "nsCOMPtr.h"
 #include "nsIDocShellTreeItem.h"
@@ -13,6 +15,7 @@
 #include "nsDOMEvent.h"
 #include "nsJSUtils.h"
 #include "mozilla/dom/ScreenBinding.h"
+#include "nsDeviceContext.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;

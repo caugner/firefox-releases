@@ -7,6 +7,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Selection.h"
+#include "mozilla/TextEvents.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/mozalloc.h"
 #include "nsAString.h"
@@ -22,7 +23,6 @@
 #include "nsEditRules.h"
 #include "nsEditorUtils.h"  // nsAutoEditBatch, nsAutoRules
 #include "nsError.h"
-#include "nsGUIEvent.h"
 #include "nsGkAtoms.h"
 #include "nsIClipboard.h"
 #include "nsIContent.h"
@@ -355,7 +355,8 @@ nsPlaintextEditor::HandleKeyPressEvent(nsIDOMKeyEvent* aKeyEvent)
     return nsEditor::HandleKeyPressEvent(aKeyEvent);
   }
 
-  nsKeyEvent* nativeKeyEvent = GetNativeKeyEvent(aKeyEvent);
+  WidgetKeyboardEvent* nativeKeyEvent =
+    aKeyEvent->GetInternalNSEvent()->AsKeyboardEvent();
   NS_ENSURE_TRUE(nativeKeyEvent, NS_ERROR_UNEXPECTED);
   NS_ASSERTION(nativeKeyEvent->message == NS_KEY_PRESS,
                "HandleKeyPressEvent gets non-keypress event");
@@ -1584,10 +1585,10 @@ nsPlaintextEditor::SelectEntireDocument(nsISelection *aSelection)
   return NS_OK;
 }
 
-already_AddRefed<nsIDOMEventTarget>
+already_AddRefed<mozilla::dom::EventTarget>
 nsPlaintextEditor::GetDOMEventTarget()
 {
-  nsCOMPtr<nsIDOMEventTarget> copy = mEventTarget;
+  nsCOMPtr<mozilla::dom::EventTarget> copy = mEventTarget;
   return copy.forget();
 }
 

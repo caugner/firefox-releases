@@ -5,7 +5,6 @@
 
 #include "base/basictypes.h"
 
-#include "jsapi.h"
 #include "jsfriendapi.h"
 #include "jswrapper.h"
 
@@ -457,7 +456,8 @@ ThrowJSException(JSContext *cx, const char *message)
                                           ucex.Length());
 
     if (str) {
-      ::JS_SetPendingException(cx, STRING_TO_JSVAL(str));
+      JS::RootedValue exn(cx, JS::StringValue(str));
+      ::JS_SetPendingException(cx, exn);
     }
 
     PopException();
@@ -886,8 +886,9 @@ nsJSObjWrapper::NP_Enumerate(NPObject *npobj, NPIdentifier **idarray,
     }
 
     NPIdentifier id;
-    if (JSVAL_IS_STRING(v)) {
-      JSString *str = JS_InternJSString(cx, JSVAL_TO_STRING(v));
+    if (v.isString()) {
+      JS::Rooted<JSString*> str(cx, v.toString());
+      str = JS_InternJSString(cx, str);
       if (!str) {
         PR_Free(*idarray);
         return false;
@@ -1073,16 +1074,16 @@ GetNPObjectWrapper(JSContext *cx, JSObject *aObj, bool wrapResult = true)
   JS::Rooted<JSObject*> obj(cx, aObj);
   while (obj && (obj = js::CheckedUnwrap(obj))) {
     if (JS_GetClass(obj) == &sNPObjectJSWrapperClass) {
-      if (wrapResult && !JS_WrapObject(cx, obj.address())) {
-        return NULL;
+      if (wrapResult && !JS_WrapObject(cx, &obj)) {
+        return nullptr;
       }
       return obj;
     }
     if (!::JS_GetPrototype(cx, obj, &obj)) {
-      return NULL;
+      return nullptr;
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 static NPObject *
@@ -1398,7 +1399,8 @@ CallNPMethodInternal(JSContext *cx, JS::Handle<JSObject*> obj, unsigned argc,
 
     if (npobj->_class->invoke) {
       JSFunction *fun = ::JS_GetObjectFunction(funobj);
-      JSString *name = ::JS_InternJSString(cx, ::JS_GetFunctionId(fun));
+      JS::Rooted<JSString*> funId(cx, ::JS_GetFunctionId(fun));
+      JSString *name = ::JS_InternJSString(cx, funId);
       NPIdentifier id = StringToNPIdentifier(cx, name);
 
       ok = npobj->_class->invoke(npobj, id, npargs, argc, &v);
@@ -1617,13 +1619,13 @@ NPObjWrapper_Convert(JSContext *cx, JS::Handle<JSObject*> obj, JSType hint, JS::
   if (!JS_GetProperty(cx, obj, "toString", &v))
     return false;
   if (!JSVAL_IS_PRIMITIVE(v) && JS_ObjectIsCallable(cx, JSVAL_TO_OBJECT(v))) {
-    if (!JS_CallFunctionValue(cx, obj, v, 0, NULL, vp.address()))
+    if (!JS_CallFunctionValue(cx, obj, v, 0, nullptr, vp.address()))
       return false;
     if (JSVAL_IS_PRIMITIVE(vp))
       return true;
   }
 
-  JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_CANT_CONVERT_TO,
+  JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_CANT_CONVERT_TO,
                        JS_GetClass(obj)->name,
                        hint == JSTYPE_VOID
                        ? "primitive type"
@@ -1727,8 +1729,8 @@ nsNPObjWrapper::GetNewOrUsed(NPP npp, JSContext *cx, NPObject *npobj)
     // npobj is one of our own, return its existing JSObject.
 
     JS::Rooted<JSObject*> obj(cx, ((nsJSObjWrapper *)npobj)->mJSObj);
-    if (!JS_WrapObject(cx, obj.address())) {
-      return NULL;
+    if (!JS_WrapObject(cx, &obj)) {
+      return nullptr;
     }
     return obj;
   }
@@ -1764,8 +1766,8 @@ nsNPObjWrapper::GetNewOrUsed(NPP npp, JSContext *cx, NPObject *npobj)
     // Found a live NPObject wrapper. It may not be in the same compartment
     // as cx, so we need to wrap it before returning it.
     JS::Rooted<JSObject*> obj(cx, entry->mJSObj);
-    if (!JS_WrapObject(cx, obj.address())) {
-      return NULL;
+    if (!JS_WrapObject(cx, &obj)) {
+      return nullptr;
     }
     return obj;
   }

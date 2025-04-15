@@ -11,7 +11,7 @@
 #ifdef JS_ION
 #include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
-#include "jit/IonCompartment.h"
+#include "jit/JitCompartment.h"
 #endif
 #include "vm/Debugger.h"
 #include "vm/Runtime.h"
@@ -52,7 +52,7 @@ JS::Zone::Zone(JSRuntime *rt)
 Zone::~Zone()
 {
     if (this == runtimeFromMainThread()->systemZone)
-        runtimeFromMainThread()->systemZone = NULL;
+        runtimeFromMainThread()->systemZone = nullptr;
 }
 
 bool
@@ -184,7 +184,7 @@ Zone::sweepBreakpoints(FreeOp *fop)
 }
 
 void
-Zone::discardJitCode(FreeOp *fop, bool discardConstraints)
+Zone::discardJitCode(FreeOp *fop)
 {
 #ifdef JS_ION
     if (isPreservingCode()) {
@@ -223,13 +223,8 @@ Zone::discardJitCode(FreeOp *fop, bool discardConstraints)
             script->resetUseCount();
         }
 
-        for (CompartmentsInZoneIter comp(this); !comp.done(); comp.next()) {
-            /* Free optimized baseline stubs. */
-            if (comp->ionCompartment())
-                comp->ionCompartment()->optimizedStubSpace()->free();
-
-            comp->types.sweepCompilerOutputs(fop, discardConstraints);
-        }
+        for (CompartmentsInZoneIter comp(this); !comp.done(); comp.next())
+            jit::FinishDiscardJitCode(fop, comp);
     }
 #endif
 }
@@ -238,6 +233,12 @@ JS::Zone *
 js::ZoneOfObject(const JSObject &obj)
 {
     return obj.zone();
+}
+
+JS::Zone *
+js::ZoneOfObjectFromAnyThread(const JSObject &obj)
+{
+    return obj.zoneFromAnyThread();
 }
 
 

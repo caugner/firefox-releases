@@ -76,7 +76,7 @@ AutoScriptEvaluate::~AutoScriptEvaluate()
     JS_EndRequest(mJSContext);
 
     if (mErrorReporterSet)
-        JS_SetErrorReporter(mJSContext, NULL);
+        JS_SetErrorReporter(mJSContext, nullptr);
 }
 
 // It turns out that some errors may be not worth reporting. So, this
@@ -244,18 +244,17 @@ nsXPCWrappedJSClass::CallQueryInterfaceOnJSObject(JSContext* cx,
         // is not an exception that is ever worth reporting, but we don't want
         // to eat all exceptions either.
 
-        uint32_t oldOpts =
-          JS_SetOptions(cx, JS_GetOptions(cx) | JSOPTION_DONT_REPORT_UNCAUGHT);
-
-        jsval args[1] = {OBJECT_TO_JSVAL(id)};
-        success = JS_CallFunctionValue(cx, jsobj, fun, 1, args, retval.address());
-
-        JS_SetOptions(cx, oldOpts);
+        {
+            AutoSaveContextOptions asco(cx);
+            ContextOptionsRef(cx).setDontReportUncaught(true);
+            jsval args[1] = {OBJECT_TO_JSVAL(id)};
+            success = JS_CallFunctionValue(cx, jsobj, fun, 1, args, retval.address());
+        }
 
         if (!success && JS_IsExceptionPending(cx)) {
             RootedValue jsexception(cx, NullValue());
 
-            if (JS_GetPendingException(cx, jsexception.address())) {
+            if (JS_GetPendingException(cx, &jsexception)) {
                 nsresult rv;
                 if (jsexception.isObject()) {
                     // XPConnect may have constructed an object to represent a
@@ -285,7 +284,7 @@ nsXPCWrappedJSClass::CallQueryInterfaceOnJSObject(JSContext* cx,
             }
 
             // Don't report if reporting was disabled by someone else.
-            if (!(oldOpts & JSOPTION_DONT_REPORT_UNCAUGHT))
+            if (!ContextOptionsRef(cx).dontReportUncaught())
                 JS_ReportPendingException(cx);
         } else if (!success) {
             NS_WARNING("QI hook ran OOMed - this is probably a bug!");
@@ -293,7 +292,7 @@ nsXPCWrappedJSClass::CallQueryInterfaceOnJSObject(JSContext* cx,
     }
 
     if (success)
-        success = JS_ValueToObject(cx, retval, retObj.address());
+        success = JS_ValueToObject(cx, retval, &retObj);
 
     return success ? retObj.get() : nullptr;
 }
@@ -707,8 +706,7 @@ nsXPCWrappedJSClass::DelegatedQueryInterface(nsXPCWrappedJS* self,
         // XPConvert::JSObject2NativeInterface() here to make sure we
         // get a new (or used) nsXPCWrappedJS.
         nsXPCWrappedJS* wrapper;
-        nsresult rv = nsXPCWrappedJS::GetNewOrUsed(jsobj, aIID, nullptr,
-                                                   &wrapper);
+        nsresult rv = nsXPCWrappedJS::GetNewOrUsed(jsobj, aIID, &wrapper);
         if (NS_SUCCEEDED(rv) && wrapper) {
             // We need to go through the QueryInterface logic to make
             // this return the right thing for the various 'special'
@@ -941,7 +939,7 @@ nsXPCWrappedJSClass::CheckForException(XPCCallContext & ccx,
     nsresult pending_result = xpcc->GetPendingResult();
 
     RootedValue js_exception(cx);
-    bool is_js_exception = JS_GetPendingException(cx, js_exception.address());
+    bool is_js_exception = JS_GetPendingException(cx, &js_exception);
 
     /* JS might throw an expection whether the reporter was called or not */
     if (is_js_exception) {
@@ -978,7 +976,8 @@ nsXPCWrappedJSClass::CheckForException(XPCCallContext & ccx,
                 // Finally, check to see if this is the last JS frame on the
                 // stack. If so then we always want to report it.
                 if (!reportable) {
-                    reportable = !JS_DescribeScriptedCaller(cx, nullptr, nullptr);
+                    RootedScript ignored(cx);
+                    reportable = !JS_DescribeScriptedCaller(cx, &ignored, nullptr);
                 }
 
                 // Ugly special case for GetInterface. It's "special" in the
@@ -1230,13 +1229,13 @@ nsXPCWrappedJSClass::CallMethod(nsXPCWrappedJS* wrapper, uint16_t methodIndex,
                                 xpcObjectHelper helper(newThis);
                                 bool ok =
                                   XPCConvert::NativeInterface2JSObject(
-                                      v.address(), nullptr, helper, nullptr,
+                                      &v, nullptr, helper, nullptr,
                                       nullptr, false, nullptr);
                                 if (!ok) {
                                     goto pre_call_clean_up;
                                 }
                                 thisObj = JSVAL_TO_OBJECT(v);
-                                if (!JS_WrapObject(cx, thisObj.address()))
+                                if (!JS_WrapObject(cx, &thisObj))
                                     goto pre_call_clean_up;
                             }
                         }
@@ -1317,19 +1316,19 @@ nsXPCWrappedJSClass::CallMethod(nsXPCWrappedJS* wrapper, uint16_t methodIndex,
             }
 
             if (isArray) {
-                if (!XPCConvert::NativeArray2JS(val.address(),
+                if (!XPCConvert::NativeArray2JS(&val,
                                                 (const void**)&pv->val,
                                                 datum_type, &param_iid,
                                                 array_count, nullptr))
                     goto pre_call_clean_up;
             } else if (isSizedString) {
-                if (!XPCConvert::NativeStringWithSize2JS(val.address(),
+                if (!XPCConvert::NativeStringWithSize2JS(&val,
                                                          (const void*)&pv->val,
                                                          datum_type,
                                                          array_count, nullptr))
                     goto pre_call_clean_up;
             } else {
-                if (!XPCConvert::NativeData2JS(val.address(), &pv->val, type,
+                if (!XPCConvert::NativeData2JS(&val, &pv->val, type,
                                                &param_iid, nullptr))
                     goto pre_call_clean_up;
             }
@@ -1417,12 +1416,10 @@ pre_call_clean_up:
         success = JS_SetProperty(cx, obj, name, rval);
     } else {
         if (!JSVAL_IS_PRIMITIVE(fval)) {
-            uint32_t oldOpts = JS_GetOptions(cx);
-            JS_SetOptions(cx, oldOpts | JSOPTION_DONT_REPORT_UNCAUGHT);
+            AutoSaveContextOptions asco(cx);
+            ContextOptionsRef(cx).setDontReportUncaught(true);
 
             success = JS_CallFunctionValue(cx, thisObj, fval, argc, argv, rval.address());
-
-            JS_SetOptions(cx, oldOpts);
         } else {
             // The property was not an object so can't be a function.
             // Let's build and 'throw' an exception.
@@ -1652,11 +1649,11 @@ static const JSClass XPCOutParamClass = {
     JS_ResolveStub,
     JS_ConvertStub,
     FinalizeStub,
-    NULL,   /* checkAccess */
-    NULL,   /* call */
-    NULL,   /* hasInstance */
-    NULL,   /* construct */
-    NULL    /* trace */
+    nullptr,   /* checkAccess */
+    nullptr,   /* call */
+    nullptr,   /* hasInstance */
+    nullptr,   /* construct */
+    nullptr    /* trace */
 };
 
 bool

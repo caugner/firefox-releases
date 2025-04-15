@@ -1,6 +1,3 @@
-var Ci = Components.interfaces;
-var Cc = Components.classes;
-
 function run_test() {
   var idnService = Cc["@mozilla.org/network/idn-service;1"]
                    .getService(Ci.nsIIDNService);

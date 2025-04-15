@@ -297,6 +297,12 @@ class BuildMonitor(MozbuildObject):
 
     def start_resource_recording(self):
         # This should be merged into start() once bug 892342 lands.
+
+        # Resource monitoring on Windows is currently busted because of
+        # multiprocessing issues. Bug 914563.
+        if self._is_windows():
+            return
+
         self.resources.start()
         self._resources_started = True
 
@@ -526,3 +532,17 @@ class BuildMonitor(MozbuildObject):
             'Read time: {io_read_time}; Write time: {io_write_time}'
 
         self.log(logging.WARNING, m_type, params, message)
+
+
+class BuildDriver(MozbuildObject):
+    """Provides a high-level API for build actions."""
+
+    def install_tests(self, remove=True):
+        """Install test files (through manifest)."""
+
+        env = {}
+        if not remove:
+            env[b'NO_REMOVE'] = b'1'
+
+        self._run_make(target='install-tests', append_env=env, pass_thru=True,
+            print_directory=False)

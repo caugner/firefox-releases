@@ -62,10 +62,13 @@
 #include "nsDisplayList.h"
 #include "mozilla/Preferences.h"
 #include "nsThemeConstants.h"
+#include "nsLayoutUtils.h"
 #include <algorithm>
 
 // Needed for Print Preview
 #include "nsIURI.h"
+
+#include "mozilla/TouchEvents.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -1237,6 +1240,13 @@ nsBoxFrame::AttributeChanged(int32_t aNameSpaceID,
   else if (aAttribute == nsGkAtoms::accesskey) {
     RegUnregAccessKey(true);
   }
+  else if (aAttribute == nsGkAtoms::rows &&
+           tag == nsGkAtoms::tree) {
+    // Reflow ourselves and all our children if "rows" changes, since
+    // nsTreeBodyFrame's layout reads this from its parent (this frame).
+    PresContext()->PresShell()->
+      FrameNeedsReflow(this, nsIPresShell::eStyleChange, NS_FRAME_IS_DIRTY);
+  }
 
   return rv;
 }
@@ -1901,8 +1911,8 @@ void
 nsBoxFrame::CheckBoxOrder()
 {
   if (SupportsOrdinalsInChildren() &&
-      !nsLayoutUtils::IsFrameListSorted<IsBoxOrdinalLEQ>(mFrames)) {
-    nsLayoutUtils::SortFrameList<IsBoxOrdinalLEQ>(mFrames);
+      !nsIFrame::IsFrameListSorted<IsBoxOrdinalLEQ>(mFrames)) {
+    nsIFrame::SortFrameList<IsBoxOrdinalLEQ>(mFrames);
   }
 }
 
@@ -2059,7 +2069,7 @@ nsBoxFrame::WrapListsInRedirector(nsDisplayListBuilder*   aBuilder,
 }
 
 bool
-nsBoxFrame::GetEventPoint(nsGUIEvent* aEvent, nsPoint &aPoint) {
+nsBoxFrame::GetEventPoint(WidgetGUIEvent* aEvent, nsPoint &aPoint) {
   nsIntPoint refPoint;
   bool res = GetEventPoint(aEvent, refPoint);
   aPoint = nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, refPoint, this);
@@ -2067,11 +2077,11 @@ nsBoxFrame::GetEventPoint(nsGUIEvent* aEvent, nsPoint &aPoint) {
 }
 
 bool
-nsBoxFrame::GetEventPoint(nsGUIEvent* aEvent, nsIntPoint &aPoint) {
+nsBoxFrame::GetEventPoint(WidgetGUIEvent* aEvent, nsIntPoint &aPoint) {
   NS_ENSURE_TRUE(aEvent, false);
 
-  if (aEvent->eventStructType == NS_TOUCH_EVENT) {
-    nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aEvent);
+  WidgetTouchEvent* touchEvent = aEvent->AsTouchEvent();
+  if (touchEvent) {
     // return false if there is more than one touch on the page, or if
     // we can't find a touch point
     if (touchEvent->touches.Length() != 1) {

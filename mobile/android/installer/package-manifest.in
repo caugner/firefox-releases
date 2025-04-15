@@ -135,7 +135,6 @@
 @BINPATH@/components/dom_camera.xpt
 @BINPATH@/components/dom_canvas.xpt
 @BINPATH@/components/dom_core.xpt
-@BINPATH@/components/dom_contacts.xpt
 @BINPATH@/components/dom_css.xpt
 @BINPATH@/components/dom_devicestorage.xpt
 @BINPATH@/components/dom_events.xpt
@@ -203,6 +202,7 @@
 @BINPATH@/components/mozfind.xpt
 @BINPATH@/components/necko_about.xpt
 @BINPATH@/components/necko_cache.xpt
+@BINPATH@/components/necko_cache2.xpt
 @BINPATH@/components/necko_cookie.xpt
 @BINPATH@/components/necko_dns.xpt
 @BINPATH@/components/necko_file.xpt
@@ -242,6 +242,7 @@
 @BINPATH@/components/spellchecker.xpt
 @BINPATH@/components/storage.xpt
 @BINPATH@/components/telemetry.xpt
+@BINPATH@/components/toolkit_finalizationwitness.xpt
 @BINPATH@/components/toolkitprofile.xpt
 #ifdef MOZ_ENABLE_XREMOTE
 @BINPATH@/components/toolkitremote.xpt
@@ -281,6 +282,8 @@
 @BINPATH@/components/ContactManager.manifest
 @BINPATH@/components/PhoneNumberService.js
 @BINPATH@/components/PhoneNumberService.manifest
+@BINPATH@/components/NotificationStorage.js
+@BINPATH@/components/NotificationStorage.manifest
 @BINPATH@/components/SettingsManager.js
 @BINPATH@/components/SettingsManager.manifest
 @BINPATH@/components/SettingsService.js
@@ -313,7 +316,6 @@
 @BINPATH@/components/nsLoginManagerPrompter.js
 @BINPATH@/components/SiteSpecificUserAgent.js
 @BINPATH@/components/SiteSpecificUserAgent.manifest
-@BINPATH@/components/storage-Legacy.js
 @BINPATH@/components/storage-mozStorage.js
 @BINPATH@/components/crypto-SDR.js
 @BINPATH@/components/jsconsole-clhandler.manifest
@@ -331,6 +333,9 @@
 @BINPATH@/components/amContentHandler.js
 @BINPATH@/components/amWebInstallListener.js
 @BINPATH@/components/nsBlocklistService.js
+@BINPATH@/components/webvtt.xpt
+@BINPATH@/components/WebVTT.manifest
+@BINPATH@/components/WebVTTParserWrapper.js
 
 #ifdef MOZ_UPDATER
 @BINPATH@/components/nsUpdateService.manifest
@@ -401,6 +406,9 @@
 @BINPATH@/components/PeerConnection.js
 @BINPATH@/components/PeerConnection.manifest
 #endif
+
+@BINPATH@/components/HttpDataUsage.manifest
+@BINPATH@/components/HttpDataUsage.js
 
 #ifdef MOZ_SERVICES_HEALTHREPORT
 @BINPATH@/components/HealthReportComponents.manifest
@@ -584,3 +592,7 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/MarionetteComponents.manifest
 @BINPATH@/components/marionettecomponent.js
 #endif
+
+@BINPATH@/components/DataStore.manifest
+@BINPATH@/components/DataStoreService.js
+@BINPATH@/components/dom_datastore.xpt

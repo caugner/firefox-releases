@@ -10,7 +10,7 @@ function test() {
     origin: "https://example.com",
     sidebarURL: "https://example.com/browser/browser/base/content/test/social/social_sidebar.html",
     workerURL: "https://example.com/browser/browser/base/content/test/social/social_worker.js",
-    iconURL: "https://example.com/browser/browser/base/content/test/moz.png"
+    iconURL: "https://example.com/browser/browser/base/content/test/general/moz.png"
   };
   runSocialTestWithProvider(manifest, function (finishcb) {
     runSocialTests(tests, undefined, undefined, finishcb);
@@ -113,15 +113,17 @@ var tests = {
           port.postMessage({topic: "test-flyout-open"});
           break;
         case "got-flyout-visibility":
+          if (e.data.result != "shown")
+            return;
           let iframe = panel.firstChild;
           iframe.contentDocument.addEventListener("SocialTest-DoneCloseSelf", function _doneHandler() {
             iframe.contentDocument.removeEventListener("SocialTest-DoneCloseSelf", _doneHandler, false);
+            port.close();
             is(panel.state, "closed", "flyout should have closed itself");
             Services.prefs.setBoolPref(ALLOW_SCRIPTS_TO_CLOSE_PREF, oldAllowScriptsToClose);
             next();
           }, false);
           is(panel.state, "open", "flyout should be open");
-          port.close(); // so we don't get the -visibility message as it hides...
           SocialFlyout.dispatchPanelEvent("socialTest-CloseSelf");
           break;
       }

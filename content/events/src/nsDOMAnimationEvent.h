@@ -7,6 +7,7 @@
 
 #include "nsDOMEvent.h"
 #include "nsIDOMAnimationEvent.h"
+#include "mozilla/EventForwards.h"
 #include "mozilla/dom/AnimationEventBinding.h"
 
 class nsAString;
@@ -17,8 +18,7 @@ class nsDOMAnimationEvent : public nsDOMEvent,
 public:
   nsDOMAnimationEvent(mozilla::dom::EventTarget* aOwner,
                       nsPresContext *aPresContext,
-                      nsAnimationEvent *aEvent);
-  ~nsDOMAnimationEvent();
+                      mozilla::InternalAnimationEvent* aEvent);
 
   NS_DECL_ISUPPORTS_INHERITED
   NS_FORWARD_TO_NSDOMEVENT
@@ -40,17 +40,7 @@ public:
   // GetAnimationName(nsAString& aAnimationName);
   // GetPseudoElement(nsAString& aPseudoElement);
 
-  float ElapsedTime()
-  {
-    return AnimationEvent()->elapsedTime;
-  }
-
-private:
-  nsAnimationEvent* AnimationEvent() {
-    NS_ABORT_IF_FALSE(mEvent->eventStructType == NS_ANIMATION_EVENT,
-                      "unexpected struct type");
-    return static_cast<nsAnimationEvent*>(mEvent);
-  }
+  float ElapsedTime();
 };
 
 #endif /* !defined(nsDOMAnimationEvent_h_) */

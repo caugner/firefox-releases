@@ -10,10 +10,7 @@
 #include <stdint.h>                     // for uint32_t, uint8_t, uint64_t
 #include "GLContextTypes.h"             // for GLContext (ptr only), etc
 #include "GLTextureImage.h"             // for TextureImage
-#include "ImageContainer.h"             // for PlanarYCbCrImage, etc
 #include "ImageTypes.h"                 // for StereoMode
-#include "gfxASurface.h"                // for gfxASurface, etc
-#include "gfxImageSurface.h"            // for gfxImageSurface
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
 #include "mozilla/RefPtr.h"             // for RefPtr, RefCounted
@@ -29,6 +26,8 @@
 #include "nsISupportsImpl.h"            // for TextureImage::AddRef, etc
 
 class gfxReusableSurfaceWrapper;
+class gfxASurface;
+class gfxImageSurface;
 
 namespace mozilla {
 namespace layers {
@@ -37,6 +36,9 @@ class ContentClient;
 class CompositableForwarder;
 class ISurfaceAllocator;
 class CompositableClient;
+class PlanarYCbCrImage;
+class PlanarYCbCrData;
+class Image;
 
 /**
  * TextureClient is the abstraction that allows us to share data between the
@@ -63,7 +65,7 @@ public:
 class TextureClientYCbCr
 {
 public:
-  virtual bool UpdateYCbCr(const PlanarYCbCrImage::Data& aData) = 0;
+  virtual bool UpdateYCbCr(const PlanarYCbCrData& aData) = 0;
   virtual bool AllocateForYCbCr(gfx::IntSize aYSize,
                                 gfx::IntSize aCbCrSize,
                                 StereoMode aStereoMode) = 0;
@@ -124,12 +126,13 @@ public:
   virtual TextureClientSurface* AsTextureClientSurface() { return nullptr; }
   virtual TextureClientYCbCr* AsTextureClientYCbCr() { return nullptr; }
 
-  virtual void MarkUnused() {}
-
-  virtual bool Lock(OpenMode aMode)
-  {
-    return IsValid();
-  }
+  /**
+   * Locks the shared data, allowing the caller to get access to it.
+   *
+   * Please always lock/unlock when accessing the shared data.
+   * If Lock() returns false, you should not attempt to access the shared data.
+   */
+  virtual bool Lock(OpenMode aMode) { return IsValid(); }
 
   virtual void Unlock() {}
 
@@ -138,11 +141,18 @@ public:
    * Textures that do not implement locking should be immutable or should
    * use immediate uploads (see TextureFlags in CompositorTypes.h)
    */
-  virtual bool ImplementsLocking() const
-  {
-    return false;
-  }
+  virtual bool ImplementsLocking() const { return false; }
 
+  /**
+   * Sets this texture's ID.
+   *
+   * This ID is used to match a texture client with his corresponding TextureHost.
+   * Only the CompositableClient should be allowed to set or clear the ID.
+   * Zero is always an invalid ID.
+   * For a given compositableClient, there can never be more than one texture
+   * client with the same non-zero ID.
+   * Texture clients from different compositables may have the same ID.
+   */
   void SetID(uint64_t aID)
   {
     MOZ_ASSERT(mID == 0 && aID != 0);
@@ -155,10 +165,7 @@ public:
     mID = 0;
   }
 
-  uint64_t GetID() const
-  {
-    return mID;
-  }
+  uint64_t GetID() const { return mID; }
 
   virtual bool IsAllocated() const = 0;
 
@@ -166,8 +173,22 @@ public:
 
   virtual gfx::IntSize GetSize() const = 0;
 
+  /**
+   * Drop the shared data into a TextureClientData object and mark this
+   * TextureClient as invalid.
+   *
+   * The TextureClient must not hold any reference to the shared data
+   * after this method has been called.
+   * The TextureClientData is owned by the caller.
+   */
   virtual TextureClientData* DropTextureData() = 0;
 
+  /**
+   * TextureFlags contain important information about various aspects
+   * of the texture, like how its liferime is managed, and how it
+   * should be displayed.
+   * See TextureFlags in CompositorTypes.h.
+   */
   TextureFlags GetFlags() const { return mFlags; }
 
   /**
@@ -189,19 +210,16 @@ public:
    */
   bool IsValid() const { return mValid; }
 
+  /**
+   * An invalid TextureClient cannot provide access to its shared data
+   * anymore. This usually means it will soon be destroyed.
+   */
   void MarkInvalid() { mValid = false; }
 
 protected:
   void AddFlags(TextureFlags  aFlags)
   {
     MOZ_ASSERT(!IsSharedWithCompositor());
-    // make sure we don't deallocate on both client and host;
-    MOZ_ASSERT(!(aFlags & TEXTURE_DEALLOCATE_CLIENT && aFlags & TEXTURE_DEALLOCATE_HOST));
-    if (aFlags & TEXTURE_DEALLOCATE_CLIENT) {
-      mFlags &= ~TEXTURE_DEALLOCATE_HOST;
-    } else if (aFlags & TEXTURE_DEALLOCATE_HOST) {
-      mFlags &= ~TEXTURE_DEALLOCATE_CLIENT;
-    }
     mFlags |= aFlags;
   }
 
@@ -248,7 +266,7 @@ public:
 
   virtual TextureClientYCbCr* AsTextureClientYCbCr() MOZ_OVERRIDE { return this; }
 
-  virtual bool UpdateYCbCr(const PlanarYCbCrImage::Data& aData) MOZ_OVERRIDE;
+  virtual bool UpdateYCbCr(const PlanarYCbCrData& aData) MOZ_OVERRIDE;
 
   virtual bool AllocateForYCbCr(gfx::IntSize aYSize,
                                 gfx::IntSize aCbCrSize,
@@ -410,8 +428,6 @@ public:
     return gfx::BACKEND_NONE;
   }
 
-
-  virtual SurfaceDescriptor* LockSurfaceDescriptor() { return GetDescriptor(); }
   virtual void ReleaseResources() {}
   /**
    * This unlocks the current DrawableTexture and allows the host to composite
@@ -425,7 +441,7 @@ public:
    * Returns true if succeeded, false if failed.
    */
   virtual bool EnsureAllocated(gfx::IntSize aSize,
-                               gfxASurface::gfxContentType aType) = 0;
+                               gfxContentType aType) = 0;
 
   /**
    * _Only_ used at the end of the layer transaction when receiving a reply from
@@ -441,6 +457,11 @@ public:
     mDescriptor = aDescriptor;
   }
   SurfaceDescriptor* GetDescriptor() { return &mDescriptor; }
+  /**
+   * Use LockSurfaceDescriptor to get the descriptor if it will be sent across IPC.
+   * Use GetDescriptor if you want to keep the descriptor on one thread.
+   */
+  virtual SurfaceDescriptor* LockSurfaceDescriptor() { return GetDescriptor(); }
 
   CompositableForwarder* GetForwarder() const
   {
@@ -469,7 +490,7 @@ public:
     return mAccessMode;
   }
 
-  virtual gfxASurface::gfxContentType GetContentType() = 0;
+  virtual gfxContentType GetContentType() = 0;
 
 protected:
   DeprecatedTextureClient(CompositableForwarder* aForwarder,
@@ -487,8 +508,7 @@ class DeprecatedTextureClientShmem : public DeprecatedTextureClient
 {
 public:
   DeprecatedTextureClientShmem(CompositableForwarder* aForwarder, const TextureInfo& aTextureInfo);
-  ~DeprecatedTextureClientShmem() { ReleaseResources(); }
-
+  ~DeprecatedTextureClientShmem();
   virtual bool SupportsType(DeprecatedTextureClientType aType) MOZ_OVERRIDE
   {
     return aType == TEXTURE_SHMEM || aType == TEXTURE_CONTENT || aType == TEXTURE_FALLBACK;
@@ -501,11 +521,11 @@ public:
     return gfx::BACKEND_CAIRO;
   }
   virtual void Unlock() MOZ_OVERRIDE;
-  virtual bool EnsureAllocated(gfx::IntSize aSize, gfxASurface::gfxContentType aType) MOZ_OVERRIDE;
+  virtual bool EnsureAllocated(gfx::IntSize aSize, gfxContentType aType) MOZ_OVERRIDE;
 
   virtual void ReleaseResources() MOZ_OVERRIDE;
   virtual void SetDescriptor(const SurfaceDescriptor& aDescriptor) MOZ_OVERRIDE;
-  virtual gfxASurface::gfxContentType GetContentType() MOZ_OVERRIDE { return mContentType; }
+  virtual gfxContentType GetContentType() MOZ_OVERRIDE { return mContentType; }
 private:
   gfxASurface* GetSurface();
 
@@ -513,7 +533,7 @@ private:
   nsRefPtr<gfxImageSurface> mSurfaceAsImage;
   RefPtr<gfx::DrawTarget> mDrawTarget;
 
-  gfxASurface::gfxContentType mContentType;
+  gfxContentType mContentType;
   gfx::IntSize mSize;
 
   friend class CompositingFactory;
@@ -529,11 +549,11 @@ public:
   ~DeprecatedTextureClientShmemYCbCr() { ReleaseResources(); }
 
   virtual bool SupportsType(DeprecatedTextureClientType aType) MOZ_OVERRIDE { return aType == TEXTURE_YCBCR; }
-  bool EnsureAllocated(gfx::IntSize aSize, gfxASurface::gfxContentType aType) MOZ_OVERRIDE;
+  bool EnsureAllocated(gfx::IntSize aSize, gfxContentType aType) MOZ_OVERRIDE;
   virtual void SetDescriptorFromReply(const SurfaceDescriptor& aDescriptor) MOZ_OVERRIDE;
   virtual void SetDescriptor(const SurfaceDescriptor& aDescriptor) MOZ_OVERRIDE;
   virtual void ReleaseResources();
-  virtual gfxASurface::gfxContentType GetContentType() MOZ_OVERRIDE { return gfxASurface::CONTENT_COLOR_ALPHA; }
+  virtual gfxContentType GetContentType() MOZ_OVERRIDE { return GFX_CONTENT_COLOR_ALPHA; }
 };
 
 class DeprecatedTextureClientTile : public DeprecatedTextureClient
@@ -546,7 +566,7 @@ public:
   ~DeprecatedTextureClientTile();
 
   virtual bool EnsureAllocated(gfx::IntSize aSize,
-                               gfxASurface::gfxContentType aType) MOZ_OVERRIDE;
+                               gfxContentType aType) MOZ_OVERRIDE;
 
   virtual gfxImageSurface* LockImageSurface() MOZ_OVERRIDE;
 
@@ -561,10 +581,10 @@ public:
   }
 
 
-  virtual gfxASurface::gfxContentType GetContentType() { return mContentType; }
+  virtual gfxContentType GetContentType() { return mContentType; }
 
 private:
-  gfxASurface::gfxContentType mContentType;
+  gfxContentType mContentType;
   nsRefPtr<gfxReusableSurfaceWrapper> mSurface;
 
   friend class CompositingFactory;

@@ -43,7 +43,7 @@ NS_IMPL_RELEASE_INHERITED(nsDOMMessageEvent, nsDOMEvent)
 
 nsDOMMessageEvent::nsDOMMessageEvent(mozilla::dom::EventTarget* aOwner,
                                      nsPresContext* aPresContext,
-                                     nsEvent* aEvent)
+                                     WidgetEvent* aEvent)
   : nsDOMEvent(aOwner, aPresContext, aEvent),
     mData(JSVAL_VOID)
 {
@@ -67,7 +67,7 @@ JS::Value
 nsDOMMessageEvent::GetData(JSContext* aCx, ErrorResult& aRv)
 {
   JS::Rooted<JS::Value> data(aCx, mData);
-  if (!JS_WrapValue(aCx, data.address())) {
+  if (!JS_WrapValue(aCx, &data)) {
     aRv.Throw(NS_ERROR_FAILURE);
   }
   return data;
@@ -95,7 +95,7 @@ nsDOMMessageEvent::GetSource(nsIDOMWindow** aSource)
 }
 
 void
-nsDOMMessageEvent::GetSource(Nullable<mozilla::dom::WindowProxyOrMessagePortReturnValue>& aValue) const
+nsDOMMessageEvent::GetSource(Nullable<mozilla::dom::OwningWindowProxyOrMessagePort>& aValue) const
 {
   if (mWindowSource) {
     aValue.SetValue().SetAsWindowProxy() = mWindowSource;
@@ -197,7 +197,7 @@ nsresult
 NS_NewDOMMessageEvent(nsIDOMEvent** aInstancePtrResult,
                       mozilla::dom::EventTarget* aOwner,
                       nsPresContext* aPresContext,
-                      nsEvent* aEvent) 
+                      WidgetEvent* aEvent) 
 {
   nsDOMMessageEvent* it = new nsDOMMessageEvent(aOwner, aPresContext, aEvent);
 

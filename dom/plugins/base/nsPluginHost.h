@@ -19,7 +19,7 @@
 #include "nsWeakPtr.h"
 #include "nsIPrompt.h"
 #include "nsWeakReference.h"
-#include "nsThreadUtils.h"
+#include "MainThreadUtils.h"
 #include "nsTArray.h"
 #include "nsTObserverArray.h"
 #include "nsITimer.h"
@@ -134,13 +134,13 @@ public:
   nsresult
   GetURLWithHeaders(nsNPAPIPluginInstance *pluginInst, 
                     const char* url, 
-                    const char* target = NULL,
-                    nsNPAPIPluginStreamListener* streamListener = NULL,
-                    const char* altHost = NULL,
-                    const char* referrer = NULL,
+                    const char* target = nullptr,
+                    nsNPAPIPluginStreamListener* streamListener = nullptr,
+                    const char* altHost = nullptr,
+                    const char* referrer = nullptr,
                     bool forceJSEnabled = false,
                     uint32_t getHeadersLength = 0, 
-                    const char* getHeaders = NULL);
+                    const char* getHeaders = nullptr);
 
   nsresult
   DoURLLoadSecurityCheck(nsNPAPIPluginInstance *aInstance,
@@ -189,7 +189,7 @@ public:
                                      nsObjectLoadingContent *aContent,
                                      nsPluginInstanceOwner** aOwner);
 
-  // Does not accept NULL and should never fail.
+  // Does not accept nullptr and should never fail.
   nsPluginTag* TagForPlugin(nsNPAPIPlugin* aPlugin);
 
   nsresult GetPlugin(const char *aMimeType, nsNPAPIPlugin** aPlugin);

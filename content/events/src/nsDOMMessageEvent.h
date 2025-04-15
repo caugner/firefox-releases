@@ -14,7 +14,7 @@
 namespace mozilla {
 namespace dom {
 class MessagePortList;
-class WindowProxyOrMessagePortReturnValue;
+class OwningWindowProxyOrMessagePort;
 }
 }
 
@@ -30,7 +30,8 @@ class nsDOMMessageEvent : public nsDOMEvent,
 {
 public:
   nsDOMMessageEvent(mozilla::dom::EventTarget* aOwner,
-                    nsPresContext* aPresContext, nsEvent* aEvent);
+                    nsPresContext* aPresContext,
+                    mozilla::WidgetEvent* aEvent);
   ~nsDOMMessageEvent();
 
   NS_DECL_ISUPPORTS_INHERITED
@@ -50,7 +51,7 @@ public:
 
   JS::Value GetData(JSContext* aCx, mozilla::ErrorResult& aRv);
 
-  void GetSource(Nullable<mozilla::dom::WindowProxyOrMessagePortReturnValue>& aValue) const;
+  void GetSource(Nullable<mozilla::dom::OwningWindowProxyOrMessagePort>& aValue) const;
 
   mozilla::dom::MessagePortList* GetPorts()
   {

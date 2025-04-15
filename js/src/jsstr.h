@@ -235,7 +235,7 @@ js_strncpy(jschar *dst, const jschar *src, size_t nelem)
 }
 
 extern jschar *
-js_strdup(JSContext *cx, const jschar *s);
+js_strdup(js::ThreadSafeContext *cx, const jschar *s);
 
 namespace js {
 
@@ -249,15 +249,15 @@ extern jschar *
 InflateString(ThreadSafeContext *cx, const char *bytes, size_t *length);
 
 /*
- * Inflate bytes to JS chars in an existing buffer. 'chars' must be large
- * enough for 'length' jschars. The buffer is NOT null-terminated.
- *
- * charsLength must be be initialized with the destination buffer size and, on
- * return, will contain on return the number of copied chars.
+ * Inflate bytes to JS chars in an existing buffer. 'dst' must be large
+ * enough for 'srclen' jschars. The buffer is NOT null-terminated.
  */
-extern bool
-InflateStringToBuffer(JSContext *maybecx, const char *bytes, size_t length,
-                      jschar *chars, size_t *charsLength);
+inline void
+InflateStringToBuffer(const char *src, size_t srclen, jschar *dst)
+{
+    for (size_t i = 0; i < srclen; i++)
+        dst[i] = (unsigned char) src[i];
+}
 
 /*
  * Deflate JS chars to bytes into a buffer. 'bytes' must be large enough for
@@ -318,7 +318,7 @@ PutEscapedStringImpl(char *buffer, size_t bufferSize, FILE *fp, const jschar *ch
 inline size_t
 PutEscapedString(char *buffer, size_t size, JSLinearString *str, uint32_t quote)
 {
-    size_t n = PutEscapedStringImpl(buffer, size, NULL, str, quote);
+    size_t n = PutEscapedStringImpl(buffer, size, nullptr, str, quote);
 
     /* PutEscapedStringImpl can only fail with a file. */
     JS_ASSERT(n != size_t(-1));
@@ -328,7 +328,7 @@ PutEscapedString(char *buffer, size_t size, JSLinearString *str, uint32_t quote)
 inline size_t
 PutEscapedString(char *buffer, size_t bufferSize, const jschar *chars, size_t length, uint32_t quote)
 {
-    size_t n = PutEscapedStringImpl(buffer, bufferSize, NULL, chars, length, quote);
+    size_t n = PutEscapedStringImpl(buffer, bufferSize, nullptr, chars, length, quote);
 
     /* PutEscapedStringImpl can only fail with a file. */
     JS_ASSERT(n != size_t(-1));
@@ -343,7 +343,7 @@ PutEscapedString(char *buffer, size_t bufferSize, const jschar *chars, size_t le
 inline bool
 FileEscapedString(FILE *fp, JSLinearString *str, uint32_t quote)
 {
-    return PutEscapedStringImpl(NULL, 0, fp, str, quote) != size_t(-1);
+    return PutEscapedStringImpl(nullptr, 0, fp, str, quote) != size_t(-1);
 }
 
 bool

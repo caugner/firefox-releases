@@ -143,11 +143,12 @@ def run_job(name, config):
     else:
         temp_map = {}
         cmdspec = fill(cmdspec, config)
-        temp = '%s.tmp' % name
         if isinstance(outfiles, basestring):
-            temp_map[temp] = outfiles
+            stdout_filename = '%s.tmp' % name
+            temp_map[stdout_filename] = outfiles
             print_command(cmdspec, outfile=outfiles, env=env(config))
         else:
+            stdout_filename = None
             pc = list(cmdspec)
             outfile = 0
             for (i, name) in out_indexes(cmdspec):
@@ -163,8 +164,11 @@ def run_job(name, config):
             outfile += 1
 
         sys.stdout.flush()
-        with open(temp, 'w') as output:
-            subprocess.check_call(command, stdout=output, env=env(config))
+        if stdout_filename is None:
+            subprocess.check_call(command, env=env(config))
+        else:
+            with open(stdout_filename, 'w') as output:
+                subprocess.check_call(command, stdout=output, env=env(config))
         for (temp, final) in temp_map.items():
             try:
                 os.rename(temp, final)
@@ -193,7 +197,7 @@ parser.add_argument('--source', metavar='SOURCE', type=str, nargs='?',
                     help='source code to analyze')
 parser.add_argument('--upto', metavar='UPTO', type=str, nargs='?',
                     help='last step to execute')
-parser.add_argument('--jobs', '-j', default=4, metavar='JOBS', type=int,
+parser.add_argument('--jobs', '-j', default=None, metavar='JOBS', type=int,
                     help='number of simultaneous analyzeRoots.js jobs')
 parser.add_argument('--list', const=True, nargs='?', type=bool,
                     help='display available steps')

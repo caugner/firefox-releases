@@ -7,8 +7,8 @@
 
 #include "nsTArray.h"
 #include "nsCocoaUtils.h"
-#include "nsGUIEvent.h"
 #include "prlog.h"
+#include "mozilla/TextEvents.h"
 
 using namespace mozilla;
 using namespace mozilla::widget;
@@ -167,14 +167,14 @@ NativeKeyBindings::Init(NativeKeyBindingsType aType)
 NS_IMPL_ISUPPORTS1(NativeKeyBindings, nsINativeKeyBindings)
 
 NS_IMETHODIMP_(bool)
-NativeKeyBindings::KeyDown(const nsKeyEvent& aEvent,
+NativeKeyBindings::KeyDown(const WidgetKeyboardEvent& aEvent,
                            DoCommandCallback aCallback, void* aCallbackData)
 {
   return false;
 }
 
 NS_IMETHODIMP_(bool)
-NativeKeyBindings::KeyPress(const nsKeyEvent& aEvent,
+NativeKeyBindings::KeyPress(const WidgetKeyboardEvent& aEvent,
                             DoCommandCallback aCallback, void* aCallbackData)
 {
   PR_LOG(gNativeKeyBindingsLog, PR_LOG_ALWAYS,
@@ -265,7 +265,7 @@ NativeKeyBindings::KeyPress(const nsKeyEvent& aEvent,
 }
 
 NS_IMETHODIMP_(bool)
-NativeKeyBindings::KeyUp(const nsKeyEvent& aEvent,
+NativeKeyBindings::KeyUp(const WidgetKeyboardEvent& aEvent,
                          DoCommandCallback aCallback, void* aCallbackData)
 {
   return false;

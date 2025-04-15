@@ -17,6 +17,7 @@
 
 #include "nsIObserverService.h"
 #include "mozilla/Services.h"
+#include "mozilla/TextEvents.h"
 
 
 #ifdef MOZ_ENABLE_QTMOBILITY
@@ -293,15 +294,17 @@ void MozQWidget::sendPressReleaseKeyEvent(int key,
 
     if (letter) {
         // Handle as TextEvent
-        nsCompositionEvent start(true, NS_COMPOSITION_START, mReceiver);
+        mozilla::WidgetCompositionEvent start(true, NS_COMPOSITION_START,
+                                              mReceiver);
         mReceiver->DispatchEvent(&start);
 
-        nsTextEvent text(true, NS_TEXT_TEXT, mReceiver);
+        mozilla::WidgetTextEvent text(true, NS_TEXT_TEXT, mReceiver);
         QString commitString = QString(*letter);
         text.theText.Assign(commitString.utf16());
         mReceiver->DispatchEvent(&text);
 
-        nsCompositionEvent end(true, NS_COMPOSITION_END, mReceiver);
+        mozilla::WidgetCompositionEvent end(true, NS_COMPOSITION_END,
+                                            mReceiver);
         mReceiver->DispatchEvent(&end);
         return;
     }

@@ -15,7 +15,6 @@
 #include "jscompartment.h"
 
 #include "jit/CompileInfo.h"
-#include "jit/IonCode.h"
 
 namespace js {
 namespace jit {
@@ -82,6 +81,13 @@ struct IonOptions
     //
     // Default: false
     bool checkRangeAnalysis;
+
+    // Whether to perform expensive graph-consistency DEBUG-only assertions.
+    // It can be useful to disable this to reduce DEBUG-compile time of large
+    // asm.js programs.
+    //
+    // Default: true
+    bool assertGraphConsistency;
 
     // Toggles whether Unreachable Code Elimination is performed.
     //
@@ -214,6 +220,7 @@ struct IonOptions
         edgeCaseAnalysis(true),
         rangeAnalysis(true),
         checkRangeAnalysis(false),
+        assertGraphConsistency(true),
         uce(true),
         eaa(true),
 #ifdef CHECK_OSIPOINT_REGISTERS
@@ -261,8 +268,8 @@ enum AbortReason {
 
 // An Ion context is needed to enter into either an Ion method or an instance
 // of the Ion compiler. It points to a temporary allocator and the active
-// JSContext, either of which may be NULL, and the active compartment, which
-// will not be NULL.
+// JSContext, either of which may be nullptr, and the active compartment, which
+// will not be nullptr.
 
 class IonContext
 {
@@ -331,7 +338,7 @@ struct EnterJitData;
 
 bool SetEnterJitData(JSContext *cx, EnterJitData &data, RunState &state, AutoValueVector &vals);
 
-IonExecStatus Cannon(JSContext *cx, RunState &state);
+IonExecStatus IonCannon(JSContext *cx, RunState &state);
 
 // Used to enter Ion from C++ natives like Array.map. Called from FastInvokeGuard.
 IonExecStatus FastInvoke(JSContext *cx, HandleFunction fun, CallArgs &args);
@@ -355,8 +362,8 @@ class CodeGenerator;
 
 bool OptimizeMIR(MIRGenerator *mir);
 LIRGraph *GenerateLIR(MIRGenerator *mir);
-CodeGenerator *GenerateCode(MIRGenerator *mir, LIRGraph *lir, MacroAssembler *maybeMasm = NULL);
-CodeGenerator *CompileBackEnd(MIRGenerator *mir, MacroAssembler *maybeMasm = NULL);
+CodeGenerator *GenerateCode(MIRGenerator *mir, LIRGraph *lir, MacroAssembler *maybeMasm = nullptr);
+CodeGenerator *CompileBackEnd(MIRGenerator *mir, MacroAssembler *maybeMasm = nullptr);
 
 void AttachFinishedCompilations(JSContext *cx);
 void FinishOffThreadBuilder(IonBuilder *builder);
@@ -364,8 +371,8 @@ void FinishOffThreadBuilder(IonBuilder *builder);
 static inline bool
 IsIonEnabled(JSContext *cx)
 {
-    return cx->hasOption(JSOPTION_ION) &&
-        cx->hasOption(JSOPTION_BASELINE) &&
+    return cx->options().ion() &&
+        cx->options().baseline() &&
         cx->typeInferenceEnabled();
 }
 
@@ -375,6 +382,12 @@ IsIonInlinablePC(jsbytecode *pc) {
     // GETPROP, CALLPROP, and LENGTH. (Inlined Getters)
     // SETPROP, SETNAME, SETGNAME (Inlined Setters)
     return IsCallPC(pc) || IsGetPropPC(pc) || IsSetPropPC(pc);
+}
+
+inline bool
+TooManyArguments(unsigned nargs)
+{
+    return (nargs >= SNAPSHOT_MAX_NARGS || nargs > js_IonOptions.maxStackArgs);
 }
 
 void ForbidCompilation(JSContext *cx, JSScript *script);

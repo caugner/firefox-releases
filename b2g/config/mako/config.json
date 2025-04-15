@@ -20,11 +20,10 @@
     ],
     "env": {
         "VARIANT": "user",
-        "MOZILLA_OFFICIAL": "1",
-        "B2GUPDATER": "1"
+        "MOZILLA_OFFICIAL": "1"
     },
     "b2g_manifest": "nexus-4.xml",
-    "b2g_manifest_branch": "v1.2",
+    "b2g_manifest_branch": "master",
     "additional_source_tarballs": [],
     "gecko_l10n_root": "http://hg.mozilla.org/l10n-central",
     "gaia": {

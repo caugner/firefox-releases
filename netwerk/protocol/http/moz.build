@@ -6,13 +6,14 @@
 
 XPIDL_SOURCES += [
     'nsIHttpActivityObserver.idl',
-    'nsIHttpAuthManager.idl',
     'nsIHttpAuthenticableChannel.idl',
     'nsIHttpAuthenticator.idl',
+    'nsIHttpAuthManager.idl',
     'nsIHttpChannel.idl',
     'nsIHttpChannelAuthProvider.idl',
     'nsIHttpChannelChild.idl',
     'nsIHttpChannelInternal.idl',
+    'nsIHttpDataUsage.idl',
     'nsIHttpEventSink.idl',
     'nsIHttpHeaderVisitor.idl',
     'nsIHttpProtocolHandler.idl',
@@ -35,10 +36,10 @@ EXPORTS.mozilla.net += [
     'HttpChannelParent.h',
     'HttpInfo.h',
     'PHttpChannelParams.h',
-    'PSpdyPush3.h',
+    'PSpdyPush.h',
 ]
 
-CPP_SOURCES += [
+SOURCES += [
     'ASpdySession.cpp',
     'ConnectionDiagnostics.cpp',
     'HttpBaseChannel.cpp',
@@ -46,12 +47,6 @@ CPP_SOURCES += [
     'HttpChannelParent.cpp',
     'HttpChannelParentListener.cpp',
     'HttpInfo.cpp',
-    'NullHttpTransaction.cpp',
-    'SpdyPush3.cpp',
-    'SpdySession2.cpp',
-    'SpdySession3.cpp',
-    'SpdyStream2.cpp',
-    'SpdyStream3.cpp',
     'nsHttp.cpp',
     'nsHttpActivityDistributor.cpp',
     'nsHttpAuthCache.cpp',
@@ -71,6 +66,15 @@ CPP_SOURCES += [
     'nsHttpRequestHead.cpp',
     'nsHttpResponseHead.cpp',
     'nsHttpTransaction.cpp',
+    'NullHttpTransaction.cpp',
+    'SpdyPush3.cpp',
+    'SpdyPush31.cpp',
+    'SpdySession2.cpp',
+    'SpdySession3.cpp',
+    'SpdySession31.cpp',
+    'SpdyStream2.cpp',
+    'SpdyStream3.cpp',
+    'SpdyStream31.cpp',
 ]
 
 IPDL_SOURCES += [
@@ -81,6 +85,11 @@ EXTRA_JS_MODULES += [
     'UserAgentUpdates.jsm',
 ]
 
+EXTRA_COMPONENTS += [
+    'HttpDataUsage.js',
+    'HttpDataUsage.manifest',
+]
+
 FAIL_ON_WARNINGS = True
 
 LIBXUL_LIBRARY = True
@@ -88,4 +97,6 @@ LIBXUL_LIBRARY = True
 MSVC_ENABLE_PGO = True
 
 LIBRARY_NAME = 'nkhttp_s'
+
+include('/ipc/chromium/chromium-config.mozbuild')
 

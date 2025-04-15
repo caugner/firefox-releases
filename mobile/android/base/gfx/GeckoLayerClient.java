@@ -132,6 +132,10 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
         mContentDocumentIsDisplayed = true;
     }
 
+    public void setOverscrollHandler(final Overscroll listener) {
+        mPanZoomController.setOverscrollHandler(listener);
+    }
+
     /** Attaches to root layer so that Gecko appears. */
     public void notifyGeckoReady() {
         mGeckoIsReady = true;
@@ -289,6 +293,15 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
         float maxMarginWidth = Math.max(0, metrics.getPageWidth() - metrics.getWidthWithoutMargins());
         float maxMarginHeight = Math.max(0, metrics.getPageHeight() - metrics.getHeightWithoutMargins());
 
+        // If the margins can't fully hide, they're pinned on - in which case,
+        // fixed margins should always be zero.
+        if (maxMarginWidth < metrics.marginLeft + metrics.marginRight) {
+          maxMarginWidth = 0;
+        }
+        if (maxMarginHeight < metrics.marginTop + metrics.marginBottom) {
+          maxMarginHeight = 0;
+        }
+
         PointF offset = metrics.getMarginOffset();
         RectF overscroll = metrics.getOverscroll();
         if (offset.x >= 0) {
@@ -412,7 +425,7 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
     /* This is invoked by JNI on the gecko thread */
     DisplayPortMetrics getDisplayPort(boolean pageSizeUpdate, boolean isBrowserContentDisplayed, int tabId, ImmutableViewportMetrics metrics) {
         Tabs tabs = Tabs.getInstance();
-        if (tabs.isSelectedTab(tabs.getTab(tabId)) && isBrowserContentDisplayed) {
+        if (isBrowserContentDisplayed && tabs.isSelectedTabId(tabId)) {
             // for foreground tabs, send the viewport update unless the document
             // displayed is different from the content document. In that case, just
             // calculate the display port.
@@ -892,16 +905,20 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
     }
 
     private void setShadowVisibility() {
-        ThreadUtils.postToUiThread(new Runnable() {
-            @Override
-            public void run() {
-                if (BrowserApp.mBrowserToolbar == null) {
-                    return;
+        try {
+            if (BrowserApp.mBrowserToolbar == null) // this will throw if we don't have BrowserApp
+                return;
+            ThreadUtils.postToUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (BrowserApp.mBrowserToolbar == null) {
+                        return;
+                    }
+                    ImmutableViewportMetrics m = mViewportMetrics;
+                    BrowserApp.mBrowserToolbar.setShadowVisibility(m.viewportRectTop >= m.pageRectTop);
                 }
-                ImmutableViewportMetrics m = mViewportMetrics;
-                BrowserApp.mBrowserToolbar.setShadowVisibility(m.viewportRectTop >= m.pageRectTop);
-            }
-        });
+            });
+        } catch (NoClassDefFoundError ex) {}
     }
 
     /** Implementation of PanZoomTarget */

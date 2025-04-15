@@ -31,7 +31,7 @@ static const nsAttrValue::EnumTable kKindTable[] = {
   { 0 }
 };
 
-class WebVTTLoadListener;
+class WebVTTListener;
 
 class HTMLTrackElement MOZ_FINAL : public nsGenericHTMLElement
 {
@@ -102,10 +102,7 @@ public:
     LOADED = 2U,
     ERROR = 3U
   };
-  uint16_t ReadyState() const
-  {
-    return mReadyState;
-  }
+  uint16_t ReadyState() const;
 
   TextTrack* Track();
 
@@ -146,19 +143,17 @@ protected:
                              JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
   void OnChannelRedirect(nsIChannel* aChannel, nsIChannel* aNewChannel,
                          uint32_t aFlags);
-  // Will open a new channel for the HTMLTrackElement's src attribute and load
-  // HTMLTrackElement's WebVTTLoadListener by calling WebVTTLoadListener's
-  // LoadResource().
+  // Open a new channel to the HTMLTrackElement's src attribute and call
+  // mListener's LoadResource().
   void LoadResource();
 
   friend class TextTrackCue;
-  friend class WebVTTLoadListener;
+  friend class WebVTTListener;
 
   nsRefPtr<TextTrack> mTrack;
   nsCOMPtr<nsIChannel> mChannel;
   nsRefPtr<HTMLMediaElement> mMediaParent;
-  nsRefPtr<WebVTTLoadListener> mLoadListener;
-  uint16_t mReadyState;
+  nsRefPtr<WebVTTListener> mListener;
 
   void CreateTextTrack();
 };

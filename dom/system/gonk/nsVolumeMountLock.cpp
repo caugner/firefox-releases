@@ -12,9 +12,11 @@
 #include "nsIVolume.h"
 #include "nsIVolumeService.h"
 #include "nsString.h"
+#include "nsXULAppAPI.h"
 
 #define VOLUME_MANAGER_LOG_TAG  "nsVolumeMountLock"
 #include "VolumeManagerLog.h"
+#include "nsServiceManagerUtils.h"
 
 using namespace mozilla::dom;
 using namespace mozilla::services;

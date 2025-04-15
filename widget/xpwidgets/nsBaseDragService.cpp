@@ -30,9 +30,9 @@
 #include "imgIContainer.h"
 #include "imgIRequest.h"
 #include "nsRegion.h"
-#include "nsGUIEvent.h"
 #include "nsXULPopupManager.h"
 #include "nsMenuPopupFrame.h"
+#include "mozilla/MouseEvents.h"
 #include "mozilla/Preferences.h"
 
 #include "gfxContext.h"
@@ -370,7 +370,7 @@ nsBaseDragService::FireDragEventAtSource(uint32_t aMsg)
       nsCOMPtr<nsIPresShell> presShell = doc->GetShell();
       if (presShell) {
         nsEventStatus status = nsEventStatus_eIgnore;
-        nsDragEvent event(true, aMsg, nullptr);
+        WidgetDragEvent event(true, aMsg, nullptr);
         event.inputSource = mInputSource;
         if (aMsg == NS_DRAGDROP_END) {
           event.refPoint.x = mEndDragPoint.x;
@@ -622,7 +622,7 @@ nsBaseDragService::DrawDragForImage(nsPresContext* aPresContext,
 
   nsRefPtr<gfxASurface> surface =
     gfxPlatform::GetPlatform()->CreateOffscreenSurface(gfxIntSize(destSize.width, destSize.height),
-                                                       gfxASurface::CONTENT_COLOR_ALPHA);
+                                                       GFX_CONTENT_COLOR_ALPHA);
   if (!surface)
     return NS_ERROR_FAILURE;
 
@@ -638,12 +638,12 @@ nsBaseDragService::DrawDragForImage(nsPresContext* aPresContext,
     gfxMatrix scale =
       gfxMatrix().Scale(srcSize.width/outRect.Width(), srcSize.height/outRect.Height());
     nsIntRect imgSize(0, 0, srcSize.width, srcSize.height);
-    imgContainer->Draw(ctx, gfxPattern::FILTER_GOOD, scale, outRect, imgSize,
+    imgContainer->Draw(ctx, GraphicsFilter::FILTER_GOOD, scale, outRect, imgSize,
                        destSize, nullptr, imgIContainer::FRAME_CURRENT,
                        imgIContainer::FLAG_SYNC_DECODE);
     return NS_OK;
   } else {
-    return aCanvas->RenderContextsExternal(ctx, gfxPattern::FILTER_GOOD);
+    return aCanvas->RenderContextsExternal(ctx, GraphicsFilter::FILTER_GOOD);
   }
 }
 

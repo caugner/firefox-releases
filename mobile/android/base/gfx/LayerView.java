@@ -18,14 +18,17 @@ import org.mozilla.gecko.util.EventDispatcher;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
 import android.graphics.SurfaceTexture;
 import android.os.Build;
 import android.os.Handler;
 import android.util.AttributeSet;
+import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
@@ -67,6 +70,7 @@ public class LayerView extends FrameLayout {
 
     /* This should only be modified on the Java UI thread. */
     private final ArrayList<TouchEventInterceptor> mTouchInterceptors;
+    private final Overscroll mOverscroll;
 
     /* Flags used to determine when to show the painted surface. */
     public static final int PAINT_START = 0;
@@ -104,10 +108,13 @@ public class LayerView extends FrameLayout {
         mBackgroundColor = Color.WHITE;
 
         mTouchInterceptors = new ArrayList<TouchEventInterceptor>();
+        mOverscroll = new Overscroll(this);
     }
 
     public void initializeView(EventDispatcher eventDispatcher) {
         mLayerClient = new GeckoLayerClient(getContext(), this, eventDispatcher);
+        mLayerClient.setOverscrollHandler(mOverscroll);
+
         mPanZoomController = mLayerClient.getPanZoomController();
         mMarginsAnimator = mLayerClient.getLayerMarginsAnimator();
 
@@ -118,6 +125,18 @@ public class LayerView extends FrameLayout {
         setFocusableInTouchMode(true);
 
         GeckoAccessibility.setDelegate(this);
+    }
+
+    private Point getEventRadius(MotionEvent event) {
+        if (Build.VERSION.SDK_INT >= 9) {
+            return new Point((int)event.getToolMajor()/2,
+                             (int)event.getToolMinor()/2);
+        }
+
+        float size = event.getSize();
+        DisplayMetrics displaymetrics = getContext().getResources().getDisplayMetrics();
+        size = size * Math.min(displaymetrics.heightPixels, displaymetrics.widthPixels);
+        return new Point((int)size, (int)size);
     }
 
     public void geckoConnected() {
@@ -152,8 +171,10 @@ public class LayerView extends FrameLayout {
                 }
 
                 if (mInitialTouchPoint != null && action == MotionEvent.ACTION_MOVE) {
+                    Point p = getEventRadius(event);
+
                     if (PointUtils.subtract(point, mInitialTouchPoint).length() <
-                        PanZoomController.PAN_THRESHOLD) {
+                        Math.max(PanZoomController.CLICK_THRESHOLD, Math.min(Math.min(p.x, p.y), PanZoomController.PAN_THRESHOLD))) {
                         // Don't send the touchmove event if if the users finger hasn't moved far.
                         // Necessary for Google Maps to work correctly. See bug 771099.
                         return true;
@@ -216,6 +237,16 @@ public class LayerView extends FrameLayout {
         }
 
         return result;
+    }
+
+    @Override
+    public void dispatchDraw(final Canvas canvas) {
+        super.dispatchDraw(canvas);
+
+        // We must have a layer client to get valid viewport metrics
+        if (mLayerClient != null) {
+            mOverscroll.draw(canvas, getViewportMetrics());
+        }
     }
 
     @Override
@@ -487,6 +518,8 @@ public class LayerView extends FrameLayout {
         if (mListener != null) {
             mListener.sizeChanged(width, height);
         }
+
+        mOverscroll.setSize(width, height);
     }
 
     private void surfaceChanged(int width, int height) {
@@ -495,6 +528,8 @@ public class LayerView extends FrameLayout {
         if (mListener != null) {
             mListener.surfaceChanged(width, height);
         }
+
+        mOverscroll.setSize(width, height);
     }
 
     private void onDestroyed() {

@@ -12,6 +12,7 @@ import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.gfx.Layer;
 import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.gfx.PluginLayer;
+import org.mozilla.gecko.prompts.PromptService;
 import org.mozilla.gecko.menu.GeckoMenu;
 import org.mozilla.gecko.menu.GeckoMenuInflater;
 import org.mozilla.gecko.menu.MenuPanel;
@@ -68,6 +69,8 @@ import android.telephony.SignalStrength;
 import android.telephony.TelephonyManager;
 import android.telephony.PhoneStateListener;
 import android.telephony.gsm.GsmCellLocation;
+
+import android.text.TextUtils;
 
 import android.util.AttributeSet;
 import android.util.Base64;
@@ -171,7 +174,6 @@ abstract public class GeckoApp
     public static int mOrientation;
     protected boolean mIsRestoringActivity;
     private String mCurrentResponse = "";
-    public static boolean sIsUsingCustomProfile = false;
 
     private ContactService mContactService;
     private PromptService mPromptService;
@@ -181,9 +183,6 @@ abstract public class GeckoApp
     protected FormAssistPopup mFormAssistPopup;
     protected TabsPanel mTabsPanel;
     protected ButtonToast mToast;
-
-    // Handles notification messages from javascript
-    protected NotificationHelper mNotificationHelper;
 
     protected LayerView mLayerView;
     private AbsoluteLayout mPluginContainer;
@@ -381,7 +380,7 @@ abstract public class GeckoApp
 
             return mMenuPanel; 
         }
-  
+
         return super.onCreatePanelView(featureId);
     }
 
@@ -839,18 +838,24 @@ abstract public class GeckoApp
     void showButtonToast(final String message, final String buttonText,
                          final String buttonIcon, final String buttonId) {
         BitmapUtils.getDrawable(GeckoApp.this, buttonIcon, new BitmapUtils.BitmapLoader() {
-            public void onBitmapFound(Drawable d) {
-                mToast.show(false, message, buttonText, d, new ButtonToast.ToastListener() {
-                    @Override
-                    public void onButtonClicked() {
-                        GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Toast:Click", buttonId));
-                    }
+            public void onBitmapFound(final Drawable d) {
 
+                ThreadUtils.postToUiThread(new Runnable() {
                     @Override
-                    public void onToastHidden(ButtonToast.ReasonHidden reason) {
-                        if (reason == ButtonToast.ReasonHidden.TIMEOUT) {
-                            GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Toast:Hidden", buttonId));
-                        }
+                    public void run() {
+                        mToast.show(false, message, buttonText, d, new ButtonToast.ToastListener() {
+                            @Override
+                            public void onButtonClicked() {
+                                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Toast:Click", buttonId));
+                            }
+
+                            @Override
+                            public void onToastHidden(ButtonToast.ReasonHidden reason) {
+                                if (reason == ButtonToast.ReasonHidden.TIMEOUT) {
+                                    GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Toast:Hidden", buttonId));
+                                }
+                            }
+                        });
                     }
                 });
             }
@@ -1169,9 +1174,9 @@ abstract public class GeckoApp
                     if (profileName == null) {
                         profileName = getDefaultProfileName();
                         if (profileName == null)
-                            profileName = "default";
+                            profileName = GeckoProfile.DEFAULT_PROFILE;
                     }
-                    GeckoApp.sIsUsingCustomProfile = true;
+                    GeckoProfile.sIsUsingCustomProfile = true;
                 }
 
                 if (profileName != null || profilePath != null) {
@@ -1189,7 +1194,11 @@ abstract public class GeckoApp
         ThreadUtils.setUiThread(Thread.currentThread(), new Handler());
 
         Tabs.getInstance().attachToContext(this);
-        Favicons.attachToContext(this);
+        try {
+            Favicons.attachToContext(this);
+        } catch (Exception e) {
+            Log.e(LOGTAG, "Exception starting favicon cache. Corrupt resources?", e);
+        }
 
         // When we detect a locale change, we need to restart Gecko, which
         // actually means restarting the entire application. This logic should
@@ -1236,7 +1245,6 @@ abstract public class GeckoApp
 
         // Set up tabs panel.
         mTabsPanel = (TabsPanel) findViewById(R.id.tabs_panel);
-        mNotificationHelper = new NotificationHelper(this);
         mToast = new ButtonToast(findViewById(R.id.toast));
 
         // Determine whether we should restore tabs.
@@ -1300,6 +1308,7 @@ abstract public class GeckoApp
         });
 
         GeckoAppShell.setNotificationClient(makeNotificationClient());
+        NotificationHelper.init(getApplicationContext());
     }
 
     protected void initializeChrome() {
@@ -1339,14 +1348,22 @@ abstract public class GeckoApp
         if (url == null) {
             if (!mShouldRestore) {
                 // Show about:home if we aren't restoring previous session and
-                // there's no external URL
-                Tab tab = Tabs.getInstance().loadUrl("about:home", Tabs.LOADURL_NEW_TAB);
+                // there's no external URL.
+                loadHomePage(Tabs.LOADURL_NEW_TAB);
             }
         } else {
             // If given an external URL, load it
             int flags = Tabs.LOADURL_NEW_TAB | Tabs.LOADURL_USER_ENTERED | Tabs.LOADURL_EXTERNAL;
             Tabs.getInstance().loadUrl(url, flags);
         }
+    }
+
+    protected Tab loadHomePage() {
+        return loadHomePage(Tabs.LOADURL_NONE);
+    }
+
+    protected Tab loadHomePage(int flags) {
+        return Tabs.getInstance().loadUrl(AboutPages.HOME, flags);
     }
 
     private void initialize() {
@@ -1362,12 +1379,13 @@ abstract public class GeckoApp
         String action = intent.getAction();
 
         String passedUri = null;
-        String uri = getURIFromIntent(intent);
-        if (uri != null && uri.length() > 0) {
+        final String uri = getURIFromIntent(intent);
+        if (!TextUtils.isEmpty(uri)) {
             passedUri = uri;
         }
 
-        final boolean isExternalURL = passedUri != null && !passedUri.equals("about:home");
+        final boolean isExternalURL = passedUri != null &&
+                                      !AboutPages.isAboutHome(passedUri);
         StartupAction startupAction;
         if (isExternalURL) {
             startupAction = StartupAction.URL;
@@ -1464,6 +1482,7 @@ abstract public class GeckoApp
         //register for events
         registerEventListener("log");
         registerEventListener("Reader:ListCountRequest");
+        registerEventListener("Reader:ListStatusRequest");
         registerEventListener("Reader:Added");
         registerEventListener("Reader:Removed");
         registerEventListener("Reader:Share");
@@ -1550,10 +1569,9 @@ abstract public class GeckoApp
                 final Context context = GeckoApp.this;
                 AnnouncementsBroadcastService.recordLastLaunch(context);
 
-                // Kick off our background services that fetch product
-                // announcements and upload health reports.  We do this by
-                // invoking the broadcast receiver, which uses the system alarm
-                // infrastructure to perform tasks at intervals.
+                // Kick off our background services. We do this by invoking the broadcast
+                // receiver, which uses the system alarm infrastructure to perform tasks at
+                // intervals.
                 GeckoPreferences.broadcastAnnouncementsPref(context);
                 GeckoPreferences.broadcastHealthReportUploadPref(context);
 
@@ -1814,11 +1832,6 @@ abstract public class GeckoApp
                 alertCookie = "";
         }
         handleNotification(ACTION_ALERT_CALLBACK, alertName, alertCookie);
-
-        if (intent.hasExtra(NotificationHelper.NOTIFICATION_ID)) {
-            String id = intent.getStringExtra(NotificationHelper.NOTIFICATION_ID);
-            mNotificationHelper.hideNotification(id);
-        }
     }
 
     @Override
@@ -1844,7 +1857,9 @@ abstract public class GeckoApp
             Tabs.getInstance().loadUrl(uri);
         } else if (Intent.ACTION_VIEW.equals(action)) {
             String uri = intent.getDataString();
-            GeckoAppShell.sendEventToGecko(GeckoEvent.createURILoadEvent(uri));
+            Tabs.getInstance().loadUrl(uri, Tabs.LOADURL_NEW_TAB |
+                                            Tabs.LOADURL_USER_ENTERED |
+                                            Tabs.LOADURL_EXTERNAL);
         } else if (action != null && action.startsWith(ACTION_WEBAPP_PREFIX)) {
             String uri = getURIFromIntent(intent);
             GeckoAppShell.sendEventToGecko(GeckoEvent.createWebappLoadEvent(uri));
@@ -1955,6 +1970,7 @@ abstract public class GeckoApp
     public void onPause()
     {
         final BrowserHealthRecorder rec = mHealthRecorder;
+        final Context context = this;
 
         // In some way it's sad that Android will trigger StrictMode warnings
         // here as the whole point is to save to disk while the activity is not
@@ -1969,6 +1985,11 @@ abstract public class GeckoApp
                     rec.recordSessionEnd("P", editor);
                 }
                 editor.commit();
+
+                // In theory, the first browser session will not run long enough that we need to
+                // prune during it and we'd rather run it when the browser is inactive so we wait
+                // until here to register the prune service.
+                GeckoPreferences.broadcastHealthReportPrune(context);
             }
         });
 
@@ -2004,6 +2025,7 @@ abstract public class GeckoApp
     {
         unregisterEventListener("log");
         unregisterEventListener("Reader:ListCountRequest");
+        unregisterEventListener("Reader:ListStatusRequest");
         unregisterEventListener("Reader:Added");
         unregisterEventListener("Reader:Removed");
         unregisterEventListener("Reader:Share");
@@ -2057,8 +2079,7 @@ abstract public class GeckoApp
             mPromptService.destroy();
         if (mTextSelection != null)
             mTextSelection.destroy();
-        if (mNotificationHelper != null)
-            mNotificationHelper.destroy();
+        NotificationHelper.destroy();
 
         if (SmsManager.getInstance() != null) {
             SmsManager.getInstance().stop();
@@ -2565,6 +2586,7 @@ abstract public class GeckoApp
 
     protected void geckoConnected() {
         mLayerView.geckoConnected();
+        mLayerView.setOverScrollMode(View.OVER_SCROLL_NEVER);
     }
 
     public void setAccessibilityEnabled(boolean enabled) {

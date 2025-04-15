@@ -21,6 +21,7 @@
 #include "nsXBLService.h"
 #include "nsIScriptSecurityManager.h"
 #include "mozilla/Preferences.h"
+#include "nsIDocument.h"
 #include "nsVariant.h"
 #include "nsIDOMCustomEvent.h"
 #include "GeneratedEvents.h"

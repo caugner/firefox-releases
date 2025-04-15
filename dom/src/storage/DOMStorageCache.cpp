@@ -14,6 +14,7 @@
 #include "nsXULAppAPI.h"
 #include "mozilla/unused.h"
 #include "nsProxyRelease.h"
+#include "nsThreadUtils.h"
 
 namespace mozilla {
 namespace dom {
@@ -74,12 +75,12 @@ NS_IMETHODIMP_(void) DOMStorageCacheBridge::Release(void)
 // DOMStorageCache
 
 DOMStorageCache::DOMStorageCache(const nsACString* aScope)
-: mManager(nullptr)
-, mScope(*aScope)
+: mScope(*aScope)
 , mMonitor("DOMStorageCache")
 , mLoaded(false)
 , mLoadResult(NS_OK)
 , mInitialized(false)
+, mPersistent(false)
 , mSessionOnlyDataSetActive(false)
 , mPreloadTelemetryRecorded(false)
 {
@@ -127,15 +128,17 @@ DOMStorageCache::Init(DOMStorageManager* aManager,
     return;
   }
 
-  mManager = aManager;
   mInitialized = true;
   mPrincipal = aPrincipal;
   mPersistent = aPersistent;
   mQuotaScope = aQuotaScope.IsEmpty() ? mScope : aQuotaScope;
 
   if (mPersistent) {
+    mManager = aManager;
     Preload();
   }
+
+  mUsage = aManager->GetScopeUsage(mQuotaScope);
 }
 
 inline bool
@@ -207,12 +210,8 @@ DOMStorageCache::ProcessUsageDelta(uint32_t aGetDataSetIndex, const int64_t aDel
   }
 
   // Now check eTLD+1 limit
-  GetDatabase();
-  if (sDatabase) {
-    DOMStorageUsage* usage = sDatabase->GetScopeUsage(mQuotaScope);
-    if (!usage->CheckAndSetETLD1UsageDelta(aGetDataSetIndex, aDelta)) {
-      return false;
-    }
+  if (mUsage && !mUsage->CheckAndSetETLD1UsageDelta(aGetDataSetIndex, aDelta)) {
+    return false;
   }
 
   // Update size in our data set
@@ -234,7 +233,6 @@ DOMStorageCache::Preload()
   }
 
   sDatabase->AsyncPreload(this);
-  sDatabase->GetScopeUsage(mQuotaScope);
 }
 
 namespace { // anon

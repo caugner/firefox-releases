@@ -13,9 +13,6 @@
 
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
-#include "nsIRunnable.h"
-#include "nsIObserver.h"
-#include "nsThreadUtils.h"
 
 #include "AndroidJavaWrappers.h"
 
@@ -38,6 +35,7 @@
 
 class nsWindow;
 class nsIDOMMozSmsMessage;
+class nsIObserver;
 
 /* See the comment in AndroidBridge about this function before using it */
 extern "C" JNIEnv * GetJNIForThread();
@@ -229,7 +227,7 @@ public:
     void GetIconForExtension(const nsACString& aFileExt, uint32_t aIconSize, uint8_t * const aBuf);
 
     // Switch Java to composite with the Gecko Compositor thread
-    void RegisterCompositor(JNIEnv* env = NULL);
+    void RegisterCompositor(JNIEnv* env = nullptr);
     EGLSurface ProvideEGLSurface();
 
     bool GetStaticStringField(const char *classID, const char *field, nsAString &result, JNIEnv* env = nullptr);
@@ -431,7 +429,7 @@ public:
 
 class AutoJObject {
 public:
-    AutoJObject(JNIEnv* aJNIEnv = NULL) : mObject(NULL)
+    AutoJObject(JNIEnv* aJNIEnv = nullptr) : mObject(nullptr)
     {
         mJNIEnv = aJNIEnv ? aJNIEnv : AndroidBridge::GetJNIEnv();
     }
@@ -486,7 +484,7 @@ public:
     void Purge() {
         if (mJNIEnv) {
             if (mHasFrameBeenPushed)
-                mJNIEnv->PopLocalFrame(NULL);
+                mJNIEnv->PopLocalFrame(nullptr);
             Push();
         }
     }
@@ -512,7 +510,7 @@ public:
         CheckForException();
 
         if (mHasFrameBeenPushed)
-            mJNIEnv->PopLocalFrame(NULL);
+            mJNIEnv->PopLocalFrame(nullptr);
     }
 
 private:

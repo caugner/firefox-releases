@@ -8,7 +8,7 @@
 
 #include <stddef.h>                     // for size_t
 #include <stdint.h>                     // for uint32_t
-#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxTypes.h"
 #include "gfxPoint.h"                   // for gfxIntSize
 #include "mozilla/ipc/SharedMemory.h"   // for SharedMemory, etc
 #include "mozilla/WeakPtr.h"
@@ -24,7 +24,6 @@
 #define MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
 #endif
 
-class gfxASurface;
 class gfxSharedImageSurface;
 
 namespace base {
@@ -98,15 +97,15 @@ ISurfaceAllocator() {}
 
   // was AllocBuffer
   virtual bool AllocSharedImageSurface(const gfxIntSize& aSize,
-                                       gfxASurface::gfxContentType aContent,
+                                       gfxContentType aContent,
                                        gfxSharedImageSurface** aBuffer);
   virtual bool AllocSurfaceDescriptor(const gfxIntSize& aSize,
-                                      gfxASurface::gfxContentType aContent,
+                                      gfxContentType aContent,
                                       SurfaceDescriptor* aBuffer);
 
   // was AllocBufferWithCaps
   virtual bool AllocSurfaceDescriptorWithCaps(const gfxIntSize& aSize,
-                                              gfxASurface::gfxContentType aContent,
+                                              gfxContentType aContent,
                                               uint32_t aCaps,
                                               SurfaceDescriptor* aBuffer);
 
@@ -126,7 +125,7 @@ protected:
   virtual bool IsOnCompositorSide() const = 0;
   static bool PlatformDestroySharedSurface(SurfaceDescriptor* aSurface);
   virtual bool PlatformAllocSurfaceDescriptor(const gfxIntSize& aSize,
-                                              gfxASurface::gfxContentType aContent,
+                                              gfxContentType aContent,
                                               uint32_t aCaps,
                                               SurfaceDescriptor* aBuffer);
 

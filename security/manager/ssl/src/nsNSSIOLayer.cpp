@@ -37,6 +37,7 @@
 #include "ScopedNSSTypes.h"
 #include "SharedSSLState.h"
 #include "mozilla/Preferences.h"
+#include "nsContentUtils.h"
 
 #include "ssl.h"
 #include "sslproto.h"
@@ -606,11 +607,7 @@ nsHandleSSLError(nsNSSSocketInfo *socketInfo,
   socketInfo->GetErrorLogMessage(err, errtype, errorString);
   
   if (!errorString.IsEmpty()) {
-    nsCOMPtr<nsIConsoleService> console;
-    console = do_GetService(NS_CONSOLESERVICE_CONTRACTID);
-    if (console) {
-      console->LogStringMessage(errorString.get());
-    }
+    nsContentUtils::LogSimpleConsoleError(errorString, "SSL");
   }
 }
 
@@ -1009,7 +1006,8 @@ int32_t checkHandshake(int32_t bytesTransfered, bool wasReading,
                        PRFileDesc* ssl_layer_fd,
                        nsNSSSocketInfo *socketInfo)
 {
-  PRErrorCode err = PR_GetError();
+  const PRErrorCode originalError = PR_GetError();
+  PRErrorCode err = originalError;
 
   // This is where we work around all of those SSL servers that don't 
   // conform to the SSL spec and shutdown a connection when we request
@@ -1087,6 +1085,14 @@ int32_t checkHandshake(int32_t bytesTransfered, bool wasReading,
   }
   
   if (bytesTransfered < 0) {
+    // Remember that we encountered an error so that getSocketInfoIfRunning
+    // will correctly cause us to fail if another part of Gecko
+    // (erroneously) calls an I/O function (PR_Send/PR_Recv/etc.) again on
+    // this socket. Note that we use the original error because if we use
+    // PR_CONNECT_RESET_ERROR, we'll repeated try to reconnect.
+    if (originalError != PR_WOULD_BLOCK_ERROR && !socketInfo->GetErrorCode()) {
+      socketInfo->SetCanceled(originalError, PlainErrorMessage);
+    }
     PR_SetError(err, 0);
   }
 
@@ -1145,13 +1151,13 @@ nsSSLIOLayerPoll(PRFileDesc * fd, int16_t in_flags, int16_t *out_flags)
 }
 
 nsSSLIOLayerHelpers::nsSSLIOLayerHelpers()
-: mutex("nsSSLIOLayerHelpers.mutex")
-, mRenegoUnrestrictedSites(nullptr)
+: mRenegoUnrestrictedSites(nullptr)
 , mTreatUnsafeNegotiationAsBroken(false)
 , mWarnLevelMissingRFC5746(1)
 , mTLSIntoleranceInfo(16)
 , mFalseStartRequireNPN(true)
 , mFalseStartRequireForwardSecrecy(false)
+, mutex("nsSSLIOLayerHelpers.mutex")
 {
 }
 

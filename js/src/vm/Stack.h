@@ -309,8 +309,9 @@ class StackFrame
     ArgumentsObject     *argsObj_;      /* if HAS_ARGS_OBJ, the call's arguments object */
 
     /*
-     * Previous frame and its pc and sp. Always NULL for InterpreterActivation's
-     * entry frame, always non-NULL for inline frames.
+     * Previous frame and its pc and sp. Always nullptr for
+     * InterpreterActivation's entry frame, always non-nullptr for inline
+     * frames.
      */
     StackFrame          *prev_;
     jsbytecode          *prevpc_;
@@ -572,7 +573,7 @@ class StackFrame
     }
 
     StaticBlockObject *maybeBlockChain() {
-        return (flags_ & HAS_BLOCKCHAIN) ? blockChain_ : NULL;
+        return (flags_ & HAS_BLOCKCHAIN) ? blockChain_ : nullptr;
     }
 
     StaticBlockObject &blockChain() const {
@@ -642,7 +643,7 @@ class StackFrame
     }
 
     JSFunction* maybeFun() const {
-        return isFunctionFrame() ? fun() : NULL;
+        return isFunctionFrame() ? fun() : nullptr;
     }
 
     /*
@@ -735,7 +736,7 @@ class StackFrame
     }
 
     void* maybeHookData() const {
-        return hasHookData() ? hookData_ : NULL;
+        return hasHookData() ? hookData_ : nullptr;
     }
 
     void setHookData(void *v) {
@@ -925,38 +926,6 @@ class StackFrame
     void clearSuspended() {
         JS_ASSERT(isGeneratorFrame());
         flags_ &= ~SUSPENDED;
-    }
-
-  public:
-    static size_t offsetOfFlags() {
-        return offsetof(StackFrame, flags_);
-    }
-
-    static size_t offsetOfExec() {
-        return offsetof(StackFrame, exec);
-    }
-
-    static size_t offsetOfNumActual() {
-        return offsetof(StackFrame, u.nactual);
-    }
-
-    static size_t offsetOfScopeChain() {
-        return offsetof(StackFrame, scopeChain_);
-    }
-
-    static ptrdiff_t offsetOfThis(JSFunction *fun) {
-        return fun == NULL
-               ? -1 * ptrdiff_t(sizeof(Value))
-               : -(fun->nargs + 1) * ptrdiff_t(sizeof(Value));
-    }
-
-    static ptrdiff_t offsetOfFormalArg(JSFunction *fun, unsigned i) {
-        JS_ASSERT(i < fun->nargs);
-        return (-(int)fun->nargs + i) * sizeof(Value);
-    }
-
-    static size_t offsetOfFixed(unsigned i) {
-        return sizeof(StackFrame) + i * sizeof(Value);
     }
 
   public:
@@ -1170,6 +1139,7 @@ struct DefaultHasher<AbstractFramePtr> {
 /*****************************************************************************/
 
 class InterpreterActivation;
+class ForkJoinActivation;
 
 namespace jit {
     class JitActivation;
@@ -1188,7 +1158,7 @@ class Activation
     // set).
     size_t savedFrameChain_;
 
-    enum Kind { Interpreter, Jit };
+    enum Kind { Interpreter, Jit, ForkJoin };
     Kind kind_;
 
     inline Activation(JSContext *cx, Kind kind_);
@@ -1211,6 +1181,9 @@ class Activation
     bool isJit() const {
         return kind_ == Jit;
     }
+    bool isForkJoin() const {
+        return kind_ == ForkJoin;
+    }
 
     InterpreterActivation *asInterpreter() const {
         JS_ASSERT(isInterpreter());
@@ -1219,6 +1192,10 @@ class Activation
     jit::JitActivation *asJit() const {
         JS_ASSERT(isJit());
         return (jit::JitActivation *)this;
+    }
+    ForkJoinActivation *asForkJoin() const {
+        JS_ASSERT(isForkJoin());
+        return (ForkJoinActivation *)this;
     }
 
     void saveFrameChain() {
@@ -1306,7 +1283,7 @@ class ActivationIterator
         return jitTop_;
     }
     bool done() const {
-        return activation_ == NULL;
+        return activation_ == nullptr;
     }
 };
 
@@ -1398,9 +1375,9 @@ class InterpreterFrameIterator
   public:
     explicit InterpreterFrameIterator(InterpreterActivation *activation)
       : activation_(activation),
-        fp_(NULL),
-        pc_(NULL),
-        sp_(NULL)
+        fp_(nullptr),
+        pc_(nullptr),
+        sp_(nullptr)
     {
         if (activation) {
             fp_ = activation->current();
@@ -1425,7 +1402,7 @@ class InterpreterFrameIterator
     InterpreterFrameIterator &operator++();
 
     bool done() const {
-        return fp_ == NULL;
+        return fp_ == nullptr;
     }
 };
 
@@ -1460,14 +1437,15 @@ class ScriptFrameIter
      */
     struct Data
     {
-        PerThreadData *perThread_;
-        JSContext    *cx_;
-        SavedOption  savedOption_;
-        ContextOption contextOption_;
+        PerThreadData * perThread_;
+        JSContext *     cx_;
+        SavedOption     savedOption_;
+        ContextOption   contextOption_;
+        JSPrincipals *  principals_;
 
-        State        state_;
+        State           state_;
 
-        jsbytecode   *pc_;
+        jsbytecode *    pc_;
 
         InterpreterFrameIterator interpFrames_;
         ActivationIterator activations_;
@@ -1477,7 +1455,7 @@ class ScriptFrameIter
 #endif
 
         Data(JSContext *cx, PerThreadData *perThread, SavedOption savedOption,
-             ContextOption contextOption);
+             ContextOption contextOption, JSPrincipals *principals);
         Data(const Data &other);
     };
 
@@ -1498,7 +1476,7 @@ class ScriptFrameIter
 
   public:
     ScriptFrameIter(JSContext *cx, SavedOption = STOP_AT_SAVED);
-    ScriptFrameIter(JSContext *cx, ContextOption, SavedOption);
+    ScriptFrameIter(JSContext *cx, ContextOption, SavedOption, JSPrincipals* = nullptr);
     ScriptFrameIter(const ScriptFrameIter &iter);
     ScriptFrameIter(const Data &data);
 
@@ -1519,7 +1497,7 @@ class ScriptFrameIter
             return ionInlineFrames_.script();
         return data_.ionFrames_.script();
 #else
-        return NULL;
+        return nullptr;
 #endif
     }
     bool isJit() const {
@@ -1589,7 +1567,7 @@ class ScriptFrameIter
     void        setReturnValue(const Value &v);
 
     JSFunction *maybeCallee() const {
-        return isFunctionFrame() ? callee() : NULL;
+        return isFunctionFrame() ? callee() : nullptr;
     }
 
     // These are only valid for the top frame.
@@ -1620,6 +1598,12 @@ class NonBuiltinScriptFrameIter : public ScriptFrameIter
   public:
     NonBuiltinScriptFrameIter(JSContext *cx, ScriptFrameIter::SavedOption opt = ScriptFrameIter::STOP_AT_SAVED)
       : ScriptFrameIter(cx, opt) { settle(); }
+
+    NonBuiltinScriptFrameIter(JSContext *cx,
+                              ScriptFrameIter::ContextOption contextOption,
+                              ScriptFrameIter::SavedOption savedOption,
+                              JSPrincipals *principals = nullptr)
+      : ScriptFrameIter(cx, contextOption, savedOption, principals) { settle(); }
 
     NonBuiltinScriptFrameIter(const ScriptFrameIter::Data &data)
       : ScriptFrameIter(data)

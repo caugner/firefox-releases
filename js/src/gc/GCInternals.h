@@ -20,7 +20,8 @@ MarkRuntime(JSTracer *trc, bool useSavedRoots = false);
 void
 BufferGrayRoots(GCMarker *gcmarker);
 
-class AutoCopyFreeListToArenas {
+class AutoCopyFreeListToArenas
+{
     JSRuntime *runtime;
 
   public:
@@ -37,7 +38,8 @@ struct AutoFinishGC
  * This class should be used by any code that needs to exclusive access to the
  * heap in order to trace through it...
  */
-class AutoTraceSession {
+class AutoTraceSession
+{
   public:
     AutoTraceSession(JSRuntime *rt, HeapState state = Tracing);
     ~AutoTraceSession();
@@ -50,12 +52,12 @@ class AutoTraceSession {
     void operator=(const AutoTraceSession&) MOZ_DELETE;
 
     js::HeapState prevState;
-    AutoPauseWorkersForGC pause;
 };
 
 struct AutoPrepareForTracing
 {
     AutoFinishGC finish;
+    AutoPauseWorkersForTracing pause;
     AutoTraceSession session;
     AutoCopyFreeListToArenas copy;
 
@@ -69,14 +71,14 @@ class IncrementalSafety
     IncrementalSafety(const char *reason) : reason_(reason) {}
 
   public:
-    static IncrementalSafety Safe() { return IncrementalSafety(NULL); }
+    static IncrementalSafety Safe() { return IncrementalSafety(nullptr); }
     static IncrementalSafety Unsafe(const char *reason) { return IncrementalSafety(reason); }
 
     typedef void (IncrementalSafety::* ConvertibleToBool)();
     void nonNull() {}
 
     operator ConvertibleToBool() const {
-        return reason_ == NULL ? &IncrementalSafety::nonNull : 0;
+        return reason_ == nullptr ? &IncrementalSafety::nonNull : 0;
     }
 
     const char *reason() {

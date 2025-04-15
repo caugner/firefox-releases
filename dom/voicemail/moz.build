@@ -18,7 +18,7 @@ EXPORTS.mozilla.dom += [
     'Voicemail.h',
 ]
 
-CPP_SOURCES += [
+SOURCES += [
     'Voicemail.cpp',
 ]
 
@@ -28,3 +28,6 @@ LIBXUL_LIBRARY = True
 
 LIBRARY_NAME = 'domvoicemail_s'
 
+LOCAL_INCLUDES += [
+    '../base',
+]

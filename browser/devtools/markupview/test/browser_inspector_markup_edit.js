@@ -38,7 +38,7 @@ function test() {
   let LONG_ATTRIBUTE_COLLAPSED = "ABCDEFGHIJKLMNOPQRSTUVWXYZ-ABCDEFGHIJKLMNOPQRSTUVWXYZ-ABCDEF\u2026UVWXYZ-ABCDEFGHIJKLMNOPQRSTUVWXYZ-ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
   let DATA_URL_INLINE_STYLE='color: red; background: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQMAAAAlPW0iAAAABlBMVEUAAAD///+l2Z/dAAAAM0lEQVR4nGP4/5/h/1+G/58ZDrAz3D/McH8yw83NDDeNGe4Ug9C9zwz3gVLMDA/A6P9/AFGGFyjOXZtQAAAAAElFTkSuQmCC");';
-  let DATA_URL_INLINE_STYLE_COLLAPSED='color: red; background: url("data:image/png;base64,iVBORw0KG\u2026NDDeNGe4Ug9C9zwz3gVLMDA/A6P9/AFGGFyjOXZtQAAAAAElFTkSuQmCC");';
+  let DATA_URL_INLINE_STYLE_COLLAPSED="color: #F00; background: url('data:image/png;base64,iVBORw0K\u2026w83NDDeNGe4Ug9C9zwz3gVLMDA/A6P9/AFGGFyjOXZtQAAAAAElFTkSuQmCC');";
 
   let DATA_URL_ATTRIBUTE = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAQMAAAAlPW0iAAAABlBMVEUAAAD///+l2Z/dAAAAM0lEQVR4nGP4/5/h/1+G/58ZDrAz3D/McH8yw83NDDeNGe4Ug9C9zwz3gVLMDA/A6P9/AFGGFyjOXZtQAAAAAElFTkSuQmCC";
   let DATA_URL_ATTRIBUTE_COLLAPSED = "data:image/png;base64,iVBORw0K\u20269/AFGGFyjOXZtQAAAAAElFTkSuQmCC";
@@ -783,16 +783,18 @@ function test() {
   function testAsyncSetup(test, callback) {
     info("START " + test.desc);
 
-    inspector.once("inspector-updated", function BIMET_testAsyncSetupNewNode() {
-      test.before();
-      test.execute(function() {
-        test.after();
-        undoRedo(test, callback);
-      });
+    inspector.on("inspector-updated", function BIMET_updated(event, name) {
+      if (name === "inspector-panel") {
+        inspector.off("inspector-updated", BIMET_updated);
+
+        test.before();
+        test.execute(function() {
+          test.after();
+          undoRedo(test, callback);
+        });
+      }
     });
-    executeSoon(function BIMET_setNode2() {
-      test.setup();
-    });
+    executeSoon(test.setup);
   }
 
   function undoRedo(test, callback) {

@@ -32,6 +32,7 @@
 #include "mozilla/Services.h"
 
 #include "ManifestParser.h"
+#include "nsISimpleEnumerator.h"
 
 using namespace mozilla;
 class nsIComponentLoaderManager;
@@ -251,7 +252,7 @@ CategoryNode::AddLeaf(const char* aEntryName,
                       PLArenaPool* aArena)
 {
   if (_retval)
-    *_retval = NULL;
+    *_retval = nullptr;
 
   MutexAutoLock lock(mLock);
   CategoryLeaf* leaf = 
@@ -636,7 +637,7 @@ nsCategoryManager::AddCategoryEntry(const char *aCategoryName,
                                     char** aOldValue)
 {
   if (aOldValue)
-    *aOldValue = NULL;
+    *aOldValue = nullptr;
 
   // Before we can insert a new entry, we'll need to
   //  find the |CategoryNode| to put it in...

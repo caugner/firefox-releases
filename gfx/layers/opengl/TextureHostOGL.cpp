@@ -104,6 +104,14 @@ CreateTextureHostOGL(uint64_t aID,
                                         desc.inverted());
       break;
     }
+#ifdef XP_MACOSX
+    case SurfaceDescriptor::TSurfaceDescriptorMacIOSurface: {
+      const SurfaceDescriptorMacIOSurface& desc =
+        aDesc.get_SurfaceDescriptorMacIOSurface();
+      result = new MacIOSurfaceTextureHostOGL(aID, aFlags, desc);
+      break;
+    }
+#endif
 #ifdef MOZ_WIDGET_GONK
     case SurfaceDescriptor::TNewSurfaceDescriptorGralloc: {
       const NewSurfaceDescriptorGralloc& desc =
@@ -234,13 +242,15 @@ TextureImageTextureSourceOGL::Update(gfx::DataSourceSurface* aSurface,
       mTexImage = mGL->CreateTextureImage(size,
                                           gfx::ContentForFormat(aSurface->GetFormat()),
                                           WrapMode(mGL, aFlags & TEXTURE_ALLOW_REPEAT),
-                                          FlagsToGLFlags(aFlags));
+                                          FlagsToGLFlags(aFlags),
+                                          SurfaceFormatToImageFormat(aSurface->GetFormat()));
     } else {
       mTexImage = CreateBasicTextureImage(mGL,
                                           size,
                                           gfx::ContentForFormat(aSurface->GetFormat()),
                                           WrapMode(mGL, aFlags & TEXTURE_ALLOW_REPEAT),
-                                          FlagsToGLFlags(aFlags));
+                                          FlagsToGLFlags(aFlags),
+                                          SurfaceFormatToImageFormat(aSurface->GetFormat()));
     }
   }
 
@@ -291,10 +301,8 @@ SharedTextureSourceOGL::SharedTextureSourceOGL(CompositorOGL* aCompositor,
                                                GLenum aTarget,
                                                GLenum aWrapMode,
                                                SharedTextureShareType aShareType,
-                                               gfx::IntSize aSize,
-                                               const gfx3DMatrix& aTexTransform)
-  : mTextureTransform(aTexTransform)
-  , mSize(aSize)
+                                               gfx::IntSize aSize)
+  : mSize(aSize)
   , mCompositor(aCompositor)
   , mSharedHandle(aHandle)
   , mFormat(aFormat)
@@ -348,6 +356,18 @@ SharedTextureSourceOGL::gl() const
   return mCompositor ? mCompositor->gl() : nullptr;
 }
 
+gfx3DMatrix
+SharedTextureSourceOGL::GetTextureTransform()
+{
+  GLContext::SharedHandleDetails handleDetails;
+  if (!gl()->GetSharedHandleDetails(mShareType, mSharedHandle, handleDetails)) {
+    NS_WARNING("Could not get shared handle details");
+    return gfx3DMatrix();
+  }
+
+  return handleDetails.mTextureTransform;
+}
+
 SharedTextureHostOGL::SharedTextureHostOGL(uint64_t aID,
                                            TextureFlags aFlags,
                                            gl::SharedTextureShareType aShareType,
@@ -397,8 +417,7 @@ SharedTextureHostOGL::Lock()
                                                 handleDetails.mTarget,
                                                 wrapMode,
                                                 mShareType,
-                                                mSize,
-                                                handleDetails.mTextureTransform);
+                                                mSize);
   }
   return true;
 }
@@ -428,6 +447,63 @@ SharedTextureHostOGL::GetFormat() const
   MOZ_ASSERT(mTextureSource);
   return mTextureSource->GetFormat();
 }
+
+#ifdef XP_MACOSX
+MacIOSurfaceTextureHostOGL::MacIOSurfaceTextureHostOGL(uint64_t aID,
+                                                       TextureFlags aFlags,
+                                                       const SurfaceDescriptorMacIOSurface& aDescriptor)
+  : TextureHost(aID, aFlags)
+{
+  mSurface = MacIOSurface::LookupSurface(aDescriptor.surface(),
+                                         aDescriptor.scaleFactor(),
+                                         aDescriptor.hasAlpha());
+}
+
+bool
+MacIOSurfaceTextureHostOGL::Lock()
+{
+  if (!mCompositor) {
+    return false;
+  }
+
+  if (!mTextureSource) {
+    mTextureSource = new MacIOSurfaceTextureSourceOGL(mCompositor, mSurface);
+  }
+  return true;
+}
+
+void
+MacIOSurfaceTextureHostOGL::SetCompositor(Compositor* aCompositor)
+{
+  CompositorOGL* glCompositor = static_cast<CompositorOGL*>(aCompositor);
+  mCompositor = glCompositor;
+  if (mTextureSource) {
+    mTextureSource->SetCompositor(glCompositor);
+  }
+}
+
+void
+MacIOSurfaceTextureSourceOGL::BindTexture(GLenum aTextureUnit)
+{
+  if (!gl()) {
+    NS_WARNING("Trying to bind a texture without a GLContext");
+    return;
+  }
+  GLuint tex = mCompositor->GetTemporaryTexture(aTextureUnit);
+
+  gl()->fActiveTexture(aTextureUnit);
+  gl()->fBindTexture(LOCAL_GL_TEXTURE_RECTANGLE_ARB, tex);
+  void *nativeGL = gl()->GetNativeData(gl::GLContext::NativeGLContext);
+  mSurface->CGLTexImageIOSurface2D(nativeGL);
+  gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
+}
+
+gl::GLContext*
+MacIOSurfaceTextureSourceOGL::gl() const
+{
+  return mCompositor ? mCompositor->gl() : nullptr;
+}
+#endif
 
 TextureImageDeprecatedTextureHostOGL::~TextureImageDeprecatedTextureHostOGL()
 {
@@ -532,7 +608,7 @@ TextureImageDeprecatedTextureHostOGL::UpdateImpl(const SurfaceDescriptor& aImage
       (mTexture->GetSize() != size && !aOffset) ||
       mTexture->GetContentType() != surf.ContentType() ||
       (mTexture->GetImageFormat() != format &&
-       mTexture->GetImageFormat() != gfxASurface::ImageFormatUnknown)) {
+       mTexture->GetImageFormat() != gfxImageFormatUnknown)) {
 
     mTexture = mGL->CreateTextureImage(size,
                                        surf.ContentType(),
@@ -853,34 +929,34 @@ YCbCrDeprecatedTextureHostOGL::UpdateImpl(const SurfaceDescriptor& aImage,
   if (!mYTexture->mTexImage || mYTexture->mTexImage->GetSize() != gfxSize) {
     mYTexture->mTexImage = CreateBasicTextureImage(mGL,
                                                    gfxSize,
-                                                   gfxASurface::CONTENT_ALPHA,
+                                                   GFX_CONTENT_ALPHA,
                                                    WrapMode(mGL, mFlags & TEXTURE_ALLOW_REPEAT),
                                                    FlagsToGLFlags(mFlags));
   }
   if (!mCbTexture->mTexImage || mCbTexture->mTexImage->GetSize() != gfxCbCrSize) {
     mCbTexture->mTexImage = CreateBasicTextureImage(mGL,
                                                     gfxCbCrSize,
-                                                    gfxASurface::CONTENT_ALPHA,
+                                                    GFX_CONTENT_ALPHA,
                                                     WrapMode(mGL, mFlags & TEXTURE_ALLOW_REPEAT),
                                                     FlagsToGLFlags(mFlags));
   }
   if (!mCrTexture->mTexImage || mCrTexture->mTexImage->GetSize() != gfxCbCrSize) {
     mCrTexture->mTexImage = CreateBasicTextureImage(mGL,
                                                     gfxCbCrSize,
-                                                    gfxASurface::CONTENT_ALPHA,
+                                                    GFX_CONTENT_ALPHA,
                                                     WrapMode(mGL, mFlags & TEXTURE_ALLOW_REPEAT),
                                                     FlagsToGLFlags(mFlags));
   }
 
   RefPtr<gfxImageSurface> tempY = new gfxImageSurface(deserializer.GetYData(),
                                        gfxSize, deserializer.GetYStride(),
-                                       gfxASurface::ImageFormatA8);
+                                       gfxImageFormatA8);
   RefPtr<gfxImageSurface> tempCb = new gfxImageSurface(deserializer.GetCbData(),
                                        gfxCbCrSize, deserializer.GetCbCrStride(),
-                                       gfxASurface::ImageFormatA8);
+                                       gfxImageFormatA8);
   RefPtr<gfxImageSurface> tempCr = new gfxImageSurface(deserializer.GetCrData(),
                                        gfxCbCrSize, deserializer.GetCbCrStride(),
-                                       gfxASurface::ImageFormatA8);
+                                       gfxImageFormatA8);
 
   nsIntRegion yRegion(nsIntRect(0, 0, gfxSize.width, gfxSize.height));
   nsIntRegion cbCrRegion(nsIntRect(0, 0, gfxCbCrSize.width, gfxCbCrSize.height));
@@ -910,11 +986,11 @@ TiledDeprecatedTextureHostOGL::BindTexture(GLenum aTextureUnit)
 }
 
 static void
-GetFormatAndTileForImageFormat(gfxASurface::gfxImageFormat aFormat,
+GetFormatAndTileForImageFormat(gfxImageFormat aFormat,
                                GLenum& aOutFormat,
                                GLenum& aOutType)
 {
-  if (aFormat == gfxASurface::ImageFormatRGB16_565) {
+  if (aFormat == gfxImageFormatRGB16_565) {
     aOutFormat = LOCAL_GL_RGB;
     aOutType = LOCAL_GL_UNSIGNED_SHORT_5_6_5;
   } else {
@@ -1093,13 +1169,12 @@ void GrallocDeprecatedTextureHostOGL::SetCompositor(Compositor* aCompositor)
 gfx::SurfaceFormat
 GrallocDeprecatedTextureHostOGL::GetFormat() const
 {
-  if (mTextureTarget == LOCAL_GL_TEXTURE_EXTERNAL) {
-    return gfx::FORMAT_R8G8B8A8;
+  switch (mTextureTarget) {
+  case LOCAL_GL_TEXTURE_EXTERNAL: return gfx::FORMAT_R8G8B8A8;
+  case LOCAL_GL_TEXTURE_2D: return mFormat;
+  default: return gfx::FORMAT_UNKNOWN;
   }
-  MOZ_ASSERT(mTextureTarget == LOCAL_GL_TEXTURE_2D);
-  return mFormat;
 }
-
 
 void
 GrallocDeprecatedTextureHostOGL::DeleteTextures()

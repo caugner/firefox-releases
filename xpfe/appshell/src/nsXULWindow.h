@@ -17,6 +17,7 @@
 #include "nsString.h"
 #include "nsWeakReference.h"
 #include "nsCOMArray.h"
+#include "nsRect.h"
 
 // Interfaces needed
 #include "nsIBaseWindow.h"
@@ -28,9 +29,9 @@
 #include "nsIXULWindow.h"
 #include "nsIPrompt.h"
 #include "nsIAuthPrompt.h"
-#include "nsGUIEvent.h"
 #include "nsIXULBrowserWindow.h"
 #include "nsIWeakReference.h"
+#include "nsIWidgetListener.h"
 
 namespace mozilla {
 namespace dom {

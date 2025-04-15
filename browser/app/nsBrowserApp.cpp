@@ -46,6 +46,7 @@
 #include "nsXPCOMPrivate.h" // for MAXPATHLEN and XPCOM_DLL
 
 #include "mozilla/Telemetry.h"
+#include "mozilla/WindowsDllBlocklist.h"
 
 using namespace mozilla;
 
@@ -78,9 +79,19 @@ static void Output(const char *fmt, ... )
 #if MOZ_WINCONSOLE
   fwprintf_s(stderr, wide_msg);
 #else
-  MessageBoxW(nullptr, wide_msg, L"Firefox", MB_OK
-                                           | MB_ICONERROR
-                                           | MB_SETFOREGROUND);
+  // Linking user32 at load-time interferes with the DLL blocklist (bug 932100).
+  // This is a rare codepath, so we can load user32 at run-time instead.
+  HMODULE user32 = LoadLibraryW(L"user32.dll");
+  if (user32) {
+    typedef int (WINAPI * MessageBoxWFn)(HWND, LPCWSTR, LPCWSTR, UINT);
+    MessageBoxWFn messageBoxW = (MessageBoxWFn)GetProcAddress(user32, "MessageBoxW");
+    if (messageBoxW) {
+      messageBoxW(nullptr, wide_msg, L"Firefox", MB_OK
+                                               | MB_ICONERROR
+                                               | MB_SETFOREGROUND);
+    }
+    FreeLibrary(user32);
+  }
 #endif
 #endif
 
@@ -144,9 +155,6 @@ static void AttachToTestHarness()
 XRE_GetFileFromPathType XRE_GetFileFromPath;
 XRE_CreateAppDataType XRE_CreateAppData;
 XRE_FreeAppDataType XRE_FreeAppData;
-#ifdef XRE_HAS_DLL_BLOCKLIST
-XRE_SetupDllBlocklistType XRE_SetupDllBlocklist;
-#endif
 XRE_TelemetryAccumulateType XRE_TelemetryAccumulate;
 XRE_StartupTimelineRecordType XRE_StartupTimelineRecord;
 XRE_mainType XRE_main;
@@ -156,9 +164,6 @@ static const nsDynamicFunctionLoad kXULFuncs[] = {
     { "XRE_GetFileFromPath", (NSFuncPtr*) &XRE_GetFileFromPath },
     { "XRE_CreateAppData", (NSFuncPtr*) &XRE_CreateAppData },
     { "XRE_FreeAppData", (NSFuncPtr*) &XRE_FreeAppData },
-#ifdef XRE_HAS_DLL_BLOCKLIST
-    { "XRE_SetupDllBlocklist", (NSFuncPtr*) &XRE_SetupDllBlocklist },
-#endif
     { "XRE_TelemetryAccumulate", (NSFuncPtr*) &XRE_TelemetryAccumulate },
     { "XRE_StartupTimelineRecord", (NSFuncPtr*) &XRE_StartupTimelineRecord },
     { "XRE_main", (NSFuncPtr*) &XRE_main },
@@ -604,8 +609,8 @@ int main(int argc, char* argv[])
 
   XRE_StartupTimelineRecord(mozilla::StartupTimeline::START, start);
 
-#ifdef XRE_HAS_DLL_BLOCKLIST
-  XRE_SetupDllBlocklist();
+#ifdef HAS_DLL_BLOCKLIST
+  DllBlocklist_Initialize();
 #endif
 
   if (gotCounters) {

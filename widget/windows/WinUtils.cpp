@@ -8,7 +8,6 @@
 #include "nsWindow.h"
 #include "nsWindowDefs.h"
 #include "KeyboardLayout.h"
-#include "nsGUIEvent.h"
 #include "nsIDOMMouseEvent.h"
 #include "mozilla/Preferences.h"
 
@@ -27,6 +26,9 @@
 #include "nsIChannel.h"
 #include "nsIObserver.h"
 #include "imgIEncoder.h"
+#include "nsIThread.h"
+#include "MainThreadUtils.h"
+#include "gfxColor.h"
 
 #ifdef NS_ENABLE_TSF
 #include <textstor.h>
@@ -49,25 +51,25 @@ const char FaviconHelper::kJumpListCacheDir[] = "jumpListCache";
 const char FaviconHelper::kShortcutCacheDir[] = "shortcutCache";
 
 // apis available on vista and up.
-WinUtils::SHCreateItemFromParsingNamePtr WinUtils::sCreateItemFromParsingName = NULL;
-WinUtils::SHGetKnownFolderPathPtr WinUtils::sGetKnownFolderPath = NULL;
+WinUtils::SHCreateItemFromParsingNamePtr WinUtils::sCreateItemFromParsingName = nullptr;
+WinUtils::SHGetKnownFolderPathPtr WinUtils::sGetKnownFolderPath = nullptr;
 
 // We just leak these DLL HMODULEs. There's no point in calling FreeLibrary
 // on them during shutdown anyway.
 static const PRUnichar kShellLibraryName[] =  L"shell32.dll";
-static HMODULE sShellDll = NULL;
+static HMODULE sShellDll = nullptr;
 static const PRUnichar kDwmLibraryName[] = L"dwmapi.dll";
-static HMODULE sDwmDll = NULL;
+static HMODULE sDwmDll = nullptr;
 
-WinUtils::DwmExtendFrameIntoClientAreaProc WinUtils::dwmExtendFrameIntoClientAreaPtr = NULL;
-WinUtils::DwmIsCompositionEnabledProc WinUtils::dwmIsCompositionEnabledPtr = NULL;
-WinUtils::DwmSetIconicThumbnailProc WinUtils::dwmSetIconicThumbnailPtr = NULL;
-WinUtils::DwmSetIconicLivePreviewBitmapProc WinUtils::dwmSetIconicLivePreviewBitmapPtr = NULL;
-WinUtils::DwmGetWindowAttributeProc WinUtils::dwmGetWindowAttributePtr = NULL;
-WinUtils::DwmSetWindowAttributeProc WinUtils::dwmSetWindowAttributePtr = NULL;
-WinUtils::DwmInvalidateIconicBitmapsProc WinUtils::dwmInvalidateIconicBitmapsPtr = NULL;
-WinUtils::DwmDefWindowProcProc WinUtils::dwmDwmDefWindowProcPtr = NULL;
-WinUtils::DwmGetCompositionTimingInfoProc WinUtils::dwmGetCompositionTimingInfoPtr = NULL;
+WinUtils::DwmExtendFrameIntoClientAreaProc WinUtils::dwmExtendFrameIntoClientAreaPtr = nullptr;
+WinUtils::DwmIsCompositionEnabledProc WinUtils::dwmIsCompositionEnabledPtr = nullptr;
+WinUtils::DwmSetIconicThumbnailProc WinUtils::dwmSetIconicThumbnailPtr = nullptr;
+WinUtils::DwmSetIconicLivePreviewBitmapProc WinUtils::dwmSetIconicLivePreviewBitmapPtr = nullptr;
+WinUtils::DwmGetWindowAttributeProc WinUtils::dwmGetWindowAttributePtr = nullptr;
+WinUtils::DwmSetWindowAttributeProc WinUtils::dwmSetWindowAttributePtr = nullptr;
+WinUtils::DwmInvalidateIconicBitmapsProc WinUtils::dwmInvalidateIconicBitmapsPtr = nullptr;
+WinUtils::DwmDefWindowProcProc WinUtils::dwmDwmDefWindowProcPtr = nullptr;
+WinUtils::DwmGetCompositionTimingInfoProc WinUtils::dwmGetCompositionTimingInfoPtr = nullptr;
 
 /* static */
 void
@@ -185,7 +187,7 @@ WinUtils::GetRegistryKey(HKEY aRoot,
 
   DWORD type;
   result =
-    ::RegQueryValueExW(key, aValueName, NULL, &type, (BYTE*) aBuffer,
+    ::RegQueryValueExW(key, aValueName, nullptr, &type, (BYTE*) aBuffer,
                        &aBufferLength);
   ::RegCloseKey(key);
   if (result != ERROR_SUCCESS || type != REG_SZ) {
@@ -224,7 +226,7 @@ WinUtils::GetTopLevelHWND(HWND aWnd,
                           bool aStopIfNotPopup)
 {
   HWND curWnd = aWnd;
-  HWND topWnd = NULL;
+  HWND topWnd = nullptr;
 
   while (curWnd) {
     topWnd = curWnd;
@@ -300,7 +302,7 @@ int32_t
 WinUtils::GetMonitorCount()
 {
   int32_t monitorCount = 0;
-  EnumDisplayMonitors(NULL, NULL, AddMonitor, (LPARAM)&monitorCount);
+  EnumDisplayMonitors(nullptr, nullptr, AddMonitor, (LPARAM)&monitorCount);
   return monitorCount;
 }
 
@@ -325,7 +327,7 @@ WinUtils::FindOurProcessWindow(HWND aWnd)
       return wnd;
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 static bool
@@ -349,7 +351,7 @@ static HWND
 FindTopmostWindowAtPoint(HWND aWnd, const POINT& aPointInScreen)
 {
   if (!::IsWindowVisible(aWnd) || !IsPointInWindow(aWnd, aPointInScreen)) {
-    return NULL;
+    return nullptr;
   }
 
   HWND childWnd = ::GetTopWindow(aWnd);
@@ -401,7 +403,7 @@ WinUtils::FindOurWindowAtPoint(const POINT& aPointInScreen)
 {
   FindOurWindowAtPointInfo info;
   info.mInPointInScreen = aPointInScreen;
-  info.mOutWnd = NULL;
+  info.mOutWnd = nullptr;
 
   // This will enumerate all top-level windows in order from top to bottom.
   EnumWindows(FindOurWindowAtPointCallback, reinterpret_cast<LPARAM>(&info));
@@ -570,7 +572,7 @@ nsresult AsyncFaviconDataReady::OnFaviconDataNotAvailable(void)
   rv = NS_NewDownloader(getter_AddRefs(listener), downloadObserver, icoFile);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  channel->AsyncOpen(listener, NULL);
+  channel->AsyncOpen(listener, nullptr);
   return NS_OK;
 }
 
@@ -622,7 +624,7 @@ AsyncFaviconDataReady::OnComplete(nsIURI *aFaviconURI,
   if (mURLShortcut) {
     imageSurface =
       new gfxImageSurface(gfxIntSize(48, 48),
-                          gfxImageSurface::ImageFormatARGB32);
+                          gfxImageFormatARGB32);
     gfxContext context(imageSurface);
     context.SetOperator(gfxContext::OPERATOR_SOURCE);
     context.SetColor(gfxRGBA(1, 1, 1, 1));
@@ -1024,7 +1026,7 @@ WinUtils::GetShellItemPath(IShellItem* aItem,
                            nsString& aResultString)
 {
   NS_ENSURE_TRUE(aItem, false);
-  LPWSTR str = NULL;
+  LPWSTR str = nullptr;
   if (FAILED(aItem->GetDisplayName(SIGDN_FILESYSPATH, &str)))
     return false;
   aResultString.Assign(str);
@@ -1040,7 +1042,7 @@ WinUtils::ConvertHRGNToRegion(HRGN aRgn)
 
   nsIntRegion rgn;
 
-  DWORD size = ::GetRegionData(aRgn, 0, NULL);
+  DWORD size = ::GetRegionData(aRgn, 0, nullptr);
   nsAutoTArray<uint8_t,100> buffer;
   if (!buffer.SetLength(size))
     return rgn;

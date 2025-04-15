@@ -13,7 +13,6 @@
 #include "XPCWrapper.h"
 #include "WrapperFactory.h"
 #include "nsDOMClassInfo.h"
-#include "nsGlobalWindow.h"
 #include "nsWrapperCacheInlines.h"
 #include "mozilla/dom/BindingUtils.h"
 
@@ -33,7 +32,7 @@ DefineStaticJSVals(JSContext* cx)
 }
 
 
-int HandlerFamily;
+const char HandlerFamily = 0;
 
 js::DOMProxyShadowsResult
 DOMProxyShadows(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id)
@@ -62,7 +61,7 @@ DOMProxyShadows(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id)
 struct SetDOMProxyInformation
 {
   SetDOMProxyInformation() {
-    js::SetDOMProxyInformation((void*) &HandlerFamily,
+    js::SetDOMProxyInformation((const void*) &HandlerFamily,
                                js::PROXY_EXTRA_SLOT + JSPROXYSLOT_EXPANDO, DOMProxyShadows);
   }
 };
@@ -236,6 +235,19 @@ BaseDOMProxyHandler::enumerate(JSContext* cx, JS::Handle<JSObject*> proxy,
 }
 
 bool
+BaseDOMProxyHandler::watch(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id,
+                           JS::Handle<JSObject*> callable)
+{
+  return js::WatchGuts(cx, proxy, id, callable);
+}
+
+bool
+BaseDOMProxyHandler::unwatch(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id)
+{
+  return js::UnwatchGuts(cx, proxy, id);
+}
+
+bool
 DOMProxyHandler::has(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id, bool* bp)
 {
   if (!hasOwn(cx, proxy, id, bp)) {
@@ -267,11 +279,11 @@ DOMProxyHandler::has(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid
 int32_t
 IdToInt32(JSContext* cx, JS::Handle<jsid> id)
 {
-  JS::Value idval;
+  JS::RootedValue idval(cx);
   double array_index;
   int32_t i;
-  if (!::JS_IdToValue(cx, id, &idval) ||
-      !::JS_ValueToNumber(cx, idval, &array_index) ||
+  if (!::JS_IdToValue(cx, id, idval.address()) ||
+      !JS::ToNumber(cx, idval, &array_index) ||
       !::JS_DoubleIsInt32(array_index, &i)) {
     return -1;
   }

@@ -78,6 +78,16 @@ Prompt.prototype = {
     });
   },
 
+  addNumber: function(aOptions) {
+    return this._addInput({
+      type: "number",
+      value: aOptions.value,
+      hint: aOptions.hint,
+      autofocus: aOptions.autofocus,
+      id: aOptions.id
+    });
+  },
+
   addPassword: function(aOptions) {
     return this._addInput({
       type: "password",
@@ -108,6 +118,14 @@ Prompt.prototype = {
     return this._addInput({
       type: "menulist",
       values: aOptions.values,
+      id: aOptions.id
+    });
+  },
+
+  addIconGrid: function(aOptions) {
+    return this._addInput({
+      type: "icongrid",
+      items: aOptions.items,
       id: aOptions.id
     });
   },

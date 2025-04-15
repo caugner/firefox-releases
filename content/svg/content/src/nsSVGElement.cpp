@@ -14,7 +14,7 @@
 #include "nsICSSDeclaration.h"
 #include "nsIDocument.h"
 #include "nsIDOMMutationEvent.h"
-#include "nsMutationEvent.h"
+#include "mozilla/MutationEvent.h"
 #include "nsError.h"
 #include "nsIPresShell.h"
 #include "nsGkAtoms.h"
@@ -664,7 +664,7 @@ nsSVGElement::UnsetAttrInternal(int32_t aNamespaceID, nsIAtom* aName,
       mContentStyleRule = nullptr;
 
     if (IsEventAttributeName(aName)) {
-      nsEventListenerManager* manager = GetListenerManager(false);
+      nsEventListenerManager* manager = GetExistingListenerManager();
       if (manager) {
         nsIAtom* eventName = GetEventNameForAttr(aName);
         manager->RemoveEventHandler(eventName, EmptyString());

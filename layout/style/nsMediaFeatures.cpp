@@ -15,6 +15,8 @@
 #include "mozilla/LookAndFeel.h"
 #endif
 #include "nsCSSRuleProcessor.h"
+#include "nsDeviceContext.h"
+#include "nsIDocument.h"
 
 using namespace mozilla;
 

@@ -102,8 +102,12 @@ public:
 
   void UpdateRenderBounds(const nsIntRect& aRect);
 
-  void BeginTransaction() MOZ_OVERRIDE;
-  void BeginTransactionWithTarget(gfxContext* aTarget) MOZ_OVERRIDE;
+  virtual void BeginTransaction() MOZ_OVERRIDE;
+  virtual void BeginTransactionWithTarget(gfxContext* aTarget) MOZ_OVERRIDE
+  {
+    MOZ_CRASH("Use BeginTransactionWithDrawTarget");
+  }
+  void BeginTransactionWithDrawTarget(gfx::DrawTarget* aTarget);
 
   void NotifyShadowTreeTransaction();
 
@@ -363,12 +367,18 @@ public:
     mShadowTransformSetByAnimation = aSetByAnimation;
   }
 
+  void SetLayerComposited(bool value)
+  {
+    mLayerComposited = value;
+  }
+
   // These getters can be used anytime.
   float GetShadowOpacity() { return mShadowOpacity; }
   const nsIntRect* GetShadowClipRect() { return mUseShadowClipRect ? &mShadowClipRect : nullptr; }
   const nsIntRegion& GetShadowVisibleRegion() { return mShadowVisibleRegion; }
   const gfx3DMatrix& GetShadowTransform() { return mShadowTransform; }
   bool GetShadowTransformSetByAnimation() { return mShadowTransformSetByAnimation; }
+  bool HasLayerBeenComposited() { return mLayerComposited; }
 
 protected:
   gfx3DMatrix mShadowTransform;
@@ -380,6 +390,7 @@ protected:
   bool mUseShadowClipRect;
   bool mShadowTransformSetByAnimation;
   bool mDestroyed;
+  bool mLayerComposited;
 };
 
 

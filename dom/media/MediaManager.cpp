@@ -26,6 +26,8 @@
 #include "mozilla/dom/MediaStreamTrackBinding.h"
 #include "mozilla/dom/GetUserMediaRequestBinding.h"
 
+#include "Latency.h"
+
 // For PR_snprintf
 #include "prprf.h"
 
@@ -363,6 +365,16 @@ MediaDevice::MediaDevice(MediaEngineVideoSource* aSource)
   mSource->GetName(mName);
   mSource->GetUUID(mID);
 
+#ifdef MOZ_B2G_CAMERA
+  if (mName.EqualsLiteral("back")) {
+    mHasFacingMode = true;
+    mFacingMode = dom::VideoFacingModeEnum::Environment;
+  } else if (mName.EqualsLiteral("front")) {
+    mHasFacingMode = true;
+    mFacingMode = dom::VideoFacingModeEnum::User;
+  }
+#endif // MOZ_B2G_CAMERA
+
   // Kludge to test user-facing cameras on OSX.
   if (mName.Find(NS_LITERAL_STRING("Face")) != -1) {
     mHasFacingMode = true;
@@ -596,6 +608,12 @@ public:
       AllocateInputPort(stream, MediaInputPort::FLAG_BLOCK_OUTPUT);
     trackunion->mSourceStream = stream;
     trackunion->mPort = port.forget();
+    // Log the relationship between SourceMediaStream and TrackUnion stream
+    // Make sure logger starts before capture
+    AsyncLatencyLogger::Get(true);
+    LogLatency(AsyncLatencyLogger::MediaStreamCreate,
+               reinterpret_cast<uint64_t>(stream.get()),
+               reinterpret_cast<int64_t>(trackunion->GetStream()));
 
     trackunion->CombineWithPrincipal(window->GetExtantDoc()->NodePrincipal());
 
@@ -605,6 +623,7 @@ public:
     // when the page is invalidated (on navigation or close).
     mListener->Activate(stream.forget(), mAudioSource, mVideoSource);
 
+    // Note: includes JS callbacks; must be released on MainThread
     TracksAvailableCallback* tracksAvailableCallback =
       new TracksAvailableCallback(mManager, mSuccess, mWindowID, trackunion);
 

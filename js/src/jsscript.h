@@ -18,6 +18,7 @@
 #endif
 #include "jsobj.h"
 #include "jsopcode.h"
+#include "jstypes.h"
 
 #include "gc/Barrier.h"
 #include "gc/Rooting.h"
@@ -241,7 +242,7 @@ class ScriptCounts
     jit::IonScriptCounts *ionCounts;
 
  public:
-    ScriptCounts() : pcCountsVector(NULL), ionCounts(NULL) { }
+    ScriptCounts() : pcCountsVector(nullptr), ionCounts(nullptr) { }
 
     inline void destroy(FreeOp *fop);
 
@@ -290,7 +291,7 @@ class ScriptSource
 
     union {
         // Before setSourceCopy or setSource are successfully called, this union
-        // has a NULL pointer. When the script source is ready,
+        // has a nullptr pointer. When the script source is ready,
         // compressedLength_ != 0 implies compressed holds the compressed data;
         // otherwise, source holds the uncompressed source. There is a special
         // pointer |emptySource| for source code for length 0.
@@ -304,7 +305,8 @@ class ScriptSource
     uint32_t length_;
     uint32_t compressedLength_;
     char *filename_;
-    jschar *sourceMap_;
+    jschar *sourceURL_;
+    jschar *sourceMapURL_;
     JSPrincipals *originPrincipals_;
 
     // True if we can call JSRuntime::sourceHook to load the source on
@@ -319,14 +321,15 @@ class ScriptSource
       : refs(0),
         length_(0),
         compressedLength_(0),
-        filename_(NULL),
-        sourceMap_(NULL),
+        filename_(nullptr),
+        sourceURL_(nullptr),
+        sourceMapURL_(nullptr),
         originPrincipals_(originPrincipals),
         sourceRetrievable_(false),
         argumentsNotIncluded_(false),
         ready_(true)
     {
-        data.source = NULL;
+        data.source = nullptr;
         if (originPrincipals_)
             JS_HoldPrincipals(originPrincipals_);
     }
@@ -341,7 +344,7 @@ class ScriptSource
                        uint32_t length,
                        bool argumentsNotIncluded,
                        SourceCompressionTask *tok);
-    void setSource(const jschar *src, uint32_t length);
+    void setSource(const jschar *src, size_t length);
     bool ready() const { return ready_; }
     void setSourceRetrievable() { sourceRetrievable_ = true; }
     bool sourceRetrievable() const { return sourceRetrievable_; }
@@ -367,10 +370,15 @@ class ScriptSource
         return filename_;
     }
 
+    // Source URLs
+    bool setSourceURL(ExclusiveContext *cx, const jschar *sourceURL);
+    const jschar *sourceURL();
+    bool hasSourceURL() const { return sourceURL_ != nullptr; }
+
     // Source maps
-    bool setSourceMap(ExclusiveContext *cx, jschar *sourceMapURL);
-    const jschar *sourceMap();
-    bool hasSourceMap() const { return sourceMap_ != NULL; }
+    bool setSourceMapURL(ExclusiveContext *cx, const jschar *sourceMapURL);
+    const jschar *sourceMapURL();
+    bool hasSourceMapURL() const { return sourceMapURL_ != nullptr; }
 
     JSPrincipals *originPrincipals() const { return originPrincipals_; }
 
@@ -432,7 +440,7 @@ GeneratorKindFromBits(unsigned val) {
 
 } /* namespace js */
 
-class JSScript : public js::gc::Cell
+class JSScript : public js::gc::BarrieredCell<JSScript>
 {
     static const uint32_t stepFlagMask = 0x80000000U;
     static const uint32_t stepCountMask = 0x7fffffffU;
@@ -479,8 +487,8 @@ class JSScript : public js::gc::Cell
     js::jit::IonScript *parallelIon;
 
     /*
-     * Pointer to either baseline->method()->raw() or ion->method()->raw(), or NULL
-     * if there's no Baseline or Ion script.
+     * Pointer to either baseline->method()->raw() or ion->method()->raw(), or
+     * nullptr if there's no Baseline or Ion script.
      */
     uint8_t *baselineOrIonRaw;
     uint8_t *baselineOrIonSkipArgCheck;
@@ -535,7 +543,7 @@ class JSScript : public js::gc::Cell
     uint16_t        nslots;     /* vars plus maximum stack depth */
     uint16_t        staticLevel;/* static level for display maintenance */
 
-    // 4-bit fields.
+    // Bit fields.
 
   public:
     // The kinds of the optional arrays.
@@ -550,10 +558,13 @@ class JSScript : public js::gc::Cell
   private:
     // The bits in this field indicate the presence/non-presence of several
     // optional arrays in |data|.  See the comments above Create() for details.
-    uint8_t         hasArrayBits:4;
+    uint8_t         hasArrayBits:ARRAY_KIND_BITS;
 
     // The GeneratorKind of the script.
-    uint8_t         generatorKindBits_:4;
+    uint8_t         generatorKindBits_:2;
+
+    // Unused padding; feel free to steal these if you need them.
+    uint8_t         padToByte_:2;
 
     // 1-bit fields.
 
@@ -592,6 +603,7 @@ class JSScript : public js::gc::Cell
     bool            shouldCloneAtCallsite:1;
     bool            isCallsiteClone:1; /* is a callsite clone; has a link to the original function */
     bool            shouldInline:1;    /* hint to inline when possible */
+    bool            uninlineable:1;    /* explicitly marked as uninlineable */
 #ifdef JS_ION
     bool            failedBoundsCheck:1; /* script has had hoisted bounds checks fail */
     bool            failedShapeGuard:1; /* script has had hoisted shape guard fail */
@@ -655,6 +667,9 @@ class JSScript : public js::gc::Cell
     bool argumentsHasVarBinding() const { return argsHasVarBinding_; }
     jsbytecode *argumentsBytecode() const { JS_ASSERT(code[0] == JSOP_ARGUMENTS); return code; }
     void setArgumentsHasVarBinding();
+    bool argumentsAliasesFormals() const {
+        return argumentsHasVarBinding() && !strict;
+    }
 
     js::GeneratorKind generatorKind() const {
         return js::GeneratorKindFromBits(generatorKindBits_);
@@ -786,7 +801,7 @@ class JSScript : public js::gc::Cell
 
     /*
      * Original compiled function for the script, if it has a function.
-     * NULL for global and eval scripts.
+     * nullptr for global and eval scripts.
      */
     JSFunction *function() const { return function_; }
     inline void setFunction(JSFunction *fun);
@@ -818,9 +833,6 @@ class JSScript : public js::gc::Cell
     /* Ensure the script has a TypeScript. */
     inline bool ensureHasTypes(JSContext *cx);
 
-    /* Ensure the script has a TypeScript and map for computing BytecodeTypes. */
-    inline bool ensureHasBytecodeTypeMap(JSContext *cx);
-
     /*
      * Ensure the script has bytecode analysis information. Performed when the
      * script first runs, or first runs after a TypeScript GC purge.
@@ -834,15 +846,13 @@ class JSScript : public js::gc::Cell
     inline void clearAnalysis();
     inline js::analyze::ScriptAnalysis *analysis();
 
-    inline void clearPropertyReadTypes();
-
     inline js::GlobalObject &global() const;
     js::GlobalObject &uninlinedGlobal() const;
 
     /* See StaticScopeIter comment. */
     JSObject *enclosingStaticScope() const {
         if (isCallsiteClone)
-            return NULL;
+            return nullptr;
         return enclosingScopeOrOriginalFunction_;
     }
 
@@ -860,7 +870,6 @@ class JSScript : public js::gc::Cell
 
   private:
     bool makeTypes(JSContext *cx);
-    bool makeBytecodeTypeMap(JSContext *cx);
     bool makeAnalysis(JSContext *cx);
 
   public:
@@ -884,11 +893,12 @@ class JSScript : public js::gc::Cell
 
     /*
      * computedSizeOfData() is the in-use size of all the data sections.
-     * sizeOfData() is the size of the block allocated to hold all the data sections
-     * (which can be larger than the in-use size).
+     * sizeOfData() is the size of the block allocated to hold all the data
+     * sections (which can be larger than the in-use size).
      */
-    size_t computedSizeOfData();
-    size_t sizeOfData(mozilla::MallocSizeOf mallocSizeOf);
+    size_t computedSizeOfData() const;
+    size_t sizeOfData(mozilla::MallocSizeOf mallocSizeOf) const;
+    size_t sizeOfTypeScript(mozilla::MallocSizeOf mallocSizeOf) const;
 
     uint32_t numNotes();  /* Number of srcnote slots in the srcnotes section */
 
@@ -930,6 +940,8 @@ class JSScript : public js::gc::Cell
         JS_ASSERT(hasTrynotes());
         return reinterpret_cast<js::TryNoteArray *>(data + trynotesOffset());
     }
+
+    bool hasLoops();
 
     js::HeapPtrAtom &getAtom(size_t index) const {
         JS_ASSERT(index < natoms);
@@ -1023,7 +1035,7 @@ class JSScript : public js::gc::Cell
     js::BreakpointSite *getBreakpointSite(jsbytecode *pc)
     {
         JS_ASSERT(size_t(pc - code) < length);
-        return hasDebugScript ? debugScript()->breakpoints[pc - code] : NULL;
+        return hasDebugScript ? debugScript()->breakpoints[pc - code] : nullptr;
     }
 
     js::BreakpointSite *getOrCreateBreakpointSite(JSContext *cx, jsbytecode *pc);
@@ -1059,36 +1071,14 @@ class JSScript : public js::gc::Cell
 
     void finalize(js::FreeOp *fop);
 
-    JS::Zone *zone() const { return tenuredZone(); }
-    JS::shadow::Zone *shadowZone() const { return JS::shadow::Zone::asShadowZone(zone()); }
-
-    static void writeBarrierPre(JSScript *script) {
-#ifdef JSGC_INCREMENTAL
-        if (!script || !script->shadowRuntimeFromAnyThread()->needsBarrier())
-            return;
-
-        JS::shadow::Zone *shadowZone = script->shadowZone();
-        if (shadowZone->needsBarrier()) {
-            MOZ_ASSERT(!js::RuntimeFromMainThreadIsHeapMajorCollecting(shadowZone));
-            JSScript *tmp = script;
-            js::gc::MarkScriptUnbarriered(shadowZone->barrierTracer(), &tmp, "write barrier");
-            JS_ASSERT(tmp == script);
-        }
-#endif
-    }
-
-    static void writeBarrierPost(JSScript *script, void *addr) {}
-
     static inline js::ThingRootKind rootKind() { return js::THING_ROOT_SCRIPT; }
 
     void markChildren(JSTracer *trc);
 };
 
-/* The array kind flags are stored in a 4-bit field; make sure they fit. */
-JS_STATIC_ASSERT(JSScript::ARRAY_KIND_BITS <= 4);
-
 /* If this fails, add/remove padding within JSScript. */
-JS_STATIC_ASSERT(sizeof(JSScript) % js::gc::CellSize == 0);
+static_assert(sizeof(JSScript) % js::gc::CellSize == 0,
+              "Size of JSScript must be an integral multiple of js::gc::CellSize");
 
 namespace js {
 
@@ -1163,20 +1153,20 @@ class AliasedFormalIter
 
 // Information about a script which may be (or has been) lazily compiled to
 // bytecode from its source.
-class LazyScript : public js::gc::Cell
+class LazyScript : public gc::BarrieredCell<LazyScript>
 {
-    // If non-NULL, the script has been compiled and this is a forwarding
+    // If non-nullptr, the script has been compiled and this is a forwarding
     // pointer to the result.
     HeapPtrScript script_;
 
     // Original function with which the lazy script is associated.
     HeapPtrFunction function_;
 
-    // Function or block chain in which the script is nested, or NULL.
+    // Function or block chain in which the script is nested, or nullptr.
     HeapPtrObject enclosingScope_;
 
-    // Source code object, or NULL if the script in which this is nested has
-    // not been compiled yet.
+    // Source code object, or nullptr if the script in which this is nested
+    // has not been compiled yet.
     HeapPtrObject sourceObject_;
 
     // Heap allocated table with any free variables or inner functions.
@@ -1190,7 +1180,7 @@ class LazyScript : public js::gc::Cell
     uint32_t version_ : 8;
 
     uint32_t numFreeVariables_ : 24;
-    uint32_t numInnerFunctions_ : 24;
+    uint32_t numInnerFunctions_ : 23;
 
     uint32_t generatorKindBits_:2;
 
@@ -1201,6 +1191,7 @@ class LazyScript : public js::gc::Cell
     uint32_t directlyInsideEval_:1;
     uint32_t usesArgumentsAndApply_:1;
     uint32_t hasBeenCloned_:1;
+    uint32_t treatAsRunOnce_:1;
 
     // Source location for the script.
     uint32_t begin_;
@@ -1317,6 +1308,13 @@ class LazyScript : public js::gc::Cell
         hasBeenCloned_ = true;
     }
 
+    bool treatAsRunOnce() const {
+        return treatAsRunOnce_;
+    }
+    void setTreatAsRunOnce() {
+        treatAsRunOnce_ = true;
+    }
+
     ScriptSource *source() const {
         return sourceObject()->source();
     }
@@ -1335,30 +1333,12 @@ class LazyScript : public js::gc::Cell
 
     uint32_t staticLevel(JSContext *cx) const;
 
-    Zone *zone() const { return tenuredZone(); }
-    JS::shadow::Zone *shadowZone() const { return JS::shadow::Zone::asShadowZone(zone()); }
-
     void markChildren(JSTracer *trc);
     void finalize(js::FreeOp *fop);
 
     size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf)
     {
         return mallocSizeOf(table_);
-    }
-
-    static void writeBarrierPre(LazyScript *lazy) {
-#ifdef JSGC_INCREMENTAL
-        if (!lazy || !lazy->shadowRuntimeFromAnyThread()->needsBarrier())
-            return;
-
-        JS::shadow::Zone *shadowZone = lazy->shadowZone();
-        if (shadowZone->needsBarrier()) {
-            MOZ_ASSERT(!js::RuntimeFromMainThreadIsHeapMajorCollecting(shadowZone));
-            js::LazyScript *tmp = lazy;
-            MarkLazyScriptUnbarriered(shadowZone->barrierTracer(), &tmp, "write barrier");
-            JS_ASSERT(tmp == lazy);
-        }
-#endif
     }
 };
 
@@ -1390,7 +1370,7 @@ struct SharedScriptData
 
     HeapPtrAtom *atoms() {
         if (!natoms)
-            return NULL;
+            return nullptr;
         return reinterpret_cast<HeapPtrAtom *>(data + length - sizeof(JSAtom *) * natoms);
     }
 
@@ -1449,6 +1429,11 @@ struct ScriptAndCounts
     }
 };
 
+struct GSNCache;
+
+jssrcnote *
+GetSrcNote(GSNCache &cache, JSScript *script, jsbytecode *pc);
+
 } /* namespace js */
 
 extern jssrcnote *
@@ -1463,19 +1448,19 @@ js_GetScriptLineExtent(JSScript *script);
 namespace js {
 
 extern unsigned
-PCToLineNumber(JSScript *script, jsbytecode *pc, unsigned *columnp = NULL);
+PCToLineNumber(JSScript *script, jsbytecode *pc, unsigned *columnp = nullptr);
 
 extern unsigned
 PCToLineNumber(unsigned startLine, jssrcnote *notes, jsbytecode *code, jsbytecode *pc,
-               unsigned *columnp = NULL);
+               unsigned *columnp = nullptr);
 
 /*
  * This function returns the file and line number of the script currently
  * executing on cx. If there is no current script executing on cx (e.g., a
- * native called directly through JSAPI (e.g., by setTimeout)), NULL and 0 are
- * returned as the file and line. Additionally, this function avoids the full
- * linear scan to compute line number when the caller guarnatees that the
- * script compilation occurs at a JSOP_EVAL.
+ * native called directly through JSAPI (e.g., by setTimeout)), nullptr and 0
+ * are returned as the file and line. Additionally, this function avoids the
+ * full linear scan to compute line number when the caller guarantees that the
+ * script compilation occurs at a JSOP_EVAL/JSOP_SPREADEVAL.
  */
 
 enum LineOption {
@@ -1496,7 +1481,7 @@ CloneFunctionScript(JSContext *cx, HandleFunction original, HandleFunction clone
                     NewObjectKind newKind = GenericObject);
 
 /*
- * JSAPI clients are allowed to leave CompileOptions.originPrincipals NULL in
+ * JSAPI clients are allowed to leave CompileOptions.originPrincipals nullptr in
  * which case the JS engine sets options.originPrincipals = origin.principals.
  * This normalization step must occur before the originPrincipals get stored in
  * the JSScript/ScriptSource.

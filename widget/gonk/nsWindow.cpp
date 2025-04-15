@@ -179,7 +179,7 @@ nsWindow::nsWindow()
 
         if (sUsingOMTC) {
           sOMTCSurface = new gfxImageSurface(gfxIntSize(1, 1),
-                                             gfxASurface::ImageFormatRGB24);
+                                             gfxImageFormatRGB24);
         }
     }
 }
@@ -261,7 +261,7 @@ nsWindow::DoDraw(void)
 }
 
 nsEventStatus
-nsWindow::DispatchInputEvent(nsGUIEvent &aEvent, bool* aWasCaptured)
+nsWindow::DispatchInputEvent(WidgetGUIEvent& aEvent, bool* aWasCaptured)
 {
     if (aWasCaptured) {
         *aWasCaptured = false;
@@ -478,7 +478,7 @@ nsWindow::GetNativeData(uint32_t aDataType)
 }
 
 NS_IMETHODIMP
-nsWindow::DispatchEvent(nsGUIEvent *aEvent, nsEventStatus &aStatus)
+nsWindow::DispatchEvent(WidgetGUIEvent* aEvent, nsEventStatus& aStatus)
 {
     if (mWidgetListener)
       aStatus = mWidgetListener->HandleEvent(aEvent, mUseAttachedEvents);
@@ -636,7 +636,7 @@ nsWindow::GetThebesSurface()
 
     // XXX this really wants to return already_AddRefed, but this only really gets used
     // on direct assignment to a gfxASurface
-    return new gfxImageSurface(gfxIntSize(5,5), gfxImageSurface::ImageFormatRGB24);
+    return new gfxImageSurface(gfxIntSize(5,5), gfxImageFormatRGB24);
 }
 
 void

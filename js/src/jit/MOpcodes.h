@@ -24,6 +24,8 @@ namespace jit {
     _(Beta)                                                                 \
     _(OsrValue)                                                             \
     _(OsrScopeChain)                                                        \
+    _(OsrReturnValue)                                                       \
+    _(OsrArgumentsObject)                                                   \
     _(ReturnFromCtor)                                                       \
     _(CheckOverRecursed)                                                    \
     _(DefVar)                                                               \
@@ -42,7 +44,7 @@ namespace jit {
     _(Bail)                                                                 \
     _(AssertFloat32)                                                        \
     _(GetDynamicName)                                                       \
-    _(FilterArguments)                                                      \
+    _(FilterArgumentsOrEval)                                                \
     _(CallDirectEval)                                                       \
     _(BitNot)                                                               \
     _(TypeOf)                                                               \
@@ -123,6 +125,7 @@ namespace jit {
     _(ArrayLength)                                                          \
     _(TypedArrayLength)                                                     \
     _(TypedArrayElements)                                                   \
+    _(TypedObjectElements)                                                  \
     _(InitializedLength)                                                    \
     _(SetInitializedLength)                                                 \
     _(Not)                                                                  \
@@ -163,7 +166,8 @@ namespace jit {
     _(IteratorEnd)                                                          \
     _(StringLength)                                                         \
     _(ArgumentsLength)                                                      \
-    _(GetArgument)                                                          \
+    _(GetFrameArgument)                                                     \
+    _(SetFrameArgument)                                                     \
     _(RunOncePrologue)                                                      \
     _(Rest)                                                                 \
     _(Floor)                                                                \
@@ -181,6 +185,7 @@ namespace jit {
     _(AsmJSUDiv)                                                            \
     _(AsmJSUMod)                                                            \
     _(AsmJSUnsignedToDouble)                                                \
+    _(AsmJSUnsignedToFloat32)                                               \
     _(AsmJSLoadHeap)                                                        \
     _(AsmJSStoreHeap)                                                       \
     _(AsmJSLoadGlobalVar)                                                   \
@@ -197,6 +202,7 @@ namespace jit {
     _(NewCallObjectPar)                                                     \
     _(NewPar)                                                               \
     _(NewDenseArrayPar)                                                     \
+    _(NewDerivedTypedObject)                                                \
     _(AbortPar)                                                             \
     _(LambdaPar)                                                            \
     _(RestPar)                                                              \

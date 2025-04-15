@@ -5,12 +5,12 @@
 
 #include "mozilla/dom/HTMLMenuElement.h"
 
+#include "mozilla/BasicEvents.h"
 #include "mozilla/dom/HTMLMenuElementBinding.h"
 #include "mozilla/dom/HTMLMenuItemElement.h"
 #include "nsAttrValueInlines.h"
 #include "nsContentUtils.h"
 #include "nsEventDispatcher.h"
-#include "nsGUIEvent.h"
 #include "nsXULContextMenuBuilder.h"
 #include "nsIURI.h"
 
@@ -75,7 +75,7 @@ HTMLMenuElement::SendShowEvent()
     return NS_ERROR_FAILURE;
   }
 
-  nsEvent event(true, NS_SHOW_EVENT);
+  WidgetEvent event(true, NS_SHOW_EVENT);
   event.mFlags.mBubbles = false;
   event.mFlags.mCancelable = false;
 

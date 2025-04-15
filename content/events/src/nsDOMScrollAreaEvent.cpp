@@ -5,28 +5,20 @@
 
 #include "base/basictypes.h"
 #include "ipc/IPCMessageUtils.h"
+#include "mozilla/ContentEvents.h"
 
 #include "nsDOMScrollAreaEvent.h"
-#include "nsGUIEvent.h"
-#include "nsClientRect.h"
+#include "mozilla/dom/DOMRect.h"
+
+using namespace mozilla;
 
 nsDOMScrollAreaEvent::nsDOMScrollAreaEvent(mozilla::dom::EventTarget* aOwner,
                                            nsPresContext *aPresContext,
-                                           nsScrollAreaEvent *aEvent)
+                                           InternalScrollAreaEvent* aEvent)
   : nsDOMUIEvent(aOwner, aPresContext, aEvent)
   , mClientArea(nullptr)
 {
   mClientArea.SetLayoutRect(aEvent ? aEvent->mArea : nsRect());
-}
-
-nsDOMScrollAreaEvent::~nsDOMScrollAreaEvent()
-{
-  if (mEventIsInternal && mEvent) {
-    if (mEvent->eventStructType == NS_SCROLLAREA_EVENT) {
-      delete static_cast<nsScrollAreaEvent *>(mEvent);
-      mEvent = nullptr;
-    }
-  }
 }
 
 NS_IMPL_ADDREF_INHERITED(nsDOMScrollAreaEvent, nsDOMUIEvent)
@@ -102,7 +94,7 @@ nsresult
 NS_NewDOMScrollAreaEvent(nsIDOMEvent **aInstancePtrResult,
                          mozilla::dom::EventTarget* aOwner,
                          nsPresContext *aPresContext,
-                         nsScrollAreaEvent *aEvent)
+                         InternalScrollAreaEvent* aEvent)
 {
   nsDOMScrollAreaEvent* ev =
     new nsDOMScrollAreaEvent(aOwner, aPresContext, aEvent);

@@ -50,6 +50,7 @@
 #include "nsCRT.h"
 #include "prprf.h"
 #include "prthread.h"
+#include "nsDebug.h"
 
 // Estimate of the smallest duration of time we can measure.
 static uint64_t sResolution;
@@ -329,7 +330,7 @@ TimeStamp::ComputeProcessUptime()
 
   KINFO_PROC proc;
   size_t bufferSize = sizeof(proc);
-  rv = sysctl(mib, mibLen, &proc, &bufferSize, NULL, 0);
+  rv = sysctl(mib, mibLen, &proc, &bufferSize, nullptr, 0);
 
   if (rv == -1)
     return 0;

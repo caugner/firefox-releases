@@ -5,6 +5,7 @@
 #ifndef nsBaseWidget_h__
 #define nsBaseWidget_h__
 
+#include "mozilla/EventForwards.h"
 #include "mozilla/WidgetUtils.h"
 #include "nsRect.h"
 #include "nsIWidget.h"
@@ -12,10 +13,11 @@
 #include "nsIFile.h"
 #include "nsString.h"
 #include "nsCOMPtr.h"
-#include "nsGUIEvent.h"
 #include "nsAutoPtr.h"
 #include "nsIRollupListener.h"
 #include "nsIObserver.h"
+#include "nsIWidgetListener.h"
+#include "nsPIDOMWindow.h"
 #include <algorithm>
 class nsIContent;
 class nsAutoRollup;
@@ -134,7 +136,8 @@ public:
   virtual void            CreateCompositor(int aWidth, int aHeight);
   virtual void            PrepareWindowEffects() {}
   virtual void            CleanupWindowEffects() {}
-  virtual void            PreRender(LayerManager* aManager) {}
+  virtual bool            PreRender(LayerManager* aManager) { return true; }
+  virtual void            PostRender(LayerManager* aManager) {}
   virtual void            DrawWindowUnderlay(LayerManager* aManager, nsIntRect aRect) {}
   virtual void            DrawWindowOverlay(LayerManager* aManager, nsIntRect aRect) {}
   virtual mozilla::TemporaryRef<mozilla::gfx::DrawTarget> StartRemoteDrawing();
@@ -171,8 +174,10 @@ public:
   virtual void            SetDrawsInTitlebar(bool aState) {}
   virtual bool            ShowsResizeIndicator(nsIntRect* aResizerRect);
   virtual void            FreeNativeData(void * data, uint32_t aDataType) {}
-  NS_IMETHOD              BeginResizeDrag(nsGUIEvent* aEvent, int32_t aHorizontal, int32_t aVertical);
-  NS_IMETHOD              BeginMoveDrag(nsMouseEvent* aEvent);
+  NS_IMETHOD              BeginResizeDrag(mozilla::WidgetGUIEvent* aEvent,
+                                          int32_t aHorizontal,
+                                          int32_t aVertical);
+  NS_IMETHOD              BeginMoveDrag(mozilla::WidgetMouseEvent* aEvent);
   virtual nsresult        ActivateNativeMenuItemAt(const nsAString& indexString) { return NS_ERROR_NOT_IMPLEMENTED; }
   virtual nsresult        ForceUpdateNativeMenuAt(const nsAString& indexString) { return NS_ERROR_NOT_IMPLEMENTED; }
   NS_IMETHOD              NotifyIME(NotificationToIME aNotification) MOZ_OVERRIDE { return NS_ERROR_NOT_IMPLEMENTED; }
@@ -417,7 +422,7 @@ protected:
 
 #ifdef DEBUG
 protected:
-  static nsAutoString debug_GuiEventToString(nsGUIEvent * aGuiEvent);
+  static nsAutoString debug_GuiEventToString(mozilla::WidgetGUIEvent* aGuiEvent);
   static bool debug_WantPaintFlashing();
 
   static void debug_DumpInvalidate(FILE *                aFileOut,
@@ -426,11 +431,11 @@ protected:
                                    const nsAutoCString & aWidgetName,
                                    int32_t               aWindowID);
 
-  static void debug_DumpEvent(FILE *                aFileOut,
-                              nsIWidget *           aWidget,
-                              nsGUIEvent *          aGuiEvent,
-                              const nsAutoCString & aWidgetName,
-                              int32_t               aWindowID);
+  static void debug_DumpEvent(FILE* aFileOut,
+                              nsIWidget* aWidget,
+                              mozilla::WidgetGUIEvent* aGuiEvent,
+                              const nsAutoCString& aWidgetName,
+                              int32_t aWindowID);
 
   static void debug_DumpPaintEvent(FILE *                aFileOut,
                                    nsIWidget *           aWidget,

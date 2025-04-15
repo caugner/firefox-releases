@@ -12,10 +12,8 @@
 #include "nsGkAtoms.h"
 #include "nsSize.h"
 #include "nsError.h"
-#include "nsNodeInfoManager.h"
 
 #include "nsICanvasElementExternal.h"
-#include "nsLayoutUtils.h"
 #include "mozilla/gfx/Rect.h"
 
 class nsICanvasRenderingContextInternal;
@@ -169,7 +167,7 @@ public:
    */
   NS_IMETHOD_(nsIntSize) GetSizeExternal() MOZ_OVERRIDE;
   NS_IMETHOD RenderContextsExternal(gfxContext *aContext,
-                                    gfxPattern::GraphicsFilter aFilter,
+                                    GraphicsFilter aFilter,
                                     uint32_t aFlags = RenderFlagPremultAlpha) MOZ_OVERRIDE;
 
   virtual bool ParseAttribute(int32_t aNamespaceID,
@@ -188,6 +186,10 @@ public:
   virtual nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                            nsIAtom* aPrefix, const nsAString& aValue,
                            bool aNotify) MOZ_OVERRIDE;
+
+  virtual nsresult UnsetAttr(int32_t aNameSpaceID, nsIAtom* aName,
+                             bool aNotify) MOZ_OVERRIDE;
+
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE;
   nsresult CopyInnerTo(mozilla::dom::Element* aDest);
 
@@ -223,10 +225,9 @@ protected:
                        const JS::Value& aEncoderOptions,
                        nsAString& aParams,
                        bool* usingCustomParseOptions);
-  nsresult ExtractData(const nsAString& aType,
+  nsresult ExtractData(nsAString& aType,
                        const nsAString& aOptions,
-                       nsIInputStream** aStream,
-                       bool& aFellBackToPNG);
+                       nsIInputStream** aStream);
   nsresult ToDataURLImpl(JSContext* aCx,
                          const nsAString& aMimeType,
                          const JS::Value& aEncoderOptions,

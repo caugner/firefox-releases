@@ -95,7 +95,7 @@ function test() {
     },
     {
       name: "search bar search",
-      searchURL: base,
+      searchURL: base + "&channel=sb",
       run: function () {
         let sb = BrowserSearch.searchBar;
         sb.focus();

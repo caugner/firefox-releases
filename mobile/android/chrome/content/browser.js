@@ -18,6 +18,9 @@ Cu.import("resource://gre/modules/JNI.jsm");
 Cu.import('resource://gre/modules/Payment.jsm');
 Cu.import("resource://gre/modules/PermissionPromptHelper.jsm");
 Cu.import("resource://gre/modules/ContactService.jsm");
+Cu.import("resource://gre/modules/NotificationDB.jsm");
+Cu.import("resource://gre/modules/SpatialNavigation.jsm");
+Cu.import("resource://gre/modules/UITelemetry.jsm");
 
 #ifdef ACCESSIBILITY
 Cu.import("resource://gre/modules/accessibility/AccessFu.jsm");
@@ -52,6 +55,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "Sanitizer",
 XPCOMUtils.defineLazyModuleGetter(this, "Prompt",
                                   "resource://gre/modules/Prompt.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "HelperApps",
+                                  "resource://gre/modules/HelperApps.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "FormHistory",
                                   "resource://gre/modules/FormHistory.jsm");
 
@@ -61,7 +67,6 @@ XPCOMUtils.defineLazyServiceGetter(this, "uuidgen",
 
 // Lazily-loaded browser scripts:
 [
-  ["HelperApps", "chrome://browser/content/HelperApps.js"],
   ["SelectHelper", "chrome://browser/content/SelectHelper.js"],
   ["InputWidgetHelper", "chrome://browser/content/InputWidgetHelper.js"],
   ["AboutReader", "chrome://browser/content/aboutReader.js"],
@@ -333,6 +338,7 @@ var BrowserApp = {
     DesktopUserAgent.init();
     Distribution.init();
     Tabs.init();
+    UITelemetry.init();
 #ifdef ACCESSIBILITY
     AccessFu.attach(window);
 #endif
@@ -1409,7 +1415,9 @@ var BrowserApp = {
         break;
 
       case "keyword-search":
-        // This assumes that the user can only perform a keyword search on the selected tab.
+        // This event refers to a search via the URL bar, not a bookmarks
+        // keyword search. Note that this code assumes that the user can only
+        // perform a keyword search on the selected tab.
         this.selectedTab.userSearch = aData;
 
         let engine = aSubject.QueryInterface(Ci.nsISearchEngine);
@@ -2870,7 +2878,7 @@ Tab.prototype = {
       this.browser.focus();
       this.browser.docShellIsActive = true;
       Reader.updatePageAction(this);
-      HelperApps.updatePageAction(this.browser.currentURI);
+      ExternalApps.updatePageAction(this.browser.currentURI);
     } else {
       this.browser.setAttribute("type", "content-targetable");
       this.browser.docShellIsActive = false;
@@ -3093,29 +3101,20 @@ Tab.prototype = {
     let screenWidth = gScreenWidth;
     let screenHeight = gScreenHeight;
 
-    let [pageWidth, pageHeight] = this.getPageSize(this.browser.contentDocument,
-                                                   viewportWidth, viewportHeight);
-
-    // Check if the page would fit into either of the viewport dimensions minus
-    // the margins and shrink the screen size accordingly so that the aspect
-    // ratio calculation below works correctly in these situations.
-    // We take away the margin size over two to account for rounding errors,
-    // as the browser size set in updateViewportSize doesn't allow for any
-    // size between these two values (and thus anything between them is
-    // attributable to rounding error).
-    if ((pageHeight * zoom) < gScreenHeight - (gViewportMargins.top + gViewportMargins.bottom) / 2) {
+    // Shrink the viewport appropriately if the margins are excluded
+    if (this.viewportExcludesVerticalMargins) {
       screenHeight = gScreenHeight - gViewportMargins.top - gViewportMargins.bottom;
       viewportHeight = screenHeight / zoom;
     }
-    if ((pageWidth * zoom) < gScreenWidth - (gViewportMargins.left + gViewportMargins.right) / 2) {
+    if (this.viewportExcludesHorizontalMargins) {
       screenWidth = gScreenWidth - gViewportMargins.left - gViewportMargins.right;
       viewportWidth = screenWidth / zoom;
     }
 
     // Make sure the aspect ratio of the screen is maintained when setting
     // the clamping scroll-port size.
-    let factor = Math.min(viewportWidth / screenWidth, pageWidth / screenWidth,
-                          viewportHeight / screenHeight, pageHeight / screenHeight);
+    let factor = Math.min(viewportWidth / screenWidth,
+                          viewportHeight / screenHeight);
     let scrollPortWidth = screenWidth * factor;
     let scrollPortHeight = screenHeight * factor;
 
@@ -3387,8 +3386,16 @@ Tab.prototype = {
           this.browser.addEventListener("pagehide", listener, true);
         }
 
-        if (docURI.startsWith("about:reader"))
-          new AboutReader(this.browser.contentDocument, this.browser.contentWindow);
+        if (docURI.startsWith("about:reader")) {
+          // During browser restart / recovery, duplicate "DOMContentLoaded" messages are received here
+          // For the visible tab ... where more than one tab is being reloaded, the inital "DOMContentLoaded"
+          // Message can be received before the document body is available ... so we avoid instantiating an
+          // AboutReader object, expecting that an eventual valid message will follow.
+          let contentDocument = this.browser.contentDocument;
+          if (contentDocument.body) {
+            new AboutReader(contentDocument, this.browser.contentWindow);
+          }
+        }
 
         break;
       }
@@ -3572,7 +3579,7 @@ Tab.prototype = {
 
         // Show page actions for helper apps.
         if (BrowserApp.selectedTab == this)
-          HelperApps.updatePageAction(this.browser.currentURI);
+          ExternalApps.updatePageAction(this.browser.currentURI);
 
         if (!Reader.isEnabledForParseOnLoad)
           return;
@@ -3858,8 +3865,6 @@ Tab.prototype = {
     let screenW = gScreenWidth - gViewportMargins.left - gViewportMargins.right;
     let screenH = gScreenHeight - gViewportMargins.top - gViewportMargins.bottom;
     let viewportW, viewportH;
-    this.viewportExcludesHorizontalMargins = true;
-    this.viewportExcludesVerticalMargins = true;
 
     let metadata = this.metadata;
     if (metadata.autoSize) {
@@ -3893,6 +3898,23 @@ Tab.prototype = {
     let oldBrowserWidth = this.browserWidth;
     this.setBrowserSize(viewportW, viewportH);
 
+    // This change to the zoom accounts for all types of changes I can conceive:
+    // 1. screen size changes, CSS viewport does not (pages with no meta viewport
+    //    or a fixed size viewport)
+    // 2. screen size changes, CSS viewport also does (pages with a device-width
+    //    viewport)
+    // 3. screen size remains constant, but CSS viewport changes (meta viewport
+    //    tag is added or removed)
+    // 4. neither screen size nor CSS viewport changes
+    //
+    // In all of these cases, we maintain how much actual content is visible
+    // within the screen width. Note that "actual content" may be different
+    // with respect to CSS pixels because of the CSS viewport size changing.
+    let zoomScale = (screenW * oldBrowserWidth) / (aOldScreenWidth * viewportW);
+    let zoom = (aInitialLoad && metadata.defaultZoom) ? metadata.defaultZoom : this.clampZoom(this._zoom * zoomScale);
+    this.setResolution(zoom, false);
+    this.setScrollClampingSize(zoom);
+
     // if this page has not been painted yet, then this must be getting run
     // because a meta-viewport element was added (via the DOMMetaAdded handler).
     // in this case, we should not do anything that forces a reflow (see bug 759678)
@@ -3905,6 +3927,8 @@ Tab.prototype = {
       return;
     }
 
+    this.viewportExcludesHorizontalMargins = true;
+    this.viewportExcludesVerticalMargins = true;
     let minScale = 1.0;
     if (this.browser.contentDocument) {
       // this may get run during a Viewport:Change message while the document
@@ -3927,29 +3951,20 @@ Tab.prototype = {
     }
     minScale = this.clampZoom(minScale);
     viewportH = Math.max(viewportH, screenH / minScale);
+
+    // In general we want to keep calls to setBrowserSize and setScrollClampingSize
+    // together because setBrowserSize could mark the viewport size as dirty, creating
+    // a pending resize event for content. If that resize gets dispatched (which happens
+    // on the next reflow) without setScrollClampingSize having being called, then
+    // content might be exposed to incorrect innerWidth/innerHeight values.
     this.setBrowserSize(viewportW, viewportH);
+    this.setScrollClampingSize(zoom);
 
     // Avoid having the scroll position jump around after device rotation.
     let win = this.browser.contentWindow;
     this.userScrollPos.x = win.scrollX;
     this.userScrollPos.y = win.scrollY;
 
-    // This change to the zoom accounts for all types of changes I can conceive:
-    // 1. screen size changes, CSS viewport does not (pages with no meta viewport
-    //    or a fixed size viewport)
-    // 2. screen size changes, CSS viewport also does (pages with a device-width
-    //    viewport)
-    // 3. screen size remains constant, but CSS viewport changes (meta viewport
-    //    tag is added or removed)
-    // 4. neither screen size nor CSS viewport changes
-    //
-    // In all of these cases, we maintain how much actual content is visible
-    // within the screen width. Note that "actual content" may be different
-    // with respect to CSS pixels because of the CSS viewport size changing.
-    let zoomScale = (screenW * oldBrowserWidth) / (aOldScreenWidth * viewportW);
-    let zoom = (aInitialLoad && metadata.defaultZoom) ? metadata.defaultZoom : this.clampZoom(this._zoom * zoomScale);
-    this.setResolution(zoom, false);
-    this.setScrollClampingSize(zoom);
     this.sendViewportUpdate();
 
     // Store the page size that was used to calculate the viewport so that we
@@ -4115,6 +4130,9 @@ var BrowserEventHandler = {
     BrowserApp.deck.addEventListener("touchstart", this, true);
     BrowserApp.deck.addEventListener("click", InputWidgetHelper, true);
     BrowserApp.deck.addEventListener("click", SelectHelper, true);
+
+    SpatialNavigation.init(BrowserApp.deck, null);
+
     document.addEventListener("MozMagnifyGesture", this, true);
 
     Services.prefs.addObserver("browser.zoom.reflowOnZoom", this, false);
@@ -4292,10 +4310,12 @@ var BrowserEventHandler = {
             this._sendMouseEvent("mousedown", element, x, y);
             this._sendMouseEvent("mouseup",   element, x, y);
 
-            // See if its a input element
-            if ((element instanceof HTMLInputElement && element.mozIsTextField(false)) ||
-                (element instanceof HTMLTextAreaElement))
-               SelectionHandler.attachCaret(element);
+            // See if its an input element, and it isn't disabled, nor handled by Android native dialog
+            if (!element.disabled &&
+                !InputWidgetHelper.hasInputWidget(element) &&
+                ((element instanceof HTMLInputElement && element.mozIsTextField(false)) ||
+                (element instanceof HTMLTextAreaElement)))
+              SelectionHandler.attachCaret(element);
 
             // scrollToFocusedInput does its own checks to find out if an element should be zoomed into
             BrowserApp.scrollToFocusedInput(BrowserApp.selectedBrowser);
@@ -4626,12 +4646,14 @@ var BrowserEventHandler = {
        * - It has overflow 'auto' or 'scroll'
        * - It's a textarea
        * - It's an HTML/BODY node
+       * - It's a text input
        * - It's a select element showing multiple rows
        */
       if (checkElem) {
         if ((elem.scrollTopMax > 0 || elem.scrollLeftMax > 0) &&
             (this._hasScrollableOverflow(elem) ||
              elem.mozMatchesSelector("html, body, textarea")) ||
+            (elem instanceof HTMLInputElement && elem.mozIsTextField(false)) ||
             (elem instanceof HTMLSelectElement && (elem.size > 1 || elem.multiple))) {
           scrollable = true;
           break;
@@ -4679,14 +4701,14 @@ const ElementTouchHelper = {
   anyElementFromPoint: function(aX, aY, aWindow) {
     let win = (aWindow ? aWindow : BrowserApp.selectedBrowser.contentWindow);
     let cwu = win.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
-    let elem = cwu.elementFromPoint(aX, aY, false, true);
+    let elem = cwu.elementFromPoint(aX, aY, true, true);
 
     while (elem && (elem instanceof HTMLIFrameElement || elem instanceof HTMLFrameElement)) {
       let rect = elem.getBoundingClientRect();
       aX -= rect.left;
       aY -= rect.top;
       cwu = elem.contentDocument.defaultView.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
-      elem = cwu.elementFromPoint(aX, aY, false, true);
+      elem = cwu.elementFromPoint(aX, aY, true, true);
     }
 
     return elem;
@@ -4968,13 +4990,9 @@ var ErrorPageEventHandler = {
                 Cu.reportError("Couldn't get malware report URL: " + e);
               }
             } else {
-              // It's a phishing site, not malware. (There's no report URL)
-              try {
-                let reportURL = formatter.formatURLPref("browser.safebrowsing.warning.infoURL");
-                BrowserApp.selectedBrowser.loadURI(reportURL);
-              } catch (e) {
-                Cu.reportError("Couldn't get phishing info URL: " + e);
-              }
+              // It's a phishing site, just link to the generic information page
+              let url = Services.urlFormatter.formatURLPref("app.support.baseURL");
+              BrowserApp.selectedBrowser.loadURI(url + "phishing-malware");
             }
           } else if (target == errorDoc.getElementById("ignoreWarningButton")) {
             Telemetry.addData("SECURITY_UI", nsISecTel[bucketName + "IGNORE_WARNING"]);
@@ -5149,10 +5167,16 @@ var FormAssistant = {
 
       // Reset invalid submit state on each pageshow
       case "pageshow":
-        let target = aEvent.originalTarget;
-        let selectedDocument = BrowserApp.selectedBrowser.contentDocument;
-        if (target == selectedDocument || target.ownerDocument == selectedDocument)
-          this._invalidSubmit = false;
+        if (!this._invalidSubmit)
+          return;
+
+        let selectedBrowser = BrowserApp.selectedBrowser;
+        if (selectedBrowser) {
+          let selectedDocument = selectedBrowser.contentDocument;
+          let target = aEvent.originalTarget;
+          if (target == selectedDocument || target.ownerDocument == selectedDocument)
+            this._invalidSubmit = false;
+        }
     }
   },
 
@@ -5719,8 +5743,11 @@ var ViewportHandler = {
   },
 
   updateMetadata: function updateMetadata(tab, aInitialLoad) {
-    let metadata = this.getViewportMetadata(tab.browser.contentWindow);
-    tab.updateViewportMetadata(metadata, aInitialLoad);
+    let contentWindow = tab.browser.contentWindow;
+    if (contentWindow.document.documentElement) {
+      let metadata = this.getViewportMetadata(contentWindow);
+      tab.updateViewportMetadata(metadata, aInitialLoad);
+    }
   },
 
   /**
@@ -6598,6 +6625,13 @@ var SearchEngines = {
         prompted: Services.prefs.getBoolPref(this.PREF_SUGGEST_PROMPTED)
       }
     });
+
+    // Send a speculative connection to the default engine.
+    let connector = Services.io.QueryInterface(Ci.nsISpeculativeConnect);
+    let searchURI = Services.search.defaultEngine.getSubmission("dummy").uri;
+    let callbacks = window.QueryInterface(Ci.nsIInterfaceRequestor)
+                          .getInterface(Ci.nsIWebNavigation).QueryInterface(Ci.nsILoadContext);
+    connector.speculativeConnect(searchURI, callbacks);
   },
 
   _handleSearchEnginesGetAll: function _handleSearchEnginesGetAll(rv) {
@@ -7727,8 +7761,61 @@ var ExternalApps = {
 
   openExternal: function(aElement) {
     let uri = ExternalApps._getMediaLink(aElement);
-    HelperApps.openUriInApp(uri);
-  }
+    HelperApps.launchUri(uri);
+  },
+
+  updatePageAction: function updatePageAction(uri) {
+    let apps = HelperApps.getAppsForUri(uri);
+
+    if (apps.length > 0)
+      this._setUriForPageAction(uri, apps);
+    else
+      this._removePageAction();
+  },
+
+  _setUriForPageAction: function setUriForPageAction(uri, apps) {
+    this._pageActionUri = uri;
+
+    // If the pageaction is already added, simply update the URI to be launched when 'onclick' is triggered.
+    if (this._pageActionId != undefined)
+      return;
+
+    this._pageActionId = NativeWindow.pageactions.add({
+      title: Strings.browser.GetStringFromName("openInApp.pageAction"),
+      icon: "drawable://icon_openinapp",
+      clickCallback: (function() {
+        let callback = function(app) {
+          app.launch(uri);
+        }
+
+        if (apps.length > 1) {
+          // Use the HelperApps prompt here to filter out any Http handlers
+          HelperApps.prompt(apps, {
+            title: Strings.browser.GetStringFromName("openInApp.pageAction"),
+            buttons: [
+              Strings.browser.GetStringFromName("openInApp.ok"),
+              Strings.browser.GetStringFromName("openInApp.cancel")
+            ]
+          }, function(result) {
+            if (result.button != 0)
+              return;
+
+            callback(apps[result.icongrid0]);
+          });
+        } else {
+          callback(apps[0]);
+        }
+      }).bind(this)
+    });
+  },
+
+  _removePageAction: function removePageAction() {
+    if(!this._pageActionId)
+      return;
+
+    NativeWindow.pageactions.remove(this._pageActionId);
+    delete this._pageActionId;
+  },
 };
 
 var Distribution = {

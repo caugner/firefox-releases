@@ -440,9 +440,6 @@ CycleCollectedJSRuntime::CycleCollectedJSRuntime(uint32_t aMaxbytes,
     mJSZoneCycleCollectorGlobal(sJSZoneCycleCollectorGlobal),
     mJSRuntime(nullptr),
     mJSHolders(512)
-#ifdef DEBUG
-  , mObjectToUnlink(nullptr)
-#endif
 {
   mJSRuntime = JS_NewRuntime(aMaxbytes, aUseHelperThreads);
   if (!mJSRuntime) {
@@ -461,18 +458,28 @@ CycleCollectedJSRuntime::CycleCollectedJSRuntime(uint32_t aMaxbytes,
   nsCycleCollector_registerJSRuntime(this);
 }
 
-CycleCollectedJSRuntime::~CycleCollectedJSRuntime()
+void
+CycleCollectedJSRuntime::DestroyRuntime()
 {
+  if (!mJSRuntime) {
+    return;
+  }
+
   MOZ_ASSERT(!mDeferredFinalizerTable.Count());
   MOZ_ASSERT(!mDeferredSupports.Length());
 
   // Clear mPendingException first, since it might be cycle collected.
   mPendingException = nullptr;
 
-  nsCycleCollector_forgetJSRuntime();
-
   JS_DestroyRuntime(mJSRuntime);
   mJSRuntime = nullptr;
+  nsCycleCollector_forgetJSRuntime();
+}
+
+CycleCollectedJSRuntime::~CycleCollectedJSRuntime()
+{
+  // Destroy our runtime if the subclass hasn't done it already.
+  DestroyRuntime();
 }
 
 size_t
@@ -480,7 +487,7 @@ CycleCollectedJSRuntime::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
 {
   size_t n = 0;
 
-  // NULL for the second arg;  we're not measuring anything hanging off the
+  // nullptr for the second arg;  we're not measuring anything hanging off the
   // entries in mJSHolders.
   n += mJSHolders.SizeOfExcludingThis(nullptr, aMallocSizeOf);
 
@@ -960,7 +967,7 @@ CycleCollectedJSRuntime::DeferredFinalize(nsISupports* aSupports)
 void
 CycleCollectedJSRuntime::DumpJSHeap(FILE* file)
 {
-  js::DumpHeapComplete(Runtime(), file);
+  js::DumpHeapComplete(Runtime(), file, js::CollectNurseryBeforeDump);
 }
 
 

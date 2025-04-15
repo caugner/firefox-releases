@@ -134,7 +134,7 @@ nsCSSBorderRenderer::nsCSSBorderRenderer(int32_t aAppUnitsPerPixel,
     mBackgroundColor(aBackgroundColor)
 {
   if (!mCompositeColors) {
-    static nsBorderColors * const noColors[4] = { NULL };
+    static nsBorderColors * const noColors[4] = { nullptr };
     mCompositeColors = &noColors[0];
   }
 
@@ -1073,8 +1073,8 @@ nsCSSBorderRenderer::CreateCornerGradient(mozilla::css::Corner aCorner,
   float gradientOffset;
   
   if (mContext->IsCairo() &&
-      (mContext->OriginalSurface()->GetType() == gfxASurface::SurfaceTypeD2D ||
-       mContext->OriginalSurface()->GetType() == gfxASurface::SurfaceTypeQuartz))
+      (mContext->OriginalSurface()->GetType() == gfxSurfaceTypeD2D ||
+       mContext->OriginalSurface()->GetType() == gfxSurfaceTypeQuartz))
   {
     // On quarz this doesn't do exactly the right thing, but it does do what
     // most other browsers do and doing the 'right' thing seems to be
@@ -1363,7 +1363,7 @@ nsCSSBorderRenderer::DrawNoCompositeColorSolidBorderAzure()
                                mBorderWidths[2] / 2.0, mBorderWidths[3] / 2.0));
 
   ColorPattern colorPat(Color(0, 0, 0, 0));
-  LinearGradientPattern gradPat(Point(), Point(), NULL);
+  LinearGradientPattern gradPat(Point(), Point(), nullptr);
 
   NS_FOR_CSS_CORNERS(i) {
       // the corner index -- either 1 2 3 0 (cw) or 0 3 2 1 (ccw)
@@ -1413,6 +1413,8 @@ nsCSSBorderRenderer::DrawNoCompositeColorSolidBorderAzure()
     builder->LineTo(strokeEnd);
     RefPtr<Path> path = builder->Finish();
     dt->Stroke(path, ColorPattern(Color::FromABGR(mBorderColors[i])), StrokeOptions(mBorderWidths[i]));
+    builder = nullptr;
+    path = nullptr;
 
     Pattern *pattern;
 
@@ -1569,7 +1571,7 @@ nsCSSBorderRenderer::DrawBorders()
   bool brBordersSame = AreBorderSideFinalStylesSame(SIDE_BIT_BOTTOM | SIDE_BIT_RIGHT);
   bool allBordersSame = AreBorderSideFinalStylesSame(SIDE_BITS_ALL);
   if (allBordersSame &&
-      ((mCompositeColors[0] == NULL &&
+      ((mCompositeColors[0] == nullptr &&
        (mBorderStyles[0] == NS_STYLE_BORDER_STYLE_NONE ||
         mBorderStyles[0] == NS_STYLE_BORDER_STYLE_HIDDEN ||
         mBorderColors[0] == NS_RGBA(0,0,0,0))) ||
@@ -1624,7 +1626,7 @@ nsCSSBorderRenderer::DrawBorders()
   // drawing paths, when none of these can be used we move on to the generalized
   // border drawing code.
   if (allBordersSame &&
-      mCompositeColors[0] == NULL &&
+      mCompositeColors[0] == nullptr &&
       allBordersSameWidth &&
       mBorderStyles[0] == NS_STYLE_BORDER_STYLE_SOLID &&
       mNoBorderRadius &&
@@ -1641,7 +1643,7 @@ nsCSSBorderRenderer::DrawBorders()
   }
 
   if (allBordersSame &&
-      mCompositeColors[0] == NULL &&
+      mCompositeColors[0] == nullptr &&
       allBordersSameWidth &&
       mBorderStyles[0] == NS_STYLE_BORDER_STYLE_DOTTED &&
       mBorderWidths[0] < 3 &&
@@ -1665,7 +1667,7 @@ nsCSSBorderRenderer::DrawBorders()
 
   
   if (allBordersSame &&
-      mCompositeColors[0] == NULL &&
+      mCompositeColors[0] == nullptr &&
       mBorderStyles[0] == NS_STYLE_BORDER_STYLE_SOLID &&
       !mAvoidStroke &&
       !mNoBorderRadius)
@@ -1702,7 +1704,7 @@ nsCSSBorderRenderer::DrawBorders()
   // Doing this is slightly faster and shouldn't be a problem visually.
   if (allBordersSolid &&
       allBordersSameWidth &&
-      mCompositeColors[0] == NULL &&
+      mCompositeColors[0] == nullptr &&
       mBorderWidths[0] == 1 &&
       mNoBorderRadius &&
       !mAvoidStroke)
@@ -1805,8 +1807,8 @@ nsCSSBorderRenderer::DrawBorders()
       const int sides[2] = { corner, PREV_SIDE(corner) };
       int sideBits = (1 << sides[0]) | (1 << sides[1]);
 
-      bool simpleCornerStyle = mCompositeColors[sides[0]] == NULL &&
-                                 mCompositeColors[sides[1]] == NULL &&
+      bool simpleCornerStyle = mCompositeColors[sides[0]] == nullptr &&
+                                 mCompositeColors[sides[1]] == nullptr &&
                                  AreBorderSideFinalStylesSame(sideBits);
 
       // If we don't have anything complex going on in this corner,

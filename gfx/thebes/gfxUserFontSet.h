@@ -6,21 +6,18 @@
 #ifndef GFX_USER_FONT_SET_H
 #define GFX_USER_FONT_SET_H
 
-#include "gfxTypes.h"
 #include "gfxFont.h"
-#include "gfxFontUtils.h"
 #include "nsRefPtrHashtable.h"
 #include "nsAutoPtr.h"
 #include "nsCOMPtr.h"
 #include "nsIURI.h"
-#include "nsIFile.h"
 #include "nsIPrincipal.h"
-#include "nsISupportsImpl.h"
 #include "nsIScriptError.h"
 #include "nsURIHashKey.h"
 
-class gfxMixedFontFamily;
 class nsFontFaceLoader;
+
+//#define DEBUG_USERFONT_CACHE
 
 // parsed CSS @font-face rule information
 // lifetime: from when @font-face rule processed until font is loaded
@@ -270,6 +267,11 @@ public:
         // Clear everything so that we don't leak URIs and Principals.
         static void Shutdown();
 
+#ifdef DEBUG_USERFONT_CACHE
+        // dump contents
+        static void Dump();
+#endif
+
     private:
         // Helper that we use to observe the empty-cache notification
         // from nsICacheService.
@@ -348,6 +350,10 @@ public:
             static PLDHashOperator RemoveIfPrivate(Entry* aEntry, void* aUserData);
             static PLDHashOperator RemoveIfMatches(Entry* aEntry, void* aUserData);
             static PLDHashOperator DisconnectSVG(Entry* aEntry, void* aUserData);
+
+#ifdef DEBUG_USERFONT_CACHE
+            static PLDHashOperator DumpEntry(Entry* aEntry, void* aUserData);
+#endif
 
         private:
             static uint32_t

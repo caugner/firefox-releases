@@ -858,6 +858,7 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
               NS_HTML5_BREAK(starttagloop);
             }
             case NS_HTML5TREE_BUILDER_INPUT: {
+              errStartTagInTable(name);
               if (!nsHtml5Portability::lowerCaseLiteralEqualsIgnoreAsciiCaseString("hidden", attributes->getValue(nsHtml5AttributeName::ATTR_TYPE))) {
                 NS_HTML5_BREAK(intableloop);
               }
@@ -3261,6 +3262,19 @@ nsHtml5TreeBuilder::resetTheInsertionMode()
       }
     }
     if (nsHtml5Atoms::select == name) {
+      int32_t ancestorIndex = i;
+      while (ancestorIndex > 0) {
+        nsHtml5StackNode* ancestor = stack[ancestorIndex--];
+        if (kNameSpaceID_XHTML == ancestor->ns) {
+          if (nsHtml5Atoms::template_ == ancestor->name) {
+            break;
+          }
+          if (nsHtml5Atoms::table == ancestor->name) {
+            mode = NS_HTML5TREE_BUILDER_IN_SELECT_IN_TABLE;
+            return;
+          }
+        }
+      }
       mode = NS_HTML5TREE_BUILDER_IN_SELECT;
       return;
     } else if (nsHtml5Atoms::td == name || nsHtml5Atoms::th == name) {

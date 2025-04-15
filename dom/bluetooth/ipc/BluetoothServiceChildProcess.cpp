@@ -12,6 +12,7 @@
 #include "mozilla/dom/ContentChild.h"
 
 #include "BluetoothChild.h"
+#include "MainThreadUtils.h"
 
 USING_BLUETOOTH_NAMESPACE
 
@@ -325,6 +326,27 @@ void
 BluetoothServiceChildProcess::IsScoConnected(BluetoothReplyRunnable* aRunnable)
 {
   SendRequest(aRunnable, IsScoConnectedRequest());
+}
+
+void
+BluetoothServiceChildProcess::AnswerWaitingCall(
+  BluetoothReplyRunnable* aRunnable)
+{
+  SendRequest(aRunnable, AnswerWaitingCallRequest());
+}
+
+void
+BluetoothServiceChildProcess::IgnoreWaitingCall(
+  BluetoothReplyRunnable* aRunnable)
+{
+  SendRequest(aRunnable, IgnoreWaitingCallRequest());
+}
+
+void
+BluetoothServiceChildProcess::ToggleCalls(
+  BluetoothReplyRunnable* aRunnable)
+{
+  SendRequest(aRunnable, ToggleCallsRequest());
 }
 
 void

@@ -10,6 +10,7 @@
 #include "nsDOMUIEvent.h"
 #include "nsIDOMCompositionEvent.h"
 #include "mozilla/dom/CompositionEventBinding.h"
+#include "mozilla/EventForwards.h"
 
 class nsDOMCompositionEvent : public nsDOMUIEvent,
                               public nsIDOMCompositionEvent
@@ -17,8 +18,7 @@ class nsDOMCompositionEvent : public nsDOMUIEvent,
 public:
   nsDOMCompositionEvent(mozilla::dom::EventTarget* aOwner,
                         nsPresContext* aPresContext,
-                        nsCompositionEvent* aEvent);
-  virtual ~nsDOMCompositionEvent();
+                        mozilla::WidgetCompositionEvent* aEvent);
 
   NS_DECL_ISUPPORTS_INHERITED
   NS_FORWARD_TO_NSDOMUIEVENT

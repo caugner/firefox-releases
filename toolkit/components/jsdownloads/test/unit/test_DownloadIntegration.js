@@ -66,7 +66,7 @@ XPCOMUtils.defineLazyGetter(this, "gStringBundle", function() {
 
 /**
  * Tests that the getSystemDownloadsDirectory returns a valid download
- * directory object string path.
+ * directory string path.
  */
 add_task(function test_getSystemDownloadsDirectory()
 {
@@ -116,7 +116,7 @@ add_task(function test_getSystemDownloadsDirectory()
 
 /**
  * Tests that the getPreferredDownloadsDirectory returns a valid download
- * directory object string path.
+ * directory string path.
  */
 add_task(function test_getPreferredDownloadsDirectory()
 {
@@ -179,7 +179,7 @@ add_task(function test_getPreferredDownloadsDirectory()
 
 /**
  * Tests that the getTemporaryDownloadsDirectory returns a valid download
- * directory object string path.
+ * directory string path.
  */
 add_task(function test_getTemporaryDownloadsDirectory()
 {

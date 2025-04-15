@@ -28,11 +28,9 @@ var ecmaGlobals =
   [
     "Array",
     "ArrayBuffer",
-    {name: "ArrayType", nightly: true},
     "Boolean",
     "DataView",
     "Date",
-    {name: "Data", nightly: true},
     "Error",
     "EvalError",
     "Float32Array",
@@ -58,9 +56,8 @@ var ecmaGlobals =
     "Set",
     "StopIteration",
     "String",
-    {name: "StructType", nightly: true},
     "SyntaxError",
-    {name: "Type", nightly: true},
+    {name: "TypedObject", nightly: true},
     "TypeError",
     "Uint16Array",
     "Uint32Array",
@@ -116,8 +113,6 @@ var interfaceNamesInGlobalScope =
     "ChannelSplitterNode",
     "CharacterData",
     {name: "ChromeWindow", xbl: true},
-    "ClientRect",
-    "ClientRectList",
     "ClipboardEvent",
     "CloseEvent",
     "CommandEvent",
@@ -134,7 +129,6 @@ var interfaceNamesInGlobalScope =
     "CSSFontFaceRule",
     {name: "CSSFontFeatureValuesRule", release: false},
     "CSSGroupingRule",
-    "CSSGroupRuleRuleList",
     "CSSImportRule",
     "CSSMediaRule",
     "CSSMozDocumentRule",
@@ -153,6 +147,9 @@ var interfaceNamesInGlobalScope =
     "DataChannel",
     "DataContainerEvent",
     {name: "DataErrorEvent", b2g: true, pref: "dom.mobileconnection.enabled"},
+    {name: "DataStore", b2g: true, release: false},
+    {name: "DataStoreChangeEvent", b2g: true, release: false},
+    {name: "DataStoreCursor", b2g: true, release: false},
     "DataTransfer",
     "DelayNode",
     "DesktopNotification",
@@ -175,6 +172,8 @@ var interfaceNamesInGlobalScope =
     "DOMImplementation",
     "DOMMMIError",
     "DOMParser",
+    "DOMRect",
+    "DOMRectList",
     "DOMRequest",
     "DOMSettableTokenList",
     "DOMStringList",
@@ -185,6 +184,7 @@ var interfaceNamesInGlobalScope =
     "DynamicsCompressorNode",
     "Element",
     "ElementReplaceEvent",
+    "ErrorEvent",
     "Event",
     "EventListenerInfo",
     "EventSource",
@@ -201,6 +201,7 @@ var interfaceNamesInGlobalScope =
     {name: "Gamepad", desktop: true},
     {name: "GamepadAxisMoveEvent", desktop: true},
     {name: "GamepadButtonEvent", desktop: true},
+    {name: "GamepadButton", desktop: true},
     {name: "GamepadEvent", desktop: true},
     "HashChangeEvent",
     "History",
@@ -224,6 +225,7 @@ var interfaceNamesInGlobalScope =
     "HTMLEmbedElement",
     "HTMLFieldSetElement",
     "HTMLFontElement",
+    "HTMLFormControlsCollection",
     "HTMLFormElement",
     "HTMLFrameElement",
     "HTMLFrameSetElement",
@@ -275,7 +277,7 @@ var interfaceNamesInGlobalScope =
     "HTMLUListElement",
     "HTMLUnknownElement",
     "HTMLVideoElement",
-    {name: "IccCardLockErrorEvent", b2g: true, pref: "dom.icc.enabled"},
+    {name: "IccCardLockError", b2g: true, pref: "dom.icc.enabled"},
     "IDBCursor",
     "IDBCursorWithValue",
     "IDBDatabase",
@@ -388,6 +390,7 @@ var interfaceNamesInGlobalScope =
     "RGBColor",
     "RTCDataChannelEvent",
     "RTCPeerConnectionIceEvent",
+    "RTCStatsReport",
     "Screen",
     "ScriptProcessorNode",
     "ScrollAreaEvent",
@@ -400,13 +403,13 @@ var interfaceNamesInGlobalScope =
     "SpeechRecognitionError",
     "SpeechRecognitionEvent",
     "SpeechSynthesisEvent",
+    {name: "SpeechSynthesis", b2g: true},
+    {name: "SpeechSynthesisUtterance", b2g: true},
+    {name: "SpeechSynthesisVoice", b2g: true},
     {name: "SpecialPowers", xbl: false},
     "Storage",
     "StorageEvent",
-    "StyleRuleChangeEvent",
     "StyleSheet",
-    "StyleSheetApplicableStateChangeEvent",
-    "StyleSheetChangeEvent",
     "StyleSheetList",
     "SVGAElement",
     "SVGAltGlyphElement",
@@ -540,6 +543,7 @@ var interfaceNamesInGlobalScope =
     "Touch",
     "TouchEvent",
     "TouchList",
+    "TrackEvent",
     "TransitionEvent",
     {name: "TreeColumn", xbl: true},
     {name: "TreeColumns", xbl: true},
@@ -603,37 +607,39 @@ function createInterfaceMap(isXBLScope) {
   var isRelease = !version.contains("a");
   var isDesktop = !/Mobile|Tablet/.test(navigator.userAgent);
   var isB2G = !isDesktop && !navigator.userAgent.contains("Android");
+
   var interfaceMap = {};
-  for (var entry of ecmaGlobals) {
-    if (typeof(entry) === "string") {
-      // Standard ECMAScript global objects are not defined on the XBL scope.
-      interfaceMap[entry] = !isXBLScope;
-    } else if (entry.nightly === isNightly) {
-      interfaceMap[entry.name] = !isXBLScope;
-    } else {
-      interfaceMap[entry.name] = false;
+
+  function addInterfaces(interfaces, shouldExpect)
+  {
+    for (var entry of interfaces) {
+      if (typeof(entry) === "string") {
+        interfaceMap[entry] = shouldExpect;
+      } else if ((entry.nightly === !isNightly) ||
+                 (entry.xbl === !isXBLScope) ||
+                 (entry.desktop === !isDesktop) ||
+                 (entry.b2g === !isB2G) ||
+                 (entry.release === !isRelease) ||
+                 (entry.pref && !prefs.getBoolPref(entry.pref))) {
+        interfaceMap[entry.name] = false;
+      } else {
+        interfaceMap[entry.name] = shouldExpect;
+      }
     }
   }
-  for (var entry of interfaceNamesInGlobalScope) {
-    if (typeof(entry) === "string") {
-      interfaceMap[entry] = true;
-    } else if (entry.xbl === !isXBLScope ||
-               entry.desktop === !isDesktop ||
-               entry.b2g === !isB2G ||
-               entry.release === !isRelease ||
-               entry.pref && !prefs.getBoolPref(entry.pref)) {
-      interfaceMap[entry.name] = false;
-    } else {
-      interfaceMap[entry.name] = true;
-    }
-  }
+
+  // Standard ECMAScript global objects are not defined on the XBL scope, but
+  // everything else exists everywhere.
+  addInterfaces(ecmaGlobals, !isXBLScope);
+  addInterfaces(interfaceNamesInGlobalScope, true);
+
   return interfaceMap;
 }
 
 function runTest(isXBLScope) {
   var interfaceMap = createInterfaceMap(isXBLScope);
   for (var name of Object.getOwnPropertyNames(window)) {
-    // An interfae name should start with an upper case character.
+    // An interface name should start with an upper case character.
     if (!/^(moz)?[A-Z]/.test(name)) {
       continue;
     }

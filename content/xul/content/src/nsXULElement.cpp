@@ -73,7 +73,8 @@
 #include "nsIListBoxObject.h"
 #include "nsContentUtils.h"
 #include "nsContentList.h"
-#include "nsMutationEvent.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/MutationEvent.h"
 #include "nsAsyncDOMEvent.h"
 #include "nsIDOMMutationEvent.h"
 #include "nsPIDOMWindow.h"
@@ -89,6 +90,7 @@
 #include "nsAttrValueOrString.h"
 #include "nsAttrValueInlines.h"
 #include "mozilla/Attributes.h"
+#include "nsIController.h"
 #include <algorithm>
 
 // The XUL doc interface
@@ -108,12 +110,6 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
-
-//----------------------------------------------------------------------
-
-static NS_DEFINE_CID(kXULPopupListenerCID,        NS_XULPOPUPLISTENER_CID);
-
-//----------------------------------------------------------------------
 
 #ifdef XUL_PROTOTYPE_ATTRIBUTE_METERING
 uint32_t             nsXULPrototypeAttribute::gNumElements;
@@ -500,7 +496,7 @@ nsXULElement::GetEventListenerManagerForAttr(nsIAtom* aAttrName, bool* aDefer)
         nsCOMPtr<EventTarget> piTarget = do_QueryInterface(window);
 
         *aDefer = false;
-        return piTarget->GetListenerManager(true);
+        return piTarget->GetOrCreateListenerManager();
     }
 
     return nsStyledElement::GetEventListenerManagerForAttr(aAttrName, aDefer);
@@ -1194,8 +1190,7 @@ nsXULElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
                     }
                 }
 
-                nsInputEvent* orig =
-                    static_cast<nsInputEvent*>(aVisitor.mEvent);
+                WidgetInputEvent* orig = aVisitor.mEvent->AsInputEvent();
                 nsContentUtils::DispatchXULCommand(
                   commandContent,
                   aVisitor.mEvent->mFlags.mIsTrusted,
@@ -1604,12 +1599,12 @@ nsXULElement::ClickWithInputSource(uint16_t aInputSource)
 
             bool isCallerChrome = nsContentUtils::IsCallerChrome();
 
-            nsMouseEvent eventDown(isCallerChrome, NS_MOUSE_BUTTON_DOWN,
-                                   nullptr, nsMouseEvent::eReal);
-            nsMouseEvent eventUp(isCallerChrome, NS_MOUSE_BUTTON_UP,
-                                 nullptr, nsMouseEvent::eReal);
-            nsMouseEvent eventClick(isCallerChrome, NS_MOUSE_CLICK, nullptr,
-                                    nsMouseEvent::eReal);
+            WidgetMouseEvent eventDown(isCallerChrome, NS_MOUSE_BUTTON_DOWN,
+                                       nullptr, WidgetMouseEvent::eReal);
+            WidgetMouseEvent eventUp(isCallerChrome, NS_MOUSE_BUTTON_UP,
+                                     nullptr, WidgetMouseEvent::eReal);
+            WidgetMouseEvent eventClick(isCallerChrome, NS_MOUSE_CLICK, nullptr,
+                                        WidgetMouseEvent::eReal);
             eventDown.inputSource = eventUp.inputSource = eventClick.inputSource 
                                   = aInputSource;
 
@@ -1675,7 +1670,7 @@ nsXULElement::AddPopupListener(nsIAtom* aName)
       new nsXULPopupListener(this, isContext);
 
     // Add the popup as a listener on this element.
-    nsEventListenerManager* manager = GetListenerManager(true);
+    nsEventListenerManager* manager = GetOrCreateListenerManager();
     SetFlags(listenerFlag);
 
     if (isContext) {
@@ -1784,7 +1779,7 @@ nsXULElement::GetWindowWidget()
     nsIDocument* doc = GetCurrentDoc();
 
     // only top level chrome documents can set the titlebar color
-    if (doc->IsRootDisplayDocument()) {
+    if (doc && doc->IsRootDisplayDocument()) {
         nsCOMPtr<nsISupports> container = doc->GetContainer();
         nsCOMPtr<nsIBaseWindow> baseWindow = do_QueryInterface(container);
         if (baseWindow) {

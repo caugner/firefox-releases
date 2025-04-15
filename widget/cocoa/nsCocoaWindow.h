@@ -76,6 +76,8 @@ typedef struct _nsCocoaWindowList {
   float mDPI;
 
   NSTrackingArea* mTrackingArea;
+
+  BOOL mBeingShown;
 }
 
 - (void)importState:(NSDictionary*)aState;
@@ -94,6 +96,9 @@ typedef struct _nsCocoaWindowList {
 - (void)mouseMoved:(NSEvent*)aEvent;
 - (void)updateTrackingArea;
 - (NSView*)trackingAreaView;
+
+- (void)setBeingShown:(BOOL)aValue;
+- (BOOL)isVisibleOrBeingShown;
 
 - (ChildView*)mainChildView;
 
@@ -267,7 +272,8 @@ public:
                                           LayersBackend aBackendHint = mozilla::layers::LAYERS_NONE,
                                           LayerManagerPersistence aPersistence = LAYER_MANAGER_CURRENT,
                                           bool* aAllowRetaining = nullptr);
-    NS_IMETHOD DispatchEvent(nsGUIEvent* event, nsEventStatus & aStatus) ;
+    NS_IMETHOD DispatchEvent(mozilla::WidgetGUIEvent* aEvent,
+                             nsEventStatus& aStatus);
     NS_IMETHOD CaptureRollupEvents(nsIRollupListener * aListener, bool aDoCapture);
     NS_IMETHOD GetAttention(int32_t aCycleCount);
     virtual bool HasPendingInputEvent();

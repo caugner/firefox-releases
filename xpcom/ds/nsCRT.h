@@ -6,7 +6,6 @@
 #define nsCRT_h___
 
 #include <stdlib.h>
-#include <string.h>
 #include <ctype.h>
 #include "plstr.h"
 #include "nscore.h"
@@ -110,7 +109,7 @@ public:
       // Establish string and get the first token:
       char* newStr;
       token = nsCRT::strtok(string, seps, &newStr);   
-      while (token != NULL) {
+      while (token != nullptr) {
         // While there are tokens in "string"
         printf(" %s\n", token);
         // Get next token:

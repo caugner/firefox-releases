@@ -8,17 +8,16 @@
 #define jit_shared_CodeGenerator_shared_h
 
 #include "mozilla/Alignment.h"
-#include "mozilla/Util.h"
 
-#include "jit/IonCaches.h"
 #include "jit/IonFrames.h"
 #include "jit/IonMacroAssembler.h"
 #include "jit/LIR.h"
-#include "jit/MIR.h"
+#include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
 #include "jit/Safepoints.h"
 #include "jit/SnapshotWriter.h"
 #include "jit/VMFunctions.h"
+#include "vm/ForkJoin.h"
 
 namespace js {
 namespace jit {
@@ -201,6 +200,7 @@ class CodeGeneratorShared : public LInstructionVisitor
     }
 
 #ifdef CHECK_OSIPOINT_REGISTERS
+    void resetOsiPointRegs(LSafepoint *safepoint);
     bool shouldVerifyOsiPointRegs(LSafepoint *safepoint);
     void verifyOsiPointRegs(LSafepoint *safepoint);
 #endif
@@ -285,6 +285,7 @@ class CodeGeneratorShared : public LInstructionVisitor
 
     OutOfLineCode *oolTruncateDouble(const FloatRegister &src, const Register &dest);
     bool emitTruncateDouble(const FloatRegister &src, const Register &dest);
+    bool emitTruncateFloat32(const FloatRegister &src, const Register &dest);
 
     void emitPreBarrier(Register base, const LAllocation *index, MIRType type);
     void emitPreBarrier(Address address, MIRType type);
@@ -305,22 +306,22 @@ class CodeGeneratorShared : public LInstructionVisitor
     // be saved and restored in case future LIR instructions need those values.)
     void saveVolatile(Register output) {
         RegisterSet regs = RegisterSet::Volatile();
-        regs.maybeTake(output);
+        regs.takeUnchecked(output);
         masm.PushRegsInMask(regs);
     }
     void restoreVolatile(Register output) {
         RegisterSet regs = RegisterSet::Volatile();
-        regs.maybeTake(output);
+        regs.takeUnchecked(output);
         masm.PopRegsInMask(regs);
     }
     void saveVolatile(FloatRegister output) {
         RegisterSet regs = RegisterSet::Volatile();
-        regs.maybeTake(output);
+        regs.takeUnchecked(output);
         masm.PushRegsInMask(regs);
     }
     void restoreVolatile(FloatRegister output) {
         RegisterSet regs = RegisterSet::Volatile();
-        regs.maybeTake(output);
+        regs.takeUnchecked(output);
         masm.PopRegsInMask(regs);
     }
     void saveVolatile(RegisterSet temps) {
@@ -365,13 +366,13 @@ class CodeGeneratorShared : public LInstructionVisitor
         masm.storeCallResultValue(t);
     }
 
-    bool callVM(const VMFunction &f, LInstruction *ins, const Register *dynStack = NULL);
+    bool callVM(const VMFunction &f, LInstruction *ins, const Register *dynStack = nullptr);
 
     template <class ArgSeq, class StoreOutputTo>
     inline OutOfLineCode *oolCallVM(const VMFunction &fun, LInstruction *ins, const ArgSeq &args,
                                     const StoreOutputTo &out);
 
-    bool callVM(const VMFunctionsModal &f, LInstruction *ins, const Register *dynStack = NULL) {
+    bool callVM(const VMFunctionsModal &f, LInstruction *ins, const Register *dynStack = nullptr) {
         return callVM(f[gen->info().executionMode()], ins, dynStack);
     }
 
@@ -412,7 +413,7 @@ class CodeGeneratorShared : public LInstructionVisitor
     bool visitOutOfLineTruncateSlow(OutOfLineTruncateSlow *ool);
 
   public:
-    bool callTraceLIR(uint32_t blockIndex, LInstruction *lir, const char *bailoutName = NULL);
+    bool callTraceLIR(uint32_t blockIndex, LInstruction *lir, const char *bailoutName = nullptr);
 
     // Parallel aborts:
     //
@@ -446,8 +447,8 @@ class OutOfLineCode : public TempObject
   public:
     OutOfLineCode()
       : framePushed_(0),
-        pc_(NULL),
-        script_(NULL)
+        pc_(nullptr),
+        script_(nullptr)
     { }
 
     virtual bool generate(CodeGeneratorShared *codegen) = 0;
@@ -673,7 +674,7 @@ CodeGeneratorShared::oolCallVM(const VMFunction &fun, LInstruction *lir, const A
 {
     OutOfLineCode *ool = new OutOfLineCallVM<ArgSeq, StoreOutputTo>(lir, fun, args, out);
     if (!addOutOfLineCode(ool))
-        return NULL;
+        return nullptr;
     return ool;
 }
 

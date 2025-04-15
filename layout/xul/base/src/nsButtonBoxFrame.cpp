@@ -11,13 +11,15 @@
 #include "nsINameSpaceManager.h"
 #include "nsPresContext.h"
 #include "nsIPresShell.h"
-#include "nsGUIEvent.h"
 #include "nsEventStateManager.h"
 #include "nsIDOMElement.h"
 #include "nsDisplayList.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/TextEvents.h"
 
+using namespace mozilla;
 
 //
 // NS_NewXULButtonFrame
@@ -45,7 +47,7 @@ nsButtonBoxFrame::BuildDisplayListForChildren(nsDisplayListBuilder*   aBuilder,
 
 NS_IMETHODIMP
 nsButtonBoxFrame::HandleEvent(nsPresContext* aPresContext, 
-                              nsGUIEvent* aEvent,
+                              WidgetGUIEvent* aEvent,
                               nsEventStatus* aEventStatus)
 {
   NS_ENSURE_ARG_POINTER(aEventStatus);
@@ -54,65 +56,73 @@ nsButtonBoxFrame::HandleEvent(nsPresContext* aPresContext,
   }
 
   switch (aEvent->message) {
-    case NS_KEY_DOWN:
-      if (NS_KEY_EVENT == aEvent->eventStructType) {
-        nsKeyEvent* keyEvent = (nsKeyEvent*)aEvent;
-        if (NS_VK_SPACE == keyEvent->keyCode) {
-          nsEventStateManager *esm = aPresContext->EventStateManager();
-          // :hover:active state
-          esm->SetContentState(mContent, NS_EVENT_STATE_HOVER);
-          esm->SetContentState(mContent, NS_EVENT_STATE_ACTIVE);
-        }
+    case NS_KEY_DOWN: {
+      WidgetKeyboardEvent* keyEvent = aEvent->AsKeyboardEvent();
+      if (!keyEvent) {
+        break;
+      }
+      if (NS_VK_SPACE == keyEvent->keyCode) {
+        nsEventStateManager* esm = aPresContext->EventStateManager();
+        // :hover:active state
+        esm->SetContentState(mContent, NS_EVENT_STATE_HOVER);
+        esm->SetContentState(mContent, NS_EVENT_STATE_ACTIVE);
       }
       break;
+    }
 
-// On mac, Return fires the defualt button, not the focused one.
+// On mac, Return fires the default button, not the focused one.
 #ifndef XP_MACOSX
-    case NS_KEY_PRESS:
-      if (NS_KEY_EVENT == aEvent->eventStructType) {
-        nsKeyEvent* keyEvent = (nsKeyEvent*)aEvent;
-        if (NS_VK_RETURN == keyEvent->keyCode) {
-          nsCOMPtr<nsIDOMXULButtonElement> buttonEl(do_QueryInterface(mContent));
-          if (buttonEl) {
-            MouseClicked(aPresContext, aEvent);
-            *aEventStatus = nsEventStatus_eConsumeNoDefault;
-          }
+    case NS_KEY_PRESS: {
+      WidgetKeyboardEvent* keyEvent = aEvent->AsKeyboardEvent();
+      if (!keyEvent) {
+        break;
+      }
+      if (NS_VK_RETURN == keyEvent->keyCode) {
+        nsCOMPtr<nsIDOMXULButtonElement> buttonEl(do_QueryInterface(mContent));
+        if (buttonEl) {
+          MouseClicked(aPresContext, aEvent);
+          *aEventStatus = nsEventStatus_eConsumeNoDefault;
         }
       }
       break;
+    }
 #endif
 
-    case NS_KEY_UP:
-      if (NS_KEY_EVENT == aEvent->eventStructType) {
-        nsKeyEvent* keyEvent = (nsKeyEvent*)aEvent;
-        if (NS_VK_SPACE == keyEvent->keyCode) {
-          // only activate on keyup if we're already in the :hover:active state
-          NS_ASSERTION(mContent->IsElement(), "How do we have a non-element?");
-          nsEventStates buttonState = mContent->AsElement()->State();
-          if (buttonState.HasAllStates(NS_EVENT_STATE_ACTIVE |
-                                       NS_EVENT_STATE_HOVER)) {
-            // return to normal state
-            nsEventStateManager *esm = aPresContext->EventStateManager();
-            esm->SetContentState(nullptr, NS_EVENT_STATE_ACTIVE);
-            esm->SetContentState(nullptr, NS_EVENT_STATE_HOVER);
-            MouseClicked(aPresContext, aEvent);
-          }
+    case NS_KEY_UP: {
+      WidgetKeyboardEvent* keyEvent = aEvent->AsKeyboardEvent();
+      if (!keyEvent) {
+        break;
+      }
+      if (NS_VK_SPACE == keyEvent->keyCode) {
+        // only activate on keyup if we're already in the :hover:active state
+        NS_ASSERTION(mContent->IsElement(), "How do we have a non-element?");
+        nsEventStates buttonState = mContent->AsElement()->State();
+        if (buttonState.HasAllStates(NS_EVENT_STATE_ACTIVE |
+                                     NS_EVENT_STATE_HOVER)) {
+          // return to normal state
+          nsEventStateManager *esm = aPresContext->EventStateManager();
+          esm->SetContentState(nullptr, NS_EVENT_STATE_ACTIVE);
+          esm->SetContentState(nullptr, NS_EVENT_STATE_HOVER);
+          MouseClicked(aPresContext, aEvent);
         }
       }
       break;
+    }
 
-    case NS_MOUSE_CLICK:
-      if (NS_IS_MOUSE_LEFT_CLICK(aEvent)) {
-        MouseClicked(aPresContext, aEvent);
+    case NS_MOUSE_CLICK: {
+      WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent();
+      if (mouseEvent->IsLeftClickEvent()) {
+        MouseClicked(aPresContext, mouseEvent);
       }
       break;
+    }
   }
 
   return nsBoxFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
 }
 
 void 
-nsButtonBoxFrame::DoMouseClick(nsGUIEvent* aEvent, bool aTrustEvent) 
+nsButtonBoxFrame::DoMouseClick(WidgetGUIEvent* aEvent, bool aTrustEvent)
 {
   // Don't execute if we're disabled.
   if (mContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::disabled,
@@ -125,10 +135,11 @@ nsButtonBoxFrame::DoMouseClick(nsGUIEvent* aEvent, bool aTrustEvent)
   bool isAlt = false;
   bool isMeta = false;
   if(aEvent) {
-    isShift = ((nsInputEvent*)(aEvent))->IsShift();
-    isControl = ((nsInputEvent*)(aEvent))->IsControl();
-    isAlt = ((nsInputEvent*)(aEvent))->IsAlt();
-    isMeta = ((nsInputEvent*)(aEvent))->IsMeta();
+    WidgetInputEvent* inputEvent = aEvent->AsInputEvent();
+    isShift = inputEvent->IsShift();
+    isControl = inputEvent->IsControl();
+    isAlt = inputEvent->IsAlt();
+    isMeta = inputEvent->IsMeta();
   }
 
   // Have the content handle the event, propagating it according to normal DOM rules.

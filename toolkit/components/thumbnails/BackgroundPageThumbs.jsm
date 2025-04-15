@@ -2,13 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/**
- * WARNING: BackgroundPageThumbs.jsm is currently excluded from release builds.
- * If you use it, you must also exclude your caller when RELEASE_BUILD is
- * defined, as described here:
- * https://wiki.mozilla.org/Platform/Channel-specific_build_defines
- */
-
 const EXPORTED_SYMBOLS = [
   "BackgroundPageThumbs",
 ];
@@ -39,11 +32,6 @@ const BackgroundPageThumbs = {
    * Asynchronously captures a thumbnail of the given URL.
    *
    * The page is loaded anonymously, and plug-ins are disabled.
-   *
-   * WARNING: BackgroundPageThumbs.jsm is currently excluded from release
-   * builds.  If you use it, you must also exclude your caller when
-   * RELEASE_BUILD is defined, as described here:
-   * https://wiki.mozilla.org/Platform/Channel-specific_build_defines
    *
    * @param url      The URL to capture.
    * @param options  An optional object that configures the capture.  Its
@@ -85,11 +73,6 @@ const BackgroundPageThumbs = {
   /**
    * Asynchronously captures a thumbnail of the given URL if one does not
    * already exist.  Otherwise does nothing.
-   *
-   * WARNING: BackgroundPageThumbs.jsm is currently excluded from release
-   * builds.  If you use it, you must also exclude your caller when
-   * RELEASE_BUILD is defined, as described here:
-   * https://wiki.mozilla.org/Platform/Channel-specific_build_defines
    *
    * @param url      The URL to capture.
    * @param options  An optional object that configures the capture.  See
@@ -332,7 +315,8 @@ Capture.prototype = {
       delete this._msgMan;
     }
     delete this.captureCallback;
-    Services.ww.unregisterNotification(this);
+    delete this.doneCallbacks;
+    delete this.options;
   },
 
   // Called when the didCapture message is received.
@@ -352,8 +336,10 @@ Capture.prototype = {
 
   _done: function (data, reason) {
     // Note that _done will be called only once, by either receiveMessage or
-    // notify, since it calls destroy, which cancels the timeout timer and
+    // notify, since it calls destroy here, which cancels the timeout timer and
     // removes the didCapture message listener.
+    let { captureCallback, doneCallbacks, options } = this;
+    this.destroy();
 
     if (typeof(reason) != "number")
       throw new Error("A done reason must be given.");
@@ -366,11 +352,10 @@ Capture.prototype = {
     }
 
     let done = () => {
-      this.captureCallback(this);
-      this.destroy();
-      for (let callback of this.doneCallbacks) {
+      captureCallback(this);
+      for (let callback of doneCallbacks) {
         try {
-          callback.call(this.options, this.url);
+          callback.call(options, this.url);
         }
         catch (err) {
           Cu.reportError(err);

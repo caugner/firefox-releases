@@ -29,22 +29,22 @@ const CONTENT_MIME_TYPE_ABBREVIATIONS = {
   "x-javascript": "js"
 };
 const CONTENT_MIME_TYPE_MAPPINGS = {
-  "/ecmascript": SourceEditor.MODES.JAVASCRIPT,
-  "/javascript": SourceEditor.MODES.JAVASCRIPT,
-  "/x-javascript": SourceEditor.MODES.JAVASCRIPT,
-  "/html": SourceEditor.MODES.HTML,
-  "/xhtml": SourceEditor.MODES.HTML,
-  "/xml": SourceEditor.MODES.HTML,
-  "/atom": SourceEditor.MODES.HTML,
-  "/soap": SourceEditor.MODES.HTML,
-  "/rdf": SourceEditor.MODES.HTML,
-  "/rss": SourceEditor.MODES.HTML,
-  "/css": SourceEditor.MODES.CSS
+  "/ecmascript": Editor.modes.js,
+  "/javascript": Editor.modes.js,
+  "/x-javascript": Editor.modes.js,
+  "/html": Editor.modes.html,
+  "/xhtml": Editor.modes.html,
+  "/xml": Editor.modes.html,
+  "/atom": Editor.modes.html,
+  "/soap": Editor.modes.html,
+  "/rdf": Editor.modes.css,
+  "/rss": Editor.modes.css,
+  "/css": Editor.modes.css
 };
 const DEFAULT_EDITOR_CONFIG = {
-  mode: SourceEditor.MODES.TEXT,
+  mode: Editor.modes.text,
   readOnly: true,
-  showLineNumbers: true
+  lineNumbers: true
 };
 const GENERIC_VARIABLES_VIEW_SETTINGS = {
   lazyEmpty: true,
@@ -156,7 +156,7 @@ let NetMonitorView = {
   },
 
   /**
-   * Lazily initializes and returns a promise for a SourceEditor instance.
+   * Lazily initializes and returns a promise for a Editor instance.
    *
    * @param string aId
    *        The id of the editor placeholder node.
@@ -175,7 +175,8 @@ let NetMonitorView = {
 
     // Initialize the source editor and store the newly created instance
     // in the ether of a resolved promise's value.
-    new SourceEditor().init($(aId), DEFAULT_EDITOR_CONFIG, deferred.resolve);
+    let editor = new Editor(DEFAULT_EDITOR_CONFIG);
+    editor.appendTo($(aId)).then(() => deferred.resolve(editor));
 
     return deferred.promise;
   },
@@ -1537,8 +1538,10 @@ NetworkDetailsView.prototype = {
       }));
     this._json = new VariablesView($("#response-content-json"),
       Heritage.extend(GENERIC_VARIABLES_VIEW_SETTINGS, {
+        onlyEnumVisible: true,
         searchPlaceholder: L10N.getStr("jsonFilterText")
       }));
+    VariablesViewController.attach(this._json);
 
     this._paramsQueryString = L10N.getStr("paramsQueryString");
     this._paramsFormData = L10N.getStr("paramsFormData");
@@ -1864,13 +1867,16 @@ NetworkDetailsView.prototype = {
     let { mimeType, text, encoding } = aResponse.content;
 
     gNetwork.getString(text).then(aString => {
-      // Handle json.
-      if (mimeType.contains("/json")) {
+      // Handle json, which we tentatively identify by checking the MIME type
+      // for "json" after any word boundary. This works for the standard
+      // "application/json", and also for custom types like "x-bigcorp-json".
+      // This should be marginally more reliable than just looking for "json".
+      if (/\bjson/.test(mimeType)) {
         let jsonpRegex = /^[a-zA-Z0-9_$]+\(|\)$/g; // JSONP with callback.
         let sanitizedJSON = aString.replace(jsonpRegex, "");
         let callbackPadding = aString.match(jsonpRegex);
 
-        // Make sure this is an valid JSON object first. If so, nicely display
+        // Make sure this is a valid JSON object first. If so, nicely display
         // the parsing results in a variables view. Otherwise, simply show
         // the contents as plain text.
         try {
@@ -1886,15 +1892,16 @@ NetworkDetailsView.prototype = {
             ? L10N.getFormatStr("jsonpScopeName", callbackPadding[0].slice(0, -1))
             : L10N.getStr("jsonScopeName");
 
-          let jsonScope = this._json.addScope(jsonScopeName);
-          jsonScope.addItem().populate(jsonObject, { expanded: true });
-          jsonScope.expanded = true;
+          this._json.controller.setSingleVariable({
+            label: jsonScopeName,
+            rawObject: jsonObject,
+          });
         }
         // Malformed JSON.
         else {
           $("#response-content-textarea-box").hidden = false;
           NetMonitorView.editor("#response-content-textarea").then(aEditor => {
-            aEditor.setMode(SourceEditor.MODES.JAVASCRIPT);
+            aEditor.setMode(Editor.modes.js);
             aEditor.setText(aString);
           });
           let infoHeader = $("#response-content-info-header");
@@ -1931,7 +1938,7 @@ NetworkDetailsView.prototype = {
       else {
         $("#response-content-textarea-box").hidden = false;
         NetMonitorView.editor("#response-content-textarea").then(aEditor => {
-          aEditor.setMode(SourceEditor.MODES.TEXT);
+          aEditor.setMode(Editor.modes.text);
           aEditor.setText(aString);
 
           // Maybe set a more appropriate mode in the Source Editor if possible,
@@ -2037,6 +2044,7 @@ NetworkDetailsView.prototype = {
  * DOM query helper.
  */
 function $(aSelector, aTarget = document) aTarget.querySelector(aSelector);
+function $all(aSelector, aTarget = document) aTarget.querySelectorAll(aSelector);
 
 /**
  * Helper for getting an nsIURL instance out of a string.

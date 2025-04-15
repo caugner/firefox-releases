@@ -87,9 +87,8 @@ static void _AudioSampleCallback(void *aThis,
  * Otherwise, put as much data as is left into |aData|, set |aNumBytes| to the
  * amount of data we have left, and return false.
  *
- * This function also calls NotifyBytesConsumed() on the media resource and
- * passes the read data on to the MP3 frame parser for stream duration
- * estimation.
+ * This function also passes the read data on to the MP3 frame parser for
+ * stream duration estimation.
  */
 nsresult
 AppleMP3Reader::ReadAndNotify(uint32_t *aNumBytes, char *aData)
@@ -111,8 +110,6 @@ AppleMP3Reader::ReadAndNotify(uint32_t *aNumBytes, char *aData)
       return NS_ERROR_FAILURE;
     }
   } while(totalBytes < *aNumBytes && numBytes);
-
-  mDecoder->NotifyBytesConsumed(totalBytes);
 
   // Pass the buffer to the MP3 frame parser to improve our duration estimate.
   if (mMP3FrameParser.IsMP3()) {
@@ -363,7 +360,7 @@ GetProperty(AudioFileStreamID aAudioFileStream,
 
 
 nsresult
-AppleMP3Reader::ReadMetadata(VideoInfo* aInfo,
+AppleMP3Reader::ReadMetadata(MediaInfo* aInfo,
                              MetadataTags** aTags)
 {
   MOZ_ASSERT(mDecoder->OnDecodeThread(), "Should be on decode thread");
@@ -401,9 +398,9 @@ AppleMP3Reader::ReadMetadata(VideoInfo* aInfo,
     return NS_ERROR_FAILURE;
   }
 
-  aInfo->mAudioRate = mAudioSampleRate;
-  aInfo->mAudioChannels = mAudioChannels;
-  aInfo->mHasAudio = mStreamReady;
+  aInfo->mAudio.mRate = mAudioSampleRate;
+  aInfo->mAudio.mChannels = mAudioChannels;
+  aInfo->mAudio.mHasAudio = mStreamReady;
 
   {
     ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
@@ -515,18 +512,6 @@ AppleMP3Reader::Seek(int64_t aTime,
 
   ResetDecode();
 
-  return NS_OK;
-}
-
-
-nsresult
-AppleMP3Reader::GetBuffered(dom::TimeRanges* aBuffered,
-                            int64_t aStartTime)
-{
-  ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
-  GetEstimatedBufferedTimeRanges(mDecoder->GetResource(),
-                                 mDecoder->GetMediaDuration(),
-                                 aBuffered);
   return NS_OK;
 }
 

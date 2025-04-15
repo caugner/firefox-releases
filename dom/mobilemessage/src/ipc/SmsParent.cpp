@@ -24,6 +24,7 @@
 #include "nsContentUtils.h"
 #include "nsTArrayHelpers.h"
 #include "nsCxPusher.h"
+#include "nsServiceManagerUtils.h"
 
 namespace mozilla {
 namespace dom {
@@ -61,7 +62,7 @@ MmsAttachmentDataToJSObject(JSContext* aContext,
                                            global,
                                            blob,
                                            &NS_GET_IID(nsIDOMBlob),
-                                           content.address());
+                                           &content);
   NS_ENSURE_SUCCESS(rv, nullptr);
   if (!JS_DefineProperty(aContext, obj, "content", content,
                          nullptr, nullptr, 0)) {

@@ -47,6 +47,7 @@
 #include "nsCrossSiteListenerProxy.h"
 #include "nsSandboxFlags.h"
 #include "nsContentTypeParser.h"
+#include "nsINetworkSeer.h"
 
 #include "mozilla/CORSMode.h"
 #include "mozilla/Attributes.h"
@@ -70,6 +71,7 @@ public:
     : mElement(aElement),
       mLoading(true),
       mIsInline(true),
+      mHasSourceMapURL(false),
       mJSVersion(aVersion),
       mLineNo(1),
       mCORSMode(aCORSMode)
@@ -93,9 +95,11 @@ public:
   }
 
   nsCOMPtr<nsIScriptElement> mElement;
-  bool mLoading;             // Are we still waiting for a load to complete?
-  bool mIsInline;            // Is the script inline or loaded?
-  nsString mScriptText;              // Holds script for loaded scripts
+  bool mLoading;          // Are we still waiting for a load to complete?
+  bool mIsInline;         // Is the script inline or loaded?
+  bool mHasSourceMapURL;  // Does the HTTP header have a source map url?
+  nsString mSourceMapURL; // Holds source map url for loaded scripts
+  nsString mScriptText;   // Holds script for text loaded scripts
   uint32_t mJSVersion;
   nsCOMPtr<nsIURI> mURI;
   nsCOMPtr<nsIPrincipal> mOriginPrincipal;
@@ -325,6 +329,10 @@ nsScriptLoader::StartLoad(nsScriptLoadRequest *aRequest, const nsAString &aType,
                                   false);
     httpChannel->SetReferrer(mDocument->GetDocumentURI());
   }
+
+  nsCOMPtr<nsILoadContext> loadContext(do_QueryInterface(docshell));
+  mozilla::net::SeerLearn(aRequest->mURI, mDocument->GetDocumentURI(),
+      nsINetworkSeer::LEARN_LOAD_SUBRESOURCE, loadContext);
 
   nsCOMPtr<nsIStreamLoader> loader;
   rv = NS_NewStreamLoader(getter_AddRefs(loader), this);
@@ -944,6 +952,9 @@ nsScriptLoader::FillCompileOptionsForRequest(nsScriptLoadRequest *aRequest,
   aOptions->setFileAndLine(aRequest->mURL.get(), aRequest->mLineNo);
   aOptions->setVersion(JSVersion(aRequest->mJSVersion));
   aOptions->setCompileAndGo(JS_IsGlobalObject(scopeChain));
+  if (aRequest->mHasSourceMapURL) {
+    aOptions->setSourceMapURL(aRequest->mSourceMapURL.get());
+  }
   if (aRequest->mOriginPrincipal) {
     aOptions->setOriginPrincipals(nsJSPrincipals::get(aRequest->mOriginPrincipal));
   }
@@ -1298,6 +1309,11 @@ nsScriptLoader::PrepareLoadedRequest(nsScriptLoadRequest* aRequest,
     if (NS_SUCCEEDED(rv) && !requestSucceeded) {
       return NS_ERROR_NOT_AVAILABLE;
     }
+
+    nsAutoCString sourceMapURL;
+    httpChannel->GetResponseHeader(NS_LITERAL_CSTRING("X-SourceMap"), sourceMapURL);
+    aRequest->mHasSourceMapURL = true;
+    aRequest->mSourceMapURL = NS_ConvertUTF8toUTF16(sourceMapURL);
   }
 
   nsCOMPtr<nsIChannel> channel = do_QueryInterface(req);

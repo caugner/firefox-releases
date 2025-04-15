@@ -48,7 +48,8 @@
 #define _nswindow_h
 
 #include "nsBaseWidget.h"
-#include "gfxASurface.h"
+#include "gfxTypes.h"
+#include "mozilla/MouseEvents.h"
 
 #define INCL_DOS
 #define INCL_WIN
@@ -71,6 +72,8 @@
 #ifndef WM_FOCUSCHANGED
 #define WM_FOCUSCHANGED 0x000E
 #endif
+
+class gfxASurface;
 
 extern "C" {
   PVOID  APIENTRY WinQueryProperty(HWND hwnd, PCSZ pszNameOrAtom);
@@ -174,7 +177,7 @@ public:
                                             bool aDoCapture, bool aConsumeRollupEvent);
   NS_IMETHOD            GetToggledKeyState(uint32_t aKeyCode,
                                            bool* aLEDState);
-  NS_IMETHOD            DispatchEvent(nsGUIEvent* event,
+  NS_IMETHOD            DispatchEvent(mozilla::WidgetGUIEvent* aEvent,
                                       nsEventStatus& aStatus);
   NS_IMETHOD            ReparentNativeWidget(nsIWidget* aNewParent);
 
@@ -212,7 +215,7 @@ protected:
                                      uint32_t aHeight, uint32_t aDepth);
   HBITMAP               CreateBitmapRGB(uint8_t* aImageData,
                                         uint32_t aWidth, uint32_t aHeight);
-  HBITMAP               CreateTransparencyMask(gfxASurface::gfxImageFormat format,
+  HBITMAP               CreateTransparencyMask(gfxImageFormat format,
                                                uint8_t* aImageData,
                                                uint32_t aWidth, uint32_t aHeight);
   static bool           EventIsInsideWindow(nsWindow* aWindow); 
@@ -232,9 +235,10 @@ protected:
   bool                  ImeConversionString(HIMI himi);
   bool                  OnImeRequest(MPARAM mp1, MPARAM mp2);
   bool                  DispatchKeyEvent(MPARAM mp1, MPARAM mp2);
-  void                  InitEvent(nsGUIEvent& event, nsIntPoint* pt = 0);
-  bool                  DispatchWindowEvent(nsGUIEvent* event);
-  bool                  DispatchWindowEvent(nsGUIEvent* event,
+  void                  InitEvent(mozilla::WidgetGUIEvent& aEvent,
+                                  nsIntPoint* pt = 0);
+  bool                  DispatchWindowEvent(mozilla::WidgetGUIEvent* aEvent);
+  bool                  DispatchWindowEvent(mozilla::WidgetGUIEvent* aEvent,
                                             nsEventStatus& aStatus);
   bool                  DispatchCommandEvent(uint32_t aEventCommand);
   bool                  DispatchDragDropEvent(uint32_t aMsg);
@@ -244,7 +248,7 @@ protected:
   bool                  DispatchMouseEvent(uint32_t aEventType,
                                            MPARAM mp1, MPARAM mp2, 
                                            bool aIsContextMenuKey = false,
-                                           int16_t aButton = nsMouseEvent::eLeftButton);
+                                           int16_t aButton = mozilla::WidgetMouseEvent::eLeftButton);
   bool                  DispatchActivationEvent(uint32_t aEventType);
   bool                  DispatchScrollEvent(ULONG msg, MPARAM mp1, MPARAM mp2);
 

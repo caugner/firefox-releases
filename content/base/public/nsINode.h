@@ -20,6 +20,7 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/dom/EventTarget.h" // for base class
 #include "js/TypeDecls.h"     // for Handle, Value, JSObject, JSContext
+#include "mozilla/dom/DOMString.h"
 
 // Including 'windows.h' will #define GetClassInfo to something else.
 #ifdef XP_WIN
@@ -83,7 +84,7 @@ enum {
   // XBL-generated ones, will do.  This flag is set-once: once a node has it,
   // it must not be removed.
   // NOTE: Should only be used on nsIContent nodes
-  NODE_IS_ANONYMOUS =                     NODE_FLAG_BIT(2),
+  NODE_IS_ANONYMOUS_ROOT =                NODE_FLAG_BIT(2),
 
   // Whether the node has some ancestor, possibly itself, that is native
   // anonymous.  This includes ancestors crossing XBL scopes, in cases when an
@@ -799,10 +800,16 @@ public:
    * See nsIDOMEventTarget
    */
   NS_DECL_NSIDOMEVENTTARGET
+
+  virtual nsEventListenerManager*
+  GetExistingListenerManager() const MOZ_OVERRIDE;
+  virtual nsEventListenerManager*
+  GetOrCreateListenerManager() MOZ_OVERRIDE;
+
   using mozilla::dom::EventTarget::RemoveEventListener;
   using nsIDOMEventTarget::AddEventListener;
   virtual void AddEventListener(const nsAString& aType,
-                                nsIDOMEventListener* aListener,
+                                mozilla::dom::EventListener* aListener,
                                 bool aUseCapture,
                                 const mozilla::dom::Nullable<bool>& aWantsUntrusted,
                                 mozilla::ErrorResult& aRv) MOZ_OVERRIDE;
@@ -910,7 +917,7 @@ public:
 
   void SetFlags(uint32_t aFlagsToSet)
   {
-    NS_ASSERTION(!(aFlagsToSet & (NODE_IS_ANONYMOUS |
+    NS_ASSERTION(!(aFlagsToSet & (NODE_IS_ANONYMOUS_ROOT |
                                   NODE_IS_NATIVE_ANONYMOUS_ROOT |
                                   NODE_IS_IN_ANONYMOUS_SUBTREE |
                                   NODE_ATTACH_BINDING_ON_POSTCREATE |
@@ -925,7 +932,7 @@ public:
   void UnsetFlags(uint32_t aFlagsToUnset)
   {
     NS_ASSERTION(!(aFlagsToUnset &
-                   (NODE_IS_ANONYMOUS |
+                   (NODE_IS_ANONYMOUS_ROOT |
                     NODE_IS_IN_ANONYMOUS_SUBTREE |
                     NODE_IS_NATIVE_ANONYMOUS_ROOT)),
                  "Trying to unset write-only flags");
@@ -1483,9 +1490,11 @@ public:
    */
   uint32_t Length() const;
 
-  void GetNodeName(nsAString& aNodeName) const
+  void GetNodeName(mozilla::dom::DOMString& aNodeName)
   {
-    aNodeName = NodeName();
+    const nsString& nodeName = NodeName();
+    aNodeName.SetStringBuffer(nsStringBuffer::FromString(nodeName),
+                              nodeName.Length());
   }
   void GetBaseURI(nsAString& aBaseURI) const;
   bool HasChildNodes() const
@@ -1536,9 +1545,15 @@ public:
     mNodeInfo->GetPrefix(aPrefix);
   }
 #endif
-  void GetLocalName(nsAString& aLocalName)
+  void GetLocalName(mozilla::dom::DOMString& aLocalName)
   {
-    aLocalName = mNodeInfo->LocalName();
+    const nsString& localName = LocalName();
+    if (localName.IsVoid()) {
+      aLocalName.SetNull();
+    } else {
+      aLocalName.SetStringBuffer(nsStringBuffer::FromString(localName),
+                                 localName.Length());
+    }
   }
   // HasAttributes is defined inline in Element.h.
   bool HasAttributes() const;
@@ -1687,8 +1702,7 @@ public:
   */
 #define EVENT(name_, id_, type_, struct_)                             \
   mozilla::dom::EventHandlerNonNull* GetOn##name_();                  \
-  void SetOn##name_(mozilla::dom::EventHandlerNonNull* listener,      \
-                    mozilla::ErrorResult& error);                     \
+  void SetOn##name_(mozilla::dom::EventHandlerNonNull* listener);     \
   NS_IMETHOD GetOn##name_(JSContext *cx, JS::Value *vp);              \
   NS_IMETHOD SetOn##name_(JSContext *cx, const JS::Value &v);
 #define TOUCH_EVENT EVENT
@@ -1757,7 +1771,7 @@ ToCanonicalSupports(nsINode* aPointer)
 #define NS_FORWARD_NSIDOMNODE_TO_NSINODE_HELPER(...) \
   NS_IMETHOD GetNodeName(nsAString& aNodeName) __VA_ARGS__ \
   { \
-    nsINode::GetNodeName(aNodeName); \
+    aNodeName = nsINode::NodeName(); \
     return NS_OK; \
   } \
   NS_IMETHOD GetNodeValue(nsAString& aNodeValue) __VA_ARGS__ \
@@ -1859,7 +1873,7 @@ ToCanonicalSupports(nsINode* aPointer)
   } \
   NS_IMETHOD GetLocalName(nsAString& aLocalName) __VA_ARGS__ \
   { \
-    nsINode::GetLocalName(aLocalName); \
+    aLocalName = nsINode::LocalName(); \
     return NS_OK; \
   } \
   using nsINode::HasAttributes; \

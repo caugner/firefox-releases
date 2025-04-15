@@ -6,10 +6,13 @@
 #include "nsCOMPtr.h"
 #include "nsPresContext.h"
 #include "nsGkAtoms.h"
-#include "nsGUIEvent.h"
 #include "nsButtonBoxFrame.h"
 #include "nsITimer.h"
 #include "nsRepeatService.h"
+#include "mozilla/MouseEvents.h"
+#include "nsIContent.h"
+
+using namespace mozilla;
 
 class nsAutoRepeatBoxFrame : public nsButtonBoxFrame
 {
@@ -25,17 +28,17 @@ public:
                               nsIAtom* aAttribute,
                               int32_t aModType);
 
-  NS_IMETHOD HandleEvent(nsPresContext* aPresContext, 
-                         nsGUIEvent* aEvent,
+  NS_IMETHOD HandleEvent(nsPresContext* aPresContext,
+                         WidgetGUIEvent* aEvent,
                          nsEventStatus* aEventStatus);
 
-  NS_IMETHOD HandlePress(nsPresContext* aPresContext, 
-                         nsGUIEvent*     aEvent,
-                         nsEventStatus*  aEventStatus);
+  NS_IMETHOD HandlePress(nsPresContext* aPresContext,
+                         WidgetGUIEvent* aEvent,
+                         nsEventStatus* aEventStatus);
 
-  NS_IMETHOD HandleRelease(nsPresContext* aPresContext, 
-                           nsGUIEvent*     aEvent,
-                           nsEventStatus*  aEventStatus);
+  NS_IMETHOD HandleRelease(nsPresContext* aPresContext,
+                           WidgetGUIEvent* aEvent,
+                           nsEventStatus* aEventStatus);
 
 protected:
   nsAutoRepeatBoxFrame(nsIPresShell* aPresShell, nsStyleContext* aContext):
@@ -71,9 +74,9 @@ NS_NewAutoRepeatBoxFrame (nsIPresShell* aPresShell, nsStyleContext* aContext)
 NS_IMPL_FRAMEARENA_HELPERS(nsAutoRepeatBoxFrame)
 
 NS_IMETHODIMP
-nsAutoRepeatBoxFrame::HandleEvent(nsPresContext* aPresContext, 
-                                      nsGUIEvent* aEvent,
-                                      nsEventStatus* aEventStatus)
+nsAutoRepeatBoxFrame::HandleEvent(nsPresContext* aPresContext,
+                                  WidgetGUIEvent* aEvent,
+                                  nsEventStatus* aEventStatus)
 {  
   NS_ENSURE_ARG_POINTER(aEventStatus);
   if (nsEventStatus_eConsumeNoDefault == *aEventStatus) {
@@ -101,20 +104,22 @@ nsAutoRepeatBoxFrame::HandleEvent(nsPresContext* aPresContext,
       mTrustedEvent = false;
       break;
 
-    case NS_MOUSE_CLICK:
-      if (NS_IS_MOUSE_LEFT_CLICK(aEvent)) {
+    case NS_MOUSE_CLICK: {
+      WidgetMouseEvent* mouseEvent = aEvent->AsMouseEvent();
+      if (mouseEvent->IsLeftClickEvent()) {
         // skip button frame handling to prevent click handling
-         return nsBoxFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
+        return nsBoxFrame::HandleEvent(aPresContext, mouseEvent, aEventStatus);
       }
       break;
+    }
   }
      
   return nsButtonBoxFrame::HandleEvent(aPresContext, aEvent, aEventStatus);
 }
 
 NS_IMETHODIMP
-nsAutoRepeatBoxFrame::HandlePress(nsPresContext* aPresContext, 
-                                  nsGUIEvent* aEvent,
+nsAutoRepeatBoxFrame::HandlePress(nsPresContext* aPresContext,
+                                  WidgetGUIEvent* aEvent,
                                   nsEventStatus* aEventStatus)
 {
   if (!IsActivatedOnHover()) {
@@ -127,8 +132,8 @@ nsAutoRepeatBoxFrame::HandlePress(nsPresContext* aPresContext,
 }
 
 NS_IMETHODIMP 
-nsAutoRepeatBoxFrame::HandleRelease(nsPresContext* aPresContext, 
-                                    nsGUIEvent* aEvent,
+nsAutoRepeatBoxFrame::HandleRelease(nsPresContext* aPresContext,
+                                    WidgetGUIEvent* aEvent,
                                     nsEventStatus* aEventStatus)
 {
   if (!IsActivatedOnHover()) {

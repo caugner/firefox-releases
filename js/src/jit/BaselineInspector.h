@@ -46,12 +46,12 @@ class SetElemICInspector : public ICInspector
 class BaselineInspector
 {
   private:
-    RootedScript script;
+    JSScript *script;
     ICEntry *prevLookedUpEntry;
 
   public:
-    BaselineInspector(JSContext *cx, JSScript *rawScript)
-      : script(cx, rawScript), prevLookedUpEntry(NULL)
+    BaselineInspector(JSScript *script)
+      : script(script), prevLookedUpEntry(nullptr)
     {
         JS_ASSERT(script);
     }
@@ -82,7 +82,7 @@ class BaselineInspector
 
     template <typename ICInspectorType>
     ICInspectorType makeICInspector(jsbytecode *pc, ICStub::Kind expectedFallbackKind) {
-        ICEntry *ent = NULL;
+        ICEntry *ent = nullptr;
         if (hasBaselineScript()) {
             ent = &icEntryFromPC(pc);
             JS_ASSERT(ent->fallbackStub()->kind() == expectedFallbackKind);
@@ -94,7 +94,8 @@ class BaselineInspector
     bool dimorphicStub(jsbytecode *pc, ICStub **pfirst, ICStub **psecond);
 
   public:
-    bool maybeShapesForPropertyOp(jsbytecode *pc, Vector<Shape *> &shapes);
+    typedef Vector<Shape *, 4, IonAllocPolicy> ShapeVector;
+    bool maybeShapesForPropertyOp(jsbytecode *pc, ShapeVector &shapes);
 
     SetElemICInspector setElemICInspector(jsbytecode *pc) {
         return makeICInspector<SetElemICInspector>(pc, ICStub::SetElem_Fallback);
@@ -108,6 +109,13 @@ class BaselineInspector
     bool hasSeenNegativeIndexGetElement(jsbytecode *pc);
     bool hasSeenAccessedGetter(jsbytecode *pc);
     bool hasSeenDoubleResult(jsbytecode *pc);
+    bool hasSeenNonStringIterNext(jsbytecode *pc);
+
+    JSObject *getTemplateObject(jsbytecode *pc);
+    JSObject *getTemplateObjectForNative(jsbytecode *pc, Native native);
+
+    DeclEnvObject *templateDeclEnvObject();
+    CallObject *templateCallObject();
 };
 
 } // namespace jit

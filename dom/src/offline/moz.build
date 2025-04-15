@@ -9,7 +9,7 @@ MODULE = 'dom'
 EXPORTS += [
     'nsDOMOfflineResourceList.h',
 ]
-CPP_SOURCES += [
+SOURCES += [
     'nsDOMOfflineResourceList.cpp',
 ]
 
@@ -19,3 +19,8 @@ FAIL_ON_WARNINGS = True
 
 LIBXUL_LIBRARY = True
 
+LOCAL_INCLUDES += [
+    "/content/base/src",
+    "/content/events/src",
+    "/dom/base",
+]

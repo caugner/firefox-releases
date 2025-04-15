@@ -13,6 +13,8 @@
 #include "nsGlobalWindow.h"
 #include "nsIAppsService.h"
 #include "PCOMContentPermissionRequestChild.h"
+#include "nsIScriptSecurityManager.h"
+#include "nsServiceManagerUtils.h"
 
 namespace mozilla {
 namespace dom {
@@ -92,7 +94,7 @@ DesktopNotification::PostDesktopNotification()
       appsService->GetManifestURLByLocalId(appId, manifestUrl);
       mozilla::AutoSafeJSContext cx;
       JS::RootedValue val(cx);
-      AppNotificationServiceOptionsInitializer ops;
+      AppNotificationServiceOptions ops;
       ops.mTextClickable = true;
       ops.mManifestURL = manifestUrl;
 

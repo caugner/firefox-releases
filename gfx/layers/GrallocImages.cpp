@@ -11,6 +11,7 @@
 #include "mozilla/layers/ImageBridgeChild.h"
 #include "mozilla/layers/GrallocTextureClient.h"
 #include "gfx2DGlue.h"
+#include "gfxImageSurface.h"
 
 #include <OMX_IVCommon.h>
 #include <ColorConverter.h>
@@ -229,7 +230,7 @@ GrallocImage::GetAsSurface()
   }
 
   nsRefPtr<gfxImageSurface> imageSurface =
-    new gfxImageSurface(GetSize(), gfxASurface::ImageFormatRGB16_565);
+    new gfxImageSurface(GetSize(), gfxImageFormatRGB16_565);
 
   uint32_t width = GetSize().width;
   uint32_t height = GetSize().height;
@@ -289,8 +290,7 @@ GrallocImage::GetTextureClient()
       return nullptr;
     }
     const SurfaceDescriptorGralloc& desc = sd.get_SurfaceDescriptorGralloc();
-    TextureFlags flags = desc.external() ? TEXTURE_DEALLOCATE_CLIENT
-                                         : TEXTURE_DEALLOCATE_HOST;
+    TextureFlags flags = desc.external() ? TEXTURE_DEALLOCATE_CLIENT : 0;
     if (desc.isRBSwapped()) {
       flags |= TEXTURE_RB_SWAPPED;
     }

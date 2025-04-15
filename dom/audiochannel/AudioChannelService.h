@@ -190,6 +190,8 @@ protected:
   //   4. When this process shuts down.
   uint64_t mPlayableHiddenContentChildID;
 
+  bool mDisabled;
+
   nsCOMPtr<nsITimer> mDeferTelChannelTimer;
   bool mTimerElementHidden;
   uint64_t mTimerChildID;

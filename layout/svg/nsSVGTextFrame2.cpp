@@ -40,6 +40,7 @@
 #include "SVGNumberList.h"
 #include "SVGPathElement.h"
 #include "SVGTextPathElement.h"
+#include "nsLayoutUtils.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -2919,7 +2920,7 @@ SVGTextDrawPathCallbacks::FillAndStrokeGeometry()
   bool pushedGroup = false;
   if (mColor == NS_40PERCENT_FOREGROUND_COLOR) {
     pushedGroup = true;
-    gfx->PushGroup(gfxASurface::CONTENT_COLOR_ALPHA);
+    gfx->PushGroup(GFX_CONTENT_COLOR_ALPHA);
   }
 
   uint32_t paintOrder = mFrame->StyleSVG()->mPaintOrder;
@@ -2968,7 +2969,85 @@ SVGTextDrawPathCallbacks::StrokeGeometry()
   }
 }
 
+//----------------------------------------------------------------------
+// SVGTextContextPaint methods:
+
+already_AddRefed<gfxPattern>
+SVGTextContextPaint::GetFillPattern(float aOpacity,
+                                    const gfxMatrix& aCTM)
+{
+  return mFillPaint.GetPattern(aOpacity, &nsStyleSVG::mFill, aCTM);
 }
+
+already_AddRefed<gfxPattern>
+SVGTextContextPaint::GetStrokePattern(float aOpacity,
+                                      const gfxMatrix& aCTM)
+{
+  return mStrokePaint.GetPattern(aOpacity, &nsStyleSVG::mStroke, aCTM);
+}
+
+already_AddRefed<gfxPattern>
+SVGTextContextPaint::Paint::GetPattern(float aOpacity,
+                                       nsStyleSVGPaint nsStyleSVG::*aFillOrStroke,
+                                       const gfxMatrix& aCTM)
+{
+  nsRefPtr<gfxPattern> pattern;
+  if (mPatternCache.Get(aOpacity, getter_AddRefs(pattern))) {
+    // Set the pattern matrix just in case it was messed with by a previous
+    // caller. We should get the same matrix each time a pattern is constructed
+    // so this should be fine.
+    pattern->SetMatrix(aCTM * mPatternMatrix);
+    return pattern.forget();
+  }
+
+  switch (mPaintType) {
+  case eStyleSVGPaintType_None:
+    pattern = new gfxPattern(gfxRGBA(0.0f, 0.0f, 0.0f, 0.0f));
+    mPatternMatrix = gfxMatrix();
+    break;
+  case eStyleSVGPaintType_Color:
+    pattern = new gfxPattern(gfxRGBA(NS_GET_R(mPaintDefinition.mColor) / 255.0,
+                                     NS_GET_G(mPaintDefinition.mColor) / 255.0,
+                                     NS_GET_B(mPaintDefinition.mColor) / 255.0,
+                                     NS_GET_A(mPaintDefinition.mColor) / 255.0 * aOpacity));
+    mPatternMatrix = gfxMatrix();
+    break;
+  case eStyleSVGPaintType_Server:
+    pattern = mPaintDefinition.mPaintServerFrame->GetPaintServerPattern(mFrame,
+                                                                        mContextMatrix,
+                                                                        aFillOrStroke,
+                                                                        aOpacity);
+    {
+      // m maps original-user-space to pattern space
+      gfxMatrix m = pattern->GetMatrix();
+      gfxMatrix deviceToOriginalUserSpace = mContextMatrix;
+      deviceToOriginalUserSpace.Invert();
+      // mPatternMatrix maps device space to pattern space via original user space
+      mPatternMatrix = deviceToOriginalUserSpace * m;
+    }
+    pattern->SetMatrix(aCTM * mPatternMatrix);
+    break;
+  case eStyleSVGPaintType_ContextFill:
+    pattern = mPaintDefinition.mContextPaint->GetFillPattern(aOpacity, aCTM);
+    // Don't cache this. mContextPaint will have cached it anyway. If we
+    // cache it, we'll have to compute mPatternMatrix, which is annoying.
+    return pattern.forget();
+  case eStyleSVGPaintType_ContextStroke:
+    pattern = mPaintDefinition.mContextPaint->GetStrokePattern(aOpacity, aCTM);
+    // Don't cache this. mContextPaint will have cached it anyway. If we
+    // cache it, we'll have to compute mPatternMatrix, which is annoying.
+    return pattern.forget();
+  default:
+    MOZ_ASSERT(false, "invalid paint type");
+    return nullptr;
+  }
+
+  mPatternCache.Put(aOpacity, pattern);
+  return pattern.forget();
+}
+
+} // namespace mozilla
+
 
 // ============================================================================
 // nsSVGTextFrame2
@@ -3538,7 +3617,7 @@ nsSVGTextFrame2::PaintSVG(nsRenderingContext* aContext,
       (gfxTextContextPaint*)aContext->GetUserData(&gfxTextContextPaint::sUserDataKey);
 
     nsAutoPtr<gfxTextContextPaint> contextPaint;
-    gfxFont::DrawMode drawMode =
+    DrawMode drawMode =
       SetupCairoState(gfx, frame, outerContextPaint,
                       getter_Transfers(contextPaint));
 
@@ -3549,7 +3628,7 @@ nsSVGTextFrame2::PaintSVG(nsRenderingContext* aContext,
     runTransform.Multiply(currentMatrix);
     gfx->SetMatrix(runTransform);
 
-    if (drawMode != gfxFont::DrawMode(0)) {
+    if (drawMode != DrawMode(0)) {
       nsRect frameRect = frame->GetVisualOverflowRect();
       bool paintSVGGlyphs;
       if (ShouldRenderAsPath(aContext, frame, paintSVGGlyphs)) {
@@ -4636,8 +4715,8 @@ nsSVGTextFrame2::GetTextPathPathFrame(nsIFrame* aTextPathFrame)
   return property->GetReferencedFrame(nsGkAtoms::svgPathGeometryFrame, nullptr);
 }
 
-already_AddRefed<gfxFlattenedPath>
-nsSVGTextFrame2::GetFlattenedTextPath(nsIFrame* aTextPathFrame)
+already_AddRefed<gfxPath>
+nsSVGTextFrame2::GetTextPath(nsIFrame* aTextPathFrame)
 {
   nsIFrame *path = GetTextPathPathFrame(aTextPathFrame);
 
@@ -4645,7 +4724,7 @@ nsSVGTextFrame2::GetFlattenedTextPath(nsIFrame* aTextPathFrame)
     nsSVGPathGeometryElement *element =
       static_cast<nsSVGPathGeometryElement*>(path->GetContent());
 
-    return element->GetFlattenedPath(element->PrependLocalTransformsTo(gfxMatrix()));
+    return element->GetPath(element->PrependLocalTransformsTo(gfxMatrix()));
   }
   return nullptr;
 }
@@ -4670,7 +4749,7 @@ nsSVGTextFrame2::GetStartOffset(nsIFrame* aTextPathFrame)
     &tp->mLengthAttributes[dom::SVGTextPathElement::STARTOFFSET];
 
   if (length->IsPercentage()) {
-    nsRefPtr<gfxFlattenedPath> data = GetFlattenedTextPath(aTextPathFrame);
+    nsRefPtr<gfxPath> data = GetTextPath(aTextPathFrame);
     return data ?
              length->GetAnimValInSpecifiedUnits() * data->GetLength() / 100.0 :
              0.0;
@@ -4693,7 +4772,7 @@ nsSVGTextFrame2::DoTextPathLayout()
     }
 
     // Get the path itself.
-    nsRefPtr<gfxFlattenedPath> data = GetFlattenedTextPath(textPathFrame);
+    nsRefPtr<gfxPath> data = GetTextPath(textPathFrame);
     if (!data) {
       it.AdvancePastCurrentTextPathFrame();
       continue;
@@ -5404,21 +5483,21 @@ nsSVGTextFrame2::TransformFrameRectFromTextChild(const nsRect& aRect,
   return result - framePosition;
 }
 
-gfxFont::DrawMode
+DrawMode
 nsSVGTextFrame2::SetupCairoState(gfxContext* aContext,
                                  nsIFrame* aFrame,
                                  gfxTextContextPaint* aOuterContextPaint,
                                  gfxTextContextPaint** aThisContextPaint)
 {
-  gfxFont::DrawMode toDraw = gfxFont::DrawMode(0);
+  DrawMode toDraw = DrawMode(0);
   SVGTextContextPaint *thisContextPaint = new SVGTextContextPaint();
 
   if (SetupCairoStroke(aContext, aFrame, aOuterContextPaint, thisContextPaint)) {
-    toDraw = gfxFont::DrawMode(toDraw | gfxFont::GLYPH_STROKE);
+    toDraw = DrawMode(int(toDraw) | int(DrawMode::GLYPH_STROKE));
   }
 
   if (SetupCairoFill(aContext, aFrame, aOuterContextPaint, thisContextPaint)) {
-    toDraw = gfxFont::DrawMode(toDraw | gfxFont::GLYPH_FILL);
+    toDraw = DrawMode(int(toDraw) | int(DrawMode::GLYPH_FILL));
   }
 
   *aThisContextPaint = thisContextPaint;

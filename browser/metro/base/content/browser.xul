@@ -255,7 +255,7 @@
             <observes element="bcast_urlbarState" attribute="*"/>
             <hbox id="toolbar-context-page" pack="end">
               <circularprogressindicator id="download-progress"
-                                     oncommand="Appbar.onDownloadButton()"/>
+                                     oncommand="MetroDownloadsView.onDownloadButton()"/>
               <toolbarbutton id="star-button" class="appbar-primary"
                              type="checkbox"
                              oncommand="Appbar.onStarButton()"/>
@@ -631,16 +631,6 @@
 #endif
 
     <flyoutpanel id="prefs-flyoutpanel" class="flyout-narrow" headertext="&optionsHeader.title;">
-      <settings id="prefs-startup" label="&optionsHeader.startup.title;"> <!-- note, this element has a custom margin-top -->
-        <setting id="prefs-homepage" title="&optionsHeader.homepage.title;" type="menulist" pref="browser.startup.sessionRestore" class="setting-expanded">
-          <menulist id="prefs-homepage-options">
-            <menupopup id="prefs-homepage-popup" position="after_end">
-              <menuitem id="prefs-homepage-default" label="&optionsHeader.homepage.startPage.button;" value="false"/>
-              <menuitem id="prefs-homepage-session" label="&optionsHeader.homepage.sessionRestore.button;" value="true"/>
-            </menupopup>
-          </menulist>
-        </setting>
-      </settings>
       <settings id="prefs-charencoding" label="&optionsHeader.char.title;">
         <setting pref="browser.menu.showCharacterEncoding" title="&optionsHeader.char.options.label;" type="bool"/>
       </settings>
@@ -680,17 +670,17 @@
         <setting pref="toolkit.telemetry.enabled" type="bool" title="&optionsHeader.telemetry.label;"/>
       </settings>
       <settings id="prefs-dnt" label="&doNotTrack.title;">
-        <description>&doNotTrack.desc;</description>
         <setting id="prefs-dnt-value" pref="privacy.donottrackheader.value" type="radio" >
           <radiogroup id="prefs-dnt-options">
             <radio id="prefs-dnt-notrack" class="flyoutpanel-hack"
-                   label="&doNotTrack.options.trackingNotOkay;" value="1"/>
-            <radio id="prefs-dnt-nopref" class="flyoutpanel-hack"
-                   label="&doNotTrack.options.noPreference;" value="-1"/>
+                   label="&doNotTrack.options.doNotTrack;" value="1"/>
             <radio id="prefs-dnt-oktrack" class="flyoutpanel-hack"
-                   label="&doNotTrack.options.trackingOkay;" value="0"/>
+                   label="&doNotTrack.options.doTrack;" value="0"/>
+            <radio id="prefs-dnt-nopref" class="flyoutpanel-hack"
+                   label="&doNotTrack.options.default;" value="-1"/>
           </radiogroup>
         </setting>
+        <label class="text-link" href="https://www.mozilla.org/dnt">&doNotTrack.learnMoreLink;</label>
       </settings>
     </flyoutpanel>
 
@@ -797,6 +787,9 @@
           </richlistitem>
           <richlistitem id="context-viewondesktop" type="view-on-desktop" onclick="ContextCommands.viewOnDesktop();">
             <label value="&appbarViewOnDesktop2.label;"/>
+          </richlistitem>
+          <richlistitem id="context-msmetadata" type="ms-meta-data" onclick="ContextCommands.openWindowsStoreLink();">
+            <label value="&appbarMSMetaData2.label;"/>
           </richlistitem>
         </richlistbox>
       </vbox>

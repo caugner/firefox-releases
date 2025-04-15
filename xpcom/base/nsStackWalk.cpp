@@ -6,9 +6,9 @@
 
 /* API for getting a stack trace of the C/C++ stack on the current thread */
 
-#include "mozilla/Util.h"
+#include "mozilla/Assertions.h"
+#include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/StackWalk.h"
-#include "nsDebug.h"
 #include "nsStackWalkPrivate.h"
 
 #include "nsStackWalk.h"
@@ -16,7 +16,7 @@
 using namespace mozilla;
 
 // The presence of this address is the stack must stop the stack walk. If
-// there is no such address, the structure will be {NULL, true}.
+// there is no such address, the structure will be {nullptr, true}.
 struct CriticalAddress {
   void* mAddr;
   bool mInit;
@@ -42,7 +42,6 @@ static CriticalAddress gCriticalAddress;
 
 #if NSSTACKWALK_SUPPORTS_MACOSX
 #include <pthread.h>
-#include <errno.h>
 #include <CoreServices/CoreServices.h>
 
 typedef void
@@ -61,7 +60,7 @@ stack_callback(void *pc, void *sp, void *closure)
   // correct one is the first that we find on our way up, so the
   // following check for gCriticalAddress.mAddr is critical.
   if (gCriticalAddress.mAddr || dladdr(pc, &info) == 0  ||
-      info.dli_sname == NULL || strcmp(info.dli_sname, name) != 0)
+      info.dli_sname == nullptr || strcmp(info.dli_sname, name) != 0)
     return;
   gCriticalAddress.mAddr = pc;
 }
@@ -141,7 +140,7 @@ StackWalkInitCriticalAddress()
   // On Lion, malloc is no longer called from pthread_cond_*wait*. This prevents
   // us from finding the address, but that is fine, since with no call to malloc
   // there is no critical address.
-  MOZ_ASSERT(OnLionOrLater() || gCriticalAddress.mAddr != NULL);
+  MOZ_ASSERT(OnLionOrLater() || gCriticalAddress.mAddr != nullptr);
   MOZ_ASSERT(r == ETIMEDOUT);
   r = pthread_mutex_unlock(&mutex);
   MOZ_ASSERT(r == 0);
@@ -178,6 +177,7 @@ StackWalkInitCriticalAddress()
 #include <stdio.h>
 #include <malloc.h>
 #include "plstr.h"
+#include "mozilla/Util.h"
 
 #include "nspr.h"
 #include <imagehlp.h>
@@ -237,12 +237,12 @@ void PrintError(const char *prefix)
     DWORD lastErr = GetLastError();
     FormatMessageA(
       FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-      NULL,
+      nullptr,
       lastErr,
       MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), // Default language
       (LPSTR) &lpMsgBuf,
       0,
-      NULL
+      nullptr
     );
     fprintf(stderr, "### ERROR: %s: %s",
                     prefix, lpMsgBuf ? lpMsgBuf : "(null)\n");
@@ -263,14 +263,14 @@ EnsureImageHlpInitialized()
     // actually start the thread until after the static initialization
     // is done, which means we'll deadlock while waiting for it to
     // process a stack.
-    HANDLE readyEvent = ::CreateEvent(NULL, FALSE /* auto-reset*/,
-                            FALSE /* initially non-signaled */, NULL);
+    HANDLE readyEvent = ::CreateEvent(nullptr, FALSE /* auto-reset*/,
+                            FALSE /* initially non-signaled */, nullptr);
     unsigned int threadID;
     HANDLE hStackWalkThread = (HANDLE)
-      _beginthreadex(NULL, 0, WalkStackThread, (void*)readyEvent,
+      _beginthreadex(nullptr, 0, WalkStackThread, (void*)readyEvent,
                      0, &threadID);
     gStackWalkThread = threadID;
-    if (hStackWalkThread == NULL) {
+    if (hStackWalkThread == nullptr) {
         PrintError("CreateThread");
         return false;
     }
@@ -356,7 +356,7 @@ WalkStackMain64(struct WalkStackData* data)
           myThread,
           &frame64,
           &context,
-          NULL,
+          nullptr,
           SymFunctionTableAccess64, // function table access routine
           SymGetModuleBase64,       // module base routine
           0
@@ -408,7 +408,7 @@ WalkStackThread(void* aData)
 
     // Call PeekMessage to force creation of a message queue so that
     // other threads can safely post events to us.
-    ::PeekMessage(&msg, NULL, WM_USER, WM_USER, PM_NOREMOVE);
+    ::PeekMessage(&msg, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
 
     // and tell the thread that created us that we're ready.
     HANDLE readyEvent = (HANDLE)aData;
@@ -466,7 +466,7 @@ NS_StackWalk(NS_WalkStackCallback aCallback, uint32_t aSkipFrames,
              void *aPlatformData)
 {
     StackWalkInitCriticalAddress();
-    static HANDLE myProcess = NULL;
+    static HANDLE myProcess = nullptr;
     HANDLE myThread;
     DWORD walkerReturn;
     struct WalkStackData data;
@@ -540,10 +540,10 @@ NS_StackWalk(NS_WalkStackCallback aCallback, uint32_t aSkipFrames,
             WalkStackMain64(&data);
         }
     } else {
-        data.eventStart = ::CreateEvent(NULL, FALSE /* auto-reset*/,
-                              FALSE /* initially non-signaled */, NULL);
-        data.eventEnd = ::CreateEvent(NULL, FALSE /* auto-reset*/,
-                            FALSE /* initially non-signaled */, NULL);
+        data.eventStart = ::CreateEvent(nullptr, FALSE /* auto-reset*/,
+                              FALSE /* initially non-signaled */, nullptr);
+        data.eventEnd = ::CreateEvent(nullptr, FALSE /* auto-reset*/,
+                            FALSE /* initially non-signaled */, nullptr);
 
         ::PostThreadMessage(gStackWalkThread, WM_USER, 0, (LPARAM)&data);
 
@@ -601,7 +601,9 @@ static BOOL CALLBACK callbackEspecial64(
        ? (addr >= aModuleBase && addr <= (aModuleBase + aModuleSize))
        : (addr <= aModuleBase && addr >= (aModuleBase - aModuleSize))
         ) {
-        retval = !!SymLoadModule64(GetCurrentProcess(), NULL, (PSTR)aModuleName, NULL, aModuleBase, aModuleSize);
+        retval = !!SymLoadModule64(GetCurrentProcess(), nullptr,
+                                   (PSTR)aModuleName, nullptr,
+                                   aModuleBase, aModuleSize);
         if (!retval)
             PrintError("SymLoadModule64");
     }
@@ -705,7 +707,7 @@ EnsureSymInitialized()
         return false;
 
     SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
-    retStat = SymInitialize(GetCurrentProcess(), NULL, TRUE);
+    retStat = SymInitialize(GetCurrentProcess(), nullptr, TRUE);
     if (!retStat)
         PrintError("SymInitialize");
 
@@ -814,7 +816,6 @@ NS_FormatCodeAddressDetails(void *aPC, const nsCodeAddressDetails *aDetails,
 
 #include <stdlib.h>
 #include <string.h>
-#include <math.h>
 #include "nscore.h"
 #include <stdio.h>
 #include "plstr.h"
@@ -831,7 +832,6 @@ NS_FormatCodeAddressDetails(void *aPC, const nsCodeAddressDetails *aDetails,
 // Yes, this is a gcc only hack
 #if defined(MOZ_DEMANGLE_SYMBOLS)
 #include <cxxabi.h>
-#include <stdlib.h> // for free()
 #endif // MOZ_DEMANGLE_SYMBOLS
 
 void DemangleSymbol(const char * aSymbol, 
@@ -925,7 +925,7 @@ myinit()
         const char *libdem = "libdemangle.so.1";
 
         /* load libdemangle if we can and need to (only try this once) */
-        if ((handle = dlopen(libdem, RTLD_LAZY)) != NULL) {
+        if ((handle = dlopen(libdem, RTLD_LAZY)) != nullptr) {
             demf = (demf_t *)dlsym(handle,
                            "cplus_demangle"); /*lint !e611 */
                 /*
@@ -981,7 +981,7 @@ newbucket(void * pc)
     static int index; /* protected by lock in caller */
                      
     ptr->index = index++;
-    ptr->next = NULL;
+    ptr->next = nullptr;
     ptr->pc = pc;    
     return (ptr);    
 }
@@ -1012,7 +1012,7 @@ cswalkstack(struct frame *fp, int (*operate_func)(void *, void *, void *),
 
     while (fp != 0 && fp->fr_savpc != 0) {
 
-        if (operate_func((void *)fp->fr_savpc, NULL, usrarg) != 0)
+        if (operate_func((void *)fp->fr_savpc, nullptr, usrarg) != 0)
             break;
         /*
          * watch out - libthread stacks look funny at the top
@@ -1231,7 +1231,7 @@ unwind_callback (struct _Unwind_Context *context, void *closure)
         return _URC_FOREIGN_EXCEPTION_CAUGHT;
     }
     if (--info->skip < 0) {
-        (*info->callback)(pc, NULL, info->closure);
+        (*info->callback)(pc, nullptr, info->closure);
         info->numFrames++;
         if (info->maxFrames != 0 && info->numFrames == info->maxFrames) {
             // Again, any error code that stops the walk will do.
@@ -1320,10 +1320,11 @@ NS_FormatCodeAddressDetails(void *aPC, const nsCodeAddressDetails *aDetails,
   if (!aDetails->library[0]) {
     snprintf(aBuffer, aBufferSize, "UNKNOWN %p\n", aPC);
   } else if (!aDetails->function[0]) {
-    snprintf(aBuffer, aBufferSize, "UNKNOWN [%s +0x%08lX]\n",
+    snprintf(aBuffer, aBufferSize, "UNKNOWN [%s +0x%08" PRIxPTR "]\n",
                                    aDetails->library, aDetails->loffset);
   } else {
-    snprintf(aBuffer, aBufferSize, "%s+0x%08lX [%s +0x%08lX]\n",
+    snprintf(aBuffer, aBufferSize, "%s+0x%08" PRIxPTR
+                                   " [%s +0x%08" PRIxPTR "]\n",
                                    aDetails->function, aDetails->foffset,
                                    aDetails->library, aDetails->loffset);
   }

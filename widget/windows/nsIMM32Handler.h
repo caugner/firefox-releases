@@ -9,8 +9,8 @@
 #include "nscore.h"
 #include <windows.h>
 #include "nsString.h"
-#include "nsGUIEvent.h"
 #include "nsTArray.h"
+#include "mozilla/EventForwards.h"
 
 class nsIWidget;
 class nsWindow;
@@ -72,11 +72,11 @@ public:
     if (mIMC) {
       return false;
     }
-    if (!::ImmAssociateContextEx(mWnd, NULL, IACE_DEFAULT)) {
+    if (!::ImmAssociateContextEx(mWnd, nullptr, IACE_DEFAULT)) {
       return false;
     }
     mIMC = ::ImmGetContext(mWnd);
-    return (mIMC != NULL);
+    return (mIMC != nullptr);
   }
 
   bool Disassociate()
@@ -84,11 +84,11 @@ public:
     if (!mIMC) {
       return false;
     }
-    if (!::ImmAssociateContextEx(mWnd, NULL, 0)) {
+    if (!::ImmAssociateContextEx(mWnd, nullptr, 0)) {
       return false;
     }
     ::ImmReleaseContext(mWnd, mIMC);
-    mIMC = NULL;
+    mIMC = nullptr;
     return true;
   }
 
@@ -282,7 +282,7 @@ protected:
   bool GetTargetClauseRange(uint32_t *aOffset, uint32_t *aLength = nullptr);
   void DispatchTextEvent(nsWindow* aWindow, const nsIMEContext &aIMEContext,
                          bool aCheckAttr = true);
-  void SetTextRangeList(nsTArray<nsTextRange> &aTextRangeList);
+  void SetTextRangeList(nsTArray<mozilla::TextRange>& aTextRangeList);
 
   nsresult EnsureClauseArray(int32_t aCount);
   nsresult EnsureAttributeArray(int32_t aCount);

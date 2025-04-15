@@ -7,13 +7,14 @@
 #include "nsIDOMEvent.h"
 #include "nsContentUtils.h"
 #include "nsEventDispatcher.h"
-#include "nsGUIEvent.h"
 #include "nsDOMEvent.h"
+#include "mozilla/BasicEvents.h"
 #include "mozilla/dom/EventTarget.h"
 
+using namespace mozilla;
 using namespace mozilla::dom;
 
-nsAsyncDOMEvent::nsAsyncDOMEvent(nsINode *aEventNode, nsEvent &aEvent)
+nsAsyncDOMEvent::nsAsyncDOMEvent(nsINode* aEventNode, WidgetEvent& aEvent)
   : mEventNode(aEventNode), mDispatchChromeOnly(false)
 {
   MOZ_ASSERT(mEventNode);

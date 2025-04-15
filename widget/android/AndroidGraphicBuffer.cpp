@@ -21,8 +21,6 @@ typedef uint32_t EGLenum;
 typedef int32_t EGLint;
 typedef uint32_t EGLBoolean;
 
-typedef gfxASurface::gfxImageFormat gfxImageFormat;
-
 #define EGL_TRUE 1
 #define EGL_FALSE 0
 #define EGL_NONE 0x3038
@@ -267,18 +265,18 @@ AndroidGraphicBuffer::DestroyBuffer()
   if (mEGLImage) {
     if (sGLFunctions.EnsureInitialized()) {
       sGLFunctions.fDestroyImageKHR(sGLFunctions.fGetDisplay(EGL_DEFAULT_DISPLAY), mEGLImage);
-      mEGLImage = NULL;
+      mEGLImage = nullptr;
     }
   }
 #endif
-  mEGLImage = NULL;
+  mEGLImage = nullptr;
 
   if (mHandle) {
     if (sGLFunctions.EnsureInitialized()) {
       sGLFunctions.fGraphicBufferDtor(mHandle);
     }
     free(mHandle);
-    mHandle = NULL;
+    mHandle = nullptr;
   }
 
 }
@@ -392,9 +390,9 @@ uint32_t
 AndroidGraphicBuffer::GetAndroidFormat(gfxImageFormat aFormat)
 {
   switch (aFormat) {
-    case gfxImageFormat::ImageFormatRGB24:
+    case gfxImageFormatRGB24:
       return HAL_PIXEL_FORMAT_RGBX_8888;
-    case gfxImageFormat::ImageFormatRGB16_565:
+    case gfxImageFormatRGB16_565:
       return HAL_PIXEL_FORMAT_RGB_565;
     default:
       return 0;
@@ -415,7 +413,7 @@ AndroidGraphicBuffer::EnsureEGLImage()
   void* nativeBuffer = sGLFunctions.fGraphicBufferGetNativeBuffer(mHandle);
 
   mEGLImage = sGLFunctions.fCreateImageKHR(sGLFunctions.fGetDisplay(EGL_DEFAULT_DISPLAY), EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_ANDROID, (EGLClientBuffer)nativeBuffer, eglImgAttrs);
-  return mEGLImage != NULL;
+  return mEGLImage != nullptr;
 }
 
 bool
@@ -447,7 +445,7 @@ static const char* const sAllowedBoards[] = {
   "sgh-i997",   // Samsung Infuse 4G
   "herring",    // Samsung Nexus S
   "sgh-t839",   // Samsung Sidekick 4G
-  NULL
+  nullptr
 };
 
 bool

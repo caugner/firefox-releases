@@ -42,11 +42,11 @@ CanvasClient::CreateCanvasClient(CanvasClientType aType,
 {
   if (aType == CanvasClientGLContext &&
       aForwarder->GetCompositorBackendType() == LAYERS_OPENGL) {
-    aFlags &= ~TEXTURE_DEALLOCATE_HOST;
+    aFlags |= TEXTURE_DEALLOCATE_CLIENT;
     return new DeprecatedCanvasClientSurfaceStream(aForwarder, aFlags);
   }
   if (gfxPlatform::GetPlatform()->UseDeprecatedTextures()) {
-    aFlags &= ~TEXTURE_DEALLOCATE_HOST;
+    aFlags |= TEXTURE_DEALLOCATE_CLIENT;
     return new DeprecatedCanvasClient2D(aForwarder, aFlags);
   }
   return new CanvasClient2D(aForwarder, aFlags);
@@ -64,10 +64,10 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
   bool bufferCreated = false;
   if (!mBuffer) {
     bool isOpaque = (aLayer->GetContentFlags() & Layer::CONTENT_OPAQUE);
-    gfxASurface::gfxContentType contentType = isOpaque
-                                                ? gfxASurface::CONTENT_COLOR
-                                                : gfxASurface::CONTENT_COLOR_ALPHA;
-    gfxASurface::gfxImageFormat format
+    gfxContentType contentType = isOpaque
+                                                ? GFX_CONTENT_COLOR
+                                                : GFX_CONTENT_COLOR_ALPHA;
+    gfxImageFormat format
       = gfxPlatform::GetPlatform()->OptimalFormatForContent(contentType);
     mBuffer = CreateBufferTextureClient(gfx::ImageFormatToSurfaceFormat(format));
     MOZ_ASSERT(mBuffer->AsTextureClientSurface());
@@ -87,8 +87,9 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 
   mBuffer->Unlock();
 
-  if (bufferCreated) {
-    AddTextureClient(mBuffer);
+  if (bufferCreated && !AddTextureClient(mBuffer)) {
+    mBuffer = nullptr;
+    return;
   }
 
   if (surface) {
@@ -98,16 +99,16 @@ CanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 }
 
 TemporaryRef<BufferTextureClient>
-CanvasClient2D::CreateBufferTextureClient(gfx::SurfaceFormat aFormat)
+CanvasClient2D::CreateBufferTextureClient(gfx::SurfaceFormat aFormat, TextureFlags aFlags)
 {
   return CompositableClient::CreateBufferTextureClient(aFormat,
-                                                       mTextureInfo.mTextureFlags);
+                                                       mTextureInfo.mTextureFlags | aFlags);
 }
 
 void
 DeprecatedCanvasClient2D::Updated()
 {
-  mForwarder->UpdateTexture(this, 1, mDeprecatedTextureClient->GetDescriptor());
+  mForwarder->UpdateTexture(this, 1, mDeprecatedTextureClient->LockSurfaceDescriptor());
 }
 
 
@@ -121,10 +122,15 @@ DeprecatedCanvasClient2D::DeprecatedCanvasClient2D(CompositableForwarder* aFwd,
 void
 DeprecatedCanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 {
+  bool isOpaque = (aLayer->GetContentFlags() & Layer::CONTENT_OPAQUE);
+  gfxContentType contentType = isOpaque
+                                              ? GFX_CONTENT_COLOR
+                                              : GFX_CONTENT_COLOR_ALPHA;
+
   if (!mDeprecatedTextureClient) {
-    mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_CONTENT);
+    mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_CONTENT, contentType);
     if (!mDeprecatedTextureClient) {
-      mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_FALLBACK);
+      mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_FALLBACK, contentType);
       if (!mDeprecatedTextureClient) {
         NS_WARNING("Could not create texture client");
         return;
@@ -132,17 +138,12 @@ DeprecatedCanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
     }
   }
 
-  bool isOpaque = (aLayer->GetContentFlags() & Layer::CONTENT_OPAQUE);
-  gfxASurface::gfxContentType contentType = isOpaque
-                                              ? gfxASurface::CONTENT_COLOR
-                                              : gfxASurface::CONTENT_COLOR_ALPHA;
-
   if (!mDeprecatedTextureClient->EnsureAllocated(aSize, contentType)) {
     // We might already be on the fallback texture client if we couldn't create a
     // better one above. In which case this call to create is wasted. But I don't
     // think this will happen often enough to be worth complicating the code with
     // further checks.
-    mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_FALLBACK);
+    mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_FALLBACK, contentType);
     MOZ_ASSERT(mDeprecatedTextureClient, "Failed to create texture client");
     if (!mDeprecatedTextureClient->EnsureAllocated(aSize, contentType)) {
       NS_WARNING("Could not allocate texture client");
@@ -158,7 +159,7 @@ DeprecatedCanvasClient2D::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 void
 DeprecatedCanvasClientSurfaceStream::Updated()
 {
-  mForwarder->UpdateTextureNoSwap(this, 1, mDeprecatedTextureClient->GetDescriptor());
+  mForwarder->UpdateTextureNoSwap(this, 1, mDeprecatedTextureClient->LockSurfaceDescriptor());
 }
 
 
@@ -173,14 +174,17 @@ void
 DeprecatedCanvasClientSurfaceStream::Update(gfx::IntSize aSize, ClientCanvasLayer* aLayer)
 {
   if (!mDeprecatedTextureClient) {
-    mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_STREAM_GL);
+    mDeprecatedTextureClient = CreateDeprecatedTextureClient(TEXTURE_STREAM_GL,
+                                                             aLayer->GetSurfaceMode() == Layer::SURFACE_OPAQUE
+                                                               ? GFX_CONTENT_COLOR
+                                                               : GFX_CONTENT_COLOR_ALPHA);
     MOZ_ASSERT(mDeprecatedTextureClient, "Failed to create texture client");
   }
 
   NS_ASSERTION(aLayer->mGLContext, "CanvasClientSurfaceStream should only be used with GL canvases");
 
   // the content type won't be used
-  mDeprecatedTextureClient->EnsureAllocated(aSize, gfxASurface::CONTENT_COLOR);
+  mDeprecatedTextureClient->EnsureAllocated(aSize, GFX_CONTENT_COLOR);
 
   GLScreenBuffer* screen = aLayer->mGLContext->Screen();
   SurfaceStream* stream = screen->Stream();

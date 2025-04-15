@@ -4,12 +4,8 @@
 
 #include "gfxSVGGlyphs.h"
 
-#include "nscore.h"
 #include "nsError.h"
-#include "nsAutoPtr.h"
-#include "nsIParser.h"
 #include "nsIDOMDocument.h"
-#include "nsIDOMNodeList.h"
 #include "nsString.h"
 #include "nsIDocument.h"
 #include "nsICategoryManager.h"
@@ -18,9 +14,6 @@
 #include "nsIStreamListener.h"
 #include "nsServiceManagerUtils.h"
 #include "nsIPresShell.h"
-#include "nsQueryFrame.h"
-#include "nsIContentSink.h"
-#include "nsXMLContentSink.h"
 #include "nsNetUtil.h"
 #include "nsIInputStream.h"
 #include "nsStringStream.h"
@@ -33,6 +26,8 @@
 #include "nsContentUtils.h"
 #include "gfxFont.h"
 #include "nsSMILAnimationController.h"
+#include "gfxContext.h"
+#include "gfxColor.h"
 #include "harfbuzz/hb.h"
 
 #define SVG_CONTENT_TYPE NS_LITERAL_CSTRING("image/svg+xml")
@@ -214,14 +209,14 @@ gfxSVGGlyphsDocument::FindGlyphElements(Element *aElem)
  * If no such glyph exists, or in the case of an error return false
  * @param aContext The thebes aContext to draw to
  * @param aGlyphId The glyph id
- * @param aDrawMode Whether to fill or stroke or both (see |gfxFont::DrawMode|)
+ * @param aDrawMode Whether to fill or stroke or both (see |DrawMode|)
  * @return true iff rendering succeeded
  */
 bool
 gfxSVGGlyphs::RenderGlyph(gfxContext *aContext, uint32_t aGlyphId,
                           DrawMode aDrawMode, gfxTextContextPaint *aContextPaint)
 {
-    if (aDrawMode == gfxFont::GLYPH_PATH) {
+    if (aDrawMode == DrawMode::GLYPH_PATH) {
         return false;
     }
 

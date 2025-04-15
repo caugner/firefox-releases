@@ -31,12 +31,14 @@
 #include "AudioManager.h"
 #endif
 #include "mozilla/ipc/Ril.h"
+#include "mozilla/ipc/KeyStore.h"
 #include "nsIObserverService.h"
 #include "nsCxPusher.h"
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
 #include "nsRadioInterfaceLayer.h"
 #include "WifiWorker.h"
+#include "mozilla/Services.h"
 
 USING_WORKERS_NAMESPACE
 
@@ -341,6 +343,8 @@ SystemWorkerManager::Init()
     return rv;
   }
 
+  InitKeyStore(cx);
+
 #ifdef MOZ_WIDGET_GONK
   InitAutoMounter();
   InitializeTimeZoneSettingObserver();
@@ -350,8 +354,7 @@ SystemWorkerManager::Init()
     do_GetService(NS_AUDIOMANAGER_CONTRACTID);
 #endif
 
-  nsCOMPtr<nsIObserverService> obs =
-    do_GetService(NS_OBSERVERSERVICE_CONTRACTID);
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
   if (!obs) {
     NS_WARNING("Failed to get observer service!");
     return NS_ERROR_FAILURE;
@@ -396,8 +399,7 @@ SystemWorkerManager::Shutdown()
   }
   mWifiWorker = nullptr;
 
-  nsCOMPtr<nsIObserverService> obs =
-    do_GetService(NS_OBSERVERSERVICE_CONTRACTID);
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
   if (obs) {
     obs->RemoveObserver(this, WORKERS_SHUTDOWN_TOPIC);
   }
@@ -542,6 +544,13 @@ SystemWorkerManager::InitWifi(JSContext *cx)
   NS_ENSURE_TRUE(worker, NS_ERROR_FAILURE);
 
   mWifiWorker = worker;
+  return NS_OK;
+}
+
+nsresult
+SystemWorkerManager::InitKeyStore(JSContext *cx)
+{
+  mKeyStore = new KeyStore();
   return NS_OK;
 }
 

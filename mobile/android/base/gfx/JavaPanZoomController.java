@@ -129,6 +129,9 @@ class JavaPanZoomController
     /* Used to change the scrollY direction */
     private boolean mNegateWheelScrollY;
 
+    // Handler to be notified when overscroll occurs
+    private Overscroll mOverscroll;
+
     public JavaPanZoomController(PanZoomTarget target, View view, EventDispatcher eventDispatcher) {
         mTarget = target;
         mSubscroller = new SubdocumentScrollHelper(eventDispatcher);
@@ -1102,12 +1105,28 @@ class JavaPanZoomController
         @Override
         protected float getPageStart() { return getMetrics().pageRectLeft; }
         @Override
+        protected float getMarginStart() { return mTarget.getMaxMargins().left - getMetrics().marginLeft; }
+        @Override
+        protected float getMarginEnd() { return mTarget.getMaxMargins().right - getMetrics().marginRight; }
+        @Override
         protected float getPageLength() { return getMetrics().getPageWidthWithMargins(); }
         @Override
         protected boolean marginsHidden() {
             ImmutableViewportMetrics metrics = getMetrics();
             RectF maxMargins = mTarget.getMaxMargins();
             return (metrics.marginLeft < maxMargins.left || metrics.marginRight < maxMargins.right);
+        }
+        @Override
+        protected void overscrollFling(final float velocity) {
+            if (mOverscroll != null) {
+                mOverscroll.setVelocity(velocity, Overscroll.Axis.X);
+            }
+        }
+        @Override
+        protected void overscrollPan(final float distance) {
+            if (mOverscroll != null) {
+                mOverscroll.setDistance(distance, Overscroll.Axis.X);
+            }
         }
     }
 
@@ -1122,10 +1141,26 @@ class JavaPanZoomController
         @Override
         protected float getPageLength() { return getMetrics().getPageHeightWithMargins(); }
         @Override
+        protected float getMarginStart() { return mTarget.getMaxMargins().top - getMetrics().marginTop; }
+        @Override
+        protected float getMarginEnd() { return mTarget.getMaxMargins().bottom - getMetrics().marginBottom; }
+        @Override
         protected boolean marginsHidden() {
             ImmutableViewportMetrics metrics = getMetrics();
             RectF maxMargins = mTarget.getMaxMargins();
             return (metrics.marginTop < maxMargins.top || metrics.marginBottom < maxMargins.bottom);
+        }
+        @Override
+        protected void overscrollFling(final float velocity) {
+            if (mOverscroll != null) {
+                mOverscroll.setVelocity(velocity, Overscroll.Axis.Y);
+            }
+        }
+        @Override
+        protected void overscrollPan(final float distance) {
+            if (mOverscroll != null) {
+                mOverscroll.setDistance(distance, Overscroll.Axis.Y);
+            }
         }
     }
 
@@ -1169,6 +1204,11 @@ class JavaPanZoomController
                      mLastZoomFocus.y - detector.getFocusY());
             mLastZoomFocus.set(detector.getFocusX(), detector.getFocusY());
             ImmutableViewportMetrics target = getMetrics().scaleTo(zoomFactor, mLastZoomFocus);
+
+            // If overscroll is diabled, prevent zooming outside the normal document pans.
+            if (mX.getOverScrollMode() == View.OVER_SCROLL_NEVER || mY.getOverScrollMode() == View.OVER_SCROLL_NEVER) {
+                target = getValidViewportMetrics(target);
+            }
             mTarget.setViewportMetrics(target);
         }
 
@@ -1420,5 +1460,10 @@ class JavaPanZoomController
     @Override
     public void updateScrollOffset(float cssX, float cssY) {
         // Nothing to update, this class doesn't store the scroll offset locally.
+    }
+
+    @Override
+    public void setOverscrollHandler(final Overscroll handler) {
+        mOverscroll = handler;
     }
 }

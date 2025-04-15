@@ -16,8 +16,11 @@
 #include "gc/Marking.h"
 #include "jit/AsmJS.h"
 #include "jit/IonMacroAssembler.h"
-#include "jit/PerfSpewer.h"
+#ifdef JS_ION_PERF
+# include "jit/PerfSpewer.h"
+#endif
 #include "jit/RegisterSets.h"
+#include "vm/TypedArrayObject.h"
 
 namespace js {
 
@@ -36,6 +39,43 @@ enum AsmJSMathBuiltin
     AsmJSMathBuiltin_ceil, AsmJSMathBuiltin_floor, AsmJSMathBuiltin_exp,
     AsmJSMathBuiltin_log, AsmJSMathBuiltin_pow, AsmJSMathBuiltin_sqrt,
     AsmJSMathBuiltin_abs, AsmJSMathBuiltin_atan2, AsmJSMathBuiltin_imul
+};
+
+// Static-link data is used to patch a module either after it has been
+// compiled or deserialized with various absolute addresses (of code or
+// data in the process) or relative addresses (of code or data in the same
+// AsmJSModule). Since AsmJSStaticLinkData can be serialized alongside the
+// AsmJSModule and isn't needed after compilation/deserialization, it
+// doesn't need to be stored in the AsmJSModule.
+struct AsmJSStaticLinkData
+{
+    struct RelativeLink
+    {
+        uint32_t patchAtOffset;
+        uint32_t targetOffset;
+    };
+
+    typedef Vector<RelativeLink> RelativeLinkVector;
+
+    struct AbsoluteLink
+    {
+        jit::CodeOffsetLabel patchAt;
+        jit::AsmJSImmKind target;
+    };
+
+    typedef Vector<AbsoluteLink> AbsoluteLinkVector;
+
+    uint32_t operationCallbackExitOffset;
+    RelativeLinkVector relativeLinks;
+    AbsoluteLinkVector absoluteLinks;
+
+    AsmJSStaticLinkData(ExclusiveContext *cx)
+      : relativeLinks(cx), absoluteLinks(cx)
+    {}
+
+    size_t serializedSize() const;
+    uint8_t *serialize(uint8_t *cursor) const;
+    const uint8_t *deserialize(ExclusiveContext *cx, const uint8_t *cursor);
 };
 
 // An asm.js module represents the collection of functions nested inside a
@@ -78,6 +118,7 @@ class AsmJSModule
         PropertyName *name_;
 
         friend class AsmJSModule;
+
         Global(Which which, PropertyName *name) {
             pod.which_ = which;
             name_ = name;
@@ -92,6 +133,7 @@ class AsmJSModule
         }
 
       public:
+        Global() {}
         Which which() const {
             return pod.which_;
         }
@@ -150,6 +192,10 @@ class AsmJSModule
             JS_ASSERT(pod.which_ == Constant);
             return pod.u.constantValue_;
         }
+
+        size_t serializedSize() const;
+        uint8_t *serialize(uint8_t *cursor) const;
+        const uint8_t *deserialize(ExclusiveContext *cx, const uint8_t *cursor);
     };
 
     class Exit
@@ -162,6 +208,7 @@ class AsmJSModule
         friend class AsmJSModule;
 
       public:
+        Exit() {}
         Exit(unsigned ffiIndex, unsigned globalDataOffset)
           : ffiIndex_(ffiIndex), globalDataOffset_(globalDataOffset),
             interpCodeOffset_(0), ionCodeOffset_(0)
@@ -180,6 +227,10 @@ class AsmJSModule
             JS_ASSERT(!ionCodeOffset_);
             ionCodeOffset_ = off;
         }
+
+        size_t serializedSize() const;
+        uint8_t *serialize(uint8_t *cursor) const;
+        const uint8_t *deserialize(ExclusiveContext *cx, const uint8_t *cursor);
     };
     typedef int32_t (*CodePtr)(uint64_t *args, uint8_t *global);
 
@@ -219,6 +270,7 @@ class AsmJSModule
         }
 
       public:
+        ExportedFunction() {}
         ExportedFunction(mozilla::MoveRef<ExportedFunction> rhs) {
             name_ = rhs->name_;
             maybeFieldName_ = rhs->maybeFieldName_;
@@ -246,6 +298,10 @@ class AsmJSModule
         ReturnType returnType() const {
             return pod.returnType_;
         }
+
+        size_t serializedSize() const;
+        uint8_t *serialize(uint8_t *cursor) const;
+        const uint8_t *deserialize(ExclusiveContext *cx, const uint8_t *cursor);
     };
 
 #if defined(MOZ_VTUNE) or defined(JS_ION_PERF)
@@ -318,7 +374,6 @@ class AsmJSModule
     ExitVector                            exits_;
     ExportedFunctionVector                exports_;
     HeapAccessVector                      heapAccesses_;
-    uint32_t                              minHeapLength_;
 #if defined(MOZ_VTUNE) or defined(JS_ION_PERF)
     ProfiledFunctionVector                profiledFunctions_;
 #endif
@@ -327,6 +382,7 @@ class AsmJSModule
 #endif
 
     struct Pod {
+        uint32_t                          charsLength_;
         uint32_t                          numGlobalVars_;
         uint32_t                          numFFIs_;
         size_t                            funcPtrTableAndExitBytes_;
@@ -334,30 +390,23 @@ class AsmJSModule
         size_t                            functionBytes_; // just the function bodies, no stubs
         size_t                            codeBytes_;     // function bodies and stubs
         size_t                            totalBytes_;    // function bodies, stubs, and global data
+        uint32_t                          minHeapLength_;
     } pod;
 
     uint8_t *                             code_;
     uint8_t *                             operationCallbackExit_;
 
     bool                                  linked_;
+    bool                                  loadedFromCache_;
     HeapPtr<ArrayBufferObject>            maybeHeap_;
 
-    AsmJSModuleSourceDesc                 sourceDesc_;
+    uint32_t                              charsBegin_;
+    ScriptSource *                        scriptSource_;
+
     FunctionCountsVector                  functionCounts_;
 
   public:
-    explicit AsmJSModule()
-      : globalArgumentName_(NULL),
-        importArgumentName_(NULL),
-        bufferArgumentName_(NULL),
-        minHeapLength_(AsmJSAllocationGranularity),
-        code_(NULL),
-        operationCallbackExit_(NULL),
-        linked_(false)
-    {
-        mozilla::PodZero(&pod);
-    }
-
+    explicit AsmJSModule(ScriptSource *scriptSource, uint32_t charsBegin);
     ~AsmJSModule();
 
     void trace(JSTracer *trc) {
@@ -380,7 +429,7 @@ class AsmJSModule
             perfProfiledBlocksFunctions_[i].trace(trc);
 #endif
         if (maybeHeap_)
-            MarkObject(trc, &maybeHeap_, "asm.js heap");
+            gc::MarkObject(trc, &maybeHeap_, "asm.js heap");
 
         if (globalArgumentName_)
             MarkStringUnbarriered(trc, &globalArgumentName_, "asm.js global argument name");
@@ -390,11 +439,26 @@ class AsmJSModule
             MarkStringUnbarriered(trc, &bufferArgumentName_, "asm.js buffer argument name");
     }
 
+    ScriptSource *scriptSource() const {
+        JS_ASSERT(scriptSource_ != nullptr);
+        return scriptSource_;
+    }
+    uint32_t charsBegin() const {
+        return charsBegin_;
+    }
+    void initCharsEnd(uint32_t charsEnd) {
+        JS_ASSERT(charsEnd >= charsBegin_);
+        pod.charsLength_ = charsEnd - charsBegin_;
+    }
+    uint32_t charsEnd() const {
+        return charsBegin_ + pod.charsLength_;
+    }
+
     bool addGlobalVarInitConstant(const Value &v, uint32_t *globalIndex) {
         JS_ASSERT(pod.funcPtrTableAndExitBytes_ == 0);
         if (pod.numGlobalVars_ == UINT32_MAX)
             return false;
-        Global g(Global::Variable, NULL);
+        Global g(Global::Variable, nullptr);
         g.pod.u.var.initKind_ = Global::InitConstant;
         g.pod.u.var.init.constant_ = v;
         g.pod.u.var.index_ = *globalIndex = pod.numGlobalVars_++;
@@ -568,11 +632,13 @@ class AsmJSModule
     //   2. interleaved function-pointer tables and exits. These are allocated
     //      while type checking function bodies (as exits and uses of
     //      function-pointer tables are encountered).
-    uint8_t *globalData() const {
+    size_t offsetOfGlobalData() const {
         JS_ASSERT(code_);
-        return code_ + pod.codeBytes_;
+        return pod.codeBytes_;
     }
-
+    uint8_t *globalData() const {
+        return code_ + offsetOfGlobalData();
+    }
     size_t globalDataBytes() const {
         return sizeof(void*) +
                pod.numGlobalVars_ * sizeof(uint64_t) +
@@ -614,8 +680,7 @@ class AsmJSModule
         return pod.functionBytes_;
     }
     bool containsPC(void *pc) const {
-        uint8_t *code = functionCode();
-        return pc >= code && pc < (code + functionBytes());
+        return pc >= code_ && pc < (code_ + functionBytes());
     }
 
     bool addHeapAccesses(const jit::AsmJSHeapAccessVector &accesses) {
@@ -633,24 +698,22 @@ class AsmJSModule
     void initHeap(Handle<ArrayBufferObject*> heap, JSContext *cx);
 
     void requireHeapLengthToBeAtLeast(uint32_t len) {
-        if (len > minHeapLength_)
-            minHeapLength_ = len;
+        if (len > pod.minHeapLength_)
+            pod.minHeapLength_ = len;
     }
     uint32_t minHeapLength() const {
-        return minHeapLength_;
+        return pod.minHeapLength_;
     }
 
-    uint8_t *allocateCodeAndGlobalSegment(ExclusiveContext *cx, size_t bytesNeeded);
+    bool allocateAndCopyCode(ExclusiveContext *cx, jit::MacroAssembler &masm);
+    void staticallyLink(const AsmJSStaticLinkData &linkData, ExclusiveContext *cx);
 
-    uint8_t *functionCode() const {
+    uint8_t *codeBase() const {
         JS_ASSERT(code_);
         JS_ASSERT(uintptr_t(code_) % AsmJSPageSize == 0);
         return code_;
     }
 
-    void setOperationCallbackExit(uint8_t *ptr) {
-        operationCallbackExit_ = ptr;
-    }
     uint8_t *operationCallbackExit() const {
         return operationCallbackExit_;
     }
@@ -665,6 +728,10 @@ class AsmJSModule
     uint8_t *maybeHeap() const {
         JS_ASSERT(linked_);
         return heapDatum();
+    }
+    ArrayBufferObject *maybeHeapBufferObject() const {
+        JS_ASSERT(linked_);
+        return maybeHeap_;
     }
     size_t heapLength() const {
         JS_ASSERT(linked_);
@@ -694,21 +761,35 @@ class AsmJSModule
         return bufferArgumentName_;
     }
 
-    void initSourceDesc(ScriptSource *scriptSource, uint32_t bufStart, uint32_t bufEnd) {
-        sourceDesc_.init(scriptSource, bufStart, bufEnd);
-    }
-    const AsmJSModuleSourceDesc &sourceDesc() const {
-        return sourceDesc_;
-    }
-
     void detachIonCompilation(size_t exitIndex) const {
         exitIndexToGlobalDatum(exitIndex).exit = interpExitTrampoline(exit(exitIndex));
     }
 
-    // Part of about:memory reporting:
-    void sizeOfMisc(mozilla::MallocSizeOf mallocSizeOf, size_t *asmJSModuleCode,
-                    size_t *asmJSModuleData);
+    void addSizeOfMisc(mozilla::MallocSizeOf mallocSizeOf, size_t *asmJSModuleCode,
+                       size_t *asmJSModuleData);
+
+    size_t serializedSize() const;
+    uint8_t *serialize(uint8_t *cursor) const;
+    const uint8_t *deserialize(ExclusiveContext *cx, const uint8_t *cursor);
+    bool loadedFromCache() const { return loadedFromCache_; }
 };
+
+// Store the just-parsed module in the cache using AsmJSCacheOps.
+extern void
+StoreAsmJSModuleInCache(AsmJSParser &parser,
+                        const AsmJSModule &module,
+                        const AsmJSStaticLinkData &linkData,
+                        ExclusiveContext *cx);
+
+// Attempt to load the asm.js module that is about to be parsed from the cache
+// using AsmJSCacheOps. On cache hit, *module will be non-null. Note: the
+// return value indicates whether or not an error was encountered, not whether
+// there was a cache hit.
+extern bool
+LookupAsmJSModuleInCache(ExclusiveContext *cx,
+                         AsmJSParser &parser,
+                         ScopedJSDeletePtr<AsmJSModule> *module,
+                         ScopedJSFreePtr<char> *compilationTimeReport);
 
 // An AsmJSModuleObject is an internal implementation object (i.e., not exposed
 // directly to user script) which manages the lifetime of an AsmJSModule. A
@@ -727,9 +808,9 @@ class AsmJSModuleObject : public JSObject
 
     AsmJSModule &module() const;
 
-    void sizeOfMisc(mozilla::MallocSizeOf mallocSizeOf, size_t *asmJSModuleCode,
-                    size_t *asmJSModuleData) {
-        module().sizeOfMisc(mallocSizeOf, asmJSModuleCode, asmJSModuleData);
+    void addSizeOfMisc(mozilla::MallocSizeOf mallocSizeOf, size_t *asmJSModuleCode,
+                       size_t *asmJSModuleData) {
+        module().addSizeOfMisc(mallocSizeOf, asmJSModuleCode, asmJSModuleData);
     }
 
     static const Class class_;

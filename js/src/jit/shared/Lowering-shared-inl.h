@@ -10,7 +10,7 @@
 #include "jit/shared/Lowering-shared.h"
 
 #include "jit/MIR.h"
-#include "jit/MIRGraph.h"
+#include "jit/MIRGenerator.h"
 
 namespace js {
 namespace jit {
@@ -339,6 +339,12 @@ LUse
 LIRGeneratorShared::useFixed(MDefinition *mir, Register reg)
 {
     return use(mir, LUse(reg));
+}
+
+LUse
+LIRGeneratorShared::useFixedAtStart(MDefinition *mir, Register reg)
+{
+    return use(mir, LUse(reg, true));
 }
 
 LUse

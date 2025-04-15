@@ -5,6 +5,7 @@
 
 #include "nsDOMFocusEvent.h"
 #include "prtime.h"
+#include "mozilla/ContentEvents.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -12,24 +13,17 @@ using namespace mozilla::dom;
 NS_IMPL_ISUPPORTS_INHERITED1(nsDOMFocusEvent, nsDOMUIEvent, nsIDOMFocusEvent)
 
 nsDOMFocusEvent::nsDOMFocusEvent(mozilla::dom::EventTarget* aOwner,
-                                 nsPresContext* aPresContext, nsFocusEvent* aEvent)
-  : nsDOMUIEvent(aOwner, aPresContext, aEvent ?
-                 static_cast<nsGUIEvent*>(aEvent) :
-                 static_cast<nsGUIEvent*>(new nsFocusEvent(false, NS_FOCUS_CONTENT)))
+                                 nsPresContext* aPresContext,
+                                 InternalFocusEvent* aEvent)
+  : nsDOMUIEvent(aOwner, aPresContext,
+                 aEvent ? aEvent :
+                          new InternalFocusEvent(false, NS_FOCUS_CONTENT))
 {
   if (aEvent) {
     mEventIsInternal = false;
   } else {
     mEventIsInternal = true;
     mEvent->time = PR_Now();
-  }
-}
-
-nsDOMFocusEvent::~nsDOMFocusEvent()
-{
-  if (mEventIsInternal && mEvent) {
-    delete static_cast<nsFocusEvent*>(mEvent);
-    mEvent = nullptr;
   }
 }
 
@@ -45,7 +39,7 @@ nsDOMFocusEvent::GetRelatedTarget(nsIDOMEventTarget** aRelatedTarget)
 mozilla::dom::EventTarget*
 nsDOMFocusEvent::GetRelatedTarget()
 {
-  return static_cast<nsFocusEvent*>(mEvent)->relatedTarget;
+  return mEvent->AsFocusEvent()->relatedTarget;
 }
 
 nsresult
@@ -58,7 +52,7 @@ nsDOMFocusEvent::InitFocusEvent(const nsAString& aType,
 {
   nsresult rv = nsDOMUIEvent::InitUIEvent(aType, aCanBubble, aCancelable, aView, aDetail);
   NS_ENSURE_SUCCESS(rv, rv);
-  static_cast<nsFocusEvent*>(mEvent)->relatedTarget = aRelatedTarget;
+  mEvent->AsFocusEvent()->relatedTarget = aRelatedTarget;
   return NS_OK;
 }
 
@@ -80,7 +74,7 @@ nsDOMFocusEvent::Constructor(const mozilla::dom::GlobalObject& aGlobal,
 nsresult NS_NewDOMFocusEvent(nsIDOMEvent** aInstancePtrResult,
                              mozilla::dom::EventTarget* aOwner,
                              nsPresContext* aPresContext,
-                             nsFocusEvent* aEvent)
+                             InternalFocusEvent* aEvent)
 {
   nsDOMFocusEvent* it = new nsDOMFocusEvent(aOwner, aPresContext, aEvent);
   return CallQueryInterface(it, aInstancePtrResult);

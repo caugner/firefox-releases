@@ -40,7 +40,7 @@ struct nsFramesetSpec {
 namespace mozilla {
 namespace dom {
 
-class BeforeUnloadEventHandlerNonNull;
+class OnBeforeUnloadEventHandlerNonNull;
 
 class HTMLFrameSetElement MOZ_FINAL : public nsGenericHTMLElement,
                                       public nsIDOMHTMLFrameSetElement
@@ -90,11 +90,11 @@ public:
   NS_IMETHOD SetOn##name_(JSContext *cx, const JS::Value &v);
 #define WINDOW_EVENT_HELPER(name_, type_)                               \
   type_* GetOn##name_();                                                \
-  void SetOn##name_(type_* handler, ErrorResult& error);
+  void SetOn##name_(type_* handler);
 #define WINDOW_EVENT(name_, id_, type_, struct_)                        \
   WINDOW_EVENT_HELPER(name_, EventHandlerNonNull)
 #define BEFOREUNLOAD_EVENT(name_, id_, type_, struct_)                  \
-  WINDOW_EVENT_HELPER(name_, BeforeUnloadEventHandlerNonNull)
+  WINDOW_EVENT_HELPER(name_, OnBeforeUnloadEventHandlerNonNull)
 #include "nsEventNameList.h" // IWYU pragma: keep
 #undef BEFOREUNLOAD_EVENT
 #undef WINDOW_EVENT

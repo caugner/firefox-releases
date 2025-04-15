@@ -229,6 +229,9 @@ public:
 
   NS_IMETHODIMP Notify(nsITimer* aTimer) MOZ_FINAL
   {
+    if (!mContent->IsInDoc())
+      return NS_OK;
+
     nsIPresShell* ps = mContent->OwnerDoc()->GetShell();
     if (ps) {
       DocAccessible* doc = ps->GetDocAccessible();
@@ -710,13 +713,22 @@ NS_IMETHODIMP
 nsAccessibilityService::GetStringRelationType(uint32_t aRelationType,
                                               nsAString& aString)
 {
-  if (aRelationType >= ArrayLength(kRelationTypeNames)) {
-    aString.AssignLiteral("unknown");
+  NS_ENSURE_ARG(aRelationType <= static_cast<uint32_t>(RelationType::LAST));
+
+#define RELATIONTYPE(geckoType, geckoTypeName, atkType, msaaType, ia2Type) \
+  case RelationType::geckoType: \
+    aString.AssignLiteral(geckoTypeName); \
     return NS_OK;
+
+  RelationType relationType = static_cast<RelationType>(aRelationType);
+  switch (relationType) {
+#include "RelationTypeMap.h"
+    default:
+      aString.AssignLiteral("unknown");
+      return NS_OK;
   }
 
-  CopyUTF8toUTF16(kRelationTypeNames[aRelationType], aString);
-  return NS_OK;
+#undef RELATIONTYPE
 }
 
 NS_IMETHODIMP
@@ -886,12 +898,12 @@ nsAccessibilityService::GetOrCreateAccessible(nsINode* aNode,
     }
 
     newAcc = CreateAccessibleByFrameType(frame, content, aContext);
-    if (document->BindToDocument(newAcc, nullptr)) {
-      newAcc->AsTextLeaf()->SetText(text);
-      return newAcc;
-    }
+    if (!aContext->IsAcceptableChild(newAcc))
+      return nullptr;
 
-    return nullptr;
+    document->BindToDocument(newAcc, nullptr);
+    newAcc->AsTextLeaf()->SetText(text);
+    return newAcc;
   }
 
   bool isHTML = content->IsHTML();
@@ -913,9 +925,11 @@ nsAccessibilityService::GetOrCreateAccessible(nsINode* aNode,
     }
 
     newAcc = new HyperTextAccessibleWrap(content, document);
-    if (document->BindToDocument(newAcc, aria::GetRoleMap(aNode)))
-      return newAcc;
-    return nullptr;
+    if (!aContext->IsAcceptableChild(newAcc))
+      return nullptr;
+
+    document->BindToDocument(newAcc, aria::GetRoleMap(aNode));
+    return newAcc;
   }
 
   nsRoleMapEntry* roleMapEntry = aria::GetRoleMap(aNode);
@@ -1020,8 +1034,11 @@ nsAccessibilityService::GetOrCreateAccessible(nsINode* aNode,
       } else if (content->Tag() == nsGkAtoms::svg) {
         newAcc = new EnumRoleAccessible(content, document, roles::DIAGRAM);
       }
-    } else if (content->IsMathML(nsGkAtoms::math)) {
-      newAcc = new EnumRoleAccessible(content, document, roles::EQUATION);
+    } else if (content->IsMathML()){
+      if (content->Tag() == nsGkAtoms::math)
+        newAcc = new EnumRoleAccessible(content, document, roles::EQUATION);
+      else
+        newAcc = new HyperTextAccessible(content, document);
     }
   }
 
@@ -1044,7 +1061,11 @@ nsAccessibilityService::GetOrCreateAccessible(nsINode* aNode,
     }
   }
 
-  return document->BindToDocument(newAcc, roleMapEntry) ? newAcc : nullptr;
+  if (!newAcc || !aContext->IsAcceptableChild(newAcc))
+    return nullptr;
+
+  document->BindToDocument(newAcc, roleMapEntry);
+  return newAcc;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

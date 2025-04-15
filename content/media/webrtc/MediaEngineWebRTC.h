@@ -111,7 +111,7 @@ public:
     , mSnapshotPath(nullptr)
   {
     mState = kReleased;
-    NS_NewNamedThread("CameraThread", getter_AddRefs(mCameraThread), nullptr);
+    NS_NewNamedThread("CameraThread", getter_AddRefs(mCameraThread));
     Init();
   }
 #else
@@ -129,7 +129,7 @@ public:
     , mHeight(0)
     , mInitDone(false)
     , mInSnapshotMode(false)
-    , mSnapshotPath(NULL) {
+    , mSnapshotPath(nullptr) {
     MOZ_ASSERT(aVideoEnginePtr);
     mState = kReleased;
     Init();
@@ -353,19 +353,19 @@ public:
     , mAudioEngineInit(false)
     , mCameraManager(aCameraManager)
     , mWindowId(aWindowId)
+    , mHasTabVideoSource(false)
   {
+    AsyncLatencyLogger::Get(true)->AddRef();
   }
 #else
-  MediaEngineWebRTC()
-    : mMutex("mozilla::MediaEngineWebRTC")
-    , mVideoEngine(nullptr)
-    , mVoiceEngine(nullptr)
-    , mVideoEngineInit(false)
-    , mAudioEngineInit(false)
-  {
-  }
+  MediaEngineWebRTC();
 #endif
-  ~MediaEngineWebRTC() { Shutdown(); }
+  ~MediaEngineWebRTC() {
+    Shutdown();
+#ifdef MOZ_B2G_CAMERA
+    AsyncLatencyLogger::Get()->Release();
+#endif
+  }
 
   // Clients should ensure to clean-up sources video/audio sources
   // before invoking Shutdown on this class.
@@ -384,6 +384,7 @@ private:
   // Need this to avoid unneccesary WebRTC calls while enumerating.
   bool mVideoEngineInit;
   bool mAudioEngineInit;
+  bool mHasTabVideoSource;
 
   // Store devices we've already seen in a hashtable for quick return.
   // Maps UUID to MediaEngineSource (one set for audio, one for video).

@@ -7,6 +7,7 @@
 #define nsDOMTextEvent_h__
 
 #include "mozilla/Attributes.h"
+#include "mozilla/EventForwards.h"
 #include "nsDOMUIEvent.h"
 #include "nsIPrivateTextEvent.h"
 #include "nsPrivateTextRange.h"
@@ -16,7 +17,8 @@ class nsDOMTextEvent : public nsDOMUIEvent,
 {
 public:
   nsDOMTextEvent(mozilla::dom::EventTarget* aOwner,
-                 nsPresContext* aPresContext, nsTextEvent* aEvent);
+                 nsPresContext* aPresContext,
+                 mozilla::WidgetTextEvent* aEvent);
 
   NS_DECL_ISUPPORTS_INHERITED
 

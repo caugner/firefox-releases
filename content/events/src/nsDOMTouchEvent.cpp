@@ -5,11 +5,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsDOMTouchEvent.h"
-#include "nsGUIEvent.h"
 #include "nsContentUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/dom/Touch.h"
 #include "mozilla/dom/TouchListBinding.h"
+#include "mozilla/TouchEvents.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -54,9 +54,9 @@ nsDOMTouchList::IdentifiedTouch(int32_t aIdentifier) const
 
 nsDOMTouchEvent::nsDOMTouchEvent(mozilla::dom::EventTarget* aOwner,
                                  nsPresContext* aPresContext,
-                                 nsTouchEvent* aEvent)
+                                 WidgetTouchEvent* aEvent)
   : nsDOMUIEvent(aOwner, aPresContext,
-                 aEvent ? aEvent : new nsTouchEvent(false, 0, nullptr))
+                 aEvent ? aEvent : new WidgetTouchEvent(false, 0, nullptr))
 {
   if (aEvent) {
     mEventIsInternal = false;
@@ -68,14 +68,6 @@ nsDOMTouchEvent::nsDOMTouchEvent(mozilla::dom::EventTarget* aOwner,
   } else {
     mEventIsInternal = true;
     mEvent->time = PR_Now();
-  }
-}
-
-nsDOMTouchEvent::~nsDOMTouchEvent()
-{
-  if (mEventIsInternal && mEvent) {
-    delete static_cast<nsTouchEvent*>(mEvent);
-    mEvent = nullptr;
   }
 }
 
@@ -115,8 +107,8 @@ nsDOMTouchEvent::InitTouchEvent(const nsAString& aType,
     return;
   }
 
-  static_cast<nsInputEvent*>(mEvent)->InitBasicModifiers(aCtrlKey, aAltKey,
-                                                         aShiftKey, aMetaKey);
+  mEvent->AsInputEvent()->InitBasicModifiers(aCtrlKey, aAltKey,
+                                             aShiftKey, aMetaKey);
   mTouches = aTouches;
   mTargetTouches = aTargetTouches;
   mChangedTouches = aChangedTouches;
@@ -126,7 +118,7 @@ nsDOMTouchList*
 nsDOMTouchEvent::Touches()
 {
   if (!mTouches) {
-    nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(mEvent);
+    WidgetTouchEvent* touchEvent = mEvent->AsTouchEvent();
     if (mEvent->message == NS_TOUCH_END || mEvent->message == NS_TOUCH_CANCEL) {
       // for touchend events, remove any changed touches from the touches array
       nsTArray< nsRefPtr<Touch> > unchangedTouches;
@@ -149,7 +141,7 @@ nsDOMTouchEvent::TargetTouches()
 {
   if (!mTargetTouches) {
     nsTArray< nsRefPtr<Touch> > targetTouches;
-    nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(mEvent);
+    WidgetTouchEvent* touchEvent = mEvent->AsTouchEvent();
     const nsTArray< nsRefPtr<Touch> >& touches = touchEvent->touches;
     for (uint32_t i = 0; i < touches.Length(); ++i) {
       // for touchend/cancel events, don't append to the target list if this is a
@@ -171,7 +163,7 @@ nsDOMTouchEvent::ChangedTouches()
 {
   if (!mChangedTouches) {
     nsTArray< nsRefPtr<Touch> > changedTouches;
-    nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(mEvent);
+    WidgetTouchEvent* touchEvent = mEvent->AsTouchEvent();
     const nsTArray< nsRefPtr<Touch> >& touches = touchEvent->touches;
     for (uint32_t i = 0; i < touches.Length(); ++i) {
       if (touches[i]->mChanged) {
@@ -221,11 +213,35 @@ nsDOMTouchEvent::PrefEnabled()
   return prefValue;
 }
 
+bool
+nsDOMTouchEvent::AltKey()
+{
+  return mEvent->AsTouchEvent()->IsAlt();
+}
+
+bool
+nsDOMTouchEvent::MetaKey()
+{
+  return mEvent->AsTouchEvent()->IsMeta();
+}
+
+bool
+nsDOMTouchEvent::CtrlKey()
+{
+  return mEvent->AsTouchEvent()->IsControl();
+}
+
+bool
+nsDOMTouchEvent::ShiftKey()
+{
+  return mEvent->AsTouchEvent()->IsShift();
+}
+
 nsresult
 NS_NewDOMTouchEvent(nsIDOMEvent** aInstancePtrResult,
                     mozilla::dom::EventTarget* aOwner,
                     nsPresContext* aPresContext,
-                    nsTouchEvent *aEvent)
+                    WidgetTouchEvent* aEvent)
 {
   nsDOMTouchEvent* it = new nsDOMTouchEvent(aOwner, aPresContext, aEvent);
   return CallQueryInterface(it, aInstancePtrResult);

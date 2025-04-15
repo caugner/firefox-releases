@@ -105,34 +105,25 @@
 #include "mozilla/CycleCollectedJSRuntime.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsCycleCollectionNoteRootCallback.h"
-#include "nsHashKeys.h"
 #include "nsDeque.h"
 #include "nsCycleCollector.h"
 #include "nsThreadUtils.h"
 #include "prenv.h"
-#include "prprf.h"
-#include "plstr.h"
 #include "nsPrintfCString.h"
 #include "nsTArray.h"
 #include "nsIConsoleService.h"
-#include "nsTArray.h"
 #include "mozilla/Attributes.h"
 #include "nsICycleCollectorListener.h"
 #include "nsIMemoryReporter.h"
 #include "nsIFile.h"
-#include "nsDirectoryServiceDefs.h"
 #include "nsMemoryInfoDumper.h"
 #include "xpcpublic.h"
-#include "nsXPCOMPrivate.h"
 #include "GeckoProfiler.h"
 #include <stdint.h>
 #include <stdio.h>
-#include <string.h>
 
-#include "mozilla/CondVar.h"
 #include "mozilla/Likely.h"
 #include "mozilla/mozPoisonWrite.h"
-#include "mozilla/Mutex.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/ThreadLocal.h"
 
@@ -183,9 +174,9 @@ struct nsCycleCollectorParams
     bool mAllTracesAtShutdown;
 
     nsCycleCollectorParams() :
-        mLogAll      (PR_GetEnv("XPCOM_CC_LOG_ALL") != NULL),
-        mLogShutdown (PR_GetEnv("XPCOM_CC_LOG_SHUTDOWN") != NULL),
-        mAllTracesAtShutdown (PR_GetEnv("XPCOM_CC_ALL_TRACES_AT_SHUTDOWN") != NULL)
+        mLogAll      (PR_GetEnv("XPCOM_CC_LOG_ALL") != nullptr),
+        mLogShutdown (PR_GetEnv("XPCOM_CC_LOG_SHUTDOWN") != nullptr),
+        mAllTracesAtShutdown (PR_GetEnv("XPCOM_CC_ALL_TRACES_AT_SHUTDOWN") != nullptr)
     {
     }
 };
@@ -788,9 +779,9 @@ public:
                          bool aAsyncSnowWhiteFreeing,
                          CC_ForgetSkippableCallback aCb);
 
-    nsPurpleBufferEntry* NewEntry()
+    MOZ_ALWAYS_INLINE nsPurpleBufferEntry* NewEntry()
     {
-        if (!mFreeList) {
+        if (MOZ_UNLIKELY(!mFreeList)) {
             Block *b = new Block;
             StartBlock(b);
 
@@ -805,8 +796,8 @@ public:
         return e;
     }
 
-    void Put(void *p, nsCycleCollectionParticipant *cp,
-             nsCycleCollectingAutoRefCnt *aRefCnt)
+    MOZ_ALWAYS_INLINE void Put(void *p, nsCycleCollectionParticipant *cp,
+                               nsCycleCollectingAutoRefCnt *aRefCnt)
     {
         nsPurpleBufferEntry *e = NewEntry();
 
@@ -901,6 +892,10 @@ enum ccType {
     ManualCC,    /* Explicitly triggered. */
     ShutdownCC   /* Shutdown CC, used for finding leaks. */
 };
+
+#ifdef MOZ_NUWA_PROCESS
+#include "ipc/Nuwa.h"
+#endif
 
 ////////////////////////////////////////////////////////////////////////
 // Top level structure for the cycle collector.
@@ -2328,7 +2323,6 @@ nsCycleCollector::CollectWhite()
     //   - Unlink(whites), which drops outgoing links on each white.
     //   - Unroot(whites), which returns the whites to normal GC.
 
-    nsresult rv;
     TimeLog timeLog;
 
     MOZ_ASSERT(mWhiteNodes->IsEmpty(),
@@ -2343,11 +2337,8 @@ nsCycleCollector::CollectWhite()
         PtrInfo *pinfo = etor.GetNext();
         if (pinfo->mColor == white) {
             mWhiteNodes->AppendElement(pinfo);
-            rv = pinfo->mParticipant->Root(pinfo->mPointer);
-            if (NS_FAILED(rv)) {
-                Fault("Failed root call while unlinking", pinfo);
-                mWhiteNodes->RemoveElementAt(mWhiteNodes->Length() - 1);
-            } else if (pinfo->mRefCount == 0) {
+            pinfo->mParticipant->Root(pinfo->mPointer);
+            if (pinfo->mRefCount == 0) {
                 // only JS objects have a refcount of 0
                 ++numWhiteGCed;
             }
@@ -2371,29 +2362,18 @@ nsCycleCollector::CollectWhite()
 
     for (uint32_t i = 0; i < count; ++i) {
         PtrInfo *pinfo = mWhiteNodes->ElementAt(i);
+        pinfo->mParticipant->Unlink(pinfo->mPointer);
 #ifdef DEBUG
         if (mJSRuntime) {
-            mJSRuntime->SetObjectToUnlink(pinfo->mPointer);
-        }
-#endif
-        rv = pinfo->mParticipant->Unlink(pinfo->mPointer);
-#ifdef DEBUG
-        if (mJSRuntime) {
-            mJSRuntime->SetObjectToUnlink(nullptr);
             mJSRuntime->AssertNoObjectsToTrace(pinfo->mPointer);
         }
 #endif
-        if (NS_FAILED(rv)) {
-            Fault("Failed unlink call while unlinking", pinfo);
-        }
     }
     timeLog.Checkpoint("CollectWhite::Unlink");
 
     for (uint32_t i = 0; i < count; ++i) {
         PtrInfo *pinfo = mWhiteNodes->ElementAt(i);
-        rv = pinfo->mParticipant->Unroot(pinfo->mPointer);
-        if (NS_FAILED(rv))
-            Fault("Failed unroot call while unlinking", pinfo);
+        pinfo->mParticipant->Unroot(pinfo->mPointer);
     }
     timeLog.Checkpoint("CollectWhite::Unroot");
 
@@ -2555,7 +2535,7 @@ nsCycleCollector_isScanSafe(void *s, nsCycleCollectionParticipant *cp)
 }
 #endif
 
-void
+MOZ_ALWAYS_INLINE void
 nsCycleCollector::Suspect(void *n, nsCycleCollectionParticipant *cp,
                           nsCycleCollectingAutoRefCnt *aRefCnt)
 {
@@ -2565,7 +2545,7 @@ nsCycleCollector::Suspect(void *n, nsCycleCollectionParticipant *cp,
     // we are canonicalizing nsISupports pointers using QI, so we will
     // see some spurious refcount traffic here.
 
-    if (mScanInProgress)
+    if (MOZ_UNLIKELY(mScanInProgress))
         return;
 
     MOZ_ASSERT(nsCycleCollector_isScanSafe(n, cp),
@@ -3017,6 +2997,25 @@ DeferredFinalize(DeferredFinalizeAppendFunction aAppendFunc,
 } // namespace mozilla
 
 
+MOZ_NEVER_INLINE static void
+SuspectAfterShutdown(void* n, nsCycleCollectionParticipant* cp,
+                     nsCycleCollectingAutoRefCnt* aRefCnt,
+                     bool* aShouldDelete)
+{
+    if (aRefCnt->get() == 0) {
+        if (!aShouldDelete) {
+            CanonicalizeParticipant(&n, &cp);
+            aRefCnt->stabilizeForDeletion();
+            cp->DeleteCycleCollectable(n);
+        } else {
+            *aShouldDelete = true;
+        }
+    } else {
+        // Make sure we'll get called again.
+        aRefCnt->RemoveFromPurpleBuffer();
+    }
+}
+
 void
 NS_CycleCollectorSuspect3(void *n, nsCycleCollectionParticipant *cp,
                           nsCycleCollectingAutoRefCnt *aRefCnt,
@@ -3027,23 +3026,11 @@ NS_CycleCollectorSuspect3(void *n, nsCycleCollectionParticipant *cp,
     // We should have started the cycle collector by now.
     MOZ_ASSERT(data);
 
-    if (!data->mCollector) {
-        if (aRefCnt->get() == 0) {
-            if (!aShouldDelete) {
-                CanonicalizeParticipant(&n, &cp);
-                aRefCnt->stabilizeForDeletion();
-                cp->DeleteCycleCollectable(n);
-            } else {
-                *aShouldDelete = true;
-            }
-        } else {
-          // Make sure we'll get called again.
-          aRefCnt->RemoveFromPurpleBuffer();
-        }
+    if (MOZ_LIKELY(data->mCollector)) {
+        data->mCollector->Suspect(n, cp, aRefCnt);
         return;
     }
-
-    return data->mCollector->Suspect(n, cp, aRefCnt);
+    SuspectAfterShutdown(n, cp, aRefCnt, aShouldDelete);
 }
 
 uint32_t

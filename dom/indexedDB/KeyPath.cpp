@@ -41,13 +41,13 @@ IsValidKeyPathString(JSContext* aCx, const nsAString& aKeyPath)
       return false;
     }
 
-    jsval stringVal;
+    JS::Rooted<JS::Value> stringVal(aCx);
     if (!xpc::StringToJsval(aCx, token, &stringVal)) {
       return false;
     }
 
-    NS_ASSERTION(JSVAL_IS_STRING(stringVal), "This should never happen");
-    JSString* str = JSVAL_TO_STRING(stringVal);
+    NS_ASSERTION(stringVal.toString(), "This should never happen");
+    JS::RootedString str(aCx, stringVal.toString());
 
     bool isIdentifier = false;
     if (!JS_IsIdentifier(aCx, str, &isIdentifier) || !isIdentifier) {
@@ -502,7 +502,7 @@ KeyPath::ToJSVal(JSContext* aCx, JS::MutableHandle<JS::Value> aValue) const
     for (uint32_t i = 0; i < len; ++i) {
       JS::Rooted<JS::Value> val(aCx);
       nsString tmp(mStrings[i]);
-      if (!xpc::StringToJsval(aCx, tmp, val.address())) {
+      if (!xpc::StringToJsval(aCx, tmp, &val)) {
         return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
       }
 
@@ -517,7 +517,7 @@ KeyPath::ToJSVal(JSContext* aCx, JS::MutableHandle<JS::Value> aValue) const
 
   if (IsString()) {
     nsString tmp(mStrings[0]);
-    if (!xpc::StringToJsval(aCx, tmp, aValue.address())) {
+    if (!xpc::StringToJsval(aCx, tmp, aValue)) {
       return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
     }
     return NS_OK;

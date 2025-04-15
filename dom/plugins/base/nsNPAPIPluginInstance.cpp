@@ -23,6 +23,7 @@
 #include "nsContentUtils.h"
 #include "nsPluginInstanceOwner.h"
 
+#include "nsThreadUtils.h"
 #include "nsIDOMElement.h"
 #include "nsIDocument.h"
 #include "nsIDocShell.h"
@@ -37,6 +38,7 @@
 #include "nsVersionComparator.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/unused.h"
+#include "nsILoadContext.h"
 
 using namespace mozilla;
 
@@ -191,7 +193,7 @@ nsNPAPIPluginInstance::nsNPAPIPluginInstance()
 #endif
   , mHaveJavaC2PJSObjectQuirk(false)
 {
-  mNPP.pdata = NULL;
+  mNPP.pdata = nullptr;
   mNPP.ndata = this;
 
   PLUGIN_LOG(PLUGIN_LOG_BASIC, ("nsNPAPIPluginInstance ctor: this=%p\n",this));
@@ -534,7 +536,9 @@ nsNPAPIPluginInstance::Start()
   // before returning. If the plugin returns failure, we'll clear it out below.
   mRunning = RUNNING;
 
-  nsresult newResult = library->NPP_New((char*)mimetype, &mNPP, (uint16_t)mode, count, (char**)names, (char**)values, NULL, &error);
+  nsresult newResult = library->NPP_New((char*)mimetype, &mNPP, (uint16_t)mode,
+                                        count, (char**)names, (char**)values,
+                                        nullptr, &error);
   mInPluginInitCall = oldVal;
 
   NPP_PLUGIN_LOG(PLUGIN_LOG_NORMAL,
@@ -552,11 +556,11 @@ nsNPAPIPluginInstance::Start()
 
 nsresult nsNPAPIPluginInstance::SetWindow(NPWindow* window)
 {
-  // NPAPI plugins don't want a SetWindow(NULL).
+  // NPAPI plugins don't want a SetWindow(nullptr).
   if (!window || RUNNING != mRunning)
     return NS_OK;
 
-#if defined(MOZ_WIDGET_GTK2)
+#if (MOZ_WIDGET_GTK == 2)
   // bug 108347, flash plugin on linux doesn't like window->width <=
   // 0, but Java needs wants this call.
   if (!nsPluginHost::IsJavaMIMEType(mMIMEType) && window->type == NPWindowTypeWindow &&
@@ -1437,7 +1441,7 @@ PluginTimerCallback(nsITimer *aTimer, void *aClosure)
   // Make sure we still have an instance and the timer is still alive
   // after the callback.
   nsNPAPIPluginInstance *inst = (nsNPAPIPluginInstance*)npp->ndata;
-  if (!inst || !inst->TimerWithID(id, NULL))
+  if (!inst || !inst->TimerWithID(id, nullptr))
     return;
 
   // use UnscheduleTimer to clean up if this is a one-shot timer
@@ -1474,7 +1478,7 @@ nsNPAPIPluginInstance::ScheduleTimer(uint32_t interval, NPBool repeat, void (*ti
 
   // generate ID that is unique to this instance
   uint32_t uniqueID = mTimers.Length();
-  while ((uniqueID == 0) || TimerWithID(uniqueID, NULL))
+  while ((uniqueID == 0) || TimerWithID(uniqueID, nullptr))
     uniqueID++;
   newTimer->id = uniqueID;
 
@@ -1597,7 +1601,7 @@ nsNPAPIPluginInstance::GetJSContext(JSContext* *outContext)
 
   nsRefPtr<nsPluginInstanceOwner> deathGrip(mOwner);
 
-  *outContext = NULL;
+  *outContext = nullptr;
   nsCOMPtr<nsIDocument> document;
 
   nsresult rv = mOwner->GetDocument(getter_AddRefs(document));

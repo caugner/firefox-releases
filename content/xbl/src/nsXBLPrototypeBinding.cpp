@@ -34,7 +34,7 @@
 #include "nsContentUtils.h"
 #include "nsTextFragment.h"
 #include "nsTextNode.h"
-
+#include "nsIInterfaceInfo.h"
 #include "nsIScriptError.h"
 
 #include "nsIStyleRuleProcessor.h"
@@ -208,8 +208,7 @@ nsXBLPrototypeBinding::SetBindingElement(nsIContent* aElement)
                             nsGkAtoms::_false, eCaseMatters))
     mInheritStyle = false;
 
-  mChromeOnlyContent = IsChrome() &&
-                       mBinding->AttrValueIs(kNameSpaceID_None,
+  mChromeOnlyContent = mBinding->AttrValueIs(kNameSpaceID_None,
                                              nsGkAtoms::chromeOnlyContent,
                                              nsGkAtoms::_true, eCaseMatters);
 }
@@ -1014,13 +1013,13 @@ nsXBLPrototypeBinding::Read(nsIObjectInputStream* aStream,
       NS_ENSURE_SUCCESS(rv, rv);
 
       nsAutoString attrPrefix, attrName, attrValue;
+      rv = aStream->ReadString(attrPrefix);
+      NS_ENSURE_SUCCESS(rv, rv);
+
       rv = aStream->ReadString(attrName);
       NS_ENSURE_SUCCESS(rv, rv);
 
       rv = aStream->ReadString(attrValue);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      rv = aStream->ReadString(attrPrefix);
       NS_ENSURE_SUCCESS(rv, rv);
 
       nsCOMPtr<nsIAtom> atomPrefix = do_GetAtom(attrPrefix);
@@ -1170,11 +1169,6 @@ nsXBLPrototypeBinding::Write(nsIObjectOutputStream* aStream)
       rv = WriteNamespace(aStream, attr->NamespaceID());
       NS_ENSURE_SUCCESS(rv, rv);
 
-      rv = aStream->WriteWStringZ(attrName.get());
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      rv = aStream->WriteWStringZ(attrValue.get());
-      NS_ENSURE_SUCCESS(rv, rv);
       nsIAtom* prefix = attr->GetPrefix();
       nsAutoString prefixString;
       if (prefix) {
@@ -1182,6 +1176,12 @@ nsXBLPrototypeBinding::Write(nsIObjectOutputStream* aStream)
       }
 
       rv = aStream->WriteWStringZ(prefixString.get());
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = aStream->WriteWStringZ(attrName.get());
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = aStream->WriteWStringZ(attrValue.get());
       NS_ENSURE_SUCCESS(rv, rv);
     }
   }

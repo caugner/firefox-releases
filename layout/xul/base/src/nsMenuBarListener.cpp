@@ -7,7 +7,6 @@
 #include "nsMenuBarFrame.h"
 #include "nsMenuPopupFrame.h"
 #include "nsIDOMEvent.h"
-#include "nsGUIEvent.h"
 
 // Drag & Drop, Clipboard
 #include "nsIServiceManager.h"
@@ -20,6 +19,7 @@
 
 #include "nsContentUtils.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/TextEvents.h"
 
 using namespace mozilla;
 
@@ -197,8 +197,8 @@ nsMenuBarListener::KeyPress(nsIDOMEvent* aKeyEvent)
 
       bool hasAccessKeyCandidates = charCode != 0;
       if (!hasAccessKeyCandidates) {
-        nsEvent* nativeEvent = nsContentUtils::GetNativeEvent(aKeyEvent);
-        nsKeyEvent* nativeKeyEvent = static_cast<nsKeyEvent*>(nativeEvent);
+        WidgetKeyboardEvent* nativeKeyEvent =
+          aKeyEvent->GetInternalNSEvent()->AsKeyboardEvent();
         if (nativeKeyEvent) {
           nsAutoTArray<uint32_t, 10> keys;
           nsContentUtils::GetAccessKeyCandidates(nativeKeyEvent, keys);
@@ -269,8 +269,8 @@ uint32_t
 nsMenuBarListener::GetModifiers(nsIDOMKeyEvent* aKeyEvent)
 {
   uint32_t modifiers = 0;
-  nsInputEvent* inputEvent =
-    static_cast<nsInputEvent*>(aKeyEvent->GetInternalNSEvent());
+  WidgetInputEvent* inputEvent =
+    aKeyEvent->GetInternalNSEvent()->AsInputEvent();
   MOZ_ASSERT(inputEvent);
 
   if (inputEvent->IsShift()) {

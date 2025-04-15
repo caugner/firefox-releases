@@ -48,6 +48,7 @@
 #include "ImageContainer.h"
 #include "mozilla/Telemetry.h"
 #include "gfxUtils.h"
+#include "gfxColor.h"
 #include "gfxGradientCache.h"
 #include <algorithm>
 
@@ -218,7 +219,7 @@ protected:
     nsIFrame* nextCont = aFrame->GetNextContinuation();
     if (!nextCont && (aFrame->GetStateBits() & NS_FRAME_IS_SPECIAL)) {
       // The {ib} properties are only stored on first continuations
-      aFrame = aFrame->GetFirstContinuation();
+      aFrame = aFrame->FirstContinuation();
       nsIFrame* block = static_cast<nsIFrame*>
         (aFrame->Properties().Get(nsIFrame::IBSplitSpecialSibling()));
       if (block) {
@@ -3314,7 +3315,7 @@ DrawBorderImageComponent(nsRenderingContext&  aRenderingContext,
     aStyleBorder.SetSubImage(aIndex, subImage);
   }
 
-  gfxPattern::GraphicsFilter graphicsFilter =
+  GraphicsFilter graphicsFilter =
     nsLayoutUtils::GetGraphicsFilterForFrame(aForFrame);
 
   // If we have no tiling in either direction, we can skip the intermediate
@@ -4296,7 +4297,7 @@ nsImageRenderer::PrepareImage()
       nsContentUtils::NewURIWithDocumentCharset(getter_AddRefs(targetURI), elementId,
                                                 mForFrame->GetContent()->GetCurrentDoc(), base);
       nsSVGPaintingProperty* property = nsSVGEffects::GetPaintingPropertyForURI(
-          targetURI, mForFrame->GetFirstContinuation(),
+          targetURI, mForFrame->FirstContinuation(),
           nsSVGEffects::BackgroundImageProperty());
       if (!property)
         return false;
@@ -4553,7 +4554,7 @@ nsImageRenderer::Draw(nsPresContext*       aPresContext,
     return;
   }
 
-  gfxPattern::GraphicsFilter graphicsFilter =
+  GraphicsFilter graphicsFilter =
     nsLayoutUtils::GetGraphicsFilterForFrame(mForFrame);
 
   switch (mType) {
@@ -4614,7 +4615,7 @@ nsImageRenderer::DrawBackground(nsPresContext*       aPresContext,
   }
 
   if (mType == eStyleImageType_Image) {
-    gfxPattern::GraphicsFilter graphicsFilter =
+    GraphicsFilter graphicsFilter =
       nsLayoutUtils::GetGraphicsFilterForFrame(mForFrame);
 
     nsLayoutUtils::DrawBackgroundImage(&aRenderingContext, mImageContainer,
@@ -4745,12 +4746,12 @@ nsContextBoxBlur::Init(const nsRect& aRect, nscoord aSpreadRadius,
                          blurRadius, &dirtyRect, &skipRect);
   } else {
     mContext = blur.Init(rect, spreadRadius,
-                         blurRadius, &dirtyRect, NULL);
+                         blurRadius, &dirtyRect, nullptr);
   }
 
   if (mContext) {
     // we don't need to blur if skipRect is equal to rect
-    // and mContext will be NULL
+    // and mContext will be nullptr
     mContext->SetMatrix(transform);
   }
   return mContext;

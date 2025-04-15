@@ -151,10 +151,21 @@ class VideoSessionConduit : public MediaSessionConduit
 public:
   /**
    * Factory function to create and initialize a Video Conduit Session
-   * return: Concrete VideoSessionConduitObject or NULL in the case
+   * return: Concrete VideoSessionConduitObject or nullptr in the case
    *         of failure
    */
-  static RefPtr<VideoSessionConduit> Create();
+  static RefPtr<VideoSessionConduit> Create(VideoSessionConduit *aOther);
+
+  enum FrameRequestType
+  {
+    FrameRequestNone,
+    FrameRequestFir,
+    FrameRequestPli,
+    FrameRequestUnknown
+  };
+
+  VideoSessionConduit() : mFrameRequestMethod(FrameRequestNone),
+                          mUsingNackBasic(false) {}
 
   virtual ~VideoSessionConduit() {}
 
@@ -208,6 +219,35 @@ public:
   virtual MediaConduitErrorCode ConfigureRecvMediaCodecs(
                                 const std::vector<VideoCodecConfig* >& recvCodecConfigList) = 0;
 
+
+  /**
+   * These methods allow unit tests to double-check that the
+   * max-fs and max-fr related settings are as expected.
+   */
+  virtual unsigned short SendingWidth() = 0;
+
+  virtual unsigned short SendingHeight() = 0;
+
+  virtual unsigned int SendingMaxFs() = 0;
+
+  virtual unsigned int SendingMaxFr() = 0;
+
+  /**
+    * These methods allow unit tests to double-check that the
+    * rtcp-fb settings are as expected.
+    */
+    FrameRequestType FrameRequestMethod() const {
+      return mFrameRequestMethod;
+    }
+
+    bool UsingNackBasic() const {
+      return mUsingNackBasic;
+    }
+
+   protected:
+     /* RTCP feedback settings, for unit testing purposes */
+     FrameRequestType mFrameRequestMethod;
+     bool mUsingNackBasic;
 };
 
 /**
@@ -220,8 +260,8 @@ class AudioSessionConduit : public MediaSessionConduit
 public:
 
    /**
-    * Factory function to create and initialize a Video Conduit Session
-    * return: Concrete VideoSessionConduitObject or NULL in the case
+    * Factory function to create and initialize an Audio Conduit Session
+    * return: Concrete AudioSessionConduitObject or nullptr in the case
     *         of failure
     */
   static mozilla::RefPtr<AudioSessionConduit> Create(AudioSessionConduit *aOther);

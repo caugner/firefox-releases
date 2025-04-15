@@ -8,16 +8,17 @@
 
 #include "gfxTypes.h"
 
-#include "gfxColor.h"
 #include "gfxMatrix.h"
+#include "mozilla/Alignment.h"
+#include "mozilla/gfx/2D.h"
+#include "GraphicsFilter.h"
 #include "nsISupportsImpl.h"
 #include "nsAutoPtr.h"
 #include "nsTArray.h"
-#include "mozilla/Alignment.h"
-#include "mozilla/gfx/2D.h"
 
 class gfxContext;
 class gfxASurface;
+struct gfxRGBA;
 typedef struct _cairo_pattern cairo_pattern_t;
 
 
@@ -89,16 +90,6 @@ public:
     GraphicsPatternType GetType() const;
 
     int CairoStatus();
-
-    enum GraphicsFilter {
-        FILTER_FAST,
-        FILTER_GOOD,
-        FILTER_BEST,
-        FILTER_NEAREST,
-        FILTER_BILINEAR,
-        FILTER_GAUSSIAN,
-        FILTER_SENTINEL
-    };
 
     void SetFilter(GraphicsFilter filter);
     GraphicsFilter Filter() const;

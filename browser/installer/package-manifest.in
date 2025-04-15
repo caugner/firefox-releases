@@ -180,7 +180,6 @@
 #endif
 @BINPATH@/components/dom_camera.xpt
 @BINPATH@/components/dom_canvas.xpt
-@BINPATH@/components/dom_contacts.xpt
 @BINPATH@/components/dom_alarm.xpt
 @BINPATH@/components/dom_core.xpt
 @BINPATH@/components/dom_css.xpt
@@ -216,6 +215,7 @@
 #ifdef MOZ_GAMEPAD
 @BINPATH@/components/dom_gamepad.xpt
 #endif
+@BINPATH@/components/dom_payment.xpt
 @BINPATH@/components/downloads.xpt
 @BINPATH@/components/editor.xpt
 @BINPATH@/components/embed_base.xpt
@@ -257,6 +257,7 @@
 @BINPATH@/components/mozfind.xpt
 @BINPATH@/components/necko_about.xpt
 @BINPATH@/components/necko_cache.xpt
+@BINPATH@/components/necko_cache2.xpt
 @BINPATH@/components/necko_cookie.xpt
 @BINPATH@/components/necko_dns.xpt
 @BINPATH@/components/necko_file.xpt
@@ -296,6 +297,7 @@
 @BINPATH@/components/shistory.xpt
 @BINPATH@/components/spellchecker.xpt
 @BINPATH@/components/storage.xpt
+@BINPATH@/components/toolkit_finalizationwitness.xpt
 @BINPATH@/components/toolkitprofile.xpt
 #ifdef MOZ_ENABLE_XREMOTE
 @BINPATH@/components/toolkitremote.xpt
@@ -352,6 +354,8 @@
 @BINPATH@/browser/components/DownloadsStartup.js
 @BINPATH@/browser/components/DownloadsUI.js
 @BINPATH@/browser/components/BrowserPlaces.manifest
+@BINPATH@/browser/components/devtools-clhandler.manifest
+@BINPATH@/browser/components/devtools-clhandler.js
 @BINPATH@/components/Downloads.manifest
 @BINPATH@/components/DownloadLegacy.js
 @BINPATH@/components/BrowserPageThumbs.manifest
@@ -364,11 +368,13 @@
 @BINPATH@/components/nsLoginInfo.js
 @BINPATH@/components/nsLoginManager.js
 @BINPATH@/components/nsLoginManagerPrompter.js
-@BINPATH@/components/storage-Legacy.js
 @BINPATH@/components/storage-mozStorage.js
 @BINPATH@/components/crypto-SDR.js
 @BINPATH@/components/jsconsole-clhandler.manifest
 @BINPATH@/components/jsconsole-clhandler.js
+@BINPATH@/components/webvtt.xpt
+@BINPATH@/components/WebVTT.manifest
+@BINPATH@/components/WebVTTParserWrapper.js
 #ifdef MOZ_GTK
 @BINPATH@/components/nsFilePicker.manifest
 @BINPATH@/components/nsFilePicker.js
@@ -503,6 +509,8 @@
 @BINPATH@/components/ContactManager.manifest
 @BINPATH@/components/PhoneNumberService.js
 @BINPATH@/components/PhoneNumberService.manifest
+@BINPATH@/components/NotificationStorage.js
+@BINPATH@/components/NotificationStorage.manifest
 @BINPATH@/components/AlarmsManager.js
 @BINPATH@/components/AlarmsManager.manifest
 @BINPATH@/components/Push.js
@@ -516,10 +524,18 @@
 @BINPATH@/components/AppProtocolHandler.js
 @BINPATH@/components/AppProtocolHandler.manifest
 
+@BINPATH@/components/Payment.js
+@BINPATH@/components/PaymentFlowInfo.js
+@BINPATH@/components/PaymentRequestInfo.js
+@BINPATH@/components/Payment.manifest
+
 #ifdef MOZ_WEBRTC
 @BINPATH@/components/PeerConnection.js
 @BINPATH@/components/PeerConnection.manifest
 #endif
+
+@BINPATH@/components/HttpDataUsage.manifest
+@BINPATH@/components/HttpDataUsage.js
 
 @BINPATH@/chrome/marionette@JAREXT@
 @BINPATH@/chrome/marionette.manifest
@@ -560,6 +576,10 @@
 @BINPATH@/browser/chrome/browser.manifest
 @BINPATH@/browser/chrome/pdfjs.manifest
 @BINPATH@/browser/chrome/pdfjs/*
+#ifdef NIGHTLY_BUILD
+@BINPATH@/browser/chrome/shumway.manifest
+@BINPATH@/browser/chrome/shumway/*
+#endif
 @BINPATH@/browser/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/install.rdf
 @BINPATH@/browser/extensions/{972ce4c6-7e08-4474-a285-3208198ce6fd}/icon.png
 @BINPATH@/chrome/toolkit@JAREXT@
@@ -745,12 +765,14 @@ bin/libfreebl_32int64_3.so
 @BINPATH@/webapprt/components/CommandLineHandler.js
 @BINPATH@/webapprt/components/ContentPermission.js
 @BINPATH@/webapprt/components/DirectoryProvider.js
+@BINPATH@/webapprt/components/PaymentUIGlue.js
 @BINPATH@/webapprt/components/components.manifest
 @BINPATH@/webapprt/defaults/preferences/prefs.js
 @BINPATH@/webapprt/modules/Startup.jsm
 @BINPATH@/webapprt/modules/WebappRT.jsm
 @BINPATH@/webapprt/modules/WebappsHandler.jsm
 @BINPATH@/webapprt/modules/RemoteDebugger.jsm
+@BINPATH@/webapprt/modules/WebRTCHandler.jsm
 #endif
 
 #ifdef MOZ_METRO
@@ -779,6 +801,11 @@ bin/libfreebl_32int64_3.so
 @BINPATH@/metro/defaults
 @BINPATH@/metro/modules
 #endif
+
+@BINPATH@/components/DataStore.manifest
+@BINPATH@/components/DataStoreService.js
+@BINPATH@/components/dom_datastore.xpt
+
 
 #ifdef MOZ_ASAN
 @BINPATH@/llvm-symbolizer

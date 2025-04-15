@@ -6,17 +6,14 @@
 #include "mozilla/Util.h"
 
 #include "nsSVGAngle.h"
-#include "prdtoa.h"
-#include "nsTextFormatter.h"
-#include "nsSVGAttrTearoffTable.h"
 #include "mozilla/dom/SVGMarkerElement.h"
-#include "nsMathUtils.h"
 #include "nsContentUtils.h" // NS_ENSURE_FINITE
 #include "nsSMILValue.h"
-#include "SVGOrientSMILType.h"
-#include "nsAttrValueInlines.h"
+#include "nsSVGAttrTearoffTable.h"
+#include "nsTextFormatter.h"
 #include "SVGAngle.h"
 #include "SVGAnimatedAngle.h"
+#include "SVGOrientSMILType.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -96,28 +93,19 @@ GetValueString(nsAString &aValueAsString, float aValue, uint16_t aUnitType)
   aValueAsString.Append(unitString);
 }
 
-static nsresult
-GetValueFromString(const nsAString &aValueAsString,
-                   float *aValue,
-                   uint16_t *aUnitType)
+static bool
+GetValueFromString(const nsAString& aValueAsString,
+                   float& aValue,
+                   uint16_t* aUnitType)
 {
-  NS_ConvertUTF16toUTF8 value(aValueAsString);
-  const char *str = value.get();
+  nsAutoString units;
 
-  if (NS_IsAsciiWhitespace(*str))
-    return NS_ERROR_DOM_SYNTAX_ERR;
-  
-  char *rest;
-  *aValue = float(PR_strtod(str, &rest));
-  if (rest != str && NS_finite(*aValue)) {
-    *aUnitType = GetUnitTypeForString(
-      Substring(aValueAsString, rest - str));
-    if (IsValidUnitType(*aUnitType)) {
-      return NS_OK;
-    }
+  if (!SVGContentUtils::ParseNumber(aValueAsString, aValue, units)) {
+    return false;
   }
-  
-  return NS_ERROR_DOM_SYNTAX_ERR;
+
+  *aUnitType = GetUnitTypeForString(units);
+  return IsValidUnitType(*aUnitType);
 }
 
 /* static */ float
@@ -260,12 +248,11 @@ nsSVGAngle::SetBaseValueString(const nsAString &aValueAsString,
                                nsSVGElement *aSVGElement,
                                bool aDoSetAttr)
 {
-  float value = 0;
-  uint16_t unitType = 0;
+  float value;
+  uint16_t unitType;
   
-  nsresult rv = GetValueFromString(aValueAsString, &value, &unitType);
-  if (NS_FAILED(rv)) {
-    return rv;
+  if (!GetValueFromString(aValueAsString, value, &unitType)) {
+     return NS_ERROR_DOM_SYNTAX_ERR;
   }
   if (mBaseVal == value && mBaseValUnit == uint8_t(unitType)) {
     return NS_OK;
@@ -384,9 +371,8 @@ nsSVGAngle::SMILOrient::ValueFromString(const nsAString& aStr,
   } else {
     float value;
     uint16_t unitType;
-    nsresult rv = GetValueFromString(aStr, &value, &unitType);
-    if (NS_FAILED(rv)) {
-      return rv;
+    if (!GetValueFromString(aStr, value, &unitType)) {
+      return NS_ERROR_DOM_SYNTAX_ERR;
     }
     val.mU.mOrient.mAngle = value;
     val.mU.mOrient.mUnit = unitType;

@@ -1376,6 +1376,7 @@ CssSelector.prototype = {
       pseudos.add("first-letter");
       pseudos.add("first-line");
       pseudos.add("selection");
+      pseudos.add("-moz-color-swatch");
       pseudos.add("-moz-focus-inner");
       pseudos.add("-moz-focus-outer");
       pseudos.add("-moz-list-bullet");
@@ -1463,7 +1464,6 @@ CssPropertyInfo.prototype = {
         Services.console.logStringMessage(ex);
       }
     }
-
     return this._value;
   },
 
@@ -1612,9 +1612,8 @@ function CssSelectorInfo(aSelector, aProperty, aValue, aStatus)
 {
   this.selector = aSelector;
   this.property = aProperty;
-  this.value = aValue;
   this.status = aStatus;
-
+  this.value = aValue;
   let priority = this.selector.cssRule.getPropertyPriority(this.property);
   this.important = (priority === "important");
 }

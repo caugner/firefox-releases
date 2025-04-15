@@ -63,7 +63,7 @@ class ArrayBufferObject : public JSObject
 
     static bool class_constructor(JSContext *cx, unsigned argc, Value *vp);
 
-    static JSObject *create(JSContext *cx, uint32_t nbytes, uint8_t *contents = NULL);
+    static JSObject *create(JSContext *cx, uint32_t nbytes, uint8_t *contents = nullptr);
 
     static JSObject *createSlice(JSContext *cx, ArrayBufferObject &arrayBuffer,
                                  uint32_t begin, uint32_t end);
@@ -146,14 +146,19 @@ class ArrayBufferObject : public JSObject
     static bool stealContents(JSContext *cx, JSObject *obj, void **contents,
                               uint8_t **data);
 
-    static void setElementsHeader(js::ObjectElements *header, uint32_t bytes) {
-        header->flags = 0;
+    static void updateElementsHeader(js::ObjectElements *header, uint32_t bytes) {
         header->initializedLength = bytes;
 
-        // NB: one or both of these fields is clobbered by GetViewList to store the
-        // 'views' link. Set them to 0 to effectively initialize 'views' to NULL.
+        // NB: one or both of these fields is clobbered by GetViewList to store
+        // the 'views' link. Set them to 0 to effectively initialize 'views'
+        // to nullptr.
         header->length = 0;
         header->capacity = 0;
+    }
+
+    static void initElementsHeader(js::ObjectElements *header, uint32_t bytes) {
+        header->flags = 0;
+        updateElementsHeader(header, bytes);
     }
 
     static uint32_t headerInitializedLength(const js::ObjectElements *header) {
@@ -162,22 +167,48 @@ class ArrayBufferObject : public JSObject
 
     void addView(ArrayBufferViewObject *view);
 
-    bool allocateSlots(JSContext *cx, uint32_t size, uint8_t *contents = NULL);
+    bool allocateSlots(JSContext *cx, uint32_t size, uint8_t *contents = nullptr);
+
     void changeContents(JSContext *cx, ObjectElements *newHeader);
 
     /*
-     * Ensure that the data is not stored inline. Used when handing back a
+     * Copy the data into freshly-allocated memory. Used when un-inlining or
+     * when converting an ArrayBuffer to an AsmJS (MMU-assisted) ArrayBuffer.
+     */
+    bool copyData(JSContext *maybecx);
+
+    /*
+     * Ensure data is not stored inline in the object. Used when handing back a
      * GC-safe pointer.
      */
-    bool uninlineData(JSContext *cx);
+    bool ensureNonInline(JSContext *maybecx);
 
     uint32_t byteLength() const {
         return getElementsHeader()->initializedLength;
     }
 
+    /*
+     * Return the contents of an ArrayBuffer without modifying the ArrayBuffer
+     * itself. Set *callerOwns to true if the caller has the only pointer to
+     * the returned contents (which is the case for inline or asm.js buffers),
+     * and false if the ArrayBuffer still owns the pointer.
+     */
+    ObjectElements *getTransferableContents(JSContext *maybecx, bool *callerOwns);
+
+    /*
+     * Neuter all views of an ArrayBuffer.
+     */
+    bool neuterViews(JSContext *cx);
+
     inline uint8_t * dataPointer() const {
         return (uint8_t *) elements;
     }
+
+    /*
+     * Discard the ArrayBuffer contents. For asm.js buffers, at least, should
+     * be called after neuterViews().
+     */
+    void neuter(JSContext *maybecx);
 
     /*
      * Check if the arrayBuffer contains any data. This will return false for
@@ -190,8 +221,11 @@ class ArrayBufferObject : public JSObject
     bool isAsmJSArrayBuffer() const {
         return getElementsHeader()->isAsmJSArrayBuffer();
     }
+    bool isNeutered() const {
+        return getElementsHeader()->isNeuteredBuffer();
+    }
     static bool prepareForAsmJS(JSContext *cx, Handle<ArrayBufferObject*> buffer);
-    static void neuterAsmJSArrayBuffer(ArrayBufferObject &buffer);
+    static bool neuterAsmJSArrayBuffer(JSContext *cx, ArrayBufferObject &buffer);
     static void releaseAsmJSArrayBuffer(FreeOp *fop, JSObject *obj);
 };
 
@@ -318,7 +352,7 @@ class TypedArrayObject : public ArrayBufferViewObject
         return static_cast<void*>(getPrivate(DATA_SLOT));
     }
 
-    inline bool isArrayIndex(jsid id, uint32_t *ip = NULL);
+    inline bool isArrayIndex(jsid id, uint32_t *ip = nullptr);
     void copyTypedArrayElement(uint32_t index, MutableHandleValue vp);
 
     void neuter();
@@ -520,6 +554,7 @@ class DataViewObject : public ArrayBufferViewObject
     static bool fun_setFloat64(JSContext *cx, unsigned argc, Value *vp);
 
     static JSObject *initClass(JSContext *cx);
+    static void neuter(JSObject *view);
     static bool getDataPointer(JSContext *cx, Handle<DataViewObject*> obj,
                                CallArgs args, size_t typeSize, uint8_t **data);
     template<typename NativeType>

@@ -63,7 +63,6 @@ class nsISelection;
 class nsISupports;
 class nsITransaction;
 class nsIWidget;
-class nsKeyEvent;
 class nsRange;
 class nsString;
 class nsTransactionManager;
@@ -73,6 +72,7 @@ class Selection;
 
 namespace dom {
 class Element;
+class EventTarget;
 }  // namespace dom
 }  // namespace mozilla
 
@@ -405,8 +405,6 @@ protected:
    */
   bool GetDesiredSpellCheckState();
 
-  nsKeyEvent* GetNativeKeyEvent(nsIDOMKeyEvent* aDOMKeyEvent);
-
   bool CanEnableSpellCheck()
   {
     // Check for password/readonly/disabled, which are not spellchecked
@@ -663,7 +661,7 @@ public:
                                     nsIDOMNode *aEndNode,
                                     int32_t aEndOffset);
 
-  virtual already_AddRefed<nsIDOMEventTarget> GetDOMEventTarget() = 0;
+  virtual already_AddRefed<mozilla::dom::EventTarget> GetDOMEventTarget() = 0;
 
   // Fast non-refcounting editor root element accessor
   mozilla::dom::Element *GetRoot();
@@ -819,7 +817,7 @@ protected:
   nsCOMPtr<mozilla::dom::Element> mRootElement; // cached root node
   nsCOMPtr<nsIPrivateTextRangeList> mIMETextRangeList; // IME special selection ranges
   nsCOMPtr<nsIDOMCharacterData>     mIMETextNode;      // current IME text node
-  nsCOMPtr<nsIDOMEventTarget> mEventTarget; // The form field as an event receiver
+  nsCOMPtr<mozilla::dom::EventTarget> mEventTarget; // The form field as an event receiver
   nsCOMPtr<nsIDOMEventListener> mEventListener;
   nsWeakPtr        mSelConWeak;          // weak reference to the nsISelectionController
   nsWeakPtr        mPlaceHolderTxn;      // weak reference to placeholder for begin/end batch purposes

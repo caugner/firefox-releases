@@ -3,15 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsAlgorithm.h"
 #include "nsString.h"
-#include "nsBidiUtils.h"
-#include "nsMathUtils.h"
-
-#include "gfxTypes.h"
-
 #include "gfxContext.h"
-#include "gfxPlatform.h"
 #include "gfxHarfBuzzShaper.h"
 #include "gfxFontUtils.h"
 #include "nsUnicodeProperties.h"
@@ -21,9 +14,6 @@
 #include "harfbuzz/hb.h"
 #include "harfbuzz/hb-ot.h"
 
-#include "cairo.h"
-
-#include "nsCRT.h"
 #include <algorithm>
 
 #define FloatToFixed(f) (65536 * (f))
@@ -83,7 +73,7 @@ hb_codepoint_t
 gfxHarfBuzzShaper::GetGlyph(hb_codepoint_t unicode,
                             hb_codepoint_t variation_selector) const
 {
-    hb_codepoint_t gid;
+    hb_codepoint_t gid = 0;
 
     if (mUseFontGetGlyph) {
         gid = mFont->GetGlyph(unicode, variation_selector);
@@ -98,6 +88,18 @@ gfxHarfBuzzShaper::GetGlyph(hb_codepoint_t unicode,
         const uint8_t* data =
             (const uint8_t*)hb_blob_get_data(mCmapTable, nullptr);
 
+        if (variation_selector) {
+            if (mUVSTableOffset) {
+                gid =
+                    gfxFontUtils::MapUVSToGlyphFormat14(data + mUVSTableOffset,
+                                                        unicode,
+                                                        variation_selector);
+            }
+            // If the variation sequence was not supported, return zero here;
+            // harfbuzz will call us again for the base character alone
+            return gid;
+        }
+
         switch (mCmapFormat) {
         case 4:
             gid = unicode < UNICODE_BMP_LIMIT ?
@@ -110,20 +112,7 @@ gfxHarfBuzzShaper::GetGlyph(hb_codepoint_t unicode,
             break;
         default:
             NS_WARNING("unsupported cmap format, glyphs will be missing");
-            gid = 0;
             break;
-        }
-
-        if (gid && variation_selector && mUVSTableOffset) {
-            hb_codepoint_t varGID =
-                gfxFontUtils::MapUVSToGlyphFormat14(data + mUVSTableOffset,
-                                                    unicode,
-                                                    variation_selector);
-            if (varGID) {
-                gid = varGID;
-            }
-            // else the variation sequence was not supported, use default
-            // mapping of the character code alone
         }
     }
 

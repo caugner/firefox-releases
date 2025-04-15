@@ -7,11 +7,11 @@
 #define mozilla_dom_compositionstringsynthesizer_h__
 
 #include "nsICompositionStringSynthesizer.h"
-#include "nsGUIEvent.h"
 #include "nsString.h"
 #include "nsTArray.h"
 #include "nsWeakReference.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/TextRange.h"
 
 class nsIWidget;
 class nsPIDOMWindow;
@@ -32,8 +32,8 @@ public:
 private:
   nsWeakPtr mWindow; // refers an instance of nsPIDOMWindow
   nsString mString;
-  nsAutoTArray<nsTextRange, 10> mClauses;
-  nsTextRange mCaret;
+  nsAutoTArray<TextRange, 10> mClauses;
+  TextRange mCaret;
 
   nsIWidget* GetWidget();
   void ClearInternal();

@@ -43,6 +43,7 @@ ClientLayerManager::ClientLayerManager(nsIWidget* aWidget)
   , mIsRepeatTransaction(false)
   , mTransactionIncomplete(false)
   , mCompositorMightResample(false)
+  , mNeedsComposite(false)
 {
   MOZ_COUNT_CTOR(ClientLayerManager);
 }
@@ -165,6 +166,7 @@ ClientLayerManager::EndTransactionInternal(DrawThebesLayerCallback aCallback,
   MOZ_LAYERS_LOG(("  ----- (beginning paint)"));
   Log();
 #endif
+  profiler_tracing("Paint", "Rasterize", TRACING_INTERVAL_START);
 
   NS_ASSERTION(InConstruction(), "Should be in construction phase");
   mPhase = PHASE_DRAWING;
@@ -263,7 +265,7 @@ ClientLayerManager::MakeSnapshotIfRequired()
       mWidget->GetBounds(bounds);
       SurfaceDescriptor inSnapshot, snapshot;
       if (AllocSurfaceDescriptor(bounds.Size(),
-                                 gfxASurface::CONTENT_COLOR_ALPHA,
+                                 GFX_CONTENT_COLOR_ALPHA,
                                  &inSnapshot) &&
           // The compositor will usually reuse |snapshot| and return
           // it through |outSnapshot|, but if it doesn't, it's
@@ -298,8 +300,9 @@ ClientLayerManager::ForwardTransaction()
   mPhase = PHASE_FORWARD;
 
   // forward this transaction's changeset to our LayerManagerComposite
+  bool sent;
   AutoInfallibleTArray<EditReply, 10> replies;
-  if (HasShadowManager() && ShadowLayerForwarder::EndTransaction(&replies)) {
+  if (HasShadowManager() && ShadowLayerForwarder::EndTransaction(&replies, &sent)) {
     for (nsTArray<EditReply>::size_type i = 0; i < replies.Length(); ++i) {
       const EditReply& reply = replies[i];
 
@@ -347,6 +350,10 @@ ClientLayerManager::ForwardTransaction()
       default:
         NS_RUNTIMEABORT("not reached");
       }
+    }
+
+    if (sent) {
+      mNeedsComposite = false;
     }
   } else if (HasShadowManager()) {
     NS_WARNING("failed to forward Layers transaction");

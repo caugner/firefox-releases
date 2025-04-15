@@ -9,6 +9,8 @@
 #ifndef js_Class_h
 #define js_Class_h
 
+#include "mozilla/NullPtr.h"
+ 
 #include "jstypes.h"
 
 #include "js/CallArgs.h"
@@ -73,7 +75,7 @@ class SpecialId
     SpecialId(JSObject &obj)
       : bits_(uintptr_t(&obj) | TYPE_OBJECT)
     {
-        JS_ASSERT(&obj != NULL);
+        JS_ASSERT(&obj != nullptr);
         JS_ASSERT((uintptr_t(&obj) & TYPE_MASK) == 0);
     }
 
@@ -270,6 +272,12 @@ typedef bool
 (* JSCheckAccessOp)(JSContext *cx, JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
                     JSAccessMode mode, JS::MutableHandle<JS::Value> vp);
 
+// Return whether the first principal subsumes the second. The exact meaning of
+// 'subsumes' is left up to the browser. Subsumption is checked inside the JS
+// engine when determining, e.g., which stack frames to display in a backtrace.
+typedef bool
+(* JSSubsumesOp)(JSPrincipals *first, JSPrincipals *second);
+
 // Check whether v is an instance of obj.  Return false on error or exception,
 // true on success with true in *bp if v is an instance of obj, false in
 // *bp otherwise.
@@ -375,6 +383,11 @@ typedef bool
 typedef bool
 (* DeleteSpecialOp)(JSContext *cx, JS::HandleObject obj, HandleSpecialId sid, bool *succeeded);
 
+typedef bool
+(* WatchOp)(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::HandleObject callable);
+
+typedef bool
+(* UnwatchOp)(JSContext *cx, JS::HandleObject obj, JS::HandleId id);
 
 typedef JSObject *
 (* ObjectOp)(JSContext *cx, JS::HandleObject obj);
@@ -437,7 +450,7 @@ struct ClassExtension
     JSWeakmapKeyDelegateOp weakmapKeyDelegateOp;
 };
 
-#define JS_NULL_CLASS_EXT   {NULL,NULL,NULL,false,NULL}
+#define JS_NULL_CLASS_EXT   {nullptr,nullptr,nullptr,false,nullptr}
 
 struct ObjectOps
 {
@@ -463,14 +476,17 @@ struct ObjectOps
     DeletePropertyOp    deleteProperty;
     DeleteElementOp     deleteElement;
     DeleteSpecialOp     deleteSpecial;
+    WatchOp             watch;
+    UnwatchOp           unwatch;
 
     JSNewEnumerateOp    enumerate;
     ObjectOp            thisObject;
 };
 
 #define JS_NULL_OBJECT_OPS                                                    \
-    {NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,   \
-     NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL}
+    {nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr, \
+     nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr, \
+     nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr}
 
 } // namespace js
 
@@ -499,7 +515,7 @@ struct JSClass {
     JSNative            construct;
     JSTraceOp           trace;
 
-    void                *reserved[40];
+    void                *reserved[42];
 };
 
 #define JSCLASS_HAS_PRIVATE             (1<<0)  // objects have private slot
@@ -555,9 +571,9 @@ struct JSClass {
 //
 // Implementing this efficiently requires that global objects have classes
 // with the following flags. Failure to use JSCLASS_GLOBAL_FLAGS was
-// prevously allowed, but is now an ES5 violation and thus unsupported.
+// previously allowed, but is now an ES5 violation and thus unsupported.
 //
-#define JSCLASS_GLOBAL_SLOT_COUNT      (JSProto_LIMIT * 3 + 26)
+#define JSCLASS_GLOBAL_SLOT_COUNT      (3 + JSProto_LIMIT * 3 + 28)
 #define JSCLASS_GLOBAL_FLAGS_WITH_SLOTS(n)                                    \
     (JSCLASS_IS_GLOBAL | JSCLASS_HAS_RESERVED_SLOTS(JSCLASS_GLOBAL_SLOT_COUNT + (n)))
 #define JSCLASS_GLOBAL_FLAGS                                                  \

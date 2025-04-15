@@ -20,7 +20,7 @@ const JSClass global_class = {
 };
 
 template<typename T>
-inline T *
+static inline T *
 checkPtr(T *ptr)
 {
   if (! ptr)
@@ -28,7 +28,7 @@ checkPtr(T *ptr)
   return ptr;
 }
 
-void
+static void
 checkBool(bool success)
 {
   if (! success)
@@ -54,11 +54,12 @@ void breakpoint() {
     fprintf(stderr, "Called " __FILE__ ":breakpoint\n");
 }
 
-GDBFragment *GDBFragment::allFragments = NULL;
+GDBFragment *GDBFragment::allFragments = nullptr;
 
 int
 main (int argc, const char **argv)
 {
+    if (!JS_Init()) return 1;
     JSRuntime *runtime = checkPtr(JS_NewRuntime(1024 * 1024, JS_USE_HELPER_THREADS));
     JS_SetGCParameter(runtime, JSGC_MAX_BYTES, 0xffffffff);
     JS_SetNativeStackQuota(runtime, 5000000);
@@ -71,8 +72,8 @@ main (int argc, const char **argv)
     /* Create the global object. */
     JS::CompartmentOptions options;
     options.setVersion(JSVERSION_LATEST);
-    RootedObject global(cx, checkPtr(JS_NewGlobalObject(cx, &global_class, NULL,
-                        JS::FireOnNewGlobalHook, options)));
+    RootedObject global(cx, checkPtr(JS_NewGlobalObject(cx, &global_class,
+                        nullptr, JS::FireOnNewGlobalHook, options)));
     js::SetDefaultObjectForContext(cx, global);
 
     JSAutoCompartment ac(cx, global);

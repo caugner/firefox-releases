@@ -310,6 +310,16 @@ private:
   nsRefPtr<T> mKey;
 };
 
+template <class T>
+inline void
+ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
+                            nsRefPtrHashKey<T>& aField,
+                            const char* aName,
+                            uint32_t aFlags = 0)
+{
+  CycleCollectionNoteChild(aCallback, aField.GetKey(), aName, aFlags);
+}
+
 /**
  * hashkey wrapper using T* KeyType
  *
@@ -342,7 +352,7 @@ class nsPtrHashKey : public PLDHashEntryHdr
 };
 
 /**
- * hashkey wrapper using T* KeyType that sets key to NULL upon
+ * hashkey wrapper using T* KeyType that sets key to nullptr upon
  * destruction. Relevant only in cases where a memory pointer-scanner
  * like valgrind might get confused about stale references.
  *

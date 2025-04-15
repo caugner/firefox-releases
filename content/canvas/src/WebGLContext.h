@@ -20,11 +20,14 @@
 #include "mozilla/dom/HTMLCanvasElement.h"
 #include "nsWrapperCache.h"
 #include "nsIObserver.h"
+#include "nsLayoutUtils.h"
 
 #include "GLContextProvider.h"
+#include "gfxImageSurface.h"
 
 #include "mozilla/LinkedList.h"
 #include "mozilla/CheckedInt.h"
+#include "mozilla/Scoped.h"
 
 #ifdef XP_MACOSX
 #include "ForceDiscreteGPUHelperCGL.h"
@@ -75,11 +78,12 @@ namespace dom {
 class ImageData;
 
 struct WebGLContextAttributes;
-struct WebGLContextAttributesInitializer;
 template<typename> struct Nullable;
 }
 
-using WebGLTexelConversions::WebGLTexelFormat;
+namespace gfx {
+class SourceSurface;
+}
 
 WebGLTexelFormat GetWebGLTexelFormat(GLenum format, GLenum type);
 
@@ -152,20 +156,24 @@ public:
     NS_DECL_NSIDOMWEBGLRENDERINGCONTEXT
 
     // nsICanvasRenderingContextInternal
+#ifdef DEBUG
+    virtual int32_t GetWidth() const MOZ_OVERRIDE;
+    virtual int32_t GetHeight() const MOZ_OVERRIDE;
+#endif
     NS_IMETHOD SetDimensions(int32_t width, int32_t height) MOZ_OVERRIDE;
     NS_IMETHOD InitializeWithSurface(nsIDocShell *docShell, gfxASurface *surface, int32_t width, int32_t height) MOZ_OVERRIDE
         { return NS_ERROR_NOT_IMPLEMENTED; }
     NS_IMETHOD Reset() MOZ_OVERRIDE
         { /* (InitializeWithSurface) */ return NS_ERROR_NOT_IMPLEMENTED; }
     NS_IMETHOD Render(gfxContext *ctx,
-                      gfxPattern::GraphicsFilter f,
+                      GraphicsFilter f,
                       uint32_t aFlags = RenderFlagPremultAlpha) MOZ_OVERRIDE;
+    virtual void GetImageBuffer(uint8_t** aImageBuffer, int32_t* aFormat);
     NS_IMETHOD GetInputStream(const char* aMimeType,
                               const PRUnichar* aEncoderOptions,
                               nsIInputStream **aStream) MOZ_OVERRIDE;
     NS_IMETHOD GetThebesSurface(gfxASurface **surface) MOZ_OVERRIDE;
-    mozilla::TemporaryRef<mozilla::gfx::SourceSurface> GetSurfaceSnapshot() MOZ_OVERRIDE
-        { return nullptr; }
+    mozilla::TemporaryRef<mozilla::gfx::SourceSurface> GetSurfaceSnapshot() MOZ_OVERRIDE;
 
     NS_IMETHOD SetIsOpaque(bool b) MOZ_OVERRIDE { return NS_OK; };
     NS_IMETHOD SetContextOptions(JSContext* aCx,
@@ -250,7 +258,7 @@ public:
     GLsizei DrawingBufferWidth() const { return IsContextLost() ? 0 : mWidth; }
     GLsizei DrawingBufferHeight() const { return IsContextLost() ? 0 : mHeight; }
 
-    void GetContextAttributes(dom::Nullable<dom::WebGLContextAttributesInitializer>& retval);
+    void GetContextAttributes(dom::Nullable<dom::WebGLContextAttributes>& retval);
     bool IsContextLost() const { return mContextStatus != ContextNotLost; }
     void GetSupportedExtensions(JSContext *cx, dom::Nullable< nsTArray<nsString> > &retval);
     JSObject* GetExtension(JSContext* cx, const nsAString& aName, ErrorResult& rv);
@@ -791,15 +799,17 @@ private:
 // -----------------------------------------------------------------------------
 // PROTECTED
 protected:
-    void SetDontKnowIfNeedFakeBlack() {
-        mFakeBlackStatus = DontKnowIfNeedFakeBlack;
+    void SetFakeBlackStatus(WebGLContextFakeBlackStatus x) {
+        mFakeBlackStatus = x;
     }
+    // Returns the current fake-black-status, except if it was Unknown,
+    // in which case this function resolves it first, so it never returns Unknown.
+    WebGLContextFakeBlackStatus ResolvedFakeBlackStatus();
 
-    bool NeedFakeBlack();
     void BindFakeBlackTextures();
     void UnbindFakeBlackTextures();
 
-    int WhatDoesVertexAttrib0Need();
+    WebGLVertexAttrib0Status WhatDoesVertexAttrib0Need();
     bool DoFakeVertexAttrib0(GLuint vertexCount);
     void UndoFakeVertexAttrib0();
     void InvalidateFakeVertexAttrib0();
@@ -1083,16 +1093,35 @@ protected:
     uint32_t mPixelStorePackAlignment, mPixelStoreUnpackAlignment, mPixelStoreColorspaceConversion;
     bool mPixelStoreFlipY, mPixelStorePremultiplyAlpha;
 
-    FakeBlackStatus mFakeBlackStatus;
+    WebGLContextFakeBlackStatus mFakeBlackStatus;
 
-    GLuint mBlackTexture2D, mBlackTextureCubeMap;
-    bool mBlackTexturesAreInitialized;
+    class FakeBlackTexture
+    {
+        gl::GLContext* mGL;
+        GLuint mGLName;
+
+    public:
+        FakeBlackTexture(gl::GLContext* gl, GLenum target, GLenum format);
+        ~FakeBlackTexture();
+        GLuint GLName() const { return mGLName; }
+    };
+
+    ScopedDeletePtr<FakeBlackTexture> mBlackOpaqueTexture2D,
+                                      mBlackOpaqueTextureCubeMap,
+                                      mBlackTransparentTexture2D,
+                                      mBlackTransparentTextureCubeMap;
+
+    void BindFakeBlackTexturesHelper(
+        GLenum target,
+        const nsTArray<WebGLRefPtr<WebGLTexture> >& boundTexturesArray,
+        ScopedDeletePtr<FakeBlackTexture> & opaqueTextureScopedPtr,
+        ScopedDeletePtr<FakeBlackTexture> & transparentTextureScopedPtr);
 
     GLfloat mVertexAttrib0Vector[4];
     GLfloat mFakeVertexAttrib0BufferObjectVector[4];
     size_t mFakeVertexAttrib0BufferObjectSize;
     GLuint mFakeVertexAttrib0BufferObject;
-    int mFakeVertexAttrib0BufferStatus;
+    WebGLVertexAttrib0Status mFakeVertexAttrib0BufferStatus;
 
     GLint mStencilRefFront, mStencilRefBack;
     GLuint mStencilValueMaskFront, mStencilValueMaskBack,

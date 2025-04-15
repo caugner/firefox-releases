@@ -8,12 +8,12 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/Decimal.h"
+#include "mozilla/EventForwards.h"
 #include "nsContainerFrame.h"
 #include "nsIAnonymousContentCreator.h"
 #include "nsCOMPtr.h"
 
 class nsBaseContentList;
-class nsGUIEvent;
 
 class nsRangeFrame : public nsContainerFrame,
                      public nsIAnonymousContentCreator
@@ -111,7 +111,7 @@ public:
    */
   bool ShouldUseNativeStyle() const;
 
-  mozilla::Decimal GetValueAtEventPoint(nsGUIEvent* aEvent);
+  mozilla::Decimal GetValueAtEventPoint(mozilla::WidgetGUIEvent* aEvent);
 
   /**
    * Helper that's used when the value of the range changes to reposition the

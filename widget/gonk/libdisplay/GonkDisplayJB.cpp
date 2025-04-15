@@ -18,6 +18,7 @@
 #include <gui/SurfaceTextureClient.h>
 #else
 #include <gui/Surface.h>
+#include <gui/GraphicBufferAlloc.h>
 #endif
 
 #include <hardware/hardware.h>
@@ -25,7 +26,9 @@
 #include <hardware/power.h>
 #include <suspend/autosuspend.h>
 
+#if ANDROID_VERSION == 17
 #include "GraphicBufferAlloc.h"
+#endif
 #include "BootAnimation.h"
 
 using namespace android;
@@ -267,6 +270,20 @@ GonkDisplayJB::QueueBuffer(ANativeWindowBuffer* buf)
 {
     bool success = Post(buf->handle, -1);
     return success;
+}
+
+void
+GonkDisplayJB::UpdateFBSurface(EGLDisplay dpy, EGLSurface sur)
+{
+    StopBootAnimation();
+    mBootAnimBuffer = nullptr;
+    eglSwapBuffers(dpy, sur);
+}
+
+void
+GonkDisplayJB::SetFBReleaseFd(int fd)
+{
+    mFBSurface->setReleaseFenceFd(fd);
 }
 
 __attribute__ ((visibility ("default")))

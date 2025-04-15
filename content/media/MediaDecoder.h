@@ -478,9 +478,10 @@ public:
   // changed. Called on main thread only.
   virtual void NotifyPrincipalChanged();
 
-  // Called by the decode thread to keep track of the number of bytes read
-  // from the resource.
-  void NotifyBytesConsumed(int64_t aBytes) MOZ_FINAL MOZ_OVERRIDE;
+  // Called by the MediaResource to keep track of the number of bytes read
+  // from the resource. Called on the main by an event runner dispatched
+  // by the MediaResource read functions.
+  void NotifyBytesConsumed(int64_t aBytes, int64_t aOffset) MOZ_FINAL MOZ_OVERRIDE;
 
   int64_t GetEndMediaTime() const MOZ_FINAL MOZ_OVERRIDE;
 
@@ -532,6 +533,7 @@ public:
 
   // Invalidate the frame.
   void Invalidate();
+  void InvalidateWithFlags(uint32_t aFlags);
 
   // Suspend any media downloads that are in progress. Called by the
   // media element when it is sent to the bfcache, or when we need
@@ -681,6 +683,10 @@ public:
   // change. Call on the main thread only.
   void ChangeState(PlayState aState);
 
+  // Called by |ChangeState|, to update the state machine.
+  // Call on the main thread only and the lock must be obtained.
+  virtual void ApplyStateToStateMachine(PlayState aState);
+
   // May be called by the reader to notify this decoder that the metadata from
   // the media file has been read. Call on the decode thread only.
   void OnReadMetadataCompleted() MOZ_OVERRIDE { }
@@ -764,6 +770,9 @@ public:
 
 #ifdef MOZ_WEBM
   static bool IsWebMEnabled();
+#endif
+#ifdef MOZ_RTSP
+  static bool IsRtspEnabled();
 #endif
 
 #ifdef MOZ_GSTREAMER

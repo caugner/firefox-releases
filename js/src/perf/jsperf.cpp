@@ -96,7 +96,7 @@ pm_canMeasureSomething(JSContext* cx, unsigned argc, jsval* vp)
     return true;
 }
 
-const uint8_t PM_FATTRS = JSPROP_READONLY | JSPROP_PERMANENT;
+static const uint8_t PM_FATTRS = JSPROP_READONLY | JSPROP_PERMANENT;
 static const JSFunctionSpec pm_fns[] = {
     JS_FN("start",               pm_start,               0, PM_FATTRS),
     JS_FN("stop",                pm_stop,                0, PM_FATTRS),
@@ -105,8 +105,8 @@ static const JSFunctionSpec pm_fns[] = {
     JS_FS_END
 };
 
-const uint8_t PM_PATTRS =
-    JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_SHARED;
+static const uint8_t PM_PATTRS =
+    JSPROP_ENUMERATE | JSPROP_PERMANENT;
 
 #define GETTER(name)                            \
     JS_PSG(#name, pm_get_##name, PM_PATTRS)
@@ -131,7 +131,7 @@ static const JSPropertySpec pm_props[] = {
 
 // If this were C++ these would be "static const" members.
 
-const uint8_t PM_CATTRS = JSPROP_ENUMERATE|JSPROP_READONLY|JSPROP_PERMANENT;
+static const uint8_t PM_CATTRS = JSPROP_ENUMERATE|JSPROP_READONLY|JSPROP_PERMANENT;
 
 #define CONSTANT(name) { #name, PerfMeasurement::name }
 
@@ -206,11 +206,11 @@ GetPM(JSContext* cx, JS::HandleValue value, const char* fname)
 {
     if (!value.isObject()) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, 0, JSMSG_NOT_NONNULL_OBJECT);
-        return NULL;
+        return nullptr;
     }
     RootedObject obj(cx, &value.toObject());
     PerfMeasurement* p = (PerfMeasurement*)
-        JS_GetInstancePrivate(cx, obj, &pm_class, NULL);
+        JS_GetInstancePrivate(cx, obj, &pm_class, nullptr);
     if (p)
         return p;
 
@@ -218,7 +218,7 @@ GetPM(JSContext* cx, JS::HandleValue value, const char* fname)
     // is nonzero, so we have to do it by hand.
     JS_ReportErrorNumber(cx, js_GetErrorMessage, 0, JSMSG_INCOMPATIBLE_PROTO,
                          pm_class.name, fname, JS_GetClass(obj)->name);
-    return NULL;
+    return nullptr;
 }
 
 namespace JS {
@@ -227,7 +227,7 @@ JSObject*
 RegisterPerfMeasurement(JSContext *cx, JSObject *global)
 {
     RootedObject prototype(cx);
-    prototype = JS_InitClass(cx, global, NULL /* parent */,
+    prototype = JS_InitClass(cx, global, nullptr /* parent */,
                              &pm_class, pm_construct, 1,
                              pm_props, pm_fns, 0, 0);
     if (!prototype)

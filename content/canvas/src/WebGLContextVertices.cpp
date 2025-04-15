@@ -247,10 +247,10 @@ WebGLContext::GetVertexAttrib(JSContext* cx, GLuint index, GLenum pname,
         {
             if (!ValidateAttribIndex(index, "getVertexAttrib"))
                 return JS::NullValue();
-            
+
             if (!mBoundVertexArray->mAttribs[index].enabled)
                 return JS::Int32Value(4);
-            
+
             // Don't break; fall through.
         }
         case LOCAL_GL_VERTEX_ATTRIB_ARRAY_TYPE:
@@ -379,7 +379,7 @@ WebGLContext::VertexAttribPointer(GLuint index, GLint size, GLenum type,
     if (byteOffset & requiredAlignmentMask) {
         return ErrorInvalidOperation("vertexAttribPointer: byteOffset doesn't satisfy the alignment "
                                      "requirement of given type");
-        
+
     }
 
     InvalidateBufferFetching();
@@ -500,7 +500,7 @@ bool WebGLContext::DrawArrays_check(GLint first, GLsizei count, GLsizei primcoun
     MakeContextCurrent();
 
     if (mBoundFramebuffer) {
-        if (!mBoundFramebuffer->CheckAndInitializeRenderbuffers()) {
+        if (!mBoundFramebuffer->CheckAndInitializeAttachments()) {
             ErrorInvalidFramebufferOperation("%s: incomplete framebuffer", info);
             return false;
         }
@@ -657,7 +657,7 @@ WebGLContext::DrawElements_check(GLsizei count, GLenum type, WebGLintptr byteOff
     MakeContextCurrent();
 
     if (mBoundFramebuffer) {
-        if (!mBoundFramebuffer->CheckAndInitializeRenderbuffers()) {
+        if (!mBoundFramebuffer->CheckAndInitializeAttachments()) {
             ErrorInvalidFramebufferOperation("%s: incomplete framebuffer", info);
             return false;
         }
@@ -726,7 +726,7 @@ void WebGLContext::Draw_cleanup()
     if (gl->WorkAroundDriverBugs()) {
         if (gl->Renderer() == gl::GLContext::RendererTegra) {
             mDrawCallsSinceLastFlush++;
-            
+
             if (mDrawCallsSinceLastFlush >= MAX_DRAW_CALLS_SINCE_FLUSH) {
                 gl->fFlush();
                 mDrawCallsSinceLastFlush = 0;

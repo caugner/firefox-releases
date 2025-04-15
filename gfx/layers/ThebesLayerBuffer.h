@@ -53,7 +53,7 @@ class ThebesLayer;
  */
 class RotatedBuffer {
 public:
-  typedef gfxASurface::gfxContentType ContentType;
+  typedef gfxContentType ContentType;
 
   RotatedBuffer(gfxASurface* aBuffer, gfxASurface* aBufferOnWhite,
                 const nsIntRect& aBufferRect,
@@ -113,6 +113,8 @@ protected:
   };
   nsIntRect GetQuadrantRectangle(XSide aXSide, YSide aYSide) const;
 
+  gfx::Rect GetSourceRectangle(XSide aXSide, YSide aYSide) const;
+
   /*
    * If aMask is non-null, then it is used as an alpha mask for rendering this
    * buffer. aMaskTransform must be non-null if aMask is non-null, and is used
@@ -158,7 +160,7 @@ protected:
  */
 class ThebesLayerBuffer : public RotatedBuffer {
 public:
-  typedef gfxASurface::gfxContentType ContentType;
+  typedef gfxContentType ContentType;
 
   /**
    * Controls the size of the backing buffer of this.
@@ -383,7 +385,7 @@ protected:
    * Return the buffer's content type.  Requires a valid buffer or
    * buffer provider.
    */
-  gfxASurface::gfxContentType BufferContentType();
+  gfxContentType BufferContentType();
   bool BufferSizeOkFor(const nsIntSize& aSize);
   /**
    * If the buffer hasn't been mapped, map it.

@@ -4,17 +4,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsDOMTransitionEvent.h"
-#include "nsGUIEvent.h"
 #include "prtime.h"
+#include "mozilla/ContentEvents.h"
+
+using namespace mozilla;
 
 nsDOMTransitionEvent::nsDOMTransitionEvent(mozilla::dom::EventTarget* aOwner,
                                            nsPresContext *aPresContext,
-                                           nsTransitionEvent *aEvent)
+                                           InternalTransitionEvent* aEvent)
   : nsDOMEvent(aOwner, aPresContext,
-               aEvent ? aEvent : new nsTransitionEvent(false, 0,
-                                                       EmptyString(),
-                                                       0.0,
-                                                       EmptyString()))
+               aEvent ? aEvent :
+                        new InternalTransitionEvent(false, 0, EmptyString(),
+                                                    0.0, EmptyString()))
 {
   if (aEvent) {
     mEventIsInternal = false;
@@ -22,14 +23,6 @@ nsDOMTransitionEvent::nsDOMTransitionEvent(mozilla::dom::EventTarget* aOwner,
   else {
     mEventIsInternal = true;
     mEvent->time = PR_Now();
-  }
-}
-
-nsDOMTransitionEvent::~nsDOMTransitionEvent()
-{
-  if (mEventIsInternal) {
-    delete TransitionEvent();
-    mEvent = nullptr;
   }
 }
 
@@ -53,9 +46,10 @@ nsDOMTransitionEvent::Constructor(const mozilla::dom::GlobalObject& aGlobal,
 
   aRv = e->InitEvent(aType, aParam.mBubbles, aParam.mCancelable);
 
-  e->TransitionEvent()->propertyName = aParam.mPropertyName;
-  e->TransitionEvent()->elapsedTime = aParam.mElapsedTime;
-  e->TransitionEvent()->pseudoElement = aParam.mPseudoElement;
+  InternalTransitionEvent* internalEvent = e->mEvent->AsTransitionEvent();
+  internalEvent->propertyName = aParam.mPropertyName;
+  internalEvent->elapsedTime = aParam.mElapsedTime;
+  internalEvent->pseudoElement = aParam.mPseudoElement;
 
   e->SetTrusted(trusted);
   return e.forget();
@@ -64,7 +58,7 @@ nsDOMTransitionEvent::Constructor(const mozilla::dom::GlobalObject& aGlobal,
 NS_IMETHODIMP
 nsDOMTransitionEvent::GetPropertyName(nsAString & aPropertyName)
 {
-  aPropertyName = TransitionEvent()->propertyName;
+  aPropertyName = mEvent->AsTransitionEvent()->propertyName;
   return NS_OK;
 }
 
@@ -75,10 +69,16 @@ nsDOMTransitionEvent::GetElapsedTime(float *aElapsedTime)
   return NS_OK;
 }
 
+float
+nsDOMTransitionEvent::ElapsedTime()
+{
+  return mEvent->AsTransitionEvent()->elapsedTime;
+}
+
 NS_IMETHODIMP
 nsDOMTransitionEvent::GetPseudoElement(nsAString& aPseudoElement)
 {
-  aPseudoElement = TransitionEvent()->pseudoElement;
+  aPseudoElement = mEvent->AsTransitionEvent()->pseudoElement;
   return NS_OK;
 }
 
@@ -86,7 +86,7 @@ nsresult
 NS_NewDOMTransitionEvent(nsIDOMEvent **aInstancePtrResult,
                          mozilla::dom::EventTarget* aOwner,
                          nsPresContext *aPresContext,
-                         nsTransitionEvent *aEvent)
+                         InternalTransitionEvent* aEvent)
 {
   nsDOMTransitionEvent *it =
     new nsDOMTransitionEvent(aOwner, aPresContext, aEvent);

@@ -5,9 +5,9 @@
 <window title="Nested Context Menu Tests"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
 
-  <script type="application/javascript" src="/tests/SimpleTest/SimpleTest.js"></script>      
-  <script type="application/javascript" src="/tests/SimpleTest/EventUtils.js"></script>      
-  <script type="application/javascript" src="popup_shared.js"></script>      
+  <script type="application/javascript" src="chrome://mochikit/content/tests/SimpleTest/SimpleTest.js"></script>
+  <script type="application/javascript" src="chrome://mochikit/content/tests/SimpleTest/EventUtils.js"></script>
+  <script type="application/javascript" src="popup_shared.js"></script>
 
 <menupopup id="outercontext">
   <menuitem label="Context One"/>
@@ -78,7 +78,9 @@ var popupTests = [
   events: [ "DOMMenuItemActive outercontextmenu", "popupshowing innercontext", "popupshown innercontext" ],
   test: function () {
     synthesizeMouse($("outercontextmenu"), 4, 4, { type: "mousemove" });
-    synthesizeMouse($("outercontextmenu"), 2, 2, { type: "mousemove" });
+    setTimeout(function() {
+        synthesizeMouse($("outercontextmenu"), 2, 2, { type: "mousemove" });
+      }, 1000);
   },
   result: function (testname) {
     is($("outermain").triggerNode, $("popuparea"), testname + " outer");

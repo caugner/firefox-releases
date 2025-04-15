@@ -9,14 +9,15 @@
 #include "nsIDOMMouseEvent.h"
 #include "nsDOMUIEvent.h"
 #include "mozilla/dom/MouseEventBinding.h"
+#include "mozilla/EventForwards.h"
 
 class nsDOMMouseEvent : public nsDOMUIEvent,
                         public nsIDOMMouseEvent
 {
 public:
   nsDOMMouseEvent(mozilla::dom::EventTarget* aOwner,
-                  nsPresContext* aPresContext, nsInputEvent* aEvent);
-  virtual ~nsDOMMouseEvent();
+                  nsPresContext* aPresContext,
+                  mozilla::WidgetMouseEventBase* aEvent);
 
   NS_DECL_ISUPPORTS_INHERITED
 
@@ -42,22 +43,10 @@ public:
   int32_t ScreenY();
   int32_t ClientX();
   int32_t ClientY();
-  bool CtrlKey()
-  {
-    return static_cast<nsInputEvent*>(mEvent)->IsControl();
-  }
-  bool ShiftKey()
-  {
-    return static_cast<nsInputEvent*>(mEvent)->IsShift();
-  }
-  bool AltKey()
-  {
-    return static_cast<nsInputEvent*>(mEvent)->IsAlt();
-  }
-  bool MetaKey()
-  {
-    return static_cast<nsInputEvent*>(mEvent)->IsMeta();
-  }
+  bool CtrlKey();
+  bool ShiftKey();
+  bool AltKey();
+  bool MetaKey();
   uint16_t Button();
   uint16_t Buttons();
   already_AddRefed<mozilla::dom::EventTarget> GetRelatedTarget();
@@ -91,14 +80,8 @@ public:
   {
     return GetMovementPoint().y;
   }
-  float MozPressure() const
-  {
-    return static_cast<nsMouseEvent_base*>(mEvent)->pressure;
-  }
-  uint16_t MozInputSource() const
-  {
-    return static_cast<nsMouseEvent_base*>(mEvent)->inputSource;
-  }
+  float MozPressure() const;
+  uint16_t MozInputSource() const;
   void InitNSMouseEvent(const nsAString & aType, bool aCanBubble, bool aCancelable,
                         nsIDOMWindow *aView, int32_t aDetail, int32_t aScreenX,
                         int32_t aScreenY, int32_t aClientX, int32_t aClientY,

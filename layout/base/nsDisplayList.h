@@ -283,6 +283,11 @@ public:
    */
   void SetPaintingToWindow(bool aToWindow) { mIsPaintingToWindow = aToWindow; }
   bool IsPaintingToWindow() const { return mIsPaintingToWindow; }
+  /**
+   * Call this to prevent descending into subdocuments.
+   */
+  void SetDescendIntoSubdocuments(bool aDescend) { mDescendIntoSubdocuments = aDescend; }
+  bool GetDescendIntoSubdocuments() { return mDescendIntoSubdocuments; }
 
   /**
    * Returns true if merging and flattening of display lists should be
@@ -622,6 +627,14 @@ public:
   void SetContainsPluginItem() { mContainsPluginItem = true; }
   bool ContainsPluginItem() { return mContainsPluginItem; }
 
+  /**
+   * mContainsBlendMode is true if we processed a display item that
+   * has a blend mode attached. We do this so we can insert a 
+   * nsDisplayBlendContainer in the parent stacking context.
+   */
+  void SetContainsBlendMode(bool aContainsBlendMode) { mContainsBlendMode = aContainsBlendMode; }
+  bool ContainsBlendMode() const { return mContainsBlendMode; }
+
   DisplayListClipState& ClipState() { return mClipState; }
 
 private:
@@ -666,6 +679,7 @@ private:
   bool                           mHadToIgnoreSuppression;
   bool                           mIsAtRootOfPseudoStackingContext;
   bool                           mIncludeAllOutOfFlows;
+  bool                           mDescendIntoSubdocuments;
   bool                           mSelectedFramesOnly;
   bool                           mAccurateVisibleRegions;
   bool                           mAllowMergingAndFlattening;
@@ -680,6 +694,7 @@ private:
   bool                           mIsInFixedPosition;
   bool                           mIsCompositingCheap;
   bool                           mContainsPluginItem;
+  bool                           mContainsBlendMode;
 };
 
 class nsDisplayItem;
@@ -773,7 +788,7 @@ public:
   struct HitTestState {
     typedef nsTArray<ViewID> ShadowArray;
 
-    HitTestState(ShadowArray* aShadows = NULL)
+    HitTestState(ShadowArray* aShadows = nullptr)
       : mShadows(aShadows) {
     }
 
@@ -1949,16 +1964,31 @@ public:
 
   virtual nsDisplayItemGeometry* AllocateGeometry(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE
   {
-    return new nsDisplayItemBoundsGeometry(this, aBuilder);
+    return new nsDisplaySolidColorGeometry(this, aBuilder, mColor);
   }
 
   virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
                                          const nsDisplayItemGeometry* aGeometry,
                                          nsRegion* aInvalidRegion) MOZ_OVERRIDE
   {
-    const nsDisplayItemBoundsGeometry* geometry = static_cast<const nsDisplayItemBoundsGeometry*>(aGeometry);
+    const nsDisplaySolidColorGeometry* geometry =
+      static_cast<const nsDisplaySolidColorGeometry*>(aGeometry);
+    if (mColor != geometry->mColor) {
+      bool dummy;
+      aInvalidRegion->Or(geometry->mBounds, GetBounds(aBuilder, &dummy));
+      return;
+    }
     ComputeInvalidationRegionDifference(aBuilder, geometry, aInvalidRegion);
   }
+
+#ifdef MOZ_DUMP_PAINTING
+  virtual void WriteDebugInfo(FILE *aOutput) MOZ_OVERRIDE
+  {
+    fprintf(aOutput, "(rgba %d,%d,%d,%d)",
+            NS_GET_R(mColor), NS_GET_G(mColor),
+            NS_GET_B(mColor), NS_GET_A(mColor));
+  }
+#endif
 
   NS_DISPLAY_DECL_NAME("SolidColor", TYPE_SOLID_COLOR)
 
@@ -2102,6 +2132,12 @@ public:
    * Can be called only when mBackgroundStyle is non-null.
    */
   nsRect GetPositioningArea();
+
+  /**
+   * Return whether our frame's document does not have the state
+   * NS_DOCUMENT_STATE_WINDOW_INACTIVE.
+   */
+  bool IsWindowActive();
 
   virtual nsDisplayItemGeometry* AllocateGeometry(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE
   {
@@ -2496,6 +2532,59 @@ public:
 #endif
 
   bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE;
+};
+
+class nsDisplayMixBlendMode : public nsDisplayWrapList {
+public:
+  nsDisplayMixBlendMode(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                        nsDisplayList* aList, uint32_t aFlags = 0);
+#ifdef NS_BUILD_REFCNT_LOGGING
+  virtual ~nsDisplayMixBlendMode();
+#endif
+
+  nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder, bool* aSnap);
+
+  virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
+                                             LayerManager* aManager,
+                                             const ContainerParameters& aContainerParameters) MOZ_OVERRIDE;
+  virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
+                                         const nsDisplayItemGeometry* aGeometry,
+                                         nsRegion* aInvalidRegion) MOZ_OVERRIDE
+  {
+    // We don't need to compute an invalidation region since we have LayerTreeInvalidation
+  }
+  virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
+                                   LayerManager* aManager,
+                                   const ContainerParameters& aParameters) MOZ_OVERRIDE
+  {
+    return mozilla::LAYER_INACTIVE;
+  }
+  virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
+                                 nsRegion* aVisibleRegion,
+                                 const nsRect& aAllowVisibleRegionExpansion) MOZ_OVERRIDE;
+  virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) MOZ_OVERRIDE;
+  NS_DISPLAY_DECL_NAME("MixBlendMode", TYPE_MIX_BLEND_MODE)
+};
+
+class nsDisplayBlendContainer : public nsDisplayWrapList {
+public:
+    nsDisplayBlendContainer(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                          nsDisplayList* aList, uint32_t aFlags = 0);
+#ifdef NS_BUILD_REFCNT_LOGGING
+    virtual ~nsDisplayBlendContainer();
+#endif
+    
+    virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
+                                               LayerManager* aManager,
+                                               const ContainerParameters& aContainerParameters) MOZ_OVERRIDE;
+    virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
+                                     LayerManager* aManager,
+                                     const ContainerParameters& aParameters) MOZ_OVERRIDE
+    {
+        return mozilla::LAYER_INACTIVE;
+    }
+    virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) MOZ_OVERRIDE;
+    NS_DISPLAY_DECL_NAME("BlendContainer", TYPE_BLEND_CONTAINER)
 };
 
 /**
@@ -2939,12 +3028,12 @@ public:
                                     float aAppUnitsPerPixel,
                                     nsRect* aOutRect);
 
-  static gfxPoint3D GetDeltaToMozTransformOrigin(const nsIFrame* aFrame,
-                                                 float aAppUnitsPerPixel,
-                                                 const nsRect* aBoundsOverride);
+  static gfxPoint3D GetDeltaToTransformOrigin(const nsIFrame* aFrame,
+                                              float aAppUnitsPerPixel,
+                                              const nsRect* aBoundsOverride);
 
-  static gfxPoint3D GetDeltaToMozPerspectiveOrigin(const nsIFrame* aFrame,
-                                                   float aAppUnitsPerPixel);
+  static gfxPoint3D GetDeltaToPerspectiveOrigin(const nsIFrame* aFrame,
+                                                float aAppUnitsPerPixel);
 
   /**
    * Returns the bounds of a frame as defined for resolving percentage
@@ -2968,19 +3057,19 @@ public:
                              float aAppUnitsPerPixel,
                              const nsRect* aBoundsOverride);
     FrameTransformProperties(const nsCSSValueList* aTransformList,
-                             const gfxPoint3D& aToMozOrigin,
+                             const gfxPoint3D& aToTransformOrigin,
                              const gfxPoint3D& aToPerspectiveOrigin,
                              nscoord aChildPerspective)
       : mFrame(nullptr)
       , mTransformList(aTransformList)
-      , mToMozOrigin(aToMozOrigin)
+      , mToTransformOrigin(aToTransformOrigin)
       , mToPerspectiveOrigin(aToPerspectiveOrigin)
       , mChildPerspective(aChildPerspective)
     {}
 
     const nsIFrame* mFrame;
     const nsCSSValueList* mTransformList;
-    const gfxPoint3D mToMozOrigin;
+    const gfxPoint3D mToTransformOrigin;
     const gfxPoint3D mToPerspectiveOrigin;
     nscoord mChildPerspective;
   };

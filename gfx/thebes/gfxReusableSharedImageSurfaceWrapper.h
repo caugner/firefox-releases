@@ -6,9 +6,17 @@
 #define GFXSHMCOWSURFACEWRAPPER
 
 #include "gfxReusableSurfaceWrapper.h"
-#include "mozilla/layers/ISurfaceAllocator.h"
 
 class gfxSharedImageSurface;
+
+namespace mozilla {
+namespace ipc {
+class Shmem;
+}
+namespace layers {
+class ISurfaceAllocator;
+}
+}
 
 /**
  * A cross-process capable implementation of gfxReusableSurfaceWrapper based
@@ -21,7 +29,7 @@ public:
   ~gfxReusableSharedImageSurfaceWrapper();
 
   const unsigned char* GetReadOnlyData() const MOZ_OVERRIDE;
-  gfxASurface::gfxImageFormat Format() MOZ_OVERRIDE;
+  gfxImageFormat Format() MOZ_OVERRIDE;
   gfxReusableSurfaceWrapper* GetWritable(gfxImageSurface** aSurface) MOZ_OVERRIDE;
   void ReadLock() MOZ_OVERRIDE;
   void ReadUnlock() MOZ_OVERRIDE;

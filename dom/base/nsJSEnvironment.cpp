@@ -28,7 +28,6 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIPrompt.h"
 #include "nsIObserverService.h"
-#include "nsGUIEvent.h"
 #include "nsITimer.h"
 #include "nsIAtom.h"
 #include "nsContentUtils.h"
@@ -81,6 +80,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/CanvasRenderingContext2DBinding.h"
 #include "mozilla/CycleCollectedJSRuntime.h"
+#include "mozilla/ContentEvents.h"
 
 #include "nsCycleCollectionNoteRootCallback.h"
 #include "GeckoProfiler.h"
@@ -306,7 +306,7 @@ private:
 // XXXmarkh - This function is mis-placed!
 bool
 NS_HandleScriptError(nsIScriptGlobalObject *aScriptGlobal,
-                     nsScriptErrorEvent *aErrorEvent,
+                     InternalScriptErrorEvent *aErrorEvent,
                      nsEventStatus *aStatus)
 {
   bool called = false;
@@ -444,7 +444,7 @@ public:
         docShell->GetPresContext(getter_AddRefs(presContext));
 
         if (presContext) {
-          nsScriptErrorEvent errorevent(true, NS_LOAD_ERROR);
+          InternalScriptErrorEvent errorevent(true, NS_LOAD_ERROR);
 
           errorevent.fileName = mFileName.get();
 
@@ -509,7 +509,8 @@ NS_ScriptErrorReporter(JSContext *cx,
   // absence of werror are swallowed whole, so report those now.
   if (!JSREPORT_IS_WARNING(report->flags)) {
     nsIXPConnect* xpc = nsContentUtils::XPConnect();
-    if (JS_DescribeScriptedCaller(cx, nullptr, nullptr)) {
+    JS::RootedScript script(cx);
+    if (JS_DescribeScriptedCaller(cx, &script, nullptr)) {
       xpc->MarkErrorUnreported(cx);
       return;
     }
@@ -723,17 +724,12 @@ int
 nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
 {
   nsJSContext *context = reinterpret_cast<nsJSContext *>(data);
-  uint32_t oldDefaultJSOptions = context->mDefaultJSOptions;
-  uint32_t newDefaultJSOptions = oldDefaultJSOptions;
+  JSContext *cx = context->mContext;
 
   sPostGCEventsToConsole = Preferences::GetBool(js_memlog_option_str);
   sPostGCEventsToObserver = Preferences::GetBool(js_memnotify_option_str);
 
-  bool strict = Preferences::GetBool(js_strict_option_str);
-  if (strict)
-    newDefaultJSOptions |= JSOPTION_EXTRA_WARNINGS;
-  else
-    newDefaultJSOptions &= ~JSOPTION_EXTRA_WARNINGS;
+  JS::ContextOptionsRef(cx).setExtraWarnings(Preferences::GetBool(js_strict_option_str));
 
   // The vanilla GetGlobalObject returns null if a global isn't set up on
   // the context yet. We can sometimes be call midway through context init,
@@ -775,43 +771,21 @@ nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
     }
   }
 
-  if (useTypeInference)
-    newDefaultJSOptions |= JSOPTION_TYPE_INFERENCE;
-  else
-    newDefaultJSOptions &= ~JSOPTION_TYPE_INFERENCE;
-
-  if (useBaselineJIT)
-    newDefaultJSOptions |= JSOPTION_BASELINE;
-  else
-    newDefaultJSOptions &= ~JSOPTION_BASELINE;
-
-  if (useIon)
-    newDefaultJSOptions |= JSOPTION_ION;
-  else
-    newDefaultJSOptions &= ~JSOPTION_ION;
-
-  if (useAsmJS)
-    newDefaultJSOptions |= JSOPTION_ASMJS;
-  else
-    newDefaultJSOptions &= ~JSOPTION_ASMJS;
+  JS::ContextOptionsRef(cx).setTypeInference(useTypeInference)
+                           .setBaseline(useBaselineJIT)
+                           .setIon(useIon)
+                           .setAsmJS(useAsmJS);
 
 #ifdef DEBUG
   // In debug builds, warnings are enabled in chrome context if
   // javascript.options.strict.debug is true
-  bool strictDebug = Preferences::GetBool(js_strict_debug_option_str);
-  if (strictDebug && (newDefaultJSOptions & JSOPTION_EXTRA_WARNINGS) == 0) {
-    if (chromeWindow || !contentWindow)
-      newDefaultJSOptions |= JSOPTION_EXTRA_WARNINGS;
+  if (Preferences::GetBool(js_strict_debug_option_str) &&
+      (chromeWindow || !contentWindow)) {
+    JS::ContextOptionsRef(cx).setExtraWarnings(true);
   }
 #endif
 
-  bool werror = Preferences::GetBool(js_werror_option_str);
-  if (werror)
-    newDefaultJSOptions |= JSOPTION_WERROR;
-  else
-    newDefaultJSOptions &= ~JSOPTION_WERROR;
-
-  ::JS_SetOptions(context->mContext, newDefaultJSOptions & JSOPTION_MASK);
+  JS::ContextOptionsRef(cx).setWerror(Preferences::GetBool(js_werror_option_str));
 
   ::JS_SetParallelParsingEnabled(context->mContext, parallelParsing);
   ::JS_SetParallelIonCompilationEnabled(context->mContext, parallelIonCompilation);
@@ -821,9 +795,6 @@ nsJSContext::JSOptionChangedCallback(const char *pref, void *data)
 
   ::JS_SetGlobalJitCompilerOption(context->mContext, JSJITCOMPILER_ION_USECOUNT_TRIGGER,
                                   (useIonEager ? 0 : -1));
-
-  // Save the new defaults for the next page load (InitContext).
-  context->mDefaultJSOptions = newDefaultJSOptions;
 
   JSRuntime *rt = JS_GetRuntime(context->mContext);
   JS_SetJitHardening(rt, useHardening);
@@ -855,18 +826,13 @@ nsJSContext::nsJSContext(bool aGCOnDestruction,
 
   ++sContextCount;
 
-  mDefaultJSOptions = JSOPTION_PRIVATE_IS_NSISUPPORTS |
-                      JSOPTION_NO_DEFAULT_COMPARTMENT_OBJECT;
-
   mContext = ::JS_NewContext(sRuntime, gStackSize);
   if (mContext) {
     ::JS_SetContextPrivate(mContext, static_cast<nsIScriptContext *>(this));
 
-    // Preserve any flags the context callback might have set.
-    mDefaultJSOptions |= ::JS_GetOptions(mContext);
-
     // Make sure the new context gets the default context options
-    ::JS_SetOptions(mContext, mDefaultJSOptions);
+    JS::ContextOptionsRef(mContext).setPrivateIsNSISupports(true)
+                                   .setNoDefaultCompartmentObject(true);
 
     // Watch for the JS boolean options
     Preferences::RegisterCallback(JSOptionChangedCallback,
@@ -1034,22 +1000,22 @@ nsJSContext::JSObjectFromInterface(nsISupports* aTarget,
   // We don't wrap here because we trust the JS engine to wrap the target
   // later.
   JS::Rooted<JS::Value> v(cx);
-  nsresult rv = nsContentUtils::WrapNative(cx, aScope, aTarget,
-                                           v.address());
+  nsresult rv = nsContentUtils::WrapNative(cx, aScope, aTarget, &v);
   NS_ENSURE_SUCCESS(rv, rv);
-
-#ifdef DEBUG
-  nsCOMPtr<nsISupports> targetSupp = do_QueryInterface(aTarget);
-  nsCOMPtr<nsISupports> native =
-    nsContentUtils::XPConnect()->GetNativeOfWrapper(cx,
-                                                    JSVAL_TO_OBJECT(v));
-  NS_ASSERTION(native == targetSupp, "Native should be the target!");
-#endif
 
   JSObject* obj = v.toObjectOrNull();
   if (obj) {
     JS::ExposeObjectToActiveJS(obj);
   }
+
+#ifdef DEBUG
+  JS::Rooted<JSObject*> rootedObj(cx, obj);
+  nsCOMPtr<nsISupports> targetSupp = do_QueryInterface(aTarget);
+  nsCOMPtr<nsISupports> native =
+    nsContentUtils::XPConnect()->GetNativeOfWrapper(cx, rootedObj);
+  NS_ASSERTION(native == targetSupp, "Native should be the target!");
+  obj = rootedObj;
+#endif
 
   *aRet = obj;
   return NS_OK;
@@ -1205,15 +1171,20 @@ nsJSContext::SetProperty(JS::Handle<JSObject*> aTarget, const char* aPropName, n
     ConvertSupportsTojsvals(aArgs, global, &argc, &argv, tempStorage);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  JS::AutoArrayRooter array(mContext, argc, argv);
+
   // got the arguments, now attach them.
 
   for (uint32_t i = 0; i < argc; ++i) {
-    if (!JS_WrapValue(mContext, &argv[i])) {
+    if (!JS_WrapValue(mContext, array.handleAt(i))) {
       return NS_ERROR_FAILURE;
     }
   }
 
-  JSObject *args = ::JS_NewArrayObject(mContext, argc, argv);
+  JSObject *args = ::JS_NewArrayObject(mContext, argc, array.array);
+  if (!args) {
+    return NS_ERROR_FAILURE;
+  }
   JS::Value vargs = OBJECT_TO_JSVAL(args);
 
   return JS_DefineProperty(mContext, aTarget, aPropName, vargs, NULL, NULL, 0)
@@ -1297,7 +1268,7 @@ nsJSContext::ConvertSupportsTojsvals(nsISupports *aArgs,
 #endif
           nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
           JS::Rooted<JS::Value> v(cx);
-          rv = nsContentUtils::WrapNative(cx, aScope, arg, v.address(),
+          rv = nsContentUtils::WrapNative(cx, aScope, arg, &v,
                                           getter_AddRefs(wrapper));
           if (NS_SUCCEEDED(rv)) {
             *thisval = v;
@@ -1499,7 +1470,7 @@ nsJSContext::AddSupportsPrimitiveTojsvals(nsISupports *aArg, JS::Value *aArgv)
       JS::Rooted<JSObject*> global(cx, GetWindowProxy());
       JS::Rooted<JS::Value> v(cx);
       nsresult rv = nsContentUtils::WrapNative(cx, global,
-                                               data, iid, v.address(),
+                                               data, iid, &v,
                                                getter_AddRefs(wrapper));
       NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1973,7 +1944,10 @@ nsJSContext::GarbageCollectNow(JS::gcreason::Reason aReason,
 
   JS::PrepareForFullGC(sRuntime);
   if (aIncremental == IncrementalGC) {
+    MOZ_ASSERT(aShrinking == NonShrinkingGC);
     JS::IncrementalGC(sRuntime, aReason, aSliceMillis);
+  } else if (aShrinking == ShrinkingGC) {
+    JS::ShrinkingGC(sRuntime, aReason);
   } else {
     JS::GCForReason(sRuntime, aReason);
   }
@@ -2121,8 +2095,8 @@ nsJSContext::CycleCollectNow(nsICycleCollectorListener *aListener,
     }
 
     NS_NAMED_MULTILINE_LITERAL_STRING(kFmt,
-      NS_LL("CC(T+%.1f) duration: %lums, suspected: %lu, visited: %lu RCed and %lu%s GCed, collected: %lu RCed and %lu GCed (%lu|%lu waiting for GC)%s\n")
-      NS_LL("ForgetSkippable %lu times before CC, min: %lu ms, max: %lu ms, avg: %lu ms, total: %lu ms, sync: %lu ms, removed: %lu"));
+      MOZ_UTF16("CC(T+%.1f) duration: %lums, suspected: %lu, visited: %lu RCed and %lu%s GCed, collected: %lu RCed and %lu GCed (%lu|%lu waiting for GC)%s\n")
+      MOZ_UTF16("ForgetSkippable %lu times before CC, min: %lu ms, max: %lu ms, avg: %lu ms, total: %lu ms, sync: %lu ms, removed: %lu"));
     nsString msg;
     msg.Adopt(nsTextFormatter::smprintf(kFmt.get(), double(delta) / PR_USEC_PER_SEC,
                                         ccNowDuration, suspected,
@@ -2146,28 +2120,28 @@ nsJSContext::CycleCollectNow(nsICycleCollectorListener *aListener,
 
   if (sPostGCEventsToObserver) {
     NS_NAMED_MULTILINE_LITERAL_STRING(kJSONFmt,
-       NS_LL("{ \"timestamp\": %llu, ")
-         NS_LL("\"duration\": %llu, ")
-         NS_LL("\"finish_gc_duration\": %llu, ")
-         NS_LL("\"sync_skippable_duration\": %llu, ")
-         NS_LL("\"suspected\": %lu, ")
-         NS_LL("\"visited\": { ")
-             NS_LL("\"RCed\": %lu, ")
-             NS_LL("\"GCed\": %lu }, ")
-         NS_LL("\"collected\": { ")
-             NS_LL("\"RCed\": %lu, ")
-             NS_LL("\"GCed\": %lu }, ")
-         NS_LL("\"waiting_for_gc\": %lu, ")
-         NS_LL("\"short_living_objects_waiting_for_gc\": %lu, ")
-         NS_LL("\"forced_gc\": %d, ")
-         NS_LL("\"forget_skippable\": { ")
-             NS_LL("\"times_before_cc\": %lu, ")
-             NS_LL("\"min\": %lu, ")
-             NS_LL("\"max\": %lu, ")
-             NS_LL("\"avg\": %lu, ")
-             NS_LL("\"total\": %lu, ")
-             NS_LL("\"removed\": %lu } ")
-       NS_LL("}"));
+       MOZ_UTF16("{ \"timestamp\": %llu, ")
+         MOZ_UTF16("\"duration\": %llu, ")
+         MOZ_UTF16("\"finish_gc_duration\": %llu, ")
+         MOZ_UTF16("\"sync_skippable_duration\": %llu, ")
+         MOZ_UTF16("\"suspected\": %lu, ")
+         MOZ_UTF16("\"visited\": { ")
+             MOZ_UTF16("\"RCed\": %lu, ")
+             MOZ_UTF16("\"GCed\": %lu }, ")
+         MOZ_UTF16("\"collected\": { ")
+             MOZ_UTF16("\"RCed\": %lu, ")
+             MOZ_UTF16("\"GCed\": %lu }, ")
+         MOZ_UTF16("\"waiting_for_gc\": %lu, ")
+         MOZ_UTF16("\"short_living_objects_waiting_for_gc\": %lu, ")
+         MOZ_UTF16("\"forced_gc\": %d, ")
+         MOZ_UTF16("\"forget_skippable\": { ")
+             MOZ_UTF16("\"times_before_cc\": %lu, ")
+             MOZ_UTF16("\"min\": %lu, ")
+             MOZ_UTF16("\"max\": %lu, ")
+             MOZ_UTF16("\"avg\": %lu, ")
+             MOZ_UTF16("\"total\": %lu, ")
+             MOZ_UTF16("\"removed\": %lu } ")
+       MOZ_UTF16("}"));
     nsString json;
     json.Adopt(nsTextFormatter::smprintf(kJSONFmt.get(), endCCTime,
                                          ccNowDuration, gcDuration, skippableDuration,

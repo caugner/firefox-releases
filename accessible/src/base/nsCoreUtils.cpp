@@ -24,7 +24,8 @@
 #include "nsEventStateManager.h"
 #include "nsISelectionPrivate.h"
 #include "nsISelectionController.h"
-#include "nsGUIEvent.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/TouchEvents.h"
 #include "nsView.h"
 #include "nsGkAtoms.h"
 #include "nsDOMTouchEvent.h"
@@ -45,7 +46,7 @@ nsCoreUtils::HasClickListener(nsIContent *aContent)
 {
   NS_ENSURE_TRUE(aContent, false);
   nsEventListenerManager* listenerManager =
-    aContent->GetListenerManager(false);
+    aContent->GetExistingListenerManager();
 
   return listenerManager &&
     (listenerManager->HasListenersFor(nsGkAtoms::onclick) ||
@@ -121,13 +122,13 @@ nsCoreUtils::DispatchMouseEvent(uint32_t aEventType, int32_t aX, int32_t aY,
                                 nsIContent *aContent, nsIFrame *aFrame,
                                 nsIPresShell *aPresShell, nsIWidget *aRootWidget)
 {
-  nsMouseEvent event(true, aEventType, aRootWidget,
-                     nsMouseEvent::eReal, nsMouseEvent::eNormal);
+  WidgetMouseEvent event(true, aEventType, aRootWidget,
+                         WidgetMouseEvent::eReal, WidgetMouseEvent::eNormal);
 
   event.refPoint = LayoutDeviceIntPoint(aX, aY);
 
   event.clickCount = 1;
-  event.button = nsMouseEvent::eLeftButton;
+  event.button = WidgetMouseEvent::eLeftButton;
   event.time = PR_IntervalNow();
   event.inputSource = nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN;
 
@@ -143,7 +144,7 @@ nsCoreUtils::DispatchTouchEvent(uint32_t aEventType, int32_t aX, int32_t aY,
   if (!nsDOMTouchEvent::PrefEnabled())
     return;
 
-  nsTouchEvent event(true, aEventType, aRootWidget);
+  WidgetTouchEvent event(true, aEventType, aRootWidget);
 
   event.time = PR_IntervalNow();
 

@@ -9,7 +9,7 @@ let doc;
 let ruleWindow;
 let ruleView;
 let inspector;
-let originalValue = "blue";
+let originalValue = "#00F";
 
 // Test data format
 // {
@@ -20,7 +20,7 @@ let originalValue = "blue";
 // }
 let testData = [
   {value: "red", commitKey: "VK_ESCAPE", modifiers: {}, expected: originalValue},
-  {value: "red", commitKey: "VK_RETURN", modifiers: {}, expected: "red"},
+  {value: "red", commitKey: "VK_RETURN", modifiers: {}, expected: "#F00"},
   {value: "blue", commitKey: "VK_TAB", modifiers: {shiftKey: true}, expected: "blue"}
 ];
 
@@ -54,14 +54,14 @@ function runTestData(index)
   let idRuleEditor = ruleView.element.children[1]._ruleEditor;
   let propEditor = idRuleEditor.rule.textProps[0].editor;
   waitForEditorFocus(propEditor.element, function(aEditor) {
-    is(inplaceEditor(propEditor.valueSpan), aEditor, "Focused editor should be the value.");
+    is(inplaceEditor(propEditor.valueSpan), aEditor, "Focused editor should be the value span.");
 
     for (let ch of testData[index].value) {
       EventUtils.sendChar(ch, ruleWindow);
     }
     EventUtils.synthesizeKey(testData[index].commitKey, testData[index].modifiers);
 
-    is(propEditor.valueSpan.innerHTML, testData[index].expected);
+    is(propEditor.valueSpan.textContent, testData[index].expected);
 
     runTestData(index + 1);
   });

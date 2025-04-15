@@ -71,8 +71,6 @@ static const PRUnichar sHTMLTagUnicodeName_col[] =
   {'c', 'o', 'l', '\0'};
 static const PRUnichar sHTMLTagUnicodeName_colgroup[] =
   {'c', 'o', 'l', 'g', 'r', 'o', 'u', 'p', '\0'};
-static const PRUnichar sHTMLTagUnicodeName_counter[] =
-  {'c', 'o', 'u', 'n', 't', 'e', 'r', '\0'};
 static const PRUnichar sHTMLTagUnicodeName_data[] =
   {'d', 'a', 't', 'a', '\0'};
 static const PRUnichar sHTMLTagUnicodeName_datalist[] =
@@ -223,8 +221,6 @@ static const PRUnichar sHTMLTagUnicodeName_small[] =
   {'s', 'm', 'a', 'l', 'l', '\0'};
 static const PRUnichar sHTMLTagUnicodeName_source[] =
   {'s', 'o', 'u', 'r', 'c', 'e', '\0'};
-static const PRUnichar sHTMLTagUnicodeName_spacer[] =
-  {'s', 'p', 'a', 'c', 'e', 'r', '\0'};
 static const PRUnichar sHTMLTagUnicodeName_span[] =
   {'s', 'p', 'a', 'n', '\0'};
 static const PRUnichar sHTMLTagUnicodeName_strike[] =
@@ -376,7 +372,7 @@ nsHTMLTags::AddRefTable(void)
 
 
 
-#if defined(DEBUG) && defined(NS_STATIC_ATOM_USE_WIDE_STRINGS)
+#if defined(DEBUG)
     {
       // let's verify that all names in the the table are lowercase...
       for (i = 0; i < NS_HTML_TAG_MAX; ++i) {

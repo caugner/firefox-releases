@@ -51,7 +51,8 @@
 #include "nsDOMString.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIDOMMutationEvent.h"
-#include "nsMutationEvent.h"
+#include "mozilla/MouseEvents.h"
+#include "mozilla/MutationEvent.h"
 #include "nsNodeUtils.h"
 #include "nsDocument.h"
 #include "nsAttrValueOrString.h"
@@ -68,7 +69,6 @@
 #include "nsXBLBinding.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIBoxObject.h"
-#include "nsClientRect.h"
 #include "nsSVGUtils.h"
 #include "nsLayoutUtils.h"
 #include "nsGkAtoms.h"
@@ -79,7 +79,7 @@
 #include "nsIBaseWindow.h"
 #include "nsIWidget.h"
 
-#include "jsapi.h"
+#include "js/GCAPI.h"
 
 #include "nsNodeInfoManager.h"
 #include "nsICategoryManager.h"
@@ -694,8 +694,7 @@ nsIContent::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
       ((this == aVisitor.mEvent->originalTarget &&
         !ChromeOnlyAccess()) || isAnonForEvents)) {
      nsCOMPtr<nsIContent> relatedTarget =
-       do_QueryInterface(static_cast<nsMouseEvent*>
-                                    (aVisitor.mEvent)->relatedTarget);
+       do_QueryInterface(aVisitor.mEvent->AsMouseEvent()->relatedTarget);
     if (relatedTarget &&
         relatedTarget->OwnerDoc() == OwnerDoc()) {
 
@@ -1020,7 +1019,7 @@ FragmentOrElement::FireNodeInserted(nsIDocument* aDoc,
 
     if (nsContentUtils::HasMutationListeners(childContent,
           NS_EVENT_BITS_MUTATION_NODEINSERTED, aParent)) {
-      nsMutationEvent mutation(true, NS_MUTATION_NODEINSERTED);
+      InternalMutationEvent mutation(true, NS_MUTATION_NODEINSERTED);
       mutation.mRelatedNode = do_QueryInterface(aParent);
 
       mozAutoSubtreeModified subtree(aDoc, aParent);
@@ -1225,7 +1224,7 @@ FragmentOrElement::MarkNodeChildren(nsINode* aNode)
     JS::ExposeObjectToActiveJS(o);
   }
 
-  nsEventListenerManager* elm = aNode->GetListenerManager(false);
+  nsEventListenerManager* elm = aNode->GetExistingListenerManager();
   if (elm) {
     elm->MarkForCC();
   }

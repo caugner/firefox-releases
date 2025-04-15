@@ -20,6 +20,7 @@ namespace mozilla {
 
 using layers::ImageContainer;
 using layers::PlanarYCbCrImage;
+using layers::PlanarYCbCrData;
 
 // Verify these values are sane. Once we've checked the frame sizes, we then
 // can do less integer overflow checking.
@@ -83,8 +84,8 @@ IsYV12Format(const VideoData::YCbCrBuffer::Plane& aYPlane,
 
 bool
 VideoInfo::ValidateVideoRegion(const nsIntSize& aFrame,
-                                 const nsIntRect& aPicture,
-                                 const nsIntSize& aDisplay)
+                               const nsIntRect& aPicture,
+                               const nsIntSize& aDisplay)
 {
   return
     aFrame.width <= PlanarYCbCrImage::MAX_DIMENSION &&
@@ -105,34 +106,30 @@ VideoInfo::ValidateVideoRegion(const nsIntSize& aFrame,
     aDisplay.width * aDisplay.height != 0;
 }
 
-VideoData::  VideoData(int64_t aOffset, int64_t aTime, int64_t aEndTime, int64_t aTimecode)
-  : mOffset(aOffset),
-    mTime(aTime),
-    mEndTime(aEndTime),
+VideoData::VideoData(int64_t aOffset, int64_t aTime, int64_t aDuration, int64_t aTimecode)
+  : MediaData(VIDEO_FRAME, aOffset, aTime, aDuration),
     mTimecode(aTimecode),
     mDuplicate(true),
     mKeyframe(false)
 {
   MOZ_COUNT_CTOR(VideoData);
-  NS_ASSERTION(aEndTime >= aTime, "Frame must start before it ends.");
+  NS_ASSERTION(mDuration >= 0, "Frame must have non-negative duration.");
 }
 
 VideoData::VideoData(int64_t aOffset,
-          int64_t aTime,
-          int64_t aEndTime,
-          bool aKeyframe,
-          int64_t aTimecode,
-          nsIntSize aDisplay)
-  : mDisplay(aDisplay),
-    mOffset(aOffset),
-    mTime(aTime),
-    mEndTime(aEndTime),
+                     int64_t aTime,
+                     int64_t aDuration,
+                     bool aKeyframe,
+                     int64_t aTimecode,
+                     nsIntSize aDisplay)
+  : MediaData(VIDEO_FRAME, aOffset, aTime, aDuration),
+    mDisplay(aDisplay),
     mTimecode(aTimecode),
     mDuplicate(false),
     mKeyframe(aKeyframe)
 {
   MOZ_COUNT_CTOR(VideoData);
-  NS_ASSERTION(aEndTime >= aTime, "Frame must start before it ends.");
+  NS_ASSERTION(mDuration >= 0, "Frame must have non-negative duration.");
 }
 
 VideoData::~VideoData()
@@ -140,13 +137,26 @@ VideoData::~VideoData()
   MOZ_COUNT_DTOR(VideoData);
 }
 
+/* static */
+VideoData* VideoData::ShallowCopyUpdateDuration(VideoData* aOther,
+                                                int64_t aDuration)
+{
+  VideoData* v = new VideoData(aOther->mOffset,
+                               aOther->mTime,
+                               aDuration,
+                               aOther->mKeyframe,
+                               aOther->mTimecode,
+                               aOther->mDisplay);
+  v->mImage = aOther->mImage;
+  return v;
+}
 
 VideoData* VideoData::Create(VideoInfo& aInfo,
                              ImageContainer* aContainer,
                              Image* aImage,
                              int64_t aOffset,
                              int64_t aTime,
-                             int64_t aEndTime,
+                             int64_t aDuration,
                              const YCbCrBuffer& aBuffer,
                              bool aKeyframe,
                              int64_t aTimecode,
@@ -157,7 +167,7 @@ VideoData* VideoData::Create(VideoInfo& aInfo,
     // send to media streams if necessary.
     nsAutoPtr<VideoData> v(new VideoData(aOffset,
                                          aTime,
-                                         aEndTime,
+                                         aDuration,
                                          aKeyframe,
                                          aTimecode,
                                          aInfo.mDisplay));
@@ -198,7 +208,7 @@ VideoData* VideoData::Create(VideoInfo& aInfo,
 
   nsAutoPtr<VideoData> v(new VideoData(aOffset,
                                        aTime,
-                                       aEndTime,
+                                       aDuration,
                                        aKeyframe,
                                        aTimecode,
                                        aInfo.mDisplay));
@@ -227,7 +237,7 @@ VideoData* VideoData::Create(VideoInfo& aInfo,
                "Wrong format?");
   PlanarYCbCrImage* videoImage = static_cast<PlanarYCbCrImage*>(v->mImage.get());
 
-  PlanarYCbCrImage::Data data;
+  PlanarYCbCrData data;
   data.mYChannel = Y.mData + Y.mOffset;
   data.mYSize = gfxIntSize(Y.mWidth, Y.mHeight);
   data.mYStride = Y.mStride;
@@ -257,13 +267,13 @@ VideoData* VideoData::Create(VideoInfo& aInfo,
                              ImageContainer* aContainer,
                              int64_t aOffset,
                              int64_t aTime,
-                             int64_t aEndTime,
+                             int64_t aDuration,
                              const YCbCrBuffer& aBuffer,
                              bool aKeyframe,
                              int64_t aTimecode,
                              nsIntRect aPicture)
 {
-  return Create(aInfo, aContainer, nullptr, aOffset, aTime, aEndTime, aBuffer,
+  return Create(aInfo, aContainer, nullptr, aOffset, aTime, aDuration, aBuffer,
                 aKeyframe, aTimecode, aPicture);
 }
 
@@ -271,13 +281,13 @@ VideoData* VideoData::Create(VideoInfo& aInfo,
                              Image* aImage,
                              int64_t aOffset,
                              int64_t aTime,
-                             int64_t aEndTime,
+                             int64_t aDuration,
                              const YCbCrBuffer& aBuffer,
                              bool aKeyframe,
                              int64_t aTimecode,
                              nsIntRect aPicture)
 {
-  return Create(aInfo, nullptr, aImage, aOffset, aTime, aEndTime, aBuffer,
+  return Create(aInfo, nullptr, aImage, aOffset, aTime, aDuration, aBuffer,
                 aKeyframe, aTimecode, aPicture);
 }
 
@@ -285,7 +295,7 @@ VideoData* VideoData::CreateFromImage(VideoInfo& aInfo,
                                       ImageContainer* aContainer,
                                       int64_t aOffset,
                                       int64_t aTime,
-                                      int64_t aEndTime,
+                                      int64_t aDuration,
                                       const nsRefPtr<Image>& aImage,
                                       bool aKeyframe,
                                       int64_t aTimecode,
@@ -293,7 +303,7 @@ VideoData* VideoData::CreateFromImage(VideoInfo& aInfo,
 {
   nsAutoPtr<VideoData> v(new VideoData(aOffset,
                                        aTime,
-                                       aEndTime,
+                                       aDuration,
                                        aKeyframe,
                                        aTimecode,
                                        aInfo.mDisplay));
@@ -306,7 +316,7 @@ VideoData* VideoData::Create(VideoInfo& aInfo,
                              ImageContainer* aContainer,
                              int64_t aOffset,
                              int64_t aTime,
-                             int64_t aEndTime,
+                             int64_t aDuration,
                              mozilla::layers::GraphicBufferLocked* aBuffer,
                              bool aKeyframe,
                              int64_t aTimecode,
@@ -317,7 +327,7 @@ VideoData* VideoData::Create(VideoInfo& aInfo,
     // send to media streams if necessary.
     nsAutoPtr<VideoData> v(new VideoData(aOffset,
                                          aTime,
-                                         aEndTime,
+                                         aDuration,
                                          aKeyframe,
                                          aTimecode,
                                          aInfo.mDisplay));
@@ -344,7 +354,7 @@ VideoData* VideoData::Create(VideoInfo& aInfo,
 
   nsAutoPtr<VideoData> v(new VideoData(aOffset,
                                        aTime,
-                                       aEndTime,
+                                       aDuration,
                                        aKeyframe,
                                        aTimecode,
                                        aInfo.mDisplay));
@@ -500,7 +510,7 @@ nsresult MediaDecoderReader::DecodeToTarget(int64_t aTarget)
       video = VideoQueue().PeekFront();
       // If the frame end time is less than the seek target, we won't want
       // to display this frame after the seek, so discard it.
-      if (video && video->mEndTime <= aTarget) {
+      if (video && video->GetEndTime() <= aTarget) {
         if (startTime == -1) {
           startTime = video->mTime;
         }
@@ -535,8 +545,8 @@ nsresult MediaDecoderReader::DecodeToTarget(int64_t aTarget)
       const AudioData* audio = AudioQueue().PeekFront();
       if (!audio)
         break;
-      CheckedInt64 startFrame = UsecsToFrames(audio->mTime, mInfo.mAudioRate);
-      CheckedInt64 targetFrame = UsecsToFrames(aTarget, mInfo.mAudioRate);
+      CheckedInt64 startFrame = UsecsToFrames(audio->mTime, mInfo.mAudio.mRate);
+      CheckedInt64 targetFrame = UsecsToFrames(aTarget, mInfo.mAudio.mRate);
       if (!startFrame.isValid() || !targetFrame.isValid()) {
         return NS_ERROR_FAILURE;
       }
@@ -580,7 +590,7 @@ nsresult MediaDecoderReader::DecodeToTarget(int64_t aTarget)
       memcpy(audioData.get(),
              audio->mAudioData.get() + (framesToPrune * channels),
              frames * channels * sizeof(AudioDataValue));
-      CheckedInt64 duration = FramesToUsecs(frames, mInfo.mAudioRate);
+      CheckedInt64 duration = FramesToUsecs(frames, mInfo.mAudio.mRate);
       if (!duration.isValid()) {
         return NS_ERROR_FAILURE;
       }
@@ -598,6 +608,20 @@ nsresult MediaDecoderReader::DecodeToTarget(int64_t aTarget)
 
   LOG(PR_LOG_DEBUG, ("MediaDecoderReader::DecodeToTarget(%lld) End", aTarget));
 
+  return NS_OK;
+}
+
+nsresult
+MediaDecoderReader::GetBuffered(mozilla::dom::TimeRanges* aBuffered,
+                                int64_t aStartTime)
+{
+  MediaResource* stream = mDecoder->GetResource();
+  int64_t durationUs = 0;
+  {
+    ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
+    durationUs = mDecoder->GetMediaDuration();
+  }
+  GetEstimatedBufferedTimeRanges(stream, durationUs, aBuffered);
   return NS_OK;
 }
 

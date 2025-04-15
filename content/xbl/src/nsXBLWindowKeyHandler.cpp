@@ -27,8 +27,8 @@
 #include "nsIDocShell.h"
 #include "nsIPresShell.h"
 #include "nsISelectionController.h"
-#include "nsGUIEvent.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/TextEvents.h"
 #include "mozilla/dom/Element.h"
 #include "nsEventStateManager.h"
 
@@ -360,11 +360,10 @@ nsXBLWindowKeyHandler::WalkHandlers(nsIDOMKeyEvent* aKeyEvent, nsIAtom* aEventTy
       root->GetControllers(getter_AddRefs(controllers));
     }
 
-    nsKeyEvent* keyEvent =
-      static_cast<nsKeyEvent*>(aKeyEvent->GetInternalNSEvent());
-    MOZ_ASSERT(keyEvent->eventStructType == NS_KEY_EVENT,
-               "DOM key event's internal event must be nsKeyEvent");
-
+    WidgetKeyboardEvent* keyEvent =
+      aKeyEvent->GetInternalNSEvent()->AsKeyboardEvent();
+    MOZ_ASSERT(keyEvent,
+               "DOM key event's internal event must be WidgetKeyboardEvent");
     bool handled = false;
     switch (keyEvent->message) {
       case NS_KEY_PRESS:

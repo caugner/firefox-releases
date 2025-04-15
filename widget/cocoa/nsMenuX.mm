@@ -23,7 +23,6 @@
 #include "nsUnicharUtils.h"
 #include "plstr.h"
 #include "nsGkAtoms.h"
-#include "nsGUIEvent.h"
 #include "nsCRT.h"
 #include "nsBaseWidget.h"
 
@@ -43,6 +42,10 @@
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptContext.h"
 #include "nsIXPConnect.h"
+
+#include "mozilla/MouseEvents.h"
+
+using namespace mozilla;
 
 static bool gConstructingMenu = false;
 static bool gMenuMethodsSwizzled = false;
@@ -351,7 +354,8 @@ nsEventStatus nsMenuX::MenuOpened()
   }
 
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event(true, NS_XUL_POPUP_SHOWN, nullptr, nsMouseEvent::eReal);
+  WidgetMouseEvent event(true, NS_XUL_POPUP_SHOWN, nullptr,
+                         WidgetMouseEvent::eReal);
 
   nsCOMPtr<nsIContent> popupContent;
   GetMenuPopupContent(getter_AddRefs(popupContent));
@@ -374,7 +378,8 @@ void nsMenuX::MenuClosed()
     mContent->UnsetAttr(kNameSpaceID_None, nsGkAtoms::open, true);
 
     nsEventStatus status = nsEventStatus_eIgnore;
-    nsMouseEvent event(true, NS_XUL_POPUP_HIDDEN, nullptr, nsMouseEvent::eReal);
+    WidgetMouseEvent event(true, NS_XUL_POPUP_HIDDEN, nullptr,
+                           WidgetMouseEvent::eReal);
 
     nsCOMPtr<nsIContent> popupContent;
     GetMenuPopupContent(getter_AddRefs(popupContent));
@@ -559,8 +564,8 @@ void nsMenuX::LoadSubMenu(nsIContent* inMenuContent)
 bool nsMenuX::OnOpen()
 {
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event(true, NS_XUL_POPUP_SHOWING, nullptr,
-                     nsMouseEvent::eReal);
+  WidgetMouseEvent event(true, NS_XUL_POPUP_SHOWING, nullptr,
+                         WidgetMouseEvent::eReal);
   
   nsCOMPtr<nsIContent> popupContent;
   GetMenuPopupContent(getter_AddRefs(popupContent));
@@ -597,8 +602,8 @@ bool nsMenuX::OnClose()
     return true;
 
   nsEventStatus status = nsEventStatus_eIgnore;
-  nsMouseEvent event(true, NS_XUL_POPUP_HIDING, nullptr,
-                     nsMouseEvent::eReal);
+  WidgetMouseEvent event(true, NS_XUL_POPUP_HIDING, nullptr,
+                         WidgetMouseEvent::eReal);
 
   nsCOMPtr<nsIContent> popupContent;
   GetMenuPopupContent(getter_AddRefs(popupContent));

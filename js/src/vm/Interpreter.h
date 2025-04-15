@@ -355,6 +355,9 @@ bool
 GetProperty(JSContext *cx, HandleValue value, HandlePropertyName name, MutableHandleValue vp);
 
 bool
+CallProperty(JSContext *cx, HandleValue value, HandlePropertyName name, MutableHandleValue vp);
+
+bool
 GetScopeName(JSContext *cx, HandleObject obj, HandlePropertyName name, MutableHandleValue vp);
 
 bool
@@ -382,34 +385,22 @@ InitElementArray(JSContext *cx, jsbytecode *pc,
                  HandleObject obj, uint32_t index, HandleValue value);
 
 bool
-AddValues(JSContext *cx, HandleScript script, jsbytecode *pc,
-          MutableHandleValue lhs, MutableHandleValue rhs,
-          Value *res);
+AddValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
 
 bool
-SubValues(JSContext *cx, HandleScript script, jsbytecode *pc,
-          MutableHandleValue lhs, MutableHandleValue rhs,
-          Value *res);
+SubValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
 
 bool
-MulValues(JSContext *cx, HandleScript script, jsbytecode *pc,
-          MutableHandleValue lhs, MutableHandleValue rhs,
-          Value *res);
+MulValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
 
 bool
-DivValues(JSContext *cx, HandleScript script, jsbytecode *pc,
-          MutableHandleValue lhs, MutableHandleValue rhs,
-          Value *res);
+DivValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
 
 bool
-ModValues(JSContext *cx, HandleScript script, jsbytecode *pc,
-          MutableHandleValue lhs, MutableHandleValue rhs,
-          Value *res);
+ModValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
 
 bool
-UrshValues(JSContext *cx, HandleScript script, jsbytecode *pc,
-           MutableHandleValue lhs, MutableHandleValue rhs,
-           Value *res);
+UrshValues(JSContext *cx, MutableHandleValue lhs, MutableHandleValue rhs, Value *res);
 
 template <bool strict>
 bool

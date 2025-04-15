@@ -16,7 +16,7 @@
 #include "nsIAtom.h"                    // for nsIAtom
 #include "nsMathUtils.h"                // for NS_round
 #include "nsRenderingContext.h"         // for nsRenderingContext
-#include "nsStringGlue.h"               // for nsString
+#include "nsString.h"               // for nsString
 #include "nsStyleConsts.h"              // for NS_STYLE_HYPHENS_NONE
 
 class gfxUserFontSet;
@@ -318,7 +318,7 @@ nsFontMetrics::DrawString(const char *aString, uint32_t aLength,
     if (mTextRunRTL) {
         pt.x += textRun->GetAdvanceWidth(0, aLength, &provider);
     }
-    textRun->Draw(aContext->ThebesContext(), pt, gfxFont::GLYPH_FILL, 0, aLength,
+    textRun->Draw(aContext->ThebesContext(), pt, DrawMode::GLYPH_FILL, 0, aLength,
                   &provider, nullptr, nullptr);
 }
 
@@ -340,7 +340,7 @@ nsFontMetrics::DrawString(const PRUnichar* aString, uint32_t aLength,
     if (mTextRunRTL) {
         pt.x += textRun->GetAdvanceWidth(0, aLength, &provider);
     }
-    textRun->Draw(aContext->ThebesContext(), pt, gfxFont::GLYPH_FILL, 0, aLength,
+    textRun->Draw(aContext->ThebesContext(), pt, DrawMode::GLYPH_FILL, 0, aLength,
                   &provider, nullptr, nullptr);
 }
 

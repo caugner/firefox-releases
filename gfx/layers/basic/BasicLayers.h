@@ -8,7 +8,7 @@
 
 #include <stdint.h>                     // for INT32_MAX, int32_t
 #include "Layers.h"                     // for Layer (ptr only), etc
-#include "gfxASurface.h"                // for gfxASurface, etc
+#include "gfxTypes.h"
 #include "gfxCachedTempSurface.h"       // for gfxCachedTempSurface
 #include "gfxContext.h"                 // for gfxContext
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
@@ -97,7 +97,7 @@ public:
   virtual void EndTransaction(DrawThebesLayerCallback aCallback,
                               void* aCallbackData,
                               EndTransactionFlags aFlags = END_DEFAULT);
-  virtual bool AreComponentAlphaLayersEnabled() { return HasShadowManager() || !IsWidgetLayerManager(); }
+  virtual bool AreComponentAlphaLayersEnabled() { return !IsWidgetLayerManager(); }
 
   void AbortTransaction();
 
@@ -139,13 +139,12 @@ public:
                                                  const nsIntRegion& aRegion,
                                                  bool* aNeedsClipToVisibleRegion);
   already_AddRefed<gfxContext> PushGroupWithCachedSurface(gfxContext *aTarget,
-                                                          gfxASurface::gfxContentType aContent);
+                                                          gfxContentType aContent);
   void PopGroupToSourceWithCachedSurface(gfxContext *aTarget, gfxContext *aPushed);
 
   virtual bool IsCompositingCheap() { return false; }
   virtual int32_t GetMaxTextureSize() const { return INT32_MAX; }
   bool CompositorMightResample() { return mCompositorMightResample; }
-  bool HasShadowTarget() { return !!mShadowTarget; }
 
 protected:
   enum TransactionPhase {
@@ -187,16 +186,6 @@ protected:
   nsRefPtr<gfxContext> mDefaultTarget;
   // The context to draw into.
   nsRefPtr<gfxContext> mTarget;
-  // When we're doing a transaction in order to draw to a non-default
-  // target, the layers transaction is only performed in order to send
-  // a PLayerTransaction:Update.  We save the original non-default target to
-  // mShadowTarget, and then perform the transaction using
-  // mDummyTarget as the render target.  After the transaction ends,
-  // we send a message to our remote side to capture the actual pixels
-  // being drawn to the default target, and then copy those pixels
-  // back to mShadowTarget.
-  nsRefPtr<gfxContext> mShadowTarget;
-  nsRefPtr<gfxContext> mDummyTarget;
   // Image factory we use.
   nsRefPtr<ImageFactory> mFactory;
 

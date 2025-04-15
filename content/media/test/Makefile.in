@@ -25,6 +25,10 @@
 # make the test first check canPlayType for the type, and if it's not
 # supported, just do ok(true, "Type not supported") and stop the test.
 
+
+# Disabled for too many intermittent failures (bug 897108)
+#		test_playback_rate_playpause.html \
+
 MOCHITEST_FILES = \
 		allowed.sjs \
 		can_play_type_ogg.js \
@@ -60,10 +64,16 @@ MOCHITEST_FILES = \
 		test_audio1.html \
 		test_audio2.html \
 		test_autoplay.html \
+		test_bug448534.html \
+		test_bug463162.xhtml \
 		test_bug495145.html \
 		test_bug495300.html \
 		test_bug654550.html \
 		test_bug686942.html \
+		test_bug883173.html \
+		test_bug895305.html \
+		test_bug895091.html \
+		test_bug919265.html \
 		test_can_play_type.html \
 		test_can_play_type_mpeg.html \
 		test_closing_connections.html \
@@ -111,6 +121,8 @@ MOCHITEST_FILES = \
 		test_mediarecorder_record_audiocontext.html \
 		test_mediarecorder_record_immediate_stop.html \
 		test_mediarecorder_record_no_timeslice.html \
+		test_mediarecorder_record_nosrc.html \
+		test_mediarecorder_record_session.html \
 		test_mediarecorder_record_stopms.html \
 		test_mediarecorder_record_timeslice.html \
 		test_mediarecorder_reload_crash.html \
@@ -118,10 +130,7 @@ MOCHITEST_FILES = \
 		test_mozHasAudio.html \
 		test_source_media.html \
 		test_autoplay_contentEditable.html \
-		test_bug448534.html \
-		test_bug463162.xhtml \
 		test_decoder_disable.html \
-		test_media_selection.html \
 		test_playback.html \
 		test_seekLies.html \
 		test_media_sniffer.html \
@@ -137,13 +146,13 @@ MOCHITEST_FILES = \
 		$(filter disabled-for-intermittent-failures--bug-608634, test_error_in_video_document.html) \
 		test_texttrack.html \
 		test_texttrackcue.html \
+		test_trackevent.html \
+		test_texttrackregion.html \
 		test_timeupdate_small_files.html \
 		test_unseekable.html \
 		test_VideoPlaybackQuality.html \
 		test_VideoPlaybackQuality_disabled.html \
 		test_webvtt_disabled.html \
-		test_playback_rate_playpause.html \
-		test_bug895305.html \
 		$(NULL)
 
 # Don't run in suite
@@ -164,6 +173,18 @@ endif
 #   test_mixed_principals.html
 # Disabled since we don't play Wave files standalone, for now
 #		test_audioDocumentTitle.html
+# Bug 751539:
+#		test_played.html
+
+# Disabled since it causes random memory corruption, bug 921622, so
+# the best-case scenario is that it results in random crashes while it
+# runs, like bug 918417, bug 920827, bug 923996, bug 928225, bug 929521
+# bug 930982, bug 932193. Worst-case but quite likely, it causes random
+# crashes and failures in other tests which run after it. Don't even think
+# about reenabling it on any platform unless you *know* that you have fixed
+# that. Then don't think about reenabling it on Windows until you know that
+# you have fixed the timeouts of bug 832768, bug 814533, bug 840742
+#		test_playback_rate.html \
 
 # The below tests are disabled on Windows due to frequent timeouts.
 # Bug 832768 and Bug 864682:
@@ -171,20 +192,17 @@ endif
 #		test_bug465498.html
 # Bug 707777:
 #		test_bug493187.html
+# Bug 897843:
+#		test_media_selection.html
 # Bug 832678, bug 795271, and bug 857424
 #		test_seek.html
-# Bug 832768, bug 814533, bug 840742
-#		test_playback_rate.html
-# Bug 751539
-#		test_played.html
 ifneq ($(OS_ARCH), WINNT)
 MOCHITEST_FILES += \
 		test_buffered.html \
 		test_bug465498.html \
 		test_bug493187.html \
+		test_media_selection.html \
 		test_seek.html \
-		test_playback_rate.html \
-		test_played.html \
 		$(NULL)
 endif
 
@@ -269,6 +287,9 @@ MOCHITEST_FILES += \
 		notags.mp3 \
 		id3tags.mp3 \
 		basic.vtt \
+		region.vtt \
+		long.vtt \
+		bug883173.vtt \
 		$(NULL)
 
 # Wave sample files

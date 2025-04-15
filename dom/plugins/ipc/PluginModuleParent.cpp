@@ -16,7 +16,7 @@
 #include "base/process_util.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/PCrashReporterParent.h"
-#include "mozilla/ipc/SyncChannel.h"
+#include "mozilla/ipc/MessageChannel.h"
 #include "mozilla/plugins/BrowserStreamParent.h"
 #include "mozilla/plugins/PluginInstanceParent.h"
 #include "mozilla/Preferences.h"
@@ -30,6 +30,7 @@
 #include "nsPrintfCString.h"
 #include "PluginIdentifierParent.h"
 #include "prsystem.h"
+#include "GeckoProfiler.h"
 
 #ifdef XP_WIN
 #include "PluginHangUIParent.h"
@@ -50,7 +51,7 @@
 using base::KillProcess;
 
 using mozilla::PluginLibrary;
-using mozilla::ipc::SyncChannel;
+using mozilla::ipc::MessageChannel;
 using mozilla::dom::PCrashReporterParent;
 using mozilla::dom::CrashReporterParent;
 
@@ -110,6 +111,10 @@ PluginModuleParent::LoadModule(const char* aFilePath)
         parent->mShutdown = true;
         return nullptr;
     }
+#ifdef XP_WIN
+    mozilla::MutexAutoLock lock(parent->mCrashReporterMutex);
+    parent->mCrashReporter = parent->CrashReporter();
+#endif
 #endif
 
     return parent.forget();
@@ -121,14 +126,18 @@ PluginModuleParent::PluginModuleParent(const char* aFilePath)
     , mShutdown(false)
     , mClearSiteDataSupported(false)
     , mGetSitesWithDataSupported(false)
-    , mNPNIface(NULL)
-    , mPlugin(NULL)
+    , mNPNIface(nullptr)
+    , mPlugin(nullptr)
     , mTaskFactory(MOZ_THIS_IN_INITIALIZER_LIST())
 #ifdef XP_WIN
     , mPluginCpuUsageOnHang()
     , mHangUIParent(nullptr)
     , mHangUIEnabled(true)
     , mIsTimerReset(true)
+#ifdef MOZ_CRASHREPORTER
+    , mCrashReporterMutex("PluginModuleParent::mCrashReporterMutex")
+    , mCrashReporter(nullptr)
+#endif
 #endif
 #ifdef MOZ_CRASHREPORTER_INJECTOR
     , mFlashProcess1(0)
@@ -193,6 +202,10 @@ PluginModuleParent::~PluginModuleParent()
 void
 PluginModuleParent::WriteExtraDataForMinidump(AnnotationTable& notes)
 {
+#ifdef XP_WIN
+    // mCrashReporterMutex is already held by the caller
+    mCrashReporterMutex.AssertCurrentThreadOwns();
+#endif
     typedef nsDependentCString CS;
 
     // Get the plugin filename, try to get just the file leafname
@@ -247,7 +260,7 @@ void
 PluginModuleParent::SetChildTimeout(const int32_t aChildTimeout)
 {
     int32_t timeoutMs = (aChildTimeout > 0) ? (1000 * aChildTimeout) :
-                      SyncChannel::kNoTimeout;
+                      MessageChannel::kNoTimeout;
     SetReplyTimeoutMs(timeoutMs);
 }
 
@@ -418,7 +431,17 @@ void
 PluginModuleParent::TerminateChildProcess(MessageLoop* aMsgLoop)
 {
 #ifdef MOZ_CRASHREPORTER
+#ifdef XP_WIN
+    mozilla::MutexAutoLock lock(mCrashReporterMutex);
+    CrashReporterParent* crashReporter = mCrashReporter;
+    if (!crashReporter) {
+        // If mCrashReporter is null then the hang has ended, the plugin module
+        // is shutting down. There's nothing to do here.
+        return;
+    }
+#else
     CrashReporterParent* crashReporter = CrashReporter();
+#endif
     crashReporter->AnnotateCrashReport(NS_LITERAL_CSTRING("PluginHang"),
                                        NS_LITERAL_CSTRING("1"));
 #ifdef XP_WIN
@@ -635,6 +658,9 @@ RemoveMinidump(nsIFile* minidump)
 void
 PluginModuleParent::ProcessFirstMinidump()
 {
+#ifdef XP_WIN
+    mozilla::MutexAutoLock lock(mCrashReporterMutex);
+#endif
     CrashReporterParent* crashReporter = CrashReporter();
     if (!crashReporter)
         return;
@@ -753,7 +779,7 @@ PluginModuleParent::AllocPPluginIdentifierParent(const nsCString& aString,
 {
     if (aTemporary) {
         NS_ERROR("Plugins don't create temporary identifiers.");
-        return NULL; // should abort the plugin
+        return nullptr; // should abort the plugin
     }
 
     NPIdentifier npident = aString.IsVoid() ?
@@ -785,7 +811,7 @@ PluginModuleParent::AllocPPluginInstanceParent(const nsCString& aMimeType,
                                                NPError* rv)
 {
     NS_ERROR("Not reachable!");
-    return NULL;
+    return nullptr;
 }
 
 bool
@@ -803,9 +829,9 @@ PluginModuleParent::SetPluginFuncs(NPPluginFuncs* aFuncs)
     aFuncs->javaClass = nullptr;
 
     // Gecko should always call these functions through a PluginLibrary object.
-    aFuncs->newp = NULL;
-    aFuncs->clearsitedata = NULL;
-    aFuncs->getsiteswithdata = NULL;
+    aFuncs->newp = nullptr;
+    aFuncs->clearsitedata = nullptr;
+    aFuncs->getsiteswithdata = nullptr;
 
     aFuncs->destroy = NPP_Destroy;
     aFuncs->setwindow = NPP_SetWindow;
@@ -819,9 +845,9 @@ PluginModuleParent::SetPluginFuncs(NPPluginFuncs* aFuncs)
     aFuncs->urlnotify = NPP_URLNotify;
     aFuncs->getvalue = NPP_GetValue;
     aFuncs->setvalue = NPP_SetValue;
-    aFuncs->gotfocus = NULL;
-    aFuncs->lostfocus = NULL;
-    aFuncs->urlredirectnotify = NULL;
+    aFuncs->gotfocus = nullptr;
+    aFuncs->lostfocus = nullptr;
+    aFuncs->urlredirectnotify = nullptr;
 
     // Provide 'NPP_URLRedirectNotify', 'NPP_ClearSiteData', and
     // 'NPP_GetSitesWithData' functionality if it is supported by the plugin.
@@ -1061,9 +1087,9 @@ PluginModuleParent::InstCast(NPP instance)
         static_cast<PluginInstanceParent*>(instance->pdata);
 
     // If the plugin crashed and the PluginInstanceParent was deleted,
-    // instance->pdata will be NULL.
+    // instance->pdata will be nullptr.
     if (!ip)
-        return NULL;
+        return nullptr;
 
     if (instance != ip->mNPP) {
         NS_RUNTIMEABORT("Corrupted plugin data.");
@@ -1077,7 +1103,7 @@ PluginModuleParent::StreamCast(NPP instance,
 {
     PluginInstanceParent* ip = InstCast(instance);
     if (!ip)
-        return NULL;
+        return nullptr;
 
     BrowserStreamParent* sp =
         static_cast<BrowserStreamParent*>(static_cast<AStream*>(s->pdata));
@@ -1240,7 +1266,7 @@ PluginModuleParent::NP_Shutdown(NPError* error)
 
     bool ok = CallNP_Shutdown(error);
 
-    // if NP_Shutdown() is nested within another RPC call, this will
+    // if NP_Shutdown() is nested within another interrupt call, this will
     // break things.  but lord help us if we're doing that anyway; the
     // plugin dso will have been unloaded on the other side by the
     // CallNP_Shutdown() message
@@ -1278,7 +1304,7 @@ PluginModuleParent::NP_GetEntryPoints(NPPluginFuncs* pFuncs, NPError* error)
 
     // We need to have the child process update its function table
     // here by actually calling NP_GetEntryPoints since the parent's
-    // function table can reflect NULL entries in the child's table.
+    // function table can reflect nullptr entries in the child's table.
     if (!CallNP_GetEntryPoints(error)) {
         return NS_ERROR_FAILURE;
     }
@@ -1455,7 +1481,7 @@ PluginModuleParent::AnswerProcessSomeEvents()
 
     int i = 0;
     for (; i < kMaxChancesToProcessEvents; ++i)
-        if (!g_main_context_iteration(NULL, FALSE))
+        if (!g_main_context_iteration(nullptr, FALSE))
             break;
 
     PLUGIN_LOG_DEBUG(("... quitting mini nested loop; processed %i tasks", i));
@@ -1465,28 +1491,28 @@ PluginModuleParent::AnswerProcessSomeEvents()
 #endif
 
 bool
-PluginModuleParent::RecvProcessNativeEventsInRPCCall()
+PluginModuleParent::RecvProcessNativeEventsInInterruptCall()
 {
     PLUGIN_LOG_DEBUG(("%s", FULLFUNCTION));
 #if defined(OS_WIN)
-    ProcessNativeEventsInRPCCall();
+    ProcessNativeEventsInInterruptCall();
     return true;
 #else
     NS_NOTREACHED(
-        "PluginModuleParent::RecvProcessNativeEventsInRPCCall not implemented!");
+        "PluginModuleParent::RecvProcessNativeEventsInInterruptCall not implemented!");
     return false;
 #endif
 }
 
 void
-PluginModuleParent::ProcessRemoteNativeEventsInRPCCall()
+PluginModuleParent::ProcessRemoteNativeEventsInInterruptCall()
 {
 #if defined(OS_WIN)
-    unused << SendProcessNativeEventsInRPCCall();
+    unused << SendProcessNativeEventsInInterruptCall();
     return;
 #endif
     NS_NOTREACHED(
-        "PluginModuleParent::ProcessRemoteNativeEventsInRPCCall not implemented!");
+        "PluginModuleParent::ProcessRemoteNativeEventsInInterruptCall not implemented!");
 }
 
 bool
@@ -1534,6 +1560,12 @@ PluginModuleParent::AllocPCrashReporterParent(mozilla::dom::NativeThreadId* id,
 bool
 PluginModuleParent::DeallocPCrashReporterParent(PCrashReporterParent* actor)
 {
+#ifdef XP_WIN
+    mozilla::MutexAutoLock lock(mCrashReporterMutex);
+    if (actor == static_cast<PCrashReporterParent*>(mCrashReporter)) {
+        mCrashReporter = nullptr;
+    }
+#endif
     delete actor;
     return true;
 }
@@ -1615,7 +1647,7 @@ PluginModuleParent::RecvNPN_SetException(PPluginScriptableObjectParent* aActor,
 {
     PLUGIN_LOG_DEBUG(("%s", FULLFUNCTION));
 
-    NPObject* aNPObj = NULL;
+    NPObject* aNPObj = nullptr;
     if (aActor) {
         aNPObj = static_cast<PluginScriptableObjectParent*>(aActor)->GetObject(true);
         if (!aNPObj) {

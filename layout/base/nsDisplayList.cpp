@@ -399,9 +399,9 @@ AddAnimationsAndTransitionsToLayer(Layer* aLayer, nsDisplayListBuilder* aBuilder
     // all data passed directly to the compositor should be in css pixels
     float scale = nsDeviceContext::AppUnitsPerCSSPixel();
     gfxPoint3D offsetToTransformOrigin =
-      nsDisplayTransform::GetDeltaToMozTransformOrigin(frame, scale, &bounds);
+      nsDisplayTransform::GetDeltaToTransformOrigin(frame, scale, &bounds);
     gfxPoint3D offsetToPerspectiveOrigin =
-      nsDisplayTransform::GetDeltaToMozPerspectiveOrigin(frame, scale);
+      nsDisplayTransform::GetDeltaToPerspectiveOrigin(frame, scale);
     nscoord perspective = 0.0;
     nsStyleContext* parentStyleContext = frame->StyleContext()->GetParent();
     if (parentStyleContext) {
@@ -484,6 +484,7 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
       mHadToIgnoreSuppression(false),
       mIsAtRootOfPseudoStackingContext(false),
       mIncludeAllOutOfFlows(false),
+      mDescendIntoSubdocuments(true),
       mSelectedFramesOnly(false),
       mAccurateVisibleRegions(false),
       mAllowMergingAndFlattening(true),
@@ -495,7 +496,8 @@ nsDisplayListBuilder::nsDisplayListBuilder(nsIFrame* aReferenceFrame,
       mHasFixedItems(false),
       mIsInFixedPosition(false),
       mIsCompositingCheap(false),
-      mContainsPluginItem(false)
+      mContainsPluginItem(false),
+      mContainsBlendMode(false)
 {
   MOZ_COUNT_CTOR(nsDisplayListBuilder);
   PL_InitArenaPool(&mPool, "displayListArena", 1024,
@@ -1892,10 +1894,8 @@ nsDisplayBackgroundImage::TryOptimizeToImageLayer(LayerManager* aManager,
     return false;
   }
 
-  // Sub-pixel alignment is hard, lets punt on that.
-  if (state.mAnchor != nsPoint(0.0f, 0.0f)) {
-    return false;
-  }
+  // XXX Ignoring state.mAnchor. ImageLayer drawing snaps mDestArea edges to
+  // layer pixel boundaries. This should be OK for now.
 
   int32_t appUnitsPerDevPixel = presContext->AppUnitsPerDevPixel();
   mDestRect = nsLayoutUtils::RectToGfxRect(state.mDestArea, appUnitsPerDevPixel);
@@ -2369,6 +2369,12 @@ nsDisplayThemedBackground::PaintInternal(nsDisplayListBuilder* aBuilder,
   theme->DrawWidgetBackground(aCtx, mFrame, mAppearance, borderArea, drawing);
 }
 
+bool nsDisplayThemedBackground::IsWindowActive()
+{
+  nsEventStates docState = mFrame->GetContent()->OwnerDoc()->GetDocumentState();
+  return !docState.HasState(NS_DOCUMENT_STATE_WINDOW_INACTIVE);
+}
+
 void nsDisplayThemedBackground::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
                                                           const nsDisplayItemGeometry* aGeometry,
                                                           nsRegion* aInvalidRegion)
@@ -2387,6 +2393,11 @@ void nsDisplayThemedBackground::ComputeInvalidationRegion(nsDisplayListBuilder* 
     // Positioning area is unchanged, so invalidate just the change in the
     // painting area.
     aInvalidRegion->Xor(bounds, geometry->mBounds);
+  }
+  nsITheme* theme = mFrame->PresContext()->GetTheme();
+  if (theme->WidgetAppearanceDependsOnWindowFocus(mAppearance) &&
+      IsWindowActive() != geometry->mWindowIsActive) {
+    aInvalidRegion->Or(*aInvalidRegion, bounds);
   }
 }
 
@@ -3126,6 +3137,149 @@ bool nsDisplayOpacity::TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* a
   return true;
 }
 
+nsDisplayMixBlendMode::nsDisplayMixBlendMode(nsDisplayListBuilder* aBuilder,
+                                             nsIFrame* aFrame, nsDisplayList* aList,
+                                             uint32_t aFlags)
+: nsDisplayWrapList(aBuilder, aFrame, aList) {
+  MOZ_COUNT_CTOR(nsDisplayMixBlendMode);
+}
+
+#ifdef NS_BUILD_REFCNT_LOGGING
+nsDisplayMixBlendMode::~nsDisplayMixBlendMode() {
+  MOZ_COUNT_DTOR(nsDisplayMixBlendMode);
+}
+#endif
+
+nsRegion nsDisplayMixBlendMode::GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
+                                                bool* aSnap) {
+  *aSnap = false;
+  // We are never considered opaque
+  return nsRegion();
+}
+
+static gfxContext::GraphicsOperator GetGFXBlendMode(uint8_t mBlendMode) {
+  switch (mBlendMode) {
+    case NS_STYLE_BLEND_NORMAL:      return gfxContext::OPERATOR_OVER;
+    case NS_STYLE_BLEND_MULTIPLY:    return gfxContext::OPERATOR_MULTIPLY;
+    case NS_STYLE_BLEND_SCREEN:      return gfxContext::OPERATOR_SCREEN;
+    case NS_STYLE_BLEND_OVERLAY:     return gfxContext::OPERATOR_OVERLAY;
+    case NS_STYLE_BLEND_DARKEN:      return gfxContext::OPERATOR_DARKEN;
+    case NS_STYLE_BLEND_LIGHTEN:     return gfxContext::OPERATOR_LIGHTEN;
+    case NS_STYLE_BLEND_COLOR_DODGE: return gfxContext::OPERATOR_COLOR_DODGE;
+    case NS_STYLE_BLEND_COLOR_BURN:  return gfxContext::OPERATOR_COLOR_BURN;
+    case NS_STYLE_BLEND_HARD_LIGHT:  return gfxContext::OPERATOR_HARD_LIGHT;
+    case NS_STYLE_BLEND_SOFT_LIGHT:  return gfxContext::OPERATOR_SOFT_LIGHT;
+    case NS_STYLE_BLEND_DIFFERENCE:  return gfxContext::OPERATOR_DIFFERENCE;
+    case NS_STYLE_BLEND_EXCLUSION:   return gfxContext::OPERATOR_EXCLUSION;
+    case NS_STYLE_BLEND_HUE:         return gfxContext::OPERATOR_HUE;
+    case NS_STYLE_BLEND_SATURATION:  return gfxContext::OPERATOR_SATURATION;
+    case NS_STYLE_BLEND_COLOR:       return gfxContext::OPERATOR_COLOR;
+    case NS_STYLE_BLEND_LUMINOSITY:  return gfxContext::OPERATOR_LUMINOSITY;
+    default:                         MOZ_ASSERT(false); return gfxContext::OPERATOR_OVER;
+  }
+  
+  return gfxContext::OPERATOR_OVER;
+}
+
+// nsDisplayMixBlendMode uses layers for rendering
+already_AddRefed<Layer>
+nsDisplayMixBlendMode::BuildLayer(nsDisplayListBuilder* aBuilder,
+                                  LayerManager* aManager,
+                                  const ContainerParameters& aContainerParameters) {
+  ContainerParameters newContainerParameters = aContainerParameters;
+  newContainerParameters.mDisableSubpixelAntialiasingInDescendants = true;
+
+  nsRefPtr<Layer> container = aManager->GetLayerBuilder()->
+  BuildContainerLayerFor(aBuilder, aManager, mFrame, this, mList,
+                         newContainerParameters, nullptr);
+  if (!container) {
+    return nullptr;
+  }
+
+  container->SetMixBlendMode(GetGFXBlendMode(mFrame->StyleDisplay()->mMixBlendMode));
+
+  return container.forget();
+}
+
+bool nsDisplayMixBlendMode::ComputeVisibility(nsDisplayListBuilder* aBuilder,
+                                              nsRegion* aVisibleRegion,
+                                              const nsRect& aAllowVisibleRegionExpansion) {
+  // Our children are need their backdrop so we should not allow them to subtract
+  // area from aVisibleRegion. We do need to find out what is visible under
+  // our children in the temporary compositing buffer, because if our children
+  // paint our entire bounds opaquely then we don't need an alpha channel in
+  // the temporary compositing buffer.
+  nsRect bounds = GetClippedBounds(aBuilder);
+  nsRegion visibleUnderChildren;
+  visibleUnderChildren.And(*aVisibleRegion, bounds);
+  nsRect allowExpansion = bounds.Intersect(aAllowVisibleRegionExpansion);
+  return
+  nsDisplayWrapList::ComputeVisibility(aBuilder, &visibleUnderChildren,
+                                       allowExpansion);
+}
+
+bool nsDisplayMixBlendMode::TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) {
+  if (aItem->GetType() != TYPE_MIX_BLEND_MODE)
+    return false;
+  // items for the same content element should be merged into a single
+  // compositing group
+  // aItem->GetUnderlyingFrame() returns non-null because it's nsDisplayOpacity
+  if (aItem->Frame()->GetContent() != mFrame->GetContent())
+    return false;
+  if (aItem->GetClip() != GetClip())
+    return false;
+  MergeFromTrackingMergedFrames(static_cast<nsDisplayMixBlendMode*>(aItem));
+  return true;
+}
+
+nsDisplayBlendContainer::nsDisplayBlendContainer(nsDisplayListBuilder* aBuilder,
+                                                 nsIFrame* aFrame, nsDisplayList* aList,
+                                                 uint32_t aFlags)
+    : nsDisplayWrapList(aBuilder, aFrame, aList) {
+  MOZ_COUNT_CTOR(nsDisplayBlendContainer);
+}
+
+#ifdef NS_BUILD_REFCNT_LOGGING
+nsDisplayBlendContainer::~nsDisplayBlendContainer() {
+  MOZ_COUNT_DTOR(nsDisplayBlendContainer);
+}
+#endif
+
+// nsDisplayBlendContainer uses layers for rendering
+already_AddRefed<Layer>
+nsDisplayBlendContainer::BuildLayer(nsDisplayListBuilder* aBuilder,
+                                    LayerManager* aManager,
+                                    const ContainerParameters& aContainerParameters) {
+  // turn off anti-aliasing in the parent stacking context because it changes
+  // how the group is initialized.
+  ContainerParameters newContainerParameters = aContainerParameters;
+  newContainerParameters.mDisableSubpixelAntialiasingInDescendants = true;
+
+  nsRefPtr<Layer> container = aManager->GetLayerBuilder()->
+  BuildContainerLayerFor(aBuilder, aManager, mFrame, this, mList,
+                         newContainerParameters, nullptr);
+  if (!container) {
+    return nullptr;
+  }
+  
+  container->SetForceIsolatedGroup(true);
+  return container.forget();
+}
+
+bool nsDisplayBlendContainer::TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) {
+  if (aItem->GetType() != TYPE_BLEND_CONTAINER)
+    return false;
+  // items for the same content element should be merged into a single
+  // compositing group
+  // aItem->GetUnderlyingFrame() returns non-null because it's nsDisplayOpacity
+  if (aItem->Frame()->GetContent() != mFrame->GetContent())
+    return false;
+  if (aItem->GetClip() != GetClip())
+    return false;
+  MergeFromTrackingMergedFrames(static_cast<nsDisplayBlendContainer*>(aItem));
+  return true;
+}
+
 nsDisplayOwnLayer::nsDisplayOwnLayer(nsDisplayListBuilder* aBuilder,
                                      nsIFrame* aFrame, nsDisplayList* aList,
                                      uint32_t aFlags)
@@ -3703,7 +3857,7 @@ nsDisplayTransform::GetFrameBoundsForTransform(const nsIFrame* aFrame)
   /* Iterate through the continuation list, unioning together all the
    * bounding rects.
    */
-  for (const nsIFrame *currFrame = aFrame->GetFirstContinuation();
+  for (const nsIFrame *currFrame = aFrame->FirstContinuation();
        currFrame != nullptr;
        currFrame = currFrame->GetNextContinuation())
     {
@@ -3754,9 +3908,9 @@ nsDisplayTransform::nsDisplayTransform(nsDisplayListBuilder* aBuilder, nsIFrame 
  * called off the main thread.
  */
 /* static */ gfxPoint3D
-nsDisplayTransform::GetDeltaToMozTransformOrigin(const nsIFrame* aFrame,
-                                                 float aAppUnitsPerPixel,
-                                                 const nsRect* aBoundsOverride)
+nsDisplayTransform::GetDeltaToTransformOrigin(const nsIFrame* aFrame,
+                                              float aAppUnitsPerPixel,
+                                              const nsRect* aBoundsOverride)
 {
   NS_PRECONDITION(aFrame, "Can't get delta for a null frame!");
   NS_PRECONDITION(aFrame->IsTransformed(),
@@ -3820,8 +3974,8 @@ nsDisplayTransform::GetDeltaToMozTransformOrigin(const nsIFrame* aFrame,
  * called off the main thread.
  */
 /* static */ gfxPoint3D
-nsDisplayTransform::GetDeltaToMozPerspectiveOrigin(const nsIFrame* aFrame,
-                                                   float aAppUnitsPerPixel)
+nsDisplayTransform::GetDeltaToPerspectiveOrigin(const nsIFrame* aFrame,
+                                                float aAppUnitsPerPixel)
 {
   NS_PRECONDITION(aFrame, "Can't get delta for a null frame!");
   NS_PRECONDITION(aFrame->IsTransformed(),
@@ -3884,8 +4038,8 @@ nsDisplayTransform::FrameTransformProperties::FrameTransformProperties(const nsI
                                                                        const nsRect* aBoundsOverride)
   : mFrame(aFrame)
   , mTransformList(aFrame->StyleDisplay()->mSpecifiedTransform)
-  , mToMozOrigin(GetDeltaToMozTransformOrigin(aFrame, aAppUnitsPerPixel, aBoundsOverride))
-  , mToPerspectiveOrigin(GetDeltaToMozPerspectiveOrigin(aFrame, aAppUnitsPerPixel))
+  , mToTransformOrigin(GetDeltaToTransformOrigin(aFrame, aAppUnitsPerPixel, aBoundsOverride))
+  , mToPerspectiveOrigin(GetDeltaToPerspectiveOrigin(aFrame, aAppUnitsPerPixel))
   , mChildPerspective(0)
 {
   const nsStyleDisplay* parentDisp = nullptr;
@@ -3994,7 +4148,7 @@ nsDisplayTransform::GetResultingTransformMatrixInternal(const FrameTransformProp
     /* At the point when perspective is applied, we have been translated to the transform origin.
      * The translation to the perspective origin is the difference between these values.
      */
-    result = result * nsLayoutUtils::ChangeMatrixBasis(aProperties.mToPerspectiveOrigin - aProperties.mToMozOrigin, perspective);
+    result = result * nsLayoutUtils::ChangeMatrixBasis(aProperties.mToPerspectiveOrigin - aProperties.mToTransformOrigin, perspective);
   }
 
   gfxPoint3D rounded(hasSVGTransforms ? newOrigin.x : NS_round(newOrigin.x),
@@ -4014,11 +4168,11 @@ nsDisplayTransform::GetResultingTransformMatrixInternal(const FrameTransformProp
         GetResultingTransformMatrixInternal(props,
                                             aOrigin - frame->GetPosition(),
                                             aAppUnitsPerPixel, nullptr, aOutAncestor);
-      return nsLayoutUtils::ChangeMatrixBasis(rounded + aProperties.mToMozOrigin, result) * parent;
+      return nsLayoutUtils::ChangeMatrixBasis(rounded + aProperties.mToTransformOrigin, result) * parent;
   }
 
   return nsLayoutUtils::ChangeMatrixBasis
-    (rounded + aProperties.mToMozOrigin, result);
+    (rounded + aProperties.mToTransformOrigin, result);
 }
 
 bool
@@ -4614,7 +4768,7 @@ nsDisplaySVGEffects::BuildLayer(nsDisplayListBuilder* aBuilder,
     return nullptr;
 
   nsIFrame* firstFrame =
-    nsLayoutUtils::GetFirstContinuationOrSpecialSibling(mFrame);
+    nsLayoutUtils::FirstContinuationOrSpecialSibling(mFrame);
   nsSVGEffects::EffectProperties effectProperties =
     nsSVGEffects::GetEffectProperties(firstFrame);
 
@@ -4674,7 +4828,7 @@ void
 nsDisplaySVGEffects::PrintEffects(FILE* aOutput)
 {
   nsIFrame* firstFrame =
-    nsLayoutUtils::GetFirstContinuationOrSpecialSibling(mFrame);
+    nsLayoutUtils::FirstContinuationOrSpecialSibling(mFrame);
   nsSVGEffects::EffectProperties effectProperties =
     nsSVGEffects::GetEffectProperties(firstFrame);
   bool isOK = true;

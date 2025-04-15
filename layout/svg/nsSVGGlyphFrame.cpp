@@ -397,9 +397,9 @@ nsSVGGlyphFrame::PaintSVG(nsRenderingContext *aContext,
 
     if (renderMode == SVGAutoRenderState::CLIP_MASK) {
       gfx->SetColor(gfxRGBA(1.0f, 1.0f, 1.0f, 1.0f));
-      DrawCharacters(&iter, gfx, gfxFont::GLYPH_FILL);
+      DrawCharacters(&iter, gfx, DrawMode::GLYPH_FILL);
     } else {
-      DrawCharacters(&iter, gfx, gfxFont::GLYPH_PATH);
+      DrawCharacters(&iter, gfx, DrawMode::GLYPH_PATH);
     }
 
     return NS_OK;
@@ -422,7 +422,7 @@ nsSVGGlyphFrame::PaintSVG(nsRenderingContext *aContext,
   nsAutoPtr<gfxTextContextPaint> objectPaint;
   DrawMode drawMode = SetupCairoState(gfx, outerContextPaint, getter_Transfers(objectPaint));
 
-  if (drawMode) {
+  if (int(drawMode)) {
     DrawCharacters(&iter, gfx, drawMode, objectPaint);
   }
   
@@ -589,7 +589,7 @@ nsSVGGlyphFrame::DrawCharacters(CharacterIterator *aIter,
                                 DrawMode aDrawMode,
                                 gfxTextContextPaint *aContextPaint)
 {
-  if (aDrawMode & gfxFont::GLYPH_STROKE) {
+  if (int(aDrawMode) & int(DrawMode::GLYPH_STROKE)) {
     aIter->SetLineWidthAndDashesForDrawing(aContext);
   }
 
@@ -738,7 +738,7 @@ nsSVGGlyphFrame::GetCharacterPositions(nsTArray<CharacterPosition>* aCharacterPo
   nsSVGTextPathFrame *textPath = FindTextPathParent();
 
   if (textPath) {
-    nsRefPtr<gfxFlattenedPath> data = textPath->GetFlattenedPath();
+    nsRefPtr<gfxPath> data = textPath->GetPath();
 
     // textPath frame, but invalid target
     if (!data)
@@ -936,11 +936,11 @@ nsSVGGlyphFrame::SetupCairoState(gfxContext *aContext,
   SVGTextContextPaint *thisContextPaint = new SVGTextContextPaint();
 
   if (SetupCairoStroke(aContext, aOuterContextPaint, thisContextPaint)) {
-    toDraw = DrawMode(toDraw | gfxFont::GLYPH_STROKE);
+    toDraw = DrawMode(int(toDraw) | int(DrawMode::GLYPH_STROKE));
   }
 
   if (SetupCairoFill(aContext, aOuterContextPaint, thisContextPaint)) {
-    toDraw = DrawMode(toDraw | gfxFont::GLYPH_FILL);
+    toDraw = DrawMode(int(toDraw) | int(DrawMode::GLYPH_FILL));
   }
 
   uint32_t paintOrder = StyleSVG()->mPaintOrder;
@@ -951,7 +951,7 @@ nsSVGGlyphFrame::SetupCairoState(gfxContext *aContext,
       break;
     }
     if (component == NS_STYLE_PAINT_ORDER_STROKE) {
-      toDraw = DrawMode(toDraw | gfxFont::GLYPH_STROKE_UNDERNEATH);
+      toDraw = DrawMode(int(toDraw) | int(DrawMode::GLYPH_STROKE_UNDERNEATH));
       break;
     }
     paintOrder >>= NS_STYLE_PAINT_ORDER_BITWIDTH;
@@ -1072,83 +1072,6 @@ nsSVGGlyphFrame::SetupContextPaint(gfxContext *aContext,
 
   aContext->SetPattern(pattern);
   return true;
-}
-
-//----------------------------------------------------------------------
-// SVGTextContextPaint methods:
-
-already_AddRefed<gfxPattern>
-mozilla::SVGTextContextPaint::GetFillPattern(float aOpacity,
-                                            const gfxMatrix& aCTM)
-{
-  return mFillPaint.GetPattern(aOpacity, &nsStyleSVG::mFill, aCTM);
-}
-
-already_AddRefed<gfxPattern>
-mozilla::SVGTextContextPaint::GetStrokePattern(float aOpacity,
-                                              const gfxMatrix& aCTM)
-{
-  return mStrokePaint.GetPattern(aOpacity, &nsStyleSVG::mStroke, aCTM);
-}
-
-already_AddRefed<gfxPattern>
-mozilla::SVGTextContextPaint::Paint::GetPattern(float aOpacity,
-                                               nsStyleSVGPaint nsStyleSVG::*aFillOrStroke,
-                                               const gfxMatrix& aCTM)
-{
-  nsRefPtr<gfxPattern> pattern;
-  if (mPatternCache.Get(aOpacity, getter_AddRefs(pattern))) {
-    // Set the pattern matrix just in case it was messed with by a previous
-    // caller. We should get the same matrix each time a pattern is constructed
-    // so this should be fine.
-    pattern->SetMatrix(aCTM * mPatternMatrix);
-    return pattern.forget();
-  }
-
-  switch (mPaintType) {
-  case eStyleSVGPaintType_None:
-    pattern = new gfxPattern(gfxRGBA(0.0f, 0.0f, 0.0f, 0.0f));
-    mPatternMatrix = gfxMatrix();
-    break;
-  case eStyleSVGPaintType_Color:
-    pattern = new gfxPattern(gfxRGBA(NS_GET_R(mPaintDefinition.mColor) / 255.0,
-                                     NS_GET_G(mPaintDefinition.mColor) / 255.0,
-                                     NS_GET_B(mPaintDefinition.mColor) / 255.0,
-                                     NS_GET_A(mPaintDefinition.mColor) / 255.0 * aOpacity));
-    mPatternMatrix = gfxMatrix();
-    break;
-  case eStyleSVGPaintType_Server:
-    pattern = mPaintDefinition.mPaintServerFrame->GetPaintServerPattern(mFrame,
-                                                                        mContextMatrix,
-                                                                        aFillOrStroke,
-                                                                        aOpacity);
-    {
-      // m maps original-user-space to pattern space
-      gfxMatrix m = pattern->GetMatrix();
-      gfxMatrix deviceToOriginalUserSpace = mContextMatrix;
-      deviceToOriginalUserSpace.Invert();
-      // mPatternMatrix maps device space to pattern space via original user space
-      mPatternMatrix = deviceToOriginalUserSpace * m;
-    }
-    pattern->SetMatrix(aCTM * mPatternMatrix);
-    break;
-  case eStyleSVGPaintType_ContextFill:
-    pattern = mPaintDefinition.mContextPaint->GetFillPattern(aOpacity, aCTM);
-    // Don't cache this. mContextPaint will have cached it anyway. If we
-    // cache it, we'll have to compute mPatternMatrix, which is annoying.
-    return pattern.forget();
-  case eStyleSVGPaintType_ContextStroke:
-    pattern = mPaintDefinition.mContextPaint->GetStrokePattern(aOpacity, aCTM);
-    // Don't cache this. mContextPaint will have cached it anyway. If we
-    // cache it, we'll have to compute mPatternMatrix, which is annoying.
-    return pattern.forget();
-  default:
-    MOZ_ASSERT(false, "invalid paint type");
-    return nullptr;
-  }
-
-  mPatternCache.Put(aOpacity, pattern);
-  return pattern.forget();
 }
 
 //----------------------------------------------------------------------

@@ -53,6 +53,8 @@ static const FeatureInfo sFeatureInfoArr[] = {
         {
             GLContext::ARB_depth_texture,
             GLContext::OES_depth_texture,
+            // Intentionally avoid putting ANGLE_depth_texture here,
+            // it does not offer quite the same functionality.
             GLContext::Extensions_End
         }
     },
@@ -157,6 +159,20 @@ static const FeatureInfo sFeatureInfoArr[] = {
             GLContext::ANGLE_instanced_arrays,
             GLContext::Extensions_End
         }
+    },
+    {
+        "instanced_non_arrays",
+        330, // OpenGL version
+        300, // OpenGL ES version
+        {
+            GLContext::ARB_instanced_arrays,
+            GLContext::Extensions_End
+        }
+        /* This is an expanded version of `instanced_arrays` that allows for all
+         * enabled active attrib arrays to have non-zero divisors.
+         * ANGLE_instanced_arrays and NV_instanced_arrays forbid this, but GLES3
+         * has no such restriction.
+         */
     },
     {
         "occlusion_query",

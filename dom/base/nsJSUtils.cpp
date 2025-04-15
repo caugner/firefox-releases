@@ -31,7 +31,7 @@ bool
 nsJSUtils::GetCallingLocation(JSContext* aContext, const char* *aFilename,
                               uint32_t* aLineno)
 {
-  JSScript* script = nullptr;
+  JS::RootedScript script(aContext);
   unsigned lineno = 0;
 
   if (!JS_DescribeScriptedCaller(aContext, &script, &lineno)) {
@@ -203,16 +203,14 @@ class MOZ_STACK_CLASS AutoDontReportUncaught {
 public:
   AutoDontReportUncaught(JSContext* aContext) : mContext(aContext) {
     MOZ_ASSERT(aContext);
-    uint32_t oldOptions = JS_GetOptions(mContext);
-    mWasSet = oldOptions & JSOPTION_DONT_REPORT_UNCAUGHT;
+    mWasSet = JS::ContextOptionsRef(mContext).dontReportUncaught();
     if (!mWasSet) {
-      JS_SetOptions(mContext, oldOptions | JSOPTION_DONT_REPORT_UNCAUGHT);
+      JS::ContextOptionsRef(mContext).setDontReportUncaught(true);
     }
   }
   ~AutoDontReportUncaught() {
     if (!mWasSet) {
-      JS_SetOptions(mContext,
-                    JS_GetOptions(mContext) & ~JSOPTION_DONT_REPORT_UNCAUGHT);
+      JS::ContextOptionsRef(mContext).setDontReportUncaught(false);
     }
   }
 };
@@ -296,14 +294,23 @@ nsJSUtils::EvaluateString(JSContext* aCx,
     } else {
       rv = JS_IsExceptionPending(aCx) ? NS_ERROR_FAILURE
                                       : NS_ERROR_OUT_OF_MEMORY;
-      JS_GetPendingException(aCx, aRetValue);
+      JS::RootedValue exn(aCx);
+      JS_GetPendingException(aCx, &exn);
+      if (aRetValue) {
+        *aRetValue = exn;
+      }
       JS_ClearPendingException(aCx);
     }
   }
 
   // Wrap the return value into whatever compartment aCx was in.
-  if (aRetValue && !JS_WrapValue(aCx, aRetValue))
-    return NS_ERROR_OUT_OF_MEMORY;
+  if (aRetValue) {
+    JS::Rooted<JS::Value> v(aCx, *aRetValue);
+    if (!JS_WrapValue(aCx, &v)) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+    *aRetValue = v;
+  }
   return rv;
 }
 

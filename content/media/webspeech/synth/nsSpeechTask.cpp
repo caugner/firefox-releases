@@ -60,6 +60,11 @@ public:
     }
   }
 
+  virtual void NotifyRemoved(MediaStreamGraph* aGraph)
+  {
+    mSpeechTask = nullptr;
+  }
+
 private:
   // Raw pointer; if we exist, the stream exists,
   // and 'mSpeechTask' exclusively owns it and therefor exists as well.
@@ -162,7 +167,7 @@ nsSpeechTask::SendAudio(const JS::Value& aData, const JS::Value& aLandmarks,
   JS::Rooted<JSObject*> darray(aCx, &aData.toObject());
   JSAutoCompartment ac(aCx, darray);
 
-  JS::Rooted<JSObject*> tsrc(aCx, NULL);
+  JS::Rooted<JSObject*> tsrc(aCx, nullptr);
 
   // Allow either Int16Array or plain JS Array
   if (JS_IsInt16Array(darray)) {
@@ -283,10 +288,15 @@ nsSpeechTask::DispatchEndImpl(float aElapsedTime, uint32_t aCharIndex)
     mSpeechSynthesis->OnEnd(this);
   }
 
-  utterance->mState = SpeechSynthesisUtterance::STATE_ENDED;
-  utterance->DispatchSpeechSynthesisEvent(NS_LITERAL_STRING("end"),
-                                          aCharIndex, aElapsedTime,
-                                          NS_LITERAL_STRING(""));
+  if (utterance->mState == SpeechSynthesisUtterance::STATE_PENDING) {
+    utterance->mState = SpeechSynthesisUtterance::STATE_NONE;
+  } else {
+    utterance->mState = SpeechSynthesisUtterance::STATE_ENDED;
+    utterance->DispatchSpeechSynthesisEvent(NS_LITERAL_STRING("end"),
+                                            aCharIndex, aElapsedTime,
+                                            EmptyString());
+  }
+
   return NS_OK;
 }
 

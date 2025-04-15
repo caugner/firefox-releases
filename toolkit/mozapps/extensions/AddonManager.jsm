@@ -26,6 +26,7 @@ const PREF_EM_CERT_CHECKATTRIBUTES    = "extensions.hotfix.cert.checkAttributes"
 const PREF_EM_HOTFIX_CERTS            = "extensions.hotfix.certs.";
 const PREF_MATCH_OS_LOCALE            = "intl.locale.matchOS";
 const PREF_SELECTED_LOCALE            = "general.useragent.locale";
+const UNKNOWN_XPCOM_ABI               = "unknownABI";
 
 const UPDATE_REQUEST_VERSION          = 2;
 const CATEGORY_UPDATE_PARAMS          = "extension-update-params";
@@ -395,6 +396,9 @@ var AddonManagerInternal = {
   providers: [],
   types: {},
   startupChanges: {},
+  // Store telemetry details per addon provider
+  telemetryDetails: {},
+
 
   // A read-only wrapper around the types dictionary
   typesProxy: Proxy.create({
@@ -456,6 +460,10 @@ var AddonManagerInternal = {
       return;
 
     this.recordTimestamp("AMI_startup_begin");
+
+    // clear this for xpcshell test restarts
+    for (let provider in this.telemetryDetails)
+      delete this.telemetryDetails[provider];
 
     let appChanged = undefined;
 
@@ -2191,12 +2199,20 @@ this.AddonManagerPrivate = {
     return this._simpleMeasures;
   },
 
+  getTelemetryDetails: function AMP_getTelemetryDetails() {
+    return AddonManagerInternal.telemetryDetails;
+  },
+
+  setTelemetryDetails: function AMP_setTelemetryDetails(aProvider, aDetails) {
+    AddonManagerInternal.telemetryDetails[aProvider] = aDetails;
+  },
+
   // Start a timer, record a simple measure of the time interval when
   // timer.done() is called
   simpleTimer: function(aName) {
     let startTime = Date.now();
     return {
-      done: () => AddonManagerPrivate.recordSimpleMeasure(aName, Date.now() - startTime)
+      done: () => this.recordSimpleMeasure(aName, Date.now() - startTime)
     };
   }
 };

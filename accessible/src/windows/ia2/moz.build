@@ -7,6 +7,7 @@
 MODULE = 'accessibility'
 
 EXPORTS += [
+    'ia2Accessible.h',
     'ia2AccessibleAction.h',
     'ia2AccessibleComponent.h',
     'ia2AccessibleEditableText.h',
@@ -16,7 +17,8 @@ EXPORTS += [
     'ia2AccessibleValue.h',
 ]
 
-CPP_SOURCES += [
+SOURCES += [
+    'ia2Accessible.cpp',
     'ia2AccessibleAction.cpp',
     'ia2AccessibleComponent.cpp',
     'ia2AccessibleEditableText.cpp',
@@ -42,4 +44,6 @@ LOCAL_INCLUDES += [
 ]
 
 LIBRARY_NAME = 'accessibility_toolkit_ia2_s'
+
+EXPORT_LIBRARY = True
 

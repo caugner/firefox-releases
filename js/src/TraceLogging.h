@@ -35,6 +35,10 @@ class TraceLogging
         GC_STOP,
         MINOR_GC_START,
         MINOR_GC_STOP,
+        GC_SWEEPING_START,
+        GC_SWEEPING_STOP,
+        GC_ALLOCATING_START,
+        GC_ALLOCATING_STOP,
         PARSER_COMPILE_SCRIPT_START,
         PARSER_COMPILE_SCRIPT_STOP,
         PARSER_COMPILE_LAZY_START,
@@ -49,6 +53,7 @@ class TraceLogging
     enum Logger {
         DEFAULT,
         ION_BACKGROUND_COMPILER,
+        GC_BACKGROUND,
 
         LAST_LOGGER
     };
@@ -80,7 +85,6 @@ class TraceLogging
                         PointerHasher<const char *, 3>,
                         SystemAllocPolicy> TextHashMap;
 
-    uint64_t loggingTime;
     TextHashMap textMap;
     uint32_t nextTextId;
     Entry *entries;
@@ -98,7 +102,7 @@ class TraceLogging
     TraceLogging(Logger id);
     ~TraceLogging();
 
-    void log(Type type, const char* text = NULL, unsigned int number = 0);
+    void log(Type type, const char* text = nullptr, unsigned int number = 0);
     void log(Type type, const JS::CompileOptions &options);
     void log(Type type, JSScript* script);
     void log(const char* log);

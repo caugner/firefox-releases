@@ -269,9 +269,9 @@ MediaDecodeTask::Decode()
 
   mDecoderReader->OnDecodeThreadStart();
 
-  VideoInfo videoInfo;
+  MediaInfo mediaInfo;
   nsAutoPtr<MetadataTags> tags;
-  nsresult rv = mDecoderReader->ReadMetadata(&videoInfo, getter_Transfers(tags));
+  nsresult rv = mDecoderReader->ReadMetadata(&mediaInfo, getter_Transfers(tags));
   if (NS_FAILED(rv)) {
     ReportFailureOnMainThread(WebAudioDecodeJob::InvalidContent);
     return;
@@ -291,8 +291,8 @@ MediaDecodeTask::Decode()
 
   MediaQueue<AudioData>& audioQueue = mDecoderReader->AudioQueue();
   uint32_t frameCount = audioQueue.FrameCount();
-  uint32_t channelCount = videoInfo.mAudioChannels;
-  uint32_t sampleRate = videoInfo.mAudioRate;
+  uint32_t channelCount = mediaInfo.mAudio.mChannels;
+  uint32_t sampleRate = mediaInfo.mAudio.mRate;
 
   if (!frameCount || !channelCount || !sampleRate) {
     ReportFailureOnMainThread(WebAudioDecodeJob::InvalidContent);
@@ -537,6 +537,17 @@ MediaBufferDecoder::EnsureThreadPoolInitialized()
     mThreadPool->SetName(NS_LITERAL_CSTRING("MediaBufferDecoder"));
   }
   return true;
+}
+
+void
+MediaBufferDecoder::Shutdown() {
+  if (mThreadPool) {
+    // Setting threadLimit to 0 causes threads to exit when all events have
+    // been run, like nsIThreadPool::Shutdown(), but doesn't run a nested event
+    // loop nor wait until this has happened.
+    mThreadPool->SetThreadLimit(0);
+    mThreadPool = nullptr;
+  }
 }
 
 WebAudioDecodeJob::WebAudioDecodeJob(const nsACString& aContentType,

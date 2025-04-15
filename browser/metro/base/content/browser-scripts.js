@@ -10,8 +10,17 @@ Cu.import("resource://gre/modules/Services.jsm");
  * JS modules
  */
 
-XPCOMUtils.defineLazyModuleGetter(this , "FormHistory",
+XPCOMUtils.defineLazyModuleGetter(this, "Downloads",
+                                  "resource://gre/modules/Downloads.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "FormHistory",
                                   "resource://gre/modules/FormHistory.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
+                                  "resource://gre/modules/FileUtils.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "PageThumbs",
+                                  "resource://gre/modules/PageThumbs.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
                                   "resource://gre/modules/PluralForm.jsm");
@@ -21,9 +30,6 @@ XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
 
 XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
                                   "resource://gre/modules/NetUtil.jsm");
-
-XPCOMUtils.defineLazyModuleGetter(this, "PdfJs",
-                                  "resource://pdf.js/PdfJs.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "DownloadUtils",
                                   "resource://gre/modules/DownloadUtils.jsm");
@@ -97,7 +103,7 @@ let ScriptContexts = {};
   ["CommandUpdater", "chrome://browser/content/commandUtil.js"],
   ["ContextCommands", "chrome://browser/content/ContextCommands.js"],
   ["Bookmarks", "chrome://browser/content/bookmarks.js"],
-  ["Downloads", "chrome://browser/content/downloads.js"],
+  ["MetroDownloadsView", "chrome://browser/content/downloads.js"],
   ["ConsolePanelView", "chrome://browser/content/console.js"],
   ["Site", "chrome://browser/content/Site.js"],
   ["TopSites", "chrome://browser/content/TopSites.js"],

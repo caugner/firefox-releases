@@ -17,6 +17,7 @@
 #include "nsIScreen.h"
 #include "nsIScreenManager.h"
 #include "nsILocaleService.h"
+#include "nsServiceManagerUtils.h"
 
 #include "cairo.h"
 
@@ -106,11 +107,11 @@ gfxAndroidPlatform::gfxAndroidPlatform()
     screen->GetColorDepth(&mScreenDepth);
 
     mOffscreenFormat = mScreenDepth == 16
-                       ? gfxASurface::ImageFormatRGB16_565
-                       : gfxASurface::ImageFormatRGB24;
+                       ? gfxImageFormatRGB16_565
+                       : gfxImageFormatRGB24;
 
     if (Preferences::GetBool("gfx.android.rgb16.force", false)) {
-        mOffscreenFormat = gfxASurface::ImageFormatRGB16_565;
+        mOffscreenFormat = gfxImageFormatRGB16_565;
     }
 
 }
@@ -127,7 +128,7 @@ gfxAndroidPlatform::~gfxAndroidPlatform()
 
 already_AddRefed<gfxASurface>
 gfxAndroidPlatform::CreateOffscreenSurface(const gfxIntSize& size,
-                                      gfxASurface::gfxContentType contentType)
+                                      gfxContentType contentType)
 {
     nsRefPtr<gfxASurface> newSurface;
     newSurface = new gfxImageSurface(size, OptimalFormatForContent(contentType));

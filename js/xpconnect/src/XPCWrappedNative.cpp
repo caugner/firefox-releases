@@ -41,12 +41,11 @@ xpc_OkToHandOutWrapper(nsWrapperCache *cache)
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(XPCWrappedNative)
 
-NS_IMETHODIMP
+NS_IMETHODIMP_(void)
 NS_CYCLE_COLLECTION_CLASSNAME(XPCWrappedNative)::Unlink(void *p)
 {
     XPCWrappedNative *tmp = static_cast<XPCWrappedNative*>(p);
     tmp->ExpireWrapper();
-    return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -836,10 +835,11 @@ XPCWrappedNative::Destroy()
     }
 
     /*
-     * The only time GetRuntime() will be NULL is if Destroy is called a second
-     * time on a wrapped native. Since we already unregistered the pointer the
-     * first time, there's no need to unregister again. Unregistration is safe
-     * the first time because mWrapper isn't used afterwards.
+     * The only time GetRuntime() will be nullptr is if Destroy is called a
+     * second time on a wrapped native. Since we already unregistered the
+     * pointer the first time, there's no need to unregister again.
+     * Unregistration is safe the first time because mWrapper isn't used
+     * afterwards.
      */
     if (XPCJSRuntime *rt = GetRuntime()) {
         if (IsIncrementalBarrierNeeded(rt->Runtime()))
@@ -1382,14 +1382,15 @@ XPCWrappedNative::ReparentWrapperIfFound(XPCWrappedNativeScope* aOldScope,
         // native, which is bad, because one of them will end up finalizing
         // a wrapped native it does not own. |cloneGuard| ensures that if we
         // exit before calling clearing |flat|'s private the private of
-        // |newobj| will be set to NULL. |flat| will go away soon, because
+        // |newobj| will be set to nullptr. |flat| will go away soon, because
         // we swap it with another object during the transplant and let that
         // object die.
         RootedObject propertyHolder(cx);
         {
             AutoClonePrivateGuard cloneGuard(cx, flat, newobj);
 
-            propertyHolder = JS_NewObjectWithGivenProto(cx, NULL, NULL, aNewParent);
+            propertyHolder = JS_NewObjectWithGivenProto(cx, nullptr, nullptr,
+                                                        aNewParent);
             if (!propertyHolder)
                 return NS_ERROR_OUT_OF_MEMORY;
             if (!JS_CopyPropertiesFrom(cx, propertyHolder, flat))
@@ -1927,7 +1928,7 @@ XPCWrappedNative::GetSameCompartmentSecurityWrapper(JSContext *cx)
     JSCompartment *cxCompartment = js::GetContextCompartment(cx);
     MOZ_ASSERT(cxCompartment == js::GetObjectCompartment(flat));
     if (xpc::AccessCheck::isChrome(cxCompartment)) {
-        MOZ_ASSERT(wrapper == NULL);
+        MOZ_ASSERT(wrapper == nullptr);
         return flat;
     }
 
@@ -1940,11 +1941,11 @@ XPCWrappedNative::GetSameCompartmentSecurityWrapper(JSContext *cx)
     if (NeedsSOW() && xpc::AllowXBLScope(js::GetContextCompartment(cx))) {
         wrapper = xpc::WrapperFactory::WrapSOWObject(cx, flat);
         if (!wrapper)
-            return NULL;
+            return nullptr;
     } else if (xpc::WrapperFactory::IsComponentsObject(flat)) {
         wrapper = xpc::WrapperFactory::WrapComponentsObject(cx, flat);
         if (!wrapper)
-            return NULL;
+            return nullptr;
     }
 
     // If we made a wrapper, cache it and return it.
@@ -2317,7 +2318,7 @@ CallMethodHelper::GatherAndConvertResults()
 
         nsresult err;
         if (isArray) {
-            if (!XPCConvert::NativeArray2JS(v.address(), (const void**)&dp->val,
+            if (!XPCConvert::NativeArray2JS(&v, (const void**)&dp->val,
                                             datum_type, &param_iid,
                                             array_count, &err)) {
                 // XXX need exception scheme for arrays to indicate bad element
@@ -2325,7 +2326,7 @@ CallMethodHelper::GatherAndConvertResults()
                 return false;
             }
         } else if (isSizedString) {
-            if (!XPCConvert::NativeStringWithSize2JS(v.address(),
+            if (!XPCConvert::NativeStringWithSize2JS(&v,
                                                      (const void*)&dp->val,
                                                      datum_type,
                                                      array_count, &err)) {
@@ -2333,7 +2334,7 @@ CallMethodHelper::GatherAndConvertResults()
                 return false;
             }
         } else {
-            if (!XPCConvert::NativeData2JS(v.address(), &dp->val, datum_type,
+            if (!XPCConvert::NativeData2JS(&v, &dp->val, datum_type,
                                            &param_iid, &err)) {
                 ThrowBadParam(err, i, mCallContext);
                 return false;
@@ -2396,7 +2397,7 @@ CallMethodHelper::QueryInterfaceFastPath() const
     RootedValue v(mCallContext, NullValue());
     nsresult err;
     bool success =
-        XPCConvert::NativeData2JS(v.address(), &qiresult,
+        XPCConvert::NativeData2JS(&v, &qiresult,
                                   nsXPTType::T_INTERFACE_IS,
                                   iid, &err);
     NS_IF_RELEASE(qiresult);
@@ -2882,12 +2883,6 @@ XPCWrappedNative::HasNativeMember(HandleId name)
     XPCNativeMember *member = nullptr;
     uint16_t ignored;
     return GetSet()->FindMember(name, &member, &ignored) && !!member;
-}
-
-inline nsresult UnexpectedFailure(nsresult rv)
-{
-    NS_ERROR("This is not supposed to fail!");
-    return rv;
 }
 
 /* void finishInitForWrappedGlobal (); */

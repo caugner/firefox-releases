@@ -8,8 +8,10 @@
 #include "DOMStorageManager.h"
 
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/ContentParent.h"
 #include "mozilla/unused.h"
 #include "nsIDiskSpaceWatcher.h"
+#include "nsThreadUtils.h"
 
 namespace mozilla {
 namespace dom {
@@ -251,12 +253,7 @@ DOMStorageDBChild::RecvLoadDone(const nsCString& aScope, const nsresult& aRv)
 bool
 DOMStorageDBChild::RecvLoadUsage(const nsCString& aScope, const int64_t& aUsage)
 {
-  DOMStorageDBBridge* db = DOMStorageCache::GetDatabase();
-  if (!db) {
-    return false;
-  }
-
-  DOMStorageUsageBridge* scopeUsage = db->GetScopeUsage(aScope);
+  nsRefPtr<DOMStorageUsageBridge> scopeUsage = mManager->GetScopeUsage(aScope);
   scopeUsage->LoadUsage(aUsage);
   return true;
 }
@@ -363,6 +360,18 @@ DOMStorageDBParent::~DOMStorageDBParent()
   }
 }
 
+mozilla::ipc::IProtocol*
+DOMStorageDBParent::CloneProtocol(Channel* aChannel,
+                                  mozilla::ipc::ProtocolCloneContext* aCtx)
+{
+  ContentParent* contentParent = aCtx->GetContentParent();
+  nsAutoPtr<PStorageParent> actor(contentParent->AllocPStorageParent());
+  if (!actor || !contentParent->RecvPStorageConstructor(actor)) {
+    return nullptr;
+  }
+  return actor.forget();
+}
+
 DOMStorageDBParent::CacheParentBridge*
 DOMStorageDBParent::NewCache(const nsACString& aScope)
 {
@@ -390,7 +399,7 @@ DOMStorageDBParent::RecvAsyncGetUsage(const nsCString& aScope)
   }
 
   // The object releases it self in LoadUsage method
-  UsageParentBridge* usage = new UsageParentBridge(this, aScope);
+  nsRefPtr<UsageParentBridge> usage = new UsageParentBridge(this, aScope);
   db->AsyncGetUsage(usage);
   return true;
 }
@@ -719,7 +728,6 @@ DOMStorageDBParent::UsageParentBridge::LoadUsage(const int64_t aUsage)
 {
   nsRefPtr<UsageRunnable> r = new UsageRunnable(mParent, mScope, aUsage);
   NS_DispatchToMainThread(r);
-  delete this;
 }
 
 } // ::dom

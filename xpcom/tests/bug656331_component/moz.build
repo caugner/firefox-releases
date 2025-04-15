@@ -6,9 +6,11 @@
 
 NO_DIST_INSTALL = True
 
-CPP_SOURCES += [
+SOURCES += [
     'TestComponent.cpp',
 ]
 
 LIBRARY_NAME = 'test656331'
+
+IS_COMPONENT = True
 

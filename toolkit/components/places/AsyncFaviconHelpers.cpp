@@ -7,7 +7,7 @@
 #include "AsyncFaviconHelpers.h"
 
 #include "nsICacheService.h"
-#include "nsICacheVisitor.h"
+#include "nsICacheEntry.h"
 #include "nsICachingChannel.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
 
@@ -89,7 +89,7 @@ FetchPageInfo(nsRefPtr<Database>& aDB,
   bool isNull;
   rv = stmt->GetIsNull(1, &isNull);
   NS_ENSURE_SUCCESS(rv, rv);
-  // favicon_id can be NULL.
+  // favicon_id can be nullptr.
   if (!isNull) {
     rv = stmt->GetInt64(1, &_page.iconId);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -224,7 +224,7 @@ FetchIconInfo(nsRefPtr<Database>& aDB,
   rv = stmt->GetInt64(0, &_icon.id);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Expiration can be NULL.
+  // Expiration can be nullptr.
   bool isNull;
   rv = stmt->GetIsNull(1, &isNull);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -233,7 +233,7 @@ FetchIconInfo(nsRefPtr<Database>& aDB,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  // Data can be NULL.
+  // Data can be nullptr.
   rv = stmt->GetIsNull(2, &isNull);
   NS_ENSURE_SUCCESS(rv, rv);
   if (!isNull) {
@@ -304,7 +304,7 @@ GetExpirationTimeFromChannel(nsIChannel* aChannel)
     nsCOMPtr<nsISupports> cacheToken;
     nsresult rv = cachingChannel->GetCacheToken(getter_AddRefs(cacheToken));
     if (NS_SUCCEEDED(rv)) {
-      nsCOMPtr<nsICacheEntryInfo> cacheEntry = do_QueryInterface(cacheToken);
+      nsCOMPtr<nsICacheEntry> cacheEntry = do_QueryInterface(cacheToken);
       uint32_t seconds;
       rv = cacheEntry->GetExpirationTime(&seconds);
       if (NS_SUCCEEDED(rv)) {

@@ -70,9 +70,6 @@
 
 #ifdef XP_MACOSX
 #include "nsILocalFileMac.h"
-#ifndef __LP64__
-#include "nsIAppleFileDecoder.h"
-#endif
 #elif defined(XP_OS2)
 #include "nsILocalFileOS2.h"
 #endif
@@ -489,6 +486,7 @@ static nsExtraMimeTypeEntry extraMimeEntries [] =
   { TEXT_XUL, "xul", "XML-Based User Interface Language" },
   { TEXT_XML, "xml,xsl,xbl", "Extensible Markup Language" },
   { TEXT_CSS, "css", "Style Sheet" },
+  { TEXT_VCARD, "vcf,vcard", "Contact Information" },
   { VIDEO_OGG, "ogv", "Ogg Video" },
   { VIDEO_OGG, "ogg", "Ogg Video" },
   { APPLICATION_OGG, "ogg", "Ogg Video"},
@@ -1129,11 +1127,18 @@ nsExternalAppHandler::nsExternalAppHandler(nsIMIMEInfo * aMIMEInfo,
 
   // Remove unsafe bidi characters which might have spoofing implications (bug 511521).
   const PRUnichar unsafeBidiCharacters[] = {
+    PRUnichar(0x061c), // Arabic Letter Mark
+    PRUnichar(0x200e), // Left-to-Right Mark
+    PRUnichar(0x200f), // Right-to-Left Mark
     PRUnichar(0x202a), // Left-to-Right Embedding
     PRUnichar(0x202b), // Right-to-Left Embedding
     PRUnichar(0x202c), // Pop Directional Formatting
     PRUnichar(0x202d), // Left-to-Right Override
-    PRUnichar(0x202e)  // Right-to-Left Override
+    PRUnichar(0x202e), // Right-to-Left Override
+    PRUnichar(0x2066), // Left-to-Right Isolate
+    PRUnichar(0x2067), // Right-to-Left Isolate
+    PRUnichar(0x2068), // First Strong Isolate
+    PRUnichar(0x2069)  // Pop Directional Isolate
   };
   for (uint32_t i = 0; i < ArrayLength(unsafeBidiCharacters); ++i) {
     mSuggestedFileName.ReplaceChar(unsafeBidiCharacters[i], '_');
@@ -1343,7 +1348,7 @@ nsresult nsExternalAppHandler::SetUpTempFile(nsIChannel * aChannel)
   rv = mTempFile->Append(NS_ConvertUTF8toUTF16(tempLeafName));
   // make this file unique!!!
   NS_ENSURE_SUCCESS(rv, rv);
-  rv = mTempFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
+  rv = mTempFile->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0644);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Now save the temp leaf name, minus the ".part" bit, so we can use it later.
@@ -2169,7 +2174,7 @@ NS_IMETHODIMP nsExternalAppHandler::LaunchWithApplication(nsIFile * aApplication
   fileToUse->Append(mSuggestedFileName);  
 #endif
 
-  nsresult rv = fileToUse->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0600);
+  nsresult rv = fileToUse->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 0644);
   if(NS_SUCCEEDED(rv))
   {
     mFinalFileDestination = do_QueryInterface(fileToUse);

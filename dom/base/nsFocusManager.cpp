@@ -37,10 +37,13 @@
 #include "nsIObserverService.h"
 #include "nsIObjectFrame.h"
 #include "nsBindingManager.h"
+#include "nsStyleCoord.h"
 
+#include "mozilla/ContentEvents.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/Services.h"
 #include <algorithm>
 
 #ifdef MOZ_XUL
@@ -1850,7 +1853,7 @@ public:
 
   NS_IMETHOD Run()
   {
-    nsFocusEvent event(true, mType);
+    InternalFocusEvent event(true, mType);
     event.mFlags.mBubbles = false;
     event.fromRaise = mWindowRaised;
     event.isRefocus = mIsRefocus;
@@ -2541,6 +2544,9 @@ nsFocusManager::DetermineElementToMoveFocus(nsPIDOMWindow* aWindow,
     ignoreTabIndex = false;
 
     if (aNoParentTraversal) {
+      if (startContent == rootContent)
+        return NS_OK;
+
       startContent = rootContent;
       tabIndex = forward ? 1 : 0;
       continue;

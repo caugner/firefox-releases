@@ -15,7 +15,9 @@
 #include "nsContentCreatorFunctions.h"
 #include "mozilla/ErrorResult.h"
 #include "nsIDOMHTMLMenuElement.h"
+#include "mozilla/dom/DOMRect.h"
 #include "mozilla/dom/ValidityState.h"
+#include "mozilla/dom/ElementInlines.h"
 
 class nsIDOMAttr;
 class nsIDOMEventListener;
@@ -38,7 +40,7 @@ class nsIDOMHTMLCollection;
 class nsDOMSettableTokenList;
 
 namespace mozilla {
-namespace dom{
+namespace dom {
 class HTMLFormElement;
 class HTMLPropertiesCollection;
 class HTMLMenuElement;
@@ -239,14 +241,12 @@ public:
   using nsINode::GetOn##name_;                                                \
   using nsINode::SetOn##name_;                                                \
   mozilla::dom::EventHandlerNonNull* GetOn##name_();                          \
-  void SetOn##name_(mozilla::dom::EventHandlerNonNull* handler,               \
-                    mozilla::ErrorResult& error);
+  void SetOn##name_(mozilla::dom::EventHandlerNonNull* handler);
 #define ERROR_EVENT(name_, id_, type_, struct_)                               \
   using nsINode::GetOn##name_;                                                \
   using nsINode::SetOn##name_;                                                \
   already_AddRefed<mozilla::dom::EventHandlerNonNull> GetOn##name_();         \
-  void SetOn##name_(mozilla::dom::EventHandlerNonNull* handler,               \
-                    mozilla::ErrorResult& error);
+  void SetOn##name_(mozilla::dom::EventHandlerNonNull* handler);
 #include "nsEventNameList.h" // IWYU pragma: keep
 #undef ERROR_EVENT
 #undef FORWARDED_EVENT
@@ -464,9 +464,8 @@ public:
     return rv.ErrorCode();
   }
   NS_IMETHOD GetOuterHTML(nsAString& aOuterHTML) MOZ_FINAL {
-    mozilla::ErrorResult rv;
-    mozilla::dom::Element::GetOuterHTML(aOuterHTML, rv);
-    return rv.ErrorCode();
+    mozilla::dom::Element::GetOuterHTML(aOuterHTML);
+    return NS_OK;
   }
   NS_IMETHOD SetOuterHTML(const nsAString& aOuterHTML) MOZ_FINAL {
     mozilla::ErrorResult rv;
@@ -528,11 +527,8 @@ public:
     *aDraggable = Draggable();
     return NS_OK;
   }
-  using mozilla::dom::Element::GetInnerHTML;
-  NS_IMETHOD GetInnerHTML(nsAString& aInnerHTML) MOZ_FINAL {
-    mozilla::ErrorResult rv;
-    GetInnerHTML(aInnerHTML, rv);
-    return rv.ErrorCode();
+  NS_IMETHOD GetInnerHTML(nsAString& aInnerHTML) MOZ_OVERRIDE {
+    return mozilla::dom::Element::GetInnerHTML(aInnerHTML);
   }
   using mozilla::dom::Element::SetInnerHTML;
   NS_IMETHOD SetInnerHTML(const nsAString& aInnerHTML) MOZ_FINAL {

@@ -20,6 +20,7 @@
 #ifndef nsIPresShell_h___
 #define nsIPresShell_h___
 
+#include "mozilla/EventForwards.h"
 #include "mozilla/MemoryReporting.h"
 #include "gfxPoint.h"
 #include "nsTHashtable.h"
@@ -28,7 +29,6 @@
 #include "nsQueryFrame.h"
 #include "nsCoord.h"
 #include "nsColor.h"
-#include "nsEvent.h"
 #include "nsCompatibility.h"
 #include "nsFrameManagerBase.h"
 #include "mozFlushType.h"
@@ -126,10 +126,10 @@ typedef struct CapturingContentInfo {
 } CapturingContentInfo;
 
 
-// d39cd4ce-6b38-4793-8c1a-00985c56d931
+// f5b542a9-eaf0-4560-a656-37a9d379864c
 #define NS_IPRESSHELL_IID \
-{ 0xd39cd4ce, 0x6b38, 0x4793, \
-  { 0x8c, 0x1a, 0x00, 0x98, 0x5c, 0x56, 0xd9, 0x31 } }
+{ 0xf5b542a9, 0xeaf0, 0x4560, \
+  { 0x37, 0xa9, 0xd3, 0x79, 0x86, 0x4c } }
 
 // debug VerifyReflow flags
 #define VERIFY_REFLOW_ON                    0x01
@@ -457,7 +457,7 @@ public:
 
   /**
    * Returns the page sequence frame associated with the frame hierarchy.
-   * Returns NULL if not a paginated view.
+   * Returns nullptr if not a paginated view.
    */
   virtual NS_HIDDEN_(nsIPageSequenceFrame*) GetPageSequenceFrame() const = 0;
 
@@ -770,18 +770,20 @@ public:
     * Interface to dispatch events via the presshell
     * @note The caller must have a strong reference to the PresShell.
     */
-  virtual NS_HIDDEN_(nsresult) HandleEventWithTarget(nsEvent* aEvent,
-                                                     nsIFrame* aFrame,
-                                                     nsIContent* aContent,
-                                                     nsEventStatus* aStatus) = 0;
+  virtual NS_HIDDEN_(nsresult) HandleEventWithTarget(
+                                 mozilla::WidgetEvent* aEvent,
+                                 nsIFrame* aFrame,
+                                 nsIContent* aContent,
+                                 nsEventStatus* aStatus) = 0;
 
   /**
    * Dispatch event to content only (NOT full processing)
    * @note The caller must have a strong reference to the PresShell.
    */
-  virtual NS_HIDDEN_(nsresult) HandleDOMEventWithTarget(nsIContent* aTargetContent,
-                                                        nsEvent* aEvent,
-                                                        nsEventStatus* aStatus) = 0;
+  virtual NS_HIDDEN_(nsresult) HandleDOMEventWithTarget(
+                                 nsIContent* aTargetContent,
+                                 mozilla::WidgetEvent* aEvent,
+                                 nsEventStatus* aStatus) = 0;
 
   /**
    * Dispatch event to content only (NOT full processing)
@@ -799,7 +801,8 @@ public:
   /**
     * Gets the current target event frame from the PresShell
     */
-  virtual NS_HIDDEN_(already_AddRefed<nsIContent>) GetEventTargetContent(nsEvent* aEvent) = 0;
+  virtual NS_HIDDEN_(already_AddRefed<nsIContent>) GetEventTargetContent(
+                                                     mozilla::WidgetEvent* aEvent) = 0;
 
   /**
    * Get and set the history state for the current document 
@@ -1262,10 +1265,10 @@ public:
   };
   virtual void Paint(nsView* aViewToPaint, const nsRegion& aDirtyRegion,
                      uint32_t aFlags) = 0;
-  virtual nsresult HandleEvent(nsIFrame*       aFrame,
-                               nsGUIEvent*     aEvent,
-                               bool            aDontRetargetEvents,
-                               nsEventStatus*  aEventStatus) = 0;
+  virtual nsresult HandleEvent(nsIFrame* aFrame,
+                               mozilla::WidgetGUIEvent* aEvent,
+                               bool aDontRetargetEvents,
+                               nsEventStatus* aEventStatus) = 0;
   virtual bool ShouldIgnoreInvalidation() = 0;
   /**
    * Notify that we're going to call Paint with PAINT_LAYERS
@@ -1295,14 +1298,15 @@ public:
   virtual void ScheduleViewManagerFlush() = 0;
   virtual void ClearMouseCaptureOnView(nsView* aView) = 0;
   virtual bool IsVisible() = 0;
-  virtual void DispatchSynthMouseMove(nsGUIEvent *aEvent, bool aFlushOnHoverChange) = 0;
+  virtual void DispatchSynthMouseMove(mozilla::WidgetGUIEvent* aEvent,
+                                      bool aFlushOnHoverChange) = 0;
 
-  virtual void SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
-                                   nsArenaMemoryStats *aArenaObjectsSize,
-                                   size_t *aPresShellSize,
-                                   size_t *aStyleSetsSize,
-                                   size_t *aTextRunsSize,
-                                   size_t *aPresContextSize) = 0;
+  virtual void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                                      nsArenaMemoryStats *aArenaObjectsSize,
+                                      size_t *aPresShellSize,
+                                      size_t *aStyleSetsSize,
+                                      size_t *aTextRunsSize,
+                                      size_t *aPresContextSize) = 0;
 
   /**
    * Methods that retrieve the cached font inflation preferences.
@@ -1463,6 +1467,17 @@ public:
     mReflowOnZoomPending = false;
   }
 
+  /**
+   * Documents belonging to an invisible DocShell must not be painted ever.
+   */
+  bool IsNeverPainting() {
+    return mIsNeverPainting;
+  }
+
+  void SetNeverPainting(bool aNeverPainting) {
+    mIsNeverPainting = aNeverPainting;
+  }
+
 protected:
   friend class nsRefreshDriver;
 
@@ -1584,6 +1599,16 @@ protected:
   // The maximum width of a line box. Text on a single line that exceeds this
   // width will be wrapped. A value of 0 indicates that no limit is enforced.
   nscoord mMaxLineBoxWidth;
+  
+  // If a document belongs to an invisible DocShell, this flag must be set
+  // to true, so we can avoid any paint calls for widget related to this
+  // presshell.
+  bool mIsNeverPainting;
+};
+
+class nsIPresShell_MOZILLA27 : public nsIPresShell {
+public:
+  virtual gfxSize GetCumulativeResolution() = 0;
 };
 
 #endif /* nsIPresShell_h___ */

@@ -28,7 +28,6 @@
 #include "nsBoxLayoutState.h"
 #include "nsIServiceManager.h"
 #include "nsContainerFrame.h"
-#include "nsGUIEvent.h"
 #include "nsAutoPtr.h"
 #include "nsContentCID.h"
 #include "nsStyleSet.h"
@@ -36,6 +35,9 @@
 #include "nsDisplayList.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/MouseEvents.h"
+
+using namespace mozilla;
 
 class nsSplitterInfo {
 public:
@@ -68,8 +70,8 @@ public:
   nsresult MouseUp(nsIDOMEvent* aMouseEvent);
   nsresult MouseMove(nsIDOMEvent* aMouseEvent);
 
-  void MouseDrag(nsPresContext* aPresContext, nsGUIEvent* aEvent);
-  void MouseUp(nsPresContext* aPresContext, nsGUIEvent* aEvent);
+  void MouseDrag(nsPresContext* aPresContext, WidgetGUIEvent* aEvent);
+  void MouseUp(nsPresContext* aPresContext, WidgetGUIEvent* aEvent);
 
   void AdjustChildren(nsPresContext* aPresContext);
   void AdjustChildren(nsPresContext* aPresContext, nsSplitterInfo* aChildInfos, int32_t aCount, bool aIsHorizontal);
@@ -324,16 +326,16 @@ nsSplitterFrame::GetInitialOrientation(bool& aIsHorizontal)
 
 NS_IMETHODIMP
 nsSplitterFrame::HandlePress(nsPresContext* aPresContext,
-                         nsGUIEvent *    aEvent,
-                         nsEventStatus*  aEventStatus)
+                             WidgetGUIEvent* aEvent,
+                             nsEventStatus* aEventStatus)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsSplitterFrame::HandleMultiplePress(nsPresContext* aPresContext,
-                                     nsGUIEvent *    aEvent,
-                                     nsEventStatus*  aEventStatus,
+                                     WidgetGUIEvent* aEvent,
+                                     nsEventStatus* aEventStatus,
                                      bool aControlHeld)
 {
   return NS_OK;
@@ -341,16 +343,16 @@ nsSplitterFrame::HandleMultiplePress(nsPresContext* aPresContext,
 
 NS_IMETHODIMP
 nsSplitterFrame::HandleDrag(nsPresContext* aPresContext,
-                        nsGUIEvent *    aEvent,
-                        nsEventStatus*  aEventStatus)
+                            WidgetGUIEvent* aEvent,
+                            nsEventStatus* aEventStatus)
 {
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsSplitterFrame::HandleRelease(nsPresContext* aPresContext,
-                           nsGUIEvent *    aEvent,
-                           nsEventStatus*  aEventStatus)
+                               WidgetGUIEvent* aEvent,
+                               nsEventStatus* aEventStatus)
 {
   return NS_OK;
 }
@@ -373,9 +375,9 @@ nsSplitterFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 }
 
 NS_IMETHODIMP
-nsSplitterFrame::HandleEvent(nsPresContext* aPresContext, 
-                                      nsGUIEvent* aEvent,
-                                      nsEventStatus* aEventStatus)
+nsSplitterFrame::HandleEvent(nsPresContext* aPresContext,
+                             WidgetGUIEvent* aEvent,
+                             nsEventStatus* aEventStatus)
 {
   NS_ENSURE_ARG_POINTER(aEventStatus);
   if (nsEventStatus_eConsumeNoDefault == *aEventStatus) {
@@ -390,9 +392,7 @@ nsSplitterFrame::HandleEvent(nsPresContext* aPresContext,
     break;
   
     case NS_MOUSE_BUTTON_UP:
-      if (aEvent->eventStructType == NS_MOUSE_EVENT &&
-          static_cast<nsMouseEvent*>(aEvent)->button ==
-            nsMouseEvent::eLeftButton) {
+      if (aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton) {
         mInner->MouseUp(aPresContext, aEvent);
       }
     break;
@@ -403,7 +403,8 @@ nsSplitterFrame::HandleEvent(nsPresContext* aPresContext,
 }
 
 void
-nsSplitterFrameInner::MouseUp(nsPresContext* aPresContext, nsGUIEvent* aEvent)
+nsSplitterFrameInner::MouseUp(nsPresContext* aPresContext,
+                              WidgetGUIEvent* aEvent)
 {
   if (mDragging && mOuter) {
     AdjustChildren(aPresContext);
@@ -435,7 +436,8 @@ nsSplitterFrameInner::MouseUp(nsPresContext* aPresContext, nsGUIEvent* aEvent)
 }
 
 void
-nsSplitterFrameInner::MouseDrag(nsPresContext* aPresContext, nsGUIEvent* aEvent)
+nsSplitterFrameInner::MouseDrag(nsPresContext* aPresContext,
+                                WidgetGUIEvent* aEvent)
 {
   if (mDragging && mOuter) {
 

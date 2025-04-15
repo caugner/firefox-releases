@@ -5,6 +5,7 @@ DIRS += [
     'html/dom/collections',
     'html/dom/errors',
     'html/dom/events',
+    'html/dom/lists',
     'html/dom/nodes',
     'html/dom/nodes/Document-createElement-namespace-tests',
     'html/dom/ranges',
@@ -31,7 +32,7 @@ DIRS += [
     'html/html/webappapis/scripting/processing-model-2',
     'html/html/webappapis/timers',
     'html/js/builtins',
-    'html/old-tests/submission/Opera/microdata',
+    'html/microdata/microdata-dom-api',
     'html/typedarrays',
     'html/webgl',
 ]

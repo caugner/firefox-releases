@@ -99,8 +99,8 @@ function updateList() {
   request.onsuccess = function() {
     for (let i = 0; i < request.result.length; i++)
       addApplication(request.result[i]);
-    if (!request.result.length)
-      document.getElementById("noapps").className = "";
+    if (request.result.length)
+      document.getElementById("main-container").classList.remove("hidden");
   }
 }
 
@@ -140,7 +140,7 @@ function onInstall(aEvent) {
     return;
 
   addApplication(aEvent.application);
-  document.getElementById("noapps").className = "hidden";
+  document.getElementById("main-container").classList.remove("hidden");
 }
 
 function onUninstall(aEvent) {
@@ -149,6 +149,6 @@ function onUninstall(aEvent) {
     let parent = node.parentNode;
     parent.removeChild(node);
     if (!parent.firstChild)
-      document.getElementById("noapps").className = "";
+      document.getElementById("main-container").classList.add("hidden");
   }
 }

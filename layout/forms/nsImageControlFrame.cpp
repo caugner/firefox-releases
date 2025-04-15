@@ -8,8 +8,8 @@
 #include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsFormControlFrame.h"
-#include "nsGUIEvent.h"
 #include "nsLayoutUtils.h"
+#include "mozilla/MouseEvents.h"
 
 using namespace mozilla;
 
@@ -43,8 +43,8 @@ public:
                     const nsHTMLReflowState& aReflowState,
                     nsReflowStatus&          aStatus);
 
-  NS_IMETHOD HandleEvent(nsPresContext* aPresContext, 
-                         nsGUIEvent* aEvent,
+  NS_IMETHOD HandleEvent(nsPresContext* aPresContext,
+                         WidgetGUIEvent* aEvent,
                          nsEventStatus* aEventStatus);
 
   virtual nsIAtom* GetType() const;
@@ -147,8 +147,8 @@ nsImageControlFrame::Reflow(nsPresContext*         aPresContext,
 }
 
 NS_METHOD 
-nsImageControlFrame::HandleEvent(nsPresContext* aPresContext, 
-                                 nsGUIEvent* aEvent,
+nsImageControlFrame::HandleEvent(nsPresContext* aPresContext,
+                                 WidgetGUIEvent* aEvent,
                                  nsEventStatus* aEventStatus)
 {
   NS_ENSURE_ARG_POINTER(aEventStatus);
@@ -169,9 +169,8 @@ nsImageControlFrame::HandleEvent(nsPresContext* aPresContext,
 
   *aEventStatus = nsEventStatus_eIgnore;
 
-  if (aEvent->eventStructType == NS_MOUSE_EVENT &&
-      aEvent->message == NS_MOUSE_BUTTON_UP &&
-      static_cast<nsMouseEvent*>(aEvent)->button == nsMouseEvent::eLeftButton) {
+  if (aEvent->message == NS_MOUSE_BUTTON_UP &&
+      aEvent->AsMouseEvent()->button == WidgetMouseEvent::eLeftButton) {
     // Store click point for HTMLInputElement::SubmitNamesValues
     // Do this on MouseUp because the specs don't say and that's what IE does
     nsIntPoint* lastClickPoint =

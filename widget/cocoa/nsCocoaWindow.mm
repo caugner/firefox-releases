@@ -8,7 +8,6 @@
 #include "nsObjCExceptions.h"
 #include "nsCOMPtr.h"
 #include "nsWidgetsCID.h"
-#include "nsGUIEvent.h"
 #include "nsIRollupListener.h"
 #include "nsChildView.h"
 #include "TextInputHandler.h"
@@ -36,6 +35,7 @@
 #include "gfxPlatform.h"
 #include "qcms.h"
 
+#include "mozilla/BasicEvents.h"
 #include "mozilla/Preferences.h"
 #include <algorithm>
 
@@ -685,6 +685,8 @@ NS_IMETHODIMP nsCocoaWindow::Show(bool bState)
   if (!mSheetNeedsShow && !bState && ![mWindow isVisible])
     return NS_OK;
 
+  [mWindow setBeingShown:bState];
+
   nsIWidget* parentWidget = mParent;
   nsCOMPtr<nsPIWidgetCocoa> piParentWidget(do_QueryInterface(parentWidget));
   NSWindow* nativeParentWindow = (parentWidget) ?
@@ -903,6 +905,8 @@ NS_IMETHODIMP nsCocoaWindow::Show(bool bState)
   
   if (mPopupContentView)
       mPopupContentView->Show(bState);
+
+  [mWindow setBeingShown:NO];
 
   return NS_OK;
 
@@ -1399,7 +1403,7 @@ NS_IMETHODIMP nsCocoaWindow::Resize(double aX, double aY,
 // Coordinates are global display pixels
 NS_IMETHODIMP nsCocoaWindow::Resize(double aWidth, double aHeight, bool aRepaint)
 {
-  double invScale = 1.0 / GetDefaultScale();
+  double invScale = 1.0 / GetDefaultScale().scale;
   return DoResize(mBounds.x * invScale, mBounds.y * invScale,
                   aWidth, aHeight, aRepaint, true);
 }
@@ -1594,7 +1598,8 @@ NS_IMETHODIMP nsCocoaWindow::SetTitle(const nsAString& aTitle)
     return NS_OK;
 
   const nsString& strTitle = PromiseFlatString(aTitle);
-  NSString* title = [NSString stringWithCharacters:strTitle.get() length:strTitle.Length()];
+  NSString* title = [NSString stringWithCharacters:reinterpret_cast<const unichar*>(strTitle.get())
+                                            length:strTitle.Length()];
   [mWindow setTitle:title];
 
   return NS_OK;
@@ -1676,7 +1681,7 @@ NS_IMETHODIMP nsCocoaWindow::GetSheetWindowParent(NSWindow** sheetWindowParent)
 
 // Invokes callback and ProcessEvent methods on Event Listener object
 NS_IMETHODIMP 
-nsCocoaWindow::DispatchEvent(nsGUIEvent* event, nsEventStatus& aStatus)
+nsCocoaWindow::DispatchEvent(WidgetGUIEvent* event, nsEventStatus& aStatus)
 {
   aStatus = nsEventStatus_eIgnore;
 
@@ -1862,6 +1867,13 @@ NS_IMETHODIMP nsCocoaWindow::CaptureRollupEvents(nsIRollupListener* aListener, b
   gRollupListener = nullptr;
   
   if (aDoCapture) {
+    if (![NSApp isActive]) {
+      // We need to capture mouse event if we aren't
+      // the active application. We only set this up when needed
+      // because they cause spurious mouse event after crash
+      // and gdb sessions. See bug 699538.
+      nsToolkit::GetToolkit()->RegisterForAllProcessMouseEvents();
+    }
     gRollupListener = aListener;
 
     // Sometimes more than one popup window can be visible at the same time
@@ -1879,6 +1891,8 @@ NS_IMETHODIMP nsCocoaWindow::CaptureRollupEvents(nsIRollupListener* aListener, b
     if (mWindow && (mWindowType == eWindowType_popup))
       SetPopupWindowLevel();
   } else {
+    nsToolkit::GetToolkit()->UnregisterAllProcessMouseEventHandlers();
+
     // XXXndeakin this doesn't make sense.
     // Why is the new window assumed to be a modal panel?
     if (mWindow && (mWindowType == eWindowType_popup))
@@ -2518,9 +2532,20 @@ GetDPI(NSWindow* aWindow)
   mScheduledShadowInvalidation = NO;
   mDPI = GetDPI(self);
   mTrackingArea = nil;
+  mBeingShown = NO;
   [self updateTrackingArea];
 
   return self;
+}
+
+- (void)setBeingShown:(BOOL)aValue
+{
+  mBeingShown = aValue;
+}
+
+- (BOOL)isVisibleOrBeingShown
+{
+  return [super isVisible] || mBeingShown;
 }
 
 - (void)dealloc

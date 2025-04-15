@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "prtypes.h"
 #include "prinrval.h"
 #include "prlock.h"
 #include "nscore.h"
@@ -32,6 +31,8 @@
 #define NS_DEBUG_CRT "msvcr100d.dll"
 #elif _MSC_VER == 1700
 #define NS_DEBUG_CRT "msvcr110d.dll"
+#elif _MSC_VER == 1800
+#define NS_DEBUG_CRT "msvcr120d.dll"
 #else
 #error "Don't know filename of MSVC debug library."
 #endif

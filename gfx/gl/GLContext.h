@@ -42,6 +42,8 @@
 #include "mozilla/GenericRefCounted.h"
 
 class nsIntRegion;
+class nsIRunnable;
+class nsIThread;
 
 namespace android {
     class GraphicBuffer;
@@ -50,6 +52,7 @@ namespace android {
 namespace mozilla {
     namespace gfx {
         class SharedSurface;
+        class SourceSurface;
         class DataSourceSurface;
         struct SurfaceCaps;
     }
@@ -89,6 +92,7 @@ namespace GLFeature {
         framebuffer_object,
         get_query_object_iv,
         instanced_arrays,
+        instanced_non_arrays,
         occlusion_query,
         occlusion_query_boolean,
         occlusion_query2,
@@ -390,6 +394,8 @@ public:
         ARB_occlusion_query2,
         EXT_transform_feedback,
         NV_transform_feedback,
+        ANGLE_depth_texture,
+        KHR_debug,
         Extensions_Max,
         Extensions_End
     };
@@ -891,6 +897,27 @@ public:
         AFTER_GL_CALL;
     }
 
+    void fDebugMessageCallback(GLDEBUGPROC callback, const GLvoid* userParam) {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fDebugMessageCallback);
+        mSymbols.fDebugMessageCallback(callback, userParam);
+        AFTER_GL_CALL;
+    }
+
+    void fDebugMessageControl(GLenum source, GLenum type, GLenum severity, GLsizei count, const GLuint* ids, realGLboolean enabled) {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fDebugMessageControl);
+        mSymbols.fDebugMessageControl(source, type, severity, count, ids, enabled);
+        AFTER_GL_CALL;
+    }
+
+    void fDebugMessageInsert(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar* buf) {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fDebugMessageInsert);
+        mSymbols.fDebugMessageInsert(source, type, id, severity, length, buf);
+        AFTER_GL_CALL;
+    }
+
     void fDetachShader(GLuint program, GLuint shader) {
         BEFORE_GL_CALL;
         mSymbols.fDetachShader(program, shader);
@@ -1089,6 +1116,35 @@ public:
         AFTER_GL_CALL;
     }
 
+    GLuint fGetDebugMessageLog(GLuint count, GLsizei bufsize, GLenum* sources, GLenum* types, GLuint* ids, GLenum* severities, GLsizei* lengths, GLchar* messageLog) {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fGetDebugMessageLog);
+        GLuint ret = mSymbols.fGetDebugMessageLog(count, bufsize, sources, types, ids, severities, lengths, messageLog);
+        AFTER_GL_CALL;
+        return ret;
+    }
+
+    void fGetPointerv(GLenum pname, GLvoid** params) {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fGetPointerv);
+        mSymbols.fGetPointerv(pname, params);
+        AFTER_GL_CALL;
+    }
+
+    void fGetObjectLabel(GLenum identifier, GLuint name, GLsizei bufSize, GLsizei* length, GLchar* label) {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fGetObjectLabel);
+        mSymbols.fGetObjectLabel(identifier, name, bufSize, length, label);
+        AFTER_GL_CALL;
+    }
+
+    void fGetObjectPtrLabel(GLvoid* ptr, GLsizei bufSize, GLsizei* length, GLchar* label) {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fGetObjectPtrLabel);
+        mSymbols.fGetObjectPtrLabel(ptr, bufSize, length, label);
+        AFTER_GL_CALL;
+    }
+
     void fGenerateMipmap(GLenum target) {
         BEFORE_GL_CALL;
         mSymbols.fGenerateMipmap(target);
@@ -1249,6 +1305,20 @@ public:
         AFTER_GL_CALL;
     }
 
+    void fObjectLabel(GLenum identifier, GLuint name, GLsizei length, const GLchar* label) {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fObjectLabel);
+        mSymbols.fObjectLabel(identifier, name, length, label);
+        AFTER_GL_CALL;
+    }
+
+    void fObjectPtrLabel(GLvoid* ptr, GLsizei length, const GLchar* label) {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fObjectPtrLabel);
+        mSymbols.fObjectPtrLabel(ptr, length, label);
+        AFTER_GL_CALL;
+    }
+
     void fPixelStorei(GLenum pname, GLint param) {
         BEFORE_GL_CALL;
         mSymbols.fPixelStorei(pname, param);
@@ -1264,6 +1334,20 @@ public:
     void fPolygonOffset(GLfloat factor, GLfloat bias) {
         BEFORE_GL_CALL;
         mSymbols.fPolygonOffset(factor, bias);
+        AFTER_GL_CALL;
+    }
+
+    void fPopDebugGroup() {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fPopDebugGroup);
+        mSymbols.fPopDebugGroup();
+        AFTER_GL_CALL;
+    }
+
+    void fPushDebugGroup(GLenum source, GLuint id, GLsizei length, const GLchar* message) {
+        BEFORE_GL_CALL;
+        ASSERT_SYMBOL_PRESENT(fPushDebugGroup);
+        mSymbols.fPushDebugGroup(source, id, length, message);
         AFTER_GL_CALL;
     }
 
@@ -2282,7 +2366,7 @@ protected:
 
     typedef class gfx::SharedSurface SharedSurface;
     typedef gfx::SharedSurfaceType SharedSurfaceType;
-    typedef gfxASurface::gfxImageFormat ImageFormat;
+    typedef gfxImageFormat ImageFormat;
     typedef gfx::SurfaceFormat SurfaceFormat;
 
 public:
@@ -2396,13 +2480,13 @@ public:
     /**
      * Applies aFilter to the texture currently bound to GL_TEXTURE_2D.
      */
-    void ApplyFilterToBoundTexture(gfxPattern::GraphicsFilter aFilter);
+    void ApplyFilterToBoundTexture(GraphicsFilter aFilter);
 
     /**
      * Applies aFilter to the texture currently bound to aTarget.
      */
     void ApplyFilterToBoundTexture(GLuint aTarget,
-                                   gfxPattern::GraphicsFilter aFilter);
+                                   GraphicsFilter aFilter);
 
     virtual bool BindExternalBuffer(GLuint texture, void* buffer) { return false; }
     virtual bool UnbindExternalBuffer(GLuint texture) { return false; }
@@ -2410,7 +2494,6 @@ public:
 #ifdef MOZ_WIDGET_GONK
     virtual EGLImage CreateEGLImageForNativeBuffer(void* buffer) = 0;
     virtual void DestroyEGLImage(EGLImage image) = 0;
-    virtual EGLImage GetNullEGLImage() = 0;
 #endif
 
     virtual already_AddRefed<TextureImage>
@@ -2649,7 +2732,7 @@ public:
                        TextureImage::ContentType aContentType,
                        GLenum aWrapMode,
                        TextureImage::Flags aFlags = TextureImage::NoFlags,
-                       TextureImage::ImageFormat aImageFormat = gfxASurface::ImageFormatUnknown);
+                       TextureImage::ImageFormat aImageFormat = gfxImageFormatUnknown);
 
     /**
      * In EGL we want to use Tiled Texture Images, which we return
@@ -2662,17 +2745,17 @@ public:
     TileGenFunc(const nsIntSize& aSize,
                 TextureImage::ContentType aContentType,
                 TextureImage::Flags aFlags = TextureImage::NoFlags,
-                TextureImage::ImageFormat aImageFormat = gfxASurface::ImageFormatUnknown)
+                TextureImage::ImageFormat aImageFormat = gfxImageFormatUnknown)
     {
         return nullptr;
     }
 
     /**
      * Read the image data contained in aTexture, and return it as an ImageSurface.
-     * If GL_RGBA is given as the format, a ImageFormatARGB32 surface is returned.
+     * If GL_RGBA is given as the format, a gfxImageFormatARGB32 surface is returned.
      * Not implemented yet:
-     * If GL_RGB is given as the format, a ImageFormatRGB24 surface is returned.
-     * If GL_LUMINANCE is given as the format, a ImageFormatA8 surface is returned.
+     * If GL_RGB is given as the format, a gfxImageFormatRGB24 surface is returned.
+     * If GL_LUMINANCE is given as the format, a gfxImageFormatA8 surface is returned.
      *
      * THIS IS EXPENSIVE.  It is ridiculously expensive.  Only do this
      * if you absolutely positively must, and never in any performance
@@ -2697,6 +2780,8 @@ public:
     // Similar to ReadPixelsIntoImageSurface, but pulls from the screen
     // instead of the currently bound framebuffer.
     void ReadScreenIntoImageSurface(gfxImageSurface* dest);
+
+    TemporaryRef<gfx::SourceSurface> ReadPixelsToSourceSurface(const gfx::IntSize &aSize);
 
     /**
      * Copy a rectangle from one TextureImage into another.  The
@@ -2759,7 +2844,7 @@ public:
      */
     SurfaceFormat UploadImageDataToTexture(unsigned char* aData,
                                            int32_t aStride,
-                                           gfxASurface::gfxImageFormat aFormat,
+                                           gfxImageFormat aFormat,
                                            const nsIntRegion& aDstRegion,
                                            GLuint& aTexture,
                                            bool aOverwrite = false,
@@ -3493,13 +3578,13 @@ protected:
 
 private:
     void Init(GLenum target) {
-        MOZ_ASSERT(target == LOCAL_GL_TEXTURE_2D ||
-                   target == LOCAL_GL_TEXTURE_RECTANGLE_ARB);
         mTarget = target;
         mOldTex = 0;
-        GLenum bindingTarget = (target == LOCAL_GL_TEXTURE_2D) ?
-                               LOCAL_GL_TEXTURE_BINDING_2D :
-                               LOCAL_GL_TEXTURE_BINDING_RECTANGLE_ARB;
+        GLenum bindingTarget = (target == LOCAL_GL_TEXTURE_2D) ? LOCAL_GL_TEXTURE_BINDING_2D
+                             : (target == LOCAL_GL_TEXTURE_RECTANGLE_ARB) ? LOCAL_GL_TEXTURE_BINDING_RECTANGLE_ARB
+                             : (target == LOCAL_GL_TEXTURE_CUBE_MAP) ? LOCAL_GL_TEXTURE_BINDING_CUBE_MAP
+                             : LOCAL_GL_NONE;
+        MOZ_ASSERT(bindingTarget != LOCAL_GL_NONE);
         mGL->GetUIntegerv(bindingTarget, &mOldTex);
     }
 

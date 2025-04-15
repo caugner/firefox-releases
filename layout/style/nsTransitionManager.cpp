@@ -19,7 +19,7 @@
 #include "nsCSSPropertySet.h"
 #include "nsStyleAnimation.h"
 #include "nsEventDispatcher.h"
-#include "nsGUIEvent.h"
+#include "mozilla/ContentEvents.h"
 #include "mozilla/dom/Element.h"
 #include "nsIFrame.h"
 #include "Layers.h"
@@ -999,7 +999,7 @@ nsTransitionManager::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const
 
 struct TransitionEventInfo {
   nsCOMPtr<nsIContent> mElement;
-  nsTransitionEvent mEvent;
+  InternalTransitionEvent mEvent;
 
   TransitionEventInfo(nsIContent *aElement, nsCSSProperty aProperty,
                       TimeDuration aDuration, const nsAString& aPseudoElement)
@@ -1010,7 +1010,7 @@ struct TransitionEventInfo {
   {
   }
 
-  // nsTransitionEvent doesn't support copy-construction, so we need
+  // InternalTransitionEvent doesn't support copy-construction, so we need
   // to ourselves in order to work with nsTArray
   TransitionEventInfo(const TransitionEventInfo &aOther)
     : mElement(aOther.mElement),

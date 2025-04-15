@@ -49,8 +49,8 @@ function setUp(server) {
 function run_test() {
   initTestLogging("Trace");
 
-  Log4Moz.repository.getLogger("Sync.Service").level = Log4Moz.Level.Trace;
-  Log4Moz.repository.getLogger("Sync.SyncScheduler").level = Log4Moz.Level.Trace;
+  Log.repository.getLogger("Sync.Service").level = Log.Level.Trace;
+  Log.repository.getLogger("Sync.SyncScheduler").level = Log.Level.Trace;
 
   run_next_test();
 }
@@ -265,7 +265,7 @@ add_test(function test_back_triggers_sync() {
 
   // Single device: no sync triggered.
   scheduler.idle = true;
-  scheduler.observe(null, "back", Svc.Prefs.get("scheduler.idleTime"));
+  scheduler.observe(null, "active", Svc.Prefs.get("scheduler.idleTime"));
   do_check_false(scheduler.idle);
 
   // Multiple devices: sync is triggered.
@@ -285,7 +285,7 @@ add_test(function test_back_triggers_sync() {
   });
 
   scheduler.idle = true;
-  scheduler.observe(null, "back", Svc.Prefs.get("scheduler.idleTime"));
+  scheduler.observe(null, "active", Svc.Prefs.get("scheduler.idleTime"));
   do_check_false(scheduler.idle);
 });
 

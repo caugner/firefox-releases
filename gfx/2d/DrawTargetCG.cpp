@@ -2,6 +2,7 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+#include "BorrowedContext.h"
 #include "DrawTargetCG.h"
 #include "SourceSurfaceCG.h"
 #include "Rect.h"
@@ -151,7 +152,6 @@ DrawTargetCG::~DrawTargetCG()
     CGColorSpaceRelease(mColorSpace);
   if (mCg)
     CGContextRelease(mCg);
-  free(mData);
 }
 
 BackendType
@@ -1191,6 +1191,11 @@ DrawTargetCG::CopySurface(SourceSurface *aSurface,
     CGRect flippedRect = CGRectMake(aDestination.x, -(aDestination.y + aSourceRect.height),
                                     aSourceRect.width, aSourceRect.height);
 
+    // Quartz seems to copy A8 surfaces incorrectly if we don't initialize them
+    // to transparent first.
+    if (mFormat == FORMAT_A8) {
+      CGContextClearRect(mCg, flippedRect);
+    }
     CGContextDrawImage(mCg, flippedRect, image);
 
     CGContextRestoreGState(mCg);
@@ -1244,7 +1249,6 @@ DrawTargetCG::Init(BackendType aType,
       aSize.width > 32767 || aSize.height > 32767) {
     mColorSpace = nullptr;
     mCg = nullptr;
-    mData = nullptr;
     return false;
   }
 
@@ -1255,12 +1259,9 @@ DrawTargetCG::Init(BackendType aType,
 
   if (aData == nullptr && aType != BACKEND_COREGRAPHICS_ACCELERATED) {
     // XXX: Currently, Init implicitly clears, that can often be a waste of time
-    mData = calloc(aSize.height * aStride, 1);
-    aData = static_cast<unsigned char*>(mData);  
-  } else {
-    // mData == nullptr means DrawTargetCG doesn't own the image data and will not
-    // delete it in the destructor
-    mData = nullptr;
+    mData.Realloc(aStride * aSize.height);
+    aData = static_cast<unsigned char*>(mData);
+    memset(aData, 0, aStride * aSize.height);
   }
 
   mSize = aSize;
@@ -1270,7 +1271,6 @@ DrawTargetCG::Init(BackendType aType,
     mCg = ioSurface->CreateIOSurfaceContext();
     // If we don't have the symbol for 'CreateIOSurfaceContext' mCg will be null
     // and we will fallback to software below
-    mData = nullptr;
   }
 
   mFormat = FORMAT_B8G8R8A8;
@@ -1332,7 +1332,9 @@ DrawTargetCG::Init(BackendType aType,
 void
 DrawTargetCG::Flush()
 {
-  CGContextFlush(mCg);
+  if (GetContextType(mCg) == CG_CONTEXT_TYPE_IOSURFACE) {
+    CGContextFlush(mCg);
+  }
 }
 
 bool
@@ -1343,7 +1345,6 @@ DrawTargetCG::Init(CGContextRef cgContext, const IntSize &aSize)
   if (aSize.width == 0 || aSize.height == 0) {
     mColorSpace = nullptr;
     mCg = nullptr;
-    mData = nullptr;
     return false;
   }
 
@@ -1356,8 +1357,6 @@ DrawTargetCG::Init(CGContextRef cgContext, const IntSize &aSize)
 
   mCg = cgContext;
   CGContextRetain(mCg);
-
-  mData = nullptr;
 
   assert(mCg);
 
@@ -1387,7 +1386,7 @@ DrawTargetCG::Init(CGContextRef cgContext, const IntSize &aSize)
 bool
 DrawTargetCG::Init(BackendType aType, const IntSize &aSize, SurfaceFormat &aFormat)
 {
-  int stride = aSize.width*4;
+  int32_t stride = GetAlignedStride<16>(aSize.width * BytesPerPixel(aFormat));
   
   // Calling Init with aData == nullptr will allocate.
   return Init(aType, nullptr, aSize, stride, aFormat);

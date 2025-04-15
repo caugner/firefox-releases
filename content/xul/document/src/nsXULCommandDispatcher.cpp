@@ -26,14 +26,16 @@
 #include "nsRDFCID.h"
 #include "nsXULCommandDispatcher.h"
 #include "prlog.h"
-#include "nsGUIEvent.h"
 #include "nsContentUtils.h"
 #include "nsReadableUtils.h"
 #include "nsCRT.h"
 #include "nsError.h"
 #include "nsEventDispatcher.h"
 #include "nsDOMClassInfoID.h"
+#include "mozilla/BasicEvents.h"
 #include "mozilla/dom/Element.h"
+
+using namespace mozilla;
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gLog;
@@ -419,7 +421,7 @@ nsXULCommandDispatcher::UpdateCommands(const nsAString& aEventName)
       // Handle the DOM event
       nsEventStatus status = nsEventStatus_eIgnore;
 
-      nsEvent event(true, NS_XUL_COMMAND_UPDATE);
+      WidgetEvent event(true, NS_XUL_COMMAND_UPDATE);
 
       nsEventDispatcher::Dispatch(content, context, &event, nullptr, &status);
     }

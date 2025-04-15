@@ -6,9 +6,8 @@
 #ifndef nsWindowBase_h_
 #define nsWindowBase_h_
 
+#include "mozilla/EventForwards.h"
 #include "nsBaseWidget.h"
-#include "nsGUIEvent.h"
-#include "npapi.h"
 #include <windows.h>
 
 /*
@@ -40,40 +39,33 @@ public:
    * @param aEvent the event to initialize.
    * @param aPoint message position in physical coordinates.
    */
-  virtual void InitEvent(nsGUIEvent& aEvent, nsIntPoint* aPoint = nullptr) = 0;
+  virtual void InitEvent(mozilla::WidgetGUIEvent& aEvent,
+                         nsIntPoint* aPoint = nullptr) = 0;
 
   /*
    * Dispatch a gecko event for this widget.
    * Returns true if it's consumed.  Otherwise, false.
    */
-  virtual bool DispatchWindowEvent(nsGUIEvent* aEvent) = 0;
+  virtual bool DispatchWindowEvent(mozilla::WidgetGUIEvent* aEvent) = 0;
 
   /*
    * Dispatch a gecko keyboard event for this widget. This
    * is called by KeyboardLayout to dispatch gecko events.
    * Returns true if it's consumed.  Otherwise, false.
    */
-  virtual bool DispatchKeyboardEvent(nsGUIEvent* aEvent) = 0;
+  virtual bool DispatchKeyboardEvent(mozilla::WidgetGUIEvent* aEvent) = 0;
+
+  /*
+   * Dispatch a gecko scroll event for this widget. This
+   * is called by ScrollHandler to dispatch gecko events.
+   * Returns true if it's consumed.  Otherwise, false.
+   */
+  virtual bool DispatchScrollEvent(mozilla::WidgetGUIEvent* aEvent) = 0;
 
   /*
    * Default dispatch of a plugin event.
    */
-  virtual bool DispatchPluginEvent(const MSG &aMsg)
-  {
-    if (!PluginHasFocus()) {
-      return false;
-    }
-    nsPluginEvent pluginEvent(true, NS_PLUGIN_INPUT_EVENT, this);
-    nsIntPoint point(0, 0);
-    InitEvent(pluginEvent, &point);
-    NPEvent npEvent;
-    npEvent.event = aMsg.message;
-    npEvent.wParam = aMsg.wParam;
-    npEvent.lParam = aMsg.lParam;
-    pluginEvent.pluginEvent = (void *)&npEvent;
-    pluginEvent.retargetToFocusedDocument = true;
-    return DispatchWindowEvent(&pluginEvent);
-  }
+  virtual bool DispatchPluginEvent(const MSG& aMsg);
 
   /*
    * Returns true if a plugin has focus on this widget.  Otherwise, false.

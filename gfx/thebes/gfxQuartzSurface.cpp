@@ -5,6 +5,7 @@
 
 #include "gfxQuartzSurface.h"
 #include "gfxContext.h"
+#include "gfxImageSurface.h"
 
 #include "cairo-quartz.h"
 
@@ -193,6 +194,8 @@ already_AddRefed<gfxImageSurface> gfxQuartzSurface::GetAsImageSurface()
     // reference to the image. We need to remove one of these references
     // explicitly so we don't leak.
     img->Release();
+
+    img->SetOpaqueRect(GetOpaqueRect());
 
     return img.forget().downcast<gfxImageSurface>();
 }

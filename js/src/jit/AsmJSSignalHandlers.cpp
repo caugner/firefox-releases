@@ -13,6 +13,8 @@ using namespace js;
 using namespace js::jit;
 using namespace mozilla;
 
+using JS::GenericNaN;
+
 #if defined(XP_WIN)
 # define XMM_sig(p,i) ((p)->Xmm##i)
 # define EIP_sig(p) ((p)->Eip)
@@ -56,12 +58,12 @@ using namespace mozilla;
 #elif defined(__linux__) || defined(SOLARIS)
 # if defined(__linux__)
 #  define XMM_sig(p,i) ((p)->uc_mcontext.fpregs->_xmm[i])
+#  define EIP_sig(p) ((p)->uc_mcontext.gregs[REG_EIP])
 # else
 #  define XMM_sig(p,i) ((p)->uc_mcontext.fpregs.fp_reg_set.fpchip_state.xmm[i])
+#  define EIP_sig(p) ((p)->uc_mcontext.gregs[REG_PC])
 # endif
-# define EIP_sig(p) ((p)->uc_mcontext.gregs[REG_EIP])
 # define RIP_sig(p) ((p)->uc_mcontext.gregs[REG_RIP])
-# define PC_sig(p) ((p)->uc_mcontext.arm_pc)
 # define RAX_sig(p) ((p)->uc_mcontext.gregs[REG_RAX])
 # define RCX_sig(p) ((p)->uc_mcontext.gregs[REG_RCX])
 # define RDX_sig(p) ((p)->uc_mcontext.gregs[REG_RDX])
@@ -77,7 +79,11 @@ using namespace mozilla;
 # define R12_sig(p) ((p)->uc_mcontext.gregs[REG_R12])
 # define R13_sig(p) ((p)->uc_mcontext.gregs[REG_R13])
 # define R14_sig(p) ((p)->uc_mcontext.gregs[REG_R14])
-# define R15_sig(p) ((p)->uc_mcontext.gregs[REG_R15])
+# if defined(__linux__) && defined(__arm__)
+#  define R15_sig(p) ((p)->uc_mcontext.arm_pc)
+# else
+#  define R15_sig(p) ((p)->uc_mcontext.gregs[REG_R15])
+# endif
 #elif defined(__NetBSD__)
 # define XMM_sig(p,i) (((struct fxsave64 *)(p)->uc_mcontext.__fpregs)->fx_xmm[i])
 # define EIP_sig(p) ((p)->uc_mcontext.__gregs[_REG_EIP])
@@ -121,7 +127,11 @@ using namespace mozilla;
 # define R12_sig(p) ((p)->uc_mcontext.mc_r12)
 # define R13_sig(p) ((p)->uc_mcontext.mc_r13)
 # define R14_sig(p) ((p)->uc_mcontext.mc_r14)
-# define R15_sig(p) ((p)->uc_mcontext.mc_r15)
+# if defined(__FreeBSD__) && defined(__arm__)
+#  define R15_sig(p) ((p)->uc_mcontext.__gregs[_REG_R15])
+# else
+#  define R15_sig(p) ((p)->uc_mcontext.mc_r15)
+# endif
 #elif defined(XP_MACOSX)
 // Mach requires special treatment.
 #else
@@ -137,7 +147,7 @@ InnermostAsmJSActivation()
 {
     PerThreadData *threadData = TlsPerThreadData.get();
     if (!threadData)
-        return NULL;
+        return nullptr;
 
     return threadData->asmJSActivationStackFromOwnerThread();
 }
@@ -147,9 +157,9 @@ RuntimeForCurrentThread()
 {
     PerThreadData *threadData = TlsPerThreadData.get();
     if (!threadData)
-        return NULL;
+        return nullptr;
 
-    return threadData->runtimeFromMainThread();
+    return threadData->runtimeIfOnOwnerThread();
 }
 #endif // !defined(XP_MACOSX)
 
@@ -181,7 +191,7 @@ class AutoSetHandlingSignal
 // Windows), the InstallSignalHandlersMutex prevents races between JSRuntimes
 // installing signal handlers.
 #if !defined(XP_MACOSX)
-# ifdef JS_THREADSAFE
+# if defined(JS_THREADSAFE)
 #  include "jslock.h"
 
 namespace {
@@ -242,7 +252,7 @@ bool InstallSignalHandlersMutex::Lock::sHandlersInstalled = false;
 # endif  // JS_THREADSAFE
 #endif   // !XP_MACOSX
 
-# if defined(JS_CPU_X64)
+#if defined(JS_CPU_X64)
 template <class T>
 static void
 SetXMMRegToNaN(bool isFloat32, T *xmm_reg)
@@ -250,14 +260,14 @@ SetXMMRegToNaN(bool isFloat32, T *xmm_reg)
     if (isFloat32) {
         JS_STATIC_ASSERT(sizeof(T) == 4 * sizeof(float));
         float *floats = reinterpret_cast<float*>(xmm_reg);
-        floats[0] = js_NaN;
+        floats[0] = GenericNaN();
         floats[1] = 0;
         floats[2] = 0;
         floats[3] = 0;
     } else {
         JS_STATIC_ASSERT(sizeof(T) == 2 * sizeof(double));
         double *dbls = reinterpret_cast<double*>(xmm_reg);
-        dbls[0] = js_NaN;
+        dbls[0] = GenericNaN();
         dbls[1] = 0;
     }
 }
@@ -268,10 +278,10 @@ static const AsmJSHeapAccess *
 LookupHeapAccess(const AsmJSModule &module, uint8_t *pc)
 {
     JS_ASSERT(module.containsPC(pc));
-    size_t targetOffset = pc - module.functionCode();
+    size_t targetOffset = pc - module.codeBase();
 
     if (module.numHeapAccesses() == 0)
-        return NULL;
+        return nullptr;
 
     size_t low = 0;
     size_t high = module.numHeapAccesses() - 1;
@@ -290,29 +300,31 @@ LookupHeapAccess(const AsmJSModule &module, uint8_t *pc)
     if (targetOffset == module.heapAccess(high).offset())
         return &module.heapAccess(high);
 
-    return NULL;
+    return nullptr;
 }
-# endif
+#endif
 
-# if defined(XP_WIN)
-#  include "jswin.h"
-# else
-#  include <signal.h>
-#  include <sys/mman.h>
-# endif
+#if defined(XP_WIN)
+# include "jswin.h"
+#else
+# include <signal.h>
+# include <sys/mman.h>
+#endif
 
-# if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
-#  include <sys/ucontext.h> // for ucontext_t, mcontext_t
-# endif
+#if defined(__FreeBSD__) || defined(__FreeBSD_kernel__)
+# include <sys/ucontext.h> // for ucontext_t, mcontext_t
+#endif
 
-# if defined(JS_CPU_X64)
-#  if defined(__DragonFly__)
-#   include <machine/npx.h> // for union savefpu
-#  elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__FreeBSD_kernel__)
-#   include <machine/fpu.h> // for struct savefpu/fxsave64
-#  endif
+#if defined(JS_CPU_X64)
+# if defined(__DragonFly__)
+#  include <machine/npx.h> // for union savefpu
+# elif defined(__FreeBSD__) || defined(__FreeBSD_kernel__) || \
+       defined(__NetBSD__) || defined(__OpenBSD__)
+#  include <machine/fpu.h> // for struct savefpu/fxsave64
 # endif
+#endif
 
+#if defined(ANDROID)
 // Not all versions of the Android NDK define ucontext_t or mcontext_t.
 // Detect this and provide custom but compatible definitions. Note that these
 // follow the GLibc naming convention to access register values from
@@ -320,13 +332,14 @@ LookupHeapAccess(const AsmJSModule &module, uint8_t *pc)
 //
 // See: https://chromiumcodereview.appspot.com/10829122/
 // See: http://code.google.com/p/android/issues/detail?id=34784
-# if (defined(ANDROID)) && !defined(__BIONIC_HAVE_UCONTEXT_T)
+# if !defined(__BIONIC_HAVE_UCONTEXT_T)
 #  if defined(__arm__)
+
 // GLibc on ARM defines mcontext_t has a typedef for 'struct sigcontext'.
 // Old versions of the C library <signal.h> didn't define the type.
-#if !defined(__BIONIC_HAVE_STRUCT_SIGCONTEXT)
-#include <asm/sigcontext.h>
-#endif
+#   if !defined(__BIONIC_HAVE_STRUCT_SIGCONTEXT)
+#    include <asm/sigcontext.h>
+#   endif
 
 typedef struct sigcontext mcontext_t;
 
@@ -356,31 +369,43 @@ typedef struct ucontext {
     // Other fields are not used by V8, don't define them here.
 } ucontext_t;
 enum { REG_EIP = 14 };
-#  endif
-# endif  // defined(__ANDROID__) && !defined(__BIONIC_HAVE_UCONTEXT_T)
+#  endif  // defined(__i386__)
+# endif  // !defined(__BIONIC_HAVE_UCONTEXT_T)
+#endif // defined(ANDROID)
 
+#if defined(ANDROID) && defined(MOZ_LINKER)
+// Apparently, on some Android systems, the signal handler is always passed
+// nullptr as the faulting address. This would cause the asm.js signal handler
+// to think that a safe out-of-bounds access was a nullptr-deref. This
+// brokenness is already detected by ElfLoader (enabled by MOZ_LINKER), so
+// reuse that check to disable asm.js compilation on systems where the signal
+// handler is broken.
+extern "C" MFBT_API bool IsSignalHandlingBroken();
+#else
+static bool IsSignalHandlingBroken() { return false; }
+#endif // defined(MOZ_LINKER)
 
-# if !defined(XP_WIN)
-#  define CONTEXT ucontext_t
-# endif
+#if !defined(XP_WIN)
+# define CONTEXT ucontext_t
+#endif
 
-# if !defined(XP_MACOSX)
+#if defined(JS_CPU_X64)
+# define PC_sig(p) RIP_sig(p)
+#elif defined(JS_CPU_X86)
+# define PC_sig(p) EIP_sig(p)
+#elif defined(JS_CPU_ARM)
+# define PC_sig(p) R15_sig(p)
+#endif
+
+#if !defined(XP_MACOSX)
 static uint8_t **
 ContextToPC(CONTEXT *context)
 {
-#  if defined(JS_CPU_X64)
-    JS_STATIC_ASSERT(sizeof(RIP_sig(context)) == sizeof(void*));
-    return reinterpret_cast<uint8_t**>(&RIP_sig(context));
-#  elif defined(JS_CPU_X86)
-    JS_STATIC_ASSERT(sizeof(EIP_sig(context)) == sizeof(void*));
-    return reinterpret_cast<uint8_t**>(&EIP_sig(context));
-#  elif defined(JS_CPU_ARM)
     JS_STATIC_ASSERT(sizeof(PC_sig(context)) == sizeof(void*));
     return reinterpret_cast<uint8_t**>(&PC_sig(context));
-#  endif
 }
 
-#  if defined(JS_CPU_X64)
+# if defined(JS_CPU_X64)
 static void
 SetRegisterToCoercedUndefined(CONTEXT *context, bool isFloat32, AnyRegister reg)
 {
@@ -426,10 +451,10 @@ SetRegisterToCoercedUndefined(CONTEXT *context, bool isFloat32, AnyRegister reg)
         }
     }
 }
-#  endif  // JS_CPU_X64
-# endif   // !XP_MACOSX
+# endif  // JS_CPU_X64
+#endif   // !XP_MACOSX
 
-# if defined(XP_WIN)
+#if defined(XP_WIN)
 
 static bool
 HandleException(PEXCEPTION_POINTERS exception)
@@ -456,7 +481,7 @@ HandleException(PEXCEPTION_POINTERS exception)
         return false;
     AutoSetHandlingSignal handling(rt);
 
-    if (rt->ionRuntime() && rt->ionRuntime()->handleAccessViolation(rt, faultingAddress))
+    if (rt->jitRuntime() && rt->jitRuntime()->handleAccessViolation(rt, faultingAddress))
         return true;
 
     AsmJSActivation *activation = InnermostAsmJSActivation();
@@ -476,7 +501,7 @@ HandleException(PEXCEPTION_POINTERS exception)
         activation->setResumePC(pc);
         *ppc = module.operationCallbackExit();
         DWORD oldProtect;
-        if (!VirtualProtect(module.functionCode(), module.functionBytes(), PAGE_EXECUTE, &oldProtect))
+        if (!VirtualProtect(module.codeBase(), module.functionBytes(), PAGE_EXECUTE, &oldProtect))
             MOZ_CRASH();
         return true;
     }
@@ -524,22 +549,22 @@ AsmJSExceptionHandler(LPEXCEPTION_POINTERS exception)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-# elif defined(XP_MACOSX)
-#  include <mach/exc.h>
+#elif defined(XP_MACOSX)
+# include <mach/exc.h>
 
 static uint8_t **
 ContextToPC(x86_thread_state_t &state)
 {
-#  if defined(JS_CPU_X64)
+# if defined(JS_CPU_X64)
     JS_STATIC_ASSERT(sizeof(state.uts.ts64.__rip) == sizeof(void*));
     return reinterpret_cast<uint8_t**>(&state.uts.ts64.__rip);
-#  else
+# else
     JS_STATIC_ASSERT(sizeof(state.uts.ts32.__eip) == sizeof(void*));
     return reinterpret_cast<uint8_t**>(&state.uts.ts32.__eip);
-#  endif
+# endif
 }
 
-#  if defined(JS_CPU_X64)
+# if defined(JS_CPU_X64)
 static bool
 SetRegisterToCoercedUndefined(mach_port_t rtThread, x86_thread_state64_t &state,
                               const AsmJSHeapAccess &heapAccess)
@@ -600,7 +625,7 @@ SetRegisterToCoercedUndefined(mach_port_t rtThread, x86_thread_state64_t &state,
     }
     return true;
 }
-#  endif
+# endif
 
 // This definition was generated by mig (the Mach Interface Generator) for the
 // routine 'exception_raise' (exc.defs).
@@ -653,7 +678,7 @@ HandleMachException(JSRuntime *rt, const ExceptionRequest &request)
 
     void *faultingAddress = (void*)request.body.code[1];
 
-    if (rt->ionRuntime() && rt->ionRuntime()->handleAccessViolation(rt, faultingAddress))
+    if (rt->jitRuntime() && rt->jitRuntime()->handleAccessViolation(rt, faultingAddress))
         return true;
 
     AsmJSActivation *activation = rt->mainThread.asmJSActivationStackFromAnyThread();
@@ -672,14 +697,14 @@ HandleMachException(JSRuntime *rt, const ExceptionRequest &request)
     if (module.containsPC(faultingAddress)) {
         activation->setResumePC(pc);
         *ppc = module.operationCallbackExit();
-        mprotect(module.functionCode(), module.functionBytes(), PROT_EXEC);
+        mprotect(module.codeBase(), module.functionBytes(), PROT_EXEC);
 
         // Update the thread state with the new pc.
         kret = thread_set_state(rtThread, x86_THREAD_STATE, (thread_state_t)&state, x86_THREAD_STATE_COUNT);
         return kret == KERN_SUCCESS;
     }
 
-#  if defined(JS_CPU_X64)
+# if defined(JS_CPU_X64)
     // These checks aren't necessary, but, since we can, check anyway to make
     // sure we aren't covering up a real bug.
     if (!module.maybeHeap() ||
@@ -711,9 +736,9 @@ HandleMachException(JSRuntime *rt, const ExceptionRequest &request)
         return false;
 
     return true;
-#  else
+# else
     return false;
-#  endif
+# endif
 }
 
 // Taken from mach_exc in /usr/include/mach/mach_exc.defs.
@@ -774,12 +799,12 @@ AsmJSMachExceptionHandlerThread(void *threadArg)
                  MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
     }
 
-    return NULL;
+    return nullptr;
 }
 
 AsmJSMachExceptionHandler::AsmJSMachExceptionHandler()
   : installed_(false),
-    thread_(NULL),
+    thread_(nullptr),
     port_(MACH_PORT_NULL)
 {}
 
@@ -798,7 +823,7 @@ AsmJSMachExceptionHandler::uninstall()
             MOZ_CRASH();
         installed_ = false;
     }
-    if (thread_ != NULL) {
+    if (thread_ != nullptr) {
         // Break the handler thread out of the mach_msg loop.
         mach_msg_header_t msg;
         msg.msgh_bits = MACH_MSGH_BITS(MACH_MSG_TYPE_COPY_SEND, 0);
@@ -815,8 +840,8 @@ AsmJSMachExceptionHandler::uninstall()
         }
 
         // Wait for the handler thread to complete before deallocating the port.
-        pthread_join(thread_, NULL);
-        thread_ = NULL;
+        pthread_join(thread_, nullptr);
+        thread_ = nullptr;
     }
     if (port_ != MACH_PORT_NULL) {
         DebugOnly<kern_return_t> kret = mach_port_destroy(mach_task_self(), port_);
@@ -841,7 +866,7 @@ AsmJSMachExceptionHandler::install(JSRuntime *rt)
         goto error;
 
     // Create a thread to block on reading port_.
-    if (pthread_create(&thread_, NULL, AsmJSMachExceptionHandlerThread, rt))
+    if (pthread_create(&thread_, nullptr, AsmJSMachExceptionHandlerThread, rt))
         goto error;
 
     // Direct exceptions on this thread to port_ (and thus our handler thread).
@@ -867,7 +892,7 @@ AsmJSMachExceptionHandler::install(JSRuntime *rt)
     return false;
 }
 
-# else  // If not Windows or Mac, assume Unix
+#else  // If not Windows or Mac, assume Unix
 
 // Be very cautious and default to not handling; we don't want to accidentally
 // silence real crashes from real bugs.
@@ -887,7 +912,7 @@ HandleSignal(int signum, siginfo_t *info, void *ctx)
         return false;
     AutoSetHandlingSignal handling(rt);
 
-    if (rt->ionRuntime() && rt->ionRuntime()->handleAccessViolation(rt, faultingAddress))
+    if (rt->jitRuntime() && rt->jitRuntime()->handleAccessViolation(rt, faultingAddress))
         return true;
 
     AsmJSActivation *activation = InnermostAsmJSActivation();
@@ -906,11 +931,11 @@ HandleSignal(int signum, siginfo_t *info, void *ctx)
     if (module.containsPC(faultingAddress)) {
         activation->setResumePC(pc);
         *ppc = module.operationCallbackExit();
-        mprotect(module.functionCode(), module.functionBytes(), PROT_EXEC);
+        mprotect(module.codeBase(), module.functionBytes(), PROT_EXEC);
         return true;
     }
 
-#  if defined(JS_CPU_X64)
+# if defined(JS_CPU_X64)
     // These checks aren't necessary, but, since we can, check anyway to make
     // sure we aren't covering up a real bug.
     if (!module.maybeHeap() ||
@@ -934,9 +959,9 @@ HandleSignal(int signum, siginfo_t *info, void *ctx)
         SetRegisterToCoercedUndefined(context, heapAccess->isFloat32Load(), heapAccess->loadedReg());
     *ppc += heapAccess->opLength();
     return true;
-#  else
+# else
     return false;
-#  endif
+# endif
 }
 
 static struct sigaction sPrevHandler;
@@ -962,15 +987,18 @@ AsmJSFaultHandler(int signum, siginfo_t *info, void *context)
     if (sPrevHandler.sa_flags & SA_SIGINFO)
         sPrevHandler.sa_sigaction(signum, info, context);
     else if (sPrevHandler.sa_handler == SIG_DFL || sPrevHandler.sa_handler == SIG_IGN)
-        sigaction(signum, &sPrevHandler, NULL);
+        sigaction(signum, &sPrevHandler, nullptr);
     else
         sPrevHandler.sa_handler(signum);
 }
-# endif
+#endif
 
 bool
 js::EnsureAsmJSSignalHandlersInstalled(JSRuntime *rt)
 {
+    if (IsSignalHandlingBroken())
+        return false;
+
 #if defined(XP_MACOSX)
     // On OSX, each JSRuntime gets its own handler.
     return rt->asmJSMachExceptionHandler.installed() || rt->asmJSMachExceptionHandler.install(rt);
@@ -1024,10 +1052,10 @@ js::TriggerOperationCallbackForAsmJSCode(JSRuntime *rt)
 
 #if defined(XP_WIN)
     DWORD oldProtect;
-    if (!VirtualProtect(module.functionCode(), module.functionBytes(), PAGE_NOACCESS, &oldProtect))
+    if (!VirtualProtect(module.codeBase(), module.functionBytes(), PAGE_NOACCESS, &oldProtect))
         MOZ_CRASH();
 #else  // assume Unix
-    if (mprotect(module.functionCode(), module.functionBytes(), PROT_NONE))
+    if (mprotect(module.codeBase(), module.functionBytes(), PROT_NONE))
         MOZ_CRASH();
 #endif
 }

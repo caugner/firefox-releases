@@ -22,7 +22,6 @@
 #include "nsNetUtil.h"
 #include "nsAppDirectoryServiceDefs.h"
 
-#include "jsapi.h"
 #include "js/Tracer.h"
 
 #include "mozilla/Preferences.h"
@@ -317,8 +316,6 @@ nsXULPrototypeCache::AbortCaching()
     mCacheURITable.Clear();
 }
 
-
-static const char kDisableXULDiskCachePref[] = "nglayout.debug.disable_xul_fastload";
 
 nsresult
 nsXULPrototypeCache::WritePrototype(nsXULPrototypeDocument* aPrototypeDocument)
