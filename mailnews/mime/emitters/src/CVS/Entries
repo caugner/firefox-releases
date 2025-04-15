@@ -1,0 +1,18 @@
+/.cvsignore/1.1/Thu Apr  1 04:21:07 1999//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.30/Sun Jul 13 22:28:29 2003//TFIREFOX_1_0_RELEASE
+/nsEmitterUtils.cpp/1.20/Sun Jan  4 21:47:13 2004//TFIREFOX_1_0_RELEASE
+/nsEmitterUtils.h/1.14/Fri Sep 28 20:07:38 2001//TFIREFOX_1_0_RELEASE
+/nsMimeBaseEmitter.cpp/1.82/Sat Apr  3 17:16:17 2004//TFIREFOX_1_0_RELEASE
+/nsMimeBaseEmitter.h/1.24/Sun Jan  4 21:47:13 2004//TFIREFOX_1_0_RELEASE
+/nsMimeEmitterCID.h/1.1/Sat Apr 19 05:20:50 2003//TFIREFOX_1_0_RELEASE
+/nsMimeHtmlEmitter.cpp/1.72.8.3/Sun Jul  4 06:19:15 2004//TFIREFOX_1_0_RELEASE
+/nsMimeHtmlEmitter.h/1.23.26.1/Mon May 17 00:57:50 2004//TFIREFOX_1_0_RELEASE
+/nsMimePlainEmitter.cpp/1.1/Fri Oct  4 22:35:08 2002//TFIREFOX_1_0_RELEASE
+/nsMimePlainEmitter.h/1.1/Fri Oct  4 22:35:08 2002//TFIREFOX_1_0_RELEASE
+/nsMimeRawEmitter.cpp/1.10/Fri Nov 23 22:36:37 2001//TFIREFOX_1_0_RELEASE
+/nsMimeRawEmitter.h/1.7/Fri Sep 28 20:07:38 2001//TFIREFOX_1_0_RELEASE
+/nsMimeRebuffer.cpp/1.3/Fri Sep 28 20:07:39 2001//TFIREFOX_1_0_RELEASE
+/nsMimeRebuffer.h/1.3/Fri Sep 28 20:07:39 2001//TFIREFOX_1_0_RELEASE
+/nsMimeXmlEmitter.cpp/1.19/Mon Dec 17 07:07:43 2001//TFIREFOX_1_0_RELEASE
+/nsMimeXmlEmitter.h/1.8/Fri Sep 28 20:07:39 2001//TFIREFOX_1_0_RELEASE
+D

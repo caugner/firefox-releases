@@ -1,0 +1,16 @@
+/.cvsignore/1.1/Wed Sep  1 01:13:54 1999//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.8.98.1/Thu Jul 15 02:34:53 2004//TFIREFOX_1_0_RELEASE
+D/base////
+D/core////
+D/css////
+D/events////
+D/html////
+D/ls////
+D/range////
+D/stylesheets////
+D/svg////
+D/traversal////
+D/views////
+D/xbl////
+D/xpath////
+D/xul////

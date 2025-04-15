@@ -1,0 +1,24 @@
+/.cvsignore/1.2/Thu Jul  3 22:49:28 2003//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.28/Wed Oct  8 03:39:52 2003//TFIREFOX_1_0_RELEASE
+/xpcom-config.h.in/1.3/Thu Jul  3 20:54:31 2003//TFIREFOX_1_0_RELEASE
+/xpcom-private.h.in/1.2/Thu Oct 30 21:11:06 2003//TFIREFOX_1_0_RELEASE
+D/MoreFiles////
+D/base////
+D/build////
+D/components////
+D/doc////
+D/ds////
+D/glue////
+D/io////
+D/libxpt////
+D/obsolete////
+D/proxy////
+D/reflect////
+D/sample////
+D/string////
+D/stub////
+D/tests////
+D/threads////
+D/tools////
+D/typelib////
+D/windbgdlg////

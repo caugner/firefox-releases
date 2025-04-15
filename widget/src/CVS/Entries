@@ -1,0 +1,19 @@
+/.cvsignore/1.1/Sat Dec  5 09:06:52 1998//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.31/Wed Jan  7 13:36:53 2004//TFIREFOX_1_0_RELEASE
+/widget.pkg/1.2/Wed Jan  7 01:22:17 2004//TFIREFOX_1_0_RELEASE
+D/beos////
+D/build////
+D/cocoa////
+D/gtk////
+D/gtk2////
+D/gtksuperwin////
+D/gtkxtbin////
+D/mac////
+D/os2////
+D/photon////
+D/support////
+D/windows////
+D/xlib////
+D/xlibxtbin////
+D/xpwidgets////
+D/xremoteclient////

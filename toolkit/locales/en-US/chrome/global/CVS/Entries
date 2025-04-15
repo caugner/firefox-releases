@@ -1,0 +1,63 @@
+/accept2locale.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/accessible.properties/1.1.2.1/Sat Jul 17 23:33:30 2004//TFIREFOX_1_0_RELEASE
+/appstrings.properties/1.1.2.2/Fri Sep 10 23:09:01 2004//TFIREFOX_1_0_RELEASE
+/charsetOverlay.dtd/1.1.2.2/Mon Aug  9 20:27:06 2004//TFIREFOX_1_0_RELEASE
+/charsetTitles.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/commonDialog.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/commonDialogs.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/config.dtd/1.1.2.3/Mon Jul 26 17:05:49 2004//TFIREFOX_1_0_RELEASE
+/config.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/console.dtd/1.1.2.2/Wed Aug 18 20:35:06 2004//TFIREFOX_1_0_RELEASE
+/console.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/css.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/customizeCharset.dtd/1.1.2.2/Wed Aug 18 20:35:06 2004//TFIREFOX_1_0_RELEASE
+/customizeToolbar.dtd/1.1.2.2/Tue Aug  3 07:50:16 2004//TFIREFOX_1_0_RELEASE
+/customizeToolbar.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/dialog.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/dialogOverlay.dtd/1.1.2.2/Wed Aug 18 20:35:06 2004//TFIREFOX_1_0_RELEASE
+/downloadProgress.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/editMenuOverlay.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/filepicker.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/filepicker.properties/1.1.2.3/Sat Aug  7 02:41:01 2004//TFIREFOX_1_0_RELEASE
+/finddialog.dtd/1.1.2.2/Fri Jul 23 19:26:59 2004//TFIREFOX_1_0_RELEASE
+/finddialog.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/global-strres.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/intl.css/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/intl.properties/1.1.2.2/Mon Aug  9 20:15:20 2004//TFIREFOX_1_0_RELEASE
+/keys.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/languageNames.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/layout_errors.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/license.dtd/1.1.2.1/Sun Sep  5 23:41:21 2004//TFIREFOX_1_0_RELEASE
+/mozilla.dtd/1.1.2.1/Sun Sep  5 23:41:21 2004//TFIREFOX_1_0_RELEASE
+/netError.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/nsHelperAppDlg.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/nsHelperAppDlg.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/nsProgressDialog.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/nsProgressDialog.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/nsTreeSorting.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/nsWebBrowserPersist.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/plugins.properties/1.1.2.1/Thu Jul 15 19:15:32 2004//TFIREFOX_1_0_RELEASE
+/printPageSetup.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/printPreview.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/printPreviewProgress.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/printProgress.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/printdialog.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/printdialog.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/printing.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/printjoboptions.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/printjoboptions.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/regionNames.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/tabbrowser.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/tabbrowser.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/textcontext.dtd/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/viewSource.dtd/1.1.2.3/Thu Sep  2 11:22:14 2004//TFIREFOX_1_0_RELEASE
+/viewSource.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+/wizard.properties/1.1.2.2/Sun Aug 15 04:10:33 2004//TFIREFOX_1_0_RELEASE
+/xbl.properties/1.1.2.1/Fri Jul 16 19:58:08 2004//TFIREFOX_1_0_RELEASE
+D/dom////
+D/history////
+D/layout////
+D/security////
+D/webservices////
+D/xml////
+D/xpinstall////

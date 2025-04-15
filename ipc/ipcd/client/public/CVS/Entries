@@ -1,0 +1,8 @@
+/.cvsignore/1.2/Fri Nov  7 13:50:16 2003//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.2/Fri Nov  7 13:50:16 2003//TFIREFOX_1_0_RELEASE
+/ipcCID.h/1.2/Fri Nov  7 13:50:16 2003//TFIREFOX_1_0_RELEASE
+/ipcIClientObserver.idl/1.2/Fri Nov  7 13:50:16 2003//TFIREFOX_1_0_RELEASE
+/ipcIClientQueryHandler.idl/1.2/Fri Nov  7 13:50:16 2003//TFIREFOX_1_0_RELEASE
+/ipcIMessageObserver.idl/1.2/Fri Nov  7 13:50:16 2003//TFIREFOX_1_0_RELEASE
+/ipcIService.idl/1.2/Fri Nov  7 13:50:16 2003//TFIREFOX_1_0_RELEASE
+D

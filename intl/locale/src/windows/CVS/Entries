@@ -1,0 +1,9 @@
+/.cvsignore/1.1/Tue Dec 18 09:11:15 2001//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.5/Thu Apr 17 19:19:26 2003//TFIREFOX_1_0_RELEASE
+/nsCollationWin.cpp/1.42.14.1.2.1/Wed Aug 25 04:01:05 2004//TFIREFOX_1_0_RELEASE
+/nsCollationWin.h/1.14.20.1/Wed Aug 25 04:01:05 2004//TFIREFOX_1_0_RELEASE
+/nsDateTimeFormatWin.cpp/1.42/Thu Oct 30 05:04:42 2003//TFIREFOX_1_0_RELEASE
+/nsDateTimeFormatWin.h/1.13/Wed Jan  8 20:50:04 2003//TFIREFOX_1_0_RELEASE
+/nsIWin32LocaleImpl.cpp/1.30.16.1/Tue Oct 19 21:59:38 2004//TFIREFOX_1_0_RELEASE
+/nsIwin32LocaleImpl.h/1.9/Thu Oct 30 05:04:42 2003//TFIREFOX_1_0_RELEASE
+D

@@ -1,0 +1,5 @@
+/.cvsignore/1.1/Tue Nov  2 19:18:04 1999//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.7/Sat Mar 15 01:03:56 2003//TFIREFOX_1_0_RELEASE
+D/base////
+D/exthandler////
+D/prefetch////

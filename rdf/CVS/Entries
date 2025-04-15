@@ -1,0 +1,10 @@
+/.cvsignore/1.1/Sat Dec  5 09:06:17 1998//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.15/Wed Feb 11 02:09:59 2004//TFIREFOX_1_0_RELEASE
+D/base////
+D/build////
+D/chrome////
+D/datasource////
+D/opendir////
+D/resources////
+D/tests////
+D/util////

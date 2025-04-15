@@ -1,0 +1,26 @@
+/.cvsignore/1.1/Tue Jun  8 19:20:01 1999//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.41/Sat Mar 15 01:03:12 2003//TFIREFOX_1_0_RELEASE
+/nsMsgBodyHandler.cpp/1.22.26.1.4.2/Thu Jun 17 20:31:53 2004//TFIREFOX_1_0_RELEASE
+/nsMsgFilter.cpp/1.91.6.3/Tue Aug  3 20:29:27 2004//TFIREFOX_1_0_RELEASE
+/nsMsgFilter.h/1.29/Thu Mar 25 20:08:26 2004//TFIREFOX_1_0_RELEASE
+/nsMsgFilterDataSource.cpp/1.22/Tue Feb 25 19:01:14 2003//TFIREFOX_1_0_RELEASE
+/nsMsgFilterDataSource.h/1.6/Fri Sep 28 20:06:37 2001//TFIREFOX_1_0_RELEASE
+/nsMsgFilterDelegateFactory.cpp/1.14/Tue Feb 25 19:01:14 2003//TFIREFOX_1_0_RELEASE
+/nsMsgFilterDelegateFactory.h/1.3/Fri Sep 28 20:06:37 2001//TFIREFOX_1_0_RELEASE
+/nsMsgFilterList.cpp/1.84.6.2/Wed Jul 21 18:10:46 2004//TFIREFOX_1_0_RELEASE
+/nsMsgFilterList.h/1.26.54.1/Wed Jul 21 18:10:46 2004//TFIREFOX_1_0_RELEASE
+/nsMsgFilterService.cpp/1.40/Tue Nov 11 10:19:00 2003//TFIREFOX_1_0_RELEASE
+/nsMsgFilterService.h/1.9/Thu Jan 31 22:08:38 2002//TFIREFOX_1_0_RELEASE
+/nsMsgImapSearch.cpp/1.41.6.1/Thu Jun 24 16:11:51 2004//TFIREFOX_1_0_RELEASE
+/nsMsgLocalSearch.cpp/1.66.30.1/Mon May 17 00:57:47 2004//TFIREFOX_1_0_RELEASE
+/nsMsgLocalSearch.h/1.18/Thu Jul 17 19:40:00 2003//TFIREFOX_1_0_RELEASE
+/nsMsgSearchAdapter.cpp/1.68.6.1/Thu Jun 24 16:11:51 2004//TFIREFOX_1_0_RELEASE
+/nsMsgSearchImap.h/1.5/Fri Sep 28 20:06:38 2001//TFIREFOX_1_0_RELEASE
+/nsMsgSearchNews.cpp/1.32/Wed Dec 11 04:28:03 2002//TFIREFOX_1_0_RELEASE
+/nsMsgSearchNews.h/1.10/Fri Sep 28 20:06:38 2001//TFIREFOX_1_0_RELEASE
+/nsMsgSearchSession.cpp/1.46.18.1/Tue Aug  3 20:29:27 2004//TFIREFOX_1_0_RELEASE
+/nsMsgSearchSession.h/1.17/Thu Nov 21 03:48:57 2002//TFIREFOX_1_0_RELEASE
+/nsMsgSearchTerm.cpp/1.108.8.5/Tue Nov  2 02:50:15 2004//TFIREFOX_1_0_RELEASE
+/nsMsgSearchValue.cpp/1.18/Sun Sep  7 22:55:21 2003//TFIREFOX_1_0_RELEASE
+/nsMsgSearchValue.h/1.4/Fri Sep 28 20:06:38 2001//TFIREFOX_1_0_RELEASE
+D

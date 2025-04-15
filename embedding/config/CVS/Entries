@@ -1,0 +1,23 @@
+/.cvsignore/1.1/Thu Jul 20 01:08:42 2000//TFIREFOX_1_0_RELEASE
+/GenerateManifest.pm/1.3/Thu Apr 25 21:25:49 2002//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.38/Mon Jul  7 08:02:25 2003//TFIREFOX_1_0_RELEASE
+/basebrowser-installer-win.pkg/1.22.6.1/Fri Sep 10 08:11:26 2004//TFIREFOX_1_0_RELEASE
+/basebrowser-mac-macho/1.37/Tue Feb 24 03:22:32 2004//TFIREFOX_1_0_RELEASE
+/basebrowser-qnx/1.4/Tue Feb 24 03:22:32 2004//TFIREFOX_1_0_RELEASE
+/basebrowser-unix/1.73/Tue Feb 24 03:22:32 2004//TFIREFOX_1_0_RELEASE
+/basebrowser-win/1.88.6.1/Fri Sep 10 08:11:26 2004//TFIREFOX_1_0_RELEASE
+/basebrowser-win-supp/1.7/Fri Jan 16 19:22:42 2004//TFIREFOX_1_0_RELEASE
+/embed-jar.mn/1.31.6.1/Sat May 22 06:28:09 2004//TFIREFOX_1_0_RELEASE
+/gen_mn.pl/1.10/Tue Oct 22 04:25:08 2002//TFIREFOX_1_0_RELEASE
+/gre-installer-win.pkg/1.5/Fri Jan 16 19:22:42 2004//TFIREFOX_1_0_RELEASE
+/gre-win/1.6/Tue Jun  3 23:15:57 2003//TFIREFOX_1_0_RELEASE
+/gre-win-supp/1.3/Sat Sep 13 17:55:10 2003//TFIREFOX_1_0_RELEASE
+/gre.pl/1.2/Thu Sep 12 19:07:34 2002//TFIREFOX_1_0_RELEASE
+/installed-chrome.txt/1.14/Thu Mar  4 00:39:06 2004//TFIREFOX_1_0_RELEASE
+/minimo-qnx/1.1/Fri Feb 20 23:04:07 2004//TFIREFOX_1_0_RELEASE
+/minimo-unix/1.7/Tue Feb 24 03:22:32 2004//TFIREFOX_1_0_RELEASE
+/mk_sdk_hdr_lst.pl/1.4/Fri Oct 19 01:45:12 2001//TFIREFOX_1_0_RELEASE
+/readme.html/1.3/Thu Sep 12 12:20:47 2002//TFIREFOX_1_0_RELEASE
+/xulprefs.mn/1.3/Mon Mar 15 23:19:46 2004//TFIREFOX_1_0_RELEASE
+/xulsecurity.mn/1.2/Wed Jun 12 18:19:42 2002//TFIREFOX_1_0_RELEASE
+D

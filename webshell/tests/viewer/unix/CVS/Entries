@@ -1,0 +1,5 @@
+/.cvsignore/1.1/Sun Aug 22 14:03:23 1999//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.7/Wed Feb 26 01:11:25 2003//TFIREFOX_1_0_RELEASE
+D/gtk////
+D/gtk2////
+D/xlib////

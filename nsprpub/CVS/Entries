@@ -1,0 +1,13 @@
+/.cvsignore/1.2/Sat May 12 00:53:26 2001//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.14.2.8/Thu Feb 27 04:11:09 2003//TFIREFOX_1_0_RELEASE
+/configure/1.78.2.82.2.1.4.4/Tue Sep 14 21:10:26 2004//TFIREFOX_1_0_RELEASE
+/configure.in/1.83.2.82.2.1.4.4/Tue Sep 14 20:59:41 2004//TFIREFOX_1_0_RELEASE
+/gmakefile.win/1.3.2.1/Thu Dec  6 03:39:02 2001//TFIREFOX_1_0_RELEASE
+/makefile.win/3.9/Tue Jun 20 21:14:37 2000//TFIREFOX_1_0_RELEASE
+D/admin////
+D/build////
+D/config////
+D/lib////
+D/pkg////
+D/pr////
+D/tools////

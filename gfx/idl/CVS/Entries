@@ -1,0 +1,22 @@
+/.cvsignore/1.1/Sat Aug 28 18:22:06 1999//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.30/Wed Jan 14 12:56:38 2004//TFIREFOX_1_0_RELEASE
+/geniid.pl/1.1/Sat Oct 10 04:36:27 1998//TFIREFOX_1_0_RELEASE
+/gfxIFormats.idl/1.3/Sat Sep 29 14:05:14 2001//TFIREFOX_1_0_RELEASE
+/gfxIImageFrame.idl/1.11/Tue Mar 18 21:07:19 2003//TFIREFOX_1_0_RELEASE
+/gfxtypes.idl/1.8/Tue Jan 21 20:38:00 2003//TFIREFOX_1_0_RELEASE
+/nsIFontCatalogService.idl/1.10/Tue Jun 24 01:15:37 2003//TFIREFOX_1_0_RELEASE
+/nsIFontEnumerator.idl/1.5/Thu May 29 03:57:21 2003//TFIREFOX_1_0_RELEASE
+/nsIFontList.idl/1.2/Wed Sep 26 00:15:02 2001//TFIREFOX_1_0_RELEASE
+/nsIFreeType2.idl/1.9.2.1/Fri Apr 16 01:09:33 2004//TFIREFOX_1_0_RELEASE
+/nsIPrintOptions.idl/1.36/Thu Apr 17 20:16:53 2003//TFIREFOX_1_0_RELEASE
+/nsIPrintSession.idl/1.1/Sat Jul 13 00:08:21 2002//TFIREFOX_1_0_RELEASE
+/nsIPrintSessionX.idl/1.1/Sat Jul 13 00:08:26 2002//TFIREFOX_1_0_RELEASE
+/nsIPrintSettings.idl/1.24.8.1/Fri Apr 30 19:51:55 2004//TFIREFOX_1_0_RELEASE
+/nsIPrintSettingsMac.idl/1.3/Thu May  2 14:01:26 2002//TFIREFOX_1_0_RELEASE
+/nsIPrintSettingsService.idl/1.1/Tue May 14 12:04:30 2002//TFIREFOX_1_0_RELEASE
+/nsIPrintSettingsWin.idl/1.1/Mon Mar 25 11:48:43 2002//TFIREFOX_1_0_RELEASE
+/nsIPrintSettingsX.idl/1.4/Sat Jul 13 00:18:24 2002//TFIREFOX_1_0_RELEASE
+/nsIScreen.idl/1.4/Tue Apr 30 23:15:09 2002//TFIREFOX_1_0_RELEASE
+/nsIScreenManager.idl/1.2/Sat Mar 18 00:56:33 2000//TFIREFOX_1_0_RELEASE
+/nsIScriptableRegion.idl/1.2/Sat May 12 20:54:54 2001//TFIREFOX_1_0_RELEASE
+D

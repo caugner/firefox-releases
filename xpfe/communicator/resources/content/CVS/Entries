@@ -1,0 +1,35 @@
+/.cvsignore/1.1/Wed May 10 06:53:01 2000//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.18/Thu Apr 25 02:52:25 2002//TFIREFOX_1_0_RELEASE
+/aboutPopups.xul/1.4/Tue Jan 27 16:38:45 2004//TFIREFOX_1_0_RELEASE
+/askViewZoom.js/1.5/Mon Jan 28 12:46:31 2002//TFIREFOX_1_0_RELEASE
+/askViewZoom.xul/1.8/Mon Sep  2 03:35:30 2002//TFIREFOX_1_0_RELEASE
+/browserBindings.xul/1.7/Mon Dec  3 21:51:56 2001//TFIREFOX_1_0_RELEASE
+/builtinURLs.js/1.8/Mon Jun  3 20:53:23 2002//TFIREFOX_1_0_RELEASE
+/communicator.css/1.2/Fri Mar  1 00:51:46 2002//TFIREFOX_1_0_RELEASE
+/communicatorOverlay.xul/1.1/Sun May 28 05:13:14 2000//TFIREFOX_1_0_RELEASE
+/contentAreaClick.js/1.37.6.2/Fri Oct 22 07:32:42 2004//TFIREFOX_1_0_RELEASE
+/contentAreaContextOverlay.xul/1.46/Fri Apr 25 09:21:31 2003//TFIREFOX_1_0_RELEASE
+/contentAreaDD.js/1.32.84.1/Thu Aug 26 07:47:58 2004//TFIREFOX_1_0_RELEASE
+/contentAreaUtils.js/1.105.2.3/Tue May 11 22:12:29 2004//TFIREFOX_1_0_RELEASE
+/contents-platform.rdf/1.20.6.2/Thu Oct  7 11:17:35 2004//TFIREFOX_1_0_RELEASE
+/contents-region.rdf/1.20/Wed Feb  4 14:24:08 2004//TFIREFOX_1_0_RELEASE
+/contents.rdf/1.26/Fri Feb 27 11:54:21 2004//TFIREFOX_1_0_RELEASE
+/editorBindings.xul/1.6/Wed Mar 21 20:32:45 2001//TFIREFOX_1_0_RELEASE
+/findUtils.js/1.10/Fri Apr 18 12:43:45 2003//TFIREFOX_1_0_RELEASE
+/manifest.rdf/1.5/Sat Aug  5 02:30:20 2000//TFIREFOX_1_0_RELEASE
+/nsContextMenu.js/1.88/Thu Feb 19 11:15:29 2004//TFIREFOX_1_0_RELEASE
+/openLocation.js/1.18/Thu Jan 22 10:00:20 2004//TFIREFOX_1_0_RELEASE
+/openLocation.xul/1.25/Thu Jan 22 10:00:20 2004//TFIREFOX_1_0_RELEASE
+/popupManager.js/1.7/Thu Oct 30 09:33:40 2003//TFIREFOX_1_0_RELEASE
+/popupManager.xul/1.5/Thu Oct  9 00:29:09 2003//TFIREFOX_1_0_RELEASE
+/printPreviewBindings.xml/1.21/Sun Jan 18 22:50:13 2004//TFIREFOX_1_0_RELEASE
+/printing.js/1.4/Sun Jan 18 22:50:13 2004//TFIREFOX_1_0_RELEASE
+/tasksOverlay.js/1.54/Sat Jul 19 17:58:44 2003//TFIREFOX_1_0_RELEASE
+/tasksOverlay.xul/1.62.34.2/Thu May  6 20:44:11 2004//TFIREFOX_1_0_RELEASE
+/utilityOverlay.js/1.79/Wed Jan  7 22:21:51 2004//TFIREFOX_1_0_RELEASE
+/utilityOverlay.xul/1.44/Thu Mar  4 09:22:06 2004//TFIREFOX_1_0_RELEASE
+/viewZoomOverlay.js/1.8/Fri Mar 21 22:34:57 2003//TFIREFOX_1_0_RELEASE
+/viewZoomOverlay.xul/1.10/Fri Mar 21 22:34:57 2003//TFIREFOX_1_0_RELEASE
+D/mac////
+D/unix////
+D/win////

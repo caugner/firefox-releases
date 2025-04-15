@@ -1,0 +1,19 @@
+/Makefile/1.2/Fri Nov  3 20:05:10 2000//TFIREFOX_1_0_RELEASE
+/Makefile.win/1.2/Fri Nov  3 20:05:11 2000//TFIREFOX_1_0_RELEASE
+/list/1.1/Wed May  3 01:01:17 2000//TFIREFOX_1_0_RELEASE
+/test_cases_JNI.html/1.1/Wed May  3 01:01:17 2000//TFIREFOX_1_0_RELEASE
+D/AccessingFields////
+D/AccessingStaticFields////
+D/ArrayOperations////
+D/CallingInstanceMethods////
+D/CallingStaticMethods////
+D/ClassOperation////
+D/Exceptions////
+D/GlobalAndLocalRefs////
+D/JavaVMInterface////
+D/ObjectOperations////
+D/StringOperations////
+D/VersionInformation////
+D/getjni////
+D/include////
+D/java////

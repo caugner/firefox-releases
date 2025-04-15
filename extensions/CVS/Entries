@@ -1,0 +1,33 @@
+/.cvsignore/1.1/Wed Mar 31 08:30:26 1999//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.14/Fri Dec 29 22:10:32 2000//TFIREFOX_1_0_RELEASE
+D/access-builtin////
+D/content-packs////
+D/cookie////
+D/cview////
+D/datetime////
+D/editor////
+D/finger////
+D/gnomevfs////
+D/help////
+D/inspector////
+D/irc////
+D/layout-debug////
+D/manticore////
+D/negotiateauth////
+D/p3p////
+D/pref////
+D/python////
+D/spellcheck////
+D/sql////
+D/sroaming////
+D/tasks////
+D/transformiix////
+D/tridentprofile////
+D/typeaheadfind////
+D/universalchardet////
+D/venkman////
+D/wallet////
+D/webservices////
+D/xml-rpc////
+D/xmlextras////
+D/xmlterm////

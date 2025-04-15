@@ -1,0 +1,18 @@
+/.cvsignore/1.1/Tue Jun 20 20:43:54 2000//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.51/Mon Feb 23 22:49:25 2004//TFIREFOX_1_0_RELEASE
+/nsCExternalHandlerService.idl/1.4/Wed Feb  7 02:00:09 2001//TFIREFOX_1_0_RELEASE
+/nsExternalHelperAppService.cpp/1.253.2.1.2.8/Mon Oct 25 09:48:47 2004//TFIREFOX_1_0_RELEASE
+/nsExternalHelperAppService.h/1.61.6.3/Wed Oct 20 15:12:42 2004//TFIREFOX_1_0_RELEASE
+/nsExternalProtocolHandler.cpp/1.19.42.4/Wed Oct 20 13:32:37 2004//TFIREFOX_1_0_RELEASE
+/nsExternalProtocolHandler.h/1.4/Fri Jan 16 18:22:55 2004//TFIREFOX_1_0_RELEASE
+/nsHelperAppRDF.h/1.5/Fri Sep 26 19:49:23 2003//TFIREFOX_1_0_RELEASE
+/nsIExternalHelperAppService.idl/1.18/Mon Feb 23 22:49:25 2004//TFIREFOX_1_0_RELEASE
+/nsIExternalProtocolService.idl/1.5.18.1/Wed Oct 20 13:32:37 2004//TFIREFOX_1_0_RELEASE
+/nsIInternetConfigService.idl/1.10/Tue Oct  1 05:25:13 2002//TFIREFOX_1_0_RELEASE
+/nsMIMEInfoImpl.cpp/1.48/Sat Mar  6 14:43:29 2004//TFIREFOX_1_0_RELEASE
+/nsMIMEInfoImpl.h/1.20/Tue Mar  9 16:42:34 2004//TFIREFOX_1_0_RELEASE
+D/beos////
+D/mac////
+D/os2////
+D/unix////
+D/win////

@@ -1,0 +1,13 @@
+/.cvsignore/1.1/Tue Dec 18 09:14:19 2001//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.4/Fri Nov  7 09:20:16 2003//TFIREFOX_1_0_RELEASE
+D/GetShortPathName////
+D/builder////
+D/ds32////
+D/nsinstall////
+D/nsztool////
+D/palmsync////
+D/ren8dot3////
+D/setup////
+D/setuprsc////
+D/test////
+D/uninstall////

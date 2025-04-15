@@ -1,0 +1,10 @@
+/.cvsignore/1.1/Sat Dec  5 09:02:53 1998//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.9/Tue Dec 18 09:10:03 2001//TFIREFOX_1_0_RELEASE
+/nsIEventListenerManager.h/1.33/Mon Feb  9 22:48:30 2004//TFIREFOX_1_0_RELEASE
+/nsIEventStateManager.h/1.50/Tue Feb  3 02:21:57 2004//TFIREFOX_1_0_RELEASE
+/nsIPrivateCompositionEvent.h/1.6/Wed Jun 26 03:37:47 2002//TFIREFOX_1_0_RELEASE
+/nsIPrivateDOMEvent.h/1.22/Wed Mar  5 15:05:45 2003//TFIREFOX_1_0_RELEASE
+/nsIPrivateTextEvent.h/1.6/Wed Jun 26 03:37:47 2002//TFIREFOX_1_0_RELEASE
+/nsIPrivateTextRange.h/1.4/Wed Jun 26 03:37:47 2002//TFIREFOX_1_0_RELEASE
+/nsMutationEvent.h/1.3/Mon Jan 12 08:25:07 2004//TFIREFOX_1_0_RELEASE
+D

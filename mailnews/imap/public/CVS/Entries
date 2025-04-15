@@ -1,0 +1,19 @@
+/.cvsignore/1.1/Thu Jan 14 23:16:25 1999//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.19/Wed Aug 21 22:55:14 2002//TFIREFOX_1_0_RELEASE
+/nsIIMAPHostSessionList.h/1.15/Wed Jun 26 03:38:43 2002//TFIREFOX_1_0_RELEASE
+/nsIImapExtensionSink.h/1.15/Thu Sep 11 02:57:27 2003//TFIREFOX_1_0_RELEASE
+/nsIImapFlagAndUidState.idl/1.7/Tue Aug 12 23:12:17 2003//TFIREFOX_1_0_RELEASE
+/nsIImapHeaderXferInfo.idl/1.2.30.1/Fri Aug 20 20:35:24 2004//TFIREFOX_1_0_RELEASE
+/nsIImapIncomingServer.idl/1.33/Fri Mar  5 15:58:53 2004//TFIREFOX_1_0_RELEASE
+/nsIImapMailFolderSink.idl/1.23.2.1/Wed May  5 22:28:50 2004//TFIREFOX_1_0_RELEASE
+/nsIImapMessageSink.idl/1.14/Thu May  8 22:23:48 2003//TFIREFOX_1_0_RELEASE
+/nsIImapMiscellaneousSink.h/1.28/Mon Jun 16 14:37:37 2003//TFIREFOX_1_0_RELEASE
+/nsIImapMockChannel.idl/1.11/Fri Sep 28 20:07:06 2001//TFIREFOX_1_0_RELEASE
+/nsIImapProtocol.idl/1.9.6.1/Mon May 17 00:57:49 2004//TFIREFOX_1_0_RELEASE
+/nsIImapServerSink.idl/1.33.6.1/Thu Sep 16 21:28:09 2004//TFIREFOX_1_0_RELEASE
+/nsIImapService.idl/1.23/Fri Nov 14 03:19:57 2003//TFIREFOX_1_0_RELEASE
+/nsIImapUrl.idl/1.19.54.2/Thu Sep 16 21:28:09 2004//TFIREFOX_1_0_RELEASE
+/nsIMailboxSpec.idl/1.5/Fri Nov 14 03:19:57 2003//TFIREFOX_1_0_RELEASE
+/nsIMsgImapMailFolder.idl/1.28/Fri Nov 14 03:19:57 2003//TFIREFOX_1_0_RELEASE
+/nsIMsgLogonRedirector.idl/1.10/Fri Mar 22 00:07:19 2002//TFIREFOX_1_0_RELEASE
+D

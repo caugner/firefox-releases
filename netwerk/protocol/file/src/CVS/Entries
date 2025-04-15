@@ -1,0 +1,8 @@
+/.cvsignore/1.1/Fri Jun 11 11:02:15 1999//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.27/Sat Jan 18 02:14:48 2003//TFIREFOX_1_0_RELEASE
+/nsFileChannel.cpp/1.143/Mon Oct  6 01:41:59 2003//TFIREFOX_1_0_RELEASE
+/nsFileChannel.h/1.59/Sat Jan 18 02:14:48 2003//TFIREFOX_1_0_RELEASE
+/nsFileProtocolHandler.cpp/1.52/Sun Sep  7 23:11:57 2003//TFIREFOX_1_0_RELEASE
+/nsFileProtocolHandler.h/1.16/Sat Jan 18 02:14:49 2003//TFIREFOX_1_0_RELEASE
+/nsFileProtocolModule.cpp/1.10/Sun Sep  7 23:11:57 2003//TFIREFOX_1_0_RELEASE
+D

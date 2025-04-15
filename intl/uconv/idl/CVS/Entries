@@ -1,0 +1,8 @@
+/.cvsignore/1.1/Tue Sep 28 22:56:20 1999//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.8/Thu Jun 12 21:57:27 2003//TFIREFOX_1_0_RELEASE
+/nsICharsetConverterManager.idl/1.1/Wed Jun 11 18:14:48 2003//TFIREFOX_1_0_RELEASE
+/nsICurrentCharsetListener.idl/1.7/Wed Sep 26 00:40:17 2001//TFIREFOX_1_0_RELEASE
+/nsIScriptableUConv.idl/1.6/Wed Jun 11 18:14:48 2003//TFIREFOX_1_0_RELEASE
+/nsITextToSubURI.idl/1.10/Sun Sep  8 15:08:19 2002//TFIREFOX_1_0_RELEASE
+/nsIUTF8ConverterService.idl/1.1/Thu Jun 12 21:57:26 2003//TFIREFOX_1_0_RELEASE
+D

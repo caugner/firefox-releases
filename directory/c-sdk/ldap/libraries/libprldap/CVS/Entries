@@ -1,0 +1,11 @@
+/.cvsignore/5.0/Tue Mar 26 21:54:02 2002//TFIREFOX_1_0_RELEASE
+/Makefile.client/5.0/Tue Mar 26 21:54:03 2002//TFIREFOX_1_0_RELEASE
+/Makefile.in/5.0.2.16/Wed Mar 10 18:47:26 2004//TFIREFOX_1_0_RELEASE
+/ldappr-dns.c/5.0/Tue Mar 26 21:54:03 2002//TFIREFOX_1_0_RELEASE
+/ldappr-error.c/5.0.2.9/Tue Mar 25 13:57:38 2003//TFIREFOX_1_0_RELEASE
+/ldappr-int.h/5.0/Tue Mar 26 21:54:03 2002//TFIREFOX_1_0_RELEASE
+/ldappr-io.c/5.0/Tue Mar 26 21:54:03 2002//TFIREFOX_1_0_RELEASE
+/ldappr-public.c/5.0/Tue Mar 26 21:54:04 2002//TFIREFOX_1_0_RELEASE
+/ldappr-threads.c/5.0/Tue Mar 26 21:54:05 2002//TFIREFOX_1_0_RELEASE
+/libprldap.ex/5.0/Tue Mar 26 21:54:07 2002//TFIREFOX_1_0_RELEASE
+D

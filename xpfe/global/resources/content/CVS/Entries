@@ -1,0 +1,58 @@
+/.cvsignore/1.1/Tue Jul 20 20:22:34 1999//TFIREFOX_1_0_RELEASE
+/MPL-1.1.html/1.1/Tue Jan 15 23:40:36 2002//TFIREFOX_1_0_RELEASE
+/Makefile.in/1.58/Thu Apr 25 02:52:33 2002//TFIREFOX_1_0_RELEASE
+/NPL-1.1.html/1.1/Tue Jan 15 23:40:37 2002//TFIREFOX_1_0_RELEASE
+/XPCNativeWrapper.js/1.2/Wed Sep 22 01:06:31 2004//TFIREFOX_1_0_RELEASE
+/about.xul/1.17/Wed Jan 14 10:37:43 2004//TFIREFOX_1_0_RELEASE
+/aboutAbout.html/1.1/Sat Sep 13 19:32:45 2003//TFIREFOX_1_0_RELEASE
+/charsetOverlay.js/1.37/Tue Mar  2 00:27:13 2004//TFIREFOX_1_0_RELEASE
+/charsetOverlay.xul/1.42/Sat Mar  6 06:11:47 2004//TFIREFOX_1_0_RELEASE
+/commonDialog.js/1.50.54.2/Sun Jun 20 20:48:30 2004//TFIREFOX_1_0_RELEASE
+/commonDialog.xul/1.42/Wed Feb  4 23:44:29 2004//TFIREFOX_1_0_RELEASE
+/config.css/1.8/Mon Jul  7 21:22:24 2003//TFIREFOX_1_0_RELEASE
+/config.js/1.13/Mon Feb 23 14:11:56 2004//TFIREFOX_1_0_RELEASE
+/config.xul/1.13/Fri Jun 13 17:01:47 2003//TFIREFOX_1_0_RELEASE
+/contents-platform.rdf/1.20/Wed Feb  4 14:24:11 2004//TFIREFOX_1_0_RELEASE
+/contents-region.rdf/1.20/Wed Feb  4 14:24:11 2004//TFIREFOX_1_0_RELEASE
+/contents.rdf/1.26/Fri Feb 27 11:54:22 2004//TFIREFOX_1_0_RELEASE
+/dialogOverlay.js/1.13/Fri Apr 13 22:30:04 2001//TFIREFOX_1_0_RELEASE
+/dialogOverlay.xul/1.11/Mon Sep  2 03:36:29 2002//TFIREFOX_1_0_RELEASE
+/fontpackage.js/1.1/Thu Jun 12 02:08:49 2003//TFIREFOX_1_0_RELEASE
+/fontpackage.xul/1.1/Thu Jun 12 02:08:49 2003//TFIREFOX_1_0_RELEASE
+/fullScreen.js/1.3/Sat Jan 18 20:55:14 2003//TFIREFOX_1_0_RELEASE
+/globalOverlay.js/1.85/Thu Nov  7 20:25:45 2002//TFIREFOX_1_0_RELEASE
+/globalOverlay.xul/1.65/Sat Nov  3 04:14:50 2001//TFIREFOX_1_0_RELEASE
+/hiddenWindow.xul/1.38/Tue Apr 29 22:51:48 2003//TFIREFOX_1_0_RELEASE
+/logo.gif/1.4/Thu Aug 24 04:10:49 2000/-kb/TFIREFOX_1_0_RELEASE
+/manifest.rdf/1.2/Sun May 14 05:30:00 2000//TFIREFOX_1_0_RELEASE
+/mozilla.xhtml/1.6/Wed Sep 24 22:21:16 2003//TFIREFOX_1_0_RELEASE
+/nsClipboard.js/1.5/Sun Nov 11 04:19:27 2001//TFIREFOX_1_0_RELEASE
+/nsDragAndDrop.js/1.24/Thu May 30 22:04:25 2002//TFIREFOX_1_0_RELEASE
+/nsTransferable.js/1.11/Thu Mar  4 19:10:03 2004//TFIREFOX_1_0_RELEASE
+/nsTreeController.js/1.12/Fri May 23 12:03:40 2003//TFIREFOX_1_0_RELEASE
+/nsTreeSorting.js/1.6/Sat Mar 15 16:30:04 2003//TFIREFOX_1_0_RELEASE
+/nsUserSettings.js/1.10/Tue Aug  6 00:53:19 2002//TFIREFOX_1_0_RELEASE
+/nsWidgetStateManager.js/1.26/Fri Apr 18 02:15:46 2003//TFIREFOX_1_0_RELEASE
+/plugins.html/1.8.2.2/Wed May 26 00:17:33 2004//TFIREFOX_1_0_RELEASE
+/printPageSetup.js/1.13/Wed Dec 17 23:24:33 2003//TFIREFOX_1_0_RELEASE
+/printPageSetup.xul/1.11/Wed Nov 19 06:34:43 2003//TFIREFOX_1_0_RELEASE
+/printPreviewProgress.js/1.5/Tue Jan 13 16:17:53 2004//TFIREFOX_1_0_RELEASE
+/printPreviewProgress.xul/1.2/Tue Jan 13 16:17:53 2004//TFIREFOX_1_0_RELEASE
+/printProgress.js/1.5/Fri Apr 25 01:53:55 2003//TFIREFOX_1_0_RELEASE
+/printProgress.xul/1.4/Tue Jul  9 12:38:59 2002//TFIREFOX_1_0_RELEASE
+/printdialog.js/1.23/Wed Dec 17 07:52:49 2003//TFIREFOX_1_0_RELEASE
+/printdialog.xul/1.6/Mon Sep  2 03:36:29 2002//TFIREFOX_1_0_RELEASE
+/selectDialog.js/1.19/Fri Mar 29 02:45:57 2002//TFIREFOX_1_0_RELEASE
+/selectDialog.xul/1.21/Fri Jan 10 15:04:04 2003//TFIREFOX_1_0_RELEASE
+/strres.js/1.17/Thu Jul 25 00:38:23 2002//TFIREFOX_1_0_RELEASE
+/widgetStateManager.js/1.15/Wed Sep 13 23:57:49 2000//TFIREFOX_1_0_RELEASE
+/wizardHandlerSet.js/1.10/Wed Feb  7 02:53:49 2001//TFIREFOX_1_0_RELEASE
+/wizardManager.js/1.9/Thu Jan 11 22:58:50 2001//TFIREFOX_1_0_RELEASE
+/wizardOverlay.js/1.1/Wed Nov 24 04:39:20 1999//TFIREFOX_1_0_RELEASE
+/wizardOverlay.xul/1.10/Mon Sep  2 03:36:29 2002//TFIREFOX_1_0_RELEASE
+/xul.css/1.130/Mon Dec 15 22:47:52 2003//TFIREFOX_1_0_RELEASE
+D/bindings////
+D/mac////
+D/os2////
+D/unix////
+D/win////
