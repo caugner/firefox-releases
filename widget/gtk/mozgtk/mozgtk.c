@@ -530,6 +530,7 @@ STUB(gtk_get_minor_version)
 STUB(gtk_menu_button_new)
 STUB(gtk_offscreen_window_new)
 STUB(gtk_paned_new)
+STUB(gtk_radio_menu_item_new)
 STUB(gtk_render_activity)
 STUB(gtk_render_arrow)
 STUB(gtk_render_background)
@@ -561,6 +562,7 @@ STUB(gtk_style_context_get_state)
 STUB(gtk_style_context_get_style)
 STUB(gtk_style_context_has_class)
 STUB(gtk_style_context_invalidate)
+STUB(gtk_style_context_list_classes)
 STUB(gtk_style_context_new)
 STUB(gtk_style_context_remove_class)
 STUB(gtk_style_context_remove_region)
@@ -609,3 +611,18 @@ STUB(gdk_x11_window_get_drawable_impl)
 STUB(gdkx_visual_get)
 STUB(gtk_object_get_type)
 #endif
+
+#include <X11/Xlib.h>
+// Bug 1271100
+// We need to trick system Cairo into not using the XShm extension due to
+// a race condition in it that results in frequent BadAccess errors. Cairo
+// relies upon XShmQueryExtension to initially detect if XShm is available.
+// So we define our own stub that always indicates XShm not being present.
+// mozgtk loads before libXext/libcairo and so this stub will take priority.
+// Our tree usage goes through xcb and remains unaffected by this.
+MOZ_EXPORT Bool
+XShmQueryExtension(Display* aDisplay)
+{
+  return False;
+}
+

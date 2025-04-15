@@ -14,6 +14,8 @@ const HTTP_MISMATCH_PATH = "http://example.org";
 const HTTP_IFRAME_PATH = "http://mochi.test:8888";
 const HTTP_REDIRECTED_IFRAME_PATH = "http://example.org";
 
+requestLongerTimeout(2); // timeouts in debug builds.
+
 // Keep this synced with /mobile/android/tests/browser/robocop/testWebChannel.js
 // as much as possible.  (We only have that since we can't run browser chrome
 // tests on Android.  Yet?)
@@ -34,6 +36,26 @@ var gTests = [
 
         tab = gBrowser.addTab(HTTP_PATH + HTTP_ENDPOINT + "?generic");
       });
+    }
+  },
+  {
+    desc: "WebChannel generic message in a private window.",
+    run: function* () {
+      let promiseTestDone = new Promise(function(resolve, reject) {
+        let channel = new WebChannel("generic", Services.io.newURI(HTTP_PATH, null, null));
+        channel.listen(function(id, message, target) {
+          is(id, "generic");
+          is(message.something.nested, "hello");
+          channel.stopListening();
+          resolve();
+        });
+      });
+
+      const url = HTTP_PATH + HTTP_ENDPOINT + "?generic";
+      let privateWindow = yield BrowserTestUtils.openNewBrowserWindow({private: true});
+      yield BrowserTestUtils.openNewForegroundTab(privateWindow.gBrowser, url);
+      yield promiseTestDone;
+      yield BrowserTestUtils.closeWindow(privateWindow);
     }
   },
   {
@@ -402,7 +424,7 @@ var gTests = [
 function test() {
   waitForExplicitFinish();
 
-  Task.spawn(function () {
+  Task.spawn(function* () {
     for (let test of gTests) {
       info("Running: " + test.desc);
       yield test.run();

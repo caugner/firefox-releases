@@ -200,6 +200,10 @@ void
 js::MarkAtoms(JSTracer* trc, AutoLockForExclusiveAccess& lock)
 {
     JSRuntime* rt = trc->runtime();
+
+    if (rt->atomsAreFinished())
+        return;
+
     for (AtomSet::Enum e(rt->atoms(lock)); !e.empty(); e.popFront()) {
         const AtomStateEntry& entry = e.front();
         if (!entry.isPinned())
@@ -335,7 +339,7 @@ AtomizeAndCopyChars(ExclusiveContext* cx, const CharT* tbchars, size_t length, P
         return atom;
     }
 
-    AutoCompartment ac(cx, cx->atomsCompartment(lock));
+    AutoCompartment ac(cx, cx->atomsCompartment(lock), &lock);
 
     JSFlatString* flat = NewStringCopyN<NoGC>(cx, tbchars, length);
     if (!flat) {
@@ -346,7 +350,8 @@ AtomizeAndCopyChars(ExclusiveContext* cx, const CharT* tbchars, size_t length, P
         return nullptr;
     }
 
-    JSAtom* atom = flat->morphAtomizedStringIntoAtom();
+    JSAtom* atom = flat->morphAtomizedStringIntoAtom(lookup.hash);
+    MOZ_ASSERT(atom->hash() == lookup.hash);
 
     // We have held the lock since looking up p, and the operations we've done
     // since then can't GC; therefore the atoms table has not been modified and
@@ -483,12 +488,24 @@ ToAtomSlow(ExclusiveContext* cx, typename MaybeRooted<Value, allowGC>::HandleTyp
         v = v2;
     }
 
-    if (v.isString())
-        return AtomizeString(cx, v.toString());
-    if (v.isInt32())
-        return Int32ToAtom(cx, v.toInt32());
-    if (v.isDouble())
-        return NumberToAtom(cx, v.toDouble());
+    if (v.isString()) {
+        JSAtom* atom = AtomizeString(cx, v.toString());
+        if (!allowGC && !atom)
+            cx->recoverFromOutOfMemory();
+        return atom;
+    }
+    if (v.isInt32()) {
+        JSAtom* atom = Int32ToAtom(cx, v.toInt32());
+        if (!allowGC && !atom)
+            cx->recoverFromOutOfMemory();
+        return atom;
+    }
+    if (v.isDouble()) {
+        JSAtom* atom = NumberToAtom(cx, v.toDouble());
+        if (!allowGC && !atom)
+            cx->recoverFromOutOfMemory();
+        return atom;
+    }
     if (v.isBoolean())
         return v.toBoolean() ? cx->names().true_ : cx->names().false_;
     if (v.isNull())
@@ -594,4 +611,3 @@ js::XDRAtom(XDRState<XDR_ENCODE>* xdr, MutableHandleAtom atomp);
 
 template bool
 js::XDRAtom(XDRState<XDR_DECODE>* xdr, MutableHandleAtom atomp);
-
