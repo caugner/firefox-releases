@@ -101,6 +101,7 @@
 #include "mozAutoDocUpdate.h"
 #include "nsIDOMXULCommandEvent.h"
 #include "nsCCUncollectableMarker.h"
+#include "nsICSSDeclaration.h"
 
 namespace css = mozilla::css;
 
@@ -684,7 +685,7 @@ nsXULElement::MaybeAddPopupListener(nsIAtom* aLocalName)
 void
 nsXULElement::UpdateEditableState(bool aNotify)
 {
-    // Don't call through to nsGenericElement here because the things
+    // Don't call through to Element here because the things
     // it does don't work for cases when we're an editable control.
     nsIContent *parent = GetParent();
 
@@ -1554,58 +1555,26 @@ nsXULElement::IsNodeOfType(uint32_t aFlags) const
     return !(aFlags & ~eCONTENT);
 }
 
-static void
-PopupListenerPropertyDtor(void* aObject, nsIAtom* aPropertyName,
-                          void* aPropertyValue, void* aData)
-{
-  nsIDOMEventListener* listener =
-    static_cast<nsIDOMEventListener*>(aPropertyValue);
-  if (!listener) {
-    return;
-  }
-  nsEventListenerManager* manager = static_cast<nsINode*>(aObject)->
-    GetListenerManager(false);
-  if (manager) {
-    manager->RemoveEventListenerByType(listener,
-                                       NS_LITERAL_STRING("mousedown"),
-                                       NS_EVENT_FLAG_BUBBLE |
-                                       NS_EVENT_FLAG_SYSTEM_EVENT);
-    manager->RemoveEventListenerByType(listener,
-                                       NS_LITERAL_STRING("contextmenu"),
-                                       NS_EVENT_FLAG_BUBBLE |
-                                       NS_EVENT_FLAG_SYSTEM_EVENT);
-  }
-  NS_RELEASE(listener);
-}
-
 nsresult
 nsXULElement::AddPopupListener(nsIAtom* aName)
 {
     // Add a popup listener to the element
     bool isContext = (aName == nsGkAtoms::context ||
                         aName == nsGkAtoms::contextmenu);
-    nsIAtom* listenerAtom = isContext ?
-                            nsGkAtoms::contextmenulistener :
-                            nsGkAtoms::popuplistener;
+    uint32_t listenerFlag = isContext ?
+                            XUL_ELEMENT_HAS_CONTENTMENU_LISTENER :
+                            XUL_ELEMENT_HAS_POPUP_LISTENER;
 
-    nsCOMPtr<nsIDOMEventListener> popupListener =
-        static_cast<nsIDOMEventListener*>(GetProperty(listenerAtom));
-    if (popupListener) {
-        // Popup listener is already installed.
+    if (HasFlag(listenerFlag)) {
         return NS_OK;
     }
 
-    popupListener = new nsXULPopupListener(this, isContext);
+    nsCOMPtr<nsIDOMEventListener> listener =
+      new nsXULPopupListener(this, isContext);
 
     // Add the popup as a listener on this element.
     nsEventListenerManager* manager = GetListenerManager(true);
-    NS_ENSURE_TRUE(manager, NS_ERROR_FAILURE);
-    nsresult rv = SetProperty(listenerAtom, popupListener,
-                              PopupListenerPropertyDtor, true);
-    NS_ENSURE_SUCCESS(rv, rv);
-    // Want the property to have a reference to the listener.
-    nsIDOMEventListener* listener = nullptr;
-    popupListener.swap(listener);
+    SetFlags(listenerFlag);
 
     if (isContext) {
       manager->AddEventListenerByType(listener,
@@ -1882,11 +1851,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_BEGIN(nsXULPrototypeNode)
                 cb.NoteXPCOMChild(name.NodeInfo());
             }
         }
-        for (i = 0; i < elem->mChildren.Length(); ++i) {
-            NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_PTR(elem->mChildren[i].get(),
-                                                         nsXULPrototypeNode,
-                                                         "mChildren[i]")
-        }
+        ImplCycleCollectionTraverse(cb, elem->mChildren, "mChildren");
     }
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END

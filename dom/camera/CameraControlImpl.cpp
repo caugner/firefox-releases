@@ -9,6 +9,7 @@
 #include "CameraCommon.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 CameraControlImpl::CameraControlImpl(uint32_t aCameraId, nsIThread* aCameraThread, uint64_t aWindowId)
   : mCameraId(aCameraId)
@@ -22,8 +23,6 @@ CameraControlImpl::CameraControlImpl(uint32_t aCameraId, nsIThread* aCameraThrea
   , mAutoFocusOnErrorCb(nullptr)
   , mTakePictureOnSuccessCb(nullptr)
   , mTakePictureOnErrorCb(nullptr)
-  , mStartRecordingOnSuccessCb(nullptr)
-  , mStartRecordingOnErrorCb(nullptr)
   , mOnShutterCb(nullptr)
   , mOnClosedCb(nullptr)
   , mOnRecorderStateChangeCb(nullptr)
@@ -250,8 +249,6 @@ CameraControlImpl::Shutdown()
   mAutoFocusOnErrorCb = nullptr;
   mTakePictureOnSuccessCb = nullptr;
   mTakePictureOnErrorCb = nullptr;
-  mStartRecordingOnSuccessCb = nullptr;
-  mStartRecordingOnErrorCb = nullptr;
   mOnShutterCb = nullptr;
   mOnClosedCb = nullptr;
   mOnRecorderStateChangeCb = nullptr;
@@ -364,6 +361,13 @@ CameraControlImpl::GetPreviewStreamVideoMode(CameraRecorderOptions* aOptions, ns
 {
   nsCOMPtr<nsIRunnable> getPreviewStreamVideoModeTask = new GetPreviewStreamVideoModeTask(this, *aOptions, onSuccess, onError);
   return mCameraThread->Dispatch(getPreviewStreamVideoModeTask, NS_DISPATCH_NORMAL);
+}
+
+nsresult
+CameraControlImpl::ReleaseHardware(nsICameraReleaseCallback* onSuccess, nsICameraErrorCallback* onError)
+{
+  nsCOMPtr<nsIRunnable> releaseHardwareTask = new ReleaseHardwareTask(this, onSuccess, onError);
+  return mCameraThread->Dispatch(releaseHardwareTask, NS_DISPATCH_NORMAL);
 }
 
 bool

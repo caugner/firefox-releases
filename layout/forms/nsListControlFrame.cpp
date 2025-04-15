@@ -36,9 +36,6 @@
 #include "nsGUIEvent.h"
 #include "nsIServiceManager.h"
 #include "nsINodeInfo.h"
-#ifdef ACCESSIBILITY
-#include "nsAccessibilityService.h"
-#endif
 #include "nsHTMLSelectElement.h"
 #include "nsCSSRendering.h"
 #include "nsITheme.h"
@@ -52,7 +49,7 @@
 using namespace mozilla;
 
 // Constants
-const int32_t kMaxDropDownRows          = 20; // This matches the setting for 4.x browsers
+const uint32_t kMaxDropDownRows         = 20; // This matches the setting for 4.x browsers
 const int32_t kNothingSelected          = -1;
 
 // Static members
@@ -267,16 +264,10 @@ NS_QUERYFRAME_HEAD(nsListControlFrame)
 NS_QUERYFRAME_TAIL_INHERITING(nsHTMLScrollFrame)
 
 #ifdef ACCESSIBILITY
-already_AddRefed<Accessible>
-nsListControlFrame::CreateAccessible()
+a11y::AccType
+nsListControlFrame::AccessibleType()
 {
-  nsAccessibilityService* accService = nsIPresShell::AccService();
-  if (accService) {
-    return accService->CreateHTMLListboxAccessible(mContent,
-                                                   PresContext()->PresShell());
-  }
-
-  return nullptr;
+  return a11y::eHTMLSelectListAccessible;
 }
 #endif
 
@@ -363,6 +354,8 @@ nsListControlFrame::Reflow(nsPresContext*           aPresContext,
 {
   NS_PRECONDITION(aReflowState.ComputedWidth() != NS_UNCONSTRAINEDSIZE,
                   "Must have a computed width");
+
+  SchedulePaint();
 
   mHasPendingInterruptAtStartOfReflow = aPresContext->HasPendingInterrupt();
 
@@ -472,7 +465,8 @@ nsListControlFrame::Reflow(nsPresContext*           aPresContext,
   // or anything like that?  We might need to, per the letter of the reflow
   // protocol, but things seem to work fine without it...  Is that just an
   // implementation detail of nsHTMLScrollFrame that we're depending on?
-  nsHTMLScrollFrame::DidReflow(aPresContext, &state, aStatus);
+  nsHTMLScrollFrame::DidReflow(aPresContext, &state,
+                               nsDidReflowStatus::FINISHED);
 
   // Now compute the height we want to have
   nscoord computedHeight = CalcIntrinsicHeight(HeightOfARow(), length); 
@@ -553,7 +547,8 @@ nsListControlFrame::ReflowAsDropdown(nsPresContext*           aPresContext,
   // or anything like that?  We might need to, per the letter of the reflow
   // protocol, but things seem to work fine without it...  Is that just an
   // implementation detail of nsHTMLScrollFrame that we're depending on?
-  nsHTMLScrollFrame::DidReflow(aPresContext, &state, aStatus);
+  nsHTMLScrollFrame::DidReflow(aPresContext, &state,
+                               nsDidReflowStatus::FINISHED);
 
   // Now compute the height we want to have.
   // Note: no need to apply min/max constraints, since we have no such
@@ -577,11 +572,11 @@ nsListControlFrame::ReflowAsDropdown(nsPresContext*           aPresContext,
       nscoord bp = aReflowState.mComputedBorderPadding.TopBottom();
       nscoord availableHeight = NS_MAX(above, below) - bp;
       nscoord newHeight;
-      int32_t rows;
+      uint32_t rows;
       if (visibleHeight <= availableHeight) {
         // The dropdown fits in the available height.
         rows = GetNumberOfRows();
-        mNumDisplayRows = clamped(rows, 1, kMaxDropDownRows);
+        mNumDisplayRows = clamped<uint32_t>(rows, 1, kMaxDropDownRows);
         if (mNumDisplayRows == rows) {
           newHeight = visibleHeight;  // use the exact height
         } else {
@@ -589,7 +584,7 @@ nsListControlFrame::ReflowAsDropdown(nsPresContext*           aPresContext,
         }
       } else {
         rows = availableHeight / heightOfARow;
-        mNumDisplayRows = clamped(rows, 1, kMaxDropDownRows);
+        mNumDisplayRows = clamped<uint32_t>(rows, 1, kMaxDropDownRows);
         newHeight = mNumDisplayRows * heightOfARow; // approximate
       }
       state.SetComputedHeight(newHeight);
@@ -1298,21 +1293,21 @@ nsListControlFrame::IsInDropDownMode() const
   return (mComboboxFrame != nullptr);
 }
 
-int32_t
+uint32_t
 nsListControlFrame::GetNumberOfOptions()
 {
-  if (mContent != nullptr) {
-    nsCOMPtr<nsIDOMHTMLOptionsCollection> options = GetOptions(mContent);
-
-    if (!options) {
-      return 0;
-    } else {
-      uint32_t length = 0;
-      options->GetLength(&length);
-      return (int32_t)length;
-    }
+  if (!mContent) {
+    return 0;
   }
-  return 0;
+
+  nsCOMPtr<nsIDOMHTMLOptionsCollection> options = GetOptions(mContent);
+  if (!options) {
+    return 0;
+  }
+
+  uint32_t length = 0;
+  options->GetLength(&length);
+  return length;
 }
 
 //----------------------------------------------------------------------
@@ -1365,10 +1360,10 @@ nsListControlFrame::AddOption(int32_t aIndex)
       mIsAllFramesHere    = false;
       mHasBeenInitialized = false;
     } else {
-      mIsAllFramesHere = (aIndex == GetNumberOfOptions()-1);
+      mIsAllFramesHere = (aIndex == static_cast<int32_t>(GetNumberOfOptions()-1));
     }
   }
-  
+
   // Make sure we scroll to the selected option as needed
   mNeedToReset = true;
 

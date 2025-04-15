@@ -41,6 +41,10 @@ Cu.import("resource:///modules/services-common/log4moz.js");
 let logger = Log4Moz.repository.getLogger("Marionette");
 logger.info('marionette-actors.js loaded');
 
+Services.prefs.setBoolPref("network.gonk.manage-offline-status", false);
+Services.io.manageOfflineStatus = false;
+Services.io.offline = false;
+
 // This is used to prevent newSession from returning before the telephony
 // API's are ready; see bug 792647.  This assumes that marionette-actors.js
 // will be loaded before the 'system-message-listener-ready' message
@@ -1105,7 +1109,9 @@ MarionetteDriverActor.prototype = {
       let foundFrame = null;
       if ((aRequest.value == null) && (aRequest.element == null)) {
         this.curFrame = null;
-        this.mainFrame.focus();
+        if (aRequest.focus) {
+          this.mainFrame.focus();
+        }
         checkTimer.initWithCallback(checkLoad.bind(this), 100, Ci.nsITimer.TYPE_ONE_SHOT);
         return;
       }
@@ -1117,7 +1123,9 @@ MarionetteDriverActor.prototype = {
             if (curWindow.frames[i].frameElement == wantedFrame) {
               curWindow = curWindow.frames[i]; 
               this.curFrame = curWindow;
-              this.curFrame.focus();
+              if (aRequest.focus) {
+                this.curFrame.focus();
+              }
               checkTimer.initWithCallback(checkLoad.bind(this), 100, Ci.nsITimer.TYPE_ONE_SHOT);
               return;
           }
@@ -1152,7 +1160,9 @@ MarionetteDriverActor.prototype = {
       if (foundFrame != null) {
         curWindow = curWindow.frames[foundFrame];
         this.curFrame = curWindow;
-        this.curFrame.focus();
+        if (aRequest.focus) {
+          this.curFrame.focus();
+        }
         checkTimer.initWithCallback(checkLoad.bind(this), 100, Ci.nsITimer.TYPE_ONE_SHOT);
       } else {
         this.sendError("Unable to locate frame: " + aRequest.value, 8, null,
@@ -1880,16 +1890,17 @@ MarionetteDriverActor.prototype = {
         } catch (ex) {
           // browserType remains undefined.
         }
-        let reg;
+        let reg = {};
         if (!browserType || browserType != "content") {
-          reg = this.curBrowser.register(this.generateFrameId(message.json.value),
+          reg.id = this.curBrowser.register(this.generateFrameId(message.json.value),
                                          message.json.href); 
         }
-        this.curBrowser.elementManager.seenItems[reg] = listenerWindow; //add to seenItems
+        this.curBrowser.elementManager.seenItems[reg.id] = listenerWindow; //add to seenItems
+        reg.importedScripts = this.importedScripts.path;
         if (nullPrevious && (this.curBrowser.curFrameId != null)) {
           this.sendAsync("newSession", {B2G: (appName == "B2G")});
           if (this.curBrowser.newSession) {
-            this.sendResponse(reg);
+            this.sendResponse(reg.id);
           }
         }
         return reg;

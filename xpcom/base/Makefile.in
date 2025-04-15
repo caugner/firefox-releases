@@ -41,7 +41,7 @@ CPPSRCS		= \
 		VisualEventTracer.cpp \
 		nsErrorAsserts.cpp \
 		nsGZFileWriter.cpp \
-		MemoryInfoDumper.cpp \
+		nsMemoryInfoDumper.cpp \
 		nsMessageLoop.cpp \
 		AvailableMemoryTracker.cpp \
 		$(NULL)
@@ -67,7 +67,6 @@ EXPORTS		= \
 		nsTraceRefcntImpl.h \
 		nsWeakPtr.h \
 		nsInterfaceRequestorAgg.h \
-		dmd.h \
 		nsGZFileWriter.h \
 		$(NULL)
 
@@ -75,7 +74,7 @@ EXPORTS_NAMESPACES = mozilla
 
 EXPORTS_mozilla = \
 	MapsMemoryReporter.h \
-	MemoryInfoDumper.h \
+	nsMemoryInfoDumper.h \
 	ClearOnShutdown.h \
 	StaticPtr.h \
 	AvailableMemoryTracker.h \
@@ -109,6 +108,8 @@ SDK_XPIDLSRCS   = \
 SDK_HEADERS     = \
 		nsAutoPtr.h \
 		nsError.h \
+		ErrorList.h \
+		ErrorListDefines.h \
 		nsISupportsBase.h \
 		nscore.h \
 		nsAtomicRefcnt.h \
@@ -133,6 +134,7 @@ XPIDLSRCS	= \
 		nsIVersionComparator.idl \
 		nsIUUIDGenerator.idl \
 		nsIMutable.idl \
+		nsIMemoryInfoDumper.idl \
 		nsIMemoryReporter.idl \
 		nsIGZFileWriter.idl \
 		nsIMessageLoop.idl \
@@ -160,3 +162,11 @@ LOCAL_INCLUDES += \
 		-I$(srcdir)/../build \
 		-I$(topsrcdir)/xpcom/ds \
 		$(NULL)
+
+# We generate ErrorListDefines.h from ErrorList.h using regex.  The -n option
+# suppresses printing the pattern space, and the p at the end prints it anyway,
+# so we don't print lines that don't match the pattern to start with.
+ErrorListDefines.h: ErrorList.h
+		sed -n 's/.*ERROR(\([A-Z_0-9]*\).*/#define \1 nsresult::\1/p' < $< > $@
+
+GARBAGE += ErrorListDefines.h

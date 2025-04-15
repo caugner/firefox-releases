@@ -142,7 +142,6 @@ sa_stream_set_stream_type(sa_stream_t *s,  const sa_stream_type_t stream_type)
       break;
     default:
       return SA_ERROR_INVALID;
-      break;
  }
 
   return SA_SUCCESS;

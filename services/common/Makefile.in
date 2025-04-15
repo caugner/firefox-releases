@@ -25,6 +25,7 @@ modules := \
 testing_modules := \
   aitcserver.js \
   bagheeraserver.js \
+  logging.js \
   storageserver.js \
   utils.js \
   $(NULL)

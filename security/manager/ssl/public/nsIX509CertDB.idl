@@ -29,7 +29,7 @@ interface nsIOpenSignedJARFileCallback : nsISupports
  * This represents a service to access and manipulate 
  * X.509 certificates stored in a database.
  */
-[scriptable, uuid(9384802f-a783-43c9-8356-77cfc2318cc1)]
+[scriptable, uuid(735d0363-e219-4387-b5c6-72e800c3ea0b)]
 interface nsIX509CertDB : nsISupports {
 
   /**
@@ -251,14 +251,6 @@ interface nsIX509CertDB : nsISupports {
                         [array, size_is(count)] in nsIX509Cert aCerts);
 
   /**
-   *  An array of all known OCSP responders within the scope of the 
-   *  certificate database.
-   *
-   *  @return Array of OCSP responders, entries are QIable to nsIOCSPResponder.
-   */
-  nsIArray getOCSPResponders();
-
-  /**
    *  Whether OCSP is enabled in preferences.
    */
   readonly attribute boolean isOcspOn;
@@ -301,4 +293,3 @@ interface nsIX509CertDB : nsISupports {
    */
   void addCert(in ACString certDER, in string aTrust, in string aName);
 };
-

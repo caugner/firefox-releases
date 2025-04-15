@@ -25,8 +25,8 @@
 
 #include "prlog.h"
 #ifdef PR_LOGGING 
-extern PRLogModuleInfo * kLayoutPrintingLogMod;
-#define PR_PL(_p1)  PR_LOG(kLayoutPrintingLogMod, PR_LOG_DEBUG, _p1)
+extern PRLogModuleInfo *GetLayoutPrintingLog();
+#define PR_PL(_p1)  PR_LOG(GetLayoutPrintingLog(), PR_LOG_DEBUG, _p1)
 #else
 #define PR_PL(_p1)
 #endif
@@ -72,10 +72,9 @@ NS_IMETHODIMP nsPageFrame::Reflow(nsPresContext*           aPresContext,
     if (mPD->mReflowSize.height == NS_UNCONSTRAINEDSIZE) {
       avHeight = NS_UNCONSTRAINEDSIZE;
     } else {
-      avHeight = mPD->mReflowSize.height - mPD->mReflowMargin.TopBottom();
+      avHeight = mPD->mReflowSize.height;
     }
-    nsSize  maxSize(mPD->mReflowSize.width - mPD->mReflowMargin.LeftRight(),
-                    avHeight);
+    nsSize  maxSize(mPD->mReflowSize.width, avHeight);
     float scale = aPresContext->GetPageScale();
     maxSize.width = NSToCoordCeil(maxSize.width / scale);
     if (maxSize.height != NS_UNCONSTRAINEDSIZE) {
@@ -97,9 +96,46 @@ NS_IMETHODIMP nsPageFrame::Reflow(nsPresContext*           aPresContext,
     kidReflowState.mFlags.mIsTopOfPage = true;
     kidReflowState.mFlags.mTableIsSplittable = true;
 
+    // Use the margins given in the @page rule.
+    // If a margin is 'auto', use the margin from the print settings for that side.
+    nsMargin pageContentMargin;
+    const nsStyleSides& marginStyle = kidReflowState.mStyleMargin->mMargin;
+    NS_FOR_CSS_SIDES(side) {
+      if (marginStyle.GetUnit(side) == eStyleUnit_Auto) {
+        pageContentMargin.Side(side) = mPD->mReflowMargin.Side(side);
+      } else {
+        pageContentMargin.Side(side) = kidReflowState.mComputedMargin.Side(side);
+      }
+    }
+
+
+    nscoord maxWidth = maxSize.width - pageContentMargin.LeftRight() / scale;
+    nscoord maxHeight;
+    if (maxSize.height == NS_UNCONSTRAINEDSIZE) {
+      maxHeight = NS_UNCONSTRAINEDSIZE;
+    } else {
+      maxHeight = maxSize.height - pageContentMargin.TopBottom() / scale;
+    }
+
+    // Check the width and height, if they're too small we reset the margins
+    // back to the default.
+    if (maxWidth < onePixelInTwips ||
+       (maxHeight != NS_UNCONSTRAINEDSIZE && maxHeight < onePixelInTwips)) {
+      NS_FOR_CSS_SIDES(side) {
+        pageContentMargin.Side(side) = mPD->mReflowMargin.Side(side);
+      }
+      maxWidth = maxSize.width - pageContentMargin.LeftRight() / scale;
+      if (maxHeight != NS_UNCONSTRAINEDSIZE) {
+        maxHeight = maxSize.height - pageContentMargin.TopBottom() / scale;
+      }
+    }
+
+    kidReflowState.SetComputedWidth(maxWidth);
+    kidReflowState.SetComputedHeight(maxHeight);
+
     // calc location of frame
-    nscoord xc = mPD->mReflowMargin.left + mPD->mExtraMargin.left;
-    nscoord yc = mPD->mReflowMargin.top + mPD->mExtraMargin.top;
+    nscoord xc = pageContentMargin.left;
+    nscoord yc = pageContentMargin.top;
 
     // Get the child's desired size
     ReflowChild(frame, aPresContext, aDesiredSize, kidReflowState, xc, yc, 0, aStatus);
@@ -220,7 +256,7 @@ nscoord nsPageFrame::GetXPosition(nsRenderingContext& aRenderingContext,
   nscoord x = aRect.x;
   switch (aJust) {
     case nsIPrintSettings::kJustLeft:
-      x += mPD->mExtraMargin.left + mPD->mEdgePaperMargin.left;
+      x += mPD->mEdgePaperMargin.left;
       break;
 
     case nsIPrintSettings::kJustCenter:
@@ -228,7 +264,7 @@ nscoord nsPageFrame::GetXPosition(nsRenderingContext& aRenderingContext,
       break;
 
     case nsIPrintSettings::kJustRight:
-      x += aRect.width - width - mPD->mExtraMargin.right - mPD->mEdgePaperMargin.right;
+      x += aRect.width - width - mPD->mEdgePaperMargin.right;
       break;
   } // switch
 
@@ -345,9 +381,9 @@ nsPageFrame::DrawHeaderFooter(nsRenderingContext& aRenderingContext,
     nscoord x = GetXPosition(aRenderingContext, aRect, aJust, str);
     nscoord y;
     if (aHeaderFooter == eHeader) {
-      y = aRect.y + mPD->mExtraMargin.top + mPD->mEdgePaperMargin.top;
+      y = aRect.y + mPD->mEdgePaperMargin.top;
     } else {
-      y = aRect.YMost() - aHeight - mPD->mExtraMargin.bottom - mPD->mEdgePaperMargin.bottom;
+      y = aRect.YMost() - aHeight - mPD->mEdgePaperMargin.bottom;
     }
 
     // set up new clip and draw the text
@@ -506,20 +542,20 @@ nsPageFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
       break;
     y += page->GetSize().height;
   }
-
+  
   // Add the canvas background color to the bottom of the list. This
   // happens after we've built the list so that AddCanvasBackgroundColorItem
   // can monkey with the contents if necessary.
-  nsRect backgroundRect = nsRect(nsPoint(0, 0), child->GetSize());
+  nsRect backgroundRect =
+    nsRect(aBuilder->ToReferenceFrame(child), child->GetSize());
   rv = PresContext()->GetPresShell()->AddCanvasBackgroundColorItem(
          *aBuilder, content, child, backgroundRect, NS_RGBA(0,0,0,0));
- 
+
   float scale = PresContext()->GetPageScale();
   nsRect clipRect(nsPoint(0, 0), child->GetSize());
   // Note: this computation matches how we compute maxSize.height
   // in nsPageFrame::Reflow
-  nscoord expectedPageContentHeight = 
-    NSToCoordCeil((GetSize().height - mPD->mReflowMargin.TopBottom()) / scale);
+  nscoord expectedPageContentHeight = NSToCoordCeil(GetSize().height / scale);
   if (clipRect.height > expectedPageContentHeight) {
     // We're doing print-selection, with one long page-content frame.
     // Clip to the appropriate page-content slice for the current page.

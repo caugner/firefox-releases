@@ -19,7 +19,6 @@
 #endif
 
 #include "nsAString.h"
-#include "nsIStatefulFrame.h"
 #include "nsNodeInfoManager.h"
 #include "nsIXPCScriptable.h"
 #include "nsDataHashtable.h"
@@ -37,6 +36,7 @@
 #include "nsCharSeparatedTokenizer.h"
 #include "gfxContext.h"
 #include "gfxFont.h"
+#include "nsContentList.h"
 
 #include "mozilla/AutoRestore.h"
 #include "mozilla/GuardObjects.h"
@@ -64,9 +64,9 @@ class nsIParserService;
 class nsIIOService;
 class nsIURI;
 class imgIContainer;
-class imgIDecoderObserver;
+class imgINotificationObserver;
 class imgIRequest;
-class imgILoader;
+class imgLoader;
 class imgICache;
 class nsIImageLoadingContent;
 class nsIDOMHTMLFormElement;
@@ -90,9 +90,6 @@ class nsIWidget;
 class nsIDragSession;
 class nsIPresShell;
 class nsIXPConnectJSObjectHolder;
-#ifdef MOZ_XTF
-class nsIXTFService;
-#endif
 #ifdef IBMBIDI
 class nsIBidiKeyboard;
 #endif
@@ -129,7 +126,8 @@ enum EventNameType {
   EventNameType_XUL = 0x0002,
   EventNameType_SVGGraphic = 0x0004, // svg graphic elements
   EventNameType_SVGSVG = 0x0008, // the svg element
-  EventNameType_SMIL = 0x0016, // smil elements
+  EventNameType_SMIL = 0x0010, // smil elements
+  EventNameType_HTMLBodyOrFramesetOnly = 0x0020,
 
   EventNameType_HTMLXUL = 0x0003,
   EventNameType_All = 0xFFFF
@@ -200,24 +198,7 @@ public:
    */
   static JSContext* GetContextFromDocument(nsIDocument *aDocument);
 
-  /**
-   * When a document's scope changes (e.g., from document.open(), call this
-   * function to move all content wrappers from the old scope to the new one.
-   */
-  static nsresult ReparentContentWrappersInScope(JSContext *cx,
-                                                 nsIScriptGlobalObject *aOldScope,
-                                                 nsIScriptGlobalObject *aNewScope);
-
   static bool     IsCallerChrome();
-
-  static bool     IsCallerTrustedForRead();
-
-  static bool     IsCallerTrustedForWrite();
-
-  /**
-   * Check whether a caller has UniversalXPConnect.
-   */
-  static bool     CallerHasUniversalXPConnect();
 
   static bool     IsImageSrcSetDisabled();
 
@@ -289,10 +270,9 @@ public:
    * Returns true if aNode1 is before aNode2 in the same connected
    * tree.
    */
-  static bool PositionIsBefore(nsINode* aNode1,
-                                 nsINode* aNode2)
+  static bool PositionIsBefore(nsINode* aNode1, nsINode* aNode2)
   {
-    return (aNode2->CompareDocPosition(aNode1) &
+    return (aNode2->CompareDocumentPosition(*aNode1) &
       (nsIDOMNode::DOCUMENT_POSITION_PRECEDING |
        nsIDOMNode::DOCUMENT_POSITION_DISCONNECTED)) ==
       nsIDOMNode::DOCUMENT_POSITION_PRECEDING;
@@ -475,10 +455,6 @@ public:
     return sIOService;
   }
 
-#ifdef MOZ_XTF
-  static nsIXTFService* GetXTFService();
-#endif
-
 #ifdef IBMBIDI
   static nsIBidiKeyboard* GetBidiKeyboard();
 #endif
@@ -498,7 +474,6 @@ public:
 
   static nsresult GenerateStateKey(nsIContent* aContent,
                                    const nsIDocument* aDocument,
-                                   nsIStatefulFrame::SpecialStateID aID,
                                    nsACString& aKey);
 
   /**
@@ -665,7 +640,7 @@ public:
                             nsIDocument* aLoadingDocument,
                             nsIPrincipal* aLoadingPrincipal,
                             nsIURI* aReferrer,
-                            imgIDecoderObserver* aObserver,
+                            imgINotificationObserver* aObserver,
                             int32_t aLoadFlags,
                             imgIRequest** aRequest);
 
@@ -673,8 +648,8 @@ public:
    * Obtain an image loader that respects the given document/channel's privacy status.
    * Null document/channel arguments return the public image loader.
    */
-  static imgILoader* GetImgLoaderForDocument(nsIDocument* aDoc);
-  static imgILoader* GetImgLoaderForChannel(nsIChannel* aChannel);
+  static imgLoader* GetImgLoaderForDocument(nsIDocument* aDoc);
+  static imgLoader* GetImgLoaderForChannel(nsIChannel* aChannel);
 
   /**
    * Returns whether the given URI is in the image cache.
@@ -767,6 +742,31 @@ public:
   {
     return sXPConnect;
   }
+
+  /**
+   * Report a non-localized error message to the error console.
+   *   @param aErrorText the error message
+   *   @param aErrorFlags See nsIScriptError.
+   *   @param aCategory Name of module reporting error.
+   *   @param aDocument Reference to the document which triggered the message.
+   *   @param [aURI=nullptr] (Optional) URI of resource containing error.
+   *   @param [aSourceLine=EmptyString()] (Optional) The text of the line that
+              contains the error (may be empty).
+   *   @param [aLineNumber=0] (Optional) Line number within resource
+              containing error.
+   *   @param [aColumnNumber=0] (Optional) Column number within resource
+              containing error.
+              If aURI is null, then aDocument->GetDocumentURI() is used.
+   */
+  static nsresult ReportToConsoleNonLocalized(const nsAString& aErrorText,
+                                              uint32_t aErrorFlags,
+                                              const char *aCategory,
+                                              nsIDocument* aDocument,
+                                              nsIURI* aURI = nullptr,
+                                              const nsAFlatString& aSourceLine
+                                                = EmptyString(),
+                                              uint32_t aLineNumber = 0,
+                                              uint32_t aColumnNumber = 0);
 
   /**
    * Report a localized error message to the error console.
@@ -1299,8 +1299,9 @@ public:
 #ifdef DEBUG
   static bool AreJSObjectsHeld(void* aScriptObjectHolder); 
 
-  static void CheckCCWrapperTraversal(nsISupports* aScriptObjectHolder,
-                                      nsWrapperCache* aCache);
+  static void CheckCCWrapperTraversal(void* aScriptObjectHolder,
+                                      nsWrapperCache* aCache,
+                                      nsScriptObjectTracer* aTracer);
 #endif
 
   static void PreserveWrapper(nsISupports* aScriptObjectHolder,
@@ -1313,15 +1314,23 @@ public:
       MOZ_ASSERT(ccISupports);
       nsXPCOMCycleCollectionParticipant* participant;
       CallQueryInterface(ccISupports, &participant);
-      HoldJSObjects(ccISupports, participant);
+      PreserveWrapper(ccISupports, aCache, participant);
+    }
+  }
+  static void PreserveWrapper(void* aScriptObjectHolder,
+                              nsWrapperCache* aCache,
+                              nsScriptObjectTracer* aTracer)
+  {
+    if (!aCache->PreservingWrapper()) {
+      HoldJSObjects(aScriptObjectHolder, aTracer);
       aCache->SetPreservingWrapper(true);
 #ifdef DEBUG
       // Make sure the cycle collector will be able to traverse to the wrapper.
-      CheckCCWrapperTraversal(ccISupports, aCache);
+      CheckCCWrapperTraversal(aScriptObjectHolder, aCache, aTracer);
 #endif
     }
   }
-  static void ReleaseWrapper(nsISupports* aScriptObjectHolder,
+  static void ReleaseWrapper(void* aScriptObjectHolder,
                              nsWrapperCache* aCache);
   static void TraceWrapper(nsWrapperCache* aCache, TraceCallback aCallback,
                            void *aClosure);
@@ -1813,16 +1822,34 @@ public:
    * Utility method for getElementsByClassName.  aRootNode is the node (either
    * document or element), which getElementsByClassName was called on.
    */
-  static nsresult GetElementsByClassName(nsINode* aRootNode,
-                                         const nsAString& aClasses,
-                                         nsIDOMNodeList** aReturn);
+  static already_AddRefed<nsContentList>
+  GetElementsByClassName(nsINode* aRootNode, const nsAString& aClasses)
+  {
+    NS_PRECONDITION(aRootNode, "Must have root node");
+
+    return NS_GetFuncStringHTMLCollection(aRootNode, MatchClassNames,
+                                          DestroyClassNameArray,
+                                          AllocClassMatchingInfo,
+                                          aClasses);
+  }
+
+  /**
+   * Returns a presshell for this document, if there is one. This will be
+   * aDoc's direct presshell if there is one, otherwise we'll look at all
+   * ancestor documents to try to find a presshell, so for example this can
+   * still find a presshell for documents in display:none frames that have
+   * no presentation. So you have to be careful how you use this presshell ---
+   * getting generic data like a device context or widget from it is OK, but it
+   * might not be this document's actual presentation.
+   */
+  static nsIPresShell* FindPresShellForDocument(nsIDocument* aDoc);
 
   /**
    * Returns the widget for this document if there is one. Looks at all ancestor
    * documents to try to find a widget, so for example this can still find a
    * widget for documents in display:none frames that have no presentation.
    */
-  static nsIWidget *WidgetForDocument(nsIDocument *aDoc);
+  static nsIWidget* WidgetForDocument(nsIDocument* aDoc);
 
   /**
    * Returns a layer manager to use for the given document. Basically we
@@ -2130,6 +2157,18 @@ public:
   static bool GetSVGGlyphExtents(Element *aElement, const gfxMatrix& aSVGToAppSpace,
                                  gfxRect *aResult);
 
+  /**
+   * Check whether a spec feature/version is supported.
+   * @param aObject the object, which should support the feature,
+   *        for example nsIDOMNode or nsIDOMDOMImplementation
+   * @param aFeature the feature ("Views", "Core", "HTML", "Range" ...)
+   * @param aVersion the version ("1.0", "2.0", ...)
+   * @return whether the feature is supported or not
+   */
+  static bool InternalIsSupported(nsISupports* aObject,
+                                  const nsAString& aFeature,
+                                  const nsAString& aVersion);
+
 private:
   static bool InitializeEventTable();
 
@@ -2156,6 +2195,12 @@ private:
 
   static void DropFragmentParsers();
 
+  static bool MatchClassNames(nsIContent* aContent, int32_t aNamespaceID,
+                              nsIAtom* aAtom, void* aData);
+  static void DestroyClassNameArray(void* aData);
+  static void* AllocClassMatchingInfo(nsINode* aRootNode,
+                                      const nsString* aClasses);
+
   static nsIDOMScriptObjectFactory *sDOMScriptObjectFactory;
 
   static nsIXPConnect *sXPConnect;
@@ -2170,16 +2215,12 @@ private:
 
   static nsIIOService *sIOService;
 
-#ifdef MOZ_XTF
-  static nsIXTFService *sXTFService;
-#endif
-
   static bool sImgLoaderInitialized;
   static void InitImgLoader();
 
   // The following four members are initialized lazily
-  static imgILoader* sImgLoader;
-  static imgILoader* sPrivateImgLoader;
+  static imgLoader* sImgLoader;
+  static imgLoader* sPrivateImgLoader;
   static imgICache* sImgCache;
   static imgICache* sPrivateImgCache;
 

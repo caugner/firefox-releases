@@ -1064,6 +1064,7 @@ WebGLContext::DeleteTexture(WebGLTexture *tex)
     if (mBoundFramebuffer)
         mBoundFramebuffer->DetachTexture(tex);
 
+    WebGLuint activeTexture = mActiveTexture;
     for (int32_t i = 0; i < mGLMaxTextureUnits; i++) {
         if ((tex->Target() == LOCAL_GL_TEXTURE_2D && mBound2DTextures[i] == tex) ||
             (tex->Target() == LOCAL_GL_TEXTURE_CUBE_MAP && mBoundCubeMapTextures[i] == tex))
@@ -1072,7 +1073,7 @@ WebGLContext::DeleteTexture(WebGLTexture *tex)
             BindTexture(tex->Target(), static_cast<WebGLTexture*>(nullptr));
         }
     }
-    ActiveTexture(LOCAL_GL_TEXTURE0 + mActiveTexture);
+    ActiveTexture(LOCAL_GL_TEXTURE0 + activeTexture);
 
     tex->RequestDelete();
 }
@@ -1421,11 +1422,11 @@ WebGLContext::DrawArrays(GLenum mode, WebGLint first, WebGLsizei count)
     if (!mCurrentProgram)
         return;
 
-    int32_t maxAllowedCount = 0;
+    uint32_t maxAllowedCount = 0;
     if (!ValidateBuffers(&maxAllowedCount, "drawArrays"))
         return;
 
-    CheckedInt32 checked_firstPlusCount = CheckedInt32(first) + count;
+    CheckedUint32 checked_firstPlusCount = CheckedUint32(first) + count;
 
     if (!checked_firstPlusCount.isValid())
         return ErrorInvalidOperation("drawArrays: overflow in first+count");
@@ -1514,13 +1515,13 @@ WebGLContext::DrawElements(WebGLenum mode, WebGLsizei count, WebGLenum type,
     if (checked_neededByteCount.value() > mBoundElementArrayBuffer->ByteLength())
         return ErrorInvalidOperation("drawElements: bound element array buffer is too small for given count and offset");
 
-    int32_t maxAllowedCount = 0;
+    uint32_t maxAllowedCount = 0;
     if (!ValidateBuffers(&maxAllowedCount, "drawElements"))
-      return;
+        return;
 
-    int32_t maxAllowedIndex = NS_MAX(maxAllowedCount - 1, 0);
-
-    if (!mBoundElementArrayBuffer->Validate(type, maxAllowedIndex, first, count)) {
+    if (!maxAllowedCount ||
+        !mBoundElementArrayBuffer->Validate(type, maxAllowedCount - 1, first, count))
+    {
         return ErrorInvalidOperation(
             "DrawElements: bound vertex attribute buffers do not have sufficient "
             "size for given indices from the bound element array");
@@ -1965,15 +1966,12 @@ WebGLContext::GetParameter(JSContext* cx, WebGLenum pname, ErrorResult& rv)
         case LOCAL_GL_UNPACK_ALIGNMENT:
         case LOCAL_GL_PACK_ALIGNMENT:
         case LOCAL_GL_SUBPIXEL_BITS:
-        case LOCAL_GL_MAX_TEXTURE_SIZE:
-        case LOCAL_GL_MAX_CUBE_MAP_TEXTURE_SIZE:
         case LOCAL_GL_SAMPLE_BUFFERS:
         case LOCAL_GL_SAMPLES:
         case LOCAL_GL_MAX_VERTEX_ATTRIBS:
         case LOCAL_GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS:
         case LOCAL_GL_MAX_VERTEX_TEXTURE_IMAGE_UNITS:
         case LOCAL_GL_MAX_TEXTURE_IMAGE_UNITS:
-        case LOCAL_GL_MAX_RENDERBUFFER_SIZE:
         case LOCAL_GL_RED_BITS:
         case LOCAL_GL_GREEN_BITS:
         case LOCAL_GL_BLUE_BITS:
@@ -1995,6 +1993,15 @@ WebGLContext::GetParameter(JSContext* cx, WebGLenum pname, ErrorResult& rv)
                 ErrorInvalidEnum("getParameter: parameter", pname);
                 return JS::NullValue();
             }
+
+        case LOCAL_GL_MAX_TEXTURE_SIZE:
+            return JS::Int32Value(mGLMaxTextureSize);
+
+        case LOCAL_GL_MAX_CUBE_MAP_TEXTURE_SIZE:
+            return JS::Int32Value(mGLMaxCubeMapTextureSize);
+
+        case LOCAL_GL_MAX_RENDERBUFFER_SIZE:
+            return JS::Int32Value(mGLMaxRenderbufferSize);
 
         case LOCAL_GL_MAX_VERTEX_UNIFORM_VECTORS:
             return JS::Int32Value(mGLMaxVertexUniformVectors);
@@ -3144,7 +3151,7 @@ WebGLContext::ReadPixels(WebGLint x, WebGLint y, WebGLsizei width,
         return;
     }
 
-    if (mCanvasElement->IsWriteOnly() && !nsContentUtils::IsCallerTrustedForRead()) {
+    if (mCanvasElement->IsWriteOnly() && !nsContentUtils::IsCallerChrome()) {
         GenerateWarning("readPixels: Not allowed");
         return rv.Throw(NS_ERROR_DOM_SECURITY_ERR);
     }
@@ -3160,8 +3167,6 @@ WebGLContext::ReadPixels(WebGLint x, WebGLint y, WebGLsizei width,
     WebGLsizei framebufferHeight = framebufferRect ? framebufferRect->Height() : 0;
 
     void* data = pixels->Data();
-    uint32_t dataByteLen = JS_GetTypedArrayByteLength(pixels->Obj(), NULL);
-    int dataType = JS_GetTypedArrayType(pixels->Obj(), NULL);
 
     uint32_t channels = 0;
 
@@ -3199,6 +3204,8 @@ WebGLContext::ReadPixels(WebGLint x, WebGLint y, WebGLsizei width,
             return ErrorInvalidEnum("readPixels: Bad type");
     }
 
+    int dataType = JS_GetArrayBufferViewType(pixels->Obj());
+
     // Check the pixels param type
     if (dataType != requiredDataType)
         return ErrorInvalidOperation("readPixels: Mismatched type/pixels types");
@@ -3215,6 +3222,7 @@ WebGLContext::ReadPixels(WebGLint x, WebGLint y, WebGLsizei width,
     if (!checked_neededByteLength.isValid())
         return ErrorInvalidOperation("readPixels: integer overflow computing the needed buffer size");
 
+    uint32_t dataByteLen = JS_GetTypedArrayByteLength(pixels->Obj());
     if (checked_neededByteLength.value() > dataByteLen)
         return ErrorInvalidOperation("readPixels: buffer too small");
 
@@ -3371,8 +3379,8 @@ WebGLContext::RenderbufferStorage(WebGLenum target, WebGLenum internalformat, We
     if (width < 0 || height < 0)
         return ErrorInvalidValue("renderbufferStorage: width and height must be >= 0");
 
-    if (!mBoundRenderbuffer || !mBoundRenderbuffer->GLName())
-        return ErrorInvalidOperation("renderbufferStorage called on renderbuffer 0");
+    if (width > mGLMaxRenderbufferSize || height > mGLMaxRenderbufferSize)
+        return ErrorInvalidValue("renderbufferStorage: width or height exceeds maximum renderbuffer size");
 
     // certain OpenGL ES renderbuffer formats may not exist on desktop OpenGL
     WebGLenum internalformatForGL = internalformat;
@@ -3637,170 +3645,249 @@ WebGLContext::SurfaceFromElementResultToImageSurface(nsLayoutUtils::SurfaceFromE
     return NS_OK;
 }
 
-#define OBTAIN_UNIFORM_LOCATION(info)                                   \
-    if (!ValidateObjectAllowNull(info, location_object))                \
-        return;                                                         \
-    if (!location_object)                                               \
-        return;                                                         \
-    /* the need to check specifically for !mCurrentProgram here is explained in bug 657556 */ \
-    if (!mCurrentProgram) \
-        return ErrorInvalidOperation("%s: no program is currently bound", info); \
-    if (mCurrentProgram != location_object->Program()) \
-        return ErrorInvalidOperation("%s: this uniform location doesn't correspond to the current program", info); \
-    if (mCurrentProgram->Generation() != location_object->ProgramGeneration())            \
-        return ErrorInvalidOperation("%s: This uniform location is obsolete since the program has been relinked", info); \
-    GLint location = location_object->Location();
 
-#define SIMPLE_ARRAY_METHOD_UNIFORM(name, expectedElemSize, arrayType, ptrType) \
-void                                                                            \
-WebGLContext::name##_base(WebGLUniformLocation *location_object,                \
-                        uint32_t arrayLength, const ptrType* data) {            \
-    if (!IsContextStable()) {                                                   \
-        return;                                                                 \
-    }                                                                           \
-                                                                                \
-    OBTAIN_UNIFORM_LOCATION(#name ": location")                                 \
-    int uniformElemSize = location_object->ElementSize();                       \
-    if (expectedElemSize != uniformElemSize) {                                  \
-        return ErrorInvalidOperation(                                           \
-            #name ": this function expected a uniform of element size %d,"      \
-            " got a uniform of element size %d",                                \
-            expectedElemSize,                                                   \
-            uniformElemSize);                                                   \
-    }                                                                           \
-    const WebGLUniformInfo& info = location_object->Info();                     \
-    if (arrayLength == 0 ||                                                     \
-        arrayLength % expectedElemSize)                                         \
-    {                                                                           \
-        return ErrorInvalidValue("%s: expected an array of length a multiple"   \
-                                 " of %d, got an array of length %d",           \
-                                 #name,                                         \
-                                 expectedElemSize,                              \
-                                 arrayLength);                                  \
-    }                                                                           \
-    if (!info.isArray &&                                                        \
-        arrayLength != expectedElemSize) {                                      \
-        return ErrorInvalidOperation("%s: expected an array of length exactly"  \
-                                     " %d (since this uniform is not an array"  \
-                                     " uniform), got an array of length %d",    \
-                                     #name,                                     \
-                                     expectedElemSize,                          \
-                                     arrayLength);                              \
-    }                                                                           \
-                                                                                \
-    uint32_t numElementsToUpload =                                              \
-        NS_MIN(info.arraySize, arrayLength / expectedElemSize);                 \
-    MakeContextCurrent();                                                       \
-    gl->f##name(location, numElementsToUpload, data);                           \
+void
+WebGLContext::Uniform1i(WebGLUniformLocation *location_object, WebGLint a1)
+{
+    GLint location;
+    if (!ValidateUniformSetter("Uniform1i", location_object, location))
+        return;
+    MakeContextCurrent();
+    gl->fUniform1i(location, a1);
 }
 
-#define SIMPLE_MATRIX_METHOD_UNIFORM(name, dim)                                 \
-void                                                                            \
-WebGLContext::name##_base(WebGLUniformLocation* location_object,                \
-                          WebGLboolean aTranspose, uint32_t arrayLength,        \
-                          const float* data)                                    \
-{                                                                               \
-    uint32_t expectedElemSize = (dim)*(dim);                                    \
-    if (!IsContextStable()) {                                                   \
-        return;                                                                 \
-    }                                                                           \
-                                                                                \
-    OBTAIN_UNIFORM_LOCATION(#name ": location")                                 \
-    uint32_t uniformElemSize = location_object->ElementSize();                  \
-    if (expectedElemSize != uniformElemSize) {                                  \
-        return ErrorInvalidOperation(                                           \
-            #name ": this function expected a uniform of element size %d,"      \
-            " got a uniform of element size %d",                                \
-            expectedElemSize,                                                   \
-            uniformElemSize);                                                   \
-    }                                                                           \
-    const WebGLUniformInfo& info = location_object->Info();                     \
-    if (arrayLength == 0 ||                                                     \
-        arrayLength % expectedElemSize)                                         \
-    {                                                                           \
-        return ErrorInvalidValue("%s: expected an array of length a multiple"   \
-                                 " of %d, got an array of length %d",           \
-                                 #name,                                         \
-                                 expectedElemSize,                              \
-                                 arrayLength);                                  \
-    }                                                                           \
-    if (!info.isArray &&                                                        \
-        arrayLength != expectedElemSize) {                                      \
-        return ErrorInvalidOperation("%s: expected an array of length exactly"  \
-                                     " %d (since this uniform is not an array"  \
-                                     " uniform), got an array of length %d",    \
-                                     #name,                                     \
-                                     expectedElemSize,                          \
-                                     arrayLength);                              \
-    }                                                                           \
-    if (aTranspose) {                                                           \
-        return ErrorInvalidValue(#name ": transpose must be FALSE as per the "  \
-                                 "OpenGL ES 2.0 spec");                         \
-    }                                                                           \
-                                                                                \
-    MakeContextCurrent();                                                       \
-    uint32_t numElementsToUpload =                                              \
-        NS_MIN(info.arraySize, arrayLength / (expectedElemSize));               \
-    gl->f##name(location, numElementsToUpload, false, data); \
+void
+WebGLContext::Uniform2i(WebGLUniformLocation *location_object, WebGLint a1,
+                        WebGLint a2)
+{
+    GLint location;
+    if (!ValidateUniformSetter("Uniform2i", location_object, location))
+        return;
+    MakeContextCurrent();
+    gl->fUniform2i(location, a1, a2);
 }
 
-#define SIMPLE_METHOD_UNIFORM_1(glname, name, t1)                               \
-void WebGLContext::name(WebGLUniformLocation *location_object, t1 a1) {         \
-    if (!IsContextStable())                                                     \
-        return;                                                                 \
-    OBTAIN_UNIFORM_LOCATION(#name ": location")                                 \
-    MakeContextCurrent(); gl->f##glname(location, a1);                          \
+void
+WebGLContext::Uniform3i(WebGLUniformLocation *location_object, WebGLint a1,
+                        WebGLint a2, WebGLint a3)
+{
+    GLint location;
+    if (!ValidateUniformSetter("Uniform3i", location_object, location))
+        return;
+    MakeContextCurrent();
+    gl->fUniform3i(location, a1, a2, a3);
 }
 
-#define SIMPLE_METHOD_UNIFORM_2(glname, name, t1, t2)                           \
-void WebGLContext::name(WebGLUniformLocation *location_object, t1 a1, t2 a2) {  \
-    if (!IsContextStable())                                                     \
-        return;                                                                 \
-    OBTAIN_UNIFORM_LOCATION(#name ": location")                                 \
-    MakeContextCurrent(); gl->f##glname(location, a1, a2);                      \
+void
+WebGLContext::Uniform4i(WebGLUniformLocation *location_object, WebGLint a1,
+                        WebGLint a2, WebGLint a3, WebGLint a4)
+{
+    GLint location;
+    if (!ValidateUniformSetter("Uniform4i", location_object, location))
+        return;
+    MakeContextCurrent();
+    gl->fUniform4i(location, a1, a2, a3, a4);
 }
 
-#define SIMPLE_METHOD_UNIFORM_3(glname, name, t1, t2, t3)                       \
-void WebGLContext::name(WebGLUniformLocation *location_object,                  \
-                        t1 a1, t2 a2, t3 a3) {                                  \
-    if (!IsContextStable())                                                     \
-        return;                                                                 \
-    OBTAIN_UNIFORM_LOCATION(#name ": location")                                 \
-    MakeContextCurrent(); gl->f##glname(location, a1, a2, a3);                  \
+void
+WebGLContext::Uniform1f(WebGLUniformLocation *location_object, WebGLfloat a1)
+{
+    GLint location;
+    if (!ValidateUniformSetter("Uniform1f", location_object, location))
+        return;
+    MakeContextCurrent();
+    gl->fUniform1f(location, a1);
 }
 
-#define SIMPLE_METHOD_UNIFORM_4(glname, name, t1, t2, t3, t4)                   \
-void WebGLContext::name(WebGLUniformLocation *location_object,                  \
-                        t1 a1, t2 a2, t3 a3, t4 a4) {                           \
-    if (!IsContextStable())                                                     \
-        return;                                                                 \
-    OBTAIN_UNIFORM_LOCATION(#name ": location")                                 \
-    MakeContextCurrent(); gl->f##glname(location, a1, a2, a3, a4);              \
+void
+WebGLContext::Uniform2f(WebGLUniformLocation *location_object, WebGLfloat a1,
+                        WebGLfloat a2)
+{
+    GLint location;
+    if (!ValidateUniformSetter("Uniform2f", location_object, location))
+        return;
+    MakeContextCurrent();
+    gl->fUniform2f(location, a1, a2);
 }
 
-SIMPLE_METHOD_UNIFORM_1(Uniform1i, Uniform1i, WebGLint)
-SIMPLE_METHOD_UNIFORM_2(Uniform2i, Uniform2i, WebGLint, WebGLint)
-SIMPLE_METHOD_UNIFORM_3(Uniform3i, Uniform3i, WebGLint, WebGLint, WebGLint)
-SIMPLE_METHOD_UNIFORM_4(Uniform4i, Uniform4i, WebGLint, WebGLint, WebGLint, WebGLint)
+void
+WebGLContext::Uniform3f(WebGLUniformLocation *location_object, WebGLfloat a1,
+                        WebGLfloat a2, WebGLfloat a3)
+{
+    GLint location;
+    if (!ValidateUniformSetter("Uniform3f", location_object, location))
+        return;
+    MakeContextCurrent();
+    gl->fUniform3f(location, a1, a2, a3);
+}
 
-SIMPLE_METHOD_UNIFORM_1(Uniform1f, Uniform1f, WebGLfloat)
-SIMPLE_METHOD_UNIFORM_2(Uniform2f, Uniform2f, WebGLfloat, WebGLfloat)
-SIMPLE_METHOD_UNIFORM_3(Uniform3f, Uniform3f, WebGLfloat, WebGLfloat, WebGLfloat)
-SIMPLE_METHOD_UNIFORM_4(Uniform4f, Uniform4f, WebGLfloat, WebGLfloat, WebGLfloat, WebGLfloat)
+void
+WebGLContext::Uniform4f(WebGLUniformLocation *location_object, WebGLfloat a1,
+                        WebGLfloat a2, WebGLfloat a3, WebGLfloat a4)
+{
+    GLint location;
+    if (!ValidateUniformSetter("Uniform4f", location_object, location))
+        return;
+    MakeContextCurrent();
+    gl->fUniform4f(location, a1, a2, a3, a4);
+}
 
-SIMPLE_ARRAY_METHOD_UNIFORM(Uniform1iv, 1, Int32, WebGLint)
-SIMPLE_ARRAY_METHOD_UNIFORM(Uniform2iv, 2, Int32, WebGLint)
-SIMPLE_ARRAY_METHOD_UNIFORM(Uniform3iv, 3, Int32, WebGLint)
-SIMPLE_ARRAY_METHOD_UNIFORM(Uniform4iv, 4, Int32, WebGLint)
+void
+WebGLContext::Uniform1iv_base(WebGLUniformLocation *location_object,
+                              uint32_t arrayLength, const WebGLint* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformArraySetter("Uniform1iv", 1, location_object, location,
+                                    numElementsToUpload, arrayLength)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniform1iv(location, numElementsToUpload, data);
+}
 
-SIMPLE_ARRAY_METHOD_UNIFORM(Uniform1fv, 1, Float32, WebGLfloat)
-SIMPLE_ARRAY_METHOD_UNIFORM(Uniform2fv, 2, Float32, WebGLfloat)
-SIMPLE_ARRAY_METHOD_UNIFORM(Uniform3fv, 3, Float32, WebGLfloat)
-SIMPLE_ARRAY_METHOD_UNIFORM(Uniform4fv, 4, Float32, WebGLfloat)
+void
+WebGLContext::Uniform2iv_base(WebGLUniformLocation *location_object,
+                              uint32_t arrayLength, const WebGLint* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformArraySetter("Uniform2iv", 2, location_object, location,
+                                    numElementsToUpload, arrayLength)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniform2iv(location, numElementsToUpload, data);
+}
 
-SIMPLE_MATRIX_METHOD_UNIFORM(UniformMatrix2fv, 2)
-SIMPLE_MATRIX_METHOD_UNIFORM(UniformMatrix3fv, 3)
-SIMPLE_MATRIX_METHOD_UNIFORM(UniformMatrix4fv, 4)
+void
+WebGLContext::Uniform3iv_base(WebGLUniformLocation *location_object,
+                              uint32_t arrayLength, const WebGLint* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformArraySetter("Uniform3iv", 3, location_object, location,
+                                    numElementsToUpload, arrayLength)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniform3iv(location, numElementsToUpload, data);
+}
+
+void
+WebGLContext::Uniform4iv_base(WebGLUniformLocation *location_object,
+                              uint32_t arrayLength, const WebGLint* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformArraySetter("Uniform4iv", 4, location_object, location,
+                                    numElementsToUpload, arrayLength)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniform4iv(location, numElementsToUpload, data);
+}
+
+void
+WebGLContext::Uniform1fv_base(WebGLUniformLocation *location_object,
+                              uint32_t arrayLength, const WebGLfloat* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformArraySetter("Uniform1fv", 1, location_object, location,
+                                    numElementsToUpload, arrayLength)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniform1fv(location, numElementsToUpload, data);
+}
+
+void
+WebGLContext::Uniform2fv_base(WebGLUniformLocation *location_object,
+                              uint32_t arrayLength, const WebGLfloat* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformArraySetter("Uniform2fv", 2, location_object, location,
+                                    numElementsToUpload, arrayLength)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniform2fv(location, numElementsToUpload, data);
+}
+
+void
+WebGLContext::Uniform3fv_base(WebGLUniformLocation *location_object,
+                              uint32_t arrayLength, const WebGLfloat* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformArraySetter("Uniform3fv", 3, location_object, location,
+                                    numElementsToUpload, arrayLength)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniform3fv(location, numElementsToUpload, data);
+}
+
+void
+WebGLContext::Uniform4fv_base(WebGLUniformLocation *location_object,
+                              uint32_t arrayLength, const WebGLfloat* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformArraySetter("Uniform4fv", 4, location_object, location,
+                                    numElementsToUpload, arrayLength)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniform4fv(location, numElementsToUpload, data);
+}
+
+void
+WebGLContext::UniformMatrix2fv_base(WebGLUniformLocation* location_object,
+                                    WebGLboolean aTranspose, uint32_t arrayLength,
+                                    const float* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformMatrixArraySetter("UniformMatrix2fv", 2, location_object, location,
+                                         numElementsToUpload, arrayLength, aTranspose)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniformMatrix2fv(location, numElementsToUpload, false, data);
+}
+
+void
+WebGLContext::UniformMatrix3fv_base(WebGLUniformLocation* location_object,
+                                    WebGLboolean aTranspose, uint32_t arrayLength,
+                                    const float* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformMatrixArraySetter("UniformMatrix3fv", 3, location_object, location,
+                                         numElementsToUpload, arrayLength, aTranspose)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniformMatrix3fv(location, numElementsToUpload, false, data);
+}
+
+void
+WebGLContext::UniformMatrix4fv_base(WebGLUniformLocation* location_object,
+                                    WebGLboolean aTranspose, uint32_t arrayLength,
+                                    const float* data)
+{
+    uint32_t numElementsToUpload;
+    GLint location;
+    if (!ValidateUniformMatrixArraySetter("UniformMatrix4fv", 4, location_object, location,
+                                         numElementsToUpload, arrayLength, aTranspose)) {
+        return;
+    }
+    MakeContextCurrent();
+    gl->fUniformMatrix4fv(location, numElementsToUpload, false, data);
+}
 
 void
 WebGLContext::VertexAttrib1f(WebGLuint index, WebGLfloat x0)
@@ -3883,36 +3970,86 @@ WebGLContext::VertexAttrib4f(WebGLuint index, WebGLfloat x0, WebGLfloat x1,
     }
 }
 
-#define SIMPLE_ARRAY_METHOD_NO_COUNT(name, cnt, ptrType)                        \
-void                                                                            \
-WebGLContext::name##_base(WebGLuint idx, uint32_t arrayLength,                  \
-                          const WebGLfloat* ptr)                                \
-{                                                                               \
-    if (!IsContextStable()) {                                                   \
-        return;                                                                 \
-    }                                                                           \
-    if (arrayLength < cnt) {                                                    \
-        return ErrorInvalidOperation(#name ": array must be >= %d elements",    \
-                                     cnt);                                      \
-    }                                                                           \
-                                                                                \
-    MakeContextCurrent();                                                       \
-    if (idx) {                                                                  \
-        gl->f##name(idx, ptr);                                                  \
-    } else {                                                                    \
-        mVertexAttrib0Vector[0] = ptr[0];                                       \
-        mVertexAttrib0Vector[1] = cnt > 1 ? ptr[1] : ptrType(0);                \
-        mVertexAttrib0Vector[2] = cnt > 2 ? ptr[2] : ptrType(0);                \
-        mVertexAttrib0Vector[3] = cnt > 3 ? ptr[3] : ptrType(1);                \
-        if (gl->IsGLES2())                                                      \
-            gl->f##name(idx, ptr);                                              \
-    }                                                                           \
+
+void
+WebGLContext::VertexAttrib1fv_base(WebGLuint idx, uint32_t arrayLength,
+                                   const WebGLfloat* ptr)
+{
+    if (!ValidateAttribArraySetter("VertexAttrib1fv", 1, arrayLength))
+        return;
+
+    MakeContextCurrent();
+    if (idx) {
+        gl->fVertexAttrib1fv(idx, ptr);
+    } else {
+        mVertexAttrib0Vector[0] = ptr[0];
+        mVertexAttrib0Vector[1] = WebGLfloat(0);
+        mVertexAttrib0Vector[2] = WebGLfloat(0);
+        mVertexAttrib0Vector[3] = WebGLfloat(1);
+        if (gl->IsGLES2())
+            gl->fVertexAttrib1fv(idx, ptr);
+    }
 }
 
-SIMPLE_ARRAY_METHOD_NO_COUNT(VertexAttrib1fv, 1, WebGLfloat)
-SIMPLE_ARRAY_METHOD_NO_COUNT(VertexAttrib2fv, 2, WebGLfloat)
-SIMPLE_ARRAY_METHOD_NO_COUNT(VertexAttrib3fv, 3, WebGLfloat)
-SIMPLE_ARRAY_METHOD_NO_COUNT(VertexAttrib4fv, 4, WebGLfloat)
+void
+WebGLContext::VertexAttrib2fv_base(WebGLuint idx, uint32_t arrayLength,
+                                   const WebGLfloat* ptr)
+{
+    if (!ValidateAttribArraySetter("VertexAttrib2fv", 2, arrayLength))
+        return;
+
+    MakeContextCurrent();
+    if (idx) {
+        gl->fVertexAttrib2fv(idx, ptr);
+    } else {
+        mVertexAttrib0Vector[0] = ptr[0];
+        mVertexAttrib0Vector[1] = ptr[1];
+        mVertexAttrib0Vector[2] = WebGLfloat(0);
+        mVertexAttrib0Vector[3] = WebGLfloat(1);
+        if (gl->IsGLES2())
+            gl->fVertexAttrib2fv(idx, ptr);
+    }
+}
+
+void
+WebGLContext::VertexAttrib3fv_base(WebGLuint idx, uint32_t arrayLength,
+                                   const WebGLfloat* ptr)
+{
+    if (!ValidateAttribArraySetter("VertexAttrib3fv", 3, arrayLength))
+        return;
+
+    MakeContextCurrent();
+    if (idx) {
+        gl->fVertexAttrib3fv(idx, ptr);
+    } else {
+        mVertexAttrib0Vector[0] = ptr[0];
+        mVertexAttrib0Vector[1] = ptr[1];
+        mVertexAttrib0Vector[2] = ptr[2];
+        mVertexAttrib0Vector[3] = WebGLfloat(1);
+        if (gl->IsGLES2())
+            gl->fVertexAttrib3fv(idx, ptr);
+    }
+}
+
+void
+WebGLContext::VertexAttrib4fv_base(WebGLuint idx, uint32_t arrayLength,
+                                   const WebGLfloat* ptr)
+{
+    if (!ValidateAttribArraySetter("VertexAttrib4fv", 4, arrayLength))
+        return;
+
+    MakeContextCurrent();
+    if (idx) {
+        gl->fVertexAttrib4fv(idx, ptr);
+    } else {
+        mVertexAttrib0Vector[0] = ptr[0];
+        mVertexAttrib0Vector[1] = ptr[1];
+        mVertexAttrib0Vector[2] = ptr[2];
+        mVertexAttrib0Vector[3] = ptr[3];
+        if (gl->IsGLES2())
+            gl->fVertexAttrib4fv(idx, ptr);
+    }
+}
 
 void
 WebGLContext::UseProgram(WebGLProgram *prog)
@@ -4008,7 +4145,6 @@ WebGLContext::CompileShader(WebGLShader *shader)
     ShShaderOutput targetShaderSourceLanguage = gl->IsGLES2() ? SH_ESSL_OUTPUT : SH_GLSL_OUTPUT;
     bool useShaderSourceTranslation = true;
 
-#if defined(USE_ANGLE)
     if (shader->NeedsTranslation() && mShaderValidation) {
         ShHandle compiler = 0;
         ShBuiltInResources resources;
@@ -4178,7 +4314,6 @@ WebGLContext::CompileShader(WebGLShader *shader)
         gl->fGetShaderiv(shadername, LOCAL_GL_COMPILE_STATUS, &ok);
         shader->SetCompileStatus(ok);
     }
-#endif
 }
 
 void
@@ -4731,7 +4866,7 @@ WebGLContext::TexImage2D_base(WebGLenum target, WebGLint level, WebGLenum intern
 
         free(tempZeroData);
     }
-    
+
     if (error) {
         GenerateWarning("texImage2D generated error %s", ErrorName(error));
         return;
@@ -4743,7 +4878,7 @@ WebGLContext::TexImage2D_base(WebGLenum target, WebGLint level, WebGLenum intern
 }
 
 void
-WebGLContext::TexImage2D(JSContext* cx, WebGLenum target, WebGLint level,
+WebGLContext::TexImage2D(WebGLenum target, WebGLint level,
                          WebGLenum internalformat, WebGLsizei width,
                          WebGLsizei height, WebGLint border, WebGLenum format,
                          WebGLenum type, ArrayBufferView *pixels, ErrorResult& rv)
@@ -4754,12 +4889,12 @@ WebGLContext::TexImage2D(JSContext* cx, WebGLenum target, WebGLint level,
     return TexImage2D_base(target, level, internalformat, width, height, 0, border, format, type,
                            pixels ? pixels->Data() : 0,
                            pixels ? pixels->Length() : 0,
-                           pixels ? (int)JS_GetTypedArrayType(pixels->Obj(), cx) : -1,
+                           pixels ? (int)JS_GetArrayBufferViewType(pixels->Obj()) : -1,
                            WebGLTexelConversions::Auto, false);
 }
 
 void
-WebGLContext::TexImage2D(JSContext* cx, WebGLenum target, WebGLint level,
+WebGLContext::TexImage2D(WebGLenum target, WebGLint level,
                          WebGLenum internalformat, WebGLenum format,
                          WebGLenum type, ImageData* pixels, ErrorResult& rv)
 {
@@ -4771,9 +4906,9 @@ WebGLContext::TexImage2D(JSContext* cx, WebGLenum target, WebGLint level,
         return ErrorInvalidValue("texImage2D: null ImageData");
     }
     
-    Uint8ClampedArray arr(cx, pixels->GetDataObject());
-    return TexImage2D_base(target, level, internalformat, pixels->GetWidth(),
-                           pixels->GetHeight(), 4*pixels->GetWidth(), 0,
+    Uint8ClampedArray arr(pixels->GetDataObject());
+    return TexImage2D_base(target, level, internalformat, pixels->Width(),
+                           pixels->Height(), 4*pixels->Width(), 0,
                            format, type, arr.Data(), arr.Length(), -1,
                            WebGLTexelConversions::RGBA8, false);
 }
@@ -4892,7 +5027,7 @@ WebGLContext::TexSubImage2D_base(WebGLenum target, WebGLint level,
 }
 
 void
-WebGLContext::TexSubImage2D(JSContext* cx, WebGLenum target, WebGLint level,
+WebGLContext::TexSubImage2D(WebGLenum target, WebGLint level,
                             WebGLint xoffset, WebGLint yoffset,
                             WebGLsizei width, WebGLsizei height,
                             WebGLenum format, WebGLenum type,
@@ -4908,12 +5043,12 @@ WebGLContext::TexSubImage2D(JSContext* cx, WebGLenum target, WebGLint level,
     return TexSubImage2D_base(target, level, xoffset, yoffset,
                               width, height, 0, format, type,
                               pixels->Data(), pixels->Length(),
-                              JS_GetTypedArrayType(pixels->Obj(), cx),
+                              JS_GetArrayBufferViewType(pixels->Obj()),
                               WebGLTexelConversions::Auto, false);
 }
 
 void
-WebGLContext::TexSubImage2D(JSContext* cx, WebGLenum target, WebGLint level,
+WebGLContext::TexSubImage2D(WebGLenum target, WebGLint level,
                             WebGLint xoffset, WebGLint yoffset,
                             WebGLenum format, WebGLenum type, ImageData* pixels,
                             ErrorResult& rv)
@@ -4924,10 +5059,10 @@ WebGLContext::TexSubImage2D(JSContext* cx, WebGLenum target, WebGLint level,
     if (!pixels)
         return ErrorInvalidValue("texSubImage2D: pixels must not be null!");
 
-    Uint8ClampedArray arr(cx, pixels->GetDataObject());
+    Uint8ClampedArray arr(pixels->GetDataObject());
     return TexSubImage2D_base(target, level, xoffset, yoffset,
-                              pixels->GetWidth(), pixels->GetHeight(),
-                              4*pixels->GetWidth(), format, type,
+                              pixels->Width(), pixels->Height(),
+                              4*pixels->Width(), format, type,
                               arr.Data(), arr.Length(),
                               -1,
                               WebGLTexelConversions::RGBA8, false);

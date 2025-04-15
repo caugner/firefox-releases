@@ -10,7 +10,6 @@
 #include "nsSVGElement.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/SVGTransformListBinding.h"
-#include "dombindings.h"
 #include "nsError.h"
 
 // local helper functions
@@ -45,12 +44,12 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(DOMSVGTransformList)
     } else {
       tmp->mAList->mBaseVal = nullptr;
     }
-    NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mAList)
+    NS_IMPL_CYCLE_COLLECTION_UNLINK(mAList)
   }
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(DOMSVGTransformList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mAList)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAList)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(DOMSVGTransformList)
@@ -78,22 +77,8 @@ JSObject*
 DOMSVGTransformList::WrapObject(JSContext *cx, JSObject *scope,
                                 bool *triedToWrap)
 {
-  JSObject* obj = mozilla::dom::SVGTransformListBinding::Wrap(cx, scope, this,
-                                                              triedToWrap);
-  if (obj || *triedToWrap) {
-    return obj;
-  }
-
-  *triedToWrap = true;
-  return mozilla::dom::oldproxybindings::SVGTransformList::create(cx, scope,
-                                                                  this);
-}
-
-nsIDOMSVGTransform*
-DOMSVGTransformList::GetItemAt(uint32_t aIndex)
-{
-  ErrorResult rv;
-  return GetItem(aIndex, rv);
+  return mozilla::dom::SVGTransformListBinding::Wrap(cx, scope, this,
+                                                     triedToWrap);
 }
 
 void

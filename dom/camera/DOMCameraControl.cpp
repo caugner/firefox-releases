@@ -23,11 +23,11 @@ DOMCI_DATA(CameraControl, nsICameraControl)
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMCameraControl)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsDOMCameraControl)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDOMCapabilities)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDOMCapabilities)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDOMCameraControl)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDOMCapabilities)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDOMCapabilities)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsDOMCameraControl)
@@ -378,6 +378,12 @@ nsDOMCameraControl::GetPreviewStreamVideoMode(const JS::Value& aOptions, nsICame
   NS_ENSURE_SUCCESS(rv, rv);
 
   return mCameraControl->GetPreviewStreamVideoMode(&options, onSuccess, onError);
+}
+
+NS_IMETHODIMP
+nsDOMCameraControl::ReleaseHardware(nsICameraReleaseCallback* onSuccess, nsICameraErrorCallback* onError)
+{
+  return mCameraControl->ReleaseHardware(onSuccess, onError);
 }
 
 class GetCameraResult : public nsRunnable

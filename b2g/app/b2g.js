@@ -83,12 +83,6 @@ pref("browser.download.manager.focusWhenStarting", false);
 pref("browser.download.manager.flashCount", 2);
 pref("browser.download.manager.displayedHistoryDays", 7);
 
-/* download alerts (disabled above) */
-pref("alerts.slideIncrement", 1);
-pref("alerts.slideIncrementTime", 10);
-pref("alerts.totalOpenTime", 6000);
-pref("alerts.height", 50);
-
 /* download helper */
 pref("browser.helperApps.deleteTempFileOnExit", false);
 
@@ -180,7 +174,8 @@ pref("content.sink.perf_parse_time", 50000000);
 
 // Maximum scripts runtime before showing an alert
 pref("dom.max_chrome_script_run_time", 0); // disable slow script dialog for chrome
-pref("dom.max_script_run_time", 20);
+// Bug 817230 - disable the dialog until we implement its checkbox properly
+pref("dom.max_script_run_time", 0);
 
 // plugins
 pref("plugin.disable", true);
@@ -240,16 +235,24 @@ pref("editor.singleLine.pasteNewlines", 2);
 pref("ui.dragThresholdX", 25);
 pref("ui.dragThresholdY", 25);
 
-// Layers Acceleration
-pref("layers.acceleration.disabled", false);
-#ifndef XP_WIN
-//TODO: turn this on for Windows in bug 808016
+// Layers Acceleration.  We can only have nice things on gonk, because
+// they're not maintained anywhere else.
+#ifndef MOZ_WIDGET_GONK
+pref("dom.ipc.tabs.disabled", true);
+pref("layers.offmainthreadcomposition.enabled", false);
+pref("layers.offmainthreadcomposition.animate-opacity", false);
+pref("layers.offmainthreadcomposition.animate-transform", false);
+pref("layers.async-video.enabled", false);
+#else
+pref("dom.ipc.tabs.disabled", false);
 pref("layers.offmainthreadcomposition.enabled", true);
-#endif
+pref("layers.acceleration.disabled", false);
 pref("layers.offmainthreadcomposition.animate-opacity", true);
 pref("layers.offmainthreadcomposition.animate-transform", true);
+pref("layers.offmainthreadcomposition.throttle-animations", true);
 pref("layers.async-video.enabled", true);
 pref("layers.async-pan-zoom.enabled", true);
+#endif
 
 // Web Notifications
 pref("notification.feature.enabled", true);
@@ -264,7 +267,7 @@ pref("media.preload.auto", 2);    // preload metadata if preload=auto
 pref("media.cache_size", 4096);    // 4MB media cache
 
 // The default number of decoded video frames that are enqueued in
-// nsBuiltinDecoderReader's mVideoQueue.
+// MediaDecoderReader's mVideoQueue.
 pref("media.video-queue.default-size", 3);
 
 //  0: don't show fullscreen keyboard
@@ -279,10 +282,14 @@ pref("content.image.allow_locking", true);
 pref("image.mem.min_discard_timeout_ms", 10000);
 pref("image.mem.max_decoded_image_kb", 5120); /* 5MB */
 
+// XXX this isn't a good check for "are touch events supported", but
+// we don't really have a better one at the moment.
+#ifdef MOZ_WIDGET_GONK
 // enable touch events interfaces
 pref("dom.w3c_touch_events.enabled", 1);
 pref("dom.w3c_touch_events.safetyX", 0); // escape borders in units of 1/240"
 pref("dom.w3c_touch_events.safetyY", 120); // escape borders in units of 1/240"
+#endif
 
 #ifdef MOZ_SAFE_BROWSING
 // Safe browsing does nothing unless this pref is set
@@ -352,13 +359,6 @@ pref("content.ime.strict_policy", true);
 // $ adb shell start
 pref("browser.dom.window.dump.enabled", false);
 
-
-
-// Temporarily relax file:// origin checks so that we can use <img>s
-// from other dirs as webgl textures and more.  Remove me when we have
-// installable apps or wifi support.
-pref("security.fileuri.strict_origin_policy", false);
-
 // Default Content Security Policy to apply to privileged and certified apps
 pref("security.apps.privileged.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self' 'unsafe-inline'");
 pref("security.apps.certified.CSP.default", "default-src *; script-src 'self'; object-src 'none'; style-src 'self'");
@@ -385,7 +385,6 @@ pref("dom.mozBrowserFramesEnabled", true);
 // We'll run out of PIDs on UNIX-y systems before we hit this limit.
 pref("dom.ipc.processCount", 100000);
 
-pref("dom.ipc.tabs.disabled", false);
 pref("dom.ipc.browser_frames.oop_by_default", false);
 
 // Temporary permission hack for WebSMS
@@ -401,6 +400,7 @@ pref("dom.mozAlarms.enabled", true);
 // NetworkStats
 #ifdef MOZ_B2G_RIL
 pref("dom.mozNetworkStats.enabled", true);
+pref("ril.lastKnownMcc", 724);
 #endif
 
 // WebSettings
@@ -457,9 +457,6 @@ pref("shutdown.watchdog.timeoutSecs", 5);
 pref("b2g.update.apply-prompt-timeout", 60000); // milliseconds
 // Amount of time to wait after the user is idle before prompting to apply an update
 pref("b2g.update.apply-idle-timeout", 600000); // milliseconds
-// Amount of time the updater waits for the process to exit cleanly before
-// forcefully exiting the process
-pref("b2g.update.self-destruct-timeout", 5000); // milliseconds
 
 pref("app.update.enabled", true);
 pref("app.update.auto", false);
@@ -478,6 +475,14 @@ pref("app.update.interval", 86400); // 1 day
 // Don't throttle background updates.
 pref("app.update.download.backgroundInterval", 0);
 
+// Retry update socket connections every 30 seconds in the cases of certain kinds of errors
+pref("app.update.socket.retryTimeout", 30000);
+
+// Max of 20 consecutive retries (total 10 minutes) before giving up and marking
+// the update download as failed.
+// Note: Offline errors will always retry when the network comes online.
+pref("app.update.socket.maxErrors", 20);
+
 // Enable update logging for now, to diagnose growing pains in the
 // field.
 pref("app.update.log", true);
@@ -493,7 +498,7 @@ pref("extensions.getAddons.cache.enabled", false);
 
 // Context Menu
 pref("ui.click_hold_context_menus", true);
-pref("ui.click_hold_context_menus.delay", 1000);
+pref("ui.click_hold_context_menus.delay", 750);
 
 // Enable device storage
 pref("device.storage.enabled", true);
@@ -542,6 +547,10 @@ pref("hal.processPriorityManager.gonk.masterOomScoreAdjust", 0);
 pref("hal.processPriorityManager.gonk.masterKillUnderMB", 1);
 pref("hal.processPriorityManager.gonk.foregroundOomScoreAdjust", 67);
 pref("hal.processPriorityManager.gonk.foregroundKillUnderMB", 4);
+pref("hal.processPriorityManager.gonk.backgroundPerceivableOomScoreAdjust", 134);
+pref("hal.processPriorityManager.gonk.backgroundPerceivebleKillUnderMB", 5);
+pref("hal.processPriorityManager.gonk.backgroundHomescreenOomScoreAdjust", 200);
+pref("hal.processPriorityManager.gonk.backgroundHomescreenKillUnderMB", 5);
 pref("hal.processPriorityManager.gonk.backgroundOomScoreAdjust", 400);
 pref("hal.processPriorityManager.gonk.backgroundKillUnderMB", 8);
 pref("hal.processPriorityManager.gonk.notifyLowMemUnderMB", 10);
@@ -587,6 +596,13 @@ pref("browser.prompt.allowNative", false);
 // a restart is required to enable a new value.
 pref("network.activity.blipIntervalMilliseconds", 250);
 
+// By default we want the NetworkManager service to manage Gecko's offline
+// status for us according to the state of Wifi/cellular data connections.
+// In some environments, such as the emulator or hardware with other network
+// connectivity, this is not desireable, however, in which case this pref
+// can be flipped to false.
+pref("network.gonk.manage-offline-status", true);
+
 pref("jsloader.reuseGlobal", true);
 
 // Enable font inflation for browser tab content.
@@ -597,3 +613,10 @@ pref("font.size.inflation.disabledInMasterProcess", true);
 // Enable freeing dirty pages when minimizing memory; this reduces memory
 // consumption when applications are sent to the background.
 pref("memory.free_dirty_pages", true);
+
+// Wait up to this much milliseconds when orientation changed
+pref("layers.orientation.sync.timeout", 1000);
+
+// Don't discard WebGL contexts for foreground apps on memory
+// pressure.
+pref("webgl.can-lose-context-in-foreground", false);

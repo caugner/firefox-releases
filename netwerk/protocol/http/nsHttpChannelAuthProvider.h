@@ -115,6 +115,7 @@ private:
     nsCString                         mHost;
     int32_t                           mPort;
     bool                              mUsingSSL;
+    bool                              mIsPrivate;
 
     nsISupports                      *mProxyAuthContinuationState;
     nsCString                         mProxyAuthType;

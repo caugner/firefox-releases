@@ -182,7 +182,7 @@ let dataProviders = {
       // include the suggested version, which the consumer likely needs to plug
       // into a format string from a localization file.  Rather than returning
       // a string in some cases and an array in others, return an array always.
-      let msg = ["no information"];
+      let msg = [""];
       try {
         var status = gfxInfo.getFeatureStatus(feature);
       }
@@ -381,5 +381,13 @@ let dataProviders = {
       }
     }
     done(data);
+  },
+
+  userJS: function userJS(done) {
+    let userJSFile = Services.dirsvc.get("PrefD", Ci.nsIFile);
+    userJSFile.append("user.js");
+    done({
+      exists: userJSFile.exists() && userJSFile.fileSize > 0,
+    });
   },
 };

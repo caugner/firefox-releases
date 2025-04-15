@@ -40,7 +40,6 @@
 #include "nsIDOMSmartCardEvent.h"
 #include "nsIDOMCrypto.h"
 #include "nsThreadUtils.h"
-#include "nsAutoPtr.h"
 #include "nsCRT.h"
 #include "nsCRLInfo.h"
 #include "nsCertOverrideService.h"
@@ -83,10 +82,8 @@
 #include "nsILocalFileWin.h"
 #endif
 
-extern "C" {
 #include "pkcs12.h"
 #include "p12plcy.h"
-}
 
 using namespace mozilla;
 using namespace mozilla::psm;
@@ -327,7 +324,7 @@ nsNSSComponent::nsNSSComponent()
    mNSSInitialized(false),
    mCrlTimerLock("nsNSSComponent.mCrlTimerLock"),
    mThreadList(nullptr),
-   mCertVerificationThread(NULL)
+   mCertVerificationThread(nullptr)
 {
 #ifdef PR_LOGGING
   if (!gPIPNSSLog)
@@ -365,7 +362,7 @@ nsNSSComponent::deleteBackgroundThreads()
 void
 nsNSSComponent::createBackgroundThreads()
 {
-  NS_ASSERTION(mCertVerificationThread == nullptr,
+  NS_ASSERTION(!mCertVerificationThread,
                "Cert verification thread already created.");
 
   mCertVerificationThread = new nsCertVerificationThread;
@@ -392,7 +389,7 @@ nsNSSComponent::~nsNSSComponent()
       }
       crlDownloadTimerOn = false;
     }
-    if(crlsScheduledForDownload != nullptr){
+    if (crlsScheduledForDownload) {
       crlsScheduledForDownload->Reset();
       delete crlsScheduledForDownload;
     }
@@ -421,9 +418,6 @@ nsNSSComponent::PostEvent(const nsAString &eventType,
 {
   nsCOMPtr<nsIRunnable> runnable = 
                                new nsTokenEventRunnable(eventType, tokenName);
-  if (!runnable) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
 
   return NS_DispatchToMainThread(runnable);
 }
@@ -495,7 +489,7 @@ nsNSSComponent::DispatchEventToWindow(nsIDOMWindow *domWin,
   // NOTE: it's not an error to say that we aren't going to dispatch
   // the event.
   {
-    nsCOMPtr<nsIDOMWindow> domWindow = domWin;
+    nsCOMPtr<nsIWindowCrypto> domWindow = do_QueryInterface(domWin);
     if (!domWindow) {
       return NS_OK; // nope, it's not an internal window
     }
@@ -519,7 +513,7 @@ nsNSSComponent::DispatchEventToWindow(nsIDOMWindow *domWin,
   // find the document
   nsCOMPtr<nsIDOMDocument> doc;
   rv = domWin->GetDocument(getter_AddRefs(doc));
-  if (doc == nullptr) {
+  if (!doc) {
     return NS_FAILED(rv) ? rv : NS_ERROR_FAILURE;
   }
 
@@ -538,10 +532,6 @@ nsNSSComponent::DispatchEventToWindow(nsIDOMWindow *domWin,
                                           new nsSmartCardEvent(tokenName);
   // init the smart card event, fail here if we can't complete the 
   // initialization.
-  if (!smartCardEvent) {
-    return NS_ERROR_OUT_OF_MEMORY;
-  }
-
   rv = smartCardEvent->Init(event);
   if (NS_FAILED(rv)) {
     return rv;
@@ -668,16 +658,10 @@ nsNSSComponent::LaunchSmartCardThread(SECMODModule *module)
 {
   SmartCardMonitoringThread *newThread;
   if (SECMOD_HasRemovableSlots(module)) {
-    if (mThreadList == nullptr) {
+    if (!mThreadList) {
       mThreadList = new SmartCardThreadList();
-      if (!mThreadList) {
-        return NS_ERROR_OUT_OF_MEMORY;
-      }
     }
     newThread = new SmartCardMonitoringThread(module);
-    if (!newThread) {
-	return NS_ERROR_OUT_OF_MEMORY;
-    }
     // newThread is adopted by the add.
     return mThreadList->Add(newThread);
   }
@@ -717,8 +701,8 @@ nss_addEscape(const char *string, char quote)
     }
 
     newString = (char*)PORT_ZAlloc(escapes+size+1);
-    if (newString == NULL) {
-        return NULL;
+    if (!newString) {
+        return nullptr;
     }
 
     for (src=string, dest=newString; *src; src++,dest++) {
@@ -1011,12 +995,6 @@ static CipherPref CipherPrefs[] = {
  {"security.ssl3.rsa_rc4_128_sha", SSL_RSA_WITH_RC4_128_SHA}, // 128-bit RC4 encryption with RSA and a SHA1 MAC
  {"security.ssl3.rsa_fips_des_ede3_sha", SSL_RSA_FIPS_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with RSA and a SHA1 MAC (FIPS)
  {"security.ssl3.rsa_des_ede3_sha", SSL_RSA_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with RSA and a SHA1 MAC
- {"security.ssl3.rsa_fips_des_sha", SSL_RSA_FIPS_WITH_DES_CBC_SHA}, // 56-bit DES encryption with RSA and a SHA1 MAC (FIPS)
- {"security.ssl3.rsa_des_sha", SSL_RSA_WITH_DES_CBC_SHA}, // 56-bit DES encryption with RSA and a SHA1 MAC
- {"security.ssl3.rsa_1024_rc4_56_sha", TLS_RSA_EXPORT1024_WITH_RC4_56_SHA}, // 56-bit RC4 encryption with RSA and a SHA1 MAC (export)
- {"security.ssl3.rsa_1024_des_cbc_sha", TLS_RSA_EXPORT1024_WITH_DES_CBC_SHA}, // 56-bit DES encryption with RSA and a SHA1 MAC (export)
- {"security.ssl3.rsa_rc4_40_md5", SSL_RSA_EXPORT_WITH_RC4_40_MD5}, // 40-bit RC4 encryption with RSA and an MD5 MAC (export)
- {"security.ssl3.rsa_rc2_40_md5", SSL_RSA_EXPORT_WITH_RC2_CBC_40_MD5}, // 40-bit RC2 encryption with RSA and an MD5 MAC (export)
  /* Extra SSL3/TLS cipher suites */
  {"security.ssl3.dhe_rsa_camellia_256_sha", TLS_DHE_RSA_WITH_CAMELLIA_256_CBC_SHA}, // 256-bit Camellia encryption with RSA, DHE, and a SHA1 MAC
  {"security.ssl3.dhe_dss_camellia_256_sha", TLS_DHE_DSS_WITH_CAMELLIA_256_CBC_SHA}, // 256-bit Camellia encryption with DSA, DHE, and a SHA1 MAC
@@ -1030,22 +1008,18 @@ static CipherPref CipherPrefs[] = {
  {"security.ssl3.ecdhe_ecdsa_aes_128_sha", TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with ECDHE-ECDSA and a SHA1 MAC
  {"security.ssl3.ecdhe_ecdsa_des_ede3_sha", TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with ECDHE-ECDSA and a SHA1 MAC
  {"security.ssl3.ecdhe_ecdsa_rc4_128_sha", TLS_ECDHE_ECDSA_WITH_RC4_128_SHA}, // 128-bit RC4 encryption with ECDHE-ECDSA and a SHA1 MAC
- {"security.ssl3.ecdhe_ecdsa_null_sha", TLS_ECDHE_ECDSA_WITH_NULL_SHA}, // No encryption with ECDHE-ECDSA and a SHA1 MAC
  {"security.ssl3.ecdhe_rsa_aes_256_sha", TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA}, // 256-bit AES encryption with ECDHE-RSA and a SHA1 MAC
  {"security.ssl3.ecdhe_rsa_aes_128_sha", TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with ECDHE-RSA and a SHA1 MAC
  {"security.ssl3.ecdhe_rsa_des_ede3_sha", TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with ECDHE-RSA and a SHA1 MAC
  {"security.ssl3.ecdhe_rsa_rc4_128_sha", TLS_ECDHE_RSA_WITH_RC4_128_SHA}, // 128-bit RC4 encryption with ECDHE-RSA and a SHA1 MAC
- {"security.ssl3.ecdhe_rsa_null_sha", TLS_ECDHE_RSA_WITH_NULL_SHA}, // No encryption with ECDHE-RSA and a SHA1 MAC
  {"security.ssl3.ecdh_ecdsa_aes_256_sha", TLS_ECDH_ECDSA_WITH_AES_256_CBC_SHA}, // 256-bit AES encryption with ECDH-ECDSA and a SHA1 MAC
  {"security.ssl3.ecdh_ecdsa_aes_128_sha", TLS_ECDH_ECDSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with ECDH-ECDSA and a SHA1 MAC
  {"security.ssl3.ecdh_ecdsa_des_ede3_sha", TLS_ECDH_ECDSA_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with ECDH-ECDSA and a SHA1 MAC
  {"security.ssl3.ecdh_ecdsa_rc4_128_sha", TLS_ECDH_ECDSA_WITH_RC4_128_SHA}, // 128-bit RC4 encryption with ECDH-ECDSA and a SHA1 MAC
- {"security.ssl3.ecdh_ecdsa_null_sha", TLS_ECDH_ECDSA_WITH_NULL_SHA}, // No encryption with ECDH-ECDSA and a SHA1 MAC
  {"security.ssl3.ecdh_rsa_aes_256_sha", TLS_ECDH_RSA_WITH_AES_256_CBC_SHA}, // 256-bit AES encryption with ECDH-RSA and a SHA1 MAC
  {"security.ssl3.ecdh_rsa_aes_128_sha", TLS_ECDH_RSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with ECDH-RSA and a SHA1 MAC
  {"security.ssl3.ecdh_rsa_des_ede3_sha", TLS_ECDH_RSA_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with ECDH-RSA and a SHA1 MAC
  {"security.ssl3.ecdh_rsa_rc4_128_sha", TLS_ECDH_RSA_WITH_RC4_128_SHA}, // 128-bit RC4 encryption with ECDH-RSA and a SHA1 MAC
- {"security.ssl3.ecdh_rsa_null_sha", TLS_ECDH_RSA_WITH_NULL_SHA}, // No encryption with ECDH-RSA and a SHA1 MAC
  {"security.ssl3.dhe_rsa_camellia_128_sha", TLS_DHE_RSA_WITH_CAMELLIA_128_CBC_SHA}, // 128-bit Camellia encryption with RSA, DHE, and a SHA1 MAC
  {"security.ssl3.dhe_dss_camellia_128_sha", TLS_DHE_DSS_WITH_CAMELLIA_128_CBC_SHA}, // 128-bit Camellia encryption with DSA, DHE, and a SHA1 MAC
  {"security.ssl3.rsa_camellia_128_sha", TLS_RSA_WITH_CAMELLIA_128_CBC_SHA}, // 128-bit Camellia encryption with RSA and a SHA1 MAC
@@ -1054,44 +1028,21 @@ static CipherPref CipherPrefs[] = {
  {"security.ssl3.rsa_aes_128_sha", TLS_RSA_WITH_AES_128_CBC_SHA}, // 128-bit AES encryption with RSA and a SHA1 MAC
  {"security.ssl3.dhe_rsa_des_ede3_sha", SSL_DHE_RSA_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with RSA, DHE, and a SHA1 MAC
  {"security.ssl3.dhe_dss_des_ede3_sha", SSL_DHE_DSS_WITH_3DES_EDE_CBC_SHA}, // 168-bit Triple DES with DSA, DHE, and a SHA1 MAC
- {"security.ssl3.dhe_rsa_des_sha", SSL_DHE_RSA_WITH_DES_CBC_SHA}, // 56-bit DES encryption with RSA, DHE, and a SHA1 MAC
- {"security.ssl3.dhe_dss_des_sha", SSL_DHE_DSS_WITH_DES_CBC_SHA}, // 56-bit DES encryption with DSA, DHE, and a SHA1 MAC
- {"security.ssl3.rsa_null_sha", SSL_RSA_WITH_NULL_SHA}, // No encryption with RSA authentication and a SHA1 MAC
- {"security.ssl3.rsa_null_md5", SSL_RSA_WITH_NULL_MD5}, // No encryption with RSA authentication and an MD5 MAC
  {"security.ssl3.rsa_seed_sha", TLS_RSA_WITH_SEED_CBC_SHA}, // SEED encryption with RSA and a SHA1 MAC
- {NULL, 0} /* end marker */
+ {nullptr, 0} /* end marker */
 };
 
 static void
 setNonPkixOcspEnabled(int32_t ocspEnabled, nsIPrefBranch * pref)
 {
-  switch (ocspEnabled) {
-  case 0:
+  // Note: this preference is numeric vs bolean because previously we
+  // supported more than two options.
+  if (!ocspEnabled) {
     CERT_DisableOCSPChecking(CERT_GetDefaultCertDB());
     CERT_DisableOCSPDefaultResponder(CERT_GetDefaultCertDB());
-    break;
-  case 1:
+  } else {
     CERT_EnableOCSPChecking(CERT_GetDefaultCertDB());
     CERT_DisableOCSPDefaultResponder(CERT_GetDefaultCertDB());
-    break;
-  case 2:
-    {
-      char *signingCA = nullptr;
-      char *url = nullptr;
-
-      // Get the signing CA and service url //
-      pref->GetCharPref("security.OCSP.signingCA", &signingCA);
-      pref->GetCharPref("security.OCSP.URL", &url);
-
-      // Set OCSP up
-      CERT_EnableOCSPChecking(CERT_GetDefaultCertDB());
-      CERT_SetOCSPDefaultResponder(CERT_GetDefaultCertDB(), url, signingCA);
-      CERT_EnableOCSPDefaultResponder(CERT_GetDefaultCertDB());
-
-      nsMemory::Free(signingCA);
-      nsMemory::Free(url);
-    }
-    break;
   }
 }
 
@@ -1147,7 +1098,7 @@ void nsNSSComponent::setValidationOptions(nsIPrefBranch * pref)
                            ocspMode_FailureIsVerificationFailure
                            : ocspMode_FailureIsNotAVerificationFailure);
 
-  nsRefPtr<nsCERTValInParamWrapper> newCVIN = new nsCERTValInParamWrapper;
+  RefPtr<nsCERTValInParamWrapper> newCVIN(new nsCERTValInParamWrapper);
   if (NS_SUCCEEDED(newCVIN->Construct(
       aiaDownloadEnabled ? 
         nsCERTValInParamWrapper::missing_cert_download_on : nsCERTValInParamWrapper::missing_cert_download_off,
@@ -1206,8 +1157,6 @@ nsNSSComponent::PostCRLImportEvent(const nsCSubstring &urlString,
 {
   //Create the event
   nsCOMPtr<nsIRunnable> event = new CRLDownloadEvent(urlString, listener);
-  if (!event)
-    return NS_ERROR_OUT_OF_MEMORY;
 
   //Get a handle to the ui thread
   return NS_DispatchToMainThread(event);
@@ -1232,8 +1181,8 @@ nsresult nsNSSComponent::DownloadCrlSilently()
   crlsScheduledForDownload->Put(&hashKey,(void *)nullptr);
     
   //Set up the download handler
-  nsRefPtr<PSMContentDownloader> psmDownloader =
-      new PSMContentDownloader(PSMContentDownloader::PKCS7_CRL);
+  RefPtr<PSMContentDownloader> psmDownloader(
+      new PSMContentDownloader(PSMContentDownloader::PKCS7_CRL));
   psmDownloader->setSilentDownload(true);
   psmDownloader->setCrlAutodownloadKey(mCrlUpdateKey);
   
@@ -1390,7 +1339,6 @@ nsNSSComponent::DefineNextTimer()
 {
   PRTime nextFiring;
   PRTime now = PR_Now();
-  uint64_t diff;
   uint32_t interval;
   uint32_t primaryDelay = CRL_AUTOUPDATE_DEFAULT_DELAY;
   nsresult rv;
@@ -1421,8 +1369,7 @@ nsNSSComponent::DefineNextTimer()
      
   //Define the firing interval, from NOW
   if ( now < nextFiring) {
-    diff = nextFiring - now;
-    LL_L2UI(interval, diff);
+    interval = uint32_t(nextFiring - now);
     //Now, we are doing 32 operations - so, don't need LL_ functions...
     interval = interval/PR_USEC_PER_MSEC;
   }else {
@@ -1446,7 +1393,7 @@ nsNSSComponent::StopCRLUpdateTimer()
   
   //If it is at all running. 
   if (mUpdateTimerInitialized) {
-    if(crlsScheduledForDownload != nullptr){
+    if (crlsScheduledForDownload) {
       crlsScheduledForDownload->Reset();
       delete crlsScheduledForDownload;
       crlsScheduledForDownload = nullptr;
@@ -1652,7 +1599,7 @@ nsNSSComponent::InitializeNSS(bool showWarningBox)
     if (NS_FAILED(rv)) {
       PR_LOG(gPIPNSSLog, PR_LOG_ERROR, ("Unable to get profile directory\n"));
       ConfigureInternalPKCS11Token();
-      SECStatus init_rv = NSS_NoDB_Init(NULL);
+      SECStatus init_rv = NSS_NoDB_Init(nullptr);
       if (init_rv != SECSuccess) {
         nsPSMInitPanic::SetPanic();
         return NS_ERROR_NOT_AVAILABLE;
@@ -1778,8 +1725,6 @@ nsNSSComponent::InitializeNSS(bool showWarningBox)
       mNSSInitialized = true;
 
       ::NSS_SetDomesticPolicy();
-      //  SSL_EnableCipher(SSL_RSA_WITH_NULL_MD5, SSL_ALLOWED);
-      //  SSL_EnableCipher(SSL_RSA_WITH_NULL_SHA, SSL_ALLOWED);
 
       PK11_SetPasswordFunc(PK11PasswordPrompt);
 
@@ -2071,7 +2016,7 @@ static PRBool DecryptionAllowedCallback(SECAlgorithmID *algid,
 
 static void * GetPasswordKeyCallback(void *arg, void *handle)
 {
-  return NULL;
+  return nullptr;
 }
 
 NS_IMETHODIMP
@@ -2640,7 +2585,7 @@ nsNSSComponent::IsNSSInitialized(bool *initialized)
 }
 
 NS_IMETHODIMP
-nsNSSComponent::GetDefaultCERTValInParam(nsRefPtr<nsCERTValInParamWrapper> &out)
+nsNSSComponent::GetDefaultCERTValInParam(RefPtr<nsCERTValInParamWrapper> &out)
 {
   MutexAutoLock lock(mutex);
   if (!mNSSInitialized)
@@ -2650,7 +2595,7 @@ nsNSSComponent::GetDefaultCERTValInParam(nsRefPtr<nsCERTValInParamWrapper> &out)
 }
 
 NS_IMETHODIMP
-nsNSSComponent::GetDefaultCERTValInParamLocalOnly(nsRefPtr<nsCERTValInParamWrapper> &out)
+nsNSSComponent::GetDefaultCERTValInParamLocalOnly(RefPtr<nsCERTValInParamWrapper> &out)
 {
   MutexAutoLock lock(mutex);
   if (!mNSSInitialized)
@@ -3162,10 +3107,12 @@ PSMContentDownloader::OnStartRequest(nsIRequest* request, nsISupports* context)
   // Get the URI //
   channel->GetURI(getter_AddRefs(mURI));
 
-  int32_t contentLength;
+  int64_t contentLength;
   rv = channel->GetContentLength(&contentLength);
   if (NS_FAILED(rv) || contentLength <= 0)
     contentLength = kDefaultCertAllocLength;
+  if (contentLength > INT32_MAX)
+    return NS_ERROR_OUT_OF_MEMORY;
   
   mBufferOffset = 0;
   mBufferSize = 0;
@@ -3173,7 +3120,7 @@ PSMContentDownloader::OnStartRequest(nsIRequest* request, nsISupports* context)
   if (!mByteData)
     return NS_ERROR_OUT_OF_MEMORY;
   
-  mBufferSize = contentLength;
+  mBufferSize = int32_t(contentLength);
   return NS_OK;
 }
 
@@ -3194,7 +3141,7 @@ PSMContentDownloader::OnDataAvailable(nsIRequest* request,
       size_t newSize = (mBufferOffset + aLength) *2; // grow some more than needed
       char *newBuffer;
       newBuffer = (char*)nsMemory::Realloc(mByteData, newSize);
-      if (newBuffer == nullptr) {
+      if (!newBuffer) {
         return NS_ERROR_OUT_OF_MEMORY;
       }
       mByteData = newBuffer;

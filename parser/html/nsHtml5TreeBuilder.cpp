@@ -30,7 +30,6 @@
 
 #define nsHtml5TreeBuilder_cpp__
 
-#include "prtypes.h"
 #include "nsIAtom.h"
 #include "nsHtml5AtomTable.h"
 #include "nsITimer.h"
@@ -52,6 +51,7 @@
 #include "nsAHtml5TreeBuilderState.h"
 #include "nsHtml5Highlighter.h"
 #include "nsHtml5ViewSourceUtils.h"
+#include "mozilla/Likely.h"
 
 #include "nsHtml5Tokenizer.h"
 #include "nsHtml5MetaScanner.h"
@@ -124,28 +124,21 @@ void
 nsHtml5TreeBuilder::doctype(nsIAtom* name, nsString* publicIdentifier, nsString* systemIdentifier, bool forceQuirks)
 {
   needToDropLF = false;
-  if (!isInForeign()) {
-    switch(mode) {
-      case NS_HTML5TREE_BUILDER_INITIAL: {
-        nsString* emptyString = nsHtml5Portability::newEmptyString();
-        appendDoctypeToDocument(!name ? nsHtml5Atoms::emptystring : name, !publicIdentifier ? emptyString : publicIdentifier, !systemIdentifier ? emptyString : systemIdentifier);
-        nsHtml5Portability::releaseString(emptyString);
-        if (isQuirky(name, publicIdentifier, systemIdentifier, forceQuirks)) {
-          errQuirkyDoctype();
-          documentModeInternal(QUIRKS_MODE, publicIdentifier, systemIdentifier, false);
-        } else if (isAlmostStandards(publicIdentifier, systemIdentifier)) {
-          errAlmostStandardsDoctype();
-          documentModeInternal(ALMOST_STANDARDS_MODE, publicIdentifier, systemIdentifier, false);
-        } else {
-          documentModeInternal(STANDARDS_MODE, publicIdentifier, systemIdentifier, false);
-        }
-        mode = NS_HTML5TREE_BUILDER_BEFORE_HTML;
-        return;
-      }
-      default: {
-        break;
-      }
+  if (!isInForeign() && mode == NS_HTML5TREE_BUILDER_INITIAL) {
+    nsString* emptyString = nsHtml5Portability::newEmptyString();
+    appendDoctypeToDocument(!name ? nsHtml5Atoms::emptystring : name, !publicIdentifier ? emptyString : publicIdentifier, !systemIdentifier ? emptyString : systemIdentifier);
+    nsHtml5Portability::releaseString(emptyString);
+    if (isQuirky(name, publicIdentifier, systemIdentifier, forceQuirks)) {
+      errQuirkyDoctype();
+      documentModeInternal(QUIRKS_MODE, publicIdentifier, systemIdentifier, false);
+    } else if (isAlmostStandards(publicIdentifier, systemIdentifier)) {
+      errAlmostStandardsDoctype();
+      documentModeInternal(ALMOST_STANDARDS_MODE, publicIdentifier, systemIdentifier, false);
+    } else {
+      documentModeInternal(STANDARDS_MODE, publicIdentifier, systemIdentifier, false);
     }
+    mode = NS_HTML5TREE_BUILDER_BEFORE_HTML;
+    return;
   }
   errStrayDoctype();
   return;
@@ -636,6 +629,36 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
       }
     }
     switch(mode) {
+      case NS_HTML5TREE_BUILDER_IN_ROW: {
+        switch(group) {
+          case NS_HTML5TREE_BUILDER_TD_OR_TH: {
+            clearStackBackTo(findLastOrRoot(NS_HTML5TREE_BUILDER_TR));
+            appendToCurrentNodeAndPushElement(elementName, attributes);
+            mode = NS_HTML5TREE_BUILDER_IN_CELL;
+            insertMarker();
+            attributes = nullptr;
+            NS_HTML5_BREAK(starttagloop);
+          }
+          case NS_HTML5TREE_BUILDER_CAPTION:
+          case NS_HTML5TREE_BUILDER_COL:
+          case NS_HTML5TREE_BUILDER_COLGROUP:
+          case NS_HTML5TREE_BUILDER_TBODY_OR_THEAD_OR_TFOOT:
+          case NS_HTML5TREE_BUILDER_TR: {
+            eltPos = findLastOrRoot(NS_HTML5TREE_BUILDER_TR);
+            if (!eltPos) {
+              MOZ_ASSERT(fragment);
+              errNoTableRowToClose();
+              NS_HTML5_BREAK(starttagloop);
+            }
+            clearStackBackTo(eltPos);
+            pop();
+            mode = NS_HTML5TREE_BUILDER_IN_TABLE_BODY;
+            continue;
+          }
+          default:
+            ; // fall through
+        }
+      }
       case NS_HTML5TREE_BUILDER_IN_TABLE_BODY: {
         switch(group) {
           case NS_HTML5TREE_BUILDER_TR: {
@@ -666,36 +689,6 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
               mode = NS_HTML5TREE_BUILDER_IN_TABLE;
               continue;
             }
-          }
-          default:
-            ; // fall through
-        }
-      }
-      case NS_HTML5TREE_BUILDER_IN_ROW: {
-        switch(group) {
-          case NS_HTML5TREE_BUILDER_TD_OR_TH: {
-            clearStackBackTo(findLastOrRoot(NS_HTML5TREE_BUILDER_TR));
-            appendToCurrentNodeAndPushElement(elementName, attributes);
-            mode = NS_HTML5TREE_BUILDER_IN_CELL;
-            insertMarker();
-            attributes = nullptr;
-            NS_HTML5_BREAK(starttagloop);
-          }
-          case NS_HTML5TREE_BUILDER_CAPTION:
-          case NS_HTML5TREE_BUILDER_COL:
-          case NS_HTML5TREE_BUILDER_COLGROUP:
-          case NS_HTML5TREE_BUILDER_TBODY_OR_THEAD_OR_TFOOT:
-          case NS_HTML5TREE_BUILDER_TR: {
-            eltPos = findLastOrRoot(NS_HTML5TREE_BUILDER_TR);
-            if (!eltPos) {
-              MOZ_ASSERT(fragment);
-              errNoTableRowToClose();
-              NS_HTML5_BREAK(starttagloop);
-            }
-            clearStackBackTo(eltPos);
-            pop();
-            mode = NS_HTML5TREE_BUILDER_IN_TABLE_BODY;
-            continue;
           }
           default:
             ; // fall through
@@ -747,7 +740,7 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
                 NS_HTML5_BREAK(starttagloop);
               }
               generateImpliedEndTags();
-              if (!!NS_UNLIKELY(mViewSource) && !isCurrent(nsHtml5Atoms::table)) {
+              if (!!MOZ_UNLIKELY(mViewSource) && !isCurrent(nsHtml5Atoms::table)) {
                 errNoCheckUnclosedElementsOnStack();
               }
               while (currentPtr >= eltPos) {
@@ -814,7 +807,7 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
               NS_HTML5_BREAK(starttagloop);
             }
             generateImpliedEndTags();
-            if (!!NS_UNLIKELY(mViewSource) && currentPtr != eltPos) {
+            if (!!MOZ_UNLIKELY(mViewSource) && currentPtr != eltPos) {
               errNoCheckUnclosedElementsOnStack();
             }
             while (currentPtr >= eltPos) {
@@ -985,14 +978,14 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
                 nsHtml5StackNode* node = stack[eltPos];
                 if (node->getGroup() == group) {
                   generateImpliedEndTagsExceptFor(node->name);
-                  if (!!NS_UNLIKELY(mViewSource) && eltPos != currentPtr) {
+                  if (!!MOZ_UNLIKELY(mViewSource) && eltPos != currentPtr) {
                     errUnclosedElementsImplied(eltPos, name);
                   }
                   while (currentPtr >= eltPos) {
                     pop();
                   }
                   break;
-                } else if (node->isScoping() || (node->isSpecial() && node->name != nsHtml5Atoms::p && node->name != nsHtml5Atoms::address && node->name != nsHtml5Atoms::div)) {
+                } else if (node->isSpecial() && node->name != nsHtml5Atoms::p && node->name != nsHtml5Atoms::address && node->name != nsHtml5Atoms::div) {
                   break;
                 }
                 eltPos--;
@@ -1052,7 +1045,7 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
               if (eltPos != NS_HTML5TREE_BUILDER_NOT_FOUND_ON_STACK) {
                 errFooSeenWhenFooOpen(name);
                 generateImpliedEndTags();
-                if (!!NS_UNLIKELY(mViewSource) && !isCurrent(name)) {
+                if (!!MOZ_UNLIKELY(mViewSource) && !isCurrent(name)) {
                   errUnclosedElementsImplied(eltPos, name);
                 }
                 while (currentPtr >= eltPos) {
@@ -2192,7 +2185,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               NS_HTML5_BREAK(endtagloop);
             }
             generateImpliedEndTags();
-            if (!!NS_UNLIKELY(mViewSource) && currentPtr != eltPos) {
+            if (!!MOZ_UNLIKELY(mViewSource) && currentPtr != eltPos) {
               errUnclosedElements(eltPos, name);
             }
             while (currentPtr >= eltPos) {
@@ -2209,7 +2202,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               NS_HTML5_BREAK(endtagloop);
             }
             generateImpliedEndTags();
-            if (!!NS_UNLIKELY(mViewSource) && currentPtr != eltPos) {
+            if (!!MOZ_UNLIKELY(mViewSource) && currentPtr != eltPos) {
               errUnclosedElements(eltPos, name);
             }
             while (currentPtr >= eltPos) {
@@ -2242,7 +2235,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               NS_HTML5_BREAK(endtagloop);
             }
             generateImpliedEndTags();
-            if (!!NS_UNLIKELY(mViewSource) && !isCurrent(name)) {
+            if (!!MOZ_UNLIKELY(mViewSource) && !isCurrent(name)) {
               errUnclosedElements(eltPos, name);
             }
             while (currentPtr >= eltPos) {
@@ -2284,7 +2277,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               NS_HTML5_BREAK(endtagloop);
             }
             MOZ_ASSERT(currentPtr >= 1);
-            if (NS_UNLIKELY(mViewSource)) {
+            if (MOZ_UNLIKELY(mViewSource)) {
               for (int32_t i = 2; i <= currentPtr; i++) {
                 switch(stack[i]->getGroup()) {
                   case NS_HTML5TREE_BUILDER_DD_OR_DT:
@@ -2314,7 +2307,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               errStrayEndTag(name);
               NS_HTML5_BREAK(endtagloop);
             }
-            if (NS_UNLIKELY(mViewSource)) {
+            if (MOZ_UNLIKELY(mViewSource)) {
               for (int32_t i = 0; i <= currentPtr; i++) {
                 switch(stack[i]->getGroup()) {
                   case NS_HTML5TREE_BUILDER_DD_OR_DT:
@@ -2348,7 +2341,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               errStrayEndTag(name);
             } else {
               generateImpliedEndTags();
-              if (!!NS_UNLIKELY(mViewSource) && !isCurrent(name)) {
+              if (!!MOZ_UNLIKELY(mViewSource) && !isCurrent(name)) {
                 errUnclosedElements(eltPos, name);
               }
               while (currentPtr >= eltPos) {
@@ -2369,7 +2362,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               NS_HTML5_BREAK(endtagloop);
             }
             generateImpliedEndTags();
-            if (!!NS_UNLIKELY(mViewSource) && !isCurrent(name)) {
+            if (!!MOZ_UNLIKELY(mViewSource) && !isCurrent(name)) {
               errUnclosedElements(eltPos, name);
             }
             removeFromStack(eltPos);
@@ -2390,7 +2383,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
             }
             generateImpliedEndTagsExceptFor(nsHtml5Atoms::p);
             MOZ_ASSERT(eltPos != NS_HTML5TREE_BUILDER_NOT_FOUND_ON_STACK);
-            if (!!NS_UNLIKELY(mViewSource) && eltPos != currentPtr) {
+            if (!!MOZ_UNLIKELY(mViewSource) && eltPos != currentPtr) {
               errUnclosedElements(eltPos, name);
             }
             while (currentPtr >= eltPos) {
@@ -2404,7 +2397,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               errNoElementToCloseButEndTagSeen(name);
             } else {
               generateImpliedEndTagsExceptFor(name);
-              if (!!NS_UNLIKELY(mViewSource) && eltPos != currentPtr) {
+              if (!!MOZ_UNLIKELY(mViewSource) && eltPos != currentPtr) {
                 errUnclosedElements(eltPos, name);
               }
               while (currentPtr >= eltPos) {
@@ -2419,7 +2412,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               errNoElementToCloseButEndTagSeen(name);
             } else {
               generateImpliedEndTagsExceptFor(name);
-              if (!!NS_UNLIKELY(mViewSource) && eltPos != currentPtr) {
+              if (!!MOZ_UNLIKELY(mViewSource) && eltPos != currentPtr) {
                 errUnclosedElements(eltPos, name);
               }
               while (currentPtr >= eltPos) {
@@ -2434,7 +2427,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               errStrayEndTag(name);
             } else {
               generateImpliedEndTags();
-              if (!!NS_UNLIKELY(mViewSource) && !isCurrent(name)) {
+              if (!!MOZ_UNLIKELY(mViewSource) && !isCurrent(name)) {
                 errUnclosedElements(eltPos, name);
               }
               while (currentPtr >= eltPos) {
@@ -2450,7 +2443,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               errStrayEndTag(name);
             } else {
               generateImpliedEndTags();
-              if (!!NS_UNLIKELY(mViewSource) && !isCurrent(name)) {
+              if (!!MOZ_UNLIKELY(mViewSource) && !isCurrent(name)) {
                 errUnclosedElements(eltPos, name);
               }
               while (currentPtr >= eltPos) {
@@ -2517,7 +2510,7 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               nsHtml5StackNode* node = stack[eltPos];
               if (node->name == name) {
                 generateImpliedEndTags();
-                if (!!NS_UNLIKELY(mViewSource) && !isCurrent(name)) {
+                if (!!MOZ_UNLIKELY(mViewSource) && !isCurrent(name)) {
                   errUnclosedElements(eltPos, name);
                 }
                 while (currentPtr >= eltPos) {
@@ -2530,6 +2523,45 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
               }
               eltPos--;
             }
+          }
+        }
+      }
+      case NS_HTML5TREE_BUILDER_IN_HEAD: {
+        switch(group) {
+          case NS_HTML5TREE_BUILDER_HEAD: {
+            pop();
+            mode = NS_HTML5TREE_BUILDER_AFTER_HEAD;
+            NS_HTML5_BREAK(endtagloop);
+          }
+          case NS_HTML5TREE_BUILDER_BR:
+          case NS_HTML5TREE_BUILDER_HTML:
+          case NS_HTML5TREE_BUILDER_BODY: {
+            pop();
+            mode = NS_HTML5TREE_BUILDER_AFTER_HEAD;
+            continue;
+          }
+          default: {
+            errStrayEndTag(name);
+            NS_HTML5_BREAK(endtagloop);
+          }
+        }
+      }
+      case NS_HTML5TREE_BUILDER_IN_HEAD_NOSCRIPT: {
+        switch(group) {
+          case NS_HTML5TREE_BUILDER_NOSCRIPT: {
+            pop();
+            mode = NS_HTML5TREE_BUILDER_IN_HEAD;
+            NS_HTML5_BREAK(endtagloop);
+          }
+          case NS_HTML5TREE_BUILDER_BR: {
+            errStrayEndTag(name);
+            pop();
+            mode = NS_HTML5TREE_BUILDER_IN_HEAD;
+            continue;
+          }
+          default: {
+            errStrayEndTag(name);
+            NS_HTML5_BREAK(endtagloop);
           }
         }
       }
@@ -2708,45 +2740,6 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
           case NS_HTML5TREE_BUILDER_HTML:
           case NS_HTML5TREE_BUILDER_BODY: {
             appendToCurrentNodeAndPushHeadElement(nsHtml5HtmlAttributes::EMPTY_ATTRIBUTES);
-            mode = NS_HTML5TREE_BUILDER_IN_HEAD;
-            continue;
-          }
-          default: {
-            errStrayEndTag(name);
-            NS_HTML5_BREAK(endtagloop);
-          }
-        }
-      }
-      case NS_HTML5TREE_BUILDER_IN_HEAD: {
-        switch(group) {
-          case NS_HTML5TREE_BUILDER_HEAD: {
-            pop();
-            mode = NS_HTML5TREE_BUILDER_AFTER_HEAD;
-            NS_HTML5_BREAK(endtagloop);
-          }
-          case NS_HTML5TREE_BUILDER_BR:
-          case NS_HTML5TREE_BUILDER_HTML:
-          case NS_HTML5TREE_BUILDER_BODY: {
-            pop();
-            mode = NS_HTML5TREE_BUILDER_AFTER_HEAD;
-            continue;
-          }
-          default: {
-            errStrayEndTag(name);
-            NS_HTML5_BREAK(endtagloop);
-          }
-        }
-      }
-      case NS_HTML5TREE_BUILDER_IN_HEAD_NOSCRIPT: {
-        switch(group) {
-          case NS_HTML5TREE_BUILDER_NOSCRIPT: {
-            pop();
-            mode = NS_HTML5TREE_BUILDER_IN_HEAD;
-            NS_HTML5_BREAK(endtagloop);
-          }
-          case NS_HTML5TREE_BUILDER_BR: {
-            errStrayEndTag(name);
-            pop();
             mode = NS_HTML5TREE_BUILDER_IN_HEAD;
             continue;
           }
@@ -2997,7 +2990,7 @@ void
 nsHtml5TreeBuilder::closeTheCell(int32_t eltPos)
 {
   generateImpliedEndTags();
-  if (!!NS_UNLIKELY(mViewSource) && eltPos != currentPtr) {
+  if (!!MOZ_UNLIKELY(mViewSource) && eltPos != currentPtr) {
     errUnclosedElementsCell(eltPos);
   }
   while (currentPtr >= eltPos) {
@@ -3104,7 +3097,7 @@ nsHtml5TreeBuilder::implicitlyCloseP()
     return;
   }
   generateImpliedEndTagsExceptFor(nsHtml5Atoms::p);
-  if (!!NS_UNLIKELY(mViewSource) && eltPos != currentPtr) {
+  if (!!MOZ_UNLIKELY(mViewSource) && eltPos != currentPtr) {
     errUnclosedElementsImplied(eltPos, nsHtml5Atoms::p);
   }
   while (currentPtr >= eltPos) {

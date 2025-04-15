@@ -38,16 +38,7 @@ protected:
   RecvHasSupport(bool* aHasSupport) MOZ_OVERRIDE;
 
   virtual bool
-  RecvGetNumberOfMessagesForText(const nsString& aText, uint16_t* aResult) MOZ_OVERRIDE;
-
-  virtual bool
-  RecvSaveReceivedMessage(const nsString& aSender, const nsString& aBody, const nsString& aMessageClass, const uint64_t& aDate, int32_t* aId) MOZ_OVERRIDE;
-
-  virtual bool
-  RecvSaveSentMessage(const nsString& aRecipient, const nsString& aBody, const uint64_t& aDate, int32_t* aId) MOZ_OVERRIDE;
-
-  virtual bool
-  RecvSetMessageDeliveryStatus(const int32_t& aMessageId, const nsString& aDeliveryStatus) MOZ_OVERRIDE;
+  RecvGetSegmentInfoForText(const nsString& aText, SmsSegmentInfoData* aResult) MOZ_OVERRIDE;
 
   virtual bool
   RecvClearMessageList(const int32_t& aListId) MOZ_OVERRIDE;

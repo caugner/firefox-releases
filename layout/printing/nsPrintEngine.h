@@ -204,6 +204,11 @@ public:
     return mIsCreatingPrintPreview;
   }
 
+  void SetDisallowSelectionPrint(bool aDisallowSelectionPrint)
+  {
+    mDisallowSelectionPrint = aDisallowSelectionPrint;
+  }
+
 protected:
 
   nsresult CommonPrint(bool aIsPrintPreview, nsIPrintSettings* aPrintSettings,
@@ -280,6 +285,8 @@ protected:
 
   int32_t mLoadCounter;
   bool mDidLoadDataForPrinting;
+  bool mIsDestroying;
+  bool mDisallowSelectionPrint;
 
   nsresult AfterNetworkPrint(bool aHandleError);
 

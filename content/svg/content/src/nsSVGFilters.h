@@ -251,8 +251,8 @@ public:
 
   NS_FORWARD_NSIDOMSVGELEMENT(nsSVGFEImageElementBase::)
 
-  NS_FORWARD_NSIDOMNODE(nsSVGFEImageElementBase::)
-  NS_FORWARD_NSIDOMELEMENT(nsSVGFEImageElementBase::)
+  NS_FORWARD_NSIDOMNODE_TO_NSINODE
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   // nsIContent
   NS_IMETHOD_(bool) IsAttributeMapped(const nsIAtom* aAttribute) const;
@@ -267,16 +267,7 @@ public:
   virtual void UnbindFromTree(bool aDeep, bool aNullParent);
   virtual nsEventStates IntrinsicState() const;
 
-  // imgIDecoderObserver
-  NS_IMETHOD OnStopDecode(imgIRequest *aRequest, nsresult status,
-                          const PRUnichar *statusArg);
-  // imgIContainerObserver
-  NS_IMETHOD FrameChanged(imgIRequest* aRequest,
-                          imgIContainer *aContainer,
-                          const nsIntRect *aDirtyRect);
-  // imgIContainerObserver
-  NS_IMETHOD OnStartContainer(imgIRequest *aRequest,
-                              imgIContainer *aContainer);
+  NS_IMETHODIMP Notify(imgIRequest *aRequest, int32_t aType, const nsIntRect* aData);
 
   void MaybeLoadSVGImage();
 

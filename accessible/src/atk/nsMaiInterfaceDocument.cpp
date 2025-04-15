@@ -9,6 +9,9 @@
 #include "AccessibleWrap.h"
 #include "DocAccessible.h"
 #include "nsMai.h"
+#include "mozilla/Likely.h"
+
+using namespace mozilla::a11y;
 
 static const char* const kDocTypeName = "W3C-doctype";
 static const char* const kDocUrlName = "DocURL";
@@ -26,7 +29,7 @@ void
 documentInterfaceInitCB(AtkDocumentIface *aIface)
 {
     NS_ASSERTION(aIface, "Invalid Interface");
-    if(NS_UNLIKELY(!aIface))
+    if(MOZ_UNLIKELY(!aIface))
         return;
 
     /*

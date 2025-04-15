@@ -44,7 +44,6 @@
 
 #include "nsThreadUtils.h"
 #include "mozilla/dom/NodeListBinding.h"
-#include "dombindings.h"
 
 // ==================================================================
 // = nsAnonymousContentList 
@@ -71,6 +70,7 @@ public:
   {
     return mContent;
   }
+  virtual nsIContent* Item(uint32_t aIndex);
 
   int32_t GetInsertionPointCount() { return mElements->Length(); }
 
@@ -80,14 +80,7 @@ public:
   virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
                                bool *triedToWrap)
   {
-    JSObject* obj = mozilla::dom::NodeListBinding::Wrap(cx, scope, this,
-                                                        triedToWrap);
-    if (obj || *triedToWrap) {
-      return obj;
-    }
-
-    *triedToWrap = true;
-    return mozilla::dom::oldproxybindings::NodeList::create(cx, scope, this);
+    return mozilla::dom::NodeListBinding::Wrap(cx, scope, this, triedToWrap);
   }
 
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_ANONYMOUS_CONTENT_LIST_IID)
@@ -135,18 +128,17 @@ NS_INTERFACE_TABLE_HEAD(nsAnonymousContentList)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsAnonymousContentList)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mContent)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mContent)
   tmp->mElements->Clear();
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsAnonymousContentList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mContent)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mContent)
   {
     int32_t i, count = tmp->mElements->Length();
     for (i = 0; i < count; ++i) {
-      NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_MEMBER(mElements->ElementAt(i),
-                                                      nsXBLInsertionPoint);
+      NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mElements->ElementAt(i));
     }
   }
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
@@ -174,7 +166,7 @@ nsAnonymousContentList::GetLength(uint32_t* aLength)
 NS_IMETHODIMP    
 nsAnonymousContentList::Item(uint32_t aIndex, nsIDOMNode** aReturn)
 {
-  nsINode* item = GetNodeAt(aIndex);
+  nsINode* item = Item(aIndex);
   if (!item)
     return NS_ERROR_FAILURE;
 
@@ -182,7 +174,7 @@ nsAnonymousContentList::Item(uint32_t aIndex, nsIDOMNode** aReturn)
 }
 
 nsIContent*
-nsAnonymousContentList::GetNodeAt(uint32_t aIndex)
+nsAnonymousContentList::Item(uint32_t aIndex)
 {
   int32_t cnt = mElements->Length();
   uint32_t pointCount = 0;
@@ -385,7 +377,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsBindingManager)
     PL_DHashTableFinish(&(tmp->mWrapperTable));
   tmp->mWrapperTable.ops = nullptr;
 
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mAttachedStack)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mAttachedStack)
 
   if (tmp->mProcessAttachedQueueEvent) {
     tmp->mProcessAttachedQueueEvent->Revoke();
@@ -423,8 +415,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsBindingManager)
       tmp->mDocumentTable.EnumerateRead(&DocumentInfoHashtableTraverser, &cb);
   if (tmp->mLoadingDocTable.IsInitialized())
       tmp->mLoadingDocTable.EnumerateRead(&LoadingDocHashtableTraverser, &cb);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSTARRAY_MEMBER(mAttachedStack,
-                                                    nsXBLBinding)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAttachedStack)
   // No need to traverse mProcessAttachedQueueEvent, since it'll just
   // fire at some point or become revoke and drop its ref to us.
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
@@ -692,7 +683,7 @@ nsBindingManager::GetContentListFor(nsIContent* aContent)
   }
 
   if (!result) {
-    result = aContent->GetChildNodesList();
+    result = aContent->ChildNodes();
   }
 
   return result;
@@ -1263,7 +1254,7 @@ nsBindingManager::GetBindingImplementation(nsIContent* aContent, REFNSIID aIID,
 
 nsresult
 nsBindingManager::WalkRules(nsIStyleRuleProcessor::EnumFunc aFunc,
-                            RuleProcessorData* aData,
+                            ElementDependentRuleProcessorData* aData,
                             bool* aCutOffInheritance)
 {
   *aCutOffInheritance = false;
@@ -1328,7 +1319,7 @@ EnumRuleProcessors(nsISupports *aKey, nsXBLBinding *aBinding, void* aClosure)
 
 struct WalkAllRulesData {
   nsIStyleRuleProcessor::EnumFunc mFunc;
-  RuleProcessorData* mData;
+  ElementDependentRuleProcessorData* mData;
 };
 
 static PLDHashOperator
@@ -1345,7 +1336,7 @@ EnumWalkAllRules(nsPtrHashKey<nsIStyleRuleProcessor> *aKey, void* aClosure)
 
 void
 nsBindingManager::WalkAllRules(nsIStyleRuleProcessor::EnumFunc aFunc,
-                               RuleProcessorData* aData)
+                               ElementDependentRuleProcessorData* aData)
 {
   if (!mBindingTable.IsInitialized())
     return;
@@ -1725,8 +1716,7 @@ nsBindingManager::Traverse(nsIContent *aContent,
   if (binding) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "[via binding manager] mBindingTable key");
     cb.NoteXPCOMChild(aContent);
-    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_PTR(binding, nsXBLBinding,
-                                  "[via binding manager] mBindingTable value")
+    CycleCollectionNoteChild(cb, binding, "[via binding manager] mBindingTable value");
   }
   if (mContentListTable.ops &&
       (value = LookupObject(mContentListTable, aContent))) {

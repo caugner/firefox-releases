@@ -15,7 +15,8 @@
 #include "nsPresContext.h"
 #include "mozilla/gfx/Point.h"
 
-#define NS_DEFAULT_VERTICAL_SCROLL_DISTANCE 3
+#define NS_DEFAULT_VERTICAL_SCROLL_DISTANCE   3
+#define NS_DEFAULT_HORIZONTAL_SCROLL_DISTANCE 5
 
 class nsBoxLayoutState;
 class nsIScrollPositionListener;
@@ -92,6 +93,10 @@ public:
    * This will always be a multiple of device pixels.
    */
   virtual nsPoint GetScrollPosition() const = 0;
+  /**
+   * As GetScrollPosition(), but uses the top-right as origin for RTL frames. 
+   */
+  virtual nsPoint GetLogicalScrollPosition() const = 0;
   /**
    * Get the area that must contain the scroll position. Typically
    * (but not always, e.g. for RTL content) x and y will be 0, and

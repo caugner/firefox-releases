@@ -16,16 +16,19 @@
 #include "mozilla/dom/Element.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
-#include "nsIDOMNode.h"
 #include "nsIPersistentProperties2.h"
 #include "nsIPresShell.h"
 #include "nsPoint.h"
+
+struct nsRoleMapEntry;
+
+namespace mozilla {
+namespace a11y {
 
 class nsAccessNode;
 class Accessible;
 class HyperTextAccessible;
 class DocAccessible;
-struct nsRoleMapEntry;
 
 class nsAccUtils
 {
@@ -293,5 +296,8 @@ public:
    */
   static bool MustPrune(Accessible* aAccessible);
 };
+
+} // namespace a11y
+} // namespace mozilla
 
 #endif

@@ -106,7 +106,7 @@ public:
 
     // for accessibility purposes
 #ifdef ACCESSIBILITY
-  virtual already_AddRefed<Accessible> CreateAccessible() MOZ_OVERRIDE;
+  virtual mozilla::a11y::AccType AccessibleType() MOZ_OVERRIDE;
 #endif
 
     // nsContainerFrame
@@ -126,7 +126,7 @@ public:
 
   virtual void CaptureMouseEvents(bool aGrabMouseEvents) MOZ_OVERRIDE;
   virtual nscoord GetHeightOfARow() MOZ_OVERRIDE;
-  virtual int32_t GetNumberOfOptions() MOZ_OVERRIDE;  
+  virtual uint32_t GetNumberOfOptions() MOZ_OVERRIDE;
   virtual void AboutToDropDown() MOZ_OVERRIDE;
 
   /**

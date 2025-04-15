@@ -2,7 +2,6 @@ background/announcements/Announcement.java
 background/announcements/AnnouncementPresenter.java
 background/announcements/AnnouncementsBroadcastReceiver.java
 background/announcements/AnnouncementsBroadcastService.java
-background/announcements/AnnouncementsConstants.java
 background/announcements/AnnouncementsFetchDelegate.java
 background/announcements/AnnouncementsFetcher.java
 background/announcements/AnnouncementsFetchResourceDelegate.java
@@ -14,6 +13,7 @@ sync/CollectionKeys.java
 sync/CommandProcessor.java
 sync/CommandRunner.java
 sync/config/AccountPickler.java
+sync/config/activities/SelectEnginesActivity.java
 sync/config/ClientRecordTerminator.java
 sync/config/ConfigurationMigrator.java
 sync/CredentialException.java

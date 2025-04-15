@@ -182,8 +182,6 @@ CSS_STATE_PSEUDO_CLASS(mozReadOnly, ":-moz-read-only",
                        NS_EVENT_STATE_MOZ_READONLY)
 CSS_STATE_PSEUDO_CLASS(mozReadWrite, ":-moz-read-write",
                        NS_EVENT_STATE_MOZ_READWRITE)
-CSS_STATE_PSEUDO_CLASS(mozPlaceholder, ":-moz-placeholder",
-                       NS_EVENT_STATE_MOZ_PLACEHOLDER)
 CSS_STATE_PSEUDO_CLASS(mozSubmitInvalid, ":-moz-submit-invalid",
                        NS_EVENT_STATE_MOZ_SUBMITINVALID)
 CSS_STATE_PSEUDO_CLASS(mozUIInvalid, ":-moz-ui-invalid",
@@ -196,6 +194,9 @@ CSS_STATE_PSEUDO_CLASS(mozMeterSubOptimum, ":-moz-meter-sub-optimum",
                        NS_EVENT_STATE_SUB_OPTIMUM)
 CSS_STATE_PSEUDO_CLASS(mozMeterSubSubOptimum, ":-moz-meter-sub-sub-optimum",
                        NS_EVENT_STATE_SUB_SUB_OPTIMUM)
+
+// Those values should be parsed but do nothing.
+CSS_STATE_PSEUDO_CLASS(mozPlaceholder, ":-moz-placeholder", NS_EVENT_STATE_IGNORE)
 
 #ifdef DEFINED_CSS_STATE_PSEUDO_CLASS
 #undef DEFINED_CSS_STATE_PSEUDO_CLASS

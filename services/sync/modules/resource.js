@@ -13,11 +13,11 @@ const Cr = Components.results;
 const Cu = Components.utils;
 
 Cu.import("resource://services-common/async.js");
-Cu.import("resource://services-sync/constants.js");
+Cu.import("resource://services-common/log4moz.js");
 Cu.import("resource://services-common/observers.js");
 Cu.import("resource://services-common/preferences.js");
-Cu.import("resource://services-sync/identity.js");
-Cu.import("resource://services-common/log4moz.js");
+Cu.import("resource://services-common/utils.js");
+Cu.import("resource://services-sync/constants.js");
 Cu.import("resource://services-sync/util.js");
 
 const DEFAULT_LOAD_FLAGS =
@@ -30,21 +30,21 @@ const DEFAULT_LOAD_FLAGS =
 /*
  * AsyncResource represents a remote network resource, identified by a URI.
  * Create an instance like so:
- * 
+ *
  *   let resource = new AsyncResource("http://foobar.com/path/to/resource");
- * 
+ *
  * The 'resource' object has the following methods to issue HTTP requests
  * of the corresponding HTTP methods:
- * 
+ *
  *   get(callback)
  *   put(data, callback)
  *   post(data, callback)
  *   delete(callback)
- * 
+ *
  * 'callback' is a function with the following signature:
- * 
+ *
  *   function callback(error, result) {...}
- * 
+ *
  * 'error' will be null on successful requests. Likewise, result will not be
  * passed (=undefined) when an error occurs. Note that this is independent of
  * the status of the HTTP response.
@@ -75,11 +75,11 @@ AsyncResource.prototype = {
 
   // The string to use as the base User-Agent in Sync requests.
   // These strings will look something like
-  // 
+  //
   //   Firefox/4.0 FxSync/1.8.0.20100101.mobile
-  //   
+  //
   // or
-  // 
+  //
   //   Firefox Aurora/5.0a1 FxSync/1.9.0.20110409.desktop
   //
   _userAgent:
@@ -116,7 +116,7 @@ AsyncResource.prototype = {
   },
   set uri(value) {
     if (typeof value == 'string')
-      this._uri = Utils.makeURI(value);
+      this._uri = CommonUtils.makeURI(value);
     else
       this._uri = value;
   },
@@ -164,12 +164,8 @@ AsyncResource.prototype = {
 
     let headers = this.headers;
 
-    let authenticator = this.authenticator;
-    if (!authenticator) {
-      authenticator = Identity.getResourceAuthenticator();
-    }
-    if (authenticator) {
-      let result = authenticator(this, method);
+    if (this.authenticator) {
+      let result = this.authenticator(this, method);
       if (result && result.headers) {
         for (let [k, v] in Iterator(result.headers)) {
           headers[k.toLowerCase()] = v;
@@ -269,9 +265,9 @@ AsyncResource.prototype = {
     } catch(ex) {
       // Got a response, but an exception occurred during processing.
       // This shouldn't occur.
-      this._log.warn("Caught unexpected exception " + Utils.exceptionStr(ex) +
+      this._log.warn("Caught unexpected exception " + CommonUtils.exceptionStr(ex) +
                      " in _onComplete.");
-      this._log.debug(Utils.stackTrace(ex));
+      this._log.debug(CommonUtils.stackTrace(ex));
     }
 
     // Process headers. They can be empty, or the call can otherwise fail, so
@@ -297,9 +293,9 @@ AsyncResource.prototype = {
         Observers.notify("weave:service:quota:remaining",
                          parseInt(headers["x-weave-quota-remaining"], 10));
     } catch (ex) {
-      this._log.debug("Caught exception " + Utils.exceptionStr(ex) +
+      this._log.debug("Caught exception " + CommonUtils.exceptionStr(ex) +
                       " visiting headers in _onComplete.");
-      this._log.debug(Utils.stackTrace(ex));
+      this._log.debug(CommonUtils.stackTrace(ex));
     }
 
     let ret     = new String(data);
@@ -314,7 +310,7 @@ AsyncResource.prototype = {
       try {
         return JSON.parse(ret);
       } catch (ex) {
-        this._log.warn("Got exception parsing response body: \"" + Utils.exceptionStr(ex));
+        this._log.warn("Got exception parsing response body: \"" + CommonUtils.exceptionStr(ex));
         // Stringify to avoid possibly printing non-printable characters.
         this._log.debug("Parse fail: Response body starts: \"" +
                         JSON.stringify((ret + "").slice(0, 100)) +
@@ -351,13 +347,13 @@ AsyncResource.prototype = {
 /*
  * Represent a remote network resource, identified by a URI, with a
  * synchronous API.
- * 
+ *
  * 'Resource' is not recommended for new code. Use the asynchronous API of
  * 'AsyncResource' instead.
  */
 this.Resource = function Resource(uri) {
   AsyncResource.call(this, uri);
-};
+}
 Resource.prototype = {
 
   __proto__: AsyncResource.prototype,
@@ -514,35 +510,46 @@ ChannelListener.prototype = {
   },
 
   onDataAvailable: function Channel_onDataAvail(req, cb, stream, off, count) {
-    let siStream = Cc["@mozilla.org/scriptableinputstream;1"].
-      createInstance(Ci.nsIScriptableInputStream);
-    siStream.init(stream);
+    let siStream;
+    try {
+      siStream = Cc["@mozilla.org/scriptableinputstream;1"].createInstance(Ci.nsIScriptableInputStream);
+      siStream.init(stream);
+    } catch (ex) {
+      this._log.warn("Exception creating nsIScriptableInputStream." + CommonUtils.exceptionStr(ex));
+      this._log.debug("Parameters: " + req.URI.spec + ", " + stream + ", " + off + ", " + count);
+      // Cannot proceed, so rethrow and allow the channel to cancel itself.
+      throw ex;
+    }
+
     try {
       this._data += siStream.read(count);
     } catch (ex) {
-      this._log.warn("Exception thrown reading " + count +
-                     " bytes from " + siStream + ".");
+      this._log.warn("Exception thrown reading " + count + " bytes from " + siStream + ".");
       throw ex;
     }
-    
+
     try {
       this._onProgress();
     } catch (ex) {
       this._log.warn("Got exception calling onProgress handler during fetch of "
                      + req.URI.spec);
-      this._log.debug(Utils.exceptionStr(ex));
+      this._log.debug(CommonUtils.exceptionStr(ex));
       this._log.trace("Rethrowing; expect a failure code from the HTTP channel.");
       throw ex;
     }
-    
+
     this.delayAbort();
   },
 
   /**
-   * Create or push back the abort timer that kills this request
+   * Create or push back the abort timer that kills this request.
    */
   delayAbort: function delayAbort() {
-    Utils.namedTimer(this.abortRequest, this._timeout, this, "abortTimer");
+    try {
+      CommonUtils.namedTimer(this.abortRequest, this._timeout, this, "abortTimer");
+    } catch (ex) {
+      this._log.warn("Got exception extending abort timer: " + CommonUtils.exceptionStr(ex));
+    }
   },
 
   abortRequest: function abortRequest() {
@@ -602,8 +609,9 @@ ChannelNotificationListener.prototype = {
   asyncOnChannelRedirect:
     function asyncOnChannelRedirect(oldChannel, newChannel, flags, callback) {
 
-    this._log.debug("Channel redirect: " + oldChannel.URI.spec + ", " +
-                    newChannel.URI.spec + ", " + flags);
+    let oldSpec = (oldChannel && oldChannel.URI) ? oldChannel.URI.spec : "<undefined>";
+    let newSpec = (newChannel && newChannel.URI) ? newChannel.URI.spec : "<undefined>";
+    this._log.debug("Channel redirect: " + oldSpec + ", " + newSpec + ", " + flags);
 
     // For internal redirects, copy the headers that our caller set.
     try {
@@ -622,6 +630,10 @@ ChannelNotificationListener.prototype = {
     }
 
     // We let all redirects proceed.
-    callback.onRedirectVerifyCallback(Cr.NS_OK);
+    try {
+      callback.onRedirectVerifyCallback(Cr.NS_OK);
+    } catch (ex) {
+      this._log.error("onRedirectVerifyCallback threw!" + CommonUtils.exceptionStr(ex));
+    }
   }
 };

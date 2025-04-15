@@ -38,6 +38,7 @@
 #include "nsRuleNode.h"
 #include "nsMediaFeatures.h"
 #include "nsDOMClassInfoID.h"
+#include "mozilla/Likely.h"
 
 using namespace mozilla;
 
@@ -1028,7 +1029,6 @@ nsCSSStyleSheet::nsCSSStyleSheet(CORSMode aCORSMode)
   : mTitle(), 
     mParent(nullptr),
     mOwnerRule(nullptr),
-    mRuleCollection(nullptr),
     mDocument(nullptr),
     mOwningNode(nullptr),
     mDisabled(false),
@@ -1047,7 +1047,6 @@ nsCSSStyleSheet::nsCSSStyleSheet(const nsCSSStyleSheet& aCopy,
   : mTitle(aCopy.mTitle),
     mParent(aParentToUse),
     mOwnerRule(aOwnerRuleToUse),
-    mRuleCollection(nullptr), // re-created lazily
     mDocument(aDocumentToUse),
     mOwningNode(aOwningNodeToUse),
     mDisabled(aCopy.mDisabled),
@@ -1100,7 +1099,7 @@ nsCSSStyleSheet::DropRuleCollection()
 {
   if (mRuleCollection) {
     mRuleCollection->DropReference();
-    NS_RELEASE(mRuleCollection);
+    mRuleCollection = nullptr;
   }
 }
 
@@ -1200,10 +1199,10 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsCSSStyleSheet)
   tmp->UnlinkInner();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsCSSStyleSheet)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mMedia)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMedia)
   // We do not traverse mNext; our parent will handle that.  See
   // comments in Unlink for why.
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mRuleCollection)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRuleCollection)
   tmp->TraverseInner(cb);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
@@ -1489,7 +1488,7 @@ nsCSSStyleSheet::ReplaceStyleRule(css::Rule* aOld, css::Rule* aNew)
 
   if (NS_SUCCEEDED(WillDirty())) {
     int32_t index = mInner->mOrderedRules.IndexOf(aOld);
-    if (NS_UNLIKELY(index == -1)) {
+    if (MOZ_UNLIKELY(index == -1)) {
       NS_NOTREACHED("Couldn't find old rule");
       return;
     }
@@ -1705,7 +1704,7 @@ nsCSSStyleSheet::SubjectSubsumesInnerPrincipal()
     return NS_OK;
   }
   
-  if (!nsContentUtils::IsCallerTrustedForWrite()) {
+  if (!nsContentUtils::IsCallerChrome()) {
     // Allow access only if CORS mode is not NONE
     if (GetCORSMode() == CORS_NONE) {
       return NS_ERROR_DOM_SECURITY_ERR;
@@ -1857,14 +1856,9 @@ nsCSSStyleSheet::GetCssRules(nsIDOMCSSRuleList** aCssRules)
   // OK, security check passed, so get the rule collection
   if (nullptr == mRuleCollection) {
     mRuleCollection = new CSSRuleListImpl(this);
-    if (nullptr == mRuleCollection) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
-    NS_ADDREF(mRuleCollection);
   }
 
-  *aCssRules = mRuleCollection;
-  NS_ADDREF(mRuleCollection);
+  NS_ADDREF(*aCssRules = mRuleCollection);
 
   return NS_OK;
 }

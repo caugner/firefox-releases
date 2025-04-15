@@ -143,6 +143,12 @@ CollectCurrentListeners(nsISupports* aKey, nsIConsoleListener* aValue,
 NS_IMETHODIMP
 nsConsoleService::LogMessage(nsIConsoleMessage *message)
 {
+    return LogMessageWithMode(message, OutputToLog);
+}
+
+nsresult
+nsConsoleService::LogMessageWithMode(nsIConsoleMessage *message, nsConsoleService::OutputMode outputMode)
+{
     if (message == nullptr)
         return NS_ERROR_INVALID_ARG;
 
@@ -168,6 +174,7 @@ nsConsoleService::LogMessage(nsIConsoleMessage *message)
         MutexAutoLock lock(mLock);
 
 #if defined(ANDROID)
+        if (outputMode == OutputToLog)
         {
             nsXPIDLString msg;
             message->GetMessageMoz(getter_Copies(msg));
@@ -232,7 +239,7 @@ nsConsoleService::LogStringMessage(const PRUnichar *message)
 }
 
 NS_IMETHODIMP
-nsConsoleService::GetMessageArray(nsIConsoleMessage ***messages, uint32_t *count)
+nsConsoleService::GetMessageArray(uint32_t *count, nsIConsoleMessage ***messages)
 {
     nsIConsoleMessage **messageArray;
 

@@ -7,6 +7,7 @@ package org.mozilla.gecko;
 
 import org.mozilla.gecko.AwesomeBar.ContextMenuSubject;
 import org.mozilla.gecko.db.BrowserContract.Bookmarks;
+import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.db.BrowserDB.URLColumns;
 
@@ -52,23 +53,9 @@ public class BookmarksTab extends AwesomeBarTab {
         super(context);
     }
 
-    public TabContentFactory getFactory() {
-        return new TabContentFactory() {
-             public View createTabContent(String tag) {
-                 final ListView list = getListView();
-                 list.setOnItemClickListener(new AdapterView.OnItemClickListener() {
-                     public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
-                         handleItemClick(parent, view, position, id);
-                     }
-                 });
-                 return list;
-             }
-        };
-    }
-
-    public ListView getListView() {
+    public View getView() {
         if (mView == null) {
-            mView = (ListView) (LayoutInflater.from(mContext).inflate(R.layout.awesomebar_list, null));
+            mView = (LayoutInflater.from(mContext).inflate(R.layout.awesomebar_list, null));
             ((Activity)mContext).registerForContextMenu(mView);
             mView.setTag(TAG);
             mView.setOnTouchListener(mListListener);
@@ -77,6 +64,11 @@ public class BookmarksTab extends AwesomeBarTab {
             ListView list = (ListView)mView;
             list.setAdapter(null);
             list.setAdapter(getCursorAdapter());
+            list.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+                public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                    handleItemClick(parent, view, position, id);
+                }
+            });
 
             if (mShowReadingList) {
                 String title = getResources().getString(R.string.bookmarks_folder_reading_list);
@@ -108,8 +100,7 @@ public class BookmarksTab extends AwesomeBarTab {
         // If the soft keyboard is visible in the bookmarks or history tab, the user
         // must have explictly brought it up, so we should try hiding it instead of
         // exiting the activity or going up a bookmarks folder level.
-        ListView view = getListView();
-        if (hideSoftInput(view))
+        if (hideSoftInput(getView()))
             return true;
 
         return moveToParentFolder();
@@ -161,7 +152,7 @@ public class BookmarksTab extends AwesomeBarTab {
     }
 
     public void handleItemClick(AdapterView<?> parent, View view, int position, long id) {
-        ListView list = getListView();
+        ListView list = (ListView)getView();
         if (list == null)
             return;
 
@@ -436,7 +427,8 @@ public class BookmarksTab extends AwesomeBarTab {
                                             cursor.getString(cursor.getColumnIndexOrThrow(URLColumns.URL)),
                                             cursor.getBlob(cursor.getColumnIndexOrThrow(URLColumns.FAVICON)),
                                             cursor.getString(cursor.getColumnIndexOrThrow(URLColumns.TITLE)),
-                                            keyword);
+                                            keyword,
+                                            isInReadingList() ? Combined.DISPLAY_READER : Combined.DISPLAY_NORMAL);
         }
 
         if (subject == null)

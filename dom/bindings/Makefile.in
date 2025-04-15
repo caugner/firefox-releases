@@ -14,6 +14,7 @@ FORCE_STATIC_LIB = 1
 EXPORT_LIBRARY   = 1
 
 include $(topsrcdir)/config/config.mk
+include $(topsrcdir)/ipc/chromium/chromium-config.mk
 
 # Need this to find all our DOM source files.
 include $(topsrcdir)/dom/dom-config.mk
@@ -37,6 +38,7 @@ globalgen_targets := \
   RegisterBindings.h \
   RegisterBindings.cpp \
   UnionTypes.h \
+  UnionTypes.cpp \
   UnionConversions.h \
   $(NULL)
 
@@ -44,6 +46,7 @@ CPPSRCS = \
   $(linked_binding_cpp_files) \
   $(filter %.cpp, $(globalgen_targets)) \
   BindingUtils.cpp \
+  CallbackFunction.cpp \
   DOMJSProxyHandler.cpp \
   $(NULL)
 
@@ -55,6 +58,7 @@ EXPORTS_mozilla = \
 
 EXPORTS_$(binding_include_path) = \
   BindingUtils.h \
+  CallbackFunction.h \
   DOMJSClass.h \
   DOMJSProxyHandler.h \
   Errors.msg \
@@ -72,7 +76,10 @@ EXPORTS_$(binding_include_path) = \
 LOCAL_INCLUDES += -I$(topsrcdir)/js/xpconnect/src \
   -I$(topsrcdir)/js/xpconnect/wrappers \
   -I$(topsrcdir)/content/canvas/src \
-  -I$(topsrcdir)/content/html/content/src
+  -I$(topsrcdir)/content/html/content/src \
+  -I$(topsrcdir)/media/webrtc/signaling/src/peerconnection \
+  -I$(topsrcdir)/dom/base \
+  $(NULL)
 
 include $(topsrcdir)/config/rules.mk
 
@@ -124,6 +131,14 @@ $(binding_cpp_files): %Binding.cpp: $(bindinggen_dependencies) \
 
 $(globalgen_targets): ParserResults.pkl
 
+%-example: $(bindinggen_dependencies) \
+           $(all_webidl_files) \
+           $(NULL)
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(topsrcdir)/config/pythonpath.py \
+	  $(PLY_INCLUDE) -I$(srcdir)/parser \
+	  $(srcdir)/ExampleGen.py \
+	  $(srcdir)/Bindings.conf $*
+
 CACHE_DIR = _cache
 
 globalgen_dependencies := \
@@ -156,6 +171,8 @@ GARBAGE += \
   ParserResults.pkl \
   webidlyacc.py \
   parser.out \
+  $(wildcard *-example.h) \
+  $(wildcard *-example.cpp) \
   $(NULL)
 
 # Make sure all binding header files are created during the export stage, so we

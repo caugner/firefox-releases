@@ -109,6 +109,10 @@ class B2GOptions(ReftestOptions):
                         type="string", dest="logcat_dir",
                         help="directory to store logcat dump files")
         defaults["logcat_dir"] = None
+        self.add_option('--busybox', action='store',
+                        type='string', dest='busybox',
+                        help="Path to busybox binary to install on device")
+        defaults['busybox'] = None
         defaults["remoteTestRoot"] = None
         defaults["logFile"] = "reftest.log"
         defaults["autorun"] = True
@@ -260,7 +264,7 @@ class B2GReftest(RefTest):
 
             # Restore the original user.js.
             self._devicemanager._checkCmdAs(['shell', 'rm', '-f', self.userJS])
-            if self._devicemanager.useDDCopy:
+            if self._devicemanager._useDDCopy:
                 self._devicemanager._checkCmdAs(['shell', 'dd', 'if=%s.orig' % self.userJS, 'of=%s' % self.userJS])
             else:
                 self._devicemanager._checkCmdAs(['shell', 'cp', '%s.orig' % self.userJS, self.userJS])
@@ -443,7 +447,7 @@ user_pref("capability.principal.codebase.p2.id", "http://%s:%s");
         # In B2G, user.js is always read from /data/local, not the profile
         # directory.  Backup the original user.js first so we can restore it.
         self._devicemanager._checkCmdAs(['shell', 'rm', '-f', '%s.orig' % self.userJS])
-        if self._devicemanager.useDDCopy:
+        if self._devicemanager._useDDCopy:
             self._devicemanager._checkCmdAs(['shell', 'dd', 'if=%s' % self.userJS, 'of=%s.orig' % self.userJS])
         else:
             self._devicemanager._checkCmdAs(['shell', 'cp', self.userJS, '%s.orig' % self.userJS])
@@ -482,6 +486,8 @@ def main(args=sys.argv[1:]):
             kwargs['gecko_path'] = options.geckoPath
         if options.logcat_dir:
             kwargs['logcat_dir'] = options.logcat_dir
+        if options.busybox:
+            kwargs['busybox'] = options.busybox
     if options.emulator_res:
         kwargs['emulator_res'] = options.emulator_res
     if options.b2gPath:

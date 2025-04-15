@@ -358,13 +358,10 @@ void nsViewManager::Refresh(nsView *aView, const nsIntRegion& aRegion,
 #ifdef DEBUG_INVALIDATIONS
       printf("--COMPOSITE-- %p\n", mPresShell);
 #endif
-      if (IsRefreshDriverPaintingEnabled()) {
-        mPresShell->Paint(aView, damageRegion, nsIPresShell::PaintType_Composite,
-                          aWillSendDidPaint);
-      } else {
-        mPresShell->Paint(aView, damageRegion, nsIPresShell::PaintType_Full,
-                          aWillSendDidPaint);
-      }
+      mPresShell->Paint(aView, damageRegion,
+                        (IsRefreshDriverPaintingEnabled() ? 0 : nsIPresShell::PAINT_LAYERS) |
+                        nsIPresShell::PAINT_COMPOSITE |
+                        (aWillSendDidPaint ? nsIPresShell::PAINT_WILL_SEND_DID_PAINT : 0));
 #ifdef DEBUG_INVALIDATIONS
       printf("--ENDCOMPOSITE--\n");
 #endif
@@ -428,7 +425,9 @@ void nsViewManager::ProcessPendingUpdatesForView(nsView* aView,
 #endif
         nsAutoScriptBlocker scriptBlocker;
         NS_ASSERTION(aView->HasWidget(), "Must have a widget!");
-        mPresShell->Paint(aView, nsRegion(), nsIPresShell::PaintType_NoComposite, true);
+        mPresShell->Paint(aView, nsRegion(),
+                          nsIPresShell::PAINT_LAYERS |
+                          nsIPresShell::PAINT_WILL_SEND_DID_PAINT);
 #ifdef DEBUG_INVALIDATIONS
         printf("---- PAINT END ----\n");
 #endif
@@ -691,7 +690,7 @@ void nsViewManager::WillPaintWindow(nsIWidget* aWidget, bool aWillSendDidPaint)
 }
 
 bool nsViewManager::PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion,
-                                bool aSentWillPaint, bool aWillSendDidPaint)
+                                uint32_t aFlags)
  {
   if (!aWidget || !mContext)
     return false;
@@ -699,15 +698,15 @@ bool nsViewManager::PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion,
   NS_ASSERTION(IsPaintingAllowed(),
                "shouldn't be receiving paint events while painting is disallowed!");
 
-  if (!aSentWillPaint && !IsRefreshDriverPaintingEnabled()) {
-    WillPaintWindow(aWidget, aWillSendDidPaint);
+  if (!(aFlags & nsIWidgetListener::SENT_WILL_PAINT) && !IsRefreshDriverPaintingEnabled()) {
+    WillPaintWindow(aWidget, (aFlags & nsIWidgetListener::WILL_SEND_DID_PAINT));
   }
 
   // Get the view pointer here since NS_WILL_PAINT might have
   // destroyed it during CallWillPaintOnObservers (bug 378273).
   nsView* view = nsView::GetViewFor(aWidget);
   if (view && !aRegion.IsEmpty()) {
-    Refresh(view, aRegion, aWillSendDidPaint);
+    Refresh(view, aRegion, (aFlags & nsIWidgetListener::WILL_SEND_DID_PAINT));
   }
 
   return true;
@@ -718,10 +717,6 @@ void nsViewManager::DidPaintWindow()
   nsCOMPtr<nsIPresShell> shell = mPresShell;
   if (shell) {
     shell->DidPaintWindow();
-  }
-
-  if (!IsRefreshDriverPaintingEnabled()) {
-    mRootViewManager->CallDidPaintOnObserver();
   }
 }
 
@@ -1219,7 +1214,6 @@ nsViewManager::ProcessPendingUpdates()
       CallWillPaintOnObservers(true);
     }
     ProcessPendingUpdatesForView(mRootView, true);
-    CallDidPaintOnObserver();
   } else {
     ProcessPendingUpdatesForView(mRootView, true);
   }
@@ -1260,19 +1254,6 @@ nsViewManager::CallWillPaintOnObservers(bool aWillSendDidPaint)
           shell->WillPaint(aWillSendDidPaint);
         }
       }
-    }
-  }
-}
-
-void
-nsViewManager::CallDidPaintOnObserver()
-{
-  NS_PRECONDITION(IsRootVM(), "Must be root VM for this to be called!");
-
-  if (mRootView && mRootView->IsEffectivelyVisible()) {
-    nsCOMPtr<nsIPresShell> shell = GetPresShell();
-    if (shell) {
-      shell->DidPaint();
     }
   }
 }

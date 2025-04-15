@@ -79,6 +79,11 @@ public:
   static bool GetDisplayPort(nsIContent* aContent, nsRect *aResult);
 
   /**
+   * Get the critical display port for the given element.
+   */
+  static bool GetCriticalDisplayPort(nsIContent* aContent, nsRect* aResult);
+
+  /**
    * Use heuristics to figure out the child list that
    * aChildFrame is currently in.
    */
@@ -1082,7 +1087,7 @@ public:
     }
   };
   static bool GetFirstLinePosition(const nsIFrame* aFrame,
-                                     LinePosition* aResult);
+                                   LinePosition* aResult);
 
 
   /**
@@ -1550,6 +1555,13 @@ public:
   static bool IsAnimationLoggingEnabled();
 
   /**
+   * Find the maximum scale for an element (aContent) over the course of any
+   * animations and transitions on the element. Will return 1,1 if there is no
+   * animated scaling.
+   */
+  static gfxSize GetMaximumAnimatedScale(nsIContent* aContent);
+
+  /**
    * Checks if we should forcibly use nearest pixel filtering for the
    * background.
    */
@@ -1610,6 +1622,14 @@ public:
                                       nscoord aMinFontSize);
 
   static bool FontSizeInflationEnabled(nsPresContext *aPresContext);
+
+  /**
+   * See comment above "font.size.inflation.maxRatio" in
+   * modules/libpref/src/init/all.js .
+   */
+  static uint32_t FontSizeInflationMaxRatio() {
+    return sFontSizeInflationMaxRatio;
+  }
 
   /**
    * See comment above "font.size.inflation.emPerLine" in
@@ -1759,7 +1779,8 @@ private:
   static uint32_t sFontSizeInflationEmPerLine;
   static uint32_t sFontSizeInflationMinTwips;
   static uint32_t sFontSizeInflationLineThreshold;
-  static int32_t sFontSizeInflationMappingIntercept;
+  static int32_t  sFontSizeInflationMappingIntercept;
+  static uint32_t sFontSizeInflationMaxRatio;
   static bool sFontSizeInflationForceEnabled;
   static bool sFontSizeInflationDisabledInMasterProcess;
 };

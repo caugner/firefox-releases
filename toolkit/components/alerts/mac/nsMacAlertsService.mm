@@ -31,22 +31,22 @@
 struct GrowlDelegateWrapper
 {
   mozGrowlDelegate* mDelegate;
-
+  
   GrowlDelegateWrapper()
   {
     NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
-
+    
     mDelegate = [[mozGrowlDelegate alloc] init];
-
+    
     NS_OBJC_END_TRY_ABORT_BLOCK;
   }
-
+  
   ~GrowlDelegateWrapper()
   {
     NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
-
+    
     [mDelegate release];
-
+    
     NS_OBJC_END_TRY_ABORT_BLOCK;
   }
 };
@@ -63,22 +63,22 @@ DispatchGrowlNotification(const nsAString &aName,
                           nsIObserver *aListener)
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
-
+  
   if ([GrowlApplicationBridge isGrowlRunning] == NO) {
     return NS_ERROR_NOT_AVAILABLE;
   }
-
+  
   mozGrowlDelegate *delegate =
-    static_cast<mozGrowlDelegate *>([GrowlApplicationBridge growlDelegate]);
+  static_cast<mozGrowlDelegate *>([GrowlApplicationBridge growlDelegate]);
   if (!delegate) {
     return NS_ERROR_NOT_AVAILABLE;
   }
-
+  
   uint32_t ind = 0;
   if (aListener) {
     ind = [delegate addObserver: aListener];
   }
-
+  
   nsCOMPtr<nsIURI> uri;
   nsresult rv = NS_NewURI(getter_AddRefs(uri), aImage);
   if (NS_FAILED(rv)) {
@@ -91,16 +91,16 @@ DispatchGrowlNotification(const nsAString &aName,
                               cookie: aCookie];
     return NS_OK;
   }
-
+  
   nsCOMPtr<nsAlertsImageLoadListener> listener =
-    new nsAlertsImageLoadListener(aName, aTitle, aMessage, aCookie, ind);
+  new nsAlertsImageLoadListener(aName, aTitle, aMessage, aCookie, ind);
   if (!listener) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
-
+  
   nsCOMPtr<nsIStreamLoader> loader;
   return NS_NewStreamLoader(getter_AddRefs(loader), uri, listener);
-
+  
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
 
@@ -186,18 +186,34 @@ nsMacAlertsService::Init()
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
 
+
   nsresult rv;
   nsCOMPtr<nsIObserverService> os =
     do_GetService("@mozilla.org/observer-service;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Don't ever use Notification Center support, it isn't ready.
+// Notification Center support isn't ready, don't use it.
+/*
+  // Only use Notification Center with OS version >= 10.8.
+  SInt32 osVersion = 0;
+  OSErr err = ::Gestalt (gestaltSystemVersion, &osVersion);
+  osVersion &= 0xFFFF; // The system version is in the low order word
+  if (err != noErr || (osVersion < 0x00001080)) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  rv = InitNotificationCenter();
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+*/
+
   InitGrowl();
 
   (void)os->AddObserver(this, DOM_WINDOW_DESTROYED_TOPIC, false);
   (void)os->AddObserver(this, "profile-before-change", false);
 
-  return NS_OK;
+  return rv;
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }
@@ -211,7 +227,7 @@ nsMacAlertsService::InitGrowl() {
 
   nsresult rv;
   nsCOMPtr<nsIObserverService> os =
-    do_GetService("@mozilla.org/observer-service;1", &rv);
+  do_GetService("@mozilla.org/observer-service;1", &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsRefPtr<nsNotificationsList> notifications = new nsNotificationsList();
@@ -277,7 +293,7 @@ nsMacAlertsService::ShowAlertNotification(const nsAString& aImageUrl,
 
     nsresult rv;
     nsCOMPtr<nsIStringBundleService> bundleService =
-      do_GetService("@mozilla.org/intl/stringbundle;1", &rv);
+    do_GetService("@mozilla.org/intl/stringbundle;1", &rv);
 
     // We don't want to fail just yet if we can't get the alert name
     nsString name = NS_LITERAL_STRING("General Notification");
@@ -293,7 +309,7 @@ nsMacAlertsService::ShowAlertNotification(const nsAString& aImageUrl,
         }
       }
     }
-
+    
     return DispatchGrowlNotification(name, aImageUrl, aAlertTitle,
                                      aAlertText, aAlertCookie, aAlertListener);
   } else {
@@ -321,13 +337,21 @@ nsMacAlertsService::Observe(nsISupports* aSubject, const char* aTopic,
   if (strcmp(aTopic, DOM_WINDOW_DESTROYED_TOPIC) == 0) {
     nsCOMPtr<nsIDOMWindow> window(do_QueryInterface(aSubject));
     if (window) {
-      mGrowlDelegate ? [mGrowlDelegate->mDelegate forgetObserversForWindow:window]
-                     : [mNCDelegate->mDelegate forgetObserversForWindow:window];
+      if (mGrowlDelegate) {
+        [mGrowlDelegate->mDelegate forgetObserversForWindow:window];
+      }
+      else if (mNCDelegate) {
+        [mNCDelegate->mDelegate forgetObserversForWindow:window];
+      }
     }
   }
   else if (strcmp(aTopic, "profile-before-change") == 0) {
-    mGrowlDelegate ? [mGrowlDelegate->mDelegate forgetObservers]
-                   : [mNCDelegate->mDelegate forgetObservers];
+    if (mGrowlDelegate) {
+      [mGrowlDelegate->mDelegate forgetObservers];
+    }
+    else if (mNCDelegate) {
+      [mNCDelegate->mDelegate forgetObservers];
+    }
   }
 
   return NS_OK;

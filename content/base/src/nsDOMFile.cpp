@@ -27,7 +27,7 @@
 #include "nsNetCID.h"
 #include "nsNetUtil.h"
 #include "nsIUUIDGenerator.h"
-#include "nsBlobProtocolHandler.h"
+#include "nsHostObjectProtocolHandler.h"
 #include "nsStringStream.h"
 #include "nsJSUtils.h"
 #include "nsPrintfCString.h"
@@ -39,7 +39,6 @@
 #include "plbase64.h"
 #include "prmem.h"
 #include "mozilla/dom/FileListBinding.h"
-#include "dombindings.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -131,11 +130,10 @@ nsDOMFileBase::GetName(nsAString &aFileName)
 }
 
 NS_IMETHODIMP
-nsDOMFileBase::GetLastModifiedDate(JSContext* cx, JS::Value* aLastModifiedDate)
+nsDOMFileBase::GetLastModifiedDate(JSContext* cx, JS::Value *aLastModifiedDate)
 {
-  NS_ASSERTION(mIsFile, "Should only be called on files");
-
-  aLastModifiedDate->setNull();
+  JSObject* date = JS_NewDateObjectMsec(cx, JS_Now() / PR_USEC_PER_MSEC);
+  aLastModifiedDate->setObject(*date);
   return NS_OK;
 }
 
@@ -144,12 +142,12 @@ nsDOMFileBase::GetMozFullPath(nsAString &aFileName)
 {
   NS_ASSERTION(mIsFile, "Should only be called on files");
 
-  // It is unsafe to call CallerHasUniversalXPConnect on a non-main thread. If
+  // It is unsafe to call IsCallerChrome on a non-main thread. If
   // you hit the following assertion you need to figure out some other way to
   // determine privileges and call GetMozFullPathInternal.
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
 
-  if (nsContentUtils::CallerHasUniversalXPConnect()) {
+  if (nsContentUtils::IsCallerChrome()) {
     return GetMozFullPathInternal(aFileName);
   }
   aFileName.Truncate();
@@ -182,6 +180,9 @@ NS_IMETHODIMP
 nsDOMFileBase::GetMozLastModifiedDate(uint64_t* aLastModifiedDate)
 {
   NS_ASSERTION(mIsFile, "Should only be called on files");
+  if (IsDateUnknown()) {
+    mLastModificationDate = PR_Now();
+  }
   *aLastModifiedDate = mLastModificationDate;
   return NS_OK;
 }
@@ -286,26 +287,15 @@ nsDOMFileBase::GetInternalUrl(nsIPrincipal* aPrincipal, nsAString& aURL)
 {
   NS_ENSURE_STATE(aPrincipal);
 
-  nsresult rv;
-  nsCOMPtr<nsIUUIDGenerator> uuidgen =
-    do_GetService("@mozilla.org/uuid-generator;1", &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-  
-  nsID id;
-  rv = uuidgen->GenerateUUIDInPlace(&id);
-  NS_ENSURE_SUCCESS(rv, rv);
-  
-  char chars[NSID_LENGTH];
-  id.ToProvidedString(chars);
-    
-  nsCString url = NS_LITERAL_CSTRING(BLOBURI_SCHEME ":") +
-    Substring(chars + 1, chars + NSID_LENGTH - 2);
-
-  nsBlobProtocolHandler::AddFileDataEntry(url, this,
-                                              aPrincipal);
+  nsCString url;
+  nsresult rv = nsBlobProtocolHandler::AddDataEntry(
+    NS_LITERAL_CSTRING(BLOBURI_SCHEME),
+    static_cast<nsIDOMBlob*>(this), aPrincipal, url);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   CopyASCIItoUTF16(url, aURL);
-  
   return NS_OK;
 }
 
@@ -483,23 +473,12 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(nsDOMFileCC)
 ////////////////////////////////////////////////////////////////////////////
 // nsDOMFileFile implementation
 
-NS_IMPL_ISUPPORTS_INHERITED1(nsDOMFileFile, nsDOMFile,
-                             nsIJSNativeInitializer)
-
 already_AddRefed<nsIDOMBlob>
 nsDOMFileFile::CreateSlice(uint64_t aStart, uint64_t aLength,
                            const nsAString& aContentType)
 {
   nsCOMPtr<nsIDOMBlob> t = new nsDOMFileFile(this, aStart, aLength, aContentType);
   return t.forget();
-}
-
-/* static */ nsresult
-nsDOMFileFile::NewFile(nsISupports* *aNewObject)
-{
-  nsCOMPtr<nsISupports> file = do_QueryObject(new nsDOMFileFile());
-  file.forget(aNewObject);
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -510,10 +489,11 @@ nsDOMFileFile::GetMozFullPathInternal(nsAString &aFilename)
 }
 
 NS_IMETHODIMP
-nsDOMFileFile::GetLastModifiedDate(JSContext* cx, JS::Value *aLastModifiedDate)
+nsDOMFileFile::GetLastModifiedDate(JSContext* cx, JS::Value* aLastModifiedDate)
 {
+  NS_ASSERTION(mIsFile, "Should only be called on files");
+
   PRTime msecs;
-  mFile->GetLastModifiedTime(&msecs);
   if (IsDateUnknown()) {
     nsresult rv = mFile->GetLastModifiedTime(&msecs);
     NS_ENSURE_SUCCESS(rv, rv);
@@ -527,7 +507,8 @@ nsDOMFileFile::GetLastModifiedDate(JSContext* cx, JS::Value *aLastModifiedDate)
     aLastModifiedDate->setObject(*date);
   }
   else {
-    aLastModifiedDate->setNull();
+    date = JS_NewDateObjectMsec(cx, JS_Now() / PR_USEC_PER_MSEC);
+    aLastModifiedDate->setObject(*date);
   }
 
   return NS_OK;
@@ -585,6 +566,12 @@ NS_IMETHODIMP
 nsDOMFileFile::GetMozLastModifiedDate(uint64_t* aLastModifiedDate)
 {
   NS_ASSERTION(mIsFile, "Should only be called on files");
+  if (IsDateUnknown()) {
+    PRTime msecs;
+    nsresult rv = mFile->GetLastModifiedTime(&msecs);
+    NS_ENSURE_SUCCESS(rv, rv);
+    mLastModificationDate = msecs;
+  }
   *aLastModifiedDate = mLastModificationDate;
   return NS_OK;
 }
@@ -601,71 +588,6 @@ nsDOMFileFile::GetInternalStream(nsIInputStream **aStream)
     NS_NewLocalFileInputStream(aStream, mFile, -1, -1, sFileStreamFlags) :
     NS_NewPartialLocalFileInputStream(aStream, mFile, mStart, mLength,
                                       -1, -1, sFileStreamFlags);
-}
-
-NS_IMETHODIMP
-nsDOMFileFile::Initialize(nsISupports* aOwner,
-                          JSContext* aCx,
-                          JSObject* aObj,
-                          uint32_t aArgc,
-                          JS::Value* aArgv)
-{
-  nsresult rv;
-
-  NS_ASSERTION(!mImmutable, "Something went wrong ...");
-  NS_ENSURE_TRUE(!mImmutable, NS_ERROR_UNEXPECTED);
-
-  if (!nsContentUtils::IsCallerChrome()) {
-    return NS_ERROR_DOM_SECURITY_ERR; // Real short trip
-  }
-
-  NS_ENSURE_TRUE(aArgc > 0, NS_ERROR_UNEXPECTED);
-
-  // We expect to get a path to represent as a File object,
-  // or an nsIFile
-  nsCOMPtr<nsIFile> file;
-  if (!aArgv[0].isString()) {
-    // Lets see if it's an nsIFile
-    if (!aArgv[0].isObject()) {
-      return NS_ERROR_UNEXPECTED; // We're not interested
-    }
-
-    JSObject* obj = &aArgv[0].toObject();
-
-    // Is it an nsIFile
-    file = do_QueryInterface(
-      nsContentUtils::XPConnect()->
-        GetNativeOfWrapper(aCx, obj));
-    if (!file)
-      return NS_ERROR_UNEXPECTED;
-  } else {
-    // It's a string
-    JSString* str = JS_ValueToString(aCx, aArgv[0]);
-    NS_ENSURE_TRUE(str, NS_ERROR_XPC_BAD_CONVERT_JS);
-
-    nsDependentJSString xpcomStr;
-    if (!xpcomStr.init(aCx, str)) {
-      return NS_ERROR_XPC_BAD_CONVERT_JS;
-    }
-
-    rv = NS_NewLocalFile(xpcomStr, false, getter_AddRefs(file));
-    NS_ENSURE_SUCCESS(rv, rv);
-  }
-
-  bool exists;
-  rv = file->Exists(&exists);
-  NS_ENSURE_SUCCESS(rv, rv);
-  NS_ENSURE_TRUE(exists, NS_ERROR_FILE_NOT_FOUND);
-
-  bool isDir;
-  rv = file->IsDirectory(&isDir);
-  NS_ENSURE_SUCCESS(rv, rv);
-  NS_ENSURE_FALSE(isDir, NS_ERROR_FILE_IS_DIRECTORY);
-
-  mFile = file;
-  file->GetLeafName(mName);
-
-  return NS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////////
@@ -698,7 +620,7 @@ nsDOMMemoryFile::DataOwner::sMemoryReporterRegistered;
 NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(DOMMemoryFileDataOwnerSizeOf,
                                      "memory-file-data");
 
-class nsDOMMemoryFileDataOwnerMemoryReporter
+class nsDOMMemoryFileDataOwnerMemoryReporter MOZ_FINAL
   : public nsIMemoryMultiReporter
 {
   NS_DECL_ISUPPORTS
@@ -825,19 +747,7 @@ JSObject*
 nsDOMFileList::WrapObject(JSContext *cx, JSObject *scope,
                           bool *triedToWrap)
 {
-  JSObject* obj = FileListBinding::Wrap(cx, scope, this, triedToWrap);
-  if (obj || *triedToWrap) {
-    return obj;
-  }
-
-  *triedToWrap = true;
-  return oldproxybindings::FileList::create(cx, scope, this);
-}
-
-nsIDOMFile*
-nsDOMFileList::GetItemAt(uint32_t aIndex)
-{
-  return Item(aIndex);
+  return FileListBinding::Wrap(cx, scope, this, triedToWrap);
 }
 
 NS_IMETHODIMP
@@ -870,6 +780,6 @@ nsDOMFileInternalUrlHolder::~nsDOMFileInternalUrlHolder() {
   if (!mUrl.IsEmpty()) {
     nsAutoCString narrowUrl;
     CopyUTF16toUTF8(mUrl, narrowUrl);
-    nsBlobProtocolHandler::RemoveFileDataEntry(narrowUrl);
+    nsBlobProtocolHandler::RemoveDataEntry(narrowUrl);
   }
 }

@@ -72,7 +72,7 @@ Fake_AudioGenerator(nsDOMMediaStream* aStream) : mStream(aStream), mCount(0) {
     mozilla::AudioSegment segment;
     segment.Init(1);
     segment.AppendFrames(samples.forget(), 1600,
-                         0, 1600, nsAudioStream::FORMAT_S16);
+                         0, 1600, mozilla::AUDIO_FORMAT_S16);
 
     gen->mStream->GetStream()->AsSourceStream()->AppendToTrack(1, &segment);
   }
@@ -336,6 +336,7 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
   nsTArray<nsRefPtr<LocalSourceStreamInfo> > mLocalSourceStreams;
 
   // A list of streams provided by the other side
+  PRLock *mRemoteSourceStreamsLock;
   nsTArray<nsRefPtr<RemoteSourceStreamInfo> > mRemoteSourceStreams;
 
   // ICE objects

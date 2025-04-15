@@ -70,10 +70,11 @@
 #include "gfxContext.h"
 #include "gfxImageSurface.h"
 
-#include "mozilla/dom/Element.h"
-#include "mozilla/Util.h" // for DebugOnly
-#include "mozilla/LookAndFeel.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/Element.h"
+#include "mozilla/Likely.h"
+#include "mozilla/LookAndFeel.h"
+#include "mozilla/Util.h" // for DebugOnly
 
 #include "sampler.h"
 
@@ -2395,7 +2396,7 @@ BuildTextRunsScanner::AssignTextRun(gfxTextRun* aTextRun, float aInflation)
         else {
           TextRunUserData* userData = static_cast<TextRunUserData*>(oldTextRun->GetUserData());
           firstFrame = userData->mMappedFlows[0].mStartFrame;
-          if (NS_UNLIKELY(f != firstFrame)) {
+          if (MOZ_UNLIKELY(f != firstFrame)) {
             TextRunMappedFlow* flow = FindFlowForContent(userData, f->GetContent());
             if (flow) {
               startOffset = flow->mDOMOffsetToBeforeTransformOffset;
@@ -2409,7 +2410,7 @@ BuildTextRunsScanner::AssignTextRun(gfxTextRun* aTextRun, float aInflation)
         // Optimization: if |f| is the first frame in the flow then there are no
         // prev-continuations that use |oldTextRun|.
         nsTextFrame* clearFrom = nullptr;
-        if (NS_UNLIKELY(f != firstFrame)) {
+        if (MOZ_UNLIKELY(f != firstFrame)) {
           // If all the frames in the mapped flow starting at |f| (inclusive)
           // are empty then we let the prev-continuations keep the old text run.
           gfxSkipCharsIterator iter(oldTextRun->GetSkipChars(), startOffset, f->GetContentOffset());
@@ -3888,23 +3889,18 @@ nsTextPaintStyle::GetResolvedForeColor(nscolor aColor,
 //-----------------------------------------------------------------------------
 
 #ifdef ACCESSIBILITY
-already_AddRefed<Accessible>
-nsTextFrame::CreateAccessible()
+a11y::AccType
+nsTextFrame::AccessibleType()
 {
   if (IsEmpty()) {
     nsAutoString renderedWhitespace;
     GetRenderedText(&renderedWhitespace, nullptr, nullptr, 0, 1);
     if (renderedWhitespace.IsEmpty()) {
-      return nullptr;
+      return a11y::eNoAccessible;
     }
   }
 
-  nsAccessibilityService* accService = nsIPresShell::AccService();
-  if (accService) {
-    return accService->CreateTextLeafAccessible(mContent,
-                                                PresContext()->PresShell());
-  }
-  return nullptr;
+  return a11y::eTextLeafAccessible;
 }
 #endif
 
@@ -4680,7 +4676,7 @@ nsTextFrame::GetTextDecorations(
   const nsCompatibility compatMode = aPresContext->CompatibilityMode();
 
   bool useOverride = false;
-  nscolor overrideColor;
+  nscolor overrideColor = NS_RGBA(0, 0, 0, 0);
 
   // frameTopOffset represents the offset to f's top from our baseline in our
   // coordinate space
@@ -7695,7 +7691,7 @@ nsTextFrame::ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,
       offset += whitespaceCount;
       length -= whitespaceCount;
       // Make sure this frame maps the trimmable whitespace.
-      if (NS_UNLIKELY(offset > GetContentEnd())) {
+      if (MOZ_UNLIKELY(offset > GetContentEnd())) {
         SetLength(offset - GetContentOffset(), &aLineLayout,
                   ALLOW_FRAME_CREATION_AND_DESTRUCTION);
       }

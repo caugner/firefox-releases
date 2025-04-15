@@ -6,20 +6,16 @@
 // Services = object with smart getters for common XPCOM services
 Components.utils.import("resource://gre/modules/Services.jsm");
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+Components.utils.import("resource://gre/modules/PrivateBrowsingUtils.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "BROWSER_NEW_TAB_URL", function () {
   const PREF = "browser.newtab.url";
   const TOPIC = "private-browsing-transition-complete";
 
   function getNewTabPageURL() {
-    if (("gPrivateBrowsingUI" in window) &&
-        !Services.prefs.prefHasUserValue(PREF)) {
-      // gPrivateBrowsingUI may not be initialized yet, in that case we'll
-      // update BROWSER_NEW_TAB_URL when it gets initialized.
-      if (!gPrivateBrowsingUI.initialized)
-        gPrivateBrowsingUI.addInitializationCallback(update);
-      else if (gPrivateBrowsingUI.privateWindow &&
-               !gPrivateBrowsingUI.autoStarted)
+    if (!Services.prefs.prefHasUserValue(PREF)) {
+      if (PrivateBrowsingUtils.isWindowPrivate(window) &&
+          !PrivateBrowsingUtils.permanentPrivateBrowsing)
         return "about:privatebrowsing";
     }
     return Services.prefs.getCharPref(PREF) || "about:blank";

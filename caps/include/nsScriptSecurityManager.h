@@ -431,12 +431,6 @@ private:
     GetSubjectPrincipal(JSContext* cx, nsresult* rv);
 
     // Returns null if a principal cannot be found.  Note that rv can be NS_OK
-    // when this happens -- this means that there was no script for the frame.
-    // Callers MUST pass in a non-null rv here.
-    nsIPrincipal*
-    GetFramePrincipal(JSContext* cx, JSStackFrame* fp, nsresult* rv);
-
-    // Returns null if a principal cannot be found.  Note that rv can be NS_OK
     // when this happens -- this means that there was no script.  Callers MUST
     // pass in a non-null rv here.
     static nsIPrincipal*
@@ -451,14 +445,6 @@ private:
     static nsIPrincipal*
     GetFunctionObjectPrincipal(JSContext* cx, JSObject* obj, JSStackFrame *fp,
                                nsresult* rv);
-
-    // Returns null if a principal cannot be found.  Note that rv can be NS_OK
-    // when this happens -- this means that there was no script
-    // running.  Callers MUST pass in a non-null rv here.
-    nsIPrincipal*
-    GetPrincipalAndFrame(JSContext *cx,
-                         JSStackFrame** frameResult,
-                         nsresult* rv);
 
     /**
      * Check capability levels for an |aObj| that implements
@@ -496,6 +482,15 @@ private:
                         nsISupports* aObj, JSObject* aJSObject,
                         nsIPrincipal* aSubjectPrincipal,
                         const char* aObjectSecurityLevel);
+
+    /**
+     * Helper for CanExecuteScripts that allows the caller to specify
+     * whether execution should be allowed if cx has no
+     * nsIScriptContext.
+     */
+    nsresult
+    CanExecuteScripts(JSContext* cx, nsIPrincipal *aPrincipal,
+                      bool aAllowIfNoScriptContext, bool *result);
 
     nsresult
     Init();

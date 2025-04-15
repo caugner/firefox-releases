@@ -9,6 +9,8 @@
 
 #include "nsAccessNode.h"
 
+#include "nsIBaseWindow.h"
+#include "nsIDocShellTreeOwner.h"
 #include "nsIDocument.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMHTMLDocument.h"
@@ -29,6 +31,7 @@
 #include "nsGUIEvent.h"
 #include "nsIView.h"
 #include "nsLayoutUtils.h"
+#include "nsGkAtoms.h"
 
 #include "nsComponentManagerUtils.h"
 #include "nsIInterfaceRequestorUtils.h"
@@ -50,9 +53,9 @@ nsCoreUtils::HasClickListener(nsIContent *aContent)
     aContent->GetListenerManager(false);
 
   return listenerManager &&
-    (listenerManager->HasListenersFor(NS_LITERAL_STRING("click")) ||
-     listenerManager->HasListenersFor(NS_LITERAL_STRING("mousedown")) ||
-     listenerManager->HasListenersFor(NS_LITERAL_STRING("mouseup")));
+    (listenerManager->HasListenersFor(nsGkAtoms::onclick) ||
+     listenerManager->HasListenersFor(nsGkAtoms::onmousedown) ||
+     listenerManager->HasListenersFor(nsGkAtoms::onmouseup));
 }
 
 void
@@ -164,11 +167,8 @@ nsCoreUtils::DispatchMouseEvent(uint32_t aEventType, int32_t aX, int32_t aY,
 }
 
 uint32_t
-nsCoreUtils::GetAccessKeyFor(nsIContent *aContent)
+nsCoreUtils::GetAccessKeyFor(nsIContent* aContent)
 {
-  if (!aContent)
-    return 0;
-
   // Accesskeys are registered by @accesskey attribute only. At first check
   // whether it is presented on the given element to avoid the slow
   // nsEventStateManager::GetRegisteredAccessKey() method.
@@ -251,7 +251,7 @@ nsCoreUtils::IsAncestorOf(nsINode *aPossibleAncestorNode,
   NS_ENSURE_TRUE(aPossibleAncestorNode && aPossibleDescendantNode, false);
 
   nsINode *parentNode = aPossibleDescendantNode;
-  while ((parentNode = parentNode->GetNodeParent()) &&
+  while ((parentNode = parentNode->GetParentNode()) &&
          parentNode != aRootNode) {
     if (parentNode == aPossibleAncestorNode)
       return true;
@@ -306,19 +306,14 @@ nsCoreUtils::ScrollFrameToPoint(nsIFrame *aScrollableFrame,
                                 nsIFrame *aFrame,
                                 const nsIntPoint& aPoint)
 {
-  nsIScrollableFrame *scrollableFrame = do_QueryFrame(aScrollableFrame);
+  nsIScrollableFrame* scrollableFrame = do_QueryFrame(aScrollableFrame);
   if (!scrollableFrame)
     return;
 
-  nsPresContext *presContext = aFrame->PresContext();
-
-  nsIntRect frameRect = aFrame->GetScreenRectExternal();
-  int32_t devDeltaX = aPoint.x - frameRect.x;
-  int32_t devDeltaY = aPoint.y - frameRect.y;
-
-  nsPoint deltaPoint;
-  deltaPoint.x = presContext->DevPixelsToAppUnits(devDeltaX);
-  deltaPoint.y = presContext->DevPixelsToAppUnits(devDeltaY);
+  nsPoint point =
+    aPoint.ToAppUnits(aFrame->PresContext()->AppUnitsPerDevPixel());
+  nsRect frameRect = aFrame->GetScreenRectInAppUnits();
+  nsPoint deltaPoint(point.x - frameRect.x, point.y - frameRect.y);
 
   nsPoint scrollPoint = scrollableFrame->GetScrollPosition();
   scrollPoint -= deltaPoint;
@@ -389,19 +384,15 @@ nsCoreUtils::GetScreenCoordsForWindow(nsINode *aNode)
   if (!treeItem)
     return coords;
 
-  nsCOMPtr<nsIDocShellTreeItem> rootTreeItem;
-  treeItem->GetRootTreeItem(getter_AddRefs(rootTreeItem));
-  nsCOMPtr<nsIDOMDocument> domDoc = do_GetInterface(rootTreeItem);
-  if (!domDoc)
+  nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
+  treeItem->GetTreeOwner(getter_AddRefs(treeOwner));
+  if (!treeOwner)
     return coords;
 
-  nsCOMPtr<nsIDOMWindow> window;
-  domDoc->GetDefaultView(getter_AddRefs(window));
-  if (!window)
-    return coords;
+  nsCOMPtr<nsIBaseWindow> baseWindow = do_QueryInterface(treeOwner);
+  if (baseWindow)
+    baseWindow->GetPosition(&coords.x, &coords.y); // in device pixels
 
-  window->GetScreenX(&coords.x);
-  window->GetScreenY(&coords.y);
   return coords;
 }
 
@@ -484,26 +475,6 @@ nsCoreUtils::IsErrorPage(nsIDocument *aDocument)
   return StringBeginsWith(path, neterror) || StringBeginsWith(path, certerror);
 }
 
-already_AddRefed<nsIDOMNode>
-nsCoreUtils::GetDOMNodeForContainer(nsIDocShellTreeItem *aContainer)
-{
-  nsCOMPtr<nsIDocShell> shell = do_QueryInterface(aContainer);
-
-  nsCOMPtr<nsIContentViewer> cv;
-  shell->GetContentViewer(getter_AddRefs(cv));
-
-  if (!cv)
-    return nullptr;
-
-  nsIDocument* doc = cv->GetDocument();
-  if (!doc)
-    return nullptr;
-
-  nsIDOMNode* node = nullptr;
-  CallQueryInterface(doc, &node);
-  return node;
-}
-
 bool
 nsCoreUtils::GetID(nsIContent *aContent, nsAString& aID)
 {
@@ -526,17 +497,6 @@ nsCoreUtils::GetUIntAttr(nsIContent *aContent, nsIAtom *aAttr, int32_t *aUInt)
   }
 
   return false;
-}
-
-bool
-nsCoreUtils::IsXLink(nsIContent *aContent)
-{
-  if (!aContent)
-    return false;
-
-  return aContent->AttrValueIs(kNameSpaceID_XLink, nsGkAtoms::type,
-                               nsGkAtoms::simple, eCaseMatters) &&
-    aContent->HasAttr(kNameSpaceID_XLink, nsGkAtoms::href);
 }
 
 void

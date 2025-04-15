@@ -12,7 +12,8 @@ const Cr = Components.results;
 
 this.EXPORTED_SYMBOLS = ["DebuggerTransport",
                          "DebuggerClient",
-                         "debuggerSocketConnect"];
+                         "debuggerSocketConnect",
+                         "LongStringClient"];
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
@@ -173,6 +174,7 @@ const UnsolicitedNotifications = {
   "locationChange": "locationChange",
   "networkEvent": "networkEvent",
   "networkEventUpdate": "networkEventUpdate",
+  "newGlobal": "newGlobal",
   "newScript": "newScript",
   "tabDetached": "tabDetached",
   "tabNavigated": "tabNavigated",
@@ -381,13 +383,16 @@ DebuggerClient.prototype = {
    *
    * @param string aActor
    *        The actor ID to send the request to.
+   * @param aOnResponse function
+   *        If specified, will be called with the response packet when
+   *        debugging server responds.
    */
-  release: function DC_release(aActor) {
+  release: function DC_release(aActor, aOnResponse) {
     let packet = {
       to: aActor,
       type: "release",
     };
-    this.request(packet);
+    this.request(packet, aOnResponse);
   },
 
   /**
@@ -489,7 +494,7 @@ DebuggerClient.prototype = {
       }
     } catch(ex) {
       dumpn("Error handling response: " + ex + " - stack:\n" + ex.stack);
-      Cu.reportError(ex);
+      Cu.reportError(ex.message + "\n" + ex.stack);
     }
 
     this._sendRequests();
@@ -784,6 +789,38 @@ ThreadClient.prototype = {
       }
       doSetBreakpoint(this.resume.bind(this));
     }.bind(this));
+  },
+
+  /**
+   * Release multiple thread-lifetime object actors. If any pause-lifetime
+   * actors are included in the request, a |notReleasable| error will return,
+   * but all the thread-lifetime ones will have been released.
+   *
+   * @param array aActors
+   *        An array with actor IDs to release.
+   */
+  releaseMany: function TC_releaseMany(aActors, aOnResponse) {
+    let packet = {
+      to: this._actor,
+      type: "releaseMany",
+      actors: aActors
+    };
+    this._client.request(packet, aOnResponse);
+  },
+
+  /**
+   * Promote multiple pause-lifetime object actors to thread-lifetime ones.
+   *
+   * @param array aActors
+   *        An array with actor IDs to promote.
+   */
+  threadGrips: function TC_threadGrips(aActors, aOnResponse) {
+    let packet = {
+      to: this._actor,
+      type: "threadGrips",
+      actors: aActors
+    };
+    this._client.request(packet, aOnResponse);
   },
 
   /**
@@ -1148,6 +1185,7 @@ function LongStringClient(aClient, aGrip) {
 LongStringClient.prototype = {
   get actor() { return this._grip.actor; },
   get length() { return this._grip.length; },
+  get initial() { return this._grip.initial; },
 
   valid: true,
 

@@ -15,8 +15,6 @@
 # libs-%
 #   This target should call into the various libs targets that this
 #   application depends on.
-#   Make sure to set BOTH_MANIFESTS=1, as this will be called only once
-#   for both packages and language packs.
 # installer-%
 #   This target should list all required targets, a typical rule would be
 #	installers-%: clobber-% langpack-% repackage-zip-%
@@ -115,6 +113,10 @@ repackage-zip:  libs-$(AB_CD)
 	-$(PERL) -pi.old -e "s/en-US/$(AB_CD)/g" $(JARLOG_DIR_AB_CD)/*.jar.log
 # call a hook for apps to put their uninstall helper.exe into the package
 	$(UNINSTALLER_PACKAGE_HOOK)
+# call a hook for apps to build the stub installer
+ifdef MOZ_STUB_INSTALLER
+	$(STUB_HOOK)
+endif
 # copy xpi-stage over, but not install.rdf and chrome.manifest,
 # those are just for language packs
 	cd $(DIST)/xpi-stage/locale-$(AB_CD) && \
@@ -171,7 +173,7 @@ langpack-%: libs-%
 	$(NSINSTALL) -D $(DIST)/$(PKG_LANGPACK_PATH)
 	$(PYTHON) $(MOZILLA_DIR)/config/Preprocessor.py $(DEFINES) $(ACDEFINES) -I$(TK_DEFINES) -I$(APP_DEFINES) $(srcdir)/generic/install.rdf > $(FINAL_TARGET)/install.rdf
 	cd $(DIST)/xpi-stage/locale-$(AB_CD) && \
-	  $(ZIP) -r9D $(LANGPACK_FILE) install.rdf chrome chrome.manifest -x chrome/$(AB_CD).manifest
+	  $(ZIP) -r9D $(LANGPACK_FILE) install.rdf chrome chrome.manifest
 
 
 # This variable is to allow the wget-en-US target to know which ftp server to download from

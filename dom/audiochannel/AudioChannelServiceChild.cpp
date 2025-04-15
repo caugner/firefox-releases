@@ -12,11 +12,8 @@
 #include "mozilla/StaticPtr.h"
 #include "mozilla/unused.h"
 #include "mozilla/Util.h"
-
 #include "mozilla/dom/ContentChild.h"
-
-#include "base/basictypes.h"
-
+#include "nsIObserverService.h"
 #include "nsThreadUtils.h"
 
 using namespace mozilla;
@@ -47,7 +44,6 @@ void
 AudioChannelServiceChild::Shutdown()
 {
   if (gAudioChannelServiceChild) {
-    delete gAudioChannelServiceChild;
     gAudioChannelServiceChild = nullptr;
   }
 }
@@ -75,13 +71,18 @@ AudioChannelServiceChild::GetMuted(AudioChannelType aType, bool aMozHidden)
 
 void
 AudioChannelServiceChild::RegisterAudioChannelAgent(AudioChannelAgent* aAgent,
-                                               AudioChannelType aType)
+                                                    AudioChannelType aType)
 {
   AudioChannelService::RegisterAudioChannelAgent(aAgent, aType);
 
   ContentChild *cc = ContentChild::GetSingleton();
   if (cc) {
     cc->SendAudioChannelRegisterType(aType);
+  }
+
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  if (obs) {
+    obs->NotifyObservers(nullptr, "audio-channel-agent-changed", nullptr);
   }
 }
 
@@ -99,5 +100,9 @@ AudioChannelServiceChild::UnregisterAudioChannelAgent(AudioChannelAgent* aAgent)
   if (cc) {
     cc->SendAudioChannelUnregisterType(type);
   }
-}
 
+  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  if (obs) {
+    obs->NotifyObservers(nullptr, "audio-channel-agent-changed", nullptr);
+  }
+}

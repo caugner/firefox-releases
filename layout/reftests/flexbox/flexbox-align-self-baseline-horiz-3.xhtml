@@ -15,16 +15,10 @@
   <head>
     <style>
       .flexbox {
-        display: -moz-flex;
-        -moz-align-items: baseline;
+        display: flex;
+        align-items: baseline;
         border: 1px dashed blue;
         font: 14px sans-serif;
-      }
-
-      input, label {
-        /* XXXdholbert HACK - REMOVEME after bug 783415 lands (which will
-           make this display:block conversion happen automatically). */
-        display: block;
       }
 
       .big {

@@ -39,9 +39,16 @@ using namespace mozilla;
 
 #include "prlog.h"
 #if defined(PR_LOGGING)
-static PRLogModuleInfo *sLog = PR_NewLogModule("proxy");
+static PRLogModuleInfo *
+GetProxyLog()
+{
+    static PRLogModuleInfo *sLog;
+    if (!sLog)
+        sLog = PR_NewLogModule("proxy");
+    return sLog;
+}
 #endif
-#define LOG(args) PR_LOG(sLog, PR_LOG_DEBUG, args)
+#define LOG(args) PR_LOG(GetProxyLog(), PR_LOG_DEBUG, args)
 
 //----------------------------------------------------------------------------
 
@@ -643,13 +650,17 @@ nsProtocolProxyService::CanUseProxy(nsIURI *aURI, int32_t defaultPort)
     return true;
 }
 
-static const char kProxyType_HTTP[]    = "http";
-static const char kProxyType_PROXY[]   = "proxy";
-static const char kProxyType_SOCKS[]   = "socks";
-static const char kProxyType_SOCKS4[]  = "socks4";
-static const char kProxyType_SOCKS5[]  = "socks5";
-static const char kProxyType_DIRECT[]  = "direct";
-static const char kProxyType_UNKNOWN[] = "unknown";
+// kProxyType\* may be referred to externally in
+// nsProxyInfo in order to compare by string pointer
+namespace mozilla {
+const char *kProxyType_HTTP    = "http";
+const char *kProxyType_PROXY   = "proxy";
+const char *kProxyType_SOCKS   = "socks";
+const char *kProxyType_SOCKS4  = "socks4";
+const char *kProxyType_SOCKS5  = "socks5";
+const char *kProxyType_DIRECT  = "direct";
+const char *kProxyType_UNKNOWN = "unknown";
+}
 
 const char *
 nsProtocolProxyService::ExtractProxyInfo(const char *start,
@@ -782,15 +793,10 @@ nsProtocolProxyService::SecondsSinceSessionStart()
     int64_t diff = now - mSessionStart;
 
     // convert microseconds to seconds
-    PRTime ups;
-    LL_I2L(ups, PR_USEC_PER_SEC);
-    diff /= ups;
+    diff /= PR_USEC_PER_SEC;
 
-    // convert to 32 bit value
-    uint32_t dsec;
-    LL_L2UI(dsec, diff);
-
-    return dsec;
+    // return converted 32 bit value
+    return uint32_t(diff);
 }
 
 void
@@ -890,17 +896,12 @@ nsProtocolProxyService::ConfigureFromPAC(const nsCString &spec,
 {
     SetupPACThread();
 
-    nsCOMPtr<nsIURI> pacURI;
-    nsresult rv = NS_NewURI(getter_AddRefs(pacURI), spec);
-    if (NS_FAILED(rv))
-        return rv;
-
-    if (mPACMan->IsPACURI(pacURI) && !forceReload)
+    if (mPACMan->IsPACURI(spec) && !forceReload)
         return NS_OK;
 
     mFailedProxies.Clear();
 
-    return mPACMan->LoadPACFromURI(pacURI);
+    return mPACMan->LoadPACFromURI(spec);
 }
 
 void

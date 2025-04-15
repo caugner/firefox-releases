@@ -22,9 +22,6 @@
 
 class nsISelectionController;
 class nsIDOMCharacterData;
-#ifdef ACCESSIBILITY
-class nsIAccessible;
-#endif
 class EditorInitializerEntryTracker;
 class nsTextEditorState;
 namespace mozilla {
@@ -70,12 +67,10 @@ public:
   virtual nsSize GetMinSize(nsBoxLayoutState& aBoxLayoutState);
   virtual bool IsCollapsed();
 
-  DECL_DO_GLOBAL_REFLOW_COUNT_DSP(nsTextControlFrame, nsContainerFrame)
-
   virtual bool IsLeaf() const;
   
 #ifdef ACCESSIBILITY
-  virtual already_AddRefed<Accessible> CreateAccessible();
+  virtual mozilla::a11y::AccType AccessibleType() MOZ_OVERRIDE;
 #endif
 
 #ifdef DEBUG
@@ -104,6 +99,10 @@ public:
   NS_IMETHOD SetInitialChildList(ChildListID     aListID,
                                  nsFrameList&    aChildList) MOZ_OVERRIDE;
 
+  NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
+                              const nsRect&           aDirtyRect,
+                              const nsDisplayListSet& aLists);
+
 //==== BEGIN NSIFORMCONTROLFRAME
   virtual void SetFocus(bool aOn , bool aRepaint); 
   virtual nsresult SetFormProperty(nsIAtom* aName, const nsAString& aValue);
@@ -115,7 +114,6 @@ public:
 //==== NSITEXTCONTROLFRAME
 
   NS_IMETHOD    GetEditor(nsIEditor **aEditor) MOZ_OVERRIDE;
-  NS_IMETHOD    GetTextLength(int32_t* aTextLength) MOZ_OVERRIDE;
   NS_IMETHOD    SetSelectionStart(int32_t aSelectionStart) MOZ_OVERRIDE;
   NS_IMETHOD    SetSelectionEnd(int32_t aSelectionEnd) MOZ_OVERRIDE;
   NS_IMETHOD    SetSelectionRange(int32_t aSelectionStart,
@@ -140,7 +138,7 @@ public:
 
 //==== NSISTATEFULFRAME
 
-  NS_IMETHOD SaveState(SpecialStateID aStateID, nsPresState** aState) MOZ_OVERRIDE;
+  NS_IMETHOD SaveState(nsPresState** aState) MOZ_OVERRIDE;
   NS_IMETHOD RestoreState(nsPresState* aState) MOZ_OVERRIDE;
 
 //=== END NSISTATEFULFRAME

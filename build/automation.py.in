@@ -386,7 +386,6 @@ user_pref("dom.popup_maximum", -1);
 user_pref("dom.send_after_paint_to_content", true);
 user_pref("dom.successive_dialog_time_limit", 0);
 user_pref("signed.applets.codebase_principal_support", true);
-user_pref("security.warn_submit_insecure", false);
 user_pref("browser.shell.checkDefaultBrowser", false);
 user_pref("shell.checkDefaultClient", false);
 user_pref("browser.warnOnQuit", false);
@@ -440,6 +439,8 @@ user_pref("extensions.update.url", "http://%(server)s/extensions-dummy/updateURL
 user_pref("extensions.update.background.url", "http://%(server)s/extensions-dummy/updateBackgroundURL");
 user_pref("extensions.blocklist.url", "http://%(server)s/extensions-dummy/blocklistURL");
 user_pref("extensions.hotfix.url", "http://%(server)s/extensions-dummy/hotfixURL");
+// Turn off extension updates so they don't bother tests
+user_pref("extensions.update.enabled", false);
 // Make sure opening about:addons won't hit the network
 user_pref("extensions.webservice.discoverURL", "http://%(server)s/extensions-dummy/discoveryURL");
 // Make sure AddonRepository won't hit the network
@@ -450,7 +451,7 @@ user_pref("extensions.getAddons.search.browseURL", "http://%(server)s/extensions
 user_pref("extensions.getAddons.search.url", "http://%(server)s/extensions-dummy/repositorySearchURL");
 
 // Make enablePrivilege continue to work for test code. :-(
-user_pref("security.enablePrivilege.enable_for_tests", true);
+user_pref("security.turn_off_all_security_so_that_viruses_can_take_over_this_computer", true);
 
 // Get network events.
 user_pref("network.activity.blipIntervalMilliseconds", 250);
@@ -606,6 +607,22 @@ user_pref("camino.use_system_proxy_settings", false); // Camino-only, harmless t
         'origin': 'https://example.com',
         'manifestURL': 'https://example.com/manifest_csp_priv.webapp',
         'description': 'https://example.com Privileged App with manifest policy',
+        'appStatus': _APP_STATUS_PRIVILEGED
+      }, 
+      {
+        'name': 'https_a_domain_certified',
+        'csp' : "",
+        'origin': 'https://acertified.com',
+        'manifestURL': 'https://acertified.com/manifest.webapp',
+        'description': 'https://acertified.com Certified App',
+        'appStatus': _APP_STATUS_CERTIFIED
+      }, 
+      {
+        'name': 'https_a_domain_privileged',
+        'csp': "",
+        'origin': 'https://aprivileged.com',
+        'manifestURL': 'https://aprivileged.com/manifest.webapp',
+        'description': 'https://aprivileged.com Privileged App ',
         'appStatus': _APP_STATUS_PRIVILEGED
       }, 
     ];

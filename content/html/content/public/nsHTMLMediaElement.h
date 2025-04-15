@@ -8,7 +8,7 @@
 
 #include "nsIDOMHTMLMediaElement.h"
 #include "nsGenericHTMLElement.h"
-#include "nsMediaDecoder.h"
+#include "MediaDecoderOwner.h"
 #include "nsIChannel.h"
 #include "nsIHttpChannel.h"
 #include "nsThreadUtils.h"
@@ -16,13 +16,13 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsILoadGroup.h"
 #include "nsIObserver.h"
-#include "nsDataHashtable.h"
-#include "nsAudioStream.h"
+#include "AudioStream.h"
 #include "VideoFrameContainer.h"
 #include "mozilla/CORSMode.h"
 #include "nsDOMMediaStream.h"
 #include "mozilla/Mutex.h"
 #include "nsTimeRanges.h"
+#include "nsIDOMWakeLock.h"
 #include "AudioChannelCommon.h"
 #include "AudioChannelAgent.h"
 
@@ -34,13 +34,15 @@ typedef uint16_t nsMediaReadyState;
 
 namespace mozilla {
 class MediaResource;
-}
+class MediaDecoder;
 #ifdef MOZ_DASH
-class nsDASHDecoder;
+class DASHDecoder;
 #endif
+}
 
 class nsHTMLMediaElement : public nsGenericHTMLElement,
                            public nsIObserver,
+                           public mozilla::MediaDecoderOwner,
                            public nsIAudioChannelAgentCallback
 {
 public:
@@ -49,11 +51,13 @@ public:
   typedef mozilla::VideoFrameContainer VideoFrameContainer;
   typedef mozilla::MediaStream MediaStream;
   typedef mozilla::MediaResource MediaResource;
-
-  typedef nsDataHashtable<nsCStringHashKey, nsCString> MetadataTags;
+  typedef mozilla::MediaDecoderOwner MediaDecoderOwner;
+  typedef mozilla::MetadataTags MetadataTags;
+  typedef mozilla::AudioStream AudioStream;
+  typedef mozilla::MediaDecoder MediaDecoder;
 
 #ifdef MOZ_DASH
-  friend class nsDASHDecoder;
+  friend class DASHDecoder;
 #endif
 
   enum CanPlayStatus {
@@ -124,49 +128,49 @@ public:
   // Called by the video decoder object, on the main thread,
   // when it has read the metadata containing video dimensions,
   // etc.
-  void MetadataLoaded(uint32_t aChannels,
-                      uint32_t aRate,
-                      bool aHasAudio,
-                      const MetadataTags* aTags);
+  virtual void MetadataLoaded(uint32_t aChannels,
+                              uint32_t aRate,
+                              bool aHasAudio,
+                              const mozilla::MetadataTags* aTags) MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the video decoder object, on the main thread,
   // when it has read the first frame of the video
   // aResourceFullyLoaded should be true if the resource has been
   // fully loaded and the caller will call ResourceLoaded next.
-  void FirstFrameLoaded(bool aResourceFullyLoaded);
+  virtual void FirstFrameLoaded(bool aResourceFullyLoaded) MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the video decoder object, on the main thread,
   // when the resource has completed downloading.
-  void ResourceLoaded();
+  virtual void ResourceLoaded() MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the video decoder object, on the main thread,
   // when the resource has a network error during loading.
-  void NetworkError();
+  virtual void NetworkError() MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the video decoder object, on the main thread, when the
   // resource has a decode error during metadata loading or decoding.
-  void DecodeError();
+  virtual void DecodeError() MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the video decoder object, on the main thread, when the
   // resource load has been cancelled.
-  void LoadAborted();
+  virtual void LoadAborted() MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the video decoder object, on the main thread,
   // when the video playback has ended.
-  void PlaybackEnded();
+  virtual void PlaybackEnded() MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the video decoder object, on the main thread,
   // when the resource has started seeking.
-  void SeekStarted();
+  virtual void SeekStarted() MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the video decoder object, on the main thread,
   // when the resource has completed seeking.
-  void SeekCompleted();
+  virtual void SeekCompleted() MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the media stream, on the main thread, when the download
   // has been suspended by the cache or because the element itself
   // asked the decoder to suspend the download.
-  void DownloadSuspended();
+  virtual void DownloadSuspended() MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the media stream, on the main thread, when the download
   // has been resumed by the cache or because the element itself
@@ -175,15 +179,15 @@ public:
   // previously finished. We are downloading the middle of the media after
   // having downloaded the end, we need to notify the element a download in
   // ongoing.
-  void DownloadResumed(bool aForceNetworkLoading = false);
+  virtual void DownloadResumed(bool aForceNetworkLoading = false) MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the media decoder to indicate that the download has stalled
   // (no data has arrived for a while).
-  void DownloadStalled();
+  virtual void DownloadStalled() MOZ_FINAL MOZ_OVERRIDE;
 
   // Called by the media decoder to indicate whether the media cache has
   // suspended the channel.
-  void NotifySuspendedByCache(bool aIsSuspended);
+  virtual void NotifySuspendedByCache(bool aIsSuspended) MOZ_FINAL MOZ_OVERRIDE;
 
   // Called when a "MozAudioAvailable" event listener is added. The media
   // element will then notify its decoder that it needs to make a copy of
@@ -194,12 +198,8 @@ public:
 
   // Called by the media decoder and the video frame to get the
   // ImageContainer containing the video data.
-  VideoFrameContainer* GetVideoFrameContainer();
-  ImageContainer* GetImageContainer()
-  {
-    VideoFrameContainer* container = GetVideoFrameContainer();
-    return container ? container->GetImageContainer() : nullptr;
-  }
+  virtual VideoFrameContainer* GetVideoFrameContainer() MOZ_FINAL MOZ_OVERRIDE;
+  ImageContainer* GetImageContainer();
 
   // Called by the video frame to get the print surface, if this is
   // a static document and we're not actually playing video
@@ -207,8 +207,8 @@ public:
 
   // Dispatch events
   using nsGenericHTMLElement::DispatchEvent;
-  nsresult DispatchEvent(const nsAString& aName);
-  nsresult DispatchAsyncEvent(const nsAString& aName);
+  virtual nsresult DispatchEvent(const nsAString& aName) MOZ_FINAL MOZ_OVERRIDE;
+  virtual nsresult DispatchAsyncEvent(const nsAString& aName) MOZ_FINAL MOZ_OVERRIDE;
   nsresult DispatchAudioAvailableEvent(float* aFrameBuffer,
                                        uint32_t aFrameBufferLength,
                                        float aTime);
@@ -221,16 +221,7 @@ public:
   // the data for the next frame is available. This method will
   // decide whether to set the ready state to HAVE_CURRENT_DATA,
   // HAVE_FUTURE_DATA or HAVE_ENOUGH_DATA.
-  enum NextFrameStatus {
-    // The next frame of audio/video is available
-    NEXT_FRAME_AVAILABLE,
-    // The next frame of audio/video is unavailable because the decoder
-    // is paused while it buffers up data
-    NEXT_FRAME_UNAVAILABLE_BUFFERING,
-    // The next frame of audio/video is unavailable for some other reasons
-    NEXT_FRAME_UNAVAILABLE
-  };
-  void UpdateReadyStateForData(NextFrameStatus aNextFrame);
+  virtual void UpdateReadyStateForData(MediaDecoderOwner::NextFrameStatus aNextFrame) MOZ_FINAL MOZ_OVERRIDE;
 
   // Use this method to change the mReadyState member, so required
   // events can be fired.
@@ -242,7 +233,7 @@ public:
   // Notify that enough data has arrived to start autoplaying.
   // If the element is 'autoplay' and is ready to play back (not paused,
   // autoplay pref enabled, etc), it should start playing back.
-  void NotifyAutoplayDataReady();
+  virtual void NotifyAutoplayDataReady() MOZ_FINAL MOZ_OVERRIDE;
 
   // Check if the media element had crossorigin set when loading started
   bool ShouldCheckAllowOrigin();
@@ -261,7 +252,7 @@ public:
   already_AddRefed<nsIPrincipal> GetCurrentPrincipal();
 
   // called to notify that the principal of the decoder's media resource has changed.
-  void NotifyDecoderPrincipalChanged();
+  virtual void NotifyDecoderPrincipalChanged() MOZ_FINAL MOZ_OVERRIDE;
 
   // Update the visual size of the media. Called from the decoder on the
   // main thread when/if the size changes.
@@ -285,54 +276,45 @@ public:
   // false here even if CanHandleMediaType would return true.
   static bool ShouldHandleMediaType(const char* aMIMEType);
 
-#ifdef MOZ_RAW
-  static bool IsRawEnabled();
-#endif
-
 #ifdef MOZ_OGG
-  static bool IsOggEnabled();
   static bool IsOggType(const nsACString& aType);
   static const char gOggTypes[3][16];
   static char const *const gOggCodecs[3];
-  static bool IsOpusEnabled();
   static char const *const gOggCodecsWithOpus[4];
 #endif
 
 #ifdef MOZ_WAVE
-  static bool IsWaveEnabled();
   static bool IsWaveType(const nsACString& aType);
   static const char gWaveTypes[4][15];
   static char const *const gWaveCodecs[2];
 #endif
 
 #ifdef MOZ_WEBM
-  static bool IsWebMEnabled();
   static bool IsWebMType(const nsACString& aType);
   static const char gWebMTypes[2][11];
   static char const *const gWebMCodecs[4];
 #endif
 
 #ifdef MOZ_GSTREAMER
-  static bool IsH264Enabled();
+  static bool IsGStreamerSupportedType(const nsACString& aType);
   static bool IsH264Type(const nsACString& aType);
   static const char gH264Types[3][16];
-  static char const *const gH264Codecs[7];
 #endif
 
 #ifdef MOZ_WIDGET_GONK
-  static bool IsOmxEnabled();
   static bool IsOmxSupportedType(const nsACString& aType);
   static const char gOmxTypes[5][16];
-  static char const *const gH264Codecs[7];
+#endif
+
+#if defined(MOZ_GSTREAMER) || defined(MOZ_WIDGET_GONK)
+  static char const *const gH264Codecs[9];
 #endif
 
 #ifdef MOZ_MEDIA_PLUGINS
-  static bool IsMediaPluginsEnabled();
   static bool IsMediaPluginsType(const nsACString& aType);
 #endif
 
 #ifdef MOZ_DASH
-  static bool IsDASHEnabled();
   static bool IsDASHMPDType(const nsACString& aType);
   static const char gDASHMPDTypes[1][21];
 #endif
@@ -357,8 +339,8 @@ public:
   /**
    * Called when data has been written to the underlying audio stream.
    */
-  void NotifyAudioAvailable(float* aFrameBuffer, uint32_t aFrameBufferLength,
-                            float aTime);
+  virtual void NotifyAudioAvailable(float* aFrameBuffer, uint32_t aFrameBufferLength,
+                                    float aTime) MOZ_FINAL MOZ_OVERRIDE;
 
   virtual bool IsNodeOfType(uint32_t aFlags) const;
 
@@ -381,7 +363,7 @@ public:
    */
   bool GetPlayedOrSeeked() const { return mHasPlayedOrSeeked; }
 
-  nsresult CopyInnerTo(nsGenericElement* aDest);
+  nsresult CopyInnerTo(mozilla::dom::Element* aDest);
 
   /**
    * Sets the Accept header on the HTTP channel to the required
@@ -401,7 +383,7 @@ public:
    * last 250ms, as required by the spec when the current time is periodically
    * increasing during playback.
    */
-  void FireTimeUpdate(bool aPeriodic);
+  virtual void FireTimeUpdate(bool aPeriodic) MOZ_FINAL MOZ_OVERRIDE;
 
   MediaStream* GetSrcMediaStream()
   {
@@ -412,6 +394,22 @@ public:
 protected:
   class MediaLoadListener;
   class StreamListener;
+
+  virtual void GetItemValueText(nsAString& text);
+  virtual void SetItemValueText(const nsAString& text);
+
+  class WakeLockBoolWrapper {
+  public:
+    WakeLockBoolWrapper(bool val = false) : mValue(val), mOuter(NULL), mWakeLock(NULL) {}
+    void SetOuter(nsHTMLMediaElement* outer) { mOuter = outer; }
+    operator bool() { return mValue; }
+    WakeLockBoolWrapper& operator=(bool val);
+    bool operator !() const { return !mValue; }
+  private:
+    bool mValue;
+    nsHTMLMediaElement* mOuter;
+    nsCOMPtr<nsIDOMMozWakeLock> mWakeLock;
+  };
 
   /**
    * Logs a warning message to the web console to report various failures.
@@ -431,9 +429,9 @@ protected:
   void SetPlayedOrSeeked(bool aValue);
 
   /**
-   * Initialize the media element for playback of mSrcAttrStream
+   * Initialize the media element for playback of aStream
    */
-  void SetupSrcMediaStreamPlayback();
+  void SetupSrcMediaStreamPlayback(nsDOMMediaStream* aStream);
   /**
    * Stop playback on mSrcStream.
    */
@@ -452,14 +450,14 @@ protected:
    * Create a decoder for the given aMIMEType. Returns null if we
    * were unable to create the decoder.
    */
-  already_AddRefed<nsMediaDecoder> CreateDecoder(const nsACString& aMIMEType);
+  already_AddRefed<MediaDecoder> CreateDecoder(const nsACString& aMIMEType);
 
   /**
    * Initialize a decoder as a clone of an existing decoder in another
    * element.
    * mLoadingSrc must already be set.
    */
-  nsresult InitializeDecoderAsClone(nsMediaDecoder* aOriginal);
+  nsresult InitializeDecoderAsClone(MediaDecoder* aOriginal);
 
   /**
    * Initialize a decoder to load the given channel. The decoder's stream
@@ -473,10 +471,10 @@ protected:
    * Finish setting up the decoder after Load() has been called on it.
    * Called by InitializeDecoderForChannel/InitializeDecoderAsClone.
    */
-  nsresult FinishDecoderSetup(nsMediaDecoder* aDecoder,
+  nsresult FinishDecoderSetup(MediaDecoder* aDecoder,
                               MediaResource* aStream,
                               nsIStreamListener **aListener,
-                              nsMediaDecoder* aCloneDonor);
+                              MediaDecoder* aCloneDonor);
 
   /**
    * Call this after setting up mLoadingSrc and mDecoder.
@@ -652,10 +650,32 @@ protected:
    */
   void ProcessMediaFragmentURI();
 
+  // Get the nsHTMLMediaElement object if the decoder is being used from an
+  // HTML media element, and null otherwise.
+  virtual nsHTMLMediaElement* GetMediaElement() MOZ_FINAL MOZ_OVERRIDE
+  {
+    return this;
+  }
+
+  // Return true if decoding should be paused
+  virtual bool GetPaused() MOZ_FINAL MOZ_OVERRIDE
+  {
+    bool isPaused = false;
+    GetPaused(&isPaused);
+    return isPaused;
+  }
+
   /**
    * Mute or unmute the audio, without changing the value that |muted| reports.
    */
   void SetMutedInternal(bool aMuted);
+
+  /**
+   * Suspend (if aPauseForInactiveDocument) or resume element playback and
+   * resource download.  If aSuspendEvents is true, event delivery is
+   * suspended (and events queued) until the element is resumed.
+   */
+  void SuspendOrResumeElement(bool aPauseElement, bool aSuspendEvents);
 
   // Check the permissions for audiochannel.
   bool CheckAudioChannelPermissions(const nsAString& aType);
@@ -668,7 +688,7 @@ protected:
 
   // The current decoder. Load() has been called on this decoder.
   // At most one of mDecoder and mSrcStream can be non-null.
-  nsRefPtr<nsMediaDecoder> mDecoder;
+  nsRefPtr<MediaDecoder> mDecoder;
 
   // A reference to the VideoFrameContainer which contains the current frame
   // of video to display.
@@ -755,7 +775,7 @@ protected:
   static PLDHashOperator BuildObjectFromTags(nsCStringHashKey::KeyType aKey,
                                              nsCString aValue,
                                              void* aUserArg);
-  nsAutoPtr<const MetadataTags> mTags;
+  nsAutoPtr<const mozilla::MetadataTags> mTags;
 
   // URI of the resource we're attempting to load. This stores the value we
   // return in the currentSrc attribute. Use GetCurrentSrc() to access the
@@ -801,7 +821,7 @@ protected:
   nsCOMPtr<nsIContent> mSourceLoadCandidate;
 
   // An audio stream for writing audio directly from JS.
-  nsRefPtr<nsAudioStream> mAudioStream;
+  nsRefPtr<AudioStream> mAudioStream;
 
   // Range of time played.
   nsTimeRanges mPlayed;
@@ -838,7 +858,7 @@ protected:
 
   // Playback of the video is paused either due to calling the
   // 'Pause' method, or playback not yet having started.
-  bool mPaused;
+  WakeLockBoolWrapper mPaused;
 
   // True if the sound is muted.
   bool mMuted;
@@ -852,8 +872,12 @@ protected:
   // to raise the 'waiting' event as per 4.7.1.8 in HTML 5 specification.
   bool mPlayingBeforeSeek;
 
-  // True iff this element is paused because the document is inactive
-  bool mPausedForInactiveDocument;
+  // True iff this element is paused because the document is inactive or has
+  // been suspended by the audio channel service.
+  bool mPausedForInactiveDocumentOrChannel;
+
+  // True iff event delivery is suspended (mPausedForInactiveDocumentOrChannel must also be true).
+  bool mEventDeliveryPaused;
 
   // True if we've reported a "waiting" event since the last
   // readyState change to HAVE_CURRENT_DATA.
@@ -927,8 +951,8 @@ protected:
   // Audio Channel Type.
   mozilla::dom::AudioChannelType mAudioChannelType;
 
-  // The audiochannel has been muted
-  bool mChannelMuted;
+  // The audiochannel has been suspended.
+  bool mChannelSuspended;
 
   // Is this media element playing?
   bool mPlayingThroughTheAudioChannel;

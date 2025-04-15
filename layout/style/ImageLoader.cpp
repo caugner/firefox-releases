@@ -10,6 +10,8 @@
 #include "nsContentUtils.h"
 #include "nsLayoutUtils.h"
 #include "nsError.h"
+#include "nsDisplayList.h"
+#include "FrameLayerBuilder.h"
 
 namespace mozilla {
 namespace css {
@@ -56,8 +58,8 @@ ImageLoader::AssociateRequestToFrame(imgIRequest* aRequest,
              mFrameToRequestMap.IsInitialized() &&
              mImages.IsInitialized());
 
-  nsCOMPtr<imgIDecoderObserver> observer;
-  aRequest->GetDecoderObserver(getter_AddRefs(observer));
+  nsCOMPtr<imgINotificationObserver> observer;
+  aRequest->GetNotificationObserver(getter_AddRefs(observer));
   if (!observer) {
     // The request has already been canceled, so ignore it.  This is ok because
     // we're not going to get any more notifications from a canceled request.
@@ -157,8 +159,8 @@ ImageLoader::DisassociateRequestFromFrame(imgIRequest* aRequest,
 
 #ifdef DEBUG
   {
-    nsCOMPtr<imgIDecoderObserver> observer;
-    aRequest->GetDecoderObserver(getter_AddRefs(observer));
+    nsCOMPtr<imgINotificationObserver> observer;
+    aRequest->GetNotificationObserver(getter_AddRefs(observer));
     MOZ_ASSERT(!observer || observer == this);
   }
 #endif
@@ -314,6 +316,20 @@ ImageLoader::GetPresContext()
   return shell->GetPresContext();
 }
 
+void InvalidateImagesCallback(nsIFrame* aFrame, 
+                              FrameLayerBuilder::DisplayItemData* aItem)
+{
+  nsDisplayItem::Type type = nsDisplayItem::GetDisplayItemTypeFromKey(aItem->GetDisplayItemKey());
+  uint8_t flags = nsDisplayItem::GetDisplayItemFlagsForType(type);
+
+  if (flags & nsDisplayItem::TYPE_RENDERS_NO_IMAGES) {
+    return;
+  }
+
+  aItem->Invalidate();
+  aFrame->SchedulePaint();
+}
+
 void
 ImageLoader::DoRedraw(FrameSet* aFrameSet)
 {
@@ -325,7 +341,7 @@ ImageLoader::DoRedraw(FrameSet* aFrameSet)
     nsIFrame* frame = aFrameSet->ElementAt(i);
 
     if (frame->GetStyleVisibility()->IsVisible()) {
-      frame->InvalidateFrame();
+      FrameLayerBuilder::IterateRetainedDataFor(frame, InvalidateImagesCallback);
     }
   }
 }
@@ -334,12 +350,35 @@ NS_IMPL_ADDREF(ImageLoader)
 NS_IMPL_RELEASE(ImageLoader)
 
 NS_INTERFACE_MAP_BEGIN(ImageLoader)
-  NS_INTERFACE_MAP_ENTRY(imgIDecoderObserver)
-  NS_INTERFACE_MAP_ENTRY(imgIContainerObserver)
+  NS_INTERFACE_MAP_ENTRY(imgINotificationObserver)
   NS_INTERFACE_MAP_ENTRY(imgIOnloadBlocker)
 NS_INTERFACE_MAP_END
 
 NS_IMETHODIMP
+ImageLoader::Notify(imgIRequest *aRequest, int32_t aType, const nsIntRect* aData)
+{
+  if (aType == imgINotificationObserver::SIZE_AVAILABLE) {
+    nsCOMPtr<imgIContainer> image;
+    aRequest->GetImage(getter_AddRefs(image));
+    return OnStartContainer(aRequest, image);
+  }
+
+  if (aType == imgINotificationObserver::IS_ANIMATED) {
+    return OnImageIsAnimated(aRequest);
+  }
+
+  if (aType == imgINotificationObserver::LOAD_COMPLETE) {
+    return OnStopFrame(aRequest);
+  }
+
+  if (aType == imgINotificationObserver::FRAME_UPDATE) {
+    return FrameChanged(aRequest);
+  }
+
+  return NS_OK;
+}
+
+nsresult
 ImageLoader::OnStartContainer(imgIRequest* aRequest, imgIContainer* aImage)
 { 
   nsPresContext* presContext = GetPresContext();
@@ -352,7 +391,7 @@ ImageLoader::OnStartContainer(imgIRequest* aRequest, imgIContainer* aImage)
   return NS_OK;
 }
 
-NS_IMETHODIMP
+nsresult
 ImageLoader::OnImageIsAnimated(imgIRequest* aRequest)
 {
   if (!mDocument) {
@@ -376,8 +415,8 @@ ImageLoader::OnImageIsAnimated(imgIRequest* aRequest)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-ImageLoader::OnStopFrame(imgIRequest *aRequest, uint32_t aFrame)
+nsresult
+ImageLoader::OnStopFrame(imgIRequest *aRequest)
 {
   if (!mDocument || mInClone) {
     return NS_OK;
@@ -395,10 +434,8 @@ ImageLoader::OnStopFrame(imgIRequest *aRequest, uint32_t aFrame)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-ImageLoader::FrameChanged(imgIRequest *aRequest,
-                          imgIContainer *aContainer,
-                          const nsIntRect *aDirtyRect)
+nsresult
+ImageLoader::FrameChanged(imgIRequest *aRequest)
 {
   if (!mDocument || mInClone) {
     return NS_OK;

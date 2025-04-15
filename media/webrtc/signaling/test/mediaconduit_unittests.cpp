@@ -12,6 +12,7 @@ using namespace std;
 
 #include "mozilla/Scoped.h"
 #include <MediaConduitInterface.h>
+#include "nsIEventTarget.h"
 #include "nsStaticComponents.h"
 #include "FakeMediaStreamsImpl.h"
 
@@ -20,7 +21,7 @@ using namespace std;
 #include "gtest_utils.h"
 
 #include "mtransport_test_utils.h"
-MtransportTestUtils test_utils;
+MtransportTestUtils *test_utils;
 
 //Video Frame Color
 const int COLOR = 0x80; //Gray
@@ -270,13 +271,14 @@ void AudioSendAndReceive::GenerateAndReadSamples()
    int16_t audioOutput[PLAYOUT_SAMPLE_LENGTH];
    short* inbuf;
    int sampleLengthDecoded = 0;
-   int SAMPLES = PLAYOUT_SAMPLE_FREQUENCY * 10; //10 milliseconds
+   int SAMPLES = (PLAYOUT_SAMPLE_FREQUENCY * 10)/1000; //10 milliseconds
    int CHANNELS = 1; //mono audio
-   int sampleLengthInBytes = PLAYOUT_SAMPLE_LENGTH * sizeof(short);
+   int sampleLengthInBytes = sizeof(audioInput);
    //generated audio buffer
    inbuf = (short *)moz_xmalloc(sizeof(short)*SAMPLES*CHANNELS);
    memset(audioInput,0,sampleLengthInBytes);
    memset(audioOutput,0,sampleLengthInBytes);
+   MOZ_ASSERT(SAMPLES <= PLAYOUT_SAMPLE_LENGTH);
 
    FILE* inFile = fopen( iFile.c_str(), "wb+");
    if(!inFile) {
@@ -747,9 +749,11 @@ TEST_F(TransportConduitTest, TestVideoConduitCodecAPI) {
 
 int main(int argc, char **argv)
 {
-  test_utils.InitServices();
+  test_utils = new MtransportTestUtils();
   ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
+  int rv = RUN_ALL_TESTS();
+  delete test_utils;
+  return rv;
 }
 
 

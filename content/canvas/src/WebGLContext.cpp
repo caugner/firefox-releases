@@ -44,15 +44,15 @@
 #include "mozilla/Services.h"
 #include "mozilla/dom/WebGLRenderingContextBinding.h"
 #include "mozilla/dom/BindingUtils.h"
+#include "mozilla/dom/ipc/ProcessPriorityManager.h"
 
 #include "Layers.h"
 
 using namespace mozilla;
 using namespace mozilla::gl;
 using namespace mozilla::dom;
+using namespace mozilla::dom::ipc;
 using namespace mozilla::layers;
-
-NS_IMPL_ISUPPORTS1(WebGLMemoryPressureObserver, nsIObserver)
 
 NS_IMETHODIMP
 WebGLMemoryPressureObserver::Observe(nsISupports* aSubject,
@@ -64,7 +64,10 @@ WebGLMemoryPressureObserver::Observe(nsISupports* aSubject,
 
     bool wantToLoseContext = true;
 
-    if (!nsCRT::strcmp(aSomeData, NS_LITERAL_STRING("heap-minimize").get()))
+    if (!mContext->mCanLoseContextInForeground && CurrentProcessIsForeground())
+        wantToLoseContext = false;
+    else if (!nsCRT::strcmp(aSomeData,
+                            NS_LITERAL_STRING("heap-minimize").get()))
         wantToLoseContext = mContext->mLoseContextOnHeapMinimize;
 
     if (wantToLoseContext)
@@ -160,6 +163,7 @@ WebGLContext::WebGLContext()
     mGLMaxTextureUnits = 0;
     mGLMaxTextureSize = 0;
     mGLMaxCubeMapTextureSize = 0;
+    mGLMaxRenderbufferSize = 0;
     mGLMaxTextureImageUnits = 0;
     mGLMaxVertexTextureImageUnits = 0;
     mGLMaxVaryingVectors = 0;
@@ -179,11 +183,15 @@ WebGLContext::WebGLContext()
     mContextStatus = ContextStable;
     mContextLostErrorSet = false;
     mLoseContextOnHeapMinimize = false;
+    mCanLoseContextInForeground = true;
 
     mAlreadyGeneratedWarnings = 0;
     mAlreadyWarnedAboutFakeVertexAttrib0 = false;
 
     mLastUseIndex = 0;
+
+    mMinInUseAttribArrayLengthCached = false;
+    mMinInUseAttribArrayLength = 0;
 }
 
 WebGLContext::~WebGLContext()
@@ -883,48 +891,22 @@ WebGLContext::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
     return canvasLayer.forget().get();
 }
 
-JSObject*
-WebGLContext::GetContextAttributes(ErrorResult &rv)
+void
+WebGLContext::GetContextAttributes(Nullable<dom::WebGLContextAttributesInitializer> &retval)
 {
+    retval.SetNull();
     if (!IsContextStable())
-    {
-        return NULL;
-    }
+        return;
 
-    JSContext *cx = nsContentUtils::GetCurrentJSContext();
-    if (!cx) {
-        rv.Throw(NS_ERROR_FAILURE);
-        return NULL;
-    }
-
-    JSObject *obj = JS_NewObject(cx, NULL, NULL, NULL);
-    if (!obj) {
-        rv.Throw(NS_ERROR_FAILURE);
-        return NULL;
-    }
+    dom::WebGLContextAttributes& result = retval.SetValue();
 
     gl::ContextFormat cf = gl->ActualFormat();
-
-    if (!JS_DefineProperty(cx, obj, "alpha", cf.alpha > 0 ? JSVAL_TRUE : JSVAL_FALSE,
-                           NULL, NULL, JSPROP_ENUMERATE) ||
-        !JS_DefineProperty(cx, obj, "depth", cf.depth > 0 ? JSVAL_TRUE : JSVAL_FALSE,
-                           NULL, NULL, JSPROP_ENUMERATE) ||
-        !JS_DefineProperty(cx, obj, "stencil", cf.stencil > 0 ? JSVAL_TRUE : JSVAL_FALSE,
-                           NULL, NULL, JSPROP_ENUMERATE) ||
-        !JS_DefineProperty(cx, obj, "antialias", cf.samples > 1 ? JSVAL_TRUE : JSVAL_FALSE,
-                           NULL, NULL, JSPROP_ENUMERATE) ||
-        !JS_DefineProperty(cx, obj, "premultipliedAlpha",
-                           mOptions.premultipliedAlpha ? JSVAL_TRUE : JSVAL_FALSE,
-                           NULL, NULL, JSPROP_ENUMERATE) ||
-        !JS_DefineProperty(cx, obj, "preserveDrawingBuffer",
-                           mOptions.preserveDrawingBuffer ? JSVAL_TRUE : JSVAL_FALSE,
-                           NULL, NULL, JSPROP_ENUMERATE))
-    {
-        rv.Throw(NS_ERROR_FAILURE);
-        return NULL;
-    }
-
-    return obj;
+    result.alpha = cf.alpha > 0;
+    result.depth = cf.depth > 0;
+    result.stencil = cf.stencil > 0;
+    result.antialias = cf.samples > 1;
+    result.premultipliedAlpha = mOptions.premultipliedAlpha;
+    result.preserveDrawingBuffer = mOptions.preserveDrawingBuffer;
 }
 
 bool
@@ -1373,132 +1355,6 @@ WebGLContext::ForceRestoreContext()
     mContextStatus = ContextLostAwaitingRestore;
 }
 
-//
-// XPCOM goop
-//
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(WebGLContext)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(WebGLContext)
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(WebGLContext)
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(WebGLContext)
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(WebGLContext)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCanvasElement)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mExtensions)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mBound2DTextures)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mBoundCubeMapTextures)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mBoundArrayBuffer)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mBoundElementArrayBuffer)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCurrentProgram)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mBoundFramebuffer)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mBoundRenderbuffer)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mAttribBuffers)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(WebGLContext)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mCanvasElement, nsINode)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSTARRAY_OF_NSCOMPTR(mExtensions)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSTARRAY_OF_NSCOMPTR(mBound2DTextures)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSTARRAY_OF_NSCOMPTR(mBoundCubeMapTextures)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mBoundArrayBuffer)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mBoundElementArrayBuffer)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCurrentProgram)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mBoundFramebuffer)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mBoundRenderbuffer)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSTARRAY_OF_NSCOMPTR(mAttribBuffers)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WebGLContext)
-  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_INTERFACE_MAP_ENTRY(nsIDOMWebGLRenderingContext)
-  NS_INTERFACE_MAP_ENTRY(nsICanvasRenderingContextInternal)
-  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
-  // If the exact way we cast to nsISupports here ever changes, fix our
-  // PreCreate hook!
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports,
-                                   nsICanvasRenderingContextInternal)
-NS_INTERFACE_MAP_END
-
-// WebGLUniformLocation
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(WebGLUniformLocation)
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(WebGLUniformLocation)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mProgram)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(WebGLUniformLocation)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mProgram)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(WebGLUniformLocation)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(WebGLUniformLocation)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WebGLUniformLocation)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
-
-JSObject*
-WebGLUniformLocation::WrapObject(JSContext *cx, JSObject *scope)
-{
-    return dom::WebGLUniformLocationBinding::Wrap(cx, scope, this);
-}
-
-// WebGLShaderPrecisionFormat
-
-NS_INTERFACE_MAP_BEGIN(WebGLShaderPrecisionFormat)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
-
-NS_IMPL_ADDREF(WebGLShaderPrecisionFormat)
-NS_IMPL_RELEASE(WebGLShaderPrecisionFormat)
-
-JSObject*
-WebGLShaderPrecisionFormat::WrapObject(JSContext *cx, JSObject *scope)
-{
-    return dom::WebGLShaderPrecisionFormatBinding::Wrap(cx, scope, this);
-}
-
-// WebGLActiveInfo
-
-NS_IMPL_ADDREF(WebGLActiveInfo)
-NS_IMPL_RELEASE(WebGLActiveInfo)
-
-DOMCI_DATA(WebGLActiveInfo, WebGLActiveInfo)
-
-NS_INTERFACE_MAP_BEGIN(WebGLActiveInfo)
-  NS_INTERFACE_MAP_ENTRY(nsIWebGLActiveInfo)
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-  NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(WebGLActiveInfo)
-NS_INTERFACE_MAP_END
-
-/* readonly attribute WebGLint size; */
-NS_IMETHODIMP
-WebGLActiveInfo::GetSize(WebGLint *aSize)
-{
-    *aSize = mSize;
-    return NS_OK;
-}
-
-/* readonly attribute WebGLenum type; */
-NS_IMETHODIMP
-WebGLActiveInfo::GetType(WebGLenum *aType)
-{
-    *aType = mType;
-    return NS_OK;
-}
-
-/* readonly attribute DOMString name; */
-NS_IMETHODIMP
-WebGLActiveInfo::GetName(nsAString & aName)
-{
-    aName = mName;
-    return NS_OK;
-}
-
 void
 WebGLContext::GetSupportedExtensions(JSContext *cx, Nullable< nsTArray<nsString> > &retval)
 {
@@ -1507,7 +1363,7 @@ WebGLContext::GetSupportedExtensions(JSContext *cx, Nullable< nsTArray<nsString>
         return;
 
     nsTArray<nsString>& arr = retval.SetValue();
-    
+
     if (IsExtensionSupported(cx, OES_texture_float))
         arr.AppendElement(NS_LITERAL_STRING("OES_texture_float"));
     if (IsExtensionSupported(cx, OES_standard_derivatives))
@@ -1527,3 +1383,33 @@ WebGLContext::GetSupportedExtensions(JSContext *cx, Nullable< nsTArray<nsString>
     if (IsExtensionSupported(cx, WEBGL_depth_texture))
         arr.AppendElement(NS_LITERAL_STRING("MOZ_WEBGL_depth_texture"));
 }
+
+//
+// XPCOM goop
+//
+
+NS_IMPL_CYCLE_COLLECTING_ADDREF(WebGLContext)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(WebGLContext)
+
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_10(WebGLContext,
+  mCanvasElement,
+  mExtensions,
+  mBound2DTextures,
+  mBoundCubeMapTextures,
+  mBoundArrayBuffer,
+  mBoundElementArrayBuffer,
+  mCurrentProgram,
+  mBoundFramebuffer,
+  mBoundRenderbuffer,
+  mAttribBuffers)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(WebGLContext)
+  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
+  NS_INTERFACE_MAP_ENTRY(nsIDOMWebGLRenderingContext)
+  NS_INTERFACE_MAP_ENTRY(nsICanvasRenderingContextInternal)
+  NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
+  // If the exact way we cast to nsISupports here ever changes, fix our
+  // PreCreate hook!
+  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports,
+                                   nsICanvasRenderingContextInternal)
+NS_INTERFACE_MAP_END

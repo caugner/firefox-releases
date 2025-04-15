@@ -62,12 +62,19 @@
 using namespace mozilla;
 
 #ifdef PR_LOGGING
-static PRLogModuleInfo *gFontInfoLog = PR_NewLogModule("fontInfoLog");
+static PRLogModuleInfo *
+GetFontInfoLog()
+{
+    static PRLogModuleInfo *sLog;
+    if (!sLog)
+        sLog = PR_NewLogModule("fontInfoLog");
+    return sLog;
+}
 #endif /* PR_LOGGING */
 
 #undef LOG
-#define LOG(args) PR_LOG(gFontInfoLog, PR_LOG_DEBUG, args)
-#define LOG_ENABLED() PR_LOG_TEST(gFontInfoLog, PR_LOG_DEBUG)
+#define LOG(args) PR_LOG(GetFontInfoLog(), PR_LOG_DEBUG, args)
+#define LOG_ENABLED() PR_LOG_TEST(GetFontInfoLog(), PR_LOG_DEBUG)
 
 static __inline void
 BuildKeyNameFromFontName(nsAString &aName)
@@ -1073,10 +1080,11 @@ gfxFT2FontList::FindFonts()
     }
 
     // look for fonts shipped with the product
+    NS_NAMED_LITERAL_STRING(kFontsDirName, "fonts");
     nsCOMPtr<nsIFile> localDir;
     nsresult rv = NS_GetSpecialDirectory(NS_APP_RES_DIR,
                                          getter_AddRefs(localDir));
-    if (NS_SUCCEEDED(rv) && NS_SUCCEEDED(localDir->Append(NS_LITERAL_STRING("fonts")))) {
+    if (NS_SUCCEEDED(rv) && NS_SUCCEEDED(localDir->Append(kFontsDirName))) {
         ExtractFontsFromJar(localDir);
         nsCString localPath;
         rv = localDir->GetNativePath(localPath);
@@ -1085,10 +1093,10 @@ gfxFT2FontList::FindFonts()
         }
     }
 
-    // look for locally-added fonts in the profile
+    // look for locally-added fonts in a "fonts" subdir of the profile
     rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_LOCAL_50_DIR,
                                 getter_AddRefs(localDir));
-    if (NS_SUCCEEDED(rv)) {
+    if (NS_SUCCEEDED(rv) && NS_SUCCEEDED(localDir->Append(kFontsDirName))) {
         nsCString localPath;
         rv = localDir->GetNativePath(localPath);
         if (NS_SUCCEEDED(rv)) {

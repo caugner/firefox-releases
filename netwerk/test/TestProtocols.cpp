@@ -56,7 +56,6 @@
 #include "nsStringAPI.h"
 #include "nsNetUtil.h"
 #include "prlog.h"
-#include "prtime.h"
 
 using namespace mozilla;
 
@@ -404,9 +403,9 @@ InputTestConsumer::OnStartRequest(nsIRequest *request, nsISupports* context)
       channel->GetContentCharset(value);
       LOG(("\tContent-Charset: %s\n", value.get()));
 
-      int32_t length = -1;
+      int64_t length = -1;
       if (NS_SUCCEEDED(channel->GetContentLength(&length))) {
-        LOG(("\tContent-Length: %d\n", length));
+        LOG(("\tContent-Length: %lld\n", length));
       } else {
         LOG(("\tContent-Length: Unknown\n"));
       }
@@ -427,16 +426,6 @@ InputTestConsumer::OnStartRequest(nsIRequest *request, nsISupports* context)
           nsAutoCString spec;
           foo->GetSpec(spec);
           LOG(("\ttest.foo: %s\n", spec.get()));
-      }
-  }
-
-  nsCOMPtr<nsIPropertyBag2> propbag = do_QueryInterface(request);
-  if (propbag) {
-      int64_t len;
-      nsresult rv = propbag->GetPropertyAsInt64(NS_CHANNEL_PROP_CONTENT_LENGTH,
-                                                &len);
-      if (NS_SUCCEEDED(rv)) {
-          LOG(("\t64-bit length: %lli\n", len));
       }
   }
 

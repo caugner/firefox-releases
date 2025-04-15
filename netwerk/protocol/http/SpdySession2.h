@@ -117,8 +117,8 @@ public:
   const static uint32_t kDefaultBufferSize = 2048;
 
   // kDefaultQueueSize must be >= other queue size constants
-  const static uint32_t kDefaultQueueSize =  16384;
-  const static uint32_t kQueueMinimumCleanup = 8192;
+  const static uint32_t kDefaultQueueSize =  32768;
+  const static uint32_t kQueueMinimumCleanup = 24576;
   const static uint32_t kQueueTailRoom    =  4096;
   const static uint32_t kQueueReserved    =  1024;
 
@@ -168,7 +168,6 @@ private:
     PROCESSING_CONTROL_RST_STREAM
   };
 
-  void        DeterminePingThreshold();
   nsresult    HandleSynReplyForValidStream();
   uint32_t    GetWriteQueueSize();
   void        ChangeDownstreamState(enum stateType);
@@ -179,7 +178,6 @@ private:
   nsresult    ConvertHeaders(nsDependentCSubstring &,
                              nsDependentCSubstring &);
   void        GeneratePing(uint32_t);
-  void        ClearPing(bool);
   void        GenerateRstStream(uint32_t, uint32_t);
   void        GenerateGoAway();
   void        CleanupStream(SpdyStream2 *, nsresult, rstReason);
@@ -336,7 +334,6 @@ private:
   PRIntervalTime       mLastDataReadEpoch; // used for IdleTime()
   PRIntervalTime       mPingSentEpoch;
   uint32_t             mNextPingID;
-  bool                 mPingThresholdExperiment;
 };
 
 }} // namespace mozilla::net

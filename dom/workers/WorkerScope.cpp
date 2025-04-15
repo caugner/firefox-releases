@@ -48,6 +48,7 @@
   JSPROP_ENUMERATE
 
 using namespace mozilla;
+using namespace mozilla::dom;
 USING_WORKERS_NAMESPACE
 
 namespace {
@@ -110,7 +111,7 @@ protected:
   : EventTarget(aCx), mWorker(aWorker)
   {
     MOZ_COUNT_CTOR(mozilla::dom::workers::WorkerGlobalScope);
-    for (int32 i = 0; i < SLOT_COUNT; i++) {
+    for (int32_t i = 0; i < SLOT_COUNT; i++) {
       mSlots[i] = JSVAL_VOID;
     }
   }
@@ -123,7 +124,7 @@ protected:
   virtual void
   _trace(JSTracer* aTrc) MOZ_OVERRIDE
   {
-    for (int32 i = 0; i < SLOT_COUNT; i++) {
+    for (int32_t i = 0; i < SLOT_COUNT; i++) {
       JS_CALL_VALUE_TRACER(aTrc, mSlots[i], "WorkerGlobalScope instance slot");
     }
     mWorker->TraceInternal(aTrc);
@@ -677,7 +678,7 @@ public:
   {
     JS_ASSERT(JS_GetClass(aObj) == Class());
 
-    dom::AllocateProtoOrIfaceCache(aObj);
+    dom::AllocateProtoAndIfaceCache(aObj);
 
     nsRefPtr<DedicatedWorkerGlobalScope> scope =
       new DedicatedWorkerGlobalScope(aCx, aWorkerPrivate);
@@ -807,7 +808,7 @@ private:
     DedicatedWorkerGlobalScope* scope =
       UnwrapDOMObject<DedicatedWorkerGlobalScope>(aObj, eRegularDOMObject);
     if (scope) {
-      DestroyProtoOrIfaceCache(aObj);
+      DestroyProtoAndIfaceCache(aObj);
       scope->_finalize(aFop);
     }
   }
@@ -819,7 +820,7 @@ private:
     DedicatedWorkerGlobalScope* scope =
       UnwrapDOMObject<DedicatedWorkerGlobalScope>(aObj, eRegularDOMObject);
     if (scope) {
-      mozilla::dom::TraceProtoOrIfaceCache(aTrc, aObj);
+      TraceProtoAndIfaceCache(aTrc, aObj);
       scope->_trace(aTrc);
     }
   }
@@ -852,8 +853,6 @@ private:
 MOZ_STATIC_ASSERT(prototypes::MaxProtoChainLength == 3,
                   "The MaxProtoChainLength must match our manual DOMJSClasses");
 
-// When this DOMJSClass is removed and it's the last consumer of
-// sNativePropertyHooks then sNativePropertyHooks should be removed too.
 DOMJSClass DedicatedWorkerGlobalScope::sClass = {
   {
     // We don't have to worry about Xray expando slots here because we'll never
@@ -869,7 +868,7 @@ DOMJSClass DedicatedWorkerGlobalScope::sClass = {
     { prototypes::id::EventTarget_workers, prototypes::id::_ID_Count,
       prototypes::id::_ID_Count },
     false,
-    &sNativePropertyHooks
+    &sWorkerNativePropertyHooks
   }
 };
 
@@ -940,7 +939,7 @@ CreateDedicatedWorkerGlobalScope(JSContext* aCx)
   //          -> Object
 
   JSObject* eventTargetProto =
-    EventTargetBinding_workers::GetProtoObject(aCx, global, global);
+    EventTargetBinding_workers::GetProtoObject(aCx, global);
   if (!eventTargetProto) {
     return NULL;
   }
@@ -967,14 +966,12 @@ CreateDedicatedWorkerGlobalScope(JSContext* aCx)
     return NULL;
   }
 
-  if (worker->IsChromeWorker() &&
-      (!chromeworker::InitClass(aCx, global, workerProto, false) ||
-       !DefineChromeWorkerFunctions(aCx, global))) {
-    return NULL;
-  }
-
-  if (!DefineOSFileConstants(aCx, global)) {
-    return NULL;
+  if (worker->IsChromeWorker()) {
+    if (!chromeworker::InitClass(aCx, global, workerProto, false) ||
+        !DefineChromeWorkerFunctions(aCx, global) ||
+        !DefineOSFileConstants(aCx, global)) {
+      return NULL;
+    }
   }
 
   // Init other classes we care about.
@@ -987,14 +984,10 @@ CreateDedicatedWorkerGlobalScope(JSContext* aCx)
     return NULL;
   }
 
-  // Init other paris-bindings.  Use GetProtoObject so the proto will
-  // be correctly cached in the proto cache.  Otherwise we'll end up
-  // double-calling CreateInterfaceObjects when we actually create an
-  // object which has these protos, which breaks things like
-  // instanceof.
-  if (!FileReaderSyncBinding_workers::GetProtoObject(aCx, global, global) ||
-      !XMLHttpRequestBinding_workers::GetProtoObject(aCx, global, global) ||
-      !XMLHttpRequestUploadBinding_workers::GetProtoObject(aCx, global, global)) {
+  // Init other paris-bindings.
+  if (!FileReaderSyncBinding_workers::GetConstructorObject(aCx, global) ||
+      !XMLHttpRequestBinding_workers::GetConstructorObject(aCx, global) ||
+      !XMLHttpRequestUploadBinding_workers::GetConstructorObject(aCx, global)) {
     return NULL;
   }
 

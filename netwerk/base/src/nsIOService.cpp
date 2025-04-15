@@ -42,11 +42,13 @@
 #include "nsIProxiedChannel.h"
 #include "nsIProtocolProxyCallback.h"
 #include "nsICancelable.h"
-
+#include "mozilla/Util.h"
 
 #if defined(XP_WIN) || defined(MOZ_PLATFORM_MAEMO)
 #include "nsNativeConnectionHelper.h"
 #endif
+
+using namespace mozilla;
 
 #define PORT_PREF_PREFIX           "network.security.ports."
 #define PORT_PREF(x)               PORT_PREF_PREFIX x
@@ -692,7 +694,6 @@ nsIOService::SetOffline(bool offline)
     }
 
     nsIIOService *subject = static_cast<nsIIOService *>(this);
-    nsresult rv;
     while (mSetOfflineValue != mOffline) {
         offline = mSetOfflineValue;
 
@@ -721,7 +722,7 @@ nsIOService::SetOffline(bool offline)
             // go online
             if (mDNSService) {
                 mDNSService->SetOffline(false);
-                rv = mDNSService->Init();
+                DebugOnly<nsresult> rv = mDNSService->Init();
                 NS_ASSERTION(NS_SUCCEEDED(rv), "DNS service init failed");
             }
             InitializeSocketTransportService();
@@ -745,11 +746,11 @@ nsIOService::SetOffline(bool offline)
         // be sure to try and shutdown both (even if the first fails)...
         // shutdown dns service first, because it has callbacks for socket transport
         if (mDNSService) {
-            rv = mDNSService->Shutdown();
+            DebugOnly<nsresult> rv = mDNSService->Shutdown();
             NS_ASSERTION(NS_SUCCEEDED(rv), "DNS service shutdown failed");
         }
         if (mSocketTransportService) {
-            rv = mSocketTransportService->Shutdown();
+            DebugOnly<nsresult> rv = mSocketTransportService->Shutdown();
             NS_ASSERTION(NS_SUCCEEDED(rv), "socket transport service shutdown failed");
         }
     }
@@ -1177,16 +1178,13 @@ public:
     NS_DECL_NSIPROTOCOLPROXYCALLBACK
 
     IOServiceProxyCallback(nsIInterfaceRequestor *aCallbacks,
-                           nsIEventTarget *aTarget,
                            nsIOService *aIOService)
         : mCallbacks(aCallbacks)
-        , mTarget(aTarget)
         , mIOService(aIOService)
     { }
 
 private:
     nsRefPtr<nsIInterfaceRequestor> mCallbacks;
-    nsRefPtr<nsIEventTarget>        mTarget;
     nsRefPtr<nsIOService>           mIOService;
 };
 
@@ -1222,15 +1220,13 @@ IOServiceProxyCallback::OnProxyAvailable(nsICancelable *request, nsIURI *aURI,
         return NS_OK;
 
     speculativeHandler->SpeculativeConnect(aURI,
-                                           mCallbacks,
-                                           mTarget);
+                                           mCallbacks);
     return NS_OK;
 }
 
 NS_IMETHODIMP
 nsIOService::SpeculativeConnect(nsIURI *aURI,
-                                nsIInterfaceRequestor *aCallbacks,
-                                nsIEventTarget *aTarget)
+                                nsIInterfaceRequestor *aCallbacks)
 {
     // Check for proxy information. If there is a proxy configured then a
     // speculative connect should not be performed because the potential
@@ -1243,6 +1239,6 @@ nsIOService::SpeculativeConnect(nsIURI *aURI,
 
     nsCOMPtr<nsICancelable> cancelable;
     nsRefPtr<IOServiceProxyCallback> callback =
-        new IOServiceProxyCallback(aCallbacks, aTarget, this);
+        new IOServiceProxyCallback(aCallbacks, this);
     return pps->AsyncResolve(aURI, 0, callback, getter_AddRefs(cancelable));
 }

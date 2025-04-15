@@ -168,8 +168,9 @@ public:
   bool WindowResized(nsIWidget* aWidget, int32_t aWidth, int32_t aHeight);
   bool RequestWindowClose(nsIWidget* aWidget);
   void WillPaintWindow(nsIWidget* aWidget, bool aWillSendDidPaint);
-  bool PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion, bool aSentDidPaint, bool aWillSendDidPaint);
+  bool PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion, uint32_t aFlags);
   void DidPaintWindow();
+  void RequestRepaint() MOZ_OVERRIDE;
   nsEventStatus HandleEvent(nsGUIEvent* aEvent, bool aUseAttachedEvents);
 
   virtual ~nsView();

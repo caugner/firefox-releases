@@ -300,7 +300,8 @@ public:
   Layer* GetOldLayerFor(nsDisplayItem* aItem, 
                         nsDisplayItemGeometry** aOldGeometry = nullptr, 
                         Clip** aOldClip = nullptr,
-                        nsTArray<nsIFrame*>* aChangedFrames = nullptr);
+                        nsTArray<nsIFrame*>* aChangedFrames = nullptr,
+                        bool *aIsInvalid = nullptr);
 
   static Layer* GetDebugOldLayerFor(nsIFrame* aFrame, uint32_t aDisplayItemKey);
 
@@ -325,6 +326,11 @@ public:
    * paint. Returns false otherwise.
    */
   static bool HasRetainedDataFor(nsIFrame* aFrame, uint32_t aDisplayItemKey);
+
+  class DisplayItemData;
+  typedef void (*DisplayItemDataCallback)(nsIFrame *aFrame, DisplayItemData* aItem);
+
+  static void IterateRetainedDataFor(nsIFrame* aFrame, DisplayItemDataCallback aCallback);
 
   /**
    * Save transform that was in aLayer when we last painted, and the position
@@ -430,6 +436,10 @@ public:
     // Intersection of all rects in this clip ignoring any rounded corners.
     nsRect NonRoundedIntersection() const;
 
+    // Intersect the given rects with all rects in this clip, ignoring any
+    // rounded corners.
+    nsRect ApplyNonRoundedIntersection(const nsRect& aRect) const;
+
     // Gets rid of any rounded corners in this clip.
     void RemoveRoundedCorners();
 
@@ -452,7 +462,6 @@ public:
   NS_DECLARE_FRAME_PROPERTY_WITH_FRAME_IN_DTOR(LayerManagerDataProperty,
                                                RemoveFrameFromLayerManager)
 
-protected:
   /**
    * Retained data storage:
    *
@@ -471,6 +480,12 @@ protected:
    */
   class DisplayItemData {
   public:
+    friend class FrameLayerBuilder;
+
+    uint32_t GetDisplayItemKey() { return mDisplayItemKey; }
+    Layer* GetLayer() { return mLayer; }
+    void Invalidate() { mIsInvalid = true; }
+  protected:
 
     DisplayItemData(LayerManagerData* aParent, uint32_t aKey, Layer* aLayer, LayerState aLayerState, uint32_t aGeneration);
     DisplayItemData(DisplayItemData &toCopy);
@@ -482,6 +497,7 @@ protected:
     ~DisplayItemData();
 
     NS_INLINE_DECL_REFCOUNTING(DisplayItemData)
+
 
     /**
      * Associates this DisplayItemData with a frame, and adds it
@@ -517,7 +533,10 @@ protected:
      * paint) has been updated in the current paint.
      */
     bool            mUsed;
+    bool            mIsInvalid;
   };
+
+protected:
 
   friend class LayerManagerData;
 

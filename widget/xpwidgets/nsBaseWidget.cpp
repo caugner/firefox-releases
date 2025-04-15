@@ -24,6 +24,7 @@
 #include "nsIXULRuntime.h"
 #include "nsIXULWindow.h"
 #include "nsIBaseWindow.h"
+#include "nsXULPopupManager.h"
 #include "nsEventStateManager.h"
 #include "nsIWidgetListener.h"
 #include "nsIGfxInfo.h"
@@ -47,6 +48,8 @@ static bool debug_InSecureKeyboardInputMode = false;
 #ifdef NOISY_WIDGET_LEAKS
 static int32_t gNumWidgets;
 #endif
+
+nsIRollupListener* nsBaseWidget::gRollupListener = nullptr;
 
 using namespace mozilla::layers;
 using namespace mozilla;
@@ -90,8 +93,7 @@ nsBaseWidget::nsBaseWidget()
 , mCursor(eCursor_standard)
 , mWindowType(eWindowType_child)
 , mBorderStyle(eBorderStyle_none)
-, mOnDestroyCalled(false)
-, mUseAcceleratedRendering(false)
+, mUseLayersAcceleration(false)
 , mForceLayersAcceleration(false)
 , mTemporarilyUseBasicLayerManager(false)
 , mUseAttachedEvents(false)
@@ -734,25 +736,22 @@ nsBaseWidget::AutoLayerManagerSetup::AutoLayerManagerSetup(
     BufferMode aDoubleBuffering, ScreenRotation aRotation)
   : mWidget(aWidget)
 {
-  BasicLayerManager* manager =
-    static_cast<BasicLayerManager*>(mWidget->GetLayerManager());
-  if (manager) {
-    NS_ASSERTION(manager->GetBackendType() == LAYERS_BASIC,
+  mLayerManager = static_cast<BasicLayerManager*>(mWidget->GetLayerManager());
+  if (mLayerManager) {
+    NS_ASSERTION(mLayerManager->GetBackendType() == LAYERS_BASIC,
       "AutoLayerManagerSetup instantiated for non-basic layer backend!");
-    manager->SetDefaultTarget(aTarget);
-    manager->SetDefaultTargetConfiguration(aDoubleBuffering, aRotation);
+    mLayerManager->SetDefaultTarget(aTarget);
+    mLayerManager->SetDefaultTargetConfiguration(aDoubleBuffering, aRotation);
   }
 }
 
 nsBaseWidget::AutoLayerManagerSetup::~AutoLayerManagerSetup()
 {
-  BasicLayerManager* manager =
-    static_cast<BasicLayerManager*>(mWidget->GetLayerManager());
-  if (manager) {
-    NS_ASSERTION(manager->GetBackendType() == LAYERS_BASIC,
+  if (mLayerManager) {
+    NS_ASSERTION(mLayerManager->GetBackendType() == LAYERS_BASIC,
       "AutoLayerManagerSetup instantiated for non-basic layer backend!");
-    manager->SetDefaultTarget(nullptr);
-    manager->SetDefaultTargetConfiguration(mozilla::layers::BUFFER_NONE, ROTATION_0);
+    mLayerManager->SetDefaultTarget(nullptr);
+    mLayerManager->SetDefaultTargetConfiguration(mozilla::layers::BUFFER_NONE, ROTATION_0);
   }
 }
 
@@ -771,13 +770,32 @@ nsBaseWidget::AutoUseBasicLayerManager::~AutoUseBasicLayerManager()
 }
 
 bool
-nsBaseWidget::GetShouldAccelerate()
+nsBaseWidget::ComputeShouldAccelerate(bool aDefault)
 {
 #if defined(XP_WIN) || defined(ANDROID) || (MOZ_PLATFORM_MAEMO > 5) || \
     defined(MOZ_GL_PROVIDER) || defined(XP_MACOSX)
   bool accelerateByDefault = true;
 #else
   bool accelerateByDefault = false;
+#endif
+
+#ifdef XP_MACOSX
+  // 10.6.2 and lower have a bug involving textures and pixel buffer objects
+  // that caused bug 629016, so we don't allow OpenGL-accelerated layers on
+  // those versions of the OS.
+  // This will still let full-screen video be accelerated on OpenGL, because
+  // that XUL widget opts in to acceleration, but that's probably OK.
+  SInt32 major, minor, bugfix;
+  OSErr err1 = ::Gestalt(gestaltSystemVersionMajor, &major);
+  OSErr err2 = ::Gestalt(gestaltSystemVersionMinor, &minor);
+  OSErr err3 = ::Gestalt(gestaltSystemVersionBugFix, &bugfix);
+  if (err1 == noErr && err2 == noErr && err3 == noErr) {
+    if (major == 10 && minor == 6) {
+      if (bugfix <= 2) {
+        accelerateByDefault = false;
+      }
+    }
+  }
 #endif
 
   // We don't want to accelerate small popup windows like menu, but we still 
@@ -836,7 +854,7 @@ nsBaseWidget::GetShouldAccelerate()
     return true;
 
   /* use the window acceleration flag */
-  return mUseAcceleratedRendering;
+  return aDefault;
 }
 
 void nsBaseWidget::CreateCompositor()
@@ -858,7 +876,7 @@ void nsBaseWidget::CreateCompositor()
   int32_t maxTextureSize;
   PLayersChild* shadowManager;
   mozilla::layers::LayersBackend backendHint =
-    mUseAcceleratedRendering ? mozilla::layers::LAYERS_OPENGL : mozilla::layers::LAYERS_BASIC;
+    mUseLayersAcceleration ? mozilla::layers::LAYERS_OPENGL : mozilla::layers::LAYERS_BASIC;
   mozilla::layers::LayersBackend parentBackend;
   shadowManager = mCompositorChild->SendPLayersConstructor(
     backendHint, 0, &parentBackend, &maxTextureSize);
@@ -897,7 +915,7 @@ LayerManager* nsBaseWidget::GetLayerManager(PLayersChild* aShadowManager,
 {
   if (!mLayerManager) {
 
-    mUseAcceleratedRendering = GetShouldAccelerate();
+    mUseLayersAcceleration = ComputeShouldAccelerate(mUseLayersAcceleration);
 
     // Try to use an async compositor first, if possible
     if (UseOffMainThreadCompositing()) {
@@ -907,7 +925,7 @@ LayerManager* nsBaseWidget::GetLayerManager(PLayersChild* aShadowManager,
       CreateCompositor();
     }
 
-    if (mUseAcceleratedRendering) {
+    if (mUseLayersAcceleration) {
       if (!mLayerManager) {
         nsRefPtr<LayerManagerOGL> layerManager = new LayerManagerOGL(this);
         /**
@@ -1147,23 +1165,26 @@ nsBaseWidget::ShowsResizeIndicator(nsIntRect* aResizerRect)
 }
 
 NS_IMETHODIMP
-nsBaseWidget::SetAcceleratedRendering(bool aEnabled)
+nsBaseWidget::SetLayersAcceleration(bool aEnabled)
 {
-  if (mUseAcceleratedRendering == aEnabled) {
+  if (mUseLayersAcceleration == aEnabled) {
     return NS_OK;
   }
-  mUseAcceleratedRendering = aEnabled;
+
+  bool usedAcceleration = mUseLayersAcceleration;
+
+  mUseLayersAcceleration = ComputeShouldAccelerate(aEnabled);
+  // ComputeShouldAccelerate may have set mUseLayersAcceleration to a value
+  // different from aEnabled.
+  if (usedAcceleration == mUseLayersAcceleration) {
+    return NS_OK;
+  }
+
   if (mLayerManager) {
     mLayerManager->Destroy();
   }
   mLayerManager = NULL;
   return NS_OK;
-}
-
-bool
-nsBaseWidget::GetAcceleratedRendering()
-{
-  return mUseAcceleratedRendering;
 }
 
 NS_METHOD nsBaseWidget::RegisterTouchWindow()
@@ -1315,6 +1336,17 @@ const widget::SizeConstraints& nsBaseWidget::GetSizeConstraints() const
   return mSizeConstraints;
 }
 
+// static
+nsIRollupListener*
+nsBaseWidget::GetActiveRollupListener()
+{
+  // If set, then this is likely an <html:select> dropdown.
+  if (gRollupListener)
+    return gRollupListener;
+
+  return nsXULPopupManager::GetInstance();
+}
+
 void
 nsBaseWidget::NotifyWindowDestroyed()
 {
@@ -1383,7 +1415,7 @@ nsBaseWidget::NotifyUIStateChanged(UIStateChangeType aShowAccelerators,
 
 #ifdef ACCESSIBILITY
 
-Accessible*
+a11y::Accessible*
 nsBaseWidget::GetAccessible()
 {
   NS_ENSURE_TRUE(mWidgetListener, nullptr);

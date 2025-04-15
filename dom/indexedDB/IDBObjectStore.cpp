@@ -487,7 +487,7 @@ class ThreadLocalJSRuntime
   JSObject* mGlobal;
 
   static JSClass sGlobalClass;
-  static const unsigned sRuntimeHeapSize = 256 * 1024;
+  static const unsigned sRuntimeHeapSize = 512 * 1024;
 
   ThreadLocalJSRuntime()
   : mRuntime(NULL), mContext(NULL), mGlobal(NULL)
@@ -497,7 +497,7 @@ class ThreadLocalJSRuntime
 
   nsresult Init()
   {
-    mRuntime = JS_NewRuntime(sRuntimeHeapSize);
+    mRuntime = JS_NewRuntime(sRuntimeHeapSize, JS_NO_HELPER_THREADS);
     NS_ENSURE_TRUE(mRuntime, NS_ERROR_OUT_OF_MEMORY);
 
     mContext = JS_NewContext(mRuntime, 0);
@@ -2033,8 +2033,7 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(IDBObjectStore)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mTransaction,
-                                                       nsIDOMEventTarget)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTransaction)
 
   for (uint32_t i = 0; i < tmp->mCreatedIndexes.Length(); i++) {
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mCreatedIndexes[i]");

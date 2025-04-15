@@ -82,7 +82,7 @@ private:
     uint16_t                       mState;
 
 protected:
-    int32_t                        mBytesRead;
+    int64_t                        mBytesRead;
 };
 
 
@@ -201,7 +201,6 @@ public:
     nsresult Init();
 
     nsresult Begin();
-    nsresult Cancel();
 
     void LoadCompleted(nsOfflineCacheUpdateItem *aItem);
     void ManifestCheckCompleted(nsresult aStatus,

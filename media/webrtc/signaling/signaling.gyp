@@ -79,6 +79,7 @@
         './src/common/csf_common.h',
         './src/common/NullDeleter.h',
         './src/common/Wrapper.h',
+        './src/common/NullTransport.h',
         # Browser Logging
         './src/common/browser_logging/CSFLog.cpp',
         './src/common/browser_logging/CSFLog.h',
@@ -127,12 +128,15 @@
         './src/softphonewrapper/CC_SIPCCLineInfo.h',
         './src/softphonewrapper/CC_SIPCCService.h',
         # PeerConnection
+        './src/peerconnection/MediaStreamList.cpp',
+        './src/peerconnection/MediaStreamList.h',
         './src/peerconnection/PeerConnectionCtx.cpp',
         './src/peerconnection/PeerConnectionCtx.h',
         './src/peerconnection/PeerConnectionImpl.cpp',
         './src/peerconnection/PeerConnectionImpl.h',
         './src/peerconnection/PeerConnectionMedia.cpp',
         './src/peerconnection/PeerConnectionMedia.h',
+
         # Media pipeline
         './src/mediapipeline/MediaPipeline.h',
         './src/mediapipeline/MediaPipeline.cpp',
@@ -196,7 +200,6 @@
           ],
           
           'cflags_mozilla': [
-            '-Werror',
           ],
         }],
         ['OS=="win"', {
@@ -224,8 +227,6 @@
           ],
           
           'cflags_mozilla': [
-            '-Werror',
-            '-Wno-error=conversion'
           ],
         }],
       ],
@@ -648,7 +649,6 @@
           ],
 
           'cflags_mozilla': [
-            '-Werror',
           ],
         }],
         ['OS=="win"', {
@@ -767,8 +767,6 @@
           ],
           
           'cflags_mozilla': [
-            '-Werror',
-            '-Wno-error=conversion'
           ],
         }],
       ],

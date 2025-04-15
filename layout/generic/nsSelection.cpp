@@ -498,16 +498,16 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsFrameSelection)
     tmp->mDomSelections[i] = nullptr;
   }
 
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCellParent)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCellParent)
   tmp->mSelectingTableCellMode = 0;
   tmp->mDragSelectingCells = false;
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mStartSelectedCell)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mEndSelectedCell)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mAppendStartSelectedCell)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mUnselectCellOnMouseUp)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mMaintainRange)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLimiter)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mAncestorLimiter)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mStartSelectedCell)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mEndSelectedCell)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mAppendStartSelectedCell)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mUnselectCellOnMouseUp)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mMaintainRange)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLimiter)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mAncestorLimiter)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsFrameSelection)
   if (tmp->mShell && tmp->mShell->GetDocument() &&
@@ -518,18 +518,17 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsFrameSelection)
   }
   int32_t i;
   for (i = 0; i < nsISelectionController::NUM_SELECTIONTYPES; ++i) {
-    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mDomSelections[i],
-                                                         nsISelection)
+    NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDomSelections[i])
   }
 
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCellParent)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mStartSelectedCell)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mEndSelectedCell)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mAppendStartSelectedCell)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mUnselectCellOnMouseUp)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mMaintainRange, nsIDOMRange)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLimiter)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mAncestorLimiter)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCellParent)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStartSelectedCell)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEndSelectedCell)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAppendStartSelectedCell)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mUnselectCellOnMouseUp)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMaintainRange)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLimiter)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAncestorLimiter)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsFrameSelection)
@@ -3184,20 +3183,20 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Selection)
   // Unlink the selection listeners *before* we do RemoveAllRanges since
   // we don't want to notify the listeners during JS GC (they could be
   // in JS!).
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mSelectionListeners)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mSelectionListeners)
   tmp->RemoveAllRanges();
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mFrameSelection)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mFrameSelection)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Selection)
   {
     uint32_t i, count = tmp->mRanges.Length();
     for (i = 0; i < count; ++i) {
-      NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mRanges[i].mRange, nsIDOMRange)
+      NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRanges[i].mRange)
     }
   }
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mAnchorFocusRange, nsIDOMRange)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFrameSelection)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mSelectionListeners)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAnchorFocusRange)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFrameSelection)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSelectionListeners)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 DOMCI_DATA(Selection, Selection)
@@ -5324,9 +5323,12 @@ Selection::ScrollIntoView(SelectionRegion aRegion,
                           nsIPresShell::ScrollAxis aHorizontal,
                           int32_t aFlags)
 {
-  nsresult result;
   if (!mFrameSelection)
     return NS_OK;//nothing to do
+
+  nsCOMPtr<nsIPresShell> presShell = mFrameSelection->GetShell();
+  if (!presShell)
+    return NS_OK;
 
   if (mFrameSelection->GetBatching())
     return NS_OK;
@@ -5335,61 +5337,45 @@ Selection::ScrollIntoView(SelectionRegion aRegion,
     return PostScrollSelectionIntoViewEvent(aRegion, aFlags,
       aVertical, aHorizontal);
 
-  //
-  // Shut the caret off before scrolling to avoid
-  // leaving caret turds on the screen!
-  //
-  nsCOMPtr<nsIPresShell> presShell;
-  result = GetPresShell(getter_AddRefs(presShell));
-  if (NS_FAILED(result) || !presShell)
-    return result;
-  nsRefPtr<nsCaret> caret = presShell->GetCaret();
-  if (caret)
-  {
-    // Now that text frame character offsets are always valid (though not
-    // necessarily correct), the worst that will happen if we don't flush here
-    // is that some callers might scroll to the wrong place.  Those should
-    // either manually flush if they're in a safe position for it or use the
-    // async version of this method.
-    if (aFlags & Selection::SCROLL_DO_FLUSH) {
-      presShell->FlushPendingNotifications(Flush_Layout);
+  // Now that text frame character offsets are always valid (though not
+  // necessarily correct), the worst that will happen if we don't flush here
+  // is that some callers might scroll to the wrong place.  Those should
+  // either manually flush if they're in a safe position for it or use the
+  // async version of this method.
+  if (aFlags & Selection::SCROLL_DO_FLUSH) {
+    presShell->FlushPendingNotifications(Flush_Layout);
 
-      // Reget the presshell, since it might have gone away.
-      result = GetPresShell(getter_AddRefs(presShell));
-      if (NS_FAILED(result) || !presShell)
-        return result;
-    }
-
-    StCaretHider  caretHider(caret);      // stack-based class hides and shows the caret
-
-    //
-    // Scroll the selection region into view.
-    //
-
-    nsRect rect;
-    nsIFrame* frame = GetSelectionAnchorGeometry(aRegion, &rect);
-    if (!frame)
-      return NS_ERROR_FAILURE;
-
-    // Scroll vertically to get the caret into view, but only if the container
-    // is perceived to be scrollable in that direction (i.e. there is a visible
-    // vertical scrollbar or the scroll range is at least one device pixel)
-    aVertical.mOnlyIfPerceivedScrollableDirection = true;
-
-
-    uint32_t flags = 0;
-    if (aFlags & Selection::SCROLL_FIRST_ANCESTOR_ONLY) {
-      flags |= nsIPresShell::SCROLL_FIRST_ANCESTOR_ONLY;
-    }
-    if (aFlags & Selection::SCROLL_OVERFLOW_HIDDEN) {
-      flags |= nsIPresShell::SCROLL_OVERFLOW_HIDDEN;
-    }
-
-    presShell->ScrollFrameRectIntoView(frame, rect, aVertical, aHorizontal,
-      flags);
-    return NS_OK;
+    // Reget the presshell, since it might have been Destroy'ed.
+    presShell = mFrameSelection ? mFrameSelection->GetShell() : nullptr;
+    if (!presShell)
+      return NS_OK;
   }
-  return result;
+
+  //
+  // Scroll the selection region into view.
+  //
+
+  nsRect rect;
+  nsIFrame* frame = GetSelectionAnchorGeometry(aRegion, &rect);
+  if (!frame)
+    return NS_ERROR_FAILURE;
+
+  // Scroll vertically to get the caret into view, but only if the container
+  // is perceived to be scrollable in that direction (i.e. there is a visible
+  // vertical scrollbar or the scroll range is at least one device pixel)
+  aVertical.mOnlyIfPerceivedScrollableDirection = true;
+
+  uint32_t flags = 0;
+  if (aFlags & Selection::SCROLL_FIRST_ANCESTOR_ONLY) {
+    flags |= nsIPresShell::SCROLL_FIRST_ANCESTOR_ONLY;
+  }
+  if (aFlags & Selection::SCROLL_OVERFLOW_HIDDEN) {
+    flags |= nsIPresShell::SCROLL_OVERFLOW_HIDDEN;
+  }
+
+  presShell->ScrollFrameRectIntoView(frame, rect, aVertical, aHorizontal,
+    flags);
+  return NS_OK;
 }
 
 

@@ -100,7 +100,9 @@ public:
 
     bool           PromptTempRedirect()      { return mPromptTempRedirect; }
 
-    nsHttpAuthCache     *AuthCache() { return &mAuthCache; }
+    nsHttpAuthCache     *AuthCache(bool aPrivate) {
+        return aPrivate ? &mPrivateAuthCache : &mAuthCache;
+    }
     nsHttpConnectionMgr *ConnMgr()   { return mConnMgr; }
 
     // cache support
@@ -158,10 +160,9 @@ public:
     }
 
     nsresult SpeculativeConnect(nsHttpConnectionInfo *ci,
-                                nsIInterfaceRequestor *callbacks,
-                                nsIEventTarget *target)
+                                nsIInterfaceRequestor *callbacks)
     {
-        return mConnMgr->SpeculativeConnect(ci, callbacks, target);
+        return mConnMgr->SpeculativeConnect(ci, callbacks);
     }
 
     //
@@ -245,6 +246,12 @@ public:
     // returns true in between Init and Shutdown states
     bool Active() { return mHandlerActive; }
 
+    static void GetCacheSessionNameForStoragePolicy(
+            nsCacheStoragePolicy storagePolicy,
+            bool isPrivate,
+            uint32_t appId,
+            bool inBrowser,
+            nsACString& sessionName);
 private:
 
     //
@@ -275,6 +282,7 @@ private:
 
     // the authentication credentials cache
     nsHttpAuthCache mAuthCache;
+    nsHttpAuthCache mPrivateAuthCache;
 
     // the connection manager
     nsHttpConnectionMgr *mConnMgr;

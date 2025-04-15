@@ -135,17 +135,21 @@ const SERVICE_UPDATER_NOT_FIXED_DRIVE      = 31;
 const SERVICE_COULD_NOT_LOCK_UPDATER       = 32;
 const SERVICE_INSTALLDIR_ERROR             = 33;
 
-const WRITE_ERROR_ACCESS_DENIED        = 35;
-const WRITE_ERROR_SHARING_VIOLATION    = 36;
-const WRITE_ERROR_CALLBACK_APP         = 37;
-const INVALID_UPDATER_STATUS_CODE      = 38;
-const UNEXPECTED_BZIP_ERROR            = 39;
-const UNEXPECTED_MAR_ERROR             = 40;
-const UNEXPECTED_BSPATCH_ERROR         = 41;
-const UNEXPECTED_FILE_OPERATION_ERROR  = 42;
-const FILESYSTEM_MOUNT_READWRITE_ERROR = 43;
-const FOTA_GENERAL_ERROR               = 44;
-const FOTA_UNKNOWN_ERROR               = 45;
+const WRITE_ERROR_ACCESS_DENIED                     = 35;
+// const WRITE_ERROR_SHARING_VIOLATION                 = 36; // Replaced with errors 46-48
+const WRITE_ERROR_CALLBACK_APP                      = 37;
+const INVALID_UPDATER_STATUS_CODE                   = 38;
+const UNEXPECTED_BZIP_ERROR                         = 39;
+const UNEXPECTED_MAR_ERROR                          = 40;
+const UNEXPECTED_BSPATCH_ERROR                      = 41;
+const UNEXPECTED_FILE_OPERATION_ERROR               = 42;
+const FILESYSTEM_MOUNT_READWRITE_ERROR              = 43;
+const FOTA_GENERAL_ERROR                            = 44;
+const FOTA_UNKNOWN_ERROR                            = 45;
+const WRITE_ERROR_SHARING_VIOLATION_SIGNALED        = 46;
+const WRITE_ERROR_SHARING_VIOLATION_NOPROCESSFORPID = 47;
+const WRITE_ERROR_SHARING_VIOLATION_NOPID           = 48;
+
 
 const CERT_ATTR_CHECK_FAILED_NO_UPDATE  = 100;
 const CERT_ATTR_CHECK_FAILED_HAS_UPDATE = 101;
@@ -765,6 +769,53 @@ function writeVersionFile(dir, version) {
 }
 
 /**
+ * Removes the MozUpdater folders that bgupdates/staged updates creates.
+ */
+function cleanUpMozUpdaterDirs() {
+  try {
+    var tmpDir = Components.classes["@mozilla.org/file/directory_service;1"].
+                            getService(Components.interfaces.nsIProperties).
+                            get("TmpD", Components.interfaces.nsIFile);
+
+    // We used to store MozUpdater-i folders directly inside the temp directory.
+    // We need to cleanup these directories if we detect that they still exist.
+    // To check if they still exist, we simply check for MozUpdater-1.
+    var mozUpdaterDir1 = tmpDir.clone();
+    mozUpdaterDir1.append("MozUpdater-1");
+    // Only try to delete the left over folders in "$Temp/MozUpdater-i/*" if
+    // MozUpdater-1 exists.
+    if (mozUpdaterDir1.exists()) {
+      LOG("cleanUpMozUpdaterDirs - Cleaning top level MozUpdater-i folders");
+      let i = 0;
+      let dirEntries = tmpDir.directoryEntries;
+      while (dirEntries.hasMoreElements() && i < 10) {
+        let file = dirEntries.getNext().QueryInterface(Components.interfaces.nsILocalFile);
+        if (file.leafName.startsWith("MozUpdater-") && file.leafName != "MozUpdater-1") {
+          file.remove(true);
+          i++;
+        }
+      }
+      // If you enumerate the whole temp directory and the count of deleted
+      // items is less than 10, then delete MozUpdate-1.
+      if (i < 10) {
+        mozUpdaterDir1.remove(true);
+      }
+    }
+
+    // If we reach here, we simply need to clean the MozUpdater folder.  In our
+    // new way of storing these files, the unique subfolders are inside MozUpdater
+    var mozUpdaterDir = tmpDir.clone();
+    mozUpdaterDir.append("MozUpdater");
+    if (mozUpdaterDir.exists()) {
+      LOG("cleanUpMozUpdaterDirs - Cleaning MozUpdater folder");
+      mozUpdaterDir.remove(true);
+    }
+  } catch (e) {
+    LOG("cleanUpMozUpdaterDirs - Exception: " + e);
+  }
+}
+
+/**
  * Removes the contents of the Updates Directory
  *
  * @param aBackgroundUpdate Whether the update has been performed in the
@@ -991,7 +1042,9 @@ function handleUpdateFailure(update, errorCode) {
 
   if (update.errorCode == WRITE_ERROR || 
       update.errorCode == WRITE_ERROR_ACCESS_DENIED ||
-      update.errorCode == WRITE_ERROR_SHARING_VIOLATION ||
+      update.errorCode == WRITE_ERROR_SHARING_VIOLATION_SIGNALED ||
+      update.errorCode == WRITE_ERROR_SHARING_VIOLATION_NOPROCESSFORPID ||
+      update.errorCode == WRITE_ERROR_SHARING_VIOLATION_NOPID ||
       update.errorCode == WRITE_ERROR_CALLBACK_APP ||
       update.errorCode == FILESYSTEM_MOUNT_READWRITE_ERROR) {
     Cc["@mozilla.org/updates/update-prompt;1"].
@@ -1211,7 +1264,8 @@ function Update(update) {
   this.showPrompt = false;
   this.showSurvey = false;
   this.showNeverForVersion = false;
-  this.channel = "default"
+  this.channel = "default";
+  this.promptWaitTime = getPref("getIntPref", PREF_APP_UPDATE_PROMPTWAITTIME, 43200);
 
   // Null <update>, assume this is a message container and do no
   // further initialization
@@ -1274,6 +1328,11 @@ function Update(update) {
       this.showNeverForVersion = attr.value == "true";
     else if (attr.name == "showPrompt")
       this.showPrompt = attr.value == "true";
+    else if (attr.name == "promptWaitTime")
+    {
+      if(!isNaN(attr.value))
+        this.promptWaitTime = parseInt(attr.value);
+    }
     else if (attr.name == "showSurvey")
       this.showSurvey = attr.value == "true";
     else if (attr.name == "version") {
@@ -1413,6 +1472,7 @@ Update.prototype = {
     update.setAttribute("serviceURL", this.serviceURL);
     update.setAttribute("showNeverForVersion", this.showNeverForVersion);
     update.setAttribute("showPrompt", this.showPrompt);
+    update.setAttribute("promptWaitTime", this.promptWaitTime);
     update.setAttribute("showSurvey", this.showSurvey);
     update.setAttribute("type", this.type);
     // for backwards compatibility in case the user downgrades
@@ -1745,6 +1805,9 @@ UpdateService.prototype = {
 
       prompter.showUpdateError(update);
     }
+
+    // Now trash the MozUpdater folders which staged/bgupdates uses.
+    cleanUpMozUpdaterDirs();
   },
 
   /**
@@ -3588,6 +3651,14 @@ Downloader.prototype = {
             prompter.showUpdateError(this._update);
           }
         }
+
+#ifdef MOZ_WIDGET_GONK
+        // We always forward errors in B2G, since Gaia controls the update UI
+        var prompter = Cc["@mozilla.org/updates/update-prompt;1"].
+                       createInstance(Ci.nsIUpdatePrompt);
+        prompter.showUpdateError(this._update);
+#endif
+
         // Prevent leaking the update object (bug 454964).
         this._update = null;
       }
@@ -3752,7 +3823,9 @@ UpdatePrompt.prototype = {
     if (update.state == STATE_FAILED &&
         (update.errorCode == WRITE_ERROR ||
          update.errorCode == WRITE_ERROR_ACCESS_DENIED ||
-         update.errorCode == WRITE_ERROR_SHARING_VIOLATION ||
+         update.errorCode == WRITE_ERROR_SHARING_VIOLATION_SIGNALED ||
+         update.errorCode == WRITE_ERROR_SHARING_VIOLATION_NOPROCESSFORPID ||
+         update.errorCode == WRITE_ERROR_SHARING_VIOLATION_NOPID ||
          update.errorCode == WRITE_ERROR_CALLBACK_APP ||
          update.errorCode == FILESYSTEM_MOUNT_READWRITE_ERROR ||
          update.errorCode == FOTA_GENERAL_ERROR ||
@@ -3887,11 +3960,11 @@ UpdatePrompt.prototype = {
       return;
     }
 
-    // Give the user x seconds to react before showing the big UI
-    var promptWaitTime = getPref("getIntPref", PREF_APP_UPDATE_PROMPTWAITTIME, 43200);
+    // Give the user x seconds to react before prompting as defined by
+    // promptWaitTime
     observer.timer = Cc["@mozilla.org/timer;1"].
                      createInstance(Ci.nsITimer);
-    observer.timer.initWithCallback(observer, promptWaitTime * 1000,
+    observer.timer.initWithCallback(observer, update.promptWaitTime * 1000,
                                     observer.timer.TYPE_ONE_SHOT);
   },
 

@@ -179,7 +179,7 @@ public:
   nsSize GetLineScrollAmount() const;
   nsSize GetPageScrollAmount() const;
 
-  nsPresState* SaveState(nsIStatefulFrame::SpecialStateID aStateID);
+  nsPresState* SaveState();
   void RestoreState(nsPresState* aState);
 
   nsIFrame* GetScrolledFrame() const { return mScrolledFrame; }
@@ -337,6 +337,9 @@ public:
   // Used for asynchronous scrolling.
   bool mShouldBuildLayer:1;
 
+  // True if this frame has been scrolled at least once
+  bool mHasBeenScrolled:1;
+
 protected:
   void ScrollToWithOrigin(nsPoint aScrollPosition,
                           nsIScrollableFrame::ScrollMode aMode,
@@ -467,6 +470,9 @@ public:
   virtual nsPoint GetScrollPosition() const MOZ_OVERRIDE {
     return mInner.GetScrollPosition();
   }
+  virtual nsPoint GetLogicalScrollPosition() const MOZ_OVERRIDE {
+    return mInner.GetLogicalScrollPosition();
+  }
   virtual nsRect GetScrollRange() const MOZ_OVERRIDE {
     return mInner.GetScrollRange();
   }
@@ -526,9 +532,9 @@ public:
   }
 
   // nsIStatefulFrame
-  NS_IMETHOD SaveState(SpecialStateID aStateID, nsPresState** aState) MOZ_OVERRIDE {
+  NS_IMETHOD SaveState(nsPresState** aState) MOZ_OVERRIDE {
     NS_ENSURE_ARG_POINTER(aState);
-    *aState = mInner.SaveState(aStateID);
+    *aState = mInner.SaveState();
     return NS_OK;
   }
   NS_IMETHOD RestoreState(nsPresState* aState) MOZ_OVERRIDE {
@@ -551,7 +557,7 @@ public:
   bool DidHistoryRestore() { return mInner.mDidHistoryRestore; }
 
 #ifdef ACCESSIBILITY
-  virtual already_AddRefed<Accessible> CreateAccessible();
+  virtual mozilla::a11y::AccType AccessibleType() MOZ_OVERRIDE;
 #endif
 
 protected:
@@ -717,6 +723,9 @@ public:
   virtual nsPoint GetScrollPosition() const MOZ_OVERRIDE {
     return mInner.GetScrollPosition();
   }
+  virtual nsPoint GetLogicalScrollPosition() const MOZ_OVERRIDE {
+    return mInner.GetLogicalScrollPosition();
+  }
   virtual nsRect GetScrollRange() const MOZ_OVERRIDE {
     return mInner.GetScrollRange();
   }
@@ -776,9 +785,9 @@ public:
   }
 
   // nsIStatefulFrame
-  NS_IMETHOD SaveState(SpecialStateID aStateID, nsPresState** aState) MOZ_OVERRIDE {
+  NS_IMETHOD SaveState(nsPresState** aState) MOZ_OVERRIDE {
     NS_ENSURE_ARG_POINTER(aState);
-    *aState = mInner.SaveState(aStateID);
+    *aState = mInner.SaveState();
     return NS_OK;
   }
   NS_IMETHOD RestoreState(nsPresState* aState) MOZ_OVERRIDE {

@@ -28,7 +28,7 @@ nsresult auxLoad(char *uriBuf);
 #define RETURN_IF_FAILED(rv, ret, step) \
     PR_BEGIN_MACRO \
     if (NS_FAILED(rv)) { \
-        printf(">>> %s failed: rv=%x\n", step, rv); \
+        printf(">>> %s failed: rv=%x\n", step, static_cast<uint32_t>(rv)); \
         return ret;\
     } \
     PR_END_MACRO
@@ -180,7 +180,8 @@ MyListener::OnDataAvailable(nsIRequest *req, nsISupports *ctxt,
     }
 
     if (NS_FAILED(rv)) {
-      printf(">>> stream->Read failed with rv=%x\n", rv);
+      printf(">>> stream->Read failed with rv=%x\n",
+             static_cast<uint32_t>(rv));
       return rv;
     }
 
@@ -352,9 +353,7 @@ int main(int argc, char **argv)
         PumpEvents();
 
         finish = PR_Now();
-        uint32_t totalTime32;
-        uint64_t totalTime64 = finish - start;
-        LL_L2UI(totalTime32, totalTime64);
+        uint32_t totalTime32 = uint32_t(finish - start);
 
         printf("\n\n--------------------\nAll done:\nnum found:%d\nnum start:%d\n", numFound, numStart);
 

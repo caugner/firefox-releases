@@ -1008,7 +1008,7 @@ DOMStorageImpl::RemoveValue(bool aCallerSecure, const nsAString& aKey,
   return NS_OK;
 }
 
-PR_STATIC_CALLBACK(PLDHashOperator)
+static PLDHashOperator
 CheckSecure(nsSessionStorageEntry* aEntry, void* userArg)
 {
   bool* secure = (bool*)userArg;
@@ -1466,10 +1466,10 @@ nsDOMStorage::StorageType()
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMStorage2)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDOMStorage2)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mStorage)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mStorage)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsDOMStorage2)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mStorage, nsIDOMStorageObsolete)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStorage)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 DOMCI_DATA(Storage, nsDOMStorage2)

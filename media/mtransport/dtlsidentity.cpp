@@ -16,7 +16,7 @@
 
 namespace mozilla {
 
-MOZ_MTLOG_MODULE("mtransport");
+MOZ_MTLOG_MODULE("mtransport")
 
 DtlsIdentity::~DtlsIdentity() {
   // XXX: make cert_ a smart pointer to avoid this, after we figure
@@ -116,7 +116,7 @@ TemporaryRef<DtlsIdentity> DtlsIdentity::Generate() {
     return nullptr;
   }
 
-  PRArenaPool *arena = certificate->arena;
+  PLArenaPool *arena = certificate->arena;
 
   rv = SECOID_SetAlgorithmID(arena, &certificate->signature,
                              SEC_OID_PKCS1_SHA1_WITH_RSA_ENCRYPTION, 0);

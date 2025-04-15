@@ -28,7 +28,7 @@ namespace a11y {
  */
 
 class ApplicationAccessible : public AccessibleWrap,
-                             public nsIAccessibleApplication
+                              public nsIAccessibleApplication
 {
 public:
 
@@ -38,8 +38,6 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIAccessible
-  NS_IMETHOD GetDOMNode(nsIDOMNode** aDOMNode);
-  NS_IMETHOD GetDocument(nsIAccessibleDocument** aDocument);
   NS_IMETHOD GetRootDocument(nsIAccessibleDocument** aRootDocument);
   NS_IMETHOD ScrollTo(uint32_t aScrollType);
   NS_IMETHOD ScrollToPoint(uint32_t aCoordinateType, int32_t aX, int32_t aY);
@@ -47,7 +45,6 @@ public:
   NS_IMETHOD GetParent(nsIAccessible **aParent);
   NS_IMETHOD GetNextSibling(nsIAccessible **aNextSibling);
   NS_IMETHOD GetPreviousSibling(nsIAccessible **aPreviousSibling);
-  NS_IMETHOD GetAttributes(nsIPersistentProperties **aAttributes);
   NS_IMETHOD GetBounds(int32_t *aX, int32_t *aY,
                        int32_t *aWidth, int32_t *aHeight);
   NS_IMETHOD SetSelected(bool aIsSelected);
@@ -65,6 +62,7 @@ public:
   virtual void Shutdown();
 
   // Accessible
+  virtual already_AddRefed<nsIPersistentProperties> NativeAttributes() MOZ_OVERRIDE;
   virtual GroupPos GroupPosition();
   virtual ENameValueFlag Name(nsString& aName);
   virtual void ApplyARIAState(uint64_t* aState) const;

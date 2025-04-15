@@ -7,10 +7,20 @@
  * Retrieves and displays icons in native menu items on Mac OS X.
  */
 
-#include "nsMenuItemIconX.h"
+/* exception_defines.h defines 'try' to 'if (true)' which breaks objective-c
+   exceptions and produces errors like: error: unexpected '@' in program'.
+   If we define __EXCEPTIONS exception_defines.h will avoid doing this.
 
+   See bug 666609 for more information.
+
+   We use <limits> to get the libstdc++ version. */
+#include <limits>
+#if __GLIBCXX__ <= 20070719
+#define __EXCEPTIONS
+#endif
+
+#include "nsMenuItemIconX.h"
 #include "nsObjCExceptions.h"
-#include "prmem.h"
 #include "nsIContent.h"
 #include "nsIDocument.h"
 #include "nsINameSpaceManager.h"
@@ -23,7 +33,7 @@
 #include "nsThreadUtils.h"
 #include "nsToolkit.h"
 #include "nsNetUtil.h"
-#include "imgILoader.h"
+#include "imgLoader.h"
 #include "imgIRequest.h"
 #include "nsMenuItemX.h"
 #include "gfxImageSurface.h"
@@ -43,7 +53,7 @@ static const uint32_t kIconBytes = kIconBytesPerRow * kIconHeight;
 typedef NS_STDCALL_FUNCPROTO(nsresult, GetRectSideMethod, nsIDOMRect,
                              GetBottom, (nsIDOMCSSPrimitiveValue**));
 
-NS_IMPL_ISUPPORTS2(nsMenuItemIconX, imgIContainerObserver, imgIDecoderObserver)
+NS_IMPL_ISUPPORTS1(nsMenuItemIconX, imgINotificationObserver)
 
 nsMenuItemIconX::nsMenuItemIconX(nsMenuObjectX* aMenuItem,
                                  nsIContent*    aContent,
@@ -279,7 +289,7 @@ nsMenuItemIconX::LoadIcon(nsIURI* aIconURI)
   nsCOMPtr<nsILoadGroup> loadGroup = document->GetDocumentLoadGroup();
   if (!loadGroup) return NS_ERROR_FAILURE;
 
-  nsCOMPtr<imgILoader> loader = nsContentUtils::GetImgLoaderForDocument(document);
+  nsRefPtr<imgLoader> loader = nsContentUtils::GetImgLoaderForDocument(document);
   if (!loader) return NS_ERROR_FAILURE;
 
   if (!mSetIcon) {
@@ -306,12 +316,12 @@ nsMenuItemIconX::LoadIcon(nsIURI* aIconURI)
   // Passing in null for channelPolicy here since nsMenuItemIconX::LoadIcon is
   // not exposed to web content
   nsresult rv = loader->LoadImage(aIconURI, nullptr, nullptr, nullptr, loadGroup, this,
-                                   nullptr, nsIRequest::LOAD_NORMAL, nullptr, nullptr,
+                                   nullptr, nsIRequest::LOAD_NORMAL, nullptr,
                                    nullptr, getter_AddRefs(mIconRequest));
   if (NS_FAILED(rv)) return rv;
 
   // We need to request the icon be decoded (bug 573583, bug 705516).
-  mIconRequest->RequestDecode();
+  mIconRequest->StartDecoding();
 
   return NS_OK;
 
@@ -319,57 +329,28 @@ nsMenuItemIconX::LoadIcon(nsIURI* aIconURI)
 }
 
 //
-// imgIContainerObserver
+// imgINotificationObserver
 //
 
 NS_IMETHODIMP
-nsMenuItemIconX::FrameChanged(imgIRequest* aRequest,
-                              imgIContainer*   aContainer,
-                              const nsIntRect* aDirtyRect)
+nsMenuItemIconX::Notify(imgIRequest *aRequest, int32_t aType, const nsIntRect* aData)
 {
+  if (aType == imgINotificationObserver::FRAME_COMPLETE) {
+    return OnStopFrame(aRequest);
+  }
+
+  if (aType == imgINotificationObserver::LOAD_COMPLETE) {
+    if (mIconRequest && mIconRequest == aRequest) {
+      mIconRequest->Cancel(NS_BINDING_ABORTED);
+      mIconRequest = nullptr;
+    }
+  }
+
   return NS_OK;
 }
 
-//
-// imgIDecoderObserver
-//
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnStartRequest(imgIRequest* aRequest)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnStartDecode(imgIRequest* aRequest)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnStartContainer(imgIRequest*   aRequest,
-                                  imgIContainer* aContainer)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnStartFrame(imgIRequest* aRequest, uint32_t aFrame)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnDataAvailable(imgIRequest*     aRequest,
-                                 bool             aCurrentFrame,
-                                 const nsIntRect* aRect)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnStopFrame(imgIRequest*    aRequest,
-                             uint32_t        aFrame)
+nsresult
+nsMenuItemIconX::OnStopFrame(imgIRequest*    aRequest)
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
 
@@ -491,42 +472,4 @@ nsMenuItemIconX::OnStopFrame(imgIRequest*    aRequest,
   return NS_OK;
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
-}
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnStopContainer(imgIRequest*   aRequest,
-                                imgIContainer* aContainer)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnStopDecode(imgIRequest*     aRequest,
-                             nsresult         status,
-                             const PRUnichar* statusArg)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnStopRequest(imgIRequest* aRequest,
-                              bool         aIsLastPart)
-{
-  if (mIconRequest && mIconRequest == aRequest) {
-    mIconRequest->Cancel(NS_BINDING_ABORTED);
-    mIconRequest = nullptr;
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnDiscard(imgIRequest* aRequest)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsMenuItemIconX::OnImageIsAnimated(imgIRequest* aRequest)
-{
-  return NS_OK;
 }

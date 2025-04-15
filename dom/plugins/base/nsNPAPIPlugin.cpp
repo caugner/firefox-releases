@@ -8,7 +8,6 @@
 /* This must occur *after* layers/PLayers.h to avoid typedefs conflicts. */
 #include "mozilla/Util.h"
 
-#include "prtypes.h"
 #include "prmem.h"
 #include "prenv.h"
 #include "prclist.h"
@@ -662,6 +661,37 @@ GetJSContextFromNPP(NPP npp)
   NS_ENSURE_TRUE(doc, nullptr);
 
   return GetJSContextFromDoc(doc);
+}
+
+static nsresult
+GetPrivacyFromNPP(NPP npp, bool* aPrivate)
+{
+  nsCOMPtr<nsIDocument> doc = GetDocumentFromNPP(npp);
+  NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
+  nsCOMPtr<nsPIDOMWindow> domwindow = doc->GetWindow();
+  NS_ENSURE_TRUE(domwindow, NS_ERROR_FAILURE);
+
+  nsCOMPtr<nsIDocShell> docShell = domwindow->GetDocShell();
+  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(docShell);
+  *aPrivate = loadContext && loadContext->UsePrivateBrowsing();
+  return NS_OK;
+}
+
+static already_AddRefed<nsIChannel>
+GetChannelFromNPP(NPP npp)
+{
+  nsCOMPtr<nsIDocument> doc = GetDocumentFromNPP(npp);
+  if (!doc)
+    return nullptr;
+  nsCOMPtr<nsPIDOMWindow> domwindow = doc->GetWindow();
+  nsCOMPtr<nsIChannel> channel;
+  if (domwindow) {
+    nsCOMPtr<nsIDocShell> docShell = domwindow->GetDocShell();
+    if (docShell) {
+      docShell->GetCurrentDocumentChannel(getter_AddRefs(channel));
+    }
+  }
+  return channel.forget();
 }
 
 static NPIdentifier
@@ -2039,16 +2069,12 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
   }
 
   case NPNVprivateModeBool: {
-    nsCOMPtr<nsIDocument> doc = GetDocumentFromNPP(npp);
-    NS_ENSURE_TRUE(doc, NPERR_GENERIC_ERROR);
-    nsCOMPtr<nsPIDOMWindow> domwindow = doc->GetWindow();
-    if (domwindow) {
-      nsCOMPtr<nsIDocShell> docShell = domwindow->GetDocShell();
-      nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(docShell);
-      *(NPBool*)result = (NPBool)(loadContext && loadContext->UsePrivateBrowsing());
-      return NPERR_NO_ERROR;
-    }
-    return NPERR_GENERIC_ERROR;
+    bool privacy;
+    nsresult rv = GetPrivacyFromNPP(npp, &privacy);
+    if (NS_FAILED(rv))
+      return NPERR_GENERIC_ERROR;
+    *(NPBool*)result = (NPBool)privacy;
+    return NPERR_NO_ERROR;
   }
 
   case NPNVdocumentOrigin: {
@@ -2136,7 +2162,7 @@ _getvalue(NPP npp, NPNVariable variable, void *result)
 
 #ifndef NP_NO_CARBON
   case NPNVsupportsCarbonBool: {
-    *(NPBool*)result = true;
+    *(NPBool*)result = false;
 
     return NPERR_NO_ERROR;
   }
@@ -2639,7 +2665,9 @@ _getvalueforurl(NPP instance, NPNURLVariable variable, const char *url,
         return NPERR_GENERIC_ERROR;
       }
 
-      if (NS_FAILED(cookieService->GetCookieString(uri, nullptr, value)) ||
+      nsCOMPtr<nsIChannel> channel = GetChannelFromNPP(instance);
+
+      if (NS_FAILED(cookieService->GetCookieString(uri, channel, value)) ||
           !*value) {
         return NPERR_GENERIC_ERROR;
       }
@@ -2692,10 +2720,12 @@ _setvalueforurl(NPP instance, NPNURLVariable variable, const char *url,
       nsCOMPtr<nsIPrompt> prompt;
       nsPluginHost::GetPrompt(nullptr, getter_AddRefs(prompt));
 
+      nsCOMPtr<nsIChannel> channel = GetChannelFromNPP(instance);
+
       char *cookie = (char*)value;
       char c = cookie[len];
       cookie[len] = '\0';
-      rv = cookieService->SetCookieString(uriIn, prompt, cookie, nullptr);
+      rv = cookieService->SetCookieString(uriIn, prompt, cookie, channel);
       cookie[len] = c;
       if (NS_SUCCEEDED(rv))
         return NPERR_NO_ERROR;
@@ -2738,12 +2768,19 @@ _getauthenticationinfo(NPP instance, const char *protocol, const char *host,
   if (!authManager)
     return NPERR_GENERIC_ERROR;
 
+  bool authPrivate = false;
+  GetPrivacyFromNPP(instance, &authPrivate);
+
+  nsIDocument *doc = GetDocumentFromNPP(instance);
+  NS_ENSURE_TRUE(doc, NPERR_GENERIC_ERROR);
+  nsIPrincipal *principal = doc->NodePrincipal();
+
   nsAutoString unused, uname16, pwd16;
   if (NS_FAILED(authManager->GetAuthIdentity(proto, nsDependentCString(host),
                                              port, nsDependentCString(scheme),
                                              nsDependentCString(realm),
                                              EmptyCString(), unused, uname16,
-                                             pwd16))) {
+                                             pwd16, authPrivate, principal))) {
     return NPERR_GENERIC_ERROR;
   }
 
@@ -2772,7 +2809,13 @@ _scheduletimer(NPP instance, uint32_t interval, NPBool repeat, PluginTimerFunc t
 void NP_CALLBACK
 _unscheduletimer(NPP instance, uint32_t timerID)
 {
+#ifdef MOZ_WIDGET_ANDROID
+  // Sometimes Flash calls this with a dead NPP instance. Ensure the one we have
+  // here is valid and maps to a nsNPAPIPluginInstance.
+  nsNPAPIPluginInstance *inst = nsNPAPIPluginInstance::GetFromNPP(instance);
+#else
   nsNPAPIPluginInstance *inst = (nsNPAPIPluginInstance *)instance->ndata;
+#endif
   if (!inst)
     return;
 

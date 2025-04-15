@@ -99,12 +99,22 @@ function waitForEvent(aEventType, aTarget, aFunc, aContext, aArg1, aArg2)
 }
 
 /**
+ * Generate mouse move over image map what creates image map accessible (async).
+ * See waitForImageMap() function.
+ */
+function waveOverImageMap(aImageMapID)
+{
+  var imageMapNode = getNode(aImageMapID);
+  synthesizeMouse(imageMapNode, 10, 10, { type: "mousemove" },
+                  imageMapNode.ownerDocument.defaultView);
+}
+
+/**
  * Call the given function when the tree of the given image map is built.
  */
 function waitForImageMap(aImageMapID, aTestFunc)
 {
-  synthesizeMouse(aImageMapID, 10, 10, { type: "mousemove" },
-                  aImageMapID.ownerDocument.defaultView);
+  waveOverImageMap(aImageMapID);
 
   var imageMapAcc = getAccessible(aImageMapID);
   if (imageMapAcc.firstChild)
@@ -493,9 +503,11 @@ function eventQueue(aEventType)
   {
     // Create unified event sequence concatenating expected and unexpected
     // events.
-    this.mEventSeq = ("eventSeq" in aInvoker) ?
-      aInvoker.eventSeq :
-      [ new invokerChecker(this.mDefEventType, aInvoker.DOMNode) ];
+    this.mEventSeq = ("eventSeq" in aInvoker) ? aInvoker.eventSeq : [ ];
+    if (!this.mEventSeq.length && this.mDefEventType) {
+      this.mEventSeq.push(new invokerChecker(this.mDefEventType,
+                                             aInvoker.DOMNode));
+    }
 
     var len = this.mEventSeq.length;
     for (var idx = 0; idx < len; idx++) {
@@ -1405,7 +1417,8 @@ function caretMoveChecker(aCaretOffset, aTargetOrFunc, aTargetFuncArg)
  * State change checker.
  */
 function stateChangeChecker(aState, aIsExtraState, aIsEnabled,
-                            aTargetOrFunc, aTargetFuncArg, aIsAsync)
+                            aTargetOrFunc, aTargetFuncArg, aIsAsync,
+                            aSkipCurrentStateCheck)
 {
   this.__proto__ = new invokerChecker(EVENT_STATE_CHANGE, aTargetOrFunc,
                                       aTargetFuncArg, aIsAsync);
@@ -1428,6 +1441,11 @@ function stateChangeChecker(aState, aIsExtraState, aIsEnabled,
             "Wrong state of the statechange event.");
     is(event.isEnabled(), aIsEnabled,
       "Wrong state of statechange event state");
+
+    if (aSkipCurrentStateCheck) {
+      todo(false, "State checking was skipped!");
+      return;
+    }
 
     var state = aIsEnabled ? (aIsExtraState ? 0 : aState) : 0;
     var extraState = aIsEnabled ? (aIsExtraState ? aState : 0) : 0;

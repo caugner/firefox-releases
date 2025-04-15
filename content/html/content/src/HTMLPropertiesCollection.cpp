@@ -5,7 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "HTMLPropertiesCollection.h"
-#include "dombindings.h"
 #include "nsIDocument.h"
 #include "nsContentUtils.h"
 #include "nsGenericHTMLElement.h"
@@ -33,18 +32,18 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(HTMLPropertiesCollection)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(HTMLPropertiesCollection)
   // SetDocument(nullptr) ensures that we remove ourselves as a mutation observer
   tmp->SetDocument(nullptr);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRoot)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mNames)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRoot)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mNames)
   tmp->mNamedItemEntries.Clear();
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mProperties)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mProperties)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(HTMLPropertiesCollection)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDoc)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mRoot)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mNames)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDoc)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRoot)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNames)
   tmp->mNamedItemEntries.EnumerateRead(TraverseNamedProperties, &cb);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSTARRAY_OF_NSCOMPTR(mProperties)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mProperties)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(HTMLPropertiesCollection)
@@ -110,14 +109,7 @@ JSObject*
 HTMLPropertiesCollection::WrapObject(JSContext* cx, JSObject* scope,
                                      bool* triedToWrap)
 {
-  JSObject* obj = HTMLPropertiesCollectionBinding::Wrap(cx, scope, this,
-                                                        triedToWrap);
-  if (obj || *triedToWrap) {
-    return obj;
-  }
-
-  *triedToWrap = true;
-  return oldproxybindings::HTMLPropertiesCollection::create(cx, scope, this);
+  return HTMLPropertiesCollectionBinding::Wrap(cx, scope, this, triedToWrap);
 }
 
 NS_IMETHODIMP
@@ -158,25 +150,7 @@ HTMLPropertiesCollection::NamedItem(JSContext* cx, const nsAString& name,
   return nullptr;
 }
 
-nsISupports*
-HTMLPropertiesCollection::GetNamedItem(const nsAString& aName,
-                                       nsWrapperCache **aCache)
-{
-  if (!IsSupportedNamedProperty(aName)) {
-    *aCache = NULL;
-    return NULL;
-  }
-
-  nsRefPtr<PropertyNodeList> propertyList;
-  if (!mNamedItemEntries.Get(aName, getter_AddRefs(propertyList))) {
-    propertyList = new PropertyNodeList(this, mRoot, aName);
-    mNamedItemEntries.Put(aName, propertyList);
-  }
-  *aCache = propertyList;
-  return static_cast<nsIDOMPropertyNodeList*>(propertyList);
-}
-
-nsGenericElement*
+Element*
 HTMLPropertiesCollection::GetElementAt(uint32_t aIndex)
 {
   EnsureFresh();
@@ -374,6 +348,13 @@ HTMLPropertiesCollection::CrawlSubtree(Element* aElement)
   }                    
 }
 
+void
+HTMLPropertiesCollection::GetSupportedNames(nsTArray<nsString>& aNames)
+{
+  EnsureFresh();
+  mNames->CopyList(aNames);
+}
+
 PropertyNodeList::PropertyNodeList(HTMLPropertiesCollection* aCollection,
                                    nsIContent* aParent, const nsAString& aName)
   : mName(aName),
@@ -429,7 +410,7 @@ PropertyNodeList::Item(uint32_t aIndex, nsIDOMNode** aReturn)
 }
 
 nsIContent*
-PropertyNodeList::GetNodeAt(uint32_t aIndex)
+PropertyNodeList::Item(uint32_t aIndex)
 {
   EnsureFresh();
   return mElements.SafeElementAt(aIndex);
@@ -449,32 +430,25 @@ PropertyNodeList::GetParentObject()
 }
 
 JSObject*
-PropertyNodeList::WrapObject(JSContext *cx, JSObject *scope,
-                             bool *triedToWrap)
+PropertyNodeList::WrapObject(JSContext *cx, JSObject *scope, bool *triedToWrap)
 {
-  JSObject* obj = PropertyNodeListBinding::Wrap(cx, scope, this, triedToWrap);
-  if (obj || *triedToWrap) {
-    return obj;
-  }
-
-  *triedToWrap = true;
-  return oldproxybindings::PropertyNodeList::create(cx, scope, this);
+  return PropertyNodeListBinding::Wrap(cx, scope, this, triedToWrap);
 }
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(PropertyNodeList)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(PropertyNodeList)
   // SetDocument(nullptr) ensures that we remove ourselves as a mutation observer
   tmp->SetDocument(nullptr);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mParent)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCollection)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mElements)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mParent)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCollection)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mElements)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(PropertyNodeList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDoc)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mParent)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mCollection, nsIDOMHTMLPropertiesCollection)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSTARRAY_OF_NSCOMPTR(mElements)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDoc)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mParent)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCollection)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mElements)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(PropertyNodeList)
@@ -610,10 +584,10 @@ PropertyStringList::PropertyStringList(HTMLPropertiesCollection* aCollection)
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(PropertyStringList)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(PropertyStringList)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCollection)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCollection)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(PropertyStringList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mCollection, nsIDOMHTMLPropertiesCollection)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCollection)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(PropertyStringList)

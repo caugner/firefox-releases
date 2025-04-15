@@ -62,8 +62,6 @@ dnl Set the minimum version of toolkit libs used by mozilla
 dnl ========================================================
 GLIB_VERSION=1.2.0
 PERL_VERSION=5.006
-PYTHON_VERSION_MAJOR=2
-PYTHON_VERSION_MINOR=5
 CAIRO_VERSION=1.10
 PANGO_VERSION=1.14.0
 GTK2_VERSION=2.10.0
@@ -72,7 +70,7 @@ W32API_VERSION=3.14
 GNOMEVFS_VERSION=2.0
 GNOMEUI_VERSION=2.2.0
 GCONF_VERSION=1.2.1
-GIO_VERSION=2.18
+GIO_VERSION=2.20
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
 SQLITE_VERSION=3.7.14.1
@@ -124,6 +122,30 @@ then
   fi
 fi
 MOZ_BUILD_ROOT=`pwd`
+
+MOZ_PATH_PROGS(PYTHON, $PYTHON python2.7 python2.6 python2.5 python)
+if test -z "$PYTHON"; then
+    AC_MSG_ERROR([python was not found in \$PATH])
+fi
+
+AC_MSG_RESULT([Creating Python environment])
+dnl This verifies our Python version is sane and ensures the Python
+dnl virtualenv is present and up to date. It sanitizes the environment
+dnl for us, so we don't need to clean anything out.
+$PYTHON $_topsrcdir/build/virtualenv/populate_virtualenv.py \
+    $_topsrcdir $MOZ_BUILD_ROOT/_virtualenv || exit 1
+
+dnl Create a virtualenv where we can install local Python packages
+case "$host_os" in
+mingw*)
+    PYTHON=`cd $MOZ_BUILD_ROOT && pwd -W`/_virtualenv/Scripts/python.exe
+    ;;
+*)
+    PYTHON=$MOZ_BUILD_ROOT/_virtualenv/bin/python
+    ;;
+esac
+
+AC_SUBST(PYTHON)
 
 MOZ_DEFAULT_COMPILER
 
@@ -380,7 +402,6 @@ dnl ========================================================
 dnl Special win32 checks
 dnl ========================================================
 
-# With win8, sdk target=602, WINVER=602
 MOZ_ARG_ENABLE_BOOL(metro,
 [  --enable-metro           Enable Windows Metro build targets],
     MOZ_METRO=1,
@@ -389,8 +410,7 @@ if test -n "$MOZ_METRO"; then
     AC_DEFINE(MOZ_METRO)
     # Target the Windows 8 Kit
     WINSDK_TARGETVER=602
-    # Allow a higher api set
-    WINVER=602
+    WINVER=502
     # toolkit/library/makefile.in needs these, see nsDllMain.
     CRTDLLVERSION=110
     CRTEXPDLLVERSION=1-1-0
@@ -727,17 +747,6 @@ EOF
         AC_MSG_ERROR([You are targeting Windows version 0x$MOZ_WINSDK_TARGETVER, but your SDK only supports up to version $MOZ_WINSDK_MAXVER. Install and use an updated SDK, or target a lower version using --with-windows-version. Alternatively, try running the Windows SDK Configuration Tool and selecting a newer SDK. See https://developer.mozilla.org/En/Windows_SDK_versions for more details on fixing this.])
     fi
     
-    # Make sure the sdk / code we're targeting has the right toolset
-    AC_MSG_CHECKING([SDK and tools are in sync])
-    if test -n "$MOZ_METRO"; then
-      if test "$MOZ_MSVCVERSION" -gt "10"; then
-        AC_MSG_RESULT("yes")
-      else
-        AC_MSG_RESULT("no")
-        AC_MSG_ERROR([Your MOZ_MSVCVERSION equals $MOZ_MSVCVERSION and you've enabled metro build support. You can't target metro without msvc 11 or higher. Disable metro support or switch to a newer set of tools.])
-      fi
-    fi
-      
     AC_DEFINE_UNQUOTED(MOZ_WINSDK_TARGETVER,0x$MOZ_WINSDK_TARGETVER)
     # Definitions matching sdkddkver.h
     AC_DEFINE_UNQUOTED(MOZ_NTDDI_WIN7, 0x06010000)
@@ -801,11 +810,6 @@ if test "$_perl_res" != 0; then
     AC_MSG_ERROR([Cannot find Config.pm or \$Config{archlib}.  A full perl installation is required.])
 else
     AC_MSG_RESULT([yes])
-fi
-
-MOZ_PATH_PROGS(PYTHON, $PYTHON python2.7 python2.6 python2.5 python)
-if test -z "$PYTHON"; then
-    AC_MSG_ERROR([python was not found in \$PATH])
 fi
 
 MOZ_ARG_WITH_BOOL(system-ply,
@@ -1141,9 +1145,6 @@ solaris*)
     AC_SUBST(SOLARIS_SUNPRO_CC)
     AC_SUBST(SOLARIS_SUNPRO_CXX)
     ;;
-BSD_386)
-    HOST_OS_ARCH=BSD
-    ;;
 OS_2)
     HOST_OS_ARCH=OS2
     ;;
@@ -1184,9 +1185,6 @@ MINGW*_NT*)
 AIX)
     OS_RELEASE=`uname -v`.`uname -r`
     OS_TEST=${target_cpu}
-    ;;
-BSD_386)
-    OS_ARCH=BSD
     ;;
 OS_2)
     OS_ARCH=OS2
@@ -1487,13 +1485,11 @@ if test "$GNU_CXX"; then
     # -Werror=return-type - catches missing returns, zero false positives
     # -Wtype-limits - catches overflow bugs, few false positives
     # -Wempty-body - catches bugs, e.g. "if (c); foo();", few false positives
-    # -Werror=conversion-null - catches conversions between NULL and non-pointer types
     #
     _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wall -Wpointer-arith -Woverloaded-virtual"
     MOZ_CXX_SUPPORTS_WARNING(-W, error=return-type, ac_cxx_has_werror_return_type)
     MOZ_CXX_SUPPORTS_WARNING(-W, type-limits, ac_cxx_has_wtype_limits)
     MOZ_CXX_SUPPORTS_WARNING(-W, empty-body, ac_cxx_has_wempty_body)
-    MOZ_CXX_SUPPORTS_WARNING(-W, error=conversion-null, ac_cxx_has_werror_conversion_null)
 
     # Turn off the following warnings that -Wall/-pedantic turn on:
     # -Wno-ctor-dtor-privacy - ???
@@ -1678,18 +1674,19 @@ fi
 AC_SUBST(MOZ_VALGRIND)
 
 dnl ========================================================
-dnl = Use DMD
+dnl = Enable DMDV
 dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(dmd,
-[  --enable-dmd            Enable DMD; also disables jemalloc (default=no)],
-    MOZ_DMD=1,
-    MOZ_DMD= )
-if test -n "$MOZ_DMD"; then
+MOZ_ARG_ENABLE_BOOL(dmdv,
+[  --enable-dmdv           Enable DMDV; also disables jemalloc (default=no)],
+    MOZ_DMDV=1,
+    MOZ_DMDV= )
+if test -n "$MOZ_DMDV"; then
     MOZ_CHECK_HEADER([valgrind/valgrind.h], [],
         AC_MSG_ERROR(
-            [--enable-dmd specified but Valgrind is not installed]))
-    AC_DEFINE(MOZ_DMD)
+            [--enable-dmdv specified but Valgrind is not installed]))
+    AC_DEFINE(MOZ_DMDV)
 fi
+AC_SUBST(MOZ_DMDV)
 
 dnl ========================================================
 dnl jprof
@@ -1840,24 +1837,6 @@ case "$host" in
     ;;
 esac
 
-dnl We require version 2.5 or newer of Python to build.
-AC_MSG_CHECKING([for Python version >= $PYTHON_VERSION_MAJOR.$PYTHON_VERSION_MINOR but not 3.x])
-
-changequote(:)
-read python_version_major python_version_minor python_version_micro <<EOF
-`$PYTHON -c 'import sys; print sys.version_info[0], sys.version_info[1], sys.version_info[2]'`
-EOF
-changequote([,])
-
-if test $python_version_major -ne $PYTHON_VERSION_MAJOR; then
-    AC_MSG_ERROR([Cannot build on Python $python_version_major.])
-else
-    if test $python_version_minor -lt $PYTHON_VERSION_MINOR; then
-        AC_MSG_ERROR([Cannot build on Python $python_version_major.$python_version_minor. You need at least $PYTHON_VERSION_MAJOR.$PYTHON_VERSION_MINOR.])
-    fi
-fi
-AC_MSG_RESULT([yes])
-
 dnl Check for using a custom <stdint.h> implementation
 dnl ========================================================
 AC_MSG_CHECKING(for custom <stdint.h> implementation)
@@ -1945,25 +1924,6 @@ case "$target" in
     AC_DEFINE(NSCAP_DISABLE_DEBUG_PTR_TYPES)
     ;;
 
-*-bsdi*)
-    dnl -pedantic doesn't play well with BSDI's _very_ modified gcc (shlicc2)
-    _PEDANTIC=
-    case $OS_RELEASE in
-	4.*|5.*)
-            STRIP="$STRIP -d"
-            ;;
-	*)
-	    DSO_CFLAGS=''
-	    DSO_LDOPTS='-r'
-	    _WARNINGS_CFLAGS="-Wall"
-	    _WARNINGS_CXXFLAGS="-Wall"
-	    # The test above doesn't work properly, at least on 3.1.
-	    MKSHLIB_FORCE_ALL=''
-	    MKSHLIB_UNFORCE_ALL=''
-	;;
-    esac
-    ;;
-
 *-darwin*)
     MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -o $@'
     MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -o $@'
@@ -1975,7 +1935,7 @@ case "$target" in
     fi
     DLL_SUFFIX=".dylib"
     DSO_LDOPTS=''
-    STRIP="$STRIP -x -S"
+    STRIP_FLAGS="$STRIP_FLAGS -x -S"
     # Check whether we're targeting OS X or iOS
     AC_CACHE_CHECK(for iOS target,
                    ac_cv_ios_target,
@@ -2159,7 +2119,7 @@ ia64*-hpux*)
         # Use temp file for windres (bug 213281)
         RCFLAGS='-O coff --use-temp-file'
         # mingw doesn't require kernel32, user32, and advapi32 explicitly
-        LIBS="$LIBS -luuid -lgdi32 -lwinmm -lwsock32 -luserenv"
+        LIBS="$LIBS -luuid -lgdi32 -lwinmm -lwsock32 -luserenv -lsecur32 -lnetapi32"
         MOZ_FIX_LINK_PATHS=
         DYNAMIC_XPCOM_LIBS='-L$(LIBXUL_DIST)/lib -lxpcom -lxpcom_core -lmozalloc'
         XPCOM_FROZEN_LDOPTS='-L$(LIBXUL_DIST)/lib -lxpcom -lmozalloc'
@@ -2215,7 +2175,7 @@ ia64*-hpux*)
         # make 'foo == bar;' error out
         CFLAGS="$CFLAGS -we4553"
         CXXFLAGS="$CXXFLAGS -we4553"
-        LIBS="$LIBS kernel32.lib user32.lib gdi32.lib winmm.lib wsock32.lib advapi32.lib"
+        LIBS="$LIBS kernel32.lib user32.lib gdi32.lib winmm.lib wsock32.lib advapi32.lib secur32.lib netapi32.lib"
         MOZ_DEBUG_FLAGS='-Zi'
         MOZ_DEBUG_LDFLAGS='-DEBUG -DEBUGTYPE:CV'
         WARNINGS_AS_ERRORS='-WX'
@@ -3770,20 +3730,21 @@ fi
 
 dnl Check for the existence of various allocation headers/functions
 
+MALLOC_HEADERS="malloc.h malloc_np.h malloc/malloc.h sys/malloc.h"
 MALLOC_H=
-MOZ_CHECK_HEADER(malloc.h,        [MALLOC_H=malloc.h])
-if test "$MALLOC_H" = ""; then
-  MOZ_CHECK_HEADER(malloc/malloc.h, [MALLOC_H=malloc/malloc.h])
-  if test "$MALLOC_H" = ""; then
-    MOZ_CHECK_HEADER(sys/malloc.h,    [MALLOC_H=sys/malloc.h])
+
+for file in $MALLOC_HEADERS; do
+  MOZ_CHECK_HEADER($file, [MALLOC_H=$file])
+  if test "$MALLOC_H" != ""; then
+    AC_DEFINE_UNQUOTED(MALLOC_H, <$MALLOC_H>)
+    break
   fi
-fi
-if test "$MALLOC_H" != ""; then
-   AC_DEFINE_UNQUOTED(MALLOC_H, <$MALLOC_H>)
-fi
+done
 
 MOZ_ALLOCATING_FUNCS="strndup posix_memalign memalign valloc"
 AC_CHECK_FUNCS(strndup posix_memalign memalign valloc)
+
+AC_CHECK_FUNCS(malloc_usable_size)
 
 dnl See if compiler supports some gcc-style attributes
 
@@ -3845,12 +3806,6 @@ dnl are defined in build/autoconf/altoptions.m4.
 
 dnl If the compiler supports these attributes, define them as
 dnl convenience macros.
-if test "$ac_cv_attribute_always_inline" = yes ; then
-  AC_DEFINE(NS_ALWAYS_INLINE, [__attribute__((always_inline))])
-else
-  AC_DEFINE(NS_ALWAYS_INLINE,)
-fi
-
 if test "$ac_cv_attribute_malloc" = yes ; then
   AC_DEFINE(NS_ATTR_MALLOC, [__attribute__((malloc))])
 else
@@ -3918,7 +3873,7 @@ MOZ_ARG_WITH_BOOL(system-nspr,
     _USE_SYSTEM_NSPR=1 )
 
 if test -n "$_USE_SYSTEM_NSPR"; then
-    AM_PATH_NSPR(4.9.3, [MOZ_NATIVE_NSPR=1], [AC_MSG_ERROR([your don't have NSPR installed or your version is too old])])
+    AM_PATH_NSPR(4.9.4, [MOZ_NATIVE_NSPR=1], [AC_MSG_ERROR([your don't have NSPR installed or your version is too old])])
 fi
 
 if test -n "$MOZ_NATIVE_NSPR"; then
@@ -3950,6 +3905,15 @@ else
         NSPR_LIBS=`"${LIBXUL_DIST}"/sdk/bin/nspr-config --prefix="${LIBXUL_DIST}" --libdir="${LIBXUL_DIST}"/lib --libs`
     fi
 fi
+
+dnl set GRE_MILESTONE
+dnl ========================================================
+if test -n "$LIBXUL_SDK"; then
+    GRE_MILESTONE=`$PYTHON "$_topsrcdir"/config/printconfigsetting.py "$LIBXUL_DIST"/bin/platform.ini Build Milestone`
+else
+    GRE_MILESTONE=`tail -n 1 "$_topsrcdir"/config/milestone.txt 2>/dev/null || tail -1 "$_topsrcdir"/config/milestone.txt`
+fi
+AC_SUBST(GRE_MILESTONE)
 
 dnl system libevent Support
 dnl ========================================================
@@ -4288,7 +4252,6 @@ MOZ_TOOLKIT_SEARCH=1
 MOZ_UI_LOCALE=en-US
 MOZ_UNIVERSALCHARDET=1
 MOZ_URL_CLASSIFIER=
-MOZ_XTF=1
 MOZ_XUL=1
 MOZ_ZIPWRITER=1
 NS_PRINTING=1
@@ -4378,6 +4341,19 @@ else
     AC_MSG_RESULT([$MOZ_BUILD_APP])
   fi
 fi
+
+# The app update channel is 'default' when not supplied. The value is used in
+# the application's confvars.sh so it must be set before confvars.sh is called.
+MOZ_ARG_ENABLE_STRING([update-channel],
+[  --enable-update-channel=CHANNEL
+                          Select application update channel (default=default)],
+    MOZ_UPDATE_CHANNEL=`echo $enableval | tr A-Z a-z`)
+
+if test -z "$MOZ_UPDATE_CHANNEL"; then
+    MOZ_UPDATE_CHANNEL=default
+fi
+AC_DEFINE_UNQUOTED(MOZ_UPDATE_CHANNEL, $MOZ_UPDATE_CHANNEL)
+AC_SUBST(MOZ_UPDATE_CHANNEL)
 
 # Allow the application to influence configure with a confvars.sh script.
 
@@ -5277,6 +5253,7 @@ dnl enable once PeerConnection lands
 fi
 
 AC_SUBST(MOZ_WEBRTC)
+AC_SUBST(MOZ_WEBRTC_TESTS)
 AC_SUBST(MOZ_WEBRTC_SIGNALING)
 AC_SUBST(MOZ_PEERCONNECTION)
 AC_SUBST(MOZ_WEBRTC_IN_LIBXUL)
@@ -5737,17 +5714,6 @@ MOZ_ARG_DISABLE_BOOL(negotiateauth,
     MOZ_AUTH_EXTENSION=1 )
 
 dnl ========================================================
-dnl XTF
-dnl ========================================================
-MOZ_ARG_DISABLE_BOOL(xtf,
-[  --disable-xtf           Disable XTF (pluggable xml tags) support],
-    MOZ_XTF=,
-    MOZ_XTF=1 )
-if test "$MOZ_XTF"; then
-  AC_DEFINE(MOZ_XTF)
-fi
-
-dnl ========================================================
 dnl Pref extensions (autoconfig)
 dnl ========================================================
 MOZ_ARG_DISABLE_BOOL(pref-extensions,
@@ -5852,7 +5818,7 @@ if test -n "$MOZ_ANGLE_RENDERER" -a -z "$CROSS_COMPILE"; then
   if test -n "`echo $MOZ_DIRECTX_SDK_REG_KEY | grep 'February 2010'`" ; then
     AC_MSG_ERROR([Found the February 2010 DirectX SDK. Need the June 2010 DirectX SDK, or newer.  Upgrade your SDK or reconfigure with --disable-webgl.])
   else
-    MOZ_DIRECTX_SDK_PATH=`reg query "$MOZ_DIRECTX_SDK_REG_KEY" //v InstallPath | grep REG_SZ | sed 's/.*\([[a-zA-Z]]\)\\:\\\\/\\1\\:\\\\/'`
+    MOZ_DIRECTX_SDK_PATH=`reg query "$MOZ_DIRECTX_SDK_REG_KEY" //v InstallPath | grep REG_SZ | sed 's/.*\([[a-zA-Z]]\)\\:\\\\/\\1\\:\\\\/' | sed 's,\\\\,/,g'`
   fi
 
   if test -n "$MOZ_DIRECTX_SDK_PATH" &&
@@ -6105,12 +6071,6 @@ if test -z "$MOZ_JSDEBUGGER" -a `echo "$MOZ_EXTENSIONS" | grep -c venkman` -ne 0
     MOZ_EXTENSIONS=`echo $MOZ_EXTENSIONS | sed -e 's|venkman||'`
 fi
 
-dnl xforms requires xtf
-if test -z "$MOZ_XTF" -a `echo "$MOZ_EXTENSIONS" | grep -c xforms` -ne 0; then
-    AC_MSG_WARN([Cannot build XForms without XTF support.  Removing XForms from MOZ_EXTENSIONS.])
-    MOZ_EXTENSIONS=`echo $MOZ_EXTENSIONS | sed -e 's|xforms||g'`
-fi
-
 dnl Remove dupes
 MOZ_EXTENSIONS=`${PERL} ${srcdir}/build/unix/uniq.pl ${MOZ_EXTENSIONS}`
 
@@ -6299,18 +6259,6 @@ MOZ_ARG_DISABLE_BOOL(updater,
 if test -n "$MOZ_UPDATER"; then
     AC_DEFINE(MOZ_UPDATER)
 fi
-
-# app update channel is 'default' when not supplied.
-MOZ_ARG_ENABLE_STRING([update-channel],
-[  --enable-update-channel=CHANNEL
-                          Select application update channel (default=default)],
-    MOZ_UPDATE_CHANNEL=`echo $enableval | tr A-Z a-z`)
-
-if test -z "$MOZ_UPDATE_CHANNEL"; then
-    MOZ_UPDATE_CHANNEL=default
-fi
-AC_DEFINE_UNQUOTED(MOZ_UPDATE_CHANNEL, $MOZ_UPDATE_CHANNEL)
-AC_SUBST(MOZ_UPDATE_CHANNEL)
 
 # tools/update-packaging is not checked out by default.
 MOZ_ARG_ENABLE_BOOL(update-packaging,
@@ -6739,20 +6687,6 @@ if test $MOZ_PLATFORM_MAEMO; then
 fi
 
 dnl ========================================================
-dnl = XRender Composite
-dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(egl-xrender-composite,
-[  --enable-egl-xrender-composite
-                          Enable EGL xrender composite optimizations],
-    MOZ_EGL_XRENDER_COMPOSITE=1)
-
-if test -n "$MOZ_EGL_XRENDER_COMPOSITE"; then
-    AC_DEFINE(MOZ_EGL_XRENDER_COMPOSITE)
-fi
-
-AC_SUBST(MOZ_EGL_XRENDER_COMPOSITE)
-
-dnl ========================================================
 dnl GL provider
 dnl ========================================================
 MOZ_GL_PROVIDER=
@@ -6985,7 +6919,7 @@ dnl = Enable trace malloc
 dnl ========================================================
 NS_TRACE_MALLOC=${MOZ_TRACE_MALLOC}
 MOZ_ARG_ENABLE_BOOL(trace-malloc,
-[  --enable-trace-malloc   Enable malloc tracing; also disables jemalloc],
+[  --enable-trace-malloc   Enable malloc tracing; also disables DMD and jemalloc],
     NS_TRACE_MALLOC=1,
     NS_TRACE_MALLOC= )
 if test "$NS_TRACE_MALLOC"; then
@@ -6995,6 +6929,33 @@ if test "$NS_TRACE_MALLOC"; then
   AC_DEFINE(NS_TRACE_MALLOC)
 fi
 AC_SUBST(NS_TRACE_MALLOC)
+
+dnl ========================================================
+dnl = Enable DMD
+dnl ========================================================
+
+MOZ_ARG_ENABLE_BOOL(dmd,
+[  --enable-dmd            Enable DMD; also enables jemalloc and replace-malloc and disables DMDV],
+    MOZ_DMD=1,
+    MOZ_DMD= )
+
+if test "$NS_TRACE_MALLOC"; then        # trace-malloc disables DMD
+    MOZ_DMD=
+fi
+if test "$MOZ_DMD"; then
+    USE_ELF_DYNSTR_GC=
+    AC_DEFINE(MOZ_DMD)
+
+    if test "${CPU_ARCH}" = "arm"; then
+        CFLAGS="$CFLAGS -funwind-tables"
+        CXXFLAGS="$CXXFLAGS -funwind-tables"
+    fi
+
+    MOZ_MEMORY=1                        # DMD enables jemalloc
+    MOZ_REPLACE_MALLOC=1                # DMD enables replace-malloc
+    MOZ_DMDV=                           # DMD disables DMDV
+fi
+AC_SUBST(MOZ_DMD)
 
 dnl ========================================================
 dnl = Enable jemalloc
@@ -7007,7 +6968,7 @@ MOZ_ARG_ENABLE_BOOL(jemalloc,
 if test "$NS_TRACE_MALLOC"; then
     MOZ_MEMORY=
 fi
-if test "$MOZ_DMD"; then
+if test "$MOZ_DMDV"; then
     MOZ_MEMORY=
 fi
 
@@ -7039,7 +7000,92 @@ else
   fi
 fi
 
+dnl ========================================================
+dnl = Enable dynamic replacement of malloc implementation
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(replace-malloc,
+[  --enable-replace-malloc   Enable ability to dynamically replace the malloc implementation],
+    MOZ_REPLACE_MALLOC=1,
+    MOZ_REPLACE_MALLOC= )
+
+if test -n "$MOZ_REPLACE_MALLOC" -a -z "$MOZ_MEMORY"; then
+    dnl We don't want to enable jemalloc unconditionally because it may be a
+    dnl deliberate choice not to enable it (bug 702250, for instance)
+    AC_MSG_ERROR([--enable-replace-malloc requires --enable-jemalloc])
+elif test -n "$MOZ_REPLACE_MALLOC"; then
+    MOZ_NATIVE_JEMALLOC=
+
+    dnl Replace-malloc Mac linkage quirks
+    if test -n "$MACOSX_DEPLOYMENT_TARGET"; then
+        AC_CACHE_CHECK([how to do weak dynamic linking],
+            ac_cv_weak_dynamic_linking,
+            [echo 'extern void foo() __attribute__((weak_import));int bar() { if (foo) foo(); return 0; }' > conftest.c
+             if AC_TRY_COMMAND([${CC-cc} -o conftest${DLL_SUFFIX} $CFLAGS -dynamiclib $LDFLAGS -Wl,-U,_foo conftest.c $LIBS 1>&5]) &&
+                test -s conftest${DLL_SUFFIX}; then
+                 dnl There are several ways the linker can put link edit rules in a binary:
+                 dnl - classic info only (for OSX < 10.6)
+                 dnl - dyld info only
+                 dnl - both
+                 if otool -l conftest${DLL_SUFFIX} 2> /dev/null | grep "LC_DYLD_INFO_ONLY" > /dev/null; then
+                     _CLASSIC_INFO=
+                 else
+                     _CLASSIC_INFO=1
+                 fi
+                 if otool -l conftest${DLL_SUFFIX} 2> /dev/null | grep "LC_DYLD_INFO" > /dev/null; then
+                     _DYLD_INFO=1
+                 else
+                     _DYLD_INFO=
+                 fi
+                 dnl With classic info, we need to build with -flat_namespace.
+                 dnl With dyld info, Xcode 4.5 does the right thing without additional flags,
+                 dnl but Xcode < 4.5 requires a dummy library and -flat_namespace because it
+                 dnl forgets to set the weak flag in the dyld info.
+                 dnl See http://glandium.org/blog/?p=2764 for more details.
+                 dnl
+                 dnl Values for ac_cv_weak_dynamic_linking, and subsequently
+                 dnl MOZ_REPLACE_MALLOC_LINKAGE are thus:
+                 dnl - "flat namespace" when -flat_namespace alone is needed
+                 dnl - "dummy library" when a dummy library and -flat_namespace are needed
+                 dnl - "compiler support" when nothing is needed
+                 if test -n "$_DYLD_INFO" && dyldinfo -bind conftest${DLL_SUFFIX} 2> /dev/null | grep "_foo (weak import)" > /dev/null; then
+                     if test -n "$_CLASSIC_INFO"; then
+                         ac_cv_weak_dynamic_linking="flat namespace"
+                     else
+                         ac_cv_weak_dynamic_linking="compiler support"
+                     fi
+                 else
+                     if test -n "$_DYLD_INFO"; then
+                         ac_cv_weak_dynamic_linking="dummy library"
+                     else
+                         ac_cv_weak_dynamic_linking="flat namespace"
+                     fi
+                 fi
+             else
+                 AC_ERROR([couldn't compile a simple C file])
+             fi
+             rm -rf conftest*])
+        MOZ_REPLACE_MALLOC_LINKAGE="$ac_cv_weak_dynamic_linking"
+    fi
+fi
+AC_SUBST(MOZ_REPLACE_MALLOC)
+AC_SUBST(MOZ_REPLACE_MALLOC_LINKAGE)
+
+dnl ========================================================
+dnl = Jemalloc build setup
+dnl ========================================================
 if test -z "$MOZ_MEMORY"; then
+  if test -n "$MOZ_JEMALLOC3" -a -z "$MOZ_REPLACE_MALLOC"; then
+    MOZ_NATIVE_JEMALLOC=1
+    AC_CHECK_FUNCS(mallctl nallocm,,
+      [MOZ_NATIVE_JEMALLOC=
+       break])
+    if test -n "$MOZ_NATIVE_JEMALLOC"; then
+      MOZ_MEMORY=1
+      AC_DEFINE(MOZ_MEMORY)
+      AC_DEFINE(MOZ_JEMALLOC3)
+      AC_DEFINE(MOZ_NATIVE_JEMALLOC)
+    fi
+  fi
   case "${target}" in
     *-mingw*)
       if test -z "$WIN32_REDIST_DIR" -a -z "$MOZ_DEBUG"; then
@@ -7071,8 +7117,8 @@ else
   fi
 
   AC_DEFINE(MOZ_MEMORY)
-  if test -n "$MOZ_JEMALLOC"; then
-    AC_DEFINE(MOZ_JEMALLOC)
+  if test -n "$MOZ_JEMALLOC3"; then
+    AC_DEFINE(MOZ_JEMALLOC3)
   fi
   if test "x$MOZ_DEBUG" = "x1"; then
     AC_DEFINE(MOZ_MEMORY_DEBUG)
@@ -7133,7 +7179,8 @@ else
   esac
 fi # MOZ_MEMORY
 AC_SUBST(MOZ_MEMORY)
-AC_SUBST(MOZ_JEMALLOC)
+AC_SUBST(MOZ_JEMALLOC3)
+AC_SUBST(MOZ_NATIVE_JEMALLOC)
 AC_SUBST(MOZ_GLUE_LDFLAGS)
 AC_SUBST(MOZ_GLUE_PROGRAM_LDFLAGS)
 AC_SUBST(WIN32_CRT_LIBS)
@@ -7480,6 +7527,15 @@ fi
 AC_SUBST(MOZ_B2G_CAMERA)
 
 dnl ========================================================
+dnl = Enable Support B2G-specific changes to the NSS
+dnl = certificate trust database.
+dnl ========================================================
+if test -n "$MOZ_B2G_CERTDATA"; then
+    AC_DEFINE(MOZ_B2G_CERTDATA)
+fi
+AC_SUBST(MOZ_B2G_CERTDATA)
+
+dnl ========================================================
 dnl = Enable Support for Payment API
 dnl ========================================================
 if test -n "$MOZ_PAY"; then
@@ -7505,9 +7561,9 @@ if test -z "$SKIP_LIBRARY_CHECKS"; then
     AC_LANG_RESTORE
 fi
 
-# Demangle only for debug or trace-malloc builds
+# Demangle only for debug or trace-malloc or DMD builds
 MOZ_DEMANGLE_SYMBOLS=
-if test "$HAVE_DEMANGLE" && test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC"; then
+if test "$HAVE_DEMANGLE" && test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC" -o "$MOZ_DMD"; then
     MOZ_DEMANGLE_SYMBOLS=1
     AC_DEFINE(MOZ_DEMANGLE_SYMBOLS)
 fi
@@ -7584,7 +7640,7 @@ dnl done during packaging with omnijar.
 if test "$MOZ_CHROME_FILE_FORMAT" = "omni"; then
     MOZ_OMNIJAR=1
     AC_DEFINE(MOZ_OMNIJAR)
-    if test "$OS_ARCH" = "WINNT" -o "$OS_ARCH" = "OS2" -o "$OS_TARGET" = "Android"; then
+    if test "$OS_ARCH" = "WINNT" -o "$OS_ARCH" = "OS2" -o "$MOZ_WIDGET_TOOLKIT" = "android"; then
         MOZ_CHROME_FILE_FORMAT=flat
     else
         MOZ_CHROME_FILE_FORMAT=symlink
@@ -8312,7 +8368,7 @@ if test -n "$MOZ_SERVICES_SYNC"; then
 fi
 
 dnl ========================================================
-if test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC"; then
+if test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC" -o "$MOZ_DMD"; then
     MOZ_COMPONENTS_VERSION_SCRIPT_LDFLAGS=
 fi
 
@@ -8351,7 +8407,6 @@ AC_SUBST(MOZ_UPDATE_XTERM)
 AC_SUBST(MOZ_PLATFORM_MAEMO)
 AC_SUBST(MOZ_AUTH_EXTENSION)
 AC_SUBST(MOZ_PERMISSIONS)
-AC_SUBST(MOZ_XTF)
 AC_SUBST(MOZ_PREF_EXTENSIONS)
 AC_SUBST(MOZ_JS_LIBS)
 AC_SUBST(MOZ_PSM)
@@ -8440,6 +8495,10 @@ AC_SUBST(MOZ_POST_PROGRAM_COMMAND)
 AC_SUBST(MOZ_LINKER_EXTRACT)
 AC_SUBST(MOZ_PER_WINDOW_PRIVATE_BROWSING)
 
+if test -n "$MOZ_PER_WINDOW_PRIVATE_BROWSING" ; then
+    AC_DEFINE(MOZ_PER_WINDOW_PRIVATE_BROWSING)
+fi
+
 dnl ========================================================
 dnl = Mac bundle name prefix
 dnl ========================================================
@@ -8513,6 +8572,7 @@ fi
 
 MOZ_B2G_VERSION=${MOZ_B2G_VERSION:-"1.0.0"}
 AC_DEFINE_UNQUOTED(MOZ_B2G_VERSION,"$MOZ_B2G_VERSION")
+AC_DEFINE_UNQUOTED(MOZ_B2G_OS_NAME,"$MOZ_B2G_OS_NAME")
 
 AC_SUBST(MOZ_APP_NAME)
 AC_SUBST(MOZ_APP_DISPLAYNAME)
@@ -8846,51 +8906,6 @@ case "$host" in
     ;;
 esac
 
-dnl Create a virtualenv where we can install local Python packages
-AC_MSG_RESULT([Creating Python virtualenv])
-rm -rf _virtualenv
-mkdir -p _virtualenv
-MACOSX_DEPLOYMENT_TARGET= PYTHONDONTWRITEBYTECODE= $PYTHON $_topsrcdir/python/virtualenv/virtualenv.py --system-site-packages ./_virtualenv
-case "$host_os" in
-mingw*)
-    PYTHON=$MOZ_BUILD_ROOT/_virtualenv/Scripts/python.exe
-    ;;
-*)
-    PYTHON=$MOZ_BUILD_ROOT/_virtualenv/bin/python
-    ;;
-esac
-
-AC_SUBST(PYTHON)
-
-dnl Populate the virtualenv
-
-dnl We always use the version Python was compiled with to ensure that compiled
-dnl extensions work properly. This works around a bug in Python. See also
-dnl http://bugs.python.org/issue9516 and bug 659881.
-dnl
-dnl Please note that this assumes nothing built during virtualenv population is
-dnl shipped as part of a release package. If it does ship, binaries built here
-dnl may not be compatible with the minimum supported OS X version.
-osx_deployment_target_system=
-
-if test $python_version_major -ne 2; then
-    AC_MSG_ERROR([Assertion failed: building with Python 2.])
-fi
-
-dnl sysconfig is only present on Python 2.7 and above.
-if test $python_version_minor -ge 7; then
-    osx_deployment_target_system=`$PYTHON -c 'import sysconfig; print sysconfig.get_config_var("MACOSX_DEPLOYMENT_TARGET")'`
-fi
-
-AC_MSG_RESULT([Populating Python virtualenv])
-MACOSX_DEPLOYMENT_TARGET=$osx_deployment_target_system \
-  LDFLAGS="${HOST_LDFLAGS}" \
-  CC="${HOST_CC}" CXX="${HOST_CXX}" \
-  CFLAGS="${HOST_CFLAGS}" CXXFLAGS="${HOST_CXXFLAGS}" \
-  $PYTHON $_topsrcdir/build/virtualenv/populate_virtualenv.py \
-    $_topsrcdir $_topsrcdir/build/virtualenv/packages.txt \
-  || exit 1
-
 dnl Load the list of Makefiles to generate.
 dnl   To add new Makefiles, edit allmakefiles.sh.
 dnl   allmakefiles.sh sets the variable, MAKEFILES.
@@ -8913,6 +8928,8 @@ fi
 if test -n "$MOZ_WEBRTC"; then
    AC_MSG_RESULT("generating WebRTC Makefiles...")
 
+dnl Any --include files must also appear in -D FORCED_INCLUDE_FILE= entries
+dnl so that regeneration via dependencies works correctly
    WEBRTC_CONFIG="-D build_with_mozilla=1 --include ${srcdir}/media/webrtc/webrtc_config.gypi -D FORCED_INCLUDE_FILE=${srcdir}/media/webrtc/webrtc_config.gypi"
 
    GYP_WEBRTC_OPTIONS="--format=mozmake ${WEBRTC_CONFIG} ${EXTRA_GYP_DEFINES} --depth=${srcdir}/media/webrtc/trunk --toplevel-dir=${srcdir} -G OBJDIR=${_objdir}"
@@ -8994,13 +9011,41 @@ fi
 
 # Run jemalloc configure script
 
-if test "$MOZ_JEMALLOC" -a "$MOZ_MEMORY"; then
+if test -z "$MOZ_NATIVE_JEMALLOC" -a "$MOZ_MEMORY" && test -n "$MOZ_JEMALLOC3" -o -n "$MOZ_REPLACE_MALLOC"; then
   ac_configure_args="$_SUBDIR_CONFIG_ARGS --build=$build --host=$target --enable-stats --with-jemalloc-prefix=je_"
-  if test "$OS_ARCH" = "Linux"; then
-    MANGLE="malloc calloc valloc free realloc memalign posix_memalign malloc_usable_size"
+  if test -n "$MOZ_REPLACE_MALLOC"; then
+    # When using replace_malloc, we always want memalign and valloc exported from jemalloc.
+    ac_configure_args="$ac_configure_args ac_cv_func_memalign=yes"
+    ac_configure_args="$ac_configure_args ac_cv_func_valloc=yes"
+  fi
+  if test -n "$MOZ_JEMALLOC3"; then
+    case "${OS_ARCH}" in
+      WINNT|Darwin)
+        # We want jemalloc functions to be kept hidden on both Mac and Windows
+        # See memory/build/mozmemory_wrap.h for details.
+        ac_configure_args="$ac_configure_args --without-export"
+        ;;
+    esac
+  elif test "${OS_ARCH}" = Darwin; then
+    # When building as a replace-malloc lib, disabling the zone allocator
+    # forces to use pthread_atfork.
+    ac_configure_args="$ac_configure_args --disable-zone-allocator"
+  fi
+  _MANGLE="malloc posix_memalign aligned_alloc calloc realloc free memalign valloc malloc_usable_size"
+  JEMALLOC_WRAPPER=
+  if test -z "$MOZ_REPLACE_MALLOC"; then
+    case "$OS_ARCH" in
+      Linux|DragonFly|FreeBSD|NetBSD|OpenBSD)
+        MANGLE=$_MANGLE
+        ;;
+    esac
+  elif test -z "$MOZ_JEMALLOC3"; then
+    MANGLE=$_MANGLE
+    JEMALLOC_WRAPPER=replace_
+  fi
+  if test -n "$MANGLE"; then
     MANGLED=
-    JEMALLOC_WRAPPER=
-    if test -n "$_WRAP_MALLOC"; then
+    if test -n "$_WRAP_MALLOC" -a -z "$JEMALLOC_WRAPPER"; then
       JEMALLOC_WRAPPER=__wrap_
     fi
     for mangle in ${MANGLE}; do

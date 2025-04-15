@@ -4,7 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#pragma once
+#ifndef AudioContext_h_
+#define AudioContext_h_
 
 #include "nsWrapperCache.h"
 #include "nsCycleCollectionParticipant.h"
@@ -13,7 +14,7 @@
 #include "EnableWebAudioCheck.h"
 #include "nsAutoPtr.h"
 
-class JSContext;
+struct JSContext;
 class nsIDOMWindow;
 
 namespace mozilla {
@@ -22,12 +23,17 @@ class ErrorResult;
 
 namespace dom {
 
-class AudioDestinationNode;
-class AudioBufferSourceNode;
 class AudioBuffer;
+class AudioBufferSourceNode;
+class AudioDestinationNode;
+class AudioListener;
+class BiquadFilterNode;
+class DelayNode;
+class DynamicsCompressorNode;
+class GainNode;
+class PannerNode;
 
-class AudioContext MOZ_FINAL : public nsISupports,
-                               public nsWrapperCache,
+class AudioContext MOZ_FINAL : public nsWrapperCache,
                                public EnableWebAudioCheck
 {
   explicit AudioContext(nsIDOMWindow* aParentWindow);
@@ -35,8 +41,8 @@ class AudioContext MOZ_FINAL : public nsISupports,
 public:
   virtual ~AudioContext();
 
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(AudioContext)
+  NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(AudioContext)
+  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(AudioContext)
 
   nsIDOMWindow* GetParentObject() const
   {
@@ -54,6 +60,8 @@ public:
     return mDestination;
   }
 
+  AudioListener* Listener();
+
   already_AddRefed<AudioBufferSourceNode> CreateBufferSource();
 
   already_AddRefed<AudioBuffer>
@@ -61,11 +69,29 @@ public:
                uint32_t aLength, float aSampleRate,
                ErrorResult& aRv);
 
+  already_AddRefed<GainNode>
+  CreateGain();
+
+  already_AddRefed<DelayNode>
+  CreateDelay(float aMaxDelayTime, ErrorResult& aRv);
+
+  already_AddRefed<PannerNode>
+  CreatePanner();
+
+  already_AddRefed<DynamicsCompressorNode>
+  CreateDynamicsCompressor();
+
+  already_AddRefed<BiquadFilterNode>
+  CreateBiquadFilter();
+
 private:
   nsCOMPtr<nsIDOMWindow> mWindow;
   nsRefPtr<AudioDestinationNode> mDestination;
+  nsRefPtr<AudioListener> mListener;
 };
 
 }
 }
+
+#endif
 

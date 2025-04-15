@@ -31,9 +31,15 @@
 #include "nsDisplayList.h"
 #include "AnimationCommon.h"
 #include "nsAnimationManager.h"
+#include "TiledLayerBuffer.h"
+#include "gfxPlatform.h"
+#include "mozilla/dom/ScreenOrientation.h"
+#include "mozilla/AutoRestore.h"
 
 using namespace base;
+using namespace mozilla;
 using namespace mozilla::ipc;
+using namespace mozilla::dom;
 using namespace std;
 
 namespace mozilla {
@@ -57,6 +63,7 @@ static MessageLoop* sCompositorLoop = nullptr;
 struct LayerTreeState {
   nsRefPtr<Layer> mRoot;
   nsRefPtr<AsyncPanZoomController> mController;
+  TargetConfig mTargetConfig;
 };
 
 static uint8_t sPanZoomUserDataKey;
@@ -169,6 +176,8 @@ CompositorParent::CompositorParent(nsIWidget* aWidget,
   , mEGLSurfaceSize(aSurfaceWidth, aSurfaceHeight)
   , mPauseCompositionMonitor("PauseCompositionMonitor")
   , mResumeCompositionMonitor("ResumeCompositionMonitor")
+  , mForceCompositionTask(nullptr)
+  , mOverrideComposeReadiness(false)
 {
   NS_ABORT_IF_FALSE(sCompositorThread != nullptr || sCompositorThreadID,
                     "The compositor thread must be Initialized before instanciating a COmpositorParent.");
@@ -210,6 +219,37 @@ CompositorParent::Destroy()
 
   // Ensure that the layer manager is destructed on the compositor thread.
   mLayerManager = NULL;
+}
+
+static void
+DispatchMemoryPressureToLayers(Layer* aLayer)
+{
+  ShadowLayer* shadowLayer = aLayer->AsShadowLayer();
+  if (shadowLayer) {
+    TiledLayerComposer* tileComposer = shadowLayer->AsTiledLayerComposer();
+    if (tileComposer) {
+      tileComposer->MemoryPressure();
+    }
+  }
+
+  for (Layer* child = aLayer->GetFirstChild();
+         child; child = child->GetNextSibling()) {
+    DispatchMemoryPressureToLayers(child);
+  }
+
+}
+
+bool
+CompositorParent::RecvMemoryPressure()
+{
+  if (!mLayerManager)
+    return true;
+
+  Layer* layer = mLayerManager->GetRoot();
+  if (layer)
+    DispatchMemoryPressureToLayers(layer);
+
+  return true;
 }
 
 bool
@@ -310,6 +350,14 @@ CompositorParent::ResumeComposition()
 
   // if anyone's waiting to make sure that composition really got resumed, tell them
   lock.NotifyAll();
+}
+
+void
+CompositorParent::ForceComposition()
+{
+  // Cancel the orientation changed state to force composition
+  mForceCompositionTask = nullptr;
+  ScheduleRenderOnCompositorThread();
 }
 
 void
@@ -435,11 +483,14 @@ public:
    * guaranteed by this helper only being used during the drawing
    * phase.
    */
-  AutoResolveRefLayers(Layer* aRoot) : mRoot(aRoot)
+  AutoResolveRefLayers(Layer* aRoot, const TargetConfig& aConfig) : mRoot(aRoot), mTargetConfig(aConfig), mReadyForCompose(true)
   { WalkTheTree<Resolve>(mRoot, nullptr); }
 
   ~AutoResolveRefLayers()
   { WalkTheTree<Detach>(mRoot, nullptr); }
+
+  bool IsReadyForCompose()
+  { return mReadyForCompose; }
 
 private:
   enum Op { Resolve, Detach };
@@ -448,19 +499,28 @@ private:
   {
     if (RefLayer* ref = aLayer->AsRefLayer()) {
       if (const LayerTreeState* state = GetIndirectShadowTree(ref->GetReferentId())) {
-        if (Layer* referent = state->mRoot) {
-          if (OP == Resolve) {
-            ref->ConnectReferentLayer(referent);
-            if (AsyncPanZoomController* apzc = state->mController) {
-              referent->SetUserData(&sPanZoomUserDataKey,
-                                    new PanZoomUserData(apzc));
-            } else {
-              CompensateForContentScrollOffset(ref, referent);
-            }
-          } else {
-            ref->DetachReferentLayer(referent);
-            referent->RemoveUserData(&sPanZoomUserDataKey);
+        Layer* referent = state->mRoot;
+
+        if (!ref->GetVisibleRegion().IsEmpty()) {
+          ScreenOrientation chromeOrientation = mTargetConfig.orientation();
+          ScreenOrientation contentOrientation = state->mTargetConfig.orientation();
+          if (!IsSameDimension(chromeOrientation, contentOrientation) &&
+              ContentMightReflowOnOrientationChange(mTargetConfig.clientBounds())) {
+            mReadyForCompose = false;
           }
+        }
+
+        if (OP == Resolve) {
+          ref->ConnectReferentLayer(referent);
+          if (AsyncPanZoomController* apzc = state->mController) {
+            referent->SetUserData(&sPanZoomUserDataKey,
+                                  new PanZoomUserData(apzc));
+          } else {
+            CompensateForContentScrollOffset(ref, referent);
+          }
+        } else {
+          ref->DetachReferentLayer(referent);
+          referent->RemoveUserData(&sPanZoomUserDataKey);
         }
       }
     }
@@ -495,7 +555,19 @@ private:
     aContainer->AsShadowLayer()->SetShadowTransform(m);
   }
 
+  bool IsSameDimension(ScreenOrientation o1, ScreenOrientation o2) {
+    bool isO1portrait = (o1 == eScreenOrientation_PortraitPrimary || o1 == eScreenOrientation_PortraitSecondary);
+    bool isO2portrait = (o2 == eScreenOrientation_PortraitPrimary || o2 == eScreenOrientation_PortraitSecondary);
+    return !(isO1portrait ^ isO2portrait);
+  }
+
+  bool ContentMightReflowOnOrientationChange(nsIntRect& rect) {
+    return rect.width != rect.height;
+  }
+
   Layer* mRoot;
+  TargetConfig mTargetConfig;
+  bool mReadyForCompose;
 
   AutoResolveRefLayers(const AutoResolveRefLayers&) MOZ_DELETE;
   AutoResolveRefLayers& operator=(const AutoResolveRefLayers&) MOZ_DELETE;
@@ -515,7 +587,15 @@ CompositorParent::Composite()
   }
 
   Layer* layer = mLayerManager->GetRoot();
-  AutoResolveRefLayers resolve(layer);
+  AutoResolveRefLayers resolve(layer, mTargetConfig);
+  if (mForceCompositionTask && !mOverrideComposeReadiness) {
+    if (!resolve.IsReadyForCompose()) {
+      return;
+    } else {
+      mForceCompositionTask->Cancel();
+      mForceCompositionTask = nullptr;
+    }
+  }
 
   bool requestNextFrame = TransformShadowTree(mLastCompose);
   if (requestNextFrame) {
@@ -544,9 +624,13 @@ CompositorParent::Composite()
 void
 CompositorParent::ComposeToTarget(gfxContext* aTarget)
 {
+  AutoRestore<bool> override(mOverrideComposeReadiness);
+  mOverrideComposeReadiness = true;
+
   if (!CanComposite()) {
     return;
   }
+
   mLayerManager->BeginTransactionWithTarget(aTarget);
   // Since CanComposite() is true, Composite() must end the layers txn
   // we opened above.
@@ -783,7 +867,7 @@ CompositorParent::TransformShadowTree(TimeStamp aCurrentFrame)
 
   // NB: we must sample animations *before* sampling pan/zoom
   // transforms.
-  wantNextFrame |= SampleAnimations(root, mLastCompose);
+  wantNextFrame |= SampleAnimations(root, aCurrentFrame);
 
   const FrameMetrics& metrics = container->GetFrameMetrics();
   // We must apply the resolution scale before a pan/zoom transform, so we call
@@ -838,7 +922,8 @@ CompositorParent::TransformShadowTree(TimeStamp aCurrentFrame)
     // We synchronise the viewport information with Java after sending the above
     // notifications, so that Java can take these into account in its response.
     // Calculate the absolute display port to send to Java
-    gfx::Rect displayPortLayersPixels(metrics.mDisplayPort);
+    gfx::Rect displayPortLayersPixels(metrics.mCriticalDisplayPort.IsEmpty() ?
+                                      metrics.mDisplayPort : metrics.mCriticalDisplayPort);
     nsIntRect displayPortDevPixels(
       NS_lround(displayPortLayersPixels.x * devPixelRatioX),
       NS_lround(displayPortLayersPixels.y * devPixelRatioY),
@@ -944,6 +1029,22 @@ CompositorParent::ShadowLayersUpdated(ShadowLayersParent* aLayerTree,
                                       const TargetConfig& aTargetConfig,
                                       bool isFirstPaint)
 {
+  if (!isFirstPaint && !mIsFirstPaint && mTargetConfig.orientation() != aTargetConfig.orientation()) {
+    if (mForceCompositionTask != NULL) {
+      mForceCompositionTask->Cancel();
+    }
+    mForceCompositionTask = NewRunnableMethod(this, &CompositorParent::ForceComposition);
+    ScheduleTask(mForceCompositionTask, gfxPlatform::GetPlatform()->GetOrientationSyncMillis());
+  }
+
+  // Instruct the LayerManager to update its render bounds now. Since all the orientation
+  // change, dimension change would be done at the stage, update the size here is free of
+  // race condition.
+  if (LAYERS_OPENGL == mLayerManager->GetBackendType()) {
+    LayerManagerOGL* lm = static_cast<LayerManagerOGL*>(mLayerManager.get());
+    lm->UpdateRenderBounds(aTargetConfig.clientBounds());
+  }
+
   mTargetConfig = aTargetConfig;
   mIsFirstPaint = mIsFirstPaint || isFirstPaint;
   mLayersUpdated = true;
@@ -1164,6 +1265,9 @@ public:
   virtual bool DeallocPGrallocBuffer(PGrallocBufferParent*)
   { return false; }
 
+  virtual bool RecvMemoryPressure()
+  { return true; }
+
 private:
   void DeferredDestroy();
 
@@ -1203,9 +1307,10 @@ CompositorParent::Create(Transport* aTransport, ProcessId aOtherProcess)
 }
 
 static void
-UpdateIndirectTree(uint64_t aId, Layer* aRoot, bool isFirstPaint)
+UpdateIndirectTree(uint64_t aId, Layer* aRoot, const TargetConfig& aTargetConfig, bool isFirstPaint)
 {
   sIndirectLayerTrees[aId].mRoot = aRoot;
+  sIndirectLayerTrees[aId].mTargetConfig = aTargetConfig;
   if (ContainerLayer* root = aRoot->AsContainerLayer()) {
     if (AsyncPanZoomController* apzc = sIndirectLayerTrees[aId].mController) {
       apzc->NotifyLayersUpdated(root->GetFrameMetrics(), isFirstPaint);
@@ -1272,7 +1377,7 @@ CrossProcessCompositorParent::ShadowLayersUpdated(
   if (shadowRoot) {
     SetShadowProperties(shadowRoot);
   }
-  UpdateIndirectTree(id, shadowRoot, isFirstPaint);
+  UpdateIndirectTree(id, shadowRoot, aTargetConfig, isFirstPaint);
 
   sCurrentCompositor->NotifyShadowTreeTransaction();
 }

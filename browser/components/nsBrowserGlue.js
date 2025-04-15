@@ -47,6 +47,12 @@ XPCOMUtils.defineLazyModuleGetter(this, "PdfJs",
 XPCOMUtils.defineLazyModuleGetter(this, "webrtcUI",
                                   "resource:///modules/webrtcUI.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
+                                  "resource://gre/modules/PrivateBrowsingUtils.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "KeywordURLResetPrompter",
+                                  "resource:///modules/KeywordURLResetPrompter.jsm");
+
 const PREF_PLUGINS_NOTIFYUSER = "plugins.update.notifyUser";
 const PREF_PLUGINS_UPDATEURL  = "plugins.update.url";
 
@@ -138,7 +144,7 @@ BrowserGlue.prototype = {
     delay = delay <= MAX_DELAY ? delay : MAX_DELAY;
 
     Cu.import("resource://services-sync/main.js");
-    Weave.SyncScheduler.delayedAutoConnect(delay);
+    Weave.Service.scheduler.delayedAutoConnect(delay);
   },
 #endif
 
@@ -255,6 +261,13 @@ BrowserGlue.prototype = {
           this._initPlaces(false);
         }
         break;
+      case "defaultURIFixup-using-keyword-pref":
+        if (KeywordURLResetPrompter.shouldPrompt) {
+          let keywordURI = subject.QueryInterface(Ci.nsIURI);
+          KeywordURLResetPrompter.prompt(this.getMostRecentBrowserWindow(),
+                                         keywordURI);
+        }
+        break;
       case "initial-migration-will-import-default-bookmarks":
         this._migrationImportsDefaultBookmarks = true;
         break;
@@ -291,6 +304,7 @@ BrowserGlue.prototype = {
     os.addObserver(this, "distribution-customization-complete", false);
     os.addObserver(this, "places-shutdown", false);
     this._isPlacesShutdownObserver = true;
+    os.addObserver(this, "defaultURIFixup-using-keyword-pref", false);
   },
 
   // cleanup (called on application shutdown)
@@ -320,6 +334,7 @@ BrowserGlue.prototype = {
       os.removeObserver(this, "places-database-locked");
     if (this._isPlacesShutdownObserver)
       os.removeObserver(this, "places-shutdown");
+    os.removeObserver(this, "defaultURIFixup-using-keyword-pref");
     UserAgentOverrides.uninit();
     webappsUI.uninit();
     SignInToWebsiteUX.uninit();
@@ -538,7 +553,7 @@ BrowserGlue.prototype = {
       windowcount++;
 
       var browser = browserEnum.getNext();
-      if (("gPrivateBrowsingUI" in browser) && !browser.gPrivateBrowsingUI.privateWindow)
+      if (!PrivateBrowsingUtils.isWindowPrivate(browser))
         allWindowsPrivate = false;
       var tabbrowser = browser.document.getElementById("content");
       if (tabbrowser)
@@ -1717,7 +1732,7 @@ ContentPermissionPrompt.prototype = {
                                                    [requestingURI.host], 1);
 
       // Don't offer to "always/never share" in PB mode
-      if (("gPrivateBrowsingUI" in chromeWin) && !chromeWin.gPrivateBrowsingUI.privateWindow) {
+      if (!PrivateBrowsingUtils.isWindowPrivate(chromeWin)) {
         secondaryActions.push({
           label: browserBundle.GetStringFromName("geolocation.alwaysShareLocation"),
           accessKey: browserBundle.GetStringFromName("geolocation.alwaysShareLocation.accesskey"),

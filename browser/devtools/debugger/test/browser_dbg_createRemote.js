@@ -20,14 +20,63 @@ function test() {
     gWindow = aWindow;
     let gDebugger = gWindow.contentWindow;
 
+    info("Current remote window x: " +
+      Services.prefs.getIntPref("devtools.debugger.ui.win-x"));
+    info("Current remote window y: " +
+      Services.prefs.getIntPref("devtools.debugger.ui.win-y"));
+    info("Current remote window width: " +
+      Services.prefs.getIntPref("devtools.debugger.ui.win-width"));
+    info("Current remote window height: " +
+      Services.prefs.getIntPref("devtools.debugger.ui.win-height"));
+
+    is(gDebugger.Prefs.windowX,
+      Services.prefs.getIntPref("devtools.debugger.ui.win-x"),
+      "Current window x pref corresponds to the debugger pref.");
+
+    is(gDebugger.Prefs.windowY,
+      Services.prefs.getIntPref("devtools.debugger.ui.win-y"),
+      "Current window y pref corresponds to the debugger pref.");
+
+    is(gDebugger.Prefs.windowWidth,
+      Services.prefs.getIntPref("devtools.debugger.ui.win-width"),
+      "Current window width pref corresponds to the debugger pref.");
+
+    is(gDebugger.Prefs.windowHeight,
+      Services.prefs.getIntPref("devtools.debugger.ui.win-height"),
+      "Current window height pref corresponds to the debugger pref.");
+
+
     info("Current remote host: " +
       Services.prefs.getCharPref("devtools.debugger.remote-host"));
     info("Current remote port: " +
       Services.prefs.getIntPref("devtools.debugger.remote-port"));
+    info("Current remote retries: " +
+      Services.prefs.getIntPref("devtools.debugger.remote-connection-retries"));
     info("Current remote timeout: " +
       Services.prefs.getIntPref("devtools.debugger.remote-timeout"));
     info("Current autoconnect flag: " +
       Services.prefs.getBoolPref("devtools.debugger.remote-autoconnect"));
+
+    is(gDebugger.Prefs.remoteHost,
+      Services.prefs.getCharPref("devtools.debugger.remote-host"),
+      "Current remote host corresponds to the debugger pref.");
+
+    is(gDebugger.Prefs.remotePort,
+      Services.prefs.getIntPref("devtools.debugger.remote-port"),
+      "Current remote port corresponds to the debugger pref.");
+
+    is(gDebugger.Prefs.remoteConnectionRetries,
+      Services.prefs.getIntPref("devtools.debugger.remote-connection-retries"),
+      "Current remote retries corresponds to the debugger pref.");
+
+    is(gDebugger.Prefs.remoteTimeout,
+      Services.prefs.getIntPref("devtools.debugger.remote-timeout"),
+      "Current remote timeout corresponds to the debugger pref.");
+
+    is(gDebugger.Prefs.remoteAutoConnect,
+      Services.prefs.getBoolPref("devtools.debugger.remote-autoconnect"),
+      "Current autoconnect flag corresponds to the debugger pref.");
+
 
     is(gDebugger.document.getElementById("close").getAttribute("hidden"), "true",
       "The close button should be hidden in a remote debugger.");
@@ -38,7 +87,7 @@ function test() {
     gDebugger.DebuggerController.activeThread.addOneTimeListener("framesadded", function() {
       Services.tm.currentThread.dispatch({ run: function() {
 
-        let frames = gDebugger.DebuggerView.StackFrames._frames;
+        let frames = gDebugger.DebuggerView.StackFrames._container._list;
         let childNodes = frames.childNodes;
 
         is(gDebugger.DebuggerController.activeThread.paused, true,
@@ -53,17 +102,24 @@ function test() {
           }}, 0);
         });
 
-        EventUtils.sendMouseEvent({ type: "click" },
+        EventUtils.sendMouseEvent({ type: "mousedown" },
           gDebugger.document.getElementById("resume"),
           gDebugger);
       }}, 0);
     });
 
     let iframe = gTab.linkedBrowser.contentWindow.wrappedJSObject.frames[0];
-
     is(iframe.document.title, "Browser Debugger Test Tab", "Found the iframe");
 
-    iframe.runDebuggerStatement();
+    function handler() {
+      if (iframe.document.readyState != "complete") {
+        return;
+      }
+      iframe.window.removeEventListener("load", handler, false);
+      executeSoon(iframe.runDebuggerStatement);
+    };
+    iframe.window.addEventListener("load", handler, false);
+    handler();
   },
   function beforeTabAdded() {
     if (!DebuggerServer.initialized) {

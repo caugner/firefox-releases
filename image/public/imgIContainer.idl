@@ -57,7 +57,7 @@ native gfxGraphicsFilter(gfxPattern::GraphicsFilter);
  *
  * Internally, imgIContainer also manages animation of images.
  */
-[scriptable, uuid(ead94080-cfd6-4a3e-8353-bd45333061d2)]
+[scriptable, uuid(01e12ac9-7d9f-40d9-9ec1-70b64c53ce7a)]
 interface imgIContainer : nsISupports
 {
   /**
@@ -158,7 +158,7 @@ interface imgIContainer : nsISupports
    * Attempts to create an ImageContainer (and Image) containing the current
    * frame. Only valid for RASTER type images.
    */
-  [noscript] ImageContainer getImageContainer();
+  [noscript] ImageContainer getImageContainer(in LayerManager aManager);
 
   /**
    * Create and return a new copy of the given frame that you can write to
@@ -232,6 +232,11 @@ interface imgIContainer : nsISupports
    * requestDecode().
    */
   void requestDecode();
+
+  /*
+   * This is equivalent to requestDecode() but it also decodes some of the image.
+   */
+  [noscript] void startDecoding();
 
   /**
     * Increments the lock count on the image. An image will not be discarded

@@ -7,8 +7,9 @@
 
 #include "nsIX509CertDB.h"
 #include "nsIX509CertDB2.h"
-#include "nsNSSCertHeader.h"
+#include "certt.h"
 
+class nsCString;
 class nsIArray;
 
 class nsNSSCertificateDB : public nsIX509CertDB, public nsIX509CertDB2
@@ -43,7 +44,7 @@ private:
                     uint32_t     *_count,
                     PRUnichar  ***_certNameList);
 
-  CERTDERCerts *getCertsFromPackage(PRArenaPool *arena, uint8_t *data, 
+  CERTDERCerts *getCertsFromPackage(PLArenaPool *arena, uint8_t *data, 
                                     uint32_t length);
   nsresult handleCACertDownload(nsIArray *x509Certs, 
                                 nsIInterfaceRequestor *ctx);

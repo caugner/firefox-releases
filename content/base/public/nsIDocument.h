@@ -79,8 +79,8 @@ class Element;
 } // namespace mozilla
 
 #define NS_IDOCUMENT_IID \
-{ 0x0e1324c9, 0xc997, 0x447e, \
-  { 0xbc, 0xd9, 0xa6, 0x57, 0x80, 0x29, 0x91, 0xe4 } }
+{ 0xd69b94c2, 0x92ed, 0x4baa, \
+  { 0x82, 0x08, 0x56, 0xe4, 0xc4, 0xb3, 0xf3, 0xc8 } }
 
 // Flag for AddStyleSheet().
 #define NS_STYLESHEET_FROM_CATALOG                (1 << 0)
@@ -448,8 +448,22 @@ public:
     return GetBFCacheEntry() ? nullptr : mPresShell;
   }
 
+  void DisallowBFCaching()
+  {
+    NS_ASSERTION(!mBFCacheEntry, "We're already in the bfcache!");
+    mBFCacheDisallowed = true;
+  }
+
+  bool IsBFCachingAllowed() const
+  {
+    return !mBFCacheDisallowed;
+  }
+
   void SetBFCacheEntry(nsIBFCacheEntry* aEntry)
   {
+    NS_ASSERTION(IsBFCachingAllowed() || !aEntry,
+                 "You should have checked!");
+
     mBFCacheEntry = aEntry;
   }
 
@@ -606,11 +620,13 @@ public:
   enum additionalSheetType {
     eAgentSheet,
     eUserSheet,
+    eAuthorSheet,
     SheetTypeCount
   };
 
   virtual nsresult LoadAdditionalStyleSheet(additionalSheetType aType, nsIURI* aSheetURI) = 0;
   virtual void RemoveAdditionalStyleSheet(additionalSheetType aType, nsIURI* sheetURI) = 0;
+  virtual nsIStyleSheet* FirstAdditionalAuthorSheet() = 0;
 
   /**
    * Get this document's CSSLoader.  This is guaranteed to not return null.
@@ -956,8 +972,6 @@ public:
   }
 
   virtual bool IsScriptEnabled() = 0;
-
-  virtual void AddXMLEventsContent(nsIContent * aXMLEventsElement) = 0;
 
   /**
    * Create an element with the specified name, prefix and namespace ID.
@@ -1555,13 +1569,13 @@ public:
   virtual nsISupports* GetCurrentContentSink() = 0;
 
   /**
-   * Register/Unregister a filedata uri as being "owned" by this document. 
+   * Register/Unregister a hostobject uri as being "owned" by this document.
    * I.e. that its lifetime is connected with this document. When the document
    * goes away it should "kill" the uri by calling
-   * nsBlobProtocolHandler::RemoveFileDataEntry
+   * nsHostObjectProtocolHandler::RemoveDataEntry
    */
-  virtual void RegisterFileDataUri(const nsACString& aUri) = 0;
-  virtual void UnregisterFileDataUri(const nsACString& aUri) = 0;
+  virtual void RegisterHostObjectUri(const nsACString& aUri) = 0;
+  virtual void UnregisterHostObjectUri(const nsACString& aUri) = 0;
 
   virtual void SetScrollToRef(nsIURI *aDocumentURI) = 0;
   virtual void ScrollToRef() = 0;
@@ -1719,6 +1733,11 @@ public:
     } else {
       --mInSyncOperationCount;
     }
+  }
+
+  bool CreatingStaticClone() const
+  {
+    return mCreatingStaticClone;
   }
 
 private:
@@ -1892,6 +1911,9 @@ protected:
   // True if a DOMMutationObserver is perhaps attached to a node in the document.
   bool mMayHaveDOMMutationObservers;
 
+  // True if DisallowBFCaching has been called on this document.
+  bool mBFCacheDisallowed;
+
   // The document's script global object, the object from which the
   // document can get its script context and scope. This is the
   // *inner* window object.
@@ -2055,10 +2077,10 @@ private:
 
 // XXX These belong somewhere else
 nsresult
-NS_NewHTMLDocument(nsIDocument** aInstancePtrResult);
+NS_NewHTMLDocument(nsIDocument** aInstancePtrResult, bool aLoadedAsData = false);
 
 nsresult
-NS_NewXMLDocument(nsIDocument** aInstancePtrResult);
+NS_NewXMLDocument(nsIDocument** aInstancePtrResult, bool aLoadedAsData = false);
 
 nsresult
 NS_NewSVGDocument(nsIDocument** aInstancePtrResult);

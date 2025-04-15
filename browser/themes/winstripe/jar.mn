@@ -49,6 +49,7 @@ browser.jar:
         skin/classic/browser/searchbar-dropdown-arrow.png
         skin/classic/browser/Secure24.png
         skin/classic/browser/setDesktopBackground.css
+        skin/classic/browser/click-to-play-warning-stripes.png
         skin/classic/browser/Toolbar.png
         skin/classic/browser/Toolbar-inverted.png
         skin/classic/browser/toolbarbutton-dropdown-arrow.png
@@ -172,6 +173,7 @@ browser.jar:
         skin/classic/browser/devtools/styleeditor.css               (devtools/styleeditor.css)
         skin/classic/browser/devtools/debugger.css                  (devtools/debugger.css)
         skin/classic/browser/devtools/magnifying-glass.png          (devtools/magnifying-glass.png)
+        skin/classic/browser/devtools/option-icon.png               (devtools/option-icon.png)
         skin/classic/browser/devtools/itemToggle.png                (devtools/itemToggle.png)
         skin/classic/browser/devtools/itemArrow-rtl.png             (devtools/itemArrow-rtl.png)
         skin/classic/browser/devtools/itemArrow-ltr.png             (devtools/itemArrow-ltr.png)
@@ -254,6 +256,7 @@ browser.jar:
         skin/classic/aero/browser/searchbar-dropdown-arrow.png       (searchbar-dropdown-arrow-aero.png)
         skin/classic/aero/browser/Secure24.png                       (Secure24-aero.png)
         skin/classic/aero/browser/setDesktopBackground.css
+        skin/classic/aero/browser/click-to-play-warning-stripes.png
         skin/classic/aero/browser/Toolbar.png
         skin/classic/aero/browser/Toolbar-inverted.png
         skin/classic/aero/browser/toolbarbutton-dropdown-arrow.png
@@ -266,7 +269,7 @@ browser.jar:
         skin/classic/aero/browser/webRTC-shareDevice-16.png
         skin/classic/aero/browser/webRTC-shareDevice-64.png
         skin/classic/aero/browser/downloads/buttons.png              (downloads/buttons-aero.png)
-        skin/classic/aero/browser/downloads/download-glow.png        (downloads/download-glow-aero.png)
+        skin/classic/aero/browser/downloads/download-glow.png        (downloads/download-glow.png)
         skin/classic/aero/browser/downloads/download-notification.png (downloads/download-notification.png)
 *       skin/classic/aero/browser/downloads/downloads.css            (downloads/downloads-aero.css)
         skin/classic/aero/browser/feeds/feedIcon.png                 (feeds/feedIcon-aero.png)
@@ -377,6 +380,7 @@ browser.jar:
         skin/classic/aero/browser/devtools/styleeditor.css           (devtools/styleeditor.css)
         skin/classic/aero/browser/devtools/debugger.css              (devtools/debugger.css)
         skin/classic/aero/browser/devtools/magnifying-glass.png      (devtools/magnifying-glass.png)
+        skin/classic/aero/browser/devtools/option-icon.png           (devtools/option-icon.png)
         skin/classic/aero/browser/devtools/itemToggle.png            (devtools/itemToggle.png)
         skin/classic/aero/browser/devtools/itemArrow-rtl.png         (devtools/itemArrow-rtl.png)
         skin/classic/aero/browser/devtools/itemArrow-ltr.png         (devtools/itemArrow-ltr.png)

@@ -62,8 +62,8 @@ public:
   NS_DECL_NSIMUTATIONOBSERVER_NODEWILLBEDESTROYED
 
   // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE(nsSVGUseElementBase::)
-  NS_FORWARD_NSIDOMELEMENT(nsSVGUseElementBase::)
+  NS_FORWARD_NSIDOMNODE_TO_NSINODE
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
   NS_FORWARD_NSIDOMSVGELEMENT(nsSVGUseElementBase::)
 
   // for nsSVGUseFrame's nsIAnonymousContentCreator implementation.

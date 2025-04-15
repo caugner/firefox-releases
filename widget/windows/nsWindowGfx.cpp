@@ -105,36 +105,6 @@ IsRenderMode(gfxWindowsPlatform::RenderMode rmode)
   return gfxWindowsPlatform::GetPlatform()->GetRenderMode() == rmode;
 }
 
-nsIntRegion
-nsWindowGfx::ConvertHRGNToRegion(HRGN aRgn)
-{
-  NS_ASSERTION(aRgn, "Don't pass NULL region here");
-
-  nsIntRegion rgn;
-
-  DWORD size = ::GetRegionData(aRgn, 0, NULL);
-  nsAutoTArray<uint8_t,100> buffer;
-  if (!buffer.SetLength(size))
-    return rgn;
-
-  RGNDATA* data = reinterpret_cast<RGNDATA*>(buffer.Elements());
-  if (!::GetRegionData(aRgn, size, data))
-    return rgn;
-
-  if (data->rdh.nCount > MAX_RECTS_IN_REGION) {
-    rgn = ToIntRect(data->rdh.rcBound);
-    return rgn;
-  }
-
-  RECT* rects = reinterpret_cast<RECT*>(data->Buffer);
-  for (uint32_t i = 0; i < data->rdh.nCount; ++i) {
-    RECT* r = rects + i;
-    rgn.Or(rgn, ToIntRect(*r));
-  }
-
-  return rgn;
-}
-
 /**************************************************************
  **************************************************************
  **
@@ -152,7 +122,7 @@ nsIntRegion nsWindow::GetRegionToPaint(bool aForceFullRepaint,
   if (aForceFullRepaint) {
     RECT paintRect;
     ::GetClientRect(mWnd, &paintRect);
-    return nsIntRegion(nsWindowGfx::ToIntRect(paintRect));
+    return nsIntRegion(WinUtils::ToIntRect(paintRect));
   }
 
   HRGN paintRgn = ::CreateRectRgn(0, 0, 0, 0);
@@ -163,11 +133,11 @@ nsIntRegion nsWindow::GetRegionToPaint(bool aForceFullRepaint,
       ::MapWindowPoints(NULL, mWnd, &pt, 1);
       ::OffsetRgn(paintRgn, pt.x, pt.y);
     }
-    nsIntRegion rgn(nsWindowGfx::ConvertHRGNToRegion(paintRgn));
+    nsIntRegion rgn(WinUtils::ConvertHRGNToRegion(paintRgn));
     ::DeleteObject(paintRgn);
     return rgn;
   }
-  return nsIntRegion(nsWindowGfx::ToIntRect(ps.rcPaint));
+  return nsIntRegion(WinUtils::ToIntRect(ps.rcPaint));
 }
 
 #define WORDSSIZE(x) ((x).width * (x).height)
@@ -427,7 +397,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
           {
             AutoLayerManagerSetup
                 setupLayerManager(this, thebesContext, doubleBuffering);
-            result = listener->PaintWindow(this, region, true, true);
+            result = listener->PaintWindow(this, region, nsIWidgetListener::SENT_WILL_PAINT | nsIWidgetListener::WILL_SEND_DID_PAINT);
           }
 
 #ifdef MOZ_XUL
@@ -542,15 +512,15 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
       case LAYERS_OPENGL:
         static_cast<mozilla::layers::LayerManagerOGL*>(GetLayerManager())->
           SetClippingRegion(region);
-        result = listener->PaintWindow(this, region, true, true);
+        result = listener->PaintWindow(this, region, nsIWidgetListener::SENT_WILL_PAINT | nsIWidgetListener::WILL_SEND_DID_PAINT);
         break;
 #ifdef MOZ_ENABLE_D3D9_LAYER
       case LAYERS_D3D9:
         {
-          LayerManagerD3D9 *layerManagerD3D9 =
+          nsRefPtr<LayerManagerD3D9> layerManagerD3D9 =
             static_cast<mozilla::layers::LayerManagerD3D9*>(GetLayerManager());
           layerManagerD3D9->SetClippingRegion(region);
-          result = listener->PaintWindow(this, region, true, true);
+          result = listener->PaintWindow(this, region, nsIWidgetListener::SENT_WILL_PAINT | nsIWidgetListener::WILL_SEND_DID_PAINT);
           if (layerManagerD3D9->DeviceWasRemoved()) {
             mLayerManager->Destroy();
             mLayerManager = nullptr;
@@ -570,7 +540,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
           if (layerManagerD3D10->device() != gfxWindowsPlatform::GetPlatform()->GetD3D10Device()) {
             Invalidate();
           } else {
-            result = listener->PaintWindow(this, region, true, true);
+            result = listener->PaintWindow(this, region, nsIWidgetListener::SENT_WILL_PAINT | nsIWidgetListener::WILL_SEND_DID_PAINT);
           }
         }
         break;
@@ -607,6 +577,8 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel)
 
   mPainting = false;
 
+  // Re-get the listener since painting may have killed it.
+  listener = GetPaintListener();
   if (listener)
     listener->DidPaintWindow();
 

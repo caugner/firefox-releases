@@ -383,7 +383,7 @@ nsRefreshDriver::Notify(nsITimer *aTimer)
           NS_ADDREF(shell);
           mStyleFlushObservers.RemoveElement(shell);
           shell->FrameConstructor()->mObservingRefreshDriver = false;
-          shell->FlushPendingNotifications(Flush_Style);
+          shell->FlushPendingNotifications(ChangesToFlush(Flush_Style, false));
           NS_RELEASE(shell);
         }
       }
@@ -403,7 +403,8 @@ nsRefreshDriver::Notify(nsITimer *aTimer)
           mLayoutFlushObservers.RemoveElement(shell);
           shell->mReflowScheduled = false;
           shell->mSuppressInterruptibleReflows = false;
-          shell->FlushPendingNotifications(Flush_InterruptibleLayout);
+          shell->FlushPendingNotifications(ChangesToFlush(Flush_InterruptibleLayout,
+                                                          false));
           NS_RELEASE(shell);
         }
       }
@@ -468,8 +469,7 @@ nsRefreshDriver::ImageRequestEnumerator(nsISupportsHashKey* aEntry,
   imgIRequest* req = static_cast<imgIRequest*>(aEntry->GetKey());
   NS_ABORT_IF_FALSE(req, "Unable to retrieve the image request");
   nsCOMPtr<imgIContainer> image;
-  req->GetImage(getter_AddRefs(image));
-  if (image) {
+  if (NS_SUCCEEDED(req->GetImage(getter_AddRefs(image)))) {
     image->RequestRefresh(mostRecentRefresh);
   }
 

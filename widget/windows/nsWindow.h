@@ -129,7 +129,7 @@ public:
   NS_IMETHOD              EnableDragDrop(bool aEnable);
   NS_IMETHOD              CaptureMouse(bool aCapture);
   NS_IMETHOD              CaptureRollupEvents(nsIRollupListener * aListener,
-                                              bool aDoCapture, bool aConsumeRollupEvent);
+                                              bool aDoCapture);
   NS_IMETHOD              GetAttention(int32_t aCycleCount);
   virtual bool            HasPendingInputEvent();
   virtual LayerManager*   GetLayerManager(PLayersChild* aShadowManager = nullptr,
@@ -176,6 +176,7 @@ public:
   NS_IMETHOD              OnIMEFocusChange(bool aFocus);
   NS_IMETHOD              OnIMETextChange(uint32_t aStart, uint32_t aOldEnd, uint32_t aNewEnd);
   NS_IMETHOD              OnIMESelectionChange(void);
+  virtual nsIMEUpdatePreference GetIMEUpdatePreference();
 #endif // NS_ENABLE_TSF
   NS_IMETHOD              GetNonClientMargins(nsIntMargin &margins);
   NS_IMETHOD              SetNonClientMargins(nsIntMargin &margins);
@@ -206,7 +207,7 @@ public:
   void                    SuppressBlurEvents(bool aSuppress); // Called from nsFilePicker
   bool                    BlurEventsSuppressed();
 #ifdef ACCESSIBILITY
-  Accessible* GetRootAccessible();
+  mozilla::a11y::Accessible* GetRootAccessible();
 #endif // ACCESSIBILITY
 
   /**
@@ -419,7 +420,7 @@ protected:
   static void             ScheduleHookTimer(HWND aWnd, UINT aMsgId);
   static void             RegisterSpecialDropdownHooks();
   static void             UnregisterSpecialDropdownHooks();
-  static BOOL             DealWithPopups(HWND inWnd, UINT inMsg, WPARAM inWParam, LPARAM inLParam, LRESULT* outResult);
+  static bool             DealWithPopups(HWND inWnd, UINT inMsg, WPARAM inWParam, LPARAM inLParam, LRESULT* outResult);
 
   /**
    * Window transparency helpers
@@ -531,11 +532,6 @@ protected:
   static UINT           sRollupMsgId;
   static HWND           sRollupMsgWnd;
   static UINT           sHookTimerId;
-
-  // Rollup Listener
-  static nsIWidget*     sRollupWidget;
-  static bool           sRollupConsumeEvent;
-  static nsIRollupListener* sRollupListener;
 
   // Mouse Clicks - static variable definitions for figuring
   // out 1 - 3 Clicks.

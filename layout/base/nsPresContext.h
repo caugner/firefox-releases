@@ -33,6 +33,7 @@
 #include "mozilla/TimeStamp.h"
 #include "prclist.h"
 #include "Layers.h"
+#include "nsRefreshDriver.h"
 
 #ifdef IBMBIDI
 class nsBidiPresUtils;
@@ -66,7 +67,6 @@ struct nsFontFaceRuleContainer;
 class nsObjectFrame;
 class nsTransitionManager;
 class nsAnimationManager;
-class nsRefreshDriver;
 class imgIContainer;
 class nsIDOMMediaQueryList;
 
@@ -110,6 +110,12 @@ public:
     uint32_t mFlags;
   };
 
+  void TakeFrom(nsInvalidateRequestList* aList)
+  {
+    mRequests.MoveElementsFrom(aList->mRequests);
+  }
+  bool IsEmpty() { return mRequests.IsEmpty(); }
+
   nsTArray<Request> mRequests;
 };
 
@@ -151,6 +157,12 @@ public:
     eContext_PageLayout    // paginated & editable.
   };
 
+  // Policies for rebuilding style data.
+  enum StyleRebuildType {
+    eRebuildStyleIfNeeded,
+    eAlwaysRebuildStyle
+  };
+
   nsPresContext(nsIDocument* aDocument, nsPresContextType aType) NS_HIDDEN;
 
   /**
@@ -189,6 +201,22 @@ public:
    * this presentation, or null if there isn't one.
    */
   nsPresContext* GetToplevelContentDocumentPresContext();
+
+  /**
+   * Returns the nearest widget for the root frame of this.
+   *
+   * @param aOffset     If non-null the offset from the origin of the root
+   *                    frame's view to the widget's origin (usually positive)
+   *                    expressed in appunits of this will be returned in
+   *                    aOffset.
+   */
+  nsIWidget* GetNearestWidget(nsPoint* aOffset = nullptr);
+
+  /**
+   * Returns the root widget for this.
+   * Note that the widget is a mediater with IME.
+   */
+  nsIWidget* GetRootWidget();
 
   /**
    * Return the presentation context for the root of the view manager
@@ -232,12 +260,13 @@ public:
    */
   void PostRebuildAllStyleDataEvent(nsChangeHint aExtraHint);
 
-  void MediaFeatureValuesChanged(bool aCallerWillRebuildStyleData);
+  void MediaFeatureValuesChanged(StyleRebuildType aShouldRebuild,
+                                 nsChangeHint aChangeHint = nsChangeHint(0));
   void PostMediaFeatureValuesChangedEvent();
   NS_HIDDEN_(void) HandleMediaFeatureValuesChangedEvent();
   void FlushPendingMediaFeatureValuesChanged() {
     if (mPendingMediaFeatureValuesChanged)
-      MediaFeatureValuesChanged(false);
+      MediaFeatureValuesChanged(eRebuildStyleIfNeeded);
   }
 
   /**
@@ -404,8 +433,10 @@ public:
     if (!r.IsEqualEdges(mVisibleArea)) {
       mVisibleArea = r;
       // Visible area does not affect media queries when paginated.
-      if (!IsPaginated() && HasCachedStyleData())
+      if (!IsPaginated() && HasCachedStyleData()) {
+        mPendingViewportChange = true;
         PostMediaFeatureValuesChangedEvent();
+      }
     }
   }
 
@@ -475,8 +506,7 @@ public:
     if (HasCachedStyleData()) {
       // Media queries could have changed, since we changed the meaning
       // of 'em' units in them.
-      MediaFeatureValuesChanged(true);
-      RebuildAllStyleData(NS_STYLE_HINT_REFLOW);
+      MediaFeatureValuesChanged(eAlwaysRebuildStyle, NS_STYLE_HINT_REFLOW);
     }
   }
 
@@ -497,8 +527,7 @@ public:
     if (HasCachedStyleData()) {
       // Media queries could have changed, since we changed the meaning
       // of 'em' units in them.
-      MediaFeatureValuesChanged(true);
-      RebuildAllStyleData(NS_STYLE_HINT_REFLOW);
+      MediaFeatureValuesChanged(eAlwaysRebuildStyle, NS_STYLE_HINT_REFLOW);
     }
   }
 
@@ -630,6 +659,22 @@ public:
   void   SetBackgroundColorDraw(bool aCanDraw)
   {
     mDrawColorBackground = aCanDraw;
+  }
+  
+  /**
+   * Getter and setter for OMTA time counters
+   */
+  bool ThrottledStyleIsUpToDate() const {
+    return mLastUpdateThrottledStyle == mRefreshDriver->MostRecentRefresh();
+  }
+  void TickLastUpdateThrottledStyle() {
+    mLastUpdateThrottledStyle = mRefreshDriver->MostRecentRefresh();
+  }
+  bool StyleUpdateForAllAnimationsIsUpToDate() const {
+    return mLastStyleUpdateForAllAnimations == mRefreshDriver->MostRecentRefresh();
+  }
+  void TickLastStyleUpdateForAllAnimations() {
+    mLastStyleUpdateForAllAnimations = mRefreshDriver->MostRecentRefresh();
   }
 
 #ifdef IBMBIDI
@@ -816,8 +861,9 @@ public:
   void NotifyInvalidation(const nsRect& aRect, uint32_t aFlags);
   // aRect is in device pixels
   void NotifyInvalidation(const nsIntRect& aRect, uint32_t aFlags);
-  void NotifyDidPaintForSubtree();
-  void FireDOMPaintEvent();
+  // aFlags are nsIPresShell::PAINT_ flags
+  void NotifyDidPaintForSubtree(uint32_t aFlags);
+  void FireDOMPaintEvent(nsInvalidateRequestList* aList);
 
   // Callback for catching invalidations in ContainerLayers
   // Passed to LayerProperties::ComputeDifference
@@ -825,7 +871,8 @@ public:
                                        const nsIntRegion& aRegion);
   bool IsDOMPaintEventPending();
   void ClearMozAfterPaintEvents() {
-    mInvalidateRequests.mRequests.Clear();
+    mInvalidateRequestsSinceLastPaint.mRequests.Clear();
+    mUndeliveredInvalidateRequestsBeforeLastPaint.mRequests.Clear();
     mAllInvalidated = false;
   }
 
@@ -936,6 +983,25 @@ public:
 
   void SetUsesRootEMUnits(bool aValue) {
     mUsesRootEMUnits = aValue;
+  }
+
+  bool UsesViewportUnits() const {
+    return mUsesViewportUnits;
+  }
+
+  void SetUsesViewportUnits(bool aValue) {
+    mUsesViewportUnits = aValue;
+  }
+
+  // true if there are OMTA transition updates for the current document which
+  // have been throttled, and therefore some style information may not be up
+  // to date
+  bool ExistThrottledUpdates() const {
+    return mExistThrottledUpdates;
+  }
+
+  void SetExistThrottledUpdates(bool aExistThrottledUpdates) {
+    mExistThrottledUpdates = aExistThrottledUpdates;
   }
 
 protected:
@@ -1123,7 +1189,8 @@ protected:
 
   FramePropertyTable    mPropertyTable;
 
-  nsInvalidateRequestList mInvalidateRequests;
+  nsInvalidateRequestList mInvalidateRequestsSinceLastPaint;
+  nsInvalidateRequestList mUndeliveredInvalidateRequestsBeforeLastPaint;
 
   // container for per-context fonts (downloadable, SVG, etc.)
   nsUserFontSet*        mUserFontSet;
@@ -1148,6 +1215,8 @@ protected:
   ScrollbarStyles       mViewportStyleOverflow;
   uint8_t               mFocusRingWidth;
 
+  bool mExistThrottledUpdates;
+
   uint16_t              mImageAnimationMode;
   uint16_t              mImageAnimationModePref;
 
@@ -1158,6 +1227,11 @@ protected:
   uint32_t              mInterruptChecksToSkip;
 
   mozilla::TimeStamp    mReflowStartTime;
+
+  // last time animations/transition styles were flushed to their primary frames
+  mozilla::TimeStamp    mLastUpdateThrottledStyle;
+  // last time we did a full style flush
+  mozilla::TimeStamp    mLastStyleUpdateForAllAnimations;
 
   unsigned              mHasPendingInterrupt : 1;
   unsigned              mInterruptsEnabled : 1;
@@ -1184,6 +1258,8 @@ protected:
   unsigned              mPendingUIResolutionChanged : 1;
   unsigned              mPendingMediaFeatureValuesChanged : 1;
   unsigned              mPrefChangePendingNeedsReflow : 1;
+  // True if the requests in mInvalidateRequestsSinceLastPaint cover the
+  // entire viewport
   unsigned              mAllInvalidated : 1;
 
   // Are we currently drawing an SVG glyph?
@@ -1191,6 +1267,11 @@ protected:
 
   // Does the associated document use root-em (rem) units?
   unsigned              mUsesRootEMUnits : 1;
+  // Does the associated document use viewport units (vw/vh/vmin/vmax)?
+  unsigned              mUsesViewportUnits : 1;
+
+  // Has there been a change to the viewport's dimensions?
+  unsigned              mPendingViewportChange : 1;
 
   // Is the current mUserFontSet valid?
   unsigned              mUserFontSetDirty : 1;

@@ -7,6 +7,7 @@ package org.mozilla.gecko;
 
 import android.content.Context;
 import android.graphics.Color;
+import android.graphics.Bitmap;
 import android.graphics.drawable.AnimationDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
@@ -15,6 +16,7 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.SystemClock;
 import android.text.TextUtils;
+import android.util.AttributeSet;
 import android.util.Log;
 import android.view.ContextMenu;
 import android.view.LayoutInflater;
@@ -51,14 +53,17 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                                        Animation.AnimationListener {
     private static final String LOGTAG = "GeckoToolbar";
     private LinearLayout mLayout;
-    private Button mAwesomeBar;
+    private View mAwesomeBar;
+    private View mAwesomeBarRightEdge;
+    private View mAddressBarBg;
     private TextView mTitle;
     private int mTitlePadding;
     private boolean mSiteSecurityVisible;
     private boolean mAnimateSiteSecurity;
     private ImageButton mTabs;
-    private ImageView mBack;
-    private ImageView mForward;
+    private int mTabsPaneWidth;
+    private ImageButton mBack;
+    private ImageButton mForward;
     public ImageButton mFavicon;
     public ImageButton mStop;
     public ImageButton mSiteSecurity;
@@ -92,6 +97,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     private TranslateAnimation mTitleSlideRight;
 
     private int mCount;
+    private int mFaviconSize;
 
     private static final int TABS_CONTRACTED = 1;
     private static final int TABS_EXPANDED = 2;
@@ -112,12 +118,29 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         mShowSiteSecurity = false;
         mShowReader = false;
 
+        // Only used on tablet layout. We need a separate view for the background
+        // because we need to slide it left/right for hiding/shoing the tabs sidebar
+        // See prepareTabsAnimation().
+        mAddressBarBg = mLayout.findViewById(R.id.address_bar_bg);
+
+        // Only used on tablet layout. The tabs sidebar slide animation is implemented
+        // in terms of translating the inner elements of the tablet toolbar to give the
+        // impression of resizing. In order to do this, This "fake" right edge  is kept
+        // in the same position during the animation while the elements on the left
+        // (favicon, back, forware, lock icon, title, ...) slide behind it.
+        // See prepareTabsAnimation().
+        mAwesomeBarRightEdge = mLayout.findViewById(R.id.awesome_bar_right_edge);
+
+        // This will hold the translation width inside the toolbar when the tabs
+        // pane is visible. It will affect the padding applied to the title TextView.
+        mTabsPaneWidth = 0;
+
         mTitle = (TextView) mLayout.findViewById(R.id.awesome_bar_title);
         mTitlePadding = mTitle.getPaddingRight();
         if (Build.VERSION.SDK_INT >= 16)
             mTitle.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
 
-        mAwesomeBar = (Button) mLayout.findViewById(R.id.awesome_bar);
+        mAwesomeBar = mLayout.findViewById(R.id.awesome_bar);
         mAwesomeBar.setOnClickListener(new Button.OnClickListener() {
             public void onClick(View v) {
                 mActivity.autoHideTabs();
@@ -204,6 +227,7 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         mFavicon.setOnClickListener(faviconListener);
         if (Build.VERSION.SDK_INT >= 16)
             mFavicon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        mFaviconSize = Math.round(mActivity.getResources().getDimension(R.dimen.browser_toolbar_favicon_size));
 
         mSiteSecurity = (ImageButton) mLayout.findViewById(R.id.site_security);
         mSiteSecurity.setOnClickListener(faviconListener);
@@ -321,8 +345,11 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         return mLayout;
     }
 
-    public void requestLayout() {
-        mLayout.invalidate();
+    public void refreshBackground() {
+        mAddressBarBg.requestLayout();
+
+        if (mAwesomeBarRightEdge != null)
+            mAwesomeBarRightEdge.requestLayout();
     }
 
     public void onTabChanged(Tab tab, Tabs.TabEvents msg, Object data) {
@@ -351,9 +378,9 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 }
                 break;
             case RESTORED:
+                updateTabCount(Tabs.getInstance().getCount());
+                break;
             case SELECTED:
-                // We should not animate the lock icon when switching or
-                // restoring tabs.
                 mAnimateSiteSecurity = false;
                 // fall through
             case LOCATION_CHANGE:
@@ -460,6 +487,73 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         updateTabs(mActivity.areTabsShown());
     }
 
+    public void prepareTabsAnimation(PropertyAnimator animator, int width) {
+        // This is negative before we want to keep the right edge in the same
+        // position while animating the left-most elements below.
+        animator.attach(mAwesomeBarRightEdge,
+                        PropertyAnimator.Property.TRANSLATION_X,
+                        -width);
+
+        animator.attach(mAwesomeBar,
+                        PropertyAnimator.Property.TRANSLATION_X,
+                        width);
+        animator.attach(mAddressBarBg,
+                        PropertyAnimator.Property.TRANSLATION_X,
+                        width);
+        animator.attach(mTabs,
+                        PropertyAnimator.Property.TRANSLATION_X,
+                        width);
+        animator.attach(mTabsCount,
+                        PropertyAnimator.Property.TRANSLATION_X,
+                        width);
+        animator.attach(mBack,
+                        PropertyAnimator.Property.TRANSLATION_X,
+                        width);
+        animator.attach(mForward,
+                        PropertyAnimator.Property.TRANSLATION_X,
+                        width);
+        animator.attach(mTitle,
+                        PropertyAnimator.Property.TRANSLATION_X,
+                        width);
+        animator.attach(mFavicon,
+                        PropertyAnimator.Property.TRANSLATION_X,
+                        width);
+        animator.attach(mSiteSecurity,
+                        PropertyAnimator.Property.TRANSLATION_X,
+                        width);
+
+        // Uses the old mTabsPaneWidth.
+        adjustTabsAnimation(false);
+
+        mTabsPaneWidth = width;
+
+        // Only update title padding immediatelly when shrinking the browser
+        // toolbar. Leave the padding update to the end of the animation when
+        // expanding (see finishTabsAnimation()).
+        if (mTabsPaneWidth > 0)
+            setPageActionVisibility(mStop.getVisibility() == View.VISIBLE);
+    }
+
+    public void adjustTabsAnimation(boolean reset) {
+        int width = reset ? 0 : mTabsPaneWidth;
+        mAwesomeBarRightEdge.setTranslationX(-width);
+        mAwesomeBar.setTranslationX(width);
+        mAddressBarBg.setTranslationX(width);
+        mTabs.setTranslationX(width);
+        mTabsCount.setTranslationX(width);
+        mBack.setTranslationX(width);
+        mForward.setTranslationX(width);
+        mTitle.setTranslationX(width);
+        mFavicon.setTranslationX(width);
+        mSiteSecurity.setTranslationX(width);
+
+        ((ViewGroup.MarginLayoutParams) mLayout.getLayoutParams()).leftMargin = reset ? mTabsPaneWidth : 0;
+    }
+
+    public void finishTabsAnimation() {
+        setPageActionVisibility(mStop.getVisibility() == View.VISIBLE);
+    }
+
     public void updateTabs(boolean areTabsShown) {
         if (areTabsShown) {
             mTabs.getBackground().setLevel(TABS_EXPANDED);
@@ -482,9 +576,16 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                 mMenu.getBackground().setLevel(TABS_CONTRACTED);
             }
         }
+
+        // A level change will not trigger onMeasure() for the tabs, where the path is created.
+        // Manually requesting a layout to re-calculate the path.
+        mTabs.requestLayout();
     }
 
     public void setProgressVisibility(boolean visible) {
+        // The "Throbber start" and "Throbber stop" log messages in this method
+        // are needed by S1/S2 tests (http://mrcote.info/phonedash/#).
+        // See discussion in Bug 804457. Bug 805124 tracks paring these down.
         if (visible) {
             mFavicon.setImageDrawable(mProgressSpinner);
             mProgressSpinner.start();
@@ -561,16 +662,23 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     }
 
     public void setShadowVisibility(boolean visible) {
-        mShadow.setVisibility(visible ? View.VISIBLE : View.GONE);
+        Tab tab = Tabs.getInstance().getSelectedTab();
+        if (tab == null) {
+            return;
+        }
+
+        String url = tab.getURL();
+
+        // Only set shadow to visible when not on about screens.
+        visible &= !(url == null || url.startsWith("about:"));
+
+        if ((mShadow.getVisibility() == View.VISIBLE) != visible) {
+            mShadow.setVisibility(visible ? View.VISIBLE : View.GONE);
+        }
     }
 
     public void setTitle(CharSequence title) {
         Tab tab = Tabs.getInstance().getSelectedTab();
-
-        // We use about:empty as a placeholder for an external page load and
-        // we don't want to change the title
-        if (tab != null && "about:empty".equals(tab.getURL()))
-            return;
 
         // Keep the title unchanged if the tab is entering reader mode
         if (tab != null && tab.isEnteringReaderMode())
@@ -585,14 +693,16 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
         mAwesomeBar.setContentDescription(title != null ? title : mTitle.getHint());
     }
 
-    public void setFavicon(Drawable image) {
+    public void setFavicon(Bitmap image) {
         if (Tabs.getInstance().getSelectedTab().getState() == Tab.STATE_LOADING)
             return;
 
-        if (image != null)
-            mFavicon.setImageDrawable(image);
-        else
+        if (image != null) {
+            image = Bitmap.createScaledBitmap(image, mFaviconSize, mFaviconSize, false);
+            mFavicon.setImageBitmap(image);
+        } else {
             mFavicon.setImageResource(R.drawable.favicon);
+        }
     }
     
     public void setSecurityMode(String mode) {
@@ -669,11 +779,16 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             setProgressVisibility(tab.getState() == Tab.STATE_LOADING);
             setSecurityMode(tab.getSecurityMode());
             setReaderMode(tab.getReaderEnabled());
-            setShadowVisibility((url == null) || !url.startsWith("about:"));
+            setShadowVisibility(true);
             updateTabCount(Tabs.getInstance().getCount());
             updateBackButton(tab.canDoBack());
             updateForwardButton(tab.canDoForward());
+            updateBackgroundColor(tab.isPrivate() ? 1 : 0);
         }
+    }
+
+    private void updateBackgroundColor(int level) {
+        mAwesomeBar.getBackground().setLevel(level);
     }
 
     public void destroy() {
@@ -701,6 +816,60 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             mMenuPopup.dismiss();
 
         return true;
+    }
+
+    public static class RightEdge extends FrameLayout
+                                  implements LightweightTheme.OnChangeListener { 
+        private BrowserApp mActivity;
+
+        public RightEdge(Context context, AttributeSet attrs) {
+            super(context, attrs);
+            mActivity = (BrowserApp) context;
+        }
+
+        @Override
+        public void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            mActivity.getLightweightTheme().addListener(this);
+        }
+
+        @Override
+        public void onDetachedFromWindow() {
+            super.onDetachedFromWindow();
+            mActivity.getLightweightTheme().removeListener(this);
+        }
+
+        @Override
+        public void onLightweightThemeChanged() {
+            Drawable drawable = mActivity.getLightweightTheme().getDrawable(this);
+            if (drawable == null)
+                return;
+
+            int[] padding =  new int[] { getPaddingLeft(),
+                                         getPaddingTop(),
+                                         getPaddingRight(),
+                                         getPaddingBottom()
+                                       };
+            setBackgroundDrawable(drawable);
+            setPadding(padding[0], padding[1], padding[2], padding[3]);
+        }
+
+        @Override
+        public void onLightweightThemeReset() {
+            int[] padding =  new int[] { getPaddingLeft(),
+                                         getPaddingTop(),
+                                         getPaddingRight(),
+                                         getPaddingBottom()
+                                       };
+            setBackgroundResource(R.drawable.address_bar_bg);
+            setPadding(padding[0], padding[1], padding[2], padding[3]);
+        }
+
+        @Override
+        protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+            super.onLayout(changed, left, top, right, bottom);
+            onLightweightThemeChanged();
+        }
     }
 
     // MenuPopup holds the MenuPanel in Honeycomb/ICS devices with no hardware key

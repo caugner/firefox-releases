@@ -10,6 +10,7 @@
  */
 
 #include "mozilla/Util.h"
+#include "mozilla/Likely.h"
 
 #include "nscore.h"
 #include "nsNodeInfo.h"
@@ -107,6 +108,11 @@ nsNodeInfo::nsNodeInfo(nsIAtom *aName, nsIAtom *aPrefix, int32_t aNamespaceID,
     mInner.mName->ToString(mQualifiedName);
   }
 
+  MOZ_ASSERT_IF(aNodeType != nsIDOMNode::ELEMENT_NODE &&
+                aNodeType != nsIDOMNode::ATTRIBUTE_NODE &&
+                aNodeType != UINT16_MAX,
+                aNamespaceID == kNameSpaceID_None && !aPrefix);
+
   switch (aNodeType) {
     case nsIDOMNode::ELEMENT_NODE:
     case nsIDOMNode::ATTRIBUTE_NODE:
@@ -159,7 +165,7 @@ static const char* kNSURIs[] = {
 };
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsNodeInfo)
-  if (NS_UNLIKELY(cb.WantDebugInfo())) {
+  if (MOZ_UNLIKELY(cb.WantDebugInfo())) {
     char name[72];
     uint32_t nsid = tmp->NamespaceID();
     nsAtomCString localName(tmp->NameAtom());
@@ -177,8 +183,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsNodeInfo)
     NS_IMPL_CYCLE_COLLECTION_DESCRIBE(nsNodeInfo, tmp->mRefCnt.get())
   }
 
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_MEMBER(mOwnerManager,
-                                                  nsNodeInfoManager)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mOwnerManager)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsNodeInfo)

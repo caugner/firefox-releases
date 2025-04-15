@@ -95,28 +95,7 @@ add_test(function test_read_8bit_unpacked_to_string() {
 });
 
 /**
- * Verify isICCServiceAvailable.
- */
-add_test(function test_is_icc_service_available() {
-  let worker = newUint8Worker();
-
-  function test_table(sst, geckoService, simEnabled, usimEnabled) {
-    worker.RIL.iccInfo.sst = sst;
-    worker.RIL.appType = CARD_APPTYPE_SIM;
-    do_check_eq(worker.RIL.isICCServiceAvailable(geckoService), simEnabled);
-    worker.RIL.appType = CARD_APPTYPE_USIM;
-    do_check_eq(worker.RIL.isICCServiceAvailable(geckoService), usimEnabled);
-  }
-
-  test_table([0x08], "ADN", true, false);
-  test_table([0x08], "FDN", false, false);
-  test_table([0x08], "SDN", false, true);
-
-  run_next_test();
-});
-
-/**
- * Verify writeDiallingNumber
+ * Verify GsmPDUHelper.writeDiallingNumber
  */
 add_test(function test_write_dialling_number() {
   let worker = newUint8Worker();
@@ -138,6 +117,47 @@ add_test(function test_write_dialling_number() {
   len = 5;
   helper.writeDiallingNumber(number);
   do_check_eq(helper.readDiallingNumber(len), number);
+
+  run_next_test();
+});
+
+/**
+ * Verify RIL.isICCServiceAvailable.
+ */
+add_test(function test_is_icc_service_available() {
+  let worker = newUint8Worker();
+
+  function test_table(sst, geckoService, simEnabled, usimEnabled) {
+    worker.RIL.iccInfo.sst = sst;
+    worker.RIL.appType = CARD_APPTYPE_SIM;
+    do_check_eq(worker.RIL.isICCServiceAvailable(geckoService), simEnabled);
+    worker.RIL.appType = CARD_APPTYPE_USIM;
+    do_check_eq(worker.RIL.isICCServiceAvailable(geckoService), usimEnabled);
+  }
+
+  test_table([0x08], "ADN", true, false);
+  test_table([0x08], "FDN", false, false);
+  test_table([0x08], "SDN", false, true);
+
+  run_next_test();
+});
+
+/**
+ * Verify RIL.sendStkTerminalProfile
+ */
+add_test(function test_send_stk_terminal_profile() {
+  let worker = newUint8Worker();
+  let ril = worker.RIL;
+  let buf = worker.Buf;
+
+  ril.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+
+  buf.seekIncoming(8);
+  let profile = buf.readString();
+  for (let i = 0; i < STK_SUPPORTED_TERMINAL_PROFILE.length; i++) {
+    do_check_eq(parseInt(profile.substring(2 * i, 2 * i + 2), 16),
+                STK_SUPPORTED_TERMINAL_PROFILE[i]);
+  }
 
   run_next_test();
 });
@@ -200,8 +220,7 @@ add_test(function test_write_location_info_tlv() {
   lac = (pduHelper.readHexOctet() << 8) | pduHelper.readHexOctet();
   do_check_eq(lac, 10291);
 
-  cellId = (pduHelper.readHexOctet() << 8)  |
-               (pduHelper.readHexOctet());
+  cellId = (pduHelper.readHexOctet() << 8) | (pduHelper.readHexOctet());
   do_check_eq(cellId, 65534);
 
   // Test with 3-digit mnc, and gsmCellId obtained from GSM network.
@@ -226,8 +245,7 @@ add_test(function test_write_location_info_tlv() {
   lac = (pduHelper.readHexOctet() << 8) | pduHelper.readHexOctet();
   do_check_eq(lac, 10291);
 
-  cellId = (pduHelper.readHexOctet() << 8) |
-           (pduHelper.readHexOctet());
+  cellId = (pduHelper.readHexOctet() << 8) | (pduHelper.readHexOctet());
   do_check_eq(cellId, 65534);
 
   run_next_test();
@@ -250,6 +268,61 @@ add_test(function test_write_disconnecting_cause() {
   do_check_eq(standard, 0x60);
   let cause = pduHelper.readHexOctet();
   do_check_eq(cause, 0x80 | ERROR_GENERIC_FAILURE);
+
+  run_next_test();
+});
+
+/**
+ * Verify ComprehensionTlvHelper.getSizeOfLengthOctets
+ */
+add_test(function test_get_size_of_length_octets() {
+  let worker = newUint8Worker();
+  let tlvHelper = worker.ComprehensionTlvHelper;
+
+  let length = 0x70;
+  do_check_eq(tlvHelper.getSizeOfLengthOctets(length), 1);
+
+  length = 0x80;
+  do_check_eq(tlvHelper.getSizeOfLengthOctets(length), 2);
+
+  length = 0x180;
+  do_check_eq(tlvHelper.getSizeOfLengthOctets(length), 3);
+
+  length = 0x18000;
+  do_check_eq(tlvHelper.getSizeOfLengthOctets(length), 4);
+
+  run_next_test();
+});
+
+/**
+ * Verify ComprehensionTlvHelper.writeLength
+ */
+add_test(function test_write_length() {
+  let worker = newUint8Worker();
+  let pduHelper = worker.GsmPDUHelper;
+  let tlvHelper = worker.ComprehensionTlvHelper;
+
+  let length = 0x70;
+  tlvHelper.writeLength(length);
+  do_check_eq(pduHelper.readHexOctet(), length);
+
+  length = 0x80;
+  tlvHelper.writeLength(length);
+  do_check_eq(pduHelper.readHexOctet(), 0x81);
+  do_check_eq(pduHelper.readHexOctet(), length);
+
+  length = 0x180;
+  tlvHelper.writeLength(length);
+  do_check_eq(pduHelper.readHexOctet(), 0x82);
+  do_check_eq(pduHelper.readHexOctet(), (length >> 8) & 0xff);
+  do_check_eq(pduHelper.readHexOctet(), length & 0xff);
+
+  length = 0x18000;
+  tlvHelper.writeLength(length);
+  do_check_eq(pduHelper.readHexOctet(), 0x83);
+  do_check_eq(pduHelper.readHexOctet(), (length >> 16) & 0xff);
+  do_check_eq(pduHelper.readHexOctet(), (length >> 8) & 0xff);
+  do_check_eq(pduHelper.readHexOctet(), length & 0xff);
 
   run_next_test();
 });
@@ -329,37 +402,6 @@ add_test(function test_stk_proactive_command_play_tone() {
   run_next_test();
 });
 
-+/**
- * Verify Proactive Command: Display Text
- */
-add_test(function test_read_septets_to_string() {
-  let worker = newUint8Worker();
-  let pduHelper = worker.GsmPDUHelper;
-  let berHelper = worker.BerTlvHelper;
-  let stkHelper = worker.StkProactiveCmdHelper;
-
-  let display_text_1 = [
-    0xd0,
-    0x28,
-    0x81, 0x03, 0x01, 0x21, 0x80,
-    0x82, 0x02, 0x81, 0x02,
-    0x0d, 0x1d, 0x00, 0xd3, 0x30, 0x9b, 0xfc, 0x06, 0xc9, 0x5c, 0x30, 0x1a,
-    0xa8, 0xe8, 0x02, 0x59, 0xc3, 0xec, 0x34, 0xb9, 0xac, 0x07, 0xc9, 0x60,
-    0x2f, 0x58, 0xed, 0x15, 0x9b, 0xb9, 0x40,
-  ];
-
-  for (let i = 0; i < display_text_1.length; i++) {
-    pduHelper.writeHexOctet(display_text_1[i]);
-  }
-
-  let berTlv = berHelper.decode(display_text_1.length);
-  let ctlvs = berTlv.value;
-  let tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_TEXT_STRING, ctlvs);
-  do_check_eq(tlv.value.textString, "Saldo 2.04 E. Validez 20/05/13. ");
-
-  run_next_test();
-});
-
 /**
  * Verify Proactive Command : Poll Interval
  */
@@ -395,56 +437,65 @@ add_test(function test_stk_proactive_command_poll_interval() {
 });
 
 /**
- * Verify ComprehensionTlvHelper.getSizeOfLengthOctets
+ * Verify Proactive Command: Display Text
  */
-add_test(function test_get_size_of_length_octets() {
+add_test(function test_read_septets_to_string() {
   let worker = newUint8Worker();
-  let tlvHelper = worker.ComprehensionTlvHelper;
+  let pduHelper = worker.GsmPDUHelper;
+  let berHelper = worker.BerTlvHelper;
+  let stkHelper = worker.StkProactiveCmdHelper;
 
-  let length = 0x70;
-  do_check_eq(tlvHelper.getSizeOfLengthOctets(length), 1);
+  let display_text_1 = [
+    0xd0,
+    0x28,
+    0x81, 0x03, 0x01, 0x21, 0x80,
+    0x82, 0x02, 0x81, 0x02,
+    0x0d, 0x1d, 0x00, 0xd3, 0x30, 0x9b, 0xfc, 0x06, 0xc9, 0x5c, 0x30, 0x1a,
+    0xa8, 0xe8, 0x02, 0x59, 0xc3, 0xec, 0x34, 0xb9, 0xac, 0x07, 0xc9, 0x60,
+    0x2f, 0x58, 0xed, 0x15, 0x9b, 0xb9, 0x40,
+  ];
 
-  length = 0x80;
-  do_check_eq(tlvHelper.getSizeOfLengthOctets(length), 2);
+  for (let i = 0; i < display_text_1.length; i++) {
+    pduHelper.writeHexOctet(display_text_1[i]);
+  }
 
-  length = 0x180;
-  do_check_eq(tlvHelper.getSizeOfLengthOctets(length), 3);
-
-  length = 0x18000;
-  do_check_eq(tlvHelper.getSizeOfLengthOctets(length), 4);
+  let berTlv = berHelper.decode(display_text_1.length);
+  let ctlvs = berTlv.value;
+  let tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_TEXT_STRING, ctlvs);
+  do_check_eq(tlv.value.textString, "Saldo 2.04 E. Validez 20/05/13. ");
 
   run_next_test();
 });
 
-/**
- * Verify ComprehensionTlvHelper.writeLength
- */
-add_test(function test_write_length() {
+add_test(function test_stk_proactive_command_event_list() {
   let worker = newUint8Worker();
   let pduHelper = worker.GsmPDUHelper;
-  let tlvHelper = worker.ComprehensionTlvHelper;
+  let berHelper = worker.BerTlvHelper;
+  let stkHelper = worker.StkProactiveCmdHelper;
 
-  let length = 0x70;
-  tlvHelper.writeLength(length);
-  do_check_eq(pduHelper.readHexOctet(), length);
+  let event_1 = [
+    0xD0,
+    0x0F,
+    0x81, 0x03, 0x01, 0x05, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x99, 0x04, 0x00, 0x01, 0x02, 0x03];
 
-  length = 0x80;
-  tlvHelper.writeLength(length);
-  do_check_eq(pduHelper.readHexOctet(), 0x81);
-  do_check_eq(pduHelper.readHexOctet(), length);
+  for (let i = 0; i < event_1.length; i++) {
+    pduHelper.writeHexOctet(event_1[i]);
+  }
 
-  length = 0x180;
-  tlvHelper.writeLength(length);
-  do_check_eq(pduHelper.readHexOctet(), 0x82);
-  do_check_eq(pduHelper.readHexOctet(), (length >> 8) & 0xff);
-  do_check_eq(pduHelper.readHexOctet(), length & 0xff);
+  let berTlv = berHelper.decode(event_1.length);
+  let ctlvs = berTlv.value;
+  let tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, 0x05);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
 
-  length = 0x18000;
-  tlvHelper.writeLength(length);
-  do_check_eq(pduHelper.readHexOctet(), 0x83);
-  do_check_eq(pduHelper.readHexOctet(), (length >> 16) & 0xff);
-  do_check_eq(pduHelper.readHexOctet(), (length >> 8) & 0xff);
-  do_check_eq(pduHelper.readHexOctet(), length & 0xff);
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_EVENT_LIST, ctlvs);
+  do_check_eq(Array.isArray(tlv.value.eventList), true);
+  for (let i = 0; i < tlv.value.eventList.length; i++) {
+    do_check_eq(tlv.value.eventList[i], i);
+  }
 
   run_next_test();
 });
@@ -502,4 +553,142 @@ add_test(function test_spn_display_condition() {
     [2, 123, 456, 123, 457, false, false],
     [0, 123, 456, 123, 457, false, true],
   ], run_next_test);
+
+add_test(function read_network_name() {
+  let worker = newUint8Worker();
+  let helper = worker.GsmPDUHelper;
+  let buf = worker.Buf;
+
+  // Returning length of byte.
+  function writeNetworkName(isUCS2, requireCi, name) {
+    let codingOctet = 0x80;
+    let len;
+    if (requireCi) {
+      codingOctet |= 0x08;
+    }
+
+    if (isUCS2) {
+      codingOctet |= 0x10;
+      len = name.length * 2;
+    } else {
+      let spare = (8 - (name.length * 7) % 8) % 8;
+      codingOctet |= spare;
+      len = Math.ceil(name.length * 7 / 8);
+    }
+    helper.writeHexOctet(codingOctet);
+
+    if (isUCS2) {
+      helper.writeUCS2String(name);
+    } else {
+      helper.writeStringAsSeptets(name, 0, 0, 0);
+    }
+
+    return len + 1; // codingOctet.
+  }
+
+  function testNetworkName(isUCS2, requireCi, name) {
+    let len = writeNetworkName(isUCS2, requireCi, name);
+    do_check_eq(helper.readNetworkName(len), name);
+  }
+
+  testNetworkName( true,  true, "Test Network Name1");
+  testNetworkName( true, false, "Test Network Name2");
+  testNetworkName(false,  true, "Test Network Name3");
+  testNetworkName(false, false, "Test Network Name4");
+
+  run_next_test();
+});
+
+add_test(function test_update_network_name() {
+  let RIL = newWorker({
+    postRILMessage: function fakePostRILMessage(data) {
+      // Do nothing
+    },
+    postMessage: function fakePostMessage(message) {
+      // Do nothing
+    }
+  }).RIL;
+
+  function testNetworkNameIsNull(operatorMcc, operatorMnc) {
+    RIL.operator.mcc = operatorMcc;
+    RIL.operator.mnc = operatorMnc;
+    do_check_eq(RIL.updateNetworkName(), null);
+  }
+
+  function testNetworkName(operatorMcc, operatorMnc,
+                            expectedLongName, expectedShortName) {
+    RIL.operator.mcc = operatorMcc;
+    RIL.operator.mnc = operatorMnc;
+    let result = RIL.updateNetworkName();
+
+    do_check_eq(result[0], expectedLongName);
+    do_check_eq(result[1], expectedShortName);
+  }
+
+  // Before EF_OPL and EF_PNN have been loaded.
+  do_check_eq(RIL.updateNetworkName(), null);
+
+  // Set HPLMN
+  RIL.iccInfo.mcc = 123;
+  RIL.iccInfo.mnc = 456;
+
+  RIL.voiceRegistrationState = {
+    cell: {
+      gsmLocationAreaCode: 0x1000
+    }
+  };
+  RIL.operator = {};
+
+  // Set EF_PNN
+  RIL.iccInfoPrivate = {
+    PNN: [
+      {"fullName": "PNN1Long", "shortName": "PNN1Short"},
+      {"fullName": "PNN2Long", "shortName": "PNN2Short"},
+      {"fullName": "PNN3Long", "shortName": "PNN3Short"},
+      {"fullName": "PNN4Long", "shortName": "PNN4Short"}
+    ]
+  };
+
+  // EF_OPL isn't available and current isn't in HPLMN,
+  testNetworkNameIsNull(123, 457);
+
+  // EF_OPL isn't available and current is in HPLMN,
+  // the first record of PNN should be returned.
+  testNetworkName(123, 456, "PNN1Long", "PNN1Short");
+
+  // Set EF_OPL
+  RIL.iccInfoPrivate.OPL = [
+    {
+      "mcc": 123,
+      "mnc": 456,
+      "lacTacStart": 0,
+      "lacTacEnd": 0xFFFE,
+      "pnnRecordId": 4
+    },
+    {
+      "mcc": 123,
+      "mnc": 457,
+      "lacTacStart": 0,
+      "lacTacEnd": 0x0010,
+      "pnnRecordId": 3
+    },
+    {
+      "mcc": 123,
+      "mnc": 457,
+      "lacTacStart": 0,
+      "lacTacEnd": 0x1010,
+      "pnnRecordId": 2
+    }
+  ];
+
+  // Both EF_PNN and EF_OPL are presented, and current PLMN is HPLMN,
+  testNetworkName(123, 456, "PNN4Long", "PNN4Short");
+
+  // Current PLMN is not HPLMN, and according to LAC, we should get
+  // the second PNN record.
+  testNetworkName(123, 457, "PNN2Long", "PNN2Short");
+
+  run_next_test();
+});
+
 });

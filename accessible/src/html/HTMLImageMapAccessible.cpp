@@ -85,6 +85,7 @@ HTMLImageMapAccessible::UpdateChildAreas(bool aDoFireEvents)
     return;
 
   bool doReorderEvent = false;
+  nsRefPtr<AccReorderEvent> reorderEvent = new AccReorderEvent(this);
 
   // Remove areas that are not a valid part of the image map anymore.
   for (int32_t childIdx = mChildren.Length() - 1; childIdx >= 0; childIdx--) {
@@ -93,8 +94,9 @@ HTMLImageMapAccessible::UpdateChildAreas(bool aDoFireEvents)
       continue;
 
     if (aDoFireEvents) {
-      nsRefPtr<AccEvent> event = new AccHideEvent(area, area->GetContent());
+      nsRefPtr<AccHideEvent> event = new AccHideEvent(area, area->GetContent());
       mDoc->FireDelayedAccessibleEvent(event);
+      reorderEvent->AddSubMutationEvent(event);
       doReorderEvent = true;
     }
 
@@ -118,20 +120,17 @@ HTMLImageMapAccessible::UpdateChildAreas(bool aDoFireEvents)
       }
 
       if (aDoFireEvents) {
-        nsRefPtr<AccEvent> event = new AccShowEvent(area, areaContent);
+        nsRefPtr<AccShowEvent> event = new AccShowEvent(area, areaContent);
         mDoc->FireDelayedAccessibleEvent(event);
+        reorderEvent->AddSubMutationEvent(event);
         doReorderEvent = true;
       }
     }
   }
 
   // Fire reorder event if needed.
-  if (doReorderEvent) {
-    nsRefPtr<AccEvent> reorderEvent =
-      new AccEvent(nsIAccessibleEvent::EVENT_REORDER, mContent,
-                   eAutoDetect, AccEvent::eCoalesceFromSameSubtree);
+  if (doReorderEvent)
     mDoc->FireDelayedAccessibleEvent(reorderEvent);
-  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -152,27 +151,25 @@ HTMLAreaAccessible::
   HTMLAreaAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   HTMLLinkAccessible(aContent, aDoc)
 {
-  // Make HTML area DOM element not accessible. HTML image map accessible			
+  // Make HTML area DOM element not accessible. HTML image map accessible
   // manages its tree itself.
-  mFlags |= eSharedNode;
+  mFlags |= eNotNodeMapEntry;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // HTMLAreaAccessible: nsIAccessible
 
-nsresult
-HTMLAreaAccessible::GetNameInternal(nsAString& aName)
+ENameValueFlag
+HTMLAreaAccessible::NativeName(nsString& aName)
 {
-  nsresult rv = Accessible::GetNameInternal(aName);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  ENameValueFlag nameFlag = Accessible::NativeName(aName);
   if (!aName.IsEmpty())
-    return NS_OK;
+    return nameFlag;
 
   if (!mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::alt, aName))
-    return GetValue(aName);
+    GetValue(aName);
 
-  return NS_OK;
+  return eNameOK;
 }
 
 void

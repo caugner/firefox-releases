@@ -381,6 +381,13 @@ static dom::ConstantSpec gLibcProperties[] =
   { "OSFILE_OFFSETOF_DIRENT_D_TYPE", INT_TO_JSVAL(offsetof (struct dirent, d_type)) },
 #endif // defined(DT_UNKNOWN)
 
+  // Under MacOS X, |dirfd| is a macro rather than a function, so we
+  // need a little help to get it to work
+#if defined(dirfd)
+  { "OSFILE_SIZEOF_DIR", INT_TO_JSVAL(sizeof (DIR)) },
+
+  { "OSFILE_OFFSETOF_DIR_DD_FD", INT_TO_JSVAL(offsetof (DIR, __dd_fd)) },
+#endif
 
   // Defining |stat|
 
@@ -400,6 +407,11 @@ static dom::ConstantSpec gLibcProperties[] =
   { "OSFILE_OFFSETOF_STAT_ST_MTIME", INT_TO_JSVAL(offsetof (struct stat, st_mtime)) },
   { "OSFILE_OFFSETOF_STAT_ST_CTIME", INT_TO_JSVAL(offsetof (struct stat, st_ctime)) },
 #endif // defined(HAVE_ST_ATIME)
+
+  // Several OSes have a birthtime field. For the moment, supporting only Darwin.
+#if defined(_DARWIN_FEATURE_64_BIT_INODE)
+  { "OSFILE_OFFSETOF_STAT_ST_BIRTHTIME", INT_TO_JSVAL(offsetof (struct stat, st_birthtime)) },
+#endif // defined(_DARWIN_FEATURE_64_BIT_INODE)
 
 #endif // defined(XP_UNIX)
 

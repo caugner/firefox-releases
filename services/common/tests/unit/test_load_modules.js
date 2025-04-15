@@ -16,6 +16,7 @@ const modules = [
 const test_modules = [
   "aitcserver.js",
   "bagheeraserver.js",
+  "logging.js",
   "storageserver.js",
 ];
 

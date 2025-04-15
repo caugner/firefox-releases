@@ -40,6 +40,8 @@ function ContentSecurityPolicy() {
   this._referrer = "";
   this._docRequest = null;
   CSPdebug("CSP POLICY INITED TO 'default-src *'");
+
+  this._cache = { };
 }
 
 /*
@@ -215,6 +217,7 @@ ContentSecurityPolicy.prototype = {
     // (3) Save the result
     this._policy = intersect;
     this._isInitialized = true;
+    this._cache = {};
   },
 
   /**
@@ -310,6 +313,9 @@ ContentSecurityPolicy.prototype = {
           // we need to set an nsIChannelEventSink on the channel object
           // so we can tell it to not follow redirects when posting the reports
           chan.notificationCallbacks = new CSPReportRedirectSink(this._policy);
+          if (this._docRequest) {
+            chan.loadGroup = this._docRequest.loadGroup;
+          }
 
           chan.QueryInterface(Ci.nsIUploadChannel)
               .setUploadStream(content, "application/json", content.available());
@@ -413,15 +419,17 @@ ContentSecurityPolicy.prototype = {
                           aMimeTypeGuess, 
                           aOriginalUri) {
 
-    // don't filter chrome stuff
-    if (aContentLocation.scheme === 'chrome' ||
-        aContentLocation.scheme === 'resource') {
-      return Ci.nsIContentPolicy.ACCEPT;
+    let key = aContentLocation.spec + "!" + aContentType;
+    if (this._cache[key]) {
+      return this._cache[key];
     }
 
-    // interpret the context, and then pass off to the decision structure
+#ifndef MOZ_B2G
+    // Try to remove as much as possible from the hot path on b2g.
     CSPdebug("shouldLoad location = " + aContentLocation.asciiSpec);
     CSPdebug("shouldLoad content type = " + aContentType);
+#endif
+    // interpret the context, and then pass off to the decision structure
     var cspContext = ContentSecurityPolicy._MAPPINGS[aContentType];
 
     // if the mapping is null, there's no policy, let it through.
@@ -451,7 +459,9 @@ ContentSecurityPolicy.prototype = {
       }
     }
 
-    return (this._reportOnlyMode ? Ci.nsIContentPolicy.ACCEPT : res);
+    let ret = this._cache[key] =
+      (this._reportOnlyMode ? Ci.nsIContentPolicy.ACCEPT : res);
+    return ret;
   },
   
   shouldProcess:

@@ -557,7 +557,7 @@ Section "-InstallEndCleanup"
   WriteIniStr "$0" "TASKBAR" "Migrated" "true"
 
   ; Refresh desktop icons
-  System::Call "shell32::SHChangeNotify(i 0x08000000, i 0, i 0, i 0)"
+  System::Call "shell32::SHChangeNotify(i ${SHCNE_ASSOCCHANGED}, i ${SHCNF_DWORDFLUSH}, i 0, i 0)"
 
   ${InstallEndCleanupCommon}
 
@@ -724,11 +724,12 @@ Function CheckExistingInstall
 FunctionEnd
 
 Function LaunchApp
+  ${ManualCloseAppPrompt} "${WindowClass}" "$(WARN_MANUALLY_CLOSE_APP_LAUNCH)"
+
   ClearErrors
   ${GetParameters} $0
   ${GetOptions} "$0" "/UAC:" $1
   ${If} ${Errors}
-    ${ManualCloseAppPrompt} "${WindowClass}" "$(WARN_MANUALLY_CLOSE_APP_LAUNCH)"
     Exec "$\"$INSTDIR\${FileMainEXE}$\""
   ${Else}
     GetFunctionAddress $0 LaunchAppFromElevatedProcess
@@ -737,8 +738,6 @@ Function LaunchApp
 FunctionEnd
 
 Function LaunchAppFromElevatedProcess
-  ${ManualCloseAppPrompt} "${WindowClass}" "$(WARN_MANUALLY_CLOSE_APP_LAUNCH)"
-
   ; Find the installation directory when launching using GetFunctionAddress
   ; from an elevated installer since $INSTDIR will not be set in this installer
   ${StrFilter} "${FileMainEXE}" "+" "" "" $R9
@@ -832,7 +831,16 @@ Function leaveShortcuts
     Abort
   ${EndIf}
   ${MUI_INSTALLOPTIONS_READ} $AddDesktopSC "shortcuts.ini" "Field 2" "State"
-  ${MUI_INSTALLOPTIONS_READ} $AddStartMenuSC "shortcuts.ini" "Field 3" "State"
+
+  ; If we have a Metro browser and are Win8, then we don't have a Field 3
+!ifdef MOZ_METRO
+  ${Unless} ${AtLeastWin8}
+!endif
+    ${MUI_INSTALLOPTIONS_READ} $AddStartMenuSC "shortcuts.ini" "Field 3" "State"
+!ifdef MOZ_METRO
+  ${EndIf}
+!endif
+
   ; Don't install the quick launch shortcut on Windows 7
   ${Unless} ${AtLeastWin7}
     ${MUI_INSTALLOPTIONS_READ} $AddQuickLaunchSC "shortcuts.ini" "Field 4" "State"
@@ -1023,6 +1031,10 @@ FunctionEnd
 # Initialization Functions
 
 Function .onInit
+  ; Remove the current exe directory from the search order.
+  ; This only effects LoadLibrary calls and not implicitly loaded DLLs.
+  System::Call 'kernel32::SetDllDirectoryW(w "")'
+
   StrCpy $PageName ""
   StrCpy $LANGUAGE 0
   ${SetBrandNameVars} "$EXEDIR\core\distribution\setup.ini"
@@ -1098,13 +1110,21 @@ Function .onInit
   WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 2" State  "1"
   WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 2" Flags  "GROUP"
 
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Type   "checkbox"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Text   "$(ICONS_STARTMENU)"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Left   "0"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Right  "-1"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Top    "40"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Bottom "50"
-  WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" State  "1"
+  ; Don't offer to install the start menu shortcut on Windows 8
+  ; for Metro builds.
+!ifdef MOZ_METRO
+  ${Unless} ${AtLeastWin8}
+!endif
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Type   "checkbox"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Text   "$(ICONS_STARTMENU)"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Left   "0"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Right  "-1"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Top    "40"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" Bottom "50"
+    WriteINIStr "$PLUGINSDIR\shortcuts.ini" "Field 3" State  "1"
+!ifdef MOZ_METRO
+  ${EndIf}
+!endif
 
   ; Don't offer to install the quick launch shortcut on Windows 7
   ${Unless} ${AtLeastWin7}

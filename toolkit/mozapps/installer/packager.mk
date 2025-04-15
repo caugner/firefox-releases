@@ -247,7 +247,11 @@ ifeq ($(MOZ_PKG_FORMAT),APK)
 JAVA_CLASSPATH = $(ANDROID_SDK)/android.jar
 include $(MOZILLA_DIR)/config/android-common.mk
 
+ifdef MOZ_SIGN_CMD
+JARSIGNER := $(MOZ_SIGN_CMD) -f jar
+else
 JARSIGNER ?= echo
+endif
 
 DIST_FILES =
 
@@ -556,7 +560,10 @@ UNMAKE_PACKAGE	= $(INNER_UNMAKE_PACKAGE)
 endif # def MOZ_OMNIJAR
 
 ifdef MOZ_INTERNAL_SIGNING_FORMAT
-MOZ_SIGN_PREPARED_PACKAGE_CMD=$(MOZ_SIGN_CMD) $(foreach f,$(MOZ_INTERNAL_SIGNING_FORMAT),-f $(f)) $(foreach i,$(SIGN_INCLUDES),-i $(i)) $(foreach x,$(SIGN_EXCLUDES),-x $(x)) --nsscmd "$(SIGN_CMD)"
+MOZ_SIGN_PREPARED_PACKAGE_CMD=$(MOZ_SIGN_CMD) $(foreach f,$(MOZ_INTERNAL_SIGNING_FORMAT),-f $(f)) $(foreach i,$(SIGN_INCLUDES),-i $(i)) $(foreach x,$(SIGN_EXCLUDES),-x $(x))
+ifeq (WINNT,$(OS_ARCH))
+MOZ_SIGN_PREPARED_PACKAGE_CMD += --nsscmd "$(SIGN_CMD)"
+endif
 endif
 
 # For final GPG / authenticode signing / dmg signing if required
@@ -732,17 +739,11 @@ ifdef MOZ_SIGN_PREPARED_PACKAGE_CMD
 	$(MOZ_SIGN_PREPARED_PACKAGE_CMD) $(DEPTH)/installer-stage && true
 endif
 
-elfhack:
-ifdef USE_ELF_HACK
-	@echo ===
-	@echo === If you get failures below, please file a bug describing the error
-	@echo === and your environment \(compiler and linker versions\), and use
-	@echo === --disable-elf-hack until this is fixed.
-	@echo ===
-	cd $(DIST)/bin; find . -name "*$(DLL_SUFFIX)" | xargs ../../build/unix/elfhack/elfhack
+ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
+ELF_HACK_FLAGS = --fill
 endif
 
-stage-package: $(MOZ_PKG_MANIFEST) $(MOZ_PKG_REMOVALS_GEN) elfhack
+stage-package: $(MOZ_PKG_MANIFEST) $(MOZ_PKG_REMOVALS_GEN)
 	@rm -rf $(DIST)/$(PKG_PATH)$(PKG_BASENAME).tar $(DIST)/$(PKG_PATH)$(PKG_BASENAME).dmg $@ $(EXCLUDE_LIST)
 ifndef MOZ_FAST_PACKAGE
 	@rm -rf $(DIST)/$(MOZ_PKG_DIR)
@@ -830,6 +831,15 @@ ifndef PKG_SKIP_STRIP
 				-exec $(STRIP) $(STRIP_FLAGS) {} >/dev/null 2>&1 \;
   endif
 endif # PKG_SKIP_STRIP
+ifdef USE_ELF_HACK
+	@echo ===
+	@echo === If you get failures below, please file a bug describing the error
+	@echo === and your environment \(compiler and linker versions\), and use
+	@echo === --disable-elf-hack until this is fixed.
+	@echo ===
+	cd $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR); find . -name "*$(DLL_SUFFIX)" | xargs ../../build/unix/elfhack/elfhack $(ELF_HACK_FLAGS)
+endif
+
 # We always sign nss because we don't do it from security/manager anymore
 	@$(SIGN_NSS)
 	@echo "Removing unpackaged files..."

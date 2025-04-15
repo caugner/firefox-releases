@@ -88,12 +88,7 @@ MoveCList(PRCList &from, PRCList &to)
 static uint32_t
 NowInMinutes()
 {
-    PRTime now = PR_Now(), minutes, factor;
-    LL_I2L(factor, 60 * PR_USEC_PER_SEC);
-    minutes = now / factor;
-    uint32_t result;
-    LL_L2UI(result, minutes);
-    return result;
+    return uint32_t(PR_Now() / int64_t(60 * PR_USEC_PER_SEC));
 }
 
 //----------------------------------------------------------------------------
@@ -184,8 +179,12 @@ nsHostRecord::Create(const nsHostKey *key, nsHostRecord **result)
 
 nsHostRecord::~nsHostRecord()
 {
-    if (addr)
+    if (addr) {
         free(addr);
+    }
+    if (addr_info) {
+        PR_FreeAddrInfo(addr_info);
+    }
 }
 
 bool
@@ -995,9 +994,10 @@ nsHostResolver::ThreadFunc(void *arg)
             status = NS_ERROR_UNKNOWN_HOST;
             Telemetry::Accumulate(Telemetry::DNS_FAILED_LOOKUP_TIME, millis);
         }
-        
-        resolver->OnLookupComplete(rec, status, ai);
+
+        // OnLookupComplete may release "rec", log before we lose it.
         LOG(("Lookup completed for host [%s].\n", rec->host));
+        resolver->OnLookupComplete(rec, status, ai);
     }
     NS_RELEASE(resolver);
     LOG(("DNS lookup thread ending execution.\n"));

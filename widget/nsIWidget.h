@@ -75,7 +75,8 @@ typedef nsEventStatus (* EVENT_CALLBACK)(nsGUIEvent *event);
 #define NS_NATIVE_OFFSETY     7
 #define NS_NATIVE_PLUGIN_PORT 8
 #define NS_NATIVE_SCREEN      9
-#define NS_NATIVE_SHELLWIDGET 10      // Get the shell GtkWidget
+// The toplevel GtkWidget containing this nsIWidget:
+#define NS_NATIVE_SHELLWIDGET 10
 // Has to match to NPNVnetscapeWindow, and shareable across processes
 // HWND on Windows and XID on X11
 #define NS_NATIVE_SHAREABLE_WINDOW 11
@@ -161,14 +162,37 @@ enum nsTopLevelWidgetZPlacement { // for PlaceBehind()
 };
 
 /**
+ * Before the OS goes to sleep, this topic is notified.
+ */
+#define NS_WIDGET_SLEEP_OBSERVER_TOPIC "sleep_notification"
+
+/**
+ * After the OS wakes up, this topic is notified.
+ */
+#define NS_WIDGET_WAKE_OBSERVER_TOPIC "wake_notification"
+
+/**
+ * Before the OS suspends the current process, this topic is notified.  Some
+ * OS will kill processes that are suspended instead of resuming them.
+ * For that reason this topic may be useful to safely close down resources.
+ */
+#define NS_WIDGET_SUSPEND_PROCESS_OBSERVER_TOPIC "suspend_process_notification"
+
+/**
+ * After the current process resumes from being suspended, this topic is
+ * notified.
+ */
+#define NS_WIDGET_RESUME_PROCESS_OBSERVER_TOPIC "resume_process_notification"
+
+/**
  * Preference for receiving IME updates
  *
- * If mWantUpdates is true, PuppetWidget will forward
- * nsIWidget::OnIMETextChange and nsIWidget::OnIMESelectionChange to the chrome
- * process. This incurs overhead from observers and IPDL. If the IME
- * implementation on a particular platform doesn't care about OnIMETextChange
- * and OnIMESelectionChange from content processes, they should set
- * mWantUpdates to false to avoid these overheads.
+ * If mWantUpdates is true, nsTextStateManager will observe text change and
+ * selection change and call nsIWidget::OnIMETextChange() and
+ * nsIWidget::OnIMESelectionChange(). The observing cost is very expensive.
+ * If the IME implementation on a particular platform doesn't care about
+ * OnIMETextChange and OnIMESelectionChange, they should set mWantUpdates to
+ * false to avoid the cost.
  *
  * If mWantHints is true, PuppetWidget will forward the content of text fields
  * to the chrome process to be cached. This way we return the cached content
@@ -279,6 +303,8 @@ struct IMEState {
 };
 
 struct InputContext {
+  InputContext() : mNativeIMEContext(nullptr) {}
+
   IMEState mIMEState;
 
   /* The type of the input if the input is a html input field */
@@ -289,6 +315,11 @@ struct InputContext {
 
   /* A hint for the action that is performed when the input is submitted */
   nsString mActionHint;
+
+  /* Native IME context for the widget.  This doesn't come from the argument of
+     SetInputContext().  If there is only one context in the process, this may
+     be nullptr. */
+  void* mNativeIMEContext;
 };
 
 struct InputContextAction {
@@ -411,6 +442,7 @@ class nsIWidget : public nsISupports {
     nsIWidget()
       : mLastChild(nullptr)
       , mPrevSibling(nullptr)
+      , mOnDestroyCalled(false)
     {}
 
         
@@ -512,6 +544,12 @@ class nsIWidget : public nsISupports {
      */
 
     NS_IMETHOD Destroy(void) = 0;
+
+    /**
+     * Destroyed() returns true if Destroy() has been called already.
+     * Otherwise, false.
+     */
+    bool Destroyed() const { return mOnDestroyCalled; }
 
 
     /**
@@ -1194,14 +1232,12 @@ class nsIWidget : public nsISupports {
 
     /**
      * Enables/Disables system capture of any and all events that would cause a
-     * dropdown to be rolled up, This method ignores the aConsumeRollupEvent 
-     * parameter when aDoCapture is FALSE
+     * popup to be rolled up. aListener should be set to a non-null value for
+     * any popups that are not managed by the popup manager.
      * @param aDoCapture true enables capture, false disables capture 
-     * @param aConsumeRollupEvent true consumes the rollup event, false dispatches rollup event
      *
      */
-    NS_IMETHOD CaptureRollupEvents(nsIRollupListener * aListener, bool aDoCapture,
-                                   bool aConsumeRollupEvent) = 0;
+    NS_IMETHOD CaptureRollupEvents(nsIRollupListener* aListener, bool aDoCapture) = 0;
 
     /**
      * Bring this window to the user's attention.  This is intended to be a more
@@ -1463,9 +1499,9 @@ class nsIWidget : public nsISupports {
     NS_IMETHOD_(InputContext) GetInputContext() = 0;
 
     /**
-     * Set accelerated rendering to 'True' or 'False'
+     * Set layers acceleration to 'True' or 'False'
      */
-    NS_IMETHOD SetAcceleratedRendering(bool aEnabled) = 0;
+    NS_IMETHOD SetLayersAcceleration(bool aEnabled) = 0;
 
     /*
      * Get toggled key states.
@@ -1483,12 +1519,6 @@ class nsIWidget : public nsISupports {
      *  is receiving or giving up focus
      * aFocus is true if node is receiving focus
      * aFocus is false if node is giving up focus (blur)
-     *
-     * If this returns NS_ERROR_*, OnIMETextChange and OnIMESelectionChange
-     * and OnIMEFocusChange(false) will be never called.
-     *
-     * If this returns NS_SUCCESS_IME_NO_UPDATES, OnIMEFocusChange(false)
-     * will be called but OnIMETextChange and OnIMESelectionChange will NOT.
      */
     NS_IMETHOD OnIMEFocusChange(bool aFocus) = 0;
 
@@ -1592,7 +1622,13 @@ class nsIWidget : public nsISupports {
     virtual bool WidgetPaintsBackground() { return false; }
 
     virtual bool NeedsPaint() {
-      return true;
+       if (!IsVisible()) {
+           return false;
+       }
+       nsIntRect bounds;
+       nsresult rv = GetBounds(bounds);
+       NS_ENSURE_SUCCESS(rv, false);
+       return !bounds.IsEmpty();
     }
     /**
      * Get the natural bounds of this widget.  This method is only
@@ -1672,6 +1708,8 @@ protected:
     nsIWidget* mLastChild;
     nsCOMPtr<nsIWidget> mNextSibling;
     nsIWidget* mPrevSibling;
+    // When Destroy() is called, the sub class should set this true.
+    bool mOnDestroyCalled;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIWidget, NS_IWIDGET_IID)

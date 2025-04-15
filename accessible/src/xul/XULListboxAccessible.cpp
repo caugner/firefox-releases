@@ -622,17 +622,18 @@ XULListitemAccessible::Description(nsString& aDesc)
   * If there is a Listcell as a child ( not anonymous ) use it, otherwise
   *   default to getting the name from GetXULName
   */
-nsresult
-XULListitemAccessible::GetNameInternal(nsAString& aName)
+ENameValueFlag
+XULListitemAccessible::NativeName(nsString& aName)
 {
   nsIContent* childContent = mContent->GetFirstChild();
   if (childContent) {
     if (childContent->NodeInfo()->Equals(nsGkAtoms::listcell,
                                          kNameSpaceID_XUL)) {
       childContent->GetAttr(kNameSpaceID_None, nsGkAtoms::label, aName);
-      return NS_OK;
+      return eNameOK;
     }
   }
+
   return GetXULName(aName);
 }
 
@@ -856,22 +857,20 @@ XULListCellAccessible::NativeRole()
   return roles::CELL;
 }
 
-nsresult
-XULListCellAccessible::GetAttributesInternal(nsIPersistentProperties* aAttributes)
+already_AddRefed<nsIPersistentProperties>
+XULListCellAccessible::NativeAttributes()
 {
-  NS_ENSURE_ARG_POINTER(aAttributes);
-
-  if (IsDefunct())
-    return NS_ERROR_FAILURE;
+  nsCOMPtr<nsIPersistentProperties> attributes =
+    HyperTextAccessibleWrap::NativeAttributes();
 
   // "table-cell-index" attribute
   TableAccessible* table = Table();
-  NS_ENSURE_STATE(table); // we expect to be in a listbox (table)
+  if (!table) // we expect to be in a listbox (table)
+    return attributes.forget();
 
   nsAutoString stringIdx;
   stringIdx.AppendInt(table->CellIndexAt(RowIdx(), ColIdx()));
-  nsAccUtils::SetAccAttr(aAttributes, nsGkAtoms::tableCellIndex,
-                         stringIdx);
+  nsAccUtils::SetAccAttr(attributes, nsGkAtoms::tableCellIndex, stringIdx);
 
-  return NS_OK;
+  return attributes.forget();
 }

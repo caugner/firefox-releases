@@ -52,7 +52,6 @@
 
 #include "nsIDOMHTMLButtonElement.h"
 #include "mozilla/dom/HTMLCollectionBinding.h"
-#include "dombindings.h"
 #include "nsSandboxFlags.h"
 
 using namespace mozilla::dom;
@@ -93,6 +92,7 @@ public:
   // nsIDOMHTMLCollection interface
   NS_DECL_NSIDOMHTMLCOLLECTION
 
+  virtual Element* GetElementAt(uint32_t index);
   virtual nsINode* GetParentObject()
   {
     return mForm;
@@ -100,6 +100,7 @@ public:
 
   virtual JSObject* NamedItem(JSContext* cx, const nsAString& name,
                               mozilla::ErrorResult& error);
+  virtual void GetSupportedNames(nsTArray<nsString>& aNames);
 
   nsresult AddElementToTable(nsGenericHTMLFormElement* aChild,
                              const nsAString& aName);
@@ -125,13 +126,7 @@ public:
   virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
                                bool *triedToWrap)
   {
-    JSObject* obj = HTMLCollectionBinding::Wrap(cx, scope, this, triedToWrap);
-    if (obj || *triedToWrap) {
-      return obj;
-    }
-
-    *triedToWrap = true;
-    return oldproxybindings::HTMLCollection::create(cx, scope, this);
+    return HTMLCollectionBinding::Wrap(cx, scope, this, triedToWrap);
   }
 
   nsHTMLFormElement* mForm;  // WEAK - the form owns me
@@ -291,13 +286,12 @@ ElementTraverser(const nsAString& key, nsIDOMHTMLInputElement* element,
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsHTMLFormElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsHTMLFormElement,
                                                   nsGenericHTMLElement)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mControls,
-                                                       nsIDOMHTMLCollection)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mControls)
   tmp->mSelectedRadioButtons.EnumerateRead(ElementTraverser, &cb);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_ADDREF_INHERITED(nsHTMLFormElement, nsGenericElement) 
-NS_IMPL_RELEASE_INHERITED(nsHTMLFormElement, nsGenericElement) 
+NS_IMPL_ADDREF_INHERITED(nsHTMLFormElement, Element)
+NS_IMPL_RELEASE_INHERITED(nsHTMLFormElement, Element)
 
 
 DOMCI_NODE_DATA(HTMLFormElement, nsHTMLFormElement)
@@ -526,7 +520,7 @@ nsHTMLFormElement::UnbindFromTree(bool aDeep, bool aNullParent)
   nsINode* ancestor = this;
   nsINode* cur;
   do {
-    cur = ancestor->GetNodeParent();
+    cur = ancestor->GetParentNode();
     if (!cur) {
       break;
     }
@@ -1948,7 +1942,7 @@ nsHTMLFormElement::GetNextRadioButton(const nsAString& aName,
     else if (++index >= (int32_t)numRadios) {
       index = 0;
     }
-    radio = do_QueryInterface(radioGroup->GetNodeAt(index));
+    radio = do_QueryInterface(radioGroup->Item(index));
     if (!radio)
       continue;
 
@@ -2345,7 +2339,7 @@ nsFormControlList::AddElementToTable(nsGenericHTMLFormElement* aChild,
       // already in the list, since if it tests true the child would
       // have come at the end of the list, and the PositionIsBefore
       // will test false.
-      if (nsContentUtils::PositionIsBefore(list->GetNodeAt(list->Length() - 1), aChild)) {
+      if (nsContentUtils::PositionIsBefore(list->Item(list->Length() - 1), aChild)) {
         list->AppendElement(aChild);
         return NS_OK;
       }
@@ -2366,7 +2360,7 @@ nsFormControlList::AddElementToTable(nsGenericHTMLFormElement* aChild,
       while (last != first) {
         mid = (first + last) / 2;
           
-        if (nsContentUtils::PositionIsBefore(aChild, list->GetNodeAt(mid)))
+        if (nsContentUtils::PositionIsBefore(aChild, list->Item(mid)))
           last = mid;
         else
           first = mid + 1;
@@ -2435,7 +2429,7 @@ nsFormControlList::RemoveElementFromTable(nsGenericHTMLFormElement* aChild,
   } else if (length == 1) {
     // Only one element left, replace the list in the hash with the
     // single element.
-    nsIContent* node = list->GetNodeAt(0);
+    nsIContent* node = list->Item(0);
     if (node) {
       mNameLookupTable.Put(aName, node);
     }
@@ -2521,20 +2515,12 @@ nsFormControlList::GetSortedControls(nsTArray<nsGenericHTMLFormElement*>& aContr
   return NS_OK;
 }
 
-nsGenericElement*
+Element*
 nsFormControlList::GetElementAt(uint32_t aIndex)
 {
   FlushPendingNotifications();
 
   return mElements.SafeElementAt(aIndex, nullptr);
-}
-
-nsISupports*
-nsFormControlList::GetNamedItem(const nsAString& aName, nsWrapperCache **aCache)
-{
-  nsISupports *item = NamedItemInternal(aName, true);
-  *aCache = nullptr;
-  return item;
 }
 
 JSObject*
@@ -2545,7 +2531,7 @@ nsFormControlList::NamedItem(JSContext* cx, const nsAString& name,
   if (!item) {
     return nullptr;
   }
-  JSObject* wrapper = GetWrapper();
+  JSObject* wrapper = nsWrapperCache::GetWrapper();
   JSAutoCompartment ac(cx, wrapper);
   JS::Value v;
   if (!mozilla::dom::WrapObject(cx, wrapper, item, &v)) {
@@ -2553,4 +2539,23 @@ nsFormControlList::NamedItem(JSContext* cx, const nsAString& name,
     return nullptr;
   }
   return &v.toObject();
+}
+
+static PLDHashOperator
+CollectNames(const nsAString& aName,
+             nsISupports* /* unused */,
+             void* aClosure)
+{
+  static_cast<nsTArray<nsString>*>(aClosure)->AppendElement(aName);
+  return PL_DHASH_NEXT;
+}
+
+void
+nsFormControlList::GetSupportedNames(nsTArray<nsString>& aNames)
+{
+  FlushPendingNotifications();
+  // Just enumerate mNameLookupTable.  This won't guarantee order, but
+  // that's OK, because the HTML5 spec doesn't define an order for
+  // this enumeration.
+  mNameLookupTable.EnumerateRead(CollectNames, &aNames);
 }

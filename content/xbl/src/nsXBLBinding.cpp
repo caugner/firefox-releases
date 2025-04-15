@@ -432,8 +432,7 @@ TraverseKey(nsISupports* aKey, nsInsertionPointList* aData, void* aClosure)
   NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mInsertionPointTable key");
   cb.NoteXPCOMChild(aKey);
   if (aData) {
-    NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSTARRAY(*aData, nsXBLInsertionPoint,
-                                               "mInsertionPointTable value")
+    ImplCycleCollectionTraverse(cb, *aData, "mInsertionPointTable value");
   }
   return PL_DHASH_NEXT;
 }
@@ -446,8 +445,8 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_NATIVE(nsXBLBinding)
     nsXBLBinding::UninstallAnonymousContent(tmp->mContent->OwnerDoc(),
                                             tmp->mContent);
   }
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mContent)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mNextBinding)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mContent)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mNextBinding)
   delete tmp->mInsertionPointTable;
   tmp->mInsertionPointTable = nullptr;
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
@@ -456,8 +455,8 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_BEGIN(nsXBLBinding)
                                      "mPrototypeBinding->XBLDocumentInfo()");
   cb.NoteXPCOMChild(static_cast<nsIScriptGlobalObjectOwner*>(
                       tmp->mPrototypeBinding->XBLDocumentInfo()));
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mContent)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_MEMBER(mNextBinding, nsXBLBinding)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mContent)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNextBinding)
   if (tmp->mInsertionPointTable)
     tmp->mInsertionPointTable->EnumerateRead(TraverseKey, &cb);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
@@ -701,7 +700,7 @@ RealizeDefaultContent(nsISupports* aKey,
           return PL_DHASH_STOP;
         }
         nsIDocument *document = insParent->OwnerDoc();
-        nsCOMPtr<nsIDOMNode> clonedNode;
+        nsCOMPtr<nsINode> clonedNode;
         nsCOMArray<nsINode> nodesWithProperties;
         nsNodeUtils::Clone(defContent, true, document->NodeInfoManager(),
                            nodesWithProperties, getter_AddRefs(clonedNode));
@@ -817,7 +816,7 @@ nsXBLBinding::GenerateAnonymousContent()
     }
 
     if (hasContent || hasInsertionPoints) {
-      nsCOMPtr<nsIDOMNode> clonedNode;
+      nsCOMPtr<nsINode> clonedNode;
       nsCOMArray<nsINode> nodesWithProperties;
       nsNodeUtils::Clone(content, true, doc->NodeInfoManager(),
                          nodesWithProperties, getter_AddRefs(clonedNode));
@@ -1700,7 +1699,7 @@ nsINodeList*
 nsXBLBinding::GetAnonymousNodes()
 {
   if (mContent) {
-    return mContent->GetChildNodesList();
+    return mContent->ChildNodes();
   }
 
   if (mNextBinding)

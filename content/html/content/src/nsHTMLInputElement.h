@@ -35,10 +35,10 @@ public:
    * Fetch the last used directory for this location from the content
    * pref service, if it is available.
    *
-   * @param aURI URI of the current page
+   * @param aDoc  current document
    * @param aFile path to the last used directory
    */
-  nsresult FetchLastUsedDirectory(nsIURI* aURI, nsIFile** aFile);
+  nsresult FetchLastUsedDirectory(nsIDocument* aDoc, nsIFile** aFile);
 
   /**
    * Store the last used directory for this location using the
@@ -47,7 +47,7 @@ public:
    * @param aFile file chosen by the user - the path to the parent of this
    *        file will be stored
    */
-  nsresult StoreLastUsedDirectory(nsIURI* aURI, nsIFile* aFile);
+  nsresult StoreLastUsedDirectory(nsIDocument* aDoc, nsIFile* aFile);
 };
 
 class nsHTMLInputElement : public nsGenericHTMLFormElement,
@@ -65,17 +65,20 @@ public:
                      mozilla::dom::FromParser aFromParser);
   virtual ~nsHTMLInputElement();
 
+  NS_IMPL_FROMCONTENT_HTML_WITH_TAG(nsHTMLInputElement, input)
+
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE(nsGenericHTMLFormElement::)
+  NS_FORWARD_NSIDOMNODE_TO_NSINODE
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLFormElement::)
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLFormElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
+
   virtual void Click() MOZ_OVERRIDE;
   virtual int32_t TabIndexDefault() MOZ_OVERRIDE;
   virtual void Focus(mozilla::ErrorResult& aError) MOZ_OVERRIDE;
@@ -150,7 +153,8 @@ public:
   NS_IMETHOD_(nsIContent*) GetRootEditorNode();
   NS_IMETHOD_(nsIContent*) CreatePlaceholderNode();
   NS_IMETHOD_(nsIContent*) GetPlaceholderNode();
-  NS_IMETHOD_(void) SetPlaceholderClass(bool aVisible, bool aNotify);
+  NS_IMETHOD_(void) UpdatePlaceholderVisibility(bool aNotify);
+  NS_IMETHOD_(bool) GetPlaceholderVisibility();
   NS_IMETHOD_(void) InitializeKeyboardEventListeners();
   NS_IMETHOD_(void) OnValueChanged(bool aNotify);
   NS_IMETHOD_(bool) HasCachedSelection();
@@ -194,13 +198,6 @@ public:
   virtual nsXPCClassInfo* GetClassInfo();
 
   virtual nsIDOMNode* AsDOMNode() { return this; }
-
-  static nsHTMLInputElement* FromContent(nsIContent *aContent)
-  {
-    if (aContent->NodeInfo()->Equals(nsGkAtoms::input, kNameSpaceID_XHTML))
-      return static_cast<nsHTMLInputElement*>(aContent);
-    return NULL;
-  }
 
   // nsIConstraintValidation
   bool     IsTooLong();

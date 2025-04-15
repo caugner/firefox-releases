@@ -1,41 +1,6 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is the Cisco Systems SIP Stack.
- *
- * The Initial Developer of the Original Code is
- * Cisco Systems (CSCO).
- * Portions created by the Initial Developer are Copyright (C) 2002
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Enda Mannion <emannion@cisco.com>
- *  Suhas Nandakumar <snandaku@cisco.com>
- *  Ethan Hugg <ehugg@cisco.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef _GSM_SDP_H_
 #define _GSM_SDP_H_
@@ -61,15 +26,33 @@
 #define GSMSDP_FOR_MEDIA_LIST(media, start_media, end_media, dcb) \
     for (media = start_media; (media != NULL);                \
          media = (media != end_media ?                        \
-                   GSMSDP_NEXT_MEDIA_ENTRY(media) : NULL)) 
+                   GSMSDP_NEXT_MEDIA_ENTRY(media) : NULL))
 
 #define GSMSDP_FOR_ALL_MEDIA(media, dcb) \
     for (media = GSMSDP_FIRST_MEDIA_ENTRY(dcb); (media != NULL); \
          media = GSMSDP_NEXT_MEDIA_ENTRY(media))
 
-cc_causes_t gsmsdp_create_local_sdp(fsmdef_dcb_t *dcb_p, boolean force_streams_enabled);
+typedef struct {
+    const char *name;
+    int         value;
+} gsmsdp_key_table_entry_t;
+
+typedef enum constraints_ {
+    OfferToReceiveAudio     = 0,
+    OfferToReceiveVideo     = 1,
+    VoiceActivityDetection  = 2
+} constraints;
+
+static const gsmsdp_key_table_entry_t constraints_table[] = {
+    {"OfferToReceiveAudio",         OfferToReceiveAudio},
+    {"OfferToReceiveVideo",         OfferToReceiveVideo},
+    {"VoiceActivityDetection",      VoiceActivityDetection}
+};
+
+cc_causes_t gsmsdp_create_local_sdp(fsmdef_dcb_t *dcb_p, boolean force_streams_enabled,
+                                    boolean audio, boolean video, boolean data, boolean offer);
 void gsmsdp_create_options_sdp(cc_sdp_t **sdp_pp);
-void gsmsdp_reset_local_sdp_media(fsmdef_dcb_t *dcb, fsmdef_media_t *media, 
+void gsmsdp_reset_local_sdp_media(fsmdef_dcb_t *dcb, fsmdef_media_t *media,
                                   boolean hold);
 void gsmsdp_set_local_sdp_direction(fsmdef_dcb_t *dcb_p, fsmdef_media_t *media,
                                     sdp_direction_e direction);
@@ -84,8 +67,8 @@ cc_causes_t gsmsdp_process_offer_sdp(fsm_fcb_t *fcb,
                                      cc_msgbody_info_t *msg_body,
                                      boolean init);
 cc_causes_t
-gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
-                              boolean initial_offer, boolean offer, boolean notify_stream_added);
+gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean initial_offer,
+                              boolean offer, boolean notify_stream_added, boolean create_answer);
 
 boolean gsmsdp_sdp_differs_from_previous_sdp(boolean rcv_only,
                                              fsmdef_media_t *media);
@@ -107,7 +90,8 @@ extern sdp_transport_e gsmsdp_negotiate_media_transport(fsmdef_dcb_t *dcb_p,
                                                         cc_sdp_t *cc_sdp_p,
                                                         boolean offer,
                                                         fsmdef_media_t *media,
-                                                        uint16_t *inst_num);
+                                                        uint16_t *inst_num,
+                                                        uint16 level);
 extern void gsmsdp_update_local_sdp_media_transport(fsmdef_dcb_t *dcb_p,
                                                     void *sdp_p,
                                                     fsmdef_media_t *media,
@@ -117,7 +101,8 @@ extern void gsmsdp_update_negotiated_transport(fsmdef_dcb_t *dcb_p,
                                                cc_sdp_t *cc_sdp_p,
                                                fsmdef_media_t *media,
                                                uint16_t crypto_inst,
-                                               sdp_transport_e transport);
+                                               sdp_transport_e transport,
+                                               uint16 level);
 extern void gsmsdp_update_crypto_transmit_key(fsmdef_dcb_t *dcb_p,
                                               fsmdef_media_t *media,
                                               boolean offer,
@@ -146,6 +131,9 @@ void gsmsdp_add_remote_stream(uint16_t idx, int pc_stream_id, fsmdef_dcb_t * dcb
 cc_causes_t gsmsdp_install_peer_ice_attributes(fsm_fcb_t *fcb_p);
 cc_causes_t gsmsdp_configure_dtls_data_attributes(fsm_fcb_t *fcb_p);
 cc_causes_t gsmsdp_find_level_from_mid(fsmdef_dcb_t * dcb, const char * mid, uint16_t *level);
-
+void gsmsdp_process_cap_constraints(fsmdef_dcb_t *dcb, const cc_media_constraints_t* constraints);
+cc_causes_t
+gsmsdp_get_offered_media_types (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean *has_audio, boolean *has_video, boolean *has_data);
+fsmdef_media_t* gsmsdp_find_media_by_media_type(fsmdef_dcb_t *dcb, sdp_media_e 	media_type);
 #endif
 

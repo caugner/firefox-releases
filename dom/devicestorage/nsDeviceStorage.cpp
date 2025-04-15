@@ -381,15 +381,11 @@ DeviceStorageFile::Write(nsIInputStream* aInputStream)
   }
 
   nsCOMPtr<nsIOutputStream> bufferedOutputStream;
-  NS_NewBufferedOutputStream(getter_AddRefs(bufferedOutputStream),
-                             outputStream,
-                             4096*4);
+  rv = NS_NewBufferedOutputStream(getter_AddRefs(bufferedOutputStream),
+                                  outputStream,
+                                  4096*4);
+  NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!bufferedOutputStream) {
-    return NS_ERROR_FAILURE;
-  }
-
-  rv = NS_OK;
   while (bufSize) {
     uint32_t wrote;
     rv = bufferedOutputStream->WriteFrom(aInputStream,
@@ -862,11 +858,11 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(DeviceStorageCursorRequest)
 NS_IMPL_CYCLE_COLLECTION_CLASS(DeviceStorageCursorRequest)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(DeviceStorageCursorRequest)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCursor)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCursor)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(DeviceStorageCursorRequest)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mCursor, nsIDOMDeviceStorageCursor)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCursor)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 
@@ -1013,7 +1009,7 @@ public:
     mFile->CollectFiles(cursor->mFiles, cursor->mSince);
 
     nsCOMPtr<ContinueCursorEvent> event = new ContinueCursorEvent(mRequest);
-    NS_DispatchToMainThread(event);
+    event->Continue();
 
     return NS_OK;
   }
@@ -1151,7 +1147,7 @@ nsDOMDeviceStorageCursor::Continue()
   }
 
   nsCOMPtr<ContinueCursorEvent> event = new ContinueCursorEvent(this);
-  NS_DispatchToMainThread(event);
+  event->Continue();
 
   mOkToCallContinue = false;
   return NS_OK;
@@ -1492,7 +1488,7 @@ public:
       return NS_OK;
     }
 
-    nsCOMPtr<nsIContentPermissionPrompt> prompt = do_GetService(NS_CONTENT_PERMISSION_PROMPT_CONTRACTID);
+    nsCOMPtr<nsIContentPermissionPrompt> prompt = do_CreateInstance(NS_CONTENT_PERMISSION_PROMPT_CONTRACTID);
     if (prompt) {
       prompt->Prompt(this);
     }
@@ -1679,19 +1675,19 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(DeviceStorageRequest)
 NS_IMPL_CYCLE_COLLECTION_CLASS(DeviceStorageRequest)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(DeviceStorageRequest)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRequest)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mWindow)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mBlob)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDeviceStorage)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mListener)
+NS_IMPL_CYCLE_COLLECTION_UNLINK(mRequest)
+NS_IMPL_CYCLE_COLLECTION_UNLINK(mWindow)
+NS_IMPL_CYCLE_COLLECTION_UNLINK(mBlob)
+NS_IMPL_CYCLE_COLLECTION_UNLINK(mDeviceStorage)
+NS_IMPL_CYCLE_COLLECTION_UNLINK(mListener)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(DeviceStorageRequest)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mRequest, nsIDOMDOMRequest)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mWindow, nsPIDOMWindow)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mBlob, nsIDOMBlob)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mDeviceStorage, nsIDOMDeviceStorage)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mListener, nsIDOMEventListener)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRequest)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mWindow)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mBlob)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDeviceStorage)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mListener)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMDeviceStorage)
@@ -1975,8 +1971,6 @@ nsDOMDeviceStorage::GetRootDirectory(nsIFile** aRootDirectory)
   if (!mRootDirectory) {
     return NS_ERROR_FAILURE;
   }
-
-  nsCOMPtr<nsIFile> file;
   return mRootDirectory->Clone(aRootDirectory);
 }
 
@@ -2091,7 +2085,7 @@ nsDOMDeviceStorage::EnumerateInternal(const JS::Value & aName,
     return NS_OK;
   }
 
-  nsCOMPtr<nsIContentPermissionPrompt> prompt = do_GetService(NS_CONTENT_PERMISSION_PROMPT_CONTRACTID);
+  nsCOMPtr<nsIContentPermissionPrompt> prompt = do_CreateInstance(NS_CONTENT_PERMISSION_PROMPT_CONTRACTID);
   if (prompt) {
     prompt->Prompt(r);
   }
@@ -2300,7 +2294,7 @@ nsDOMDeviceStorage::RemoveEventListener(const nsAString & aType,
 {
   nsDOMEventTargetHelper::RemoveEventListener(aType, aListener, false);
 
-  if (mIsWatchingFile && !HasListenersFor(NS_LITERAL_STRING("change"))) {
+  if (mIsWatchingFile && !HasListenersFor(nsGkAtoms::onchange)) {
     mIsWatchingFile = false;
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
     obs->RemoveObserver(this, "file-watcher-update");

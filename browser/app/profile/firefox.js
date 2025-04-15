@@ -115,8 +115,10 @@ pref("app.update.cert.maxErrors", 5);
 //    the value for the name must be the same as the value for the attribute name
 //    on the certificate.
 // If these conditions aren't met it will be treated the same as when there is
-// no update available. This validation will not be performed when using the
-// |app.update.url.override| preference for update checking.
+// no update available. This validation will not be performed when the
+// |app.update.url.override| user preference has been set for testing updates or
+// when the |app.update.cert.checkAttributes| preference is set to false. Also,
+// the |app.update.url.override| preference should ONLY be used for testing.
 pref("app.update.certs.1.issuerName", "OU=Equifax Secure Certificate Authority,O=Equifax,C=US");
 pref("app.update.certs.1.commonName", "aus3.mozilla.org");
 
@@ -327,6 +329,13 @@ pref("browser.download.useToolkitUI", true);
 
 // This controls retention behavior in the Downloads Panel only.
 pref("browser.download.panel.removeFinishedDownloads", false);
+
+// This records whether or not the panel has been shown at least once.
+pref("browser.download.panel.shown", false);
+
+// This records whether or not at least one session with the Downloads Panel
+// enabled has been completed already.
+pref("browser.download.panel.firstSessionCompleted", false);
 
 // search engines URL
 pref("browser.search.searchEnginesURL",      "https://addons.mozilla.org/%LOCALE%/firefox/search-engines/");
@@ -557,13 +566,6 @@ pref("network.protocol-handler.expose.mailto", false);
 pref("network.protocol-handler.expose.news", false);
 pref("network.protocol-handler.expose.snews", false);
 pref("network.protocol-handler.expose.nntp", false);
-
-// Default security warning dialogs to show once.
-pref("security.warn_entering_secure.show_once", false);
-pref("security.warn_entering_weak.show_once", true);
-pref("security.warn_leaving_secure.show_once", false);
-pref("security.warn_viewing_mixed.show_once", true);
-pref("security.warn_submit_insecure.show_once", false);
 
 pref("accessibility.typeaheadfind", false);
 pref("accessibility.typeaheadfind.timeout", 5000);
@@ -979,11 +981,6 @@ pref("services.sync.prefs.sync.security.OCSP.require", true);
 pref("services.sync.prefs.sync.security.default_personal_cert", true);
 pref("services.sync.prefs.sync.security.enable_ssl3", true);
 pref("services.sync.prefs.sync.security.enable_tls", true);
-pref("services.sync.prefs.sync.security.warn_entering_secure", true);
-pref("services.sync.prefs.sync.security.warn_entering_weak", true);
-pref("services.sync.prefs.sync.security.warn_leaving_secure", true);
-pref("services.sync.prefs.sync.security.warn_submit_insecure", true);
-pref("services.sync.prefs.sync.security.warn_viewing_mixed", true);
 pref("services.sync.prefs.sync.signon.rememberSignons", true);
 pref("services.sync.prefs.sync.spellchecker.dictionary", true);
 pref("services.sync.prefs.sync.xpinstall.whitelist.required", true);
@@ -1015,7 +1012,7 @@ pref("devtools.responsiveUI.enabled", true);
 
 // Enable the Debugger
 pref("devtools.debugger.enabled", true);
-pref("devtools.debugger.chrome-enabled", false);
+pref("devtools.debugger.chrome-enabled", true);
 pref("devtools.debugger.remote-host", "localhost");
 pref("devtools.debugger.remote-autoconnect", false);
 pref("devtools.debugger.remote-connection-retries", 3);
@@ -1023,12 +1020,16 @@ pref("devtools.debugger.remote-timeout", 20000);
 
 // The default Debugger UI settings
 pref("devtools.debugger.ui.height", 250);
-pref("devtools.debugger.ui.remote-win.width", 900);
-pref("devtools.debugger.ui.remote-win.height", 400);
+pref("devtools.debugger.ui.win-x", 0);
+pref("devtools.debugger.ui.win-y", 0);
+pref("devtools.debugger.ui.win-width", 900);
+pref("devtools.debugger.ui.win-height", 400);
 pref("devtools.debugger.ui.stackframes-width", 200);
-pref("devtools.debugger.ui.stackframes-pane-visible", true);
 pref("devtools.debugger.ui.variables-width", 300);
-pref("devtools.debugger.ui.variables-pane-visible", true);
+pref("devtools.debugger.ui.panes-visible-on-startup", false);
+pref("devtools.debugger.ui.variables-sorting-enabled", true);
+pref("devtools.debugger.ui.variables-non-enum-visible", true);
+pref("devtools.debugger.ui.variables-searchbox-visible", false);
 
 // Enable the style inspector
 pref("devtools.styleinspector.enabled", true);
@@ -1151,7 +1152,7 @@ pref("toolkit.startup.max_resumed_crashes", 3);
 // Completely disable pdf.js as an option to preview pdfs within firefox.
 // Note: if this is not disabled it does not necessarily mean pdf.js is the pdf
 // handler just that it is an option.
-pref("pdfjs.disabled", true);
+pref("pdfjs.disabled", false);
 // Used by pdf.js to know the first time firefox is run with it installed so it
 // can become the default pdf viewer.
 pref("pdfjs.firstRun", true);

@@ -22,6 +22,7 @@
 #include "nsIObserverService.h"
 #include "mozilla/Services.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/Likely.h"
 
 
 // XXX: There is no good header file to put these in. :(
@@ -44,7 +45,7 @@ PRThread                 *gSocketThread           = nullptr;
 #define SEND_BUFFER_PREF "network.tcp.sendbuffer"
 #define SOCKET_LIMIT_TARGET 550U
 #define SOCKET_LIMIT_MIN     50U
-#define BLIB_INTERVAL_PREF "network.activity.blipIntervalMilliseconds"
+#define BLIP_INTERVAL_PREF "network.activity.blipIntervalMilliseconds"
 
 uint32_t nsSocketTransportService::gMaxCount;
 PRCallOnceType nsSocketTransportService::gMaxCountInitOnce;
@@ -794,7 +795,7 @@ nsSocketTransportService::DoPollIteration(bool wait)
                 // here -- otherwise, some compilers will treat it as signed,
                 // which makes them fire signed/unsigned-comparison build
                 // warnings for the comparison against 'pollInterval'.)
-                if (NS_UNLIKELY(pollInterval >
+                if (MOZ_UNLIKELY(pollInterval >
                                 static_cast<uint32_t>(UINT16_MAX) -
                                 s.mElapsedTime))
                     s.mElapsedTime = UINT16_MAX;
@@ -875,7 +876,7 @@ nsSocketTransportService::Observe(nsISupports *subject,
     }
 
     if (!strcmp(topic, "profile-initial-state")) {
-        int32_t blipInterval = Preferences::GetInt(BLIB_INTERVAL_PREF, 0);
+        int32_t blipInterval = Preferences::GetInt(BLIP_INTERVAL_PREF, 0);
         if (blipInterval <= 0) {
             return NS_OK;
         }

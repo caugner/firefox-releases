@@ -9,6 +9,9 @@
 #include "HyperTextAccessible.h"
 #include "nsMai.h"
 #include "nsMaiHyperlink.h"
+#include "mozilla/Likely.h"
+
+using namespace mozilla::a11y;
 
 extern "C" {
 
@@ -70,7 +73,7 @@ void
 hypertextInterfaceInitCB(AtkHypertextIface* aIface)
 {
   NS_ASSERTION(aIface, "no interface!");
-  if (NS_UNLIKELY(!aIface))
+  if (MOZ_UNLIKELY(!aIface))
     return;
 
   aIface->get_link = getLinkCB;

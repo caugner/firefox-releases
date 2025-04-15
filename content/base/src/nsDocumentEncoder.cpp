@@ -175,19 +175,19 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsDocumentEncoder)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocumentEncoder)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDocument)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mSelection)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRange)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mNode)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCommonParent)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocument)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mSelection)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRange)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mNode)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCommonParent)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsDocumentEncoder)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDocument)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mSelection)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mRange, nsIDOMRange)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mNode)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCommonParent)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocument)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSelection)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRange)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNode)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCommonParent)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 nsDocumentEncoder::nsDocumentEncoder() : mCachedBuffer(nullptr)
@@ -535,7 +535,7 @@ nsDocumentEncoder::SerializeToStringIterative(nsINode* aNode,
       node = current->GetNextSibling();
       if (!node) {
         // Perhaps parent node has siblings.
-        current = current->GetNodeParent();
+        current = current->GetParentNode();
       }
     }
   }
@@ -1091,7 +1091,7 @@ nsDocumentEncoder::EncodeToString(nsAString& aOutputString)
           if (!prevNode) {
             // Went from a non-<tr> to a <tr>
             mCommonAncestors.Clear();
-            nsContentUtils::GetAncestors(n->GetNodeParent(), mCommonAncestors);
+            nsContentUtils::GetAncestors(n->GetParentNode(), mCommonAncestors);
             rv = SerializeRangeContextStart(mCommonAncestors, output);
             NS_ENSURE_SUCCESS(rv, rv);
             // Don't let SerializeRangeToString serialize the context again
@@ -1104,7 +1104,7 @@ nsDocumentEncoder::EncodeToString(nsAString& aOutputString)
         } else if (prevNode) {
           // Went from a <tr> to a non-<tr>
           mCommonAncestors.Clear();
-          nsContentUtils::GetAncestors(p->GetNodeParent(), mCommonAncestors);
+          nsContentUtils::GetAncestors(p->GetParentNode(), mCommonAncestors);
           mDisableContextSerialize = false;
           rv = SerializeRangeContextEnd(mCommonAncestors, output);
           NS_ENSURE_SUCCESS(rv, rv);
@@ -1122,7 +1122,7 @@ nsDocumentEncoder::EncodeToString(nsAString& aOutputString)
       rv = SerializeNodeEnd(p, output);
       NS_ENSURE_SUCCESS(rv, rv);
       mCommonAncestors.Clear();
-      nsContentUtils::GetAncestors(p->GetNodeParent(), mCommonAncestors);
+      nsContentUtils::GetAncestors(p->GetParentNode(), mCommonAncestors);
       mDisableContextSerialize = false; 
       rv = SerializeRangeContextEnd(mCommonAncestors, output);
       NS_ENSURE_SUCCESS(rv, rv);
@@ -2014,11 +2014,11 @@ nsHTMLCopyEncoder::GetImmediateContextCount(const nsTArray<nsINode*>& aAncestorA
       break;
     }
     nsCOMPtr<nsIContent> content(do_QueryInterface(node));
-    if (!content || !content->IsHTML() || content->Tag() != nsGkAtoms::tr    &&
-                                          content->Tag() != nsGkAtoms::thead &&
-                                          content->Tag() != nsGkAtoms::tbody &&
-                                          content->Tag() != nsGkAtoms::tfoot &&
-                                          content->Tag() != nsGkAtoms::table) {
+    if (!content || !content->IsHTML() || (content->Tag() != nsGkAtoms::tr    &&
+                                           content->Tag() != nsGkAtoms::thead &&
+                                           content->Tag() != nsGkAtoms::tbody &&
+                                           content->Tag() != nsGkAtoms::tfoot &&
+                                           content->Tag() != nsGkAtoms::table)) {
       break;
     }
     ++j;

@@ -103,9 +103,12 @@ var shell = {
     } catch(e) { }
 
     // Bail if there isn't a valid crashID.
-    if (!crashID) {
+    if (!crashID && !this.CrashSubmit.pendingIDs().length) {
       return;
     }
+
+    // purge the queue.
+    this.CrashSubmit.pruneSavedDumps();
 
     try {
       // Check if we should automatically submit this crash.
@@ -122,10 +125,20 @@ var shell = {
     });
   },
 
+  // this function submit the pending crashes.
+  // make sure you are online.
+  submitQueuedCrashes: function shell_submitQueuedCrashes() {
+    // submit the pending queue.
+    let pending = shell.CrashSubmit.pendingIDs();
+    for (let crashid of pending) {
+      shell.CrashSubmit.submit(crashid);
+    }
+  },
+
   // This function submits a crash when we're online.
   submitCrash: function shell_submitCrash(aCrashID) {
     if (this.onlineForCrashReport()) {
-      this.CrashSubmit.submit(aCrashID);
+      this.submitQueuedCrashes();
       return;
     }
 
@@ -133,13 +146,7 @@ var shell = {
       let network = subject.QueryInterface(Ci.nsINetworkInterface);
       if (network.state == Ci.nsINetworkInterface.NETWORK_STATE_CONNECTED
           && network.type == Ci.nsINetworkInterface.NETWORK_TYPE_WIFI) {
-        shell.CrashSubmit.submit(aCrashID);
-
-        // purge the queue.
-        let pending = shell.CrashSubmit.pendingIDs();
-        for (let crashid of pending) {
-          shell.CrashSubmit.submit(crashid);
-        }
+        shell.submitQueuedCrashes();
 
         Services.obs.removeObserver(observer, topic);
       }
@@ -681,7 +688,7 @@ var AlertsHelper = {
           let message = messages[i];
           if (message === "notification") {
             return helper.fullLaunchPath();
-          } else if ("notification" in message) {
+          } else if (typeof message == "object" && "notification" in message) {
             return helper.resolveFromOrigin(message["notification"]);
           }
         }
@@ -738,10 +745,16 @@ var AlertsHelper = {
                           uid, name, null);
   },
 
-  receiveMessage: function alert_receiveMessage(message) {
-    let data = message.data;
+  receiveMessage: function alert_receiveMessage(aMessage) {
+    if (!aMessage.target.assertPermission("desktop-notification")) {
+      Cu.reportError("Desktop-notification message " + aMessage.name +
+                     " from a content process with no desktop-notification privileges.");
+      return null;
+    }
+
+    let data = aMessage.data;
     let listener = {
-      mm: message.target,
+      mm: aMessage.target,
       title: data.title,
       text: data.text,
       manifestURL: data.manifestURL,

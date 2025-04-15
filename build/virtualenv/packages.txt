@@ -1,5 +1,6 @@
 simplejson.pth:python/simplejson-2.1.1
 manifestdestiny.pth:testing/mozbase/manifestdestiny
+mozcrash.pth:testing/mozbase/mozcrash
 mozdevice.pth:testing/mozbase/mozdevice
 mozfile.pth:testing/mozbase/mozfile
 mozhttpd.pth:testing/mozbase/mozhttpd
@@ -16,6 +17,7 @@ pymake.pth:build/pymake
 optional:setup.py:python/psutil:build_ext:--inplace
 optional:psutil.pth:python/psutil
 which.pth:python/which
+mock.pth:python/mock-1.0.0
 mozilla.pth:build
 mozilla.pth:config
 copy:build/buildconfig.py

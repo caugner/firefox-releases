@@ -8,13 +8,13 @@
 #include "Accessible-inl.h"
 #include "HTMLFormControlAccessible.h"
 #include "nsAccUtils.h"
-#include "nsAccTreeWalker.h"
 #include "nsCoreUtils.h"
 #include "DocAccessible.h"
 #include "nsIAccessibleRelation.h"
 #include "Relation.h"
 #include "Role.h"
 #include "States.h"
+#include "TreeWalker.h"
 #include "XULMenuAccessible.h"
 
 #include "nsIDOMNSEditableElement.h"
@@ -188,7 +188,7 @@ XULButtonAccessible::CacheChildren()
   Accessible* menupopup = nullptr;
   Accessible* button = nullptr;
 
-  nsAccTreeWalker walker(mDoc, mContent, true);
+  TreeWalker walker(this, mContent);
 
   Accessible* child = nullptr;
   while ((child = walker.NextChild())) {
@@ -413,16 +413,16 @@ XULGroupboxAccessible::NativeRole()
   return roles::GROUPING;
 }
 
-nsresult
-XULGroupboxAccessible::GetNameInternal(nsAString& aName)
+ENameValueFlag
+XULGroupboxAccessible::NativeName(nsString& aName)
 {
   // XXX: we use the first related accessible only.
   Accessible* label =
     RelationByType(nsIAccessibleRelation::RELATION_LABELLED_BY).Next();
   if (label)
-    return label->GetName(aName);
+    return label->Name(aName);
 
-  return NS_OK;
+  return eNameOK;
 }
 
 Relation
@@ -639,16 +639,13 @@ XULToolbarAccessible::NativeRole()
   return roles::TOOLBAR;
 }
 
-nsresult
-XULToolbarAccessible::GetNameInternal(nsAString& aName)
+ENameValueFlag
+XULToolbarAccessible::NativeName(nsString& aName)
 {
-  nsAutoString name;
-  if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::toolbarname, name)) {
-    name.CompressWhitespace();
-    aName = name;
-  }
+  if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::toolbarname, aName))
+    aName.CompressWhitespace();
 
-  return NS_OK;
+  return eNameOK;
 }
 
 
@@ -830,7 +827,7 @@ XULTextFieldAccessible::CacheChildren()
   if (!inputContent)
     return;
 
-  nsAccTreeWalker walker(mDoc, inputContent, false);
+  TreeWalker walker(this, inputContent);
 
   Accessible* child = nullptr;
   while ((child = walker.NextChild()) && AppendChild(child));

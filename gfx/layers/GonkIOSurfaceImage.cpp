@@ -21,6 +21,7 @@ uint32_t GonkIOSurfaceImage::sColorIdMap[] = {
     HAL_PIXEL_FORMAT_YCbCr_422_P, OMX_COLOR_FormatYUV422Planar,
     HAL_PIXEL_FORMAT_YCbCr_420_SP, OMX_COLOR_FormatYUV420SemiPlanar,
     HAL_PIXEL_FORMAT_YCrCb_420_SP_ADRENO, -1,
+    HAL_PIXEL_FORMAT_YV12, OMX_COLOR_FormatYUV420Planar,
     0, 0
 };
 
@@ -114,7 +115,7 @@ GonkIOSurfaceImage::GetAsSurface()
 
   if (format == HAL_PIXEL_FORMAT_YCrCb_420_SP_ADRENO) {
     // The Adreno hardware decoder aligns image dimensions to a multiple of 32,
-    //  so we have to account for that here
+    // so we have to account for that here
     uint32_t alignedWidth = ALIGN(width, 32);
     uint32_t alignedHeight = ALIGN(height, 32);
     uint32_t uvOffset = ALIGN(alignedHeight * alignedWidth, 4096);

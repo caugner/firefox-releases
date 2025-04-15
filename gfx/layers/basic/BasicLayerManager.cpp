@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/TabChild.h"
+#include "mozilla/Hal.h"
 #include "mozilla/layers/PLayerChild.h"
 #include "mozilla/layers/PLayersChild.h"
 #include "mozilla/layers/PLayersParent.h"
@@ -537,9 +538,13 @@ BasicLayerManager::EndTransactionInternal(DrawThebesLayerCallback aCallback,
   mTransactionIncomplete = false;
 
   if (aFlags & END_NO_COMPOSITE) {
-    // TODO: We should really just set mTarget to null and make sure we can handle that further down the call chain
-    nsRefPtr<gfxASurface> surf = gfxPlatform::GetPlatform()->CreateOffscreenSurface(gfxIntSize(1, 1), gfxASurface::CONTENT_COLOR);
-    mTarget = new gfxContext(surf);
+    if (!mDummyTarget) {
+      // TODO: We should really just set mTarget to null and make sure we can handle that further down the call chain
+      // Creating this temporary surface can be expensive on some platforms (d2d in particular), so cache it between paints.
+      nsRefPtr<gfxASurface> surf = gfxPlatform::GetPlatform()->CreateOffscreenSurface(gfxIntSize(1, 1), gfxASurface::CONTENT_COLOR);
+      mDummyTarget = new gfxContext(surf);
+    }
+    mTarget = mDummyTarget;
   }
 
   if (mTarget && mRoot && !(aFlags & END_NO_IMMEDIATE_REDRAW)) {
@@ -1030,7 +1035,7 @@ BasicLayerManager::CreateReadbackLayer()
 
 BasicShadowLayerManager::BasicShadowLayerManager(nsIWidget* aWidget) :
   BasicLayerManager(aWidget), mTargetRotation(ROTATION_0),
-  mRepeatTransaction(false)
+  mRepeatTransaction(false), mIsRepeatTransaction(false)
 {
   MOZ_COUNT_CTOR(BasicShadowLayerManager);
 }
@@ -1099,7 +1104,17 @@ BasicShadowLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
   // don't signal a new transaction to ShadowLayerForwarder. Carry on adding
   // to the previous transaction.
   if (HasShadowManager()) {
-    ShadowLayerForwarder::BeginTransaction(mTargetBounds, mTargetRotation);
+    ScreenOrientation orientation;
+    nsIntRect clientBounds;
+    if (TabChild* window = mWidget->GetOwningTabChild()) {
+      orientation = window->GetOrientation();
+    } else {
+      hal::ScreenConfiguration currentConfig;
+      hal::GetCurrentScreenConfiguration(&currentConfig);
+      orientation = currentConfig.orientation();
+    }
+    mWidget->GetClientBounds(clientBounds);
+    ShadowLayerForwarder::BeginTransaction(mTargetBounds, mTargetRotation, clientBounds, orientation);
 
     // If we're drawing on behalf of a context with async pan/zoom
     // enabled, then the entire buffer of thebes layers might be
@@ -1140,8 +1155,10 @@ BasicShadowLayerManager::EndTransaction(DrawThebesLayerCallback aCallback,
 
   if (mRepeatTransaction) {
     mRepeatTransaction = false;
+    mIsRepeatTransaction = true;
     BasicLayerManager::BeginTransaction();
     BasicShadowLayerManager::EndTransaction(aCallback, aCallbackData, aFlags);
+    mIsRepeatTransaction = false;
   } else if (mShadowTarget) {
     if (mWidget) {
       if (CompositorChild* remoteRenderer = mWidget->GetRemoteRenderer()) {
@@ -1296,7 +1313,11 @@ BasicShadowLayerManager::ClearCachedResources(Layer* aSubtree)
 }
 
 bool
-BasicShadowLayerManager::ShouldAbortProgressiveUpdate(bool aHasPendingNewThebesContent)
+BasicShadowLayerManager::ProgressiveUpdateCallback(bool aHasPendingNewThebesContent,
+                                                   gfx::Rect& aViewport,
+                                                   float& aScaleX,
+                                                   float& aScaleY,
+                                                   bool aDrawingCritical)
 {
 #ifdef MOZ_WIDGET_ANDROID
   Layer* primaryScrollable = GetPrimaryScrollableLayer();
@@ -1308,13 +1329,17 @@ BasicShadowLayerManager::ShouldAbortProgressiveUpdate(bool aHasPendingNewThebesC
     const gfx3DMatrix& rootTransform = GetRoot()->GetTransform();
     float devPixelRatioX = 1 / rootTransform.GetXScale();
     float devPixelRatioY = 1 / rootTransform.GetYScale();
-    gfx::Rect displayPort((metrics.mDisplayPort.x + metrics.mScrollOffset.x) * devPixelRatioX,
-                          (metrics.mDisplayPort.y + metrics.mScrollOffset.y) * devPixelRatioY,
-                          metrics.mDisplayPort.width * devPixelRatioX,
-                          metrics.mDisplayPort.height * devPixelRatioY);
+    const gfx::Rect& metricsDisplayPort =
+      (aDrawingCritical && !metrics.mCriticalDisplayPort.IsEmpty()) ?
+        metrics.mCriticalDisplayPort : metrics.mDisplayPort;
+    gfx::Rect displayPort((metricsDisplayPort.x + metrics.mScrollOffset.x) * devPixelRatioX,
+                          (metricsDisplayPort.y + metrics.mScrollOffset.y) * devPixelRatioY,
+                          metricsDisplayPort.width * devPixelRatioX,
+                          metricsDisplayPort.height * devPixelRatioY);
 
-    return AndroidBridge::Bridge()->ShouldAbortProgressiveUpdate(
-      aHasPendingNewThebesContent, displayPort, devPixelRatioX);
+    return AndroidBridge::Bridge()->ProgressiveUpdateCallback(
+      aHasPendingNewThebesContent, displayPort, devPixelRatioX, aDrawingCritical,
+      aViewport, aScaleX, aScaleY);
   }
 #endif
 

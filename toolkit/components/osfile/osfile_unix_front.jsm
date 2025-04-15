@@ -16,9 +16,6 @@
 
     throw new Error("osfile_unix_front.jsm cannot be used from the main thread yet");
   }
-  importScripts("resource://gre/modules/osfile/osfile_unix_back.jsm");
-  importScripts("resource://gre/modules/osfile/ospath_unix_back.jsm");
-  importScripts("resource://gre/modules/osfile/osfile_shared_front.jsm");
   (function(exports) {
      "use strict";
 
@@ -258,6 +255,21 @@
      };
 
      /**
+      * Checks if a file exists
+      *
+      * @param {string} path The path to the file.
+      *
+      * @return {bool} true if the file exists, false otherwise.
+      */
+     File.exists = function Unix_exists(path) {
+       if (UnixFile.access(path, OS.Constants.libc.F_OK) == -1) {
+         return false;
+       } else {
+         return true;
+       }
+     };
+
+     /**
       * Remove an existing file.
       *
       * @param {string} path The name of the file.
@@ -303,12 +315,18 @@
       * as per libc function |mkdir|. If unspecified, dirs are
       * created with a default mode of 0700 (dir is private to
       * the user, the user can read, write and execute).
+      * - {bool} ignoreExisting If |true|, do not fail if the
+      * directory already exists.
       */
      File.makeDir = function makeDir(path, options) {
        options = options || noOptions;
        let omode = options.unixMode || DEFAULT_UNIX_MODE_DIR;
-       throw_on_negative("makeDir",
-         UnixFile.mkdir(path, omode));
+       let result = UnixFile.mkdir(path, omode);
+       if (result != -1 ||
+           options.ignoreExisting && ctypes.errno == OS.Constants.libc.EEXIST) {
+        return;
+       }
+       throw new File.Error("makeDir");
      };
 
      /**
@@ -636,6 +654,14 @@
      };
 
      /**
+      * Return directory as |File|
+      */
+     File.DirectoryIterator.prototype.unixAsFile = function unixAsFile() {
+       if (!this._dir) throw File.Error.closed();
+       return error_or_file(UnixFile.dirfd(this._dir));
+     };
+
+     /**
       * An entry in a directory.
       */
      File.DirectoryIterator.Entry = function Entry(unix_entry, parent) {
@@ -709,6 +735,10 @@
        this._st_atime = stat.st_atime;
        this._st_mtime = stat.st_mtime;
        this._st_ctime = stat.st_ctime;
+       // Some platforms (e.g. MacOS X, some BSDs) store a file creation date
+       if ("OSFILE_OFFSETOF_STAT_ST_BIRTHTIME" in OS.Constants.libc) {
+         this._st_birthtime = stat.st_birthtime;
+       }
        this._st_size = stat.st_size;
      };
      File.Info.prototype = {
@@ -735,16 +765,12 @@
        get size() {
          return exports.OS.Shared.Type.size_t.importFromC(this._st_size);
        },
-       /**
-        * The date of creation of this file
-        *
-        * @type {Date}
-        */
+       // Deprecated, use macBirthDate/winBirthDate instead
        get creationDate() {
-         delete this.creationDate;
-         let date = new Date(this._st_ctime * 1000);
-         Object.defineProperty(this, "creationDate", { value: date });
-         return date;
+         // On the Macintosh, returns the birth date if available.
+         // On other Unix, as the birth date is not available,
+         // returns the epoch.
+         return this.macBirthDate || new Date(0);
        },
        /**
         * The date of last access to this file.
@@ -770,6 +796,17 @@
          return date;
        },
        /**
+        * Return the date at which the status of this file was last modified
+        * (this is the date of the latest write/renaming/mode change/...
+        * of the file)
+        */
+       get unixLastStatusChangeDate() {
+         delete this.unixLastStatusChangeDate;
+         let date = new Date(this._st_ctime * 1000);
+         Object.defineProperty(this, "unixLastStatusChangeDate", {value: date});
+         return date;
+       },
+       /**
         * Return the Unix owner of this file.
         */
        get unixOwner() {
@@ -788,6 +825,32 @@
          return exports.OS.Shared.Type.mode_t.importFromC(this._st_mode & MODE_MASK);
        }
      };
+
+    /**
+     * The date of creation of this file.
+     *
+     * Note that the date returned by this method is not always
+     * reliable. Not all file systems are able to provide this
+     * information.
+     *
+     * @type {Date}
+     */
+     if ("OSFILE_OFFSETOF_STAT_ST_BIRTHTIME" in OS.Constants.libc) {
+       Object.defineProperty(
+         File.Info.prototype,
+         "macBirthDate",
+         {
+           get: function macBirthDate() {
+             delete this.macBirthDate;
+             let time;
+             time = this._st_birthtime;
+             let date = new Date(time * 1000);
+             Object.defineProperty(this, "macBirthDate", { value: date });
+             return date;
+           }
+         }
+       );
+     }
 
      /**
       * Return a version of an instance of File.Info that can be sent
@@ -831,19 +894,33 @@
      File.writeAtomic = exports.OS.Shared.AbstractFile.writeAtomic;
 
      /**
+      * Get the current directory by getCurrentDirectory.
+      */
+     File.getCurrentDirectory = function getCurrentDirectory() {
+       let path = UnixFile.get_current_dir_name?UnixFile.get_current_dir_name():
+         UnixFile.getwd_auto(null);
+       throw_on_null("getCurrentDirectory",path);
+       return path.readString();
+     };
+
+     /**
+      * Set the current directory by setCurrentDirectory.
+      */
+     File.setCurrentDirectory = function setCurrentDirectory(path) {
+       throw_on_negative("setCurrentDirectory",
+         UnixFile.chdir(path)
+       );
+     };
+
+     /**
       * Get/set the current directory.
       */
      Object.defineProperty(File, "curDir", {
          set: function(path) {
-           throw_on_negative("curDir",
-             UnixFile.chdir(path)
-           );
+           this.setCurrentDirectory(path);
          },
          get: function() {
-           let path = UnixFile.get_current_dir_name?UnixFile.get_current_dir_name():
-             UnixFile.getwd_auto(null);
-           throw_on_null("curDir",path);
-           return path.readString();
+           return this.getCurrentDirectory();
          }
        }
      );

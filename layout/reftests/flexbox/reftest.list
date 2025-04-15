@@ -10,7 +10,16 @@ fails test-pref(layout.css.flexbox.enabled,true) == flexbox-align-self-baseline-
 # This one fails on windows R (but not Ru, strangely). On Windows R, the
 # single-line <label> flex item has a different background size in test vs. ref
 random-if(winWidget) test-pref(layout.css.flexbox.enabled,true) == flexbox-align-self-baseline-horiz-3.xhtml  flexbox-align-self-baseline-horiz-3-ref.xhtml # XXXdholbert investigate
-test-pref(layout.css.flexbox.enabled,true) == flexbox-align-self-horiz-1.xhtml  flexbox-align-self-horiz-1-ref.xhtml
+# XXXdholbert This test needs the flexbox pref to be enabled _at startup time_
+# (when we parse ua.css) in order to pass -- so it'll fail until we enable the
+# flexbox pref by default (bug 783409):
+fails == flexbox-align-self-baseline-horiz-4.xhtml flexbox-align-self-baseline-horiz-4-ref.xhtml
+
+test-pref(layout.css.flexbox.enabled,true) == flexbox-align-self-horiz-1-block.xhtml  flexbox-align-self-horiz-1-ref.xhtml
+# XXXdholbert This test needs the flexbox pref to be enabled _at startup time_
+# (when we parse ua.css) in order to pass -- so it'll fail until we enable the
+# flexbox pref by default (bug 783409):
+fails == flexbox-align-self-horiz-1-table.xhtml  flexbox-align-self-horiz-1-ref.xhtml
 test-pref(layout.css.flexbox.enabled,true) == flexbox-align-self-horiz-2.xhtml  flexbox-align-self-horiz-2-ref.xhtml
 test-pref(layout.css.flexbox.enabled,true) == flexbox-align-self-horiz-3.xhtml  flexbox-align-self-horiz-3-ref.xhtml
 test-pref(layout.css.flexbox.enabled,true) == flexbox-align-self-horiz-4.xhtml  flexbox-align-self-horiz-4-ref.xhtml
@@ -61,9 +70,9 @@ pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundDiv-1.xhtml fle
 pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundDiv-2.xhtml flexbox-dyn-insertAroundDiv-2-ref.xhtml
 pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundDiv-3.xhtml flexbox-dyn-insertAroundDiv-3-ref.xhtml
 
-pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundSpan-1.xhtml flexbox-dyn-insertAroundText-1-ref.xhtml
-pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundSpan-2.xhtml flexbox-dyn-insertAroundText-2-ref.xhtml
-pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundSpan-3.xhtml flexbox-dyn-insertAroundText-3-ref.xhtml
+pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundSpan-1.xhtml flexbox-dyn-insertAroundDiv-1-ref.xhtml
+pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundSpan-2.xhtml flexbox-dyn-insertAroundDiv-2-ref.xhtml
+pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundSpan-3.xhtml flexbox-dyn-insertAroundDiv-3-ref.xhtml
 
 pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundText-1.xhtml flexbox-dyn-insertAroundText-1-ref.xhtml
 pref(layout.css.flexbox.enabled,true) == flexbox-dyn-insertAroundText-2.xhtml flexbox-dyn-insertAroundText-2-ref.xhtml
@@ -112,16 +121,14 @@ test-pref(layout.css.flexbox.enabled,true) == flexbox-justify-content-vert-4.xht
 test-pref(layout.css.flexbox.enabled,true) == flexbox-justify-content-vert-5.xhtml flexbox-justify-content-vert-5-ref.xhtml
 
 # Tests for inline content in a flexbox that gets wrapped in an anonymous block
-# XXXdholbert: These will likely need to change once bug 783415 is fixed.
 test-pref(layout.css.flexbox.enabled,true) HTTP(..) == flexbox-inlinecontent-horiz-1a.xhtml flexbox-inlinecontent-horiz-1-ref.xhtml
 test-pref(layout.css.flexbox.enabled,true) HTTP(..) == flexbox-inlinecontent-horiz-1b.xhtml flexbox-inlinecontent-horiz-1-ref.xhtml
 pref(layout.css.flexbox.enabled,true) == flexbox-inlinecontent-horiz-2.xhtml  flexbox-inlinecontent-horiz-2-ref.xhtml
 test-pref(layout.css.flexbox.enabled,true) HTTP(..) == flexbox-inlinecontent-horiz-3a.xhtml flexbox-inlinecontent-horiz-3-ref.xhtml
-fails-if(Android) test-pref(layout.css.flexbox.enabled,true) HTTP(..) == flexbox-inlinecontent-horiz-3b.xhtml flexbox-inlinecontent-horiz-3-ref.xhtml
-fails-if(Android) test-pref(layout.css.flexbox.enabled,true) HTTP(..) == flexbox-inlinecontent-horiz-3c.xhtml flexbox-inlinecontent-horiz-3-ref.xhtml
+test-pref(layout.css.flexbox.enabled,true) HTTP(..) == flexbox-inlinecontent-horiz-3b.xhtml flexbox-inlinecontent-horiz-3-ref.xhtml
+test-pref(layout.css.flexbox.enabled,true) HTTP(..) == flexbox-inlinecontent-horiz-3c.xhtml flexbox-inlinecontent-horiz-3-ref.xhtml
 test-pref(layout.css.flexbox.enabled,true) == flexbox-inlinecontent-horiz-4.xhtml  flexbox-inlinecontent-horiz-4-ref.xhtml
 pref(layout.css.flexbox.enabled,true) == flexbox-inlinecontent-horiz-5.xhtml  flexbox-inlinecontent-horiz-5-ref.xhtml
-pref(layout.css.flexbox.enabled,true) == flexbox-inlinecontent-horiz-6.xhtml  flexbox-inlinecontent-horiz-6-ref.xhtml
 
 # Tests for intrinsic sizing of flexboxes
 test-pref(layout.css.flexbox.enabled,true) HTTP(..) == flexbox-intrinsic-sizing-horiz-1a.xhtml flexbox-intrinsic-sizing-horiz-1-ref.xhtml
@@ -149,17 +156,17 @@ pref(layout.css.flexbox.enabled,true) == flexbox-resizeviewport-1.xhtml flexbox-
 
 # Tests for sizing of flex containers, e.g. under min/max size constraints
 test-pref(layout.css.flexbox.enabled,true) == flexbox-sizing-horiz-1.xhtml flexbox-sizing-horiz-1-ref.xhtml
+test-pref(layout.css.flexbox.enabled,true) == flexbox-sizing-horiz-2.xhtml flexbox-sizing-horiz-2-ref.xhtml
 test-pref(layout.css.flexbox.enabled,true) == flexbox-sizing-vert-1.xhtml  flexbox-sizing-vert-1-ref.xhtml
+test-pref(layout.css.flexbox.enabled,true) == flexbox-sizing-vert-2.xhtml  flexbox-sizing-vert-2-ref.xhtml
 
 test-pref(layout.css.flexbox.enabled,true) == flexbox-table-fixup-1a.xhtml flexbox-table-fixup-1-ref.xhtml
 test-pref(layout.css.flexbox.enabled,true) == flexbox-table-fixup-1b.xhtml flexbox-table-fixup-1-ref.xhtml
 
 # Tests for handling of whitespace within anonymous flex items.
-# XXXdholbert: These will likely need to change once bug 783415 is fixed.
 test-pref(layout.css.flexbox.enabled,true) == flexbox-whitespace-handling-1a.xhtml flexbox-whitespace-handling-1-ref.xhtml
 test-pref(layout.css.flexbox.enabled,true) == flexbox-whitespace-handling-1b.xhtml flexbox-whitespace-handling-1-ref.xhtml
 pref(layout.css.flexbox.enabled,true) == flexbox-whitespace-handling-2.xhtml  flexbox-whitespace-handling-2-ref.xhtml
-pref(layout.css.flexbox.enabled,true) == flexbox-whitespace-handling-3.xhtml  flexbox-whitespace-handling-3-ref.xhtml
 
 # Tests with widgets as flex items
 fuzzy-if(gtk2Widget,1,66) test-pref(layout.css.flexbox.enabled,true) == flexbox-widget-flex-items-1.html flexbox-widget-flex-items-1-ref.html

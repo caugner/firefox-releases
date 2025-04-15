@@ -15,6 +15,7 @@
 #include "runnable_utils.h"
 
 #ifdef MOZILLA_INTERNAL_API
+#include "MediaStreamList.h"
 #include "nsIScriptGlobalObject.h"
 #include "jsapi.h"
 #endif

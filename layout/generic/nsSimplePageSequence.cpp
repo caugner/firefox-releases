@@ -41,8 +41,15 @@ static const char sPrintOptionsContractID[] = "@mozilla.org/gfx/printsettings-se
 
 #include "prlog.h"
 #ifdef PR_LOGGING 
-PRLogModuleInfo * kLayoutPrintingLogMod = PR_NewLogModule("printing-layout");
-#define PR_PL(_p1)  PR_LOG(kLayoutPrintingLogMod, PR_LOG_DEBUG, _p1)
+PRLogModuleInfo *
+GetLayoutPrintingLog()
+{
+  static PRLogModuleInfo *sLog;
+  if (!sLog)
+    sLog = PR_NewLogModule("printing-layout");
+  return sLog;
+}
+#define PR_PL(_p1)  PR_LOG(GetLayoutPrintingLog(), PR_LOG_DEBUG, _p1)
 #else
 #define PR_PL(_p1)
 #endif
@@ -58,7 +65,6 @@ nsSharedPageData::nsSharedPageData() :
   mDocURL(nullptr),
   mReflowSize(0,0),
   mReflowMargin(0,0,0,0),
-  mExtraMargin(0,0,0,0),
   mEdgePaperMargin(0,0,0,0),
   mPageContentXMost(0),
   mPageContentSize(0)
@@ -86,10 +92,10 @@ NS_IMPL_FRAMEARENA_HELPERS(nsSimplePageSequenceFrame)
 nsSimplePageSequenceFrame::nsSimplePageSequenceFrame(nsStyleContext* aContext) :
   nsContainerFrame(aContext),
   mTotalPages(-1),
-  mCurrentCanvasListSetup(false),
   mSelectionHeight(-1),
   mYSelOffset(0),
-  mCalledBeginPage(false)
+  mCalledBeginPage(false),
+  mCurrentCanvasListSetup(false)
 {
   nscoord halfInch = PresContext()->CSSTwipsToAppUnits(NS_INCHES_TO_TWIPS(0.5));
   mMargin.SizeTo(halfInch, halfInch, halfInch, halfInch);
@@ -213,30 +219,11 @@ nsSimplePageSequenceFrame::Reflow(nsPresContext*          aPresContext,
   }
   mPageData->mReflowMargin = mMargin;
 
-  // Compute the size of each page and the x coordinate that each page will
-  // be placed at
-  nscoord extraThreshold = NS_MAX(pageSize.width, pageSize.height)/10;
-  int32_t gapInTwips = Preferences::GetInt("print.print_extra_margin");
-  gapInTwips = NS_MAX(0, gapInTwips);
-
-  nscoord extraGap = aPresContext->CSSTwipsToAppUnits(gapInTwips);
-  extraGap = NS_MIN(extraGap, extraThreshold); // clamp to 1/10 of the largest dim of the page
-
-  nsMargin extraMargin(0,0,0,0);
-  if (aPresContext->IsScreen()) {
-    extraMargin.SizeTo(extraGap, extraGap, extraGap, extraGap);
-  }
-
-  mPageData->mExtraMargin = extraMargin;
-
   // We use the CSS "margin" property on the -moz-page pseudoelement
   // to determine the space between each page in print preview.
   // Keep a running y-offset for each page.
   nscoord y = 0;
   nscoord maxXMost = 0;
-
-  nsSize availSize(pageSize.width + extraMargin.LeftRight(),
-                   pageSize.height + extraMargin.TopBottom());
 
   // Tile the pages vertically
   nsHTMLReflowMetrics kidSize;
@@ -247,7 +234,7 @@ nsSimplePageSequenceFrame::Reflow(nsPresContext*          aPresContext,
 
     // Reflow the page
     nsHTMLReflowState kidReflowState(aPresContext, aReflowState, kidFrame,
-                                     availSize);
+                                     pageSize);
     nsReflowStatus  status;
 
     kidReflowState.SetComputedWidth(kidReflowState.availableWidth);
@@ -513,7 +500,7 @@ GetPrintCanvasElementsInFrame(nsIFrame* aFrame, nsTArray<nsRefPtr<nsHTMLCanvasEl
       // If there is a canvasFrame, try to get actual canvas element.
       if (canvasFrame) {
         nsHTMLCanvasElement* canvas =
-          nsHTMLCanvasElement::FromContent(canvasFrame->GetContent());
+          nsHTMLCanvasElement::FromContentOrNull(canvasFrame->GetContent());
         nsCOMPtr<nsIPrintCallback> printCallback;
         if (canvas &&
             NS_SUCCEEDED(canvas->GetMozPrintCallback(getter_AddRefs(printCallback))) &&
@@ -645,6 +632,10 @@ nsSimplePageSequenceFrame::PrePrintNextPage(nsITimerCallback* aCallback, bool* a
              size
            );
 
+        if (!printSurface) {
+          continue;
+        }
+
         nsICanvasRenderingContextInternal* ctx = canvas->GetContextAtIndex(0);
 
         if (!ctx) {
@@ -661,7 +652,7 @@ nsSimplePageSequenceFrame::PrePrintNextPage(nsITimerCallback* aCallback, bool* a
       }
     }
   }
-  int32_t doneCounter = 0;
+  uint32_t doneCounter = 0;
   for (int32_t i = mCurrentCanvasList.Length() - 1; i >= 0 ; i--) {
     nsHTMLCanvasElement* canvas = mCurrentCanvasList[i];
 

@@ -37,6 +37,13 @@ nsDOMTouch::GetIdentifier(int32_t* aIdentifier)
 NS_IMETHODIMP
 nsDOMTouch::GetTarget(nsIDOMEventTarget** aTarget)
 {
+  nsCOMPtr<nsIContent> content = do_QueryInterface(mTarget);
+  if (content && content->ChromeOnlyAccess() &&
+      !nsContentUtils::CanAccessNativeAnon()) {
+    content = content->FindFirstNonChromeOnlyAccessContent();
+    *aTarget = content.forget().get();
+    return NS_OK;
+  }
   NS_IF_ADDREF(*aTarget = mTarget);
   return NS_OK;
 }
@@ -144,10 +151,10 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsDOMTouchList)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsDOMTouchList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSTARRAY_OF_NSCOMPTR(mPoints)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPoints)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDOMTouchList)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSTARRAY(mPoints)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mPoints)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsDOMTouchList)
@@ -215,15 +222,15 @@ nsDOMTouchEvent::~nsDOMTouchEvent()
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMTouchEvent)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsDOMTouchEvent, nsDOMUIEvent)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mTouches)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mTargetTouches)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mChangedTouches)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mTouches)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mTargetTouches)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mChangedTouches)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsDOMTouchEvent, nsDOMUIEvent)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mTouches)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mTargetTouches)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mChangedTouches)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTouches)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTargetTouches)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChangedTouches)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 DOMCI_DATA(TouchEvent, nsDOMTouchEvent)
@@ -314,7 +321,7 @@ nsDOMTouchEvent::GetTargetTouches(nsIDOMTouchList** aTargetTouches)
     if ((mEvent->message != NS_TOUCH_END &&
          mEvent->message != NS_TOUCH_CANCEL) || !touches[i]->mChanged) {
       nsIDOMEventTarget* targetPtr = touches[i]->GetTarget();
-      if (targetPtr == mEvent->target) {
+      if (targetPtr == mEvent->originalTarget) {
         targetTouches.AppendElement(touches[i]);
       }
     }
@@ -395,7 +402,8 @@ nsDOMTouchEvent::PrefEnabled()
         // On Windows we auto-detect based on device support.
         sPrefValue = mozilla::widget::IsTouchDeviceSupportPresent();
 #else
-        NS_ERROR("Not implemented");
+        NS_WARNING("dom.w3c_touch_events.enabled=2 not implemented!");
+        sPrefValue = false;
 #endif
       } else {
         sPrefValue = !!flag;

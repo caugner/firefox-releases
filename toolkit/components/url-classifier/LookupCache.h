@@ -114,6 +114,7 @@ public:
   nsresult Build(AddPrefixArray& aAddPrefixes,
                  AddCompleteArray& aAddCompletes);
   nsresult GetPrefixes(nsTArray<uint32_t>* aAddPrefixes);
+  void ClearCompleteCache();
 
 #if DEBUG && defined(PR_LOGGING)
   void Dump();
@@ -127,7 +128,7 @@ public:
   bool IsPrimed();
 
 private:
-  void Clear();
+  void ClearAll();
   nsresult Reset();
   void UpdateHeader();
   nsresult ReadHeader(nsIInputStream* aInputStream);
@@ -139,9 +140,9 @@ private:
   nsresult ConstructPrefixSet(AddPrefixArray& aAddPrefixes);
 
   struct Header {
-    uint32 magic;
-    uint32 version;
-    uint32 numCompletions;
+    uint32_t magic;
+    uint32_t version;
+    uint32_t numCompletions;
   };
   Header mHeader;
 
@@ -152,9 +153,6 @@ private:
   CompletionArray mCompletions;
   // Set of prefixes known to be in the database
   nsRefPtr<nsUrlClassifierPrefixSet> mPrefixSet;
-
-  // Fx18 temporary; true if this is a -simple test table.
-  bool mTestTable;
 };
 
 }

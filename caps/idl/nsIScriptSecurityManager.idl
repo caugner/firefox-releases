@@ -10,7 +10,7 @@ interface nsIURI;
 interface nsIChannel;
 interface nsIDocShell;
 
-[scriptable, uuid(90c6b901-9952-4934-a560-974dfd144af7)]
+[scriptable, uuid(ae486501-ec57-4ec8-a565-6880ca4ae6c4)]
 interface nsIScriptSecurityManager : nsIXPCSecurityManager
 {
     ///////////////// Security Checks //////////////////
@@ -203,13 +203,6 @@ interface nsIScriptSecurityManager : nsIXPCSecurityManager
     void checkSameOriginURI(in nsIURI aSourceURI,
                             in nsIURI aTargetURI,
                             in boolean reportError);
-
-    /**
-     * Returns the principal of the global object of the given context, or null
-     * if no global or no principal.
-     */
-    [noscript] nsIPrincipal getPrincipalFromContext(in JSContextPtr cx);
-
     /**
      * Get the principal for the given channel.  This will typically be the
      * channel owner if there is one, and the codebase principal for the
@@ -231,9 +224,6 @@ interface nsIScriptSecurityManager : nsIXPCSecurityManager
      * principal.
      */
     [noscript,notxpcom] nsIPrincipal getCxSubjectPrincipal(in JSContextPtr cx);
-    [noscript,notxpcom] nsIPrincipal getCxSubjectPrincipalAndFrame(in JSContextPtr cx,
-                                                                   out JSStackFramePtr fp);
-
 
     const unsigned long NO_APP_ID = 0;
     const unsigned long UNKNOWN_APP_ID = 4294967295; // UINT32_MAX

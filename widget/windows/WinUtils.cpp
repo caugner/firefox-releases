@@ -744,7 +744,7 @@ nsresult FaviconHelper::ObtainCachedIconFile(nsCOMPtr<nsIURI> aFaviconPageURI,
   if (exists) {
 
     // Obtain the file's last modification date in seconds
-    int64_t fileModTime = LL_ZERO;
+    int64_t fileModTime = 0;
     rv = icoFile->GetLastModifiedTime(&fileModTime);
     fileModTime /= PR_MSEC_PER_SEC;
     int32_t icoReCacheSecondsTimeout = GetICOCacheSecondsTimeout();
@@ -905,6 +905,45 @@ WinUtils::GetShellItemPath(IShellItem* aItem,
   aResultString.Assign(str);
   CoTaskMemFree(str);
   return !aResultString.IsEmpty();
+}
+
+/* static */
+nsIntRegion
+WinUtils::ConvertHRGNToRegion(HRGN aRgn)
+{
+  NS_ASSERTION(aRgn, "Don't pass NULL region here");
+
+  nsIntRegion rgn;
+
+  DWORD size = ::GetRegionData(aRgn, 0, NULL);
+  nsAutoTArray<uint8_t,100> buffer;
+  if (!buffer.SetLength(size))
+    return rgn;
+
+  RGNDATA* data = reinterpret_cast<RGNDATA*>(buffer.Elements());
+  if (!::GetRegionData(aRgn, size, data))
+    return rgn;
+
+  if (data->rdh.nCount > MAX_RECTS_IN_REGION) {
+    rgn = ToIntRect(data->rdh.rcBound);
+    return rgn;
+  }
+
+  RECT* rects = reinterpret_cast<RECT*>(data->Buffer);
+  for (uint32_t i = 0; i < data->rdh.nCount; ++i) {
+    RECT* r = rects + i;
+    rgn.Or(rgn, ToIntRect(*r));
+  }
+
+  return rgn;
+}
+
+nsIntRect
+WinUtils::ToIntRect(const RECT& aRect)
+{
+  return nsIntRect(aRect.left, aRect.top,
+                   aRect.right - aRect.left,
+                   aRect.bottom - aRect.top);
 }
 
 } // namespace widget

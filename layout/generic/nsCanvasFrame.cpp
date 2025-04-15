@@ -47,7 +47,6 @@ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 void
 nsCanvasFrame::DestroyFrom(nsIFrame* aDestructRoot)
 {
-  DestroyAbsoluteFrames(aDestructRoot);
   nsIScrollableFrame* sf =
     PresContext()->GetPresShell()->GetRootScrollFrameAsScrollable();
   if (sf) {
@@ -240,7 +239,6 @@ nsDisplayCanvasBackground::Paint(nsDisplayListBuilder* aBuilder,
     BlitSurface(dest, destRect, surf);
 
     GetUnderlyingFrame()->Properties().Set(nsIFrame::CachedBackgroundImage(), surf.forget().get());
-    GetUnderlyingFrame()->AddStateBits(NS_FRAME_HAS_CACHED_BACKGROUND);
   }
 }
 
@@ -448,7 +446,6 @@ nsCanvasFrame::Reflow(nsPresContext*           aPresContext,
     aDesiredSize.width = aDesiredSize.height = 0;
   } else {
     nsIFrame* kidFrame = mFrames.FirstChild();
-    nsRect oldKidRect = kidFrame->GetRect();
     bool kidDirty = (kidFrame->GetStateBits() & NS_FRAME_IS_DIRTY) != 0;
 
     nsHTMLReflowState kidReflowState(aPresContext, aReflowState, kidFrame,

@@ -47,6 +47,62 @@ struct nsMyTrustedEVInfo
   CERTCertificate *cert;
 };
 
+/* HOWTO enable additional CA root certificates for EV:
+ *
+ * For each combination of "root certificate" and "policy OID",
+ * one entry must be added to the array named myTrustedEVInfos.
+ *
+ * We use the combination of "issuer name" and "serial number" to
+ * uniquely identify the certificate. In order to avoid problems
+ * because of encodings when comparing certificates, we don't
+ * use plain text representation, we rather use the original encoding
+ * as it can be found in the root certificate (in base64 format).
+ *
+ * We can use the NSS utility named "pp" to extract the encoding.
+ *
+ * Build standalone NSS including the NSS tools, then run
+ *   pp -t certificate-identity -i the-cert-filename
+ *
+ * You will need the output from sections "Issuer", "Fingerprint (SHA1)",
+ * "Issuer DER Base64" and "Serial DER Base64".
+ *
+ * The new section consists of 8 lines:
+ *
+ * - a comment that should contain the human readable issuer name
+ *   of the certificate, as printed by the pp tool
+ * - the EV policy OID that is associated to the EV grant
+ * - a text description of the EV policy OID. The array can contain
+ *   multiple entries with the same OID.
+ *   Please make sure to use the identical OID text description for
+ *   all entries with the same policy OID (use the text search
+ *   feature of your text editor to find duplicates).
+ *   When adding a new policy OID that is not yet contained in the array,
+ *   please make sure that your new description is different from
+ *   all the other descriptions (again use the text search feature
+ *   to be sure).
+ * - the constant SEC_OID_UNKNOWN
+ *   (it will be replaced at runtime with another identifier)
+ * - the UPPERCASE version of the SHA1 fingerprint, hexadecimal,
+ *   bytes separated by colons (as printed by pp)
+ * - the "Issuer DER Base64" as printed by the pp tool.
+ *   Remove all whitespaces. If you use multiple lines, make sure that
+ *   only the final line will be followed by a comma.
+ * - the "Serial DER Base64" (as printed by pp)
+ * - a NULL pointer value
+ *
+ * After adding an entry, test it locally against the test site that
+ * has been provided by the CA. Note that you must use a version of NSS
+ * where the root certificate has already been added and marked as trusted
+ * for issueing SSL server certificates (at least).
+ *
+ * If you are able to connect to the site without certificate errors,
+ * but you don't see the EV status indicator, then most likely the CA
+ * has a problem in their infrastructure. The most common problems are
+ * related to the CA's OCSP infrastructure, either they use an incorrect
+ * OCSP signing certificate, or OCSP for the intermediate certificates
+ * isn't working, or OCSP isn't working at all.
+ */
+
 static struct nsMyTrustedEVInfo myTrustedEVInfos[] = {
   /*
    * IMPORTANT! When extending this list, 
@@ -102,7 +158,7 @@ static struct nsMyTrustedEVInfo myTrustedEVInfos[] = {
   },
   {
     // CN=StartCom Certification Authority,OU=Secure Digital Certificate Signing,O=StartCom Ltd.,C=IL
-    "1.3.6.1.4.1.23223.2",
+    "1.3.6.1.4.1.23223.1.1.1",
     "StartCom EV OID",
     SEC_OID_UNKNOWN,
     "3E:2B:F7:F2:03:1B:96:F3:8C:E6:C4:D8:A8:5D:3E:2D:58:47:6A:0F",
@@ -110,6 +166,29 @@ static struct nsMyTrustedEVInfo myTrustedEVInfos[] = {
     "EyJTZWN1cmUgRGlnaXRhbCBDZXJ0aWZpY2F0ZSBTaWduaW5nMSkwJwYDVQQDEyBT"
     "dGFydENvbSBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eQ==",
     "AQ==",
+    nullptr
+  },
+  {
+    // CN=StartCom Certification Authority,OU=Secure Digital Certificate Signing,O=StartCom Ltd.,C=IL
+    "1.3.6.1.4.1.23223.1.1.1",
+    "StartCom EV OID",
+    SEC_OID_UNKNOWN,
+    "A3:F1:33:3F:E2:42:BF:CF:C5:D1:4E:8F:39:42:98:40:68:10:D1:A0",
+    "MH0xCzAJBgNVBAYTAklMMRYwFAYDVQQKEw1TdGFydENvbSBMdGQuMSswKQYDVQQL"
+    "EyJTZWN1cmUgRGlnaXRhbCBDZXJ0aWZpY2F0ZSBTaWduaW5nMSkwJwYDVQQDEyBT"
+    "dGFydENvbSBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eQ==",
+    "LQ==",
+    nullptr
+  },
+  {
+    // CN=StartCom Certification Authority G2,O=StartCom Ltd.,C=IL
+    "1.3.6.1.4.1.23223.1.1.1",
+    "StartCom EV OID",
+    SEC_OID_UNKNOWN,
+    "31:F1:FD:68:22:63:20:EE:C6:3B:3F:9D:EA:4A:3E:53:7C:7C:39:17",
+    "MFMxCzAJBgNVBAYTAklMMRYwFAYDVQQKEw1TdGFydENvbSBMdGQuMSwwKgYDVQQD"
+    "EyNTdGFydENvbSBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eSBHMg==",
+    "Ow==",
     nullptr
   },
   {
@@ -405,11 +484,22 @@ static struct nsMyTrustedEVInfo myTrustedEVInfos[] = {
   {
     // CN=Buypass Class 3 CA 1,O=Buypass AS-983163327,C=NO
     "2.16.578.1.26.1.3.3",
-    "Buypass Class 3 CA 1",
+    "Buypass EV OID",
     SEC_OID_UNKNOWN,
     "61:57:3A:11:DF:0E:D8:7E:D5:92:65:22:EA:D0:56:D7:44:B3:23:71",
     "MEsxCzAJBgNVBAYTAk5PMR0wGwYDVQQKDBRCdXlwYXNzIEFTLTk4MzE2MzMyNzEd"
     "MBsGA1UEAwwUQnV5cGFzcyBDbGFzcyAzIENBIDE=",
+    "Ag==",
+    nullptr
+  },
+  {
+    // CN=Buypass Class 3 Root CA,O=Buypass AS-983163327,C=NO
+    "2.16.578.1.26.1.3.3",
+    "Buypass EV OID",
+    SEC_OID_UNKNOWN,
+    "DA:FA:F7:FA:66:84:EC:06:8F:14:50:BD:C7:C2:81:A5:BC:A9:64:57",
+    "ME4xCzAJBgNVBAYTAk5PMR0wGwYDVQQKDBRCdXlwYXNzIEFTLTk4MzE2MzMyNzEg"
+    "MB4GA1UEAwwXQnV5cGFzcyBDbGFzcyAzIFJvb3QgQ0E=",
     "Ag==",
     nullptr
   },
@@ -1026,7 +1116,7 @@ static SECStatus getFirstEVPolicy(CERTCertificate *cert, SECOidTag &outOidTag)
     return SECFailure;
 
   if (cert->extensions) {
-    for (int i=0; cert->extensions[i] != nullptr; i++) {
+    for (int i=0; cert->extensions[i]; i++) {
       const SECItem *oid = &cert->extensions[i]->id;
 
       SECOidTag oidTag = SECOID_FindOIDTag(oid);
@@ -1045,7 +1135,7 @@ static SECStatus getFirstEVPolicy(CERTCertificate *cert, SECOidTag &outOidTag)
       policyInfos = policies->policyInfos;
 
       bool found = false;
-      while (*policyInfos != NULL) {
+      while (*policyInfos) {
         policyInfo = *policyInfos++;
 
         SECOidTag oid_tag = policyInfo->oid;

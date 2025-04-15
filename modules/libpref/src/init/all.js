@@ -169,7 +169,7 @@ pref("media.webm.enabled", true);
 pref("media.dash.enabled", true);
 #endif
 #ifdef MOZ_GSTREAMER
-pref("media.h264.enabled", true);
+pref("media.gstreamer.enabled", true);
 #endif
 #ifdef MOZ_WEBRTC
 pref("media.navigator.enabled", false);
@@ -188,7 +188,7 @@ pref("media.webaudio.enabled", false);
 pref("media.autoplay.enabled", true);
 
 // The default number of decoded video frames that are enqueued in
-// nsBuiltinDecoderReader's mVideoQueue.
+// MediaDecoderReader's mVideoQueue.
 pref("media.video-queue.default-size", 10);
 
 #ifdef XP_MACOSX
@@ -196,7 +196,7 @@ pref("media.video-queue.default-size", 10);
 //   <= 0 : hidpi mode disabled, display will just use pixel-based upscaling
 //   == 1 : hidpi supported if all screens share the same backingScaleFactor
 //   >= 2 : hidpi supported even with mixed backingScaleFactors (somewhat broken)
-pref("gfx.hidpi.enabled", 2);
+pref("gfx.hidpi.enabled", 1);
 #endif
 
 // 0 = Off, 1 = Full, 2 = Tagged Images Only. 
@@ -232,18 +232,12 @@ pref("gfx.font_rendering.graphite.enabled", false);
 // (see http://mxr.mozilla.org/mozilla-central/ident?i=ShapingType)
 // Scripts not listed are grouped in the default category.
 // Set the pref to -1 to have all text shaped via the harfbuzz backend.
-#ifdef XP_MACOSX
-// use harfbuzz for default (0x01) + arabic (0x02) + hebrew (0x04) + thai (0x40)
-pref("gfx.font_rendering.harfbuzz.scripts", 71);
-#else
-#ifdef ANDROID
-// use harfbuzz for everything, as we don't have a platform script-shaping lib
-// to fall back on anyhow, and Indic support is coming along well
-pref("gfx.font_rendering.harfbuzz.scripts", -1);
-#else
+#ifdef XP_WIN
 // use harfbuzz for default (0x01) + arabic (0x02) + hebrew (0x04)
 pref("gfx.font_rendering.harfbuzz.scripts", 7);
-#endif
+#else
+// use harfbuzz for all scripts (except when using AAT fonts on OS X)
+pref("gfx.font_rendering.harfbuzz.scripts", -1);
 #endif
 
 #ifdef XP_WIN
@@ -253,7 +247,6 @@ pref("gfx.font_rendering.directwrite.use_gdi_table_loading", true);
 
 pref("gfx.font_rendering.opentype_svg.enabled", false);
 
-pref("gfx.canvas.azure.enabled", true);
 #ifdef XP_WIN
 // comma separated list of backends to use in order of preference
 // e.g., pref("gfx.canvas.azure.backends", "direct2d,skia,cairo");
@@ -261,6 +254,7 @@ pref("gfx.canvas.azure.backends", "direct2d,cairo");
 pref("gfx.content.azure.backends", "direct2d");
 pref("gfx.content.azure.enabled", true);
 #else
+pref("gfx.content.azure.enabled", false);
 #ifdef XP_MACOSX
 pref("gfx.canvas.azure.backends", "cg");
 // Accelerated cg canvas where available (10.7+)
@@ -348,8 +342,8 @@ pref("toolkit.autocomplete.richBoundaryCutoff", 200);
 
 pref("toolkit.scrollbox.smoothScroll", true);
 pref("toolkit.scrollbox.scrollIncrement", 20);
-// Make sure to update NS_DEFAULT_VERTICAL_SCROLL_DISTANCE if changing this default.
 pref("toolkit.scrollbox.verticalScrollDistance", 3);
+pref("toolkit.scrollbox.horizontalScrollDistance", 5);
 pref("toolkit.scrollbox.clickToScroll.scrollDelay", 150);
 
 // Telemetry
@@ -688,7 +682,6 @@ pref("dom.min_background_timeout_value", 1000);
 
 // Use the new DOM bindings (only affects any scopes created after the pref is
 // changed)
-pref("dom.new_bindings", true);
 pref("dom.experimental_bindings", true);
 
 // Don't use new input types
@@ -716,7 +709,6 @@ pref("javascript.options.strict",           false);
 #ifdef DEBUG
 pref("javascript.options.strict.debug",     true);
 #endif
-pref("javascript.options.relimit",          true);
 pref("javascript.options.methodjit.content", true);
 pref("javascript.options.methodjit.chrome",  true);
 pref("javascript.options.ion.content",      true);
@@ -772,6 +764,9 @@ pref("security.fileuri.strict_origin_policy", true);
 // telemetry is also enabled as otherwise there is no way to report
 // the results
 pref("network.allow-experiments", true);
+
+// Turn off interprocess security checks. Needed to run xpcshell tests.
+pref("network.disable.ipc.security", false);
 
 // Default action for unlisted external protocol handlers
 pref("network.protocol-handler.external-default", true);      // OK to load
@@ -929,7 +924,7 @@ pref("network.http.spdy.chunk-size", 4096);
 pref("network.http.spdy.timeout", 180);
 pref("network.http.spdy.coalesce-hostnames", true);
 pref("network.http.spdy.use-alternate-protocol", true);
-pref("network.http.spdy.ping-threshold", 44);
+pref("network.http.spdy.ping-threshold", 58);
 pref("network.http.spdy.ping-timeout", 8);
 pref("network.http.spdy.send-buffer-size", 131072);
 
@@ -1261,6 +1256,9 @@ pref("network.proxy.autoconfig_url", "");
 pref("network.proxy.autoconfig_retry_interval_min", 5);    // 5 seconds
 pref("network.proxy.autoconfig_retry_interval_max", 300);  // 5 minutes
 
+// Use the HSTS preload list by default
+pref("network.stricttransportsecurity.preloadlist", true);
+
 pref("converter.html2txt.structs",          true); // Output structured phrases (strong, em, code, sub, sup, b, i, u)
 pref("converter.html2txt.header_strategy",  1); // 0 = no indention; 1 = indention, increased with header level; 2 = numbering and slight indention
 
@@ -1268,11 +1266,11 @@ pref("intl.accept_languages",               "chrome://global/locale/intl.propert
 pref("intl.menuitems.alwaysappendaccesskeys","chrome://global/locale/intl.properties");
 pref("intl.menuitems.insertseparatorbeforeaccesskeys","chrome://global/locale/intl.properties");
 pref("intl.charsetmenu.browser.static",     "chrome://global/locale/intl.properties");
-pref("intl.charsetmenu.browser.more1",      "ISO-8859-1, ISO-8859-15, IBM850, x-mac-roman, windows-1252, ISO-8859-14, ISO-8859-7, x-mac-greek, windows-1253, x-mac-icelandic, ISO-8859-10, ISO-8859-3");
+pref("intl.charsetmenu.browser.more1",      "ISO-8859-1, ISO-8859-15, IBM850, macintosh, windows-1252, ISO-8859-14, ISO-8859-7, x-mac-greek, windows-1253, x-mac-icelandic, ISO-8859-10, ISO-8859-3");
 pref("intl.charsetmenu.browser.more2",      "ISO-8859-4, ISO-8859-13, windows-1257, IBM852, ISO-8859-2, x-mac-ce, windows-1250, x-mac-croatian, IBM855, ISO-8859-5, ISO-IR-111, KOI8-R, x-mac-cyrillic, windows-1251, IBM866, KOI8-U, x-mac-ukrainian, ISO-8859-16, x-mac-romanian");
-pref("intl.charsetmenu.browser.more3",      "GB2312, gbk, gb18030, HZ-GB-2312, ISO-2022-CN, Big5, Big5-HKSCS, x-euc-tw, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR, x-windows-949, x-johab, ISO-2022-KR");
+pref("intl.charsetmenu.browser.more3",      "GB2312, gbk, gb18030, HZ-GB-2312, ISO-2022-CN, Big5, Big5-HKSCS, x-euc-tw, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR, x-johab, ISO-2022-KR");
 pref("intl.charsetmenu.browser.more4",      "armscii-8, TIS-620, ISO-8859-11, windows-874, IBM857, ISO-8859-9, x-mac-turkish, windows-1254, x-viet-tcvn5712, VISCII, x-viet-vps, windows-1258, x-mac-devanagari, x-mac-gujarati, x-mac-gurmukhi");
-pref("intl.charsetmenu.browser.more5",      "ISO-8859-6, windows-1256, IBM864, ISO-8859-8-I, windows-1255, ISO-8859-8, IBM862");
+pref("intl.charsetmenu.browser.more5",      "ISO-8859-6, windows-1256, ISO-8859-8-I, windows-1255, ISO-8859-8, IBM862");
 pref("intl.charsetmenu.browser.unicode",    "UTF-8, UTF-16LE, UTF-16BE");
 pref("intl.charsetmenu.mailedit",           "chrome://global/locale/intl.properties");
 pref("intl.charsetmenu.browser.cache",      "");
@@ -1615,10 +1613,20 @@ pref("layout.css.dpi", -1);
 pref("layout.css.devPixelsPerPx", "-1.0");
 
 // Is support for the the @supports rule enabled?
+#ifdef RELEASE_BUILD
 pref("layout.css.supports-rule.enabled", false);
+#else
+pref("layout.css.supports-rule.enabled", true);
+#endif
 
 // Is support for CSS Flexbox enabled?
 pref("layout.css.flexbox.enabled", false);
+
+// Are sets of prefixed properties supported?
+pref("layout.css.prefixes.border-image", true);
+pref("layout.css.prefixes.transforms", true);
+pref("layout.css.prefixes.transitions", true);
+pref("layout.css.prefixes.animations", true);
 
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
@@ -1849,6 +1857,19 @@ pref("font.size.inflation.lineThreshold", 400);
  * large enough. This means that when s=0, i is always equal to m.
  */
 pref("font.size.inflation.mappingIntercept", 1);
+
+
+/*
+ * This controls the percentage that fonts will be inflated, if font
+ * size inflation is enabled. Essentially, if we have a specified font
+ * size, s, and an inflated font size, i, this specifies that the ratio
+ * i/s * 100 should never exceed the value of this preference.
+ *
+ * In order for this preference to have any effect, its value must be
+ * greater than 100, since font inflation can never decrease the ratio
+ * i/s.
+ */
+pref("font.size.inflation.maxRatio", 0);
 
 /*
  * When enabled, the touch.radius and mouse.radius prefs allow events to be dispatched
@@ -3034,10 +3055,10 @@ pref("font.name.monospace.he", "Droid Sans Mono");
 pref("font.name-list.sans-serif.he", "Droid Sans Hebrew, Droid Sans");
 
 pref("font.name.serif.ja", "Droid Serif");
-pref("font.name.sans-serif.ja", "Droid Sans Japanese");
+pref("font.name.sans-serif.ja", "Droid Sans");
 pref("font.name.monospace.ja", "MotoyaLMaru");
-pref("font.name-list.sans-serif.ja", "MotoyaLMaru, MotoyaLCedar, Droid Sans Japanese");
-pref("font.name-list.monospace.ja", "MotoyaLMaru, MotoyaLCedar");
+pref("font.name-list.sans-serif.ja", "Roboto, Droid Sans, MotoyaLMaru, MotoyaLCedar, Droid Sans Japanese");
+pref("font.name-list.monospace.ja", "MotoyaLMaru, MotoyaLCedar, Droid Sans Mono");
 
 pref("font.name.serif.ko", "Droid Serif");
 pref("font.name.sans-serif.ko", "Droid Sans");
@@ -3592,7 +3613,7 @@ pref("image.http.accept", "image/png,image/*;q=0.8,*/*;q=0.5");
 #ifdef XP_MACOSX
 pref("image.high_quality_downscaling.enabled", false);
 #else
-pref("image.high_quality_downscaling.enabled", false);
+pref("image.high_quality_downscaling.enabled", true);
 #endif
 
 // The minimum percent downscaling we'll use high-quality downscaling on,
@@ -3621,7 +3642,7 @@ pref("image.mem.decodeondraw", true);
 pref("image.mem.min_discard_timeout_ms", 10000);
 
 // Chunk size for calls to the image decoders
-pref("image.mem.decode_bytes_at_a_time", 4096);
+pref("image.mem.decode_bytes_at_a_time", 16384);
 
 // The longest time we can spend in an iteration of an async decode
 pref("image.mem.max_ms_before_yield", 5);
@@ -3643,6 +3664,7 @@ pref("webgl.prefer-16bpp", false);
 pref("webgl.default-no-alpha", false);
 pref("webgl.force-layers-readback", false);
 pref("webgl.lose-context-on-heap-minimize", false);
+pref("webgl.can-lose-context-in-foreground", true);
 
 // Stagefright prefs
 pref("stagefright.force-enabled", false);
@@ -3665,7 +3687,13 @@ pref("layers.acceleration.disabled", false);
 #endif
 
 // Whether to force acceleration on, ignoring blacklists.
+#ifdef ANDROID
+// bug 838603 -- on Android, accidentally blacklisting OpenGL layers
+// means a startup crash for everyone.
+pref("layers.acceleration.force-enabled", true);
+#else
 pref("layers.acceleration.force-enabled", false);
+#endif
 
 pref("layers.acceleration.draw-fps", false);
 
@@ -3852,3 +3880,12 @@ pref("jsloader.reuseGlobal", false);
 // When we're asked to take a screenshot, don't wait more than 2000ms for the
 // event loop to become idle before actually taking the screenshot.
 pref("dom.browserElement.maxScreenshotDelayMS", 2000);
+
+// If the user puts a finger down on an element and we think the user
+// might be executing a pan gesture, how long do we wait before
+// tentatively deciding the gesture is actually a tap and activating
+// the target element?
+pref("ui.touch_activation.delay_ms", 50);
+
+// Whether we should show the placeholder when the element is focused but empty.
+pref("dom.placeholder.show_on_focus", true);

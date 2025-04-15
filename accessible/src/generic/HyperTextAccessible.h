@@ -17,12 +17,11 @@
 
 namespace mozilla {
 namespace a11y {
+
 struct DOMPoint {
   nsINode* node;
   int32_t idx;
 };
-}
-}
 
 enum EGetTextType { eGetBefore=-1, eGetAt=0, eGetAfter=1 };
 
@@ -51,8 +50,7 @@ public:
 
   // Accessible
   virtual int32_t GetLevelInternal();
-  virtual nsresult GetAttributesInternal(nsIPersistentProperties *aAttributes);
-  virtual nsresult GetNameInternal(nsAString& aName);
+  virtual already_AddRefed<nsIPersistentProperties> NativeAttributes() MOZ_OVERRIDE;
   virtual mozilla::a11y::role NativeRole();
   virtual uint64_t NativeState();
 
@@ -243,6 +241,9 @@ public:
   virtual already_AddRefed<nsIEditor> GetEditor() const;
 
 protected:
+  // Accessible
+  virtual ENameValueFlag NativeName(nsString& aName) MOZ_OVERRIDE;
+
   // HyperTextAccessible
 
   /**
@@ -402,6 +403,9 @@ Accessible::AsHyperText()
   return mFlags & eHyperTextAccessible ?
     static_cast<HyperTextAccessible*>(this) : nullptr;
 }
+
+} // namespace a11y
+} // namespace mozilla
 
 #endif
 

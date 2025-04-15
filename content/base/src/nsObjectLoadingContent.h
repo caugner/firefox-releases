@@ -77,8 +77,10 @@ class nsObjectLoadingContent : public nsImageLoadingContent
       eFallbackSuppressed = nsIObjectLoadingContent::PLUGIN_SUPPRESSED,
       // Blocked by content policy
       eFallbackUserDisabled = nsIObjectLoadingContent::PLUGIN_USER_DISABLED,
-      /// ** All values >= eFallbackClickToPlay and
-      //     <= eFallbackVulnerableNoUpdate are click-to-play types.
+      /// ** All values >= eFallbackClickToPlay are plugin placeholder types
+      ///    that would be replaced by a real plugin if activated (PlayPlugin())
+      /// ** Furthermore, values >= eFallbackClickToPlay and
+      ///    <= eFallbackVulnerableNoUpdate are click-to-play types.
       // The plugin is disabled until the user clicks on it
       eFallbackClickToPlay = nsIObjectLoadingContent::PLUGIN_CLICK_TO_PLAY,
       // The plugin is vulnerable (update available)
@@ -100,20 +102,13 @@ class nsObjectLoadingContent : public nsImageLoadingContent
     NS_DECL_NSIINTERFACEREQUESTOR
     NS_DECL_NSICHANNELEVENTSINK
 
-#ifdef HAVE_CPP_AMBIGUITY_RESOLVING_USING
-    // Fix gcc compile warnings
-    using nsImageLoadingContent::OnStartRequest;
-    using nsImageLoadingContent::OnDataAvailable;
-    using nsImageLoadingContent::OnStopRequest;
-#endif
-
     /**
      * Object state. This is a bitmask of NS_EVENT_STATEs epresenting the
      * current state of the object.
      */
     nsEventStates ObjectState() const;
 
-    ObjectType Type() { return mType; }
+    ObjectType Type() const { return mType; }
 
     void SetIsNetworkCreated(bool aNetworkCreated)
     {
@@ -190,13 +185,13 @@ class nsObjectLoadingContent : public nsImageLoadingContent
                         bool aForceLoad = false);
 
     enum Capabilities {
-      eSupportImages       = PR_BIT(0), // Images are supported (imgILoader)
-      eSupportPlugins      = PR_BIT(1), // Plugins are supported (nsIPluginHost)
-      eSupportDocuments    = PR_BIT(2), // Documents are supported
+      eSupportImages       = 1u << 0, // Images are supported (imgILoader)
+      eSupportPlugins      = 1u << 1, // Plugins are supported (nsIPluginHost)
+      eSupportDocuments    = 1u << 2, // Documents are supported
                                         // (nsIDocumentLoaderFactory)
                                         // This flag always includes SVG
-      eSupportSVG          = PR_BIT(3), // SVG is supported (image/svg+xml)
-      eSupportClassID      = PR_BIT(4), // The classid attribute is supported
+      eSupportSVG          = 1u << 3, // SVG is supported (image/svg+xml)
+      eSupportClassID      = 1u << 4, // The classid attribute is supported
 
       // Allows us to load a plugin if it matches a MIME type or file extension
       // registered to a plugin without opening its specified URI first. Can
@@ -204,7 +199,7 @@ class nsObjectLoadingContent : public nsImageLoadingContent
       // types. Plugins without URIs may instantiate regardless.
       // XXX(johns) this is our legacy behavior on <embed> tags, whereas object
       // will always open a channel and check its MIME if a URI is present.
-      eAllowPluginSkipChannel  = PR_BIT(5)
+      eAllowPluginSkipChannel  = 1u << 5
     };
 
     /**
@@ -241,10 +236,17 @@ class nsObjectLoadingContent : public nsImageLoadingContent
       eParamNoChange           = 0,
       // Parameters that potentially affect the channel changed
       // - mOriginalURI, mOriginalContentType
-      eParamChannelChanged     = PR_BIT(0),
+      eParamChannelChanged     = 1u << 0,
       // Parameters that affect displayed content changed
       // - mURI, mContentType, mType, mBaseURI
-      eParamStateChanged       = PR_BIT(1)
+      eParamStateChanged       = 1u << 1,
+      // The effective content type changed, independant of object type. This
+      // can happen when changing from Loading -> Final type, but doesn't
+      // necessarily happen when changing between object types. E.g., if a PDF
+      // handler was installed between the last load of this object and now, we
+      // might change from eType_Document -> eType_Plugin without changing
+      // ContentType
+      eParamContentTypeChanged = 1u << 2
     };
 
     /**

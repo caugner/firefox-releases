@@ -21,6 +21,7 @@
 #include "mozIStorageFunction.h"
 #include "nsNetUtil.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Telemetry.h"
 
 #include "sampler.h"
 
@@ -226,6 +227,8 @@ nsDOMStoragePersistentDB::EnsureLoadTemporaryTableForStorage(DOMStorageImpl* aSt
   if (!mTempTableLoads.Get(aStorage->GetScopeDBKey(), &timeStamp)) {
     nsresult rv;
 
+    Telemetry::AutoTimer<Telemetry::LOCALDOMSTORAGE_FETCH_DOMAIN_MS> timer;
+
     rv = MaybeCommitInsertTransaction();
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -271,6 +274,32 @@ nsDOMStoragePersistentDB::FlushTemporaryTable(nsCStringHashKey::KeyType aKey,
   {
     nsCOMPtr<mozIStorageStatement> stmt =
       data->mDB->mStatements.GetCachedStatement(
+        "SELECT SUM(modified) * 100.0 / COUNT(*) FROM webappsstore2_temp "
+        "WHERE scope = :scope"
+      );
+    mozStorageStatementScoper scope(stmt);
+
+    nsresult rv;
+    bool exists;
+    double percentFlushed;
+    if (stmt) {
+      rv = stmt->BindUTF8StringByName(NS_LITERAL_CSTRING("scope"), aKey);
+      if (NS_SUCCEEDED(rv)) {
+        rv = stmt->ExecuteStep(&exists);
+        if (NS_SUCCEEDED(rv) && exists) {
+          rv = stmt->GetDouble(0, &percentFlushed);
+          if (NS_SUCCEEDED(rv) && percentFlushed > 0.0) {
+            Telemetry::Accumulate(Telemetry::LOCALDOMSTORAGE_PERCENT_FLUSHED,
+                                  uint32_t(percentFlushed));
+          }
+        }
+      }
+    }
+  }
+
+  {
+    nsCOMPtr<mozIStorageStatement> stmt =
+      data->mDB->mStatements.GetCachedStatement(
         "INSERT OR REPLACE INTO webappsstore2 "
          "SELECT scope, key, value, secure, owner FROM webappsstore2_temp "
          "WHERE scope = :scope AND modified = 1"
@@ -307,8 +336,23 @@ nsDOMStoragePersistentDB::FlushTemporaryTable(nsCStringHashKey::KeyType aKey,
 nsresult
 nsDOMStoragePersistentDB::FlushTemporaryTables(bool force)
 {
-  mozStorageTransaction trans(mConnection, false);
+  nsCOMPtr<mozIStorageStatement> stmt =
+    mStatements.GetCachedStatement(
+      "SELECT COUNT(*) FROM webappsstore2_temp WHERE modified = 1"
+    );
+  mozStorageStatementScoper scope(stmt);
 
+  TimeStamp startTime;
+  bool exists;
+  int32_t dirtyCount;
+  if (stmt &&
+      NS_SUCCEEDED(stmt->ExecuteStep(&exists)) && exists &&
+      NS_SUCCEEDED(stmt->GetInt32(0, &dirtyCount)) && dirtyCount > 0) {
+    // Time the operation if dirty entries will be flushed
+    startTime = TimeStamp::Now();
+  }
+
+  mozStorageTransaction trans(mConnection, false);
   nsresult rv;
 
   FlushTemporaryTableData data;
@@ -325,6 +369,10 @@ nsDOMStoragePersistentDB::FlushTemporaryTables(bool force)
   rv = MaybeCommitInsertTransaction();
   NS_ENSURE_SUCCESS(rv, rv);
 
+  if (!startTime.IsNull()) {
+    Telemetry::AutoTimer<Telemetry::LOCALDOMSTORAGE_TIMER_FLUSH_MS> timer(startTime);
+  }
+
   return NS_OK;
 }
 
@@ -332,6 +380,7 @@ nsresult
 nsDOMStoragePersistentDB::GetAllKeys(DOMStorageImpl* aStorage,
                                      nsTHashtable<nsSessionStorageEntry>* aKeys)
 {
+  Telemetry::AutoTimer<Telemetry::LOCALDOMSTORAGE_GETALLKEYS_MS> timer;
   nsresult rv;
 
   rv = MaybeCommitInsertTransaction();
@@ -384,6 +433,7 @@ nsDOMStoragePersistentDB::GetKeyValue(DOMStorageImpl* aStorage,
                                       nsAString& aValue,
                                       bool* aSecure)
 {
+  Telemetry::AutoTimer<Telemetry::LOCALDOMSTORAGE_GETVALUE_MS> timer;
   SAMPLE_LABEL("nsDOMStoragePersistentDB", "GetKeyValue");
   nsresult rv;
 
@@ -435,6 +485,8 @@ nsDOMStoragePersistentDB::SetKey(DOMStorageImpl* aStorage,
                                  const nsAString& aValue,
                                  bool aSecure)
 {
+  Telemetry::AutoTimer<Telemetry::LOCALDOMSTORAGE_SETVALUE_MS> timer;
+
   nsresult rv;
 
   rv = EnsureLoadTemporaryTableForStorage(aStorage);
@@ -541,6 +593,7 @@ nsresult
 nsDOMStoragePersistentDB::RemoveKey(DOMStorageImpl* aStorage,
                                     const nsAString& aKey)
 {
+  Telemetry::AutoTimer<Telemetry::LOCALDOMSTORAGE_REMOVEKEY_MS> timer;
   nsresult rv;
 
   rv = MaybeCommitInsertTransaction();
@@ -645,6 +698,7 @@ nsDOMStoragePersistentDB::RemoveOwner(const nsACString& aOwner)
 nsresult
 nsDOMStoragePersistentDB::RemoveAll()
 {
+  Telemetry::AutoTimer<Telemetry::LOCALDOMSTORAGE_REMOVEALL_MS> timer;
   nsresult rv;
 
   rv = MaybeCommitInsertTransaction();
@@ -725,6 +779,8 @@ nsDOMStoragePersistentDB::GetUsageInternal(const nsACString& aQuotaDBKey,
     *aUsage = mCachedUsage;
     return NS_OK;
   }
+
+  Telemetry::AutoTimer<Telemetry::LOCALDOMSTORAGE_FETCH_QUOTA_USE_MS> timer;
 
   nsresult rv;
 

@@ -48,6 +48,7 @@
 #include "nsCOMPtr.h"
 #include "nsChromeRegistryChrome.h"
 #include "nsConsoleMessage.h"
+#include "nsConsoleService.h"
 #include "nsDebugImpl.h"
 #include "nsDirectoryServiceDefs.h"
 #include "nsDOMFile.h"
@@ -56,7 +57,6 @@
 #include "nsHashPropertyBag.h"
 #include "nsIAlertsService.h"
 #include "nsIClipboard.h"
-#include "nsIConsoleService.h"
 #include "nsIDOMApplicationRegistry.h"
 #include "nsIDOMGeoGeolocation.h"
 #include "nsIDOMWindow.h"
@@ -79,6 +79,7 @@
 #include "StructuredCloneUtils.h"
 #include "TabParent.h"
 #include "URIUtils.h"
+#include "nsGeolocation.h"
 
 #ifdef ANDROID
 # include "gfxAndroidPlatform.h"
@@ -114,6 +115,7 @@
 static NS_DEFINE_CID(kCClipboardCID, NS_CLIPBOARD_CID);
 static const char* sClipboardTextFlavors[] = { kUnicodeMime };
 
+using base::ChildPrivileges;
 using base::KillProcess;
 using namespace mozilla::dom::bluetooth;
 using namespace mozilla::dom::devicestorage;
@@ -164,6 +166,10 @@ MemoryReportRequestParent::~MemoryReportRequestParent()
 nsDataHashtable<nsStringHashKey, ContentParent*>* ContentParent::gAppContentParents;
 nsTArray<ContentParent*>* ContentParent::gNonAppContentParents;
 nsTArray<ContentParent*>* ContentParent::gPrivateContent;
+
+// This is true when subprocess launching is enabled.  This is the
+// case between StartUp() and ShutDown() or JoinAllSubprocesses().
+static bool sCanLaunchSubprocesses;
 
 // The first content child has ID 1, so the chrome process can have ID 0.
 static uint64_t gContentChildID = 1;
@@ -258,6 +264,8 @@ ContentParent::StartUp()
         // the main process goes idle before we preallocate a process
         MessageLoop::current()->PostIdleTask(FROM_HERE, NewRunnableFunction(FirstIdle));
     }
+
+    sCanLaunchSubprocesses = true;
 }
 
 /*static*/ void
@@ -265,6 +273,55 @@ ContentParent::ShutDown()
 {
     // No-op for now.  We rely on normal process shutdown and
     // ClearOnShutdown() to clean up our state.
+    sCanLaunchSubprocesses = false;
+}
+
+/*static*/ void
+ContentParent::JoinProcessesIOThread(const nsTArray<ContentParent*>* aProcesses,
+                                     Monitor* aMonitor, bool* aDone)
+{
+    const nsTArray<ContentParent*>& processes = *aProcesses;
+    for (uint32_t i = 0; i < processes.Length(); ++i) {
+        if (GeckoChildProcessHost* process = processes[i]->mSubprocess) {
+            process->Join();
+        }
+    }
+    {
+        MonitorAutoLock lock(*aMonitor);
+        *aDone = true;
+        lock.Notify();
+    }
+    // Don't touch any arguments to this function from now on.
+}
+
+/*static*/ void
+ContentParent::JoinAllSubprocesses()
+{
+    MOZ_ASSERT(NS_IsMainThread());
+
+    nsAutoTArray<ContentParent*, 8> processes;
+    GetAll(processes);
+    if (processes.IsEmpty()) {
+        printf_stderr("There are no live subprocesses.");
+        return;
+    }
+
+    printf_stderr("Subprocesses are still alive.  Doing emergency join.\n");
+
+    bool done = false;
+    Monitor monitor("mozilla.dom.ContentParent.JoinAllSubprocesses");
+    XRE_GetIOMessageLoop()->PostTask(FROM_HERE,
+                                     NewRunnableFunction(
+                                         &ContentParent::JoinProcessesIOThread,
+                                         &processes, &monitor, &done));
+    {
+        MonitorAutoLock lock(monitor);
+        while (!done) {
+            lock.Wait();
+        }
+    }
+
+    sCanLaunchSubprocesses = false;
 }
 
 /*static*/ ContentParent*
@@ -292,33 +349,44 @@ ContentParent::GetNewOrUsed(bool aForBrowserElement)
     return p;
 }
 
-static bool
-AppNeedsInheritedOSPrivileges(mozIApplication* aApp)
+namespace {
+struct SpecialPermission {
+    const char* perm;           // an app permission
+    ChildPrivileges privs;      // the OS privilege it requires
+};
+}
+
+static ChildPrivileges
+PrivilegesForApp(mozIApplication* aApp)
 {
-    const char* const needInheritPermissions[] = {
+    const SpecialPermission specialPermissions[] = {
         // FIXME/bug 785592: implement a CameraBridge so we don't have
         // to hack around with OS permissions
-        "camera",
+        { "camera", base::PRIVILEGES_INHERIT },
         // FIXME/bug 793034: change our video architecture so that we
         // can stream video from remote processes
-        "deprecated-hwvideo",
+        { "deprecated-hwvideo", base::PRIVILEGES_VIDEO }
     };
-    for (size_t i = 0; i < ArrayLength(needInheritPermissions); ++i) {
-        const char* const permission = needInheritPermissions[i];
-        bool needsInherit = false;
-        if (NS_FAILED(aApp->HasPermission(permission, &needsInherit))) {
+    for (size_t i = 0; i < ArrayLength(specialPermissions); ++i) {
+        const char* const permission = specialPermissions[i].perm;
+        bool hasPermission = false;
+        if (NS_FAILED(aApp->HasPermission(permission, &hasPermission))) {
             NS_WARNING("Unable to check permissions.  Breakage may follow.");
-            return false;
-        } else if (needsInherit) {
-            return true;
+            break;
+        } else if (hasPermission) {
+            return specialPermissions[i].privs;
         }
     }
-    return false;
+    return base::PRIVILEGES_DEFAULT;
 }
 
 /*static*/ TabParent*
 ContentParent::CreateBrowserOrApp(const TabContext& aContext)
 {
+    if (!sCanLaunchSubprocesses) {
+        return nullptr;
+    }
+
     if (aContext.IsBrowserElement() || !aContext.HasOwnApp()) {
         if (ContentParent* cp = GetNewOrUsed(aContext.IsBrowserElement())) {
             nsRefPtr<TabParent> tp(new TabParent(aContext));
@@ -351,9 +419,10 @@ ContentParent::CreateBrowserOrApp(const TabContext& aContext)
 
     nsRefPtr<ContentParent> p = gAppContentParents->Get(manifestURL);
     if (!p) {
-        if (AppNeedsInheritedOSPrivileges(ownApp)) {
+        ChildPrivileges privs = PrivilegesForApp(ownApp);
+        if (privs != base::PRIVILEGES_DEFAULT) {
             p = new ContentParent(manifestURL, /* isBrowserElement = */ false,
-                                  base::PRIVILEGES_INHERIT);
+                                  privs);
             p->Init();
         } else {
             p = MaybeTakePreallocatedAppProcess();
@@ -618,6 +687,8 @@ ContentParent::ActorDestroy(ActorDestroyReason why)
 
     RecvRemoveGeolocationListener();
 
+    mConsoleService = nullptr;
+
     nsCOMPtr<nsIThreadInternal>
         threadInt(do_QueryInterface(NS_GetCurrentThread()));
     if (threadInt)
@@ -637,14 +708,20 @@ ContentParent::ActorDestroy(ActorDestroyReason why)
             props->SetPropertyAsBool(NS_LITERAL_STRING("abnormal"), true);
 
 #ifdef MOZ_CRASHREPORTER
-            MOZ_ASSERT(ManagedPCrashReporterParent().Length() > 0);
-            CrashReporterParent* crashReporter =
+            // There's a window in which child processes can crash
+            // after IPC is established, but before a crash reporter
+            // is created.
+            if (ManagedPCrashReporterParent().Length() > 0) {
+                CrashReporterParent* crashReporter =
                     static_cast<CrashReporterParent*>(ManagedPCrashReporterParent()[0]);
 
-            crashReporter->GenerateCrashReport(this, NULL);
- 
-            nsAutoString dumpID(crashReporter->ChildDumpID());
-            props->SetPropertyAsAString(NS_LITERAL_STRING("dumpID"), dumpID);
+                crashReporter->AnnotateCrashReport(NS_LITERAL_CSTRING("URL"),
+                                                   NS_ConvertUTF16toUTF8(mAppManifestURL));
+                crashReporter->GenerateCrashReport(this, NULL);
+
+                nsAutoString dumpID(crashReporter->ChildDumpID());
+                props->SetPropertyAsAString(NS_LITERAL_STRING("dumpID"), dumpID);
+            }
 #endif
         }
         obs->NotifyObservers((nsIPropertyBag2*) props, "ipc:content-shutdown", nullptr);
@@ -706,7 +783,7 @@ ContentParent::ContentParent(const nsAString& aAppManifestURL,
                              ChildOSPrivileges aOSPrivileges)
     : mSubprocess(nullptr)
     , mOSPrivileges(aOSPrivileges)
-    , mChildID(-1)
+    , mChildID(CONTENT_PARENT_UNKNOWN_CHILD_ID)
     , mGeolocationWatchID(-1)
     , mRunToCompletionDepth(0)
     , mShouldCallUnblockChild(false)
@@ -1034,7 +1111,7 @@ ContentParent::RecvAudioChannelRegisterType(const AudioChannelType& aType)
     nsRefPtr<AudioChannelService> service =
         AudioChannelService::GetAudioChannelService();
     if (service) {
-        service->RegisterType(aType);
+        service->RegisterType(aType, mChildID);
     }
     return true;
 }
@@ -1045,7 +1122,7 @@ ContentParent::RecvAudioChannelUnregisterType(const AudioChannelType& aType)
     nsRefPtr<AudioChannelService> service =
         AudioChannelService::GetAudioChannelService();
     if (service) {
-        service->UnregisterType(aType);
+        service->UnregisterType(aType, mChildID);
     }
     return true;
 }
@@ -1069,7 +1146,8 @@ ContentParent::Observe(nsISupports* aSubject,
         return NS_OK;
 
     // listening for memory pressure event
-    if (!strcmp(aTopic, "memory-pressure")) {
+    if (!strcmp(aTopic, "memory-pressure") &&
+        !NS_LITERAL_STRING("low-memory-no-forward").Equals(aData)) {
         unused << SendFlushMemory(nsDependentString(aData));
     }
     // listening for remotePrefs...
@@ -1488,11 +1566,10 @@ ContentParent::DeallocPTestShell(PTestShellParent* shell)
  
 PAudioParent*
 ContentParent::AllocPAudio(const int32_t& numChannels,
-                           const int32_t& rate,
-                           const int32_t& format)
+                           const int32_t& rate)
 {
 #if defined(MOZ_SYDNEYAUDIO)
-    AudioParent *parent = new AudioParent(numChannels, rate, format);
+    AudioParent *parent = new AudioParent(numChannels, rate);
     NS_ADDREF(parent);
     return parent;
 #else
@@ -1825,6 +1902,9 @@ ContentParent::RecvShowAlertNotification(const nsString& aImageUrl, const nsStri
                                          const nsString& aText, const bool& aTextClickable,
                                          const nsString& aCookie, const nsString& aName)
 {
+    if (!AssertAppProcessPermission(this, "desktop-notification")) {
+        return false;
+    }
     nsCOMPtr<nsIAlertsService> sysAlerts(do_GetService(NS_ALERTSERVICE_CONTRACTID));
     if (sysAlerts) {
         sysAlerts->ShowAlertNotification(aImageUrl, aTitle, aText, aTextClickable,
@@ -1920,6 +2000,15 @@ ContentParent::RecvRemoveGeolocationListener()
   return true;
 }
 
+bool
+ContentParent::RecvSetGeolocationHigherAccuracy(const bool& aEnable)
+{
+    nsRefPtr<nsGeolocationService> geoSvc =
+        nsGeolocationService::GetGeolocationService();
+    geoSvc->SetHigherAccuracy(aEnable);
+    return true;
+}
+
 NS_IMETHODIMP
 ContentParent::HandleEvent(nsIDOMGeoPosition* postion)
 {
@@ -1927,15 +2016,33 @@ ContentParent::HandleEvent(nsIDOMGeoPosition* postion)
   return NS_OK;
 }
 
+nsConsoleService *
+ContentParent::GetConsoleService()
+{
+    if (mConsoleService) {
+        return mConsoleService.get();
+    }
+
+    // Get the ConsoleService by CID rather than ContractID, so that we
+    // can cast the returned pointer to an nsConsoleService (rather than
+    // just an nsIConsoleService). This allows us to call the non-idl function
+    // nsConsoleService::LogMessageWithMode.
+    NS_DEFINE_CID(consoleServiceCID, NS_CONSOLESERVICE_CID);
+    nsCOMPtr<nsConsoleService>  consoleService(do_GetService(consoleServiceCID));
+    mConsoleService = consoleService;
+    return mConsoleService.get();
+}
+
 bool
 ContentParent::RecvConsoleMessage(const nsString& aMessage)
 {
-  nsCOMPtr<nsIConsoleService> svc(do_GetService(NS_CONSOLESERVICE_CONTRACTID));
-  if (!svc)
+  nsRefPtr<nsConsoleService> consoleService = GetConsoleService();
+  if (!consoleService) {
     return true;
+  }
   
   nsRefPtr<nsConsoleMessage> msg(new nsConsoleMessage(aMessage.get()));
-  svc->LogMessage(msg);
+  consoleService->LogMessageWithMode(msg, nsConsoleService::SuppressLog);
   return true;
 }
 
@@ -1948,9 +2055,10 @@ ContentParent::RecvScriptError(const nsString& aMessage,
                                       const uint32_t& aFlags,
                                       const nsCString& aCategory)
 {
-  nsCOMPtr<nsIConsoleService> svc(do_GetService(NS_CONSOLESERVICE_CONTRACTID));
-  if (!svc)
-      return true;
+  nsRefPtr<nsConsoleService> consoleService = GetConsoleService();
+  if (!consoleService) {
+    return true;
+  }
 
   nsCOMPtr<nsIScriptError> msg(do_CreateInstance(NS_SCRIPTERROR_CONTRACTID));
   nsresult rv = msg->Init(aMessage, aSourceName, aSourceLine,
@@ -1958,7 +2066,7 @@ ContentParent::RecvScriptError(const nsString& aMessage,
   if (NS_FAILED(rv))
     return true;
 
-  svc->LogMessage(msg);
+  consoleService->LogMessageWithMode(msg, nsConsoleService::SuppressLog);
   return true;
 }
 

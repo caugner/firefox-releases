@@ -298,7 +298,6 @@ ClearCache(tmp->mAccessibleCache);
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(XULTreeGridRowAccessible)
-NS_INTERFACE_MAP_STATIC_AMBIGUOUS(XULTreeGridRowAccessible)
 NS_INTERFACE_MAP_END_INHERITING(XULTreeItemAccessibleBase)
 
 NS_IMPL_ADDREF_INHERITED(XULTreeGridRowAccessible,
@@ -479,14 +478,14 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(XULTreeGridCellAccessible)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(XULTreeGridCellAccessible,
                                                   LeafAccessible)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mTree)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mColumn)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTree)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mColumn)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(XULTreeGridCellAccessible,
                                                 LeafAccessible)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mTree)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mColumn)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mTree)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mColumn)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(XULTreeGridCellAccessible)
@@ -727,31 +726,29 @@ XULTreeGridCellAccessible::Init()
 ////////////////////////////////////////////////////////////////////////////////
 // XULTreeGridCellAccessible: Accessible public implementation
 
-nsresult
-XULTreeGridCellAccessible::GetAttributesInternal(nsIPersistentProperties* aAttributes)
+already_AddRefed<nsIPersistentProperties>
+XULTreeGridCellAccessible::NativeAttributes()
 {
-  NS_ENSURE_ARG_POINTER(aAttributes);
-
-  if (IsDefunct())
-    return NS_ERROR_FAILURE;
+  nsCOMPtr<nsIPersistentProperties> attributes =
+    do_CreateInstance(NS_PERSISTENTPROPERTIES_CONTRACTID);
 
   // "table-cell-index" attribute
   TableAccessible* table = Table();
   if (!table)
-    return NS_ERROR_FAILURE;
+    return attributes.forget();
 
   nsAutoString stringIdx;
   stringIdx.AppendInt(table->CellIndexAt(mRow, ColIdx()));
-  nsAccUtils::SetAccAttr(aAttributes, nsGkAtoms::tableCellIndex, stringIdx);
+  nsAccUtils::SetAccAttr(attributes, nsGkAtoms::tableCellIndex, stringIdx);
 
   // "cycles" attribute
   bool isCycler = false;
   nsresult rv = mColumn->GetCycler(&isCycler);
   if (NS_SUCCEEDED(rv) && isCycler)
-    nsAccUtils::SetAccAttr(aAttributes, nsGkAtoms::cycles,
+    nsAccUtils::SetAccAttr(attributes, nsGkAtoms::cycles,
                            NS_LITERAL_STRING("true"));
 
-  return NS_OK;
+  return attributes.forget();
 }
 
 role

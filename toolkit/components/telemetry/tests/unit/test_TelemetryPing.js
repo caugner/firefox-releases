@@ -180,6 +180,7 @@ function checkPayload(request, reason, successfulPings) {
   do_check_true(payload.simpleMeasurements.uptime >= 0);
   do_check_true(payload.simpleMeasurements.startupInterrupted === 1);
   do_check_eq(payload.simpleMeasurements.shutdownDuration, SHUTDOWN_TIME);
+  do_check_eq(payload.simpleMeasurements.savedPings, 1);
 
   var isWindows = ("@mozilla.org/windows-registry-key;1" in Components.classes);
   if (isWindows) {
@@ -208,7 +209,7 @@ function checkPayload(request, reason, successfulPings) {
     bucket_count: 3,
     histogram_type: 3,
     values: {0:1, 1:0},
-    sum: 1
+    sum: 0
   };
   let flag = payload.histograms[TELEMETRY_TEST_FLAG];
   do_check_eq(uneval(flag), uneval(expected_flag));

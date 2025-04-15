@@ -23,7 +23,7 @@
 
 namespace mozilla {
 
-MOZ_MTLOG_MODULE("mtransport");
+MOZ_MTLOG_MODULE("mtransport")
 
 nsresult TransportLayerPrsock::InitInternal() {
   // Get the transport service as a transport service
@@ -112,5 +112,5 @@ void TransportLayerPrsock::OnSocketReady(PRFileDesc *fd, int16_t outflags) {
   }
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS0(TransportLayerPrsock::SocketHandler);
+NS_IMPL_THREADSAFE_ISUPPORTS0(TransportLayerPrsock::SocketHandler)
 }  // close namespace

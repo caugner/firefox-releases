@@ -46,13 +46,6 @@ ViewportFrame::Init(nsIContent*      aContent,
   return rv;
 }
 
-void
-ViewportFrame::DestroyFrom(nsIFrame* aDestructRoot)
-{
-  DestroyAbsoluteFrames(aDestructRoot);
-  nsContainerFrame::DestroyFrom(aDestructRoot);
-}
-
 NS_IMETHODIMP
 ViewportFrame::SetInitialChildList(ChildListID     aListID,
                                    nsFrameList&    aChildList)
@@ -247,7 +240,10 @@ ViewportFrame::Reflow(nsPresContext*           aPresContext,
       reflowState.SetComputedHeight(aDesiredSize.height);
     }
 
-    nsPoint offset = AdjustReflowStateForScrollbars(&reflowState);
+#ifdef DEBUG
+    nsPoint offset =
+#endif
+      AdjustReflowStateForScrollbars(&reflowState);
 
     NS_ASSERTION(GetAbsoluteContainingBlock()->GetChildList().IsEmpty() ||
                  (offset.x == 0 && offset.y == 0),

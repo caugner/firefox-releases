@@ -38,6 +38,7 @@
 #include "nsDisplayList.h"
 #include "nsIScrollableFrame.h"
 #include "nsCSSProps.h"
+#include "mozilla/Likely.h"
 
 using namespace mozilla;
 using namespace mozilla::layout;
@@ -177,9 +178,6 @@ nsTableFrame::Init(nsIContent*      aContent,
   const nsStyleTableBorder* tableStyle = GetStyleTableBorder();
   bool borderCollapse = (NS_STYLE_BORDER_COLLAPSE == tableStyle->mBorderCollapse);
   SetBorderCollapse(borderCollapse);
-
-  // Transforms need to affect the outer frame, not the inner frame (bug 722777)
-  mState &= ~NS_FRAME_MAY_BE_TRANSFORMED;
 
   // Create the cell map if this frame is the first-in-flow.
   if (!aPrevInFlow) {
@@ -1406,7 +1404,7 @@ nsTableFrame::ProcessRowInserted(nscoord aNewHeight)
 nsTableFrame::MarkIntrinsicWidthsDirty()
 {
   nsITableLayoutStrategy* tls = LayoutStrategy();
-  if (NS_UNLIKELY(!tls)) {
+  if (MOZ_UNLIKELY(!tls)) {
     // This is a FrameNeedsReflow() from nsBlockFrame::RemoveFrame()
     // walking up the ancestor chain in a table next-in-flow.  In this case
     // our original first-in-flow (which owns the TableLayoutStrategy) has
@@ -2191,7 +2189,7 @@ nsTableFrame::HomogenousInsertFrames(ChildListID     aListID,
         pseudoFrame = pseudoFrame->GetFirstPrincipalChild();
       }
       nsCOMPtr<nsIContent> container = content->GetParent();
-      if (NS_LIKELY(container)) { // XXX need this null-check, see bug 411823.
+      if (MOZ_LIKELY(container)) { // XXX need this null-check, see bug 411823.
         int32_t newIndex = container->IndexOf(content);
         nsIFrame* kidFrame;
         bool isColGroup = (NS_STYLE_DISPLAY_TABLE_COLUMN_GROUP ==
@@ -2796,10 +2794,9 @@ nsTableFrame::ReflowChildren(nsTableReflowState& aReflowState,
 
       // If this isn't the first row group, and the previous row group has a
       // nonzero YMost, then we can't be at the top of the page.
-      // We ignore the head row group in this check, because a head row group
-      // may be automatically added at the top of *every* page.  This prevents
+      // We ignore a repeated head row group in this check to avoid causing
       // infinite loops in some circumstances - see bug 344883.
-      if (childX > (thead ? 1 : 0) &&
+      if (childX > ((thead && IsRepeatedFrame(thead)) ? 1 : 0) &&
           (rowGroups[childX - 1]->GetRect().YMost() > 0)) {
         kidReflowState.mFlags.mIsTopOfPage = false;
       }
@@ -2826,11 +2823,22 @@ nsTableFrame::ReflowChildren(nsTableReflowState& aReflowState,
           childX = rowGroups.Length();
         }
       }
+      if (isPaginated && !NS_FRAME_IS_FULLY_COMPLETE(aStatus) &&
+          ShouldAvoidBreakInside(aReflowState.reflowState)) {
+        aStatus = NS_INLINE_LINE_BREAK_BEFORE();
+        break;
+      }
       // see if the rowgroup did not fit on this page might be pushed on
       // the next page
-      if (NS_FRAME_IS_COMPLETE(aStatus) && isPaginated &&
-          (NS_UNCONSTRAINEDSIZE != kidReflowState.availableHeight) &&
-          kidReflowState.availableHeight < desiredSize.height) {
+      if (isPaginated &&
+          (NS_INLINE_IS_BREAK_BEFORE(aStatus) ||
+           (NS_FRAME_IS_COMPLETE(aStatus) &&
+            (NS_UNCONSTRAINEDSIZE != kidReflowState.availableHeight) &&
+            kidReflowState.availableHeight < desiredSize.height))) {
+        if (ShouldAvoidBreakInside(aReflowState.reflowState)) {
+          aStatus = NS_INLINE_LINE_BREAK_BEFORE();
+          break;
+        }
         // if we are on top of the page place with dataloss
         if (kidReflowState.mFlags.mIsTopOfPage) {
           if (childX+1 < rowGroups.Length()) {

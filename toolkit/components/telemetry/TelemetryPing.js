@@ -52,7 +52,7 @@ const MEM_HISTOGRAMS = {
   "js-compartments/system": "MEMORY_JS_COMPARTMENTS_SYSTEM",
   "js-compartments/user": "MEMORY_JS_COMPARTMENTS_USER",
   "explicit": "MEMORY_EXPLICIT",
-  "resident": "MEMORY_RESIDENT",
+  "resident-fast": "MEMORY_RESIDENT",
   "storage-sqlite": "MEMORY_STORAGE_SQLITE",
   "images-content-used-uncompressed":
     "MEMORY_IMAGES_CONTENT_USED_UNCOMPRESSED",
@@ -337,7 +337,8 @@ TelemetryPing.prototype = {
 
     // sysinfo fields are not always available, get what we can.
     let sysInfo = Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
-    let fields = ["cpucount", "memsize", "arch", "version", "device", "manufacturer", "hardware",
+    let fields = ["cpucount", "memsize", "arch", "version", "kernel_version",
+                  "device", "manufacturer", "hardware",
                   "hasMMX", "hasSSE", "hasSSE2", "hasSSE3",
                   "hasSSSE3", "hasSSE4A", "hasSSE4_1", "hasSSE4_2",
                   "hasEDSP", "hasARMv6", "hasARMv7", "hasNEON"];
@@ -508,6 +509,15 @@ TelemetryPing.prototype = {
     
     for (let ioCounter in this._startupIO)
       payloadObj.simpleMeasurements[ioCounter] = this._startupIO[ioCounter];
+
+    let hasPingBeenSent = false;
+    try {
+      hasPingBeenSent = Telemetry.getHistogramById("TELEMETRY_SUCCESS").snapshot().sum > 0;
+    } catch(e) {
+    }
+    if (reason != "saved-session" || hasPingBeenSent) {
+      payloadObj.simpleMeasurements.savedPings = this._pingsLoaded;
+    }
 
     let slug = (isTestPing ? reason : this._uuid);
     payloadObj.info = this.getMetadata(reason);
@@ -982,8 +992,11 @@ TelemetryPing.prototype = {
       }).bind(this), Ci.nsIThread.DISPATCH_NORMAL);
       break;
     case "get-payload":
+      // This handler returns the current Telemetry payload to the caller.
+      // We only gather startup info once.
+      if (Object.keys(this._slowSQLStartup).length == 0)
+        this.gatherStartupInformation();
       this.gatherMemory();
-      this.gatherStartupInformation();
       let data = this.getCurrentSessionPayloadAndSlug("gather-payload");
 
       aSubject.QueryInterface(Ci.nsISupportsString).data = data.payload;

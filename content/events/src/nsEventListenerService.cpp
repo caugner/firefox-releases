@@ -83,7 +83,7 @@ nsEventListenerInfo::GetJSVal(JSContext* aCx, mozilla::Maybe<JSAutoCompartment>&
 
   nsCOMPtr<nsIJSEventListener> jsl = do_QueryInterface(mListener);
   if (jsl) {
-    JSObject *handler = jsl->GetHandler();
+    JSObject *handler = jsl->GetHandler().Ptr()->Callable();
     if (handler) {
       aAc.construct(aCx, handler);
       *aJSVal = OBJECT_TO_JSVAL(handler);
@@ -276,6 +276,35 @@ nsEventListenerService::RemoveSystemEventListener(nsIDOMEventTarget *aTarget,
     manager->RemoveEventListenerByType(aListener, aType, flags);
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsEventListenerService::AddListenerForAllEvents(nsIDOMEventTarget* aTarget,
+                                                nsIDOMEventListener* aListener,
+                                                bool aUseCapture,
+                                                bool aWantsUntrusted,
+                                                bool aSystemEventGroup)
+{
+  NS_ENSURE_STATE(aTarget && aListener);
+  nsEventListenerManager* manager = aTarget->GetListenerManager(true);
+  NS_ENSURE_STATE(manager);
+  manager->AddListenerForAllEvents(aListener, aUseCapture, aWantsUntrusted,
+                               aSystemEventGroup);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsEventListenerService::RemoveListenerForAllEvents(nsIDOMEventTarget* aTarget,
+                                                   nsIDOMEventListener* aListener,
+                                                   bool aUseCapture,
+                                                   bool aSystemEventGroup)
+{
+  NS_ENSURE_STATE(aTarget && aListener);
+  nsEventListenerManager* manager = aTarget->GetListenerManager(false);
+  if (manager) {
+    manager->RemoveListenerForAllEvents(aListener, aUseCapture, aSystemEventGroup);
+  }
   return NS_OK;
 }
 

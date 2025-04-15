@@ -58,6 +58,7 @@ class CompositorParent : public PCompositorParent,
                          public ShadowLayersManager
 {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(CompositorParent)
+
 public:
   CompositorParent(nsIWidget* aWidget,
                    bool aRenderToEGLSurface = false,
@@ -151,6 +152,12 @@ public:
   static void StartUpWithExistingThread(MessageLoop* aMsgLoop,
                                         PlatformThreadId aThreadID);
 
+  /**
+   * Release disposable memory. This will clear the tile store (stale tiles).
+   */
+  bool
+  RecvMemoryPressure();
+
 protected:
   virtual PLayersParent* AllocPLayers(const LayersBackend& aBackendHint,
                                       const uint64_t& aId,
@@ -170,6 +177,7 @@ private:
   void PauseComposition();
   void ResumeComposition();
   void ResumeCompositionAndResize(int width, int height);
+  void ForceComposition();
 
   // Sample transforms for layer trees.  Return true to request
   // another animation frame.
@@ -280,6 +288,9 @@ private:
   mozilla::Monitor mResumeCompositionMonitor;
 
   uint64_t mCompositorID;
+
+  bool mOverrideComposeReadiness;
+  CancelableTask* mForceCompositionTask;
 
   DISALLOW_EVIL_CONSTRUCTORS(CompositorParent);
 };

@@ -585,7 +585,7 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(WebSocket)
   bool isBlack = tmp->IsBlack();
   if (isBlack|| tmp->mKeepingAlive) {
     if (tmp->mListenerManager) {
-      tmp->mListenerManager->UnmarkGrayJSListeners();
+      tmp->mListenerManager->MarkForCC();
     }
     if (!isBlack && tmp->PreservingWrapper()) {
       xpc_UnmarkGrayObject(tmp->GetWrapperPreserveColor());
@@ -608,17 +608,17 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(WebSocket,
                                                   nsDOMEventTargetHelper)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mPrincipal)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mURI)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mChannel)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPrincipal)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mURI)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChannel)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(WebSocket,
                                                 nsDOMEventTargetHelper)
   tmp->Disconnect();
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mPrincipal)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mURI)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mChannel)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mPrincipal)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mURI)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mChannel)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(WebSocket)
@@ -631,11 +631,6 @@ NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
 
 NS_IMPL_ADDREF_INHERITED(WebSocket, nsDOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(WebSocket, nsDOMEventTargetHelper)
-
-NS_IMPL_EVENT_HANDLER(WebSocket, open)
-NS_IMPL_EVENT_HANDLER(WebSocket, error)
-NS_IMPL_EVENT_HANDLER(WebSocket, message)
-NS_IMPL_EVENT_HANDLER(WebSocket, close)
 
 void
 WebSocket::DisconnectFromOwner()
@@ -1081,10 +1076,10 @@ WebSocket::UpdateMustKeepAlive()
     {
       case WebSocket::CONNECTING:
       {
-        if (mListenerManager->HasListenersFor(NS_LITERAL_STRING("open")) ||
-            mListenerManager->HasListenersFor(NS_LITERAL_STRING("message")) ||
-            mListenerManager->HasListenersFor(NS_LITERAL_STRING("error")) ||
-            mListenerManager->HasListenersFor(NS_LITERAL_STRING("close"))) {
+        if (mListenerManager->HasListenersFor(nsGkAtoms::onopen) ||
+            mListenerManager->HasListenersFor(nsGkAtoms::onmessage) ||
+            mListenerManager->HasListenersFor(nsGkAtoms::onerror) ||
+            mListenerManager->HasListenersFor(nsGkAtoms::onclose)) {
           shouldKeepAlive = true;
         }
       }
@@ -1093,9 +1088,9 @@ WebSocket::UpdateMustKeepAlive()
       case WebSocket::OPEN:
       case WebSocket::CLOSING:
       {
-        if (mListenerManager->HasListenersFor(NS_LITERAL_STRING("message")) ||
-            mListenerManager->HasListenersFor(NS_LITERAL_STRING("error")) ||
-            mListenerManager->HasListenersFor(NS_LITERAL_STRING("close")) ||
+        if (mListenerManager->HasListenersFor(nsGkAtoms::onmessage) ||
+            mListenerManager->HasListenersFor(nsGkAtoms::onerror) ||
+            mListenerManager->HasListenersFor(nsGkAtoms::onclose) ||
             mOutgoingBufferedAmount != 0) {
           shouldKeepAlive = true;
         }

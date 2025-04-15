@@ -290,6 +290,7 @@ public:
 
     JSObject *sample = NULL;
     JSObject *frames = NULL;
+    JSObject *marker = NULL;
 
     int readPos = mReadPos;
     while (readPos != mLastFlushPos) {
@@ -315,6 +316,19 @@ public:
           frames = b.CreateArray();
           b.DefineProperty(sample, "frames", frames);
           b.ArrayPush(samples, sample);
+          // Created lazily
+          marker = NULL;
+          break;
+        case 'm':
+          {
+            if (sample) {
+              if (!marker) {
+                marker = b.CreateArray();
+                b.DefineProperty(sample, "marker", marker);
+              }
+              b.ArrayPush(marker, tagStringData);
+            }
+          }
           break;
         case 'r':
           {
@@ -820,7 +834,7 @@ void TableTicker::doBacktrace(ThreadProfile &aProfile, TickSample* aSample)
   // handle it correctly.
   unw_tdep_context_t *unw_ctx = reinterpret_cast<unw_tdep_context_t*> (&uc);
   mcontext_t& mcontext = reinterpret_cast<ucontext_t*> (aSample->context)->uc_mcontext;
-#define REPLACE_REG(num) unw_ctx->regs[num] = mcontext.gregs[R##num]
+#define REPLACE_REG(num) unw_ctx->regs[num] = (&mcontext.arm_r0)[num]
   REPLACE_REG(0);
   REPLACE_REG(1);
   REPLACE_REG(2);
@@ -1010,9 +1024,13 @@ void mozilla_sampler_init()
     return;
   }
 
-  const char* features = "js";
+  const char* features[] = {"js"
+#if defined(XP_WIN) || defined(XP_MACOSX)
+                         , "stackwalk"
+#endif
+                         };
   mozilla_sampler_start(PROFILE_DEFAULT_ENTRY, PROFILE_DEFAULT_INTERVAL,
-                        &features, 1);
+                        features, sizeof(features)/sizeof(const char*));
 }
 
 void mozilla_sampler_deinit()

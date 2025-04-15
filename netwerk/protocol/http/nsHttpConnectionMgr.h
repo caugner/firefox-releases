@@ -105,8 +105,7 @@ public:
     // connection manager, nor is the submitter obligated to actually submit a
     // real transaction for this connectionInfo.
     nsresult SpeculativeConnect(nsHttpConnectionInfo *,
-                                nsIInterfaceRequestor *,
-                                nsIEventTarget *);
+                                nsIInterfaceRequestor *);
 
     // called when a connection is done processing a transaction.  if the 
     // connection can be reused then it will be added to the idle list, else
@@ -481,6 +480,7 @@ private:
     nsresult ProcessNewTransaction(nsHttpTransaction *);
     nsresult EnsureSocketThreadTarget();
     void     ClosePersistentConnections(nsConnectionEntry *ent);
+    void     ReportProxyTelemetry(nsConnectionEntry *ent);
     nsresult CreateTransport(nsConnectionEntry *, nsAHttpTransaction *,
                              uint8_t, bool);
     void     AddActiveConn(nsHttpConnection *, nsConnectionEntry *);

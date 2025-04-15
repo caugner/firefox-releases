@@ -6,7 +6,6 @@
 #define _PEER_CONNECTION_IMPL_H_
 
 #include <string>
-#include <iostream>
 #include <vector>
 #include <map>
 #include <cmath>
@@ -42,6 +41,22 @@ namespace mozilla {
 using namespace mozilla;
 
 namespace sipcc {
+
+struct ConstraintInfo {
+  std::string  value;
+  bool         mandatory;
+};
+typedef std::map<std::string, ConstraintInfo> constraints_map;
+
+class MediaConstraints {
+public:
+  void setBooleanConstraint(const std::string& constraint, bool enabled, bool mandatory);
+
+  void buildArray(cc_media_constraints_t** constraintarray);
+
+private:
+  constraints_map  mConstraints;
+};
 
 class PeerConnectionWrapper;
 
@@ -132,6 +147,15 @@ public:
   // Create a fake media stream
   nsresult CreateFakeMediaStream(uint32_t hint, nsIDOMMediaStream** retval);
 
+  nsPIDOMWindow* GetWindow() const { return mWindow; }
+
+  // Validate constraints and construct a MediaConstraints object
+  // from a JS::Value.
+  nsresult ConvertConstraints(
+    const JS::Value& aConstraints, MediaConstraints* aObj, JSContext* aCx);
+  NS_IMETHODIMP CreateOffer(MediaConstraints& aConstraints);
+  NS_IMETHODIMP CreateAnswer(MediaConstraints& aConstraints);
+
 private:
   PeerConnectionImpl(const PeerConnectionImpl&rhs);
   PeerConnectionImpl& operator=(PeerConnectionImpl);
@@ -142,7 +166,7 @@ private:
   }
 
   // Shut down media. Called on any thread.
-  void ShutdownMedia();
+  void ShutdownMedia(bool isSynchronous);
 
   nsresult MakeMediaStream(uint32_t aHint, nsIDOMMediaStream** aStream);
   nsresult MakeRemoteSource(nsDOMMediaStream* aStream, RemoteSourceStreamInfo** aInfo);

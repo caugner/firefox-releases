@@ -31,7 +31,7 @@
 #include "nsIDocumentTransformer.h"
 #include "mozilla/css/Loader.h"
 #include "mozilla/dom/Element.h"
-#include "nsCharsetAlias.h"
+#include "mozilla/dom/EncodingUtils.h"
 #include "nsContentUtils.h"
 #include "txXMLUtils.h"
 #include "nsContentSink.h"
@@ -353,7 +353,7 @@ txMozillaXMLOutput::endElement()
 
         // Check to make sure that script hasn't inserted the node somewhere
         // else in the tree
-        if (!mCurrentNode->GetNodeParent()) {
+        if (!mCurrentNode->GetParentNode()) {
             parent->AppendChildTo(mNonAddedNode, true);
         }
         mNonAddedNode = nullptr;
@@ -791,19 +791,22 @@ void txMozillaXMLOutput::processHTTPEquiv(nsIAtom* aHeader, const nsString& aVal
 
 nsresult
 txMozillaXMLOutput::createResultDocument(const nsSubstring& aName, int32_t aNsID,
-                                         nsIDOMDocument* aSourceDocument)
+                                         nsIDOMDocument* aSourceDocument,
+                                         bool aLoadedAsData)
 {
     nsresult rv;
 
     // Create the document
     if (mOutputFormat.mMethod == eHTMLOutput) {
-        rv = NS_NewHTMLDocument(getter_AddRefs(mDocument));
+        rv = NS_NewHTMLDocument(getter_AddRefs(mDocument),
+                                aLoadedAsData);
         NS_ENSURE_SUCCESS(rv, rv);
     }
     else {
         // We should check the root name/namespace here and create the
         // appropriate document
-        rv = NS_NewXMLDocument(getter_AddRefs(mDocument));
+        rv = NS_NewXMLDocument(getter_AddRefs(mDocument),
+                               aLoadedAsData);
         NS_ENSURE_SUCCESS(rv, rv);
     }
     // This should really be handled by nsIDocument::BeginLoad
@@ -826,9 +829,9 @@ txMozillaXMLOutput::createResultDocument(const nsSubstring& aName, int32_t aNsID
 
     // Set the charset
     if (!mOutputFormat.mEncoding.IsEmpty()) {
-        NS_LossyConvertUTF16toASCII charset(mOutputFormat.mEncoding);
         nsAutoCString canonicalCharset;
-        if (NS_SUCCEEDED(nsCharsetAlias::GetPreferred(charset, canonicalCharset))) {
+        if (EncodingUtils::FindEncodingForLabel(mOutputFormat.mEncoding,
+                                                canonicalCharset)) {
             mDocument->SetDocumentCharacterSetSource(kCharsetFromOtherComponent);
             mDocument->SetDocumentCharacterSet(canonicalCharset);
         }

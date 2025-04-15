@@ -17,7 +17,6 @@ interface HitRegionOptions;
 interface HTMLCanvasElement;
 interface HTMLImageElement;
 interface HTMLVideoElement;
-interface ImageData;
 interface TextMetrics;
 interface Window;
 interface XULElement;
@@ -91,6 +90,7 @@ interface CanvasRenderingContext2D {
 // NOT IMPLEMENTED  void resetClip();
   boolean isPointInPath(double x, double y);
 // NOT IMPLEMENTED  boolean isPointInPath(Path path, double x, double y);
+  boolean isPointInStroke(double x, double y);
 
   // text (see also the CanvasDrawingStyles interface)
   [Throws]

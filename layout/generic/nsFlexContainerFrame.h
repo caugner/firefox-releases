@@ -5,7 +5,7 @@
  * version 2.0 (the "License"). You can obtain a copy of the License at
  * http://mozilla.org/MPL/2.0/. */
 
-/* rendering object for CSS display: -moz-flex */
+/* rendering object for CSS "display: flex" */
 
 #ifndef nsFlexContainerFrame_h___
 #define nsFlexContainerFrame_h___
@@ -64,9 +64,6 @@ protected:
     mCachedAscent(nscoord_MIN)
   {}
   virtual ~nsFlexContainerFrame();
-
-  // Protected nsIFrame overrides:
-  virtual void DestroyFrom(nsIFrame* aDestructRoot);
 
   // Protected flex-container-specific methods / member-vars
 #ifdef DEBUG

@@ -181,9 +181,17 @@ public:
       mBackgroundStyle->mLayers[mLayer].mAttachment == NS_STYLE_BG_ATTACHMENT_FIXED &&
       !mBackgroundStyle->mLayers[mLayer].mImage.IsEmpty();
   }
+  virtual void NotifyRenderingChanged() MOZ_OVERRIDE
+  {
+    mFrame->Properties().Delete(nsIFrame::CachedBackgroundImage());
+  }
 
   virtual void Paint(nsDisplayListBuilder* aBuilder,
                      nsRenderingContext* aCtx) MOZ_OVERRIDE;
+ 
+  // We still need to paint a background color as well as an image for this item, 
+  // so we can't support this yet.
+  virtual bool SupportsOptimizingToImage() { return false; }
 
   void SetExtraBackgroundColor(nscolor aColor)
   {

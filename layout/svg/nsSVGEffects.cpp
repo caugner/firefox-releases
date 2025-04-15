@@ -253,7 +253,7 @@ nsSVGFilterProperty::DoUpdate()
 
   // Repaint asynchronously in case the filter frame is being torn down
   nsChangeHint changeHint =
-    nsChangeHint(nsChangeHint_RepaintFrame | nsChangeHint_UpdateEffects);
+    nsChangeHint(nsChangeHint_RepaintFrame);
 
   // Don't need to request UpdateOverflow if we're being reflowed.
   if (!(mFrame->GetStateBits() & NS_FRAME_IN_REFLOW)) {
@@ -272,15 +272,16 @@ nsSVGMarkerProperty::DoUpdate()
 
   NS_ASSERTION(mFrame->IsFrameOfType(nsIFrame::eSVG), "SVG frame expected");
 
-  // Repaint asynchronously in case the filter frame is being torn down
+  // Repaint asynchronously in case the marker frame is being torn down
   nsChangeHint changeHint =
-    nsChangeHint(nsChangeHint_RepaintFrame | nsChangeHint_UpdateEffects);
+    nsChangeHint(nsChangeHint_RepaintFrame);
   
   // Don't need to request ReflowFrame if we're being reflowed.
   if (!(mFrame->GetStateBits() & NS_FRAME_IN_REFLOW)) {
     // XXXjwatt: We need to unify SVG into standard reflow so we can just use
     // nsChangeHint_NeedReflow | nsChangeHint_NeedDirtyReflow here.
     nsSVGUtils::InvalidateBounds(mFrame, false);
+    // XXXSDL KILL THIS!!!
     nsSVGUtils::ScheduleReflowSVG(mFrame);
   }
   mFramePresShell->FrameConstructor()->PostRestyleEvent(
@@ -361,7 +362,7 @@ nsSVGEffects::GetMarkerProperty(nsIURI *aURI, nsIFrame *aFrame,
                                 const FramePropertyDescriptor *aProp)
 {
   NS_ABORT_IF_FALSE(aFrame->GetType() == nsGkAtoms::svgPathGeometryFrame &&
-                    static_cast<nsSVGPathGeometryElement*>(aFrame->GetContent())->IsMarkable(),
+                      static_cast<nsSVGPathGeometryElement*>(aFrame->GetContent())->IsMarkable(),
                     "Bad frame");
   return static_cast<nsSVGMarkerProperty*>(
           GetEffectProperty(aURI, aFrame, aProp, CreateMarkerProperty));

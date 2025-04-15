@@ -290,7 +290,7 @@ var PlacesCommandHook = {
                                                     title, null, [descAnno]);
       PlacesUtils.transactionManager.doTransaction(txn);
       // Set the character-set
-      if (charset)
+      if (charset && !PrivateBrowsingUtils.isWindowPrivate(aBrowser.contentWindow))
         PlacesUtils.history.setCharsetForURI(uri, charset);
       itemId = PlacesUtils.getMostRecentBookmarkForURI(uri);
     }
@@ -652,8 +652,9 @@ HistoryMenu.prototype = {
 
     // The tabs engine might never be inited (if services.sync.registerEngines
     // is modified), so make sure we avoid undefined errors.
-    let enabled = Weave.Service.isLoggedIn && Weave.Engines.get("tabs") &&
-                  Weave.Engines.get("tabs").enabled;
+    let enabled = Weave.Service.isLoggedIn &&
+                  Weave.Service.engineManager.get("tabs") &&
+                  Weave.Service.engineManager.get("tabs").enabled;
     menuitem.setAttribute("disabled", !enabled);
     menuitem.setAttribute("hidden", false);
 #endif
@@ -684,7 +685,8 @@ HistoryMenu.prototype = {
   _onCommand: function HM__onCommand(aEvent) {
     let placesNode = aEvent.target._placesNode;
     if (placesNode) {
-      PlacesUIUtils.markPageAsTyped(placesNode.uri);
+      if (!PrivateBrowsingUtils.isWindowPrivate(window))
+        PlacesUIUtils.markPageAsTyped(placesNode.uri);
       openUILink(placesNode.uri, aEvent, { ignoreAlt: true });
     }
   }

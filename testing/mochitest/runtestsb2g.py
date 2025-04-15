@@ -102,6 +102,10 @@ class B2GOptions(MochitestOptions):
                         type="string", dest="logcat_dir",
                         help="directory to store logcat dump files")
         defaults["logcat_dir"] = None
+        self.add_option('--busybox', action='store',
+                        type='string', dest='busybox',
+                        help="Path to busybox binary to install on device")
+        defaults['busybox'] = None
 
         defaults["remoteTestRoot"] = None
         defaults["logFile"] = "mochitest.log"
@@ -218,7 +222,7 @@ class B2GMochitest(Mochitest):
         self.originalProfilesIni = None
 
     def copyRemoteFile(self, src, dest):
-        if self._dm.useDDCopy:
+        if self._dm._useDDCopy:
             self._dm._checkCmdAs(['shell', 'dd', 'if=%s' % src,'of=%s' % dest])
         else:
             self._dm._checkCmdAs(['shell', 'cp', src, dest])
@@ -482,6 +486,8 @@ def main():
             kwargs['gecko_path'] = options.geckoPath
         if options.logcat_dir:
             kwargs['logcat_dir'] = options.logcat_dir
+        if options.busybox:
+            kwargs['busybox'] = options.busybox
     # needless to say sdcard is only valid if using an emulator
     if options.sdcard:
         kwargs['sdcard'] = options.sdcard

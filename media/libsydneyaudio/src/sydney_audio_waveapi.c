@@ -753,7 +753,7 @@ UNSUPPORTED(int sa_stream_pwrite_ni(sa_stream_t *s, unsigned int channel, const 
 /** Query how much can be read without blocking */
 UNSUPPORTED(int sa_stream_get_read_size(sa_stream_t *s, size_t *size))
 
-UNSUPPORTED(int sa_stream_set_stream_type(sa_stream_t *s,  const sa_stream_type_t stream_type))
+UNSUPPORTED(int sa_stream_set_stream_type(sa_stream_t *s, const sa_stream_type_t stream_type))
 
 /** Return a human readable error */
 const char *sa_strerror(int code);

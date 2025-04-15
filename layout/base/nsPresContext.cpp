@@ -87,6 +87,7 @@
 
 using namespace mozilla;
 using namespace mozilla::dom;
+using namespace mozilla::layers;
 
 uint8_t gNotifySubDocInvalidationData;
 
@@ -134,14 +135,15 @@ nsPresContext::MakeColorPref(const nsString& aColor)
 bool
 nsPresContext::IsDOMPaintEventPending() 
 {
-  if (!mInvalidateRequests.mRequests.IsEmpty()) {
-    return true;    
+  if (mFireAfterPaintEvents) {
+    return true;
   }
   if (GetDisplayRootPresContext()->GetRootPresContext()->mRefreshDriver->ViewManagerFlushIsPending()) {
     // Since we're promising that there will be a MozAfterPaint event
     // fired, we record an empty invalidation in case display list
     // invalidation doesn't invalidate anything further.
     NotifyInvalidation(nsRect(0, 0, 0, 0), 0);
+    NS_ASSERTION(mFireAfterPaintEvents, "Why aren't we planning to fire the event?");
     return true;
   }
   return false;
@@ -173,8 +175,7 @@ nsPresContext::PrefChangedUpdateTimerCallback(nsITimer *aTimer, void *aClosure)
 static bool
 IsVisualCharset(const nsCString& aCharset)
 {
-  if (aCharset.LowerCaseEqualsLiteral("ibm864")             // Arabic//ahmed
-      || aCharset.LowerCaseEqualsLiteral("ibm862")          // Hebrew
+  if (aCharset.LowerCaseEqualsLiteral("ibm862")             // Hebrew
       || aCharset.LowerCaseEqualsLiteral("iso-8859-8") ) {  // Hebrew
     return true; // visual text type
   }
@@ -323,9 +324,9 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(nsPresContext)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsPresContext)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsPresContext)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDocument);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocument);
   // NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mDeviceContext); // not xpcom
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mEventManager, nsIObserver);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEventManager);
   // NS_IMPL_CYCLE_COLLECTION_TRAVERSE_RAWPTR(mLanguage); // an atom
 
   // We own only the items in mDOMMediaQueryLists that have listeners;
@@ -340,15 +341,15 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsPresContext)
     }
   }
 
-  // NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mTheme); // a service
-  // NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLangService); // a service
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mPrintSettings);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mPrefChangedTimer);
+  // NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTheme); // a service
+  // NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLangService); // a service
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPrintSettings);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPrefChangedTimer);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsPresContext)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDocument);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDeviceContext); // worth bothering?
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocument);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDeviceContext); // worth bothering?
   if (tmp->mEventManager) {
     // unclear if these are needed, but can't hurt
     tmp->mEventManager->NotifyDestroyPresContext(tmp);
@@ -369,9 +370,9 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsPresContext)
 
   // NS_RELEASE(tmp->mLanguage); // an atom
 
-  // NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mTheme); // a service
-  // NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLangService); // a service
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mPrintSettings);
+  // NS_IMPL_CYCLE_COLLECTION_UNLINK(mTheme); // a service
+  // NS_IMPL_CYCLE_COLLECTION_UNLINK(mLangService); // a service
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mPrintSettings);
   if (tmp->mPrefChangedTimer)
   {
     tmp->mPrefChangedTimer->Cancel();
@@ -806,10 +807,9 @@ nsPresContext::AppUnitsPerDevPixelChanged()
 
   mDeviceContext->FlushFontCache();
 
-  // All cached style data must be recomputed.
   if (HasCachedStyleData()) {
-    MediaFeatureValuesChanged(true);
-    RebuildAllStyleData(NS_STYLE_HINT_REFLOW);
+    // All cached style data must be recomputed.
+    MediaFeatureValuesChanged(eAlwaysRebuildStyle, NS_STYLE_HINT_REFLOW);
   }
 }
 
@@ -956,6 +956,10 @@ nsPresContext::Init(nsDeviceContext* aDeviceContext)
       mRefreshDriver = new nsRefreshDriver(this);
     }
   }
+
+  // Initialise refresh tick counters for OMTA
+  mLastStyleUpdateForAllAnimations =
+    mLastUpdateThrottledStyle = mRefreshDriver->MostRecentRefresh();
 
   mLangService = do_GetService(NS_LANGUAGEATOMSERVICE_CONTRACTID);
 
@@ -1169,6 +1173,29 @@ nsPresContext::GetToplevelContentDocumentPresContext()
       return pc;
     pc = parent;
   }
+}
+
+nsIWidget*
+nsPresContext::GetNearestWidget(nsPoint* aOffset)
+{
+  NS_ENSURE_TRUE(mShell, nullptr);
+  nsIFrame* frame = mShell->GetRootFrame();
+  NS_ENSURE_TRUE(frame, nullptr);
+  return frame->GetView()->GetNearestWidget(aOffset);
+}
+
+nsIWidget*
+nsPresContext::GetRootWidget()
+{
+  NS_ENSURE_TRUE(mShell, nullptr);
+  nsIViewManager* vm = mShell->GetViewManager();
+  if (!vm) {
+    return nullptr;
+  }
+  nsCOMPtr<nsIWidget> widget;
+  nsresult rv = vm->GetRootWidget(getter_AddRefs(widget));
+  NS_ENSURE_SUCCESS(rv, nullptr);
+  return widget.get();
 }
 
 // We may want to replace this with something faster, maybe caching the root prescontext
@@ -1563,13 +1590,11 @@ nsPresContext::ThemeChangedInternal()
   nsCSSRuleProcessor::FreeSystemMetrics();
 
   // Changes to system metrics can change media queries on them.
-  MediaFeatureValuesChanged(true);
-
   // Changes in theme can change system colors (whose changes are
   // properly reflected in computed style data), system fonts (whose
   // changes are not), and -moz-appearance (whose changes likewise are
   // not), so we need to reflow.
-  RebuildAllStyleData(NS_STYLE_HINT_REFLOW);
+  MediaFeatureValuesChanged(eAlwaysRebuildStyle, NS_STYLE_HINT_REFLOW);
 }
 
 void
@@ -1653,6 +1678,7 @@ nsPresContext::RebuildAllStyleData(nsChangeHint aExtraHint)
   }
 
   mUsesRootEMUnits = false;
+  mUsesViewportUnits = false;
   RebuildUserFontSet();
   AnimationManager()->KeyframesListIsDirty();
 
@@ -1670,14 +1696,25 @@ nsPresContext::PostRebuildAllStyleDataEvent(nsChangeHint aExtraHint)
 }
 
 void
-nsPresContext::MediaFeatureValuesChanged(bool aCallerWillRebuildStyleData)
+nsPresContext::MediaFeatureValuesChanged(StyleRebuildType aShouldRebuild,
+                                         nsChangeHint aChangeHint)
 {
+  NS_ASSERTION(aShouldRebuild == eAlwaysRebuildStyle || aChangeHint == 0,
+               "If you don't know if we need a rebuild, how can you provide a hint?");
+
   mPendingMediaFeatureValuesChanged = false;
-  if (mShell &&
-      mShell->StyleSet()->MediumFeaturesChanged(this) &&
-      !aCallerWillRebuildStyleData) {
-    RebuildAllStyleData(nsChangeHint(0));
+
+  // MediumFeaturesChanged updates the applied rules, so it always gets called.
+  bool mediaFeaturesDidChange = mShell ? mShell->StyleSet()->MediumFeaturesChanged(this)
+                                       : false;
+
+  if (aShouldRebuild == eAlwaysRebuildStyle ||
+      mediaFeaturesDidChange ||
+      (mUsesViewportUnits && mPendingViewportChange)) {
+    RebuildAllStyleData(aChangeHint);
   }
+
+  mPendingViewportChange = false;
 
   if (!nsContentUtils::IsSafeToRunScript()) {
     NS_ABORT_IF_FALSE(mDocument->IsBeingUsedAsImage(),
@@ -1753,7 +1790,7 @@ nsPresContext::HandleMediaFeatureValuesChangedEvent()
   // Null-check mShell in case the shell has been destroyed (and the
   // event is the only thing holding the pres context alive).
   if (mPendingMediaFeatureValuesChanged && mShell) {
-    MediaFeatureValuesChanged(false);
+    MediaFeatureValuesChanged(eRebuildStyleIfNeeded);
   }
 }
 
@@ -2019,7 +2056,7 @@ nsPresContext::EnsureSafeToHandOutCSSRules()
 }
 
 void
-nsPresContext::FireDOMPaintEvent()
+nsPresContext::FireDOMPaintEvent(nsInvalidateRequestList* aList)
 {
   nsPIDOMWindow* ourWindow = mDocument->GetWindow();
   if (!ourWindow)
@@ -2044,9 +2081,7 @@ nsPresContext::FireDOMPaintEvent()
   // (hopefully it won't, or we're likely to get an infinite loop! At least
   // it won't be blocking app execution though).
   NS_NewDOMNotifyPaintEvent(getter_AddRefs(event), this, nullptr,
-                            NS_AFTERPAINT,
-                            &mInvalidateRequests);
-  mAllInvalidated = false;
+                            NS_AFTERPAINT, aList);
   if (!event) {
     return;
   }
@@ -2185,7 +2220,7 @@ nsPresContext::NotifyInvalidation(const nsRect& aRect, uint32_t aFlags)
   }
 
   nsInvalidateRequestList::Request* request =
-    mInvalidateRequests.mRequests.AppendElement();
+    mInvalidateRequestsSinceLastPaint.mRequests.AppendElement();
   if (!request)
     return;
 
@@ -2217,36 +2252,86 @@ nsPresContext::NotifySubDocInvalidation(ContainerLayer* aContainer,
   }
 }
 
+struct NotifyDidPaintSubdocumentCallbackClosure {
+  uint32_t mFlags;
+  bool mNeedsAnotherDidPaintNotification;
+};
 static bool
 NotifyDidPaintSubdocumentCallback(nsIDocument* aDocument, void* aData)
 {
+  NotifyDidPaintSubdocumentCallbackClosure* closure =
+    static_cast<NotifyDidPaintSubdocumentCallbackClosure*>(aData);
   nsIPresShell* shell = aDocument->GetShell();
   if (shell) {
     nsPresContext* pc = shell->GetPresContext();
     if (pc) {
-      pc->NotifyDidPaintForSubtree();
+      pc->NotifyDidPaintForSubtree(closure->mFlags);
+      if (pc->IsDOMPaintEventPending()) {
+        closure->mNeedsAnotherDidPaintNotification = true;
+      }
     }
   }
   return true;
 }
 
-void
-nsPresContext::NotifyDidPaintForSubtree()
-{
-  if (IsRoot()) {
-    if (!mFireAfterPaintEvents)
-      return;
-
-    static_cast<nsRootPresContext*>(this)->CancelDidPaintTimer();
+class DelayedFireDOMPaintEvent : public nsRunnable {
+public:
+  DelayedFireDOMPaintEvent(nsPresContext* aPresContext,
+                           nsInvalidateRequestList* aList)
+    : mPresContext(aPresContext)
+  {
+    mList.TakeFrom(aList);
+  }
+  NS_IMETHOD Run()
+  {
+    mPresContext->FireDOMPaintEvent(&mList);
+    return NS_OK;
   }
 
-  mFireAfterPaintEvents = false;
+  nsRefPtr<nsPresContext> mPresContext;
+  nsInvalidateRequestList mList;
+};
 
-  nsCOMPtr<nsIRunnable> ev =
-    NS_NewRunnableMethod(this, &nsPresContext::FireDOMPaintEvent);
-  nsContentUtils::AddScriptRunner(ev);
+void
+nsPresContext::NotifyDidPaintForSubtree(uint32_t aFlags)
+{
+  if (IsRoot()) {
+    static_cast<nsRootPresContext*>(this)->CancelDidPaintTimer();
 
-  mDocument->EnumerateSubDocuments(NotifyDidPaintSubdocumentCallback, nullptr);
+    if (!mFireAfterPaintEvents) {
+      return;
+    }
+  }
+  // Non-root prescontexts fire MozAfterPaint to all their descendants
+  // unconditionally, even if no invalidations have been collected. This is
+  // because we don't want to eat the cost of collecting invalidations for
+  // every subdocument (which would require putting every subdocument in its
+  // own layer).
+
+  if (aFlags & nsIPresShell::PAINT_LAYERS) {
+    mUndeliveredInvalidateRequestsBeforeLastPaint.TakeFrom(
+        &mInvalidateRequestsSinceLastPaint);
+    mAllInvalidated = false;
+  }
+  if (aFlags & nsIPresShell::PAINT_COMPOSITE) {
+    nsCOMPtr<nsIRunnable> ev =
+      new DelayedFireDOMPaintEvent(this, &mUndeliveredInvalidateRequestsBeforeLastPaint);
+    nsContentUtils::AddScriptRunner(ev);
+  }
+
+  NotifyDidPaintSubdocumentCallbackClosure closure = { aFlags, false };
+  mDocument->EnumerateSubDocuments(NotifyDidPaintSubdocumentCallback, &closure);
+
+  if (!closure.mNeedsAnotherDidPaintNotification &&
+      mInvalidateRequestsSinceLastPaint.IsEmpty() &&
+      mUndeliveredInvalidateRequestsBeforeLastPaint.IsEmpty()) {
+    // Nothing more to do for the moment.
+    mFireAfterPaintEvents = false;
+  } else {
+    if (IsRoot()) {
+      static_cast<nsRootPresContext*>(this)->EnsureEventualDidPaintEvent();
+    }
+  }
 }
 
 bool
@@ -2551,7 +2636,13 @@ nsRootPresContext::ComputePluginGeometryUpdates(nsIFrame* aFrame,
     aList->ComputeVisibilityForRoot(aBuilder, &region);
   }
 
+#ifdef XP_MACOSX
+  // We control painting of Mac plugins, so just apply geometry updates now.
+  // This is not happening during a paint event.
+  ApplyPluginGeometryUpdates();
+#else
   InitApplyPluginGeometryTimer();
+#endif
 }
 
 static void
@@ -2711,7 +2802,10 @@ NotifyDidPaintForSubtreeCallback(nsITimer *aTimer, void *aClosure)
 {
   nsPresContext* presContext = (nsPresContext*)aClosure;
   nsAutoScriptBlocker blockScripts;
-  presContext->NotifyDidPaintForSubtree();
+  // This is a fallback if we don't get paint events for some reason
+  // so we'll just pretend both layer painting and compositing happened.
+  presContext->NotifyDidPaintForSubtree(
+      nsIPresShell::PAINT_LAYERS | nsIPresShell::PAINT_COMPOSITE);
 }
 
 void

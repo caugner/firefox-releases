@@ -10,10 +10,11 @@
 #include "nsIURI.h"
 #include "nsNetUtil.h"
 #include "imgIContainer.h"
-#include "imgIDecoderObserver.h"
+#include "imgINotificationObserver.h"
 #include "gfxContext.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 nsSVGElement::LengthInfo nsSVGImageElement::sLengthInfo[4] =
 {
@@ -42,7 +43,7 @@ NS_INTERFACE_TABLE_HEAD(nsSVGImageElement)
   NS_NODE_INTERFACE_TABLE9(nsSVGImageElement, nsIDOMNode, nsIDOMElement,
                            nsIDOMSVGElement, nsIDOMSVGTests,
                            nsIDOMSVGImageElement,
-                           nsIDOMSVGURIReference, imgIDecoderObserver,
+                           nsIDOMSVGURIReference, imgINotificationObserver,
                            nsIImageLoadingContent, imgIOnloadBlocker)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGImageElement)
 NS_INTERFACE_MAP_END_INHERITING(nsSVGImageElementBase)
@@ -274,7 +275,7 @@ nsSVGImageElement::GetStringInfo()
 }
 
 nsresult
-nsSVGImageElement::CopyInnerTo(nsGenericElement* aDest)
+nsSVGImageElement::CopyInnerTo(Element* aDest)
 {
   if (aDest->OwnerDoc()->IsStaticDocument()) {
     CreateStaticImageClone(static_cast<nsSVGImageElement*>(aDest));

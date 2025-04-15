@@ -6,7 +6,7 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.gfx.DisplayPortMetrics;
-import org.mozilla.gecko.gfx.ViewportMetrics;
+import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
 
 import android.content.res.Resources;
 import android.graphics.Point;
@@ -61,13 +61,12 @@ public class GeckoEvent {
     private static final int NETWORK_CHANGED = 22;
     private static final int UNUSED3_EVENT = 23;
     private static final int ACTIVITY_RESUMING = 24;
-    private static final int SCREENSHOT = 25;
+    private static final int THUMBNAIL = 25;
     private static final int UNUSED2_EVENT = 26;
     private static final int SCREENORIENTATION_CHANGED = 27;
     private static final int COMPOSITOR_PAUSE = 28;
     private static final int COMPOSITOR_RESUME = 29;
-    private static final int PAINT_LISTEN_START_EVENT = 30;
-    private static final int NATIVE_GESTURE_EVENT = 31;
+    private static final int NATIVE_GESTURE_EVENT = 30;
 
     /**
      * These DOM_KEY_LOCATION constants mirror the DOM KeyboardEvent's constants.
@@ -80,14 +79,13 @@ public class GeckoEvent {
     private static final int DOM_KEY_LOCATION_MOBILE = 4;
     private static final int DOM_KEY_LOCATION_JOYSTICK = 5;
 
-    public static final int IME_COMPOSITION_END = 0;
-    public static final int IME_COMPOSITION_BEGIN = 1;
-    public static final int IME_SET_TEXT = 2;
-    public static final int IME_GET_TEXT = 3;
-    public static final int IME_DELETE_TEXT = 4;
-    public static final int IME_SET_SELECTION = 5;
-    public static final int IME_GET_SELECTION = 6;
-    public static final int IME_ADD_RANGE = 7;
+    public static final int IME_SYNCHRONIZE = 0;
+    public static final int IME_REPLACE_TEXT = 1;
+    public static final int IME_SET_SELECTION = 2;
+    public static final int IME_ADD_COMPOSITION_RANGE = 3;
+    public static final int IME_UPDATE_COMPOSITION = 4;
+    public static final int IME_REMOVE_COMPOSITION = 5;
+    public static final int IME_ACKNOWLEDGE_FOCUS = 6;
 
     public static final int IME_RANGE_CARETPOSITION = 1;
     public static final int IME_RANGE_RAWINPUT = 2;
@@ -118,7 +116,8 @@ public class GeckoEvent {
     public int mMetaState, mFlags;
     public int mKeyCode, mUnicodeChar;
     public int mRepeatCount;
-    public int mOffset, mCount;
+    public int mCount;
+    public int mStart, mEnd;
     public String mCharacters, mCharactersExtra;
     public int mRangeType, mRangeStyles;
     public int mRangeForeColor, mRangeBackColor;
@@ -266,24 +265,29 @@ public class GeckoEvent {
     }
 
     public static GeckoEvent createNativeGestureEvent(int action, PointF pt, double size) {
-        GeckoEvent event = new GeckoEvent(NATIVE_GESTURE_EVENT);
-        event.mAction = action;
-        event.mCount = 1;
-        event.mPoints = new Point[1];
+        try {
+            GeckoEvent event = new GeckoEvent(NATIVE_GESTURE_EVENT);
+            event.mAction = action;
+            event.mCount = 1;
+            event.mPoints = new Point[1];
 
-        PointF geckoPoint = new PointF(pt.x, pt.y);
-        geckoPoint = GeckoApp.mAppContext.getLayerView().convertViewPointToLayerPoint(geckoPoint);
+            PointF geckoPoint = new PointF(pt.x, pt.y);
+            geckoPoint = GeckoApp.mAppContext.getLayerView().convertViewPointToLayerPoint(geckoPoint);
 
-        if (geckoPoint == null) {
-            // This could happen if Gecko isn't ready yet.
+            if (geckoPoint == null) {
+                // This could happen if Gecko isn't ready yet.
+                return null;
+            }
+
+            event.mPoints[0] = new Point(Math.round(geckoPoint.x), Math.round(geckoPoint.y));
+
+            event.mX = size;
+            event.mTime = System.currentTimeMillis();
+            return event;
+        } catch (Exception e) {
+            // This can happen if Gecko isn't ready yet
             return null;
         }
-
-        event.mPoints[0] = new Point(Math.round(geckoPoint.x), Math.round(geckoPoint.y));
-
-        event.mX = size;
-        event.mTime = System.currentTimeMillis();
-        return event;
     }
 
     public static GeckoEvent createMotionEvent(MotionEvent m) {
@@ -371,7 +375,7 @@ public class GeckoEvent {
                 mOrientations[index] = 0;
             }
             mPressures[index] = event.getPressure(eventIndex);
-        } catch(Exception ex) {
+        } catch (Exception ex) {
             Log.e(LOGTAG, "Error creating motion point " + index, ex);
             mPointRadii[index] = new Point(0, 0);
             mPoints[index] = new Point(0, 0);
@@ -459,44 +463,51 @@ public class GeckoEvent {
         return event;
     }
 
-    public static GeckoEvent createIMEEvent(int imeAction, int offset, int count) {
+    public static GeckoEvent createIMEEvent(int action) {
         GeckoEvent event = new GeckoEvent(IME_EVENT);
-        event.mAction = imeAction;
-        event.mOffset = offset;
-        event.mCount = count;
+        event.mAction = action;
         return event;
     }
 
-    private void InitIMERange(int action, int offset, int count,
-                              int rangeType, int rangeStyles,
-                              int rangeForeColor, int rangeBackColor) {
-        mAction = action;
-        mOffset = offset;
-        mCount = count;
-        mRangeType = rangeType;
-        mRangeStyles = rangeStyles;
-        mRangeForeColor = rangeForeColor;
-        mRangeBackColor = rangeBackColor;
-        return;
-    }
-    
-    public static GeckoEvent createIMERangeEvent(int offset, int count,
-                                                 int rangeType, int rangeStyles,
-                                                 int rangeForeColor, int rangeBackColor,
-                                                 String text) {
+    public static GeckoEvent createIMEReplaceEvent(int start, int end,
+                                                   String text) {
         GeckoEvent event = new GeckoEvent(IME_EVENT);
-        event.InitIMERange(IME_SET_TEXT, offset, count, rangeType, rangeStyles,
-                           rangeForeColor, rangeBackColor);
+        event.mAction = IME_REPLACE_TEXT;
+        event.mStart = start;
+        event.mEnd = end;
         event.mCharacters = text;
         return event;
     }
 
-    public static GeckoEvent createIMERangeEvent(int offset, int count,
-                                                 int rangeType, int rangeStyles,
-                                                 int rangeForeColor, int rangeBackColor) {
+    public static GeckoEvent createIMESelectEvent(int start, int end) {
         GeckoEvent event = new GeckoEvent(IME_EVENT);
-        event.InitIMERange(IME_ADD_RANGE, offset, count, rangeType, rangeStyles,
-                           rangeForeColor, rangeBackColor);
+        event.mAction = IME_SET_SELECTION;
+        event.mStart = start;
+        event.mEnd = end;
+        return event;
+    }
+
+    public static GeckoEvent createIMECompositionEvent(int start, int end) {
+        GeckoEvent event = new GeckoEvent(IME_EVENT);
+        event.mAction = IME_UPDATE_COMPOSITION;
+        event.mStart = start;
+        event.mEnd = end;
+        return event;
+    }
+
+    public static GeckoEvent createIMERangeEvent(int start,
+                                                 int end, int rangeType,
+                                                 int rangeStyles,
+                                                 int rangeForeColor,
+                                                 int rangeBackColor) {
+        GeckoEvent event = new GeckoEvent(IME_EVENT);
+        event.mAction = IME_ADD_COMPOSITION_RANGE;
+        event.mStart = start;
+        event.mEnd = end;
+        event.mRangeType = rangeType;
+        event.mRangeStyles = rangeStyles;
+        event.mRangeForeColor = rangeForeColor;
+        event.mRangeBackColor = rangeBackColor;
         return event;
     }
 
@@ -521,14 +532,13 @@ public class GeckoEvent {
         return event;
     }
 
-    public static GeckoEvent createViewportEvent(ViewportMetrics viewport, DisplayPortMetrics displayPort) {
+    public static GeckoEvent createViewportEvent(ImmutableViewportMetrics metrics, DisplayPortMetrics displayPort) {
         GeckoEvent event = new GeckoEvent(VIEWPORT);
         event.mCharacters = "Viewport:Change";
-        PointF origin = viewport.getOrigin();
         StringBuffer sb = new StringBuffer(256);
-        sb.append("{ \"x\" : ").append(origin.x)
-          .append(", \"y\" : ").append(origin.y)
-          .append(", \"zoom\" : ").append(viewport.getZoomFactor())
+        sb.append("{ \"x\" : ").append(metrics.viewportRectLeft)
+          .append(", \"y\" : ").append(metrics.viewportRectTop)
+          .append(", \"zoom\" : ").append(metrics.zoomFactor)
           .append(", \"displayPort\" :").append(displayPort.toJSON())
           .append('}');
         event.mCharactersExtra = sb.toString();
@@ -569,16 +579,11 @@ public class GeckoEvent {
         return event;
     }
 
-    public static GeckoEvent createScreenshotEvent(int tabId, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int bw, int bh, int token, ByteBuffer buffer) {
-        GeckoEvent event = new GeckoEvent(SCREENSHOT);
-        event.mPoints = new Point[5];
-        event.mPoints[0] = new Point(sx, sy);
-        event.mPoints[1] = new Point(sw, sh);
-        event.mPoints[2] = new Point(dx, dy);
-        event.mPoints[3] = new Point(dw, dh);
-        event.mPoints[4] = new Point(bw, bh);
+    public static GeckoEvent createThumbnailEvent(int tabId, int bufw, int bufh, ByteBuffer buffer) {
+        GeckoEvent event = new GeckoEvent(THUMBNAIL);
+        event.mPoints = new Point[1];
+        event.mPoints[0] = new Point(bufw, bufh);
         event.mMetaState = tabId;
-        event.mFlags = token;
         event.mBuffer = buffer;
         return event;
     }
@@ -586,12 +591,6 @@ public class GeckoEvent {
     public static GeckoEvent createScreenOrientationEvent(short aScreenOrientation) {
         GeckoEvent event = new GeckoEvent(SCREENORIENTATION_CHANGED);
         event.mScreenOrientation = aScreenOrientation;
-        return event;
-    }
-
-    public static GeckoEvent createStartPaintListentingEvent(int tabId) {
-        GeckoEvent event = new GeckoEvent(PAINT_LISTEN_START_EVENT);
-        event.mMetaState = tabId;
         return event;
     }
 }

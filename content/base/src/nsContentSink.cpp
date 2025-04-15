@@ -72,17 +72,16 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsContentSink)
   if (tmp->mDocument) {
     tmp->mDocument->RemoveObserver(tmp);
   }
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDocument)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mParser)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mNodeInfoManager)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mScriptLoader)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocument)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mParser)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mNodeInfoManager)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mScriptLoader)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsContentSink)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDocument)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mParser)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_MEMBER(mNodeInfoManager,
-                                                  nsNodeInfoManager)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mScriptLoader)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocument)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mParser)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNodeInfoManager)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mScriptLoader)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 
@@ -1225,15 +1224,9 @@ nsContentSink::Notify(nsITimer *timer)
 #ifdef MOZ_DEBUG
   {
     PRTime now = PR_Now();
-    int64_t diff, interval;
-    int32_t delay;
 
-    LL_I2L(interval, GetNotificationInterval());
-    diff = now - mLastNotificationTime;
-
-    diff -= interval;
-    LL_L2I(delay, diff);
-    delay /= PR_USEC_PER_MSEC;
+    int64_t interval = GetNotificationInterval();
+    delay = int32_t(now - mLastNotificationTime - interval) / PR_USEC_PER_MSEC;
 
     mBackoffCount--;
     SINK_TRACE(gContentSinkLogModuleInfo, SINK_TRACE_REFLOW,

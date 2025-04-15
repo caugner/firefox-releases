@@ -129,6 +129,13 @@ MOCHITEST_FILES	= \
 		test_bug750051.html \
 		test_bug755320.html \
 		test_bug777628.html \
+		test_bug665548.html \
+		test_bug809290.html \
+		file_bug809290_b1.html \
+		file_bug809290_b2.html \
+		file_bug809290_c.html \
+		file_empty.html \
+		test_bug817476.html \
 		test_bug823173.html \
 		$(NULL)
 

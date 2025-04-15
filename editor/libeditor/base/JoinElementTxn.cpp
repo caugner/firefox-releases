@@ -27,15 +27,15 @@ JoinElementTxn::JoinElementTxn()
 NS_IMPL_CYCLE_COLLECTION_CLASS(JoinElementTxn)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(JoinElementTxn, EditTxn)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLeftNode)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRightNode)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mParent)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLeftNode)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRightNode)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mParent)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(JoinElementTxn, EditTxn)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLeftNode)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mRightNode)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mParent)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLeftNode)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRightNode)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mParent)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(JoinElementTxn)
@@ -83,11 +83,11 @@ NS_IMETHODIMP JoinElementTxn::DoTransaction(void)
   NS_ENSURE_STATE(rightNode);
 
   // get the parent node
-  nsCOMPtr<nsINode> leftParent = leftNode->GetNodeParent();
+  nsCOMPtr<nsINode> leftParent = leftNode->GetParentNode();
   NS_ENSURE_TRUE(leftParent, NS_ERROR_NULL_POINTER);
 
   // verify that mLeftNode and mRightNode have the same parent
-  nsCOMPtr<nsINode> rightParent = rightNode->GetNodeParent();
+  nsCOMPtr<nsINode> rightParent = rightNode->GetParentNode();
   NS_ENSURE_TRUE(rightParent, NS_ERROR_NULL_POINTER);
 
   if (leftParent != rightParent) {

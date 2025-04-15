@@ -145,10 +145,13 @@ private:
   Mutex mLock;
 };
 
+static std::map<NPP, nsNPAPIPluginInstance*> sPluginNPPMap;
+
 #endif
 
 using namespace mozilla;
 using namespace mozilla::plugins::parent;
+using namespace mozilla::layers;
 
 static NS_DEFINE_IID(kIOutputStreamIID, NS_IOUTPUTSTREAM_IID);
 
@@ -183,11 +186,19 @@ nsNPAPIPluginInstance::nsNPAPIPluginInstance()
   mNPP.ndata = this;
 
   PLUGIN_LOG(PLUGIN_LOG_BASIC, ("nsNPAPIPluginInstance ctor: this=%p\n",this));
+
+#ifdef MOZ_WIDGET_ANDROID
+  sPluginNPPMap[&mNPP] = this;
+#endif
 }
 
 nsNPAPIPluginInstance::~nsNPAPIPluginInstance()
 {
   PLUGIN_LOG(PLUGIN_LOG_BASIC, ("nsNPAPIPluginInstance dtor: this=%p\n",this));
+
+#ifdef MOZ_WIDGET_ANDROID
+  sPluginNPPMap.erase(&mNPP);
+#endif
 
   if (mMIMEType) {
     PR_Free((void *)mMIMEType);
@@ -1043,6 +1054,17 @@ void nsNPAPIPluginInstance::SetInverted(bool aInverted)
   mInverted = aInverted;
 }
 
+nsNPAPIPluginInstance* nsNPAPIPluginInstance::GetFromNPP(NPP npp)
+{
+  std::map<NPP, nsNPAPIPluginInstance*>::iterator it;
+
+  it = sPluginNPPMap.find(npp);
+  if (it == sPluginNPPMap.end())
+    return nullptr;
+
+  return it->second;
+}
+
 #endif
 
 nsresult nsNPAPIPluginInstance::GetDrawingModel(int32_t* aModel)
@@ -1370,34 +1392,12 @@ nsNPAPIPluginInstance::PrivateModeStateChanged(bool enabled)
     return NS_ERROR_FAILURE;
 
   PluginDestructionGuard guard(this);
-    
+
   NPError error;
   NPBool value = static_cast<NPBool>(enabled);
   NS_TRY_SAFE_CALL_RETURN(error, (*pluginFunctions->setvalue)(&mNPP, NPNVprivateModeBool, &value), this);
   return (error == NPERR_NO_ERROR) ? NS_OK : NS_ERROR_FAILURE;
 }
-
-class DelayUnscheduleEvent : public nsRunnable {
-public:
-  nsRefPtr<nsNPAPIPluginInstance> mInstance;
-  uint32_t mTimerID;
-  DelayUnscheduleEvent(nsNPAPIPluginInstance* aInstance, uint32_t aTimerId)
-    : mInstance(aInstance)
-    , mTimerID(aTimerId)
-  {}
-
-  ~DelayUnscheduleEvent() {}
-
-  NS_IMETHOD Run();
-};
-
-NS_IMETHODIMP
-DelayUnscheduleEvent::Run()
-{
-  mInstance->UnscheduleTimer(mTimerID);
-  return NS_OK;
-}
-
 
 static void
 PluginTimerCallback(nsITimer *aTimer, void *aClosure)
@@ -1409,7 +1409,6 @@ PluginTimerCallback(nsITimer *aTimer, void *aClosure)
   PLUGIN_LOG(PLUGIN_LOG_NOISY, ("nsNPAPIPluginInstance running plugin timer callback this=%p\n", npp->ndata));
 
   MAIN_THREAD_JNI_REF_GUARD;
-
   // Some plugins (Flash on Android) calls unscheduletimer
   // from this callback.
   t->inCallback = true;
@@ -1425,8 +1424,8 @@ PluginTimerCallback(nsITimer *aTimer, void *aClosure)
   // use UnscheduleTimer to clean up if this is a one-shot timer
   uint32_t timerType;
   t->timer->GetType(&timerType);
-  if (timerType == nsITimer::TYPE_ONE_SHOT)
-      inst->UnscheduleTimer(id);
+  if (t->needUnschedule || timerType == nsITimer::TYPE_ONE_SHOT)
+    inst->UnscheduleTimer(id);
 }
 
 nsNPAPITimer*
@@ -1451,7 +1450,7 @@ nsNPAPIPluginInstance::ScheduleTimer(uint32_t interval, NPBool repeat, void (*ti
 
   nsNPAPITimer *newTimer = new nsNPAPITimer();
 
-  newTimer->inCallback = false;
+  newTimer->inCallback = newTimer->needUnschedule = false;
   newTimer->npp = &mNPP;
 
   // generate ID that is unique to this instance
@@ -1490,8 +1489,7 @@ nsNPAPIPluginInstance::UnscheduleTimer(uint32_t timerID)
     return;
 
   if (t->inCallback) {
-    nsCOMPtr<nsIRunnable> e = new DelayUnscheduleEvent(this, timerID);
-    NS_DispatchToCurrentThread(e);
+    t->needUnschedule = true;
     return;
   }
 

@@ -597,6 +597,8 @@ File.remove = function remove(path) {
  * as per winapi function |CreateDirectory|. If unspecified,
  * use the default security descriptor, inherited from the
  * parent directory.
+ * - {bool} ignoreExisting If |true|, do not fail if the
+ * directory already exists.
  */
 File.makeDir = function makeDir(path, options) {
   return Scheduler.post("makeDir",
@@ -619,6 +621,18 @@ File.read = function read(path, bytes) {
 };
 
 /**
+ * Find outs if a file exists.
+ *
+ * @param {string} path The path to the file.
+ *
+ * @return {bool} true if the file exists, false otherwise.
+ */
+File.exists = function exists(path) {
+  return Scheduler.post("exists",
+    [Type.path.toMsg(path)], path);
+};
+
+/**
  * Write a file, atomically.
  *
  * By opposition to a regular |write|, this operation ensures that,
@@ -635,6 +649,8 @@ File.read = function read(path, bytes) {
  * - {number} bytes The number of bytes to write. If unspecified,
  * |buffer.byteLength|. Required if |buffer| is a C pointer.
  * - {string} tmpPath The path at which to write the temporary file.
+ * - {bool} noOverwrite - If set, this function will fail if a file already
+ * exists at |path|. The |tmpPath| is not overwritten if |path| exist.
  *
  * @return {promise}
  * @resolves {number} The number of bytes actually written.

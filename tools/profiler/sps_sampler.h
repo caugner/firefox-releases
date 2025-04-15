@@ -83,7 +83,7 @@ extern bool stack_key_initialized;
 # define PLATFORM_LIKELY_MEMORY_CONSTRAINED
 #endif
 
-#ifndef PLATFORM_LIKELY_MEMORY_CONSTRAINED
+#if !defined(PLATFORM_LIKELY_MEMORY_CONSTRAINED) && !defined(ARCH_ARMV6)
 # define PROFILE_DEFAULT_ENTRY 1000000
 #else
 # define PROFILE_DEFAULT_ENTRY 100000
@@ -424,6 +424,9 @@ inline void mozilla_sampler_call_exit(void *aHandle)
 
 inline void mozilla_sampler_add_marker(const char *aMarker)
 {
+  if (!stack_key_initialized)
+    return;
+
   ProfileStack *stack = tlsStack.get();
   if (!stack) {
     return;

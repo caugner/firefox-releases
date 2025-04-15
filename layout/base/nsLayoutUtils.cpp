@@ -91,8 +91,9 @@
 #include "nsTransitionManager.h"
 
 using namespace mozilla;
-using namespace mozilla::layers;
+using namespace mozilla::css;
 using namespace mozilla::dom;
+using namespace mozilla::layers;
 using namespace mozilla::layout;
 
 #define FLEXBOX_ENABLED_PREF_NAME "layout.css.flexbox.enabled"
@@ -108,7 +109,8 @@ typedef FrameMetrics::ViewID ViewID;
 /* static */ uint32_t nsLayoutUtils::sFontSizeInflationEmPerLine;
 /* static */ uint32_t nsLayoutUtils::sFontSizeInflationMinTwips;
 /* static */ uint32_t nsLayoutUtils::sFontSizeInflationLineThreshold;
-/* static */ int32_t nsLayoutUtils::sFontSizeInflationMappingIntercept;
+/* static */ int32_t  nsLayoutUtils::sFontSizeInflationMappingIntercept;
+/* static */ uint32_t nsLayoutUtils::sFontSizeInflationMaxRatio;
 /* static */ bool nsLayoutUtils::sFontSizeInflationForceEnabled;
 /* static */ bool nsLayoutUtils::sFontSizeInflationDisabledInMasterProcess;
 
@@ -135,7 +137,7 @@ static ContentMap& GetContentMap() {
 
 // When the pref "layout.css.flexbox.enabled" changes, this function is invoked
 // to let us update kDisplayKTable, to selectively disable or restore the
-// entries for "-moz-flex" and "-moz-inline-flex" in that table.
+// entries for "flex" and "inline-flex" in that table.
 #ifdef MOZ_FLEXBOX
 static int
 FlexboxEnabledPrefChangeCallback(const char* aPrefName, void* aClosure)
@@ -149,13 +151,13 @@ FlexboxEnabledPrefChangeCallback(const char* aPrefName, void* aClosure)
     Preferences::GetBool(FLEXBOX_ENABLED_PREF_NAME, false);
 
   if (!sAreFlexKeywordIndicesInitialized) {
-    // First run: find the position of "-moz-flex" and "-moz-inline-flex" in
+    // First run: find the position of "flex" and "inline-flex" in
     // kDisplayKTable.
     sIndexOfFlexInDisplayTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword__moz_flex,
+      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_flex,
                                      nsCSSProps::kDisplayKTable);
     sIndexOfInlineFlexInDisplayTable =
-      nsCSSProps::FindIndexOfKeyword(eCSSKeyword__moz_inline_flex,
+      nsCSSProps::FindIndexOfKeyword(eCSSKeyword_inline_flex,
                                      nsCSSProps::kDisplayKTable);
 
     sAreFlexKeywordIndicesInitialized = true;
@@ -165,16 +167,36 @@ FlexboxEnabledPrefChangeCallback(const char* aPrefName, void* aClosure)
   // depending on whether the flexbox pref is enabled vs. disabled.
   if (sIndexOfFlexInDisplayTable >= 0) {
     nsCSSProps::kDisplayKTable[sIndexOfFlexInDisplayTable] =
-      isFlexboxEnabled ? eCSSKeyword__moz_flex : eCSSKeyword_UNKNOWN;
+      isFlexboxEnabled ? eCSSKeyword_flex : eCSSKeyword_UNKNOWN;
   }
   if (sIndexOfInlineFlexInDisplayTable >= 0) {
     nsCSSProps::kDisplayKTable[sIndexOfInlineFlexInDisplayTable] =
-      isFlexboxEnabled ? eCSSKeyword__moz_inline_flex : eCSSKeyword_UNKNOWN;
+      isFlexboxEnabled ? eCSSKeyword_inline_flex : eCSSKeyword_UNKNOWN;
   }
 
   return 0;
 }
 #endif // MOZ_FLEXBOX
+
+template <class AnimationsOrTransitions>
+static AnimationsOrTransitions*
+HasAnimationOrTransition(nsIContent* aContent,
+                         nsIAtom* aAnimationProperty,
+                         nsCSSProperty aProperty)
+{
+  AnimationsOrTransitions* animations =
+    static_cast<AnimationsOrTransitions*>(aContent->GetProperty(aAnimationProperty));
+  if (animations) {
+    bool propertyMatches = animations->HasAnimationOfProperty(aProperty);
+    if (propertyMatches &&
+        animations->CanPerformOnCompositorThread(
+          CommonElementAnimationData::CanAnimate_AllowPartial)) {
+      return animations;
+    }
+  }
+
+  return nullptr;
+}
 
 bool
 nsLayoutUtils::HasAnimationsForCompositor(nsIContent* aContent,
@@ -182,25 +204,107 @@ nsLayoutUtils::HasAnimationsForCompositor(nsIContent* aContent,
 {
   if (!aContent->MayHaveAnimations())
     return false;
-  ElementAnimations* animations =
-    static_cast<ElementAnimations*>(aContent->GetProperty(nsGkAtoms::animationsProperty));
+  if (HasAnimationOrTransition<ElementAnimations>
+        (aContent, nsGkAtoms::animationsProperty, aProperty)) {
+    return true;
+  }
+  return HasAnimationOrTransition<ElementTransitions>
+    (aContent, nsGkAtoms::transitionsProperty, aProperty);
+}
+
+static gfxSize
+GetScaleForValue(const nsStyleAnimation::Value& aValue,
+                 nsIFrame* aFrame)
+{
+  if (!aFrame) {
+    NS_WARNING("No frame.");
+    return gfxSize();
+  }
+  if (aValue.GetUnit() != nsStyleAnimation::eUnit_Transform) {
+    NS_WARNING("Expected a transform.");
+    return gfxSize();
+  }
+
+  nsCSSValueList* values = aValue.GetCSSValueListValue();
+  if (values->mValue.GetUnit() == eCSSUnit_None) {
+    // There is an animation, but no actual transform yet.
+    return gfxSize();
+  }
+
+  nsRect frameBounds = aFrame->GetRect();
+  bool dontCare;
+  gfx3DMatrix transform = nsStyleTransformMatrix::ReadTransforms(
+                            aValue.GetCSSValueListValue(),
+                            aFrame->GetStyleContext(),
+                            aFrame->PresContext(), dontCare, frameBounds,
+                            aFrame->PresContext()->AppUnitsPerDevPixel());
+
+  gfxMatrix transform2d;
+  bool canDraw2D = transform.CanDraw2D(&transform2d);
+  if (!canDraw2D) {
+    return gfxSize();
+  }
+
+  return transform2d.ScaleFactors(true);
+}
+
+gfxSize
+nsLayoutUtils::GetMaximumAnimatedScale(nsIContent* aContent)
+{
+  gfxSize result;
+  ElementAnimations* animations = HasAnimationOrTransition<ElementAnimations>
+    (aContent, nsGkAtoms::animationsProperty, eCSSProperty_transform);
   if (animations) {
-    bool propertyMatches = animations->HasAnimationOfProperty(aProperty);
-    if (propertyMatches && animations->CanPerformOnCompositorThread()) {
-      return true;
+    for (uint32_t animIdx = animations->mAnimations.Length(); animIdx-- != 0; ) {
+      ElementAnimation& anim = animations->mAnimations[animIdx];
+      for (uint32_t propIdx = anim.mProperties.Length(); propIdx-- != 0; ) {
+        AnimationProperty& prop = anim.mProperties[propIdx];
+        if (prop.mProperty == eCSSProperty_transform) {
+          for (uint32_t segIdx = prop.mSegments.Length(); segIdx-- != 0; ) {
+            AnimationPropertySegment& segment = prop.mSegments[segIdx];
+            gfxSize from = GetScaleForValue(segment.mFromValue,
+                                            aContent->GetPrimaryFrame());
+            result.width = NS_MAX<float>(result.width, from.width);
+            result.height = NS_MAX<float>(result.height, from.height);
+            gfxSize to = GetScaleForValue(segment.mToValue,
+                                          aContent->GetPrimaryFrame());
+            result.width = NS_MAX<float>(result.width, to.width);
+            result.height = NS_MAX<float>(result.height, to.height);
+          }
+        }
+      }
     }
   }
-
-  ElementTransitions* transitions =
-    static_cast<ElementTransitions*>(aContent->GetProperty(nsGkAtoms::transitionsProperty));
+  ElementTransitions* transitions = HasAnimationOrTransition<ElementTransitions>
+    (aContent, nsGkAtoms::transitionsProperty, eCSSProperty_transform);
   if (transitions) {
-    bool propertyMatches = transitions->HasTransitionOfProperty(aProperty);
-    if (propertyMatches && transitions->CanPerformOnCompositorThread()) {
-      return true;
+    for (uint32_t i = 0, i_end = transitions->mPropertyTransitions.Length();
+         i < i_end; ++i)
+    {
+      ElementPropertyTransition &pt = transitions->mPropertyTransitions[i];
+      if (pt.IsRemovedSentinel()) {
+        continue;
+      }
+
+      if (pt.mProperty == eCSSProperty_transform) {
+        gfxSize start = GetScaleForValue(pt.mStartValue,
+                                         aContent->GetPrimaryFrame());
+        result.width = NS_MAX<float>(result.width, start.width);
+        result.height = NS_MAX<float>(result.height, start.height);
+        gfxSize end = GetScaleForValue(pt.mEndValue,
+                                       aContent->GetPrimaryFrame());
+        result.width = NS_MAX<float>(result.width, end.width);
+        result.height = NS_MAX<float>(result.height, end.height);
+      }
     }
   }
 
-  return false;
+  // If we didn't manage to find a max scale, use no scale rather than 0,0
+  if (result == gfxSize()) {
+    return gfxSize(1, 1);
+  }
+
+  return result;
 }
 
 bool
@@ -368,6 +472,20 @@ bool
 nsLayoutUtils::GetDisplayPort(nsIContent* aContent, nsRect *aResult)
 {
   void* property = aContent->GetProperty(nsGkAtoms::DisplayPort);
+  if (!property) {
+    return false;
+  }
+
+  if (aResult) {
+    *aResult = *static_cast<nsRect*>(property);
+  }
+  return true;
+}
+
+bool
+nsLayoutUtils::GetCriticalDisplayPort(nsIContent* aContent, nsRect* aResult)
+{
+  void* property = aContent->GetProperty(nsGkAtoms::CriticalDisplayPort);
   if (!property) {
     return false;
   }
@@ -721,7 +839,7 @@ nsLayoutUtils::DoCompareTreePosition(nsIContent* aContent1,
 
   nsAutoTArray<nsINode*, 32> content1Ancestors;
   nsINode* c1;
-  for (c1 = aContent1; c1 && c1 != aCommonAncestor; c1 = c1->GetNodeParent()) {
+  for (c1 = aContent1; c1 && c1 != aCommonAncestor; c1 = c1->GetParentNode()) {
     content1Ancestors.AppendElement(c1);
   }
   if (!c1 && aCommonAncestor) {
@@ -732,7 +850,7 @@ nsLayoutUtils::DoCompareTreePosition(nsIContent* aContent1,
 
   nsAutoTArray<nsINode*, 32> content2Ancestors;
   nsINode* c2;
-  for (c2 = aContent2; c2 && c2 != aCommonAncestor; c2 = c2->GetNodeParent()) {
+  for (c2 = aContent2; c2 && c2 != aCommonAncestor; c2 = c2->GetParentNode()) {
     content2Ancestors.AppendElement(c2);
   }
   if (!c2 && aCommonAncestor) {
@@ -768,7 +886,7 @@ nsLayoutUtils::DoCompareTreePosition(nsIContent* aContent1,
   }
 
   // content1Ancestor != content2Ancestor, so they must be siblings with the same parent
-  nsINode* parent = content1Ancestor->GetNodeParent();
+  nsINode* parent = content1Ancestor->GetParentNode();
 #ifdef DEBUG
   // TODO: remove the uglyness, see bug 598468.
   NS_ASSERTION(gPreventAssertInCompareTreePosition || parent,
@@ -1306,7 +1424,11 @@ gfx3DMatrix
 nsLayoutUtils::GetTransformToAncestor(nsIFrame *aFrame, const nsIFrame *aAncestor)
 {
   nsIFrame* parent;
-  gfx3DMatrix ctm = aFrame->GetTransformMatrix(aAncestor, &parent);
+  gfx3DMatrix ctm;
+  if (aFrame == aAncestor) {
+    return ctm;
+  }
+  ctm = aFrame->GetTransformMatrix(aAncestor, &parent);
   while (parent && parent != aAncestor) {
     if (!parent->Preserves3DChildren()) {
       ctm.ProjectTo2D();
@@ -2330,13 +2452,18 @@ static bool GetAbsoluteCoord(const nsStyleCoord& aStyle, nscoord& aResult)
   return true;
 }
 
+// Only call on style coords for which GetAbsoluteCoord returned false.
 static bool
 GetPercentHeight(const nsStyleCoord& aStyle,
                  nsIFrame* aFrame,
                  nscoord& aResult)
 {
-  if (eStyleUnit_Percent != aStyle.GetUnit())
+  if (eStyleUnit_Percent != aStyle.GetUnit() &&
+      !aStyle.IsCalcUnit())
     return false;
+
+  MOZ_ASSERT(!aStyle.IsCalcUnit() || aStyle.CalcHasPercent(),
+             "GetAbsoluteCoord should have handled this");
 
   nsIFrame *f = aFrame->GetContainingBlock();
   if (!f) {
@@ -2393,6 +2520,11 @@ GetPercentHeight(const nsStyleCoord& aStyle,
     NS_ASSERTION(pos->mMinHeight.HasPercent() ||
                  pos->mMinHeight.GetUnit() == eStyleUnit_Auto,
                  "unknown min-height unit");
+  }
+
+  if (aStyle.IsCalcUnit()) {
+    aResult = NS_MAX(nsRuleNode::ComputeComputedCalc(aStyle, h), 0);
+    return true;
   }
 
   aResult = NSToCoordRound(aStyle.GetPercentValue() * h);
@@ -2559,26 +2691,56 @@ nsLayoutUtils::IntrinsicForContainer(nsRenderingContext *aRenderingContext,
       nsSize ratio = aFrame->GetIntrinsicRatio();
 
       if (ratio.height != 0) {
+        nscoord heightTakenByBoxSizing = 0;
+        switch (boxSizing) {
+        case NS_STYLE_BOX_SIZING_BORDER: {
+          const nsStyleBorder* styleBorder = aFrame->GetStyleBorder();
+          heightTakenByBoxSizing +=
+            styleBorder->GetComputedBorder().TopBottom();
+          // fall through
+        }
+        case NS_STYLE_BOX_SIZING_PADDING: {
+          const nsStylePadding* stylePadding = aFrame->GetStylePadding();
+          nscoord pad;
+          if (GetAbsoluteCoord(stylePadding->mPadding.GetTop(), pad) ||
+              GetPercentHeight(stylePadding->mPadding.GetTop(), aFrame, pad)) {
+            heightTakenByBoxSizing += pad;
+          }
+          if (GetAbsoluteCoord(stylePadding->mPadding.GetBottom(), pad) ||
+              GetPercentHeight(stylePadding->mPadding.GetBottom(), aFrame, pad)) {
+            heightTakenByBoxSizing += pad;
+          }
+          // fall through
+        }
+        case NS_STYLE_BOX_SIZING_CONTENT:
+        default:
+          break;
+        }
 
         nscoord h;
         if (GetAbsoluteCoord(styleHeight, h) ||
             GetPercentHeight(styleHeight, aFrame, h)) {
+          h = NS_MAX(0, h - heightTakenByBoxSizing);
           result =
             NSToCoordRound(h * (float(ratio.width) / float(ratio.height)));
         }
 
         if (GetAbsoluteCoord(styleMaxHeight, h) ||
             GetPercentHeight(styleMaxHeight, aFrame, h)) {
-          h = NSToCoordRound(h * (float(ratio.width) / float(ratio.height)));
-          if (h < result)
-            result = h;
+          h = NS_MAX(0, h - heightTakenByBoxSizing);
+          nscoord maxWidth =
+            NSToCoordRound(h * (float(ratio.width) / float(ratio.height)));
+          if (maxWidth < result)
+            result = maxWidth;
         }
 
         if (GetAbsoluteCoord(styleMinHeight, h) ||
             GetPercentHeight(styleMinHeight, aFrame, h)) {
-          h = NSToCoordRound(h * (float(ratio.width) / float(ratio.height)));
-          if (h > result)
-            result = h;
+          h = NS_MAX(0, h - heightTakenByBoxSizing);
+          nscoord minWidth =
+            NSToCoordRound(h * (float(ratio.width) / float(ratio.height)));
+          if (minWidth > result)
+            result = minWidth;
         }
       }
     }
@@ -2838,11 +3000,23 @@ nsLayoutUtils::ComputeSizeWithIntrinsicDimensions(
       flexDirection == NS_STYLE_FLEX_DIRECTION_ROW ||
       flexDirection == NS_STYLE_FLEX_DIRECTION_ROW_REVERSE;
 
-    if (stylePos->mFlexBasis.GetUnit() != eStyleUnit_Auto) {
+    // NOTE: The logic here should match the similar chunk for determining
+    // widthStyleCoord and heightStyleCoord in nsFrame::ComputeSize().
+    const nsStyleCoord* flexBasis = &(stylePos->mFlexBasis);
+    if (flexBasis->GetUnit() != eStyleUnit_Auto) {
       if (isHorizontalFlexItem) {
-        widthStyleCoord = &(stylePos->mFlexBasis);
+        widthStyleCoord = flexBasis;
       } else {
-        heightStyleCoord = &(stylePos->mFlexBasis);
+        // One caveat for vertical flex items: We don't support enumerated
+        // values (e.g. "max-content") for height properties yet. So, if our
+        // computed flex-basis is an enumerated value, we'll just behave as if
+        // it were "auto", which means "use the main-size property after all"
+        // (which is "height", in this case).
+        // NOTE: Once we support intrinsic sizing keywords for "height",
+        // we should remove this check.
+        if (flexBasis->GetUnit() != eStyleUnit_Enumerated) {
+          heightStyleCoord = flexBasis;
+        }
       }
     }
   }
@@ -3380,7 +3554,8 @@ nsLayoutUtils::GetFirstLinePosition(const nsIFrame* aFrame,
       nsIFrame* kid = aFrame->GetFirstPrincipalChild();
       // kid might be a legend frame here, but that's ok.
       if (GetFirstLinePosition(kid, &kidPosition)) {
-        *aResult = kidPosition + kid->GetPosition().y;
+        *aResult = kidPosition + (kid->GetPosition().y -
+                                  kid->GetRelativeOffset().y);
         return true;
       }
       return false;
@@ -3397,7 +3572,8 @@ nsLayoutUtils::GetFirstLinePosition(const nsIFrame* aFrame,
       nsIFrame *kid = line->mFirstChild;
       LinePosition kidPosition;
       if (GetFirstLinePosition(kid, &kidPosition)) {
-        *aResult = kidPosition + kid->GetPosition().y;
+        *aResult = kidPosition + (kid->GetPosition().y -
+                                  kid->GetRelativeOffset().y);
         return true;
       }
     } else {
@@ -3430,12 +3606,14 @@ nsLayoutUtils::GetLastLineBaseline(const nsIFrame* aFrame, nscoord* aResult)
       nsIFrame *kid = line->mFirstChild;
       nscoord kidBaseline;
       if (GetLastLineBaseline(kid, &kidBaseline)) {
-        *aResult = kidBaseline + kid->GetPosition().y;
+        // Ignore relative positioning for baseline calculations
+        *aResult = kidBaseline + kid->GetPosition().y -
+          kid->GetRelativeOffset().y;
         return true;
       } else if (kid->GetType() == nsGkAtoms::scrollFrame) {
         // Use the bottom of the scroll frame.
         // XXX CSS2.1 really doesn't say what to do here.
-        *aResult = kid->GetRect().YMost();
+        *aResult = kid->GetRect().YMost() - kid->GetRelativeOffset().y;
         return true;
       }
     } else {
@@ -4265,12 +4443,12 @@ nsLayoutUtils::SurfaceFromElement(nsIImageLoadingContent* aElement,
 
   nsCOMPtr<nsIPrincipal> principal;
   rv = imgRequest->GetImagePrincipal(getter_AddRefs(principal));
-  if (NS_FAILED(rv) || !principal)
+  if (NS_FAILED(rv))
     return result;
 
   nsCOMPtr<imgIContainer> imgContainer;
   rv = imgRequest->GetImage(getter_AddRefs(imgContainer));
-  if (NS_FAILED(rv) || !imgContainer)
+  if (NS_FAILED(rv))
     return result;
 
   uint32_t whichFrame = (aSurfaceFlags & SFE_WANT_FIRST_FRAME)
@@ -4454,13 +4632,15 @@ nsLayoutUtils::SurfaceFromElement(dom::Element* aElement,
                                   uint32_t aSurfaceFlags)
 {
   // If it's a <canvas>, we may be able to just grab its internal surface
-  if (nsHTMLCanvasElement* canvas = nsHTMLCanvasElement::FromContent(aElement)) {
+  if (nsHTMLCanvasElement* canvas =
+        nsHTMLCanvasElement::FromContentOrNull(aElement)) {
     return SurfaceFromElement(canvas, aSurfaceFlags);
   }
 
 #ifdef MOZ_MEDIA
   // Maybe it's <video>?
-  if (nsHTMLVideoElement* video = nsHTMLVideoElement::FromContent(aElement)) {
+  if (nsHTMLVideoElement* video =
+        nsHTMLVideoElement::FromContentOrNull(aElement)) {
     return SurfaceFromElement(video, aSurfaceFlags);
   }
 #endif
@@ -4683,6 +4863,8 @@ nsLayoutUtils::SizeOfTextRunsForFrames(nsIFrame* aFrame,
 void
 nsLayoutUtils::Initialize()
 {
+  Preferences::AddUintVarCache(&sFontSizeInflationMaxRatio,
+                               "font.size.inflation.maxRatio");
   Preferences::AddUintVarCache(&sFontSizeInflationEmPerLine,
                                "font.size.inflation.emPerLine");
   Preferences::AddUintVarCache(&sFontSizeInflationMinTwips,
@@ -4764,9 +4946,7 @@ nsLayoutUtils::RegisterImageRequestIfAnimated(nsPresContext* aPresContext,
 
   if (aRequest) {
     nsCOMPtr<imgIContainer> image;
-    aRequest->GetImage(getter_AddRefs(image));
-    if (image) {
-
+    if (NS_SUCCEEDED(aRequest->GetImage(getter_AddRefs(image)))) {
       // Check to verify that the image is animated. If so, then add it to the
       // list of images tracked by the refresh driver.
       bool isAnimated = false;
@@ -4803,8 +4983,7 @@ nsLayoutUtils::DeregisterImageRequest(nsPresContext* aPresContext,
 
   if (aRequest) {
     nsCOMPtr<imgIContainer> image;
-    aRequest->GetImage(getter_AddRefs(image));
-    if (image) {
+    if (NS_SUCCEEDED(aRequest->GetImage(getter_AddRefs(image)))) {
       aPresContext->RefreshDriver()->RemoveImageRequest(aRequest);
 
       if (aRequestRegistered) {
@@ -4968,8 +5147,10 @@ nsLayoutUtils::FontSizeInflationInner(const nsIFrame *aFrame,
   }
 
   int32_t interceptParam = nsLayoutUtils::FontSizeInflationMappingIntercept();
+  float maxRatio = (float)nsLayoutUtils::FontSizeInflationMaxRatio() / 100.0f;
 
   float ratio = float(styleFontSize) / float(aMinFontSize);
+  float inflationRatio;
 
   // Given a minimum inflated font size m, a specified font size s, we want to
   // find the inflated font size i and then return the ratio of i to s (i/s).
@@ -4992,12 +5173,18 @@ nsLayoutUtils::FontSizeInflationInner(const nsIFrame *aFrame,
     // graph is a line from (0, m), to that point). We calculate the
     // intersection point to be ((1+P/2)m, (1+P/2)m), where P is the
     // intercept parameter above. We then need to return i/s.
-    return (1.0f + (ratio * (intercept - 1) / intercept)) / ratio;
+    inflationRatio = (1.0f + (ratio * (intercept - 1) / intercept)) / ratio;
   } else {
     // This is the case where P is negative. We essentially want to implement
     // the case for P=infinity here, so we make i = s + m, which means that
     // i/s = s/s + m/s = 1 + 1/ratio
-    return 1 + 1.0f / ratio;
+    inflationRatio = 1 + 1.0f / ratio;
+  }
+
+  if (maxRatio > 1.0 && inflationRatio > maxRatio) {
+    return maxRatio;
+  } else {
+    return inflationRatio;
   }
 }
 

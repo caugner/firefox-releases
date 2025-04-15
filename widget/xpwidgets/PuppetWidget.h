@@ -126,7 +126,7 @@ public:
   NS_IMETHOD DispatchEvent(nsGUIEvent* event, nsEventStatus& aStatus);
 
   NS_IMETHOD CaptureRollupEvents(nsIRollupListener* aListener,
-                                 bool aDoCapture, bool aConsumeRollupEvent)
+                                 bool aDoCapture)
   { return NS_ERROR_UNEXPECTED; }
 
   //
@@ -158,6 +158,7 @@ public:
   NS_IMETHOD OnIMETextChange(uint32_t aOffset, uint32_t aEnd,
                              uint32_t aNewEnd);
   NS_IMETHOD OnIMESelectionChange(void);
+  virtual nsIMEUpdatePreference GetIMEUpdatePreference();
 
   NS_IMETHOD SetCursor(nsCursor aCursor);
   NS_IMETHOD SetCursor(imgIContainer* aCursor,

@@ -16,6 +16,7 @@
 #include "nsBidiPresUtils.h"
 #endif
 #include "nsStyleStructInlines.h"
+#include "mozilla/Likely.h"
 
 #ifdef DEBUG
 static int32_t ctorCount;
@@ -53,7 +54,7 @@ nsLineBox::nsLineBox(nsIFrame* aFrame, int32_t aCount, bool aIsBlock)
 nsLineBox::~nsLineBox()
 {
   MOZ_COUNT_DTOR(nsLineBox);
-  if (NS_UNLIKELY(mFlags.mHasHashedFrames)) {
+  if (MOZ_UNLIKELY(mFlags.mHasHashedFrames)) {
     delete mFrames;
   }  
   Cleanup();
@@ -70,9 +71,7 @@ NS_NewLineBox(nsIPresShell* aPresShell, nsLineBox* aFromLine,
               nsIFrame* aFrame, int32_t aCount)
 {
   nsLineBox* newLine = new (aPresShell) nsLineBox(aFrame, aCount, false);
-  if (newLine) {
-    newLine->NoteFramesMovedFrom(aFromLine);
-  }
+  newLine->NoteFramesMovedFrom(aFromLine);
   return newLine;
 }
 
@@ -99,7 +98,7 @@ nsLineBox::NoteFramesMovedFrom(nsLineBox* aFromLine)
   uint32_t toCount = GetChildCount();
   MOZ_ASSERT(toCount <= fromCount, "moved more frames than aFromLine has");
   uint32_t fromNewCount = fromCount - toCount;
-  if (NS_LIKELY(!aFromLine->mFlags.mHasHashedFrames)) {
+  if (MOZ_LIKELY(!aFromLine->mFlags.mHasHashedFrames)) {
     aFromLine->mChildCount = fromNewCount;
     MOZ_ASSERT(toCount < kMinChildCountForHashtable);
   } else if (fromNewCount < kMinChildCountForHashtable) {
@@ -226,9 +225,7 @@ nsLineBox::StateToString(char* aBuf, int32_t aBufSize) const
 void
 nsLineBox::List(FILE* out, int32_t aIndent, uint32_t aFlags) const
 {
-  int32_t i;
-
-  for (i = aIndent; --i >= 0; ) fputs("  ", out);
+  nsFrame::IndentBy(out, aIndent);
   char cbuf[100];
   fprintf(out, "line %p: count=%d state=%s ",
           static_cast<const void*>(this), GetChildCount(),
@@ -258,12 +255,12 @@ nsLineBox::List(FILE* out, int32_t aIndent, uint32_t aFlags) const
     frame = frame->GetNextSibling();
   }
 
-  for (i = aIndent; --i >= 0; ) fputs("  ", out);
   if (HasFloats()) {
+    nsFrame::IndentBy(out, aIndent);
     fputs("> floats <\n", out);
     ListFloats(out, aIndent + 1, mInlineData->mFloats);
-    for (i = aIndent; --i >= 0; ) fputs("  ", out);
   }
+  nsFrame::IndentBy(out, aIndent);
   fputs(">\n", out);
 }
 #endif
@@ -364,7 +361,7 @@ nsLineBox::DeleteLineList(nsPresContext* aPresContext, nsLineList& aLines,
   // frame tree while we're destroying.
   while (!aLines.empty()) {
     nsLineBox* line = aLines.front();
-    if (NS_UNLIKELY(line->mFlags.mHasHashedFrames)) {
+    if (MOZ_UNLIKELY(line->mFlags.mHasHashedFrames)) {
       line->SwitchToCounter();  // Avoid expensive has table removals.
     }
     while (line->GetChildCount() > 0) {
@@ -393,7 +390,7 @@ nsLineBox::RFindLineContaining(nsIFrame* aFrame,
   while (aBegin != aEnd) {
     --aEnd;
     NS_ASSERTION(aEnd->LastChild() == curFrame, "Unexpected curFrame");
-    if (NS_UNLIKELY(aEnd->mFlags.mHasHashedFrames) &&
+    if (MOZ_UNLIKELY(aEnd->mFlags.mHasHashedFrames) &&
         !aEnd->Contains(aFrame)) {
       if (aEnd->mFirstChild) {
         curFrame = aEnd->mFirstChild->GetPrevSibling();

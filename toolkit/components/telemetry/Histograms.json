@@ -16,10 +16,6 @@
     "kind": "flag",
     "description": "has the IAccessibleTable accessibility interface been used"
   },
-  "A11Y_XFORMS_USAGE_FLAG": {
-    "kind": "flag",
-    "description": "has XForms accessibility been instantiated"
-  },
   "A11Y_UPDATE_TIME": {
     "kind": "exponential",
     "high": "10000",
@@ -429,6 +425,10 @@
     "n_buckets": 20,
     "description": "Startup cache age (hours)"
   },
+  "STARTUP_CACHE_INVALID": {
+    "kind": "flag",
+    "description": "Was the disk startup cache file detected as invalid"
+  },
   "WORD_CACHE_HITS": {
     "kind": "exponential",
     "high": "256",
@@ -453,7 +453,7 @@
     "kind": "boolean",
     "description": "Did the browser start after a successful shutdown"
   },
-  "IMAGE_DECODE_LATENCY": {
+  "IMAGE_DECODE_LATENCY_US": {
     "kind": "exponential",
     "low": 50,
     "high": "5000000",
@@ -701,6 +701,16 @@
     "n_buckets": 50,
     "description": "HTTP subitem: Overall load time - network (ms)"
   },
+  "HTTP_PROXY_TYPE": {
+    "kind": "enumerated",
+    "n_values": 8,
+    "description": "HTTP Proxy Type (none, http, socks)"
+  },
+  "WEBSOCKETS_HANDSHAKE_TYPE": {
+    "kind": "enumerated",
+    "n_values": 16,
+    "description": "Websockets Handshake Results (ws-ok-plain, ws-ok-proxy, ws-failed-plain, ws-failed-proxy, wss-ok-plain, wss-ok-proxy, wss-failed-plain, wss-failed-proxy)"
+  },
   "SPDY_VERSION2": {
     "kind": "enumerated",
     "n_values": 48,
@@ -769,20 +779,6 @@
     "high": "3000",
     "n_buckets": 50,
     "description": "SPDY: KB read per connection"
-  },
-  "SPDY_PING_EXPERIMENT_PASS": {
-    "kind": "linear",
-    "low": 10,
-    "high": "355",
-    "n_buckets": 64,
-    "description": "SPDY: Ping Interval Passed"
-  },
-  "SPDY_PING_EXPERIMENT_FAIL": {
-    "kind": "linear",
-    "low": 10,
-    "high": "355",
-    "n_buckets": 64,
-    "description": "SPDY: Ping Interval Failed"
   },
   "SPDY_SETTINGS_UL_BW": {
     "kind": "exponential",
@@ -1096,6 +1092,12 @@
     "high": "10 * 1000",
     "n_buckets": 50,
     "description": "Time spent waiting on the cache service lock (ms) on the main thread in NSCACHESERVICE_EVICTENTRIESFORCLIENT"
+  },
+  "CACHE_SERVICE_LOCK_WAIT_MAINTHREAD_NSCACHESERVICE_DISKDEVICEHEAPSIZE": {
+    "kind": "exponential",
+    "high": "10 * 1000",
+    "n_buckets": 50,
+    "description": "Time spent waiting on the cache service lock (ms) on the main thread in NSCACHESERVICE_DISKDEVICEHEAPSIZE"
   },
   "CACHE_SERVICE_LOCK_WAIT_MAINTHREAD_NSCACHEENTRYDESCRIPTOR_DOOM": {
     "kind": "exponential",
@@ -1766,6 +1768,20 @@
     "n_buckets": 10,
     "description": "PLACES: Number of keywords"
   },
+  "FENNEC_FAVICONS_COUNT": {
+    "kind": "exponential",
+    "high": "2000",
+    "n_buckets": 10,
+    "cpp_guard": "ANDROID",
+    "description": "FENNEC: (Places) Number of favicons stored"
+  },
+  "FENNEC_THUMBNAILS_COUNT": {
+    "kind": "exponential",
+    "high": "2000",
+    "n_buckets": 10,
+    "cpp_guard": "ANDROID",
+    "description": "FENNEC: (Places) Number of thumbnails stored"
+  },
   "PLACES_SORTED_BOOKMARKS_PERC": {
     "kind": "linear",
     "high": "100",
@@ -2113,19 +2129,59 @@
     "kind": "boolean",
     "description": "DOM: Ranges that are detached on destruction (bug 702948)"
   },
-  "GLOBALDOMSTORAGE_KEY_SIZE_BYTES": {
+  "LOCALDOMSTORAGE_GETALLKEYS_MS": {
     "kind": "exponential",
-    "low": 1024,
-    "high": "32768",
+    "high": "3000",
     "n_buckets": 10,
-    "description": "DOM storage: size of keys stored in globalStorage"
+    "description": "Time to return a list of all keys in domain's LocalStorage (ms)"
   },
-  "GLOBALDOMSTORAGE_VALUE_SIZE_BYTES": {
+  "LOCALDOMSTORAGE_GETVALUE_MS": {
     "kind": "exponential",
-    "low": 1024,
-    "high": "32768",
+    "high": "3000",
     "n_buckets": 10,
-    "description": "DOM storage: size of values stored in globalStorage"
+    "description": "Time to return a value for a key in LocalStorage (ms)"
+  },
+  "LOCALDOMSTORAGE_SETVALUE_MS": {
+    "kind": "exponential",
+    "high": "3000",
+    "n_buckets": 10,
+    "description": "Time to set a single key's value in LocalStorage (ms)"
+  },
+  "LOCALDOMSTORAGE_REMOVEKEY_MS": {
+    "kind": "exponential",
+    "high": "3000",
+    "n_buckets": 10,
+    "description": "Time to remove a single key from LocalStorage (ms)"
+  },
+  "LOCALDOMSTORAGE_REMOVEALL_MS": {
+    "kind": "exponential",
+    "high": "3000",
+    "n_buckets": 10,
+    "description": "Time to clear LocalStorage for all domains (ms)"
+  },
+  "LOCALDOMSTORAGE_FETCH_DOMAIN_MS": {
+    "kind": "exponential",
+    "high": "3000",
+    "n_buckets": 10,
+    "description": "Time to fetch LocalStorage data for a domain (ms)"
+  },
+  "LOCALDOMSTORAGE_FETCH_QUOTA_USE_MS": {
+    "kind": "exponential",
+    "high": "3000",
+    "n_buckets": 10,
+    "description": "Time to fetch quota use stats for a TLD (ms)"
+  },
+  "LOCALDOMSTORAGE_TIMER_FLUSH_MS": {
+    "kind": "exponential",
+    "high": "3000",
+    "n_buckets": 10,
+    "description": "Time to flush dirty entries from the cache (ms)"
+  },
+  "LOCALDOMSTORAGE_PERCENT_FLUSHED": {
+    "kind": "linear",
+    "high": "100",
+    "n_buckets": 12,
+    "description": "Percentage of dirty entries during a flush"
   },
   "LOCALDOMSTORAGE_KEY_SIZE_BYTES": {
     "kind": "exponential",
@@ -2261,6 +2317,18 @@
     "description": "Fennec: Time for the Awesomebar Top Sites query to return with no filter set (ms)",
     "cpp_guard": "ANDROID"
   },
+  "FENNEC_LOWMEM_TAB_COUNT": {
+    "kind": "exponential",
+    "high": 100,
+    "n_buckets": 30,
+    "description": "How many tabs were open when a low-memory event was received",
+    "cpp_guard": "ANDROID"
+  },
+  "FENNEC_RESTORING_ACTIVITY": {
+    "kind": "flag",
+    "description": "Fennec is starting up but the Gecko thread was still running",
+    "cpp_guard": "ANDROID"
+  },
   "FENNEC_STARTUP_TIME_JAVAUI": {
     "kind": "exponential",
     "low": 100,
@@ -2291,9 +2359,25 @@
     "description": "The way the GeckoApp was launched. (Normal, URL, Prefetch, Redirector)",
     "cpp_guard": "ANDROID"
   },
-  "OUT_OF_MEMORY_KILLED": {
+  "FENNEC_TAB_EXPIRED": {
+    "kind": "exponential",
+    "low": 10,
+    "high": 604800,
+    "n_buckets": 20,
+    "description": "How long (in seconds) a tab was inactive before it was expired",
+    "cpp_guard": "ANDROID"
+  },
+  "FENNEC_TAB_ZOMBIFIED": {
+    "kind": "exponential",
+    "low": 10,
+    "high": 604800,
+    "n_buckets": 20,
+    "description": "How long (in seconds) a tab was inactive when it was OOM-zombified",
+    "cpp_guard": "ANDROID"
+  },
+  "FENNEC_WAS_KILLED": {
     "kind": "flag",
-    "description": "Killed due to an OOM condition",
+    "description": "Killed, likely due to an OOM condition",
     "cpp_guard": "ANDROID"
   },
   "SECURITY_UI": {
@@ -2325,5 +2409,13 @@
   "COMPONENTS_OBJECT_ACCESSED_BY_CONTENT": {
     "kind": "flag",
     "description": "Whether content ever accesed the Components object in this session"
+  },
+  "COMPONENTS_LOOKUPMETHOD_ACCESSED_BY_CONTENT": {
+    "kind": "flag",
+    "description": "Whether content ever accesed Components.lookupMethod in this session"
+  },
+  "COMPONENTS_INTERFACES_ACCESSED_BY_CONTENT": {
+    "kind": "flag",
+    "description": "Whether content ever accesed Components.interfaces in this session"
   }
 }

@@ -31,8 +31,6 @@ const PREF_PREFIX = 'pdfjs';
 const PDF_VIEWER_WEB_PAGE = 'resource://pdf.js/web/viewer.html';
 const MAX_DATABASE_LENGTH = 4096;
 const FIREFOX_ID = '{ec8030f7-c20a-464f-9b0e-13a3a9e97384}';
-const SEAMONKEY_ID = '{92650c4d-4b8e-4d2a-b7eb-24ecf4f6b63a}';
-const METRO_ID = '{99bceaaa-e3c6-48c1-b981-ef9b46b67d60}';
 
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
 Cu.import('resource://gre/modules/Services.jsm');
@@ -41,20 +39,28 @@ Cu.import('resource://gre/modules/NetUtil.jsm');
 
 let appInfo = Cc['@mozilla.org/xre/app-info;1']
                   .getService(Ci.nsIXULAppInfo);
-let privateBrowsing, inPrivateBrowsing;
 let Svc = {};
 XPCOMUtils.defineLazyServiceGetter(Svc, 'mime',
                                    '@mozilla.org/mime;1',
                                    'nsIMIMEService');
 
+let isInPrivateBrowsing;
 if (appInfo.ID === FIREFOX_ID) {
-  privateBrowsing = Cc['@mozilla.org/privatebrowsing;1']
-                          .getService(Ci.nsIPrivateBrowsingService);
-  inPrivateBrowsing = privateBrowsing.privateBrowsingEnabled;
-} else if (appInfo.ID === SEAMONKEY_ID ||
-           appInfo.ID === METRO_ID) {
-  privateBrowsing = null;
-  inPrivateBrowsing = false;
+  let privateBrowsing = Cc['@mozilla.org/privatebrowsing;1']
+                            .getService(Ci.nsIPrivateBrowsingService);
+  isInPrivateBrowsing = function getInPrivateBrowsing() {
+    return privateBrowsing.privateBrowsingEnabled;
+  };
+} else {
+  isInPrivateBrowsing = function() { return false; };
+}
+
+function getChromeWindow(domWindow) {
+  var containingBrowser = domWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                                   .getInterface(Ci.nsIWebNavigation)
+                                   .QueryInterface(Ci.nsIDocShell)
+                                   .chromeEventHandler;
+  return containingBrowser.ownerDocument.defaultView;
 }
 
 function getBoolPref(pref, def) {
@@ -89,7 +95,9 @@ function log(aMsg) {
 }
 
 function getDOMWindow(aChannel) {
-  var requestor = aChannel.notificationCallbacks;
+  var requestor = aChannel.notificationCallbacks ?
+                  aChannel.notificationCallbacks :
+                  aChannel.loadGroup.notificationCallbacks;
   var win = requestor.getInterface(Components.interfaces.nsIDOMWindow);
   return win;
 }
@@ -197,13 +205,15 @@ PdfDataListener.prototype = {
 };
 
 // All the priviledged actions.
-function ChromeActions(domWindow, dataListener) {
+function ChromeActions(domWindow, dataListener, contentDispositionFilename) {
   this.domWindow = domWindow;
   this.dataListener = dataListener;
+  this.contentDispositionFilename = contentDispositionFilename;
 }
 
 ChromeActions.prototype = {
   download: function(data, sendResponse) {
+    var self = this;
     var originalUrl = data.originalUrl;
     // The data may not be downloaded so we need just retry getting the pdf with
     // the original url.
@@ -240,9 +250,13 @@ ChromeActions.prototype = {
       // so the filename will be correct.
       let channel = Cc['@mozilla.org/network/input-stream-channel;1'].
                        createInstance(Ci.nsIInputStreamChannel);
+      channel.QueryInterface(Ci.nsIChannel);
+      channel.contentDisposition = Ci.nsIChannel.DISPOSITION_ATTACHMENT;
+      if (self.contentDispositionFilename) {
+        channel.contentDispositionFilename = self.contentDispositionFilename;
+      }
       channel.setURI(originalUri);
       channel.contentStream = aInputStream;
-      channel.QueryInterface(Ci.nsIChannel);
       if ('nsIPrivateBrowsingChannel' in Ci &&
           channel instanceof Ci.nsIPrivateBrowsingChannel) {
         channel.setPrivate(docIsPrivate);
@@ -273,7 +287,7 @@ ChromeActions.prototype = {
     });
   },
   setDatabase: function(data) {
-    if (inPrivateBrowsing)
+    if (isInPrivateBrowsing())
       return;
     // Protect against something sending tons of data to setDatabase.
     if (data.length > MAX_DATABASE_LENGTH)
@@ -281,7 +295,7 @@ ChromeActions.prototype = {
     setStringPref(PREF_PREFIX + '.database', data);
   },
   getDatabase: function() {
-    if (inPrivateBrowsing)
+    if (isInPrivateBrowsing())
       return '{}';
     return getStringPref(PREF_PREFIX + '.database', '{}');
   },
@@ -336,8 +350,11 @@ ChromeActions.prototype = {
   pdfBugEnabled: function() {
     return getBoolPref(PREF_PREFIX + '.pdfBugEnabled', false);
   },
-  searchEnabled: function() {
-    return getBoolPref(PREF_PREFIX + '.searchEnabled', false);
+  supportsIntegratedFind: function() {
+    // Integrated find is only supported when we're not in a frame and when the
+    // new find events code exists.
+    return this.domWindow.frameElement === null &&
+           'updateControlState' in getChromeWindow(this.domWindow).gFindBar;
   },
   fallback: function(url, sendResponse) {
     var self = this;
@@ -391,6 +408,20 @@ ChromeActions.prototype = {
       if (!sentResponse)
         sendResponse(false);
     });
+  },
+  updateFindControlState: function(data) {
+    if (!this.supportsIntegratedFind())
+      return;
+    // Verify what we're sending to the findbar.
+    var result = data.result;
+    var findPrevious = data.findPrevious;
+    var findPreviousType = typeof findPrevious;
+    if ((typeof result !== 'number' || result < 0 || result > 3) ||
+        (findPreviousType !== 'undefined' && findPreviousType !== 'boolean')) {
+      return;
+    }
+    getChromeWindow(this.domWindow).gFindBar
+                                   .updateControlState(result, findPrevious);
   }
 };
 
@@ -420,7 +451,13 @@ RequestListener.prototype.receive = function(event) {
       response = null;
     } else {
       response = function sendResponse(response) {
-        message.setUserData('response', response, null);
+        try {
+          message.setUserData('response', response, null);
+        } catch (e) {
+          // message is no longer accessible because the sender is already
+          // gone. the unloaded sender cannot receive the response anyway.
+          return false;
+        }
 
         var listener = doc.createEvent('HTMLEvents');
         listener.initEvent('pdf.js.response', true, false);
@@ -428,6 +465,57 @@ RequestListener.prototype.receive = function(event) {
       }
     }
     actions[action].call(this.actions, data, response);
+  }
+};
+
+// Forwards events from the eventElement to the contentWindow only if the
+// content window matches the currently selected browser window.
+function FindEventManager(eventElement, contentWindow, chromeWindow) {
+  this.types = ['find',
+                'findagain',
+                'findhighlightallchange',
+                'findcasesensitivitychange'];
+  this.chromeWindow = chromeWindow;
+  this.contentWindow = contentWindow;
+  this.eventElement = eventElement;
+}
+
+FindEventManager.prototype.bind = function() {
+  var unload = function(e) {
+    this.unbind();
+    this.contentWindow.removeEventListener(e.type, unload);
+  }.bind(this);
+  this.contentWindow.addEventListener('unload', unload);
+
+  for (var i = 0; i < this.types.length; i++) {
+    var type = this.types[i];
+    this.eventElement.addEventListener(type, this, true);
+  }
+};
+
+FindEventManager.prototype.handleEvent = function(e) {
+  var chromeWindow = this.chromeWindow;
+  var contentWindow = this.contentWindow;
+  // Only forward the events if they are for our dom window.
+  if (chromeWindow.gBrowser.selectedBrowser.contentWindow === contentWindow) {
+    var detail = e.detail;
+    detail.__exposedProps__ = {
+      query: 'r',
+      caseSensitive: 'r',
+      highlightAll: 'r',
+      findPrevious: 'r'
+    };
+    var forward = contentWindow.document.createEvent('CustomEvent');
+    forward.initCustomEvent(e.type, true, true, detail);
+    contentWindow.dispatchEvent(forward);
+    e.preventDefault();
+  }
+};
+
+FindEventManager.prototype.unbind = function() {
+  for (var i = 0; i < this.types.length; i++) {
+    var type = this.types[i];
+    this.eventElement.removeEventListener(type, this, true);
   }
 };
 
@@ -468,21 +556,6 @@ PdfStreamConverter.prototype = {
     if (!isEnabled())
       throw Cr.NS_ERROR_NOT_IMPLEMENTED;
 
-    var useFetchByChrome = getBoolPref(PREF_PREFIX + '.fetchByChrome', true);
-    if (!useFetchByChrome) {
-      // Ignoring HTTP POST requests -- pdf.js has to repeat the request.
-      var skipConversion = false;
-      try {
-        var request = aCtxt;
-        request.QueryInterface(Ci.nsIHttpChannel);
-        skipConversion = (request.requestMethod !== 'GET');
-      } catch (e) {
-        // Non-HTTP request... continue normally.
-      }
-      if (skipConversion)
-        throw Cr.NS_ERROR_NOT_IMPLEMENTED;
-    }
-
     // Store the listener passed to us
     this.listener = aListener;
   },
@@ -501,22 +574,21 @@ PdfStreamConverter.prototype = {
 
   // nsIRequestObserver::onStartRequest
   onStartRequest: function(aRequest, aContext) {
-
     // Setup the request so we can use it below.
     aRequest.QueryInterface(Ci.nsIChannel);
-    var useFetchByChrome = getBoolPref(PREF_PREFIX + '.fetchByChrome', true);
-    var dataListener;
-    if (useFetchByChrome) {
-      // Creating storage for PDF data
-      var contentLength = aRequest.contentLength;
-      dataListener = new PdfDataListener(contentLength);
-      this.dataListener = dataListener;
-      this.binaryStream = Cc['@mozilla.org/binaryinputstream;1']
-                          .createInstance(Ci.nsIBinaryInputStream);
-    } else {
-      // Cancel the request so the viewer can handle it.
-      aRequest.cancel(Cr.NS_BINDING_ABORTED);
-    }
+    // Creating storage for PDF data
+    var contentLength = aRequest.contentLength;
+    var dataListener = new PdfDataListener(contentLength);
+    var contentDispositionFilename;
+    try {
+      contentDispositionFilename = aRequest.contentDispositionFilename;
+    } catch (e) {}
+    this.dataListener = dataListener;
+    this.binaryStream = Cc['@mozilla.org/binaryinputstream;1']
+                        .createInstance(Ci.nsIBinaryInputStream);
+
+    // Change the content type so we don't get stuck in a loop.
+    aRequest.contentType = 'text/html';
 
     // Create a new channel that is viewer loaded as a resource.
     var ioService = Services.io;
@@ -524,45 +596,59 @@ PdfStreamConverter.prototype = {
                     PDF_VIEWER_WEB_PAGE, null, null);
 
     var listener = this.listener;
-    var self = this;
     // Proxy all the request observer calls, when it gets to onStopRequest
-    // we can get the dom window.
+    // we can get the dom window.  We also intentionally pass on the original
+    // request(aRequest) below so we don't overwrite the original channel and
+    // trigger an assertion.
     var proxy = {
-      onStartRequest: function() {
-        listener.onStartRequest.apply(listener, arguments);
+      onStartRequest: function(request, context) {
+        listener.onStartRequest(aRequest, context);
       },
-      onDataAvailable: function() {
-        listener.onDataAvailable.apply(listener, arguments);
+      onDataAvailable: function(request, context, inputStream, offset, count) {
+        listener.onDataAvailable(aRequest, context, inputStream, offset, count);
       },
-      onStopRequest: function() {
+      onStopRequest: function(request, context, statusCode) {
+        // We get the DOM window here instead of before the request since it
+        // may have changed during a redirect.
         var domWindow = getDOMWindow(channel);
         // Double check the url is still the correct one.
         if (domWindow.document.documentURIObject.equals(aRequest.URI)) {
-          let actions = new ChromeActions(domWindow, dataListener);
+          let actions = new ChromeActions(domWindow, dataListener,
+                                          contentDispositionFilename);
           let requestListener = new RequestListener(actions);
           domWindow.addEventListener(PDFJS_EVENT_ID, function(event) {
             requestListener.receive(event);
           }, false, true);
+          if (actions.supportsIntegratedFind()) {
+            var chromeWindow = getChromeWindow(domWindow);
+            var findEventManager = new FindEventManager(chromeWindow.gFindBar,
+                                                        domWindow,
+                                                        chromeWindow);
+            findEventManager.bind();
+          }
+        } else {
+          log('Dom window url did not match request url.');
         }
-        listener.onStopRequest.apply(listener, arguments);
+        listener.onStopRequest(aRequest, context, statusCode);
       }
     };
 
     // Keep the URL the same so the browser sees it as the same.
     channel.originalURI = aRequest.URI;
+    channel.loadGroup = aRequest.loadGroup;
+
+    // We can use resource principal when data is fetched by the chrome
+    // e.g. useful for NoScript
+    var securityManager = Cc['@mozilla.org/scriptsecuritymanager;1']
+                          .getService(Ci.nsIScriptSecurityManager);
+    var uri = ioService.newURI(PDF_VIEWER_WEB_PAGE, null, null);
+    // FF16 and below had getCodebasePrincipal, it was replaced by
+    // getNoAppCodebasePrincipal (bug 758258).
+    var resourcePrincipal = 'getNoAppCodebasePrincipal' in securityManager ?
+                            securityManager.getNoAppCodebasePrincipal(uri) :
+                            securityManager.getCodebasePrincipal(uri);
+    aRequest.owner = resourcePrincipal;
     channel.asyncOpen(proxy, aContext);
-    if (useFetchByChrome) {
-      // We can use resource principal when data is fetched by the chrome
-      // e.g. useful for NoScript
-      var securityManager = Cc['@mozilla.org/scriptsecuritymanager;1']
-                            .getService(Ci.nsIScriptSecurityManager);
-      var uri = ioService.newURI(PDF_VIEWER_WEB_PAGE, null, null);
-      // FF16 and below had getCodebasePrincipal (bug 774585)
-      var resourcePrincipal = 'getNoAppCodebasePrincipal' in securityManager ?
-                              securityManager.getNoAppCodebasePrincipal(uri) :
-                              securityManager.getCodebasePrincipal(uri);
-      channel.owner = resourcePrincipal;
-    }
   },
 
   // nsIRequestObserver::onStopRequest

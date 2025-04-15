@@ -16,9 +16,11 @@ let {NewTabUtils, Sanitizer} = tmp;
 let uri = Services.io.newURI("about:newtab", null, null);
 let principal = Services.scriptSecurityManager.getNoAppCodebasePrincipal(uri);
 
+let gWindow = window;
+
 registerCleanupFunction(function () {
-  while (gBrowser.tabs.length > 1)
-    gBrowser.removeTab(gBrowser.tabs[1]);
+  while (gWindow.gBrowser.tabs.length > 1)
+    gWindow.gBrowser.removeTab(gWindow.gBrowser.tabs[1]);
 
   Services.prefs.clearUserPref(PREF_NEWTAB_ENABLED);
 });
@@ -80,7 +82,7 @@ let TestRunner = {
  * @return The content window.
  */
 function getContentWindow() {
-  return gBrowser.selectedBrowser.contentWindow;
+  return gWindow.gBrowser.selectedBrowser.contentWindow;
 }
 
 /**
@@ -88,7 +90,7 @@ function getContentWindow() {
  * @return The content document.
  */
 function getContentDocument() {
-  return gBrowser.selectedBrowser.contentDocument;
+  return gWindow.gBrowser.selectedBrowser.contentDocument;
 }
 
 /**
@@ -202,7 +204,7 @@ function restore() {
  * Creates a new tab containing 'about:newtab'.
  */
 function addNewTabPageTab() {
-  let tab = gBrowser.selectedTab = gBrowser.addTab("about:newtab");
+  let tab = gWindow.gBrowser.selectedTab = gWindow.gBrowser.addTab("about:newtab");
   let browser = tab.linkedBrowser;
 
   function whenNewTabLoaded() {

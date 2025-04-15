@@ -3,7 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "prmem.h"
 #include "nsString.h"
 #include "nsBidiUtils.h"
 #include "nsMathUtils.h"
@@ -341,7 +340,9 @@ gfxGraphiteShaper::SetGlyphsFromSegment(gfxShapedWord *aShapedWord,
                     d->mAdvance = appAdvance;
                     clusterLoc = xLocs[j];
                 } else {
-                    d->mXOffset = (xLocs[j] - clusterLoc - adv) * dev2appUnits;
+                    d->mXOffset = dev2appUnits *
+                        (rtl ? (xLocs[j] - clusterLoc) :
+                               (xLocs[j] - clusterLoc - adv));
                     d->mAdvance = 0;
                 }
             }

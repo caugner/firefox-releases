@@ -31,6 +31,11 @@
 #include "nsAlgorithm.h"
 #include "mozilla/layout/FrameChildList.h"
 #include "FramePropertyTable.h"
+#include "mozilla/Attributes.h"
+
+#ifdef ACCESSIBILITY
+#include "mozilla/a11y/AccTypes.h"
+#endif
 
 /**
  * New rules of reflow:
@@ -64,9 +69,6 @@ class nsISelectionController;
 class nsBoxLayoutState;
 class nsBoxLayout;
 class nsILineIterator;
-#ifdef ACCESSIBILITY
-class Accessible;
-#endif
 class nsDisplayListBuilder;
 class nsDisplayListSet;
 class nsDisplayList;
@@ -163,8 +165,10 @@ typedef uint64_t nsFrameState;
 // e.g., it is absolutely positioned or floated
 #define NS_FRAME_OUT_OF_FLOW                        NS_FRAME_STATE_BIT(8)
 
-// This bit is available for re-use.
-//#define NS_FRAME_SELECTED_CONTENT                   NS_FRAME_STATE_BIT(9)
+// Frame can be an abs/fixed pos. container, if its style says so.
+// MarkAs[Not]AbsoluteContainingBlock will assert that this bit is set.
+// NS_FRAME_HAS_ABSPOS_CHILDREN must not be set when this bit is unset.
+#define NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN           NS_FRAME_STATE_BIT(9)
 
 // If this bit is set, then the frame and _all_ of its descendant frames need
 // to be reflowed.
@@ -249,9 +253,6 @@ typedef uint64_t nsFrameState;
 // This bit acts as a loop flag for recursive paint server drawing.
 #define NS_FRAME_DRAWING_AS_PAINTSERVER             NS_FRAME_STATE_BIT(33)
 
-// Frame's overflow area was clipped by the 'clip' property.
-#define NS_FRAME_HAS_CLIP                           NS_FRAME_STATE_BIT(35)
-
 // Frame is a display root and the retained layer tree needs to be updated
 // at the next paint via display list construction.
 // Only meaningful for display roots, so we don't really need a global state
@@ -294,10 +295,6 @@ typedef uint64_t nsFrameState;
 // alpha children. With BasicLayers we avoid creating these, so we mark
 // the frames for future reference.
 #define NS_FRAME_NO_COMPONENT_ALPHA                 NS_FRAME_STATE_BIT(45)
-
-// Frame has a cached rasterization of anV
-// nsDisplayBackground display item
-#define NS_FRAME_HAS_CACHED_BACKGROUND              NS_FRAME_STATE_BIT(46)
 
 // The frame is a descendant of nsSVGTextFrame2 and is thus used for SVG
 // text layout.
@@ -507,10 +504,10 @@ void NS_MergeReflowStatusInto(nsReflowStatus* aPrimary,
 /**
  * DidReflow status values.
  */
-typedef bool nsDidReflowStatus;
-
-#define NS_FRAME_REFLOW_NOT_FINISHED false
-#define NS_FRAME_REFLOW_FINISHED     true
+MOZ_BEGIN_ENUM_CLASS(nsDidReflowStatus, uint32_t)
+  NOT_FINISHED,
+  FINISHED
+MOZ_END_ENUM_CLASS(nsDidReflowStatus)
 
 /**
  * When there is no scrollable overflow rect, the visual overflow rect
@@ -2051,7 +2048,11 @@ public:
    * @param aStopAtAncestor don't look further than aStopAtAncestor. If null,
    *   all ancestors (including across documents) will be traversed.
    * @param aOutAncestor [out] The ancestor frame the frame has chosen.  If
-   *   this frame has no ancestor, *aOutAncestor will be set to null.
+   *   this frame has no ancestor, *aOutAncestor will be set to null. If
+   * this frame is not a root frame, then *aOutAncestor will be in the same
+   * document as this frame. If this frame IsTransformed(), then *aOutAncestor
+   * will be the parent frame (if not preserve-3d) or the nearest non-transformed
+   * ancestor (if preserve-3d).
    * @return A gfxMatrix that converts points in this frame's coordinate space
    *   into points in aOutAncestor's coordinate space.
    */
@@ -2084,6 +2085,7 @@ public:
     // children. For example, the whitespace between <table>\n<tr>\n<td>
     // will be excluded during the construction of children. 
     eExcludesIgnorableWhitespace =      1 << 13,
+    eSupportsCSSTransforms =            1 << 14,
 
     // These are to allow nsFrame::Init to assert that IsFrameOfType
     // implementations all call the base class method.  They are only
@@ -2102,9 +2104,9 @@ public:
   virtual bool IsFrameOfType(uint32_t aFlags) const
   {
 #ifdef DEBUG
-    return !(aFlags & ~(nsIFrame::eDEBUGAllFrames));
+    return !(aFlags & ~(nsIFrame::eDEBUGAllFrames | nsIFrame::eSupportsCSSTransforms));
 #else
-    return !aFlags;
+    return !(aFlags & ~nsIFrame::eSupportsCSSTransforms);
 #endif
   }
 
@@ -2507,7 +2509,7 @@ public:
    * Use a mediatior of some kind.
    */
 #ifdef ACCESSIBILITY
-  virtual already_AddRefed<Accessible> CreateAccessible() = 0;
+  virtual mozilla::a11y::AccType AccessibleType() = 0;
 #endif
 
   /**
@@ -2862,7 +2864,8 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
   bool IsAbsoluteContainer() const { return !!(mState & NS_FRAME_HAS_ABSPOS_CHILDREN); }
   bool HasAbsolutelyPositionedChildren() const;
   nsAbsoluteContainingBlock* GetAbsoluteContainingBlock() const;
-  virtual void MarkAsAbsoluteContainingBlock();
+  void MarkAsAbsoluteContainingBlock();
+  void MarkAsNotAbsoluteContainingBlock();
   // Child frame types override this function to select their own child list name
   virtual mozilla::layout::FrameChildListID GetAbsoluteListID() const { return kAbsoluteList; }
 
@@ -2903,6 +2906,8 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
   enum { eInvalidVerticalAlign = 0xFF };
 
   bool IsSVGText() const { return mState & NS_FRAME_IS_SVG_TEXT; }
+
+  void CreateOwnLayerIfNeeded(nsDisplayListBuilder* aBuilder, nsDisplayList* aList);
 
 protected:
   // Members

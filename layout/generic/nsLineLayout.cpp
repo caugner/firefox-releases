@@ -764,8 +764,8 @@ nsLineLayout::ReflowFrame(nsIFrame* aFrame,
   // possible width.
   nscoord maxLineBoxWidth = aFrame->PresContext()->PresShell()->MaxLineBoxWidth();
 
-  if (maxLineBoxWidth > 0 && psd->mRightEdge > maxLineBoxWidth) {
-    psd->mRightEdge = maxLineBoxWidth;
+  if (maxLineBoxWidth > 0 && psd->mRightEdge - psd->mLeftEdge > maxLineBoxWidth) {
+    psd->mRightEdge = psd->mLeftEdge + maxLineBoxWidth;
   }
 
   // Inline-ish and text-ish things don't compute their width;
@@ -961,7 +961,7 @@ nsLineLayout::ReflowFrame(nsIFrame* aFrame,
   // Tell the frame that we're done reflowing it
   aFrame->DidReflow(mPresContext,
                     isText ? nullptr : reflowStateHolder.addr(),
-                    NS_FRAME_REFLOW_FINISHED);
+                    nsDidReflowStatus::FINISHED);
 
   if (aMetrics) {
     *aMetrics = metrics;

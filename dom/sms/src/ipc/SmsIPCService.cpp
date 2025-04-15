@@ -11,6 +11,7 @@
 #include "mozilla/dom/sms/SmsMessage.h"
 #include "SmsFilter.h"
 #include "SmsRequest.h"
+#include "SmsSegmentInfo.h"
 
 namespace mozilla {
 namespace dom {
@@ -57,10 +58,15 @@ SmsIPCService::HasSupport(bool* aHasSupport)
 }
 
 NS_IMETHODIMP
-SmsIPCService::GetNumberOfMessagesForText(const nsAString& aText, uint16_t* aResult)
+SmsIPCService::GetSegmentInfoForText(const nsAString & aText,
+                                     nsIDOMMozSmsSegmentInfo** aResult)
 {
-  GetSmsChild()->SendGetNumberOfMessagesForText(nsString(aText), aResult);
+  SmsSegmentInfoData data;
+  bool ok = GetSmsChild()->SendGetSegmentInfoForText(nsString(aText), &data);
+  NS_ENSURE_TRUE(ok, NS_ERROR_FAILURE);
 
+  nsCOMPtr<nsIDOMMozSmsSegmentInfo> info = new SmsSegmentInfo(data);
+  info.forget(aResult);
   return NS_OK;
 }
 
@@ -92,43 +98,21 @@ SmsIPCService::CreateSmsMessage(int32_t aId,
                             aCx, aMessage);
 }
 
+NS_IMETHODIMP
+SmsIPCService::CreateSmsSegmentInfo(int32_t aSegments,
+                                    int32_t aCharsPerSegment,
+                                    int32_t aCharsAvailableInLastSegment,
+                                    nsIDOMMozSmsSegmentInfo** aSegmentInfo)
+{
+  nsCOMPtr<nsIDOMMozSmsSegmentInfo> info =
+      new SmsSegmentInfo(aSegments, aCharsPerSegment, aCharsAvailableInLastSegment);
+  info.forget(aSegmentInfo);
+  return NS_OK;
+}
+
 /*
  * Implementation of nsISmsDatabaseService.
  */
-NS_IMETHODIMP
-SmsIPCService::SaveReceivedMessage(const nsAString& aSender,
-                                   const nsAString& aBody,
-                                   const nsAString& aMessageClass,
-                                   uint64_t aDate,
-                                   int32_t* aId)
-{
-  GetSmsChild()->SendSaveReceivedMessage(nsString(aSender), nsString(aBody),
-                                         nsString(aMessageClass), aDate, aId);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-SmsIPCService::SaveSentMessage(const nsAString& aReceiver,
-                               const nsAString& aBody,
-                               uint64_t aDate, int32_t* aId)
-{
-  GetSmsChild()->SendSaveSentMessage(nsString(aReceiver), nsString(aBody),
-                                     aDate, aId);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-SmsIPCService::SetMessageDeliveryStatus(int32_t aMessageId,
-                                        const nsAString& aDeliveryStatus)
-{
-  GetSmsChild()->SendSetMessageDeliveryStatus(aMessageId,
-                                              nsString(aDeliveryStatus));
-
-  return NS_OK;
-}
-
 NS_IMETHODIMP
 SmsIPCService::GetMessageMoz(int32_t aMessageId,
                              nsISmsRequest* aRequest)

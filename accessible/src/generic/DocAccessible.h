@@ -24,22 +24,20 @@
 #include "nsIWeakReference.h"
 #include "nsIDocShellTreeNode.h"
 
-template<class Class, class Arg>
-class TNotification;
-class NotificationController;
+class nsAccDocManager;
+class nsAccessiblePivot;
 
 class nsIScrollableView;
-class nsAccessiblePivot;
 
 const uint32_t kDefaultCacheSize = 256;
 
 namespace mozilla {
 namespace a11y {
 
+class NotificationController;
 class RelatedAccIterator;
-
-} // namespace a11y
-} // namespace mozilla
+template<class Class, class Arg>
+class TNotification;
 
 class DocAccessible : public HyperTextAccessibleWrap,
                       public nsIAccessibleDocument,
@@ -68,7 +66,6 @@ public:
   virtual ~DocAccessible();
 
   // nsIAccessible
-  NS_IMETHOD GetAttributes(nsIPersistentProperties** aAttributes);
   NS_IMETHOD TakeFocus(void);
 
   // nsIScrollPositionListener
@@ -83,7 +80,7 @@ public:
   virtual void Shutdown();
   virtual nsIFrame* GetFrame() const;
   virtual nsINode* GetNode() const { return mDocument; }
-  virtual nsIDocument* GetDocumentNode() const { return mDocument; }
+  nsIDocument* DocumentNode() const { return mDocument; }
 
   // Accessible
   virtual mozilla::a11y::ENameValueFlag Name(nsString& aName);
@@ -94,8 +91,7 @@ public:
   virtual uint64_t NativeInteractiveState() const;
   virtual bool NativelyUnavailable() const;
   virtual void ApplyARIAState(uint64_t* aState) const;
-
-  virtual void SetRoleMapEntry(nsRoleMapEntry* aRoleMapEntry);
+  virtual already_AddRefed<nsIPersistentProperties> Attributes();
 
 #ifdef A11Y_LOG
   virtual nsresult HandleAccEvent(AccEvent* aEvent);
@@ -269,7 +265,7 @@ public:
    */
   Accessible* GetContainerAccessible(nsINode* aNode)
   {
-    return aNode ? GetAccessibleOrContainer(aNode->GetNodeParent()) : nullptr;
+    return aNode ? GetAccessibleOrContainer(aNode->GetParentNode()) : nullptr;
   }
 
   /**
@@ -332,15 +328,10 @@ protected:
   /**
    * Marks this document as loaded or loading.
    */
-  void NotifyOfLoad(uint32_t aLoadEventType)
-  {
-    mLoadState |= eDOMLoaded;
-    mLoadEventType = aLoadEventType;
-  }
-
+  void NotifyOfLoad(uint32_t aLoadEventType);
   void NotifyOfLoading(bool aIsReloading);
 
-  friend class nsAccDocManager;
+  friend class ::nsAccDocManager;
 
   /**
    * Perform initial update (create accessible tree).
@@ -430,12 +421,6 @@ protected:
   void ARIAActiveDescendantChanged(nsIContent* aElm);
 
   /**
-   * Process the event when the queue of pending events is untwisted. Fire
-   * accessible events as result of the processing.
-   */
-  void ProcessPendingEvent(AccEvent* aEvent);
-
-  /**
    * Update the accessible tree for inserted content.
    */
   void ProcessContentInserted(Accessible* aContainer,
@@ -466,7 +451,8 @@ protected:
     eAlertAccessible = 2
   };
 
-  uint32_t UpdateTreeInternal(Accessible* aChild, bool aIsInsert);
+  uint32_t UpdateTreeInternal(Accessible* aChild, bool aIsInsert,
+                              AccReorderEvent* aReorderEvent);
 
   /**
    * Create accessible tree.
@@ -575,7 +561,7 @@ protected:
   typedef nsTArray<nsAutoPtr<AttrRelProvider> > AttrRelProviderArray;
   nsClassHashtable<nsStringHashKey, AttrRelProviderArray> mDependentIDsHash;
 
-  friend class mozilla::a11y::RelatedAccIterator;
+  friend class RelatedAccIterator;
 
   /**
    * Used for our caching algorithm. We store the list of nodes that should be
@@ -602,5 +588,8 @@ Accessible::AsDoc()
   return mFlags & eDocAccessible ?
     static_cast<DocAccessible*>(this) : nullptr;
 }
+
+} // namespace a11y
+} // namespace mozilla
 
 #endif

@@ -296,7 +296,7 @@ var gPluginHandler = {
 
   activatePlugins: function PH_activatePlugins(aContentWindow) {
     let browser = gBrowser.getBrowserForDocument(aContentWindow.document);
-    browser._clickToPlayPluginsActivated = true;
+    browser._clickToPlayAllPluginsActivated = true;
     let cwu = aContentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
                             .getInterface(Ci.nsIDOMWindowUtils);
     let plugins = cwu.plugins;
@@ -321,7 +321,6 @@ var gPluginHandler = {
     let browser = gBrowser.getBrowserForDocument(aContentWindow.document);
     let notification = PopupNotifications.getNotification("click-to-play-plugins", browser);
     if (notification) {
-      browser._clickToPlayDoorhangerShown = false;
       notification.remove();
     }
     if (pluginNeedsActivation) {
@@ -357,14 +356,14 @@ var gPluginHandler = {
 
   // Callback for user clicking on a missing (unsupported) plugin.
   installSinglePlugin: function (plugin) {
-    var missingPluginsArray = {};
+    var missingPlugins = new Map();
 
     var pluginInfo = getPluginInfo(plugin);
-    missingPluginsArray[pluginInfo.mimetype] = pluginInfo;
+    missingPlugins.set(pluginInfo.mimetype, pluginInfo);
 
     openDialog("chrome://mozapps/content/plugins/pluginInstallerWizard.xul",
                "PFSWindow", "chrome,centerscreen,resizable=yes",
-               {plugins: missingPluginsArray, browser: gBrowser.selectedBrowser});
+               {plugins: missingPlugins, browser: gBrowser.selectedBrowser});
   },
 
   // Callback for user clicking on a disabled plugin
@@ -406,7 +405,9 @@ var gPluginHandler = {
     let pluginsPermission = Services.perms.testPermission(browser.currentURI, "plugins");
     let overlay = doc.getAnonymousElementByAttribute(aPlugin, "class", "mainBox");
 
-    if (browser._clickToPlayPluginsActivated) {
+    let pluginInfo = getPluginInfo(aPlugin);
+    if (browser._clickToPlayAllPluginsActivated ||
+        browser._clickToPlayPluginsActivated.get(pluginInfo.pluginName)) {
       let objLoadingContent = aPlugin.QueryInterface(Ci.nsIObjectLoadingContent);
       objLoadingContent.playPlugin();
       return;
@@ -428,8 +429,7 @@ var gPluginHandler = {
       }, true);
     }
 
-    if (!browser._clickToPlayDoorhangerShown)
-      gPluginHandler._showClickToPlayNotification(browser);
+    gPluginHandler._showClickToPlayNotification(browser);
   },
 
   _handlePlayPreviewEvent: function PH_handlePlayPreviewEvent(aPlugin) {
@@ -515,19 +515,20 @@ var gPluginHandler = {
     let contentWindow = aBrowser.contentWindow;
     let cwu = contentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
                            .getInterface(Ci.nsIDOMWindowUtils);
-    let pluginsDictionary = {};
+    let pluginsDictionary = new Map();
     for (let plugin of cwu.plugins) {
       let objLoadingContent = plugin.QueryInterface(Ci.nsIObjectLoadingContent);
       if (gPluginHandler.canActivatePlugin(objLoadingContent)) {
         let pluginName = getPluginInfo(plugin).pluginName;
-        if (!pluginsDictionary[pluginName]) pluginsDictionary[pluginName] = [];
-        pluginsDictionary[pluginName].push(objLoadingContent);
+        if (!pluginsDictionary.has(pluginName))
+          pluginsDictionary.set(pluginName, []);
+        pluginsDictionary.get(pluginName).push(objLoadingContent);
       }
     }
 
     let centerActions = [];
-    for (let pluginName in pluginsDictionary) {
-      let plugin = pluginsDictionary[pluginName][0];
+    for (let [pluginName, namedPluginArray] of pluginsDictionary) {
+      let plugin = namedPluginArray[0];
       let warn = false;
       let warningText = "";
       let updateLink = Services.urlFormatter.formatURLPref("plugins.update.url");
@@ -556,6 +557,7 @@ var gPluginHandler = {
           for (let objLoadingContent of plugins) {
             objLoadingContent.playPlugin();
           }
+          aBrowser._clickToPlayPluginsActivated.set(this.message, true);
 
           let notification = PopupNotifications.getNotification("click-to-play-plugins", aBrowser);
           if (notification &&
@@ -571,9 +573,7 @@ var gPluginHandler = {
    },
 
   _showClickToPlayNotification: function PH_showClickToPlayNotification(aBrowser) {
-    aBrowser._clickToPlayDoorhangerShown = true;
     let contentWindow = aBrowser.contentWindow;
-
     let messageString = gNavigatorBundle.getString("activatePluginsMessage.message");
     let mainAction = {
       label: gNavigatorBundle.getString("activateAllPluginsMessage.label"),
@@ -596,12 +596,8 @@ var gPluginHandler = {
       label: gNavigatorBundle.getString("activatePluginsMessage.always"),
       accessKey: gNavigatorBundle.getString("activatePluginsMessage.always.accesskey"),
       callback: function () {
-        // bug 796039/797043: setting the plugin permission to "ALLOW"
-        // causes the "activated" property on an nsIObjectLoadingContent
-        // to return true for plugins that have not actually been activated.
-        // Thus, activate all applicable plugins before setting the permission.
-        gPluginHandler.activatePlugins(contentWindow);
         Services.perms.add(aBrowser.currentURI, "plugins", Ci.nsIPermissionManager.ALLOW_ACTION);
+        gPluginHandler.activatePlugins(contentWindow);
       }
     },{
       label: gNavigatorBundle.getString("activatePluginsMessage.never"),
@@ -638,10 +634,10 @@ var gPluginHandler = {
     let browser = gBrowser.getBrowserForDocument(plugin.ownerDocument
                                                        .defaultView.top.document);
     if (!browser.missingPlugins)
-      browser.missingPlugins = {};
+      browser.missingPlugins = new Map();
 
     var pluginInfo = getPluginInfo(plugin);
-    browser.missingPlugins[pluginInfo.mimetype] = pluginInfo;
+    browser.missingPlugins.set(pluginInfo.mimetype, pluginInfo);
 
     var notificationBox = gBrowser.getNotificationBox(browser);
 
@@ -667,11 +663,11 @@ var gPluginHandler = {
 
     function showPluginsMissing() {
       // get the urls of missing plugins
-      var missingPluginsArray = gBrowser.selectedBrowser.missingPlugins;
-      if (missingPluginsArray) {
+      var missingPlugins = gBrowser.selectedBrowser.missingPlugins;
+      if (missingPlugins) {
         openDialog("chrome://mozapps/content/plugins/pluginInstallerWizard.xul",
                    "PFSWindow", "chrome,centerscreen,resizable=yes",
-                   {plugins: missingPluginsArray, browser: gBrowser.selectedBrowser});
+                   {plugins: missingPlugins, browser: gBrowser.selectedBrowser});
       }
     }
 

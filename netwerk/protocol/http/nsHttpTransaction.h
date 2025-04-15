@@ -28,6 +28,7 @@ class nsHttpRequestHead;
 class nsHttpResponseHead;
 class nsHttpChunkedDecoder;
 class nsIHttpActivityObserver;
+class UpdateSecurityCallbacks;
 
 //-----------------------------------------------------------------------------
 // nsHttpTransaction represents a single HTTP transaction.  It is thread-safe,
@@ -84,8 +85,9 @@ public:
     nsHttpResponseHead    *ResponseHead()   { return mHaveAllHeaders ? mResponseHead : nullptr; }
     nsISupports           *SecurityInfo()   { return mSecurityInfo; }
 
-    nsIInterfaceRequestor *Callbacks()      { return mCallbacks; } 
     nsIEventTarget        *ConsumerTarget() { return mConsumerTarget; }
+
+    void SetSecurityCallbacks(nsIInterfaceRequestor* aCallbacks);
 
     // Called to take ownership of the response headers; the transaction
     // will drop any reference to the response headers after this call.
@@ -134,6 +136,26 @@ private:
     bool TimingEnabled() const { return mCaps & NS_HTTP_TIMING_ENABLED; }
 
 private:
+    class UpdateSecurityCallbacks : public nsRunnable
+    {
+      public:
+        UpdateSecurityCallbacks(nsHttpTransaction* aTrans,
+                                nsIInterfaceRequestor* aCallbacks)
+        : mTrans(aTrans), mCallbacks(aCallbacks) {}
+
+        NS_IMETHOD Run()
+        {
+            if (mTrans->mConnection)
+                mTrans->mConnection->SetSecurityCallbacks(mCallbacks);
+            return NS_OK;
+        }
+      private:
+        nsRefPtr<nsHttpTransaction> mTrans;
+        nsCOMPtr<nsIInterfaceRequestor> mCallbacks;
+    };
+
+    mozilla::Mutex mCallbacksLock;
+
     nsCOMPtr<nsIInterfaceRequestor> mCallbacks;
     nsCOMPtr<nsITransportEventSink> mTransportSink;
     nsCOMPtr<nsIEventTarget>        mConsumerTarget;

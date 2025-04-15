@@ -14,6 +14,13 @@
 
 namespace mozilla {
 
+#ifdef PR_LOGGING
+extern PRLogModuleInfo* GetMediaManagerLog();
+#define LOG(msg) PR_LOG(GetMediaManagerLog(), PR_LOG_DEBUG, msg)
+#else
+#define LOG(msg)
+#endif
+
 /**
  * Webrtc audio source.
  */
@@ -46,54 +53,14 @@ MediaEngineWebRTCAudioSource::Allocate()
     return NS_ERROR_FAILURE;
   }
 
-  mVoEBase->Init();
-
-  mVoERender = webrtc::VoEExternalMedia::GetInterface(mVoiceEngine);
-  if (!mVoERender) {
-    return NS_ERROR_FAILURE;
-  }
-
-  mChannel = mVoEBase->CreateChannel();
-  if (mChannel < 0) {
-    return NS_ERROR_FAILURE;
-  }
-
-  // Check for availability.
   webrtc::VoEHardware* ptrVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
-  if (ptrVoEHw->SetRecordingDevice(mCapIndex)) {
+  int res = ptrVoEHw->SetRecordingDevice(mCapIndex);
+  ptrVoEHw->Release();
+  if (res) {
     return NS_ERROR_FAILURE;
   }
 
-  bool avail = false;
-  ptrVoEHw->GetRecordingDeviceStatus(avail);
-  if (!avail) {
-    return NS_ERROR_FAILURE;
-  }
-
-  // Set "codec" to PCM, 32kHz on 1 channel
-  webrtc::VoECodec* ptrVoECodec;
-  webrtc::CodecInst codec;
-  ptrVoECodec = webrtc::VoECodec::GetInterface(mVoiceEngine);
-  if (!ptrVoECodec) {
-    return NS_ERROR_FAILURE;
-  }
-
-  strcpy(codec.plname, ENCODING);
-  codec.channels = CHANNELS;
-  codec.rate = SAMPLE_RATE;
-  codec.plfreq = SAMPLE_FREQUENCY;
-  codec.pacsize = SAMPLE_LENGTH;
-  codec.pltype = 0; // Default payload type
-
-  if (ptrVoECodec->SetSendCodec(mChannel, codec)) {
-    return NS_ERROR_FAILURE;
-  }
-
-  // Audio doesn't play through unless we set a receiver and destination, so
-  // we setup a dummy local destination, and do a loopback.
-  mVoEBase->SetLocalReceiver(mChannel, DEFAULT_PORT);
-  mVoEBase->SetSendDestination(mChannel, DEFAULT_PORT, "127.0.0.1");
-
+  LOG(("Audio device %d allocated", mCapIndex));
   mState = kAllocated;
   return NS_OK;
 }
@@ -104,9 +71,6 @@ MediaEngineWebRTCAudioSource::Deallocate()
   if (mState != kStopped && mState != kAllocated) {
     return NS_ERROR_FAILURE;
   }
-
-  mVoEBase->Terminate();
-  mVoERender->Release();
 
   mState = kReleased;
   return NS_OK;
@@ -128,6 +92,7 @@ MediaEngineWebRTCAudioSource::Start(SourceMediaStream* aStream, TrackID aID)
   segment->Init(CHANNELS);
   mSource->AddTrack(aID, SAMPLE_FREQUENCY, 0, segment);
   mSource->AdvanceKnownTracksTime(STREAM_TIME_MAX);
+  LOG(("Initial audio"));
   mTrackID = aID;
 
   if (mVoEBase->StartReceive(mChannel)) {
@@ -163,8 +128,27 @@ MediaEngineWebRTCAudioSource::Stop()
     return NS_ERROR_FAILURE;
   }
 
-  mState = kStopped;
+  {
+    ReentrantMonitorAutoEnter enter(mMonitor);
+    mState = kStopped;
+    mSource->EndTrack(mTrackID);
+  }
+
   return NS_OK;
+}
+
+void
+MediaEngineWebRTCAudioSource::NotifyPull(MediaStreamGraph* aGraph,
+                                         StreamTime aDesiredTime)
+{
+  // Ignore - we push audio data
+#ifdef DEBUG
+  static TrackTicks mLastEndTime = 0;
+  TrackTicks target = TimeToTicksRoundUp(SAMPLE_FREQUENCY, aDesiredTime);
+  TrackTicks delta = target - mLastEndTime;
+  LOG(("Audio:NotifyPull: target %lu, delta %lu",(uint32_t) target, (uint32_t) delta));
+  mLastEndTime = target;
+#endif
 }
 
 nsresult
@@ -173,11 +157,80 @@ MediaEngineWebRTCAudioSource::Snapshot(uint32_t aDuration, nsIDOMFile** aFile)
    return NS_ERROR_NOT_IMPLEMENTED;
 }
 
+void
+MediaEngineWebRTCAudioSource::Init()
+{
+  mVoEBase = webrtc::VoEBase::GetInterface(mVoiceEngine);
+
+  mVoEBase->Init();
+
+  mVoERender = webrtc::VoEExternalMedia::GetInterface(mVoiceEngine);
+  if (!mVoERender) {
+    return;
+  }
+  mVoENetwork = webrtc::VoENetwork::GetInterface(mVoiceEngine);
+  if (!mVoENetwork) {
+    return;
+  }
+
+  mChannel = mVoEBase->CreateChannel();
+  if (mChannel < 0) {
+    return;
+  }
+  mNullTransport = new NullTransport();
+  if (mVoENetwork->RegisterExternalTransport(mChannel, *mNullTransport)) {
+    return;
+  }
+
+  // Check for availability.
+  webrtc::VoEHardware* ptrVoEHw = webrtc::VoEHardware::GetInterface(mVoiceEngine);
+  if (ptrVoEHw->SetRecordingDevice(mCapIndex)) {
+    ptrVoEHw->Release();
+    return;
+  }
+
+  bool avail = false;
+  ptrVoEHw->GetRecordingDeviceStatus(avail);
+  ptrVoEHw->Release();
+  if (!avail) {
+    return;
+  }
+
+  // Set "codec" to PCM, 32kHz on 1 channel
+  webrtc::VoECodec* ptrVoECodec;
+  webrtc::CodecInst codec;
+  ptrVoECodec = webrtc::VoECodec::GetInterface(mVoiceEngine);
+  if (!ptrVoECodec) {
+    return;
+  }
+
+  strcpy(codec.plname, ENCODING);
+  codec.channels = CHANNELS;
+  codec.rate = SAMPLE_RATE;
+  codec.plfreq = SAMPLE_FREQUENCY;
+  codec.pacsize = SAMPLE_LENGTH;
+  codec.pltype = 0; // Default payload type
+
+  if (ptrVoECodec->SetSendCodec(mChannel, codec)) {
+    return;
+  }
+
+  mInitDone = true;
+}
 
 void
 MediaEngineWebRTCAudioSource::Shutdown()
 {
   if (!mInitDone) {
+    // duplicate these here in case we failed during Init()
+    if (mChannel != -1) {
+      mVoENetwork->DeRegisterExternalTransport(mChannel);
+    }
+
+    if (mNullTransport) {
+      delete mNullTransport;
+    }
+
     return;
   }
 
@@ -189,6 +242,16 @@ MediaEngineWebRTCAudioSource::Shutdown()
     Deallocate();
   }
 
+  mVoEBase->Terminate();
+  if (mChannel != -1) {
+    mVoENetwork->DeRegisterExternalTransport(mChannel);
+  }
+
+  if (mNullTransport) {
+    delete mNullTransport;
+  }
+
+  mVoERender->Release();
   mVoEBase->Release();
 
   mState = kReleased;
@@ -203,18 +266,18 @@ MediaEngineWebRTCAudioSource::Process(const int channel,
   const int length, const int samplingFreq, const bool isStereo)
 {
   ReentrantMonitorAutoEnter enter(mMonitor);
+  if (mState != kStarted)
+    return;
 
   nsRefPtr<SharedBuffer> buffer = SharedBuffer::Create(length * sizeof(sample));
 
   sample* dest = static_cast<sample*>(buffer->Data());
-  for (int i = 0; i < length; i++) {
-    dest[i] = audio10ms[i];
-  }
+  memcpy(dest, audio10ms, length * sizeof(sample));
 
   AudioSegment segment;
   segment.Init(CHANNELS);
   segment.AppendFrames(
-    buffer.forget(), length, 0, length, nsAudioStream::FORMAT_S16
+    buffer.forget(), length, 0, length, AUDIO_FORMAT_S16
   );
   mSource->AppendToTrack(mTrackID, &segment);
 

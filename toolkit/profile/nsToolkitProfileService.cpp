@@ -606,11 +606,10 @@ static const char kTable[] =
 
 static void SaltProfileName(nsACString& aName)
 {
-    double fpTime;
-    LL_L2D(fpTime, PR_Now());
+    double fpTime = double(PR_Now());
 
     // use 1e-6, granularity of PR_Now() on the mac is seconds
-    srand((uint)(fpTime * 1e-6 + 0.5));
+    srand((unsigned int)(fpTime * 1e-6 + 0.5));
 
     char salt[9];
 

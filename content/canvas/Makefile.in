@@ -12,7 +12,11 @@ include $(DEPTH)/config/autoconf.mk
 
 PARALLEL_DIRS	= public src
 
-TOOLS_DIRS += test
+TEST_DIRS += test
+
+ifdef ENABLE_TESTS
+TOOL_DIRS += compiledtest
+endif
 
 include $(topsrcdir)/config/rules.mk
 

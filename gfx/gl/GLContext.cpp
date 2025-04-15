@@ -645,20 +645,33 @@ GLContext::CanUploadSubTextures()
     return true;
 }
 
+bool GLContext::sPowerOfTwoForced = false;
+bool GLContext::sPowerOfTwoPrefCached = false;
+
+void
+GLContext::PlatformStartup()
+{
+  CacheCanUploadNPOT();
+}
+
+void
+GLContext::CacheCanUploadNPOT()
+{
+    MOZ_ASSERT(NS_IsMainThread(), "Can't cache prefs off the main thread.");
+    MOZ_ASSERT(!sPowerOfTwoPrefCached, "Must only call this function once!");
+
+    sPowerOfTwoPrefCached = true;
+    mozilla::Preferences::AddBoolVarCache(&sPowerOfTwoForced,
+                                          "gfx.textures.poweroftwo.force-enabled");
+}
+
 bool
 GLContext::CanUploadNonPowerOfTwo()
 {
+    MOZ_ASSERT(sPowerOfTwoPrefCached);
+
     if (!mWorkAroundDriverBugs)
         return true;
-
-    static bool sPowerOfTwoForced;
-    static bool sPowerOfTwoPrefCached = false;
-
-    if (!sPowerOfTwoPrefCached) {
-        sPowerOfTwoPrefCached = true;
-        mozilla::Preferences::AddBoolVarCache(&sPowerOfTwoForced,
-                                              "gfx.textures.poweroftwo.force-enabled");
-    }
 
     // Some GPUs driver crash when uploading non power of two 565 textures.
     return sPowerOfTwoForced ? false : (Renderer() != RendererAdreno200 &&
@@ -941,8 +954,11 @@ TiledTextureImage::TiledTextureImage(GLContext* aGL,
     , mGL(aGL)
     , mTextureState(Created)
 {
-    mTileSize = (!(aFlags & TextureImage::ForceSingleTile) && mGL->WantsSmallTiles())
-        ? 256 : mGL->GetMaxTextureSize();
+    if (!(aFlags & TextureImage::ForceSingleTile) && mGL->WantsSmallTiles()) {
+        mTileSize = 256;
+    } else {
+        mGL->fGetIntegerv(LOCAL_GL_MAX_TEXTURE_SIZE, (GLint*) &mTileSize);
+    }
     if (aSize.width != 0 && aSize.height != 0) {
         Resize(aSize);
     }

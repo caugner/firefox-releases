@@ -59,6 +59,7 @@
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
 #include "nsSandboxFlags.h"
+#include "mozilla/Preferences.h"
 
 #ifdef USEWEAKREFS
 #include "nsIWeakReference.h"
@@ -1473,6 +1474,12 @@ uint32_t nsWindowWatcher::CalculateChromeFlags(nsIDOMWindow *aParent,
     if (NS_FAILED(rv)) {
       isChrome = false;
     }
+  }
+
+  // Determine whether the window is a private browsing window
+  if (isChrome) {
+    chromeFlags |= WinHasOption(aFeatures, "private", 0, &presenceFlag) ?
+      nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW : 0;
   }
 
   nsCOMPtr<nsIPrefBranch> prefBranch;

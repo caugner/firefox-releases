@@ -27,9 +27,23 @@ namespace mozilla {
 namespace image {
 
 #ifdef PR_LOGGING
-static PRLogModuleInfo *gPNGLog = PR_NewLogModule("PNGDecoder");
-static PRLogModuleInfo *gPNGDecoderAccountingLog =
-                        PR_NewLogModule("PNGDecoderAccounting");
+static PRLogModuleInfo *
+GetPNGLog()
+{
+  static PRLogModuleInfo *sPNGLog;
+  if (!sPNGLog)
+    sPNGLog = PR_NewLogModule("PNGDecoder");
+  return sPNGLog;
+}
+
+static PRLogModuleInfo *
+GetPNGDecoderAccountingLog()
+{
+  static PRLogModuleInfo *sPNGDecoderAccountingLog;
+  if (!sPNGDecoderAccountingLog)
+    sPNGDecoderAccountingLog = PR_NewLogModule("PNGDecoderAccounting");
+  return sPNGDecoderAccountingLog;
+}
 #endif
 
 /* limit image dimensions (bug #251381) */
@@ -99,7 +113,7 @@ void nsPNGDecoder::CreateFrame(png_uint_32 x_offset, png_uint_32 y_offset,
   // Tell the superclass we're starting a frame
   PostFrameStart();
 
-  PR_LOG(gPNGDecoderAccountingLog, PR_LOG_DEBUG,
+  PR_LOG(GetPNGDecoderAccountingLog(), PR_LOG_DEBUG,
          ("PNGDecoderAccounting: nsPNGDecoder::CreateFrame -- created "
           "image frame with %dx%d pixels in container %p",
           width, height,
@@ -583,6 +597,8 @@ nsPNGDecoder::info_callback(png_structp png_ptr, png_infop info_ptr)
   /* copy PNG info into imagelib structs (formerly png_set_dims()) */
   /*---------------------------------------------------------------*/
 
+  // This code is currently unused, but it will be needed for bug 517713.
+#if 0
   int32_t alpha_bits = 1;
 
   if (channels == 2 || channels == 4) {
@@ -601,6 +617,7 @@ nsPNGDecoder::info_callback(png_structp png_ptr, png_infop info_ptr)
       alpha_bits = 8;
     }
   }
+#endif
 
   if (channels == 1 || channels == 3)
     decoder->format = gfxASurface::ImageFormatRGB24;
@@ -846,7 +863,7 @@ nsPNGDecoder::end_callback(png_structp png_ptr, png_infop info_ptr)
 void
 nsPNGDecoder::error_callback(png_structp png_ptr, png_const_charp error_msg)
 {
-  PR_LOG(gPNGLog, PR_LOG_ERROR, ("libpng error: %s\n", error_msg));
+  PR_LOG(GetPNGLog(), PR_LOG_ERROR, ("libpng error: %s\n", error_msg));
   longjmp(png_jmpbuf(png_ptr), 1);
 }
 
@@ -854,7 +871,7 @@ nsPNGDecoder::error_callback(png_structp png_ptr, png_const_charp error_msg)
 void
 nsPNGDecoder::warning_callback(png_structp png_ptr, png_const_charp warning_msg)
 {
-  PR_LOG(gPNGLog, PR_LOG_WARNING, ("libpng warning: %s\n", warning_msg));
+  PR_LOG(GetPNGLog(), PR_LOG_WARNING, ("libpng warning: %s\n", warning_msg));
 }
 
 Telemetry::ID

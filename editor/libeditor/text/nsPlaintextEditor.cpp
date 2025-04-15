@@ -96,11 +96,11 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(nsPlaintextEditor)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsPlaintextEditor, nsEditor)
   if (tmp->mRules)
     tmp->mRules->DetachEditor();
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRules)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRules)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsPlaintextEditor, nsEditor)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mRules)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRules)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_ADDREF_INHERITED(nsPlaintextEditor, nsEditor)
@@ -264,17 +264,19 @@ nsPlaintextEditor::UpdateMetaCharset(nsIDOMDocument* aDocument,
 {
   MOZ_ASSERT(aDocument);
   // get a list of META tags
-  nsCOMPtr<nsIDOMNodeList> metaList;
+  nsCOMPtr<nsIDOMNodeList> list;
   nsresult rv = aDocument->GetElementsByTagName(NS_LITERAL_STRING("meta"),
-                                                getter_AddRefs(metaList));
+                                                getter_AddRefs(list));
   NS_ENSURE_SUCCESS(rv, false);
-  NS_ENSURE_TRUE(metaList, false);
+  NS_ENSURE_TRUE(list, false);
+
+  nsCOMPtr<nsINodeList> metaList = do_QueryInterface(list);
 
   uint32_t listLength = 0;
   metaList->GetLength(&listLength);
 
   for (uint32_t i = 0; i < listLength; ++i) {
-    nsCOMPtr<nsIContent> metaNode = metaList->GetNodeAt(i);
+    nsCOMPtr<nsIContent> metaNode = metaList->Item(i);
     MOZ_ASSERT(metaNode);
 
     if (!metaNode->IsElement()) {

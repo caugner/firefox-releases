@@ -11,7 +11,7 @@
 #include "nsIDOMSVGImageElement.h"
 #include "nsLayoutUtils.h"
 #include "nsRenderingContext.h"
-#include "nsStubImageDecoderObserver.h"
+#include "imgINotificationObserver.h"
 #include "nsSVGEffects.h"
 #include "nsSVGImageElement.h"
 #include "nsSVGPathGeometryFrame.h"
@@ -23,22 +23,13 @@ using namespace mozilla;
 
 class nsSVGImageFrame;
 
-class nsSVGImageListener MOZ_FINAL : public nsStubImageDecoderObserver
+class nsSVGImageListener MOZ_FINAL : public imgINotificationObserver
 {
 public:
   nsSVGImageListener(nsSVGImageFrame *aFrame);
 
   NS_DECL_ISUPPORTS
-  // imgIDecoderObserver (override nsStubImageDecoderObserver)
-  NS_IMETHOD OnStopDecode(imgIRequest *aRequest, nsresult status,
-                          const PRUnichar *statusArg);
-  // imgIContainerObserver (override nsStubImageDecoderObserver)
-  NS_IMETHOD FrameChanged(imgIRequest *aRequest,
-                          imgIContainer *aContainer,
-                          const nsIntRect *aDirtyRect);
-  // imgIContainerObserver (override nsStubImageDecoderObserver)
-  NS_IMETHOD OnStartContainer(imgIRequest *aRequest,
-                              imgIContainer *aContainer);
+  NS_DECL_IMGINOTIFICATIONOBSERVER
 
   void SetFrame(nsSVGImageFrame *frame) { mFrame = frame; }
 
@@ -98,7 +89,7 @@ private:
   gfxMatrix GetVectorImageTransform(uint32_t aFor);
   bool      TransformContextForPainting(gfxContext* aGfxContext);
 
-  nsCOMPtr<imgIDecoderObserver> mListener;
+  nsCOMPtr<imgINotificationObserver> mListener;
 
   nsCOMPtr<imgIContainer> mImageContainer;
 
@@ -478,10 +469,30 @@ nsSVGImageFrame::ReflowSVG()
 
   gfxContext tmpCtx(gfxPlatform::GetPlatform()->ScreenReferenceSurface());
 
-  gfxMatrix identity;
-  GeneratePath(&tmpCtx, identity);
-
+  // We'd like to just pass the identity matrix to GeneratePath, but if
+  // this frame's user space size is _very_ large/small then the extents we
+  // obtain below might have overflowed or otherwise be broken. This would
+  // cause us to end up with a broken mRect and visual overflow rect and break
+  // painting of this frame. This is particularly noticeable if the transforms
+  // between us and our nsSVGOuterSVGFrame scale this frame to a reasonable
+  // size. To avoid this we sadly have to do extra work to account for the
+  // transforms between us and our nsSVGOuterSVGFrame, even though the
+  // overwhelming number of SVGs will never have this problem.
+  // XXX Will Azure eventually save us from having to do this?
+  gfxSize scaleFactors = GetCanvasTM(FOR_OUTERSVG_TM).ScaleFactors(true);
+  bool applyScaling = fabs(scaleFactors.width) >= 1e-6 &&
+                      fabs(scaleFactors.height) >= 1e-6;
+  gfxMatrix scaling;
+  if (applyScaling) {
+    scaling.Scale(scaleFactors.width, scaleFactors.height);
+  }
+  tmpCtx.Save();
+  GeneratePath(&tmpCtx, scaling);
+  tmpCtx.Restore();
   gfxRect extent = tmpCtx.GetUserPathExtent();
+  if (applyScaling) {
+    extent.Scale(1 / scaleFactors.width, 1 / scaleFactors.height);
+  }
 
   if (!extent.IsEmpty()) {
     mRect = nsLayoutUtils::RoundGfxRectToAppRect(extent, 
@@ -553,51 +564,36 @@ nsSVGImageFrame::GetHitTestFlags()
 //----------------------------------------------------------------------
 // nsSVGImageListener implementation
 
-NS_IMPL_ISUPPORTS2(nsSVGImageListener,
-                   imgIDecoderObserver,
-                   imgIContainerObserver)
+NS_IMPL_ISUPPORTS1(nsSVGImageListener, imgINotificationObserver)
 
 nsSVGImageListener::nsSVGImageListener(nsSVGImageFrame *aFrame) :  mFrame(aFrame)
 {
 }
 
-NS_IMETHODIMP nsSVGImageListener::OnStopDecode(imgIRequest *aRequest,
-                                               nsresult status,
-                                               const PRUnichar *statusArg)
+NS_IMETHODIMP
+nsSVGImageListener::Notify(imgIRequest *aRequest, int32_t aType, const nsIntRect* aData)
 {
   if (!mFrame)
     return NS_ERROR_FAILURE;
 
-  nsSVGUtils::InvalidateBounds(mFrame, false);
-  nsSVGUtils::ScheduleReflowSVG(mFrame);
-  return NS_OK;
-}
+  if (aType == imgINotificationObserver::LOAD_COMPLETE) {
+    nsSVGUtils::InvalidateBounds(mFrame, false);
+    nsSVGUtils::ScheduleReflowSVG(mFrame);
+  }
 
-NS_IMETHODIMP nsSVGImageListener::FrameChanged(imgIRequest *aRequest,
-                                               imgIContainer *aContainer,
-                                               const nsIntRect *aDirtyRect)
-{
-  if (!mFrame)
-    return NS_ERROR_FAILURE;
+  if (aType == imgINotificationObserver::FRAME_UPDATE) {
+    // No new dimensions, so we don't need to call
+    // nsSVGUtils::InvalidateAndScheduleBoundsUpdate.
+    nsSVGEffects::InvalidateRenderingObservers(mFrame);
+    nsSVGUtils::InvalidateBounds(mFrame);
+  }
 
-  // No new dimensions, so we don't need to call
-  // nsSVGUtils::InvalidateAndScheduleBoundsUpdate.
-  nsSVGEffects::InvalidateRenderingObservers(mFrame);
-  nsSVGUtils::InvalidateBounds(mFrame);
-  return NS_OK;
-}
-
-NS_IMETHODIMP nsSVGImageListener::OnStartContainer(imgIRequest *aRequest,
-                                                   imgIContainer *aContainer)
-{
-  // Called once the resource's dimensions have been obtained.
-
-  if (!mFrame)
-    return NS_ERROR_FAILURE;
-
-  mFrame->mImageContainer = aContainer;
-  nsSVGUtils::InvalidateBounds(mFrame, false);
-  nsSVGUtils::ScheduleReflowSVG(mFrame);
+  if (aType == imgINotificationObserver::SIZE_AVAILABLE) {
+    // Called once the resource's dimensions have been obtained.
+    aRequest->GetImage(getter_AddRefs(mFrame->mImageContainer));
+    nsSVGUtils::InvalidateBounds(mFrame, false);
+    nsSVGUtils::ScheduleReflowSVG(mFrame);
+  }
 
   return NS_OK;
 }

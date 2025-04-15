@@ -11,7 +11,6 @@
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/SVGNumberListBinding.h"
-#include "dombindings.h"
 
 // See the comment in this file's header.
 
@@ -48,12 +47,12 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(DOMSVGNumberList)
     } else {
       tmp->mAList->mBaseVal = nullptr;
     }
-    NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mAList)
+    NS_IMPL_CYCLE_COLLECTION_UNLINK(mAList)
   }
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(DOMSVGNumberList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mAList)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAList)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(DOMSVGNumberList)
@@ -78,21 +77,7 @@ NS_INTERFACE_MAP_END
 JSObject*
 DOMSVGNumberList::WrapObject(JSContext *cx, JSObject *scope, bool *triedToWrap)
 {
-  JSObject* obj = mozilla::dom::SVGNumberListBinding::Wrap(cx, scope, this,
-                                                           triedToWrap);
-  if (obj || *triedToWrap) {
-    return obj;
-  }
-
-  *triedToWrap = true;
-  return mozilla::dom::oldproxybindings::SVGNumberList::create(cx, scope, this);
-}
-
-nsIDOMSVGNumber*
-DOMSVGNumberList::GetItemAt(uint32_t aIndex)
-{
-  ErrorResult rv;
-  return GetItem(aIndex, rv);
+  return mozilla::dom::SVGNumberListBinding::Wrap(cx, scope, this, triedToWrap);
 }
 
 void

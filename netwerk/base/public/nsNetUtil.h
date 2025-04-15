@@ -78,6 +78,7 @@
 #include "mozilla/Services.h"
 #include "nsIPrivateBrowsingChannel.h"
 #include "mozIApplicationClearPrivateDataParams.h"
+#include "nsIOfflineCacheUpdate.h"
 
 #include <limits>
 
@@ -1033,7 +1034,7 @@ NS_BackgroundOutputStream(nsIOutputStream **result,
     return rv;
 }
 
-inline nsresult
+MOZ_WARN_UNUSED_RESULT inline nsresult
 NS_NewBufferedInputStream(nsIInputStream **result,
                           nsIInputStream  *str,
                           uint32_t         bufferSize)
@@ -1373,6 +1374,29 @@ NS_GetAppInfoFromClearDataNotification(nsISupports *aSubject,
 }
 
 /**
+ * Determines whether appcache should be checked for a given URI.
+ */
+inline bool
+NS_ShouldCheckAppCache(nsIURI *aURI, bool usePrivateBrowsing)
+{
+    if (usePrivateBrowsing) {
+        return false;
+    }
+
+    nsCOMPtr<nsIOfflineCacheUpdateService> offlineService =
+        do_GetService("@mozilla.org/offlinecacheupdate-service;1");
+    if (!offlineService) {
+        return false;
+    }
+
+    bool allowed;
+    nsresult rv = offlineService->OfflineAppAllowedForURI(aURI,
+                                                          nullptr,
+                                                          &allowed);
+    return NS_SUCCEEDED(rv) && allowed;
+}
+
+/**
  * Wraps an nsIAuthPrompt so that it can be used as an nsIAuthPrompt2. This
  * method is provided mainly for use by other methods in this file.
  *
@@ -1480,12 +1504,21 @@ NS_QueryNotificationCallbacks(const nsCOMPtr<nsIChannel> &aChannel,
 inline nsresult
 NS_NewNotificationCallbacksAggregation(nsIInterfaceRequestor  *callbacks,
                                        nsILoadGroup           *loadGroup,
+                                       nsIEventTarget         *target,
                                        nsIInterfaceRequestor **result)
 {
     nsCOMPtr<nsIInterfaceRequestor> cbs;
     if (loadGroup)
         loadGroup->GetNotificationCallbacks(getter_AddRefs(cbs));
-    return NS_NewInterfaceRequestorAggregation(callbacks, cbs, result);
+    return NS_NewInterfaceRequestorAggregation(callbacks, cbs, target, result);
+}
+
+inline nsresult
+NS_NewNotificationCallbacksAggregation(nsIInterfaceRequestor  *callbacks,
+                                       nsILoadGroup           *loadGroup,
+                                       nsIInterfaceRequestor **result)
+{
+    return NS_NewNotificationCallbacksAggregation(callbacks, loadGroup, nullptr, result);
 }
 
 /**
@@ -1982,9 +2015,7 @@ NS_GetContentDispositionFromToken(const nsAString& aDispToken)
       // Broken sites just send
       // Content-Disposition: filename="file"
       // without a disposition token... screen those out.
-      StringHead(aDispToken, 8).LowerCaseEqualsLiteral("filename") ||
-      // Also in use is Content-Disposition: name="file"
-      StringHead(aDispToken, 4).LowerCaseEqualsLiteral("name"))
+      StringHead(aDispToken, 8).LowerCaseEqualsLiteral("filename"))
     return nsIChannel::DISPOSITION_INLINE;
 
   return nsIChannel::DISPOSITION_ATTACHMENT;
@@ -2053,11 +2084,6 @@ NS_GetFilenameFromDisposition(nsAString& aFilename,
   rv = mimehdrpar->GetParameter(aDisposition, "filename",
                                 fallbackCharset, true, nullptr,
                                 aFilename);
-  if (NS_FAILED(rv) || aFilename.IsEmpty()) {
-    // Try 'name' parameter, instead.
-    rv = mimehdrpar->GetParameter(aDisposition, "name", fallbackCharset,
-                                  true, nullptr, aFilename);
-  }
 
   if (NS_FAILED(rv)) {
     aFilename.Truncate();

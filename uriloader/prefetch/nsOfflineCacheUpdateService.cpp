@@ -3,6 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#if defined(MOZ_LOGGING)
+#define FORCE_PR_LOG
+#endif
+
 #include "OfflineCacheUpdateChild.h"
 #include "OfflineCacheUpdateParent.h"
 #include "nsXULAppAPI.h"
@@ -63,6 +67,7 @@ typedef mozilla::docshell::OfflineCacheUpdateGlue OfflineCacheUpdateGlue;
 //
 PRLogModuleInfo *gOfflineCacheUpdateLog;
 #endif
+#undef LOG
 #define LOG(args) PR_LOG(gOfflineCacheUpdateLog, 4, args)
 #define LOG_ENABLED() PR_LOG_TEST(gOfflineCacheUpdateLog, 4)
 
@@ -90,8 +95,7 @@ GetAppIDAndInBrowserFromWindow(nsIDOMWindow *aWindow,
         return NS_OK;
     }
 
-    nsCOMPtr<nsIWebNavigation> webNav = do_GetInterface(aWindow);
-    nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(webNav);
+    nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(aWindow);
     if (!loadContext) {
         return NS_OK;
     }

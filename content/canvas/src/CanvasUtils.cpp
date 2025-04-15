@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <stdarg.h>
 
-#include "prmem.h"
 #include "prprf.h"
 
 #include "nsIServiceManager.h"
@@ -14,6 +13,7 @@
 #include "nsIConsoleService.h"
 #include "nsIDOMCanvasRenderingContext2D.h"
 #include "nsICanvasRenderingContextInternal.h"
+#include "nsIHTMLCollection.h"
 #include "nsHTMLCanvasElement.h"
 #include "nsIPrincipal.h"
 
@@ -23,6 +23,8 @@
 
 #include "CanvasUtils.h"
 #include "mozilla/gfx/Matrix.h"
+
+using namespace mozilla::gfx;
 
 namespace mozilla {
 namespace CanvasUtils {

@@ -9,6 +9,7 @@
 #include "CameraCommon.h"
 
 using namespace mozilla;
+using namespace mozilla::layers;
 
 /**
  * 'PreviewControl' is a helper class that dispatches preview control
@@ -44,7 +45,7 @@ public:
         break;
 
       case STOP:
-        mDOMPreview->Stop();
+        mDOMPreview->StopPreview();
         break;
 
       case STARTED:
@@ -148,7 +149,7 @@ DOMCameraPreview::DOMCameraPreview(ICameraControl* aCameraControl, uint32_t aWid
 
   mImageContainer = LayerManager::CreateImageContainer();
   MediaStreamGraph* gm = MediaStreamGraph::GetInstance();
-  mStream = gm->CreateInputStream(this);
+  mStream = gm->CreateSourceStream(this);
   mInput = GetStream()->AsSourceStream();
 
   mListener = new DOMCameraPreviewListener(this);
@@ -209,7 +210,7 @@ DOMCameraPreview::Start()
    * This reference is removed in SetStateStopped().
    */
   NS_ADDREF_THIS();
-  mState = STARTING;
+  DOM_CAMERA_SETSTATE(STARTING);
   mCameraControl->StartPreview(this);
 }
 
@@ -218,7 +219,7 @@ DOMCameraPreview::SetStateStarted()
 {
   NS_ASSERTION(NS_IsMainThread(), "SetStateStarted() not called from main thread");
 
-  mState = STARTED;
+  DOM_CAMERA_SETSTATE(STARTED);
   DOM_CAMERA_LOGI("Preview stream started\n");
 }
 
@@ -238,16 +239,18 @@ DOMCameraPreview::Started()
 }
 
 void
-DOMCameraPreview::Stop()
+DOMCameraPreview::StopPreview()
 {
-  NS_ASSERTION(NS_IsMainThread(), "Stop() not called from main thread");
+  NS_ASSERTION(NS_IsMainThread(), "StopPreview() not called from main thread");
   if (mState != STARTED) {
     return;
   }
 
   DOM_CAMERA_LOGI("Stopping preview stream\n");
-  mState = STOPPING;
+  DOM_CAMERA_SETSTATE(STOPPING);
   mCameraControl->StopPreview();
+  mInput->EndTrack(TRACK_VIDEO);
+  mInput->Finish();
 }
 
 void
@@ -255,9 +258,12 @@ DOMCameraPreview::SetStateStopped()
 {
   NS_ASSERTION(NS_IsMainThread(), "SetStateStopped() not called from main thread");
 
-  mInput->EndTrack(TRACK_VIDEO);
-  mInput->Finish();
-  mState = STOPPED;
+  // see bug 809259 and bug 817367.
+  if (mState != STOPPING) {
+    mInput->EndTrack(TRACK_VIDEO);
+    mInput->Finish();
+  }
+  DOM_CAMERA_SETSTATE(STOPPED);
   DOM_CAMERA_LOGI("Preview stream stopped\n");
 
   /**

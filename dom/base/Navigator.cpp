@@ -375,7 +375,7 @@ Navigator::GetPlatform(nsAString& aPlatform)
 NS_IMETHODIMP
 Navigator::GetOscpu(nsAString& aOSCPU)
 {
-  if (!nsContentUtils::IsCallerTrustedForRead()) {
+  if (!nsContentUtils::IsCallerChrome()) {
     const nsAdoptingString& override =
       Preferences::GetString("general.oscpu.override");
 
@@ -515,7 +515,7 @@ Navigator::GetOnLine(bool* aOnline)
 NS_IMETHODIMP
 Navigator::GetBuildID(nsAString& aBuildID)
 {
-  if (!nsContentUtils::IsCallerTrustedForRead()) {
+  if (!nsContentUtils::IsCallerChrome()) {
     const nsAdoptingString& override =
       Preferences::GetString("general.buildID.override");
 
@@ -624,7 +624,7 @@ public:
     mDocument = do_GetWeakReference(aDocument);
 
     nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(aDocument);
-    NS_NAMED_LITERAL_STRING(visibilitychange, "mozvisibilitychange");
+    NS_NAMED_LITERAL_STRING(visibilitychange, "visibilitychange");
     target->AddSystemEventListener(visibilitychange,
                                    this, /* listener */
                                    true, /* use capture */
@@ -658,7 +658,7 @@ VibrateWindowListener::HandleEvent(nsIDOMEvent* aEvent)
 
   bool hidden = true;
   if (doc) {
-    doc->GetMozHidden(&hidden);
+    doc->GetHidden(&hidden);
   }
 
   if (hidden) {
@@ -683,7 +683,7 @@ VibrateWindowListener::RemoveListener()
   if (!target) {
     return;
   }
-  NS_NAMED_LITERAL_STRING(visibilitychange, "mozvisibilitychange");
+  NS_NAMED_LITERAL_STRING(visibilitychange, "visibilitychange");
   target->RemoveSystemEventListener(visibilitychange, this,
                                     true /* use capture */);
 }
@@ -756,7 +756,7 @@ Navigator::Vibrate(const jsval& aPattern, JSContext* cx)
   NS_ENSURE_TRUE(domDoc, NS_ERROR_FAILURE);
 
   bool hidden = true;
-  domDoc->GetMozHidden(&hidden);
+  domDoc->GetHidden(&hidden);
   if (hidden) {
     // Hidden documents cannot start or stop a vibration.
     return NS_OK;
@@ -806,7 +806,7 @@ Navigator::Vibrate(const jsval& aPattern, JSContext* cx)
   }
 
   // Add a listener to cancel the vibration if the document becomes hidden,
-  // and remove the old mozvisibility listener, if there was one.
+  // and remove the old visibility listener, if there was one.
 
   if (!gVibrateWindowListener) {
     // If gVibrateWindowListener is null, this is the first time we've vibrated,
@@ -1521,7 +1521,7 @@ NS_GetNavigatorUserAgent(nsAString& aUserAgent)
 nsresult
 NS_GetNavigatorPlatform(nsAString& aPlatform)
 {
-  if (!nsContentUtils::IsCallerTrustedForRead()) {
+  if (!nsContentUtils::IsCallerChrome()) {
     const nsAdoptingString& override =
       mozilla::Preferences::GetString("general.platform.override");
 
@@ -1565,7 +1565,7 @@ NS_GetNavigatorPlatform(nsAString& aPlatform)
 nsresult
 NS_GetNavigatorAppVersion(nsAString& aAppVersion)
 {
-  if (!nsContentUtils::IsCallerTrustedForRead()) {
+  if (!nsContentUtils::IsCallerChrome()) {
     const nsAdoptingString& override =
       mozilla::Preferences::GetString("general.appversion.override");
 
@@ -1600,7 +1600,7 @@ NS_GetNavigatorAppVersion(nsAString& aAppVersion)
 nsresult
 NS_GetNavigatorAppName(nsAString& aAppName)
 {
-  if (!nsContentUtils::IsCallerTrustedForRead()) {
+  if (!nsContentUtils::IsCallerChrome()) {
     const nsAdoptingString& override =
       mozilla::Preferences::GetString("general.appname.override");
 

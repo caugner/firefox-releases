@@ -33,6 +33,7 @@ Var CheckboxSetAsDefault
 Var CheckboxShortcutOnBar ; Used for Quicklaunch or Taskbar as appropriate
 Var CheckboxShortcutInStartMenu
 Var CheckboxShortcutOnDesktop
+Var CheckboxSendPing
 Var CheckboxInstallMaintSvc
 Var DirRequest
 Var ButtonBrowse
@@ -133,11 +134,6 @@ Var CTL_RIGHT_PX
 
 !include "defines.nsi"
 
-!if "${AB_CD}" == "en-US"
-!define STUB_PING
-Var CheckboxSendPing
-!endif
-
 ; Workaround to support different urls for Official and Beta since they share
 ; the same branding.
 !ifdef Official
@@ -209,6 +205,10 @@ Page custom createOptions leaveOptions ; Options page
 Page custom createInstall leaveInstall ; Download / Installation page
 
 Function .onInit
+  ; Remove the current exe directory from the search order.
+  ; This only effects LoadLibrary calls and not implicitly loaded DLLs.
+  System::Call 'kernel32::SetDllDirectoryW(w "")'
+
   StrCpy $LANGUAGE 0
   ; This macro is used to set the brand name variables but the ini file method
   ; isn't supported for the stub installer.
@@ -352,7 +352,6 @@ FunctionEnd
 !endif
 
 Function .onGUIEnd
-!ifdef STUB_PING
   ; Try to send a ping if a download was attempted
   ${If} $IsDownloadFinished != ""
   ${AndIf} $CheckboxSendPing == 1
@@ -391,12 +390,6 @@ Function .onGUIEnd
     ; Cancel the download in progress
     InetBgDL::Get /RESET /END
   ${EndIf}
-!else
-  ${If} $IsDownloadFinished == "false"
-    ; Cancel the download in progress
-    InetBgDL::Get /RESET /END
-  ${EndIf}
-!endif
 
   ${UnloadUAC}
 FunctionEnd
@@ -423,9 +416,7 @@ Function createIntro
   StrCpy $CheckboxShortcutOnBar "1"
   StrCpy $CheckboxShortcutInStartMenu "1"
   StrCpy $CheckboxShortcutOnDesktop "1"
-!ifdef STUB_PING
   StrCpy $CheckboxSendPing "1"
-!endif
 !ifdef MOZ_MAINTENANCE_SERVICE
   StrCpy $CheckboxInstallMaintSvc "1"
 !else
@@ -666,9 +657,8 @@ Function createOptions
 
   Call UpdateFreeSpaceLabel
 
-!ifdef STUB_PING
   ${NSD_CreateCheckbox} ${OPTIONS_ITEM_EDGE_DU} 168u ${OPTIONS_SUBITEM_WIDTH_DU} \
-                        12u "S&end information about this installation to Mozilla"
+                        12u "$(SEND_PING)"
   Pop $CheckboxSendPing
   ; The uxtheme must be disabled on checkboxes in order to override the system
   ; font color.
@@ -676,7 +666,6 @@ Function createOptions
   SetCtlColors $CheckboxSendPing ${OPTIONS_TEXT_COLOR_NORMAL} ${OPTIONS_BKGRD_COLOR}
   SendMessage $CheckboxSendPing ${WM_SETFONT} $FontNormal 0
   ${NSD_Check} $CheckboxSendPing
-!endif
 
 !ifdef MOZ_MAINTENANCE_SERVICE
   ; Only show the maintenance service checkbox if we have write access to HKLM
@@ -756,9 +745,7 @@ Function leaveOptions
   ${NSD_GetState} $CheckboxShortcutOnBar $CheckboxShortcutOnBar
   ${NSD_GetState} $CheckboxShortcutInStartMenu $CheckboxShortcutInStartMenu
   ${NSD_GetState} $CheckboxShortcutOnDesktop $CheckboxShortcutOnDesktop
-!ifdef STUB_PING
   ${NSD_GetState} $CheckboxSendPing $CheckboxSendPing
-!endif
 !ifdef MOZ_MAINTENANCE_SERVICE
   ${NSD_GetState} $CheckboxInstallMaintSvc $CheckboxInstallMaintSvc
 !endif

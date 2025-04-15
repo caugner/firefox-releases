@@ -28,7 +28,7 @@ void
 nsWindowMemoryReporter::Init()
 {
   // The memory reporter manager will own this object.
-  nsWindowMemoryReporter *windowReporter = new nsWindowMemoryReporter();
+  nsRefPtr<nsWindowMemoryReporter> windowReporter = new nsWindowMemoryReporter();
   NS_RegisterMemoryMultiReporter(windowReporter);
 
   nsCOMPtr<nsIObserverService> os = services::GetObserverService();
@@ -41,11 +41,11 @@ nsWindowMemoryReporter::Init()
                     /* weakRef = */ true);
   }
 
-  GhostURLsReporter *ghostMultiReporter =
+  nsRefPtr<GhostURLsReporter> ghostMultiReporter =
     new GhostURLsReporter(windowReporter);
   NS_RegisterMemoryMultiReporter(ghostMultiReporter);
 
-  NumGhostsReporter *ghostReporter =
+  nsRefPtr<NumGhostsReporter> ghostReporter =
     new NumGhostsReporter(windowReporter);
   NS_RegisterMemoryReporter(ghostReporter);
 }
@@ -68,10 +68,15 @@ GetWindowURI(nsIDOMWindow *aWindow)
       do_QueryInterface(aWindow);
     NS_ENSURE_TRUE(scriptObjPrincipal, NULL);
 
-    nsIPrincipal *principal = scriptObjPrincipal->GetPrincipal();
-
-    if (principal) {
-      principal->GetURI(getter_AddRefs(uri));
+    // GetPrincipal() will print a warning if the window does not have an outer
+    // window, so check here for an outer window first.  This code is
+    // functionally correct if we leave out the GetOuterWindow() check, but we
+    // end up printing a lot of warnings during debug mochitests.
+    if (pWindow->GetOuterWindow()) {
+      nsIPrincipal* principal = scriptObjPrincipal->GetPrincipal();
+      if (principal) {
+        principal->GetURI(getter_AddRefs(uri));
+      }
     }
   }
 

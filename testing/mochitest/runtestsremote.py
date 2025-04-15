@@ -12,7 +12,7 @@ import traceback
 sys.path.insert(0, os.path.abspath(os.path.realpath(os.path.dirname(sys.argv[0]))))
 
 from automation import Automation
-from remoteautomation import RemoteAutomation
+from remoteautomation import RemoteAutomation, fennecLogcatFilters
 from runtests import Mochitest
 from runtests import MochitestOptions
 from runtests import MochitestServer
@@ -387,6 +387,41 @@ class MochiRemote(Mochitest):
         if failed > 0:
             return 1
         return 0
+
+    def buildRobotiumConfig(self, options, browserEnv):
+        deviceRoot = self._dm.getDeviceRoot()
+        fHandle = tempfile.NamedTemporaryFile(suffix='.config',
+                                              prefix='robotium-',
+                                              dir=os.getcwd(),
+                                              delete=False)
+        fHandle.write("profile=%s\n" % (self.remoteProfile))
+        fHandle.write("logfile=%s\n" % (options.remoteLogFile))
+        fHandle.write("host=http://mochi.test:8888/tests\n")
+        fHandle.write("rawhost=http://%s:%s/tests\n" % (options.remoteWebServer, options.httpPort))
+
+        if browserEnv:
+            envstr = ""
+            delim = ""
+            for key, value in browserEnv.items():
+                try:
+                    value.index(',')
+                    print "Found: Error an ',' in our value, unable to process value."
+                except ValueError, e:
+                    envstr += "%s%s=%s" % (delim, key, value)
+                    delim = ","
+
+            fHandle.write("envvars=%s\n" % envstr)
+        fHandle.close()
+
+        self._dm.removeFile(os.path.join(deviceRoot, "robotium.config"))
+        self._dm.pushFile(fHandle.name, os.path.join(deviceRoot, "robotium.config"))
+        os.unlink(fHandle.name)
+
+    def buildBrowserEnv(self, options):
+        browserEnv = Mochitest.buildBrowserEnv(self, options)
+        self.buildRobotiumConfig(options, browserEnv)
+        return browserEnv
+
         
 def main():
     scriptdir = os.path.abspath(os.path.realpath(os.path.dirname(__file__)))
@@ -428,28 +463,15 @@ def main():
     procName = options.app.split('/')[-1]
     if (dm.processExist(procName)):
         dm.killProcess(procName)
-    
+
     if options.robocop != "":
         mp = manifestparser.TestManifest(strict=False)
         # TODO: pull this in dynamically
         mp.read(options.robocop)
         robocop_tests = mp.active_tests(exists=False)
 
-        fHandle = tempfile.NamedTemporaryFile(suffix='.config',
-                                              prefix='robotium-',
-                                              dir=os.getcwd(),
-                                              delete=False)
-        fHandle.write("profile=%s\n" % (mochitest.remoteProfile))
-        fHandle.write("logfile=%s\n" % (options.remoteLogFile))
-        fHandle.write("host=http://mochi.test:8888/tests\n")
-        fHandle.write("rawhost=http://%s:%s/tests\n" % (options.remoteWebServer, options.httpPort))
-        fHandle.close()
-        deviceRoot = dm.getDeviceRoot()
-      
+        deviceRoot = dm.getDeviceRoot()      
         dm.removeFile(os.path.join(deviceRoot, "fennec_ids.txt"))
-        dm.removeFile(os.path.join(deviceRoot, "robotium.config"))
-        dm.pushFile(fHandle.name, os.path.join(deviceRoot, "robotium.config"))
-        os.unlink(fHandle.name)
         fennec_ids = os.path.abspath("fennec_ids.txt")
         if not os.path.exists(fennec_ids) and options.robocopIds:
             fennec_ids = options.robocopIds
@@ -463,7 +485,6 @@ def main():
 
         appname = options.app
         retVal = None
-        logcat = []
         for test in robocop_tests:
             if options.testPath and options.testPath != test['name']:
                 continue
@@ -476,7 +497,6 @@ def main():
             try:
                 dm.recordLogcat()
                 retVal = mochitest.runTests(options)
-                logcat = dm.getLogcat()
                 mochitest.addLogData()
             except:
                 print "Automation Error: Exception caught while running tests"
@@ -484,33 +504,43 @@ def main():
                 mochitest.stopWebServer(options)
                 mochitest.stopWebSocketServer(options)
                 try:
-                    self.cleanup(None, options)
-                except:
+                    mochitest.cleanup(None, options)
+                except devicemanager.DMError:
+                    # device error cleaning up... oh well!
                     pass
-                sys.exit(1)
+                retVal = 1
+                break
         if retVal is None:
             print "No tests run. Did you pass an invalid TEST_PATH?"
             retVal = 1
 
-        retVal = mochitest.printLog()
+        if retVal == 0:
+            # if we didn't have some kind of error running the tests, make
+            # sure the tests actually passed
+            retVal = mochitest.printLog()
     else:
-      try:
-        dm.recordLogcat()
-        retVal = mochitest.runTests(options)
-        logcat = dm.getLogcat()
-      except:
-        print "Automation Error: Exception caught while running tests"
-        traceback.print_exc()
-        mochitest.stopWebServer(options)
-        mochitest.stopWebSocketServer(options)
         try:
-            self.cleanup(None, options)
+            dm.recordLogcat()
+            retVal = mochitest.runTests(options)
         except:
-            pass
-        sys.exit(1)
+            print "Automation Error: Exception caught while running tests"
+            traceback.print_exc()
+            mochitest.stopWebServer(options)
+            mochitest.stopWebSocketServer(options)
+            try:
+                mochitest.cleanup(None, options)
+            except devicemanager.DMError:
+                # device error cleaning up... oh well!
+                pass
+            retVal = 1
 
-    print ''.join(logcat[-500:-1])
-    print dm.getInfo()
+    try:
+        logcat = dm.getLogcat(filterOutRegexps=fennecLogcatFilters)
+        print ''.join(logcat)
+        print dm.getInfo()
+    except devicemanager.DMError:
+        print "WARNING: Error getting device information at end of test"
+
     sys.exit(retVal)
         
 if __name__ == "__main__":

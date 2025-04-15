@@ -58,6 +58,8 @@
 #include "nsRenderingContext.h"
 #include "nsIScriptableRegion.h"
 
+#include "mozilla/Likely.h"
+
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
 #endif
@@ -181,7 +183,7 @@ nsTreeBodyFrame::GetMinSize(nsBoxLayoutState& aBoxLayoutState)
 
   nsSize min(0,0);
   int32_t desiredRows;
-  if (NS_UNLIKELY(!baseElement)) {
+  if (MOZ_UNLIKELY(!baseElement)) {
     desiredRows = 0;
   }
   else if (baseElement->Tag() == nsGkAtoms::select &&
@@ -2117,8 +2119,8 @@ nsTreeBodyFrame::GetImage(int32_t aRowIndex, nsTreeColumn* aCol, bool aUseContex
 
     if ((!(status & imgIRequest::STATUS_LOAD_COMPLETE)) || animated) {
       // We either aren't done loading, or we're animating. Add our row as a listener for invalidations.
-      nsCOMPtr<imgIDecoderObserver> obs;
-      imgReq->GetDecoderObserver(getter_AddRefs(obs));
+      nsCOMPtr<imgINotificationObserver> obs;
+      imgReq->GetNotificationObserver(getter_AddRefs(obs));
 
       if (obs) {
         static_cast<nsTreeImageListener*> (obs.get())->AddCell(aRowIndex, aCol);
@@ -2140,11 +2142,11 @@ nsTreeBodyFrame::GetImage(int32_t aRowIndex, nsTreeColumn* aCol, bool aUseContex
     }
 
     listener->AddCell(aRowIndex, aCol);
-    nsCOMPtr<imgIDecoderObserver> imgDecoderObserver = listener;
+    nsCOMPtr<imgINotificationObserver> imgNotificationObserver = listener;
 
     nsCOMPtr<imgIRequest> imageRequest;
     if (styleRequest) {
-      styleRequest->Clone(imgDecoderObserver, getter_AddRefs(imageRequest));
+      styleRequest->Clone(imgNotificationObserver, getter_AddRefs(imageRequest));
     } else {
       nsIDocument* doc = mContent->GetDocument();
       if (!doc)
@@ -2169,7 +2171,7 @@ nsTreeBodyFrame::GetImage(int32_t aRowIndex, nsTreeColumn* aCol, bool aUseContex
                                                 doc,
                                                 mContent->NodePrincipal(),
                                                 doc->GetDocumentURI(),
-                                                imgDecoderObserver,
+                                                imgNotificationObserver,
                                                 nsIRequest::LOAD_NORMAL,
                                                 getter_AddRefs(imageRequest));
         NS_ENSURE_SUCCESS(rv, rv);
@@ -2182,12 +2184,12 @@ nsTreeBodyFrame::GetImage(int32_t aRowIndex, nsTreeColumn* aCol, bool aUseContex
       return NS_ERROR_FAILURE;
 
     // We don't want discarding/decode-on-draw for xul images
-    imageRequest->RequestDecode();
+    imageRequest->StartDecoding();
     imageRequest->LockImage();
 
     // In a case it was already cached.
     imageRequest->GetImage(aResult);
-    nsTreeImageCacheEntry cacheEntry(imageRequest, imgDecoderObserver);
+    nsTreeImageCacheEntry cacheEntry(imageRequest, imgNotificationObserver);
     mImageCache.Put(imageSrc, cacheEntry);
   }
   return NS_OK;

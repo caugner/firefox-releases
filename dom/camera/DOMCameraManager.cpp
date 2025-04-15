@@ -21,11 +21,11 @@ DOMCI_DATA(CameraManager, nsIDOMCameraManager)
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsDOMCameraManager)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsDOMCameraManager)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCameraThread)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCameraThread)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDOMCameraManager)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCameraThread)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCameraThread)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsDOMCameraManager)
@@ -44,7 +44,14 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(nsDOMCameraManager)
  * Set the NSPR_LOG_MODULES environment variable to enable logging
  * in a debug build, e.g. NSPR_LOG_MODULES=Camera:5
  */
-PRLogModuleInfo* gCameraLog = PR_LOG_DEFINE("Camera");
+PRLogModuleInfo*
+GetCameraLog()
+{
+  static PRLogModuleInfo *sLog;
+  if (!sLog)
+    sLog = PR_NewLogModule("Camera");
+  return sLog;
+}
 
 /**
  * nsDOMCameraManager::GetListOfCameras

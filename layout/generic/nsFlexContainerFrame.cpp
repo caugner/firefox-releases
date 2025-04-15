@@ -5,7 +5,7 @@
  * version 2.0 (the "License"). You can obtain a copy of the License at
  * http://mozilla.org/MPL/2.0/. */
 
-/* rendering object for CSS display: -moz-flex */
+/* rendering object for CSS "display: flex" */
 
 #include "nsFlexContainerFrame.h"
 #include "nsLayoutUtils.h"
@@ -16,7 +16,14 @@
 using namespace mozilla::css;
 
 #ifdef PR_LOGGING
-static PRLogModuleInfo* nsFlexContainerFrameLM = PR_NewLogModule("nsFlexContainerFrame");
+static PRLogModuleInfo*
+GetFlexContainerLog()
+{
+  static PRLogModuleInfo *sLog;
+  if (!sLog)
+    sLog = PR_NewLogModule("nsFlexContainerFrame");
+  return sLog;
+}
 #endif /* PR_LOGGING */
 
 // XXXdholbert Some of this helper-stuff should be separated out into a general
@@ -556,6 +563,16 @@ nsFlexContainerFrame::AppendFlexItemForChild(
                  "We gave flex item unconstrained available height, so it "
                  "should be complete");
 
+      // Call DidReflow to clear NS_FRAME_IN_REFLOW and any other state on the
+      // child before our next ReflowChild call.
+      // NOTE: We're intentionally calling DidReflow() instead of the wrapper
+      // FinishReflowChild() because we don't want the rest of the stuff in
+      // FinishReflowChild() (e.g. moving the frame's rect) to happen until we
+      // do our "real" reflow of the child.
+      rv = aChildFrame->DidReflow(aPresContext, &childRSForMeasuringHeight,
+                                  nsDidReflowStatus::FINISHED);
+      NS_ENSURE_SUCCESS(rv, rv);
+
       // Subtract border/padding in vertical axis, to get _just_
       // the effective computed value of the "height" property.
       nscoord childDesiredHeight = childDesiredSize.height -
@@ -698,7 +715,8 @@ FlexItem::FlexItem(nsIFrame* aChildFrame,
 
   // Resolve "align-self: auto" to parent's "align-items" value.
   if (mAlignSelf == NS_STYLE_ALIGN_SELF_AUTO) {
-    mAlignSelf = mFrame->GetParent()->GetStylePosition()->mAlignItems;
+    mAlignSelf =
+      mFrame->GetStyleContext()->GetParent()->GetStylePosition()->mAlignItems;
   }
 
   // If the flex item's inline axis is the same as the cross axis, then
@@ -922,14 +940,6 @@ nsFlexContainerFrame::~nsFlexContainerFrame()
 }
 
 /* virtual */
-void
-nsFlexContainerFrame::DestroyFrom(nsIFrame* aDestructRoot)
-{
-  DestroyAbsoluteFrames(aDestructRoot);
-  nsFlexContainerFrameSuper::DestroyFrom(aDestructRoot);
-}
-
-/* virtual */
 nsIAtom*
 nsFlexContainerFrame::GetType() const
 {
@@ -1087,7 +1097,7 @@ nsFlexContainerFrame::ResolveFlexibleLengths(
   nscoord aFlexContainerMainSize,
   nsTArray<FlexItem>& aItems)
 {
-  PR_LOG(nsFlexContainerFrameLM, PR_LOG_DEBUG, ("ResolveFlexibleLengths\n"));
+  PR_LOG(GetFlexContainerLog(), PR_LOG_DEBUG, ("ResolveFlexibleLengths\n"));
   if (aItems.IsEmpty()) {
     return;
   }
@@ -1126,7 +1136,7 @@ nsFlexContainerFrame::ResolveFlexibleLengths(
       availableFreeSpace -= item.GetMainSize();
     }
 
-    PR_LOG(nsFlexContainerFrameLM, PR_LOG_DEBUG,
+    PR_LOG(GetFlexContainerLog(), PR_LOG_DEBUG,
            (" available free space = %d\n", availableFreeSpace));
 
     // If sign of free space matches flexType, give each flexible
@@ -1179,7 +1189,7 @@ nsFlexContainerFrame::ResolveFlexibleLengths(
       }
 
       if (runningFlexWeightSum != 0.0f) { // no distribution if no flexibility
-        PR_LOG(nsFlexContainerFrameLM, PR_LOG_DEBUG,
+        PR_LOG(GetFlexContainerLog(), PR_LOG_DEBUG,
                (" Distributing available space:"));
         for (uint32_t i = aItems.Length() - 1; i < aItems.Length(); --i) {
           FlexItem& item = aItems[i];
@@ -1218,7 +1228,7 @@ nsFlexContainerFrame::ResolveFlexibleLengths(
             availableFreeSpace -= sizeDelta;
 
             item.SetMainSize(item.GetMainSize() + sizeDelta);
-            PR_LOG(nsFlexContainerFrameLM, PR_LOG_DEBUG,
+            PR_LOG(GetFlexContainerLog(), PR_LOG_DEBUG,
                    ("  child %d receives %d, for a total of %d\n",
                     i, sizeDelta, item.GetMainSize()));
           }
@@ -1228,7 +1238,7 @@ nsFlexContainerFrame::ResolveFlexibleLengths(
 
     // Fix min/max violations:
     nscoord totalViolation = 0; // keeps track of adjustments for min/max
-    PR_LOG(nsFlexContainerFrameLM, PR_LOG_DEBUG,
+    PR_LOG(GetFlexContainerLog(), PR_LOG_DEBUG,
            (" Checking for violations:"));
 
     for (uint32_t i = 0; i < aItems.Length(); i++) {
@@ -1250,7 +1260,7 @@ nsFlexContainerFrame::ResolveFlexibleLengths(
 
     FreezeOrRestoreEachFlexibleSize(totalViolation, aItems);
 
-    PR_LOG(nsFlexContainerFrameLM, PR_LOG_DEBUG,
+    PR_LOG(GetFlexContainerLog(), PR_LOG_DEBUG,
            (" Total violation: %d\n", totalViolation));
 
     if (totalViolation == 0) {
@@ -1554,7 +1564,8 @@ SingleLineCrossAxisPositionTracker::
   // XXXdholbert This assumes cross axis is Top-To-Bottom.
   // For bottom-to-top support, probably want to make this depend on
   //   AxisGrowsInPositiveDirection(mAxis)
-  return aItem.GetAscent() + aItem.GetMarginComponentForSide(crossStartSide);
+  return NSCoordSaturatingAdd(aItem.GetAscent(),
+                              aItem.GetMarginComponentForSide(crossStartSide));
 }
 
 void
@@ -1655,8 +1666,9 @@ SingleLineCrossAxisPositionTracker::
           aItem.GetMarginBorderPaddingSizeInAxis(mAxis))) / 2;
       break;
     case NS_STYLE_ALIGN_ITEMS_BASELINE:
-      MOZ_ASSERT(mCrossStartToFurthestBaseline != nscoord_MIN,
-                 "using uninitialized baseline offset");
+      NS_WARN_IF_FALSE(mCrossStartToFurthestBaseline != nscoord_MIN,
+                       "using uninitialized baseline offset (or working with "
+                       "content that has bogus huge values)");
       MOZ_ASSERT(mCrossStartToFurthestBaseline >=
                  GetBaselineOffsetFromCrossStart(aItem),
                  "failed at finding largest ascent");
@@ -1789,9 +1801,9 @@ nsFlexContainerFrame::ComputeFlexContainerMainSize(
     return mainSize;
   }
 
-  MOZ_ASSERT(!IsAxisHorizontal(aAxisTracker.GetMainAxis()),
-             "Computed width should always be constrained, so horizontal "
-             "flex containers should always have a constrained main-size");
+  NS_WARN_IF_FALSE(!IsAxisHorizontal(aAxisTracker.GetMainAxis()),
+                   "Computed width should always be constrained, so horizontal "
+                   "flex containers should have a constrained main-size");
 
   // Otherwise, use the sum of our items' hypothetical main sizes, clamped
   // to our computed min/max main-size properties.
@@ -1943,7 +1955,7 @@ nsFlexContainerFrame::Reflow(nsPresContext*           aPresContext,
 {
   DO_GLOBAL_REFLOW_COUNT("nsFlexContainerFrame");
   DISPLAY_REFLOW(aPresContext, this, aReflowState, aDesiredSize, aStatus);
-  PR_LOG(nsFlexContainerFrameLM, PR_LOG_DEBUG,
+  PR_LOG(GetFlexContainerLog(), PR_LOG_DEBUG,
          ("Reflow() for nsFlexContainerFrame %p\n", this));
 
   // We (and our children) can only depend on our ancestor's height if we have
@@ -2045,10 +2057,20 @@ nsFlexContainerFrame::Reflow(nsPresContext*           aPresContext,
                                            aReflowState.ComputedHeight()));
 
     if (mCachedContentBoxCrossSize == NS_AUTOHEIGHT) {
-      // unconstrained 'auto' cross-size: shrink-wrap our line(s)
+      // Unconstrained 'auto' cross-size: shrink-wrap our line(s), subject
+      // to our min-size / max-size constraints in that axis.
+      nscoord minCrossSize =
+        axisTracker.GetCrossComponent(nsSize(aReflowState.mComputedMinWidth,
+                                             aReflowState.mComputedMinHeight));
+      nscoord maxCrossSize =
+        axisTracker.GetCrossComponent(nsSize(aReflowState.mComputedMaxWidth,
+                                             aReflowState.mComputedMaxHeight));
       mCachedContentBoxCrossSize =
-        lineCrossAxisPosnTracker.GetLineCrossSize();
-    } else {
+        NS_CSS_MINMAX(lineCrossAxisPosnTracker.GetLineCrossSize(),
+                      minCrossSize, maxCrossSize);
+    }
+    if (lineCrossAxisPosnTracker.GetLineCrossSize() !=
+        mCachedContentBoxCrossSize) {
       // XXXdholbert When we support multi-line flex containers, we should
       // distribute any extra space among or between our lines here according
       // to 'align-content'. For now, we do the single-line special behavior:

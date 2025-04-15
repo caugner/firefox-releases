@@ -18,16 +18,14 @@
 #define DOM_CAMERA_GONKCAMERACONTROL_H
 
 #include "base/basictypes.h"
-#include "prtypes.h"
 #include "prrwlock.h"
+#include <media/MediaProfiles.h>
 #include "DeviceStorage.h"
 #include "nsIDOMCameraManager.h"
 #include "DOMCameraControl.h"
 #include "CameraControlImpl.h"
 #include "CameraCommon.h"
 #include "GonkRecorder.h"
-
-using namespace android;
 
 namespace mozilla {
 
@@ -48,17 +46,14 @@ public:
   const char* GetParameterConstChar(uint32_t aKey);
   double GetParameterDouble(uint32_t aKey);
   void GetParameter(uint32_t aKey, nsTArray<dom::CameraRegion>& aRegions);
-  void GetParameter(uint32_t aKey, nsTArray<CameraSize>& aSizes);
+  void GetParameter(uint32_t aKey, nsTArray<dom::CameraSize>& aSizes);
   void SetParameter(const char* aKey, const char* aValue);
   void SetParameter(uint32_t aKey, const char* aValue);
   void SetParameter(uint32_t aKey, double aValue);
   void SetParameter(uint32_t aKey, const nsTArray<dom::CameraRegion>& aRegions);
   void SetParameter(uint32_t aKey, int aValue);
-  nsresult GetVideoSizes(nsTArray<CameraSize>& aVideoSizes);
+  nsresult GetVideoSizes(nsTArray<dom::CameraSize>& aVideoSizes);
   nsresult PushParameters();
-
-  nsresult SetupRecording(int aFd, int aRotation, int64_t aMaxFileSizeBytes, int64_t aMaxVideoLengthMs);
-  nsresult SetupVideoMode(const nsAString& aProfile);
 
   void AutoFocusComplete(bool aSuccess);
   void TakePictureComplete(uint8_t* aData, uint32_t aLength);
@@ -78,9 +73,12 @@ protected:
   nsresult PushParametersImpl();
   nsresult PullParametersImpl();
   nsresult GetPreviewStreamVideoModeImpl(GetPreviewStreamVideoModeTask* aGetPreviewStreamVideoMode);
+  nsresult ReleaseHardwareImpl(ReleaseHardwareTask* aReleaseHardware);
   already_AddRefed<RecorderProfileManager> GetRecorderProfileManagerImpl();
   already_AddRefed<GonkRecorderProfileManager> GetGonkRecorderProfileManager();
 
+  nsresult SetupRecording(int aFd, int aRotation, int64_t aMaxFileSizeBytes, int64_t aMaxVideoLengthMs);
+  nsresult SetupVideoMode(const nsAString& aProfile);
   void SetPreviewSize(uint32_t aWidth, uint32_t aHeight);
   void SetupThumbnail(uint32_t aPictureWidth, uint32_t aPictureHeight, uint32_t aPercentQuality);
 

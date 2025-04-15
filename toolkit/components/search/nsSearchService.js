@@ -447,7 +447,7 @@ function getDir(aKey, aIFace) {
  */
 function queryCharsetFromCode(aCode) {
   const codes = [];
-  codes[0] = "x-mac-roman";
+  codes[0] = "macintosh";
   codes[6] = "x-mac-greek";
   codes[35] = "x-mac-turkish";
   codes[513] = "ISO-8859-1";
@@ -457,7 +457,6 @@ function queryCharsetFromCode(aCode) {
   codes[519] = "ISO-8859-7";
   codes[520] = "ISO-8859-8";
   codes[521] = "ISO-8859-9";
-  codes[1049] = "IBM864";
   codes[1280] = "windows-1252";
   codes[1281] = "windows-1250";
   codes[1282] = "windows-1251";
@@ -488,7 +487,7 @@ function queryCharsetFromCode(aCode) {
 }
 function fileCharsetFromCode(aCode) {
   const codes = [
-    "x-mac-roman",           // 0
+    "macintosh",             // 0
     "Shift_JIS",             // 1
     "Big5",                  // 2
     "EUC-KR",                // 3
@@ -520,7 +519,7 @@ function fileCharsetFromCode(aCode) {
     "X-MAC-VIETNAMESE",      // 30
     "X-MAC-EXTARABIC"        // 31
   ];
-  // Sherlock files have always defaulted to x-mac-roman, so do that here too
+  // Sherlock files have always defaulted to macintosh, so do that here too
   return codes[aCode] || codes[0];
 }
 

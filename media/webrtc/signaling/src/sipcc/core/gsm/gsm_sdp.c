@@ -1,41 +1,6 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is the Cisco Systems SIP Stack.
- *
- * The Initial Developer of the Original Code is
- * Cisco Systems (CSCO).
- * Portions created by the Initial Developer are Copyright (C) 2002
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Enda Mannion <emannion@cisco.com>
- *  Suhas Nandakumar <snandaku@cisco.com>
- *  Ethan Hugg <ehugg@cisco.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "cpr_in.h"
 #include "cpr_rand.h"
@@ -68,15 +33,15 @@
 #define GET_CODEC_TYPE(a)    ((uint8_t)((a) & 0XFF))
 
 #define GSMSDP_SET_MEDIA_DIABLE(media) \
-     (media->src_port = 0) 
+     (media->src_port = 0)
 
 #define CAST_DEFAULT_BITRATE 320000
 /*
  * The maximum number of media lines per call. This puts the upper limit
  * on * the maximum number of media lines per call to resource hogging.
- * The value of 8 is intended up to 2 audio and 2 video streams with 
+ * The value of 8 is intended up to 2 audio and 2 video streams with
  * each stream can offer IPV4 and IPV6 alternate network address type
- * in ANAT group (RFC-4091). 
+ * in ANAT group (RFC-4091).
  */
 #define GSMSDP_MAX_MLINES_PER_CALL  (8)
 
@@ -91,15 +56,15 @@
  * media structures are allocated from heap and they will be freed back
  * from heap after thehy are not used. The only time where the heap
  * is used when phone reaches the maximum call capacity and each one
- * of the call is using more than one media lines. 
+ * of the call is using more than one media lines.
  */
 #define GSMSDP_PERM_MEDIA_ELEMS   (LSM_MAX_CALLS)
 
 /*
- * The permanent free media structure elements use static array. 
+ * The permanent free media structure elements use static array.
  * It is to ensure a low overhead for this a typical single audio call.
- */ 
-static fsmdef_media_t gsmsdp_free_media_chunk[GSMSDP_PERM_MEDIA_ELEMS]; 
+ */
+static fsmdef_media_t gsmsdp_free_media_chunk[GSMSDP_PERM_MEDIA_ELEMS];
 static sll_lite_list_t gsmsdp_free_media_list;
 
 typedef enum {
@@ -109,7 +74,7 @@ typedef enum {
 
 /* Forward references */
 static cc_causes_t
-gsmsdp_init_local_sdp (cc_sdp_t **sdp_pp);
+gsmsdp_init_local_sdp (const char *peerconnection, cc_sdp_t **sdp_pp);
 
 static void
 gsmsdp_set_media_capability(fsmdef_media_t *media,
@@ -117,17 +82,17 @@ gsmsdp_set_media_capability(fsmdef_media_t *media,
 static fsmdef_media_t *
 gsmsdp_add_media_line(fsmdef_dcb_t *dcb_p, const cc_media_cap_t *media_cap,
                       uint8_t cap_index, uint16_t level,
-                      cpr_ip_type addr_type);
+                      cpr_ip_type addr_type, boolean offer);
 
 
 extern cc_media_cap_table_t g_media_table;
 extern vcm_media_payload_type_t vcmRtpToMediaPayload (int32_t ptype,
                                             int32_t dynamic_ptype_value,
                                             uint16_t mode);
-extern boolean g_disable_mass_reg_debug_print; 
+extern boolean g_disable_mass_reg_debug_print;
 /**
  * A wraper function to return the media capability supported by
- * the platform and session. This is a convient place if policy 
+ * the platform and session. This is a convient place if policy
  * to get the capability table as it applies to the session
  * updates the media_cap_tbl ptr in dcb
  *
@@ -142,63 +107,105 @@ static const cc_media_cap_table_t *gsmsdp_get_media_capability (fsmdef_dcb_t *dc
     int                sdpmode = 0;
 
     if (g_disable_mass_reg_debug_print == FALSE) {
-        GSM_DEBUG(DEB_F_PREFIX"dcb video pref %x\n", 
+        GSM_DEBUG(DEB_F_PREFIX"dcb video pref %x\n",
                                DEB_F_PREFIX_ARGS(GSM, fname), dcb_p->video_pref);
     }
-    
+
     config_get_value(CFGID_SDPMODE, &sdpmode, sizeof(sdpmode));
-    
+
     if ( dcb_p->media_cap_tbl == NULL ) {
          dcb_p->media_cap_tbl = (cc_media_cap_table_t*) cpr_malloc(sizeof(cc_media_cap_table_t));
          if ( dcb_p->media_cap_tbl == NULL ) {
-             GSM_ERR_MSG(GSM_L_C_F_PREFIX"media table malloc failed.\n", 
+             GSM_ERR_MSG(GSM_L_C_F_PREFIX"media table malloc failed.\n",
                     dcb_p->line, dcb_p->call_id, fname);
              return NULL;
          }
-    } 
- 
+    }
+
     *(dcb_p->media_cap_tbl) = g_media_table;
-
-    if ( dcb_p->video_pref == SDP_DIRECTION_INACTIVE) {
-     // do not enable video
-       dcb_p->media_cap_tbl->cap[CC_VIDEO_1].enabled = FALSE;
-    } 
-
-    if ( dcb_p->video_pref == SDP_DIRECTION_RECVONLY ) {
-       if ( dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction == SDP_DIRECTION_SENDRECV ) {
-           dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction = dcb_p->video_pref;
-       }
-      
-       if ( dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction == SDP_DIRECTION_SENDONLY ) {
-           dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction = SDP_DIRECTION_INACTIVE;
-            DEF_DEBUG(GSM_L_C_F_PREFIX"video capability disabled to SDP_DIRECTION_INACTIVE from sendonly\n", 
-                dcb_p->line, dcb_p->call_id, fname);
-       }
-    } else if ( dcb_p->video_pref == SDP_DIRECTION_SENDONLY ) {
-       if ( dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction == SDP_DIRECTION_SENDRECV ) {
-           dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction = dcb_p->video_pref;
-       }
-
-       if ( dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction == SDP_DIRECTION_RECVONLY ) {
-           dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction = SDP_DIRECTION_INACTIVE;
-            DEF_DEBUG(GSM_L_C_F_PREFIX"video capability disabled to SDP_DIRECTION_INACTIVE from recvonly\n", 
-                dcb_p->line, dcb_p->call_id, fname);
-       }
-    } // else if requested is SENDRECV just go by capability 
 
     /*
      * Turn off two default streams, this is temporary
      * until we can handle multiple streams properly
      */
     if (sdpmode) {
-    	dcb_p->media_cap_tbl->cap[CC_VIDEO_1].enabled = FALSE;
-    	dcb_p->media_cap_tbl->cap[CC_AUDIO_1].enabled = FALSE;
-    	dcb_p->media_cap_tbl->cap[CC_DATACHANNEL_1].enabled = TRUE;
+        dcb_p->media_cap_tbl->cap[CC_AUDIO_1].enabled = TRUE;
+        dcb_p->media_cap_tbl->cap[CC_VIDEO_1].enabled = TRUE;
+        dcb_p->media_cap_tbl->cap[CC_AUDIO_1].support_direction = SDP_DIRECTION_RECVONLY;
+        dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction = SDP_DIRECTION_RECVONLY;
+        dcb_p->media_cap_tbl->cap[CC_DATACHANNEL_1].enabled = TRUE;
     } else {
         dcb_p->media_cap_tbl->cap[CC_DATACHANNEL_1].enabled = FALSE;
+
+        if ( dcb_p->video_pref == SDP_DIRECTION_INACTIVE) {
+            // do not enable video
+            dcb_p->media_cap_tbl->cap[CC_VIDEO_1].enabled = FALSE;
+        }
+
+        if ( dcb_p->video_pref == SDP_DIRECTION_RECVONLY ) {
+            if ( dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction == SDP_DIRECTION_SENDRECV ) {
+                dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction = dcb_p->video_pref;
+            }
+
+            if ( dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction == SDP_DIRECTION_SENDONLY ) {
+                dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction = SDP_DIRECTION_INACTIVE;
+                DEF_DEBUG(GSM_L_C_F_PREFIX"video capability disabled to SDP_DIRECTION_INACTIVE from sendonly\n",
+                dcb_p->line, dcb_p->call_id, fname);
+            }
+        } else if ( dcb_p->video_pref == SDP_DIRECTION_SENDONLY ) {
+            if ( dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction == SDP_DIRECTION_SENDRECV ) {
+                dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction = dcb_p->video_pref;
+            }
+
+            if ( dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction == SDP_DIRECTION_RECVONLY ) {
+               dcb_p->media_cap_tbl->cap[CC_VIDEO_1].support_direction = SDP_DIRECTION_INACTIVE;
+                DEF_DEBUG(GSM_L_C_F_PREFIX"video capability disabled to SDP_DIRECTION_INACTIVE from recvonly\n",
+                    dcb_p->line, dcb_p->call_id, fname);
+            }
+        } // else if requested is SENDRECV just go by capability
     }
 
     return (dcb_p->media_cap_tbl);
+}
+
+/*
+ * Process a single constraint for one media capablity
+ */
+void gsmsdp_process_cap_constraint(cc_media_cap_t *cap,
+                                   const char *constraint) {
+  /* Check constraint string for values "TRUE" or "FALSE"
+     (currently set in PeerConnectionImpl.cpp, with only
+     two possible hardcoded values).
+     TODO -- The values that constraints can take are
+     fairly narrow and enumerated; they should probably
+     use an enumeration rather than a string. See bug 811360.
+  */
+  if (constraint[0] == 'F') {
+    cap->support_direction &= ~SDP_DIRECTION_FLAG_RECV;
+  } else if (constraint[0] == 'T') {
+    cap->support_direction |= SDP_DIRECTION_FLAG_RECV;
+  }
+}
+
+/*
+ * Process constraints only related to media capabilities., i.e
+ * OfferToReceiveAudio, OfferToReceiveVideo
+ */
+void gsmsdp_process_cap_constraints(fsmdef_dcb_t *dcb,
+                                    const cc_media_constraints_t* constraints) {
+  int i = 0;
+
+  for (i=0; i<constraints->constraint_count; i++) {
+    if (strcmp(constraints_table[OfferToReceiveAudio].name,
+               constraints->constraints[i]->name) == 0) {
+      gsmsdp_process_cap_constraint(&dcb->media_cap_tbl->cap[CC_AUDIO_1],
+                                    constraints->constraints[i]->value);
+    } else if (strcmp(constraints_table[OfferToReceiveVideo].name,
+               constraints->constraints[i]->name) == 0) {
+      gsmsdp_process_cap_constraint(&dcb->media_cap_tbl->cap[CC_VIDEO_1],
+                                    constraints->constraints[i]->value);
+    }
+  }
 }
 
 /**
@@ -231,13 +238,13 @@ static const cc_media_remote_stream_table_t *gsmsdp_get_media_stream_table (fsmd
 /**
  * The function creates a free media structure elements list. The
  * free list is global for all calls. The function must be called once
- * during GSM initializtion. 
+ * during GSM initializtion.
  *
  * @param            None.
  *
  * @return           TRUE  - free media structure list is created
  *                           successfully.
- *                   FALSE - failed to create free media structure 
+ *                   FALSE - failed to create free media structure
  *                           list.
  */
 boolean
@@ -256,7 +263,7 @@ gsmsdp_create_free_media_list (void)
      */
     media = &gsmsdp_free_media_chunk[0];    /* first element */
     for (i = 0; i < GSMSDP_PERM_MEDIA_ELEMS; i++) {
-        (void)sll_lite_link_head(&gsmsdp_free_media_list, 
+        (void)sll_lite_link_head(&gsmsdp_free_media_list,
                                  (sll_lite_node_t *)media);
         media = media + 1; /* next element */
     }
@@ -273,12 +280,12 @@ gsmsdp_create_free_media_list (void)
  *
  * @return           None.
  */
-void 
+void
 gsmsdp_destroy_free_media_list (void)
 {
     /*
      * Although the free chunk is not allocated but,
-     * NULL out the free list header to indicate that the 
+     * NULL out the free list header to indicate that the
      * there is not thing from the free chunk.
      */
     (void)sll_lite_init(&gsmsdp_free_media_list);
@@ -286,14 +293,14 @@ gsmsdp_destroy_free_media_list (void)
 
 /**
  * The function allocates a media structure. The function
- * attempts to obtain a free media structure from the free media 
+ * attempts to obtain a free media structure from the free media
  * structure list first. If free list is empty then the media structure
  * is allocated from a memory pool.
  *
  * @param            None.
  *
  * @return           pointer to the fsmdef_media_t if successful or
- *                   NULL when there is no free media structure 
+ *                   NULL when there is no free media structure
  *                   is available.
  */
 static fsmdef_media_t *
@@ -307,18 +314,18 @@ gsmsdp_alloc_media (void)
     if (media == NULL) {
         /* no free element from cache, allocate it from the pool */
         media = cpr_malloc(sizeof(fsmdef_media_t));
-        GSM_DEBUG(DEB_F_PREFIX"get from dynamic pool, media %x\n", 
+        GSM_DEBUG(DEB_F_PREFIX"get from dynamic pool, media %x\n",
                                DEB_F_PREFIX_ARGS(GSM, fname), media);
     }
     return (media);
 }
 
-/** 
+/**
  * The function frees a media structure back to the free list or
  * heap. If the media structure is from the free list then it
  * is put back to the free list otherwise it will be freed
  * back to the dynamic pool.
- *  
+ *
  * @param[in]media   - pointer to fsmdef_media_t to free back to
  *                   free list.
  *
@@ -350,12 +357,12 @@ gsmsdp_free_media (fsmdef_media_t *media)
     if ((media >= &gsmsdp_free_media_chunk[0]) &&
         (media <= &gsmsdp_free_media_chunk[GSMSDP_PERM_MEDIA_ELEMS-1])) {
         /* the element is part of free chunk, put it back to the list */
-        (void)sll_lite_link_head(&gsmsdp_free_media_list, 
+        (void)sll_lite_link_head(&gsmsdp_free_media_list,
                                  (sll_lite_node_t *)media);
     } else {
         /* this element is from the dynamic pool, free it back */
         cpr_free(media);
-        GSM_DEBUG(DEB_F_PREFIX"free media 0x%x to dynamic pool\n", 
+        GSM_DEBUG(DEB_F_PREFIX"free media 0x%x to dynamic pool\n",
                   DEB_F_PREFIX_ARGS(GSM, fname), media);
     }
 }
@@ -426,7 +433,7 @@ gsmsdp_init_media (fsmdef_media_t *media)
 /**
  *
  * Returns a pointer to a new the fsmdef_media_t for a given dcb.
- * The default media parameters will be intialized for the known or 
+ * The default media parameters will be intialized for the known or
  * supported media types. The new media is also added to the media list
  * in the dcb.
  *
@@ -449,9 +456,9 @@ gsmsdp_get_new_media (fsmdef_dcb_t *dcb_p, sdp_media_e media_type,
 
     /* check to ensue we do not handle too many media lines */
     if (GSMSDP_MEDIA_COUNT(dcb_p) >= GSMSDP_MAX_MLINES_PER_CALL) {
-        GSM_ERR_MSG(GSM_L_C_F_PREFIX"exceeding media lines per call\n", 
+        GSM_ERR_MSG(GSM_L_C_F_PREFIX"exceeding media lines per call\n",
                     dcb_p->line, dcb_p->call_id, fname);
-        return (NULL); 
+        return (NULL);
     }
 
     /* allocate new media entry */
@@ -473,26 +480,26 @@ gsmsdp_get_new_media (fsmdef_dcb_t *dcb_p, sdp_media_e media_type,
                            (sll_lite_node_t *)media);
         if (sll_lite_ret != SLL_LITE_RET_SUCCESS) {
             /* fails to put the new media entry on to the list */
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"error %d when add media to list\n", 
+            GSM_ERR_MSG(GSM_L_C_F_PREFIX"error %d when add media to list\n",
                         dcb_p->line, dcb_p->call_id, fname, sll_lite_ret);
             gsmsdp_free_media(media);
             media = NULL;
-        } 
-    } 
+        }
+    }
     return (media);
 }
 
 /**
  * The function removes the media entry from the list of a given call and
  * then deallocates the media entry.
- * 
+ *
  * @param[in]dcb   - pointer to fsmdef_def_t for the dcb whose
  *                   media to be removed from.
  * @param[in]media - pointer to fsmdef_media_t for the media
  *                   entry to be removed.
  *
  * @return  none
- * 
+ *
  * @pre     (dcb not_eq NULL)
  */
 static void gsmsdp_remove_media (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
@@ -501,7 +508,7 @@ static void gsmsdp_remove_media (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
     cc_action_data_t data;
 
     if (media == NULL) {
-        GSM_ERR_MSG(GSM_L_C_F_PREFIX"removing NULL media\n", 
+        GSM_ERR_MSG(GSM_L_C_F_PREFIX"removing NULL media\n",
                     dcb_p->line, dcb_p->call_id, fname);
         return;
     }
@@ -513,7 +520,7 @@ static void gsmsdp_remove_media (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
                              &data);
     }
     /* remove this media off the list */
-    (void)sll_lite_remove(&dcb_p->media_list, (sll_lite_node_t *)media); 
+    (void)sll_lite_remove(&dcb_p->media_list, (sll_lite_node_t *)media);
 
     /* Release the port */
     vcmRxReleasePort(media->cap_index, dcb_p->group_id, media->refid,
@@ -521,7 +528,7 @@ static void gsmsdp_remove_media (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
 
     /* free media structure */
     gsmsdp_free_media(media);
-}   
+}
 
 /**
  * The function performs cleaning media list of a given call. It walks
@@ -529,19 +536,19 @@ static void gsmsdp_remove_media (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
  *
  * @param[in]dcb   - pointer to fsmdef_def_t for the dcb whose
  *                   media list to be cleaned.
- *  
- * @return  none 
- *  
+ *
+ * @return  none
+ *
  * @pre     (dcb not_eq NULL)
  */
 void gsmsdp_clean_media_list (fsmdef_dcb_t *dcb_p)
 {
-    fsmdef_media_t *media = NULL; 
- 
+    fsmdef_media_t *media = NULL;
+
     while (TRUE) {
         /* unlink head and free the media */
         media = (fsmdef_media_t *)sll_lite_unlink_head(&dcb_p->media_list);
-        if (media != NULL) { 
+        if (media != NULL) {
             gsmsdp_free_media(media);
         } else {
             break;
@@ -569,11 +576,11 @@ void gsmsdp_init_media_list (fsmdef_dcb_t *dcb_p)
 
     /* do the actual media element list initialization */
     (void)sll_lite_init(&dcb_p->media_list);
- 
+
     media_cap_tbl = gsmsdp_get_media_capability(dcb_p);
 
     if (media_cap_tbl == NULL) {
-        GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media capbility available\n", 
+        GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media capbility available\n",
                     dcb_p->line, dcb_p->call_id, fname);
     }
 
@@ -608,30 +615,30 @@ gsmsdp_find_media_by_level (fsmdef_dcb_t *dcb_p, uint16_t level)
      */
     GSMSDP_FOR_ALL_MEDIA(media, dcb_p) {
         if (media->level == level) {
-            /* found a match */   
+            /* found a match */
             return (media);
         }
     }
     return (NULL);
 }
 
-/** 
+/**
  *
  * Returns a pointer to the fsmdef_media_t in the dcb for the
- * correspoinding reference ID. 
+ * correspoinding reference ID.
  *
  * @param[in]dcb_p      - pointer to the fsmdef_dcb_t
  * @param[in]refid      - media reference ID to look for.
- * 
+ *
  * @return           pointer to the fsmdef_media_t of the corresponding
  *                   media entry in the dcb.
  * @pre              (dcb not_eq NULL)
  */
-fsmdef_media_t * 
+fsmdef_media_t *
 gsmsdp_find_media_by_refid (fsmdef_dcb_t *dcb_p, media_refid_t refid)
 {
     fsmdef_media_t *media = NULL;
- 
+
     /*
      * search the all entries that has a valid media and matches
      * the reference ID.
@@ -652,7 +659,7 @@ gsmsdp_find_media_by_refid (fsmdef_dcb_t *dcb_p, media_refid_t refid)
  *
  * @param[in]dcb_p      - pointer to the fsmdef_dcb_t
  * @param[in]cap_index  - capability table index.
- * 
+ *
  * @return           pointer to the fsmdef_media_t of the corresponding
  *                   media entry in the dcb.
  * @pre              (dcb not_eq NULL)
@@ -661,14 +668,14 @@ static fsmdef_media_t *
 gsmsdp_find_media_by_cap_index (fsmdef_dcb_t *dcb_p, uint8_t cap_index)
 {
     fsmdef_media_t *media = NULL;
-    
+
     /*
      * search the all entries that has a valid media and matches
      * the reference ID.
      */
     GSMSDP_FOR_ALL_MEDIA(media, dcb_p) {
         if (media->cap_index == cap_index) {
-            /* found a match */ 
+            /* found a match */
             return (media);
         }
     }
@@ -697,7 +704,7 @@ fsmdef_media_t *gsmsdp_find_audio_media (fsmdef_dcb_t *dcb_p)
      */
     GSMSDP_FOR_ALL_MEDIA(media, dcb_p) {
         if (media->type == SDP_MEDIA_AUDIO) {
-            /* found a match */   
+            /* found a match */
             return (media);
         }
     }
@@ -705,18 +712,18 @@ fsmdef_media_t *gsmsdp_find_audio_media (fsmdef_dcb_t *dcb_p)
 }
 
 /**
- * 
- * The function finds an unused media line given type.  
- * 
- * @param[in]sdp        - void pointer of thd SDP libray handle. 
- * @param[in]media_type - media type of the unused line. 
- * 
+ *
+ * The function finds an unused media line given type.
+ *
+ * @param[in]sdp        - void pointer of thd SDP libray handle.
+ * @param[in]media_type - media type of the unused line.
+ *
  * @return           level (line) of the unused one if found or
- *                   0 if there is no unused one found. 
+ *                   0 if there is no unused one found.
  */
-static uint16_t 
+static uint16_t
 gsmsdp_find_unused_media_line_with_type (void *sdp, sdp_media_e media_type)
-{   
+{
     uint16_t num_m_lines, level;
     int32_t  port;
 
@@ -733,7 +740,7 @@ gsmsdp_find_unused_media_line_with_type (void *sdp, sdp_media_e media_type)
     }
     /* no unused media line of the given type found */
     return (0);
-}   
+}
 
 /**
  *
@@ -771,16 +778,16 @@ gsmsdp_get_media_cap_entry_by_index (uint8_t cap_index, fsmdef_dcb_t *dcb_p)
  *
  * @param[in]dcb_p      - pointer to the fsmdef_dcb_t
  * @param[in]media      - current media level.
- * 
+ *
  * @return           pointer to the fsmdef_media_t of the corresponding
  *                   media entry in the dcb.
  * @pre              (dcb not_eq NULL)
  */
-fsmdef_media_t * 
+fsmdef_media_t *
 gsmsdp_find_anat_pair (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
 {
     fsmdef_media_t *searched_media = NULL;
- 
+
     /*
      * search the all entries that has a the same capability index
      * but at a different level. The only time that this is true is
@@ -799,14 +806,14 @@ gsmsdp_find_anat_pair (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
 /**
  *
  * The function queries platform to see if the platform is capable
- * of handle mixing additional media or not. 
- * 
+ * of handle mixing additional media or not.
+ *
  * P2: This may go away when integrate with the platform.
  *
  * @param[in]dcb_p      - pointer to the fsmdef_dcb_t structure.
  * @param[in]media_type - media type to be mixed.
  *
- * @return          TRUE the media can be mixed. 
+ * @return          TRUE the media can be mixed.
  *                  FALSE the media can not be mixed
  *
  * @pre            (dcb_p not_eq NULL)
@@ -826,7 +833,7 @@ gsmsdp_platform_addition_mix (fsmdef_dcb_t *dcb_p, sdp_media_e media_type)
  * @param[in]dcb_p         - pointer to the fsmdef_dcb_t
  * @param[in]offer         - boolean indicates this is procssing an offered
  *                           SDP
- * @param[in]initial_offer - boolean indicates this is processin an 
+ * @param[in]initial_offer - boolean indicates this is processin an
  *                           initial offered SDP.
  *
  * @return           none.
@@ -852,7 +859,7 @@ gsmsdp_update_local_time_stamp (fsmdef_dcb_t *dcb_p, boolean offer,
          * Per RFC3264, time description of answer must equal that
          * of the offer.
          */
-        (void) sdp_set_time_start(local_sdp_p, 
+        (void) sdp_set_time_start(local_sdp_p,
                                   sdp_get_time_start(remote_sdp_p));
         (void) sdp_set_time_stop(local_sdp_p, sdp_get_time_stop(remote_sdp_p));
     } else if (offer) {
@@ -895,7 +902,7 @@ gsmsdp_get_local_source_v4_address (fsmdef_media_t *media)
 {
     int              nat_enable = 0;
     char             curr_media_ip[MAX_IPADDR_STR_LEN];
-    cpr_ip_addr_t    addr;                
+    cpr_ip_addr_t    addr;
     const char       fname[] = "gsmsdp_get_local_source_v4_address";
 
     /*
@@ -1052,8 +1059,8 @@ gsmsdp_set_video_media_attributes (uint32_t media_type, void *cc_sdp_p, uint16_t
             (void) sdp_attr_set_rtpmap_clockrate(sdp_p, level, 0, a_inst,
                                              RTPMAP_VIDEO_CLOCKRATE);
             break;
-        case RTP_H264_P0: 
-        case RTP_H264_P1: 
+        case RTP_H264_P0:
+        case RTP_H264_P1:
             (void) sdp_attr_set_rtpmap_encname(sdp_p, level, 0, a_inst,
                                                SIPSDP_ATTR_ENCNAME_H264);
             (void) sdp_attr_set_rtpmap_clockrate(sdp_p, level, 0, a_inst,
@@ -1072,7 +1079,7 @@ gsmsdp_set_video_media_attributes (uint32_t media_type, void *cc_sdp_p, uint16_t
 
         break;
 
-        default: 
+        default:
             break;
     }
 }
@@ -1117,12 +1124,12 @@ gsmsdp_set_media_attributes (uint32_t media_type, void *sdp_p, uint16_t level,
 
 
 
-    switch (media_type) { 
+    switch (media_type) {
     case RTP_PCMU:             // type 0
     case RTP_PCMA:             // type 8
     case RTP_G729:             // type 18
     case RTP_G722:             // type 9
-    case RTP_ILBC:             
+    case RTP_ILBC:
     case RTP_L16:
     case RTP_ISAC:
     case RTP_OPUS:
@@ -1142,13 +1149,13 @@ gsmsdp_set_media_attributes (uint32_t media_type, void *sdp_p, uint16_t level,
             (void) sdp_attr_set_rtpmap_encname(sdp_p, level, 0, a_inst,
                                                SIPSDP_ATTR_ENCNAME_PCMU);
             (void) sdp_attr_set_rtpmap_clockrate(sdp_p, level, 0, a_inst,
-                                                 RTPMAP_CLOCKRATE);               
+                                                 RTPMAP_CLOCKRATE);
             break;
         case RTP_PCMA:
             (void) sdp_attr_set_rtpmap_encname(sdp_p, level, 0, a_inst,
                                                SIPSDP_ATTR_ENCNAME_PCMA);
             (void) sdp_attr_set_rtpmap_clockrate(sdp_p, level, 0, a_inst,
-                                                 RTPMAP_CLOCKRATE);               
+                                                 RTPMAP_CLOCKRATE);
             break;
         case RTP_G729:
             {
@@ -1166,21 +1173,21 @@ gsmsdp_set_media_attributes (uint32_t media_type, void *sdp_p, uint16_t level,
                                                  RTPMAP_CLOCKRATE);
             }
             break;
-            
+
         case RTP_G722:
             (void) sdp_attr_set_rtpmap_encname(sdp_p, level, 0, a_inst,
                                                SIPSDP_ATTR_ENCNAME_G722);
             (void) sdp_attr_set_rtpmap_clockrate(sdp_p, level, 0, a_inst,
-                                                 RTPMAP_CLOCKRATE);               
+                                                 RTPMAP_CLOCKRATE);
             break;
 
         case RTP_L16:
             (void) sdp_attr_set_rtpmap_encname(sdp_p, level, 0, a_inst,
                                                SIPSDP_ATTR_ENCNAME_L16_256K);
-                                             
+
             (void) sdp_attr_set_rtpmap_clockrate(sdp_p, level, 0, a_inst,
-                                                 RTPMAP_L16_CLOCKRATE);               
-            break;            
+                                                 RTPMAP_L16_CLOCKRATE);
+            break;
 
         case RTP_ILBC:
             (void) sdp_attr_set_rtpmap_encname(sdp_p, level, 0, a_inst,
@@ -1262,7 +1269,7 @@ gsmsdp_set_media_attributes (uint32_t media_type, void *sdp_p, uint16_t level,
             }
 
             break;
-        }    
+        }
         break;
 
     case RTP_AVT:
@@ -1330,12 +1337,9 @@ gsmsdp_set_media_attributes (uint32_t media_type, void *sdp_p, uint16_t level,
  * level - The media level of the SDP where the media attribute is to be added.
  */
 static void
-gsmsdp_set_sctp_attributes (void *sdp_p, uint16_t level)
+gsmsdp_set_sctp_attributes (void *sdp_p, uint16_t level, fsmdef_media_t *media)
 {
     uint16_t a_inst;
-    int      sctp_port = 0;
-
-    config_get_value(CFGID_SCTP_PORT, &sctp_port, sizeof(sctp_port));
 
     if (sdp_add_new_attr(sdp_p, level, 0, SDP_ATTR_FMTP, &a_inst)
         != SDP_SUCCESS) {
@@ -1343,7 +1347,7 @@ gsmsdp_set_sctp_attributes (void *sdp_p, uint16_t level)
     }
 
     /* Use SCTP port in place of fmtp payload type */
-    (void) sdp_attr_set_fmtp_payload_type(sdp_p, level, 0, a_inst, sctp_port);
+    (void) sdp_attr_set_fmtp_payload_type(sdp_p, level, 0, a_inst, media->sctp_port);
 
     sdp_attr_set_fmtp_data_channel_protocol (sdp_p, level, 0, a_inst, WEBRTC_DATA_CHANNEL_PROT);
 
@@ -1435,7 +1439,7 @@ gsmsdp_set_sdp_direction (fsmdef_media_t *media,
        (void) sdp_add_new_attr(sdp_p, media->level, 0, sdp_attr, &a_instance);
     } else {
        /* Just in case that there is no level defined, add to the session */
-       (void) sdp_add_new_attr(sdp_p, SDP_SESSION_LEVEL, 0, sdp_attr, 
+       (void) sdp_add_new_attr(sdp_p, SDP_SESSION_LEVEL, 0, sdp_attr,
                                &a_instance);
     }
 }
@@ -1583,16 +1587,15 @@ gsmsdp_set_rtcp_mux_attribute (sdp_attr_e sdp_attr, uint16_t level, void *sdp_p,
  * fingerprint_len - string len of fingerprint
  */
 static void
-gsmsdp_set_dtls_fingerprint_attribute (sdp_attr_e sdp_attr, uint16_t level, void *sdp_p, 
+gsmsdp_set_dtls_fingerprint_attribute (sdp_attr_e sdp_attr, uint16_t level, void *sdp_p,
   char *hash_func,char *fingerprint)
 {
     uint16_t      a_instance = 0;
     sdp_result_e  result;
     char hash_and_fingerprint[FSMDEF_MAX_DIGEST_ALG_LEN + FSMDEF_MAX_DIGEST_LEN + 2];
 
-    sstrncpy(hash_and_fingerprint, (cc_string_t)hash_func, FSMDEF_MAX_DIGEST_ALG_LEN);
-    sstrncat(hash_and_fingerprint, (cc_string_t)" ", sizeof(hash_and_fingerprint) - strlen(hash_and_fingerprint) - 1);
-    sstrncat(hash_and_fingerprint, (cc_string_t)fingerprint, FSMDEF_MAX_DIGEST_LEN);
+    snprintf(hash_and_fingerprint, sizeof(hash_and_fingerprint),
+         "%s %s", hash_func, fingerprint);
 
     result = sdp_add_new_attr(sdp_p, level, 0, sdp_attr, &a_instance);
     if (result != SDP_SUCCESS) {
@@ -1623,7 +1626,7 @@ gsmsdp_set_dtls_fingerprint_attribute (sdp_attr_e sdp_attr, uint16_t level, void
  *         removed.
  */
 static void
-gsmsdp_remove_sdp_direction (fsmdef_media_t *media, 
+gsmsdp_remove_sdp_direction (fsmdef_media_t *media,
                              sdp_direction_e direction, void *sdp_p)
 {
     sdp_attr_e    sdp_attr = SDP_ATTR_SENDRECV;
@@ -1646,8 +1649,8 @@ gsmsdp_remove_sdp_direction (fsmdef_media_t *media,
  * direction - The media direction to set into the local SDP.
  */
 void
-gsmsdp_set_local_sdp_direction (fsmdef_dcb_t *dcb_p, 
-                                fsmdef_media_t *media, 
+gsmsdp_set_local_sdp_direction (fsmdef_dcb_t *dcb_p,
+                                fsmdef_media_t *media,
                                 sdp_direction_e direction)
 {
     /*
@@ -1657,7 +1660,7 @@ gsmsdp_set_local_sdp_direction (fsmdef_dcb_t *dcb_p,
      */
     if (media->direction_set) {
         media->previous_sdp.direction = media->direction;
-        gsmsdp_remove_sdp_direction(media, media->direction, 
+        gsmsdp_remove_sdp_direction(media, media->direction,
                                     dcb_p->sdp ? dcb_p->sdp->src_sdp: NULL );
         media->direction_set = FALSE;
     }
@@ -1755,7 +1758,7 @@ gsmsdp_get_remote_sdp_direction (fsmdef_dcb_t *dcb_p, uint16_t level,
      * To support legacy way of signaling remote hold, we will interpret
      * c=0.0.0.0 to be a=inactive
      */
-    if (dest_addr->type == CPR_IP_ADDR_IPV4 &&  
+    if (dest_addr->type == CPR_IP_ADDR_IPV4 &&
         dest_addr->u.ip4 == 0) {
 
         direction = SDP_DIRECTION_INACTIVE;
@@ -1781,10 +1784,10 @@ gsmsdp_get_remote_sdp_direction (fsmdef_dcb_t *dcb_p, uint16_t level,
 static void
 gsmsdp_feature_overide_direction (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
 {
-    /* 
+    /*
      * Disable video if this is a BARGE with video
      */
-    if ( CC_IS_VIDEO(media->cap_index) && 
+    if ( CC_IS_VIDEO(media->cap_index) &&
                    dcb_p->join_call_id != CC_NO_CALL_ID ){
         media->support_direction = SDP_DIRECTION_INACTIVE;
     }
@@ -1817,8 +1820,8 @@ gsmsdp_feature_overide_direction (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
  * disabled     sendrecv          sendonly              sendonly
  * disabled     sendrecv          recvonly              recvonly
  * disabled     sendrecv          inactive              inactive
- * disabled     sendonly          sendrecv              recvonly           
- * disabled     sendonly          sendonly              inactive           
+ * disabled     sendonly          sendrecv              recvonly
+ * disabled     sendonly          sendonly              inactive
  * disabled     sendonly          recvonly              recvonly
  * disabled     sendonly          inactive              inactive
  * disabled     recvonly          sendrecv              sendonly
@@ -1840,11 +1843,11 @@ gsmsdp_negotiate_local_sdp_direction (fsmdef_dcb_t *dcb_p,
     sdp_direction_e direction = SDP_DIRECTION_SENDRECV;
     sdp_direction_e remote_direction = gsmsdp_get_remote_sdp_direction(dcb_p,
                                            media->level, &media->dest_addr);
-    
+
     if (remote_direction == SDP_DIRECTION_SENDRECV) {
         if (local_hold) {
             if ((media->support_direction == SDP_DIRECTION_SENDRECV) ||
-                (media->support_direction == SDP_DIRECTION_SENDONLY)) { 
+                (media->support_direction == SDP_DIRECTION_SENDONLY)) {
                 direction = SDP_DIRECTION_SENDONLY;
             } else {
                 direction = SDP_DIRECTION_INACTIVE;
@@ -1966,12 +1969,14 @@ gsmsdp_add_default_audio_formats_to_local_sdp (fsmdef_dcb_t *dcb_p,
         if (sdp_add_media_payload_type(local_sdp_p, level,
                                        (uint16_t)local_media_types[type_cnt],
                                        SDP_PAYLOAD_NUMERIC) != SDP_SUCCESS) {
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"Adding media payload type failed\n", 
+            GSM_ERR_MSG(GSM_L_C_F_PREFIX"Adding media payload type failed\n",
                         DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname));
         }
 
-        gsmsdp_set_media_attributes(local_media_types[type_cnt], local_sdp_p,
+        if (media->support_direction != SDP_DIRECTION_INACTIVE) {
+            gsmsdp_set_media_attributes(local_media_types[type_cnt], local_sdp_p,
                                     level, (uint16_t)local_media_types[type_cnt]);
+        }
     }
 
     /*
@@ -1981,14 +1986,16 @@ gsmsdp_add_default_audio_formats_to_local_sdp (fsmdef_dcb_t *dcb_p,
         if (sdp_add_media_payload_type(local_sdp_p, level,
                                        local_avt_payload_type,
                                        SDP_PAYLOAD_NUMERIC) != SDP_SUCCESS) {
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"Adding AVT payload type failed\n",  
+            GSM_ERR_MSG(GSM_L_C_F_PREFIX"Adding AVT payload type failed\n",
                         dcb_p->line, dcb_p->call_id, fname);
         }
 
-        gsmsdp_set_media_attributes(RTP_AVT, local_sdp_p, level,
-                                    local_avt_payload_type);
-        if (media) {
-            media->avt_payload_type = local_avt_payload_type;
+        if (media->support_direction != SDP_DIRECTION_INACTIVE) {
+            gsmsdp_set_media_attributes(RTP_AVT, local_sdp_p, level,
+                                        local_avt_payload_type);
+            if (media) {
+                media->avt_payload_type = local_avt_payload_type;
+            }
         }
     }
 }
@@ -2075,12 +2082,14 @@ gsmsdp_add_default_video_formats_to_local_sdp (fsmdef_dcb_t *dcb_p,
         if (sdp_add_media_payload_type(local_sdp_p, level,
                                        (uint16_t)video_media_types[type_cnt],
                                        SDP_PAYLOAD_NUMERIC) != SDP_SUCCESS) {
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"SDP ERROR(1)\n", 
+            GSM_ERR_MSG(GSM_L_C_F_PREFIX"SDP ERROR(1)\n",
                         line, call_id, fname);
         }
 
-        gsmsdp_set_video_media_attributes(video_media_types[type_cnt], sdp_p,
-                           level, (uint16_t)video_media_types[type_cnt]);
+        if (media->support_direction != SDP_DIRECTION_INACTIVE) {
+            gsmsdp_set_video_media_attributes(video_media_types[type_cnt], sdp_p,
+                               level, (uint16_t)video_media_types[type_cnt]);
+        }
     }
 }
 
@@ -2105,20 +2114,20 @@ static void gsmsdp_set_mid_attr (void *src_sdp_p, uint16_t level)
          */
         (void) sdp_add_new_attr(src_sdp_p, level, 0, SDP_ATTR_MID, &inst_num);
 
-        (void) sdp_attr_set_simple_u32(src_sdp_p, SDP_ATTR_MID, level, 0, 
+        (void) sdp_attr_set_simple_u32(src_sdp_p, SDP_ATTR_MID, level, 0,
                                        inst_num, level);
     }
 }
 
 /**
  * This function sets the anat attr to the session level
- * and labels the relevant media streams  
+ * and labels the relevant media streams
  *
- * @param[in]media   - The media line that we are operating on. 
+ * @param[in]media   - The media line that we are operating on.
  * @param[in]dcb_p   - Pointer to the DCB whose local SDP is to be updated.
  *
  * @return           - None
- *                   
+ *
  */
 static void gsmsdp_set_anat_attr (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
 {
@@ -2130,11 +2139,11 @@ static void gsmsdp_set_anat_attr (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
     u32            group_id_1, group_id_2;
     uint16_t       i;
     fsmdef_media_t *group_media;
-   
+
 
     if (dest_sdp_p == NULL) {
         /* If this is our initial offer */
-        if (media->addr_type == SDP_AT_IP4) {      
+        if (media->addr_type == SDP_AT_IP4) {
             group_media = gsmsdp_find_anat_pair(dcb_p, media);
             if (group_media != NULL) {
                 /*
@@ -2142,20 +2151,20 @@ static void gsmsdp_set_anat_attr (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
                  */
                  (void) sdp_add_new_attr(src_sdp_p, SDP_SESSION_LEVEL, 0, SDP_ATTR_GROUP, &inst_num);
 
-                 (void) sdp_set_group_attr(src_sdp_p, SDP_SESSION_LEVEL, 0, inst_num, SDP_GROUP_ATTR_ANAT);             
+                 (void) sdp_set_group_attr(src_sdp_p, SDP_SESSION_LEVEL, 0, inst_num, SDP_GROUP_ATTR_ANAT);
 
                  (void) sdp_set_group_num_id(src_sdp_p, SDP_SESSION_LEVEL, 0, inst_num, 2);
                  (void) sdp_set_group_id(src_sdp_p, SDP_SESSION_LEVEL, 0, inst_num, group_media->level);
-                 (void) sdp_set_group_id(src_sdp_p, SDP_SESSION_LEVEL, 0, inst_num, media->level);       
+                 (void) sdp_set_group_id(src_sdp_p, SDP_SESSION_LEVEL, 0, inst_num, media->level);
             }
         }
     } else {
         /* This is an answer, check if the offer rcvd had anat grouping */
         (void) sdp_attr_num_instances(dest_sdp_p, SDP_SESSION_LEVEL, 0, SDP_ATTR_GROUP,
                                   &num_group_lines);
-                            
+
         for (i = 1; i <= num_group_lines; i++) {
-             if (sdp_get_group_attr(dest_sdp_p, SDP_SESSION_LEVEL, 0, i) == SDP_GROUP_ATTR_ANAT) {                                  
+             if (sdp_get_group_attr(dest_sdp_p, SDP_SESSION_LEVEL, 0, i) == SDP_GROUP_ATTR_ANAT) {
                  num_anat_lines++;
              }
         }
@@ -2163,23 +2172,23 @@ static void gsmsdp_set_anat_attr (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
         for (i = 1; i <= num_anat_lines; i++) {
              group_id_1 = sdp_get_group_id(dest_sdp_p, SDP_SESSION_LEVEL, 0, i, 1);
              group_id_2 = sdp_get_group_id(dest_sdp_p, SDP_SESSION_LEVEL, 0, i, 2);
- 
-             if ((media->level == group_id_1)  || (media->level == group_id_2)) {       
-            
+
+             if ((media->level == group_id_1)  || (media->level == group_id_2)) {
+
                  group_media = gsmsdp_find_anat_pair(dcb_p, media);
-                 if (group_media != NULL) { 
+                 if (group_media != NULL) {
                      if (sdp_get_group_attr(src_sdp_p, SDP_SESSION_LEVEL, 0, i) != SDP_GROUP_ATTR_ANAT) {
                          /*
                           * add a=group line
                           */
                          (void) sdp_add_new_attr(src_sdp_p, SDP_SESSION_LEVEL, 0, SDP_ATTR_GROUP, &inst_num);
                          (void) sdp_set_group_attr(src_sdp_p, SDP_SESSION_LEVEL, 0, inst_num, SDP_GROUP_ATTR_ANAT);
-            
-                     }                
+
+                     }
                      (void) sdp_set_group_num_id(src_sdp_p, SDP_SESSION_LEVEL, 0, i, 2);
                      (void) sdp_set_group_id(src_sdp_p, SDP_SESSION_LEVEL, 0, i, group_media->level);
                      (void) sdp_set_group_id(src_sdp_p, SDP_SESSION_LEVEL, 0, i, media->level);
-               
+
                  } else {
                      /*
                       * add a=group line
@@ -2190,10 +2199,10 @@ static void gsmsdp_set_anat_attr (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
                      (void) sdp_set_group_num_id(src_sdp_p, SDP_SESSION_LEVEL, 0, inst_num, 1);
                      (void) sdp_set_group_id(src_sdp_p, SDP_SESSION_LEVEL, 0, inst_num, media->level);
                  }
-                
+
              }
         }
-    }        
+    }
     gsmsdp_set_mid_attr (src_sdp_p, media->level);
 }
 
@@ -2230,7 +2239,8 @@ gsmsdp_update_local_sdp_media (fsmdef_dcb_t *dcb_p, cc_sdp_t *cc_sdp_p,
     sdp_result_e    result;
     int             dynamic_payload_type;
     uint16_t        level;
-    void           *sdp_p; 
+    void           *sdp_p;
+    int             sdpmode = 0;
 
     if (!dcb_p || !media)  {
         GSM_ERR_MSG(get_debug_string(FSMDEF_DBG_INVALID_DCB), fname);
@@ -2239,19 +2249,21 @@ gsmsdp_update_local_sdp_media (fsmdef_dcb_t *dcb_p, cc_sdp_t *cc_sdp_p,
     level = media->level;
     port  = media->src_port;
 
+    config_get_value(CFGID_SDPMODE, &sdpmode, sizeof(sdpmode));
+
     sdp_p = cc_sdp_p ? (void *) cc_sdp_p->src_sdp : NULL;
-    
+
     if (sdp_p == NULL) {
 
-        gsmsdp_init_local_sdp(&(dcb_p->sdp));
+        gsmsdp_init_local_sdp(dcb_p->peerconnection, &(dcb_p->sdp));
 
         cc_sdp_p = dcb_p->sdp;
         if ((cc_sdp_p == NULL) || (cc_sdp_p->src_sdp == NULL)) {
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"sdp is NULL and init failed \n", 
+            GSM_ERR_MSG(GSM_L_C_F_PREFIX"sdp is NULL and init failed \n",
                     dcb_p->line, dcb_p->call_id, fname);
             return;
         }
-        sdp_p = (void *) cc_sdp_p->src_sdp; 
+        sdp_p = (void *) cc_sdp_p->src_sdp;
     } else {
 
     /*
@@ -2264,12 +2276,15 @@ gsmsdp_update_local_sdp_media (fsmdef_dcb_t *dcb_p, cc_sdp_t *cc_sdp_p,
 
     result = sdp_insert_media_line(sdp_p, level);
     if (result != SDP_SUCCESS) {
-        GSM_ERR_MSG(GSM_L_C_F_PREFIX"Inserting media line to Sdp failed\n", 
+        GSM_ERR_MSG(GSM_L_C_F_PREFIX"Inserting media line to Sdp failed\n",
                     dcb_p->line, dcb_p->call_id, fname);
         return;
     }
 
-    gsmsdp_set_connection_address(sdp_p, media->level, dcb_p->ice_default_candidate_addr);
+    if (media->support_direction != SDP_DIRECTION_INACTIVE) {
+        gsmsdp_set_connection_address(sdp_p, media->level, dcb_p->ice_default_candidate_addr);
+    }
+
     (void) sdp_set_media_type(sdp_p, level, media->type);
 
 
@@ -2293,11 +2308,11 @@ gsmsdp_update_local_sdp_media (fsmdef_dcb_t *dcb_p, cc_sdp_t *cc_sdp_p,
                                                           media);
             break;
         case SDP_MEDIA_APPLICATION:
-            gsmsdp_set_sctp_attributes (sdp_p, level);
+            gsmsdp_set_sctp_attributes (sdp_p, level, media);
             break;
         default:
             GSM_ERR_MSG(GSM_L_C_F_PREFIX"SDP ERROR media %d for level %d is not"
-                        " supported\n", 
+                        " supported\n",
                         dcb_p->line, dcb_p->call_id, fname, media->level);
             break;
         }
@@ -2317,7 +2332,7 @@ gsmsdp_update_local_sdp_media (fsmdef_dcb_t *dcb_p, cc_sdp_t *cc_sdp_p,
                                        (uint16_t)dynamic_payload_type,
                                        SDP_PAYLOAD_NUMERIC);
         if (result != SDP_SUCCESS) {
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"Adding dynamic payload type failed\n", 
+            GSM_ERR_MSG(GSM_L_C_F_PREFIX"Adding dynamic payload type failed\n",
                         dcb_p->line, dcb_p->call_id, fname);
         }
         switch (media->type) {
@@ -2330,8 +2345,8 @@ gsmsdp_update_local_sdp_media (fsmdef_dcb_t *dcb_p, cc_sdp_t *cc_sdp_p,
                             (uint16_t)dynamic_payload_type);
             break;
         case SDP_MEDIA_APPLICATION:
-        	gsmsdp_set_sctp_attributes (sdp_p, level);
-        	break;
+            gsmsdp_set_sctp_attributes (sdp_p, level, media);
+            break;
         default:
             GSM_ERR_MSG(GSM_L_C_F_PREFIX"SDP ERROR media %d for level %d is not"
                         " supported\n",
@@ -2347,14 +2362,16 @@ gsmsdp_update_local_sdp_media (fsmdef_dcb_t *dcb_p, cc_sdp_t *cc_sdp_p,
                          (uint16_t)media->avt_payload_type,
                          SDP_PAYLOAD_NUMERIC);
             if (result != SDP_SUCCESS) {
-                GSM_ERR_MSG(GSM_L_C_F_PREFIX"Adding AVT payload type failed\n", 
+                GSM_ERR_MSG(GSM_L_C_F_PREFIX"Adding AVT payload type failed\n",
                             dcb_p->line, dcb_p->call_id, fname);
             }
             gsmsdp_set_media_attributes(RTP_AVT, sdp_p, level,
                 (uint16_t) media->avt_payload_type);
         }
     }
-    gsmsdp_set_anat_attr(dcb_p, media);
+
+    if (!sdpmode)
+        gsmsdp_set_anat_attr(dcb_p, media);
 }
 
 /*
@@ -2377,7 +2394,7 @@ gsmsdp_update_local_sdp_media (fsmdef_dcb_t *dcb_p, cc_sdp_t *cc_sdp_p,
  *    FALSE - update the local SDP failed.
  */
 static boolean
-gsmsdp_update_local_sdp (fsmdef_dcb_t *dcb_p, boolean offer, 
+gsmsdp_update_local_sdp (fsmdef_dcb_t *dcb_p, boolean offer,
                          boolean initial_offer,
                          fsmdef_media_t *media)
 {
@@ -2387,7 +2404,7 @@ gsmsdp_update_local_sdp (fsmdef_dcb_t *dcb_p, boolean offer,
     boolean         local_hold = (boolean)FSM_CHK_FLAGS(media->hold, FSM_HOLD_LCL);
 
     if (media->src_port == 0) {
-        GSM_DEBUG(DEB_L_C_F_PREFIX"allocate receive port for media line\n", 
+        GSM_DEBUG(DEB_L_C_F_PREFIX"allocate receive port for media line\n",
                   DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname));
         /*
          * Source port has not been allocated, this could mean we
@@ -2410,7 +2427,7 @@ gsmsdp_update_local_sdp (fsmdef_dcb_t *dcb_p, boolean offer,
             media->src_port = data.open_rcv.port;
             media->rcv_chan = FALSE;  /* mark no RX chan yet */
         } else {
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"allocate rx port failed\n", 
+            GSM_ERR_MSG(GSM_L_C_F_PREFIX"allocate rx port failed\n",
                         dcb_p->line, dcb_p->call_id, fname);
             return (FALSE);
         }
@@ -2425,8 +2442,8 @@ gsmsdp_update_local_sdp (fsmdef_dcb_t *dcb_p, boolean offer,
      * Update Transmit SRTP transmit key if this SRTP session.
      */
     if (media->transport == SDP_TRANSPORT_RTPSAVP) {
-    gsmsdp_update_crypto_transmit_key(dcb_p, media, offer, 
-                                      initial_offer, direction);
+        gsmsdp_update_crypto_transmit_key(dcb_p, media, offer,
+                                       initial_offer, direction);
     }
 
     if (offer == TRUE) {
@@ -2461,7 +2478,7 @@ gsmsdp_update_local_sdp (fsmdef_dcb_t *dcb_p, boolean offer,
  *
  * dcb_p         - Pointer to the DCB whose local SDP is to be updated.
  * portnum       - Remote port.
- * media         - Pointer to fsmdef_media_t for the media entry of the SDP. 
+ * media         - Pointer to fsmdef_media_t for the media entry of the SDP.
  * offer         - boolean indicating an offer SDP if true.
  * initial_offer - boolean indicating an initial offer SDP if true.
  *
@@ -2494,7 +2511,7 @@ gsmsdp_update_local_sdp_for_multicast (fsmdef_dcb_t *dcb_p,
      * Update Transmit SRTP transmit key any way to clean up the
      * tx condition that we may have offered prior.
      */
-    gsmsdp_update_crypto_transmit_key(dcb_p, media, offer, initial_offer, 
+    gsmsdp_update_crypto_transmit_key(dcb_p, media, offer, initial_offer,
                                       direction);
 
     gsmsdp_update_local_sdp_media(dcb_p, dcb_p->sdp, FALSE,
@@ -2505,7 +2522,7 @@ gsmsdp_update_local_sdp_for_multicast (fsmdef_dcb_t *dcb_p,
      */
     if ((direction == SDP_DIRECTION_RECVONLY) || (direction == SDP_DIRECTION_INACTIVE)) {
         if ((media->support_direction == SDP_DIRECTION_SENDRECV) ||
-            (media->support_direction == SDP_DIRECTION_RECVONLY)) { 
+            (media->support_direction == SDP_DIRECTION_RECVONLY)) {
             /*
              * Echo same direction back in our local SDP but set the direction
              * in DCB to recvonly so that LSM operations on rcv port work
@@ -2619,8 +2636,8 @@ gsmsdp_get_remote_avt_payload_type (uint16_t level, void *sdp_p)
  *           <= 0: negotiation failed
  */
 static int
-gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p, 
-                        fsmdef_media_t *media, boolean offer, boolean initial_offer)
+gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
+                        fsmdef_media_t *media, boolean offer, boolean initial_offer, uint16 media_level)
 {
     static const char fname[] = "gsmsdp_negotiate_codec";
     rtp_ptype       pref_codec = RTP_NONE;
@@ -2647,19 +2664,18 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
     boolean         stereo;
     boolean         useinbandfec;
     boolean         cbr;
-    boolean         found_codec = FALSE; 
-    int32_t         num_match_payloads = 0; 
-    int             payload = RTP_NONE; 
+    boolean         found_codec = FALSE;
+    int32_t         num_match_payloads = 0;
+    int             payload = RTP_NONE;
     int             remote_dynamic_payload_type_value = RTP_NONE;
-    int             local_dynamic_payload_type_value = RTP_NONE;
     int32_t         payload_types_count = 0; // count for allocating right amout
                                              // of memory for media->paylaods
-    
+
     if (!dcb_p || !sdp_p || !media) {
         return (RTP_NONE);
     }
 
-    level = media->level;
+    level = media_level;
     attr_label = sdp_attr_get_simple_string(sdp_p->dest_sdp,
                                             SDP_ATTR_LABEL, level, 0, 1);
 
@@ -2695,7 +2711,7 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
         num_local_types = sip_config_video_supported_codecs_get( (rtp_ptype *)local_media_types,
                                                   CC_MAX_MEDIA_TYPES, offer);
     } else {
-        GSM_DEBUG(DEB_L_C_F_PREFIX"unsupported media type %d\n", 
+        GSM_DEBUG(DEB_L_C_F_PREFIX"unsupported media type %d\n",
                   DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), media->type);
         return (RTP_NONE);
     }
@@ -2757,7 +2773,7 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
      * so this will ensure that we will match the preferred codec with the
      * remote list first, before matching other codecs.
      */
-    pref_codec = sip_config_preferred_codec(); 
+    pref_codec = sip_config_preferred_codec();
     if (pref_codec != RTP_NONE) {
         /*
          * If a preferred codec was configured and the platform
@@ -2767,7 +2783,7 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
          */
         if (local_media_types[0] != pref_codec) {
             /*
-             * preferred codec is configured but it is not avaible 
+             * preferred codec is configured but it is not avaible
              * currently, treat it as there is no codec available.
              */
             pref_codec = RTP_NONE;
@@ -2796,11 +2812,11 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
     media->previous_sdp.local_payload_type = media->local_dynamic_payload_type_value;
 
     /*
-     * Setup payload info structure list to store matched payload details in the SDP. 
+     * Setup payload info structure list to store matched payload details in the SDP.
      */
     media->num_payloads = 0;
     if(num_master_types <= num_slave_types ) {
-      payload_types_count = num_master_types;  
+      payload_types_count = num_master_types;
     } else {
       payload_types_count = num_slave_types;
     }
@@ -2808,9 +2824,9 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
     media->payloads = (vcm_media_payload_type_t*) cpr_malloc(payload_types_count * sizeof(vcm_media_payload_type_t));
     if (!(media->payloads))
     {
-      GSM_ERR_MSG(GSM_L_C_F_PREFIX"Memory Allocation failed for payloads\n", 
+      GSM_ERR_MSG(GSM_L_C_F_PREFIX"Memory Allocation failed for payloads\n",
                     DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname));
-      return RTP_NONE;  
+      return RTP_NONE;
     }
 
     for (i = 0; i < num_master_types; i++) {
@@ -2818,20 +2834,17 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
             if (GET_CODEC_TYPE(master_list_p[i]) == GET_CODEC_TYPE(slave_list_p[j])) {
                 payload = GET_CODEC_TYPE(slave_list_p[j]);
                 if (offer == TRUE) { // if remote SDP is an offer
-                    /* we answer with same dynamic payload type value for a given dynamic payload type */   
+                    /* we answer with same dynamic payload type value for a given dynamic payload type */
                     if (master_list_p == remote_media_types) {
                         remote_dynamic_payload_type_value = GET_DYN_PAYLOAD_TYPE_VALUE(master_list_p[i]);
-                        local_dynamic_payload_type_value = GET_DYN_PAYLOAD_TYPE_VALUE(master_list_p[i]);
                     } else {
                         remote_dynamic_payload_type_value = GET_DYN_PAYLOAD_TYPE_VALUE(slave_list_p[j]);
-                        local_dynamic_payload_type_value = GET_DYN_PAYLOAD_TYPE_VALUE(slave_list_p[j]);
                     }
                 } else { //if remote SDP is an answer
                       if (media->local_dynamic_payload_type_value == RTP_NONE ||
                           media->payload !=  media->previous_sdp.payload_type) {
                         /* If the the negotiated payload type is different from previous,
                            set it the local dynamic to payload type  as this is what we offered*/
-                        local_dynamic_payload_type_value =  media->payload;
                     }
                     /* remote answer may not use the value that we offered for a given dynamic payload type */
                     if (master_list_p == remote_media_types) {
@@ -2840,19 +2853,26 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
                         remote_dynamic_payload_type_value = GET_DYN_PAYLOAD_TYPE_VALUE(slave_list_p[j]);
                     }
                 }
-                
+
                 if (media->type == SDP_MEDIA_AUDIO) {
-                    ptime = sdp_attr_get_simple_u32(sdp_p->dest_sdp,
-                                                SDP_ATTR_PTIME, level, 0, 1);
-                    if (ptime != 0) {
-                        media->packetization_period = (uint16_t) ptime;
-                    }
+
                     if (media->payload == RTP_ILBC) {
                         media->mode = (uint16_t)sdp_attr_get_fmtp_mode_for_payload_type
                                                        (sdp_p->dest_sdp, level, 0,
                                                         media->remote_dynamic_payload_type_value);
                     }
                     if (media->payload == RTP_OPUS) {
+                        u16 a_inst;
+                        if (!sdp_attr_rtpmap_payload_valid(sdp_p->dest_sdp, level, 0, &a_inst,
+                                                               remote_dynamic_payload_type_value) ||
+                            sdp_attr_get_rtpmap_clockrate(sdp_p->dest_sdp, level, 0, a_inst) != RTPMAP_OPUS_CLOCKRATE ||
+                            sdp_attr_get_rtpmap_num_chan(sdp_p->dest_sdp, level, 0, a_inst) != 2) {
+                            /* Be conservative in what we accept: any
+                               implementation that does not use a 48 kHz
+                               clockrate or 2 channels is broken. */
+                            explicit_reject = TRUE;
+                            continue; // keep looking
+                        }
 
                         maxptime = sdp_attr_get_simple_u32(sdp_p->dest_sdp,
                         		                          SDP_ATTR_MAXPTIME, level, 0, 1);
@@ -2874,11 +2894,16 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
 
                         sdp_attr_get_fmtp_cbr (sdp_p->dest_sdp, level, 0, 1, &cbr);
                     }
+                    ptime = sdp_attr_get_simple_u32(sdp_p->dest_sdp,
+                                                SDP_ATTR_PTIME, level, 0, 1);
+                    if (ptime != 0) {
+                        media->packetization_period = (uint16_t) ptime;
+                    }
 
                     GSM_DEBUG(DEB_L_C_F_PREFIX"codec= %d\n",
                           DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname),
                           payload);
-                    
+
                 } else if (media->type == SDP_MEDIA_VIDEO) {
                     if ( media-> video != NULL ) {
                        vcmFreeMediaPtr(media->video);
@@ -2887,26 +2912,26 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
 
                   if ( vcmCheckAttribs(media->payload, sdp_p, level,
                                        &media->video) == FALSE ) {
-                        GSM_DEBUG(DEB_L_C_F_PREFIX"codec= %d ignored - attribs not accepted\n", 
-                             DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, 
+                        GSM_DEBUG(DEB_L_C_F_PREFIX"codec= %d ignored - attribs not accepted\n",
+                             DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line,
                              dcb_p->call_id, fname), media->payload);
                         explicit_reject = TRUE;
                         continue; // keep looking
                     }
 
-                    // cache the negotiated profile_level and bandwidth 
+                    // cache the negotiated profile_level and bandwidth
                     media->previous_sdp.tias_bw = media->tias_bw;
                     media->tias_bw =  ccsdpGetBandwidthValue(sdp_p,level, 1);
-                    if ( (attr_label = 
+                    if ( (attr_label =
                         ccsdpAttrGetFmtpProfileLevelId(sdp_p,level,0,1)) != NULL ) {
                         media->previous_sdp.profile_level = media->profile_level;
                         sscanf(attr_label,"%x", &media->profile_level);
                     }
 
                     GSM_DEBUG(DEB_L_C_F_PREFIX"codec= %d\n",
-                         DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, 
+                         DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line,
                          dcb_p->call_id, fname), media->payload);
-                    
+
                 }
                 found_codec = TRUE;
                 if(media->num_payloads >= payload_types_count) {
@@ -2919,29 +2944,29 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
                 media->num_payloads++;
                 if(offer) {
                  //return on the first match
-                 return payload;   
+                 return payload;
                 }
             }
         }
     }
 
-    // we should be ok to return a valid payload here. The calling function doesn't care 
-     //unless it is RTP_NONE   
+    // we should be ok to return a valid payload here. The calling function doesn't care
+     //unless it is RTP_NONE
     if(found_codec) {
       return (payload);
     }
     /*
-     * CSCsv84705 - we could not negotiate a common codec because the local list is empty. This condition could happen 
+     * CSCsv84705 - we could not negotiate a common codec because the local list is empty. This condition could happen
      * when using g729 in locally mixed conference in which another call to vcm_get_codec_list() would return 0 or no codec.
      * So if this is a not an init offer, we should just go ahead and use the last negotiated codec if the remote list
-     * matches with currently used. 
-     */ 
+     * matches with currently used.
+     */
     if (!initial_offer && explicit_reject == FALSE) {
         for (i = 0; i < num_types; i++) {
             if (media->payload == GET_CODEC_TYPE(remote_media_types[i])) {
                 /*
-                 * CSCta40560 - DSP runs out of bandwidth as the current API's do not consider the request is for 
-                 * the same call. Need to update dynamic payload types for dynamic PT codecs. Would need to possibly 
+                 * CSCta40560 - DSP runs out of bandwidth as the current API's do not consider the request is for
+                 * the same call. Need to update dynamic payload types for dynamic PT codecs. Would need to possibly
                  * add other video codecs as support is added here.
                  */
                 if ( (media->payload == RTP_H264_P1 || media->payload == RTP_H264_P0) && offer == TRUE )  {
@@ -2977,6 +3002,9 @@ gsmsdp_negotiate_datachannel_attribs(fsmdef_dcb_t* dcb_p, cc_sdp_t* sdp_p, uint1
     sdp_attr_get_fmtp_data_channel_protocol(sdp_p->dest_sdp, level, 0, 1, media->protocol);
 
     media->sctp_port = sdp_attr_get_fmtp_payload_type (sdp_p->dest_sdp, level, 0, 1);
+
+    /* Increment port for answer SDP */
+    media->sctp_port++;
 }
 
 /*
@@ -3063,7 +3091,7 @@ gsmsdp_add_unsupported_stream_to_local_sdp (cc_sdp_t *sdp_p,
      * at the media level can become complex. For this reason, the
      * unsupported media line will have "c=" with 0.0.0.0 address instead.
      */
-    gsmsdp_set_connection_address(sdp_p->src_sdp, level, "0.0.0.0"); 
+    gsmsdp_set_connection_address(sdp_p->src_sdp, level, "0.0.0.0");
 }
 
 /*
@@ -3119,7 +3147,7 @@ gsmsdp_get_remote_media_address (fsmdef_dcb_t *dcb_p,
                 *dest_addr = ip_addr_invalid;
                 stat = FALSE;
                 GSM_ERR_MSG(GSM_L_C_F_PREFIX"DNS remote address error %d"
-                            " with media at %d\n", dcb_p->line, dcb_p->call_id, 
+                            " with media at %d\n", dcb_p->line, dcb_p->call_id,
                             fname, dns_err_code, level);
             }
         }
@@ -3127,7 +3155,7 @@ gsmsdp_get_remote_media_address (fsmdef_dcb_t *dcb_p,
         /*
          * No address the media level or the session level.
          */
-        GSM_ERR_MSG(GSM_L_C_F_PREFIX"No remote address from SDP with at %d\n", 
+        GSM_ERR_MSG(GSM_L_C_F_PREFIX"No remote address from SDP with at %d\n",
                     dcb_p->line, dcb_p->call_id, fname, level);
     }
     /*
@@ -3169,7 +3197,7 @@ gsmsdp_is_multicast_address (cpr_ip_addr_t theIpAddress)
             (theIpAddress.u.ip4 <= MULTICAST_END_ADDRESS)) {
         return (TRUE);
     }
-    } else { 
+    } else {
         //todo IPv6: Check IPv6 multicast address here.
 
     }
@@ -3207,15 +3235,15 @@ gsmsdp_find_anat_media_line (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p, uint16_t leve
      */
     (void) sdp_attr_num_instances(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, SDP_ATTR_GROUP,
                                   &num_group_lines);
-                            
+
     for (i = 1; i <= num_group_lines; i++) {
-         if (sdp_get_group_attr(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, i) == SDP_GROUP_ATTR_ANAT) {                                  
+         if (sdp_get_group_attr(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, i) == SDP_GROUP_ATTR_ANAT) {
              num_anat_lines++;
          }
     }
 
     for (i = 1; i <= num_anat_lines; i++) {
-    
+
         dst_mid = sdp_attr_get_simple_u32(sdp_p->dest_sdp, SDP_ATTR_MID, level, 0, 1);
         group_id_1 = sdp_get_group_id(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, i, 1);
         group_id_2 = sdp_get_group_id(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, i, 2);
@@ -3223,20 +3251,20 @@ gsmsdp_find_anat_media_line (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p, uint16_t leve
         if (dst_mid == group_id_1) {
             GSMSDP_FOR_ALL_MEDIA(anat_media, dcb_p) {
                 group_mid = sdp_attr_get_simple_u32(sdp_p->src_sdp,
-                                                    SDP_ATTR_MID, (uint16_t) group_id_2, 0, 1);            
+                                                    SDP_ATTR_MID, (uint16_t) group_id_2, 0, 1);
                 if (group_mid == group_id_2) {
-                    /* found a match */   
+                    /* found a match */
                     return (anat_media);
                 }
             }
         } else if (dst_mid == group_id_2) {
             GSMSDP_FOR_ALL_MEDIA(anat_media, dcb_p) {
                 group_mid = sdp_attr_get_simple_u32(sdp_p->src_sdp,
-                                                    SDP_ATTR_MID, (uint16_t) group_id_1, 0, 1);            
+                                                    SDP_ATTR_MID, (uint16_t) group_id_1, 0, 1);
                 if (group_mid == group_id_1) {
-                    /* found a match */   
+                    /* found a match */
                     return (anat_media);
-                } 
+                }
             }
         }
     }
@@ -3271,15 +3299,15 @@ gsmsdp_validate_anat (cc_sdp_t *sdp_p)
      */
     (void) sdp_attr_num_instances(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, SDP_ATTR_GROUP,
                                   &num_group_lines);
-                            
+
     for (i = 1; i <= num_group_lines; i++) {
-         if (sdp_get_group_attr(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, i) == SDP_GROUP_ATTR_ANAT) {                                  
+         if (sdp_get_group_attr(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, i) == SDP_GROUP_ATTR_ANAT) {
              num_anat_lines++;
          }
     }
 
     for (i = 1; i <= num_anat_lines; i++) {
-         num_group_id = sdp_get_group_num_id (sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, i); 
+         num_group_id = sdp_get_group_num_id (sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, i);
          if ((num_group_id <=0) || (num_group_id > 2)) {
              /* This anat line has zero or more than two grouping, this is invalid */
              return (FALSE);
@@ -3291,21 +3319,21 @@ gsmsdp_validate_anat (cc_sdp_t *sdp_p)
             media_type_gid2 = sdp_get_media_type(sdp_p->dest_sdp, (u16) group_id_2);
             if (media_type_gid1 != media_type_gid2) {
                 /* Group id types do not match */
-                return (FALSE);            
+                return (FALSE);
             }
             if (group_id_1 != sdp_attr_get_simple_u32(sdp_p->dest_sdp, SDP_ATTR_MID, (u16) group_id_1, 0, 1)) {
                 /* Group id does not match the mid at the corresponding line */
-                return (FALSE);            
+                return (FALSE);
             }
             if (group_id_2 != sdp_attr_get_simple_u32(sdp_p->dest_sdp, SDP_ATTR_MID, (u16) group_id_2, 0, 1)) {
-                return (FALSE);            
-            }                        
+                return (FALSE);
+            }
          }
     }
 
     return (TRUE);
 }
-    
+
 /**
  *
  * The function validates if all the destination
@@ -3334,16 +3362,16 @@ gsmsdp_validate_mid (cc_sdp_t *sdp_p, uint16_t level)
      */
     (void) sdp_attr_num_instances(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, SDP_ATTR_GROUP,
                                   &num_group_lines);
-                            
+
     for (i = 1; i <= num_group_lines; i++) {
-         if (sdp_get_group_attr(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, i) == SDP_GROUP_ATTR_ANAT) {                                  
+         if (sdp_get_group_attr(sdp_p->dest_sdp, SDP_SESSION_LEVEL, 0, i) == SDP_GROUP_ATTR_ANAT) {
              num_anat_lines++;
          }
     }
 
 
     if (num_anat_lines > 0) {
-        dst_mid = sdp_attr_get_simple_u32(sdp_p->dest_sdp, SDP_ATTR_MID, level, 0, 1);            
+        dst_mid = sdp_attr_get_simple_u32(sdp_p->dest_sdp, SDP_ATTR_MID, level, 0, 1);
         if (dst_mid == 0) {
             return (FALSE);
         }
@@ -3353,11 +3381,11 @@ gsmsdp_validate_mid (cc_sdp_t *sdp_p, uint16_t level)
                 return (FALSE);
              }
         }
-        
+
     }
     return (TRUE);
 }
-    
+
 /**
  *
  * The function negotiates the type of the media lines
@@ -3379,12 +3407,12 @@ gsmsdp_negotiate_addr_type (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
     cpr_ip_type     media_addr_type;
     cpr_ip_mode_e   ip_mode;
     fsmdef_media_t  *group_media;
-  
+
     media_addr_type = media->dest_addr.type;
-    if ((media_addr_type != CPR_IP_ADDR_IPV4) && 
+    if ((media_addr_type != CPR_IP_ADDR_IPV4) &&
         (media_addr_type != CPR_IP_ADDR_IPV6)) {
         /* Unknown/unsupported address type */
-        GSM_ERR_MSG(GSM_L_C_F_PREFIX"address type is not IPv4 or IPv6\n", 
+        GSM_ERR_MSG(GSM_L_C_F_PREFIX"address type is not IPv4 or IPv6\n",
                     dcb_p->line, dcb_p->call_id, fname);
         return (FALSE);
     }
@@ -3404,9 +3432,9 @@ gsmsdp_negotiate_addr_type (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
      * checking the FSM_MEDIA_F_SUPPORT_SECURITY.
      */
     if (!FSM_CHK_FLAGS(media->flags, FSM_MEDIA_F_SUPPORT_SECURITY)) {
-        if (media_addr_type != CPR_IP_ADDR_IPV4) {  
+        if (media_addr_type != CPR_IP_ADDR_IPV4) {
             /* off board device we do not allow other address type but IPV4 */
-            GSM_DEBUG(DEB_L_C_F_PREFIX"offboard device does not support IPV6\n", 
+            GSM_DEBUG(DEB_L_C_F_PREFIX"offboard device does not support IPV6\n",
                       DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname));
             return (FALSE);
         }
@@ -3418,7 +3446,7 @@ gsmsdp_negotiate_addr_type (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
          */
         if ((ip_mode == CPR_IP_MODE_DUAL) || (ip_mode == CPR_IP_MODE_IPV4)) {
             if (group_media != NULL) {
-                /* 
+                /*
                  * this media line is part of ANAT group, keep the previous
                  * one negotiated media line.
                  */
@@ -3426,7 +3454,7 @@ gsmsdp_negotiate_addr_type (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
             }
             gsmsdp_get_local_source_v4_address(media);
             return (TRUE);
-        } 
+        }
         /* phone is IPV6 only mode */
         return (FALSE);
     }
@@ -3440,8 +3468,8 @@ gsmsdp_negotiate_addr_type (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
              /*
               * no pair media line found, this can be the first media
               * line negotiate. Keep this media line for now.
-              */ 
-             if (media_addr_type == CPR_IP_ADDR_IPV4) { 
+              */
+             if (media_addr_type == CPR_IP_ADDR_IPV4) {
                  gsmsdp_get_local_source_v4_address(media);
              } else {
                  gsmsdp_get_local_source_v6_address(media);
@@ -3450,20 +3478,20 @@ gsmsdp_negotiate_addr_type (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
          }
 
          /*
-          * Found a ANAT pair media structure that this media line 
+          * Found a ANAT pair media structure that this media line
           * is part of.
           */
          if (media_addr_type == CPR_IP_ADDR_IPV4) {
              /*
               * This media line is IPV4, keep the other line that have
               * been accepted before i.e. it shows up first therefore
-              * the other one has preference. 
+              * the other one has preference.
               */
              return (FALSE);
-         } 
+         }
 
          /* This media line is IPV6 */
-         if (group_media->src_addr.type == CPR_IP_ADDR_IPV4) { 
+         if (group_media->src_addr.type == CPR_IP_ADDR_IPV4) {
              /*
               * The previous media line part of ANAT group is IPV4. The
               * phone policy is to select IPV6 for media stream. Remove
@@ -3477,18 +3505,18 @@ gsmsdp_negotiate_addr_type (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
               return (TRUE);
          }
          /*
-          * keep the previous one is also IPV6, remove this one i.e. 
+          * keep the previous one is also IPV6, remove this one i.e.
           * the one found has higher preferecne although this is not
           * a valid ANAT grouping.
-          */  
-         return (FALSE); 
+          */
+         return (FALSE);
     }
 
     /*
      * The phone is not in dual mode, the address type must be from the media
      * line must match the address type that the phone is supporting.
      */
-    if ((ip_mode == CPR_IP_MODE_IPV6) && 
+    if ((ip_mode == CPR_IP_MODE_IPV6) &&
         (media_addr_type == CPR_IP_ADDR_IPV4)) {
         /* incompatible address type */
         return (FALSE);
@@ -3508,7 +3536,7 @@ gsmsdp_negotiate_addr_type (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
     }
 
     /*
-     * We have a compatible address type, set the source address based on 
+     * We have a compatible address type, set the source address based on
      * the address type from the remote media line.
      */
     if (media_addr_type == CPR_IP_ADDR_IPV4) {
@@ -3517,7 +3545,7 @@ gsmsdp_negotiate_addr_type (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
         gsmsdp_get_local_source_v6_address(media);
     }
     /* keep this media line */
-    return (TRUE);    
+    return (TRUE);
 }
 
 /**
@@ -3552,21 +3580,21 @@ gsmdsp_find_best_match_media_cap_index (fsmdef_dcb_t    *dcb_p,
     remote_transport = sdp_get_media_transport(sdp_p->dest_sdp, media->level);
     remote_direction = gsmsdp_get_remote_sdp_direction(dcb_p, media->level,
                                                        &media->dest_addr);
-    srtp_fallback    = sip_regmgr_srtp_fallback_enabled(dcb_p->line); 
+    srtp_fallback    = sip_regmgr_srtp_fallback_enabled(dcb_p->line);
     media_type       = media->type;
 
 
     /*
      * Select the best suitable media capability entry that
      * match this media line.
-     * 
+     *
      * The following rules are used:
      *
-     * 1) rule out entry that is invalid or not enabled or with 
+     * 1) rule out entry that is invalid or not enabled or with
      *    different media type.
      * 2) rule out entry that has been used by other existing
      *    media line.
-     * 
+     *
      * After the above rules applies look for the better match for
      * direction support and security support. The platform should
      * arrange the capability table in preference order with
@@ -3596,7 +3624,7 @@ gsmdsp_find_best_match_media_cap_index (fsmdef_dcb_t    *dcb_p,
          * Check for security support. The rules below attempts to
          * use entry that support security unless there is no entry
          * and the SRTP fallback is enabled. If the remote offer is not
-         * SRTP just ignore the supported security and proceed on i.e. 
+         * SRTP just ignore the supported security and proceed on i.e.
          * any entry is ok.
          */
         if (remote_transport == SDP_TRANSPORT_RTPSAVP) {
@@ -3622,7 +3650,7 @@ gsmdsp_find_best_match_media_cap_index (fsmdef_dcb_t    *dcb_p,
          * offer as much as possible. This is the best we know. We can
          * not guess what the real capability of the offer may have or will
          * change in the future (re-invite).
-         */ 
+         */
         support_direction = media_cap->support_direction;
         if (remote_direction == SDP_DIRECTION_INACTIVE) {
             if (support_direction != SDP_DIRECTION_SENDRECV) {
@@ -3705,7 +3733,7 @@ gsmsdp_assign_cap_entry_to_incoming_media (fsmdef_dcb_t    *dcb_p,
     if (anat_media != NULL) {
         media_cap = gsmsdp_get_media_cap_entry_by_index(anat_media->cap_index, dcb_p);
         if (media_cap == NULL) {
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media capability\n", 
+            GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media capability\n",
                         dcb_p->line, dcb_p->call_id, fname);
             return (FALSE);
         }
@@ -3723,15 +3751,15 @@ gsmsdp_assign_cap_entry_to_incoming_media (fsmdef_dcb_t    *dcb_p,
 
     if (cap_index == CC_MAX_MEDIA_CAP) {
             GSM_ERR_MSG(GSM_L_C_F_PREFIX"reached max streams supported or"
-                      " no suitable media capability\n", 
+                      " no suitable media capability\n",
                       dcb_p->line, dcb_p->call_id, fname);
             return (FALSE);
         }
 
-    /* set the capabilities to the media and associate with it */ 
+    /* set the capabilities to the media and associate with it */
     media_cap = gsmsdp_get_media_cap_entry_by_index(cap_index,dcb_p);
     if (media_cap == NULL) {
-        GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media cap\n", 
+        GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media cap\n",
                     dcb_p->line, dcb_p->call_id, fname);
         return (FALSE);
     }
@@ -3747,17 +3775,17 @@ gsmsdp_assign_cap_entry_to_incoming_media (fsmdef_dcb_t    *dcb_p,
     }
 
     media->cap_index = cap_index;
-    GSM_DEBUG(DEB_L_C_F_PREFIX"assign media cap index %d\n", 
+    GSM_DEBUG(DEB_L_C_F_PREFIX"assign media cap index %d\n",
               DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), cap_index);
     return (TRUE);
 }
-                                 
+
 /**
  *
- * The function handles negotiate adding of a media line. 
+ * The function handles negotiate adding of a media line.
  *
  * @param[in]dcb_p       - pointer to the fsmdef_dcb_t
- * @param[in]media_type  - media type. 
+ * @param[in]media_type  - media type.
  * @param[in]level       - media line.
  * @param[in]remote_port - remote port
  * @param[in]offer       - boolean indicates offer or answer.
@@ -3765,17 +3793,17 @@ gsmsdp_assign_cap_entry_to_incoming_media (fsmdef_dcb_t    *dcb_p,
  * @return           pointer to fsmdef_media_t if media is successfully
  *                   added or return NULL.
  *
- * @pre              (dcb_p not_eq NULL) 
- * @pre              (sdp_p not_eq NULL) 
+ * @pre              (dcb_p not_eq NULL)
+ * @pre              (sdp_p not_eq NULL)
  * @pre              (remote_addr not_eq NULL)
  */
 static fsmdef_media_t *
-gsmsdp_negotiate_add_media_line (fsmdef_dcb_t  *dcb_p, 
+gsmsdp_negotiate_add_media_line (fsmdef_dcb_t  *dcb_p,
                                  sdp_media_e   media_type,
                                  uint16_t      level,
                                  uint16_t      remote_port,
                                  boolean       offer)
-{ 
+{
     static const char fname[] = "gsmsdp_negotiate_add_media_line";
     fsmdef_media_t       *media;
 
@@ -3791,7 +3819,7 @@ gsmsdp_negotiate_add_media_line (fsmdef_dcb_t  *dcb_p,
          * This is not an offer, the remote end wants to add
          * a new media line in the answer.
          */
-        GSM_ERR_MSG(GSM_L_C_F_PREFIX"remote trying add media in answer SDP\n", 
+        GSM_ERR_MSG(GSM_L_C_F_PREFIX"remote trying add media in answer SDP\n",
                     dcb_p->line, dcb_p->call_id, fname);
         return (NULL);
     }
@@ -3809,7 +3837,7 @@ gsmsdp_negotiate_add_media_line (fsmdef_dcb_t  *dcb_p,
      * If this call is locally held, mark the media with local hold so
      * that the negotiate direction will have the correct direction.
      */
-    if ((dcb_p->fcb->state == FSMDEF_S_HOLDING) ||  
+    if ((dcb_p->fcb->state == FSMDEF_S_HOLDING) ||
         (dcb_p->fcb->state == FSMDEF_S_HOLD_PENDING)) {
         /* the call is locally held, set the local held status */
         FSM_SET_FLAGS(media->hold, FSM_HOLD_LCL);
@@ -3822,7 +3850,7 @@ gsmsdp_negotiate_add_media_line (fsmdef_dcb_t  *dcb_p,
  * The function handles negotiate remove of a media line. Note the
  * removal of a media line does not actaully removed from the offer/answer
  * SDP.
- * 
+ *
  * @param[in]dcb_p    - pointer to the fsmdef_dcb_t
  * @param[in]media    - pointer to the fsmdef_media_t for the media entry
  *                      to deactivate.
@@ -3846,9 +3874,9 @@ gsmsdp_negotiate_remove_media_line (fsmdef_dcb_t *dcb_p,
         /* This is an offer SDP from the remote */
         if (remote_port != 0) {
             /* the remote quests media is not for removal */
-            return (FALSE); 
-        } 
-        /* 
+            return (FALSE);
+        }
+        /*
          * Remote wants to remove the media line or to keep the media line
          * disabled. Fall through.
          */
@@ -3856,14 +3884,14 @@ gsmsdp_negotiate_remove_media_line (fsmdef_dcb_t *dcb_p,
         /* This is an answer SDP from the remote */
         if ((media->src_port != 0) && (remote_port != 0)) {
             /* the media line is not for removal */
-            return (FALSE);  
+            return (FALSE);
         }
-        /* 
+        /*
          * There are 3 possible causes:
          * 1) our offered port is 0 and remote's port is 0
-         * 2) our offered port is 0 and remote's port is not 0. 
+         * 2) our offered port is 0 and remote's port is not 0.
          * 3) our offered port is not 0 and remote's port is 0.
-         * 
+         *
          * In any of these cases, the media line will not be used.
          */
         if ((media->src_port == 0) && (remote_port != 0)) {
@@ -3880,6 +3908,25 @@ gsmsdp_negotiate_remove_media_line (fsmdef_dcb_t *dcb_p,
 }
 
 /*
+ * Find a media line based on the media type.
+ */
+fsmdef_media_t* gsmsdp_find_media_by_media_type(fsmdef_dcb_t *dcb_p, sdp_media_e media_type) {
+
+    fsmdef_media_t *media = NULL;
+
+    /*
+     * search the all entries that has a valid media and matches the media type
+     */
+    GSMSDP_FOR_ALL_MEDIA(media, dcb_p) {
+        if (media->type == media_type) {
+            /* found a match */
+            return (media);
+        }
+    }
+    return (NULL);
+}
+
+/*
  * gsmsdp_negotiate_media_lines
  *
  * Description:
@@ -3890,8 +3937,7 @@ gsmsdp_negotiate_remove_media_line (fsmdef_dcb_t *dcb_p,
  * line exists in the local sdp but is different from the remote sdp,
  * change the local sdp to match the remote sdp. If the media line
  * is an AUDIO format, negotiate the codec and update the local sdp
- * as needed. We will reject all media lines that are not AUDIO and we
- * will only accept the first AUDIO media line located.
+ * as needed.
  *
  * Parameters:
  *
@@ -3903,8 +3949,8 @@ gsmsdp_negotiate_remove_media_line (fsmdef_dcb_t *dcb_p,
  *
  */
 cc_causes_t
-gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
-                             boolean initial_offer, boolean offer, boolean notify_stream_added)
+gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean initial_offer,
+                              boolean offer, boolean notify_stream_added, boolean create_answer)
 {
     static const char fname[] = "gsmsdp_negotiate_media_lines";
     cc_causes_t     cause = CC_CAUSE_OK;
@@ -3938,7 +3984,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
 
     num_m_lines = sdp_get_num_media_lines(sdp_p->dest_sdp);
     if (num_m_lines == 0) {
-        GSM_DEBUG(DEB_L_C_F_PREFIX"no media lines found.\n", 
+        GSM_DEBUG(DEB_L_C_F_PREFIX"no media lines found.\n",
                   DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname));
         return CC_CAUSE_NO_MEDIA;
     }
@@ -3948,7 +3994,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
      */
     if (gsmsdp_validate_anat(sdp_p) == FALSE) {
         /* Failed anat validation */
-        GSM_DEBUG(DEB_L_C_F_PREFIX"failed anat validation\n", 
+        GSM_DEBUG(DEB_L_C_F_PREFIX"failed anat validation\n",
                   DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname));
         return (CC_CAUSE_NO_MEDIA);
     }
@@ -3957,15 +4003,42 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
      * Process each media line in the remote SDP
      */
     for (i = 1; i <= num_m_lines; i++) {
-
         unsupported_line = FALSE; /* assume line will be supported */
         new_media        = FALSE;
         media            = NULL;
         media_type = sdp_get_media_type(sdp_p->dest_sdp, i);
 
+        /*
+         * Only perform these checks when called from createanswer
+         * because at this point we are concerned as to which m= lines
+         * have been created in the answer.
+         */
+        if (create_answer) {
+
+            /* Since the incoming SDP might not be in the same order as
+               our media, we find them by type rather than location
+               for this check. Note that we're not checking for the
+               value of any _particular_ m= section; we're just checking
+               whether (at least) one of the specified type exists.  */
+            media = gsmsdp_find_media_by_media_type(dcb_p, media_type);
+
+            if (media_type == SDP_MEDIA_AUDIO && !media) {
+                /* continue if answer will not add this m= line */
+                continue;
+            }
+
+            if (media_type == SDP_MEDIA_VIDEO && !media) {
+                continue;
+            }
+
+            if (media_type == SDP_MEDIA_APPLICATION && !media) {
+                continue;
+            }
+        }
+
         port = (uint16_t) sdp_get_media_portnum(sdp_p->dest_sdp, i);
-        GSM_DEBUG(DEB_L_C_F_PREFIX"Port is %d at %d %d\n", 
-                  DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), 
+        GSM_DEBUG(DEB_L_C_F_PREFIX"Port is %d at %d %d\n",
+                  DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname),
                   port, i, initial_offer);
 
         switch (media_type) {
@@ -3974,13 +4047,13 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
         case SDP_MEDIA_APPLICATION:
             /*
              * Get remote address before other negotiations process in case
-             * the address 0.0.0.0 (old style hold) to be used 
+             * the address 0.0.0.0 (old style hold) to be used
              * for direction negotiation.
              */
-            if (!gsmsdp_get_remote_media_address(dcb_p, sdp_p, i, 
+            if (!gsmsdp_get_remote_media_address(dcb_p, sdp_p, i,
                                              &remote_addr)) {
                 /* failed to get the remote address */
-                GSM_DEBUG(DEB_L_C_F_PREFIX"unable to get remote addr at %d\n", 
+                GSM_DEBUG(DEB_L_C_F_PREFIX"unable to get remote addr at %d\n",
                           DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), i);
                 unsupported_line = TRUE;
                 break;
@@ -3990,8 +4063,10 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
              * Find the corresponding media entry in the dcb to see
              * this has been negiotiated previously (from the
              * last offer/answer session).
-             */ 
-            media = gsmsdp_find_media_by_level(dcb_p, i);
+             */
+            if(!create_answer)
+              media = gsmsdp_find_media_by_level(dcb_p, i);
+
             if (media == NULL) {
                 /* No previous media, negotiate adding new media line. */
                 media = gsmsdp_negotiate_add_media_line(dcb_p, media_type, i,
@@ -4006,7 +4081,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
                  * initial offer of this line.
                  */
                 new_media = TRUE;
-                GSM_DEBUG(DEB_L_C_F_PREFIX"new media entry at %d\n", 
+                GSM_DEBUG(DEB_L_C_F_PREFIX"new media entry at %d\n",
                           DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), i);
             } else if (media->type == media_type) {
                 /*
@@ -4017,15 +4092,20 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
                                                        offer)) {
                     /* the media line is to be removed from the SDP */
                     unsupported_line = TRUE;
-                    GSM_DEBUG(DEB_L_C_F_PREFIX"media at %d is removed\n", 
+                    GSM_DEBUG(DEB_L_C_F_PREFIX"media at %d is removed\n",
                               DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), i);
                    break;
                 }
             } else {
                 /* The media at the same level but not the expected type */
-                GSM_ERR_MSG(GSM_L_C_F_PREFIX"mismatch media type at %d\n", 
+                GSM_ERR_MSG(GSM_L_C_F_PREFIX"mismatch media type at %d\n",
                             dcb_p->line, dcb_p->call_id, fname, i);
                 unsupported_line = TRUE;
+                break;
+            }
+
+            /* Do not negotiate if media is set to inactive */
+            if (SDP_DIRECTION_INACTIVE == media->direction) {
                 break;
             }
 
@@ -4045,11 +4125,11 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
                 if (!gsmsdp_assign_cap_entry_to_incoming_media(dcb_p, sdp_p,
                                                                media)) {
                     unsupported_line = TRUE;
-                    GSM_DEBUG(DEB_L_C_F_PREFIX"unable to assign capability entry at %d\n", 
+                    GSM_DEBUG(DEB_L_C_F_PREFIX"unable to assign capability entry at %d\n",
                               DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), i);
                     // Check if we need to update the UI that video has been offered
                     if ( offer && media_type == SDP_MEDIA_VIDEO &&
-                          ( ( g_media_table.cap[CC_VIDEO_1].support_direction != 
+                          ( ( g_media_table.cap[CC_VIDEO_1].support_direction !=
                                    SDP_DIRECTION_INACTIVE) )  ) {
                         // passed basic checks, now on to more expensive checks...
                         remote_direction = gsmsdp_get_remote_sdp_direction(dcb_p,
@@ -4060,13 +4140,13 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
                                                                                   media,
                                                                                   MEDIA_TABLE_GLOBAL);
 
-                        GSM_DEBUG(DEB_L_C_F_PREFIX"remote_direction: %d global match %sfound\n", 
+                        GSM_DEBUG(DEB_L_C_F_PREFIX"remote_direction: %d global match %sfound\n",
                             DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname),
                             remote_direction, (cap_index != CC_MAX_MEDIA_CAP)?"":"not ");
                         if ( cap_index != CC_MAX_MEDIA_CAP &&
                                remote_direction != SDP_DIRECTION_INACTIVE ) {
                            // this is an offer and platform can support video
-                           GSM_DEBUG(DEB_L_C_F_PREFIX"\n\n\n\nUpdate video Offered Called %d\n", 
+                           GSM_DEBUG(DEB_L_C_F_PREFIX"\n\n\n\nUpdate video Offered Called %d\n",
                                     DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), remote_direction);
                            lsm_update_video_offered(dcb_p->line, dcb_p->call_id, remote_direction);
                         }
@@ -4090,11 +4170,11 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
              */
             transport = gsmsdp_negotiate_media_transport(dcb_p, sdp_p,
                                                          offer, media,
-                                                         &crypto_inst);
+                                                         &crypto_inst, i);
             if (transport == SDP_TRANSPORT_INVALID) {
                 /* unable to negotiate transport */
                 unsupported_line = TRUE;
-                GSM_DEBUG(DEB_L_C_F_PREFIX"transport mismatch at %d\n", 
+                GSM_DEBUG(DEB_L_C_F_PREFIX"transport mismatch at %d\n",
                           DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), i);
                 break;
             }
@@ -4105,7 +4185,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
                 /*
                  * Negotiate to a single codec
                  */
-                if (gsmsdp_negotiate_codec(dcb_p, sdp_p, media, offer, initial_offer) ==
+                if (gsmsdp_negotiate_codec(dcb_p, sdp_p, media, offer, initial_offer, i) ==
                     RTP_NONE) {
                     /* unable to negotiate codec */
                     unsupported_line = TRUE;
@@ -4125,7 +4205,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
              * parameters to be used for SRTP, if there is any.
              */
             gsmsdp_update_negotiated_transport(dcb_p, sdp_p, media,
-                                               crypto_inst, transport);
+                                               crypto_inst, transport, i);
             GSM_DEBUG(DEB_F_PREFIX"local transport after updating negotiated: %d\n",DEB_F_PREFIX_ARGS(GSM, fname), sdp_get_media_transport(dcb_p->sdp->src_sdp, 1));
             /*
              * Add to or update media line to the local SDP as needed.
@@ -4136,11 +4216,11 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
                  * then change the local sdp and do the necessary
                  * call to set up reception of multicast packets
                  */
-                GSM_DEBUG(DEB_L_C_F_PREFIX"Got multicast offer\n", 
+                GSM_DEBUG(DEB_L_C_F_PREFIX"Got multicast offer\n",
                          DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname));
                 media->is_multicast = TRUE;
                 media->multicast_port = port;
-                update_local_ret_value = 
+                update_local_ret_value =
                      gsmsdp_update_local_sdp_for_multicast(dcb_p, port,
                                                            media, offer,
                                                            new_media);
@@ -4152,7 +4232,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
             }
             GSM_DEBUG(DEB_F_PREFIX"local transport after updateing local SDP: %d\n",DEB_F_PREFIX_ARGS(GSM, fname), sdp_get_media_transport(dcb_p->sdp->src_sdp, 1));
 
-            /* 
+            /*
              * Successful codec negotiated cache direction for  ui video update
              */
             if (media_type == SDP_MEDIA_VIDEO ) {
@@ -4162,7 +4242,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
             if (update_local_ret_value == TRUE) {
                 media->previous_sdp.dest_port = media->dest_port;
                 media->dest_port = port;
-                if (media_type == SDP_MEDIA_AUDIO) {
+                if (media_type == SDP_MEDIA_AUDIO || sdpmode) {
                     /* at least found one workable audio media line */
                     media_found = TRUE;
                 }
@@ -4178,7 +4258,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
              * Negotiate rtcp-mux
              */
 
-            sdp_res = sdp_attr_get_rtcp_mux_attribute (sdp_p->dest_sdp, media->level,
+            sdp_res = sdp_attr_get_rtcp_mux_attribute (sdp_p->dest_sdp, i,
                                               0, SDP_ATTR_RTCP_MUX, 1, &rtcp_mux);
 
             if (SDP_SUCCESS == sdp_res) {
@@ -4207,9 +4287,8 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
                      */
                      int pc_stream_id = 0;
 
-                     lsm_add_remote_stream (dcb_p->line, dcb_p->call_id, media, &pc_stream_id);
-
                      if (SDP_MEDIA_APPLICATION != media_type) {
+                         lsm_add_remote_stream (dcb_p->line, dcb_p->call_id, media, &pc_stream_id);
                          gsmsdp_add_remote_stream(i-1, pc_stream_id, dcb_p, media);
                      } else {
                          /*
@@ -4222,14 +4301,14 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
             }
 
             break;
-            
+
         default:
             /* Not a support media type stream */
             unsupported_line = TRUE;
-            break;     
+            break;
         }
 
-        if (unsupported_line) { 
+        if (unsupported_line) {
             /* add this line to unsupported line */
             gsmsdp_add_unsupported_stream_to_local_sdp(sdp_p, i);
             gsmsdp_set_mid_attr(sdp_p->src_sdp, i);
@@ -4242,16 +4321,16 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
         if (gsmsdp_validate_mid(sdp_p, i) == FALSE) {
              /* Failed mid validation */
             cause = CC_CAUSE_NO_MEDIA;
-            GSM_DEBUG(DEB_L_C_F_PREFIX"failed mid validation at %d\n", 
+            GSM_DEBUG(DEB_L_C_F_PREFIX"failed mid validation at %d\n",
                       DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), i);
-        }            
+        }
     }
 
     /*
      * Must have at least one media found and at least one audio
      * line.
      */
-    if (!media_found) { 
+    if (!media_found) {
         if (cause != CC_CAUSE_PAYLOAD_MISMATCH) {
             cause = CC_CAUSE_NO_MEDIA;
         }
@@ -4261,7 +4340,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
              * some media lines have codec mismatch but there are some
              * that works, do not return error.
              */
-            cause = CC_CAUSE_OK; 
+            cause = CC_CAUSE_OK;
         }
 
         /*
@@ -4271,8 +4350,8 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
         gsmsdp_update_local_time_stamp(dcb_p, offer, initial_offer);
 
         /*
-         * workable media line was found. Need to make sure we don't 
-         * advertise more than workable media lines. Loop through 
+         * workable media line was found. Need to make sure we don't
+         * advertise more than workable media lines. Loop through
          * remaining media lines in local SDP and set port to zero.
          */
         num_local_m_lines = sdp_get_num_media_lines(sdp_p->src_sdp);
@@ -4301,13 +4380,15 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
             /*
              * Bubble the stream added event up to the PC UI
              */
-             if (notify_stream_added) {
-
+            if (notify_stream_added) {
                 for (j=0; j < CC_MAX_STREAMS; j++ ) {
-                    // If this stream has been created it should have >0 tracks.
+                    /* If this stream has been created it should have > 0 tracks. */
                     if (dcb_p->remote_media_stream_tbl->streams[j].num_tracks) {
                         ui_on_remote_stream_added(evOnRemoteStreamAdd, dcb_p->line, dcb_p->call_id,
-                               dcb_p->caller_id.call_instance_id, dcb_p->remote_media_stream_tbl->streams[j]);
+                           dcb_p->caller_id.call_instance_id, dcb_p->remote_media_stream_tbl->streams[j]);
+
+                        /* Setting num_tracks == 0 indicates stream not set */
+                        dcb_p->remote_media_stream_tbl->streams[j].num_tracks = 0;
                     }
                 }
             }
@@ -4316,13 +4397,13 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
     /*
      * We have negotiated the line, clear flag that we have set
      * that we are waiting for an answer SDP in ack.
-     */ 
+     */
     dcb_p->remote_sdp_in_ack = FALSE;
 
-    /* 
+    /*
      * check to see if UI needs to be updated for video
      */
-    GSM_DEBUG(DEB_L_C_F_PREFIX"Update video Avail Called %d\n", 
+    GSM_DEBUG(DEB_L_C_F_PREFIX"Update video Avail Called %d\n",
                DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname),video_avail);
 
     // update direction but preserve the cast attrib
@@ -4330,6 +4411,49 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
     dcb_p->cur_video_avail |= (uint8_t)video_avail;
 
     lsm_update_video_avail(dcb_p->line, dcb_p->call_id, dcb_p->cur_video_avail);
+
+    return cause;
+}
+
+/*
+ * This function returns boolean parameters indicating what media types
+ * exist in the offered SDP.
+ */
+cc_causes_t
+gsmsdp_get_offered_media_types (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean *has_audio,
+                                boolean *has_video, boolean *has_data)
+{
+    cc_causes_t     cause = CC_CAUSE_OK;
+    uint16_t        num_m_lines = 0;
+    uint16_t        i = 0;
+    sdp_media_e     media_type;
+    fsmdef_dcb_t   *dcb_p = fcb_p->dcb;
+    boolean         result;
+
+    num_m_lines = sdp_get_num_media_lines(sdp_p->dest_sdp);
+    if (num_m_lines == 0) {
+        GSM_DEBUG(DEB_L_C_F_PREFIX"no media lines found.\n",
+                  DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, __FUNCTION__));
+        return CC_CAUSE_NO_MEDIA;
+    }
+
+    *has_audio = FALSE;
+    *has_video = FALSE;
+    *has_data = FALSE;
+
+    /*
+     * Process each media line in the remote SDP
+     */
+    for (i = 1; i <= num_m_lines; i++) {
+        media_type = sdp_get_media_type(sdp_p->dest_sdp, i);
+
+        if(SDP_MEDIA_AUDIO == media_type)
+            *has_audio = TRUE;
+        else if(SDP_MEDIA_VIDEO == media_type)
+            *has_video = TRUE;
+        else if(SDP_MEDIA_APPLICATION == media_type)
+            *has_data = TRUE;
+    }
 
     return cause;
 }
@@ -4349,6 +4473,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
  *
  * Parameters:
  *
+ * peerconnection - handle to peerconnection object
  * sdp_pp     - Pointer to the local sdp
  *
  * returns    cc_causes_t
@@ -4356,7 +4481,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p,
  *            CC_CAUSE_ERROR - indicates failure
  */
 static cc_causes_t
-gsmsdp_init_local_sdp (cc_sdp_t **sdp_pp)
+gsmsdp_init_local_sdp (const char *peerconnection, cc_sdp_t **sdp_pp)
 {
     char            addr_str[MAX_IPADDR_STR_LEN];
     cpr_ip_addr_t   ipaddr;
@@ -4369,7 +4494,7 @@ gsmsdp_init_local_sdp (cc_sdp_t **sdp_pp)
     cpr_ip_mode_e   ip_mode;
     char           *strtok_state;
 
-    if (!sdp_pp) {
+    if (!peerconnection || !sdp_pp) {
         return CC_CAUSE_ERROR;
     }
 
@@ -4397,13 +4522,15 @@ gsmsdp_init_local_sdp (cc_sdp_t **sdp_pp)
      * Create the local sdp struct
      */
     if (*sdp_pp == NULL) {
-        sipsdp_src_dest_create(CCSIP_SRC_SDP_BIT, sdp_pp);
+        sipsdp_src_dest_create(peerconnection,
+            CCSIP_SRC_SDP_BIT, sdp_pp);
     } else {
         sdp_p = *sdp_pp;
         if (sdp_p->src_sdp != NULL) {
             sipsdp_src_dest_free(CCSIP_SRC_SDP_BIT, sdp_pp);
         }
-        sipsdp_src_dest_create(CCSIP_SRC_SDP_BIT, sdp_pp);
+        sipsdp_src_dest_create(peerconnection,
+            CCSIP_SRC_SDP_BIT, sdp_pp);
     }
     sdp_p = *sdp_pp;
 
@@ -4488,10 +4615,10 @@ gsmsdp_set_media_capability (fsmdef_media_t *media,
  *
  * @param[in]dcb_p     - pointer to the fsmdef_dcb_t
  * @param[in]media_cap - media capability to be used with this new media
- *                       line. 
+ *                       line.
  * @param[in]cap_index - media capability entry index to associate with
  *                       the media line.
- * @param[in]level     - media line order in the SDP so called level.  
+ * @param[in]level     - media line order in the SDP so called level.
  * @param[in]addr_type - cpr_ip_type for address of the media line to add.
  *
  * @return           Pointer to the fsmdef_media_t if successfully
@@ -4500,10 +4627,10 @@ gsmsdp_set_media_capability (fsmdef_media_t *media,
  * @pre              (dcb_p not_eq NULL)
  * @pre              (media_cap not_eq NULL)
  */
-static fsmdef_media_t * 
+static fsmdef_media_t *
 gsmsdp_add_media_line (fsmdef_dcb_t *dcb_p, const cc_media_cap_t *media_cap,
                        uint8_t cap_index, uint16_t level,
-                       cpr_ip_type addr_type)
+                       cpr_ip_type addr_type, boolean offer)
 {
     static const char fname[] = "gsmsdp_add_media_line";
     cc_action_data_t  data;
@@ -4519,7 +4646,7 @@ gsmsdp_add_media_line (fsmdef_dcb_t *dcb_p, const cc_media_cap_t *media_cap,
         media = gsmsdp_get_new_media(dcb_p, media_cap->type, level);
         if (media == NULL) {
             /* should not happen */
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media entry available\n", 
+            GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media entry available\n",
                         dcb_p->line, dcb_p->call_id, fname);
             return (NULL);
         }
@@ -4528,106 +4655,120 @@ gsmsdp_add_media_line (fsmdef_dcb_t *dcb_p, const cc_media_cap_t *media_cap,
         gsmsdp_set_media_capability(media, media_cap);
 
         /* associate this media line to the capability entry */
-        media->cap_index = cap_index; /* keep the media cap entry index */ 
+        media->cap_index = cap_index; /* keep the media cap entry index */
 
         /* override the direction for special feature */
         gsmsdp_feature_overide_direction(dcb_p, media);
         if (media->support_direction == SDP_DIRECTION_INACTIVE) {
             GSM_DEBUG(DEB_L_C_F_PREFIX"feature overrides direction to inactive"
-                      " no media added\n", 
-					  DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname));
-            gsmsdp_remove_media(dcb_p, media);
-            return (NULL);
+                      " no media added\n",
+                      DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname));
+
+            /*
+             * For an answer, SDP_DIRECTION_INACTIVE will now add an m=
+             * line but it is disabled.
+             */
+            if (!offer) {
+                media->src_port = 0;
+            } else {
+              gsmsdp_remove_media(dcb_p, media);
+              return (NULL);
+            }
         }
 
-        /*
-         * Get the local RTP port. The src port will be set in the dcb
-         * within the call to cc_call_action(CC_ACTION_OPEN_RCV)
-         */
-        data.open_rcv.is_multicast = FALSE;
-        data.open_rcv.listen_ip = ip_addr_invalid;
-        data.open_rcv.port = 0;
-        data.open_rcv.keep = FALSE;
-        /*
-         * Indicate type of media (audio/video etc) becase some for
-         * supporting video over vieo, the port is obtained from other
-         * entity.
-         */
-        data.open_rcv.media_type = media->type;
-        data.open_rcv.media_refid = media->refid;
-        if (cc_call_action(dcb_p->call_id, dcb_p->line,
-                           CC_ACTION_OPEN_RCV,
-                           &data) != CC_RC_SUCCESS) {
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"allocate rx port failed\n", 
-                        dcb_p->line, dcb_p->call_id, fname);
-            gsmsdp_remove_media(dcb_p, media);
-            return (NULL);
-        }
+        if (media->support_direction != SDP_DIRECTION_INACTIVE) {
+          /*
+           * Get the local RTP port. The src port will be set in the dcb
+           * within the call to cc_call_action(CC_ACTION_OPEN_RCV)
+           */
+          data.open_rcv.is_multicast = FALSE;
+          data.open_rcv.listen_ip = ip_addr_invalid;
+          data.open_rcv.port = 0;
+          data.open_rcv.keep = FALSE;
+          /*
+           * Indicate type of media (audio/video etc) becase some for
+           * supporting video over vieo, the port is obtained from other
+           * entity.
+           */
+          data.open_rcv.media_type = media->type;
+          data.open_rcv.media_refid = media->refid;
+          if (cc_call_action(dcb_p->call_id, dcb_p->line,
+                             CC_ACTION_OPEN_RCV,
+                             &data) != CC_RC_SUCCESS) {
+              GSM_ERR_MSG(GSM_L_C_F_PREFIX"allocate rx port failed\n",
+                          dcb_p->line, dcb_p->call_id, fname);
+              gsmsdp_remove_media(dcb_p, media);
+              return (NULL);
+          }
 
-        /* allocate port successful, save the port */
+          /* allocate port successful, save the port */
 
-    	media->src_port = data.open_rcv.port;
+          media->src_port = data.open_rcv.port;
 
-    	if(media_cap->type == SDP_MEDIA_APPLICATION) {
+          if(media_cap->type == SDP_MEDIA_APPLICATION) {
             config_get_value(CFGID_SCTP_PORT, &sctp_port, sizeof(sctp_port));
             media->sctp_port = sctp_port;
-    	}
+          }
 
-        /*
-         * Setup the local soruce address.
-         */
-        if (addr_type == CPR_IP_ADDR_IPV6) {
-            gsmsdp_get_local_source_v6_address(media);
-        } else if (addr_type == CPR_IP_ADDR_IPV4) {
-            gsmsdp_get_local_source_v4_address(media);
-        } else {
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"invalid IP address mode\n", 
-                        dcb_p->line, dcb_p->call_id, fname);
-            gsmsdp_remove_media(dcb_p, media);
-            return (NULL);
+          /*
+           * Setup the local soruce address.
+           */
+          if (addr_type == CPR_IP_ADDR_IPV6) {
+              gsmsdp_get_local_source_v6_address(media);
+          } else if (addr_type == CPR_IP_ADDR_IPV4) {
+              gsmsdp_get_local_source_v4_address(media);
+          } else {
+              GSM_ERR_MSG(GSM_L_C_F_PREFIX"invalid IP address mode\n",
+                          dcb_p->line, dcb_p->call_id, fname);
+              gsmsdp_remove_media(dcb_p, media);
+              return (NULL);
+          }
+
         }
-    
+
         /*
          * Initialize the media transport for RTP or SRTP (or do not thing
          * and leave to the gsmsdp_update_local_sdp_media to set default)
          */
-        gsmsdp_init_sdp_media_transport(dcb_p, dcb_p->sdp->src_sdp, media); 
-       
+        gsmsdp_init_sdp_media_transport(dcb_p, dcb_p->sdp->src_sdp, media);
+
 
         gsmsdp_update_local_sdp_media(dcb_p, dcb_p->sdp, TRUE, media,
                                           media->transport);
 
+        if (media->support_direction != SDP_DIRECTION_INACTIVE) {
 
-        gsmsdp_set_local_sdp_direction(dcb_p, media, media->direction);
+          gsmsdp_set_local_sdp_direction(dcb_p, media, media->direction);
 
-        /*
-         * wait until here to set ICE candidates as SDP is now initialized
-         */
-        for (i=0; i<media->candidate_ct; i++) {
-        	gsmsdp_set_ice_attribute (SDP_ATTR_ICE_CANDIDATE, level, dcb_p->sdp->src_sdp, media->candidatesp[i]);
+          /*
+           * wait until here to set ICE candidates as SDP is now initialized
+           */
+          for (i=0; i<media->candidate_ct; i++) {
+            gsmsdp_set_ice_attribute (SDP_ATTR_ICE_CANDIDATE, level, dcb_p->sdp->src_sdp, media->candidatesp[i]);
+          }
+
+          config_get_value(CFGID_RTCPMUX, &rtcpmux, sizeof(rtcpmux));
+          if (rtcpmux) {
+            gsmsdp_set_rtcp_mux_attribute (SDP_ATTR_RTCP_MUX, level, dcb_p->sdp->src_sdp, TRUE);
+          }
+
+
+          /*
+           * Since we are initiating an initial offer and opening a
+           * receive port, store initial media settings.
+           */
+          media->previous_sdp.avt_payload_type = media->avt_payload_type;
+          media->previous_sdp.direction = media->direction;
+          media->previous_sdp.packetization_period = media->packetization_period;
+          media->previous_sdp.payload_type = media->payload;
+          media->previous_sdp.local_payload_type = media->payload;
+          break;
         }
-
-        config_get_value(CFGID_RTCPMUX, &rtcpmux, sizeof(rtcpmux));
-        if (rtcpmux) {
-          gsmsdp_set_rtcp_mux_attribute (SDP_ATTR_RTCP_MUX, level, dcb_p->sdp->src_sdp, TRUE);
-        }
-
-
-        /*
-         * Since we are initiating an initial offer and opening a
-         * receive port, store initial media settings.
-         */
-        media->previous_sdp.avt_payload_type = media->avt_payload_type;
-        media->previous_sdp.direction = media->direction;
-        media->previous_sdp.packetization_period = media->packetization_period;
-        media->previous_sdp.payload_type = media->payload;
-        media->previous_sdp.local_payload_type = media->payload;
-        break;
 
     default:
         /* Unsupported media type, not added */
-        GSM_DEBUG(DEB_L_C_F_PREFIX"media type %d is not supported\n", 
-                  DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), media_cap->type);   
+        GSM_DEBUG(DEB_L_C_F_PREFIX"media type %d is not supported\n",
+                  DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), media_cap->type);
         break;
     }
     return (media);
@@ -4649,19 +4790,22 @@ gsmsdp_add_media_line (fsmdef_dcb_t *dcb_p, const cc_media_cap_t *media_cap,
  *            CC_CAUSE_ERROR - indicates failure
  */
 cc_causes_t
-gsmsdp_create_local_sdp (fsmdef_dcb_t *dcb_p, boolean force_streams_enabled)
+gsmsdp_create_local_sdp (fsmdef_dcb_t *dcb_p, boolean force_streams_enabled,
+                         boolean audio, boolean video, boolean data, boolean offer)
 {
     static const char fname[] = "gsmsdp_create_local_sdp";
     uint16_t        level;
-    const cc_media_cap_table_t *media_cap_tbl; 
+    const cc_media_cap_table_t *media_cap_tbl;
     const cc_media_cap_t       *media_cap;
-    cpr_ip_mode_e   ip_mode;    
+    cpr_ip_mode_e   ip_mode;
     uint8_t         cap_index;
     fsmdef_media_t  *media;
     boolean         has_audio;
     int             sdpmode = 0;
+    boolean         media_enabled;
 
-    if ( CC_CAUSE_OK != gsmsdp_init_local_sdp(&(dcb_p->sdp)) )
+    if ( CC_CAUSE_OK != gsmsdp_init_local_sdp(dcb_p->peerconnection,
+        &(dcb_p->sdp)) )
       return CC_CAUSE_ERROR;
 
     config_get_value(CFGID_SDPMODE, &sdpmode, sizeof(sdpmode));
@@ -4672,40 +4816,51 @@ gsmsdp_create_local_sdp (fsmdef_dcb_t *dcb_p, boolean force_streams_enabled)
 
     if (media_cap_tbl == NULL) {
         /* should not happen */
-        GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media capbility available\n", 
+        GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media capbility available\n",
                     dcb_p->line, dcb_p->call_id, fname);
         return (CC_CAUSE_ERROR);
     }
 
     media_cap = &media_cap_tbl->cap[0];
     level = 0;
-    for (cap_index = 0; cap_index < CC_MAX_MEDIA_CAP; cap_index++) {
+    for (cap_index = 0; cap_index < CC_MAX_MEDIA_CAP-1; cap_index++) {
+
+        /* Build local m lines based on m lines that were in the offered SDP */
+        media_enabled = TRUE;
+        if (FALSE == audio && SDP_MEDIA_AUDIO == media_cap->type) {
+            media_enabled = FALSE;
+        } else if (FALSE == video && SDP_MEDIA_VIDEO == media_cap->type) {
+            media_enabled = FALSE;
+        } else if (FALSE == data && SDP_MEDIA_APPLICATION == media_cap->type) {
+            media_enabled = FALSE;
+        }
+
         /*
          * Add each enabled media line to the SDP
          */
-        if (media_cap->enabled || force_streams_enabled) {
-            level = level + 1;  /* next level */ 
+        if (media_enabled && ( media_cap->enabled || force_streams_enabled)) {
+            level = level + 1;  /* next level */
             ip_mode = platform_get_ip_address_mode();
             if (ip_mode >= CPR_IP_MODE_IPV6) {
                 if (gsmsdp_add_media_line(dcb_p, media_cap, cap_index,
-                                          level, CPR_IP_ADDR_IPV6) 
+                                          level, CPR_IP_ADDR_IPV6, offer)
                     == NULL) {
                     /* fail to add a media line, go back one level */
                     level = level - 1;
                 }
-                
+
                 if (ip_mode == CPR_IP_MODE_DUAL) {
                     level = level + 1;  /* next level */
-                    if (gsmsdp_add_media_line(dcb_p, media_cap, cap_index, 
-                                              level, CPR_IP_ADDR_IPV4) ==
+                    if (gsmsdp_add_media_line(dcb_p, media_cap, cap_index,
+                                              level, CPR_IP_ADDR_IPV4, offer) ==
                         NULL) {
                         /* fail to add a media line, go back one level */
                         level = level - 1;
-                    } 
+                    }
                 }
             } else {
                 if (gsmsdp_add_media_line(dcb_p, media_cap, cap_index, level,
-                                          CPR_IP_ADDR_IPV4) == NULL) {
+                                          CPR_IP_ADDR_IPV4, offer) == NULL) {
                     /* fail to add a media line, go back one level */
                     level = level - 1;
                 }
@@ -4717,12 +4872,12 @@ gsmsdp_create_local_sdp (fsmdef_dcb_t *dcb_p, boolean force_streams_enabled)
 
     if (level == 0) {
         /*
-         * Did not find media line for the SDP and we do not 
+         * Did not find media line for the SDP and we do not
          * support SDP without any media line.
          */
-        GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media line for SDP\n", 
+        GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media line for SDP\n",
                     dcb_p->line, dcb_p->call_id, fname);
-        return (CC_CAUSE_ERROR); 
+        return (CC_CAUSE_ERROR);
     }
 
     /*
@@ -4758,7 +4913,7 @@ gsmsdp_create_local_sdp (fsmdef_dcb_t *dcb_p, boolean force_streams_enabled)
             return (CC_CAUSE_ERROR);
         }
     }
-    
+
     return CC_CAUSE_OK;
 }
 
@@ -4776,8 +4931,8 @@ gsmsdp_create_options_sdp (cc_sdp_t ** sdp_pp)
 {
     cc_sdp_t *sdp_p;
 
-
-    if (gsmsdp_init_local_sdp(sdp_pp) == CC_CAUSE_ERROR) {
+    /* This empty string represents to associated peerconnection object */
+    if (gsmsdp_init_local_sdp("", sdp_pp) == CC_CAUSE_ERROR) {
         return;
     }
 
@@ -4816,12 +4971,12 @@ gsmsdp_create_options_sdp (cc_sdp_t ** sdp_pp)
 }
 
 /**
- * The function checks and removes media capability for the media 
+ * The function checks and removes media capability for the media
  * lines that is to be removed.
  *
  * @param[in]dcb_p   - Pointer to DCB
  *
- * @return           TRUE  - if there is a media line removed. 
+ * @return           TRUE  - if there is a media line removed.
  *                   FALSE - if there is no media line to remove.
  *
  * @pre              (dcb_p not_eq NULL)
@@ -4833,14 +4988,14 @@ gsmsdp_check_remove_local_sdp_media (fsmdef_dcb_t *dcb_p)
     fsmdef_media_t             *media, *media_to_remove;
     const cc_media_cap_t       *media_cap;
     boolean                    removed = FALSE;
- 
+
     media = GSMSDP_FIRST_MEDIA_ENTRY(dcb_p);
     while (media) {
         media_cap = gsmsdp_get_media_cap_entry_by_index(media->cap_index,dcb_p);
         if (media_cap != NULL) {
             /* found the corresponding capability of the media line */
             if (!media_cap->enabled) {
-                GSM_DEBUG(DEB_L_C_F_PREFIX"remove media at level %d\n", 
+                GSM_DEBUG(DEB_L_C_F_PREFIX"remove media at level %d\n",
                           DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), media->level);
                 /* set the media line to unused */
                 gsmsdp_add_unsupported_stream_to_local_sdp(dcb_p->sdp,
@@ -4866,7 +5021,7 @@ gsmsdp_check_remove_local_sdp_media (fsmdef_dcb_t *dcb_p)
 /**
  * The function checks and adds media capability for the media
  * lines that is to be added.
- * 
+ *
  * @param[in]dcb_p   - Pointer to DCB
  * @param[in]hold    - TRUE indicates the newly media line
  *                     should have direction that indicates hold.
@@ -4892,14 +5047,14 @@ gsmsdp_check_add_local_sdp_media (fsmdef_dcb_t *dcb_p, boolean hold)
     uint16_t                   i, num_ip_addrs;
 
     if (fsmcnf_get_ccb_by_call_id(dcb_p->call_id) != NULL) {
-        /* 
+        /*
          * This call is part of a local conference. The mixing
-         * support will be needed for additional media line. 
+         * support will be needed for additional media line.
          * If platform does not have capability to support mixing
          * of a particular media type for the local conference, either
          * leg in the conference will not see addition media line
          * added.
-         */ 
+         */
         need_mix = TRUE;
     }
 
@@ -4910,7 +5065,7 @@ gsmsdp_check_add_local_sdp_media (fsmdef_dcb_t *dcb_p, boolean hold)
     for (cap_index = 0; cap_index < CC_MAX_MEDIA_CAP; cap_index++) {
         media_cap = gsmsdp_get_media_cap_entry_by_index(cap_index, dcb_p);
         if (media_cap == NULL) {
-            GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media capbility available\n", 
+            GSM_ERR_MSG(GSM_L_C_F_PREFIX"no media capbility available\n",
                         dcb_p->line, dcb_p->call_id, fname);
             continue;
         }
@@ -4924,15 +5079,15 @@ gsmsdp_check_add_local_sdp_media (fsmdef_dcb_t *dcb_p, boolean hold)
             continue;
         }
 
-        /* 
+        /*
          * This is a new entry the capability table to be added.
          */
         if (CC_IS_AUDIO(cap_index) && need_mix) {
             if (!gsmsdp_platform_addition_mix(dcb_p, media_cap->type)) {
                 /* platform can not support additional mixing of this type */
                 GSM_DEBUG(DEB_L_C_F_PREFIX"no support addition mixing for %d "
-                          "media type\n", 
-                          DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), 
+                          "media type\n",
+                          DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname),
 						  media_cap->type);
                 continue;
             }
@@ -4960,7 +5115,7 @@ gsmsdp_check_add_local_sdp_media (fsmdef_dcb_t *dcb_p, boolean hold)
             num_ip_addrs = 1;
             ip_addr_type[0] = CPR_IP_ADDR_IPV4;
             break;
-        } 
+        }
         /* add media line or lines */
         for (i = 0; i < num_ip_addrs; i++) {
             /*
@@ -4978,12 +5133,12 @@ gsmsdp_check_add_local_sdp_media (fsmdef_dcb_t *dcb_p, boolean hold)
                 num_m_lines  = sdp_get_num_media_lines(src_sdp);
                 level_to_use = num_m_lines + 1;
             }
-            GSM_DEBUG(DEB_L_C_F_PREFIX"add media at level %d\n", 
+            GSM_DEBUG(DEB_L_C_F_PREFIX"add media at level %d\n",
                       DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), level_to_use);
 
             /* add a new media */
             media = gsmsdp_add_media_line(dcb_p, media_cap, cap_index,
-                                          level_to_use, ip_addr_type[i]);
+                                          level_to_use, ip_addr_type[i], FALSE);
             if (media != NULL) {
                 /* successfully add a new media line */
                 if (hold) {
@@ -5001,12 +5156,12 @@ gsmsdp_check_add_local_sdp_media (fsmdef_dcb_t *dcb_p, boolean hold)
 }
 
 /**
- * The function checks support direction changes and updates the support 
+ * The function checks support direction changes and updates the support
  * direction of media lines.
  *
  * @param[in]dcb_p         - Pointer to DCB
  * @param[in]no_sdp_update - TRUE indicates do not update SDP.
- * 
+ *
  * @return           TRUE  - if there is a media line support direction
  *                           changes.
  *                   FALSE - if there is no media line that has
@@ -5020,7 +5175,7 @@ gsmsdp_check_direction_change_local_sdp_media (fsmdef_dcb_t *dcb_p,
 {
     static const char fname[] = "gsmsdp_check_direction_change_local_sdp_media";
     fsmdef_media_t             *media;
-    const cc_media_cap_t       *media_cap; 
+    const cc_media_cap_t       *media_cap;
     boolean                    direction_change = FALSE;
     sdp_direction_e            save_supported_direction;
 
@@ -5036,11 +5191,11 @@ gsmsdp_check_direction_change_local_sdp_media (fsmdef_dcb_t *dcb_p,
                  * the supported direction remains the same after override
                  * take place. If it is different then there is a direction
                  * change.
-                 */ 
-                save_supported_direction = media->support_direction; 
+                 */
+                save_supported_direction = media->support_direction;
                 media->support_direction = media_cap->support_direction;
-                gsmsdp_feature_overide_direction(dcb_p, media);  
-                if (media->support_direction == save_supported_direction) { 
+                gsmsdp_feature_overide_direction(dcb_p, media);
+                if (media->support_direction == save_supported_direction) {
                     /* nothing change after override */
                 } else {
                     /* there is no override, this is a change */
@@ -5049,8 +5204,8 @@ gsmsdp_check_direction_change_local_sdp_media (fsmdef_dcb_t *dcb_p,
                 if (direction_change) {
                     /* Support direction changed */
                     GSM_DEBUG(DEB_L_C_F_PREFIX"change support direction at level %d"
-                              " from %d to %d\n", 
-							  DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), 
+                              " from %d to %d\n",
+							  DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname),
 							  media->level, media->support_direction,
                               media_cap->support_direction);
                     if (no_sdp_update) {
@@ -5059,7 +5214,7 @@ gsmsdp_check_direction_change_local_sdp_media (fsmdef_dcb_t *dcb_p,
                          */
                         media->direction = media_cap->support_direction;
                     } else {
-                        /* 
+                        /*
                          * Need to update direction in the SDP.
                          * The direction in the media structure will
                          * be set by the gsmsdp_set_local_sdp_direction.
@@ -5092,14 +5247,14 @@ static void gsmsdp_reset_media(fsmdef_dcb_t *dcb_p, fsmdef_media_t *media, boole
 }
 
 /**
- * 
+ *
  * This functions checks if the media IP Address has changed
- * 
- * Convert the configMedia IP String to Ip address format, 
+ *
+ * Convert the configMedia IP String to Ip address format,
  * check if it is valid and then compare to current media source
  * address, if the address is valid and the media source and
  * config media ip differ, then
- * 
+ *
  *  1) Stop the media to close the socket
  *  2) Set flag to true, to initiate re-invite
  *  3) Update the media src addr
@@ -5111,12 +5266,12 @@ static void gsmsdp_reset_media(fsmdef_dcb_t *dcb_p, fsmdef_media_t *media, boole
  *
  * @pre              (dcb_p not_eq NULL)
  */
-boolean 
+boolean
 gsmsdp_media_ip_changed (fsmdef_dcb_t *dcb_p)
 {
     static const char     fname[] = "gsmsdp_media_ip_changed";
     boolean               ip_changed = FALSE;
-    cpr_ip_addr_t         addr ;                
+    cpr_ip_addr_t         addr ;
     char                  curr_media_ip[MAX_IPADDR_STR_LEN];
     char                  addr_str[MAX_IPADDR_STR_LEN];
     fsmdef_media_t        *media;
@@ -5125,15 +5280,15 @@ gsmsdp_media_ip_changed (fsmdef_dcb_t *dcb_p)
      * Check if media IP has changed
      */
     init_empty_str(curr_media_ip);
-    config_get_value(CFGID_MEDIA_IP_ADDR, curr_media_ip, 
+    config_get_value(CFGID_MEDIA_IP_ADDR, curr_media_ip,
                         MAX_IPADDR_STR_LEN);
-    if (is_empty_str(curr_media_ip) == FALSE) { 
+    if (is_empty_str(curr_media_ip) == FALSE) {
         str2ip(curr_media_ip, &addr);
         util_ntohl(&addr, &addr);
         GSMSDP_FOR_ALL_MEDIA(media, dcb_p) {
             if ((util_check_if_ip_valid(&media->src_addr) == TRUE) &&
                 (util_check_if_ip_valid(&addr) == TRUE) &&
-                (util_compare_ip(&media->src_addr, &addr) == FALSE)) { 
+                (util_compare_ip(&media->src_addr, &addr) == FALSE)) {
                 ipaddr2dotted(curr_media_ip, &media->src_addr); // for logging
 
                 (void)cc_call_action(dcb_p->call_id, dcb_p->line,
@@ -5145,7 +5300,7 @@ gsmsdp_media_ip_changed (fsmdef_dcb_t *dcb_p)
                     gsmsdp_set_connection_address(dcb_p->sdp->src_sdp,
                             media->level,
                             dcb_p->ice_default_candidate_addr);
-                }   
+                }
                 ipaddr2dotted(addr_str, &media->src_addr);  // for logging
                 GSM_ERR_MSG("%s MEDIA IP_CHANGED: after Update IP %s"\
                             " before %s" ,fname, addr_str, curr_media_ip );
@@ -5193,7 +5348,7 @@ boolean is_gsmsdp_media_ip_updated_to_latest( fsmdef_dcb_t * dcb ) {
  *
  * @param[in]dcb_p   - Pointer to DCB
  * @param[in]reset   - Reset the unchanged media lines to include all
- *                     codecs etc. again. 
+ *                     codecs etc. again.
  * @param[in]hold    - Set media line will be set to hold.
  *
  * @return         TRUE  - if media changes occur.
@@ -5218,7 +5373,7 @@ gsmsdp_update_local_sdp_media_capability (fsmdef_dcb_t *dcb_p, boolean reset,
      */
     if ((g_media_table.id != dcb_p->media_cap_tbl->id) || reset) {
 
-            /* 
+            /*
              * capabilty table ID different or we are doing a reset for
              * the full offer again, need to check for various changes.
          * Update capabilities to match platform caps
@@ -5242,7 +5397,7 @@ gsmsdp_update_local_sdp_media_capability (fsmdef_dcb_t *dcb_p, boolean reset,
     }
 
     /*
-     * Find media lines that may have direction changes 
+     * Find media lines that may have direction changes
      */
     if ( check_for_change &&
          gsmsdp_check_direction_change_local_sdp_media(dcb_p, reset)) {
@@ -5254,7 +5409,7 @@ gsmsdp_update_local_sdp_media_capability (fsmdef_dcb_t *dcb_p, boolean reset,
      * Reset all the existing media lines to have full codec etc.
      * again if the caller requested.
      */
-    if (reset) { 
+    if (reset) {
         GSMSDP_FOR_ALL_MEDIA(media, dcb_p) {
             gsmsdp_reset_media(dcb_p, media, hold);
         }
@@ -5263,16 +5418,16 @@ gsmsdp_update_local_sdp_media_capability (fsmdef_dcb_t *dcb_p, boolean reset,
     /*
      * Find new media entries to be added.
      */
-    if ( check_for_change && gsmsdp_check_add_local_sdp_media(dcb_p, hold)) { 
+    if ( check_for_change && gsmsdp_check_add_local_sdp_media(dcb_p, hold)) {
         change_found = TRUE;
     }
 
     if (change_found) {
-        GSM_DEBUG(DEB_L_C_F_PREFIX"media capability change found \n", 
+        GSM_DEBUG(DEB_L_C_F_PREFIX"media capability change found \n",
                   DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname));
     }
 
-    
+
     /* report back any changes made */
     return (change_found);
 }
@@ -5321,7 +5476,7 @@ gsmsdp_reset_local_sdp_media (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media,
         /*
          * Reset media transport in preparation for hold or resume.
          * It is possible that transport media may
-         * change from the current media transport (for SRTP re-offer 
+         * change from the current media transport (for SRTP re-offer
          * to a different end point).
          */
         gsmsdp_reset_sdp_media_transport(dcb_p, dcb_p->sdp ? dcb_p->sdp->src_sdp : NULL,
@@ -5398,15 +5553,15 @@ gsmsdp_set_local_hold_sdp (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
         } else {
             /*
              * RFC3264 states that hold is signaled by setting the media
-             * direction attribute to SENDONLY if in SENDRECV mode. 
+             * direction attribute to SENDONLY if in SENDRECV mode.
              * INACTIVE if RECVONLY mode (mutual hold).
              */
             if (media->direction == SDP_DIRECTION_SENDRECV ||
                 media->direction == SDP_DIRECTION_SENDONLY) {
-                gsmsdp_set_local_sdp_direction(dcb_p, media, 
+                gsmsdp_set_local_sdp_direction(dcb_p, media,
                                                SDP_DIRECTION_SENDONLY);
             } else {
-                gsmsdp_set_local_sdp_direction(dcb_p, media, 
+                gsmsdp_set_local_sdp_direction(dcb_p, media,
                                                SDP_DIRECTION_INACTIVE);
             }
         }
@@ -5447,7 +5602,7 @@ gsmsdp_set_local_resume_sdp (fsmdef_dcb_t *dcb_p, fsmdef_media_t *media)
             continue;
         }
         /*
-         * We are not locally held, set direction to the supported 
+         * We are not locally held, set direction to the supported
          * direction.
          */
         gsmsdp_set_local_sdp_direction(dcb_p, media, media->support_direction);
@@ -5529,7 +5684,8 @@ gsmsdp_encode_sdp_and_update_version (fsmdef_dcb_t *dcb_p, cc_msgbody_info_t *ms
 
     if ( dcb_p->sdp == NULL || dcb_p->sdp->src_sdp == NULL )
     {
-    	if ( CC_CAUSE_OK != gsmsdp_init_local_sdp(&(dcb_p->sdp)) )
+    	if ( CC_CAUSE_OK != gsmsdp_init_local_sdp(dcb_p->peerconnection,
+            &(dcb_p->sdp)) )
     	{
     		return CC_CAUSE_ERROR;
     	}
@@ -5621,7 +5777,8 @@ gsmsdp_realloc_dest_sdp (fsmdef_dcb_t *dcb_p)
     /* There are SDPs to process, prepare for parsing the SDP */
     if (dcb_p->sdp == NULL) {
         /* Create internal SDP information block with dest sdp block */
-        sipsdp_src_dest_create(CCSIP_DEST_SDP_BIT, &dcb_p->sdp);
+        sipsdp_src_dest_create(dcb_p->peerconnection,
+            CCSIP_DEST_SDP_BIT, &dcb_p->sdp);
     } else {
         /*
          * SDP info. block exists, remove the previously received
@@ -5631,7 +5788,8 @@ gsmsdp_realloc_dest_sdp (fsmdef_dcb_t *dcb_p)
         if (dcb_p->sdp->dest_sdp) {
             sipsdp_src_dest_free(CCSIP_DEST_SDP_BIT, &dcb_p->sdp);
         }
-        sipsdp_src_dest_create(CCSIP_DEST_SDP_BIT, &dcb_p->sdp);
+        sipsdp_src_dest_create(dcb_p->peerconnection,
+            CCSIP_DEST_SDP_BIT, &dcb_p->sdp);
     }
 
     /* No SDP info block and parsed control block are available */
@@ -5703,10 +5861,10 @@ gsmsdp_negotiate_answer_sdp (fsm_fcb_t *fcb_p, cc_msgbody_info_t *msg_body)
         /* Error parsing SDP */
         return status;
     }
- 
+
     gsmsdp_set_remote_sdp(dcb_p, dcb_p->sdp);
 
-    status = gsmsdp_negotiate_media_lines(fcb_p, dcb_p->sdp, FALSE, FALSE, TRUE);
+    status = gsmsdp_negotiate_media_lines(fcb_p, dcb_p->sdp, FALSE, FALSE, TRUE, TRUE);
     GSM_DEBUG(DEB_F_PREFIX"returns with %d\n",DEB_F_PREFIX_ARGS(GSM, fname), status);
     return (status);
 }
@@ -5744,7 +5902,7 @@ gsmsdp_negotiate_offer_sdp (fsm_fcb_t *fcb_p,
      * If a new error code has been added to sdp processing please make sure
      * the sip side is aware of it
      */
-    status = gsmsdp_negotiate_media_lines(fcb_p, dcb_p->sdp, init, TRUE, FALSE);
+    status = gsmsdp_negotiate_media_lines(fcb_p, dcb_p->sdp, init, TRUE, FALSE, FALSE);
     return (status);
 }
 
@@ -5779,7 +5937,7 @@ gsmsdp_process_offer_sdp (fsm_fcb_t *fcb_p,
     /* Get just the SDP bodies */
     num_sdp_bodies = gsmsdp_get_sdp_body(msg_body, &sdp_bodies[0],
                                          CC_MAX_BODY_PARTS);
-    GSM_DEBUG(DEB_L_C_F_PREFIX"Init is %d\n", 
+    GSM_DEBUG(DEB_L_C_F_PREFIX"Init is %d\n",
         DEB_L_C_F_PREFIX_ARGS(GSM, dcb_p->line, dcb_p->call_id, fname), init);
     if (num_sdp_bodies == 0) {
         /*
@@ -5788,11 +5946,11 @@ gsmsdp_process_offer_sdp (fsm_fcb_t *fcb_p,
          * of a session. Otherwise, we will send what we have.
          */
         if (init) {
-            if ( CC_CAUSE_OK != gsmsdp_create_local_sdp(dcb_p, FALSE)) {
+            if ( CC_CAUSE_OK != gsmsdp_create_local_sdp(dcb_p, FALSE, TRUE, TRUE, TRUE, TRUE)) {
                 return CC_CAUSE_ERROR;
             }
         } else {
-            /* 
+            /*
              * Reset all media entries that we have to offer all capabilities
              */
            (void)gsmsdp_update_local_sdp_media_capability(dcb_p, TRUE, FALSE);
@@ -5830,9 +5988,9 @@ gsmsdp_process_offer_sdp (fsm_fcb_t *fcb_p,
     }
 
     if (init) {
-        (void)gsmsdp_init_local_sdp(&(dcb_p->sdp));
+        (void)gsmsdp_init_local_sdp(dcb_p->peerconnection, &(dcb_p->sdp));
         /* Note that there should not a previous version here as well */
-    } 
+    }
 
     gsmsdp_set_remote_sdp(dcb_p, dcb_p->sdp);
 
@@ -5859,7 +6017,7 @@ gsmsdp_install_peer_ice_attributes(fsm_fcb_t *fcb_p)
     short           vcm_res;
     fsmdef_dcb_t    *dcb_p = fcb_p->dcb;
     cc_sdp_t        *sdp_p = dcb_p->sdp;
-    fsmdef_media_t  *media; 
+    fsmdef_media_t  *media;
     int             level;
     short           result;
 
@@ -5890,7 +6048,7 @@ gsmsdp_install_peer_ice_attributes(fsm_fcb_t *fcb_p)
         SDP_ATTR_ICE_UFRAG, 1, &ufrag);
       if (sdp_res != SDP_SUCCESS)
         ufrag = NULL;
-    
+
       sdp_res = sdp_attr_get_ice_attribute(sdp_p->dest_sdp, media->level, 0,
         SDP_ATTR_ICE_PWD, 1, &pwd);
       if (sdp_res != SDP_SUCCESS)
@@ -5921,9 +6079,9 @@ gsmsdp_install_peer_ice_attributes(fsm_fcb_t *fcb_p)
 
       if (vcm_res)
         return (CC_CAUSE_ERROR);
-      
+
     }
-    
+
     return CC_CAUSE_OK;
 }
 
@@ -6085,7 +6243,7 @@ gsmsdp_sdp_differs_from_previous_sdp (boolean rcv_only, fsmdef_media_t *media)
 
     if ( (media->previous_sdp.local_payload_type != media->local_dynamic_payload_type_value) ) {
         GSM_DEBUG(DEB_F_PREFIX"previous dynamic payload: %d new dynamic payload: %d\n",
-                  DEB_F_PREFIX_ARGS(GSM, fname), media->previous_sdp.local_payload_type, 
+                  DEB_F_PREFIX_ARGS(GSM, fname), media->previous_sdp.local_payload_type,
                                media->local_dynamic_payload_type_value);
         return TRUE;
     }

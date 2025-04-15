@@ -193,7 +193,7 @@ public:
     }
     for (const nsIFrame* f = aFrame; f; f = nsLayoutUtils::GetCrossDocParentFrame(f))
     {
-      if (f->IsTransformed()) {
+      if (f == mReferenceFrame || f->IsTransformed()) {
         mCachedOffsetFrame = aFrame;
         mCachedReferenceFrame = f;
         mCachedOffset = aFrame->GetOffsetToCrossDoc(f);
@@ -691,7 +691,7 @@ public:
   {
     if (aFrame) {
       mReferenceFrame = aBuilder->FindReferenceFrameFor(aFrame);
-      mToReferenceFrame = aFrame->GetOffsetToCrossDoc(mReferenceFrame);
+      mToReferenceFrame = aBuilder->ToReferenceFrame(aFrame);
     } else {
       mReferenceFrame = nullptr;
     }
@@ -855,7 +855,17 @@ public:
       aInvalidRegion->Or(GetBounds(aBuilder, &snap), geometry->mBounds);
     }
   }
-  
+
+  /**
+   * Called when the area rendered by this display item has changed (been
+   * invalidated or changed geometry) since the last paint. This includes
+   * when the display item was not rendered at all in the last paint.
+   * It does NOT get called when a display item was being rendered and no
+   * longer is, because generally that means there is no display item to
+   * call this method on.
+   */
+  virtual void NotifyRenderingChanged() {}
+
   /**
    * @param aSnap set to true if the edges of the rectangles of the opaque
    * region would be snapped to device pixels when drawing
@@ -1087,6 +1097,8 @@ public:
   virtual bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) {
     return false;
   }
+  
+  virtual bool SupportsOptimizingToImage() { return false; }
 
 protected:
   friend class nsDisplayList;
@@ -1306,6 +1318,7 @@ public:
    * @return true if any item in the list is visible.
    */
   bool ComputeVisibilityForSublist(nsDisplayListBuilder* aBuilder,
+                                   nsDisplayItem* aForItem,
                                    nsRegion* aVisibleRegion,
                                    const nsRect& aListVisibleBounds,
                                    const nsRect& aAllowVisibleRegionExpansion);
@@ -1536,6 +1549,23 @@ private:
   void* operator new(size_t sz) CPP_THROW_NEW;
 
   nsDisplayList mLists[6];
+};
+
+
+class nsDisplayImageContainer : public nsDisplayItem {
+public:
+  typedef mozilla::layers::ImageContainer ImageContainer;
+  typedef mozilla::layers::ImageLayer ImageLayer;
+
+  nsDisplayImageContainer(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
+    : nsDisplayItem(aBuilder, aFrame)
+  {}
+
+  virtual already_AddRefed<ImageContainer> GetContainer(LayerManager* aManager,
+                                                        nsDisplayListBuilder* aBuilder) = 0;
+  virtual void ConfigureLayer(ImageLayer* aLayer, const nsIntPoint& aOffset) = 0;
+
+  virtual bool SupportsOptimizingToImage() { return true; }
 };
 
 /**
@@ -1784,7 +1814,7 @@ private:
  * A display item to paint one background-image for a frame. Each background
  * image layer gets its own nsDisplayBackgroundImage.
  */
-class nsDisplayBackgroundImage : public nsDisplayItem {
+class nsDisplayBackgroundImage : public nsDisplayImageContainer {
 public:
   /**
    * aLayer signifies which background layer this item represents.
@@ -1849,14 +1879,18 @@ public:
    */
   bool RenderingMightDependOnPositioningAreaSizeChange();
 
-  virtual nsDisplayItemGeometry* AllocateGeometry(nsDisplayListBuilder* aBuilder)
+  virtual nsDisplayItemGeometry* AllocateGeometry(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE
   {
     return new nsDisplayBackgroundGeometry(this, aBuilder);
   }
 
   virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
                                          const nsDisplayItemGeometry* aGeometry,
-                                         nsRegion* aInvalidRegion);
+                                         nsRegion* aInvalidRegion) MOZ_OVERRIDE;
+  
+  virtual already_AddRefed<ImageContainer> GetContainer(LayerManager* aManager,
+                                                        nsDisplayListBuilder *aBuilder) MOZ_OVERRIDE;
+  virtual void ConfigureLayer(ImageLayer* aLayer, const nsIntPoint& aOffset) MOZ_OVERRIDE;
 
   static nsRegion GetInsideClipRegion(nsDisplayItem* aItem, nsPresContext* aPresContext, uint8_t aClip,
                                       const nsRect& aRect, bool* aSnap);
@@ -1864,11 +1898,10 @@ protected:
   typedef class mozilla::layers::ImageContainer ImageContainer;
   typedef class mozilla::layers::ImageLayer ImageLayer;
 
-  bool TryOptimizeToImageLayer(nsDisplayListBuilder* aBuilder);
+  bool TryOptimizeToImageLayer(LayerManager* aManager, nsDisplayListBuilder* aBuilder);
   bool IsSingleFixedPositionImage(nsDisplayListBuilder* aBuilder,
                                   const nsRect& aClipRect,
                                   gfxRect* aDestRect);
-  void ConfigureLayer(ImageLayer* aLayer);
   nsRect GetBoundsInternal();
 
   // Cache the result of nsCSSRendering::FindBackground. Always null if
@@ -2127,6 +2160,10 @@ public:
                                     
   virtual nsDisplayList* GetSameCoordinateSystemChildren() MOZ_OVERRIDE
   {
+    NS_ASSERTION(mList.IsEmpty() || !ReferenceFrame() ||
+                 !mList.GetBottom()->ReferenceFrame() ||
+                 mList.GetBottom()->ReferenceFrame() == ReferenceFrame(),
+                 "Children must have same reference frame");
     return &mList;
   }
   virtual nsDisplayList* GetChildren() MOZ_OVERRIDE { return &mList; }
@@ -2226,6 +2263,12 @@ public:
                                    nsRegion* aVisibleRegion,
                                    const nsRect& aAllowVisibleRegionExpansion) MOZ_OVERRIDE;  
   virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem) MOZ_OVERRIDE;
+  virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
+                                         const nsDisplayItemGeometry* aGeometry,
+                                         nsRegion* aInvalidRegion) MOZ_OVERRIDE
+  {
+    // We don't need to compute an invalidation region since we have LayerTreeInvalidation
+  }
   NS_DISPLAY_DECL_NAME("Opacity", TYPE_OPACITY)
 
   bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder);
@@ -2575,6 +2618,13 @@ public:
   virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
                                              LayerManager* aManager,
                                              const ContainerParameters& aContainerParameters) MOZ_OVERRIDE;
+  
+  virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
+                                         const nsDisplayItemGeometry* aGeometry,
+                                         nsRegion* aInvalidRegion) MOZ_OVERRIDE
+  {
+    // We don't need to compute an invalidation region since we have LayerTreeInvalidation
+  }
 
   void PaintAsLayer(nsDisplayListBuilder* aBuilder,
                     nsRenderingContext* aCtx,
@@ -2661,6 +2711,13 @@ public:
   virtual bool TryMerge(nsDisplayListBuilder *aBuilder, nsDisplayItem *aItem) MOZ_OVERRIDE;
   
   virtual uint32_t GetPerFrameKey() MOZ_OVERRIDE { return (mIndex << nsDisplayItem::TYPE_BITS) | nsDisplayItem::GetPerFrameKey(); }
+  
+  virtual void ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
+                                         const nsDisplayItemGeometry* aGeometry,
+                                         nsRegion* aInvalidRegion) MOZ_OVERRIDE
+  {
+    // We don't need to compute an invalidation region since we have LayerTreeInvalidation
+  }
 
   virtual const nsIFrame* ReferenceFrameForChildren() const MOZ_OVERRIDE {
     // If we were created using a transform-getter, then we don't
@@ -2841,19 +2898,6 @@ public:
 
   nscoord mLeftEdge;  // length from the left side
   nscoord mRightEdge; // length from the right side
-};
-
-class nsDisplayImageContainer : public nsDisplayItem {
-public:
-  typedef mozilla::layers::ImageContainer ImageContainer;
-  typedef mozilla::layers::ImageLayer ImageLayer;
-
-  nsDisplayImageContainer(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
-    : nsDisplayItem(aBuilder, aFrame)
-  {}
-
-  virtual already_AddRefed<ImageContainer> GetContainer() = 0;
-  virtual void ConfigureLayer(ImageLayer* aLayer, const nsIntPoint& aOffset) = 0;
 };
 
 #endif /*NSDISPLAYLIST_H_*/

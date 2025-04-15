@@ -18,7 +18,6 @@
 #include "AudioSegment.h"
 #include "MediaSegment.h"
 #include "StreamBuffer.h"
-#include "nsAudioStream.h"
 #include "nsTArray.h"
 #include "nsIRunnable.h"
 #include "nsISupportsImpl.h"
@@ -142,17 +141,17 @@ public:
     mMediaStream->Stop();
   }
 
-  
+
   NS_DECL_ISUPPORTS
   NS_DECL_NSIDOMMEDIASTREAM
-    
-  static already_AddRefed<Fake_nsDOMMediaStream> CreateInputStream(uint32_t aHintContents) {
+
+  static already_AddRefed<Fake_nsDOMMediaStream> CreateSourceStream(uint32_t aHintContents) {
     Fake_SourceMediaStream *source = new Fake_SourceMediaStream();
-    
+
     Fake_nsDOMMediaStream *ds = new Fake_nsDOMMediaStream(source);
     ds->SetHintContents(aHintContents);
     ds->AddRef();
-    
+
     return ds;
   }
 

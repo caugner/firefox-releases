@@ -12,7 +12,6 @@
 #include "nsSVGAttrTearoffTable.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/SVGPointListBinding.h"
-#include "dombindings.h"
 
 // See the comment in this file's header.
 
@@ -48,7 +47,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(DOMSVGPointList)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(DOMSVGPointList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mElement, nsIContent)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mElement)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(DOMSVGPointList)
@@ -103,27 +102,7 @@ DOMSVGPointList::~DOMSVGPointList()
 JSObject*
 DOMSVGPointList::WrapObject(JSContext *cx, JSObject *scope, bool *triedToWrap)
 {
-  JSObject* obj = mozilla::dom::SVGPointListBinding::Wrap(cx, scope, this,
-                                                          triedToWrap);
-  if (obj || *triedToWrap) {
-    return obj;
-  }
-
-  *triedToWrap = true;
-  return mozilla::dom::oldproxybindings::SVGPointList::create(cx, scope, this);
-}
-
-nsIDOMSVGPoint*
-DOMSVGPointList::GetItemAt(uint32_t aIndex)
-{
-  if (IsAnimValList()) {
-    Element()->FlushAnimations();
-  }
-  if (aIndex < LengthNoFlush()) {
-    EnsureItemAt(aIndex);
-    return mItems[aIndex];
-  }
-  return nullptr;
+  return mozilla::dom::SVGPointListBinding::Wrap(cx, scope, this, triedToWrap);
 }
 
 void

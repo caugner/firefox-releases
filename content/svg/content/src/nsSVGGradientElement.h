@@ -93,8 +93,8 @@ public:
   // The Gradient Element base class implements these
   NS_FORWARD_NSIDOMSVGELEMENT(nsSVGLinearGradientElementBase::)
 
-  NS_FORWARD_NSIDOMNODE(nsSVGLinearGradientElementBase::)
-  NS_FORWARD_NSIDOMELEMENT(nsSVGLinearGradientElementBase::)
+  NS_FORWARD_NSIDOMNODE_TO_NSINODE
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
 
@@ -137,8 +137,8 @@ public:
   NS_DECL_NSIDOMSVGRADIALGRADIENTELEMENT
 
   // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE(nsSVGRadialGradientElementBase::)
-  NS_FORWARD_NSIDOMELEMENT(nsSVGRadialGradientElementBase::)
+  NS_FORWARD_NSIDOMNODE_TO_NSINODE
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
   NS_FORWARD_NSIDOMSVGELEMENT(nsSVGRadialGradientElementBase::)
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;

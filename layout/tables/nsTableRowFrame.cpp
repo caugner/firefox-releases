@@ -18,9 +18,6 @@
 #include "nsTableColFrame.h"
 #include "nsCOMPtr.h"
 #include "nsDisplayList.h"
-#ifdef ACCESSIBILITY
-#include "nsAccessibilityService.h"
-#endif
 
 using namespace mozilla;
 
@@ -795,7 +792,7 @@ nsTableRowFrame::ReflowChildren(nsPresContext*          aPresContext,
       nsHTMLReflowMetrics desiredSize;
       nsReflowStatus  status;
       ReflowChild(kidFrame, aPresContext, desiredSize, kidReflowState, 0, 0, 0, status);
-      kidFrame->DidReflow(aPresContext, nullptr, NS_FRAME_REFLOW_FINISHED);
+      kidFrame->DidReflow(aPresContext, nullptr, nsDidReflowStatus::FINISHED);
 
       continue;
     }
@@ -1023,6 +1020,11 @@ nsTableRowFrame::Reflow(nsPresContext*          aPresContext,
   rv = ReflowChildren(aPresContext, aDesiredSize, aReflowState, *tableFrame,
                       aStatus);
 
+  if (aPresContext->IsPaginated() && !NS_FRAME_IS_FULLY_COMPLETE(aStatus) &&
+      ShouldAvoidBreakInside(aReflowState)) {
+    aStatus = NS_INLINE_LINE_BREAK_BEFORE();
+  }
+
   // just set our width to what was available. The table will calculate the width and not use our value.
   aDesiredSize.width = aReflowState.availableWidth;
 
@@ -1084,7 +1086,7 @@ nsTableRowFrame::ReflowCellFrame(nsPresContext*          aPresContext,
                                      (aCellFrame->GetStateBits() &
                                       NS_FRAME_FIRST_REFLOW) != 0);
   
-  aCellFrame->DidReflow(aPresContext, nullptr, NS_FRAME_REFLOW_FINISHED);
+  aCellFrame->DidReflow(aPresContext, nullptr, nsDidReflowStatus::FINISHED);
 
   return desiredSize.height;
 }
@@ -1343,16 +1345,10 @@ void nsTableRowFrame::SetContinuousBCBorderWidth(uint8_t     aForSide,
   }
 }
 #ifdef ACCESSIBILITY
-already_AddRefed<Accessible>
-nsTableRowFrame::CreateAccessible()
+a11y::AccType
+nsTableRowFrame::AccessibleType()
 {
-  nsAccessibilityService* accService = nsIPresShell::AccService();
-  if (accService) {
-    return accService->CreateHTMLTableRowAccessible(mContent,
-                                                    PresContext()->PresShell());
-  }
-
-  return nullptr;
+  return a11y::eHTMLTableRowAccessible;
 }
 #endif
 /**

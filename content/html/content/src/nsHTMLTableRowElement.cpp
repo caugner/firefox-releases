@@ -22,6 +22,7 @@
 #include "nsContentUtils.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 class nsHTMLTableRowElement : public nsGenericHTMLElement,
                               public nsIDOMHTMLTableRowElement
@@ -33,13 +34,13 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMNODE_TO_NSINODE
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
 
   // nsIDOMHTMLTableRowElement
   NS_DECL_NSIDOMHTMLTABLEROWELEMENT
@@ -78,12 +79,11 @@ nsHTMLTableRowElement::nsHTMLTableRowElement(already_AddRefed<nsINodeInfo> aNode
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsHTMLTableRowElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsHTMLTableRowElement,
                                                   nsGenericHTMLElement)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mCells,
-                                                       nsIDOMNodeList)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCells)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_ADDREF_INHERITED(nsHTMLTableRowElement, nsGenericElement) 
-NS_IMPL_RELEASE_INHERITED(nsHTMLTableRowElement, nsGenericElement) 
+NS_IMPL_ADDREF_INHERITED(nsHTMLTableRowElement, Element)
+NS_IMPL_RELEASE_INHERITED(nsHTMLTableRowElement, Element)
 
 
 DOMCI_NODE_DATA(HTMLTableRowElement, nsHTMLTableRowElement)
@@ -144,11 +144,11 @@ nsHTMLTableRowElement::GetRowIndex(int32_t* aValue)
   nsCOMPtr<nsIDOMHTMLCollection> rows;
   table->GetRows(getter_AddRefs(rows));
 
-  uint32_t numRows;
-  rows->GetLength(&numRows);
+  nsCOMPtr<nsIHTMLCollection> coll = do_QueryInterface(rows);
+  uint32_t numRows = coll->Length();
 
   for (uint32_t i = 0; i < numRows; i++) {
-    if (rows->GetElementAt(i) == this) {
+    if (coll->GetElementAt(i) == this) {
       *aValue = i;
       break;
     }
@@ -168,10 +168,10 @@ nsHTMLTableRowElement::GetSectionRowIndex(int32_t* aValue)
   nsCOMPtr<nsIDOMHTMLCollection> rows;
   section->GetRows(getter_AddRefs(rows));
 
-  uint32_t numRows;
-  rows->GetLength(&numRows);
+  nsCOMPtr<nsIHTMLCollection> coll = do_QueryInterface(rows);
+  uint32_t numRows = coll->Length();
   for (uint32_t i = 0; i < numRows; i++) {
-    if (rows->GetElementAt(i) == this) {
+    if (coll->GetElementAt(i) == this) {
       *aValue = i;
       break;
     }

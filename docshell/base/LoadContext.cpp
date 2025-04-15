@@ -8,21 +8,11 @@
 #include "nsIScriptSecurityManager.h"
 #include "nsServiceManagerUtils.h"
 #include "nsContentUtils.h"
+#include "mozIApplication.h"
 
 namespace mozilla {
 
 NS_IMPL_ISUPPORTS1(LoadContext, nsILoadContext);
-
-LoadContext::LoadContext(const IPC::SerializedLoadContext& aToCopy,
-                         nsIDOMElement* aTopFrameElemenet)
-  : mIsNotNull(aToCopy.mIsNotNull)
-  , mIsContent(aToCopy.mIsContent)
-  , mUsePrivateBrowsing(aToCopy.mUsePrivateBrowsing)
-  , mIsInBrowserElement(aToCopy.mIsInBrowserElement)
-  , mAppId(aToCopy.mAppId)
-  , mTopFrameElement(do_GetWeakReference(aTopFrameElemenet))
-{}
-
 
 //-----------------------------------------------------------------------------
 // LoadContext::nsILoadContext
@@ -87,6 +77,15 @@ LoadContext::GetUsePrivateBrowsing(bool* aUsePrivateBrowsing)
 
 NS_IMETHODIMP
 LoadContext::SetUsePrivateBrowsing(bool aUsePrivateBrowsing)
+{
+  MOZ_ASSERT(mIsNotNull);
+
+  // We shouldn't need this on parent...
+  return NS_ERROR_UNEXPECTED;
+}
+
+NS_IMETHODIMP
+LoadContext::SetPrivateBrowsing(bool aUsePrivateBrowsing)
 {
   MOZ_ASSERT(mIsNotNull);
 

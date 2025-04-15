@@ -800,6 +800,26 @@ var WifiManager = (function() {
 
   var driverEventMap = { STOPPED: "driverstopped", STARTED: "driverstarted", HANGED: "driverhung" };
 
+  manager.getCurrentNetworkId = function (ssid, callback) {
+    manager.getConfiguredNetworks(function(networks) {
+      if (!networks) {
+        debug("Unable to get configured networks");
+        return callback(null);
+      }
+      for (let net in networks) {
+        let network = networks[net];
+        // Trying to get netId from
+        // 1. CURRENT network.
+        // 2. Trying to associate with SSID 'ssid' event
+        if (network.status === "CURRENT" ||
+            (ssid && ssid === dequote(network.ssid))) {
+          return callback(net);
+        }
+      }
+      callback(null);
+    });
+  }
+
   // handle events sent to us by the event worker
   function handleEvent(event) {
     debug("Event coming in: " + event);
@@ -809,8 +829,8 @@ var WifiManager = (function() {
       if (event.indexOf("Association request to the driver failed") !== -1) {
         notify("passwordmaybeincorrect");
         if (manager.authenticationFailuresCount > MAX_RETRIES_ON_AUTHENTICATION_FAILURE) {
-          notify("disconnected");
           manager.authenticationFailuresCount = 0;
+          notify("disconnected", {ssid: manager.connectionInfo.ssid});
         }
         return true;
       }
@@ -884,21 +904,21 @@ var WifiManager = (function() {
     if (eventData.indexOf("CTRL-EVENT-DISCONNECTED") === 0) {
       var token = event.split(" ")[1];
       var bssid = token.split("=")[1];
+      if (manager.authenticationFailuresCount > MAX_RETRIES_ON_AUTHENTICATION_FAILURE) {
+        manager.authenticationFailuresCount = 0;
+        notify("disconnected", {ssid: manager.connectionInfo.ssid});
+      }
       manager.connectionInfo.bssid = null;
       manager.connectionInfo.ssid = null;
       manager.connectionInfo.id = -1;
-      if (manager.authenticationFailuresCount > MAX_RETRIES_ON_AUTHENTICATION_FAILURE) {
-        notify("disconnected", {BSSID: bssid});
-        manager.authenticationFailuresCount = 0;
-      }
       return true;
     }
     // Association reject is triggered mostly on incorrect WEP key.
     if (eventData.indexOf("CTRL-EVENT-ASSOC-REJECT") === 0) {
       notify("passwordmaybeincorrect");
       if (manager.authenticationFailuresCount > MAX_RETRIES_ON_AUTHENTICATION_FAILURE) {
-        notify("disconnected");
         manager.authenticationFailuresCount = 0;
+        notify("disconnected", {ssid: manager.connectionInfo.ssid});
       }
       return true;
     }
@@ -1336,7 +1356,7 @@ var WifiManager = (function() {
           manager.loopDetectionCount++;
         }
         if (manager.loopDetectionCount > MAX_SUPPLICANT_LOOP_ITERATIONS) {
-          notify("disconnected");
+          notify("disconnected", {ssid: manager.connectionInfo.ssid});
           manager.loopDetectionCount = 0;
         }
       }
@@ -1590,6 +1610,7 @@ function WifiWorker() {
 
   this.wantScanResults = [];
 
+  this._allowWpaEap = false;
   this._needToEnableNetworks = false;
   this._highestPriority = -1;
 
@@ -1753,6 +1774,12 @@ function WifiWorker() {
       WifiManager.saveConfig(function() {})
     });
 
+    try {
+      self._allowWpaEap = Services.prefs.getBoolPref("b2g.wifi.allow_unsafe_wpa_eap");
+    } catch (e) {
+      self._allowWpaEap = false;
+    }
+
     // Check if we need to dequeue requests first.
     self._notifyAfterStateChange(true, true);
 
@@ -1797,16 +1824,19 @@ function WifiWorker() {
       self._needToEnableNetworks = false;
     }
 
-    var currentNetwork = self.currentNetwork;
-    if (currentNetwork && !isNaN(currentNetwork.netId)) {
-      // Disable the network when password is incorrect.
-      WifiManager.disableNetwork(currentNetwork.netId, function() {});
-    } else {
-      // TODO: We can't get netId when connecting to wep network with
-      // incorrect password, see Bug 813880
-    }
-    self._fireEvent("onconnectingfailed", {network: currentNetwork});
-  };
+    WifiManager.getCurrentNetworkId(this.ssid, function(netId) {
+      // Trying to get netId from current network.
+      if (!netId &&
+          self.currentNetwork &&
+          typeof self.currentNetwork.netId !== "undefined") {
+        netId = self.currentNetwork.netId;
+      }
+      if (netId) {
+        WifiManager.disableNetwork(netId, function() {});
+      }
+    });
+    self._fireEvent("onconnectingfailed", {network: self.currentNetwork});
+  }
 
   WifiManager.onstatechange = function() {
     debug("State change: " + this.prevState + " -> " + this.state);
@@ -2003,13 +2033,17 @@ function WifiWorker() {
               signalLevel = match[3],
               flags = match[4];
 
+          // Skip ad-hoc networks which aren't supported (bug 811635).
+          if (flags.indexOf("[IBSS]") >= 0)
+            continue;
+
           // If this is the first time that we've seen this SSID in the scan
           // results, add it to the list along with any other information.
           // Also, we use the highest signal strength that we see.
           let network = new ScanResult(ssid, bssid, flags, signalLevel);
-          self.networksArray.push(network);
 
           let networkKey = getNetworkKey(network);
+          let eapIndex = -1;
           if (networkKey in self.configuredNetworks) {
             let known = self.configuredNetworks[networkKey];
             network.known = true;
@@ -2024,8 +2058,21 @@ function WifiWorker() {
                 ("wep_key0" in known && known.wep_key0)) {
               network.password = "*";
             }
+          } else if (!self._allowWpaEap &&
+                     (eapIndex = network.capabilities.indexOf("WPA-EAP")) >= 0) {
+            // Don't offer to connect to WPA-EAP networks unless one has been
+            // configured through other means (e.g. it was added directly to
+            // wpa_supplicant.conf). Here, we have an unknown WPA-EAP network,
+            // so we ignore it entirely if it only supports WPA-EAP, otherwise
+            // we take EAP out of the list and offer the rest of the
+            // capabilities.
+            if (network.capabilities.length === 1)
+              continue;
+
+            network.capabilities.splice(eapIndex, 1);
           }
 
+          self.networksArray.push(network);
           if (network.bssid === WifiManager.connectionInfo.bssid)
             network.connected = true;
 

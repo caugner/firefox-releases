@@ -44,6 +44,7 @@ public:
   {
     dt->PrepareForDrawing(ctx);
     cairo_save(mCtx);
+    MOZ_ASSERT(cairo_status(mCtx) || dt->GetTransform() == GetTransform());
   }
 
   AutoPrepareForDrawing(DrawTargetCairo* dt, cairo_t* ctx, const Path* path)
@@ -51,11 +52,21 @@ public:
   {
     dt->PrepareForDrawing(ctx, path);
     cairo_save(mCtx);
+    MOZ_ASSERT(cairo_status(mCtx) || dt->GetTransform() == GetTransform());
   }
 
   ~AutoPrepareForDrawing() { cairo_restore(mCtx); }
 
 private:
+#ifdef DEBUG
+  Matrix GetTransform()
+  {
+    cairo_matrix_t mat;
+    cairo_get_matrix(mCtx, &mat);
+    return Matrix(mat.xx, mat.yx, mat.xy, mat.yy, mat.x0, mat.y0);
+  }
+#endif
+
   cairo_t* mCtx;
 };
 
@@ -162,6 +173,15 @@ GetCairoSurfaceForSourceSurface(SourceSurface *aSurface)
                                         data->GetSize().width,
                                         data->GetSize().height,
                                         data->Stride());
+
+  // In certain scenarios, requesting larger than 8k image fails.  Bug 803568
+  // covers the details of how to run into it, but the full detailed
+  // investigation hasn't been done to determine the underlying cause.  We
+  // will just handle the failure to allocate the surface to avoid a crash.
+  if (cairo_surface_status(surf)) {
+    return nullptr;
+  }
+
   cairo_surface_set_user_data(surf,
  				                      &surfaceDataKey,
  				                      data.forget().drop(),
@@ -221,8 +241,10 @@ GfxPatternToCairoPattern(const Pattern& aPattern, Float aAlpha)
                                         pattern.mEnd.x, pattern.mEnd.y);
 
       MOZ_ASSERT(pattern.mStops->GetBackendType() == BACKEND_CAIRO);
-      const std::vector<GradientStop>& stops =
-        static_cast<GradientStopsCairo*>(pattern.mStops.get())->GetStops();
+      GradientStopsCairo* cairoStops = static_cast<GradientStopsCairo*>(pattern.mStops.get());
+      cairo_pattern_set_extend(pat, GfxExtendToCairoExtend(cairoStops->GetExtendMode()));
+
+      const std::vector<GradientStop>& stops = cairoStops->GetStops();
       for (size_t i = 0; i < stops.size(); ++i) {
         const GradientStop& stop = stops[i];
         cairo_pattern_add_color_stop_rgba(pat, stop.offset, stop.color.r,
@@ -239,8 +261,11 @@ GfxPatternToCairoPattern(const Pattern& aPattern, Float aAlpha)
       pat = cairo_pattern_create_radial(pattern.mCenter1.x, pattern.mCenter1.y, pattern.mRadius1,
                                         pattern.mCenter2.x, pattern.mCenter2.y, pattern.mRadius2);
 
-      const std::vector<GradientStop>& stops =
-        static_cast<GradientStopsCairo*>(pattern.mStops.get())->GetStops();
+      MOZ_ASSERT(pattern.mStops->GetBackendType() == BACKEND_CAIRO);
+      GradientStopsCairo* cairoStops = static_cast<GradientStopsCairo*>(pattern.mStops.get());
+      cairo_pattern_set_extend(pat, GfxExtendToCairoExtend(cairoStops->GetExtendMode()));
+
+      const std::vector<GradientStop>& stops = cairoStops->GetStops();
       for (size_t i = 0; i < stops.size(); ++i) {
         const GradientStop& stop = stops[i];
         cairo_pattern_add_color_stop_rgba(pat, stop.offset, stop.color.r,
@@ -415,7 +440,7 @@ DrawTargetCairo::DrawSurfaceWithShadow(SourceSurface *aSurface,
 
   WillChange();
   ClearSurfaceForUnboundedSource(aOperator);
-  
+
   cairo_save(mContext);
   cairo_set_operator(mContext, GfxOpToCairoOp(aOperator));
   cairo_identity_matrix(mContext);
@@ -710,9 +735,11 @@ DrawTargetCairo::ClearSurfaceForUnboundedSource(const CompositionOp &aOperator)
 
 
 TemporaryRef<GradientStops>
-DrawTargetCairo::CreateGradientStops(GradientStop *aStops, uint32_t aNumStops, ExtendMode aExtendMode) const
+DrawTargetCairo::CreateGradientStops(GradientStop *aStops, uint32_t aNumStops,
+                                     ExtendMode aExtendMode) const
 {
-  RefPtr<GradientStopsCairo> stops = new GradientStopsCairo(aStops, aNumStops);
+  RefPtr<GradientStopsCairo> stops = new GradientStopsCairo(aStops, aNumStops,
+                                                            aExtendMode);
   return stops;
 }
 
@@ -728,6 +755,13 @@ CopyDataToCairoSurface(cairo_surface_t* aSurface,
                        int32_t aPixelWidth)
 {
   unsigned char* surfData = cairo_image_surface_get_data(aSurface);
+  // In certain scenarios, requesting larger than 8k image fails.  Bug 803568
+  // covers the details of how to run into it, but the full detailed
+  // investigation hasn't been done to determine the underlying cause.  We
+  // will just handle the failure to allocate the surface to avoid a crash.
+  if (!surfData) {
+    return;
+  }
   for (int32_t y = 0; y < aSize.height; ++y) {
     memcpy(surfData + y * aSize.width * aPixelWidth,
            aData + y * aStride,
@@ -745,8 +779,16 @@ DrawTargetCairo::CreateSourceSurfaceFromData(unsigned char *aData,
   cairo_surface_t* surf = cairo_image_surface_create(GfxFormatToCairoFormat(aFormat),
                                                      aSize.width,
                                                      aSize.height);
+  // In certain scenarios, requesting larger than 8k image fails.  Bug 803568
+  // covers the details of how to run into it, but the full detailed
+  // investigation hasn't been done to determine the underlying cause.  We
+  // will just handle the failure to allocate the surface to avoid a crash.
+  if (cairo_surface_status(surf)) {
+    return nullptr;
+  }
+
   CopyDataToCairoSurface(surf, aData, aSize, aStride, BytesPerPixel(aFormat));
-    
+
   RefPtr<SourceSurfaceCairo> source_surf = new SourceSurfaceCairo(surf, aSize, aFormat);
   cairo_surface_destroy(surf);
 

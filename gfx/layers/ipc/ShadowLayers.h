@@ -14,6 +14,7 @@
 #include "ImageLayers.h"
 #include "mozilla/ipc/SharedMemory.h"
 #include "mozilla/WidgetUtils.h"
+#include "mozilla/dom/ScreenOrientation.h"
 
 class gfxSharedImageSurface;
 
@@ -23,7 +24,6 @@ namespace gl {
 class GLContext;
 class TextureImage;
 }
-using namespace gl;
 
 namespace layers {
 
@@ -117,7 +117,9 @@ public:
    * ShadowLayerManager.
    */
   void BeginTransaction(const nsIntRect& aTargetBounds,
-                        ScreenRotation aRotation);
+                        ScreenRotation aRotation,
+                        const nsIntRect& aClientBounds,
+                        mozilla::dom::ScreenOrientation aOrientation);
 
   /**
    * The following methods may only be called after BeginTransaction()
@@ -416,8 +418,8 @@ public:
    * underlying surface supports direct texturing, a non-null
    * TextureImage is returned.  Otherwise null is returned.
    */
-  static already_AddRefed<TextureImage>
-  OpenDescriptorForDirectTexturing(GLContext* aContext,
+  static already_AddRefed<gl::TextureImage>
+  OpenDescriptorForDirectTexturing(gl::GLContext* aContext,
                                    const SurfaceDescriptor& aDescriptor,
                                    GLenum aWrapMode);
 

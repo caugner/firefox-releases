@@ -18,14 +18,9 @@ let log =
   function log_dump(msg) { dump("UpdatePrompt: "+ msg +"\n"); } :
   function log_noop(msg) { };
 
-const APPLY_PROMPT_TIMEOUT =
-      Services.prefs.getIntPref("b2g.update.apply-prompt-timeout");
-const APPLY_IDLE_TIMEOUT =
-      Services.prefs.getIntPref("b2g.update.apply-idle-timeout");
-const SELF_DESTRUCT_TIMEOUT =
-      Services.prefs.getIntPref("b2g.update.self-destruct-timeout");
+const PREF_APPLY_PROMPT_TIMEOUT = "b2g.update.apply-prompt-timeout";
+const PREF_APPLY_IDLE_TIMEOUT   = "b2g.update.apply-idle-timeout";
 
-const APPLY_IDLE_TIMEOUT_SECONDS = APPLY_IDLE_TIMEOUT / 1000;
 const NETWORK_ERROR_OFFLINE = 111;
 
 XPCOMUtils.defineLazyServiceGetter(Services, "aus",
@@ -108,6 +103,14 @@ UpdatePrompt.prototype = {
   _waitingForIdle: false,
   _updateCheckListner: null,
 
+  get applyPromptTimeout() {
+    return Services.prefs.getIntPref(PREF_APPLY_PROMPT_TIMEOUT);
+  },
+
+  get applyIdleTimeout() {
+    return Services.prefs.getIntPref(PREF_APPLY_IDLE_TIMEOUT);
+  },
+
   // nsIUpdatePrompt
 
   // FIXME/bug 737601: we should have users opt-in to downloading
@@ -130,14 +133,15 @@ UpdatePrompt.prototype = {
     // update quietly without user intervention.
     this.sendUpdateEvent("update-downloaded", aUpdate);
 
-    if (Services.idle.idleTime >= APPLY_IDLE_TIMEOUT) {
+    if (Services.idle.idleTime >= this.applyIdleTimeout) {
       this.showApplyPrompt(aUpdate);
       return;
     }
 
+    let applyIdleTimeoutSeconds = this.applyIdleTimeout / 1000;
     // We haven't been idle long enough, so register an observer
     log("Update is ready to apply, registering idle timeout of " +
-        APPLY_IDLE_TIMEOUT_SECONDS + " seconds before prompting.");
+        applyIdleTimeoutSeconds + " seconds before prompting.");
 
     this._update = aUpdate;
     this.waitForIdle();
@@ -152,7 +156,10 @@ UpdatePrompt.prototype = {
   },
 
   showUpdateHistory: function UP_showUpdateHistory(aParent) { },
-  showUpdateInstalled: function UP_showUpdateInstalled() { },
+  showUpdateInstalled: function UP_showUpdateInstalled() {
+    let lock = Services.settings.createLock();
+    lock.set("deviceinfo.last_updated", Date.now(), null, null);
+  },
 
   // Custom functions
 
@@ -162,7 +169,7 @@ UpdatePrompt.prototype = {
     }
 
     this._waitingForIdle = true;
-    Services.idle.addIdleObserver(this, APPLY_IDLE_TIMEOUT_SECONDS);
+    Services.idle.addIdleObserver(this, this.applyIdleTimeout / 1000);
     Services.obs.addObserver(this, "quit-application", false);
   },
 
@@ -182,18 +189,18 @@ UpdatePrompt.prototype = {
 
     // Schedule a fallback timeout in case the UI is unable to respond or show
     // a prompt for some reason.
-    this._applyPromptTimer = this.createTimer(APPLY_PROMPT_TIMEOUT);
+    this._applyPromptTimer = this.createTimer(this.applyPromptTimeout);
   },
 
+  _copyProperties: ["appVersion", "buildID", "detailsURL", "displayVersion",
+                    "errorCode", "isOSUpdate", "platformVersion",
+                    "previousAppVersion", "state", "statusText"],
+
   sendUpdateEvent: function UP_sendUpdateEvent(aType, aUpdate) {
-    let detail = {
-      displayVersion: aUpdate.displayVersion,
-      detailsURL: aUpdate.detailsURL,
-      statusText: aUpdate.statusText,
-      state: aUpdate.state,
-      errorCode: aUpdate.errorCode,
-      isOSUpdate: aUpdate.isOSUpdate
-    };
+    let detail = {};
+    for each (let property in this._copyProperties) {
+      detail[property] = aUpdate[property];
+    }
 
     let patch = aUpdate.selectedPatch;
     if (!patch && aUpdate.patchCount > 0) {
@@ -257,8 +264,21 @@ UpdatePrompt.prototype = {
   },
 
   downloadUpdate: function UP_downloadUpdate(aUpdate) {
+    if (!aUpdate) {
+      aUpdate = Services.um.activeUpdate;
+      if (!aUpdate) {
+        log("No active update found to download");
+        return;
+      }
+    }
+
     Services.aus.downloadUpdate(aUpdate, true);
     Services.aus.addDownloadListener(this);
+  },
+
+  handleDownloadCancel: function UP_handleDownloadCancel() {
+    log("Pausing download");
+    Services.aus.pauseDownload();
   },
 
   finishUpdate: function UP_finishUpdate() {
@@ -344,6 +364,9 @@ UpdatePrompt.prototype = {
         this.handleAvailableResult(detail);
         this._update = null;
         break;
+      case "update-download-cancel":
+        this.handleDownloadCancel();
+        break;
       case "update-prompt-apply-result":
         this.handleApplyPromptResult(detail);
         break;
@@ -410,7 +433,7 @@ UpdatePrompt.prototype = {
         this.showApplyPrompt(this._update);
         // Fall through
       case "quit-application":
-        Services.idle.removeIdleObserver(this, APPLY_IDLE_TIMEOUT_SECONDS);
+        Services.idle.removeIdleObserver(this, this.applyIdleTimeout / 1000);
         Services.obs.removeObserver(this, "quit-application");
         break;
       case "update-check-start":

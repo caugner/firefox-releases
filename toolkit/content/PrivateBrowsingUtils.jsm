@@ -4,6 +4,15 @@
 
 this.EXPORTED_SYMBOLS = ["PrivateBrowsingUtils"];
 
+Components.utils.import("resource://gre/modules/Services.jsm");
+
+const kAutoStartPref = "browser.privatebrowsing.autostart";
+
+// This will be set to true when the PB mode is autostarted from the command
+// line for the current session.
+let gTemporaryAutoStartMode = false;
+
+const Cc = Components.classes;
 const Ci = Components.interfaces;
 
 this.PrivateBrowsingUtils = {
@@ -15,5 +24,45 @@ this.PrivateBrowsingUtils = {
     return aWindow.QueryInterface(Ci.nsIInterfaceRequestor)
                   .getInterface(Ci.nsIWebNavigation)
                   .QueryInterface(Ci.nsILoadContext);
+  },
+
+  get permanentPrivateBrowsing() {
+#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
+    return gTemporaryAutoStartMode ||
+           Services.prefs.getBoolPref(kAutoStartPref, false);
+#else
+    try {
+      return Cc["@mozilla.org/privatebrowsing;1"].
+             getService(Ci.nsIPrivateBrowsingService).
+             autoStarted;
+    } catch (e) {
+      return false; // PB not supported
+    }
+#endif
+  },
+
+  // These should only be used from internal code
+  enterTemporaryAutoStartMode: function pbu_enterTemporaryAutoStartMode() {
+    gTemporaryAutoStartMode = true;
+  },
+  get isInTemporaryAutoStartMode() {
+    return gTemporaryAutoStartMode;
   }
 };
+
+#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
+function autoStartObserver(aSubject, aTopic, aData) {
+  var newValue = Services.prefs.getBoolPref(kAutoStartPref);
+  var windowsEnum = Services.wm.getEnumerator(null);
+  while (windowsEnum.hasMoreElements()) {
+    var window = windowsEnum.getNext();
+    window.QueryInterface(Ci.nsIInterfaceRequestor)
+          .getInterface(Ci.nsIWebNavigation)
+          .QueryInterface(Ci.nsILoadContext)
+          .usePrivateBrowsing = newValue;
+  }
+}
+
+Services.prefs.addObserver(kAutoStartPref, autoStartObserver, false);
+#endif
+

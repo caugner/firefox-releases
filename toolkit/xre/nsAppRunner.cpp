@@ -25,6 +25,7 @@
 
 #include "mozilla/Util.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Likely.h"
 
 #include "nsAppRunner.h"
 #include "mozilla/AppData.h"
@@ -90,16 +91,21 @@
 #include "nsIWidget.h"
 #include "nsIDocShell.h"
 #include "nsAppShellCID.h"
+#include "mozilla/scache/StartupCache.h"
 
 #include "mozilla/unused.h"
 
 using namespace mozilla;
 using mozilla::unused;
+using mozilla::scache::StartupCache;
 
 #ifdef XP_WIN
 #include "nsIWinAppHelper.h"
 #include <windows.h>
 #include "cairo/cairo-features.h"
+#ifdef MOZ_METRO
+#include <roapi.h>
+#endif
 
 #ifndef PROCESS_DEP_ENABLE
 #define PROCESS_DEP_ENABLE 0x1
@@ -128,8 +134,14 @@ using mozilla::unused;
 #include "nsINIParser.h"
 #include "mozilla/Omnijar.h"
 #include "mozilla/StartupTimeline.h"
+#include "mozilla/mozPoisonWrite.h"
 
 #include <stdlib.h>
+
+// for old system jemalloc version check
+#if !defined(MOZ_MEMORY) && defined(__NetBSD__)
+#include <sys/param.h>
+#endif
 
 #ifdef XP_UNIX
 #include <sys/stat.h>
@@ -1056,9 +1068,9 @@ bool gLogConsoleErrors
 
 #define NS_ENSURE_TRUE_LOG(x, ret)               \
   PR_BEGIN_MACRO                                 \
-  if (NS_UNLIKELY(!(x))) {                       \
+  if (MOZ_UNLIKELY(!(x))) {                      \
     NS_WARNING("NS_ENSURE_TRUE(" #x ") failed"); \
-    gLogConsoleErrors = true;                 \
+    gLogConsoleErrors = true;                    \
     return ret;                                  \
   }                                              \
   PR_END_MACRO
@@ -1735,6 +1747,11 @@ ProfileLockedDialog(nsIFile* aProfileDir, nsIFile* aProfileLocalDir,
     NS_ENSURE_TRUE(ps, NS_ERROR_FAILURE);
 
     if (aUnlocker) {
+      int32_t button;
+#ifdef MOZ_WIDGET_ANDROID
+      mozilla::AndroidBridge::Bridge()->KillAnyZombies();
+      button = 1;
+#else
       const uint32_t flags =
         (nsIPromptService::BUTTON_TITLE_CANCEL * 
          nsIPromptService::BUTTON_POS_0) +
@@ -1742,14 +1759,10 @@ ProfileLockedDialog(nsIFile* aProfileDir, nsIFile* aProfileLocalDir,
          nsIPromptService::BUTTON_POS_1) +
         nsIPromptService::BUTTON_POS_1_DEFAULT;
 
-      int32_t button;
       // The actual value is irrelevant but we shouldn't be handing out
       // malformed JSBools to XPConnect.
       bool checkState = false;
-#ifdef MOZ_WIDGET_ANDROID
-      mozilla::AndroidBridge::Bridge()->KillAnyZombies();
-      button = 1;
-#else
+
       rv = ps->ConfirmEx(nullptr, killTitle, killMessage, flags,
                          killTitle, nullptr, nullptr, nullptr, 
                          &checkState, &button);
@@ -2399,7 +2412,7 @@ static void BuildVersion(nsCString &aBuf)
 static void
 WriteVersion(nsIFile* aProfileDir, const nsCString& aVersion,
              const nsCString& aOSABI, nsIFile* aXULRunnerDir,
-             nsIFile* aAppDir)
+             nsIFile* aAppDir, bool invalidateCache)
 {
   nsCOMPtr<nsIFile> file;
   aProfileDir->Clone(getter_AddRefs(file));
@@ -2442,19 +2455,30 @@ WriteVersion(nsIFile* aProfileDir, const nsCString& aVersion,
     PR_Write(fd, appDir.get(), appDir.Length());
   }
 
+  static const char kInvalidationHeader[] = "InvalidateCaches=1" NS_LINEBREAK;
+  if (invalidateCache)
+    PR_Write(fd, kInvalidationHeader, sizeof(kInvalidationHeader) - 1);
+
   static const char kNL[] = NS_LINEBREAK;
   PR_Write(fd, kNL, sizeof(kNL) - 1);
 
   PR_Close(fd);
 }
 
-static void RemoveComponentRegistries(nsIFile* aProfileDir, nsIFile* aLocalProfileDir,
+/**
+ * Returns true if the startup cache file was successfully removed.
+ * Returns false if file->Clone fails at any point (OOM) or if unable
+ * to remove the startup cache file. Note in particular the return value
+ * is unaffected by a failure to remove extensions.ini
+ */
+static bool
+RemoveComponentRegistries(nsIFile* aProfileDir, nsIFile* aLocalProfileDir,
                                       bool aRemoveEMFiles)
 {
   nsCOMPtr<nsIFile> file;
   aProfileDir->Clone(getter_AddRefs(file));
   if (!file)
-    return;
+    return false;
 
   if (aRemoveEMFiles) {
     file->SetNativeLeafName(NS_LITERAL_CSTRING("extensions.ini"));
@@ -2463,7 +2487,7 @@ static void RemoveComponentRegistries(nsIFile* aProfileDir, nsIFile* aLocalProfi
 
   aLocalProfileDir->Clone(getter_AddRefs(file));
   if (!file)
-    return;
+    return false;
 
 #if defined(XP_UNIX) || defined(XP_BEOS)
 #define PLATFORM_FASL_SUFFIX ".mfasl"
@@ -2478,7 +2502,8 @@ static void RemoveComponentRegistries(nsIFile* aProfileDir, nsIFile* aLocalProfi
   file->Remove(false);
 
   file->SetNativeLeafName(NS_LITERAL_CSTRING("startupCache"));
-  file->Remove(true);
+  nsresult rv = file->Remove(true);
+  return NS_SUCCEEDED(rv) || rv == NS_ERROR_FILE_TARGET_DOES_NOT_EXIST;
 }
 
 // To support application initiated restart via nsIAppStartup.quit, we
@@ -3526,21 +3551,22 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
   // profile in different builds the component registry must be
   // re-generated to prevent mysterious component loading failures.
   //
+  bool startupCacheValid = true;
   if (gSafeMode) {
-    RemoveComponentRegistries(mProfD, mProfLD, false);
+    startupCacheValid = RemoveComponentRegistries(mProfD, mProfLD, false);
     WriteVersion(mProfD, NS_LITERAL_CSTRING("Safe Mode"), osABI,
-                 mDirProvider.GetGREDir(), mAppData->directory);
+                 mDirProvider.GetGREDir(), mAppData->directory, !startupCacheValid);
   }
   else if (versionOK) {
     if (!cachesOK) {
       // Remove caches, forcing component re-registration.
       // The new list of additional components directories is derived from
       // information in "extensions.ini".
-      RemoveComponentRegistries(mProfD, mProfLD, false);
+      startupCacheValid = RemoveComponentRegistries(mProfD, mProfLD, false);
         
       // Rewrite compatibility.ini to remove the flag
       WriteVersion(mProfD, version, osABI,
-                   mDirProvider.GetGREDir(), mAppData->directory);
+                   mDirProvider.GetGREDir(), mAppData->directory, !startupCacheValid);
     }
     // Nothing need be done for the normal startup case.
   }
@@ -3548,12 +3574,15 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
     // Remove caches, forcing component re-registration
     // with the default set of components (this disables any potentially
     // troublesome incompatible XPCOM components). 
-    RemoveComponentRegistries(mProfD, mProfLD, true);
+    startupCacheValid = RemoveComponentRegistries(mProfD, mProfLD, true);
 
     // Write out version
     WriteVersion(mProfD, version, osABI,
-                 mDirProvider.GetGREDir(), mAppData->directory);
+                 mDirProvider.GetGREDir(), mAppData->directory, !startupCacheValid);
   }
+
+  if (!startupCacheValid)
+    StartupCache::IgnoreDiskCache();
 
   if (flagFile) {
     flagFile->Remove(true);
@@ -3826,7 +3855,8 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
   ScopedLogging log;
 
 #if defined(MOZ_WIDGET_GTK)
-#ifdef MOZ_MEMORY
+#if defined(MOZ_MEMORY) || defined(__FreeBSD__) \
+  || defined(__NetBSD__) && __NetBSD_Version__ >= 500000000
   // Disable the slice allocator, since jemalloc already uses similar layout
   // algorithms, and using a sub-allocator tends to increase fragmentation.
   // This must be done before g_thread_init() is called.
@@ -3867,6 +3897,10 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
   // corresponds to nsIAppStartup.quit(eRestart)
   if (rv == NS_SUCCESS_RESTART_APP) {
     appInitiatedRestart = true;
+  } else {
+    // We will have a real shutdown, let ShutdownXPCOM poison writes to
+    // find any late ones.
+    mozilla::EnableWritePoisoning();
   }
 
   if (!mShuttingDown) {
@@ -3928,13 +3962,149 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
   return NS_FAILED(rv) ? 1 : 0;
 }
 
+#if defined(MOZ_METRO) && defined(XP_WIN)
+extern bool XRE_MetroCoreApplicationRun();
+static XREMain* xreMainPtr;
+
+// must be called by the thread we want as the main thread
+nsresult
+XRE_metroStartup()
+{
+  nsresult rv;
+
+  bool exit = false;
+  if (xreMainPtr->XRE_mainStartup(&exit) != 0 || exit)
+    return NS_ERROR_FAILURE;
+
+  // Start the real application
+  xreMainPtr->mScopedXPCom = new ScopedXPCOMStartup();
+  if (!xreMainPtr->mScopedXPCom)
+    return NS_ERROR_FAILURE;
+
+  rv = xreMainPtr->mScopedXPCom->Initialize();
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = xreMainPtr->XRE_mainRun();
+  NS_ENSURE_SUCCESS(rv, rv);
+  return NS_OK;
+}
+
+void
+XRE_metroShutdown()
+{
+  delete xreMainPtr->mScopedXPCom;
+  xreMainPtr->mScopedXPCom = nullptr;
+
+#ifdef MOZ_INSTRUMENT_EVENT_LOOP
+  mozilla::ShutdownEventTracing();
+#endif
+
+  // unlock the profile after ScopedXPCOMStartup object (xpcom) 
+  // has gone out of scope.  see bug #386739 for more details
+  xreMainPtr->mProfileLock->Unlock();
+  gProfileLock = nullptr;
+
+#ifdef MOZ_CRASHREPORTER
+  if (xreMainPtr->mAppData->flags & NS_XRE_ENABLE_CRASH_REPORTER)
+      CrashReporter::UnsetExceptionHandler();
+#endif
+
+  XRE_DeinitCommandLine();
+}
+
+class WinRTInitWrapper
+{
+public:
+  WinRTInitWrapper() {
+    mResult = ::RoInitialize(RO_INIT_MULTITHREADED);
+  }
+  ~WinRTInitWrapper() {
+    if (SUCCEEDED(mResult)) {
+      ::RoUninitialize();
+    }
+  }
+  HRESULT mResult;
+};
+
+int
+XRE_mainMetro(int argc, char* argv[], const nsXREAppData* aAppData)
+{
+  SAMPLER_INIT();
+  SAMPLE_LABEL("Startup", "XRE_Main");
+
+  nsresult rv = NS_OK;
+
+  xreMainPtr = new XREMain();
+  if (!xreMainPtr) {
+    return 1;
+  }
+
+  // Inits Winrt and COM underneath it.
+  WinRTInitWrapper wrap;
+
+  gArgc = argc;
+  gArgv = argv;
+
+  NS_ENSURE_TRUE(aAppData, 2);
+
+  xreMainPtr->mAppData = new ScopedAppData(aAppData);
+  if (!xreMainPtr->mAppData)
+    return 1;
+  // used throughout this file
+  gAppData = xreMainPtr->mAppData;
+
+  ScopedLogging log;
+
+  // init
+  bool exit = false;
+  if (xreMainPtr->XRE_mainInit(aAppData, &exit) != 0 || exit)
+    return 1;
+
+  // Located in widget, will call back into XRE_metroStartup and
+  // XRE_metroShutdown above.
+  if (!XRE_MetroCoreApplicationRun()) {
+    return 1;
+  }
+
+  // XRE_metroShutdown should have already been called on the worker
+  // thread that called XRE_metroStartup.
+  NS_ASSERTION(!xreMainPtr->mScopedXPCom,
+               "XPCOM Shutdown hasn't occured, and we are exiting.");
+  return 0;
+}
+
+void SetWindowsEnvironment(WindowsEnvironmentType aEnvID);
+#endif // MOZ_METRO || !defined(XP_WIN)
+
 int
 XRE_main(int argc, char* argv[], const nsXREAppData* aAppData, uint32_t aFlags)
 {
+#if !defined(MOZ_METRO) || !defined(XP_WIN)
   XREMain main;
   int result = main.XRE_main(argc, argv, aAppData);
   mozilla::RecordShutdownEndTimeStamp();
   return result;
+#else
+  if (aFlags == XRE_MAIN_FLAG_USE_METRO) {
+    SetWindowsEnvironment(WindowsEnvironmentType_Metro);
+  }
+
+  // Desktop
+  if (XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Desktop) {
+    XREMain main;
+    int result = main.XRE_main(argc, argv, aAppData);
+    mozilla::RecordShutdownEndTimeStamp();
+    return result;
+  }
+
+  // Metro
+  NS_ASSERTION(XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Metro,
+               "Unknown Windows environment");
+
+  int result = XRE_mainMetro(argc, argv, aAppData);
+  mozilla::RecordShutdownEndTimeStamp();
+  return result;
+#endif // MOZ_METRO || !defined(XP_WIN)
 }
 
 nsresult

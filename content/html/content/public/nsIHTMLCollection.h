@@ -14,12 +14,16 @@ struct JSObject;
 class nsINode;
 namespace mozilla {
 class ErrorResult;
-}
+
+namespace dom {
+class Element;
+} // namespace dom
+} // namespace mozilla
 
 // IID for the nsIHTMLCollection interface
 #define NS_IHTMLCOLLECTION_IID \
-{ 0x5c6012c3, 0xa816, 0x4f28, \
- { 0xab, 0x93, 0xe9, 0x8a, 0x36, 0x16, 0x88, 0xf2 } }
+{ 0x5643235d, 0x9a72, 0x4b6a, \
+ { 0xa6, 0x0c, 0x64, 0x63, 0x72, 0xb7, 0x53, 0x4a } }
 
 /**
  * An internal interface
@@ -43,13 +47,14 @@ public:
     GetLength(&length);
     return length;
   }
-  nsGenericElement* Item(uint32_t index)
+  virtual mozilla::dom::Element* GetElementAt(uint32_t index) = 0;
+  mozilla::dom::Element* Item(uint32_t index)
   {
     return GetElementAt(index);
   }
-  nsGenericElement* IndexedGetter(uint32_t index, bool& aFound)
+  mozilla::dom::Element* IndexedGetter(uint32_t index, bool& aFound)
   {
-    nsGenericElement* item = Item(index);
+    mozilla::dom::Element* item = Item(index);
     aFound = !!item;
     return item;
   }
@@ -62,6 +67,17 @@ public:
     found = !!namedItem;
     return namedItem;
   }
+
+  virtual void GetSupportedNames(nsTArray<nsString>& aNames) = 0;
+
+  JSObject* GetWrapper()
+  {
+    nsWrapperCache* cache;
+    CallQueryInterface(this, &cache);
+    return cache->GetWrapper();
+  }
+  virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
+                               bool *triedToWrap) = 0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIHTMLCollection, NS_IHTMLCOLLECTION_IID)

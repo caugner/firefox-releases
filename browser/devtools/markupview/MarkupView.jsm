@@ -868,7 +868,11 @@ function ElementEditor(aContainer, aNode)
         return;
       }
 
-      this._applyAttributes(aVal);
+      try {
+        this._applyAttributes(aVal);
+      } catch (x) {
+        return;
+      }
     }.bind(this)
   });
 
@@ -963,11 +967,16 @@ ElementEditor.prototype = {
           this.undo.startBatch();
 
           // Remove the attribute stored in this editor and re-add any attributes
-          // parsed out of the input element.
-          this._removeAttribute(this.node, aAttr.name)
-          this._applyAttributes(aVal, attr);
-
-          this.undo.endBatch();
+          // parsed out of the input element. Restore original attribute if
+          // parsing fails.
+          this._removeAttribute(this.node, aAttr.name);
+          try {
+            this._applyAttributes(aVal, attr);
+            this.undo.endBatch();
+          } catch (e) {
+            this.undo.endBatch();
+            this.undo.undo();
+          }
         }.bind(this)
       });
 
@@ -988,6 +997,7 @@ ElementEditor.prototype = {
    * @param Element aAttrNode the attribute editor that created this
    *        set of attributes, used to place new attributes where the
    *        user put them.
+   * @throws SYNTAX_ERR if aValue is not well-formed.
    */
   _applyAttributes: function EE__applyAttributes(aValue, aAttrNode)
   {
@@ -997,6 +1007,7 @@ ElementEditor.prototype = {
     let parseTag = (this.node.namespaceURI.match(/svg/i) ? "svg" :
                    (this.node.namespaceURI.match(/mathml/i) ? "math" : "div"));
     let parseText = "<" + parseTag + " " + aValue + "/>";
+    // Throws exception if parseText is not well-formed.
     dummyNode.innerHTML = parseText;
     let parsedNode = dummyNode.firstChild;
 

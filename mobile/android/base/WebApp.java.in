@@ -88,6 +88,12 @@ public class WebApp extends GeckoApp {
         }
     }
 
+    @Override
+    protected void initializeChrome(String uri, boolean isExternalURL) {
+        super.initializeChrome(uri, isExternalURL);
+        Tabs.getInstance().loadUrl(uri, Tabs.LOADURL_NEW_TAB | Tabs.LOADURL_USER_ENTERED | Tabs.LOADURL_PINNED);
+    }
+
     private void showSplash() {
         mSplashscreen = (RelativeLayout) findViewById(R.id.splashscreen);
 
@@ -182,6 +188,11 @@ public class WebApp extends GeckoApp {
         return true;
     }
 #endif
+
+    @Override
+    protected boolean shouldRestoreSession() {
+      return false;
+    }
 
     @Override
     public void onTabChanged(Tab tab, Tabs.TabEvents msg, Object data) {

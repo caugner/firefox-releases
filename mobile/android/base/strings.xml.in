@@ -77,7 +77,12 @@
   <string name="pref_do_not_track">&pref_do_not_track;</string>
   <string name="pref_telemetry">&pref_telemetry;</string>
   <string name="pref_remember_signons">&pref_remember_signons;</string>
-  <string name="pref_cookies">&pref_cookies;</string>
+
+  <string name="pref_cookies_menu">&pref_cookies_menu;</string>
+  <string name="pref_cookies_accept_all">&pref_cookies_accept_all;</string>
+  <string name="pref_cookies_not_accept_foreign">&pref_cookies_not_accept_foreign;</string>
+  <string name="pref_cookies_disabled">&pref_cookies_disabled;</string>
+
   <string name="pref_char_encoding">&pref_char_encoding;</string>
   <string name="pref_char_encoding_on">&pref_char_encoding_on;</string>
   <string name="pref_char_encoding_off">&pref_char_encoding_off;</string>
@@ -95,6 +100,7 @@
   <string name="pref_font_size_set">&pref_font_size_set;</string>
   <string name="pref_font_size_adjust_char">&pref_font_size_adjust_char;</string>
   <string name="pref_font_size_preview_text">&pref_font_size_preview_text;</string>
+  <string name="pref_reflow_on_zoom">&pref_reflow_on_zoom2;</string>
   <string name="pref_show_product_announcements">&pref_show_product_announcements;</string>
   <string name="pref_sync">&pref_sync;</string>
   <string name="pref_search_suggestions">&pref_search_suggestions;</string>
@@ -106,6 +112,10 @@
   <string name="pref_private_data_offlineApps">&pref_private_data_offlineApps;</string>
   <string name="pref_private_data_siteSettings">&pref_private_data_siteSettings;</string>
   <string name="pref_import_android">&pref_import_android;</string>
+  <string name="pref_update_autodownload">&pref_update_autodownload;</string>
+  <string name="pref_update_autodownload_wifi">&pref_update_autodownload_wifi;</string>
+  <string name="pref_update_autodownload_disabled">&pref_update_autodownload_disabled;</string>
+  <string name="pref_update_autodownload_enabled">&pref_update_autodownload_enabled;</string>
 
   <string name="go">&go;</string>
   <string name="search">&search;</string>
@@ -124,6 +134,7 @@
   <string name="downloads">&downloads;</string>
   <string name="apps">&apps;</string>
   <string name="char_encoding">&char_encoding;</string>
+  <string name="new_pb_tab">&new_pb_tab;</string>
   <!-- This string only appears in developer builds, which
        is why it is not localizable. -->
   <string name="toggle_profiling">Toggle Profiling</string>
@@ -176,7 +187,6 @@
   <string name="abouthome_last_tabs_title">&abouthome_last_tabs_title;</string>
   <string name="abouthome_last_tabs_open">&abouthome_last_tabs_open;</string>
   <string name="abouthome_top_sites_title">&abouthome_top_sites_title;</string>
-  <string name="abouthome_top_sites_browse">&abouthome_top_sites_browse;</string>
   <string name="abouthome_about_sync">&abouthome_about_sync3;</string>
   <string name="abouthome_about_apps">&abouthome_about_apps3;</string>
   <string name="abouthome_sync_bold_name">&abouthome_sync_bold_name;</string>
@@ -196,7 +206,7 @@
   <string name="bookmarkdefaults_url_addons">https://addons.mozilla.org/@AB_CD@/android/</string>
 
   <string name="bookmarkdefaults_title_support">@bookmarks_support@</string>
-  <string name="bookmarkdefaults_url_support">http://support.mozilla.org/@AB_CD@/mobile</string>
+  <string name="bookmarkdefaults_url_support">http://support.mozilla.org/@AB_CD@/products/mobile</string>
 
   <string name="bookmarkdefaults_title_abouthome">@bookmarks_aboutHome@</string>
   <string name="bookmarkdefaults_url_abouthome">about:home</string>

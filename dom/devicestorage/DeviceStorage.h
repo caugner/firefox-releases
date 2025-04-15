@@ -11,8 +11,6 @@
 #include "nsIObserver.h"
 #include "nsDOMEventTargetHelper.h"
 
-class nsIInputStream;
-
 class DeviceStorageFile MOZ_FINAL
   : public nsISupports {
 public:

@@ -43,7 +43,6 @@ public:
   NS_IMETHOD  RemoveFrame(ChildListID     aListID,
                           nsIFrame*       aOldFrame);
 
-  virtual void DestroyFrom(nsIFrame* aDestructRoot);
   virtual nscoord GetMinWidth(nsRenderingContext *aRenderingContext);  
   virtual nscoord GetPrefWidth(nsRenderingContext *aRenderingContext);
 
@@ -156,10 +155,7 @@ nsIFrame*
 NS_NewColumnSetFrame(nsIPresShell* aPresShell, nsStyleContext* aContext, uint32_t aStateFlags)
 {
   nsColumnSetFrame* it = new (aPresShell) nsColumnSetFrame(aContext);
-  if (it) {
-    it->AddStateBits(aStateFlags | NS_BLOCK_MARGIN_ROOT);
-  }
-
+  it->AddStateBits(aStateFlags | NS_BLOCK_MARGIN_ROOT);
   return it;
 }
 
@@ -169,13 +165,6 @@ nsColumnSetFrame::nsColumnSetFrame(nsStyleContext* aContext)
   : nsContainerFrame(aContext), mLastBalanceHeight(NS_INTRINSICSIZE),
     mLastFrameStatus(NS_FRAME_COMPLETE)
 {
-}
-
-void
-nsColumnSetFrame::DestroyFrom(nsIFrame* aDestructRoot)
-{
-  DestroyAbsoluteFrames(aDestructRoot);
-  nsContainerFrame::DestroyFrom(aDestructRoot);
 }
 
 nsIAtom*
@@ -325,21 +314,26 @@ nsColumnSetFrame::ChooseColumnStrategy(const nsHTMLReflowState& aReflowState)
   nscoord colHeight = GetAvailableContentHeight(aReflowState);
   if (aReflowState.ComputedHeight() != NS_INTRINSICSIZE) {
     colHeight = aReflowState.ComputedHeight();
+  } else if (aReflowState.mComputedMaxHeight != NS_INTRINSICSIZE) {
+    colHeight = aReflowState.mComputedMaxHeight;
   }
 
   nscoord colGap = GetColumnGap(this, colStyle);
   int32_t numColumns = colStyle->mColumnCount;
 
-  const uint32_t MAX_NESTED_COLUMN_BALANCING = 2;
-  uint32_t cnt = 1;
-  for (const nsHTMLReflowState* rs = aReflowState.parentReflowState; rs && cnt
-    < MAX_NESTED_COLUMN_BALANCING; rs = rs->parentReflowState) {
-    if (rs->mFlags.mIsColumnBalancing) {
-      ++cnt;
+  const bool isBalancing = aReflowState.ComputedHeight() == NS_INTRINSICSIZE;
+  if (isBalancing) {
+    const uint32_t MAX_NESTED_COLUMN_BALANCING = 2;
+    uint32_t cnt = 0;
+    for (const nsHTMLReflowState* rs = aReflowState.parentReflowState;
+         rs && cnt < MAX_NESTED_COLUMN_BALANCING; rs = rs->parentReflowState) {
+      if (rs->mFlags.mIsColumnBalancing) {
+        ++cnt;
+      }
     }
-  }
-  if (cnt == MAX_NESTED_COLUMN_BALANCING) {
-    numColumns = 1;
+    if (cnt == MAX_NESTED_COLUMN_BALANCING) {
+      numColumns = 1;
+    }
   }
 
   nscoord colWidth;
@@ -394,16 +388,14 @@ nsColumnSetFrame::ChooseColumnStrategy(const nsHTMLReflowState& aReflowState)
     expectedWidthLeftOver = extraSpace - (extraToColumns*numColumns);
   }
 
-  // NOTE that the non-balancing behavior for non-auto computed height
-  // is not in the CSS3 columns draft as of 18 January 2001
-  if (aReflowState.ComputedHeight() == NS_INTRINSICSIZE) {
-    // Balancing!
+  if (isBalancing) {
     if (numColumns <= 0) {
       // Hmm, auto column count, column width or available width is unknown,
       // and balancing is required. Let's just use one column then.
       numColumns = 1;
     }
     colHeight = NS_MIN(mLastBalanceHeight, GetAvailableContentHeight(aReflowState));
+
   } else {
     // No balancing, so don't limit the column count
     numColumns = INT32_MAX;

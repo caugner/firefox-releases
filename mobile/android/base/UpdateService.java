@@ -76,6 +76,7 @@ public class UpdateService extends IntentService {
     private static final String KEY_LAST_HASH_FUNCTION = "UpdateService.lastHashFunction";
     private static final String KEY_LAST_HASH_VALUE = "UpdateService.lastHashValue";
     private static final String KEY_LAST_ATTEMPT_DATE = "UpdateService.lastAttemptDate";
+    private static final String KEY_AUTODOWNLOAD_POLICY = "UpdateService.autoDownloadPolicy";
 
     private SharedPreferences mPrefs;
 
@@ -118,9 +119,17 @@ public class UpdateService extends IntentService {
     @Override
     protected void onHandleIntent (Intent intent) {
         if (UpdateServiceHelper.ACTION_REGISTER_FOR_UPDATES.equals(intent.getAction())) {
+            int policy = intent.getIntExtra(UpdateServiceHelper.EXTRA_AUTODOWNLOAD_NAME, -1);
+            if (policy >= 0) {
+                setAutoDownloadPolicy(policy);
+            }
+
             registerForUpdates(false);
         } else if (UpdateServiceHelper.ACTION_CHECK_FOR_UPDATE.equals(intent.getAction())) {
             startUpdate(intent.getIntExtra(UpdateServiceHelper.EXTRA_UPDATE_FLAGS_NAME, 0));
+        } else if (UpdateServiceHelper.ACTION_DOWNLOAD_UPDATE.equals(intent.getAction())) {
+            // We always want to do the download here
+            startUpdate(UpdateServiceHelper.FLAG_FORCE_DOWNLOAD);
         } else if (UpdateServiceHelper.ACTION_APPLY_UPDATE.equals(intent.getAction())) {
             applyUpdate(intent.getStringExtra(UpdateServiceHelper.EXTRA_PACKAGE_PATH_NAME));
         }
@@ -202,17 +211,29 @@ public class UpdateService extends IntentService {
         Log.i(LOGTAG, "update available, buildID = " + info.buildID);
         
         int connectionType = netInfo.getType();
-        if (!hasFlag(flags, UpdateServiceHelper.FLAG_FORCE_DOWNLOAD) &&
-            connectionType != ConnectivityManager.TYPE_WIFI &&
-            connectionType != ConnectivityManager.TYPE_ETHERNET) {
-            Log.i(LOGTAG, "not connected via wifi or ethernet");
+        int autoDownloadPolicy = getAutoDownloadPolicy();
+
+
+        /**
+         * We only start a download automatically if one of following criteria are met:
+         *
+         * - We have a FORCE_DOWNLOAD flag passed in
+         * - The preference is set to 'always'
+         * - The preference is set to 'wifi' and we are actually using wifi (or regular ethernet)
+         */
+        boolean shouldStartDownload = hasFlag(flags, UpdateServiceHelper.FLAG_FORCE_DOWNLOAD) ||
+            autoDownloadPolicy == UpdateServiceHelper.AUTODOWNLOAD_ENABLED ||
+            (autoDownloadPolicy == UpdateServiceHelper.AUTODOWNLOAD_WIFI &&
+             (connectionType == ConnectivityManager.TYPE_WIFI || connectionType == ConnectivityManager.TYPE_ETHERNET));
+
+        if (!shouldStartDownload) {
+            Log.i(LOGTAG, "not initiating automatic update download due to policy " + autoDownloadPolicy);
 
             // We aren't autodownloading here, so prompt to start the update
             Notification notification = new Notification(R.drawable.ic_status_logo, null, System.currentTimeMillis());
 
-            Intent notificationIntent = new Intent(UpdateServiceHelper.ACTION_CHECK_FOR_UPDATE);
+            Intent notificationIntent = new Intent(UpdateServiceHelper.ACTION_DOWNLOAD_UPDATE);
             notificationIntent.setClass(this, UpdateService.class);
-            notificationIntent.putExtra(UpdateServiceHelper.EXTRA_UPDATE_FLAGS_NAME, UpdateServiceHelper.FLAG_FORCE_DOWNLOAD);
 
             PendingIntent contentIntent = PendingIntent.getService(this, 0, notificationIntent, PendingIntent.FLAG_UPDATE_CURRENT);
             notification.flags = Notification.FLAG_AUTO_CANCEL;
@@ -519,6 +540,16 @@ public class UpdateService extends IntentService {
     private void setLastAttemptDate() {
         SharedPreferences.Editor editor = mPrefs.edit();
         editor.putLong(KEY_LAST_ATTEMPT_DATE, System.currentTimeMillis());
+        editor.commit();
+    }
+
+    private int getAutoDownloadPolicy() {
+        return mPrefs.getInt(KEY_AUTODOWNLOAD_POLICY, UpdateServiceHelper.AUTODOWNLOAD_WIFI);
+    }
+
+    private void setAutoDownloadPolicy(int policy) {
+        SharedPreferences.Editor editor = mPrefs.edit();
+        editor.putInt(KEY_AUTODOWNLOAD_POLICY, policy);
         editor.commit();
     }
 

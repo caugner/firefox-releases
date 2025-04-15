@@ -25,7 +25,8 @@
                       android:layout_height="0dip"
                       android:visibility="gone"/>
 
-        <org.mozilla.gecko.BrowserToolbarBackground android:layout_width="fill_parent"
+        <org.mozilla.gecko.BrowserToolbarBackground android:id="@+id/address_bar_bg"
+                                                    android:layout_width="fill_parent"
                                                     android:layout_height="fill_parent"
                                                     android:layout_marginRight="17dip"
                                                     android:layout_alignParentTop="true"
@@ -66,14 +67,14 @@
 
             <Button android:id="@+id/awesome_bar"
                     style="@style/AddressBar.Button"
-                    android:background="@drawable/address_bar_url"/>
+                    android:background="@drawable/address_bar_url_level"/>
 
             <LinearLayout style="@style/AddressBar.Button"
                           android:orientation="horizontal">
 
                 <ImageButton android:id="@+id/favicon"
                              style="@style/AddressBar.ImageButton"
-                             android:layout_width="29.33dip"
+                             android:layout_width="@dimen/browser_toolbar_favicon_size"
                              android:layout_height="fill_parent"
                              android:scaleType="fitCenter"
                              android:paddingLeft="8dip"

@@ -57,12 +57,8 @@ static PRLogModuleInfo *gPrefetchLog;
 static inline uint32_t
 PRTimeToSeconds(PRTime t_usec)
 {
-    PRTime usec_per_sec;
-    uint32_t t_sec;
-    LL_I2L(usec_per_sec, PR_USEC_PER_SEC);
-    t_usec /= usec_per_sec;
-    LL_L2I(t_sec, t_usec);
-    return t_sec;
+    PRTime usec_per_sec = PR_USEC_PER_SEC;
+    return uint32_t(t_usec /= usec_per_sec);
 }
 
 #define NowInSeconds() PRTimeToSeconds(PR_Now())
@@ -808,7 +804,11 @@ NS_IMETHODIMP
 nsPrefetchNode::GetTotalSize(int32_t *aTotalSize)
 {
     if (mChannel) {
-        return mChannel->GetContentLength(aTotalSize);
+        int64_t size64;
+        nsresult rv = mChannel->GetContentLength(&size64);
+        NS_ENSURE_SUCCESS(rv, rv);
+        *aTotalSize = int32_t(size64); // XXX - loses precision
+        return NS_OK;
     }
 
     *aTotalSize = -1;
@@ -818,7 +818,7 @@ nsPrefetchNode::GetTotalSize(int32_t *aTotalSize)
 NS_IMETHODIMP
 nsPrefetchNode::GetLoadedSize(int32_t *aLoadedSize)
 {
-    *aLoadedSize = mBytesRead;
+    *aLoadedSize = int32_t(mBytesRead); // XXX - loses precision
     return NS_OK;
 }
 

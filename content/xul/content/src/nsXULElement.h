@@ -321,28 +321,21 @@ public:
 
 // XUL element specific bits
 enum {
-  XUL_ELEMENT_TEMPLATE_GENERATED =        XUL_ELEMENT_FLAG_BIT(0)
+  XUL_ELEMENT_TEMPLATE_GENERATED =        XUL_ELEMENT_FLAG_BIT(0),
+  XUL_ELEMENT_HAS_CONTENTMENU_LISTENER =  XUL_ELEMENT_FLAG_BIT(1),
+  XUL_ELEMENT_HAS_POPUP_LISTENER =        XUL_ELEMENT_FLAG_BIT(2)
 };
 
-// Make sure we have space for our bit
-PR_STATIC_ASSERT(ELEMENT_TYPE_SPECIFIC_BITS_OFFSET < 32);
+// Make sure we have space for our bits
+PR_STATIC_ASSERT((ELEMENT_TYPE_SPECIFIC_BITS_OFFSET + 2) < 32);
 
 #undef XUL_ELEMENT_FLAG_BIT
 
 class nsScriptEventHandlerOwnerTearoff;
 
-class nsXULElement : public nsStyledElement, public nsIDOMXULElement
+class nsXULElement : public nsStyledElement,
+                     public nsIDOMXULElement
 {
-public:
-
-    /** Typesafe, non-refcounting cast from nsIContent.  Cheaper than QI. **/
-    static nsXULElement* FromContent(nsIContent *aContent)
-    {
-        if (aContent->IsXUL())
-            return static_cast<nsXULElement*>(aContent);
-        return nullptr;
-    }
-
 public:
     nsXULElement(already_AddRefed<nsINodeInfo> aNodeInfo);
 
@@ -350,10 +343,12 @@ public:
     Create(nsXULPrototypeElement* aPrototype, nsIDocument* aDocument,
            bool aIsScriptable, mozilla::dom::Element** aResult);
 
+    NS_IMPL_FROMCONTENT(nsXULElement, kNameSpaceID_XUL)
+
     // nsISupports
     NS_DECL_ISUPPORTS_INHERITED
     NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED_NO_UNLINK(nsXULElement,
-                                                       nsGenericElement)
+                                                       mozilla::dom::Element)
 
     // nsINode
     virtual nsresult PreHandleEvent(nsEventChainPreVisitor& aVisitor);
@@ -396,10 +391,10 @@ public:
     bool GetTemplateGenerated() { return HasFlag(XUL_ELEMENT_TEMPLATE_GENERATED); }
 
     // nsIDOMNode
-    NS_FORWARD_NSIDOMNODE(nsGenericElement::)
+    NS_FORWARD_NSIDOMNODE_TO_NSINODE
 
     // nsIDOMElement
-    NS_FORWARD_NSIDOMELEMENT(nsGenericElement::)
+    NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
     // nsIDOMXULElement
     NS_DECL_NSIDOMXULELEMENT
@@ -415,7 +410,7 @@ public:
 
     // This function should ONLY be used by BindToTree implementations.
     // The function exists solely because XUL elements store the binding
-    // parent as a member instead of in the slots, as nsGenericElement does.
+    // parent as a member instead of in the slots, as Element does.
     void SetXULBindingParent(nsIContent* aBindingParent)
     {
       mBindingParent = aBindingParent;
@@ -442,7 +437,7 @@ protected:
 
     nsresult AddPopupListener(nsIAtom* aName);
 
-    class nsXULSlots : public nsGenericElement::nsDOMSlots
+    class nsXULSlots : public mozilla::dom::Element::nsDOMSlots
     {
     public:
         nsXULSlots();

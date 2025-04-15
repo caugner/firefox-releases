@@ -15,7 +15,7 @@ from runreftest import RefTest
 from runreftest import ReftestOptions
 from automation import Automation
 import devicemanager, devicemanagerADB, devicemanagerSUT
-from remoteautomation import RemoteAutomation
+from remoteautomation import RemoteAutomation, fennecLogcatFilters
 
 class RemoteOptions(ReftestOptions):
     def __init__(self, automation):
@@ -436,24 +436,27 @@ def main(args):
 
 #an example manifest name to use on the cli
 #    manifest = "http://" + options.remoteWebServer + "/reftests/layout/reftests/reftest-sanity/reftest.list"
-    logcat = []
+    retVal = 0
     try:
         cmdlineArgs = ["-reftest", manifest]
         if options.bootstrap:
             cmdlineArgs = []
         dm.recordLogcat()
         reftest.runTests(manifest, options, cmdlineArgs)
-        logcat = dm.getLogcat()
     except:
         print "Automation Error: Exception caught while running tests"
         traceback.print_exc()
-        reftest.stopWebServer(options)
-        return 1
+        retVal = 1
 
     reftest.stopWebServer(options)
-    print ''.join(logcat[-500:-1])
-    print dm.getInfo()
-    return 0
+    try:
+        logcat = dm.getLogcat(filterOutRegexps=fennecLogcatFilters)
+        print ''.join(logcat)
+        print dm.getInfo()
+    except devicemanager.DMError:
+        print "WARNING: Error getting device information at end of test"
+
+    return retVal
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))

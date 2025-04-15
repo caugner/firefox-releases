@@ -14,13 +14,14 @@
 #include "nsIASN1Object.h"
 #include "nsISMimeCert.h"
 #include "nsIIdentityInfo.h"
+#include "nsCOMPtr.h"
 #include "nsNSSShutDown.h"
 #include "nsISimpleEnumerator.h"
 #include "nsISerializable.h"
 #include "nsIClassInfo.h"
+#include "certt.h"
 
-#include "nsNSSCertHeader.h"
-
+class nsAutoString;
 class nsINSSComponent;
 class nsIASN1Sequence;
 

@@ -14,6 +14,7 @@
 #include "nsISmsDatabaseService.h"
 #include "SmsFilter.h"
 #include "SmsRequest.h"
+#include "SmsSegmentInfo.h"
 
 namespace mozilla {
 namespace dom {
@@ -30,7 +31,9 @@ SmsParent::SmsParent()
   }
 
   obs->AddObserver(this, kSmsReceivedObserverTopic, false);
+  obs->AddObserver(this, kSmsSendingObserverTopic, false);
   obs->AddObserver(this, kSmsSentObserverTopic, false);
+  obs->AddObserver(this, kSmsFailedObserverTopic, false);
   obs->AddObserver(this, kSmsDeliverySuccessObserverTopic, false);
   obs->AddObserver(this, kSmsDeliveryErrorObserverTopic, false);
 }
@@ -49,7 +52,9 @@ SmsParent::ActorDestroy(ActorDestroyReason why)
   }
 
   obs->RemoveObserver(this, kSmsReceivedObserverTopic);
+  obs->RemoveObserver(this, kSmsSendingObserverTopic);
   obs->RemoveObserver(this, kSmsSentObserverTopic);
+  obs->RemoveObserver(this, kSmsFailedObserverTopic);
   obs->RemoveObserver(this, kSmsDeliverySuccessObserverTopic);
   obs->RemoveObserver(this, kSmsDeliveryErrorObserverTopic);
 }
@@ -69,6 +74,17 @@ SmsParent::Observe(nsISupports* aSubject, const char* aTopic,
     return NS_OK;
   }
 
+  if (!strcmp(aTopic, kSmsSendingObserverTopic)) {
+    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
+    if (!message) {
+      NS_ERROR("Got a 'sms-sending' topic without a valid message!");
+      return NS_OK;
+    }
+
+    unused << SendNotifySendingMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    return NS_OK;
+  }
+
   if (!strcmp(aTopic, kSmsSentObserverTopic)) {
     nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
     if (!message) {
@@ -77,6 +93,17 @@ SmsParent::Observe(nsISupports* aSubject, const char* aTopic,
     }
 
     unused << SendNotifySentMessage(static_cast<SmsMessage*>(message.get())->GetData());
+    return NS_OK;
+  }
+
+  if (!strcmp(aTopic, kSmsFailedObserverTopic)) {
+    nsCOMPtr<nsIDOMMozSmsMessage> message = do_QueryInterface(aSubject);
+    if (!message) {
+      NS_ERROR("Got a 'sms-failed' topic without a valid message!");
+      return NS_OK;
+    }
+
+    unused << SendNotifyFailedMessage(static_cast<SmsMessage*>(message.get())->GetData());
     return NS_OK;
   }
 
@@ -118,58 +145,31 @@ SmsParent::RecvHasSupport(bool* aHasSupport)
 }
 
 bool
-SmsParent::RecvGetNumberOfMessagesForText(const nsString& aText, uint16_t* aResult)
+SmsParent::RecvGetSegmentInfoForText(const nsString& aText,
+                                     SmsSegmentInfoData* aResult)
 {
-  *aResult = 0;
+  aResult->segments() = 0;
+  aResult->charsPerSegment() = 0;
+  aResult->charsAvailableInLastSegment() = 0;
 
   nsCOMPtr<nsISmsService> smsService = do_GetService(SMS_SERVICE_CONTRACTID);
   NS_ENSURE_TRUE(smsService, true);
 
-  smsService->GetNumberOfMessagesForText(aText, aResult);
-  return true;
-}
+  nsCOMPtr<nsIDOMMozSmsSegmentInfo> info;
+  nsresult rv = smsService->GetSegmentInfoForText(aText, getter_AddRefs(info));
+  NS_ENSURE_SUCCESS(rv, true);
 
-bool
-SmsParent::RecvSaveReceivedMessage(const nsString& aSender,
-                                   const nsString& aBody,
-                                   const nsString& aMessageClass,
-                                   const uint64_t& aDate,
-                                   int32_t* aId)
-{
-  *aId = -1;
+  int segments, charsPerSegment, charsAvailableInLastSegment;
+  if (NS_FAILED(info->GetSegments(&segments)) ||
+      NS_FAILED(info->GetCharsPerSegment(&charsPerSegment)) ||
+      NS_FAILED(info->GetCharsAvailableInLastSegment(&charsAvailableInLastSegment))) {
+    NS_ERROR("Can't get attribute values from nsIDOMMozSmsSegmentInfo");
+    return true;
+  }
 
-  nsCOMPtr<nsISmsDatabaseService> smsDBService =
-    do_GetService(SMS_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsDBService, true);
-
-  smsDBService->SaveReceivedMessage(aSender, aBody, aMessageClass, aDate, aId);
-  return true;
-}
-
-bool
-SmsParent::RecvSaveSentMessage(const nsString& aRecipient,
-                               const nsString& aBody,
-                               const uint64_t& aDate, int32_t* aId)
-{
-  *aId = -1;
-
-  nsCOMPtr<nsISmsDatabaseService> smsDBService =
-    do_GetService(SMS_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsDBService, true);
-
-  smsDBService->SaveSentMessage(aRecipient, aBody, aDate, aId);
-  return true;
-}
-
-bool
-SmsParent::RecvSetMessageDeliveryStatus(const int32_t& aMessageId,
-                                        const nsString& aDeliveryStatus)
-{
-  nsCOMPtr<nsISmsDatabaseService> smsDBService =
-    do_GetService(SMS_DATABASE_SERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(smsDBService, true);
-
-  smsDBService->SetMessageDeliveryStatus(aMessageId, aDeliveryStatus);
+  aResult->segments() = segments;
+  aResult->charsPerSegment() = charsPerSegment;
+  aResult->charsAvailableInLastSegment() = charsAvailableInLastSegment;
   return true;
 }
 

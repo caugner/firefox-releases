@@ -92,8 +92,8 @@ public:
   NS_IMETHOD GetContentDispositionFilename(nsAString& aContentDispositionFilename);
   NS_IMETHOD SetContentDispositionFilename(const nsAString& aContentDispositionFilename);
   NS_IMETHOD GetContentDispositionHeader(nsACString& aContentDispositionHeader);
-  NS_IMETHOD GetContentLength(int32_t *aContentLength);
-  NS_IMETHOD SetContentLength(int32_t aContentLength);
+  NS_IMETHOD GetContentLength(int64_t *aContentLength);
+  NS_IMETHOD SetContentLength(int64_t aContentLength);
   NS_IMETHOD Open(nsIInputStream **aResult);
 
   // nsIEncodedChannel
@@ -260,6 +260,8 @@ protected:
   uint32_t                          mCanceled                   : 1;
   uint32_t                          mIsPending                  : 1;
   uint32_t                          mWasOpened                  : 1;
+  // if 1 all "http-on-{opening|modify|etc}-request" observers have been called
+  uint32_t                          mRequestObserversCalled     : 1;
   uint32_t                          mResponseHeadersModified    : 1;
   uint32_t                          mAllowPipelining            : 1;
   uint32_t                          mForceAllowThirdPartyCookie : 1;

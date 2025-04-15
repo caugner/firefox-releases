@@ -156,6 +156,9 @@ const DownloadsButton = {
     if (!placeholder) {
       // The placeholder has been removed from the browser window.
       indicator.collapsed = true;
+      // Move the indicator to a safe position on the toolbar, since otherwise
+      // it may break the merge of adjacent items, like back/forward + urlbar.
+      indicator.parentNode.appendChild(indicator);
       return null;
     }
 
@@ -177,15 +180,25 @@ const DownloadsButton = {
   },
 
   /**
-   * Indicates whether the indicator is visible in the browser window.
+   * Checks whether the indicator is, or will soon be visible in the browser
+   * window.
+   *
+   * @param aCallback
+   *        Called once the indicator overlay has loaded. Gets a boolean
+   *        argument representing the indicator visibility.
    */
-  get isVisible()
+  checkIsVisible: function DB_checkIsVisible(aCallback)
   {
-    if (!this._placeholder) {
-      return false;
+    function DB_CEV_callback() {
+      if (!this._placeholder) {
+        aCallback(false);
+      } else {
+        let element = DownloadsIndicatorView.indicator || this._placeholder;
+        aCallback(isElementVisible(element.parentNode));
+      }
     }
-    let element = DownloadsIndicatorView.indicator || this._placeholder;
-    return isElementVisible(element.parentNode);
+    DownloadsOverlayLoader.ensureOverlayLoaded(this.kIndicatorOverlay,
+                                               DB_CEV_callback.bind(this));
   },
 
   /**
@@ -513,10 +526,17 @@ const DownloadsIndicatorView = {
 
   onDrop: function DIV_onDrop(aEvent)
   {
+    let dt = aEvent.dataTransfer;
+    // If dragged item is from our source, do not try to
+    // redownload already downloaded file.
+    if (dt.mozGetDataAt("application/x-moz-file", 0))
+      return;
+
     let name = {};
     let url = browserDragAndDrop.drop(aEvent, name);
     if (url) {
-      saveURL(url, name.value, null, true, true);
+      let sourceDoc = dt.mozSourceNode ? dt.mozSourceNode.ownerDocument : document;
+      saveURL(url, name.value, null, true, true, null, sourceDoc);
       aEvent.preventDefault();
     }
   },

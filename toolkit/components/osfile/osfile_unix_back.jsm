@@ -11,8 +11,6 @@
 
     throw new Error("osfile_unix_back.jsm cannot be used from the main thread yet");
   }
-  importScripts("resource://gre/modules/osfile/osfile_shared_allthreads.jsm");
-  importScripts("resource://gre/modules/osfile/osfile_unix_allthreads.jsm");
   (function(exports) {
      "use strict";
      if (!exports.OS) {
@@ -108,19 +106,6 @@
        Types.time_t =
          Types.intn_t(OS.Constants.libc.OSFILE_SIZEOF_TIME_T).withName("time_t");
 
-       Types.DIR =
-         new Type("DIR",
-                  ctypes.StructType("DIR"));
-
-       Types.null_or_DIR_ptr =
-         Types.DIR.out_ptr.withName("null_or_DIR*");
-       Types.null_or_DIR_ptr.importFromC = function importFromC(dir) {
-         if (dir == null || dir.isNull()) {
-           return null;
-         }
-         return ctypes.CDataFinalizer(dir, _close_dir);
-       };
-
        // Structure |dirent|
        // Building this type is rather complicated, as its layout varies between
        // variants of Unix. For this reason, we rely on a number of constants
@@ -170,10 +155,47 @@
          stat.add_field_at(OS.Constants.libc.OSFILE_OFFSETOF_STAT_ST_CTIME,
                           "st_ctime", Types.time_t.implementation);
 
+         // To complicate further, MacOS and some BSDs have a field |birthtime|
+         if ("OSFILE_OFFSETOF_STAT_ST_BIRTHTIME" in OS.Constants.libc) {
+           stat.add_field_at(OS.Constants.libc.OSFILE_OFFSETOF_STAT_ST_BIRTHTIME,
+                             "st_birthtime", Types.time_t.implementation);
+         }
+
          stat.add_field_at(OS.Constants.libc.OSFILE_OFFSETOF_STAT_ST_SIZE,
                         "st_size", Types.size_t.implementation);
          Types.stat = stat.getType();
        }
+
+       // Structure |DIR|
+       if ("OSFILE_SIZEOF_DIR" in OS.Constants.libc) {
+         // On platforms for which we need to access the fields of DIR
+         // directly (e.g. because certain functions are implemented
+         // as macros), we need to define DIR as a hollow structure.
+         let DIR = new OS.Shared.HollowStructure(
+           "DIR",
+           OS.Constants.libc.OSFILE_SIZEOF_DIR);
+
+         DIR.add_field_at(
+           OS.Constants.libc.OSFILE_OFFSETOF_DIR_DD_FD,
+           "dd_fd",
+           Types.fd.implementation);
+
+         Types.DIR = DIR.getType();
+       } else {
+         // On other platforms, we keep DIR as a blackbox
+         Types.DIR =
+           new Type("DIR",
+             ctypes.StructType("DIR"));
+       }
+
+       Types.null_or_DIR_ptr =
+         Types.DIR.out_ptr.withName("null_or_DIR*");
+       Types.null_or_DIR_ptr.importFromC = function importFromC(dir) {
+         if (dir == null || dir.isNull()) {
+           return null;
+         }
+         return ctypes.CDataFinalizer(dir, _close_dir);
+       };
 
        // Declare libc functions as functions of |OS.Unix.File|
 
@@ -240,6 +262,20 @@
          declareFFI("dup", ctypes.default_abi,
                     /*return*/ Types.negativeone_or_fd,
                     /*fd*/     Types.fd);
+
+       if ("OSFILE_SIZEOF_DIR" in OS.Constants.libc) {
+         // On platforms for which |dirfd| is a macro
+         UnixFile.dirfd =
+           function dirfd(DIRp) {
+             return Types.DIR.in_ptr.implementation(DIRp).contents.dd_fd;
+           };
+       } else {
+         // On platforms for which |dirfd| is a function
+         UnixFile.dirfd =
+           declareFFI("dirfd", ctypes.default_abi,
+                      /*return*/ Types.negativeone_or_fd,
+                      /*dir*/    Types.DIR.in_ptr);
+       }
 
        UnixFile.chdir =
          declareFFI("chdir", ctypes.default_abi,

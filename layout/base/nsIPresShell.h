@@ -76,7 +76,11 @@ class nsRefreshDriver;
 class nsARefreshObserver;
 #ifdef ACCESSIBILITY
 class nsAccessibilityService;
+namespace mozilla {
+namespace a11y {
 class DocAccessible;
+} // namespace a11y
+} // namespace mozilla
 #endif
 class nsIWidget;
 struct nsArenaMemoryStats;
@@ -114,10 +118,10 @@ typedef struct CapturingContentInfo {
   nsIContent* mContent;
 } CapturingContentInfo;
 
-// ebc1bbe4-5456-4c62-ba1f-c2ef7387963e
+// a43e26cd-9573-44c7-8fe5-859549eff814
 #define NS_IPRESSHELL_IID \
-{ 0xebc1bbe4, 0x5456, 0x4c62, \
-  { 0xba, 0x1f, 0xc2, 0xef, 0x73, 0x87, 0x96, 0x3e } }
+{ 0x13b031cb, 0x738a, 0x4e97, \
+  { 0xb0, 0xca, 0x8b, 0x4b, 0x6c, 0xbb, 0xea, 0xa9 } }
 
 // debug VerifyReflow flags
 #define VERIFY_REFLOW_ON                    0x01
@@ -200,10 +204,7 @@ public:
     mPresArenaAllocCount++;
 #endif
     void* result = mFrameArena.AllocateByFrameID(aID, aSize);
-  
-    if (result) {
-      memset(result, 0, aSize);
-    }
+    memset(result, 0, aSize);
     return result;
   }
 
@@ -228,10 +229,7 @@ public:
     mPresArenaAllocCount++;
 #endif
     void* result = mFrameArena.AllocateByObjectID(aID, aSize);
-  
-    if (result) {
-      memset(result, 0, aSize);
-    }
+    memset(result, 0, aSize);
     return result;
   }
 
@@ -277,9 +275,20 @@ public:
   nsIViewManager* GetViewManager() const { return mViewManager; }
 
 #ifdef ACCESSIBILITY
-  void SetAccDocument(DocAccessible* aAccDocument)
+  /**
+   * Return the document accessible for this pres shell if there is one.
+   */
+  mozilla::a11y::DocAccessible* GetDocAccessible() const
   {
-    mAccDocument = aAccDocument;
+    return mDocAccessible;
+  }
+
+  /**
+   * Set the document accessible for this pres shell.
+   */
+  void SetDocAccessible(mozilla::a11y::DocAccessible* aDocAccessible)
+  {
+    mDocAccessible = aDocAccessible;
   }
 #endif
 
@@ -515,6 +524,7 @@ public:
    * @param aType the type of notifications to flush
    */
   virtual NS_HIDDEN_(void) FlushPendingNotifications(mozFlushType aType) = 0;
+  virtual NS_HIDDEN_(void) FlushPendingNotifications(mozilla::ChangesToFlush aType) = 0;
 
   /**
    * Callbacks will be called even if reflow itself fails for
@@ -780,7 +790,7 @@ public:
    * Get and set the history state for the current document 
    */
 
-  virtual NS_HIDDEN_(nsresult) CaptureHistoryState(nsILayoutHistoryState** aLayoutHistoryState, bool aLeavingPage = false) = 0;
+  virtual NS_HIDDEN_(nsresult) CaptureHistoryState(nsILayoutHistoryState** aLayoutHistoryState) = 0;
 
   /**
    * Determine if reflow is currently locked
@@ -1217,39 +1227,39 @@ public:
    */
   virtual void SynthesizeMouseMove(bool aFromScroll) = 0;
 
-  enum PaintType {
-    PaintType_Composite, /* Just composite the layers, don't do ThebesLayer painting. */
-    PaintType_NoComposite, /* Only paint ThebesLayers, don't composite. */
-    PaintType_Full /* Do a full transaction. */
+  enum PaintFlags {
+    /* Update the layer tree and paint ThebesLayers. If this is not specified,
+     * we may still have to do it if the layer tree lost ThebesLayer contents
+     * we need for compositing. */
+    PAINT_LAYERS = 0x01,
+    /* Composite layers to the window. */
+    PAINT_COMPOSITE = 0x02,
+    PAINT_WILL_SEND_DID_PAINT = 0x80
   };
   virtual void Paint(nsIView* aViewToPaint, const nsRegion& aDirtyRegion,
-                     PaintType aType, bool aWillSendDidPaint) = 0;
+                     uint32_t aFlags) = 0;
   virtual nsresult HandleEvent(nsIFrame*       aFrame,
                                nsGUIEvent*     aEvent,
                                bool            aDontRetargetEvents,
                                nsEventStatus*  aEventStatus) = 0;
   virtual bool ShouldIgnoreInvalidation() = 0;
   /**
-   * Notify that we're going to call Paint with PaintType_NoComposite
-   * or PaintType_Full on the root pres shell (which might not be this one, since
-   * WillPaint is called on all descendant presshells). This is issued at a time when
-   * it's safe to modify widget geometry.
+   * Notify that we're going to call Paint with PAINT_LAYERS
+   * on the pres shell for a widget (which might not be this one, since
+   * WillPaint is called on all presshells in the same toplevel window as the
+   * painted widget). This is issued at a time when it's safe to modify
+   * widget geometry.
    */
   virtual void WillPaint(bool aWillSendDidPaint) = 0;
   /**
-   * Notify that we called Paint with PaintType_NoComposite. Only fires on the
-   * root pres shell. This is issued at a time when it's safe to modify
-   * widget geometry.
-   */
-  virtual void DidPaint() = 0;
-  /**
-   * Notify that we're going to call Paint with PaintType_Composite
-   * or PaintType_Full.  This is issued at a time when it's safe to
-   * modify widget geometry.
+   * Notify that we're going to call Paint with PAINT_COMPOSITE.
+   * Fires on the presshell for the painted widget.
+   * This is issued at a time when it's safe to modify widget geometry.
    */
   virtual void WillPaintWindow(bool aWillSendDidPaint) = 0;
   /**
-   * Notify that we called Paint with PaintType_Composite or PaintType_Full.
+   * Notify that we called Paint with PAINT_COMPOSITE.
+   * Fires on the presshell for the painted widget.
    * This is issued at a time when it's safe to modify widget geometry.
    */
   virtual void DidPaintWindow() = 0;
@@ -1380,7 +1390,7 @@ protected:
   nsWeakPtr                 mForwardingContainer;
   nsRefreshDriver*          mHiddenInvalidationObserverRefreshDriver;
 #ifdef ACCESSIBILITY
-  DocAccessible* mAccDocument;
+  mozilla::a11y::DocAccessible* mDocAccessible;
 #endif
 
 #ifdef DEBUG

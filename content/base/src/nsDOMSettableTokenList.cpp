@@ -8,10 +8,10 @@
 
 #include "nsDOMSettableTokenList.h"
 #include "mozilla/dom/DOMSettableTokenListBinding.h"
-#include "dombindings.h"
+#include "mozilla/dom/Element.h"
 
 
-nsDOMSettableTokenList::nsDOMSettableTokenList(nsGenericElement *aElement, nsIAtom* aAttrAtom)
+nsDOMSettableTokenList::nsDOMSettableTokenList(Element *aElement, nsIAtom* aAttrAtom)
   : nsDOMTokenList(aElement, aAttrAtom)
 {
 }
@@ -52,14 +52,6 @@ JSObject*
 nsDOMSettableTokenList::WrapObject(JSContext *cx, JSObject *scope,
                                    bool *triedToWrap)
 {
-  JSObject* obj = mozilla::dom::DOMSettableTokenListBinding::Wrap(cx, scope,
-                                                                  this,
-                                                                  triedToWrap);
-  if (obj || *triedToWrap) {
-    return obj;
-  }
-
-  *triedToWrap = true;
-  return mozilla::dom::oldproxybindings::DOMSettableTokenList::create(cx, scope,
-                                                                      this);
+  return mozilla::dom::DOMSettableTokenListBinding::Wrap(cx, scope, this,
+                                                         triedToWrap);
 }

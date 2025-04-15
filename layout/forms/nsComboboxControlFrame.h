@@ -65,7 +65,7 @@ public:
   virtual nsIFrame* CreateFrameFor(nsIContent* aContent) MOZ_OVERRIDE;
 
 #ifdef ACCESSIBILITY
-  virtual already_AddRefed<Accessible> CreateAccessible() MOZ_OVERRIDE;
+  virtual mozilla::a11y::AccType AccessibleType() MOZ_OVERRIDE;
 #endif
 
   virtual nscoord GetMinWidth(nsRenderingContext *aRenderingContext) MOZ_OVERRIDE;
@@ -168,7 +168,7 @@ public:
    * Hide the dropdown menu and stop capturing mouse events.
    * @note This method might destroy |this|.
    */
-  virtual nsIContent* Rollup(uint32_t aCount, bool aGetLastRolledUp = false);
+  virtual bool Rollup(uint32_t aCount, nsIContent** aLastRolledUp);
   virtual void NotifyGeometryChange();
 
   /**
@@ -188,8 +188,10 @@ public:
   virtual uint32_t GetSubmenuWidgetChain(nsTArray<nsIWidget*> *aWidgetChain)
     { return 0; }
 
+  virtual nsIWidget* GetRollupWidget();
+
   //nsIStatefulFrame
-  NS_IMETHOD SaveState(SpecialStateID aStateID, nsPresState** aState) MOZ_OVERRIDE;
+  NS_IMETHOD SaveState(nsPresState** aState) MOZ_OVERRIDE;
   NS_IMETHOD RestoreState(nsPresState* aState) MOZ_OVERRIDE;
 
   static bool ToolkitHasNativePopup();

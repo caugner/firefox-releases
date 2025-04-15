@@ -56,7 +56,15 @@ using namespace mozilla::services;
 namespace mozilla {
 namespace hal {
 
-PRLogModuleInfo *sHalLog = PR_LOG_DEFINE("hal");
+PRLogModuleInfo *
+GetHalLog()
+{
+  static PRLogModuleInfo *sHalLog;
+  if (!sHalLog) {
+    sHalLog = PR_NewLogModule("hal");
+  }
+  return sHalLog;
+}
 
 namespace {
 
@@ -88,7 +96,7 @@ WindowIsActive(nsIDOMWindow *window)
   NS_ENSURE_TRUE(doc, false);
 
   bool hidden = true;
-  doc->GetMozHidden(&hidden);
+  doc->GetHidden(&hidden);
   return !hidden;
 }
 

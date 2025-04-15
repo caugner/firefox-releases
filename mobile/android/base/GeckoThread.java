@@ -20,12 +20,10 @@ public class GeckoThread extends Thread {
 
     Intent mIntent;
     String mUri;
-    int mRestoreMode;
 
-    GeckoThread(Intent intent, String uri, int restoreMode) {
+    GeckoThread(Intent intent, String uri) {
         mIntent = intent;
         mUri = uri;
-        mRestoreMode = restoreMode;
         setName("Gecko");
     }
 
@@ -45,6 +43,11 @@ public class GeckoThread extends Thread {
         // At some point while loading the gecko libs our default locale gets set
         // so just save it to locale here and reset it as default after the join
         Locale locale = Locale.getDefault();
+
+        if (locale.toString().equalsIgnoreCase("zh_hk")) {
+            locale = Locale.TRADITIONAL_CHINESE;
+            Locale.setDefault(locale);
+        }
 
         String resourcePath = app.getApplication().getPackageResourcePath();
         GeckoAppShell.setupGeckoEnvironment(app);
@@ -79,7 +82,6 @@ public class GeckoThread extends Thread {
         GeckoAppShell.runGecko(app.getApplication().getPackageResourcePath(),
                                args,
                                mUri,
-                               type,
-                               mRestoreMode);
+                               type);
     }
 }

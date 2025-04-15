@@ -121,12 +121,10 @@ class XPCShellTests(object):
     if self.mozInfo is None:
       self.mozInfo = os.path.join(self.testharnessdir, "mozinfo.json")
 
-  def buildEnvironment(self):
+  def buildCoreEnvironment(self):
     """
-      Create and returns a dictionary of self.env to include all the appropriate env variables and values.
-      On a remote system, we overload this to set different values and are missing things like os.environ and PATH.
+      Add environment variables likely to be used across all platforms, including remote systems.
     """
-    self.env = dict(os.environ)
     # Make assertions fatal
     self.env["XPCOM_DEBUG_BREAK"] = "stack-and-abort"
     # Don't launch the crash reporter client
@@ -135,6 +133,13 @@ class XPCShellTests(object):
     # disabled by automation.py too
     self.env["NS_TRACE_MALLOC_DISABLE_STACKS"] = "1"
 
+  def buildEnvironment(self):
+    """
+      Create and returns a dictionary of self.env to include all the appropriate env variables and values.
+      On a remote system, we overload this to set different values and are missing things like os.environ and PATH.
+    """
+    self.env = dict(os.environ)
+    self.buildCoreEnvironment()
     if sys.platform == 'win32':
       self.env["PATH"] = self.env["PATH"] + ";" + self.xrePath
     elif sys.platform in ('os2emx', 'os2knix'):
@@ -482,7 +487,7 @@ class XPCShellTests(object):
     if name is None:
       name = "xpcshell"
     else:
-      assert isinstance(name, str)
+      assert isinstance(name, basestring)
 
     if filename is not None:
       fh = open(filename, 'wb')
@@ -588,6 +593,15 @@ class XPCShellTests(object):
     out = AutologOutput()
     out.post(out.make_testgroups(collection))
 
+  def logCommand(self, name, completeCmd, testdir):
+    self.log.info("TEST-INFO | %s | full command: %r" % (name, completeCmd))
+    self.log.info("TEST-INFO | %s | current directory: %r" % (name, testdir))
+    # Show only those environment variables that are changed from
+    # the ambient environment.
+    changedEnv = (set("%s=%s" % i for i in self.env.iteritems())
+                  - set("%s=%s" % i for i in os.environ.iteritems()))
+    self.log.info("TEST-INFO | %s | environment: %s" % (name, list(changedEnv)))
+
   def runTests(self, xpcshell, xrePath=None, appPath=None, symbolsPath=None,
                manifest=None, testdirs=None, testPath=None,
                interactive=False, verbose=False, keepGoing=False, logfiles=True,
@@ -637,7 +651,7 @@ class XPCShellTests(object):
         testdirs = []
 
     if xunitFilename is not None or xunitName is not None:
-        if not isinstance(testsRootDir, str):
+        if not isinstance(testsRootDir, basestring):
             raise Exception("testsRootDir must be a str when outputting xUnit.")
 
         if not os.path.isabs(testsRootDir):
@@ -781,16 +795,11 @@ class XPCShellTests(object):
 
       completeCmd = cmdH + cmdT + args
 
+      proc = None
       try:
         self.log.info("TEST-INFO | %s | running test ..." % name)
         if verbose:
-            self.log.info("TEST-INFO | %s | full command: %r" % (name, completeCmd))
-            self.log.info("TEST-INFO | %s | current directory: %r" % (name, testdir))
-            # Show only those environment variables that are changed from
-            # the ambient environment.
-            changedEnv = (set("%s=%s" % i for i in self.env.iteritems())
-                          - set("%s=%s" % i for i in os.environ.iteritems()))
-            self.log.info("TEST-INFO | %s | environment: %s" % (name, list(changedEnv)))
+            self.logCommand(name, completeCmd, testdir)
         startTime = time.time()
 
         proc = self.launchProcess(completeCmd,
@@ -876,7 +885,7 @@ class XPCShellTests(object):
       finally:
         # We can sometimes get here before the process has terminated, which would
         # cause removeDir() to fail - so check for the process & kill it it needed.
-        if self.poll(proc) is None:
+        if proc and self.poll(proc) is None:
           message = "TEST-UNEXPECTED-FAIL | %s | Process still running after test!" % name
           self.log.error(message)
           print_stdout(stdout)
@@ -894,17 +903,27 @@ class XPCShellTests(object):
           try:
             self.removeDir(self.profileDir)
           except Exception:
-            message = "TEST-UNEXPECTED-FAIL | %s | Failed to clean up the test profile directory: %s" % (name, sys.exc_info()[1])
-            self.log.error(message)
-            print_stdout(stdout)
-            print_stdout(traceback.format_exc())
-            self.failCount += 1
-            xunitResult["passed"] = False
-            xunitResult["failure"] = {
-              "type": "TEST-UNEXPECTED-FAIL",
-              "message": message,
-              "text": "%s\n%s" % (stdout, traceback.format_exc())
-            }
+            self.log.info("TEST-INFO | Failed to remove profile directory. Waiting.")
+
+            # We suspect the filesystem may still be making changes. Wait a
+            # little bit and try again.
+            time.sleep(5)
+
+            try:
+                self.removeDir(self.profileDir)
+            except Exception:
+                message = "TEST-UNEXPECTED-FAIL | %s | Failed to clean up the test profile directory: %s" % (name, sys.exc_info()[1])
+                self.log.error(message)
+                print_stdout(stdout)
+                print_stdout(traceback.format_exc())
+
+                self.failCount += 1
+                xunitResult["passed"] = False
+                xunitResult["failure"] = {
+                    "type": "TEST-UNEXPECTED-FAIL",
+                    "message": message,
+                    "text": "%s\n%s" % (stdout, traceback.format_exc())
+                }
 
       if gotSIGINT:
         xunitResult["passed"] = False

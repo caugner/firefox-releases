@@ -48,9 +48,12 @@ EXPORTS	= \
 	gfxUtils.h \
 	gfxUserFontSet.h \
 	nsSurfaceTexture.h \
+	gfxBaseSharedMemorySurface.h \
 	gfxSharedImageSurface.h \
+	gfxSharedQuartzSurface.h \
 	gfxReusableSurfaceWrapper.h \
 	gfxSVGGlyphs.h \
+	RoundedRect.h \
 	$(NULL)
 
 # gfxSVGGlyphs needs nsDOMParser.h
@@ -178,7 +181,7 @@ CPPSRCS	= \
 	gfxUtils.cpp \
 	gfxScriptItemizer.cpp \
 	gfxHarfBuzzShaper.cpp \
-	gfxSharedImageSurface.cpp \
+	gfxBaseSharedMemorySurface.cpp \
 	gfxReusableSurfaceWrapper.cpp \
 	nsSurfaceTexture.cpp \
 	gfxSVGGlyphs.cpp \
@@ -389,3 +392,9 @@ ifdef SOLARIS_SUNPRO_CXX
 gfxAlphaRecoverySSE2.$(OBJ_SUFFIX): OS_CXXFLAGS += -xarch=sse2 -xO4
 endif
 endif
+
+.PHONY: CONSTANT_TABLES
+CONSTANT_TABLES:
+	$(PYTHON) $(srcdir)/genTables.py
+
+gfxUtils.$(OBJ_SUFFIX): CONSTANT_TABLES

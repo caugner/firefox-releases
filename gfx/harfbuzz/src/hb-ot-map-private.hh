@@ -49,6 +49,7 @@ struct hb_ot_map_t
     unsigned int shift;
     hb_mask_t mask;
     hb_mask_t _1_mask; /* mask for value=1, for quick access */
+    hb_bool_t needs_fallback;
 
     static int cmp (const feature_map_t *a, const feature_map_t *b)
     { return a->tag < b->tag ? -1 : a->tag > b->tag ? 1 : 0; }
@@ -80,6 +81,11 @@ struct hb_ot_map_t
     return map ? map->mask : 0;
   }
 
+  inline bool needs_fallback (hb_tag_t feature_tag) const {
+    const feature_map_t *map = features.bsearch (&feature_tag);
+    return map ? map->needs_fallback : false;
+  }
+
   inline hb_mask_t get_1_mask (hb_tag_t feature_tag) const {
     const feature_map_t *map = features.bsearch (&feature_tag);
     return map ? map->_1_mask : 0;
@@ -109,10 +115,7 @@ struct hb_ot_map_t
     *lookup_count = end - start;
   }
 
-  inline hb_tag_t get_chosen_script (unsigned int table_index) const
-  { return chosen_script[table_index]; }
-
-  HB_INTERNAL void substitute_closure (const struct hb_ot_shape_plan_t *plan, hb_face_t *face, hb_set_t *glyphs) const;
+  HB_INTERNAL void collect_lookups (unsigned int table_index, hb_set_t *lookups) const;
   HB_INTERNAL void substitute (const struct hb_ot_shape_plan_t *plan, hb_font_t *font, hb_buffer_t *buffer) const;
   HB_INTERNAL void position (const struct hb_ot_shape_plan_t *plan, hb_font_t *font, hb_buffer_t *buffer) const;
 
@@ -124,6 +127,9 @@ struct hb_ot_map_t
     pauses[1].finish ();
   }
 
+  public:
+  hb_tag_t chosen_script[2];
+  bool found_script[2];
 
   private:
 
@@ -134,7 +140,6 @@ struct hb_ot_map_t
 
   hb_mask_t global_mask;
 
-  hb_tag_t chosen_script[2];
   hb_prealloced_array_t<feature_map_t, 8> features;
   hb_prealloced_array_t<lookup_map_t, 32> lookups[2]; /* GSUB/GPOS */
   hb_prealloced_array_t<pause_map_t, 1> pauses[2]; /* GSUB/GPOS */
@@ -145,21 +150,20 @@ struct hb_ot_map_builder_t
 {
   public:
 
-  hb_ot_map_builder_t (void) { memset (this, 0, sizeof (*this)); }
+  HB_INTERNAL hb_ot_map_builder_t (hb_face_t *face_,
+				   const hb_segment_properties_t *props_);
 
-  HB_INTERNAL void add_feature (hb_tag_t tag, unsigned int value, bool global);
+  HB_INTERNAL void add_feature (hb_tag_t tag, unsigned int value, bool global, bool has_fallback = false);
 
-  inline void add_bool_feature (hb_tag_t tag, bool global = true)
-  { add_feature (tag, 1, global); }
+  inline void add_bool_feature (hb_tag_t tag, bool global = true, bool has_fallback = false)
+  { add_feature (tag, 1, global, has_fallback); }
 
   inline void add_gsub_pause (hb_ot_map_t::pause_func_t pause_func)
   { add_pause (0, pause_func); }
   inline void add_gpos_pause (hb_ot_map_t::pause_func_t pause_func)
   { add_pause (1, pause_func); }
 
-  HB_INTERNAL void compile (hb_face_t *face,
-			    const hb_segment_properties_t *props,
-			    struct hb_ot_map_t &m);
+  HB_INTERNAL void compile (struct hb_ot_map_t &m);
 
   inline void finish (void) {
     feature_infos.finish ();
@@ -174,6 +178,7 @@ struct hb_ot_map_builder_t
     unsigned int seq; /* sequence#, used for stable sorting only */
     unsigned int max_value;
     bool global; /* whether the feature applies value to every glyph in the buffer */
+    bool has_fallback; /* whether to allocate bits even if feature not found */
     unsigned int default_value; /* for non-global features, what should the unset glyphs take */
     unsigned int stage[2]; /* GSUB/GPOS */
 
@@ -187,6 +192,17 @@ struct hb_ot_map_builder_t
   };
 
   HB_INTERNAL void add_pause (unsigned int table_index, hb_ot_map_t::pause_func_t pause_func);
+
+  public:
+
+  hb_face_t *face;
+  hb_segment_properties_t props;
+
+  hb_tag_t chosen_script[2];
+  bool found_script[2];
+  unsigned int script_index[2], language_index[2];
+
+  private:
 
   unsigned int current_stage[2]; /* GSUB/GPOS */
   hb_prealloced_array_t<feature_info_t,16> feature_infos;

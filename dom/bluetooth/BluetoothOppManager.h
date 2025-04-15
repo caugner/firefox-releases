@@ -10,6 +10,7 @@
 #include "BluetoothCommon.h"
 #include "mozilla/dom/ipc/Blob.h"
 #include "mozilla/ipc/UnixSocket.h"
+#include "DeviceStorage.h"
 
 class nsIOutputStream;
 class nsIInputStream;
@@ -59,13 +60,14 @@ public:
 
   void SendConnectRequest();
   void SendPutHeaderRequest(const nsAString& aFileName, int aFileSize);
-  void SendPutRequest(uint8_t* aFileBody, int aFileBodyLength,
-                      bool aFinal);
+  void SendPutRequest(uint8_t* aFileBody, int aFileBodyLength);
+  void SendPutFinalRequest();
   void SendDisconnectRequest();
   void SendAbortRequest();
 
   void ExtractPacketHeaders(const ObexHeaderSet& aHeader);
   bool ExtractBlobHeaders();
+  nsresult HandleShutdown();
 private:
   BluetoothOppManager();
   void StartFileTransfer();
@@ -155,8 +157,8 @@ private:
    */
   bool mWaitingForConfirmationFlag;
 
-  nsAutoPtr<uint8_t> mBodySegment;
-  nsAutoPtr<uint8_t> mReceivedDataBuffer;
+  nsAutoArrayPtr<uint8_t> mBodySegment;
+  nsAutoArrayPtr<uint8_t> mReceivedDataBuffer;
 
   nsCOMPtr<nsIDOMBlob> mBlob;
   nsCOMPtr<nsIThread> mReadFileThread;
@@ -164,6 +166,7 @@ private:
   nsCOMPtr<nsIInputStream> mInputStream;
 
   nsRefPtr<BluetoothReplyRunnable> mRunnable;
+  nsRefPtr<DeviceStorageFile> mDsFile;
 };
 
 END_BLUETOOTH_NAMESPACE

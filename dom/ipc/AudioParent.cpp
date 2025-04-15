@@ -34,7 +34,7 @@ class AudioWriteDoneEvent : public nsRunnable
 class AudioWriteEvent : public nsRunnable
 {
  public:
-  AudioWriteEvent(AudioParent* parent, nsAudioStream* owner, nsCString data, uint32_t frames)
+  AudioWriteEvent(AudioParent* parent, AudioStream* owner, nsCString data, uint32_t frames)
   {
     mParent = parent;
     mOwner = owner;
@@ -44,7 +44,7 @@ class AudioWriteEvent : public nsRunnable
 
   NS_IMETHOD Run()
   {
-    mOwner->Write(mData.get(), mFrames);
+    mOwner->Write(reinterpret_cast<const AudioDataValue*>(mData.get()), mFrames);
     nsCOMPtr<nsIRunnable> event = new AudioWriteDoneEvent(mParent);
     NS_DispatchToMainThread(event);
     return NS_OK;
@@ -52,7 +52,7 @@ class AudioWriteEvent : public nsRunnable
 
  private:
     nsRefPtr<AudioParent> mParent;
-    nsRefPtr<nsAudioStream> mOwner;
+    nsRefPtr<AudioStream> mOwner;
     nsCString mData;
     uint32_t  mFrames;
 };
@@ -60,7 +60,7 @@ class AudioWriteEvent : public nsRunnable
 class AudioPauseEvent : public nsRunnable
 {
  public:
-  AudioPauseEvent(nsAudioStream* owner, bool aPause)
+  AudioPauseEvent(AudioStream* owner, bool aPause)
   {
     mOwner = owner;
     mPause = aPause;
@@ -76,14 +76,14 @@ class AudioPauseEvent : public nsRunnable
   }
 
  private:
-    nsRefPtr<nsAudioStream> mOwner;
+    nsRefPtr<AudioStream> mOwner;
     bool mPause;
 };
 
 class AudioStreamShutdownEvent : public nsRunnable
 {
  public:
-  AudioStreamShutdownEvent(nsAudioStream* owner)
+  AudioStreamShutdownEvent(AudioStream* owner)
   {
     mOwner = owner;
   }
@@ -95,7 +95,7 @@ class AudioStreamShutdownEvent : public nsRunnable
   }
 
  private:
-    nsRefPtr<nsAudioStream> mOwner;
+    nsRefPtr<AudioStream> mOwner;
 };
 
 
@@ -122,7 +122,7 @@ class AudioMinWriteSizeDone : public nsRunnable
 class AudioMinWriteSizeEvent : public nsRunnable
 {
  public:
-  AudioMinWriteSizeEvent(AudioParent* parent, nsAudioStream* owner)
+  AudioMinWriteSizeEvent(AudioParent* parent, AudioStream* owner)
   {
     mParent = parent;
     mOwner = owner;
@@ -137,7 +137,7 @@ class AudioMinWriteSizeEvent : public nsRunnable
   }
 
  private:
-    nsRefPtr<nsAudioStream> mOwner;
+    nsRefPtr<AudioStream> mOwner;
     nsRefPtr<AudioParent> mParent;
 };
 
@@ -162,7 +162,7 @@ class AudioDrainDoneEvent : public nsRunnable
 class AudioDrainEvent : public nsRunnable
 {
  public:
-  AudioDrainEvent(AudioParent* parent, nsAudioStream* owner)
+  AudioDrainEvent(AudioParent* parent, AudioStream* owner)
   {
     mParent = parent;
     mOwner = owner;
@@ -177,7 +177,7 @@ class AudioDrainEvent : public nsRunnable
   }
 
  private:
-    nsRefPtr<nsAudioStream> mOwner;
+    nsRefPtr<AudioStream> mOwner;
     nsRefPtr<AudioParent> mParent;
 };
 
@@ -293,11 +293,12 @@ AudioParent::SendWriteDone()
   return true;
 }
 
-AudioParent::AudioParent(int32_t aNumChannels, int32_t aRate, int32_t aFormat)
+AudioParent::AudioParent(int32_t aNumChannels, int32_t aRate)
   : mIPCOpen(true)
 {
-  mStream = nsAudioStream::AllocateStream();
+  mStream = AudioStream::AllocateStream();
   NS_ASSERTION(mStream, "AudioStream allocation failed.");
+
   if (NS_FAILED(mStream->Init(aNumChannels, aRate, AUDIO_CHANNEL_NORMAL))) {
       NS_WARNING("AudioStream initialization failed.");
       mStream = nullptr;

@@ -64,6 +64,8 @@ using namespace QtMobility;
 #include "nsQtKeyUtils.h"
 #include "mozilla/Services.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/Likely.h"
+#include "LayersTypes.h"
 #include "nsIWidgetListener.h"
 
 #include "nsIStringBundle.h"
@@ -101,7 +103,9 @@ static Atom sPluginIMEAtom = nullptr;
 #endif
 #endif //MOZ_X11
 
+#include "gfxUtils.h"
 #include "Layers.h"
+#include "GLContextProvider.h"
 #include "BasicLayers.h"
 #include "LayerManagerOGL.h"
 #include "nsFastStartupQt.h"
@@ -118,6 +122,8 @@ extern "C" {
 
 using namespace mozilla;
 using namespace mozilla::widget;
+using mozilla::gl::GLContext;
+using mozilla::layers::LayerManagerOGL;
 
 // Cached offscreen surface
 static nsRefPtr<gfxASurface> gBufferSurface;
@@ -142,12 +148,6 @@ static NS_DEFINE_IID(kCDragServiceCID,  NS_DRAGSERVICE_CID);
 static const int WHEEL_DELTA = 120;
 static bool gGlobalsInitialized = false;
 
-static nsIRollupListener*          gRollupListener;
-static nsWeakPtr                   gRollupWindow;
-static bool                        gConsumeRollupEvent;
-
-static bool       check_for_rollup(double aMouseX, double aMouseY,
-                                   bool aIsWheel);
 static bool
 is_mouse_in_window (MozQWidget* aWindow, double aMouseX, double aMouseY);
 
@@ -384,18 +384,38 @@ nsWindow::Destroy(void)
 #endif
     }
 
-    nsCOMPtr<nsIWidget> rollupWidget = do_QueryReferent(gRollupWindow);
-    if (static_cast<nsIWidget *>(this) == rollupWidget.get()) {
-        if (gRollupListener)
-            gRollupListener->Rollup(0);
-        gRollupWindow = nullptr;
-        gRollupListener = nullptr;
-    }
-
+    /** Need to clean our LayerManager up while still alive */
     if (mLayerManager) {
+        nsRefPtr<GLContext> gl = nullptr;
+        if (mLayerManager->GetBackendType() == mozilla::layers::LAYERS_OPENGL) {
+            LayerManagerOGL *ogllm = static_cast<LayerManagerOGL*>(mLayerManager.get());
+            gl = ogllm->gl();
+        }
+
         mLayerManager->Destroy();
+
+        if (gl) {
+            gl->MarkDestroyed();
+        }
     }
     mLayerManager = nullptr;
+
+    // It is safe to call DestroyeCompositor several times (here and 
+    // in the parent class) since it will take effect only once.
+    // The reason we call it here is because on gtk platforms we need 
+    // to destroy the compositor before we destroy the gdk window (which
+    // destroys the the gl context attached to it).
+    DestroyCompositor();
+
+    ClearCachedResources();
+
+    nsIRollupListener* rollupListener = nsBaseWidget::GetActiveRollupListener();
+    if (rollupListener) {
+    nsCOMPtr<nsIWidget> rollupWidget = rollupListener->GetRollupWidget();
+        if (static_cast<nsIWidget *>(this) == rollupWidget) {
+        rollupListener->Rollup(0, nullptr);
+        }
+    }
 
     Show(false);
 
@@ -436,6 +456,21 @@ nsWindow::Destroy(void)
     delete view;
 
     return NS_OK;
+}
+
+void
+nsWindow::ClearCachedResources()
+{
+    if (mLayerManager &&
+        mLayerManager->GetBackendType() == mozilla::layers::LAYERS_BASIC) {
+        static_cast<mozilla::layers::BasicLayerManager*> (mLayerManager.get())->
+            ClearCachedResources();
+    }
+    for (nsIWidget* kid = mFirstChild; kid; ) {
+        nsIWidget* next = kid->GetNextSibling();
+        static_cast<nsWindow*>(kid)->ClearCachedResources();
+        kid = next;
+    }
 }
 
 NS_IMETHODIMP
@@ -545,7 +580,7 @@ nsWindow::Move(int32_t aX, int32_t aY)
     mBounds.x = pos.x();
     mBounds.y = pos.y();
 
-    NotifyRollupGeometryChange(gRollupListener);
+    NotifyRollupGeometryChange();
     return NS_OK;
 }
 
@@ -888,51 +923,47 @@ nsWindow::CaptureMouse(bool aCapture)
 
 NS_IMETHODIMP
 nsWindow::CaptureRollupEvents(nsIRollupListener *aListener,
-                              bool               aDoCapture,
-                              bool               aConsumeRollupEvent)
+                              bool               aDoCapture)
 {
     if (!mWidget)
         return NS_OK;
 
     LOG(("CaptureRollupEvents %p\n", (void *)this));
 
-    if (aDoCapture) {
-        gConsumeRollupEvent = aConsumeRollupEvent;
-        gRollupListener = aListener;
-        gRollupWindow = do_GetWeakReference(static_cast<nsIWidget*>(this));
-    }
-    else {
-        gRollupListener = nullptr;
-        gRollupWindow = nullptr;
-    }
-
+    gRollupListener = aDoCapture ? aListener : nullptr;
     return NS_OK;
 }
 
 bool
-check_for_rollup(double aMouseX, double aMouseY,
-                 bool aIsWheel)
+nsWindow::CheckForRollup(double aMouseX, double aMouseY,
+                         bool aIsWheel)
 {
-    bool retVal = false;
-    nsCOMPtr<nsIWidget> rollupWidget = do_QueryReferent(gRollupWindow);
+    nsIRollupListener* rollupListener = GetActiveRollupListener();
+    nsCOMPtr<nsIWidget> rollupWidget;
+    if (rollupListener) {
+        rollupWidget = rollupListener->GetRollupWidget();
+    }
+    if (!rollupWidget) {
+        nsBaseWidget::gRollupListener = nullptr;
+        return false;
+    }
 
-    if (rollupWidget && gRollupListener) {
+    bool retVal = false;
         MozQWidget *currentPopup =
             (MozQWidget *)rollupWidget->GetNativeData(NS_NATIVE_WINDOW);
-
         if (!is_mouse_in_window(currentPopup, aMouseX, aMouseY)) {
             bool rollup = true;
             if (aIsWheel) {
-                rollup = gRollupListener->ShouldRollupOnMouseWheelEvent();
+                rollup = rollupListener->ShouldRollupOnMouseWheelEvent();
                 retVal = true;
             }
             // if we're dealing with menus, we probably have submenus and
             // we don't want to rollup if the clickis in a parent menu of
             // the current submenu
             uint32_t popupsToRollup = UINT32_MAX;
-            if (gRollupListener) {
+            if (rollupListener) {
                 nsAutoTArray<nsIWidget*, 5> widgetChain;
-                uint32_t sameTypeCount = gRollupListener->GetSubmenuWidgetChain(&widgetChain);
+                uint32_t sameTypeCount = rollupListener->GetSubmenuWidgetChain(&widgetChain);
                 for (uint32_t i=0; i<widgetChain.Length(); ++i) {
                     nsIWidget* widget =  widgetChain[i];
                     MozQWidget* currWindow =
@@ -951,14 +982,9 @@ check_for_rollup(double aMouseX, double aMouseY,
 
             // if we've determined that we should still rollup, do it.
             if (rollup) {
-                gRollupListener->Rollup(popupsToRollup);
-                retVal = true;
+                retVal = rollupListener->Rollup(popupsToRollup, nullptr);
             }
         }
-    } else {
-        gRollupWindow = nullptr;
-        gRollupListener = nullptr;
-    }
 
     return retVal;
 }
@@ -1047,7 +1073,7 @@ nsWindow::DoPaint(QPainter* aPainter, const QStyleOptionGraphicsItem* aOption, Q
 #endif //MOZ_ENABLE_QTMOBILITY
 
         if (mWidgetListener)
-          painted = mWidgetListener->PaintWindow(this, region, true, true);
+          painted = mWidgetListener->PaintWindow(this, region, nsIWidgetListener::SENT_WILL_PAINT | nsIWidgetListener::WILL_SEND_DID_PAINT);
         aPainter->endNativePainting();
         if (mWidgetListener)
           mWidgetListener->DidPaintWindow();
@@ -1076,7 +1102,7 @@ nsWindow::DoPaint(QPainter* aPainter, const QStyleOptionGraphicsItem* aOption, Q
         targetSurface = gBufferSurface;
     }
 
-    if (NS_UNLIKELY(!targetSurface))
+    if (MOZ_UNLIKELY(!targetSurface))
         return false;
 
     nsRefPtr<gfxContext> ctx = new gfxContext(targetSurface);
@@ -1105,13 +1131,13 @@ nsWindow::DoPaint(QPainter* aPainter, const QStyleOptionGraphicsItem* aOption, Q
             setupLayerManager(this, ctx, mozilla::layers::BUFFER_NONE);
         if (mWidgetListener) {
           nsIntRegion region(rect);
-          painted = mWidgetListener->PaintWindow(this, region, true, true);
+          painted = mWidgetListener->PaintWindow(this, region, nsIWidgetListener::SENT_WILL_PAINT | nsIWidgetListener::WILL_SEND_DID_PAINT);
         }
     }
 
     // DispatchEvent can Destroy us (bug 378273), avoid doing any paint
     // operations below if that happened - it will lead to XError and exit().
-    if (NS_UNLIKELY(mIsDestroyed))
+    if (MOZ_UNLIKELY(mIsDestroyed))
         return painted;
 
     if (!painted)
@@ -1318,8 +1344,7 @@ nsWindow::OnButtonPressEvent(QGraphicsSceneMouseEvent *aEvent)
     if (mWidget)
         pos = mWidget->mapToParent(pos);
 
-    bool rolledUp = check_for_rollup( pos.x(), pos.y(), false);
-    if (gConsumeRollupEvent && rolledUp)
+    if (CheckForRollup( pos.x(), pos.y(), false))
         return nsEventStatus_eIgnore;
 
     uint16_t      domButton;
@@ -1345,7 +1370,7 @@ nsWindow::OnButtonPressEvent(QGraphicsSceneMouseEvent *aEvent)
 
     // right menu click on linux should also pop up a context menu
     if (domButton == nsMouseEvent::eRightButton &&
-        NS_LIKELY(!mIsDestroyed)) {
+        MOZ_LIKELY(!mIsDestroyed)) {
         nsMouseEvent contextMenuEvent(true, NS_CONTEXTMENU, this,
                                       nsMouseEvent::eReal);
         InitButtonEvent(contextMenuEvent, aEvent, 1);
@@ -1595,7 +1620,7 @@ nsWindow::OnKeyPressEvent(QKeyEvent *aEvent)
         nsEventStatus status = DispatchEvent(&downEvent);
 
         // DispatchEvent can Destroy us (bug 378273)
-        if (NS_UNLIKELY(mIsDestroyed)) {
+        if (MOZ_UNLIKELY(mIsDestroyed)) {
             qWarning() << "Returning[" << __LINE__ << "]: " << "Window destroyed";
             return status;
         }
@@ -1679,7 +1704,7 @@ nsWindow::OnKeyPressEvent(QKeyEvent *aEvent)
         KeySym keysym = aEvent->nativeVirtualKey();
         if (keysym) {
             domCharCode = (uint32_t) keysym2ucs(keysym);
-            if (domCharCode == -1 || ! QChar((quint32)domCharCode).isPrint()) {
+            if (domCharCode == -1 || !QChar((quint32)domCharCode).isPrint()) {
                 domCharCode = 0;
             }
         }
@@ -2629,6 +2654,7 @@ nsWindow::createQWidget(MozQWidget *parent,
     MozQWidget * widget = new MozQWidget(this, parentQWidget);
     if (!widget)
         return nullptr;
+    widget->setObjectName(QString(windowName));
 
     // make only child and plugin windows focusable
     if (eWindowType_child == mWindowType || eWindowType_plugin == mWindowType) {
@@ -2647,7 +2673,7 @@ nsWindow::createQWidget(MozQWidget *parent,
         }
 
 #if defined(MOZ_PLATFORM_MAEMO) || defined(MOZ_GL_PROVIDER)
-        if (GetShouldAccelerate()) {
+        if (ComputeShouldAccelerate(mUseLayersAcceleration)) {
             // Only create new OGL widget if it is not yet installed
             if (!HasGLContext()) {
                 MozQGraphicsView *qview = qobject_cast<MozQGraphicsView*>(newView);
@@ -2877,6 +2903,13 @@ NS_IMETHODIMP
 nsWindow::Show(bool aState)
 {
     LOG(("nsWindow::Show [%p] state %d\n", (void *)this, aState));
+    if (aState == mIsShown)
+        return NS_OK;
+
+    // Clear our cached resources when the window is hidden.
+    if (mIsShown && !aState) {
+        ClearCachedResources();
+    }
 
     mIsShown = aState;
 
@@ -2975,7 +3008,7 @@ nsWindow::Resize(int32_t aWidth, int32_t aHeight, bool aRepaint)
         DispatchResizeEvent(rect, status);
     }
 
-    NotifyRollupGeometryChange(gRollupListener);
+    NotifyRollupGeometryChange();
     return NS_OK;
 }
 
@@ -3039,7 +3072,7 @@ nsWindow::Resize(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight,
     if (aRepaint)
         mWidget->update();
 
-    NotifyRollupGeometryChange(gRollupListener);
+    NotifyRollupGeometryChange();
     return NS_OK;
 }
 
@@ -3210,6 +3243,9 @@ NS_IMETHODIMP_(InputContext)
 nsWindow::GetInputContext()
 {
     mInputContext.mIMEState.mOpen = IMEState::OPEN_STATE_NOT_SUPPORTED;
+    // Our qt widget looks like using only one context per process.
+    // However, it's better to set the context's pointer.
+    mInputContext.mNativeIMEContext = qApp->inputContext();
     return mInputContext;
 }
 

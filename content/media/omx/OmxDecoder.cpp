@@ -30,6 +30,7 @@ PRLogModuleInfo *gOmxDecoderLog;
 #endif
 
 using namespace MPAPI;
+using namespace mozilla;
 
 namespace mozilla {
 namespace layers {
@@ -64,7 +65,7 @@ VideoGraphicBuffer::Unlock()
 namespace android {
 
 MediaStreamSource::MediaStreamSource(MediaResource *aResource,
-                                     nsBuiltinDecoder *aDecoder) :
+                                     MediaDecoder *aDecoder) :
   mDecoder(aDecoder), mResource(aResource)
 {
 }
@@ -117,7 +118,7 @@ status_t MediaStreamSource::getSize(off64_t *size)
 using namespace android;
 
 OmxDecoder::OmxDecoder(MediaResource *aResource,
-                       nsBuiltinDecoder *aDecoder) :
+                       MediaDecoder *aDecoder) :
   mResource(aResource),
   mDecoder(aDecoder),
   mVideoWidth(0),
@@ -184,7 +185,7 @@ bool OmxDecoder::Init() {
     return false;
   }
 
-  mResource->SetReadMode(nsMediaCacheStream::MODE_METADATA);
+  mResource->SetReadMode(MediaCacheStream::MODE_METADATA);
 
   sp<MediaExtractor> extractor = MediaExtractor::Create(dataSource);
   if (extractor == nullptr) {
@@ -221,7 +222,7 @@ bool OmxDecoder::Init() {
     return false;
   }
 
-  mResource->SetReadMode(nsMediaCacheStream::MODE_PLAYBACK);
+  mResource->SetReadMode(MediaCacheStream::MODE_PLAYBACK);
 
   int64_t totalDurationUs = 0;
 
@@ -559,6 +560,11 @@ bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aTimeUs,
   else if (err == ERROR_END_OF_STREAM) {
     return false;
   }
+  else if (err == UNKNOWN_ERROR) {
+    // This sometimes is used to mean "out of memory", but regardless,
+    // don't keep trying to decode if the decoder doesn't want to.
+    return false;
+  }
 
   return true;
 }
@@ -566,6 +572,10 @@ bool OmxDecoder::ReadVideo(VideoFrame *aFrame, int64_t aTimeUs,
 bool OmxDecoder::ReadAudio(AudioFrame *aFrame, int64_t aSeekTimeUs)
 {
   status_t err;
+
+  if (!mAudioBuffer) {
+    return false;
+  }
 
   if (mAudioMetadataRead && aSeekTimeUs == -1) {
     // Use the data read into the buffer during metadata time
@@ -608,6 +618,9 @@ bool OmxDecoder::ReadAudio(AudioFrame *aFrame, int64_t aSeekTimeUs)
     if (aFrame->mSize == 0) {
       return false;
     }
+  }
+  else if (err == UNKNOWN_ERROR) {
+    return false;
   }
 
   return true;

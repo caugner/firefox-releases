@@ -67,6 +67,8 @@ TimerObserverRunnable::Run()
   if (observerService) {
     observerService->AddObserver(mObserver, "sleep_notification", false);
     observerService->AddObserver(mObserver, "wake_notification", false);
+    observerService->AddObserver(mObserver, "suspend_process_notification", false);
+    observerService->AddObserver(mObserver, "resume_process_notification", false);
   }
   return NS_OK;
 }
@@ -75,7 +77,7 @@ TimerObserverRunnable::Run()
 
 nsresult TimerThread::Init()
 {
-  PR_LOG(gTimerLog, PR_LOG_DEBUG, ("TimerThread::Init [%d]\n", mInitialized));
+  PR_LOG(GetTimerLog(), PR_LOG_DEBUG, ("TimerThread::Init [%d]\n", mInitialized));
 
   if (mInitialized) {
     if (!mThread)
@@ -121,7 +123,7 @@ nsresult TimerThread::Init()
 
 nsresult TimerThread::Shutdown()
 {
-  PR_LOG(gTimerLog, PR_LOG_DEBUG, ("TimerThread::Shutdown begin\n"));
+  PR_LOG(GetTimerLog(), PR_LOG_DEBUG, ("TimerThread::Shutdown begin\n"));
 
   if (!mThread)
     return NS_ERROR_NOT_INITIALIZED;
@@ -155,7 +157,7 @@ nsresult TimerThread::Shutdown()
 
   mThread->Shutdown();    // wait for the thread to die
 
-  PR_LOG(gTimerLog, PR_LOG_DEBUG, ("TimerThread::Shutdown end\n"));
+  PR_LOG(GetTimerLog(), PR_LOG_DEBUG, ("TimerThread::Shutdown end\n"));
   return NS_OK;
 }
 
@@ -207,7 +209,7 @@ void TimerThread::UpdateFilter(uint32_t aDelay, TimeStamp aTimeout,
   }
 
 #ifdef DEBUG_TIMERS
-  PR_LOG(gTimerLog, PR_LOG_DEBUG,
+  PR_LOG(GetTimerLog(), PR_LOG_DEBUG,
          ("UpdateFilter: smoothSlack = %g, filterLength = %u\n",
           smoothSlack, filterLength));
 #endif
@@ -273,8 +275,8 @@ NS_IMETHODIMP TimerThread::Run()
             MonitorAutoUnlock unlock(mMonitor);
 
 #ifdef DEBUG_TIMERS
-            if (PR_LOG_TEST(gTimerLog, PR_LOG_DEBUG)) {
-              PR_LOG(gTimerLog, PR_LOG_DEBUG,
+            if (PR_LOG_TEST(GetTimerLog(), PR_LOG_DEBUG)) {
+              PR_LOG(GetTimerLog(), PR_LOG_DEBUG,
                      ("Timer thread woke up %fms from when it was supposed to\n",
                       fabs((now - timer->mTimeout).ToMilliseconds())));
             }
@@ -333,12 +335,12 @@ NS_IMETHODIMP TimerThread::Run()
       }
 
 #ifdef DEBUG_TIMERS
-      if (PR_LOG_TEST(gTimerLog, PR_LOG_DEBUG)) {
+      if (PR_LOG_TEST(GetTimerLog(), PR_LOG_DEBUG)) {
         if (waitFor == PR_INTERVAL_NO_TIMEOUT)
-          PR_LOG(gTimerLog, PR_LOG_DEBUG,
+          PR_LOG(GetTimerLog(), PR_LOG_DEBUG,
                  ("waiting for PR_INTERVAL_NO_TIMEOUT\n"));
         else
-          PR_LOG(gTimerLog, PR_LOG_DEBUG,
+          PR_LOG(GetTimerLog(), PR_LOG_DEBUG,
                  ("waiting for %u\n", PR_IntervalToMilliseconds(waitFor)));
       }
 #endif
@@ -485,9 +487,11 @@ void TimerThread::DoAfterSleep()
 NS_IMETHODIMP
 TimerThread::Observe(nsISupports* /* aSubject */, const char *aTopic, const PRUnichar* /* aData */)
 {
-  if (strcmp(aTopic, "sleep_notification") == 0)
+  if (strcmp(aTopic, "sleep_notification") == 0 ||
+      strcmp(aTopic, "suspend_process_notification") == 0)
     DoBeforeSleep();
-  else if (strcmp(aTopic, "wake_notification") == 0)
+  else if (strcmp(aTopic, "wake_notification") == 0 ||
+           strcmp(aTopic, "resume_process_notification") == 0)
     DoAfterSleep();
 
   return NS_OK;

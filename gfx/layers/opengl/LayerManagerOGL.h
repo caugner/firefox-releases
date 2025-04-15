@@ -114,13 +114,15 @@ public:
   {
       if (!mGLContext)
           return false;
-      int32_t maxSize = mGLContext->GetMaxTextureSize();
+      int32_t maxSize = GetMaxTextureSize();
       return aSize <= gfxIntSize(maxSize, maxSize);
   }
 
   virtual int32_t GetMaxTextureSize() const
   {
-    return mGLContext->GetMaxTextureSize();
+    int32_t maxSize;
+    mGLContext->fGetIntegerv(LOCAL_GL_MAX_TEXTURE_SIZE, &maxSize);
+    return maxSize;
   }
 
   virtual already_AddRefed<ThebesLayer> CreateThebesLayer();
@@ -348,6 +350,8 @@ public:
   gfxMatrix& GetWorldTransform(void);
   void WorldTransformRect(nsIntRect& aRect);
 
+  void UpdateRenderBounds(const nsIntRect& aRect);
+
   /**
    * Set the size of the surface we're rendering to.
    */
@@ -363,6 +367,15 @@ public:
   virtual TemporaryRef<mozilla::gfx::DrawTarget>
     CreateDrawTarget(const mozilla::gfx::IntSize &aSize,
                      mozilla::gfx::SurfaceFormat aFormat);
+
+  /**
+   * Calculates the 'completeness' of the rendering that intersected with the
+   * screen on the last render. This is only useful when progressive tile
+   * drawing is enabled, otherwise this will always return 1.0.
+   * This function's expense scales with the size of the layer tree and the
+   * complexity of individual layers' valid regions.
+   */
+  float ComputeRenderIntegrity();
 
 private:
   /** Widget associated with this layer manager */
@@ -446,12 +459,24 @@ private:
    */
   void AddPrograms(gl::ShaderProgramType aType);
 
+  /**
+   * Recursive helper method for use by ComputeRenderIntegrity. Subtracts
+   * any incomplete rendering on aLayer from aScreenRegion. Any low-precision
+   * rendering is included in aLowPrecisionScreenRegion. aTransform is the
+   * accumulated transform of intermediate surfaces beneath aLayer.
+   */
+  static void ComputeRenderIntegrityInternal(Layer* aLayer,
+                                             nsIntRegion& aScreenRegion,
+                                             nsIntRegion& aLowPrecisionScreenRegion,
+                                             const gfx3DMatrix& aTransform);
+
   /* Thebes layer callbacks; valid at the end of a transaciton,
    * while rendering */
   DrawThebesLayerCallback mThebesLayerCallback;
   void *mThebesLayerCallbackData;
   gfxMatrix mWorldMatrix;
   nsAutoPtr<FPSState> mFPS;
+  nsIntRect mRenderBounds;
 #ifdef DEBUG
   // NB: only interesting when this is a purely compositing layer
   // manager.  True after possibly onscreen layers have had their

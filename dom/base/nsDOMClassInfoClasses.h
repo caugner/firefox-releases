@@ -19,7 +19,6 @@ DOMCI_CLASS(DOMConstructor)
 // Core classes
 DOMCI_CLASS(XMLDocument)
 DOMCI_CLASS(DocumentType)
-DOMCI_CLASS(DOMImplementation)
 DOMCI_CLASS(DOMException)
 DOMCI_CLASS(DOMTokenList)
 DOMCI_CLASS(DOMSettableTokenList)
@@ -131,7 +130,6 @@ DOMCI_CLASS(CSSGroupRuleRuleList)
 DOMCI_CLASS(MediaList)
 DOMCI_CLASS(StyleSheetList)
 DOMCI_CLASS(CSSStyleSheet)
-DOMCI_CLASS(CSSStyleDeclaration)
 DOMCI_CLASS(ROCSSPrimitiveValue)
 
 // Range classes
@@ -317,11 +315,9 @@ DOMCI_CLASS(SVGZoomEvent)
 
 // Canvas
 DOMCI_CLASS(HTMLCanvasElement)
-DOMCI_CLASS(CanvasRenderingContext2D)
 DOMCI_CLASS(CanvasGradient)
 DOMCI_CLASS(CanvasPattern)
 DOMCI_CLASS(TextMetrics)
-DOMCI_CLASS(ImageData)
 DOMCI_CLASS(MozCanvasPrintState)
 
 // SmartCard Events
@@ -370,9 +366,6 @@ DOMCI_CLASS(File)
 DOMCI_CLASS(FileReader)
 DOMCI_CLASS(ArchiveReader)
 DOMCI_CLASS(ArchiveRequest)
-DOMCI_CLASS(MozURLProperty)
-
-DOMCI_CLASS(DOMStringMap)
 
 // DOM modal content window class, almost identical to Window
 DOMCI_CLASS(ModalContentWindow)
@@ -405,6 +398,7 @@ DOMCI_CLASS(MozSmsEvent)
 DOMCI_CLASS(MozSmsRequest)
 DOMCI_CLASS(MozSmsFilter)
 DOMCI_CLASS(MozSmsCursor)
+DOMCI_CLASS(MozSmsSegmentInfo)
 
 DOMCI_CLASS(MozConnection)
 #ifdef MOZ_B2G_RIL
@@ -418,7 +412,6 @@ DOMCI_CLASS(DataErrorEvent)
 
 // @font-face in CSS
 DOMCI_CLASS(CSSFontFaceRule)
-DOMCI_CLASS(CSSFontFaceStyleDecl)
 
 #if defined(MOZ_MEDIA)
 // WhatWG Video Element
@@ -430,6 +423,7 @@ DOMCI_CLASS(TimeRanges)
 
 // Media streams
 DOMCI_CLASS(MediaStream)
+DOMCI_CLASS(LocalMediaStream)
 #endif
 
 DOMCI_CLASS(XMLHttpRequestUpload)
@@ -446,9 +440,6 @@ DOMCI_CLASS(NotifyAudioAvailableEvent)
 DOMCI_CLASS(SimpleGestureEvent)
 
 DOMCI_CLASS(MathMLElement)
-
-// WebGL
-DOMCI_CLASS(WebGLActiveInfo)
 
 DOMCI_CLASS(PaintRequest)
 DOMCI_CLASS(PaintRequestList)
@@ -489,14 +480,14 @@ DOMCI_CLASS(TouchEvent)
 DOMCI_CLASS(MozCSSKeyframeRule)
 DOMCI_CLASS(MozCSSKeyframesRule)
 
+DOMCI_CLASS(CSSPageRule)
+
 DOMCI_CLASS(MediaQueryList)
 
 DOMCI_CLASS(MutationObserver)
 DOMCI_CLASS(MutationRecord)
 
 #ifdef MOZ_B2G_RIL
-DOMCI_CLASS(MozWifiStatusChangeEvent)
-DOMCI_CLASS(MozWifiConnectionInfoEvent)
 DOMCI_CLASS(Telephony)
 DOMCI_CLASS(TelephonyCall)
 DOMCI_CLASS(CallEvent)
@@ -524,12 +515,15 @@ DOMCI_CLASS(CameraCapabilities)
 DOMCI_CLASS(DOMError)
 DOMCI_CLASS(DOMRequest)
 DOMCI_CLASS(OpenWindowEventDetail)
+DOMCI_CLASS(AsyncScrollEventDetail)
 
 DOMCI_CLASS(DOMFileHandle)
 DOMCI_CLASS(FileRequest)
 DOMCI_CLASS(LockedFile)
 
+#ifdef MOZ_SYS_MSG
 DOMCI_CLASS(MozActivity)
+#endif
 
 #ifdef MOZ_TIME_MANAGER
 DOMCI_CLASS(MozTimeManager)

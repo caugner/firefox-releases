@@ -51,7 +51,7 @@ public:
 private:
 
   template<typename T>
-  bool Validate(T maxAllowed, size_t first, size_t count);
+  bool Validate(uint32_t maxAllowed, size_t first, size_t count);
 
   size_t ByteSize() const {
     return mByteSize;
@@ -65,7 +65,7 @@ private:
   void InvalidateTrees(size_t firstByte, size_t lastByte);
 
   template<typename T>
-  friend class WebGLElementArrayCacheTree;
+  friend struct WebGLElementArrayCacheTree;
   template<typename T>
   friend struct TreeForType;
 

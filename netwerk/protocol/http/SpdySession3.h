@@ -89,6 +89,14 @@ public:
     RST_FRAME_TOO_LARGE = 11
   };
 
+  enum goawayReason
+  {
+    OK = 0,
+    PROTOCOL_ERROR = 1,
+    INTERNAL_ERROR = 2,    // sometimes misdocumented as 11
+    NUM_STATUS_CODES = 3   // reserved by chromium but undocumented
+  };
+
   enum
   {
     SETTINGS_TYPE_UPLOAD_BW = 1, // kb/s
@@ -108,8 +116,8 @@ public:
   const static uint32_t kDefaultBufferSize = 2048;
 
   // kDefaultQueueSize must be >= other queue size constants
-  const static uint32_t kDefaultQueueSize =  16384;
-  const static uint32_t kQueueMinimumCleanup = 8192;
+  const static uint32_t kDefaultQueueSize =  32768;
+  const static uint32_t kQueueMinimumCleanup = 24576;
   const static uint32_t kQueueTailRoom    =  4096;
   const static uint32_t kQueueReserved    =  1024;
 
@@ -171,7 +179,6 @@ private:
     PROCESSING_CONTROL_RST_STREAM
   };
 
-  void        DeterminePingThreshold();
   nsresult    ResponseHeadersComplete();
   uint32_t    GetWriteQueueSize();
   void        ChangeDownstreamState(enum stateType);
@@ -179,9 +186,8 @@ private:
   nsresult    UncompressAndDiscard(uint32_t, uint32_t);
   void        zlibInit();
   void        GeneratePing(uint32_t);
-  void        ClearPing(bool);
   void        GenerateRstStream(uint32_t, uint32_t);
-  void        GenerateGoAway();
+  void        GenerateGoAway(uint32_t);
   void        CleanupStream(SpdyStream3 *, nsresult, rstReason);
   void        CloseStream(SpdyStream3 *, nsresult);
   void        GenerateSettings();
@@ -339,7 +345,6 @@ private:
   PRIntervalTime       mLastDataReadEpoch; // used for IdleTime()
   PRIntervalTime       mPingSentEpoch;
   uint32_t             mNextPingID;
-  bool                 mPingThresholdExperiment;
 };
 
 }} // namespace mozilla::net

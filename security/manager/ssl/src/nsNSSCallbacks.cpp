@@ -337,7 +337,7 @@ nsNSSHttpRequestSession::internal_send_receive_attempt(bool &retryable_error,
   volatile bool &waitFlag = mListener->mWaitFlag;
   waitFlag = true;
 
-  nsRefPtr<nsHTTPDownloadEvent> event = new nsHTTPDownloadEvent;
+  RefPtr<nsHTTPDownloadEvent> event(new nsHTTPDownloadEvent);
   if (!event)
     return SECFailure;
 
@@ -401,7 +401,8 @@ nsNSSHttpRequestSession::internal_send_receive_attempt(bool &retryable_error,
         {
           request_canceled = true;
 
-          nsRefPtr<nsCancelHTTPDownloadEvent> cancelevent = new nsCancelHTTPDownloadEvent;
+          RefPtr<nsCancelHTTPDownloadEvent> cancelevent(
+            new nsCancelHTTPDownloadEvent);
           cancelevent->mListener = mListener;
           rv = NS_DispatchToMainThread(cancelevent);
           if (NS_FAILED(rv)) {
@@ -723,7 +724,7 @@ void PK11PasswordPromptRunnable::RunOnTargetThread()
   else
   {
     prompt = do_GetInterface(mIR);
-    NS_ASSERTION(prompt != nullptr, "callbacks does not implement nsIPrompt");
+    NS_ASSERTION(prompt, "callbacks does not implement nsIPrompt");
   }
 
   if (!prompt)
@@ -774,9 +775,9 @@ void PK11PasswordPromptRunnable::RunOnTargetThread()
 char*
 PK11PasswordPrompt(PK11SlotInfo* slot, PRBool retry, void* arg)
 {
-  nsRefPtr<PK11PasswordPromptRunnable> runnable = 
+  RefPtr<PK11PasswordPromptRunnable> runnable(
     new PK11PasswordPromptRunnable(slot,
-                                   static_cast<nsIInterfaceRequestor*>(arg));
+                                   static_cast<nsIInterfaceRequestor*>(arg)));
   runnable->DispatchToMainThreadAndWait();
   return runnable->mResult;
 }
@@ -809,12 +810,9 @@ void HandshakeCallback(PRFileDesc* fd, void* client_data) {
   int32_t secStatus;
   if (sslStatus == SSL_SECURITY_STATUS_OFF)
     secStatus = nsIWebProgressListener::STATE_IS_BROKEN;
-  else if (encryptBits >= 90)
-    secStatus = (nsIWebProgressListener::STATE_IS_SECURE |
-                 nsIWebProgressListener::STATE_SECURE_HIGH);
   else
-    secStatus = (nsIWebProgressListener::STATE_IS_SECURE |
-                 nsIWebProgressListener::STATE_SECURE_LOW);
+    secStatus = nsIWebProgressListener::STATE_IS_SECURE
+              | nsIWebProgressListener::STATE_SECURE_HIGH;
 
   PRBool siteSupportsSafeRenego;
   if (SSL_HandshakeNegotiatedExtension(fd, ssl_renegotiation_info_xtn, &siteSupportsSafeRenego) != SECSuccess
@@ -870,7 +868,7 @@ void HandshakeCallback(PRFileDesc* fd, void* client_data) {
     infoObject->SetShortSecurityDescription(shortDesc.get());
 
     /* Set the SSL Status information */
-    nsRefPtr<nsSSLStatus> status = infoObject->SSLStatus();
+    RefPtr<nsSSLStatus> status(infoObject->SSLStatus());
     if (!status) {
       status = new nsSSLStatus();
       infoObject->SetSSLStatus(status);
@@ -881,7 +879,7 @@ void HandshakeCallback(PRFileDesc* fd, void* client_data) {
 
     CERTCertificate *serverCert = SSL_PeerCertificate(fd);
     if (serverCert) {
-      nsRefPtr<nsNSSCertificate> nssc = nsNSSCertificate::Create(serverCert);
+      RefPtr<nsNSSCertificate> nssc(nsNSSCertificate::Create(serverCert));
       CERT_DestroyCertificate(serverCert);
       serverCert = nullptr;
 

@@ -226,9 +226,9 @@ struct nsStyleImage {
                                bool* aIsEntireImage = nullptr) const;
 
   /**
-   * Requests a decode on the image.
+   * Starts the decoding of a image.
    */
-  nsresult RequestDecode() const;
+  nsresult StartDecoding() const;
   /**
    * @return true if the item is definitely opaque --- i.e., paints every
    * pixel within its bounds opaquely, and the bounds contains at least a pixel.
@@ -1083,7 +1083,9 @@ struct nsStylePosition {
 
   nsChangeHint CalcDifference(const nsStylePosition& aOther) const;
   static nsChangeHint MaxDifference() {
-    return NS_STYLE_HINT_REFLOW;
+    return NS_CombineHint(NS_STYLE_HINT_REFLOW,
+                          nsChangeHint(nsChangeHint_RecomputePosition |
+                                       nsChangeHint_UpdateOverflow));
   }
 
   nsStyleSides  mOffset;                // [reset] coord, percent, calc, auto
@@ -1574,7 +1576,8 @@ struct nsStyleDisplay {
     return nsChangeHint(NS_STYLE_HINT_FRAMECHANGE |
                         nsChangeHint_UpdateOpacityLayer |
                         nsChangeHint_UpdateTransformLayer |
-                        nsChangeHint_UpdateOverflow);
+                        nsChangeHint_UpdateOverflow |
+                        nsChangeHint_AddOrRemoveTransform);
   }
 
   // We guarantee that if mBinding is non-null, so are mBinding->GetURI() and
@@ -1592,6 +1595,7 @@ struct nsStyleDisplay {
   uint8_t mOriginalFloats;      // [reset] saved mFloats for position:absolute/fixed;
                                 //         otherwise equal to mFloats
   uint8_t mBreakType;           // [reset] see nsStyleConsts.h NS_STYLE_CLEAR_*
+  uint8_t mBreakInside;         // [reset] NS_STYLE_PAGE_BREAK_AUTO/AVOID
   bool mBreakBefore;    // [reset]
   bool mBreakAfter;     // [reset]
   uint8_t mOverflowX;           // [reset] see nsStyleConsts.h
@@ -1678,13 +1682,6 @@ struct nsStyleDisplay {
            NS_STYLE_POSITION_FIXED == mPosition;
   }
 
-  /* Returns true if we're positioned or there's a transform in effect. */
-  bool IsPositionedStyle() const {
-    return IsAbsolutelyPositionedStyle() ||
-           IsRelativelyPositionedStyle() ||
-           HasTransform();
-  }
-
   bool IsRelativelyPositionedStyle() const {
     return mPosition == NS_STYLE_POSITION_RELATIVE;
   }
@@ -1696,8 +1693,9 @@ struct nsStyleDisplay {
            mOverflowX != NS_STYLE_OVERFLOW_CLIP;
   }
 
-  /* Returns whether the element has the -moz-transform property. */
-  bool HasTransform() const {
+  /* Returns whether the element has the -moz-transform property
+   * or a related property. */
+  bool HasTransformStyle() const {
     return mSpecifiedTransform != nullptr || 
            mTransformStyle == NS_STYLE_TRANSFORM_STYLE_PRESERVE_3D ||
            mBackfaceVisibility == NS_STYLE_BACKFACE_VISIBILITY_HIDDEN;
@@ -1713,6 +1711,9 @@ struct nsStyleDisplay {
   inline bool IsPositioned(const nsIFrame* aFrame) const;
   inline bool IsRelativelyPositioned(const nsIFrame* aFrame) const;
   inline bool IsAbsolutelyPositioned(const nsIFrame* aFrame) const;
+  /* Returns whether the element has the -moz-transform property
+   * or a related property, and supports CSS transforms. */
+  inline bool HasTransform(const nsIFrame* aFrame) const;
 };
 
 struct nsStyleTable {

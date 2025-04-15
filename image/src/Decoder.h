@@ -59,7 +59,7 @@ public:
    *
    * Notifications Sent: TODO
    */
-  void Finish();
+  void Finish(RasterImage::eShutdownIntent aShutdownIntent);
 
   /**
    * Informs the shared decoder that all the data has been written.
@@ -120,6 +120,12 @@ public:
     DECODER_NO_PREMULTIPLY_ALPHA = 0x2,     // imgIContainer::FLAG_DECODE_NO_PREMULTIPLY_ALPHA
     DECODER_NO_COLORSPACE_CONVERSION = 0x4  // imgIContainer::FLAG_DECODE_NO_COLORSPACE_CONVERSION
   };
+
+  enum DecodeStyle {
+      PROGRESSIVE, // produce intermediate frames representing the partial state of the image
+      SEQUENTIAL // decode to final image immediately
+  };
+
   void SetDecodeFlags(uint32_t aFlags) { mDecodeFlags = aFlags; }
   uint32_t GetDecodeFlags() { return mDecodeFlags; }
 

@@ -26,7 +26,7 @@ using namespace mozilla::a11y;
 ApplicationAccessible::ApplicationAccessible() :
   AccessibleWrap(nullptr, nullptr)
 {
-  mFlags |= (eApplicationAccessible | eSharedNode);
+  mFlags |= eApplicationAccessible;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -110,12 +110,10 @@ ApplicationAccessible::State()
   return IsDefunct() ? states::DEFUNCT : 0;
 }
 
-NS_IMETHODIMP
-ApplicationAccessible::GetAttributes(nsIPersistentProperties** aAttributes)
+already_AddRefed<nsIPersistentProperties>
+ApplicationAccessible::NativeAttributes()
 {
-  NS_ENSURE_ARG_POINTER(aAttributes);
-  *aAttributes = nullptr;
-  return NS_OK;
+  return nullptr;
 }
 
 GroupPos
@@ -369,22 +367,6 @@ ApplicationAccessible::GetSiblingAtOffset(int32_t aOffset,
 
 ////////////////////////////////////////////////////////////////////////////////
 // nsIAccessible
-
-NS_IMETHODIMP
-ApplicationAccessible::GetDOMNode(nsIDOMNode** aDOMNode)
-{
-  NS_ENSURE_ARG_POINTER(aDOMNode);
-  *aDOMNode = nullptr;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-ApplicationAccessible::GetDocument(nsIAccessibleDocument** aDocument)
-{
-  NS_ENSURE_ARG_POINTER(aDocument);
-  *aDocument = nullptr;
-  return NS_OK;
-}
 
 NS_IMETHODIMP
 ApplicationAccessible::GetRootDocument(nsIAccessibleDocument** aRootDocument)

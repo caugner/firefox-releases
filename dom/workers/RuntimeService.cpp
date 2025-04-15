@@ -19,6 +19,7 @@
 #include "nsISupportsPriority.h"
 #include "nsITimer.h"
 #include "nsPIDOMWindow.h"
+#include "nsLayoutStatics.h"
 
 #include "jsdbgapi.h"
 #include "mozilla/dom/EventTargetBinding.h"
@@ -142,7 +143,6 @@ MOZ_STATIC_ASSERT(NS_ARRAY_LENGTH(gStringChars) == ID_COUNT,
 enum {
   PREF_strict = 0,
   PREF_werror,
-  PREF_relimit,
   PREF_methodjit,
   PREF_methodjit_always,
   PREF_typeinference,
@@ -163,7 +163,6 @@ enum {
 const char* gPrefsToWatch[] = {
   JS_OPTIONS_DOT_STR "strict",
   JS_OPTIONS_DOT_STR "werror",
-  JS_OPTIONS_DOT_STR "relimit",
   JS_OPTIONS_DOT_STR "methodjit.content",
   JS_OPTIONS_DOT_STR "methodjit_always",
   JS_OPTIONS_DOT_STR "typeinference",
@@ -205,9 +204,6 @@ PrefCallback(const char* aPrefName, void* aClosure)
     }
     if (Preferences::GetBool(gPrefsToWatch[PREF_werror])) {
       newOptions |= JSOPTION_WERROR;
-    }
-    if (Preferences::GetBool(gPrefsToWatch[PREF_relimit])) {
-      newOptions |= JSOPTION_RELIMIT;
     }
     if (Preferences::GetBool(gPrefsToWatch[PREF_methodjit])) {
       newOptions |= JSOPTION_METHODJIT;
@@ -310,14 +306,15 @@ public:
   bool
   Dispatch(JSContext* aCx)
   {
-    mSyncQueueKey = mWorkerPrivate->CreateNewSyncLoop();
+    AutoSyncLoopHolder syncLoop(mWorkerPrivate);
+    mSyncQueueKey = syncLoop.SyncQueueKey();
 
     if (NS_FAILED(NS_DispatchToMainThread(this, NS_DISPATCH_NORMAL))) {
       JS_ReportError(aCx, "Failed to dispatch to main thread!");
       return false;
     }
 
-    return mWorkerPrivate->RunSyncLoop(aCx, mSyncQueueKey);
+    return syncLoop.RunAndForget(aCx);
   }
 
   NS_IMETHOD
@@ -383,7 +380,7 @@ CreateJSContextForWorker(WorkerPrivate* aWorkerPrivate)
 
   // The number passed here doesn't matter, we're about to change it in the call
   // to JS_SetGCParameter.
-  JSRuntime* runtime = JS_NewRuntime(WORKER_DEFAULT_RUNTIME_HEAPSIZE);
+  JSRuntime* runtime = JS_NewRuntime(WORKER_DEFAULT_RUNTIME_HEAPSIZE, JS_NO_HELPER_THREADS);
   if (!runtime) {
     NS_WARNING("Could not create new runtime!");
     return nullptr;
@@ -553,7 +550,7 @@ ResolveWorkerClasses(JSContext* aCx, JSHandleObject aObj, JSHandleId aId, unsign
       return true;
     }
 
-    JSObject* eventTarget = EventTargetBinding_workers::GetProtoObject(aCx, aObj, aObj);
+    JSObject* eventTarget = EventTargetBinding_workers::GetProtoObject(aCx, aObj);
     if (!eventTarget) {
       return false;
     }
@@ -1006,6 +1003,7 @@ nsresult
 RuntimeService::Init()
 {
   AssertIsOnMainThread();
+  nsLayoutStatics::AddRef();
 
   mIdleThreadTimer = do_CreateInstance(NS_TIMER_CONTRACTID);
   NS_ENSURE_STATE(mIdleThreadTimer);
@@ -1182,6 +1180,7 @@ RuntimeService::Cleanup()
   }
 
   CleanupOSFileConstants();
+  nsLayoutStatics::Release();
 }
 
 // static

@@ -21,9 +21,9 @@
 // PrefixSet.
 
 // Data format for the ".cache" files:
-//    uint32 magic           Identify the file type
-//    uint32 version         Version identifier for file format
-//    uint32 numCompletions  Amount of completions stored
+//    uint32_t magic           Identify the file type
+//    uint32_t version         Version identifier for file format
+//    uint32_t numCompletions  Amount of completions stored
 //    0...numCompletions     256-bit Completions
 
 // Name of the lookupcomplete cache
@@ -45,8 +45,8 @@ extern PRLogModuleInfo *gUrlClassifierDbServiceLog;
 namespace mozilla {
 namespace safebrowsing {
 
-const uint32 LOOKUPCACHE_MAGIC = 0x1231af3e;
-const uint32 CURRENT_VERSION = 2;
+const uint32_t LOOKUPCACHE_MAGIC = 0x1231af3e;
+const uint32_t CURRENT_VERSION = 2;
 
 LookupCache::LookupCache(const nsACString& aTableName, nsIFile* aStoreDir,
                          bool aPerClientRandomize)
@@ -54,11 +54,7 @@ LookupCache::LookupCache(const nsACString& aTableName, nsIFile* aStoreDir,
   , mPerClientRandomize(aPerClientRandomize)
   , mTableName(aTableName)
   , mStoreDirectory(aStoreDir)
-  , mTestTable(false)
 {
-  if (mTableName.RFind(NS_LITERAL_CSTRING("-simple")) != kNotFound) {
-    mTestTable = true;
-  }
 }
 
 nsresult
@@ -99,8 +95,7 @@ LookupCache::Open()
     // Simply lacking a .cache file is a recoverable error,
     // as unlike the .pset/.sbstore files it is a pure cache.
     // Just create a new empty one.
-    Clear();
-    UpdateHeader();
+    ClearCompleteCache();
   } else {
     // Read in the .cache file
     rv = ReadHeader(inputStream);
@@ -148,7 +143,7 @@ LookupCache::Reset()
   rv = prefixsetFile->Remove(false);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  Clear();
+  ClearAll();
 
   return NS_OK;
 }
@@ -163,7 +158,7 @@ LookupCache::Build(AddPrefixArray& aAddPrefixes,
 
   mCompletions.Clear();
   mCompletions.SetCapacity(aAddCompletes.Length());
-  for (uint32 i = 0; i < aAddCompletes.Length(); i++) {
+  for (uint32_t i = 0; i < aAddCompletes.Length(); i++) {
     mCompletions.AppendElement(aAddCompletes[i].CompleteHash());
   }
   aAddCompletes.Clear();
@@ -186,7 +181,7 @@ LookupCache::Dump()
   if (!LOG_ENABLED())
     return;
 
-  for (uint32 i = 0; i < mCompletions.Length(); i++) {
+  for (uint32_t i = 0; i < mCompletions.Length(); i++) {
     nsAutoCString str;
     mCompletions[i].ToString(str);
     LOG(("Completion: %s", str.get()));
@@ -219,14 +214,14 @@ LookupCache::Has(const Completion& aCompletion,
 
   LOG(("Probe in %s: %X, found %d", mTableName.get(), prefix, found));
 
-  if (found || mTestTable) {
-    *aHas = found;
-    // check completion store
-    if (mCompletions.BinaryIndexOf(aCompletion) != nsTArray<Completion>::NoIndex) {
-      LOG(("Complete in %s", mTableName.get()));
-      *aHas = true;
-      *aComplete = true;
-    }
+  if (found) {
+    *aHas = true;
+  }
+
+  if (mCompletions.BinaryIndexOf(aCompletion) != nsTArray<Completion>::NoIndex) {
+    LOG(("Complete in %s", mTableName.get()));
+    *aComplete = true;
+    *aHas = true;
   }
 
   return NS_OK;
@@ -277,11 +272,18 @@ LookupCache::WriteFile()
 }
 
 void
-LookupCache::Clear()
+LookupCache::ClearAll()
 {
-  mCompletions.Clear();
+  ClearCompleteCache();
   mPrefixSet->SetPrefixes(nullptr, 0);
   mPrimed = false;
+}
+
+void
+LookupCache::ClearCompleteCache()
+{
+  mCompletions.Clear();
+  UpdateHeader();
 }
 
 void
@@ -324,8 +326,7 @@ nsresult
 LookupCache::ReadHeader(nsIInputStream* aInputStream)
 {
   if (!aInputStream) {
-    Clear();
-    UpdateHeader();
+    ClearCompleteCache();
     return NS_OK;
   }
 
@@ -683,7 +684,7 @@ LookupCache::ConstructPrefixSet(AddPrefixArray& aAddPrefixes)
   nsTArray<uint32_t> array;
   array.SetCapacity(aAddPrefixes.Length());
 
-  for (uint32 i = 0; i < aAddPrefixes.Length(); i++) {
+  for (uint32_t i = 0; i < aAddPrefixes.Length(); i++) {
     array.AppendElement(aAddPrefixes[i].PrefixHash().ToUint32());
   }
   aAddPrefixes.Clear();

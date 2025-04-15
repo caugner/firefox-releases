@@ -23,23 +23,27 @@
       <field name="limit" readonly="true">
         250
       </field>
+
+      <field name="hrefMaxLength" readonly="true">
+        <!-- Limit displayed script error source URL to avoid performance issues. (Bug 796179) -->
+        200
+      </field>
+
       <field name="_showChromeErrors">-1</field>
-      
+
       <property name="showChromeErrors">
         <getter><![CDATA[
           if (this._showChromeErrors != -1)
             return this._showChromeErrors;
-          var pref = Components.classes['@mozilla.org/preferences-service;1'].getService();
-          pref = pref.QueryInterface(Components.interfaces.nsIPrefBranch);
 
           try {
-            return this._showChromeErrors = pref.getBoolPref("javascript.options.showInConsole");
+            return this._showChromeErrors = Services.prefs.getBoolPref("javascript.options.showInConsole");
           }
           catch(ex) {
             return this._showChromeErrors = false;
           }
         ]]></getter>
-      </property>          
+      </property>
 
       <property name="count" readonly="true">
         <getter>return this.mCount</getter>
@@ -105,18 +109,16 @@
           
           this.mConsoleRowBox = document.getAnonymousElementByAttribute(this, "role", "console-rows");
           this.mStrBundle = document.getAnonymousElementByAttribute(this, "role", "string-bundle");
-          
+
           try {
-            var isupports = Components.classes['@mozilla.org/consoleservice;1'].getService();
-            this.mCService = isupports.QueryInterface(Components.interfaces.nsIConsoleService);
-            this.mCService.registerListener(this.mConsoleListener);
+            Services.console.registerListener(this.mConsoleListener);
           } catch (ex) {
             appendItem(
               "Unable to display errors - couldn't get Console Service component. " +
               "(Missing @mozilla.org/consoleservice;1)");
             return;
-          }          
-                    
+          }
+
           this.mMode = this.getAttribute("mode") || "All";
           this.mFilter = "";
 
@@ -127,16 +129,14 @@
 
       <method name="destroy">
         <body><![CDATA[
-          this.mCService.unregisterListener(this.mConsoleListener);
+          Services.console.unregisterListener(this.mConsoleListener);
           window.controllers.removeController(this._controller);
         ]]></body>
       </method>
 
       <method name="appendInitialItems">
         <body><![CDATA[
-          var out = {}; // Throwaway references to support 'out' parameters.
-          this.mCService.getMessageArray(out, {});
-          var messages = out.value;
+          var messages = Services.console.getMessageArray();
       
           // In case getMessageArray returns 0-length array as null
           if (!messages)
@@ -166,7 +166,13 @@
             // filter chrome urls
             if (!this.showChromeErrors && scriptError.sourceName.substr(0, 9) == "chrome://")
               return;
- 
+
+#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
+            // filter private windows
+            if (scriptError.isFromPrivateWindow)
+              return;
+#endif
+
             this.appendError(scriptError);
           } catch (ex) {
             try {
@@ -192,7 +198,7 @@
           
           // Is this error actually just a non-fatal warning?
           var warning = aObject.flags & nsIScriptError.warningFlag != 0;
-  
+
           var typetext = warning ? "typeWarning" : "typeError";
           row.setAttribute("typetext", this.mStrBundle.getString(typetext));
           row.setAttribute("type", warning ? "warning" : "error");
@@ -200,7 +206,12 @@
           row.setAttribute("category", aObject.category);
           row.setAttribute("time", this.properFormatTime(aObject.timeStamp));
           if (aObject.lineNumber || aObject.sourceName) {
-            row.setAttribute("href", aObject.sourceName);
+            if (aObject.sourceName.length <= this.hrefMaxLength) {
+              row.setAttribute("href", aObject.sourceName);
+            } else {
+              row.setAttribute("href", aObject.sourceName.substring(0, this.hrefMaxLength) + '…');
+            }
+            row.mSourceName = aObject.sourceName;
             row.setAttribute("line", aObject.lineNumber);
           } else {
             row.setAttribute("hideSource", "true");
@@ -236,8 +247,8 @@
       <method name="clear">
         <body><![CDATA[
           // add a "clear" message (mainly for other listeners)
-          this.mCService.logStringMessage(null);
-          this.mCService.reset();
+          Services.console.logStringMessage(null);
+          Services.console.reset();
         ]]></body>
       </method>
 
@@ -310,10 +321,11 @@
       <method name="filterElement">
         <parameter name="aRow" />
         <body><![CDATA[
-          let anyMatch = ["msg", "href", "line", "code"].some(function (key) {
-            return (aRow.hasAttribute(key) && 
+          let anyMatch = ["msg", "line", "code"].some(function (key) {
+            return (aRow.hasAttribute(key) &&
                     this.stringMatchesFilters(aRow.getAttribute(key), this.mFilter));
-          }, this);
+          }, this) || (aRow.mSourceName &&
+                       this.stringMatchesFilters(aRow.mSourceName, this.mFilter));
 
           if (anyMatch) {
             aRow.classList.remove("filtered-by-string")
@@ -417,12 +429,10 @@
           <xul:image class="console-icon" xbl:inherits="src,type"/>
         </xul:box>
         <xul:vbox class="console-row-content" xbl:inherits="selected" flex="1">
-          <xul:box class="console-row-time">
-            <xul:label class="label" xbl:inherits="value=time"/>
-          </xul:box>
           <xul:box class="console-row-msg" align="start">
             <xul:label class="label" xbl:inherits="value=typetext"/>
             <xul:description class="console-error-msg" xbl:inherits="xbl:text=msg" flex="1"/>
+            <xul:label class="label console-time" xbl:inherits="value=time"/>
           </xul:box>
           <xul:box class="console-row-file" xbl:inherits="hidden=hideSource">
             <xul:label class="label" value="&errFile.label;"/>
@@ -446,6 +456,8 @@
     </content>
 
     <implementation>
+      <field name="mSourceName">null</field>
+
       <method name="toString">
         <body><![CDATA[
           let msg = "";
@@ -456,9 +468,9 @@
 
           msg += this.getAttribute("typetext") + " " + this.getAttribute("msg");
 
-          if (this.hasAttribute("line") && this.hasAttribute("href")) {
+          if (this.hasAttribute("line") && this.mSourceName) {
             msg += "\n" + strBundle.getFormattedString("errFile",
-                                        [this.getAttribute("href")]) + "\n";
+                                        [this.mSourceName]) + "\n";
             if (this.hasAttribute("col")) {
               msg += strBundle.getFormattedString("errLineCol",
                          [this.getAttribute("line"), this.getAttribute("col")]);
@@ -501,13 +513,13 @@
 
   <binding id="console-error-source" extends="xul:box">
     <content>
-      <xul:label class="text-link" xbl:inherits="href,value=href" crop="right"/>
+      <xul:label class="text-link" xbl:inherits="value=href" crop="right"/>
     </content>
 
     <handlers>
       <handler event="click" phase="capturing" button="0" preventdefault="true">
         <![CDATA[
-          var url = this.getAttribute("href");
+          var url = document.getBindingParent(this).mSourceName;
           url = url.substring(url.lastIndexOf(" ") + 1);
           var line = getAttribute("line");
           gViewSourceUtils.viewSource(url, null, null, line);
@@ -517,4 +529,3 @@
   </binding>
 
 </bindings>
-

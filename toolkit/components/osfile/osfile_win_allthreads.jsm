@@ -22,9 +22,6 @@ if (typeof Components != "undefined") {
   this.EXPORTED_SYMBOLS = ["OS"];
   Components.utils.import("resource://gre/modules/ctypes.jsm");
   Components.utils.import("resource://gre/modules/osfile/osfile_shared_allthreads.jsm", this);
-} else {
-  // File is included from a chrome worker
-  importScripts("resource://gre/modules/osfile/osfile_shared_allthreads.jsm");
 }
 
 (function(exports) {
@@ -194,4 +191,7 @@ if (typeof Components != "undefined") {
     return new OSError(operation, exports.OS.Constants.Win.INVALID_HANDLE_VALUE);
   };
 
+  OSError.exists = function exists(operation) {
+    return new OSError(operation, exports.OS.Constants.Win.ERROR_FILE_EXISTS);
+  };
 })(this);

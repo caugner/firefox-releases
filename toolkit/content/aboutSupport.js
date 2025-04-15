@@ -178,6 +178,17 @@ let snapshotFormatters = {
     );
     $.append($("libversions-tbody"), trs);
   },
+
+  userJS: function userJS(data) {
+    if (!data.exists)
+      return;
+    let userJSFile = Services.dirsvc.get("PrefD", Ci.nsIFile);
+    userJSFile.append("user.js");
+    $("prefs-user-js-link").href = Services.io.newFileURI(userJSFile).spec;
+    $("prefs-user-js-section").style.display = "";
+    // Clear the no-copy class
+    $("prefs-user-js-section").className = "";
+  },
 };
 
 let $ = document.getElementById.bind(document);

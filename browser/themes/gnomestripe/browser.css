@@ -1274,6 +1274,13 @@ toolbar[iconsize="small"] #feed-button {
   list-style-image: url(chrome://mozapps/skin/plugins/notifyPluginBlocked.png);
 }
 
+#notification-popup-box[hidden] {
+  /* Override display:none to make the pluginBlockedNotification animation work
+     when showing the notification repeatedly. */
+  display: -moz-box;
+  visibility: collapse;
+}
+
 #blocked-plugins-notification-icon[showing] {
   animation: pluginBlockedNotification 500ms ease 0s 5 alternate both;
 }
@@ -1440,7 +1447,6 @@ richlistitem[type~="action"][actiontype="switchtab"] > .ac-url-box > .ac-action-
 
 /* Star button */
 #star-button {
-  padding: 1px;
   list-style-image: url("chrome://browser/skin/places/starPage.png");
 }
 
@@ -2699,7 +2705,7 @@ html|*#gcli-output-frame {
   margin-right: -12px;
 }
 
-#social-statusarea-user-portrait {
+.social-statusarea-user-portrait {
   width: 32px;
   height: 32px;
   border-radius: 2px;
@@ -2912,7 +2918,7 @@ chatbox[minimized="true"] {
 }
 
 .center-item-box[warn="true"] {
-  background-image: url("chrome://mozapps/skin/extensions/stripes-info-negative-small.png");
+  background-image: url("chrome://browser/skin/click-to-play-warning-stripes.png");
   background-repeat: repeat-x;
   padding-top: 7px;
   -moz-padding-end: 11px;

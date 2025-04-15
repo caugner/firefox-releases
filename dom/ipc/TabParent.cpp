@@ -15,6 +15,7 @@
 #include "mozilla/BrowserElementParent.h"
 #include "mozilla/docshell/OfflineCacheUpdateParent.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/Hal.h"
 #include "mozilla/ipc/DocumentRendererParent.h"
 #include "mozilla/layers/CompositorParent.h"
 #include "mozilla/layout/RenderFrameParent.h"
@@ -256,7 +257,10 @@ TabParent::UpdateDimensions(const nsRect& rect, const nsIntSize& size)
   if (mIsDestroyed) {
     return;
   }
-  unused << SendUpdateDimensions(rect, size);
+  hal::ScreenConfiguration config;
+  hal::GetCurrentScreenConfiguration(&config);
+
+  unused << SendUpdateDimensions(rect, size, config.orientation());
   if (RenderFrameParent* rfp = GetRenderFrame()) {
     rfp->NotifyDimensionsChanged(size.width, size.height);
   }
@@ -431,14 +435,14 @@ bool TabParent::SendRealTouchEvent(nsTouchEvent& event)
   }
 
   nsTouchEvent e(event);
-  // PresShell::HandleEventInternal adds touches on touch end/cancel,
-  // when we're not capturing raw events from the widget backend.
-  // This hack filters those out. Bug 785554
-  if (sEventCapturer != this &&
-      (event.message == NS_TOUCH_END || event.message == NS_TOUCH_CANCEL)) {
+  // PresShell::HandleEventInternal adds touches on touch end/cancel.
+  // This confuses remote content into thinking that the added touches
+  // are part of the touchend/cancel, when actually they're not.
+  if (event.message == NS_TOUCH_END || event.message == NS_TOUCH_CANCEL) {
     for (int i = e.touches.Length() - 1; i >= 0; i--) {
-      if (!e.touches[i]->mChanged)
+      if (!e.touches[i]->mChanged) {
         e.touches.RemoveElementAt(i);
+      }
     }
   }
 
@@ -481,6 +485,13 @@ TabParent::TryCapture(const nsGUIEvent& aEvent)
 
   // Adjust the widget coordinates to be relative to our frame.
   nsRefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
+
+  if (!frameLoader) {
+    // No frame anymore?
+    sEventCapturer = nullptr;
+    return false;
+  }
+
   nsEventStateManager::MapEventCoordinatesForChildProcess(frameLoader, &event);
 
   SendRealTouchEvent(event);
@@ -561,22 +572,20 @@ TabParent::RecvNotifyIMEFocus(const bool& aFocus,
                               uint32_t* aSeqno)
 {
   nsCOMPtr<nsIWidget> widget = GetWidget();
-  if (!widget)
+  if (!widget) {
+    aPreference->mWantUpdates = false;
+    aPreference->mWantHints = false;
     return true;
+  }
 
   *aSeqno = mIMESeqno;
   mIMETabParent = aFocus ? this : nullptr;
   mIMESelectionAnchor = 0;
   mIMESelectionFocus = 0;
-  nsresult rv = widget->OnIMEFocusChange(aFocus);
+  widget->OnIMEFocusChange(aFocus);
 
   if (aFocus) {
-    if (NS_SUCCEEDED(rv) && rv != NS_SUCCESS_IME_NO_UPDATES) {
-      *aPreference = widget->GetIMEUpdatePreference();
-    } else {
-      aPreference->mWantUpdates = false;
-      aPreference->mWantHints = false;
-    }
+    *aPreference = widget->GetIMEUpdatePreference();
   } else {
     mIMECacheText.Truncate(0);
   }
@@ -798,18 +807,21 @@ TabParent::RecvEndIMEComposition(const bool& aCancel,
 
 bool
 TabParent::RecvGetInputContext(int32_t* aIMEEnabled,
-                               int32_t* aIMEOpen)
+                               int32_t* aIMEOpen,
+                               intptr_t* aNativeIMEContext)
 {
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget) {
     *aIMEEnabled = IMEState::DISABLED;
     *aIMEOpen = IMEState::OPEN_STATE_NOT_SUPPORTED;
+    *aNativeIMEContext = 0;
     return true;
   }
 
   InputContext context = widget->GetInputContext();
   *aIMEEnabled = static_cast<int32_t>(context.mIMEState.mEnabled);
   *aIMEOpen = static_cast<int32_t>(context.mIMEState.mOpen);
+  *aNativeIMEContext = reinterpret_cast<intptr_t>(context.mNativeIMEContext);
   return true;
 }
 
@@ -1120,15 +1132,13 @@ TabParent::DeallocPRenderFrame(PRenderFrameParent* aFrame)
 mozilla::docshell::POfflineCacheUpdateParent*
 TabParent::AllocPOfflineCacheUpdate(const URIParams& aManifestURI,
                                     const URIParams& aDocumentURI,
-                                    const bool& isInBrowserElement,
-                                    const uint32_t& appId,
                                     const bool& stickDocument)
 {
   nsRefPtr<mozilla::docshell::OfflineCacheUpdateParent> update =
-    new mozilla::docshell::OfflineCacheUpdateParent();
+    new mozilla::docshell::OfflineCacheUpdateParent(OwnOrContainingAppId(),
+                                                    IsBrowserElement());
 
-  nsresult rv = update->Schedule(aManifestURI, aDocumentURI,
-                                 isInBrowserElement, appId, stickDocument);
+  nsresult rv = update->Schedule(aManifestURI, aDocumentURI, stickDocument);
   if (NS_FAILED(rv))
     return nullptr;
 

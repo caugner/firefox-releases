@@ -34,7 +34,8 @@ namespace mozilla {
 namespace net {
 
 HttpChannelParent::HttpChannelParent(PBrowserParent* iframeEmbedding,
-                                     const IPC::SerializedLoadContext& loadContext)
+                                     nsILoadContext* aLoadContext,
+                                     PBOverrideStatus aOverrideStatus)
   : mIPCClosed(false)
   , mStoredStatus(NS_OK)
   , mStoredProgress(0)
@@ -42,7 +43,8 @@ HttpChannelParent::HttpChannelParent(PBrowserParent* iframeEmbedding,
   , mSentRedirect1Begin(false)
   , mSentRedirect1BeginFailed(false)
   , mReceivedRedirect2Verify(false)
-  , mPBOverride(kPBOverride_Unset)
+  , mPBOverride(aOverrideStatus)
+  , mLoadContext(aLoadContext)
 {
   // Ensure gHttpHandler is initialized: we need the atom table up and running.
   nsIHttpProtocolHandler* handler;
@@ -50,18 +52,6 @@ HttpChannelParent::HttpChannelParent(PBrowserParent* iframeEmbedding,
   NS_ASSERTION(handler, "no http handler");
 
   mTabParent = static_cast<mozilla::dom::TabParent*>(iframeEmbedding);
-
-  if (loadContext.IsNotNull()) {
-    if (mTabParent) {
-      mLoadContext = new LoadContext(loadContext, mTabParent->GetOwnerElement());
-    } else {
-      mLoadContext = new LoadContext(loadContext);
-    }
-  } else if (loadContext.IsPrivateBitValid()) {
-    // Don't have channel yet: override PB status after we create it.
-    mPBOverride = loadContext.mUsePrivateBrowsing ? kPBOverride_Private
-                                                  : kPBOverride_NotPrivate;
-  }
 }
 
 HttpChannelParent::~HttpChannelParent()
@@ -211,7 +201,7 @@ HttpChannelParent::RecvAsyncOpen(const URIParams&           aURI,
   bool setChooseApplicationCache = chooseApplicationCache;
   if (appCacheChan && appCacheService) {
     // We might potentially want to drop this flag (that is TRUE by default)
-    // after we succefully associate the channel with an application cache
+    // after we successfully associate the channel with an application cache
     // reported by the channel child.  Dropping it here may be too early.
     appCacheChan->SetInheritApplicationCache(false);
     if (!appCacheClientID.IsEmpty()) {
@@ -225,16 +215,10 @@ HttpChannelParent::RecvAsyncOpen(const URIParams&           aURI,
     }
 
     if (setChooseApplicationCache) {
-      nsCOMPtr<nsIOfflineCacheUpdateService> offlineUpdateService =
-        do_GetService("@mozilla.org/offlinecacheupdate-service;1", &rv);
-      if (NS_SUCCEEDED(rv)) {
-        rv = offlineUpdateService->OfflineAppAllowedForURI(uri,
-                                                           nullptr,
-                                                           &setChooseApplicationCache);
-
-        if (setChooseApplicationCache && NS_SUCCEEDED(rv))
-          appCacheChan->SetChooseApplicationCache(true);
-      }
+      // This works because we've already called SetNotificationCallbacks and
+      // done mPBOverride logic by this point.
+      appCacheChan->SetChooseApplicationCache(
+            NS_ShouldCheckAppCache(uri, NS_UsePrivateBrowsing(mChannel)));
     }
   }
 
@@ -320,14 +304,10 @@ HttpChannelParent::RecvSetCacheTokenCachedCharset(const nsCString& charset)
 }
 
 bool
-HttpChannelParent::RecvUpdateAssociatedContentSecurity(const int32_t& high,
-                                                       const int32_t& low,
-                                                       const int32_t& broken,
+HttpChannelParent::RecvUpdateAssociatedContentSecurity(const int32_t& broken,
                                                        const int32_t& no)
 {
   if (mAssociatedContentSecurity) {
-    mAssociatedContentSecurity->SetCountSubRequestsHighSecurity(high);
-    mAssociatedContentSecurity->SetCountSubRequestsLowSecurity(low);
     mAssociatedContentSecurity->SetCountSubRequestsBrokenSecurity(broken);
     mAssociatedContentSecurity->SetCountSubRequestsNoSecurity(no);
   }

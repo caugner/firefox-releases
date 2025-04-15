@@ -28,7 +28,6 @@ EXPORTS		= \
 		nsRange.h \
 		nsScriptLoader.h \
 		nsStubDocumentObserver.h \
-		nsStubImageDecoderObserver.h \
 		nsStubMutationObserver.h \
 		nsTextFragment.h \
 		mozAutoDocUpdate.h \
@@ -38,7 +37,6 @@ EXPORTS		= \
 		nsAttrValueInlines.h \
 		nsCrossSiteListenerProxy.h \
 		nsDOMAttributeMap.h \
-		nsGenericElement.h \
 		nsMappedAttributeElement.h \
 		nsStyledElement.h \
     nsSandboxFlags.h \
@@ -47,18 +45,22 @@ EXPORTS		= \
 EXPORTS_NAMESPACES = mozilla/dom
 
 EXPORTS_mozilla/dom = \
+  Comment.h \
+  DocumentFragment.h \
+  DOMImplementation.h \
   Link.h \
   $(NULL)
 
 CPPSRCS		= \
+		Comment.cpp \
 		DirectionalityUtils.cpp \
+		DOMImplementation.cpp \
 		nsAtomListUtils.cpp \
 		nsAttrAndChildArray.cpp \
 		nsAttrValue.cpp \
 		nsAttrValueOrString.cpp \
 		nsCCUncollectableMarker.cpp \
 		nsChannelPolicy.cpp \
-		nsCommentNode.cpp \
 		nsContentAreaDragDrop.cpp \
 		nsContentIterator.cpp \
 		nsContentList.cpp \
@@ -82,12 +84,12 @@ CPPSRCS		= \
 		nsDOMSettableTokenList.cpp \
 		nsDocument.cpp \
 		nsDocumentEncoder.cpp \
-		nsDocumentFragment.cpp \
+		DocumentFragment.cpp \
 		nsFrameLoader.cpp \
+		Element.cpp \
 		nsFormData.cpp \
 		nsGenConImageContent.cpp \
 		nsGenericDOMDataNode.cpp \
-		nsGenericElement.cpp \
 		nsGkAtoms.cpp \
 		nsHTMLContentSerializer.cpp \
 		nsImageLoadingContent.cpp \
@@ -109,7 +111,6 @@ CPPSRCS		= \
 		nsScriptElement.cpp \
 		nsScriptLoader.cpp \
 		nsStubDocumentObserver.cpp \
-		nsStubImageDecoderObserver.cpp \
 		nsStubMutationObserver.cpp \
 		nsStyledElement.cpp \
 		nsStyleLinkElement.cpp \
@@ -126,8 +127,8 @@ CPPSRCS		= \
 		nsXMLNameSpaceMap.cpp \
 		FragmentOrElement.cpp \
 		Link.cpp \
-		nsBlobProtocolHandler.cpp \
-		nsBlobURI.cpp \
+		nsHostObjectProtocolHandler.cpp \
+		nsHostObjectURI.cpp \
 		nsFrameMessageManager.cpp \
 		nsInProcessTabChildGlobal.cpp \
 		ThirdPartyUtil.cpp \
@@ -160,12 +161,15 @@ FORCE_STATIC_LIB = 1
 EXTRA_COMPONENTS = \
 		$(srcdir)/nsBadCertHandler.js \
 		nsBadCertHandler.manifest \
-		contentSecurityPolicy.js \
 		contentSecurityPolicy.manifest \
 		contentAreaDropListener.js \
 		contentAreaDropListener.manifest \
 		messageWakeupService.js \
 		messageWakeupService.manifest \
+		$(NULL)
+
+EXTRA_PP_COMPONENTS = \
+		contentSecurityPolicy.js \
 		$(NULL)
 
 EXTRA_JS_MODULES = \
@@ -189,6 +193,7 @@ LOCAL_INCLUDES += \
   -I$(topsrcdir)/dom/ipc \
   -I$(topsrcdir)/image/src \
   -I$(topsrcdir)/js/xpconnect/src \
+  -I$(topsrcdir)/layout/base \
   -I$(topsrcdir)/layout/generic \
   -I$(topsrcdir)/layout/style \
   -I$(topsrcdir)/layout/svg \

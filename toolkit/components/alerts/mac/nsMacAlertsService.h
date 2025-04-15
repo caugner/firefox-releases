@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef nsGrowlAlertsService_h_
-#define nsGrowlAlertsService_h_
+#ifndef nsMacAlertsService_h_
+#define nsMacAlertsService_h_
 
 #include "nsIAlertsService.h"
 #include "nsIObserver.h"
@@ -31,4 +31,4 @@ private:
   NotificationCenterDelegateWrapper* mNCDelegate;
 };
 
-#endif // nsGrowlAlertsService_h_
+#endif // nsMacAlertsService_h_

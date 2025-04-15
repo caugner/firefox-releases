@@ -121,17 +121,25 @@ function check_cookie_exists(aDomain, aExists)
  */
 function add_download(aURIString, aIsActive)
 {
+  function makeGUID() {
+    let guid = "";
+    for (var i = 0; i < 12; i++)
+      guid += Math.floor(Math.random() * 10);
+    return guid;
+  }
+
   check_downloaded(aURIString, false);
   let db = Cc["@mozilla.org/download-manager;1"].
            getService(Ci.nsIDownloadManager).
            DBConnection;
   let stmt = db.createStatement(
-    "INSERT INTO moz_downloads (source, state) " +
-    "VALUES (:source, :state)"
+    "INSERT INTO moz_downloads (source, state, guid) " +
+    "VALUES (:source, :state, :guid)"
   );
   stmt.params.source = aURIString;
   stmt.params.state = aIsActive ? Ci.nsIDownloadManager.DOWNLOAD_DOWNLOADING :
                                   Ci.nsIDownloadManager.DOWNLOAD_FINISHED;
+  stmt.params.guid = makeGUID();
   try {
     stmt.execute();
   }
@@ -288,7 +296,7 @@ function add_preference(aURI)
   check_preference_exists(aURI, false);
   let cp = Cc["@mozilla.org/content-pref/service;1"].
            getService(Ci.nsIContentPrefService);
-  cp.setPref(aURI, PREFERENCE_NAME, "foo");
+  cp.setPref(aURI, PREFERENCE_NAME, "foo", null);
   check_preference_exists(aURI, true);
 }
 
@@ -305,7 +313,7 @@ function check_preference_exists(aURI, aExists)
   let cp = Cc["@mozilla.org/content-pref/service;1"].
            getService(Ci.nsIContentPrefService);
   let checker = aExists ? do_check_true : do_check_false;
-  checker(cp.hasPref(aURI, PREFERENCE_NAME));
+  checker(cp.hasPref(aURI, PREFERENCE_NAME, null));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -515,7 +523,7 @@ function test_content_preferecnes_not_cleared_with_uri_contains_domain()
   // Reset state
   let cp = Cc["@mozilla.org/content-pref/service;1"].
            getService(Ci.nsIContentPrefService);
-  cp.removePref(TEST_URI, PREFERENCE_NAME);
+  cp.removePref(TEST_URI, PREFERENCE_NAME, null);
   check_preference_exists(TEST_URI, false);
 }
 

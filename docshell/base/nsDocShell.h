@@ -227,6 +227,7 @@ public:
     NS_IMETHOD GetIsContent(bool*);
     NS_IMETHOD GetUsePrivateBrowsing(bool*);
     NS_IMETHOD SetUsePrivateBrowsing(bool);
+    NS_IMETHOD SetPrivateBrowsing(bool);
 
     // Restores a cached presentation from history (mLSHE).
     // This method swaps out the content viewer and simulates loads for
@@ -281,10 +282,6 @@ protected:
     // resulting principal.  If aConsiderCurrentDocument is false, we just look
     // at the parent.
     nsIPrincipal* GetInheritedPrincipal(bool aConsiderCurrentDocument);
-
-    // True if when loading aURI into this docshell, the channel should look
-    // for an appropriate application cache.
-    bool ShouldCheckAppCache(nsIURI * aURI);
 
     // Actually open a channel and perform a URI load.  Note: whatever owner is
     // passed to this function will be set on the channel.  Callers who wish to
@@ -532,12 +529,8 @@ protected:
     static  inline  uint32_t
     PRTimeToSeconds(PRTime t_usec)
     {
-      PRTime usec_per_sec;
-      uint32_t t_sec;
-      LL_I2L(usec_per_sec, PR_USEC_PER_SEC);
-      t_usec /= usec_per_sec;
-      LL_L2I(t_sec, t_usec);
-      return t_sec;
+      PRTime usec_per_sec = PR_USEC_PER_SEC;
+      return  uint32_t(t_usec /= usec_per_sec);
     }
 
     bool IsFrame();
@@ -678,6 +671,8 @@ protected:
     };
 
     FrameType GetInheritedFrameType();
+
+    bool HasUnloadedParent();
 
     // hash of session storages, keyed by domain
     nsInterfaceHashtable<nsCStringHashKey, nsIDOMStorage> mStorages;

@@ -200,6 +200,32 @@ private:
     static jfieldID jScaleField;
 };
 
+class AndroidProgressiveUpdateData : public WrappedJavaObject {
+public:
+    static void InitProgressiveUpdateDataClass(JNIEnv *jEnv);
+
+    void Init(jobject jobj);
+
+    AndroidProgressiveUpdateData() {}
+    AndroidProgressiveUpdateData(jobject jobj) { Init(jobj); }
+
+    float GetX(JNIEnv *env);
+    float GetY(JNIEnv *env);
+    float GetWidth(JNIEnv *env);
+    float GetHeight(JNIEnv *env);
+    float GetScale(JNIEnv *env);
+    bool GetShouldAbort(JNIEnv *env);
+
+private:
+    static jclass jProgressiveUpdateDataClass;
+    static jfieldID jXField;
+    static jfieldID jYField;
+    static jfieldID jWidthField;
+    static jfieldID jHeightField;
+    static jfieldID jScaleField;
+    static jfieldID jShouldAbortField;
+};
+
 class AndroidLayerRendererFrame : public WrappedJavaObject {
 public:
     static void InitLayerRendererFrameClass(JNIEnv *jEnv);
@@ -233,7 +259,7 @@ public:
     void SetPageRect(const gfx::Rect& aCssPageRect);
     void SyncViewportInfo(const nsIntRect& aDisplayPort, float aDisplayResolution, bool aLayersUpdated,
                           nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY);
-    bool ShouldAbortProgressiveUpdate(bool aHasPendingNewThebesContent, const gfx::Rect& aDisplayPort, float aDisplayResolution);
+    bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent, const gfx::Rect& aDisplayPort, float aDisplayResolution, bool aDrawingCritical, gfx::Rect& aViewport, float& aScaleX, float& aScaleY);
     bool CreateFrame(AutoLocalJNIFrame *jniFrame, AndroidLayerRendererFrame& aFrame);
     bool ActivateProgram(AutoLocalJNIFrame *jniFrame);
     bool DeactivateProgram(AutoLocalJNIFrame *jniFrame);
@@ -248,7 +274,7 @@ protected:
     static jmethodID jActivateProgramMethod;
     static jmethodID jDeactivateProgramMethod;
     static jmethodID jGetDisplayPort;
-    static jmethodID jShouldAbortProgressiveUpdate;
+    static jmethodID jProgressiveUpdateCallbackMethod;
 
 public:
     static jclass jViewportClass;
@@ -526,6 +552,14 @@ public:
         META_SHIFT_LEFT_ON         = 0x00000040,
         META_SHIFT_RIGHT_ON        = 0x00000080,
         META_SHIFT_MASK            = META_SHIFT_RIGHT_ON | META_SHIFT_LEFT_ON | META_SHIFT_ON,
+        META_CTRL_ON               = 0x00001000,
+        META_CTRL_LEFT_ON          = 0x00002000,
+        META_CTRL_RIGHT_ON         = 0x00004000,
+        META_CTRL_MASK             = META_CTRL_RIGHT_ON | META_CTRL_LEFT_ON | META_CTRL_ON,
+        META_META_ON               = 0x00010000,
+        META_META_LEFT_ON          = 0x00020000,
+        META_META_RIGHT_ON         = 0x00040000,
+        META_META_MASK             = META_META_RIGHT_ON | META_META_LEFT_ON | META_META_ON,
         META_SYM_ON                = 0x00000004,
         FLAG_WOKE_HERE             = 0x00000001,
         FLAG_SOFT_KEYBOARD         = 0x00000002,
@@ -637,11 +671,14 @@ public:
     int DomKeyLocation() { return mDomKeyLocation; }
     bool IsAltPressed() const { return (mMetaState & AndroidKeyEvent::META_ALT_MASK) != 0; }
     bool IsShiftPressed() const { return (mMetaState & AndroidKeyEvent::META_SHIFT_MASK) != 0; }
+    bool IsCtrlPressed() const { return (mMetaState & AndroidKeyEvent::META_CTRL_MASK) != 0; }
+    bool IsMetaPressed() const { return (mMetaState & AndroidKeyEvent::META_META_MASK) != 0; }
     int Flags() { return mFlags; }
     int UnicodeChar() { return mUnicodeChar; }
     int RepeatCount() const { return mRepeatCount; }
-    int Offset() { return mOffset; }
     int Count() { return mCount; }
+    int Start() { return mStart; }
+    int End() { return mEnd; }
     int PointerIndex() { return mPointerIndex; }
     int RangeType() { return mRangeType; }
     int RangeStyles() { return mRangeStyles; }
@@ -667,7 +704,8 @@ protected:
     int mDomKeyLocation;
     int mKeyCode, mUnicodeChar;
     int mRepeatCount;
-    int mOffset, mCount;
+    int mCount;
+    int mStart, mEnd;
     int mRangeType, mRangeStyles;
     int mRangeForeColor, mRangeBackColor;
     double mX, mY, mZ;
@@ -717,8 +755,9 @@ protected:
     static jfieldID jMetaStateField;
     static jfieldID jDomKeyLocationField;
     static jfieldID jFlagsField;
-    static jfieldID jOffsetField;
     static jfieldID jCountField;
+    static jfieldID jStartField;
+    static jfieldID jEndField;
     static jfieldID jPointerIndexField;
     static jfieldID jUnicodeCharField;
     static jfieldID jRepeatCountField;
@@ -760,25 +799,23 @@ public:
         NETWORK_CHANGED = 22,
         UNUSED3_EVENT = 23,
         ACTIVITY_RESUMING = 24,
-        SCREENSHOT = 25,
+        THUMBNAIL = 25,
         UNUSED2_EVENT = 26,
         SCREENORIENTATION_CHANGED = 27,
         COMPOSITOR_PAUSE = 28,
         COMPOSITOR_RESUME = 29,
-        PAINT_LISTEN_START_EVENT = 30,
-        NATIVE_GESTURE_EVENT = 31,
+        NATIVE_GESTURE_EVENT = 30,
         dummy_java_enum_list_end
     };
 
     enum {
-        IME_COMPOSITION_END = 0,
-        IME_COMPOSITION_BEGIN = 1,
-        IME_SET_TEXT = 2,
-        IME_GET_TEXT = 3,
-        IME_DELETE_TEXT = 4,
-        IME_SET_SELECTION = 5,
-        IME_GET_SELECTION = 6,
-        IME_ADD_RANGE = 7
+        IME_SYNCHRONIZE = 0,
+        IME_REPLACE_TEXT = 1,
+        IME_SET_SELECTION = 2,
+        IME_ADD_COMPOSITION_RANGE = 3,
+        IME_UPDATE_COMPOSITION = 4,
+        IME_REMOVE_COMPOSITION = 5,
+        IME_ACKNOWLEDGE_FOCUS = 6
     };
 };
 

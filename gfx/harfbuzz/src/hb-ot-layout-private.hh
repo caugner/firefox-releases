@@ -49,14 +49,6 @@
  * GDEF
  */
 
-typedef enum {
-  HB_OT_LAYOUT_GLYPH_CLASS_UNCLASSIFIED	= 0x0001,
-  HB_OT_LAYOUT_GLYPH_CLASS_BASE_GLYPH	= 0x0002,
-  HB_OT_LAYOUT_GLYPH_CLASS_LIGATURE	= 0x0004,
-  HB_OT_LAYOUT_GLYPH_CLASS_MARK		= 0x0008,
-  HB_OT_LAYOUT_GLYPH_CLASS_COMPONENT	= 0x0010
-} hb_ot_layout_glyph_class_t;
-
 
 
 /*
@@ -138,10 +130,11 @@ static inline uint8_t allocate_lig_id (hb_buffer_t *buffer) {
 
 
 HB_INTERNAL hb_bool_t
-hb_ot_layout_would_substitute_lookup_fast (hb_face_t            *face,
+hb_ot_layout_lookup_would_substitute_fast (hb_face_t            *face,
+					   unsigned int          lookup_index,
 					   const hb_codepoint_t *glyphs,
 					   unsigned int          glyphs_length,
-					   unsigned int          lookup_index);
+					   hb_bool_t             zero_context);
 
 
 /* Should be called before all the substitute_lookup's are done. */
@@ -184,15 +177,21 @@ hb_ot_layout_position_finish (hb_font_t    *font,
  * hb_ot_layout_t
  */
 
+namespace OT {
+  struct GDEF;
+  struct GSUB;
+  struct GPOS;
+}
+
 struct hb_ot_layout_t
 {
   hb_blob_t *gdef_blob;
   hb_blob_t *gsub_blob;
   hb_blob_t *gpos_blob;
 
-  const struct GDEF *gdef;
-  const struct GSUB *gsub;
-  const struct GPOS *gpos;
+  const struct OT::GDEF *gdef;
+  const struct OT::GSUB *gsub;
+  const struct OT::GPOS *gpos;
 
   unsigned int gsub_lookup_count;
   unsigned int gpos_lookup_count;

@@ -36,6 +36,7 @@
 #include "nsSocketTransportService2.h"
 #include "nsAlgorithm.h"
 #include "ASpdySession.h"
+#include "mozIApplicationClearPrivateDataParams.h"
 
 #include "nsIXULAppInfo.h"
 
@@ -175,7 +176,7 @@ nsHttpHandler::nsHttpHandler()
     , mUseAlternateProtocol(false)
     , mSpdySendingChunkSize(ASpdySession::kSendingChunkSize)
     , mSpdySendBufferSize(ASpdySession::kTCPSendBufferSize)
-    , mSpdyPingThreshold(PR_SecondsToInterval(44))
+    , mSpdyPingThreshold(PR_SecondsToInterval(58))
     , mSpdyPingTimeout(PR_SecondsToInterval(8))
     , mConnectTimeout(90000)
 {
@@ -273,6 +274,9 @@ nsHttpHandler::Init()
     rv = mAuthCache.Init();
     if (NS_FAILED(rv)) return rv;
 
+    rv = mPrivateAuthCache.Init();
+    if (NS_FAILED(rv)) return rv;
+
     rv = InitConnectionMgr();
     if (NS_FAILED(rv)) return rv;
 
@@ -307,7 +311,7 @@ nsHttpHandler::Init()
                                   static_cast<nsISupports*>(static_cast<void*>(this)),
                                   NS_HTTP_STARTUP_TOPIC);
 
-    mObserverService = mozilla::services::GetObserverService();
+    mObserverService = services::GetObserverService();
     if (mObserverService) {
         mObserverService->AddObserver(this, "profile-change-net-teardown", true);
         mObserverService->AddObserver(this, "profile-change-net-restore", true);
@@ -315,6 +319,8 @@ nsHttpHandler::Init()
         mObserverService->AddObserver(this, "net:clear-active-logins", true);
         mObserverService->AddObserver(this, "net:prune-dead-connections", true);
         mObserverService->AddObserver(this, "net:failed-to-process-uri-content", true);
+        mObserverService->AddObserver(this, "last-pb-context-exited", true);
+        mObserverService->AddObserver(this, "webapps-clear-data", true);
     }
 
     return NS_OK;
@@ -408,6 +414,11 @@ nsHttpHandler::IsAcceptableEncoding(const char *enc)
     // to accept.
     if (!PL_strncasecmp(enc, "x-", 2))
         enc += 2;
+
+    // gzip and deflate are inherently acceptable in modern HTTP - always
+    // process them if a stream converter can also be found.
+    if (!PL_strcasecmp(enc, "gzip") || !PL_strcasecmp(enc, "deflate"))
+        return true;
 
     return nsHttp::FindToken(mAcceptEncodings.get(), enc, HTTP_LWS ",") != nullptr;
 }
@@ -1414,7 +1425,6 @@ nsHttpHandler::NewURI(const nsACString &aSpec,
                       nsIURI *aBaseURI,
                       nsIURI **aURI)
 {
-    LOG(("nsHttpHandler::NewURI\n"));
     return ::NewURI(aSpec, aCharset, aBaseURI, NS_HTTP_DEFAULT_PORT, aURI);
 }
 
@@ -1551,9 +1561,61 @@ nsHttpHandler::GetMisc(nsACString &value)
     return NS_OK;
 }
 
+/*static*/ void
+nsHttpHandler::GetCacheSessionNameForStoragePolicy(
+        nsCacheStoragePolicy storagePolicy,
+        bool isPrivate,
+        uint32_t appId,
+        bool inBrowser,
+        nsACString& sessionName)
+{
+    MOZ_ASSERT(!isPrivate || storagePolicy == nsICache::STORE_IN_MEMORY);
+
+    switch (storagePolicy) {
+        case nsICache::STORE_IN_MEMORY:
+            sessionName.AssignASCII(isPrivate ? "HTTP-memory-only-PB" : "HTTP-memory-only");
+            break;
+        case nsICache::STORE_OFFLINE:
+            sessionName.AssignLiteral("HTTP-offline");
+            break;
+        default:
+            sessionName.AssignLiteral("HTTP");
+            break;
+    }
+    if (appId != NECKO_NO_APP_ID || inBrowser) {
+        sessionName.Append('~');
+        sessionName.AppendInt(appId);
+        sessionName.Append('~');
+        sessionName.AppendInt(inBrowser);
+    }
+}
+
 //-----------------------------------------------------------------------------
 // nsHttpHandler::nsIObserver
 //-----------------------------------------------------------------------------
+
+static void
+EvictCacheSession(nsCacheStoragePolicy aPolicy,
+                  bool aPrivateBrowsing,
+                  uint32_t aAppId,
+                  bool aInBrowser)
+{
+    nsAutoCString clientId;
+    nsHttpHandler::GetCacheSessionNameForStoragePolicy(aPolicy,
+                                                       aPrivateBrowsing,
+                                                       aAppId, aInBrowser,
+                                                       clientId);
+    nsCOMPtr<nsICacheService> serv =
+        do_GetService(NS_CACHESERVICE_CONTRACTID);
+    nsCOMPtr<nsICacheSession> session;
+    nsresult rv = serv->CreateSession(clientId.get(),
+                                      nsICache::STORE_ANYWHERE,
+                                      nsICache::STREAM_BASED,
+                                      getter_AddRefs(session));
+    if (NS_SUCCEEDED(rv) && session) {
+        session->EvictEntries();
+    }
+}
 
 NS_IMETHODIMP
 nsHttpHandler::Observe(nsISupports *subject,
@@ -1574,6 +1636,7 @@ nsHttpHandler::Observe(nsISupports *subject,
 
         // clear cache of all authentication credentials.
         mAuthCache.ClearAll();
+        mPrivateAuthCache.ClearAll();
 
         // ensure connection manager is shutdown
         if (mConnMgr)
@@ -1589,6 +1652,7 @@ nsHttpHandler::Observe(nsISupports *subject,
     }
     else if (strcmp(topic, "net:clear-active-logins") == 0) {
         mAuthCache.ClearAll();
+        mPrivateAuthCache.ClearAll();
     }
     else if (strcmp(topic, "net:prune-dead-connections") == 0) {
         if (mConnMgr) {
@@ -1600,6 +1664,48 @@ nsHttpHandler::Observe(nsISupports *subject,
         if (uri && mConnMgr)
             mConnMgr->ReportFailedToProcess(uri);
     }
+    else if (strcmp(topic, "last-pb-context-exited") == 0) {
+        mPrivateAuthCache.ClearAll();
+    }
+    else if (strcmp(topic, "webapps-clear-data") == 0) {
+        nsCOMPtr<mozIApplicationClearPrivateDataParams> params =
+                do_QueryInterface(subject);
+        if (!params) {
+            NS_ERROR("'webapps-clear-data' notification's subject should be a mozIApplicationClearPrivateDataParams");
+            return NS_ERROR_UNEXPECTED;
+        }
+
+        uint32_t appId;
+        bool browserOnly;
+        nsresult rv = params->GetAppId(&appId);
+        NS_ENSURE_SUCCESS(rv, rv);
+        rv = params->GetBrowserOnly(&browserOnly);
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        MOZ_ASSERT(appId != NECKO_UNKNOWN_APP_ID);
+
+        // Now we ensure that all unique session name combinations are cleared.
+        struct {
+            nsCacheStoragePolicy policy;
+            bool privateBrowsing;
+        } policies[] = { {nsICache::STORE_OFFLINE, false},
+                         {nsICache::STORE_IN_MEMORY, false},
+                         {nsICache::STORE_IN_MEMORY, true},
+                         {nsICache::STORE_ON_DISK, false} };
+
+        for (uint32_t i = 0; i < NS_ARRAY_LENGTH(policies); i++) {
+            EvictCacheSession(policies[i].policy,
+                              policies[i].privateBrowsing,
+                              appId, browserOnly);
+
+            if (!browserOnly) {
+                EvictCacheSession(policies[i].policy,
+                                  policies[i].privateBrowsing,
+                                  appId, true);
+            }
+        }
+
+    }
 
     return NS_OK;
 }
@@ -1608,16 +1714,19 @@ nsHttpHandler::Observe(nsISupports *subject,
 
 NS_IMETHODIMP
 nsHttpHandler::SpeculativeConnect(nsIURI *aURI,
-                                  nsIInterfaceRequestor *aCallbacks,
-                                  nsIEventTarget *aTarget)
+                                  nsIInterfaceRequestor *aCallbacks)
 {
     nsIStrictTransportSecurityService* stss = gHttpHandler->GetSTSService();
     bool isStsHost = false;
     if (!stss)
         return NS_OK;
 
+    nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(aCallbacks);
+    uint32_t flags = 0;
+    if (loadContext && loadContext->UsePrivateBrowsing())
+        flags |= nsISocketProvider::NO_PERMANENT_STORAGE;
     nsCOMPtr<nsIURI> clone;
-    if (NS_SUCCEEDED(stss->IsStsURI(aURI, &isStsHost)) && isStsHost) {
+    if (NS_SUCCEEDED(stss->IsStsURI(aURI, flags, &isStsHost)) && isStsHost) {
         if (NS_SUCCEEDED(aURI->Clone(getter_AddRefs(clone)))) {
             clone->SetScheme(NS_LITERAL_CSTRING("https"));
             aURI = clone.get();
@@ -1660,7 +1769,7 @@ nsHttpHandler::SpeculativeConnect(nsIURI *aURI,
     nsHttpConnectionInfo *ci =
         new nsHttpConnectionInfo(host, port, nullptr, usingSSL);
 
-    return SpeculativeConnect(ci, aCallbacks, aTarget);
+    return SpeculativeConnect(ci, aCallbacks);
 }
 
 //-----------------------------------------------------------------------------
@@ -1700,7 +1809,7 @@ nsHttpsHandler::GetDefaultPort(int32_t *aPort)
 NS_IMETHODIMP
 nsHttpsHandler::GetProtocolFlags(uint32_t *aProtocolFlags)
 {
-    *aProtocolFlags = NS_HTTP_PROTOCOL_FLAGS;
+    *aProtocolFlags = NS_HTTP_PROTOCOL_FLAGS | URI_SAFE_TO_LOAD_IN_SECURE_CONTEXT;
     return NS_OK;
 }
 

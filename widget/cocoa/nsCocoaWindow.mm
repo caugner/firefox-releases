@@ -57,14 +57,10 @@ int32_t gXULModalLevel = 0;
 // also made app-modal.)  See nsCocoaWindow::SetModal().
 nsCocoaWindowList *gGeckoAppModalWindowList = NULL;
 
-bool gConsumeRollupEvent;
-
 // defined in nsMenuBarX.mm
 extern NSMenu* sApplicationMenu; // Application menu shared by all menubars
 
 // defined in nsChildView.mm
-extern nsIRollupListener * gRollupListener;
-extern nsIWidget         * gRollupWidget;
 extern BOOL                gSomeMenuBarPainted;
 
 extern "C" {
@@ -90,11 +86,13 @@ NS_IMPL_ISUPPORTS_INHERITED1(nsCocoaWindow, Inherited, nsPIWidgetCocoa)
 // widget - whether or not the sheet is showing. |[mWindow isSheet]| will return
 // true *only when the sheet is actually showing*. Choose your test wisely.
 
-// roll up any popup windows
 static void RollUpPopups()
 {
-  if (gRollupListener && gRollupWidget)
-    gRollupListener->Rollup(0);
+  nsIRollupListener* rollupListener = nsBaseWidget::GetActiveRollupListener();
+  NS_ENSURE_TRUE_VOID(rollupListener);
+  nsCOMPtr<nsIWidget> rollupWidget = rollupListener->GetRollupWidget();
+  NS_ENSURE_TRUE_VOID(rollupWidget);
+    rollupListener->Rollup(0, nullptr);
 }
 
 nsCocoaWindow::nsCocoaWindow()
@@ -198,7 +196,7 @@ static NSScreen *FindTargetScreenForRect(const nsIntRect& aRect)
 
 // fits the rect to the screen that contains the largest area of it,
 // or to aScreen if a screen is passed in
-// NB: this operates with aRect in global CSS pixels
+// NB: this operates with aRect in global display pixels
 static void FitRectToVisibleAreaForScreen(nsIntRect &aRect, NSScreen *aScreen)
 {
   if (!aScreen) {
@@ -242,7 +240,7 @@ static bool UseNativePopupWindows()
 #endif /* MOZ_USE_NATIVE_POPUP_WINDOWS */
 }
 
-// aRect here is specified in CSS pixels
+// aRect here is specified in global display pixels
 nsresult nsCocoaWindow::Create(nsIWidget *aParent,
                                nsNativeWidget aNativeParent,
                                const nsIntRect &aRect,
@@ -265,6 +263,10 @@ nsresult nsCocoaWindow::Create(nsIWidget *aParent,
   // Ensure that the toolkit is created.
   nsToolkit::GetToolkit();
 
+  // newBounds is still display (global screen) pixels at this point;
+  // fortunately, BaseCreate doesn't actually use it so we don't
+  // need to worry about trying to convert it to device pixels
+  // when we don't have a window (or dev context, perhaps) yet
   Inherited::BaseCreate(aParent, newBounds, aContext, aInitData);
 
   mParent = aParent;
@@ -273,14 +275,22 @@ nsresult nsCocoaWindow::Create(nsIWidget *aParent,
   if ((mWindowType == eWindowType_popup) && UseNativePopupWindows())
     return NS_OK;
 
-  nsresult rv = CreateNativeWindow(nsCocoaUtils::GeckoRectToCocoaRect(newBounds),
-                                   mBorderStyle, false);
+  nsresult rv =
+    CreateNativeWindow(nsCocoaUtils::GeckoRectToCocoaRect(newBounds),
+                       mBorderStyle, false);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (mWindowType == eWindowType_popup) {
     if (aInitData->mIsDragPopup) {
       [mWindow setIgnoresMouseEvents:YES];
     }
+    // now we can convert newBounds to device pixels for the window we created,
+    // as the child view expects a rect expressed in the dev pix of its parent
+    double scale = BackingScaleFactor();
+    newBounds.x *= scale;
+    newBounds.y *= scale;
+    newBounds.width *= scale;
+    newBounds.height *= scale;
     return CreatePopupContentView(newBounds, aContext);
   }
 
@@ -1749,29 +1759,21 @@ nsMenuBarX* nsCocoaWindow::GetMenuBar()
   return mMenuBar;
 }
 
-NS_IMETHODIMP nsCocoaWindow::CaptureRollupEvents(nsIRollupListener * aListener,
-                                                 bool aDoCapture,
-                                                 bool aConsumeRollupEvent)
+NS_IMETHODIMP nsCocoaWindow::CaptureRollupEvents(nsIRollupListener* aListener, bool aDoCapture)
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
 
   gRollupListener = nullptr;
-  NS_IF_RELEASE(gRollupWidget);
   
   if (aDoCapture) {
     gRollupListener = aListener;
-    gRollupWidget = this;
-    NS_ADDREF(this);
-
-    gConsumeRollupEvent = aConsumeRollupEvent;
 
     // Sometimes more than one popup window can be visible at the same time
     // (e.g. nested non-native context menus, or the test case (attachment
-    // 276885) for bmo bug 392389, which displays a non-native combo-box in
-    // a non-native popup window).  In these cases the "active" popup window
-    // (the one that corresponds to the current gRollupWidget) should be the
-    // topmost -- the (nested) context menu the mouse is currently over, or
-    // the combo-box's drop-down list (when it's displayed).  But (among
+    // 276885) for bmo bug 392389, which displays a non-native combo-box in a
+    // non-native popup window).  In these cases the "active" popup window should
+    // be the topmost -- the (nested) context menu the mouse is currently over,
+    // or the combo-box's drop-down list (when it's displayed).  But (among
     // windows that have the same "level") OS X makes topmost the window that
     // last received a mouse-down event, which may be incorrect (in the combo-
     // box case, it makes topmost the window containing the combo-box).  So

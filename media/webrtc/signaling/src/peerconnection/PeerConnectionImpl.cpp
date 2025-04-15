@@ -3,8 +3,6 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <string>
-#include <iostream>
-
 
 #include "vcm.h"
 #include "CSFLog.h"
@@ -13,15 +11,22 @@
 #include "CC_SIPCCCallInfo.h"
 #include "ccapi_device_info.h"
 #include "CC_SIPCCDeviceInfo.h"
+#include "cpr_string.h"
+#include "cpr_stdlib.h"
 
+#include "jsapi.h"
 #include "nspr.h"
 #include "nss.h"
 #include "pk11pub.h"
 
 #include "nsNetCID.h"
+#include "nsIProperty.h"
+#include "nsIPropertyBag2.h"
 #include "nsIServiceManager.h"
+#include "nsISimpleEnumerator.h"
 #include "nsServiceManagerUtils.h"
 #include "nsISocketTransportService.h"
+
 #include "nsThreadUtils.h"
 #include "nsProxyRelease.h"
 
@@ -31,6 +36,11 @@
 
 #include "nsPIDOMWindow.h"
 #include "nsDOMDataChannel.h"
+#ifdef MOZILLA_INTERNAL_API
+#include "MediaStreamList.h"
+#include "nsIScriptGlobalObject.h"
+#include "jsapi.h"
+#endif
 
 #ifndef USE_FAKE_MEDIA_STREAMS
 #include "MediaSegment.h"
@@ -50,6 +60,51 @@ static const int DTLS_FINGERPRINT_LENGTH = 64;
 static const int MEDIA_STREAM_MUTE = 0x80;
 
 namespace sipcc {
+
+void MediaConstraints::setBooleanConstraint(const std::string& constraint, bool enabled, bool mandatory) {
+
+  ConstraintInfo booleanconstraint;
+  booleanconstraint.mandatory = mandatory;
+
+  if (enabled)
+    booleanconstraint.value = "TRUE";
+  else
+    booleanconstraint.value = "FALSE";
+
+  mConstraints[constraint] = booleanconstraint;
+}
+
+void MediaConstraints::buildArray(cc_media_constraints_t** constraintarray) {
+
+  if (0 == mConstraints.size())
+    return;
+
+  short i = 0;
+  std::string tmpStr;
+  *constraintarray = (cc_media_constraints_t*) cpr_malloc(sizeof(cc_media_constraints_t));
+  int tmpStrAllocLength;
+
+  (*constraintarray)->constraints = (cc_media_constraint_t**) cpr_malloc(mConstraints.size() * sizeof(cc_media_constraint_t));
+
+  for (constraints_map::iterator it = mConstraints.begin();
+          it != mConstraints.end(); ++it) {
+    (*constraintarray)->constraints[i] = (cc_media_constraint_t*) cpr_malloc(sizeof(cc_media_constraint_t));
+
+    tmpStr = it->first;
+    tmpStrAllocLength = tmpStr.size() + 1;
+    (*constraintarray)->constraints[i]->name = (char*) cpr_malloc(tmpStrAllocLength);
+    sstrncpy((*constraintarray)->constraints[i]->name, tmpStr.c_str(), tmpStrAllocLength);
+
+    tmpStr = it->second.value;
+    tmpStrAllocLength = tmpStr.size() + 1;
+    (*constraintarray)->constraints[i]->value = (char*) cpr_malloc(tmpStrAllocLength);
+    sstrncpy((*constraintarray)->constraints[i]->value, tmpStr.c_str(), tmpStrAllocLength);
+
+    (*constraintarray)->constraints[i]->mandatory = it->second.mandatory;
+    i++;
+  }
+  (*constraintarray)->constraint_count = i;
+}
 
 typedef enum {
   PC_OBSERVER_CALLBACK,
@@ -147,7 +202,6 @@ public:
               MOZ_ASSERT(remoteStream);
               if (!remoteStream)
               {
-                (void) logTag;
                 CSFLogErrorS(logTag, __FUNCTION__ << " GetRemoteStream returned NULL");
               }
               else
@@ -224,8 +278,14 @@ PeerConnectionImpl::PeerConnectionImpl()
 
 PeerConnectionImpl::~PeerConnectionImpl()
 {
+  Close(false);
+  // Since this and Initialize() occur on MainThread, they can't both be
+  // running at once
+  // Might be more optimal to release off a timer (and XPCOM Shutdown)
+  // to avoid churn
   peerconnections.erase(mHandle);
-  Close();
+  if (peerconnections.empty())
+    Shutdown();
 
   /* We should release mPCObserver on the main thread, but also prevent a double free.
   nsCOMPtr<nsIThread> mainThread;
@@ -240,7 +300,7 @@ PeerConnectionImpl::MakeMediaStream(uint32_t aHint, nsIDOMMediaStream** aRetval)
 {
   MOZ_ASSERT(aRetval);
 
-  nsRefPtr<nsDOMMediaStream> stream = nsDOMMediaStream::CreateInputStream(aHint);
+  nsRefPtr<nsDOMMediaStream> stream = nsDOMMediaStream::CreateSourceStream(aHint);
   NS_ADDREF(*aRetval = stream);
 
   CSFLogDebugS(logTag, "PeerConnection " << static_cast<void*>(this)
@@ -307,8 +367,17 @@ NS_IMETHODIMP
 PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
                                nsIDOMWindow* aWindow,
                                nsIThread* aThread) {
+  MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aObserver);
   mPCObserver = aObserver;
+
+  nsresult res;
+
+#ifdef MOZILLA_INTERNAL_API
+  // This code interferes with the C++ unit test startup code.
+  nsCOMPtr<nsISupports> nssDummy = do_GetService("@mozilla.org/psm;1", &res);
+  NS_ENSURE_SUCCESS(res, res);
+#endif
 
 #ifdef MOZILLA_INTERNAL_API
   // Currently no standalone unit tests for DataChannel,
@@ -335,7 +404,7 @@ PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
   mMedia->SignalIceCompleted.connect(this, &PeerConnectionImpl::IceCompleted);
 
   // Initialize the media object.
-  nsresult res = mMedia->Init();
+  res = mMedia->Init();
   if (NS_FAILED(res)) {
     CSFLogErrorS(logTag, __FUNCTION__ << ": Couldn't initialize media object");
     return res;
@@ -346,10 +415,10 @@ PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
   PK11_GenerateRandom(handle_bin, sizeof(handle_bin));
 
   char hex[17];
-  PR_snprintf(hex,sizeof(hex),"%.2x%.2x%.2x%.2x%.2x%.2x%.2x%.2x", 
-    handle_bin[0], 
+  PR_snprintf(hex,sizeof(hex),"%.2x%.2x%.2x%.2x%.2x%.2x%.2x%.2x",
+    handle_bin[0],
     handle_bin[1],
-    handle_bin[2], 
+    handle_bin[2],
     handle_bin[3],
     handle_bin[4],
     handle_bin[5],
@@ -380,7 +449,8 @@ PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
                                       &fingerprint_length);
 
   if (NS_FAILED(res)) {
-    CSFLogErrorS(logTag, __FUNCTION__ << ": ComputeFingerprint failed: " << res);
+    CSFLogErrorS(logTag, __FUNCTION__ << ": ComputeFingerprint failed: " <<
+        static_cast<uint32_t>(res));
     return res;
   }
 
@@ -391,7 +461,8 @@ PeerConnectionImpl::Initialize(IPeerConnectionObserver* aObserver,
   mSTSThread = do_GetService(NS_SOCKETTRANSPORTSERVICE_CONTRACTID, &res);
 
   if (NS_FAILED(res)) {
-    CSFLogErrorS(logTag, __FUNCTION__ << ": do_GetService failed: " << res);
+    CSFLogErrorS(logTag, __FUNCTION__ << ": do_GetService failed: " <<
+        static_cast<uint32_t>(res));
     return res;
   }
 
@@ -483,7 +554,7 @@ PeerConnectionImpl::CreateDataChannel(const nsACString& aLabel,
   MOZ_ASSERT(aRetval);
 
 #ifdef MOZILLA_INTERNAL_API
-  mozilla::DataChannel* dataChannel;
+  nsRefPtr<mozilla::DataChannel> dataChannel;
   mozilla::DataChannelConnection::Type theType =
     static_cast<mozilla::DataChannelConnection::Type>(aType);
 
@@ -500,7 +571,7 @@ PeerConnectionImpl::CreateDataChannel(const nsACString& aLabel,
 
   CSFLogDebugS(logTag, __FUNCTION__ << ": making DOMDataChannel");
 
-  return NS_NewDOMDataChannel(dataChannel, mWindow, aRetval);
+  return NS_NewDOMDataChannel(dataChannel.forget(), mWindow, aRetval);
 #else
   return NS_OK;
 #endif
@@ -574,33 +645,131 @@ PeerConnectionImpl::NotifyDataChannel(mozilla::DataChannel *aChannel)
 #endif
 }
 
-/*
- * CC_SDP_DIRECTION_SENDRECV will not be used when Constraints are implemented
+/**
+ * Constraints look like this:
+ *
+ * {
+ *    "mandatory": {"foo":"hello", "bar": false, "baz": 10},
+ *    "optional": [{"hello":"foo"}, {"baz": false}]
+ * }
+ *
+ * Optional constraints are ordered, and hence in an array. This function
+ * converts a jsval that looks like the above into a MediaConstraints object.
  */
-NS_IMETHODIMP
-PeerConnectionImpl::CreateOffer(const char* aHints) {
-  MOZ_ASSERT(aHints);
+nsresult
+PeerConnectionImpl::ConvertConstraints(
+  const JS::Value& aConstraints, MediaConstraints* aObj, JSContext* aCx)
+{
+  size_t i;
+  jsval mandatory, optional;
+  JSObject& constraints = aConstraints.toObject();
 
+  // Mandatory constraints.
+  if (JS_GetProperty(aCx, &constraints, "mandatory", &mandatory)) {
+    if (JSVAL_IS_PRIMITIVE(mandatory) && mandatory.isObject() && !JSVAL_IS_NULL(mandatory)) {
+      JSObject* opts = JSVAL_TO_OBJECT(mandatory);
+      JS::AutoIdArray mandatoryOpts(aCx, JS_Enumerate(aCx, opts));
+
+      // Iterate over each property.
+      for (i = 0; i < mandatoryOpts.length(); i++) {
+        jsval option, optionName;
+        if (JS_GetPropertyById(aCx, opts, mandatoryOpts[i], &option)) {
+          if (JS_IdToValue(aCx, mandatoryOpts[i], &optionName)) {
+            // We only support boolean constraints for now.
+            if (JSVAL_IS_BOOLEAN(option)) {
+              JSString* optionNameString = JS_ValueToString(aCx, optionName);
+              NS_ConvertUTF16toUTF8 stringVal(JS_GetStringCharsZ(aCx, optionNameString));
+              aObj->setBooleanConstraint(stringVal.get(), JSVAL_TO_BOOLEAN(option), true);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Optional constraints.
+  if (JS_GetProperty(aCx, &constraints, "optional", &optional)) {
+    if (JSVAL_IS_PRIMITIVE(optional) && optional.isObject() && !JSVAL_IS_NULL(optional)) {
+      JSObject* opts = JSVAL_TO_OBJECT(optional);
+      if (JS_IsArrayObject(aCx, opts)) {
+        uint32_t length;
+        if (!JS_GetArrayLength(aCx, opts, &length)) {
+          return NS_ERROR_FAILURE;
+        }
+        for (i = 0; i < length; i++) {
+          jsval val;
+          JS_GetElement(aCx, opts, i, &val);
+          if (JSVAL_IS_PRIMITIVE(val)) {
+            // Extract name & value and store.
+            // FIXME: MediaConstraints does not support optional constraints?
+          }
+        }
+      }
+    }
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+PeerConnectionImpl::CreateOffer(const JS::Value& aConstraints, JSContext* aCx)
+{
   CheckIceState();
   mRole = kRoleOfferer;  // TODO(ekr@rtfm.com): Interrogate SIPCC here?
-  mCall->createOffer(aHints);
+
+  MediaConstraints* cs = new MediaConstraints();
+  nsresult rv = ConvertConstraints(aConstraints, cs, aCx);
+  if (rv != NS_OK) {
+    return rv;
+  }
+
+  return CreateOffer(*cs);
+}
+
+// Used by unit tests and the IDL CreateOffer.
+NS_IMETHODIMP
+PeerConnectionImpl::CreateOffer(MediaConstraints& constraints)
+{
+  cc_media_constraints_t* cc_constraints = nullptr;
+  constraints.buildArray(&cc_constraints);
+
+  mCall->createOffer(cc_constraints);
   return NS_OK;
 }
 
 NS_IMETHODIMP
-PeerConnectionImpl::CreateAnswer(const char* aHints, const char* aOffer) {
-  MOZ_ASSERT(aHints);
-  MOZ_ASSERT(aOffer);
-
+PeerConnectionImpl::CreateAnswer(const JS::Value& aConstraints, JSContext* aCx)
+{
   CheckIceState();
   mRole = kRoleAnswerer;  // TODO(ekr@rtfm.com): Interrogate SIPCC here?
-  mCall->createAnswer(aHints, aOffer);
+
+  MediaConstraints* cs = new MediaConstraints();
+  nsresult rv = ConvertConstraints(aConstraints, cs, aCx);
+  if (rv != NS_OK) {
+    return rv;
+  }
+
+  CreateAnswer(*cs);
   return NS_OK;
 }
 
 NS_IMETHODIMP
-PeerConnectionImpl::SetLocalDescription(int32_t aAction, const char* aSDP) {
-  MOZ_ASSERT(aSDP);
+PeerConnectionImpl::CreateAnswer(MediaConstraints& constraints)
+{
+  cc_media_constraints_t* cc_constraints = nullptr;
+  constraints.buildArray(&cc_constraints);
+
+  mCall->createAnswer(cc_constraints);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+PeerConnectionImpl::SetLocalDescription(int32_t aAction, const char* aSDP)
+{
+  if (!aSDP) {
+    CSFLogError(logTag, "%s - aSDP is NULL", __FUNCTION__);
+    return NS_ERROR_FAILURE;
+  }
 
   CheckIceState();
   mLocalRequestedSDP = aSDP;
@@ -609,14 +778,19 @@ PeerConnectionImpl::SetLocalDescription(int32_t aAction, const char* aSDP) {
 }
 
 NS_IMETHODIMP
-PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP) {
-  MOZ_ASSERT(aSDP);
+PeerConnectionImpl::SetRemoteDescription(int32_t action, const char* aSDP)
+{
+  if (!aSDP) {
+    CSFLogError(logTag, "%s - aSDP is NULL", __FUNCTION__);
+    return NS_ERROR_FAILURE;
+  }
 
   CheckIceState();
   mRemoteRequestedSDP = aSDP;
   mCall->setRemoteDescription((cc_jsep_action_t)action, mRemoteRequestedSDP);
   return NS_OK;
 }
+
 
 NS_IMETHODIMP
 PeerConnectionImpl::AddIceCandidate(const char* aCandidate, const char* aMid, unsigned short aLevel) {
@@ -769,7 +943,7 @@ PeerConnectionImpl::GetIceState(uint32_t* aState)
 }
 
 NS_IMETHODIMP
-PeerConnectionImpl::Close()
+PeerConnectionImpl::Close(bool aIsSynchronous)
 {
   if (mCall != NULL)
     mCall->endCall();
@@ -778,7 +952,7 @@ PeerConnectionImpl::Close()
     mDataConnection->CloseAll();
 #endif
 
-  ShutdownMedia();
+  ShutdownMedia(aIsSynchronous);
 
   // DataConnection will need to stay alive until all threads/runnables exit
 
@@ -786,12 +960,12 @@ PeerConnectionImpl::Close()
 }
 
 void
-PeerConnectionImpl::ShutdownMedia()
+PeerConnectionImpl::ShutdownMedia(bool aIsSynchronous)
 {
   // Check that we are on the main thread.
   if (mThread) {
     bool on;
-    (void) on;
+
     MOZ_ASSERT(NS_SUCCEEDED(mThread->IsOnCurrentThread(&on)));
     MOZ_ASSERT(on);
   }
@@ -803,10 +977,15 @@ PeerConnectionImpl::ShutdownMedia()
   // This avoids reentrancy issues with the garbage collector.
   // Note that no media calls may be made after this point
   // because we have removed the pointer.
+  // For the aIsSynchronous case, we *know* the PeerConnection is
+  // still alive, and are shutting it down on network teardown/etc, so
+  // recursive GC isn't an issue. (Recursive GC should assert)
+
   // Forget the reference so that we can transfer it to
   // SelfDestruct().
   RUN_ON_THREAD(mThread, WrapRunnable(mMedia.forget().get(),
-        &PeerConnectionMedia::SelfDestruct), NS_DISPATCH_NORMAL);
+                                      &PeerConnectionMedia::SelfDestruct),
+                aIsSynchronous ? NS_DISPATCH_SYNC : NS_DISPATCH_NORMAL);
 }
 
 void
@@ -950,5 +1129,48 @@ PeerConnectionImpl::IceStreamReady(NrIceMediaStream *aStream)
 
   CSFLogDebugS(logTag, __FUNCTION__ << ": "  << aStream->name().c_str());
 }
+
+
+#ifdef MOZILLA_INTERNAL_API
+static nsresult
+GetStreams(JSContext* cx, PeerConnectionImpl* peerConnection,
+           MediaStreamList::StreamType type, JS::Value* streams)
+{
+  nsAutoPtr<MediaStreamList> list(new MediaStreamList(peerConnection, type));
+
+  ErrorResult rv;
+  JSObject* obj = list->WrapObject(cx, rv);
+  if (rv.Failed()) {
+    streams->setNull();
+    return rv.ErrorCode();
+  }
+
+  // Transfer ownership to the binding.
+  streams->setObject(*obj);
+  list.forget();
+  return NS_OK;
+}
+#endif
+
+NS_IMETHODIMP
+PeerConnectionImpl::GetLocalStreams(JSContext* cx, JS::Value* streams)
+{
+#ifdef MOZILLA_INTERNAL_API
+  return GetStreams(cx, this, MediaStreamList::Local, streams);
+#else
+  return NS_ERROR_FAILURE;
+#endif
+}
+
+NS_IMETHODIMP
+PeerConnectionImpl::GetRemoteStreams(JSContext* cx, JS::Value* streams)
+{
+#ifdef MOZILLA_INTERNAL_API
+  return GetStreams(cx, this, MediaStreamList::Remote, streams);
+#else
+  return NS_ERROR_FAILURE;
+#endif
+}
+
 
 }  // end sipcc namespace

@@ -13,7 +13,7 @@ this.WindowDraggingElement = function WindowDraggingElement(elem) {
   else
 #endif
   this._elem.addEventListener("mousedown", this, false);
-}
+};
 
 WindowDraggingElement.prototype = {
   mouseDownCheck: function(e) { return true; },

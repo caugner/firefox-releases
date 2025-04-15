@@ -1044,7 +1044,7 @@ toolbar[mode="icons"] #forward-button:-moz-lwtheme {
   }
 
   #zoom-in-button {
-    -moz-image-region: rect(0, 480px, 40px, 440px);
+    -moz-image-region: rect(0, 840px, 40px, 800px);
   }
 }
 
@@ -1319,7 +1319,7 @@ toolbar[mode="icons"] #zoom-in-button {
 }
 
 .urlbar-icon {
-  padding: 2px 3px;
+  padding: 0 3px;
 }
 
 .urlbar-icon[open="true"],
@@ -1953,7 +1953,8 @@ window[tabsontop="false"] richlistitem[type~="action"][actiontype="switchtab"][s
   }
 }
 
-#editBMPanel_tagsField > .autocomplete-textbox-container > .textbox-input-box > html|*.textbox-input:-moz-placeholder {
+#editBMPanel_tagsField > .autocomplete-textbox-container > .textbox-input-box > html|*.textbox-input::-moz-placeholder {
+  opacity: 1.0;
   color: #bbb;
 }
 
@@ -3034,6 +3035,13 @@ toolbarbutton.chevron > .toolbarbutton-menu-dropmarker {
   #blocked-plugins-notification-icon {
     list-style-image: url(chrome://mozapps/skin/plugins/pluginBlocked.png);
   }
+}
+
+#notification-popup-box[hidden] {
+  /* Override display:none to make the pluginBlockedNotification animation work
+     when showing the notification repeatedly. */
+  display: -moz-box;
+  visibility: collapse;
 }
 
 #blocked-plugins-notification-icon[showing] {
@@ -4130,7 +4138,7 @@ html|*#gcli-output-frame {
 
 /* === social toolbar provider menu  === */
 
-#social-statusarea-user-portrait {
+.social-statusarea-user-portrait {
   width: 32px;
   height: 32px;
   margin: 4px;
@@ -4366,7 +4374,7 @@ panel[type="arrow"][popupid="click-to-play-plugins"] > .panel-arrowcontainer > .
 }
 
 .center-item-box[warn="true"] {
-  background-image: url("chrome://mozapps/skin/extensions/stripes-info-negative-small.png");
+  background-image: url("chrome://browser/skin/click-to-play-warning-stripes.png");
   background-repeat: repeat-x;
   padding-top: 3px;
   -moz-padding-end: 11px;

@@ -1,41 +1,6 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is the Cisco Systems SIP Stack.
- *
- * The Initial Developer of the Original Code is
- * Cisco Systems (CSCO).
- * Portions created by the Initial Developer are Copyright (C) 2002
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Enda Mannion <emannion@cisco.com>
- *  Suhas Nandakumar <snandaku@cisco.com>
- *  Ethan Hugg <ehugg@cisco.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef _CCAPI_H_
 #define _CCAPI_H_
@@ -59,7 +24,6 @@ typedef int cc_causes_t;
 #define  CC_CALL_NONE       CC_CALL_TYPE_NONE
 #define  CC_CALL_INCOMING   CC_CALL_TYPE_INCOMING
 #define  SDP_SIZE           4096   /* must increase this */
-#define  PC_HANDLE_SIZE     17 /* 8 random bytes in hex plus null */
 #define  CANDIDATE_SIZE     150
 #define  MID_SIZE           150
 
@@ -264,10 +228,10 @@ typedef enum cc_msgs_t_ {
     CC_MSG_DIALSTRING,
     CC_MSG_MWI,
     CC_MSG_AUDIT,
-    CC_MSG_CREATEOFFER,  
+    CC_MSG_CREATEOFFER,
     CC_MSG_CREATEANSWER,
     CC_MSG_SETLOCALDESC,
-    CC_MSG_SETREMOTEDESC,  
+    CC_MSG_SETREMOTEDESC,
     CC_MSG_REMOTEDESC,
     CC_MSG_LOCALDESC,
     CC_MSG_SETPEERCONNECTION,
@@ -313,7 +277,7 @@ static const char *cc_msg_names[] = {
     "LOCALDESC",
     "SETPEERCONNECTION",
     "ADDSTREAM",
-    "REMOVESTREAM",    
+    "REMOVESTREAM",
     "ADDCANDIDATE",
     "AUDIT_ACK",
     "OPTIONS",
@@ -870,6 +834,10 @@ typedef struct cc_feature_candidate_t_ {
   char        mid[MID_SIZE];
 } cc_feature_candidate_t;
 
+typedef struct cc_feature_session_t_ {
+  unsigned int  sessionid;
+  cc_boolean    has_constraints;
+} cc_feature_session_t;
 
 
 typedef union cc_feature_data_t {
@@ -896,6 +864,7 @@ typedef union cc_feature_data_t {
     cc_feature_data_pc_t        pc;
     cc_feature_data_track_t     track;
     cc_feature_candidate_t      candidate;
+    cc_feature_session_t        session;
 } cc_feature_data_t;
 
 typedef struct cc_setup_t_ {
@@ -1212,29 +1181,29 @@ void cc_int_feature2(cc_msgs_t msg_id, cc_srcs_t src_id, cc_srcs_t dst_id,
 
 void cc_createoffer(cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id,
                     line_t line, cc_features_t feature_id, cc_feature_data_t *data);
-                   
+
 void cc_createanswer (cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id,
                     line_t line, cc_features_t feature_id, string_t sdp, cc_feature_data_t *data);
 
-void cc_setlocaldesc (cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id, line_t line, 
+void cc_setlocaldesc (cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id, line_t line,
                     cc_features_t feature_id, cc_jsep_action_t action, string_t sdp, cc_feature_data_t *data);
 
-void cc_setremotedesc (cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id, line_t line, 
+void cc_setremotedesc (cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id, line_t line,
                     cc_features_t feature_id, cc_jsep_action_t action, string_t sdp, cc_feature_data_t *data);
 
-void cc_localdesc (cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id, line_t line, 
+void cc_localdesc (cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id, line_t line,
                     cc_features_t feature_id, cc_feature_data_t *data);
 
-void cc_remotedesc (cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id, line_t line, 
+void cc_remotedesc (cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id, line_t line,
                     cc_features_t feature_id, cc_feature_data_t *data);
-                   
+
 void cc_int_feature_ack(cc_srcs_t src_id, cc_srcs_t dst_id, callid_t call_id,
                         line_t line, cc_features_t feature_id,
                         cc_feature_data_t *data, cc_causes_t cause);
 
 void cc_int_offhook(cc_srcs_t src_id, cc_srcs_t dst_id, callid_t prim_call_id,
                     cc_hold_resume_reason_e consult_reason, callid_t call_id,
-                    line_t line, char *global_call_id, 
+                    line_t line, char *global_call_id,
                     monitor_mode_t monitor_mode,
                     cfwdall_mode_t cfwdall_mode);
 

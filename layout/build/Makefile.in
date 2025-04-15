@@ -22,6 +22,7 @@ IS_COMPONENT	= 1
 MODULE_NAME	= nsLayoutModule
 GRE_MODULE	= 1
 LIBXUL_LIBRARY	= 1
+FAIL_ON_WARNINGS = 1
 
 
 CPPSRCS		= \
@@ -237,12 +238,6 @@ LOCAL_INCLUDES  += \
       -I$(srcdir)/../inspector/src \
       $(NULL)
 SHARED_LIBRARY_LIBS += ../inspector/src/$(LIB_PREFIX)inspector_s.$(LIB_SUFFIX)
-
-ifdef MOZ_XTF
-SHARED_LIBRARY_LIBS += \
-		$(DEPTH)/content/xtf/src/$(LIB_PREFIX)gkcontentxtf_s.$(LIB_SUFFIX) \
-		$(NULL)
-endif
 
 SHARED_LIBRARY_LIBS += \
 		../svg/$(LIB_PREFIX)gksvgbase_s.$(LIB_SUFFIX) \

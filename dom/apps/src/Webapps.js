@@ -34,14 +34,6 @@ function WebappsRegistry() {
 WebappsRegistry.prototype = {
   __proto__: DOMRequestIpcHelper.prototype,
 
-  // Hosted apps can't be trusted or certified, so just check that the
-  // manifest doesn't ask for those.
-  checkAppStatus: function(aManifest) {
-    let manifestStatus = aManifest.type || "web";
-    return (Services.prefs.getBoolPref("dom.mozApps.dev_mode") ||
-            manifestStatus === "web");
-  },
-
   receiveMessage: function(aMessage) {
     let msg = aMessage.json;
     if (msg.oid != this._id)
@@ -96,66 +88,30 @@ WebappsRegistry.prototype = {
     this._validateScheme(aURL);
 
     let installURL = this._window.location.href;
-    let installOrigin = this._getOrigin(installURL);
     let request = this.createRequest();
     let requestID = this.getRequestId(request);
-    let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Ci.nsIXMLHttpRequest);
-    xhr.open("GET", aURL, true);
-    xhr.channel.loadFlags |= Ci.nsIRequest.VALIDATE_ALWAYS;
+    let receipts = (aParams && aParams.receipts &&
+                    Array.isArray(aParams.receipts)) ? aParams.receipts
+                                                     : [];
+    let categories = (aParams && aParams.categories &&
+                      Array.isArray(aParams.categories)) ? aParams.categories
+                                                         : [];
 
-    xhr.addEventListener("load", (function() {
-      if (xhr.status == 200) {
-        if (!AppsUtils.checkManifestContentType(installOrigin, this._getOrigin(aURL),
-                                                xhr.getResponseHeader("content-type"))) {
-          Services.DOMRequest.fireError(request, "INVALID_MANIFEST");
-          return;
-        }
-
-        let manifest;
-        try {
-          manifest = JSON.parse(xhr.responseText, installOrigin);
-        } catch (e) {
-          Services.DOMRequest.fireError(request, "MANIFEST_PARSE_ERROR");
-          Cu.reportError("Error installing app from: " + installOrigin + ": " + "MANIFEST_PARSE_ERROR");
-          return;
-        }
-
-        if (!AppsUtils.checkManifest(manifest)) {
-          Services.DOMRequest.fireError(request, "INVALID_MANIFEST");
-          Cu.reportError("Error installing app from: " + installOrigin + ": " + "INVALID_MANIFEST");
-        } else if (!AppsUtils.checkInstallAllowed(manifest, installOrigin)) {
-          Services.DOMRequest.fireError(request, "INSTALL_FROM_DENIED");
-          Cu.reportError("Error installing app from: " + installOrigin + ": " + "INSTALL_FROM_DENIED");
-        } else if (!this.checkAppStatus(manifest)) {
-          Services.DOMRequest.fireError(request, "INVALID_SECURITY_LEVEL");
-          Cu.reportError("Error installing app, '" + manifest.name + "': " + "INVALID_SECURITY_LEVEL");
-        } else {
-          let receipts = (aParams && aParams.receipts && Array.isArray(aParams.receipts)) ? aParams.receipts : [];
-          let categories = (aParams && aParams.categories && Array.isArray(aParams.categories)) ? aParams.categories : [];
-          let etag = xhr.getResponseHeader("Etag");
-          cpmm.sendAsyncMessage("Webapps:Install", { app: { installOrigin: installOrigin,
-                                                            origin: this._getOrigin(aURL),
-                                                            manifestURL: aURL,
-                                                            manifest: manifest,
-                                                            etag: etag,
-                                                            receipts: receipts,
-                                                            categories: categories },
-                                                     from: installURL,
-                                                     oid: this._id,
-                                                     requestID: requestID });
-        }
-      } else {
-        Services.DOMRequest.fireError(request, "MANIFEST_URL_ERROR");
-        Cu.reportError("Error installing app from: " + installOrigin + ": " + "MANIFEST_URL_ERROR");
-      }
-    }).bind(this), false);
-
-    xhr.addEventListener("error", (function() {
-      Services.DOMRequest.fireError(request, "NETWORK_ERROR");
-      Cu.reportError("Error installing app from: " + installOrigin + ": " + "NETWORK_ERROR");
-    }).bind(this), false);
-
-    xhr.send(null);
+    let principal = this._window.document.nodePrincipal;
+    cpmm.sendAsyncMessage("Webapps:Install",
+                          { app: {
+                              installOrigin: this._getOrigin(installURL),
+                              origin: this._getOrigin(aURL),
+                              manifestURL: aURL,
+                              receipts: receipts,
+                              categories: categories
+                            },
+                            from: installURL,
+                            oid: this._id,
+                            requestID: requestID,
+                            appId: principal.appId,
+                            isBrowser: principal.isInBrowserElement
+                          });
     return request;
   },
 
@@ -203,73 +159,34 @@ WebappsRegistry.prototype = {
   // mozIDOMApplicationRegistry2 implementation
 
   installPackage: function(aURL, aParams) {
-    let installURL = this._window.location.href;
-    let installOrigin = this._getOrigin(installURL);
     this._validateScheme(aURL);
 
+    let installURL = this._window.location.href;
     let request = this.createRequest();
     let requestID = this.getRequestId(request);
-
     let receipts = (aParams && aParams.receipts &&
-                    Array.isArray(aParams.receipts)) ? aParams.receipts : [];
+                    Array.isArray(aParams.receipts)) ? aParams.receipts
+                                                     : [];
     let categories = (aParams && aParams.categories &&
-                      Array.isArray(aParams.categories)) ? aParams.categories : [];
-    let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Ci.nsIXMLHttpRequest);
-    xhr.open("GET", aURL, true);
-    xhr.channel.loadFlags |= Ci.nsIRequest.VALIDATE_ALWAYS;
+                      Array.isArray(aParams.categories)) ? aParams.categories
+                                                         : [];
 
-    xhr.addEventListener("load", (function() {
-      if (xhr.status == 200) {
-        if (!AppsUtils.checkManifestContentType(installOrigin, this._getOrigin(aURL),
-                                                xhr.getResponseHeader("content-type"))) {
-          Services.DOMRequest.fireError(request, "INVALID_MANIFEST");
-          return;
-        }
-
-        let manifest;
-        try {
-          manifest = JSON.parse(xhr.responseText, installOrigin);
-        } catch(e) {
-          Services.DOMRequest.fireError(request, "MANIFEST_PARSE_ERROR");
-          return;
-        }
-        if (!(AppsUtils.checkManifest(manifest) &&
-              manifest.package_path)) {
-          Services.DOMRequest.fireError(request, "INVALID_MANIFEST");
-        } else if (!AppsUtils.checkInstallAllowed(manifest, installOrigin)) {
-          Services.DOMRequest.fireError(request, "INSTALL_FROM_DENIED");
-        } else {
-          if (!this.checkAppStatus(manifest)) {
-            Services.DOMRequest.fireError(request, "INVALID_SECURITY_LEVEL");
-          } else {
-            let receipts = (aParams && aParams.receipts && Array.isArray(aParams.receipts)) ? aParams.receipts : [];
-            let categories = (aParams && aParams.categories && Array.isArray(aParams.categories)) ? aParams.categories : [];
-            let etag = xhr.getResponseHeader("Etag");
-            cpmm.sendAsyncMessage("Webapps:InstallPackage", { app: {
-                                                              installOrigin: installOrigin,
-                                                              origin: this._getOrigin(aURL),
-                                                              manifestURL: aURL,
-                                                              updateManifest: manifest,
-                                                              etag: etag,
-                                                              receipts: receipts,
-                                                              categories: categories },
-                                                              from: installURL,
-                                                              oid: this._id,
-                                                              requestID: requestID,
-                                                              isPackage: true });
-          }
-        }
-      }
-      else {
-        Services.DOMRequest.fireError(request, "MANIFEST_URL_ERROR");
-      }
-    }).bind(this), false);
-
-    xhr.addEventListener("error", (function() {
-      Services.DOMRequest.fireError(request, "NETWORK_ERROR");
-    }).bind(this), false);
-
-    xhr.send(null);
+    let principal = this._window.document.nodePrincipal;
+    cpmm.sendAsyncMessage("Webapps:InstallPackage",
+                          { app: {
+                              installOrigin: this._getOrigin(installURL),
+                              origin: this._getOrigin(aURL),
+                              manifestURL: aURL,
+                              receipts: receipts,
+                              categories: categories
+                            },
+                            from: installURL,
+                            oid: this._id,
+                            requestID: requestID,
+                            isPackage: true,
+                            appId: principal.appId,
+                            isBrowser: principal.isInBrowserElement
+                          });
     return request;
   },
 
@@ -407,9 +324,10 @@ WebappsApplication.prototype = {
                               "Webapps:CheckForUpdate:Return:OK",
                               "Webapps:CheckForUpdate:Return:KO",
                               "Webapps:PackageEvent"]);
+
     cpmm.sendAsyncMessage("Webapps:RegisterForMessages",
                           ["Webapps:Uninstall:Return:OK", "Webapps:OfflineCache",
-                           "Webapps:PackageEvent"]);
+                           "Webapps:PackageEvent", "Webapps:CheckForUpdate:Return:OK"]);
   },
 
   get manifest() {
@@ -478,19 +396,10 @@ WebappsApplication.prototype = {
   checkForUpdate: function() {
     let request = this.createRequest();
 
-    // We can't update apps that are not removable.
-    if (!this.removable) {
-      Services.tm.currentThread.dispatch({
-        run: function checkUpdateFail() {
-          Services.DOMRequest.fireError(request, "NOT_UPDATABLE");
-        }
-      }, Ci.nsIEventTarget.DISPATCH_NORMAL)
-    } else {
-      cpmm.sendAsyncMessage("Webapps:CheckForUpdate",
-                            { manifestURL: this.manifestURL,
-                              oid: this._id,
-                              requestID: this.getRequestId(request) });
-    }
+    cpmm.sendAsyncMessage("Webapps:CheckForUpdate",
+                          { manifestURL: this.manifestURL,
+                            oid: this._id,
+                            requestID: this.getRequestId(request) });
     return request;
   },
 
@@ -524,7 +433,7 @@ WebappsApplication.prototype = {
     this._onprogress = null;
     cpmm.sendAsyncMessage("Webapps:UnregisterForMessages",
                           ["Webapps:Uninstall:Return:OK", "Webapps:OfflineCache",
-                           "Webapps:PackageEvent"]);
+                           "Webapps:PackageEvent", "Webapps:CheckForUpdate:Return:OK"]);
   },
 
   _fireEvent: function(aName, aHandler) {
@@ -537,9 +446,12 @@ WebappsApplication.prototype = {
   receiveMessage: function(aMessage) {
     let msg = aMessage.json;
     let req = this.takeRequest(msg.requestID);
+
+    // ondownload* callbacks should be triggered on all app instances
     if ((msg.oid != this._id || !req) &&
         aMessage.name !== "Webapps:OfflineCache" &&
-        aMessage.name !== "Webapps:PackageEvent")
+        aMessage.name !== "Webapps:PackageEvent" &&
+        aMessage.name !== "Webapps:CheckForUpdate:Return:OK")
       return;
     switch (aMessage.name) {
       case "Webapps:Uninstall:Return:OK":
@@ -553,6 +465,27 @@ WebappsApplication.prototype = {
         break;
       case "Webapps:Uninstall:Return:KO":
         Services.DOMRequest.fireError(req, "NOT_INSTALLED");
+        break;
+      case "Webapps:CheckForUpdate:Return:KO":
+        Services.DOMRequest.fireError(req, msg.error);
+        break;
+      case "Webapps:CheckForUpdate:Return:OK":
+        if (msg.manifestURL != this.manifestURL)
+          return;
+
+        for (let prop in msg.app) {
+          this[prop] = msg.app[prop];
+        }
+
+        if (msg.event == "downloadapplied") {
+          this._fireEvent("downloadapplied", this._ondownloadapplied);
+        } else if (msg.event == "downloadavailable") {
+          this._fireEvent("downloadavailable", this._ondownloadavailable);
+        }
+
+        if (req) {
+          Services.DOMRequest.fireSuccess(req, this.manifestURL);
+        }
         break;
       case "Webapps:OfflineCache":
         if (msg.manifest != this.manifestURL)
@@ -574,58 +507,43 @@ WebappsApplication.prototype = {
           this._fireEvent("downloaderror", this._ondownloaderror);
         }
         break;
-        case "Webapps:CheckForUpdate:Return:OK":
-          for (let prop in msg.app) {
-            this[prop] = msg.app[prop];
-          }
-          if (msg.event == "downloadapplied") {
-            Services.DOMRequest.fireSuccess(req, this.manifestURL);
+      case "Webapps:PackageEvent":
+        if (msg.manifestURL != this.manifestURL)
+          return;
+
+        // Set app values according to parent process results.
+        let app = msg.app;
+        this.downloading = app.downloading;
+        this.downloadAvailable = app.downloadAvailable;
+        this.downloadSize = app.downloadSize || 0;
+        this.installState = app.installState;
+        this.progress = app.progress || msg.progress || 0;
+        this.readyToApplyDownload = app.readyToApplyDownload;
+        this.updateTime = app.updateTime;
+
+        switch(msg.type) {
+          case "error":
+          case "canceled":
+            this._downloadError = msg.error;
+            this._fireEvent("downloaderror", this._ondownloaderror);
+            break;
+          case "progress":
+            this._fireEvent("downloadprogress", this._onprogress);
+            break;
+          case "installed":
+            this._manifest = msg.manifest;
+            this._fireEvent("downloadsuccess", this._ondownloadsuccess);
             this._fireEvent("downloadapplied", this._ondownloadapplied);
-          } else if (msg.event == "downloadavailable") {
-            Services.DOMRequest.fireSuccess(req, this.manifestURL);
-            this._fireEvent("downloadavailable", this._ondownloadavailable);
-          }
-          break;
-        case "Webapps:CheckForUpdate:Return:KO":
-          Services.DOMRequest.fireError(req, msg.error);
-          break;
-        case "Webapps:PackageEvent":
-          if (msg.manifestURL != this.manifestURL)
-            return;
-
-          // Set app values according to parent process results.
-          let app = msg.app;
-          this.downloading = app.downloading;
-          this.downloadAvailable = app.downloadAvailable;
-          this.downloadSize = app.downloadSize || 0;
-          this.installState = app.installState;
-          this.progress = app.progress || msg.progress || 0;
-          this.readyToApplyDownload = app.readyToApplyDownload;
-          this.updateTime = app.updateTime;
-
-          switch(msg.type) {
-            case "error":
-            case "canceled":
-              this._downloadError = msg.error;
-              this._fireEvent("downloaderror", this._ondownloaderror);
-              break;
-            case "progress":
-              this._fireEvent("downloadprogress", this._onprogress);
-              break;
-            case "installed":
-              this._manifest = msg.manifest;
-              this._fireEvent("downloadsuccess", this._ondownloadsuccess);
-              this._fireEvent("downloadapplied", this._ondownloadapplied);
-              break;
-            case "downloaded":
-              this._manifest = msg.manifest;
-              this._fireEvent("downloadsuccess", this._ondownloadsuccess);
-              break;
-            case "applied":
-              this._fireEvent("downloadapplied", this._ondownloadapplied);
-              break;
-          }
-          break;
+            break;
+          case "downloaded":
+            this._manifest = msg.manifest;
+            this._fireEvent("downloadsuccess", this._ondownloadsuccess);
+            break;
+          case "applied":
+            this._fireEvent("downloadapplied", this._ondownloadapplied);
+            break;
+        }
+        break;
     }
   },
 

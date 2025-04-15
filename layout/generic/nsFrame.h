@@ -9,6 +9,7 @@
 #define nsFrame_h___
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Likely.h"
 #include "nsBox.h"
 #include "nsRect.h"
 #include "nsString.h"
@@ -229,7 +230,7 @@ public:
   virtual void ChildIsDirty(nsIFrame* aChild);
 
 #ifdef ACCESSIBILITY
-  virtual already_AddRefed<Accessible> CreateAccessible();
+  virtual mozilla::a11y::AccType AccessibleType() MOZ_OVERRIDE;
 #endif
 
   virtual nsIFrame* GetParentStyleContextFrame() const {
@@ -334,7 +335,6 @@ public:
                                       nsHTMLReflowMetrics&     aDesiredSize,
                                       const nsHTMLReflowState& aReflowState,
                                       nsReflowStatus&          aStatus);
-  void DestroyAbsoluteFrames(nsIFrame* aDestructRoot);
   virtual bool CanContinueTextRun() const;
 
   virtual bool UpdateOverflow();
@@ -407,6 +407,15 @@ public:
 
   virtual const void* GetStyleDataExternal(nsStyleStructID aSID) const;
 
+
+  /**
+   * @return true if we should avoid a page/column break in this frame.
+   */
+  bool ShouldAvoidBreakInside(const nsHTMLReflowState& aReflowState) const {
+    return !aReflowState.mFlags.mIsTopOfPage &&
+           NS_STYLE_PAGE_BREAK_AVOID == GetStyleDisplay()->mBreakInside &&
+           !GetPrevInFlow();
+  }
 
 #ifdef DEBUG
   /**
@@ -578,7 +587,7 @@ public:
                                     const nsStyleDisplay* aDisp)
   {
     // clip overflow:-moz-hidden-unscrollable ...
-    if (NS_UNLIKELY(aDisp->mOverflowX == NS_STYLE_OVERFLOW_CLIP)) {
+    if (MOZ_UNLIKELY(aDisp->mOverflowX == NS_STYLE_OVERFLOW_CLIP)) {
       return true;
     }
 

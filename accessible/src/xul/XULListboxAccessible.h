@@ -131,7 +131,6 @@ public:
 
   // Accessible
   virtual void Description(nsString& aDesc);
-  virtual nsresult GetNameInternal(nsAString& aName);
   virtual a11y::role NativeRole();
   virtual uint64_t NativeState();
   virtual uint64_t NativeInteractiveState() const;
@@ -141,6 +140,11 @@ public:
   virtual Accessible* ContainerWidget() const;
 
 protected:
+  // Accessible
+  virtual ENameValueFlag NativeName(nsString& aName) MOZ_OVERRIDE;
+
+  // XULListitemAccessible
+
   /**
    * Return listbox accessible for the listitem.
    */
@@ -170,7 +174,7 @@ public:
   // Accessible
   virtual TableCellAccessible* AsTableCell() { return this; }
   virtual void Shutdown();
-  virtual nsresult GetAttributesInternal(nsIPersistentProperties *aAttributes);
+  virtual already_AddRefed<nsIPersistentProperties> NativeAttributes() MOZ_OVERRIDE;
   virtual a11y::role NativeRole();
 
   // TableCellAccessible

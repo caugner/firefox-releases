@@ -16,7 +16,6 @@
 #include "nsTArray.h"
 
 class nsRange;
-class nsIDOMNode;
 class nsIFrame;
 class nsIDocShellTreeItem;
 class nsITreeColumn;
@@ -169,7 +168,8 @@ public:
                                           nsIPresShell::ScrollAxis *aHorizontal);
 
   /**
-   * Returns coordinates relative screen for the top level window.
+   * Returns coordinates in device pixels relative screen for the top level
+   * window.
    *
    * @param aNode  the DOM node hosted in the window.
    */
@@ -210,12 +210,6 @@ public:
   }
 
   /**
-   * Return document node for the given document shell tree item.
-   */
-  static already_AddRefed<nsIDOMNode>
-    GetDOMNodeForContainer(nsIDocShellTreeItem *aContainer);
-
-  /**
    * Get the ID for an element, in some types of XML this may not be the ID attribute
    * @param aContent  Node to get the ID for
    * @param aID       Where to put ID string
@@ -229,14 +223,6 @@ public:
    */
   static bool GetUIntAttr(nsIContent *aContent, nsIAtom *aAttr,
                             int32_t *aUInt);
-
-  /**
-   * Check if the given element is XLink.
-   *
-   * @param aContent  the given element
-   * @return          true if the given element is XLink
-   */
-  static bool IsXLink(nsIContent *aContent);
 
   /**
    * Returns language for the given node.

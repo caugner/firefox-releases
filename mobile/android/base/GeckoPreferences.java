@@ -5,6 +5,7 @@
 
 package org.mozilla.gecko;
 
+import org.mozilla.gecko.background.announcements.AnnouncementsConstants;
 import org.mozilla.gecko.util.GeckoEventListener;
 
 import org.json.JSONArray;
@@ -16,6 +17,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.Build;
 import android.os.Bundle;
 import android.preference.CheckBoxPreference;
 import android.preference.EditTextPreference;
@@ -54,12 +56,16 @@ public class GeckoPreferences
     public static String PREFS_MP_ENABLED         = "privacy.masterpassword.enabled";
     public static String PREFS_MENU_CHAR_ENCODING = "browser.menu.showCharacterEncoding";
     public static String PREFS_ANNOUNCEMENTS_ENABLED = NON_PREF_PREFIX + "privacy.announcements.enabled";
+    public static String PREFS_UPDATER_AUTODOWNLOAD  = "app.update.autodownload";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         addPreferencesFromResource(R.xml.preferences);
         registerEventListener("Sanitize:Finished");
+
+        if (Build.VERSION.SDK_INT >= 14)
+            getActionBar().setHomeButtonEnabled(true);
     }
 
     @Override
@@ -165,7 +171,7 @@ public class GeckoPreferences
      */
     public static void broadcastAnnouncementsPref(final Context context, final boolean value) {
         broadcastPrefAction(context,
-                            GeckoApp.ACTION_ANNOUNCEMENTS_PREF,
+                            AnnouncementsConstants.ACTION_ANNOUNCEMENTS_PREF,
                             PREFS_ANNOUNCEMENTS_ENABLED,
                             value);
     }
@@ -175,10 +181,8 @@ public class GeckoPreferences
      * <code>PREFS_ANNOUNCEMENTS_ENABLED</code> pref.
      */
     public static void broadcastAnnouncementsPref(final Context context) {
-        broadcastPrefAction(context,
-                            GeckoApp.ACTION_ANNOUNCEMENTS_PREF,
-                            PREFS_ANNOUNCEMENTS_ENABLED,
-                            getBooleanPref(context, PREFS_ANNOUNCEMENTS_ENABLED, true));
+        final boolean value = getBooleanPref(context, PREFS_ANNOUNCEMENTS_ENABLED, true);
+        broadcastAnnouncementsPref(context, value);
     }
 
     /**
@@ -210,6 +214,8 @@ public class GeckoPreferences
             // Send a broadcast intent to the product announcements service, either to start or
             // to stop the repeated background checks.
             broadcastAnnouncementsPref(GeckoApp.mAppContext, ((Boolean) newValue).booleanValue());
+        } else if (prefName != null && prefName.equals(PREFS_UPDATER_AUTODOWNLOAD)) {
+            org.mozilla.gecko.updater.UpdateServiceHelper.registerForUpdates(GeckoApp.mAppContext, (String)newValue);
         }
 
         if (!TextUtils.isEmpty(prefName)) {

@@ -43,13 +43,12 @@ enum nsChangeHint {
   nsChangeHint_UpdateCursor = 0x40,
 
   /**
-   * SVG filter/mask/clip effects need to be recomputed because the URI
-   * in the filter/mask/clip-path property has changed. This wipes
-   * out cached nsSVGPropertyBase and subclasses which hold a reference to
-   * the element referenced by the URI, and a mutation observer for
-   * the DOM subtree rooted at that element. Also, for filters they store a
-   * bounding-box for the filter result so that if the filter changes we can
-   * invalidate the old covered area.
+   * Used when the computed value (a URI) of one or more of an element's
+   * filter/mask/clip/etc CSS properties changes, causing the element's frame
+   * to start/stop referencing (or reference different) SVG resource elements.
+   * (_Not_ used to handle changes to referenced resource elements.) Using this
+   * hint results in nsSVGEffects::UpdateEffects being called on the element's
+   * frame.
    */
   nsChangeHint_UpdateEffects = 0x80,
 
@@ -86,18 +85,38 @@ enum nsChangeHint {
   nsChangeHint_ChildrenOnlyTransform = 0x1000,
 
   /**
+   * The frame's offsets have changed, while its dimensions might have
+   * changed as well.  This hint is used for positioned frames if their
+   * offset changes.  If we decide that the dimensions are likely to
+   * change, this will trigger a reflow.
+   *
+   * Note that this should probably be used in combination with
+   * nsChangeHint_UpdateOverflow in order to get the overflow areas of
+   * the ancestors updated as well.
+   */
+  nsChangeHint_RecomputePosition = 0x2000,
+
+  /**
+   * Behaves like ReconstructFrame, but only if the frame has descendants
+   * that are absolutely or fixed position. Use this hint when a style change
+   * has changed whether the frame is a container for fixed-pos or abs-pos
+   * elements, but reframing is otherwise not needed.
+   */
+  nsChangeHint_AddOrRemoveTransform = 0x4000,
+
+  /**
    * This change hint has *no* change handling behavior.  However, it
    * exists to be a non-inherited hint, because when the border-style
    * changes, and it's inherited by a child, that might require a reflow
    * due to the border-width change on the child.
    */
-  nsChangeHint_BorderStyleNoneChange = 0x2000,
+  nsChangeHint_BorderStyleNoneChange = 0x8000,
 
   /**
    * SVG textPath needs to be recomputed because the path has changed.
    * This means that the glyph positions of the text need to be recomputed.
    */
-  nsChangeHint_UpdateTextPath = 0x4000
+  nsChangeHint_UpdateTextPath = 0x10000
 
   // IMPORTANT NOTE: When adding new hints, consider whether you need to
   // add them to NS_HintsNotHandledForDescendantsIn() below.
@@ -154,6 +173,8 @@ inline bool NS_IsHintSubset(nsChangeHint aSubset, nsChangeHint aSuperSet) {
           nsChangeHint_UpdateOpacityLayer | \
           nsChangeHint_UpdateOverflow | \
           nsChangeHint_ChildrenOnlyTransform | \
+          nsChangeHint_RecomputePosition | \
+          nsChangeHint_AddOrRemoveTransform | \
           nsChangeHint_BorderStyleNoneChange | \
           nsChangeHint_NeedReflow | \
           nsChangeHint_ClearAncestorIntrinsics)
@@ -165,6 +186,8 @@ inline nsChangeHint NS_HintsNotHandledForDescendantsIn(nsChangeHint aChangeHint)
     nsChangeHint_UpdateOpacityLayer |
     nsChangeHint_UpdateOverflow |
     nsChangeHint_ChildrenOnlyTransform |
+    nsChangeHint_RecomputePosition |
+    nsChangeHint_AddOrRemoveTransform |
     nsChangeHint_BorderStyleNoneChange));
 
   if (!NS_IsHintSubset(nsChangeHint_NeedDirtyReflow, aChangeHint) &&

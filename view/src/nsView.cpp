@@ -13,6 +13,7 @@
 #include "nsGfxCIID.h"
 #include "nsIInterfaceRequestor.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Likely.h"
 #include "nsXULPopupManager.h"
 #include "nsIWidgetListener.h"
 
@@ -29,6 +30,7 @@ nsView::nsView(nsViewManager* aViewManager, nsViewVisibility aVisibility)
   mViewManager = aViewManager;
   mDirtyRegion = nullptr;
   mWidgetIsTopLevel = false;
+  mInAlternatePaint = false;
 }
 
 void nsView::DropMouseGrabbing()
@@ -248,9 +250,11 @@ void nsView::DoResetWidgetBounds(bool aMoveOnly,
   nsWindowType type;
   mWindow->GetWindowType(type);
 
-  if (curBounds.IsEmpty() && mDimBounds.IsEmpty() && type == eWindowType_popup) {
-    // Don't manipulate empty popup widgets. For example there's no point
-    // moving hidden comboboxes around, or doing X server roundtrips
+  if (type == eWindowType_popup &&
+      ((curBounds.IsEmpty() && mDimBounds.IsEmpty()) ||
+       mVis == nsViewVisibility_kHide)) {
+    // Don't manipulate empty or hidden popup widgets. For example there's no
+    // point moving hidden comboboxes around, or doing X server roundtrips
     // to compute their true screen position. This could mean that WidgetToScreen
     // operations on these widgets don't return up-to-date values, but popup
     // positions aren't reliable anyway because of correction to be on or off-screen.
@@ -710,7 +714,7 @@ void nsView::SetZIndex(bool aAuto, int32_t aZIndex, bool aTopMost)
 void nsView::AssertNoWindow()
 {
   // XXX: it would be nice to make this a strong assert
-  if (NS_UNLIKELY(mWindow)) {
+  if (MOZ_UNLIKELY(mWindow)) {
     NS_ERROR("We already have a window for this view? BAD");
     mWindow->SetWidgetListener(nullptr);
     mWindow->Destroy();
@@ -1029,10 +1033,20 @@ nsView::WillPaintWindow(nsIWidget* aWidget, bool aWillSendDidPaint)
 }
 
 bool
-nsView::PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion, bool aSentWillPaint, bool aWillSendDidPaint)
+nsView::PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion, uint32_t aFlags)
 {
+  NS_ASSERTION(this == nsView::GetViewFor(aWidget), "wrong view for widget?");
+
+  mInAlternatePaint = aFlags & PAINT_IS_ALTERNATE;
   nsCOMPtr<nsViewManager> vm = mViewManager;
-  return vm->PaintWindow(aWidget, aRegion, aSentWillPaint, aWillSendDidPaint);
+  bool result = vm->PaintWindow(aWidget, aRegion, aFlags);
+  // PaintWindow can destroy this via WillPaintWindow notification, so we have
+  // to re-get the view from the widget.
+  nsView* view = nsView::GetViewFor(aWidget);
+  if (view) {
+    view->mInAlternatePaint = false;
+  }
+  return result;
 }
 
 void
@@ -1040,6 +1054,15 @@ nsView::DidPaintWindow()
 {
   nsCOMPtr<nsViewManager> vm = mViewManager;
   vm->DidPaintWindow();
+}
+
+void
+nsView::RequestRepaint()
+{
+  nsIPresShell* presShell = mViewManager->GetPresShell();
+  if (presShell) {
+    presShell->ScheduleViewManagerFlush();
+  }
 }
 
 nsEventStatus

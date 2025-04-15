@@ -58,6 +58,7 @@ public:
   nsCOMPtr<nsITimer> timer;
   void (*callback)(NPP npp, uint32_t timerID);
   bool inCallback;
+  bool needUnschedule;
 };
 
 class nsNPAPIPluginInstance : public nsISupports
@@ -83,7 +84,7 @@ public:
   bool ShouldCache();
   nsresult IsWindowless(bool* isWindowless);
   nsresult AsyncSetWindow(NPWindow* window);
-  nsresult GetImageContainer(ImageContainer **aContainer);
+  nsresult GetImageContainer(mozilla::layers::ImageContainer **aContainer);
   nsresult GetImageSize(nsIntSize* aSize);
   nsresult NotifyPainted(void);
   nsresult GetIsOOP(bool* aIsOOP);
@@ -206,6 +207,8 @@ public:
 
   void SetInverted(bool aInverted);
   bool Inverted() { return mInverted; }
+
+  static nsNPAPIPluginInstance* GetFromNPP(NPP npp);
 #endif
 
   nsresult NewStreamListener(const char* aURL, void* notifyData,

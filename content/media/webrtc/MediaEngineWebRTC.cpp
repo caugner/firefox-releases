@@ -13,11 +13,18 @@
 #include "prlog.h"
 
 #ifdef PR_LOGGING
-PRLogModuleInfo* GetUserMediaLog = PR_NewLogModule("GetUserMedia");
+static PRLogModuleInfo*
+GetUserMediaLog()
+{
+  static PRLogModuleInfo *sLog;
+  if (!sLog)
+    sLog = PR_NewLogModule("GetUserMedia");
+  return sLog;
+}
 #endif
 
 #undef LOG
-#define LOG(args) PR_LOG(GetUserMediaLog, PR_LOG_DEBUG, args)
+#define LOG(args) PR_LOG(GetUserMediaLog(), PR_LOG_DEBUG, args)
 
 #include "MediaEngineWebRTC.h"
 #include "ImageContainer.h"
@@ -29,6 +36,8 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
 {
   webrtc::ViEBase* ptrViEBase;
   webrtc::ViECapture* ptrViECapture;
+  // We spawn threads to handle gUM runnables, so we must protect the member vars
+  MutexAutoLock lock(mMutex);
 
   if (!mVideoEngine) {
     if (!(mVideoEngine = webrtc::VideoEngine::Create())) {
@@ -53,13 +62,20 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
     return;
   }
 
+  /**
+   * We still enumerate every time, in case a new device was plugged in since
+   * the last call. TODO: Verify that WebRTC actually does deal with hotplugging
+   * new devices (with or without new engine creation) and accordingly adjust.
+   * Enumeration is not neccessary if GIPS reports the same set of devices
+   * for a given instance of the engine. Likewise, if a device was plugged out,
+   * mVideoSources must be updated.
+   */
   int num = ptrViECapture->NumberOfCaptureDevices();
   if (num <= 0) {
     return;
   }
 
   for (int i = 0; i < num; i++) {
-#ifdef DEBUG
     const unsigned int kMaxDeviceNameLength = 128; // XXX FIX!
     const unsigned int kMaxUniqueIdLength = 256;
     char deviceName[kMaxDeviceNameLength];
@@ -71,18 +87,20 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
     int error = ptrViECapture->GetCaptureDevice(i, deviceName,
                                                 sizeof(deviceName), uniqueId,
                                                 sizeof(uniqueId));
+
     if (error) {
-      LOG((" VieCapture:GetCaptureDevice: Failed %d", 
+      LOG((" VieCapture:GetCaptureDevice: Failed %d",
            ptrViEBase->LastError() ));
       continue;
     }
+#ifdef DEBUG
     LOG(("  Capture Device Index %d, Name %s", i, deviceName));
 
     webrtc::CaptureCapability cap;
     int numCaps = ptrViECapture->NumberOfCapabilities(uniqueId, kMaxUniqueIdLength);
     LOG(("Number of Capabilities %d", numCaps));
     for (int j = 0; j < numCaps; j++) {
-      if (ptrViECapture->GetCaptureCapability(uniqueId, kMaxUniqueIdLength, 
+      if (ptrViECapture->GetCaptureCapability(uniqueId, kMaxUniqueIdLength,
                                               j, cap ) != 0 ) {
         break;
       }
@@ -91,8 +109,22 @@ MediaEngineWebRTC::EnumerateVideoDevices(nsTArray<nsRefPtr<MediaEngineVideoSourc
     }
 #endif
 
-    nsRefPtr<MediaEngineVideoSource> vSource = new MediaEngineWebRTCVideoSource(mVideoEngine, i);
-    aVSources->AppendElement(vSource.forget());
+    if (uniqueId[0] == '\0') {
+      // In case a device doesn't set uniqueId!
+      strncpy(uniqueId, deviceName, sizeof(uniqueId));
+	  uniqueId[sizeof(uniqueId)-1] = '\0'; // strncpy isn't safe
+    }
+
+    nsRefPtr<MediaEngineWebRTCVideoSource> vSource;
+    NS_ConvertUTF8toUTF16 uuid(uniqueId);
+    if (mVideoSources.Get(uuid, getter_AddRefs(vSource))) {
+      // We've already seen this device, just append.
+      aVSources->AppendElement(vSource.get());
+    } else {
+      vSource = new MediaEngineWebRTCVideoSource(mVideoEngine, i);
+      mVideoSources.Put(uuid, vSource); // Hashtable takes ownership.
+      aVSources->AppendElement(vSource);
+    }
   }
 
   ptrViEBase->Release();
@@ -106,6 +138,8 @@ MediaEngineWebRTC::EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSourc
 {
   webrtc::VoEBase* ptrVoEBase = NULL;
   webrtc::VoEHardware* ptrVoEHw = NULL;
+  // We spawn threads to handle gUM runnables, so we must protect the member vars
+  MutexAutoLock lock(mMutex);
 
   if (!mVoiceEngine) {
     mVoiceEngine = webrtc::VoiceEngine::Create();
@@ -136,31 +170,56 @@ MediaEngineWebRTC::EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSourc
   for (int i = 0; i < nDevices; i++) {
     // We use constants here because GetRecordingDeviceName takes char[128].
     char deviceName[128];
-    char uniqueID[128];
+    char uniqueId[128];
     // paranoia; jingle doesn't bother with this
     deviceName[0] = '\0';
-    uniqueID[0] = '\0';
+    uniqueId[0] = '\0';
 
-    ptrVoEHw->GetRecordingDeviceName(i, deviceName, uniqueID);
-    nsRefPtr<MediaEngineAudioSource> aSource = new MediaEngineWebRTCAudioSource(
-      mVoiceEngine, i, deviceName, uniqueID
-    );
-    aASources->AppendElement(aSource.forget());
+    int error = ptrVoEHw->GetRecordingDeviceName(i, deviceName, uniqueId);
+    if (error) {
+      LOG((" VoEHardware:GetRecordingDeviceName: Failed %d",
+           ptrVoEBase->LastError() ));
+      continue;
+    }
+
+    LOG(("  Capture Device Index %d, Name %s Uuid %s", i, deviceName, uniqueId));
+    if (uniqueId[0] == '\0') {
+      // Mac and Linux don't set uniqueId!
+      MOZ_ASSERT(sizeof(deviceName) == sizeof(uniqueId)); // total paranoia
+      strcpy(uniqueId,deviceName); // safe given assert and initialization/error-check
+    }
+
+    nsRefPtr<MediaEngineWebRTCAudioSource> aSource;
+    NS_ConvertUTF8toUTF16 uuid(uniqueId);
+    if (mAudioSources.Get(uuid, getter_AddRefs(aSource))) {
+      // We've already seen this device, just append.
+      aASources->AppendElement(aSource.get());
+    } else {
+      aSource = new MediaEngineWebRTCAudioSource(
+        mVoiceEngine, i, deviceName, uniqueId
+      );
+      mAudioSources.Put(uuid, aSource); // Hashtable takes ownership.
+      aASources->AppendElement(aSource);
+    }
   }
 
   ptrVoEHw->Release();
   ptrVoEBase->Release();
 }
 
-
 void
 MediaEngineWebRTC::Shutdown()
 {
+  // This is likely paranoia
+  MutexAutoLock lock(mMutex);
+
   if (mVideoEngine) {
+    mVideoSources.Clear();
     webrtc::VideoEngine::Delete(mVideoEngine);
   }
 
   if (mVoiceEngine) {
+    mAudioSources.Clear();
     webrtc::VoiceEngine::Delete(mVoiceEngine);
   }
 

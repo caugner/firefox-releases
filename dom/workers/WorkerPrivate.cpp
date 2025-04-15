@@ -44,6 +44,7 @@
 #include "nsThreadUtils.h"
 #include "xpcpublic.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Likely.h"
 
 #ifdef ANDROID
 #include <android/log.h>
@@ -1026,7 +1027,7 @@ public:
       nsIScriptGlobalObject* sgo;
 
       if (aWorkerPrivate ||
-          !(sgo = nsJSUtils::GetStaticScriptGlobal(aCx, aTarget))) {
+          !(sgo = nsJSUtils::GetStaticScriptGlobal(aTarget))) {
         // Fire a normal ErrorEvent if we're running on a worker thread.
         JSObject* event =
           CreateErrorEvent(aCx, message, filename, aLineNumber, false);
@@ -2536,7 +2537,7 @@ WorkerPrivate::Create(JSContext* aCx, JSObject* aObj, WorkerPrivate* aParent,
 
     // See if we're being called from a window or from somewhere else.
     nsCOMPtr<nsIScriptGlobalObject> scriptGlobal =
-      nsJSUtils::GetStaticScriptGlobal(aCx, JS_GetGlobalForScopeChain(aCx));
+      nsJSUtils::GetStaticScriptGlobal(JS_GetGlobalForScopeChain(aCx));
     if (scriptGlobal) {
       // Window!
       nsCOMPtr<nsPIDOMWindow> globalWindow = do_QueryInterface(scriptGlobal);
@@ -3385,7 +3386,7 @@ WorkerPrivate::RunSyncLoop(JSContext* aCx, uint32_t aSyncLoopKey)
       NS_ASSERTION(syncQueue->mQueue.IsEmpty(), "Unprocessed sync events!");
 
       bool result = syncQueue->mResult;
-      mSyncQueues.RemoveElementAt(aSyncLoopKey);
+      DestroySyncLoop(aSyncLoopKey);
 
 #ifdef DEBUG
       syncQueue = nullptr;
@@ -3417,6 +3418,14 @@ WorkerPrivate::StopSyncLoop(uint32_t aSyncLoopKey, bool aSyncResult)
 
   syncQueue->mResult = aSyncResult;
   syncQueue->mComplete = true;
+}
+
+void
+WorkerPrivate::DestroySyncLoop(uint32_t aSyncLoopKey)
+{
+  AssertIsOnWorkerThread();
+
+  mSyncQueues.RemoveElementAt(aSyncLoopKey);
 }
 
 bool
@@ -3679,7 +3688,7 @@ WorkerPrivate::SetTimeout(JSContext* aCx, unsigned aArgc, jsval* aVp,
   newInfo->mIsInterval = aIsInterval;
   newInfo->mId = timerId;
 
-  if (NS_UNLIKELY(timerId == UINT32_MAX)) {
+  if (MOZ_UNLIKELY(timerId == UINT32_MAX)) {
     NS_WARNING("Timeout ids overflowed!");
     mNextTimeoutId = 1;
   }
@@ -3783,7 +3792,7 @@ WorkerPrivate::SetTimeout(JSContext* aCx, unsigned aArgc, jsval* aVp,
 }
 
 bool
-WorkerPrivate::ClearTimeout(JSContext* aCx, uint32 aId)
+WorkerPrivate::ClearTimeout(JSContext* aCx, uint32_t aId)
 {
   AssertIsOnWorkerThread();
 

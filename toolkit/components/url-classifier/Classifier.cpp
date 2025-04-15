@@ -127,7 +127,7 @@ Classifier::SetupPathNames()
   // Make sure LookupCaches (which are persistent and survive updates)
   // are reading/writing in the right place. We will be moving their
   // files "underneath" them during backup/restore.
-  for (uint32 i = 0; i < mLookupCaches.Length(); i++) {
+  for (uint32_t i = 0; i < mLookupCaches.Length(); i++) {
     mLookupCaches[i]->UpdateDirHandle(mStoreDirectory);
   }
 
@@ -240,7 +240,7 @@ Classifier::TableRequest(nsACString& aResult)
 {
   nsTArray<nsCString> tables;
   ActiveTables(tables);
-  for (uint32 i = 0; i < tables.Length(); i++) {
+  for (uint32_t i = 0; i < tables.Length(); i++) {
     nsAutoPtr<HashStore> store(new HashStore(tables[i], mStoreDirectory));
     if (!store)
       continue;
@@ -376,7 +376,7 @@ Classifier::ApplyUpdates(nsTArray<TableUpdate*>* aUpdates)
 
   LOG(("Applying table updates."));
 
-  for (uint32 i = 0; i < aUpdates->Length(); i++) {
+  for (uint32_t i = 0; i < aUpdates->Length(); i++) {
     // Previous ApplyTableUpdates() may have consumed this update..
     if ((*aUpdates)[i]) {
       // Run all updates for one table
@@ -420,10 +420,15 @@ Classifier::ApplyUpdates(nsTArray<TableUpdate*>* aUpdates)
 nsresult
 Classifier::MarkSpoiled(nsTArray<nsCString>& aTables)
 {
-  for (uint32 i = 0; i < aTables.Length(); i++) {
+  for (uint32_t i = 0; i < aTables.Length(); i++) {
     LOG(("Spoiling table: %s", aTables[i].get()));
     // Spoil this table by marking it as no known freshness
     mTableFreshness.Remove(aTables[i]);
+    // Remove any cached Completes for this table
+    LookupCache *cache = GetLookupCache(aTables[i]);
+    if (cache) {
+      cache->ClearCompleteCache();
+    }
   }
   return NS_OK;
 }
@@ -431,11 +436,11 @@ Classifier::MarkSpoiled(nsTArray<nsCString>& aTables)
 void
 Classifier::DropStores()
 {
-  for (uint32 i = 0; i < mHashStores.Length(); i++) {
+  for (uint32_t i = 0; i < mHashStores.Length(); i++) {
     delete mHashStores[i];
   }
   mHashStores.Clear();
-  for (uint32 i = 0; i < mLookupCaches.Length(); i++) {
+  for (uint32_t i = 0; i < mLookupCaches.Length(); i++) {
     delete mLookupCaches[i];
   }
   mLookupCaches.Clear();
@@ -449,7 +454,7 @@ Classifier::RegenActiveTables()
   nsTArray<nsCString> foundTables;
   ScanStoreDir(foundTables);
 
-  for (uint32 i = 0; i < foundTables.Length(); i++) {
+  for (uint32_t i = 0; i < foundTables.Length(); i++) {
     nsAutoPtr<HashStore> store(new HashStore(nsCString(foundTables[i]), mStoreDirectory));
     if (!store)
       return NS_ERROR_OUT_OF_MEMORY;
@@ -629,9 +634,9 @@ Classifier::ApplyTableUpdates(nsTArray<TableUpdate*>* aUpdates,
 
   // take the quick exit if there is no valid update for us
   // (common case)
-  uint32 validupdates = 0;
+  uint32_t validupdates = 0;
 
-  for (uint32 i = 0; i < aUpdates->Length(); i++) {
+  for (uint32_t i = 0; i < aUpdates->Length(); i++) {
     TableUpdate *update = aUpdates->ElementAt(i);
     if (!update || !update->TableName().Equals(store->TableName()))
       continue;
@@ -664,10 +669,11 @@ Classifier::ApplyTableUpdates(nsTArray<TableUpdate*>* aUpdates,
   NS_ENSURE_SUCCESS(rv, rv);
   AddPrefixHashes.Clear();
 
-  uint32 applied = 0;
+  uint32_t applied = 0;
   bool updateFreshness = false;
+  bool hasCompletes = false;
 
-  for (uint32 i = 0; i < aUpdates->Length(); i++) {
+  for (uint32_t i = 0; i < aUpdates->Length(); i++) {
     TableUpdate *update = aUpdates->ElementAt(i);
     if (!update || !update->TableName().Equals(store->TableName()))
       continue;
@@ -692,6 +698,12 @@ Classifier::ApplyTableUpdates(nsTArray<TableUpdate*>* aUpdates,
       LOG(("Remote update, updating freshness"));
     }
 
+    if (update->AddCompletes().Length() > 0
+        || update->SubCompletes().Length() > 0) {
+      hasCompletes = true;
+      LOG(("Contains Completes, keeping cache."));
+    }
+
     aUpdates->ElementAt(i) = nullptr;
     delete update;
   }
@@ -700,6 +712,11 @@ Classifier::ApplyTableUpdates(nsTArray<TableUpdate*>* aUpdates,
 
   rv = store->Rebuild();
   NS_ENSURE_SUCCESS(rv, rv);
+
+  // Not an update with Completes, clear all completes data.
+  if (!hasCompletes) {
+    store->ClearCompletes();
+  }
 
   LOG(("Table %s now has:", store->TableName().get()));
   LOG(("  %d add chunks", store->AddChunks().Length()));
@@ -716,6 +733,7 @@ Classifier::ApplyTableUpdates(nsTArray<TableUpdate*>* aUpdates,
   // the data is still in memory.  Build our quick-lookup table here.
   rv = prefixSet->Build(store->AddPrefixes(), store->AddCompletes());
   NS_ENSURE_SUCCESS(rv, rv);
+
 #if defined(DEBUG) && defined(PR_LOGGING)
   prefixSet->Dump();
 #endif
@@ -734,7 +752,7 @@ Classifier::ApplyTableUpdates(nsTArray<TableUpdate*>* aUpdates,
 LookupCache *
 Classifier::GetLookupCache(const nsACString& aTable)
 {
-  for (uint32 i = 0; i < mLookupCaches.Length(); i++) {
+  for (uint32_t i = 0; i < mLookupCaches.Length(); i++) {
     if (mLookupCaches[i]->TableName().Equals(aTable)) {
       return mLookupCaches[i];
     }

@@ -143,19 +143,19 @@ nsIntRect
 HyperTextAccessible::GetBoundsForString(nsIFrame* aFrame, uint32_t aStartRenderedOffset,
                                         uint32_t aEndRenderedOffset)
 {
-  nsIntRect screenRect;
-  NS_ENSURE_TRUE(aFrame, screenRect);
+  nsPresContext* presContext = mDoc->PresContext();
   if (aFrame->GetType() != nsGkAtoms::textFrame) {
     // XXX fallback for non-text frames, happens for bullets right now
     // but in the future bullets will have proper text frames
-    return aFrame->GetScreenRectExternal();
+    return aFrame->GetScreenRectInAppUnits().
+      ToNearestPixels(presContext->AppUnitsPerDevPixel());
   }
 
   int32_t startContentOffset, endContentOffset;
   nsresult rv = RenderedToContentOffset(aFrame, aStartRenderedOffset, &startContentOffset);
-  NS_ENSURE_SUCCESS(rv, screenRect);
+  NS_ENSURE_SUCCESS(rv, nsIntRect());
   rv = RenderedToContentOffset(aFrame, aEndRenderedOffset, &endContentOffset);
-  NS_ENSURE_SUCCESS(rv, screenRect);
+  NS_ENSURE_SUCCESS(rv, nsIntRect());
 
   nsIFrame *frame;
   int32_t startContentOffsetInFrame;
@@ -163,16 +163,15 @@ HyperTextAccessible::GetBoundsForString(nsIFrame* aFrame, uint32_t aStartRendere
   // the primary frame passed in
   rv = aFrame->GetChildFrameContainingOffset(startContentOffset, false,
                                              &startContentOffsetInFrame, &frame);
-  NS_ENSURE_SUCCESS(rv, screenRect);
+  NS_ENSURE_SUCCESS(rv, nsIntRect());
 
-  nsPresContext* context = mDoc->PresContext();
-
+  nsRect screenRect;
   while (frame && startContentOffset < endContentOffset) {
     // Start with this frame's screen rect, which we will 
     // shrink based on the substring we care about within it.
     // We will then add that frame to the total screenRect we
     // are returning.
-    nsIntRect frameScreenRect = frame->GetScreenRectExternal();
+    nsRect frameScreenRect = frame->GetScreenRectInAppUnits();
 
     // Get the length of the substring in this frame that we want the bounds for
     int32_t startFrameTextOffset, endFrameTextOffset;
@@ -185,13 +184,13 @@ HyperTextAccessible::GetBoundsForString(nsIFrame* aFrame, uint32_t aStartRendere
     nsPoint frameTextStartPoint;
     rv = frame->GetPointFromOffset(startContentOffset, &frameTextStartPoint);
     NS_ENSURE_SUCCESS(rv, nsIntRect());
-    frameScreenRect.x += context->AppUnitsToDevPixels(frameTextStartPoint.x);
+    frameScreenRect.x += frameTextStartPoint.x;
 
     // Use the point for the end offset to calculate the width
     nsPoint frameTextEndPoint;
     rv = frame->GetPointFromOffset(startContentOffset + frameSubStringLength, &frameTextEndPoint);
     NS_ENSURE_SUCCESS(rv, nsIntRect());
-    frameScreenRect.width = context->AppUnitsToDevPixels(frameTextEndPoint.x - frameTextStartPoint.x);
+    frameScreenRect.width = frameTextEndPoint.x - frameTextStartPoint.x;
 
     screenRect.UnionRect(frameScreenRect, screenRect);
 
@@ -201,7 +200,7 @@ HyperTextAccessible::GetBoundsForString(nsIFrame* aFrame, uint32_t aStartRendere
     frame = frame->GetNextContinuation();
   }
 
-  return screenRect;
+  return screenRect.ToNearestPixels(presContext->AppUnitsPerDevPixel());
 }
 
 /*
@@ -376,8 +375,9 @@ HyperTextAccessible::GetPosAndText(int32_t& aStartOffset, int32_t& aEndOffset,
             }
           }
           if (aBoundsRect) {
-            aBoundsRect->UnionRect(*aBoundsRect,
-                                   frame->GetScreenRectExternal());
+            nsIntRect frameScreenRect = frame->GetScreenRectInAppUnits().
+              ToNearestPixels(frame->PresContext()->AppUnitsPerDevPixel());
+            aBoundsRect->UnionRect(*aBoundsRect, frameScreenRect);
           }
         }
         if (!startFrame) {
@@ -1135,21 +1135,19 @@ HyperTextAccessible::GetLevelInternal()
   return AccessibleWrap::GetLevelInternal();
 }
 
-nsresult
-HyperTextAccessible::GetAttributesInternal(nsIPersistentProperties* aAttributes)
+already_AddRefed<nsIPersistentProperties>
+HyperTextAccessible::NativeAttributes()
 {
-  nsresult rv = AccessibleWrap::GetAttributesInternal(aAttributes);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsIPersistentProperties> attributes =
+    AccessibleWrap::NativeAttributes();
 
-  // Indicate when the current object uses block-level formatting
-  // via formatting: block
-  // XXX: 'formatting' attribute is deprecated and will be removed in Mozilla2,
-  // use 'display' attribute instead.
+  // 'formatting' attribute is deprecated, 'display' attribute should be
+  // instead.
   nsIFrame *frame = GetFrame();
   if (frame && frame->GetType() == nsGkAtoms::blockFrame) {
-    nsAutoString oldValueUnused;
-    aAttributes->SetStringProperty(NS_LITERAL_CSTRING("formatting"), NS_LITERAL_STRING("block"),
-                                   oldValueUnused);
+    nsAutoString unused;
+    attributes->SetStringProperty(NS_LITERAL_CSTRING("formatting"),
+                                  NS_LITERAL_STRING("block"), unused);
   }
 
   if (FocusMgr()->IsFocused(this)) {
@@ -1157,32 +1155,34 @@ HyperTextAccessible::GetAttributesInternal(nsIPersistentProperties* aAttributes)
     if (lineNumber >= 1) {
       nsAutoString strLineNumber;
       strLineNumber.AppendInt(lineNumber);
-      nsAccUtils::SetAccAttr(aAttributes, nsGkAtoms::lineNumber,
-                             strLineNumber);
+      nsAccUtils::SetAccAttr(attributes, nsGkAtoms::lineNumber, strLineNumber);
     }
   }
+
+  if (!HasOwnContent())
+    return attributes.forget();
 
   // For the html landmark elements we expose them like we do aria landmarks to
   // make AT navigation schemes "just work". Note html:header is redundant as
   // a landmark since it usually contains headings. We're not yet sure how the
   // web will use html:footer but our best bet right now is as contentinfo.
   if (mContent->Tag() == nsGkAtoms::nav)
-    nsAccUtils::SetAccAttr(aAttributes, nsGkAtoms::xmlroles,
+    nsAccUtils::SetAccAttr(attributes, nsGkAtoms::xmlroles,
                            NS_LITERAL_STRING("navigation"));
   else if (mContent->Tag() == nsGkAtoms::section) 
-    nsAccUtils::SetAccAttr(aAttributes, nsGkAtoms::xmlroles,
+    nsAccUtils::SetAccAttr(attributes, nsGkAtoms::xmlroles,
                            NS_LITERAL_STRING("region"));
   else if (mContent->Tag() == nsGkAtoms::footer) 
-    nsAccUtils::SetAccAttr(aAttributes, nsGkAtoms::xmlroles,
+    nsAccUtils::SetAccAttr(attributes, nsGkAtoms::xmlroles,
                            NS_LITERAL_STRING("contentinfo"));
   else if (mContent->Tag() == nsGkAtoms::aside) 
-    nsAccUtils::SetAccAttr(aAttributes, nsGkAtoms::xmlroles,
+    nsAccUtils::SetAccAttr(attributes, nsGkAtoms::xmlroles,
                            NS_LITERAL_STRING("complementary"));
   else if (mContent->Tag() == nsGkAtoms::article)
-    nsAccUtils::SetAccAttr(aAttributes, nsGkAtoms::xmlroles,
+    nsAccUtils::SetAccAttr(attributes, nsGkAtoms::xmlroles,
                            NS_LITERAL_STRING("article"));
 
-  return  NS_OK;
+  return attributes.forget();
 }
 
 /*
@@ -1237,23 +1237,22 @@ HyperTextAccessible::GetOffsetAtPoint(int32_t aX, int32_t aY,
   if (!hyperFrame) {
     return NS_ERROR_FAILURE;
   }
-  nsIntRect frameScreenRect = hyperFrame->GetScreenRectExternal();
 
   nsIntPoint coords;
   nsresult rv = nsAccUtils::ConvertToScreenCoords(aX, aY, aCoordType,
                                                   this, &coords);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // coords are currently screen coordinates, and we need to turn them into
-  // frame coordinates relative to the current accessible
-  if (!frameScreenRect.Contains(coords.x, coords.y)) {
+  nsPresContext* presContext = mDoc->PresContext();
+  nsPoint coordsInAppUnits =
+    coords.ToAppUnits(presContext->AppUnitsPerDevPixel());
+
+  nsRect frameScreenRect = hyperFrame->GetScreenRectInAppUnits();
+  if (!frameScreenRect.Contains(coordsInAppUnits.x, coordsInAppUnits.y))
     return NS_OK;   // Not found, will return -1
-  }
-  nsIntPoint pxInHyperText(coords.x - frameScreenRect.x,
-                           coords.y - frameScreenRect.y);
-  nsPresContext* context = mDoc->PresContext();
-  nsPoint pointInHyperText(context->DevPixelsToAppUnits(pxInHyperText.x),
-                           context->DevPixelsToAppUnits(pxInHyperText.y));
+
+  nsPoint pointInHyperText(coordsInAppUnits.x - frameScreenRect.x,
+                           coordsInAppUnits.y - frameScreenRect.y);
 
   // Go through the frames to check if each one has the point.
   // When one does, add up the character offsets until we have a match
@@ -1272,7 +1271,7 @@ HyperTextAccessible::GetOffsetAtPoint(int32_t aX, int32_t aY,
     while (frame) {
       nsIContent *content = frame->GetContent();
       NS_ENSURE_TRUE(content, NS_ERROR_FAILURE);
-      nsPoint pointInFrame = pointInHyperText - frame->GetOffsetToExternal(hyperFrame);
+      nsPoint pointInFrame = pointInHyperText - frame->GetOffsetTo(hyperFrame);
       nsSize frameSize = frame->GetSize();
       if (pointInFrame.x < frameSize.width && pointInFrame.y < frameSize.height) {
         // Finished
@@ -1485,7 +1484,7 @@ HyperTextAccessible::GetEditor() const
     return nullptr; // No editing session interface
 
   nsCOMPtr<nsIEditor> editor;
-  nsIDocument* docNode = mDoc->GetDocumentNode();
+  nsIDocument* docNode = mDoc->DocumentNode();
   editingSession->GetEditorForWindow(docNode->GetWindow(),
                                      getter_AddRefs(editor));
   return editor.forget();
@@ -1539,7 +1538,7 @@ HyperTextAccessible::SetSelectionRange(int32_t aStartPos, int32_t aEndPos)
   nsFocusManager* DOMFocusManager = nsFocusManager::GetFocusManager();
   if (DOMFocusManager) {
     NS_ENSURE_TRUE(mDoc, NS_ERROR_FAILURE);
-    nsIDocument* docNode = mDoc->GetDocumentNode();
+    nsIDocument* docNode = mDoc->DocumentNode();
     NS_ENSURE_TRUE(docNode, NS_ERROR_FAILURE);
     nsCOMPtr<nsPIDOMWindow> window = docNode->GetWindow();
     nsCOMPtr<nsIDOMElement> result;
@@ -1910,7 +1909,9 @@ HyperTextAccessible::ScrollSubstringToPoint(int32_t aStartIndex,
   rv = HypertextOffsetsToDOMRange(aStartIndex, aEndIndex, range);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsPresContext *presContext = frame->PresContext();
+  nsPresContext* presContext = frame->PresContext();
+  nsPoint coordsInAppUnits =
+    coords.ToAppUnits(presContext->AppUnitsPerDevPixel());
 
   bool initialScrolled = false;
   nsIFrame *parentFrame = frame;
@@ -1920,12 +1921,9 @@ HyperTextAccessible::ScrollSubstringToPoint(int32_t aStartIndex,
       if (!initialScrolled) {
         // Scroll substring to the given point. Turn the point into percents
         // relative scrollable area to use nsCoreUtils::ScrollSubstringTo.
-        nsIntRect frameRect = parentFrame->GetScreenRectExternal();
-        int32_t devOffsetX = coords.x - frameRect.x;
-        int32_t devOffsetY = coords.y - frameRect.y;
-
-        nsPoint offsetPoint(presContext->DevPixelsToAppUnits(devOffsetX),
-                            presContext->DevPixelsToAppUnits(devOffsetY));
+        nsRect frameRect = parentFrame->GetScreenRectInAppUnits();
+        nscoord offsetPointX = coordsInAppUnits.x - frameRect.x;
+        nscoord offsetPointY = coordsInAppUnits.y - frameRect.y;
 
         nsSize size(parentFrame->GetSize());
 
@@ -1933,8 +1931,8 @@ HyperTextAccessible::ScrollSubstringToPoint(int32_t aStartIndex,
         size.width = size.width ? size.width : 1;
         size.height = size.height ? size.height : 1;
 
-        int16_t hPercent = offsetPoint.x * 100 / size.width;
-        int16_t vPercent = offsetPoint.y * 100 / size.height;
+        int16_t hPercent = offsetPointX * 100 / size.width;
+        int16_t vPercent = offsetPointY * 100 / size.height;
 
         rv = nsCoreUtils::ScrollSubstringTo(frame, range, vPercent, hPercent);
         NS_ENSURE_SUCCESS(rv, rv);
@@ -1957,23 +1955,22 @@ HyperTextAccessible::ScrollSubstringToPoint(int32_t aStartIndex,
 ////////////////////////////////////////////////////////////////////////////////
 // Accessible public
 
-nsresult
-HyperTextAccessible::GetNameInternal(nsAString& aName)
+// Accessible protected
+ENameValueFlag
+HyperTextAccessible::NativeName(nsString& aName)
 {
-  nsresult rv = AccessibleWrap::GetNameInternal(aName);
-  NS_ENSURE_SUCCESS(rv, rv);
+  ENameValueFlag nameFlag = AccessibleWrap::NativeName(aName);
+  if (!aName.IsEmpty())
+    return nameFlag;
 
   // Get name from title attribute for HTML abbr and acronym elements making it
   // a valid name from markup. Otherwise their name isn't picked up by recursive
   // name computation algorithm. See NS_OK_NAME_FROM_TOOLTIP.
-  if (aName.IsEmpty() && IsAbbreviation()) {
-    nsAutoString name;
-    if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::title, name)) {
-      name.CompressWhitespace();
-      aName = name;
-    }
-  }
-  return NS_OK;
+  if (IsAbbreviation() &&
+      mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::title, aName))
+    aName.CompressWhitespace();
+
+  return eNameOK;
 }
 
 void
@@ -2235,59 +2232,49 @@ HyperTextAccessible::GetSpellTextAttribute(nsINode* aNode,
                                            int32_t* aHTEndOffset,
                                            nsIPersistentProperties* aAttributes)
 {
-  nsTArray<nsRange*> ranges;
-  GetSelectionDOMRanges(nsISelectionController::SELECTION_SPELLCHECK, &ranges);
-
-  uint32_t rangeCount = ranges.Length();
-  if (!rangeCount)
+  nsRefPtr<nsFrameSelection> fs = FrameSelection();
+  if (!fs)
     return NS_OK;
 
-  nsCOMPtr<nsIDOMNode> DOMNode = do_QueryInterface(aNode);
-  for (uint32_t index = 0; index < rangeCount; index++) {
-    nsRange* range = ranges[index];
+  Selection* domSel = fs->GetSelection(nsISelectionController::SELECTION_SPELLCHECK);
+  if (!domSel)
+    return NS_OK;
 
-    int16_t result;
-    nsresult rv = range->ComparePoint(DOMNode, aNodeOffset, &result);
-    NS_ENSURE_SUCCESS(rv, rv);
-    // ComparePoint checks boundary points, but we need to check that
-    // text at aNodeOffset is inside the range.
-    // See also bug 460690.
-    if (result == 0) {
-      if (aNode == range->GetEndParent() && aNodeOffset == range->EndOffset())
-        result = 1;
-    }
+  int32_t rangeCount = domSel->GetRangeCount();
+  if (rangeCount <= 0)
+    return NS_OK;
 
-    if (result == 1) { // range is before point
-      int32_t startHTOffset = 0;
-      nsresult rv = RangeBoundToHypertextOffset(range, false, true,
-                                                &startHTOffset);
+  int32_t startHTOffset = 0, endHTOffset = 0;
+  nsresult rv = NS_OK;
+  for (int32_t idx = 0; idx < rangeCount; idx++) {
+    nsRange* range = domSel->GetRangeAt(idx);
+    if (range->Collapsed())
+      continue;
+
+    // See if the point comes after the range in which case we must continue in
+    // case there is another range after this one.
+    nsINode* endNode = range->GetEndParent();
+    int32_t endOffset = range->EndOffset();
+    if (nsContentUtils::ComparePoints(aNode, aNodeOffset, endNode, endOffset) >= 0)
+      continue;
+
+    // At this point our point is either in this range or before it but after
+    // the previous range.  So we check to see if the range starts before the
+    // point in which case the point is in the missspelled range, otherwise it
+    // must be before the range and after the previous one if any.
+    nsINode* startNode = range->GetStartParent();
+    int32_t startOffset = range->StartOffset();
+    if (nsContentUtils::ComparePoints(startNode, startOffset, aNode,
+                                      aNodeOffset) <= 0) {
+      rv = RangeBoundToHypertextOffset(range, true, true, &startHTOffset);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = RangeBoundToHypertextOffset(range, false, false, &endHTOffset);
       NS_ENSURE_SUCCESS(rv, rv);
 
       if (startHTOffset > *aHTStartOffset)
         *aHTStartOffset = startHTOffset;
 
-    } else if (result == -1) { // range is after point
-      int32_t endHTOffset = 0;
-      nsresult rv = RangeBoundToHypertextOffset(range, true, false,
-                                                &endHTOffset);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      if (endHTOffset < *aHTEndOffset)
-        *aHTEndOffset = endHTOffset;
-
-    } else { // point is in range
-      int32_t startHTOffset = 0;
-      nsresult rv = RangeBoundToHypertextOffset(range, true, true,
-                                                &startHTOffset);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      int32_t endHTOffset = 0;
-      rv = RangeBoundToHypertextOffset(range, false, false,
-                                       &endHTOffset);
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      if (startHTOffset > *aHTStartOffset)
-        *aHTStartOffset = startHTOffset;
       if (endHTOffset < *aHTEndOffset)
         *aHTEndOffset = endHTOffset;
 
@@ -2298,7 +2285,36 @@ HyperTextAccessible::GetSpellTextAttribute(nsINode* aNode,
 
       return NS_OK;
     }
+
+    // This range came after the point.
+    rv = RangeBoundToHypertextOffset(range, true, false, &endHTOffset);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (idx > 0) {
+      rv = RangeBoundToHypertextOffset(domSel->GetRangeAt(idx - 1), false,
+                                       true, &startHTOffset);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    if (startHTOffset > *aHTStartOffset)
+      *aHTStartOffset = startHTOffset;
+
+    if (endHTOffset < *aHTEndOffset)
+      *aHTEndOffset = endHTOffset;
+
+    return NS_OK;
   }
+
+  // We never found a range that ended after the point, therefore we know that
+  // the point is not in a range, that we do not need to compute an end offset,
+  // and that we should use the end offset of the last range to compute the
+  // start offset of the text attribute range.
+  rv = RangeBoundToHypertextOffset(domSel->GetRangeAt(rangeCount - 1), false,
+                                   true, &startHTOffset);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (startHTOffset > *aHTStartOffset)
+    *aHTStartOffset = startHTOffset;
 
   return NS_OK;
 }

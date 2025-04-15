@@ -961,8 +961,8 @@ int32_t nsCSSProps::kDisplayKTable[] = {
   // XXXdholbert NOTE: These currently need to be the last entries in the
   // table, because the "is flexbox enabled" pref that disables these will
   // disable all the entries after them, too.
-  eCSSKeyword__moz_flex,          NS_STYLE_DISPLAY_FLEX,
-  eCSSKeyword__moz_inline_flex,   NS_STYLE_DISPLAY_INLINE_FLEX,
+  eCSSKeyword_flex,               NS_STYLE_DISPLAY_FLEX,
+  eCSSKeyword_inline_flex,        NS_STYLE_DISPLAY_INLINE_FLEX,
 #endif // MOZ_FLEXBOX
   eCSSKeyword_UNKNOWN,-1
 };
@@ -1389,6 +1389,7 @@ const int32_t nsCSSProps::kTextTransformKTable[] = {
   eCSSKeyword_capitalize, NS_STYLE_TEXT_TRANSFORM_CAPITALIZE,
   eCSSKeyword_lowercase, NS_STYLE_TEXT_TRANSFORM_LOWERCASE,
   eCSSKeyword_uppercase, NS_STYLE_TEXT_TRANSFORM_UPPERCASE,
+  eCSSKeyword_full_width, NS_STYLE_TEXT_TRANSFORM_FULLWIDTH,
   eCSSKeyword_UNKNOWN,-1
 };
 

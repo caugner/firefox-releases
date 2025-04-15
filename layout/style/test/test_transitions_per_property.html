@@ -240,13 +240,13 @@ var supported_properties = {
 // to supported_properties, if the flexbox pref is enabled.
 if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
     var flexbox_properties = {
-        "-moz-flex-basis": [ test_length_transition, test_percent_transition,
-                             test_length_clamped, test_percent_clamped ],
-        "-moz-flex-grow": [ test_float_zeroToOne_transition,
-                            test_float_aboveOne_transition ],
-        "-moz-flex-shrink": [ test_float_zeroToOne_transition,
-                          test_float_aboveOne_transition ],
-        "-moz-order": [ test_integer_transition ]
+        "flex-basis": [ test_length_transition, test_percent_transition,
+                        test_length_clamped, test_percent_clamped ],
+        "flex-grow": [ test_float_zeroToOne_transition,
+                       test_float_aboveOne_transition ],
+        "flex-shrink": [ test_float_zeroToOne_transition,
+                         test_float_aboveOne_transition ],
+        "order": [ test_integer_transition ]
     };
     for (var prop in flexbox_properties) {
       supported_properties[prop] = flexbox_properties[prop];
@@ -638,7 +638,7 @@ function test_border_color_transition(prop) {
   is(cs.getPropertyValue(prop), "rgb(96, 48, 32)",
      "color-valued property " + prop + ": interpolation of initial value");
 
-  check_distance(prop, "rgb(128, 64, 0)", "rgb(96, 48, 32)", "-moz-initial");
+  check_distance(prop, "rgb(128, 64, 0)", "rgb(96, 48, 32)", "initial");
 
   div.style.removeProperty("color");
 }

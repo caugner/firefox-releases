@@ -8,7 +8,6 @@
 #include "nsLiteralString.h"
 #include "nsIDOMSVGSVGElement.h"
 #include "mozilla/dom/Element.h"
-#include "nsGenericElement.h"
 
 using namespace mozilla::dom;
 
@@ -53,23 +52,6 @@ nsSVGDocument::GetDomain(nsAString& aDomain)
     if (domain.IsEmpty() || NS_FAILED(rv))
       return rv;
     CopyUTF8toUTF16(domain, aDomain);
-  }
-
-  return NS_OK;
-}
-
-/* readonly attribute DOMString URL; */
-NS_IMETHODIMP
-nsSVGDocument::GetURL(nsAString& aURL)
-{
-  SetDOMStringToNull(aURL);
-
-  if (mDocumentURI) {
-    nsAutoCString url;
-    nsresult rv = mDocumentURI->GetSpec(url);
-    if (url.IsEmpty() || NS_FAILED(rv))
-      return rv;
-    CopyUTF8toUTF16(url, aURL);
   }
 
   return NS_OK;

@@ -42,7 +42,7 @@ function initial_font_family_is_sans_serif()
 	// The initial value of 'font-family' might be 'serif' or
 	// 'sans-serif'.
 	var div = document.createElement("div");
-	div.setAttribute("style", "font: -moz-initial");
+	div.setAttribute("style", "font: initial");
 	return getComputedStyle(div, "").fontFamily == "sans-serif";
 }
 var gInitialFontFamilyIsSansSerif = initial_font_family_is_sans_serif();
@@ -2307,7 +2307,7 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
-		other_values: [ "foo 1", "bar", "foo 3 bar baz 2", "\\32  1", "-\\32  1", "-c 1", "\\32 1", "-\\32 1", "\\2  1", "-\\2  1", "-c 1", "\\2 1", "-\\2 1" ],
+		other_values: [ "foo 1", "bar", "foo 3 bar baz 2", "\\32  1", "-\\32  1", "-c 1", "\\32 1", "-\\32 1", "\\2  1", "-\\2  1", "-c 1", "\\2 1", "-\\2 1", "-\\7f \\9e 1" ],
 		invalid_values: []
 	},
 	"counter-reset": {
@@ -2315,7 +2315,7 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
-		other_values: [ "foo 1", "bar", "foo 3 bar baz 2", "\\32  1", "-\\32  1", "-c 1", "\\32 1", "-\\32 1", "\\2  1", "-\\2  1", "-c 1", "\\2 1", "-\\2 1" ],
+		other_values: [ "foo 1", "bar", "foo 3 bar baz 2", "\\32  1", "-\\32  1", "-c 1", "\\32 1", "-\\32 1", "\\2  1", "-\\2  1", "-c 1", "\\2 1", "-\\2 1", "-\\7f \\9e 1" ],
 		invalid_values: []
 	},
 	"cursor": {
@@ -2981,12 +2981,11 @@ var gCSSProperties = {
 	},
 	"page-break-inside": {
 		domProp: "pageBreakInside",
-		inherited: true,
-		backend_only: true,
+		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "auto" ],
 		other_values: [ "avoid" ],
-		invalid_values: []
+		invalid_values: [ "left", "right" ]
 	},
 	"pointer-events": {
 		domProp: "pointerEvents",
@@ -3165,7 +3164,7 @@ var gCSSProperties = {
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
-		other_values: [ "capitalize", "uppercase", "lowercase" ],
+		other_values: [ "capitalize", "uppercase", "lowercase", "full-width" ],
 		invalid_values: []
 	},
 	"top": {
@@ -4065,16 +4064,16 @@ function get_computed_value(cs, property)
 // to gCSSProperties, if the flexbox pref is enabled.
 if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 	var flexProperties = {
-	"-moz-align-items": {
-		domProp: "MozAlignItems",
+	"align-items": {
+		domProp: "alignItems",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "stretch" ],
 		other_values: [ "flex-start", "flex-end", "center", "baseline" ],
 		invalid_values: [ "space-between", "abc", "30px" ]
 	},
-	"-moz-align-self": {
-		domProp: "MozAlignSelf",
+	"align-self": {
+		domProp: "alignSelf",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		// (Assuming defaults on the parent, 'auto' will compute to 'stretch'.)
@@ -4082,14 +4081,14 @@ if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 		other_values: [ "flex-start", "flex-end", "center", "baseline" ],
 		invalid_values: [ "space-between", "abc", "30px" ]
 	},
-	"-moz-flex": {
-		domProp: "MozFlex",
+	"flex": {
+		domProp: "flex",
 		inherited: false,
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [
-			"-moz-flex-grow",
-			"-moz-flex-shrink",
-			"-moz-flex-basis"
+			"flex-grow",
+			"flex-shrink",
+			"flex-basis"
 		],
 		initial_values: [ "0 1 auto", "auto 0 1", "0 auto", "auto 0" ],
 		other_values: [
@@ -4099,6 +4098,7 @@ if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 			"0 1",
 			"0.5",
 			"1.2 3.4",
+			"0 0 0",
 			"0 0 0px",
 			"0px 0 0",
 			"5px 0 0",
@@ -4113,7 +4113,6 @@ if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 			"-0"
 		],
 		invalid_values: [
-			"0 0 0",
 			"1 2px 3",
 			"1 auto 3",
 			"1px 2 3px",
@@ -4122,8 +4121,8 @@ if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 			"1 -1"
 		]
 	},
-	"-moz-flex-basis": {
-		domProp: "MozFlexBasis",
+	"flex-basis": {
+		domProp: "flexBasis",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ " auto" ],
@@ -4189,40 +4188,40 @@ if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 			"calc(3em * 3em / 100%)"
 		]
 	},
-	"-moz-flex-direction": {
-		domProp: "MozFlexDirection",
+	"flex-direction": {
+		domProp: "flexDirection",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "row" ],
 		other_values: [ "row-reverse", "column", "column-reverse" ],
 		invalid_values: [ "10px", "30%", "justify", "column wrap" ]
 	},
-	"-moz-flex-grow": {
-		domProp: "MozFlexGrow",
+	"flex-grow": {
+		domProp: "flexGrow",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "0" ],
 		other_values: [ "3", "1", "1.0", "2.5", "123" ],
 		invalid_values: [ "0px", "-5", "1%", "3em", "stretch", "auto" ]
 	},
-	"-moz-flex-shrink": {
-		domProp: "MozFlexShrink",
+	"flex-shrink": {
+		domProp: "flexShrink",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "1" ],
 		other_values: [ "3", "0", "0.0", "2.5", "123" ],
 		invalid_values: [ "0px", "-5", "1%", "3em", "stretch", "auto" ]
 	},
-	"-moz-order": {
-		domProp: "MozOrder",
+	"order": {
+		domProp: "order",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "0" ],
 		other_values: [ "1", "99999", "-1", "-50" ],
 		invalid_values: [ "0px", "1.0", "1.", "1%", "0.2", "3em", "stretch" ]
 	},
-	"-moz-justify-content": {
-		domProp: "MozJustifyContent",
+	"justify-content": {
+		domProp: "justifyContent",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "flex-start" ],
@@ -4233,6 +4232,6 @@ if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 	for (var prop in flexProperties) {
 		gCSSProperties[prop] = flexProperties[prop];
 	}
-	gCSSProperties["display"].other_values.push("-moz-flex");
-	gCSSProperties["display"].other_values.push("-moz-inline-flex");
+	gCSSProperties["display"].other_values.push("flex");
+	gCSSProperties["display"].other_values.push("inline-flex");
 }

@@ -906,7 +906,7 @@ nsSOCKSSocketInfo::ReadUint8()
 {
     uint8_t rv;
     NS_ABORT_IF_FALSE(mReadOffset + sizeof(rv) <= mDataLength,
-                      "Not enough space to pop a uint8!");
+                      "Not enough space to pop a uint8_t!");
     rv = mData[mReadOffset];
     mReadOffset += sizeof(rv);
     return rv;
@@ -917,7 +917,7 @@ nsSOCKSSocketInfo::ReadUint16()
 {
     uint16_t rv;
     NS_ABORT_IF_FALSE(mReadOffset + sizeof(rv) <= mDataLength,
-                      "Not enough space to pop a uint16!");
+                      "Not enough space to pop a uint16_t!");
     memcpy(&rv, mData + mReadOffset, sizeof(rv));
     mReadOffset += sizeof(rv);
     return rv;
@@ -928,7 +928,7 @@ nsSOCKSSocketInfo::ReadUint32()
 {
     uint32_t rv;
     NS_ABORT_IF_FALSE(mReadOffset + sizeof(rv) <= mDataLength,
-                      "Not enough space to pop a uint32!");
+                      "Not enough space to pop a uint32_t!");
     memcpy(&rv, mData + mReadOffset, sizeof(rv));
     mReadOffset += sizeof(rv);
     return rv;

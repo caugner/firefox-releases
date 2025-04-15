@@ -67,7 +67,6 @@ class TransportLayer : public sigslot::has_slots<> {
 
       nsresult rv = NS_GetCurrentThread(&thr);
       MOZ_ASSERT(NS_SUCCEEDED(rv));
-      (void)rv;
 
       if (target_ != thr) {
         return target_->Dispatch(event, NS_DISPATCH_SYNC);

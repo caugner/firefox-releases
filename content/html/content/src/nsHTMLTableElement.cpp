@@ -26,9 +26,9 @@
 #include "nsIHTMLCollection.h"
 #include "nsHTMLStyleSheet.h"
 #include "mozilla/dom/HTMLCollectionBinding.h"
-#include "dombindings.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 /* ------------------------------ TableRowsCollection -------------------------------- */
 /**
@@ -45,6 +45,7 @@ public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_NSIDOMHTMLCOLLECTION
 
+  virtual Element* GetElementAt(uint32_t aIndex);
   virtual nsINode* GetParentObject()
   {
     return mParent;
@@ -52,6 +53,7 @@ public:
 
   virtual JSObject* NamedItem(JSContext* cx, const nsAString& name,
                               ErrorResult& error);
+  virtual void GetSupportedNames(nsTArray<nsString>& aNames);
 
   NS_IMETHOD    ParentDestroyed();
 
@@ -61,15 +63,8 @@ public:
   virtual JSObject* WrapObject(JSContext *cx, JSObject *scope,
                                bool *triedToWrap)
   {
-    JSObject* obj = mozilla::dom::HTMLCollectionBinding::Wrap(cx, scope, this,
-                                                              triedToWrap);
-    if (obj || *triedToWrap) {
-      return obj;
-    }
-
-    *triedToWrap = true;
-    return mozilla::dom::oldproxybindings::HTMLCollection::create(cx, scope,
-                                                                  this);
+    return mozilla::dom::HTMLCollectionBinding::Wrap(cx, scope, this,
+                                                     triedToWrap);
   }
 
 protected:
@@ -101,11 +96,10 @@ TableRowsCollection::~TableRowsCollection()
 NS_IMPL_CYCLE_COLLECTION_CLASS(TableRowsCollection)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(TableRowsCollection)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mOrphanRows)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mOrphanRows)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(TableRowsCollection)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mOrphanRows,
-                                                       nsIDOMNodeList)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOrphanRows)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(TableRowsCollection)
@@ -145,7 +139,7 @@ NS_INTERFACE_MAP_END
       nsContentList *_tbodies = mParent->TBodies();                  \
       nsINode * _node;                                               \
       uint32_t _tbodyIndex = 0;                                      \
-      _node = _tbodies->GetNodeAt(_tbodyIndex);                      \
+      _node = _tbodies->Item(_tbodyIndex);                           \
       while (_node) {                                                \
         rowGroup = do_QueryInterface(_node);                         \
         if (rowGroup) {                                              \
@@ -154,7 +148,7 @@ NS_INTERFACE_MAP_END
             _code                                                    \
           } while (0);                                               \
         }                                                            \
-        _node = _tbodies->GetNodeAt(++_tbodyIndex);                  \
+        _node = _tbodies->Item(++_tbodyIndex);                       \
       }                                                              \
       /* orphan rows */                                              \
       rows = mOrphanRows;                                            \
@@ -203,7 +197,7 @@ TableRowsCollection::GetLength(uint32_t* aLength)
 // Returns the item at index aIndex if available. If null is returned,
 // then aCount will be set to the number of rows in this row collection.
 // Otherwise, the value of aCount is undefined.
-static nsGenericElement*
+static Element*
 GetItemOrCountInRowGroup(nsIDOMHTMLCollection* rows,
                          uint32_t aIndex, uint32_t* aCount)
 {
@@ -220,12 +214,12 @@ GetItemOrCountInRowGroup(nsIDOMHTMLCollection* rows,
   return nullptr;
 }
 
-nsGenericElement*
+Element*
 TableRowsCollection::GetElementAt(uint32_t aIndex)
 {
   DO_FOR_EACH_ROWGROUP(
     uint32_t count;
-    nsGenericElement* node = GetItemOrCountInRowGroup(rows, aIndex, &count);
+    Element* node = GetItemOrCountInRowGroup(rows, aIndex, &count);
     if (node) {
       return node; 
     }
@@ -250,66 +244,70 @@ TableRowsCollection::Item(uint32_t aIndex, nsIDOMNode** aReturn)
   return CallQueryInterface(node, aReturn);
 }
 
-static nsISupports*
-GetNamedItemInRowGroup(nsIDOMHTMLCollection* aRows, const nsAString& aName,
-                       nsWrapperCache** aCache)
-{
-  nsCOMPtr<nsIHTMLCollection> rows = do_QueryInterface(aRows);
-  if (rows) {
-    return rows->GetNamedItem(aName, aCache);
-  }
-
-  return nullptr;
-}
-
-nsISupports* 
-TableRowsCollection::GetNamedItem(const nsAString& aName,
-                                  nsWrapperCache** aCache)
-{
-  DO_FOR_EACH_ROWGROUP(
-    nsISupports* item = GetNamedItemInRowGroup(rows, aName, aCache);
-    if (item) {
-      return item;
-    }
-  );
-  *aCache = nullptr;
-  return nullptr;
-}
-
 JSObject*
 TableRowsCollection::NamedItem(JSContext* cx, const nsAString& name,
                                ErrorResult& error)
 {
-  nsWrapperCache* cache;
   DO_FOR_EACH_ROWGROUP(
-    nsISupports* item = GetNamedItemInRowGroup(rows, name, &cache);
-    if (item) {
-      JSObject* wrapper = GetWrapper();
-      JSAutoCompartment ac(cx, wrapper);
-      JS::Value v;
-      if (!mozilla::dom::WrapObject(cx, wrapper, item, cache, nullptr, &v)) {
-        error.Throw(NS_ERROR_FAILURE);
+    nsCOMPtr<nsIHTMLCollection> collection = do_QueryInterface(rows);
+    if (collection) {
+      // We'd like to call the nsIHTMLCollection::NamedItem that returns a
+      // JSObject*, but that relies on collection having a cached wrapper, which
+      // we can't guarantee here.
+      nsCOMPtr<nsIDOMNode> item;
+      error = collection->NamedItem(name, getter_AddRefs(item));
+      if (error.Failed()) {
         return nullptr;
       }
-      return &v.toObject();
+      if (item) {
+        JSObject* wrapper = nsWrapperCache::GetWrapper();
+        JSAutoCompartment ac(cx, wrapper);
+        JS::Value v;
+        if (!mozilla::dom::WrapObject(cx, wrapper, item, &v)) {
+          error.Throw(NS_ERROR_FAILURE);
+          return nullptr;
+        }
+        return &v.toObject();
+      }
     }
   );
   return nullptr;
 }
+
+void
+TableRowsCollection::GetSupportedNames(nsTArray<nsString>& aNames)
+{
+  DO_FOR_EACH_ROWGROUP(
+    nsTArray<nsString> names;
+    nsCOMPtr<nsIHTMLCollection> coll = do_QueryInterface(rows);
+    if (coll) {
+      coll->GetSupportedNames(names);
+      for (uint32_t i = 0; i < names.Length(); ++i) {
+        if (!aNames.Contains(names[i])) {
+          aNames.AppendElement(names[i]);
+        }
+      }
+    }
+  );
+}
+
 
 NS_IMETHODIMP 
 TableRowsCollection::NamedItem(const nsAString& aName,
                                nsIDOMNode** aReturn)
 {
-  nsWrapperCache *cache;
-  nsISupports* item = GetNamedItem(aName, &cache);
-  if (!item) {
-    *aReturn = nullptr;
+  DO_FOR_EACH_ROWGROUP(
+    nsCOMPtr<nsIHTMLCollection> collection = do_QueryInterface(rows);
+    if (collection) {
+      nsresult rv = collection->NamedItem(aName, aReturn);
+      if (NS_FAILED(rv) || *aReturn) {
+        return rv;
+      }
+    }
+  );
 
-    return NS_OK;
-  }
-
-  return CallQueryInterface(item, aReturn);
+  *aReturn = nullptr;
+  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -345,21 +343,20 @@ nsHTMLTableElement::~nsHTMLTableElement()
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsHTMLTableElement)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsHTMLTableElement, nsGenericHTMLElement)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mTBodies)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mTBodies)
   if (tmp->mRows) {
     tmp->mRows->ParentDestroyed();
   }
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRows)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRows)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsHTMLTableElement,
                                                   nsGenericHTMLElement)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mTBodies,
-                                                       nsIDOMNodeList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mRows)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTBodies)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRows)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_ADDREF_INHERITED(nsHTMLTableElement, nsGenericElement) 
-NS_IMPL_RELEASE_INHERITED(nsHTMLTableElement, nsGenericElement) 
+NS_IMPL_ADDREF_INHERITED(nsHTMLTableElement, Element)
+NS_IMPL_RELEASE_INHERITED(nsHTMLTableElement, Element)
 
 
 DOMCI_NODE_DATA(HTMLTableElement, nsHTMLTableElement)

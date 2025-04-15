@@ -10,6 +10,7 @@ const DEBUGGER_ENABLED_PREF = 'devtools.debugger.remote-enabled';
 const MARIONETTE_ENABLED_PREF = 'marionette.defaultPrefs.enabled';
 const MARIONETTE_LOADEARLY_PREF = 'marionette.loadearly';
 const DEBUGGER_FORCELOCAL_PREF = 'devtools.debugger.force-local';
+const MARIONETTE_FORCELOCAL_PREF = 'marionette.force-local';
 
 const ServerSocket = CC("@mozilla.org/network/server-socket;1",
                         "nsIServerSocket",
@@ -85,14 +86,22 @@ MarionetteComponent.prototype = {
           this.original_forcelocal = Services.prefs.getBoolPref(DEBUGGER_FORCELOCAL_PREF);
         }
         catch(e) {}
-        Services.prefs.setBoolPref(DEBUGGER_FORCELOCAL_PREF, false);
 
-        // See bug 800138.  Because the first socket that opens with
-        // force-local=false fails, we open a dummy socket that will fail.
-        // This allows the following attempt by Marionette to open a socket
-        // to succeed.
-        let insaneSacrificialGoat = new ServerSocket(666, false, 4);
-        insaneSacrificialGoat.asyncListen(this);
+        let marionette_forcelocal = false;
+        try {
+          marionette_forcelocal = Services.prefs.getBoolPref(MARIONETTE_FORCELOCAL_PREF);
+        }
+        catch(e) {}
+        Services.prefs.setBoolPref(DEBUGGER_FORCELOCAL_PREF, marionette_forcelocal);
+
+        if (!marionette_forcelocal) {
+          // See bug 800138.  Because the first socket that opens with
+          // force-local=false fails, we open a dummy socket that will fail.
+          // This allows the following attempt by Marionette to open a socket
+          // to succeed.
+          let insaneSacrificialGoat = new ServerSocket(666, false, 4);
+          insaneSacrificialGoat.asyncListen(this);
+        }
 
         this.init();
         break;

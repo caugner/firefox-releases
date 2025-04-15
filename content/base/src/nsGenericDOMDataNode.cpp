@@ -9,7 +9,7 @@
  */
 
 #include "nsGenericDOMDataNode.h"
-#include "nsGenericElement.h"
+#include "mozilla/dom/Element.h"
 #include "nsIDocument.h"
 #include "nsEventListenerManager.h"
 #include "nsIDOMDocument.h"
@@ -36,6 +36,7 @@
 #include "nsWrapperCacheInlines.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 nsGenericDOMDataNode::nsGenericDOMDataNode(already_AddRefed<nsINodeInfo> aNodeInfo)
   : nsIContent(aNodeInfo)
@@ -65,15 +66,15 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsGenericDOMDataNode)
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsGenericDOMDataNode)
-  return nsGenericElement::CanSkip(tmp, aRemovingAllowed);
+  return Element::CanSkip(tmp, aRemovingAllowed);
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_BEGIN(nsGenericDOMDataNode)
-  return nsGenericElement::CanSkipInCC(tmp);
+  return Element::CanSkipInCC(tmp);
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(nsGenericDOMDataNode)
-  return nsGenericElement::CanSkipThis(tmp);
+  return Element::CanSkipThis(tmp);
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsGenericDOMDataNode)
@@ -114,42 +115,19 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_DESTROY(nsGenericDOMDataNode,
                                               nsNodeUtils::LastRelease(this))
 
 
-nsresult
-nsGenericDOMDataNode::GetNodeValue(nsAString& aNodeValue)
+void
+nsGenericDOMDataNode::GetNodeValueInternal(nsAString& aNodeValue)
 {
-  return GetData(aNodeValue);
+  DebugOnly<nsresult> rv = GetData(aNodeValue);
+  NS_ASSERTION(NS_SUCCEEDED(rv), "GetData() failed!");
 }
 
-nsresult
-nsGenericDOMDataNode::SetNodeValue(const nsAString& aNodeValue)
+void
+nsGenericDOMDataNode::SetNodeValueInternal(const nsAString& aNodeValue,
+                                           ErrorResult& aError)
 {
-  return SetTextInternal(0, mText.GetLength(), aNodeValue.BeginReading(),
-                         aNodeValue.Length(), true);
-}
-
-nsresult
-nsGenericDOMDataNode::GetNamespaceURI(nsAString& aNamespaceURI)
-{
-  SetDOMStringToNull(aNamespaceURI);
-
-  return NS_OK;
-}
-
-nsresult
-nsGenericDOMDataNode::GetPrefix(nsAString& aPrefix)
-{
-  SetDOMStringToNull(aPrefix);
-
-  return NS_OK;
-}
-
-nsresult
-nsGenericDOMDataNode::IsSupported(const nsAString& aFeature,
-                                  const nsAString& aVersion,
-                                  bool* aReturn)
-{
-  return nsGenericElement::InternalIsSupported(static_cast<nsIContent*>(this),
-                                               aFeature, aVersion, aReturn);
+  aError = SetTextInternal(0, mText.GetLength(), aNodeValue.BeginReading(),
+                           aNodeValue.Length(), true);
 }
 
 //----------------------------------------------------------------------
@@ -492,7 +470,7 @@ nsGenericDOMDataNode::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     // if we do this any later).
     ClearSubtreeRootPointer();
 
-    // XXX See the comment in nsGenericElement::BindToTree
+    // XXX See the comment in Element::BindToTree
     SetInDocument();
     if (mText.IsBidi()) {
       aDocument->SetBidiEnabled();
@@ -745,7 +723,7 @@ nsGenericDOMDataNode::SplitData(uint32_t aOffset, nsIContent** aReturn,
     return rv;
   }
 
-  nsCOMPtr<nsINode> parent = GetNodeParent();
+  nsCOMPtr<nsINode> parent = GetParentNode();
   if (parent) {
     int32_t insertionIndex = parent->IndexOf(this);
     if (aCloneAfterOriginal) {

@@ -17,17 +17,19 @@ public:
                       mozilla::dom::FromParser aFromParser = mozilla::dom::NOT_FROM_PARSER);
   virtual ~nsHTMLIFrameElement();
 
+  NS_IMPL_FROMCONTENT_HTML_WITH_TAG(nsHTMLIFrameElement, iframe)
+
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE(nsGenericHTMLFrameElement::)
+  NS_FORWARD_NSIDOMNODE_TO_NSINODE
 
   // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT(nsGenericHTMLFrameElement::)
+  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
 
   // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT(nsGenericHTMLFrameElement::)
+  NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
 
   // nsIDOMHTMLIFrameElement
   NS_DECL_NSIDOMHTMLIFRAMEELEMENT
@@ -61,14 +63,6 @@ public:
 
     // No sandbox attribute, no sandbox flags.
     return 0;
-  }
-
-  static nsHTMLIFrameElement* FromContent(nsIContent *aContent)
-  {
-    if (aContent->IsHTML(nsGkAtoms::iframe)) {
-      return static_cast<nsHTMLIFrameElement*>(aContent);
-    }
-    return nullptr;
   }
 
 protected:

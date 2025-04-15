@@ -5,6 +5,7 @@
 
 #include "nsAccDocManager.h"
 
+#include "Accessible-inl.h"
 #include "ApplicationAccessible.h"
 #include "DocAccessible-inl.h"
 #include "nsAccessibilityService.h"
@@ -359,12 +360,6 @@ nsAccDocManager::CreateDocOrRootAccessible(nsIDocument* aDocument)
   if (!presShell || !presShell->GetRootFrame() || presShell->IsDestroying())
     return nullptr;
 
-  // Do not create document accessible until role content is loaded, otherwise
-  // we get accessible document with wrong role.
-  nsIContent *rootElm = nsCoreUtils::GetRoleContent(aDocument);
-  if (!rootElm)
-    return nullptr;
-
   bool isRootDoc = nsCoreUtils::IsRootDocument(aDocument);
 
   DocAccessible* parentDocAcc = nullptr;
@@ -380,6 +375,7 @@ nsAccDocManager::CreateDocOrRootAccessible(nsIDocument* aDocument)
 
   // We only create root accessibles for the true root, otherwise create a
   // doc accessible.
+  nsIContent *rootElm = nsCoreUtils::GetRoleContent(aDocument);
   nsRefPtr<DocAccessible> docAcc = isRootDoc ?
     new RootAccessibleWrap(aDocument, rootElm, presShell) :
     new DocAccessibleWrap(aDocument, rootElm, presShell);
@@ -402,9 +398,10 @@ nsAccDocManager::CreateDocOrRootAccessible(nsIDocument* aDocument)
     // the tree. The reorder event is delivered after the document tree is
     // constructed because event processing and tree construction are done by
     // the same document.
+    // Note: don't use AccReorderEvent to avoid coalsecense and special reorder
+    // events processing.
     nsRefPtr<AccEvent> reorderEvent =
-      new AccEvent(nsIAccessibleEvent::EVENT_REORDER, ApplicationAcc(),
-                   eAutoDetect, AccEvent::eCoalesceFromSameSubtree);
+      new AccEvent(nsIAccessibleEvent::EVENT_REORDER, ApplicationAcc());
     docAcc->FireDelayedAccessibleEvent(reorderEvent);
 
   } else {

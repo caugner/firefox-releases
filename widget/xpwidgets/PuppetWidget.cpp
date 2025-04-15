@@ -391,9 +391,11 @@ PuppetWidget::GetInputContext()
   InputContext context;
   if (mTabChild) {
     int32_t enabled, open;
-    mTabChild->SendGetInputContext(&enabled, &open);
+    intptr_t nativeIMEContext;
+    mTabChild->SendGetInputContext(&enabled, &open, &nativeIMEContext);
     context.mIMEState.mEnabled = static_cast<IMEState::Enabled>(enabled);
     context.mIMEState.mOpen = static_cast<IMEState::Open>(open);
+    context.mNativeIMEContext = reinterpret_cast<void*>(nativeIMEContext);
   }
   return context;
 }
@@ -427,14 +429,19 @@ PuppetWidget::OnIMEFocusChange(bool aFocus)
     return NS_ERROR_FAILURE;
 
   if (aFocus) {
-    if (!mIMEPreference.mWantUpdates && !mIMEPreference.mWantHints)
-      // call OnIMEFocusChange on blur but no other updates
-      return NS_SUCCESS_IME_NO_UPDATES;
-    OnIMESelectionChange(); // Update selection
+    if (mIMEPreference.mWantUpdates && mIMEPreference.mWantHints) {
+      OnIMESelectionChange(); // Update selection
+    }
   } else {
     mIMELastBlurSeqno = chromeSeqno;
   }
   return NS_OK;
+}
+
+nsIMEUpdatePreference
+PuppetWidget::GetIMEUpdatePreference()
+{
+  return mIMEPreference;
 }
 
 NS_IMETHODIMP
@@ -519,14 +526,14 @@ PuppetWidget::Paint()
 #endif
 
     if (mozilla::layers::LAYERS_D3D10 == mLayerManager->GetBackendType()) {
-      mAttachedWidgetListener->PaintWindow(this, region, false, true);
+      mAttachedWidgetListener->PaintWindow(this, region, nsIWidgetListener::WILL_SEND_DID_PAINT);
     } else {
       nsRefPtr<gfxContext> ctx = new gfxContext(mSurface);
       ctx->Rectangle(gfxRect(0,0,0,0));
       ctx->Clip();
       AutoLayerManagerSetup setupLayerManager(this, ctx,
                                               BUFFER_NONE);
-      mAttachedWidgetListener->PaintWindow(this, region, false, true);
+      mAttachedWidgetListener->PaintWindow(this, region, nsIWidgetListener::WILL_SEND_DID_PAINT);
       mTabChild->NotifyPainted();
     }
   }

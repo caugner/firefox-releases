@@ -811,6 +811,17 @@ nsDiskCacheStreamIO::DeleteBuffer()
     }
 }
 
+size_t
+nsDiskCacheStreamIO::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf)
+{
+    size_t usage = aMallocSizeOf(this);
+
+    usage += aMallocSizeOf(mLocalFile);
+    usage += aMallocSizeOf(mFD);
+    usage += aMallocSizeOf(mBuffer);
+
+    return usage;
+}
 
 // NOTE: called with service lock held
 nsresult
@@ -818,9 +829,9 @@ nsDiskCacheStreamIO::Seek(int32_t whence, int32_t offset)
 {
     int32_t  newPos;
     if (!mBinding)  return NS_ERROR_NOT_AVAILABLE;
-
+    
     if (uint32_t(offset) > mStreamEnd)  return NS_ERROR_FAILURE;
- 
+    
     if (mBinding->mRecord.DataLocationInitialized()) {
         if (mBinding->mRecord.DataFile() == 0) {
             if (!mFD) {
@@ -830,7 +841,7 @@ nsDiskCacheStreamIO::Seek(int32_t whence, int32_t offset)
             }
         }
     }
-
+    
     if (mFD) {
         // do we have data in the buffer that needs to be flushed?
         if (mBufDirty) {
@@ -838,7 +849,7 @@ nsDiskCacheStreamIO::Seek(int32_t whence, int32_t offset)
             nsresult rv = FlushBufferToFile();
             if (NS_FAILED(rv))  return rv;
         }
-    
+        
         newPos = PR_Seek(mFD, offset, (PRSeekWhence)whence);
         if (newPos == -1)
             return NS_ErrorAccordingToNSPR();
@@ -855,7 +866,7 @@ nsDiskCacheStreamIO::Seek(int32_t whence, int32_t offset)
         case PR_SEEK_SET:
             newPos = offset;
             break;
-        
+            
         case PR_SEEK_CUR:   // relative from current posistion
             newPos = offset + (uint32_t)mStreamPos;
             break;
@@ -863,11 +874,11 @@ nsDiskCacheStreamIO::Seek(int32_t whence, int32_t offset)
         case PR_SEEK_END:   // relative from end
             newPos = offset + (uint32_t)mBufEnd;
             break;
-        
+            
         default:
             return NS_ERROR_INVALID_ARG;
     }
-
+    
     // read data into mBuffer if not read yet.
     if (mStreamEnd && !mBufEnd) {
         if (newPos > 0) {
@@ -875,7 +886,7 @@ nsDiskCacheStreamIO::Seek(int32_t whence, int32_t offset)
             if (NS_FAILED(rv))  return rv;
         }
     }
-
+    
     // stream buffer sanity checks
     NS_ASSERTION(mBufEnd <= kMaxBufferSize, "bad stream");
     NS_ASSERTION(mBufPos <= mBufEnd,     "bad stream");
@@ -886,7 +897,7 @@ nsDiskCacheStreamIO::Seek(int32_t whence, int32_t offset)
         NS_WARNING("seek offset out of range");
         return NS_ERROR_INVALID_ARG;
     }
-
+    
     mStreamPos = newPos;
     mBufPos    = newPos;
     return NS_OK;
@@ -909,7 +920,7 @@ nsDiskCacheStreamIO::SetEOF()
 {
     nsresult    rv;
     bool        needToCloseFD = false;
-
+    
     NS_ASSERTION(mStreamPos <= mStreamEnd, "bad stream");
     if (!mBinding)  return NS_ERROR_NOT_AVAILABLE;
     
@@ -928,7 +939,7 @@ nsDiskCacheStreamIO::SetEOF()
                 rv = ReadCacheBlocks();
                 if (NS_FAILED(rv))  return rv;
             }
-
+            
             // We need to make sure we reflect this change in Flush().
             // In particular, if mStreamPos is 0 and we never write to
             // the buffer, we want the storage to be deleted.
@@ -951,17 +962,17 @@ nsDiskCacheStreamIO::SetEOF()
 
     NS_ASSERTION(mStreamEnd == mBinding->mCacheEntry->DataSize(), "cache entry not updated");
     // we expect nsCacheEntryDescriptor::TransportWrapper::OpenOutputStream()
-    // to eventually update the cache entry    
+    // to eventually update the cache entry
 
     mStreamEnd  = mStreamPos;
     mBufEnd     = mBufPos;
-    
+
     if (mFD) {
         UpdateFileSize();
         if (needToCloseFD) {
             (void) PR_Close(mFD);
             mFD = nullptr;
-        } 
+        }
     }
 
     return  NS_OK;

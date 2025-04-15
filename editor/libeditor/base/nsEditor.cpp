@@ -11,7 +11,6 @@
 #include "DeleteNodeTxn.h"              // for DeleteNodeTxn
 #include "DeleteRangeTxn.h"             // for DeleteRangeTxn
 #include "DeleteTextTxn.h"              // for DeleteTextTxn
-#include "EditActionListener.h"         // for EditActionListener
 #include "EditAggregateTxn.h"           // for EditAggregateTxn
 #include "EditTxn.h"                    // for EditTxn
 #include "IMETextTxn.h"                 // for IMETextTxn
@@ -31,7 +30,7 @@
 #include "mozilla/mozalloc.h"           // for operator new, etc
 #include "nsAString.h"                  // for nsAString_internal::Length, etc
 #include "nsCCUncollectableMarker.h"    // for nsCCUncollectableMarker
-#include "nsCaret.h"                    // for nsCaret, StCaretHider
+#include "nsCaret.h"                    // for nsCaret
 #include "nsCaseTreatment.h"
 #include "nsCharTraits.h"               // for NS_IS_HIGH_SURROGATE, etc
 #include "nsComponentManagerUtils.h"    // for do_CreateInstance
@@ -70,6 +69,7 @@
 #include "nsIDocument.h"                // for nsIDocument
 #include "nsIDocumentStateListener.h"   // for nsIDocumentStateListener
 #include "nsIEditActionListener.h"      // for nsIEditActionListener
+#include "nsIEditorObserver.h"          // for nsIEditorObserver
 #include "nsIEditorSpellCheck.h"        // for nsIEditorSpellCheck
 #include "nsIEnumerator.h"              // for nsIEnumerator, etc
 #include "nsIFrame.h"                   // for nsIFrame
@@ -135,7 +135,6 @@ nsEditor::nsEditor()
 :  mPlaceHolderName(nullptr)
 ,  mSelState(nullptr)
 ,  mPhonetic(nullptr)
-,  mEditActionListener(nullptr)
 ,  mModCount(0)
 ,  mFlags(0)
 ,  mUpdateCount(0)
@@ -169,15 +168,16 @@ nsEditor::~nsEditor()
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsEditor)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsEditor)
- NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRootElement)
- NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mInlineSpellChecker)
- NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mTxnMgr)
- NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mIMETextRangeList)
- NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mIMETextNode)
- NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mActionListeners)
- NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mDocStateListeners)
- NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mEventTarget)
- NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mEventListener)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK(mRootElement)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK(mInlineSpellChecker)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK(mTxnMgr)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK(mIMETextRangeList)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK(mIMETextNode)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK(mActionListeners)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK(mEditorObservers)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocStateListeners)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK(mEventTarget)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK(mEventListener)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsEditor)
@@ -187,15 +187,16 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsEditor)
      nsCCUncollectableMarker::InGeneration(cb, currentDoc->GetMarkedCCGeneration())) {
    return NS_SUCCESS_INTERRUPTED_TRAVERSE;
  }
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mRootElement)
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mInlineSpellChecker)
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mTxnMgr, nsITransactionManager)
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mIMETextRangeList)
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mIMETextNode)
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mActionListeners)
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mDocStateListeners)
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mEventTarget)
- NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mEventListener)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRootElement)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mInlineSpellChecker)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTxnMgr)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mIMETextRangeList)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mIMETextNode)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mActionListeners)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEditorObservers)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocStateListeners)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEventTarget)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEventListener)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsEditor)
@@ -309,14 +310,6 @@ nsEditor::PostCreate()
   // update nsTextStateManager and caret if we have focus
   nsCOMPtr<nsIContent> focusedContent = GetFocusedContent();
   if (focusedContent) {
-    nsCOMPtr<nsIPresShell> ps = GetPresShell();
-    NS_ASSERTION(ps, "no pres shell even though we have focus");
-    NS_ENSURE_TRUE(ps, NS_ERROR_UNEXPECTED);
-    nsPresContext* pc = ps->GetPresContext(); 
-
-    nsIMEStateManager::OnTextStateBlur(pc, nullptr);
-    nsIMEStateManager::OnTextStateFocus(pc, focusedContent);
-
     nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(focusedContent);
     if (target) {
       InitializeSelection(target);
@@ -328,6 +321,12 @@ nsEditor::PostCreate()
     nsEditorEventListener* listener =
       reinterpret_cast<nsEditorEventListener*> (mEventListener.get());
     listener->SpellCheckIfNeeded();
+
+    IMEState newState;
+    rv = GetPreferredIMEState(&newState);
+    NS_ENSURE_SUCCESS(rv, NS_OK);
+    nsCOMPtr<nsIContent> content = GetFocusedContentForIME();
+    nsIMEStateManager::UpdateIMEState(newState, content);
   }
   return NS_OK;
 }
@@ -444,7 +443,7 @@ nsEditor::PreDestroy(bool aDestroyingFrames)
   // Unregister event listeners
   RemoveEventListeners();
   mActionListeners.Clear();
-  mEditActionListener = nullptr;
+  mEditorObservers.Clear();
   mDocStateListeners.Clear();
   mInlineSpellChecker = nullptr;
   mSpellcheckCheckboxState = eTriUnset;
@@ -484,6 +483,12 @@ nsEditor::SetFlags(uint32_t aFlags)
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
+  // If this is called from PostCreate(), it will update the IME state if it's
+  // necessary.
+  if (!mDidPostCreate) {
+    return NS_OK;
+  }
+
   // Might be changing editable state, so, we need to reset current IME state
   // if we're focused and the flag change causes IME state change.
   nsCOMPtr<nsIContent> focusedContent = GetFocusedContent();
@@ -493,7 +498,8 @@ nsEditor::SetFlags(uint32_t aFlags)
     if (NS_SUCCEEDED(rv)) {
       // NOTE: When the enabled state isn't going to be modified, this method
       // is going to do nothing.
-      nsIMEStateManager::UpdateIMEState(newState, focusedContent);
+      nsCOMPtr<nsIContent> content = GetFocusedContentForIME();
+      nsIMEStateManager::UpdateIMEState(newState, content);
     }
   }
 
@@ -939,8 +945,6 @@ nsEditor::EndPlaceHolderTransaction()
       if (presShell)
         caret = presShell->GetCaret();
 
-      StCaretHider caretHider(caret);
-
       // time to turn off the batch
       EndUpdateViewBatch();
       // make sure selection is in view
@@ -981,7 +985,7 @@ nsEditor::EndPlaceHolderTransaction()
     }
   }
   mPlaceHolderBatch--;
-
+  
   return NS_OK;
 }
 
@@ -1434,9 +1438,9 @@ nsEditor::JoinNodes(nsINode* aNodeToKeep, nsIContent* aNodeToMove)
   // We don't really need aNodeToMove's parent to be non-null -- we could just
   // skip adjusting any ranges in aNodeToMove's parent if there is none.  But
   // the current implementation requires it.
-  MOZ_ASSERT(aNodeToKeep && aNodeToMove && aNodeToMove->GetNodeParent());
+  MOZ_ASSERT(aNodeToKeep && aNodeToMove && aNodeToMove->GetParentNode());
   nsresult res = JoinNodes(aNodeToKeep->AsDOMNode(), aNodeToMove->AsDOMNode(),
-                           aNodeToMove->GetNodeParent()->AsDOMNode());
+                           aNodeToMove->GetParentNode()->AsDOMNode());
   NS_ASSERTION(NS_SUCCEEDED(res), "JoinNodes failed");
   NS_ENSURE_SUCCESS(res, res);
   return NS_OK;
@@ -1611,7 +1615,7 @@ nsEditor::RemoveContainer(nsINode* aNode)
 {
   NS_ENSURE_TRUE(aNode, NS_ERROR_NULL_POINTER);
 
-  nsCOMPtr<nsINode> parent = aNode->GetNodeParent();
+  nsCOMPtr<nsINode> parent = aNode->GetParentNode();
   NS_ENSURE_STATE(parent);
 
   int32_t offset = parent->IndexOf(aNode);
@@ -1758,21 +1762,34 @@ nsEditor::MoveNode(nsIDOMNode *aNode, nsIDOMNode *aParent, int32_t aOffset)
   return InsertNode(node, aParent, aOffset);
 }
 
-NS_IMETHODIMP
-nsEditor::SetEditorObserver(EditActionListener* aObserver)
-{
-  NS_ENSURE_TRUE(aObserver, NS_ERROR_NULL_POINTER);
-  MOZ_ASSERT(!mEditActionListener);
 
-  mEditActionListener = aObserver;
+NS_IMETHODIMP
+nsEditor::AddEditorObserver(nsIEditorObserver *aObserver)
+{
+  // we don't keep ownership of the observers.  They must
+  // remove themselves as observers before they are destroyed.
+  
+  NS_ENSURE_TRUE(aObserver, NS_ERROR_NULL_POINTER);
+
+  // Make sure the listener isn't already on the list
+  if (mEditorObservers.IndexOf(aObserver) == -1) 
+  {
+    if (!mEditorObservers.AppendObject(aObserver))
+      return NS_ERROR_FAILURE;
+  }
+
   return NS_OK;
 }
 
 
 NS_IMETHODIMP
-nsEditor::RemoveEditorObserver()
+nsEditor::RemoveEditorObserver(nsIEditorObserver *aObserver)
 {
-  mEditActionListener = nullptr;
+  NS_ENSURE_TRUE(aObserver, NS_ERROR_FAILURE);
+
+  if (!mEditorObservers.RemoveObject(aObserver))
+    return NS_ERROR_FAILURE;
+
   return NS_OK;
 }
 
@@ -1816,11 +1833,10 @@ private:
   bool mIsTrusted;
 };
 
-void
-nsEditor::NotifyEditorObservers(void)
+void nsEditor::NotifyEditorObservers(void)
 {
-  if (mEditActionListener) {
-    mEditActionListener->EditAction();
+  for (int32_t i = 0; i < mEditorObservers.Count(); i++) {
+    mEditorObservers[i]->EditAction();
   }
 
   if (!mDispatchInputEvent) {
@@ -2031,73 +2047,31 @@ nsEditor::GetPhonetic(nsAString& aPhonetic)
   return NS_OK;
 }
 
-
-static nsresult
-GetEditorContentWindow(dom::Element *aRoot, nsIWidget **aResult)
-{
-  NS_ENSURE_TRUE(aRoot && aResult, NS_ERROR_NULL_POINTER);
-
-  *aResult = 0;
-
-  // Not ref counted
-  nsIFrame *frame = aRoot->GetPrimaryFrame();
-
-  NS_ENSURE_TRUE(frame, NS_ERROR_FAILURE);
-
-  *aResult = frame->GetNearestWidget();
-  NS_ENSURE_TRUE(*aResult, NS_ERROR_FAILURE);
-
-  NS_ADDREF(*aResult);
-  return NS_OK;
-}
-
-nsresult
-nsEditor::GetWidget(nsIWidget **aWidget)
-{
-  NS_ENSURE_TRUE(aWidget, NS_ERROR_NULL_POINTER);
-  *aWidget = nullptr;
-
-  nsCOMPtr<nsIWidget> widget;
-  nsresult res = GetEditorContentWindow(GetRoot(), getter_AddRefs(widget));
-  NS_ENSURE_SUCCESS(res, res);
-  NS_ENSURE_TRUE(widget, NS_ERROR_NOT_AVAILABLE);
-
-  NS_ADDREF(*aWidget = widget);
-
-  return NS_OK;
-}
-
 NS_IMETHODIMP
 nsEditor::ForceCompositionEnd()
 {
-
-// We can test mInIMEMode and do some optimization for Mac and Window
-// Howerver, since UNIX support over-the-spot, we cannot rely on that 
-// flag for Unix.
-// We should use LookAndFeel to resolve this
-
-#if defined(XP_MACOSX) || defined(XP_WIN) || defined(XP_OS2)
-  // XXXmnakano see bug 558976, ResetInputState() has two meaning which are
-  // "commit the composition" and "cursor is moved".  This method name is
-  // "ForceCompositionEnd", so, ResetInputState() should be used only for the
-  // former here.  However, ResetInputState() is also used for the latter here
-  // because even if we don't have composition, we call ResetInputState() on
-  // Linux.  Currently, nsGtkIMModule can know the timing of the cursor move,
-  // so, the latter meaning should be gone and we should remove this #if.
-  if(! mInIMEMode)
-    return NS_OK;
-#endif
-
-  nsCOMPtr<nsIWidget> widget;
-  nsresult res = GetWidget(getter_AddRefs(widget));
-  NS_ENSURE_SUCCESS(res, res);
-
-  if (widget) {
-    res = widget->ResetInputState();
-    NS_ENSURE_SUCCESS(res, res);
+  nsCOMPtr<nsIPresShell> ps = GetPresShell();
+  if (!ps) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+  nsPresContext* pc = ps->GetPresContext();
+  if (!pc) {
+    return NS_ERROR_NOT_AVAILABLE;
   }
 
-  return NS_OK;
+  if (!mInIMEMode) {
+    // XXXmnakano see bug 558976, ResetInputState() has two meaning which are
+    // "commit the composition" and "cursor is moved".  This method name is
+    // "ForceCompositionEnd", so, ResetInputState() should be used only for the
+    // former here.  However, ResetInputState() is also used for the latter here
+    // because even if we don't have composition, we call ResetInputState() on
+    // Linux.  Currently, nsGtkIMModule can know the timing of the cursor move,
+    // so, the latter meaning should be gone.
+    // XXX This may commit a composition in another editor.
+    return nsIMEStateManager::NotifyIME(NOTIFY_IME_OF_CURSOR_POS_CHANGED, pc);
+  }
+
+  return nsIMEStateManager::NotifyIME(REQUEST_TO_COMMIT_COMPOSITION, pc);
 }
 
 NS_IMETHODIMP
@@ -3231,7 +3205,7 @@ nsEditor::GetNextNode(nsINode* aParentNode,
 
   // if aParentNode is a text node, use its location instead
   if (aParentNode->NodeType() == nsIDOMNode::TEXT_NODE) {
-    nsINode* parent = aParentNode->GetNodeParent();
+    nsINode* parent = aParentNode->GetParentNode();
     NS_ENSURE_TRUE(parent, nullptr);
     aOffset = parent->IndexOf(aParentNode) + 1; // _after_ the text node
     aParentNode = parent;
@@ -3332,7 +3306,7 @@ nsEditor::FindNextLeafNode(nsINode  *aCurrentNode,
       return leaf;
     }
 
-    nsINode *parent = cur->GetNodeParent();
+    nsINode *parent = cur->GetParentNode();
     if (!parent) {
       return nullptr;
     }
@@ -4086,7 +4060,7 @@ nsEditor::SplitNodeDeep(nsIDOMNode *aNode,
       }
     }
 
-    nsINode* parentNode = nodeToSplit->GetNodeParent();
+    nsINode* parentNode = nodeToSplit->GetParentNode();
     NS_ENSURE_TRUE(parentNode, NS_ERROR_FAILURE);
 
     if (!bDoSplit && offset) {
@@ -4224,19 +4198,6 @@ nsresult nsEditor::EndUpdateViewBatch()
 
   if (0 == mUpdateCount)
   {
-    // Hide the caret with an StCaretHider. By the time it goes out
-    // of scope and tries to show the caret, reflow and selection changed
-    // notifications should've happened so the caret should have enough info
-    // to draw at the correct position.
-
-    nsRefPtr<nsCaret> caret;
-    nsCOMPtr<nsIPresShell> presShell = GetPresShell();
-
-    if (presShell)
-      caret = presShell->GetCaret();
-
-    StCaretHider caretHider(caret);
-
     // Turn selection updating and notifications back on.
 
     nsCOMPtr<nsISelection>selection;
@@ -4401,29 +4362,29 @@ nsEditor::DeleteSelectionAndPrepareToCreateNode()
   MOZ_ASSERT(node, "Selection has no ranges in it");
 
   if (node && node->IsNodeOfType(nsINode::eDATA_NODE)) {
-    NS_ASSERTION(node->GetNodeParent(),
+    NS_ASSERTION(node->GetParentNode(),
                  "It's impossible to insert into chardata with no parent -- "
                  "fix the caller");
-    NS_ENSURE_STATE(node->GetNodeParent());
+    NS_ENSURE_STATE(node->GetParentNode());
 
     int32_t offset = selection->GetAnchorOffset();
 
     if (offset == 0) {
-      res = selection->Collapse(node->GetNodeParent(),
-                                node->GetNodeParent()->IndexOf(node));
+      res = selection->Collapse(node->GetParentNode(),
+                                node->GetParentNode()->IndexOf(node));
       MOZ_ASSERT(NS_SUCCEEDED(res));
       NS_ENSURE_SUCCESS(res, res);
     } else if (offset == (int32_t)node->Length()) {
-      res = selection->Collapse(node->GetNodeParent(),
-                                node->GetNodeParent()->IndexOf(node) + 1);
+      res = selection->Collapse(node->GetParentNode(),
+                                node->GetParentNode()->IndexOf(node) + 1);
       MOZ_ASSERT(NS_SUCCEEDED(res));
       NS_ENSURE_SUCCESS(res, res);
     } else {
       nsCOMPtr<nsIDOMNode> tmp;
       res = SplitNode(node->AsDOMNode(), offset, getter_AddRefs(tmp));
       NS_ENSURE_SUCCESS(res, res);
-      res = selection->Collapse(node->GetNodeParent(),
-                                node->GetNodeParent()->IndexOf(node));
+      res = selection->Collapse(node->GetParentNode(),
+                                node->GetParentNode()->IndexOf(node));
       MOZ_ASSERT(NS_SUCCEEDED(res));
       NS_ENSURE_SUCCESS(res, res);
     }
@@ -5272,6 +5233,12 @@ nsEditor::GetFocusedContent()
 
   nsCOMPtr<nsIContent> content = fm->GetFocusedContent();
   return SameCOMIdentity(content, piTarget) ? content.forget() : nullptr;
+}
+
+already_AddRefed<nsIContent>
+nsEditor::GetFocusedContentForIME()
+{
+  return GetFocusedContent();
 }
 
 bool

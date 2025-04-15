@@ -12,10 +12,12 @@
 #include "nsIThreadManager.h"
 #include "nsIThread.h"
 #include "nsIRunnable.h"
+#include "nsICancelableRunnable.h"
 #include "nsStringGlue.h"
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
 #include "mozilla/threads/nsThreadIDs.h"
+#include "mozilla/Likely.h"
 
 // This is needed on some systems to prevent collisions between the symbols
 // appearing in xpcom_core and xpcomglue.  It may be unnecessary in the future
@@ -262,6 +264,22 @@ protected:
   }
 };
 
+// This class is designed to be subclassed.
+class NS_COM_GLUE nsCancelableRunnable : public nsICancelableRunnable
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIRUNNABLE
+  NS_DECL_NSICANCELABLERUNNABLE
+
+  nsCancelableRunnable() {
+  }
+
+protected:
+  virtual ~nsCancelableRunnable() {
+  }
+};
+
 #undef  IMETHOD_VISIBILITY
 #define IMETHOD_VISIBILITY NS_VISIBILITY_HIDDEN
 
@@ -345,7 +363,7 @@ public:
   {}
 
   NS_IMETHOD Run() {
-    if (NS_LIKELY(mReceiver.mObj))
+    if (MOZ_LIKELY(mReceiver.mObj))
       ((*mReceiver.mObj).*mMethod)();
     return NS_OK;
   }

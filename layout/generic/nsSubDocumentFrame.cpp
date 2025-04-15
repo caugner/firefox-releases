@@ -57,11 +57,6 @@
 #include "LayerTreeInvalidation.h"
 #include "nsIPermissionManager.h"
 
-// For Accessibility
-#ifdef ACCESSIBILITY
-#include "nsAccessibilityService.h"
-#endif
-
 using namespace mozilla;
 using mozilla::layout::RenderFrameParent;
 
@@ -87,13 +82,10 @@ nsSubDocumentFrame::nsSubDocumentFrame(nsStyleContext* aContext)
 }
 
 #ifdef ACCESSIBILITY
-already_AddRefed<Accessible>
-nsSubDocumentFrame::CreateAccessible()
+a11y::AccType
+nsSubDocumentFrame::AccessibleType()
 {
-  nsAccessibilityService* accService = nsIPresShell::AccService();
-  return accService ?
-    accService->CreateOuterDocAccessible(mContent, PresContext()->PresShell()) :
-    nullptr;
+  return a11y::eOuterDocAccessible;
 }
 #endif
 
@@ -250,7 +242,6 @@ nsSubDocumentFrame::PassPointerEventsToChildren()
   if (GetStyleVisibility()->mPointerEvents != NS_STYLE_POINTER_EVENTS_NONE) {
     return true;
   }
-
   // Limit use of mozpasspointerevents to documents with embedded:apps/chrome
   // permission, because this could be used by the parent document to discover
   // which parts of the subdocument are transparent to events (if subdocument
@@ -271,6 +262,7 @@ nsSubDocumentFrame::PassPointerEventsToChildren()
         return permission == nsIPermissionManager::ALLOW_ACTION;
       }
   }
+
   return false;
 }
 

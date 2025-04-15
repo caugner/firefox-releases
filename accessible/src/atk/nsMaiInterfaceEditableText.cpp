@@ -10,6 +10,9 @@
 #include "nsMai.h"
 
 #include "nsString.h"
+#include "mozilla/Likely.h"
+
+using namespace mozilla::a11y;
 
 extern "C" {
 static void
@@ -116,7 +119,7 @@ void
 editableTextInterfaceInitCB(AtkEditableTextIface* aIface)
 {
   NS_ASSERTION(aIface, "Invalid aIface");
-  if (NS_UNLIKELY(!aIface))
+  if (MOZ_UNLIKELY(!aIface))
     return;
 
   aIface->set_text_contents = setTextContentsCB;

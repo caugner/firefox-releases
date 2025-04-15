@@ -154,6 +154,7 @@ public:
   virtual bool IsCompositingCheap() { return false; }
   virtual int32_t GetMaxTextureSize() const { return INT32_MAX; }
   bool CompositorMightResample() { return mCompositorMightResample; }
+  bool HasShadowTarget() { return !!mShadowTarget; }
 
 protected:
   enum TransactionPhase {
@@ -275,14 +276,26 @@ public:
   virtual void ClearCachedResources(Layer* aSubtree = nullptr) MOZ_OVERRIDE;
 
   void SetRepeatTransaction() { mRepeatTransaction = true; }
+  bool GetRepeatTransaction() { return mRepeatTransaction; }
+
+  bool IsRepeatTransaction() { return mIsRepeatTransaction; }
 
   /**
-   * Determines if a progressive update should be cancelled. This is only called
-   * if gfxPlatform::UseProgressiveTilePainting() returns true.
-   * aHasPendingNewThebesContent is true if there is a Thebes layer update
-   * that will cause its valid region to expand.
+   * Called for each iteration of a progressive tile update. Fills
+   * aViewport, aScaleX and aScaleY with the current scale and viewport
+   * being used to composite the layers in this manager, to determine what area
+   * intersects with the target render rectangle. aDrawingCritical will be
+   * true if the current drawing operation is using the critical displayport.
+   * Returns true if the update should continue, or false if it should be
+   * cancelled.
+   * This is only called if gfxPlatform::UseProgressiveTilePainting() returns
+   * true.
    */
-  bool ShouldAbortProgressiveUpdate(bool aHasPendingNewThebesContent);
+  bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent,
+                                 gfx::Rect& aViewport,
+                                 float& aScaleX,
+                                 float& aScaleY,
+                                 bool aDrawingCritical);
 
 private:
   /**
@@ -304,6 +317,7 @@ private:
   // Used to repeat the transaction right away (to avoid rebuilding
   // a display list) to support progressive drawing.
   bool mRepeatTransaction;
+  bool mIsRepeatTransaction;
 };
 
 class BasicShadowableThebesLayer;

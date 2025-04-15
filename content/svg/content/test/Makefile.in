@@ -43,7 +43,7 @@ MOCHITEST_FILES = \
 		test_getSubStringLength.xhtml \
 		getSubStringLength-helper.svg \
 		test_isSupported.xhtml \
-		test_lang.xhtml \
+		$(warning test_lang.xhtml is disabled for intermittent failures. Bug 701060) \
 		test_nonAnimStrings.xhtml \
 		test_pathAnimInterpolation.xhtml \
 		test_pathSeg.xhtml \
@@ -51,6 +51,7 @@ MOCHITEST_FILES = \
 		test_pointer-events.xhtml \
 		test_pointer-events-2.xhtml \
 		test_pointer-events-3.xhtml \
+		test_pointer-events-4.xhtml \
 		test_scientific.html \
 		scientific-helper.svg \
 		test_SVGAnimatedImageSMILDisabled.html \

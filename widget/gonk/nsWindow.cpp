@@ -227,7 +227,7 @@ nsWindow::DoDraw(void)
         oglm->SetWorldTransform(sRotationMatrix);
 
         if (nsIWidgetListener* listener = gWindowToRedraw->GetWidgetListener())
-          listener->PaintWindow(gWindowToRedraw, region, false, false);
+          listener->PaintWindow(gWindowToRedraw, region, 0);
     } else if (mozilla::layers::LAYERS_BASIC == lm->GetBackendType()) {
         MOZ_ASSERT(sFramebufferOpen || sUsingOMTC);
         nsRefPtr<gfxASurface> targetSurface;
@@ -248,7 +248,7 @@ nsWindow::DoDraw(void)
                 ScreenRotation(EffectiveScreenRotation()));
 
             if (nsIWidgetListener* listener = gWindowToRedraw->GetWidgetListener())
-              listener->PaintWindow(gWindowToRedraw, region, false, false);
+              listener->PaintWindow(gWindowToRedraw, region, 0);
         }
 
         if (!sUsingOMTC) {
@@ -494,6 +494,8 @@ nsWindow::SetInputContext(const InputContext& aContext,
 NS_IMETHODIMP_(InputContext)
 nsWindow::GetInputContext()
 {
+    // There is only one IME context on Gonk.
+    mInputContext.mNativeIMEContext = nullptr;
     return mInputContext;
 }
 
@@ -551,9 +553,9 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
         return mLayerManager;
     }
 
-    // Set mUseAcceleratedRendering here to make it consistent with
+    // Set mUseLayersAcceleration here to make it consistent with
     // nsBaseWidget::GetLayerManager
-    mUseAcceleratedRendering = GetShouldAccelerate();
+    mUseLayersAcceleration = ComputeShouldAccelerate(mUseLayersAcceleration);
     nsWindow *topWindow = sTopWindows[0];
 
     if (!topWindow) {
@@ -567,7 +569,7 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
             return mLayerManager;
     }
 
-    if (mUseAcceleratedRendering) {
+    if (mUseLayersAcceleration) {
         DebugOnly<nsIntRect> fbBounds = gScreenBounds;
         if (!sGLContext) {
             sGLContext = GLContextProvider::CreateForWindow(this);
@@ -598,7 +600,7 @@ nsWindow::GetLayerManager(PLayersChild* aShadowManager,
     }
 
     mLayerManager = new BasicShadowLayerManager(this);
-    mUseAcceleratedRendering = false;
+    mUseLayersAcceleration = false;
 
     return mLayerManager;
 }

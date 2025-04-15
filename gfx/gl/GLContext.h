@@ -746,7 +746,17 @@ public:
     }
 
     bool CanUploadSubTextures();
+
+    static void PlatformStartup();
+
+protected:
+    static bool sPowerOfTwoForced;
+    static bool sPowerOfTwoPrefCached;
+    static void CacheCanUploadNPOT();
+
+public:
     bool CanUploadNonPowerOfTwo();
+
     bool WantsSmallTiles();
     virtual bool HasLockSurface() { return false; }
 
@@ -1391,15 +1401,6 @@ public:
         AfterGLDrawCall();
     }
 
-#if defined(MOZ_X11) && defined(MOZ_EGL_XRENDER_COMPOSITE)
-    virtual gfxASurface* GetOffscreenPixmapSurface()
-    {
-      return 0;
-    };
-    
-    virtual bool WaitNative() { return false; }
-#endif
-
     virtual bool TextureImageSupportsGetBackingSurface() {
         return false;
     }
@@ -1689,7 +1690,6 @@ public:
     static bool ListHasExtension(const GLubyte *extensions,
                                  const char *extension);
 
-    GLint GetMaxTextureSize() { return mMaxTextureSize; }
     GLint GetMaxTextureImageSize() { return mMaxTextureImageSize; }
     void SetFlipped(bool aFlipped) { mFlipped = aFlipped; }
 

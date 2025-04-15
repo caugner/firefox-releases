@@ -22,9 +22,6 @@ if (typeof Components != "undefined") {
   this.EXPORTED_SYMBOLS = ["OS"];
   Components.utils.import("resource://gre/modules/ctypes.jsm");
   Components.utils.import("resource://gre/modules/osfile/osfile_shared_allthreads.jsm", this);
-} else {
-  // File is included from a chrome worker
-  importScripts("resource://gre/modules/osfile/osfile_shared_allthreads.jsm");
 }
 
 (function(exports) {
@@ -42,7 +39,7 @@ if (typeof Components != "undefined") {
 
   // Open libc
   let libc;
-  let libc_candidates =  [ "libsystem.B.dylib",
+  let libc_candidates =  [ "libSystem.B.dylib",
                            "libc.so.6",
                            "libc.so" ];
   for (let i = 0; i < libc_candidates.length; ++i) {
@@ -184,5 +181,9 @@ if (typeof Components != "undefined") {
   // Special constructors that need to be defined on all threads
   OSError.closed = function closed(operation) {
     return new OSError(operation, OS.Constants.libc.EBADF);
+  };
+
+  OSError.exists = function exists(operation) {
+    return new OSError(operation, OS.Constants.libc.EEXIST);
   };
 })(this);

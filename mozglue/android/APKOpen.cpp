@@ -324,6 +324,7 @@ SHELL_WRAPPER0(bindWidgetTexture)
 SHELL_WRAPPER0(scheduleComposite)
 SHELL_WRAPPER0(schedulePauseComposition)
 SHELL_WRAPPER2(scheduleResumeComposition, jint, jint)
+SHELL_WRAPPER0_WITH_RETURN(computeRenderIntegrity, jfloat)
 SHELL_WRAPPER3_WITH_RETURN(saveMessageInSentbox, jint, jstring, jstring, jlong)
 SHELL_WRAPPER5(notifySmsSent, jint, jstring, jstring, jlong, jint)
 SHELL_WRAPPER5(notifySmsDelivery, jint, jint, jstring, jstring, jlong)
@@ -751,6 +752,7 @@ loadGeckoLibs(const char *apkName)
   GETFUNC(scheduleComposite);
   GETFUNC(schedulePauseComposition);
   GETFUNC(scheduleResumeComposition);
+  GETFUNC(computeRenderIntegrity);
   GETFUNC(saveMessageInSentbox);
   GETFUNC(notifySmsSent);
   GETFUNC(notifySmsDelivery);

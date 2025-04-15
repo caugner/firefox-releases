@@ -15,7 +15,8 @@
 let expectedConsoleCalls = [];
 let expectedPageErrors = [];
 
-(function() {
+function doPageErrors()
+{
   Services.console.reset();
 
   expectedPageErrors = [
@@ -43,17 +44,18 @@ let expectedPageErrors = [];
     },
   ];
 
-  let body = top.document.documentElement;
-  let container = top.document.createElementNS(XHTML_NS, "script");
-  body.appendChild(container);
-  container.textContent = "document.documentElement.style.color = 'fooColor';";
-  body.removeChild(container);
+  let container = document.createElement("script");
+  document.body.appendChild(container);
+  container.textContent = "document.body.style.color = 'fooColor';";
+  document.body.removeChild(container);
 
-  container = top.document.createElementNS(XHTML_NS, "script");
-  body.appendChild(container);
+  SimpleTest.expectUncaughtException();
+
+  container = document.createElement("script");
+  document.body.appendChild(container);
   container.textContent = "document.doTheImpossible();";
-  body.removeChild(container);
-})();
+  document.body.removeChild(container);
+}
 
 function doConsoleCalls()
 {
@@ -93,9 +95,9 @@ function doConsoleCalls()
 <script class="testbody" type="text/javascript;version=1.8">
 SimpleTest.waitForExplicitFinish();
 
-let consoleAPIListener;
-
+let consoleAPIListener, pageErrorListener;
 let consoleAPICalls = 0;
+let pageErrors = 0;
 
 let handlers = {
   onConsoleAPICall: function onConsoleAPICall()
@@ -103,6 +105,14 @@ let handlers = {
     consoleAPICalls++;
     if (consoleAPICalls == expectedConsoleCalls.length) {
       checkConsoleAPICache();
+    }
+  },
+
+  onPageError: function onPageError()
+  {
+    pageErrors++;
+    if (pageErrors == expectedPageErrors.length) {
+      testPageErrors();
     }
   },
 };
@@ -142,11 +152,17 @@ function onCachedConsoleAPI(aState, aResponse)
     checkConsoleAPICall(msgs[aIndex], expectedConsoleCalls[aIndex]);
   });
 
-  closeDebugger(aState, testPageErrors);
+  closeDebugger(aState, function() {
+    pageErrorListener = new PageErrorListener(null, handlers);
+    pageErrorListener.init();
+    doPageErrors();
+  });
 }
 
 function testPageErrors()
 {
+  pageErrorListener.destroy();
+  pageErrorListener = null;
   attachConsole(["PageError"], onAttach2);
 }
 

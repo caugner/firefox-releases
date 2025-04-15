@@ -32,6 +32,8 @@
 #include "imgIContainer.h"
 #include "prlog.h"
 
+#include "mozilla/Likely.h"
+
 MOZ_STATIC_ASSERT((((1 << nsStyleStructID_Length) - 1) &
                    ~(NS_STYLE_INHERIT_MASK)) == 0,
                   "Not enough bits in NS_STYLE_INHERIT_MASK");
@@ -384,7 +386,7 @@ nsBorderColors*
 nsBorderColors::Clone(bool aDeep) const
 {
   nsBorderColors* result = new nsBorderColors(mColor);
-  if (NS_UNLIKELY(!result))
+  if (MOZ_UNLIKELY(!result))
     return result;
   if (aDeep)
     NS_CSS_CLONE_LIST_MEMBER(nsBorderColors, this, mNext, result, (false));
@@ -1157,26 +1159,29 @@ nsChangeHint nsStylePosition::CalcDifference(const nsStylePosition& aOther) cons
     return NS_CombineHint(hint, nsChangeHint_AllReflowHints);
   }
 
-  if ((mWidth == aOther.mWidth) &&
-      (mMinWidth == aOther.mMinWidth) &&
-      (mMaxWidth == aOther.mMaxWidth)) {
-    if (mOffset == aOther.mOffset) {
-      return hint;
-    } else {
-      // Offset changes only affect positioned content, and can't affect any
-      // intrinsic widths.  They also don't need to force reflow of
-      // descendants.
-      return NS_CombineHint(hint, nsChangeHint_NeedReflow);
-    }
+  if (mWidth != aOther.mWidth ||
+      mMinWidth != aOther.mMinWidth ||
+      mMaxWidth != aOther.mMaxWidth) {
+    // None of our width differences can affect descendant intrinsic
+    // sizes and none of them need to force children to reflow.
+    return
+      NS_CombineHint(hint,
+                     NS_SubtractHint(nsChangeHint_AllReflowHints,
+                                     NS_CombineHint(nsChangeHint_ClearDescendantIntrinsics,
+                                                    nsChangeHint_NeedDirtyReflow)));
   }
 
-  // None of our width differences can affect descendant intrinsic
-  // sizes and none of them need to force children to reflow.
-  return
-    NS_CombineHint(hint,
-                   NS_SubtractHint(nsChangeHint_AllReflowHints,
-                                   NS_CombineHint(nsChangeHint_ClearDescendantIntrinsics,
-                                                  nsChangeHint_NeedDirtyReflow)));
+  // If width and height have not changed, but any of the offsets have changed,
+  // then return the respective hints so that we would hopefully be able to
+  // avoid reflowing.
+  // Note that it is possible that we'll need to reflow when processing
+  // restyles, but we don't have enough information to make a good decision
+  // right now.
+  if (mOffset != aOther.mOffset) {
+    NS_UpdateHint(hint, nsChangeHint(nsChangeHint_RecomputePosition |
+                                     nsChangeHint_UpdateOverflow));
+  }
+  return hint;
 }
 
 /* static */ bool
@@ -1605,10 +1610,10 @@ nsStyleImage::ComputeActualCropRect(nsIntRect& aActualCropRect,
 }
 
 nsresult
-nsStyleImage::RequestDecode() const
+nsStyleImage::StartDecoding() const
 {
   if ((mType == eStyleImageType_Image) && mImage)
-    return mImage->RequestDecode();
+    return mImage->StartDecoding();
   return NS_OK;
 }
 
@@ -2083,6 +2088,7 @@ nsStyleDisplay::nsStyleDisplay()
   mFloats = NS_STYLE_FLOAT_NONE;
   mOriginalFloats = mFloats;
   mBreakType = NS_STYLE_CLEAR_NONE;
+  mBreakInside = NS_STYLE_PAGE_BREAK_AUTO;
   mBreakBefore = false;
   mBreakAfter = false;
   mOverflowX = NS_STYLE_OVERFLOW_VISIBLE;
@@ -2136,6 +2142,7 @@ nsStyleDisplay::nsStyleDisplay(const nsStyleDisplay& aSource)
   , mFloats(aSource.mFloats)
   , mOriginalFloats(aSource.mOriginalFloats)
   , mBreakType(aSource.mBreakType)
+  , mBreakInside(aSource.mBreakInside)
   , mBreakBefore(aSource.mBreakBefore)
   , mBreakAfter(aSource.mBreakAfter)
   , mOverflowX(aSource.mOverflowX)
@@ -2196,6 +2203,7 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
   // XXX the following is conservative, for now: changing float breaking shouldn't
   // necessarily require a repaint, reflow should suffice.
   if (mBreakType != aOther.mBreakType
+      || mBreakInside != aOther.mBreakInside
       || mBreakBefore != aOther.mBreakBefore
       || mBreakAfter != aOther.mBreakAfter
       || mAppearance != aOther.mAppearance
@@ -2211,10 +2219,15 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
   /* If we've added or removed the transform property, we need to reconstruct the frame to add
    * or remove the view object, and also to handle abs-pos and fixed-pos containers.
    */
-  if (HasTransform() != aOther.HasTransform()) {
-    NS_UpdateHint(hint, nsChangeHint_ReconstructFrame);
+  if (HasTransformStyle() != aOther.HasTransformStyle()) {
+    // We do not need to apply nsChangeHint_UpdateTransformLayer since
+    // nsChangeHint_RepaintFrame will forcibly invalidate the frame area and
+    // ensure layers are rebuilt (or removed).
+    NS_UpdateHint(hint, NS_CombineHint(nsChangeHint_AddOrRemoveTransform,
+                          NS_CombineHint(nsChangeHint_UpdateOverflow,
+                                         nsChangeHint_RepaintFrame)));
   }
-  else if (HasTransform()) {
+  else if (HasTransformStyle()) {
     /* Otherwise, if we've kept the property lying around and we already had a
      * transform, we need to see whether or not we've changed the transform.
      * If so, we need to recompute its overflow rect (which probably changed

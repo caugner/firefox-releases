@@ -29,7 +29,6 @@
 #include "nsIJSContextStack.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsWeakPtr.h"
-#include "nsCharsetAlias.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsDOMClassInfoID.h"
 #include "nsIDOMElement.h"
@@ -72,6 +71,7 @@
 #include "mozilla/Telemetry.h"
 #include "jsfriendapi.h"
 #include "sampler.h"
+#include "mozilla/dom/EncodingUtils.h"
 #include "mozilla/dom/XMLHttpRequestBinding.h"
 #include "nsIDOMFormData.h"
 #include "DictionaryHelpers.h"
@@ -465,6 +465,8 @@ nsXMLHttpRequest::Init(nsIPrincipal* aPrincipal,
                        nsPIDOMWindow* aOwnerWindow,
                        nsIURI* aBaseURI)
 {
+  NS_ASSERTION(!aOwnerWindow || aOwnerWindow->IsOuterWindow(),
+               "Expecting an outer window here!");
   NS_ENSURE_ARG_POINTER(aPrincipal);
   Construct(aPrincipal,
             aOwnerWindow ? aOwnerWindow->GetCurrentInnerWindow() : nullptr,
@@ -574,7 +576,7 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsXMLHttpRequest)
   bool isBlack = tmp->IsBlack();
   if (isBlack || tmp->mWaitingForOnStopRequest) {
     if (tmp->mListenerManager) {
-      tmp->mListenerManager->UnmarkGrayJSListeners();
+      tmp->mListenerManager->MarkForCC();
     }
     if (!isBlack && tmp->PreservingWrapper()) {
       xpc_UnmarkGrayObject(tmp->GetWrapperPreserveColor());
@@ -594,37 +596,36 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsXMLHttpRequest,
                                                   nsXHREventTarget)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mContext)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mChannel)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mReadRequest)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mResponseXML)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCORSPreflightChannel)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mContext)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChannel)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mReadRequest)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mResponseXML)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCORSPreflightChannel)
 
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mXMLParserStreamListener)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mXMLParserStreamListener)
 
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mChannelEventSink)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mProgressEventSink)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChannelEventSink)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mProgressEventSink)
 
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mUpload,
-                                                       nsIXMLHttpRequestUpload)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mUpload)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsXMLHttpRequest,
                                                 nsXHREventTarget)
   tmp->mResultArrayBuffer = nullptr;
   tmp->mResultJSON = JSVAL_VOID;
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mContext)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mChannel)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mReadRequest)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mResponseXML)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCORSPreflightChannel)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mContext)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mChannel)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mReadRequest)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mResponseXML)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCORSPreflightChannel)
 
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mXMLParserStreamListener)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mXMLParserStreamListener)
 
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mChannelEventSink)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mProgressEventSink)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mChannelEventSink)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mProgressEventSink)
 
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mUpload)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mUpload)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(nsXMLHttpRequest,
@@ -744,13 +745,10 @@ nsXMLHttpRequest::DetectCharset()
   }
 
   nsAutoCString charsetVal;
-  nsresult rv = channel ? channel->GetContentCharset(charsetVal) :
-                NS_ERROR_FAILURE;
-  if (NS_SUCCEEDED(rv)) {
-    rv = nsCharsetAlias::GetPreferred(charsetVal, mResponseCharset);
-  }
-
-  if (NS_FAILED(rv) || mResponseCharset.IsEmpty()) {
+  bool ok = channel &&
+            NS_SUCCEEDED(channel->GetContentCharset(charsetVal)) &&
+            EncodingUtils::FindEncodingForLabel(charsetVal, mResponseCharset);
+  if (!ok || mResponseCharset.IsEmpty()) {
     // MS documentation states UTF-8 is default for responseText
     mResponseCharset.AssignLiteral("UTF-8");
   }
@@ -762,6 +760,7 @@ nsXMLHttpRequest::DetectCharset()
     mResponseCharset.AssignLiteral("UTF-8");
   }
 
+  nsresult rv;
   nsCOMPtr<nsICharsetConverterManager> ccm =
     do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -1419,7 +1418,7 @@ nsXMLHttpRequest::GetAllResponseHeaders(nsString& aResponseHeaders)
     aResponseHeaders.AppendLiteral("\r\n");
   }
 
-  int32_t length;
+  int64_t length;
   if (NS_SUCCEEDED(mChannel->GetContentLength(&length))) {
     aResponseHeaders.AppendLiteral("Content-Length: ");
     aResponseHeaders.AppendInt(length);
@@ -1480,7 +1479,7 @@ nsXMLHttpRequest::GetResponseHeader(const nsACString& header,
 
     // Content Length:
     else if (header.LowerCaseEqualsASCII("content-length")) {
-      int32_t length;
+      int64_t length;
       if (NS_SUCCEEDED(mChannel->GetContentLength(&length))) {
         _retval.AppendInt(length);
       }
@@ -1624,8 +1623,6 @@ nsXMLHttpRequest::DispatchProgressEvent(nsDOMEventTargetHelper* aTarget,
     return;
   }
 
-  event->SetTrusted(true);
-
   nsCOMPtr<nsIDOMProgressEvent> progress = do_QueryInterface(event);
   if (!progress) {
     return;
@@ -1633,6 +1630,8 @@ nsXMLHttpRequest::DispatchProgressEvent(nsDOMEventTargetHelper* aTarget,
 
   progress->InitProgressEvent(aType, false, false, aLengthComputable,
                               aLoaded, (aTotal == UINT64_MAX) ? 0 : aTotal);
+
+  event->SetTrusted(true);
 
   if (aUseLSEventWrapper) {
     nsCOMPtr<nsIDOMProgressEvent> xhrprogressEvent =
@@ -1677,8 +1676,17 @@ nsXMLHttpRequest::IsSystemXHR()
 nsresult
 nsXMLHttpRequest::CheckChannelForCrossSiteRequest(nsIChannel* aChannel)
 {
-  // First check if cross-site requests are enabled...
+  // A system XHR (chrome code or a web app with the right permission) can
+  // always perform cross-site requests. In the web app case, however, we
+  // must still check for protected URIs like file:///.
   if (IsSystemXHR()) {
+    if (!nsContentUtils::IsSystemPrincipal(mPrincipal)) {
+      nsIScriptSecurityManager *secMan = nsContentUtils::GetSecurityManager();
+      nsCOMPtr<nsIURI> uri;
+      aChannel->GetOriginalURI(getter_AddRefs(uri));
+      return secMan->CheckLoadURIWithPrincipal(
+        mPrincipal, uri, nsIScriptSecurityManager::STANDARD);
+    }
     return NS_OK;
   }
 
@@ -2263,7 +2271,7 @@ nsXMLHttpRequest::OnStartRequest(nsIRequest *request, nsISupports *ctxt)
   // events when starting the request - so maybe no need to start timer here.
   if (NS_SUCCEEDED(rv) &&
       (mState & XML_HTTP_REQUEST_ASYNC) &&
-      HasListenersFor(NS_LITERAL_STRING(PROGRESS_STR))) {
+      HasListenersFor(nsGkAtoms::onprogress)) {
     StartProgressEventTimer();
   }
 
@@ -2655,26 +2663,12 @@ GetRequestBody(nsIVariant* aBody, nsIInputStream** aResult, uint64_t* aContentLe
 
     // ArrayBuffer?
     jsval realVal;
-    nsCxPusher pusher;
-    Maybe<JSAutoCompartment> ac;
-
-    // If there's a context on the stack, we can just use it. Otherwise, we need
-    // to use the safe js context (and push it into the stack, so that it's
-    // visible to cx-less functions that we might call here).
-    JSContext* cx = nsContentUtils::GetCurrentJSContext();
-    if (!cx) {
-      cx = nsContentUtils::GetSafeJSContext();
-      if (!pusher.Push(cx)) {
-        return NS_ERROR_FAILURE;
-      }
-    }
 
     nsresult rv = aBody->GetAsJSVal(&realVal);
     if (NS_SUCCEEDED(rv) && !JSVAL_IS_PRIMITIVE(realVal)) {
       JSObject *obj = JSVAL_TO_OBJECT(realVal);
-      ac.construct(cx, obj);
-      if (JS_IsArrayBufferObject(obj, cx)) {
-          ArrayBuffer buf(cx, obj);
+      if (JS_IsArrayBufferObject(obj)) {
+          ArrayBuffer buf(obj);
           return GetRequestBody(&buf, aResult, aContentLength, aContentType, aCharset);
       }
     }
@@ -2791,8 +2785,8 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
   // in turn keeps STOP button from becoming active.  If the consumer passed in
   // a progress event handler we must load with nsIRequest::LOAD_NORMAL or
   // necko won't generate any progress notifications.
-  if (HasListenersFor(NS_LITERAL_STRING(PROGRESS_STR)) ||
-      (mUpload && mUpload->HasListenersFor(NS_LITERAL_STRING(PROGRESS_STR)))) {
+  if (HasListenersFor(nsGkAtoms::onprogress) ||
+      (mUpload && mUpload->HasListenersFor(nsGkAtoms::onprogress))) {
     nsLoadFlags loadFlags;
     mChannel->GetLoadFlags(&loadFlags);
     loadFlags &= ~nsIRequest::LOAD_BACKGROUND;
@@ -3042,6 +3036,9 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
   if (mIsAnon) {
     AddLoadFlags(mChannel, nsIRequest::LOAD_ANONYMOUS);
   }
+  else {
+    AddLoadFlags(mChannel, nsIChannel::LOAD_EXPLICIT_CREDENTIALS);
+  }
 
   NS_ASSERTION(listener != this,
                "Using an object as a listener that can't be exposed to JS");
@@ -3155,7 +3152,7 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
     // can run script that would try to restart this request, and that could end
     // up doing our AsyncOpen on a null channel if the reentered AsyncOpen fails.
     ChangeState(XML_HTTP_REQUEST_SENT);
-    if (mUpload && mUpload->HasListenersFor(NS_LITERAL_STRING(PROGRESS_STR))) {
+    if (mUpload && mUpload->HasListenersFor(nsGkAtoms::onprogress)) {
       StartProgressEventTimer();
     }
     DispatchProgressEvent(this, NS_LITERAL_STRING(LOADSTART_STR), false,
@@ -3566,11 +3563,11 @@ private:
 NS_IMPL_CYCLE_COLLECTION_CLASS(AsyncVerifyRedirectCallbackForwarder)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(AsyncVerifyRedirectCallbackForwarder)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mXHR, nsIXMLHttpRequest)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mXHR)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(AsyncVerifyRedirectCallbackForwarder)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mXHR)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mXHR)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(AsyncVerifyRedirectCallbackForwarder)
@@ -3922,7 +3919,9 @@ nsXMLHttpRequest::GetInterface(JSContext* aCx, nsIJSID* aIID, ErrorResult& aRv)
   aRv = GetInterface(*iid, getter_AddRefs(result));
   NS_ENSURE_FALSE(aRv.Failed(), JSVAL_NULL);
 
-  JSObject* global = JS_GetGlobalForObject(aCx, GetWrapper());
+  JSObject* wrapper = GetWrapper();
+  JSAutoCompartment ac(aCx, wrapper);
+  JSObject* global = JS_GetGlobalForObject(aCx, wrapper);
   aRv = nsContentUtils::WrapNative(aCx, global, result, iid, &v);
   return aRv.Failed() ? JSVAL_NULL : v;
 }
@@ -4086,13 +4085,13 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(nsXMLHttpProgressEvent)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsXMLHttpProgressEvent)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsXMLHttpProgressEvent)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mInner);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mWindow);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mInner);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mWindow);
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsXMLHttpProgressEvent)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mInner)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mWindow);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mInner)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mWindow);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMETHODIMP nsXMLHttpProgressEvent::GetInput(nsIDOMLSInput * *aInput)
@@ -4119,7 +4118,7 @@ NS_IMETHODIMP nsXMLHttpProgressEvent::GetPosition(uint32_t *aPosition)
 {
   WarnAboutLSProgressEvent(nsIDocument::ePosition);
   // XXX can we change the iface?
-  LL_L2UI(*aPosition, mCurProgress);
+  *aPosition = uint32_t(mCurProgress);
   return NS_OK;
 }
 
@@ -4127,7 +4126,7 @@ NS_IMETHODIMP nsXMLHttpProgressEvent::GetTotalSize(uint32_t *aTotalSize)
 {
   WarnAboutLSProgressEvent(nsIDocument::eTotalSize);
   // XXX can we change the iface?
-  LL_L2UI(*aTotalSize, mMaxProgress);
+  *aTotalSize = uint32_t(mMaxProgress);
   return NS_OK;
 }
 
@@ -4153,11 +4152,11 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsXMLHttpRequestXPCOMifier)
 if (tmp->mXHR) {
   tmp->mXHR->mXPCOMifier = nullptr;
 }
-NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mXHR)
+NS_IMPL_CYCLE_COLLECTION_UNLINK(mXHR)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsXMLHttpRequestXPCOMifier)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR_AMBIGUOUS(mXHR, nsIXMLHttpRequest)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mXHR)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMETHODIMP

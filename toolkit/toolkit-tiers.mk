@@ -15,8 +15,17 @@ ifdef NS_TRACE_MALLOC
 tier_platform_dirs = tools/trace-malloc/lib
 endif
 
+ifdef MOZ_DMD
+tier_platform_dirs += memory/replace/dmd
+endif
+
 ifdef MOZ_TREE_FREETYPE
 tier_platform_staticdirs += modules/freetype2
+endif
+
+# this must precede xpcom
+ifdef MOZ_DMDV
+tier_platform_dirs += tools/dmdv
 endif
 
 tier_platform_dirs += xpcom
@@ -206,7 +215,7 @@ endif
 
 tier_platform_dirs += profile
 
-# This must preceed xpfe
+# This must precede xpfe
 ifdef MOZ_JPROF
 tier_platform_dirs        += tools/jprof
 endif
@@ -266,6 +275,10 @@ tier_platform_dirs += toolkit/library
 
 tier_platform_dirs += xpcom/stub
 
+ifdef MOZ_REPLACE_MALLOC
+tier_platform_dirs += memory/replace
+endif
+
 ifdef NS_TRACE_MALLOC
 tier_platform_dirs += tools/trace-malloc
 endif
@@ -296,8 +309,9 @@ tier_platform_dirs += testing/tools/screenshot
 tier_platform_dirs += testing/peptest
 tier_platform_dirs += testing/mozbase
 ifdef MOZ_WEBRTC
-#disabled
-#tier_platform_dirs += media/webrtc/signaling/test
-#tier_platform_dirs += media/mtransport/test
+ifdef MOZ_WEBRTC_TESTS
+tier_platform_dirs += media/webrtc/signaling/test
+tier_platform_dirs += media/mtransport/test
+endif
 endif
 endif

@@ -367,12 +367,20 @@ public class AwesomeBar extends GeckoActivity {
 
     private void openUserEnteredAndFinish(String url) {
         int index = url.indexOf(' ');
-        if (index != -1) {
-            String keywordUrl = BrowserDB.getUrlForKeyword(mResolver, url.substring(0, index));
-            if (keywordUrl != null && keywordUrl.contains("%s")) {
-                String search = URLEncoder.encode(url.substring(index + 1));
-                url = keywordUrl.replace("%s", search);
-            }
+        String keywordUrl = null;
+        String keywordSearch = null;
+
+        if (index == -1) {
+            keywordUrl = BrowserDB.getUrlForKeyword(mResolver, url);
+            keywordSearch = "";
+        } else {
+            keywordUrl = BrowserDB.getUrlForKeyword(mResolver, url.substring(0, index));
+            keywordSearch = url.substring(index + 1);
+        }
+
+        if (keywordUrl != null) {
+            String search = URLEncoder.encode(keywordSearch);
+            url = keywordUrl.replace("%s", search);
         }
 
         Intent resultIntent = new Intent();
@@ -503,6 +511,7 @@ public class AwesomeBar extends GeckoActivity {
         final byte[] b = mContextMenuSubject.favicon;
         final String title = mContextMenuSubject.title;
         final String keyword = mContextMenuSubject.keyword;
+        final int display = mContextMenuSubject.display;
 
         switch (item.getItemId()) {
             case R.id.open_new_tab: {
@@ -511,7 +520,11 @@ public class AwesomeBar extends GeckoActivity {
                     break;
                 }
 
-                GeckoApp.mAppContext.loadUrl(url, AwesomeBar.Target.NEW_TAB);
+                String newTabUrl = url;
+                if (display == Combined.DISPLAY_READER)
+                    newTabUrl = ReaderModeUtils.getAboutReaderForUrl(url, true);
+
+                Tabs.getInstance().loadUrl(newTabUrl, Tabs.LOADURL_NEW_TAB);
                 Toast.makeText(this, R.string.new_tab_opened, Toast.LENGTH_SHORT).show();
                 break;
             }

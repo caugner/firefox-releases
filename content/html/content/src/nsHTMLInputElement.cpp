@@ -148,6 +148,28 @@ static const nsAttrValue::EnumTable kInputAutocompleteTable[] = {
 // Default autocomplete value is "".
 static const nsAttrValue::EnumTable* kInputDefaultAutocomplete = &kInputAutocompleteTable[0];
 
+static const uint8_t NS_INPUT_INPUTMODE_AUTO              = 0;
+static const uint8_t NS_INPUT_INPUTMODE_NUMERIC           = 1;
+static const uint8_t NS_INPUT_INPUTMODE_DIGIT             = 2;
+static const uint8_t NS_INPUT_INPUTMODE_UPPERCASE         = 3;
+static const uint8_t NS_INPUT_INPUTMODE_LOWERCASE         = 4;
+static const uint8_t NS_INPUT_INPUTMODE_TITLECASE         = 5;
+static const uint8_t NS_INPUT_INPUTMODE_AUTOCAPITALIZED   = 6;
+
+static const nsAttrValue::EnumTable kInputInputmodeTable[] = {
+  { "auto", NS_INPUT_INPUTMODE_AUTO },
+  { "numeric", NS_INPUT_INPUTMODE_NUMERIC },
+  { "digit", NS_INPUT_INPUTMODE_DIGIT },
+  { "uppercase", NS_INPUT_INPUTMODE_UPPERCASE },
+  { "lowercase", NS_INPUT_INPUTMODE_LOWERCASE },
+  { "titlecase", NS_INPUT_INPUTMODE_TITLECASE },
+  { "autocapitalized", NS_INPUT_INPUTMODE_AUTOCAPITALIZED },
+  { 0 }
+};
+
+// Default inputmode value is "auto".
+static const nsAttrValue::EnumTable* kInputDefaultInputmode = &kInputInputmodeTable[0];
+
 const double nsHTMLInputElement::kDefaultStepBase = 0;
 const double nsHTMLInputElement::kStepAny = 0;
 
@@ -253,7 +275,7 @@ nsHTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult)
       if (!prefSaved) {
         // Store the last used directory using the content pref service
         nsHTMLInputElement::gUploadLastDir->StoreLastUsedDirectory(
-          mInput->OwnerDoc()->GetDocumentURI(), localFile);
+          mInput->OwnerDoc(), localFile);
         prefSaved = true;
       }
     }
@@ -271,7 +293,7 @@ nsHTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult)
         newFiles.AppendObject(domFile);
         // Store the last used directory using the content pref service
         nsHTMLInputElement::gUploadLastDir->StoreLastUsedDirectory(
-          mInput->OwnerDoc()->GetDocumentURI(), localFile);
+          mInput->OwnerDoc(), localFile);
       }
     }
   }
@@ -388,7 +410,7 @@ nsHTMLInputElement::AsyncClickHandler::Run()
   } else {
     // Attempt to retrieve the last used directory from the content pref service
     nsCOMPtr<nsIFile> localFile;
-    nsHTMLInputElement::gUploadLastDir->FetchLastUsedDirectory(doc->GetDocumentURI(),
+    nsHTMLInputElement::gUploadLastDir->FetchLastUsedDirectory(doc,
                                                                getter_AddRefs(localFile));
     if (!localFile) {
       // Default to "desktop" directory for each platform
@@ -426,10 +448,17 @@ nsHTMLInputElement::DestroyUploadLastDir() {
 }
 
 nsresult
-UploadLastDir::FetchLastUsedDirectory(nsIURI* aURI, nsIFile** aFile)
+UploadLastDir::FetchLastUsedDirectory(nsIDocument* aDoc, nsIFile** aFile)
 {
-  NS_PRECONDITION(aURI, "aURI is null");
+  NS_PRECONDITION(aDoc, "aDoc is null");
   NS_PRECONDITION(aFile, "aFile is null");
+
+  nsIURI* docURI = aDoc->GetDocumentURI();
+  NS_PRECONDITION(docURI, "docURI is null");
+
+  nsCOMPtr<nsISupports> container = aDoc->GetContainer();
+  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(container);
+
   // Attempt to get the CPS, if it's not present we'll just return
   nsCOMPtr<nsIContentPrefService> contentPrefService =
     do_GetService(NS_CONTENT_PREF_SERVICE_CONTRACTID);
@@ -438,13 +467,13 @@ UploadLastDir::FetchLastUsedDirectory(nsIURI* aURI, nsIFile** aFile)
   nsCOMPtr<nsIWritableVariant> uri = do_CreateInstance(NS_VARIANT_CONTRACTID);
   if (!uri)
     return NS_ERROR_OUT_OF_MEMORY;
-  uri->SetAsISupports(aURI);
+  uri->SetAsISupports(docURI);
 
   // Get the last used directory, if it is stored
   bool hasPref;
-  if (NS_SUCCEEDED(contentPrefService->HasPref(uri, CPS_PREF_NAME, &hasPref)) && hasPref) {
+  if (NS_SUCCEEDED(contentPrefService->HasPref(uri, CPS_PREF_NAME, loadContext, &hasPref)) && hasPref) {
     nsCOMPtr<nsIVariant> pref;
-    contentPrefService->GetPref(uri, CPS_PREF_NAME, nullptr, getter_AddRefs(pref));
+    contentPrefService->GetPref(uri, CPS_PREF_NAME, loadContext, nullptr, getter_AddRefs(pref));
     nsString prefStr;
     pref->GetAsAString(prefStr);
 
@@ -458,10 +487,14 @@ UploadLastDir::FetchLastUsedDirectory(nsIURI* aURI, nsIFile** aFile)
 }
 
 nsresult
-UploadLastDir::StoreLastUsedDirectory(nsIURI* aURI, nsIFile* aFile)
+UploadLastDir::StoreLastUsedDirectory(nsIDocument* aDoc, nsIFile* aFile)
 {
-  NS_PRECONDITION(aURI, "aURI is null");
+  NS_PRECONDITION(aDoc, "aDoc is null");
   NS_PRECONDITION(aFile, "aFile is null");
+
+  nsCOMPtr<nsIURI> docURI = aDoc->GetDocumentURI();
+  NS_PRECONDITION(docURI, "docURI is null");
+
   nsCOMPtr<nsIFile> parentFile;
   aFile->GetParent(getter_AddRefs(parentFile));
   if (!parentFile) {
@@ -476,7 +509,7 @@ UploadLastDir::StoreLastUsedDirectory(nsIURI* aURI, nsIFile* aFile)
   nsCOMPtr<nsIWritableVariant> uri = do_CreateInstance(NS_VARIANT_CONTRACTID);
   if (!uri)
     return NS_ERROR_OUT_OF_MEMORY;
-  uri->SetAsISupports(aURI);
+  uri->SetAsISupports(docURI);
  
   // Find the parent of aFile, and store it
   nsString unicodePath;
@@ -487,7 +520,10 @@ UploadLastDir::StoreLastUsedDirectory(nsIURI* aURI, nsIFile* aFile)
   if (!prefValue)
     return NS_ERROR_OUT_OF_MEMORY;
   prefValue->SetAsAString(unicodePath);
-  return contentPrefService->SetPref(uri, CPS_PREF_NAME, prefValue);
+
+  nsCOMPtr<nsISupports> container = aDoc->GetContainer();
+  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(container);
+  return contentPrefService->SetPref(uri, CPS_PREF_NAME, prefValue, loadContext);
 }
 
 NS_IMETHODIMP
@@ -497,7 +533,7 @@ UploadLastDir::Observe(nsISupports *aSubject, char const *aTopic, PRUnichar cons
     nsCOMPtr<nsIContentPrefService> contentPrefService =
       do_GetService(NS_CONTENT_PREF_SERVICE_CONTRACTID);
     if (contentPrefService)
-      contentPrefService->RemovePrefsByName(CPS_PREF_NAME);
+      contentPrefService->RemovePrefsByName(CPS_PREF_NAME, nullptr);
   }
   return NS_OK;
 }
@@ -590,18 +626,18 @@ nsHTMLInputElement::GetEditorState() const
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsHTMLInputElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsHTMLInputElement,
                                                   nsGenericHTMLFormElement)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mControllers)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mControllers)
   if (tmp->IsSingleLineTextControl(false)) {
     tmp->mInputData.mState->Traverse(cb);
   }
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mFiles)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFileList)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFiles)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFileList)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsHTMLInputElement,
                                                   nsGenericHTMLFormElement)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mControllers)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mFiles)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mControllers)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mFiles)
   if (tmp->mFileList) {
     tmp->mFileList->Disconnect();
     tmp->mFileList = nullptr;
@@ -612,21 +648,20 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsHTMLInputElement,
   //XXX should unlink more?
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
                                                               
-NS_IMPL_ADDREF_INHERITED(nsHTMLInputElement, nsGenericElement) 
-NS_IMPL_RELEASE_INHERITED(nsHTMLInputElement, nsGenericElement) 
+NS_IMPL_ADDREF_INHERITED(nsHTMLInputElement, Element)
+NS_IMPL_RELEASE_INHERITED(nsHTMLInputElement, Element)
 
 
 DOMCI_NODE_DATA(HTMLInputElement, nsHTMLInputElement)
 
 // QueryInterface implementation for nsHTMLInputElement
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(nsHTMLInputElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE9(nsHTMLInputElement,
+  NS_HTML_CONTENT_INTERFACE_TABLE8(nsHTMLInputElement,
                                    nsIDOMHTMLInputElement,
                                    nsITextControlElement,
                                    nsIPhonetic,
-                                   imgIDecoderObserver,
+                                   imgINotificationObserver,
                                    nsIImageLoadingContent,
-                                   imgIContainerObserver,
                                    imgIOnloadBlocker,
                                    nsIDOMNSEditableElement,
                                    nsIConstraintValidation)
@@ -867,6 +902,8 @@ NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(nsHTMLInputElement, FormMethod, formmethod,
                                 kFormDefaultMethod->tag)
 NS_IMPL_BOOL_ATTR(nsHTMLInputElement, FormNoValidate, formnovalidate)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, FormTarget, formtarget)
+NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(nsHTMLInputElement, Inputmode, inputmode,
+                                kInputDefaultInputmode->tag)
 NS_IMPL_BOOL_ATTR(nsHTMLInputElement, Multiple, multiple)
 NS_IMPL_NON_NEGATIVE_INT_ATTR(nsHTMLInputElement, MaxLength, maxlength)
 NS_IMPL_STRING_ATTR(nsHTMLInputElement, Name, name)
@@ -967,7 +1004,7 @@ nsHTMLInputElement::GetValueInternal(nsAString& aValue) const
       return NS_OK;
 
     case VALUE_MODE_FILENAME:
-      if (nsContentUtils::CallerHasUniversalXPConnect()) {
+      if (nsContentUtils::IsCallerChrome()) {
         if (mFiles.Count()) {
           return mFiles[0]->GetMozFullPath(aValue);
         }
@@ -1029,9 +1066,9 @@ nsHTMLInputElement::SetValue(const nsAString& aValue)
   // OK and gives pages a way to clear a file input if necessary.
   if (mType == NS_FORM_INPUT_FILE) {
     if (!aValue.IsEmpty()) {
-      if (!nsContentUtils::CallerHasUniversalXPConnect()) {
-        // setting the value of a "FILE" input widget requires the
-        // UniversalXPConnect privilege
+      if (!nsContentUtils::IsCallerChrome()) {
+        // setting the value of a "FILE" input widget requires
+        // chrome privilege
         return NS_ERROR_DOM_SECURITY_ERR;
       }
       const PRUnichar *name = PromiseFlatString(aValue).get();
@@ -1247,7 +1284,7 @@ nsHTMLInputElement::StepUp(int32_t n, uint8_t optional_argc)
 NS_IMETHODIMP 
 nsHTMLInputElement::MozGetFileNameArray(uint32_t *aLength, PRUnichar ***aFileNames)
 {
-  if (!nsContentUtils::CallerHasUniversalXPConnect()) {
+  if (!nsContentUtils::IsCallerChrome()) {
     // Since this function returns full paths it's important that normal pages
     // can't call it.
     return NS_ERROR_DOM_SECURITY_ERR;
@@ -1274,9 +1311,8 @@ nsHTMLInputElement::MozGetFileNameArray(uint32_t *aLength, PRUnichar ***aFileNam
 NS_IMETHODIMP 
 nsHTMLInputElement::MozSetFileNameArray(const PRUnichar **aFileNames, uint32_t aLength)
 {
-  if (!nsContentUtils::CallerHasUniversalXPConnect()) {
-    // setting the value of a "FILE" input widget requires the
-    // UniversalXPConnect privilege
+  if (!nsContentUtils::IsCallerChrome()) {
+    // setting the value of a "FILE" input widget requires chrome privilege
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
@@ -1329,7 +1365,7 @@ nsHTMLInputElement::MozIsTextField(bool aExcludePassword, bool* aResult)
 NS_IMETHODIMP 
 nsHTMLInputElement::SetUserInput(const nsAString& aValue)
 {
-  if (!nsContentUtils::IsCallerTrustedForWrite()) {
+  if (!nsContentUtils::IsCallerChrome()) {
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
@@ -1438,12 +1474,23 @@ nsHTMLInputElement::GetPlaceholderNode()
 }
 
 NS_IMETHODIMP_(void)
-nsHTMLInputElement::SetPlaceholderClass(bool aVisible, bool aNotify)
+nsHTMLInputElement::UpdatePlaceholderVisibility(bool aNotify)
 {
   nsTextEditorState *state = GetEditorState();
   if (state) {
-    state->SetPlaceholderClass(aVisible, aNotify);
+    state->UpdatePlaceholderVisibility(aNotify);
   }
+}
+
+NS_IMETHODIMP_(bool)
+nsHTMLInputElement::GetPlaceholderVisibility()
+{
+  nsTextEditorState* state = GetEditorState();
+  if (!state) {
+    return false;
+  }
+
+  return state->GetPlaceholderVisibility();
 }
 
 void
@@ -1584,15 +1631,6 @@ nsHTMLInputElement::SetValueInternal(const nsAString& aValue,
       }
 
       mInputData.mState->SetValue(value, aUserInput, aSetValueChanged);
-
-      // This call might be useless in some situations because if the element is
-      // a single line text control, nsTextEditorState::SetValue will call
-      // nsHTMLInputElement::OnValueChanged which is going to call UpdateState()
-      // if the element is focused. This bug 665547.
-      if (PlaceholderApplies() &&
-          HasAttr(kNameSpaceID_None, nsGkAtoms::placeholder)) {
-        UpdateState(true);
-      }
 
       return NS_OK;
     }
@@ -2366,7 +2404,7 @@ nsHTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
                 nsCOMPtr<nsIContent> radioContent =
                   do_QueryInterface(selectedRadioButton);
                 if (radioContent) {
-                  rv = selectedRadioButton->DOMFocus();
+                  rv = selectedRadioButton->Focus();
                   if (NS_SUCCEEDED(rv)) {
                     nsEventStatus status = nsEventStatus_eIgnore;
                     nsMouseEvent event(NS_IS_TRUSTED_EVENT(aVisitor.mEvent),
@@ -2763,6 +2801,9 @@ nsHTMLInputElement::ParseAttribute(int32_t aNamespaceID,
     }
     if (aAttribute == nsGkAtoms::autocomplete) {
       return aResult.ParseEnumValue(aValue, kInputAutocompleteTable, false);
+    }
+    if (aAttribute == nsGkAtoms::inputmode) {
+      return aResult.ParseEnumValue(aValue, kInputInputmodeTable, false);
     }
     if (ParseImageAttribute(aAttribute, aValue, aResult)) {
       // We have to call |ParseImageAttribute| unconditionally since we
@@ -3457,11 +3498,6 @@ nsHTMLInputElement::IntrinsicState() const
                         !mCanShowInvalidUI)))) {
       state |= NS_EVENT_STATE_MOZ_UI_VALID;
     }
-  }
-
-  if (PlaceholderApplies() && HasAttr(kNameSpaceID_None, nsGkAtoms::placeholder) &&
-      IsValueEmpty()) {
-    state |= NS_EVENT_STATE_MOZ_PLACEHOLDER;
   }
 
   if (mForm && !mForm->GetValidity() && IsSubmitControl()) {
@@ -4570,13 +4606,6 @@ NS_IMETHODIMP_(void)
 nsHTMLInputElement::OnValueChanged(bool aNotify)
 {
   UpdateAllValidityStates(aNotify);
-
-  // :-moz-placeholder pseudo-class may change when the value changes.
-  // However, we don't want to waste cycles if the state doesn't apply.
-  if (PlaceholderApplies() &&
-      HasAttr(kNameSpaceID_None, nsGkAtoms::placeholder)) {
-    UpdateState(aNotify);
-  }
 }
 
 NS_IMETHODIMP_(bool)

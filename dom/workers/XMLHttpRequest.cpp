@@ -32,6 +32,7 @@
 
 using namespace mozilla;
 
+using namespace mozilla::dom;
 USING_WORKERS_NAMESPACE
 
 using mozilla::dom::workers::exceptions::ThrowDOMExceptionForNSResult;
@@ -154,12 +155,26 @@ public:
     NS_ASSERTION(mWorkerPrivate, "Must have a worker here!");
 
     if (!mXHR) {
+      nsPIDOMWindow* ownerWindow = mWorkerPrivate->GetWindow();
+      if (ownerWindow) {
+        ownerWindow = ownerWindow->GetOuterWindow();
+        if (!ownerWindow) {
+          NS_ERROR("No outer window?!");
+          return false;
+        }
+
+        nsPIDOMWindow* innerWindow = ownerWindow->GetCurrentInnerWindow();
+        if (mWorkerPrivate->GetWindow() != innerWindow) {
+          NS_WARNING("Window has navigated, cannot create XHR here.");
+          return false;
+        }
+      }
+
       mXHR = new nsXMLHttpRequest();
 
       if (NS_FAILED(mXHR->Init(mWorkerPrivate->GetPrincipal(),
                                mWorkerPrivate->GetScriptContext(),
-                               mWorkerPrivate->GetWindow(),
-                               mWorkerPrivate->GetBaseURI()))) {
+                               ownerWindow, mWorkerPrivate->GetBaseURI()))) {
         mXHR = nullptr;
         return false;
       }
@@ -815,18 +830,15 @@ public:
   {
     mWorkerPrivate->AssertIsOnWorkerThread();
 
-    mSyncQueueKey = mWorkerPrivate->CreateNewSyncLoop();
+    AutoSyncLoopHolder syncLoop(mWorkerPrivate);
+    mSyncQueueKey = syncLoop.SyncQueueKey();
 
     if (NS_FAILED(NS_DispatchToMainThread(this, NS_DISPATCH_NORMAL))) {
       JS_ReportError(aCx, "Failed to dispatch to main thread!");
       return false;
     }
 
-    if (!mWorkerPrivate->RunSyncLoop(aCx, mSyncQueueKey)) {
-      return false;
-    }
-
-    return true;
+    return syncLoop.RunAndForget(aCx);
   }
 
   virtual nsresult
@@ -1692,10 +1704,13 @@ XMLHttpRequest::SendInternal(const nsAString& aStringBody,
   }
 
   AutoUnpinXHR autoUnpin(this);
+  Maybe<AutoSyncLoopHolder> autoSyncLoop;
 
   uint32_t syncQueueKey = UINT32_MAX;
-  if (mProxy->mIsSyncXHR) {
-    syncQueueKey = mWorkerPrivate->CreateNewSyncLoop();
+  bool isSyncXHR = mProxy->mIsSyncXHR;
+  if (isSyncXHR) {
+    autoSyncLoop.construct(mWorkerPrivate);
+    syncQueueKey = autoSyncLoop.ref().SyncQueueKey();
   }
 
   mProxy->mOuterChannelId++;
@@ -1709,16 +1724,24 @@ XMLHttpRequest::SendInternal(const nsAString& aStringBody,
     return;
   }
 
-  autoUnpin.Clear();
+  if (!isSyncXHR)  {
+    autoUnpin.Clear();
+    MOZ_ASSERT(autoSyncLoop.empty());
+    return;
+  }
 
-  // The event loop was spun above, make sure we aren't canceled already.
+  // If our sync XHR was canceled during the send call the worker is going
+  // away.  We have no idea how far through the send call we got.  There may
+  // be a ProxyCompleteRunnable in the sync loop, but rather than run the loop
+  // to get it we just let our RAII helpers clean up.
   if (mCanceled) {
     return;
   }
 
-  if (mProxy->mIsSyncXHR && !mWorkerPrivate->RunSyncLoop(cx, syncQueueKey)) {
+  autoUnpin.Clear();
+
+  if (!autoSyncLoop.ref().RunAndForget(cx)) {
     aRv.Throw(NS_ERROR_FAILURE);
-    return;
   }
 }
 
@@ -1994,7 +2017,7 @@ XMLHttpRequest::Send(JSObject* aBody, ErrorResult& aRv)
   JSContext* cx = GetJSContext();
 
   jsval valToClone;
-  if (JS_IsArrayBufferObject(aBody, cx) || file::GetDOMBlobFromJSObject(aBody)) {
+  if (JS_IsArrayBufferObject(aBody) || file::GetDOMBlobFromJSObject(aBody)) {
     valToClone = OBJECT_TO_JSVAL(aBody);
   }
   else {

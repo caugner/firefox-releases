@@ -40,6 +40,7 @@ browser.jar:
   skin/classic/browser/Secure.png
   skin/classic/browser/Security-broken.png
   skin/classic/browser/setDesktopBackground.css
+  skin/classic/browser/click-to-play-warning-stripes.png
   skin/classic/browser/Toolbar.png
   skin/classic/browser/Toolbar-small.png
   skin/classic/browser/urlbar-arrow.png
@@ -47,6 +48,7 @@ browser.jar:
   skin/classic/browser/webRTC-shareDevice-64.png
   skin/classic/browser/downloads/buttons.png          (downloads/buttons.png)
   skin/classic/browser/downloads/download-glow.png    (downloads/download-glow.png)
+  skin/classic/browser/downloads/download-glow-small.png (downloads/download-glow-small.png)
   skin/classic/browser/downloads/download-notification.png (downloads/download-notification.png)
   skin/classic/browser/downloads/downloads.css        (downloads/downloads.css)
   skin/classic/browser/feeds/feedIcon.png             (feeds/feedIcon.png)
@@ -145,6 +147,7 @@ browser.jar:
   skin/classic/browser/devtools/styleeditor.css       (devtools/styleeditor.css)
   skin/classic/browser/devtools/debugger.css          (devtools/debugger.css)
   skin/classic/browser/devtools/magnifying-glass.png  (devtools/magnifying-glass.png)
+  skin/classic/browser/devtools/option-icon.png       (devtools/option-icon.png)
   skin/classic/browser/devtools/itemToggle.png        (devtools/itemToggle.png)
   skin/classic/browser/devtools/itemArrow-rtl.png     (devtools/itemArrow-rtl.png)
   skin/classic/browser/devtools/itemArrow-ltr.png     (devtools/itemArrow-ltr.png)

@@ -28,8 +28,9 @@
 #include "nsIAndroidBridge.h"
 #include "nsISmsRequest.h"
 
+#include "mozilla/Likely.h"
 #include "mozilla/StaticPtr.h"
- 
+
 // Some debug #defines
 // #define DEBUG_ANDROID_EVENTS
 // #define DEBUG_ANDROID_WIDGET
@@ -64,6 +65,7 @@ class NetworkInformation;
 namespace dom {
 namespace sms {
 struct SmsFilterData;
+struct SmsSegmentInfoData;
 } // namespace sms
 } // namespace dom
 
@@ -101,7 +103,7 @@ class AndroidBridge
 public:
     enum {
         NOTIFY_IME_RESETINPUTSTATE = 0,
-        NOTIFY_IME_SETOPENSTATE = 1,
+        NOTIFY_IME_REPLY_EVENT = 1,
         NOTIFY_IME_CANCELCOMPOSITION = 2,
         NOTIFY_IME_FOCUSCHANGE = 3
     };
@@ -118,13 +120,13 @@ public:
     }
 
     static JavaVM *GetVM() {
-        if (NS_LIKELY(sBridge))
+        if (MOZ_LIKELY(sBridge))
             return sBridge->mJavaVM;
         return nullptr;
     }
 
     static JNIEnv *GetJNIEnv() {
-        if (NS_LIKELY(sBridge)) {
+        if (MOZ_LIKELY(sBridge)) {
             if ((void*)pthread_self() != sBridge->mThread) {
                 __android_log_print(ANDROID_LOG_INFO, "AndroidBridge",
                                     "###!!!!!!! Something's grabbing the JNIEnv from the wrong thread! (thr %p should be %p)",
@@ -156,12 +158,11 @@ public:
 
     static void NotifyIMEChange(const PRUnichar *aText, uint32_t aTextLen, int aStart, int aEnd, int aNewEnd);
 
-    nsresult TakeScreenshot(nsIDOMWindow *window, int32_t srcX, int32_t srcY, int32_t srcW, int32_t srcH, int32_t dstY, int32_t dstX, int32_t dstW, int32_t dstH, int32_t bufW, int32_t bufH, int32_t tabId, int32_t token, jobject buffer);
+    nsresult CaptureThumbnail(nsIDOMWindow *window, int32_t bufW, int32_t bufH, int32_t tabId, jobject buffer);
+    void SendThumbnail(jobject buffer, int32_t tabId, bool success);
     nsresult GetDisplayPort(bool aPageSizeUpdate, bool aIsBrowserContentDisplayed, int32_t tabId, nsIAndroidViewport* metrics, nsIAndroidDisplayport** displayPort);
 
-    bool ShouldAbortProgressiveUpdate(bool aHasPendingNewThebesContent, const gfx::Rect& aDisplayPort, float aDisplayResolution);
-
-    static void NotifyPaintedRect(float top, float left, float bottom, float right);
+    bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent, const gfx::Rect& aDisplayPort, float aDisplayResolution, bool aDrawingCritical, gfx::Rect& aViewport, float& aScaleX, float& aScaleY);
 
     void AcknowledgeEventSync();
 
@@ -171,8 +172,6 @@ public:
     void EnableSensor(int aSensorType);
 
     void DisableSensor(int aSensorType);
-
-    void ReturnIMEQueryResult(const PRUnichar *aResult, uint32_t aLen, int aSelStart, int aSelLen);
 
     void NotifyXreExit();
 
@@ -321,9 +320,8 @@ public:
     void DisableBatteryNotifications();
     void GetCurrentBatteryInformation(hal::BatteryInformation* aBatteryInfo);
 
-    uint16_t GetNumberOfMessagesForText(const nsAString& aText);
+    nsresult GetSegmentInfoForText(const nsAString& aText, dom::sms::SmsSegmentInfoData* aData);
     void SendMessage(const nsAString& aNumber, const nsAString& aText, nsISmsRequest* aRequest);
-    int32_t SaveSentMessage(const nsAString& aRecipient, const nsAString& aBody, uint64_t aDate);
     void GetMessage(int32_t aMessageId, nsISmsRequest* aRequest);
     void DeleteMessage(int32_t aMessageId, nsISmsRequest* aRequest);
     void CreateMessageList(const dom::sms::SmsFilterData& aFilter, bool aReverse, nsISmsRequest* aRequest);
@@ -367,7 +365,11 @@ public:
     void UnregisterSurfaceTextureFrameListener(jobject surfaceTexture);
 
     void GetGfxInfoData(nsACString& aRet);
-
+    nsresult GetProxyForURI(const nsACString & aSpec,
+                            const nsACString & aScheme,
+                            const nsACString & aHost,
+                            const int32_t      aPort,
+                            nsACString & aResult);
 protected:
     static AndroidBridge *sBridge;
     static StaticAutoPtr<nsTArray<nsCOMPtr<nsISmsRequest> > > sSmsRequests;
@@ -386,6 +388,8 @@ protected:
 
     // the GeckoAppShell java class
     jclass mGeckoAppShellClass;
+    // the android.telephony.SmsMessage class
+    jclass mAndroidSmsMessageClass;
 
     AndroidBridge();
     ~AndroidBridge();
@@ -413,7 +417,6 @@ protected:
     jmethodID jEnableLocationHighAccuracy;
     jmethodID jEnableSensor;
     jmethodID jDisableSensor;
-    jmethodID jReturnIMEQueryResult;
     jmethodID jNotifyAppShellReady;
     jmethodID jNotifyXreExit;
     jmethodID jScheduleRestart;
@@ -468,10 +471,10 @@ protected:
     jmethodID jShowSurface;
     jmethodID jHideSurface;
     jmethodID jDestroySurface;
+    jmethodID jGetProxyForURI;
 
-    jmethodID jNumberOfMessages;
+    jmethodID jCalculateLength;
     jmethodID jSendMessage;
-    jmethodID jSaveSentMessage;
     jmethodID jGetMessage;
     jmethodID jDeleteMessage;
     jmethodID jCreateMessageList;
@@ -492,9 +495,8 @@ protected:
     jmethodID jRegisterSurfaceTextureFrameListener;
     jmethodID jUnregisterSurfaceTextureFrameListener;
 
-    jclass jScreenshotHandlerClass;
-    jmethodID jNotifyScreenShot;
-    jmethodID jNotifyPaintedRect;
+    jclass jThumbnailHelperClass;
+    jmethodID jNotifyThumbnail;
 
     // for GfxInfo (gfx feature detection and blacklisting)
     jmethodID jGetGfxInfoData;
@@ -534,6 +536,40 @@ protected:
     int (* Surface_unlockAndPost)(void* surface);
     void (* Region_constructor)(void* region);
     void (* Region_set)(void* region, void* rect);
+};
+
+class AutoJObject {
+public:
+    AutoJObject(JNIEnv* aJNIEnv = NULL) : mObject(NULL)
+    {
+        mJNIEnv = aJNIEnv ? aJNIEnv : AndroidBridge::GetJNIEnv();
+    }
+
+    AutoJObject(JNIEnv* aJNIEnv, jobject aObject)
+    {
+        mJNIEnv = aJNIEnv ? aJNIEnv : AndroidBridge::GetJNIEnv();
+        mObject = aObject;
+    }
+
+    ~AutoJObject() {
+        if (mObject)
+            mJNIEnv->DeleteLocalRef(mObject);
+    }
+
+    jobject operator=(jobject aObject)
+    {
+        if (mObject) {
+            mJNIEnv->DeleteLocalRef(mObject);
+        }
+        return mObject = aObject;
+    }
+
+    operator jobject() {
+        return mObject;
+    }
+private:
+    JNIEnv* mJNIEnv;
+    jobject mObject;
 };
 
 class AutoLocalJNIFrame {

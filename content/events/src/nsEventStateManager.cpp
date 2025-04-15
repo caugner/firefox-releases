@@ -887,43 +887,43 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(nsEventStateManager)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsEventStateManager)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsEventStateManager)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCurrentTargetContent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLastMouseOverElement);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mGestureDownContent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mGestureDownFrameOwner);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLastLeftMouseDownContent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLastLeftMouseDownContentParent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLastMiddleMouseDownContent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLastMiddleMouseDownContentParent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLastRightMouseDownContent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mLastRightMouseDownContentParent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mActiveContent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mHoverContent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mURLTargetContent);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFirstMouseOverEventElement);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFirstMouseOutEventElement);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDocument);
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mAccessKeys);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCurrentTargetContent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLastMouseOverElement);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mGestureDownContent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mGestureDownFrameOwner);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLastLeftMouseDownContent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLastLeftMouseDownContentParent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLastMiddleMouseDownContent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLastMiddleMouseDownContentParent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLastRightMouseDownContent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLastRightMouseDownContentParent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mActiveContent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mHoverContent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mURLTargetContent);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFirstMouseOverEventElement);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFirstMouseOutEventElement);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocument);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAccessKeys);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsEventStateManager)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCurrentTargetContent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLastMouseOverElement);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mGestureDownContent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mGestureDownFrameOwner);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLastLeftMouseDownContent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLastLeftMouseDownContentParent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLastMiddleMouseDownContent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLastMiddleMouseDownContentParent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLastRightMouseDownContent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mLastRightMouseDownContentParent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mActiveContent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mHoverContent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mURLTargetContent);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mFirstMouseOverEventElement);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mFirstMouseOutEventElement);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDocument);
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mAccessKeys);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCurrentTargetContent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLastMouseOverElement);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mGestureDownContent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mGestureDownFrameOwner);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLastLeftMouseDownContent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLastLeftMouseDownContentParent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLastMiddleMouseDownContent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLastMiddleMouseDownContentParent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLastRightMouseDownContent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mLastRightMouseDownContentParent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mActiveContent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mHoverContent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mURLTargetContent);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mFirstMouseOverEventElement);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mFirstMouseOutEventElement);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocument);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mAccessKeys);
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 nsresult
@@ -2819,8 +2819,7 @@ nsEventStateManager::GetScrollAmount(nsPresContext* aPresContext,
   nsLayoutUtils::GetFontMetricsForFrame(rootFrame, getter_AddRefs(fm),
     nsLayoutUtils::FontSizeInflationFor(rootFrame));
   NS_ENSURE_TRUE(fm, nsSize(0, 0));
-  int32_t fontHeight = fm->MaxHeight();
-  return nsSize(fontHeight, fontHeight);
+  return nsSize(fm->AveCharWidth(), fm->MaxHeight());
 }
 
 void
@@ -2890,17 +2889,20 @@ nsEventStateManager::DoScrollText(nsIScrollableFrame* aScrollableFrame,
       return;
   }
 
-  // We shouldn't scroll more one page at once.
+  // We shouldn't scroll more one page at once except when over one page scroll
+  // is allowed for the event.
   nsSize pageSize = aScrollableFrame->GetPageScrollAmount();
   nsIntSize devPixelPageSize(pc->AppUnitsToDevPixels(pageSize.width),
                              pc->AppUnitsToDevPixels(pageSize.height));
-  if (NS_ABS(actualDevPixelScrollAmount.x) > devPixelPageSize.width) {
+  if (!WheelPrefs::GetInstance()->IsOverOnePageScrollAllowedX(aEvent) &&
+      NS_ABS(actualDevPixelScrollAmount.x) > devPixelPageSize.width) {
     actualDevPixelScrollAmount.x =
       (actualDevPixelScrollAmount.x >= 0) ? devPixelPageSize.width :
                                             -devPixelPageSize.width;
   }
 
-  if (NS_ABS(actualDevPixelScrollAmount.y) > devPixelPageSize.height) {
+  if (!WheelPrefs::GetInstance()->IsOverOnePageScrollAllowedY(aEvent) &&
+      NS_ABS(actualDevPixelScrollAmount.y) > devPixelPageSize.height) {
     actualDevPixelScrollAmount.y =
       (actualDevPixelScrollAmount.y >= 0) ? devPixelPageSize.height :
                                             -devPixelPageSize.height;
@@ -4885,6 +4887,8 @@ nsEventStateManager::ContentRemoved(nsIDocument* aDocument, nsIContent* aContent
     element->LeaveLink(element->GetPresContext());
   }
 
+  nsIMEStateManager::OnRemoveContent(mPresContext, aContent);
+
   // inform the focus manager that the content is being removed. If this
   // content is focused, the focus will be removed without firing events.
   nsFocusManager* fm = nsFocusManager::GetFocusManager();
@@ -5544,4 +5548,24 @@ nsEventStateManager::WheelPrefs::NeedToComputeLineOrPageDelta(
 
   return (mMultiplierX[index] != 1.0 && mMultiplierX[index] != -1.0) ||
          (mMultiplierY[index] != 1.0 && mMultiplierY[index] != -1.0);
+}
+
+bool
+nsEventStateManager::WheelPrefs::IsOverOnePageScrollAllowedX(
+                                   widget::WheelEvent* aEvent)
+{
+  Index index = GetIndexFor(aEvent);
+  Init(index);
+  return NS_ABS(mMultiplierX[index]) >=
+           MIN_MULTIPLIER_VALUE_ALLOWING_OVER_ONE_PAGE_SCROLL;
+}
+
+bool
+nsEventStateManager::WheelPrefs::IsOverOnePageScrollAllowedY(
+                                   widget::WheelEvent* aEvent)
+{
+  Index index = GetIndexFor(aEvent);
+  Init(index);
+  return NS_ABS(mMultiplierY[index]) >=
+           MIN_MULTIPLIER_VALUE_ALLOWING_OVER_ONE_PAGE_SCROLL;
 }

@@ -8,11 +8,14 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintWriter;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Date;
 import java.util.List;
 import java.util.Timer;
 import java.util.TimerTask;
@@ -42,9 +45,12 @@ import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
 import android.widget.Toast;
+import android.os.Environment;
 
 public class WatcherService extends Service
 {
+    private final String prgVersion = "Watcher Version 1.15";
+
     String sErrorPrefix = "##Installer Error## ";
     String currentDir = "/";
     String sPingTarget = "";
@@ -52,6 +58,7 @@ public class WatcherService extends Service
     long lPeriod = 300000;
     int nMaxStrikes = 0; // maximum number of tries before we consider network unreachable (0 means don't check)
     boolean bStartSUTAgent = true;
+    boolean bStartedTimer = false;
 
     Process    pProc;
     Context myContext = null;
@@ -216,9 +223,13 @@ public class WatcherService extends Service
                 }
             else if (sCmd.equalsIgnoreCase("start"))
                 {
-                doToast("WatcherService started");
-                myTimer = new Timer();
-                myTimer.scheduleAtFixedRate(new MyTime(), lDelay, lPeriod);
+                if (!this.bStartedTimer) {
+                    doToast("WatcherService started");
+                    myTimer = new Timer();
+                    Date startSchedule = new Date(System.currentTimeMillis() + lDelay);
+                    myTimer.schedule(new MyTime(), startSchedule, lPeriod);
+                    this.bStartedTimer = true;
+                }
                 }
             else
                 {
@@ -229,15 +240,33 @@ public class WatcherService extends Service
             doToast("WatcherService created");
         }
 
+    public void writeVersion() {
+        PrintWriter pw = null;
+        String appPath = getApplicationContext().getFilesDir().getAbsolutePath();
+        String versionPath = appPath + "/version.txt";
+        Log.i("Watcher", "writing version string to: " + versionPath);
+        try {
+            pw = new PrintWriter(new FileWriter(versionPath, true));
+            pw.println(this.prgVersion);
+        } catch (IOException ioe) {
+            Log.e("Watcher", "Exception writing version: " + this.prgVersion + " to file: " + versionPath);
+        } finally {
+            if (pw != null) {
+                pw.close();
+            }
+        }
+    }
 
     @Override
     public void onStart(Intent intent, int startId) {
+        writeVersion();
         handleCommand(intent);
         return;
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        writeVersion();
         handleCommand(intent);
         return START_STICKY;
         }
@@ -489,9 +518,9 @@ public class WatcherService extends Service
             if (strProcName.contains(sProcName))
                 {
                 bRet = true;
+                break;
                 }
             }
-
         return (bRet);
         }
 
@@ -895,6 +924,8 @@ public class WatcherService extends Service
     private class MyTime extends TimerTask
         {
         int    nStrikes = 0;
+        final int PERIODS_TO_WAIT_FOR_SDCARD = 3;
+        int    nPeriodsWaited = 0;
 
         public MyTime()
             {
@@ -931,8 +962,23 @@ public class WatcherService extends Service
 
 //            Debug.waitForDebugger();
 
+            // Ensure the sdcard is mounted before we even attempt to start the agent
+            // We will wait for the sdcard to mount for PERIODS_TO_WAIT_FOR_SDCARD
+            // after which time we go ahead and attempt to start the agent.
+            if (nPeriodsWaited++ < PERIODS_TO_WAIT_FOR_SDCARD) {
+                String state = Environment.getExternalStorageState();
+                if (Environment.MEDIA_MOUNTED.compareTo(state) != 0) {
+                    Log.i("SUTAgentWatcher", "SDcard not mounted, waiting another turn");
+                    return;
+                } else if (Environment.MEDIA_MOUNTED_READ_ONLY.equals(state)) {
+                    Log.e("SUTAgentWatcher", "SDcard mounted read only not starting agent now, try again in 60s");
+                    return;
+                }
+            }
+
             if (bStartSUTAgent && !GetProcessInfo(sProgramName))
                 {
+                Log.i("SUTAgentWatcher", "Starting SUTAgent from watcher code");
                 Intent agentIntent = new Intent();
                 agentIntent.setPackage(sProgramName);
                 agentIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

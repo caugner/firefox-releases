@@ -475,6 +475,7 @@ void nsCSSRendering::Init()
   NS_ASSERTION(!gInlineBGData, "Init called twice");
   gInlineBGData = new InlineBackgroundData();
   gGradientCache = new GradientCache();
+  nsCSSBorderRenderer::Init();
 }
 
 // Clean up any global variables used by nsCSSRendering.
@@ -484,6 +485,7 @@ void nsCSSRendering::Shutdown()
   gInlineBGData = nullptr;
   delete gGradientCache;
   gGradientCache = nullptr;
+  nsCSSBorderRenderer::Shutdown();
 }
 
 /**
@@ -1257,20 +1259,23 @@ nsCSSRendering::PaintBoxShadowOuter(nsPresContext* aPresContext,
     shadowGfxRectPlusBlur.RoundOut();
 
     gfxContext* renderContext = aRenderingContext.ThebesContext();
-    nsRefPtr<gfxContext> shadowContext;
     nsContextBoxBlur blurringArea;
 
     // When getting the widget shape from the native theme, we're going
     // to draw the widget into the shadow surface to create a mask.
     // We need to ensure that there actually *is* a shadow surface
     // and that we're not going to draw directly into renderContext.
-    shadowContext = 
+    gfxContext* shadowContext =
       blurringArea.Init(shadowRect, pixelSpreadRadius,
                         blurRadius, twipsPerPixel, renderContext, aDirtyRect,
                         useSkipGfxRect ? &skipGfxRect : nullptr,
                         nativeTheme ? nsContextBoxBlur::FORCE_MASK : 0);
     if (!shadowContext)
       continue;
+
+    // shadowContext is owned by either blurringArea or aRenderingContext.
+    MOZ_ASSERT(shadowContext == renderContext ||
+               shadowContext == blurringArea.GetContext());
 
     // Set the shadow color; if not specified, use the foreground color
     nscolor shadowColor;
@@ -1455,13 +1460,16 @@ nsCSSRendering::PaintBoxShadowInner(nsPresContext* aPresContext,
     // rendered shadow (even after blurring), so those pixels must be completely
     // transparent in the shadow, so drawing them changes nothing.
     gfxContext* renderContext = aRenderingContext.ThebesContext();
-    nsRefPtr<gfxContext> shadowContext;
     nsContextBoxBlur blurringArea;
-    shadowContext =
+    gfxContext* shadowContext =
       blurringArea.Init(shadowPaintRect, 0, blurRadius, twipsPerPixel,
                         renderContext, aDirtyRect, &skipGfxRect);
     if (!shadowContext)
       continue;
+
+    // shadowContext is owned by either blurringArea or aRenderingContext.
+    MOZ_ASSERT(shadowContext == renderContext ||
+               shadowContext == blurringArea.GetContext());
 
     // Set the shadow color; if not specified, use the foreground color
     nscolor shadowColor;
@@ -2015,6 +2023,7 @@ ComputeRadialGradientLine(nsPresContext* aPresContext,
     break;
   }
   default:
+    radiusX = radiusY = 0;
     NS_ABORT_IF_FALSE(false, "unknown radial gradient sizing method");
   }
   *aRadiusX = radiusX;
@@ -3048,8 +3057,8 @@ DrawBorderImage(nsPresContext*       aPresContext,
   // Get the actual image.
 
   nsCOMPtr<imgIContainer> imgContainer;
-  req->GetImage(getter_AddRefs(imgContainer));
-  NS_ASSERTION(imgContainer, "no image to draw");
+  DebugOnly<nsresult> rv = req->GetImage(getter_AddRefs(imgContainer));
+  NS_ASSERTION(NS_SUCCEEDED(rv) && imgContainer, "no image to draw");
 
   nsIntSize imageSize;
   if (NS_FAILED(imgContainer->GetWidth(&imageSize.width))) {
@@ -4231,28 +4240,36 @@ nsImageRenderer::~nsImageRenderer()
 bool
 nsImageRenderer::PrepareImage()
 {
-  if (mImage->IsEmpty() || !mImage->IsComplete()) {
-    // Make sure the image is actually decoding
-    mImage->RequestDecode();
+  if (mImage->IsEmpty())
+    return false;
 
-    // We can not prepare the image for rendering if it is not fully loaded.
-    //
-    // Special case: If we requested a sync decode and we have an image, push
-    // on through
-    nsCOMPtr<imgIContainer> img;
-    if (!((mFlags & FLAG_SYNC_DECODE_IMAGES) &&
-          (mType == eStyleImageType_Image) &&
-          (NS_SUCCEEDED(mImage->GetImageData()->GetImage(getter_AddRefs(img))) && img)))
-      return false;
+  if (!mImage->IsComplete()) {
+    // Make sure the image is actually decoding
+    mImage->StartDecoding();
+
+    // check again to see if we finished
+    if (!mImage->IsComplete()) {
+      // We can not prepare the image for rendering if it is not fully loaded.
+      //
+      // Special case: If we requested a sync decode and we have an image, push
+      // on through because the Draw() will do a sync decode then
+      nsCOMPtr<imgIContainer> img;
+      if (!((mFlags & FLAG_SYNC_DECODE_IMAGES) &&
+            (mType == eStyleImageType_Image) &&
+            (NS_SUCCEEDED(mImage->GetImageData()->GetImage(getter_AddRefs(img))))))
+        return false;
+    }
   }
 
   switch (mType) {
     case eStyleImageType_Image:
     {
       nsCOMPtr<imgIContainer> srcImage;
-      mImage->GetImageData()->GetImage(getter_AddRefs(srcImage));
-      NS_ABORT_IF_FALSE(srcImage, "If srcImage is null, mImage->IsComplete() "
-                                  "should have returned false");
+      DebugOnly<nsresult> rv =
+        mImage->GetImageData()->GetImage(getter_AddRefs(srcImage));
+      NS_ABORT_IF_FALSE(NS_SUCCEEDED(rv) && srcImage,
+                        "If GetImage() is failing, mImage->IsComplete() "
+                        "should have returned false");
 
       if (!mImage->GetCropRect()) {
         mImageContainer.swap(srcImage);
@@ -4673,23 +4690,23 @@ nsImageRenderer::IsRasterImage()
   if (mType != eStyleImageType_Image)
     return false;
   nsCOMPtr<imgIContainer> img;
-  nsresult rv = mImage->GetImageData()->GetImage(getter_AddRefs(img));
-  if (NS_FAILED(rv) || !img)
+  if (NS_FAILED(mImage->GetImageData()->GetImage(getter_AddRefs(img))))
     return false;
   return img->GetType() == imgIContainer::TYPE_RASTER;
 }
 
 already_AddRefed<mozilla::layers::ImageContainer>
-nsImageRenderer::GetContainer()
+nsImageRenderer::GetContainer(LayerManager* aManager)
 {
   if (mType != eStyleImageType_Image)
     return nullptr;
   nsCOMPtr<imgIContainer> img;
   nsresult rv = mImage->GetImageData()->GetImage(getter_AddRefs(img));
-  if (NS_FAILED(rv) || !img)
+  if (NS_FAILED(rv))
     return nullptr;
+
   nsRefPtr<ImageContainer> container;
-  rv = img->GetImageContainer(getter_AddRefs(container));
+  rv = img->GetImageContainer(aManager, getter_AddRefs(container));
   NS_ENSURE_SUCCESS(rv, nullptr);
   return container.forget();
 }

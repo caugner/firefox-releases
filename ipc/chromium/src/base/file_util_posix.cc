@@ -33,11 +33,6 @@
 #include "base/string_util.h"
 #include "base/time.h"
 
-// FreeBSD/OpenBSD lacks stat64, but its stat handles files >2GB just fine
-#ifndef HAVE_STAT64
-#define stat64 stat
-#endif
-
 namespace file_util {
 
 #if defined(GOOGLE_CHROME_BUILD)
@@ -420,11 +415,11 @@ bool CreateNewTempDirectory(const FilePath::StringType& prefix,
     return false;
   tmpdir = tmpdir.Append(kTempFileName);
   std::string tmpdir_string = tmpdir.value();
-  // this should be OK since mkdtemp just replaces characters in place
-  char* buffer = const_cast<char*>(tmpdir_string.c_str());
 #ifdef ANDROID
   char* dtemp = NULL;
 #else
+  // this should be OK since mkdtemp just replaces characters in place
+  char* buffer = const_cast<char*>(tmpdir_string.c_str());
   char* dtemp = mkdtemp(buffer);
 #endif
   if (!dtemp)

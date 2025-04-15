@@ -10,6 +10,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 namespace mozilla {
 
@@ -146,7 +147,6 @@ public:
     , mLastInvalidatedLeaf(0)
   {
     ResizeToParentSize();
-    Invalidate(0, mParent.ByteSize() - 1);
   }
 
   T GlobalMaximum() const {
@@ -157,22 +157,22 @@ public:
   // returns the index of the parent node; if treeIndex=1 (the root node),
   // the return value is 0.
   static size_t ParentNode(size_t treeIndex) {
-    MOZ_ASSERT(treeIndex);
+    MOZ_ASSERT(treeIndex > 1);
     return treeIndex >> 1;
   }
 
   static bool IsRightNode(size_t treeIndex) {
-    MOZ_ASSERT(treeIndex);
+    MOZ_ASSERT(treeIndex > 1);
     return treeIndex & 1;
   }
 
   static bool IsLeftNode(size_t treeIndex) {
-    MOZ_ASSERT(treeIndex);
+    MOZ_ASSERT(treeIndex > 1);
     return !IsRightNode(treeIndex);
   }
 
   static size_t SiblingNode(size_t treeIndex) {
-    MOZ_ASSERT(treeIndex);
+    MOZ_ASSERT(treeIndex > 1);
     return treeIndex ^ 1;
   }
 
@@ -187,12 +187,12 @@ public:
   }
 
   static size_t LeftNeighborNode(size_t treeIndex, size_t distance = 1) {
-    MOZ_ASSERT(treeIndex);
+    MOZ_ASSERT(treeIndex > 1);
     return treeIndex - distance;
   }
 
   static size_t RightNeighborNode(size_t treeIndex, size_t distance = 1) {
-    MOZ_ASSERT(treeIndex);
+    MOZ_ASSERT(treeIndex > 1);
     return treeIndex + distance;
   }
 
@@ -287,10 +287,18 @@ public:
     size_t numberOfElements = mParent.ByteSize() / sizeof(T);
     size_t requiredNumLeaves = (numberOfElements + sElementsPerLeaf - 1) / sElementsPerLeaf;
 
+    size_t oldNumLeaves = mNumLeaves;
     mNumLeaves = NextPowerOfTwo(requiredNumLeaves);
+    Invalidate(0, mParent.ByteSize() - 1);
 
     // see class comment for why we the tree storage size is 2 * mNumLeaves
-    return mTreeData.SetLength(2 * mNumLeaves);
+    if (!mTreeData.SetLength(2 * mNumLeaves)) {
+      return false;
+    }
+    if (mNumLeaves != oldNumLeaves) {
+      memset(mTreeData.Elements(), 0, mTreeData.Length() * sizeof(mTreeData[0]));
+    }
+    return true;
   }
 
   void Invalidate(size_t firstByte, size_t lastByte);
@@ -326,6 +334,9 @@ template<typename T>
 void WebGLElementArrayCacheTree<T>::Invalidate(size_t firstByte, size_t lastByte)
 {
   lastByte = NS_MIN(lastByte, mNumLeaves * sElementsPerLeaf * sizeof(T) - 1);
+  if (firstByte > lastByte) {
+    return;
+  }
 
   size_t firstLeaf = LeafForByte(firstByte);
   size_t lastLeaf = LeafForByte(lastByte);
@@ -380,22 +391,17 @@ void WebGLElementArrayCacheTree<T>::Update()
 
   // Step #2: propagate the values up the tree. This is simply a matter of walking up
   // the tree and setting each node to the max of its two children.
-  while (true) {
-
-    // fast-exit case where only one node is invalidated at the current level
-    if (firstTreeIndex == lastTreeIndex) {
-      size_t firstTreeIndexParent = ParentNode(firstTreeIndex);
-      while (firstTreeIndexParent) {
-        mTreeData[firstTreeIndexParent] = NS_MAX(mTreeData[firstTreeIndex], mTreeData[SiblingNode(firstTreeIndex)]);
-        firstTreeIndex = firstTreeIndexParent;
-        firstTreeIndexParent = ParentNode(firstTreeIndex);
-      }
-      break;
-    }
+  while (firstTreeIndex > 1) {
 
     // move up 1 level
     firstTreeIndex = ParentNode(firstTreeIndex);
     lastTreeIndex = ParentNode(lastTreeIndex);
+
+    // fast-exit case where only one node is invalidated at the current level
+    if (firstTreeIndex == lastTreeIndex) {
+      mTreeData[firstTreeIndex] = NS_MAX(mTreeData[LeftChildNode(firstTreeIndex)], mTreeData[RightChildNode(firstTreeIndex)]);
+      continue;
+    }
 
     // initialize local iteration variables: child and parent.
     size_t child = LeftChildNode(firstTreeIndex);
@@ -470,7 +476,17 @@ void WebGLElementArrayCache::InvalidateTrees(size_t firstByte, size_t lastByte)
 }
 
 template<typename T>
-bool WebGLElementArrayCache::Validate(T maxAllowed, size_t firstElement, size_t countElements) {
+bool WebGLElementArrayCache::Validate(uint32_t maxAllowed, size_t firstElement, size_t countElements) {
+  // if maxAllowed is >= the max T value, then there is no way that a T index could be invalid
+  if (maxAllowed >= std::numeric_limits<T>::max())
+    return true;
+
+  T maxAllowedT(maxAllowed);
+
+  // integer overflow must have been handled earlier, so we assert that maxAllowedT
+  // is exactly the max allowed value.
+  MOZ_ASSERT(uint32_t(maxAllowedT) == maxAllowed);
+
   if (!mByteSize || !countElements)
     return true;
 
@@ -485,7 +501,7 @@ bool WebGLElementArrayCache::Validate(T maxAllowed, size_t firstElement, size_t 
 
   // fast exit path when the global maximum for the whole element array buffer
   // falls in the allowed range
-  if (tree->GlobalMaximum() <= maxAllowed)
+  if (tree->GlobalMaximum() <= maxAllowedT)
   {
     return true;
   }
@@ -497,14 +513,14 @@ bool WebGLElementArrayCache::Validate(T maxAllowed, size_t firstElement, size_t 
   size_t firstElementAdjustmentEnd = NS_MIN(lastElement,
                                             tree->LastElementUnderSameLeaf(firstElement));
   while (firstElement <= firstElementAdjustmentEnd) {
-    if (elements[firstElement] > maxAllowed)
+    if (elements[firstElement] > maxAllowedT)
       return false;
     firstElement++;
   }
   size_t lastElementAdjustmentEnd = NS_MAX(firstElement,
                                            tree->FirstElementUnderSameLeaf(lastElement));
   while (lastElement >= lastElementAdjustmentEnd) {
-    if (elements[lastElement] > maxAllowed)
+    if (elements[lastElement] > maxAllowedT)
       return false;
     lastElement--;
   }
@@ -514,16 +530,16 @@ bool WebGLElementArrayCache::Validate(T maxAllowed, size_t firstElement, size_t 
     return true;
 
   // general case
-  return tree->Validate(maxAllowed,
+  return tree->Validate(maxAllowedT,
                         tree->LeafForElement(firstElement),
                         tree->LeafForElement(lastElement));
 }
 
 bool WebGLElementArrayCache::Validate(GLenum type, uint32_t maxAllowed, size_t firstElement, size_t countElements) {
   if (type == LOCAL_GL_UNSIGNED_BYTE)
-    return Validate<uint8_t>(uint8_t(maxAllowed), firstElement, countElements);
+    return Validate<uint8_t>(maxAllowed, firstElement, countElements);
   if (type == LOCAL_GL_UNSIGNED_SHORT)
-    return Validate<uint16_t>(uint16_t(maxAllowed), firstElement, countElements);
+    return Validate<uint16_t>(maxAllowed, firstElement, countElements);
   return false;
 }
 

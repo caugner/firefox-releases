@@ -57,6 +57,7 @@
 #include "nsIEditor.h"
 #include "nsIEditorDocShell.h"
 #include "nsIMozBrowserFrame.h"
+#include "nsIPermissionManager.h"
 
 #include "nsLayoutUtils.h"
 #include "nsIView.h"
@@ -259,16 +260,16 @@ nsContentView::GetId(nsContentViewId* aId)
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsFrameLoader)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsFrameLoader)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDocShell)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mMessageManager)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mChildMessageManager)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mDocShell)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mMessageManager)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mChildMessageManager)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsFrameLoader)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDocShell)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocShell)
   NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "nsFrameLoader::mMessageManager");
   cb.NoteXPCOMChild(static_cast<nsIContentFrameMessageManager*>(tmp->mMessageManager.get()));
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mChildMessageManager)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChildMessageManager)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsFrameLoader)
@@ -282,6 +283,7 @@ NS_INTERFACE_MAP_END
 
 nsFrameLoader::nsFrameLoader(Element* aOwner, bool aNetworkCreated)
   : mOwnerContent(aOwner)
+  , mAppIdSentToPermissionManager(nsIScriptSecurityManager::NO_APP_ID)
   , mDetachedSubdocViews(nullptr)
   , mDepthTooGreat(false)
   , mIsTopLevelContent(false)
@@ -303,6 +305,7 @@ nsFrameLoader::nsFrameLoader(Element* aOwner, bool aNetworkCreated)
   , mRenderMode(RENDER_MODE_DEFAULT)
   , mEventMode(EVENT_MODE_NORMAL_DISPATCH)
 {
+  ResetPermissionManagerStatus();
 }
 
 nsFrameLoader*
@@ -1399,6 +1402,8 @@ nsFrameLoader::SetOwnerContent(Element* aContent)
   if (RenderFrameParent* rfp = GetCurrentRemoteFrame()) {
     rfp->OwnerContentChanged(aContent);
   }
+
+  ResetPermissionManagerStatus();
 }
 
 bool
@@ -2064,6 +2069,14 @@ nsFrameLoader::TryRemoteBrowser()
     nsCOMPtr<nsIDOMElement> element = do_QueryInterface(mOwnerContent);
     mRemoteBrowser->SetOwnerElement(element);
 
+    // If we're an app, send the frame element's mozapptype down to the child
+    // process.  This ends up in TabChild::GetAppType().
+    if (ownApp) {
+      nsAutoString appType;
+      mOwnerContent->GetAttr(kNameSpaceID_None, nsGkAtoms::mozapptype, appType);
+      mRemoteBrowser->SendSetAppType(appType);
+    }
+
     nsCOMPtr<nsIDocShellTreeItem> rootItem;
     parentAsItem->GetRootTreeItem(getter_AddRefs(rootItem));
     nsCOMPtr<nsIDOMWindow> rootWin = do_GetInterface(rootItem);
@@ -2528,3 +2541,59 @@ nsFrameLoader::AttributeChanged(nsIDocument* aDocument,
                                        is_targetable, value);
   }
 }
+
+void
+nsFrameLoader::ResetPermissionManagerStatus()
+{
+  // Finding the new app Id:
+  // . first we check if the owner is an app frame
+  // . second, we check if the owner is a browser frame
+  // in both cases we populate the appId variable.
+  uint32_t appId = nsIScriptSecurityManager::NO_APP_ID;
+  if (OwnerIsAppFrame()) {
+    // You can't be both an app and a browser frame.
+    MOZ_ASSERT(!OwnerIsBrowserFrame());
+
+    nsCOMPtr<mozIApplication> ownApp = GetOwnApp();
+    MOZ_ASSERT(ownApp);
+    uint32_t ownAppId = nsIScriptSecurityManager::NO_APP_ID;
+    if (ownApp && NS_SUCCEEDED(ownApp->GetLocalId(&ownAppId))) {
+      appId = ownAppId;
+    }
+  }
+
+  if (OwnerIsBrowserFrame()) {
+    // You can't be both a browser and an app frame.
+    MOZ_ASSERT(!OwnerIsAppFrame());
+
+    nsCOMPtr<mozIApplication> containingApp = GetContainingApp();
+    uint32_t containingAppId = nsIScriptSecurityManager::NO_APP_ID;
+    if (containingApp && NS_SUCCEEDED(containingApp->GetLocalId(&containingAppId))) {
+      appId = containingAppId;
+    }
+  }
+
+  // Nothing changed.
+  if (appId == mAppIdSentToPermissionManager) {
+    return;
+  }
+
+  nsCOMPtr<nsIPermissionManager> permMgr = do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
+  if (!permMgr) {
+    NS_ERROR("No PermissionManager available!");
+    return;
+  }
+
+  // If previously we registered an appId, we have to unregister it.
+  if (mAppIdSentToPermissionManager != nsIScriptSecurityManager::NO_APP_ID) {
+    permMgr->ReleaseAppId(mAppIdSentToPermissionManager);
+    mAppIdSentToPermissionManager = nsIScriptSecurityManager::NO_APP_ID;
+  }
+
+  // Register the new AppId.
+  if (appId != nsIScriptSecurityManager::NO_APP_ID) {
+    mAppIdSentToPermissionManager = appId;
+    permMgr->AddrefAppId(mAppIdSentToPermissionManager);
+  }
+}
+

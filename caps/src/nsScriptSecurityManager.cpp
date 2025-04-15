@@ -368,20 +368,6 @@ nsScriptSecurityManager::GetCxSubjectPrincipal(JSContext *cx)
     return principal;
 }
 
-NS_IMETHODIMP_(nsIPrincipal *)
-nsScriptSecurityManager::GetCxSubjectPrincipalAndFrame(JSContext *cx, JSStackFrame **fp)
-{
-    NS_ASSERTION(cx == GetCurrentJSContext(),
-                 "Uh, cx is not the current JS context!");
-
-    nsresult rv = NS_ERROR_FAILURE;
-    nsIPrincipal *principal = GetPrincipalAndFrame(cx, fp, &rv);
-    if (NS_FAILED(rv))
-        return nullptr;
-
-    return principal;
-}
-
 ////////////////////
 // Policy Storage //
 ////////////////////
@@ -1653,12 +1639,17 @@ nsScriptSecurityManager::CheckFunctionAccess(JSContext *aCx, void *aFunObj,
     // allowed to execute scripts.
 
     bool result;
-    rv = CanExecuteScripts(aCx, subject, &result);
+    rv = CanExecuteScripts(aCx, subject, true, &result);
     if (NS_FAILED(rv))
       return rv;
 
     if (!result)
       return NS_ERROR_DOM_SECURITY_ERR;
+
+    if (!aTargetObj) {
+        // We're done here
+        return NS_OK;
+    }
 
     /*
     ** Get origin of subject and object and compare.
@@ -1682,6 +1673,15 @@ nsScriptSecurityManager::CanExecuteScripts(JSContext* cx,
                                            nsIPrincipal *aPrincipal,
                                            bool *result)
 {
+    return CanExecuteScripts(cx, aPrincipal, false, result);
+}
+
+nsresult
+nsScriptSecurityManager::CanExecuteScripts(JSContext* cx,
+                                           nsIPrincipal *aPrincipal,
+                                           bool aAllowIfNoScriptContext,
+                                           bool *result)
+{
     *result = false; 
 
     if (aPrincipal == mSystemPrincipal)
@@ -1693,7 +1693,13 @@ nsScriptSecurityManager::CanExecuteScripts(JSContext* cx,
 
     //-- See if the current window allows JS execution
     nsIScriptContext *scriptContext = GetScriptContext(cx);
-    if (!scriptContext) return NS_ERROR_FAILURE;
+    if (!scriptContext) {
+        if (aAllowIfNoScriptContext) {
+            *result = true;
+            return NS_OK;
+        }
+        return NS_ERROR_FAILURE;
+    }
 
     if (!scriptContext->GetScriptsEnabled()) {
         // No scripting on this context, folks
@@ -1940,27 +1946,6 @@ nsScriptSecurityManager::GetCodebasePrincipalInternal(nsIURI *aURI,
     return NS_OK;
 }
 
-NS_IMETHODIMP
-nsScriptSecurityManager::GetPrincipalFromContext(JSContext *cx,
-                                                 nsIPrincipal **result)
-{
-    *result = nullptr;
-
-    nsIScriptContextPrincipal* scp =
-        GetScriptContextPrincipalFromJSContext(cx);
-
-    if (!scp)
-    {
-        return NS_ERROR_FAILURE;
-    }
-
-    nsIScriptObjectPrincipal* globalData = scp->GetObjectPrincipal();
-    if (globalData)
-        NS_IF_ADDREF(*result = globalData->GetPrincipal());
-
-    return NS_OK;
-}
-
 // static
 nsIPrincipal*
 nsScriptSecurityManager::GetScriptPrincipal(JSScript *script,
@@ -2046,86 +2031,6 @@ nsScriptSecurityManager::GetFunctionObjectPrincipal(JSContext *cx,
     }
 
     return GetScriptPrincipal(script, rv);
-}
-
-nsIPrincipal*
-nsScriptSecurityManager::GetFramePrincipal(JSContext *cx,
-                                           JSStackFrame *fp,
-                                           nsresult *rv)
-{
-    NS_PRECONDITION(rv, "Null out param");
-    JSObject *obj = JS_GetFrameFunctionObject(cx, fp);
-    if (!obj)
-    {
-        // Must be in a top-level script. Get principal from the script.
-        JSScript *script = JS_GetFrameScript(cx, fp);
-        return GetScriptPrincipal(script, rv);
-    }
-
-    nsIPrincipal* result = GetFunctionObjectPrincipal(cx, obj, fp, rv);
-
-#ifdef DEBUG
-    if (NS_SUCCEEDED(*rv) && !result)
-    {
-        JSFunction *fun = JS_GetObjectFunction(obj);
-        JSScript *script = JS_GetFunctionScript(cx, fun);
-
-        NS_ASSERTION(!script, "Null principal for non-native function!");
-    }
-#endif
-
-    return result;
-}
-
-nsIPrincipal*
-nsScriptSecurityManager::GetPrincipalAndFrame(JSContext *cx,
-                                              JSStackFrame **frameResult,
-                                              nsresult* rv)
-{
-    NS_PRECONDITION(rv, "Null out param");
-    //-- If there's no principal on the stack, look at the global object
-    //   and return the innermost frame for annotations.
-    *rv = NS_OK;
-
-    if (cx)
-    {
-        // Get principals from innermost JavaScript frame.
-        JSStackFrame *fp = nullptr; // tell JS_BrokenFrameIterator to start at innermost
-        for (fp = JS_BrokenFrameIterator(cx, &fp); fp; fp = JS_BrokenFrameIterator(cx, &fp))
-        {
-            nsIPrincipal* result = GetFramePrincipal(cx, fp, rv);
-            if (result)
-            {
-                NS_ASSERTION(NS_SUCCEEDED(*rv), "Weird return");
-                *frameResult = fp;
-                return result;
-            }
-        }
-
-        nsIScriptContextPrincipal* scp =
-            GetScriptContextPrincipalFromJSContext(cx);
-        if (scp)
-        {
-            nsIScriptObjectPrincipal* globalData = scp->GetObjectPrincipal();
-            if (!globalData)
-            {
-                *rv = NS_ERROR_FAILURE;
-                return nullptr;
-            }
-
-            // Note that we're not in a loop or anything, and nothing comes
-            // after this point in the function, so we can just return here.
-            nsIPrincipal* result = globalData->GetPrincipal();
-            if (result)
-            {
-                JSStackFrame *inner = nullptr;
-                *frameResult = JS_BrokenFrameIterator(cx, &inner);
-                return result;
-            }
-        }
-    }
-
-    return nullptr;
 }
 
 nsIPrincipal*

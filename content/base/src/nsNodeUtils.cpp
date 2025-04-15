@@ -14,7 +14,6 @@
 #include "nsIDOMUserDataHandler.h"
 #include "nsEventListenerManager.h"
 #include "nsIXPConnect.h"
-#include "nsGenericElement.h"
 #include "pldhash.h"
 #include "nsIDOMAttr.h"
 #include "nsCOMArray.h"
@@ -28,7 +27,6 @@
 #ifdef MOZ_MEDIA
 #include "nsHTMLMediaElement.h"
 #endif // MOZ_MEDIA
-#include "jsgc.h"
 #include "nsWrapperCacheInlines.h"
 #include "nsObjectLoadingContent.h"
 #include "nsDOMMutationObserver.h"
@@ -46,8 +44,7 @@ using namespace mozilla::dom;
   nsINode* node = content_;                                       \
   NS_ASSERTION(node->OwnerDoc() == doc, "Bogus document");        \
   if (doc) {                                                      \
-    static_cast<nsIMutationObserver*>(doc->BindingManager())->    \
-      func_ params_;                                              \
+    doc->BindingManager()->func_ params_;                         \
   }                                                               \
   do {                                                            \
     nsINode::nsSlots* slots = node->GetExistingSlots();           \
@@ -58,7 +55,7 @@ using namespace mozilla::dom;
         slots->mMutationObservers, nsIMutationObserver,           \
         func_, params_);                                          \
     }                                                             \
-    node = node->GetNodeParent();                                 \
+    node = node->GetParentNode();                                 \
   } while (node);                                                 \
   if (needsEnterLeave) {                                          \
     nsDOMMutationObserver::LeaveMutationHandling();               \
@@ -359,11 +356,11 @@ nsNodeUtils::TraverseUserData(nsINode* aNode,
 nsresult
 nsNodeUtils::CloneNodeImpl(nsINode *aNode, bool aDeep,
                            bool aCallUserDataHandlers,
-                           nsIDOMNode **aResult)
+                           nsINode **aResult)
 {
   *aResult = nullptr;
 
-  nsCOMPtr<nsIDOMNode> newNode;
+  nsCOMPtr<nsINode> newNode;
   nsCOMArray<nsINode> nodesWithProperties;
   nsresult rv = Clone(aNode, aDeep, nullptr, nodesWithProperties,
                       getter_AddRefs(newNode));
@@ -438,9 +435,7 @@ nsNodeUtils::CloneAndAdopt(nsINode *aNode, bool aClone, bool aDeep,
     nodeInfo = newNodeInfo;
   }
 
-  nsGenericElement *elem = aNode->IsElement() ?
-                           static_cast<nsGenericElement*>(aNode) :
-                           nullptr;
+  Element *elem = aNode->IsElement() ? aNode->AsElement() : nullptr;
 
   nsCOMPtr<nsINode> clone;
   if (aClone) {

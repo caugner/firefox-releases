@@ -31,6 +31,7 @@
 #include "nsUnicodeRange.h"
 #include "nsStyleConsts.h"
 #include "mozilla/FloatingPoint.h"
+#include "mozilla/Likely.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
 #include "mozilla/Telemetry.h"
@@ -424,14 +425,14 @@ hb_blob_t *
 gfxFontEntry::ShareFontTableAndGetBlob(uint32_t aTag,
                                        FallibleTArray<uint8_t>* aBuffer)
 {
-    if (NS_UNLIKELY(!mFontTableCache.IsInitialized())) {
+    if (MOZ_UNLIKELY(!mFontTableCache.IsInitialized())) {
         // we do this here rather than on fontEntry construction
         // because not all shapers will access the table cache at all
         mFontTableCache.Init(10);
     }
 
     FontTableHashEntry *entry = mFontTableCache.PutEntry(aTag);
-    if (NS_UNLIKELY(!entry)) { // OOM
+    if (MOZ_UNLIKELY(!entry)) { // OOM
         return nullptr;
     }
 
@@ -843,7 +844,7 @@ gfxFontFamily::FindFontForChar(GlobalFontMatch *aMatchData)
 #ifdef PR_LOGGING
             PRLogModuleInfo *log = gfxPlatform::GetLog(eGfxLog_textrun);
 
-            if (NS_UNLIKELY(log)) {
+            if (MOZ_UNLIKELY(log)) {
                 uint32_t charRange = gfxFontUtils::CharRangeBit(aMatchData->mCh);
                 uint32_t unicodeRange = FindCharUnicodeRange(aMatchData->mCh);
                 uint32_t script = GetScriptCode(aMatchData->mCh);
@@ -1607,7 +1608,7 @@ struct GlyphBufferAzure {
                bool aFinish = false)
     {
         // Ensure there's enough room for a glyph to be added to the buffer
-        if (!aFinish && mNumGlyphs < GLYPH_BUFFER_SIZE || !mNumGlyphs) {
+        if ((!aFinish && mNumGlyphs < GLYPH_BUFFER_SIZE) || !mNumGlyphs) {
             return;
         }
 
@@ -1769,7 +1770,7 @@ gfxFont::Draw(gfxTextRun *aTextRun, uint32_t aStart, uint32_t aEnd,
 
     if (aContext->IsCairo()) {
       bool success = SetupCairoFont(aContext);
-      if (NS_UNLIKELY(!success))
+      if (MOZ_UNLIKELY(!success))
           return;
 
       ::GlyphBuffer glyphs;
@@ -3499,7 +3500,7 @@ gfxFontGroup::MakeSpaceTextRun(const Parameters *aParams, uint32_t aFlags)
     }
 
     gfxFont *font = GetFontAt(0);
-    if (NS_UNLIKELY(GetStyle()->size == 0)) {
+    if (MOZ_UNLIKELY(GetStyle()->size == 0)) {
         // Short-circuit for size-0 fonts, as Windows and ATSUI can't handle
         // them, and always create at least size 1 fonts, i.e. they still
         // render something for size 0 fonts.
@@ -3660,7 +3661,7 @@ gfxFontGroup::InitTextRun(gfxContext *aContext,
         while (scriptRuns.Next(runStart, runLimit, runScript)) {
 
 #ifdef PR_LOGGING
-            if (NS_UNLIKELY(log)) {
+            if (MOZ_UNLIKELY(log)) {
                 nsAutoCString lang;
                 mStyle.language->ToUTF8String(lang);
                 uint32_t runLen = runLimit - runStart;
@@ -4955,7 +4956,7 @@ gfxTextRun::Draw(gfxContext *aContext, gfxPoint aPt, gfxFont::DrawMode aDrawMode
         ShrinkToLigatureBoundaries(&ligatureRunStart, &ligatureRunEnd);
         
         bool drawPartial = aDrawMode == gfxFont::GLYPH_FILL ||
-                           aDrawMode == gfxFont::GLYPH_PATH && aCallbacks;
+                           (aDrawMode == gfxFont::GLYPH_PATH && aCallbacks);
 
         if (drawPartial) {
             DrawPartialLigature(font, aContext, start, ligatureRunStart, &pt,

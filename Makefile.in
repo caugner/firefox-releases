@@ -46,11 +46,7 @@ tier_base_dirs += \
 endif
 
 ifdef MOZ_MEMORY
-tier_base_dirs += memory/mozjemalloc
-ifdef MOZ_JEMALLOC
-tier_base_dirs += memory/jemalloc
-endif
-tier_base_dirs += memory/build
+tier_base_dirs += memory
 endif
 ifndef MOZ_NATIVE_ZLIB
 tier_base_dirs += modules/zlib
@@ -80,7 +76,7 @@ default alldep all:: $(topsrcdir)/configure config.status
 	$(RM) -r $(DIST)/include
 	$(RM) -r $(DIST)/private
 	$(RM) -r $(DIST)/public
-	$(RM) $(DIST)/chrome.manifest
+	$(RM) $(DIST)/bin/chrome.manifest $(DIST)/bin/components/components.manifest
 	$(RM) -r _tests
 
 $(topsrcdir)/configure: $(topsrcdir)/configure.in
@@ -154,13 +150,6 @@ SYMBOL_INDEX_NAME = \
 
 buildsymbols:
 ifdef MOZ_CRASHREPORTER
-ifdef USE_ELF_HACK
-    ifeq (mobile,$(MOZ_BUILD_APP))
-		$(MAKE) -C mobile/xul/installer elfhack
-    else
-		$(MAKE) -C $(MOZ_BUILD_APP)/installer elfhack
-    endif
-endif
 	echo building symbol store
 	$(RM) -r $(DIST)/crashreporter-symbols
 	$(RM) "$(DIST)/$(SYMBOL_ARCHIVE_BASENAME).zip"
@@ -168,21 +157,20 @@ endif
 	OBJCOPY="$(OBJCOPY)" \
 	$(PYTHON) $(topsrcdir)/toolkit/crashreporter/tools/symbolstore.py \
 	  $(MAKE_SYM_STORE_ARGS)                                          \
-	  --exclude="*test*" --exclude="*Test*"                           \
 	  $(foreach dir,$(SYM_STORE_SOURCE_DIRS),-s $(dir))               \
 	  $(DUMP_SYMS_BIN)                                                \
 	  $(DIST)/crashreporter-symbols                                   \
-	  $(MAKE_SYM_STORE_PATH) >                                        \
+	  $(MAKE_SYM_STORE_PATH) | grep -iv test >                        \
 	  $(DIST)/crashreporter-symbols/$(SYMBOL_INDEX_NAME)
 	echo packing symbols
 	$(NSINSTALL) -D $(DIST)/$(PKG_PATH)
 	cd $(DIST)/crashreporter-symbols && \
-          zip -r9D "../$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip" .
+          zip -r9D "../$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip" . -x "*test*" -x "*Test*"
 	cd $(DIST)/crashreporter-symbols && \
 	grep "sym" $(SYMBOL_INDEX_NAME) > $(SYMBOL_INDEX_NAME).tmp && \
 	  mv $(SYMBOL_INDEX_NAME).tmp $(SYMBOL_INDEX_NAME)
 	cd $(DIST)/crashreporter-symbols && \
-          zip -r9D "../$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip" . -i "*.sym" -i "*.txt"
+          zip -r9D "../$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip" . -i "*.sym" -i "*.txt"  -x "*test*" -x "*Test*"
 endif # MOZ_CRASHREPORTER
 
 uploadsymbols:

@@ -62,6 +62,8 @@ class Configuration:
 
         self.enums = [e for e in parseData if e.isEnum()]
         self.dictionaries = [d for d in parseData if d.isDictionary()]
+        self.callbacks = [c for c in parseData if
+                          c.isCallback() and not c.isInterface()]
 
         # Keep the descriptor list sorted for determinism.
         self.descriptors.sort(lambda x,y: cmp(x.name, y.name))
@@ -92,8 +94,14 @@ class Configuration:
         return curr
     def getEnums(self, webIDLFile):
         return filter(lambda e: e.filename() == webIDLFile, self.enums)
-    def getDictionaries(self, webIDLFile):
+    def getDictionaries(self, webIDLFile=None):
+        if not webIDLFile:
+            return self.dictionaries
         return filter(lambda d: d.filename() == webIDLFile, self.dictionaries)
+    def getCallbacks(self, webIDLFile=None):
+        if not webIDLFile:
+            return self.callbacks
+        return filter(lambda d: d.filename() == webIDLFile, self.callbacks)
     def getDescriptor(self, interfaceName, workers):
         """
         Gets the appropriate descriptor for the given interface name
@@ -172,10 +180,14 @@ class Descriptor(DescriptorProvider):
                 headerDefault = headerDefault.replace("::", "/") + ".h"
         self.headerFile = desc.get('headerFile', headerDefault)
 
-        if self.interface.isCallback() or self.interface.isExternal():
+        self.skipGen = desc.get('skipGen', False)
+
+        if (self.interface.isCallback() or self.interface.isExternal() or
+            self.skipGen):
             if 'castable' in desc:
-                raise TypeError("%s is external or callback but has a castable "
-                                "setting" % self.interface.identifier.name)
+                raise TypeError("%s is external or callback or skipGen but has "
+                                "a castable setting" %
+                                self.interface.identifier.name)
             self.castable = False
         else:
             self.castable = desc.get('castable', True)
@@ -187,29 +199,36 @@ class Descriptor(DescriptorProvider):
 
         # If we're concrete, we need to crawl our ancestor interfaces and mark
         # them as having a concrete descendant.
-        self.concrete = desc.get('concrete', not self.interface.isExternal())
+        self.concrete = (not self.interface.isExternal() and
+                         not self.interface.isCallback() and
+                         desc.get('concrete', True))
+        operations = {
+            'IndexedGetter': None,
+            'IndexedSetter': None,
+            'IndexedCreator': None,
+            'IndexedDeleter': None,
+            'NamedGetter': None,
+            'NamedSetter': None,
+            'NamedCreator': None,
+            'NamedDeleter': None,
+            'Stringifier': None
+            }
         if self.concrete:
             self.proxy = False
-            operations = {
-                'IndexedGetter': None,
-                'IndexedSetter': None,
-                'IndexedCreator': None,
-                'IndexedDeleter': None,
-                'NamedGetter': None,
-                'NamedSetter': None,
-                'NamedCreator': None,
-                'NamedDeleter': None,
-                'Stringifier': None
-            }
             iface = self.interface
+            def addOperation(operation, m):
+                if not operations[operation]:
+                    operations[operation] = m
+            # Since stringifiers go on the prototype, we only need to worry
+            # about our own stringifier, not those of our ancestor interfaces.
+            for m in iface.members:
+                if m.isMethod() and m.isStringifier():
+                    addOperation('Stringifier', m)
             while iface:
                 for m in iface.members:
                     if not m.isMethod():
                         continue
 
-                    def addOperation(operation, m):
-                        if not operations[operation]:
-                            operations[operation] = m
                     def addIndexedOrNamedOperation(operation, m):
                         self.proxy = True
                         if m.isIndexed():
@@ -218,31 +237,39 @@ class Descriptor(DescriptorProvider):
                             assert m.isNamed()
                             operation = 'Named' + operation
                         addOperation(operation, m)
-                        
-                    if m.isStringifier():
-                        addOperation('Stringifier', m)
-                    else:
-                        if m.isGetter():
-                            addIndexedOrNamedOperation('Getter', m)
-                        if m.isSetter():
-                            addIndexedOrNamedOperation('Setter', m)
-                        if m.isCreator():
-                            addIndexedOrNamedOperation('Creator', m)
-                        if m.isDeleter():
-                            addIndexedOrNamedOperation('Deleter', m)
-                            raise TypeError("deleter specified on %s but we "
-                                            "don't support deleters yet" %
-                                            self.interface.identifier.name)
+
+                    if m.isGetter():
+                        addIndexedOrNamedOperation('Getter', m)
+                    if m.isSetter():
+                        addIndexedOrNamedOperation('Setter', m)
+                    if m.isCreator():
+                        addIndexedOrNamedOperation('Creator', m)
+                    if m.isDeleter():
+                        addIndexedOrNamedOperation('Deleter', m)
 
                 iface.setUserData('hasConcreteDescendant', True)
                 iface = iface.parent
 
             if self.proxy:
-                self.operations = operations
+                if (not operations['IndexedGetter'] and
+                    (operations['IndexedSetter'] or
+                     operations['IndexedDeleter'] or
+                     operations['IndexedCreator'])):
+                    raise SyntaxError("%s supports indexed properties but does "
+                                      "not have an indexed getter.\n%s" %
+                                      (self.interface, self.interface.location))
+                if (not operations['NamedGetter'] and
+                    (operations['NamedSetter'] or
+                     operations['NamedDeleter'] or
+                     operations['NamedCreator'])):
+                    raise SyntaxError("%s supports named properties but does "
+                                      "not have a named getter.\n%s" %
+                                      (self.interface, self.interface.location))
                 iface = self.interface
                 while iface:
                     iface.setUserData('hasProxyDescendant', True)
                     iface = iface.parent
+        self.operations = operations
 
         if self.interface.isExternal() and 'prefable' in desc:
             raise TypeError("%s is external but has a prefable setting" %
@@ -263,7 +290,10 @@ class Descriptor(DescriptorProvider):
                                 (self.interface.identifier.name, self.nativeOwnership))
         self.customTrace = desc.get('customTrace', self.workers)
         self.customFinalize = desc.get('customFinalize', self.workers)
-        self.wrapperCache = self.workers or desc.get('wrapperCache', True)
+        self.wrapperCache = (not self.interface.isCallback() and
+                             (self.workers or
+                              (self.nativeOwnership != 'owned' and
+                               desc.get('wrapperCache', True))))
 
         if not self.wrapperCache and self.prefable:
             raise TypeError("Descriptor for %s is prefable but not wrappercached" %
@@ -354,3 +384,9 @@ class Descriptor(DescriptorProvider):
             throws = member.getExtendedAttribute(throwsAttr)
         maybeAppendInfallibleToAttrs(attrs, throws)
         return attrs
+
+    def supportsIndexedProperties(self):
+        return self.operations['IndexedGetter'] is not None
+
+    def supportsNamedProperties(self):
+        return self.operations['NamedGetter'] is not None

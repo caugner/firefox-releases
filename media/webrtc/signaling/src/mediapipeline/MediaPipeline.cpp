@@ -45,7 +45,7 @@ nsresult MediaPipeline::Init() {
   MOZ_ASSERT(rtp_transport_);
 
   nsresult res;
-  
+
   // Look to see if the transport is ready
   rtp_transport_->SignalStateChange.connect(this,
                                             &MediaPipeline::StateChange);
@@ -72,6 +72,8 @@ nsresult MediaPipeline::Init() {
 // the pipeline on the main thread.
 void MediaPipeline::DetachTransportInt() {
   transport_->Detach();
+  rtp_transport_ = NULL;
+  rtcp_transport_ = NULL;
 }
 
 void MediaPipeline::DetachTransport() {
@@ -393,10 +395,10 @@ bool MediaPipeline::IsRtp(const unsigned char *data, size_t len) {
   // Anything outside this range is RTP.
   if ((data[1] < 192) || (data[1] > 207))
     return true;
-  
+
   if (data[1] == 192)  // FIR
     return false;
-  
+
   if (data[1] == 193)  // NACK, but could also be RTP. This makes us sad
     return true;       // but it's how webrtc.org behaves.
 
@@ -404,7 +406,7 @@ bool MediaPipeline::IsRtp(const unsigned char *data, size_t len) {
     return true;
 
   if (data[1] == 195)  // IJ.
-    return false;   
+    return false;
 
   if ((data[1] > 195) && (data[1] < 200))  // the > 195 is redundant
     return true;
@@ -433,9 +435,9 @@ void MediaPipeline::PacketReceived(TransportLayer *layer,
 
 nsresult MediaPipelineTransmit::Init() {
   // TODO(ekr@rtfm.com): Check for errors
-  MOZ_MTLOG(PR_LOG_DEBUG, "Attaching pipeline to stream " 
+  MOZ_MTLOG(PR_LOG_DEBUG, "Attaching pipeline to stream "
             << static_cast<void *>(stream_) <<
-            " conduit type=" << 
+            " conduit type=" <<
             (conduit_->type() == MediaSessionConduit::AUDIO ?
              "audio" : "video") <<
             " hints=" << stream_->GetHintContents());
@@ -579,25 +581,15 @@ void MediaPipelineTransmit::ProcessAudioChunk(AudioSessionConduit *conduit,
 
   if (chunk.mBuffer) {
     switch(chunk.mBufferFormat) {
-      case nsAudioStream::FORMAT_U8:
-      case nsAudioStream::FORMAT_FLOAT32:
+      case AUDIO_FORMAT_FLOAT32:
         MOZ_MTLOG(PR_LOG_ERROR, "Can't process audio except in 16-bit PCM yet");
         MOZ_ASSERT(PR_FALSE);
         return;
         break;
-      case nsAudioStream::FORMAT_S16:
+      case AUDIO_FORMAT_S16:
         {
-          // Code based on nsAudioStream
           const short* buf = static_cast<const short *>(chunk.mBuffer->Data());
-
-          int32_t volume = int32_t((1 << 16) * chunk.mVolume);
-          for (uint32_t i = 0; i < chunk.mDuration; ++i) {
-            int16_t s = buf[i];
-#if defined(IS_BIG_ENDIAN)
-            s = ((s & 0x00ff) << 8) | ((s & 0xff00) >> 8);
-#endif
-            samples[i] = short((int32_t(s) * volume) >> 16);
-          }
+          ConvertAudioSamplesWithScale(buf, samples, chunk.mDuration, chunk.mVolume);
         }
         break;
       default:
@@ -622,6 +614,10 @@ void MediaPipelineTransmit::ProcessVideoChunk(VideoSessionConduit *conduit,
                                               VideoChunk& chunk) {
   // We now need to send the video frame to the other side
   layers::Image *img = chunk.mFrame.GetImage();
+  if (!img) {
+    // segment.AppendFrame() allows null images, which show up here as null
+    return;
+  }
 
   ImageFormat format = img->GetFormat();
 
@@ -637,7 +633,7 @@ void MediaPipelineTransmit::ProcessVideoChunk(VideoSessionConduit *conduit,
       static_cast<const layers::PlanarYCbCrImage *>(img));
 
   // Big-time assumption here that this is all contiguous data coming
-  // from getUserMedia or other sources. 
+  // from getUserMedia or other sources.
   const layers::PlanarYCbCrImage::Data *data = yuv->GetData();
 
   uint8_t *y = data->mYChannel;
@@ -726,7 +722,7 @@ NotifyPull(MediaStreamGraph* graph, StreamTime total) {
     AudioSegment segment;
     segment.Init(1);
     segment.AppendFrames(samples.forget(), samples_length,
-                         0, samples_length, nsAudioStream::FORMAT_S16);
+                         0, samples_length, AUDIO_FORMAT_S16);
 
     char buf[32];
     PR_snprintf(buf, 32, "%p", source);

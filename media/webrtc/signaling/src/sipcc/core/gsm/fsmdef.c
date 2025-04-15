@@ -1,44 +1,9 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is the Cisco Systems SIP Stack.
- *
- * The Initial Developer of the Original Code is
- * Cisco Systems (CSCO).
- * Portions created by the Initial Developer are Copyright (C) 2002
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Enda Mannion <emannion@cisco.com>
- *  Suhas Nandakumar <snandaku@cisco.com>
- *  Ethan Hugg <ehugg@cisco.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <limits.h>
-
+#include "CCProvider.h"
 #include "cpr_types.h"
 #include "cpr_stdlib.h"
 #include "cpr_stdio.h"
@@ -72,6 +37,7 @@
 #include "platform_api.h"
 #include "peer_connection_types.h"
 #include "prlog.h"
+#include "sessionHash.h"
 
 extern void update_kpmlconfig(int kpmlVal);
 extern boolean g_disable_mass_reg_debug_print;
@@ -202,512 +168,512 @@ static sm_function_t fsmdef_function_table[FSMDEF_S_MAX][CC_MSG_MAX] =
 {
 /* FSMDEF_S_IDLE ------------------------------------------------------------ */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_idle_setup,       // New incoming
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_release_complete,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_idle_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_idle_offhook,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_default,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_idle_offhook,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_idle_dialstring,  // new outgoing
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_idle_setup,       // New incoming
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_release_complete,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_idle_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_idle_offhook,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_default,
+    /* CC_MSG_LINE             */ fsmdef_ev_idle_offhook,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_idle_dialstring,  // new outgoing
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_COLLECT_INFO ---------------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_collectinginfo_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_collectinginfo_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_default,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_digit_begin,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_dialstring,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_collectinginfo_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_collectinginfo_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_default,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_digit_begin,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_dialstring,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_CALL_SENT ------------------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_proceeding,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_out_alerting,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_connected,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_callsent_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_callsent_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_offhook,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_proceeding,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_out_alerting,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_connected,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_callsent_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_callsent_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_offhook,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_OUTGOING_PROCEEDING --------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_out_alerting,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_connected,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_callsent_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_callsent_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_offhook,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_out_alerting,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_connected,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_callsent_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_callsent_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_offhook,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_KPML_COLLECT_INFO ----------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_out_alerting,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_connected,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_callsent_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_collectinginfo_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_default,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_digit_begin,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_out_alerting,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_connected,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_callsent_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_collectinginfo_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_default,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_digit_begin,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_OUTGOING_ALERTING ----------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_out_alerting,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_connected,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_callsent_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_callsent_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_offhook,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_out_alerting,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_connected,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_callsent_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_callsent_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_offhook,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_INCOMING_ALERTING ----------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_inalerting_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_inalerting_offhook,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_inalerting_offhook,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_inalerting_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_inalerting_offhook,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_inalerting_offhook,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_CONNECTING ------------------------------------------------------ */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_connected_ack,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_connecting_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_offhook,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_connected_line,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_connected_ack,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_connecting_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_offhook,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_connected_line,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_JOINING --------------------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_joining_connected_ack,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_connecting_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_joining_offhook,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_connected_line,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_joining_connected_ack,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_connecting_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_joining_offhook,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_connected_line,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_CONNECTED ------------------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_connected_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_offhook,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_connected_line,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_connected_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_offhook,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_connected_line,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_CONNECTED_MEDIA_PEND  ------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_connected_media_pend_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_connected_media_pend_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_offhook,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_connected_line,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_connected_media_pend_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_connected_media_pend_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_offhook,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_connected_line,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_RELEASING ------------------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_releasing_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_release_complete,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_releasing_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_default,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_releasing_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_connected_line,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_releasing_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_release_complete,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_releasing_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_default,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_releasing_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_connected_line,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_HOLD_PENDING ---------------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_holding_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_hold_pending_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_hold_pending_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_default,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_holding_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_hold_pending_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_hold_pending_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_default,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_HOLDING --------------------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_holding_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_holding_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_holding_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_holding_offhook,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_holding_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_holding_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_holding_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_holding_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_holding_offhook,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_holding_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_RESUME_PENDING -------------------------------------------------- */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_resume_pending_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_resume_pending_feature_ack,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_default,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_resume_pending_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_resume_pending_feature_ack,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_default,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     },
 
 /* FSMDEF_S_PRESERVED  ------------------------------------------------------ */
     {
-    /* FSMDEF_E_SETUP            */ fsmdef_ev_default,
-    /* FSMDEF_E_SETUP_ACK        */ fsmdef_ev_default,
-    /* FSMDEF_E_PROCEEDING       */ fsmdef_ev_default,
-    /* FSMDEF_E_ALERTING         */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED        */ fsmdef_ev_default,
-    /* FSMDEF_E_CONNECTED_ACK    */ fsmdef_ev_default,
-    /* FSMDEF_E_RELEASE          */ fsmdef_ev_release,
-    /* FSMDEF_E_RELEASE_COMPLETE */ fsmdef_ev_default,
-    /* FSMDEF_E_FEATURE          */ fsmdef_ev_preserved_feature,
-    /* FSMDEF_E_FEATURE_ACK      */ fsmdef_ev_default,
-    /* FSMDEF_E_OFFHOOK          */ fsmdef_ev_default,
-    /* FSMDEF_E_ONHOOK           */ fsmdef_ev_onhook,
-    /* FSMDEF_E_LINE             */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_BEGIN      */ fsmdef_ev_default,
-    /* FSMDEF_E_DIGIT_END        */ fsmdef_ev_default,
-    /* FSMDEF_E_DIALSTRING       */ fsmdef_ev_default,
-    /* FSMDEF_E_MWI              */ fsmdef_ev_default,
-    /* FSMDEF_E_SESSION_AUDIT    */ fsmdef_ev_session_audit,
-    /* FSMDEF_E_CREATEOFFER      */ fsmdef_ev_createoffer,
-    /* FSMDEF_E_CREATEANSWER     */ fsmdef_ev_createanswer,
-    /* FSMDEF_E_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
-    /* FSMDEF_E_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
-    /* FSMDEF_E_LOCALDESC        */ fsmdef_ev_localdesc,
-    /* FSMDEF_E_REMOTEDESC       */ fsmdef_ev_remotedesc,
-    /* FSMDEF_E_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
-    /* FSMDEF_E_ADDSTREAM        */ fsmdef_ev_addstream,
-    /* FSMDEF_E_REMOVESTREAM     */ fsmdef_ev_removestream,
-    /* FAMDEF_E_ADDCANDIDATE     */ fsmdef_ev_addcandidate
+    /* CC_MSG_SETUP            */ fsmdef_ev_default,
+    /* CC_MSG_SETUP_ACK        */ fsmdef_ev_default,
+    /* CC_MSG_PROCEEDING       */ fsmdef_ev_default,
+    /* CC_MSG_ALERTING         */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED        */ fsmdef_ev_default,
+    /* CC_MSG_CONNECTED_ACK    */ fsmdef_ev_default,
+    /* CC_MSG_RELEASE          */ fsmdef_ev_release,
+    /* CC_MSG_RELEASE_COMPLETE */ fsmdef_ev_default,
+    /* CC_MSG_FEATURE          */ fsmdef_ev_preserved_feature,
+    /* CC_MSG_FEATURE_ACK      */ fsmdef_ev_default,
+    /* CC_MSG_OFFHOOK          */ fsmdef_ev_default,
+    /* CC_MSG_ONHOOK           */ fsmdef_ev_onhook,
+    /* CC_MSG_LINE             */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_BEGIN      */ fsmdef_ev_default,
+    /* CC_MSG_DIGIT_END        */ fsmdef_ev_default,
+    /* CC_MSG_DIALSTRING       */ fsmdef_ev_default,
+    /* CC_MSG_MWI              */ fsmdef_ev_default,
+    /* CC_MSG_SESSION_AUDIT    */ fsmdef_ev_session_audit,
+    /* CC_MSG_CREATEOFFER      */ fsmdef_ev_createoffer,
+    /* CC_MSG_CREATEANSWER     */ fsmdef_ev_createanswer,
+    /* CC_MSG_SETLOCALDESC     */ fsmdef_ev_setlocaldesc,
+    /* CC_MSG_SETREMOTEDESC    */ fsmdef_ev_setremotedesc,
+    /* CC_MSG_LOCALDESC        */ fsmdef_ev_localdesc,
+    /* CC_MSG_REMOTEDESC       */ fsmdef_ev_remotedesc,
+    /* CC_MSG_SETPEERCONNECTION */fsmdef_ev_setpeerconnection,
+    /* CC_MSG_ADDSTREAM        */ fsmdef_ev_addstream,
+    /* CC_MSG_REMOVESTREAM     */ fsmdef_ev_removestream,
+    /* CC_MSG_ADDCANDIDATE     */ fsmdef_ev_addcandidate
     }
 };
 
@@ -800,19 +766,19 @@ fsmdef_check_if_chaperone_call_exist (void)
 }
 
 
-void fsmdef_get_rtp_stat (fsmdef_dcb_t *dcb , cc_kfact_t *kfactor) 
+void fsmdef_get_rtp_stat (fsmdef_dcb_t *dcb , cc_kfact_t *kfactor)
 {
     static const char fname[] ="fsmdef_get_rtp_stat";
-    
+
     int      call_stats_flag;
     fsmdef_media_t *media;
-    media = gsmsdp_find_audio_media(dcb);    
+    media = gsmsdp_find_audio_media(dcb);
 
     if (!media) {
         GSM_ERR_MSG(GSM_F_PREFIX"dcb media pointer invalid\n", fname);
         return;
     }
-    
+
     memset(kfactor, 0, sizeof(cc_kfact_t));
     config_get_value(CFGID_CALL_STATS, &call_stats_flag, sizeof(call_stats_flag));
 
@@ -837,7 +803,7 @@ void fsmdef_get_rtp_stat (fsmdef_dcb_t *dcb , cc_kfact_t *kfactor)
  * @pre     (dcb not_eq NULL)
  */
 static void
-fsmdef_update_media_hold_status (fsmdef_dcb_t *dcb, fsmdef_media_t *media, 
+fsmdef_update_media_hold_status (fsmdef_dcb_t *dcb, fsmdef_media_t *media,
                                  boolean set)
 {
     fsmdef_media_t *start_media, *end_media;
@@ -880,7 +846,7 @@ fsmdef_all_media_are_local_hold (fsmdef_dcb_t *dcb)
     fsmdef_media_t *media;
     /*
      * Check the local hold status of each media to see if the
-     * media is already locally held or not. 
+     * media is already locally held or not.
      */
     GSMSDP_FOR_ALL_MEDIA(media, dcb) {
         if (!GSMSDP_MEDIA_ENABLED(media)) {
@@ -916,10 +882,10 @@ fsmdef_num_media_in_local_hold (fsmdef_dcb_t *dcb)
             continue;
         }
         if (FSM_CHK_FLAGS(media->hold, FSM_HOLD_LCL)) {
-            num_local_hold++;    
+            num_local_hold++;
         }
     }
-    return (num_local_hold); 
+    return (num_local_hold);
 }
 
 /**
@@ -993,7 +959,7 @@ fsmdef_init_dcb (fsmdef_dcb_t *dcb, callid_t call_id,
         dcb->caller_id.called_name   = strlib_empty();
         dcb->caller_id.called_number = strlib_empty();
         dcb->caller_id.orig_rpid_number = strlib_empty();
-        
+
         dcb->inbound = FALSE;
 
         break;
@@ -1011,7 +977,7 @@ fsmdef_init_dcb (fsmdef_dcb_t *dcb, callid_t call_id,
         dcb->caller_id.orig_called_name = strlib_empty();
         dcb->caller_id.orig_called_number = strlib_empty();
         dcb->caller_id.orig_rpid_number = strlib_empty();
-        
+
         sip_config_get_display_name(line, name, sizeof(name));
         dcb->caller_id.called_name =
             strlib_update(dcb->caller_id.called_name, name);
@@ -1128,7 +1094,7 @@ fsmdef_init_dcb (fsmdef_dcb_t *dcb, callid_t call_id,
     }
 
     /* clear all bit flags */
-    dcb->flags = 0; 
+    dcb->flags = 0;
     dcb->onhook_received = FALSE;
 
     dcb->cur_video_avail = SDP_DIRECTION_INACTIVE;
@@ -1142,7 +1108,7 @@ fsmdef_init_dcb (fsmdef_dcb_t *dcb, callid_t call_id,
     }
 
     gsmsdp_init_media_list(dcb);
-    
+
     dcb->join_call_id = CC_NO_CALL_ID;
     dcb->callref = 0;
 
@@ -1173,7 +1139,7 @@ fsmdef_free_dcb (fsmdef_dcb_t *dcb)
     strlib_free(dcb->caller_id.orig_called_name);
     strlib_free(dcb->caller_id.orig_called_number);
     strlib_free(dcb->caller_id.orig_rpid_number);
-    
+
     /* Cancel any existing error onhook timer */
     if (dcb->err_onhook_tmr) {
         (void) cprCancelTimer(dcb->err_onhook_tmr);
@@ -1210,7 +1176,7 @@ fsmdef_free_dcb (fsmdef_dcb_t *dcb)
      * Cache random numbers for SRTP keys
      */
     gsmsdp_cache_crypto_keys();
-    
+
 }
 
 void
@@ -1225,7 +1191,11 @@ fsmdef_free_cb (fim_icb_t *icb, callid_t call_id)
             fcb = dcb->fcb;
             fsmdef_init_dcb(dcb, CC_NO_CALL_ID, FSMDEF_CALL_TYPE_NONE,
                             NULL, LSM_NO_LINE, NULL);
-            fsm_init_fcb(fcb, CC_NO_CALL_ID, FSMDEF_NO_DCB, FSM_TYPE_NONE);
+            /* fsmdef_init_dcb(...,NULL) will always set the fcb ptr to NULL,
+               so if fsmdef_free_cb were called on that we'd have fcb==NULL here */
+            if (fcb != NULL) {
+              fsm_init_fcb(fcb, CC_NO_CALL_ID, FSMDEF_NO_DCB, FSM_TYPE_NONE);
+            }
         } else {
 
             fcb = fsm_get_fcb_by_call_id_and_type(call_id, FSM_TYPE_DEF);
@@ -1361,8 +1331,8 @@ fsmdef_get_active_call_cnt (callid_t callId)
  * return the dcbs and count of calls that are ringing and
  * are in error state not including the given call_id
  *
- * @param pointer to dcbs array        
- * @param call_id that should be ignored from search         
+ * @param pointer to dcbs array
+ * @param call_id that should be ignored from search
  *
  * @return  int number of ringing or error state calls
  *
@@ -1415,9 +1385,9 @@ void fsmdef_call_cc_state_dialing (fsmdef_dcb_t *dcb, boolean suppress)
   } else {
      data.play_dt = FALSE;
   }
- 
+
   data.suppress_stutter = suppress;
-  
+
   cc_call_state(dcb->call_id, dcb->line, CC_STATE_DIALING,
                           (cc_state_data_t *)(&data));
 }
@@ -1500,9 +1470,9 @@ boolean fsmdef_are_join_calls_on_same_line (line_t line)
  *
  * Handles media capability update feature event from platform when
  * media stream capability changes.
- * 
+ *
  * @param[in]msg - pointer to the cc_feature_t.
- * 
+ *
  * @return  None.
  *
  * @pre     (msg not_eq NULL)
@@ -1517,17 +1487,17 @@ fsmdef_update_media_cap_feature_event (cc_feature_t *msg)
     FSM_DEBUG_SM(DEB_L_C_F_PREFIX"\n", DEB_L_C_F_PREFIX_ARGS(FSM, msg->line, msg->call_id, fname));
 
     /*
-     * Find the connected call to send the media capability update 
-     * event to. There can be more than one call chains in 
+     * Find the connected call to send the media capability update
+     * event to. There can be more than one call chains in
      * connected state for an example, a call that participates in
      * local conference, barged, monitored. All calls that
-     * are active are sent the update event. Each call leg will handle 
+     * are active are sent the update event. Each call leg will handle
      * the event.
-     * 
+     *
      */
     FSM_FOR_ALL_CBS(dcb, fsmdef_dcbs, FSMDEF_MAX_DCBS) {
         if (dcb->call_id != CC_NO_CALL_ID) {
-            fcb = dcb->fcb; 
+            fcb = dcb->fcb;
             if ((fcb != NULL) && (fcb->state == FSMDEF_S_RESUME_PENDING ||
                                 fcb->state == FSMDEF_S_CONNECTED)) {
                 cc_int_feature(CC_SRC_GSM, CC_SRC_GSM, dcb->call_id,
@@ -1615,11 +1585,11 @@ fsmdef_find_and_hold_connected_call (callid_t call_id, boolean *wait,
 
 /*
  * Function  post a event to end the call which are in ringing
- * reorder or busy and connecting state. This would indicate call function to 
+ * reorder or busy and connecting state. This would indicate call function to
  * wait on the existing event.
  *
- * @param call_id that should be ignored from search         
- * @param pointer to boolean to indicate if the caller has to wait         
+ * @param call_id that should be ignored from search
+ * @param pointer to boolean to indicate if the caller has to wait
  *
  * @return  none
  *
@@ -1654,8 +1624,8 @@ fsmdef_find_and_handle_ring_connecting_releasing_calls (callid_t call_id, boolea
         }
         else if (act_dcb->fcb->state == FSMDEF_S_CONNECTING) {
             /* If the call is in connecting state, then wait till SIP
-             * response to get the call in connected state. 
-             * The call can be put on hold only when call is connected. 
+             * response to get the call in connected state.
+             * The call can be put on hold only when call is connected.
              */
             *wait = TRUE;
         }
@@ -1787,7 +1757,7 @@ fsmdef_get_cause (boolean data_valid, cc_feature_data_t *data)
  *
  *                    Otherwise, it cleans up dcb and releases fcb and
  *                    return SM_RC_CLEANUP to the caller.
- *  
+ *
  *                    If the SM_RC_CLEANUP is returned, the caller should
  *                    terminate any access or perform any operation
  *                    afterward.
@@ -1987,7 +1957,7 @@ fsmdef_compare_caller_id (cc_caller_id_t *dest_caller_id,
                                         src_caller_id->last_redirect_number)) {
         return (TRUE);
     }
-    
+
     if (fsmdef_compare_caller_id_string(dest_caller_id->orig_rpid_number,
                                         src_caller_id->orig_rpid_number)) {
         return (TRUE);
@@ -2072,16 +2042,16 @@ fsmdef_update_callinfo (fsm_fcb_t *fcb, cc_feature_t *msg)
      */
     fsmdef_update_callinfo_security_status(dcb, &feat_data->call_info);
 
-    /*	
-     * Update call policy	
-     */	
-    if (feat_data->call_info.feature_flag & CC_POLICY) {	
-        if (dcb->policy != feat_data->call_info.policy) {	
-	    dcb->policy = feat_data->call_info.policy;	
-	    dcb->ui_update_required = TRUE;	
-	}	
+    /*
+     * Update call policy
+     */
+    if (feat_data->call_info.feature_flag & CC_POLICY) {
+        if (dcb->policy != feat_data->call_info.policy) {
+	    dcb->policy = feat_data->call_info.policy;
+	    dcb->ui_update_required = TRUE;
+	}
     }
-    
+
     /*
      * Save orientation so that UI call update can be done at
      * any time that UI needs to be updated.
@@ -2110,7 +2080,7 @@ fsmdef_update_callinfo (fsm_fcb_t *fcb, cc_feature_t *msg)
         /*
          * Only perform a UI update if something changed.
          */
-        if (dcb->ui_update_required == TRUE 
+        if (dcb->ui_update_required == TRUE
            || dcb->spoof_ringout_requested == TRUE) {
 
             action_data.update_ui.action = CC_UPDATE_CALLER_INFO;
@@ -2144,23 +2114,23 @@ fsmdef_update_callinfo (fsm_fcb_t *fcb, cc_feature_t *msg)
 
 /**
  *  Function: fsmdef_set_feature_timer
- *  
+ *
  *  Description: This function is called to set (start) timer for a
  *    given timer. The context of the timer is set so that upon
  *    expiration the corresponding context (dcb) can be obtained.
  *
- *  Parameters: 
- *    dcb      - pointer to the fsmdef_dcb_t. The caller must ensure 
+ *  Parameters:
+ *    dcb      - pointer to the fsmdef_dcb_t. The caller must ensure
  *               dcb is not NULL.
  *    timer    - pointer to cprTimer_t. The caller must ensure that
- *               timer is not NULL.  
+ *               timer is not NULL.
  *    duration - the time duration for the timer to be set.
  *
- *  Returns: 
+ *  Returns:
  *    N/A.
  */
 static void
-fsmdef_set_feature_timer (fsmdef_dcb_t *dcb, cprTimer_t *timer, 
+fsmdef_set_feature_timer (fsmdef_dcb_t *dcb, cprTimer_t *timer,
                           uint32_t duration)
 {
     static const char fname[] = "fsmdef_set_feature_timer";
@@ -2271,29 +2241,29 @@ fsmdef_ev_default_feature_ack (sm_event_t *event)
             dcb->selected = FALSE;
             g_numofselected_calls--;
             FSM_DEBUG_SM(DEB_L_C_F_PREFIX"call is unselected and number of selected \
-                          calls on the phone is %d\n", 
+                          calls on the phone is %d\n",
 						  DEB_L_C_F_PREFIX_ARGS(FSM, dcb->line, msg->call_id, fname),
                           g_numofselected_calls);
-            
+
         } else {
             dcb->selected = TRUE;
-            if ((g_b2bjoin_pending == FALSE) && 
+            if ((g_b2bjoin_pending == FALSE) &&
                 (dcb->active_feature == CC_FEATURE_B2B_JOIN)) {
                 g_b2bjoin_pending = TRUE;
                 g_b2bjoin_callid  = dcb->call_id;
             }
             g_numofselected_calls++;
             FSM_DEBUG_SM(DEB_L_C_F_PREFIX"call is selected and number of selected \
-                          calls on the phone is %d\n", 
+                          calls on the phone is %d\n",
 						  DEB_L_C_F_PREFIX_ARGS(FSM, dcb->line, dcb->call_id, fname),
-                          g_numofselected_calls);            
+                          g_numofselected_calls);
         }
         ui_call_selected(dcb->line, lsm_get_ui_id(dcb->call_id), (dcb->selected)?CC_DIALOG_LOCKED:CC_DIALOG_UNLOCKED);
 
     } else if (dcb->active_feature != ftr_id) {
         // check if we are getting feature_ack for the active feature
         FSM_DEBUG_SM(DEB_L_C_F_PREFIX"feature_ack rcvd for %s but %s is active\n",
-                     DEB_L_C_F_PREFIX_ARGS(FSM, dcb->line, dcb->call_id, fname), 
+                     DEB_L_C_F_PREFIX_ARGS(FSM, dcb->line, dcb->call_id, fname),
 					 cc_feature_name(ftr_id), cc_feature_name(dcb->active_feature));
 
     }
@@ -2331,7 +2301,7 @@ fsmdef_sm_ignore_src (fsm_fcb_t *fcb, int fname, cc_srcs_t src_id)
  *
  * Timer is started immediately after the call error. This function is called
  * when there is a timeout event generated by the timer .
- * 
+ *
  * @param[in] data    The gsm ID (callid_t) of the call onhook timeout
  *                    has occured.
  *
@@ -2369,7 +2339,7 @@ fsmdef_error_onhook_timeout (void *data)
 /**
  *  Function: fsmdef_feature_timer_timeout
  *
- *  Description: This function is called when receives time out 
+ *  Description: This function is called when receives time out
  *    notification. The function then converts the timer event
  *    into the CCAPI event suitable for GSM's call state machine.
  *
@@ -2380,7 +2350,7 @@ fsmdef_error_onhook_timeout (void *data)
  *
  *  Returns:
  *    NULL or
- *    pointer to the cc_feature_t. 
+ *    pointer to the cc_feature_t.
  */
 void *
 fsmdef_feature_timer_timeout (cc_features_t feature_id, void *data)
@@ -2405,7 +2375,7 @@ fsmdef_feature_timer_timeout (cc_features_t feature_id, void *data)
         FSM_DEBUG_SM(get_debug_string(FSMDEF_DBG_INVALID_DCB), fname);
         return (NULL);
     }
-    
+
     if (dcb->inband_received && feature_id == CC_FEATURE_RINGBACK_DELAY_TIMER_EXP) {
         /* Double check if inbound ringback indication is received*/
         FSM_DEBUG_SM(get_debug_string(FSMDEF_DBG1), 0, 0, fname, "inband received!");
@@ -2485,7 +2455,7 @@ fsmdef_ev_idle_setup (sm_event_t *event)
     }
 
     FSM_DEBUG_SM(DEB_L_C_F_PREFIX"called_number= %s calling_number= %s\n",
-		DEB_L_C_F_PREFIX_ARGS(FSM, msg->line, msg->call_id, fname), 
+		DEB_L_C_F_PREFIX_ARGS(FSM, msg->line, msg->call_id, fname),
 		msg->caller_id.called_number, msg->caller_id.calling_number);
 
     //idle = lsm_is_phone_idle();
@@ -2527,7 +2497,7 @@ fsmdef_ev_idle_setup (sm_event_t *event)
      * avoid updating UI when call info is received in "ACK" which
      * shoule be "from" for typicall incoming call.
      */
-    dcb->orientation = CC_ORIENTATION_FROM; 
+    dcb->orientation = CC_ORIENTATION_FROM;
 
     switch (cause) {
     case CC_CAUSE_OK:
@@ -2634,14 +2604,14 @@ fsmdef_ev_idle_setup (sm_event_t *event)
 
         data = &msg->call_info.data.call_info_feat_data;
         if (data->feature_flag & CC_CALL_INSTANCE) {
-            if (data->caller_id.call_instance_id != 0 && 
-                data->caller_id.call_instance_id != 
+            if (data->caller_id.call_instance_id != 0 &&
+                data->caller_id.call_instance_id !=
                                dcb->caller_id.call_instance_id) {
                 if (dcb->caller_id.call_instance_id != 0) {
-                    fsmutil_free_ci_id(dcb->caller_id.call_instance_id, 
+                    fsmutil_free_ci_id(dcb->caller_id.call_instance_id,
                                        dcb->line);
                 }
-                dcb->caller_id.call_instance_id = 
+                dcb->caller_id.call_instance_id =
                     data->caller_id.call_instance_id;
                 fsmutil_set_ci_id(dcb->caller_id.call_instance_id, dcb->line);
             }
@@ -2650,7 +2620,7 @@ fsmdef_ev_idle_setup (sm_event_t *event)
         if (data->feature_flag & CC_SECURITY) {
             FSM_SET_SECURITY_STATUS(dcb, data->security);
         }
-	
+
         if (data->feature_flag & CC_POLICY) {
             FSM_SET_POLICY(dcb, data->policy);
         }
@@ -2728,7 +2698,7 @@ fsmdef_ev_idle_setup (sm_event_t *event)
             (msg->call_info.data.call_info_feat_data.dusting == TRUE)) {
             lsm_set_lcb_dusting_call(call_id);
         }
-		
+
         cc_call_state(dcb->call_id, dcb->line, CC_STATE_ALERTING,
                       FSMDEF_CC_CALLER_ID);
         /*
@@ -2799,7 +2769,7 @@ fsmdef_dialstring (fsm_fcb_t *fcb, const char *dialstring,
         break;
     }
 
-    cause = gsmsdp_create_local_sdp(dcb, FALSE);
+    cause = gsmsdp_create_local_sdp(dcb, FALSE, TRUE, TRUE, TRUE, TRUE);
     if (cause != CC_CAUSE_OK) {
         FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
         /* Force clean up call without sending release */
@@ -2813,7 +2783,7 @@ fsmdef_dialstring (fsm_fcb_t *fcb, const char *dialstring,
         /* Force clean up call without sending release */
         return (fsmdef_release(fcb, cause, FALSE));
     }
-	
+
     /*
      * Since we are sending setup to UI we will also have to send
      * release to it to for sip stack to clean up the call
@@ -2886,8 +2856,8 @@ fsmdef_ev_dialstring (sm_event_t *event)
 /**
  * fsmdef_ev_createoffer
  *
- * Generates Offer SDP 
- *  
+ * Generates Offer SDP
+ *
  */
 static sm_rcs_t
 fsmdef_ev_createoffer (sm_event_t *event) {
@@ -2904,20 +2874,34 @@ fsmdef_ev_createoffer (sm_event_t *event) {
     char                *ufrag = NULL;
     char                *ice_pwd = NULL;
     short               vcm_res;
+    session_data_t      *sess_data_p = NULL;
 
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
-    
+
     config_get_value(CFGID_SDPMODE, &sdpmode, sizeof(sdpmode));
     if (!sdpmode) {
       /* Force clean up call without sending release */
       return (fsmdef_release(fcb, cause, FALSE));
     }
-    
+
     if (dcb == NULL) {
       FSM_DEBUG_SM(DEB_F_PREFIX"dcb is NULL.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
       return SM_RC_CLEANUP;
     }
-    
+
+   if (msg->data.session.has_constraints) {
+        sess_data_p = (session_data_t *)findhash(msg->data.session.sessionid);
+        if (sess_data_p) {
+            gsmsdp_process_cap_constraints(dcb, sess_data_p->cc_constraints);
+
+            if (0 > delhash(msg->data.session.sessionid)) {
+                FSM_DEBUG_SM (DEB_F_PREFIX"failed to delete hash sessid=0x%08x\n",
+                DEB_F_PREFIX_ARGS(SIP_CC_PROV, __FUNCTION__), msg->data.session.sessionid);
+            }
+            cpr_free(sess_data_p);
+        }
+    }
+
     vcmGetIceParams(dcb->peerconnection, &ufrag, &ice_pwd);
     if (!ufrag || !ice_pwd) {
       ui_create_offer(evCreateOfferError, line, call_id, dcb->caller_id.call_instance_id, NULL);
@@ -2948,19 +2932,19 @@ fsmdef_ev_createoffer (sm_event_t *event) {
         return SM_RC_END;
     }
 
-    cause = gsmsdp_create_local_sdp(dcb, FALSE);
+    cause = gsmsdp_create_local_sdp(dcb, FALSE, TRUE, TRUE, TRUE, TRUE);
     if (cause != CC_CAUSE_OK) {
         ui_create_offer(evCreateOfferError, line, call_id, dcb->caller_id.call_instance_id, NULL);
         FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
-        return (fsmdef_release(fcb, cause, FALSE));	
+        return (fsmdef_release(fcb, cause, FALSE));
     }
-    
+
     cause = gsmsdp_encode_sdp_and_update_version(dcb, &msg_body);
     if (cause != CC_CAUSE_OK) {
         ui_create_offer(evCreateOfferError, line, call_id, dcb->caller_id.call_instance_id, NULL);
         FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
         return (fsmdef_release(fcb, cause, FALSE));
-    }     
+    }
 
     /* Pass offer SDP back to UI */
     ui_create_offer(evCreateOffer, line, call_id, dcb->caller_id.call_instance_id, msg_body.parts[0].body);
@@ -2973,7 +2957,7 @@ fsmdef_ev_createoffer (sm_event_t *event) {
  * fsmdef_ev_createanswer
  *
  * Generates Answer SDP
- *  
+ *
  */
 static sm_rcs_t
 fsmdef_ev_createanswer (sm_event_t *event) {
@@ -2984,27 +2968,44 @@ fsmdef_ev_createanswer (sm_event_t *event) {
     cc_causes_t         cause = CC_CAUSE_NORMAL;
     cc_msgbody_info_t   msg_body;
     line_t              line = msg->line;
-    callid_t            call_id = msg->call_id;	
+    callid_t            call_id = msg->call_id;
     line_t              free_line;
     int                 sdpmode = 0;
     const char          *called_number = "1234";
-    cc_causes_t         lsm_rc;	
+    cc_causes_t         lsm_rc;
     cc_msgbody_t        *part;
     uint32_t            body_length;
     char                *ufrag = NULL;
     char                *ice_pwd = NULL;
     short               vcm_res;
+    session_data_t      *sess_data_p;
+    boolean             has_audio;
+    boolean             has_video;
+    boolean             has_data;
 
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
-    
+
     config_get_value(CFGID_SDPMODE, &sdpmode, sizeof(sdpmode));
     if (!sdpmode) {
         return (fsmdef_release(fcb, cause, FALSE));
-    } 
+    }
 
     if (dcb == NULL) {
         FSM_DEBUG_SM(DEB_F_PREFIX"dcb is NULL.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
         return SM_RC_CLEANUP;
+    }
+
+    if (msg->data.session.has_constraints) {
+        sess_data_p = (session_data_t *)findhash(msg->data.session.sessionid);
+        if (sess_data_p) {
+            gsmsdp_process_cap_constraints(dcb, sess_data_p->cc_constraints);
+
+            if (0 > delhash(msg->data.session.sessionid)) {
+                FSM_DEBUG_SM (DEB_F_PREFIX"failed to delete hash sessid=0x%08x\n",
+                DEB_F_PREFIX_ARGS(SIP_CC_PROV, __FUNCTION__), msg->data.session.sessionid);
+            }
+            cpr_free(sess_data_p);
+        }
     }
 
     vcmGetIceParams(dcb->peerconnection, &ufrag, &ice_pwd);
@@ -3027,7 +3028,7 @@ fsmdef_ev_createanswer (sm_event_t *event) {
 
     sstrncpy(dcb->ice_pwd, ice_pwd, strlen(ice_pwd) + 1);
     free(ice_pwd);
-   
+
     vcm_res = vcmGetDtlsIdentity(dcb->peerconnection,
                     dcb->digest_alg, FSMDEF_MAX_DIGEST_ALG_LEN,
                     dcb->digest, FSMDEF_MAX_DIGEST_LEN);
@@ -3038,34 +3039,40 @@ fsmdef_ev_createanswer (sm_event_t *event) {
     }
 
     /*
+     * Determine what media types are offered, used to create matching local SDP
+     * for negotiation.
+     */
+    gsmsdp_get_offered_media_types(fcb, dcb->sdp, &has_audio, &has_video, &has_data);
+
+    /*
      * The sdp member of the dcb has local and remote sdp
      * this next function fills in the local part
      */
-    cause = gsmsdp_create_local_sdp(dcb, FALSE);
+    cause = gsmsdp_create_local_sdp(dcb, FALSE, has_audio, has_video, has_data, FALSE);
     if (cause != CC_CAUSE_OK) {
         ui_create_answer(evCreateAnswerError, line, call_id, dcb->caller_id.call_instance_id, NULL);
         FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
-        // Force clean up call without sending release 
-        return (fsmdef_release(fcb, cause, FALSE));	
+        // Force clean up call without sending release
+        return (fsmdef_release(fcb, cause, FALSE));
     }
 
     /* TODO(ekr@rtfm.com): The second true is because we are acting as if we are
        processing an offer. The first, however, is for an initial offer and we may
        want to set that conditionally. */
-    cause = gsmsdp_negotiate_media_lines(fcb, dcb->sdp, TRUE, TRUE, FALSE);
+    cause = gsmsdp_negotiate_media_lines(fcb, dcb->sdp, TRUE, TRUE, FALSE, TRUE);
 
     if (cause != CC_CAUSE_OK) {
         ui_create_answer(evCreateAnswerError, line, call_id, dcb->caller_id.call_instance_id, NULL);
         return (fsmdef_release(fcb, cause, FALSE));
     }
-    
+
     cause = gsmsdp_encode_sdp_and_update_version(dcb, &msg_body);
     if (cause != CC_CAUSE_OK) {
         ui_create_answer(evCreateAnswerError, line, call_id, dcb->caller_id.call_instance_id, NULL);
         FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
-        return (fsmdef_release(fcb, cause, FALSE));	
+        return (fsmdef_release(fcb, cause, FALSE));
     }
-    
+
     /* Pass SDP back to UI */
     ui_create_answer(evCreateAnswer, line, call_id, dcb->caller_id.call_instance_id, msg_body.parts[0].body);
 
@@ -3077,22 +3084,22 @@ fsmdef_ev_createanswer (sm_event_t *event) {
  * SetLocalDescription
  *
  */
-static sm_rcs_t 
+static sm_rcs_t
 fsmdef_ev_setlocaldesc(sm_event_t *event) {
     fsm_fcb_t           *fcb = (fsm_fcb_t *) event->data;
     fsmdef_dcb_t        *dcb = fcb->dcb;
-    cc_feature_t        *msg = (cc_feature_t *) event->msg; 
+    cc_feature_t        *msg = (cc_feature_t *) event->msg;
     cc_causes_t         cause = CC_CAUSE_NORMAL;
     cc_msgbody_info_t   msg_body;
     int                 action = msg->action;
     string_t            sdp = msg->sdp;
     int                 sdpmode = 0;
     callid_t            call_id = msg->call_id;
-    line_t              line = msg->line;	
-    cc_causes_t         lsm_rc;	
+    line_t              line = msg->line;
+    cc_causes_t         lsm_rc;
 
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
-    
+
     config_get_value(CFGID_SDPMODE, &sdpmode, sizeof(sdpmode));
     if (!sdpmode) {
         ui_set_local_description(evSetLocalDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETLOCALDESCERROR);
@@ -3103,15 +3110,15 @@ fsmdef_ev_setlocaldesc(sm_event_t *event) {
         FSM_DEBUG_SM(DEB_F_PREFIX"dcb is NULL.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
         return SM_RC_CLEANUP;
     }
-    
+
     if (JSEP_OFFER == action) {
         cause = gsmsdp_encode_sdp(dcb->sdp, &msg_body);
         if (cause != CC_CAUSE_OK) {
             FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
             ui_set_local_description(evSetLocalDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETLOCALDESCERROR);
-            return (SM_RC_END);	
+            return (SM_RC_END);
         }
-        
+
         /* compare and fail if different:
          * anant: Why? The JS should be able to modify the SDP. Commenting out for now (same for answer)
         if (strcmp(msg_body.parts[0].body, sdp) != 0) {
@@ -3131,7 +3138,7 @@ fsmdef_ev_setlocaldesc(sm_event_t *event) {
             ui_set_local_description(evSetLocalDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETLOCALDESCERROR);
             return (SM_RC_END);
         }
-        
+
         /* compare and fail if different
         if (strcmp(msg_body.parts[0].body, sdp) != 0) {
             ui_set_local_description(evSetLocalDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SDPCHANGED);
@@ -3140,7 +3147,7 @@ fsmdef_ev_setlocaldesc(sm_event_t *event) {
 
         FSM_SET_FLAGS(dcb->msgs_sent, FSMDEF_MSG_CONNECTED);
 
-        
+
         cc_call_state(dcb->call_id, dcb->line, CC_STATE_ANSWERED,
                       FSMDEF_CC_CALLER_ID);
 
@@ -3171,21 +3178,21 @@ fsmdef_ev_setlocaldesc(sm_event_t *event) {
          *  to handle media capability changes, needs discussion
          * fsmdef_transition_to_connected(fcb);
          */
-        fsm_change_state(fcb, __LINE__, FSMDEF_S_CONNECTED);    	
+        fsm_change_state(fcb, __LINE__, FSMDEF_S_CONNECTED);
 
     }
-    
+
     ui_set_local_description(evSetLocalDesc, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_OK);
 
     return (SM_RC_END);
 }
 
 
-/**   
+/**
  * SetRemoteDescription
  *
  */
-static sm_rcs_t 
+static sm_rcs_t
 fsmdef_ev_setremotedesc(sm_event_t *event) {
     fsm_fcb_t           *fcb = (fsm_fcb_t *) event->data;
     fsmdef_dcb_t        *dcb = fcb->dcb;
@@ -3194,17 +3201,21 @@ fsmdef_ev_setremotedesc(sm_event_t *event) {
     int                 action = msg->action;
     int                 sdpmode = 0;
     callid_t            call_id = msg->call_id;
-    line_t              line = msg->line;	
+    line_t              line = msg->line;
     cc_causes_t         lsm_rc;
     cc_msgbody_t        *part;
     uint32_t            body_length;
     cc_msgbody_info_t   msg_body;
+    boolean             has_audio;
+    boolean             has_video;
+    boolean             has_data;
 
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
     config_get_value(CFGID_SDPMODE, &sdpmode, sizeof(sdpmode));
     if (!sdpmode) {
-        ui_set_remote_description(evSetRemoteDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETREMOTEDESCERROR);
+        ui_set_remote_description(evSetRemoteDescError, line, call_id,
+            dcb->caller_id.call_instance_id, NULL, PC_SETREMOTEDESCERROR);
         return (SM_RC_END);
     }
 
@@ -3214,7 +3225,7 @@ fsmdef_ev_setremotedesc(sm_event_t *event) {
     }
 
     cc_initialize_msg_body_parts_info(&msg_body);
-    
+
     msg_body.num_parts = 1;
     msg_body.content_type = cc_content_type_SDP;
     part = &msg_body.parts[0];
@@ -3228,27 +3239,36 @@ fsmdef_ev_setremotedesc(sm_event_t *event) {
 
     if (JSEP_OFFER == action) {
 
+        cause = gsmsdp_process_offer_sdp(fcb, &msg_body, TRUE);
+        if (cause != CC_CAUSE_OK) {
+            ui_set_remote_description(evSetRemoteDescError, line, call_id,
+                dcb->caller_id.call_instance_id, NULL, PC_SETREMOTEDESCERROR);
+            return (SM_RC_END);
+        }
+
+        /*
+         * Determine what media types are offered, used to create matching local SDP
+         * for negotiation.
+         */
+        gsmsdp_get_offered_media_types(fcb, dcb->sdp, &has_audio, &has_video, &has_data);
+
         /*
          * The sdp member of the dcb has local and remote sdp
          * this next function fills in the local part
          */
-        cause = gsmsdp_create_local_sdp(dcb, TRUE);
+        cause = gsmsdp_create_local_sdp(dcb, TRUE, has_audio, has_video, has_data, FALSE);
         if (cause != CC_CAUSE_OK) {
-            ui_set_remote_description(evSetRemoteDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETREMOTEDESCERROR);
+            ui_set_remote_description(evSetRemoteDescError, line, call_id, dcb->caller_id.call_instance_id,
+                NULL, PC_SETREMOTEDESCERROR);
             FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
             // Force clean up call without sending release
             return (fsmdef_release(fcb, cause, FALSE));
         }
 
-        cause = gsmsdp_process_offer_sdp(fcb, &msg_body, TRUE);
+        cause = gsmsdp_negotiate_media_lines(fcb, dcb->sdp, TRUE, TRUE, TRUE, FALSE);
         if (cause != CC_CAUSE_OK) {
-            ui_set_remote_description(evSetRemoteDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETREMOTEDESCERROR);
-            return (SM_RC_END);
-        }
-
-        cause = gsmsdp_negotiate_media_lines(fcb, dcb->sdp, TRUE, TRUE, TRUE);
-        if (cause != CC_CAUSE_OK) {
-            ui_set_remote_description(evSetRemoteDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETREMOTEDESCERROR);
+            ui_set_remote_description(evSetRemoteDescError, line, call_id, dcb->caller_id.call_instance_id,
+                NULL, PC_SETREMOTEDESCERROR);
             return (fsmdef_release(fcb, cause, FALSE));
         }
 
@@ -3257,10 +3277,11 @@ fsmdef_ev_setremotedesc(sm_event_t *event) {
         fsm_change_state(fcb, __LINE__, FSMDEF_S_INCOMING_ALERTING);
 
     } else if (JSEP_ANSWER == action) {
-    
+
         cause = gsmsdp_negotiate_answer_sdp(fcb, &msg_body);
         if (cause != CC_CAUSE_OK) {
-            ui_set_remote_description(evSetRemoteDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETREMOTEDESCERROR);
+            ui_set_remote_description(evSetRemoteDescError, line, call_id, dcb->caller_id.call_instance_id,
+                NULL, PC_SETREMOTEDESCERROR);
             return (SM_RC_END);
         }
 
@@ -3270,7 +3291,8 @@ fsmdef_ev_setremotedesc(sm_event_t *event) {
          */
         cause = gsmsdp_install_peer_ice_attributes(fcb);
         if (cause != CC_CAUSE_OK) {
-            ui_set_remote_description(evSetRemoteDescError, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_SETREMOTEDESCERROR);
+            ui_set_remote_description(evSetRemoteDescError, line, call_id, dcb->caller_id.call_instance_id,
+                NULL, PC_SETREMOTEDESCERROR);
             return (SM_RC_END);
         }
 
@@ -3284,14 +3306,14 @@ fsmdef_ev_setremotedesc(sm_event_t *event) {
 
         fsm_change_state(fcb, __LINE__, FSMDEF_S_CONNECTED);
     }
-    
+
     ui_set_remote_description(evSetRemoteDesc, line, call_id, dcb->caller_id.call_instance_id, NULL, PC_OK);
-    
+
     return (SM_RC_END);
 }
 
 
-static sm_rcs_t 
+static sm_rcs_t
 fsmdef_ev_localdesc(sm_event_t *event) {
     fsm_fcb_t           *fcb = (fsm_fcb_t *) event->data;
     fsmdef_dcb_t        *dcb = fcb->dcb;
@@ -3308,17 +3330,17 @@ fsmdef_ev_localdesc(sm_event_t *event) {
     if (!sdpmode) {
         return (SM_RC_END);
     }
-    
+
     if (dcb == NULL) {
         FSM_DEBUG_SM(DEB_F_PREFIX"dcb is NULL.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
         return SM_RC_CLEANUP;
     }
-    
+
 
     return (SM_RC_END);
 }
 
-static sm_rcs_t 
+static sm_rcs_t
 fsmdef_ev_remotedesc(sm_event_t *event) {
     fsm_fcb_t           *fcb = (fsm_fcb_t *) event->data;
     fsmdef_dcb_t        *dcb = fcb->dcb;
@@ -3346,7 +3368,7 @@ fsmdef_ev_remotedesc(sm_event_t *event) {
 }
 
 
-static sm_rcs_t 
+static sm_rcs_t
 fsmdef_ev_setpeerconnection(sm_event_t *event) {
     fsm_fcb_t           *fcb = (fsm_fcb_t *) event->data;
     fsmdef_dcb_t        *dcb = fcb->dcb;
@@ -3361,14 +3383,14 @@ fsmdef_ev_setpeerconnection(sm_event_t *event) {
     config_get_value(CFGID_SDPMODE, &sdpmode, sizeof(sdpmode));
     if (!sdpmode) {
         return (SM_RC_END);
-    } 
-    
+    }
+
     if (!msg)
       return SM_RC_END;
 
     if (!msg->data_valid)
       return SM_RC_END;
-    
+
     if (dcb == NULL) {
       dcb = fsmdef_get_new_dcb(call_id);
       if (dcb == NULL) {
@@ -3428,7 +3450,6 @@ fsmdef_ev_addstream(sm_event_t *event) {
         dcb->media_cap_tbl->cap[CC_VIDEO_1].support_direction = SDP_DIRECTION_SENDRECV;
         dcb->media_cap_tbl->cap[CC_VIDEO_1].pc_stream = msg->data.track.stream_id;
         dcb->media_cap_tbl->cap[CC_VIDEO_1].pc_track = msg->data.track.track_id;
-        dcb->video_pref = SDP_DIRECTION_SENDRECV;
     } else if (msg->data.track.media_type == AUDIO) {
         dcb->media_cap_tbl->cap[CC_AUDIO_1].enabled = TRUE;
         dcb->media_cap_tbl->cap[CC_AUDIO_1].support_direction = SDP_DIRECTION_SENDRECV;
@@ -3471,13 +3492,13 @@ fsmdef_ev_removestream(sm_event_t *event) {
      * default streams. When multiple streams > 2 are supported this
      * will be re-implemented.
      */
-    if (msg->data.track.media_type == VIDEO) {
-        dcb->media_cap_tbl->cap[CC_VIDEO_1].enabled = FALSE;
-        dcb->media_cap_tbl->cap[CC_VIDEO_1].support_direction = SDP_DIRECTION_INACTIVE;
+    if (msg->data.track.media_type == AUDIO) {
+        dcb->media_cap_tbl->cap[CC_AUDIO_1].enabled = TRUE;
+        dcb->media_cap_tbl->cap[CC_AUDIO_1].support_direction = SDP_DIRECTION_RECVONLY;
         dcb->video_pref = SDP_DIRECTION_SENDRECV;
-    } else if (msg->data.track.media_type == AUDIO) {
-        dcb->media_cap_tbl->cap[CC_AUDIO_1].enabled = FALSE;
-        dcb->media_cap_tbl->cap[CC_AUDIO_1].support_direction = SDP_DIRECTION_INACTIVE;
+    } else if (msg->data.track.media_type == VIDEO) {
+        dcb->media_cap_tbl->cap[CC_VIDEO_1].enabled = TRUE;
+        dcb->media_cap_tbl->cap[CC_VIDEO_1].support_direction = SDP_DIRECTION_RECVONLY;
     } else {
         return (SM_RC_END);
     }
@@ -3577,7 +3598,7 @@ fsmdef_ev_idle_feature (sm_event_t *event)
 
             // handle cfwd event for ccm and non-ccm cases
             // process feature event only if no other active feature
-            if ((dcb->active_feature == CC_FEATURE_NONE) && 
+            if ((dcb->active_feature == CC_FEATURE_NONE) &&
                 (fsmdef_get_connected_call() == NULL)) {
                 dcb->active_feature = ftr_id;
                 (void) fsmdef_process_cfwd_softkey_event(event);
@@ -3830,7 +3851,7 @@ fsmdef_offhook (fsm_fcb_t *fcb, cc_msgs_t msg_id, callid_t call_id,
     fsmdef_find_and_hold_connected_call(call_id, &wait, CC_SRC_GSM);
 
     fsmdef_find_and_handle_ring_connecting_releasing_calls(call_id, &wait2);
- 
+
     fsmdef_clear_preserved_calls(&wait3);
 
     /*
@@ -4000,10 +4021,10 @@ fsmdef_ev_session_audit (sm_event_t *event)
         FSM_DEBUG_SM(get_debug_string(FSMDEF_DBG_CLR_SPOOF_APPLD),
                      dcb->call_id, dcb->line, fname);
 
-        if ((fcb->state != FSMDEF_S_HOLDING) &&  
+        if ((fcb->state != FSMDEF_S_HOLDING) &&
             (fcb->state != FSMDEF_S_HOLD_PENDING)) {
-            /* 
-             * If is at least one media entry that is not in loally held 
+            /*
+             * If is at least one media entry that is not in loally held
              * then go to connected state.
              */
             dcb->spoof_ringout_applied = FALSE;
@@ -4020,7 +4041,7 @@ fsmdef_ev_collectinginfo_release (sm_event_t *event)
 {
     fsm_fcb_t          *fcb       = (fsm_fcb_t *) event->data;
     fsmdef_dcb_t       *dcb       = fcb->dcb;
-    
+
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
    fsmdef_set_call_info_cc_call_state(dcb, CC_STATE_CALL_FAILED, CC_CAUSE_INVALID_NUMBER);
@@ -4048,7 +4069,7 @@ fsmdef_ev_collectinginfo_release (sm_event_t *event)
                      "Error Onhook", cpr_errno);
 		return (SM_RC_CLEANUP);
     }
-    
+
     return (SM_RC_END);
 }
 
@@ -4065,7 +4086,7 @@ fsmdef_ev_collectinginfo_feature (sm_event_t *event)
     sm_rcs_t         sm_rc = SM_RC_END;
     cc_causes_t      cause;
     cc_feature_data_t *feature_data = &(msg->data);
-    
+
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
     fsm_sm_ftr(ftr_id, src_id);
@@ -4075,7 +4096,7 @@ fsmdef_ev_collectinginfo_feature (sm_event_t *event)
         dcb->video_pref = feature_data->caps.support_direction;
         break;
     case CC_FEATURE_END_CALL:
-        cause = fsmdef_get_cause(msg->data_valid, &(msg->data)); 
+        cause = fsmdef_get_cause(msg->data_valid, &(msg->data));
         if (fcb->state == FSMDEF_S_KPML_COLLECT_INFO) {
             /* Clean up and send release */
             return (fsmdef_release(fcb, cause, TRUE));
@@ -4083,7 +4104,7 @@ fsmdef_ev_collectinginfo_feature (sm_event_t *event)
         else {
             /* Clean up without sending release */
             return (fsmdef_release(fcb, cause, FALSE));
-        } 
+        }
 
     case CC_FEATURE_NUMBER:
     case CC_FEATURE_URL:
@@ -4098,7 +4119,7 @@ fsmdef_ev_collectinginfo_feature (sm_event_t *event)
         break;
 
     case CC_FEATURE_CALLINFO:
-        fsmdef_update_callinfo(fcb, msg); 
+        fsmdef_update_callinfo(fcb, msg);
         /*
          * lsm_set_lcb_prevent_ringing() will check if there is a RINGIN call
          * with the same GCID. If so, it will set a flag to prevent ringing.
@@ -4157,7 +4178,7 @@ fsmdef_ev_collectinginfo_feature (sm_event_t *event)
 static sm_rcs_t
 fsmdef_ev_digit_begin (sm_event_t *event)
 {
-    static const char  fname[]    = "fsmdef_ev_digit_begin";    
+    static const char  fname[]    = "fsmdef_ev_digit_begin";
     fsm_fcb_t        *fcb = (fsm_fcb_t *) event->data;
     fsmdef_dcb_t     *dcb = fcb->dcb;
     cc_digit_begin_t *msg = (cc_digit_begin_t *) event->msg;
@@ -4300,13 +4321,13 @@ fsmdef_ev_callsent_release (sm_event_t *event)
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
     /* if UI_STATE of BUSY in 183 Call-Info is causing the release,
-       do not modify dcb->send_release */ 
+       do not modify dcb->send_release */
     if (cause != CC_CAUSE_UI_STATE_BUSY) {
         dcb->send_release = FALSE;
     } else {
         // CSCti63677
-        if ((fcb->state == FSMDEF_S_OUTGOING_ALERTING) && 
-            (dcb->inband_received == TRUE) && 
+        if ((fcb->state == FSMDEF_S_OUTGOING_ALERTING) &&
+            (dcb->inband_received == TRUE) &&
             (dcb->placed_call_update_required)) {
 
             lsm_update_placed_callinfo(dcb);
@@ -4353,7 +4374,7 @@ fsmdef_ev_callsent_release (sm_event_t *event)
             if (cause != CC_CAUSE_UI_STATE_BUSY) {
                 cc_int_release_complete(CC_SRC_GSM, CC_SRC_SIP, dcb->call_id,
                         dcb->line, cause, NULL);
-            } 
+            }
             /* see if the SIP stack has aborted this call early for some reason
              * If SIP brought this down, we are still offhook on the UI, so
              * when we get the release_complete from the 200 for the BYE, we
@@ -4393,18 +4414,18 @@ fsmdef_ev_callsent_release (sm_event_t *event)
         default:
             sm_rc = fsmdef_release(fcb, cause, dcb->send_release);
             if (sm_rc == SM_RC_CLEANUP) {
-                /* 
+                /*
                  * FSM release indicates clean up, do not continue
                  * on since fcb and dcb have been freed or re-initialized.
                  */
-                return (sm_rc); 
+                return (sm_rc);
             }
     }                           /* switch (cause) */
 
-    /*UI_STATE of BUSY in 183 is causing the release, so 
+    /*UI_STATE of BUSY in 183 is causing the release, so
      *don't change state. This is needed to support
      *callback feature. Since the callee is busy, we need
-     *update call UI status to "Busy" from "Ringout" to 
+     *update call UI status to "Busy" from "Ringout" to
      *reflect this change.
      */
     if (cause != CC_CAUSE_UI_STATE_BUSY) {
@@ -4464,7 +4485,7 @@ fsmdef_ev_callsent_feature (sm_event_t *event)
         lsm_remove_lcb_prevent_ringing(dcb->call_id);
         /*
          *  Since user press the end call, no need to wait to play the busy tone.
-         *  So, clear the early_error_release and clean the fcb/dcb. 
+         *  So, clear the early_error_release and clean the fcb/dcb.
          */
         dcb->early_error_release = FALSE;
         cause = fsmdef_get_cause(msg->data_valid, &(msg->data));
@@ -4495,7 +4516,7 @@ fsmdef_ev_callsent_feature (sm_event_t *event)
 
 
     case CC_FEATURE_CALLINFO:
-        fsmdef_update_calltype(fcb, msg);        
+        fsmdef_update_calltype(fcb, msg);
         fsmdef_update_callinfo(fcb, msg);
         /*
          * lsm_set_lcb_prevent_ringing() will check if there is a RINGIN call
@@ -4728,7 +4749,7 @@ fsmdef_handle_inalerting_offhook_answer (sm_event_t *event)
     if (cause != CC_CAUSE_OK) {
         FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
         return (fsmdef_release(fcb, cause, dcb->send_release));
-    }   
+    }
 
     /* For CCM, call_type indicate if the call is forwarded or not
      * for forwarded call display will be shown as "Forward", only
@@ -4742,10 +4763,10 @@ fsmdef_handle_inalerting_offhook_answer (sm_event_t *event)
         if (!fsmdef_check_retain_fwd_info_state()) {
             dcb->call_type = FSMDEF_CALL_TYPE_INCOMING;
             /*
-             * Force us to update the UI so that any possible callinfo received 
+             * Force us to update the UI so that any possible callinfo received
              * prior to the call is answered takes effect.
              */
-            dcb->ui_update_required = TRUE; 
+            dcb->ui_update_required = TRUE;
         }
     }
 
@@ -4878,7 +4899,7 @@ fsmdef_transition_to_connected (fsm_fcb_t *fcb)
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
     if (dcb->req_pending_tmr) {
-        /* cancel any request pending timer, just in case */ 
+        /* cancel any request pending timer, just in case */
         (void) cprCancelTimer(dcb->req_pending_tmr);
     }
 
@@ -4891,7 +4912,7 @@ fsmdef_transition_to_connected (fsm_fcb_t *fcb)
         return (sm_rc);
     }
 
-    
+
     feature_data.resume.call_info.type = CC_FEAT_NONE;
     feature_data.resume.call_info.data.hold_resume_reason = CC_REASON_NONE;
     feature_data.resume.msg_body.num_parts = 0;
@@ -4939,7 +4960,7 @@ fsmdef_ev_connected (sm_event_t *event)
 
     cause = gsmsdp_negotiate_answer_sdp(fcb, &msg->msg_body);
     if (cause != CC_CAUSE_OK) {
-	
+
 		cc_call_state(fcb->dcb->call_id, fcb->dcb->line, CC_STATE_UNKNOWN,
 						NULL);
 		return (fsmdef_release(fcb, cause, dcb->send_release));
@@ -5047,7 +5068,7 @@ fsmdef_ev_connected_ack (sm_event_t *event)
  * out to the remote end. The local SDP is updated by the way.
  *
  * @param[in]fcb          - pointer to fsm_fcb_t
- *  
+ *
  * @return  SM_RC_END or failrue.
  *
  * @pre     (fcb not_eq NULL)
@@ -5063,7 +5084,7 @@ fsm_hold_local_only (fsm_fcb_t *fcb)
 
     /*
      * Check local hold status, and allow request if the media is not
-     * locally held. 
+     * locally held.
      */
     if (fsmdef_all_media_are_local_hold(dcb)) {
         /*
@@ -5096,13 +5117,13 @@ fsm_hold_local_only (fsm_fcb_t *fcb)
     cc_call_state(dcb->call_id, dcb->line, CC_STATE_HOLD, &state_data);
 
     /* set all the media to local hold */
-    fsmdef_update_media_hold_status(dcb, NULL, TRUE); 
+    fsmdef_update_media_hold_status(dcb, NULL, TRUE);
 
     fsm_change_state(fcb, __LINE__, FSMDEF_S_HOLDING);
 
     sipsdp_src_dest_free(CCSIP_DEST_SDP_BIT | CCSIP_SRC_SDP_BIT,
                              &dcb->sdp);
- 
+
     return (SM_RC_END);
 }
 
@@ -5133,7 +5154,7 @@ fsm_hold_local (fsm_fcb_t *fcb, cc_feature_data_t *data_p,
 
     /*
      * Check local hold status, and allow request if the media is not
-     * locally held or the caller indicates that to resend the hold 
+     * locally held or the caller indicates that to resend the hold
      * request (such as in glare resolution).
      */
     if (!resend && fsmdef_all_media_are_local_hold(dcb)) {
@@ -5162,12 +5183,12 @@ fsm_hold_local (fsm_fcb_t *fcb, cc_feature_data_t *data_p,
                  dcb->call_id, dcb->line, fname);
 
     dcb->spoof_ringout_applied = FALSE;
-    
-    fsmdef_get_rtp_stat(dcb, &(data_p->hold.kfactor)); 
 
-    /* put the call on hold before building the SDP  as DSP 
-     * will then be able to give us a full set of codecs 
-     * CUCM doesn't like to see a change in codecs on the fly 
+    fsmdef_get_rtp_stat(dcb, &(data_p->hold.kfactor));
+
+    /* put the call on hold before building the SDP  as DSP
+     * will then be able to give us a full set of codecs
+     * CUCM doesn't like to see a change in codecs on the fly
      * ( i.e. without going to inactive state ) */
     cc_call_state(dcb->call_id, dcb->line, CC_STATE_HOLD, &state_data);
 
@@ -5192,7 +5213,7 @@ fsm_hold_local (fsm_fcb_t *fcb, cc_feature_data_t *data_p,
     }
 
     /* set all the media to local hold */
-    fsmdef_update_media_hold_status(dcb, NULL, TRUE); 
+    fsmdef_update_media_hold_status(dcb, NULL, TRUE);
 
     cc_int_feature(CC_SRC_GSM, CC_SRC_SIP, dcb->call_id, dcb->line,
                    CC_FEATURE_HOLD, data_p);
@@ -5201,7 +5222,7 @@ fsm_hold_local (fsm_fcb_t *fcb, cc_feature_data_t *data_p,
 
     sipsdp_src_dest_free(CCSIP_DEST_SDP_BIT | CCSIP_SRC_SDP_BIT,
                              &dcb->sdp);
- 
+
     return (SM_RC_END);
 }
 
@@ -5223,7 +5244,7 @@ fsm_connected_media_pend_local_hold (fsm_fcb_t *fcb, cc_feature_data_t *data_p)
 
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
-    /* 
+    /*
      * Check local hold status, and allow request if the media is not
      * locally held.
      */
@@ -5254,7 +5275,7 @@ fsm_connected_media_pend_local_hold (fsm_fcb_t *fcb, cc_feature_data_t *data_p)
         dcb->hold_reason = data_p->hold.call_info.data.hold_resume_reason;
         /*
          * reset feature hold pending flag in case that there are
-         * multiple hold feature received while waiting for 
+         * multiple hold feature received while waiting for
          * glare resolution to resolve.
          */
         FSM_RESET_FLAGS(dcb->flags, FSMDEF_F_HOLD_REQ_PENDING);
@@ -5314,17 +5335,17 @@ fsmdef_remote_media (fsm_fcb_t *fcb, cc_feature_t *msg)
          * Case 1.
          *
          * negotiate offer without SDP will reset all local media entries
-         * to have all codecs included. This is to re-advertise the 
+         * to have all codecs included. This is to re-advertise the
          * capabilities again.
          */
          (void) gsmsdp_negotiate_offer_sdp(fcb, NULL, FALSE);
 
-        /* 
+        /*
          * Update the media direction based on whether each media
          * stream is locally held or not before sending out the
          * offer SDP.
          */
-        fsmdef_set_per_media_local_hold_sdp(dcb); 
+        fsmdef_set_per_media_local_hold_sdp(dcb);
         (void)cc_call_action(dcb->call_id, dcb->line, CC_ACTION_STOP_MEDIA,
                                  NULL);
         (void)cc_call_action(dcb->call_id, dcb->line, CC_ACTION_START_RCV,
@@ -5355,7 +5376,7 @@ fsmdef_remote_media (fsm_fcb_t *fcb, cc_feature_t *msg)
              * This is the answer to our previous offer, no need to
              * to ack to SIP this one.
              */
-            send_ack = FALSE; 
+            send_ack = FALSE;
         } else {
             /* This is a new offer */
 
@@ -5368,7 +5389,7 @@ fsmdef_remote_media (fsm_fcb_t *fcb, cc_feature_t *msg)
             if ((media) && (media->direction != SDP_DIRECTION_INACTIVE)) {
                 fsmdef_get_rtp_stat(dcb, &(feature_data.resume.kfactor));
             }
-             
+
             cause = gsmsdp_negotiate_offer_sdp(fcb,
                                                &data->resume.msg_body, FALSE);
             if (cause != CC_CAUSE_OK) {
@@ -5510,7 +5531,7 @@ fsmdef_ev_connected_feature (sm_event_t *event)
             } else {
                 fsmdef_b2bjoin_invoke(dcb, data);
             }
-            return (SM_RC_END);       
+            return (SM_RC_END);
 
         case CC_FEATURE_DIRTRXFR:
         case CC_FEATURE_UNDEFINED:
@@ -5526,10 +5547,10 @@ fsmdef_ev_connected_feature (sm_event_t *event)
             /* FALL THRU */
         case CC_FEATURE_UPD_MEDIA_CAP:
             /*
-             * Media capability update request, check to see if 
+             * Media capability update request, check to see if
              * there is any change in media capability and transition
              * the pending state or stay in the connected state.
-             */ 
+             */
             sm_rc = fsmdef_transition_to_connected(fcb);
             return (sm_rc);
 
@@ -5552,7 +5573,7 @@ fsmdef_ev_connected_feature (sm_event_t *event)
         case CC_FEATURE_MEDIA:
             /*
              * remote send media update which can be resume or
-             * or just media changes. 
+             * or just media changes.
              */
             sm_rc = fsmdef_remote_media(fcb, msg);
             return (sm_rc);
@@ -5589,7 +5610,7 @@ fsmdef_ev_connected_feature (sm_event_t *event)
             }
 
 	    /*
-	     * For chaperone call, we will update call state here, to update 
+	     * For chaperone call, we will update call state here, to update
 	     * the related key's status.
 	     */
 	    if(dcb->policy == CC_POLICY_CHAPERONE){
@@ -5689,7 +5710,7 @@ fsmdef_ev_connected_media_pend_feature (sm_event_t *event)
 
         case CC_FEATURE_REQ_PEND_TIMER_EXP:
             /*
-             * Glare resolution timer expires. 
+             * Glare resolution timer expires.
              */
             if (FSM_CHK_FLAGS(dcb->flags, FSMDEF_F_HOLD_REQ_PENDING)) {
                 /* There is a hold feature pending, send out hold instead */
@@ -5701,14 +5722,14 @@ fsmdef_ev_connected_media_pend_feature (sm_event_t *event)
                 feature_data.hold.call_info.data.call_info_feat_data.protect = FALSE;
                 FSM_RESET_FLAGS(dcb->flags, FSMDEF_F_HOLD_REQ_PENDING);
                 return (fsm_hold_local(fcb, &feature_data, FALSE));
-            } 
+            }
 
             /*
              * Check the possible media capbility changes.
              */
             (void)gsmsdp_update_local_sdp_media_capability(dcb, FALSE, FALSE);
             feature_data.resume.call_info.type = CC_FEAT_NONE;
-            feature_data.resume.call_info.data.hold_resume_reason = 
+            feature_data.resume.call_info.data.hold_resume_reason =
                                                             CC_REASON_NONE;
             feature_data.resume.msg_body.num_parts = 0;
             feature_data.resume.call_info.data.call_info_feat_data.swap = FALSE;
@@ -5716,12 +5737,12 @@ fsmdef_ev_connected_media_pend_feature (sm_event_t *event)
             /* Encode SDP */
             cause = gsmsdp_encode_sdp_and_update_version(dcb,
                                                          &feature_data.resume.msg_body);
-   
+
             if (cause != CC_CAUSE_OK) {
                 FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
                 return(fsmdef_release(fcb, cause, dcb->send_release));
             }
-   
+
             /* Send feature request to SIP */
             cc_int_feature(CC_SRC_GSM, CC_SRC_SIP, dcb->call_id, dcb->line,
                            CC_FEATURE_MEDIA, &feature_data);
@@ -5747,17 +5768,17 @@ fsmdef_ev_connected_media_pend_feature (sm_event_t *event)
     /*
      * Unhandled features are handled by the normal connected feature
      */
-    return (fsmdef_ev_connected_feature(event)); 
+    return (fsmdef_ev_connected_feature(event));
 }
 
 /**
  *
- * Function to handles connected media update pending state feature ack 
+ * Function to handles connected media update pending state feature ack
  * events.
  *
  * @param sm_event_t        event
  *
- * @return  SM_RC_END or SM_RC_CLEANUP 
+ * @return  SM_RC_END or SM_RC_CLEANUP
  *
  * @pre     (fcb->dcb not_eq NULL)
  * @pre     (event->data not_eq NULL)
@@ -5773,7 +5794,7 @@ fsmdef_ev_connected_media_pend_feature_ack (sm_event_t *event)
     cc_features_t     ftr_id = msg->feature_id;
     cc_srcs_t         src_id = msg->src_id;
     cc_feature_data_t feature_data;
-    sm_rcs_t          sm_rc = SM_RC_END; 
+    sm_rcs_t          sm_rc = SM_RC_END;
     cc_msgbody_info_t *msg_body;
     cc_causes_t        cause;
 
@@ -5794,13 +5815,13 @@ fsmdef_ev_connected_media_pend_feature_ack (sm_event_t *event)
                  */
                 fsmdef_set_req_pending_timer(dcb);
                 if (FSM_CHK_FLAGS(dcb->flags, FSMDEF_F_HOLD_REQ_PENDING)) {
-                    /* 
+                    /*
                      * Feature hold is pending, abort the media capability
-                     * update and retry with hold instead. 
+                     * update and retry with hold instead.
                      */
                     FSM_RESET_FLAGS(dcb->flags, FSMDEF_F_HOLD_REQ_PENDING);
                     fsm_change_state(fcb, __LINE__, FSMDEF_S_HOLD_PENDING);
-                } 
+                }
                 return (SM_RC_END);
             }
 
@@ -5840,7 +5861,7 @@ fsmdef_ev_connected_media_pend_feature_ack (sm_event_t *event)
                  * currently playing spoof ringout, transition the LSM from
                  * the far end alerting to the connected state.
                  */
-                if ((!dcb->spoof_ringout_requested) && 
+                if ((!dcb->spoof_ringout_requested) &&
                     (dcb->spoof_ringout_applied)) {
                     FSM_DEBUG_SM(get_debug_string(FSMDEF_DBG_CLR_SPOOF_APPLD),
                                  dcb->call_id, dcb->line, fname);
@@ -5858,21 +5879,21 @@ fsmdef_ev_connected_media_pend_feature_ack (sm_event_t *event)
                  * while we were in the middle of the previous transaction.
                  */
                 sm_rc = fsmdef_transition_to_connected(fcb);
-                if (g_dock_undock_event != MEDIA_INTERFACE_UPDATE_NOT_REQUIRED) { 
+                if (g_dock_undock_event != MEDIA_INTERFACE_UPDATE_NOT_REQUIRED) {
                     if (is_gsmsdp_media_ip_updated_to_latest(dcb) == TRUE) {
                         ui_update_media_interface_change(dcb->line, dcb->call_id, MEDIA_INTERFACE_UPDATE_SUCCESSFUL);
                     } else {
                         DEF_DEBUG("We must have received another MEDIA_INTERFACE_UPDATE  events "
-                            " while current MEDIA_INTERFACE_UPDATE event is in procoess. Sending re-invite again"); 
+                            " while current MEDIA_INTERFACE_UPDATE event is in procoess. Sending re-invite again");
                         escalateDeescalate();
                     }
                 }
             }
             return (sm_rc);
 
-        default: 
+        default:
             break;
-        } 
+        }
         break;
 
     default:
@@ -5932,7 +5953,7 @@ fsmdef_ev_onhook (sm_event_t *event)
     sm_rcs_t         sm_rc;
     cc_action_data_t data;
     int              sdpmode = 0;
-    
+
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
     /* currently this flag is only set by conference case. It signals
@@ -5955,15 +5976,15 @@ fsmdef_ev_onhook (sm_event_t *event)
 
     /*
      * If the user presses the ENDCALL softkey for an
-     * incoming call set the release cause to Busy. 
+     * incoming call set the release cause to Busy.
      */
     if (fcb->state == FSMDEF_S_INCOMING_ALERTING) {
         sm_rc = fsmdef_release(fcb, CC_CAUSE_BUSY, dcb->send_release);
-    } else  { 
-        dcb->early_error_release = FALSE; 
+    } else  {
+        dcb->early_error_release = FALSE;
         sm_rc = fsmdef_release(fcb, CC_CAUSE_NORMAL, dcb->send_release);
     }
-    
+
     if (sm_rc == SM_RC_CLEANUP) {
         /* This dcb has been cleaned up, do nothing more */
         return (sm_rc);
@@ -5986,7 +6007,7 @@ fsmdef_ev_release (sm_event_t *event)
     fsm_fcb_t    *fcb = (fsm_fcb_t *) event->data;
     cc_release_t *msg = (cc_release_t *) event->msg;
     fsmdef_dcb_t *dcb = fcb->dcb;
-    
+
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
     dcb->send_release = FALSE;
@@ -5996,7 +6017,7 @@ fsmdef_ev_release (sm_event_t *event)
 	if (msg->cause == CC_CAUSE_REMOTE_DISCONN_REQ_PLAYTONE) {
 
 		fsmdef_set_call_info_cc_call_state(dcb, CC_STATE_CALL_FAILED, CC_CAUSE_REMOTE_DISCONN_REQ_PLAYTONE);
-		
+
 		/* what to return for return code */
 		return(SM_RC_SUCCESS);
 	} else {
@@ -6011,7 +6032,7 @@ fsmdef_ev_releasing_release (sm_event_t *event)
     fsm_fcb_t    *fcb = (fsm_fcb_t *) event->data;
     cc_release_t *msg = (cc_release_t *) event->msg;
     fsmdef_dcb_t *dcb = fcb->dcb;
-    
+
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
     /* see if the SIP stack has aborted this call early for some reason
@@ -6168,7 +6189,7 @@ fsmdef_ev_hold_pending_feature (sm_event_t *event)
             feature_data.hold.call_info.data.call_info_feat_data.swap = FALSE;
             feature_data.hold.call_info.data.call_info_feat_data.protect = FALSE;
             sm_rc = fsm_hold_local(fcb, &feature_data, TRUE);
-            break;
+            return sm_rc;
 
         case CC_FEATURE_END_CALL:
             sm_rc = fsmdef_release_call(fcb, msg);
@@ -6240,20 +6261,20 @@ fsmdef_ev_hold_pending_feature_ack (sm_event_t *event)
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
     fsm_sm_ftr(ftr_id, src_id);
-    
+
     switch (src_id) {
     case (CC_SRC_SIP):
         switch (ftr_id) {
         case CC_FEATURE_RESUME:
             /*
-             * This is feature ack for resume. We received resume 
+             * This is feature ack for resume. We received resume
              * feature ack because the hold request was received while
              * we are waiting to resume i.e. was in the
-             * resume pending state and resume request has been sent out.  
+             * resume pending state and resume request has been sent out.
              *
              * If the resume ack indicates glare, then ignore sending the
              * resume and transition to holding (we were in hold and
-             * unable to send RESUME). Otherwise send hold out right away 
+             * unable to send RESUME). Otherwise send hold out right away
              * if there is no other error.
              */
             fsm_sm_ftr(ftr_id, src_id);
@@ -6298,7 +6319,7 @@ fsmdef_ev_hold_pending_feature_ack (sm_event_t *event)
             feature_data.hold.call_info.data.call_info_feat_data.swap = FALSE;
             feature_data.hold.call_info.data.call_info_feat_data.protect = FALSE;
             fsm_hold_local(fcb, &feature_data, FALSE);
-            break;            
+            break;
 
         default:
             fsmdef_sm_ignore_ftr(fcb, __LINE__, ftr_id);
@@ -6360,7 +6381,7 @@ fsmdef_ev_holding_onhook (sm_event_t *event)
 /**
   *
   * fsmdef_reversion_timeout - Triggers LSM for doing Reversion alerts.
-  * 
+  *
   * @param fsmdef_dcb_t     dcb for this call
   *
   * @return  none
@@ -6380,7 +6401,7 @@ void fsmdef_reversion_timeout(callid_t call_id)
     }
 
     // check that we are in HOLDING state before proceeding
-    if ((dcb->fcb->state != FSMDEF_S_HOLDING) && 
+    if ((dcb->fcb->state != FSMDEF_S_HOLDING) &&
         (dcb->fcb->state != FSMDEF_S_HOLD_PENDING)) {
         return;
     }
@@ -6396,15 +6417,15 @@ void fsmdef_reversion_timeout(callid_t call_id)
     }
 
 	cc_call_state(dcb->call_id, dcb->line, CC_STATE_HOLD_REVERT, NULL);
-    
+
 }
 
 
 /**
   *
   * fsmdef_resume - Performs Resume Operation.
-  * 
-  * @param sm_event_t     event 
+  *
+  * @param sm_event_t     event
   *
   * @return  sm_rcs_t     SM_RC_END - indicating the event has been consumed
   *
@@ -6440,9 +6461,9 @@ fsmdef_resume (sm_event_t *event)
         cc_int_feature_ack(CC_SRC_GSM, CC_SRC_GSM, dcb->call_id,
                            dcb->line, CC_FEATURE_RESUME, NULL,
                            CC_CAUSE_NORMAL);
-        FSM_DEBUG_SM(get_debug_string(FSMDEF_DBG1), call_id, dcb->line, 
+        FSM_DEBUG_SM(get_debug_string(FSMDEF_DBG1), call_id, dcb->line,
                      fname, "resume media not in hold state\n");
-        return; 
+        return;
     }
 
     (void) cprCancelTimer(dcb->revertTimer);
@@ -6520,7 +6541,7 @@ fsmdef_resume (sm_event_t *event)
                      dcb->call_id, dcb->line, fname);
 
         dcb->spoof_ringout_applied = FALSE;
-        /* Start receiving but not transmit, before sending resume */ 
+        /* Start receiving but not transmit, before sending resume */
         (void)cc_call_action(dcb->call_id, dcb->line, CC_ACTION_START_RCV,
                              NULL);
     }
@@ -6528,7 +6549,7 @@ fsmdef_resume (sm_event_t *event)
     if (!req_pending_tmr_running) {
         cc_int_feature(CC_SRC_GSM, CC_SRC_SIP, dcb->call_id, dcb->line,
                        CC_FEATURE_RESUME, &feature_data);
-    } 
+    }
 
     /*
      * We lock the UI until we learn the result of the resume request
@@ -6537,7 +6558,7 @@ fsmdef_resume (sm_event_t *event)
 
     /* Wait for feature ack */
     fsm_change_state(fcb, __LINE__, FSMDEF_S_RESUME_PENDING);
-    
+
 	return ;
 
 }
@@ -6545,8 +6566,8 @@ fsmdef_resume (sm_event_t *event)
 /**
   *
   * fsmdef_ev_holding_offhook - Handles offhook in for holding state.
-  * 
-  * @param sm_event_t     event 
+  *
+  * @param sm_event_t     event
   *
   * @return  sm_rcs_t     SM_RC_END - indicating the event has been consumed
   *
@@ -6567,7 +6588,7 @@ fsmdef_ev_holding_offhook (sm_event_t *event)
 	}
 
 	return  SM_RC_END;
-    
+
 }
 
 static sm_rcs_t
@@ -6581,7 +6602,7 @@ fsmdef_ev_holding_feature (sm_event_t *event)
     cc_feature_data_t *data = &(msg->data);
     cc_feature_data_t feature_data;
     sm_rcs_t sm_rc;
-    
+
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
 
     fsm_sm_ftr(ftr_id, src_id);
@@ -6659,7 +6680,7 @@ fsmdef_ev_holding_feature (sm_event_t *event)
             } else {
                 fsmdef_b2bjoin_invoke(dcb, data);
             }
-            return (SM_RC_END);  
+            return (SM_RC_END);
 
         case CC_FEATURE_DIRTRXFR:
         case CC_FEATURE_UNDEFINED:
@@ -6767,7 +6788,7 @@ fsmdef_ev_holding_feature_ack (sm_event_t *event)
     default:
         fsm_sm_ignore_ftr(fcb, __LINE__, ftr_id);
         break;
-    } 
+    }
 
     /* call default feature ack handler to take common/default actions */
     (void) fsmdef_ev_default_feature_ack(event);
@@ -6800,12 +6821,12 @@ fsmdef_ev_resume_pending_feature (sm_event_t *event)
         case CC_FEATURE_UPD_SESSION_MEDIA_CAP:
              dcb->video_pref = data->caps.support_direction;
              break;
-             
+
         case CC_FEATURE_END_CALL:
             fim_unlock_ui(call_id);
             sm_rc = fsmdef_release_call(fcb, msg);
-            return (sm_rc); 
-                        
+            return (sm_rc);
+
         case CC_FEATURE_HOLD:
             /*
              * The UI should be locked but the hold event from UI here
@@ -6819,16 +6840,16 @@ fsmdef_ev_resume_pending_feature (sm_event_t *event)
              * There are 2 choices here. If we are in this state and has
              * not sent a resume out to the network, then simply
              * transition to holding state. If resume has already
-             * been sent and we are here waiting for resume pending ack, 
-             * then we can not send out hold immediately. In the later 
-             * case, go to hold pending state and wait for resume 
-             * feature ack to send hold out.  
-             * 
+             * been sent and we are here waiting for resume pending ack,
+             * then we can not send out hold immediately. In the later
+             * case, go to hold pending state and wait for resume
+             * feature ack to send hold out.
+             *
              * In either case, UI can be unlocked since we are now
              * about to hold again.
              */
             fim_unlock_ui(dcb->call_id);
-            if (dcb->req_pending_tmr && 
+            if (dcb->req_pending_tmr &&
                 cprIsTimerRunning(dcb->req_pending_tmr)) {
                 /*
                  * Request timer is running, that means we are waiting
@@ -6840,21 +6861,21 @@ fsmdef_ev_resume_pending_feature (sm_event_t *event)
 
                 FSM_DEBUG_SM(get_debug_string(FSMDEF_DBG1),
                              dcb->call_id, dcb->line, fname,
-                             "Received Hold while waiting to send resume\n"); 
+                             "Received Hold while waiting to send resume\n");
 
                 /* Go back to holding without sending any thing out */
                 (void)fsm_hold_local_only(fcb);
-            } else {      
-                /* 
+            } else {
+                /*
                  * We have sent resume to the network and wait for
                  * for the feature ack. The glare condition can
-                 * occur but we can only assume that resume was sent out 
+                 * occur but we can only assume that resume was sent out
                  * at this point. We can not send out any more request
-                 * until the result is known. 
+                 * until the result is known.
                  */
                 if (msg->data_valid) {
-                    dcb->hold_reason = 
-                         data->hold.call_info.data.hold_resume_reason; 
+                    dcb->hold_reason =
+                         data->hold.call_info.data.hold_resume_reason;
                 } else {
                     dcb->hold_reason = CC_REASON_NONE;
                 }
@@ -6868,7 +6889,7 @@ fsmdef_ev_resume_pending_feature (sm_event_t *event)
 
         default:
             fsmdef_sm_ignore_ftr(fcb, __LINE__, ftr_id);
-            break; 
+            break;
         }
         break;
 
@@ -6981,13 +7002,13 @@ fsmdef_ev_resume_pending_feature (sm_event_t *event)
  * feature ack event handler in resume pending state.
  *
  * @param[in] event   Pointer to sm_event_t structure for feature ack event.
- * 
- * @return            Value of type sm_rcs_t to state machine 
- * 
+ *
+ * @return            Value of type sm_rcs_t to state machine
+ *
  * @pre               (event not_eqs NULL) and
  *                    (event->data not_eqs NULL) and
  *                    ((fsm_fcb_t *)(event->data)->dcb not_eqs NULL)
- */ 
+ */
 static sm_rcs_t
 fsmdef_ev_resume_pending_feature_ack (sm_event_t *event)
 {
@@ -7006,7 +7027,7 @@ fsmdef_ev_resume_pending_feature_ack (sm_event_t *event)
 
     switch (src_id) {
     case (CC_SRC_SIP):
-        switch (ftr_id) { 
+        switch (ftr_id) {
          case CC_FEATURE_HOLD:
              /*
               * This can occur because SIP stack has not sent HOLD out yet
@@ -7018,7 +7039,7 @@ fsmdef_ev_resume_pending_feature_ack (sm_event_t *event)
              if (msg->cause == CC_CAUSE_REQUEST_PENDING) {
                 cc_call_state(dcb->call_id, dcb->line, CC_STATE_CONNECTED,
                               FSMDEF_CC_CALLER_ID);
-                fsm_change_state(fcb, __LINE__, FSMDEF_S_CONNECTED);       
+                fsm_change_state(fcb, __LINE__, FSMDEF_S_CONNECTED);
                 return (SM_RC_END);
              }
              if ((msg->cause != CC_CAUSE_NORMAL) &&
@@ -7051,11 +7072,11 @@ fsmdef_ev_resume_pending_feature_ack (sm_event_t *event)
                 (dcb->hold_reason == CC_REASON_MONITOR_UPDATE)) {
                 FSM_DEBUG_SM(get_debug_string(FSMDEF_DBG1),
                              dcb->call_id, dcb->line, fname,
-                             "msg->cause == CC_CAUSE_SERV_ERR_UNAVAIL, unable to monitor update\n"); 
+                             "msg->cause == CC_CAUSE_SERV_ERR_UNAVAIL, unable to monitor update\n");
                 return (fsmdef_transition_to_connected(fcb));
             }
 
-            if ((msg->cause != CC_CAUSE_NORMAL) && 
+            if ((msg->cause != CC_CAUSE_NORMAL) &&
                 (msg->cause != CC_CAUSE_OK)) {
                 cc_call_state(dcb->call_id, dcb->line,
                               CC_STATE_UNKNOWN, NULL);
@@ -7083,7 +7104,7 @@ fsmdef_ev_resume_pending_feature_ack (sm_event_t *event)
              * transaction.
              */
             return (fsmdef_transition_to_connected(fcb));
-                        
+
         default:
             fsmdef_sm_ignore_ftr(fcb, __LINE__, ftr_id);
             break;
@@ -7308,9 +7329,9 @@ fsmdef_auto_answer_timeout (void *data)
         GSM_ERR_MSG(get_debug_string(FSMDEF_DBG1), 0, 0, fname, "invalid data");
         return;
     }
-    
+
     /* Retrieve dcb from call id */
-    dcb = fsmdef_get_dcb_by_call_id(call_id); 
+    dcb = fsmdef_get_dcb_by_call_id(call_id);
     if (dcb == NULL) {
         /*
          * The only way this should happen is for the
@@ -7319,7 +7340,7 @@ fsmdef_auto_answer_timeout (void *data)
          */
         FSM_DEBUG_SM(DEB_F_PREFIX"AutoAnswer timer expired but no dcb was found.\n", DEB_F_PREFIX_ARGS(FSM, fname));
         return;
-    } 
+    }
 
     /*
      * The device-based config parameter autoAnswerIdleAlternate
@@ -7427,11 +7448,11 @@ static void
 fsmdef_b2bjoin_invoke (fsmdef_dcb_t *dcb, cc_feature_data_t *join_data)
 {
     cc_feature_data_t feature_data;
-    int join_across_lines;                     
-    cc_uint32_t major_ver;   
-    
+    int join_across_lines;
+    cc_uint32_t major_ver;
+
     FSM_DEBUG_SM(DEB_F_PREFIX"Entered.\n", DEB_F_PREFIX_ARGS(FSM, __FUNCTION__));
-	
+
     // Disable Join if the CUCM doesn't support it
     platGetSISProtocolVer(&major_ver, NULL, NULL, NULL);
 
@@ -7443,47 +7464,47 @@ fsmdef_b2bjoin_invoke (fsmdef_dcb_t *dcb, cc_feature_data_t *join_data)
         return;
     }
 
-    config_get_value(CFGID_JOIN_ACROSS_LINES, 
+    config_get_value(CFGID_JOIN_ACROSS_LINES,
                      &join_across_lines, sizeof(join_across_lines));
     /*
      * Invoke B2BJoin feature towards SIP. It will send a REFER to CCM
      */
     if (join_data) {
         cc_int_feature(CC_SRC_GSM, CC_SRC_SIP, dcb->call_id,
-                       dcb->line, CC_FEATURE_B2B_JOIN, join_data);                                 
+                       dcb->line, CC_FEATURE_B2B_JOIN, join_data);
     } else {
 
-        if ((g_b2bjoin_pending == FALSE) && (dcb->fcb->state == FSMDEF_S_HOLDING) 
-            && ((fsmdef_get_connected_call() != NULL) || 
+        if ((g_b2bjoin_pending == FALSE) && (dcb->fcb->state == FSMDEF_S_HOLDING)
+            && ((fsmdef_get_connected_call() != NULL) ||
                 (fsmdef_get_alertingout_call() != NULL))) {
-             /* Single Button Join case 
-              * If Join is pressed on a held call while there is 
+             /* Single Button Join case
+              * If Join is pressed on a held call while there is
               * an active(connected or alerting) call, that completes the Join
               */
              feature_data.b2bjoin.b2bjoin_callid = dcb->call_id;
-             feature_data.b2bjoin.b2bjoin_joincallid = dcb->call_id;              
+             feature_data.b2bjoin.b2bjoin_joincallid = dcb->call_id;
              cc_int_feature(CC_SRC_GSM, CC_SRC_SIP, dcb->call_id,
-                            dcb->line, CC_FEATURE_B2B_JOIN, &feature_data);                 
-             return;       
+                            dcb->line, CC_FEATURE_B2B_JOIN, &feature_data);
+             return;
         }
 
-        if ((g_numofselected_calls == 0) || 
+        if ((g_numofselected_calls == 0) ||
             ((g_b2bjoin_pending == FALSE) && (join_across_lines == JOIN_ACROSS_LINES_DISABLED) &&
             (fsmdef_are_there_selected_calls_onotherline(dcb->line) == TRUE))) {
             dcb->active_feature =  CC_FEATURE_B2B_JOIN;
             feature_data.select.select = TRUE;
             fsmdef_select_invoke(dcb,&feature_data);
-            fsm_display_use_line_or_join_to_complete();         
+            fsm_display_use_line_or_join_to_complete();
             return;
-        } 
-        if (g_b2bjoin_pending) {           	        
-	                if (join_across_lines == JOIN_ACROSS_LINES_DISABLED) {	
+        }
+        if (g_b2bjoin_pending) {
+	                if (join_across_lines == JOIN_ACROSS_LINES_DISABLED) {
 	                    if (fsmdef_are_join_calls_on_same_line(dcb->line) == FALSE) {
-	                    	
+
 	                        fsm_display_use_line_or_join_to_complete();
 	                        g_b2bjoin_pending = FALSE;
 	                        g_b2bjoin_callid  = CC_NO_CALL_ID;
-	                        return;   
+	                        return;
 	                    }
 	                }
 	                if (dcb->call_id== g_b2bjoin_callid) {
@@ -7505,12 +7526,12 @@ fsmdef_b2bjoin_invoke (fsmdef_dcb_t *dcb, cc_feature_data_t *join_data)
 
 	                cc_int_feature(CC_SRC_GSM, CC_SRC_SIP, dcb->call_id,
 	                               dcb->line, CC_FEATURE_B2B_JOIN, &feature_data);
-	                
+
         } else {
                   if ((g_numofselected_calls == 1) && (dcb->selected)) {
-                    /* 
-                     * If this is only one selected call, pressing 
-                     * Join on it will start a new join operation 
+                    /*
+                     * If this is only one selected call, pressing
+                     * Join on it will start a new join operation
                      */
 	                    g_b2bjoin_pending = TRUE;
 	                    g_b2bjoin_callid  = dcb->call_id;
@@ -7518,18 +7539,18 @@ fsmdef_b2bjoin_invoke (fsmdef_dcb_t *dcb, cc_feature_data_t *join_data)
 	                    return;
                    }
 	                feature_data.b2bjoin.b2bjoin_callid = dcb->call_id;
-	                feature_data.b2bjoin.b2bjoin_joincallid = dcb->call_id;              
+	                feature_data.b2bjoin.b2bjoin_joincallid = dcb->call_id;
 	                cc_int_feature(CC_SRC_GSM, CC_SRC_SIP, dcb->call_id,
-	                               dcb->line, CC_FEATURE_B2B_JOIN, &feature_data);               
+	                               dcb->line, CC_FEATURE_B2B_JOIN, &feature_data);
         }
     }
     g_b2bjoin_pending = FALSE;
-    g_b2bjoin_callid  = CC_NO_CALL_ID; 
+    g_b2bjoin_callid  = CC_NO_CALL_ID;
 }
 
 /*
  * fsmdef_select_invoke
- * 
+ *
  *
  * Description:
  *    This function implements the join feature invocation.
@@ -7573,10 +7594,10 @@ fsmdef_select_invoke (fsmdef_dcb_t *dcb, cc_feature_data_t *select_data)
 
 /*
  * handle_join_pending
- * 
+ *
  *
  * Description:
- *    This function checks if the join_pending flag 
+ *    This function checks if the join_pending flag
  *    needs to be cleared.due to the invocation of other features
  *
  * Parameters:
@@ -7663,7 +7684,7 @@ fsmdef_process_cfwd_softkey_event (sm_event_t *event)
          {
              dcb->active_feature = CC_FEATURE_NONE;
              return (SM_RC_END);
-         } 
+         }
 
 
         // go offhook and then move to dialing state to collect digits
@@ -7717,7 +7738,7 @@ fsmdef_process_cfwd_softkey_event (sm_event_t *event)
  *
  * @param[in] fcb     The pointer to the fsm_fcb_t structure of this
  *                    call chain.
- * 
+ *
  * @pre               (fcb not_eq NULL)
  *
  * @return            sm_rsc_t indicates whether the execution of
@@ -7738,11 +7759,11 @@ fsmdef_cfwd_clear_ccm (fsm_fcb_t *fcb)
     // From here on all we need to do is send INVITE out.
     // Since, its not a real call there is no need to update UI etc.
     // Response to this call will be 5xx so it will be released by the SIP stack.
-    cause = gsmsdp_create_local_sdp(dcb, FALSE);
+    cause = gsmsdp_create_local_sdp(dcb, FALSE, TRUE, TRUE, TRUE, TRUE);
     if (cause != CC_CAUSE_OK) {
         FSM_DEBUG_SM(get_debug_string(FSM_DBG_SDP_BUILD_ERR));
         return (fsmdef_release(fcb, cause, dcb->send_release));
-    } 
+    }
 
     /* Build SDP for sending out */
     cause = gsmsdp_encode_sdp_and_update_version(dcb, &msg_body);
@@ -7816,7 +7837,7 @@ fsmdef_append_dialstring_to_feature_uri (fsmdef_dcb_t *dcb,
         }
     } else {
         FSM_DEBUG_SM(DEB_F_PREFIX"Configured Feature/Service URI Not Found For Feature[%d]\n", DEB_F_PREFIX_ARGS(FSM, "fsmdef_append_dialstring_to_feature_uri"), (int)dcb->active_feature);
-        
+
         if (dialstring && dialstring[0]) {
             dcb->caller_id.called_number =
                 strlib_update(dcb->caller_id.called_number, dialstring);
@@ -7859,7 +7880,7 @@ fsmdef_is_feature_uri_configured (cc_features_t ftr_id)
     if (service_uri[0] != NUL) {
         return TRUE;
     }
-       
+
     FSM_DEBUG_SM(DEB_F_PREFIX"Configured Feature/Service URI Not Found For Feature[%d]\n", DEB_F_PREFIX_ARGS(FSM, "fsmdef_is_feature_uri_configured"), (int)ftr_id);
     return FALSE;
 }
@@ -7947,7 +7968,7 @@ fsmdef_check_if_ok_to_hold_call (line_t line, callid_t call_id)
     dcb = fsmdef_get_dcb_by_call_id(call_id);
 
     if (dcb == NULL) {
-    	
+
         return (FALSE);
     }
 
@@ -8016,9 +8037,9 @@ fsmdef_check_if_ok_to_run_feature (line_t line, callid_t call_id)
         return (FALSE);
     }
 
-    if ((dcb->line != line) || 
-        ((dcb->fcb != NULL) && 
-         (dcb->fcb->state != FSMDEF_S_CONNECTED) && 
+    if ((dcb->line != line) ||
+        ((dcb->fcb != NULL) &&
+         (dcb->fcb->state != FSMDEF_S_CONNECTED) &&
          (dcb->fcb->state != FSMDEF_S_CONNECTED_MEDIA_PEND))) {
         return (FALSE);
     }
@@ -8049,8 +8070,8 @@ fsmdef_check_if_ok_to_monitor_update_call (line_t line, callid_t call_id)
         return (FALSE);
     }
 
-    if ((dcb->line != line) || 
-        ((dcb->fcb != NULL) && 
+    if ((dcb->line != line) ||
+        ((dcb->fcb != NULL) &&
          (dcb->fcb->state != FSMDEF_S_CONNECTED))) {
         return (FALSE);
     }
@@ -8077,7 +8098,7 @@ fsmdef_set_call_info_cc_call_state (fsmdef_dcb_t *dcb, cc_states_t state, cc_cau
     cc_state_data_t temp_data;
     char           tmp_str[CALL_BUBBLE_STR_MAX_LEN];
     int            rc = CPR_FAILURE;
-    
+
 	tmp_str[0] = '\0';
 
     switch (dcb->active_feature) {
@@ -8359,15 +8380,15 @@ fsmdef_extract_join_target (sm_event_t *event)
                 // set the session leg of this dcb to monitor
                 dcb->session = MONITOR;
             }
-            FSM_DEBUG_SM(DEB_L_C_F_PREFIX" dcb-session type is = %s \n", 
+            FSM_DEBUG_SM(DEB_L_C_F_PREFIX" dcb-session type is = %s \n",
                 DEB_L_C_F_PREFIX_ARGS(FSM, dcb->line, dcb->call_id, fname),
-                dcb->session == WHISPER_COACHING ? "WHISPER_COACHING" : 
+                dcb->session == WHISPER_COACHING ? "WHISPER_COACHING" :
                 dcb->session == MONITOR ? "MONITOR" : "PRIMARY");
 
             cc_int_feature(CC_SRC_GSM, CC_SRC_GSM, join_dcb->call_id, line,
                            CC_FEATURE_JOIN, &data);
         } else {
-            FSM_DEBUG_SM(DEB_L_C_F_PREFIX"Unable to find join target dcb\n", 
+            FSM_DEBUG_SM(DEB_L_C_F_PREFIX"Unable to find join target dcb\n",
 				DEB_L_C_F_PREFIX_ARGS(FSM, dcb->line, dcb->call_id, fname));
             return (TRUE);
         }
@@ -8423,7 +8444,7 @@ fsmdef_notify_hook_event (fsm_fcb_t *fcb, cc_msgs_t msg, char *global_call_id,
 
     if (msg == CC_MSG_OFFHOOK) {
         cc_int_offhook(CC_SRC_GSM, CC_SRC_SIP, prim_call_id, consult_reason,
-                       fcb->dcb->call_id, fcb->dcb->line, 
+                       fcb->dcb->call_id, fcb->dcb->line,
                        global_call_id, monitor_mode,cfwdall_mode);
     } else if (msg == CC_MSG_ONHOOK) {
         cc_int_onhook(CC_SRC_GSM, CC_SRC_SIP, prim_call_id,
@@ -8576,7 +8597,7 @@ fsmdef_init (void)
         }
         if (dcb == fsmdef_dcbs) {
             g_disable_mass_reg_debug_print = TRUE;
-        } 
+        }
     }
     g_disable_mass_reg_debug_print = FALSE;
 
@@ -8606,10 +8627,10 @@ fsmdef_shutdown (void)
             (void)cprDestroyTimer(dcb->ringback_delay_tmr);
         }
         if (dcb->autoAnswerTimer) {
-            (void)cprDestroyTimer(dcb->autoAnswerTimer); 
+            (void)cprDestroyTimer(dcb->autoAnswerTimer);
         }
         if (dcb->revertTimer) {
-            (void)cprDestroyTimer(dcb->revertTimer); 
+            (void)cprDestroyTimer(dcb->revertTimer);
         }
 
         /* clean media list */

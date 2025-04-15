@@ -18,15 +18,14 @@
 #include "nsCSSAnonBoxes.h"
 #include "nsAutoPtr.h"
 #include "nsFrameManager.h"
-#ifdef ACCESSIBILITY
-#include "nsIServiceManager.h"
-#include "nsAccessibilityService.h"
-#endif
 #include "nsDisplayList.h"
+#include "mozilla/Likely.h"
 
 #ifdef DEBUG
 #undef NOISY_PUSHING
 #endif
+
+using namespace mozilla;
 
 
 //////////////////////////////////////////////////////////////////////
@@ -37,20 +36,6 @@ nsIFrame*
 NS_NewInlineFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
   return new (aPresShell) nsInlineFrame(aContext);
-}
-
-NS_IMETHODIMP
-nsInlineFrame::Init(nsIContent*      aContent,
-                    nsIFrame*        aParent,
-                    nsIFrame*        aPrevInFlow)
-{
-  // Let the base class do its processing
-  nsresult rv = nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
-
-  // Transforms do not affect regular inline elements (bug 722463)
-  mState &= ~NS_FRAME_MAY_BE_TRANSFORMED;
-
-  return rv;
 }
 
 NS_IMPL_FRAMEARENA_HELPERS(nsInlineFrame)
@@ -508,7 +493,7 @@ nsInlineFrame::ReflowFrames(nsPresContext* aPresContext,
         // This scenario doesn't happen often, but it can happen.
         nsIFrame* nextSibling = child->GetNextSibling();
         child = child->GetNextInFlow();
-        if (NS_UNLIKELY(child)) {
+        if (MOZ_UNLIKELY(child)) {
           while (child != nextSibling && nextSibling) {
             nextSibling = nextSibling->GetNextSibling();
           }
@@ -902,39 +887,21 @@ nsInlineFrame::GetBaseline() const
   return mBaseline;
 }
 
-void
-nsInlineFrame::DestroyFrom(nsIFrame* aDestructRoot)
-{
-  DestroyAbsoluteFrames(aDestructRoot);
-  nsContainerFrame::DestroyFrom(aDestructRoot);
-}
-
 #ifdef ACCESSIBILITY
-already_AddRefed<Accessible>
-nsInlineFrame::CreateAccessible()
+a11y::AccType
+nsInlineFrame::AccessibleType()
 {
   // Broken image accessibles are created here, because layout
   // replaces the image or image control frame with an inline frame
   nsIAtom *tagAtom = mContent->Tag();
-  if ((tagAtom == nsGkAtoms::img || tagAtom == nsGkAtoms::input || 
-       tagAtom == nsGkAtoms::label) && mContent->IsHTML()) {
-    // Only get accessibility service if we're going to use it
+  if (tagAtom == nsGkAtoms::input)  // Broken <input type=image ... />
+    return a11y::eHTMLButtonAccessible;
+  if (tagAtom == nsGkAtoms::img)  // Create accessible for broken <img>
+    return a11y::eImageAccessible;
+  if (tagAtom == nsGkAtoms::label)  // Creat accessible for <label>
+    return a11y::eHTMLLabelAccessible;
 
-    nsAccessibilityService* accService = nsIPresShell::AccService();
-    if (!accService)
-      return nullptr;
-    if (tagAtom == nsGkAtoms::input)  // Broken <input type=image ... />
-      return accService->CreateHTMLButtonAccessible(mContent,
-                                                    PresContext()->PresShell());
-    else if (tagAtom == nsGkAtoms::img)  // Create accessible for broken <img>
-      return accService->CreateHTMLImageAccessible(mContent,
-                                                   PresContext()->PresShell());
-    else if (tagAtom == nsGkAtoms::label)  // Creat accessible for <label>
-      return accService->CreateHTMLLabelAccessible(mContent,
-                                                   PresContext()->PresShell());
-  }
-
-  return nullptr;
+  return a11y::eNoAccessible;
 }
 #endif
 
