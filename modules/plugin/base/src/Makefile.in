@@ -51,9 +51,6 @@ MODULE_NAME	= nsPluginModule
 GRE_MODULE	= 1
 LIBXUL_LIBRARY = 1
 
-PACKAGE_FILE = plugin.pkg
-PACKAGE_VARS += MOZ_ENABLE_GTK
-
 REQUIRES	= xpcom \
 		  xpconnect \
 		  string \
@@ -85,12 +82,13 @@ REQUIRES	+= gtkxtbin
 endif
 
 CPPSRCS		= \
-		ns4xPlugin.cpp \
-		ns4xPluginInstance.cpp \
+		nsNPAPIPlugin.cpp \
+		nsNPAPIPluginInstance.cpp \
 		nsPluginHostImpl.cpp \
 		nsPluginModule.cpp \
 		nsPluginInstancePeer.cpp \
 		nsJSNPRuntime.cpp \
+		nsJVMAuthTools.cpp \
 		$(NULL)
 
 ifeq ($(OS_ARCH), BeOS)

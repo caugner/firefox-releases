@@ -365,14 +365,7 @@ void nsListControlFrame::PaintFocus(nsIRenderingContext& aRC, nsPoint aPt)
              nsILookAndFeel::eColor_WidgetSelectForeground :
              nsILookAndFeel::eColor_WidgetSelectBackground, color);
 
-  nscoord onePixelInTwips = nsPresContext::CSSPixelsToAppUnits(1);
-
-  nsRect dirty;
-  nscolor colors[] = {color, color, color, color};
-  PRUint8 borderStyle[] = {NS_STYLE_BORDER_STYLE_DOTTED, NS_STYLE_BORDER_STYLE_DOTTED, NS_STYLE_BORDER_STYLE_DOTTED, NS_STYLE_BORDER_STYLE_DOTTED};
-  nsRect innerRect = fRect;
-  innerRect.Deflate(nsSize(onePixelInTwips, onePixelInTwips));
-  nsCSSRendering::DrawDashedSides(0, aRC, dirty, borderStyle, colors, fRect, innerRect, 0, nsnull);
+  nsCSSRendering::PaintFocus(presContext, aRC, fRect, color);
 }
 
 void
@@ -678,7 +671,9 @@ nsListControlFrame::ReflowAsDropdown(nsPresContext*           aPresContext,
   mMightNeedSecondPass = NS_SUBTREE_DIRTY(this) ||
     aReflowState.ShouldReflowAllKids();
 
+#ifdef DEBUG
   nscoord oldHeightOfARow = HeightOfARow();
+#endif
 
   nsHTMLReflowState state(aReflowState);
 
@@ -1552,13 +1547,16 @@ nsListControlFrame::SetOptionsSelectedFromFrame(PRInt32 aStartIndex,
 {
   nsCOMPtr<nsISelectElement> selectElement(do_QueryInterface(mContent));
   PRBool wasChanged = PR_FALSE;
-  nsresult rv = selectElement->SetOptionsSelectedByIndex(aStartIndex,
-                                                         aEndIndex,
-                                                         aValue,
-                                                         aClearAll,
-                                                         PR_FALSE,
-                                                         PR_TRUE,
-                                                         &wasChanged);
+#ifdef DEBUG
+  nsresult rv = 
+#endif
+    selectElement->SetOptionsSelectedByIndex(aStartIndex,
+                                             aEndIndex,
+                                             aValue,
+                                             aClearAll,
+                                             PR_FALSE,
+                                             PR_TRUE,
+                                             &wasChanged);
   NS_ASSERTION(NS_SUCCEEDED(rv), "SetSelected failed");
   return wasChanged;
 }
@@ -1825,11 +1823,13 @@ nsListControlFrame::IsContainingBlock() const
 void
 nsListControlFrame::InvalidateInternal(const nsRect& aDamageRect,
                                        nscoord aX, nscoord aY, nsIFrame* aForChild,
-                                       PRBool aImmediate)
+                                       PRUint32 aFlags)
 {
-  if (!IsInDropDownMode())
-    nsHTMLScrollFrame::InvalidateInternal(aDamageRect, aX, aY, this, aImmediate);
-  InvalidateRoot(aDamageRect, aX, aY, aImmediate);
+  if (!IsInDropDownMode()) {
+    nsHTMLScrollFrame::InvalidateInternal(aDamageRect, aX, aY, this, aFlags);
+    return;
+  }
+  InvalidateRoot(aDamageRect + nsPoint(aX, aY), aFlags);
 }
 
 #ifdef DEBUG
@@ -1877,36 +1877,27 @@ nsListControlFrame::IsLeftButton(nsIDOMEvent* aMouseEvent)
 nscoord
 nsListControlFrame::CalcFallbackRowHeight(PRInt32 aNumOptions)
 {
-  const nsStyleFont* styleFont = nsnull;
+  nsIFrame *fontFrame = nsnull;
     
   if (aNumOptions > 0) {
     // Try the first option
     nsCOMPtr<nsIContent> option = GetOptionContent(0);
     if (option) {
-      nsIFrame * optFrame = PresContext()->PresShell()->
-        GetPrimaryFrameFor(option);
-      if (optFrame) {
-        styleFont = optFrame->GetStyleFont();
-      }
+      fontFrame = PresContext()->PresShell()->GetPrimaryFrameFor(option);
     }
   }
 
-  if (!styleFont) {
+  if (!fontFrame) {
     // Fall back to our own font
-    styleFont = GetStyleFont();
+    fontFrame = this;
   }
-
-  NS_ASSERTION(styleFont, "Must have font style by now!");
 
   nscoord rowHeight = 0;
   
   nsCOMPtr<nsIFontMetrics> fontMet;
-  nsresult result = PresContext()->DeviceContext()->
-    GetMetricsFor(styleFont->mFont, *getter_AddRefs(fontMet));
-  if (NS_SUCCEEDED(result) && fontMet) {
-    if (fontMet) {
-      fontMet->GetHeight(rowHeight);
-    }
+  nsLayoutUtils::GetFontMetricsForFrame(fontFrame, getter_AddRefs(fontMet));
+  if (fontMet) {
+    fontMet->GetHeight(rowHeight);
   }
 
   return rowHeight;
@@ -2010,7 +2001,7 @@ nsListControlFrame::MouseUp(nsIDOMEvent* aMouseEvent)
     // so the right thing happens for the onclick event
     nsCOMPtr<nsIPrivateDOMEvent> privateEvent(do_QueryInterface(aMouseEvent));
     nsMouseEvent * mouseEvent;
-    privateEvent->GetInternalNSEvent((nsEvent**)&mouseEvent);
+    mouseEvent = (nsMouseEvent *) privateEvent->GetInternalNSEvent();
 
     PRInt32 selectedIndex;
     if (NS_SUCCEEDED(GetIndexFromDOMEvent(aMouseEvent, selectedIndex))) {
@@ -2324,7 +2315,7 @@ nsListControlFrame::ScrollToFrame(nsIContent* aOptElement)
   if (scrollableView) {
     // if null is passed in we scroll to 0,0
     if (nsnull == aOptElement) {
-      scrollableView->ScrollTo(0, 0, PR_TRUE);
+      scrollableView->ScrollTo(0, 0, 0);
       return NS_OK;
     }
   
@@ -2382,7 +2373,7 @@ nsListControlFrame::ScrollToFrame(nsIContent* aOptElement)
           } else {
             y = fRect.y;
           }
-          scrollableView->ScrollTo(pnt.x, y, PR_TRUE);
+          scrollableView->ScrollTo(pnt.x, y, 0);
         }
 
       }
@@ -2502,13 +2493,16 @@ nsListControlFrame::DropDownToggleKey(nsIDOMEvent* aKeyEvent)
   // dropdowns there.
   if (IsInDropDownMode() && !nsComboboxControlFrame::ToolkitHasNativePopup()) {
     aKeyEvent->PreventDefault();
-    nsIFrame* comboFrame;
-    CallQueryInterface(mComboboxFrame, &comboFrame);
-    nsWeakFrame weakFrame(comboFrame);
-    mComboboxFrame->ShowDropDown(!mComboboxFrame->IsDroppedDown());
-    if (!weakFrame.IsAlive())
-      return;
-    mComboboxFrame->RedisplaySelectedText();
+    if (!mComboboxFrame->IsDroppedDown()) {
+      mComboboxFrame->ShowDropDown(PR_TRUE);
+    } else {
+      nsWeakFrame weakFrame(this);
+      // mEndSelectionIndex is the last item that got selected.
+      ComboboxFinish(mEndSelectionIndex);
+      if (weakFrame.IsAlive()) {
+        FireOnChange();
+      }
+    }
   }
 }
 

@@ -66,7 +66,6 @@ var observer =
 
 };
 
-var root = bmsvc.bookmarksRoot;
 const FEEDSPEC = "http://localhost:8888/tests/toolkit/components/places/tests/chrome/rss_as_html.rss";
 
 gLivemarkId = lmsvc.createLivemarkFolderOnly(toolbarFolderId, "foo",

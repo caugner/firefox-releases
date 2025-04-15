@@ -41,6 +41,22 @@
 #include "nsToolkit.h"
 #include "nsThreadUtils.h"
 
+#ifdef WINCE
+BOOL WaitMessage(VOID)
+{
+  BOOL retval = TRUE;
+  
+  HANDLE hThread = GetCurrentThread();
+  DWORD waitRes = MsgWaitForMultipleObjectsEx(1, &hThread, INFINITE, QS_ALLEVENTS, 0);
+  if((DWORD)-1 == waitRes)
+  {
+    retval = FALSE;
+  }
+  
+  return retval;
+}
+#endif
+
 static UINT sMsgId;
 
 //-------------------------------------------------------------------------
@@ -93,13 +109,13 @@ nsresult
 nsAppShell::Init()
 {
   if (!sMsgId)
-    sMsgId = RegisterWindowMessage("nsAppShell:EventID");
+    sMsgId = RegisterWindowMessageW(L"nsAppShell:EventID");
 
-  WNDCLASS wc;
+  WNDCLASSW wc;
   HINSTANCE module = GetModuleHandle(NULL);
 
-  const char *const kWindowClass = "nsAppShell:EventWindowClass";
-  if (!GetClassInfo(module, kWindowClass, &wc)) {
+  const PRUnichar *const kWindowClass = L"nsAppShell:EventWindowClass";
+  if (!GetClassInfoW(module, kWindowClass, &wc)) {
     wc.style         = 0;
     wc.lpfnWndProc   = EventWindowProc;
     wc.cbClsExtra    = 0;
@@ -108,12 +124,12 @@ nsAppShell::Init()
     wc.hIcon         = NULL;
     wc.hCursor       = NULL;
     wc.hbrBackground = (HBRUSH) NULL;
-    wc.lpszMenuName  = (LPCSTR) NULL;
+    wc.lpszMenuName  = (LPCWSTR) NULL;
     wc.lpszClassName = kWindowClass;
-    RegisterClass(&wc);
+    RegisterClassW(&wc);
   }
 
-  mEventWnd = CreateWindow(kWindowClass, "nsAppShell:EventWindow",
+  mEventWnd = CreateWindowW(kWindowClass, L"nsAppShell:EventWindow",
                            0, 0, 0, 10, 10, NULL, NULL, module, NULL);
   NS_ENSURE_STATE(mEventWnd);
 
@@ -142,6 +158,7 @@ nsAppShell::ProcessNextNativeEvent(PRBool mayWait)
         ::PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
       gotMessage = PR_TRUE;
       if (msg.message == WM_QUIT) {
+        ::PostQuitMessage(msg.wParam);
         Exit();
       } else {
         ::TranslateMessage(&msg);

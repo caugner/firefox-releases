@@ -187,13 +187,14 @@ ProcessTableRulesAttribute(void*       aStyleStruct,
       borderData->SetBorderStyle(aSide, bStyle);
 
       nscolor borderColor;
-      PRBool transparent, foreground;
-      borderData->GetBorderColor(aSide, borderColor, transparent, foreground);
-      if (transparent || foreground) {
+      PRBool foreground;
+      borderData->GetBorderColor(aSide, borderColor, foreground);
+      if (foreground || NS_GET_A(borderColor) == 0) {
         // use the table's border color if it is set, otherwise use black
         nscolor tableBorderColor;
-        tableBorderData->GetBorderColor(aSide, tableBorderColor, transparent, foreground);
-        borderColor = (transparent || foreground) ? NS_RGB(0,0,0) : tableBorderColor;
+        tableBorderData->GetBorderColor(aSide, tableBorderColor, foreground);
+        borderColor = (foreground || NS_GET_A(tableBorderColor) == 0)
+                        ? NS_RGB(0,0,0) : tableBorderColor;
         borderData->SetBorderColor(aSide, borderColor);
       }
       // set the border width to be 1 pixel
@@ -301,7 +302,7 @@ struct MappedAttrTableEntry : public PLDHashEntryHdr {
   nsMappedAttributes *mAttributes;
 };
 
-PR_STATIC_CALLBACK(PLDHashNumber)
+static PLDHashNumber
 MappedAttrTable_HashKey(PLDHashTable *table, const void *key)
 {
   nsMappedAttributes *attributes =
@@ -310,7 +311,7 @@ MappedAttrTable_HashKey(PLDHashTable *table, const void *key)
   return attributes->HashValue();
 }
 
-PR_STATIC_CALLBACK(void)
+static void
 MappedAttrTable_ClearEntry(PLDHashTable *table, PLDHashEntryHdr *hdr)
 {
   MappedAttrTableEntry *entry = static_cast<MappedAttrTableEntry*>(hdr);
@@ -319,7 +320,7 @@ MappedAttrTable_ClearEntry(PLDHashTable *table, PLDHashEntryHdr *hdr)
   memset(entry, 0, sizeof(MappedAttrTableEntry));
 }
 
-PR_STATIC_CALLBACK(PRBool)
+static PRBool
 MappedAttrTable_MatchEntry(PLDHashTable *table, const PLDHashEntryHdr *hdr,
                            const void *key)
 {
@@ -562,6 +563,14 @@ nsHTMLStyleSheet::HasAttributeDependentStyle(AttributeRuleProcessorData* aData,
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsHTMLStyleSheet::MediumFeaturesChanged(nsPresContext* aPresContext,
+                                        PRBool* aRulesChanged)
+{
+  *aRulesChanged = PR_FALSE;
+  return NS_OK;
+}
+
 
 NS_IMETHODIMP
 nsHTMLStyleSheet::RulesMatching(PseudoRuleProcessorData* aData)
@@ -606,12 +615,6 @@ nsHTMLStyleSheet::GetType(nsString& aType) const
 {
   aType.AssignLiteral("text/html");
   return NS_OK;
-}
-
-NS_IMETHODIMP_(PRBool)
-nsHTMLStyleSheet::UseForMedium(nsPresContext* aPresContext) const
-{
-  return PR_TRUE; // works for all media
 }
 
 NS_IMETHODIMP_(PRBool)

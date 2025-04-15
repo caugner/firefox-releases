@@ -180,7 +180,7 @@ struct PropertyPolicy : public PLDHashEntryHdr
     SecurityLevel  mSet;
 };
 
-PR_STATIC_CALLBACK(PRBool)
+static PRBool
 InitPropertyPolicyEntry(PLDHashTable *table,
                      PLDHashEntryHdr *entry,
                      const void *key)
@@ -192,7 +192,7 @@ InitPropertyPolicyEntry(PLDHashTable *table,
     return PR_TRUE;
 }
 
-PR_STATIC_CALLBACK(void)
+static void
 ClearPropertyPolicyEntry(PLDHashTable *table, PLDHashEntryHdr *entry)
 {
     PropertyPolicy* pp = (PropertyPolicy*)entry;
@@ -212,7 +212,7 @@ struct ClassPolicy : public PLDHashEntryHdr
     DomainPolicy* mDomainWeAreWildcardFor;
 };
 
-PR_STATIC_CALLBACK(void)
+static void
 ClearClassPolicyEntry(PLDHashTable *table, PLDHashEntryHdr *entry)
 {
     ClassPolicy* cp = (ClassPolicy *)entry;
@@ -226,12 +226,12 @@ ClearClassPolicyEntry(PLDHashTable *table, PLDHashEntryHdr *entry)
 
 // Note: actual impl is going to be after the DomainPolicy class definition,
 // since we need to access members of DomainPolicy in the impl
-PR_STATIC_CALLBACK(void)
+static void
 MoveClassPolicyEntry(PLDHashTable *table,
                      const PLDHashEntryHdr *from,
                      PLDHashEntryHdr *to);
 
-PR_STATIC_CALLBACK(PRBool)
+static PRBool
 InitClassPolicyEntry(PLDHashTable *table,
                      PLDHashEntryHdr *entry,
                      const void *key)
@@ -344,7 +344,7 @@ private:
 
 };
 
-PR_STATIC_CALLBACK(void)
+static void
 MoveClassPolicyEntry(PLDHashTable *table,
                      const PLDHashEntryHdr *from,
                      PLDHashEntryHdr *to)
@@ -402,14 +402,18 @@ public:
      * false otherwise.
      */
     static PRBool SecurityCompareURIs(nsIURI* aSourceURI, nsIURI* aTargetURI);
+    static PRUint32 SecurityHashURI(nsIURI* aURI);
 
     static nsresult 
     ReportError(JSContext* cx, const nsAString& messageTag,
                 nsIURI* aSource, nsIURI* aTarget);
+
     static nsresult
     CheckSameOriginPrincipal(nsIPrincipal* aSubject,
                              nsIPrincipal* aObject,
                              PRBool aIsCheckConnect);
+    static PRUint32
+    HashPrincipalByOrigin(nsIPrincipal* aPrincipal);
 
     static PRBool
     GetStrictFileOriginPolicy()
@@ -423,7 +427,7 @@ private:
     nsScriptSecurityManager();
     virtual ~nsScriptSecurityManager();
 
-    static JSBool JS_DLL_CALLBACK
+    static JSBool
     CheckObjectAccess(JSContext *cx, JSObject *obj,
                       jsval id, JSAccessMode mode,
                       jsval *vp);
@@ -525,13 +529,36 @@ private:
     nsresult
     SavePrincipal(nsIPrincipal* aToSave);
 
+    /**
+     * Check capability levels for an |aObj| that implements
+     * nsISecurityCheckedComponent.
+     *
+     * NB: This function also checks to see if aObj is a plugin and the user
+     * has set the "security.xpconnect.plugin.unrestricted" pref to allow
+     * anybody to script plugin objects from anywhere.
+     *
+     * @param aObj The nsISupports representation of the object in question
+     *             object, possibly null.
+     * @param aJSObject The JSObject representation of the object in question.
+     *                  Only used if |aObjectSecurityLevel| is "sameOrigin".
+     * @param aSubjectPrincipal The nominal subject principal used when
+     *                          aObjectSecurityLevel is "sameOrigin".
+     * @param aObjectSecurityLevel Can be one of three values:
+     *                  - allAccess: Allow access no matter what.
+     *                  - noAccess: Deny access no matter what.
+     *                  - sameOrigin: If both a subject principal and JS
+     *                                object have been passed in, returns
+     *                                true if the subject subsumes the object,
+     *                                otherwise, behaves like noAccess.
+     */
     nsresult
-    CheckXPCPermissions(nsISupports* aObj,
+    CheckXPCPermissions(nsISupports* aObj, JSObject* aJSObject,
+                        nsIPrincipal* aSubjectPrincipal,
                         const char* aObjectSecurityLevel);
 
     nsresult
     Init();
-    
+
     nsresult
     InitPrefs();
 
@@ -571,7 +598,6 @@ private:
     ScriptSecurityPrefChanged();
 
     static const char sJSEnabledPrefName[];
-    static const char sJSMailEnabledPrefName[];
     static const char sFileOriginPolicyPrefName[];
 
     nsObjectHashtable* mOriginToPolicyMap;
@@ -583,9 +609,7 @@ private:
     nsCOMPtr<nsIPrincipal> mSystemPrincipal;
     nsCOMPtr<nsIPrincipal> mSystemCertificate;
     nsInterfaceHashtable<PrincipalKey, nsIPrincipal> mPrincipals;
-    nsCOMPtr<nsIThreadJSContextStack> mJSContextStack;
     PRPackedBool mIsJavaScriptEnabled;
-    PRPackedBool mIsMailJavaScriptEnabled;
     PRPackedBool mIsWritingPrefs;
     PRPackedBool mPolicyPrefsChanged;
 #ifdef XPC_IDISPATCH_SUPPORT    
@@ -597,6 +621,7 @@ private:
 
     static nsIIOService    *sIOService;
     static nsIXPConnect    *sXPConnect;
+    static nsIThreadJSContextStack* sJSContextStack;
     static nsIStringBundle *sStrBundle;
     static JSRuntime       *sRuntime;
 };

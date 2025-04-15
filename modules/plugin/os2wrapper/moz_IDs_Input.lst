@@ -209,7 +209,6 @@ nsIDOMCSSStyleSheet
 nsIDOMCSSUnknownRule
 nsIDOMCSSValue
 nsIDOMCSSValueList
-nsIDOMCustomEvent
 nsIDOMDocument
 nsIDOMDocumentCSS
 nsIDOMDocumentEvent
@@ -725,7 +724,6 @@ nsIReadConfig
 nsIRecyclingAllocator
 nsIRefreshURI
 nsIRegistry
-nsIRelatedLinksHandler
 nsIRelativeFilePref
 nsIRequest
 nsIRequestObserver

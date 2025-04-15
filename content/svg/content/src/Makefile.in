@@ -73,11 +73,9 @@ CPPSRCS		= \
 		nsSVGAnimatedNumberList.cpp \
 		nsSVGAnimatedRect.cpp \
 		nsSVGAnimatedPreserveAspectRatio.cpp \
-		nsSVGAnimatedString.cpp \
 		nsSVGAnimatedTransformList.cpp \
 		nsSVGBoolean.cpp \
 		nsSVGCircleElement.cpp \
-		nsSVGClassValue.cpp \
 		nsSVGClipPathElement.cpp \
 		nsSVGDataParser.cpp \
 		nsSVGDefsElement.cpp \
@@ -89,6 +87,7 @@ CPPSRCS		= \
 		nsSVGFeatures.cpp \
 		nsSVGFilterElement.cpp \
 		nsSVGFilters.cpp \
+		nsSVGForeignObjectElement.cpp \
 		nsSVGGElement.cpp \
 		nsSVGGradientElement.cpp \
 		nsSVGGraphicElement.cpp \
@@ -118,6 +117,7 @@ CPPSRCS		= \
 		nsSVGPolylineElement.cpp \
 		nsSVGPreserveAspectRatio.cpp \
 		nsSVGScriptElement.cpp \
+		nsSVGString.cpp \
 		nsSVGStringProxyValue.cpp \
 		nsSVGStylableElement.cpp \
 		nsSVGRect.cpp \
@@ -137,10 +137,6 @@ CPPSRCS		= \
 		nsSVGUseElement.cpp \
 		nsSVGValue.cpp \
 		$(NULL)
-
-ifdef MOZ_SVG_FOREIGNOBJECT
-CPPSRCS += nsSVGForeignObjectElement.cpp
-endif
 
 include $(topsrcdir)/config/config.mk
 

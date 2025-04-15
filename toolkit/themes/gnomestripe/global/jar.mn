@@ -24,6 +24,8 @@ classic.jar:
 +  skin/classic/global/printPreview.css
 +  skin/classic/global/printPageSetup.css
 +  skin/classic/global/preferences.css
++  skin/classic/global/filefield.css
++  skin/classic/global/alerts/alert.css                        (alerts/alert.css)
 +  skin/classic/global/console/console.css                     (console/console.css)
 +  skin/classic/global/console/console.png                     (console/console.png)
 +  skin/classic/global/console/console-toolbar.png             (console/console-toolbar.png)
@@ -41,6 +43,8 @@ classic.jar:
 +  skin/classic/global/icons/notloading_16.png                 (icons/notloading_16.png)
 +  skin/classic/global/icons/notfound.png                      (icons/notfound.png)
 +  skin/classic/global/icons/questionGhosted-64.png            (icons/questionGhosted-64.png)
++  skin/classic/global/icons/Search-glass.png                  (icons/Search-glass.png)
++  skin/classic/global/icons/Search-glass-rtl.png              (icons/Search-glass-rtl.png)
 +  skin/classic/global/icons/sslWarning.png                    (icons/sslWarning.png)
 +  skin/classic/global/icons/warningGhosted-64.png             (icons/warningGhosted-64.png)
 +  skin/classic/global/icons/wrap.png                          (icons/wrap.png)

@@ -49,6 +49,7 @@
 #include "nsIInterfaceRequestor.h"
 // for do_CreateInstance
 #include "nsIComponentManager.h"
+#include "nsComponentManagerUtils.h"
 
 // for initializing our window watcher service
 #include "nsIWindowWatcher.h"
@@ -137,7 +138,8 @@ GTKEmbedDirectoryProvider::GetFile(const char *aKey, PRBool *aPersist,
       return rv;
   }
 
-  if (EmbedPrivate::sProfileDir && !strcmp(aKey, NS_APP_USER_PROFILE_50_DIR)) {
+  if (EmbedPrivate::sProfileDir && (!strcmp(aKey, NS_APP_USER_PROFILE_50_DIR)
+                                 || !strcmp(aKey, NS_APP_PROFILE_DIR_STARTUP))) {
     *aPersist = PR_TRUE;
     return EmbedPrivate::sProfileDir->Clone(aResult);
   }

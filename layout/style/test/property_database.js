@@ -116,8 +116,8 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "-moz-border-end-color", "-moz-border-end-style", "-moz-border-end-width" ],
-		initial_values: [ "none", "medium", "currentColor", "none medium currentcolor" ],
-		other_values: [ "solid", "thin", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
+		initial_values: [ "none", "medium", "currentColor", "thin", "none medium currentcolor" ],
+		other_values: [ "solid", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
 		invalid_values: [ "5%" ]
 	},
 	"-moz-border-end-color": {
@@ -149,6 +149,23 @@ var gCSSProperties = {
 		other_values: [ "thin", "thick", "1px", "2em" ],
 		invalid_values: [ "5%" ]
 	},
+	"-moz-border-image": {
+		domProp: "MozBorderImage",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "none" ],
+		other_values: [ "url('border.png') 27 27 27 27",
+		                "url('border.png') 27",
+		                "url('border.png') 27 27 27 27 repeat",
+		                "url('border.png') 27 27 27 27 / 1em",
+		                "url('border.png') 27 27 27 27 / 1em 1em 1em 1em repeat",
+		                "url('border.png') 27 27 27 27 / 1em 1em 1em 1em stretch round" ],
+		invalid_values: [ "url('border.png')",
+		                  "url('border.png') 27 27 27 27 27",
+		                  "url('border.png') 27 27 27 27 / 1em 1em 1em 1em 1em",
+		                  "url('border.png') / repeat",
+		                  "url('border.png') 27 27 27 27 /" ]
+	},
 	"-moz-border-left-colors": {
 		domProp: "MozBorderLeftColors",
 		inherited: false,
@@ -163,40 +180,50 @@ var gCSSProperties = {
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "-moz-border-radius-bottomleft", "-moz-border-radius-bottomright", "-moz-border-radius-topleft", "-moz-border-radius-topright" ],
 		initial_values: [ "0", "0px", "0px 0 0 0px" ], /* 0% ? */
-		other_values: [ "3%", "1px", "2em", "3em 2px", "2pt 3% 4em", "2px 2px 2px 2px" ],
-		invalid_values: [ "2px -2px" ]
+		other_values: [ "3%", "1px", "2em", "3em 2px", "2pt 3% 4em", "2px 2px 2px 2px", // circular
+		                "3% / 2%", "1px / 4px", "2em / 1em", "3em 2px / 2px 3em", "2pt 3% 4em / 4pt 1% 5em", "2px 2px 2px 2px / 4px 4px 4px 4px", "1pt / 2pt 3pt", "4pt 5pt / 3pt" // elliptical
+		              ],
+		invalid_values: [ "2px -2px", "inherit 2px", "inherit / 2px", "2px inherit", "2px / inherit", "2px 2px 2px 2px 2px", "1px / 2px 2px 2px 2px 2px" ]
 	},
 	"-moz-border-radius-bottomleft": {
 		domProp: "MozBorderRadiusBottomleft",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "0", "0px" ], /* 0% ? */
-		other_values: [ "3%", "1px", "2em" ],
-		invalid_values: [ "-1px" ]
+		other_values: [ "3%", "1px", "2em", // circular
+		                "3% 2%", "1px 4px", "2em 2pt" // elliptical
+		              ],
+		invalid_values: [ "-1px", "4px -2px", "inherit 2px", "2px inherit" ]
 	},
 	"-moz-border-radius-bottomright": {
 		domProp: "MozBorderRadiusBottomright",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "0", "0px" ], /* 0% ? */
-		other_values: [ "3%", "1px", "2em" ],
-		invalid_values: [ "-1px" ]
+		other_values: [ "3%", "1px", "2em", // circular
+		                "3% 2%", "1px 4px", "2em 2pt" // elliptical
+		              ],
+		invalid_values: [ "-1px", "4px -2px", "inherit 2px", "2px inherit" ]
 	},
 	"-moz-border-radius-topleft": {
 		domProp: "MozBorderRadiusTopleft",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "0", "0px" ], /* 0% ? */
-		other_values: [ "3%", "1px", "2em" ],
-		invalid_values: [ "-1px" ]
+		other_values: [ "3%", "1px", "2em", // circular
+		                "3% 2%", "1px 4px", "2em 2pt" // elliptical
+		              ],
+		invalid_values: [ "-1px", "4px -2px", "inherit 2px", "2px inherit" ]
 	},
 	"-moz-border-radius-topright": {
 		domProp: "MozBorderRadiusTopright",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "0", "0px" ], /* 0% ? */
-		other_values: [ "3%", "1px", "2em" ],
-		invalid_values: [ "-1px" ]
+		other_values: [ "3%", "1px", "2em", // circular
+		                "3% 2%", "1px 4px", "2em 2pt" // elliptical
+		              ],
+		invalid_values: [ "-1px", "4px -2px", "inherit 2px", "2px inherit" ]
 	},
 	"-moz-border-right-colors": {
 		domProp: "MozBorderRightColors",
@@ -211,8 +238,8 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "-moz-border-start-color", "-moz-border-start-style", "-moz-border-start-width" ],
-		initial_values: [ "none", "medium", "currentColor", "none medium currentcolor" ],
-		other_values: [ "solid", "thin", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
+		initial_values: [ "none", "medium", "currentColor", "thin", "none medium currentcolor" ],
+		other_values: [ "solid", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
 		invalid_values: [ "5%" ]
 	},
 	"-moz-border-start-color": {
@@ -300,6 +327,15 @@ var gCSSProperties = {
 		other_values: [ "center", "end", "justify" ],
 		invalid_values: []
 	},
+	"-moz-box-shadow": {
+		domProp: "MozBoxShadow",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "none" ],
+		prerequisites: { "color": "blue" },
+		other_values: [ "2px 2px", "2px 2px 1px", "2px 2px 2px 2px", "blue 3px 2px", "2px 2px 1px 5px green", "2px 2px red", "green 2px 2px 1px", "green 2px 2px, blue 1px 3px 4px", "currentColor 3px 3px", "blue 2px 2px, currentColor 1px 2px, 1px 2px 3px 2px orange", "3px 0 0 0", "inset 2px 2px 3px 4px black", "2px -2px green inset, 4px 4px 3px blue, inset 2px 2px" ],
+		invalid_values: [ "3% 3%", "1px 1px 1px 1px 1px", "2px 2px, none", "red 2px 2px blue", "inherit, 2px 2px", "2px 2px, inherit", "2px 2px -5px", "inset 4px 4px black inset", "inset inherit", "inset none" ]
+	},
 	"-moz-box-sizing": {
 		domProp: "MozBoxSizing",
 		inherited: false,
@@ -315,7 +351,7 @@ var gCSSProperties = {
 		initial_values: [ "auto" ],
 		other_values: [ "1", "0", "17" ],
 		invalid_values: [
-			// "-1", unclear: see http://lists.w3.org/Archives/Public/www-style/2007Apr/0030
+			"-1", //unclear: see http://lists.w3.org/Archives/Public/www-style/2007Apr/0030
 			"3px"
 		]
 	},
@@ -335,12 +371,48 @@ var gCSSProperties = {
 		other_values: [ "15px", "50%" ],
 		invalid_values: [ "20", "-1px" ]
 	},
+	"-moz-column-rule-width": {
+		domProp: "MozColumnRuleWidth",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		prerequisites: { "-moz-column-rule-style": "solid" },
+		initial_values: [ "medium" ],
+		other_values: [ "thin", "15px" ],
+		invalid_values: [ "20", "-1px", "red", "50%" ]
+	},
+	"-moz-column-rule-style": {
+		domProp: "MozColumnRuleStyle",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "none" ],
+		other_values: [ "solid", "hidden", "ridge", "groove", "inset", "outset", "double", "dotted", "dashed" ],
+		invalid_values: [ "20", "foo" ]
+	},
+	"-moz-column-rule-color": {
+		domProp: "MozColumnRuleColor",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		prerequisites: { "color": "green" },
+		initial_values: [ "currentColor" ],
+		other_values: [ "red", "blue", "#ffff00" ],
+		invalid_values: [ ]
+	},
+	"-moz-column-rule": {
+		domProp: "MozColumnRule",
+		inherited: false,
+		type: CSS_TYPE_TRUE_SHORTHAND,
+		prerequisites: { "color": "green" },
+		subproperties: [ "-moz-column-rule-width", "-moz-column-rule-style", "-moz-column-rule-color" ],
+		initial_values: [ "medium none currentColor" ],
+		other_values: [ "2px blue solid", "red dotted 1px", "ridge 4px orange" ],
+		invalid_values: [ "2px 3px 4px red", "dotted dashed", "5px dashed green 3px" ]
+	},
 	"-moz-float-edge": {
 		domProp: "MozFloatEdge",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "content-box" ],
-		other_values: [ "border-box", "padding-box", "margin-box" ],
+		other_values: [ "margin-box" ],
 		invalid_values: [ "content", "padding", "border", "margin" ]
 	},
 	"-moz-force-broken-image-icon": {
@@ -387,40 +459,50 @@ var gCSSProperties = {
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "-moz-outline-radius-bottomleft", "-moz-outline-radius-bottomright", "-moz-outline-radius-topleft", "-moz-outline-radius-topright" ],
 		initial_values: [ "0", "0px", "0%" ],
-		other_values: [ "2px", "0.3em", "2%" ],
-		invalid_values: [ "-2px" ]
+		other_values: [ "3%", "1px", "2em", "3em 2px", "2pt 3% 4em", "2px 2px 2px 2px", // circular
+		                "3% / 2%", "1px / 4px", "2em / 1em", "3em 2px / 2px 3em", "2pt 3% 4em / 4pt 1% 5em", "2px 2px 2px 2px / 4px 4px 4px 4px", "1pt / 2pt 3pt", "4pt 5pt / 3pt" // elliptical
+		              ],
+		invalid_values: [ "2px -2px", "inherit 2px", "inherit / 2px", "2px inherit", "2px / inherit", "2px 2px 2px 2px 2px", "1px / 2px 2px 2px 2px 2px" ]
 	},
 	"-moz-outline-radius-bottomleft": {
 		domProp: "MozOutlineRadiusBottomleft",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "0", "0px", "0%" ],
-		other_values: [ "2px", "0.3em", "2%" ],
-		invalid_values: [ "-2px" ]
+		other_values: [ "3%", "1px", "2em", // circular
+		                "3% 2%", "1px 4px", "2em 2pt" // elliptical
+		              ],
+		invalid_values: [ "-1px", "4px -2px", "inherit 2px", "2px inherit" ]
 	},
 	"-moz-outline-radius-bottomright": {
 		domProp: "MozOutlineRadiusBottomright",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "0", "0px", "0%" ],
-		other_values: [ "2px", "0.3em", "2%" ],
-		invalid_values: [ "-2px" ]
+		other_values: [ "3%", "1px", "2em", // circular
+		                "3% 2%", "1px 4px", "2em 2pt" // elliptical
+		              ],
+		invalid_values: [ "-1px", "4px -2px", "inherit 2px", "2px inherit" ]
 	},
 	"-moz-outline-radius-topleft": {
 		domProp: "MozOutlineRadiusTopleft",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "0", "0px", "0%" ],
-		other_values: [ "2px", "0.3em", "2%" ],
-		invalid_values: [ "-2px" ]
+		other_values: [ "3%", "1px", "2em", // circular
+		                "3% 2%", "1px 4px", "2em 2pt" // elliptical
+		              ],
+		invalid_values: [ "-1px", "4px -2px", "inherit 2px", "2px inherit" ]
 	},
 	"-moz-outline-radius-topright": {
 		domProp: "MozOutlineRadiusTopright",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "0", "0px", "0%" ],
-		other_values: [ "2px", "0.3em", "2%" ],
-		invalid_values: [ "-2px" ]
+		other_values: [ "3%", "1px", "2em", // circular
+		                "3% 2%", "1px 4px", "2em 2pt" // elliptical
+		              ],
+		invalid_values: [ "-1px", "4px -2px", "inherit 2px", "2px inherit" ]
 	},
 	"-moz-padding-end": {
 		domProp: "MozPaddingEnd",
@@ -440,6 +522,39 @@ var gCSSProperties = {
 		/* no subproperties */
 		initial_values: [ "0", "0px", "0%", "0em", "0ex" ],
 		other_values: [ "1px", "3em" ],
+		invalid_values: []
+	},
+	"-moz-transform": {
+		domProp: "MozTransform",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "none" ],
+		other_values: [ "translatex(1px)", "translatex(4em)", "translatex(-4px)", "translatex(3px)", "translatex(0px) translatex(1px) translatex(2px) translatex(3px) translatex(4px)", "translatey(4em)", "translate(3px)", "translate(10px, -3px)", "rotate(45deg)", "rotate(45grad)", "rotate(45rad)", "rotate(0)", "scalex(10)", "scaley(10)", "scale(10)", "scale(10, 20)", "skewx(30deg)", "skewx(0)", "skewy(0)", "skewx(30grad)", "skewx(30rad)", "skewy(30deg)", "skewy(30grad)", "skewy(30rad)", "matrix(1, 2, 3, 4, 5px, 6em)", "rotate(45deg) scale(2, 1)", "skewx(45deg) skewx(-50grad)", "translate(0, 0) scale(1, 1) skewx(0) skewy(0) matrix(1, 0, 0, 1, 0, 0)", "translatex(50%)", "translatey(50%)", "translate(50%)", "translate(3%, 5px)", "translate(5px, 3%)", "matrix(1, 2, 3, 4, 5px, 6%)", "matrix(1, 2, 3, 4, 5%, 6px)", "matrix(1, 2, 3, 4, 5%, 6%)"],
+		invalid_values: ["1px", "#0000ff", "red", "auto", "translatex(1px 1px)", "translatex(translatex(1px))", "translatex(#0000ff)", "translatex(red)", "translatey()", "matrix(1, 2, 3, 4, 5, 6)", "matrix(1px, 2px, 3px, 4px, 5px, 6px)", "scale(150%)", "skewx(red)", "matrix(1%, 0, 0, 0, 0px, 0px)", "matrix(0, 1%, 2, 3, 4px,5px)", "matrix(0, 1, 2%, 3, 4px, 5px)", "matrix(0, 1, 2, 3%, 4%, 5%)"]
+	},
+	"-moz-transform-origin": {
+		domProp: "MozTransformOrigin",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		/* no subproperties */
+		prerequisites: { "width": "10px", "height": "10px", "display": "block"},
+		initial_values: [ "50% 50%", "center", "center center" ],
+		other_values: [ "25% 25%", "5px 5px", "20% 3em", "0 0", "0in 1in",
+						"top", "bottom","top left", "top right",
+						"top center", "center left", "center right",
+						"bottom left", "bottom right", "bottom center",
+						"20% center", "5px center", "13in bottom",
+						"left 50px", "right 13%", "center 40px"],
+		invalid_values: ["red", "auto", "none", "0.5 0.5", "40px #0000ff",
+						 "border", "center red", "right diagonal",
+						 "#00ffff bottom"]
+	},
+	"-moz-stack-sizing": {
+		domProp: "MozStackSizing",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "stretch-to-fit" ],
+		other_values: [ "ignore" ],
 		invalid_values: []
 	},
 	"-moz-user-focus": {
@@ -472,6 +587,14 @@ var gCSSProperties = {
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "auto" ],
 		other_values: [ "none", "text", "element", "elements", "all", "toggle", "tri-state", "-moz-all", "-moz-none" ],
+		invalid_values: []
+	},
+	"-moz-window-shadow": {
+		domProp: "MozWindowShadow",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "default" ],
+		other_values: [ "none" ],
 		invalid_values: []
 	},
 	"azimuth": {
@@ -542,7 +665,7 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "border-bottom-color", "border-bottom-style", "border-bottom-width", "border-left-color", "border-left-style", "border-left-width", "border-right-color", "border-right-style", "border-right-width", "border-top-color", "border-top-style", "border-top-width" ],
-		initial_values: [ "none", "medium", "currentColor", "none medium currentcolor" ],
+		initial_values: [ "none", "medium", "currentColor", "thin", "none medium currentcolor" ],
 		other_values: [ "solid", "medium solid", "green solid", "10px solid", "thick solid" ],
 		invalid_values: [ "5%" ]
 	},
@@ -551,8 +674,8 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "border-bottom-color", "border-bottom-style", "border-bottom-width" ],
-		initial_values: [ "none", "medium", "currentColor", "none medium currentcolor" ],
-		other_values: [ "solid", "thin", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
+		initial_values: [ "none", "medium", "currentColor", "thin", "none medium currentcolor" ],
+		other_values: [ "solid", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
 		invalid_values: [ "5%" ]
 	},
 	"border-bottom-color": {
@@ -604,8 +727,8 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "border-left-color", "border-left-style", "border-left-width" ],
-		initial_values: [ "none", "medium", "currentColor", "none medium currentcolor" ],
-		other_values: [ "solid", "thin", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
+		initial_values: [ "none", "medium", "currentColor", "thin", "none medium currentcolor" ],
+		other_values: [ "solid", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
 		invalid_values: [ "5%" ]
 	},
 	"border-left-color": {
@@ -640,8 +763,8 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "border-right-color", "border-right-style", "border-right-width" ],
-		initial_values: [ "none", "medium", "currentColor", "none medium currentcolor" ],
-		other_values: [ "solid", "thin", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
+		initial_values: [ "none", "medium", "currentColor", "thin", "none medium currentcolor" ],
+		other_values: [ "solid", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
 		invalid_values: [ "5%" ]
 	},
 	"border-right-color": {
@@ -694,8 +817,8 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "border-top-color", "border-top-style", "border-top-width" ],
-		initial_values: [ "none", "medium", "currentColor", "none medium currentcolor" ],
-		other_values: [ "solid", "thin", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
+		initial_values: [ "none", "medium", "currentColor", "thin", "none medium currentcolor" ],
+		other_values: [ "solid", "green", "medium solid", "green solid", "10px solid", "thick solid", "5px green none" ],
 		invalid_values: [ "5%" ]
 	},
 	"border-top-color": {
@@ -775,7 +898,7 @@ var gCSSProperties = {
 		type: CSS_TYPE_LONGHAND,
 		/* XXX should test currentColor, but may or may not be initial */
 		initial_values: [ "black", "#000" ],
-		other_values: [ "green", "#f3c", "#fed292", "rgba(45,300,12,2)", "transparent" ],
+		other_values: [ "green", "#f3c", "#fed292", "rgba(45,300,12,2)", "transparent", "-moz-nativehyperlinktext", "rgba(255,128,0,0.5)" ],
 		invalid_values: [ "fff", "ffffff", "#f", "#ff", "#ffff", "#fffff", "#fffffff", "#ffffffff", "#fffffffff" ]
 	},
 	"content": {
@@ -1158,7 +1281,7 @@ var gCSSProperties = {
 		type: CSS_TYPE_TRUE_SHORTHAND,
 		subproperties: [ "outline-color", "outline-style", "outline-width" ],
 		initial_values: [
-			"none", "medium",
+			"none", "medium", "thin",
 			// XXX Should be invert, but currently currentcolor.
 			//"invert", "none medium invert"
 			"currentColor", "none medium currentcolor"
@@ -1364,7 +1487,8 @@ var gCSSProperties = {
 		domProp: "quotes",
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
-		initial_values: [ '"\\201C" "\\201D" "\\2018" "\\2019"' ],
+		initial_values: [ '"\u201C" "\u201D" "\u2018" "\u2019"',
+		                  '"\\201C" "\\201D" "\\2018" "\\2019"' ],
 		other_values: [ "none", "'\"' '\"'" ],
 		invalid_values: []
 	},
@@ -1491,12 +1615,12 @@ var gCSSProperties = {
 	},
 	"text-shadow": {
 		domProp: "textShadow",
-		inherited: false,
-		backend_only: true,
+		inherited: true,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
+		prerequisites: { "color": "blue" },
 		other_values: [ "2px 2px", "2px 2px 1px", "2px 2px green", "2px 2px 1px green", "green 2px 2px", "green 2px 2px 1px", "green 2px 2px, blue 1px 3px 4px", "currentColor 3px 3px", "blue 2px 2px, currentColor 1px 2px" ],
-		invalid_values: [ "3% 3%", "2px 2px 2px 2px", "2px 2px, none" ]
+		invalid_values: [ "3% 3%", "2px 2px 2px 2px", "2px 2px, none", "none, 2px 2px", "inherit, 2px 2px", "2px 2px, inherit" ]
 	},
 	"text-transform": {
 		domProp: "textTransform",
@@ -1563,7 +1687,7 @@ var gCSSProperties = {
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "normal" ],
-		other_values: [ "pre", "nowrap", "pre-wrap" ],
+		other_values: [ "pre", "nowrap", "pre-wrap", "pre-line" ],
 		invalid_values: []
 	},
 	"widows": {
@@ -1595,6 +1719,14 @@ var gCSSProperties = {
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "normal", "0", "0px", "-0em" ],
 		other_values: [ "1em", "2px", "-3px" ],
+		invalid_values: []
+	},
+	"word-wrap": {
+		domProp: "wordWrap",
+		inherited: true,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "normal" ],
+		other_values: [ "break-word" ],
 		invalid_values: []
 	},
 	"z-index": {

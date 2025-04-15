@@ -78,7 +78,6 @@ nsPluginArray::~nsPluginArray()
 NS_INTERFACE_MAP_BEGIN(nsPluginArray)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIDOMPluginArray)
   NS_INTERFACE_MAP_ENTRY(nsIDOMPluginArray)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMJSPluginArray)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(PluginArray)
 NS_INTERFACE_MAP_END
 
@@ -106,57 +105,68 @@ nsPluginArray::AllowPlugins()
   return allowPlugins;
 }
 
+nsIDOMPlugin*
+nsPluginArray::GetItemAt(PRUint32 aIndex, nsresult* aResult)
+{
+  *aResult = NS_OK;
+
+  if (!AllowPlugins())
+    return nsnull;
+
+  if (mPluginArray == nsnull) {
+    *aResult = GetPlugins();
+    if (*aResult != NS_OK)
+      return nsnull;
+  }
+
+  return aIndex < mPluginCount ? mPluginArray[aIndex] : nsnull;
+}
+
 NS_IMETHODIMP
 nsPluginArray::Item(PRUint32 aIndex, nsIDOMPlugin** aReturn)
 {
-  NS_PRECONDITION(nsnull != aReturn, "null arg");
-  *aReturn = nsnull;
+  nsresult rv;
+
+  NS_IF_ADDREF(*aReturn = GetItemAt(aIndex, &rv));
+
+  return rv;
+}
+
+nsIDOMPlugin*
+nsPluginArray::GetNamedItem(const nsAString& aName, nsresult* aResult)
+{
+  *aResult = NS_OK;
 
   if (!AllowPlugins())
-    return NS_OK;
+    return nsnull;
 
   if (mPluginArray == nsnull) {
-    nsresult rv = GetPlugins();
-    if (rv != NS_OK)
-      return rv;
+    *aResult = GetPlugins();
+    if (*aResult != NS_OK)
+      return nsnull;
   }
 
-  if (aIndex < mPluginCount) {
-    *aReturn = mPluginArray[aIndex];
-    NS_IF_ADDREF(*aReturn);
+  for (PRUint32 i = 0; i < mPluginCount; i++) {
+    nsAutoString pluginName;
+    nsIDOMPlugin* plugin = mPluginArray[i];
+    if (plugin->GetName(pluginName) == NS_OK && pluginName.Equals(aName)) {
+      return plugin;
+    }
   }
 
-  return NS_OK;
+  return nsnull;
 }
 
 NS_IMETHODIMP
 nsPluginArray::NamedItem(const nsAString& aName, nsIDOMPlugin** aReturn)
 {
   NS_PRECONDITION(nsnull != aReturn, "null arg");
-  *aReturn = nsnull;
 
-  if (!AllowPlugins())
-    return NS_OK;
+  nsresult rv;
 
-  if (mPluginArray == nsnull) {
-    nsresult rv = GetPlugins();
-    if (rv != NS_OK)
-      return rv;
-  }
+  NS_IF_ADDREF(*aReturn = GetNamedItem(aName, &rv));
 
-  for (PRUint32 i = 0; i < mPluginCount; i++) {
-    nsAutoString pluginName;
-    nsIDOMPlugin* plugin = mPluginArray[i];
-    if (plugin->GetName(pluginName) == NS_OK) {
-      if (pluginName.Equals(aName)) {
-        *aReturn = plugin;
-        NS_IF_ADDREF(plugin);
-        break;
-      }
-    }
-  }
-
-  return NS_OK;
+  return rv;
 }
 
 nsresult
@@ -240,41 +250,6 @@ nsPluginArray::Refresh(PRBool aReloadDocuments)
     webNav->Reload(nsIWebNavigation::LOAD_FLAGS_NONE);
 
   return res;
-}
-
-NS_IMETHODIMP
-nsPluginArray::Refresh()
-{
-  nsAXPCNativeCallContext *ncc = nsnull;
-  nsresult rv = nsContentUtils::XPConnect()->
-    GetCurrentNativeCallContext(&ncc);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!ncc)
-    return NS_ERROR_NOT_AVAILABLE;
-
-  PRBool reload_doc = PR_FALSE;
-
-  PRUint32 argc;
-
-  ncc->GetArgc(&argc);
-
-  if (argc > 0) {
-    jsval *argv = nsnull;
-
-    ncc->GetArgvPtr(&argv);
-    NS_ENSURE_TRUE(argv, NS_ERROR_UNEXPECTED);
-
-    JSContext *cx = nsnull;
-
-    rv = ncc->GetJSContext(&cx);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    JSAutoRequest ar(cx);
-    JS_ValueToBoolean(cx, argv[0], &reload_doc);
-  }
-
-  return Refresh(reload_doc);
 }
 
 nsresult
@@ -366,46 +341,65 @@ nsPluginElement::GetLength(PRUint32* aLength)
   return mPlugin->GetLength(aLength);
 }
 
+nsIDOMMimeType*
+nsPluginElement::GetItemAt(PRUint32 aIndex, nsresult *aResult)
+{
+  if (mMimeTypeArray == nsnull) {
+    *aResult = GetMimeTypes();
+    if (*aResult != NS_OK)
+      return nsnull;
+  }
+
+  if (aIndex >= mMimeTypeCount) {
+    *aResult = NS_ERROR_FAILURE;
+
+    return nsnull;
+  }
+
+  *aResult = NS_OK;
+
+  return mMimeTypeArray[aIndex];
+}
+
 NS_IMETHODIMP
 nsPluginElement::Item(PRUint32 aIndex, nsIDOMMimeType** aReturn)
 {
+  nsresult rv;
+
+  NS_IF_ADDREF(*aReturn = GetItemAt(aIndex, &rv));
+
+  return rv;
+}
+
+nsIDOMMimeType*
+nsPluginElement::GetNamedItem(const nsAString& aName, nsresult *aResult)
+{
   if (mMimeTypeArray == nsnull) {
-    nsresult rv = GetMimeTypes();
-    if (rv != NS_OK)
-      return rv;
+    *aResult = GetMimeTypes();
+    if (*aResult != NS_OK)
+      return nsnull;
   }
-  if (aIndex < mMimeTypeCount) {
-    nsIDOMMimeType* mimeType = mMimeTypeArray[aIndex];
-    NS_IF_ADDREF(mimeType);
-    *aReturn = mimeType;
-    return NS_OK;
+
+  *aResult = NS_OK;
+  for (PRUint32 i = 0; i < mMimeTypeCount; i++) {
+    nsAutoString type;
+    nsIDOMMimeType* mimeType = mMimeTypeArray[i];
+    if (mimeType->GetType(type) == NS_OK && type.Equals(aName)) {
+      return mimeType;
+    }
   }
-  return NS_ERROR_FAILURE;
+
+  return nsnull;
 }
 
 NS_IMETHODIMP
 nsPluginElement::NamedItem(const nsAString& aName, nsIDOMMimeType** aReturn)
 {
-  if (mMimeTypeArray == nsnull) {
-    nsresult rv = GetMimeTypes();
-    if (rv != NS_OK)
-      return rv;
-  }
+  nsresult rv;
 
-  *aReturn = nsnull;
-  for (PRUint32 i = 0; i < mMimeTypeCount; i++) {
-    nsAutoString type;
-    nsIDOMMimeType* mimeType = mMimeTypeArray[i];
-    if (mimeType->GetType(type) == NS_OK) {
-      if (type.Equals(aName)) {
-        *aReturn = mimeType;
-        NS_ADDREF(mimeType);
-        break;
-      }
-    }
-  }
+  NS_IF_ADDREF(*aReturn = GetNamedItem(aName, &rv));
 
-  return NS_OK;
+  return rv;
 }
 
 nsresult

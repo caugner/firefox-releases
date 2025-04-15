@@ -144,14 +144,7 @@ function getManifestProperty(id, property) {
  */
 function do_get_addon(name)
 {
-  var lf = gTestRoot.clone();
-  lf.append("unit");
-  lf.append("addons");
-  lf.append(name + ".xpi");
-  if (!lf.exists())
-    do_throw("Addon "+name+" does not exist.");
-
-  return lf;
+  return do_get_file("addons/" + name + ".xpi");
 }
 
 /**
@@ -216,7 +209,6 @@ function startupEM()
                   .getService(Components.interfaces.nsIExtensionManager);
   
   gEM.QueryInterface(Components.interfaces.nsIObserver);
-  gEM.observe(null, "app-startup", null);
   gEM.observe(null, "profile-after-change", "startup");
 
   // First run is a new profile which nsAppRunner would consider as an update
@@ -260,15 +252,9 @@ function restartEM()
 
 var gDirSvc = Components.classes["@mozilla.org/file/directory_service;1"]
                         .getService(Components.interfaces.nsIProperties);
-var gTestRoot = gDirSvc.get("CurProcD", Components.interfaces.nsILocalFile);
-gTestRoot = gTestRoot.parent.parent;
-gTestRoot.append("_tests");
-gTestRoot.append("xpcshell-simple");
-gTestRoot.append("test_extensionmanager");
-gTestRoot.normalize();
 
 // Need to create and register a profile folder.
-var gProfD = gTestRoot.clone();
+var gProfD = do_get_cwd();
 gProfD.append("profile");
 if (gProfD.exists())
   gProfD.remove(true);

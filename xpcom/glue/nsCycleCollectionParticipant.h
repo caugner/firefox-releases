@@ -139,7 +139,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsCycleCollectionParticipant,
 #define IMETHOD_VISIBILITY NS_COM_GLUE
 
 typedef void
-(* PR_CALLBACK TraceCallback)(PRUint32 langID, void *p, void *closure);
+(* TraceCallback)(PRUint32 langID, void *p, void *closure);
 
 class NS_NO_VTABLE nsScriptObjectTracer : public nsCycleCollectionParticipant
 {
@@ -322,14 +322,14 @@ public:
 ///////////////////////////////////////////////////////////////////////////////
 
 #ifdef DEBUG_CC
-#define NS_IMPL_CYCLE_COLLECTION_DESCRIBE(_class)                              \
-    cb.DescribeNode(RefCounted, tmp->mRefCnt.get(), sizeof(_class), #_class);
+#define NS_IMPL_CYCLE_COLLECTION_DESCRIBE(_class, _refcnt)                     \
+    cb.DescribeNode(RefCounted, _refcnt, sizeof(_class), #_class);
 #else
-#define NS_IMPL_CYCLE_COLLECTION_DESCRIBE(_class)                              \
-    cb.DescribeNode(RefCounted, tmp->mRefCnt.get());
+#define NS_IMPL_CYCLE_COLLECTION_DESCRIBE(_class, _refcnt)                     \
+    cb.DescribeNode(RefCounted, _refcnt);
 #endif
 
-#define NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(_class)                        \
+#define NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_REFCNT(_class, _refcnt)        \
   NS_IMETHODIMP                                                                \
   NS_CYCLE_COLLECTION_CLASSNAME(_class)::Traverse                              \
                          (void *p,                                             \
@@ -339,7 +339,16 @@ public:
     NS_ASSERTION(CheckForRightISupports(s),                                    \
                  "not the nsISupports pointer we expect");                     \
     _class *tmp = Downcast(s);                                                 \
-    NS_IMPL_CYCLE_COLLECTION_DESCRIBE(_class)
+    NS_IMPL_CYCLE_COLLECTION_DESCRIBE(_class, _refcnt)
+
+#define NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(_class)                        \
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_REFCNT(_class, tmp->mRefCnt.get())
+
+// Base class' CC participant should return NS_SUCCESS_INTERRUPTED_TRAVERSE
+// from Traverse if it wants derived classes to not traverse anything from
+// their CC participant.
+#define NS_SUCCESS_INTERRUPTED_TRAVERSE \
+  NS_ERROR_GENERATE_SUCCESS(NS_ERROR_MODULE_XPCOM, 2)
 
 #define NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(_class, _base_class) \
   NS_IMETHODIMP                                                                \
@@ -351,7 +360,10 @@ public:
     NS_ASSERTION(CheckForRightISupports(s),                                    \
                  "not the nsISupports pointer we expect");                     \
     _class *tmp = static_cast<_class*>(Downcast(s));                           \
-    NS_CYCLE_COLLECTION_CLASSNAME(_base_class)::Traverse(s, cb);
+    if (NS_CYCLE_COLLECTION_CLASSNAME(_base_class)::Traverse(s, cb) ==         \
+        NS_SUCCESS_INTERRUPTED_TRAVERSE) {                                     \
+      return NS_SUCCESS_INTERRUPTED_TRAVERSE;                                  \
+    }
 
 #define NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NATIVE_BEGIN(_class)                 \
   NS_IMETHODIMP                                                                \
@@ -360,7 +372,7 @@ public:
                           nsCycleCollectionTraversalCallback &cb)              \
   {                                                                            \
     _class *tmp = static_cast<_class*>(p);                                     \
-    NS_IMPL_CYCLE_COLLECTION_DESCRIBE(_class)
+    NS_IMPL_CYCLE_COLLECTION_DESCRIBE(_class, tmp->mRefCnt.get())
 
 #ifdef DEBUG_CC
   #define NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(_cb, _name)                       \
@@ -670,6 +682,21 @@ NS_CYCLE_COLLECTION_PARTICIPANT_INSTANCE
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(_f1)                               \
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(_f2)                               \
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(_f3)                               \
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+#define NS_IMPL_CYCLE_COLLECTION_4(_class, _f1, _f2, _f3, _f4)                 \
+ NS_IMPL_CYCLE_COLLECTION_CLASS(_class)                                        \
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(_class)                                 \
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(_f1)                                 \
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(_f2)                                 \
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(_f3)                                 \
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(_f4)                                 \
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_END                                           \
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(_class)                               \
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(_f1)                               \
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(_f2)                               \
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(_f3)                               \
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(_f4)                               \
  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 #endif // nsCycleCollectionParticipant_h__

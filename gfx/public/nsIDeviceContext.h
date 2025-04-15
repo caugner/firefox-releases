@@ -52,6 +52,7 @@ class nsIFontMetrics;
 class nsIWidget;
 class nsIDeviceContextSpec;
 class nsIAtom;
+class gfxUserFontSet;
 
 struct nsFont;
 
@@ -168,10 +169,10 @@ const PRUint8 kUseAltDCFor_CREATERC_PAINT  = 0x04; // Use when creating Renderin
 const PRUint8 kUseAltDCFor_SURFACE_DIM     = 0x08; // Use it for getting the Surface Dimensions
 #endif
 
-// 92a1e76c-adbd-441e-aae6-243d6004e0ee
+// eca27eb2-ef6f-4142-bf77-89c14e595171
 #define NS_IDEVICE_CONTEXT_IID   \
-{ 0x92a1e76c, 0xadbd, 0x441e, \
- { 0xaa, 0xe6, 0x24, 0x3d, 0x60, 0x4, 0xe0, 0xee } }
+{ 0xeca27eb2, 0xef6f, 0x4142, \
+  { 0xbf, 0x77, 0x89, 0xc1, 0x4e, 0x59, 0x51, 0x71 } }
 
 //a cross platform way of specifying a native palette handle
 typedef void * nsPalette;
@@ -330,9 +331,11 @@ public:
    * @param aFont font description to obtain metrics for
    * @param aLangGroup the language group of the document
    * @param aMetrics out parameter for font metrics
+   * @param aUserFontSet user font set
    * @return error status
    */
   NS_IMETHOD  GetMetricsFor(const nsFont& aFont, nsIAtom* aLangGroup,
+                            gfxUserFontSet* aUserFontSet,
                             nsIFontMetrics*& aMetrics) = 0;
 
   /**
@@ -340,9 +343,11 @@ public:
    * an nsFont.
    * @param aFont font description to obtain metrics for
    * @param aMetrics out parameter for font metrics
+   * @param aUserFontSet user font set
    * @return error status
    */
-  NS_IMETHOD  GetMetricsFor(const nsFont& aFont, nsIFontMetrics*& aMetrics) = 0;
+  NS_IMETHOD  GetMetricsFor(const nsFont& aFont, gfxUserFontSet* aUserFontSet,
+                            nsIFontMetrics*& aMetrics) = 0;
 
   /**
    * Check to see if a particular named font exists.

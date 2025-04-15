@@ -51,6 +51,7 @@
 #include "nsTableOuterFrame.h"
 #include "nsTableFrame.h"
 #include "nsTableCellFrame.h"
+#include "celldata.h"
 
 #include "nsMathMLmtableFrame.h"
 
@@ -348,8 +349,9 @@ ListMathMLTree(nsIFrame* atLeast)
 // --------
 // implementation of nsMathMLmtableOuterFrame
 
-NS_IMPL_ADDREF_INHERITED(nsMathMLmtableOuterFrame, nsMathMLFrame)
-NS_IMPL_RELEASE_INHERITED(nsMathMLmtableOuterFrame, nsMathMLFrame)
+// Frames are not refcounted objects, so use the non-logging addref/release macros.
+NS_IMPL_NONLOGGING_ADDREF_INHERITED(nsMathMLmtableOuterFrame, nsMathMLFrame)
+NS_IMPL_NONLOGGING_RELEASE_INHERITED(nsMathMLmtableOuterFrame, nsMathMLFrame)
 NS_IMPL_QUERY_INTERFACE_INHERITED1(nsMathMLmtableOuterFrame, nsTableOuterFrame, nsMathMLFrame)
 
 nsIFrame*
@@ -608,7 +610,8 @@ nsMathMLmtableOuterFrame::Reflow(nsPresContext*          aPresContext,
     case eAlign_axis:
     default: {
       // XXX should instead use style data from the row of reference here ?
-      aReflowState.rendContext->SetFont(GetStyleFont()->mFont, nsnull);
+      aReflowState.rendContext->SetFont(GetStyleFont()->mFont, nsnull,
+                                        aPresContext->GetUserFontSet());
       nsCOMPtr<nsIFontMetrics> fm;
       aReflowState.rendContext->GetFontMetrics(*getter_AddRefs(fm));
       nscoord axisHeight;
@@ -648,8 +651,9 @@ nsMathMLmtableOuterFrame::Reflow(nsPresContext*          aPresContext,
 // --------
 // implementation of nsMathMLmtableFrame
 
-NS_IMPL_ADDREF_INHERITED(nsMathMLmtableFrame, nsTableFrame)
-NS_IMPL_RELEASE_INHERITED(nsMathMLmtableFrame, nsTableFrame)
+// Frames are not refcounted objects, so use the non-logging addref/release macros.
+NS_IMPL_NONLOGGING_ADDREF_INHERITED(nsMathMLmtableFrame, nsTableFrame)
+NS_IMPL_NONLOGGING_RELEASE_INHERITED(nsMathMLmtableFrame, nsTableFrame)
 NS_IMPL_QUERY_INTERFACE_INHERITED0(nsMathMLmtableFrame, nsTableFrame)
 
 nsIFrame*
@@ -686,8 +690,9 @@ nsMathMLmtableFrame::RestyleTable()
 // --------
 // implementation of nsMathMLmtrFrame
 
-NS_IMPL_ADDREF_INHERITED(nsMathMLmtrFrame, nsTableRowFrame)
-NS_IMPL_RELEASE_INHERITED(nsMathMLmtrFrame, nsTableRowFrame)
+// Frames are not refcounted objects, so use the non-logging addref/release macros.
+NS_IMPL_NONLOGGING_ADDREF_INHERITED(nsMathMLmtrFrame, nsTableRowFrame)
+NS_IMPL_NONLOGGING_RELEASE_INHERITED(nsMathMLmtrFrame, nsTableRowFrame)
 NS_IMPL_QUERY_INTERFACE_INHERITED0(nsMathMLmtrFrame, nsTableRowFrame)
 
 nsIFrame*
@@ -747,8 +752,9 @@ nsMathMLmtrFrame::AttributeChanged(PRInt32  aNameSpaceID,
 // --------
 // implementation of nsMathMLmtdFrame
 
-NS_IMPL_ADDREF_INHERITED(nsMathMLmtdFrame, nsTableCellFrame)
-NS_IMPL_RELEASE_INHERITED(nsMathMLmtdFrame, nsTableCellFrame)
+// Frames are not refcounted objects, so use the non-logging addref/release macros.
+NS_IMPL_NONLOGGING_ADDREF_INHERITED(nsMathMLmtdFrame, nsTableCellFrame)
+NS_IMPL_NONLOGGING_RELEASE_INHERITED(nsMathMLmtdFrame, nsTableCellFrame)
 NS_IMPL_QUERY_INTERFACE_INHERITED0(nsMathMLmtdFrame, nsTableCellFrame)
 
 nsIFrame*
@@ -775,6 +781,7 @@ nsMathMLmtdFrame::GetRowSpan()
       rowspan = value.ToInteger(&error);
       if (error || rowspan < 0)
         rowspan = 1;
+      rowspan = PR_MIN(rowspan, MAX_ROWSPAN);
     }
   }
   return rowspan;
@@ -792,7 +799,7 @@ nsMathMLmtdFrame::GetColSpan()
     if (!value.IsEmpty()) {
       PRInt32 error;
       colspan = value.ToInteger(&error);
-      if (error || colspan < 0)
+      if (error || colspan < 0 || colspan > MAX_COLSPAN)
         colspan = 1;
     }
   }
@@ -832,8 +839,9 @@ nsMathMLmtdFrame::AttributeChanged(PRInt32  aNameSpaceID,
 // --------
 // implementation of nsMathMLmtdInnerFrame
 
-NS_IMPL_ADDREF_INHERITED(nsMathMLmtdInnerFrame, nsMathMLFrame)
-NS_IMPL_RELEASE_INHERITED(nsMathMLmtdInnerFrame, nsMathMLFrame)
+// Frames are not refcounted objects, so use the non-logging addref/release macros.
+NS_IMPL_NONLOGGING_ADDREF_INHERITED(nsMathMLmtdInnerFrame, nsMathMLFrame)
+NS_IMPL_NONLOGGING_RELEASE_INHERITED(nsMathMLmtdInnerFrame, nsMathMLFrame)
 NS_IMPL_QUERY_INTERFACE_INHERITED1(nsMathMLmtdInnerFrame, nsBlockFrame, nsMathMLFrame)
 
 nsIFrame*
@@ -844,19 +852,6 @@ NS_NewMathMLmtdInnerFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 
 nsMathMLmtdInnerFrame::~nsMathMLmtdInnerFrame()
 {
-}
-
-NS_IMETHODIMP
-nsMathMLmtdInnerFrame::Init(nsIContent*      aContent,
-                            nsIFrame*        aParent,
-                            nsIFrame*        aPrevInFlow)
-{
-  nsresult rv = nsBlockFrame::Init(aContent, aParent, aPrevInFlow);
-
-  // record that children that are ignorable whitespace should be excluded
-  mState |= NS_FRAME_EXCLUDE_IGNORABLE_WHITESPACE;
-
-  return rv;
 }
 
 NS_IMETHODIMP

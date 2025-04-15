@@ -55,8 +55,7 @@ enum nsStyleUnit {
   eStyleUnit_Factor       = 11,     // (float) a multiplier
   eStyleUnit_Coord        = 20,     // (nscoord) value is twips
   eStyleUnit_Integer      = 30,     // (int) value is simple integer
-  eStyleUnit_Enumerated   = 32,     // (int) value has enumerated meaning
-  eStyleUnit_Chars        = 33      // (int) value is number of characters
+  eStyleUnit_Enumerated   = 32      // (int) value has enumerated meaning
 };
 
 typedef union {
@@ -104,8 +103,10 @@ public:
   void  SetAutoValue(void);
   void  SetNoneValue(void);
 
+#ifdef DEBUG
   void  AppendToString(nsString& aBuffer) const;
   void  ToString(nsString& aBuffer) const;
+#endif
 
 public:
   nsStyleUnit   mUnit;
@@ -148,13 +149,49 @@ public:
   inline void SetRight(const nsStyleCoord& aCoord);
   inline void SetBottom(const nsStyleCoord& aCoord);
 
+#ifdef DEBUG
   void  AppendToString(nsString& aBuffer) const;
   void  ToString(nsString& aBuffer) const;
+#endif
 
 protected:
   PRUint8       mUnits[4];
   nsStyleUnion  mValues[4];
 };
+
+/**
+ * Class that represents a set of top-left/top-right/bottom-left/bottom-right
+ * nsStyleCoord pairs.  This is used to hold the dimensions of the
+ * corners of a box (for, e.g., border-radius and outline-radius).
+ */
+class nsStyleCorners {
+public:
+  nsStyleCorners(void);
+
+  // use compiler's version
+  //nsStyleCorners&  operator=(const nsStyleCorners& aCopy);  
+  PRBool         operator==(const nsStyleCorners& aOther) const;
+  PRBool         operator!=(const nsStyleCorners& aOther) const;
+
+  // aCorner is always one of NS_CORNER_* defined in nsStyleConsts.h
+  inline nsStyleUnit GetUnit(PRUint8 aHalfCorner) const;
+
+  inline nsStyleCoord Get(PRUint8 aHalfCorner) const;
+
+  void  Reset(void);
+
+  inline void Set(PRUint8 aHalfCorner, const nsStyleCoord& aCoord);
+
+#ifdef DEBUG
+  void  AppendToString(nsString& aBuffer) const;
+  void  ToString(nsString& aBuffer) const;
+#endif
+
+protected:
+  PRUint8       mUnits[8];
+  nsStyleUnion  mValues[8];
+};
+
 
 // -------------------------
 // nsStyleCoord inlines
@@ -182,7 +219,7 @@ inline nsStyleCoord::nsStyleCoord(const nsStyleUnion& aValue, nsStyleUnit aUnit)
 
 inline PRBool nsStyleCoord::operator!=(const nsStyleCoord& aOther) const
 {
-  return PRBool(! ((*this) == aOther));
+  return !((*this) == aOther);
 }
 
 inline PRInt32 nsStyleCoord::GetCoordValue(void) const
@@ -197,10 +234,8 @@ inline PRInt32 nsStyleCoord::GetCoordValue(void) const
 inline PRInt32 nsStyleCoord::GetIntValue(void) const
 {
   NS_ASSERTION((mUnit == eStyleUnit_Enumerated) ||
-               (mUnit == eStyleUnit_Chars) ||
                (mUnit == eStyleUnit_Integer), "not an int value");
   if ((mUnit == eStyleUnit_Enumerated) ||
-      (mUnit == eStyleUnit_Chars) ||
       (mUnit == eStyleUnit_Integer)) {
     return mValue.mInt;
   }
@@ -235,7 +270,7 @@ inline void nsStyleCoord::GetUnionValue(nsStyleUnion& aValue) const
 //
 inline PRBool nsStyleSides::operator!=(const nsStyleSides& aOther) const
 {
-  return PRBool(! ((*this) == aOther));
+  return !((*this) == aOther);
 }
 
 inline nsStyleUnit nsStyleSides::GetUnit(PRUint8 aSide) const
@@ -312,6 +347,30 @@ inline void nsStyleSides::SetRight(const nsStyleCoord& aCoord)
 inline void nsStyleSides::SetBottom(const nsStyleCoord& aCoord)
 {
   Set(NS_SIDE_BOTTOM, aCoord);
+}
+
+// -------------------------
+// nsStyleCorners inlines
+//
+inline PRBool nsStyleCorners::operator!=(const nsStyleCorners& aOther) const
+{
+  return !((*this) == aOther);
+}
+
+inline nsStyleUnit nsStyleCorners::GetUnit(PRUint8 aCorner) const
+{
+  return (nsStyleUnit)mUnits[aCorner];
+}
+
+inline nsStyleCoord nsStyleCorners::Get(PRUint8 aCorner) const
+{
+  return nsStyleCoord(mValues[aCorner], nsStyleUnit(mUnits[aCorner]));
+}
+
+inline void nsStyleCorners::Set(PRUint8 aCorner, const nsStyleCoord& aCoord)
+{
+  mUnits[aCorner] = aCoord.GetUnit();
+  aCoord.GetUnionValue(mValues[aCorner]);
 }
 
 #endif /* nsStyleCoord_h___ */

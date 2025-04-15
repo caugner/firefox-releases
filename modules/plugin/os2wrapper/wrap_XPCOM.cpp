@@ -62,7 +62,6 @@
 
 /* the headers */
 #include "npapi.h"
-#include "npupp.h"
 
 #include "nscore.h"
 #include "nsError.h"
@@ -2837,6 +2836,11 @@ public:
         UP_LEAVE_INT(rc);
         return rc;
     }
+
+    /**
+      * Drop our reference to our owner.
+      */
+    NS_IMETHOD InvalidateOwner() { return NS_ERROR_NOT_IMPLEMENTED; }
 
     /**
      * Constructor

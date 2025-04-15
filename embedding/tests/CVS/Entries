@@ -1,9 +1,0 @@
-/.cvsignore/1.1/Tue Dec 18 09:10:39 2001//TFIREFOX_3_0rc3_RELEASE
-/Makefile.in/1.12/Fri Apr 13 17:22:42 2007//TFIREFOX_3_0rc3_RELEASE
-D/MSDotNETCSEmbed////
-D/apitest////
-D/cocoaEmbed////
-D/os2Embed////
-D/unit////
-D/winEmbed////
-D/wxEmbed////

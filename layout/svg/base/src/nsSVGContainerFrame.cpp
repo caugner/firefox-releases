@@ -88,7 +88,7 @@ nsSVGContainerFrame::Init(nsIContent* aContent,
                           nsIFrame* aParent,
                           nsIFrame* aPrevInFlow)
 {
-  AddStateBits(NS_STATE_SVG_NONDISPLAY_CHILD);
+  AddStateBits(NS_STATE_SVG_NONDISPLAY_CHILD | NS_STATE_SVG_PROPAGATE_TRANSFORM);
   nsresult rv = nsSVGContainerFrameBase::Init(aContent, aParent, aPrevInFlow);
   return rv;
 }
@@ -98,16 +98,12 @@ nsSVGDisplayContainerFrame::Init(nsIContent* aContent,
                                  nsIFrame* aParent,
                                  nsIFrame* aPrevInFlow)
 {
-  AddStateBits(aParent->GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD);
+  AddStateBits(NS_STATE_SVG_PROPAGATE_TRANSFORM);
+  if (!(GetStateBits() & NS_STATE_IS_OUTER_SVG)) {
+    AddStateBits(aParent->GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD);
+  }
   nsresult rv = nsSVGContainerFrameBase::Init(aContent, aParent, aPrevInFlow);
   return rv;
-}
-
-void
-nsSVGDisplayContainerFrame::Destroy()
-{
-  nsSVGUtils::StyleEffects(this);
-  nsSVGContainerFrame::Destroy();
 }
 
 NS_IMETHODIMP
@@ -149,12 +145,7 @@ NS_IMETHODIMP
 nsSVGDisplayContainerFrame::RemoveFrame(nsIAtom* aListName,
                                         nsIFrame* aOldFrame)
 {
-  if (!(GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD)) {
-    nsSVGOuterSVGFrame* outerSVGFrame = nsSVGUtils::GetOuterSVGFrame(this);
-    NS_ASSERTION(outerSVGFrame, "no outer svg frame");
-    if (outerSVGFrame)
-      outerSVGFrame->InvalidateCoveredRegion(aOldFrame);
-  }
+  nsSVGUtils::InvalidateCoveredRegion(aOldFrame);
 
   nsresult rv = nsSVGContainerFrame::RemoveFrame(aListName, aOldFrame);
 
@@ -170,7 +161,7 @@ nsSVGDisplayContainerFrame::RemoveFrame(nsIAtom* aListName,
 
 NS_IMETHODIMP
 nsSVGDisplayContainerFrame::PaintSVG(nsSVGRenderState* aContext,
-                                     nsRect *aDirtyRect)
+                                     const nsIntRect *aDirtyRect)
 {
   const nsStyleDisplay *display = mStyleContext->GetStyleDisplay();
   if (display->mOpacity == 0.0)
@@ -178,18 +169,16 @@ nsSVGDisplayContainerFrame::PaintSVG(nsSVGRenderState* aContext,
 
   for (nsIFrame* kid = mFrames.FirstChild(); kid;
        kid = kid->GetNextSibling()) {
-    nsSVGUtils::PaintChildWithEffects(aContext, aDirtyRect, kid);
+    nsSVGUtils::PaintFrameWithEffects(aContext, aDirtyRect, kid);
   }
 
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsSVGDisplayContainerFrame::GetFrameForPointSVG(float x, float y, nsIFrame** hit)
+NS_IMETHODIMP_(nsIFrame*)
+nsSVGDisplayContainerFrame::GetFrameForPoint(const nsPoint &aPoint)
 {
-  nsSVGUtils::HitTestChildren(this, x, y, hit);
-  
-  return NS_OK;
+  return nsSVGUtils::HitTestChildren(this, aPoint);
 }
 
 NS_IMETHODIMP_(nsRect)
@@ -244,10 +233,6 @@ nsSVGDisplayContainerFrame::NotifySVGChanged(PRUint32 aFlags)
   NS_ASSERTION(aFlags & (TRANSFORM_CHANGED | COORD_CONTEXT_CHANGED),
                "Invalidation logic may need adjusting");
 
-  if (!(aFlags & SUPPRESS_INVALIDATION) &&
-      !(GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD))
-    nsSVGUtils::UpdateFilterRegion(this);
-
   nsSVGUtils::NotifyChildrenOfSVGChange(this, aFlags);
 }
 
@@ -283,4 +268,21 @@ NS_IMETHODIMP
 nsSVGDisplayContainerFrame::GetBBox(nsIDOMSVGRect **_retval)
 {
   return nsSVGUtils::GetBBox(&mFrames, _retval);
+}
+
+NS_IMETHODIMP
+nsSVGDisplayContainerFrame::SetMatrixPropagation(PRBool aPropagate)
+{
+  if (aPropagate) {
+    AddStateBits(NS_STATE_SVG_PROPAGATE_TRANSFORM);
+  } else {
+    RemoveStateBits(NS_STATE_SVG_PROPAGATE_TRANSFORM);
+  }
+  return NS_OK;
+}
+
+PRBool
+nsSVGDisplayContainerFrame::GetMatrixPropagation()
+{
+  return (GetStateBits() & NS_STATE_SVG_PROPAGATE_TRANSFORM) != 0;
 }

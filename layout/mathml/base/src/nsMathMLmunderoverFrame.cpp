@@ -307,7 +307,6 @@ nsMathMLmunderoverFrame::Place(nsIRenderingContext& aRenderingContext,
     overFrame = underFrame->GetNextSibling();
   if (!baseFrame || !underFrame || !overFrame || overFrame->GetNextSibling()) {
     // report an error, encourage people to get their markups in order
-    NS_WARNING("invalid markup");
     return ReflowError(aRenderingContext, aDesiredSize);
   }
   GetReflowAndBoundingMetricsFor(baseFrame, baseSize, bmBase);
@@ -319,7 +318,8 @@ nsMathMLmunderoverFrame::Place(nsIRenderingContext& aRenderingContext,
   ////////////////////
   // Place Children
 
-  aRenderingContext.SetFont(GetStyleFont()->mFont, nsnull);
+  aRenderingContext.SetFont(GetStyleFont()->mFont, nsnull,
+                            PresContext()->GetUserFontSet());
   nsCOMPtr<nsIFontMetrics> fm;
   aRenderingContext.GetFontMetrics(*getter_AddRefs(fm));
 
@@ -436,12 +436,19 @@ nsMathMLmunderoverFrame::Place(nsIRenderingContext& aRenderingContext,
 
   GetItalicCorrection(bmAnonymousBase, correction);
 
-  nscoord maxWidth = PR_MAX(bmAnonymousBase.width, bmUnder.width);
-  if (NS_MATHML_EMBELLISH_IS_ACCENTUNDER(mEmbellishData.flags)) {    
-    dxUnder = (maxWidth - bmUnder.width)/2;;
+  // Width of non-spacing marks is zero so use left and right bearing.
+  nscoord underWidth = bmUnder.width;
+  if (!underWidth) {
+    underWidth = bmUnder.rightBearing - bmUnder.leftBearing;
+    dxUnder = -bmUnder.leftBearing;
+  }
+
+  nscoord maxWidth = PR_MAX(bmAnonymousBase.width, underWidth);
+  if (NS_MATHML_EMBELLISH_IS_ACCENTUNDER(mEmbellishData.flags)) {
+    dxUnder += (maxWidth - underWidth)/2;;
   }
   else {
-    dxUnder = -correction/2 + (maxWidth - bmUnder.width)/2;
+    dxUnder += -correction/2 + (maxWidth - underWidth)/2;
   }
   nscoord dxAnonymousBase = (maxWidth - bmAnonymousBase.width)/2;
 

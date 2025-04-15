@@ -80,6 +80,14 @@ nsStyleContext::nsStyleContext(nsStyleContext* aParent,
   if (mParent) {
     mParent->AddRef();
     mParent->AddChild(this);
+#ifdef DEBUG
+    nsRuleNode *r1 = mParent->GetRuleNode(), *r2 = aRuleNode;
+    while (r1->GetParent())
+      r1 = r1->GetParent();
+    while (r2->GetParent())
+      r2 = r2->GetParent();
+    NS_ASSERTION(r1 == r2, "must be in the same rule tree as parent");
+#endif
   }
 
   ApplyStyleFixups(aPresContext);
@@ -235,7 +243,7 @@ const void* nsStyleContext::GetStyleData(nsStyleStructID aSID)
 #include "nsStyleStructList.h"
 #undef STYLE_STRUCT
 
-inline const void* nsStyleContext::PeekStyleData(nsStyleStructID aSID)
+const void* nsStyleContext::PeekStyleData(nsStyleStructID aSID)
 {
   const void* cachedData = mCachedStyleData.GetStyleData(aSID); 
   if (cachedData)
@@ -447,6 +455,12 @@ nsStyleContext::CalcStyleDifference(nsStyleContext* aOther)
   // a framechange here and a reflow should be sufficient.  See bug 35768.
   DO_STRUCT_DIFFERENCE(Quotes);
 
+#ifdef MOZ_SVG
+  maxHint = nsChangeHint(NS_STYLE_HINT_REFLOW | nsChangeHint_UpdateEffects);
+  DO_STRUCT_DIFFERENCE(SVGReset);
+  DO_STRUCT_DIFFERENCE(SVG);
+#endif
+
   // At this point, we know that the worst kind of damage we could do is
   // a reflow.
   maxHint = NS_STYLE_HINT_REFLOW;
@@ -470,9 +484,6 @@ nsStyleContext::CalcStyleDifference(nsStyleContext* aOther)
   // re-render to occur.  VISUAL Structs: Color, Background
   DO_STRUCT_DIFFERENCE(Color);
   DO_STRUCT_DIFFERENCE(Background);
-#ifdef MOZ_SVG
-  DO_STRUCT_DIFFERENCE(SVG);
-#endif
 
 #undef DO_STRUCT_DIFFERENCE
 
@@ -604,7 +615,7 @@ void nsStyleContext::DumpRegressionData(nsPresContext* aPresContext, FILE* out, 
           NS_ConvertUTF16toUTF8(font->mFont.name).get(),
           font->mFont.size,
           font->mSize,
-          font->mFlags);
+          font->mGenericID);
 
   // COLOR
   IndentBy(out,aIndent);
@@ -644,10 +655,10 @@ void nsStyleContext::DumpRegressionData(nsPresContext* aPresContext, FILE* out, 
   const char format [] = "top: %dtw right: %dtw bottom: %dtw left: %dtw";
 #endif
   nsPrintfCString output(format,
-                         border->GetBorderWidth(NS_SIDE_TOP),
-                         border->GetBorderWidth(NS_SIDE_RIGHT),
-                         border->GetBorderWidth(NS_SIDE_BOTTOM),
-                         border->GetBorderWidth(NS_SIDE_LEFT));
+                         border->GetActualBorderWidth(NS_SIDE_TOP),
+                         border->GetActualBorderWidth(NS_SIDE_RIGHT),
+                         border->GetActualBorderWidth(NS_SIDE_BOTTOM),
+                         border->GetActualBorderWidth(NS_SIDE_LEFT));
   fprintf(out, "%s ", output.get());
   border->mBorderRadius.ToString(str);
   fprintf(out, "%s ", NS_ConvertUTF16toUTF8(str).get());
@@ -694,10 +705,11 @@ void nsStyleContext::DumpRegressionData(nsPresContext* aPresContext, FILE* out, 
   // TEXT
   IndentBy(out,aIndent);
   const nsStyleText* text = GetStyleText();
-  fprintf(out, "<text data=\"%d %d %d ",
+  fprintf(out, "<text data=\"%d %d %d %d",
     (int)text->mTextAlign,
     (int)text->mTextTransform,
-    (int)text->mWhiteSpace);
+    (int)text->mWhiteSpace,
+    (int)text->mWordWrap);
   text->mLetterSpacing.ToString(str);
   fprintf(out, "%s ", NS_ConvertUTF16toUTF8(str).get());
   text->mLineHeight.ToString(str);
@@ -761,13 +773,10 @@ void nsStyleContext::DumpRegressionData(nsPresContext* aPresContext, FILE* out, 
   // TABLEBORDER
   IndentBy(out,aIndent);
   const nsStyleTableBorder* tableBorder = GetStyleTableBorder();
-  fprintf(out, "<tableborder data=\"%d ",
-    (int)tableBorder->mBorderCollapse);
-  tableBorder->mBorderSpacingX.ToString(str);
-  fprintf(out, "%s ", NS_ConvertUTF16toUTF8(str).get());
-  tableBorder->mBorderSpacingY.ToString(str);
-  fprintf(out, "%s ", NS_ConvertUTF16toUTF8(str).get());
-  fprintf(out, "%d %d ",
+  fprintf(out, "<tableborder data=\"%d %d %d %d %d ",
+    (int)tableBorder->mBorderCollapse,
+    (int)tableBorder->mBorderSpacingX,
+    (int)tableBorder->mBorderSpacingY,
     (int)tableBorder->mCaptionSide,
     (int)tableBorder->mEmptyCells);
   fprintf(out, "\" />\n");
@@ -804,9 +813,10 @@ void nsStyleContext::DumpRegressionData(nsPresContext* aPresContext, FILE* out, 
   // UIReset
   IndentBy(out,aIndent);
   const nsStyleUIReset* uiReset = GetStyleUIReset();
-  fprintf(out, "<uireset data=\"%d %d\" />\n",
+  fprintf(out, "<uireset data=\"%d %d %d\" />\n",
     (int)uiReset->mUserSelect,
-    (int)uiReset->mIMEMode);
+    (int)uiReset->mIMEMode,
+    (int)uiReset->mWindowShadow);
 
   // Column
   IndentBy(out,aIndent);
@@ -816,7 +826,11 @@ void nsStyleContext::DumpRegressionData(nsPresContext* aPresContext, FILE* out, 
   column->mColumnWidth.ToString(str);
   fprintf(out, "%s ", NS_ConvertUTF16toUTF8(str).get());
   column->mColumnGap.ToString(str);
-  fprintf(out, "%s", NS_ConvertUTF16toUTF8(str).get());
+  fprintf(out, "%s ", NS_ConvertUTF16toUTF8(str).get());
+  fprintf(out, "%d %d %ld",
+    (int)column->GetComputedColumnRuleWidth(),
+    (int)column->mColumnRuleStyle,
+    (long)column->mColumnRuleColor);
   fprintf(out, "\" />\n");
 
   // XUL

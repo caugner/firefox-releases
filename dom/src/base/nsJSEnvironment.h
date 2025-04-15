@@ -43,7 +43,6 @@
 #include "jsapi.h"
 #include "nsIObserver.h"
 #include "nsIXPCScriptNotify.h"
-#include "nsITimer.h"
 #include "prtime.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsScriptNameSpaceManager.h"
@@ -51,15 +50,15 @@
 class nsIXPConnectJSObjectHolder;
 
 class nsJSContext : public nsIScriptContext,
-                    public nsIXPCScriptNotify,
-                    public nsITimerCallback
+                    public nsIXPCScriptNotify
 {
 public:
   nsJSContext(JSRuntime *aRuntime);
   virtual ~nsJSContext();
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsJSContext, nsIScriptContext)
+  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(nsJSContext,
+                                                         nsIScriptContext)
 
   virtual PRUint32 GetScriptTypeID()
     { return nsIProgrammingLanguage::JAVASCRIPT; }
@@ -166,11 +165,12 @@ public:
   virtual nsresult DropScriptObject(void *object);
   virtual nsresult HoldScriptObject(void *object);
 
+  // Report the pending exception on our mContext, if any.  This
+  // function will set aside the frame chain on mContext before
+  // reporting.
   virtual void ReportPendingException();
 
   NS_DECL_NSIXPCSCRIPTNOTIFY
-
-  NS_DECL_NSITIMERCALLBACK
 
   static void LoadStart();
   static void LoadEnd();
@@ -196,20 +196,22 @@ public:
 
   // Calls CC() if user is currently inactive, otherwise MaybeCC(PR_TRUE)
   static void CCIfUserInactive();
+
+  static void FireGCTimer(PRBool aLoadInProgress);
+
 protected:
   nsresult InitializeExternalClasses();
   // aHolder should be holding our global object
   nsresult FindXPCNativeWrapperClass(nsIXPConnectJSObjectHolder *aHolder);
 
   // Helper to convert xpcom datatypes to jsvals.
-  nsresult ConvertSupportsTojsvals(nsISupports *aArgs,
-                                   void *aScope,
-                                   PRUint32 *aArgc, void **aArgv,
-                                   void **aMarkp);
+  JS_FORCES_STACK nsresult ConvertSupportsTojsvals(nsISupports *aArgs,
+                                                   void *aScope,
+                                                   PRUint32 *aArgc,
+                                                   void **aArgv,
+                                                   void **aMarkp);
 
   nsresult AddSupportsPrimitiveTojsvals(nsISupports *aArg, jsval *aArgv);
-
-  void FireGCTimer(PRBool aLoadInProgress);
 
   // given an nsISupports object (presumably an event target or some other
   // DOM object), get (or create) the JSObject wrapping it.
@@ -217,7 +219,9 @@ protected:
                                  JSObject **aRet);
 
 private:
-  void Unlink();
+  void DestroyJSContext();
+
+  nsrefcnt GetCCRefcnt();
 
   JSContext *mContext;
   PRUint32 mNumEvaluations;
@@ -292,9 +296,9 @@ private:
 
   nsCOMPtr<nsISupports> mGlobalWrapperRef;
 
-  static int PR_CALLBACK JSOptionChangedCallback(const char *pref, void *data);
+  static int JSOptionChangedCallback(const char *pref, void *data);
 
-  static JSBool JS_DLL_CALLBACK DOMOperationCallback(JSContext *cx);
+  static JSBool DOMOperationCallback(JSContext *cx);
 };
 
 class nsIJSRuntimeService;
@@ -309,9 +313,6 @@ public:
   // nsISupports
   NS_DECL_ISUPPORTS
 
-  // nsIScriptRuntime
-  virtual void ShutDown();
-
   virtual PRUint32 GetScriptTypeID() {
             return nsIProgrammingLanguage::JAVASCRIPT;
   }
@@ -323,9 +324,8 @@ public:
   virtual nsresult DropScriptObject(void *object);
   virtual nsresult HoldScriptObject(void *object);
   
-  // Private stuff.
-  // called by the nsDOMScriptObjectFactory to initialize statics
   static void Startup();
+  static void Shutdown();
   // Setup all the statics etc - safe to call multiple times after Startup()
   static nsresult Init();
   // Get the NameSpaceManager, creating if necessary
@@ -357,6 +357,6 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsIJSArgArray, NS_IJSARGARRAY_IID)
 nsresult NS_CreateJSRuntime(nsIScriptRuntime **aRuntime);
 
 /* prototypes */
-void JS_DLL_CALLBACK NS_ScriptErrorReporter(JSContext *cx, const char *message, JSErrorReport *report);
+void NS_ScriptErrorReporter(JSContext *cx, const char *message, JSErrorReport *report);
 
 #endif /* nsJSEnvironment_h___ */

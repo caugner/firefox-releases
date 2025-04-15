@@ -74,8 +74,9 @@ NS_DEFINE_CID(kInlineFrameCID, NS_INLINE_FRAME_CID);
 // nsISupports
 // =============================================================================
 
-NS_IMPL_ADDREF_INHERITED(nsMathMLContainerFrame, nsMathMLFrame)
-NS_IMPL_RELEASE_INHERITED(nsMathMLContainerFrame, nsMathMLFrame)
+// Frames are not refcounted objects, so use the non-logging addref/release macros.
+NS_IMPL_NONLOGGING_ADDREF_INHERITED(nsMathMLContainerFrame, nsMathMLFrame)
+NS_IMPL_NONLOGGING_RELEASE_INHERITED(nsMathMLContainerFrame, nsMathMLFrame)
 NS_IMPL_QUERY_INTERFACE_INHERITED1(nsMathMLContainerFrame, nsHTMLContainerFrame, nsMathMLFrame)
 
 // =============================================================================
@@ -94,7 +95,7 @@ nsMathMLContainerFrame::ReflowError(nsIRenderingContext& aRenderingContext,
 
   ///////////////
   // Set font
-  aRenderingContext.SetFont(GetStyleFont()->mFont, nsnull);
+  nsLayoutUtils::SetFontFromStyle(&aRenderingContext, GetStyleContext());
 
   // bounding metrics
   nsAutoString errorMsg; errorMsg.AssignLiteral("invalid-markup");
@@ -144,7 +145,7 @@ void nsDisplayMathMLError::Paint(nsDisplayListBuilder* aBuilder,
      nsIRenderingContext* aCtx, const nsRect& aDirtyRect)
 {
   // Set color and font ...
-  aCtx->SetFont(mFrame->GetStyleFont()->mFont, nsnull);
+  nsLayoutUtils::SetFontFromStyle(aCtx, mFrame->GetStyleContext());
 
   nsPoint pt = aBuilder->ToReferenceFrame(mFrame);
   aCtx->SetColor(NS_RGB(255,0,0));
@@ -308,6 +309,14 @@ nsMathMLContainerFrame::GetPreferredStretchSize(nsIRenderingContext& aRenderingC
           // vertically and fire an horizontal stretch on each them. This is the case
           // for \munder, \mover, \munderover. We just sum-up the size vertically.
           bm.descent += bmChild.ascent + bmChild.descent;
+          // Sometimes non-spacing marks (when width is zero) are positioned
+          // to the left of the origin, but it is the distance between left
+          // and right bearing that is important rather than the offsets from
+          // the origin.
+          if (bmChild.width == 0) {
+            bmChild.rightBearing -= bmChild.leftBearing;
+            bmChild.leftBearing = 0;
+          }
           if (bm.leftBearing > bmChild.leftBearing)
             bm.leftBearing = bmChild.leftBearing;
           if (bm.rightBearing < bmChild.rightBearing)
@@ -855,6 +864,12 @@ nsMathMLContainerFrame::GatherAndStoreOverflow(nsHTMLReflowMetrics* aMetrics)
   // nsIFrame::FinishAndStoreOverflow likes the overflow area to include the
   // frame rectangle.
   nsRect frameRect(0, 0, aMetrics->width, aMetrics->height);
+
+  // Text-shadow overflows.
+  if (PresContext()->CompatibilityMode() != eCompatibility_NavQuirks) {
+    nsRect shadowRect = nsLayoutUtils::GetTextShadowRectsUnion(frameRect, this);
+    frameRect.UnionRect(frameRect, shadowRect);
+  }
 
   // All non-child-frame content such as nsMathMLChars (and most child-frame
   // content) is included in mBoundingMetrics.
@@ -1431,7 +1446,7 @@ nsMathMLContainerFrame::FixInterFrameSpacing(nsHTMLReflowMetrics& aDesiredSize)
   return gap;
 }
 
-void
+/* static */ void
 nsMathMLContainerFrame::DidReflowChildren(nsIFrame* aFirst, nsIFrame* aStop)
 
 {
@@ -1443,6 +1458,11 @@ nsMathMLContainerFrame::DidReflowChildren(nsIFrame* aFirst, nsIFrame* aStop)
        frame = frame->GetNextSibling()) {
     NS_ASSERTION(frame, "aStop isn't a sibling");
     if (frame->GetStateBits() & NS_FRAME_IN_REFLOW) {
+      // finish off principal descendants, too
+      nsIFrame* grandchild = frame->GetFirstChild(nsnull);
+      if (grandchild)
+        DidReflowChildren(grandchild, nsnull);
+
       frame->DidReflow(frame->PresContext(), nsnull,
                        NS_FRAME_REFLOW_FINISHED);
     }

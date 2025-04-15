@@ -80,39 +80,12 @@ nsSVGGFrame::NotifySVGChanged(PRUint32 aFlags)
   nsSVGGFrameBase::NotifySVGChanged(aFlags);
 }
 
-NS_IMETHODIMP
-nsSVGGFrame::SetMatrixPropagation(PRBool aPropagate)
-{
-  mPropagateTransform = aPropagate;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsSVGGFrame::SetOverrideCTM(nsIDOMSVGMatrix *aCTM)
-{
-  mOverrideCTM = aCTM;
-  return NS_OK;
-}
-
-already_AddRefed<nsIDOMSVGMatrix>
-nsSVGGFrame::GetOverrideCTM()
-{
-  nsIDOMSVGMatrix *matrix = mOverrideCTM.get();
-  NS_IF_ADDREF(matrix);
-  return matrix;
-}
-
 already_AddRefed<nsIDOMSVGMatrix>
 nsSVGGFrame::GetCanvasTM()
 {
-  if (!mPropagateTransform) {
+  if (!GetMatrixPropagation()) {
     nsIDOMSVGMatrix *retval;
-    if (mOverrideCTM) {
-      retval = mOverrideCTM;
-      NS_ADDREF(retval);
-    } else {
-      NS_NewSVGMatrix(&retval);
-    }
+    NS_NewSVGMatrix(&retval);
     return retval;
   }
 
@@ -138,13 +111,6 @@ nsSVGGFrame::GetCanvasTM()
   nsIDOMSVGMatrix* retval = mCanvasTM.get();
   NS_IF_ADDREF(retval);
   return retval;
-}
-
-NS_IMETHODIMP
-nsSVGGFrame::DidSetStyleContext()
-{
-  nsSVGUtils::StyleEffects(this);
-  return NS_OK;
 }
 
 NS_IMETHODIMP

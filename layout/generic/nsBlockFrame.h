@@ -74,7 +74,6 @@ class nsBlockInFlowLineIterator;
 class nsBulletFrame;
 class nsLineBox;
 class nsFirstLineFrame;
-class nsILineIterator;
 class nsIntervalSet;
 /**
  * Child list name indices
@@ -187,7 +186,7 @@ public:
                               const nsDisplayListSet& aLists);
   virtual void InvalidateInternal(const nsRect& aDamageRect,
                                   nscoord aX, nscoord aY, nsIFrame* aForChild,
-                                  PRBool aImmediate);
+                                  PRUint32 aFlags);
   virtual nsIAtom* GetType() const;
   virtual PRBool IsFrameOfType(PRUint32 aFlags) const
   {
@@ -258,7 +257,8 @@ public:
                               PRBool         aForceNormal);
 
   virtual void DeleteNextInFlowChild(nsPresContext* aPresContext,
-                                     nsIFrame*       aNextInFlow);
+                                     nsIFrame*      aNextInFlow,
+                                     PRBool         aDeletingEmptyFrames);
 
   /**
    * Determines whether the collapsed margin carried out of the last
@@ -286,7 +286,7 @@ public:
     nsBlockReflowState& aState, nsLineBox* aLine);
 
   static PRBool BlockIsMarginRoot(nsIFrame* aBlock);
-  static PRBool BlockNeedsSpaceManager(nsIFrame* aBlock);
+  static PRBool BlockNeedsFloatManager(nsIFrame* aBlock);
 
   /**
    * Returns whether aFrame is a block frame that will wrap its contents
@@ -341,7 +341,7 @@ protected:
    * Overides member function of nsHTMLContainerFrame. Needed to handle the 
    * lines in a nsBlockFrame properly.
    */
-  virtual void PaintTextDecorationLine(nsIRenderingContext& aRenderingContext,
+  virtual void PaintTextDecorationLine(gfxContext* aCtx,
                                        const nsPoint& aPt,
                                        nsLineBox* aLine,
                                        nscolor aColor,
@@ -379,10 +379,12 @@ protected:
 
   virtual void ComputeFinalSize(const nsHTMLReflowState& aReflowState,
                                 nsBlockReflowState&      aState,
-                                nsHTMLReflowMetrics&     aMetrics);
+                                nsHTMLReflowMetrics&     aMetrics,
+                                nscoord*                 aBottomEdgeOfChildren);
 
   void ComputeCombinedArea(const nsHTMLReflowState& aReflowState,
-                           nsHTMLReflowMetrics& aMetrics);
+                           nsHTMLReflowMetrics&     aMetrics,
+                           nscoord                  aBottomEdgeOfChildren);
 
   /** add the frames in aFrameList to this block after aPrevSibling
     * this block thinks in terms of lines, but the frame construction code
@@ -411,18 +413,26 @@ protected:
 #endif
 
 public:
-  /** does all the real work for removing aDeletedFrame from this
-    * finds the line containing aFrame.
-    * handled continued frames
-    * marks lines dirty as needed
-    * @param aDestroyFrames if false then we don't actually destroy the
-    * frame or its next in flows, we just remove them. This does NOT work
-    * on out of flow frames so always use PR_TRUE for out of flows.
-    * @param aRemoveOnlyFluidContinuations if true, only in-flows are removed;
-    * if false, all continuations are removed.
-    */
-  nsresult DoRemoveFrame(nsIFrame* aDeletedFrame, PRBool aDestroyFrames = PR_TRUE, 
-                         PRBool aRemoveOnlyFluidContinuations = PR_TRUE);
+  /**
+   * Does all the real work for removing aDeletedFrame
+   * -- finds the line containing aDeletedFrame
+   * -- removes all aDeletedFrame next-in-flows (or all continuations,
+   * if REMOVE_FIXED_CONTINUATIONS is given)
+   * -- marks lines dirty as needed
+   * -- marks textruns dirty (unless FRAMES_ARE_EMPTY is given, in which
+   * case textruns do not need to be dirtied)
+   * -- destroys all removed frames (unless PRESERVE_REMOVED_FRAMES is
+   * given)
+   * 
+   * PRESERVE_REMOVED_FRAMES does NOT work on out of flow frames so
+   * don't use it for out of flows.
+   */
+  enum {
+    PRESERVE_REMOVED_FRAMES    = 0x01,
+    REMOVE_FIXED_CONTINUATIONS = 0x02,
+    FRAMES_ARE_EMPTY           = 0x04
+  };
+  nsresult DoRemoveFrame(nsIFrame* aDeletedFrame, PRUint32 aFlags);
 
   void ReparentFloats(nsIFrame* aFirstFrame,
                       nsBlockFrame* aOldParent, PRBool aFromOverflow,
@@ -479,8 +489,12 @@ protected:
    * pull-up, mark the previous line dirty as well. Also invalidates textruns
    * on those lines because the text in the lines might have changed due to
    * addition/removal of frames.
+   * @param aLine the line to mark dirty
+   * @param aLineList the line list containing that line, null means the line
+   *        is in 'mLines' of this frame.
    */
-  nsresult MarkLineDirty(line_iterator aLine);
+  nsresult MarkLineDirty(line_iterator aLine,
+                         const nsLineList* aLineList = nsnull);
 
   // XXX where to go
   PRBool ShouldJustifyLine(nsBlockReflowState& aState,
@@ -517,6 +531,12 @@ protected:
                              nsIFrame* aFrame,
                              LineReflowStatus* aLineReflowStatus);
 
+  // Compute the available width for a float. 
+  nsRect ComputeFloatAvailableSpace(nsBlockReflowState& aState,
+                                    nsIFrame*           aFloatFrame);
+  // Computes the border-box width of the float
+  nscoord ComputeFloatWidth(nsBlockReflowState& aState,
+                            nsPlaceholderFrame* aPlaceholder);
   // An incomplete aReflowStatus indicates the float should be split
   // but only if the available height is constrained.
   nsresult ReflowFloat(nsBlockReflowState& aState,
@@ -588,6 +608,8 @@ protected:
 
   //----------------------------------------
 
+  virtual nsILineIterator* GetLineIterator();
+
 public:
   nsLineList* GetOverflowLines() const;
 protected:
@@ -657,7 +679,7 @@ public:
   static PRBool gNoisyIntrinsic;
   static PRBool gNoisyReflow;
   static PRBool gReallyNoisyReflow;
-  static PRBool gNoisySpaceManager;
+  static PRBool gNoisyFloatManager;
   static PRBool gVerifyLines;
   static PRBool gDisableResizeOpt;
 
@@ -714,6 +736,11 @@ public:
   nsBlockFrame* GetContainer() { return mFrame; }
   PRBool GetInOverflow() { return mInOverflowLines != nsnull; }
 
+  /**
+   * Returns the current line list we're iterating, null means
+   * we're iterating |mLines| of the container.
+   */
+  nsLineList* GetLineList() { return mInOverflowLines; }
 
   /**
    * Returns the end-iterator of whatever line list we're in.

@@ -65,8 +65,6 @@ public:
                                nsIAtom*        aAttribute,
                                PRInt32         aModType);
 
-  NS_IMETHOD DidSetStyleContext();
-
   /**
    * Get the "type" of the frame
    *
@@ -129,14 +127,6 @@ nsSVGAFrame::AttributeChanged(PRInt32         aNameSpaceID,
  return NS_OK;
 }
 
-NS_IMETHODIMP
-nsSVGAFrame::DidSetStyleContext()
-{
-  nsSVGUtils::StyleEffects(this);
-
-  return NS_OK;
-}
-
 nsIAtom *
 nsSVGAFrame::GetType() const
 {
@@ -163,14 +153,9 @@ nsSVGAFrame::NotifySVGChanged(PRUint32 aFlags)
 already_AddRefed<nsIDOMSVGMatrix>
 nsSVGAFrame::GetCanvasTM()
 {
-  if (!mPropagateTransform) {
+  if (!GetMatrixPropagation()) {
     nsIDOMSVGMatrix *retval;
-    if (mOverrideCTM) {
-      retval = mOverrideCTM;
-      NS_ADDREF(retval);
-    } else {
-      NS_NewSVGMatrix(&retval);
-    }
+    NS_NewSVGMatrix(&retval);
     return retval;
   }
 

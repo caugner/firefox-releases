@@ -48,6 +48,7 @@ CPPSRCS = \
 	updater.cpp \
 	bspatch.cpp \
 	archivereader.cpp \
+	readstrings.cpp \
 	$(NULL)
 
 PROGRAM = updater$(BIN_SUFFIX)
@@ -66,7 +67,9 @@ ifeq ($(OS_ARCH),WINNT)
 USE_STATIC_LIBS = 1
 HAVE_PROGRESSUI = 1
 RCINCLUDE = updater.rc
-CPPSRCS += progressui_win.cpp
+CPPSRCS += \
+	progressui_win.cpp \
+	$(NULL)
 OS_LIBS += $(call EXPAND_LIBNAME,comctl32 ws2_32 shell32)
 DEFINES += -DUNICODE -D_UNICODE
 ifndef GNU_CC
@@ -80,7 +83,6 @@ ifneq ($(MOZ_ENABLE_GTK2),)
 HAVE_PROGRESSUI = 1
 CPPSRCS += \
 	progressui_gtk.cpp \
-	readstrings.cpp \
 	$(NULL)
 OS_CXXFLAGS += $(TK_CFLAGS)
 OS_LIBS += $(TK_LIBS)
@@ -88,7 +90,6 @@ endif
 
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 HAVE_PROGRESSUI = 1
-CPPSRCS += readstrings.cpp
 CMMSRCS += progressui_osx.mm launchchild_osx.mm
 OS_LIBS += -framework Cocoa
 endif
@@ -110,7 +111,17 @@ include $(topsrcdir)/config/rules.mk
 DEFINES += -DNS_NO_XPCOM
 
 ifdef _MSC_VER
+ifdef WINCE
+WIN32_EXE_LDFLAGS += -ENTRY:mainWCRTStartup
+else
 WIN32_EXE_LDFLAGS += -ENTRY:wmainCRTStartup
+endif
+endif
+
+ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
+libs:: updater.png
+	$(NSINSTALL) -D $(DIST)/bin/icons
+	$(INSTALL) $(IFLAGS1) $^ $(DIST)/bin/icons
 endif
 
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))

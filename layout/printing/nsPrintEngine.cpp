@@ -112,6 +112,7 @@ static const char kPrintingPromptService[] = "@mozilla.org/embedcomp/printingpro
 #include "nsISelectionListener.h"
 #include "nsISelectionPrivate.h"
 #include "nsIDOMHTMLDocument.h"
+#include "nsIDOMNSDocument.h"
 #include "nsIDOMNSHTMLDocument.h"
 #include "nsIDOMHTMLCollection.h"
 #include "nsIDOMHTMLElement.h"
@@ -213,6 +214,35 @@ static void DumpPrintObjectsTreeLayout(nsPrintObject * aPO,nsIDeviceContext * aD
 #define DUMP_DOC_TREELAYOUT
 #endif
 
+class nsScriptSuppressor
+{
+public:
+  nsScriptSuppressor(nsPrintEngine* aPrintEngine)
+  : mPrintEngine(aPrintEngine), mSuppressed(PR_FALSE) {}
+
+  ~nsScriptSuppressor() { Unsuppress(); }
+
+  void Suppress()
+  {
+    if (mPrintEngine) {
+      mSuppressed = PR_TRUE;
+      mPrintEngine->TurnScriptingOn(PR_FALSE);
+    }
+  }
+  
+  void Unsuppress()
+  {
+    if (mPrintEngine && mSuppressed) {
+      mPrintEngine->TurnScriptingOn(PR_TRUE);
+    }
+    mSuppressed = PR_FALSE;
+  }
+
+  void Disconnect() { mPrintEngine = nsnull; }
+protected:
+  nsRefPtr<nsPrintEngine> mPrintEngine;
+  PRBool                  mSuppressed;
+};
 
 // Class IDs
 static NS_DEFINE_CID(kViewManagerCID,       NS_VIEW_MANAGER_CID);
@@ -228,7 +258,6 @@ nsPrintEngine::nsPrintEngine() :
   mIsDoingPrinting(PR_FALSE),
   mIsDoingPrintPreview(PR_FALSE),
   mProgressDialogIsShown(PR_FALSE),
-  mDocViewerPrint(nsnull),
   mContainer(nsnull),
   mDeviceContext(nsnull),
   mPrt(nsnull),
@@ -268,7 +297,7 @@ void nsPrintEngine::Destroy()
   }
 
 #endif
-
+  mDocViewerPrint = nsnull;
 }
 
 //-------------------------------------------------------
@@ -298,7 +327,7 @@ nsresult nsPrintEngine::Initialize(nsIDocumentViewerPrint* aDocViewerPrint,
   NS_ENSURE_ARG_POINTER(aDevContext);
   NS_ENSURE_ARG_POINTER(aParentWidget);
 
-  mDocViewerPrint = aDocViewerPrint; // weak reference
+  mDocViewerPrint = aDocViewerPrint;
   mContainer      = aContainer;      // weak reference
   mDocument       = aDocument;
   mDeviceContext  = aDevContext;     // weak reference
@@ -557,11 +586,13 @@ nsPrintEngine::DoCommonPrint(PRBool                  aIsPrintPreview,
     (do_CreateInstance("@mozilla.org/gfx/devicecontextspec;1", &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
+  nsScriptSuppressor scriptSuppressor(this);
   if (!aIsPrintPreview) {
 #ifdef NS_DEBUG
     mPrt->mDebugFilePtr = mDebugFile;
 #endif
 
+    scriptSuppressor.Suppress();
     PRBool printSilently;
     mPrt->mPrintSettings->GetPrintSilent(&printSilently);
 
@@ -712,6 +743,9 @@ nsPrintEngine::DoCommonPrint(PRBool                  aIsPrintPreview,
       NS_ENSURE_SUCCESS(rv, rv);
     }
   }
+
+  // We will enable scripting later after printing has finished.
+  scriptSuppressor.Disconnect();
 
   return NS_OK;
 }
@@ -1153,7 +1187,9 @@ nsPrintEngine::GetDocumentTitleAndURL(nsIDocument* aDoc,
   *aTitle  = nsnull;
   *aURLStr = nsnull;
 
-  const nsAString &docTitle = aDoc->GetDocumentTitle();
+  nsAutoString docTitle;
+  nsCOMPtr<nsIDOMNSDocument> doc = do_QueryInterface(aDoc);
+  doc->GetTitle(docTitle);
   if (!docTitle.IsEmpty()) {
     *aTitle = ToNewUnicode(docTitle);
   }
@@ -1190,7 +1226,12 @@ nsPrintEngine::MapContentToWebShells(nsPrintObject* aRootPO,
   // Recursively walk the content from the root item
   // XXX Would be faster to enumerate the subdocuments, although right now
   //     nsIDocument doesn't expose quite what would be needed.
-  MapContentForPO(aPO, aPO->mDocument->GetRootContent());
+  nsIContent *rootContent = aPO->mDocument->GetRootContent();
+  if (rootContent) {
+    MapContentForPO(aPO, rootContent);
+  } else {
+    NS_WARNING("Null root content on (sub)document.");
+  }
 
   // Continue recursively walking the chilren of this PO
   for (PRInt32 i=0;i<aPO->mKids.Count();i++) {
@@ -1421,6 +1462,9 @@ nsPrintEngine::GetDisplayTitleAndURL(nsPrintObject*    aPO,
         } else if (mPrt->mBrandName) {
           *aTitle = NS_strdup(mPrt->mBrandName);
         }
+        break;
+      case eDocTitleDefNone:
+        // *aTitle defaults to nsnull
         break;
     }
   }
@@ -1854,6 +1898,27 @@ nsPrintEngine::ReflowPrintObject(nsPrintObject * aPO)
     documentIsTopLevel = PR_TRUE;
   }
 
+  // Here we decide whether we need scrollbars and
+  // what the parent will be of the widget
+  // How this logic presently works: Print Preview is always as-is (as far
+  // as I can tell; not sure how it would work in other cases); only the root 
+  // is not eIFrame or eFrame.  The child documents get a parent widget from
+  // logic in nsFrameFrame.  In any case, a child widget is created for the root
+  // view of the document.
+  PRBool canCreateScrollbars = PR_FALSE;
+  nsIView* parentView;
+  // the top nsPrintObject's widget will always have scrollbars
+  if (frame) {
+    nsIView* view = frame->GetView();
+    NS_ENSURE_TRUE(view, NS_ERROR_FAILURE);
+    view = view->GetFirstChild();
+    NS_ENSURE_TRUE(view, NS_ERROR_FAILURE);
+    parentView = view;
+  } else {
+    canCreateScrollbars = PR_TRUE;
+    parentView = nsnull;
+  }
+
   // create the PresContext
   aPO->mPresContext = new nsPresContext(aPO->mDocument,
                                         mIsCreatingPrintPreview ?
@@ -1896,27 +1961,6 @@ nsPrintEngine::ReflowPrintObject(nsPrintObject * aPO)
 
   PR_PL(("In DV::ReflowPrintObject PO: %p (%9s) Setting w,h to %d,%d\n", aPO,
          gFrameTypesStr[aPO->mFrameType], adjSize.width, adjSize.height));
-
-  // Here we decide whether we need scrollbars and
-  // what the parent will be of the widget
-  // How this logic presently works: Print Preview is always as-is (as far
-  // as I can tell; not sure how it would work in other cases); only the root 
-  // is not eIFrame or eFrame.  The child documents get a parent widget from
-  // logic in nsFrameFrame.  In any case, a child widget is created for the root
-  // view of the document.
-  PRBool canCreateScrollbars = PR_FALSE;
-  nsIView* parentView;
-  // the top nsPrintObject's widget will always have scrollbars
-  if (frame) {
-    nsIView* view = frame->GetView();
-    NS_ENSURE_TRUE(view, NS_ERROR_FAILURE);
-    view = view->GetFirstChild();
-    NS_ENSURE_TRUE(view, NS_ERROR_FAILURE);
-    parentView = view;
-  } else {
-    canCreateScrollbars = PR_TRUE;
-    parentView = nsnull;
-  }
 
   // Create a child window of the parent that is our "root view/window"
   nsRect tbounds = nsRect(nsPoint(0, 0), adjSize);
@@ -2601,7 +2645,9 @@ nsPrintEngine::GetPageRangeForSelection(nsIPresShell *        aPresShell,
 void nsPrintEngine::SetIsPrinting(PRBool aIsPrinting)
 { 
   mIsDoingPrinting = aIsPrinting;
-  if (mDocViewerPrint) {
+  // Calling SetIsPrinting while in print preview confuses the document viewer
+  // This is safe because we prevent exiting print preview while printing
+  if (mDocViewerPrint && !mIsDoingPrintPreview) {
     mDocViewerPrint->SetIsPrinting(aIsPrinting);
   }
   if (mPrt && aIsPrinting) {
@@ -2735,6 +2781,7 @@ nsPrintEngine::DonePrintingPages(nsPrintObject* aPO, nsresult aResult)
     FirePrintCompletionEvent();
   }
 
+  TurnScriptingOn(PR_TRUE);
   SetIsPrinting(PR_FALSE);
 
   // Release reference to mPagePrintTimer; the timer object destroys itself
@@ -3016,6 +3063,13 @@ nsPrintEngine::FindSmallestSTF()
 void
 nsPrintEngine::TurnScriptingOn(PRBool aDoTurnOn)
 {
+  if (mIsDoingPrinting && aDoTurnOn && mDocViewerPrint &&
+      mDocViewerPrint->GetIsPrintPreview()) {
+    // We don't want to turn scripting on if print preview is shown still after
+    // printing.
+    return;
+  }
+
   nsPrintData* prt = mPrt;
 #ifdef NS_PRINT_PREVIEW
   if (!prt) {
@@ -3034,30 +3088,44 @@ nsPrintEngine::TurnScriptingOn(PRBool aDoTurnOn)
     NS_ASSERTION(po, "nsPrintObject can't be null!");
 
     nsIDocument* doc = po->mDocument;
-    
+    if (!doc) {
+      continue;
+    }
+
     // get the script global object
     nsIScriptGlobalObject *scriptGlobalObj = doc->GetScriptGlobalObject();
 
     if (scriptGlobalObj) {
+      nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(scriptGlobalObj);
+      NS_ASSERTION(window, "Can't get nsPIDOMWindow");
       nsIScriptContext *scx = scriptGlobalObj->GetContext();
-      NS_ASSERTION(scx, "Can't get nsIScriptContext");
+      NS_WARN_IF_FALSE(scx, "Can't get nsIScriptContext");
+      nsresult propThere = NS_PROPTABLE_PROP_NOT_THERE;
+      doc->GetProperty(nsGkAtoms::scriptEnabledBeforePrintOrPreview,
+                       &propThere);
       if (aDoTurnOn) {
-        doc->DeleteProperty(nsGkAtoms::scriptEnabledBeforePrintPreview);
+        if (propThere != NS_PROPTABLE_PROP_NOT_THERE) {
+          doc->DeleteProperty(nsGkAtoms::scriptEnabledBeforePrintOrPreview);
+          if (scx) {
+            scx->SetScriptsEnabled(PR_TRUE, PR_FALSE);
+          }
+          window->ResumeTimeouts(PR_FALSE);
+        }
       } else {
         // Have to be careful, because people call us over and over again with
         // aDoTurnOn == PR_FALSE.  So don't set the property if it's already
         // set, since in that case we'd set it to the wrong value.
-        nsresult propThere;
-        doc->GetProperty(nsGkAtoms::scriptEnabledBeforePrintPreview,
-                         &propThere);
         if (propThere == NS_PROPTABLE_PROP_NOT_THERE) {
           // Stash the current value of IsScriptEnabled on the document, so
           // that layout code running in print preview doesn't get confused.
-          doc->SetProperty(nsGkAtoms::scriptEnabledBeforePrintPreview,
+          doc->SetProperty(nsGkAtoms::scriptEnabledBeforePrintOrPreview,
                            NS_INT32_TO_PTR(doc->IsScriptEnabled()));
+          if (scx) {
+            scx->SetScriptsEnabled(PR_FALSE, PR_FALSE);
+          }
+          window->SuspendTimeouts(1, PR_FALSE);
         }
       }
-      scx->SetScriptsEnabled(aDoTurnOn, PR_TRUE);
     }
   }
 }

@@ -117,8 +117,13 @@ ifeq ($(OS_TEST),mips)
 	OS_REL_CFLAGS   = -DLINUX1_2 -D_XOPEN_SOURCE
 	CPU_ARCH        = mips
 else
+ifeq (,$(filter-out i%86,$(OS_TEST)))
 	OS_REL_CFLAGS	= -DLINUX1_2 -Di386 -D_XOPEN_SOURCE
 	CPU_ARCH	= x86
+else
+	OS_REL_CFLAGS   = -DLINUX1_2 -D_XOPEN_SOURCE
+	CPU_ARCH	= $(OS_TEST)
+endif
 endif
 endif
 endif
@@ -180,3 +185,6 @@ G++INCLUDES		= -I/usr/include/g++
 # Always set CPU_TAG on Linux, OpenVMS, WINCE.
 #
 CPU_TAG = _$(CPU_ARCH)
+
+USE_SYSTEM_ZLIB = 1
+ZLIB_LIBS = -lz

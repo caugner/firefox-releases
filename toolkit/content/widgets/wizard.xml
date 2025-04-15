@@ -175,12 +175,9 @@
         try {
           // need to create string bundle manually instead of using <xul:stringbundle/>
           // see bug 63370 for details
-          var localeService = Components.classes["@mozilla.org/intl/nslocaleservice;1"]
-                                .getService(Components.interfaces.nsILocaleService);
-          var stringBundleService = Components.classes["@mozilla.org/intl/stringbundle;1"]
-                                      .getService(Components.interfaces.nsIStringBundleService);
-          var bundleURL = "chrome://global/locale/wizard.properties";
-          this._bundle = stringBundleService.createBundle(bundleURL);
+          this._bundle = Components.classes["@mozilla.org/intl/stringbundle;1"]
+                                   .getService(Components.interfaces.nsIStringBundleService)
+                                   .createBundle("chrome://global/locale/wizard.properties");
         } catch (e) {
           // This fails in remote XUL, which has to provide titles for all pages
           // see bug 142502
@@ -489,9 +486,6 @@
           <xul:spacer flex="1"/>
           <xul:button label="&button-back-mac.label;" accesskey="&button-back-mac.accesskey;"
                       class="wizard-button wizard-nav-button" dlgtype="back"/>
-          <xul:hbox class="wizard-label-box" align="center">
-            <xul:label class="wizard-page-label" xbl:inherits="value=pagestep"/>
-          </xul:hbox>
           <xul:button label="&button-next-mac.label;" accesskey="&button-next-mac.accesskey;"
                       class="wizard-button wizard-nav-button" dlgtype="next"
                       default="true" xbl:inherits="hidden=lastpage" />
@@ -538,7 +532,8 @@
                       dlgtype="cancel" icon="cancel"/>
           <xul:spacer style="width: 24px"/>
           <xul:button label="&button-back-unix.label;" accesskey="&button-back-unix.accesskey;"
-                      class="wizard-button" dlgtype="back" icon="go-back"/>
+                      class="wizard-button" dlgtype="back" icon="go-back"
+                      chromedir="&locale.dir;"/>
           <xul:deck class="wizard-next-deck" anonid="WizardButtonDeck">
             <xul:hbox>
               <xul:button label="&button-finish-unix.label;" class="wizard-button"
@@ -547,12 +542,13 @@
             <xul:hbox>
               <xul:button label="&button-next-unix.label;" accesskey="&button-next-unix.accesskey;"
                           class="wizard-button" dlgtype="next" icon="go-forward" 
-                          default="true" flex="1"/> 
+                          chromedir="&locale.dir;" default="true" flex="1"/>
             </xul:hbox>
           </xul:deck>
 #else
           <xul:button label="&button-back-win.label;" accesskey="&button-back-win.accesskey;"
-                      class="wizard-button" dlgtype="back" icon="go-back"/>
+                      class="wizard-button" dlgtype="back" icon="go-back"
+                      chromedir="&locale.dir;"/>
           <xul:deck class="wizard-next-deck" anonid="WizardButtonDeck">
             <xul:hbox>
               <xul:button label="&button-finish-win.label;" class="wizard-button"
@@ -561,7 +557,7 @@
             <xul:hbox>
               <xul:button label="&button-next-win.label;" accesskey="&button-next-win.accesskey;"
                           class="wizard-button" dlgtype="next" icon="go-forward" 
-                          default="true" flex="1"/> 
+                          chromedir="&locale.dir;" default="true" flex="1"/>
             </xul:hbox>
           </xul:deck>
           <xul:button label="&button-cancel-win.label;" class="wizard-button"

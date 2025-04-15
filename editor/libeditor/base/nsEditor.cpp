@@ -77,8 +77,7 @@
 #include "nsISelectionController.h"
 #include "nsIEnumerator.h"
 #include "nsIAtom.h"
-#include "nsICaret.h"
-#include "nsIKBStateControl.h"
+#include "nsCaret.h"
 #include "nsIWidget.h"
 #include "nsIPlaintextEditor.h"
 #include "nsGUIEvent.h"  // nsTextEventReply
@@ -105,6 +104,7 @@
 #include "JoinElementTxn.h"
 #include "nsStyleSheetTxns.h"
 #include "IMETextTxn.h"
+#include "nsString.h"
 
 #include "nsEditor.h"
 #include "nsEditorUtils.h"
@@ -168,8 +168,55 @@ nsEditor::~nsEditor()
   NS_IF_RELEASE(mViewManager);
 }
 
-NS_IMPL_ISUPPORTS5(nsEditor, nsIEditor, nsIEditorIMESupport,
-                   nsISupportsWeakReference, nsIPhonetic, nsIMutationObserver)
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsEditor)
+
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsEditor)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mRootElement)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mInlineSpellChecker)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mTxnMgr)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mIMETextRangeList)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mIMETextNode)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mActionListeners)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mEditorObservers)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMARRAY(mDocStateListeners)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mEventTarget)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mKeyListenerP)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mMouseListenerP)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mTextListenerP)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mCompositionListenerP)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mDragListenerP)
+ NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mFocusListenerP)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsEditor)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mRootElement)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mInlineSpellChecker)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mTxnMgr)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mIMETextRangeList)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mIMETextNode)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mActionListeners)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mEditorObservers)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMARRAY(mDocStateListeners)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mEventTarget)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mKeyListenerP)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mMouseListenerP)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mTextListenerP)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mCompositionListenerP)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mDragListenerP)
+ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mFocusListenerP)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsEditor)
+ NS_INTERFACE_MAP_ENTRY(nsIMutationObserver)
+ NS_INTERFACE_MAP_ENTRY(nsIPhonetic)
+ NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
+ NS_INTERFACE_MAP_ENTRY(nsIEditorIMESupport)
+ NS_INTERFACE_MAP_ENTRY(nsIEditor)
+ NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIEditor)
+NS_INTERFACE_MAP_END
+
+NS_IMPL_CYCLE_COLLECTING_ADDREF_AMBIGUOUS(nsEditor, nsIEditor)
+NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsEditor, nsIEditor)
 
 #ifdef XP_MAC
 #pragma mark -
@@ -320,8 +367,15 @@ nsEditor::InstallEventListeners()
   rv |= piTarget->AddEventListenerByIID(mCompositionListenerP,
                                         NS_GET_IID(nsIDOMCompositionListener));
 
-  rv |= piTarget->AddEventListenerByIID(mDragListenerP,
-                                        NS_GET_IID(nsIDOMDragListener));
+  nsCOMPtr<nsIDOMEventTarget> target(do_QueryInterface(piTarget));
+  if (target) {
+    // See bug 455215, we cannot use the standard dragstart event yet
+    rv |= target->AddEventListener(NS_LITERAL_STRING("draggesture"), mDragListenerP, PR_FALSE);
+    rv |= target->AddEventListener(NS_LITERAL_STRING("dragenter"), mDragListenerP, PR_FALSE);
+    rv |= target->AddEventListener(NS_LITERAL_STRING("dragover"), mDragListenerP, PR_FALSE);
+    rv |= target->AddEventListener(NS_LITERAL_STRING("dragleave"), mDragListenerP, PR_FALSE);
+    rv |= target->AddEventListener(NS_LITERAL_STRING("drop"), mDragListenerP, PR_FALSE);
+  }
 
   if (NS_FAILED(rv))
   {
@@ -389,8 +443,14 @@ nsEditor::RemoveEventListeners()
 
     if (mDragListenerP)
     {
-      piTarget->RemoveEventListenerByIID(mDragListenerP,
-                                         NS_GET_IID(nsIDOMDragListener));
+      nsCOMPtr<nsIDOMEventTarget> target(do_QueryInterface(piTarget));
+      if (target) {
+        target->RemoveEventListener(NS_LITERAL_STRING("draggesture"), mDragListenerP, PR_FALSE);
+        target->RemoveEventListener(NS_LITERAL_STRING("dragenter"), mDragListenerP, PR_FALSE);
+        target->RemoveEventListener(NS_LITERAL_STRING("dragover"), mDragListenerP, PR_FALSE);
+        target->RemoveEventListener(NS_LITERAL_STRING("dragleave"), mDragListenerP, PR_FALSE);
+        target->RemoveEventListener(NS_LITERAL_STRING("drop"), mDragListenerP, PR_FALSE);
+      }
     }
   }
 }
@@ -441,7 +501,7 @@ nsEditor::GetDesiredSpellCheckState()
     return PR_FALSE;
   }
 
-  if (content->IsNativeAnonymous()) {
+  if (content->IsRootOfNativeAnonymousSubtree()) {
     content = content->GetParent();
   }
 
@@ -457,7 +517,7 @@ nsEditor::GetDesiredSpellCheckState()
 }
 
 NS_IMETHODIMP
-nsEditor::PreDestroy()
+nsEditor::PreDestroy(PRBool aDestroyingFrames)
 {
   if (mDidPreDestroy)
     return NS_OK;
@@ -469,7 +529,7 @@ nsEditor::PreDestroy()
   // object that is still in use! It will be freed when the editor is
   // destroyed.
   if (mInlineSpellChecker)
-    mInlineSpellChecker->Cleanup();
+    mInlineSpellChecker->Cleanup(aDestroyingFrames);
 
   // tell our listeners that the doc is going away
   NotifyDocumentListeners(eDocumentToBeDestroyed);
@@ -1940,7 +2000,7 @@ nsEditor::QueryComposition(nsTextEventReply* aReply)
   if (!mPresShellWeak) return NS_ERROR_NOT_INITIALIZED;
   nsCOMPtr<nsIPresShell> ps = do_QueryReferent(mPresShellWeak);
   if (!ps) return NS_ERROR_NOT_INITIALIZED;
-  nsCOMPtr<nsICaret> caretP; 
+  nsRefPtr<nsCaret> caretP; 
   result = ps->GetCaret(getter_AddRefs(caretP));
   
   if (NS_SUCCEEDED(result) && caretP) {
@@ -1983,8 +2043,15 @@ nsEditor::QueryComposition(nsTextEventReply* aReply)
 
       // XXX_kin: END HACK! HACK! HACK!
 
-      result = caretP->GetCaretCoordinates(nsICaret::eIMECoordinates, selection,
-		                      &(aReply->mCursorPosition), &(aReply->mCursorIsCollapsed), nsnull);
+      nsIView *view = nsnull;
+      result =
+        caretP->GetCaretCoordinates(nsCaret::eRenderingViewCoordinates,
+                                    selection,
+                                    &(aReply->mCursorPosition),
+                                    &(aReply->mCursorIsCollapsed),
+                                    &view);
+      if (NS_SUCCEEDED(result) && view)
+        aReply->mReferenceWidget = view->GetWidget();
     }
   }
   return result;
@@ -2082,11 +2149,11 @@ GetEditorContentWindow(nsIPresShell *aPresShell, nsIDOMElement *aRoot, nsIWidget
 }
 
 nsresult
-nsEditor::GetKBStateControl(nsIKBStateControl **aKBSC)
+nsEditor::GetWidget(nsIWidget **aWidget)
 {
-  if (!aKBSC)
+  if (!aWidget)
     return NS_ERROR_NULL_POINTER;
-  *aKBSC = nsnull;
+  *aWidget = nsnull;
   nsCOMPtr<nsIPresShell> shell;
   nsresult res = GetPresShell(getter_AddRefs(shell));
 
@@ -2100,12 +2167,10 @@ nsEditor::GetKBStateControl(nsIKBStateControl **aKBSC)
   res = GetEditorContentWindow(shell, GetRoot(), getter_AddRefs(widget));
   if (NS_FAILED(res))
     return res;
+  if (!widget)
+    return NS_ERROR_NOT_AVAILABLE;
 
-  nsCOMPtr<nsIKBStateControl> kb = do_QueryInterface(widget);
-  if (!kb)
-    return NS_ERROR_NOT_INITIALIZED;
-
-  NS_ADDREF(*aKBSC = kb);
+  NS_ADDREF(*aWidget = widget);
 
   return NS_OK;
 }
@@ -2129,29 +2194,17 @@ nsEditor::ForceCompositionEnd()
 	return NS_OK;
 #endif
 
-  nsCOMPtr<nsIKBStateControl> kb;
-  nsresult res = GetKBStateControl(getter_AddRefs(kb));
+  nsCOMPtr<nsIWidget> widget;
+  nsresult res = GetWidget(getter_AddRefs(widget));
   if (NS_FAILED(res))
     return res;
 
-  if (kb) {
-    res = kb->ResetInputState();
+  if (widget) {
+    res = widget->ResetInputState();
     if (NS_FAILED(res)) 
       return res;
   }
 
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsEditor::NotifyIMEOnFocus()
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsEditor::NotifyIMEOnBlur()
-{
   return NS_OK;
 }
 
@@ -2207,41 +2260,6 @@ nsEditor::GetComposing(PRBool* aResult)
   NS_ENSURE_ARG_POINTER(aResult);
   *aResult = IsIMEComposing();
   return NS_OK;
-}
-
-NS_IMETHODIMP
-nsEditor::GetReconversionString(nsReconversionEventReply* aReply)
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
-nsEditor::GetQueryCaretRect(nsQueryCaretRectEventReply* aReply)
-{
-  nsCOMPtr<nsISelection> selection;
-  nsresult rv = GetSelection(getter_AddRefs(selection));
-  if (NS_FAILED(rv))
-    return rv;
-
-  if (!mPresShellWeak)
-    return NS_ERROR_NOT_INITIALIZED;
-
-  nsCOMPtr<nsIPresShell> ps = do_QueryReferent(mPresShellWeak);
-  if (!ps)
-    return NS_ERROR_NOT_INITIALIZED;
-
-  nsCOMPtr<nsICaret> caretP;
-  rv = ps->GetCaret(getter_AddRefs(caretP));
-
-  if (NS_FAILED(rv) || !caretP)
-    return rv;
-
-  PRBool cursorIsCollapsed;
-  rv = caretP->GetCaretCoordinates(nsICaret::eIMECoordinates, selection,
-                                   &aReply->mCaretRect, &cursorIsCollapsed, nsnull);
-  if (NS_SUCCEEDED(rv))
-    aReply->mRectIsValid = PR_TRUE;
-  return rv;
 }
 
 #ifdef XP_MAC
@@ -2589,7 +2607,7 @@ NS_IMETHODIMP nsEditor::InsertTextIntoTextNodeImpl(const nsAString& aStringToIns
                                                      PRInt32 aOffset, PRBool suppressIME)
 {
   nsRefPtr<EditTxn> txn;
-  nsresult result;
+  nsresult result = NS_OK;
   // suppressIME s used when editor must insert text, yet this text is not
   // part of current ime operation.  example: adjusting whitespace around an ime insertion.
   if (mIMETextRangeList && mInIMEMode && !suppressIME)
@@ -2600,14 +2618,14 @@ NS_IMETHODIMP nsEditor::InsertTextIntoTextNodeImpl(const nsAString& aStringToIns
       mIMETextOffset = aOffset;
     }
     PRUint16 len ;
-    result = mIMETextRangeList->GetLength(&len);
-    if (NS_SUCCEEDED(result) && len > 0)
+    len = mIMETextRangeList->GetLength();
+    if (len > 0)
     {
       nsCOMPtr<nsIPrivateTextRange> range;
       for (PRUint16 i = 0; i < len; i++) 
       {
-        result = mIMETextRangeList->Item(i, getter_AddRefs(range));
-        if (NS_SUCCEEDED(result) && range)
+        range = mIMETextRangeList->Item(i);
+        if (range)
         {
           PRUint16 type;
           result = range->GetRangeType(&type);
@@ -4346,7 +4364,7 @@ nsresult nsEditor::EndUpdateViewBatch()
     // notifications should've happened so the caret should have enough info
     // to draw at the correct position.
 
-    nsCOMPtr<nsICaret> caret;
+    nsRefPtr<nsCaret> caret;
     nsCOMPtr<nsIPresShell> presShell;
     GetPresShell(getter_AddRefs(presShell));
 
@@ -4368,7 +4386,7 @@ nsresult nsEditor::EndUpdateViewBatch()
       // the reflows we caused will get processed before the invalidates.
       if (flags & nsIPlaintextEditor::eEditorUseAsyncUpdatesMask) {
         updateFlag = NS_VMREFRESH_DEFERRED;
-      } else {
+      } else if (presShell) {
         // Flush out layout.  Need to do this because if we have no invalidates
         // to flush the viewmanager code won't flush our reflow here, and we
         // have selection code that does sync caret scrolling in this case.
@@ -4496,14 +4514,13 @@ nsEditor::SetIsIMEComposing(){
   PRUint16 listlen, type;
 
   mIsIMEComposing = PR_FALSE;
-  nsresult result = mIMETextRangeList->GetLength(&listlen);
-  if (NS_FAILED(result)) return;
+  listlen = mIMETextRangeList->GetLength();
 
   for (PRUint16 i = 0; i < listlen; i++)
   {
-      result = mIMETextRangeList->Item(i, getter_AddRefs(rangePtr));
-      if (NS_FAILED(result)) continue;
-      result = rangePtr->GetRangeType(&type);
+      rangePtr = mIMETextRangeList->Item(i);
+      if (!rangePtr) continue;
+      nsresult result = rangePtr->GetRangeType(&type);
       if (NS_FAILED(result)) continue;
       if ( type == nsIPrivateTextRange::TEXTRANGE_RAWINPUT ||
            type == nsIPrivateTextRange::TEXTRANGE_CONVERTEDTEXT ||
@@ -5244,7 +5261,7 @@ nsEditor::GetPIDOMEventTarget()
 
   nsCOMPtr<nsIContent> content = do_QueryInterface(rootElement);
 
-  if (content && content->IsNativeAnonymous())
+  if (content && content->IsRootOfNativeAnonymousSubtree())
   {
     mEventTarget = do_QueryInterface(content->GetParent());
     piTarget = mEventTarget;

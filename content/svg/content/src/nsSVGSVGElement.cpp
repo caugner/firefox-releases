@@ -94,14 +94,11 @@ NS_IMPL_NS_NEW_SVG_ELEMENT(SVG)
 NS_IMPL_ADDREF_INHERITED(nsSVGSVGElement,nsSVGSVGElementBase)
 NS_IMPL_RELEASE_INHERITED(nsSVGSVGElement,nsSVGSVGElementBase)
 
-NS_INTERFACE_MAP_BEGIN(nsSVGSVGElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMNode)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMSVGElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMSVGSVGElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMSVGFitToViewBox)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMSVGLocatable)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMSVGZoomAndPan)
+NS_INTERFACE_TABLE_HEAD(nsSVGSVGElement)
+  NS_NODE_INTERFACE_TABLE7(nsSVGSVGElement, nsIDOMNode, nsIDOMElement,
+                           nsIDOMSVGElement, nsIDOMSVGSVGElement,
+                           nsIDOMSVGFitToViewBox, nsIDOMSVGLocatable,
+                           nsIDOMSVGZoomAndPan)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(SVGSVGElement)
 NS_INTERFACE_MAP_END_INHERITING(nsSVGSVGElementBase)
 
@@ -683,14 +680,8 @@ nsSVGSVGElement::GetBBox(nsIDOMSVGRect **_retval)
   nsISVGChildFrame* svgframe;
   CallQueryInterface(frame, &svgframe);
   if (svgframe) {
-    svgframe->SetMatrixPropagation(PR_FALSE);
-    svgframe->NotifySVGChanged(nsISVGChildFrame::SUPPRESS_INVALIDATION |
-                               nsISVGChildFrame::TRANSFORM_CHANGED);
-    nsresult rv = svgframe->GetBBox(_retval);
-    svgframe->SetMatrixPropagation(PR_TRUE);
-    svgframe->NotifySVGChanged(nsISVGChildFrame::SUPPRESS_INVALIDATION |
-                               nsISVGChildFrame::TRANSFORM_CHANGED);
-    return rv;
+    *_retval = nsSVGUtils::GetBBox(frame).get();
+    return NS_OK;
   } else {
     // XXX: outer svg
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -1401,7 +1392,7 @@ nsSVGSVGElement::GetLength(PRUint8 aCtxType)
   case nsSVGUtils::Y:
     return h;
   case nsSVGUtils::XY:
-    return (float)sqrt((w*w+h*h)/2.0);
+    return float(nsSVGUtils::ComputeNormalizedHypotenuse(w, h));
   }
   return 0;
 }

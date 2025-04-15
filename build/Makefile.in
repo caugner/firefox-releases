@@ -44,7 +44,6 @@ VPATH		= @srcdir@
 include $(DEPTH)/config/autoconf.mk
 
 MODULE = build
-PACKAGE_FILE = build.pkg
 
 ifeq (,$(filter WINCE WINNT OS2,$(OS_ARCH)))
 DIRS		= unix
@@ -54,9 +53,38 @@ ifeq (WINNT,$(OS_ARCH))
 DIRS = win32
 endif
 
+ifdef WINCE
+# We need jemalloc built before the shunt
+ifdef MOZ_MEMORY
+DIRS += wince/tools $(DEPTH)/memory/jemalloc wince/shunt
+else
+DIRS += wince/tools wince/shunt
+endif
+endif
+
 DIRS += pgo
 
 include $(topsrcdir)/config/rules.mk
+
+# we install to _leaktest/
+TARGET_DEPTH = ..
+include $(srcdir)/automation-build.mk
+
+_LEAKTEST_DIR = $(DEPTH)/_leaktest
+
+_LEAKTEST_FILES =    \
+		automation.py \
+		leaktest.py \
+		bloatcycle.html \
+		$(topsrcdir)/build/pgo/server-locations.txt \
+		$(NULL)
+
+leaktest.py: leaktest.py.in
+	$(PYTHON) $(topsrcdir)/config/Preprocessor.py $^ > $@
+	chmod +x $@
+
+libs:: $(_LEAKTEST_FILES)
+	$(INSTALL) $^ $(_LEAKTEST_DIR)
 
 ifdef ENABLE_TESTS
 # Install bloaturls.txt file for tinderbox bloat test.

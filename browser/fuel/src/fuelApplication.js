@@ -142,7 +142,7 @@ Window.prototype = {
    * Helper event callback used to redirect events made on the XBL element
    */
   _event : function win_event(aEvent) {
-    this._events.dispatch(aEvent.type, "");
+    this._events.dispatch(aEvent.type, new BrowserTab(this, aEvent.originalTarget.linkedBrowser));
   },
 
   get tabs() {
@@ -150,17 +150,16 @@ Window.prototype = {
     var browsers = this._tabbrowser.browsers;
 
     for (var i=0; i<browsers.length; i++)
-      tabs.push(new BrowserTab(this._window, browsers[i]));
-
+      tabs.push(new BrowserTab(this, browsers[i]));
     return tabs;
   },
 
   get activeTab() {
-    return new BrowserTab(this._window, this._tabbrowser.selectedBrowser);
+    return new BrowserTab(this, this._tabbrowser.selectedBrowser);
   },
 
   open : function win_open(aURI) {
-    return new BrowserTab(this._window, this._tabbrowser.addTab(aURI.spec).linkedBrowser);
+    return new BrowserTab(this, this._tabbrowser.addTab(aURI.spec).linkedBrowser);
   },
 
   _shutdown : function win_shutdown() {
@@ -179,9 +178,9 @@ Window.prototype = {
 
 //=================================================
 // BrowserTab implementation
-function BrowserTab(aWindow, aBrowser) {
-  this._window = aWindow;
-  this._tabbrowser = aWindow.getBrowser();
+function BrowserTab(aFUELWindow, aBrowser) {
+  this._window = aFUELWindow;
+  this._tabbrowser = aFUELWindow._tabbrowser;
   this._browser = aBrowser;
   this._events = new Events();
   this._cleanup = {};
@@ -241,7 +240,7 @@ BrowserTab.prototype = {
         return;
     }
 
-    this._events.dispatch(aEvent.type, "");
+    this._events.dispatch(aEvent.type, this);
   },
 
   /*

@@ -35,6 +35,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsFrame.h"
+#include "nsSVGEffects.h"
 
 class nsSVGLeafFrame : public nsFrame
 {
@@ -56,10 +57,18 @@ public:
   }
 #endif
 
+  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext);
 };
 
 nsIFrame*
 NS_NewSVGLeafFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
   return new (aPresShell) nsSVGLeafFrame(aContext);
+}
+
+/* virtual */ void
+nsSVGLeafFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
+{
+  nsFrame::DidSetStyleContext(aOldStyleContext);
+  nsSVGEffects::InvalidateRenderingObservers(this);
 }

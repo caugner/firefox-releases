@@ -527,7 +527,7 @@ PRBool nsWindow::DispatchCommandEvent(PRUint32 aEventCommand)
 
 PRBool nsWindow::DispatchDragDropEvent(PRUint32 aMsg)
 {
-  nsMouseEvent event(PR_TRUE, aMsg, this, nsMouseEvent::eReal);
+  nsDragEvent event(PR_TRUE, aMsg, this);
   InitEvent(event);
 
   event.isShift   = WinIsKeyDown(VK_SHIFT);
@@ -3214,7 +3214,7 @@ PRBool nsWindow::DispatchMouseEvent(PRUint32 aEventType, MPARAM mp1, MPARAM mp2,
 {
   PRBool result = PR_FALSE;
 
-  if (nsnull == mEventCallback && nsnull == mMouseListener) {
+  if (nsnull == mEventCallback) {
     return result;
   }
 
@@ -3336,33 +3336,6 @@ PRBool nsWindow::DispatchMouseEvent(PRUint32 aEventType, MPARAM mp1, MPARAM mp2,
   if (nsnull != mEventCallback) {
     return DispatchWindowEvent(&event);
   }
-
-  if (nsnull != mMouseListener) {
-    switch (aEventType) {
-      case NS_MOUSE_MOVE: {
-        result = ConvertStatus(mMouseListener->MouseMoved(event));
-        nsRect rect;
-        GetBounds(rect);
-        if (rect.Contains(event.refPoint.x, event.refPoint.y)) {
-          if (gCurrentWindow == NULL || gCurrentWindow != this) {
-            gCurrentWindow = this;
-          }
-        }
-      } break;
-
-      case NS_MOUSE_BUTTON_DOWN:
-        result = ConvertStatus(mMouseListener->MousePressed(event));
-        break;
-
-      case NS_MOUSE_BUTTON_UP:
-        result = ConvertStatus(mMouseListener->MouseReleased(event));
-        break;
-
-      case NS_MOUSE_CLICK:
-        result = ConvertStatus(mMouseListener->MouseClicked(event));
-        break;
-    } // switch
-  } 
 
   return result;
 }
@@ -3597,16 +3570,20 @@ NS_METHOD nsWindow::SetPreferredSize(PRInt32 aWidth, PRInt32 aHeight)
 NS_IMETHODIMP
 nsWindow::GetLastInputEventTime(PRUint32& aTime)
 {
-   ULONG ulStatus = WinQueryQueueStatus(HWND_DESKTOP);
+  // If there is pending input then return the current time.
+  if (HasPendingInputEvent()) {
+    gLastInputEventTime = PR_IntervalToMicroseconds(PR_IntervalNow());
+  }
 
-   // If there is pending input then return the current time.
-   if (ulStatus && (QS_KEY | QS_MOUSE | QS_MOUSEBUTTON | QS_MOUSEMOVE)) {
-     gLastInputEventTime = PR_IntervalToMicroseconds(PR_IntervalNow());
-   } 
+  aTime = gLastInputEventTime;
 
-   aTime = gLastInputEventTime;
+  return NS_OK;
+}
 
-   return NS_OK;
+PRBool
+nsWindow::HasPendingInputEvent()
+{
+  return (WinQueryQueueStatus(HWND_DESKTOP) & (QS_KEY | QS_MOUSE)) != 0;
 }
 
 // --------------------------------------------------------------------------
@@ -3669,6 +3646,33 @@ void nsWindow::RemoveFromStyle( ULONG style)
       oldStyle &= ~style;
       WinSetWindowULong( mWnd, QWL_STYLE, oldStyle);
    }
+}
+
+// --------------------------------------------------------------------------
+
+NS_IMETHODIMP nsWindow::GetToggledKeyState(PRUint32 aKeyCode, PRBool* aLEDState)
+{
+  PRUint32  vkey;
+
+  NS_ENSURE_ARG_POINTER(aLEDState);
+
+  switch (aKeyCode) {
+    case NS_VK_CAPS_LOCK:
+      vkey = VK_CAPSLOCK;
+      break;
+    case NS_VK_NUM_LOCK:
+      vkey = VK_NUMLOCK;
+      break;
+    case NS_VK_SCROLL_LOCK:
+      vkey = VK_SCRLLOCK;
+      break;
+    default:
+      *aLEDState = PR_FALSE;
+      return NS_OK;
+  }
+
+  *aLEDState = (::WinGetKeyState(HWND_DESKTOP, vkey) & 1) != 0;
+  return NS_OK;
 }
 
 // --------------------------------------------------------------------------

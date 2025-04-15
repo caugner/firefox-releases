@@ -70,6 +70,7 @@
 #include "nsINestedURI.h"
 #include "nsNetUtil.h"
 #include "nsThreadUtils.h"
+#include "nsIPermissionManager.h"
 
 #if defined(XP_WIN)
 #include "nsNativeConnectionHelper.h"
@@ -162,6 +163,9 @@ nsIMemory* nsIOService::gBufferCache = nsnull;
 nsIOService::nsIOService()
     : mOffline(PR_FALSE)
     , mOfflineForProfileChange(PR_FALSE)
+    , mSettingOffline(PR_FALSE)
+    , mSetOfflineValue(PR_FALSE)
+    , mShutdown(PR_FALSE)
     , mManageOfflineStatus(PR_FALSE)
     , mChannelEventSinks(NS_CHANNEL_EVENT_SINK_CATEGORY)
     , mContentSniffers(NS_CONTENT_SNIFFER_CATEGORY)
@@ -582,6 +586,24 @@ nsIOService::NewChannel(const nsACString &aSpec, const char *aCharset, nsIURI *a
     return NewChannelFromURI(uri, result);
 }
 
+PRBool
+nsIOService::IsLinkUp()
+{
+    if (!mNetworkLinkService) {
+        // We cannot decide, assume the link is up
+        return PR_TRUE;
+    }
+
+    PRBool isLinkUp;
+    nsresult rv;
+    rv = mNetworkLinkService->GetIsLinkUp(&isLinkUp);
+    if (NS_FAILED(rv)) {
+        return PR_TRUE;
+    }
+
+    return isLinkUp;
+}
+
 NS_IMETHODIMP
 nsIOService::GetOffline(PRBool *offline)
 {
@@ -592,61 +614,83 @@ nsIOService::GetOffline(PRBool *offline)
 NS_IMETHODIMP
 nsIOService::SetOffline(PRBool offline)
 {
+    // When someone wants to go online (!offline) after we got XPCOM shutdown
+    // throw ERROR_NOT_AVAILABLE to prevent return to online state.
+    if (mShutdown && !offline)
+        return NS_ERROR_NOT_AVAILABLE;
+
+    // SetOffline() may re-enter while it's shutting down services.
+    // If that happens, save the most recent value and it will be
+    // processed when the first SetOffline() call is done bringing
+    // down the service.
+    mSetOfflineValue = offline;
+    if (mSettingOffline) {
+        return NS_OK;
+    }
+    mSettingOffline = PR_TRUE;
+
     nsCOMPtr<nsIObserverService> observerService =
         do_GetService("@mozilla.org/observer-service;1");
-    
-    nsresult rv;
-    if (offline && !mOffline) {
-        NS_NAMED_LITERAL_STRING(offlineString, NS_IOSERVICE_OFFLINE);
-        mOffline = PR_TRUE; // indicate we're trying to shutdown
 
-        // don't care if notification fails
-        // this allows users to attempt a little cleanup before dns and socket transport are shut down.
-        if (observerService)
-            observerService->NotifyObservers(static_cast<nsIIOService *>(this),
-                                             NS_IOSERVICE_GOING_OFFLINE_TOPIC,
-                                             offlineString.get());
+    while (mSetOfflineValue != mOffline) {
+        offline = mSetOfflineValue;
 
-        // be sure to try and shutdown both (even if the first fails)...
-        // shutdown dns service first, because it has callbacks for socket transport
-        if (mDNSService) {
-            rv = mDNSService->Shutdown();
-            NS_ASSERTION(NS_SUCCEEDED(rv), "DNS service shutdown failed");
+        nsresult rv;
+        if (offline && !mOffline) {
+            NS_NAMED_LITERAL_STRING(offlineString, NS_IOSERVICE_OFFLINE);
+            mOffline = PR_TRUE; // indicate we're trying to shutdown
+
+            // don't care if notification fails
+            // this allows users to attempt a little cleanup before dns and socket transport are shut down.
+            if (observerService)
+                observerService->NotifyObservers(static_cast<nsIIOService *>(this),
+                                                 NS_IOSERVICE_GOING_OFFLINE_TOPIC,
+                                                 offlineString.get());
+
+            // be sure to try and shutdown both (even if the first fails)...
+            // shutdown dns service first, because it has callbacks for socket transport
+            if (mDNSService) {
+                rv = mDNSService->Shutdown();
+                NS_ASSERTION(NS_SUCCEEDED(rv), "DNS service shutdown failed");
+            }
+            if (mSocketTransportService) {
+                rv = mSocketTransportService->Shutdown();
+                NS_ASSERTION(NS_SUCCEEDED(rv), "socket transport service shutdown failed");
+            }
+
+            // don't care if notification fails
+            if (observerService)
+                observerService->NotifyObservers(static_cast<nsIIOService *>(this),
+                                                 NS_IOSERVICE_OFFLINE_STATUS_TOPIC,
+                                                 offlineString.get());
         }
-        if (mSocketTransportService) {
-            rv = mSocketTransportService->Shutdown();
-            NS_ASSERTION(NS_SUCCEEDED(rv), "socket transport service shutdown failed");
-        }
+        else if (!offline && mOffline) {
+            // go online
+            if (mDNSService) {
+                rv = mDNSService->Init();
+                NS_ASSERTION(NS_SUCCEEDED(rv), "DNS service init failed");
+            }
+            if (mSocketTransportService) {
+                rv = mSocketTransportService->Init();
+                NS_ASSERTION(NS_SUCCEEDED(rv), "socket transport service init failed");
+            }
+            mOffline = PR_FALSE;    // indicate success only AFTER we've
+                                    // brought up the services
 
-        // don't care if notification fails
-        if (observerService)
-            observerService->NotifyObservers(static_cast<nsIIOService *>(this),
-                                             NS_IOSERVICE_OFFLINE_STATUS_TOPIC,
-                                             offlineString.get());
+            // trigger a PAC reload when we come back online
+            if (mProxyService)
+                mProxyService->ReloadPAC();
+
+            // don't care if notification fails
+            if (observerService)
+                observerService->NotifyObservers(static_cast<nsIIOService *>(this),
+                                                 NS_IOSERVICE_OFFLINE_STATUS_TOPIC,
+                                                 NS_LITERAL_STRING(NS_IOSERVICE_ONLINE).get());
+        }
     }
-    else if (!offline && mOffline) {
-        // go online
-        if (mDNSService) {
-            rv = mDNSService->Init();
-            NS_ASSERTION(NS_SUCCEEDED(rv), "DNS service init failed");
-        }
-        if (mSocketTransportService) {
-            rv = mSocketTransportService->Init();
-            NS_ASSERTION(NS_SUCCEEDED(rv), "socket transport service init failed");
-        }
-        mOffline = PR_FALSE;    // indicate success only AFTER we've
-                                // brought up the services
-         
-        // trigger a PAC reload when we come back online
-        if (mProxyService)
-            mProxyService->ReloadPAC();
- 
-        // don't care if notification fails
-        if (observerService)
-            observerService->NotifyObservers(static_cast<nsIIOService *>(this),
-                                             NS_IOSERVICE_OFFLINE_STATUS_TOPIC,
-                                             NS_LITERAL_STRING(NS_IOSERVICE_ONLINE).get());
-    }
+
+    mSettingOffline = PR_FALSE;
+
     return NS_OK;
 }
 
@@ -785,6 +829,11 @@ nsIOService::Observe(nsISupports *subject,
         } 
     }
     else if (!strcmp(topic, NS_XPCOM_SHUTDOWN_OBSERVER_ID)) {
+        // Remember we passed XPCOM shutdown notification to prevent any
+        // changes of the offline status from now. We must not allow going
+        // online after this point.
+        mShutdown = PR_TRUE;
+
         SetOffline(PR_TRUE);
 
         // Break circular reference.
@@ -901,6 +950,9 @@ nsIOService::TrackNetworkLinkStatusForOffline()
                  "Don't call this unless we're managing the offline status");
     if (!mNetworkLinkService)
         return NS_ERROR_FAILURE;
+
+    if (mShutdown)
+        return NS_ERROR_NOT_AVAILABLE;
   
     // check to make sure this won't collide with Autodial
     if (mSocketTransportService) {
@@ -910,7 +962,7 @@ nsIOService::TrackNetworkLinkStatusForOffline()
         // option is set to always autodial. If so, then we are 
         // always up for the purposes of offline management.
         if (autodialEnabled) {
-#if defined(XP_WIN) && !defined(WINCE)
+#if defined(XP_WIN)
             // On Windows, need to do some registry checking to see if
             // autodial is enabled at the OS level. Only if that is
             // enabled are we always up for the purposes of offline
@@ -952,8 +1004,8 @@ nsIOService::EscapeURL(const nsACString &aStr,
                        PRUint32 aFlags, nsACString &aResult)
 {
   aResult.Truncate();
-  PRBool escaped = NS_EscapeURL(aStr.BeginReading(), aStr.Length(), 
-                                aFlags | esc_AlwaysCopy, aResult);
+  NS_EscapeURL(aStr.BeginReading(), aStr.Length(), 
+               aFlags | esc_AlwaysCopy, aResult);
   return NS_OK;
 }
 
@@ -962,8 +1014,8 @@ nsIOService::UnescapeString(const nsACString &aStr,
                             PRUint32 aFlags, nsACString &aResult)
 {
   aResult.Truncate();
-  PRBool unescaped = NS_UnescapeURL(aStr.BeginReading(), aStr.Length(), 
-                                    aFlags | esc_AlwaysCopy, aResult);
+  NS_UnescapeURL(aStr.BeginReading(), aStr.Length(), 
+                 aFlags | esc_AlwaysCopy, aResult);
   return NS_OK;
 }
 
@@ -982,4 +1034,3 @@ nsIOService::ExtractCharsetFromContentType(const nsACString &aTypeHeader,
     }
     return NS_OK;
 }
-

@@ -46,7 +46,7 @@
 #include "nsIDOMRange.h"
 #include "nsRange.h"
 #include "nsGUIEvent.h"
-#include "nsICaret.h"
+#include "nsCaret.h"
 #include "nsFrameSelection.h"
 #include "nsIFrame.h"
 #include "nsIView.h"
@@ -100,6 +100,19 @@ nsQueryContentEventHandler::Init(nsQueryContentEvent* aEvent)
   NS_ENSURE_TRUE(mRootContent, NS_ERROR_FAILURE);
 
   aEvent->mReply.mContentsRoot = mRootContent.get();
+
+  nsRefPtr<nsCaret> caret;
+  rv = mPresShell->GetCaret(getter_AddRefs(caret));
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ASSERTION(caret, "GetCaret succeeded, but the result is null");
+  PRBool isCollapsed;
+  nsRect r;
+  nsIView* view = nsnull;
+  rv = caret->GetCaretCoordinates(nsCaret::eRenderingViewCoordinates,
+                                  mSelection, &r, &isCollapsed, &view);
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(view, NS_ERROR_FAILURE);
+  aEvent->mReply.mFocusedWidget = view->GetWidget();
 
   return NS_OK;
 }
@@ -195,9 +208,10 @@ nsQueryContentEventHandler::GenerateFlatTextContent(nsIRange* aRange,
 
   nsAutoString tmpStr;
   for (; !iter->IsDone(); iter->Next()) {
-    nsIContent* content = iter->GetCurrentNode();
-    if (!content)
+    nsINode* node = iter->GetCurrentNode();
+    if (!node || !node->IsNodeOfType(nsINode::eCONTENT))
       continue;
+    nsIContent* content = static_cast<nsIContent*>(node);
 
     if (content->IsNodeOfType(nsINode::eTEXT)) {
       if (content == startNode)
@@ -276,11 +290,12 @@ nsQueryContentEventHandler::SetRangeFromFlatTextOffset(
 
   PRUint32 nativeOffset = 0;
   PRUint32 nativeEndOffset = aNativeOffset + aNativeLength;
-  nsIContent* content = nsnull;
+  nsCOMPtr<nsIContent> content;
   for (; !iter->IsDone(); iter->Next()) {
-    content = iter->GetCurrentNode();
-    if (!content)
+    nsINode* node = iter->GetCurrentNode();
+    if (!node || !node->IsNodeOfType(nsINode::eCONTENT))
       continue;
+    nsIContent* content = static_cast<nsIContent*>(node);
 
     PRUint32 nativeTextLength;
     nativeTextLength = GetNativeTextLength(content);
@@ -413,7 +428,7 @@ nsQueryContentEventHandler::OnQueryTextContent(nsQueryContentEvent* aEvent)
 nsresult
 nsQueryContentEventHandler::QueryRectFor(nsQueryContentEvent* aEvent,
                                          nsIRange* aRange,
-                                         nsICaret* aCaret)
+                                         nsCaret* aCaret)
 {
   PRInt32 offsetInFrame;
   nsIFrame* frame;
@@ -474,7 +489,7 @@ nsQueryContentEventHandler::OnQueryCaretRect(nsQueryContentEvent* aEvent)
   if (NS_FAILED(rv))
     return rv;
 
-  nsCOMPtr<nsICaret> caret;
+  nsRefPtr<nsCaret> caret;
   rv = mPresShell->GetCaret(getter_AddRefs(caret));
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ASSERTION(caret, "GetCaret succeeded, but the result is null");
@@ -491,7 +506,7 @@ nsQueryContentEventHandler::OnQueryCaretRect(nsQueryContentEvent* aEvent)
     NS_ENSURE_SUCCESS(rv, rv);
     if (offset == aEvent->mInput.mOffset) {
       PRBool isCollapsed;
-      rv = caret->GetCaretCoordinates(nsICaret::eTopLevelWindowCoordinates,
+      rv = caret->GetCaretCoordinates(nsCaret::eTopLevelWindowCoordinates,
                                       mSelection, &aEvent->mReply.mRect,
                                       &isCollapsed, nsnull);
       NS_ENSURE_SUCCESS(rv, rv);

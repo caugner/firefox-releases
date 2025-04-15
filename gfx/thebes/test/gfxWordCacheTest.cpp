@@ -160,10 +160,10 @@ main (int argc, char **argv) {
                            10.0,
                            nsDependentCString("x-western"),
                            0.0,
-                           PR_FALSE, PR_FALSE);
+                           PR_FALSE, PR_FALSE, PR_FALSE);
 
        nsRefPtr<gfxFontGroup> fontGroup =
-           gfxPlatform::GetPlatform()->CreateFontGroup(NS_LITERAL_STRING("Geneva, MS Sans Serif, Helvetica,serif"), &style);
+           gfxPlatform::GetPlatform()->CreateFontGroup(NS_LITERAL_STRING("Geneva, MS Sans Serif, Helvetica,serif"), &style, nsnull);
 
        gfxTextRunFactory::Parameters params = {
            ctx, nsnull, nsnull, nsnull, 0, 60

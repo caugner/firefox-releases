@@ -36,6 +36,12 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
+/**
+ * Using Places services on quit-application or later is not reliable, so make
+ * sure to do shutdown work on quit-application-granted, or history
+ * synchronization could fail, losing latest changes.
+ */
+ 
 #include "nsISupports.idl"
 #include "nsIArray.idl"
 #include "nsIURI.idl"
@@ -712,6 +718,26 @@ interface nsINavHistoryObserver : nsISupports
   void onPageExpired(in nsIURI aURI, in PRTime aVisitTime, in boolean aWholeEntry);
 };
 
+/**
+ * Additional notifications for history observers.  Your observer will not be
+ * notified for this unless it can QI to this interface.
+ *
+ * This interface was added after the binary compatibility freeze, so it lives
+ * in a separate interface for 1.9.1.  In future releases, the methods found in
+ * this interface will be in nsINavHistoryObserver.
+ */
+[scriptable, uuid(c1945447-a94f-4134-80c5-7fe48ef00178)]
+interface nsINavHistoryObserver_MOZILLA_1_9_1_ADDITIONS : nsISupports
+{
+  /**
+   * This page and all of its visits are about to be deleted.  Note: the page
+   * may not necessarily have actually existed for this function to be called.
+   *
+   * @param aURI
+   *        The URI being deleted.
+   */
+  void onBeforeDeleteURI(in nsIURI aURI);
+};
 
 /**
  * This object encapsulates all the query parameters you're likely to need
@@ -939,6 +965,7 @@ interface nsINavHistoryQueryOptions : nsISupports
    * This returns nsINavHistoryQueryResultNode nodes for each tag.
    * The node contains information how to load its content:
    * - list of bookmarks with the given tag will be loaded.
+   * Setting this resultType will force queryType to QUERY_TYPE_BOOKMARKS.
    */
   const unsigned short RESULTS_AS_TAG_QUERY = 6;
 
@@ -946,6 +973,7 @@ interface nsINavHistoryQueryOptions : nsISupports
    * This is a container with an URI result type that contains the last
    * modified bookmarks for the given tag.
    * Tag folder id must be defined in the query.
+   * Setting this resultType will force queryType to QUERY_TYPE_BOOKMARKS.
    */
   const unsigned short RESULTS_AS_TAG_CONTENTS = 7;
 
@@ -970,7 +998,7 @@ interface nsINavHistoryQueryOptions : nsISupports
    * This option excludes all URIs and separators from a bookmarks query.
    * This would be used if you just wanted a list of bookmark folders and
    * queries (such as the left pane of the places page).
-   * Ignored for queries over history. Defaults to false.
+   * Defaults to false.
    */
   attribute boolean excludeItems;
 
@@ -1057,9 +1085,19 @@ interface nsINavHistoryQueryOptions : nsISupports
   nsINavHistoryQueryOptions clone();
 };
 
-[scriptable, uuid(8b258ff6-b591-4da5-8b7c-0665b27d09cc)]
+[scriptable, uuid(437f539b-d541-4a0f-a200-6f9a6d45cce2)]
 interface nsINavHistoryService : nsISupports
 {
+  /**
+   * System Notifications:
+   *
+   * places-init-complete - Sent once the History service is completely
+   *                        initialized successfully.
+   * places-database-locked - Sent if initialization of the History service
+   *                          failed due to the inability to open the places.sqlite
+   *                          for access reasons.
+   */
+
   /**
    * This transition type means the user followed a link and got a new toplevel
    * window.
@@ -1102,6 +1140,31 @@ interface nsINavHistoryService : nsISupports
    * Set when the transition is a download.
    */
   const unsigned long TRANSITION_DOWNLOAD = 7;
+
+  /**
+   * Set when database is coherent
+   */
+  const unsigned short DATABASE_STATUS_OK = 0;
+
+  /**
+   * Set when database did not exist and we created a new one
+   */
+  const unsigned short DATABASE_STATUS_CREATE = 1;
+
+  /**
+   * Set when database was corrupt and we replaced it
+   */
+  const unsigned short DATABASE_STATUS_CORRUPT = 2;
+
+  /**
+   * Set when database schema has been upgraded
+   */
+  const unsigned short DATABASE_STATUS_UPGRADED = 3;
+
+  /**
+   * Returns the current database status
+   */
+  readonly attribute unsigned short databaseStatus;
 
   /**
    * True if there is any history. This can be used in UI to determine whether

@@ -53,6 +53,20 @@ Login Manager test: multiple login autocomplete
     <input  type="password"   name="pword">
     <button type="submit">Submit</button>
   </form>
+
+  <!-- This form will be manipulated to insert a different username field. -->
+  <form id="form7" action="http://autocomplete3" onsubmit="return false;">
+    <input  type="text"       name="uname">
+    <input  type="password"   name="pword">
+    <button type="submit">Submit</button>
+  </form>
+
+  <!-- test for no autofill after onblur with blank username -->
+  <form id="form8" action="http://autocomplete4" onsubmit="return false;">
+    <input  type="text"       name="uname">
+    <input  type="password"   name="pword">
+    <button type="submit">Submit</button>
+  </form>
 </div>
 
 <pre id="test">
@@ -66,10 +80,6 @@ var uname = $_(1, "uname");
 var pword = $_(1, "pword");
 const shiftModifier = Components.interfaces.nsIDOMNSEvent.SHIFT_MASK;
 
-// Window utils for sending fake sey events.
-var wutils = window.QueryInterface(Components.interfaces.nsIInterfaceRequestor).
-                      getInterface(Components.interfaces.nsIDOMWindowUtils);
-
 // Get the pwmgr service
 var pwmgr = Components.classes["@mozilla.org/login-manager;1"]
             .getService(Components.interfaces.nsILoginManager);
@@ -81,6 +91,11 @@ Components.Constructor("@mozilla.org/login-manager/loginInfo;1",
                        Components.interfaces.nsILoginInfo, "init");
 ok(nsLoginInfo != null, "nsLoginInfo constructor");
 
+
+// login0 has no username, so should be filtered out from the autocomplete list.
+var login0 = new nsLoginInfo(
+    "http://localhost:8888", "http://autocomplete:8888", null,
+    "", "user0pass", "", "pword");
 
 var login1 = new nsLoginInfo(
     "http://localhost:8888", "http://autocomplete:8888", null,
@@ -103,13 +118,27 @@ var login5 = new nsLoginInfo(
     "http://localhost:8888", "http://autocomplete2", null,
     "singleuser5", "singlepass5", "uname", "pword");
 
+var login6A = new nsLoginInfo(
+    "http://localhost:8888", "http://autocomplete3", null,
+    "form7user1", "form7pass1", "uname", "pword");
+var login6B = new nsLoginInfo(
+    "http://localhost:8888", "http://autocomplete3", null,
+    "form7user2", "form7pass2", "uname", "pword");
+
+var login7  = new nsLoginInfo(
+    "http://localhost:8888", "http://autocomplete4", null,
+    "form8user", "form8pass", "uname", "pword");
 // try/catch in case someone runs the tests manually, twice.
 try {
+    pwmgr.addLogin(login0);
     pwmgr.addLogin(login1);
     pwmgr.addLogin(login2);
     pwmgr.addLogin(login3);
     pwmgr.addLogin(login4);
     pwmgr.addLogin(login5);
+    pwmgr.addLogin(login6A);
+    pwmgr.addLogin(login6B);
+    pwmgr.addLogin(login7);
 } catch (e) {
     ok(false, "addLogin threw: " + e);
 }
@@ -128,25 +157,6 @@ function checkACForm(expectedUsername, expectedPassword) {
   var formID = uname.parentNode.id;
   is(uname.value, expectedUsername, "Checking " + formID + " username");
   is(pword.value, expectedPassword, "Checking " + formID + " password");
-}
-
-
-// Mochitest gives us a sendKey(), but it's targeted to a specific element.
-// This basically sends an untargeted key event, to whatever's focused.
-function doKey(aKey, modifier) {
-    // Seems we need to enable this again, or sendKeyEvent() complaints.
-    netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
-
-    var keyName = "DOM_VK_" + aKey.toUpperCase();
-    var key = Components.interfaces.nsIDOMKeyEvent[keyName];
-
-    // undefined --> null
-    if (!modifier)
-        modifier = null;
-
-    wutils.sendKeyEvent("keydown",  key, 0, modifier);
-    wutils.sendKeyEvent("keypress", key, 0, modifier);
-    wutils.sendKeyEvent("keyup",    key, 0, modifier);
 }
 
 
@@ -354,15 +364,15 @@ function runTest(testNum) {
         doKey("down");
         var numLogins;
         numLogins = pwmgr.countLogins("http://localhost:8888", "http://autocomplete:8888", null);
-        is(numLogins, 4, "Correct number of logins before deleting one");
+        is(numLogins, 5, "Correct number of logins before deleting one");
 
         // On OS X, shift-backspace and shift-delete work, just delete does not.
         // On Win/Linux, shift-backspace does not work, delete and shift-delete do.
         doKey("delete", shiftModifier);
 
-        checkACForm("zzzuser4", ""); // why does a value get set here?
+        checkACForm("", "");
         numLogins = pwmgr.countLogins("http://localhost:8888", "http://autocomplete:8888", null);
-        is(numLogins, 3, "Correct number of logins after deleting one");
+        is(numLogins, 4, "Correct number of logins after deleting one");
         doKey("return");
         checkACForm("testuser2", "testpass2");
 
@@ -387,9 +397,9 @@ function runTest(testNum) {
         doKey("down");
         doKey("down");
         doKey("delete", shiftModifier);
-        checkACForm("testuser2", ""); // XXX why does a value get set here?
+        checkACForm("", "");
         numLogins = pwmgr.countLogins("http://localhost:8888", "http://autocomplete:8888", null);
-        is(numLogins, 2, "Correct number of logins after deleting one");
+        is(numLogins, 3, "Correct number of logins after deleting one");
         doKey("return");
         checkACForm("zzzuser4", "zzzpass4");
 
@@ -414,9 +424,9 @@ function runTest(testNum) {
         doKey("down");
         doKey("down");
         doKey("delete", shiftModifier);
-        checkACForm("testuser2", ""); // XXX why does a value get set here?
+        checkACForm("", "");
         numLogins = pwmgr.countLogins("http://localhost:8888", "http://autocomplete:8888", null);
-        is(numLogins, 1, "Correct number of logins after deleting one");
+        is(numLogins, 2, "Correct number of logins after deleting one");
         doKey("return");
         checkACForm("testuser2", "testpass2");
 
@@ -443,7 +453,8 @@ function runTest(testNum) {
         //doKey("return");
         checkACForm("", "");
         numLogins = pwmgr.countLogins("http://localhost:8888", "http://autocomplete:8888", null);
-        is(numLogins, 0, "Correct number of logins after deleting one");
+        is(numLogins, 1, "Correct number of logins after deleting one");
+        pwmgr.removeLogin(login0); // remove the login that's not shown in the list.
         testNum = 99;
         break;
 
@@ -467,6 +478,7 @@ function runTest(testNum) {
         checkACForm("", ""); // value shouldn't update
         doKey("return"); // not "enter"!
         checkACForm("singleuser5", "singlepass5");
+        restoreForm(); // clear field, so reloading test doesn't fail
         break;
 
     case 102:
@@ -534,10 +546,78 @@ function runTest(testNum) {
         pword = $_(6, "pword");
         checkACForm("singleuser5", "singlepass5");
 
-        /* FALLTHRU */
+        pwmgr.removeLogin(login5);
+        testNum = 499;
+        break;
+
+    case 500:
+        // Turn our attention to form7
+        uname = $_(7, "uname");
+        pword = $_(7, "pword");
+        checkACForm("", "");
+
+        // Insert a new username field into the form. We'll then make sure
+        // that invoking the autocomplete doesn't try to fill the form.
+        var newField = document.createElement("input");
+        newField.setAttribute("type", "text");
+        newField.setAttribute("name", "uname2");
+        pword.parentNode.insertBefore(newField, pword);
+        is($_(7, "uname2").value, "", "Verifying empty uname2");;
+
+        // Delete login6B. It was created just to prevent filling in a login
+        // automatically, removing it makes it more likely that we'll catch a
+        // future regression with form filling here.
+        pwmgr.removeLogin(login6B);
+
+        // Trigger autocomplete popup
+        restoreForm();
+        doKey("down");
+        break;
+
+    case 501:
+        // Check first entry
+        doKey("down");
+        checkACForm("", ""); // value shouldn't update
+        doKey("return"); // not "enter"!
+        // The form changes, so we expect the old username field to get the
+        // selected autocomplete value, but neither the new username field nor
+        // the password field should have any values filled in.
+        checkACForm("form7user1", "");
+        is($_(7, "uname2").value, "", "Verifying empty uname2");;
+        restoreForm(); // clear field, so reloading test doesn't fail
+
+        pwmgr.removeLogin(login6A);
+        testNum = 599;
+        break;
+
+    case 600:
+        // Turn our attention to form8
+        uname = $_(8, "uname");
+        pword = $_(8, "pword");
+        checkACForm("form8user", "form8pass");
+        restoreForm();
+        break;
+
+    case 601:
+        checkACForm("", "");
+        // Focus the previous form to trigger a blur.
+        $_(7, "uname").focus();
+        break;
+
+    case 602:
+        checkACForm("", "");
+        restoreForm();
+        break;
+
+    case 603:
+        checkACForm("", "");
+        pwmgr.removeLogin(login7);
+
+        SimpleTest.finish();
+        return;
 
     default:
-        pwmgr.removeLogin(login5);
+        ok(false, "Unexpected invocataion of test #" + testNum);
         SimpleTest.finish();
         return;
   }

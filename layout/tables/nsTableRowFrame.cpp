@@ -164,8 +164,8 @@ nsTableRowFrame::Init(nsIContent*      aContent,
   // Let the base class do its initialization
   rv = nsHTMLContainerFrame::Init(aContent, aParent, aPrevInFlow);
 
-  // record that children that are ignorable whitespace should be excluded 
-  mState |= NS_FRAME_EXCLUDE_IGNORABLE_WHITESPACE;
+  NS_ASSERTION(NS_STYLE_DISPLAY_TABLE_ROW == GetStyleDisplay()->mDisplay,
+               "wrong display on table row frame");
 
   if (aPrevInFlow) {
     // Set the row index
@@ -177,6 +177,21 @@ nsTableRowFrame::Init(nsIContent*      aContent,
   return rv;
 }
 
+/* virtual */ void
+nsTableRowFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
+{
+  if (!aOldStyleContext) //avoid this on init
+    return;
+     
+  nsTableFrame* tableFrame = nsTableFrame::GetTableFrame(this);
+    
+  if (tableFrame->IsBorderCollapse() &&
+      tableFrame->BCRecalcNeeded(aOldStyleContext, GetStyleContext())) {
+    nsRect damageArea(0, GetRowIndex(), tableFrame->GetColCount(), 1);
+    tableFrame->SetBCDamageArea(damageArea);
+  }
+  return;
+}
 
 NS_IMETHODIMP
 nsTableRowFrame::AppendFrames(nsIAtom*        aListName,
@@ -345,7 +360,7 @@ nsTableRowFrame::DidResize()
   desiredSize.width = mRect.width;
   desiredSize.height = mRect.height;
   desiredSize.mOverflowArea = nsRect(0, 0, desiredSize.width,
-                                      desiredSize.height);
+                                     desiredSize.height);
 
   while (childFrame) {
     if (IS_TABLE_CELL(childFrame->GetType())) {
@@ -684,7 +699,7 @@ CalcAvailWidth(nsTableFrame&     aTableFrame,
     else {
       aColAvailWidth += colWidth;
     }
-    if ((spanX > 0) && (aTableFrame.GetNumCellsOriginatingInCol(colIndex + spanX) > 0)) {
+    if ((spanX > 0) && aTableFrame.ColumnHasCellSpacingBefore(colIndex + spanX)) {
       cellSpacing += aCellSpacingX;
     }
   }
@@ -723,7 +738,7 @@ GetSpaceBetween(PRInt32       aPrevColIndex,
         if (!isCollapsed)
           space += aTableFrame.GetColumnWidth(colX);
       }
-      if (!isCollapsed && (aTableFrame.GetNumCellsOriginatingInCol(colX) > 0)) {
+      if (!isCollapsed && aTableFrame.ColumnHasCellSpacingBefore(colX)) {
         space += aCellSpacingX;
       }
     }
@@ -747,7 +762,7 @@ GetSpaceBetween(PRInt32       aPrevColIndex,
         if (!isCollapsed)
           space += aTableFrame.GetColumnWidth(colX);
       }
-      if (!isCollapsed && (aTableFrame.GetNumCellsOriginatingInCol(colX) > 0)) {
+      if (!isCollapsed && aTableFrame.ColumnHasCellSpacingBefore(colX)) {
         space += aCellSpacingX;
       }
     }
@@ -1064,7 +1079,7 @@ nsTableRowFrame::Reflow(nsPresContext*          aPresContext,
   // If our parent is in initial reflow, it'll handle invalidating our
   // entire overflow rect.
   if (!(GetParent()->GetStateBits() & NS_FRAME_FIRST_REFLOW)) {
-    CheckInvalidateSizeChange(aPresContext, aDesiredSize, aReflowState);
+    CheckInvalidateSizeChange(aDesiredSize);
   }
 
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
@@ -1242,7 +1257,7 @@ nsTableRowFrame::CollapseRowIfNecessary(nscoord aRowOffset,
             const nsStyleVisibility* nextColVis =
               nextColFrame->GetStyleVisibility();
             if ( (NS_STYLE_VISIBILITY_COLLAPSE != nextColVis->mVisible) &&
-                (tableFrame->GetNumCellsOriginatingInCol(colX + colIncrement) > 0)) {
+                tableFrame->ColumnHasCellSpacingBefore(colX + colIncrement)) {
               cRect.width += cellSpacingX;
             }
           }

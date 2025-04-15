@@ -56,7 +56,6 @@
 #include "nsICSSStyleSheet.h"
 #include "nsDOMAttribute.h"
 #include "nsDOMClassInfo.h"
-#include "nsDOMScriptObjectFactory.h"
 #include "nsEventListenerManager.h"
 #include "nsFrame.h"
 #include "nsGenericElement.h"  // for nsDOMEventRTTearoff
@@ -68,7 +67,7 @@
 #include "nsNodeInfo.h"
 #include "nsRange.h"
 #include "nsRepeatService.h"
-#include "nsSpaceManager.h"
+#include "nsFloatManager.h"
 #include "nsSprocketLayout.h"
 #include "nsStackLayout.h"
 #include "nsStyleSet.h"
@@ -83,6 +82,9 @@
 #include "nsCSSRuleProcessor.h"
 #include "nsXMLHttpRequest.h"
 #include "nsIFocusEventSuppressor.h"
+#include "nsDOMThreadService.h"
+#include "nsHTMLDNSPrefetch.h"
+#include "nsCrossSiteListenerProxy.h"
 
 #ifdef MOZ_XUL
 #include "nsXULPopupManager.h"
@@ -110,10 +112,20 @@ PRBool NS_SVGEnabled();
 #include "nsTextServicesDocument.h"
 #endif
 
+#ifdef MOZ_MEDIA
+#include "nsMediaDecoder.h"
+#include "nsHTMLMediaElement.h"
+#endif
+
+#ifdef MOZ_SYDNEYAUDIO
+#include "nsAudioStream.h"
+#endif
+
 #include "nsError.h"
 #include "nsTraceRefcnt.h"
 
 #include "nsCycleCollector.h"
+#include "nsJSEnvironment.h"
 
 static nsrefcnt sLayoutStaticRefcnt;
 
@@ -138,7 +150,7 @@ nsLayoutStatics::Initialize()
   nsColorNames::AddRefTable();
   nsGkAtoms::AddRefAtoms();
 
-  nsDOMScriptObjectFactory::Startup();
+  nsJSRuntime::Startup();
   rv = nsContentUtils::Init();
   if (NS_FAILED(rv)) {
     NS_ERROR("Could not initialize nsContentUtils");
@@ -172,6 +184,12 @@ nsLayoutStatics::Initialize()
   rv = nsTextFrameTextRunCache::Init();
   if (NS_FAILED(rv)) {
     NS_ERROR("Could not initialize textframe textrun cache");
+    return rv;
+  }
+
+  rv = nsHTMLDNSPrefetch::Initialize();
+  if (NS_FAILED(rv)) {
+    NS_ERROR("Could not initialize HTML DNS prefetch");
     return rv;
   }
 
@@ -227,6 +245,8 @@ nsLayoutStatics::Initialize()
   }
 #endif
 
+  nsCSSRuleProcessor::Startup();
+
 #ifdef MOZ_XUL
   rv = nsXULPopupManager::Init();
   if (NS_FAILED(rv)) {
@@ -234,6 +254,22 @@ nsLayoutStatics::Initialize()
     return rv;
   }
 #endif
+
+#ifdef MOZ_MEDIA
+  rv = nsMediaDecoder::InitLogger();
+  if (NS_FAILED(rv)) {
+    NS_ERROR("Could not initialize nsMediaDecoder");
+    return rv;
+  }
+  
+  nsHTMLMediaElement::InitMediaTypes();
+#endif
+
+#ifdef MOZ_SYDNEYAUDIO
+  nsAudioStream::InitLibrary();
+#endif
+
+  nsCrossSiteListenerProxy::Startup();
 
   return NS_OK;
 }
@@ -252,8 +288,9 @@ nsLayoutStatics::Shutdown()
   nsContentList::Shutdown();
   nsComputedDOMStyle::Shutdown();
   CSSLoaderImpl::Shutdown();
-  nsCSSRuleProcessor::Shutdown();
+  nsCSSRuleProcessor::FreeSystemMetrics();
   nsTextFrameTextRunCache::Shutdown();
+  nsHTMLDNSPrefetch::Shutdown();
   nsCSSRendering::Shutdown();
 #ifdef DEBUG
   nsFrame::DisplayReflowShutdown();
@@ -281,12 +318,11 @@ nsLayoutStatics::Shutdown()
 #endif
 
   nsCSSFrameConstructor::ReleaseGlobals();
-  nsSpaceManager::Shutdown();
+  nsFloatManager::Shutdown();
   nsImageFrame::ReleaseGlobals();
 
   nsCSSScanner::ReleaseGlobals();
 
-  NS_IF_RELEASE(nsContentDLF::gUAStyleSheet);
   NS_IF_RELEASE(nsRuleNode::gLangService);
   nsStyledElement::Shutdown();
 
@@ -297,8 +333,8 @@ nsLayoutStatics::Shutdown()
   nsNodeInfo::ClearCache();
   nsLayoutStylesheetCache::Shutdown();
   NS_NameSpaceManagerShutdown();
-  nsStyleSet::FreeGlobals();
 
+  nsJSRuntime::Shutdown();
   nsGlobalWindow::ShutDown();
   nsDOMClassInfo::ShutDown();
   nsTextControlFrame::ShutDown();
@@ -310,7 +346,18 @@ nsLayoutStatics::Shutdown()
   nsTextServicesDocument::Shutdown();
 #endif
 
+  nsDOMThreadService::Shutdown();
+
   NS_ShutdownFocusSuppressor();
+
+#ifdef MOZ_MEDIA
+  nsHTMLMediaElement::ShutdownMediaTypes();
+#endif
+#ifdef MOZ_SYDNEYAUDIO
+  nsAudioStream::ShutdownLibrary();
+#endif
+
+  nsXMLHttpRequest::ShutdownACCache();
 }
 
 void

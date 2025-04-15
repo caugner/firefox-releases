@@ -44,8 +44,8 @@
  */
 
 #include "nsplugin.h"
-#include "ns4xPlugin.h"
-#include "ns4xPluginInstance.h"
+#include "nsNPAPIPlugin.h"
+#include "nsNPAPIPluginInstance.h"
 #include "nsIServiceManager.h"
 #include "nsIMemory.h"
 #include "nsIPluginStreamListener.h"
@@ -441,6 +441,7 @@ nsresult nsPluginFile::GetPluginInfo(nsPluginInfo& info)
 
     nsCOMPtr<nsIPlugin> plugin;
 
+    info.fVersion = nsnull;
     if (nsGetFactory) {
         // It's an almost-new-style plugin. The "truly new" plugins
         // are just XPCOM components, but there are some Mozilla
@@ -457,8 +458,7 @@ nsresult nsPluginFile::GetPluginInfo(nsPluginInfo& info)
             // a reference to an unrelated function when we have an NPAPI
             // plugin linked to libxul.so.  Give this plugin another shot as
             // an NPAPI plugin
-            rv = ns4xPlugin::CreatePlugin(mgr, 0, 0, pLibrary,
-                                          getter_AddRefs(plugin));
+            rv = nsNPAPIPlugin::CreatePlugin(0, 0, pLibrary, getter_AddRefs(plugin));
             if (NS_FAILED(rv))
                 return rv;
         } else {
@@ -466,13 +466,17 @@ nsresult nsPluginFile::GetPluginInfo(nsPluginInfo& info)
         }
     } else {
         // It's old sk00l
-        // if fileName parameter == 0 ns4xPlugin::CreatePlugin() will not call NP_Initialize()
-        rv = ns4xPlugin::CreatePlugin(mgr, 0, 0, pLibrary, 
-				      getter_AddRefs(plugin));
+        // if fileName parameter == 0 nsNPAPIPlugin::CreatePlugin() will not call NP_Initialize()
+        rv = nsNPAPIPlugin::CreatePlugin(0, 0, pLibrary, getter_AddRefs(plugin));
         if (NS_FAILED(rv)) return rv;
     }
 
     if (plugin) {
+        const char* (*npGetPluginVersion)() =
+          (const char* (*)()) PR_FindFunctionSymbol(pLibrary, "NP_GetPluginVersion");
+        if (npGetPluginVersion)
+            info.fVersion = PL_strdup(npGetPluginVersion());
+
         plugin->GetMIMEDescription(&mimedescr);
 #ifdef NS_DEBUG
         printf("GetMIMEDescription() returned \"%s\"\n", mimedescr);
@@ -522,6 +526,9 @@ nsresult nsPluginFile::FreePluginInfo(nsPluginInfo& info)
 
     if (info.fFileName != nsnull)
         PL_strfree(info.fFileName);
+
+    if (info.fVersion != nsnull)
+        PL_strfree(info.fVersion);
 
     return NS_OK;
 }

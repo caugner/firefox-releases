@@ -73,6 +73,7 @@ private:
 	InsertTextTxn();
 
 public:
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(InsertTextTxn, EditTxn)
 	
   NS_DECL_EDITTXN
 
@@ -104,9 +105,6 @@ protected:
   nsIEditor *mEditor;   
 
   friend class TransactionFactory;
-
-  friend class nsDerivedSafe<InsertTextTxn>; // work around for a compiler bug
-
 };
 
 #endif

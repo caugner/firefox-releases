@@ -39,7 +39,7 @@
 #include "nsGUIEvent.h"
 #include "nsDOMEvent.h"
 #include "nsEventListenerManager.h"
-#include "nsICaret.h"
+#include "nsCaret.h"
 #include "nsIDOMNSEvent.h"
 #include "nsIDOMEventListener.h"
 #include "nsIDOMMouseListener.h"
@@ -225,11 +225,7 @@ static const EventDispatchData sCompositionEvents[] = {
   { NS_COMPOSITION_END,
     HANDLER(&nsIDOMCompositionListener::HandleEndComposition)    },
   { NS_COMPOSITION_QUERY,
-    HANDLER(&nsIDOMCompositionListener::HandleQueryComposition)  },
-  { NS_RECONVERSION_QUERY,
-    HANDLER(&nsIDOMCompositionListener::HandleQueryReconversion) },
-  { NS_QUERYCARETRECT,
-    HANDLER(&nsIDOMCompositionListener::HandleQueryCaretRect)    }
+    HANDLER(&nsIDOMCompositionListener::HandleQueryComposition)  }
 };
 
 static const EventDispatchData sTextEvents[] = {
@@ -266,10 +262,13 @@ static const EventDispatchData sDragEvents[] = {
   { NS_DRAGDROP_ENTER,       HANDLER(&nsIDOMDragListener::DragEnter)   },
   { NS_DRAGDROP_OVER_SYNTH,  HANDLER(&nsIDOMDragListener::DragOver)    },
   { NS_DRAGDROP_EXIT_SYNTH,  HANDLER(&nsIDOMDragListener::DragExit)    },
-  { NS_DRAGDROP_DROP,        HANDLER(&nsIDOMDragListener::DragDrop)    },
+  { NS_DRAGDROP_DRAGDROP,    HANDLER(&nsIDOMDragListener::DragDrop)    },
   { NS_DRAGDROP_GESTURE,     HANDLER(&nsIDOMDragListener::DragGesture) },
   { NS_DRAGDROP_DRAG,        HANDLER(&nsIDOMDragListener::Drag)        },
-  { NS_DRAGDROP_END,         HANDLER(&nsIDOMDragListener::DragEnd)     }
+  { NS_DRAGDROP_END,         HANDLER(&nsIDOMDragListener::DragEnd)     },
+  { NS_DRAGDROP_START,       HANDLER(&nsIDOMDragListener::DragStart)   },
+  { NS_DRAGDROP_LEAVE_SYNTH, HANDLER(&nsIDOMDragListener::DragLeave)   },
+  { NS_DRAGDROP_DROP,        HANDLER(&nsIDOMDragListener::Drop)        }
 };
 
 static const EventDispatchData sXULEvents[] = {
@@ -340,13 +339,13 @@ nsIDOMEventGroup* gDOM2EventGroup = nsnull;
 nsDataHashtable<nsISupportsHashKey, PRUint32>* gEventIdTable = nsnull;
 
 PRUint32 nsEventListenerManager::mInstanceCount = 0;
+PRUint32 nsEventListenerManager::sCreatedCount = 0;
 
 nsEventListenerManager::nsEventListenerManager() :
-  mTarget(nsnull),
-  mMayHaveMutationListeners(PR_FALSE),
-  mNoListenerForEvent(NS_EVENT_TYPE_NULL)
+  mTarget(nsnull)
 {
   ++mInstanceCount;
+  ++sCreatedCount;
 }
 
 nsEventListenerManager::~nsEventListenerManager() 
@@ -392,6 +391,7 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE_AMBIGUOUS(nsEventListenerManager, nsIEventListe
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsEventListenerManager)
   PRUint32 count = tmp->mListeners.Length();
   for (PRUint32 i = 0; i < count; i++) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mListeners[i] mListener");
     cb.NoteXPCOMChild(tmp->mListeners.ElementAt(i).mListener.get());
   }  
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
@@ -425,6 +425,27 @@ nsEventListenerManager::GetTypeDataForEventName(nsIAtom* aName)
       }
     }
   }
+  return nsnull;
+}
+
+nsPIDOMWindow*
+nsEventListenerManager::GetInnerWindowForTarget()
+{
+  nsCOMPtr<nsINode> node = do_QueryInterface(mTarget);
+  if (node) {
+    // XXX sXBL/XBL2 issue -- do we really want the owner here?  What
+    // if that's the XBL document?
+    nsIDocument* document = node->GetOwnerDoc();
+    if (document)
+      return document->GetInnerWindow();
+  }
+
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(mTarget);
+  if (window) {
+    NS_ASSERTION(window->IsInnerWindow(), "Target should not be an outer window");
+    return window;
+  }
+
   return nsnull;
 }
 
@@ -495,29 +516,19 @@ nsEventListenerManager::AddEventListener(nsIDOMEventListener *aListener,
   ls->mHandlerIsString = PR_FALSE;
   ls->mTypeData = aTypeData;
 
-  // For mutation listeners, we need to update the global bit on the DOM window.
-  // Otherwise we won't actually fire the mutation event.
-  if (aType >= NS_MUTATION_START && aType <= NS_MUTATION_END) {
+  if (aType == NS_AFTERPAINT) {
+    mMayHavePaintEventListener = PR_TRUE;
+    nsPIDOMWindow* window = GetInnerWindowForTarget();
+    if (window) {
+      window->SetHasPaintEventListeners();
+    }
+  } else if (aType >= NS_MUTATION_START && aType <= NS_MUTATION_END) {
+    // For mutation listeners, we need to update the global bit on the DOM window.
+    // Otherwise we won't actually fire the mutation event.
     mMayHaveMutationListeners = PR_TRUE;
     // Go from our target to the nearest enclosing DOM window.
-    nsCOMPtr<nsPIDOMWindow> window;
-    nsCOMPtr<nsIDocument> document;
-    nsCOMPtr<nsINode> node(do_QueryInterface(mTarget));
-    if (node) {
-      // XXX sXBL/XBL2 issue -- do we really want the owner here?  What
-      // if that's the XBL document?
-      document = node->GetOwnerDoc();
-      if (document) {
-        window = document->GetInnerWindow();
-      }
-    }
-
-    if (!window) {
-      window = do_QueryInterface(mTarget);
-    }
+    nsPIDOMWindow* window = GetInnerWindowForTarget();
     if (window) {
-      NS_ASSERTION(window->IsInnerWindow(),
-                   "Setting mutation listener bits on outer window?");
       // If aType is NS_MUTATION_SUBTREEMODIFIED, we need to listen all
       // mutations. nsContentUtils::HasMutationListeners relies on this.
       window->SetMutationListeners((aType == NS_MUTATION_SUBTREEMODIFIED) ?
@@ -806,6 +817,11 @@ nsEventListenerManager::AddScriptEventListener(nsISupports *aObject,
         nsContentUtils::GetEventArgNames(nameSpace, aName, &argCount,
                                          &argNames);
 
+        nsCxPusher pusher;
+        if (!pusher.Push((JSContext*)context->GetNativeContext())) {
+          return NS_ERROR_FAILURE;
+        }
+
         rv = context->CompileEventHandler(aName, argCount, argNames,
                                           aBody,
                                           url.get(), lineNo,
@@ -813,7 +829,6 @@ nsEventListenerManager::AddScriptEventListener(nsISupports *aObject,
                                           handler);
         if (rv == NS_ERROR_ILLEGAL_VALUE) {
           NS_WARNING("Probably a syntax error in the event handler!");
-          context->ReportPendingException();
           return NS_SUCCESS_LOSS_OF_INSIGNIFICANT_DATA;
         }
         NS_ENSURE_SUCCESS(rv, rv);
@@ -1007,6 +1022,12 @@ nsEventListenerManager::CompileEventHandlerInternal(nsIScriptContext *aContext,
         }
       }
 
+      nsCxPusher pusher;
+      if (!pusher.Push((JSContext*)aContext->GetNativeContext())) {
+        return NS_ERROR_FAILURE;
+      }
+
+
       if (handlerOwner) {
         // Always let the handler owner compile the event
         // handler, as it may want to use a special
@@ -1048,7 +1069,7 @@ nsresult
 nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
                                            nsIDOMEventListener* aListener,
                                            nsIDOMEvent* aDOMEvent,
-                                           nsISupports* aCurrentTarget,
+                                           nsPIDOMEventTarget* aCurrentTarget,
                                            PRUint32 aPhaseFlags)
 {
   nsresult result = NS_OK;
@@ -1072,10 +1093,7 @@ nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
     }
   }
 
-  // nsCxPusher will push and pop (automatically) the current cx onto the
-  // context stack
-  nsCxPusher pusher;
-  if (NS_SUCCEEDED(result) && pusher.Push(aCurrentTarget)) {
+  if (NS_SUCCEEDED(result)) {
     // nsIDOMEvent::currentTarget is set in nsEventDispatcher.
     result = aListener->HandleEvent(aDOMEvent);
   }
@@ -1095,7 +1113,7 @@ static const EventDispatchData* sLatestEventDispData = nsnull;
 nsresult
 nsEventListenerManager::HandleEvent(nsPresContext* aPresContext,
                                     nsEvent* aEvent, nsIDOMEvent** aDOMEvent,
-                                    nsISupports* aCurrentTarget,
+                                    nsPIDOMEventTarget* aCurrentTarget,
                                     PRUint32 aFlags,
                                     nsEventStatus* aEventStatus)
 {
@@ -1155,6 +1173,7 @@ found:
   nsAutoTObserverArray<nsListenerStruct, 2>::EndLimitedIterator iter(mListeners);
   nsAutoPopupStatePusher popupStatePusher(nsDOMEvent::GetEventPopupControlState(aEvent));
   PRBool hasListener = PR_FALSE;
+  nsCxPusher pusher;
   while (iter.HasMore()) {
     nsListenerStruct* ls = &iter.GetNext();
     PRBool useTypeInterface =
@@ -1176,10 +1195,13 @@ found:
                                            EmptyString(), aDOMEvent);
           }
           if (*aDOMEvent) {
+            nsRefPtr<nsIDOMEventListener> kungFuDeathGrip = ls->mListener;
             if (useTypeInterface) {
+              pusher.Pop();
               DispatchToInterface(*aDOMEvent, ls->mListener,
                                   dispData->method, *typeData->iid);
-            } else if (useGenericInterface) {
+            } else if (useGenericInterface &&
+                       pusher.RePush(aCurrentTarget)) {
               HandleEventSubType(ls, ls->mListener, *aDOMEvent,
                                  aCurrentTarget, aFlags);
             }
@@ -1445,7 +1467,7 @@ nsEventListenerManager::PrepareToUseCaretPosition(nsIWidget* aEventWidget,
   nsresult rv;
 
   // check caret visibility
-  nsCOMPtr<nsICaret> caret;
+  nsRefPtr<nsCaret> caret;
   rv = aShell->GetCaret(getter_AddRefs(caret));
   NS_ENSURE_SUCCESS(rv, PR_FALSE);
   NS_ENSURE_TRUE(caret, PR_FALSE);
@@ -1455,10 +1477,9 @@ nsEventListenerManager::PrepareToUseCaretPosition(nsIWidget* aEventWidget,
   if (NS_FAILED(rv) || ! caretVisible)
     return PR_FALSE;
 
-  // caret selection, watch out: GetCaretDOMSelection can return null but NS_OK
-  nsCOMPtr<nsISelection> domSelection;
-  rv = caret->GetCaretDOMSelection(getter_AddRefs(domSelection));
-  NS_ENSURE_SUCCESS(rv, PR_FALSE);
+  // caret selection, this is a temporary weak reference, so no refcounting is 
+  // needed
+  nsISelection* domSelection = caret->GetCaretDOMSelection();
   NS_ENSURE_TRUE(domSelection, PR_FALSE);
 
   // since the match could be an anonymous textnode inside a
@@ -1521,7 +1542,7 @@ nsEventListenerManager::PrepareToUseCaretPosition(nsIWidget* aEventWidget,
   PRBool isCollapsed;
   nsIView* view;
   nsRect caretCoords;
-  rv = caret->GetCaretCoordinates(nsICaret::eRenderingViewCoordinates,
+  rv = caret->GetCaretCoordinates(nsCaret::eRenderingViewCoordinates,
                                   domSelection, &caretCoords, &isCollapsed,
                                   &view);
   NS_ENSURE_SUCCESS(rv, PR_FALSE);
@@ -1748,6 +1769,12 @@ found:
     }
   }
   return PR_FALSE;
+}
+
+PRBool
+nsEventListenerManager::HasListeners()
+{
+  return !mListeners.IsEmpty();
 }
 
 PRBool

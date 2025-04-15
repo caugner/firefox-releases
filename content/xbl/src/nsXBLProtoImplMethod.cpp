@@ -132,9 +132,7 @@ nsXBLProtoImplMethod::InstallMember(nsIScriptContext* aContext,
   nsIDocument *ownerDoc = aBoundElement->GetOwnerDoc();
   nsIScriptGlobalObject *sgo;
 
-  if (!ownerDoc || !(sgo = ownerDoc->GetScriptGlobalObject())) {
-    NS_ERROR("Can't find global object for bound content!");
- 
+  if (!ownerDoc || !(sgo = ownerDoc->GetScopeObject())) {
     return NS_ERROR_UNEXPECTED;
   }
 
@@ -335,9 +333,13 @@ nsXBLProtoImplAnonymousMethod::Execute(nsIContent* aBoundElement)
   }
 
   if (!ok) {
-    // If a constructor or destructor threw an exception, it doesn't
-    // stop anything else.  We just report it.
+    // If a constructor or destructor threw an exception, it doesn't stop
+    // anything else.  We just report it.  Note that we need to set aside the
+    // frame chain here, since the constructor invocation is not related to
+    // whatever is on the stack right now, really.
+    JSStackFrame* frame = JS_SaveFrameChain(cx);
     ::JS_ReportPendingException(cx);
+    JS_RestoreFrameChain(cx, frame);
     return NS_ERROR_FAILURE;
   }
 

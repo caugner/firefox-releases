@@ -127,7 +127,7 @@ var gUpdateWizard = {
   errorItems: [],
   showErrors: function (aState, aErrors)
   {
-    openDialog("chrome://mozapps/content/update/errors.xul", "",
+    openDialog("chrome://mozapps/content/extensions/errors.xul", "",
                "modal", { state: aState, errors: aErrors });
   },
 
@@ -391,7 +391,7 @@ var gFoundPage = {
 
     var oneChecked = false;
     var foundUpdates = document.getElementById("found.updates");
-    var updates = foundUpdates.getElementsByTagName("listitem");;
+    var updates = foundUpdates.getElementsByTagName("listitem");
     for (var i = 0; i < updates.length; ++i) {
       if (!updates[i].checked)
         continue;
@@ -426,7 +426,7 @@ var gInstallingPage = {
     this._errors = [];
 
     var foundUpdates = document.getElementById("found.updates");
-    var updates = foundUpdates.getElementsByTagName("listitem");;
+    var updates = foundUpdates.getElementsByTagName("listitem");
     for (var i = 0; i < updates.length; ++i) {
       if (!updates[i].checked)
         continue;

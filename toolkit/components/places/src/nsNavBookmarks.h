@@ -41,7 +41,6 @@
 
 #include "nsINavBookmarksService.h"
 #include "nsIAnnotationService.h"
-#include "nsIStringBundle.h"
 #include "nsITransaction.h"
 #include "nsNavHistory.h"
 #include "nsNavHistoryResult.h" // need for Int64 hashtable
@@ -97,6 +96,15 @@ public:
                                  PRInt32* aIndex,
                                  PRInt64* aNewFolder);
 
+  /**
+   * Determines if we have a real bookmark or not (not a livemark).
+   *
+   * @param aPlaceId
+   *        The place_id of the location to check against.
+   * @returns true if it's a real bookmark, false otherwise.
+   */
+  PRBool IsRealBookmark(PRInt64 aPlaceId);
+
   // Called by History service when quitting.
   nsresult OnQuit();
 
@@ -105,6 +113,11 @@ public:
 
   PRBool ItemExists(PRInt64 aItemId);
 
+  /**
+   * Finalize all internal statements.
+   */
+  nsresult FinalizeStatements();
+
 private:
   static nsNavBookmarks *sInstance;
 
@@ -112,6 +125,7 @@ private:
 
   nsresult InitRoots();
   nsresult InitDefaults();
+  nsresult InitStatements();
   nsresult CreateRoot(mozIStorageStatement* aGetRootStatement,
                       const nsCString& name, PRInt64* aID,
                       PRInt64 aParentID, PRBool* aWasCreated);
@@ -127,12 +141,11 @@ private:
   // remove me when there is better query initialization
   nsNavHistory* History() { return nsNavHistory::GetHistoryService(); }
 
-  mozIStorageStatement* DBGetURLPageInfo()
-  { return History()->DBGetURLPageInfo(); }
-
-  mozIStorageConnection* DBConn() { return History()->GetStorageConnection(); }
+  nsCOMPtr<mozIStorageConnection> mDBConn;
 
   nsString mGUIDBase;
+  nsresult GetGUIDBase(nsAString& aGUIDBase);
+
   PRInt32 mItemCount;
 
   nsMaybeWeakPtrArray<nsINavBookmarkObserver> mObservers;
@@ -166,18 +179,36 @@ private:
 
   nsresult SetItemDateInternal(mozIStorageStatement* aStatement, PRInt64 aItemId, PRTime aValue);
 
+  // Structure to hold folder's children informations
+  typedef struct folderChildrenInfo
+  {
+    PRInt64 itemId;
+    PRUint16 itemType;
+    PRInt64 placeId;
+    PRInt64 parentId;
+    PRInt64 grandParentId;
+    PRInt32 index;
+    nsCString url;
+    nsCString folderType;
+  };
+
+  // Recursive method to build an array of folder's children
+  nsresult GetDescendantChildren(PRInt64 aFolderId,
+                                 PRInt64 aGrandParentId,
+                                 nsTArray<folderChildrenInfo>& aFolderChildrenArray);
+
   // kGetInfoIndex_* results + kGetChildrenIndex_* results
   nsCOMPtr<mozIStorageStatement> mDBGetChildren;
   static const PRInt32 kGetChildrenIndex_Position;
   static const PRInt32 kGetChildrenIndex_Type;
-  static const PRInt32 kGetChildrenIndex_ForeignKey;
+  static const PRInt32 kGetChildrenIndex_PlaceID;
   static const PRInt32 kGetChildrenIndex_FolderTitle;
-  static const PRInt32 kGetChildrenIndex_ID;
+  static const PRInt32 kGetChildrenIndex_ServiceContractId;
 
   nsCOMPtr<mozIStorageStatement> mDBFindURIBookmarks;  // kFindBookmarksIndex_* results
   static const PRInt32 kFindBookmarksIndex_ID;
   static const PRInt32 kFindBookmarksIndex_Type;
-  static const PRInt32 kFindBookmarksIndex_ForeignKey;
+  static const PRInt32 kFindBookmarksIndex_PlaceID;
   static const PRInt32 kFindBookmarksIndex_Parent;
   static const PRInt32 kFindBookmarksIndex_Position;
   static const PRInt32 kFindBookmarksIndex_Title;
@@ -203,6 +234,8 @@ private:
   nsCOMPtr<mozIStorageStatement> mDBGetRedirectDestinations;
   nsCOMPtr<mozIStorageStatement> mDBInsertBookmark;
   nsCOMPtr<mozIStorageStatement> mDBIsBookmarkedInDatabase;
+  nsCOMPtr<mozIStorageStatement> mDBIsRealBookmark;
+  nsCOMPtr<mozIStorageStatement> mDBGetLastBookmarkID;
   nsCOMPtr<mozIStorageStatement> mDBSetItemDateAdded;
   nsCOMPtr<mozIStorageStatement> mDBSetItemLastModified;
   nsCOMPtr<mozIStorageStatement> mDBSetItemIndex;
@@ -212,24 +245,26 @@ private:
   nsCOMPtr<mozIStorageStatement> mDBGetKeywordForBookmark;
   nsCOMPtr<mozIStorageStatement> mDBGetURIForKeyword;
 
-  nsCOMPtr<nsIStringBundle> mBundle;
-
   class RemoveFolderTransaction : public nsITransaction {
   public:
-    RemoveFolderTransaction(PRInt64 aID, PRInt64 aParent, 
-                            const nsACString& aTitle, PRInt32 aIndex,
-                            const nsAString& aType) 
-                            : mID(aID),
-                              mParent(aParent),
-                              mIndex(aIndex){
-      mTitle = aTitle;
-      mType = aType;
-    }
-    
+    RemoveFolderTransaction(PRInt64 aID) : mID(aID) {}
+
     NS_DECL_ISUPPORTS
 
     NS_IMETHOD DoTransaction() {
       nsNavBookmarks* bookmarks = nsNavBookmarks::GetBookmarksService();
+
+      nsresult rv = bookmarks->GetParentAndIndexOfFolder(mID, &mParent, &mIndex);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      rv = bookmarks->GetItemTitle(mID, mTitle);
+      NS_ENSURE_SUCCESS(rv, rv);
+
+      nsCAutoString type;
+      rv = bookmarks->GetFolderType(mID, type);
+      NS_ENSURE_SUCCESS(rv, rv);
+      mType = NS_ConvertUTF8toUTF16(type);
+
       return bookmarks->RemoveFolder(mID);
     }
 

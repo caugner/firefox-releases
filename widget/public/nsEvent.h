@@ -76,9 +76,8 @@ class nsMouseScrollEvent;
 class nsReconversionEvent;
 class nsTooltipEvent;
 class nsMenuEvent;
+class nsSimpleGestureEvent;
 
 struct nsTextEventReply;
-struct nsReconversionEventReply;
-struct nsQueryCaretRectEventReply;
 
 #endif // nsEvent_h__

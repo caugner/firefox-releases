@@ -40,8 +40,6 @@ MOZILLA_INTERNAL_API = 1
 
 MODULE		= os2Embed
 
-PACKAGE_FILE = os2embed.pkg
-
 REQUIRES	= xpcom \
 		  string \
 		  embed_base \
@@ -102,9 +100,7 @@ EXTRA_DEPS     += $(STATIC_EXTRA_DEPS)
 EXTRA_DSO_LIBS += $(STATIC_EXTRA_DSO_LIBS)
 EXTRA_LIBS     += -L$(DEPTH)/dist/lib/components
 EXTRA_LIBS     += $(EXTRA_DSO_LIBS) $(STATIC_EXTRA_LIBS)
-ifdef MOZ_XUL_APP
 EXTRA_LIBS     += $(DIST)/lib/$(LIB_PREFIX)xulapp_s.$(LIB_SUFFIX)
-endif # MOZ_XUL_APP
 DEFINES        += $(STATIC_DEFINES)
 CPPSRCS        += $(STATIC_CPPSRCS)
 

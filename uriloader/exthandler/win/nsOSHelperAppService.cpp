@@ -177,11 +177,14 @@ nsresult nsOSHelperAppService::OSProtocolHandlerExists(const char * aProtocolSch
 #endif
 
     HKEY hKey;
-    LONG err = ::RegOpenKeyEx(HKEY_CLASSES_ROOT, aProtocolScheme, 0,
-                             KEY_QUERY_VALUE, &hKey);
+    LONG err = ::RegOpenKeyExW(HKEY_CLASSES_ROOT,
+                               NS_ConvertASCIItoUTF16(aProtocolScheme).get(),
+                               0,
+                               KEY_QUERY_VALUE,
+                               &hKey);
     if (err == ERROR_SUCCESS)
     {
-      err = ::RegQueryValueEx(hKey, "URL Protocol", NULL, NULL, NULL, NULL);
+      err = ::RegQueryValueExW(hKey, L"URL Protocol", NULL, NULL, NULL, NULL);
       *aHandlerExists = (err == ERROR_SUCCESS);
       // close the key
       ::RegCloseKey(hKey);
@@ -532,7 +535,7 @@ already_AddRefed<nsMIMEInfoWin> nsOSHelperAppService::GetByExtension(const nsAFl
   else {
     nsAutoString temp;
     if (NS_FAILED(regKey->ReadStringValue(NS_LITERAL_STRING("Content Type"),
-                  temp))) {
+                  temp)) || temp.IsEmpty()) {
       return nsnull; 
     }
     // Content-Type is always in ASCII

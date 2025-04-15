@@ -163,22 +163,6 @@ static PRThread * acceptorThread;
 
 static PRLogModuleInfo *lm;
 
-/* Add custom password handler because SECU_GetModulePassword 
- * makes automation of this program next to impossible.
- */
-
-char *
-ownPasswd(PK11SlotInfo *info, PRBool retry, void *arg)
-{
-	char * passwd = NULL;
-
-	if ( (!retry) && arg ) {
-		passwd = PL_strdup((char *)arg);
-	}
-
-	return passwd;
-}
-
 #define PRINTF  if (verbose)  printf
 #define FPRINTF if (verbose) fprintf
 #define FLUSH	if (verbose) { fflush(stdout); fflush(stderr); }
@@ -191,7 +175,7 @@ Usage(const char *progName)
 
 "Usage: %s -n rsa_nickname -p port [-3BDENRSTbjlmrsuvx] [-w password]\n"
 "         [-t threads] [-i pid_file] [-c ciphers] [-d dbdir] [-g numblocks]\n"
-"         [-f fortezza_nickname] [-L [seconds]] [-M maxProcs] [-P dbprefix]\n"
+"         [-f password_file] [-L [seconds]] [-M maxProcs] [-P dbprefix]\n"
 #ifdef NSS_ENABLE_ECC
 "         [-C SSLCacheEntries] [-e ec_nickname]\n"
 #else
@@ -1130,7 +1114,7 @@ handle_connection(
 	    char *      fnEnd;
 	    PRFileInfo  info;
 	    /* try to open the file named.  
-	     * If succesful, then write it to the client.
+	     * If successful, then write it to the client.
 	     */
 	    fnEnd = strpbrk(fnBegin, " \r\n");
 	    if (fnEnd) {
@@ -1782,35 +1766,6 @@ beAGoodParent(int argc, char **argv, int maxProcs, PRFileDesc * listen_sock)
     exit(0);
 }
 
-#ifdef DEBUG_nelsonb
-
-#if defined(XP_UNIX) || defined(XP_OS2) || defined(XP_BEOS)
-#define SSL_GETPID getpid
-#elif defined(_WIN32_WCE)
-#define SSL_GETPID GetCurrentProcessId
-#elif defined(WIN32)
-extern int __cdecl _getpid(void);
-#define SSL_GETPID _getpid
-#else
-#define SSL_GETPID() 0   
-#endif
-
-void
-WaitForDebugger(void)
-{
-
-    int waiting       = 12;
-    int myPid         = SSL_GETPID();
-    PRIntervalTime    nrval = PR_SecondsToInterval(5);
-
-    while (waiting) {
-    	printf("child %d is waiting to be debugged!\n", myPid);
-	PR_Sleep(nrval); 
-	--waiting;
-    }
-}
-#endif
-
 #define HEXCHAR_TO_INT(c, i) \
     if (((c) >= '0') && ((c) <= '9')) { \
 	i = (c) - '0'; \
@@ -1834,11 +1789,11 @@ main(int argc, char **argv)
 #ifdef NSS_ENABLE_ECC
     char *               ecNickName   = NULL;
 #endif
-    char *               fNickName   = NULL;
     const char *         fileName    = NULL;
     char *               cipherString= NULL;
     const char *         dir         = ".";
     char *               passwd      = NULL;
+    char *               pwfile      = NULL;
     const char *         pidFile     = NULL;
     char *               tmp;
     char *               envString;
@@ -1862,6 +1817,7 @@ main(int argc, char **argv)
     PRUint32             protos = 0;
     SSL3Statistics      *ssl3stats;
     PRUint32             i;
+    secuPWData  pwdata = { PW_NONE, 0 };
  
     tmp = strrchr(argv[0], '/');
     tmp = tmp ? tmp + 1 : argv[0];
@@ -1923,7 +1879,10 @@ main(int argc, char **argv)
 	case 'e': ecNickName = PORT_Strdup(optstate->value); break;
 #endif /* NSS_ENABLE_ECC */
 
-	case 'f': fNickName = PORT_Strdup(optstate->value); break;
+	case 'f':
+            pwdata.source = PW_FROMFILE;
+            pwdata.data = pwfile = PORT_Strdup(optstate->value);
+            break;
 
         case 'g': 
             testBulk = PR_TRUE;
@@ -1967,7 +1926,10 @@ main(int argc, char **argv)
 
 	case 'v': verbose++; break;
 
-	case 'w': passwd = PORT_Strdup(optstate->value); break;
+	case 'w':
+            pwdata.source = PW_PLAINTEXT;
+            pwdata.data = passwd = PORT_Strdup(optstate->value);
+            break;
 
 	case 'x': useExportPolicy = PR_TRUE; break;
 
@@ -2007,7 +1969,7 @@ main(int argc, char **argv)
 	exit(0);
     }
 
-    if ((nickName == NULL) && (fNickName == NULL) 
+    if ((nickName == NULL)
  #ifdef NSS_ENABLE_ECC
 						&& (ecNickName == NULL)
  #endif
@@ -2070,9 +2032,6 @@ main(int argc, char **argv)
 	if (prStatus != PR_SUCCESS)
 	    errExit("PR_SetFDInheritable");
 #endif
-#ifdef DEBUG_nelsonb
-	WaitForDebugger();
-#endif
 	rv = SSL_InheritMPServerSIDCache(envString);
 	if (rv != SECSuccess)
 	    errExit("SSL_InheritMPServerSIDCache");
@@ -2107,9 +2066,9 @@ main(int argc, char **argv)
     	readBigFile(fileName);
 
     /* set our password function */
-    PK11_SetPasswordFunc( passwd ? ownPasswd : SECU_GetModulePassword);
+    PK11_SetPasswordFunc(SECU_GetModulePassword);
 
-    /* Call the libsec initialization routines */
+    /* Call the NSS initialization routines */
     rv = NSS_Initialize(dir, certPrefix, certPrefix, SECMOD_DB, NSS_INIT_READONLY);
     if (rv != SECSuccess) {
     	fputs("NSS_Init failed.\n", stderr);
@@ -2202,12 +2161,12 @@ main(int argc, char **argv)
     }
 
     if (nickName) {
-	cert[kt_rsa] = PK11_FindCertFromNickname(nickName, passwd);
+	cert[kt_rsa] = PK11_FindCertFromNickname(nickName, &pwdata);
 	if (cert[kt_rsa] == NULL) {
 	    fprintf(stderr, "selfserv: Can't find certificate %s\n", nickName);
 	    exit(10);
 	}
-	privKey[kt_rsa] = PK11_FindKeyByAnyCert(cert[kt_rsa], passwd);
+	privKey[kt_rsa] = PK11_FindKeyByAnyCert(cert[kt_rsa], &pwdata);
 	if (privKey[kt_rsa] == NULL) {
 	    fprintf(stderr, "selfserv: Can't find Private Key for cert %s\n", 
 	            nickName);
@@ -2216,7 +2175,7 @@ main(int argc, char **argv)
 	if (testbypass) {
 	    PRBool bypassOK;
 	    if (SSL_CanBypass(cert[kt_rsa], privKey[kt_rsa], protos, cipherlist, 
-	                      nciphers, &bypassOK, passwd) != SECSuccess) {
+	                      nciphers, &bypassOK, &pwdata) != SECSuccess) {
 		SECU_PrintError(progName, "Bypass test failed %s\n", nickName);
 		exit(14);
 	    }
@@ -2224,23 +2183,15 @@ main(int argc, char **argv)
 		    bypassOK ? "" : "not");
 	}
     }
-    if (fNickName) {
-	cert[kt_fortezza] = PK11_FindCertFromNickname(fNickName, NULL);
-	if (cert[kt_fortezza] == NULL) {
-	    fprintf(stderr, "selfserv: Can't find certificate %s\n", fNickName);
-	    exit(12);
-	}
-	privKey[kt_fortezza] = PK11_FindKeyByAnyCert(cert[kt_fortezza], NULL);
-    }
 #ifdef NSS_ENABLE_ECC
     if (ecNickName) {
-	cert[kt_ecdh] = PK11_FindCertFromNickname(ecNickName, passwd);
+	cert[kt_ecdh] = PK11_FindCertFromNickname(ecNickName, &pwdata);
 	if (cert[kt_ecdh] == NULL) {
 	    fprintf(stderr, "selfserv: Can't find certificate %s\n",
 		    ecNickName);
 	    exit(13);
 	}
-	privKey[kt_ecdh] = PK11_FindKeyByAnyCert(cert[kt_ecdh], passwd);
+	privKey[kt_ecdh] = PK11_FindKeyByAnyCert(cert[kt_ecdh], &pwdata);
 	if (privKey[kt_ecdh] == NULL) {
 	    fprintf(stderr, "selfserv: Can't find Private Key for cert %s\n", 
 	            ecNickName);
@@ -2249,7 +2200,7 @@ main(int argc, char **argv)
 	if (testbypass) {
 	    PRBool bypassOK;
 	    if (SSL_CanBypass(cert[kt_ecdh], privKey[kt_ecdh], protos, cipherlist,
-			      nciphers, &bypassOK, passwd) != SECSuccess) {
+			      nciphers, &bypassOK, &pwdata) != SECSuccess) {
 		SECU_PrintError(progName, "Bypass test failed %s\n", ecNickName);
 		exit(15);
 	    }
@@ -2312,11 +2263,11 @@ cleanup:
     if (passwd) {
         PORT_Free(passwd);
     }
+    if (pwfile) {
+        PORT_Free(pwfile);
+    }
     if (certPrefix && certPrefix != emptyString) {                            
         PORT_Free(certPrefix);
-    }
-    if (fNickName) {
-        PORT_Free(fNickName);
     }
  #ifdef NSS_ENABLE_ECC
     if (ecNickName) {

@@ -105,9 +105,13 @@ LOCAL_INCLUDES += -I$(srcdir)/../../build
 
 EXTRA_PP_COMPONENTS = nsLivemarkService.js \
                       nsTaggingService.js \
+                      nsPlacesDBFlush.js \
                       $(NULL)
 
-EXTRA_JS_MODULES = utils.js
+EXTRA_JS_MODULES = \
+  utils.js \
+  PlacesDBUtils.jsm \
+  $(NULL)
 
 EXTRA_PP_JS_MODULES = utils.js
 

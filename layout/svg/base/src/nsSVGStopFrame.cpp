@@ -40,7 +40,7 @@
 #include "nsStyleContext.h"
 #include "nsFrame.h"
 #include "nsGkAtoms.h"
-#include "nsISVGValue.h"
+#include "nsSVGEffects.h"
 
 // This is a very simple frame whose only purpose is to capture style change
 // events and propagate them to the parent.  Most of the heavy lifting is done
@@ -58,7 +58,7 @@ protected:
 
 public:
   // nsIFrame interface:
-  NS_IMETHOD DidSetStyleContext();
+  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext);
 
   NS_IMETHOD AttributeChanged(PRInt32         aNameSpaceID,
                               nsIAtom*        aAttribute,
@@ -91,13 +91,11 @@ public:
 //----------------------------------------------------------------------
 // nsIFrame methods:
 
-NS_IMETHODIMP
-nsSVGStopFrame::DidSetStyleContext()
+/* virtual */ void
+nsSVGStopFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
 {
-  // Tell our parent
-  if (mParent)
-    mParent->DidSetStyleContext();
-  return NS_OK;
+  nsSVGStopFrameBase::DidSetStyleContext(aOldStyleContext);
+  nsSVGEffects::InvalidateRenderingObservers(this);
 }
 
 nsIAtom *
@@ -113,21 +111,8 @@ nsSVGStopFrame::AttributeChanged(PRInt32         aNameSpaceID,
 {
   if (aNameSpaceID == kNameSpaceID_None &&
       aAttribute == nsGkAtoms::offset) {
-
-    // Need to tell our parent gradients that something happened.
-    // Calling {Begin,End}Update on an nsISVGValue, which
-    // nsSVGGradientFrame implements, causes its observers (the
-    // referencing graphics frames) to be notified.
-    if (mParent) {
-      nsISVGValue *svgParent;
-      CallQueryInterface(mParent, &svgParent);
-      if (svgParent) {
-        svgParent->BeginBatchUpdate();
-        svgParent->EndBatchUpdate();
-      }
-    }
-    return NS_OK;
-  } 
+    nsSVGEffects::InvalidateRenderingObservers(this);
+  }
 
   return nsSVGStopFrameBase::AttributeChanged(aNameSpaceID,
                                               aAttribute, aModType);

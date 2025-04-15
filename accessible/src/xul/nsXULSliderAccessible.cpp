@@ -49,6 +49,12 @@ nsXULSliderAccessible::nsXULSliderAccessible(nsIDOMNode* aNode,
 {
 }
 
+// nsISupports
+
+NS_IMPL_ISUPPORTS_INHERITED1(nsXULSliderAccessible,
+                             nsAccessibleWrap,
+                             nsIAccessibleValue)
+
 // nsIAccessible
 
 NS_IMETHODIMP
@@ -128,17 +134,6 @@ nsXULSliderAccessible::SetCurrentValue(double aValue)
   return SetSliderAttr(nsAccessibilityAtoms::curpos, aValue);
 }
 
-// nsPIAccessible
-NS_IMETHODIMP
-nsXULSliderAccessible::GetAllowsAnonChildAccessibles(PRBool *aAllowsAnonChildren)
-{
-  NS_ENSURE_ARG_POINTER(aAllowsAnonChildren);
-
-  // Allow anonymous xul:thumb inside xul:slider.
-  *aAllowsAnonChildren = PR_TRUE;
-  return NS_OK;
-}
-
 // Utils
 
 already_AddRefed<nsIContent>
@@ -177,7 +172,7 @@ nsXULSliderAccessible::GetSliderAttr(nsIAtom *aName, nsAString& aValue)
 {
   aValue.Truncate();
 
-  if (!mDOMNode)
+  if (IsDefunct())
     return NS_ERROR_FAILURE;
 
   nsCOMPtr<nsIContent> sliderNode(GetSliderNode());
@@ -190,7 +185,7 @@ nsXULSliderAccessible::GetSliderAttr(nsIAtom *aName, nsAString& aValue)
 nsresult
 nsXULSliderAccessible::SetSliderAttr(nsIAtom *aName, const nsAString& aValue)
 {
-  if (!mDOMNode)
+  if (IsDefunct())
     return NS_ERROR_FAILURE;
 
   nsCOMPtr<nsIContent> sliderNode(GetSliderNode());
@@ -206,13 +201,20 @@ nsXULSliderAccessible::GetSliderAttr(nsIAtom *aName, double *aValue)
   NS_ENSURE_ARG_POINTER(aValue);
   *aValue = 0;
 
-  nsAutoString value;
-  nsresult rv = GetSliderAttr(aName, value);
+  nsAutoString attrValue;
+  nsresult rv = GetSliderAttr(aName, attrValue);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  // Return zero value if there is no attribute or its value is empty.
+  if (attrValue.IsEmpty())
+    return NS_OK;
+
   PRInt32 error = NS_OK;
-  *aValue = value.ToFloat(&error);
-  return error;
+  double value = attrValue.ToFloat(&error);
+  if (NS_SUCCEEDED(error))
+    *aValue = value;
+
+  return NS_OK;
 }
 
 nsresult

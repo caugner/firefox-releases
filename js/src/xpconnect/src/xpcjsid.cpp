@@ -516,12 +516,9 @@ nsJSIID::NewResolve(nsIXPConnectWrappedNative *wrapper,
             return NS_ERROR_OUT_OF_MEMORY;
 
         *objp = obj;
-        *_retval = OBJ_DEFINE_PROPERTY(cx, obj, idid, val,
-                                       nsnull, nsnull,
-                                       JSPROP_ENUMERATE |
-                                       JSPROP_READONLY |
-                                       JSPROP_PERMANENT,
-                                       nsnull);
+        *_retval = JS_DefinePropertyById(cx, obj, idid, val, nsnull, nsnull,
+                                         JSPROP_ENUMERATE | JSPROP_READONLY |
+                                         JSPROP_PERMANENT);
     }
 
     return NS_OK;
@@ -795,15 +792,15 @@ nsJSCID::CreateInstance(nsISupports **_retval)
 
     // Do the security check if necessary
 
-    XPCContext* xpcc = nsXPConnect::GetContext(cx);
+    XPCContext* xpcc = XPCContext::GetXPCContext(cx);
 
     nsIXPCSecurityManager* sm;
     sm = xpcc->GetAppropriateSecurityManager(
                         nsIXPCSecurityManager::HOOK_CREATE_INSTANCE);
     if(sm && NS_FAILED(sm->CanCreateInstance(cx, mDetails.ID())))
     {
-        // the security manager vetoed. It should have set an exception.
-        ccxp->SetExceptionWasThrown(JS_TRUE);
+        NS_ASSERTION(JS_IsExceptionPending(cx),
+                     "security manager vetoed CreateInstance without setting exception");
         return NS_OK;
     }
 
@@ -868,15 +865,15 @@ nsJSCID::GetService(nsISupports **_retval)
 
     // Do the security check if necessary
 
-    XPCContext* xpcc = nsXPConnect::GetContext(cx);
+    XPCContext* xpcc = XPCContext::GetXPCContext(cx);
 
     nsIXPCSecurityManager* sm;
     sm = xpcc->GetAppropriateSecurityManager(
                         nsIXPCSecurityManager::HOOK_GET_SERVICE);
     if(sm && NS_FAILED(sm->CanCreateInstance(cx, mDetails.ID())))
     {
-        // the security manager vetoed. It should have set an exception.
-        ccxp->SetExceptionWasThrown(JS_TRUE);
+        NS_ASSERTION(JS_IsExceptionPending(cx),
+                     "security manager vetoed GetService without setting exception");
         return NS_OK;
     }
 
@@ -914,7 +911,7 @@ nsJSCID::Construct(nsIXPConnectWrappedNative *wrapper,
                    PRUint32 argc, jsval * argv, jsval * vp,
                    PRBool *_retval)
 {
-    XPCJSRuntime* rt = nsXPConnect::GetRuntime();
+    XPCJSRuntime* rt = nsXPConnect::GetRuntimeInstance();
     if(!rt)
         return NS_ERROR_FAILURE;
 

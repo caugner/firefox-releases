@@ -80,8 +80,8 @@ nsCSSValue::nsCSSValue(float aValue, nsCSSUnit aUnit)
 nsCSSValue::nsCSSValue(const nsString& aValue, nsCSSUnit aUnit)
   : mUnit(aUnit)
 {
-  NS_ASSERTION((eCSSUnit_String <= aUnit) && (aUnit <= eCSSUnit_Attr), "not a string value");
-  if ((eCSSUnit_String <= aUnit) && (aUnit <= eCSSUnit_Attr)) {
+  NS_ASSERTION(UnitHasStringValue(), "not a string value");
+  if (UnitHasStringValue()) {
     mValue.mString = BufferFromString(aValue);
     if (NS_UNLIKELY(!mValue.mString)) {
       // XXXbz not much we can do here; just make sure that our promise of a
@@ -104,7 +104,7 @@ nsCSSValue::nsCSSValue(nscolor aValue)
 nsCSSValue::nsCSSValue(nsCSSValue::Array* aValue, nsCSSUnit aUnit)
   : mUnit(aUnit)
 {
-  NS_ASSERTION(eCSSUnit_Array <= aUnit && aUnit <= eCSSUnit_Counters,
+  NS_ASSERTION(eCSSUnit_Array <= aUnit && aUnit <= eCSSUnit_Function,
                "bad unit");
   mValue.mArray = aValue;
   mValue.mArray->AddRef();
@@ -127,13 +127,13 @@ nsCSSValue::nsCSSValue(nsCSSValue::Image* aValue)
 nsCSSValue::nsCSSValue(const nsCSSValue& aCopy)
   : mUnit(aCopy.mUnit)
 {
-  if (mUnit <= eCSSUnit_Dummy) {
+  if (mUnit <= eCSSUnit_DummyInherit) {
     // nothing to do, but put this important case first
   }
   else if (eCSSUnit_Percent <= mUnit) {
     mValue.mFloat = aCopy.mValue.mFloat;
   }
-  else if (eCSSUnit_String <= mUnit && mUnit <= eCSSUnit_Attr) {
+  else if (UnitHasStringValue()) {
     mValue.mString = aCopy.mValue.mString;
     mValue.mString->AddRef();
   }
@@ -143,7 +143,7 @@ nsCSSValue::nsCSSValue(const nsCSSValue& aCopy)
   else if (eCSSUnit_Color == mUnit) {
     mValue.mColor = aCopy.mValue.mColor;
   }
-  else if (eCSSUnit_Array <= mUnit && mUnit <= eCSSUnit_Counters) {
+  else if (eCSSUnit_Array <= mUnit && mUnit <= eCSSUnit_Function) {
     mValue.mArray = aCopy.mValue.mArray;
     mValue.mArray->AddRef();
   }
@@ -172,10 +172,10 @@ nsCSSValue& nsCSSValue::operator=(const nsCSSValue& aCopy)
 PRBool nsCSSValue::operator==(const nsCSSValue& aOther) const
 {
   if (mUnit == aOther.mUnit) {
-    if (mUnit <= eCSSUnit_Dummy) {
+    if (mUnit <= eCSSUnit_DummyInherit) {
       return PR_TRUE;
     }
-    else if ((eCSSUnit_String <= mUnit) && (mUnit <= eCSSUnit_Attr)) {
+    else if (UnitHasStringValue()) {
       return (NS_strcmp(GetBufferValue(mValue.mString),
                         GetBufferValue(aOther.mValue.mString)) == 0);
     }
@@ -185,7 +185,7 @@ PRBool nsCSSValue::operator==(const nsCSSValue& aOther) const
     else if (eCSSUnit_Color == mUnit) {
       return mValue.mColor == aOther.mValue.mColor;
     }
-    else if (eCSSUnit_Array <= mUnit && mUnit <= eCSSUnit_Counters) {
+    else if (eCSSUnit_Array <= mUnit && mUnit <= eCSSUnit_Function) {
       return *mValue.mArray == *aOther.mValue.mArray;
     }
     else if (eCSSUnit_URL == mUnit) {
@@ -247,9 +247,9 @@ nscoord nsCSSValue::GetLengthTwips() const
 
 void nsCSSValue::DoReset()
 {
-  if (eCSSUnit_String <= mUnit && mUnit <= eCSSUnit_Attr) {
+  if (UnitHasStringValue()) {
     mValue.mString->Release();
-  } else if (eCSSUnit_Array <= mUnit && mUnit <= eCSSUnit_Counters) {
+  } else if (eCSSUnit_Array <= mUnit && mUnit <= eCSSUnit_Function) {
     mValue.mArray->Release();
   } else if (eCSSUnit_URL == mUnit) {
     mValue.mURL->Release();
@@ -291,17 +291,18 @@ void nsCSSValue::SetFloatValue(float aValue, nsCSSUnit aUnit)
 void nsCSSValue::SetStringValue(const nsString& aValue,
                                 nsCSSUnit aUnit)
 {
-  NS_ASSERTION((eCSSUnit_String <= aUnit) && (aUnit <= eCSSUnit_Attr), "not a string unit");
   Reset();
-  if ((eCSSUnit_String <= aUnit) && (aUnit <= eCSSUnit_Attr)) {
-    mUnit = aUnit;
+  mUnit = aUnit;
+  NS_ASSERTION(UnitHasStringValue(), "not a string unit");
+  if (UnitHasStringValue()) {
     mValue.mString = BufferFromString(aValue);
     if (NS_UNLIKELY(!mValue.mString)) {
       // XXXbz not much we can do here; just make sure that our promise of a
       // non-null mValue.mString holds for string units.
       mUnit = eCSSUnit_Null;
     }
-  }
+  } else
+    mUnit = eCSSUnit_Null;
 }
 
 void nsCSSValue::SetColorValue(nscolor aValue)
@@ -313,7 +314,7 @@ void nsCSSValue::SetColorValue(nscolor aValue)
 
 void nsCSSValue::SetArrayValue(nsCSSValue::Array* aValue, nsCSSUnit aUnit)
 {
-  NS_ASSERTION(eCSSUnit_Array <= aUnit && aUnit <= eCSSUnit_Counters,
+  NS_ASSERTION(eCSSUnit_Array <= aUnit && aUnit <= eCSSUnit_Function,
                "bad unit");
   Reset();
   mUnit = aUnit;
@@ -377,6 +378,12 @@ void nsCSSValue::SetDummyValue()
 {
   Reset();
   mUnit = eCSSUnit_Dummy;
+}
+
+void nsCSSValue::SetDummyInheritValue()
+{
+  Reset();
+  mUnit = eCSSUnit_DummyInherit;
 }
 
 void nsCSSValue::StartImageLoad(nsIDocument* aDocument) const

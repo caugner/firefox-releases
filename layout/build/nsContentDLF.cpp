@@ -56,6 +56,9 @@
 #include "nsICSSLoader.h"
 #include "nsCRT.h"
 #include "nsIViewSourceChannel.h"
+#ifdef MOZ_MEDIA
+#include "nsHTMLMediaElement.h"
+#endif
 
 #include "imgILoader.h"
 #include "nsIParser.h"
@@ -66,9 +69,6 @@
 static NS_DEFINE_CID(kPluginManagerCID, NS_PLUGINMANAGER_CID);
 static NS_DEFINE_CID(kPluginDocumentCID, NS_PLUGINDOCUMENT_CID);
 
-// URL for the "user agent" style sheet
-#define UA_CSS_URL "resource://gre/res/ua.css"
-
 // Factory code for creating variations on html documents
 
 #undef NOISY_REGISTRY
@@ -77,6 +77,9 @@ static NS_DEFINE_IID(kHTMLDocumentCID, NS_HTMLDOCUMENT_CID);
 static NS_DEFINE_IID(kXMLDocumentCID, NS_XMLDOCUMENT_CID);
 #ifdef MOZ_SVG
 static NS_DEFINE_IID(kSVGDocumentCID, NS_SVGDOCUMENT_CID);
+#endif
+#ifdef MOZ_MEDIA
+static NS_DEFINE_IID(kVideoDocumentCID, NS_VIDEODOCUMENT_CID);
 #endif
 static NS_DEFINE_IID(kImageDocumentCID, NS_IMAGEDOCUMENT_CID);
 static NS_DEFINE_IID(kXULDocumentCID, NS_XULDOCUMENT_CID);
@@ -125,8 +128,6 @@ static const char* const gXULTypes[] = {
   0
 };
 
-nsICSSStyleSheet* nsContentDLF::gUAStyleSheet;
-
 nsresult
 NS_NewContentDocumentLoaderFactory(nsIDocumentLoaderFactory** aResult)
 {
@@ -163,7 +164,10 @@ nsContentDLF::CreateInstance(const char* aCommand,
                              nsIStreamListener** aDocListener,
                              nsIContentViewer** aDocViewer)
 {
-  EnsureUAStyleSheet();
+  // Declare "type" here.  This is because although the variable itself only
+  // needs limited scope, we need to use the raw string memory -- as returned
+  // by "type.get()" farther down in the function.
+  nsCAutoString type;
 
   // Are we viewing source?
 #ifdef MOZ_VIEW_SOURCE
@@ -176,7 +180,6 @@ nsContentDLF::CreateInstance(const char* aCommand,
     // view-source channel normally returns.  Get the actual content
     // type of the data.  If it's known, use it; otherwise use
     // text/plain.
-    nsCAutoString type;
     viewSourceChannel->GetOriginalContentType(type);
     PRBool knownType = PR_FALSE;
     PRInt32 typeIndex;
@@ -211,6 +214,10 @@ nsContentDLF::CreateInstance(const char* aCommand,
 
     if (knownType) {
       viewSourceChannel->SetContentType(type);
+    } else if (IsImageContentType(type.get())) {
+      // If it's an image, we want to display it the same way we normally would.
+      // Also note the lifetime of "type" allows us to safely use "get()" here.
+      aContentType = type.get();
     } else {
       viewSourceChannel->SetContentType(NS_LITERAL_CSTRING("text/plain"));
     }
@@ -267,11 +274,17 @@ nsContentDLF::CreateInstance(const char* aCommand,
     }
   }
 
+#ifdef MOZ_MEDIA
+  if (nsHTMLMediaElement::ShouldHandleMediaType(aContentType)) {
+    return CreateDocument(aCommand, 
+                          aChannel, aLoadGroup,
+                          aContainer, kVideoDocumentCID,
+                          aDocListener, aDocViewer);
+  }  
+#endif
+
   // Try image types
-  nsCOMPtr<imgILoader> loader(do_GetService("@mozilla.org/image/loader;1"));
-  PRBool isReg = PR_FALSE;
-  loader->SupportImageWithMimeType(aContentType, &isReg);
-  if (isReg) {
+  if (IsImageContentType(aContentType)) {
     return CreateDocument(aCommand, 
                           aChannel, aLoadGroup,
                           aContainer, kImageDocumentCID,
@@ -286,7 +299,6 @@ nsContentDLF::CreateInstance(const char* aCommand,
                           aDocListener, aDocViewer);
   }
 
-
   // If we get here, then we weren't able to create anything. Sorry!
   return NS_ERROR_FAILURE;
 }
@@ -300,15 +312,11 @@ nsContentDLF::CreateInstanceForDocument(nsISupports* aContainer,
 {
   nsresult rv = NS_ERROR_FAILURE;  
 
-  EnsureUAStyleSheet();
-
   do {
     nsCOMPtr<nsIDocumentViewer> docv;
     rv = NS_NewDocumentViewer(getter_AddRefs(docv));
     if (NS_FAILED(rv))
       break;
-
-    docv->SetUAStyleSheet(static_cast<nsIStyleSheet*>(gUAStyleSheet));
 
     // Bind the document to the Content Viewer
     nsIContentViewer* cv = static_cast<nsIContentViewer*>(docv.get());
@@ -350,18 +358,15 @@ nsContentDLF::CreateBlankDocument(nsILoadGroup *aLoadGroup,
     nsCOMPtr<nsINodeInfo> htmlNodeInfo;
 
     // generate an html html element
-    nim->GetNodeInfo(nsGkAtoms::html, 0, kNameSpaceID_None,
-                     getter_AddRefs(htmlNodeInfo));
+    htmlNodeInfo = nim->GetNodeInfo(nsGkAtoms::html, 0, kNameSpaceID_None);
     nsCOMPtr<nsIContent> htmlElement = NS_NewHTMLHtmlElement(htmlNodeInfo);
 
     // generate an html head element
-    nim->GetNodeInfo(nsGkAtoms::head, 0, kNameSpaceID_None,
-                     getter_AddRefs(htmlNodeInfo));
+    htmlNodeInfo = nim->GetNodeInfo(nsGkAtoms::head, 0, kNameSpaceID_None);
     nsCOMPtr<nsIContent> headElement = NS_NewHTMLHeadElement(htmlNodeInfo);
 
     // generate an html body element
-    nim->GetNodeInfo(nsGkAtoms::body, 0, kNameSpaceID_None,
-                     getter_AddRefs(htmlNodeInfo));
+    htmlNodeInfo = nim->GetNodeInfo(nsGkAtoms::body, 0, kNameSpaceID_None);
     nsCOMPtr<nsIContent> bodyElement = NS_NewHTMLBodyElement(htmlNodeInfo);
 
     // blat in the structure
@@ -428,7 +433,6 @@ nsContentDLF::CreateDocument(const char* aCommand,
     rv = NS_NewDocumentViewer(getter_AddRefs(docv));
     if (NS_FAILED(rv))
       break;
-    docv->SetUAStyleSheet(gUAStyleSheet);
 
     doc->SetContainer(aContainer);
 
@@ -465,9 +469,6 @@ nsContentDLF::CreateXULDocument(const char* aCommand,
   nsCOMPtr<nsIDocumentViewer> docv;
   rv = NS_NewDocumentViewer(getter_AddRefs(docv));
   if (NS_FAILED(rv)) return rv;
-
-  // Load the UA style sheet if we haven't already done that
-  docv->SetUAStyleSheet(gUAStyleSheet);
 
   nsCOMPtr<nsIURI> aURL;
   rv = aChannel->GetURI(getter_AddRefs(aURL));
@@ -608,29 +609,10 @@ nsContentDLF::UnregisterDocumentFactories(nsIComponentManager* aCompMgr,
   return rv;
 }
 
-/* static */ nsresult
-nsContentDLF::EnsureUAStyleSheet()
-{
-  if (gUAStyleSheet)
-    return NS_OK;
-
-  // Load the UA style sheet
-  nsCOMPtr<nsIURI> uri;
-  nsresult rv = NS_NewURI(getter_AddRefs(uri), NS_LITERAL_CSTRING(UA_CSS_URL));
-  if (NS_FAILED(rv)) {
-#ifdef DEBUG
-    printf("*** open of %s failed: error=%x\n", UA_CSS_URL, rv);
-#endif
-    return rv;
-  }
-  nsCOMPtr<nsICSSLoader> cssLoader;
-  NS_NewCSSLoader(getter_AddRefs(cssLoader));
-  if (!cssLoader)
-    return NS_ERROR_OUT_OF_MEMORY;
-  rv = cssLoader->LoadSheetSync(uri, PR_TRUE, &gUAStyleSheet);
-#ifdef DEBUG
-  if (NS_FAILED(rv))
-    printf("*** open of %s failed: error=%x\n", UA_CSS_URL, rv);
-#endif
-  return rv;
+PRBool nsContentDLF::IsImageContentType(const char* aContentType) {
+  nsCOMPtr<imgILoader> loader(do_GetService("@mozilla.org/image/loader;1"));
+  PRBool isDecoderAvailable = PR_FALSE;
+  loader->SupportImageWithMimeType(aContentType, &isDecoderAvailable);
+  return isDecoderAvailable;
 }
+

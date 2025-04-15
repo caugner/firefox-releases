@@ -48,7 +48,7 @@
 #include "prlink.h"
 #include "prclist.h"
 #include "npapi.h"
-#include "ns4xPluginInstance.h"
+#include "nsNPAPIPluginInstance.h"
 
 #include "nsIPlugin.h"
 #include "nsIPluginTag.h"
@@ -58,7 +58,7 @@
 #include "nsIFileUtilities.h"
 #include "nsICookieStorage.h"
 #include "nsPluginsDir.h"
-#include "nsVoidArray.h"  // array for holding "active" streams
+#include "nsVoidArray.h"
 #include "nsPluginDirServiceProvider.h"
 #include "nsAutoPtr.h"
 #include "nsWeakPtr.h"
@@ -69,11 +69,9 @@
 #include "nsWeakReference.h"
 #include "nsThreadUtils.h"
 #include "nsTArray.h"
-
-// XXX this file really doesn't think this is possible, but ...
 #include "nsIFactory.h"
 
-class ns4xPlugin;
+class nsNPAPIPlugin;
 class nsIComponentManager;
 class nsIFile;
 class nsIChannel;
@@ -81,7 +79,7 @@ class nsIRegistry;
 class nsPluginHostImpl;
 
 #define NS_PLUGIN_FLAG_ENABLED      0x0001    // is this plugin enabled?
-#define NS_PLUGIN_FLAG_OLDSCHOOL    0x0002    // is this a pre-xpcom plugin?
+#define NS_PLUGIN_FLAG_NPAPI        0x0002    // is this an NPAPI plugin?
 #define NS_PLUGIN_FLAG_FROMCACHE    0x0004    // this plugintag info was loaded from cache
 #define NS_PLUGIN_FLAG_UNWANTED     0x0008    // this is an unwanted plugin
 #define NS_PLUGIN_FLAG_BLOCKLISTED  0x0010    // this is a blocklisted plugin
@@ -104,6 +102,7 @@ public:
               const char* aDescription,
               const char* aFileName,
               const char* aFullPath,
+              const char* aVersion,
               const char* const* aMimeTypes,
               const char* const* aMimeDescriptions,
               const char* const* aExtensions,
@@ -166,6 +165,7 @@ public:
   PRPackedBool  mIsNPRuntimeEnabledJavaPlugin;
   nsCString     mFileName; // UTF-8
   nsCString     mFullPath; // UTF-8
+  nsCString     mVersion;  // UTF-8
   PRInt64       mLastModifiedTime;
 private:
   PRUint32      mFlags;
@@ -184,7 +184,7 @@ struct nsActivePlugin
   PRPackedBool           mStopped;
   PRPackedBool           mDefaultPlugin;
   PRPackedBool           mXPConnected;
-  //Array holding all opened stream listeners for this entry
+  // Array holding all opened stream listeners for this entry
   nsCOMPtr <nsISupportsArray>  mStreams; 
 
   nsActivePlugin(nsPluginTag* aPluginTag,
@@ -420,10 +420,6 @@ private:
   // in the plugin list but found in some different place
   PRBool IsDuplicatePlugin(nsPluginTag * aPluginTag);
 
-  // checks whether the given plugin is an unwanted Java plugin
-  // (e.g. no OJI support is compiled in)
-  PRBool IsUnwantedJavaPlugin(nsPluginTag * aPluginTag);
-
   nsresult EnsurePrivateDirServiceProvider();
 
   nsresult GetPrompt(nsIPluginInstanceOwner *aOwner, nsIPrompt **aPrompt);
@@ -474,7 +470,7 @@ private:
   static nsPluginHostImpl* sInst;
 };
 
-class PluginDestructionGuard : protected PRCList
+class NS_STACK_CLASS PluginDestructionGuard : protected PRCList
 {
 public:
   PluginDestructionGuard(nsIPluginInstance *aInstance)
@@ -484,7 +480,7 @@ public:
   }
 
   PluginDestructionGuard(NPP npp)
-    : mInstance(npp ? static_cast<ns4xPluginInstance*>(npp->ndata) : nsnull)
+    : mInstance(npp ? static_cast<nsNPAPIPluginInstance*>(npp->ndata) : nsnull)
   {
     Init();
   }

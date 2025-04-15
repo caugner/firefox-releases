@@ -71,11 +71,9 @@ nsStyledElement::GetIDAttributeName() const
 }
 
 const nsAttrValue*
-nsStyledElement::GetClasses() const
+nsStyledElement::DoGetClasses() const
 {
-  if (!HasFlag(NODE_MAY_HAVE_CLASS)) {
-    return nsnull;
-  }
+  NS_ASSERTION(HasFlag(NODE_MAY_HAVE_CLASS), "Unexpected call");
   return mAttrsAndChildren.GetAttr(nsGkAtoms::_class);
 }
 
@@ -91,10 +89,6 @@ nsStyledElement::ParseAttribute(PRInt32 aNamespaceID, nsIAtom* aAttribute,
     }
     if (aAttribute == nsGkAtoms::_class) {
       SetFlags(NODE_MAY_HAVE_CLASS);
-#ifdef MOZ_SVG
-      NS_ASSERTION(!nsCOMPtr<nsIDOMSVGStylable>(do_QueryInterface(this)),
-                   "SVG code should have handled this 'class' attribute!");
-#endif
       aResult.ParseAtomArray(aValue);
       return PR_TRUE;
     }
@@ -135,7 +129,7 @@ nsStyledElement::SetInlineStyleRule(nsICSSStyleRule* aStyleRule, PRBool aNotify)
 
   return SetAttrAndNotify(kNameSpaceID_None, nsGkAtoms::style, nsnull,
                           oldValueStr, attrValue, modification, hasListeners,
-                          aNotify);
+                          aNotify, nsnull);
 }
 
 nsICSSStyleRule*

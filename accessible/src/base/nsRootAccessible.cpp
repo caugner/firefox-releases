@@ -40,7 +40,6 @@
 #include "nsAccessibleEventData.h"
 #include "nsHTMLSelectAccessible.h"
 #include "nsIBaseWindow.h"
-#include "nsICaret.h"
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIDocShellTreeNode.h"
@@ -119,8 +118,11 @@ nsRootAccessible::~nsRootAccessible()
 
 // helpers
 /* readonly attribute AString name; */
-NS_IMETHODIMP nsRootAccessible::GetName(nsAString& aName)
+NS_IMETHODIMP
+nsRootAccessible::GetName(nsAString& aName)
 {
+  aName.Truncate();
+
   if (!mDocument) {
     return NS_ERROR_FAILURE;
   }
@@ -133,7 +135,7 @@ NS_IMETHODIMP nsRootAccessible::GetName(nsAString& aName)
   }
 
   nsCOMPtr<nsIDocShellTreeItem> docShellAsItem =
-    nsAccUtils::GetDocShellTreeItemFor(mDOMNode);
+    nsCoreUtils::GetDocShellTreeItemFor(mDOMNode);
   NS_ENSURE_TRUE(docShellAsItem, NS_ERROR_FAILURE);
 
   nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
@@ -193,7 +195,7 @@ PRUint32 nsRootAccessible::GetChromeFlags()
   // by nsIWebBrowserChrome::CHROME_WINDOW_[FLAGNAME]
   // Not simple: nsIXULWindow is not just a QI from nsIDOMWindow
   nsCOMPtr<nsIDocShellTreeItem> treeItem =
-    nsAccUtils::GetDocShellTreeItemFor(mDOMNode);
+    nsCoreUtils::GetDocShellTreeItemFor(mDOMNode);
   NS_ENSURE_TRUE(treeItem, 0);
   nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
   treeItem->GetTreeOwner(getter_AddRefs(treeOwner));
@@ -208,13 +210,11 @@ PRUint32 nsRootAccessible::GetChromeFlags()
 }
 #endif
 
-NS_IMETHODIMP
-nsRootAccessible::GetState(PRUint32 *aState, PRUint32 *aExtraState)
+nsresult
+nsRootAccessible::GetStateInternal(PRUint32 *aState, PRUint32 *aExtraState)
 {
-  nsresult rv = nsDocAccessibleWrap::GetState(aState, aExtraState);
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (!mDOMNode)
-    return NS_OK;
+  nsresult rv = nsDocAccessibleWrap::GetStateInternal(aState, aExtraState);
+  NS_ENSURE_A11Y_SUCCESS(rv, rv);
 
 #ifdef MOZ_XUL
   PRUint32 chromeFlags = GetChromeFlags();
@@ -384,7 +384,7 @@ void nsRootAccessible::TryFireEarlyLoadEvent(nsIDOMNode *aDocNode)
   // This also works for firing events for error pages
 
   nsCOMPtr<nsIDocShellTreeItem> treeItem =
-    nsAccUtils::GetDocShellTreeItemFor(aDocNode);
+    nsCoreUtils::GetDocShellTreeItemFor(aDocNode);
   NS_ASSERTION(treeItem, "No docshelltreeitem for aDocNode");
   if (!treeItem) {
     return;
@@ -449,7 +449,9 @@ PRBool nsRootAccessible::FireAccessibleFocusEvent(nsIAccessible *aAccessible,
   // Check for aria-activedescendant, which changes which element has focus
   nsCOMPtr<nsIDOMNode> finalFocusNode = aNode;
   nsCOMPtr<nsIAccessible> finalFocusAccessible = aAccessible;
-  nsCOMPtr<nsIContent> finalFocusContent = GetRoleContent(finalFocusNode);
+  nsCOMPtr<nsIContent> finalFocusContent =
+    nsCoreUtils::GetRoleContent(finalFocusNode);
+
   if (finalFocusContent) {
     nsAutoString id;
     if (finalFocusContent->GetAttr(kNameSpaceID_None, nsAccessibilityAtoms::aria_activedescendant, id)) {
@@ -488,20 +490,22 @@ PRBool nsRootAccessible::FireAccessibleFocusEvent(nsIAccessible *aAccessible,
     }
   }
 
-  gLastFocusedAccessiblesState = State(finalFocusAccessible);
-  PRUint32 role = Role(finalFocusAccessible);
+  gLastFocusedAccessiblesState = nsAccUtils::State(finalFocusAccessible);
+  PRUint32 role = nsAccUtils::Role(finalFocusAccessible);
   if (role == nsIAccessibleRole::ROLE_MENUITEM) {
     if (!mCurrentARIAMenubar) {  // Entering menus
       PRUint32 naturalRole; // The natural role is the role that this type of element normally has
       finalFocusAccessible->GetRole(&naturalRole);
       if (role != naturalRole) { // Must be a DHTML menuitem
         nsCOMPtr<nsIAccessible> menuBarAccessible =
-          nsAccUtils::GetAncestorWithRole(finalFocusAccessible, nsIAccessibleRole::ROLE_MENUBAR);
+          nsAccUtils::GetAncestorWithRole(finalFocusAccessible,
+                                          nsIAccessibleRole::ROLE_MENUBAR);
         nsCOMPtr<nsIAccessNode> menuBarAccessNode = do_QueryInterface(menuBarAccessible);
         if (menuBarAccessNode) {
           menuBarAccessNode->GetDOMNode(getter_AddRefs(mCurrentARIAMenubar));
           if (mCurrentARIAMenubar) {
-            nsAccUtils::FireAccEvent(nsIAccessibleEvent::EVENT_MENU_START, menuBarAccessible);
+            nsAccUtils::FireAccEvent(nsIAccessibleEvent::EVENT_MENU_START,
+                                     menuBarAccessible);
           }
         }
       }
@@ -524,7 +528,8 @@ PRBool nsRootAccessible::FireAccessibleFocusEvent(nsIAccessible *aAccessible,
   nsCOMPtr<nsIContent> focusContent = do_QueryInterface(gLastFocusedNode);
   nsIFrame *focusFrame = nsnull;
   if (focusContent) {
-    nsCOMPtr<nsIPresShell> shell = nsAccessNode::GetPresShellFor(gLastFocusedNode);
+    nsCOMPtr<nsIPresShell> shell =
+      nsCoreUtils::GetPresShellFor(gLastFocusedNode);
     focusFrame = shell->GetRealPrimaryFrameFor(focusContent);
   }
   gLastFocusedFrameType = (focusFrame && focusFrame->GetStyleVisibility()->IsVisible()) ? focusFrame->GetType() : 0;
@@ -623,14 +628,15 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
     // create it just to destroy it.
     nsCOMPtr<nsIDocument> doc(do_QueryInterface(aTargetNode));
     nsCOMPtr<nsIAccessibleDocument> accDoc = GetDocAccessibleFor(doc);
-    nsCOMPtr<nsPIAccessNode> privateAcc = do_QueryInterface(accDoc);
-    if (privateAcc) {
-      privateAcc->Shutdown();
+    if (accDoc) {
+      nsRefPtr<nsAccessNode> docAccNode = nsAccUtils::QueryAccessNode(accDoc);
+      docAccNode->Shutdown();
     }
+
     return NS_OK;
   }
 
-  nsCOMPtr<nsIPresShell> eventShell = GetPresShellFor(aTargetNode);
+  nsCOMPtr<nsIPresShell> eventShell = nsCoreUtils::GetPresShellFor(aTargetNode);
   if (!eventShell) {
     return NS_OK;
   }
@@ -643,18 +649,6 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
     return NS_OK;
   }
 
-#ifdef MOZ_XUL
-  if (eventType.EqualsLiteral("TreeViewChanged")) { // Always asynch, always from user input
-    if (!isTree)
-      return NS_OK;
-
-    nsCOMPtr<nsIContent> treeContent = do_QueryInterface(aTargetNode);
-    nsAccEvent::PrepareForEvent(aTargetNode, PR_TRUE);
-    return accService->InvalidateSubtreeFor(eventShell, treeContent,
-                                            nsIAccessibleEvent::EVENT_DOM_SIGNIFICANT_CHANGE);
-  }
-#endif
-
   if (eventType.EqualsLiteral("popuphiding")) {
     // If accessible focus was on or inside popup that closes,
     // then restore it to true current focus.
@@ -663,7 +657,7 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
     // It's also the case when a popup gets focus in ATK -- when it closes
     // we need to fire an event to restore focus to where it was
     if (!gLastFocusedNode ||
-        !nsAccUtils::IsAncestorOf(aTargetNode, gLastFocusedNode)) {
+        !nsCoreUtils::IsAncestorOf(aTargetNode, gLastFocusedNode)) {
       return NS_OK;  // And was not focused on an item inside the popup
     }
     // Focus was on or inside of a popup that's being hidden
@@ -678,19 +672,30 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
     return NS_OK;
 
 #ifdef MOZ_XUL
-  if (eventType.EqualsLiteral("TreeRowCountChanged"))
-    return HandleTreeRowCountChangedEvent(aEvent, accessible, localName);
-  
-  if (eventType.EqualsLiteral("TreeInvalidated"))
-    return HandleTreeInvalidatedEvent(aEvent, accessible, localName);
+  if (isTree) {
+    nsCOMPtr<nsIAccessibleTreeCache> treeAcc(do_QueryInterface(accessible));
+    NS_ASSERTION(treeAcc,
+                 "Accessible for xul:tree doesn't implement nsIAccessibleTreeCache interface.");
+
+    if (treeAcc) {
+      if (eventType.EqualsLiteral("TreeViewChanged"))
+        return treeAcc->TreeViewChanged();
+
+      if (eventType.EqualsLiteral("TreeRowCountChanged"))
+        return HandleTreeRowCountChangedEvent(aEvent, treeAcc);
+      
+      if (eventType.EqualsLiteral("TreeInvalidated"))
+        return HandleTreeInvalidatedEvent(aEvent, treeAcc);
+    }
+  }
 #endif
 
   if (eventType.EqualsLiteral("RadioStateChange")) {
-    PRUint32 state = State(accessible);
+    PRUint32 state = nsAccUtils::State(accessible);
 
     // radiogroup in prefWindow is exposed as a list,
     // and panebutton is exposed as XULListitem in A11y.
-    // nsXULListitemAccessible::GetState uses STATE_SELECTED in this case,
+    // nsXULListitemAccessible::GetStateInternal uses STATE_SELECTED in this case,
     // so we need to check nsIAccessibleStates::STATE_SELECTED also.
     PRBool isEnabled = (state & (nsIAccessibleStates::STATE_CHECKED |
                         nsIAccessibleStates::STATE_SELECTED)) != 0;
@@ -707,7 +712,7 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
   }
 
   if (eventType.EqualsLiteral("CheckboxStateChange")) {
-    PRUint32 state = State(accessible);
+    PRUint32 state = nsAccUtils::State(accessible);
 
     PRBool isEnabled = !!(state & nsIAccessibleStates::STATE_CHECKED);
 
@@ -746,7 +751,7 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
 
 #ifdef MOZ_XUL
   if (treeItemAccessible && eventType.EqualsLiteral("OpenStateChange")) {
-    PRUint32 state = State(accessible); // collapsed/expanded changed
+    PRUint32 state = nsAccUtils::State(accessible); // collapsed/expanded changed
     PRBool isEnabled = (state & nsIAccessibleStates::STATE_EXPANDED) != 0;
 
     nsCOMPtr<nsIAccessibleStateChangeEvent> accEvent =
@@ -827,7 +832,7 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
   }
   else if (eventType.EqualsLiteral("popupshown")) {
     // Don't fire menupopup events for combobox and autocomplete lists
-    PRUint32 role = Role(accessible);
+    PRUint32 role = nsAccUtils::Role(accessible);
     PRInt32 event = 0;
     if (role == nsIAccessibleRole::ROLE_MENUPOPUP) {
       event = nsIAccessibleEvent::EVENT_MENUPOPUP_START;
@@ -844,7 +849,7 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
     }
   }
   else if (eventType.EqualsLiteral("DOMMenuInactive")) {
-    if (Role(accessible) == nsIAccessibleRole::ROLE_MENUPOPUP) {
+    if (nsAccUtils::Role(accessible) == nsIAccessibleRole::ROLE_MENUPOPUP) {
       nsAccUtils::FireAccEvent(nsIAccessibleEvent::EVENT_MENUPOPUP_END,
                                accessible);
     }
@@ -857,10 +862,12 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
         return NS_OK; // Tree with nothing selected
       }
 #endif
-      nsCOMPtr<nsPIAccessNode> menuAccessNode = do_QueryInterface(accessible);
-      NS_ENSURE_TRUE(menuAccessNode, NS_ERROR_FAILURE);
+      nsRefPtr<nsAccessNode> menuAccessNode =
+        nsAccUtils::QueryAccessNode(accessible);
+  
       nsIFrame* menuFrame = menuAccessNode->GetFrame();
       NS_ENSURE_TRUE(menuFrame, NS_ERROR_FAILURE);
+
       nsIMenuFrame* imenuFrame;
       CallQueryInterface(menuFrame, &imenuFrame);
       if (imenuFrame)
@@ -878,11 +885,11 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
         // It is not top level menuitem
         // Only fire focus event if it is not inside collapsed popup
         // and not a listitem of a combo box
-        if (State(containerAccessible) & nsIAccessibleStates::STATE_COLLAPSED) {
+        if (nsAccUtils::State(containerAccessible) & nsIAccessibleStates::STATE_COLLAPSED) {
           nsCOMPtr<nsIAccessible> containerParent;
           containerAccessible->GetParent(getter_AddRefs(containerParent));
           NS_ENSURE_TRUE(containerParent, NS_ERROR_FAILURE);
-          if (Role(containerParent) != nsIAccessibleRole::ROLE_COMBOBOX) {
+          if (nsAccUtils::Role(containerParent) != nsIAccessibleRole::ROLE_COMBOBOX) {
             return NS_OK;
           }
         }
@@ -911,11 +918,13 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
   }
   else if (eventType.EqualsLiteral("DOMMenuBarActive")) {  // Always asynch, always from user input
     nsAccEvent::PrepareForEvent(aTargetNode, PR_TRUE);
-    nsAccUtils::FireAccEvent(nsIAccessibleEvent::EVENT_MENU_START, accessible, PR_TRUE);
+    nsAccUtils::FireAccEvent(nsIAccessibleEvent::EVENT_MENU_START,
+                             accessible, PR_TRUE);
   }
   else if (eventType.EqualsLiteral("DOMMenuBarInactive")) {  // Always asynch, always from user input
     nsAccEvent::PrepareForEvent(aTargetNode, PR_TRUE);
-    nsAccUtils::FireAccEvent(nsIAccessibleEvent::EVENT_MENU_END, accessible, PR_TRUE);
+    nsAccUtils::FireAccEvent(nsIAccessibleEvent::EVENT_MENU_END,
+                             accessible, PR_TRUE);
     FireCurrentFocusEvent();
   }
   else if (eventType.EqualsLiteral("ValueChange")) {
@@ -923,7 +932,8 @@ nsresult nsRootAccessible::HandleEventWithTarget(nsIDOMEvent* aEvent,
   }
 #ifdef DEBUG
   else if (eventType.EqualsLiteral("mouseover")) {
-    nsAccUtils::FireAccEvent(nsIAccessibleEvent::EVENT_DRAGDROP_START, accessible);
+    nsAccUtils::FireAccEvent(nsIAccessibleEvent::EVENT_DRAGDROP_START,
+                             accessible);
   }
 #endif
   return NS_OK;
@@ -962,7 +972,7 @@ void nsRootAccessible::FireFocusCallback(nsITimer *aTimer, void *aClosure)
   rootAccessible->FireCurrentFocusEvent();
 }
 
-NS_IMETHODIMP
+nsresult
 nsRootAccessible::Init()
 {
   nsresult rv = nsDocAccessibleWrap::Init();
@@ -975,7 +985,8 @@ nsRootAccessible::Init()
   return NS_OK;
 }
 
-NS_IMETHODIMP nsRootAccessible::Shutdown()
+nsresult
+nsRootAccessible::Shutdown()
 {
   // Called manually or by nsAccessNode::LastRelease()
   if (!mWeakShell) {
@@ -1009,14 +1020,21 @@ nsRootAccessible::GetContentDocShell(nsIDocShellTreeItem *aStart)
   if (itemType == nsIDocShellTreeItem::typeContent) {
     nsCOMPtr<nsIAccessibleDocument> accDoc =
       GetDocAccessibleFor(aStart, PR_TRUE);
+
+    // Hidden documents don't have accessibles (like SeaMonkey's sidebar),
+    // they are of no interest for a11y.
+    if (!accDoc)
+      return nsnull;
+
     nsCOMPtr<nsIAccessible> accessible = do_QueryInterface(accDoc);
+
     // If ancestor chain of accessibles is not completely visible,
     // don't use this one. This happens for example if it's inside
     // a background tab (tabbed browsing)
     while (accessible) {
-      if (State(accessible) & nsIAccessibleStates::STATE_INVISIBLE) {
+      if (nsAccUtils::State(accessible) & nsIAccessibleStates::STATE_INVISIBLE)
         return nsnull;
-      }
+
       nsCOMPtr<nsIAccessible> ancestor;
       accessible->GetParent(getter_AddRefs(ancestor));
       if (ancestor == this) {
@@ -1056,16 +1074,15 @@ NS_IMETHODIMP nsRootAccessible::GetAccessibleRelated(PRUint32 aRelationType,
   }
 
   nsCOMPtr<nsIDocShellTreeItem> treeItem =
-    nsAccUtils::GetDocShellTreeItemFor(mDOMNode);
+    nsCoreUtils::GetDocShellTreeItemFor(mDOMNode);
   nsCOMPtr<nsIDocShellTreeItem> contentTreeItem = GetContentDocShell(treeItem);
   // there may be no content area, so we need a null check
   if (contentTreeItem) {
     nsCOMPtr<nsIAccessibleDocument> accDoc =
       GetDocAccessibleFor(contentTreeItem, PR_TRUE);
-    NS_ASSERTION(accDoc, "No EMBEDS document");
-    if (accDoc) {
-      accDoc->QueryInterface(NS_GET_IID(nsIAccessible), (void**)aRelated);
-    }
+
+    if (accDoc)
+      CallQueryInterface(accDoc, aRelated);
   }
   return NS_OK;
 }
@@ -1077,7 +1094,7 @@ NS_IMETHODIMP nsRootAccessible::FireDocLoadEvents(PRUint32 aEventType)
   }
 
   nsCOMPtr<nsIDocShellTreeItem> docShellTreeItem =
-    nsAccUtils::GetDocShellTreeItemFor(mDOMNode);
+    nsCoreUtils::GetDocShellTreeItemFor(mDOMNode);
   NS_ASSERTION(docShellTreeItem, "No doc shell tree item for document");
   NS_ENSURE_TRUE(docShellTreeItem, NS_ERROR_FAILURE);
   PRInt32 contentType;
@@ -1093,14 +1110,11 @@ NS_IMETHODIMP nsRootAccessible::FireDocLoadEvents(PRUint32 aEventType)
   return NS_OK;
 }
 
+#ifdef MOZ_XUL
 nsresult
 nsRootAccessible::HandleTreeRowCountChangedEvent(nsIDOMEvent *aEvent,
-                                                 nsIAccessible *aAccessible,
-                                                 const nsAString& aTargetName)
+                                                 nsIAccessibleTreeCache *aAccessible)
 {
-  if (!aTargetName.EqualsLiteral("tree"))
-    return NS_OK;
-
   nsCOMPtr<nsIDOMDataContainerEvent> dataEvent(do_QueryInterface(aEvent));
   if (!dataEvent)
     return NS_OK;
@@ -1121,20 +1135,13 @@ nsRootAccessible::HandleTreeRowCountChangedEvent(nsIDOMEvent *aEvent,
   indexVariant->GetAsInt32(&index);
   countVariant->GetAsInt32(&count);
 
-  nsCOMPtr<nsIAccessibleTreeCache> treeAccCache(do_QueryInterface(aAccessible));
-  NS_ENSURE_STATE(treeAccCache);
-
-  return treeAccCache->InvalidateCache(index, count);
+  return aAccessible->InvalidateCache(index, count);
 }
 
 nsresult
 nsRootAccessible::HandleTreeInvalidatedEvent(nsIDOMEvent *aEvent,
-                                             nsIAccessible *aAccessible,
-                                             const nsAString& aTargetName)
+                                             nsIAccessibleTreeCache *aAccessible)
 {
-  if (!aTargetName.EqualsLiteral("tree"))
-    return NS_OK;
-
   nsCOMPtr<nsIDOMDataContainerEvent> dataEvent(do_QueryInterface(aEvent));
   if (!dataEvent)
     return NS_OK;
@@ -1165,9 +1172,7 @@ nsRootAccessible::HandleTreeInvalidatedEvent(nsIDOMEvent *aEvent,
   if (endColVariant)
     endColVariant->GetAsInt32(&endCol);
 
-  nsCOMPtr<nsIAccessibleTreeCache> treeAcc(do_QueryInterface(aAccessible));
-  NS_ENSURE_STATE(treeAcc);
-
-  return treeAcc->TreeViewInvalidated(startRow, endRow, startCol, endCol);
+  return aAccessible->TreeViewInvalidated(startRow, endRow, startCol, endCol);
 }
+#endif
 

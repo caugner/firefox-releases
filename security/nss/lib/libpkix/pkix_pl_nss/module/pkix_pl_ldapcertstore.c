@@ -329,6 +329,8 @@ pkix_pl_LdapCertStore_BuildCrlList(
                                 PKIX_CRLCREATETOLISTFAILED);
                             derCrlItem = *attrVal++;
                         }
+                        /* Clean up after PKIX_CHECK_ONLY_FATAL */
+                        pkixTempErrorReceived = PKIX_FALSE;
                     }
                     sreAttr = *sreAttrArray++;
                 }
@@ -1085,6 +1087,8 @@ PKIX_PL_LdapCertStore_Create(
                 pkix_pl_LdapCertStore_GetCertContinue,
                 pkix_pl_LdapCertStore_GetCRLContinue,
                 NULL,       /* don't support trust */
+                NULL,      /* can not store crls */
+                NULL,      /* can not do revocation check */
                 (PKIX_PL_Object *)client,
                 PKIX_TRUE,  /* cache flag */
                 PKIX_FALSE, /* not local */

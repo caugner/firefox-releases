@@ -40,8 +40,10 @@
 #include "nsObjCExceptions.h"
 #include "nsIInternetConfigService.h"
 #include "nsIServiceManager.h"
+#include "nsNativeThemeColors.h"
 
 #import <Carbon/Carbon.h>
+#import <Cocoa/Cocoa.h>
 
 nsLookAndFeel::nsLookAndFeel() : nsXPLookAndFeel()
 {
@@ -49,6 +51,14 @@ nsLookAndFeel::nsLookAndFeel() : nsXPLookAndFeel()
 
 nsLookAndFeel::~nsLookAndFeel()
 {
+}
+
+static nscolor GetColorFromNSColor(NSColor* aColor)
+{
+  NSColor* deviceColor = [aColor colorUsingColorSpaceName:NSDeviceRGBColorSpace];
+  return NS_RGB((unsigned int)([deviceColor redComponent] * 255.0),
+                (unsigned int)([deviceColor greenComponent] * 255.0),
+                (unsigned int)([deviceColor blueComponent] * 255.0));
 }
 
 nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor &aColor)
@@ -207,7 +217,7 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor &aColor)
       res = GetMacBrushColor(kThemeBrushButtonActiveDarkShadow, aColor, NS_RGB(0x77,0x77,0x77));
       break;
     case eColor_graytext:
-      res = GetMacTextColor(kThemeTextColorDialogInactive, aColor, NS_RGB(0x77,0x77,0x77));
+      aColor = GetColorFromNSColor([NSColor disabledControlTextColor]);
       break;
     case eColor_inactiveborder:
       //ScrollBar DelimiterInactive looks like an odd constant to use, but gives the right colour in most themes, 
@@ -285,9 +295,15 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor &aColor)
       //default to lavender if not available
       res = GetMacBrushColor(kThemeBrushDragHilite, aColor, NS_RGB(0x63,0x63,0xCE));
       break;
+    case eColor__moz_mac_chrome_active:
+    case eColor__moz_mac_chrome_inactive: {
+      int grey = NativeGreyColorAsInt(headerEndGrey, (aID == eColor__moz_mac_chrome_active));
+      aColor = NS_RGB(grey, grey, grey);
+    }
+      break;
     case eColor__moz_mac_focusring:
-      //default to lavender if not available
-      res = GetMacBrushColor(kThemeBrushFocusHighlight, aColor, NS_RGB(0x63,0x63,0xCE));
+      aColor = [NSColor currentControlTint] == NSGraphiteControlTint ?
+               NS_RGB(0x5F,0x70,0x82) : NS_RGB(0x53,0x90,0xD2);
       break;
     case eColor__moz_mac_menushadow:
       res = GetMacBrushColor(kThemeBrushBevelActiveDark, aColor, NS_RGB(0x88,0x88,0x88));
@@ -298,6 +314,9 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor &aColor)
     case eColor__moz_mac_menutextselect:
       res = GetMacTextColor(kThemeTextColorMenuItemSelected, aColor, NS_RGB(0xFF,0xFF,0xFF));
       break;      
+    case eColor__moz_mac_disabledtoolbartext:
+      aColor = NS_RGB(0x3F,0x3F,0x3F);
+      break;
     case eColor__moz_mac_accentlightesthighlight:
       //get this colour by querying variation table, ows. default to Platinum/Lavendar
       res = GetMacAccentColor(eColorOffset_mac_accentlightesthighlight, aColor, NS_RGB(0xEE,0xEE,0xEE));
@@ -349,6 +368,10 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor &aColor)
     case eColor__moz_oddtreerow:
       // Background color of odd list rows.
       res = GetMacBrushColor(kThemeBrushListViewEvenRowBackground, aColor, NS_RGB(0xF0,0xF0,0xF0));
+      break;
+    case eColor__moz_nativehyperlinktext:
+      // There appears to be no available system defined color. HARDCODING to the appropriate color.
+      aColor = NS_RGB(0x14,0x4F,0xAE);
       break;
     default:
       NS_WARNING("Someone asked nsILookAndFeel for a color I don't know about");
@@ -596,9 +619,14 @@ NS_IMETHODIMP nsLookAndFeel::GetMetric(const nsMetricID aID, PRInt32 & aMetric)
     case eMetric_TreeScrollLinesMax:
       aMetric = 3;
       break;
+    case eMetric_DWMCompositor:
+    case eMetric_WindowsClassic:
     case eMetric_WindowsDefaultTheme:
       aMetric = 0;
       res = NS_ERROR_NOT_IMPLEMENTED;
+      break;
+    case eMetric_MacGraphiteTheme:
+      aMetric = [NSColor currentControlTint] == NSGraphiteControlTint;
       break;
     case eMetric_TabFocusModel:
     {

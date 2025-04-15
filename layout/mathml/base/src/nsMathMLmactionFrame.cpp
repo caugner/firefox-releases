@@ -74,8 +74,9 @@
 #define NS_MATHML_ACTION_TYPE_TOOLTIP      3 // unsupported
 #define NS_MATHML_ACTION_TYPE_RESTYLE      4
 
-NS_IMPL_ADDREF_INHERITED(nsMathMLmactionFrame, nsMathMLContainerFrame)
-NS_IMPL_RELEASE_INHERITED(nsMathMLmactionFrame, nsMathMLContainerFrame)
+// Frames are not refcounted objects, so use the non-logging addref/release macros.
+NS_IMPL_NONLOGGING_ADDREF_INHERITED(nsMathMLmactionFrame, nsMathMLContainerFrame)
+NS_IMPL_NONLOGGING_RELEASE_INHERITED(nsMathMLmactionFrame, nsMathMLContainerFrame)
 NS_IMPL_QUERY_INTERFACE_INHERITED2(nsMathMLmactionFrame,
                                    nsMathMLContainerFrame,
                                    nsIDOMMouseListener,

@@ -99,12 +99,14 @@ public:
   
   // nsIFrame overrides - see there for a description
 
-  NS_IMETHOD Init(nsIContent*      aContent,
-                  nsIFrame*        aParent,
-                  nsIFrame*        aPrevInFlow);
-
   virtual void Destroy();
   
+  virtual PRBool IsFrameOfType(PRUint32 aFlags) const
+  {
+    return nsHTMLContainerFrame::IsFrameOfType(aFlags &
+      ~nsIFrame::eExcludesIgnorableWhitespace);
+  }
+
   virtual PRBool IsContainingBlock() const;
 
   NS_IMETHOD SetInitialChildList(nsIAtom*        aListName,
@@ -173,7 +175,8 @@ public:
   NS_IMETHOD SetSelected(nsPresContext* aPresContext,
                          nsIDOMRange *aRange,
                          PRBool aSelected,
-                         nsSpread aSpread);
+                         nsSpread aSpread,
+                         SelectionType aType);
 
   NS_IMETHOD GetParentStyleContextFrame(nsPresContext* aPresContext,
                                         nsIFrame**      aProviderFrame,
@@ -194,8 +197,6 @@ public:
 
   NS_IMETHOD GetIndexByRowAndColumn(PRInt32 aRow, PRInt32 aColumn, PRInt32 *aIndex);
   NS_IMETHOD GetRowAndColumnByIndex(PRInt32 aIndex, PRInt32 *aRow, PRInt32 *aColumn);
-
-  PRBool IsNested(const nsHTMLReflowState& aReflowState) const;
 
 protected:
 

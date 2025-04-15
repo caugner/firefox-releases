@@ -108,12 +108,12 @@ $PrologName
 
 	MACRO
 	MY_STUB_NESTED_ARMENTRY	$Number
-;FuncName    SETS    VBar:CC:"?Stub$Number@nsXPTCStubBase@@UAAIXZ":CC:VBar
-;PrologName  SETS    VBar:CC:"?Stub$Number@nsXPTCStubBase@@UAAIXZ":CC:"_Prolog":CC:VBar
-;FuncEndName SETS    VBar:CC:"?Stub$Number@nsXPTCStubBase@@UAAIXZ":CC:"_end":CC:VBar
-FuncName    SETS    VBar:CC:"?asmXPTCStubBase_Stub$Number@@YAIXZ":CC:VBar
-PrologName  SETS    VBar:CC:"?asmXPTCStubBase_Stub$Number@@YAIXZ":CC:"_Prolog":CC:VBar
-FuncEndName SETS    VBar:CC:"?asmXPTCStubBase_Stub$Number@@YAIXZ":CC:"_end":CC:VBar
+FuncName    SETS    VBar:CC:"?Stub$Number@nsXPTCStubBase@@UAAIXZ":CC:VBar
+PrologName  SETS    VBar:CC:"?Stub$Number@nsXPTCStubBase@@UAAIXZ":CC:"_Prolog":CC:VBar
+FuncEndName SETS    VBar:CC:"?Stub$Number@nsXPTCStubBase@@UAAIXZ":CC:"_end":CC:VBar
+;FuncName    SETS    VBar:CC:"?asmXPTCStubBase_Stub$Number@@YAIXZ":CC:VBar ; 
+;PrologName  SETS    VBar:CC:"?asmXPTCStubBase_Stub$Number@@YAIXZ":CC:"_Prolog":CC:VBar
+;FuncEndName SETS    VBar:CC:"?asmXPTCStubBase_Stub$Number@@YAIXZ":CC:"_end":CC:VBar
 
 	AREA |.pdata|,ALIGN=2,PDATA
 	DCD	    $FuncName
@@ -287,9 +287,8 @@ $FuncName PROC
 				  ; the result is in r0
 
 
-	ldr       r0, [sp]        ; Start unwinding the stack
+	str       r0, [sp]        ; Start unwinding the stack
 	str       r0, [sp, #0x20] 
-	ldr       r0, [sp, #0x20]
 
 ; 225  : }    
 

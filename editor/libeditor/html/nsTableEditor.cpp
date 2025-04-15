@@ -45,6 +45,8 @@
 #include "nsIDOMNode.h"
 #include "nsIDOMNodeList.h"
 #include "nsIDOMRange.h"
+#include "nsIFrame.h"
+#include "nsIPresShell.h"
 #include "nsISelection.h"
 #include "nsISelectionPrivate.h"
 #include "nsLayoutCID.h"
@@ -69,7 +71,7 @@
 /***************************************************************************
  * stack based helper class for restoring selection after table edit
  */
-class nsSetSelectionAfterTableEdit
+class NS_STACK_CLASS nsSetSelectionAfterTableEdit
 {
   private:
     nsCOMPtr<nsITableEditor> mEd;
@@ -99,18 +101,18 @@ class nsSetSelectionAfterTableEdit
 };
 
 // Stack-class to turn on/off selection batching for table selection
-class nsSelectionBatcher
+class NS_STACK_CLASS nsSelectionBatcherForTable
 {
 private:
   nsCOMPtr<nsISelectionPrivate> mSelection;
 public:
-  nsSelectionBatcher(nsISelection *aSelection)
+  nsSelectionBatcherForTable(nsISelection *aSelection)
   {
     nsCOMPtr<nsISelection> sel(aSelection);
     mSelection = do_QueryInterface(sel);
     if (mSelection)  mSelection->StartBatchChanges();
   }
-  virtual ~nsSelectionBatcher() 
+  virtual ~nsSelectionBatcherForTable() 
   { 
     if (mSelection) mSelection->EndBatchChanges();
   }
@@ -1554,7 +1556,7 @@ nsHTMLEditor::SelectBlockOfCells(nsIDOMElement *aStartCell, nsIDOMElement *aEndC
 
   // Suppress nsISelectionListener notification
   //  until all selection changes are finished
-  nsSelectionBatcher selectionBatcher(selection);
+  nsSelectionBatcherForTable selectionBatcher(selection);
 
   // Examine all cell nodes in current selection and 
   //  remove those outside the new block cell region
@@ -1637,7 +1639,7 @@ nsHTMLEditor::SelectAllTableCells()
 
   // Suppress nsISelectionListener notification
   //  until all selection changes are finished
-  nsSelectionBatcher selectionBatcher(selection);
+  nsSelectionBatcherForTable selectionBatcher(selection);
 
   // It is now safe to clear the selection
   // BE SURE TO RESET IT BEFORE LEAVING!
@@ -1707,7 +1709,7 @@ nsHTMLEditor::SelectTableRow()
 
   // Suppress nsISelectionListener notification
   //  until all selection changes are finished
-  nsSelectionBatcher selectionBatcher(selection);
+  nsSelectionBatcherForTable selectionBatcher(selection);
 
   // It is now safe to clear the selection
   // BE SURE TO RESET IT BEFORE LEAVING!
@@ -1770,7 +1772,7 @@ nsHTMLEditor::SelectTableColumn()
 
   // Suppress nsISelectionListener notification
   //  until all selection changes are finished
-  nsSelectionBatcher selectionBatcher(selection);
+  nsSelectionBatcherForTable selectionBatcher(selection);
 
   // It is now safe to clear the selection
   // BE SURE TO RESET IT BEFORE LEAVING!
@@ -2718,9 +2720,14 @@ nsHTMLEditor::GetCellIndexes(nsIDOMElement *aCell,
       return NS_ERROR_FAILURE;
   }
 
-  nsISupports *layoutObject=nsnull; // frames are not ref counted, so don't use an nsCOMPtr
-  res = nsHTMLEditor::GetLayoutObject(aCell, &layoutObject);
-  if (NS_FAILED(res)) return res;
+  if (!mPresShellWeak) return NS_ERROR_NOT_INITIALIZED;
+  nsCOMPtr<nsIPresShell> ps = do_QueryReferent(mPresShellWeak);
+  if (!ps) return NS_ERROR_NOT_INITIALIZED;
+
+  nsCOMPtr<nsIContent> nodeAsContent( do_QueryInterface(aCell) );
+  if (!nodeAsContent) return NS_ERROR_FAILURE;
+  // frames are not ref counted, so don't use an nsCOMPtr
+  nsIFrame *layoutObject = ps->GetPrimaryFrameFor(nodeAsContent);
   if (!layoutObject)  return NS_ERROR_FAILURE;
 
   nsITableCellLayout *cellLayoutObject=nsnull; // again, frames are not ref-counted
@@ -2734,14 +2741,17 @@ NS_IMETHODIMP
 nsHTMLEditor::GetTableLayoutObject(nsIDOMElement* aTable, nsITableLayout **tableLayoutObject)
 {
   *tableLayoutObject=nsnull;
-  if (!aTable)
-    return NS_ERROR_NOT_INITIALIZED;
-  
+  if (!aTable) return NS_ERROR_NOT_INITIALIZED;
+  if (!mPresShellWeak) return NS_ERROR_NOT_INITIALIZED;
+  nsCOMPtr<nsIPresShell> ps = do_QueryReferent(mPresShellWeak);
+  if (!ps) return NS_ERROR_NOT_INITIALIZED;
+
+  nsCOMPtr<nsIContent> nodeAsContent( do_QueryInterface(aTable) );
+  if (!nodeAsContent) return NS_ERROR_FAILURE;
   // frames are not ref counted, so don't use an nsCOMPtr
-  nsISupports *layoutObject=nsnull;
-  nsresult res = GetLayoutObject(aTable, &layoutObject); 
-  if (NS_FAILED(res)) return res;
+  nsIFrame *layoutObject = ps->GetPrimaryFrameFor(nodeAsContent);
   if (!layoutObject)  return NS_ERROR_FAILURE;
+
   return layoutObject->QueryInterface(NS_GET_IID(nsITableLayout), 
                                       (void**)(tableLayoutObject)); 
 }

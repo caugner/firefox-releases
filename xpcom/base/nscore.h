@@ -52,7 +52,7 @@
 
 /* Core XPCOM declarations. */
 
-/**
+/** 
  * Macros defining the target platform...
  */
 #ifdef _WIN32
@@ -107,6 +107,8 @@
 
 #if defined(HAVE_VISIBILITY_ATTRIBUTE)
 #define NS_VISIBILITY_DEFAULT __attribute__ ((visibility ("default")))
+#elif defined(__SUNPRO_C) || defined(__SUNPRO_CC)
+#define NS_VISIBILITY_DEFAULT __global
 #else
 #define NS_VISIBILITY_DEFAULT
 #endif
@@ -256,15 +258,6 @@
 #endif
 
 /**
- * Attributes defined to help Dehydra GCC analysis.	
- */
-#ifdef DEHYDRA_GCC
-# define NS_SCRIPTABLE __attribute__((user("script")))
-#else
-# define NS_SCRIPTABLE
-#endif
-
-/**
  * Generic API modifiers which return the standard XPCOM nsresult type
  */
 #define NS_IMETHOD          NS_IMETHOD_(nsresult)
@@ -395,17 +388,11 @@ typedef PRUint32 nsrefcnt;
 
   /* under VC++ (Windows), we don't have autoconf yet */
 #if defined(_MSC_VER) && (_MSC_VER>=1100)
-  /* VC++ 5.0 and greater implement template specialization, 4.2 is unknown */
   #define HAVE_CPP_MODERN_SPECIALIZE_TEMPLATE_SYNTAX
 
   #define HAVE_CPP_EXPLICIT
   #define HAVE_CPP_TYPENAME
   #define HAVE_CPP_ACCESS_CHANGING_USING
-
-  #if (_MSC_VER==1100)
-      /* VC++5.0 has an internal compiler error (sometimes) without this */
-    #undef HAVE_CPP_ACCESS_CHANGING_USING
-  #endif
 
   #define HAVE_CPP_NAMESPACE_STD
   #define HAVE_CPP_UNAMBIGUOUS_STD_NOTEQUAL
@@ -489,6 +476,39 @@ typedef PRUint32 nsrefcnt;
   */
 #if defined(XPCOM_GLUE) && !defined(XPCOM_GLUE_USE_NSPR)
 #define XPCOM_GLUE_AVOID_NSPR
+#endif
+
+/**
+ * Static type annotations, enforced when static-checking is enabled:
+ *
+ * NS_STACK_CLASS: a class which must only be instantiated on the stack
+ * NS_FINAL_CLASS: a class which may not be subclassed
+ */
+#ifdef NS_STATIC_CHECKING
+#define NS_STACK_CLASS __attribute__((user("NS_stack")))
+#define NS_OKONHEAP    __attribute__((user("NS_okonheap")))
+#define NS_SUPPRESS_STACK_CHECK __attribute__((user("NS_suppress_stackcheck")))
+#define NS_FINAL_CLASS __attribute__((user("NS_final")))
+#else
+#define NS_STACK_CLASS
+#define NS_OKONHEAP
+#define NS_SUPPRESS_STACK_CHECK
+#define NS_FINAL_CLASS
+#endif
+
+/**
+ * Attributes defined to help Dehydra GCC analysis.	
+ */
+#ifdef NS_STATIC_CHECKING
+# define NS_SCRIPTABLE __attribute__((user("NS_script")))
+# define NS_INPARAM __attribute__((user("NS_inparam")))
+# define NS_OUTPARAM  __attribute__((user("NS_outparam")))
+# define NS_INOUTPARAM __attribute__((user("NS_inoutparam")))
+#else
+# define NS_SCRIPTABLE
+# define NS_INPARAM
+# define NS_OUTPARAM
+# define NS_INOUTPARAM
 #endif
 
 #endif /* nscore_h___ */

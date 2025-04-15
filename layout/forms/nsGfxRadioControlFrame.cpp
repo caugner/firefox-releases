@@ -89,98 +89,22 @@ NS_IMETHODIMP nsGfxRadioControlFrame::GetAccessible(nsIAccessible** aAccessible)
 #endif
 
 //--------------------------------------------------------------
-nsStyleContext*
-nsGfxRadioControlFrame::GetAdditionalStyleContext(PRInt32 aIndex) const
+// Draw the dot for a non-native radio button in the checked state.
+static void
+PaintCheckedRadioButton(nsIFrame* aFrame,
+                        nsIRenderingContext* aCtx,
+                        const nsRect& aDirtyRect,
+                        nsPoint aPt)
 {
-  switch (aIndex) {
-  case NS_GFX_RADIO_CONTROL_FRAME_FACE_CONTEXT_INDEX:
-    return mRadioButtonFaceStyle;
-    break;
-  default:
-    return nsnull;
-  }
-}
+  // The dot is an ellipse 2px on all sides smaller than the content-box,
+  // drawn in the foreground color.
+  nsRect rect(aPt, aFrame->GetSize());
+  rect.Deflate(aFrame->GetUsedBorderAndPadding());
+  rect.Deflate(nsPresContext::CSSPixelsToAppUnits(2),
+               nsPresContext::CSSPixelsToAppUnits(2));
 
-//--------------------------------------------------------------
-void
-nsGfxRadioControlFrame::SetAdditionalStyleContext(PRInt32 aIndex, 
-                                                  nsStyleContext* aStyleContext)
-{
-  switch (aIndex) {
-  case NS_GFX_RADIO_CONTROL_FRAME_FACE_CONTEXT_INDEX:
-    mRadioButtonFaceStyle = aStyleContext;
-    break;
-  }
-}
-
-//--------------------------------------------------------------
-NS_IMETHODIMP
-nsGfxRadioControlFrame::SetRadioButtonFaceStyleContext(nsStyleContext *aRadioButtonFaceStyleContext)
-{
-  mRadioButtonFaceStyle = aRadioButtonFaceStyleContext;
-  return NS_OK;
-}
-
-//--------------------------------------------------------------
-void
-nsGfxRadioControlFrame::PaintRadioButtonFromStyle(
-    nsIRenderingContext& aRenderingContext, nsPoint aPt, const nsRect& aDirtyRect)
-{
-  const nsStyleBorder* myBorder = mRadioButtonFaceStyle->GetStyleBorder();
-  // Paint the button for the radio button using CSS background rendering code
-  const nsStyleBackground* myColor = mRadioButtonFaceStyle->GetStyleBackground();
-  const nsStyleColor* color = mRadioButtonFaceStyle->GetStyleColor();
-  const nsStylePadding* myPadding = mRadioButtonFaceStyle->GetStylePadding();
-  const nsStylePosition* myPosition = mRadioButtonFaceStyle->GetStylePosition();
-
-  NS_ASSERTION(myPosition->mWidth.GetUnit() == eStyleUnit_Coord &&
-               myPosition->mHeight.GetUnit() == eStyleUnit_Coord,
-               "styles for :-moz-radio are incorrect or author-accessible");
-  nscoord width = myPosition->mWidth.GetCoordValue();
-  nscoord height = myPosition->mHeight.GetCoordValue();
-  // Position the button centered within the radio control's rectangle.
-  nscoord x = (mRect.width - width) / 2;
-  nscoord y = (mRect.height - height) / 2;
-  nsRect rect = nsRect(x, y, width, height) + aPt;
-
-  // So we will use PaintBackgroundWithSC to paint the dot, 
-  // but it uses the mBackgroundColor for painting and we need to use the mColor
-  // so create a temporary style color struct and set it up appropriately
-  // XXXldb It would make more sense to use
-  // |aRenderingContext.FillEllipse| here, but on at least GTK that
-  // doesn't draw a round enough circle.
-  nsStyleBackground tmpColor     = *myColor;
-  tmpColor.mBackgroundColor = color->mColor;
-  nsPresContext* pc = PresContext();
-  nsCSSRendering::PaintBackgroundWithSC(pc, aRenderingContext,
-                                        this, aDirtyRect, rect,
-                                        tmpColor, *myBorder, *myPadding, PR_FALSE);
-  nsCSSRendering::PaintBorder(pc, aRenderingContext, this,
-                              aDirtyRect, rect, *myBorder, mRadioButtonFaceStyle, 0);
-}
-
-class nsDisplayRadioButtonFromStyle : public nsDisplayItem {
-public:
-  nsDisplayRadioButtonFromStyle(nsGfxRadioControlFrame* aFrame)
-    : nsDisplayItem(aFrame) {
-    MOZ_COUNT_CTOR(nsDisplayRadioButtonFromStyle);
-  }
-#ifdef NS_BUILD_REFCNT_LOGGING
-  virtual ~nsDisplayRadioButtonFromStyle() {
-    MOZ_COUNT_DTOR(nsDisplayRadioButtonFromStyle);
-  }
-#endif
-  
-  virtual void Paint(nsDisplayListBuilder* aBuilder, nsIRenderingContext* aCtx,
-     const nsRect& aDirtyRect);
-  NS_DISPLAY_DECL_NAME("RadioButton")
-};
-
-void
-nsDisplayRadioButtonFromStyle::Paint(nsDisplayListBuilder* aBuilder,
-     nsIRenderingContext* aCtx, const nsRect& aDirtyRect) {
-  static_cast<nsGfxRadioControlFrame*>(mFrame)->
-    PaintRadioButtonFromStyle(*aCtx, aBuilder->ToReferenceFrame(mFrame), aDirtyRect);
+  aCtx->SetColor(aFrame->GetStyleColor()->mColor);
+  aCtx->FillEllipse(rect);
 }
 
 //--------------------------------------------------------------
@@ -189,7 +113,8 @@ nsGfxRadioControlFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                          const nsRect&           aDirtyRect,
                                          const nsDisplayListSet& aLists)
 {
-  nsresult rv = nsFormControlFrame::BuildDisplayList(aBuilder, aDirtyRect, aLists);
+  nsresult rv = nsFormControlFrame::BuildDisplayList(aBuilder, aDirtyRect,
+                                                     aLists);
   NS_ENSURE_SUCCESS(rv, rv);
   
   if (!IsVisibleForPainting(aBuilder))
@@ -198,16 +123,13 @@ nsGfxRadioControlFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   if (IsThemed())
     return NS_OK; // No need to paint the radio button. The theme will do it.
 
-  if (!mRadioButtonFaceStyle)
-    return NS_OK;
-  
   PRBool checked = PR_TRUE;
   GetCurrentCheckState(&checked); // Get check state from the content model
   if (!checked)
     return NS_OK;
     
   return aLists.Content()->AppendNewToTop(new (aBuilder)
-      nsDisplayRadioButtonFromStyle(this));
+    nsDisplayGeneric(this, PaintCheckedRadioButton, "CheckedRadioButton"));
 }
 
 
@@ -216,7 +138,6 @@ NS_IMETHODIMP
 nsGfxRadioControlFrame::OnChecked(nsPresContext* aPresContext,
                                   PRBool aChecked)
 {
-  Invalidate(GetOverflowRect(), PR_FALSE);
+  InvalidateOverflowRect();
   return NS_OK;
 }
-

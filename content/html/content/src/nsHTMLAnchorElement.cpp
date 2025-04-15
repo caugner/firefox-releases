@@ -64,6 +64,8 @@
 #include "nsIPresShell.h"
 #include "nsIDocument.h"
 
+#include "nsHTMLDNSPrefetch.h"
+
 nsresult NS_NewContentIterator(nsIContentIterator** aInstancePtrResult);
 
 class nsHTMLAnchorElement : public nsGenericHTMLElement,
@@ -103,6 +105,9 @@ public:
   NS_IMETHOD LinkAdded() { return NS_OK; }
   NS_IMETHOD LinkRemoved() { return NS_OK; }
 
+  // override from nsGenericHTMLElement
+  NS_IMETHOD GetDraggable(PRBool* aDraggable);
+
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent,
                               PRBool aCompileEventHandlers);
@@ -137,7 +142,6 @@ protected:
 
 NS_IMPL_NS_NEW_HTML_ELEMENT(Anchor)
 
-
 nsHTMLAnchorElement::nsHTMLAnchorElement(nsINodeInfo *aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo),
     mLinkState(eLinkState_Unknown)
@@ -154,12 +158,14 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLAnchorElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLAnchorElement
-NS_HTML_CONTENT_INTERFACE_TABLE_HEAD(nsHTMLAnchorElement, nsGenericHTMLElement)
-  NS_INTERFACE_TABLE_INHERITED4(nsHTMLAnchorElement,
-                                nsIDOMHTMLAnchorElement,
-                                nsIDOMNSHTMLAnchorElement,
-                                nsIDOMNSHTMLAnchorElement2,
-                                nsILink)
+NS_INTERFACE_TABLE_HEAD(nsHTMLAnchorElement)
+  NS_HTML_CONTENT_INTERFACE_TABLE4(nsHTMLAnchorElement,
+                                   nsIDOMHTMLAnchorElement,
+                                   nsIDOMNSHTMLAnchorElement,
+                                   nsIDOMNSHTMLAnchorElement2,
+                                   nsILink)
+  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(nsHTMLAnchorElement,
+                                               nsGenericHTMLElement)
 NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLAnchorElement)
 
 
@@ -178,6 +184,20 @@ NS_IMPL_INT_ATTR_DEFAULT_VALUE(nsHTMLAnchorElement, TabIndex, tabindex, 0)
 NS_IMPL_STRING_ATTR(nsHTMLAnchorElement, Type, type)
 NS_IMPL_STRING_ATTR(nsHTMLAnchorElement, AccessKey, accesskey)
 
+NS_IMETHODIMP
+nsHTMLAnchorElement::GetDraggable(PRBool* aDraggable)
+{
+  // links can be dragged as long as there is an href and the
+  // draggable attribute isn't false
+  if (HasAttr(kNameSpaceID_None, nsGkAtoms::href)) {
+    *aDraggable = !AttrValueIs(kNameSpaceID_None, nsGkAtoms::draggable,
+                               nsGkAtoms::_false, eIgnoreCase);
+    return NS_OK;
+  }
+
+  // no href, so just use the same behavior as other elements
+  return nsGenericHTMLElement::GetDraggable(aDraggable);
+}
 
 nsresult
 nsHTMLAnchorElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
@@ -193,6 +213,10 @@ nsHTMLAnchorElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
     RegUnRegAccessKey(PR_TRUE);
   }
 
+  // Prefetch links
+  if (aDocument && nsHTMLDNSPrefetch::IsAllowed(GetOwnerDoc())) {
+    nsHTMLDNSPrefetch::PrefetchLow(this);
+  }
   return rv;
 }
 
@@ -647,6 +671,10 @@ nsHTMLAnchorElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
                                PRBool aNotify)
 {
   if (aAttribute == nsGkAtoms::href && kNameSpaceID_None == aNameSpaceID) {
+    nsIDocument* doc = GetCurrentDoc();
+    if (doc) {
+      doc->ForgetLink(this);
+    }
     SetLinkState(eLinkState_Unknown);
   }
 

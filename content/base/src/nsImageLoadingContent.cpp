@@ -121,11 +121,11 @@ nsImageLoadingContent::DestroyImageLoadingContent()
 {
   // Cancel our requests so they won't hold stale refs to us
   if (mCurrentRequest) {
-    mCurrentRequest->Cancel(NS_ERROR_FAILURE);
+    mCurrentRequest->CancelAndForgetObserver(NS_ERROR_FAILURE);
     mCurrentRequest = nsnull;
   }
   if (mPendingRequest) {
-    mPendingRequest->Cancel(NS_ERROR_FAILURE);
+    mPendingRequest->CancelAndForgetObserver(NS_ERROR_FAILURE);
     mPendingRequest = nsnull;
   }
 }
@@ -486,6 +486,24 @@ nsImageLoadingContent::LoadImage(const nsAString& aNewURI,
   NS_ENSURE_SUCCESS(rv, rv);
   // XXXbiesi fire onerror if that failed?
 
+  PRBool equal;
+
+  if (aNewURI.IsEmpty() &&
+      doc->GetDocumentURI() &&
+      NS_SUCCEEDED(doc->GetDocumentURI()->Equals(imageURI, &equal)) && 
+      equal)  {
+
+    // Loading an embedded img from the same URI as the document URI will not work
+    // as a resource cannot recursively embed itself. Attempting to do so generally
+    // results in having to pre-emptively close down an in-flight HTTP transaction 
+    // and then incurring the significant cost of establishing a new TCP channel.
+    // This is generally triggered from <img src=""> 
+    // In light of that, just skip loading it..
+    // Do make sure to drop our existing image, if any
+    CancelImageRequests(aNotify);
+    return NS_OK;
+  }
+
   NS_TryToSetImmutable(imageURI);
 
   return LoadImage(imageURI, aForce, aNotify, doc);
@@ -667,10 +685,9 @@ void
 nsImageLoadingContent::CancelImageRequests(PRBool aNotify)
 {
   // Make sure to null out mCurrentURI here, so we no longer look like an image
+  AutoStateChanger changer(this, aNotify);
   mCurrentURI = nsnull;
   CancelImageRequests(NS_BINDING_ABORTED, PR_TRUE, nsIContentPolicy::ACCEPT);
-  NS_ASSERTION(!mStartingLoad, "Whence a state changer here?");
-  UpdateImageState(aNotify);
 }
 
 void
@@ -724,6 +741,8 @@ nsImageLoadingContent::UseAsPrimaryRequest(imgIRequest* aRequest,
 {
   // Use an AutoStateChanger so that the clone call won't
   // automatically notify from inside OnStopDecode.
+  // Also, make sure to use the CancelImageRequests which doesn't
+  // notify, so that the changer is handling the notifications.
   NS_PRECONDITION(aRequest, "Must have a request here!");
   AutoStateChanger changer(this, aNotify);
   mCurrentURI = nsnull;

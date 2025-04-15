@@ -59,14 +59,17 @@ NS_IMETHODIMP nsOuterDocAccessible::GetRole(PRUint32 *aRole)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsOuterDocAccessible::GetState(PRUint32 *aState, PRUint32 *aExtraState)
+nsresult
+nsOuterDocAccessible::GetStateInternal(PRUint32 *aState, PRUint32 *aExtraState)
 {
-  nsAccessible::GetState(aState, aExtraState);
+  nsresult rv = nsAccessible::GetStateInternal(aState, aExtraState);
+  NS_ENSURE_A11Y_SUCCESS(rv, rv);
+
   *aState &= ~nsIAccessibleStates::STATE_FOCUSABLE;
   return NS_OK;
 }
 
+// nsIAccessible::getChildAtPoint(in long x, in long y)
 NS_IMETHODIMP
 nsOuterDocAccessible::GetChildAtPoint(PRInt32 aX, PRInt32 aY,
                                       nsIAccessible **aAccessible)
@@ -83,6 +86,23 @@ nsOuterDocAccessible::GetChildAtPoint(PRInt32 aX, PRInt32 aY,
   }
 
   return GetFirstChild(aAccessible);  // Always return the inner doc unless bounds outside of it
+}
+
+// nsIAccessible::getDeepestChildAtPoint(in long x, in long y)
+NS_IMETHODIMP
+nsOuterDocAccessible::GetDeepestChildAtPoint(PRInt32 aX, PRInt32 aY,
+                                      nsIAccessible **aAccessible)
+{
+  // Call getDeepestChildAtPoint on the fist child accessible of the outer
+  // document accessible if the given point is inside of outer document.
+  nsCOMPtr<nsIAccessible> childAcc;
+  nsresult rv = GetChildAtPoint(aX, aY, getter_AddRefs(childAcc));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!childAcc)
+    return NS_OK;
+
+  return childAcc->GetDeepestChildAtPoint(aX, aY, aAccessible);
 }
 
 void nsOuterDocAccessible::CacheChildren()
@@ -147,4 +167,36 @@ nsOuterDocAccessible::GetAttributesInternal(nsIPersistentProperties *aAttributes
     return NS_OK;
   }
   return nsAccessible::GetAttributesInternal(aAttributes);
+}
+
+// Internal frame, which is the doc's parent, should not have a click action
+NS_IMETHODIMP
+nsOuterDocAccessible::GetNumActions(PRUint8 *aNumActions)
+{
+  NS_ENSURE_ARG_POINTER(aNumActions);
+  *aNumActions = 0;
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsOuterDocAccessible::GetActionName(PRUint8 aIndex, nsAString& aName)
+{
+  aName.Truncate();
+
+  return NS_ERROR_INVALID_ARG;
+}
+
+NS_IMETHODIMP
+nsOuterDocAccessible::GetActionDescription(PRUint8 aIndex, nsAString& aDescription)
+{
+  aDescription.Truncate();
+
+  return NS_ERROR_INVALID_ARG;
+}
+
+NS_IMETHODIMP
+nsOuterDocAccessible::DoAction(PRUint8 aIndex)
+{
+  return NS_ERROR_INVALID_ARG;
 }

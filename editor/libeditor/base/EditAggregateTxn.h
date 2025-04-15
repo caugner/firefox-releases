@@ -41,7 +41,8 @@
 #include "EditTxn.h"
 #include "nsIAtom.h"
 #include "nsCOMPtr.h"
-#include "nsISupportsArray.h"
+#include "nsTArray.h"
+#include "nsAutoPtr.h"
 
 #define EDIT_AGGREGATE_TXN_CID \
 {/* 345921a0-ac49-11d2-86d8-000064657374 */ \
@@ -61,6 +62,8 @@ public:
   static const nsIID& GetCID() { static const nsIID cid = EDIT_AGGREGATE_TXN_CID; return cid; }
 
   EditAggregateTxn();
+
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(EditAggregateTxn, EditTxn)
 
   NS_DECL_EDITTXN
 
@@ -88,7 +91,7 @@ public:
 
 protected:
 
-  nsCOMPtr<nsISupportsArray> mChildren;
+  nsTArray< nsRefPtr<EditTxn> > mChildren;
   nsCOMPtr<nsIAtom> mName;
 };
 

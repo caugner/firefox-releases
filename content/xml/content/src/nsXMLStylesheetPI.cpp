@@ -47,6 +47,7 @@
 #include "nsUnicharUtils.h"
 #include "nsParserUtils.h"
 #include "nsGkAtoms.h"
+#include "nsThreadUtils.h"
 
 class nsXMLStylesheetPI : public nsXMLProcessingInstruction,
                           public nsStyleLinkElement
@@ -89,9 +90,10 @@ protected:
 
 // nsISupports implementation
 
-NS_INTERFACE_MAP_BEGIN(nsXMLStylesheetPI)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMLinkStyle)
-  NS_INTERFACE_MAP_ENTRY(nsIStyleSheetLinkingElement)
+NS_INTERFACE_TABLE_HEAD(nsXMLStylesheetPI)
+  NS_NODE_INTERFACE_TABLE4(nsXMLStylesheetPI, nsIDOMNode,
+                           nsIDOMProcessingInstruction, nsIDOMLinkStyle,
+                           nsIStyleSheetLinkingElement)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(XMLStylesheetProcessingInstruction)
 NS_INTERFACE_MAP_END_INHERITING(nsXMLProcessingInstruction)
 
@@ -122,7 +124,9 @@ nsXMLStylesheetPI::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                                                        aCompileEventHandlers);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  UpdateStyleSheetInternal(nsnull);
+  nsContentUtils::AddScriptRunner(
+    new nsRunnableMethod<nsXMLStylesheetPI>(this,
+                                            &nsXMLStylesheetPI::UpdateStyleSheetInternal));
 
   return rv;  
 }
@@ -170,8 +174,7 @@ nsXMLStylesheetPI::GetStyleSheetURL(PRBool* aIsInline,
   *aURI = nsnull;
 
   nsAutoString href;
-  GetAttrValue(nsGkAtoms::href, href);
-  if (href.IsEmpty()) {
+  if (!GetAttrValue(nsGkAtoms::href, href)) {
     return;
   }
 
@@ -259,11 +262,9 @@ NS_NewXMLStylesheetProcessingInstruction(nsIContent** aInstancePtrResult,
   *aInstancePtrResult = nsnull;
   
   nsCOMPtr<nsINodeInfo> ni;
-  nsresult rv =
-    aNodeInfoManager->GetNodeInfo(nsGkAtoms::processingInstructionTagName,
-                                  nsnull, kNameSpaceID_None,
-                                  getter_AddRefs(ni));
-  NS_ENSURE_SUCCESS(rv, rv);
+  ni = aNodeInfoManager->GetNodeInfo(nsGkAtoms::processingInstructionTagName,
+                                     nsnull, kNameSpaceID_None);
+  NS_ENSURE_TRUE(ni, NS_ERROR_OUT_OF_MEMORY);
 
   nsXMLStylesheetPI *instance = new nsXMLStylesheetPI(ni, aData);
   if (!instance) {

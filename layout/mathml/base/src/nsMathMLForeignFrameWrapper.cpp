@@ -54,8 +54,9 @@
 
 #include "nsMathMLForeignFrameWrapper.h"
 
-NS_IMPL_ADDREF_INHERITED(nsMathMLForeignFrameWrapper, nsMathMLFrame)
-NS_IMPL_RELEASE_INHERITED(nsMathMLForeignFrameWrapper, nsMathMLFrame)
+// Frames are not refcounted objects, so use the non-logging addref/release macros.
+NS_IMPL_NONLOGGING_ADDREF_INHERITED(nsMathMLForeignFrameWrapper, nsMathMLFrame)
+NS_IMPL_NONLOGGING_RELEASE_INHERITED(nsMathMLForeignFrameWrapper, nsMathMLFrame)
 NS_IMPL_QUERY_INTERFACE_INHERITED1(nsMathMLForeignFrameWrapper, nsBlockFrame, nsMathMLFrame)
 
 nsIFrame*

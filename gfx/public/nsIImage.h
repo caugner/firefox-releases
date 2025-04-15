@@ -39,12 +39,14 @@
 #define nsIImage_h___
 
 #include "nsISupports.h"
-#include "nsIRenderingContext.h"
+#include "nsMargin.h"
 #include "nsRect.h"
-#include "gfxRect.h"
 
 class gfxASurface;
 class gfxPattern;
+class gfxMatrix;
+class gfxRect;
+class gfxContext;
 
 class nsIDeviceContext;
 
@@ -72,10 +74,10 @@ typedef enum {
 #define  nsImageUpdateFlags_kBitsChanged     0x2
 
 // IID for the nsIImage interface
-// 96d9d7ce-e575-4265-8507-35555112a430
+// c942f66c-97d0-470e-99de-a1efb4586afd
 #define NS_IIMAGE_IID \
-{ 0x96d9d7ce, 0xe575, 0x4265, \
-  { 0x85, 0x07, 0x35, 0x55, 0x51, 0x12, 0xa4, 0x30 } }
+  { 0xc942f66c, 0x97d0, 0x470e, \
+    { 0x99, 0xde, 0xa1, 0xef, 0xb4, 0x58, 0x6a, 0xfd } }
 
 // Interface to Images
 class nsIImage : public nsISupports
@@ -159,11 +161,12 @@ public:
 
   /**
    * Update the nsIImage color table
-   * @update - dwc 2/1/99
+   * @update - dougt 9/9/08
    * @param aFlags Used to pass in parameters for the update
    * @param aUpdateRect The rectangle to update
+   * @return success code. failure means stop decoding
    */
-  virtual void ImageUpdated(nsIDeviceContext *aContext, PRUint8 aFlags, nsIntRect *aUpdateRect) = 0;
+  virtual nsresult ImageUpdated(nsIDeviceContext *aContext, PRUint8 aFlags, nsIntRect *aUpdateRect) = 0;
   
   /**
    * Get whether this image's region is completely filled with data.
@@ -188,19 +191,32 @@ public:
   virtual nsColorMap * GetColorMap() = 0;
 
   /**
-   * BitBlit the nsIImage to a device, the source and dest can be scaled
-   * @param aSourceRect  source rectangle, in image pixels
-   * @param aSubimageRect the subimage that we're extracting the contents from.
-   * It must contain aSourceRect. Pixels outside this rectangle must not
+   * BitBlit the nsIImage to a device, the source and dest can be scaled.
+   * @param aContext the destination
+   * @param aUserSpaceToImageSpace the transform that maps user-space
+   * coordinates to coordinates in (tiled, post-padding) image pixels
+   * @param aFill the area to fill with tiled images
+   * @param aPadding the padding to be added to this image before tiling,
+   * in image pixels
+   * @param aSubimage the subimage in padded+tiled image space that we're
+   * extracting the contents from. Pixels outside this rectangle must not
    * be sampled.
-   * @param aDestRect  destination rectangle, in device pixels
+   * 
+   * So this is supposed to
+   * -- add aPadding transparent pixels around the image
+   * -- use that image to tile the plane
+   * -- replace everything outside the aSubimage region with the nearest
+   * border pixel of that region (like EXTEND_PAD)
+   * -- fill aFill with the image, using aImageSpaceToDeviceSpace as the
+   * image-space-to-device-space transform
    */
-  NS_IMETHOD Draw(nsIRenderingContext &aContext,
-                  const gfxRect &aSourceRect,
-                  const gfxRect &aSubimageRect,
-                  const gfxRect &aDestRect) = 0;
+  virtual void Draw(gfxContext*        aContext,
+                    const gfxMatrix&   aUserSpaceToImageSpace,
+                    const gfxRect&     aFill,
+                    const nsIntMargin& aPadding,
+                    const nsIntRect&   aSubimage) = 0;
 
-  /**
+  /** 
    * Get the alpha depth for the image mask
    * @update - lordpixel 2001/05/16
    * @return  the alpha mask depth for the image, ie, 0, 1 or 8
@@ -273,6 +289,15 @@ public:
    * the original format requested a 1-bit or 8-bit alpha mask
    */
   virtual void SetHasNoAlpha() = 0;
+
+  /**
+   * Extract a rectangular region of the nsIImage and return it as a new
+   * nsIImage.
+   * @param aSubimage  the region to extract
+   * @param aResult    the extracted image
+   */
+  NS_IMETHOD Extract(const nsIntRect& aSubimage,
+                     nsIImage** aResult NS_OUTPARAM) = 0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIImage, NS_IIMAGE_IID)

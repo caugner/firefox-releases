@@ -53,7 +53,6 @@
 #include "nsRect.h"
 #include "nsTransform2D.h"
 #include "nsGfxCIID.h"
-#include "nsIMenuBar.h"
 #include "nsToolkit.h"
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
@@ -97,6 +96,7 @@ nsWindow::nsWindow()
 {
   mClientWidget    = nsnull;
   mIsTooSmall      = PR_FALSE;
+  mIsDestroying    = PR_FALSE;
   mBorderStyle     = eBorderStyle_default;
   mWindowType      = eWindowType_child;
 	mLastMenu				 = nsnull;

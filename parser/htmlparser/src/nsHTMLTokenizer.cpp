@@ -51,7 +51,6 @@
 #include "nsHTMLTokenizer.h"
 #include "nsScanner.h"
 #include "nsElementTable.h"
-#include "CParserContext.h"
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
 
@@ -93,7 +92,6 @@ nsHTMLTokenizer::nsHTMLTokenizer(PRInt32 aParseMode,
   } else if (aDocType == eXML) {
     mFlags |= NS_IPARSER_FLAG_XML;
   } else if (aDocType == eHTML_Quirks ||
-             aDocType == eHTML3_Quirks ||
              aDocType == eHTML_Strict) {
     mFlags |= NS_IPARSER_FLAG_HTML;
   }
@@ -561,7 +559,7 @@ nsHTMLTokenizer::ConsumeTag(PRUnichar aChar,
 
           // XML allows non ASCII tag names, consume this as an end tag. This
           // is needed to make XML view source work
-          PRBool isXML = mFlags & NS_IPARSER_FLAG_XML;
+          PRBool isXML = !!(mFlags & NS_IPARSER_FLAG_XML);
           if (nsCRT::IsAsciiAlpha(theNextChar) ||
               kGreaterThan == theNextChar      ||
               (isXML && !nsCRT::IsAscii(theNextChar))) {
@@ -597,7 +595,7 @@ nsHTMLTokenizer::ConsumeTag(PRUnichar aChar,
 
       default:
         // XML allows non ASCII tag names, consume this as a start tag.
-        PRBool isXML = mFlags & NS_IPARSER_FLAG_XML;
+        PRBool isXML = !!(mFlags & NS_IPARSER_FLAG_XML);
         if (nsCRT::IsAsciiAlpha(aChar) ||
             (isXML && !nsCRT::IsAscii(aChar))) {
           // Get the original "<" (we've already seen it with a Peek)

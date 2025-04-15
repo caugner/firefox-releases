@@ -42,7 +42,8 @@
  * for shared application glue for the Communicator suite of applications
  **/
 
-var goPrefWindow = 0;
+var TAB_DROP_TYPE = "application/x-moz-tabbrowser-tab";
+
 var gBidiUI = false;
 
 function getBrowserURL()
@@ -147,8 +148,11 @@ function openUILink( url, e, ignoreButton, ignoreAlt, allowKeywordFixup, postDat
  */
 function whereToOpenLink( e, ignoreButton, ignoreAlt )
 {
+  // This method must treat a null event like a left click without modifier keys (i.e.
+  // e = { shiftKey:false, ctrlKey:false, metaKey:false, altKey:false, button:0 })
+  // for compatibility purposes.
   if (!e)
-    e = { shiftKey:false, ctrlKey:false, metaKey:false, altKey:false, button:0 };
+    return "current";
 
   var shift = e.shiftKey;
   var ctrl =  e.ctrlKey;
@@ -259,8 +263,7 @@ function openUILinkIn( url, where, allowThirdPartyFixup, postData, referrerUrl )
 
 // Used as an onclick handler for UI elements with link-like behavior.
 // e.g. onclick="checkForMiddleClick(this, event);"
-function checkForMiddleClick(node, event)
-{
+function checkForMiddleClick(node, event) {
   // We should be using the disabled property here instead of the attribute,
   // but some elements that this function is used with don't support it (e.g.
   // menuitem).
@@ -268,12 +271,14 @@ function checkForMiddleClick(node, event)
     return; // Do nothing
 
   if (event.button == 1) {
-    /* Execute the node's oncommand.
+    /* Execute the node's oncommand or command.
      *
      * XXX: we should use node.oncommand(event) once bug 246720 is fixed.
      */
-    var fn = new Function("event", node.getAttribute("oncommand"));
-    fn.call(node, event);
+    var target = node.hasAttribute("oncommand") ? node :
+                 node.ownerDocument.getElementById(node.getAttribute("command"));
+    var fn = new Function("event", target.getAttribute("oncommand"));
+    fn.call(target, event);
 
     // If the middle-click was on part of a menu, close the menu.
     // (Menus close automatically with left-click but not with middle-click.)
@@ -349,6 +354,12 @@ function getShellService()
 }
 
 function isBidiEnabled() {
+  // first check the pref.
+  if (getBoolPref("bidi.browser.ui", false))
+    return true;
+
+  // if the pref isn't set, check for an RTL locale and force the pref to true
+  // if we find one.
   var rv = false;
 
   try {
@@ -363,12 +374,11 @@ function isBidiEnabled() {
       case "ur-":
       case "syr":
         rv = true;
+        var pref = Components.classes["@mozilla.org/preferences-service;1"]
+                             .getService(Components.interfaces.nsIPrefBranch);
+        pref.setBoolPref("bidi.browser.ui", true);
     }
   } catch (e) {}
-
-  // check the overriding pref
-  if (!rv)
-    rv = getBoolPref("bidi.browser.ui");
 
   return rv;
 }
@@ -426,20 +436,17 @@ function openAdvancedPreferences(tabID)
 
 /**
  * Opens the release notes page for this version of the application.
- * @param   event
- *          The DOM Event that caused this function to be called, used to
- *          determine where the release notes page should be displayed based
- *          on modifiers (e.g. Ctrl = new tab)
  */
-function openReleaseNotes(event)
+function openReleaseNotes()
 {
   var formatter = Components.classes["@mozilla.org/toolkit/URLFormatterService;1"]
                             .getService(Components.interfaces.nsIURLFormatter);
   var relnotesURL = formatter.formatURLPref("app.releaseNotesURL");
   
-  openUILink(relnotesURL, event, false, true);
+  openUILinkIn(relnotesURL, "tab");
 }
-  
+
+#ifdef MOZ_UPDATER
 /**
  * Opens the update manager and checks for updates to the application.
  */
@@ -460,6 +467,7 @@ function checkForUpdates()
   else
     prompter.checkForUpdates();
 }
+#endif
 
 function buildHelpMenu()
 {
@@ -468,6 +476,7 @@ function buildHelpMenu()
   if (typeof safebrowsing != "undefined")
     safebrowsing.setReportPhishingMenu();
 
+#ifdef MOZ_UPDATER
   var updates = 
       Components.classes["@mozilla.org/updates/update-service;1"].
       getService(Components.interfaces.nsIApplicationUpdateService);
@@ -516,6 +525,10 @@ function buildHelpMenu()
     checkForUpdates.setAttribute("loading", "true");
   else
     checkForUpdates.removeAttribute("loading");
+#else
+  // Needed by safebrowsing for inserting its menuitem so just hide it
+  document.getElementById("updateSeparator").hidden = true;
+#endif
 }
 
 function isElementVisible(aElement)
@@ -628,7 +641,7 @@ function openNewWindowWith(aURL, aDocument, aPostData, aAllowThirdPartyFixup,
 /**
  * isValidFeed: checks whether the given data represents a valid feed.
  *
- * @param  aData
+ * @param  aLink
  *         An object representing a feed with title, href and type.
  * @param  aPrincipal
  *         The principal of the document, used for security check.
@@ -636,40 +649,28 @@ function openNewWindowWith(aURL, aDocument, aPostData, aAllowThirdPartyFixup,
  *         Whether this is already a known feed or not, if true only a security
  *         check will be performed.
  */ 
-function isValidFeed(aData, aPrincipal, aIsFeed)
+function isValidFeed(aLink, aPrincipal, aIsFeed)
 {
-  if (!aData || !aPrincipal)
+  if (!aLink || !aPrincipal)
     return false;
 
+  var type = aLink.type.toLowerCase().replace(/^\s+|\s*(?:;.*)?$/g, "");
   if (!aIsFeed) {
-    var type = aData.type && aData.type.toLowerCase();
-    type = type.replace(/^\s+|\s*(?:;.*)?$/g, "");
-
     aIsFeed = (type == "application/rss+xml" ||
                type == "application/atom+xml");
-
-    if (!aIsFeed) {
-      // really slimy: general XML types with magic letters in the title
-      const titleRegex = /(^|\s)rss($|\s)/i;
-      aIsFeed = ((type == "text/xml" || type == "application/rdf+xml" ||
-                  type == "application/xml") && titleRegex.test(aData.title));
-    }
   }
 
   if (aIsFeed) {
     try {
-      urlSecurityCheck(aData.href, aPrincipal,
+      urlSecurityCheck(aLink.href, aPrincipal,
                        Components.interfaces.nsIScriptSecurityManager.DISALLOW_INHERIT_PRINCIPAL);
+      return type || "application/rss+xml";
     }
     catch(ex) {
-      aIsFeed = false;
     }
   }
 
-  if (type)
-    aData.type = type;
-
-  return aIsFeed;
+  return null;
 }
 
 // aCalledFromModal is optional

@@ -66,6 +66,7 @@ nsresult XPCOMGlueStartup(const char* xpcomFile)
 
     if (!xpcomFile)
         xpcomFile = XPCOM_DLL;
+    
 
     func = XPCOMGlueLoad(xpcomFile);
 
@@ -563,4 +564,22 @@ NS_CycleCollectorForget(nsISupports* obj)
         return PR_FALSE;
 
     return xpcomFunctions.cycleForgetFunc(obj);
+}
+
+XPCOM_API(nsPurpleBufferEntry*)
+NS_CycleCollectorSuspect2(nsISupports* obj)
+{
+    if (!xpcomFunctions.cycleSuspect2Func)
+        return nsnull;
+
+    return xpcomFunctions.cycleSuspect2Func(obj);
+}
+
+XPCOM_API(PRBool)
+NS_CycleCollectorForget2(nsPurpleBufferEntry* e)
+{
+    if (!xpcomFunctions.cycleForget2Func)
+        return PR_FALSE;
+
+    return xpcomFunctions.cycleForget2Func(e);
 }

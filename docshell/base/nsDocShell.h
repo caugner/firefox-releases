@@ -107,8 +107,10 @@
 #include "nsPIDOMEventTarget.h"
 #include "nsIURIClassifier.h"
 #include "nsIChannelClassifier.h"
+#include "nsILoadContext.h"
 
 class nsIScrollableView;
+class nsDocShell;
 
 /* load commands were moved to nsIDocShell.h */
 /* load types were moved to nsDocShellLoadTypes.h */
@@ -133,7 +135,7 @@ public:
 
     PRInt32 GetDelay() { return mDelay ;}
 
-    nsCOMPtr<nsIDocShell> mDocShell;
+    nsRefPtr<nsDocShell>  mDocShell;
     nsCOMPtr<nsIURI>      mURI;
     PRInt32               mDelay;
     PRPackedBool          mRepeat;
@@ -146,6 +148,8 @@ protected:
 class nsClassifierCallback : public nsIChannelClassifier
                            , public nsIURIClassifierCallback
                            , public nsIRunnable
+                           , public nsIChannelEventSink
+                           , public nsIInterfaceRequestor
 {
 public:
     nsClassifierCallback() {}
@@ -155,13 +159,16 @@ public:
     NS_DECL_NSICHANNELCLASSIFIER
     NS_DECL_NSIURICLASSIFIERCALLBACK
     NS_DECL_NSIRUNNABLE
+    NS_DECL_NSICHANNELEVENTSINK
+    NS_DECL_NSIINTERFACEREQUESTOR
 
 private:
     nsCOMPtr<nsIChannel> mChannel;
     nsCOMPtr<nsIChannel> mSuspendedChannel;
+    nsCOMPtr<nsIInterfaceRequestor> mNotificationCallbacks;
 
     void MarkEntryClassified(nsresult status);
-    PRBool HasBeenClassified();
+    PRBool HasBeenClassified(nsIChannel *aChannel);
 };
 
 //*****************************************************************************
@@ -184,7 +191,11 @@ class nsDocShell : public nsDocLoader,
                    public nsIEditorDocShell,
                    public nsIWebPageDescriptor,
                    public nsIAuthPromptProvider,
-                   public nsIObserver
+                   public nsIObserver,
+                   public nsILoadContext,
+                   public nsIDocShell_MOZILLA_1_9_1,
+                   public nsIDocShell_MOZILLA_1_9_1_SessionStorage,
+                   public nsIDocShell_MOZILLA_1_9_1_dns
 {
 friend class nsDSURIContentListener;
 
@@ -213,6 +224,10 @@ public:
     NS_DECL_NSIWEBPAGEDESCRIPTOR
     NS_DECL_NSIAUTHPROMPTPROVIDER
     NS_DECL_NSIOBSERVER
+    NS_DECL_NSILOADCONTEXT
+    NS_DECL_NSIDOCSHELL_MOZILLA_1_9_1
+    NS_DECL_NSIDOCSHELL_MOZILLA_1_9_1_SESSIONSTORAGE
+    NS_DECL_NSIDOCSHELL_MOZILLA_1_9_1_DNS
 
     NS_IMETHOD Stop() {
         // Need this here because otherwise nsIWebNavigation::Stop
@@ -235,6 +250,13 @@ public:
     // subframes.  It then simulates the completion of the toplevel load.
     nsresult RestoreFromHistory();
 
+    // Perform a URI load from a refresh timer.  This is just like the
+    // ForceRefreshURI method on nsIRefreshURI, but makes sure to take
+    // the timer involved out of mRefreshURIList if it's there.
+    // aTimer must not be null.
+    nsresult ForceRefreshURIFromTimer(nsIURI * aURI, PRInt32 aDelay,
+                                      PRBool aMetaRefresh, nsITimer* aTimer);
+
 protected:
     // Object Management
     virtual ~nsDocShell();
@@ -244,7 +266,8 @@ protected:
     NS_IMETHOD EnsureContentViewer();
     // aPrincipal can be passed in if the caller wants.  If null is
     // passed in, the about:blank principal will end up being used.
-    nsresult CreateAboutBlankContentViewer(nsIPrincipal* aPrincipal);
+    nsresult CreateAboutBlankContentViewer(nsIPrincipal* aPrincipal,
+                                           nsIURI* aBaseURI);
     NS_IMETHOD CreateContentViewer(const char * aContentType, 
         nsIRequest * request, nsIStreamListener ** aContentHandler);
     NS_IMETHOD NewContentViewerObj(const char * aContentType, 
@@ -263,6 +286,10 @@ protected:
     // resulting principal.  If aConsiderCurrentDocument is false, we just look
     // at the parent.
     nsIPrincipal* GetInheritedPrincipal(PRBool aConsiderCurrentDocument);
+
+    // True if when loading aURI into this docshell, the channel should look
+    // for an appropriate application cache.
+    PRBool ShouldCheckAppCache(nsIURI * aURI);
 
     // Actually open a channel and perform a URI load.  Note: whatever owner is
     // passed to this function will be set on the channel.  Callers who wish to
@@ -307,7 +334,10 @@ protected:
     // In this case it is the caller's responsibility to ensure
     // FireOnLocationChange is called.
     // In all other cases PR_FALSE is returned.
-    PRBool OnNewURI(nsIURI * aURI, nsIChannel * aChannel, PRUint32 aLoadType,
+    // Either aChannel or aOwner must be null.  If aChannel is
+    // present, the owner should be gotten from it.
+    PRBool OnNewURI(nsIURI * aURI, nsIChannel * aChannel, nsISupports* aOwner,
+                    PRUint32 aLoadType,
                     PRBool aFireOnLocationChange,
                     PRBool aAddToGlobalHistory = PR_TRUE);
 
@@ -315,8 +345,11 @@ protected:
 
     // Session History
     virtual PRBool ShouldAddToSessionHistory(nsIURI * aURI);
+    // Either aChannel or aOwner must be null.  If aChannel is
+    // present, the owner should be gotten from it.
     virtual nsresult AddToSessionHistory(nsIURI * aURI, nsIChannel * aChannel,
-        nsISHEntry ** aNewEntry);
+                                         nsISupports* aOwner,
+                                         nsISHEntry ** aNewEntry);
     nsresult DoAddChildSHEntry(nsISHEntry* aNewEntry, PRInt32 aChildOffset);
 
     NS_IMETHOD LoadHistoryEntry(nsISHEntry * aEntry, PRUint32 aLoadType);
@@ -526,8 +559,10 @@ protected:
     PRBool IsOKToLoadURI(nsIURI* aURI);
     
     void ReattachEditorToWindow(nsISHEntry *aSHEntry);
-    void DetachEditorFromWindow(nsISHEntry *aSHEntry);
 
+    nsresult GetSessionStorageForURI(nsIURI* aURI,
+                                     PRBool create,
+                                     nsIDOMStorage2** aStorage);
 protected:
     // Override the parent setter from nsDocLoader
     virtual nsresult SetDocLoaderParent(nsDocLoader * aLoader);
@@ -547,6 +582,7 @@ protected:
     PRPackedBool               mAllowJavascript;
     PRPackedBool               mAllowMetaRedirects;
     PRPackedBool               mAllowImages;
+    PRPackedBool               mAllowDNSPrefetch;
     PRPackedBool               mFocusDocFirst;
     PRPackedBool               mHasFocus;
     PRPackedBool               mCreatingDocument; // (should be) debugging only
@@ -554,6 +590,7 @@ protected:
     PRPackedBool               mObserveErrorPages;
     PRPackedBool               mAllowAuth;
     PRPackedBool               mAllowKeywordFixup;
+    PRPackedBool               mIsOffScreenBrowser;
 
     // This boolean is set to true right before we fire pagehide and generally
     // unset when we embed a new content viewer.  While it's true no navigation
@@ -638,7 +675,7 @@ protected:
     nsRevocableEventPtr<RestorePresentationEvent> mRestorePresentationEvent;
 
     // hash of session storages, keyed by domain
-    nsInterfaceHashtable<nsCStringHashKey, nsIDOMStorage> mStorages;
+    nsInterfaceHashtable<nsCStringHashKey, nsIDOMStorage2> mStorages;
 
     // Index into the SHTransaction list, indicating the previous and current
     // transaction at the time that this DocShell begins to load

@@ -46,9 +46,8 @@ class nsPresContext;
  * Event listener manager interface.
  */
 #define NS_IPRIVATEDOMEVENT_IID \
-{ /* 25e6626c-8e54-409b-87b5-2beceaac399e */ \
-0x25e6626c, 0x8e54, 0x409b, \
-{0x87, 0xb5, 0x2b, 0xec, 0xea, 0xac, 0x39, 0x9e} }
+{0x5b3543d3, 0x84ed, 0x4b59, \
+{0x95, 0xca, 0xa4, 0x21, 0xf2, 0x59, 0x22, 0x22}}
 
 class nsIDOMEventTarget;
 class nsIDOMEvent;
@@ -64,10 +63,10 @@ public:
   NS_IMETHOD SetTarget(nsIDOMEventTarget* aTarget) = 0;
   NS_IMETHOD SetCurrentTarget(nsIDOMEventTarget* aTarget) = 0;
   NS_IMETHOD SetOriginalTarget(nsIDOMEventTarget* aTarget) = 0;
-  NS_IMETHOD IsDispatchStopped(PRBool* aIsDispatchPrevented) = 0;
-  NS_IMETHOD GetInternalNSEvent(nsEvent** aNSEvent) = 0;
-  NS_IMETHOD HasOriginalTarget(PRBool* aResult)=0;
-  NS_IMETHOD SetTrusted(PRBool aTrusted)=0;
+  NS_IMETHOD_(PRBool) IsDispatchStopped() = 0;
+  NS_IMETHOD_(nsEvent*) GetInternalNSEvent() = 0;
+  NS_IMETHOD_(PRBool) HasOriginalTarget() = 0;
+  NS_IMETHOD SetTrusted(PRBool aTrusted) = 0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIPrivateDOMEvent, NS_IPRIVATEDOMEVENT_IID)
@@ -80,6 +79,10 @@ nsresult
 NS_NewDOMUIEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsGUIEvent *aEvent);
 nsresult
 NS_NewDOMMouseEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsInputEvent *aEvent);
+nsresult
+NS_NewDOMMouseScrollEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsInputEvent *aEvent);
+nsresult
+NS_NewDOMDragEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsDragEvent *aEvent);
 nsresult
 NS_NewDOMKeyboardEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsKeyEvent *aEvent);
 nsresult
@@ -104,5 +107,10 @@ nsresult
 NS_NewDOMCommandEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, nsCommandEvent* aEvent);
 nsresult
 NS_NewDOMMessageEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsEvent* aEvent);
-
+nsresult
+NS_NewDOMProgressEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsEvent* aEvent);
+nsresult
+NS_NewDOMNotifyPaintEvent(nsIDOMEvent** aResult, nsPresContext* aPresContext, class nsNotifyPaintEvent* aEvent);
+nsresult
+NS_NewDOMSimpleGestureEvent(nsIDOMEvent** aInstancePtrResult, nsPresContext* aPresContext, class nsSimpleGestureEvent* aEvent);
 #endif // nsIPrivateDOMEvent_h__

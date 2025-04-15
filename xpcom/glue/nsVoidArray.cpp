@@ -647,7 +647,7 @@ struct VoidArrayComparatorContext {
   void* mData;
 };
 
-PR_STATIC_CALLBACK(int)
+static int
 VoidArrayComparator(const void* aElement1, const void* aElement2, void* aData)
 {
   VoidArrayComparatorContext* ctx = static_cast<VoidArrayComparatorContext*>(aData);
@@ -732,6 +732,14 @@ nsStringArray::~nsStringArray(void)
 nsStringArray& 
 nsStringArray::operator=(const nsStringArray& other)
 {
+  if (this == &other)
+  {
+    return *this;
+  }
+
+  // Free our strings
+  Clear();
+  
   // Copy the pointers
   nsVoidArray::operator=(other);
 
@@ -853,7 +861,7 @@ nsStringArray::Clear(void)
   nsVoidArray::Clear();
 }
 
-PR_STATIC_CALLBACK(int)
+static int
 CompareString(const nsString* aString1, const nsString* aString2, void*)
 {
 #ifdef MOZILLA_INTERNAL_API
@@ -982,6 +990,14 @@ nsCStringArray::~nsCStringArray(void)
 nsCStringArray& 
 nsCStringArray::operator=(const nsCStringArray& other)
 {
+  if (this == &other)
+  {
+    return *this;
+  }
+
+  // Free our strings
+  Clear();
+  
   // Copy the pointers
   nsVoidArray::operator=(other);
 
@@ -1137,7 +1153,7 @@ nsCStringArray::Clear(void)
   nsVoidArray::Clear();
 }
 
-PR_STATIC_CALLBACK(int)
+static int
 CompareCString(const nsCString* aCString1, const nsCString* aCString2, void*)
 {
 #ifdef MOZILLA_INTERNAL_API
@@ -1162,7 +1178,7 @@ CompareCString(const nsCString* aCString1, const nsCString* aCString2, void*)
 }
 
 #ifdef MOZILLA_INTERNAL_API
-PR_STATIC_CALLBACK(int)
+static int
 CompareCStringIgnoreCase(const nsCString* aCString1, const nsCString* aCString2, void*)
 {
   return Compare(*aCString1, *aCString2, nsCaseInsensitiveCStringComparator());

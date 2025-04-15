@@ -48,6 +48,22 @@
 #include "nsIFileURL.h"
 #include "nsIInternetConfigService.h"
 
+// We override this to make sure app bundles display their pretty name (without .app suffix)
+NS_IMETHODIMP nsMIMEInfoMac::GetDefaultDescription(nsAString& aDefaultDescription)
+{
+  if (mDefaultApplication) {
+    nsCOMPtr<nsILocalFileMac> macFile = do_QueryInterface(mDefaultApplication);
+    if (macFile) {
+      PRBool isPackage;
+      (void)macFile->IsPackage(&isPackage);
+      if (isPackage)
+        return macFile->GetBundleDisplayName(aDefaultDescription);
+    }
+  }
+
+  return nsMIMEInfoImpl::GetDefaultDescription(aDefaultDescription);
+}
+
 NS_IMETHODIMP
 nsMIMEInfoMac::LaunchWithFile(nsIFile *aFile)
 {
@@ -112,7 +128,7 @@ nsMIMEInfoMac::LoadUriInternal(nsIURI *aURI)
   nsresult rv = NS_ERROR_FAILURE;
   
   nsCAutoString uri;
-  aURI->GetSpec(uri);
+  aURI->GetAsciiSpec(uri);
   if (!uri.IsEmpty()) {
     nsCOMPtr<nsIInternetConfigService> icService = 
       do_GetService(NS_INTERNETCONFIGSERVICE_CONTRACTID);

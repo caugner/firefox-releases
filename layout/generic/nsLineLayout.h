@@ -55,17 +55,18 @@
 #include "nsLineBox.h"
 #include "nsBlockReflowState.h"
 #include "plarena.h"
+#include "gfxTypes.h"
 
 class nsBlockFrame;
 
-class nsSpaceManager;
+class nsFloatManager;
 class nsPlaceholderFrame;
 struct nsStyleText;
 
 class nsLineLayout {
 public:
   nsLineLayout(nsPresContext* aPresContext,
-               nsSpaceManager* aSpaceManager,
+               nsFloatManager* aFloatManager,
                const nsHTMLReflowState* aOuterReflowState,
                const nsLineList::iterator* aLine);
   ~nsLineLayout();
@@ -88,7 +89,17 @@ public:
 
   void EndLineReflow();
 
-  void UpdateBand(nscoord aX, nscoord aY, nscoord aWidth, nscoord aHeight,
+  /**
+   * Called when a float has been placed. This method updates the
+   * inline frame and span data to account for any change in positions
+   * due to available space for the line boxes changing.
+   * @param aX/aY/aWidth/aHeight are the new available
+   * space rectangle, relative to the containing block.
+   * @param aPlacedLeftFloat whether we placed a left float or a right
+   * float to trigger the available space change
+   * @param aFloatFrame the float frame that was placed.
+   */
+  void UpdateBand(const nsRect& aNewAvailableSpace,
                   PRBool aPlacedLeftFloat,
                   nsIFrame* aFloatFrame);
 
@@ -145,15 +156,15 @@ public:
 protected:
 #define LL_FIRSTLETTERSTYLEOK          0x00000008
 #define LL_ISTOPOFPAGE                 0x00000010
-#define LL_UPDATEDBAND                 0x00000020
 #define LL_IMPACTEDBYFLOATS            0x00000040
 #define LL_LASTFLOATWASLETTERFRAME     0x00000080
-#define LL_CANPLACEFLOAT               0x00000100
+#define LL_LINEISEMPTY                 0x00000100
 #define LL_LINEENDSINBR                0x00000200
 #define LL_NEEDBACKUP                  0x00000400
 #define LL_INFIRSTLINE                 0x00000800
 #define LL_GOTLINEBOX                  0x00001000
-#define LL_LASTFLAG                    LL_GOTLINEBOX
+#define LL_INFIRSTLETTER               0x00002000
+#define LL_LASTFLAG                    LL_INFIRSTLETTER
 
   PRUint16 mFlags;
 
@@ -184,7 +195,14 @@ public:
     mTextJustificationNumLetters = aNumLetters;
   }
 
-  PRBool CanPlaceFloatNow() const;
+  /**
+   * @return true if so far during reflow no non-empty content has been
+   * placed in the line
+   */
+  PRBool LineIsEmpty() const
+  {
+    return GetFlag(LL_LINEISEMPTY);
+  }
 
   PRBool LineIsBreakable() const;
 
@@ -201,12 +219,17 @@ public:
   //----------------------------------------
   // Inform the line-layout about the presence of a floating frame
   // XXX get rid of this: use get-frame-type?
-  PRBool InitFloat(nsPlaceholderFrame* aFrame, nsReflowStatus& aReflowStatus) {
-    return mBlockRS->InitFloat(*this, aFrame, aReflowStatus);
+  PRBool InitFloat(nsPlaceholderFrame* aFrame, 
+                   nscoord aAvailableWidth,
+                   nsReflowStatus& aReflowStatus) {
+    return mBlockRS->InitFloat(*this, aFrame, aAvailableWidth, aReflowStatus);
   }
 
-  PRBool AddFloat(nsPlaceholderFrame* aFrame, nsReflowStatus& aReflowStatus) {
-    return mBlockRS->AddFloat(*this, aFrame, PR_FALSE, aReflowStatus);
+  PRBool AddFloat(nsPlaceholderFrame* aFrame,
+                  nscoord aAvailableWidth,
+                  nsReflowStatus& aReflowStatus) {
+    return mBlockRS->AddFloat(*this, aFrame, PR_FALSE,
+                              aAvailableWidth, aReflowStatus);
   }
 
   void SetTrimmableWidth(nscoord aTrimmableWidth) {
@@ -221,6 +244,14 @@ public:
 
   void SetFirstLetterStyleOK(PRBool aSetting) {
     SetFlag(LL_FIRSTLETTERSTYLEOK, aSetting);
+  }
+
+  PRBool GetInFirstLetter() const {
+    return GetFlag(LL_INFIRSTLETTER);
+  }
+
+  void SetInFirstLetter(PRBool aSetting) {
+    SetFlag(LL_INFIRSTLETTER, aSetting);
   }
 
   PRBool GetInFirstLine() const {
@@ -252,18 +283,24 @@ public:
    * 
    * @param aFits set to true if the break position is within the available width.
    * 
+   * @param aPriority the priority of the break opportunity. If we are
+   * prioritizing break opportunities, we will not set a break if we have
+   * already set a break with a higher priority. @see gfxBreakPriority.
+   *
    * @return PR_TRUE if we are actually reflowing with forced break position and we
    * should break here
    */
   PRBool NotifyOptionalBreakPosition(nsIContent* aContent, PRInt32 aOffset,
-                                     PRBool aFits) {
+                                     PRBool aFits, gfxBreakPriority aPriority) {
     NS_ASSERTION(!aFits || !GetFlag(LL_NEEDBACKUP),
                   "Shouldn't be updating the break position with a break that fits after we've already flagged an overrun");
     // Remember the last break position that fits; if there was no break that fit,
     // just remember the first break
-    if (aFits || !mLastOptionalBreakContent) {
+    if ((aFits && aPriority >= mLastOptionalBreakPriority) ||
+        !mLastOptionalBreakContent) {
       mLastOptionalBreakContent = aContent;
       mLastOptionalBreakContentOffset = aOffset;
+      mLastOptionalBreakPriority = aPriority;
     }
     return aContent && mForceBreakContent == aContent &&
       mForceBreakContentOffset == aOffset;
@@ -273,9 +310,11 @@ public:
    * to be set, because the caller is merely pruning some saved break position(s)
    * that are actually not feasible.
    */
-  void RestoreSavedBreakPosition(nsIContent* aContent, PRInt32 aOffset) {
+  void RestoreSavedBreakPosition(nsIContent* aContent, PRInt32 aOffset,
+                                 gfxBreakPriority aPriority) {
     mLastOptionalBreakContent = aContent;
     mLastOptionalBreakContentOffset = aOffset;
+    mLastOptionalBreakPriority = aPriority;
   }
   /**
    * Signal that no backing up will be required after all.
@@ -284,11 +323,14 @@ public:
     SetFlag(LL_NEEDBACKUP, PR_FALSE);
     mLastOptionalBreakContent = nsnull;
     mLastOptionalBreakContentOffset = -1;
+    mLastOptionalBreakPriority = eNoBreak;
   }
   // Retrieve last set optional break position. When this returns null, no
   // optional break has been recorded (which means that the line can't break yet).
-  nsIContent* GetLastOptionalBreakPosition(PRInt32* aOffset) {
+  nsIContent* GetLastOptionalBreakPosition(PRInt32* aOffset,
+                                           gfxBreakPriority* aPriority) {
     *aOffset = mLastOptionalBreakContentOffset;
+    *aPriority = mLastOptionalBreakPriority;
     return mLastOptionalBreakContent;
   }
   
@@ -319,7 +361,7 @@ public:
   /**
    * This can't be null. It usually returns a block frame but may return
    * some other kind of frame when inline frames are reflowed in a non-block
-   * context (e.g. MathML).
+   * context (e.g. MathML or floating first-letter).
    */
   nsIFrame* GetLineContainerFrame() const { return mBlockReflowState->frame; }
   const nsLineList::iterator* GetLine() const {
@@ -327,15 +369,20 @@ public:
   }
   
   /**
-   * Return the horizontal offset of the current reflowed-frame from the 
-   * edge of the line container. This is always positive, measured from
+   * Returns the accumulated advance width of frames before the current frame
+   * on the line, plus the line container's left border+padding.
+   * This is always positive, the advance width is measured from
    * the right edge for RTL blocks and from the left edge for LTR blocks.
+   * In other words, the current frame's distance from the line container's
+   * start content edge is:
+   * <code>GetCurrentFrameXDistanceFromBlock() - lineContainer->GetUsedBorderAndPadding().left</code>
+   * Note the use of <code>.left</code> for both LTR and RTL line containers.
    */
   nscoord GetCurrentFrameXDistanceFromBlock();
 
 protected:
   // This state is constant for a given block frame doing line layout
-  nsSpaceManager* mSpaceManager;
+  nsFloatManager* mFloatManager;
   const nsStyleText* mStyleText; // for the block
   const nsHTMLReflowState* mBlockReflowState;
 
@@ -343,6 +390,7 @@ protected:
   nsIContent* mForceBreakContent;
   PRInt32     mLastOptionalBreakContentOffset;
   PRInt32     mForceBreakContentOffset;
+  gfxBreakPriority mLastOptionalBreakPriority;
   
   // XXX remove this when landing bug 154892 (splitting absolute positioned frames)
   friend class nsInlineFrame;
@@ -531,8 +579,6 @@ protected:
 
   void PlaceFrame(PerFrameData* pfd,
                   nsHTMLReflowMetrics& aMetrics);
-
-  void UpdateFrames();
 
   void VerticalAlignFrames(PerSpanData* psd);
 

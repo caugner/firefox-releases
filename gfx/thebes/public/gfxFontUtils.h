@@ -42,7 +42,6 @@
 #include "gfxTypes.h"
 
 #include "prtypes.h"
-#include "gfxFont.h"
 #include "prcpucfg.h"
 
 #include "nsDataHashtable.h"
@@ -51,6 +50,9 @@
 #include "nsCOMPtr.h"
 #include "nsIRunnable.h"
 #include "nsThreadUtils.h"
+#include "nsComponentManagerUtils.h"
+#include "nsTArray.h"
+#include "nsAutoPtr.h"
 
 /* Bug 341128 - w32api defines min/max which causes problems with <bitset> */
 #ifdef __MINGW32__
@@ -86,6 +88,7 @@ public:
         }
     }
     PRBool test(PRUint32 aIndex) {
+        NS_ASSERTION(mBlocks.DebugGetHeader(), "mHdr is null, this is bad");
         PRUint32 blockIndex = aIndex/BLOCK_SIZE_BITS;
         if (blockIndex >= mBlocks.Length())
             return PR_FALSE;
@@ -287,6 +290,8 @@ public:
     nsTArray< nsAutoPtr<Block> > mBlocks;
 };
 
+#define TRUETYPE_TAG(a, b, c, d) ((a) << 24 | (b) << 16 | (c) << 8 | (d))
+
 class THEBES_API gfxFontUtils {
 
 public:
@@ -310,19 +315,75 @@ public:
     static inline PRUint32
     ReadLongAt(const PRUint8 *aBuf, PRUint32 aIndex)
     {
-        return ((aBuf[aIndex] << 24) | (aBuf[aIndex + 1] << 16) | (aBuf[aIndex + 2] << 8) | (aBuf[aIndex + 3]));
+        return ((aBuf[aIndex] << 24) | (aBuf[aIndex + 1] << 16) | 
+                (aBuf[aIndex + 2] << 8) | (aBuf[aIndex + 3]));
     }
     
     static nsresult
-    ReadCMAPTableFormat12(PRUint8 *aBuf, PRInt32 aLength, gfxSparseBitSet& aCharacterMap);
+    ReadCMAPTableFormat12(PRUint8 *aBuf, PRUint32 aLength, 
+                          gfxSparseBitSet& aCharacterMap);
     
     static nsresult 
-    ReadCMAPTableFormat4(PRUint8 *aBuf, PRInt32 aLength, gfxSparseBitSet& aCharacterMap);
+    ReadCMAPTableFormat4(PRUint8 *aBuf, PRUint32 aLength, 
+                         gfxSparseBitSet& aCharacterMap);
 
     static nsresult
     ReadCMAP(PRUint8 *aBuf, PRUint32 aBufLength, gfxSparseBitSet& aCharacterMap,
              PRPackedBool& aUnicodeFont, PRPackedBool& aSymbolFont);
 
+#ifdef XP_WIN
+    // given a TrueType/OpenType data file, produce a EOT-format header
+    // for use with Windows T2Embed API AddFontResource type API's
+    // effectively hide existing fonts with matching names aHeaderLen is
+    // the size of the header buffer on input, the actual size of the
+    // EOT header on output
+    static nsresult
+    MakeEOTHeader(const PRUint8 *aFontData, PRUint32 aFontDataLength,
+                  nsTArray<PRUint8> *aHeader);
+#endif
+
+    // checks for valid SFNT table structure, returns true if valid
+    // does *not* guarantee that all font data is valid
+    static PRBool
+    ValidateSFNTHeaders(const PRUint8 *aFontData, PRUint32 aFontDataLength,
+                        PRBool *aIsCFF = nsnull);
+    
+    // create a new name table and build a new font with that name table
+    // appended on the end, returns true on success
+    static nsresult
+    RenameFont(const nsAString& aName, const PRUint8 *aFontData, 
+               PRUint32 aFontDataLength, nsTArray<PRUint8> *aNewFont);
+    
+    // constansts used with name table read methods
+    enum {
+        PLATFORM_ALL = -1,
+        PLATFORM_UNICODE = 0,
+        PLATFORM_MACINTOSH = 1,
+        PLATFORM_MICROSOFT = 3,
+        
+        NAME_LANG_ALL = -1,
+        
+        // name record id's
+        NAME_ID_FAMILY = 1,
+        NAME_ID_STYLE = 2,
+        NAME_ID_UNIQUE = 3,
+        NAME_ID_FULL = 4,  // used as key to GDI CreateFontIndirect
+        NAME_ID_VERSION = 5,
+        NAME_ID_POSTSCRIPT = 6,
+        NAME_ID_PREFERRED_FAMILY = 16       
+    };
+
+    // read all names matching aNameID, returning in aNames array
+    static nsresult
+    ReadNames(nsTArray<PRUint8>& aNameTable, PRUint32 aNameID, 
+              PRInt32 aPlatformID, nsTArray<nsString>& aNames);
+      
+    // reads English or first name matching aNameID, returning in aName
+    // platform based on OS
+    static nsresult
+    ReadCanonicalName(nsTArray<PRUint8>& aNameTable, PRUint32 aNameID, 
+                      nsString& aName);
+      
     static inline bool IsJoiner(PRUint32 ch) {
         return (ch == 0x200C ||
                 ch == 0x200D ||
@@ -336,7 +397,16 @@ public:
     static PRUint8 CharRangeBit(PRUint32 ch);
     
     // for a given font list pref name, set up a list of font names
-    static void GetPrefsFontList(const char *aPrefName, nsTArray<nsString>& aFontList);
+    static void GetPrefsFontList(const char *aPrefName, 
+                                 nsTArray<nsString>& aFontList);
+
+    // generate a unique font name
+    static nsresult MakeUniqueUserFontName(nsAString& aName);
+
+protected:
+    static nsresult
+    ReadNames(nsTArray<PRUint8>& aNameTable, PRUint32 aNameID, 
+              PRInt32 aLangID, PRInt32 aPlatformID, nsTArray<nsString>& aNames);
 
 };
 
@@ -398,7 +468,8 @@ public:
         InitLoader();
 
         // start timer
-        mTimer->InitWithFuncCallback(LoaderTimerCallback, this, aDelay, nsITimer::TYPE_REPEATING_SLACK);
+        mTimer->InitWithFuncCallback(LoaderTimerCallback, this, aDelay, 
+                                     nsITimer::TYPE_REPEATING_SLACK);
     }
 
     // cancel the timer and cleanup

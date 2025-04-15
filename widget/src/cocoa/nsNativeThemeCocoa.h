@@ -64,7 +64,7 @@ public:
                                   nsIFrame* aFrame,
                                   PRUint8 aWidgetType,
                                   const nsRect& aRect,
-                                  const nsRect& aClipRect);
+                                  const nsRect& aDirtyRect);
   NS_IMETHOD GetWidgetBorder(nsIDeviceContext* aContext, 
                              nsIFrame* aFrame,
                              PRUint8 aWidgetType,
@@ -88,44 +88,52 @@ public:
   PRBool WidgetIsContainer(PRUint8 aWidgetType);
   PRBool ThemeDrawsFocusForWidget(nsPresContext* aPresContext, nsIFrame* aFrame, PRUint8 aWidgetType);
   PRBool ThemeNeedsComboboxDropmarker();
+  virtual nsTransparencyMode GetWidgetTransparency(PRUint8 aWidgetType);
 
 protected:  
 
   nsresult GetSystemColor(PRUint8 aWidgetType, nsILookAndFeel::nsColorID& aColorID);
   nsresult GetSystemFont(PRUint8 aWidgetType, nsSystemFontID& aFont);
+  nsIntMargin RTLAwareMargin(const nsIntMargin& aMargin, nsIFrame* aFrame);
 
   // HITheme drawing routines
-  void DrawFrame (CGContextRef context, HIThemeFrameKind inKind,
-                  const HIRect& inBoxRect, PRBool inIsDisabled,
-                  PRInt32 inState);
+  void DrawFrame(CGContextRef context, HIThemeFrameKind inKind,
+                 const HIRect& inBoxRect, PRBool inIsDisabled,
+                 PRInt32 inState);
   void DrawProgress(CGContextRef context, const HIRect& inBoxRect,
                     PRBool inIsIndeterminate, PRBool inIsHorizontal,
-                    PRInt32 inValue);
-  void DrawTab (CGContextRef context, const HIRect& inBoxRect,
-                PRBool inIsDisabled, PRBool inIsFrontmost, 
-                PRBool inIsHorizontal, PRBool inTabBottom,
-                PRInt32 inState);
-  void DrawTabPanel (CGContextRef context, const HIRect& inBoxRect);
-  void DrawScale (CGContextRef context, const HIRect& inBoxRect,
-                  PRBool inIsDisabled, PRInt32 inState,
-                  PRBool inDirection, PRBool inIsReverse,
-                  PRInt32 inCurrentValue,
-                  PRInt32 inMinValue, PRInt32 inMaxValue);
-  void DrawRadioButton(CGContextRef cgContext, const HIRect& inBoxRect, PRBool inSelected,
-                       PRBool inDisabled, PRInt32 inState);
+                    PRInt32 inValue, PRInt32 inMaxValue, nsIFrame* aFrame);
+  void DrawTab(CGContextRef context, HIRect inBoxRect, PRInt32 inState,
+               nsIFrame* aFrame);
+  void DrawTabPanel(CGContextRef context, const HIRect& inBoxRect, nsIFrame* aFrame);
+  void DrawScale(CGContextRef context, const HIRect& inBoxRect,
+                 PRBool inIsDisabled, PRInt32 inState,
+                 PRBool inDirection, PRBool inIsReverse,
+                 PRInt32 inCurrentValue,
+                 PRInt32 inMinValue, PRInt32 inMaxValue,
+                 nsIFrame* aFrame);
+  void DrawCheckboxOrRadio(CGContextRef cgContext, PRBool inCheckbox,
+                           const HIRect& inBoxRect, PRBool inSelected,
+                           PRBool inDisabled, PRInt32 inState, nsIFrame* aFrame);
+  void DrawSearchField(CGContextRef cgContext, const HIRect& inBoxRect, nsIFrame* aFrame);
   void DrawPushButton(CGContextRef cgContext, const HIRect& inBoxRect, PRBool inIsDefault,
-                      PRBool inDisabled, PRInt32 inState);
-  void DrawButton (CGContextRef context, ThemeButtonKind inKind,
-                   const HIRect& inBoxRect, PRBool inIsDefault, 
-                   PRBool inDisabled, ThemeButtonValue inValue,
-                   ThemeButtonAdornment inAdornment, PRInt32 inState);
-  void DrawSpinButtons (CGContextRef context, ThemeButtonKind inKind,
-                        const HIRect& inBoxRect,
-                        PRBool inDisabled, ThemeDrawState inDrawState,
-                        ThemeButtonAdornment inAdornment, PRInt32 inState);
-  void DrawCheckbox(CGContextRef context, ThemeButtonKind inKind,
-                    const HIRect& inBoxRect, PRBool inChecked, 
-                    PRBool inDisabled, PRInt32 inState);
+                      PRBool inDisabled, PRInt32 inState, nsIFrame* aFrame);
+  void DrawButton(CGContextRef context, ThemeButtonKind inKind,
+                  const HIRect& inBoxRect, PRBool inIsDefault, 
+                  PRBool inDisabled, ThemeButtonValue inValue,
+                  ThemeButtonAdornment inAdornment, PRInt32 inState, nsIFrame* aFrame);
+  void DrawDropdown(CGContextRef context, const HIRect& inBoxRect, PRInt32 inState,
+                    PRBool aIsEditable, nsIFrame* aFrame);
+  void DrawSpinButtons(CGContextRef context, ThemeButtonKind inKind,
+                       const HIRect& inBoxRect,
+                       PRBool inDisabled, ThemeDrawState inDrawState,
+                       ThemeButtonAdornment inAdornment, PRInt32 inState,
+                       nsIFrame* aFrame);
+  void DrawUnifiedToolbar(CGContextRef cgContext, const HIRect& inBoxRect,
+                          nsIFrame *aFrame);
+  void DrawStatusBar(CGContextRef cgContext, const HIRect& inBoxRect,
+                     nsIFrame *aFrame);
+
   // Scrollbars
   void DrawScrollbar(CGContextRef aCGContext, const HIRect& aBoxRect, nsIFrame *aFrame);
   void GetScrollbarPressStates (nsIFrame *aFrame, PRInt32 aButtonStates[]);
@@ -133,18 +141,13 @@ protected:
                              const HIRect& aRect, PRBool aShouldGetButtonStates);
   nsIFrame* GetParentScrollbarFrame(nsIFrame *aFrame);
 
-  void DrawCellWithScaling(NSCell *cell,
-                           CGContextRef cgContext,
-                           const HIRect& destRect,
-                           NSControlSize controlSize,
-                           float naturalWidth, float naturalHeight,
-                           float minWidth, float minHeight,
-                           const float marginSet[][3][4],
-                           PRBool doSaveCTM);
-
 private:
   NSButtonCell* mPushButtonCell;
   NSButtonCell* mRadioButtonCell;
+  NSButtonCell* mCheckboxCell;
+  NSSearchFieldCell* mSearchFieldCell;
+  NSPopUpButtonCell* mDropdownCell;
+  NSComboBoxCell* mComboBoxCell;
 };
 
 #endif // nsNativeThemeCocoa_h_

@@ -85,6 +85,8 @@ CSRCS   = \
         cairo-deflate-stream.c \
         cairo-fixed.c \
 	cairo-font-face.c \
+	cairo-font-face-twin.c \
+	cairo-font-face-twin-data.c \
         cairo-font-options.c \
         cairo-freelist.c \
         cairo-gstate.c \
@@ -118,16 +120,19 @@ CSRCS   = \
         cairo-surface-fallback.c \
         cairo-traps.c \
         cairo-unicode.c \
+	cairo-user-font.c \
+	cairo-version.c \
         cairo-wideint.c \
         $(NULL)
 
-EXPORTS = cairo.h cairo-features.h cairo-platform.h cairo-deprecated.h cairo-rename.h
+EXPORTS = cairo.h cairo-version.h cairo-features.h cairo-platform.h cairo-deprecated.h cairo-rename.h
 
 # cairo-type1-subset.c should be here, but it's only supported on freetype platforms
 
 PSPDF_BASE_CSRCS = \
 	cairo-base85-stream.c \
 	cairo-type1-fallback.c \
+	cairo-type3-glyph-surface.c \
 	cairo-truetype-subset.c \
 	cairo-cff-subset.c \
 	$(NULL)
@@ -143,10 +148,18 @@ PDF_EXPORTS = cairo-pdf.h
 PS_EXPORTS = cairo-ps.h
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
-CSRCS	+= cairo-win32.c \
-	   cairo-win32-font.c \
-	   cairo-win32-surface.c \
-	   cairo-win32-printing-surface.c
+CSRCS	+=	cairo-win32-surface.c
+
+ifndef WINCE
+CSRCS	+=	cairo-win32-font.c
+endif
+
+ifdef NS_PRINTING
+CSRCS   += cairo-win32-printing-surface.c
+else
+DEFINES += -DCAIRO_OMIT_WIN32_PRINTING
+endif
+
 EXPORTS += cairo-win32.h
 CSRCS   += $(PSPDF_BASE_CSRCS) $(PDF_CSRCS)
 EXPORTS += $(PDF_EXPORTS)
@@ -178,6 +191,12 @@ CSRCS   += $(PSPDF_BASE_CSRCS) $(PDF_CSRCS) $(PS_CSRCS)
 EXPORTS += $(PDF_EXPORTS) $(PS_EXPORTS)
 endif
 
+ifeq ($(MOZ_WIDGET_TOOLKIT),qt)
+CPPSRCS += cairo-qpainter-surface.cpp
+EXPORTS += cairo-qpainter.h
+OS_INCLUDES += $(MOZ_QT_CFLAGS)
+endif
+
 ifdef BUILD_CAIRO_SVG
 CSRCS	+= cairo-svg-surface.c
 EXPORTS += cairo-svg.h
@@ -196,14 +215,6 @@ CSRCS   += cairo-ft-font.c cairo-type1-subset.c
 EXPORTS += cairo-ft.h
 OS_INCLUDES += $(CAIRO_FT_CFLAGS)
 endif
-
-
-ifdef MOZ_ENABLE_GLITZ
-REQUIRES += glitz
-CSRCS    += cairo-glitz-surface.c
-EXPORTS  += cairo-glitz.h
-endif
-
 
 LOCAL_INCLUDES  += -I$(srcdir)
 

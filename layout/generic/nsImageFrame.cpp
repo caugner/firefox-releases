@@ -552,7 +552,7 @@ nsImageFrame::OnDataAvailable(imgIRequest *aRequest,
   // handle iconLoads first...
   if (HandleIconLoads(aRequest, PR_FALSE)) {
     // Image changed, invalidate
-    Invalidate(r, PR_FALSE);
+    Invalidate(r);
     return NS_OK;
   }
 
@@ -580,7 +580,7 @@ nsImageFrame::OnDataAvailable(imgIRequest *aRequest,
          r.x, r.y, r.width, r.height);
 #endif
 
-  Invalidate(r, PR_FALSE);
+  Invalidate(r);
   
   return NS_OK;
 }
@@ -633,7 +633,7 @@ nsImageFrame::OnStopDecode(imgIRequest *aRequest,
         nsSize s = GetSize();
         nsRect r(0, 0, s.width, s.height);
         // Update border+content to account for image change
-        Invalidate(r, PR_FALSE);
+        Invalidate(r);
       }
     }
   }
@@ -658,7 +658,7 @@ nsImageFrame::FrameChanged(imgIContainer *aContainer,
   nsRect r = SourceRectToDest(*aDirtyRect);
 
   // Update border+content to account for image change
-  Invalidate(r, PR_FALSE);
+  Invalidate(r);
   return NS_OK;
 }
 
@@ -849,7 +849,7 @@ nsImageFrame::Reflow(nsPresContext*          aPresContext,
   // we have no way to detect when mRect changes (since SetRect is non-virtual,
   // so this is the best we can do).
   if (mRect.width != aMetrics.width || mRect.height != aMetrics.height) {
-    Invalidate(nsRect(0, 0, mRect.width, mRect.height), PR_FALSE);
+    Invalidate(nsRect(0, 0, mRect.width, mRect.height));
   }
 
   NS_FRAME_TRACE(NS_FRAME_TRACE_CALLS,
@@ -1034,7 +1034,7 @@ nsImageFrame::DisplayAltFeedback(nsIRenderingContext& aRenderingContext,
   // Paint the border
   nsRecessedBorder recessedBorder(borderEdgeWidth, PresContext());
   nsCSSRendering::PaintBorder(PresContext(), aRenderingContext, this, inner,
-                              inner, recessedBorder, mStyleContext, 0);
+                              inner, recessedBorder, mStyleContext);
 
   // Adjust the inner rect to account for the one pixel recessed border,
   // and a six pixel padding on each edge
@@ -1069,7 +1069,7 @@ nsImageFrame::DisplayAltFeedback(nsIRenderingContext& aRenderingContext,
         nsRect dest((vis->mDirection == NS_STYLE_DIRECTION_RTL) ?
                     inner.XMost() - size : inner.x,
                     inner.y, size, size);
-        nsLayoutUtils::DrawImage(&aRenderingContext, imgCon, dest, aDirtyRect);
+        nsLayoutUtils::DrawSingleImage(&aRenderingContext, imgCon, dest, aDirtyRect);
         iconUsed = PR_TRUE;
       }
     }
@@ -1132,7 +1132,7 @@ static void PaintDebugImageMap(nsIFrame* aFrame, nsIRenderingContext* aCtx,
   aCtx->SetColor(NS_RGB(0, 0, 0));
   aCtx->PushState();
   aCtx->Translate(inner.x, inner.y);
-  f->GetImageMap(pc)->Draw(pc, *aCtx);
+  f->GetImageMap(pc)->Draw(aFrame, *aCtx);
   aCtx->PopState();
 }
 #endif
@@ -1174,13 +1174,10 @@ nsImageFrame::PaintImage(nsIRenderingContext& aRenderingContext, nsPoint aPt,
   // the borders and padding)
   NS_ASSERTION(GetInnerArea().width == mComputedSize.width, "bad width");
   nsRect inner = GetInnerArea() + aPt;
-  nsRect clip;
-  clip.IntersectRect(inner, aDirtyRect);
-
   nsRect dest(inner.TopLeft(), mComputedSize);
   dest.y -= GetContinuationOffset();
 
-  nsLayoutUtils::DrawImage(&aRenderingContext, aImage, dest, clip);
+  nsLayoutUtils::DrawSingleImage(&aRenderingContext, aImage, dest, aDirtyRect);
 
   nsPresContext* presContext = PresContext();
   nsImageMap* map = GetImageMap(presContext);
@@ -1189,7 +1186,7 @@ nsImageFrame::PaintImage(nsIRenderingContext& aRenderingContext, nsPoint aPt,
     aRenderingContext.SetColor(NS_RGB(0, 0, 0));
     aRenderingContext.SetLineStyle(nsLineStyle_kDotted);
     aRenderingContext.Translate(inner.x, inner.y);
-    map->Draw(presContext, aRenderingContext);
+    map->Draw(this, aRenderingContext);
     aRenderingContext.PopState();
   }
 }
@@ -1435,9 +1432,9 @@ nsImageFrame::HandleEvent(nsPresContext* aPresContext,
   NS_ENSURE_ARG_POINTER(aEventStatus);
   nsImageMap* map;
 
-  if (aEvent->eventStructType == NS_MOUSE_EVENT &&
-      (aEvent->message == NS_MOUSE_BUTTON_UP && 
-      static_cast<nsMouseEvent*>(aEvent)->button == nsMouseEvent::eLeftButton) ||
+  if ((aEvent->eventStructType == NS_MOUSE_EVENT &&
+       aEvent->message == NS_MOUSE_BUTTON_UP && 
+       static_cast<nsMouseEvent*>(aEvent)->button == nsMouseEvent::eLeftButton) ||
       aEvent->message == NS_MOUSE_MOVE) {
     map = GetImageMap(aPresContext);
     PRBool isServerMap = IsServerImageMap();

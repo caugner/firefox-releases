@@ -44,6 +44,7 @@
 
 #include "gfxTextRunCache.h"
 #include "gfxPlatform.h"
+#include "gfxUserFontSet.h"
 
 NS_IMPL_ISUPPORTS1(nsThebesFontMetrics, nsIFontMetrics)
 
@@ -63,7 +64,8 @@ nsThebesFontMetrics::~nsThebesFontMetrics()
 
 NS_IMETHODIMP
 nsThebesFontMetrics::Init(const nsFont& aFont, nsIAtom* aLangGroup,
-                          nsIDeviceContext *aContext)
+                          nsIDeviceContext *aContext, 
+                          gfxUserFontSet *aUserFontSet)
 {
     mFont = aFont;
     mLangGroup = aLangGroup;
@@ -81,12 +83,17 @@ nsThebesFontMetrics::Init(const nsFont& aFont, nsIAtom* aLangGroup,
         langGroup.Assign(lg);
     }
 
+    PRBool printerFont = mDeviceContext->IsPrinterSurface();
     mFontStyle = new gfxFontStyle(aFont.style, aFont.weight, size, langGroup,
                                   aFont.sizeAdjust, aFont.systemFont,
-                                  aFont.familyNameQuirks);
+                                  aFont.familyNameQuirks,
+                                  printerFont);
 
     mFontGroup =
-        gfxPlatform::GetPlatform()->CreateFontGroup(aFont.name, mFontStyle);
+        gfxPlatform::GetPlatform()->CreateFontGroup(aFont.name, mFontStyle, 
+                                                    aUserFontSet);
+    if (mFontGroup->FontListLength() < 1) 
+        return NS_ERROR_UNEXPECTED;
 
     return NS_OK;
 }
@@ -490,4 +497,10 @@ PRBool
 nsThebesFontMetrics::GetRightToLeftText()
 {
     return mIsRightToLeft;
+}
+
+/* virtual */ gfxUserFontSet*
+nsThebesFontMetrics::GetUserFontSet()
+{
+    return mFontGroup->GetUserFontSet();
 }

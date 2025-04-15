@@ -240,8 +240,6 @@ TableBackgroundPainter::TableBackgroundPainter(nsTableFrame*        aTableFrame,
     mZeroBorder.SetBorderWidth(side, 0);
   }
 
-  mZeroPadding.RecalcData();
-
   mIsBorderCollapse = aTableFrame->IsBorderCollapse();
 #ifdef DEBUG
   mCompatMode = mPresContext->CompatibilityMode();
@@ -320,7 +318,7 @@ TableBackgroundPainter::PaintTableFrame(nsTableFrame*         aTableFrame,
                                           tableData.mRect + mRenderPt,
                                           *tableData.mBackground,
                                           *tableData.mBorder,
-                                          mZeroPadding, PR_TRUE);
+                                          0);
   }
   tableData.Destroy(mPresContext);
   return NS_OK;
@@ -443,7 +441,8 @@ TableBackgroundPainter::PaintTable(nsTableFrame* aTableFrame,
     // group may not be a child of the table.
     mRowGroup.mRect.MoveTo(rg->GetOffsetTo(aTableFrame));
     if (mRowGroup.mRect.Intersects(mDirtyRect - mRenderPt)) {
-      nsresult rv = PaintRowGroup(rg, rg->IsPseudoStackingContextFromStyle());
+      nsresult rv = PaintRowGroup(rg,
+              rg->IsPseudoStackingContextFromStyle() || rg->IsScrolled());
       if (NS_FAILED(rv)) return rv;
     }
   }
@@ -607,7 +606,7 @@ TableBackgroundPainter::PaintCell(nsTableCellFrame* aCell,
   cellTableStyle = aCell->GetStyleTableBorder();
   if (!(NS_STYLE_TABLE_EMPTY_CELLS_SHOW == cellTableStyle->mEmptyCells ||
         NS_STYLE_TABLE_EMPTY_CELLS_SHOW_BACKGROUND == cellTableStyle->mEmptyCells)
-      && aCell->GetContentEmpty()) {
+      && aCell->GetContentEmpty() && !mIsBorderCollapse) {
     return NS_OK;
   }
 
@@ -624,7 +623,7 @@ TableBackgroundPainter::PaintCell(nsTableCellFrame* aCell,
                                           mCols[colIndex].mColGroup->mRect + mRenderPt,
                                           *mCols[colIndex].mColGroup->mBackground,
                                           *mCols[colIndex].mColGroup->mBorder,
-                                          mZeroPadding, PR_TRUE, &mCellRect);
+                                          0, &mCellRect);
   }
 
   //Paint column background
@@ -634,7 +633,7 @@ TableBackgroundPainter::PaintCell(nsTableCellFrame* aCell,
                                           mCols[colIndex].mCol.mRect + mRenderPt,
                                           *mCols[colIndex].mCol.mBackground,
                                           *mCols[colIndex].mCol.mBorder,
-                                          mZeroPadding, PR_TRUE, &mCellRect);
+                                          0, &mCellRect);
   }
 
   //Paint row group background
@@ -643,7 +642,7 @@ TableBackgroundPainter::PaintCell(nsTableCellFrame* aCell,
                                           mRowGroup.mFrame, mDirtyRect,
                                           mRowGroup.mRect + mRenderPt,
                                           *mRowGroup.mBackground, *mRowGroup.mBorder,
-                                          mZeroPadding, PR_TRUE, &mCellRect);
+                                          0, &mCellRect);
   }
 
   //Paint row background
@@ -652,7 +651,7 @@ TableBackgroundPainter::PaintCell(nsTableCellFrame* aCell,
                                           mRow.mFrame, mDirtyRect,
                                           mRow.mRect + mRenderPt,
                                           *mRow.mBackground, *mRow.mBorder,
-                                          mZeroPadding, PR_TRUE, &mCellRect);
+                                          0, &mCellRect);
   }
 
   //Paint cell background in border-collapse unless we're just passing

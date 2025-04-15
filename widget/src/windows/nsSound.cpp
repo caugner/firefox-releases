@@ -40,7 +40,7 @@
 #include "nscore.h"
 #include "plstr.h"
 #include <stdio.h>
-
+#include "nsString.h"
 #include <windows.h>
 
 // mmsystem.h is needed to build with WIN32_LEAN_AND_MEAN
@@ -124,8 +124,7 @@ NS_IMETHODIMP nsSound::OnStreamComplete(nsIStreamLoader *aLoader,
       data = mLastSound;
       flags |= SND_ASYNC;
     }
-
-    ::PlaySound(reinterpret_cast<const char*>(data), 0, flags);
+    ::PlaySoundW(reinterpret_cast<LPCWSTR>(data), 0, flags);
   }
 
   return NS_OK;
@@ -165,14 +164,28 @@ NS_IMETHODIMP nsSound::PlaySystemSound(const nsAString &aSoundAlias)
 {
   PurgeLastSound();
 
-  if (aSoundAlias.EqualsLiteral("_moz_mailbeep")) {
-    ::PlaySound("MailBeep", nsnull, SND_ALIAS | SND_ASYNC);
+  if (!NS_IsMozAliasSound(aSoundAlias)) {
+    ::PlaySoundW(PromiseFlatString(aSoundAlias).get(), nsnull,
+                 SND_NODEFAULT | SND_ALIAS | SND_ASYNC);
+    return NS_OK;
   }
-  else {
-    nsCAutoString nativeSoundAlias;
-    NS_CopyUnicodeToNative(aSoundAlias, nativeSoundAlias);
-    ::PlaySound(nativeSoundAlias.get(), nsnull, SND_ALIAS | SND_ASYNC);
-  }
+
+  // Win32 plays no sounds at NS_SYSSOUND_PROMPT_DIALOG and
+  // NS_SYSSOUND_SELECT_DIALOG.
+  const wchar_t *sound = nsnull;
+  if (aSoundAlias.Equals(NS_SYSSOUND_MAIL_BEEP))
+    sound = L"MailBeep";
+  else if (aSoundAlias.Equals(NS_SYSSOUND_CONFIRM_DIALOG))
+    sound = L"SystemQuestion";
+  else if (aSoundAlias.Equals(NS_SYSSOUND_ALERT_DIALOG))
+    sound = L"SystemExclamation";
+  else if (aSoundAlias.Equals(NS_SYSSOUND_MENU_EXECUTE))
+    sound = L"MenuCommand";
+  else if (aSoundAlias.Equals(NS_SYSSOUND_MENU_POPUP))
+    sound = L"MenuPopup";
+
+  if (sound)
+    ::PlaySoundW(sound, nsnull, SND_NODEFAULT | SND_ALIAS | SND_ASYNC);
 
   return NS_OK;
 }

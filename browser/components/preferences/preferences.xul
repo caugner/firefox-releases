@@ -84,7 +84,7 @@
 #endif
             xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
 #ifdef USE_WIN_TITLE_STYLE
-            style="&prefWin.styleWin2;">
+            style="&prefWin.styleWin3;">
 #else
 #ifdef XP_MACOSX
             style="&prefWin.styleMac2;">

@@ -113,7 +113,7 @@
 //
 // The JS class for XBLBinding
 //
-JS_STATIC_DLL_CALLBACK(void)
+static void
 XBLFinalize(JSContext *cx, JSObject *obj)
 {
   nsIXBLDocumentInfo* docInfo =
@@ -124,7 +124,7 @@ XBLFinalize(JSContext *cx, JSObject *obj)
   c->Drop();
 }
 
-JS_STATIC_DLL_CALLBACK(JSBool)
+static JSBool
 XBLResolve(JSContext *cx, JSObject *obj, jsval id, uintN flags,
            JSObject **objp)
 {
@@ -206,6 +206,7 @@ XBLResolve(JSContext *cx, JSObject *obj, jsval id, uintN flags,
   // Now we either resolve or fail
   PRBool didInstall;
   nsresult rv = field->InstallField(context, origObj,
+                                    content->NodePrincipal(),
                                     protoBinding->DocURI(),
                                     &didInstall);
   if (NS_FAILED(rv)) {
@@ -282,12 +283,15 @@ nsXBLBinding::nsXBLBinding(nsXBLPrototypeBinding* aBinding)
 
 nsXBLBinding::~nsXBLBinding(void)
 {
+  if (mContent) {
+    nsXBLBinding::UninstallAnonymousContent(mContent->GetOwnerDoc(), mContent);
+  }
   delete mInsertionPointTable;
   nsIXBLDocumentInfo* info = mPrototypeBinding->XBLDocumentInfo();
   NS_RELEASE(info);
 }
 
-PR_STATIC_CALLBACK(PLDHashOperator)
+static PLDHashOperator
 TraverseKey(nsISupports* aKey, nsInsertionPointList* aData, void* aClosure)
 {
   nsCycleCollectionTraversalCallback &cb = 
@@ -306,6 +310,10 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(nsXBLBinding)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_NATIVE(nsXBLBinding)
   // XXX Probably can't unlink mPrototypeBinding->XBLDocumentInfo(), because
   //     mPrototypeBinding is weak.
+  if (tmp->mContent) {
+    nsXBLBinding::UninstallAnonymousContent(tmp->mContent->GetOwnerDoc(),
+                                            tmp->mContent);
+  }
   NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mContent)
   // XXX What about mNextBinding and mInsertionPointTable?
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
@@ -360,6 +368,8 @@ nsXBLBinding::InstallAnonymousContent(nsIContent* aAnonParent, nsIContent* aElem
       return;
     }        
 
+    child->SetFlags(NODE_IS_ANONYMOUS);
+
 #ifdef MOZ_XUL
     // To make XUL templates work (and other goodies that happen when
     // an element is added to a XUL document), we need to notify the
@@ -367,6 +377,29 @@ nsXBLBinding::InstallAnonymousContent(nsIContent* aAnonParent, nsIContent* aElem
     nsCOMPtr<nsIXULDocument> xuldoc(do_QueryInterface(doc));
     if (xuldoc)
       xuldoc->AddSubtreeToDocument(child);
+#endif
+  }
+}
+
+void
+nsXBLBinding::UninstallAnonymousContent(nsIDocument* aDocument,
+                                        nsIContent* aAnonParent)
+{
+  nsAutoScriptBlocker scriptBlocker;
+  // Hold a strong ref while doing this, just in case.
+  nsCOMPtr<nsIContent> anonParent = aAnonParent;
+#ifdef MOZ_XUL
+  nsCOMPtr<nsIXULDocument> xuldoc =
+    do_QueryInterface(aDocument);
+#endif
+  PRUint32 childCount = aAnonParent->GetChildCount();
+  for (PRUint32 i = 0; i < childCount; ++i) {
+    nsIContent* child = aAnonParent->GetChildAt(i);
+    child->UnbindFromTree();
+#ifdef MOZ_XUL
+    if (xuldoc) {
+      xuldoc->RemoveSubtreeFromDocument(child);
+    }
 #endif
   }
 }
@@ -407,7 +440,7 @@ struct ContentListData : public EnumData {
   {}
 };
 
-PR_STATIC_CALLBACK(PLDHashOperator)
+static PLDHashOperator
 BuildContentLists(nsISupports* aKey,
                   nsAutoPtr<nsInsertionPointList>& aData,
                   void* aClosure)
@@ -500,7 +533,7 @@ BuildContentLists(nsISupports* aKey,
   return PL_DHASH_NEXT;
 }
 
-PR_STATIC_CALLBACK(PLDHashOperator)
+static PLDHashOperator
 RealizeDefaultContent(nsISupports* aKey,
                       nsAutoPtr<nsInsertionPointList>& aData,
                       void* aClosure)
@@ -561,7 +594,7 @@ RealizeDefaultContent(nsISupports* aKey,
   return PL_DHASH_NEXT;
 }
 
-PR_STATIC_CALLBACK(PLDHashOperator)
+static PLDHashOperator
 ChangeDocumentForDefaultContent(nsISupports* aKey,
                                 nsAutoPtr<nsInsertionPointList>& aData,
                                 void* aClosure)
@@ -724,6 +757,9 @@ nsXBLBinding::GenerateAnonymousContent()
                 if (ni->NamespaceID() != kNameSpaceID_XUL ||
                     (localName != nsGkAtoms::observes &&
                      localName != nsGkAtoms::_template)) {
+                  // Undo InstallAnonymousContent
+                  UninstallAnonymousContent(doc, mContent);
+
                   // Kill all anonymous content.
                   mContent = nsnull;
                   bindingManager->SetContentListFor(mBoundElement, nsnull);
@@ -1045,6 +1081,9 @@ nsXBLBinding::ChangeDocument(nsIDocument* aOldDocument, nsIDocument* aNewDocumen
           if (context) {
             JSContext *cx = (JSContext *)context->GetNativeContext();
  
+            nsCxPusher pusher;
+            pusher.Push(cx);
+
             nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
             nsresult rv = nsContentUtils::XPConnect()->
               WrapNative(cx, global->GetGlobalJSObject(),
@@ -1137,20 +1176,7 @@ nsXBLBinding::ChangeDocument(nsIDocument* aOldDocument, nsIDocument* aNewDocumen
         mInsertionPointTable->Enumerate(ChangeDocumentForDefaultContent,
                                         nsnull);
 
-#ifdef MOZ_XUL
-      nsCOMPtr<nsIXULDocument> xuldoc(do_QueryInterface(aOldDocument));
-#endif
-
-      nsAutoScriptBlocker scriptBlocker;
-      anonymous->UnbindFromTree(); // Kill it.
-
-#ifdef MOZ_XUL
-      // To make XUL templates work (and other XUL-specific stuff),
-      // we'll need to notify it using its add & remove APIs. Grab the
-      // interface now...
-      if (xuldoc)
-        xuldoc->RemoveSubtreeFromDocument(anonymous);
-#endif
+      nsXBLBinding::UninstallAnonymousContent(aOldDocument, anonymous);
     }
 
     // Make sure that henceforth we don't claim that mBoundElement's children
@@ -1373,7 +1399,21 @@ nsXBLBinding::AllowScripts()
   PRBool canExecute;
   nsresult rv =
     mgr->CanExecuteScripts(cx, ourDocument->NodePrincipal(), &canExecute);
-  return NS_SUCCEEDED(rv) && canExecute;
+  if (NS_FAILED(rv) || !canExecute) {
+    return PR_FALSE;
+  }
+
+  // Now one last check: make sure that we're not allowing a privilege
+  // escalation here.
+  PRBool haveCert;
+  doc->NodePrincipal()->GetHasCertificate(&haveCert);
+  if (!haveCert) {
+    return PR_TRUE;
+  }
+
+  PRBool subsumes;
+  rv = ourDocument->NodePrincipal()->Subsumes(doc->NodePrincipal(), &subsumes);
+  return NS_SUCCEEDED(rv) && subsumes;
 }
 
 void

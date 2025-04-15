@@ -66,16 +66,12 @@ REQUIRES = xpcom \
 		  intl \
 		  exthandler \
 		  appshell \
-                  lcms \
+		  qcms \
 		  thebes \
 		  js \
 		  xpconnect \
 		  imglib2 \
 		  $(NULL)
-
-ifdef MOZ_ENABLE_GLITZ
-REQUIRES += glitz glitzagl
-endif
 
 ifdef ACCESSIBILITY
 REQUIRES += accessibility
@@ -84,8 +80,6 @@ endif
 EXPORTS = \
 		mozView.h \
 		nsChangeObserver.h \
-		nsIMenu.h \
-		nsIMenuItem.h \
 		$(NULL)
 
 CMMSRCS = \
@@ -95,6 +89,7 @@ CMMSRCS = \
 		nsMenuBarX.mm \
 		nsMenuItemX.mm \
 		nsMenuItemIconX.mm \
+		nsMenuUtilsX.mm \
 		nsFilePicker.mm \
 		nsDragService.mm \
 		nsToolkit.mm \
@@ -130,7 +125,7 @@ EXTRA_DSO_LDOPTS += \
 		$(call EXPAND_LIBNAME_PATH,gkgfx,$(DEPTH)/gfx/src) \
 		$(MOZ_COMPONENT_LIBS) \
 		-lthebes \
-		$(LCMS_LIBS) \
+		$(QCMS_LIBS) \
 		$(NULL)
 
 include $(topsrcdir)/config/rules.mk

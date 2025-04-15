@@ -85,13 +85,12 @@ public:
     PRBool TestCharacterMap(PRUint32 aCh);
 
     MacOSFontEntry* GetFontEntry();
+    PRBool Valid() { return mIsValid; }
 
 protected:
     const gfxFontStyle *mFontStyle;
 
     ATSUStyle mATSUStyle;
-
-    nsRefPtr<MacOSFontEntry> mFontEntry;
 
     PRBool mHasMirroring;
     PRBool mHasMirroringLookedUp;
@@ -114,7 +113,8 @@ protected:
 class THEBES_API gfxAtsuiFontGroup : public gfxFontGroup {
 public:
     gfxAtsuiFontGroup(const nsAString& families,
-                      const gfxFontStyle *aStyle);
+                      const gfxFontStyle *aStyle,
+                      gfxUserFontSet *aUserFontSet);
     virtual ~gfxAtsuiFontGroup() {};
 
     virtual gfxFontGroup *Copy(const gfxFontStyle *aStyle);
@@ -133,12 +133,22 @@ public:
                              PRBool aWrapped, gfxTextRun *aTextRun);
 
     gfxAtsuiFont* GetFontAt(PRInt32 aFontIndex) {
+        // If it turns out to be hard for all clients that cache font
+        // groups to call UpdateFontList at appropriate times, we could
+        // instead consider just calling UpdateFontList from someplace
+        // more central (such as here).
+        NS_ASSERTION(!mUserFontSet || mCurrGeneration == GetGeneration(),
+                     "Whoever was caching this font group should have "
+                     "called UpdateFontList on it");
+
         return static_cast<gfxAtsuiFont*>(static_cast<gfxFont*>(mFonts[aFontIndex]));
     }
 
     PRBool HasFont(ATSUFontID fid);
 
-    inline gfxAtsuiFont* WhichFontSupportsChar(nsTArray< nsRefPtr<gfxFont> >& aFontList, PRUint32 aCh) {
+    inline gfxAtsuiFont* WhichFontSupportsChar(nsTArray< nsRefPtr<gfxFont> >& aFontList, 
+                                               PRUint32 aCh)
+    {
         PRUint32 len = aFontList.Length();
         for (PRUint32 i = 0; i < len; i++) {
             gfxAtsuiFont* font = static_cast<gfxAtsuiFont*>(aFontList.ElementAt(i).get());
@@ -148,10 +158,12 @@ public:
         return nsnull;
     }
 
-   // search through pref fonts for a character, return nsnull if no matching pref font
-   already_AddRefed<gfxAtsuiFont> WhichPrefFontSupportsChar(PRUint32 aCh);
-   
-   already_AddRefed<gfxAtsuiFont> FindFontForChar(PRUint32 aCh, PRUint32 aPrevCh, PRUint32 aNextCh, gfxAtsuiFont* aPrevMatchedFont);
+    // search through pref fonts for a character, return nsnull if no matching pref font
+    already_AddRefed<gfxFont> WhichPrefFontSupportsChar(PRUint32 aCh);
+
+    already_AddRefed<gfxFont> WhichSystemFontSupportsChar(PRUint32 aCh);
+
+    void UpdateFontList();
 
 protected:
     static PRBool FindATSUFont(const nsAString& aName,
@@ -181,6 +193,12 @@ protected:
                        const PRUnichar *aString, PRUint32 aLength,
                        PRUint32 aLayoutStart, PRUint32 aLayoutLength,
                        PRUint32 aOffsetInTextRun, PRUint32 aLengthInTextRun);
+
+    /**
+     * Function to reinitialize our mFonts array and any other data
+     * that depends on mFonts.
+     */
+    void InitFontList();
     
     // cache the most recent pref font to avoid general pref font lookup
     nsRefPtr<MacOSFamilyEntry>    mLastPrefFamily;

@@ -77,7 +77,6 @@ tier_app_dirs += xulrunner
 
 installer:
 	@echo "XULRunner doesn't have an installer yet."
-	@exit 1
 
 package:
 	@$(MAKE) -C xulrunner/installer
@@ -90,3 +89,11 @@ sdk:
 
 distclean::
 	@$(MAKE) -C xulrunner/installer distclean
+
+upload::
+	@$(MAKE) -C xulrunner/installer upload
+
+ifeq ($(OS_TARGET),Linux)
+deb: package
+	@$(MAKE) -C xulrunner/installer deb
+endif

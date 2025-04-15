@@ -57,7 +57,6 @@ public:
 struct PRLibrary;
 
 struct nsPluginInfo {
-	PRUint32 fPluginInfoSize;	// indicates how large the structure is currently.
 	char* fName;				// name of the plugin
 	char* fDescription;			// etc.
 	PRUint32 fVariantCount;
@@ -66,6 +65,7 @@ struct nsPluginInfo {
 	char** fExtensionArray;
 	char* fFileName;
 	char* fFullPath;
+	char* fVersion;
 #ifdef XP_MACOSX
   PRBool fBundle;
 #endif

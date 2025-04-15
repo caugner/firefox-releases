@@ -298,6 +298,7 @@ function showView(aView) {
                         ["availableUpdateURL", "?availableUpdateURL"],
                         ["availableUpdateVersion", "?availableUpdateVersion"],
                         ["blocklisted", "?blocklisted"],
+                        ["blocklistedsoft", "?blocklistedsoft"],
                         ["compatible", "?compatible"],
                         ["description", "?description"],
                         ["downloadURL", "?downloadURL"],
@@ -329,7 +330,6 @@ function showView(aView) {
   var showCheckUpdatesAll = true;
   var showInstallUpdatesAll = false;
   var showSkip = false;
-  var showContinue = false;
   switch (aView) {
     case "search":
       var bindingList = [ [ ["action", "?action"],
@@ -355,7 +355,7 @@ function showView(aView) {
                     [ ["statusMessage", "true", null] ] ];
       var displays = [ "richlistitem", "vbox" ];
       showCheckUpdatesAll = false;
-      document.getElementById("searchbox").disabled = isOffline("offlineSearchMsg");
+      document.getElementById("searchfield").disabled = isOffline("offlineSearchMsg");
       break;
     case "extensions":
       prefURL = PREF_EXTENSIONS_GETMOREEXTENSIONSURL;
@@ -385,6 +385,7 @@ function showView(aView) {
                         ["availableUpdateVersion", "?availableUpdateVersion"],
                         ["availableUpdateInfo", "?availableUpdateInfo"],
                         ["blocklisted", "?blocklisted"],
+                        ["blocklistedsoft", "?blocklistedsoft"],
                         ["homepageURL", "?homepageURL"],
                         ["iconURL", "?iconURL"],
                         ["internalName", "?internalName"],
@@ -406,13 +407,12 @@ function showView(aView) {
       showInstallFile = false;
       showCheckUpdatesAll = false;
       showInstallUpdatesAll = false;
-      if (gUpdatesOnly)
-        showContinue = true;
       bindingList = [ [ ["aboutURL", "?aboutURL"],
                         ["addonID", "?addonID"],
                         ["availableUpdateURL", "?availableUpdateURL"],
                         ["availableUpdateVersion", "?availableUpdateVersion"],
                         ["blocklisted", "?blocklisted"],
+                        ["blocklistedsoft", "?blocklistedsoft"],
                         ["compatible", "?compatible"],
                         ["description", "?description"],
                         ["downloadURL", "?downloadURL"],
@@ -469,7 +469,6 @@ function showView(aView) {
   document.getElementById("checkUpdatesAllButton").hidden = !showCheckUpdatesAll;
   document.getElementById("installUpdatesAllButton").hidden = !showInstallUpdatesAll;
   document.getElementById("skipDialogButton").hidden = !showSkip;
-  document.getElementById("continueDialogButton").hidden = !showContinue;
   document.getElementById("themePreviewArea").hidden = !isThemes;
   document.getElementById("themeSplitter").hidden = !isThemes;
   document.getElementById("showUpdateInfoButton").hidden = aView != "updates";
@@ -487,11 +486,6 @@ function showView(aView) {
     window.setTimeout(function () { button.focus(); }, 0);
   } else
     document.getElementById("installUpdatesAllButton").removeAttribute("default");
-
-  if (showContinue)
-    document.getElementById("continueDialogButton").setAttribute("default", "true");
-  else
-    document.getElementById("continueDialogButton").removeAttribute("default");
 
   if (isThemes)
     onAddonSelect();
@@ -643,9 +637,9 @@ function displaySearchThrobber(aKey) {
 
 // Clears the search box and updates the result list
 function resetSearch() {
-  var searchbox = document.getElementById("searchbox");
-  searchbox.value = "";
-  searchbox.focus();
+  var searchfield = document.getElementById("searchfield");
+  searchfield.value = "";
+  searchfield.focus();
   retrieveRepositoryAddons("");
 }
 
@@ -694,13 +688,9 @@ function displaySearchResults(addons, count, isRecommended) {
                      gRDF.GetLiteral("header-recommended"),
                      true);
 
-    // Case insensitive sort
+    // Locale sensitive sort
     function compare(a, b) {
-      if (a.name.toLowerCase() < b.name.toLowerCase())
-        return -1;
-      if (a.name.toLowerCase() > b.name.toLowerCase())
-        return 1;
-      return 0;
+      return String.localeCompare(a.name, b.name);
     }
     addons.sort(compare);
   }
@@ -798,9 +788,8 @@ function displaySearchResults(addons, count, isRecommended) {
                      gRDF.GetResource(PREFIX_NS_EM + "count"),
                      gRDF.GetIntLiteral(count),
                      true);
-    var searchbox = document.getElementById("searchbox");
-    // The value attribute will be the persisted value of the last search run
-    url = gAddonRepository.getSearchURL(searchbox.getAttribute("value"));
+    var searchfield = document.getElementById("searchfield");
+    url = gAddonRepository.getSearchURL(searchfield.value);
   }
   gSearchDS.Assert(labelNode,
                    gRDF.GetResource(PREFIX_NS_EM + "link"),
@@ -875,7 +864,7 @@ function initSearchDS() {
   var ioService = Components.classes["@mozilla.org/network/io-service;1"]
                             .getService(nsIIOService);
   if (!ioService.offline)
-    retrieveRepositoryAddons(document.getElementById("searchbox").value);
+    retrieveRepositoryAddons(document.getElementById("searchfield").value);
 }
 
 function initPluginsDS()
@@ -900,13 +889,9 @@ function rebuildPluginsDS()
 
   cleanDataSource(gPluginsDS, rootctr);
 
-  // Case insensitive sort
+  // Locale sensitive sort
   function compare(a, b) {
-    if (a.name.toLowerCase() < b.name.toLowerCase())
-      return -1;
-    if (a.name.toLowerCase() > b.name.toLowerCase())
-      return 1;
-    return 0;
+    return String.localeCompare(a.name, b.name);
   }
   plugins.sort(compare);
 
@@ -927,6 +912,7 @@ function rebuildPluginsDS()
         homepageURL = /<A\s+HREF=["']?([^>"'\s]*)/i.exec(plugin.description)[1];
 
       gPlugins[name][desc] = { filename    : plugin.filename,
+                               version     : plugin.version,
                                homepageURL : homepageURL,
                                disabled    : plugin.disabled,
                                blocklisted : plugin.blocklisted,
@@ -935,6 +921,8 @@ function rebuildPluginsDS()
     gPlugins[name][desc].plugins.push(plugin);
   }
 
+  var blocklist = Components.classes["@mozilla.org/extensions/blocklist;1"]
+                            .getService(Components.interfaces.nsIBlocklistService);
   for (var pluginName in gPlugins) {
     for (var pluginDesc in gPlugins[pluginName]) {
       plugin = gPlugins[pluginName][pluginDesc];
@@ -943,6 +931,10 @@ function rebuildPluginsDS()
       gPluginsDS.Assert(pluginNode,
                         gRDF.GetResource(PREFIX_NS_EM + "name"),
                         gRDF.GetLiteral(pluginName),
+                        true);
+      gPluginsDS.Assert(pluginNode,
+                        gRDF.GetResource(PREFIX_NS_EM + "version"),
+                        gRDF.GetLiteral(plugin.version),
                         true);
       gPluginsDS.Assert(pluginNode,
                         gRDF.GetResource(PREFIX_NS_EM + "addonID"),
@@ -965,6 +957,12 @@ function rebuildPluginsDS()
       gPluginsDS.Assert(pluginNode,
                         gRDF.GetResource(PREFIX_NS_EM + "blocklisted"),
                         gRDF.GetLiteral(plugin.blocklisted ? "true" : "false"),
+                        true);
+      var softblocked = blocklist.getPluginBlocklistState(plugin) == 
+                        Components.interfaces.nsIBlocklistService.STATE_SOFTBLOCKED;
+      gPluginsDS.Assert(pluginNode,
+                        gRDF.GetResource(PREFIX_NS_EM + "blocklistedsoft"),
+                        gRDF.GetLiteral(softblocked ? "true" : "false"),
                         true);
       gPluginsDS.Assert(pluginNode,
                         gRDF.GetResource(PREFIX_NS_EM + "compatible"),
@@ -1165,7 +1163,7 @@ function Startup()
            !document.getElementById(viewGroup.getAttribute("last-selected") + "-view").hidden)
     showView(viewGroup.getAttribute("last-selected"));
   else
-    showView("search");
+    showView(gShowGetAddonsPane ? "search" : "extensions");
 
   if (gExtensionsView.selectedItem)
     gExtensionsView.scrollBoxObject.scrollToElement(gExtensionsView.selectedItem);
@@ -1346,8 +1344,12 @@ XPInstallDownloadManager.prototype = {
   {
   },
 
+  _failed: false,
   onInstallEnded: function(aAddon, aStatus)
   {
+    if (aStatus < 0)
+      this._failed = true;
+
     // From nsInstall.h
     // USER_CANCELLED = -210
     // All other xpinstall errors are <= -200
@@ -1375,8 +1377,15 @@ XPInstallDownloadManager.prototype = {
     gInstalling = false;
     gExtensionManager.sortTypeByProperty(nsIUpdateItem.TYPE_ANY, "name", true);
     if (gUpdatesOnly) {
-      setElementDisabledByID("cmd_continue", false);
-      document.getElementById("continueDialogButton").focus();
+      if (this._failed) {
+        let continueButton = document.getElementById("continueDialogButton");
+        setElementDisabledByID("cmd_continue", false);
+        continueButton.hidden = false;
+        continueButton.setAttribute("default", "true");
+        continueButton.focus();
+      } else {
+        setTimeout(closeEM, 2000);
+      }
     }
     else {
       updateOptionalViews();
@@ -1710,8 +1719,10 @@ var gUpdateContextMenus = ["menuitem_homepage", "menuitem_about", "menuseparator
                            "menuitem_installUpdate", "menuitem_includeUpdate"];
 // For Firefox don't display context menuitems that can open a browser window.
 var gUpdateContextMenusNoBrowser = ["menuitem_installUpdate", "menuitem_includeUpdate"];
-var gInstallContextMenus = ["menuitem_homepage", "menuitem_about"];
-var gSearchContextMenus = ["menuitem_learnMore", "menuitem_installSearchResult"];
+var gInstallContextMenus = ["menuitem_homepage", "menuitem_about", "menuseparator_1",
+                            "menuitem_cancelUpgrade", "menuitem_cancelInstall"];
+var gSearchContextMenus = ["menuitem_learnMore", "menuitem_installSearchResult",
+                           "menuseparator_1", "menuitem_cancelInstall"];
 
 function buildContextMenu(aEvent)
 {
@@ -1747,29 +1758,43 @@ function buildContextMenu(aEvent)
     popup.appendChild(clonedMenu);
   }
 
-  // All views support about
-  var menuitem_about = document.getElementById("menuitem_about_clone");
-  var name = selectedItem ? selectedItem.getAttribute("name") : "";
-  menuitem_about.setAttribute("label", getExtensionString("aboutAddon", [name]));
+  // All views (but search and plugins) support about
+  if (gView != "search" && gView != "plugins") {
+    var menuitem_about = document.getElementById("menuitem_about_clone");
+    var name = selectedItem ? selectedItem.getAttribute("name") : "";
+    menuitem_about.setAttribute("label", getExtensionString("aboutAddon", [name]));
+  }
+
+  // Make sure all commands are up to date
+  gExtensionsViewController.onCommandUpdate();
+
+  // Some flags needed later
+  var canCancelInstall = gExtensionsViewController.isCommandEnabled("cmd_cancelInstall");
+  var canCancelUpgrade = gExtensionsViewController.isCommandEnabled("cmd_cancelUpgrade");
+  var canReallyEnable = gExtensionsViewController.isCommandEnabled("cmd_reallyEnable");
+  var canCancelUninstall = gExtensionsViewController.isCommandEnabled("cmd_cancelUninstall");
 
   /* When an update or install is pending allow canceling the update or install
      and don't allow uninstall. When an uninstall is pending allow canceling the
      uninstall.*/
-  if (gView != "updates" && gView != "installs") {
-    var canEnable = gExtensionsViewController.isCommandEnabled("cmd_cancelUninstall");
-    document.getElementById("menuitem_cancelUninstall_clone").hidden = !canEnable;
-    var canCancelInstall = gExtensionsViewController.isCommandEnabled("cmd_cancelInstall");
+  if (gView != "updates") {
     document.getElementById("menuitem_cancelInstall_clone").hidden = !canCancelInstall;
-    var canCancelUpgrade = gExtensionsViewController.isCommandEnabled("cmd_cancelUpgrade");
-    document.getElementById("menuitem_cancelUpgrade_clone").hidden = !canCancelUpgrade;
-    document.getElementById("menuitem_uninstall_clone").hidden = canEnable || canCancelInstall || canCancelUpgrade;
+
+    if (gView != "installs" && gView != "search") {
+      document.getElementById("menuitem_cancelUninstall_clone").hidden = !canCancelUninstall;
+      document.getElementById("menuitem_uninstall_clone").hidden = canCancelUninstall ||
+                                                                   canCancelInstall ||
+                                                                   canCancelUpgrade;
+    }
+
+    if (gView != "search")
+      document.getElementById("menuitem_cancelUpgrade_clone").hidden = !canCancelUpgrade;
   }
 
   switch (gView) {
   case "extensions":
-    canEnable = gExtensionsViewController.isCommandEnabled("cmd_reallyEnable");
-    document.getElementById("menuitem_enable_clone").hidden = !canEnable;
-    document.getElementById("menuitem_disable_clone").hidden = canEnable;
+    document.getElementById("menuitem_enable_clone").hidden = !canReallyEnable;
+    document.getElementById("menuitem_disable_clone").hidden = canReallyEnable;
     document.getElementById("menuitem_useTheme_clone").hidden = true;
     break;
   case "themes":
@@ -1789,9 +1814,8 @@ function buildContextMenu(aEvent)
     document.getElementById("menuitem_uninstall_clone").hidden = true;
     document.getElementById("menuitem_checkUpdate_clone").hidden = true;
   case "locales":
-    canEnable = gExtensionsViewController.isCommandEnabled("cmd_reallyEnable");
-    document.getElementById("menuitem_enable_clone").hidden = !canEnable;
-    document.getElementById("menuitem_disable_clone").hidden = canEnable;
+    document.getElementById("menuitem_enable_clone").hidden = !canReallyEnable;
+    document.getElementById("menuitem_disable_clone").hidden = canReallyEnable;
     document.getElementById("menuitem_useTheme_clone").hidden = true;
     document.getElementById("menuitem_options_clone").hidden = true;
     break;
@@ -1801,6 +1825,14 @@ function buildContextMenu(aEvent)
     menuitem_includeUpdate.setAttribute("checked", includeUpdate.checked ? "true" : "false");
     break;
   case "installs":
+    // Hides the separator if nothing is below it
+    document.getElementById("menuseparator_1_clone").hidden = !canCancelInstall && !canCancelUpgrade;
+    break;
+  case "search":
+    var canInstall = gExtensionsViewController.isCommandEnabled("cmd_installSearchResult");
+    document.getElementById("menuitem_installSearchResult_clone").hidden = !canInstall;
+    // Hides the separator if nothing is below it
+    document.getElementById("menuseparator_1_clone").hidden = !canCancelInstall;
     break;
   }
 
@@ -1964,9 +1996,9 @@ const gAddonsMsgObserver = {
       ioService.offline = false;
       // If no results have been retrieved start pulling some
       if (!gRetrievedResults)
-        retrieveRepositoryAddons(document.getElementById("searchbox").value);
+        retrieveRepositoryAddons(document.getElementById("searchfield").value);
       if (gView == "search")
-        document.getElementById("searchbox").disabled = false;
+        document.getElementById("searchfield").disabled = false;
       break;
     case "addons-message-dismiss":
       break;
@@ -2083,6 +2115,7 @@ function updateOptionalViews() {
   var elements = ctr.GetElements();
   var showLocales = false;
   var showUpdates = false;
+  var showThemes = false;
   var showInstalls = gInstalling;
   gPendingActions = false;
 
@@ -2091,12 +2124,14 @@ function updateOptionalViews() {
 
   while (elements.hasMoreElements()) {
     var e = elements.getNext().QueryInterface(Components.interfaces.nsIRDFResource);
-    if (!showLocales) {
+    if (!showLocales || !showThemes) {
       var typeArc = gRDF.GetResource(PREFIX_NS_EM + "type");
       var type = ds.GetTarget(e, typeArc, true);
       if (type && type instanceof Components.interfaces.nsIRDFInt) {
         if (type.Value & nsIUpdateItem.TYPE_LOCALE)
           showLocales = true;
+        else if (type.Value & nsIUpdateItem.TYPE_THEME)
+          showThemes = true;
       }
     }
 
@@ -2131,9 +2166,40 @@ function updateOptionalViews() {
       }
     }
   }
+
   document.getElementById("locales-view").hidden = !showLocales;
   document.getElementById("updates-view").hidden = !showUpdates;
   document.getElementById("installs-view").hidden = !showInstalls;
+  document.getElementById("themes-view").hidden = !showThemes;
+  updateVisibilityFlags();
+
+  // fall back to the previously selected view or "search" since "installs" became hidden
+  if (!showInstalls && gView == "installs") {
+    var viewGroup = document.getElementById("viewGroup");
+    var lastSelectedView = "search";
+
+    if (viewGroup.hasAttribute("last-selected"))
+      lastSelectedView = viewGroup.getAttribute("last-selected");
+
+    showView(lastSelectedView);
+  }
+}
+
+function updateVisibilityFlags() {
+  let children = document.getElementById("installs-view").parentNode._getRadioChildren();
+  let firstVisible = null, lastVisible = null;
+  children.forEach(function(child) {
+    child.removeAttribute("first-visible");
+    child.removeAttribute("last-visible");
+    if (!child.hidden) {
+      firstVisible = firstVisible || child;
+      lastVisible = child;
+    }
+  });
+  if (firstVisible) {
+    firstVisible.setAttribute("first-visible", "true");
+    lastVisible.setAttribute("last-visible", "true");
+  }
 }
 
 function updateGlobalCommands() {
@@ -2189,7 +2255,7 @@ function hideUpdateInfo()
 }
 
 function checkUpdatesAll() {
-  if (isOffline("offlineUpdateMsg"))
+  if (isOffline("offlineUpdateMsg2"))
     return;
 
   if (!isXPInstallEnabled())
@@ -2217,7 +2283,7 @@ function checkUpdatesAll() {
 }
 
 function installUpdatesAll() {
-  if (isOffline("offlineUpdateMsg"))
+  if (isOffline("offlineUpdateMsg2"))
     return;
 
   if (!isXPInstallEnabled())
@@ -2353,7 +2419,8 @@ var gExtensionsViewController = {
     }
     switch (aCommand) {
     case "cmd_installSearchResult":
-      return true;
+      return selectedItem.getAttribute("action") == "" ||
+             selectedItem.getAttribute("action") == "failed";
     case "cmd_useTheme":
       return selectedItem.type == nsIUpdateItem.TYPE_THEME &&
              !selectedItem.isDisabled &&
@@ -2381,7 +2448,8 @@ var gExtensionsViewController = {
     case "cmd_cancelUninstall":
       return selectedItem.opType == OP_NEEDS_UNINSTALL;
     case "cmd_cancelInstall":
-      return selectedItem.opType == OP_NEEDS_INSTALL;
+      return selectedItem.getAttribute("action") == "installed" &&
+             gView == "search" || selectedItem.opType == OP_NEEDS_INSTALL;
     case "cmd_cancelUpgrade":
       return selectedItem.opType == OP_NEEDS_UPGRADE;
     case "cmd_checkUpdate":
@@ -2402,7 +2470,7 @@ var gExtensionsViewController = {
       return selectedItem.type != nsIUpdateItem.TYPE_THEME &&
              (selectedItem.isDisabled ||
              (!selectedItem.opType ||
-             selectedItem.opType == "needs-disable")) &&
+             selectedItem.opType == OP_NEEDS_DISABLE)) &&
              !selectedItem.isBlocklisted &&
              (!gCheckUpdateSecurity || selectedItem.providesUpdatesSecurely) &&
              (!gCheckCompat || selectedItem.isCompatible) &&
@@ -2566,7 +2634,7 @@ var gExtensionsViewController = {
 
     cmd_checkUpdate: function (aSelectedItem)
     {
-      if (isOffline("offlineUpdateMsg"))
+      if (isOffline("offlineUpdateMsg2"))
         return;
 
       if (!isXPInstallEnabled())
@@ -2582,7 +2650,7 @@ var gExtensionsViewController = {
 
     cmd_installUpdate: function (aSelectedItem)
     {
-      if (isOffline("offlineUpdateMsg"))
+      if (isOffline("offlineUpdateMsg2"))
         return;
 
       if (!isXPInstallEnabled())
@@ -2670,8 +2738,14 @@ var gExtensionsViewController = {
     {
       var name = aSelectedItem.getAttribute("name");
       var result = false;
+      var opType = aSelectedItem.opType;
+
+      // A search result with an action "installed" is equivalent to a pending install
+      if (aSelectedItem.getAttribute("action") == "installed" && gView == "search")
+        opType = OP_NEEDS_INSTALL;
+
       // Confirm cancelling the operation
-      switch (aSelectedItem.opType)
+      switch (opType)
       {
         case OP_NEEDS_INSTALL:
           result = confirmOperation(name, "cancelInstallTitle", "cancelInstallQueryMessage",
@@ -2687,7 +2761,7 @@ var gExtensionsViewController = {
       if (!result)
         return;
 
-      var id = getIDFromResourceURI(aSelectedItem.id);
+      var id = aSelectedItem.getAttribute("addonID");
       gExtensionManager.cancelInstallItem(id);
       if (gSearchDS) {
         // Check for a search result for this entry
@@ -2766,8 +2840,10 @@ function installSkin()
   // 1) Prompt the user for the location of the theme to install.
   var fp = Components.classes["@mozilla.org/filepicker;1"].createInstance(nsIFilePicker);
   fp.init(window, getExtensionString("installThemePickerTitle"), nsIFilePicker.modeOpen);
-  fp.appendFilter(getExtensionString("themesFilter"), "*.jar");
-  fp.appendFilters(nsIFilePicker.filterAll);
+  try {
+    fp.appendFilter(getExtensionString("themesFilter"), "*.jar");
+    fp.appendFilters(nsIFilePicker.filterAll);
+  } catch (e) { }
 
   var ret = fp.show();
   if (ret == nsIFilePicker.returnOK)
@@ -2784,8 +2860,10 @@ function installExtension()
 {
   var fp = Components.classes["@mozilla.org/filepicker;1"].createInstance(nsIFilePicker);
   fp.init(window, getExtensionString("installExtensionPickerTitle"), nsIFilePicker.modeOpen);
-  fp.appendFilter(getExtensionString("extensionFilter"), "*.xpi");
-  fp.appendFilters(nsIFilePicker.filterAll);
+  try {
+    fp.appendFilter(getExtensionString("extensionFilter"), "*.xpi");
+    fp.appendFilters(nsIFilePicker.filterAll);
+  } catch (e) { }
 
   var ret = fp.show();
   if (ret == nsIFilePicker.returnOK)

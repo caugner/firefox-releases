@@ -118,9 +118,11 @@ public:
   // nsIDOMEventListener
   NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent);
 
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsImageDocument, nsMediaDocument)
+
   friend class ImageListener;
 protected:
-  nsresult CreateSyntheticDocument();
+  virtual nsresult CreateSyntheticDocument();
 
   nsresult CheckOverflowing(PRBool changeState);
 
@@ -152,13 +154,14 @@ protected:
   // can be false when this is true
   PRPackedBool                  mShouldResize;
   PRPackedBool                  mFirstResize;
+  // mObservingImageLoader is true while the observer is set.
+  PRPackedBool                  mObservingImageLoader;
 };
 
 ImageListener::ImageListener(nsImageDocument* aDocument)
   : nsMediaDocumentStreamListener(aDocument)
 {
 }
-
 
 ImageListener::~ImageListener()
 {
@@ -212,6 +215,7 @@ ImageListener::OnStartRequest(nsIRequest* request, nsISupports *ctxt)
   NS_ENSURE_TRUE(imageLoader, NS_ERROR_UNEXPECTED);
 
   imageLoader->AddObserver(imgDoc);
+  imgDoc->mObservingImageLoader = PR_TRUE;
   imageLoader->LoadImageWithChannel(channel, getter_AddRefs(mNextStream));
 
   return nsMediaDocumentStreamListener::OnStartRequest(request, ctxt);
@@ -227,6 +231,7 @@ ImageListener::OnStopRequest(nsIRequest* request, nsISupports *ctxt,
   
   nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(imgDoc->mImageContent);
   if (imageLoader) {
+    imgDoc->mObservingImageLoader = PR_FALSE;
     imageLoader->RemoveObserver(imgDoc);
   }
 
@@ -269,18 +274,27 @@ nsImageDocument::~nsImageDocument()
 {
 }
 
-// XXXbz shouldn't this participate in cycle collection?  It's got
-// mImageContent!
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsImageDocument)
+
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsImageDocument, nsMediaDocument)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mImageContent)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsImageDocument, nsMediaDocument)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mImageContent)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+
 NS_IMPL_ADDREF_INHERITED(nsImageDocument, nsMediaDocument)
 NS_IMPL_RELEASE_INHERITED(nsImageDocument, nsMediaDocument)
 
 NS_INTERFACE_TABLE_HEAD(nsImageDocument)
-  NS_INTERFACE_TABLE_INHERITED4(nsImageDocument,
-                                nsIImageDocument,
-                                imgIDecoderObserver,
-                                imgIContainerObserver,
-                                nsIDOMEventListener)
-  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+  NS_HTML_DOCUMENT_INTERFACE_TABLE_BEGIN(nsImageDocument)
+    NS_INTERFACE_TABLE_ENTRY(nsImageDocument, nsIImageDocument)
+    NS_INTERFACE_TABLE_ENTRY(nsImageDocument, imgIDecoderObserver)
+    NS_INTERFACE_TABLE_ENTRY(nsImageDocument, imgIContainerObserver)
+    NS_INTERFACE_TABLE_ENTRY(nsImageDocument, nsIDOMEventListener)
+  NS_OFFSET_AND_INTERFACE_TABLE_END
+  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(ImageDocument)
 NS_INTERFACE_MAP_END_INHERITING(nsMediaDocument)
 
@@ -334,9 +348,11 @@ nsImageDocument::Destroy()
     target->RemoveEventListener(NS_LITERAL_STRING("click"), this, PR_FALSE);
 
     // Break reference cycle with mImageContent, if we have one
-    nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(mImageContent);
-    if (imageLoader) {
-      imageLoader->RemoveObserver(this);
+    if (mObservingImageLoader) {
+      nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(mImageContent);
+      if (imageLoader) {
+        imageLoader->RemoveObserver(this);
+      }
     }
 
     mImageContent = nsnull;
@@ -366,7 +382,10 @@ nsImageDocument::SetScriptGlobalObject(nsIScriptGlobalObject* aScriptGlobalObjec
   if (aScriptGlobalObject) {
     if (!GetRootContent()) {
       // Create synthetic document
-      nsresult rv = CreateSyntheticDocument();
+#ifdef DEBUG
+      nsresult rv =
+#endif
+        CreateSyntheticDocument();
       NS_ASSERTION(NS_SUCCEEDED(rv), "failed to create synthetic document");
 
       target = do_QueryInterface(mImageContent);
@@ -481,7 +500,7 @@ nsImageDocument::ScrollImageTo(PRInt32 aX, PRInt32 aY, PRBool restoreImage)
   nsRect portRect = view->View()->GetBounds();
   view->ScrollTo(nsPresContext::CSSPixelsToAppUnits(aX/ratio) - portRect.width/2,
                  nsPresContext::CSSPixelsToAppUnits(aY/ratio) - portRect.height/2,
-                 NS_VMREFRESH_IMMEDIATE);
+                 0);
   return NS_OK;
 }
 
@@ -571,9 +590,13 @@ nsImageDocument::HandleEvent(nsIDOMEvent* aEvent)
   else if (eventType.EqualsLiteral("keypress")) {
     nsCOMPtr<nsIDOMKeyEvent> keyEvent = do_QueryInterface(aEvent);
     PRUint32 charCode;
+    PRBool ctrlKey, metaKey, altKey;
     keyEvent->GetCharCode(&charCode);
+    keyEvent->GetCtrlKey(&ctrlKey);
+    keyEvent->GetMetaKey(&metaKey);
+    keyEvent->GetAltKey(&altKey);
     // plus key
-    if (charCode == 0x2B) {
+    if (charCode == 0x2B && !ctrlKey && !metaKey && !altKey) {
       mShouldResize = PR_FALSE;
       if (mImageIsResized) {
         SetZoomLevel(1.0);
@@ -581,7 +604,7 @@ nsImageDocument::HandleEvent(nsIDOMEvent* aEvent)
       }
     }
     // minus key
-    else if (charCode == 0x2D) {
+    else if (charCode == 0x2D && !ctrlKey && !metaKey && !altKey) {
       mShouldResize = PR_TRUE;
       if (mImageIsOverflowing) {
         SetZoomLevel(1.0);
@@ -607,10 +630,9 @@ nsImageDocument::CreateSyntheticDocument()
   }
 
   nsCOMPtr<nsINodeInfo> nodeInfo;
-  rv = mNodeInfoManager->GetNodeInfo(nsGkAtoms::img, nsnull,
-                                     kNameSpaceID_None,
-                                     getter_AddRefs(nodeInfo));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nodeInfo = mNodeInfoManager->GetNodeInfo(nsGkAtoms::img, nsnull,
+                                           kNameSpaceID_None);
+  NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
 
   mImageContent = NS_NewHTMLImageElement(nodeInfo);
   if (!mImageContent) {
@@ -662,7 +684,7 @@ nsImageDocument::CheckOverflowing(PRBool changeState)
     nsMargin m;
     if (styleContext->GetStyleMargin()->GetMargin(m))
       visibleArea.Deflate(m);
-    m = styleContext->GetStyleBorder()->GetBorder();
+    m = styleContext->GetStyleBorder()->GetActualBorder();
     visibleArea.Deflate(m);
     if (styleContext->GetStylePadding()->GetPadding(m))
       visibleArea.Deflate(m);

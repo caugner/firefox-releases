@@ -56,6 +56,9 @@
 #include "nsPrefetchService.h"
 #include "nsOfflineCacheUpdate.h"
 #include "nsLocalHandlerApp.h"
+#ifdef MOZ_ENABLE_DBUS
+#include "nsDBusHandlerApp.h"
+#endif 
 
 // session history
 #include "nsSHEntry.h"
@@ -73,7 +76,7 @@ static PRBool gInitialized = PR_FALSE;
 
 // The one time initialization for this module
 // static
-PR_STATIC_CALLBACK(nsresult)
+static nsresult
 Initialize(nsIModule* aSelf)
 {
   NS_PRECONDITION(!gInitialized, "docshell module already initialized");
@@ -89,7 +92,7 @@ Initialize(nsIModule* aSelf)
   return rv;
 }
 
-PR_STATIC_CALLBACK(void)
+static void
 Shutdown(nsIModule* aSelf)
 {
   nsSHEntry::Shutdown();
@@ -112,6 +115,9 @@ NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsOfflineCacheUpdateService,
                                          nsOfflineCacheUpdateService::GetInstance)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsOfflineCacheUpdate)
 NS_GENERIC_FACTORY_CONSTRUCTOR(PlatformLocalHandlerApp_t)
+#ifdef MOZ_ENABLE_DBUS
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsDBusHandlerApp)
+#endif 
 
 #if defined(XP_MAC) || defined(XP_MACOSX)
 #include "nsInternetConfigService.h"
@@ -205,11 +211,6 @@ static const nsModuleComponentInfo gDocShellModuleInfo[] = {
       NS_ABOUT_MODULE_CONTRACTID_PREFIX "licence",
       nsAboutRedirector::Create
     },
-    { "about:about",
-      NS_ABOUT_REDIRECTOR_MODULE_CID,
-      NS_ABOUT_MODULE_CONTRACTID_PREFIX "about",
-      nsAboutRedirector::Create
-    },
     { "about:neterror",
       NS_ABOUT_REDIRECTOR_MODULE_CID,
       NS_ABOUT_MODULE_CONTRACTID_PREFIX "neterror",
@@ -236,7 +237,10 @@ static const nsModuleComponentInfo gDocShellModuleInfo[] = {
     nsOfflineCacheUpdateConstructor, },
   { "Local Application Handler App", NS_LOCALHANDLERAPP_CID, 
     NS_LOCALHANDLERAPP_CONTRACTID, PlatformLocalHandlerApp_tConstructor, },
-
+#ifdef MOZ_ENABLE_DBUS
+  { "DBus Handler App", NS_DBUSHANDLERAPP_CID,
+      NS_DBUSHANDLERAPP_CONTRACTID, nsDBusHandlerAppConstructor},
+#endif
 #if defined(XP_MAC) || defined(XP_MACOSX)
   { "Internet Config Service", NS_INTERNETCONFIGSERVICE_CID, NS_INTERNETCONFIGSERVICE_CONTRACTID,
     nsInternetConfigServiceConstructor, },

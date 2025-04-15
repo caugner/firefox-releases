@@ -95,6 +95,7 @@ public:
   NS_IMETHOD InvalidateFrameSubrect (const nsRect& damageRect);
   virtual PRInt32 CountContexts();
   virtual nsICanvasRenderingContextInternal *GetContextAtIndex (PRInt32 index);
+  virtual PRBool GetIsOpaque();
 
   NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
   nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
@@ -118,6 +119,7 @@ public:
 
 protected:
   nsIntSize GetWidthHeight();
+
   nsresult UpdateContext();
   nsresult ToDataURLImpl(const nsAString& aMimeType,
                          const nsAString& aEncoderOptions,
@@ -157,10 +159,12 @@ nsHTMLCanvasElement::~nsHTMLCanvasElement()
 NS_IMPL_ADDREF_INHERITED(nsHTMLCanvasElement, nsGenericElement)
 NS_IMPL_RELEASE_INHERITED(nsHTMLCanvasElement, nsGenericElement)
 
-NS_HTML_CONTENT_INTERFACE_TABLE_HEAD(nsHTMLCanvasElement, nsGenericHTMLElement)
-  NS_INTERFACE_TABLE_INHERITED2(nsHTMLCanvasElement,
-                                nsIDOMHTMLCanvasElement,
-                                nsICanvasElement)
+NS_INTERFACE_TABLE_HEAD(nsHTMLCanvasElement)
+  NS_HTML_CONTENT_INTERFACE_TABLE2(nsHTMLCanvasElement,
+                                   nsIDOMHTMLCanvasElement,
+                                   nsICanvasElement)
+  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(nsHTMLCanvasElement,
+                                               nsGenericHTMLElement)
 NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLCanvasElement)
 
 NS_IMPL_ELEMENT_CLONE(nsHTMLCanvasElement)
@@ -193,6 +197,7 @@ nsHTMLCanvasElement::GetWidthHeight()
 
 NS_IMPL_INT_ATTR_DEFAULT_VALUE(nsHTMLCanvasElement, Width, width, DEFAULT_CANVAS_WIDTH)
 NS_IMPL_INT_ATTR_DEFAULT_VALUE(nsHTMLCanvasElement, Height, height, DEFAULT_CANVAS_HEIGHT)
+NS_IMPL_BOOL_ATTR(nsHTMLCanvasElement, MozOpaque, moz_opaque)
 
 nsresult
 nsHTMLCanvasElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
@@ -202,7 +207,7 @@ nsHTMLCanvasElement::SetAttr(PRInt32 aNameSpaceID, nsIAtom* aName,
   nsresult rv = nsGenericHTMLElement::SetAttr(aNameSpaceID, aName, aPrefix, aValue,
                                               aNotify);
   if (NS_SUCCEEDED(rv) && mCurrentContext &&
-      (aName == nsGkAtoms::width || aName == nsGkAtoms::height))
+      (aName == nsGkAtoms::width || aName == nsGkAtoms::height || aName == nsGkAtoms::moz_opaque))
   {
     rv = UpdateContext();
     NS_ENSURE_SUCCESS(rv, rv);
@@ -221,6 +226,9 @@ nsHTMLCanvasElement::GetAttributeChangeHint(const nsIAtom* aAttribute,
       aAttribute == nsGkAtoms::height)
   {
     NS_UpdateHint(retval, NS_STYLE_HINT_REFLOW);
+  } else if (aAttribute == nsGkAtoms::moz_opaque)
+  {
+    NS_UpdateHint(retval, NS_STYLE_HINT_VISUAL);
   }
   return retval;
 }
@@ -488,6 +496,7 @@ nsHTMLCanvasElement::UpdateContext()
   nsresult rv = NS_OK;
   if (mCurrentContext) {
     nsIntSize sz = GetWidthHeight();
+    rv = mCurrentContext->SetIsOpaque(GetIsOpaque());
     rv = mCurrentContext->SetDimensions(sz.width, sz.height);
   }
 
@@ -539,7 +548,7 @@ nsHTMLCanvasElement::InvalidateFrame()
   if (frame) {
     nsRect r = frame->GetRect();
     r.x = r.y = 0;
-    frame->Invalidate(r, PR_FALSE);
+    frame->Invalidate(r);
   }
 
   return NS_OK;
@@ -550,7 +559,7 @@ nsHTMLCanvasElement::InvalidateFrameSubrect(const nsRect& damageRect)
 {
   nsIFrame *frame = GetPrimaryFrame(Flush_Frames);
   if (frame) {
-    frame->Invalidate(damageRect, PR_FALSE);
+    frame->Invalidate(damageRect);
   }
 
   return NS_OK;
@@ -572,4 +581,10 @@ nsHTMLCanvasElement::GetContextAtIndex (PRInt32 index)
     return mCurrentContext.get();
 
   return NULL;
+}
+
+PRBool
+nsHTMLCanvasElement::GetIsOpaque()
+{
+  return HasAttr(kNameSpaceID_None, nsGkAtoms::moz_opaque);
 }

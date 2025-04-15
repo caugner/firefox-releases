@@ -40,6 +40,15 @@
  */
 
 Components.utils.import("resource://gre/modules/XPCOMUtils.jsm");
+
+const TRANSITION_LINK = Ci.nsINavHistoryService.TRANSITION_LINK;
+const TRANSITION_TYPED = Ci.nsINavHistoryService.TRANSITION_TYPED;
+const TRANSITION_BOOKMARK = Ci.nsINavHistoryService.TRANSITION_BOOKMARK;
+const TRANSITION_EMBED = Ci.nsINavHistoryService.TRANSITION_EMBED;
+const TRANSITION_REDIRECT_PERMANENT = Ci.nsINavHistoryService.TRANSITION_REDIRECT_PERMANENT;
+const TRANSITION_REDIRECT_TEMPORARY = Ci.nsINavHistoryService.TRANSITION_REDIRECT_TEMPORARY;
+const TRANSITION_DOWNLOAD = Ci.nsINavHistoryService.TRANSITION_DOWNLOAD;
+
 let current_test = 0;
 
 function AutoCompleteInput(aSearches) {
@@ -67,6 +76,14 @@ AutoCompleteInput.prototype = {
 function toURI(aSpec)
 {
   return iosvc.newURI(aSpec, null, null);
+}
+
+let appendTags = true;
+// Helper to turn off tag matching in results
+function ignoreTags()
+{
+  print("Ignoring tags from results");
+  appendTags = false;
 }
 
 function ensure_results(aSearch, aExpected)
@@ -106,7 +123,7 @@ function ensure_results(aSearch, aExpected)
         // Load the real uri and titles and tags if necessary
         uri = toURI(kURIs[uri]).spec;
         title = kTitles[title];
-        if (tags)
+        if (tags && appendTags)
           title += " \u2013 " + tags.map(function(aTag) kTitles[aTag]);
 
         // Got a match on both uri and title?
@@ -164,7 +181,56 @@ let gDate = new Date(Date.now() - 1000 * 60 * 60) * 1000;
 // Store the page info for each uri
 let gPages = [];
 
-function addPageBook(aURI, aTitle, aBook, aTags, aKey)
+/**
+ * Sets the page title synchronously.  The page must already be in the database.
+ *
+ * @param aURI
+ *        An nsIURI to set the title for.
+ * @param aTitle
+ *        The title to set the page to.
+ */
+function setPageTitle(aURI, aTitle)
+{
+  // XXX this function only exists because we have no API to do this. It should
+  //     be added in bug 421897.
+  let db = histsvc.QueryInterface(Ci.nsPIPlacesDatabase).DBConnection;
+  let stmt = db.createStatement(
+    "UPDATE moz_places_view " +
+    "SET title = :title " +
+    "WHERE url = :uri"
+  );
+  stmt.params.title = aTitle;
+  stmt.params.uri = aURI.spec;
+  stmt.execute();
+  stmt.finalize();
+}
+
+/**
+ * Adds a page, and creates various properties for it depending on the
+ * parameters passed in.  This function will also add one visit.
+ *
+ * @param aURI
+ *        An index into kURIs that holds the string for the URI we are to add a
+ *        page for.
+ * @param aTitle
+ *        An index into kTitles that holds the string for the title we are to
+ *        associate with the specified URI.
+ * @param aBook [optional]
+ *        An index into kTitles that holds the string for the title we are to
+ *        associate with the bookmark.  If this is undefined, no bookmark is
+ *        created.
+ * @param aTags [optional]
+ *        An array of indexes into kTitles that hold the strings for the tags we
+ *        are to associate with the URI.  If this is undefined (or aBook is), no
+ *        tags are added.
+ * @param aKey [optional]
+ *        A string to associate as the keyword for this bookmark.  aBook must be
+ *        a valid index into kTitles for this to be checked and used.
+ * @param aTransitionType [optional]
+ *        The transition type to use when adding the visit.  The default is
+ *        nsINavHistoryService::TRANSITION_LINK.
+ */
+function addPageBook(aURI, aTitle, aBook, aTags, aKey, aTransitionType)
 {
   // Add a page entry for the current uri
   gPages[aURI] = [aURI, aBook != undefined ? aBook : aTitle, aTags];
@@ -176,8 +242,12 @@ function addPageBook(aURI, aTitle, aBook, aTags, aKey)
   out.push("\nuri=" + kURIs[aURI]);
   out.push("\ntitle=" + title);
 
-  // Add the page and a visit for good measure
-  bhist.addPageWithDetails(uri, title, gDate);
+  // Add the page and a visit
+  let tt = aTransitionType || TRANSITION_LINK;
+  let isRedirect = tt == TRANSITION_REDIRECT_PERMANENT ||
+                   tt == TRANSITION_REDIRECT_TEMPORARY;
+  histsvc.addVisit(uri, gDate, null, tt, isRedirect, 0);
+  setPageTitle(uri, title);
 
   // Add a bookmark if we need to
   if (aBook != undefined) {
@@ -204,6 +274,10 @@ function addPageBook(aURI, aTitle, aBook, aTags, aKey)
 
 function run_test() {
   print("\n");
+  // always search in history + bookmarks, no matter what the default is
+  prefs.setIntPref("browser.urlbar.search.sources", 3);
+  prefs.setIntPref("browser.urlbar.default.behavior", 0);
+
   // Search is asynchronous, so don't let the test finish immediately
   do_test_pending();
 
@@ -211,9 +285,28 @@ function run_test() {
   let [description, search, expected, func] = gTests[current_test];
   print(description);
 
+  // By default assume we want to match tags
+  appendTags = true;
+
   // Do an extra function if necessary
   if (func)
     func();
 
   ensure_results(search, expected);
 }
+
+// Utility function to remove history pages
+function removePages(aURIs)
+{
+  for each (let uri in aURIs)
+    histsvc.removePage(toURI(kURIs[uri]));
+}
+
+// Utility function to mark pages as typed
+function markTyped(aURIs)
+{
+  for each (let uri in aURIs)
+    histsvc.addVisit(toURI(kURIs[uri]), Date.now() * 1000, null,
+      histsvc.TRANSITION_TYPED, false, 0);
+}
+

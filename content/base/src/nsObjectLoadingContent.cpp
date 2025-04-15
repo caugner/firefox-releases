@@ -99,12 +99,12 @@ public:
   // This stores both the content and the frame so that Instantiate calls can be
   // avoided if the frame changed in the meantime.
   nsObjectLoadingContent *mContent;
-  nsIObjectFrame*         mFrame;
+  nsWeakFrame             mFrame;
   nsCString               mContentType;
   nsCOMPtr<nsIURI>        mURI;
 
   nsAsyncInstantiateEvent(nsObjectLoadingContent* aContent,
-                          nsIObjectFrame* aFrame,
+                          nsIFrame* aFrame,
                           const nsCString& aType,
                           nsIURI* aURI)
     : mContent(aContent), mFrame(aFrame), mContentType(aType), mURI(aURI)
@@ -134,7 +134,14 @@ nsAsyncInstantiateEvent::Run()
   // Also make sure that we still refer to the same data.
   nsIObjectFrame* frame = mContent->
     GetExistingFrame(nsObjectLoadingContent::eFlushContent);
-  if (frame == mFrame &&
+
+  nsIFrame* objectFrame = nsnull;
+  if (frame) {
+    CallQueryInterface(frame, &objectFrame);
+  }
+
+  if (objectFrame &&
+      mFrame.GetFrame() == objectFrame &&
       mContent->mURI == mURI &&
       mContent->mContentType.Equals(mContentType)) {
     if (LOG_ENABLED()) {
@@ -163,11 +170,11 @@ nsAsyncInstantiateEvent::Run()
 class nsPluginErrorEvent : public nsRunnable {
 public:
   nsCOMPtr<nsIContent> mContent;
-  PRBool mBlocklisted;
+  PluginSupportState mState;
 
-  nsPluginErrorEvent(nsIContent* aContent, PRBool aBlocklisted)
+  nsPluginErrorEvent(nsIContent* aContent, PluginSupportState aState)
     : mContent(aContent),
-      mBlocklisted(aBlocklisted)
+      mState(aState)
   {}
 
   ~nsPluginErrorEvent() {}
@@ -180,14 +187,22 @@ nsPluginErrorEvent::Run()
 {
   LOG(("OBJLC []: Firing plugin not found event for content %p\n",
        mContent.get()));
-  if (mBlocklisted)
-    nsContentUtils::DispatchTrustedEvent(mContent->GetDocument(), mContent,
-                                         NS_LITERAL_STRING("PluginBlocklisted"),
-                                         PR_TRUE, PR_TRUE);
-  else
-    nsContentUtils::DispatchTrustedEvent(mContent->GetDocument(), mContent,
-                                         NS_LITERAL_STRING("PluginNotFound"),
-                                         PR_TRUE, PR_TRUE);
+  nsString type;
+  switch (mState) {
+    case ePluginUnsupported:
+      type = NS_LITERAL_STRING("PluginNotFound");
+      break;
+    case ePluginDisabled:
+      type = NS_LITERAL_STRING("PluginDisabled");
+      break;
+    case ePluginBlocklisted:
+      type = NS_LITERAL_STRING("PluginBlocklisted");
+      break;
+    default:
+      return NS_OK;
+  }
+  nsContentUtils::DispatchTrustedEvent(mContent->GetDocument(), mContent,
+                                       type, PR_TRUE, PR_TRUE);
 
   return NS_OK;
 }
@@ -232,28 +247,29 @@ class AutoNotifier {
 class AutoFallback {
   public:
     AutoFallback(nsObjectLoadingContent* aContent, const nsresult* rv)
-      : mContent(aContent), mResult(rv), mTypeUnsupported(PR_FALSE) {}
+      : mContent(aContent), mResult(rv), mPluginState(ePluginOtherState) {}
     ~AutoFallback() {
       if (NS_FAILED(*mResult)) {
         LOG(("OBJLC [%p]: rv=%08x, falling back\n", mContent, *mResult));
         mContent->Fallback(PR_FALSE);
-        if (mTypeUnsupported) {
-          mContent->mTypeUnsupported = PR_TRUE;
+        if (mPluginState != ePluginOtherState) {
+          mContent->mPluginState = mPluginState;
         }
       }
     }
 
     /**
-     * This function can be called to indicate that, after falling back,
-     * mTypeUnsupported should be set to true.
+     * This should be set to something other than ePluginOtherState to indicate
+     * a specific failure that should be passed on.
      */
-    void TypeUnsupported() {
-      mTypeUnsupported = PR_TRUE;
-    }
+     void SetPluginState(PluginSupportState aState) {
+       NS_ASSERTION(aState != ePluginOtherState, "Should not be setting ePluginOtherState");
+       mPluginState = aState;
+     }
   private:
     nsObjectLoadingContent* mContent;
     const nsresult* mResult;
-    PRBool mTypeUnsupported;
+    PluginSupportState mPluginState;
 };
 
 /**
@@ -340,7 +356,7 @@ nsObjectLoadingContent::nsObjectLoadingContent()
   , mInstantiating(PR_FALSE)
   , mUserDisabled(PR_FALSE)
   , mSuppressed(PR_FALSE)
-  , mTypeUnsupported(PR_FALSE)
+  , mPluginState(ePluginOtherState)
 {
 }
 
@@ -573,20 +589,16 @@ nsObjectLoadingContent::OnStartRequest(nsIRequest *aRequest,
     case eType_Null:
       LOG(("OBJLC [%p]: Unsupported type, falling back\n", this));
       // Need to fallback here (instead of using the case below), so that we can
-      // set mTypeUnsupported without it being overwritten. This is also why we
+      // set mPluginState without it being overwritten. This is also why we
       // return early.
       Fallback(PR_FALSE);
 
       PluginSupportState pluginState = GetPluginSupportState(thisContent,
                                                              mContentType);
       // Do nothing, but fire the plugin not found event if needed
-      if (pluginState == ePluginUnsupported ||
-          pluginState == ePluginBlocklisted) {
-        FirePluginError(thisContent, pluginState == ePluginBlocklisted);
-      }
-      if (pluginState != ePluginDisabled &&
-          pluginState != ePluginBlocklisted) {
-        mTypeUnsupported = PR_TRUE;
+      if (pluginState != ePluginOtherState) {
+        FirePluginError(thisContent, pluginState);
+        mPluginState = pluginState;
       }
       return NS_BINDING_ABORTED;
   }
@@ -670,6 +682,12 @@ nsObjectLoadingContent::GetFrameLoader(nsIFrameLoader** aFrameLoader)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsObjectLoadingContent::SwapFrameLoaders(nsIFrameLoaderOwner* aOtherLoader)
+{
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 // nsIObjectLoadingContent
 NS_IMETHODIMP
 nsObjectLoadingContent::GetActualType(nsACString& aType)
@@ -742,6 +760,21 @@ nsObjectLoadingContent::EnsureInstantiation(nsIPluginInstance** aInstance)
 
   nsIFrame *nsiframe;
   CallQueryInterface(frame, &nsiframe);
+
+  if (nsiframe->GetStateBits() & NS_FRAME_FIRST_REFLOW) {
+    // A frame for this plugin element already exists now, but it has
+    // not been reflown yet. Force a reflow now so that we don't end
+    // up initializing a plugin before knowing its size. Also re-fetch
+    // the frame, as flushing can cause the frame to be deleted.
+    frame = GetExistingFrame(eFlushLayout);
+
+    if (!frame) {
+      return NS_OK;
+    }
+
+    CallQueryInterface(frame, &nsiframe);
+  }
+
   nsWeakFrame weakFrame(nsiframe);
 
   // We may have a plugin instance already; if so, do nothing
@@ -762,24 +795,42 @@ nsObjectLoadingContent::HasNewFrame(nsIObjectFrame* aFrame)
 {
   LOG(("OBJLC [%p]: Got frame %p (mInstantiating=%i)\n", this, aFrame,
        mInstantiating));
-  if (!mInstantiating && aFrame && mType == eType_Plugin) {
+
+  // "revoke" any existing instantiate event as it likely has out of
+  // date data (frame pointer etc).
+  mPendingInstantiateEvent = nsnull;
+
+  nsCOMPtr<nsIPluginInstance> instance;
+  aFrame->GetPluginInstance(*getter_AddRefs(instance));
+
+  if (instance) {
+    // The frame already has a plugin instance, that means the plugin
+    // has already been instantiated.
+
+    return NS_OK;
+  }
+
+  if (!mInstantiating && mType == eType_Plugin) {
     // Asynchronously call Instantiate
     // This can go away once plugin loading moves to content
     // This must be done asynchronously to ensure that the frame is correctly
     // initialized (has a view etc)
 
-    // "revoke" any existing instantiate event.
-    mPendingInstantiateEvent = nsnull;
-
     // When in a plugin document, the document will take care of calling
     // instantiate
     nsCOMPtr<nsIPluginDocument> pDoc (do_QueryInterface(GetOurDocument()));
     if (pDoc) {
-      return NS_OK;
+      PRBool willHandleInstantiation;
+      pDoc->GetWillHandleInstantiation(&willHandleInstantiation);
+      if (willHandleInstantiation) {
+        return NS_OK;
+      }
     }
 
+    nsIFrame* frame = nsnull;
+    CallQueryInterface(aFrame, &frame);
     nsCOMPtr<nsIRunnable> event =
-        new nsAsyncInstantiateEvent(this, aFrame, mContentType, mURI);
+      new nsAsyncInstantiateEvent(this, frame, mContentType, mURI);
     if (!event) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
@@ -874,8 +925,16 @@ nsObjectLoadingContent::ObjectState() const
 
       // Otherwise, broken
       PRInt32 state = NS_EVENT_STATE_BROKEN;
-      if (mTypeUnsupported) {
-        state |= NS_EVENT_STATE_TYPE_UNSUPPORTED;
+      switch (mPluginState) {
+        case ePluginDisabled:
+          state |= NS_EVENT_STATE_HANDLER_DISABLED;
+          break;
+        case ePluginBlocklisted:
+          state |= NS_EVENT_STATE_HANDLER_BLOCKED;
+          break;
+        case ePluginUnsupported:
+          state |= NS_EVENT_STATE_TYPE_UNSUPPORTED;
+          break;
       }
       return state;
   };
@@ -943,16 +1002,11 @@ nsObjectLoadingContent::UpdateFallbackState(nsIContent* aContent,
                                             AutoFallback& fallback,
                                             const nsCString& aTypeHint)
 {
-  PluginSupportState pluginState = GetPluginDisabledState(aTypeHint);
-  if (pluginState == ePluginUnsupported) {
-    // For unknown plugins notify the UI and allow the unknown plugin binding
-    // to attach.
-    FirePluginError(aContent, PR_FALSE);
-    fallback.TypeUnsupported();
-  }
-  else if (pluginState == ePluginBlocklisted) {
-    // For blocklisted plugins just send a notification to the UI.
-    FirePluginError(aContent, PR_TRUE);
+  // Notify the UI and update the fallback state
+  PluginSupportState state = GetPluginSupportState(aContent, aTypeHint);
+  if (state != ePluginOtherState) {
+    fallback.SetPluginState(state);
+    FirePluginError(aContent, state);
   }
 }
 
@@ -1430,7 +1484,8 @@ nsObjectLoadingContent::UnloadContent()
     mFrameLoader = nsnull;
   }
   mType = eType_Null;
-  mUserDisabled = mSuppressed = mTypeUnsupported = PR_FALSE;
+  mUserDisabled = mSuppressed = PR_FALSE;
+  mPluginState = ePluginOtherState;
 }
 
 void
@@ -1480,12 +1535,12 @@ nsObjectLoadingContent::NotifyStateChanged(ObjectType aOldType,
 
 /* static */ void
 nsObjectLoadingContent::FirePluginError(nsIContent* thisContent,
-                                        PRBool blocklisted)
+                                        PluginSupportState state)
 {
   LOG(("OBJLC []: Dispatching nsPluginErrorEvent for content %p\n",
        thisContent));
 
-  nsCOMPtr<nsIRunnable> ev = new nsPluginErrorEvent(thisContent, blocklisted);
+  nsCOMPtr<nsIRunnable> ev = new nsPluginErrorEvent(thisContent, state);
   nsresult rv = NS_DispatchToCurrentThread(ev);
   if (NS_FAILED(rv)) {
     NS_WARNING("failed to dispatch nsPluginErrorEvent");
@@ -1650,12 +1705,26 @@ nsObjectLoadingContent::TryInstantiate(const nsACString& aMIMEType,
     LOG(("OBJLC [%p]: No frame yet\n", this));
     return NS_OK; // Not a failure to have no frame
   }
-  nsIFrame* iframe;
-  CallQueryInterface(frame, &iframe);
-  if (iframe->GetStateBits() & NS_FRAME_FIRST_REFLOW) {
-    LOG(("OBJLC [%p]: Frame hasn't been reflown yet\n", this));
-    return NS_OK; // Not a failure to have no frame
+
+  nsCOMPtr<nsIPluginInstance> instance;
+  frame->GetPluginInstance(*getter_AddRefs(instance));
+
+  if (!instance) {
+    // The frame has no plugin instance yet. If the frame hasn't been
+    // reflown yet, do nothing as once the reflow happens we'll end up
+    // instantiating the plugin with the correct size n' all (which
+    // isn't known until we've done the first reflow). But if the
+    // frame does have a plugin instance already, be sure to
+    // re-instantiate the plugin as its source or whatnot might have
+    // chanced since it was instantiated.
+    nsIFrame* iframe;
+    CallQueryInterface(frame, &iframe);
+    if (iframe->GetStateBits() & NS_FRAME_FIRST_REFLOW) {
+      LOG(("OBJLC [%p]: Frame hasn't been reflown yet\n", this));
+      return NS_OK; // Not a failure to have no frame
+    }
   }
+
   return Instantiate(frame, aMIMEType, aURI);
 }
 
@@ -1711,11 +1780,7 @@ nsObjectLoadingContent::CheckClassifier(nsIChannel *aChannel)
     do_CreateInstance(NS_CHANNELCLASSIFIER_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  rv = classifier->Start(aChannel);
-  if (rv == NS_ERROR_FACTORY_NOT_REGISTERED) {
-    // no URI classifier, ignore this
-    return NS_OK;
-  }
+  rv = classifier->Start(aChannel, PR_FALSE);
   NS_ENSURE_SUCCESS(rv, rv);
 
   mClassifier = classifier;
@@ -1734,7 +1799,7 @@ nsObjectLoadingContent::ShouldShowDefaultPlugin(nsIContent* aContent,
   return GetPluginSupportState(aContent, aContentType) == ePluginUnsupported;
 }
 
-/* static */ nsObjectLoadingContent::PluginSupportState
+/* static */ PluginSupportState
 nsObjectLoadingContent::GetPluginSupportState(nsIContent* aContent,
                                               const nsCString& aContentType)
 {
@@ -1771,7 +1836,7 @@ nsObjectLoadingContent::GetPluginSupportState(nsIContent* aContent,
     GetPluginDisabledState(aContentType);
 }
 
-/* static */ nsObjectLoadingContent::PluginSupportState
+/* static */ PluginSupportState
 nsObjectLoadingContent::GetPluginDisabledState(const nsCString& aContentType)
 {
   nsCOMPtr<nsIPluginHost> host(do_GetService("@mozilla.org/plugin/host;1"));

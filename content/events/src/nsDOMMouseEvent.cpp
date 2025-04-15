@@ -67,9 +67,6 @@ nsDOMMouseEvent::nsDOMMouseEvent(nsPresContext* aPresContext,
     case NS_MOUSE_EVENT:
       mDetail = static_cast<nsMouseEvent*>(mEvent)->clickCount;
       break;
-    case NS_MOUSE_SCROLL_EVENT:
-      mDetail = static_cast<nsMouseScrollEvent*>(mEvent)->delta;
-      break;
     default:
       break;
   }
@@ -77,14 +74,11 @@ nsDOMMouseEvent::nsDOMMouseEvent(nsPresContext* aPresContext,
 
 nsDOMMouseEvent::~nsDOMMouseEvent()
 {
-  if (mEventIsInternal) {
+  if (mEventIsInternal && mEvent) {
     switch (mEvent->eventStructType)
     {
       case NS_MOUSE_EVENT:
         delete static_cast<nsMouseEvent*>(mEvent);
-        break;
-      case NS_MOUSE_SCROLL_EVENT:
-        delete static_cast<nsMouseScrollEvent*>(mEvent);
         break;
       default:
         delete mEvent;
@@ -116,6 +110,7 @@ nsDOMMouseEvent::InitMouseEvent(const nsAString & aType, PRBool aCanBubble, PRBo
   {
     case NS_MOUSE_EVENT:
     case NS_MOUSE_SCROLL_EVENT:
+    case NS_SIMPLE_GESTURE_EVENT:
     {
        static_cast<nsMouseEvent_base*>(mEvent)->relatedTarget = aRelatedTarget;
        static_cast<nsMouseEvent_base*>(mEvent)->button = aButton;
@@ -129,10 +124,7 @@ nsDOMMouseEvent::InitMouseEvent(const nsAString & aType, PRBool aCanBubble, PRBo
        inputEvent->refPoint.x = aScreenX;
        inputEvent->refPoint.y = aScreenY;
 
-       if (mEvent->eventStructType == NS_MOUSE_SCROLL_EVENT) {
-         nsMouseScrollEvent* scrollEvent = static_cast<nsMouseScrollEvent*>(mEvent);
-         scrollEvent->delta = aDetail;
-       } else {
+       if (mEvent->eventStructType == NS_MOUSE_EVENT) {
          nsMouseEvent* mouseEvent = static_cast<nsMouseEvent*>(mEvent);
          mouseEvent->clickCount = aDetail;
        }
@@ -153,6 +145,7 @@ nsDOMMouseEvent::GetButton(PRUint16* aButton)
   {
     case NS_MOUSE_EVENT:
     case NS_MOUSE_SCROLL_EVENT:
+    case NS_SIMPLE_GESTURE_EVENT:
       *aButton = static_cast<nsMouseEvent_base*>(mEvent)->button;
       break;
     default:
@@ -173,6 +166,7 @@ nsDOMMouseEvent::GetRelatedTarget(nsIDOMEventTarget** aRelatedTarget)
   {
     case NS_MOUSE_EVENT:
     case NS_MOUSE_SCROLL_EVENT:
+    case NS_SIMPLE_GESTURE_EVENT:
       relatedTarget = static_cast<nsMouseEvent_base*>(mEvent)->relatedTarget;
       break;
     default:

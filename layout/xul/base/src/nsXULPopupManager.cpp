@@ -64,7 +64,7 @@
 #include "nsIBaseWindow.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsIDOMMouseEvent.h"
-#include "nsICaret.h"
+#include "nsCaret.h"
 #include "nsIDocument.h"
 #include "nsPIDOMWindow.h"
 
@@ -321,8 +321,8 @@ nsXULPopupManager::SetTriggerEvent(nsIDOMEvent* aEvent, nsIContent* aPopup)
     if (privateEvent) {
       NS_ASSERTION(aPopup, "Expected a popup node");
       nsEvent* event;
-      nsresult rv = privateEvent->GetInternalNSEvent(&event);
-      if (NS_SUCCEEDED(rv) && event) {
+      event = privateEvent->GetInternalNSEvent();
+      if (event) {
         nsIDocument* doc = aPopup->GetCurrentDoc();
         if (doc) {
           nsIPresShell* presShell = doc->GetPrimaryShell();
@@ -422,7 +422,7 @@ nsXULPopupManager::ShowMenu(nsIContent *aMenu,
   if (aAsynchronous) {
     SetTriggerEvent(nsnull, nsnull);
     nsCOMPtr<nsIRunnable> event =
-      new nsXULPopupShowingEvent(popupFrame->GetContent(), aMenu,
+      new nsXULPopupShowingEvent(popupFrame->GetContent(), aMenu, popupFrame->PopupType(),
                                  parentIsContextMenu, aSelectFirstItem);
     NS_DispatchToCurrentThread(event);
   }
@@ -530,8 +530,8 @@ CheckCaretDrawingState(nsIDocument *aDocument) {
   if (!presShell)
     return;
 
-  nsCOMPtr<nsICaret> caret;
-  nsresult res = presShell->GetCaret(getter_AddRefs(caret));
+  nsRefPtr<nsCaret> caret;
+  presShell->GetCaret(getter_AddRefs(caret));
   if (!caret)
     return;
   caret->CheckCaretDrawingState();
@@ -1168,13 +1168,13 @@ nsXULPopupManager::GetTopPopup(nsPopupType aType)
 }
 
 nsTArray<nsIFrame *>
-nsXULPopupManager::GetOpenPopups()
+nsXULPopupManager::GetVisiblePopups()
 {
   nsTArray<nsIFrame *> popups;
 
   nsMenuChainItem* item = mCurrentMenu;
   while (item) {
-    if (item->Frame()->PopupState() != ePopupInvisible)
+    if (item->Frame()->PopupState() == ePopupOpenAndVisible)
       popups.AppendElement(static_cast<nsIFrame*>(item->Frame()));
     item = item->GetParent();
   }
@@ -1210,35 +1210,43 @@ nsXULPopupManager::MayShowPopup(nsMenuPopupFrame* aPopup)
 
   nsCOMPtr<nsISupports> cont = aPopup->PresContext()->GetContainer();
   nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(cont);
-  if (!dsti)
+  nsCOMPtr<nsIBaseWindow> baseWin = do_QueryInterface(dsti);
+  if (!baseWin)
     return PR_FALSE;
 
-  // chrome shells can always open popups, but other types of shells can only
-  // open popups when they are focused
   PRInt32 type = -1;
   if (NS_FAILED(dsti->GetItemType(&type)))
     return PR_FALSE;
 
+  // chrome shells can always open popups, but other types of shells can only
+  // open popups when they are focused and visible
   if (type != nsIDocShellTreeItem::typeChrome) {
+    // only allow popups in active windows
     nsCOMPtr<nsPIDOMWindow> win = do_GetInterface(dsti);
     if (!win)
       return PR_FALSE;
 
-    // only allow popups in active windows
     PRBool active;
     nsIFocusController* focusController = win->GetRootFocusController();
     focusController->GetActive(&active);
     if (!active)
       return PR_FALSE;
 
-    nsCOMPtr<nsIBaseWindow> baseWin = do_QueryInterface(dsti);
-    if (!baseWin)
-      return PR_FALSE;
-
     // only allow popups in visible frames
     PRBool visible;
     baseWin->GetVisibility(&visible);
     if (!visible)
+      return PR_FALSE;
+  }
+
+  // platforms respond differently when an popup is opened in a minimized
+  // window, so this is always disabled.
+  nsCOMPtr<nsIWidget> mainWidget;
+  baseWin->GetMainWidget(getter_AddRefs(mainWidget));
+  if (mainWidget) {
+    PRInt32 sizeMode;
+    mainWidget->GetSizeMode(&sizeMode);
+    if (sizeMode == nsSizeMode_Minimized)
       return PR_FALSE;
   }
 
@@ -2000,9 +2008,7 @@ nsXULPopupShowingEvent::Run()
   nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
   nsPresContext* context = GetPresContextFor(mPopup);
   if (pm && context) {
-    // the popupshowing event should only be fired asynchronously
-    // for menus, so just use ePopupTypeMenu as the type
-    pm->FirePopupShowingEvent(mPopup, mMenu, context, ePopupTypeMenu,
+    pm->FirePopupShowingEvent(mPopup, mMenu, context, mPopupType,
                               mIsContextMenu, mSelectFirstItem);
   }
 

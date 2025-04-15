@@ -207,7 +207,7 @@ nsImageBoxFrame::Destroy()
 {
   // Release image loader first so that it's refcnt can go to zero
   if (mImageRequest)
-    mImageRequest->Cancel(NS_ERROR_FAILURE);
+    mImageRequest->CancelAndForgetObserver(NS_ERROR_FAILURE);
 
   if (mListener)
     reinterpret_cast<nsImageBoxListener*>(mListener.get())->SetFrame(nsnull); // set the frame to null so we don't send messages to a dead object.
@@ -378,8 +378,8 @@ nsImageBoxFrame::PaintImage(nsIRenderingContext& aRenderingContext,
 
   if (imgCon) {
     PRBool hasSubRect = !mUseSrcAttr && (mSubRect.width > 0 || mSubRect.height > 0);
-    nsLayoutUtils::DrawImage(&aRenderingContext, imgCon,
-                             rect, dirty, hasSubRect ? &mSubRect : nsnull);
+    nsLayoutUtils::DrawSingleImage(&aRenderingContext, imgCon,
+        rect, dirty, hasSubRect ? &mSubRect : nsnull);
   }
 }
 
@@ -389,21 +389,23 @@ nsImageBoxFrame::PaintImage(nsIRenderingContext& aRenderingContext,
 //
 // When the style context changes, make sure that all of our image is up to date.
 //
-NS_IMETHODIMP
-nsImageBoxFrame::DidSetStyleContext()
+/* virtual */ void
+nsImageBoxFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
 {
+  nsLeafBoxFrame::DidSetStyleContext(aOldStyleContext);
+
   // Fetch our subrect.
   const nsStyleList* myList = GetStyleList();
   mSubRect = myList->mImageRegion; // before |mSuppressStyleCheck| test!
 
   if (mUseSrcAttr || mSuppressStyleCheck)
-    return NS_OK; // No more work required, since the image isn't specified by style.
+    return; // No more work required, since the image isn't specified by style.
 
   // If we're using a native theme implementation, we shouldn't draw anything.
   const nsStyleDisplay* disp = GetStyleDisplay();
   if (disp->mAppearance && nsBox::gTheme && 
       nsBox::gTheme->ThemeSupportsWidget(nsnull, this, disp->mAppearance))
-    return NS_OK;
+    return;
 
   // If list-style-image changes, we have a new image.
   nsCOMPtr<nsIURI> oldURI, newURI;
@@ -415,10 +417,9 @@ nsImageBoxFrame::DidSetStyleContext()
   if (newURI == oldURI ||   // handles null==null
       (newURI && oldURI &&
        NS_SUCCEEDED(newURI->Equals(oldURI, &equal)) && equal))
-    return NS_OK;
+    return;
 
   UpdateImage();
-  return NS_OK;
 } // DidSetStyleContext
 
 void

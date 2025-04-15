@@ -111,19 +111,11 @@
 #include "nsLayoutUtils.h"
 #include "nsContentCreatorFunctions.h"
 #include "mozAutoDocUpdate.h"
+#include "nsIFocusController.h"
 
 class nsINodeInfo;
 class nsIDOMNodeList;
 class nsRuleWalker;
-
-static nsIFrame*
-GetStyledFrameFor(nsGenericHTMLElement* aElement)
-{
-  nsIFrame *frame = aElement->GetPrimaryFrame(Flush_Layout);
-
-  return (frame && frame->GetType() == nsGkAtoms::tableOuterFrame) ?
-    frame->GetFirstChild(nsnull) : frame;
-}
 
 // XXX todo: add in missing out-of-memory checks
 
@@ -497,10 +489,9 @@ void
 nsGenericHTMLElement::GetOffsetRect(nsRect& aRect, nsIContent** aOffsetParent)
 {
   *aOffsetParent = nsnull;
-  aRect.x = aRect.y = 0;
-  aRect.Empty();
+  aRect = nsRect();
 
-  nsIFrame* frame = ::GetStyledFrameFor(this);
+  nsIFrame* frame = GetStyledFrame();
   if (!frame) {
     return;
   }
@@ -583,8 +574,8 @@ nsGenericHTMLElement::GetOffsetRect(nsRect& aRect, nsIContent** aOffsetParent)
   if (parent &&
       parent->GetStylePosition()->mBoxSizing != NS_STYLE_BOX_SIZING_BORDER) {
     const nsStyleBorder* border = parent->GetStyleBorder();
-    origin.x -= border->GetBorderWidth(NS_SIDE_LEFT);
-    origin.y -= border->GetBorderWidth(NS_SIDE_TOP);
+    origin.x -= border->GetActualBorderWidth(NS_SIDE_LEFT);
+    origin.y -= border->GetActualBorderWidth(NS_SIDE_TOP);
   }
 
   // XXX We should really consider subtracting out padding for
@@ -763,254 +754,6 @@ nsGenericHTMLElement::SetInnerHTML(const nsAString& aInnerHTML)
   return rv;
 }
 
-void
-nsGenericHTMLElement::GetScrollInfo(nsIScrollableView **aScrollableView,
-                                    nsIFrame **aFrame)
-{
-  *aScrollableView = nsnull;
-
-  nsIFrame *frame = ::GetStyledFrameFor(this);
-  if (aFrame) {
-    *aFrame = frame;
-  }
-  if (!frame) {
-    return;
-  }
-
-  // Get the scrollable frame
-  nsIScrollableFrame *scrollFrame = nsnull;
-  CallQueryInterface(frame, &scrollFrame);
-
-  if (!scrollFrame) {
-    nsIScrollableViewProvider *scrollProvider = nsnull;
-    CallQueryInterface(frame, &scrollProvider);
-    if (scrollProvider) {
-      *aScrollableView = scrollProvider->GetScrollableView();
-      if (*aScrollableView) {
-        return;
-      }
-    }
-
-    PRBool quirksMode = InNavQuirksMode(GetCurrentDoc());
-    if ((quirksMode && mNodeInfo->Equals(nsGkAtoms::body)) ||
-        (!quirksMode && mNodeInfo->Equals(nsGkAtoms::html))) {
-      // In quirks mode, the scroll info for the body element should map to the
-      // scroll info for the nearest scrollable frame above the body element
-      // (i.e. the root scrollable frame).  This is what IE6 does in quirks
-      // mode.  In strict mode the root scrollable frame corresponds to the
-      // html element in IE6, so we map the scroll info for the html element to
-      // the root scrollable frame.
-
-      do {
-        frame = frame->GetParent();
-
-        if (!frame) {
-          break;
-        }
-
-        CallQueryInterface(frame, &scrollFrame);
-      } while (!scrollFrame);
-    }
-
-    if (!scrollFrame) {
-      return;
-    }
-  }
-
-  // Get the scrollable view
-  *aScrollableView = scrollFrame->GetScrollableView();
-
-  return;
-}
-
-
-nsresult
-nsGenericHTMLElement::GetScrollTop(PRInt32* aScrollTop)
-{
-  NS_ENSURE_ARG_POINTER(aScrollTop);
-  *aScrollTop = 0;
-
-  nsIScrollableView *view;
-  nsresult rv = NS_OK;
-
-  GetScrollInfo(&view);
-
-  if (view) {
-    nscoord xPos, yPos;
-    rv = view->GetScrollPosition(xPos, yPos);
-
-    *aScrollTop = nsPresContext::AppUnitsToIntCSSPixels(yPos);
-  }
-
-  return rv;
-}
-
-nsresult
-nsGenericHTMLElement::SetScrollTop(PRInt32 aScrollTop)
-{
-  nsIScrollableView *view;
-  nsresult rv = NS_OK;
-
-  GetScrollInfo(&view);
-
-  if (view) {
-    nscoord xPos, yPos;
-
-    rv = view->GetScrollPosition(xPos, yPos);
-
-    if (NS_SUCCEEDED(rv)) {
-      rv = view->ScrollTo(xPos, nsPresContext::CSSPixelsToAppUnits(aScrollTop),
-                          NS_VMREFRESH_IMMEDIATE);
-    }
-  }
-
-  return rv;
-}
-
-nsresult
-nsGenericHTMLElement::GetScrollLeft(PRInt32* aScrollLeft)
-{
-  NS_ENSURE_ARG_POINTER(aScrollLeft);
-  *aScrollLeft = 0;
-
-  nsIScrollableView *view;
-  nsresult rv = NS_OK;
-
-  GetScrollInfo(&view);
-
-  if (view) {
-    nscoord xPos, yPos;
-    rv = view->GetScrollPosition(xPos, yPos);
-
-    *aScrollLeft = nsPresContext::AppUnitsToIntCSSPixels(xPos);
-  }
-
-  return rv;
-}
-
-nsresult
-nsGenericHTMLElement::SetScrollLeft(PRInt32 aScrollLeft)
-{
-  nsIScrollableView *view;
-  nsresult rv = NS_OK;
-
-  GetScrollInfo(&view);
-
-  if (view) {
-    nscoord xPos, yPos;
-    rv = view->GetScrollPosition(xPos, yPos);
-
-    if (NS_SUCCEEDED(rv)) {
-      rv = view->ScrollTo(nsPresContext::CSSPixelsToAppUnits(aScrollLeft),
-                          yPos, NS_VMREFRESH_IMMEDIATE);
-    }
-  }
-
-  return rv;
-}
-
-nsresult
-nsGenericHTMLElement::GetScrollHeight(PRInt32* aScrollHeight)
-{
-  NS_ENSURE_ARG_POINTER(aScrollHeight);
-  *aScrollHeight = 0;
-
-  nsIScrollableView *scrollView;
-  nsresult rv = NS_OK;
-
-  GetScrollInfo(&scrollView);
-
-  if (!scrollView) {
-    return GetOffsetHeight(aScrollHeight);
-  }
-
-  // xMax and yMax is the total length of our container
-  nscoord xMax, yMax;
-  rv = scrollView->GetContainerSize(&xMax, &yMax);
-
-  *aScrollHeight = nsPresContext::AppUnitsToIntCSSPixels(yMax);
-
-  return rv;
-}
-
-nsresult
-nsGenericHTMLElement::GetScrollWidth(PRInt32* aScrollWidth)
-{
-  NS_ENSURE_ARG_POINTER(aScrollWidth);
-  *aScrollWidth = 0;
-
-  nsIScrollableView *scrollView;
-  nsresult rv = NS_OK;
-
-  GetScrollInfo(&scrollView);
-
-  if (!scrollView) {
-    return GetOffsetWidth(aScrollWidth);
-  }
-
-  nscoord xMax, yMax;
-  rv = scrollView->GetContainerSize(&xMax, &yMax);
-
-  *aScrollWidth = nsPresContext::AppUnitsToIntCSSPixels(xMax);
-
-  return rv;
-}
-
-nsRect
-nsGenericHTMLElement::GetClientAreaRect()
-{
-  nsIScrollableView *scrollView;
-  nsIFrame *frame;
-
-  GetScrollInfo(&scrollView, &frame);
-
-  if (scrollView) {
-    return scrollView->View()->GetBounds();
-  }
-
-  if (frame &&
-      (frame->GetStyleDisplay()->mDisplay != NS_STYLE_DISPLAY_INLINE ||
-       frame->IsFrameOfType(nsIFrame::eReplaced))) {
-    // Special case code to make client area work even when there isn't
-    // a scroll view, see bug 180552, bug 227567.
-    return frame->GetPaddingRect() - frame->GetPositionIgnoringScrolling();
-  }
-
-  return nsRect(0, 0, 0, 0);
-}
-
-nsresult
-nsGenericHTMLElement::GetClientTop(PRInt32* aLength)
-{
-  NS_ENSURE_ARG_POINTER(aLength);
-  *aLength = nsPresContext::AppUnitsToIntCSSPixels(GetClientAreaRect().y);
-  return NS_OK;
-}
-
-nsresult
-nsGenericHTMLElement::GetClientLeft(PRInt32* aLength)
-{
-  NS_ENSURE_ARG_POINTER(aLength);
-  *aLength = nsPresContext::AppUnitsToIntCSSPixels(GetClientAreaRect().x);
-  return NS_OK;
-}
-
-nsresult
-nsGenericHTMLElement::GetClientHeight(PRInt32* aLength)
-{
-  NS_ENSURE_ARG_POINTER(aLength);
-  *aLength = nsPresContext::AppUnitsToIntCSSPixels(GetClientAreaRect().height);
-  return NS_OK;
-}
-
-nsresult
-nsGenericHTMLElement::GetClientWidth(PRInt32* aLength)
-{
-  NS_ENSURE_ARG_POINTER(aLength);
-  *aLength = nsPresContext::AppUnitsToIntCSSPixels(GetClientAreaRect().width);
-  return NS_OK;
-}
-
 nsresult
 nsGenericHTMLElement::ScrollIntoView(PRBool aTop)
 {
@@ -1112,6 +855,22 @@ nsGenericHTMLElement::SetSpellcheck(PRBool aSpellcheck)
   }
 
   return SetAttrHelper(nsGkAtoms::spellcheck, NS_LITERAL_STRING("false"));
+}
+
+NS_IMETHODIMP
+nsGenericHTMLElement::GetDraggable(PRBool* aDraggable)
+{
+  *aDraggable = AttrValueIs(kNameSpaceID_None, nsGkAtoms::draggable,
+                             nsGkAtoms::_true, eIgnoreCase);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsGenericHTMLElement::SetDraggable(PRBool aDraggable)
+{
+  return SetAttrHelper(nsGkAtoms::draggable,
+                       aDraggable ? NS_LITERAL_STRING("true") :
+                                    NS_LITERAL_STRING("false"));
 }
 
 PRBool
@@ -1419,13 +1178,17 @@ nsresult
 nsGenericHTMLElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
                                 PRBool aNotify)
 {
+  PRBool contentEditable = PR_FALSE;
+  PRInt32 contentEditableChange;
+
+  if (aNameSpaceID == kNameSpaceID_None) {
+    contentEditable = PR_TRUE;
+    contentEditableChange = GetContentEditableValue() == eTrue ? -1 : 0;
+  }
+
   // Check for event handlers
   if (aNameSpaceID == kNameSpaceID_None) {
-    if (aAttribute == nsGkAtoms::contenteditable) {
-      ChangeEditableState(GetContentEditableValue() == eTrue ? -1 : 0);
-    }
-    else if (nsContentUtils::IsEventAttributeName(aAttribute,
-                                                  EventNameType_HTML)) {
+    if (nsContentUtils::IsEventAttributeName(aAttribute, EventNameType_HTML)) {
       nsCOMPtr<nsIEventListenerManager> manager;
       GetListenerManager(PR_FALSE, getter_AddRefs(manager));
 
@@ -1435,8 +1198,15 @@ nsGenericHTMLElement::UnsetAttr(PRInt32 aNameSpaceID, nsIAtom* aAttribute,
     }
   }
 
-  return nsGenericHTMLElementBase::UnsetAttr(aNameSpaceID, aAttribute,
-                                             aNotify);
+  nsresult rv = nsGenericHTMLElementBase::UnsetAttr(aNameSpaceID, aAttribute,
+                                                    aNotify);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (contentEditable) {
+    ChangeEditableState(contentEditableChange);
+  }
+
+  return NS_OK;
 }
 
 already_AddRefed<nsIURI>
@@ -1896,9 +1666,9 @@ nsGenericHTMLElement::MapCommonAttributesInto(const nsMappedAttributes* aAttribu
           ui->mUserModify.SetIntValue(NS_STYLE_USER_MODIFY_READ_WRITE,
                                       eCSSUnit_Enumerated);
         }
-        else {
-          ui->mUserModify.SetIntValue(NS_STYLE_USER_MODIFY_READ_ONLY,
-                                      eCSSUnit_Enumerated);
+        else if (value->Equals(nsGkAtoms::_false, eIgnoreCase)) {
+            ui->mUserModify.SetIntValue(NS_STYLE_USER_MODIFY_READ_ONLY,
+                                        eCSSUnit_Enumerated);
         }
       }
     }
@@ -2351,6 +2121,28 @@ nsGenericHTMLElement::SetIntAttr(nsIAtom* aAttr, PRInt32 aValue)
 }
 
 nsresult
+nsGenericHTMLElement::GetFloatAttr(nsIAtom* aAttr, float aDefault, float* aResult)
+{
+  const nsAttrValue* attrVal = mAttrsAndChildren.GetAttr(aAttr);
+  if (attrVal && attrVal->Type() == nsAttrValue::eFloatValue) {
+    *aResult = attrVal->GetFloatValue();
+  }
+  else {
+    *aResult = aDefault;
+  }
+  return NS_OK;
+}
+
+nsresult
+nsGenericHTMLElement::SetFloatAttr(nsIAtom* aAttr, float aValue)
+{
+  nsAutoString value;
+  value.AppendFloat(aValue);
+
+  return SetAttr(kNameSpaceID_None, aAttr, value, PR_TRUE);
+}
+
+nsresult
 nsGenericHTMLElement::GetURIAttr(nsIAtom* aAttr, nsIAtom* aBaseAttr, nsAString& aResult)
 {
   nsAutoString attrValue;
@@ -2506,7 +2298,7 @@ nsGenericHTMLFormElement::~nsGenericHTMLFormElement()
 
   // Clean up.  Set the form to nsnull so it knows we went away.
   // Do not notify as the content is being destroyed.
-  SetForm(nsnull, PR_TRUE, PR_FALSE);
+  ClearForm(PR_TRUE, PR_FALSE);
 }
 
 NS_IMPL_QUERY_INTERFACE_INHERITED1(nsGenericHTMLFormElement,
@@ -2527,15 +2319,30 @@ nsGenericHTMLFormElement::SaveSubtreeState()
   nsGenericHTMLElement::SaveSubtreeState();
 }
 
-NS_IMETHODIMP
-nsGenericHTMLFormElement::SetForm(nsIDOMHTMLFormElement* aForm,
-                                  PRBool aRemoveFromForm,
-                                  PRBool aNotify)
+void
+nsGenericHTMLFormElement::SetForm(nsIDOMHTMLFormElement* aForm)
 {
-  NS_ASSERTION(!mForm || HasFlag(ADDED_TO_FORM),
-               "Form control should have had flag set.");
+  NS_PRECONDITION(aForm, "Don't pass null here");
+  NS_ASSERTION(!mForm,
+               "We don't support switching from one non-null form to another.");
 
-  if (mForm && aRemoveFromForm) {
+  // keep a *weak* ref to the form here
+  CallQueryInterface(aForm, &mForm);
+  mForm->Release();
+}
+
+void
+nsGenericHTMLFormElement::ClearForm(PRBool aRemoveFromForm,
+                                    PRBool aNotify)
+{
+  NS_ASSERTION((mForm != nsnull) == HasFlag(ADDED_TO_FORM),
+               "Form control should have had flag set correctly");
+
+  if (!mForm) {
+    return;
+  }
+  
+  if (aRemoveFromForm) {
     nsAutoString nameVal, idVal;
     GetAttr(kNameSpaceID_None, nsGkAtoms::name, nameVal);
     GetAttr(kNameSpaceID_None, nsGkAtoms::id, idVal);
@@ -2549,19 +2356,10 @@ nsGenericHTMLFormElement::SetForm(nsIDOMHTMLFormElement* aForm,
     if (!idVal.IsEmpty()) {
       mForm->RemoveElementFromTable(this, idVal);
     }
-
-    UnsetFlags(ADDED_TO_FORM);
   }
 
-  if (aForm) {
-    // keep a *weak* ref to the form here
-    CallQueryInterface(aForm, &mForm);
-    mForm->Release();
-  } else {
-    mForm = nsnull;
-  }
-
-  return NS_OK;
+  UnsetFlags(ADDED_TO_FORM);
+  mForm = nsnull;
 }
 
 NS_IMETHODIMP
@@ -2663,7 +2461,7 @@ nsGenericHTMLFormElement::BindToTree(nsIDocument* aDocument,
     // probably changed _somewhere_.
     nsCOMPtr<nsIDOMHTMLFormElement> form = FindForm();
     if (form) {
-      SetForm(form, PR_FALSE, PR_FALSE);
+      SetForm(form);
     }
   }
 
@@ -2700,12 +2498,12 @@ nsGenericHTMLFormElement::UnbindFromTree(PRBool aDeep, PRBool aNullParent)
     // Might need to unset mForm
     if (aNullParent) {
       // No more parent means no more form
-      SetForm(nsnull, PR_TRUE, PR_TRUE);
+      ClearForm(PR_TRUE, PR_TRUE);
     } else {
       // Recheck whether we should still have an mForm.
       nsCOMPtr<nsIDOMHTMLFormElement> form = FindForm(mForm);
       if (!form) {
-        SetForm(nsnull, PR_TRUE, PR_TRUE);
+        ClearForm(PR_TRUE, PR_TRUE);
       } else {
         UnsetFlags(MAYBE_ORPHAN_FORM_ELEMENT);
       }
@@ -2884,6 +2682,53 @@ nsGenericHTMLFormElement::SetFocusAndScrollIntoView(nsPresContext* aPresContext)
   }
 }
 
+void
+nsGenericHTMLFormElement::DoSetFocus(nsPresContext* aPresContext)
+{
+  if (!aPresContext)
+    return;
+
+  if (FocusState() == eActiveWindow) {
+    SetFocusAndScrollIntoView(aPresContext);
+  }
+}
+
+nsGenericHTMLFormElement::FocusTristate
+nsGenericHTMLFormElement::FocusState()
+{
+  // We can't be focused if we aren't in a document
+  nsIDocument* doc = GetCurrentDoc();
+  if (!doc)
+    return eUnfocusable;
+
+  // first see if we are disabled or not. If disabled then do nothing.
+  if (HasAttr(kNameSpaceID_None, nsGkAtoms::disabled)) {
+    return eUnfocusable;
+  }
+
+  // If the window is not active, do not allow the focus to bring the
+  // window to the front.  We update the focus controller, but do
+  // nothing else.
+  nsCOMPtr<nsPIDOMWindow> win = doc->GetWindow();
+  if (win) {
+    nsIFocusController *focusController = win->GetRootFocusController();
+    if (focusController) {
+      PRBool isActive = PR_FALSE;
+      focusController->GetActive(&isActive);
+      if (!isActive) {
+        focusController->SetFocusedWindow(win);
+        nsCOMPtr<nsIDOMElement> el =
+          do_QueryInterface(static_cast<nsGenericHTMLElement*>(this));
+        focusController->SetFocusedElement(el);
+
+        return eInactiveWindow;
+      }
+    }
+  }
+
+  return eActiveWindow;
+}
+
 //----------------------------------------------------------------------
 
 nsGenericHTMLFrameElement::~nsGenericHTMLFrameElement()
@@ -2979,6 +2824,13 @@ nsGenericHTMLFrameElement::GetFrameLoader(nsIFrameLoader **aFrameLoader)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsGenericHTMLFrameElement::SwapFrameLoaders(nsIFrameLoaderOwner* aOtherOwner)
+{
+  // We don't support this yet
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 nsresult
 nsGenericHTMLFrameElement::LoadSrc()
 {
@@ -3011,6 +2863,8 @@ nsGenericHTMLFrameElement::BindToTree(nsIDocument* aDocument,
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (aDocument) {
+    NS_ASSERTION(!nsContentUtils::IsSafeToRunScript(),
+                 "Missing a script blocker!");
     // We're in a document now.  Kick off the frame load.
     LoadSrc();
   }
@@ -3116,7 +2970,7 @@ nsGenericHTMLElement::RemoveFocus(nsPresContext *aPresContext)
     return;
 
   if (IsNodeOfType(eHTML_FORM_CONTROL)) {
-    nsIFormControlFrame* formControlFrame = GetFormControlFrame(PR_FALSE);
+    nsIFormControlFrame* formControlFrame = GetFormControlFrame(PR_TRUE);
     if (formControlFrame) {
       formControlFrame->SetFocus(PR_FALSE, PR_FALSE);
     }

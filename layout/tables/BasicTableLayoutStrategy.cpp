@@ -51,7 +51,8 @@
 #undef  DEBUG_TABLE_STRATEGY 
 
 BasicTableLayoutStrategy::BasicTableLayoutStrategy(nsTableFrame *aTableFrame)
-  : mTableFrame(aTableFrame)
+  : nsITableLayoutStrategy(nsITableLayoutStrategy::Auto)
+  , mTableFrame(aTableFrame)
 {
     MarkIntrinsicWidthsDirty();
 }
@@ -121,7 +122,7 @@ GetWidthInfo(nsIRenderingContext *aRenderingContext,
     // XXXldb Should we consider -moz-box-sizing?
 
     nsStyleUnit unit = aStylePos->mWidth.GetUnit();
-    if (unit == eStyleUnit_Coord || unit == eStyleUnit_Chars) {
+    if (unit == eStyleUnit_Coord) {
         hasSpecifiedWidth = PR_TRUE;
         nscoord w = nsLayoutUtils::ComputeWidthValue(aRenderingContext,
                       aFrame, 0, 0, 0, aStylePos->mWidth);
@@ -171,8 +172,7 @@ GetWidthInfo(nsIRenderingContext *aRenderingContext,
     unit = maxWidth.GetUnit();
     // XXX To really implement 'max-width' well, we'd need to store
     // it separately on the columns.
-    if (unit == eStyleUnit_Coord || unit == eStyleUnit_Chars ||
-        unit == eStyleUnit_Enumerated) {
+    if (unit == eStyleUnit_Coord || unit == eStyleUnit_Enumerated) {
         nscoord w =
             nsLayoutUtils::ComputeWidthValue(aRenderingContext, aFrame,
                                              0, 0, 0, maxWidth);
@@ -197,8 +197,7 @@ GetWidthInfo(nsIRenderingContext *aRenderingContext,
                                  eStyleUnit_Enumerated);
     }
     unit = minWidth.GetUnit();
-    if (unit == eStyleUnit_Coord || unit == eStyleUnit_Chars ||
-        unit == eStyleUnit_Enumerated) {
+    if (unit == eStyleUnit_Coord || unit == eStyleUnit_Enumerated) {
         nscoord w =
             nsLayoutUtils::ComputeWidthValue(aRenderingContext, aFrame,
                                              0, 0, 0, minWidth);
@@ -423,7 +422,7 @@ BasicTableLayoutStrategy::ComputeIntrinsicWidths(nsIRenderingContext* aRendering
             NS_ERROR("column frames out of sync with cell map");
             continue;
         }
-        if (mTableFrame->GetNumCellsOriginatingInCol(col)) {
+        if (mTableFrame->ColumnHasCellSpacingBefore(col)) {
             add += spacing;
         }
         min += colFrame->GetMinCoord();
@@ -632,7 +631,7 @@ BasicTableLayoutStrategy::DistributeWidthToColumns(nscoord aWidth,
     // each of the columns. We start at aFirstCol + 1 because the first
     // in-between boundary would be at the left edge of column aFirstCol + 1
     for (PRInt32 col = aFirstCol + 1; col < aFirstCol + aColCount; ++col) {
-        if (mTableFrame->GetNumCellsOriginatingInCol(col)) {
+        if (mTableFrame->ColumnHasCellSpacingBefore(col)) {
             subtract += spacing;
         }
     }
@@ -741,7 +740,7 @@ BasicTableLayoutStrategy::DistributeWidthToColumns(nscoord aWidth,
                                                         pref_width);
             } else if (pref_width == 0) {
                 if (aWidthType == BTLS_FINAL_WIDTH &&
-                    mTableFrame->GetNumCellsOriginatingInCol(col)) {
+                    mTableFrame->ColumnHasCellSpacingBefore(col)) {
                     ++numNonSpecZeroWidthCols;
                 }
             } else {
@@ -939,7 +938,7 @@ BasicTableLayoutStrategy::DistributeWidthToColumns(nscoord aWidth,
                              "when we're setting final width.");
                 if (pct == 0.0f &&
                     !colFrame->GetHasSpecifiedCoord() &&
-                    mTableFrame->GetNumCellsOriginatingInCol(col)) {
+                    mTableFrame->ColumnHasCellSpacingBefore(col)) {
 
                     NS_ASSERTION(col_width == 0 &&
                                  colFrame->GetPrefCoord() == 0,

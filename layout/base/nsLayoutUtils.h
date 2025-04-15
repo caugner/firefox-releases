@@ -61,6 +61,7 @@ class nsIFontMetrics;
 #include "nsThreadUtils.h"
 
 class nsBlockFrame;
+class nsTextFragment;
 
 /**
  * nsLayoutUtils is a namespace class used for various helper
@@ -71,7 +72,7 @@ class nsLayoutUtils
 {
 public:
   /**
-   * GetBeforeFrame returns the :before frame of the given frame, if
+   * GetBeforeFrame returns the outermost :before frame of the given frame, if
    * one exists.  This is typically O(1).  The frame passed in must be
    * the first-in-flow.   
    *
@@ -81,7 +82,7 @@ public:
   static nsIFrame* GetBeforeFrame(nsIFrame* aFrame);
 
   /**
-   * GetAfterFrame returns the :after frame of the given frame, if one
+   * GetAfterFrame returns the outermost :after frame of the given frame, if one
    * exists.  This will walk the in-flow chain to the last-in-flow if
    * needed.  This function is typically O(N) in the number of child
    * frames, following in-flows, etc.
@@ -116,8 +117,11 @@ public:
   }
 
   /**
-   * IsGeneratedContentFor returns PR_TRUE if aFrame is generated
-   * content of type aPseudoElement for aContent
+   * IsGeneratedContentFor returns PR_TRUE if aFrame is the outermost
+   * frame for generated content of type aPseudoElement for aContent.
+   * aFrame *might not* have the aPseudoElement pseudo-style! For example
+   * it might be a table outer frame and the inner table frame might
+   * have the pseudo-style.
    *
    * @param aContent the content node we're looking at.  If this is
    *        null, then we just assume that aFrame has the right content
@@ -226,8 +230,11 @@ public:
    * Get the parent of aFrame. If aFrame is the root frame for a document,
    * and the document has a parent document in the same view hierarchy, then
    * we try to return the subdocumentframe in the parent document.
+   * @param aExtraOffset [in/out] if non-null, then as we cross documents
+   * an extra offset may be required and it will be added to aCrossDocOffset
    */
-  static nsIFrame* GetCrossDocParentFrame(nsIFrame* aFrame);
+  static nsIFrame* GetCrossDocParentFrame(const nsIFrame* aFrame,
+                                          nsPoint* aCrossDocOffset = nsnull);
   
   /**
    * IsProperAncestorFrame checks whether aAncestorFrame is an ancestor
@@ -381,15 +388,80 @@ public:
                                        nsIView* aView);
 
   /**
+   * Given a matrix and a point, let T be the transformation matrix translating points
+   * in the coordinate space with origin aOrigin to the coordinate space used by the
+   * matrix.  If M is the stored matrix, this function returns (T-1)MT, the matrix
+   * that's equivalent to aMatrix but in the coordinate space that treats aOrigin
+   * as the origin.
+   *
+   * @param aOrigin The origin to translate to.
+   * @param aMatrix The matrix to change the basis of.
+   * @return A matrix equivalent to aMatrix, but operating in the coordinate system with
+   *         origin aOrigin.
+   */
+  static gfxMatrix ChangeMatrixBasis(const gfxPoint &aOrigin, const gfxMatrix &aMatrix);
+
+  /**
    * Given aFrame, the root frame of a stacking context, find its descendant
    * frame under the point aPt that receives a mouse event at that location,
    * or nsnull if there is no such frame.
    * @param aPt the point, relative to the frame origin
    * @param aShouldIgnoreSuppression a boolean to control if the display
    * list builder should ignore paint suppression or not
+   * @param aIgnoreRootScrollFrame whether or not the display list builder
+   * should ignore the root scroll frame.
    */
   static nsIFrame* GetFrameForPoint(nsIFrame* aFrame, nsPoint aPt,
-                                    PRBool aShouldIgnoreSuppression = PR_FALSE);
+                                    PRBool aShouldIgnoreSuppression = PR_FALSE,
+                                    PRBool aIgnoreRootScrollFrame = PR_FALSE);
+
+  /**
+   * Given a point in the global coordinate space, returns that point expressed
+   * in the coordinate system of aFrame.  This effectively inverts all transforms
+   * between this point and the root frame.
+   *
+   * @param aFrame The frame that acts as the coordinate space container.
+   * @param aPoint The point, in the global space, to get in the frame-local space.
+   * @return aPoint, expressed in aFrame's canonical coordinate space.
+   */
+  static nsPoint InvertTransformsToRoot(nsIFrame* aFrame,
+                                        const nsPoint &aPt);
+
+
+  /**
+   * Helper function that, given a rectangle and a matrix, returns the smallest
+   * rectangle containing the image of the source rectangle.
+   *
+   * @param aBounds The rectangle to transform.
+   * @param aMatrix The matrix to transform it with.
+   * @param aFactor The number of app units per graphics unit.
+   * @return The smallest rect that contains the image of aBounds.
+   */
+  static nsRect MatrixTransformRect(const nsRect &aBounds,
+                                    const gfxMatrix &aMatrix, float aFactor);
+
+  /**
+   * Helper function that, given a point and a matrix, returns the image
+   * of that point under the matrix transform.
+   *
+   * @param aPoint The point to transform.
+   * @param aMatrix The matrix to transform it with.
+   * @param aFactor The number of app units per graphics unit.
+   * @return The image of the point under the transform.
+   */
+  static nsPoint MatrixTransformPoint(const nsPoint &aPoint,
+                                      const gfxMatrix &aMatrix, float aFactor);
+
+  /**
+   * Given a graphics rectangle in graphics space, return a rectangle in
+   * app space that contains the graphics rectangle, rounding out as necessary.
+   *
+   * @param aRect The graphics rect to round outward.
+   * @param aFactor The number of app units per graphics unit.
+   * @return The smallest rectangle in app space that contains aRect.
+   */
+  static nsRect RoundGfxRectToAppRect(const gfxRect &aRect, float aFactor);
+
 
   /**
    * Given aFrame, the root frame of a stacking context, paint it and its
@@ -480,6 +552,19 @@ public:
                           PRInt32&   aIndex,
                           PRInt32&   aTextWidth);
 
+  class BoxCallback {
+  public:
+    virtual void AddBox(nsIFrame* aFrame) = 0;
+  };
+  /**
+   * Collect all CSS boxes associated with aFrame and its
+   * continuations, "drilling down" through outer table frames and
+   * some anonymous blocks since they're not real CSS boxes.
+   * If aFrame is null, no boxes are returned.
+   * SVG frames return a single box, themselves.
+   */
+  static void GetAllInFlowBoxes(nsIFrame* aFrame, BoxCallback* aCallback);
+
   class RectCallback {
   public:
     virtual void AddRect(const nsRect& aRect) = 0;
@@ -501,6 +586,14 @@ public:
    * the union is empty, returns the first rect.
    */
   static nsRect GetAllInFlowRectsUnion(nsIFrame* aFrame, nsIFrame* aRelativeTo);
+
+  /**
+   * Takes a text-shadow array from the style properties of a given nsIFrame and
+   * computes the union of those shadows along with the given initial rect.
+   * If there are no shadows, the initial rect is returned.
+   */
+  static nsRect GetTextShadowRectsUnion(const nsRect& aTextAndDecorationsRect,
+                                        nsIFrame* aFrame);
 
   /**
    * Get the font metrics corresponding to the frame's style data.
@@ -531,6 +624,12 @@ public:
    * Find the nearest ancestor that's a block
    */
   static nsBlockFrame* FindNearestBlockAncestor(nsIFrame* aFrame);
+
+  /**
+   * Find the nearest ancestor that's not for generated content. Will return
+   * aFrame if aFrame is not for generated content.
+   */
+  static nsIFrame* GetNonGeneratedAncestor(nsIFrame* aFrame);
 
   /**
    * Cast aFrame to an nsBlockFrame* or return null if it's not
@@ -566,6 +665,13 @@ public:
   GetNextContinuationOrSpecialSibling(nsIFrame *aFrame);
 
   /**
+   * Get the first frame in the continuation-plus-special-sibling chain
+   * containing aFrame.
+   */
+  static nsIFrame*
+  GetFirstContinuationOrSpecialSibling(nsIFrame *aFrame);
+  
+  /**
    * Check whether aFrame is a part of the scrollbar or scrollcorner of
    * the root content.
    * @param aFrame the checking frame
@@ -574,31 +680,6 @@ public:
    */
   static PRBool IsViewportScrollbarFrame(nsIFrame* aFrame);
 
-  /**
-   * Return the value of aStyle as an nscoord if it can be determined without
-   * reference to ancestors or children (e.g. is not a percentage width)
-   * @param aStyle the style coord
-   * @param aRenderingContext the rendering context to use for font measurement
-   * @param aFrame the frame whose style context should be used for font information
-   * @param aResult the nscoord value of the style coord
-   * @return TRUE if the unit is eStyleUnit_Coord or eStyleUnit_Chars
-   */
-  static PRBool GetAbsoluteCoord(const nsStyleCoord& aStyle,
-                                 nsIRenderingContext* aRenderingContext,
-                                 nsIFrame* aFrame,
-                                 nscoord& aResult)
-  {
-    return GetAbsoluteCoord(aStyle, aRenderingContext,
-                            aFrame->GetStyleContext(), aResult);
-  }
-
-  /**
-   * Same as above but doesn't need a frame
-   */
-  static PRBool GetAbsoluteCoord(const nsStyleCoord& aStyle,
-                                 nsIRenderingContext* aRenderingContext,
-                                 nsStyleContext* aStyleContext,
-                                 nscoord& aResult);
   /**
    * Get the contribution of aFrame to its containing block's intrinsic
    * width.  This considers the child's intrinsic width, its 'width',
@@ -615,8 +696,6 @@ public:
    * containing block width.
    */
   static nscoord ComputeWidthDependentValue(
-                   nsIRenderingContext* aRenderingContext,
-                   nsIFrame*            aFrame,
                    nscoord              aContainingBlockWidth,
                    const nsStyleCoord&  aCoord);
 
@@ -650,8 +729,6 @@ public:
    * containing block height.
    */
   static nscoord ComputeHeightDependentValue(
-                   nsIRenderingContext* aRenderingContext,
-                   nsIFrame*            aFrame,
                    nscoord              aContainingBlockHeight,
                    const nsStyleCoord&  aCoord);
 
@@ -678,7 +755,8 @@ public:
                          nsIRenderingContext* aContext,
                          const PRUnichar*     aString,
                          PRInt32              aLength,
-                         nsPoint              aPoint);
+                         nsPoint              aPoint,
+                         PRUint8              aDirection = NS_STYLE_DIRECTION_INHERIT);
 
   static nscoord GetStringWidth(const nsIFrame*      aFrame,
                                 nsIRenderingContext* aContext,
@@ -725,28 +803,94 @@ public:
    */
   static nsIFrame* GetClosestLayer(nsIFrame* aFrame);
 
+  /* N.B. The only difference between variants of the Draw*Image
+   * functions below is the type of the aImage argument.
+   */
+
   /**
-   * Draw a single image.
+   * Draw an image.
+   * See https://wiki.mozilla.org/Gecko:Image_Snapping_and_Rendering
    *   @param aRenderingContext Where to draw the image, set up with an
    *                            appropriate scale and transform for drawing in
-   *                            app units (aDestRect).
+   *                            app units.
    *   @param aImage            The image.
-   *   @param aDestRect         Where to draw the image (app units).
-   *   @param aDirtyRect        Draw only within this region (rounded to the
-   *                            nearest pixel); the intersection of
-   *                            invalidation and clipping (this is the
-   *                            destination clip)
-   *   @param aSourceRect       If null, draw the entire image so it fits in
-   *                            aDestRect.  If non-null, the subregion of the
-   *                            image that should be drawn (in app units, such
-   *                            that converting it to CSS pixels yields image
-   *                            pixels).
+   *   @param aDest             Where one copy of the image should mapped to.
+   *   @param aFill             The area to be filled with copies of the
+   *                            image.
+   *   @param aAnchor           A point in aFill which we will ensure is
+   *                            pixel-aligned in the output.
+   *   @param aDirty            Pixels outside this area may be skipped.
    */
   static nsresult DrawImage(nsIRenderingContext* aRenderingContext,
-                            imgIContainer* aImage,
-                            const nsRect& aDestRect,
-                            const nsRect& aDirtyRect,
-                            const nsRect* aSourceRect = nsnull);
+                            imgIContainer*       aImage,
+                            const nsRect&        aDest,
+                            const nsRect&        aFill,
+                            const nsPoint&       aAnchor,
+                            const nsRect&        aDirty);
+
+  static nsresult DrawImage(nsIRenderingContext* aRenderingContext,
+                            nsIImage*            aImage,
+                            const nsRect&        aDest,
+                            const nsRect&        aFill,
+                            const nsPoint&       aAnchor,
+                            const nsRect&        aDirty);
+
+  /**
+   * Draw a whole image without scaling or tiling.
+   *
+   *   @param aRenderingContext Where to draw the image, set up with an
+   *                            appropriate scale and transform for drawing in
+   *                            app units.
+   *   @param aImage            The image.
+   *   @param aDest             The top-left where the image should be drawn
+   *   @param aDirty            Pixels outside this area may be skipped.
+   *   @param aSourceArea       If non-null, this area is extracted from
+   *                            the image and drawn at aDest. It's
+   *                            in appunits. For best results it should
+   *                            be aligned with image pixels.
+   */
+  static nsresult DrawSingleUnscaledImage(nsIRenderingContext* aRenderingContext,
+                                          imgIContainer*       aImage,
+                                          const nsPoint&       aDest,
+                                          const nsRect&        aDirty,
+                                          const nsRect*        aSourceArea = nsnull);
+
+  /**
+   * Draw a whole image without tiling.
+   *
+   *   @param aRenderingContext Where to draw the image, set up with an
+   *                            appropriate scale and transform for drawing in
+   *                            app units.
+   *   @param aImage            The image.
+   *   @param aDest             The area that the image should fill
+   *   @param aDirty            Pixels outside this area may be skipped.
+   *   @param aSourceArea       If non-null, this area is extracted from
+   *                            the image and drawn in aDest. It's
+   *                            in appunits. For best results it should
+   *                            be aligned with image pixels.
+   */
+  static nsresult DrawSingleImage(nsIRenderingContext* aRenderingContext,
+                                  imgIContainer*       aImage,
+                                  const nsRect&        aDest,
+                                  const nsRect&        aDirty,
+                                  const nsRect*        aSourceArea = nsnull);
+
+  static nsresult DrawSingleImage(nsIRenderingContext* aRenderingContext,
+                                  nsIImage*            aImage,
+                                  const nsRect&        aDest,
+                                  const nsRect&        aDirty,
+                                  const nsRect*        aSourceArea = nsnull);
+
+  /**
+   * Given a source area of an image (in appunits) and a destination area
+   * that we want to map that source area too, computes the area that
+   * would be covered by the whole image. This is useful for passing to
+   * the aDest parameter of DrawImage, when we want to draw a subimage
+   * of an overall image.
+   */
+  static nsRect GetWholeImageDestination(const nsIntSize& aWholeImageSize,
+                                         const nsRect& aImageSourceArea,
+                                         const nsRect& aDestArea);
 
   /**
    * Set the font on aRC based on the style in aSC
@@ -754,29 +898,31 @@ public:
   static void SetFontFromStyle(nsIRenderingContext* aRC, nsStyleContext* aSC);
 
   /**
-   * Convert an eStyleUnit_Chars nsStyleCoord to an nscoord.
+   * Determine if any corner radius is of nonzero size
+   *   @param aCorners the |nsStyleCorners| object to check
+   *   @return PR_TRUE unless all the coordinates are 0%, 0 or null.
    *
-   * @param aStyle the style coord
-   * @param aRenderingContext the rendering context to use for font measurement
-   * @param aStyleContext the style context to use for font infomation
+   * A corner radius with one dimension zero and one nonzero is
+   * treated as a nonzero-radius corner, even though it will end up
+   * being rendered like a zero-radius corner.  This is because such
+   * corners are not expected to appear outside of test cases, and it's
+   * simpler to implement the test this way.
    */
-  static nscoord CharsToCoord(const nsStyleCoord& aStyle,
-                              nsIRenderingContext* aRenderingContext,
-                              nsStyleContext* aStyleContext);
+  static PRBool HasNonZeroCorner(const nsStyleCorners& aCorners);
 
   /**
-   * Determine if any style coordinate is nonzero
-   *   @param aCoord the style sides
-   *   @return PR_TRUE unless all the coordinates are 0%, 0 or null.
+   * Determine if there is any corner radius on corners adjacent to the
+   * given side.
    */
-  static PRBool HasNonZeroSide(const nsStyleSides& aSides);
+  static PRBool HasNonZeroCornerOnSide(const nsStyleCorners& aCorners,
+                                       PRUint8 aSide);
 
   /**
    * Determine if a widget is likely to require transparency or translucency.
    *   @param aFrame the frame of a <window>, <popup> or <menupopup> element.
    *   @return a value suitable for passing to SetWindowTranslucency
    */
-  static PRBool FrameHasTransparency(nsIFrame* aFrame);
+  static nsTransparencyMode GetFrameTransparency(nsIFrame* aFrame);
 
   /**
    * Get textrun construction flags determined by a given style; in particular
@@ -799,17 +945,36 @@ public:
                                       nsRect* aHStrip, nsRect* aVStrip);
 
   /**
+   * Get a device context that can be used to get up-to-date device
+   * dimensions for the given docshell.  For some reason, this is more
+   * complicated than it ought to be in multi-monitor situations.
+   */
+  static nsIDeviceContext*
+  GetDeviceContextForScreenInfo(nsIDocShell* aDocShell);
+
+  /**
+   * Some frames with 'position: fixed' (nsStylePosition::mDisplay ==
+   * NS_STYLE_POSITION_FIXED) are not really fixed positioned, since
+   * they're inside an element with -moz-transform.  This function says
+   * whether such an element is a real fixed-pos element.
+   */
+  static PRBool IsReallyFixedPos(nsIFrame* aFrame);
+
+  /**
    * Indicates if the nsIFrame::GetUsedXXX assertions in nsFrame.cpp should
    * disabled.
    */
-#ifdef DEBUG
   static PRBool sDisableGetUsedXAssertions;
-#endif
+
+  /**
+   * Returns the text fragment, which aFrame should use for printing.
+   * @param aFrame The nsIFrame object, which uses text fragment data.
+   */
+  static nsTextFragment* GetTextFragmentForPrinting(const nsIFrame* aFrame);
 };
 
 class nsAutoDisableGetUsedXAssertions
 {
-#ifdef DEBUG
 public:
   nsAutoDisableGetUsedXAssertions()
     : mOldValue(nsLayoutUtils::sDisableGetUsedXAssertions)
@@ -823,7 +988,6 @@ public:
 
 private:
   PRBool mOldValue;
-#endif  
 };
 
 class nsSetAttrRunnable : public nsRunnable

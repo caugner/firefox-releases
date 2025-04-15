@@ -73,6 +73,8 @@ nsXTFElementWrapper::nsXTFElementWrapper(nsINodeInfo* aNodeInfo,
       mTmpAttrName(nsGkAtoms::_asterix) // XXX this is a hack, but names
                                             // have to have a value
 {
+  // We never know when we might have a class
+  SetFlags(NODE_MAY_HAVE_CLASS);
 }
 
 nsXTFElementWrapper::~nsXTFElementWrapper()
@@ -120,6 +122,7 @@ nsXTFElementWrapper::QueryInterface(REFNSIID aIID, void** aInstancePtr)
 {
   NS_PRECONDITION(aInstancePtr, "null out param");
 
+  NS_IMPL_QUERY_CYCLE_COLLECTION(nsXTFElementWrapper)
   if (aIID.Equals(NS_GET_IID(nsIClassInfo))) {
     *aInstancePtr = static_cast<nsIClassInfo*>(this);
     NS_ADDREF_THIS();
@@ -526,7 +529,7 @@ nsXTFElementWrapper::GetExistingAttrNameFromQName(const nsAString& aStr) const
   if (!nodeInfo) {
     nsCOMPtr<nsIAtom> nameAtom = do_GetAtom(aStr);
     if (HandledByInner(nameAtom)) 
-      mNodeInfo->NodeInfoManager()->GetNodeInfo(nameAtom, nsnull, kNameSpaceID_None, &nodeInfo);
+      nodeInfo = mNodeInfo->NodeInfoManager()->GetNodeInfo(nameAtom, nsnull, kNameSpaceID_None).get();
   }
   
   return nodeInfo;
@@ -931,7 +934,7 @@ nsXTFElementWrapper::GetClassAttributeName() const
 }
 
 const nsAttrValue*
-nsXTFElementWrapper::GetClasses() const
+nsXTFElementWrapper::DoGetClasses() const
 {
   const nsAttrValue* val = nsnull;
   nsIAtom* clazzAttr = GetClassAttributeName();

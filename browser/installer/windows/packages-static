@@ -26,6 +26,7 @@ bin\defaults\profile\prefs.js
 bin\defaults\profile\mimeTypes.rdf
 bin\defaults\profile\chrome\*
 bin\uninstall\helper.exe
+bin\update.locale
 bin\updater.ini
 bin\dictionaries\*
 
@@ -73,7 +74,6 @@ bin\components\autocomplete.xpt
 bin\components\autoconfig.xpt
 bin\components\browsercompsbase.xpt
 bin\components\browserplaces.xpt
-bin\components\browsersearch.xpt
 bin\components\browser-feeds.xpt
 bin\components\caps.xpt
 bin\components\chardet.xpt
@@ -97,6 +97,7 @@ bin\components\dom_canvas.xpt
 bin\components\dom_core.xpt
 bin\components\dom_css.xpt
 bin\components\dom_events.xpt
+bin\components\dom_geolocation.xpt
 bin\components\dom_html.xpt
 bin\components\dom_offline.xpt
 bin\components\dom_json.xpt
@@ -104,6 +105,7 @@ bin\components\dom_range.xpt
 bin\components\dom_sidebar.xpt
 bin\components\dom_storage.xpt
 bin\components\dom_stylesheets.xpt
+bin\components\dom_threads.xpt
 bin\components\dom_traversal.xpt
 bin\components\dom_views.xpt
 bin\components\dom_xbl.xpt
@@ -154,7 +156,10 @@ bin\components\necko_http.xpt
 bin\components\necko_res.xpt
 bin\components\necko_socket.xpt
 bin\components\necko_viewsource.xpt
+bin\components\necko_wifi.xpt
+#ifdef OJI
 bin\components\oji.xpt
+#endif
 bin\components\loginmgr.xpt
 bin\components\places.xpt
 bin\components\plugin.xpt
@@ -168,6 +173,7 @@ bin\components\saxparser.xpt
 bin\components\shistory.xpt
 bin\components\storage.xpt
 bin\components\toolkitprofile.xpt
+bin\components\toolkitsearch.xpt
 bin\components\txtsvc.xpt
 bin\components\txmgr.xpt
 #ifdef MOZ_USE_NATIVE_UCONV
@@ -211,6 +217,7 @@ bin\components\nsTryToClose.js
 bin\components\nsHelperAppDlg.js
 bin\components\nsDownloadManagerUI.js
 bin\components\nsProxyAutoConfig.js
+bin\components\NetworkGeolocationProvider.js
 bin\components\nsSearchService.js
 bin\components\nsSearchSuggestions.js
 bin\components\nsSidebar.js
@@ -220,15 +227,19 @@ bin\components\nsUpdateService.js
 bin\components\nsMicrosummaryService.js
 bin\components\nsPlacesTransactionsService.js
 bin\components\nsPostUpdateWin.js
+bin\components\nsPrivateBrowsingService.js
 bin\components\nsLoginInfo.js
 bin\components\nsLoginManager.js
 bin\components\nsLoginManagerPrompter.js
 bin\components\storage-Legacy.js
+bin\components\storage-mozStorage.js
 bin\components\pluginGlue.js
 bin\components\extensions.xpt
 bin\components\update.xpt
 bin\components\nsSessionStartup.js
 bin\components\nsSessionStore.js
+bin\components\aboutPrivateBrowsing.js
+bin\components\aboutSessionRestore.js
 bin\components\sessionstore.xpt
 bin\components\nsURLFormatter.js
 bin\components\urlformatter.xpt
@@ -237,12 +248,16 @@ bin\components\brwsrcmp.dll
 bin\components\txEXSLTRegExFunctions.js
 bin\components\nsLivemarkService.js
 bin\components\nsTaggingService.js
+bin\components\nsPlacesDBFlush.js
 bin\components\nsDefaultCLH.js
 bin\components\nsContentPrefService.js
 bin\components\nsContentDispatchChooser.js
 bin\components\nsHandlerService.js
 bin\components\nsWebHandlerApp.js
+bin\components\aboutRights.js
 bin\components\aboutRobots.js
+bin\components\aboutCertError.js
+bin\components\nsBadCertHandler.js
 
 ; Modules
 bin\modules\*

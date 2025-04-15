@@ -2,8 +2,6 @@
  * Tests for nsIFaviconService
  */
 
-const TESTDIR = "toolkit/components/places/tests/unit/";
-
 /*
  * dumpToFile()
  *
@@ -67,11 +65,15 @@ function readFileData(aFile) {
  */
 function setAndGetFaviconData(aFilename, aData, aMimeType) {
   var iconURI = uri("http://places.test/" + aFilename);
-
-  iconsvc.setFaviconData(iconURI,
-                         aData, aData.length, aMimeType,
-                         Number.MAX_VALUE);
-
+  try {
+    iconsvc.setFaviconData(iconURI,
+                           aData, aData.length, aMimeType,
+                           Number.MAX_VALUE);
+  } catch (ex) {}
+  var dataURL = iconsvc.getFaviconDataAsDataURL(iconURI);
+  try {
+    iconsvc.setFaviconDataFromDataURL(iconURI, dataURL, Number.MAX_VALUE);
+  } catch (ex) {}
   var mimeTypeOutparam = {};
 
   var outData = iconsvc.getFaviconData(iconURI,
@@ -130,7 +132,7 @@ var testdesc = "test storing a normal 16x16 icon";
 // 16x16 png, 286 bytes.
 var iconName = "favicon-normal16.png";
 var inMimeType = "image/png";
-var iconFile = do_get_file(TESTDIR + iconName);
+var iconFile = do_get_file(iconName);
 
 var inData = readFileData(iconFile);
 do_check_eq(inData.length, 286);
@@ -149,7 +151,7 @@ testdesc = "test storing a normal 32x32 icon";
 // 32x32 png, 344 bytes.
 iconName = "favicon-normal32.png";
 inMimeType = "image/png";
-iconFile = do_get_file(TESTDIR + iconName);
+iconFile = do_get_file(iconName);
 
 inData = readFileData(iconFile);
 do_check_eq(inData.length, 344);
@@ -169,7 +171,7 @@ testdesc = "test storing an oversize 16x16 icon ";
 // out: 16x16 png 
 iconName = "favicon-big16.ico";
 inMimeType = "image/x-icon";
-iconFile = do_get_file(TESTDIR + iconName);
+iconFile = do_get_file(iconName);
 
 inData = readFileData(iconFile);
 do_check_eq(inData.length, 1406);
@@ -177,7 +179,7 @@ do_check_eq(inData.length, 1406);
 [outData, outMimeType] = setAndGetFaviconData(iconName, inData, inMimeType);
 
 // Read in the expected output.
-var expectedFile = do_get_file(TESTDIR + "expected-" + iconName + ".png");
+var expectedFile = do_get_file("expected-" + iconName + ".png");
 var expectedData = readFileData(expectedFile);
 
 // Compare thet expected data to the actual data.
@@ -192,7 +194,7 @@ testdesc = "test storing an oversize 4x4 icon ";
 // out: 16x16 png 
 iconName = "favicon-big4.jpg";
 inMimeType = "image/jpeg";
-iconFile = do_get_file(TESTDIR + iconName);
+iconFile = do_get_file(iconName);
 
 inData = readFileData(iconFile);
 do_check_eq(inData.length, 4751);
@@ -200,7 +202,7 @@ do_check_eq(inData.length, 4751);
 [outData, outMimeType] = setAndGetFaviconData(iconName, inData, inMimeType);
 
 // Read in the expected output.
-var expectedFile = do_get_file(TESTDIR + "expected-" + iconName + ".png");
+var expectedFile = do_get_file("expected-" + iconName + ".png");
 var expectedData = readFileData(expectedFile);
 
 // Compare thet expected data to the actual data.
@@ -216,7 +218,7 @@ testdesc = "test storing an oversize 32x32 icon ";
 // out: 16x16 png 
 iconName = "favicon-big32.jpg";
 inMimeType = "image/jpeg";
-iconFile = do_get_file(TESTDIR + iconName);
+iconFile = do_get_file(iconName);
 
 inData = readFileData(iconFile);
 do_check_eq(inData.length, 3494);
@@ -224,7 +226,7 @@ do_check_eq(inData.length, 3494);
 [outData, outMimeType] = setAndGetFaviconData(iconName, inData, inMimeType);
 
 // Read in the expected output.
-var expectedFile = do_get_file(TESTDIR + "expected-" + iconName + ".png");
+var expectedFile = do_get_file("expected-" + iconName + ".png");
 var expectedData = readFileData(expectedFile);
 
 // Compare thet expected data to the actual data.
@@ -244,7 +246,7 @@ testdesc = "test storing an oversize 48x48 icon ";
 // out: 16x16 png 
 iconName = "favicon-big48.ico";
 inMimeType = "image/x-icon";
-iconFile = do_get_file(TESTDIR + iconName);
+iconFile = do_get_file(iconName);
 
 inData = readFileData(iconFile);
 do_check_eq(inData.length, 56646);
@@ -252,7 +254,7 @@ do_check_eq(inData.length, 56646);
 [outData, outMimeType] = setAndGetFaviconData(iconName, inData, inMimeType);
 
 // Read in the expected output.
-var expectedFile = do_get_file(TESTDIR + "expected-" + iconName + ".png");
+var expectedFile = do_get_file("expected-" + iconName + ".png");
 var expectedData = readFileData(expectedFile);
 
 // Compare thet expected data to the actual data.
@@ -267,7 +269,7 @@ testdesc = "test storing an oversize 64x64 icon ";
 // out: 16x16 png 
 iconName = "favicon-big64.png";
 inMimeType = "image/png";
-iconFile = do_get_file(TESTDIR + iconName);
+iconFile = do_get_file(iconName);
 
 inData = readFileData(iconFile);
 do_check_eq(inData.length, 10698);
@@ -275,7 +277,7 @@ do_check_eq(inData.length, 10698);
 [outData, outMimeType] = setAndGetFaviconData(iconName, inData, inMimeType);
 
 // Read in the expected output.
-var expectedFile = do_get_file(TESTDIR + "expected-" + iconName + ".png");
+var expectedFile = do_get_file("expected-" + iconName + ".png");
 var expectedData = readFileData(expectedFile);
 
 // Compare thet expected data to the actual data.
@@ -290,7 +292,7 @@ testdesc = "test scaling an oversize 160x3 icon ";
 // out: 16x16 png 
 iconName = "favicon-scale160x3.jpg";
 inMimeType = "image/jpeg";
-iconFile = do_get_file(TESTDIR + iconName);
+iconFile = do_get_file(iconName);
 
 inData = readFileData(iconFile);
 do_check_eq(inData.length, 5095);
@@ -298,7 +300,7 @@ do_check_eq(inData.length, 5095);
 [outData, outMimeType] = setAndGetFaviconData(iconName, inData, inMimeType);
 
 // Read in the expected output.
-var expectedFile = do_get_file(TESTDIR + "expected-" + iconName + ".png");
+var expectedFile = do_get_file("expected-" + iconName + ".png");
 var expectedData = readFileData(expectedFile);
 
 // Compare thet expected data to the actual data.
@@ -313,7 +315,7 @@ testdesc = "test scaling an oversize 3x160 icon ";
 // out: 16x16 png 
 iconName = "favicon-scale3x160.jpg";
 inMimeType = "image/jpeg";
-iconFile = do_get_file(TESTDIR + iconName);
+iconFile = do_get_file(iconName);
 
 inData = readFileData(iconFile);
 do_check_eq(inData.length, 5059);
@@ -321,7 +323,7 @@ do_check_eq(inData.length, 5059);
 [outData, outMimeType] = setAndGetFaviconData(iconName, inData, inMimeType);
 
 // Read in the expected output.
-var expectedFile = do_get_file(TESTDIR + "expected-" + iconName + ".png");
+var expectedFile = do_get_file("expected-" + iconName + ".png");
 var expectedData = readFileData(expectedFile);
 
 // Compare thet expected data to the actual data.
@@ -336,18 +338,18 @@ testdesc = "test set and get favicon ";
 // 32x32 png, 344 bytes.
 var icon1Name = "favicon-normal32.png";
 var icon1MimeType = "image/png";
-var icon1File = do_get_file(TESTDIR + icon1Name);
+var icon1File = do_get_file(icon1Name);
 var icon1Data = readFileData(icon1File);
 do_check_eq(icon1Data.length, 344);
-var icon1URI = uri("file:///./" + TESTDIR + icon1Name);
+var icon1URI = uri("file:///./" + icon1Name);
 
 // 16x16 png, 286 bytes.
 var icon2Name = "favicon-normal16.png";
 var icon2MimeType = "image/png";
-var icon2File = do_get_file(TESTDIR + icon2Name);
+var icon2File = do_get_file(icon2Name);
 var icon2Data = readFileData(icon2File);
 do_check_eq(icon2Data.length, 286);
-var icon2URI = uri("file:///./" + TESTDIR + icon2Name);
+var icon2URI = uri("file:///./" + icon2Name);
 
 var page1URI = uri("http://foo.bar/");
 var page2URI = uri("http://bar.foo/");
@@ -362,21 +364,27 @@ histsvc.addVisit(page3URI, Date.now() * 1000, null,
                  histsvc.TRANSITION_TYPED, false, 0);
 
 // set first page icon
+try {
+  iconsvc.setFaviconData(icon1URI, icon1Data, icon1Data.length,
+                         icon1MimeType, Number.MAX_VALUE);
+} catch (ex) {}
 iconsvc.setFaviconUrlForPage(page1URI, icon1URI);
-iconsvc.setFaviconData(icon1URI, icon1Data, icon1Data.length,
-                       icon1MimeType, Number.MAX_VALUE);
 var savedIcon1URI = iconsvc.getFaviconForPage(page1URI);
 
 // set second page icon
+try {
+  iconsvc.setFaviconData(icon2URI, icon2Data, icon2Data.length,
+                         icon2MimeType, Number.MAX_VALUE);
+} catch (ex) {}
 iconsvc.setFaviconUrlForPage(page2URI, icon2URI);
-iconsvc.setFaviconData(icon2URI, icon2Data, icon2Data.length,
-                       icon2MimeType, Number.MAX_VALUE);
 var savedIcon2URI = iconsvc.getFaviconForPage(page2URI);
 
 // set third page icon as the same as first page one
+try {
+  iconsvc.setFaviconData(icon1URI, icon1Data, icon1Data.length,
+                         icon1MimeType, Number.MAX_VALUE);
+} catch (ex) {}
 iconsvc.setFaviconUrlForPage(page3URI, icon1URI);
-iconsvc.setFaviconData(icon1URI, icon1Data, icon1Data.length,
-                       icon1MimeType, Number.MAX_VALUE);
 var savedIcon3URI = iconsvc.getFaviconForPage(page3URI);
 
 // check first page icon
@@ -405,12 +413,12 @@ testdesc = "test setAndLoadFaviconForPage ";
 // 32x32 png, 344 bytes.
 iconName = "favicon-normal32.png";
 inMimeType = "image/png";
-iconFile = do_get_file(TESTDIR + iconName);
+iconFile = do_get_file(iconName);
 inData = readFileData(iconFile);
 do_check_eq(inData.length, 344);
 var pageURI = uri("http://foo.bar/");
 
-faviconURI = uri("file:///./" + TESTDIR + iconName);
+faviconURI = uri("file:///./" + iconName);
 
 iconsvc.setAndLoadFaviconForPage(pageURI, faviconURI, true);
 
@@ -437,7 +445,7 @@ testdesc = "test failed favicon cache ";
 
 // 32x32 png, 344 bytes.
 iconName = "favicon-normal32.png";
-faviconURI = uri("file:///./" + TESTDIR + iconName);
+faviconURI = uri("file:///./" + iconName);
 
 iconsvc.addFailedFavicon(faviconURI);
 do_check_true(iconsvc.isFailedFavicon(faviconURI));

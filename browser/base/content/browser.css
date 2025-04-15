@@ -1,3 +1,6 @@
+@namespace url("http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul");
+@namespace html url("http://www.w3.org/1999/xhtml");
+
 searchbar {
   -moz-binding: url("chrome://browser/content/search/search.xml#searchbar");
 }
@@ -10,9 +13,18 @@ toolbar[printpreview="true"] {
   -moz-binding: url("chrome://global/content/printPreviewBindings.xml#printpreviewtoolbar");
 }
 
+toolbarpaletteitem[place="palette"] > toolbaritem > hbox[type="places"] {
+  display: none;
+}
+
 /* ::::: location bar ::::: */
 #urlbar {
   -moz-binding: url(chrome://browser/content/urlbarBindings.xml#urlbar);
+}
+
+#wrapper-urlbar-container #urlbar {
+  -moz-user-input: disabled;
+  cursor: -moz-grab;
 }
 
 #PopupAutoComplete {
@@ -23,10 +35,30 @@ toolbar[printpreview="true"] {
   -moz-binding: url("chrome://browser/content/urlbarBindings.xml#urlbar-rich-result-popup");
 }
 
+#page-report-button:not([blocked]) {
+  display: none;
+}
+
 #urlbar-throbber:not([busy="true"]),
 #urlbar-throbber[busy="true"] + #page-proxy-favicon {
   display: none;
-} 
+}
+
+#feed-button > .button-box > .box-inherit > .button-text {
+  display: none;
+}
+
+#urlbar[pageproxystate="invalid"] > #urlbar-icons > :not(#go-button) ,
+#urlbar[pageproxystate="valid"] > #urlbar-icons > #go-button ,
+#urlbar[empty="true"] > #urlbar-icons > #go-button,
+#feed-button:not([feeds]) {
+  visibility: collapse;
+}
+
+#identity-box > hbox {
+  max-width: 22em;
+  min-width: 1px;
+}
 
 /* ::::: Unified Back-/Forward Button ::::: */
 #back-forward-dropmarker > image ,
@@ -35,6 +67,11 @@ toolbar[printpreview="true"] {
 }
 .unified-nav-current {
   font-weight: bold;
+}
+
+#editBMPanel_tagsSelector {
+  /* override default listbox width from xul.css */
+  width: auto;
 }
 
 menuitem.spell-suggestion {
@@ -81,4 +118,33 @@ window[chromehidden~="toolbar"] toolbar:not(.toolbar-primary):not(.chromeclass-m
 
 #navigator-toolbox[inFullscreen="true"] #fullscr-toggler {
   display: -moz-box;
+}
+
+%ifdef USE_TAB_PREVIEWS
+/* Tab Previews */
+#ctrlTab-panel {
+  -moz-user-focus: normal;
+}
+
+.ctrlTab-thumbnail {
+  -moz-binding: url("chrome://browser/content/browser-tabPreviews.xml#ctrlTab-thumbnail");
+}
+
+.ctrlTab-thumbnail:not([valid]) {
+  visibility: hidden;
+}
+
+#ctrlTab-pages {
+  display: block;
+  text-align: center;
+}
+ 
+.ctrlTab-pagePointer {
+  display: inline-block;
+}
+%endif
+
+/* Bug 483950 - Hide domain name in status bar pending removal */
+#security-button > label {
+  display: none;
 }

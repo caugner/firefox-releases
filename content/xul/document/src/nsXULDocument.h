@@ -46,7 +46,6 @@
 #include "nsTArray.h"
 
 #include "nsXMLDocument.h"
-#include "nsElementMap.h"
 #include "nsForwardReference.h"
 #include "nsIContent.h"
 #include "nsIDOMEventTarget.h"
@@ -77,6 +76,35 @@ class nsIXULPrototypeScript;
  
 struct JSObject;
 struct PRLogModuleInfo;
+
+class nsRefMapEntry : public nsISupportsHashKey
+{
+public:
+  nsRefMapEntry(const nsISupports* aKey) :
+    nsISupportsHashKey(aKey)
+  {
+  }
+  nsRefMapEntry(const nsRefMapEntry& aOther) :
+    nsISupportsHashKey(GetKey())
+  {
+    NS_ERROR("Should never be called");
+  }
+
+  nsIContent* GetFirstContent();
+  void AppendAll(nsCOMArray<nsIContent>* aElements);
+  /**
+   * @return true if aContent was added, false if we failed due to OOM
+   */
+  PRBool AddContent(nsIContent* aContent);
+  /**
+   * @return true if aContent was removed and it was the last content for
+   * this ref, so this entry should be removed from the map
+   */
+  PRBool RemoveContent(nsIContent* aContent);
+
+private:
+  nsSmallVoidArray mRefContentList;
+};
 
 /**
  * The XUL document class
@@ -118,9 +146,12 @@ public:
     NS_DECL_NSIMUTATIONOBSERVER_CONTENTREMOVED
     NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTECHANGED
 
+    virtual void AttributeWillChange(nsIContent* aChild,
+                                     PRInt32 aNameSpaceID,
+                                     nsIAtom* aAttribute);
+
     // nsIXULDocument interface
-    NS_IMETHOD AddElementForID(const nsAString& aID, nsIContent* aElement);
-    NS_IMETHOD RemoveElementForID(const nsAString& aID, nsIContent* aElement);
+    NS_IMETHOD AddElementForID(nsIContent* aElement);
     NS_IMETHOD GetElementsForID(const nsAString& aID,
                                 nsCOMArray<nsIContent>& aElements);
 
@@ -152,14 +183,15 @@ public:
                                 PRBool aWasAlternate,
                                 nsresult aStatus);
 
+    virtual void EndUpdate(nsUpdateType aUpdateType);
+
     static PRBool
     MatchAttribute(nsIContent* aContent,
                    PRInt32 aNameSpaceID,
                    nsIAtom* aAttrName,
                    void* aData);
 
-    NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED_NO_UNLINK(nsXULDocument,
-                                                       nsXMLDocument)
+    NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsXULDocument, nsXMLDocument)
 
 protected:
     // Implementation methods
@@ -170,19 +202,11 @@ protected:
     nsresult StartLayout(void);
 
     nsresult
-    AddElementToMap(nsIContent* aElement);
-
-    nsresult
-    RemoveElementFromMap(nsIContent* aElement);
+    AddElementToRefMap(nsIContent* aElement);
+    void
+    RemoveElementFromRefMap(nsIContent* aElement);
 
     nsresult GetViewportSize(PRInt32* aWidth, PRInt32* aHeight);
-
-    static PRIntn
-    RemoveElementsFromMapByContent(const PRUnichar* aID,
-                                   nsIContent* aElement,
-                                   void* aClosure);
-
-    void SetIsPopup(PRBool isPopup) { mIsPopup = isPopup; }
 
     nsresult PrepareToLoad(nsISupports* aContainer,
                            const char* aCommand,
@@ -201,6 +225,7 @@ protected:
                         PRBool* aFailureFromContent);
 
     nsresult ApplyPersistentAttributes();
+    nsresult ApplyPersistentAttributesInternal();
     nsresult ApplyPersistentAttributesToElements(nsIRDFResource* aResource,
                                                  nsCOMArray<nsIContent>& aElements);
 
@@ -237,6 +262,9 @@ protected:
 
     static PRLogModuleInfo* gXULLog;
 
+    PRBool
+    IsCapabilityEnabled(const char* aCapabilityLabel);
+
     nsresult
     Persist(nsIContent* aElement, PRInt32 aNameSpaceID, nsIAtom* aAttribute);
 
@@ -250,9 +278,10 @@ protected:
 
     nsXULDocument*             mNextSrcLoadWaiter;  // [OWNER] but not COMPtr
 
-    nsElementMap               mElementMap;
+    // Tracks elements with a 'ref' attribute, or an 'id' attribute where
+    // the element's namespace has no registered ID attribute name.
+    nsTHashtable<nsRefMapEntry> mRefMap;
     nsCOMPtr<nsIRDFDataSource> mLocalStore;
-    PRPackedBool               mIsPopup;
     PRPackedBool               mApplyingPersistedAttrs;
     PRPackedBool               mIsWritingFastLoad;
     PRPackedBool               mDocumentLoaded;
@@ -668,6 +697,46 @@ protected:
     nsInterfaceHashtable<nsURIHashKey,nsIObserver> mPendingOverlayLoadNotifications;
     
     PRBool mInitialLayoutComplete;
+
+    class nsDelayedBroadcastUpdate
+    {
+    public:
+      nsDelayedBroadcastUpdate(nsIDOMElement* aBroadcaster,
+                               nsIDOMElement* aListener,
+                               const nsAString &aAttr)
+      : mBroadcaster(aBroadcaster), mListener(aListener), mAttr(aAttr),
+        mSetAttr(PR_FALSE), mNeedsAttrChange(PR_FALSE) {}
+
+      nsDelayedBroadcastUpdate(nsIDOMElement* aBroadcaster,
+                               nsIDOMElement* aListener,
+                               nsIAtom* aAttrName,
+                               const nsAString &aAttr,
+                               PRBool aSetAttr,
+                               PRBool aNeedsAttrChange)
+      : mBroadcaster(aBroadcaster), mListener(aListener), mAttr(aAttr),
+        mAttrName(aAttrName), mSetAttr(aSetAttr),
+        mNeedsAttrChange(aNeedsAttrChange) {}
+
+      nsDelayedBroadcastUpdate(const nsDelayedBroadcastUpdate& aOther)
+      : mBroadcaster(aOther.mBroadcaster), mListener(aOther.mListener),
+        mAttr(aOther.mAttr), mAttrName(aOther.mAttrName),
+        mSetAttr(aOther.mSetAttr), mNeedsAttrChange(aOther.mNeedsAttrChange) {}
+
+      nsCOMPtr<nsIDOMElement> mBroadcaster;
+      nsCOMPtr<nsIDOMElement> mListener;
+      // Note if mAttrName isn't used, this is the name of the attr, otherwise
+      // this is the value of the attribute.
+      nsString                mAttr;
+      nsCOMPtr<nsIAtom>       mAttrName;
+      PRPackedBool            mSetAttr;
+      PRPackedBool            mNeedsAttrChange;
+    };
+
+    nsTArray<nsDelayedBroadcastUpdate> mDelayedBroadcasters;
+    nsTArray<nsDelayedBroadcastUpdate> mDelayedAttrChangeBroadcasts;
+    PRBool                             mHandlingDelayedAttrChange;
+
+    void MaybeBroadcast();
 private:
     // helpers
 

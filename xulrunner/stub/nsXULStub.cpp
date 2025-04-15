@@ -50,9 +50,12 @@
 #include <io.h>
 #define snprintf _snprintf
 #define vsnprintf _vsnprintf
+#define strcasecmp _stricmp
 #define PATH_SEPARATOR_CHAR '\\'
 #define R_OK 04
 #elif defined(XP_MACOSX)
+#include <unistd.h>
+#include <sys/stat.h>
 #include <CFBundle.h>
 #define PATH_SEPARATOR_CHAR '/'
 #elif defined (XP_OS2)
@@ -87,7 +90,7 @@ static void Output(PRBool isError, const char *fmt, ... )
   va_list ap;
   va_start(ap, fmt);
 
-#if defined(XP_WIN) && !MOZ_WINCONSOLE
+#if (defined(XP_WIN) && !MOZ_WINCONSOLE) || defined(WINCE)
   char msg[2048];
 
   vsnprintf(msg, sizeof(msg), fmt, ap);
@@ -97,12 +100,75 @@ static void Output(PRBool isError, const char *fmt, ... )
     flags |= MB_ICONERROR;
   else
     flags |= MB_ICONINFORMATION;
-  MessageBox(NULL, msg, "XULRunner", flags);
+
+  wchar_t wide_msg[1024];
+  MultiByteToWideChar(CP_ACP,
+		      0,
+		      msg,
+		      -1,
+		      wide_msg,
+		      sizeof(wide_msg) / sizeof(wchar_t));
+  
+  MessageBoxW(NULL, wide_msg, L"XULRunner", flags);
 #else
   vfprintf(stderr, fmt, ap);
 #endif
 
   va_end(ap);
+}
+
+/**
+ * Return true if |arg| matches the given argument name.
+ */
+static PRBool IsArg(const char* arg, const char* s)
+{
+  if (*arg == '-')
+  {
+    if (*++arg == '-')
+      ++arg;
+    return !strcasecmp(arg, s);
+  }
+
+#if defined(XP_WIN) || defined(XP_OS2)
+  if (*arg == '/')
+    return !strcasecmp(++arg, s);
+#endif
+
+  return PR_FALSE;
+}
+
+/**
+ * Return true if |aDir| is a valid file/directory.
+ */
+static PRBool FolderExists(const char* aDir)
+{
+#ifdef XP_WIN
+  wchar_t wideDir[MAX_PATH];
+  MultiByteToWideChar(CP_UTF8, 0, aDir, -1, wideDir, MAX_PATH);
+  DWORD fileAttrs = GetFileAttributesW(wideDir);
+  return fileAttrs != INVALID_FILE_ATTRIBUTES;
+#else
+  return access(aDir, R_OK) == 0;
+#endif
+}
+
+static nsresult GetRealPath(const char* appDataFile, char* *aResult)
+{
+#ifdef XP_WIN
+  wchar_t wAppDataFile[MAX_PATH];
+  wchar_t wIniPath[MAX_PATH];
+  MultiByteToWideChar(CP_UTF8, 0, appDataFile, -1, wAppDataFile, MAX_PATH);
+  _wfullpath(wIniPath, wAppDataFile, MAX_PATH);
+  WideCharToMultiByte(CP_UTF8, 0, wIniPath, -1, *aResult, MAX_PATH, 0, 0);
+#else
+  struct stat fileStat;
+  if (!realpath(appDataFile, *aResult) || stat(*aResult, &fileStat))
+    return NS_ERROR_FAILURE;
+#endif
+  if (!*aResult || !**aResult)
+    return NS_ERROR_FAILURE;
+
+  return NS_OK;
 }
 
 class AutoAppData
@@ -176,8 +242,12 @@ main(int argc, char **argv)
 #else
 
 #ifdef XP_WIN
-  if (!::GetModuleFileName(NULL, iniPath, sizeof(iniPath)))
+  wchar_t wide_path[MAX_PATH];
+  if (!::GetModuleFileNameW(NULL, wide_path, MAX_PATH))
     return 1;
+
+  WideCharToMultiByte(CP_UTF8, 0, wide_path,-1,
+		      iniPath, MAX_PATH, NULL, NULL);
 
 #elif defined(XP_OS2)
    PPIB ppib;
@@ -246,12 +316,60 @@ main(int argc, char **argv)
            "%sxulrunner" XPCOM_FILE_PATH_SEPARATOR XPCOM_DLL,
            iniPath);
 
-  greFound = (access(greDir, R_OK) == 0);
+  greFound = FolderExists(greDir);
 
   strncpy(lastSlash, "application.ini", sizeof(iniPath) - (lastSlash - iniPath));
 
 #endif
 
+  // If -app parameter was passed in, it is now time to take it under 
+  // consideration.
+  const char *appDataFile;
+  appDataFile = getenv("XUL_APP_FILE");
+  if (!appDataFile || !*appDataFile) 
+    if (argc > 1 && IsArg(argv[1], "app")) {
+      if (argc == 2) {
+        Output(PR_FALSE, "specify APP-FILE (optional)\n");
+        return 1;
+      }
+      argv[1] = argv[0];
+      ++argv;
+      --argc;
+
+      appDataFile = argv[1];
+      argv[1] = argv[0];
+      ++argv;
+      --argc;
+
+      char kAppEnv[MAXPATHLEN];
+      snprintf(kAppEnv, MAXPATHLEN, "XUL_APP_FILE=%s", appDataFile);
+      if (putenv(kAppEnv)) 
+        Output(PR_FALSE, "Couldn't set %s.\n", kAppEnv);
+
+      char *result = (char*) calloc(sizeof(char), MAXPATHLEN);
+      if (NS_FAILED(GetRealPath(appDataFile, &result))) {
+        Output(PR_TRUE, "Invalid application.ini path.\n");
+        return 1;
+      }
+      
+      // We have a valid application.ini path passed in to the -app parameter 
+      // but not yet a valid greDir, so lets look for it also on the same folder
+      // as the stub.
+      if (!greFound) {
+        lastSlash = strrchr(iniPath, PATH_SEPARATOR_CHAR);
+        if (!lastSlash)
+          return 1;
+
+        *(++lastSlash) = '\0';
+
+        snprintf(greDir, sizeof(greDir), "%s" XPCOM_DLL, iniPath);
+        greFound = FolderExists(greDir);
+      }
+      
+      // copy it back.
+      strcpy(iniPath, result);
+    }
+  
   nsINIParser parser;
   rv = parser.Init(iniPath);
   if (NS_FAILED(rv)) {

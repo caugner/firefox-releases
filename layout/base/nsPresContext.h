@@ -20,6 +20,7 @@
  * the Initial Developer. All Rights Reserved.
  *
  * Contributor(s):
+ *   L. David Baron <dbaron@dbaron.org>, Mozilla Corporation
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -62,8 +63,12 @@
 #include "nsInterfaceHashtable.h"
 #include "nsCycleCollectionParticipant.h"
 #include "nsChangeHint.h"
-// XXX we need only gfxTypes.h, but we cannot include it directly.
-#include "gfxPoint.h"
+// This also pulls in gfxTypes.h, which we cannot include directly.
+#include "gfxRect.h"
+#include "nsRegion.h"
+#include "nsTArray.h"
+#include "nsAutoPtr.h"
+
 class nsImageLoader;
 #ifdef IBMBIDI
 class nsBidiPresUtils;
@@ -89,6 +94,9 @@ class nsIAtom;
 struct nsStyleBackground;
 template <class T> class nsRunnableMethod;
 class nsIRunnable;
+class gfxUserFontSet;
+class nsUserFontSet;
+struct nsFontFaceRuleContainer;
 
 #ifdef MOZ_REFLOW_PERF
 class nsIRenderingContext;
@@ -206,8 +214,26 @@ public:
     { return GetPresShell()->FrameManager(); } 
 #endif
 
+  /**
+   * Rebuilds all style data by throwing out the old rule tree and
+   * building a new one, and additionally applying aExtraHint (which
+   * must not contain nsChangeHint_ReconstructFrame) to the root frame.
+   * Also rebuild the user font set.
+   */
   void RebuildAllStyleData(nsChangeHint aExtraHint);
-  void PostRebuildAllStyleDataEvent();
+  /**
+   * Just like RebuildAllStyleData, except (1) asynchronous and (2) it
+   * doesn't rebuild the user font set.
+   */
+  void PostRebuildAllStyleDataEvent(nsChangeHint aExtraHint);
+
+  void MediaFeatureValuesChanged(PRBool aCallerWillRebuildStyleData);
+  void PostMediaFeatureValuesChangedEvent();
+  NS_HIDDEN_(void) HandleMediaFeatureValuesChangedEvent();
+  void FlushPendingMediaFeatureValuesChanged() {
+    if (mPendingMediaFeatureValuesChanged)
+      MediaFeatureValuesChanged(PR_FALSE);
+  }
 
   /**
    * Access compatibility mode for this context.  This is the same as
@@ -256,24 +282,21 @@ public:
 
   void FreeToShell(size_t aSize, void* aFreeChunk)
   {
+    NS_ASSERTION(mShell, "freeing after shutdown");
     if (mShell)
       mShell->FreeFrame(aSize, aFreeChunk);
   }
 
   /**
    * Get the font metrics for a given font.
+   *
+   * If aUseUserFontSet is false, don't build or use the user font set.
+   * This is intended only for nsRuleNode::CalcLengthWithInitialFont
+   * (which is used from media query matching, which is in turn called
+   * when building the user font set).
    */
-  virtual NS_HIDDEN_(already_AddRefed<nsIFontMetrics>)
-   GetMetricsForExternal(const nsFont& aFont);
   NS_HIDDEN_(already_AddRefed<nsIFontMetrics>)
-    GetMetricsForInternal(const nsFont& aFont);
-#ifdef _IMPL_NS_LAYOUT
-  already_AddRefed<nsIFontMetrics> GetMetricsFor(const nsFont& aFont)
-  { return GetMetricsForInternal(aFont); }
-#else
-  already_AddRefed<nsIFontMetrics> GetMetricsFor(const nsFont& aFont)
-  { return GetMetricsForExternal(aFont); }
-#endif
+  GetMetricsFor(const nsFont& aFont, PRBool aUseUserFontSet = PR_TRUE);
 
   /**
    * Get the default font corresponding to the given ID.  This object is
@@ -292,15 +315,7 @@ public:
    * preferences for the given generic and the pres context's language
    * group, and its size set to the default variable font size.
    */
-  virtual NS_HIDDEN_(const nsFont*) GetDefaultFontExternal(PRUint8 aFontID) const;
-  NS_HIDDEN_(const nsFont*) GetDefaultFontInternal(PRUint8 aFontID) const;
-#ifdef _IMPL_NS_LAYOUT
-  const nsFont* GetDefaultFont(PRUint8 aFontID) const
-  { return GetDefaultFontInternal(aFontID); }
-#else
-  const nsFont* GetDefaultFont(PRUint8 aFontID) const
-  { return GetDefaultFontExternal(aFontID); }
-#endif
+  NS_HIDDEN_(const nsFont*) GetDefaultFont(PRUint8 aFontID) const;
 
   /** Get a cached boolean pref, by its type */
   // *  - initially created for bugs 31816, 20760, 22963
@@ -361,18 +376,40 @@ public:
   PRBool GetUseFocusColors() const { return mUseFocusColors; }
   PRUint8 FocusRingWidth() const { return mFocusRingWidth; }
   PRBool GetFocusRingOnAnything() const { return mFocusRingOnAnything; }
- 
+  PRUint8 GetFocusRingStyle() const { return mFocusRingStyle; }
+
 
   /**
-   * Load an image for the target frame. This call can be made
-   * repeated with only a single image ever being loaded. When the
-   * image's data is ready for rendering the target frame's Paint()
-   * method will be invoked (via the ViewManager) so that the
-   * appropriate damage repair is done.
+   * Set up observers so that aTargetFrame will be invalidated when
+   * aImage loads, where aImage is its background image.  Only a single
+   * image will be tracked per frame.
    */
   NS_HIDDEN_(imgIRequest*) LoadImage(imgIRequest* aImage,
                                      nsIFrame* aTargetFrame);
+  /**
+   * Set up observers so that aTargetFrame will be invalidated or
+   * reflowed (as appropriate) when aImage loads, where aImage is its
+   * *border* image.  Only a single image will be tracked per frame.
+   */
+  NS_HIDDEN_(imgIRequest*) LoadBorderImage(imgIRequest* aImage,
+                                           nsIFrame* aTargetFrame);
 
+private:
+  typedef nsInterfaceHashtable<nsVoidPtrHashKey, nsImageLoader> ImageLoaderTable;
+
+  NS_HIDDEN_(imgIRequest*) DoLoadImage(ImageLoaderTable& aTable,
+                                       imgIRequest* aImage,
+                                       nsIFrame* aTargetFrame,
+                                       PRBool aReflowOnLoad);
+
+  NS_HIDDEN_(void) DoStopImageFor(ImageLoaderTable& aTable,
+                                  nsIFrame* aTargetFrame);
+public:
+
+  NS_HIDDEN_(void) StopBackgroundImageFor(nsIFrame* aTargetFrame)
+  { DoStopImageFor(mImageLoaders, aTargetFrame); }
+  NS_HIDDEN_(void) StopBorderImageFor(nsIFrame* aTargetFrame)
+  { DoStopImageFor(mBorderImageLoaders, aTargetFrame); }
   /**
    * This method is called when a frame is being destroyed to
    * ensure that the image load gets disassociated from the prescontext
@@ -397,7 +434,7 @@ public:
 
   /**
    * Get the visible area associated with this presentation context.
-   * This is the size of the visiable area that is used for
+   * This is the size of the visible area that is used for
    * presenting the document. The returned value is in the standard
    * nscoord units (as scaled by the device context).
    */
@@ -407,7 +444,14 @@ public:
    * Set the currently visible area. The units for r are standard
    * nscoord units (as scaled by the device context).
    */
-  void SetVisibleArea(const nsRect& r) { mVisibleArea = r; }
+  void SetVisibleArea(const nsRect& r) {
+    if (!r.IsExactEqual(mVisibleArea)) {
+      mVisibleArea = r;
+      // Visible area does not affect media queries when paginated.
+      if (!IsPaginated() && HasCachedStyleData())
+        PostMediaFeatureValuesChangedEvent();
+    }
+  }
 
   /**
    * Return true if this presentation context is a paginated
@@ -471,8 +515,16 @@ public:
 
   float TextZoom() { return mTextZoom; }
   void SetTextZoom(float aZoom) {
+    if (aZoom == mTextZoom)
+      return;
+
     mTextZoom = aZoom;
-    RebuildAllStyleData(NS_STYLE_HINT_REFLOW);
+    if (HasCachedStyleData()) {
+      // Media queries could have changed since we changed the meaning
+      // of 'em' units in them.
+      MediaFeatureValuesChanged(PR_TRUE);
+      RebuildAllStyleData(NS_STYLE_HINT_REFLOW);
+    }
   }
 
   float GetFullZoom() { return mFullZoom; }
@@ -492,18 +544,15 @@ public:
 
   static nscoord CSSPixelsToAppUnits(float aPixels)
   { return NSFloatPixelsToAppUnits(aPixels,
-                                   nsIDeviceContext::AppUnitsPerCSSPixel()); }
+             float(nsIDeviceContext::AppUnitsPerCSSPixel())); }
 
   static PRInt32 AppUnitsToIntCSSPixels(nscoord aAppUnits)
   { return NSAppUnitsToIntPixels(aAppUnits,
-                                 nsIDeviceContext::AppUnitsPerCSSPixel()); }
+             float(nsIDeviceContext::AppUnitsPerCSSPixel())); }
 
   static float AppUnitsToFloatCSSPixels(nscoord aAppUnits)
   { return NSAppUnitsToFloatPixels(aAppUnits,
-                                   nsIDeviceContext::AppUnitsPerCSSPixel()); }
-
-  static gfxFloat AppUnitsToGfxCSSPixels(nscoord aAppUnits)
-  { return nsIDeviceContext::AppUnitsToGfxCSSPixels(aAppUnits); }
+             float(nsIDeviceContext::AppUnitsPerCSSPixel())); }
 
   nscoord DevPixelsToAppUnits(PRInt32 aPixels) const
   { return NSIntPixelsToAppUnits(aPixels,
@@ -511,7 +560,7 @@ public:
 
   PRInt32 AppUnitsToDevPixels(nscoord aAppUnits) const
   { return NSAppUnitsToIntPixels(aAppUnits,
-                                 mDeviceContext->AppUnitsPerDevPixel()); }
+             float(mDeviceContext->AppUnitsPerDevPixel())); }
 
   // If there is a remainder, it is rounded to nearest app units.
   nscoord GfxUnitsToAppUnits(gfxFloat aGfxUnits) const
@@ -519,6 +568,12 @@ public:
 
   gfxFloat AppUnitsToGfxUnits(nscoord aAppUnits) const
   { return mDeviceContext->AppUnitsToGfxUnits(aAppUnits); }
+
+  gfxRect AppUnitsToGfxUnits(const nsRect& aAppRect) const
+  { return gfxRect(AppUnitsToGfxUnits(aAppRect.x),
+                   AppUnitsToGfxUnits(aAppRect.y),
+                   AppUnitsToGfxUnits(aAppRect.width),
+                   AppUnitsToGfxUnits(aAppRect.height)); }
 
   nscoord TwipsToAppUnits(PRInt32 aTwips) const
   { return NSToCoordRound(NS_TWIPS_TO_INCHES(aTwips) *
@@ -531,32 +586,12 @@ public:
                     TwipsToAppUnits(marginInTwips.right),
                     TwipsToAppUnits(marginInTwips.bottom)); }
 
-  PRInt32 AppUnitsToTwips(nscoord aTwips) const
-  { return NS_INCHES_TO_TWIPS((float)aTwips /
-                              mDeviceContext->AppUnitsPerInch()); }
-
   nscoord PointsToAppUnits(float aPoints) const
   { return NSToCoordRound(aPoints * mDeviceContext->AppUnitsPerInch() /
                           POINTS_PER_INCH_FLOAT); }
-  float AppUnitsToPoints(nscoord aAppUnits) const
-  { return (float)aAppUnits / mDeviceContext->AppUnitsPerInch() *
-      POINTS_PER_INCH_FLOAT; }
 
   nscoord RoundAppUnitsToNearestDevPixels(nscoord aAppUnits) const
   { return DevPixelsToAppUnits(AppUnitsToDevPixels(aAppUnits)); }
-
-  /**
-   * Get the language-specific transform type for the current document.
-   * This tells us whether we need to perform special language-dependent
-   * transformations such as Unicode U+005C (backslash) to Japanese
-   * Yen Sign (Unicode U+00A5, JIS 0x5C).
-   *
-   * @param aType returns type, must be non-NULL
-   */
-  nsLanguageSpecificTransformType LanguageSpecificTransformType() const
-  {
-    return mLanguageSpecificTransformType;
-  }
 
   struct ScrollbarStyles {
     // Always one of NS_STYLE_OVERFLOW_SCROLL, NS_STYLE_OVERFLOW_HIDDEN,
@@ -613,7 +648,7 @@ public:
    *
    *  @lina 07/12/2000
    */
-  NS_HIDDEN_(void) SetBidiEnabled(PRBool aBidiEnabled) const;
+  NS_HIDDEN_(void) SetBidiEnabled() const;
 
   /**
    *  Set visual or implicit mode into the pres context.
@@ -661,22 +696,6 @@ public:
    * include nsIDocument.
    */  
   NS_HIDDEN_(PRUint32) GetBidi() const;
-
-  /**
-   * Set the Bidi capabilities of the system
-   * @param aIsBidi == TRUE if the system has the capability of reordering Bidi text
-   */
-  void SetIsBidiSystem(PRBool aIsBidi)
-  {
-    NS_ASSERTION(!(aIsBidi & ~1), "Value must be true or false");
-    mIsBidiSystem = aIsBidi;
-  }
-
-  /**
-   * Get the Bidi capabilities of the system
-   * @return TRUE if the system has the capability of reordering Bidi text
-   */
-  PRBool IsBidiSystem() const { return mIsBidiSystem; }
 #endif // IBMBIDI
 
   /**
@@ -754,25 +773,57 @@ public:
   }
 
   PRBool           SupressingResizeReflow() const { return mSupressResizeReflow; }
+  
+  virtual NS_HIDDEN_(gfxUserFontSet*) GetUserFontSetExternal();
+  NS_HIDDEN_(gfxUserFontSet*) GetUserFontSetInternal();
+#ifdef _IMPL_NS_LAYOUT
+  gfxUserFontSet* GetUserFontSet() { return GetUserFontSetInternal(); }
+#else
+  gfxUserFontSet* GetUserFontSet() { return GetUserFontSetExternal(); }
+#endif
+
+  void FlushUserFontSet();
+  void RebuildUserFontSet(); // asynchronously
+
+  // Should be called whenever the set of fonts available in the user
+  // font set changes (e.g., because a new font loads, or because the
+  // user font set is changed and fonts become unavailable).
+  void UserFontSetUpdated();
+
+  void NotifyInvalidation(const nsRect& aRect, PRBool aIsCrossDoc);
+  void FireDOMPaintEvent();
+
+  void ClearMozAfterPaintEvents() {
+    mSameDocDirtyRegion.SetEmpty();
+    mCrossDocDirtyRegion.SetEmpty();
+  }
 
 protected:
   friend class nsRunnableMethod<nsPresContext>;
   NS_HIDDEN_(void) ThemeChangedInternal();
   NS_HIDDEN_(void) SysColorChangedInternal();
-  
+
   NS_HIDDEN_(void) SetImgAnimations(nsIContent *aParent, PRUint16 aMode);
   NS_HIDDEN_(void) GetDocumentColorPreferences();
 
   NS_HIDDEN_(void) PreferenceChanged(const char* aPrefName);
-  static NS_HIDDEN_(int) PR_CALLBACK PrefChangedCallback(const char*, void*);
+  static NS_HIDDEN_(int) PrefChangedCallback(const char*, void*);
 
   NS_HIDDEN_(void) UpdateAfterPreferencesChanged();
-  static NS_HIDDEN_(void) PR_CALLBACK PrefChangedUpdateTimerCallback(nsITimer *aTimer, void *aClosure);
+  static NS_HIDDEN_(void) PrefChangedUpdateTimerCallback(nsITimer *aTimer, void *aClosure);
 
   NS_HIDDEN_(void) GetUserPreferences();
   NS_HIDDEN_(void) GetFontPreferences();
 
   NS_HIDDEN_(void) UpdateCharSet(const nsAFlatCString& aCharSet);
+
+  void HandleRebuildUserFontSet() {
+    mPostedFlushUserFontSet = PR_FALSE;
+    FlushUserFontSet();
+  }
+
+  // Can't be inline because we can't include nsStyleSet.h.
+  PRBool HasCachedStyleData();
 
   // IMPORTANT: The ownership implicit in the following member variables
   // has been explicitly checked.  If you add any members to this class,
@@ -794,7 +845,8 @@ protected:
   nsILinkHandler*       mLinkHandler;   // [WEAK]
   nsIAtom*              mLangGroup;     // [STRONG]
 
-  nsInterfaceHashtable<nsVoidPtrHashKey, nsImageLoader> mImageLoaders;
+  ImageLoaderTable      mImageLoaders;
+  ImageLoaderTable      mBorderImageLoaders;
   nsWeakPtr             mContainer;
 
   float                 mTextZoom;      // Text zoom, defaults to 1.0
@@ -814,7 +866,14 @@ protected:
 
   nsPropertyTable       mPropertyTable;
 
-  nsLanguageSpecificTransformType mLanguageSpecificTransformType;
+  nsRegion              mSameDocDirtyRegion;
+  nsRegion              mCrossDocDirtyRegion;
+
+  // container for per-context fonts (downloadable, SVG, etc.)
+  nsUserFontSet*        mUserFontSet;
+  // The list of @font-face rules that we put into mUserFontSet
+  nsTArray<nsFontFaceRuleContainer> mFontFaceRules;
+  
   PRInt32               mFontScaler;
   nscoord               mMinimumFontSize;
 
@@ -854,6 +913,7 @@ protected:
   unsigned              mUnderlineLinks : 1;
   unsigned              mUseFocusColors : 1;
   unsigned              mFocusRingOnAnything : 1;
+  unsigned              mFocusRingStyle : 1;
   unsigned              mDrawImageBackground : 1;
   unsigned              mDrawColorBackground : 1;
   unsigned              mNeverAnimate : 1;
@@ -868,8 +928,16 @@ protected:
   unsigned              mPrefScrollbarSide : 2;
   unsigned              mPendingSysColorChanged : 1;
   unsigned              mPendingThemeChanged : 1;
+  unsigned              mPendingMediaFeatureValuesChanged : 1;
   unsigned              mPrefChangePendingNeedsReflow : 1;
   unsigned              mRenderedPositionVaryingContent : 1;
+
+  // Is the current mUserFontSet valid?
+  unsigned              mUserFontSetDirty : 1;
+  // Has GetUserFontSet() been called?
+  unsigned              mGetUserFontSetCalled : 1;
+  // Do we currently have an event posted to call FlushUserFontSet?
+  unsigned              mPostedFlushUserFontSet : 1;
 
   // resize reflow is supressed when the only change has been to zoom
   // the document rather than to change the document's dimensions
@@ -877,7 +945,6 @@ protected:
 
 #ifdef IBMBIDI
   unsigned              mIsVisual : 1;
-  unsigned              mIsBidiSystem : 1;
 
 #endif
 #ifdef DEBUG
@@ -912,11 +979,6 @@ public:
 #endif
 
 };
-
-// Bit values for StartLoadImage's aImageStatus
-#define NS_LOAD_IMAGE_STATUS_ERROR      0x1
-#define NS_LOAD_IMAGE_STATUS_SIZE       0x2
-#define NS_LOAD_IMAGE_STATUS_BITS       0x4
 
 #ifdef DEBUG
 

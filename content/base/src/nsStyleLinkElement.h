@@ -82,6 +82,7 @@ public:
 
   static void ParseLinkTypes(const nsAString& aTypes, nsStringArray& aResult);
 
+  void UpdateStyleSheetInternal() { UpdateStyleSheetInternal(nsnull); }
 protected:
   /**
    * @param aOldDocument should be non-null only if we're updating because we
@@ -101,6 +102,8 @@ protected:
                                  nsAString& aMedia,
                                  PRBool* aIsAlternate) = 0;
 
+  nsIStyleSheet* GetStyleSheet() { return mStyleSheet; }
+
 private:
   /**
    * @param aOldDocument should be non-null only if we're updating because we
@@ -116,8 +119,8 @@ private:
                               PRBool* aIsAlternate,
                               PRBool aForceUpdate);
 
-protected:
   nsCOMPtr<nsIStyleSheet> mStyleSheet;
+protected:
   PRPackedBool mDontLoadStyle;
   PRPackedBool mUpdatesEnabled;
   PRUint32 mLineNumber;

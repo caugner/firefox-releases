@@ -174,11 +174,15 @@ public:
 
   virtual void InvalidateInternal(const nsRect& aDamageRect,
                                   nscoord aX, nscoord aY, nsIFrame* aForChild,
-                                  PRBool aImmediate);
+                                  PRUint32 aFlags);
 
   // returns true if the popup is a panel with the noautohide attribute set to
   // true. These panels do not roll up automatically.
   PRBool IsNoAutoHide();
+
+  // returns true if the popup is a top-most window. Otherwise, the
+  // panel appears in front of the parent window.
+  PRBool IsTopMost();
 
   void EnsureWidget();
 
@@ -353,6 +357,7 @@ protected:
   // SetPopupPosition.
   nsSize mPrefSize;
 
+  static PRInt8 sDefaultLevelParent;
 }; // class nsMenuPopupFrame
 
 #endif

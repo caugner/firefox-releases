@@ -372,11 +372,11 @@ nsScriptablePeer::ConvertVariants(VARIANT *aIn, nsIVariant **aOut)
     {
         // do_CreateInstance macro is broken so load the component manager by
         // hand and get it to create the component.
-        HMODULE hlib = ::LoadLibrary("xpcom.dll");
+        HMODULE hlib = ::LoadLibraryW(L"xpcom.dll");
         if (hlib)
         {
             nsIComponentManager *pManager = nsnull; // A frozen interface, even in 1.0.x
-            typedef nsresult (PR_CALLBACK *Moz1XGetComponentManagerFunc)(nsIComponentManager* *result);
+            typedef nsresult (*Moz1XGetComponentManagerFunc)(nsIComponentManager* *result);
             Moz1XGetComponentManagerFunc compMgr = (Moz1XGetComponentManagerFunc)
                 ::GetProcAddress(hlib, "NS_GetComponentManager");
             if (compMgr)

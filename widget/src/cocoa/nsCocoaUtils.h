@@ -95,7 +95,12 @@ private:
 // cache" in order to deactivate it.  The "window cache" is an undocumented
 // subsystem, all of whose methods are included in the NSWindowCache category
 // of the NSApplication class (in header files generated using class-dump).
+// Present in all versions of OS X from (at least) 10.2.8 through 10.5.
 - (void)_removeWindowFromCache:(NSWindow *)aWindow;
+
+// Send an event to the current Cocoa app-modal session.  Present in all
+// versions of OS X from (at least) 10.2.8 through 10.5.
+- (void)_modalSession:(NSModalSession)aSession sendEvent:(NSEvent *)theEvent;
 
 @end
 
@@ -141,6 +146,12 @@ class nsCocoaUtils
 
   static void PrepareForNativeAppModalDialog();
   static void CleanUpAfterNativeAppModalDialog();
+
+  // Wrap calls to [theEvent keyCode] and [theEvent modifierFlags].  Needed to
+  // work around an Apple bug (on OS X 10.4.X) that causes ctrl-ESC key events
+  // sent via performKeyEquivalent: to return 0 on these calls.
+  static unsigned short GetCocoaEventKeyCode(NSEvent *theEvent);
+  static NSUInteger GetCocoaEventModifierFlags(NSEvent *theEvent);
 };
 
 #endif // nsCocoaUtils_h_

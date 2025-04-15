@@ -122,11 +122,12 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(nsDOMUIEvent)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMEvent)
 
 nsPoint nsDOMUIEvent::GetScreenPoint() {
-  if (!mEvent ||
-      (mEvent->eventStructType != NS_MOUSE_EVENT &&
-       mEvent->eventStructType != NS_POPUP_EVENT &&
-       mEvent->eventStructType != NS_MOUSE_SCROLL_EVENT &&
-       !NS_IS_DRAG_EVENT(mEvent))) {
+  if (!mEvent || 
+       (mEvent->eventStructType != NS_MOUSE_EVENT &&
+        mEvent->eventStructType != NS_POPUP_EVENT &&
+        mEvent->eventStructType != NS_MOUSE_SCROLL_EVENT &&
+        mEvent->eventStructType != NS_DRAG_EVENT &&
+        mEvent->eventStructType != NS_SIMPLE_GESTURE_EVENT)) {
     return nsPoint(0, 0);
   }
 
@@ -147,7 +148,8 @@ nsPoint nsDOMUIEvent::GetClientPoint() {
       (mEvent->eventStructType != NS_MOUSE_EVENT &&
        mEvent->eventStructType != NS_POPUP_EVENT &&
        mEvent->eventStructType != NS_MOUSE_SCROLL_EVENT &&
-       !NS_IS_DRAG_EVENT(mEvent)) ||
+       mEvent->eventStructType != NS_DRAG_EVENT &&
+       mEvent->eventStructType != NS_SIMPLE_GESTURE_EVENT) ||
       !mPresContext ||
       !((nsGUIEvent*)mEvent)->widget) {
     return mClientPoint;
@@ -197,30 +199,25 @@ nsDOMUIEvent::InitUIEvent(const nsAString & typeArg, PRBool canBubbleArg, PRBool
 nsPoint
 nsDOMUIEvent::GetPagePoint()
 {
-  if (((nsGUIEvent*)mEvent)->widget) {
-    // Native event; calculate using presentation
-    nsPoint pt(0, 0);
-    nsIPresShell* shell = mPresContext->GetPresShell();
-    if (!shell) {
-      return pt;
-    }
-    nsIScrollableFrame* scrollframe = shell->GetRootScrollFrameAsScrollable();
-
-    if (scrollframe)
-      pt += scrollframe->GetScrollPosition();
-    nsIFrame* rootFrame = shell->GetRootFrame();
-    if (rootFrame)
-      pt += nsLayoutUtils::GetEventCoordinatesRelativeTo(mEvent, rootFrame);
-    return nsPoint(nsPresContext::AppUnitsToIntCSSPixels(pt.x),
-                   nsPresContext::AppUnitsToIntCSSPixels(pt.y));
+  if (mPrivateDataDuplicated) {
+    return mPagePoint;
   }
 
-  // If event was initialized manually using InitMouseEvent(...),
-  // page coordinates must be the same as client coordinates. See bug 405632.
-  return mPrivateDataDuplicated ? mPagePoint : GetClientPoint();
+  nsPoint pagePoint = GetClientPoint();
+
+  // If there is some scrolling, add scroll info to client point.
+  if (mPresContext && mPresContext->GetPresShell()) {
+    nsIPresShell* shell = mPresContext->GetPresShell();
+    nsIScrollableFrame* scrollframe = shell->GetRootScrollFrameAsScrollable();
+    if (scrollframe) {
+      nsPoint pt = scrollframe->GetScrollPosition();
+      pagePoint += nsPoint(nsPresContext::AppUnitsToIntCSSPixels(pt.x),
+                           nsPresContext::AppUnitsToIntCSSPixels(pt.y));
+    }
+  }
+
+  return pagePoint;
 }
-
-
 
 NS_IMETHODIMP
 nsDOMUIEvent::GetPageX(PRInt32* aPageX)
@@ -314,7 +311,10 @@ nsDOMUIEvent::SetCancelBubble(PRBool aCancelBubble)
 nsPoint nsDOMUIEvent::GetLayerPoint() {
   if (!mEvent ||
       (mEvent->eventStructType != NS_MOUSE_EVENT &&
-       mEvent->eventStructType != NS_MOUSE_SCROLL_EVENT) ||
+       mEvent->eventStructType != NS_POPUP_EVENT &&
+       mEvent->eventStructType != NS_MOUSE_SCROLL_EVENT &&
+       mEvent->eventStructType != NS_DRAG_EVENT &&
+       mEvent->eventStructType != NS_SIMPLE_GESTURE_EVENT) ||
       !mPresContext ||
       mEventIsInternal) {
     return mLayerPoint;
@@ -375,35 +375,10 @@ nsDOMUIEvent::GetPreventDefault(PRBool* aReturn)
 
 NS_METHOD nsDOMUIEvent::GetCompositionReply(nsTextEventReply** aReply)
 {
-  if((mEvent->eventStructType == NS_RECONVERSION_EVENT) ||
-     (mEvent->message == NS_COMPOSITION_START) ||
+  if((mEvent->message == NS_COMPOSITION_START) ||
      (mEvent->message == NS_COMPOSITION_QUERY))
   {
     *aReply = &(static_cast<nsCompositionEvent*>(mEvent)->theReply);
-    return NS_OK;
-  }
-  *aReply = nsnull;
-  return NS_ERROR_FAILURE;
-}
-
-NS_METHOD
-nsDOMUIEvent::GetReconversionReply(nsReconversionEventReply** aReply)
-{
-  if (mEvent->eventStructType == NS_RECONVERSION_EVENT)
-  {
-    *aReply = &(static_cast<nsReconversionEvent*>(mEvent)->theReply);
-    return NS_OK;
-  }
-  *aReply = nsnull;
-  return NS_ERROR_FAILURE;
-}
-
-NS_METHOD
-nsDOMUIEvent::GetQueryCaretRectReply(nsQueryCaretRectEventReply** aReply)
-{
-  if (mEvent->eventStructType == NS_QUERYCARETRECT_EVENT)
-  {
-    *aReply = &(static_cast<nsQueryCaretRectEvent*>(mEvent)->theReply);
     return NS_OK;
   }
   *aReply = nsnull;

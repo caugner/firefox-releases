@@ -207,7 +207,7 @@ class nsScanner {
        *  @param   
        *  @return  
        */
-      void Mark(void);
+      PRInt32 Mark(void);
 
       /**
        *  Resets current offset position of input stream to marked position. 
@@ -317,10 +317,14 @@ class nsScanner {
 
   protected:
 
-      void AppendToBuffer(nsScannerString::Buffer *, nsIRequest *aRequest);
-      void AppendToBuffer(const nsAString& aStr)
+      PRBool AppendToBuffer(nsScannerString::Buffer *, nsIRequest *aRequest);
+      PRBool AppendToBuffer(const nsAString& aStr)
       {
-        AppendToBuffer(nsScannerString::AllocBufferFromString(aStr), nsnull);
+        nsScannerString::Buffer* buf = nsScannerString::AllocBufferFromString(aStr);
+        if (!buf)
+          return PR_FALSE;
+        AppendToBuffer(buf, nsnull);
+        return PR_TRUE;
       }
 
       nsScannerString*             mSlidingBuffer;
@@ -334,8 +338,11 @@ class nsScanner {
       PRInt32         mFirstNonWhitespacePosition;
       PRInt32         mCharsetSource;
       nsCString       mCharset;
-      nsIUnicodeDecoder *mUnicodeDecoder;
+      nsCOMPtr<nsIUnicodeDecoder> mUnicodeDecoder;
       nsParser        *mParser;
+
+  private:
+      nsScanner &operator =(const nsScanner &); // Not implemented.
 };
 
 #endif

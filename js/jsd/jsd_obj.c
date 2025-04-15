@@ -156,7 +156,7 @@ _createJSDObject(JSDContext* jsdc, JSContext *cx, JSObject *obj)
     return jsdobj;
 }
 
-void JS_DLL_CALLBACK
+void
 jsd_ObjectHook(JSContext *cx, JSObject *obj, JSBool isNew, void *closure)
 {
     JSDObject* jsdobj;
@@ -205,7 +205,7 @@ jsd_Constructing(JSDContext* jsdc, JSContext *cx, JSObject *obj,
                 jsdobj->ctorURL = jsd_AddAtom(jsdc, ctorURL);
 
             JSD_LOCK_SCRIPTS(jsdc);
-            jsdscript = jsd_FindJSDScript(jsdc, script);
+            jsdscript = jsd_FindOrCreateJSDScript(jsdc, cx, script, fp);
             JSD_UNLOCK_SCRIPTS(jsdc);
             if( jsdscript )
             {
@@ -220,7 +220,7 @@ jsd_Constructing(JSDContext* jsdc, JSContext *cx, JSObject *obj,
     JSD_UNLOCK_OBJECTS(jsdc);
 }
 
-JS_STATIC_DLL_CALLBACK(JSHashNumber)
+static JSHashNumber
 _hash_root(const void *key)
 {
     return ((JSHashNumber) key) >> 2; /* help lame MSVC1.5 on Win16 */

@@ -58,9 +58,6 @@ MODULE_NAME	= nsLayoutModule
 GRE_MODULE	= 1
 LIBXUL_LIBRARY	= 1
 
-PACKAGE_FILE = layout.pkg
-PACKAGE_VARS += MOZ_XUL
-
 ifndef MOZ_ENABLE_LIBXUL
 EXTRA_DSO_LIBS	= gkgfx
 endif
@@ -138,9 +135,35 @@ SHARED_LIBRARY_LIBS = \
 	$(DEPTH)/dom/src/jsurl/$(LIB_PREFIX)jsurl_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/src/storage/$(LIB_PREFIX)jsdomstorage_s.$(LIB_SUFFIX) \
 	$(DEPTH)/dom/src/offline/$(LIB_PREFIX)jsdomoffline_s.$(LIB_SUFFIX) \
+ 	$(DEPTH)/dom/src/geolocation/$(LIB_PREFIX)jsdomgeolocation_s.$(LIB_SUFFIX) \
+	$(DEPTH)/dom/src/threads/$(LIB_PREFIX)domthreads_s.$(LIB_SUFFIX) \
 	$(DEPTH)/editor/libeditor/text/$(LIB_PREFIX)texteditor_s.$(LIB_SUFFIX) \
 	$(DEPTH)/editor/libeditor/base/$(LIB_PREFIX)editorbase_s.$(LIB_SUFFIX) \
 	$(NULL)
+
+ifdef MOZ_MEDIA
+SHARED_LIBRARY_LIBS 	+= \
+	$(DEPTH)/content/media/video/src/$(LIB_PREFIX)gkconvideo_s.$(LIB_SUFFIX) \
+	$(NULL)
+endif
+
+ifdef MOZ_OGG
+SHARED_LIBRARY_LIBS 	+= \
+	$(DEPTH)/media/libfishsound/src/libfishsound/$(LIB_PREFIX)fishsound.$(LIB_SUFFIX) \
+	$(DEPTH)/media/libogg/src/$(LIB_PREFIX)ogg.$(LIB_SUFFIX) \
+	$(DEPTH)/media/liboggplay/src/liboggplay/$(LIB_PREFIX)oggplay.$(LIB_SUFFIX) \
+	$(DEPTH)/media/liboggz/src/liboggz/$(LIB_PREFIX)oggz.$(LIB_SUFFIX) \
+	$(DEPTH)/media/libtheora/lib/$(LIB_PREFIX)theora.$(LIB_SUFFIX) \
+	$(DEPTH)/media/libvorbis/lib/$(LIB_PREFIX)vorbis.$(LIB_SUFFIX) \
+	$(NULL)
+endif
+
+ifdef MOZ_SYDNEYAUDIO
+SHARED_LIBRARY_LIBS 	+= \
+	$(DEPTH)/media/libsydneyaudio/src/$(LIB_PREFIX)sydneyaudio.$(LIB_SUFFIX) \
+	$(NULL)
+LOCAL_INCLUDES += -I$(DEPTH)/content/html/content/src
+endif
 
 ifdef NS_PRINTING
 SHARED_LIBRARY_LIBS += \
@@ -216,15 +239,18 @@ EXTRA_DSO_LDOPTS = \
 		$(MOZ_JS_LIBS) \
 		$(NULL)
 
-ifdef NS_TRACE_MALLOC
-EXTRA_DSO_LIBS	+= tracemalloc
-endif
-
 ifdef MOZ_ENABLE_GTK2
 EXTRA_DSO_LDOPTS += $(MOZ_GTK2_LIBS) \
 		    -lXrender \
 		    $(NULL)
 endif
+
+ifdef MOZ_ENABLE_QT
+EXTRA_DSO_LDOPTS += $(MOZ_QT_LIBS) \
+		    $(NULL)
+endif
+
+EXTRA_DSO_LDOPTS += $(MOZ_LOCATION_LIBS)
 
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 EXTRA_DSO_LDOPTS += \
@@ -235,6 +261,12 @@ endif
 # Add explicit X11 dependency when building against X11 toolkits
 ifneq (,$(filter gtk2,$(MOZ_WIDGET_TOOLKIT)))
 EXTRA_DSO_LDOPTS += $(XLDFLAGS) $(XLIBS)
+endif
+
+ifdef MOZ_SYDNEYAUDIO
+ifeq ($(OS_ARCH),Darwin)
+OS_LIBS += -framework CoreAudio -framework AudioToolbox -framework AudioUnit -framework Carbon
+endif
 endif
 
 include $(topsrcdir)/config/rules.mk
@@ -265,6 +297,8 @@ LOCAL_INCLUDES	+= -I$(srcdir)/../base \
 		   -I$(topsrcdir)/dom/src/jsurl \
 		   -I$(topsrcdir)/dom/src/storage \
 		   -I$(topsrcdir)/dom/src/offline \
+		   -I$(topsrcdir)/dom/src/geolocation \
+		   -I$(topsrcdir)/dom/src/threads \
 		   -I. \
 		   -I$(topsrcdir)/editor/libeditor/base \
 		   -I$(topsrcdir)/editor/libeditor/text \

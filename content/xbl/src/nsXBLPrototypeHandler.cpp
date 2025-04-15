@@ -67,7 +67,6 @@
 #include "nsPIWindowRoot.h"
 #include "nsIDOMWindowInternal.h"
 #include "nsIServiceManager.h"
-#include "nsContentUtils.h"
 #include "nsIScriptError.h"
 #include "nsXPIDLString.h"
 #include "nsReadableUtils.h"
@@ -156,7 +155,7 @@ nsXBLPrototypeHandler::~nsXBLPrototypeHandler()
   }
 
   // We own the next handler in the chain, so delete it now.
-  delete mNextHandler;
+  NS_CONTENT_DELETE_LIST_MEMBER(nsXBLPrototypeHandler, this, mNextHandler);
 }
 
 already_AddRefed<nsIContent>
@@ -302,11 +301,9 @@ nsXBLPrototypeHandler::ExecuteHandler(nsPIDOMEventTarget* aTarget,
         return NS_OK;
     }
 
-    boundGlobal = boundDocument->GetScriptGlobalObject();
+    boundGlobal = boundDocument->GetScopeObject();
   }
 
-  // If we still don't have a 'boundGlobal', we're doomed. bug 95465.
-  NS_ASSERTION(boundGlobal, "failed to get the nsIScriptGlobalObject. bug 95465?");
   if (!boundGlobal)
     return NS_OK;
 
@@ -404,8 +401,7 @@ nsXBLPrototypeHandler::DispatchXBLCommand(nsPIDOMEventTarget* aTarget, nsIDOMEve
 
   nsCOMPtr<nsIPrivateDOMEvent> privateEvent = do_QueryInterface(aEvent);
   if (privateEvent) {
-    PRBool dispatchStopped;
-    privateEvent->IsDispatchStopped(&dispatchStopped);
+    PRBool dispatchStopped = privateEvent->IsDispatchStopped();
     if (dispatchStopped)
       return NS_OK;
   }
@@ -600,25 +596,24 @@ nsXBLPrototypeHandler::KeyEventMatched(nsIDOMKeyEvent* aKeyEvent,
                                        PRUint32 aCharCode,
                                        PRBool aIgnoreShiftKey)
 {
-  if (mDetail == -1)
-    return PR_TRUE; // No filters set up. It's generic.
+  if (mDetail != -1) {
+    // Get the keycode or charcode of the key event.
+    PRUint32 code;
 
-  // Get the keycode or charcode of the key event.
-  PRUint32 code;
-
-  if (mMisc) {
-    if (aCharCode)
-      code = aCharCode;
+    if (mMisc) {
+      if (aCharCode)
+        code = aCharCode;
+      else
+        aKeyEvent->GetCharCode(&code);
+      if (IS_IN_BMP(code))
+        code = ToLowerCase(PRUnichar(code));
+    }
     else
-      aKeyEvent->GetCharCode(&code);
-    if (IS_IN_BMP(code))
-      code = ToLowerCase(PRUnichar(code));
-  }
-  else
-    aKeyEvent->GetKeyCode(&code);
+      aKeyEvent->GetKeyCode(&code);
 
-  if (code != PRUint32(mDetail))
-    return PR_FALSE;
+    if (code != PRUint32(mDetail))
+      return PR_FALSE;
+  }
 
   return ModifiersMatchMask(aKeyEvent, aIgnoreShiftKey);
 }

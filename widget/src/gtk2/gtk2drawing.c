@@ -56,6 +56,7 @@
 #define WINDOW_IS_MAPPED(window) ((window) && GDK_IS_WINDOW(window) && gdk_window_is_visible(window))
 
 static GtkWidget* gProtoWindow;
+static GtkWidget* gProtoLayout;
 static GtkWidget* gButtonWidget;
 static GtkWidget* gToggleButtonWidget;
 static GtkWidget* gButtonArrowWidget;
@@ -133,15 +134,15 @@ ensure_window_widget()
 static gint
 setup_widget_prototype(GtkWidget* widget)
 {
-    static GtkWidget* protoLayout;
     ensure_window_widget();
-    if (!protoLayout) {
-        protoLayout = gtk_fixed_new();
-        gtk_container_add(GTK_CONTAINER(gProtoWindow), protoLayout);
+    if (!gProtoLayout) {
+        gProtoLayout = gtk_fixed_new();
+        gtk_container_add(GTK_CONTAINER(gProtoWindow), gProtoLayout);
     }
 
-    gtk_container_add(GTK_CONTAINER(protoLayout), widget);
+    gtk_container_add(GTK_CONTAINER(gProtoLayout), widget);
     gtk_widget_realize(widget);
+    g_object_set_data(G_OBJECT(widget), "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     return MOZ_GTK_SUCCESS;
 }
 
@@ -286,6 +287,7 @@ moz_gtk_get_combo_box_inner_button(GtkWidget *widget, gpointer client_data)
         g_object_add_weak_pointer(G_OBJECT(widget),
                                   (gpointer) &gComboBoxButtonWidget);
         gtk_widget_realize(widget);
+        g_object_set_data(G_OBJECT(widget), "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     }
 }
 
@@ -304,6 +306,7 @@ moz_gtk_get_combo_box_button_inner_widgets(GtkWidget *widget,
     } else
         return;
     gtk_widget_realize(widget);
+    g_object_set_data(G_OBJECT(widget), "transparent-bg-hint", GINT_TO_POINTER(TRUE));
 }
 
 static gint
@@ -343,6 +346,8 @@ ensure_combo_box_widgets()
             g_object_add_weak_pointer(G_OBJECT(buttonChild), (gpointer)
                                       &gComboBoxArrowWidget);
             gtk_widget_realize(gComboBoxArrowWidget);
+            g_object_set_data(G_OBJECT(gComboBoxArrowWidget),
+                              "transparent-bg-hint", GINT_TO_POINTER(TRUE));
         }
     } else {
         /* Shouldn't be reached with current internal gtk implementation; we
@@ -392,6 +397,7 @@ moz_gtk_get_combo_box_entry_inner_widgets(GtkWidget *widget,
     } else
         return;
     gtk_widget_realize(widget);
+    g_object_set_data(G_OBJECT(widget), "transparent-bg-hint", GINT_TO_POINTER(TRUE));
 }
 
 static void
@@ -402,6 +408,7 @@ moz_gtk_get_combo_box_entry_arrow(GtkWidget *widget, gpointer client_data)
         g_object_add_weak_pointer(G_OBJECT(widget),
                                   (gpointer) &gComboBoxEntryArrowWidget);
         gtk_widget_realize(widget);
+        g_object_set_data(G_OBJECT(widget), "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     }
 }
 
@@ -452,6 +459,8 @@ ensure_combo_box_entry_widgets()
             g_object_add_weak_pointer(G_OBJECT(buttonChild), (gpointer)
                                       &gComboBoxEntryArrowWidget);
             gtk_widget_realize(gComboBoxEntryArrowWidget);
+            g_object_set_data(G_OBJECT(gComboBoxEntryArrowWidget),
+                              "transparent-bg-hint", GINT_TO_POINTER(TRUE));
         }
     } else {
         /* Shouldn't be reached with current internal gtk implementation;
@@ -491,6 +500,7 @@ ensure_toolbar_widget()
         gToolbarWidget = gtk_toolbar_new();
         gtk_container_add(GTK_CONTAINER(gHandleBoxWidget), gToolbarWidget);
         gtk_widget_realize(gToolbarWidget);
+        g_object_set_data(G_OBJECT(gToolbarWidget), "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     }
     return MOZ_GTK_SUCCESS;
 }
@@ -578,6 +588,8 @@ ensure_menu_bar_item_widget()
         gtk_menu_shell_append(GTK_MENU_SHELL(gMenuBarWidget),
                               gMenuBarItemWidget);
         gtk_widget_realize(gMenuBarItemWidget);
+        g_object_set_data(G_OBJECT(gMenuBarItemWidget),
+                          "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     }
     return MOZ_GTK_SUCCESS;
 }
@@ -591,6 +603,8 @@ ensure_menu_popup_widget()
         gtk_menu_item_set_submenu(GTK_MENU_ITEM(gMenuBarItemWidget),
                                   gMenuPopupWidget);
         gtk_widget_realize(gMenuPopupWidget);
+        g_object_set_data(G_OBJECT(gMenuPopupWidget),
+                          "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     }
     return MOZ_GTK_SUCCESS;
 }
@@ -604,6 +618,8 @@ ensure_menu_item_widget()
         gtk_menu_shell_append(GTK_MENU_SHELL(gMenuPopupWidget),
                               gMenuItemWidget);
         gtk_widget_realize(gMenuItemWidget);
+        g_object_set_data(G_OBJECT(gMenuItemWidget),
+                          "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     }
     return MOZ_GTK_SUCCESS;
 }
@@ -617,6 +633,8 @@ ensure_image_menu_item_widget()
         gtk_menu_shell_append(GTK_MENU_SHELL(gMenuPopupWidget),
                               gImageMenuItemWidget);
         gtk_widget_realize(gImageMenuItemWidget);
+        g_object_set_data(G_OBJECT(gImageMenuItemWidget),
+                          "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     }
     return MOZ_GTK_SUCCESS;
 }
@@ -630,6 +648,8 @@ ensure_menu_separator_widget()
         gtk_menu_shell_append(GTK_MENU_SHELL(gMenuPopupWidget),
                               gMenuSeparatorWidget);
         gtk_widget_realize(gMenuSeparatorWidget);
+        g_object_set_data(G_OBJECT(gMenuSeparatorWidget),
+                          "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     }
     return MOZ_GTK_SUCCESS;
 }
@@ -643,6 +663,8 @@ ensure_check_menu_item_widget()
         gtk_menu_shell_append(GTK_MENU_SHELL(gMenuPopupWidget),
                               gCheckMenuItemWidget);
         gtk_widget_realize(gCheckMenuItemWidget);
+        g_object_set_data(G_OBJECT(gCheckMenuItemWidget),
+                          "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     }
     return MOZ_GTK_SUCCESS;
 }
@@ -696,6 +718,10 @@ ensure_tree_header_cell_widget()
         /* Use the middle column's header for our button */
         gTreeHeaderCellWidget = GTK_TREE_VIEW_COLUMN(gMiddleTreeViewColumn)->button;
         gTreeHeaderSortArrowWidget = GTK_TREE_VIEW_COLUMN(gMiddleTreeViewColumn)->arrow;
+        g_object_set_data(G_OBJECT(gTreeHeaderCellWidget),
+                          "transparent-bg-hint", GINT_TO_POINTER(TRUE));
+        g_object_set_data(G_OBJECT(gTreeHeaderSortArrowWidget),
+                          "transparent-bg-hint", GINT_TO_POINTER(TRUE));
     }
     return MOZ_GTK_SUCCESS;
 }
@@ -845,9 +871,22 @@ moz_gtk_button_paint(GdkDrawable* drawable, GdkRectangle* rect,
 gint
 moz_gtk_init()
 {
+    GtkWidgetClass *entry_class;
+
     is_initialized = TRUE;
     have_arrow_scaling = (gtk_major_version > 2 ||
                           (gtk_major_version == 2 && gtk_minor_version >= 12));
+
+    /* Add style property to GtkEntry.
+     * Adding the style property to the normal GtkEntry class means that it
+     * will work without issues inside GtkComboBox and for Spinbuttons. */
+    entry_class = g_type_class_ref(GTK_TYPE_ENTRY);
+    gtk_widget_class_install_style_property(entry_class,
+        g_param_spec_boolean("honors-transparent-bg-hint",
+                             "Transparent BG enabling flag",
+                             "If TRUE, the theme is able to draw the GtkEntry on non-prefilled background.",
+                             FALSE,
+                             G_PARAM_READWRITE));
 
     return MOZ_GTK_SUCCESS;
 }
@@ -1443,6 +1482,23 @@ moz_gtk_vpaned_paint(GdkDrawable* drawable, GdkRectangle* rect,
 }
 
 static gint
+moz_gtk_caret_paint(GdkDrawable* drawable, GdkRectangle* rect,
+                    GdkRectangle* cliprect, GtkTextDirection direction)
+{
+    GdkRectangle location = *rect;
+    if (direction == GTK_TEXT_DIR_RTL) {
+        /* gtk_draw_insertion_cursor ignores location.width */
+        location.x = rect->x + rect->width;
+    }
+
+    ensure_entry_widget();
+    gtk_draw_insertion_cursor(gEntryWidget, drawable, cliprect,
+                              &location, TRUE, direction, FALSE);
+
+    return MOZ_GTK_SUCCESS;
+}
+
+static gint
 moz_gtk_entry_paint(GdkDrawable* drawable, GdkRectangle* rect,
                     GdkRectangle* cliprect, GtkWidgetState* state,
                     GtkWidget* widget, GtkTextDirection direction)
@@ -1452,6 +1508,7 @@ moz_gtk_entry_paint(GdkDrawable* drawable, GdkRectangle* rect,
     gint x, y, width = rect->width, height = rect->height;
     GtkStyle* style;
     gboolean interior_focus;
+    gboolean theme_honors_transparency = FALSE;
     gint focus_width;
 
     gtk_widget_set_direction(widget, direction);
@@ -1461,6 +1518,7 @@ moz_gtk_entry_paint(GdkDrawable* drawable, GdkRectangle* rect,
     gtk_widget_style_get(widget,
                          "interior-focus", &interior_focus,
                          "focus-line-width", &focus_width,
+                         "honors-transparent-bg-hint", &theme_honors_transparency,
                          NULL);
 
     /* gtkentry.c uses two windows, one for the entire widget and one for the
@@ -1473,9 +1531,20 @@ moz_gtk_entry_paint(GdkDrawable* drawable, GdkRectangle* rect,
     /* This gets us a lovely greyish disabledish look */
     gtk_widget_set_sensitive(widget, !state->disabled);
 
-    /* Draw the default window background */
-    gdk_draw_rectangle(drawable, style->base_gc[bg_state], TRUE,
-                       rect->x, rect->y, rect->width, rect->height);
+    /* GTK fills the outer widget window with the base color before drawing the widget.
+     * Some older themes rely on this behavior, but many themes nowadays use rounded
+     * corners on their widgets. While most GTK apps are blissfully unaware of this
+     * problem due to their use of the default window background, we render widgets on
+     * many kinds of backgrounds on the web.
+     * If the theme is able to cope with transparency, then we can skip pre-filling
+     * and notify the theme it will paint directly on the canvas. */
+    if (theme_honors_transparency) {
+        g_object_set_data(G_OBJECT(widget), "transparent-bg-hint", GINT_TO_POINTER(TRUE));
+    } else {
+        gdk_draw_rectangle(drawable, style->base_gc[bg_state], TRUE,
+                           cliprect->x, cliprect->y, cliprect->width, cliprect->height);
+        g_object_set_data(G_OBJECT(widget), "transparent-bg-hint", GINT_TO_POINTER(FALSE));
+    }
 
     /* Get the position of the inner window, see _gtk_entry_get_borders */
     x = XTHICKNESS(style);
@@ -2784,6 +2853,7 @@ moz_gtk_get_widget_border(GtkThemeWidgetType widget, gint* left, gint* top,
     case MOZ_GTK_TOOLBAR:
     case MOZ_GTK_MENUBAR:
     case MOZ_GTK_TAB_SCROLLARROW:
+    case MOZ_GTK_ENTRY_CARET:
         *left = *top = *right = *bottom = 0;
         return MOZ_GTK_SUCCESS;
     default:
@@ -3052,6 +3122,9 @@ moz_gtk_widget_paint(GtkThemeWidgetType widget, GdkDrawable* drawable,
         return moz_gtk_entry_paint(drawable, rect, cliprect, state,
                                    gEntryWidget, direction);
         break;
+    case MOZ_GTK_ENTRY_CARET:
+        return moz_gtk_caret_paint(drawable, rect, cliprect, direction);
+        break;
     case MOZ_GTK_DROPDOWN:
         return moz_gtk_combo_box_paint(drawable, rect, cliprect, state,
                                        (gboolean) flags, direction);
@@ -3167,6 +3240,8 @@ GtkWidget* moz_gtk_get_scrollbar_widget(void)
 gint
 moz_gtk_shutdown()
 {
+    GtkWidgetClass *entry_class;
+
     if (gTooltipWidget)
         gtk_widget_destroy(gTooltipWidget);
     /* This will destroy all of our widgets */
@@ -3174,6 +3249,7 @@ moz_gtk_shutdown()
         gtk_widget_destroy(gProtoWindow);
 
     gProtoWindow = NULL;
+    gProtoLayout = NULL;
     gButtonWidget = NULL;
     gToggleButtonWidget = NULL;
     gButtonArrowWidget = NULL;
@@ -3216,6 +3292,9 @@ moz_gtk_shutdown()
     gHPanedWidget = NULL;
     gVPanedWidget = NULL;
     gScrolledWindowWidget = NULL;
+
+    entry_class = g_type_class_peek(GTK_TYPE_ENTRY);
+    g_type_class_unref(entry_class);
 
     is_initialized = FALSE;
 

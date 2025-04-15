@@ -41,9 +41,10 @@
 #define _MOZSTORAGECONNECTION_H_
 
 #include "nsCOMPtr.h"
+#include "nsAutoLock.h"
 
 #include "nsString.h"
-#include "nsDataHashtable.h"
+#include "nsInterfaceHashtable.h"
 #include "mozIStorageProgressHandler.h"
 #include "mozIStorageConnection.h"
 
@@ -52,6 +53,8 @@
 #include <sqlite3.h>
 
 class nsIFile;
+class nsIEventTarget;
+class nsIThread;
 class mozIStorageService;
 
 class mozStorageConnection : public mozIStorageConnection
@@ -69,6 +72,15 @@ public:
     // fetch the native handle
     sqlite3 *GetNativeConnection() { return mDBConn; }
 
+    /**
+     * Lazily creates and returns a background execution thread.  In the future,
+     * the thread may be re-claimed if left idle, so you should call this
+     * method just before you dispatch and not save the reference.
+     * 
+     * @returns an event target suitable for asynchronous statement execution.
+     */
+    already_AddRefed<nsIEventTarget> getAsyncExecutionTarget();
+
 private:
     ~mozStorageConnection();
 
@@ -81,8 +93,6 @@ protected:
     void HandleSqliteError(const char *aSqlStatement);
     static PLDHashOperator s_FindFuncEnum(const nsACString &aKey,
                                           nsISupports* aData, void* userArg);
-    static PLDHashOperator s_ReleaseFuncEnum(const nsACString &aKey,
-                                             nsISupports* aData, void* userArg);
     PRBool FindFunctionByInstance(nsISupports *aInstance);
 
     static int s_ProgressHelper(void *arg);
@@ -93,10 +103,33 @@ protected:
 
     sqlite3 *mDBConn;
     nsCOMPtr<nsIFile> mDatabaseFile;
+
+    /**
+     * Protects access to mAsyncExecutionThread.
+     */
+    PRLock *mAsyncExecutionMutex;
+
+    /**
+     * Lazily created thread for asynchronous statement execution.  Consumers
+     * should use getAsyncExecutionTarget rather than directly accessing this
+     * field.
+     */
+    nsCOMPtr<nsIThread> mAsyncExecutionThread;
+    /**
+     * Set to true by Close() prior to actually shutting down the thread.  This
+     * lets getAsyncExecutionTarget() know not to hand out any more thread
+     * references (or to create the thread in the first place).  This variable
+     * should be accessed while holding the mAsyncExecutionMutex.
+     */
+    PRBool mAsyncExecutionThreadShuttingDown;
+
+    PRLock *mTransactionMutex;
     PRBool mTransactionInProgress;
 
-    nsDataHashtable<nsCStringHashKey, nsISupports*> mFunctions;
+    PRLock *mFunctionsMutex;
+    nsInterfaceHashtable<nsCStringHashKey, nsISupports> mFunctions;
 
+    PRLock *mProgressHandlerMutex;
     nsCOMPtr<mozIStorageProgressHandler> mProgressHandler;
 
     // This isn't accessed but is used to make sure that the connections do

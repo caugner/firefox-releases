@@ -65,6 +65,14 @@ struct JSRegExpStatics {
     JSSubString rightContext;   /* input to right of last match (perl $') */
 };
 
+extern JS_FRIEND_API(void)
+js_SaveRegExpStatics(JSContext *cx, JSRegExpStatics *statics,
+                     JSTempValueRooter *tvr);
+
+extern JS_FRIEND_API(void)
+js_RestoreRegExpStatics(JSContext *cx, JSRegExpStatics *statics,
+                        JSTempValueRooter *tvr);
+
 /*
  * This struct holds a bitmap representation of a class from a regexp.
  * There's a list of these referenced by the classList field in the JSRegExp
@@ -131,21 +139,29 @@ extern JSBool
 js_ExecuteRegExp(JSContext *cx, JSRegExp *re, JSString *str, size_t *indexp,
                  JSBool test, jsval *rval);
 
-/*
- * These two add and remove GC roots, respectively, so their calls must be
- * well-ordered.
- */
-extern JSBool
-js_InitRegExpStatics(JSContext *cx, JSRegExpStatics *res);
+extern void
+js_InitRegExpStatics(JSContext *cx);
 
 extern void
-js_FreeRegExpStatics(JSContext *cx, JSRegExpStatics *res);
+js_TraceRegExpStatics(JSTracer *trc, JSContext *acx);
 
-#define JSVAL_IS_REGEXP(cx, v)                                                \
+extern void
+js_FreeRegExpStatics(JSContext *cx);
+
+#define VALUE_IS_REGEXP(cx, v)                                                \
     (JSVAL_IS_OBJECT(v) && JSVAL_TO_OBJECT(v) &&                              \
      OBJ_GET_CLASS(cx, JSVAL_TO_OBJECT(v)) == &js_RegExpClass)
 
 extern JSClass js_RegExpClass;
+
+enum regexp_tinyid {
+    REGEXP_SOURCE       = -1,
+    REGEXP_GLOBAL       = -2,
+    REGEXP_IGNORE_CASE  = -3,
+    REGEXP_LAST_INDEX   = -4,
+    REGEXP_MULTILINE    = -5,
+    REGEXP_STICKY       = -6
+};
 
 extern JSObject *
 js_InitRegExpClass(JSContext *cx, JSObject *obj);
@@ -164,7 +180,7 @@ js_NewRegExpObject(JSContext *cx, JSTokenStream *ts,
                    jschar *chars, size_t length, uintN flags);
 
 extern JSBool
-js_XDRRegExp(JSXDRState *xdr, JSObject **objp);
+js_XDRRegExpObject(JSXDRState *xdr, JSObject **objp);
 
 extern JSObject *
 js_CloneRegExpObject(JSContext *cx, JSObject *obj, JSObject *parent);

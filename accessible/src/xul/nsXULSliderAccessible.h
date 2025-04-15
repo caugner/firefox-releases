@@ -48,19 +48,15 @@ class nsXULSliderAccessible : public nsAccessibleWrap
 public:
   nsXULSliderAccessible(nsIDOMNode* aNode, nsIWeakReference* aShell);
 
+  // nsISupports
+  NS_DECL_ISUPPORTS_INHERITED
+
   // nsIAccessible
   NS_IMETHOD GetRole(PRUint32 *aRole);
   NS_IMETHOD GetValue(nsAString& aValue);
 
   // nsIAccessibleValue
-  NS_IMETHOD GetMaximumValue(double *aMaximumValue);
-  NS_IMETHOD GetMinimumValue(double *aMinimumValue);
-  NS_IMETHOD GetMinimumIncrement(double *aMinIncrement);
-  NS_IMETHOD GetCurrentValue(double *aValue);
-  NS_IMETHOD SetCurrentValue(double aValue);
-
-  // nsPIAccessible
-  NS_IMETHOD GetAllowsAnonChildAccessibles(PRBool *aAllowsAnonChildren);
+  NS_DECL_NSIACCESSIBLEVALUE
 
 protected:
   already_AddRefed<nsIContent> GetSliderNode();

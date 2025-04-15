@@ -94,7 +94,7 @@ SwapBytes(PRUnichar *buffer)
 }
 
 // Enumerator callback to add a table row to history
-static PLDHashOperator PR_CALLBACK
+static PLDHashOperator
 AddToHistoryCB(const nsCSubstring &aRowID,
                const nsTArray<nsCString> *aValues,
                void *aData)
@@ -178,7 +178,7 @@ AddToHistoryCB(const nsCSubstring &aRowID,
 NS_IMETHODIMP
 nsNavHistory::ImportHistory(nsIFile* aFile)
 {
-  NS_ENSURE_TRUE(aFile, NS_ERROR_NULL_POINTER);
+  NS_ENSURE_ARG(aFile);
 
   // Check that the file exists before we try to open it
   PRBool exists;
@@ -237,15 +237,8 @@ nsNavHistory::ImportHistory(nsIFile* aFile)
   mozIStorageConnection *conn = GetStorageConnection();
   NS_ENSURE_TRUE(conn, NS_ERROR_NOT_INITIALIZED);
   mozStorageTransaction transaction(conn, PR_FALSE);
-#ifdef IN_MEMORY_LINKS
-  mozIStorageConnection *memoryConn = GetMemoryStorageConnection();
-  mozStorageTransaction memTransaction(memoryConn, PR_FALSE);
-#endif
 
   reader.EnumerateRows(AddToHistoryCB, &data);
 
-#ifdef IN_MEMORY_LINKS
-  memTransaction.Commit();
-#endif
   return transaction.Commit();
 }

@@ -48,6 +48,9 @@
 #include "nsIServiceManager.h"
 #include "nsXPCOM.h"
 #include "nsISupportsPrimitives.h"
+#include "nsIIOService.h"
+#include "nsIFileURL.h"
+#include "nsNetUtil.h"
 #include "prlog.h"
 #include "nsVoidArray.h"
 #include "nsPrimitiveHelpers.h"
@@ -58,11 +61,16 @@
 #include "nsCRT.h"
 
 #include "gfxASurface.h"
+#include "gfxXlibSurface.h"
+#include "gfxContext.h"
 #include "nsImageToPixbuf.h"
 #include "nsIPresShell.h"
 #include "nsPresContext.h"
 #include "nsIDocument.h"
 #include "nsISelection.h"
+
+// This sets how opaque the drag image is
+#define DRAG_IMAGE_ALPHA_LEVEL 0.5
 
 static PRLogModuleInfo *sDragLm = NULL;
 
@@ -202,33 +210,90 @@ nsDragService::InvokeDragSession(nsIDOMNode *aDOMNode,
                                                  1,
                                                  &event);
 
-        GdkPixbuf* dragPixbuf = nsnull;
+        PRBool needsFallbackIcon = PR_FALSE;
         nsRect dragRect;
         nsPresContext* pc;
+        nsRefPtr<gfxASurface> surface;
         if (mHasImage || mSelection) {
-          nsRefPtr<gfxASurface> surface;
           DrawDrag(aDOMNode, aRegion, mScreenX, mScreenY,
                    &dragRect, getter_AddRefs(surface), &pc);
-          if (surface) {
-            dragPixbuf =
-              nsImageToPixbuf::SurfaceToPixbuf(surface, dragRect.width, dragRect.height);
-          }
         }
 
-        if (dragPixbuf) {
+        if (surface) {
           PRInt32 sx = mScreenX, sy = mScreenY;
           ConvertToUnscaledDevPixels(pc, &sx, &sy);
-          gtk_drag_set_icon_pixbuf(context, dragPixbuf,
-                                   sx - NSToIntRound(dragRect.x),
-                                   sy - NSToIntRound(dragRect.y));
+
+          PRInt32 offsetX = sx - NSToIntRound(dragRect.x);
+          PRInt32 offsetY = sy - NSToIntRound(dragRect.y);
+          if (!SetAlphaPixmap(surface, context, offsetX, offsetY, dragRect)) {
+            GdkPixbuf* dragPixbuf =
+              nsImageToPixbuf::SurfaceToPixbuf(surface, dragRect.width, dragRect.height);
+            if (dragPixbuf)
+              gtk_drag_set_icon_pixbuf(context, dragPixbuf, offsetX, offsetY);
+            else
+              needsFallbackIcon = PR_TRUE;
+          }
+        } else {
+          needsFallbackIcon = PR_TRUE;
         }
-        else
+
+        if (needsFallbackIcon)
           gtk_drag_set_icon_default(context);
 
         gtk_target_list_unref(sourceList);
     }
 
     return NS_OK;
+}
+
+PRBool
+nsDragService::SetAlphaPixmap(gfxASurface *aSurface,
+                                 GdkDragContext *aContext,
+                                 PRInt32 aXOffset,
+                                 PRInt32 aYOffset,
+                                 const nsRect& dragRect)
+{
+    GdkScreen* screen = gtk_widget_get_screen(mHiddenWidget);
+
+    // Transparent drag icons need, like a lot of transparency-related things,
+    // a compositing X window manager
+    if (!gdk_screen_is_composited(screen))
+      return PR_FALSE;
+
+    GdkColormap* alphaColormap = gdk_screen_get_rgba_colormap(screen);
+    if (!alphaColormap)
+      return PR_FALSE;
+
+    GdkPixmap* pixmap = gdk_pixmap_new(NULL, dragRect.width, dragRect.height,
+                                       gdk_colormap_get_visual(alphaColormap)->depth);
+    if (!pixmap)
+      return PR_FALSE;
+
+    gdk_drawable_set_colormap(GDK_DRAWABLE(pixmap), alphaColormap);
+
+    // Make a gfxXlibSurface wrapped around the pixmap to render on
+    nsRefPtr<gfxASurface> xPixmapSurface =
+         nsWindow::GetSurfaceForGdkDrawable(GDK_DRAWABLE(pixmap),
+                                            dragRect.Size());
+    if (!xPixmapSurface)
+      return PR_FALSE;
+
+    nsRefPtr<gfxContext> xPixmapCtx = new gfxContext(xPixmapSurface);
+
+    // Clear it...
+    xPixmapCtx->SetOperator(gfxContext::OPERATOR_CLEAR);
+    xPixmapCtx->Paint();
+
+    // ...and paint the drag image with translucency
+    xPixmapCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
+    xPixmapCtx->SetSource(aSurface);
+    xPixmapCtx->Paint(DRAG_IMAGE_ALPHA_LEVEL);
+
+    // The drag transaction addrefs the pixmap, so we can just unref it from us here
+    gtk_drag_set_icon_pixmap(aContext, alphaColormap, pixmap, NULL,
+                             aXOffset, aYOffset);
+    gdk_pixmap_unref(pixmap);
+    return PR_TRUE;
 }
 
 NS_IMETHODIMP
@@ -459,8 +524,8 @@ nsDragService::GetData(nsITransferable * aTransferable,
             else {
                 PR_LOG(sDragLm, PR_LOG_DEBUG, ("dataFound = PR_FALSE\n"));
 
-                // Dragging and dropping from the file manager would cause us to parse the source text as a
-                // nsILocalFile URL.
+                // Dragging and dropping from the file manager would cause us 
+                // to parse the source text as a nsILocalFile URL.
                 if ( strcmp(flavorStr, kFileMime) == 0 ) {
                     gdkFlavor = gdk_atom_intern(kTextMime, FALSE);
                     GetTargetDragData(gdkFlavor);
@@ -473,20 +538,27 @@ nsDragService::GetData(nsITransferable * aTransferable,
                                            &convertedText, &convertedTextLen);
 
                         if (convertedText) {
-                            nsDependentString fileUrl = nsDependentString(convertedText);
-                            if (StringBeginsWith(fileUrl, NS_LITERAL_STRING("file://")))
-                                fileUrl.Cut(0, strlen("file://"));
-
-                            nsCOMPtr<nsILocalFile> file;
-                            nsresult rv = NS_NewLocalFile(fileUrl, PR_TRUE, getter_AddRefs(file));
+                            nsCOMPtr<nsIIOService> ioService = do_GetIOService(&rv);
+                            nsCOMPtr<nsIURI> fileURI;
+                            nsresult rv = ioService->NewURI(NS_ConvertUTF16toUTF8(convertedText),
+                                                            nsnull, nsnull, getter_AddRefs(fileURI));
                             if (NS_SUCCEEDED(rv)) {
-                                // The common wrapping code at the end of this function assumes the data is text
-                                // and calls text-specific operations.
-                                // Make a secret hideout here for nsILocalFile objects and return early.
-                                aTransferable->SetTransferData(flavorStr, file,
-                                                               fileUrl.Length() * sizeof(PRUnichar));
-                                g_free(convertedText);
-                                return NS_OK;
+                                nsCOMPtr<nsIFileURL> fileURL = do_QueryInterface(fileURI, &rv);
+                                if (NS_SUCCEEDED(rv)) {
+                                    nsCOMPtr<nsIFile> file;
+                                    rv = fileURL->GetFile(getter_AddRefs(file));
+                                    if (NS_SUCCEEDED(rv)) {
+                                        // The common wrapping code at the end of 
+                                        // this function assumes the data is text
+                                        // and calls text-specific operations.
+                                        // Make a secret hideout here for nsILocalFile
+                                        // objects and return early.
+                                        aTransferable->SetTransferData(flavorStr, file,
+                                                                       convertedTextLen);
+                                        g_free(convertedText);
+                                        return NS_OK;
+                                    }
+                                }
                             }
                             g_free(convertedText);
                         }
@@ -1285,6 +1357,14 @@ invisibleSourceDragEnd(GtkWidget        *aWidget,
 {
     PR_LOG(sDragLm, PR_LOG_DEBUG, ("invisibleDragEnd"));
     nsDragService *dragService = (nsDragService *)aData;
+
+    gint x, y;
+    GdkDisplay* display = gdk_display_get_default();
+    if (display) {
+      gdk_display_get_pointer(display, NULL, &x, &y, NULL);
+      dragService->SetDragEndPoint(nsIntPoint(x, y));
+    }
+
     // The drag has ended.  Release the hostages!
     dragService->SourceEndDrag();
 }

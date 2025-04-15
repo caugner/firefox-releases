@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set sw=2 ts=2 et tw=78: */
+/* vim: set sw=2 ts=2 et tw=79: */
 /* ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -52,6 +52,9 @@
 #include "nsIInputStream.h"
 #include "CNavDTD.h"
 #include "prenv.h"
+#include "prlock.h"
+#include "prcvar.h"
+#include "nsAutoLock.h"
 #include "nsParserCIID.h"
 #include "nsReadableUtils.h"
 #include "nsCOMPtr.h"
@@ -61,6 +64,16 @@
 #include "nsISupportsPrimitives.h"
 #include "nsIFragmentContentSink.h"
 #include "nsStreamUtils.h"
+#include "nsHTMLTokenizer.h"
+#include "nsIDocument.h"
+#include "nsNetUtil.h"
+#include "nsScriptLoader.h"
+#include "nsDataHashtable.h"
+#include "nsIThreadPool.h"
+#include "nsXPCOMCIDInternal.h"
+#include "nsICSSStyleSheet.h"
+#include "nsICSSLoaderObserver.h"
+#include "nsICSSLoader.h"
 
 #ifdef MOZ_VIEW_SOURCE
 #include "nsViewSourceHTML.h"
@@ -155,8 +168,533 @@ public:
 
 //-------------- End ParseContinue Event Definition ------------------------
 
+template <class Type>
+class Holder {
+public:
+  typedef void (*Reaper)(Type *);
+
+  Holder(Reaper aReaper)
+    : mHoldee(nsnull), mReaper(aReaper)
+  {
+  }
+
+  ~Holder() {
+    if (mHoldee) {
+      mReaper(mHoldee);
+    }
+  }
+
+  Type *get() {
+    return mHoldee;
+  }
+  const Holder &operator =(Type *aHoldee) {
+    if (mHoldee && aHoldee != mHoldee) {
+      mReaper(mHoldee);
+    }
+    mHoldee = aHoldee;
+    return *this;
+  }
+
+private:
+  Type *mHoldee;
+  Reaper mReaper;
+};
+
+class nsSpeculativeScriptThread : public nsIRunnable {
+public:
+  nsSpeculativeScriptThread()
+    : mLock(nsAutoLock::DestroyLock),
+      mCVar(PR_DestroyCondVar),
+      mKeepParsing(PR_FALSE),
+      mCurrentlyParsing(PR_FALSE),
+      mNumConsumed(0),
+      mContext(nsnull),
+      mTerminated(PR_FALSE) {
+  }
+
+  ~nsSpeculativeScriptThread() {
+    NS_ASSERTION(NS_IsMainThread() || !mDocument,
+                 "Destroying the document on the wrong thread");
+  }
+
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIRUNNABLE
+
+  nsresult StartParsing(nsParser *aParser);
+  void StopParsing(PRBool aFromDocWrite);
+
+  enum PrefetchType { NONE, SCRIPT, STYLESHEET, IMAGE };
+  struct PrefetchEntry {
+    PrefetchType type;
+    nsString uri;
+    nsString charset;
+    nsString elementType;
+  };
+
+  nsIDocument *GetDocument() {
+    NS_ASSERTION(NS_IsMainThread(), "Potential threadsafety hazard");
+    return mDocument;
+  }
+
+  PRBool Parsing() {
+    return mCurrentlyParsing;
+  }
+
+  CParserContext *Context() {
+    return mContext;
+  }
+
+  typedef nsDataHashtable<nsCStringHashKey, PRBool> PreloadedType;
+  PreloadedType& GetPreloadedURIs() {
+    return mPreloadedURIs;
+  }
+
+  void Terminate() {
+    mTerminated = PR_TRUE;
+    StopParsing(PR_FALSE);
+  }
+  PRBool Terminated() {
+    return mTerminated;
+  }
+
+private:
+
+  void ProcessToken(CToken *aToken);
+
+  void AddToPrefetchList(const nsAString &src,
+                         const nsAString &charset,
+                         const nsAString &elementType,
+                         PrefetchType type);
+
+  void FlushURIs();
+
+  // These members are only accessed on the speculatively parsing thread.
+  nsTokenAllocator mTokenAllocator;
+
+  // The following members are shared across the main thread and the
+  // speculatively parsing thread.
+  Holder<PRLock> mLock;
+  Holder<PRCondVar> mCVar;
+
+  volatile PRBool mKeepParsing;
+  volatile PRBool mCurrentlyParsing;
+  nsRefPtr<nsHTMLTokenizer> mTokenizer;
+  nsAutoPtr<nsScanner> mScanner;
+
+  enum { kBatchPrefetchURIs = 5 };
+  nsAutoTArray<PrefetchEntry, kBatchPrefetchURIs> mURIs;
+
+  // Number of characters consumed by the last speculative parse.
+  PRUint32 mNumConsumed;
+
+  // These members are only accessed on the main thread.
+  nsCOMPtr<nsIDocument> mDocument;
+  CParserContext *mContext;
+  PreloadedType mPreloadedURIs;
+  PRBool mTerminated;
+};
+
+/**
+ * Used if we need to pass an nsICSSLoaderObserver as parameter,
+ * but don't really need its services
+ */
+class nsDummyCSSLoaderObserver : public nsICSSLoaderObserver {
+public:
+  NS_IMETHOD
+  StyleSheetLoaded(nsICSSStyleSheet* aSheet, PRBool aWasAlternate, nsresult aStatus) {
+      return NS_OK;
+  }
+  NS_DECL_ISUPPORTS
+};
+
+NS_IMPL_ISUPPORTS1(nsDummyCSSLoaderObserver, nsICSSLoaderObserver)
+
+class nsPreloadURIs : public nsIRunnable {
+public:
+  nsPreloadURIs(nsAutoTArray<nsSpeculativeScriptThread::PrefetchEntry, 5> &aURIs,
+                nsSpeculativeScriptThread *aScriptThread)
+    : mURIs(aURIs),
+      mScriptThread(aScriptThread) {
+  }
+
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIRUNNABLE
+
+  static void PreloadURIs(const nsAutoTArray<nsSpeculativeScriptThread::PrefetchEntry, 5> &aURIs,
+                          nsSpeculativeScriptThread *aScriptThread);
+
+private:
+  nsAutoTArray<nsSpeculativeScriptThread::PrefetchEntry, 5> mURIs;
+  nsRefPtr<nsSpeculativeScriptThread> mScriptThread;
+};
+
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsPreloadURIs, nsIRunnable)
+
+NS_IMETHODIMP
+nsPreloadURIs::Run()
+{
+  PreloadURIs(mURIs, mScriptThread);
+  return NS_OK;
+}
+
+void
+nsPreloadURIs::PreloadURIs(const nsAutoTArray<nsSpeculativeScriptThread::PrefetchEntry, 5> &aURIs,
+                           nsSpeculativeScriptThread *aScriptThread)
+{
+  NS_ASSERTION(NS_IsMainThread(), "Touching non-threadsafe objects off thread");
+
+  if (aScriptThread->Terminated()) {
+    return;
+  }
+
+  nsIDocument *doc = aScriptThread->GetDocument();
+  NS_ASSERTION(doc, "We shouldn't have started preloading without a document");
+
+  // Note: Per the code in the HTML content sink, we should be keeping track
+  // of each <base href> as it comes. However, because we do our speculative
+  // parsing off the main thread, this is hard to emulate. For now, just load
+  // the URIs using the document's base URI at the potential cost of being
+  // wrong and having to re-load a given relative URI later.
+  nsIURI *base = doc->GetBaseURI();
+  const nsCString &charset = doc->GetDocumentCharacterSet();
+  nsSpeculativeScriptThread::PreloadedType &alreadyPreloaded =
+    aScriptThread->GetPreloadedURIs();
+  for (PRUint32 i = 0, e = aURIs.Length(); i < e; ++i) {
+    const nsSpeculativeScriptThread::PrefetchEntry &pe = aURIs[i];
+    nsCOMPtr<nsIURI> uri;
+    nsresult rv = NS_NewURI(getter_AddRefs(uri), pe.uri, charset.get(), base);
+    if (NS_FAILED(rv)) {
+      NS_WARNING("Failed to create a URI");
+      continue;
+    }
+
+    nsCAutoString spec;
+    uri->GetSpec(spec);
+    PRBool answer;
+    if (alreadyPreloaded.Get(spec, &answer)) {
+      // Already preloaded. Don't preload again.
+      continue;
+    }
+
+    alreadyPreloaded.Put(spec, PR_TRUE);
+
+    switch (pe.type) {
+      case nsSpeculativeScriptThread::SCRIPT:
+        doc->ScriptLoader()->PreloadURI(uri, pe.charset, pe.elementType);
+        break;
+      case nsSpeculativeScriptThread::STYLESHEET: {
+        nsCOMPtr<nsICSSLoaderObserver> obs = new nsDummyCSSLoaderObserver();
+        doc->CSSLoader()->LoadSheet(uri, doc->NodePrincipal(),
+                                    NS_LossyConvertUTF16toASCII(pe.charset),
+                                    obs);
+        break;
+      }
+      case nsSpeculativeScriptThread::IMAGE:
+        NS_NOTREACHED("We don't scan these yet");
+        break;
+      case nsSpeculativeScriptThread::NONE:
+        NS_NOTREACHED("Uninitialized preload entry?");
+        break;
+    }
+  }
+}
+
+NS_IMPL_THREADSAFE_ISUPPORTS1(nsSpeculativeScriptThread, nsIRunnable)
+
+NS_IMETHODIMP
+nsSpeculativeScriptThread::Run()
+{
+  NS_ASSERTION(!NS_IsMainThread(), "Speculative parsing on the main thread?");
+
+  mNumConsumed = 0;
+
+  mTokenizer->WillTokenize(PR_FALSE, &mTokenAllocator);
+  while (mKeepParsing) {
+    PRBool flushTokens = PR_FALSE;
+    nsresult rv = mTokenizer->ConsumeToken(*mScanner, flushTokens);
+    if (NS_FAILED(rv)) {
+      break;
+    }
+
+    mNumConsumed += mScanner->Mark();
+
+    // TODO Don't pop the tokens.
+    CToken *token;
+    while (mKeepParsing && (token = mTokenizer->PopToken())) {
+      ProcessToken(token);
+    }
+  }
+  mTokenizer->DidTokenize(PR_FALSE);
+
+  if (mKeepParsing) {
+    // Ran out of room in this part of the document -- flush out the URIs we
+    // gathered so far so we don't end up waiting for the parser's current
+    // load to finish.
+    if (!mURIs.IsEmpty()) {
+      FlushURIs();
+    }
+  }
+
+  {
+    nsAutoLock al(mLock.get());
+
+    mCurrentlyParsing = PR_FALSE;
+    PR_NotifyCondVar(mCVar.get());
+  }
+  return NS_OK;
+}
+
+nsresult
+nsSpeculativeScriptThread::StartParsing(nsParser *aParser)
+{
+  NS_ASSERTION(NS_IsMainThread(), "Called on the wrong thread");
+  NS_ASSERTION(!mCurrentlyParsing, "Bad race happening");
+
+  if (!aParser->ThreadPool()) {
+    return NS_OK;
+  }
+
+  nsIContentSink *sink = aParser->GetContentSink();
+  if (!sink) {
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIDocument> doc = do_QueryInterface(sink->GetTarget());
+  if (!doc) {
+    return NS_OK;
+  }
+
+  nsAutoString toScan;
+  CParserContext *context = aParser->PeekContext();
+  if (!mLock.get()) {
+    mLock = nsAutoLock::NewLock("nsSpeculativeScriptThread::mLock");
+    if (!mLock.get()) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    mCVar = PR_NewCondVar(mLock.get());
+    if (!mCVar.get()) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    if (!mPreloadedURIs.Init(15)) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    mTokenizer = new nsHTMLTokenizer(context->mDTDMode, context->mDocType,
+                                     context->mParserCommand, 0);
+    if (!mTokenizer) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+    mTokenizer->CopyState(context->mTokenizer);
+    context->mScanner->CopyUnusedData(toScan);
+    if (toScan.IsEmpty()) {
+      return NS_OK;
+    }
+  } else if (context == mContext) {
+    // Don't parse the same part of the document twice.
+    nsScannerIterator end;
+    context->mScanner->EndReading(end);
+
+    nsScannerIterator start;
+    context->mScanner->CurrentPosition(start);
+
+    if (mNumConsumed > context->mNumConsumed) {
+      // We consumed more the last time we tried speculatively parsing than we
+      // did the last time we actually parsed.
+      PRUint32 distance = Distance(start, end);
+      start.advance(PR_MIN(mNumConsumed - context->mNumConsumed, distance));
+    }
+
+    if (start == end) {
+      // We're at the end of this context's buffer, nothing else to do.
+      return NS_OK;
+    }
+
+    CopyUnicodeTo(start, end, toScan);
+  } else {
+    // Grab all of the context.
+    context->mScanner->CopyUnusedData(toScan);
+    if (toScan.IsEmpty()) {
+      // Nothing to parse, don't do anything.
+      return NS_OK;
+    }
+  }
+
+  nsCAutoString charset;
+  PRInt32 source;
+  aParser->GetDocumentCharset(charset, source);
+
+  mScanner = new nsScanner(toScan, charset, source);
+  if (!mScanner) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
+  mScanner->SetIncremental(PR_TRUE);
+
+  mDocument.swap(doc);
+  mKeepParsing = PR_TRUE;
+  mCurrentlyParsing = PR_TRUE;
+  mContext = context;
+  return aParser->ThreadPool()->Dispatch(this, NS_DISPATCH_NORMAL);
+}
+
+void
+nsSpeculativeScriptThread::StopParsing(PRBool /*aFromDocWrite*/)
+{
+  NS_ASSERTION(NS_IsMainThread(), "Can't stop parsing from another thread");
+
+  if (!mLock.get()) {
+    // If we bailed early out of StartParsing, don't do anything.
+    return;
+  }
+
+  {
+    nsAutoLock al(mLock.get());
+
+    mKeepParsing = PR_FALSE;
+    if (mCurrentlyParsing) {
+      PR_WaitCondVar(mCVar.get(), PR_INTERVAL_NO_TIMEOUT);
+      NS_ASSERTION(!mCurrentlyParsing, "Didn't actually stop parsing?");
+    }
+  }
+
+  // The thread is now idle.
+  if (mTerminated) {
+    // If we're terminated, then we need to ensure that we release our document
+    // and tokenizer here on the main thread so that our last reference to them
+    // isn't our alter-ego rescheduled on another thread.
+    mDocument = nsnull;
+    mTokenizer = nsnull;
+    mScanner = nsnull;
+  } else if (mURIs.Length()) {
+    // Note: Don't do this if we're terminated.
+    nsPreloadURIs::PreloadURIs(mURIs, this);
+    mURIs.Clear();
+  }
+
+  // Note: Currently, we pop the tokens off (see the comment in Run) so this
+  // isn't a problem. If and when we actually use the tokens created
+  // off-thread, we'll need to use aFromDocWrite for real.
+}
+
+void
+nsSpeculativeScriptThread::ProcessToken(CToken *aToken)
+{
+  // Only called on the speculative script thread.
+
+  CHTMLToken *token = static_cast<CHTMLToken *>(aToken);
+  switch (static_cast<eHTMLTokenTypes>(token->GetTokenType())) {
+    case eToken_start: {
+        CStartToken *start = static_cast<CStartToken *>(aToken);
+        nsHTMLTag tag = static_cast<nsHTMLTag>(start->GetTypeID());
+        PRInt16 attrs = start->GetAttributeCount();
+        PRInt16 i = 0;
+        nsAutoString src;
+        nsAutoString elementType;
+        nsAutoString charset;
+        nsAutoString href;
+        nsAutoString rel;
+        PrefetchType ptype = NONE;
+
+        switch (tag) {
+          case eHTMLTag_link:
+              ptype = STYLESHEET;
+              break;
+
+          case eHTMLTag_script:
+              ptype = SCRIPT;
+              break;
+
+          default:
+              break;
+        }
+
+        // We currently handle the following element/attribute combos :
+        //     <link rel="stylesheet" href= charset= type>
+        //     <script src= charset= type=>
+        if (ptype != NONE) {
+            // loop over all attributes to extract relevant info
+            for (; i < attrs ; ++i) {
+              CAttributeToken *attr = static_cast<CAttributeToken *>(mTokenizer->PopToken());
+              NS_ASSERTION(attr->GetTokenType() == eToken_attribute, "Weird token");
+
+              if (attr->GetKey().EqualsLiteral("src")) {
+                src.Assign(attr->GetValue());
+              } else if (attr->GetKey().EqualsLiteral("href")) {
+                href.Assign(attr->GetValue());
+              } else if (attr->GetKey().EqualsLiteral("rel")) {
+                rel.Assign(attr->GetValue());
+              } else if (attr->GetKey().EqualsLiteral("charset")) {
+                charset.Assign(attr->GetValue());
+              } else if (attr->GetKey().EqualsLiteral("type")) {
+                elementType.Assign(attr->GetValue());
+              }
+
+              IF_FREE(attr, &mTokenAllocator);
+            }
+
+            // ensure we have the right kind if it's a link-element
+            if (ptype == STYLESHEET) {
+              if (rel.EqualsLiteral("stylesheet")) {
+                src = href; // src is the important variable below
+              } else {
+                src.Truncate(); // clear src if wrong kind of link
+              }
+            }
+
+            // add to list if we have a valid src
+            if (!src.IsEmpty()) {
+              AddToPrefetchList(src, charset, elementType, ptype);
+            }
+        } else {
+            // Irrelevant tag, but pop and free all its attributes in any case
+            for (; i < attrs ; ++i) {
+              CToken *attr = mTokenizer->PopToken();
+              IF_FREE(attr, &mTokenAllocator);
+            }
+        }
+        break;
+      }
+
+    default:
+      break;
+  }
+
+  IF_FREE(aToken, &mTokenAllocator);
+}
+
+void
+nsSpeculativeScriptThread::AddToPrefetchList(const nsAString &src,
+                                      const nsAString &charset,
+                                      const nsAString &elementType,
+                                      PrefetchType type)
+{
+  PrefetchEntry *pe = mURIs.AppendElement();
+  pe->type = type;
+  pe->uri = src;
+  pe->charset = charset;
+  pe->elementType = elementType;
+
+  if (mURIs.Length() == kBatchPrefetchURIs) {
+    FlushURIs();
+  }
+}
+
+void
+nsSpeculativeScriptThread::FlushURIs()
+{
+    nsCOMPtr<nsIRunnable> r = new nsPreloadURIs(mURIs, this);
+    if (!r) {
+      return;
+    }
+
+    mURIs.Clear();
+    NS_DispatchToMainThread(r, NS_DISPATCH_NORMAL);
+}
+
 nsICharsetAlias* nsParser::sCharsetAliasService = nsnull;
 nsICharsetConverterManager* nsParser::sCharsetConverterManager = nsnull;
+nsIThreadPool* nsParser::sSpeculativeThreadPool = nsnull;
 
 /**
  *  This gets called when the htmlparser module is initialized.
@@ -211,13 +749,28 @@ nsParser::Init()
   nsCOMPtr<nsICharsetAlias> charsetAlias =
     do_GetService(NS_CHARSETALIAS_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
-  
+
   nsCOMPtr<nsICharsetConverterManager> charsetConverter =
     do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
 
   charsetAlias.swap(sCharsetAliasService);
   charsetConverter.swap(sCharsetConverterManager);
+
+  nsCOMPtr<nsIThreadPool> threadPool =
+    do_CreateInstance(NS_THREADPOOL_CONTRACTID, &rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = threadPool->SetThreadLimit(kSpeculativeThreadLimit);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = threadPool->SetIdleThreadLimit(kIdleThreadLimit);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = threadPool->SetIdleThreadTimeout(kIdleThreadTimeout);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  threadPool.swap(sSpeculativeThreadPool);
 
   return NS_OK;
 }
@@ -231,9 +784,13 @@ void nsParser::Shutdown()
 {
   delete sParserDataListeners;
   sParserDataListeners = nsnull;
-  
+
   NS_IF_RELEASE(sCharsetAliasService);
   NS_IF_RELEASE(sCharsetConverterManager);
+  if (sSpeculativeThreadPool) {
+    sSpeculativeThreadPool->Shutdown();
+    NS_RELEASE(sSpeculativeThreadPool);
+  }
 }
 
 #ifdef DEBUG
@@ -270,6 +827,7 @@ nsParser::Initialize(PRBool aConstructor)
     // nsCOMPtrs
     mObserver = nsnull;
     mParserFilter = nsnull;
+    mUnusedInput.Truncate();
   }
 
   mContinueEvent = nsnull;
@@ -321,6 +879,10 @@ nsParser::Cleanup()
   // destroyed since this flag implies a pending nsParserContinueEvent, which
   // has an owning reference to |this|.
   NS_ASSERTION(!(mFlags & NS_PARSER_FLAG_PENDING_CONTINUE_EVENT), "bad");
+  if (mSpeculativeScriptThread) {
+    mSpeculativeScriptThread->Terminate();
+    mSpeculativeScriptThread = nsnull;
+  }
 }
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsParser)
@@ -657,7 +1219,6 @@ struct PubIDInfo
 {
   enum eMode {
     eQuirks,         /* always quirks mode, unless there's an internal subset */
-    eQuirks3,        /* ditto, but but pre-HTML4 (no tbody) */
     eAlmostStandards,/* eCompatibility_AlmostStandards */
     eFullStandards   /* eCompatibility_FullStandards */
       /*
@@ -684,82 +1245,82 @@ struct PubIDInfo
 // identifiers below are in lower case (with the correct case following,
 // in comments).  The case is verified, |#ifdef DEBUG|, below.
 static const PubIDInfo kPublicIDs[] = {
-  {"+//silmaril//dtd html pro v0r11 19970101//en" /* "+//Silmaril//dtd html Pro v0r11 19970101//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//advasoft ltd//dtd html 3.0 aswedit + extensions//en" /* "-//AdvaSoft Ltd//DTD HTML 3.0 asWedit + extensions//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//as//dtd html 3.0 aswedit + extensions//en" /* "-//AS//DTD HTML 3.0 asWedit + extensions//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 2.0 level 1//en" /* "-//IETF//DTD HTML 2.0 Level 1//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 2.0 level 2//en" /* "-//IETF//DTD HTML 2.0 Level 2//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 2.0 strict level 1//en" /* "-//IETF//DTD HTML 2.0 Strict Level 1//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 2.0 strict level 2//en" /* "-//IETF//DTD HTML 2.0 Strict Level 2//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 2.0 strict//en" /* "-//IETF//DTD HTML 2.0 Strict//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 2.0//en" /* "-//IETF//DTD HTML 2.0//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 2.1e//en" /* "-//IETF//DTD HTML 2.1E//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 3.0//en" /* "-//IETF//DTD HTML 3.0//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 3.0//en//" /* "-//IETF//DTD HTML 3.0//EN//" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 3.2 final//en" /* "-//IETF//DTD HTML 3.2 Final//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 3.2//en" /* "-//IETF//DTD HTML 3.2//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html 3//en" /* "-//IETF//DTD HTML 3//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html level 0//en" /* "-//IETF//DTD HTML Level 0//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html level 0//en//2.0" /* "-//IETF//DTD HTML Level 0//EN//2.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html level 1//en" /* "-//IETF//DTD HTML Level 1//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html level 1//en//2.0" /* "-//IETF//DTD HTML Level 1//EN//2.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html level 2//en" /* "-//IETF//DTD HTML Level 2//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html level 2//en//2.0" /* "-//IETF//DTD HTML Level 2//EN//2.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html level 3//en" /* "-//IETF//DTD HTML Level 3//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html level 3//en//3.0" /* "-//IETF//DTD HTML Level 3//EN//3.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict level 0//en" /* "-//IETF//DTD HTML Strict Level 0//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict level 0//en//2.0" /* "-//IETF//DTD HTML Strict Level 0//EN//2.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict level 1//en" /* "-//IETF//DTD HTML Strict Level 1//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict level 1//en//2.0" /* "-//IETF//DTD HTML Strict Level 1//EN//2.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict level 2//en" /* "-//IETF//DTD HTML Strict Level 2//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict level 2//en//2.0" /* "-//IETF//DTD HTML Strict Level 2//EN//2.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict level 3//en" /* "-//IETF//DTD HTML Strict Level 3//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict level 3//en//3.0" /* "-//IETF//DTD HTML Strict Level 3//EN//3.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict//en" /* "-//IETF//DTD HTML Strict//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict//en//2.0" /* "-//IETF//DTD HTML Strict//EN//2.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html strict//en//3.0" /* "-//IETF//DTD HTML Strict//EN//3.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html//en" /* "-//IETF//DTD HTML//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html//en//2.0" /* "-//IETF//DTD HTML//EN//2.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//ietf//dtd html//en//3.0" /* "-//IETF//DTD HTML//EN//3.0" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
+  {"+//silmaril//dtd html pro v0r11 19970101//en" /* "+//Silmaril//dtd html Pro v0r11 19970101//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//advasoft ltd//dtd html 3.0 aswedit + extensions//en" /* "-//AdvaSoft Ltd//DTD HTML 3.0 asWedit + extensions//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//as//dtd html 3.0 aswedit + extensions//en" /* "-//AS//DTD HTML 3.0 asWedit + extensions//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 2.0 level 1//en" /* "-//IETF//DTD HTML 2.0 Level 1//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 2.0 level 2//en" /* "-//IETF//DTD HTML 2.0 Level 2//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 2.0 strict level 1//en" /* "-//IETF//DTD HTML 2.0 Strict Level 1//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 2.0 strict level 2//en" /* "-//IETF//DTD HTML 2.0 Strict Level 2//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 2.0 strict//en" /* "-//IETF//DTD HTML 2.0 Strict//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 2.0//en" /* "-//IETF//DTD HTML 2.0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 2.1e//en" /* "-//IETF//DTD HTML 2.1E//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 3.0//en" /* "-//IETF//DTD HTML 3.0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 3.0//en//" /* "-//IETF//DTD HTML 3.0//EN//" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 3.2 final//en" /* "-//IETF//DTD HTML 3.2 Final//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 3.2//en" /* "-//IETF//DTD HTML 3.2//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html 3//en" /* "-//IETF//DTD HTML 3//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html level 0//en" /* "-//IETF//DTD HTML Level 0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html level 0//en//2.0" /* "-//IETF//DTD HTML Level 0//EN//2.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html level 1//en" /* "-//IETF//DTD HTML Level 1//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html level 1//en//2.0" /* "-//IETF//DTD HTML Level 1//EN//2.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html level 2//en" /* "-//IETF//DTD HTML Level 2//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html level 2//en//2.0" /* "-//IETF//DTD HTML Level 2//EN//2.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html level 3//en" /* "-//IETF//DTD HTML Level 3//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html level 3//en//3.0" /* "-//IETF//DTD HTML Level 3//EN//3.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict level 0//en" /* "-//IETF//DTD HTML Strict Level 0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict level 0//en//2.0" /* "-//IETF//DTD HTML Strict Level 0//EN//2.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict level 1//en" /* "-//IETF//DTD HTML Strict Level 1//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict level 1//en//2.0" /* "-//IETF//DTD HTML Strict Level 1//EN//2.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict level 2//en" /* "-//IETF//DTD HTML Strict Level 2//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict level 2//en//2.0" /* "-//IETF//DTD HTML Strict Level 2//EN//2.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict level 3//en" /* "-//IETF//DTD HTML Strict Level 3//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict level 3//en//3.0" /* "-//IETF//DTD HTML Strict Level 3//EN//3.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict//en" /* "-//IETF//DTD HTML Strict//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict//en//2.0" /* "-//IETF//DTD HTML Strict//EN//2.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html strict//en//3.0" /* "-//IETF//DTD HTML Strict//EN//3.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html//en" /* "-//IETF//DTD HTML//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html//en//2.0" /* "-//IETF//DTD HTML//EN//2.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//ietf//dtd html//en//3.0" /* "-//IETF//DTD HTML//EN//3.0" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
   {"-//metrius//dtd metrius presentational//en" /* "-//Metrius//DTD Metrius Presentational//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
-  {"-//microsoft//dtd internet explorer 2.0 html strict//en" /* "-//Microsoft//DTD Internet Explorer 2.0 HTML Strict//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//microsoft//dtd internet explorer 2.0 html//en" /* "-//Microsoft//DTD Internet Explorer 2.0 HTML//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//microsoft//dtd internet explorer 2.0 tables//en" /* "-//Microsoft//DTD Internet Explorer 2.0 Tables//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//microsoft//dtd internet explorer 3.0 html strict//en" /* "-//Microsoft//DTD Internet Explorer 3.0 HTML Strict//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//microsoft//dtd internet explorer 3.0 html//en" /* "-//Microsoft//DTD Internet Explorer 3.0 HTML//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//microsoft//dtd internet explorer 3.0 tables//en" /* "-//Microsoft//DTD Internet Explorer 3.0 Tables//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//netscape comm. corp.//dtd html//en" /* "-//Netscape Comm. Corp.//DTD HTML//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//netscape comm. corp.//dtd strict html//en" /* "-//Netscape Comm. Corp.//DTD Strict HTML//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//o'reilly and associates//dtd html 2.0//en" /* "-//O'Reilly and Associates//DTD HTML 2.0//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//o'reilly and associates//dtd html extended 1.0//en" /* "-//O'Reilly and Associates//DTD HTML Extended 1.0//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//o'reilly and associates//dtd html extended relaxed 1.0//en" /* "-//O'Reilly and Associates//DTD HTML Extended Relaxed 1.0//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
+  {"-//microsoft//dtd internet explorer 2.0 html strict//en" /* "-//Microsoft//DTD Internet Explorer 2.0 HTML Strict//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//microsoft//dtd internet explorer 2.0 html//en" /* "-//Microsoft//DTD Internet Explorer 2.0 HTML//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//microsoft//dtd internet explorer 2.0 tables//en" /* "-//Microsoft//DTD Internet Explorer 2.0 Tables//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//microsoft//dtd internet explorer 3.0 html strict//en" /* "-//Microsoft//DTD Internet Explorer 3.0 HTML Strict//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//microsoft//dtd internet explorer 3.0 html//en" /* "-//Microsoft//DTD Internet Explorer 3.0 HTML//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//microsoft//dtd internet explorer 3.0 tables//en" /* "-//Microsoft//DTD Internet Explorer 3.0 Tables//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//netscape comm. corp.//dtd html//en" /* "-//Netscape Comm. Corp.//DTD HTML//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//netscape comm. corp.//dtd strict html//en" /* "-//Netscape Comm. Corp.//DTD Strict HTML//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//o'reilly and associates//dtd html 2.0//en" /* "-//O'Reilly and Associates//DTD HTML 2.0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//o'reilly and associates//dtd html extended 1.0//en" /* "-//O'Reilly and Associates//DTD HTML Extended 1.0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//o'reilly and associates//dtd html extended relaxed 1.0//en" /* "-//O'Reilly and Associates//DTD HTML Extended Relaxed 1.0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
   {"-//softquad software//dtd hotmetal pro 6.0::19990601::extensions to html 4.0//en" /* "-//SoftQuad Software//DTD HoTMetaL PRO 6.0::19990601::extensions to HTML 4.0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
   {"-//softquad//dtd hotmetal pro 4.0::19971010::extensions to html 4.0//en" /* "-//SoftQuad//DTD HoTMetaL PRO 4.0::19971010::extensions to HTML 4.0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
-  {"-//spyglass//dtd html 2.0 extended//en" /* "-//Spyglass//DTD HTML 2.0 Extended//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//sq//dtd html 2.0 hotmetal + extensions//en" /* "-//SQ//DTD HTML 2.0 HoTMetaL + extensions//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//sun microsystems corp.//dtd hotjava html//en" /* "-//Sun Microsystems Corp.//DTD HotJava HTML//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//sun microsystems corp.//dtd hotjava strict html//en" /* "-//Sun Microsystems Corp.//DTD HotJava Strict HTML//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//w3c//dtd html 3 1995-03-24//en" /* "-//W3C//DTD HTML 3 1995-03-24//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//w3c//dtd html 3.2 draft//en" /* "-//W3C//DTD HTML 3.2 Draft//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//w3c//dtd html 3.2 final//en" /* "-//W3C//DTD HTML 3.2 Final//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//w3c//dtd html 3.2//en" /* "-//W3C//DTD HTML 3.2//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//w3c//dtd html 3.2s draft//en" /* "-//W3C//DTD HTML 3.2S Draft//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
+  {"-//spyglass//dtd html 2.0 extended//en" /* "-//Spyglass//DTD HTML 2.0 Extended//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//sq//dtd html 2.0 hotmetal + extensions//en" /* "-//SQ//DTD HTML 2.0 HoTMetaL + extensions//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//sun microsystems corp.//dtd hotjava html//en" /* "-//Sun Microsystems Corp.//DTD HotJava HTML//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//sun microsystems corp.//dtd hotjava strict html//en" /* "-//Sun Microsystems Corp.//DTD HotJava Strict HTML//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//w3c//dtd html 3 1995-03-24//en" /* "-//W3C//DTD HTML 3 1995-03-24//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//w3c//dtd html 3.2 draft//en" /* "-//W3C//DTD HTML 3.2 Draft//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//w3c//dtd html 3.2 final//en" /* "-//W3C//DTD HTML 3.2 Final//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//w3c//dtd html 3.2//en" /* "-//W3C//DTD HTML 3.2//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//w3c//dtd html 3.2s draft//en" /* "-//W3C//DTD HTML 3.2S Draft//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
   {"-//w3c//dtd html 4.0 frameset//en" /* "-//W3C//DTD HTML 4.0 Frameset//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
   {"-//w3c//dtd html 4.0 transitional//en" /* "-//W3C//DTD HTML 4.0 Transitional//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
   {"-//w3c//dtd html 4.01 frameset//en" /* "-//W3C//DTD HTML 4.01 Frameset//EN" */, PubIDInfo::eQuirks, PubIDInfo::eAlmostStandards},
   {"-//w3c//dtd html 4.01 transitional//en" /* "-//W3C//DTD HTML 4.01 Transitional//EN" */, PubIDInfo::eQuirks, PubIDInfo::eAlmostStandards},
-  {"-//w3c//dtd html experimental 19960712//en" /* "-//W3C//DTD HTML Experimental 19960712//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//w3c//dtd html experimental 970421//en" /* "-//W3C//DTD HTML Experimental 970421//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//w3c//dtd w3 html//en" /* "-//W3C//DTD W3 HTML//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
+  {"-//w3c//dtd html experimental 19960712//en" /* "-//W3C//DTD HTML Experimental 19960712//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//w3c//dtd html experimental 970421//en" /* "-//W3C//DTD HTML Experimental 970421//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//w3c//dtd w3 html//en" /* "-//W3C//DTD W3 HTML//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
   {"-//w3c//dtd xhtml 1.0 frameset//en" /* "-//W3C//DTD XHTML 1.0 Frameset//EN" */, PubIDInfo::eAlmostStandards, PubIDInfo::eAlmostStandards},
   {"-//w3c//dtd xhtml 1.0 transitional//en" /* "-//W3C//DTD XHTML 1.0 Transitional//EN" */, PubIDInfo::eAlmostStandards, PubIDInfo::eAlmostStandards},
-  {"-//w3o//dtd w3 html 3.0//en" /* "-//W3O//DTD W3 HTML 3.0//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//w3o//dtd w3 html 3.0//en//" /* "-//W3O//DTD W3 HTML 3.0//EN//" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//w3o//dtd w3 html strict 3.0//en//" /* "-//W3O//DTD W3 HTML Strict 3.0//EN//" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//webtechs//dtd mozilla html 2.0//en" /* "-//WebTechs//DTD Mozilla HTML 2.0//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
-  {"-//webtechs//dtd mozilla html//en" /* "-//WebTechs//DTD Mozilla HTML//EN" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
+  {"-//w3o//dtd w3 html 3.0//en" /* "-//W3O//DTD W3 HTML 3.0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//w3o//dtd w3 html 3.0//en//" /* "-//W3O//DTD W3 HTML 3.0//EN//" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//w3o//dtd w3 html strict 3.0//en//" /* "-//W3O//DTD W3 HTML Strict 3.0//EN//" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//webtechs//dtd mozilla html 2.0//en" /* "-//WebTechs//DTD Mozilla HTML 2.0//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
+  {"-//webtechs//dtd mozilla html//en" /* "-//WebTechs//DTD Mozilla HTML//EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
   {"-/w3c/dtd html 4.0 transitional/en" /* "-/W3C/DTD HTML 4.0 Transitional/EN" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
-  {"html" /* "HTML" */, PubIDInfo::eQuirks3, PubIDInfo::eQuirks3},
+  {"html" /* "HTML" */, PubIDInfo::eQuirks, PubIDInfo::eQuirks},
 };
 
 #ifdef DEBUG
@@ -858,10 +1419,6 @@ DetermineHTMLParseMode(const nsString& aBuffer,
                 ? kPublicIDs[index].mode_if_sysid
                 : kPublicIDs[index].mode_if_no_sysid)
       {
-        case PubIDInfo::eQuirks3:
-          aParseMode = eDTDMode_quirks;
-          aDocType = eHTML3_Quirks;
-          break;
         case PubIDInfo::eQuirks:
           aParseMode = eDTDMode_quirks;
           aDocType = eHTML_Quirks;
@@ -881,7 +1438,7 @@ DetermineHTMLParseMode(const nsString& aBuffer,
   } else {
     // badly formed DOCTYPE -> quirks
     aParseMode = eDTDMode_quirks;
-    aDocType = eHTML3_Quirks;
+    aDocType = eHTML_Quirks;
   }
 }
 
@@ -1000,7 +1557,11 @@ nsParser::DidBuildModel(nsresult anErrorCode)
 
   if (IsComplete()) {
     if (mParserContext && !mParserContext->mPrevContext) {
-      if (mParserContext->mDTD) {
+      // Let sink know if we're about to end load because we've been terminated.
+      // In that case we don't want it to run deferred scripts.
+      PRBool terminated = mInternalState == NS_ERROR_HTMLPARSER_STOPPARSING;
+      if (mParserContext->mDTD && mSink &&
+          mSink->ReadyToCallDidBuildModel(terminated)) {
         result = mParserContext->mDTD->DidBuildModel(anErrorCode,PR_TRUE,this,mSink);
       }
 
@@ -1012,6 +1573,26 @@ nsParser::DidBuildModel(nsresult anErrorCode)
   return result;
 }
 
+void
+nsParser::SpeculativelyParse()
+{
+  if (mParserContext->mParserCommand == eViewNormal &&
+      !mParserContext->mMimeType.EqualsLiteral("text/html")) {
+    return;
+  }
+
+  if (!mSpeculativeScriptThread) {
+    mSpeculativeScriptThread = new nsSpeculativeScriptThread();
+    if (!mSpeculativeScriptThread) {
+      return;
+    }
+  }
+
+  nsresult rv = mSpeculativeScriptThread->StartParsing(this);
+  if (NS_FAILED(rv)) {
+    mSpeculativeScriptThread = nsnull;
+  }
+}
 
 /**
  * This method adds a new parser context to the list,
@@ -1112,6 +1693,10 @@ nsParser::Terminate(void)
   // will reset it so DidBuildModel will call DidBuildModel on the DTD. Note:
   // The IsComplete() call inside of DidBuildModel looks at the pendingContinueEvents flag.
   CancelParsingEvents();
+  if (mSpeculativeScriptThread) {
+    mSpeculativeScriptThread->Terminate();
+    mSpeculativeScriptThread = nsnull;
+  }
 
   // If we got interrupted in the middle of a document.write, then we might
   // have more than one parser context on our parsercontext stack. This has
@@ -1155,6 +1740,13 @@ nsParser::ContinueParsing()
 NS_IMETHODIMP
 nsParser::ContinueInterruptedParsing()
 {
+  // If there are scripts executing, then the content sink is jumping the gun
+  // (probably due to a synchronous XMLHttpRequest) and will re-enable us
+  // later, see bug 460706.
+  if (IsScriptExecuting()) {
+    return NS_OK;
+  }
+
   // If the stream has already finished, there's a good chance
   // that we might start closing things down when the parser
   // is reenabled. To make sure that we're not deleted across
@@ -1168,9 +1760,16 @@ nsParser::ContinueInterruptedParsing()
   }
 #endif
 
+  if (mSpeculativeScriptThread) {
+    mSpeculativeScriptThread->StopParsing(PR_FALSE);
+  }
+
   PRBool isFinalChunk = mParserContext &&
                         mParserContext->mStreamListenerState == eOnStop;
 
+  if (mSink) {
+    mSink->WillParse();
+  }
   result = ResumeParse(PR_TRUE, isFinalChunk); // Ref. bug 57999
 
   if (result != NS_OK) {
@@ -1229,7 +1828,8 @@ nsParser::IsComplete()
 }
 
 
-void nsParser::HandleParserContinueEvent(nsParserContinueEvent *ev) {
+void nsParser::HandleParserContinueEvent(nsParserContinueEvent *ev)
+{
   // Ignore any revoked continue events...
   if (mContinueEvent != ev)
     return;
@@ -1237,6 +1837,7 @@ void nsParser::HandleParserContinueEvent(nsParserContinueEvent *ev) {
   mFlags &= ~NS_PARSER_FLAG_PENDING_CONTINUE_EVENT;
   mContinueEvent = nsnull;
 
+  NS_ASSERTION(!IsScriptExecuting(), "Interrupted in the middle of a script?");
   ContinueInterruptedParsing();
 }
 
@@ -1300,6 +1901,7 @@ nsParser::Parse(nsIURI* aURL,
 {
 
   NS_PRECONDITION(aURL, "Error: Null URL given");
+  NS_ASSERTION(!mSpeculativeScriptThread, "Can't reuse a parser like this");
 
   nsresult result=kBadURL;
   mObserver = aListener;
@@ -1365,6 +1967,10 @@ nsParser::Parse(const nsAString& aSourceBuffer,
     // But if this is the last call, make sure to finish up
     // stuff correctly.
     return result;
+  }
+
+  if (mSpeculativeScriptThread) {
+    mSpeculativeScriptThread->StopParsing(PR_TRUE);
   }
 
   // Hack to pass on to the dtd the caller's desire to
@@ -1487,10 +2093,18 @@ nsParser::ParseFragment(const nsAString& aSourceBuffer,
   // Disable observers for fragments
   mFlags &= ~NS_PARSER_FLAG_OBSERVERS_ENABLED;
 
+  NS_ASSERTION(!mSpeculativeScriptThread, "Can't reuse a parser like this");
+
   for (theIndex = 0; theIndex < theCount; theIndex++) {
     theContext.AppendLiteral("<");
     theContext.Append(aTagStack[theCount - theIndex - 1]);
     theContext.AppendLiteral(">");
+  }
+
+  if (theCount == 0) {
+    // Ensure that the buffer is not empty. Because none of the DTDs care
+    // about leading whitespace, this doesn't change the result.
+    theContext.AssignLiteral(" ");
   }
 
   // First, parse the context to build up the DTD's tag stack. Note that we
@@ -1499,6 +2113,12 @@ nsParser::ParseFragment(const nsAString& aSourceBuffer,
   if (NS_FAILED(result)) {
     mFlags |= NS_PARSER_FLAG_OBSERVERS_ENABLED;
     return result;
+  }
+
+  if (!mSink) {
+    // Parse must have failed in the XML case and so the sink was killed.
+    NS_ASSERTION(aXMLMode, "Unexpected!");
+    return NS_ERROR_HTMLPARSER_STOPPARSING;
   }
 
   nsCOMPtr<nsIFragmentContentSink> fragSink = do_QueryInterface(mSink);
@@ -1557,9 +2177,9 @@ nsParser::ParseFragment(const nsAString& aSourceBuffer,
     result = Parse(aSourceBuffer + NS_LITERAL_STRING("</"),
                    &theContext, aMimeType, PR_FALSE, aMode);
     fragSink->DidBuildContent();
- 
+
     if (NS_SUCCEEDED(result)) {
-      nsAutoString endContext;       
+      nsAutoString endContext;
       for (theIndex = 0; theIndex < theCount; theIndex++) {
          // we already added an end tag chunk above
         if (theIndex > 0) {
@@ -1577,7 +2197,7 @@ nsParser::ParseFragment(const nsAString& aSourceBuffer,
 
         endContext.AppendLiteral(">");
       }
-       
+
       result = Parse(endContext, &theContext, aMimeType,
                      PR_TRUE, aMode);
     }
@@ -1620,6 +2240,9 @@ nsParser::ResumeParse(PRBool allowIteration, PRBool aIsFinalChunk,
       mInternalState != NS_ERROR_HTMLPARSER_STOPPARSING) {
     MOZ_TIMER_DEBUGLOG(("Start: Parse Time: nsParser::ResumeParse(), this=%p\n", this));
     MOZ_TIMER_START(mParseTime);
+
+    NS_ASSERTION(!mSpeculativeScriptThread || !mSpeculativeScriptThread->Parsing(),
+                 "Bad races happening, expect to crash!");
 
     result = WillBuildModel(mParserContext->mScanner->GetFilename());
     if (NS_FAILED(result)) {
@@ -1669,7 +2292,11 @@ nsParser::ResumeParse(PRBool allowIteration, PRBool aIsFinalChunk,
             mParserContext->mDTD->WillInterruptParse(mSink);
           }
 
-          BlockParser();
+          if (mFlags & NS_PARSER_FLAG_PARSER_ENABLED) {
+            // If we were blocked by a recursive invocation, don't re-block.
+            BlockParser();
+            SpeculativelyParse();
+          }
           return NS_OK;
         }
         if (NS_ERROR_HTMLPARSER_STOPPARSING == result) {
@@ -1823,8 +2450,10 @@ nsParser::OnStartRequest(nsIRequest *request, nsISupports* aContext)
 }
 
 
+#define UTF16_BOM "UTF-16"
 #define UTF16_BE "UTF-16BE"
 #define UTF16_LE "UTF-16LE"
+#define UCS4_BOM "UTF-32"
 #define UCS4_BE "UTF-32BE"
 #define UCS4_LE "UTF-32LE"
 #define UCS4_2143 "X-ISO-10646-UCS-4-2143"
@@ -1862,7 +2491,7 @@ DetectByteOrderMark(const unsigned char* aBytes, PRInt32 aLen,
         // 00 00
         if((0xFE==aBytes[2]) && (0xFF==aBytes[3])) {
            // 00 00 FE FF UCS-4, big-endian machine (1234 order)
-           oCharset.Assign(UCS4_BE);
+           oCharset.Assign(UCS4_BOM);
         } else if((0x00==aBytes[2]) && (0x3C==aBytes[3])) {
            // 00 00 00 3C UCS-4, big-endian machine (1234 order)
            oCharset.Assign(UCS4_BE);
@@ -1993,7 +2622,7 @@ DetectByteOrderMark(const unsigned char* aBytes, PRInt32 aLen,
           oCharset.Assign(UCS4_3412);
         } else {
           // FE FF UTF-16, big-endian 
-          oCharset.Assign(UTF16_BE); 
+          oCharset.Assign(UTF16_BOM); 
         }
         oCharsetSource= kCharsetFromByteOrderMark;
      }
@@ -2002,11 +2631,11 @@ DetectByteOrderMark(const unsigned char* aBytes, PRInt32 aLen,
      if(0xFE==aBytes[1]) {
         if(0x00==aBytes[2] && 0x00==aBytes[3]) 
          // FF FE 00 00  UTF-32, little-endian
-           oCharset.Assign(UCS4_LE); 
+           oCharset.Assign(UCS4_BOM); 
         else
         // FF FE
         // UTF-16, little-endian 
-           oCharset.Assign(UTF16_LE); 
+           oCharset.Assign(UTF16_BOM); 
         oCharsetSource= kCharsetFromByteOrderMark;
      }
    break;
@@ -2201,6 +2830,7 @@ ParserWriteFunc(nsIInputStream* in,
            (!preferred.EqualsLiteral("UTF-16") &&
             !preferred.EqualsLiteral("UTF-16BE") &&
             !preferred.EqualsLiteral("UTF-16LE") &&
+            !preferred.EqualsLiteral("UTF-32") &&
             !preferred.EqualsLiteral("UTF-32BE") &&
             !preferred.EqualsLiteral("UTF-32LE")))) {
         guess = preferred;
@@ -2259,6 +2889,11 @@ nsParser::OnDataAvailable(nsIRequest *request, nsISupports* aContext,
   if (theContext) {
     theContext->mStreamListenerState = eOnDataAvail;
 
+    if ((mFlags & NS_PARSER_FLAG_PARSER_ENABLED) &&
+        mSpeculativeScriptThread) {
+      mSpeculativeScriptThread->StopParsing(PR_FALSE);
+    }
+
     if (eInvalidDetect == theContext->mAutoDetectStatus) {
       if (theContext->mScanner) {
         nsScannerIterator iter;
@@ -2283,7 +2918,11 @@ nsParser::OnDataAvailable(nsIRequest *request, nsISupports* aContext,
 
     // Don't bother to start parsing until we've seen some
     // non-whitespace data
-    if (theContext->mScanner->FirstNonWhitespacePosition() >= 0) {
+    if (!IsScriptExecuting() &&
+        theContext->mScanner->FirstNonWhitespacePosition() >= 0) {
+      if (mSink) {
+        mSink->WillParse();
+      }
       rv = ResumeParse();
     }
   } else {
@@ -2303,12 +2942,9 @@ nsParser::OnStopRequest(nsIRequest *request, nsISupports* aContext,
 {
   nsresult rv = NS_OK;
 
-  if (eOnStart == mParserContext->mStreamListenerState) {
-    // If you're here, then OnDataAvailable() never got called.  Prior
-    // to necko, we never dealt with this case, but the problem may
-    // have existed.  Everybody can live with an empty input stream, so
-    // just resume parsing.
-    rv = ResumeParse(PR_TRUE, PR_TRUE);
+  if ((mFlags & NS_PARSER_FLAG_PARSER_ENABLED) &&
+      mSpeculativeScriptThread) {
+    mSpeculativeScriptThread->StopParsing(PR_FALSE);
   }
 
   CParserContext *pc = mParserContext;
@@ -2327,7 +2963,10 @@ nsParser::OnStopRequest(nsIRequest *request, nsISupports* aContext,
   if (mParserFilter)
     mParserFilter->Finish();
 
-  if (NS_SUCCEEDED(rv)) {
+  if (!IsScriptExecuting() && NS_SUCCEEDED(rv)) {
+    if (mSink) {
+      mSink->WillParse();
+    }
     rv = ResumeParse(PR_TRUE, PR_TRUE);
   }
 
@@ -2377,7 +3016,6 @@ nsParser::WillTokenize(PRBool aIsFinalChunk)
                                         NS_IPARSER_FLAG_HTML;
   nsresult result = mParserContext->GetTokenizer(type, mSink, theTokenizer);
   NS_ENSURE_SUCCESS(result, PR_FALSE);
-  mSink->WillTokenize();
   return NS_SUCCEEDED(theTokenizer->WillTokenize(aIsFinalChunk,
                                                  &mTokenAllocator));
 }
@@ -2416,9 +3054,13 @@ nsresult nsParser::Tokenize(PRBool aIsFinalChunk)
 
     MOZ_TIMER_START(mTokenizeTime);
 
+    mParserContext->mNumConsumed = 0;
+
+    PRBool killSink = PR_FALSE;
+
     WillTokenize(aIsFinalChunk);
     while (NS_SUCCEEDED(result)) {
-      mParserContext->mScanner->Mark();
+      mParserContext->mNumConsumed += mParserContext->mScanner->Mark();
       result = theTokenizer->ConsumeToken(*mParserContext->mScanner,
                                           flushTokens);
       if (NS_FAILED(result)) {
@@ -2427,6 +3069,7 @@ nsresult nsParser::Tokenize(PRBool aIsFinalChunk)
           break;
         }
         if (NS_ERROR_HTMLPARSER_STOPPARSING == result) {
+          killSink = PR_TRUE;
           result = Terminate();
           break;
         }
@@ -2435,13 +3078,17 @@ nsresult nsParser::Tokenize(PRBool aIsFinalChunk)
         // Flush tokens on seeing </SCRIPT> -- Ref: Bug# 22485 --
         // Also remember to update the marked position.
         mFlags |= NS_PARSER_FLAG_FLUSH_TOKENS;
-        mParserContext->mScanner->Mark();
+        mParserContext->mNumConsumed += mParserContext->mScanner->Mark();
         break;
       }
     }
     DidTokenize(aIsFinalChunk);
 
     MOZ_TIMER_STOP(mTokenizeTime);
+
+    if (killSink) {
+      mSink = nsnull;
+    }
   } else {
     result = mInternalState = NS_ERROR_HTMLPARSER_BADTOKENIZER;
   }

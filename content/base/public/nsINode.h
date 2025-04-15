@@ -44,10 +44,13 @@
 #include "nsTObserverArray.h"
 #include "nsINodeInfo.h"
 #include "nsCOMPtr.h"
+#include "nsWrapperCache.h"
 
 class nsIContent;
 class nsIDocument;
 class nsIDOMEvent;
+class nsIDOMNode;
+class nsIDOMNodeList;
 class nsIPresShell;
 class nsPresContext;
 class nsEventChainVisitor;
@@ -73,49 +76,66 @@ enum {
   // Whether this node has had any properties set on it
   NODE_HAS_PROPERTIES =          0x00000004U,
 
-  // Whether this node is anonymous
+  // Whether this node is the root of an anonymous subtree.  Note that this
+  // need not be a native anonymous subtree.  Any anonymous subtree, including
+  // XBL-generated ones, will do.  This flag is set-once: once a node has it,
+  // it must not be removed.
   // NOTE: Should only be used on nsIContent nodes
   NODE_IS_ANONYMOUS =            0x00000008U,
-  
+
+  // Whether the node has some ancestor, possibly itself, that is native
+  // anonymous.  This includes ancestors crossing XBL scopes, in cases when an
+  // XBL binding is attached to an element which has a native anonymous
+  // ancestor.  This flag is set-once: once a node has it, it must not be
+  // removed.
+  // NOTE: Should only be used on nsIContent nodes
   NODE_IS_IN_ANONYMOUS_SUBTREE = 0x00000010U,
+
+  // Whether this node is the root of a native anonymous (from the perspective
+  // of its parent) subtree.  This flag is set-once: once a node has it, it
+  // must not be removed.
+  // NOTE: Should only be used on nsIContent nodes
+  NODE_IS_NATIVE_ANONYMOUS_ROOT = 0x00000020U,
 
   // Whether this node may have a frame
   // NOTE: Should only be used on nsIContent nodes
-  NODE_MAY_HAVE_FRAME =          0x00000020U,
+  NODE_MAY_HAVE_FRAME =          0x00000040U,
 
   // Forces the XBL code to treat this node as if it were
   // in the document and therefore should get bindings attached.
-  NODE_FORCE_XBL_BINDINGS =      0x00000040U,
+  NODE_FORCE_XBL_BINDINGS =      0x00000080U,
 
   // Whether a binding manager may have a pointer to this
-  NODE_MAY_BE_IN_BINDING_MNGR =  0x00000080U,
+  NODE_MAY_BE_IN_BINDING_MNGR =  0x00000100U,
 
-  NODE_IS_EDITABLE =             0x00000100U,
+  NODE_IS_EDITABLE =             0x00000200U,
 
   // Optimizations to quickly check whether element may have ID, class or style
   // attributes. Not all element implementations may use these!
-  NODE_MAY_HAVE_ID =             0x00000200U,
-  NODE_MAY_HAVE_CLASS =          0x00000400U,
-  NODE_MAY_HAVE_STYLE =          0x00000800U,
+  NODE_MAY_HAVE_ID =             0x00000400U,
+  // For all Element nodes, NODE_MAY_HAVE_CLASS is guaranteed to be set if the
+  // node in fact has a class, but may be set even if it doesn't.
+  NODE_MAY_HAVE_CLASS =          0x00000800U,
+  NODE_MAY_HAVE_STYLE =          0x00001000U,
 
-  NODE_IS_INSERTION_PARENT =     0x00001000U,
+  NODE_IS_INSERTION_PARENT =     0x00002000U,
 
   // Node has an :empty or :-moz-only-whitespace selector
-  NODE_HAS_EMPTY_SELECTOR =      0x00002000U,
+  NODE_HAS_EMPTY_SELECTOR =      0x00004000U,
 
   // A child of the node has a selector such that any insertion,
   // removal, or appending of children requires restyling the parent.
-  NODE_HAS_SLOW_SELECTOR =       0x00004000U,
+  NODE_HAS_SLOW_SELECTOR =       0x00008000U,
 
   // A child of the node has a :first-child, :-moz-first-node,
   // :only-child, :last-child or :-moz-last-node selector.
-  NODE_HAS_EDGE_CHILD_SELECTOR = 0x00008000U,
+  NODE_HAS_EDGE_CHILD_SELECTOR = 0x00010000U,
 
   // A child of the node has a selector such that any insertion or
   // removal of children requires restyling the parent (but append is
   // OK).
   NODE_HAS_SLOW_SELECTOR_NOAPPEND
-                               = 0x00010000U,
+                               = 0x00020000U,
 
   NODE_ALL_SELECTOR_FLAGS =      NODE_HAS_EMPTY_SELECTOR |
                                  NODE_HAS_SLOW_SELECTOR |
@@ -123,7 +143,7 @@ enum {
                                  NODE_HAS_SLOW_SELECTOR_NOAPPEND,
 
   // Four bits for the script-type ID
-  NODE_SCRIPT_TYPE_OFFSET =               17,
+  NODE_SCRIPT_TYPE_OFFSET =               18,
 
   NODE_SCRIPT_TYPE_SIZE =                  4,
 
@@ -148,15 +168,17 @@ inline nsINode* NODE_FROM(C& aContent, D& aDocument)
 
 // IID for the nsINode interface
 #define NS_INODE_IID \
-{ 0x6f69dd90, 0x318d, 0x40ac, \
-  { 0xb8, 0xb8, 0x99, 0xb8, 0xa7, 0xbb, 0x9a, 0x58 } }
+{ 0x2e911aef, 0x5427, 0x477d, \
+ { 0x84, 0xfd, 0x0d, 0xac, 0x40, 0x5f, 0x2f, 0x1c } }
 
 /**
  * An internal interface that abstracts some DOMNode-related parts that both
  * nsIContent and nsIDocument share.  An instance of this interface has a list
  * of nsIContent children and provides access to them.
  */
-class nsINode : public nsPIDOMEventTarget {
+class nsINode : public nsPIDOMEventTarget,
+                public nsWrapperCache
+{
 public:
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_INODE_IID)
 
@@ -207,7 +229,9 @@ public:
      returns a non-null value for nsIContent::GetText() */
     eDATA_NODE           = 1 << 12,
     /** nsMathMLElement */
-    eMATHML              = 1 << 13
+    eMATHML              = 1 << 13,
+    /** nsHTMLMediaElement */
+    eMEDIA               = 1 << 14
   };
 
   /**
@@ -232,6 +256,16 @@ public:
    * @return the child, or null if index out of bounds
    */
   virtual nsIContent* GetChildAt(PRUint32 aIndex) const = 0;
+
+  /**
+   * Get a raw pointer to the child array.  This should only be used if you
+   * plan to walk a bunch of the kids, promise to make sure that nothing ever
+   * mutates (no attribute changes, not DOM tree changes, no script execution,
+   * NOTHING), and will never ever peform an out-of-bounds access here.  This
+   * method may return null if there are no children, or it may return a
+   * garbage pointer..
+   */
+  virtual nsIContent * const * GetChildArray() const = 0;
 
   /**
    * Get the index of a child within this content
@@ -622,7 +656,10 @@ public:
 
   void SetFlags(PtrBits aFlagsToSet)
   {
-    NS_ASSERTION(!(aFlagsToSet & (NODE_IS_ANONYMOUS | NODE_MAY_HAVE_FRAME)) ||
+    NS_ASSERTION(!(aFlagsToSet & (NODE_IS_ANONYMOUS |
+                                  NODE_MAY_HAVE_FRAME |
+                                  NODE_IS_NATIVE_ANONYMOUS_ROOT |
+                                  NODE_IS_IN_ANONYMOUS_SUBTREE)) ||
                  IsNodeOfType(eCONTENT),
                  "Flag only permitted on nsIContent nodes");
     PtrBits* flags = HasSlots() ? &FlagsAsSlots()->mFlags :
@@ -632,6 +669,11 @@ public:
 
   void UnsetFlags(PtrBits aFlagsToUnset)
   {
+    NS_ASSERTION(!(aFlagsToUnset &
+                   (NODE_IS_ANONYMOUS |
+                    NODE_IS_IN_ANONYMOUS_SUBTREE |
+                    NODE_IS_NATIVE_ANONYMOUS_ROOT)),
+                 "Trying to unset write-only flags");
     PtrBits* flags = HasSlots() ? &FlagsAsSlots()->mFlags :
                                   &mFlagsOrSlots;
     *flags &= ~aFlagsToUnset;
@@ -657,6 +699,22 @@ public:
   }
 
   /**
+   * Returns PR_TRUE if |this| or any of its ancestors is native anonymous.
+   */
+  PRBool IsInNativeAnonymousSubtree() const
+  {
+#ifdef DEBUG
+    if (HasFlag(NODE_IS_IN_ANONYMOUS_SUBTREE)) {
+      return PR_TRUE;
+    }
+    CheckNotNativeAnonymous();
+    return PR_FALSE;
+#else
+    return HasFlag(NODE_IS_IN_ANONYMOUS_SUBTREE);
+#endif
+  }
+
+  /**
    * Get the root content of an editor. So, this node must be a descendant of
    * an editor. Note that this should be only used for getting input or textarea
    * editor's root content. This method doesn't support HTML editors.
@@ -671,6 +729,27 @@ public:
    * node.
    */
   nsIContent* GetSelectionRootContent(nsIPresShell* aPresShell);
+
+  virtual nsIDOMNodeList* GetChildNodesList();
+  nsIContent* GetSibling(PRInt32 aOffset)
+  {
+    nsINode *parent = GetNodeParent();
+    if (!parent) {
+      return nsnull;
+    }
+
+    return parent->GetChildAt(parent->IndexOf(this) + aOffset);
+  }
+  nsIContent* GetLastChild() const
+  {
+    return GetChildAt(GetChildCount() - 1);
+  }
+
+  /**
+   * Implementation is in nsIDocument.h, because it needs to cast from
+   * nsIDocument* to nsINode*.
+   */
+  nsIDocument* GetOwnerDocument() const;
 
 protected:
 
@@ -718,6 +797,20 @@ protected:
     return IsEditableInternal();
   }
 
+#ifdef DEBUG
+  // Note: virtual so that IsInNativeAnonymousSubtree can be called accross
+  // module boundaries.
+  virtual void CheckNotNativeAnonymous() const;
+#endif
+
+  nsresult GetParentNode(nsIDOMNode** aParentNode);
+  nsresult GetChildNodes(nsIDOMNodeList** aChildNodes);
+  nsresult GetFirstChild(nsIDOMNode** aFirstChild);
+  nsresult GetLastChild(nsIDOMNode** aLastChild);
+  nsresult GetPreviousSibling(nsIDOMNode** aPrevSibling);
+  nsresult GetNextSibling(nsIDOMNode** aNextSibling);
+  nsresult GetOwnerDocument(nsIDOMDocument** aOwnerDocument);
+
   nsCOMPtr<nsINodeInfo> mNodeInfo;
 
   enum { PARENT_BIT_INDOCUMENT = 1 << 0, PARENT_BIT_PARENT_IS_CONTENT = 1 << 1 };
@@ -734,6 +827,116 @@ protected:
   PtrBits mFlagsOrSlots;
 };
 
+
+extern const nsIID kThisPtrOffsetsSID;
+
+// _implClass is the class to use to cast to nsISupports
+#define NS_OFFSET_AND_INTERFACE_TABLE_BEGIN_AMBIGUOUS(_class, _implClass)     \
+  static const QITableEntry offsetAndQITable[] = {                            \
+    NS_INTERFACE_TABLE_ENTRY_AMBIGUOUS(_class, nsISupports, _implClass)
+
+#define NS_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                           \
+  NS_OFFSET_AND_INTERFACE_TABLE_BEGIN_AMBIGUOUS(_class, _class)
+
+#define NS_OFFSET_AND_INTERFACE_TABLE_END                                     \
+  { nsnull, 0 } };                                                            \
+  if (aIID.Equals(kThisPtrOffsetsSID)) {                                      \
+    *aInstancePtr =                                                           \
+      const_cast<void*>(static_cast<const void*>(&offsetAndQITable));         \
+    return NS_OK;                                                             \
+  }
+
+#define NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE                            \
+  rv = NS_TableDrivenQI(this, offsetAndQITable, aIID, aInstancePtr);          \
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+
+// nsNodeSH::PreCreate() depends on the identity pointer being the same as
+// nsINode, so if you change the nsISupports line  below, make sure
+// nsNodeSH::PreCreate() still does the right thing!
+#define NS_NODE_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                      \
+  NS_OFFSET_AND_INTERFACE_TABLE_BEGIN_AMBIGUOUS(_class, nsINode)              \
+    NS_INTERFACE_TABLE_ENTRY(_class, nsINode)                       
+
+#define NS_NODE_INTERFACE_TABLE2(_class, _i1, _i2)                            \
+  NS_NODE_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                            \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i1)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i2)                                     \
+  NS_OFFSET_AND_INTERFACE_TABLE_END                                           \
+  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
+
+#define NS_NODE_INTERFACE_TABLE3(_class, _i1, _i2, _i3)                       \
+  NS_NODE_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                            \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i1)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i2)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i3)                                     \
+  NS_OFFSET_AND_INTERFACE_TABLE_END                                           \
+  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
+
+#define NS_NODE_INTERFACE_TABLE4(_class, _i1, _i2, _i3, _i4)                  \
+  NS_NODE_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                            \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i1)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i2)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i3)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i4)                                     \
+  NS_OFFSET_AND_INTERFACE_TABLE_END                                           \
+  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
+
+#define NS_NODE_INTERFACE_TABLE5(_class, _i1, _i2, _i3, _i4, _i5)             \
+  NS_NODE_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                            \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i1)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i2)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i3)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i4)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i5)                                     \
+  NS_OFFSET_AND_INTERFACE_TABLE_END                                           \
+  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
+
+#define NS_NODE_INTERFACE_TABLE6(_class, _i1, _i2, _i3, _i4, _i5, _i6)        \
+  NS_NODE_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                            \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i1)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i2)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i3)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i4)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i5)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i6)                                     \
+  NS_OFFSET_AND_INTERFACE_TABLE_END                                           \
+  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
+
+#define NS_NODE_INTERFACE_TABLE7(_class, _i1, _i2, _i3, _i4, _i5, _i6, _i7)   \
+  NS_NODE_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                            \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i1)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i2)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i3)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i4)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i5)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i6)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i7)                                     \
+  NS_OFFSET_AND_INTERFACE_TABLE_END                                           \
+  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
+
+#define NS_NODE_INTERFACE_TABLE8(_class, _i1, _i2, _i3, _i4, _i5, _i6, _i7,   \
+                                 _i8)                                         \
+  NS_NODE_OFFSET_AND_INTERFACE_TABLE_BEGIN(_class)                            \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i1)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i2)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i3)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i4)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i5)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i6)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i7)                                     \
+    NS_INTERFACE_TABLE_ENTRY(_class, _i8)                                     \
+  NS_OFFSET_AND_INTERFACE_TABLE_END                                           \
+  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
+
+
 NS_DEFINE_STATIC_IID_ACCESSOR(nsINode, NS_INODE_IID)
+
+
+#define NS_IMPL_CYCLE_COLLECTION_TRAVERSE_PRESERVED_WRAPPER \
+   tmp->TraverseWrapper(cb);
+
+#define NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER \
+  tmp->ReleaseWrapper();
+
 
 #endif /* nsINode_h___ */

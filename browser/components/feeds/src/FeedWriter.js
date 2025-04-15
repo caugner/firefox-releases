@@ -845,7 +845,7 @@ FeedWriter.prototype = {
 
   // nsIDomEventListener
   handleEvent: function(event) {
-    // see comments in the write method
+    // see comments in init()
     event = new XPCNativeWrapper(event);
     if (event.target.ownerDocument != this._document) {
       LOG("FeedWriter.handleEvent: Someone passed the feed writer as a listener to the events of another document!");
@@ -1023,6 +1023,7 @@ FeedWriter.prototype = {
     // "Choose Application..." menuitem
     menuItem = this._document.createElementNS(XUL_NS, "menuitem");
     menuItem.id = "chooseApplicationMenuItem";
+    menuItem.className = "menuitem-iconic";
     menuItem.setAttribute("label", this._getString("chooseApplicationMenuItem"));
 
     this._contentSandbox.chooseAppMenuItem = menuItem;
@@ -1114,8 +1115,8 @@ FeedWriter.prototype = {
         this._document.getElementById("feedSubscriptionInfo2");
       this._contentSandbox.feedinfo2Str = this._getString(textfeedinfo2);
       this._contentSandbox.header = header;
-      codeStr = "feedinfo1.value = feedinfo1Str; " +
-                "feedinfo2.value = feedinfo2Str; " +
+      codeStr = "feedinfo1.textContent = feedinfo1Str; " +
+                "feedinfo2.textContent = feedinfo2Str; " +
                 "header.setAttribute('firstrun', 'true');"
       Cu.evalInSandbox(codeStr, this._contentSandbox);
       prefs.setBoolPref(PREF_SHOW_FIRST_RUN_UI, false);
@@ -1296,14 +1297,14 @@ FeedWriter.prototype = {
     else {
       switch (selectedItem.id) {
         case "selectedAppMenuItem":
-          prefs.setCharPref(getPrefReaderForType(feedType), "client");
           prefs.setComplexValue(getPrefAppForType(feedType), Ci.nsILocalFile, 
                                 this._selectedApp);
+          prefs.setCharPref(getPrefReaderForType(feedType), "client");
           break;
         case "defaultHandlerMenuItem":
-          prefs.setCharPref(getPrefReaderForType(feedType), "client");
           prefs.setComplexValue(getPrefAppForType(feedType), Ci.nsILocalFile, 
                                 this._defaultSystemReader);
+          prefs.setCharPref(getPrefReaderForType(feedType), "client");
           break;
         case "liveBookmarksMenuItem":
           defaultHandler = "bookmarks";
@@ -1331,8 +1332,11 @@ FeedWriter.prototype = {
 
   // nsIObserver
   observe: function FW_observe(subject, topic, data) {
+    // see init()
+    subject = new XPCNativeWrapper(subject);
+    
     if (!this._window) {
-      // this._window is null unless this.write was called with a trusted
+      // this._window is null unless this.init was called with a trusted
       // window object.
       return;
     }
@@ -1372,26 +1376,21 @@ FeedWriter.prototype = {
   _setFaviconForWebReader:
   function FW__setFaviconForWebReader(aURI, aMenuItem) {
     var faviconsSvc = this._faviconService;
-    var faviconURL = null;
+    var faviconURI = null;
     try {
-      faviconURL = faviconsSvc.getFaviconForPage(aURI);
+      faviconURI = faviconsSvc.getFaviconForPage(aURI);
     }
     catch(ex) { }
 
-    if (faviconURL) {
-      var mimeType = { };
-      var bytes = faviconsSvc.getFaviconData(faviconURL, mimeType,
-                                             { /* dataLen */ });
-      if (bytes) {
-        var dataURI = "data:" + mimeType.value + ";" + "base64," +
-                      btoa(String.fromCharCode.apply(null, bytes));
-
+    if (faviconURI) {
+      var dataURL = faviconsSvc.getFaviconDataAsDataURL(faviconURI);
+      if (dataURL) {
         this._contentSandbox.menuItem = aMenuItem;
-        this._contentSandbox.dataURI = dataURI;
-        var codeStr = "menuItem.setAttribute('image', dataURI);";
+        this._contentSandbox.dataURL = dataURL;
+        var codeStr = "menuItem.setAttribute('image', dataURL);";
         Cu.evalInSandbox(codeStr, this._contentSandbox);
         this._contentSandbox.menuItem = null;
-        this._contentSandbox.dataURI = null;
+        this._contentSandbox.dataURL = null;
 
         return true;
       }
@@ -1402,6 +1401,9 @@ FeedWriter.prototype = {
 
    // nsINavHistoryService
    onPageChanged: function FW_onPageChanged(aURI, aWhat, aValue) {
+     // see init()
+     aURI = new XPCNativeWrapper(aURI);
+
      if (aWhat == Ci.nsINavHistoryObserver.ATTRIBUTE_FAVICON) {
        // Go through the readers menu and look for the corresponding
        // reader menu-item for the page if any.

@@ -38,9 +38,15 @@
 #ifndef _nsRootAccessible_H_
 #define _nsRootAccessible_H_
 
+#include "nsCaretAccessible.h"
 #include "nsDocAccessibleWrap.h"
-#include "nsHashtable.h"
+
 #include "nsIAccessibleDocument.h"
+#ifdef MOZ_XUL
+#include "nsIAccessibleTreeCache.h"
+#endif
+
+#include "nsHashtable.h"
 #include "nsCaretAccessible.h"
 #include "nsIDocument.h"
 #include "nsIDOMFocusListener.h"
@@ -71,7 +77,6 @@ class nsRootAccessible : public nsDocAccessibleWrap,
     NS_IMETHOD GetName(nsAString& aName);
     NS_IMETHOD GetParent(nsIAccessible * *aParent);
     NS_IMETHOD GetRole(PRUint32 *aRole);
-    NS_IMETHOD GetState(PRUint32 *aState, PRUint32 *aExtraState);
     NS_IMETHOD GetAccessibleRelated(PRUint32 aRelationType,
                                     nsIAccessible **aRelated);
 
@@ -81,9 +86,12 @@ class nsRootAccessible : public nsDocAccessibleWrap,
     // ----- nsIDOMEventListener --------------------------
     NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent);
 
-    // nsIAccessNode
-    NS_IMETHOD Init();
-    NS_IMETHOD Shutdown();
+    // nsAccessNode
+    virtual nsresult Init();
+    virtual nsresult Shutdown();
+
+    // nsAccessible
+    virtual nsresult GetStateInternal(PRUint32 *aState, PRUint32 *aExtraState);
 
     void ShutdownAll();
     
@@ -103,6 +111,11 @@ class nsRootAccessible : public nsDocAccessibleWrap,
                                     nsIDOMEvent *aFocusEvent,
                                     PRBool aForceEvent = PR_FALSE,
                                     PRBool aIsAsynch = PR_FALSE);
+    /**
+      * Fire an accessible focus event for the current focused node,
+      * if there is a focus.
+      */
+    void FireCurrentFocusEvent();
 
     nsCaretAccessible *GetCaretAccessible();
 
@@ -117,24 +130,21 @@ class nsRootAccessible : public nsDocAccessibleWrap,
                                    nsIDOMNode* aTargetNode);
     static void GetTargetNode(nsIDOMEvent *aEvent, nsIDOMNode **aTargetNode);
     void TryFireEarlyLoadEvent(nsIDOMNode *aDocNode);
-    void FireCurrentFocusEvent();
     void GetChromeEventHandler(nsIDOMEventTarget **aChromeTarget);
 
     /**
      * Handles 'TreeRowCountChanged' event. Used in HandleEventWithTarget().
      */
+#ifdef MOZ_XUL
     nsresult HandleTreeRowCountChangedEvent(nsIDOMEvent *aEvent,
-                                            nsIAccessible *aAccessible,
-                                            const nsAString& aTargetName);
+                                            nsIAccessibleTreeCache *aAccessible);
 
     /**
      * Handles 'TreeInvalidated' event. Used in HandleEventWithTarget().
      */
     nsresult HandleTreeInvalidatedEvent(nsIDOMEvent *aEvent,
-                                        nsIAccessible *aAccessible,
-                                        const nsAString& aTargetName);
+                                        nsIAccessibleTreeCache *aAccessible);
 
-#ifdef MOZ_XUL
     PRUint32 GetChromeFlags();
 #endif
     already_AddRefed<nsIDocShellTreeItem>

@@ -22,6 +22,7 @@
 #   Annie Sullivan <annie.sullivan@gmail.com>
 #   Joe Hughes <joe@retrovirus.com>
 #   Asaf Romano <mano@mozilla.com>
+#   Ehsan Akhgari <ehsan.akhgari@gmail.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -112,18 +113,23 @@ var StarUI = {
         break;
       case "keypress":
         if (aEvent.keyCode == KeyEvent.DOM_VK_ESCAPE) {
-          // In edit mode, if we're not editing a folder, the ESC key is mapped
-          // to the cancel button
+          // If the panel is visible the ESC key is mapped to the cancel button
+          // unless we are editing a folder in the folderTree, or an
+          // autocomplete popup is open.
           if (!this._element("editBookmarkPanelContent").hidden) {
             var elt = aEvent.target;
-            if (elt.localName != "tree" ||
-                (elt.localName == "tree" && !elt.hasAttribute("editing")))
+            if ((elt.localName != "tree" || !elt.hasAttribute("editing")) &&
+                !elt.popupOpen)
               this.cancelButtonOnCommand();
           }
         }
         else if (aEvent.keyCode == KeyEvent.DOM_VK_RETURN) {
-          // hide the panel unless the folder tree is focused
-          if (aEvent.target.localName != "tree")
+          // hide the panel unless the folder tree or an expander are focused
+          // or an autocomplete popup is open.
+          if (aEvent.target.localName != "tree" &&
+              aEvent.target.className != "expander-up" &&
+              aEvent.target.className != "expander-down" &&
+              !aEvent.target.popupOpen)
             this.panel.hidePopup();
         }
         break;
@@ -163,7 +169,17 @@ var StarUI = {
 
   _doShowEditBookmarkPanel:
   function SU__doShowEditBookmarkPanel(aItemId, aAnchorElement, aPosition) {
+    if (this.panel.state != "closed")
+      return;
+
     this._blockCommands(); // un-done in the popuphiding handler
+
+    // Move the header (star, title, possibly a button) into the grid,
+    // so that it aligns nicely with the other items (bug 484022).
+    var rows = this._element("editBookmarkPanelGrid").lastChild;
+    var header = this._element("editBookmarkPanelHeader");
+    rows.insertBefore(header, rows.firstChild);
+    header.hidden = false;
 
     var bundle = this._element("bundle_browser");
 
@@ -188,34 +204,23 @@ var StarUI = {
     // if the cancel button/ESC does not remove the bookmark.
     this._element("editBookmarkPanelRemoveButton").hidden = this._batching;
 
+    // The label of the remove button differs if the URI is bookmarked
+    // multiple times.
+    var bookmarks = PlacesUtils.getBookmarksForURI(gBrowser.currentURI);
+    var forms = bundle.getString("editBookmark.removeBookmarks.label");
+    var label = PluralForm.get(bookmarks.length, forms).replace("#1", bookmarks.length);
+    this._element("editBookmarkPanelRemoveButton").label = label;
+
     // unset the unstarred state, if set
     this._element("editBookmarkPanelStarIcon").removeAttribute("unstarred");
 
     this._itemId = aItemId !== undefined ? aItemId : this._itemId;
     this.beginBatch();
 
-    // XXXmano hack: We push a no-op transaction on the stack so it's always
-    // safe for the Cancel button to call undoTransaction after endBatch.
-    // Otherwise, if no changes were done in the edit-item panel, the last
-    // transaction on the undo stack may be the initial createItem transaction,
-    // or worse, the batched editing of some other item.
-    PlacesUIUtils.ptm.doTransaction({ doTransaction: function() { },
-                                      undoTransaction: function() { },
-                                      redoTransaction: function() { },
-                                      isTransient: false,
-                                      merge: function() { return false; } });
-
-    if (this.panel.state == "closed") {
-      // Consume dismiss clicks, see bug 400924
-      this.panel.popupBoxObject
-          .setConsumeRollupEvent(Ci.nsIPopupBoxObject.ROLLUP_CONSUME);
-      this.panel.openPopup(aAnchorElement, aPosition, -1, -1);
-    }
-    else {
-      var namePicker = this._element("editBMPanel_namePicker");
-      namePicker.focus();
-      namePicker.editor.selectAll();
-    }
+    // Consume dismiss clicks, see bug 400924
+    this.panel.popupBoxObject
+        .setConsumeRollupEvent(Ci.nsIPopupBoxObject.ROLLUP_CONSUME);
+    this.panel.openPopup(aAnchorElement, aPosition, -1, -1);
 
     gEditItemOverlay.initPanel(this._itemId,
                                { hiddenRows: ["description", "location",
@@ -228,7 +233,7 @@ var StarUI = {
       if (!this._element("editBookmarkPanelContent").hidden) {
         var namePicker = this._element("editBMPanel_namePicker");
         namePicker.focus();
-        namePicker.editor.selectAll();
+        namePicker.select();
       }
       else
         this.panel.focus();
@@ -416,18 +421,24 @@ var PlacesCommandHook = {
     }
 
     // Revert the contents of the location bar
-    handleURLBarRevert();
+    if (gURLBar)
+      gURLBar.handleRevert();
 
     // dock the panel to the star icon when possible, otherwise dock
     // it to the content area
     if (aBrowser.contentWindow == window.content) {
       var starIcon = aBrowser.ownerDocument.getElementById("star-button");
       if (starIcon && isElementVisible(starIcon)) {
+        // Make sure the bookmark properties dialog hangs toward the middle of
+        // the location bar in RTL builds
+        var position = "after_end";
+        if (gURLBar.getAttribute("chromedir") == "rtl")
+          position = "after_start";
         if (aShowEditUI)
-          StarUI.showEditBookmarkPopup(itemId, starIcon, "after_end");
+          StarUI.showEditBookmarkPopup(itemId, starIcon, position);
 #ifdef ADVANCED_STARRING_UI
         else
-          StarUI.showPageBookmarkedNotification(itemId, starIcon, "after_end");
+          StarUI.showPageBookmarkedNotification(itemId, starIcon, position);
 #endif
         return;
       }
@@ -456,14 +467,12 @@ var PlacesCommandHook = {
   bookmarkLink: function PCH_bookmarkLink(aParent, aURL, aTitle) {
     var linkURI = makeURI(aURL);
     var itemId = PlacesUtils.getMostRecentBookmarkForURI(linkURI);
-    if (itemId == -1) {
-      StarUI.beginBatch();
-      var txn = PlacesUIUtils.ptm.createItem(linkURI, aParent, -1, aTitle);
-      PlacesUIUtils.ptm.doTransaction(txn);
-      itemId = PlacesUtils.getMostRecentBookmarkForURI(linkURI);
+    if (itemId == -1)
+      PlacesUIUtils.showMinimalAddBookmarkUI(linkURI, aTitle);
+    else {
+      PlacesUIUtils.showItemProperties(itemId,
+                                       PlacesUtils.bookmarks.TYPE_BOOKMARK);
     }
-
-    StarUI.showEditBookmarkPopup(itemId, getBrowser(), "overlap");
   },
 
   /**
@@ -568,6 +577,12 @@ var PlacesCommandHook = {
 
 // Functions for the history menu.
 var HistoryMenu = {
+  get _ss() {
+    delete this._ss;
+    return this._ss = Components.classes["@mozilla.org/browser/sessionstore;1"].
+                      getService(Components.interfaces.nsISessionStore);
+  },
+
   /**
    * popupshowing handler for the history menu.
    * @param aMenuPopup
@@ -583,8 +598,10 @@ var HistoryMenu = {
     if (!wasOpen)
       resultNode.containerOpen = false;
 
-    // HistoryMenu.toggleRecentlyClosedTabs is defined in browser.js
+    // HistoryMenu.toggleRecentlyClosedTabs, HistoryMenu.toggleRecentlyClosedWindows
+    // are defined in browser.js
     this.toggleRecentlyClosedTabs();
+    this.toggleRecentlyClosedWindows();
   }
 };
 
@@ -706,7 +723,6 @@ var BookmarksEventHandler = {
     if (!target._endOptSeparator) {
       // create a separator before options
       target._endOptSeparator = document.createElement("menuseparator");
-      target._endOptSeparator.setAttribute("builder", "end");
       target._endMarker = target.childNodes.length;
       target.appendChild(target._endOptSeparator);
     }
@@ -744,31 +760,25 @@ var BookmarksEventHandler = {
   },
 
   fillInBTTooltip: function(aTipElement) {
-    // Fx2XP: Don't show tooltips for bookmarks under sub-folders
-    if (aTipElement.localName != "toolbarbutton")
+    if (!aTipElement.node)
       return false;
 
-    // Fx2XP: Only show tooltips for URL items
+    //Show tooltips only for URL items
     if (!PlacesUtils.nodeIsURI(aTipElement.node))
       return false;
 
+    var title = aTipElement.node.title;
     var url = aTipElement.node.uri;
-    if (!url) 
-      return false;
+
+    var tooltipTitle = document.getElementById("btTitleText");
+    tooltipTitle.hidden = !title || (title == url);
+    if (!tooltipTitle.hidden)
+      tooltipTitle.textContent = title;
 
     var tooltipUrl = document.getElementById("btUrlText");
     tooltipUrl.value = url;
 
-    var title = aTipElement.label;
-    var tooltipTitle = document.getElementById("btTitleText");
-    if (title && title != url) {
-      tooltipTitle.hidden = false;
-      tooltipTitle.value = title;
-    }
-    else
-      tooltipTitle.hidden = true;
-
-    // show tooltip
+    //Show tooltip
     return true;
   }
 };
@@ -784,7 +794,8 @@ var BookmarksMenuDropHandler = {
    * state.
    */
   onDragOver: function BMDH_onDragOver(event, flavor, session) {
-    session.canDrop = this.canDrop(event, session);
+    if (!this.canDrop(event, session))
+      event.dataTransfer.effectAllowed = "none";
   },
 
   /**
@@ -807,6 +818,8 @@ var BookmarksMenuDropHandler = {
    *          otherwise.
    */
   canDrop: function BMDH_canDrop(event, session) {
+    PlacesControllerDragHelper.currentDataTransfer = event.dataTransfer;
+
     var ip = new InsertionPoint(PlacesUtils.bookmarksMenuFolderId, -1);  
     return ip && PlacesControllerDragHelper.canDrop(ip);
   },
@@ -821,9 +834,21 @@ var BookmarksMenuDropHandler = {
    *          The active DragSession
    */
   onDrop: function BMDH_onDrop(event, data, session) {
-    // Put the item at the end of bookmark menu
-    var ip = new InsertionPoint(PlacesUtils.bookmarksMenuFolderId, -1);
+    PlacesControllerDragHelper.currentDataTransfer = event.dataTransfer;
+
+  // Put the item at the end of bookmark menu
+    var ip = new InsertionPoint(PlacesUtils.bookmarksMenuFolderId, -1,
+                                Ci.nsITreeView.DROP_ON);
     PlacesControllerDragHelper.onDrop(ip);
+  },
+
+  /**
+   * Called when drop target leaves the menu or after a drop.
+   * @param   aEvent
+   *          A drop event
+   */
+  onDragExit: function BMDH_onDragExit(event, session) {
+    PlacesControllerDragHelper.currentDataTransfer = null;
   }
 };
 
@@ -898,8 +923,9 @@ var PlacesMenuDNDController = {
    *`         menu-toolbarbutton), false otherwise.
    */
   _isContainer: function PMDC__isContainer(node) {
-    return node.localName == "menu" || 
-           node.localName == "toolbarbutton" && node.getAttribute("type") == "menu";
+    return node.localName == "menu" ||
+           (node.localName == "toolbarbutton" &&
+            node.getAttribute("type") == "menu");
   },
   
   /**
@@ -930,7 +956,11 @@ var PlacesMenuDNDController = {
 
 var PlacesStarButton = {
   init: function PSB_init() {
-    PlacesUtils.bookmarks.addObserver(this, false);
+    try {
+      PlacesUtils.bookmarks.addObserver(this, false);
+    } catch(ex) {
+      Components.utils.reportError("PlacesStarButton.init(): error adding bookmark observer: " + ex);
+    }
   },
 
   uninit: function PSB_uninit() {
@@ -1004,62 +1034,3 @@ var PlacesStarButton = {
   onItemVisited: function() { },
   onItemMoved: function() { }
 };
-
-/**
- * Various migration tasks.
- */
-function placesMigrationTasks() {
-  // bug 398914 - move all post-data annotations from URIs to bookmarks
-  // XXX - REMOVE ME FOR BETA 3 (bug 391419)
-  if (gPrefService.getBoolPref("browser.places.migratePostDataAnnotations")) {
-    const annosvc = PlacesUtils.annotations;
-    var bmsvc = PlacesUtils.bookmarks;
-    const oldPostDataAnno = "URIProperties/POSTData";
-    var pages = annosvc.getPagesWithAnnotation(oldPostDataAnno, {});
-    for (let i = 0; i < pages.length; i++) {
-      try {
-        let uri = pages[i];
-        var postData = annosvc.getPageAnnotation(uri, oldPostDataAnno);
-        // We can't know which URI+keyword combo this postdata was for, but
-        // it's very likely that if this URI is bookmarked and has a keyword
-        // *and* the URI has postdata, then this bookmark was using the
-        // postdata. Propagate the annotation to all bookmarks for this URI
-        // just to be safe.
-        let bookmarks = bmsvc.getBookmarkIdsForURI(uri, {});
-        for (let i = 0; i < bookmarks.length; i++) {
-          var keyword = bmsvc.getKeywordForBookmark(bookmarks[i]);
-          if (keyword)
-            annosvc.setItemAnnotation(bookmarks[i], POST_DATA_ANNO, postData, 0, annosvc.EXPIRE_NEVER); 
-        }
-        // Remove the old annotation.
-        annosvc.removePageAnnotation(uri, oldPostDataAnno);
-      } catch(ex) {}
-    }
-    gPrefService.setBoolPref("browser.places.migratePostDataAnnotations", false);
-  }
-
-  if (gPrefService.getBoolPref("browser.places.updateRecentTagsUri")) {
-    var oldUriSpec = "place:folder=TAGS&group=3&queryType=1" +
-                     "&applyOptionsToContainers=1&sort=12&maxResults=10";
-
-    var maxResults = 10;
-    var newUriSpec = "place:type=" + 
-                     Ci.nsINavHistoryQueryOptions.RESULTS_AS_TAG_QUERY +
-                     "&sort=" + 
-                     Ci.nsINavHistoryQueryOptions.SORT_BY_LASTMODIFIED_DESCENDING +
-                     "&maxResults=" + maxResults;
-                     
-    var ios = Cc["@mozilla.org/network/io-service;1"].
-              getService(Ci.nsIIOService);
-
-    var oldUri = ios.newURI(oldUriSpec, null, null);
-    var newUri = ios.newURI(newUriSpec, null, null);
-
-    let bmsvc = PlacesUtils.bookmarks;
-    let bookmarks = bmsvc.getBookmarkIdsForURI( oldUri, {});
-    for (let i = 0; i < bookmarks.length; i++) {
-      bmsvc.changeBookmarkURI( bookmarks[i], newUri);
-    }
-    gPrefService.setBoolPref("browser.places.updateRecentTagsUri", false);
-  }
-}

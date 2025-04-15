@@ -85,6 +85,9 @@
 #include "nsIMutableArray.h"
 #include "nsISupportsArray.h"
 #include "nsIDeviceContext.h"
+#include "nsIDOMStorage.h"
+#include "nsIDOMStorage2.h"
+#include "nsPIDOMStorage.h"
 
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
@@ -268,7 +271,7 @@ void nsWatcherWindowEnumerator::WindowRemoved(nsWatcherWindowEntry *inInfo) {
  ********************** JSContextAutoPopper *********************
  ****************************************************************/
 
-class JSContextAutoPopper {
+class NS_STACK_CLASS JSContextAutoPopper {
 public:
   JSContextAutoPopper();
   ~JSContextAutoPopper();
@@ -644,6 +647,23 @@ nsWindowWatcher::OpenWindowJSInternal(nsIDOMWindow *aParent,
         nsIWebBrowserChrome::CHROME_DEPENDENT;
     }
 
+    // Make sure to not create modal windows if our parent is invisible and
+    // isn't a chrome window.  Otherwise we can end up in a bizarre situation
+    // where we can't shut down because an invisible window is open.  If
+    // someone tries to do this, throw.
+    if (!chromeParent && (chromeFlags & nsIWebBrowserChrome::CHROME_MODAL)) {
+      PRBool parentVisible = PR_TRUE;
+      nsCOMPtr<nsIBaseWindow> parentWindow(do_GetInterface(parentTreeOwner));
+      nsCOMPtr<nsIWidget> parentWidget;
+      if (parentWindow)
+        parentWindow->GetMainWidget(getter_AddRefs(parentWidget));
+      if (parentWidget)
+        parentWidget->IsVisible(parentVisible);
+      if (!parentVisible) {
+        return NS_ERROR_NOT_AVAILABLE;
+      }
+    }
+
     NS_ASSERTION(mWindowCreator,
                  "attempted to open a new window with no WindowCreator");
     rv = NS_ERROR_FAILURE;
@@ -909,9 +929,32 @@ nsWindowWatcher::OpenWindowJSInternal(nsIDOMWindow *aParent,
                     nsIWebNavigation::LOAD_FLAGS_NONE, PR_TRUE);
   }
 
+  // Copy the current session storage for the current domain.
+  nsCOMPtr<nsPIDOMWindow> piWindow = do_QueryInterface(aParent);
+  nsCOMPtr<nsIDocShell_MOZILLA_1_9_1_SessionStorage> parentDocShell;
+  if (piWindow)
+    parentDocShell = do_QueryInterface(piWindow->GetDocShell());
+
+  if (subjectPrincipal && parentDocShell) {
+    nsCOMPtr<nsIDOMStorage2> storage;
+    parentDocShell->GetSessionStorageForPrincipal(subjectPrincipal, PR_FALSE,
+                                                  getter_AddRefs(storage));
+    nsCOMPtr<nsPIDOMStorage> piStorage =
+      do_QueryInterface(storage);
+    if (piStorage){
+      storage = piStorage->Clone();
+      nsCOMPtr<nsIDocShell_MOZILLA_1_9_1_SessionStorage> newDocShell191 =
+        do_QueryInterface(newDocShell);
+      newDocShell191->AddSessionStorage(
+        piStorage->Principal(),
+        storage);
+    }
+  }
+
   if (isNewToplevelWindow)
     SizeOpenedDocShellItem(newDocShellItem, aParent, sizeSpec);
 
+  // XXXbz isn't windowIsModal always true when windowIsModalContentDialog?
   if (windowIsModal || windowIsModalContentDialog) {
     nsCOMPtr<nsIDocShellTreeOwner> newTreeOwner;
     newDocShellItem->GetTreeOwner(getter_AddRefs(newTreeOwner));

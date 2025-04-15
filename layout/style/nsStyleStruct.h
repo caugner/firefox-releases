@@ -22,6 +22,7 @@
  * Contributor(s):
  *   Mats Palmgren <mats.palmgren@bredband.net>
  *   Masayuki Nakano <masayuki@d-toybox.com>
+ *   Rob Arnold <robarnold@mozilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -61,6 +62,7 @@
 #include "nsIAtom.h"
 #include "nsIURI.h"
 #include "nsCSSValue.h"
+#include "nsStyleTransformMatrix.h"
 
 class nsIFrame;
 class imgIRequest;
@@ -103,11 +105,14 @@ struct nsStyleFont {
   void Destroy(nsPresContext* aContext);
 
   nsFont  mFont;        // [inherited]
-  nscoord mSize;        // [inherited] Our "computed size". Can be different from mFont.size
-                        // which is our "actual size" and is enforced to be >= the user's
-                        // preferred min-size. mFont.size should be used for display purposes
-                        // while mSize is the value to return in getComputedStyle() for example.
-  PRUint8 mFlags;       // [inherited] See nsStyleConsts.h
+  nscoord mSize;        // [inherited] Our "computed size". Can be different
+                        // from mFont.size which is our "actual size" and is
+                        // enforced to be >= the user's preferred min-size.
+                        // mFont.size should be used for display purposes
+                        // while mSize is the value to return in
+                        // getComputedStyle() for example.
+  PRUint8 mGenericID;   // [inherited] generic CSS font family, if any;
+                        // value is a kGenericFont_* constant, see nsFont.h.
 
 #ifdef MOZ_MATHML
   // MathML scriptlevel support
@@ -143,7 +148,7 @@ struct nsStyleColor {
 };
 
 struct nsStyleBackground {
-  nsStyleBackground(nsPresContext* aPresContext);
+  nsStyleBackground();
   nsStyleBackground(const nsStyleBackground& aOther);
   ~nsStyleBackground();
 
@@ -160,16 +165,12 @@ struct nsStyleBackground {
   static nsChangeHint MaxDifference();
 #endif
 
-  // On Linux (others?), there is an extra byte being used up by
-  // inheritance so we only have 3 bytes to fit these 6 things into.
-  // Fortunately, the properties are enums which have few possible
-  // values.
-  PRUint8 mBackgroundFlags;            // [reset] See nsStyleConsts.h
-  PRUint8 mBackgroundAttachment   : 4; // [reset] See nsStyleConsts.h
-  PRUint8 mBackgroundClip         : 3; // [reset] See nsStyleConsts.h
-  PRUint8 mBackgroundInlinePolicy : 2; // [reset] See nsStyleConsts.h
-  PRUint8 mBackgroundOrigin       : 3; // [reset] See nsStyleConsts.h
-  PRUint8 mBackgroundRepeat       : 4; // [reset] See nsStyleConsts.h
+  PRUint8 mBackgroundFlags;        // [reset] See nsStyleConsts.h
+  PRUint8 mBackgroundAttachment;   // [reset] See nsStyleConsts.h
+  PRUint8 mBackgroundClip;         // [reset] See nsStyleConsts.h
+  PRUint8 mBackgroundInlinePolicy; // [reset] See nsStyleConsts.h
+  PRUint8 mBackgroundOrigin;       // [reset] See nsStyleConsts.h
+  PRUint8 mBackgroundRepeat;       // [reset] See nsStyleConsts.h
 
   // Note: a member of this union is valid IFF the appropriate bit flag
   // is set in mBackgroundFlags.
@@ -182,24 +183,26 @@ struct nsStyleBackground {
   nscolor mBackgroundColor;       // [reset]
   nsCOMPtr<imgIRequest> mBackgroundImage; // [reset]
 
+  // True if this background is completely transparent.
   PRBool IsTransparent() const
   {
-    return (mBackgroundFlags &
-            (NS_STYLE_BG_COLOR_TRANSPARENT | NS_STYLE_BG_IMAGE_NONE)) ==
-            (NS_STYLE_BG_COLOR_TRANSPARENT | NS_STYLE_BG_IMAGE_NONE);
+    return (NS_GET_A(mBackgroundColor) == 0 &&
+            (mBackgroundFlags & NS_STYLE_BG_IMAGE_NONE));
   }
 
   // We have to take slower codepaths for fixed background attachment,
   // but we don't want to do that when there's no image.
   // Not inline because it uses an nsCOMPtr<imgIRequest>
+  // FIXME: Should be in nsStyleStructInlines.h.
   PRBool HasFixedBackground() const;
 };
 
-#define BORDER_COLOR_TRANSPARENT  0x40
+// See https://bugzilla.mozilla.org/show_bug.cgi?id=271586#c43 for why
+// this is hard to replace with 'currentColor'.
 #define BORDER_COLOR_FOREGROUND   0x20
 #define OUTLINE_COLOR_INITIAL     0x80
-// TRANSPARENT | FOREGROUND | INITIAL(OUTLINE)
-#define BORDER_COLOR_SPECIAL      0xE0
+// FOREGROUND | INITIAL(OUTLINE)
+#define BORDER_COLOR_SPECIAL      0xA0
 #define BORDER_STYLE_MASK         0x1F
 
 #define NS_SPACING_MARGIN   0
@@ -221,7 +224,7 @@ struct nsStyleMargin {
   static nsChangeHint MaxDifference();
 #endif
 
-  nsStyleSides  mMargin;          // [reset] length, percent, auto
+  nsStyleSides  mMargin;          // [reset] coord, percent, auto
 
   PRBool GetMargin(nsMargin& aMargin) const
   {
@@ -252,7 +255,7 @@ struct nsStylePadding {
   static nsChangeHint MaxDifference();
 #endif
   
-  nsStyleSides  mPadding;         // [reset] length, percent
+  nsStyleSides  mPadding;         // [reset] coord, percent
 
   PRBool GetPadding(nsMargin& aPadding) const
   {
@@ -271,39 +274,109 @@ protected:
 struct nsBorderColors {
   nsBorderColors* mNext;
   nscolor mColor;
-  PRBool mTransparent;
 
-  nsBorderColors* CopyColors() {
-    nsBorderColors* next = nsnull;
-    if (mNext)
-      next = mNext->CopyColors();
-    return new nsBorderColors(mColor, mTransparent, next);
-  }
+  nsBorderColors() : mNext(nsnull), mColor(NS_RGB(0,0,0)) {}
+  nsBorderColors(const nscolor& aColor) : mNext(nsnull), mColor(aColor) {}
+  ~nsBorderColors();
 
-  nsBorderColors() :mNext(nsnull) { mColor = NS_RGB(0,0,0); }
+  nsBorderColors* Clone() const { return Clone(PR_TRUE); }
 
-  nsBorderColors(const nscolor& aColor, PRBool aTransparent, nsBorderColors* aNext=nsnull) {
-    mColor = aColor;
-    mTransparent = aTransparent;
-    mNext = aNext;
-  }
-
-  ~nsBorderColors() {
-    delete mNext;
-  }
-
-  PRBool Equals(nsBorderColors* aOther) {
-    nsBorderColors* c1 = this;
-    nsBorderColors* c2 = aOther;
+  static PRBool Equal(const nsBorderColors* c1,
+                      const nsBorderColors* c2) {
+    if (c1 == c2)
+      return PR_TRUE;
     while (c1 && c2) {
-      if (c1->mColor != c2->mColor ||
-          c1->mTransparent != c2->mTransparent)
+      if (c1->mColor != c2->mColor)
         return PR_FALSE;
       c1 = c1->mNext;
       c2 = c2->mNext;
     }
+    // both should be NULL if these are equal, otherwise one
+    // has more colors than another
     return !c1 && !c2;
   }
+
+private:
+  nsBorderColors* Clone(PRBool aDeep) const;
+};
+
+struct nsCSSShadowItem {
+  nscoord mXOffset;
+  nscoord mYOffset;
+  nscoord mRadius;
+  nscoord mSpread;
+
+  nscolor      mColor;
+  PRPackedBool mHasColor; // Whether mColor should be used
+  PRPackedBool mInset;
+
+  nsCSSShadowItem() : mHasColor(PR_FALSE) {
+    MOZ_COUNT_CTOR(nsCSSShadowItem);
+  }
+  ~nsCSSShadowItem() {
+    MOZ_COUNT_DTOR(nsCSSShadowItem);
+  }
+
+  PRBool operator==(const nsCSSShadowItem& aOther) {
+    return (mXOffset == aOther.mXOffset &&
+            mYOffset == aOther.mYOffset &&
+            mRadius == aOther.mRadius &&
+            mHasColor == aOther.mHasColor &&
+            mSpread == aOther.mSpread &&
+            mInset == aOther.mInset &&
+            (!mHasColor || mColor == aOther.mColor));
+  }
+  PRBool operator!=(const nsCSSShadowItem& aOther) {
+    return !(*this == aOther);
+  }
+};
+
+class nsCSSShadowArray {
+  public:
+    void* operator new(size_t aBaseSize, PRUint32 aArrayLen) {
+      // We can allocate both this nsCSSShadowArray and the
+      // actual array in one allocation. The amount of memory to
+      // allocate is equal to the class's size + the number of bytes for all
+      // but the first array item (because aBaseSize includes one
+      // item, see the private declarations)
+      return ::operator new(aBaseSize +
+                            (aArrayLen - 1) * sizeof(nsCSSShadowItem));
+    }
+
+    nsCSSShadowArray(PRUint32 aArrayLen) :
+      mLength(aArrayLen), mRefCnt(0)
+    {
+      MOZ_COUNT_CTOR(nsCSSShadowArray);
+      for (PRUint32 i = 1; i < mLength; ++i) {
+        // Make sure we call the constructors of each nsCSSShadowItem
+        // (the first one is called for us because we declared it under private)
+        new (&mArray[i]) nsCSSShadowItem();
+      }
+    }
+    ~nsCSSShadowArray() {
+      MOZ_COUNT_DTOR(nsCSSShadowArray);
+      for (PRUint32 i = 1; i < mLength; ++i) {
+        mArray[i].~nsCSSShadowItem();
+      }
+    }
+
+    nsrefcnt AddRef() { return ++mRefCnt; }
+    nsrefcnt Release();
+
+    PRUint32 Length() const { return mLength; }
+    nsCSSShadowItem* ShadowAt(PRUint32 i) {
+      NS_ABORT_IF_FALSE(i < mLength, "Accessing too high an index in the text shadow array!");
+      return &mArray[i];
+    }
+    const nsCSSShadowItem* ShadowAt(PRUint32 i) const {
+      NS_ABORT_IF_FALSE(i < mLength, "Accessing too high an index in the text shadow array!");
+      return &mArray[i];
+    }
+
+  private:
+    PRUint32 mLength;
+    PRUint32 mRefCnt;
+    nsCSSShadowItem mArray[1]; // This MUST be the last item
 };
 
 // Border widths are rounded to the nearest-below integer number of pixels,
@@ -319,16 +392,17 @@ struct nsBorderColors {
     ((l) > 0) ? PR_MAX( (tpp), ((l) + ((tpp) / 2)) / (tpp) * (tpp)) : \
                 PR_MIN(-(tpp), ((l) - ((tpp) / 2)) / (tpp) * (tpp)))
 
+// Returns if the given border style type is visible or not
+static PRBool IsVisibleBorderStyle(PRUint8 aStyle)
+{
+  return (aStyle != NS_STYLE_BORDER_STYLE_NONE &&
+          aStyle != NS_STYLE_BORDER_STYLE_HIDDEN);
+}
+
 struct nsStyleBorder {
   nsStyleBorder(nsPresContext* aContext);
   nsStyleBorder(const nsStyleBorder& aBorder);
-  ~nsStyleBorder(void) {
-    if (mBorderColors) {
-      for (PRInt32 i = 0; i < 4; i++)
-        delete mBorderColors[i];
-      delete []mBorderColors;
-    }
-  }
+  ~nsStyleBorder();
 
   void* operator new(size_t sz, nsPresContext* aContext) CPP_THROW_NEW;
   void Destroy(nsPresContext* aContext);
@@ -337,11 +411,18 @@ struct nsStyleBorder {
 #ifdef DEBUG
   static nsChangeHint MaxDifference();
 #endif
+  PRBool ImageBorderDiffers() const;
  
-  nsStyleSides  mBorderRadius;    // [reset] length, percent
+  nsStyleCorners mBorderRadius;    // [reset] coord, percent
+  nsStyleSides  mBorderImageSplit; // [reset] integer, percent
   PRUint8       mFloatEdge;       // [reset] see nsStyleConsts.h
+  PRUint8       mBorderImageHFill; // [reset]
+  PRUint8       mBorderImageVFill; // [reset]
   nsBorderColors** mBorderColors; // [reset] multiple levels of color for a border.
-
+  nsRefPtr<nsCSSShadowArray> mBoxShadow; // [reset] NULL for 'none'
+  PRBool        mHaveBorderImageWidth; // [reset]
+  nsMargin      mBorderImageWidth; // [reset]
+  
   void EnsureBorderColors() {
     if (!mBorderColors) {
       mBorderColors = new nsBorderColors*[4];
@@ -360,34 +441,52 @@ struct nsStyleBorder {
 
   // Return whether aStyle is a visible style.  Invisible styles cause
   // the relevant computed border width to be 0.
-  static PRBool IsVisibleStyle(PRUint8 aStyle) {
-    return aStyle != NS_STYLE_BORDER_STYLE_NONE &&
-           aStyle != NS_STYLE_BORDER_STYLE_HIDDEN;
+  // Note that this does *not* consider the effects of 'border-image':
+  // if border-style is none, but there is a loaded border image,
+  // HasVisibleStyle will be false even though there *is* a border.
+  PRBool HasVisibleStyle(PRUint8 aSide)
+  {
+    return IsVisibleBorderStyle(GetBorderStyle(aSide));
   }
 
   // aBorderWidth is in twips
   void SetBorderWidth(PRUint8 aSide, nscoord aBorderWidth)
   {
-    mBorder.side(aSide) = aBorderWidth;
-    if (IsVisibleStyle(GetBorderStyle(aSide))) {
-      mActualBorder.side(aSide) =
-        NS_ROUND_BORDER_TO_PIXELS(aBorderWidth, mTwipsPerPixel);
-    }
+    nscoord roundedWidth =
+      NS_ROUND_BORDER_TO_PIXELS(aBorderWidth, mTwipsPerPixel);
+    mBorder.side(aSide) = roundedWidth;
+    if (HasVisibleStyle(aSide))
+      mComputedBorder.side(aSide) = roundedWidth;
   }
 
-  // Get the actual border, in twips.
-  const nsMargin& GetBorder() const
+  void SetBorderImageWidthOverride(PRUint8 aSide, nscoord aBorderWidth)
   {
-    return mActualBorder;
+    mBorderImageWidth.side(aSide) =
+      NS_ROUND_BORDER_TO_PIXELS(aBorderWidth, mTwipsPerPixel);
   }
 
-  // Get the actual border width for a particular side, in twips.  Note that
+  // Get the actual border, in twips.  (If there is no border-image
+  // loaded, this is the same as GetComputedBorder.  If there is a
+  // border-image loaded, it uses the border-image width overrides if
+  // present, and otherwise mBorder, which is GetComputedBorder without
+  // considering border-style: none.)
+  const nsMargin& GetActualBorder() const;
+  
+  // Get the computed border (plus rounding).  This does consider the
+  // effects of 'border-style: none', but does not consider
+  // 'border-image'.
+  const nsMargin& GetComputedBorder() const
+  {
+    return mComputedBorder;
+  }
+
+  // Get the actual border width for a particular side, in appunits.  Note that
   // this is zero if and only if there is no border to be painted for this
   // side.  That is, this value takes into account the border style and the
   // value is rounded to the nearest device pixel by NS_ROUND_BORDER_TO_PIXELS.
-  nscoord GetBorderWidth(PRUint8 aSide) const
+  nscoord GetActualBorderWidth(PRUint8 aSide) const
   {
-    return mActualBorder.side(aSide);
+    return GetActualBorder().side(aSide);
   }
 
   PRUint8 GetBorderStyle(PRUint8 aSide) const
@@ -401,25 +500,24 @@ struct nsStyleBorder {
     NS_ASSERTION(aSide <= NS_SIDE_LEFT, "bad side"); 
     mBorderStyle[aSide] &= ~BORDER_STYLE_MASK; 
     mBorderStyle[aSide] |= (aStyle & BORDER_STYLE_MASK);
-    if (IsVisibleStyle(aStyle)) {
-      mActualBorder.side(aSide) =
-        NS_ROUND_BORDER_TO_PIXELS(mBorder.side(aSide), mTwipsPerPixel);
-    } else {
-      mActualBorder.side(aSide) = 0;
-    }
+    mComputedBorder.side(aSide) =
+      (HasVisibleStyle(aSide) ? mBorder.side(aSide) : 0);
   }
 
+  // Defined in nsStyleStructInlines.h
+  inline PRBool IsBorderImageLoaded() const;
+
   void GetBorderColor(PRUint8 aSide, nscolor& aColor,
-                      PRBool& aTransparent, PRBool& aForeground) const
+                      PRBool& aForeground) const
   {
-    aTransparent = aForeground = PR_FALSE;
+    aForeground = PR_FALSE;
     NS_ASSERTION(aSide <= NS_SIDE_LEFT, "bad side"); 
     if ((mBorderStyle[aSide] & BORDER_COLOR_SPECIAL) == 0)
       aColor = mBorderColor[aSide]; 
     else if (mBorderStyle[aSide] & BORDER_COLOR_FOREGROUND)
       aForeground = PR_TRUE;
     else
-      aTransparent = PR_TRUE;
+      NS_NOTREACHED("OUTLINE_COLOR_INITIAL should not be set here");
   }
 
   void SetBorderColor(PRUint8 aSide, nscolor aColor) 
@@ -429,6 +527,10 @@ struct nsStyleBorder {
     mBorderStyle[aSide] &= ~BORDER_COLOR_SPECIAL;
   }
 
+  // These are defined in nsStyleStructInlines.h
+  inline void SetBorderImage(imgIRequest* aImage);
+  inline imgIRequest* GetBorderImage() const;
+
   void GetCompositeColors(PRInt32 aIndex, nsBorderColors** aColors) const
   {
     if (!mBorderColors)
@@ -437,10 +539,10 @@ struct nsStyleBorder {
       *aColors = mBorderColors[aIndex];
   }
 
-  void AppendBorderColor(PRInt32 aIndex, nscolor aColor, PRBool aTransparent)
+  void AppendBorderColor(PRInt32 aIndex, nscolor aColor)
   {
     NS_ASSERTION(aIndex >= 0 && aIndex <= 3, "bad side for composite border color");
-    nsBorderColors* colorEntry = new nsBorderColors(aColor, aTransparent);
+    nsBorderColors* colorEntry = new nsBorderColors(aColor);
     if (!mBorderColors[aIndex])
       mBorderColors[aIndex] = colorEntry;
     else {
@@ -452,13 +554,6 @@ struct nsStyleBorder {
     mBorderStyle[aIndex] &= ~BORDER_COLOR_SPECIAL;
   }
 
-  void SetBorderTransparent(PRUint8 aSide)
-  {
-    NS_ASSERTION(aSide <= NS_SIDE_LEFT, "bad side"); 
-    mBorderStyle[aSide] &= ~BORDER_COLOR_SPECIAL;
-    mBorderStyle[aSide] |= BORDER_COLOR_TRANSPARENT; 
-  }
-
   void SetBorderToForeground(PRUint8 aSide)
   {
     NS_ASSERTION(aSide <= NS_SIDE_LEFT, "bad side"); 
@@ -467,25 +562,33 @@ struct nsStyleBorder {
   }
 
 protected:
-  // mActualBorder holds the CSS2.1 actual border-width values.  In
+  // mComputedBorder holds the CSS2.1 computed border-width values.  In
   // particular, these widths take into account the border-style for the
-  // relevant side and the values are rounded to the nearest device pixel.
-  nsMargin      mActualBorder;
+  // relevant side and the values are rounded to the nearest device
+  // pixel.  They are also rounded (which is not part of the definition
+  // of computed values).  However, they do *not* take into account the
+  // presence of border-image.  See GetActualBorder above for how to
+  // really get the actual border.
+  nsMargin      mComputedBorder;
 
   // mBorder holds the nscoord values for the border widths as they would be if
   // all the border-style values were visible (not hidden or none).  This
-  // member exists solely so that when we create structs using the copy
+  // member exists so that when we create structs using the copy
   // constructor during style resolution the new structs will know what the
   // specified values of the border were in case they have more specific rules
   // setting the border style.  Note that this isn't quite the CSS specified
   // value, since this has had the enumerated border widths converted to
   // lengths, and all lengths converted to twips.  But it's not quite the
-  // computed value either.
+  // computed value either. The values are rounded to the nearest device pixel
+  // We also use these values when we have a loaded border-image that
+  // does not have width overrides.
   nsMargin      mBorder;
 
   PRUint8       mBorderStyle[4];  // [reset] See nsStyleConsts.h
   nscolor       mBorderColor[4];  // [reset] the colors to use for a simple border.  not used
                                   // if -moz-border-colors is specified
+
+  nsCOMPtr<imgIRequest> mBorderImage; // [reset]
 
   nscoord       mTwipsPerPixel;
 };
@@ -510,27 +613,12 @@ struct nsStyleOutline {
   static nsChangeHint MaxDifference();
 #endif
  
-  nsStyleSides  mOutlineRadius;    // [reset] length, percent
-  																// (top=topLeft, right=topRight, bottom=bottomRight, left=bottomLeft)
+  nsStyleCorners  mOutlineRadius; // [reset] coord, percent
 
-  // Note that these are specified values.  You can get the actual values with
-  // GetOutlineWidth and GetOutlineOffset.  You cannot get the computed values
-  // directly.
-  nsStyleCoord  mOutlineOffset;   // [reset] length
-  nsStyleCoord  mOutlineWidth;    // [reset] length, enum (see nsStyleConsts.h)
-
-  PRBool GetOutlineOffset(nscoord& aOffset) const
-  {
-    if (mOutlineOffset.GetUnit() == eStyleUnit_Coord) {
-      nscoord offset = mOutlineOffset.GetCoordValue();
-      aOffset = NS_ROUND_OFFSET_TO_PIXELS(offset, mTwipsPerPixel);
-      return PR_TRUE;
-    } else {
-      NS_NOTYETIMPLEMENTED("GetOutlineOffset: eStyleUnit_Chars");
-      aOffset = 0;
-      return PR_FALSE;
-    }
-  }
+  // Note that this is a specified value.  You can get the actual values
+  // with GetOutlineWidth.  You cannot get the computed value directly.
+  nsStyleCoord  mOutlineWidth;    // [reset] coord, enum (see nsStyleConsts.h)
+  nscoord       mOutlineOffset;   // [reset]
 
   PRBool GetOutlineWidth(nscoord& aWidth) const
   {
@@ -634,7 +722,7 @@ struct nsStylePosition {
   static nsChangeHint MaxDifference();
 #endif
   
-  nsStyleSides  mOffset;                // [reset]
+  nsStyleSides  mOffset;                // [reset] coord, percent, auto
   nsStyleCoord  mWidth;                 // [reset] coord, percent, auto, enum
   nsStyleCoord  mMinWidth;              // [reset] coord, percent, enum
   nsStyleCoord  mMaxWidth;              // [reset] coord, percent, null, enum
@@ -642,7 +730,7 @@ struct nsStylePosition {
   nsStyleCoord  mMinHeight;             // [reset] coord, percent
   nsStyleCoord  mMaxHeight;             // [reset] coord, percent, null
   PRUint8       mBoxSizing;             // [reset] see nsStyleConsts.h
-  nsStyleCoord  mZIndex;                // [reset] 
+  nsStyleCoord  mZIndex;                // [reset] integer, auto
 };
 
 struct nsStyleTextReset {
@@ -666,7 +754,7 @@ struct nsStyleTextReset {
   PRUint8 mTextDecoration;              // [reset] see nsStyleConsts.h
   PRUint8 mUnicodeBidi;                 // [reset] see nsStyleConsts.h
 
-  nsStyleCoord  mVerticalAlign;         // [reset] see nsStyleConsts.h for enums
+  nsStyleCoord  mVerticalAlign;         // [reset] coord, percent, enum (see nsStyleConsts.h)
 };
 
 struct nsStyleText {
@@ -690,20 +778,34 @@ struct nsStyleText {
   PRUint8 mTextAlign;                   // [inherited] see nsStyleConsts.h
   PRUint8 mTextTransform;               // [inherited] see nsStyleConsts.h
   PRUint8 mWhiteSpace;                  // [inherited] see nsStyleConsts.h
+  PRUint8 mWordWrap;                    // [inherited] see nsStyleConsts.h
 
-  nsStyleCoord  mLetterSpacing;         // [inherited] 
-  nsStyleCoord  mLineHeight;            // [inherited] 
-  nsStyleCoord  mTextIndent;            // [inherited] 
-  nsStyleCoord  mWordSpacing;           // [inherited] 
+  nsStyleCoord  mLetterSpacing;         // [inherited] coord, normal
+  nsStyleCoord  mLineHeight;            // [inherited] coord, factor, normal
+  nsStyleCoord  mTextIndent;            // [inherited] coord, percent
+  nsStyleCoord  mWordSpacing;           // [inherited] coord, normal
+
+  nsRefPtr<nsCSSShadowArray> mTextShadow; // [inherited] NULL in case of a zero-length
   
   PRBool WhiteSpaceIsSignificant() const {
     return mWhiteSpace == NS_STYLE_WHITESPACE_PRE ||
            mWhiteSpace == NS_STYLE_WHITESPACE_PRE_WRAP;
   }
 
+  PRBool NewlineIsSignificant() const {
+    return mWhiteSpace == NS_STYLE_WHITESPACE_PRE ||
+           mWhiteSpace == NS_STYLE_WHITESPACE_PRE_WRAP ||
+           mWhiteSpace == NS_STYLE_WHITESPACE_PRE_LINE;
+  }
+
   PRBool WhiteSpaceCanWrap() const {
     return mWhiteSpace == NS_STYLE_WHITESPACE_NORMAL ||
-           mWhiteSpace == NS_STYLE_WHITESPACE_PRE_WRAP;
+           mWhiteSpace == NS_STYLE_WHITESPACE_PRE_WRAP ||
+           mWhiteSpace == NS_STYLE_WHITESPACE_PRE_LINE;
+  }
+
+  PRBool WordCanWrap() const {
+    return WhiteSpaceCanWrap() && mWordWrap == NS_STYLE_WORDWRAP_BREAK_WORD;
   }
 };
 
@@ -730,13 +832,13 @@ struct nsStyleVisibility {
   nsCOMPtr<nsIAtom> mLangGroup;        // [inherited]
  
   PRBool IsVisible() const {
-		return (mVisible == NS_STYLE_VISIBILITY_VISIBLE);
-	}
+    return (mVisible == NS_STYLE_VISIBILITY_VISIBLE);
+  }
 
-	PRBool IsVisibleOrCollapsed() const {
-		return ((mVisible == NS_STYLE_VISIBILITY_VISIBLE) ||
-						(mVisible == NS_STYLE_VISIBILITY_COLLAPSE));
-	}
+  PRBool IsVisibleOrCollapsed() const {
+    return ((mVisible == NS_STYLE_VISIBILITY_VISIBLE) ||
+            (mVisible == NS_STYLE_VISIBILITY_COLLAPSE));
+  }
 };
 
 struct nsStyleDisplay {
@@ -780,7 +882,10 @@ struct nsStyleDisplay {
   PRUint8 mOverflowX;           // [reset] see nsStyleConsts.h
   PRUint8 mOverflowY;           // [reset] see nsStyleConsts.h
   PRUint8   mClipFlags;         // [reset] see nsStyleConsts.h
-  
+  PRPackedBool mTransformPresent;  // [reset] Whether there is a -moz-transform.
+  nsStyleTransformMatrix mTransform; // [reset] The stored transform matrix
+  nsStyleCoord mTransformOrigin[2]; // [reset] percent, coord.
+
   PRBool IsBlockInside() const {
     return NS_STYLE_DISPLAY_BLOCK == mDisplay ||
            NS_STYLE_DISPLAY_LIST_ITEM == mDisplay ||
@@ -812,8 +917,11 @@ struct nsStyleDisplay {
   PRBool IsAbsolutelyPositioned() const {return (NS_STYLE_POSITION_ABSOLUTE == mPosition) ||
                                                 (NS_STYLE_POSITION_FIXED == mPosition);}
 
-  PRBool IsPositioned() const {return IsAbsolutelyPositioned() ||
-                                      (NS_STYLE_POSITION_RELATIVE == mPosition);}
+  /* Returns true if we're positioned or there's a transform in effect. */
+  PRBool IsPositioned() const {
+    return IsAbsolutelyPositioned() ||
+      NS_STYLE_POSITION_RELATIVE == mPosition || mTransformPresent;
+  }
 
   PRBool IsScrollableOverflow() const {
     // mOverflowX and mOverflowY always match when one of them is
@@ -828,6 +936,11 @@ struct nsStyleDisplay {
     return mOverflowX == NS_STYLE_OVERFLOW_CLIP ||
            (mOverflowX == NS_STYLE_OVERFLOW_HIDDEN &&
             mOverflowY == NS_STYLE_OVERFLOW_HIDDEN);
+  }
+
+  /* Returns whether the element has the -moz-transform property. */
+  PRBool HasTransform() const {
+    return mTransformPresent;
   }
 };
 
@@ -874,8 +987,8 @@ struct nsStyleTableBorder {
   static nsChangeHint MaxDifference();
 #endif
   
-  nsStyleCoord  mBorderSpacingX;// [inherited]
-  nsStyleCoord  mBorderSpacingY;// [inherited]
+  nscoord       mBorderSpacingX;// [inherited]
+  nscoord       mBorderSpacingY;// [inherited]
   PRUint8       mBorderCollapse;// [inherited]
   PRUint8       mCaptionSide;   // [inherited]
   PRUint8       mEmptyCells;    // [inherited]
@@ -934,6 +1047,9 @@ struct nsStyleQuotes {
     this->~nsStyleQuotes();
     aContext->FreeToShell(sizeof(nsStyleQuotes), this);
   }
+
+  void SetInitial();
+  void CopyFrom(const nsStyleQuotes& aSource);
 
   nsChangeHint CalcDifference(const nsStyleQuotes& aOther) const;
 #ifdef DEBUG
@@ -1084,7 +1200,7 @@ struct nsStyleContent {
     return NS_ERROR_ILLEGAL_VALUE;
   }
 
-  nsStyleCoord  mMarkerOffset;  // [reset]
+  nsStyleCoord  mMarkerOffset;  // [reset] coord, auto
 
 protected:
   PRUint32            mContentCount;
@@ -1118,6 +1234,7 @@ struct nsStyleUIReset {
   PRUint8   mUserSelect;      // [reset] (selection-style)
   PRUint8   mForceBrokenImageIcon; // [reset]  (0 if not forcing, otherwise forcing)
   PRUint8   mIMEMode;         // [reset]
+  PRUint8   mWindowShadow;    // [reset]
 };
 
 struct nsCursorImage {
@@ -1187,10 +1304,11 @@ struct nsStyleXUL {
   PRUint8       mBoxDirection;          // [reset] see nsStyleConsts.h
   PRUint8       mBoxOrient;             // [reset] see nsStyleConsts.h
   PRUint8       mBoxPack;               // [reset] see nsStyleConsts.h
+  PRPackedBool  mStretchStack;          // [reset] see nsStyleConsts.h
 };
 
 struct nsStyleColumn {
-  nsStyleColumn();
+  nsStyleColumn(nsPresContext* aPresContext);
   nsStyleColumn(const nsStyleColumn& aSource);
   ~nsStyleColumn();
 
@@ -1208,8 +1326,26 @@ struct nsStyleColumn {
 #endif
 
   PRUint32     mColumnCount; // [reset] see nsStyleConsts.h
-  nsStyleCoord mColumnWidth; // [reset]
-  nsStyleCoord mColumnGap;   // [reset] coord
+  nsStyleCoord mColumnWidth; // [reset] coord, auto
+  nsStyleCoord mColumnGap;   // [reset] coord, percent, normal
+
+  nscolor      mColumnRuleColor;  // [reset]
+  PRUint8      mColumnRuleStyle;  // [reset]
+  // See https://bugzilla.mozilla.org/show_bug.cgi?id=271586#c43 for why
+  // this is hard to replace with 'currentColor'.
+  PRPackedBool mColumnRuleColorIsForeground;
+
+  void SetColumnRuleWidth(nscoord aWidth) {
+    mColumnRuleWidth = NS_ROUND_BORDER_TO_PIXELS(aWidth, mTwipsPerPixel);
+  }
+
+  nscoord GetComputedColumnRuleWidth() const {
+    return (IsVisibleBorderStyle(mColumnRuleStyle) ? mColumnRuleWidth : 0);
+  }
+
+protected:
+  nscoord mColumnRuleWidth;  // [reset] coord
+  nscoord mTwipsPerPixel;
 };
 
 #ifdef MOZ_SVG
@@ -1262,10 +1398,10 @@ struct nsStyleSVG {
   nsCOMPtr<nsIURI> mMarkerEnd;        // [inherited]
   nsCOMPtr<nsIURI> mMarkerMid;        // [inherited]
   nsCOMPtr<nsIURI> mMarkerStart;      // [inherited]
-  nsStyleCoord    *mStrokeDasharray;  // [inherited]
+  nsStyleCoord    *mStrokeDasharray;  // [inherited] coord, percent, factor
 
-  nsStyleCoord     mStrokeDashoffset; // [inherited]
-  nsStyleCoord     mStrokeWidth;      // [inherited]
+  nsStyleCoord     mStrokeDashoffset; // [inherited] coord, percent, factor
+  nsStyleCoord     mStrokeWidth;      // [inherited] coord, percent, factor
 
   float            mFillOpacity;      // [inherited]
   float            mStrokeMiterlimit; // [inherited]

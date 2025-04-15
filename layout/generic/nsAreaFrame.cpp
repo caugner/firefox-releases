@@ -38,7 +38,6 @@
 /* derived class of nsBlockFrame; distinction barely relevant anymore */
 
 #include "nsAreaFrame.h"
-#include "nsBlockBandData.h"
 #include "nsStyleContext.h"
 #include "nsStyleConsts.h"
 #include "nsPresContext.h"

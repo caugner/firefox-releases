@@ -388,7 +388,7 @@ class nsTArray : public nsTArray_base {
     template<class Item, class Comparator>
     index_type IndexOf(const Item& item, index_type start,
                        const Comparator& comp) const {
-      const elem_type* iter = Elements() + start, *end = iter + Length();
+      const elem_type* iter = Elements() + start, *end = Elements() + Length();
       for (; iter != end; ++iter) {
         if (comp.Equals(*iter, item))
           return iter - Elements();
@@ -660,14 +660,29 @@ class nsTArray : public nsTArray_base {
     // removes elements from the array (see also RemoveElementsAt).
     // @param newLen  The desired length of this array.
     // @return        True if the operation succeeded; false otherwise.
+    // See also TruncateLength if the new length is guaranteed to be
+    // smaller than the old.
     PRBool SetLength(size_type newLen) {
       size_type oldLen = Length();
       if (newLen > oldLen) {
         return InsertElementsAt(oldLen, newLen - oldLen) != nsnull;
       }
       
-      RemoveElementsAt(newLen, oldLen - newLen);
+      TruncateLength(newLen);
       return PR_TRUE;
+    }
+
+    // This method modifies the length of the array, but may only be
+    // called when the new length is shorter than the old.  It can
+    // therefore be called when elem_type has no default constructor,
+    // unlike SetLength.  It removes elements from the array (see also
+    // RemoveElementsAt).
+    // @param newLen  The desired length of this array.
+    void TruncateLength(size_type newLen) {
+      size_type oldLen = Length();
+      NS_ABORT_IF_FALSE(newLen <= oldLen,
+                        "caller should use SetLength instead");
+      RemoveElementsAt(newLen, oldLen - newLen);
     }
 
     // This method inserts elements into the array, constructing

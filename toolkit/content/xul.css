@@ -21,13 +21,13 @@
 }
 
 /* hide the content and destroy the frame */
-*[hidden="true"] {
+[hidden="true"] {
   display: none;
 }
 
 /* hide the content, but don't destroy the frames */
-*[collapsed="true"], 
-*[moz-collapsed="true"] {
+[collapsed="true"], 
+[moz-collapsed="true"] {
   visibility: collapse;
 }
 
@@ -43,8 +43,7 @@ window[chromehidden~="status"] .chromeclass-status,
 window[chromehidden~="extrachrome"] .chromeclass-extrachrome,
 window[chromehidden~="location"] .chromeclass-location,
 window[chromehidden~="location"][chromehidden~="toolbar"] .chromeclass-toolbar,
-window[chromehidden~="toolbar"] .chromeclass-toolbar-additional
-{
+window[chromehidden~="toolbar"] .chromeclass-toolbar-additional {
   display: none;
 }
 
@@ -53,8 +52,7 @@ window[chromehidden~="toolbar"] .chromeclass-toolbar-additional
    :: or URI elements
    ::::: */
 
-.uri-element
-{
+.uri-element {
   direction: ltr !important;
 }
 
@@ -118,7 +116,7 @@ button[type="repeat"] {
   -moz-binding: url("chrome://global/content/bindings/button.xml#button-repeat");
 }
 
-button[type="menu"] {
+button[type="menu"], button[type="panel"] {
   -moz-binding: url("chrome://global/content/bindings/button.xml#menu");
 }
 
@@ -132,7 +130,7 @@ toolbarbutton {
   -moz-binding: url("chrome://global/content/bindings/toolbarbutton.xml#toolbarbutton");
 }
 
-toolbarbutton[type="menu"] {
+toolbarbutton[type="menu"], toolbarbutton[type="panel"] {
   -moz-binding: url("chrome://global/content/bindings/toolbarbutton.xml#menu");
 }
 
@@ -340,7 +338,8 @@ menupopup,
 panel,
 tooltip {
   display: -moz-popup;
-  z-index: 2147483647; 
+  z-index: 2147483647;
+  text-shadow: none;
 }
 
 tooltip {
@@ -360,40 +359,6 @@ window[sizemode="maximized"] statusbarpanel.statusbar-resizerpanel {
 }
 %endif
 
-/********** floating popups **********/
-
-/*
-titlebar {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#titlebar");  
-}  
-
-resizer[resizerdirection="right"] {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#ew-resizer");
-}  
-
-resizer[resizerdirection="bottom"] {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#ns-resizer");
-}  
-
-resizer[resizerdirection="bottomright"] {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#diag-resizer");  
-}  
-
-floatingwindow {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#floater-normal");
-  -moz-box-orient: vertical;
-  display: none;
-  z-index: 2147483647; 
-}
-
-floatingwindow[docked="left"] {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#floater-dock-left");
-}
-
-button.popupClose {
-  -moz-binding: url("chrome://global/content/bindings/popup.xml#close-button") !important;
-}  
-*/
 /******** grid **********/
 
 grid {
@@ -581,6 +546,15 @@ treecol[hidden="true"] {
   overflow: hidden;
 }
 
+/* ::::: lines connecting cells ::::: */
+tree:not([treelines="true"]) > treechildren::-moz-tree-line {
+  visibility: hidden;
+}
+
+treechildren::-moz-tree-cell(ltr) {
+  direction: ltr !important;
+}
+
 /********** deck & stack *********/
 
 deck {
@@ -635,11 +609,11 @@ progressmeter {
 /********** basic rule for anonymous content that needs to pass box properties through
  ********** to an insertion point parent that holds the real kids **************/
 
- .box-inherit {
-   -moz-box-orient: inherit;
-   -moz-box-pack: inherit;
-   -moz-box-align: inherit;
-   -moz-box-direction: inherit;
+.box-inherit {
+  -moz-box-orient: inherit;
+  -moz-box-pack: inherit;
+  -moz-box-align: inherit;
+  -moz-box-direction: inherit;
 }
 
 /********** label **********/
@@ -670,6 +644,7 @@ html|span.accesskey {
 textbox {
   -moz-binding: url("chrome://global/content/bindings/textbox.xml#textbox");
   -moz-user-select: text;
+  text-shadow: none;
 }
 
 textbox[multiline="true"] {
@@ -679,10 +654,29 @@ textbox[multiline="true"] {
 html|*.textbox-input {
   -moz-appearance: none !important;
   text-align: inherit;
+  text-shadow: inherit;
 }
 
 html|*.textbox-textarea {
   -moz-appearance: none !important;
+  text-shadow: inherit;
+}
+
+textbox[empty="true"] html|*.textbox-input ,
+textbox[empty="true"] html|*.textbox-textarea {
+  text-align: left;
+  direction: ltr;
+}
+
+textbox[empty="true"][chromedir="rtl"] html|*.textbox-input ,
+textbox[empty="true"][chromedir="rtl"] html|*.textbox-textarea {
+  text-align: right;
+  direction: rtl;
+}
+
+textbox[empty="true"] html|*.textbox-input[emptytextdelay="true"] ,
+textbox[empty="true"] html|*.textbox-textarea[emptytextdelay="true"] {
+  color: transparent !important;
 }
 
 .textbox-input-box {
@@ -697,8 +691,16 @@ textbox[type="timed"] {
   -moz-binding: url("chrome://global/content/bindings/textbox.xml#timed-textbox");
 }
 
+textbox[type="search"] {
+  -moz-binding: url("chrome://global/content/bindings/textbox.xml#search-textbox");
+}
+
 textbox[type="number"] {
   -moz-binding: url("chrome://global/content/bindings/numberbox.xml#numberbox");
+}
+
+.textbox-contextmenu[chromedir="rtl"] {
+  direction: rtl;
 }
 
 /********** autocomplete textbox **********/
@@ -805,6 +807,8 @@ popup[type="autocomplete"][hidden="true"] {
 .autocomplete-result-popupset {
   max-width: 0px;
   width: 0 !important;
+  min-width: 0%;
+  min-height: 0%;
 }
 
 /********** colorpicker **********/
@@ -847,6 +851,47 @@ menulist > menupopup > menuitem {
 dropmarker {
   -moz-binding: url("chrome://global/content/bindings/general.xml#dropmarker");
 }
+
+/********** resizer **********/
+
+resizer {
+  -moz-binding: url("chrome://global/content/bindings/resizer.xml#resizer");
+}
+
+resizer[dir="top"],
+resizer[dir="bottom"] {
+  cursor: ns-resize;
+}
+
+resizer[dir="left"],
+resizer[dir="right"] {
+  cursor: ew-resize;
+}
+
+resizer[dir="topleft"] {
+  cursor: nw-resize;
+}
+
+resizer[dir="bottomright"],
+resizer[dir="bottomend"][chromedir="ltr"] {
+  cursor: se-resize;
+}
+
+resizer[dir="topright"] {
+  cursor: ne-resize;
+}
+
+resizer[dir="bottomleft"],
+resizer[dir="bottomend"][chromedir="rtl"] {
+  cursor: sw-resize;
+}
+
+%ifndef XP_MACOSX
+resizer[dir="bottomright"][chromedir="ltr"],
+resizer[dir="bottomend"] {
+  -moz-appearance: resizer;
+}
+%endif
 
 /********** splitter **********/
 
@@ -940,8 +985,7 @@ autorepeatbutton {
 
 /********** statusbar **********/
 
-statusbar 
-{
+statusbar {
   -moz-binding: url("chrome://global/content/bindings/general.xml#statusbar");
 %ifdef XP_MACOSX
   padding-right: 14px;
@@ -1072,8 +1116,7 @@ radio[pane] {
   -moz-box-align: center;
 }
 
-prefwindow[chromehidden~="toolbar"] .chromeclass-toolbar
-{
+prefwindow[chromehidden~="toolbar"] .chromeclass-toolbar {
   display: none;
 }
 
@@ -1124,4 +1167,10 @@ timepicker {
 /*********** findbar ************/
 findbar {
   -moz-binding: url('chrome://global/content/bindings/findbar.xml#findbar');
+}
+
+
+/*********** filefield ************/
+filefield {
+  -moz-binding: url("chrome://global/content/bindings/filefield.xml#filefield");
 }

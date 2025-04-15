@@ -290,7 +290,7 @@ protected:
      */
     NS_HIDDEN_(PRBool) CanUseProxy(nsIURI *uri, PRInt32 defaultPort);
 
-    static PRBool PR_CALLBACK CleanupFilterArray(void *aElement, void *aData);
+    static PRBool CleanupFilterArray(void *aElement, void *aData);
 
 public:
     // The Sun Forte compiler and others implement older versions of the
@@ -308,8 +308,7 @@ public:
         PRUint32 host_len;
     };
 
-protected:
-
+    // These values correspond to the integer network.proxy.type preference
     enum ProxyConfig {
         eProxyConfig_Direct,
         eProxyConfig_Manual,
@@ -319,6 +318,8 @@ protected:
         eProxyConfig_System, // use system proxy settings if available, otherwise DIRECT
         eProxyConfig_Last
     };
+
+protected:
 
     // simplified array of filters defined by this struct
     struct HostInfo {

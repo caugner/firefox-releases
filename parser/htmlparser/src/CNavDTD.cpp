@@ -36,8 +36,6 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-//#define ALLOW_TR_AS_CHILD_OF_TABLE  //by setting this to true, TR is allowable directly in TABLE.
-
 #include "nsDebug.h"
 #include "nsIAtom.h"
 #include "CNavDTD.h"
@@ -131,7 +129,7 @@ CNavDTD::CNavDTD()
     mParser(0),
     mTokenizer(0),
     mDTDMode(eDTDMode_quirks),
-    mDocType(eHTML3_Quirks), // why not eHTML_Quirks?
+    mDocType(eHTML_Quirks),
     mParserCommand(eViewNormal),
     mLineNumber(1),
     mOpenMapCount(0),
@@ -324,8 +322,6 @@ CNavDTD::BuildModel(nsIParser* aParser,
       }
     }
   }
-
-  mSink->WillProcessTokens();
 
   while (NS_SUCCEEDED(result)) {
     if (!(mFlags & NS_DTD_FLAG_STOP_PARSING)) {
@@ -1576,7 +1572,7 @@ FindAutoCloseTargetForEndTag(eHTMLTags aCurrentTag, nsDTDContext& aContext,
 
 static void
 StripWSFollowingTag(eHTMLTags aChildTag, nsITokenizer* aTokenizer,
-                    nsTokenAllocator* aTokenAllocator, PRInt32& aNewlineCount)
+                    nsTokenAllocator* aTokenAllocator, PRInt32* aNewlineCount)
 {
   if (!aTokenizer || !aTokenAllocator) {
     return;
@@ -1584,16 +1580,15 @@ StripWSFollowingTag(eHTMLTags aChildTag, nsITokenizer* aTokenizer,
 
   CToken* theToken = aTokenizer->PeekToken();
 
+  PRInt32 newlineCount = 0;
   while (theToken) {
     eHTMLTokenTypes theType = eHTMLTokenTypes(theToken->GetTokenType());
 
     switch(theType) {
       case eToken_newline:
-        ++aNewlineCount;
-        // Fall through...
-
       case eToken_whitespace:
         theToken = aTokenizer->PopToken();
+        newlineCount += theToken->GetNewlineCount();
         IF_FREE(theToken, aTokenAllocator);
 
         theToken = aTokenizer->PeekToken();
@@ -1603,6 +1598,10 @@ StripWSFollowingTag(eHTMLTags aChildTag, nsITokenizer* aTokenizer,
         theToken = nsnull;
         break;
     }
+  }
+
+  if (aNewlineCount) {
+    *aNewlineCount += newlineCount;
   }
 }
 
@@ -1635,7 +1634,8 @@ CNavDTD::HandleEndToken(CToken* aToken)
       break;
 
     case eHTMLTag_head:
-      StripWSFollowingTag(theChildTag, mTokenizer, mTokenAllocator, mLineNumber);
+      StripWSFollowingTag(theChildTag, mTokenizer, mTokenAllocator,
+                          IsParserInDocWrite() ? nsnull : &mLineNumber);
       if (mBodyContext->LastOf(eHTMLTag_head) != kNotFound) {
         result = CloseContainersTo(eHTMLTag_head, PR_FALSE);
       }
@@ -1663,7 +1663,7 @@ CNavDTD::HandleEndToken(CToken* aToken)
     case eHTMLTag_body:
     case eHTMLTag_html:
       StripWSFollowingTag(theChildTag, mTokenizer, mTokenAllocator,
-                          mLineNumber);
+                          IsParserInDocWrite() ? nsnull : &mLineNumber);
       break;
 
     case eHTMLTag_script:
@@ -1808,8 +1808,9 @@ CNavDTD::HandleSavedTokens(PRInt32 anIndex)
       PRInt32   attrCount;
       PRInt32   theTopIndex = anIndex + 1;
       PRInt32   theTagCount = mBodyContext->GetCount();
+      PRBool    formWasOnStack = mSink->IsFormOnStack();
 
-      if (mSink->IsFormOnStack()) {
+      if (formWasOnStack) {
         // Do this to synchronize dtd stack and the sink stack.
         // Note: FORM is never on the dtd stack because its always
         // considered as a leaf. However, in the sink FORM can either
@@ -1877,9 +1878,19 @@ CNavDTD::HandleSavedTokens(PRInt32 anIndex)
           result = HandleToken(theToken, mParser);
         }
       }
+
       if (theTopIndex != mBodyContext->GetCount()) {
+        // CloseContainersTo does not close any forms we might have opened while
+        // handling saved tokens, because the parser does not track forms on its
+        // mBodyContext stack.
         CloseContainersTo(theTopIndex, mBodyContext->TagAt(theTopIndex),
                           PR_TRUE);
+      }      
+
+      if (!formWasOnStack && mSink->IsFormOnStack()) {
+        // If a form has appeared on the sink context stack since the beginning of
+        // HandleSavedTokens, have the sink close it:
+        mSink->CloseContainer(eHTMLTag_form);
       }
 
       // Bad-contents were successfully processed. Now, itz time to get
@@ -2140,17 +2151,7 @@ CNavDTD::CanContain(PRInt32 aParent, PRInt32 aChild) const
 {
   PRBool result = gHTMLElements[aParent].CanContain((eHTMLTags)aChild, mDTDMode);
 
-#ifdef ALLOW_TR_AS_CHILD_OF_TABLE
-  if (!result) {
-      //XXX This vile hack is here to support bug 30378, which allows
-      //table to contain tr directly in an html32 document.
-    if ((eHTMLTag_tr == aChild) && (eHTMLTag_table == aParent)) {
-      result = PR_TRUE;
-    }
-  }
-#endif
-
-  if (eHTMLTag_nobr == aChild           &&
+  if (eHTMLTag_nobr == aChild &&
       IsInlineElement(aParent, aParent) &&
       HasOpenContainer(eHTMLTag_nobr)) {
     return PR_FALSE;
@@ -2245,7 +2246,7 @@ CNavDTD::CanPropagate(eHTMLTags aParent, eHTMLTags aChild,
       result = PR_FALSE;
     }
   } else {
-    result = aParentContains;
+    result = !!aParentContains;
   }
 
 
@@ -2286,7 +2287,7 @@ CNavDTD::CanOmit(eHTMLTags aParent, eHTMLTags aChild, PRInt32& aParentContains)
   if (-1 == aParentContains) {
     aParentContains = CanContain(aParent, aChild);
   }
-  
+
   if (aParentContains || aChild == aParent) {
     return PR_FALSE;
   }
@@ -2304,6 +2305,12 @@ CNavDTD::CanOmit(eHTMLTags aParent, eHTMLTags aChild, PRInt32& aParentContains)
   }
 
   if (gHTMLElements[aParent].HasSpecialProperty(kSaveMisplaced)) {
+    return PR_TRUE;
+  }
+
+  if (aParent == eHTMLTag_body) {
+    // There are very few tags that the body does not contain. If we get here
+    // the best thing to do is just drop them.
     return PR_TRUE;
   }
 
@@ -2713,6 +2720,19 @@ CNavDTD::OpenContainer(const nsCParserNode *aNode,
   return result;
 }
 
+nsresult
+CNavDTD::CloseResidualStyleTags(const eHTMLTags aTag,
+                                PRBool aClosedByStartTag)
+{
+  const PRInt32 count = mBodyContext->GetCount();
+  PRInt32 pos = count;
+  while (nsHTMLElement::IsResidualStyleTag(mBodyContext->TagAt(pos - 1)))
+    --pos;
+  if (pos < count)
+    return CloseContainersTo(pos, aTag, aClosedByStartTag);
+  return NS_OK;
+}
+
 /**
  * This method does two things: 1st, help construct
  * our own internal model of the content-stack; and
@@ -2755,6 +2775,10 @@ CNavDTD::CloseContainer(const eHTMLTags aTag, PRBool aMalformed)
       if (mFlags & NS_DTD_FLAG_HAS_OPEN_FORM) {
         mFlags &= ~NS_DTD_FLAG_HAS_OPEN_FORM;
         done = PR_FALSE;
+        // If we neglect to close these tags, the sink will refuse to close the
+        // form because the form will not be on the top of the SinkContext stack.
+        // See HTMLContentSink::CloseForm.  (XXX do this in other cases?)
+        CloseResidualStyleTags(eHTMLTag_form, PR_FALSE);
       }
       break;
 
@@ -3125,13 +3149,6 @@ CNavDTD::CreateContextStackFor(eHTMLTags aParent, eHTMLTags aChild)
   // Now, build up the stack according to the tags.
   while (theLen) {
     theTag = (eHTMLTags)mScratch[--theLen];
-
-#ifdef ALLOW_TR_AS_CHILD_OF_TABLE
-    if (eHTML3_Quirks == mDocType && eHTMLTag_tbody == theTag) {
-      // The prev. condition prevents us from emitting tbody in html3.2 docs; fix bug 30378
-      continue;
-    }
-#endif
 
     // Note: These tokens should all wind up on contextstack, so don't recycle
     // them.

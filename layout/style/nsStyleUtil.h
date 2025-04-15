@@ -44,8 +44,8 @@
 struct nsStyleBackground;
 
 enum nsFontSizeType {
-  eFontSize_HTML  	= 1,
-  eFontSize_CSS			= 2
+  eFontSize_HTML = 1,
+  eFontSize_CSS = 2
 };
 
 
@@ -69,8 +69,11 @@ public:
 
   static PRInt32 ConstrainFontWeight(PRInt32 aWeight);
 
-  static PRBool IsHTMLLink(nsIContent *aContent, nsIAtom *aTag, nsPresContext *aPresContext, nsLinkState *aState);
-  static PRBool IsLink(nsIContent *aContent, nsPresContext *aPresContext, nsLinkState *aState);
+  static PRBool IsHTMLLink(nsIContent *aContent, nsIAtom *aTag,
+                           nsILinkHandler *aLinkHandler,
+                           nsLinkState *aState);
+  static PRBool IsLink(nsIContent *aContent, nsILinkHandler *aLinkHandler,
+                       nsLinkState *aState);
 
  static PRBool DashMatchCompare(const nsAString& aAttributeValue,
                                 const nsAString& aSelectorValue,

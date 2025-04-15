@@ -82,6 +82,7 @@
 #include "nsContentUtils.h"
 #include "nsDisplayList.h"
 #include "nsIReflowCallback.h"
+#include "nsISound.h"
 
 #define NS_MENU_POPUP_LIST_INDEX 0
 
@@ -441,13 +442,17 @@ nsMenuFrame::HandleEvent(nsPresContext* aPresContext,
 #ifdef XP_MACOSX
     // On mac, open menulist on either up/down arrow or space (w/o Cmd pressed)
     if (!IsOpen() && ((keyEvent->charCode == NS_VK_SPACE && !keyEvent->isMeta) ||
-        (keyCode == NS_VK_UP || keyCode == NS_VK_DOWN)))
+        (keyCode == NS_VK_UP || keyCode == NS_VK_DOWN))) {
+      *aEventStatus = nsEventStatus_eConsumeNoDefault;
       OpenMenu(PR_FALSE);
+    }
 #else
     // On other platforms, toggle menulist on unmodified F4 or Alt arrow
     if ((keyCode == NS_VK_F4 && !keyEvent->isAlt) ||
-        ((keyCode == NS_VK_UP || keyCode == NS_VK_DOWN) && keyEvent->isAlt))
+        ((keyCode == NS_VK_UP || keyCode == NS_VK_DOWN) && keyEvent->isAlt)) {
+      *aEventStatus = nsEventStatus_eConsumeNoDefault;
       ToggleMenuState();
+    }
 #endif
   }
   else if (aEvent->eventStructType == NS_MOUSE_EVENT &&
@@ -456,12 +461,15 @@ nsMenuFrame::HandleEvent(nsPresContext* aPresContext,
            !IsDisabled() && IsMenu()) {
     // The menu item was selected. Bring up the menu.
     // We have children.
+    // Don't prevent the default action here, since that will also cancel
+    // potential drag starts.
     if (!mMenuParent || mMenuParent->IsMenuBar()) {
       ToggleMenuState();
     }
     else {
-      if (!IsOpen())
+      if (!IsOpen()) {
         OpenMenu(PR_FALSE);
+      }
     }
   }
   else if (
@@ -494,6 +502,7 @@ nsMenuFrame::HandleEvent(nsPresContext* aPresContext,
            static_cast<nsMouseEvent*>(aEvent)->button == nsMouseEvent::eLeftButton &&
            !IsMenu() && !IsDisabled()) {
     // Execute the execute event handler.
+    *aEventStatus = nsEventStatus_eConsumeNoDefault;
     Execute(aEvent);
   }
   else if (aEvent->message == NS_MOUSE_EXIT_SYNTH) {
@@ -586,7 +595,8 @@ void
 nsMenuFrame::PopupClosed(PRBool aDeselectMenu)
 {
   nsWeakFrame weakFrame(this);
-  mContent->UnsetAttr(kNameSpaceID_None, nsGkAtoms::open, PR_TRUE);
+  nsContentUtils::AddScriptRunner(
+    new nsUnsetAttrRunnable(mContent, nsGkAtoms::open));
   if (!weakFrame.IsAlive())
     return;
 
@@ -714,7 +724,7 @@ nsMenuFrame::IsSizedToPopup(nsIContent* aContent, PRBool aRequireAlways)
     nsAutoString sizedToPopup;
     aContent->GetAttr(kNameSpaceID_None, nsGkAtoms::sizetopopup, sizedToPopup);
     sizeToPopup = sizedToPopup.EqualsLiteral("always") ||
-                  !aRequireAlways && sizedToPopup.EqualsLiteral("pref");
+                  (!aRequireAlways && sizedToPopup.EqualsLiteral("pref"));
   }
   
   return sizeToPopup;
@@ -1170,6 +1180,10 @@ nsMenuFrame::Execute(nsGUIEvent *aEvent)
       }
     }
   }
+
+  nsCOMPtr<nsISound> sound(do_CreateInstance("@mozilla.org/sound;1"));
+  if (sound)
+    sound->PlaySystemSound(NS_SYSSOUND_MENU_EXECUTE);
 
   nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
   if (pm && mMenuParent)

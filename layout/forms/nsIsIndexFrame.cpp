@@ -76,6 +76,7 @@
 #include "nsNodeInfoManager.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsContentUtils.h"
+#include "nsLayoutErrors.h"
 
 nsIFrame*
 NS_NewIsIndexFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
@@ -86,7 +87,7 @@ NS_NewIsIndexFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
 nsIsIndexFrame::nsIsIndexFrame(nsStyleContext* aContext) :
   nsAreaFrame(aContext)
 {
-  SetFlags(NS_BLOCK_SPACE_MGR);
+  SetFlags(NS_BLOCK_FLOAT_MGR);
 }
 
 nsIsIndexFrame::~nsIsIndexFrame()
@@ -110,8 +111,8 @@ nsIsIndexFrame::Destroy()
 // REVIEW: We don't need to override BuildDisplayList, nsAreaFrame will honour
 // our visibility setting
 
-NS_IMETHODIMP
-nsIsIndexFrame::UpdatePromptLabel()
+nsresult
+nsIsIndexFrame::UpdatePromptLabel(PRBool aNotify)
 {
   if (!mTextContent) return NS_ERROR_UNEXPECTED;
 
@@ -133,7 +134,7 @@ nsIsIndexFrame::UpdatePromptLabel()
                                          "IsIndexPrompt", prompt);
   }
 
-  mTextContent->SetText(prompt, PR_TRUE);
+  mTextContent->SetText(prompt, aNotify);
 
   return NS_OK;
 }
@@ -191,8 +192,7 @@ nsIsIndexFrame::CreateAnonymousContent(nsTArray<nsIContent*>& aElements)
 
   // Create an hr
   nsCOMPtr<nsINodeInfo> hrInfo;
-  nimgr->GetNodeInfo(nsGkAtoms::hr, nsnull, kNameSpaceID_None,
-                     getter_AddRefs(hrInfo));
+  hrInfo = nimgr->GetNodeInfo(nsGkAtoms::hr, nsnull, kNameSpaceID_None);
 
   NS_NewHTMLElement(getter_AddRefs(mPreHr), hrInfo, PR_FALSE);
   if (!mPreHr || !aElements.AppendElement(mPreHr))
@@ -204,14 +204,13 @@ nsIsIndexFrame::CreateAnonymousContent(nsTArray<nsIContent*>& aElements)
     return NS_ERROR_OUT_OF_MEMORY;
 
   // set the value of the text node and add it to the child list
-  UpdatePromptLabel();
+  UpdatePromptLabel(PR_FALSE);
   if (!aElements.AppendElement(mTextContent))
     return NS_ERROR_OUT_OF_MEMORY;
 
   // Create text input field
   nsCOMPtr<nsINodeInfo> inputInfo;
-  nimgr->GetNodeInfo(nsGkAtoms::input, nsnull, kNameSpaceID_None,
-                     getter_AddRefs(inputInfo));
+  inputInfo = nimgr->GetNodeInfo(nsGkAtoms::input, nsnull, kNameSpaceID_None);
 
   NS_NewHTMLElement(getter_AddRefs(mInputContent), inputInfo, PR_FALSE);
   if (!mInputContent)
@@ -285,7 +284,7 @@ nsIsIndexFrame::AttributeChanged(PRInt32         aNameSpaceID,
 {
   nsresult rv = NS_OK;
   if (nsGkAtoms::prompt == aAttribute) {
-    rv = UpdatePromptLabel();
+    rv = UpdatePromptLabel(PR_TRUE);
   } else {
     rv = nsAreaFrame::AttributeChanged(aNameSpaceID, aAttribute, aModType);
   }
@@ -554,6 +553,7 @@ nsIsIndexFrame::RestoreState(nsPresState* aState)
   nsresult res = aState->GetStateProperty(NS_LITERAL_STRING("value"), stateString);
   NS_ENSURE_SUCCESS(res, res);
 
-  SetInputValue(stateString);
+  if (res == NS_STATE_PROPERTY_EXISTS)
+    SetInputValue(stateString);
   return NS_OK;
 }

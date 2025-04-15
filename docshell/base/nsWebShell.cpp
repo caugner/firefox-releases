@@ -390,6 +390,8 @@ nsPingListener::OnChannelRedirect(nsIChannel *oldChan, nsIChannel *newChan,
   if (!mRequireSameHost)
     return NS_OK;
 
+  // XXXbz should this be using something more like the nsContentUtils
+  // same-origin checker?
   nsCOMPtr<nsIURI> oldURI;
   oldChan->GetURI(getter_AddRefs(oldURI));
   NS_ENSURE_STATE(oldURI && newURI);
@@ -588,18 +590,16 @@ nsWebShell::EnsureCommandHandler()
 {
   if (!mCommandManager)
   {
-    mCommandManager = do_CreateInstance("@mozilla.org/embedcomp/command-manager;1");
-    if (!mCommandManager) return NS_ERROR_OUT_OF_MEMORY;
+    nsCOMPtr<nsPICommandUpdater> commandUpdater =
+      do_CreateInstance("@mozilla.org/embedcomp/command-manager;1");
+    if (!commandUpdater) return NS_ERROR_OUT_OF_MEMORY;
     
-    nsCOMPtr<nsPICommandUpdater>       commandUpdater = do_QueryInterface(mCommandManager);
-    if (!commandUpdater) return NS_ERROR_FAILURE;
-    
-    nsCOMPtr<nsIDOMWindow> domWindow = do_GetInterface(static_cast<nsIInterfaceRequestor *>(this));
-#ifdef DEBUG
-    nsresult rv =
-#endif
-    commandUpdater->Init(domWindow);
-    NS_ASSERTION(NS_SUCCEEDED(rv), "Initting command manager failed");
+    nsCOMPtr<nsIDOMWindow> domWindow =
+      do_GetInterface(static_cast<nsIInterfaceRequestor *>(this));
+
+    nsresult rv = commandUpdater->Init(domWindow);
+    if (NS_SUCCEEDED(rv))
+      mCommandManager = do_QueryInterface(commandUpdater);
   }
   
   return mCommandManager ? NS_OK : NS_ERROR_FAILURE;
@@ -634,7 +634,7 @@ nsWebShell::GetInterface(const nsIID &aIID, void** aInstancePtr)
    return nsDocShell::GetInterface(aIID, aInstancePtr);
 }
 
-nsEventStatus PR_CALLBACK
+nsEventStatus
 nsWebShell::HandleEvent(nsGUIEvent *aEvent)
 {
   return nsEventStatus_eIgnore;
@@ -878,8 +878,8 @@ nsWebShell::OnLinkClickSync(nsIContent *aContent,
   
   rv = InternalLoad(aURI,               // New URI
                     referer,            // Referer URI
-                    nsnull,             // No onwer
-                    INTERNAL_LOAD_FLAGS_INHERIT_OWNER, // Inherit owner from document
+                    aContent->NodePrincipal(), // Owner is our node's principal
+                    INTERNAL_LOAD_FLAGS_NONE,
                     target.get(),       // Window target
                     NS_LossyConvertUTF16toASCII(typeHint).get(),
                     aPostDataStream,    // Post data stream

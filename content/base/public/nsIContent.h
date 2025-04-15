@@ -62,8 +62,8 @@ class nsIDocShell;
 
 // IID for the nsIContent interface
 #define NS_ICONTENT_IID       \
-{ 0x0acd0482, 0x09a2, 0x42fd, \
-  { 0xb6, 0x1b, 0x95, 0xa2, 0x01, 0x6a, 0x55, 0xd3 } }
+{ 0x2813b1d9, 0x7fe1, 0x496f, \
+ { 0x85, 0x52, 0xa2, 0xc1, 0xc5, 0x6b, 0x15, 0x40 } }
 
 /**
  * A node of content in a document's content model. This interface
@@ -146,9 +146,13 @@ public:
    * @see nsIAnonymousContentCreator
    * @return whether this content is anonymous
    */
-  PRBool IsNativeAnonymous() const
+  PRBool IsRootOfNativeAnonymousSubtree() const
   {
-    return HasFlag(NODE_IS_ANONYMOUS);
+    NS_ASSERTION(!HasFlag(NODE_IS_NATIVE_ANONYMOUS_ROOT) ||
+                 (HasFlag(NODE_IS_ANONYMOUS) &&
+                  HasFlag(NODE_IS_IN_ANONYMOUS_SUBTREE)),
+                 "Some flags seem to be missing!");
+    return HasFlag(NODE_IS_NATIVE_ANONYMOUS_ROOT);
   }
 
   /**
@@ -157,7 +161,8 @@ public:
    */
   void SetNativeAnonymous()
   {
-    SetFlags(NODE_IS_ANONYMOUS);
+    SetFlags(NODE_IS_ANONYMOUS | NODE_IS_IN_ANONYMOUS_SUBTREE |
+             NODE_IS_NATIVE_ANONYMOUS_ROOT);
   }
 
   /**
@@ -167,26 +172,32 @@ public:
   virtual nsIContent* FindFirstNonNativeAnonymous() const;
 
   /**
-   * Returns PR_TRUE if |this| or any of its ancestors is native anonymous.
+   * Returns true if and only if this node has a parent, but is not in
+   * its parent's child list.
    */
-  PRBool IsInNativeAnonymousSubtree() const
+  PRBool IsRootOfAnonymousSubtree() const
   {
-#ifdef DEBUG
-    if (HasFlag(NODE_IS_IN_ANONYMOUS_SUBTREE)) {
-      return PR_TRUE;
-    }
-    nsIContent* content = GetBindingParent();
-    while (content) {
-      if (content->IsNativeAnonymous()) {
-        NS_ERROR("Element not marked to be in native anonymous subtree!");
-        break;
-      }
-      content = content->GetBindingParent();
-    }
-    return PR_FALSE;
-#else
-    return HasFlag(NODE_IS_IN_ANONYMOUS_SUBTREE);
-#endif
+    NS_ASSERTION(!IsRootOfNativeAnonymousSubtree() ||
+                 (GetParent() && GetBindingParent() == GetParent()),
+                 "root of native anonymous subtree must have parent equal "
+                 "to binding parent");
+    NS_ASSERTION(!GetParent() ||
+                 ((GetBindingParent() == GetParent()) ==
+                  HasFlag(NODE_IS_ANONYMOUS)),
+                 "For nodes with parent, flag and GetBindingParent() check "
+                 "should match");
+    return HasFlag(NODE_IS_ANONYMOUS);
+  }
+
+  /**
+   * Returns true if and only if there is NOT a path through child lists
+   * from the top of this node's parent chain back to this node.
+   */
+  PRBool IsInAnonymousSubtree() const
+  {
+    NS_ASSERTION(!IsInNativeAnonymousSubtree() || GetBindingParent(),
+                 "must have binding parent when in native anonymous subtree");
+    return GetBindingParent() != nsnull;
   }
 
   /**
@@ -533,18 +544,23 @@ public:
    *         IME_STATUS_PASSWORD should be returned only from password editor,
    *         this value has a special meaning. It is used as alternative of
    *         IME_STATUS_DISABLED.
+   *         IME_STATUS_PLUGIN should be returned only when plug-in has focus.
+   *         When a plug-in is focused content, we should send native events
+   *         directly. Because we don't process some native events, but they may
+   *         be needed by the plug-in.
    */
   enum {
     IME_STATUS_NONE     = 0x0000,
     IME_STATUS_ENABLE   = 0x0001,
     IME_STATUS_DISABLE  = 0x0002,
     IME_STATUS_PASSWORD = 0x0004,
-    IME_STATUS_OPEN     = 0x0008,
-    IME_STATUS_CLOSE    = 0x0010
+    IME_STATUS_PLUGIN   = 0x0008,
+    IME_STATUS_OPEN     = 0x0010,
+    IME_STATUS_CLOSE    = 0x0020
   };
   enum {
     IME_STATUS_MASK_ENABLED = IME_STATUS_ENABLE | IME_STATUS_DISABLE |
-                              IME_STATUS_PASSWORD,
+                              IME_STATUS_PASSWORD | IME_STATUS_PLUGIN,
     IME_STATUS_MASK_OPENED  = IME_STATUS_OPEN | IME_STATUS_CLOSE
   };
   virtual PRUint32 GetDesiredIMEState()
@@ -563,9 +579,12 @@ public:
   }
 
   /**
-   * Gets content node with the binding responsible for our construction (and
-   * existence).  Used by anonymous content (XBL-generated). null for all
-   * explicit content.
+   * Gets content node with the binding (or native code, possibly on the
+   * frame) responsible for our construction (and existence).  Used by
+   * anonymous content (both XBL-generated and native-anonymous).
+   *
+   * null for all explicit content (i.e., content reachable from the top
+   * of its GetParent() chain via child lists).
    *
    * @return the binding parent
    */
@@ -756,10 +775,15 @@ public:
   /**
    * Get the class list of this content node (this corresponds to the
    * value of the null-namespace attribute whose name is given by
-   * GetClassAttributeName().  This may be null if there are no
+   * GetClassAttributeName()).  This may be null if there are no
    * classes, but that's not guaranteed.
    */
-  virtual const nsAttrValue* GetClasses() const = 0;
+  const nsAttrValue* GetClasses() const {
+    if (HasFlag(NODE_MAY_HAVE_CLASS)) {
+      return DoGetClasses();
+    }
+    return nsnull;
+  }
 
   /**
    * Walk aRuleWalker over the content style rules (presentational
@@ -821,6 +845,14 @@ public:
    */
   virtual void SaveSubtreeState() = 0;
 
+private:
+  /**
+   * Hook for implementing GetClasses.  This is guaranteed to only be
+   * called if the NODE_MAY_HAVE_CLASS flag is set.
+   */
+  virtual const nsAttrValue* DoGetClasses() const = 0;
+
+public:
 #ifdef DEBUG
   /**
    * List the content (and anything it contains) out to the given
@@ -861,15 +893,6 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsIContent, NS_ICONTENT_IID)
     nsContentUtils::TraverseListenerManager(tmp, cb);     \
   }
 
-#define NS_IMPL_CYCLE_COLLECTION_TRAVERSE_PRESERVED_WRAPPER      \
-  {                                                              \
-    nsISupports *preservedWrapper = nsnull;                      \
-    if (tmp->GetOwnerDoc())                                      \
-      preservedWrapper = tmp->GetOwnerDoc()->GetReference(tmp);  \
-    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "[preserved wrapper]");\
-    cb.NoteXPCOMChild(preservedWrapper);                         \
-  }
-
 #define NS_IMPL_CYCLE_COLLECTION_TRAVERSE_USERDATA \
   if (tmp->HasProperties()) {                      \
     nsNodeUtils::TraverseUserData(tmp, cb);        \
@@ -880,10 +903,6 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsIContent, NS_ICONTENT_IID)
     nsContentUtils::RemoveListenerManager(tmp);         \
     tmp->UnsetFlags(NODE_HAS_LISTENERMANAGER);          \
   }
-
-#define NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER \
-  if (tmp->GetOwnerDoc())                                 \
-    tmp->GetOwnerDoc()->RemoveReference(tmp);
 
 #define NS_IMPL_CYCLE_COLLECTION_UNLINK_USERDATA \
   if (tmp->HasProperties()) {                    \

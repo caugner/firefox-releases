@@ -43,6 +43,8 @@
 #include "nsSVGElement.h"
 #include "nsDOMError.h"
 
+class nsIFrame;
+
 class nsSVGLength2
 {
 
@@ -64,10 +66,12 @@ public:
   void GetBaseValueString(nsAString& aValue);
   void GetAnimValueString(nsAString& aValue);
 
-  float GetBaseValue(nsSVGElement* aSVGElement)
+  float GetBaseValue(nsSVGElement* aSVGElement) const
     { return mBaseVal / GetUnitScaleFactor(aSVGElement); }
-  float GetAnimValue(nsSVGElement* aSVGElement)
+  float GetAnimValue(nsSVGElement* aSVGElement) const
     { return mAnimVal / GetUnitScaleFactor(aSVGElement); }
+  float GetAnimValue(nsIFrame* aFrame) const
+    { return mAnimVal / GetUnitScaleFactor(aFrame); }
 
   PRUint8 GetCtxType() const { return mCtxType; }
   PRUint8 GetSpecifiedUnitType() const { return mSpecifiedUnitType; }
@@ -76,9 +80,9 @@ public:
   float GetAnimValInSpecifiedUnits() const { return mAnimVal; }
   float GetBaseValInSpecifiedUnits() const { return mBaseVal; }
 
-  float GetBaseValue(nsSVGSVGElement* aCtx)
+  float GetBaseValue(nsSVGSVGElement* aCtx) const
     { return mBaseVal / GetUnitScaleFactor(aCtx); }
-  float GetAnimValue(nsSVGSVGElement* aCtx)
+  float GetAnimValue(nsSVGSVGElement* aCtx) const
     { return mAnimVal / GetUnitScaleFactor(aCtx); }
   
   nsresult ToDOMAnimatedLength(nsIDOMSVGAnimatedLength **aResult,
@@ -93,6 +97,14 @@ private:
   PRUint8 mCtxType; // X, Y or Unspecified
   PRPackedBool mIsAnimated;
   
+  float GetMMPerPixel(nsIFrame *aNonSVGFrame) const;
+  float GetAxisLength(nsIFrame *aNonSVGFrame) const;
+  float GetEmLength(nsIFrame *aFrame) const
+    { return nsSVGUtils::GetFontSize(aFrame); }
+  float GetExLength(nsIFrame *aFrame) const
+    { return nsSVGUtils::GetFontXHeight(aFrame); }
+  float GetUnitScaleFactor(nsIFrame *aFrame) const;
+
   float GetMMPerPixel(nsSVGSVGElement *aCtx) const;
   float GetAxisLength(nsSVGSVGElement *aCtx) const;
   float GetEmLength(nsSVGElement *aSVGElement) const
@@ -111,7 +123,8 @@ private:
 
   struct DOMBaseVal : public nsIDOMSVGLength
   {
-    NS_DECL_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTION_CLASS(DOMBaseVal)
 
     DOMBaseVal(nsSVGLength2* aVal, nsSVGElement *aSVGElement)
       : mVal(aVal), mSVGElement(aSVGElement) {}
@@ -125,13 +138,20 @@ private:
     NS_IMETHOD GetValue(float* aResult)
       { *aResult = mVal->GetBaseValue(mSVGElement); return NS_OK; }
     NS_IMETHOD SetValue(float aValue)
-      { mVal->SetBaseValue(aValue, mSVGElement); return NS_OK; }
+      {
+        NS_ENSURE_FINITE(aValue, NS_ERROR_ILLEGAL_VALUE);
+        mVal->SetBaseValue(aValue, mSVGElement);
+        return NS_OK;
+      }
 
     NS_IMETHOD GetValueInSpecifiedUnits(float* aResult)
       { *aResult = mVal->mBaseVal; return NS_OK; }
     NS_IMETHOD SetValueInSpecifiedUnits(float aValue)
-      { mVal->SetBaseValueInSpecifiedUnits(aValue, mSVGElement);
-        return NS_OK; }
+      {
+        NS_ENSURE_FINITE(aValue, NS_ERROR_ILLEGAL_VALUE);
+        mVal->SetBaseValueInSpecifiedUnits(aValue, mSVGElement);
+        return NS_OK;
+      }
 
     NS_IMETHOD SetValueAsString(const nsAString& aValue)
       { return mVal->SetBaseValueString(aValue, mSVGElement, PR_TRUE); }
@@ -140,7 +160,9 @@ private:
 
     NS_IMETHOD NewValueSpecifiedUnits(PRUint16 unitType,
                                       float valueInSpecifiedUnits)
-      { mVal->NewValueSpecifiedUnits(unitType, valueInSpecifiedUnits,
+      {
+        NS_ENSURE_FINITE(valueInSpecifiedUnits, NS_ERROR_ILLEGAL_VALUE);
+        mVal->NewValueSpecifiedUnits(unitType, valueInSpecifiedUnits,
                                      mSVGElement);
         return NS_OK; }
 
@@ -150,7 +172,8 @@ private:
 
   struct DOMAnimVal : public nsIDOMSVGLength
   {
-    NS_DECL_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTION_CLASS(DOMAnimVal)
 
     DOMAnimVal(nsSVGLength2* aVal, nsSVGElement *aSVGElement)
       : mVal(aVal), mSVGElement(aSVGElement) {}
@@ -186,7 +209,8 @@ private:
 
   struct DOMAnimatedLength : public nsIDOMSVGAnimatedLength
   {
-    NS_DECL_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTION_CLASS(DOMAnimatedLength)
 
     DOMAnimatedLength(nsSVGLength2* aVal, nsSVGElement *aSVGElement)
       : mVal(aVal), mSVGElement(aSVGElement) {}

@@ -82,6 +82,8 @@ private:
 	IMETextTxn();
 
 public:
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(IMETextTxn, EditTxn)
+
   NS_DECL_EDITTXN
 
   NS_IMETHOD Merge(nsITransaction *aTransaction, PRBool *aDidMerge);
@@ -120,9 +122,6 @@ protected:
   PRBool	mFixed;
 
   friend class TransactionFactory;
-
-  friend class nsDerivedSafe<IMETextTxn>; // work around for a compiler bug
-
 };
 
 #endif

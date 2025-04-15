@@ -78,16 +78,15 @@ function run_test()
         timer.init(observer, 0, Ci.nsITimer.TYPE_ONE_SHOT);
       }
 
-      if (Ci.nsIDownloadManager.DOWNLOAD_FINISHED == aDownload.state) {
-        httpserv.stop();
+      if (Ci.nsIDownloadManager.DOWNLOAD_FINISHED == aDownload.state)
         do_test_finished();
-      }
     },
     onStateChange: function(a, b, c, d, e) { },
     onProgressChange: function(a, b, c, d, e, f, g) { },
     onSecurityChange: function(a, b, c, d) { }
   };
   dm.addListener(listener);
+  dm.addListener(getDownloadListener());
 
   var os = Cc["@mozilla.org/observer-service;1"].
            getService(Ci.nsIObserverService);

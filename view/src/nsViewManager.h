@@ -123,6 +123,7 @@ public:
 
   NS_IMETHOD  GetWindowDimensions(nscoord *width, nscoord *height);
   NS_IMETHOD  SetWindowDimensions(nscoord width, nscoord height);
+  NS_IMETHOD  FlushDelayedResize();
 
   NS_IMETHOD  Composite(void);
 
@@ -286,8 +287,9 @@ private:
   void UpdateWidgetsForView(nsView* aView);
 
   /**
-   * Transforms a rectangle from specified view's coordinate system to
-   * the first parent that has an attached widget.
+   * Transforms a rectangle from aView's coordinate system to the coordinate
+   * system of the widget attached to aWidgetView, which should be an ancestor
+   * of aView.
    */
   void ViewToWidget(nsView *aView, nsView* aWidgetView, nsRect &aRect) const;
 
@@ -316,7 +318,8 @@ private:
     nsRect oldDim;
     nsRect newDim(0, 0, aWidth, aHeight);
     mRootView->GetDimensions(oldDim);
-    if (oldDim != newDim) {
+    // We care about resizes even when one dimension is already zero.
+    if (!oldDim.IsExactEqual(newDim)) {
       // Don't resize the widget. It is already being set elsewhere.
       mRootView->SetDimensions(newDim, PR_TRUE, PR_FALSE);
       if (mObserver)
@@ -394,7 +397,8 @@ public: // NOT in nsIViewManager, so private to the view module
   nsresult WillBitBlit(nsView* aView, nsPoint aScrollAmount);
   
   /**
-   * Called to inform the view manager that a view has scrolled.
+   * Called to inform the view manager that a view has scrolled via a
+   * bitblit.
    * The view manager will invalidate any widgets which may need
    * to be rerendered.
    * @param aView view to paint. should be the nsScrollPortView that
@@ -411,11 +415,6 @@ public: // NOT in nsIViewManager, so private to the view module
   PRBool CanScrollWithBitBlt(nsView* aView, nsPoint aDelta, nsRegion* aUpdateRegion);
 
   nsresult CreateRegion(nsIRegion* *result);
-
-  // return the sum of all view offsets from aView right up to the
-  // root of this view hierarchy (the view with no parent, which might
-  // not be in this view manager).
-  static nsPoint ComputeViewOffset(const nsView *aView);
 
   PRBool IsRefreshEnabled() { return RootViewManager()->mRefreshEnabled; }
 

@@ -54,12 +54,12 @@ protected:
 public:
   // nsSVGClipPathFrame methods:
   nsresult ClipPaint(nsSVGRenderState* aContext,
-                     nsISVGChildFrame* aParent,
+                     nsIFrame* aParent,
                      nsIDOMSVGMatrix *aMatrix);
 
-  PRBool ClipHitTest(nsISVGChildFrame* aParent,
+  PRBool ClipHitTest(nsIFrame* aParent,
                      nsIDOMSVGMatrix *aMatrix,
-                     float aX, float aY);
+                     const nsPoint &aPoint);
 
   // Check if this clipPath is made up of more than one geometry object.
   // If so, the clipping API in cairo isn't enough and we need to use
@@ -100,17 +100,13 @@ public:
     nsSVGClipPathFrame *mFrame;
   };
 
-  nsISVGChildFrame *mClipParent;
+  nsIFrame *mClipParent;
   nsCOMPtr<nsIDOMSVGMatrix> mClipParentMatrix;
+  // recursion prevention flag
+  PRPackedBool mInUse;
 
   // nsSVGContainerFrame methods:
   virtual already_AddRefed<nsIDOMSVGMatrix> GetCanvasTM();
-
-  // recursion prevention flag
-  PRPackedBool mInUse;
 };
-
-nsIContent *
-NS_GetSVGClipPathElement(nsIURI *aURI, nsIContent *aContent);
 
 #endif

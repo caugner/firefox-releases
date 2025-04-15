@@ -27,6 +27,7 @@
 #   Josh Aas <josh@mozilla.com>
 #   Shawn Wilsher <me@shawnwilsher.com> (v3.0)
 #   Edward Lee <edward.lee@engineering.uiuc.edu>
+#   Ehsan Akhgari <ehsan.akhgari@gmail.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
 # either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -115,19 +116,7 @@ let gStr = {
 };
 
 // The statement to query for downloads that are active or match the search
-let gStmt = gDownloadManager.DBConnection.createStatement(
-  "SELECT id, target, name, source, state, startTime, endTime, referrer, " +
-         "currBytes, maxBytes, state IN (?1, ?2, ?3, ?4, ?5) isActive " +
-  "FROM moz_downloads " +
-  "ORDER BY isActive DESC, endTime DESC, startTime DESC");
-
-////////////////////////////////////////////////////////////////////////////////
-//// Utility Functions
-
-function getDownload(aID)
-{
-  return document.getElementById("dl" + aID);
-}
+let gStmt = null;
 
 ////////////////////////////////////////////////////////////////////////////////
 //// Start/Stop Observers
@@ -156,10 +145,8 @@ function downloadCompleted(aDownload)
       while (next && next.inProgress)
         next = next.nextSibling;
 
-      // Move the item and color everything after where it moved from
-      let fixup = dl.nextSibling;
+      // Move the item
       gDownloadsView.insertBefore(dl, next);
-      stripeifyList(fixup);
     } else {
       removeFromView(dl);
     }
@@ -286,7 +273,7 @@ function showDownload(aDownload)
 function onDownloadDblClick(aEvent)
 {
   // Only do the default action for double primary clicks
-  if (aEvent.button == 0)
+  if (aEvent.button == 0 && aEvent.target.selected)
     doDefaultForSelected();
 }
 
@@ -300,6 +287,17 @@ function openDownload(aDownload)
     try {
       dontAsk = !pref.getBoolPref(PREF_BDM_ALERTONEXEOPEN);
     } catch (e) { }
+
+#ifdef XP_WIN
+    // On Vista and above, we rely on native security prompting for
+    // downloaded content.
+    try {
+        var sysInfo = Cc["@mozilla.org/system-info;1"].
+                      getService(Ci.nsIPropertyBag2);
+        if (parseFloat(sysInfo.getProperty("version")) >= 6)
+          dontAsk = true;
+    } catch (ex) { }
+#endif
 
     if (!dontAsk) {
       var strings = document.getElementById("downloadStrings");
@@ -441,6 +439,7 @@ function Startup()
       gStr[name] = typeof value == "string" ? getStr(value) : value.map(getStr);
   }
 
+  initStatement();
   buildDownloadList(true);
 
   // The DownloadProgressListener (DownloadProgressListener.js) handles progress
@@ -461,19 +460,16 @@ function Startup()
   let obs = Cc["@mozilla.org/observer-service;1"].
             getService(Ci.nsIObserverService);
   obs.addObserver(gDownloadObserver, "download-manager-remove-download", false);
+  obs.addObserver(gDownloadObserver, "private-browsing", false);
 
   // Clear the search box and move focus to the list on escape from the box
   gSearchBox.addEventListener("keypress", function(e) {
     if (e.keyCode == e.DOM_VK_ESCAPE) {
-      // Clear the input as if the user did it
-      gSearchBox.value = "";
-      gSearchBox.doCommand();
-
       // Move focus to the list instead of closing the window
       gDownloadsView.focus();
       e.preventDefault();
     }
-  }, true);
+  }, false);
 }
 
 function Shutdown()
@@ -482,6 +478,7 @@ function Shutdown()
 
   let obs = Cc["@mozilla.org/observer-service;1"].
             getService(Ci.nsIObserverService);
+  obs.removeObserver(gDownloadObserver, "private-browsing");
   obs.removeObserver(gDownloadObserver, "download-manager-remove-download");
 
   clearTimeout(gBuilder);
@@ -493,7 +490,7 @@ let gDownloadObserver = {
   observe: function gdo_observe(aSubject, aTopic, aData) {
     switch (aTopic) {
       case "download-manager-remove-download":
-        // A null subject here indicates "remove all"
+        // A null subject here indicates "remove multiple", so we just rebuild.
         if (!aSubject) {
           // Rebuild the default view
           buildDownloadList(true);
@@ -504,6 +501,27 @@ let gDownloadObserver = {
         let id = aSubject.QueryInterface(Ci.nsISupportsPRUint32);
         let dl = getDownload(id.data);
         removeFromView(dl);
+        break;
+      case "private-browsing":
+        if (aData == "enter" || aData == "exit") {
+          // We need to reset the title here, because otherwise the title of
+          // the download manager would still reflect the progress of current
+          // active downloads, if any, after switching the private browsing
+          // mode, even though the downloads will no longer be accessible.
+          // If any download is auto-started after switching the private
+          // browsing mode, the title will be updated as needed by the progress
+          // listener.
+          document.title = document.documentElement.getAttribute("statictitle");
+
+          // We might get this notification before the download manager
+          // service, so the new database connection might not be ready
+          // yet.  Defer this until all private-browsing notifications
+          // have been processed.
+          setTimeout(function() {
+            initStatement();
+            buildDownloadList(true);
+          }, 0);
+        }
         break;
     }
   }
@@ -1082,9 +1100,6 @@ function removeFromView(aDownload)
   gDownloadsView.removeChild(aDownload);
   gDownloadsView.selectedIndex = Math.min(index, gDownloadsView.itemCount - 1);
 
-  // Color everything after from the newly selected item
-  stripeifyList(gDownloadsView.selectedItem);
-
   // We might have removed the last item, so update the clear list button
   updateClearListButton();
 }
@@ -1200,9 +1215,8 @@ function stepListBuilder(aNumItems) {
     // Make the item and add it to the end if it's active or matches the search
     let item = createDownloadItem(attrs);
     if (item && (isActive || downloadMatchesSearch(item))) {
-      // Add item to the end and color just that one item
+      // Add item to the end
       gDownloadsView.appendChild(item);
-      stripeifyList(item);
     
       // Because of the joys of XBL, we can't update the buttons until the
       // download object is in the document.
@@ -1253,9 +1267,8 @@ function prependList(aDownload)
   // Make the item and add it to the beginning
   let item = createDownloadItem(attrs);
   if (item) {
-    // Add item to the beginning and color the whole list
+    // Add item to the beginning
     gDownloadsView.insertBefore(item, gDownloadsView.firstChild);
-    stripeifyList(item);
     
     // Because of the joys of XBL, we can't update the buttons until the
     // download object is in the document.
@@ -1289,27 +1302,6 @@ function downloadMatchesSearch(aItem)
       return false;
 
   return true;
-}
-
-/**
- * Stripeify the download list by setting or clearing the "alternate" attribute
- * on items starting from a particular item and continuing to the end.
- *
- * @param aItem
- *        Download rishlist item to start stripeifying
- */
-function stripeifyList(aItem)
-{
-  let alt = "alternate";
-  // Set the item to be opposite of the other
-  let flipFrom = function(aOther) aOther && aOther.hasAttribute(alt) ?
-    aItem.removeAttribute(alt) : aItem.setAttribute(alt, "true");
-
-  // Keep coloring items as the opposite of its previous until no more
-  while (aItem) {
-    flipFrom(aItem.previousSibling);
-    aItem = aItem.nextSibling;
-  }
 }
 
 // we should be using real URLs all the time, but until
@@ -1346,4 +1338,28 @@ function updateClearListButton()
   let button = document.getElementById("clearListButton");
   // The button is enabled if we have items in the list and we can clean up
   button.disabled = !(gDownloadsView.itemCount && gDownloadManager.canCleanUp);
+}
+
+function getDownload(aID)
+{
+  return document.getElementById("dl" + aID);
+}
+
+/**
+ * Initialize the statement which is used to retrieve the list of downloads.
+ *
+ * This function gets called both at startup, and when entering the private
+ * browsing mode (because the database connection is changed when entering
+ * the private browsing mode, and a new statement should be initialized.
+ */
+function initStatement()
+{
+  if (gStmt)
+    gStmt.finalize();
+
+  gStmt = gDownloadManager.DBConnection.createStatement(
+    "SELECT id, target, name, source, state, startTime, endTime, referrer, " +
+           "currBytes, maxBytes, state IN (?1, ?2, ?3, ?4, ?5) isActive " +
+    "FROM moz_downloads " +
+    "ORDER BY isActive DESC, endTime DESC, startTime DESC");
 }

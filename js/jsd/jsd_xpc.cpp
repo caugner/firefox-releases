@@ -108,7 +108,7 @@
 #define JSD_AUTOREG_ENTRY "JSDebugger Startup Observer"
 #define JSD_STARTUP_ENTRY "JSDebugger Startup Observer"
 
-JS_STATIC_DLL_CALLBACK (JSBool)
+static JSBool
 jsds_GCCallbackProc (JSContext *cx, JSGCStatus status);
 
 /*******************************************************************************
@@ -417,7 +417,7 @@ jsds_FilterHook (JSDContext *jsdc, JSDThreadState *state)
                  currentFilter->endLine >= currentLine)) {
                 /* then we're going to have to compare the url. */
                 if (currentFilter->patternType == ptIgnore)
-                    return flags & jsdIFilter::FLAG_PASS;
+                    return !!(flags & jsdIFilter::FLAG_PASS);
 
                 if (!len)
                     len = PL_strlen(url);
@@ -426,22 +426,22 @@ jsds_FilterHook (JSDContext *jsdc, JSDThreadState *state)
                     switch (currentFilter->patternType) {
                         case ptEquals:
                             if (!PL_strcmp(currentFilter->urlPattern, url))
-                                return flags & jsdIFilter::FLAG_PASS;
+                                return !!(flags & jsdIFilter::FLAG_PASS);
                             break;
                         case ptStartsWith:
                             if (!PL_strncmp(currentFilter->urlPattern, url, 
                                            currentFilter->patternLength))
-                                return flags & jsdIFilter::FLAG_PASS;
+                                return !!(flags & jsdIFilter::FLAG_PASS);
                             break;
                         case ptEndsWith:
                             if (!PL_strcmp(currentFilter->urlPattern,
                                            &url[len - 
                                                currentFilter->patternLength]))
-                                return flags & jsdIFilter::FLAG_PASS;
+                                return !!(flags & jsdIFilter::FLAG_PASS);
                             break;
                         case ptContains:
                             if (PL_strstr(url, currentFilter->urlPattern))
-                                return flags & jsdIFilter::FLAG_PASS;
+                                return !!(flags & jsdIFilter::FLAG_PASS);
                             break;
                         default:
                             NS_ASSERTION(0, "Invalid pattern type");
@@ -461,7 +461,7 @@ jsds_FilterHook (JSDContext *jsdc, JSDThreadState *state)
  * c callbacks
  *******************************************************************************/
 
-JS_STATIC_DLL_CALLBACK (void)
+static void
 jsds_NotifyPendingDeadScripts (JSContext *cx)
 {
 #ifdef CAUTIOUS_SCRIPTHOOK
@@ -513,7 +513,7 @@ jsds_NotifyPendingDeadScripts (JSContext *cx)
     }
 }
 
-JS_STATIC_DLL_CALLBACK (JSBool)
+static JSBool
 jsds_GCCallbackProc (JSContext *cx, JSGCStatus status)
 {
 #ifdef DEBUG_verbose
@@ -533,7 +533,7 @@ jsds_GCCallbackProc (JSContext *cx, JSGCStatus status)
     return JS_TRUE;
 }
 
-JS_STATIC_DLL_CALLBACK (uintN)
+static uintN
 jsds_ErrorHookProc (JSDContext *jsdc, JSContext *cx, const char *message,
                     JSErrorReport *report, void *callerdata)
 {
@@ -590,7 +590,7 @@ jsds_ErrorHookProc (JSDContext *jsdc, JSContext *cx, const char *message,
     return JSD_ERROR_REPORTER_PASS_ALONG;
 }
 
-JS_STATIC_DLL_CALLBACK (JSBool)
+static JSBool
 jsds_CallHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
                    uintN type, void* callerdata)
 {
@@ -630,7 +630,7 @@ jsds_CallHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
     return JS_TRUE;
 }
 
-JS_STATIC_DLL_CALLBACK (PRUint32)
+static PRUint32
 jsds_ExecutionHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
                         uintN type, void* callerdata, jsval* rval)
 {
@@ -706,7 +706,7 @@ jsds_ExecutionHookProc (JSDContext* jsdc, JSDThreadState* jsdthreadstate,
     return hook_rv;
 }
 
-JS_STATIC_DLL_CALLBACK (void)
+static void
 jsds_ScriptHookProc (JSDContext* jsdc, JSDScript* jsdscript, JSBool creating,
                      void* callerdata)
 {
@@ -715,10 +715,10 @@ jsds_ScriptHookProc (JSDContext* jsdc, JSDScript* jsdscript, JSBool creating,
     JSRuntime *rt = JS_GetRuntime(cx);
 #endif
 
-    nsCOMPtr<jsdIScriptHook> hook;
-    gJsds->GetScriptHook (getter_AddRefs(hook));
-    
     if (creating) {
+        nsCOMPtr<jsdIScriptHook> hook;
+        gJsds->GetScriptHook(getter_AddRefs(hook));
+
         /* a script is being created */
         if (!hook) {
             /* nobody cares, just exit */
@@ -744,12 +744,15 @@ jsds_ScriptHookProc (JSDContext* jsdc, JSDScript* jsdscript, JSBool creating,
             static_cast<jsdIScript *>(JSD_GetScriptPrivate(jsdscript));
         if (!jsdis)
             return;
-        
+
         jsdis->Invalidate();
-        if (!hook)
-            return;
-        
+
         if (gGCStatus == JSGC_END) {
+            nsCOMPtr<jsdIScriptHook> hook;
+            gJsds->GetScriptHook(getter_AddRefs(hook));
+            if (!hook)
+                return;
+
             /* if GC *isn't* running, we can tell the user about the script
              * delete now. */
 #ifdef CAUTIOUS_SCRIPTHOOK
@@ -1467,12 +1470,9 @@ NS_IMPL_THREADSAFE_ISUPPORTS2(jsdContext, jsdIContext, jsdIEphemeral)
 jsdIContext *
 jsdContext::FromPtr (JSDContext *aJSDCx, JSContext *aJSCx)
 {
-    if (!aJSDCx || !aJSCx ||
-        !(JS_GetOptions(aJSCx) & JSOPTION_PRIVATE_IS_NSISUPPORTS))
-    {
+    if (!aJSDCx || !aJSCx)
         return nsnull;
-    }
-    
+
     nsCOMPtr<jsdIContext> jsdicx;
     nsCOMPtr<jsdIEphemeral> eph = 
         jsds_FindEphemeral (&gLiveContexts, static_cast<void *>(aJSCx));
@@ -1482,17 +1482,15 @@ jsdContext::FromPtr (JSDContext *aJSDCx, JSContext *aJSCx)
     }
     else
     {
-        nsCOMPtr<nsISupports> iscx = 
-            static_cast<nsISupports *>(JS_GetContextPrivate(aJSCx));
-        if (!iscx)
-            return nsnull;
-        
+        nsCOMPtr<nsISupports> iscx;
+        if (JS_GetOptions(aJSCx) & JSOPTION_PRIVATE_IS_NSISUPPORTS)
+            iscx = static_cast<nsISupports *>(JS_GetContextPrivate(aJSCx));
         jsdicx = new jsdContext (aJSDCx, aJSCx, iscx);
     }
 
-    jsdIContext *rv = jsdicx;
-    NS_IF_ADDREF(rv);
-    return rv;
+    jsdIContext *ctx = nsnull;
+    jsdicx.swap(ctx);
+    return ctx;
 }
 
 jsdContext::jsdContext (JSDContext *aJSDCx, JSContext *aJSCx,
@@ -1592,8 +1590,7 @@ NS_IMETHODIMP
 jsdContext::GetWrappedContext(nsISupports **_rval)
 {
     ASSERT_VALID_EPHEMERAL;
-    *_rval = mISCx;
-    NS_IF_ADDREF(*_rval);
+    NS_IF_ADDREF(*_rval = mISCx);
     return NS_OK;
 }
 
@@ -1643,6 +1640,11 @@ NS_IMETHODIMP
 jsdContext::GetScriptsEnabled (PRBool *_rval)
 {
     ASSERT_VALID_EPHEMERAL;
+    if (!mISCx) {
+        *_rval = PR_TRUE;
+        return NS_OK;
+    }
+
     nsCOMPtr<nsIScriptContext> context = do_QueryInterface(mISCx);
     if (!context)
         return NS_ERROR_NO_INTERFACE;
@@ -1656,6 +1658,12 @@ NS_IMETHODIMP
 jsdContext::SetScriptsEnabled (PRBool _rval)
 {
     ASSERT_VALID_EPHEMERAL;
+    if (!mISCx) {
+        if (_rval)
+            return NS_OK;
+        return NS_ERROR_NO_INTERFACE;
+    }
+
     nsCOMPtr<nsIScriptContext> context = do_QueryInterface(mISCx);
     if (!context)
         return NS_ERROR_NO_INTERFACE;

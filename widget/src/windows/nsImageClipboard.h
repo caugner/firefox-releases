@@ -22,6 +22,8 @@
  * Contributor(s):
  *   Mike Pinkerton <pinkerton@netscape.com>
  *   Gus Verdun <gustavoverdun@aol.com>
+ *   Kathleen Brade <brade@comcast.net>
+ *   Mark Smith <mcs@pearlcrescent.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -36,8 +38,6 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-
-#ifndef WINCE
 
 /* Things To Do 11/8/00
 
@@ -111,7 +111,7 @@ public:
   ~nsImageFromClipboard ( ) ;
   
     // Retrieve the newly created image
-  nsresult GetEncodedImageStream (unsigned char * aClipboardData, nsIInputStream** outImage);
+  nsresult GetEncodedImageStream (unsigned char * aClipboardData, const char * aMIMEFormat, nsIInputStream** outImage);
 
 private:
 
@@ -121,5 +121,3 @@ private:
   void CalcBitShift(bitFields * aColorMask);
 
 }; // nsImageFromClipboard
-
-#endif //WINCE

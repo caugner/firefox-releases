@@ -64,17 +64,6 @@ nsTableRowGroupFrame::~nsTableRowGroupFrame()
 {
 }
 
-/* ----------- nsTableRowGroupFrame ---------- */
-nsrefcnt nsTableRowGroupFrame::AddRef(void)
-{
-  return 1;//implementation of nsLineIterator
-}
-
-nsrefcnt nsTableRowGroupFrame::Release(void)
-{
-  return 1;//implementation of nsLineIterator
-}
-
 NS_IMETHODIMP
 nsTableRowGroupFrame::QueryInterface(const nsIID& aIID, void** aInstancePtr)
 {
@@ -83,14 +72,6 @@ nsTableRowGroupFrame::QueryInterface(const nsIID& aIID, void** aInstancePtr)
   static NS_DEFINE_IID(kITableRowGroupIID, NS_ITABLEROWGROUPFRAME_IID);
   if (aIID.Equals(kITableRowGroupIID)) {
     *aInstancePtr = (void*)this;
-    return NS_OK;
-  }
-  if (aIID.Equals(NS_GET_IID(nsILineIteratorNavigator))) {
-    *aInstancePtr = static_cast<nsILineIteratorNavigator*>(this);
-    return NS_OK;
-  }
-  if (aIID.Equals(NS_GET_IID(nsILineIterator))) {
-    *aInstancePtr = static_cast<nsILineIterator*>(this);
     return NS_OK;
   }
 
@@ -287,7 +268,7 @@ nsTableRowGroupFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
   if (!IsVisibleInSelection(aBuilder))
     return NS_OK;
 
-  PRBool isRoot = aBuilder->IsAtRootOfPseudoStackingContext();
+  PRBool isRoot = aBuilder->IsAtRootOfPseudoStackingContext() || IsScrolled();
   nsDisplayTableItem* item = nsnull;
   if (isRoot) {
     // This background is created regardless of whether this frame is
@@ -464,7 +445,10 @@ nsTableRowGroupFrame::ReflowChildren(nsPresContext*         aPresContext,
           // Inform the row of its new height.
           ((nsTableRowFrame*)kidFrame)->DidResize();
           // the overflow area may have changed inflate the overflow area
-          if (aReflowState.tableFrame->IsAutoHeight()) {
+          const nsStylePosition *stylePos = GetStylePosition();
+          nsStyleUnit unit = stylePos->mHeight.GetUnit();
+          if (aReflowState.tableFrame->IsAutoHeight() &&
+              unit != eStyleUnit_Coord) {
             // Because other cells in the row may need to be aligned
             // differently, repaint the entire row
             nsRect kidRect(0, aReflowState.y,
@@ -924,19 +908,11 @@ nsTableRowGroupFrame::CollapseRowGroupIfNecessary(nscoord aYTotalOffset,
   return yGroupOffset;
 }
 
-// Move a child that was skipped during an incremental reflow.
-// This function is not used for paginated mode so we don't need to deal
-// with continuing frames, and it's only called if aKidFrame has no
-// cells that span into it and no cells that span across it. That way
-// we don't have to deal with rowspans
-// XXX Is it still true that it's not used for paginated mode?
+// Move a child that was skipped during a reflow.
 void
 nsTableRowGroupFrame::SlideChild(nsRowGroupReflowState& aReflowState,
                                  nsIFrame*              aKidFrame)
 {
-  NS_PRECONDITION(NS_UNCONSTRAINEDSIZE == aReflowState.reflowState.availableHeight,
-                  "we're not in galley mode");
-
   // Move the frame if we need to
   nsPoint oldPosition = aKidFrame->GetPosition();
   nsPoint newPosition = oldPosition;
@@ -1392,12 +1368,29 @@ nsTableRowGroupFrame::Reflow(nsPresContext*           aPresContext,
   // If our parent is in initial reflow, it'll handle invalidating our
   // entire overflow rect.
   if (!(GetParent()->GetStateBits() & NS_FRAME_FIRST_REFLOW)) {
-    CheckInvalidateSizeChange(aPresContext, aDesiredSize, aReflowState);
+    CheckInvalidateSizeChange(aDesiredSize);
   }
   
   FinishAndStoreOverflow(&aDesiredSize);
   NS_FRAME_SET_TRUNCATION(aStatus, aReflowState, aDesiredSize);
   return rv;
+}
+
+/* virtual */ void
+nsTableRowGroupFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
+{
+  if (!aOldStyleContext) //avoid this on init
+    return;
+     
+  nsTableFrame* tableFrame = nsTableFrame::GetTableFrame(this);
+    
+  if (tableFrame->IsBorderCollapse() &&
+      tableFrame->BCRecalcNeeded(aOldStyleContext, GetStyleContext())) {
+    nsRect damageArea(0, GetStartRowIndex(), tableFrame->GetColCount(),
+                      GetRowCount());
+    tableFrame->SetBCDamageArea(damageArea);
+  }
+  return;
 }
 
 NS_IMETHODIMP
@@ -1413,6 +1406,9 @@ nsTableRowGroupFrame::AppendFrames(nsIAtom*        aListName,
   for (nsIFrame* rowFrame = aFrameList; rowFrame;
        rowFrame = rowFrame->GetNextSibling()) {
     if (nsGkAtoms::tableRowFrame == rowFrame->GetType()) {
+      NS_ASSERTION(NS_STYLE_DISPLAY_TABLE_ROW ==
+                     rowFrame->GetStyleDisplay()->mDisplay,
+                   "wrong display type on rowframe");      
       rows.AppendElement(rowFrame);
     }
   }
@@ -1456,6 +1452,9 @@ nsTableRowGroupFrame::InsertFrames(nsIAtom*        aListName,
   for (nsIFrame* rowFrame = aFrameList; rowFrame;
        rowFrame = rowFrame->GetNextSibling()) {
     if (nsGkAtoms::tableRowFrame == rowFrame->GetType()) {
+      NS_ASSERTION(NS_STYLE_DISPLAY_TABLE_ROW ==
+                     rowFrame->GetStyleDisplay()->mDisplay,
+                   "wrong display type on rowframe");      
       rows.AppendElement(rowFrame);
       if (!gotFirstRow) {
         ((nsTableRowFrame*)rowFrame)->SetFirstInserted(PR_TRUE);
@@ -1587,20 +1586,6 @@ NS_NewTableRowGroupFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
   return new (aPresShell) nsTableRowGroupFrame(aContext);
 }
 
-NS_IMETHODIMP
-nsTableRowGroupFrame::Init(nsIContent*      aContent,
-                           nsIFrame*        aParent,
-                           nsIFrame*        aPrevInFlow)
-{
-  // Let the base class do its processing
-  nsresult rv = nsHTMLContainerFrame::Init(aContent, aParent, aPrevInFlow);
-
-  // record that children that are ignorable whitespace should be excluded 
-  mState |= NS_FRAME_EXCLUDE_IGNORABLE_WHITESPACE;
-
-  return rv;
-}
-
 #ifdef DEBUG
 NS_IMETHODIMP
 nsTableRowGroupFrame::GetFrameName(nsAString& aResult) const
@@ -1649,23 +1634,18 @@ void nsTableRowGroupFrame::SetContinuousBCBorderWidth(PRUint8     aForSide,
 }
 
 //nsILineIterator methods
-NS_IMETHODIMP
-nsTableRowGroupFrame::GetNumLines(PRInt32* aResult)
+PRInt32
+nsTableRowGroupFrame::GetNumLines()
 {
-  NS_ENSURE_ARG_POINTER(aResult);
-  *aResult = GetRowCount();
-  return NS_OK;
+  return GetRowCount();
 }
 
-NS_IMETHODIMP
-nsTableRowGroupFrame::GetDirection(PRBool* aIsRightToLeft)
+PRBool
+nsTableRowGroupFrame::GetDirection()
 {
-  NS_ENSURE_ARG_POINTER(aIsRightToLeft);
-  // rtl is table wide @see nsTableIterator
   nsTableFrame* table = nsTableFrame::GetTableFrame(this);
-  *aIsRightToLeft = (NS_STYLE_DIRECTION_RTL ==
-                     table->GetStyleVisibility()->mDirection);
-  return NS_OK;
+  return (NS_STYLE_DIRECTION_RTL ==
+          table->GetStyleVisibility()->mDirection);
 }
   
 NS_IMETHODIMP
@@ -1710,28 +1690,25 @@ nsTableRowGroupFrame::GetLine(PRInt32    aLineNumber,
   return NS_ERROR_FAILURE;
 }
   
-NS_IMETHODIMP
-nsTableRowGroupFrame::FindLineContaining(nsIFrame* aFrame, 
-                                         PRInt32*  aLineNumberResult)
+PRInt32
+nsTableRowGroupFrame::FindLineContaining(nsIFrame* aFrame)
 {
   NS_ENSURE_ARG_POINTER(aFrame);
-  NS_ENSURE_ARG_POINTER(aLineNumberResult);
   
   NS_ASSERTION((aFrame->GetType() == nsGkAtoms::tableRowFrame),
                "RowGroup contains a frame that is not a row");
 
   nsTableRowFrame* rowFrame = (nsTableRowFrame*)aFrame;
-  *aLineNumberResult = rowFrame->GetRowIndex() - GetStartRowIndex();
-
-  return NS_OK;
+  return rowFrame->GetRowIndex() - GetStartRowIndex();
 }
 
-NS_IMETHODIMP
-nsTableRowGroupFrame::FindLineAt(nscoord  aY, 
-                                 PRInt32* aLineNumberResult)
+PRInt32
+nsTableRowGroupFrame::FindLineAt(nscoord  aY)
 {
+  NS_NOTREACHED("Not implemented");
   return NS_ERROR_NOT_IMPLEMENTED;
 }
+
 #ifdef IBMBIDI
 NS_IMETHODIMP
 nsTableRowGroupFrame::CheckLineOrder(PRInt32                  aLine,

@@ -65,7 +65,7 @@ nsTableCaptionFrame::nsTableCaptionFrame(nsStyleContext* aContext):
   nsBlockFrame(aContext)
 {
   // shrink wrap 
-  SetFlags(NS_BLOCK_SPACE_MGR);
+  SetFlags(NS_BLOCK_FLOAT_MGR);
 }
 
 nsTableCaptionFrame::~nsTableCaptionFrame()
@@ -218,20 +218,6 @@ NS_IMETHODIMP nsTableOuterFrame::GetAccessible(nsIAccessible** aAccessible)
 nsTableOuterFrame::IsContainingBlock() const
 {
   return PR_FALSE;
-}
-
-NS_IMETHODIMP
-nsTableOuterFrame::Init(
-                   nsIContent*           aContent,
-                   nsIFrame*             aParent,
-                   nsIFrame*             aPrevInFlow)
-{
-  nsresult rv = nsHTMLContainerFrame::Init(aContent, aParent, aPrevInFlow);
-  
-  // record that children that are ignorable whitespace should be excluded 
-  mState |= NS_FRAME_EXCLUDE_IGNORABLE_WHITESPACE;
-
-  return rv;
 }
 
 void
@@ -422,11 +408,12 @@ nsTableOuterFrame::BuildDisplayListForInnerTable(nsDisplayListBuilder*   aBuilde
 NS_IMETHODIMP nsTableOuterFrame::SetSelected(nsPresContext* aPresContext,
                                              nsIDOMRange *aRange,
                                              PRBool aSelected,
-                                             nsSpread aSpread)
+                                             nsSpread aSpread,
+                                             SelectionType aType)
 {
-  nsresult result = nsFrame::SetSelected(aPresContext, aRange,aSelected, aSpread);
+  nsresult result = nsFrame::SetSelected(aPresContext, aRange,aSelected, aSpread, aType);
   if (NS_SUCCEEDED(result) && mInnerTableFrame)
-    return mInnerTableFrame->SetSelected(aPresContext, aRange,aSelected, aSpread);
+    return mInnerTableFrame->SetSelected(aPresContext, aRange,aSelected, aSpread, aType);
   return result;
 }
 
@@ -1058,21 +1045,6 @@ nsTableOuterFrame::GetInnerOrigin(PRUint32         aCaptionSide,
   } break;
   }
   return NS_OK;
-}
-
-// helper method for determining if this is a nested table or not
-PRBool 
-nsTableOuterFrame::IsNested(const nsHTMLReflowState& aReflowState) const
-{
-  // Walk up the reflow state chain until we find a cell or the root
-  const nsHTMLReflowState* rs = aReflowState.parentReflowState;
-  while (rs) {
-    if (nsGkAtoms::tableFrame == rs->frame->GetType()) {
-      return PR_TRUE;
-    }
-    rs = rs->parentReflowState;
-  }
-  return PR_FALSE;
 }
 
 void

@@ -47,6 +47,8 @@
 #include "nsIXULWindow.h"
 #include "nsIBaseWindow.h"
 #include "nsIServiceManager.h"
+#include "nsMenuUtilsX.h"
+#include "nsToolkit.h"
 
 float nsCocoaUtils::MenuBarScreenHeight()
 {
@@ -191,7 +193,7 @@ void nsCocoaUtils::PrepareForNativeAppModalDialog()
 
   // Don't do anything if this is embedding. We'll assume that if there is no hidden
   // window we shouldn't do anything, and that should cover the embedding case.
-  nsIMenuBar* hiddenWindowMenuBar = MenuHelpersX::GetHiddenWindowMenuBar();
+  nsMenuBarX* hiddenWindowMenuBar = nsMenuUtilsX::GetHiddenWindowMenuBar();
   if (!hiddenWindowMenuBar)
     return;
 
@@ -212,7 +214,7 @@ void nsCocoaUtils::PrepareForNativeAppModalDialog()
   [firstMenuItem release];
   
   // Add standard edit menu
-  [newMenuBar addItem:MenuHelpersX::GetStandardEditMenuItem()];
+  [newMenuBar addItem:nsMenuUtilsX::GetStandardEditMenuItem()];
   
   // Show the new menu bar
   [NSApp setMainMenu:newMenuBar];
@@ -228,7 +230,7 @@ void nsCocoaUtils::CleanUpAfterNativeAppModalDialog()
 
   // Don't do anything if this is embedding. We'll assume that if there is no hidden
   // window we shouldn't do anything, and that should cover the embedding case.
-  nsIMenuBar* hiddenWindowMenuBar = MenuHelpersX::GetHiddenWindowMenuBar();
+  nsMenuBarX* hiddenWindowMenuBar = nsMenuUtilsX::GetHiddenWindowMenuBar();
   if (!hiddenWindowMenuBar)
     return;
 
@@ -240,3 +242,56 @@ void nsCocoaUtils::CleanUpAfterNativeAppModalDialog()
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
+
+unsigned short nsCocoaUtils::GetCocoaEventKeyCode(NSEvent *theEvent)
+{
+  unsigned short keyCode = [theEvent keyCode];
+  if (nsToolkit::OnLeopardOrLater())
+    return keyCode;
+  NSEventType type = [theEvent type];
+  // GetCocoaEventKeyCode() can get called with theEvent set to a FlagsChanged
+  // event, which triggers an NSInternalInconsistencyException when
+  // charactersIgnoringModifiers is called on it.  For some reason there's no
+  // problem calling keyCode on it (as we do above).
+  if ((type != NSKeyDown) && (type != NSKeyUp))
+    return keyCode;
+  NSString *unmodchars = [theEvent charactersIgnoringModifiers];
+  if (!keyCode && ([unmodchars length] == 1)) {
+    // An OS-X-10.4.X-specific Apple bug causes the 'theEvent' parameter of
+    // all calls to performKeyEquivalent: (whether on NSMenu, NSWindow or
+    // NSView objects) to have most of its fields zeroed on a ctrl-ESC event.
+    // These include its keyCode and modifierFlags fields, but fortunately
+    // not its characters and charactersIgnoringModifiers fields.  So if
+    // charactersIgnoringModifiers has length == 1 and corresponds to the ESC
+    // character (0x1b), we correct keyCode to 0x35 (kEscapeKeyCode).
+    if ([unmodchars characterAtIndex:0] == 0x1b)
+      keyCode = 0x35;
+  }
+  return keyCode;
+}
+
+NSUInteger nsCocoaUtils::GetCocoaEventModifierFlags(NSEvent *theEvent)
+{
+  NSUInteger modifierFlags = [theEvent modifierFlags];
+  if (nsToolkit::OnLeopardOrLater())
+    return modifierFlags;
+  NSEventType type = [theEvent type];
+  if ((type != NSKeyDown) && (type != NSKeyUp))
+    return modifierFlags;
+  NSString *unmodchars = [theEvent charactersIgnoringModifiers];
+  if (!modifierFlags && ([unmodchars length] == 1)) {
+    // An OS-X-10.4.X-specific Apple bug causes the 'theEvent' parameter of
+    // all calls to performKeyEquivalent: (whether on NSMenu, NSWindow or
+    // NSView objects) to have most of its fields zeroed on a ctrl-ESC event.
+    // These include its keyCode and modifierFlags fields, but fortunately
+    // not its characters and charactersIgnoringModifiers fields.  So if
+    // charactersIgnoringModifiers has length == 1 and corresponds to the ESC
+    // character (0x1b), we correct modifierFlags to NSControlKeyMask.  (ESC
+    // key events don't get messed up (anywhere they're sent) on opt-ESC,
+    // shift-ESC or cmd-ESC.)
+    if ([unmodchars characterAtIndex:0] == 0x1b)
+      modifierFlags = NSControlKeyMask;
+  }
+  return modifierFlags;
+}
+

@@ -44,8 +44,11 @@
  */
 #include "jsprvtd.h"
 #include "jspubtd.h"
+#include "jsobj.h"
 
 JS_BEGIN_EXTERN_C
+
+#define ARRAY_CAPACITY_MIN      7
 
 /* Generous sanity-bound on length (in elements) of array initialiser. */
 #define ARRAY_INIT_LIMIT        JS_BIT(24)
@@ -60,32 +63,75 @@ extern JSClass js_ArrayClass, js_SlowArrayClass;
 #define OBJ_IS_ARRAY(cx,obj)    (OBJ_IS_DENSE_ARRAY(cx, obj) ||               \
                                  OBJ_GET_CLASS(cx, obj) == &js_SlowArrayClass)
 
+/*
+ * Dense arrays are not native (OBJ_IS_NATIVE(cx, aobj) for a dense array aobj
+ * results in false, meaning aobj->map does not point to a JSScope).
+ *
+ * But Array methods are called via aobj.sort(), e.g., and the interpreter and
+ * the trace recorder must consult the property cache in order to perform well.
+ * The cache works only for native objects.
+ *
+ * Therefore the interpreter (js_Interpret in JSOP_GETPROP and JSOP_CALLPROP)
+ * and js_GetPropertyHelper use this inline function to skip up one link in the
+ * prototype chain when obj is a dense array, in order to find a native object
+ * (to wit, Array.prototype) in which to probe for cached methods.
+ *
+ * Note that setting aobj.__proto__ for a dense array aobj turns aobj into a
+ * slow array, avoiding the neede to skip.
+ *
+ * Callers of js_GetProtoIfDenseArray must take care to use the original object
+ * (obj) for the |this| value of a getter, setter, or method call (bug 476447).
+ */
+static JS_INLINE JSObject *
+js_GetProtoIfDenseArray(JSContext *cx, JSObject *obj)
+{
+    return OBJ_IS_DENSE_ARRAY(cx, obj) ? OBJ_GET_PROTO(cx, obj) : obj;
+}
+
 extern JSObject *
 js_InitArrayClass(JSContext *cx, JSObject *obj);
 
 extern JSObject *
-js_NewArrayObject(JSContext *cx, jsuint length, jsval *vector);
+js_NewArrayObject(JSContext *cx, jsuint length, jsval *vector,
+                  JSBool holey = JS_FALSE);
 
 /* Create an array object that starts out already made slow/sparse. */
 extern JSObject *
 js_NewSlowArrayObject(JSContext *cx);
 
+extern JSBool
+js_MakeArraySlow(JSContext *cx, JSObject *obj);
+
 #define JSSLOT_ARRAY_LENGTH            JSSLOT_PRIVATE
 #define JSSLOT_ARRAY_COUNT             (JSSLOT_ARRAY_LENGTH + 1)
-#define JSSLOT_ARRAY_LOOKUP_HOLDER     (JSSLOT_ARRAY_COUNT + 1)
+#define JSSLOT_ARRAY_UNUSED            (JSSLOT_ARRAY_COUNT + 1)
 
-#define ARRAY_DENSE_LENGTH(obj)                                                \
-    (JS_ASSERT(OBJ_IS_DENSE_ARRAY(cx, obj)),                                   \
-     (obj)->dslots ? (uint32)(obj)->dslots[-1] : 0)
+static JS_INLINE uint32
+js_DenseArrayCapacity(JSObject *obj)
+{
+    JS_ASSERT(OBJ_IS_DENSE_ARRAY(BOGUS_CX, obj));
+    return obj->dslots ? (uint32) obj->dslots[-1] : 0;
+}
+
+static JS_INLINE void
+js_SetDenseArrayCapacity(JSObject *obj, uint32 capacity)
+{
+    JS_ASSERT(OBJ_IS_DENSE_ARRAY(BOGUS_CX, obj));
+    JS_ASSERT(obj->dslots);
+    obj->dslots[-1] = (jsval) capacity;
+}
 
 extern JSBool
 js_GetLengthProperty(JSContext *cx, JSObject *obj, jsuint *lengthp);
 
 extern JSBool
-js_SetLengthProperty(JSContext *cx, JSObject *obj, jsuint length);
+js_SetLengthProperty(JSContext *cx, JSObject *obj, jsdouble length);
 
 extern JSBool
 js_HasLengthProperty(JSContext *cx, JSObject *obj, jsuint *lengthp);
+
+extern JSBool JS_FASTCALL
+js_IndexToId(JSContext *cx, jsuint index, jsid *idp);
 
 /*
  * Test whether an object is "array-like".  Currently this means whether obj
@@ -110,7 +156,7 @@ typedef JSBool (*JSComparator)(void *arg, const void *a, const void *b,
  * comparator function cmp returns an error inside a comparison, so remember
  * to check the return value of this function.
  */
-extern JSBool
+extern JS_REQUIRES_STACK JSBool
 js_MergeSort(void *vec, size_t nel, size_t elsize, JSComparator cmp,
              void *arg, void *tmp);
 
@@ -118,6 +164,74 @@ js_MergeSort(void *vec, size_t nel, size_t elsize, JSComparator cmp,
 extern JSBool
 js_ArrayInfo(JSContext *cx, JSObject *obj, uintN argc, jsval *argv, jsval *rval);
 #endif
+
+extern JSBool JS_FASTCALL
+js_ArrayCompPush(JSContext *cx, JSObject *obj, jsval v);
+
+/*
+ * Fast dense-array-to-buffer conversions.
+ *
+ * If the array is a dense array, fill [offset..offset+count] values
+ * into destination, assuming that types are consistent.  Return
+ * JS_TRUE if successful, otherwise JS_FALSE -- note that the
+ * destination buffer may be modified even if JS_FALSE is returned
+ * (e.g. due to finding an inappropriate type later on in the array).
+ * If JS_FALSE is returned, no error conditions or exceptions are set
+ * on the context.
+ *
+ * For ArrayToJSUint8, ArrayToJSUint16, and ArrayToJSUint32, each element
+ * in the array a) must be an integer; b) must be >= 0.  Integers
+ * are clamped to fit in the destination size.  Only JSVAL_IS_INT values
+ * are considered to be valid, so for JSUint32, the maximum value that
+ * can be fast-converted is less than the full unsigned 32-bit range.
+ *
+ * For ArrayToJSInt8, ArrayToJSInt16, ArrayToJSInt32, each element in
+ * the array must be an integer.  Integers are clamped to fit in the
+ * destination size.  Only JSVAL_IS_INT values are considered to be
+ * valid, so for JSInt32, the maximum value that can be
+ * fast-converted is less than the full signed 32-bit range.
+ * 
+ * For ArrayToJSDouble, each element in the array must be an
+ * integer -or- a double (JSVAL_IS_NUMBER).
+ */
+
+JS_FRIEND_API(JSBool)
+js_ArrayToJSUint8Buffer(JSContext *cx, JSObject *obj, jsuint offset, jsuint count,
+                        JSUint8 *dest);
+
+JS_FRIEND_API(JSBool)
+js_ArrayToJSUint16Buffer(JSContext *cx, JSObject *obj, jsuint offset, jsuint count,
+                         JSUint16 *dest);
+
+JS_FRIEND_API(JSBool)
+js_ArrayToJSUint32Buffer(JSContext *cx, JSObject *obj, jsuint offset, jsuint count,
+                         JSUint32 *dest);
+
+JS_FRIEND_API(JSBool)
+js_ArrayToJSInt8Buffer(JSContext *cx, JSObject *obj, jsuint offset, jsuint count,
+                       JSInt8 *dest);
+
+JS_FRIEND_API(JSBool)
+js_ArrayToJSInt16Buffer(JSContext *cx, JSObject *obj, jsuint offset, jsuint count,
+                        JSInt16 *dest);
+
+JS_FRIEND_API(JSBool)
+js_ArrayToJSInt32Buffer(JSContext *cx, JSObject *obj, jsuint offset, jsuint count,
+                        JSInt32 *dest);
+
+JS_FRIEND_API(JSBool)
+js_ArrayToJSDoubleBuffer(JSContext *cx, JSObject *obj, jsuint offset, jsuint count,
+                         jsdouble *dest);
+
+JSBool
+js_PrototypeHasIndexedProperties(JSContext *cx, JSObject *obj);
+
+/*
+ * Utility to access the value from the id returned by array_lookupProperty.
+ */
+JSBool
+js_GetDenseArrayElementValue(JSContext *cx, JSObject *obj, JSProperty *prop,
+                             jsval *vp);
 
 JS_END_EXTERN_C
 

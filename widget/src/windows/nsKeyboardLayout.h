@@ -47,7 +47,6 @@
 #define VK_OEM_MINUS            0xBD   // '-' any country
 
 
-
 //  0 - Normal
 //  1 - Shift
 //  2 - Control
@@ -73,7 +72,6 @@ enum eKeyShiftFlags
   eCapsLock = 0x08
 };
 
-#ifndef WINCE
 struct DeadKeyEntry;
 class DeadKeyTable;
 
@@ -122,12 +120,10 @@ public:
   PRUint32 GetNativeUniChars (PRUint8 aShiftState, PRUint16* aUniChars = nsnull) const;
   PRUint32 GetUniChars (PRUint8 aShiftState, PRUint16* aUniChars, PRUint8* aFinalShiftState) const;
 };
-#endif
 
 
 class KeyboardLayout
 {
-#ifndef WINCE
   struct DeadKeyTableListEntry
   {
     DeadKeyTableListEntry* next;
@@ -137,6 +133,8 @@ class KeyboardLayout
   #define NUM_OF_KEYS   50
 
   HKL mKeyboardLayout;
+  UINT mCodePage;
+  DWORD mIMEProperty;
 
   VirtualKey mVirtualKeys [NUM_OF_KEYS];
   DeadKeyTableListEntry* mDeadKeyTableListHead;
@@ -151,7 +149,7 @@ class KeyboardLayout
   static PRUint8 GetShiftState (const PBYTE aKbdState);
   static void SetShiftState (PBYTE aKbdState, PRUint8 aShiftState);
   static inline PRInt32 GetKeyIndex (PRUint8 aVirtualKey);
-  static int PR_CALLBACK CompareDeadKeyEntries (const void* aArg1, const void* aArg2, void* aData);
+  static int CompareDeadKeyEntries (const void* aArg1, const void* aArg2, void* aData);
   static PRBool AddDeadKeyEntry (PRUint16 aBaseChar, PRUint16 aCompositeChar, DeadKeyEntry* aDeadKeyArray, PRUint32 aEntries);
   PRBool EnsureDeadKeyActive (PRBool aIsActive, PRUint8 aDeadKey, const PBYTE aDeadKeyKbdState);
   PRUint32 GetDeadKeyCombinations (PRUint8 aDeadKey, const PBYTE aDeadKeyKbdState, PRUint16 aShiftStatesWithBaseChars,
@@ -159,7 +157,6 @@ class KeyboardLayout
   void DeactivateDeadKeyState ();
   const DeadKeyTable* AddDeadKeyTable (const DeadKeyEntry* aDeadKeyArray, PRUint32 aEntries);
   void ReleaseDeadKeyTables ();
-#endif
 
 public:
   KeyboardLayout ();
@@ -170,11 +167,7 @@ public:
 
   PRBool IsDeadKey () const
   {
-#ifndef WINCE
     return (mLastVirtualKeyIndex >= 0) ? mVirtualKeys [mLastVirtualKeyIndex].IsDeadKey (mLastShiftState) : PR_FALSE;
-#else
-    return PR_FALSE;
-#endif
   }
 
   void LoadLayout (HKL aLayout);
@@ -183,6 +176,10 @@ public:
   PRUint32 GetUniCharsWithShiftState(PRUint8 aVirtualKey, PRUint8 aShiftStates,
                                      PRUint16* aUniChars,
                                      PRUint32 aMaxChars) const;
+
+  HKL GetLayout() { return mKeyboardLayout; }
+  UINT GetCodePage() { return mCodePage; }
+  DWORD GetIMEProperty() { return mIMEProperty; }
 };
 
 #endif

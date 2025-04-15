@@ -107,6 +107,7 @@ public:
     }
 
     PRBool IsOffline() { return mOffline; }
+    PRBool IsLinkUp();
 
 private:
     // These shouldn't be called directly:
@@ -133,6 +134,14 @@ private:
     PRPackedBool                         mOffline;
     PRPackedBool                         mOfflineForProfileChange;
     PRPackedBool                         mManageOfflineStatus;
+
+    // Used to handle SetOffline() reentrancy.  See the comment in
+    // SetOffline() for more details.
+    PRPackedBool                         mSettingOffline;
+    PRPackedBool                         mSetOfflineValue;
+
+    PRPackedBool                         mShutdown;
+
     nsCOMPtr<nsPISocketTransportService> mSocketTransportService;
     nsCOMPtr<nsPIDNSService>             mDNSService;
     nsCOMPtr<nsIProtocolProxyService2>   mProxyService;

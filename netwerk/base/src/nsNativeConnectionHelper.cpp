@@ -37,16 +37,24 @@
  * ***** END LICENSE BLOCK ***** */
 
 #include "nsNativeConnectionHelper.h"
+#ifdef WINCE
+#include "nsAutodialWinCE.h"
+#else
 #include "nsAutodialWin.h"
+#endif
+#include "nsIOService.h"
+
 //-----------------------------------------------------------------------------
 // API typically invoked on the socket transport thread
 //-----------------------------------------------------------------------------
 
-
 PRBool
-nsNativeConnectionHelper::OnConnectionFailed(const char* hostName)
+nsNativeConnectionHelper::OnConnectionFailed(const PRUnichar* hostName)
 {
-    nsRASAutodial autodial;
+    if (gIOService->IsLinkUp())
+        return PR_FALSE;
+
+    nsAutodial autodial;
 
     if (autodial.ShouldDialOnNetworkError()) 
         return NS_SUCCEEDED(autodial.DialDefault(hostName));
@@ -57,7 +65,6 @@ nsNativeConnectionHelper::OnConnectionFailed(const char* hostName)
 PRBool
 nsNativeConnectionHelper::IsAutodialEnabled()
 {
-    nsRASAutodial autodial;
-
+    nsAutodial autodial;
     return autodial.Init() == NS_OK && autodial.ShouldDialOnNetworkError();
 }

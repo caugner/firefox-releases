@@ -56,8 +56,11 @@
 #include "nsMIMEInputStream.h"
 #include "nsSOCKSSocketProvider.h"
 #include "nsCacheService.h"
+#include "nsDiskCacheDeviceSQL.h"
 #include "nsMimeTypes.h"
 #include "nsNetStrings.h"
+#include "nsDNSPrefetch.h"
+#include "nsAboutProtocolHandler.h"
 
 #include "nsNetCID.h"
 
@@ -168,6 +171,15 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsStreamListenerTee)
 NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsCookieService, nsCookieService::GetSingleton)
 #endif
 
+
+///////////////////////////////////////////////////////////////////////////////
+#ifdef NECKO_WIFI
+
+#include "nsWifiMonitor.h"
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsWifiMonitor)
+
+#endif
+
 ///////////////////////////////////////////////////////////////////////////////
 // protocols
 ///////////////////////////////////////////////////////////////////////////////
@@ -177,6 +189,7 @@ NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsCookieService, nsCookieService::GetSi
 #include "nsAboutBlank.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsAboutProtocolHandler)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSafeAboutProtocolHandler)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsNestedAboutURI)
 
 #ifdef NECKO_PROTOCOL_about
 // about
@@ -187,7 +200,12 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsSafeAboutProtocolHandler)
 #include "nsAboutCacheEntry.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsAboutCacheEntry)
 #endif
-  
+
+#ifdef NECKO_OFFLINE_CACHE
+NS_GENERIC_FACTORY_SINGLETON_CONSTRUCTOR(nsOfflineCacheDevice, nsOfflineCacheDevice::GetInstance)
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsApplicationCacheNamespace)
+#endif
+
 #ifdef NECKO_PROTOCOL_file
 // file
 #include "nsFileProtocolHandler.h"
@@ -263,9 +281,12 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsSimpleNestedURI)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsIDNService, Init)
 
 ///////////////////////////////////////////////////////////////////////////////
-#if defined(XP_WIN) && !defined(WINCE)
+#if defined(XP_WIN)
 #include "nsNotifyAddrListener.h"
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsNotifyAddrListener, Init)
+#elif defined(MOZ_WIDGET_COCOA)
+#include "nsNetworkLinkService.h"
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsNetworkLinkService, Init)
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -589,7 +610,7 @@ CreateNewNSTXTToHTMLConvFactory(nsISupports *aOuter, REFNSIID aIID, void **aResu
 // Module implementation for the net library
 
 // Net module startup hook
-PR_STATIC_CALLBACK(nsresult) nsNetStartup(nsIModule *neckoModule)
+static nsresult nsNetStartup(nsIModule *neckoModule)
 {
     gNetStrings = new nsNetStrings();
     return gNetStrings ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
@@ -597,7 +618,7 @@ PR_STATIC_CALLBACK(nsresult) nsNetStartup(nsIModule *neckoModule)
 
 
 // Net module shutdown hook
-static void PR_CALLBACK nsNetShutdown(nsIModule *neckoModule)
+static void nsNetShutdown(nsIModule *neckoModule)
 {
     // Release the url parser that the stdurl is holding.
     nsStandardURL::ShutdownGlobalObjects();
@@ -610,10 +631,13 @@ static void PR_CALLBACK nsNetShutdown(nsIModule *neckoModule)
 #ifdef XP_MACOSX
     net_ShutdownURLHelperOSX();
 #endif
-
+    
     // Release necko strings
     delete gNetStrings;
     gNetStrings = nsnull;
+    
+    // Release DNS service reference.
+    nsDNSPrefetch::Shutdown();
 }
 
 static const nsModuleComponentInfo gNetModuleInfo[] = {
@@ -1001,6 +1025,10 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
       NS_ABOUT_MODULE_CONTRACTID_PREFIX "blank", 
       nsAboutBlank::Create
     },
+    { "Nested about: URI",
+      NS_NESTEDABOUTURI_CID,
+      nsnull,
+      nsNestedAboutURIConstructor },
 #ifdef NECKO_PROTOCOL_about
 #ifdef NS_BUILD_REFCNT_LOGGING
     { "about:bloat", 
@@ -1045,6 +1073,19 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
        nsCacheService::Create
     },
 
+#ifdef NECKO_OFFLINE_CACHE
+    {  NS_APPLICATIONCACHESERVICE_CLASSNAME,
+       NS_APPLICATIONCACHESERVICE_CID,
+       NS_APPLICATIONCACHESERVICE_CONTRACTID,
+       nsOfflineCacheDeviceConstructor
+    },
+    {  NS_APPLICATIONCACHENAMESPACE_CLASSNAME,
+       NS_APPLICATIONCACHENAMESPACE_CID,
+       NS_APPLICATIONCACHENAMESPACE_CONTRACTID,
+       nsApplicationCacheNamespaceConstructor
+    },
+#endif
+
 #ifdef NECKO_COOKIES
     { NS_COOKIEMANAGER_CLASSNAME,
       NS_COOKIEMANAGER_CID,
@@ -1056,6 +1097,15 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
       NS_COOKIESERVICE_CID,
       NS_COOKIESERVICE_CONTRACTID,
       nsCookieServiceConstructor
+    },
+#endif
+
+#ifdef NECKO_WIFI
+    {
+      NS_WIFI_MONITOR_CLASSNAME,
+      NS_WIFI_MONITOR_COMPONENT_CID,
+      NS_WIFI_MONITOR_CONTRACTID,
+      nsWifiMonitorConstructor
     },
 #endif
 
@@ -1085,11 +1135,17 @@ static const nsModuleComponentInfo gNetModuleInfo[] = {
     },
 #endif
 
-#if defined(XP_WIN) && !defined(WINCE)
+#if defined(XP_WIN)
     { NS_NETWORK_LINK_SERVICE_CLASSNAME,
       NS_NETWORK_LINK_SERVICE_CID,
       NS_NETWORK_LINK_SERVICE_CONTRACTID,
       nsNotifyAddrListenerConstructor
+    },
+#elif defined(MOZ_WIDGET_COCOA)
+    { NS_NETWORK_LINK_SERVICE_CLASSNAME,
+      NS_NETWORK_LINK_SERVICE_CID,
+      NS_NETWORK_LINK_SERVICE_CONTRACTID,
+      nsNetworkLinkServiceConstructor
     },
 #endif
 };

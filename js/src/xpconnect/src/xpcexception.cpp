@@ -151,6 +151,24 @@ nsXPCException::~nsXPCException()
     Reset();
 }
 
+PRBool
+nsXPCException::StealThrownJSVal(jsval *vp)
+{
+    if(mThrownJSVal.IsHeld())
+    {
+        *vp = mThrownJSVal.Release();
+        return PR_TRUE;
+    }
+    return PR_FALSE;
+}
+
+void
+nsXPCException::StowThrownJSVal(JSContext *cx, jsval v)
+{
+    if (mThrownJSVal.Hold(cx))
+        mThrownJSVal = v;
+}
+
 void
 nsXPCException::Reset()
 {

@@ -145,17 +145,15 @@ NS_NewHTMLOptionElement(nsINodeInfo *aNodeInfo, PRBool aFromParser)
    * if someone says "var opt = new Option();" in JavaScript, in a case like
    * that we request the nsINodeInfo from the document's nodeinfo list.
    */
-  nsresult rv;
   nsCOMPtr<nsINodeInfo> nodeInfo(aNodeInfo);
   if (!nodeInfo) {
     nsCOMPtr<nsIDocument> doc =
       do_QueryInterface(nsContentUtils::GetDocumentFromCaller());
     NS_ENSURE_TRUE(doc, nsnull);
 
-    rv = doc->NodeInfoManager()->GetNodeInfo(nsGkAtoms::option, nsnull,
-                                             kNameSpaceID_None,
-                                             getter_AddRefs(nodeInfo));
-    NS_ENSURE_SUCCESS(rv, nsnull);
+    nodeInfo = doc->NodeInfoManager()->GetNodeInfo(nsGkAtoms::option, nsnull,
+                                                   kNameSpaceID_None);
+    NS_ENSURE_TRUE(nodeInfo, nsnull);
   }
 
   return new nsHTMLOptionElement(nodeInfo);
@@ -181,13 +179,14 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLOptionElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLOptionElement
-NS_HTML_CONTENT_INTERFACE_TABLE_HEAD(nsHTMLOptionElement,
-                                     nsGenericHTMLElement)
-  NS_INTERFACE_TABLE_INHERITED4(nsHTMLOptionElement,
-                                nsIDOMHTMLOptionElement,
-                                nsIDOMNSHTMLOptionElement,
-                                nsIJSNativeInitializer,
-                                nsIOptionElement)
+NS_INTERFACE_TABLE_HEAD(nsHTMLOptionElement)
+  NS_HTML_CONTENT_INTERFACE_TABLE4(nsHTMLOptionElement,
+                                   nsIDOMHTMLOptionElement,
+                                   nsIDOMNSHTMLOptionElement,
+                                   nsIJSNativeInitializer,
+                                   nsIOptionElement)
+  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(nsHTMLOptionElement,
+                                               nsGenericHTMLElement)
 NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLOptionElement)
 
 

@@ -44,6 +44,7 @@
 
 #include "gfxQuartzFontCache.h"
 #include "gfxAtsuiFonts.h"
+#include "gfxUserFontSet.h"
 
 #include "nsIPrefBranch.h"
 #include "nsIPrefService.h"
@@ -51,19 +52,10 @@
 #include "nsServiceManagerUtils.h"
 #include "nsCRT.h"
 
-#ifdef MOZ_ENABLE_GLITZ
-#include "gfxGlitzSurface.h"
-#include "glitz-agl.h"
-#endif
-
-#include "lcms.h"
+#include "qcms.h"
 
 gfxPlatformMac::gfxPlatformMac()
 {
-#ifdef MOZ_ENABLE_GLITZ
-    if (UseGlitz())
-        glitz_agl_init();
-#endif
     mOSXVersion = 0;
     mFontAntiAliasingThreshold = ReadAntiAliasingThreshold();
 }
@@ -74,74 +66,7 @@ gfxPlatformMac::CreateOffscreenSurface(const gfxIntSize& size,
 {
     gfxASurface *newSurface = nsnull;
 
-    if (!UseGlitz()) {
-        newSurface = new gfxQuartzSurface(size, imageFormat);
-    } else {
-#ifdef MOZ_ENABLE_GLITZ
-        int bpp, glitzf;
-        switch (imageFormat) {
-            case gfxASurface::ImageFormatARGB32:
-                bpp = 32;
-                glitzf = 0; // GLITZ_STANDARD_ARGB32;
-                break;
-            case gfxASurface::ImageFormatRGB24:
-                bpp = 24;
-                glitzf = 1; // GLITZ_STANDARD_RGB24;
-                break;
-            case gfxASurface::ImageFormatA8:
-                bpp = 8;
-                glitzf = 2; // GLITZ_STANDARD_A8;
-            case gfxASurface::ImageFormatA1:
-                bpp = 1;
-                glitzf = 3; // GLITZ_STANDARD_A1;
-                break;
-            default:
-                return nsnull;
-        }
-
-        // XXX look for the right kind of format based on bpp
-        glitz_drawable_format_t templ;
-        memset(&templ, 0, sizeof(templ));
-        templ.color.red_size = 8;
-        templ.color.green_size = 8;
-        templ.color.blue_size = 8;
-        if (bpp == 32)
-            templ.color.alpha_size = 8;
-        else
-            templ.color.alpha_size = 0;
-        templ.doublebuffer = FALSE;
-        templ.samples = 1;
-
-        unsigned long mask =
-            GLITZ_FORMAT_RED_SIZE_MASK |
-            GLITZ_FORMAT_GREEN_SIZE_MASK |
-            GLITZ_FORMAT_BLUE_SIZE_MASK |
-            GLITZ_FORMAT_ALPHA_SIZE_MASK |
-            GLITZ_FORMAT_SAMPLES_MASK |
-            GLITZ_FORMAT_DOUBLEBUFFER_MASK;
-
-        glitz_drawable_format_t *gdformat =
-            glitz_agl_find_pbuffer_format(mask, &templ, 0);
-
-        glitz_drawable_t *gdraw =
-            glitz_agl_create_pbuffer_drawable(gdformat, width, height);
-
-        glitz_format_t *gformat =
-            glitz_find_standard_format(gdraw, (glitz_format_name_t) glitzf);
-
-        glitz_surface_t *gsurf =
-            glitz_surface_create(gdraw,
-                                 gformat,
-                                 width,
-                                 height,
-                                 0,
-                                 NULL);
-
-        glitz_surface_attach(gsurf, gdraw, GLITZ_DRAWABLE_BUFFER_FRONT_COLOR);
-
-        newSurface = new gfxGlitzSurface(gdraw, gsurf, PR_TRUE);
-#endif
-    }
+    newSurface = new gfxQuartzSurface(size, imageFormat);
 
     NS_IF_ADDREF(newSurface);
     return newSurface;
@@ -191,9 +116,49 @@ gfxPlatformMac::GetStandardFamilyName(const nsAString& aFontName, nsAString& aFa
 
 gfxFontGroup *
 gfxPlatformMac::CreateFontGroup(const nsAString &aFamilies,
-                                const gfxFontStyle *aStyle)
+                                const gfxFontStyle *aStyle,
+                                gfxUserFontSet *aUserFontSet)
 {
-    return new gfxAtsuiFontGroup(aFamilies, aStyle);
+    return new gfxAtsuiFontGroup(aFamilies, aStyle, aUserFontSet);
+}
+
+gfxFontEntry* 
+gfxPlatformMac::LookupLocalFont(const gfxProxyFontEntry *aProxyEntry,
+                                const nsAString& aFontName)
+{
+    return gfxQuartzFontCache::SharedFontCache()->LookupLocalFont(aProxyEntry, 
+                                                                  aFontName);
+}
+
+gfxFontEntry* 
+gfxPlatformMac::MakePlatformFont(const gfxProxyFontEntry *aProxyEntry,
+                                 nsISupports *aLoader,
+                                 const PRUint8 *aFontData, PRUint32 aLength)
+{
+    return gfxQuartzFontCache::SharedFontCache()->MakePlatformFont(aProxyEntry, aFontData, aLength);
+}
+
+PRBool
+gfxPlatformMac::IsFontFormatSupported(nsIURI *aFontURI, PRUint32 aFormatFlags)
+{
+    // check for strange format flags
+    NS_ASSERTION(!(aFormatFlags & gfxUserFontSet::FLAG_FORMAT_NOT_USED),
+                 "strange font format hint set");
+
+    // accept supported formats
+    if (aFormatFlags & (gfxUserFontSet::FLAG_FORMAT_OPENTYPE | 
+                        gfxUserFontSet::FLAG_FORMAT_TRUETYPE | 
+                        gfxUserFontSet::FLAG_FORMAT_TRUETYPE_AAT)) {
+        return PR_TRUE;
+    }
+
+    // reject all other formats, known and unknown
+    if (aFormatFlags != 0) {
+        return PR_FALSE;
+    }
+
+    // no format hint set, need to look at data
+    return PR_TRUE;
 }
 
 nsresult
@@ -371,7 +336,7 @@ gfxPlatformMac::ReadAntiAliasingThreshold()
     return threshold;
 }
 
-cmsHPROFILE
+qcms_profile *
 gfxPlatformMac::GetPlatformCMSOutputProfile()
 {
     CMProfileLocation device;
@@ -382,14 +347,14 @@ gfxPlatformMac::GetPlatformCMSOutputProfile()
     if (err != noErr)
         return nsnull;
 
-    cmsHPROFILE profile = nsnull;
+    qcms_profile *profile = nsnull;
     switch (device.locType) {
     case cmFileBasedProfile: {
         FSRef fsRef;
         if (!FSpMakeFSRef(&device.u.fileLoc.spec, &fsRef)) {
             char path[512];
             if (!FSRefMakePath(&fsRef, (UInt8*)(path), sizeof(path))) {
-                profile = cmsOpenProfileFromFile(path, "r");
+                profile = qcms_profile_from_path(path);
 #ifdef DEBUG_tor
                 if (profile)
                     fprintf(stderr,
@@ -400,7 +365,7 @@ gfxPlatformMac::GetPlatformCMSOutputProfile()
         break;
     }
     case cmPathBasedProfile:
-        profile = cmsOpenProfileFromFile(device.u.pathLoc.path, "r");
+        profile = qcms_profile_from_path(device.u.pathLoc.path);
 #ifdef DEBUG_tor
         if (profile)
             fprintf(stderr,

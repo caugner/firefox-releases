@@ -39,13 +39,8 @@
 
 #include "nsFormFillController.h"
 
-#ifdef MOZ_STORAGE_SATCHEL
 #include "nsStorageFormHistory.h"
 #include "nsIAutoCompleteSimpleResult.h"
-#else
-#include "nsFormHistory.h"
-#include "nsIAutoCompleteResultTypes.h"
-#endif
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsIServiceManager.h"
@@ -221,8 +216,9 @@ nsFormFillController::SetPopupOpen(PRBool aPopupOpen)
       presShell->ScrollContentIntoView(content,
                                        NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE,
                                        NS_PRESSHELL_SCROLL_IF_NOT_VISIBLE);
-
-      mFocusedPopup->OpenAutocompletePopup(this, mFocusedInput);
+      // mFocusedPopup can be destroyed after ScrollContentIntoView, see bug 420089
+      if (mFocusedPopup)
+        mFocusedPopup->OpenAutocompletePopup(this, mFocusedInput);
     } else
       mFocusedPopup->ClosePopup();
   }
@@ -513,11 +509,7 @@ nsFormFillController::StartSearch(const nsAString &aSearchString, const nsAStrin
                                          mFocusedInput,
                                          getter_AddRefs(result));
   } else {
-#ifdef MOZ_STORAGE_SATCHEL
     nsCOMPtr<nsIAutoCompleteSimpleResult> historyResult;
-#else
-    nsCOMPtr<nsIAutoCompleteMdbResult2> historyResult;
-#endif
     historyResult = do_QueryInterface(aPreviousResult);
 
     nsFormHistory *history = nsFormHistory::GetInstance();
@@ -571,7 +563,7 @@ nsFormFillController::HandleEvent(nsIDOMEvent* aEvent)
 }
 
 
-/* static */ PLDHashOperator PR_CALLBACK
+/* static */ PLDHashOperator
 nsFormFillController::RemoveForDOMDocumentEnumerator(nsISupports* aKey,
                                                   PRInt32& aEntry,
                                                   void* aUserData)
@@ -754,18 +746,6 @@ nsFormFillController::HandleEndComposition(nsIDOMEvent* aCompositionEvent)
 
 NS_IMETHODIMP
 nsFormFillController::HandleQueryComposition(nsIDOMEvent* aCompositionEvent)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsFormFillController::HandleQueryReconversion(nsIDOMEvent* aCompositionEvent)
-{
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsFormFillController::HandleQueryCaretRect(nsIDOMEvent* aCompostionEvent)
 {
   return NS_OK;
 }
@@ -1136,7 +1116,7 @@ nsFormFillController::GetIndexOfDocShell(nsIDocShell *aDocShell)
 
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsFormHistory, Init)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsFormFillController)
-#if defined(MOZ_STORAGE_SATCHEL) && defined(MOZ_MORKREADER)
+#ifdef MOZ_MORKREADER
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsFormHistoryImporter)
 #endif
 
@@ -1157,7 +1137,7 @@ static const nsModuleComponentInfo components[] =
     NS_FORMHISTORYAUTOCOMPLETE_CONTRACTID,
     nsFormFillControllerConstructor },
 
-#if defined(MOZ_STORAGE_SATCHEL) && defined(MOZ_MORKREADER)
+#ifdef MOZ_MORKREADER
   { "Form History Importer",
     NS_FORMHISTORYIMPORTER_CID,
     NS_FORMHISTORYIMPORTER_CONTRACTID,

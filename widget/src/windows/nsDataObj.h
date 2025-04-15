@@ -38,19 +38,21 @@
 #ifndef _NSDATAOBJ_H_
 #define _NSDATAOBJ_H_
 
+#ifdef __MINGW32__
 #include <unknwn.h>
 #include <basetyps.h>
 #include <objidl.h>
-// The above are required for __MINGW32__
+#endif
 #include <oleidl.h>
 
-//#include "Ddforw.h"
+#include "nsCOMPtr.h"
 #include "nsString.h"
 #include "nsILocalFile.h"
 #include "nsIURI.h"
 #include "nsIInputStream.h"
 #include "nsIChannel.h"
 #include "nsTArray.h"
+#include "nsVoidArray.h"
 
 // XXX for older version of PSDK where IAsyncOperation and related stuff is not available
 // but thisdefine  should be removed when parocles config is updated
@@ -82,10 +84,10 @@ IAsyncOperation : public IUnknown
  * See http://msdn.microsoft.com/library/default.asp?url=/library/en-us/shellcc/platform/shell/programmersguide/shell_basics/shell_basics_programming/transferring/clipboard.asp
  */
 #ifndef CFSTR_INETURLA
-#define CFSTR_INETURLA    "UniformResourceLocator"
+#define CFSTR_INETURLA    L"UniformResourceLocator"
 #endif
 #ifndef CFSTR_INETURLW
-#define CFSTR_INETURLW    "UniformResourceLocatorW"
+#define CFSTR_INETURLW    L"UniformResourceLocatorW"
 #endif
 
 // For support of MinGW w32api v2.4. 
@@ -93,10 +95,10 @@ IAsyncOperation : public IUnknown
 // http://sources.redhat.com/cgi-bin/cvsweb.cgi/src/winsup/w32api/include/shlobj.h?cvsroot=src
 // then that can be made the base required version and this code should be removed.
 #ifndef CFSTR_FILEDESCRIPTORA
-# define CFSTR_FILEDESCRIPTORA   "FileGroupDescriptor"
+# define CFSTR_FILEDESCRIPTORA   L"FileGroupDescriptor"
 #endif
 #ifndef CFSTR_FILEDESCRIPTORW
-# define CFSTR_FILEDESCRIPTORW   "FileGroupDescriptorW"
+# define CFSTR_FILEDESCRIPTORW   L"FileGroupDescriptorW"
 #endif
 
 #ifdef __MINGW32__
@@ -128,7 +130,6 @@ typedef struct _FILEGROUPDESCRIPTORW {
 # endif /*__W32API_MAJOR_VERSION*/
 #endif /*__MINGW32__*/
 
-class nsVoidArray;
 class CEnumFormatEtc;
 class nsITransferable;
 
@@ -212,13 +213,6 @@ class nsDataObj : public IDataObject,
 
 	public: // other methods
 
-		// Return the total reference counts of all instances of this class.
-		static ULONG GetCumRefCount();
-
-		// Return the reference count (which helps determine if another app has
-		// released the interface pointer after a drop).
-		ULONG GetRefCount() const;
-
     // Gets the filename from the kFilePromiseURLMime flavour
     nsresult GetDownloadDetails(nsIURI **aSourceURI,
                                 nsAString &aFilename);
@@ -230,6 +224,7 @@ class nsDataObj : public IDataObject,
 		virtual HRESULT AddSetFormat(FORMATETC&  FE);
 		virtual HRESULT AddGetFormat(FORMATETC&  FE);
 
+		virtual HRESULT GetFile ( FORMATETC& aFE, STGMEDIUM& aSTG );
 		virtual HRESULT GetText ( const nsACString& aDF, FORMATETC& aFE, STGMEDIUM & aSTG );
 		virtual HRESULT GetBitmap ( const nsACString& inFlavor, FORMATETC&  FE, STGMEDIUM&  STM);
 		virtual HRESULT GetDib ( const nsACString& inFlavor, FORMATETC &, STGMEDIUM & aSTG );
@@ -266,14 +261,11 @@ class nsDataObj : public IDataObject,
     // Used for the SourceURL part of CF_HTML
     nsCString mSourceURL;
 
-    nsString mStringData;
-
     BOOL FormatsMatch(const FORMATETC& source, const FORMATETC& target) const;
 
-   	static ULONG g_cRef;              // the cum reference count of all instances
 		ULONG        m_cRef;              // the reference count
 
-    nsVoidArray * mDataFlavors;       // we own and its contents
+    nsVoidArray mDataFlavors;
 
     nsITransferable  * mTransferable; // nsDataObj owns and ref counts nsITransferable, 
                                       // the nsITransferable does know anything about the nsDataObj
@@ -281,7 +273,7 @@ class nsDataObj : public IDataObject,
     CEnumFormatEtc   * m_enumFE;      // Ownership Rules: 
                                       // nsDataObj owns and ref counts CEnumFormatEtc,
 
-    nsCOMPtr<nsILocalFile> mCachedTempFile;
+    nsCOMPtr<nsIFile> mCachedTempFile;
 
     BOOL mIsAsyncMode;
     BOOL mIsInOperation;
@@ -339,7 +331,6 @@ class nsDataObj : public IDataObject,
                             BOOL fCopyIn);
     IUnknown* GetCanonicalIUnknown(IUnknown *punk);
     HGLOBAL GlobalClone(HGLOBAL hglobIn);
-
 };
 
 

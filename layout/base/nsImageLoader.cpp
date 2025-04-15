@@ -74,16 +74,18 @@ nsImageLoader::~nsImageLoader()
   mPresContext = nsnull;
 
   if (mRequest) {
-    mRequest->Cancel(NS_ERROR_FAILURE);
+    mRequest->CancelAndForgetObserver(NS_ERROR_FAILURE);
   }
 }
 
 
 void
-nsImageLoader::Init(nsIFrame *aFrame, nsPresContext *aPresContext)
+nsImageLoader::Init(nsIFrame *aFrame, nsPresContext *aPresContext,
+                    PRBool aReflowOnLoad)
 {
   mFrame = aFrame;
   mPresContext = aPresContext;
+  mReflowOnLoad = aReflowOnLoad;
 }
 
 void
@@ -93,7 +95,7 @@ nsImageLoader::Destroy()
   mPresContext = nsnull;
 
   if (mRequest) {
-    mRequest->Cancel(NS_ERROR_FAILURE);
+    mRequest->CancelAndForgetObserver(NS_ERROR_FAILURE);
   }
 
   mRequest = nsnull;
@@ -120,7 +122,7 @@ nsImageLoader::Load(imgIRequest *aImage)
     }
 
     // Now cancel the old request so it won't hold a stale ref to us.
-    mRequest->Cancel(NS_ERROR_FAILURE);
+    mRequest->CancelAndForgetObserver(NS_ERROR_FAILURE);
     mRequest = nsnull;
   }
 
@@ -208,6 +210,16 @@ NS_IMETHODIMP nsImageLoader::FrameChanged(imgIContainer *aContainer,
 void
 nsImageLoader::RedrawDirtyFrame(const nsRect* aDamageRect)
 {
+  if (mReflowOnLoad) {
+    nsIPresShell *shell = mPresContext->GetPresShell();
+#ifdef DEBUG
+    nsresult rv = 
+#endif
+      shell->FrameNeedsReflow(mFrame, nsIPresShell::eStyleChange, NS_FRAME_IS_DIRTY);
+    NS_WARN_IF_FALSE(NS_SUCCEEDED(rv), "Could not reflow after loading border-image");
+    // The reflow might not do all the invalidation we need, so continue
+    // on with the invalidation codepath.
+  }
   // NOTE: It is not sufficient to invalidate only the size of the image:
   //       the image may be tiled! 
   //       The best option is to call into the frame, however lacking this
@@ -248,5 +260,7 @@ nsImageLoader::RedrawDirtyFrame(const nsRect* aDamageRect)
 
 #endif
 
-  mFrame->Invalidate(bounds, PR_FALSE);
+  if (mFrame->GetStyleVisibility()->IsVisible()) {
+    mFrame->Invalidate(bounds);
+  }
 }

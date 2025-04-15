@@ -64,6 +64,7 @@ ACCESSIBILITY_ATOM(password, "password")
 ACCESSIBILITY_ATOM(reset, "reset")
 ACCESSIBILITY_ATOM(submit, "submit")
 ACCESSIBILITY_ATOM(_true, "true")
+ACCESSIBILITY_ATOM(_undefined, "undefined")
 
   // Header info
 ACCESSIBILITY_ATOM(headerContentLanguage, "content-language")
@@ -149,7 +150,7 @@ ACCESSIBILITY_ATOM(tooltip, "tooltip")   // XUL
 ACCESSIBILITY_ATOM(tr, "tr")
 ACCESSIBILITY_ATOM(ul, "ul")
 
-  // Alphabetical list of attributes
+  // Alphabetical list of attributes (DOM)
 ACCESSIBILITY_ATOM(acceltext, "acceltext")
 ACCESSIBILITY_ATOM(accesskey, "accesskey")
 ACCESSIBILITY_ATOM(alt, "alt")
@@ -169,6 +170,8 @@ ACCESSIBILITY_ATOM(href, "href") // XUL, XLink
 ACCESSIBILITY_ATOM(increment, "increment") // XUL
 ACCESSIBILITY_ATOM(lang, "lang")
 ACCESSIBILITY_ATOM(linkedPanel, "linkedpanel") // XUL
+ACCESSIBILITY_ATOM(longDesc, "longdesc")
+ACCESSIBILITY_ATOM(max, "max") // XUL
 ACCESSIBILITY_ATOM(maxpos, "maxpos") // XUL
 ACCESSIBILITY_ATOM(minpos, "minpos") // XUL
 ACCESSIBILITY_ATOM(multiline, "multiline") // XUL
@@ -185,6 +188,18 @@ ACCESSIBILITY_ATOM(tooltiptext, "tooltiptext")
 ACCESSIBILITY_ATOM(type, "type")
 ACCESSIBILITY_ATOM(value, "value")
 
+  // Alphabetical list of object attributes
+ACCESSIBILITY_ATOM(checkable, "checkable")
+ACCESSIBILITY_ATOM(display, "display")
+ACCESSIBILITY_ATOM(textAlign, "text-align")
+ACCESSIBILITY_ATOM(textIndent, "text-indent")
+
+  // Alphabetical list of text attributes (AT API)
+ACCESSIBILITY_ATOM(backgroundColor, "background-color")
+ACCESSIBILITY_ATOM(fontSize, "font-size")
+ACCESSIBILITY_ATOM(invalid, "invalid")
+ACCESSIBILITY_ATOM(language, "language")
+
   // ARIA (DHTML accessibility) attributes
   // Also add to nsARIAMap.cpp and nsARIAMap.h
   // ARIA role attribute
@@ -193,19 +208,18 @@ ACCESSIBILITY_ATOM(aria_activedescendant, "aria-activedescendant")
 ACCESSIBILITY_ATOM(aria_atomic, "aria-atomic")
 ACCESSIBILITY_ATOM(aria_autocomplete, "aria-autocomplete")
 ACCESSIBILITY_ATOM(aria_busy, "aria-busy")
-ACCESSIBILITY_ATOM(aria_channel, "aria-channel")
 ACCESSIBILITY_ATOM(aria_checked, "aria-checked")
 ACCESSIBILITY_ATOM(aria_controls, "aria-controls")
-ACCESSIBILITY_ATOM(aria_datatype, "aria-datatype")
 ACCESSIBILITY_ATOM(aria_describedby, "aria-describedby")
 ACCESSIBILITY_ATOM(aria_droppable, "aria-droppable")
 ACCESSIBILITY_ATOM(aria_disabled, "aria-disabled")
 ACCESSIBILITY_ATOM(aria_dropeffect, "aria-dropeffect")
 ACCESSIBILITY_ATOM(aria_expanded, "aria-expanded")
 ACCESSIBILITY_ATOM(aria_flowto, "aria-flowto")
-ACCESSIBILITY_ATOM(aria_grab, "aria-grab")
+ACCESSIBILITY_ATOM(aria_grabbed, "aria-grabbed")
 ACCESSIBILITY_ATOM(aria_haspopup, "aria-haspopup")
 ACCESSIBILITY_ATOM(aria_invalid, "aria-invalid")
+ACCESSIBILITY_ATOM(aria_label, "aria-label")
 ACCESSIBILITY_ATOM(aria_labelledby, "aria-labelledby")
 ACCESSIBILITY_ATOM(aria_level, "aria-level")
 ACCESSIBILITY_ATOM(aria_live, "aria-live")
@@ -234,7 +248,6 @@ ACCESSIBILITY_ATOM(defaultLabel, "defaultLabel")
 ACCESSIBILITY_ATOM(tableCellIndex, "table-cell-index")
 ACCESSIBILITY_ATOM(containerAtomic, "container-atomic")
 ACCESSIBILITY_ATOM(containerBusy, "container-busy")
-ACCESSIBILITY_ATOM(containerChannel, "container-channel")
 ACCESSIBILITY_ATOM(containerLive, "container-live")
 ACCESSIBILITY_ATOM(containerRelevant, "container-relevant")
 ACCESSIBILITY_ATOM(level, "level")

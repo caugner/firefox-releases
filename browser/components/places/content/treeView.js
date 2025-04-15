@@ -294,10 +294,14 @@ PlacesTreeView.prototype = {
       var min = { }, max = { };
       selection.getRangeAt(rangeIndex, min, max);
       var lastIndex = Math.min(max.value, startReplacement + replaceCount -1);
-      if (min.value < startReplacement || min.value > lastIndex)
+      // if this range does not overlap the replaced chunk we don't need to
+      // persist the selection.
+      if (max.value < startReplacement || min.value > lastIndex)
         continue;
-
-      for (var nodeIndex = min.value; nodeIndex <= lastIndex; nodeIndex++)
+      // if this range starts before the replaced chunk we should persist from
+      // startReplacement to lastIndex
+      var firstIndex = Math.max(min.value, startReplacement);
+      for (var nodeIndex = firstIndex; nodeIndex <= lastIndex; nodeIndex++)
         previouslySelectedNodes.push(
           { node: this._visibleElements[nodeIndex].node, oldIndex: nodeIndex });
     }
@@ -309,7 +313,8 @@ PlacesTreeView.prototype = {
     // Building the new list will set the new elements' visible indices.
     var newElements = [];
     var toOpenElements = [];
-    this._buildVisibleSection(aContainer, newElements, toOpenElements, startReplacement);
+    this._buildVisibleSection(aContainer,
+                              newElements, toOpenElements, startReplacement);
 
     // actually update the visible list
     this._visibleElements =
@@ -320,7 +325,7 @@ PlacesTreeView.prototype = {
     // If the new area has a different size, we'll have to renumber the
     // elements following the area.
     if (replaceCount != newElements.length) {
-      for (i = startReplacement + newElements.length;
+      for (var i = startReplacement + newElements.length;
            i < this._visibleElements.length; i ++) {
         this._visibleElements[i].node.viewIndex = i;
       }
@@ -399,25 +404,22 @@ PlacesTreeView.prototype = {
 
   _convertPRTimeToString: function PTV__convertPRTimeToString(aTime) {
     var timeInMilliseconds = aTime / 1000; // PRTime is in microseconds
+
+    // Date is calculated starting from midnight, so the modulo with a day are
+    // milliseconds from today's midnight.
+    // getTimezoneOffset corrects that based on local time.
+    // 86400000 = 24 * 60 * 60 * 1000 = 1 day
+    // 60000 = 60 * 1000 = 1 minute
+    var dateObj = new Date();
+    var timeZoneOffsetInMs = dateObj.getTimezoneOffset() * 60000;
+    var now = dateObj.getTime() - timeZoneOffsetInMs;
+    var midnight = now - (now % (86400000));
+
+    var dateFormat = timeInMilliseconds - timeZoneOffsetInMs >= midnight ?
+                      Ci.nsIScriptableDateFormat.dateFormatNone :
+                      Ci.nsIScriptableDateFormat.dateFormatShort;
+
     var timeObj = new Date(timeInMilliseconds);
-
-    // Check if it is today and only display the time.  Only bother
-    // checking for today if it's within the last 24 hours, since
-    // computing midnight is not really cheap. Sometimes we may get dates
-    // in the future, so always show those.
-    var ago = new Date(Date.now() - timeInMilliseconds);
-    var dateFormat = Ci.nsIScriptableDateFormat.dateFormatShort;
-    if (ago > -10000 && ago < (1000 * 24 * 60 * 60)) {
-      var midnight = new Date(timeInMilliseconds);
-      midnight.setHours(0);
-      midnight.setMinutes(0);
-      midnight.setSeconds(0);
-      midnight.setMilliseconds(0);
-
-      if (timeInMilliseconds > midnight.getTime())
-        dateFormat = Ci.nsIScriptableDateFormat.dateFormatNone;
-    }
-
     return (this._dateService.FormatDateTime("", dateFormat,
       Ci.nsIScriptableDateFormat.timeFormatNoSeconds,
       timeObj.getFullYear(), timeObj.getMonth() + 1,
@@ -567,7 +569,7 @@ PlacesTreeView.prototype = {
 
     // Need to redraw the rows around this one because session boundaries
     // may have changed. For example, if we add a page to a session, the
-    // previous page will need to be redrawn because it's session border
+    // previous page will need to be redrawn because its session border
     // will disappear.
     if (this._showSessions) {
       if (newViewIndex > 0)
@@ -606,7 +608,7 @@ PlacesTreeView.prototype = {
   /**
    * THIS FUNCTION DOES NOT HANDLE cases where a collapsed node is being
    * removed but the node it is collapsed with is not being removed (this then
-   * just swap out the removee with it's collapsing partner). The only time
+   * just swap out the removee with its collapsing partner). The only time
    * when we really remove things is when deleting URIs, which will apply to
    * all collapsees. This function is called sometimes when resorting items.
    * However, we won't do this when sorted by date because dates will never
@@ -879,6 +881,10 @@ PlacesTreeView.prototype = {
     else
       var columnType = aColumn.id;
 
+    // Set the "ltr" property on url cells
+    if (columnType == "url")
+      aProperties.AppendElement(this._getAtomFor("ltr"));
+
     if (columnType != "title")
       return;
 
@@ -887,9 +893,9 @@ PlacesTreeView.prototype = {
 
     if (!properties) {
       properties = new Array();
+      var itemId = node.itemId;
       var nodeType = node.type;
       if (PlacesUtils.containerTypes.indexOf(nodeType) != -1) {
-        var itemId = node.itemId;
         if (nodeType == Ci.nsINavHistoryResultNode.RESULT_TYPE_QUERY) {
           properties.push(this._getAtomFor("query"));
           if (PlacesUtils.nodeIsTagQuery(node))
@@ -909,7 +915,9 @@ PlacesTreeView.prototype = {
         if (itemId != -1) {
           var oqAnno;
           try {
-            oqAnno = PlacesUtils.annotations.getItemAnnotation(itemId, ORGANIZER_QUERY_ANNO);
+            oqAnno = PlacesUtils.annotations
+                                .getItemAnnotation(itemId,
+                                                   ORGANIZER_QUERY_ANNO);
             properties.push(this._getAtomFor("OrganizerQuery_" + oqAnno));
           }
           catch (ex) { /* not a special query */ }
@@ -917,9 +925,12 @@ PlacesTreeView.prototype = {
       }
       else if (nodeType == Ci.nsINavHistoryResultNode.RESULT_TYPE_SEPARATOR)
         properties.push(this._getAtomFor("separator"));
-      else if (itemId != -1) { // bookmark nodes
-        if (PlacesUtils.nodeIsLivemarkContainer(node.parent))
-          properties.push(this._getAtomFor("livemarkItem"));
+      else if (PlacesUtils.nodeIsURI(node)) {
+        properties.push(this._getAtomFor(PlacesUIUtils.guessUrlSchemeForUI(node.uri)));
+        if (itemId != -1) {
+          if (PlacesUtils.nodeIsLivemarkContainer(node.parent))
+            properties.push(this._getAtomFor("livemarkItem"));
+        }
       }
 
       this._visibleElements[aRow].properties = properties;
@@ -937,6 +948,11 @@ PlacesTreeView.prototype = {
     if (PlacesUtils.nodeIsContainer(node)) {
       // the root node is always expandable
       if (!node.parent)
+        return true;
+
+      // Flat-lists may ignore expandQueries and other query options when
+      // they are asked to open a container.
+      if (this._flatList)
         return true;
 
       // treat non-expandable childless queries as non-containers
@@ -989,33 +1005,12 @@ PlacesTreeView.prototype = {
     if (!this._result)
       throw Cr.NS_ERROR_UNEXPECTED;
 
-    var node = aRow != -1 ? this.nodeForTreeIndex(aRow) : this._result.root;
+    // drop position into a sorted treeview would be wrong
+    if (this.isSorted())
+      return false;
 
-    if (aOrientation == Ci.nsITreeView.DROP_ON) {
-      // The user cannot drop an item into itself or a read-only container
-      var dragService =  Cc["@mozilla.org/widget/dragservice;1"].
-                         getService(Ci.nsIDragService);
-      var dragSession = dragService.getCurrentSession();
-      var elt = dragSession.sourceNode.parentNode;
-      if (elt.localName == "tree" && elt.view == this &&
-          this.selection.isSelected(aRow))
-        return false;
-    }
-  
     var ip = this._getInsertionPoint(aRow, aOrientation);
     return ip && PlacesControllerDragHelper.canDrop(ip);
-  },
-
-  // XXXmano: these two are copied over from tree.xml, to fix this we need to
-  // either add a helper to PlacesUtils or keep it here and add insertionPoint
-  // to the view interface.
-  _disallowInsertion: function PTV__disallowInsertion(aContainer) {
-    // allow dropping into Tag containers
-    if (PlacesUtils.nodeIsTagQuery(aContainer))
-      return false;
-    // Disallow insertion of items under readonly folders
-    return (!PlacesUtils.nodeIsFolder(aContainer) ||
-            PlacesUtils.nodeIsReadOnly(aContainer));
   },
 
   _getInsertionPoint: function PTV__getInsertionPoint(index, orientation) {
@@ -1031,14 +1026,13 @@ PlacesTreeView.prototype = {
         container = lastSelected;
         index = -1;
       }
-      else if (!this._disallowInsertion(lastSelected) &&
-               lastSelected.containerOpen &&
+      else if (lastSelected.containerOpen &&
                orientation == Ci.nsITreeView.DROP_AFTER &&
                lastSelected.hasChildren) {
         // If the last selected item is an open container and the user is
         // trying to drag into it as a first item, really insert into it.
         container = lastSelected;
-        orientation = Ci.nsITreeView.DROP_BEFORE;
+        orientation = Ci.nsITreeView.DROP_ON;
         index = 0;
       }
       else {
@@ -1049,12 +1043,13 @@ PlacesTreeView.prototype = {
 
         // avoid the potentially expensive call to getIndexOfNode() 
         // if we know this container doesn't allow insertion
-        if (this._disallowInsertion(container))
+        if (PlacesControllerDragHelper.disallowInsertion(container))
           return null;
 
         var queryOptions = asQuery(this._result.root).queryOptions;
-        if (queryOptions.sortingMode != Ci.nsINavHistoryQueryOptions.SORT_BY_NONE) {
-          // If we are within a sorted view, insert at the end
+        if (queryOptions.sortingMode !=
+              Ci.nsINavHistoryQueryOptions.SORT_BY_NONE) {
+          // If we are within a sorted view, insert at the ends
           index = -1;
         }
         else if (queryOptions.excludeItems ||
@@ -1073,7 +1068,7 @@ PlacesTreeView.prototype = {
       }
     }
 
-    if (this._disallowInsertion(container))
+    if (PlacesControllerDragHelper.disallowInsertion(container))
       return null;
 
     return new InsertionPoint(PlacesUtils.getConcreteItemId(container),
@@ -1088,7 +1083,7 @@ PlacesTreeView.prototype = {
     // since this information is specific to the tree view.
     var ip = this._getInsertionPoint(aRow, aOrientation);
     if (!ip)
-      throw Cr.NS_ERROR_NOT_AVAILABLE;
+      return;
     PlacesControllerDragHelper.onDrop(ip);
   },
 

@@ -143,6 +143,10 @@ nsFocusController::GetFocusedWindow(nsIDOMWindowInternal** aWindow)
 NS_IMETHODIMP
 nsFocusController::SetFocusedElement(nsIDOMElement* aElement)
 {
+  if (aElement) {
+    nsCOMPtr<nsIContent> content = do_QueryInterface(aElement);
+    NS_ENSURE_ARG(content);
+  }
   if (mCurrentElement) 
     mPreviousElement = mCurrentElement;
   else if (aElement) 
@@ -294,6 +298,7 @@ nsFocusController::MoveFocus(PRBool aForward, nsIDOMElement* aElt)
   nsCOMPtr<nsIContent> content;
   if (aElt) {
     content = do_QueryInterface(aElt);
+    NS_ENSURE_ARG(content);
     doc = content->GetDocument();
   }
   else {
@@ -423,7 +428,7 @@ nsFocusController::GetWindowFromDocument(nsIDOMDocument* aDocument)
 {
   nsCOMPtr<nsIDocument> doc = do_QueryInterface(aDocument);
   if (!doc)
-    return NS_OK;
+    return nsnull;
 
   return doc->GetWindow();
 }
@@ -522,7 +527,8 @@ nsFocusController::SetSuppressFocus(PRBool aSuppressFocus, const char* aReason)
     //#endif
   }
   else 
-    NS_ASSERTION(PR_FALSE, "Attempt to decrement focus controller's suppression when no suppression active!\n");
+    // It's ok to unsuppress even if no suppression is active (bug 112294)
+    return NS_OK;
 
   // we are unsuppressing after activating, so update focus-related commands
   // we need this to update command, including the case where there is no element
@@ -612,6 +618,10 @@ nsFocusController::SetPopupNode(nsIDOMNode* aNode)
   printf("dr :: nsFocusController::SetPopupNode\n");
 #endif
 
+  if (aNode) {
+    nsCOMPtr<nsINode> node = do_QueryInterface(aNode);
+    NS_ENSURE_ARG(node);
+  }
   mPopupNode = aNode;
   return NS_OK;
 }

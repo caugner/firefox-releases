@@ -63,6 +63,14 @@ interface nsIScreenManager : nsISupports
   [noscript] nsIScreen screenForNativeWidget ( in voidPtr nativeWidget );
 };
 
+[scriptable, uuid(ee561ea4-7409-46f9-b79c-9f98f7f21aec)]
+interface nsIScreenManager_MOZILLA_1_9_1_BRANCH : nsIScreenManager
+{
+    // Returns the nsIScreen instance for the given native widget pointer;
+    // the pointer is specific to the particular widget implementation,
+    // and is generally of the same type that NS_NATIVE_WINDOW is.
+  [noscript] nsIScreen screenForNativeWindow ( in voidPtr nativeWidget );
+};
 
 %{ C++
 

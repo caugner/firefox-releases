@@ -1111,8 +1111,10 @@ nsXULTemplateBuilder::AttributeChanged(nsIDocument* aDocument,
             Rebuild();
 
         // Check for a change to the 'datasources' attribute. If so, setup
-        // mDB by parsing the vew value and rebuild.
+        // mDB by parsing the new value and rebuild.
         else if (aAttribute == nsGkAtoms::datasources) {
+            Uninit(PR_FALSE);  // Reset results
+            
             PRBool shouldDelay;
             LoadDataSources(aDocument, &shouldDelay);
             if (!shouldDelay)
@@ -1142,13 +1144,11 @@ nsXULTemplateBuilder::ContentRemoved(nsIDocument* aDocument,
         if (xuldoc)
             xuldoc->SetTemplateBuilderFor(mRoot, nsnull);
 
-        // clear the lazy state when removing content so that it will be
-        // regenerated again if the content is reinserted
+        // clear the template state when removing content so that template
+        // content will be regenerated again if the content is reinserted
         nsXULElement *xulcontent = nsXULElement::FromContent(mRoot);
-        if (xulcontent) {
-            xulcontent->ClearLazyState(nsXULElement::eTemplateContentsBuilt);
-            xulcontent->ClearLazyState(nsXULElement::eContainerContentsBuilt);
-        }
+        if (xulcontent)
+            xulcontent->ClearTemplateGenerated();
 
         mDB = nsnull;
         mCompDB = nsnull;
@@ -1323,27 +1323,10 @@ nsXULTemplateBuilder::LoadDataSourceUrls(nsIDocument* aDocument,
         if (NS_FAILED(rv) || !uri)
             continue; // Necko will barf if our URI is weird
 
-        nsCOMPtr<nsIPrincipal> principal;
-        if (!isTrusted) {
-            // Our document is untrusted, so check to see if we can
-            // load the datasource that they've asked for.
-
-            rv = gScriptSecurityManager->GetCodebasePrincipal(uri, getter_AddRefs(principal));
-            NS_ASSERTION(NS_SUCCEEDED(rv), "unable to get codebase principal");
-            NS_ENSURE_SUCCESS(rv, rv);
-
-            PRBool same;
-            rv = docPrincipal->Equals(principal, &same);
-            NS_ASSERTION(NS_SUCCEEDED(rv), "unable to test same origin");
-            NS_ENSURE_SUCCESS(rv, rv);
-
-            if (! same)
-                continue;
-
-            // If we get here, we've run the gauntlet, and the
-            // datasource's URI has the same origin as our
-            // document. Let it load!
-        }
+        // don't add the uri to the list if the document is not allowed to
+        // load it
+        if (!isTrusted && NS_FAILED(docPrincipal->CheckMayLoad(uri, PR_TRUE)))
+          continue;
 
         uriList->AppendElement(uri, PR_FALSE);
     }
@@ -1356,7 +1339,6 @@ nsXULTemplateBuilder::LoadDataSourceUrls(nsIDocument* aDocument,
                                         aShouldDelayBuilding,
                                         getter_AddRefs(mDataSource));
     NS_ENSURE_SUCCESS(rv, rv);
-
 
     if (aIsRDFQuery && mDataSource) {  
         // check if we were given an inference engine type
@@ -1580,7 +1562,7 @@ nsXULTemplateBuilder::ParseAttribute(const nsAString& aAttributeValue,
 }
 
 
-struct SubstituteTextClosure {
+struct NS_STACK_CLASS SubstituteTextClosure {
     SubstituteTextClosure(nsIXULTemplateResult* aResult, nsAString& aString)
         : result(aResult), str(aString) {}
 

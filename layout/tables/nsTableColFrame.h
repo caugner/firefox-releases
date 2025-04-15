@@ -69,16 +69,14 @@ public:
     */
   friend nsTableColFrame* NS_NewTableColFrame(nsIPresShell* aPresShell,
                                               nsStyleContext*  aContext);
-
+  /** @see nsIFrame::DidSetStyleContext */
+  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext);
+  
   PRInt32 GetColIndex() const;
   
   void SetColIndex (PRInt32 aColIndex);
 
   nsTableColFrame* GetNextCol() const;
-
-  NS_IMETHOD Init(nsIContent*      aContent,
-                  nsIFrame*        aParent,
-                  nsIFrame*        aPrevInFlow);
 
   NS_IMETHOD Reflow(nsPresContext*          aPresContext,
                     nsHTMLReflowMetrics&     aDesiredSize,
@@ -91,6 +89,12 @@ public:
   NS_IMETHOD BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                               const nsRect&           aDirtyRect,
                               const nsDisplayListSet& aLists) { return NS_OK; }
+
+  virtual PRBool IsFrameOfType(PRUint32 aFlags) const
+  {
+    return nsSplittableFrame::IsFrameOfType(aFlags &
+      ~(nsIFrame::eExcludesIgnorableWhitespace));
+  }
 
   /**
    * Get the "type" of the frame

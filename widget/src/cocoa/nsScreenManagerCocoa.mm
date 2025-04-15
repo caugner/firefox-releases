@@ -41,7 +41,8 @@
 #include "nsCOMPtr.h"
 #include "nsCocoaUtils.h"
 
-NS_IMPL_ISUPPORTS1(nsScreenManagerCocoa, nsIScreenManager)
+NS_IMPL_ISUPPORTS2(nsScreenManagerCocoa, nsIScreenManager,
+                                         nsIScreenManager_MOZILLA_1_9_1_BRANCH)
 
 nsScreenManagerCocoa::nsScreenManagerCocoa()
 {
@@ -138,6 +139,25 @@ nsScreenManagerCocoa::ScreenForNativeWidget (void *nativeWidget, nsIScreen **out
     NSView *view = (NSView*) nativeWidget;
 
     NSWindow *window = [view window];
+    if (window) {
+        nsIScreen *screen = ScreenForCocoaScreen([window screen]);
+        *outScreen = screen;
+        NS_ADDREF(*outScreen);
+        return NS_OK;
+    }
+
+    *outScreen = nsnull;
+    return NS_OK;
+
+    NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
+}
+
+NS_IMETHODIMP
+nsScreenManagerCocoa::ScreenForNativeWindow (void *nativeWidget, nsIScreen **outScreen)
+{
+    NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NSRESULT;
+
+    NSWindow *window = static_cast<NSWindow*>(nativeWidget);
     if (window) {
         nsIScreen *screen = ScreenForCocoaScreen([window screen]);
         *outScreen = screen;

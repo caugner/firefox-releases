@@ -67,8 +67,10 @@ interface nsISHEntry;
 interface nsILayoutHistoryState;
 interface nsISecureBrowserUI;
 interface nsIDOMStorage;
+interface nsIDOMStorage2;
+interface nsIPrincipal;
 
-[scriptable, uuid(7d1cf6b9-daa3-476d-8f9f-9eb2a971a95c)]
+[scriptable, uuid(dc4daea1-b43d-406f-bd62-c2ee879192ad)]
 interface nsIDocShell : nsISupports
 {
   /**
@@ -84,8 +86,11 @@ interface nsIDocShell : nsISupports
    *                     object by calling createLoadInfo.  Once you have this
    *                     object you can set the needed properties on it and
    *                     then pass it to loadURI.
-   * @param aLoadFlags - Flags to modify load behaviour. Flags are defined
-   *                     in nsIWebNavigation.
+   * @param aLoadFlags - Flags to modify load behaviour. Flags are defined in
+   *                     nsIWebNavigation.  Note that using flags outside
+   *                     LOAD_FLAGS_MASK is only allowed if passing in a
+   *                     non-null loadInfo.  And even some of those might not
+   *                     be allowed.  Use at your own risk.
    */
   [noscript]void loadURI(in nsIURI uri,
                          in nsIDocShellLoadInfo loadInfo,
@@ -420,17 +425,23 @@ interface nsIDocShell : nsISupports
    * Retrieves the WebApps session storage object for the supplied domain.
    * If it doesn't already exist, a new one will be created.
    *
-   * @param domain the domain of the storage object to retrieve
+   * @param uri the uri of the storage object to retrieve
+   *
+   * @throws
+   *    NS_ERROR_NOT_IMPLEMENTED because it's currently unsupported
    */
-  nsIDOMStorage getSessionStorageForURI(in nsIURI uri);
+  [noscript]nsIDOMStorage getSessionStorageForURI(in nsIURI uri);
 
   /*
    * Add a WebApps session storage object to the docshell.
    *
    * @param domain the domain the storage object is associated with
    * @param storage the storage object to add
+   *
+   * @throws
+   *    NS_ERROR_NOT_IMPLEMENTED because it's currently unsupported
    */
-  void addSessionStorage(in ACString aDomain, in nsIDOMStorage storage);
+  [noscript]void addSessionStorage(in ACString aDomain, in nsIDOMStorage storage);
 
   /**
    * Gets the channel for the currently loaded document, if any. 
@@ -460,8 +471,73 @@ interface nsIDocShell : nsISupports
 
   /**
    * Disconnects this docshell's editor from its window, and stores the
-   * editor data in the open document's session history entry.
+   * editor data in the open document's session history entry.  This
+   * should be called only during page transitions.
    */
   [noscript, notxpcom] void DetachEditorFromWindow();
+
+  /**
+   * If true, this browser is not visible in the traditional sense, but
+   * is actively being rendered to the screen (ex. painted on a canvas)
+   * and should be treated accordingly.
+   **/
+  attribute boolean isOffScreenBrowser;    
 };
 
+[scriptable, uuid(460ba822-e664-4c38-9b08-98d2736473d7)]
+interface nsIDocShell_MOZILLA_1_9_1 : nsISupports
+{
+  /*
+   * Retrieves the WebApps session storage object for the supplied principal.
+   *
+   * @param principal returns a storage for this principal
+   * @param create If true and a session storage object doesn't
+   *               already exist, a new one will be created.
+   *
+   * @throws
+   *    NS_ERROR_NOT_IMPLEMENTED because it's currently unsupported
+   */
+  [noscript]nsIDOMStorage getSessionStorageForPrincipal(in nsIPrincipal principal,
+                                              in boolean create);
+};
+
+[scriptable, uuid(B0534FDD-8A6C-4489-8C9E-471D7B2B2596)]
+interface nsIDocShell_MOZILLA_1_9_1_SessionStorage : nsISupports
+{
+  /*
+   * Retrieves the WebApps session storage object for the supplied domain.
+   * If it doesn't already exist, a new one will be created.
+   *
+   * @param uri the uri of the storage object to retrieve
+   */
+  nsIDOMStorage2 getSessionStorageForURI(in nsIURI uri);
+
+  /*
+   * Retrieves the WebApps session storage object for the supplied principal.
+   *
+   * @param principal returns a storage for this principal
+   * @param create If true and a session storage object doesn't
+   *               already exist, a new one will be created.
+   */
+  nsIDOMStorage2 getSessionStorageForPrincipal(in nsIPrincipal principal,
+                                              in boolean create);
+
+  /*
+   * Add a WebApps session storage object to the docshell.
+   *
+   * @param principal the principal the storage object is associated with
+   * @param storage the storage object to add
+   */
+  void addSessionStorage(in nsIPrincipal principal, in nsIDOMStorage2 storage);
+};
+
+[scriptable, uuid(6cf71a12-c7d6-404d-b0b5-15ceae321337)]
+interface nsIDocShell_MOZILLA_1_9_1_dns : nsISupports
+{
+  /**
+   * Attribute that determines whether DNS prefetch is allowed for this subtree
+   * of the docshell tree.  Defaults to true.  Setting this will make it take
+   * effect starting with the next document loaded in the docshell.
+   */
+  attribute boolean allowDNSPrefetch;
+};

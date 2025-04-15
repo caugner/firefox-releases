@@ -55,11 +55,14 @@
 
 #include <gtk/gtk.h>
 #include <gdk/gdk.h>
-#include <gdk/gdkx.h>
+
 #include "nsFont.h"
 
 #include <pango/pango.h>
+#ifdef MOZ_X11
+#include <gdk/gdkx.h>
 #include <pango/pangox.h>
+#endif /* MOZ_X11 */
 #include <pango/pango-fontmap.h>
 #endif /* GTK2 */
 
@@ -75,7 +78,9 @@ static nsSystemFontsGTK2 *gSystemFonts = nsnull;
 #include "gfxWindowsSurface.h"
 #include "gfxPDFSurface.h"
 static nsSystemFontsWin *gSystemFonts = nsnull;
+#ifndef WINCE
 #include <usp10.h>
+#endif
 #elif defined(XP_OS2)
 #include "nsSystemFontsOS2.h"
 #include "gfxPDFSurface.h"
@@ -88,11 +93,14 @@ static nsSystemFontsBeOS *gSystemFonts = nsnull;
 #include "gfxQuartzSurface.h"
 #include "gfxImageSurface.h"
 static nsSystemFontsMac *gSystemFonts = nsnull;
+#elif defined(MOZ_WIDGET_QT)
+#include "nsSystemFontsQt.h"
+static nsSystemFontsQt *gSystemFonts = nsnull;
 #else
 #error Need to declare gSystemFonts!
 #endif
 
-#ifdef MOZ_ENABLE_GTK2
+#if defined(MOZ_ENABLE_GTK2) && defined(MOZ_X11)
 extern "C" {
 static int x11_error_handler (Display *dpy, XErrorEvent *err) {
     NS_ASSERTION(PR_FALSE, "X Error");
@@ -123,7 +131,7 @@ nsThebesDeviceContext::nsThebesDeviceContext()
 
     mWidgetSurfaceCache.Init();
 
-#ifdef XP_WIN
+#if defined(XP_WIN) && !defined(WINCE)
     SCRIPT_DIGITSUBSTITUTE sds;
     ScriptRecordDigitSubstitution(LOCALE_USER_DEFAULT, &sds);
 #endif
@@ -140,11 +148,30 @@ nsThebesDeviceContext::Shutdown()
     gSystemFonts = nsnull;
 }
 
+PRBool
+nsThebesDeviceContext::IsPrinterSurface()
+{
+  return(mPrintingSurface != NULL);
+}
+
 nsresult
 nsThebesDeviceContext::SetDPI()
 {
     PRInt32 dpi = -1;
     PRBool dotsArePixels = PR_TRUE;
+
+    // The number of device pixels per CSS pixel. A value <= 0 means choose
+    // automatically based on the DPI. A positive value is used as-is. This effectively
+    // controls the size of a CSS "px".
+    PRInt32 prefDevPixelsPerCSSPixel = -1;
+
+    nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
+    if (prefs) {
+        nsresult rv = prefs->GetIntPref("layout.css.devPixelsPerPx", &prefDevPixelsPerCSSPixel);
+        if (NS_FAILED(rv)) {
+            prefDevPixelsPerCSSPixel = -1;
+        }
+    }
 
     // PostScript, PDF and Mac (when printing) all use 72 dpi
     if (mPrintingSurface &&
@@ -154,17 +181,13 @@ nsThebesDeviceContext::SetDPI()
         dpi = 72;
         dotsArePixels = PR_FALSE;
     } else {
-        // Get prefVal the value of the preference
-        // "layout.css.dpi"
-        // or -1 if we can't get it.
-        // If it's negative, use the default DPI setting
-        // If it's 0, force the use of the OS's set resolution.  Set this if your
-        //      X server has the correct DPI and it's less than 96dpi.
-        // If it's positive, we use it as the logical resolution
         nsresult rv;
-        PRInt32 prefDPI;
-        nsCOMPtr<nsIPref> prefs(do_GetService(NS_PREF_CONTRACTID, &rv));
-        if (NS_SUCCEEDED(rv) && prefs) {
+        // A value of -1 means use the minimum of 96 and the system DPI.
+        // A value of 0 means use the system DPI. A positive value is used as the DPI.
+        // This sets the physical size of a device pixel and thus controls the
+        // interpretation of physical units such as "pt".
+        PRInt32 prefDPI = -1;
+        if (prefs) {
             rv = prefs->GetIntPref("layout.css.dpi", &prefDPI);
             if (NS_FAILED(rv)) {
                 prefDPI = -1;
@@ -225,6 +248,9 @@ nsThebesDeviceContext::SetDPI()
         // we probably want to actually get a real DPI here?
         dpi = 96;
 
+#elif defined(MOZ_WIDGET_QT)
+		// TODO: get real DPI here with Qt methods
+        dpi = 96;
 #else
 #error undefined platform dpi
 #endif
@@ -236,18 +262,23 @@ nsThebesDeviceContext::SetDPI()
     NS_ASSERTION(dpi != -1, "no dpi set");
 
     if (dotsArePixels) {
-        // First figure out the closest multiple of 96, which is the number of
-        // dev pixels per CSS pixel.  Then, divide that into AppUnitsPerCSSPixel()
-        // to get the number of app units per dev pixel.  The PR_MAXes are to
-        // make sure we don't end up dividing by zero.
-        PRUint32 roundedDPIScaleFactor = (dpi + 48)/96;
+        if (prefDevPixelsPerCSSPixel <= 0) {
+            // First figure out the closest multiple of 96, which is the number of
+            // dev pixels per CSS pixel.  Then, divide that into AppUnitsPerCSSPixel()
+            // to get the number of app units per dev pixel.  The PR_MAXes are to
+            // make sure we don't end up dividing by zero.
+            PRUint32 roundedDPIScaleFactor = (dpi + 48)/96;
 #ifdef MOZ_WIDGET_GTK2
-        // be more conservative about activating scaling on GTK2, since the dpi
-        // information is more likely to be wrong
-        roundedDPIScaleFactor = dpi/96;
+            // be more conservative about activating scaling on GTK2, since the dpi
+            // information is more likely to be wrong
+            roundedDPIScaleFactor = dpi/96;
 #endif
-        mAppUnitsPerDevNotScaledPixel =
-          PR_MAX(1, AppUnitsPerCSSPixel() / PR_MAX(1, roundedDPIScaleFactor));
+            mAppUnitsPerDevNotScaledPixel =
+                PR_MAX(1, AppUnitsPerCSSPixel() / PR_MAX(1, roundedDPIScaleFactor));
+        } else {
+            mAppUnitsPerDevNotScaledPixel =
+                PR_MAX(1, AppUnitsPerCSSPixel() / prefDevPixelsPerCSSPixel);
+        }
     } else {
         /* set mAppUnitsPerDevPixel so we're using exactly 72 dpi, even
          * though that means we have a non-integer number of device "pixels"
@@ -271,7 +302,7 @@ nsThebesDeviceContext::Init(nsNativeWidget aWidget)
     SetDPI();
 
 
-#ifdef MOZ_ENABLE_GTK2
+#if defined(MOZ_ENABLE_GTK2) && defined(MOZ_X11)
     if (getenv ("MOZ_X_SYNC")) {
         PR_LOG (gThebesGFXLog, PR_LOG_DEBUG, ("+++ Enabling XSynchronize\n"));
         XSynchronize (gdk_x11_get_default_xdisplay(), True);
@@ -393,6 +424,8 @@ nsThebesDeviceContext::GetSystemFont(nsSystemFontID aID, nsFont *aFont) const
         gSystemFonts = new nsSystemFontsBeOS();
 #elif XP_MACOSX
         gSystemFonts = new nsSystemFontsMac();
+#elif defined(MOZ_WIDGET_QT)
+        gSystemFonts = new nsSystemFontsQt();
 #else
 #error Need to know how to create gSystemFonts, fix me!
 #endif
@@ -683,9 +716,14 @@ nsThebesDeviceContext::ComputeFullAreaUsingScreen(nsRect* outRect)
 void
 nsThebesDeviceContext::FindScreen(nsIScreen** outScreen)
 {
-    if (mWidget)
-        mScreenManager->ScreenForNativeWidget(mWidget, outScreen);
-    else
+    if (mWidget) {
+        nsCOMPtr<nsIScreenManager_MOZILLA_1_9_1_BRANCH> sm191(do_QueryInterface(mScreenManager));
+        if (sm191) {
+            sm191->ScreenForNativeWindow(mWidget, outScreen);
+        } else {
+            mScreenManager->ScreenForNativeWidget(mWidget, outScreen);
+        }
+    } else
         mScreenManager->GetPrimaryScreen(outScreen);
 }
 

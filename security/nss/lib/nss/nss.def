@@ -957,3 +957,18 @@ VFY_VerifyDigestWithAlgorithmID;
 ;+    local:
 ;+       *;
 ;+};
+;+NSS_3.12.1 { 	# NSS 3.12.1 release
+;+    global:
+CERT_NameToAsciiInvertible;
+PK11_FindCertFromDERCertItem;
+;+    local:
+;+       *;
+;+};
+;+NSS_3.12.3 { 	# NSS 3.12.3 release
+;+    global:
+CERT_CompareCerts;
+CERT_RegisterAlternateOCSPAIAInfoCallBack;
+PK11_GetSymKeyHandle;
+;+    local:
+;+       *;
+;+};

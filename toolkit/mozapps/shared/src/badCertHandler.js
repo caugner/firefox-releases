@@ -22,6 +22,7 @@
  * Contributor(s):
  *  Darin Fisher <darin@meer.net>
  *  Daniel Veditz <dveditz@mozilla.com>
+ *  Jesper Kristensen <mail@jesperkristensen.dk>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -56,12 +57,23 @@ function checkCert(channel) {
     issuer = cert.issuer;
   }
 
-  if (!issuer || issuer.tokenName != "Builtin Object Token")
-    throw "cert issuer is not built-in";
+  var errorstring = "cert issuer is not built-in";
+  if (!issuer)
+    throw errorstring;
+
+  issuer = issuer.QueryInterface(Ci.nsIX509Cert3);
+  var tokenNames = issuer.getAllTokenNames({});
+
+  if (!tokenNames.some(isBuiltinToken))
+    throw errorstring;
+}
+
+function isBuiltinToken(tokenName) {
+  return tokenName == "Builtin Object Token";
 }
 
 /**
- * This class implements nsIBadCertListener.  It's job is to prevent "bad cert"
+ * This class implements nsIBadCertListener.  Its job is to prevent "bad cert"
  * security dialogs from being shown to the user.  It is better to simply fail
  * if the certificate is bad. See bug 304286.
  */

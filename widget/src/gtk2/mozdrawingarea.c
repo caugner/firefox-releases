@@ -87,8 +87,6 @@ moz_drawingarea_new (MozDrawingarea *parent, MozContainer *widget_parent,
 
     drawingarea = g_object_new(MOZ_DRAWINGAREA_TYPE, NULL);
 
-    drawingarea->parent = parent;
-
     if (!parent)
         moz_drawingarea_create_windows(drawingarea,
                                        GTK_WIDGET(widget_parent)->window,
@@ -164,6 +162,9 @@ moz_drawingarea_create_windows (MozDrawingarea *drawingarea, GdkWindow *parent,
                              GDK_VISIBILITY_NOTIFY_MASK |
                              GDK_ENTER_NOTIFY_MASK | GDK_LEAVE_NOTIFY_MASK |
                              GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK |
+#ifdef HAVE_GTK_MOTION_HINTS
+                             GDK_POINTER_MOTION_HINT_MASK |
+#endif
                              GDK_POINTER_MOTION_MASK);
     /* create the inner window */
     drawingarea->inner_window = gdk_window_new (drawingarea->clip_window,
@@ -183,14 +184,13 @@ void
 moz_drawingarea_finalize (GObject *object)
 {
     MozDrawingarea *drawingarea;
+    gpointer user_data;
 
     g_return_if_fail(IS_MOZ_DRAWINGAREA(object));
 
     drawingarea = MOZ_DRAWINGAREA(object);
 
-    gdk_window_set_user_data(drawingarea->inner_window, NULL);
     gdk_window_destroy(drawingarea->inner_window);
-    gdk_window_set_user_data(drawingarea->clip_window, NULL);
     gdk_window_destroy(drawingarea->clip_window);
 
     (* parent_class->finalize) (object);

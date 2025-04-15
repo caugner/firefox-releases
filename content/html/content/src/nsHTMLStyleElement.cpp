@@ -49,7 +49,7 @@
 #include "nsIDocument.h"
 #include "nsUnicharUtils.h"
 #include "nsParserUtils.h"
-
+#include "nsThreadUtils.h"
 
 class nsHTMLStyleElement : public nsGenericHTMLElement,
                            public nsIDOMHTMLStyleElement,
@@ -137,12 +137,14 @@ NS_IMPL_RELEASE_INHERITED(nsHTMLStyleElement, nsGenericElement)
 
 
 // QueryInterface implementation for nsHTMLStyleElement
-NS_HTML_CONTENT_INTERFACE_TABLE_HEAD(nsHTMLStyleElement, nsGenericHTMLElement)
-  NS_INTERFACE_TABLE_INHERITED4(nsHTMLStyleElement,
-                                nsIDOMHTMLStyleElement,
-                                nsIDOMLinkStyle,
-                                nsIStyleSheetLinkingElement,
-                                nsIMutationObserver)
+NS_INTERFACE_TABLE_HEAD(nsHTMLStyleElement)
+  NS_HTML_CONTENT_INTERFACE_TABLE4(nsHTMLStyleElement,
+                                   nsIDOMHTMLStyleElement,
+                                   nsIDOMLinkStyle,
+                                   nsIStyleSheetLinkingElement,
+                                   nsIMutationObserver)
+  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(nsHTMLStyleElement,
+                                               nsGenericHTMLElement)
 NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLStyleElement)
 
 
@@ -154,8 +156,8 @@ nsHTMLStyleElement::GetDisabled(PRBool* aDisabled)
 {
   nsresult result = NS_OK;
   
-  if (mStyleSheet) {
-    nsCOMPtr<nsIDOMStyleSheet> ss(do_QueryInterface(mStyleSheet));
+  if (GetStyleSheet()) {
+    nsCOMPtr<nsIDOMStyleSheet> ss(do_QueryInterface(GetStyleSheet()));
 
     if (ss) {
       result = ss->GetDisabled(aDisabled);
@@ -173,8 +175,8 @@ nsHTMLStyleElement::SetDisabled(PRBool aDisabled)
 {
   nsresult result = NS_OK;
   
-  if (mStyleSheet) {
-    nsCOMPtr<nsIDOMStyleSheet> ss(do_QueryInterface(mStyleSheet));
+  if (GetStyleSheet()) {
+    nsCOMPtr<nsIDOMStyleSheet> ss(do_QueryInterface(GetStyleSheet()));
 
     if (ss) {
       result = ss->SetDisabled(aDisabled);
@@ -239,7 +241,9 @@ nsHTMLStyleElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                                                  aCompileEventHandlers);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  UpdateStyleSheetInternal(nsnull);
+  nsContentUtils::AddScriptRunner(
+    new nsRunnableMethod<nsHTMLStyleElement>(this,
+                                             &nsHTMLStyleElement::UpdateStyleSheetInternal));
 
   return rv;  
 }

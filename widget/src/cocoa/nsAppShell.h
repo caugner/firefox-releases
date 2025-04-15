@@ -43,7 +43,41 @@
 #ifndef nsAppShell_h_
 #define nsAppShell_h_
 
+class nsCocoaWindow;
+
 #include "nsBaseAppShell.h"
+#include "nsTArray.h"
+
+typedef struct _nsCocoaAppModalWindowListItem {
+  _nsCocoaAppModalWindowListItem(NSWindow *aWindow, NSModalSession aSession) :
+    mWindow(aWindow), mSession(aSession), mWidget(nsnull) {}
+  _nsCocoaAppModalWindowListItem(NSWindow *aWindow, nsCocoaWindow *aWidget) :
+    mWindow(aWindow), mSession(nil), mWidget(aWidget) {}
+  NSWindow *mWindow;       // Weak
+  NSModalSession mSession; // Weak (not retainable)
+  nsCocoaWindow *mWidget;  // Weak
+} nsCocoaAppModalWindowListItem;
+
+class nsCocoaAppModalWindowList {
+public:
+  nsCocoaAppModalWindowList() {}
+  ~nsCocoaAppModalWindowList() {}
+  // Push a Cocoa app-modal window onto the top of our list.
+  nsresult PushCocoa(NSWindow *aWindow, NSModalSession aSession);
+  // Pop the topmost Cocoa app-modal window off our list.
+  nsresult PopCocoa(NSWindow *aWindow, NSModalSession aSession);
+  // Push a Gecko-modal window onto the top of our list.
+  nsresult PushGecko(NSWindow *aWindow, nsCocoaWindow *aWidget);
+  // Pop the topmost Gecko-modal window off our list.
+  nsresult PopGecko(NSWindow *aWindow, nsCocoaWindow *aWidget);
+  // Return the "session" of the top-most visible Cocoa app-modal window.
+  NSModalSession CurrentSession();
+  // Has a Gecko modal dialog popped up over a Cocoa app-modal dialog?
+  PRBool GeckoModalAboveCocoaModal();
+private:
+  nsTArray<nsCocoaAppModalWindowListItem> mList;
+};
+
 
 @class AppShellDelegate;
 

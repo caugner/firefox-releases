@@ -22,6 +22,8 @@
  * Contributor(s):
  *   Daniel Witte (dwitte@stanford.edu)
  *   Michiel van Leeuwen (mvl@exedo.nl)
+ *   Michael Ventnor <m.ventnor@gmail.com>
+ *   Ehsan Akhgari <ehsan.akhgari@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -162,7 +164,7 @@ class nsCookieService : public nsICookieService
 
   protected:
     void                          PrefChanged(nsIPrefBranch *aPrefBranch);
-    nsresult                      InitDB();
+    nsresult                      InitDB(PRBool aDeleteExistingDB = PR_FALSE);
     nsresult                      CreateTable();
     nsresult                      Read();
     void                          GetCookieInternal(nsIURI *aHostURI, nsIChannel *aChannel, PRBool aHttpBound, char **aCookie);
@@ -198,7 +200,9 @@ class nsCookieService : public nsICookieService
     nsCOMPtr<nsIEffectiveTLDService> mTLDService;
 
     // impl members
-    nsTHashtable<nsCookieEntry>   mHostTable;
+    nsTHashtable<nsCookieEntry>  *mHostTable;
+    nsTHashtable<nsCookieEntry>   mDefaultHostTable;
+    nsTHashtable<nsCookieEntry>   mPrivateHostTable;
     PRUint32                      mCookieCount;
 
     // cached prefs
@@ -211,7 +215,7 @@ class nsCookieService : public nsICookieService
     static nsCookieService        *gCookieService;
 
     // this callback needs access to member functions
-    friend PLDHashOperator PR_CALLBACK removeExpiredCallback(nsCookieEntry *aEntry, void *aArg);
+    friend PLDHashOperator removeExpiredCallback(nsCookieEntry *aEntry, void *aArg);
 };
 
 #endif // nsCookieService_h__

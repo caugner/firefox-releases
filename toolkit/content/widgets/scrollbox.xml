@@ -42,6 +42,10 @@
     </content>
 
     <implementation>
+      <destructor><![CDATA[
+        this._stopSmoothScroll();
+      ]]></destructor>
+
       <field name="_scrollbox">
         document.getAnonymousElementByAttribute(this, "anonid", "scrollbox");
       </field>
@@ -243,12 +247,17 @@
         ]]></body>
       </method>
 
+      <method name="_getScrollableElements">
+        <body><![CDATA[
+          return this.hasChildNodes() ?
+                   this.childNodes : document.getBindingParent(this).childNodes;
+        ]]></body>
+      </method>
+
       <method name="_elementFromPoint">
         <parameter name="aX"/>
         <body><![CDATA[
-          var elements = this.hasChildNodes() ?
-                         this.childNodes :
-                         document.getBindingParent(this).childNodes;
+          var elements = this._getScrollableElements();
           if (!this._isLTRScrollbox) {
             elements = Array.slice(elements);
             elements.reverse();
@@ -303,8 +312,10 @@
 
       <method name="_stopSmoothScroll">
         <body><![CDATA[
-          clearInterval(this._smoothScrollTimer);
-          this._isScrolling = 0;
+          if (this._isScrolling) {
+            clearInterval(this._smoothScrollTimer);
+            this._isScrolling = 0;
+          }
         ]]></body>
       </method>
 
@@ -360,9 +371,20 @@
     </implementation>
 
     <handlers>
-      <handler event="DOMMouseScroll" action="this.scrollByIndex(event.detail); event.stopPropagation();"/>
+      <handler event="DOMMouseScroll"><![CDATA[
+        // prevent horizontal scrolling from scrolling a vertical scrollbox
+        if (event.axis == event.HORIZONTAL_AXIS &&
+            this.getAttribute("orient") != "horizontal")
+          return;
+        // We allow vertical scrolling to scroll a horizontal scrollbox
+        // because many users have a vertical scroll wheel but no
+        // horizontal support.
 
-      <handler event="underflow"><![CDATA[
+        this.scrollByIndex(event.detail);
+        event.stopPropagation();
+      ]]></handler>
+
+      <handler event="underflow" phase="capturing"><![CDATA[
         // filter underflow events which were dispatched on nested scrollboxes
         if (event.target != this)
           return;
@@ -398,7 +420,7 @@
         }
       ]]></handler>
 
-      <handler event="overflow"><![CDATA[
+      <handler event="overflow" phase="capturing"><![CDATA[
         // filter underflow events which were dispatched on nested scrollboxes
         if (event.target != this)
           return;
@@ -603,10 +625,10 @@
 
           if (!targetElement) {
             // scroll to the first resp. last element
-            var container = this.hasChildNodes() ? this : document.getBindingParent(this);
+            var elements = this._getScrollableElements();
             targetElement = (this._isLTRScrollbox ? scrollLeft : !scrollLeft) ?
-                            container.firstChild :
-                            container.lastChild;
+                            elements.item(0) :
+                            elements.item(elements.length-1);
           }
 
           this.ensureElementIsVisible(targetElement);

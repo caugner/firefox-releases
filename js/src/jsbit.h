@@ -87,18 +87,18 @@ unsigned char _BitScanReverse(unsigned long * Index, unsigned long Mask);
 __forceinline static int
 __BitScanForward32(unsigned int val)
 {
-   unsigned long idx;
+    unsigned long idx;
 
-   _BitScanForward(&idx, (unsigned long)val);
-   return (int)idx;
+    _BitScanForward(&idx, (unsigned long)val);
+    return (int)idx;
 }
 __forceinline static int
 __BitScanReverse32(unsigned int val)
 {
-   unsigned long idx;
+    unsigned long idx;
 
-   _BitScanReverse(&idx, (unsigned long)val);
-   return (int)(31-idx);
+    _BitScanReverse(&idx, (unsigned long)val);
+    return (int)(31-idx);
 }
 # define js_bitscan_ctz32(val)  __BitScanForward32(val)
 # define js_bitscan_clz32(val)  __BitScanReverse32(val)
@@ -129,7 +129,6 @@ __BitScanReverse32(unsigned int val)
  */
 # define JS_CEILING_LOG2(_log2,_n)                                            \
     JS_BEGIN_MACRO                                                            \
-        JS_STATIC_ASSERT(sizeof(unsigned int) == sizeof(JSUint32));           \
         unsigned int j_ = (unsigned int)(_n);                                 \
         (_log2) = (j_ <= 1 ? 0 : 32 - js_bitscan_clz32(j_ - 1));              \
     JS_END_MACRO
@@ -167,7 +166,6 @@ __BitScanReverse32(unsigned int val)
  */
 # define JS_FLOOR_LOG2(_log2,_n)                                              \
     JS_BEGIN_MACRO                                                            \
-        JS_STATIC_ASSERT(sizeof(unsigned int) == sizeof(JSUint32));           \
         (_log2) = 31 - js_bitscan_clz32(((unsigned int)(_n)) | 1);            \
     JS_END_MACRO
 #else
@@ -207,9 +205,8 @@ __BitScanReverse32(unsigned int val)
 #if JS_BYTES_PER_WORD == 4
 
 # ifdef JS_HAS_BUILTIN_BITSCAN32
-JS_STATIC_ASSERT(sizeof(unsigned) == sizeof(JSUword));
 #  define js_FloorLog2wImpl(n)                                                \
-   ((JSUword)(JS_BITS_PER_WORD - 1 - js_bitscan_clz32(n)))
+    ((JSUword)(JS_BITS_PER_WORD - 1 - js_bitscan_clz32(n)))
 # else
 #  define js_FloorLog2wImpl(n) ((JSUword)JS_FloorLog2(n))
 #endif
@@ -217,9 +214,8 @@ JS_STATIC_ASSERT(sizeof(unsigned) == sizeof(JSUword));
 #elif JS_BYTES_PER_WORD == 8
 
 # ifdef JS_HAS_BUILTIN_BITSCAN64
-JS_STATIC_ASSERT(sizeof(unsigned long long) == sizeof(JSUword));
 #  define js_FloorLog2wImpl(n)                                                \
-   ((JSUword)(JS_BITS_PER_WORD - 1 - js_bitscan_clz64(n)))
+    ((JSUword)(JS_BITS_PER_WORD - 1 - js_bitscan_clz64(n)))
 # else
 extern JSUword js_FloorLog2wImpl(JSUword n);
 # endif

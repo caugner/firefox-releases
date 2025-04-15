@@ -95,7 +95,7 @@
 #endif
     <key id="key_close"   key="&cmd.close.commandKey;"  oncommand="closeWindow(true);"    modifiers="accel"/>
 #ifdef XP_GNOME
-    <key id="key_close2"  key="&cmd.close2Unix.commandKey;" oncommand="closeWindow(true);" modifiers="accel"/>
+    <key id="key_close2"  key="&cmd.close2Unix.commandKey;" oncommand="closeWindow(true);" modifiers="accel,shift"/>
 #else
     <key id="key_close2"  key="&cmd.close2.commandKey;" oncommand="closeWindow(true);" modifiers="accel"/>
 #endif
@@ -103,6 +103,10 @@
 
     <key id="key_findDownload"
          key="&cmd.find.commandKey;"
+         modifiers="accel"
+         command="cmd_findDownload"/>
+    <key id="key_findDownload2"
+         key="&cmd.search.commandKey;"
          modifiers="accel"
          command="cmd_findDownload"/>
     <key id="key_selectAllDownloads"
@@ -179,14 +183,15 @@
                ondragdrop="nsDragAndDrop.drop(event, gDownloadDNDObserver);">
   </richlistbox>
 
-  <hbox id="search" align="center">
+  <windowdragbox id="search" align="center">
     <button id="clearListButton" command="cmd_clearList"
             label="&cmd.clearList.label;"
             accesskey="&cmd.clearList.accesskey;"
             tooltiptext="&cmd.clearList.tooltip;"/>
     <spacer flex="1"/>
-    <textbox type="timed" timeout="500" id="searchbox"
+    <textbox type="search" id="searchbox" class="compact"
+             aria-controls="downloadView"
              oncommand="buildDownloadList();" emptytext="&searchBox.label;"/>
-  </hbox>
+  </windowdragbox>
 
 </window>

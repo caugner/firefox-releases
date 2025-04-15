@@ -175,18 +175,10 @@ OpenKeyForReading(HKEY aKeyRoot, const nsAString& aKeyName, HKEY* aKey)
 //     shell\safemode\command           (default)         REG_SZ     <apppath> -safe-mode
 //
 
-typedef enum {
-  NO_SUBSTITUTION           = 0x00,
-  APP_PATH_SUBSTITUTION     = 0x01,
-  EXE_NAME_SUBSTITUTION     = 0x02
-} SettingFlags;
-
 typedef struct {
   char* keyName;
   char* valueName;
   char* valueData;
-
-  PRInt32 flags;
 } SETTING;
 
 #define APP_REG_NAME L"Firefox"
@@ -209,20 +201,20 @@ static SETTING gSettings[] = {
   // File Extension Class - as of 1.8.1.2 the value for VAL_OPEN is also checked
   // for CLS_HTML since Firefox should also own opeing local files when set as
   // the default browser.
-  { MAKE_KEY_NAME1(CLS_HTML, SOP), "", VAL_OPEN, APP_PATH_SUBSTITUTION },
+  { MAKE_KEY_NAME1(CLS_HTML, SOP), "", VAL_OPEN },
 
   // Protocol Handler Class - for Vista and above
-  { MAKE_KEY_NAME1(CLS_URL, SOP), "", VAL_OPEN, APP_PATH_SUBSTITUTION },
+  { MAKE_KEY_NAME1(CLS_URL, SOP), "", VAL_OPEN },
 
   // Protocol Handlers
-  { MAKE_KEY_NAME1("HTTP", DI),    "", VAL_FILE_ICON, APP_PATH_SUBSTITUTION },
-  { MAKE_KEY_NAME1("HTTP", SOP),   "", VAL_OPEN, APP_PATH_SUBSTITUTION },
-  { MAKE_KEY_NAME1("HTTPS", DI),   "", VAL_FILE_ICON, APP_PATH_SUBSTITUTION },
-  { MAKE_KEY_NAME1("HTTPS", SOP),  "", VAL_OPEN, APP_PATH_SUBSTITUTION }
+  { MAKE_KEY_NAME1("HTTP", DI),    "", VAL_FILE_ICON },
+  { MAKE_KEY_NAME1("HTTP", SOP),   "", VAL_OPEN },
+  { MAKE_KEY_NAME1("HTTPS", DI),   "", VAL_FILE_ICON },
+  { MAKE_KEY_NAME1("HTTPS", SOP),  "", VAL_OPEN }
 };
 
 PRBool
-nsWindowsShellService::IsDefaultBrowserVista(PRBool aStartupCheck, PRBool* aIsDefaultBrowser)
+nsWindowsShellService::IsDefaultBrowserVista(PRBool* aIsDefaultBrowser)
 {
 #if !defined(MOZ_DISABLE_VISTA_SDK_REQUIREMENTS)
   IApplicationAssociationRegistration* pAAR;
@@ -232,18 +224,12 @@ nsWindowsShellService::IsDefaultBrowserVista(PRBool aStartupCheck, PRBool* aIsDe
                                 CLSCTX_INPROC,
                                 IID_IApplicationAssociationRegistration,
                                 (void**)&pAAR);
-  
+
   if (SUCCEEDED(hr)) {
     hr = pAAR->QueryAppIsDefaultAll(AL_EFFECTIVE,
                                     APP_REG_NAME,
                                     aIsDefaultBrowser);
-    
-    // If this is the first browser window, maintain internal state that we've
-    // checked this session (so that subsequent window opens don't show the 
-    // default browser dialog).
-    if (aStartupCheck)
-      mCheckedThisSession = PR_TRUE;
-    
+
     pAAR->Release();
     return PR_TRUE;
   }
@@ -270,72 +256,47 @@ nsWindowsShellService::IsDefaultBrowser(PRBool aStartupCheck,
   if (!::GetModuleFileNameW(0, exePath, MAX_BUF))
     return NS_ERROR_FAILURE;
 
-  nsAutoString appLongPath(exePath);
-
-  // Support short path to the exe so if it is already set the user is not
-  // prompted to set the default browser again.
-  if (!::GetShortPathNameW(exePath, exePath, sizeof(exePath)))
+  // Convert the path to a long path since GetModuleFileNameW returns the path
+  // that was used to launch Firefox which is not necessarily a long path.
+  if (!::GetLongPathNameW(exePath, exePath, MAX_BUF))
     return NS_ERROR_FAILURE;
 
-  nsAutoString appShortPath(exePath);
-  ToUpperCase(appShortPath);
+  nsAutoString appLongPath(exePath);
 
-  nsCOMPtr<nsILocalFile> lf;
-  nsresult rv = NS_NewLocalFile(appShortPath, PR_TRUE,
-                                getter_AddRefs(lf));
-  if (NS_FAILED(rv))
-    return rv;
-
-  nsAutoString exeName;
-  rv = lf->GetLeafName(exeName);
-  if (NS_FAILED(rv))
-    return rv;
-  ToUpperCase(exeName);
-
+  nsresult rv;
   PRUnichar currValue[MAX_BUF];
   for (settings = gSettings; settings < end; ++settings) {
     NS_ConvertUTF8toUTF16 dataLongPath(settings->valueData);
-    NS_ConvertUTF8toUTF16 dataShortPath(settings->valueData);
     NS_ConvertUTF8toUTF16 key(settings->keyName);
     NS_ConvertUTF8toUTF16 value(settings->valueName);
-    if (settings->flags & APP_PATH_SUBSTITUTION) {
-      PRInt32 offset = dataLongPath.Find("%APPPATH%");
-      dataLongPath.Replace(offset, 9, appLongPath);
-      // Remove the quotes around %APPPATH% in VAL_OPEN for short paths
-      PRInt32 offsetQuoted = dataShortPath.Find("\"%APPPATH%\"");
-      if (offsetQuoted != -1)
-        dataShortPath.Replace(offsetQuoted, 11, appShortPath);
-      else
-        dataShortPath.Replace(offset, 9, appShortPath);
-    }
-    if (settings->flags & EXE_NAME_SUBSTITUTION) {
-      PRInt32 offset = key.Find("%APPEXE%");
-      key.Replace(offset, 8, exeName);
-    }
+    PRInt32 offset = dataLongPath.Find("%APPPATH%");
+    dataLongPath.Replace(offset, 9, appLongPath);
 
     ::ZeroMemory(currValue, sizeof(currValue));
     HKEY theKey;
     rv = OpenKeyForReading(HKEY_CLASSES_ROOT, key, &theKey);
-    if (NS_SUCCEEDED(rv)) {
-      DWORD len = sizeof currValue;
-      DWORD res = ::RegQueryValueExW(theKey, PromiseFlatString(value).get(),
-                                     NULL, NULL, (LPBYTE)currValue, &len);
-      // Close the key we opened.
-      ::RegCloseKey(theKey);
-      if (REG_FAILED(res) ||
-          !dataLongPath.Equals(currValue, CaseInsensitiveCompare) &&
-          !dataShortPath.Equals(currValue, CaseInsensitiveCompare)) {
-        // Key wasn't set, or was set to something else (something else became the default browser)
-        *aIsDefaultBrowser = PR_FALSE;
-        return NS_OK;
-      }
+    if (NS_FAILED(rv)) {
+      *aIsDefaultBrowser = PR_FALSE;
+      return NS_OK;
+    }
+
+    DWORD len = sizeof currValue;
+    DWORD res = ::RegQueryValueExW(theKey, PromiseFlatString(value).get(),
+                                   NULL, NULL, (LPBYTE)currValue, &len);
+    // Close the key we opened.
+    ::RegCloseKey(theKey);
+    if (REG_FAILED(res) ||
+        !dataLongPath.Equals(currValue, CaseInsensitiveCompare)) {
+      // Key wasn't set, or was set to something other than our registry entry
+      *aIsDefaultBrowser = PR_FALSE;
+      return NS_OK;
     }
   }
 
   // Only check if Firefox is the default browser on Vista if the previous
   // checks show that Firefox is the default browser.
-  if (aIsDefaultBrowser)
-    IsDefaultBrowserVista(aStartupCheck, aIsDefaultBrowser);
+  if (*aIsDefaultBrowser)
+    IsDefaultBrowserVista(aIsDefaultBrowser);
 
   return NS_OK;
 }
@@ -358,8 +319,8 @@ nsWindowsShellService::SetDefaultBrowser(PRBool aClaimAllTypes, PRBool aForAllUs
   rv = appHelper->AppendNative(NS_LITERAL_CSTRING("helper.exe"));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCAutoString appHelperPath;
-  rv = appHelper->GetNativePath(appHelperPath);
+  nsAutoString appHelperPath;
+  rv = appHelper->GetPath(appHelperPath);
   NS_ENSURE_SUCCESS(rv, rv);
 
   if (aForAllUsers) {
@@ -368,11 +329,11 @@ nsWindowsShellService::SetDefaultBrowser(PRBool aClaimAllTypes, PRBool aForAllUs
     appHelperPath.AppendLiteral(" /SetAsDefaultAppUser");
   }
 
-  STARTUPINFO si = {sizeof(si), 0};
+  STARTUPINFOW si = {sizeof(si), 0};
   PROCESS_INFORMATION pi = {0};
 
-  BOOL ok = CreateProcess(NULL, (LPSTR)appHelperPath.get(), NULL, NULL,
-                          FALSE, 0, NULL, NULL, &si, &pi);
+  BOOL ok = CreateProcessW(NULL, (LPWSTR)appHelperPath.get(), NULL, NULL,
+                           FALSE, 0, NULL, NULL, &si, &pi);
 
   if (!ok)
     return NS_ERROR_FAILURE;
@@ -600,7 +561,7 @@ nsWindowsShellService::SetDesktopBackground(nsIDOMElement* aElement,
       ::RegSetValueExW(key, L"WallpaperStyle",
                        0, REG_SZ, (const BYTE *)style, size);
       ::SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, (PVOID)path.get(),
-                              SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE);
+                              SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
       // Close the key we opened.
       ::RegCloseKey(key);
     }
@@ -766,8 +727,8 @@ nsWindowsShellService::GetUnreadMailCount(PRUint32* aCount)
     if (REG_SUCCEEDED(res))
       *aCount = unreadCount;
 
-  // Close the key we opened.
-  ::RegCloseKey(accountKey);
+    // Close the key we opened.
+    ::RegCloseKey(accountKey);
   }
 
   return NS_OK;
@@ -828,8 +789,7 @@ nsWindowsShellService::OpenApplicationWithURI(nsILocalFile* aApplication,
   
   const nsCString spec(aURI);
   const char* specStr = spec.get();
-  PRUint32 pid;
-  return process->Run(PR_FALSE, &specStr, 1, &pid);
+  return process->Run(PR_FALSE, &specStr, 1);
 }
 
 NS_IMETHODIMP

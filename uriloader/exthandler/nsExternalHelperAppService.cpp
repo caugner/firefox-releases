@@ -26,6 +26,7 @@
  *   Christian Biesinger <cbiesinger@web.de>
  *   Dan Mosedale <dmose@mozilla.org>
  *   Myk Melez <myk@mozilla.org>
+ *   Ehsan Akhgari <ehsan.akhgari@gmail.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either of the GNU General Public License Version 2 or later (the "GPL"),
@@ -124,8 +125,19 @@
 #include "plbase64.h"
 #include "prmem.h"
 
+#include "nsIPrivateBrowsingService.h"
+
 // Buffer file writes in 32kb chunks
 #define BUFFERED_OUTPUT_SIZE (1024 * 32)
+
+// Download Folder location constants
+#define NS_PREF_DOWNLOAD_DIR        "browser.download.dir"
+#define NS_PREF_DOWNLOAD_FOLDERLIST "browser.download.folderList"
+enum {
+  NS_FOLDER_VALUE_DESKTOP = 0
+, NS_FOLDER_VALUE_DOWNLOADS = 1
+, NS_FOLDER_VALUE_CUSTOM = 2
+};
 
 #ifdef PR_LOGGING
 PRLogModuleInfo* nsExternalHelperAppService::mLog = nsnull;
@@ -307,17 +319,14 @@ static PRBool GetFilenameAndExtensionFromChannel(nsIChannel* aChannel,
     // XXXbz this code is duplicated in nsDocumentOpenInfo::DispatchContent.
     // Factor it out!  Maybe store it in the nsDocumentOpenInfo?
     if (NS_FAILED(rv) || 
-        (// Some broken sites just send
-         // Content-Disposition: ; filename="file"
-         // screen those out here.
-         !dispToken.IsEmpty() &&
+        (!dispToken.IsEmpty() &&
          !dispToken.LowerCaseEqualsLiteral("inline") &&
-        // Broken sites just send
-        // Content-Disposition: filename="file"
-        // without a disposition token... screen those out.
-        !dispToken.EqualsIgnoreCase("filename", 8)) &&
-        // Also in use is Content-Disposition: name="file"
-        !dispToken.EqualsIgnoreCase("name", 4)) 
+         // Broken sites just send
+         // Content-Disposition: filename="file"
+         // without a disposition token... screen those out.
+         !dispToken.EqualsIgnoreCase("filename", 8) &&
+         // Also in use is Content-Disposition: name="file"
+         !dispToken.EqualsIgnoreCase("name", 4)))
     {
       // We have a content-disposition of "attachment" or unknown
       handleExternally = PR_TRUE;
@@ -377,6 +386,66 @@ static PRBool GetFilenameAndExtensionFromChannel(nsIChannel* aChannel,
 
 
   return handleExternally;
+}
+
+/**
+ * Obtains the download directory to use.  This tends to vary per platform, and
+ * needs to be consistent throughout our codepaths.
+ */
+static nsresult GetDownloadDirectory(nsIFile **_directory)
+{
+  nsCOMPtr<nsIFile> dir;
+#ifdef XP_MACOSX
+  // On OS X, we first try to get the users download location, if it's set.
+  nsCOMPtr<nsIPrefBranch> prefs =
+    do_GetService(NS_PREFSERVICE_CONTRACTID);
+  NS_ENSURE_TRUE(prefs, NS_ERROR_UNEXPECTED);
+
+  PRInt32 folderValue = -1;
+  (void) prefs->GetIntPref(NS_PREF_DOWNLOAD_FOLDERLIST, &folderValue);
+  switch (folderValue) {
+    case NS_FOLDER_VALUE_DESKTOP:
+      (void) NS_GetSpecialDirectory(NS_OS_DESKTOP_DIR, getter_AddRefs(dir));
+      break;
+    case NS_FOLDER_VALUE_CUSTOM:
+      {
+        (void) prefs->GetComplexValue(NS_PREF_DOWNLOAD_DIR,
+                                      NS_GET_IID(nsILocalFile),
+                                      getter_AddRefs(dir));
+        if (!dir) break;
+
+        // We have the directory, and now we need to make sure it exists
+        PRBool dirExists = PR_FALSE;
+        (void) dir->Exists(&dirExists);
+        if (dirExists) break;
+
+        nsresult rv = dir->Create(nsIFile::DIRECTORY_TYPE, 0755);
+        if (NS_FAILED(rv)) {
+          dir = nsnull;
+          break;
+        }
+      }
+      break;
+    case NS_FOLDER_VALUE_DOWNLOADS:
+      // This is just the OS default location, so fall out
+      break;
+  }
+
+  if (!dir) {
+    // If not, we default to the OS X default download location.
+    nsresult rv = NS_GetSpecialDirectory(NS_OSX_DEFAULT_DOWNLOAD_DIR,
+                                         getter_AddRefs(dir));
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+#else
+  // On all other platforms, we default to the systems temporary directory.
+  nsresult rv = NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(dir));
+  NS_ENSURE_SUCCESS(rv, rv);
+#endif
+
+  NS_ASSERTION(dir, "Somehow we didn't get a download directory!");
+  dir.forget(_directory);
+  return NS_OK;
 }
 
 /**
@@ -469,6 +538,11 @@ static nsExtraMimeTypeEntry extraMimeEntries [] =
   { TEXT_XUL, "xul", "XML-Based User Interface Language", MAC_TYPE('TEXT'), MAC_TYPE('ttxt') },
   { TEXT_XML, "xml,xsl,xbl", "Extensible Markup Language", MAC_TYPE('TEXT'), MAC_TYPE('ttxt') },
   { TEXT_CSS, "css", "Style Sheet", MAC_TYPE('TEXT'), MAC_TYPE('ttxt') },
+  { VIDEO_OGG, "ogv", "Ogg Video", 0, 0 },
+  { VIDEO_OGG, "ogg", "Ogg Video", 0, 0 },
+  { APPLICATION_OGG, "ogg", "Ogg Video", 0, 0},
+  { AUDIO_OGG, "oga", "Ogg Audio", 0, 0 },
+  { AUDIO_WAV, "wav", "Waveform Audio", 0, 0 }
 };
 
 #undef MAC_TYPE
@@ -494,12 +568,19 @@ NS_IMPL_ISUPPORTS6(
   nsIObserver,
   nsISupportsWeakReference)
 
-nsExternalHelperAppService::nsExternalHelperAppService()
+nsExternalHelperAppService::nsExternalHelperAppService() :
+  mInPrivateBrowsing(PR_FALSE)
 {
   gExtProtSvc = this;
 }
 nsresult nsExternalHelperAppService::Init()
 {
+  nsCOMPtr<nsIPrivateBrowsingService> pbs =
+    do_GetService(NS_PRIVATE_BROWSING_SERVICE_CONTRACTID);
+  if (pbs) {
+    pbs->GetPrivateBrowsingEnabled(&mInPrivateBrowsing);
+  }
+
   // Add an observer for profile change
   nsresult rv = NS_OK;
   nsCOMPtr<nsIObserverService> obs = do_GetService("@mozilla.org/observer-service;1", &rv);
@@ -513,7 +594,9 @@ nsresult nsExternalHelperAppService::Init()
   }
 #endif
 
-  return obs->AddObserver(this, "profile-before-change", PR_TRUE);
+  rv = obs->AddObserver(this, "profile-before-change", PR_TRUE);
+  NS_ENSURE_SUCCESS(rv, rv);
+  return obs->AddObserver(this, NS_PRIVATE_BROWSING_SWITCH_TOPIC, PR_TRUE);
 }
 
 nsExternalHelperAppService::~nsExternalHelperAppService()
@@ -857,7 +940,10 @@ NS_IMETHODIMP nsExternalHelperAppService::DeleteTemporaryFileOnExit(nsIFile * aT
   localFile->IsFile(&isFile);
   if (!isFile) return NS_OK;
 
-  mTemporaryFilesList.AppendObject(localFile);
+  if (mInPrivateBrowsing)
+    mTemporaryPrivateFilesList.AppendObject(localFile);
+  else
+    mTemporaryFilesList.AppendObject(localFile);
 
   return NS_OK;
 }
@@ -867,13 +953,13 @@ void nsExternalHelperAppService::FixFilePermissions(nsILocalFile* aFile)
   // This space intentionally left blank
 }
 
-nsresult nsExternalHelperAppService::ExpungeTemporaryFiles()
+void nsExternalHelperAppService::ExpungeTemporaryFilesHelper(nsCOMArray<nsILocalFile> &fileList)
 {
-  PRInt32 numEntries = mTemporaryFilesList.Count();
+  PRInt32 numEntries = fileList.Count();
   nsILocalFile* localFile;
   for (PRInt32 index = 0; index < numEntries; index++)
   {
-    localFile = mTemporaryFilesList[index];
+    localFile = fileList[index];
     if (localFile) {
       // First make the file writable, since the temp file is probably readonly.
       localFile->SetPermissions(0600);
@@ -881,9 +967,17 @@ nsresult nsExternalHelperAppService::ExpungeTemporaryFiles()
     }
   }
 
-  mTemporaryFilesList.Clear();
+  fileList.Clear();
+}
 
-  return NS_OK;
+void nsExternalHelperAppService::ExpungeTemporaryFiles()
+{
+  ExpungeTemporaryFilesHelper(mTemporaryFilesList);
+}
+
+void nsExternalHelperAppService::ExpungeTemporaryPrivateFiles()
+{
+  ExpungeTemporaryFilesHelper(mTemporaryPrivateFilesList);
 }
 
 static const char kExternalWarningPrefPrefix[] = 
@@ -972,6 +1066,13 @@ nsExternalHelperAppService::Observe(nsISupports *aSubject, const char *aTopic, c
 {
   if (!strcmp(aTopic, "profile-before-change")) {
     ExpungeTemporaryFiles();
+  } else if (!strcmp(aTopic, NS_PRIVATE_BROWSING_SWITCH_TOPIC)) {
+    if (NS_LITERAL_STRING(NS_PRIVATE_BROWSING_ENTER).Equals(someData))
+      mInPrivateBrowsing = PR_TRUE;
+    else if (NS_LITERAL_STRING(NS_PRIVATE_BROWSING_LEAVE).Equals(someData)) {
+      mInPrivateBrowsing = PR_FALSE;
+      ExpungeTemporaryPrivateFiles();
+    }
   }
   return NS_OK;
 }
@@ -1085,6 +1186,12 @@ NS_IMETHODIMP nsExternalAppHandler::GetTimeDownloadStarted(PRTime* aTime)
   return NS_OK;
 }
 
+NS_IMETHODIMP nsExternalAppHandler::GetContentLength(PRInt64 *aContentLength)
+{
+  *aContentLength = mContentLength;
+  return NS_OK;
+}
+
 NS_IMETHODIMP nsExternalAppHandler::CloseProgressWindow()
 {
   // release extra state...
@@ -1164,18 +1271,9 @@ void nsExternalAppHandler::EnsureSuggestedFileName()
 
 nsresult nsExternalAppHandler::SetUpTempFile(nsIChannel * aChannel)
 {
-  nsresult rv;
-
-#ifdef XP_MACOSX
- // create a temp file for the data...and open it for writing.
- // use NS_MAC_DEFAULT_DOWNLOAD_DIR which gets download folder from InternetConfig
- // if it can't get download folder pref, then it uses desktop folder
-  rv = NS_GetSpecialDirectory(NS_MAC_DEFAULT_DOWNLOAD_DIR,
-                              getter_AddRefs(mTempFile));
-#else
-  // create a temp file for the data...and open it for writing.
-  rv = NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(mTempFile));
-#endif
+  // First we need to try to get the destination directory for the temporary
+  // file.
+  nsresult rv = GetDownloadDirectory(getter_AddRefs(mTempFile));
   NS_ENSURE_SUCCESS(rv, rv);
 
   // At this point, we do not have a filename for the temp file.  For security
@@ -2103,7 +2201,7 @@ nsresult nsExternalAppHandler::OpenWithApplication()
 
     // make the tmp file readonly so users won't edit it and lose the changes
     // only if we're going to delete the file
-    if (deleteTempFileOnExit)
+    if (deleteTempFileOnExit || gExtProtSvc->InPrivateBrowsing())
       mFinalFileDestination->SetPermissions(0400);
 
     rv = mMimeInfo->LaunchWithFile(mFinalFileDestination);        
@@ -2115,7 +2213,9 @@ nsresult nsExternalAppHandler::OpenWithApplication()
       SendStatusChange(kLaunchError, rv, nsnull, path);
       Cancel(rv); // Cancel, and clean up temp file.
     }
-    else if (deleteTempFileOnExit) {
+    // Always schedule files to be deleted at the end of the private browsing
+    // mode, regardless of the value of the pref.
+    else if (deleteTempFileOnExit || gExtProtSvc->InPrivateBrowsing()) {
       NS_ASSERTION(gExtProtSvc, "Service gone away!?");
       gExtProtSvc->DeleteTemporaryFileOnExit(mFinalFileDestination);
     }
@@ -2172,17 +2272,9 @@ NS_IMETHODIMP nsExternalAppHandler::LaunchWithApplication(nsIFile * aApplication
   // download is done prior to launching the helper app.  So that any existing file of that name won't
   // be overwritten we call CreateUnique() before calling MoveFile().  Also note that we use the same
   // directory as originally downloaded to so that MoveFile() just does an in place rename.
-   
+
   nsCOMPtr<nsIFile> fileToUse;
-  
-  // The directories specified here must match those specified in SetUpTempFile().  This avoids
-  // having to do a copy of the file when it finishes downloading and the potential for errors
-  // that would introduce
-#ifdef XP_MACOSX
-  NS_GetSpecialDirectory(NS_MAC_DEFAULT_DOWNLOAD_DIR, getter_AddRefs(fileToUse));
-#else
-  NS_GetSpecialDirectory(NS_OS_TEMP_DIR, getter_AddRefs(fileToUse));
-#endif
+  (void) GetDownloadDirectory(getter_AddRefs(fileToUse));
 
   if (mSuggestedFileName.IsEmpty())
   {

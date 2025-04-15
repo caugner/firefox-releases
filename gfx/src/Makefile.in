@@ -48,8 +48,6 @@ EXPORT_LIBRARY = 1
 GRE_MODULE	= 1
 LIBXUL_LIBRARY = 1
 
-PACKAGE_FILE = gfx.pkg
-
 REQUIRES	= xpcom \
 		  string \
 		  widget \
@@ -65,13 +63,8 @@ ifdef MOZ_ENABLE_POSTSCRIPT
 DIRS        += psshared
 endif
 
-ifdef MOZ_ENABLE_PHOTON
-DIRS        += photon
-endif
-
 CPPSRCS = \
         nsColor.cpp \
-        nsColorNames.cpp \
         nsDeviceContext.cpp \
         nsFont.cpp \
         nsRect.cpp \

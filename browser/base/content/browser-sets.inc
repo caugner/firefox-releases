@@ -98,10 +98,23 @@
              disabled="true"/>
     <command id="Browser:Home"    oncommand="BrowserHome();"/>
     <command id="Browser:Back"    oncommand="BrowserBack();" disabled="true"/>
+    <command id="Browser:BackOrBackDuplicate" oncommand="BrowserBack(event);" disabled="true">
+      <observes element="Browser:Back" attribute="disabled"/>
+    </command>
     <command id="Browser:Forward" oncommand="BrowserForward();" disabled="true"/>
+    <command id="Browser:ForwardOrForwardDuplicate" oncommand="BrowserForward(event);" disabled="true">
+      <observes element="Browser:Forward" attribute="disabled"/>
+    </command>
     <command id="Browser:Stop"    oncommand="BrowserStop();" disabled="true"/>
     <command id="Browser:Reload"  oncommand="if (event.shiftKey) BrowserReloadSkipCache(); else BrowserReload()" disabled="true"/>
-    <command id="Browser:ReloadSkipCache"  oncommand="BrowserReloadSkipCache()" disabled="true"/>
+    <command id="Browser:ReloadOrDuplicate" oncommand="BrowserReloadOrDuplicate(event)" disabled="true">
+      <observes element="Browser:Reload" attribute="disabled"/>
+    </command>
+    <command id="Browser:ReloadSkipCache" oncommand="BrowserReloadSkipCache()" disabled="true">
+      <observes element="Browser:Reload" attribute="disabled"/>
+    </command>
+    <command id="Browser:NextTab" oncommand="gBrowser.mTabContainer.advanceSelectedTab(1, true);"/>
+    <command id="Browser:PrevTab" oncommand="gBrowser.mTabContainer.advanceSelectedTab(-1, true);"/>
     <command id="cmd_fullZoomReduce"  oncommand="FullZoom.reduce()"/>
     <command id="cmd_fullZoomEnlarge" oncommand="FullZoom.enlarge()"/>
     <command id="cmd_fullZoomReset"   oncommand="FullZoom.reset()"/>
@@ -113,7 +126,9 @@
     <command id="Tools:Addons" oncommand="BrowserOpenAddonsMgr();"/>
     <command id="Tools:Sanitize"
      oncommand="Cc[GLUE_CID].getService(Ci.nsIBrowserGlue).sanitize(window || null);"/>
+    <command id="Tools:PrivateBrowsing" oncommand="gPrivateBrowsingUI.toggleMode();"/>
     <command id="History:UndoCloseTab" oncommand="undoCloseTab();"/>
+    <command id="History:UndoCloseWindow" oncommand="undoCloseWindow();"/>
   </commandset>
 
   <commandset id="placesCommands">
@@ -201,7 +216,7 @@
 #endif
 #ifdef XP_GNOME
     <key id="key_search2" key="&searchFocusUnix.commandkey;" command="Tools:Search" modifiers="accel"/>
-    <key id="key_openDownloads" key="&downloadsUnix.commandkey;" command="Tools:Downloads" modifiers="accel"/>
+    <key id="key_openDownloads" key="&downloadsUnix.commandkey;" command="Tools:Downloads" modifiers="accel,shift"/>
 #else
     <key id="key_openDownloads" key="&downloads.commandkey;" command="Tools:Downloads" modifiers="accel"/>
 #endif
@@ -268,6 +283,8 @@
 #ifndef MOZ_WIDGET_GTK2
     <key id="bookmarkAllTabsKb" key="&bookmarkThisPageCmd.commandkey;" command="Browser:BookmarkAllTabs" modifiers="accel,shift"/>
     <key id="manBookmarkKb" key="&bookmarksSidebarCmd.commandkey;" command="Browser:ShowAllBookmarks" modifiers="accel,shift"/>
+#else
+    <key id="manBookmarkKb" key="&bookmarksSidebarGtkCmd.commandkey;" command="Browser:ShowAllBookmarks" modifiers="accel,shift"/>
 #endif
     <key id="viewBookmarksSidebarKb" key="&bookmarksSidebarCmd.commandkey;" command="viewBookmarksSidebar" modifiers="accel"/>
 #ifdef XP_WIN
@@ -303,6 +320,7 @@
     
     <key id="key_switchTextDirection" key="&bidiSwitchTextDirectionItem.commandkey;" command="cmd_switchTextDirection" modifiers="accel,shift" />
 
+    <key id="key_privatebrowsing" command="Tools:PrivateBrowsing" key="&privateBrowsingCmd.commandkey;" modifiers="accel,shift"/>
     <key id="key_sanitize" command="Tools:Sanitize" keycode="VK_DELETE" modifiers="accel,shift"/>
 #ifdef XP_MACOSX
     <key id="key_sanitize_mac" command="Tools:Sanitize" keycode="VK_BACK" modifiers="accel,shift"/>
@@ -312,6 +330,7 @@
 #endif
 
     <key id="key_undoCloseTab" command="History:UndoCloseTab" key="&tabCmd.commandkey;" modifiers="accel,shift"/>
+    <key id="key_undoCloseWindow" command="History:UndoCloseWindow" key="&newNavigatorCmd.key;" modifiers="accel,shift"/>
 
 #ifdef XP_GNOME
 #define NUM_SELECT_TAB_MODIFIER alt
@@ -319,15 +338,15 @@
 #define NUM_SELECT_TAB_MODIFIER accel
 #endif
 
-#expand    <key id="key_selectTab1" oncommand="BrowserNumberTabSelection(event, 0);" key="1" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
-#expand    <key id="key_selectTab2" oncommand="BrowserNumberTabSelection(event, 1);" key="2" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
-#expand    <key id="key_selectTab3" oncommand="BrowserNumberTabSelection(event, 2);" key="3" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
-#expand    <key id="key_selectTab4" oncommand="BrowserNumberTabSelection(event, 3);" key="4" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
-#expand    <key id="key_selectTab5" oncommand="BrowserNumberTabSelection(event, 4);" key="5" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
-#expand    <key id="key_selectTab6" oncommand="BrowserNumberTabSelection(event, 5);" key="6" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
-#expand    <key id="key_selectTab7" oncommand="BrowserNumberTabSelection(event, 6);" key="7" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
-#expand    <key id="key_selectTab8" oncommand="BrowserNumberTabSelection(event, 7);" key="8" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
-#expand    <key id="key_selectTab9" oncommand="BrowserNumberTabSelection(event, 8);" key="9" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab1" oncommand="gBrowser.selectTabAtIndex(0, event);" key="1" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab2" oncommand="gBrowser.selectTabAtIndex(1, event);" key="2" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab3" oncommand="gBrowser.selectTabAtIndex(2, event);" key="3" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab4" oncommand="gBrowser.selectTabAtIndex(3, event);" key="4" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab5" oncommand="gBrowser.selectTabAtIndex(4, event);" key="5" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab6" oncommand="gBrowser.selectTabAtIndex(5, event);" key="6" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab7" oncommand="gBrowser.selectTabAtIndex(6, event);" key="7" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectTab8" oncommand="gBrowser.selectTabAtIndex(7, event);" key="8" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
+#expand    <key id="key_selectLastTab" oncommand="gBrowser.selectTabAtIndex(-1, event);" key="9" modifiers="__NUM_SELECT_TAB_MODIFIER__"/>
 
   </keyset>
 

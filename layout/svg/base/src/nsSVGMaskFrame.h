@@ -57,7 +57,7 @@ protected:
 public:
   // nsSVGMaskFrame method:
   already_AddRefed<gfxPattern> ComputeMaskAlpha(nsSVGRenderState *aContext,
-                                                nsISVGChildFrame* aParent,
+                                                nsIFrame* aParent,
                                                 nsIDOMSVGMatrix* aMatrix,
                                                 float aOpacity = 1.0f);
 
@@ -95,7 +95,7 @@ private:
     nsSVGMaskFrame *mFrame;
   };
 
-  nsISVGChildFrame *mMaskParent;
+  nsIFrame *mMaskParent;
   nsCOMPtr<nsIDOMSVGMatrix> mMaskParentMatrix;
   // recursion prevention flag
   PRPackedBool mInUse;
@@ -103,8 +103,5 @@ private:
   // nsSVGContainerFrame methods:
   virtual already_AddRefed<nsIDOMSVGMatrix> GetCanvasTM();
 };
-
-nsIContent *
-NS_GetSVGMaskElement(nsIURI *aURI, nsIContent *aContent);
 
 #endif

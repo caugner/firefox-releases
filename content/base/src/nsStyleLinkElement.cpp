@@ -72,10 +72,7 @@ nsStyleLinkElement::nsStyleLinkElement()
 
 nsStyleLinkElement::~nsStyleLinkElement()
 {
-  nsCOMPtr<nsICSSStyleSheet> cssSheet = do_QueryInterface(mStyleSheet);
-  if (cssSheet) {
-    cssSheet->SetOwningNode(nsnull);
-  }
+  nsStyleLinkElement::SetStyleSheet(nsnull);
 }
 
 NS_IMETHODIMP 
@@ -230,7 +227,7 @@ nsStyleLinkElement::DoUpdateStyleSheet(nsIDocument *aOldDocument,
     aOldDocument->BeginUpdate(UPDATE_STYLE);
     aOldDocument->RemoveStyleSheet(mStyleSheet);
     aOldDocument->EndUpdate(UPDATE_STYLE);
-    mStyleSheet = nsnull;
+    nsStyleLinkElement::SetStyleSheet(nsnull);
   }
 
   if (mDontLoadStyle || !mUpdatesEnabled) {
@@ -275,7 +272,7 @@ nsStyleLinkElement::DoUpdateStyleSheet(nsIDocument *aOldDocument,
     doc->BeginUpdate(UPDATE_STYLE);
     doc->RemoveStyleSheet(mStyleSheet);
     doc->EndUpdate(UPDATE_STYLE);
-    mStyleSheet = nsnull;
+    nsStyleLinkElement::SetStyleSheet(nsnull);
   }
 
   if (!uri && !isInline) {
@@ -314,8 +311,12 @@ nsStyleLinkElement::DoUpdateStyleSheet(nsIDocument *aOldDocument,
     rv = doc->CSSLoader()->
       LoadStyleLink(thisContent, uri, title, media, isAlternate, aObserver,
                     &isAlternate);
-    if (rv == NS_ERROR_FILE_NOT_FOUND) {
+    if (NS_FAILED(rv)) {
+      // Don't propagate LoadStyleLink() errors further than this, since some
+      // consumers (e.g. nsXMLContentSink) will completely abort on innocuous
+      // things like a stylesheet load being blocked by the security system.
       doneLoading = PR_TRUE;
+      isAlternate = PR_FALSE;
       rv = NS_OK;
     }
   }

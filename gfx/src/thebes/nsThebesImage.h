@@ -71,22 +71,15 @@ public:
     virtual PRUint8 *GetAlphaBits();
     virtual PRInt32 GetAlphaLineStride();
     virtual PRBool GetIsImageComplete();
-    virtual void ImageUpdated(nsIDeviceContext *aContext, PRUint8 aFlags, nsRect *aUpdateRect);
+    virtual nsresult ImageUpdated(nsIDeviceContext *aContext, PRUint8 aFlags, nsRect *aUpdateRect);
     virtual nsresult Optimize(nsIDeviceContext* aContext);
     virtual nsColorMap *GetColorMap();
 
-    NS_IMETHOD Draw(nsIRenderingContext &aContext,
-                    const gfxRect &aSourceRect,
-                    const gfxRect &aSubimageRect,
-                    const gfxRect &aDestRect);
-
-    nsresult ThebesDrawTile(gfxContext *thebesContext,
-                            nsIDeviceContext* dx,
-                            const gfxPoint& aOffset,
-                            const gfxRect& aTileRect,
-                            const nsIntRect& aSubimageRect,
-                            const PRInt32 aXPadding,
-                            const PRInt32 aYPadding);
+    virtual void Draw(gfxContext*        aContext,
+                      const gfxMatrix&   aUserSpaceToImageSpace,
+                      const gfxRect&     aFill,
+                      const nsIntMargin& aPadding,
+                      const nsIntRect&   aSubimage);
 
     virtual PRInt8 GetAlphaDepth();
     virtual void* GetBitInfo();
@@ -122,6 +115,9 @@ public:
     }
 
     void SetHasNoAlpha();
+
+    NS_IMETHOD Extract(const nsIntRect& aSubimage,
+                       nsIImage** aResult NS_OUTPARAM);
 
 protected:
     static PRBool AllowedImageSize(PRInt32 aWidth, PRInt32 aHeight) {
@@ -163,6 +159,7 @@ protected:
     PRPackedBool mImageComplete;
     PRPackedBool mSinglePixel;
     PRPackedBool mFormatChanged;
+    PRPackedBool mNeverUseDeviceSurface;
 #ifdef XP_WIN
     PRPackedBool mIsDDBSurface;
 #endif

@@ -245,7 +245,8 @@ protected:
 #define IMETHOD_VISIBILITY NS_VISIBILITY_HIDDEN
 
 // An event that can be used to call a method on a class.  The class type must
-// support reference counting.
+// support reference counting. This event supports Revoke for use
+// with nsRevocableEventPtr.
 template <class T>
 class nsRunnableMethod : public nsRunnable
 {
@@ -258,13 +259,19 @@ public:
   }
 
   NS_IMETHOD Run() {
+    if (!mObj)
+      return NS_OK;
     (mObj->*mMethod)();
     return NS_OK;
+  }
+  
+  void Revoke() {
+    NS_IF_RELEASE(mObj);
   }
 
 private:
   virtual ~nsRunnableMethod() {
-    NS_RELEASE(mObj);
+    NS_IF_RELEASE(mObj);
   }
 
   T      *mObj;
@@ -285,6 +292,60 @@ private:
 //
 #define NS_NEW_RUNNABLE_METHOD(class_, obj_, method_) \
     new nsRunnableMethod<class_>(obj_, &class_::method_)
+
+// An event that can be used to call a method on a class, but holds only
+// a raw pointer to the object on which the method will be called.  This
+// event supports Revoke for use with nsRevocableEventPtr and should
+// almost always be used with it.
+template <class ClassType, typename ReturnType = void>
+class nsNonOwningRunnableMethod : public nsRunnable
+{
+public:
+  typedef ReturnType (ClassType::*Method)();
+
+  nsNonOwningRunnableMethod(ClassType *obj, Method method)
+    : mObj(obj), mMethod(method) {
+  }
+
+  NS_IMETHOD Run() {
+    if (!mObj)
+      return NS_OK;
+    (mObj->*mMethod)();
+    return NS_OK;
+  }
+
+  void Revoke() {
+    mObj = nsnull;
+  }
+
+  // These ReturnTypeEnforcer classes set up a blacklist for return types that
+  // we know are not safe. The default ReturnTypeEnforcer compiles just fine but
+  // already_AddRefed will not.
+  template <typename OtherReturnType>
+  class ReturnTypeEnforcer
+  {
+  public:
+    typedef int ReturnTypeIsSafe;
+  };
+
+  template <class T>
+  class ReturnTypeEnforcer<already_AddRefed<T> >
+  {
+    // No ReturnTypeIsSafe makes this illegal!
+  };
+
+  // Make sure this return type is safe.
+  typedef typename ReturnTypeEnforcer<ReturnType>::ReturnTypeIsSafe check;
+
+protected:
+  virtual ~nsNonOwningRunnableMethod() {
+  }
+
+private:
+  ClassType* mObj;
+  Method mMethod;
+};
+
 
 #endif  // XPCOM_GLUE_AVOID_NSPR
 
@@ -364,6 +425,8 @@ public:
   PRBool IsPending() {
     return mEvent != nsnull;
   }
+  
+  T *get() { return mEvent; }
 
 private:
   // Not implemented

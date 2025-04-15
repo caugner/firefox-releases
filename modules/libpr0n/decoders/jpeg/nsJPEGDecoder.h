@@ -50,7 +50,7 @@
 #include "imgILoad.h"
 #include "nsIInputStream.h"
 #include "nsIPipe.h"
-#include "lcms.h"
+#include "qcms.h"
 
 extern "C" {
 #include "jpeglib.h"
@@ -94,7 +94,7 @@ public:
   nsresult  ProcessData(const char *data, PRUint32 count, PRUint32 *writeCount);
 
 protected:
-  PRBool OutputScanlines();
+  nsresult OutputScanlines(PRBool* suspend);
 
 public:
   nsCOMPtr<imgIContainer> mImage;
@@ -122,8 +122,8 @@ public:
   JOCTET  *mProfile;
   PRUint32 mProfileLength;
 
-  cmsHPROFILE mInProfile;
-  cmsHTRANSFORM mTransform;
+  qcms_profile *mInProfile;
+  qcms_transform *mTransform;
 
   PRPackedBool mReading;
 };

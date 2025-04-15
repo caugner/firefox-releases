@@ -76,6 +76,7 @@ private:
   PlaceholderTxn();
 
 public:
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(PlaceholderTxn, EditAggregateTxn)
 // ------------ EditAggregateTxn -----------------------
 
   NS_DECL_EDITTXN

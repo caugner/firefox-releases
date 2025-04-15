@@ -228,7 +228,6 @@ public:
   virtual nsIFrame* GetNextInFlowVirtual() const;
   NS_IMETHOD  SetNextInFlow(nsIFrame*);
   NS_IMETHOD  GetOffsetFromView(nsPoint& aOffset, nsIView** aView) const;
-  NS_IMETHOD  GetOriginToViewOffset(nsPoint& aOffset, nsIView **aView) const;
   virtual nsIAtom* GetType() const;
   virtual PRBool IsContainingBlock() const;
 #ifdef NS_DEBUG
@@ -239,7 +238,7 @@ public:
   NS_IMETHOD  VerifyTree() const;
 #endif
 
-  NS_IMETHOD  SetSelected(nsPresContext* aPresContext, nsIDOMRange *aRange,PRBool aSelected, nsSpread aSpread);
+  NS_IMETHOD  SetSelected(nsPresContext* aPresContext, nsIDOMRange *aRange,PRBool aSelected, nsSpread aSpread, SelectionType aType);
   NS_IMETHOD  GetSelected(PRBool *aSelected) const;
   NS_IMETHOD  IsSelectable(PRBool* aIsSelectable, PRUint8* aSelectStyle) const;
 
@@ -346,7 +345,8 @@ public:
 
   NS_IMETHOD HandleMultiplePress(nsPresContext* aPresContext,
                          nsGUIEvent *    aEvent,
-                         nsEventStatus*  aEventStatus);
+                         nsEventStatus*  aEventStatus,
+                         PRBool          aControlHeld);
 
   NS_IMETHOD HandleDrag(nsPresContext* aPresContext,
                         nsGUIEvent *    aEvent,
@@ -360,7 +360,8 @@ public:
                                     nsSelectionAmount aAmountForward,
                                     PRInt32 aStartPos,
                                     nsPresContext* aPresContext,
-                                    PRBool aJumpLines);
+                                    PRBool aJumpLines,
+                                    PRBool aMultipleSelection);
 
 
   // Helper for GetContentAndOffsetsFromPoint; calculation of content offsets
@@ -379,17 +380,13 @@ public:
 
   /**
    * Helper method to invalidate portions of a standard container frame if the
-   * reflow state indicates that the size has changed (specifically border,
+   * desired size indicates that the size has changed (specifically border,
    * background and outline).
    * We assume that the difference between the old frame area and the new
    * frame area is invalidated by some other means.
-   * @param aPresContext the presentation context
    * @param aDesiredSize the new size of the frame
-   * @param aReflowState the reflow that was just done on this frame
    */
-  void CheckInvalidateSizeChange(nsPresContext*          aPresContext,
-                                 nsHTMLReflowMetrics&     aDesiredSize,
-                                 const nsHTMLReflowState& aReflowState);
+  void CheckInvalidateSizeChange(nsHTMLReflowMetrics&     aNewDesiredSize);
 
   // Helper function that tests if the frame tree is too deep; if it
   // is it marks the frame as "unflowable" and zeros out the metrics
@@ -560,7 +557,7 @@ protected:
   PRInt16 DisplaySelection(nsPresContext* aPresContext, PRBool isOkToTurnOn = PR_FALSE);
   
   // Style post processing hook
-  NS_IMETHOD DidSetStyleContext();
+  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext);
 
 public:
   //given a frame five me the first/last leaf available
@@ -568,8 +565,13 @@ public:
   static void GetLastLeaf(nsPresContext* aPresContext, nsIFrame **aFrame);
   static void GetFirstLeaf(nsPresContext* aPresContext, nsIFrame **aFrame);
 
-  // return the line number of the aFrame, and (optionally) the containing block frame.
-  static PRInt32 GetLineNumber(nsIFrame *aFrame, nsIFrame** aContainingBlock = nsnull);
+  // Return the line number of the aFrame, and (optionally) the containing block
+  // frame.
+  // If aScrollLock is true, don't break outside scrollframes when looking for a
+  // containing block frame.
+  static PRInt32 GetLineNumber(nsIFrame *aFrame,
+                               PRBool aLockScroll,
+                               nsIFrame** aContainingBlock = nsnull);
 
 protected:
 
@@ -618,6 +620,8 @@ private:
                      PRBool aMoveFrame = PR_TRUE);
 
   NS_IMETHODIMP RefreshSizeCache(nsBoxLayoutState& aState);
+
+  virtual nsILineIterator* GetLineIterator();
 
 protected:
   NS_IMETHOD_(nsrefcnt) AddRef(void);

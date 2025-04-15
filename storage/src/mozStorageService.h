@@ -45,14 +45,15 @@
 #include "nsCOMPtr.h"
 #include "nsIFile.h"
 #include "nsIObserver.h"
-#include "nsIObserverService.h"
 #include "prlock.h"
 
 #include "mozIStorageService.h"
 
 class mozStorageConnection;
+class nsIXPConnect;
 
 class mozStorageService : public mozIStorageService
+                        , public nsIObserver
 {
     friend class mozStorageConnection;
 
@@ -62,12 +63,15 @@ public:
 
     static mozStorageService *GetSingleton();
 
-    // nsISupports
     NS_DECL_ISUPPORTS
-
-    // mozIStorageService
     NS_DECL_MOZISTORAGESERVICE
+    NS_DECL_NSIOBSERVER
 
+    /**
+     * Obtains an already AddRefed pointer to XPConnect.  This is used by
+     * language helpers.
+     */
+    static already_AddRefed<nsIXPConnect> XPConnect();
 private:
     virtual ~mozStorageService();
 
@@ -76,10 +80,17 @@ private:
      * can ensure that the state of sqlite3_enable_shared_cache is sane.
      */
     PRLock *mLock;
+
+    /**
+     * Shuts down the storage service, freeing all of the acquired resources.
+     */
+    void Shutdown();
 protected:
     nsCOMPtr<nsIFile> mProfileStorageFile;
 
     static mozStorageService *gStorageService;
+
+    static nsIXPConnect *sXPConnect;
 };
 
 #endif /* _MOZSTORAGESERVICE_H_ */

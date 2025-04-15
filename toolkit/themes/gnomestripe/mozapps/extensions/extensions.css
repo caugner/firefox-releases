@@ -20,6 +20,7 @@ notification {
   -moz-border-bottom-colors: ThreeDHighlight ThreeDLightShadow;
   -moz-border-left-colors: ThreeDShadow ThreeDDarkShadow;
   margin: 0;
+  min-width: 245px;
 }
 
 #resizerBox {
@@ -31,6 +32,10 @@ notification {
   height: 10px;
   max-height: 10px;
   visibility: visible;
+}
+
+#searchfield {
+  -moz-margin-start: 0;
 }
 
 /* Command Bar */
@@ -114,8 +119,12 @@ richlistitem[selected="true"]:not([opType]) .descriptionCrop {
   -moz-border-left-colors: ThreeDShadow ThreeDDarkShadow;
   background-color: -moz-Field;
   color: -moz-FieldText;
+  min-width: 65px;
   overflow: auto;
-  width: 0px;
+}
+
+#previewImageDeck {
+  min-width: 220px;
 }
 
 #themeSplitter {
@@ -161,6 +170,7 @@ richlistitem[availableUpdateURL][updateable="true"] .updateAvailableBox,
 richlistitem[compatible="false"] .notifyBadge,
 richlistitem[providesUpdatesSecurely="false"] .notifyBadge,
 richlistitem[blocklisted="true"] .notifyBadge,
+richlistitem[blocklistedsoft="true"] .notifyBadge,
 richlistitem[satisfiesDependencies="false"] .notifyBadge {
   display: -moz-box;
 }
@@ -193,7 +203,10 @@ richlistitem[satisfiesDependencies="false"] .notifyBadge {
 richlistitem[compatible="true"] .incompatibleBox,
 richlistitem[providesUpdatesSecurely="true"] .insecureUpdateBox,
 richlistitem[satisfiesDependencies="true"] .needsDependenciesBox,
-richlistitem[blocklisted="false"] .blocklistedBox,
+richlistitem:not([blocklisted="true"]):not([blocklistedsoft="true"]) .blocklistedBox,
+richlistitem[blocklistedsoft="false"]:not([selected="true"]) .blocklistedBox,
+richlistitem[blocklisted="false"] .blocklistedLabel,
+richlistitem[blocklistedsoft="false"] .softBlocklistedLabel,
 richlistitem[opType="needs-uninstall"] .blocklistedBox,
 richlistitem[opType="needs-uninstall"] .incompatibleBox,
 richlistitem[opType="needs-uninstall"] .needsDependenciesBox,
@@ -336,26 +349,6 @@ vbox[typeName="status"][type="footer-search"] {
 vbox[typeName="status"][type="header-recommended"] {
   font-size: 150%;
   background: -moz-dialog;
-}
-
-.searchbox-search, .searchbox-cancel {
-  -moz-appearance: none;
-  cursor: default;
-  background-color: transparent;
-  margin: 0;
-  border: 0;
-  padding: 0;
-  width: 16px;
-  height: 16px;
-  min-width: 16px;
-}
-
-.searchbox-search {
-  list-style-image: url("chrome://mozapps/skin/extensions/searchIcons.png");
-}
-
-.searchbox-cancel {
-  list-style-image: url("moz-icon://stock/gtk-clear?size=menu");
 }
 
 #progressBox {

@@ -162,6 +162,28 @@ interface nsINavBookmarkObserver : nsISupports
 };
 
 /**
+ * Additional notifications for bookmark observers.  Your observer will not be
+ * notified for this unless it can QI to this interface.
+ *
+ * This interface was added after the binary compatibility freeze, so it lives
+ * in a separate interface for 1.9.1.  In future releases, the methods found in
+ * this interface will be in nsINavBookmarkObserver.
+ */
+[scriptable, uuid(76440c39-1085-4f2b-9535-5ba4658fcdad)]
+interface nsINavBookmarkObserver_MOZILLA_1_9_1_ADDITIONS : nsISupports
+{
+  /**
+   * Notify this observer that an item is about to be removed.  Called before
+   * the actual removal will take place.
+   *
+   * @param aItemId
+   *        The id of the bookmark to be removed.
+   */
+  void onBeforeItemRemoved(in long long aItemId);
+};
+
+
+/**
  * The BookmarksService interface provides methods for managing bookmarked
  * history items.  Bookmarks consist of a set of user-customizable
  * folders.  A URI in history can be contained in one or more such folders.
@@ -351,8 +373,7 @@ interface nsINavBookmarksService : nsISupports
    *         The direct parent folder of the item
    *  @param aIndex
    *         The index of the item within aFolder, DEFAULT_INDEX for the last item
-   *  @returns the id of the found item
-   *  @throws if the item does not exist
+   *  @returns the id of the found item, -1 if the item does not exists
    */
   long long getIdForItemAt(in long long aFolder, in long aIndex);
 
@@ -562,9 +583,11 @@ interface nsINavBookmarksService : nsISupports
   void removeObserver(in nsINavBookmarkObserver observer);
 
   /**
-   * Runs the passed callback in batch mode. Use this when a lot of things
-   * are about to change. Calls can be nested, observers will only be
-   * notified when all batches begin/end.
+   * Runs the passed callback inside of a database transaction.
+   * Use this when a lot of things are about to change, for example
+   * adding or deleting a large number of bookmark items. Calls can
+   * be nested. Observers are notified when batches begin and end, via 
+   * nsINavBookmarkObserver.onBeginUpdateBatch/onEndUpdateBatch.
    *
    * @param aCallback
    *        nsINavHistoryBatchCallback interface to call.

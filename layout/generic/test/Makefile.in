@@ -61,9 +61,18 @@ _TEST_FILES = 	test_bug288789.html \
 		test_bug404872.html \
 		test_bug405178.html \
 		test_bug416168.html \
+		test_bug421436.html \
+		$(warning test_bug421839-1.html disabled because it calls finish twice which can cause timeouts) \
+		test_bug421839-2.html \
+		bug421839-2-page.html \
+		test_bug448860.html \
+		test_bug460532.html \
+		test_bug468167.html \
+		test_bug469613.xul \
+		test_bug470212.html \
 		test_character_movement.html \
 		test_word_movement.html \
-		test_backspace_delete.html \
+		test_backspace_delete.xul \
 		$(NULL)
 
 libs:: $(_TEST_FILES)

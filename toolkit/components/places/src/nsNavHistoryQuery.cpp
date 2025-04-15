@@ -292,6 +292,10 @@ nsNavHistory::QueryStringToQueries(const nsACString& aQueryString,
                                    PRUint32* aResultCount,
                                    nsINavHistoryQueryOptions** aOptions)
 {
+  NS_ENSURE_ARG_POINTER(aQueries);
+  NS_ENSURE_ARG_POINTER(aResultCount);
+  NS_ENSURE_ARG_POINTER(aOptions);
+
   *aQueries = nsnull;
   *aResultCount = 0;
   nsCOMPtr<nsNavHistoryQueryOptions> options;
@@ -338,15 +342,12 @@ nsNavHistory::QueryStringToQueryArray(const nsACString& aQueryString,
   rv = TokenizeQueryString(aQueryString, &tokens);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (tokens.Length() > 0) {
-    rv = TokensToQueries(tokens, aQueries, options);
-    if (NS_FAILED(rv)) {
-      NS_WARNING("Unable to parse the query string: ");
-      NS_WARNING(PromiseFlatCString(aQueryString).get());
-    }
-    NS_ENSURE_SUCCESS(rv, rv);
+  rv = TokensToQueries(tokens, aQueries, options);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Unable to parse the query string: ");
+    NS_WARNING(PromiseFlatCString(aQueryString).get());
+    return rv;
   }
-  // when there are no tokens, leave the query array empty
 
   NS_ADDREF(*aOptions = options);
   return NS_OK;
@@ -361,6 +362,9 @@ nsNavHistory::QueriesToQueryString(nsINavHistoryQuery **aQueries,
                                    nsINavHistoryQueryOptions* aOptions,
                                    nsACString& aQueryString)
 {
+  NS_ENSURE_ARG(aQueries);
+  NS_ENSURE_ARG(aOptions);
+
   nsCOMPtr<nsNavHistoryQueryOptions> options = do_QueryInterface(aOptions);
   NS_ENSURE_TRUE(options, NS_ERROR_INVALID_ARG);
 
@@ -605,7 +609,7 @@ TokenizeQueryString(const nsACString& aQuery,
   // Strip off the "place:" prefix
   const PRUint32 prefixlen = 6; // = strlen("place:");
   nsCString query;
-  if (aQuery.Length() > prefixlen &&
+  if (aQuery.Length() >= prefixlen &&
       Substring(aQuery, 0, prefixlen).EqualsLiteral("place:"))
     query = Substring(aQuery, prefixlen);
   else
@@ -644,16 +648,17 @@ nsNavHistory::TokensToQueries(const nsTArray<QueryKeyValuePair>& aTokens,
                               nsNavHistoryQueryOptions* aOptions)
 {
   nsresult rv;
-  if (aTokens.Length() == 0)
-    return NS_OK; // nothing to do
-
-  nsTArray<PRInt64> folders;
 
   nsCOMPtr<nsNavHistoryQuery> query(new nsNavHistoryQuery());
   if (! query)
     return NS_ERROR_OUT_OF_MEMORY;
   if (! aQueries->AppendObject(query))
     return NS_ERROR_OUT_OF_MEMORY;
+
+  if (aTokens.Length() == 0)
+    return NS_OK; // nothing to do
+
+  nsTArray<PRInt64> folders;
   for (PRUint32 i = 0; i < aTokens.Length(); i ++) {
     const QueryKeyValuePair& kvp = aTokens[i];
 
@@ -1060,8 +1065,7 @@ NS_IMETHODIMP nsNavHistoryQuery::SetUriIsPrefix(PRBool aIsPrefix)
 /* attribute nsIURI uri; */
 NS_IMETHODIMP nsNavHistoryQuery::GetUri(nsIURI** aUri)
 {
-  *aUri = mUri;
-  NS_ADDREF(*aUri);
+  NS_IF_ADDREF(*aUri = mUri);
   return NS_OK;
 }
 NS_IMETHODIMP nsNavHistoryQuery::SetUri(nsIURI* aUri)
@@ -1197,6 +1201,10 @@ nsNavHistoryQueryOptions::SetResultType(PRUint16 aType)
 {
   if (aType > RESULTS_AS_TAG_CONTENTS)
     return NS_ERROR_INVALID_ARG;
+  // Tag queries and containers are bookmarks related, so we set the QueryType
+  // accordingly.
+  if (aType == RESULTS_AS_TAG_QUERY || aType == RESULTS_AS_TAG_CONTENTS)
+    mQueryType = QUERY_TYPE_BOOKMARKS;
   mResultType = aType;
   return NS_OK;
 }
@@ -1322,6 +1330,11 @@ nsNavHistoryQueryOptions::GetQueryType(PRUint16* _retval)
 NS_IMETHODIMP
 nsNavHistoryQueryOptions::SetQueryType(PRUint16 aQueryType)
 {
+  // Tag query and containers are forced to QUERY_TYPE_BOOKMARKS when the
+  // resultType is set.
+  if (mResultType == RESULTS_AS_TAG_CONTENTS ||
+      mResultType == RESULTS_AS_TAG_QUERY)
+   return NS_OK;
   mQueryType = aQueryType;
   return NS_OK;
 }

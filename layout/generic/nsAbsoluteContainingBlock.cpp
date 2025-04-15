@@ -52,17 +52,6 @@
 #include "nsBlockFrame.h"
 #endif
 
-
-nsresult
-nsAbsoluteContainingBlock::FirstChild(const nsIFrame* aDelegatingFrame,
-                                      nsIAtom*        aListName,
-                                      nsIFrame**      aFirstChild) const
-{
-  NS_PRECONDITION(GetChildListName() == aListName, "unexpected child list name");
-  *aFirstChild = mAbsoluteFrames.FirstChild();
-  return NS_OK;
-}
-
 nsresult
 nsAbsoluteContainingBlock::SetInitialChildList(nsIFrame*       aDelegatingFrame,
                                                nsIAtom*        aListName,
@@ -127,7 +116,7 @@ nsAbsoluteContainingBlock::RemoveFrame(nsIFrame*       aDelegatingFrame,
   nsIFrame* nif = aOldFrame->GetNextInFlow();
   if (nif) {
     static_cast<nsContainerFrame*>(nif->GetParent())
-      ->DeleteNextInFlowChild(aOldFrame->PresContext(), nif);
+      ->DeleteNextInFlowChild(aOldFrame->PresContext(), nif, PR_FALSE);
   }
 
   PRBool result = mAbsoluteFrames.DestroyFrame(aOldFrame);
@@ -188,7 +177,7 @@ nsAbsoluteContainingBlock::Reflow(nsContainerFrame*        aDelegatingFrame,
         if (nextFrame) {
           tracker.Finish(kidFrame);
           static_cast<nsContainerFrame*>(nextFrame->GetParent())
-            ->DeleteNextInFlowChild(aPresContext, nextFrame);
+            ->DeleteNextInFlowChild(aPresContext, nextFrame, PR_TRUE);
         }
       }
     }
@@ -210,26 +199,24 @@ nsAbsoluteContainingBlock::Reflow(nsContainerFrame*        aDelegatingFrame,
 }
 
 static inline PRBool IsFixedPaddingSize(nsStyleUnit aUnit) {
-  return aUnit == eStyleUnit_Coord || aUnit == eStyleUnit_Chars;
+  return aUnit == eStyleUnit_Coord;
 }
 static inline PRBool IsFixedMarginSize(nsStyleUnit aUnit) {
-  return aUnit == eStyleUnit_Coord || aUnit == eStyleUnit_Chars;
+  return aUnit == eStyleUnit_Coord;
 }
 static inline PRBool IsFixedMaxSize(nsStyleUnit aUnit) {
-  return aUnit == eStyleUnit_None || aUnit == eStyleUnit_Coord ||
-         aUnit == eStyleUnit_Chars;
+  return aUnit == eStyleUnit_None || aUnit == eStyleUnit_Coord;
 }
 static inline PRBool IsFixedOffset(nsStyleUnit aUnit) {
-  return aUnit == eStyleUnit_Coord || aUnit == eStyleUnit_Chars;
+  return aUnit == eStyleUnit_Coord;
 }
 static inline PRBool IsFixedHeight(nsStyleUnit aUnit) {
-  return aUnit == eStyleUnit_Coord || aUnit == eStyleUnit_Chars;
+  return aUnit == eStyleUnit_Coord;
 }
 
 static inline PRBool IsFixedWidth(const nsStyleCoord& aCoord)
 {
   return aCoord.GetUnit() == eStyleUnit_Coord ||
-         aCoord.GetUnit() == eStyleUnit_Chars ||
          (aCoord.GetUnit() == eStyleUnit_Enumerated &&
           (aCoord.GetIntValue() == NS_STYLE_WIDTH_MAX_CONTENT ||
            aCoord.GetIntValue() == NS_STYLE_WIDTH_MIN_CONTENT));
@@ -345,6 +332,19 @@ nsAbsoluteContainingBlock::DestroyFrames(nsIFrame* aDelegatingFrame)
   mAbsoluteFrames.DestroyFrames();
 }
 
+void
+nsAbsoluteContainingBlock::MarkSizeDependentFramesDirty()
+{
+  for (nsIFrame* kidFrame = mAbsoluteFrames.FirstChild();
+       kidFrame;
+       kidFrame = kidFrame->GetNextSibling()) {
+    if (FrameDependsOnContainer(kidFrame, PR_TRUE, PR_TRUE)) {
+      // Add the weakest flags that will make sure we reflow this frame later
+      kidFrame->AddStateBits(NS_FRAME_HAS_DIRTY_CHILDREN);
+    }
+  }
+}
+
 // XXX Optimize the case where it's a resize reflow and the absolutely
 // positioned child has the exact same size and position and skip the
 // reflow...
@@ -397,7 +397,7 @@ nsAbsoluteContainingBlock::ReflowAbsoluteFrame(nsIFrame*                aDelegat
 
   nsresult  rv;
   // Get the border values
-  const nsMargin& border = aReflowState.mStyleBorder->GetBorder();
+  const nsMargin& border = aReflowState.mStyleBorder->GetActualBorder();
 
   nscoord availWidth = aContainingBlockWidth;
   if (availWidth == -1) {
@@ -426,7 +426,10 @@ nsAbsoluteContainingBlock::ReflowAbsoluteFrame(nsIFrame*                aDelegat
        // anything totally below the fold, but we can't position frames
        // across next-in-flow breaks yet.
   if (constrainHeight) {
-    kidReflowState.availableHeight = aReflowState.availableHeight - aKidFrame->GetRect().y;
+    kidReflowState.availableHeight = aReflowState.availableHeight - border.top
+                                     - kidReflowState.mComputedMargin.top;
+    if (NS_AUTOOFFSET != kidReflowState.mComputedOffsets.top)
+      kidReflowState.availableHeight -= kidReflowState.mComputedOffsets.top;
   }
 
   // Do the reflow

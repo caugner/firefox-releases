@@ -290,6 +290,10 @@ nsWindow::nsWindow() : nsBaseWidget()
 	mPreferredWidth     = 0;
 	mPreferredHeight    = 0;
 	mFontMetrics        = nsnull;
+	mIsShiftDown        = PR_FALSE;
+	mIsControlDown      = PR_FALSE;
+	mIsAltDown          = PR_FALSE;
+	mIsDestroying       = PR_FALSE;
 	mIsVisible          = PR_FALSE;
 	mEnabled            = PR_TRUE;
 	mIsScrolling        = PR_FALSE;
@@ -1937,7 +1941,7 @@ bool nsWindow::CallMethod(MethodInfo *info)
 		{
 			NS_ASSERTION(info->nArgs == 4, "Wrong number of arguments to CallMethod");
 
-			nsMouseEvent event(PR_TRUE, (int32)  info->args[0], this, nsMouseEvent::eReal);
+			nsDragEvent event(PR_TRUE, (int32)  info->args[0], this);
 			nsPoint point(((int32 *)info->args)[1], ((int32 *)info->args)[2]);
 			InitEvent (event, &point);
 			uint32 mod = (uint32) info->args[3];
@@ -2630,7 +2634,7 @@ PRBool nsWindow::DispatchMouseEvent(PRUint32 aEventType, nsPoint aPoint, PRUint3
                                     PRUint16 aButton)
 {
 	PRBool result = PR_FALSE;
-	if (nsnull != mEventCallback || nsnull != mMouseListener)
+	if (nsnull != mEventCallback)
 	{
 		nsMouseEvent event(PR_TRUE, aEventType, this, nsMouseEvent::eReal);
 		InitEvent (event, &aPoint);
@@ -2642,31 +2646,9 @@ PRBool nsWindow::DispatchMouseEvent(PRUint32 aEventType, nsPoint aPoint, PRUint3
 		event.button = aButton;
 
 		// call the event callback
-		if (nsnull != mEventCallback)
-		{
-			result = DispatchWindowEvent(&event);
-			NS_RELEASE(event.widget);
-			return result;
-		}
-		else
-		{
-			switch(aEventType)
-			{
-			case NS_MOUSE_MOVE :
-				result = ConvertStatus(mMouseListener->MouseMoved(event));
-				break;
-
-			case NS_MOUSE_BUTTON_DOWN :
-				result = ConvertStatus(mMouseListener->MousePressed(event));
-				break;
-
-			case NS_MOUSE_BUTTON_UP :
-				result = ConvertStatus(mMouseListener->MouseReleased(event)) && ConvertStatus(mMouseListener->MouseClicked(event));
-				break;
-			}
-			NS_RELEASE(event.widget);
-			return result;
-		}
+    result = DispatchWindowEvent(&event);
+    NS_RELEASE(event.widget);
+    return result;
 	}
 
 	return PR_FALSE;

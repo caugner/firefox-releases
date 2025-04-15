@@ -81,8 +81,9 @@ static NS_DEFINE_CID(kRegionCID, NS_REGION_CID);
 
 NS_IMPL_ISUPPORTS1(nsThebesRenderingContext, nsIRenderingContext)
 
-nsThebesRenderingContext::nsThebesRenderingContext() :
-    mLineStyle(nsLineStyle_kNone)
+nsThebesRenderingContext::nsThebesRenderingContext()
+  : mLineStyle(nsLineStyle_kNone)
+  , mColor(NS_RGB(0,0,0))
 {
 }
 
@@ -97,8 +98,6 @@ NS_IMETHODIMP
 nsThebesRenderingContext::Init(nsIDeviceContext* aContext, gfxASurface *aThebesSurface)
 {
     PR_LOG(gThebesGFXLog, PR_LOG_DEBUG, ("## %p nsTRC::Init ctx %p thebesSurface %p\n", this, aContext, aThebesSurface));
-
-    nsThebesDeviceContext *thebesDC = static_cast<nsThebesDeviceContext*>(aContext);
 
     mDeviceContext = aContext;
     mWidget = nsnull;
@@ -125,8 +124,6 @@ NS_IMETHODIMP
 nsThebesRenderingContext::Init(nsIDeviceContext* aContext, nsIWidget *aWidget)
 {
     PR_LOG(gThebesGFXLog, PR_LOG_DEBUG, ("## %p nsTRC::Init ctx %p widget %p\n", this, aContext, aWidget));
-
-    nsThebesDeviceContext *thebesDC = static_cast<nsThebesDeviceContext*>(aContext);
 
     mDeviceContext = aContext;
     mWidget = aWidget;
@@ -191,19 +188,6 @@ nsThebesRenderingContext::SetTranslation(nscoord aX, nscoord aY)
     newMat.x0 = aX;
     newMat.y0 = aY;
     mThebes->SetMatrix(newMat);
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsThebesRenderingContext::GetHints(PRUint32& aResult)
-{
-    aResult = 0;
-
-    aResult |= (NS_RENDERING_HINT_BIDI_REORDERING |
-                NS_RENDERING_HINT_ARABIC_SHAPING |
-                NS_RENDERING_HINT_REORDER_SPACED_TEXT |
-                NS_RENDERING_HINT_NEW_TEXT_RUNS);
-
     return NS_OK;
 }
 
@@ -705,8 +689,7 @@ nsThebesRenderingContext::FillPolygon(const nsPoint twPoints[], PRInt32 aNumPoin
 void*
 nsThebesRenderingContext::GetNativeGraphicData(GraphicDataType aType)
 {
-    if (aType == NATIVE_GDK_DRAWABLE &&
-        !gfxPlatform::GetPlatform()->UseGlitz())
+    if (aType == NATIVE_GDK_DRAWABLE)
     {
         if (mWidget)
             return mWidget->GetNativeData(NS_NATIVE_WIDGET);
@@ -778,76 +761,6 @@ nsThebesRenderingContext::PopFilter()
     return NS_OK;
 }
 
-NS_IMETHODIMP
-nsThebesRenderingContext::DrawTile(imgIContainer *aImage,
-                                   nscoord twXOffset, nscoord twYOffset,
-                                   const nsRect *twTargetRect,
-                                   const nsIntRect *subimageRect)
-{
-    PR_LOG(gThebesGFXLog, PR_LOG_DEBUG, ("## %p nsTRC::DrawTile %p %f %f [%f,%f,%f,%f]\n",
-                                         this, aImage, FROM_TWIPS(twXOffset), FROM_TWIPS(twYOffset),
-                                         FROM_TWIPS(twTargetRect->x), FROM_TWIPS(twTargetRect->y),
-                                         FROM_TWIPS(twTargetRect->width), FROM_TWIPS(twTargetRect->height)));
-
-    nscoord containerWidth, containerHeight;
-    aImage->GetWidth(&containerWidth);
-    aImage->GetHeight(&containerHeight);
-
-    nsCOMPtr<gfxIImageFrame> imgFrame;
-    aImage->GetCurrentFrame(getter_AddRefs(imgFrame));
-    if (!imgFrame) return NS_ERROR_FAILURE;
-
-    nsRect imgFrameRect;
-    imgFrame->GetRect(imgFrameRect);
-
-    nsCOMPtr<nsIImage> img(do_GetInterface(imgFrame));
-    if (!img) return NS_ERROR_FAILURE;
-    
-    nsThebesImage *thebesImage = static_cast<nsThebesImage*>((nsIImage*) img.get());
-
-    /* Phase offset of the repeated image from the origin */
-    gfxPoint phase(FROM_TWIPS(twXOffset), FROM_TWIPS(twYOffset));
-
-    /* The image may be smaller than the container (bug 113561),
-     * so we need to make sure that there is the right amount of padding
-     * in between each tile of the nsIImage.  This problem goes away
-     * when we change the way the GIF decoder works to have it store
-     * full frames that are ready to be composited.
-     */
-    PRInt32 xPadding = 0;
-    PRInt32 yPadding = 0;
-
-    nsIntRect tmpSubimageRect;
-    if (subimageRect) {
-        tmpSubimageRect = *subimageRect;
-    } else {
-        tmpSubimageRect = nsIntRect(0, 0, containerWidth, containerHeight);
-    }
-
-    if (imgFrameRect.width != containerWidth ||
-        imgFrameRect.height != containerHeight)
-    {
-        xPadding = containerWidth - imgFrameRect.width;
-        yPadding = containerHeight - imgFrameRect.height;
-
-        // XXXroc shouldn't we be adding to 'phase' here? it's tbe origin
-        // at which the image origin should be drawn, and ThebesDrawTile
-        // just draws the origin of its "frame" there, so we should be
-        // adding imgFrameRect.x/y. so that the imgFrame draws in the
-        // right place.
-        phase.x -= imgFrameRect.x;
-        phase.y -= imgFrameRect.y;
-
-        tmpSubimageRect.x -= imgFrameRect.x;
-        tmpSubimageRect.y -= imgFrameRect.y;
-    }
-
-    return thebesImage->ThebesDrawTile (mThebes, mDeviceContext, phase,
-                                        GFX_RECT_FROM_TWIPS_RECT(*twTargetRect),
-                                        tmpSubimageRect,
-                                        xPadding, yPadding);
-}
-
 //
 // text junk
 //
@@ -871,12 +784,14 @@ nsThebesRenderingContext::SetTextRunRTL(PRBool aIsRTL)
 }
 
 NS_IMETHODIMP
-nsThebesRenderingContext::SetFont(const nsFont& aFont, nsIAtom* aLangGroup)
+nsThebesRenderingContext::SetFont(const nsFont& aFont, nsIAtom* aLangGroup,
+                                  gfxUserFontSet *aUserFontSet)
 {
     PR_LOG(gThebesGFXLog, PR_LOG_DEBUG, ("## %p nsTRC::SetFont %p\n", this, &aFont));
 
     nsCOMPtr<nsIFontMetrics> newMetrics;
-    mDeviceContext->GetMetricsFor(aFont, aLangGroup, *getter_AddRefs(newMetrics));
+    mDeviceContext->GetMetricsFor(aFont, aLangGroup, aUserFontSet,
+                                  *getter_AddRefs(newMetrics));
     mFontMetrics = reinterpret_cast<nsIThebesFontMetrics*>(newMetrics.get());
     return NS_OK;
 }
@@ -974,7 +889,7 @@ nsThebesRenderingContext::GetTextDimensionsInternal(const PRUnichar* aString,
   return GetWidth(aString, aLength, aDimensions.width, aFontID);
 }
 
-#if defined(_WIN32) || defined(XP_OS2) || defined(MOZ_X11) || defined(XP_BEOS) || defined(XP_MACOSX)
+#if defined(_WIN32) || defined(XP_OS2) || defined(MOZ_X11) || defined(XP_BEOS) || defined(XP_MACOSX) || defined (MOZ_DFB)
 NS_IMETHODIMP
 nsThebesRenderingContext::GetTextDimensionsInternal(const char*       aString,
                                                     PRInt32           aLength,
@@ -1048,14 +963,6 @@ nsThebesRenderingContext::DrawStringInternal(const PRUnichar *aString, PRUint32 
 
     return mFontMetrics->DrawString(aString, aLength, aX, aY, aFontID,
                                     aSpacing, this);
-}
-
-NS_IMETHODIMP
-nsThebesRenderingContext::GetClusterInfo(const PRUnichar *aText,
-                                         PRUint32 aLength,
-                                         PRUint8 *aClusterStarts)
-{
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 PRInt32

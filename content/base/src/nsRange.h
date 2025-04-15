@@ -85,7 +85,8 @@ public:
   }
   virtual ~nsRange();
 
-  NS_DECL_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
+  NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsRange, nsIRange)
 
   // nsIDOMRange interface
   NS_DECL_NSIDOMRANGE
@@ -109,7 +110,6 @@ public:
                               nsIContent* aContainer,
                               nsIContent* aChild,
                               PRInt32 aIndexInContainer);
-  virtual void NodeWillBeDestroyed(const nsINode* aNode);
   virtual void ParentChainChanged(nsIContent *aContent);
 
 private:
@@ -119,6 +119,19 @@ private:
 
   nsINode* IsValidBoundary(nsINode* aNode);
  
+  /**
+   * Cut or delete the range's contents.
+   *
+   * @param aFragment nsIDOMDocumentFragment containing the nodes.
+   *                  May be null to indicate the caller doesn't want a fragment.
+   */
+  nsresult CutContents(nsIDOMDocumentFragment** frag);
+
+  static nsresult CloneParentsBetween(nsIDOMNode *aAncestor,
+                                      nsIDOMNode *aNode,
+                                      nsIDOMNode **aClosestAncestor,
+                                      nsIDOMNode **aFarthestAncestor);
+
 public:
 /******************************************************************************
  *  Utility routine to detect if a content node starts before a range and/or 
@@ -127,10 +140,10 @@ public:
  *  XXX - callers responsibility to ensure node in same doc as range!
  *
  *****************************************************************************/
-  static nsresult CompareNodeToRange(nsIContent* aNode, nsIDOMRange* aRange,
+  static nsresult CompareNodeToRange(nsINode* aNode, nsIDOMRange* aRange,
                                      PRBool *outNodeBefore,
                                      PRBool *outNodeAfter);
-  static nsresult CompareNodeToRange(nsIContent* aNode, nsIRange* aRange,
+  static nsresult CompareNodeToRange(nsINode* aNode, nsIRange* aRange,
                                      PRBool *outNodeBefore,
                                      PRBool *outNodeAfter);
 

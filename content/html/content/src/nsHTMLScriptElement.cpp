@@ -337,7 +337,8 @@ public:
   virtual void GetScriptType(nsAString& type);
   virtual already_AddRefed<nsIURI> GetScriptURI();
   virtual void GetScriptText(nsAString& text);
-  virtual void GetScriptCharset(nsAString& charset); 
+  virtual void GetScriptCharset(nsAString& charset);
+  virtual PRBool GetScriptDeferred();
 
   // nsIContent
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,
@@ -384,13 +385,14 @@ NS_IMPL_ADDREF_INHERITED(nsHTMLScriptElement, nsGenericElement)
 NS_IMPL_RELEASE_INHERITED(nsHTMLScriptElement, nsGenericElement)
 
 // QueryInterface implementation for nsHTMLScriptElement
-NS_HTML_CONTENT_INTERFACE_TABLE_HEAD(nsHTMLScriptElement, nsGenericHTMLElement)
-  NS_INTERFACE_TABLE_INHERITED4(nsHTMLScriptElement,
-                                nsIDOMHTMLScriptElement,
-                                nsIScriptLoaderObserver,
-                                nsIScriptElement,
-                                nsIMutationObserver)
-  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+NS_INTERFACE_TABLE_HEAD(nsHTMLScriptElement)
+  NS_HTML_CONTENT_INTERFACE_TABLE4(nsHTMLScriptElement,
+                                   nsIDOMHTMLScriptElement,
+                                   nsIScriptLoaderObserver,
+                                   nsIScriptElement,
+                                   nsIMutationObserver)
+  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(nsHTMLScriptElement,
+                                               nsGenericHTMLElement)
   if (mScriptEventHandler && aIID.Equals(NS_GET_IID(nsIScriptEventHandler)))
     foundInterface = static_cast<nsIScriptEventHandler*>
                                 (mScriptEventHandler);
@@ -430,9 +432,7 @@ nsHTMLScriptElement::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const
   nsresult rv = CopyInnerTo(it);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // The clone should be marked evaluated if we are.  It should also be marked
-  // evaluated if we're evaluating, to handle the case when this script node's
-  // script clones the node.
+  // The clone should be marked evaluated if we are.
   it->mIsEvaluated = mIsEvaluated;
   it->mLineNumber = mLineNumber;
   it->mMalformed = mMalformed;
@@ -522,6 +522,15 @@ void
 nsHTMLScriptElement::GetScriptCharset(nsAString& charset)
 {
   GetCharset(charset);
+}
+
+PRBool
+nsHTMLScriptElement::GetScriptDeferred()
+{
+  PRBool defer;
+  GetDefer(&defer);
+
+  return defer;
 }
 
 PRBool

@@ -79,16 +79,19 @@ must be one of the following:
           fails-if(MOZ_WIDGET_TOOLKIT=="cocoa") ...
           fails-if(MOZ_WIDGET_TOOLKIT=="gtk2") ...
 
-   b. <http>, if present, is the string "HTTP" (sans quotes), indicating that
+   b. <http>, if present, is one of the strings (sans quotes) "HTTP" or
+      "HTTP(..)" or "HTTP(../..)" or "HTTP(../../..)", etc. , indicating that
       the test should be run over an HTTP server because it requires certain
       HTTP headers or a particular HTTP status.  (Don't use this if your test
       doesn't require this functionality, because it unnecessarily slows down
       the test.)
 
-      HTTP tests have the restriction that any resource an HTTP test accesses
-      must be accessed using a relative URL, and the test and the resource must
-      be within the directory containing the reftest manifest that describes
-      the test (or within a descendant directory).
+      With "HTTP", HTTP tests have the restriction that any resource an HTTP
+      test accesses must be accessed using a relative URL, and the test and
+      the resource must be within the directory containing the reftest
+      manifest that describes the test (or within a descendant directory).
+      The variants "HTTP(..)", etc., can be used to relax this restriction by
+      allowing resources in the parent directory, etc.
 
       To modify the HTTP status or headers of a resource named FOO, create a
       sibling file named FOO^headers^ with the following contents:
@@ -160,6 +163,11 @@ that do not depend on XUL, or even ones testing other layout engines.
 
 Running Tests
 =============
+
+(If you're not using a DEBUG build, first set browser.dom.window.dump.enabled
+to true (in about:config, in the profile you'll be using to run the tests).
+Create the option as a new boolean if it doesn't exist already. If you skip
+this step you won't get any output in the terminal.)
 
 At some point in the future there will hopefully be a cleaner way to do
 this.  For now, go to your object directory, and run (perhaps using

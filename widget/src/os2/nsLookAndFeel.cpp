@@ -246,6 +246,9 @@ nsresult nsLookAndFeel::NativeGetColor(const nsColorID aID, nscolor &aColor)
         idx = SYSCLR_MENUHILITE;
       }
       break;
+    case eColor__moz_nativehyperlinktext:
+      aColor = NS_RGB( 0, 0, 255);
+      return res;
     default:
       idx = SYSCLR_WINDOW;
       break;
@@ -366,7 +369,13 @@ NS_IMETHODIMP nsLookAndFeel::GetMetric(const nsMetricID aID, PRInt32 & aMetric)
     case eMetric_TreeScrollLinesMax:
         aMetric = 3;
         break;
+    case eMetric_DWMCompositor:
+    case eMetric_WindowsClassic:
     case eMetric_WindowsDefaultTheme:
+        aMetric = 0;
+        res = NS_ERROR_NOT_IMPLEMENTED;
+        break;
+    case eMetric_MacGraphiteTheme:
         aMetric = 0;
         res = NS_ERROR_NOT_IMPLEMENTED;
         break;

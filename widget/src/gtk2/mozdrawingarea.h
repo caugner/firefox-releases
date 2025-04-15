@@ -40,6 +40,7 @@
 #define __MOZ_DRAWINGAREA_H__
 
 #include <gdk/gdkwindow.h>
+#include <gtk/gtkversion.h>
 #include "mozcontainer.h"
 
 #ifdef __cplusplus
@@ -53,15 +54,21 @@ extern "C" {
 #define IS_MOZ_DRAWINGAREA_CLASS(klass) (GTK_CHECK_CLASS_TYPE((klass), MOZ_DRAWINGAREA_TYPE))
 #define MOZ_DRAWINGAREA_GET_CLASS(obj)  (GTK_CHECK_GET_CLASS((obj), MOZ_DRAWINGAREA_TYPE, MozDrawingareaClass))
 
+#if (GTK_CHECK_VERSION(2, 12, 0) || \
+    (GTK_CHECK_VERSION(2, 10, 0) && defined(MOZ_PLATFORM_HILDON)))
+#define HAVE_GTK_MOTION_HINTS
+#endif
+
 typedef struct _MozDrawingarea      MozDrawingarea;
 typedef struct _MozDrawingareaClass MozDrawingareaClass;
 
 struct _MozDrawingarea
 {
     GObject         parent_instance;
+    /* AFAIK this clip_window (and thus this whole class) exists solely to
+     * make gdk_window_scroll() smooth for nsIWidget::Scroll(). */
     GdkWindow      *clip_window;
     GdkWindow      *inner_window;
-    MozDrawingarea *parent;
 };
 
 struct _MozDrawingareaClass

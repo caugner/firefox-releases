@@ -48,6 +48,8 @@
 <!DOCTYPE window [
   <!ENTITY % pageInfoDTD SYSTEM "chrome://browser/locale/pageInfo.dtd">
   %pageInfoDTD;
+  <!ENTITY % global SYSTEM "chrome://global/locale/global.dtd">
+  %global;
 ]>
 
 #ifdef XP_MACOSX
@@ -70,11 +72,11 @@
   <script type="application/x-javascript" src="chrome://browser/content/pageinfo/feeds.js"/>
   <script type="application/x-javascript" src="chrome://browser/content/pageinfo/permissions.js"/>
   <script type="application/x-javascript" src="chrome://browser/content/pageinfo/security.js"/>
-  <script type="application/x-javascript" src="chrome://global/content/strres.js"/>
   <script type="application/x-javascript" src="chrome://browser/content/utilityOverlay.js"/>
 
   <stringbundleset id="pageinfobundleset">
     <stringbundle id="pageinfobundle" src="chrome://browser/locale/pageInfo.properties"/>
+    <stringbundle id="pkiBundle" src="chrome://pippki/locale/pippki.properties"/>
   </stringbundleset>
 
   <commandset id="pageInfoCommandSet">
@@ -88,10 +90,12 @@
     <command id="cmd_popupDef"      oncommand="onCheckboxClick('popup');"/>
     <command id="cmd_cookieDef"     oncommand="onCheckboxClick('cookie');"/>
     <command id="cmd_installDef"    oncommand="onCheckboxClick('install');"/>
+    <command id="cmd_geoDef"        oncommand="onCheckboxClick('geo');"/>
     <command id="cmd_imageToggle"   oncommand="onRadioClick('image');"/>
     <command id="cmd_popupToggle"   oncommand="onRadioClick('popup');"/>
     <command id="cmd_cookieToggle"  oncommand="onRadioClick('cookie');"/>
     <command id="cmd_installToggle" oncommand="onRadioClick('install');"/>
+    <command id="cmd_geoToggle"     oncommand="onRadioClick('geo');"/>
   </commandset>
 
   <keyset>
@@ -112,21 +116,24 @@
     <menuitem id="menu_copy"      label="&copy.label;"      command="cmd_copy"      accesskey="&copy.accesskey;"/>
   </menupopup>
 
-  <stack id="topStackBar">
-    <radiogroup id="viewGroup" class="viewSelector chromeclass-toolbar" orient="horizontal">
-      <radio id="generalTab"  label="&generalTab;"  accesskey="&generalTab.accesskey;"
-           oncommand="showTab('general');"/>
-      <radio id="mediaTab"    label="&mediaTab;"    accesskey="&mediaTab.accesskey;"
-           oncommand="showTab('media'); ensureSelection(gImageView)" hidden="true"/>
-      <radio id="feedTab"     label="&feedTab;"     accesskey="&feedTab.accesskey;"
-           oncommand="showTab('feed');" hidden="true"/>
-      <radio id="permTab"     label="&permTab;"     accesskey="&permTab.accesskey;"
-           oncommand="showTab('perm');"/>
-      <radio id="securityTab" label="&securityTab;" accesskey="&securityTab.accesskey;"
-           oncommand="showTab('security');"/>
-      <!-- Others added by overlay -->
-    </radiogroup>
-  </stack>
+  <windowdragbox orient="vertical">
+    <stack id="topStackBar">
+      <radiogroup id="viewGroup" class="viewSelector chromeclass-toolbar" orient="horizontal"
+                  chromedir="&locale.dir;">
+        <radio id="generalTab"  label="&generalTab;"  accesskey="&generalTab.accesskey;"
+             oncommand="showTab('general');"/>
+        <radio id="mediaTab"    label="&mediaTab;"    accesskey="&mediaTab.accesskey;"
+             oncommand="showTab('media'); ensureSelection(gImageView)" hidden="true"/>
+        <radio id="feedTab"     label="&feedTab;"     accesskey="&feedTab.accesskey;"
+             oncommand="showTab('feed');" hidden="true"/>
+        <radio id="permTab"     label="&permTab;"     accesskey="&permTab.accesskey;"
+             oncommand="showTab('perm');"/>
+        <radio id="securityTab" label="&securityTab;" accesskey="&securityTab.accesskey;"
+             oncommand="showTab('security');"/>
+        <!-- Others added by overlay -->
+      </radiogroup>
+    </stack>
+  </windowdragbox>
 
   <deck id="mainDeck" flex="1">
     <!-- General page information -->
@@ -201,8 +208,8 @@
         <description id="general-security-identity" class="header"/>
         <description id="general-security-privacy"  class="header"/>
         <hbox align="right">
-          <button id="security-view-more" label="&generalSecurityMore;"
-                  accesskey="&generalSecurityMore.accesskey;"
+          <button id="security-view-details" label="&generalSecurityDetails;"
+                  accesskey="&generalSecurityDetails.accesskey;"
                   oncommand="onClickMore();"/>
         </hbox>
       </groupbox>
@@ -357,6 +364,18 @@
             </radiogroup>
           </hbox>
         </vbox>
+
+        <vbox>
+          <label value="&permGeo;" control="permGeoGroup geoRadioGroup"/>
+          <hbox id="permGeoGroup" role="group">
+            <checkbox id="geoDef" command="cmd_geoDef" label="&permAskAlways;"/>
+            <spacer flex="1"/>
+            <radiogroup id="geoRadioGroup" orient="horizontal">
+              <radio id="geo#1" command="cmd_geoToggle" label="&permAllow;"/>
+              <radio id="geo#2" command="cmd_geoToggle" label="&permBlock;"/>
+            </radiogroup>
+          </hbox>
+        </vbox>
       </vbox>
     </vbox>
 
@@ -398,9 +417,7 @@
           </rows>
         </grid>
         <spacer flex="1"/>
-        <hbox align="center"><!-- Cert button -->
-          <description id="security-view-text" class="fieldLabel"
-                 control="security-view-cert" flex="1"/>
+        <hbox pack="end"><!-- Cert button -->
           <button id="security-view-cert" label="&securityView.certView;"
                   accesskey="&securityView.accesskey;"
                   oncommand="security.viewCert();"/>

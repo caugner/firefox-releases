@@ -60,9 +60,12 @@ class nsIDocShellTreeNode;
 class nsIDocShellTreeItem;
 class nsIFocusController;
 class imgIContainer;
+class nsDOMDataTransfer;
 
 // mac uses click-hold context menus, a holdover from 4.x
-#ifdef XP_MACOSX
+// touch screens (like hildon) could use this also, 
+// perhaps we should move to NS_TOUCHSCREEN
+#if defined(XP_MACOSX) || defined(MOZ_PLATFORM_HILDON)
 #define CLICK_HOLD_CONTEXT_MENUS 1
 #endif
 
@@ -257,7 +260,7 @@ protected:
    *        that recursively called us in it's Up phase. The initial caller
    *        passes |nsnull| here. This is to avoid an infinite loop.
    * @param aAccessKeyState Normal, Down or Up processing phase (see enums
-   *        above). The initial event reciever uses 'normal', then 'down' when
+   *        above). The initial event receiver uses 'normal', then 'down' when
    *        processing children and Up when recursively calling its ancestor.
    * @param aModifierMask modifier mask for the key event
    */
@@ -288,12 +291,20 @@ protected:
   void GetPrevDocShell(nsIDocShellTreeNode* aNode,
                        nsIDocShellTreeItem** aResult);
 
-  // These functions are for mousewheel scrolling
+  // These functions are for mousewheel and pixel scrolling
   nsresult GetParentScrollingView(nsInputEvent* aEvent,
                                   nsPresContext* aPresContext,
                                   nsIFrame* &targetOuterFrame,
                                   nsPresContext* &presCtxOuter);
-
+  void SendLineScrollEvent(nsIFrame* aTargetFrame,
+                           nsMouseScrollEvent* aEvent,
+                           nsPresContext* aPresContext,
+                           nsEventStatus* aStatus,
+                           PRInt32 aNumLines);
+  void SendPixelScrollEvent(nsIFrame* aTargetFrame,
+                            nsMouseScrollEvent* aEvent,
+                            nsPresContext* aPresContext,
+                            nsEventStatus* aStatus);
   typedef enum {
     eScrollByPixel,
     eScrollByLine,
@@ -305,7 +316,6 @@ protected:
                         PRInt32 aNumLines,
                         PRBool aScrollHorizontal,
                         ScrollQuantity aScrollQuantity);
-  void ForceViewUpdate(nsIView* aView);
   void DoScrollHistory(PRInt32 direction);
   void DoScrollZoom(nsIFrame *aTargetFrame, PRInt32 adjustment);
   nsresult GetMarkupDocumentViewer(nsIMarkupDocumentViewer** aMv);
@@ -318,6 +328,40 @@ protected:
                                   nsIFrame* inDownFrame ) ;
   void StopTrackingDragGesture ( ) ;
   void GenerateDragGesture ( nsPresContext* aPresContext, nsMouseEvent *aEvent ) ;
+
+  /**
+   * Determine which node the drag should be targeted at.
+   * This is either the node clicked when there is a selection, or, for HTML,
+   * the element with a draggable property set to true.
+   *
+   * aSelectionTarget - target to check for selection
+   * aDataTransfer - data transfer object that will contain the data to drag
+   * aIsSelection - [out] set to true if a selection is being dragged
+   * aIsInEditor - [out] set to true if the content is in an editor field
+   * aTargetNode - [out] the draggable node, or null if there isn't one
+   */
+  void DetermineDragTarget(nsPresContext* aPresContext,
+                           nsIContent* aSelectionTarget,
+                           nsDOMDataTransfer* aDataTransfer,
+                           PRBool* aIsSelection,
+                           PRBool* aIsInEditor,
+                           nsIContent** aTargetNode);
+
+  /*
+   * Perform the default handling for the dragstart/draggesture event and set up a
+   * drag for aDataTransfer if it contains any data.
+   *
+   * aDragEvent - the dragstart/draggesture event
+   * aDataTransfer - the data transfer that holds the data to be dragged
+   * aDragTarget - the target of the drag
+   * aIsSelection - true if a selection is being dragged
+   */
+  void DoDefaultDragStart(nsPresContext* aPresContext,
+                          nsDragEvent* aDragEvent,
+                          nsDOMDataTransfer* aDataTransfer,
+                          nsIContent* aDragTarget,
+                          PRBool aIsSelection);
+
   PRBool IsTrackingDragGesture ( ) const { return mGestureDownContent != nsnull; }
   /**
    * Set the fields of aEvent to reflect the mouse position and modifier keys
@@ -379,6 +423,7 @@ protected:
   //Anti-recursive stack controls
 
   nsCOMPtr<nsIContent> mFirstBlurEvent;
+  nsCOMPtr<nsIDocument> mFirstDocumentBlurEvent;
   nsCOMPtr<nsIContent> mFirstFocusEvent;
 
   // The last element on which we fired a mouseover event, or null if
@@ -410,6 +455,10 @@ protected:
   nsCOMArray<nsIContent> mAccessKeys;
 
   nsCOMArray<nsIDocShell> mTabbingFromDocShells;
+
+  // Unlocks pixel scrolling
+  PRPackedBool mLastLineScrollConsumedX;
+  PRPackedBool mLastLineScrollConsumedY;
 
 #ifdef CLICK_HOLD_CONTEXT_MENUS
   enum { kClickHoldDelay = 500 } ;        // 500ms == 1/2 second

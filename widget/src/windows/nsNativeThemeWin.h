@@ -53,7 +53,7 @@ public:
                                   nsIFrame* aFrame,
                                   PRUint8 aWidgetType,
                                   const nsRect& aRect,
-                                  const nsRect& aClipRect);
+                                  const nsRect& aDirtyRect);
 
   NS_IMETHOD GetWidgetBorder(nsIDeviceContext* aContext, 
                              nsIFrame* aFrame,
@@ -75,6 +75,8 @@ public:
                                   nsSize* aResult,
                                   PRBool* aIsOverridable);
 
+  virtual nsTransparencyMode GetWidgetTransparency(PRUint8 aWidgetType);
+
   NS_IMETHOD WidgetStateChanged(nsIFrame* aFrame, PRUint8 aWidgetType, 
                                 nsIAtom* aAttribute, PRBool* aShouldRepaint);
 
@@ -94,8 +96,6 @@ public:
   virtual ~nsNativeThemeWin();
 
 protected:
-  void UpdateConfig();
-  void CloseData();
   HANDLE GetTheme(PRUint8 aWidgetType);
   nsresult GetThemePartAndState(nsIFrame* aFrame, PRUint8 aWidgetType,
                                 PRInt32& aPart, PRInt32& aState);
@@ -128,33 +128,6 @@ protected:
   PRInt32 StandardGetState(nsIFrame* aFrame, PRUint8 aWidgetType, PRBool wantFocused);
 
   PRBool IsMenuActive(nsIFrame* aFrame, PRUint8 aWidgetType);
-
-private:
-  HMODULE mThemeDLL;
-  HANDLE mButtonTheme;
-  HANDLE mTextFieldTheme;
-  HANDLE mTooltipTheme;
-  HANDLE mToolbarTheme;
-  HANDLE mRebarTheme;
-  HANDLE mMediaRebarTheme;
-  HANDLE mCommunicationsRebarTheme;
-  HANDLE mBrowserTabBarRebarTheme;
-  HANDLE mProgressTheme;
-  HANDLE mScrollbarTheme;
-  HANDLE mScaleTheme;
-  HANDLE mSpinTheme;
-  HANDLE mStatusbarTheme;
-  HANDLE mTabTheme;
-  HANDLE mTreeViewTheme;
-  HANDLE mComboBoxTheme;
-  HANDLE mHeaderTheme;
-  HANDLE mMenuTheme;
-
-  BOOL mFlatMenus;
-  OSVERSIONINFO mOsVersion;
-
-  PRPackedBool mIsXPOrLater;
-  PRPackedBool mIsVistaOrLater;
 };
 
 // Creator function

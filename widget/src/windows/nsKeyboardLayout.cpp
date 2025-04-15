@@ -42,11 +42,10 @@
 #include "nsQuickSort.h"
 
 #include <winuser.h>
+
 #ifndef WINABLEAPI
 #include <winable.h>
 #endif
-
-#ifndef WINCE
 
 struct DeadKeyEntry
 {
@@ -153,9 +152,20 @@ PRUint32 VirtualKey::GetUniChars (PRUint8 aShiftState, PRUint16* aUniChars, PRUi
 
     if (numOfChars)
     {
-      if (!(numOfChars == numOfUnshiftedChars &&
-            memcmp (aUniChars, unshiftedChars, numOfChars * sizeof (PRUint16)) == 0))
+      if ((aShiftState & (eAlt | eCtrl)) == (eAlt | eCtrl)) {
+        // Even if the shifted chars and the unshifted chars are same, we
+        // should consume the Alt key state and the Ctrl key state when
+        // AltGr key is pressed. Because if we don't consume them, the input
+        // events are ignored on nsEditor. (I.e., Users cannot input the
+        // characters with this key combination.)
         *aFinalShiftState &= ~(eAlt | eCtrl);
+      } else if (!(numOfChars == numOfUnshiftedChars &&
+                   memcmp (aUniChars, unshiftedChars,
+                           numOfChars * sizeof (PRUint16)) == 0)) {
+        // Otherwise, we should consume the Alt key state and the Ctrl key state
+        // only when the shifted chars and unshifted chars are different.
+        *aFinalShiftState &= ~(eAlt | eCtrl);
+      }
     } else
     {
       if (numOfUnshiftedChars)
@@ -194,47 +204,32 @@ PRUint32 VirtualKey::GetNativeUniChars (PRUint8 aShiftState, PRUint16* aUniChars
     return cnt;
   }
 }
-#endif
 
-
-
-KeyboardLayout::KeyboardLayout ()
+KeyboardLayout::KeyboardLayout () :
+  mKeyboardLayout(0), mCodePage(0)
 {
-#ifndef WINCE
   mDeadKeyTableListHead = nsnull;
-#endif
 
   LoadLayout (::GetKeyboardLayout(0));
 }
 
 KeyboardLayout::~KeyboardLayout ()
 {
-#ifndef WINCE
   ReleaseDeadKeyTables ();
-#endif
 }
 
 PRBool KeyboardLayout::IsPrintableCharKey (PRUint8 aVirtualKey)
 {
-#ifndef WINCE
   return GetKeyIndex (aVirtualKey) >= 0;
-#else
-  return PR_FALSE;
-#endif
 }
 
 PRBool KeyboardLayout::IsNumpadKey (PRUint8 aVirtualKey)
 {
-#ifndef WINCE
   return VK_NUMPAD0 <= aVirtualKey && aVirtualKey <= VK_DIVIDE;
-#else
-  return PR_FALSE;
-#endif
 }
 
 void KeyboardLayout::OnKeyDown (PRUint8 aVirtualKey)
 {
-#ifndef WINCE
   mLastVirtualKeyIndex = GetKeyIndex (aVirtualKey);
 
   if (mLastVirtualKeyIndex < 0)
@@ -307,21 +302,16 @@ void KeyboardLayout::OnKeyDown (PRUint8 aVirtualKey)
       }
     }
   }
-#endif
 }
 
 PRUint32 KeyboardLayout::GetUniChars (PRUint16* aUniChars, PRUint8* aShiftStates, PRUint32 aMaxChars) const
 {
-#ifndef WINCE
   PRUint32 chars = PR_MIN (mNumOfChars, aMaxChars);
 
   memcpy (aUniChars, mChars, chars * sizeof (PRUint16));
   memcpy (aShiftStates, mShiftStates, chars);
 
   return chars;
-#else
-  return 0;
-#endif
 }
 
 PRUint32
@@ -330,7 +320,6 @@ KeyboardLayout::GetUniCharsWithShiftState(PRUint8 aVirtualKey,
                                           PRUint16* aUniChars,
                                           PRUint32 aMaxChars) const
 {
-#ifndef WINCE
   PRInt32 key = GetKeyIndex(aVirtualKey);
   if (key < 0)
     return 0;
@@ -343,14 +332,21 @@ KeyboardLayout::GetUniCharsWithShiftState(PRUint8 aVirtualKey,
   memcpy(aUniChars, uniChars, chars * sizeof (PRUint16));
 
   return chars;
-#else
-  return 0;
-#endif
 }
 
 void KeyboardLayout::LoadLayout (HKL aLayout)
 {
-#ifndef WINCE
+  if (mKeyboardLayout == aLayout)
+    return;
+
+  mKeyboardLayout = aLayout;
+  mIMEProperty = ::ImmGetProperty(aLayout, IGP_PROPERTY);
+
+  WORD langID = LOWORD(aLayout);
+  ::GetLocaleInfoA(MAKELCID(langID, SORT_DEFAULT),
+                   LOCALE_IDEFAULTANSICODEPAGE | LOCALE_RETURN_NUMBER,
+                   (PSTR)&mCodePage, sizeof(mCodePage));
+
   PRUint32 shiftState;
   BYTE kbdState [256];
   BYTE originalKbdState [256];
@@ -361,7 +357,6 @@ void KeyboardLayout::LoadLayout (HKL aLayout)
 
   mActiveDeadKey = -1;
   mNumOfChars = 0;
-  mKeyboardLayout = aLayout;
 
   ReleaseDeadKeyTables ();
 
@@ -441,11 +436,9 @@ void KeyboardLayout::LoadLayout (HKL aLayout)
   }
 
   ::SetKeyboardState (originalKbdState);
-#endif
 }
 
 
-#ifndef WINCE
 PRUint8 KeyboardLayout::GetShiftState (const PBYTE aKbdState)
 {
   PRBool isShift = (aKbdState [VK_SHIFT] & 0x80) != 0;
@@ -539,7 +532,7 @@ inline PRInt32 KeyboardLayout::GetKeyIndex (PRUint8 aVirtualKey)
   return xlat [aVirtualKey];
 }
 
-int PR_CALLBACK KeyboardLayout::CompareDeadKeyEntries (const void* aArg1, const void* aArg2, void*)
+int KeyboardLayout::CompareDeadKeyEntries (const void* aArg1, const void* aArg2, void*)
 {
   const DeadKeyEntry* arg1 = static_cast<const DeadKeyEntry*>(aArg1);
   const DeadKeyEntry* arg2 = static_cast<const DeadKeyEntry*>(aArg2);
@@ -714,5 +707,3 @@ PRUint16 DeadKeyTable::GetCompositeChar (PRUint16 aBaseChar) const
 
   return 0;
 }
-
-#endif

@@ -72,7 +72,6 @@ public:
     NS_IMETHOD Init(nsIDeviceContext* aContext, nsIWidget *aWidget);
     NS_IMETHOD CommonInit(void);
     NS_IMETHOD GetDeviceContext(nsIDeviceContext *& aDeviceContext);
-    NS_IMETHOD GetHints(PRUint32& aResult);
     NS_IMETHOD PushState(void);
     NS_IMETHOD PopState(void);
     NS_IMETHOD SetClipRect(const nsRect& aRect, nsClipCombine aCombine);
@@ -80,7 +79,8 @@ public:
     NS_IMETHOD SetClipRegion(const nsIRegion& aRegion, nsClipCombine aCombine);
     NS_IMETHOD SetColor(nscolor aColor);
     NS_IMETHOD GetColor(nscolor &aColor) const;
-    NS_IMETHOD SetFont(const nsFont& aFont, nsIAtom* aLangGroup);
+    NS_IMETHOD SetFont(const nsFont& aFont, nsIAtom* aLangGroup,
+                       gfxUserFontSet *aUserFontSet);
     NS_IMETHOD SetFont(nsIFontMetrics *aFontMetrics);
     NS_IMETHOD GetFontMetrics(nsIFontMetrics *&aFontMetrics);
     NS_IMETHOD Translate(nscoord aX, nscoord aY);
@@ -184,15 +184,10 @@ public:
     NS_IMETHOD PopTranslation(PushedTranslation* aState);
     NS_IMETHOD SetTranslation(nscoord aX, nscoord aY);
 
-    NS_IMETHOD DrawTile(imgIContainer *aImage, nscoord aXOffset, nscoord aYOffset,
-                        const nsRect * aTargetRect, const nsIntRect * aSubimageRect);
     NS_IMETHOD SetRightToLeftText(PRBool aIsRTL);
     NS_IMETHOD GetRightToLeftText(PRBool* aIsRTL);
     virtual void SetTextRunRTL(PRBool aIsRTL);
 
-    NS_IMETHOD GetClusterInfo(const PRUnichar *aText,
-                              PRUint32 aLength,
-                              PRUint8 *aClusterStarts);
     virtual PRInt32 GetPosition(const PRUnichar *aText,
                                 PRUint32 aLength,
                                 nsPoint aPt);

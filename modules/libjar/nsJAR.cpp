@@ -112,7 +112,7 @@ nsJARManifestItem::~nsJARManifestItem()
 //----------------------------------------------
 // nsJAR constructor/destructor
 //----------------------------------------------
-PR_STATIC_CALLBACK(PRBool)
+static PRBool
 DeleteManifestEntry(nsHashKey* aKey, void* aData, void* closure)
 {
 //-- deletes an entry in  mManifestData.
@@ -127,6 +127,7 @@ nsJAR::nsJAR(): mManifestData(nsnull, nsnull, DeleteManifestEntry, nsnull, 10),
                 mReleaseTime(PR_INTERVAL_NO_TIMEOUT), 
                 mCache(nsnull), 
                 mLock(nsnull),
+                mMtime(0),
                 mTotalItemsInManifest(0)
 {
 }
@@ -167,16 +168,20 @@ nsrefcnt nsJAR::Release(void)
 NS_IMETHODIMP
 nsJAR::Open(nsIFile* zipFile)
 {
+  NS_ENSURE_ARG_POINTER(zipFile);
   if (mLock) return NS_ERROR_FAILURE; // Already open!
 
   mZipFile = zipFile;
+  nsresult rv = zipFile->GetLastModifiedTime(&mMtime);
+  if (NS_FAILED(rv)) return rv;
+
   mLock = PR_NewLock();
   NS_ENSURE_TRUE(mLock, NS_ERROR_OUT_OF_MEMORY);
 
   PRFileDesc *fd = OpenFile();
   NS_ENSURE_TRUE(fd, NS_ERROR_FAILURE);
 
-  nsresult rv = mZip.OpenArchive(fd);
+  rv = mZip.OpenArchive(fd);
   if (NS_FAILED(rv)) Close();
 
   return rv;
@@ -199,6 +204,7 @@ nsJAR::Close()
   }
 
   mParsedManifest = PR_FALSE;
+  mManifestData.Reset();
   mGlobalStatus = JAR_MANIFEST_NOT_PARSED;
   mTotalItemsInManifest = 0;
 
@@ -371,15 +377,8 @@ nsJAR::GetCertificatePrincipal(const char* aFilename, nsIPrincipal** aPrincipal)
     return NS_ERROR_NULL_POINTER;
   *aPrincipal = nsnull;
 
-  //-- Get the signature verifier service
-  nsresult rv;
-  nsCOMPtr<nsISignatureVerifier> verifier = 
-           do_GetService(SIGNATURE_VERIFIER_CONTRACTID, &rv);
-  if (NS_FAILED(rv)) // No signature verifier available
-    return NS_OK;
-
   //-- Parse the manifest
-  rv = ParseManifest(verifier);
+  nsresult rv = ParseManifest();
   if (NS_FAILED(rv)) return rv;
   if (mGlobalStatus == JAR_NO_MANIFEST)
     return NS_OK;
@@ -520,7 +519,7 @@ nsJAR::ReadLine(const char** src)
 #define JAR_SF_HEADER (const char*)"Signature-Version: 1.0"
 
 nsresult
-nsJAR::ParseManifest(nsISignatureVerifier* verifier)
+nsJAR::ParseManifest()
 {
   //-- Verification Step 1
   if (mParsedManifest)
@@ -601,6 +600,16 @@ nsJAR::ParseManifest(nsISignatureVerifier* verifier)
     rv = LoadEntry(tempFilename.get(), getter_Copies(sigBuffer), &sigLen);
   }
   if (NS_FAILED(rv))
+  {
+    mGlobalStatus = JAR_NO_MANIFEST;
+    mParsedManifest = PR_TRUE;
+    return NS_OK;
+  }
+
+  //-- Get the signature verifier service
+  nsCOMPtr<nsISignatureVerifier> verifier = 
+           do_GetService(SIGNATURE_VERIFIER_CONTRACTID, &rv);
+  if (NS_FAILED(rv)) // No signature verifier available
   {
     mGlobalStatus = JAR_NO_MANIFEST;
     mParsedManifest = PR_TRUE;
@@ -1090,7 +1099,7 @@ nsZipReaderCache::Init(PRUint32 cacheSize)
   return mLock ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
 }
 
-static PRBool PR_CALLBACK
+static PRBool
 DropZipReaderCache(nsHashKey *aKey, void *aData, void* closure)
 {
   nsJAR* zip = (nsJAR*)aData;
@@ -1115,7 +1124,9 @@ nsZipReaderCache::~nsZipReaderCache()
 NS_IMETHODIMP
 nsZipReaderCache::GetZip(nsIFile* zipFile, nsIZipReader* *result)
 {
+  NS_ENSURE_ARG_POINTER(zipFile);
   nsresult rv;
+  nsCOMPtr<nsIJAR> antiLockZipGrip;
   nsAutoLock lock(mLock);
 
 #ifdef ZIP_CACHE_HIT_RATE
@@ -1126,15 +1137,23 @@ nsZipReaderCache::GetZip(nsIFile* zipFile, nsIZipReader* *result)
   rv = zipFile->GetNativePath(path);
   if (NS_FAILED(rv)) return rv;
 
+  PRInt64 Mtime;
+  rv = zipFile->GetLastModifiedTime(&Mtime);
+  if (NS_FAILED(rv)) return rv;
+
   nsCStringKey key(path);
   nsJAR* zip = static_cast<nsJAR*>(static_cast<nsIZipReader*>(mZips.Get(&key))); // AddRefs
-  if (zip) {
+  if (zip && Mtime == zip->GetMtime()) {
 #ifdef ZIP_CACHE_HIT_RATE
     mZipCacheHits++;
 #endif
     zip->ClearReleaseTime();
   }
   else {
+    if (zip) {
+      antiLockZipGrip = zip;
+      mZips.Remove(&key);
+    }
     zip = new nsJAR();
     if (zip == nsnull)
         return NS_ERROR_OUT_OF_MEMORY;
@@ -1154,7 +1173,7 @@ nsZipReaderCache::GetZip(nsIFile* zipFile, nsIZipReader* *result)
   return rv;
 }
 
-static PRBool PR_CALLBACK
+static PRBool
 FindOldestZip(nsHashKey *aKey, void *aData, void* closure)
 {
   nsJAR** oldestPtr = (nsJAR**)closure;
@@ -1172,7 +1191,7 @@ FindOldestZip(nsHashKey *aKey, void *aData, void* closure)
 
 struct ZipFindData {nsJAR* zip; PRBool found;}; 
 
-static PRBool PR_CALLBACK
+static PRBool
 FindZip(nsHashKey *aKey, void *aData, void* closure)
 {
   ZipFindData* find_data = (ZipFindData*)closure;
@@ -1248,7 +1267,7 @@ nsZipReaderCache::ReleaseZip(nsJAR* zip)
   return NS_OK;
 }
 
-static PRBool PR_CALLBACK
+static PRBool
 FindFlushableZip(nsHashKey *aKey, void *aData, void* closure)
 {
   nsHashKey** flushableKeyPtr = (nsHashKey**)closure;

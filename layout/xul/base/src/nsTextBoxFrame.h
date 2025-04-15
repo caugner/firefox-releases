@@ -87,6 +87,8 @@ public:
                   const nsRect&        aDirtyRect,
                   nsPoint              aPt);
 
+  virtual PRBool ComputesOwnOverflowArea();
+
 protected:
   friend class nsAsyncAccesskeyUpdate;
   // Should be called only by nsAsyncAccesskeyUpdate.
@@ -103,6 +105,8 @@ protected:
   void CalculateUnderline(nsIRenderingContext& aRenderingContext);
 
   void CalcTextSize(nsBoxLayoutState& aBoxLayoutState);
+
+  nsRect CalcTextRect(nsIRenderingContext &aRenderingContext, const nsPoint &aTextOrigin);
 
   nsTextBoxFrame(nsIPresShell* aShell, nsStyleContext* aContext);
 
@@ -122,6 +126,17 @@ private:
 
   PRBool AlwaysAppendAccessKey();
   PRBool InsertSeparatorBeforeAccessKey();
+
+  void DrawText(nsIRenderingContext& aRenderingContext,
+                         const nsRect&        aTextRect,
+                         const nscolor*       aOverrideColor);
+
+  void PaintOneShadow(gfxContext *     aCtx,
+                      const nsRect&    aTextRect,
+                      nsCSSShadowItem* aShadowDetails,
+                      const nscolor&   aForegroundColor,
+                      const nsRect&    aDirtyRect);
+
 
   CroppingStyle mCropType;
   nsString mTitle;

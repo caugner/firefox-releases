@@ -92,6 +92,9 @@ public:
                                nsIAtom*        aAttribute,
                                PRInt32         aModType);
 
+  /** @see nsIFrame::DidSetStyleContext */
+  virtual void DidSetStyleContext(nsStyleContext* aOldStyleContext);
+  
   // table cells contain an area frame which does most of the work, and
   // so these functions should never be called. They assert and return
   // NS_ERROR_NOT_IMPLEMENTED
@@ -130,7 +133,8 @@ public:
   NS_IMETHOD SetSelected(nsPresContext* aPresContext,
                          nsIDOMRange *aRange,
                          PRBool aSelected,
-                         nsSpread aSpread);
+                         nsSpread aSpread,
+                         SelectionType aType);
 
   virtual nscoord GetMinWidth(nsIRenderingContext *aRenderingContext);
   virtual nscoord GetPrefWidth(nsIRenderingContext *aRenderingContext);
@@ -158,6 +162,10 @@ public:
   void VerticallyAlignChild(nscoord aMaxAscent);
 
   PRBool HasVerticalAlignBaseline();
+  
+  PRBool CellHasVisibleContent(nscoord       height, 
+                               nsTableFrame* tableFrame,
+                               nsIFrame*     kidFrame);
 
   /**
    * Get the first-line baseline of the cell relative to its top border

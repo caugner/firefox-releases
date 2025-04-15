@@ -341,10 +341,10 @@ nsSeamonkeyProfileMigrator::FillProfileDataFromSeamonkeyRegistry()
 #define F(a) nsSeamonkeyProfileMigrator::a
 
 #define MAKEPREFTRANSFORM(pref, newpref, getmethod, setmethod) \
-  { pref, newpref, F(Get##getmethod), F(Set##setmethod), PR_FALSE, -1 }
+  { pref, newpref, F(Get##getmethod), F(Set##setmethod), PR_FALSE, { -1 } }
 
 #define MAKESAMETYPEPREFTRANSFORM(pref, method) \
-  { pref, 0, F(Get##method), F(Set##method), PR_FALSE, -1 }
+  { pref, 0, F(Get##method), F(Set##method), PR_FALSE, { -1 } }
 
 
 static 
@@ -707,7 +707,6 @@ nsSeamonkeyProfileMigrator::CopyPasswords(PRBool aReplace)
 
     importer->InitWithFile(signonsFile, nsnull);
 
-    nsresult rv;
     PRUint32 count;
     nsILoginInfo **logins;
 
@@ -733,9 +732,10 @@ nsSeamonkeyProfileMigrator::CopyPasswords(PRBool aReplace)
 nsresult
 nsSeamonkeyProfileMigrator::CopyBookmarks(PRBool aReplace)
 {
+  nsresult rv;
   if (aReplace) {
     // Initialize the default bookmarks
-    nsresult rv = InitializeBookmarks(mTargetProfile);
+    rv = InitializeBookmarks(mTargetProfile);
     NS_ENSURE_SUCCESS(rv, rv);
 
     // Merge in the bookmarks from the source profile
@@ -744,17 +744,13 @@ nsSeamonkeyProfileMigrator::CopyBookmarks(PRBool aReplace)
     sourceFile->Append(FILE_NAME_BOOKMARKS);
     rv = ImportBookmarksHTML(sourceFile, PR_TRUE, PR_FALSE, EmptyString().get());
     NS_ENSURE_SUCCESS(rv, rv);
-
-    // we need to set this pref so that on startup
-    // we don't blow away what we just imported
-    nsCOMPtr<nsIPrefBranch> pref(do_GetService(NS_PREFSERVICE_CONTRACTID, &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    return pref->SetBoolPref("browser.places.importBookmarksHTML", PR_FALSE);
   }
-
-  return ImportNetscapeBookmarks(FILE_NAME_BOOKMARKS, 
+  else {
+    rv = ImportNetscapeBookmarks(FILE_NAME_BOOKMARKS, 
                                  NS_LITERAL_STRING("sourceNameSeamonkey").get());
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  return NS_OK;
 }
 
 nsresult

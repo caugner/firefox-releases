@@ -34,35 +34,13 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsSVGGraphicElement.h"
-#include "nsIDOMSVGSwitchElement.h"
+#include "nsSVGSwitchElement.h"
+#include "nsIFrame.h"
+#include "nsISVGChildFrame.h"
+#include "nsSVGUtils.h"
 
-typedef nsSVGGraphicElement nsSVGSwitchElementBase;
-
-class nsSVGSwitchElement : public nsSVGSwitchElementBase,
-                           public nsIDOMSVGSwitchElement
-{
-protected:
-  friend nsresult NS_NewSVGSwitchElement(nsIContent **aResult,
-                                         nsINodeInfo *aNodeInfo);
-  nsSVGSwitchElement(nsINodeInfo *aNodeInfo);
-
-public:
-  // interfaces:
-
-  NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_NSIDOMSVGSWITCHELEMENT
-
-  // xxx I wish we could use virtual inheritance
-  NS_FORWARD_NSIDOMNODE(nsSVGSwitchElementBase::)
-  NS_FORWARD_NSIDOMELEMENT(nsSVGSwitchElementBase::)
-  NS_FORWARD_NSIDOMSVGELEMENT(nsSVGSwitchElementBase::)
-
-  // nsIContent
-  NS_IMETHOD_(PRBool) IsAttributeMapped(const nsIAtom* aAttribute) const;
-
-  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-};
+PRBool 
+NS_SVG_PassesConditionalProcessingTests(nsIContent *aContent);
 
 ////////////////////////////////////////////////////////////////////////
 // implementation
@@ -74,14 +52,22 @@ NS_IMPL_NS_NEW_SVG_ELEMENT(Switch)
 //----------------------------------------------------------------------
 // nsISupports methods
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsSVGSwitchElement)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsSVGSwitchElement,
+                                                  nsSVGSwitchElementBase)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_NSCOMPTR(mActiveChild)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsSVGSwitchElement,
+                                                nsSVGSwitchElementBase)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_NSCOMPTR(mActiveChild)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+
 NS_IMPL_ADDREF_INHERITED(nsSVGSwitchElement,nsSVGSwitchElementBase)
 NS_IMPL_RELEASE_INHERITED(nsSVGSwitchElement,nsSVGSwitchElementBase)
 
-NS_INTERFACE_MAP_BEGIN(nsSVGSwitchElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMNode)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMSVGElement)
-  NS_INTERFACE_MAP_ENTRY(nsIDOMSVGSwitchElement)
+NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(nsSVGSwitchElement)
+  NS_NODE_INTERFACE_TABLE4(nsSVGSwitchElement, nsIDOMNode, nsIDOMElement,
+                           nsIDOMSVGElement, nsIDOMSVGSwitchElement)
   NS_INTERFACE_MAP_ENTRY_CONTENT_CLASSINFO(SVGSwitchElement)
 NS_INTERFACE_MAP_END_INHERITING(nsSVGSwitchElementBase)
 
@@ -91,9 +77,51 @@ NS_INTERFACE_MAP_END_INHERITING(nsSVGSwitchElementBase)
 nsSVGSwitchElement::nsSVGSwitchElement(nsINodeInfo *aNodeInfo)
   : nsSVGSwitchElementBase(aNodeInfo)
 {
-
 }
 
+void
+nsSVGSwitchElement::MaybeInvalidate()
+{
+  // We don't reuse UpdateActiveChild() and check if mActiveChild has changed
+  // to determine if we should call nsSVGUtils::UpdateGraphic. If we did that,
+  // nsSVGUtils::UpdateGraphic would not invalidate the old mActiveChild area!
+
+  PRUint32 count = GetChildCount();
+  for (PRUint32 i = 0; i < count; i++) {
+    nsIContent * child = GetChildAt(i);
+    if (NS_SVG_PassesConditionalProcessingTests(child)) {
+
+      if (mActiveChild == child) {
+        return;
+      }
+
+      nsIFrame *frame = GetPrimaryFrame();
+      if (frame) {
+        nsISVGChildFrame* svgFrame = nsnull;
+
+        CallQueryInterface(frame, &svgFrame);
+        if (svgFrame) {
+          nsSVGUtils::UpdateGraphic(svgFrame);
+        }
+      }
+      return;
+    }
+  }
+}
+
+void
+nsSVGSwitchElement::UpdateActiveChild()
+{
+  PRUint32 count = GetChildCount();
+  for (PRUint32 i = 0; i < count; i++) {
+    nsIContent * child = GetChildAt(i);
+    if (NS_SVG_PassesConditionalProcessingTests(child)) {
+      mActiveChild = child;
+      return;
+    }
+  }
+  mActiveChild = nsnull;
+}
 
 //----------------------------------------------------------------------
 // nsIDOMNode methods
@@ -101,7 +129,31 @@ nsSVGSwitchElement::nsSVGSwitchElement(nsINodeInfo *aNodeInfo)
 
 NS_IMPL_ELEMENT_CLONE_WITH_INIT(nsSVGSwitchElement)
 
+//----------------------------------------------------------------------
+// nsINode methods
 
+nsresult
+nsSVGSwitchElement::InsertChildAt(nsIContent* aKid,
+                                  PRUint32 aIndex,
+                                  PRBool aNotify)
+{
+  nsresult rv = nsSVGSwitchElementBase::InsertChildAt(aKid, aIndex, aNotify);
+  if (NS_SUCCEEDED(rv)) {
+    MaybeInvalidate();
+  }
+  return rv;
+}
+
+nsresult
+nsSVGSwitchElement::RemoveChildAt(PRUint32 aIndex, PRBool aNotify)
+{
+  nsresult rv = nsSVGSwitchElementBase::RemoveChildAt(aIndex, aNotify);
+  if (NS_SUCCEEDED(rv)) {
+    MaybeInvalidate();
+  }
+  return rv;
+}
+ 
 //----------------------------------------------------------------------
 // nsIContent methods
 

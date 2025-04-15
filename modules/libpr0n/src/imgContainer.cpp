@@ -945,7 +945,10 @@ nsresult imgContainer::DoComposite(gfxIImageFrame** aFrameToUse,
   nsIntRect r;
   mAnim->compositingFrame->GetRect(r);
   nsCOMPtr<nsIImage> img = do_GetInterface(mAnim->compositingFrame);
-  img->ImageUpdated(nsnull, nsImageUpdateFlags_kBitsChanged, &r);
+  nsresult rv = img->ImageUpdated(nsnull, nsImageUpdateFlags_kBitsChanged, &r);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   // We don't want to keep composite images for 8bit frames...
   if (isFullNextFrame && mAnimationMode == kNormalAnimMode && mLoopCount != 0 &&
@@ -1221,9 +1224,9 @@ imgContainer::sDiscardTimerCallback(nsITimer *aTimer, void *aClosure)
 
   int old_frame_count = self->mFrames.Count();
 
+  // Don't discard animated images, because we don't handle that very well. (See bug 414259.)
   if (self->mAnim) {
-    delete self->mAnim;
-    self->mAnim = nsnull;
+    return;
   }
 
   self->mFrames.Clear();
@@ -1489,9 +1492,9 @@ imgContainer::ReloadImages(void)
             mRestoreData.Length()));
   }
 
+  // |WriteFrom()| may fail if the original data is broken.
   PRUint32 written;
-  result = decoder->WriteFrom(stream, mRestoreData.Length(), &written);
-  NS_ENSURE_SUCCESS(result, result);
+  (void)decoder->WriteFrom(stream, mRestoreData.Length(), &written);
 
   result = decoder->Flush();
   NS_ENSURE_SUCCESS(result, result);

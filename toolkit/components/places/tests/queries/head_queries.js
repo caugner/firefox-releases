@@ -36,6 +36,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 const NS_APP_USER_PROFILE_50_DIR = "ProfD";
+const NS_APP_HISTORY_50_FILE = "UHist";
+
 const Ci = Components.interfaces;
 const Cc = Components.classes;
 const Cr = Components.results;
@@ -69,6 +71,11 @@ if (!profileDir) {
      persistent.value = true;
      if (prop == NS_APP_USER_PROFILE_50_DIR) {
        return dirSvc.get("CurProcD", Ci.nsIFile);
+     }
+     if (prop == NS_APP_HISTORY_50_FILE) {
+       var histFile = dirSvc.get("CurProcD", Ci.nsIFile);
+       histFile.append("history.dat");
+       return histFile;
      }
      throw Cr.NS_ERROR_FAILURE;
    },
@@ -163,10 +170,43 @@ function populateDB(aArray) {
       if (qdata.isVisit) {
         // Then we should add a visit for this node
         var referrer = qdata.referrer ? uri(qdata.referrer) : null;
-        var placeID = histsvc.addVisit(uri(qdata.uri), qdata.lastVisit,
+        var visitId = histsvc.addVisit(uri(qdata.uri), qdata.lastVisit,
                                        referrer, qdata.transType,
                                        qdata.isRedirect, qdata.sessionID);
-        do_check_true(placeID > 0);
+        do_check_true(visitId > 0);
+        if (qdata.title && !qdata.isDetails) {
+          // Set the page title synchronously, otherwise setPageTitle is LAZY.
+          let db = Cc["@mozilla.org/browser/nav-history-service;1"].
+                   getService(Ci.nsPIPlacesDatabase).
+                   DBConnection;
+          let stmt = db.createStatement("UPDATE moz_places_view " +
+                                        "SET title = :title WHERE url = :url");
+          stmt.params.title = qdata.title;
+          stmt.params.url = qdata.uri;
+          try {
+            stmt.execute();
+          }
+          finally {
+            stmt.finalize();
+          }
+        }
+        if (qdata.visitCount && !qdata.isDetails) {
+          // Set a fake visit_count, this is not a real count but can be used
+          // to test sorting by visit_count.
+          let db = Cc["@mozilla.org/browser/nav-history-service;1"].
+                   getService(Ci.nsPIPlacesDatabase).
+                   DBConnection;
+          let stmt = db.createStatement("UPDATE moz_places_view " +
+                                        "SET visit_count = :vc WHERE url = :url");
+          stmt.params.vc = qdata.visitCount;
+          stmt.params.url = qdata.uri;
+          try {
+            stmt.execute();
+          }
+          finally {
+            stmt.finalize();
+          }
+        }
       }
 
       if (qdata.isDetails) {
@@ -206,16 +246,14 @@ function populateDB(aArray) {
                                         qdata.annoExpiration);
       }
 
-      if (qdata.isTag) {
-        tagssvc.tagURI(uri(qdata.uri), qdata.tagArray);
-      }
-
       if (qdata.isFavicon) {
         // Not planning on doing deep testing of favIcon service so these two
         // calls should be sufficient to get favicons into the database
-        faviconsvc.setFaviconData(uri(qdata.faviconURI), qdata.favicon,
-                                  qdata.faviconLen, qdata.faviconMimeType,
-                                  qdata.faviconExpiration);
+        try {
+          faviconsvc.setFaviconData(uri(qdata.faviconURI), qdata.favicon,
+                                    qdata.faviconLen, qdata.faviconMimeType,
+                                    qdata.faviconExpiration);
+        } catch (ex) {}
         faviconsvc.setFaviconUrlForPage(uri(qdata.uri), uri(qdata.faviconURI));
       }
 
@@ -229,8 +267,20 @@ function populateDB(aArray) {
       }
 
       if (qdata.isBookmark) {
-        bmsvc.insertBookmark(qdata.parentFolder, uri(qdata.uri), qdata.index,
-                               qdata.title);
+        let itemId = bmsvc.insertBookmark(qdata.parentFolder, uri(qdata.uri),
+                                          qdata.index, qdata.title);
+        if (qdata.keyword)
+          bmsvc.setKeywordForBookmark(itemId, qdata.keyword);
+        if (qdata.dateAdded)
+          bmsvc.setItemDateAdded(itemId, qdata.dateAdded);
+        if (qdata.lastModified)
+          bmsvc.setItemLastModified(itemId, qdata.lastModified);
+
+        LOG("added bookmark");
+      }
+
+      if (qdata.isTag) {
+        tagssvc.tagURI(uri(qdata.uri), qdata.tagArray);
       }
 
       if (qdata.isDynContainer) {
@@ -251,13 +301,14 @@ function populateDB(aArray) {
  * database. It also has some interesting meta functions to determine which APIs
  * should be called, and to determine if this object should show up in the
  * resulting query.
- * It's parameter is an object specifying which attributes you want to set.
+ * Its parameter is an object specifying which attributes you want to set.
  * For ex:
  * var myobj = new queryData({isVisit: true, uri:"http://mozilla.com", title="foo"});
  * Note that it doesn't do any input checking on that object.
  */
 function queryData(obj) {
   this.isVisit = obj.isVisit ? obj.isVisit : false;
+  this.isBookmark = obj.isBookmark ? obj.isBookmark: false;
   this.uri = obj.uri ? obj.uri : "";
   this.lastVisit = obj.lastVisit ? obj.lastVisit : today;
   this.referrer = obj.referrer ? obj.referrer : null;
@@ -293,9 +344,13 @@ function queryData(obj) {
   this.isLivemark = obj.isLivemark ? obj.isLivemark : false;
   this.parentFolder = obj.parentFolder ? obj.parentFolder : bmsvc.placesRoot;
   this.feedURI = obj.feedURI ? obj.feedURI : "";
-  this.bmIndex = obj.bmIndex ? obj.bmIndex : bmsvc.DEFAULT_INDEX;
+  this.index = obj.index ? obj.index : bmsvc.DEFAULT_INDEX;
   this.isFolder = obj.isFolder ? obj.isFolder : false;
   this.contractId = obj.contractId ? obj.contractId : "";
+  this.lastModified = obj.lastModified ? obj.lastModified : today;
+  this.dateAdded = obj.dateAdded ? obj.dateAdded : today;
+  this.keyword = obj.keyword ? obj.keyword : "";
+  this.visitCount = obj.visitCount ? obj.visitCount : 0;
 
   // And now, the attribute for whether or not this object should appear in the
   // resulting query
@@ -306,26 +361,43 @@ function queryData(obj) {
 queryData.prototype = { }
 
 /**
- * Helper function to compare an array of query objects with a result set
- * NOTE: It assumes the array of query objects contains the SAME SORT as the
- *       result set and only checks the URI and title of the results.
- *       For deeper checks, you'll need to write your own method.
+ * Helper function to compare an array of query objects with a result set.
+ * It assumes the array of query objects contains the SAME SORT as the result
+ * set.  It checks the the uri, title, time, and bookmarkIndex properties of
+ * the results, where appropriate.
  */
 function compareArrayToResult(aArray, aRoot) {
   LOG("Comparing Array to Results");
-  var validResults = 0;
-  if (!aRoot.containerOpen)
+
+  var wasOpen = aRoot.containerOpen;
+  if (!wasOpen)
     aRoot.containerOpen = true;
 
-  for (var i=0; i < aArray.length; i++) {
+  // check expected number of results against actual
+  var expectedResultCount = aArray.filter(function(aEl) { return aEl.isInQuery; }).length;
+  do_check_eq(expectedResultCount, aRoot.childCount);
+
+  var inQueryIndex = 0;
+  for (var i = 0; i < aArray.length; i++) {
     if (aArray[i].isInQuery) {
-      do_check_eq(aArray[i].uri, aRoot.getChild(i).uri);
-      do_check_eq(aArray[i].title, aRoot.getChild(i).title);
-      validResults++;
+      var child = aRoot.getChild(inQueryIndex);
+      LOG("testing testData[" + i + "] vs result[" + inQueryIndex + "]");
+      LOG("testing testData[" + aArray[i].uri + "] vs result[" + child.uri + "]");
+      if (!aArray[i].isFolder)
+        do_check_eq(aArray[i].uri, child.uri);
+      do_check_eq(aArray[i].title, child.title);
+      if (aArray[i].hasOwnProperty("lastVisit"))
+        do_check_eq(aArray[i].lastVisit, child.time);
+      if (aArray[i].hasOwnProperty("index") &&
+          aArray[i].index != bmsvc.DEFAULT_INDEX)
+        do_check_eq(aArray[i].index, child.bookmarkIndex);
+
+      inQueryIndex++;
     }
   }
-  // One last sanity check - make sure there weren't more results in Result
-  do_check_eq(validResults, aRoot.childCount);
+
+  if (!wasOpen)
+    aRoot.containerOpen = false;
   LOG("Comparing Array to Results passes");
 }
 
@@ -380,4 +452,31 @@ function displayResultSet(aRoot) {
     LOG("Result Set URI: " + aRoot.getChild(i).uri + " Title: " +
         aRoot.getChild(i).title);
   }
+}
+
+/*
+ * Removes all bookmarks and checks for correct cleanup
+ */
+function remove_all_bookmarks() {
+  // Clear all bookmarks
+  bmsvc.removeFolderChildren(bmsvc.bookmarksMenuFolder);
+  bmsvc.removeFolderChildren(bmsvc.toolbarFolder);
+  bmsvc.removeFolderChildren(bmsvc.unfiledBookmarksFolder);
+  // Check for correct cleanup
+  check_no_bookmarks()
+}
+
+/*
+ * Checks that we don't have any bookmark
+ */
+function check_no_bookmarks() {
+  var query = histsvc.getNewQuery();
+  query.setFolders([bmsvc.toolbarFolder, bmsvc.bookmarksMenuFolder, bmsvc.unfiledBookmarksFolder], 3);
+  var options = histsvc.getNewQueryOptions();
+  options.queryType = Ci.nsINavHistoryQueryOptions.QUERY_TYPE_BOOKMARKS;
+  var result = histsvc.executeQuery(query, options);
+  var root = result.root;
+  root.containerOpen = true;
+  do_check_eq(root.childCount, 0);
+  root.containerOpen = false;
 }

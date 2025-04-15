@@ -78,6 +78,7 @@ extern PRLogModuleInfo* sCocoaLog;
 extern NSPasteboard* globalDragPboard;
 extern NSView* gLastDragView;
 extern NSEvent* gLastDragEvent;
+extern PRBool gUserCancelledDrag;
 
 // This global makes the transferable array available to Cocoa's promised
 // file destination callback.
@@ -142,6 +143,10 @@ static nsresult SetUpDragClipboard(nsISupportsArray* aTransferableArray)
           currentKey == kCorePboardType_urld ||
           currentKey == kCorePboardType_urln) {
         [dragPBoard setString:currentValue forType:currentKey];
+      }
+      else if (currentKey == NSHTMLPboardType) {
+        [dragPBoard setString:(nsClipboard::WrapHtmlForSystemPasteboard(currentValue))
+                      forType:currentKey];
       }
       else if (currentKey == NSTIFFPboardType) {
         [dragPBoard setData:currentValue forType:currentKey];
@@ -304,6 +309,7 @@ nsDragService::InvokeDragSession(nsIDOMNode* aDOMNode, nsISupportsArray* aTransf
   mNativeDragView = [gLastDragView retain];
   mNativeDragEvent = [gLastDragEvent retain];
 
+  gUserCancelledDrag = PR_FALSE;
   [mNativeDragView dragImage:image
                           at:localPoint
                       offset:NSMakeSize(0,0)
@@ -311,7 +317,11 @@ nsDragService::InvokeDragSession(nsIDOMNode* aDOMNode, nsISupportsArray* aTransf
                   pasteboard:[NSPasteboard pasteboardWithName:NSDragPboard]
                       source:mNativeDragView
                    slideBack:YES];
+  gUserCancelledDrag = PR_FALSE;
 
+  if (mDoingDrag)
+    nsBaseDragService::EndDragSession(PR_FALSE);
+  
   return NS_OK;
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
@@ -408,11 +418,13 @@ nsDragService::GetData(nsITransferable* aTransferable, PRUint32 aItemIndex)
       break;
     }
 
-    if (flavorStr.EqualsLiteral(kUnicodeMime) ||
+    const NSString *pboardType = NSStringPboardType;
+
+    if (nsClipboard::IsStringType(flavorStr, &pboardType) ||
         flavorStr.EqualsLiteral(kURLMime) ||
         flavorStr.EqualsLiteral(kURLDataMime) ||
         flavorStr.EqualsLiteral(kURLDescriptionMime)) {
-      NSString* pString = [globalDragPboard stringForType:NSStringPboardType];
+      NSString* pString = [globalDragPboard stringForType:pboardType];
       if (!pString)
         continue;
 
@@ -509,14 +521,21 @@ nsDragService::IsDataFlavorSupported(const char *aDataFlavor, PRBool *_retval)
     }
   }
 
+  const NSString *pboardType;
+
   if (dataFlavor.EqualsLiteral(kFileMime)) {
     NSString* availableType = [globalDragPboard availableTypeFromArray:[NSArray arrayWithObject:NSFilenamesPboardType]];
     if (availableType && [availableType isEqualToString:NSFilenamesPboardType])
       *_retval = PR_TRUE;
   }
-  else if (dataFlavor.EqualsLiteral(kUnicodeMime)) {
-    NSString* availableType = [globalDragPboard availableTypeFromArray:[NSArray arrayWithObject:NSStringPboardType]];
-    if (availableType && [availableType isEqualToString:NSStringPboardType])
+  else if (dataFlavor.EqualsLiteral(kURLMime)) {
+    NSString* availableType = [globalDragPboard availableTypeFromArray:[NSArray arrayWithObject:kCorePboardType_url]];
+    if (availableType && [availableType isEqualToString:kCorePboardType_url])
+      *_retval = PR_TRUE;
+  }
+  else if (nsClipboard::IsStringType(dataFlavor, &pboardType)) {
+    NSString* availableType = [globalDragPboard availableTypeFromArray:[NSArray arrayWithObject:pboardType]];
+    if (availableType && [availableType isEqualToString:pboardType])
       *_retval = PR_TRUE;
   }
 
@@ -571,8 +590,11 @@ nsDragService::EndDragSession(PRBool aDoneDrag)
     mNativeDragEvent = nil;
   }
 
+  mUserCancelled = gUserCancelledDrag;
+
+  nsresult rv = nsBaseDragService::EndDragSession(aDoneDrag);
   mDataItems = nsnull;
-  return nsBaseDragService::EndDragSession(aDoneDrag);
+  return rv;
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
 }

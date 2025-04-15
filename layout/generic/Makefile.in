@@ -41,7 +41,7 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-ifdef MOZ_MOCHITEST
+ifdef ENABLE_TESTS
 DIRS		+= test
 endif
 
@@ -82,11 +82,6 @@ ifdef ACCESSIBILITY
 REQUIRES	+= accessibility
 endif
 
-# Sun's Complex Text Layout support
-ifdef SUNCTL
-REQUIRES	+= ctl
-endif
-
 EXPORTS		= \
 		nsFrameList.h \
 		nsHTMLParts.h \
@@ -119,7 +114,6 @@ CPPSRCS		= \
 		nsAbsoluteContainingBlock.cpp \
 		nsAreaFrame.cpp \
 		nsBRFrame.cpp \
-		nsBlockBandData.cpp \
 		nsBlockFrame.cpp \
 		nsBlockReflowContext.cpp \
 		nsBlockReflowState.cpp \
@@ -127,6 +121,7 @@ CPPSRCS		= \
 		nsColumnSetFrame.cpp \
 		nsContainerFrame.cpp \
 		nsFirstLetterFrame.cpp \
+		nsFloatManager.cpp \
 		nsFrame.cpp \
 		nsFrameFrame.cpp \
 		nsFrameList.cpp \
@@ -150,7 +145,6 @@ CPPSRCS		= \
 		nsPlaceholderFrame.cpp \
 		nsSelection.cpp \
 		nsSimplePageSequence.cpp \
-		nsSpaceManager.cpp \
 		nsSpacerFrame.cpp \
 		nsSplittableFrame.cpp \
 		nsTextFrameThebes.cpp \
@@ -158,6 +152,12 @@ CPPSRCS		= \
 		nsTextRunTransformations.cpp \
 		nsViewportFrame.cpp \
 		$(NULL)
+
+ifdef MOZ_MEDIA
+CPPSRCS		+= \
+		nsVideoFrame.cpp \
+		$(NULL)
+endif
 
 ifdef IBMBIDI
 CPPSRCS		+= \
@@ -193,6 +193,10 @@ LOCAL_INCLUDES += \
 
 ifdef MOZ_ENABLE_GTK2
 CXXFLAGS += $(MOZ_GTK2_CFLAGS)
+endif
+
+ifdef MOZ_ENABLE_QT
+CXXFLAGS += $(MOZ_QT_CFLAGS)
 endif
 
 libs::

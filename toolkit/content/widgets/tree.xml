@@ -209,11 +209,12 @@
           var col = this.columns.getFirstColumn();
           var lastCol = null;
           var currentX = this.boxObject.x;
+          var adjustedX = aX + this.treeBoxObject.horizontalPosition;
           while (col) {
             var cw = col.element.boxObject.width;
             if (cw > 0) {
               currentX += cw;
-              if (currentX - (cw * aThresh) > aX)
+              if (currentX - (cw * aThresh) > adjustedX)
                 return col.element;
             }
             lastCol = col;
@@ -259,6 +260,13 @@
           ]]>
         </getter>
       </property>
+
+      <constructor><![CDATA[
+          // Bindings that extend this one wouldn't inherit the
+          // chromedir attribute if it would only be set in <content>.
+          this.setAttribute("chromedir", "]]>&locale.dir;<![CDATA[");
+        ]]>
+      </constructor>
 
       <method name="_getNextColumn">
         <parameter name="row"/>
@@ -340,23 +348,37 @@
             var box = this.treeBoxObject;
             box.ensureCellIsVisible(row, column);
 
-            var outx = {}, outy = {}, outwidth = {}, outheight = {};
+            // Get the coordinates of the text inside the cell.
+            var textx = {}, texty = {}, textwidth = {}, textheight = {};
             var coords = box.getCoordsForCellItem(row, column, "text",
-                                                  outx, outy, outwidth, outheight);
+                                                  textx, texty, textwidth, textheight);
 
+            // Get the coordinates of the cell itself.
+            var cellx = {}, cellwidth = {};
+            coords = box.getCoordsForCellItem(row, column, "cell",
+                                              cellx, {}, cellwidth, {});
+
+            // Calculate the top offset of the textbox.
             var style = window.getComputedStyle(input, "");
             var topadj = parseInt(style.borderTopWidth) + parseInt(style.paddingTop);
-            input.top = outy.value - topadj;
+            input.top = texty.value - topadj;
 
-            var left = outx.value;
+            // The leftside of the textbox is aligned to the left side of the text
+            // in LTR mode, and left side of the cell in RTL mode.
+            var left, widthdiff;
+            if (style.direction == "rtl") {
+              left = cellx.value;
+              widthdiff = cellx.value + cellwidth.value - textx.value - textwidth.value;
+            } else {
+              left = textx.value;
+              widthdiff = textx.value - cellx.value;
+            }
+
             input.left = left;
-            input.height = outheight.value + topadj +
+            input.height = textheight.value + topadj +
                            parseInt(style.borderBottomWidth) +
                            parseInt(style.paddingBottom);
-
-            coords = box.getCoordsForCellItem(row, column, "cell",
-                                              outx, outy, outwidth, outheight);
-            input.width = outwidth.value - (left - outx.value);
+            input.width = cellwidth.value - widthdiff;
             input.hidden = false;
 
             input.value = this.view.getCellText(row, column);
@@ -632,6 +654,8 @@
       <handler event="DOMMouseScroll" phase="capturing">
         <![CDATA[
           if (this._editingColumn)
+            return;
+          if (event.axis == event.HORIZONTAL_AXIS)
             return;
 
           var rows = event.detail;
@@ -1060,25 +1084,24 @@
       <![CDATA[
         if (this.parentNode.disabled)
           return;
-        var b = this.parentNode.treeBoxObject;
-        var row = b.view.selection.currentIndex;
-         if (row == -1)
-           return;
-  
-          var col = {};
-          var obj = {};
-          b.getCellAt(event.clientX, event.clientY, {}, col, obj);
-  
-          if (this.parentNode.editable)
-            this.parentNode.startEditing(row, col.value);
- 
-          if (!b.view.isContainer(row))
-            return;
- 
+        var tbo = this.parentNode.treeBoxObject;
+        var row = tbo.view.selection.currentIndex;
+        if (row == -1)
+          return;
 
-         // Cyclers and twisties respond to single clicks, not double clicks
-         if (col.value && !col.value.cycler && obj.value != "twisty")
-           this.parentNode.changeOpenState(row);
+        var col = {};
+        var obj = {};
+        tbo.getCellAt(event.clientX, event.clientY, {}, col, obj);
+
+        if (this.parentNode.editable && obj.value != "twisty")
+          this.parentNode.startEditing(row, col.value);
+
+        if (this.parentNode._editingColumn || !tbo.view.isContainer(row))
+          return;
+
+        // Cyclers and twisties respond to single clicks, not double clicks
+        if (col.value != -1 && !col.value.cycler && obj.value != "twisty")
+          this.parentNode.changeOpenState(row);
       ]]>
       </handler>
       
@@ -1281,6 +1304,13 @@
         <![CDATA[
           if (event.target != event.originalTarget)
             return;
+
+#ifdef XP_WIN
+          // On Windows multiple clicking on tree columns only cycles one time
+          // every 2 clicks.
+          if (event.detail % 2 == 0)
+            return;
+#endif
 
           var tree = this.parentNode.parentNode;
           var column = tree.columns.getColumnFor(this);

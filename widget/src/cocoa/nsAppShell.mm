@@ -56,13 +56,115 @@
 #include "nsIWebBrowserChrome.h"
 #include "nsObjCExceptions.h"
 #include "nsCocoaUtils.h"
+#include "nsChildView.h"
+#include "nsToolkit.h"
 
 // defined in nsChildView.mm
 extern nsIRollupListener * gRollupListener;
 extern nsIWidget         * gRollupWidget;
+extern PRUint32          gLastModifierState;
 
 // defined in nsCocoaWindow.mm
 extern PRInt32             gXULModalLevel;
+
+static PRBool gAppShellMethodsSwizzled = PR_FALSE;
+// List of current Cocoa app-modal windows (nested if more than one).
+nsCocoaAppModalWindowList *gCocoaAppModalWindowList = NULL;
+
+// Push a Cocoa app-modal window onto the top of our list.
+nsresult nsCocoaAppModalWindowList::PushCocoa(NSWindow *aWindow, NSModalSession aSession)
+{
+  NS_ENSURE_STATE(aWindow && aSession);
+  mList.AppendElement(nsCocoaAppModalWindowListItem(aWindow, aSession));
+  return NS_OK;
+}
+
+// Pop the topmost Cocoa app-modal window off our list.  aWindow and aSession
+// are just used to check that it's what we expect it to be.
+nsresult nsCocoaAppModalWindowList::PopCocoa(NSWindow *aWindow, NSModalSession aSession)
+{
+  NS_ENSURE_STATE(aWindow && aSession);
+
+  for (int i = mList.Length(); i > 0; --i) {
+    nsCocoaAppModalWindowListItem &item = mList.ElementAt(i - 1);
+    if (item.mSession) {
+      NS_ASSERTION((item.mWindow == aWindow) && (item.mSession == aSession),
+                   "PopCocoa() called without matching call to PushCocoa()!");
+      mList.RemoveElementAt(i - 1);
+      return NS_OK;
+    }
+  }
+
+  NS_ERROR("PopCocoa() called without matching call to PushCocoa()!");
+  return NS_ERROR_FAILURE;
+}
+
+// Push a Gecko-modal window onto the top of our list.
+nsresult nsCocoaAppModalWindowList::PushGecko(NSWindow *aWindow, nsCocoaWindow *aWidget)
+{
+  NS_ENSURE_STATE(aWindow && aWidget);
+  mList.AppendElement(nsCocoaAppModalWindowListItem(aWindow, aWidget));
+  return NS_OK;
+}
+
+// Pop the topmost Gecko-modal window off our list.  aWindow and aWidget are
+// just used to check that it's what we expect it to be.
+nsresult nsCocoaAppModalWindowList::PopGecko(NSWindow *aWindow, nsCocoaWindow *aWidget)
+{
+  NS_ENSURE_STATE(aWindow && aWidget);
+
+  for (int i = mList.Length(); i > 0; --i) {
+    nsCocoaAppModalWindowListItem &item = mList.ElementAt(i - 1);
+    if (item.mWidget) {
+      NS_ASSERTION((item.mWindow == aWindow) && (item.mWidget == aWidget),
+                   "PopGecko() called without matching call to PushGecko()!");
+      mList.RemoveElementAt(i - 1);
+      return NS_OK;
+    }
+  }
+
+  NS_ERROR("PopGecko() called without matching call to PushGecko()!");
+  return NS_ERROR_FAILURE;
+}
+
+// The "current session" is normally the "session" corresponding to the
+// top-most Cocoa app-modal window (both on the screen and in our list).
+// But because Cocoa app-modal dialog can be "interrupted" by a Gecko-modal
+// dialog, the top-most Cocoa app-modal dialog may already have finished
+// (and no longer be visible).  In this case we need to check the list for
+// the "next" visible Cocoa app-modal window (and return its "session"), or
+// (if no Cocoa app-modal window is visible) return nil.  This way we ensure
+// (as we need to) that all nested Cocoa app-modal sessions are dealt with
+// before we get to any Gecko-modal session(s).  See nsAppShell::
+// ProcessNextNativeEvent() below.
+NSModalSession nsCocoaAppModalWindowList::CurrentSession()
+{
+  if (![NSApp _isRunningAppModal])
+    return nil;
+
+  NSModalSession currentSession = nil;
+
+  for (int i = mList.Length(); i > 0; --i) {
+    nsCocoaAppModalWindowListItem &item = mList.ElementAt(i - 1);
+    if (item.mSession && [item.mWindow isVisible]) {
+      currentSession = item.mSession;
+      break;
+    }
+  }
+
+  return currentSession;
+}
+
+// Has a Gecko modal dialog popped up over a Cocoa app-modal dialog?
+PRBool nsCocoaAppModalWindowList::GeckoModalAboveCocoaModal()
+{
+  if (mList.IsEmpty())
+    return PR_FALSE;
+
+  nsCocoaAppModalWindowListItem &topItem = mList.ElementAt(mList.Length() - 1);
+
+  return (topItem.mWidget != nsnull);
+}
 
 // AppShellDelegate
 //
@@ -236,6 +338,17 @@ nsAppShell::Init()
 
   rv = nsBaseAppShell::Init();
 
+  NS_InstallPluginKeyEventsHandler();
+
+  gCocoaAppModalWindowList = new nsCocoaAppModalWindowList;
+  if (!gAppShellMethodsSwizzled) {
+    nsToolkit::SwizzleMethods([NSApplication class], @selector(beginModalSessionForWindow:),
+                              @selector(nsAppShell_NSApplication_beginModalSessionForWindow:));
+    nsToolkit::SwizzleMethods([NSApplication class], @selector(endModalSession:),
+                              @selector(nsAppShell_NSApplication_endModalSession:));
+    gAppShellMethodsSwizzled = PR_TRUE;
+  }
+
   [localPool release];
 
   return rv;
@@ -250,14 +363,7 @@ nsAppShell::Init()
 //
 // Arrange for Gecko events to be processed on demand (in response to a call
 // to ScheduleNativeEventCallback(), if processing of Gecko events via "native
-// methods" hasn't been suspended).  This happens in NativeEventCallback() ...
-// or rather it's supposed to:  nsBaseAppShell::NativeEventCallback() doesn't
-// actually process any Gecko events if elsewhere we're also processing Gecko
-// events in a tight loop (as happens in nsBaseAppShell::Run()) -- in that
-// case ProcessGeckoEvents() is always called while ProcessNextNativeEvent()
-// is running (called from nsBaseAppShell::OnProcessNextEvent()) and
-// mProcessingNextNativeEvent is always true (which makes NativeEventCallback()
-// take an early out).
+// methods" hasn't been suspended).  This happens in NativeEventCallback().
 //
 // protected static
 void
@@ -414,12 +520,18 @@ nsAppShell::ProcessNextNativeEvent(PRBool aMayWait)
 
   if (mTerminated)
     return PR_FALSE;
+
   // We don't want any native events to be processed here (via Gecko) while
-  // Cocoa is displaying an app-modal dialog (as opposed to a doc-modal or
-  // window-modal "sheet").  Otherwise event-processing loops (Cocoa ones)
-  // may be "interrupted", or inappropriate events may get through to the
+  // Cocoa is displaying an app-modal dialog (as opposed to a window-modal
+  // "sheet" or a Gecko-modal dialog).  Otherwise Cocoa event-processing loops
+  // may be interrupted, and inappropriate events may get through to the
   // browser window(s) underneath.  This resolves bmo bugs 419668 and 420967.
-  if ([NSApp _isRunningAppModal])
+  //
+  // But we need more complex handling (we need to make an exception) if a
+  // Gecko modal dialog is running above the Cocoa app-modal dialog -- for
+  // which see below.
+  if ([NSApp _isRunningAppModal] &&
+      (!gCocoaAppModalWindowList || !gCocoaAppModalWindowList->GeckoModalAboveCocoaModal()))
     return PR_FALSE;
 
   PRBool wasRunningEventLoop = mRunningEventLoop;
@@ -491,7 +603,23 @@ nsAppShell::ProcessNextNativeEvent(PRBool aMayWait)
                                           untilDate:waitUntil
                                              inMode:currentMode
                                             dequeue:YES])) {
-        [NSApp sendEvent:nextEvent];
+        // If we're in a Cocoa app-modal session that's been interrupted by a
+        // Gecko-modal dialog, send the event to the Cocoa app-modal dialog's
+        // session.  This ensures that the app-modal session won't be starved
+        // of events, and fixes bugs 463473 and 442442.  (The case of an
+        // ordinary Cocoa app-modal dialog has been dealt with above.)
+        //
+        // Otherwise (if we're in an ordinary Gecko-modal dialog, or if we're
+        // otherwise not in a Gecko main event loop), process the event as
+        // expected.
+        NSModalSession currentAppModalSession = nil;
+        if (gCocoaAppModalWindowList)
+          currentAppModalSession = gCocoaAppModalWindowList->CurrentSession();
+        if (currentAppModalSession) {
+          [NSApp _modalSession:currentAppModalSession sendEvent:nextEvent];
+        } else {
+          [NSApp sendEvent:nextEvent];
+        }
         eventProcessed = PR_TRUE;
       }
     } else {
@@ -532,6 +660,10 @@ nsAppShell::ProcessNextNativeEvent(PRBool aMayWait)
   mRunningEventLoop = wasRunningEventLoop;
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
+
+  if (!moreEvents) {
+    nsChildView::UpdateCurrentInputEventCount();
+  }
 
   return moreEvents;
 }
@@ -606,6 +738,11 @@ nsAppShell::Exit(void)
   }
 
   mTerminated = PR_TRUE;
+
+  delete gCocoaAppModalWindowList;
+  gCocoaAppModalWindowList = NULL;
+
+  NS_RemovePluginKeyEventsHandler();
 
   // Quoting from Apple's doc on the [NSApplication stop:] method (from their
   // doc on the NSApplication class):  "If this method is invoked during a
@@ -707,6 +844,10 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal *aThread,
                                              selector:@selector(applicationWillTerminate:)
                                                  name:NSApplicationWillTerminateNotification
                                                object:NSApp];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(applicationDidBecomeActive:)
+                                                 name:NSApplicationDidBecomeActiveNotification
+                                               object:NSApp];
     [[NSDistributedNotificationCenter defaultCenter] addObserver:self
                                                         selector:@selector(beginMenuTracking:)
                                                             name:@"com.apple.HIToolbox.beginMenuTrackingNotification"
@@ -741,6 +882,25 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal *aThread,
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
 
+// applicationDidBecomeActive
+//
+// Make sure gLastModifierState is updated when we become active (since we
+// won't have received [ChildView flagsChanged:] messages while inactive).
+- (void)applicationDidBecomeActive:(NSNotification*)aNotification
+{
+  NS_OBJC_BEGIN_TRY_ABORT_BLOCK;
+
+  // [NSEvent modifierFlags] is valid on every kind of event, so we don't need
+  // to worry about getting an NSInternalInconsistencyException here.
+  NSEvent* currentEvent = [NSApp currentEvent];
+  if (currentEvent) {
+    gLastModifierState =
+      nsCocoaUtils::GetCocoaEventModifierFlags(currentEvent) & NSDeviceIndependentModifierFlagsMask;
+  }
+
+  NS_OBJC_END_TRY_ABORT_BLOCK;
+}
+
 // beginMenuTracking
 //
 // Roll up our context menu (if any) when some other app (or the OS) opens
@@ -757,6 +917,45 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal *aThread,
   }
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
+}
+
+@end
+
+// We hook these methods in order to maintain a list of Cocoa app-modal
+// windows (and the "sessions" to which they correspond).  We need this in
+// order to deal with the consequences of a Cocoa app-modal dialog being
+// "interrupted" by a Gecko-modal dialog.  See nsCocoaAppModalWindowList::
+// CurrentSession() and nsAppShell::ProcessNextNativeEvent() above.
+@interface NSApplication (MethodSwizzling)
+- (NSModalSession)nsAppShell_NSApplication_beginModalSessionForWindow:(NSWindow *)aWindow;
+- (void)nsAppShell_NSApplication_endModalSession:(NSModalSession)aSession;
+@end
+
+@implementation NSApplication (MethodSwizzling)
+
+// Called if and only if a Cocoa app-modal session is beginning.  Always call
+// gCocoaAppModalWindowList->PushCocoa() here (if gCocoaAppModalWindowList is
+// non-nil).
+- (NSModalSession)nsAppShell_NSApplication_beginModalSessionForWindow:(NSWindow *)aWindow
+{
+  NSModalSession session =
+    [self nsAppShell_NSApplication_beginModalSessionForWindow:aWindow];
+  if (gCocoaAppModalWindowList)
+    gCocoaAppModalWindowList->PushCocoa(aWindow, session);
+  return session;
+}
+
+// Called to end any Cocoa modal session (app-modal or otherwise).  Only call
+// gCocoaAppModalWindowList->PopCocoa() when an app-modal session is ending
+// (and when gCocoaAppModalWindowList is non-nil).
+- (void)nsAppShell_NSApplication_endModalSession:(NSModalSession)aSession
+{
+  BOOL wasRunningAppModal = [NSApp _isRunningAppModal];
+  NSWindow *prevAppModalWindow = [NSApp modalWindow];
+  [self nsAppShell_NSApplication_endModalSession:aSession];
+  if (gCocoaAppModalWindowList &&
+      wasRunningAppModal && (prevAppModalWindow != [NSApp modalWindow]))
+    gCocoaAppModalWindowList->PopCocoa(prevAppModalWindow, aSession);
 }
 
 @end

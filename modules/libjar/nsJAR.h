@@ -133,6 +133,10 @@ class nsJAR : public nsIZipReader, public nsIJAR
       mCache = cache;
     }
 
+    PRInt64 GetMtime() {
+      return mMtime;
+    }
+
   protected:
     //-- Private data members
     nsCOMPtr<nsIFile>        mZipFile;        // The zip/jar file on disk
@@ -144,12 +148,13 @@ class nsJAR : public nsIZipReader, public nsIJAR
     PRIntervalTime           mReleaseTime;    // used by nsZipReaderCache for flushing entries
     nsZipReaderCache*        mCache;          // if cached, this points to the cache it's contained in
     PRLock*                  mLock;	
+    PRInt64                  mMtime;
     PRInt32                  mTotalItemsInManifest;
     
     //-- Private functions
     PRFileDesc* OpenFile();
 
-    nsresult ParseManifest(nsISignatureVerifier* verifier);
+    nsresult ParseManifest();
     void     ReportError(const char* aFilename, PRInt16 errorCode);
     nsresult LoadEntry(const char* aFilename, char** aBuf, 
                        PRUint32* aBufLen = nsnull);
