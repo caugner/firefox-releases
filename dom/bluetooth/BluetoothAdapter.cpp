@@ -13,6 +13,7 @@
 #include "GeneratedEvents.h"
 
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsDOMClassInfo.h"
 #include "nsIDOMBluetoothDeviceEvent.h"
 #include "nsTArrayHelpers.h"
@@ -103,7 +104,8 @@ public:
       return false;
     }
 
-    rv = nsTArrayToJSArray(sc->GetNativeContext(), devices, &JsDevices);
+    AutoPushJSContext cx(sc->GetNativeContext());
+    rv = nsTArrayToJSArray(cx, devices, &JsDevices);
     if (!JsDevices) {
       NS_WARNING("Cannot create JS array!");
       SetError(NS_LITERAL_STRING("BluetoothError"));
@@ -259,12 +261,13 @@ BluetoothAdapter::SetPropertyByValue(const BluetoothNamedValue& aValue)
     nsIScriptContext* sc = GetContextForEventHandlers(&rv);
     NS_ENSURE_SUCCESS_VOID(rv);
 
-    if (NS_FAILED(nsTArrayToJSArray(sc->GetNativeContext(),
-                                    mUuids,
-                                    &mJsUuids))) {
+    AutoPushJSContext cx(sc->GetNativeContext());
+    JS::Rooted<JSObject*> uuids(cx);
+    if (NS_FAILED(nsTArrayToJSArray(cx, mUuids, uuids.address()))) {
       NS_WARNING("Cannot set JS UUIDs object!");
       return;
     }
+    mJsUuids = uuids;
     Root();
   } else if (name.EqualsLiteral("Devices")) {
     mDeviceAddresses = value.get_ArrayOfnsString();
@@ -278,12 +281,14 @@ BluetoothAdapter::SetPropertyByValue(const BluetoothNamedValue& aValue)
     nsIScriptContext* sc = GetContextForEventHandlers(&rv);
     NS_ENSURE_SUCCESS_VOID(rv);
 
-    if (NS_FAILED(nsTArrayToJSArray(sc->GetNativeContext(),
-                                    mDeviceAddresses,
-                                    &mJsDeviceAddresses))) {
+    AutoPushJSContext cx(sc->GetNativeContext());
+    JS::Rooted<JSObject*> deviceAddresses(cx);
+    if (NS_FAILED(nsTArrayToJSArray(cx, mDeviceAddresses,
+                                    deviceAddresses.address()))) {
       NS_WARNING("Cannot set JS Devices object!");
       return;
     }
+    mJsDeviceAddresses = deviceAddresses;
     Root();
   } else {
 #ifdef DEBUG

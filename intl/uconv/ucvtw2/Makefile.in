@@ -10,17 +10,9 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-LIBRARY_NAME	= ucvtw2_s
 FORCE_STATIC_LIB=1
 LIBXUL_LIBRARY = 1
 
-
-CPPSRCS		= \
-		nsEUCTWToUnicode.cpp \
-		nsUnicodeToEUCTW.cpp \
-		$(NULL)
-
-#SHARED_LIBRARY_LIBS = $(DIST)/lib/$(LIB_PREFIX)ucvutil_s.$(LIB_SUFFIX)
 
 LOCAL_INCLUDES	= -I$(srcdir)/../util
 

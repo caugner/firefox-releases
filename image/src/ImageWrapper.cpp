@@ -231,6 +231,12 @@ ImageWrapper::StartDecoding()
   return mInnerImage->StartDecoding();
 }
 
+bool
+ImageWrapper::IsDecoded()
+{
+  return mInnerImage->IsDecoded();
+}
+
 NS_IMETHODIMP
 ImageWrapper::LockImage()
 {
@@ -277,6 +283,18 @@ NS_IMETHODIMP_(float)
 ImageWrapper::GetFrameIndex(uint32_t aWhichFrame)
 {
   return mInnerImage->GetFrameIndex(aWhichFrame);
+}
+
+NS_IMETHODIMP_(int32_t)
+ImageWrapper::GetFirstFrameDelay()
+{
+  return mInnerImage->GetFirstFrameDelay();
+}
+
+NS_IMETHODIMP_(void)
+ImageWrapper::SetAnimationStartTime(const mozilla::TimeStamp& aTime)
+{
+  mInnerImage->SetAnimationStartTime(aTime);
 }
 
 } // namespace image

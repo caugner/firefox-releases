@@ -5,6 +5,20 @@
 
 <resources>
 
+    <!-- Theme level attributes -->
+    <declare-styleable name="GeckoTheme">
+
+        <!-- Style for MenuItemActionBar -->
+        <attr name="menuItemActionBarStyle" format="reference"/>
+
+        <!-- Style for MenuItemActionView -->
+        <attr name="menuItemActionViewStyle" format="reference"/>
+
+        <!-- Style for MenuItemDefault -->
+        <attr name="menuItemDefaultStyle" format="reference"/>
+
+    </declare-styleable>
+
     <declare-styleable name="AboutHomeSection">
         <attr name="title" format="string"/>
         <attr name="subtitle" format="string"/>
@@ -13,7 +27,7 @@
 
     <!-- DoorHangers -->
     <declare-styleable name="DoorHanger">
-        <attr name="doorhangerWidth" format="dimension">
+        <attr name="arrowPopupWidth" format="dimension">
              <enum name="fill_parent" value="-1" />
              <enum name="match_parent" value="-1" />
              <enum name="wrap_content" value="-2" />
@@ -155,6 +169,10 @@
         <attr name="android:choiceMode"/>
         <attr name="android:drawSelectorOnTop"/>
         <attr name="android:listSelector"/>
+    </declare-styleable>
+
+    <declare-styleable name="GeckoView">
+        <attr name="url" format="string"/>
     </declare-styleable>
 
 </resources>

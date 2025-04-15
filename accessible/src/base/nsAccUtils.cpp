@@ -442,9 +442,10 @@ nsAccUtils::MustPrune(Accessible* aAccessible)
   // Don't prune the tree for certain roles if the tree is more complex than
   // a single text leaf.
   return
-    ((role == roles::MENUITEM ||
+    (role == roles::MENUITEM ||
      role == roles::COMBOBOX_OPTION ||
      role == roles::OPTION ||
+     role == roles::ENTRY ||
      role == roles::FLAT_EQUATION ||
      role == roles::PASSWORD_TEXT ||
      role == roles::PUSHBUTTON ||
@@ -454,6 +455,5 @@ nsAccUtils::MustPrune(Accessible* aAccessible)
      role == roles::PROGRESSBAR ||
      role == roles::SEPARATOR) &&
     aAccessible->ContentChildCount() == 1 &&
-    aAccessible->ContentChildAt(0)->IsTextLeaf()) ||
-    role == roles::ENTRY;
+    aAccessible->ContentChildAt(0)->IsTextLeaf();
 }

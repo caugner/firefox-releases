@@ -6,3 +6,19 @@
 
 MODULE = 'browser_feeds'
 
+CPP_SOURCES += [
+    'nsFeedSniffer.cpp',
+]
+
+EXTRA_COMPONENTS += [
+    'BrowserFeeds.manifest',
+    'FeedConverter.js',
+    'WebContentConverter.js',
+]
+
+EXTRA_PP_COMPONENTS += [
+    'FeedWriter.js',
+]
+
+LIBRARY_NAME = 'browser_feeds_s'
+

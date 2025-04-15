@@ -24,7 +24,7 @@ interface IPeerConnectionManager : nsISupports
  *
  * See media/webrtc/signaling/include/PeerConnectionImpl.h
  */
-[scriptable, uuid(85ba28da-53d0-401d-afed-9cad69f727ff)]
+[scriptable, uuid(cf9152f0-c9a8-4093-9435-1daa056e0177)]
 interface IPeerConnectionObserver : nsISupports
 {
   /* Constants */
@@ -32,6 +32,7 @@ interface IPeerConnectionObserver : nsISupports
   const long kIceState = 0x2;
   const long kSdpState = 0x3;
   const long kSipccState = 0x4;
+  const long kSignalingState = 0x5;
 
   /* JSEP callbacks */
   void onCreateOfferSuccess(in string offer);
@@ -54,7 +55,7 @@ interface IPeerConnectionObserver : nsISupports
   void onStateChange(in unsigned long state);
 
   /* Changes to MediaStreams */
-  void onAddStream(in nsIDOMMediaStream stream, in string type);
+  void onAddStream(in nsIDOMMediaStream stream);
   void onRemoveStream();
   void onAddTrack();
   void onRemoveTrack();
@@ -67,7 +68,7 @@ interface IPeerConnectionObserver : nsISupports
   void foundIceCandidate(in string candidate);
 };
 
-[scriptable, uuid(80b98a4f-c629-4e81-b738-a4608f6a4cd3)]
+[scriptable, uuid(930dce8b-7c5e-4393-b8c0-cb3a928f68bd)]
 interface IPeerConnection : nsISupports
 {
   const unsigned long kHintAudio = 0x00000001;
@@ -90,6 +91,15 @@ interface IPeerConnection : nsISupports
   const long kActive = 2;
   const long kClosing = 3;
   const long kClosed = 4;
+
+  /* RTCSignalingState from WebRTC spec */
+  const long kSignalingInvalid            = 0;
+  const long kSignalingStable             = 1;
+  const long kSignalingHaveLocalOffer     = 2;
+  const long kSignalingHaveRemoteOffer    = 3;
+  const long kSignalingHaveLocalPranswer  = 4;
+  const long kSignalingHaveRemotePranswer = 5;
+  const long kSignalingClosed             = 6;
 
   /* for 'type' in DataChannelInit dictionary */
   const unsigned short kDataChannelReliable = 0;
@@ -144,6 +154,7 @@ interface IPeerConnection : nsISupports
 
   readonly attribute unsigned long iceState;
   readonly attribute unsigned long readyState;
+  readonly attribute unsigned long signalingState;
   readonly attribute unsigned long sipccState;
 
   /* Data channels */

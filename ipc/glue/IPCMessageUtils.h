@@ -788,10 +788,44 @@ struct ParamTraits<nsIntSize>
   }
 };
 
-template<>
-struct ParamTraits<mozilla::gfx::Point>
+template<class T, class U>
+struct ParamTraits< mozilla::gfx::ScaleFactor<T, U> >
 {
-  typedef mozilla::gfx::Point paramType;
+  typedef mozilla::gfx::ScaleFactor<T, U> paramType;
+
+  static void Write(Message* msg, const paramType& param)
+  {
+    WriteParam(msg, param.scale);
+  }
+
+  static bool Read(const Message* msg, void** iter, paramType* result)
+  {
+    return (ReadParam(msg, iter, &result->scale));
+  }
+};
+
+template<class T>
+struct ParamTraits< mozilla::gfx::PointTyped<T> >
+{
+  typedef mozilla::gfx::PointTyped<T> paramType;
+
+  static void Write(Message* msg, const paramType& param)
+  {
+    WriteParam(msg, param.x);
+    WriteParam(msg, param.y);
+  }
+
+  static bool Read(const Message* msg, void** iter, paramType* result)
+  {
+    return (ReadParam(msg, iter, &result->x) &&
+            ReadParam(msg, iter, &result->y));
+  }
+};
+
+template<class T>
+struct ParamTraits< mozilla::gfx::IntPointTyped<T> >
+{
+  typedef mozilla::gfx::IntPointTyped<T> paramType;
 
   static void Write(Message* msg, const paramType& param)
   {
@@ -824,10 +858,32 @@ struct ParamTraits<mozilla::gfx::Size>
   }
 };
 
-template<>
-struct ParamTraits<mozilla::gfx::Rect>
+template<class T>
+struct ParamTraits< mozilla::gfx::RectTyped<T> >
 {
-  typedef mozilla::gfx::Rect paramType;
+  typedef mozilla::gfx::RectTyped<T> paramType;
+
+  static void Write(Message* msg, const paramType& param)
+  {
+    WriteParam(msg, param.x);
+    WriteParam(msg, param.y);
+    WriteParam(msg, param.width);
+    WriteParam(msg, param.height);
+  }
+
+  static bool Read(const Message* msg, void** iter, paramType* result)
+  {
+    return (ReadParam(msg, iter, &result->x) &&
+            ReadParam(msg, iter, &result->y) &&
+            ReadParam(msg, iter, &result->width) &&
+            ReadParam(msg, iter, &result->height));
+  }
+};
+
+template<class T>
+struct ParamTraits< mozilla::gfx::IntRectTyped<T> >
+{
+  typedef mozilla::gfx::IntRectTyped<T> paramType;
 
   static void Write(Message* msg, const paramType& param)
   {
@@ -1034,7 +1090,6 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
   {
     WriteParam(aMsg, aParam.mScrollableRect);
     WriteParam(aMsg, aParam.mViewport);
-    WriteParam(aMsg, aParam.mContentRect);
     WriteParam(aMsg, aParam.mScrollOffset);
     WriteParam(aMsg, aParam.mDisplayPort);
     WriteParam(aMsg, aParam.mCriticalDisplayPort);
@@ -1044,13 +1099,13 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
     WriteParam(aMsg, aParam.mZoom);
     WriteParam(aMsg, aParam.mDevPixelsPerCSSPixel);
     WriteParam(aMsg, aParam.mMayHaveTouchListeners);
+    WriteParam(aMsg, aParam.mPresShellId);
   }
 
   static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
   {
     return (ReadParam(aMsg, aIter, &aResult->mScrollableRect) &&
             ReadParam(aMsg, aIter, &aResult->mViewport) &&
-            ReadParam(aMsg, aIter, &aResult->mContentRect) &&
             ReadParam(aMsg, aIter, &aResult->mScrollOffset) &&
             ReadParam(aMsg, aIter, &aResult->mDisplayPort) &&
             ReadParam(aMsg, aIter, &aResult->mCriticalDisplayPort) &&
@@ -1059,7 +1114,8 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
             ReadParam(aMsg, aIter, &aResult->mResolution) &&
             ReadParam(aMsg, aIter, &aResult->mZoom) &&
             ReadParam(aMsg, aIter, &aResult->mDevPixelsPerCSSPixel) &&
-            ReadParam(aMsg, aIter, &aResult->mMayHaveTouchListeners));
+            ReadParam(aMsg, aIter, &aResult->mMayHaveTouchListeners) &&
+            ReadParam(aMsg, aIter, &aResult->mPresShellId));
   }
 };
 
@@ -1072,12 +1128,16 @@ struct ParamTraits<mozilla::layers::TextureFactoryIdentifier>
   {
     WriteParam(aMsg, aParam.mParentBackend);
     WriteParam(aMsg, aParam.mMaxTextureSize);
+    WriteParam(aMsg, aParam.mSupportsTextureBlitting);
+    WriteParam(aMsg, aParam.mSupportsPartialUploads);
   }
 
   static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
   {
     return ReadParam(aMsg, aIter, &aResult->mParentBackend) &&
-           ReadParam(aMsg, aIter, &aResult->mMaxTextureSize);
+           ReadParam(aMsg, aIter, &aResult->mMaxTextureSize) &&
+           ReadParam(aMsg, aIter, &aResult->mSupportsTextureBlitting) &&
+           ReadParam(aMsg, aIter, &aResult->mSupportsPartialUploads);
   }
 };
 

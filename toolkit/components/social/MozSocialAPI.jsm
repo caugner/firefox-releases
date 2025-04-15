@@ -10,7 +10,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "SocialService", "resource://gre/modules/SocialService.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils", "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
-this.EXPORTED_SYMBOLS = ["MozSocialAPI", "openChatWindow"];
+this.EXPORTED_SYMBOLS = ["MozSocialAPI", "openChatWindow", "findChromeWindowForChats"];
 
 this.MozSocialAPI = {
   _enabled: false,
@@ -53,13 +53,20 @@ function injectController(doc, topic, data) {
                                   .getInterface(Ci.nsIWebNavigation)
                                   .QueryInterface(Ci.nsIDocShell)
                                   .chromeEventHandler;
+    // limit injecting into social panels or same-origin browser tabs if
+    // social.debug.injectIntoTabs is enabled
+    let allowTabs = false;
+    try {
+      allowTabs = containingBrowser.contentWindow == window &&
+                  Services.prefs.getBoolPref("social.debug.injectIntoTabs");
+    } catch(e) {}
 
     let origin = containingBrowser.getAttribute("origin");
-    if (!origin) {
+    if (!allowTabs && !origin) {
       return;
     }
 
-    SocialService.getProvider(origin, function(provider) {
+    SocialService.getProvider(doc.nodePrincipal.origin, function(provider) {
       if (provider && provider.workerURL && provider.enabled) {
         attachToWindow(provider, window);
       }

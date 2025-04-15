@@ -31,10 +31,6 @@ extern "C" {
 #endif
   int __wrap_dladdr(void *addr, Dl_info *info);
 
-  sighandler_t __wrap_signal(int signum, sighandler_t handler);
-  int __wrap_sigaction(int signum, const struct sigaction *act,
-                       struct sigaction *oldact);
-
   struct dl_phdr_info {
     Elf::Addr dlpi_addr;
     const char *dlpi_name;
@@ -68,14 +64,16 @@ __dl_munmap(void *handle, void *addr, size_t length);
 class LibHandle;
 
 namespace mozilla {
+namespace detail {
 
-template <> inline void RefCounted<LibHandle>::Release();
+template <> inline void RefCounted<LibHandle, AtomicRefCount>::Release();
 
-template <> inline RefCounted<LibHandle>::~RefCounted()
+template <> inline RefCounted<LibHandle, AtomicRefCount>::~RefCounted()
 {
   MOZ_ASSERT(refCnt == 0x7fffdead);
 }
 
+} /* namespace detail */
 } /* namespace mozilla */
 
 /* Forward declaration */
@@ -85,7 +83,7 @@ class Mappable;
  * Abstract class for loaded libraries. Libraries may be loaded through the
  * system linker or this linker, both cases will be derived from this class.
  */
-class LibHandle: public mozilla::RefCounted<LibHandle>
+class LibHandle: public mozilla::AtomicRefCounted<LibHandle>
 {
 public:
   /**
@@ -136,7 +134,7 @@ public:
   void AddDirectRef()
   {
     ++directRefCnt;
-    mozilla::RefCounted<LibHandle>::AddRef();
+    mozilla::AtomicRefCounted<LibHandle>::AddRef();
   }
 
   /**
@@ -147,10 +145,11 @@ public:
   {
     bool ret = false;
     if (directRefCnt) {
-      MOZ_ASSERT(directRefCnt <= mozilla::RefCounted<LibHandle>::refCount());
+      MOZ_ASSERT(directRefCnt <=
+                 mozilla::AtomicRefCounted<LibHandle>::refCount());
       if (--directRefCnt)
         ret = true;
-      mozilla::RefCounted<LibHandle>::Release();
+      mozilla::AtomicRefCounted<LibHandle>::Release();
     }
     return ret;
   }
@@ -213,8 +212,9 @@ private:
  * would mean too many Releases from within the destructor.
  */
 namespace mozilla {
+namespace detail {
 
-template <> inline void RefCounted<LibHandle>::Release() {
+template <> inline void RefCounted<LibHandle, AtomicRefCount>::Release() {
 #ifdef DEBUG
   if (refCnt > 0x7fff0000)
     MOZ_ASSERT(refCnt > 0x7fffdead);
@@ -232,6 +232,7 @@ template <> inline void RefCounted<LibHandle>::Release() {
   }
 }
 
+} /* namespace detail */
 } /* namespace mozilla */
 
 /**
@@ -287,19 +288,21 @@ private:
  * The ElfLoader registers its own SIGSEGV handler to handle segmentation
  * faults within the address space of the loaded libraries. It however
  * allows a handler to be set for faults in other places, and redispatches
- * to the handler set through signal() or sigaction(). We assume no system
- * library loaded with system dlopen is going to call signal or sigaction
- * for SIGSEGV.
+ * to the handler set through signal() or sigaction().
  */
 class SEGVHandler
 {
+public:
+  bool hasRegisteredHandler() {
+    return registeredHandler;
+  }
+
 protected:
   SEGVHandler();
   ~SEGVHandler();
 
 private:
-  friend sighandler_t __wrap_signal(int signum, sighandler_t handler);
-  friend int __wrap_sigaction(int signum, const struct sigaction *act,
+  static int __wrap_sigaction(int signum, const struct sigaction *act,
                               struct sigaction *oldact);
 
   /**
@@ -328,6 +331,8 @@ private:
    * not set or not big enough.
    */
   MappedPtr stackPtr;
+
+  bool registeredHandler;
 };
 
 /**

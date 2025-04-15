@@ -30,17 +30,12 @@ import automationutils
 here = os.path.dirname(__file__)
 mozbase = os.path.realpath(os.path.join(os.path.dirname(here), 'mozbase'))
 
-try:
-    import mozcrash
-except:
-    deps = ['mozcrash',
-            'mozfile',
-            'mozlog']
-    for dep in deps:
-        module = os.path.join(mozbase, dep)
-        if module not in sys.path:
-            sys.path.append(module)
-    import mozcrash
+if os.path.isdir(mozbase):
+    for package in os.listdir(mozbase):
+        sys.path.append(os.path.join(mozbase, package))
+
+import mozcrash
+
 # ---------------------------------------------------------------
 
 _DEFAULT_PREFERENCE_FILE = os.path.join(SCRIPT_DIR, 'prefs_general.js')
@@ -756,7 +751,7 @@ user_pref("camino.use_system_proxy_settings", false); // Camino-only, harmless t
     # 841150, and 839677 (at least)
     # Also (temporary) bug 870002 (mediastreamgraph)
     if 'NSPR_LOG_MODULES' not in env:
-      env['NSPR_LOG_MODULES'] = 'signaling:5,mtransport:3,mediastreamgraph:4'
+      env['NSPR_LOG_MODULES'] = 'signaling:5,mtransport:3'
     env['R_LOG_LEVEL'] = '5'
     env['R_LOG_DESTINATION'] = 'stderr'
     env['R_LOG_VERBOSE'] = '1'

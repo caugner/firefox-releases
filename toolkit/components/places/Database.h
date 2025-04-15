@@ -122,7 +122,7 @@ public:
    */
   void DispatchToAsyncThread(nsIRunnable* aEvent) const
   {
-    if (mShuttingDown) {
+    if (mClosed) {
       return;
     }
     nsCOMPtr<nsIEventTarget> target = do_GetInterface(mMainConn);
@@ -283,10 +283,8 @@ private:
 
   /**
    * Singleton getter, invoked by class instantiation.
-   *
-   * Note: does AddRef.
    */
-  static Database* GetSingleton();
+  static already_AddRefed<Database> GetSingleton();
 
   static Database* gDatabase;
 
@@ -299,6 +297,7 @@ private:
   int32_t mDBPageSize;
   uint16_t mDatabaseStatus;
   bool mShuttingDown;
+  bool mClosed;
 };
 
 } // namespace places

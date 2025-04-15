@@ -62,7 +62,11 @@ public class GeckoEvent {
         COMPOSITOR_PAUSE(29),
         COMPOSITOR_RESUME(30),
         NATIVE_GESTURE_EVENT(31),
-        IME_KEY_EVENT(32);
+        IME_KEY_EVENT(32),
+        CALL_OBSERVER(33),
+        REMOVE_OBSERVER(34),
+        LOW_MEMORY(35),
+        NETWORK_LINK_CHANGE(36);
 
         public final int value;
 
@@ -155,6 +159,7 @@ public class GeckoEvent {
     private int mEnd;
     private String mCharacters;
     private String mCharactersExtra;
+    private String mData;
     private int mRangeType;
     private int mRangeStyles;
     private int mRangeLineStyle;
@@ -311,7 +316,7 @@ public class GeckoEvent {
             event.mPoints = new Point[1];
 
             PointF geckoPoint = new PointF(pt.x, pt.y);
-            geckoPoint = GeckoApp.mAppContext.getLayerView().convertViewPointToLayerPoint(geckoPoint);
+            geckoPoint = GeckoAppShell.getLayerView().convertViewPointToLayerPoint(geckoPoint);
 
             if (geckoPoint == null) {
                 // This could happen if Gecko isn't ready yet.
@@ -384,7 +389,7 @@ public class GeckoEvent {
         try {
             PointF geckoPoint = new PointF(event.getX(eventIndex), event.getY(eventIndex));
             if (!keepInViewCoordinates) {
-                geckoPoint = GeckoApp.mAppContext.getLayerView().convertViewPointToLayerPoint(geckoPoint);
+                geckoPoint = GeckoAppShell.getLayerView().convertViewPointToLayerPoint(geckoPoint);
             }
 
             mPoints[index] = new Point(Math.round(geckoPoint.x), Math.round(geckoPoint.y));
@@ -415,7 +420,7 @@ public class GeckoEvent {
                 }
             } else {
                 float size = event.getSize(eventIndex);
-                Resources resources = GeckoApp.mAppContext.getResources();
+                Resources resources = GeckoAppShell.getContext().getResources();
                 DisplayMetrics displaymetrics = resources.getDisplayMetrics();
                 size = size*Math.min(displaymetrics.heightPixels, displaymetrics.widthPixels);
                 mPointRadii[index] = new Point((int)size,(int)size);
@@ -654,6 +659,32 @@ public class GeckoEvent {
     public static GeckoEvent createScreenOrientationEvent(short aScreenOrientation) {
         GeckoEvent event = new GeckoEvent(NativeGeckoEvent.SCREENORIENTATION_CHANGED);
         event.mScreenOrientation = aScreenOrientation;
+        return event;
+    }
+
+    public static GeckoEvent createCallObserverEvent(String observerKey, String topic, String data) {
+        GeckoEvent event = new GeckoEvent(NativeGeckoEvent.CALL_OBSERVER);
+        event.mCharacters = observerKey;
+        event.mCharactersExtra = topic;
+        event.mData = data;
+        return event;
+    }
+
+    public static GeckoEvent createRemoveObserverEvent(String observerKey) {
+        GeckoEvent event = new GeckoEvent(NativeGeckoEvent.REMOVE_OBSERVER);
+        event.mCharacters = observerKey;
+        return event;
+    }
+
+    public static GeckoEvent createLowMemoryEvent(int level) {
+        GeckoEvent event = new GeckoEvent(NativeGeckoEvent.LOW_MEMORY);
+        event.mMetaState = level;
+        return event;
+    }
+
+    public static GeckoEvent createNetworkLinkChangeEvent(String status) {
+        GeckoEvent event = new GeckoEvent(NativeGeckoEvent.NETWORK_LINK_CHANGE);
+        event.mCharacters = status;
         return event;
     }
 

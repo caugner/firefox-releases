@@ -17,3 +17,30 @@ XPIDL_SOURCES += [
 
 MODULE = 'url-classifier'
 
+CPP_SOURCES += [
+    'ChunkSet.cpp',
+    'Classifier.cpp',
+    'HashStore.cpp',
+    'LookupCache.cpp',
+    'ProtocolParser.cpp',
+    'nsCheckSummedOutputStream.cpp',
+    'nsUrlClassifierDBService.cpp',
+    'nsUrlClassifierPrefixSet.cpp',
+    'nsUrlClassifierProxies.cpp',
+    'nsUrlClassifierStreamUpdater.cpp',
+    'nsUrlClassifierUtils.cpp',
+]
+
+EXTRA_COMPONENTS += [
+    'nsURLClassifier.manifest',
+    'nsUrlClassifierHashCompleter.js',
+]
+
+# Same as JS components that are run through the pre-processor.
+EXTRA_PP_COMPONENTS += [
+    'nsUrlClassifierLib.js',
+    'nsUrlClassifierListManager.js',
+]
+
+LIBRARY_NAME = 'urlclassifier_s'
+

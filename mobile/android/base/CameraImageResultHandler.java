@@ -19,21 +19,38 @@ class CameraImageResultHandler implements ActivityResultHandler {
     private static final String LOGTAG = "GeckoCameraImageResultHandler";
 
     private final Queue<String> mFilePickerResult;
+    private final ActivityHandlerHelper.FileResultHandler mHandler;
 
     CameraImageResultHandler(Queue<String> resultQueue) {
         mFilePickerResult = resultQueue;
+        mHandler = null;
+    }
+
+    /* Use this constructor to asynchronously listen for results */
+    public CameraImageResultHandler(ActivityHandlerHelper.FileResultHandler handler) {
+        mHandler = handler;
+        mFilePickerResult = null;
     }
 
     @Override
     public void onActivityResult(int resultCode, Intent data) {
         if (resultCode != Activity.RESULT_OK) {
-            mFilePickerResult.offer("");
+            if (mFilePickerResult != null) {
+                mFilePickerResult.offer("");
+            }
             return;
         }
 
         File file = new File(Environment.getExternalStorageDirectory(), sImageName);
         sImageName = "";
-        mFilePickerResult.offer(file.getAbsolutePath());
+
+        if (mFilePickerResult != null) {
+            mFilePickerResult.offer(file.getAbsolutePath());
+        }
+
+        if (mHandler != null) {
+            mHandler.gotFile(file.getAbsolutePath());
+        }
     }
 
     // this code is really hacky and doesn't belong anywhere so I'm putting it here for now

@@ -15,25 +15,19 @@
 
 #include "mozilla/DebugOnly.h"
 
-#include <EGL/egl.h>
-#include <EGL/eglext.h>
-
 #include <fcntl.h>
 
 #include "android/log.h"
-#include "ui/FramebufferNativeWindow.h"
 
 #include "mozilla/dom/TabParent.h"
 #include "mozilla/Hal.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/FileUtils.h"
-#include "BootAnimation.h"
 #include "Framebuffer.h"
 #include "gfxContext.h"
 #include "gfxPlatform.h"
 #include "gfxUtils.h"
 #include "GLContextProvider.h"
-#include "HwcComposer2D.h"
 #include "LayerManagerOGL.h"
 #include "nsAutoPtr.h"
 #include "nsAppShell.h"
@@ -45,6 +39,12 @@
 #include "cutils/properties.h"
 #include "ClientLayerManager.h"
 #include "BasicLayers.h"
+#include "libdisplay/GonkDisplay.h"
+#include "pixelflinger/format.h"
+
+#if ANDROID_VERSION == 15
+#include "HwcComposer2D.h"
+#endif
 
 #define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "Gonk" , ## args)
 #define LOGW(args...) __android_log_print(ANDROID_LOG_WARN, "Gonk", ## args)
@@ -97,6 +97,15 @@ public:
             if (nsIWidgetListener* listener = win->GetWidgetListener()) {
                 listener->SizeModeChanged(mIsOn ? nsSizeMode_Fullscreen : nsSizeMode_Minimized);
             }
+        }
+
+        // Notify observers that the screen state has just changed.
+        nsCOMPtr<nsIObserverService> observerService = mozilla::services::GetObserverService();
+        if (observerService) {
+          observerService->NotifyObservers(
+            nullptr, "screen-state-changed",
+            mIsOn ? NS_LITERAL_STRING("on").get() : NS_LITERAL_STRING("off").get()
+          );
         }
 
         return NS_OK;
@@ -227,7 +236,7 @@ nsWindow::DoDraw(void)
 
         listener = gWindowToRedraw->GetWidgetListener();
         if (listener) {
-            listener->PaintWindow(gWindowToRedraw, region, 0);
+            listener->PaintWindow(gWindowToRedraw, region);
         }
     } else if (mozilla::layers::LAYERS_CLIENT == lm->GetBackendType()) {
       // No need to do anything, the compositor will handle drawing
@@ -252,7 +261,7 @@ nsWindow::DoDraw(void)
 
             listener = gWindowToRedraw->GetWidgetListener();
             if (listener) {
-                listener->PaintWindow(gWindowToRedraw, region, 0);
+                listener->PaintWindow(gWindowToRedraw, region);
             }
         }
 
@@ -480,7 +489,7 @@ nsWindow::GetNativeData(uint32_t aDataType)
 {
     switch (aDataType) {
     case NS_NATIVE_WINDOW:
-        return NativeWindow();
+        return GetGonkDisplay()->GetNativeWindow();
     case NS_NATIVE_WIDGET:
         return this;
     }
@@ -541,18 +550,23 @@ nsWindow::MakeFullScreen(bool aFullScreen)
 float
 nsWindow::GetDPI()
 {
-    return NativeWindow()->xdpi;
+    return GetGonkDisplay()->xdpi;
 }
 
 double
 nsWindow::GetDefaultScaleInternal()
 {
-    double rawscale = GetDPI() / 192.0;
-    if (rawscale < 1.25)
-        return 1;
-    else if (rawscale < 1.75)
-        return 1.5;
-    return 2;
+    float dpi = GetDPI();
+    // The mean pixel density for mdpi devices is 160dpi, 240dpi for hdpi,
+    // and 320dpi for xhdpi, respectively.
+    // We'll take the mid-value between these three numbers as the boundary.
+    if (dpi < 200.0) {
+        return 1.0; // mdpi devices.
+    }
+    if (dpi < 280.0) {
+        return 1.5; // hdpi devices.
+    }
+    return 2.0; // xhdpi devices.
 }
 
 LayerManager *
@@ -579,8 +593,6 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
         }
         return mLayerManager;
     }
-
-    StopBootAnimation();
 
     // Set mUseLayersAcceleration here to make it consistent with
     // nsBaseWidget::GetLayerManager
@@ -707,9 +719,13 @@ nsWindow::GetComposer2D()
     if (!sUsingHwc) {
         return nullptr;
     }
+
+#if ANDROID_VERSION == 15
     if (HwcComposer2D* hwc = HwcComposer2D::GetInstance()) {
         return hwc->Initialized() ? hwc : nullptr;
     }
+#endif
+
     return nullptr;
 }
 
@@ -746,7 +762,7 @@ nsScreenGonk::GetAvailRect(int32_t *outLeft,  int32_t *outTop,
 static uint32_t
 ColorDepth()
 {
-    switch (NativeWindow()->getDevice()->format) {
+    switch (GetGonkDisplay()->surfaceformat) {
     case GGL_PIXEL_FORMAT_RGB_565:
         return 16;
     case GGL_PIXEL_FORMAT_RGBA_8888:

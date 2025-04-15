@@ -38,6 +38,7 @@ background/healthreport/upload/HealthReportBroadcastReceiver.java
 background/healthreport/upload/HealthReportBroadcastService.java
 background/healthreport/upload/HealthReportUploadService.java
 background/healthreport/upload/HealthReportUploadStartReceiver.java
+background/healthreport/upload/ObsoleteDocumentTracker.java
 background/healthreport/upload/SubmissionClient.java
 background/healthreport/upload/SubmissionPolicy.java
 sync/AlreadySyncingException.java

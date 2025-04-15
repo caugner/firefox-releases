@@ -12,7 +12,7 @@
     <style name="GeckoBase" parent="@android:style/Theme.Light">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowContentOverlay">@null</item>
-        <item name="doorhangerWidth">fill_parent</item>
+        <item name="arrowPopupWidth">fill_parent</item>
     </style>
 
     <style name="GeckoDialogBase" parent="@android:style/Theme.Dialog">
@@ -80,9 +80,8 @@
         <item name="android:buttonStyle">@style/Widget.Button</item>
         <item name="android:dropDownItemStyle">@style/Widget.DropDownItem</item>
         <item name="android:editTextStyle">@style/Widget.EditText</item>
-        <item name="android:spinnerDropDownItemStyle">@style/TextAppearance.Widget.TextView</item>
-        <item name="android:spinnerItemStyle">@style/Widget.TextView.SpinnerItem</item>
         <item name="android:textViewStyle">@style/Widget.TextView</item>
+        <item name="android:spinnerStyle">@style/Widget.Spinner</item>
     </style>
 
     <style name="Gecko.AwesomeBar" parent="GeckoAwesomeBarBase">

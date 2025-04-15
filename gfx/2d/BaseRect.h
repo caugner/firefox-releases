@@ -89,10 +89,10 @@ struct BaseRect {
   Sub Intersect(const Sub& aRect) const
   {
     Sub result;
-    result.x = std::max(x, aRect.x);
-    result.y = std::max(y, aRect.y);
-    result.width = std::min(XMost(), aRect.XMost()) - result.x;
-    result.height = std::min(YMost(), aRect.YMost()) - result.y;
+    result.x = std::max<T>(x, aRect.x);
+    result.y = std::max<T>(y, aRect.y);
+    result.width = std::min<T>(XMost(), aRect.XMost()) - result.x;
+    result.height = std::min<T>(YMost(), aRect.YMost()) - result.y;
     if (result.width < 0 || result.height < 0) {
       result.SizeTo(0, 0);
     }
@@ -343,6 +343,18 @@ struct BaseRect {
     height = y1 - y0;
   }
 
+  // Scale 'this' by aScale without doing any rounding.
+  void Scale(T aScale) { Scale(aScale, aScale); }
+  // Scale 'this' by aXScale and aYScale, without doing any rounding.
+  void Scale(T aXScale, T aYScale)
+  {
+    T right = XMost() * aXScale;
+    T bottom = YMost() * aYScale;
+    x = x * aXScale;
+    y = y * aYScale;
+    width = right - x;
+    height = bottom - y;
+  }
   // Scale 'this' by aScale, converting coordinates to integers so that the result is
   // the smallest integer-coordinate rectangle containing the unrounded result.
   // Note: this can turn an empty rectangle into a non-empty rectangle
@@ -416,6 +428,22 @@ struct BaseRect {
   {
     return Point(std::max(x, std::min(XMost(), aPoint.x)),
                  std::max(y, std::min(YMost(), aPoint.y)));
+  }
+
+  /**
+   * Clamp aRect to this rectangle. This returns aRect after it is forced
+   * inside the bounds of this rectangle. It will attempt to retain the size
+   * but will shrink the dimensions that don't fit.
+   */
+  Sub ClampRect(const Sub& aRect) const
+  {
+    Sub rect(std::max(aRect.x, x),
+             std::max(aRect.y, y),
+             std::min(aRect.width, width),
+             std::min(aRect.height, height));
+    rect.x = std::min(rect.XMost(), XMost()) - rect.width;
+    rect.y = std::min(rect.YMost(), YMost()) - rect.height;
+    return rect;
   }
 
 private:

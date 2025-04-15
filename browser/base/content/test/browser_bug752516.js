@@ -29,18 +29,20 @@ function test() {
 }
 
 function tabLoad() {
-  // The plugin events are async dispatched and can come after the load event
-  // This just allows the events to fire before we proceed
+  // Due to layout being async, "PluginBindAttached" may trigger later.
+  // This forces a layout flush, thus triggering it, and schedules the
+  // test so it is definitely executed afterwards.
+  gTestBrowser.contentDocument.getElementById('test').clientTop;
   executeSoon(actualTest);
 }
 
 function actualTest() {
   let doc = gTestBrowser.contentDocument;
   let plugin = doc.getElementById("test");
-  let objLoadingContent = plugin.QueryInterface(Ci.nsIObjectLoadingContent);
-  ok(!objLoadingContent.activated, "Plugin should not be activated");
+  ok(!plugin.activated, "Plugin should not be activated");
+  ok(PopupNotifications.getNotification("click-to-play-plugins", gTestBrowser).dismissed, "Doorhanger should not be open");
 
   EventUtils.synthesizeMouseAtCenter(plugin, {}, gTestBrowser.contentWindow);
-  let condition = function() objLoadingContent.activated;
-  waitForCondition(condition, finish, "Waited too long for plugin to activate");
+  let condition = function() !PopupNotifications.getNotification("click-to-play-plugins", gTestBrowser).dismissed;
+  waitForCondition(condition, finish, "Waited too long for plugin doorhanger to activate");
 }

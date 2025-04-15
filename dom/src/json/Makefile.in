@@ -11,13 +11,8 @@ FAIL_ON_WARNINGS := 1
 
 include $(DEPTH)/config/autoconf.mk
 
-LIBRARY_NAME   = json_s
 LIBXUL_LIBRARY = 1
 
-
-CPPSRCS =                      \
-       nsJSON.cpp              \
-       $(NULL)
 
 FORCE_STATIC_LIB = 1
 

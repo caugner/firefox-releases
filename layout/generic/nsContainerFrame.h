@@ -58,10 +58,10 @@ public:
   NS_IMETHOD SetInitialChildList(ChildListID  aListID,
                                  nsFrameList& aChildList) MOZ_OVERRIDE;
   NS_IMETHOD AppendFrames(ChildListID  aListID,
-                          nsFrameList& aFrameList);
+                          nsFrameList& aFrameList) MOZ_OVERRIDE;
   NS_IMETHOD InsertFrames(ChildListID aListID,
                           nsIFrame* aPrevFrame,
-                          nsFrameList& aFrameList);
+                          nsFrameList& aFrameList) MOZ_OVERRIDE;
   NS_IMETHOD RemoveFrame(ChildListID aListID,
                          nsIFrame* aOldFrame) MOZ_OVERRIDE;
 
@@ -70,7 +70,7 @@ public:
   virtual void DestroyFrom(nsIFrame* aDestructRoot) MOZ_OVERRIDE;
   virtual void ChildIsDirty(nsIFrame* aChild) MOZ_OVERRIDE;
 
-  virtual bool IsLeaf() const;
+  virtual bool IsLeaf() const MOZ_OVERRIDE;
   virtual bool PeekOffsetNoAmount(bool aForward, int32_t* aOffset) MOZ_OVERRIDE;
   virtual bool PeekOffsetCharacter(bool aForward, int32_t* aOffset,
                                      bool aRespectClusters = true) MOZ_OVERRIDE;
@@ -309,7 +309,7 @@ public:
    * Move any frames on our overflow list to the end of our principal list.
    * @return true if there were any overflow frames
    */
-  virtual bool DrainSelfOverflowList();
+  virtual bool DrainSelfOverflowList() MOZ_OVERRIDE;
 
   /**
    * Removes aChild without destroying it and without requesting reflow.
@@ -600,14 +600,33 @@ public:
   nsresult Insert(nsIFrame*       aOverflowCont,
                   nsReflowStatus& aReflowStatus);
   /**
-   * This function must be called for each child that is reflowed
+   * Begin/EndFinish() must be called for each child that is reflowed
    * but no longer has an overflow continuation. (It may be called for
    * other children, but in that case has no effect.) It increments our
    * walker and makes sure we drop any dangling pointers to its
    * next-in-flow. This function MUST be called before stealing or
    * deleting aChild's next-in-flow.
+   * The AutoFinish helper object does that for you. Use it like so:
+   * if (kidNextInFlow) {
+   *   nsOverflowContinuationTracker::AutoFinish fini(tracker, kid);
+   *   ... DeleteNextInFlowChild/StealFrame(kidNextInFlow) here ...
+   * }
    */
-  void Finish(nsIFrame* aChild);
+  class MOZ_STACK_CLASS AutoFinish {
+  public:
+    AutoFinish(nsOverflowContinuationTracker* aTracker, nsIFrame* aChild)
+      : mTracker(aTracker), mChild(aChild)
+    {
+      if (mTracker) mTracker->BeginFinish(mChild);
+    }
+    ~AutoFinish() 
+    {
+      if (mTracker) mTracker->EndFinish(mChild);
+    }
+  private:
+    nsOverflowContinuationTracker* mTracker;
+    nsIFrame* mChild;
+  };
 
   /**
    * This function should be called for each child that isn't reflowed.
@@ -629,6 +648,13 @@ public:
 
 private:
 
+  /**
+   * @see class AutoFinish
+   */
+  void BeginFinish(nsIFrame* aChild);
+  void EndFinish(nsIFrame* aChild);
+
+  void SetupOverflowContList();
   void SetUpListWalker();
   void StepForward();
 

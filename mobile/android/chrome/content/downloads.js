@@ -33,15 +33,20 @@ var Downloads = {
     this._dlmgr = Cc["@mozilla.org/download-manager;1"].getService(Ci.nsIDownloadManager);
     this._progressAlert = new AlertDownloadProgressListener();
     this._dlmgr.addPrivacyAwareListener(this._progressAlert);
-    Services.obs.addObserver(this, "xpcom-shutdown", true);
     Services.obs.addObserver(this, "last-pb-context-exited", true);
   },
 
-  openDownload: function dl_openDownload(aFileURI) {
-    let f = this._getLocalFile(aFileURI);
+  openDownload: function dl_openDownload(aDownload) {
+    let fileUri = aDownload.target.spec;
+    let guid = aDownload.guid;
+    let f = this._getLocalFile(fileUri);
     try {
       f.launch();
-    } catch (ex) { }
+    } catch (ex) {
+      // in case we are not able to open the file (i.e. there is no app able to handle it)
+      // we just open the browser tab showing it 
+      BrowserApp.addTab("about:downloads?id=" + guid);
+    }
   },
 
   cancelDownload: function dl_cancelDownload(aDownload) {
@@ -65,7 +70,7 @@ var Downloads = {
         if (aTopic == "alertclickcallback") {
           if (aDownload.state == Ci.nsIDownloadManager.DOWNLOAD_FINISHED) {
             // Only open the downloaded file if the download is complete
-            self.openDownload(aDownload.target.spec);
+            self.openDownload(aDownload);
           } else if (aDownload.state == Ci.nsIDownloadManager.DOWNLOAD_DOWNLOADING &&
                      !cancelPrompt) {
             cancelPrompt = true;

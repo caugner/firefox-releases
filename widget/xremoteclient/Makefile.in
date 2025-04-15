@@ -14,7 +14,6 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-LIBRARY_NAME = xremote_client_s
 FORCE_STATIC_LIB = 1
 
 DEFINES += -DXPCOM_GLUE
@@ -34,8 +33,6 @@ PROGCPPSRCS = \
   $(NULL)
 
 PROGOBJS = $(PROGCPPSRCS:.cpp=.$(OBJ_SUFFIX))
-
-CPPSRCS = $(filter-out $(LIBCPPSRCS),$(PROGCPPSRCS)) $(LIBCPPSRCS)
 
 LIBS            = \
 		$(NSPR_LIBS) \

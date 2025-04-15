@@ -163,7 +163,7 @@ public abstract class TreeBuilder<T> implements TokenHandler,
 
     final static int IFRAME = 47;
 
-    final static int EMBED_OR_IMG = 48;
+    final static int EMBED = 48;
 
     final static int AREA_OR_WBR = 49;
 
@@ -202,6 +202,8 @@ public abstract class TreeBuilder<T> implements TokenHandler,
     final static int MENUITEM = 66;
 
     final static int TEMPLATE = 67;
+
+    final static int IMG = 68;
 
     // start insertion modes
 
@@ -1593,7 +1595,8 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                         case RUBY_OR_SPAN_OR_SUB_OR_SUP_OR_VAR:
                         case DD_OR_DT:
                         case UL_OR_OL_OR_DL:
-                        case EMBED_OR_IMG:
+                        case EMBED:
+                        case IMG:
                         case H1_OR_H2_OR_H3_OR_H4_OR_H5_OR_H6:
                         case HEAD:
                         case HR:
@@ -1977,7 +1980,8 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                         case TABLE:
                         case AREA_OR_WBR:
                         case BR:
-                        case EMBED_OR_IMG:
+                        case EMBED:
+                        case IMG:
                         case INPUT:
                         case KEYGEN:
                         case HR:
@@ -2208,7 +2212,7 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                                 attributes = null; // CPP
                                 break starttagloop;
                             case BR:
-                            case EMBED_OR_IMG:
+                            case EMBED:
                             case AREA_OR_WBR:
                                 reconstructTheActiveFormattingElements();
                                 // FALL THROUGH to PARAM_OR_SOURCE_OR_TRACK
@@ -2232,6 +2236,7 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                                 errImage();
                                 elementName = ElementName.IMG;
                                 continue starttagloop;
+                            case IMG:
                             case KEYGEN:
                             case INPUT:
                                 reconstructTheActiveFormattingElements();
@@ -3682,7 +3687,8 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                         case AREA_OR_WBR:
                         // CPPONLY: case MENUITEM:
                         case PARAM_OR_SOURCE_OR_TRACK:
-                        case EMBED_OR_IMG:
+                        case EMBED:
+                        case IMG:
                         case IMAGE:
                         case INPUT:
                         case KEYGEN: // XXX??
@@ -4286,6 +4292,7 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                 }
             }
             if ("template" == name) {
+                assert templateModePtr >= 0;
                 mode = templateModeStack[templateModePtr];
                 return;
             } else if ("select" == name) {
@@ -5659,7 +5666,12 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                 stackCopy[i].retain();
             }
         }
-        return new StateSnapshot<T>(stackCopy, listCopy, formPointer, headPointer, deepTreeSurrogateParent, mode, originalMode, framesetOk, needToDropLF, quirks);
+        int[] templateModeStackCopy = new int[templateModePtr + 1];
+        System.arraycopy(templateModeStack, 0, templateModeStackCopy, 0,
+                templateModeStackCopy.length);
+        return new StateSnapshot<T>(stackCopy, listCopy, templateModeStackCopy, formPointer,
+                headPointer, deepTreeSurrogateParent, mode, originalMode, framesetOk,
+                needToDropLF, quirks);
     }
 
     public boolean snapshotMatches(TreeBuilderState<T> snapshot) {
@@ -5667,9 +5679,12 @@ public abstract class TreeBuilder<T> implements TokenHandler,
         int stackLen = snapshot.getStackLength();
         StackNode<T>[] listCopy = snapshot.getListOfActiveFormattingElements();
         int listLen = snapshot.getListOfActiveFormattingElementsLength();
+        int[] templateModeStackCopy = snapshot.getTemplateModeStack();
+        int templateModeStackLen = snapshot.getTemplateModeStackLength();
 
         if (stackLen != currentPtr + 1
                 || listLen != listPtr + 1
+                || templateModeStackLen != templateModePtr + 1
                 || formPointer != snapshot.getFormPointer()
                 || headPointer != snapshot.getHeadPointer()
                 || deepTreeSurrogateParent != snapshot.getDeepTreeSurrogateParent()
@@ -5698,6 +5713,11 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                 return false;
             }
         }
+        for (int i = templateModeStackLen - 1; i >=0; i--) {
+            if (templateModeStackCopy[i] != templateModeStack[i]) {
+                return false;
+            }
+        }
         return true;
     }
 
@@ -5708,6 +5728,8 @@ public abstract class TreeBuilder<T> implements TokenHandler,
         int stackLen = snapshot.getStackLength();
         StackNode<T>[] listCopy = snapshot.getListOfActiveFormattingElements();
         int listLen = snapshot.getListOfActiveFormattingElementsLength();
+        int[] templateModeStackCopy = snapshot.getTemplateModeStack();
+        int templateModeStackLen = snapshot.getTemplateModeStackLength();
 
         for (int i = 0; i <= listPtr; i++) {
             if (listOfActiveFormattingElements[i] != null) {
@@ -5726,6 +5748,11 @@ public abstract class TreeBuilder<T> implements TokenHandler,
             stack = new StackNode[stackLen];
         }
         currentPtr = stackLen - 1;
+
+        if (templateModeStack.length < templateModeStackLen) {
+            templateModeStack = new int[templateModeStackLen];
+        }
+        templateModePtr = templateModeStackLen - 1;
 
         for (int i = 0; i < listLen; i++) {
             StackNode<T> node = listCopy[i];
@@ -5761,6 +5788,7 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                 stack[i].retain();
             }
         }
+        System.arraycopy(templateModeStackCopy, 0, templateModeStack, 0, templateModeStackLen);
         formPointer = snapshot.getFormPointer();
         headPointer = snapshot.getHeadPointer();
         deepTreeSurrogateParent = snapshot.getDeepTreeSurrogateParent();
@@ -5820,6 +5848,13 @@ public abstract class TreeBuilder<T> implements TokenHandler,
     }
 
     /**
+     * @see nu.validator.htmlparser.impl.TreeBuilderState#getTemplateModeStack()
+     */
+    public int[] getTemplateModeStack() {
+        return templateModeStack;
+    }
+
+    /**
      * Returns the mode.
      *
      * @return the mode
@@ -5876,6 +5911,13 @@ public abstract class TreeBuilder<T> implements TokenHandler,
      */
     public int getStackLength() {
         return currentPtr + 1;
+    }
+
+    /**
+     * @see nu.validator.htmlparser.impl.TreeBuilderState#getTemplateModeStackLength()
+     */
+    public int getTemplateModeStackLength() {
+        return templateModePtr + 1;
     }
 
     /**

@@ -33,6 +33,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "DownloadStore",
                                   "resource://gre/modules/DownloadStore.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "DownloadUIHelper",
                                   "resource://gre/modules/DownloadUIHelper.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "FileUtils",
+                                  "resource://gre/modules/FileUtils.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "NetUtil",
+                                  "resource://gre/modules/NetUtil.jsm");
 XPCOMUtils.defineLazyModuleGetter(this, "Promise",
                                   "resource://gre/modules/commonjs/sdk/core/promise.js");
 XPCOMUtils.defineLazyModuleGetter(this, "Services",
@@ -56,6 +60,8 @@ this.Downloads = {
    *        {
    *          source: {
    *            uri: The nsIURI for the download source.
+   *            isPrivate: Indicates whether the download originated from a
+   *                       private window.
    *          },
    *          target: {
    *            file: The nsIFile for the download target.
@@ -77,6 +83,12 @@ this.Downloads = {
 
       download.source = new DownloadSource();
       download.source.uri = aProperties.source.uri;
+      if ("isPrivate" in aProperties.source) {
+        download.source.isPrivate = aProperties.source.isPrivate;
+      }
+      if ("referrer" in aProperties.source) {
+        download.source.referrer = aProperties.source.referrer;
+      }
       download.target = new DownloadTarget();
       download.target.file = aProperties.target.file;
 
@@ -101,22 +113,39 @@ this.Downloads = {
    * reference to a Download object using the createDownload function.
    *
    * @param aSource
-   *        The nsIURI for the download source, or alternative DownloadSource.
+   *        The nsIURI or string containing the URI spec for the download
+   *        source, or alternative DownloadSource.
    * @param aTarget
-   *        The nsIFile for the download target, or alternative DownloadTarget.
+   *        The nsIFile or string containing the file path, or alternative
+   *        DownloadTarget.
+   * @param aOptions
+   *        The object contains different additional options or null.
+   *        {  isPrivate: Indicates whether the download originated from a
+   *                      private window.
+   *        }
    *
    * @return {Promise}
    * @resolves When the download has finished successfully.
    * @rejects JavaScript exception if the download failed.
    */
-  simpleDownload: function D_simpleDownload(aSource, aTarget) {
+  simpleDownload: function D_simpleDownload(aSource, aTarget, aOptions) {
     // Wrap the arguments into simple objects resembling DownloadSource and
     // DownloadTarget, if they are not objects of that type already.
     if (aSource instanceof Ci.nsIURI) {
       aSource = { uri: aSource };
+    } else if (typeof aSource == "string" ||
+               (typeof aSource == "object" && "charAt" in aSource)) {
+      aSource = { uri: NetUtil.newURI(aSource) };
+    }
+
+    if (aSource && aOptions && ("isPrivate" in aOptions)) {
+      aSource.isPrivate = aOptions.isPrivate;
     }
     if (aTarget instanceof Ci.nsIFile) {
       aTarget = { file: aTarget };
+    } else if (typeof aTarget == "string" ||
+               (typeof aTarget == "object" && "charAt" in aTarget)) {
+      aTarget = { file: new FileUtils.File(aTarget) };
     }
 
     // Create and start the actual download.
@@ -145,11 +174,74 @@ this.Downloads = {
   getPublicDownloadList: function D_getPublicDownloadList()
   {
     if (!this._publicDownloadList) {
-      this._publicDownloadList = new DownloadList();
+      this._publicDownloadList = new DownloadList(true);
     }
     return Promise.resolve(this._publicDownloadList);
   },
   _publicDownloadList: null,
+
+  /**
+   * Retrieves the DownloadList object for downloads that were started from
+   * a private browsing window.
+   *
+   * This method always retrieves a reference to the same download list.
+   *
+   * @return {Promise}
+   * @resolves The DownloadList object for private downloads.
+   * @rejects JavaScript exception.
+   */
+  getPrivateDownloadList: function D_getPrivateDownloadList()
+  {
+    if (!this._privateDownloadList) {
+      this._privateDownloadList = new DownloadList(false);
+    }
+    return Promise.resolve(this._privateDownloadList);
+  },
+  _privateDownloadList: null,
+
+  /**
+   * Returns the system downloads directory asynchronously.
+   *   Mac OSX:
+   *     User downloads directory
+   *   XP/2K:
+   *     My Documents/Downloads
+   *   Vista and others:
+   *     User downloads directory
+   *   Linux:
+   *     XDG user dir spec, with a fallback to Home/Downloads
+   *   Android:
+   *     standard downloads directory i.e. /sdcard
+   *
+   * @return {Promise}
+   * @resolves The nsIFile of downloads directory.
+   */
+  getSystemDownloadsDirectory: function D_getSystemDownloadsDirectory() {
+    return DownloadIntegration.getSystemDownloadsDirectory();
+  },
+
+  /**
+   * Returns the preferred downloads directory based on the user preferences
+   * in the current profile asynchronously.
+   *
+   * @return {Promise}
+   * @resolves The nsIFile of downloads directory.
+   */
+  getUserDownloadsDirectory: function D_getUserDownloadsDirectory() {
+    return DownloadIntegration.getUserDownloadsDirectory();
+  },
+
+  /**
+   * Returns the temporary directory where downloads are placed before the
+   * final location is chosen, or while the document is opened temporarily
+   * with an external application. This may or may not be the system temporary
+   * directory, based on the platform asynchronously.
+   *
+   * @return {Promise}
+   * @resolves The nsIFile of downloads directory.
+   */
+  getTemporaryDownloadsDirectory: function D_getTemporaryDownloadsDirectory() {
+    return DownloadIntegration.getTemporaryDownloadsDirectory();
+  },
 
   /**
    * Constructor for a DownloadError object.  When you catch an exception during

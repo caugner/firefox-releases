@@ -39,6 +39,7 @@
 #include "CSSCalc.h"
 #include "nsPrintfCString.h"
 #include "nsRenderingContext.h"
+#include "nsStyleUtil.h"
 
 #include "mozilla/LookAndFeel.h"
 
@@ -134,9 +135,7 @@ nsRuleNode::EnsureBlockDisplay(uint8_t& display)
   case NS_STYLE_DISPLAY_TABLE :
   case NS_STYLE_DISPLAY_BLOCK :
   case NS_STYLE_DISPLAY_LIST_ITEM :
-#ifdef MOZ_FLEXBOX
   case NS_STYLE_DISPLAY_FLEX :
-#endif // MOZ_FLEXBOX
     // do not muck with these at all - already blocks
     // This is equivalent to nsStyleDisplay::IsBlockOutside.  (XXX Maybe we
     // should just call that?)
@@ -149,12 +148,10 @@ nsRuleNode::EnsureBlockDisplay(uint8_t& display)
     display = NS_STYLE_DISPLAY_TABLE;
     break;
 
-#ifdef MOZ_FLEXBOX
   case NS_STYLE_DISPLAY_INLINE_FLEX:
     // make inline flex containers into flex containers
     display = NS_STYLE_DISPLAY_FLEX;
     break;
-#endif // MOZ_FLEXBOX
 
   default :
     // make it a block
@@ -3273,6 +3270,109 @@ nsRuleNode::SetFont(nsPresContext* aPresContext, nsStyleContext* aContext,
     aFont->mScriptLevel = 0;
   }
 
+  // font-kerning: none, enum, inherit, initial, -moz-system-font
+  SetDiscrete(*aRuleData->ValueForFontKerning(),
+              aFont->mFont.kerning, aCanStoreInRuleTree,
+              SETDSC_ENUMERATED | SETDSC_SYSTEM_FONT,
+              aParentFont->mFont.kerning,
+              defaultVariableFont->kerning,
+              0, 0, 0, systemFont.kerning);
+
+  // font-synthesis: none, enum (bit field), inherit, initial, -moz-system-font
+  SetDiscrete(*aRuleData->ValueForFontSynthesis(),
+              aFont->mFont.synthesis, aCanStoreInRuleTree,
+              SETDSC_NONE | SETDSC_ENUMERATED | SETDSC_SYSTEM_FONT,
+              aParentFont->mFont.synthesis,
+              defaultVariableFont->synthesis,
+              0, 0, 0, systemFont.synthesis);
+
+  // font-variant-alternates: normal, enum (bit field) + functions, inherit,
+  //                          initial, -moz-system-font
+  const nsCSSValue* variantAlternatesValue =
+    aRuleData->ValueForFontVariantAlternates();
+  int32_t variantAlternates = 0;
+
+  switch (variantAlternatesValue->GetUnit()) {
+  case eCSSUnit_Inherit:
+    aFont->mFont.CopyAlternates(aParentFont->mFont);
+    aCanStoreInRuleTree = false;
+    break;
+
+  case eCSSUnit_Initial:
+  case eCSSUnit_Normal:
+    aFont->mFont.variantAlternates = 0;
+    aFont->mFont.alternateValues.Clear();
+    aFont->mFont.featureValueLookup = nullptr;
+    break;
+
+  case eCSSUnit_Pair:
+    NS_ASSERTION(variantAlternatesValue->GetPairValue().mXValue.GetUnit() ==
+                   eCSSUnit_Enumerated, "strange unit for variantAlternates");
+    variantAlternates =
+      variantAlternatesValue->GetPairValue().mXValue.GetIntValue();
+    aFont->mFont.variantAlternates = variantAlternates;
+
+    if (variantAlternates & NS_FONT_VARIANT_ALTERNATES_FUNCTIONAL_MASK) {
+      // fetch the feature lookup object from the styleset
+      aFont->mFont.featureValueLookup =
+        aPresContext->StyleSet()->GetFontFeatureValuesLookup();
+
+      NS_ASSERTION(variantAlternatesValue->GetPairValue().mYValue.GetUnit() ==
+                   eCSSUnit_List, "function list not a list value");
+      nsStyleUtil::ComputeFunctionalAlternates(
+        variantAlternatesValue->GetPairValue().mYValue.GetListValue(),
+        aFont->mFont.alternateValues);
+    }
+    break;
+
+  default:
+    break;
+  }
+
+  // font-variant-caps: normal, enum, inherit, initial, -moz-system-font
+  SetDiscrete(*aRuleData->ValueForFontVariantCaps(),
+              aFont->mFont.variantCaps, aCanStoreInRuleTree,
+              SETDSC_NORMAL | SETDSC_ENUMERATED | SETDSC_SYSTEM_FONT,
+              aParentFont->mFont.variantCaps,
+              defaultVariableFont->variantCaps,
+              0, 0, 0, systemFont.variantCaps);
+
+  // font-variant-east-asian: normal, enum (bit field), inherit, initial,
+  //                          -moz-system-font
+  SetDiscrete(*aRuleData->ValueForFontVariantEastAsian(),
+              aFont->mFont.variantEastAsian, aCanStoreInRuleTree,
+              SETDSC_NORMAL | SETDSC_ENUMERATED | SETDSC_SYSTEM_FONT,
+              aParentFont->mFont.variantEastAsian,
+              defaultVariableFont->variantEastAsian,
+              0, 0, 0, systemFont.variantEastAsian);
+
+  // font-variant-ligatures: normal, enum (bit field), inherit, initial,
+  //                         -moz-system-font
+  SetDiscrete(*aRuleData->ValueForFontVariantLigatures(),
+              aFont->mFont.variantLigatures, aCanStoreInRuleTree,
+              SETDSC_NORMAL | SETDSC_ENUMERATED | SETDSC_SYSTEM_FONT,
+              aParentFont->mFont.variantLigatures,
+              defaultVariableFont->variantLigatures,
+              0, 0, 0, systemFont.variantLigatures);
+
+  // font-variant-numeric: normal, enum (bit field), inherit, initial,
+  //                       -moz-system-font
+  SetDiscrete(*aRuleData->ValueForFontVariantNumeric(),
+              aFont->mFont.variantNumeric, aCanStoreInRuleTree,
+              SETDSC_NORMAL | SETDSC_ENUMERATED | SETDSC_SYSTEM_FONT,
+              aParentFont->mFont.variantNumeric,
+              defaultVariableFont->variantNumeric,
+              0, 0, 0, systemFont.variantNumeric);
+
+  // font-variant-position: normal, enum, inherit, initial,
+  //                        -moz-system-font
+  SetDiscrete(*aRuleData->ValueForFontVariantPosition(),
+              aFont->mFont.variantPosition, aCanStoreInRuleTree,
+              SETDSC_NORMAL | SETDSC_ENUMERATED | SETDSC_SYSTEM_FONT,
+              aParentFont->mFont.variantPosition,
+              defaultVariableFont->variantPosition,
+              0, 0, 0, systemFont.variantPosition);
+
   // font-feature-settings
   const nsCSSValue* featureSettingsValue =
     aRuleData->ValueForFontFeatureSettings();
@@ -5143,6 +5243,12 @@ nsRuleNode::ComputeVisibilityData(void* aStartStruct,
               SETDSC_ENUMERATED, parentVisibility->mPointerEvents,
               NS_STYLE_POINTER_EVENTS_AUTO, 0, 0, 0, 0);
 
+  // writing-mode: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForWritingMode(), visibility->mWritingMode,
+              canStoreInRuleTree, SETDSC_ENUMERATED,
+              parentVisibility->mWritingMode,
+              NS_STYLE_WRITING_MODE_HORIZONTAL_TB, 0, 0, 0, 0);
+
   COMPUTE_END_INHERITED(Visibility, visibility)
 }
 
@@ -6527,7 +6633,6 @@ nsRuleNode::ComputePositionData(void* aStartStruct,
               SETDSC_ENUMERATED, parentPos->mBoxSizing,
               NS_STYLE_BOX_SIZING_CONTENT, 0, 0, 0, 0);
 
-#ifdef MOZ_FLEXBOX
   // align-items: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForAlignItems(),
               pos->mAlignItems, canStoreInRuleTree,
@@ -6617,7 +6722,6 @@ nsRuleNode::ComputePositionData(void* aStartStruct,
               pos->mJustifyContent, canStoreInRuleTree,
               SETDSC_ENUMERATED, parentPos->mJustifyContent,
               NS_STYLE_JUSTIFY_CONTENT_FLEX_START, 0, 0, 0, 0);
-#endif // MOZ_FLEXBOX
 
   // z-index
   const nsCSSValue* zIndexValue = aRuleData->ValueForZIndex();
@@ -7103,8 +7207,9 @@ nsRuleNode::ComputeColumnData(void* aStartStruct,
     column->mColumnCount = NS_STYLE_COLUMN_COUNT_AUTO;
   } else if (eCSSUnit_Integer == columnCountValue->GetUnit()) {
     column->mColumnCount = columnCountValue->GetIntValue();
-    // Max 1000 columns - wallpaper for bug 345583.
-    column->mColumnCount = std::min(column->mColumnCount, 1000U);
+    // Max kMaxColumnCount columns - wallpaper for bug 345583.
+    column->mColumnCount = std::min(column->mColumnCount,
+                                    nsStyleColumn::kMaxColumnCount);
   } else if (eCSSUnit_Inherit == columnCountValue->GetUnit()) {
     canStoreInRuleTree = false;
     column->mColumnCount = parent->mColumnCount;

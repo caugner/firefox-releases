@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef SharedContext_h__
-#define SharedContext_h__
+#ifndef frontend_SharedContext_h
+#define frontend_SharedContext_h
 
 #include "jstypes.h"
 #include "jsatom.h"
@@ -17,6 +17,7 @@
 #include "builtin/Module.h"
 #include "frontend/ParseMaps.h"
 #include "frontend/ParseNode.h"
+#include "frontend/TokenStream.h"
 #include "vm/ScopeObject.h"
 
 namespace js {
@@ -73,11 +74,11 @@ class FunctionContextFlags
     friend class FunctionBox;
 
     // We parsed a yield statement in the function.
-    bool            isGenerator:1;
+    bool isGenerator:1;
 
     // The function or a function that encloses it may define new local names
     // at runtime through means other than calling eval.
-    bool            mightAliasLocals:1;
+    bool mightAliasLocals:1;
 
     // This function does something that can extend the set of bindings in its
     // call objects --- it does a direct eval in non-strict code, or includes a
@@ -86,7 +87,11 @@ class FunctionContextFlags
     // This flag is *not* inherited by enclosed or enclosing functions; it
     // applies only to the function in whose flags it appears.
     //
-    bool            hasExtensibleScope:1;
+    bool hasExtensibleScope:1;
+
+    // This function refers directly to its name in a way which requires the
+    // name to be a separate object on the scope chain.
+    bool needsDeclEnvObject:1;
 
     // Technically, every function has a binding named 'arguments'. Internally,
     // this binding is only added when 'arguments' is mentioned by the function
@@ -109,7 +114,7 @@ class FunctionContextFlags
     // have no special semantics: the initial value is unconditionally the
     // actual argument (or undefined if nactual < nformal).
     //
-    bool            argumentsHasLocalBinding:1;
+    bool argumentsHasLocalBinding:1;
 
     // In many cases where 'arguments' has a local binding (as described above)
     // we do not need to actually create an arguments object in the function
@@ -120,13 +125,14 @@ class FunctionContextFlags
     // be unsound in several cases. The frontend filters out such cases by
     // setting this flag which eagerly sets script->needsArgsObj to true.
     //
-    bool            definitelyNeedsArgsObj:1;
+    bool definitelyNeedsArgsObj:1;
 
   public:
     FunctionContextFlags()
      :  isGenerator(false),
         mightAliasLocals(false),
         hasExtensibleScope(false),
+        needsDeclEnvObject(false),
         argumentsHasLocalBinding(false),
         definitelyNeedsArgsObj(false)
     { }
@@ -167,7 +173,7 @@ class SharedContext
     void setBindingsAccessedDynamically() { anyCxFlags.bindingsAccessedDynamically = true; }
     void setHasDebuggerStatement()        { anyCxFlags.hasDebuggerStatement        = true; }
 
-    // JSOPTION_STRICT warnings or strict mode errors.
+    // JSOPTION_EXTRA_WARNINGS warnings or strict mode errors.
     inline bool needStrictChecks();
 };
 
@@ -183,15 +189,15 @@ class GlobalSharedContext : public SharedContext
     JSObject *scopeChain() const { return scopeChain_; }
 };
 
-
-class ModuleBox : public ObjectBox, public SharedContext {
-public:
+class ModuleBox : public ObjectBox, public SharedContext
+{
+  public:
     Bindings bindings;
 
     ModuleBox(JSContext *cx, ObjectBox *traceListHead, Module *module,
               ParseContext<FullParseHandler> *pc);
     ObjectBox *toObjectBox() { return this; }
-    Module *module() const { return &object->asModule(); }
+    Module *module() const { return &object->as<Module>(); }
 };
 
 class FunctionBox : public ObjectBox, public SharedContext
@@ -200,12 +206,18 @@ class FunctionBox : public ObjectBox, public SharedContext
     Bindings        bindings;               /* bindings for this function */
     uint32_t        bufStart;
     uint32_t        bufEnd;
+    uint32_t        startLine;
+    uint32_t        startColumn;
     uint32_t        asmStart;               /* offset of the "use asm" directive, if present */
     uint16_t        ndefaults;
     bool            inWith:1;               /* some enclosing scope is a with-statement */
     bool            inGenexpLambda:1;       /* lambda from generator expression */
     bool            useAsm:1;               /* function contains "use asm" directive */
     bool            insideUseAsm:1;         /* nested function of function of "use asm" directive */
+
+    // Fields for use in heuristics.
+    bool            usesArguments:1;  /* contains a free use of 'arguments' */
+    bool            usesApply:1;      /* contains an f.apply() call */
 
     FunctionContextFlags funCxFlags;
 
@@ -214,17 +226,19 @@ class FunctionBox : public ObjectBox, public SharedContext
                 bool strict);
 
     ObjectBox *toObjectBox() { return this; }
-    JSFunction *function() const { return object->toFunction(); }
+    JSFunction *function() const { return &object->as<JSFunction>(); }
 
     bool isGenerator()              const { return funCxFlags.isGenerator; }
     bool mightAliasLocals()         const { return funCxFlags.mightAliasLocals; }
     bool hasExtensibleScope()       const { return funCxFlags.hasExtensibleScope; }
+    bool needsDeclEnvObject()       const { return funCxFlags.needsDeclEnvObject; }
     bool argumentsHasLocalBinding() const { return funCxFlags.argumentsHasLocalBinding; }
     bool definitelyNeedsArgsObj()   const { return funCxFlags.definitelyNeedsArgsObj; }
 
     void setIsGenerator()                  { funCxFlags.isGenerator              = true; }
     void setMightAliasLocals()             { funCxFlags.mightAliasLocals         = true; }
     void setHasExtensibleScope()           { funCxFlags.hasExtensibleScope       = true; }
+    void setNeedsDeclEnvObject()           { funCxFlags.needsDeclEnvObject       = true; }
     void setArgumentsHasLocalBinding()     { funCxFlags.argumentsHasLocalBinding = true; }
     void setDefinitelyNeedsArgsObj()       { JS_ASSERT(funCxFlags.argumentsHasLocalBinding);
                                              funCxFlags.definitelyNeedsArgsObj   = true; }
@@ -233,6 +247,20 @@ class FunctionBox : public ObjectBox, public SharedContext
     // (transitively) nested inside a function that has.
     bool useAsmOrInsideUseAsm() const {
         return useAsm || insideUseAsm;
+    }
+
+    void setStart(const TokenStream &tokenStream) {
+        bufStart = tokenStream.currentToken().pos.begin;
+        startLine = tokenStream.getLineno();
+        startColumn = tokenStream.getColumn();
+    }
+
+    bool isHeavyweight()
+    {
+        // Note: this should be kept in sync with JSFunction::isHeavyweight().
+        return bindings.hasAnyAliasedBindings() ||
+               hasExtensibleScope() ||
+               needsDeclEnvObject();
     }
 };
 
@@ -371,4 +399,4 @@ LexicalLookup(ContextT *ct, HandleAtom atom, int *slotp, typename ContextT::Stmt
 
 } // namespace js
 
-#endif // SharedContext_h__
+#endif /* frontend_SharedContext_h */

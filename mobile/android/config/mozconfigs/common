@@ -11,6 +11,4 @@
 # Has no effect when MOZ_ENABLE_SZIP is not set in mobile/android/confvars.sh.
 MOZ_SZIP_FLAGS="-D auto -f auto"
 
-# Feature is buggy and missing some notification UI to show
-# the camera is enabled.
-ac_add_options --disable-webrtc
+ac_add_options --enable-elf-hack

@@ -9,14 +9,7 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-LIBRARY_NAME	= gkconmediaplugins_s
 LIBXUL_LIBRARY 	= 1
-
-CPPSRCS		= \
-		MediaPluginHost.cpp \
-		MediaPluginDecoder.cpp \
-		MediaPluginReader.cpp \
-		$(NULL)
 
 FORCE_STATIC_LIB = 1
 

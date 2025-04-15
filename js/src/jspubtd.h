@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jspubtd_h___
-#define jspubtd_h___
+#ifndef jspubtd_h
+#define jspubtd_h
 
 /*
  * JS public API typedefs.
@@ -150,9 +150,10 @@ typedef enum {
     JSTRACE_SCRIPT,
 
     /*
-     * Trace kinds internal to the engine. The embedding can only them if it
-     * implements JSTraceCallback.
+     * Trace kinds internal to the engine. The embedding can only see them if
+     * it implements JSTraceCallback.
      */
+    JSTRACE_LAZY_SCRIPT,
     JSTRACE_IONCODE,
     JSTRACE_SHAPE,
     JSTRACE_BASE_SHAPE,
@@ -225,6 +226,8 @@ struct Runtime
 
 namespace js {
 
+struct ThreadSafeContext;
+
 class Allocator;
 
 class SkipRoot;
@@ -269,17 +272,20 @@ template <> struct RootKind<JSScript *> : SpecificRootKind<JSScript *, THING_ROO
 template <> struct RootKind<jsid> : SpecificRootKind<jsid, THING_ROOT_ID> {};
 template <> struct RootKind<JS::Value> : SpecificRootKind<JS::Value, THING_ROOT_VALUE> {};
 
-struct ContextFriendFields {
-    JSRuntime *const    runtime;
+struct ContextFriendFields
+{
+  protected:
+    JSRuntime *const     runtime_;
 
     /* The current compartment. */
-    JSCompartment       *compartment;
+    JSCompartment       *compartment_;
 
     /* The current zone. */
     JS::Zone            *zone_;
 
+  public:
     explicit ContextFriendFields(JSRuntime *rt)
-      : runtime(rt), compartment(NULL), zone_(NULL)
+      : runtime_(rt), compartment_(NULL), zone_(NULL)
     { }
 
     static const ContextFriendFields *get(const JSContext *cx) {
@@ -309,6 +315,10 @@ struct ContextFriendFields {
      */
     SkipRoot *skipGCRooters;
 #endif
+
+    friend JSRuntime *GetRuntime(const JSContext *cx);
+    friend JSCompartment *GetContextCompartment(const JSContext *cx);
+    friend JS::Zone *GetContextZone(const JSContext *cx);
 };
 
 class PerThreadData;
@@ -380,4 +390,4 @@ struct PerThreadDataFriendFields
 
 } /* namespace js */
 
-#endif /* jspubtd_h___ */
+#endif /* jspubtd_h */

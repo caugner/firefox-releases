@@ -188,10 +188,12 @@ let FormAssistant = {
     addEventListener("beforeunload", this, true, false);
     addEventListener("input", this, true, false);
     addEventListener("keydown", this, true, false);
+    addEventListener("keyup", this, true, false);
     addMessageListener("Forms:Select:Choice", this);
     addMessageListener("Forms:Input:Value", this);
     addMessageListener("Forms:Select:Blur", this);
     addMessageListener("Forms:SetSelectionRange", this);
+    addMessageListener("Forms:ReplaceSurroundingText", this);
   },
 
   ignoredInputTypes: new Set([
@@ -206,6 +208,7 @@ let FormAssistant = {
   _documentEncoder: null,
   _editor: null,
   _editing: false,
+  _ignoreEditActionOnce: false,
 
   get focusedElement() {
     if (this._focusedElement && Cu.isDeadWrapper(this._focusedElement))
@@ -257,10 +260,18 @@ let FormAssistant = {
     return this._documentEncoder;
   },
 
+  // Get the nsIPlaintextEditor object of current input field.
+  get editor() {
+    return this._editor;
+  },
+
   // Implements nsIEditorObserver get notification when the text content of
   // current input field has changed.
   EditAction: function fa_editAction() {
     if (this._editing) {
+      return;
+    } else if (this._ignoreEditActionOnce) {
+      this._ignoreEditActionOnce = false;
       return;
     }
     this.sendKeyboardState(this.focusedElement);
@@ -356,14 +367,17 @@ let FormAssistant = {
 
       case "keydown":
         // Don't monitor the text change resulting from key event.
-        this._editing = true;
+        this._ignoreEditActionOnce = true;
 
         // We use 'setTimeout' to wait until the input element accomplishes the
-        // change in selection range or text content.
+        // change in selection range.
         content.setTimeout(function() {
           this.updateSelection();
-          this._editing = false;
         }.bind(this), 0);
+        break;
+
+      case "keyup":
+        this._ignoreEditActionOnce = false;
         break;
     }
   },
@@ -422,6 +436,15 @@ let FormAssistant = {
         let end =  json.selectionEnd;
         setSelectionRange(target, start, end);
         this.updateSelection();
+        break;
+      }
+
+      case "Forms:ReplaceSurroundingText": {
+        let text = json.text;
+        let beforeLength = json.beforeLength;
+        let afterLength = json.afterLength;
+        replaceSurroundingText(target, text, this.selectionStart, beforeLength,
+                               afterLength);
         break;
       }
     }
@@ -778,4 +801,38 @@ function getPlaintextEditor(element) {
     editor.QueryInterface(Ci.nsIPlaintextEditor);
   }
   return editor;
+}
+
+function replaceSurroundingText(element, text, selectionStart, beforeLength,
+                                afterLength) {
+  let editor = FormAssistant.editor;
+  if (!editor) {
+    return;
+  }
+
+  // Check the parameters.
+  if (beforeLength < 0) {
+    beforeLength = 0;
+  }
+  if (afterLength < 0) {
+    afterLength = 0;
+  }
+
+  let start = selectionStart - beforeLength;
+  let end = selectionStart + afterLength;
+
+  if (beforeLength != 0 || afterLength != 0) {
+    // Change selection range before replacing.
+    setSelectionRange(element, start, end);
+  }
+
+  if (start != end) {
+    // Delete the selected text.
+    editor.deleteSelection(Ci.nsIEditor.ePrevious, Ci.nsIEditor.eStrip);
+  }
+
+  if (text) {
+    // Insert the text to be replaced with.
+    editor.insertText(text);
+  }
 }

@@ -10,3 +10,9 @@ XPIDL_SOURCES += [
 
 MODULE = 'peerconnection'
 
+CPP_SOURCES += [
+    'MediaModule.cpp',
+]
+
+LIBRARY_NAME = 'peerconnection'
+

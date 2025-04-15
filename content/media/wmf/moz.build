@@ -12,3 +12,14 @@ EXPORTS += [
     'WMFReader.h',
 ]
 
+CPP_SOURCES += [
+    'DXVA2Manager.cpp',
+    'WMFByteStream.cpp',
+    'WMFDecoder.cpp',
+    'WMFReader.cpp',
+    'WMFSourceReaderCallback.cpp',
+    'WMFUtils.cpp',
+]
+
+LIBRARY_NAME = 'gkconwmf_s'
+

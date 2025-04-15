@@ -103,14 +103,6 @@ BluetoothServiceChildProcess::GetDefaultAdapterPathInternal(
 }
 
 nsresult
-BluetoothServiceChildProcess::GetDevicePropertiesInternal(
-                                                 const BluetoothSignal& aSignal)
-{
-  MOZ_NOT_REACHED("Should never be called from child");
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-nsresult
 BluetoothServiceChildProcess::GetConnectedDevicePropertiesInternal(
                                               uint16_t aProfileId,
                                               BluetoothReplyRunnable* aRunnable)
@@ -207,12 +199,20 @@ BluetoothServiceChildProcess::GetScoSocket(
 }
 
 nsresult
-BluetoothServiceChildProcess::GetServiceChannel(const nsAString& aObjectPath,
+BluetoothServiceChildProcess::GetServiceChannel(const nsAString& aDeviceAddress,
                                                 const nsAString& aServiceUuid,
                                                 BluetoothProfileManagerBase* aManager)
 {
   MOZ_NOT_REACHED("This should never be called!");
   return NS_ERROR_FAILURE;
+}
+
+bool
+BluetoothServiceChildProcess::UpdateSdpRecords(const nsAString& aDeviceAddress,
+                                               BluetoothProfileManagerBase* aManager)
+{
+  MOZ_NOT_REACHED("This should never be called!");
+  return false;
 }
 
 bool
@@ -267,13 +267,6 @@ BluetoothServiceChildProcess::SetAuthorizationInternal(
                 DenyAuthorizationRequest(nsString(aDeviceAddress)));
   }
   return true;
-}
-
-nsresult
-BluetoothServiceChildProcess::PrepareAdapterInternal()
-{
-  MOZ_NOT_REACHED("Should never be called from child");
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 void
@@ -394,4 +387,12 @@ BluetoothServiceChildProcess::IsConnected(uint16_t aProfileId)
 {
   MOZ_NOT_REACHED("This should never be called!");
   return false;
+}
+
+nsresult
+BluetoothServiceChildProcess::SendSinkMessage(const nsAString& aDeviceAddresses,
+                                              const nsAString& aMessage)
+{
+  MOZ_NOT_REACHED("This should never be called!");
+  return NS_ERROR_FAILURE;
 }

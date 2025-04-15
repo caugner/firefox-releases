@@ -6,3 +6,10 @@
 
 MODULE = 'txtsvc'
 
+CPP_SOURCES += [
+    'nsFilteredContentIterator.cpp',
+    'nsTextServicesDocument.cpp',
+]
+
+LIBRARY_NAME = 'txtsvc_s'
+

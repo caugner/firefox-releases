@@ -7,6 +7,7 @@
 #ifndef nsXMLHttpRequest_h__
 #define nsXMLHttpRequest_h__
 
+#include "mozilla/Attributes.h"
 #include "nsIXMLHttpRequest.h"
 #include "nsISupportsUtils.h"
 #include "nsString.h"
@@ -241,19 +242,18 @@ public:
   uint16_t ReadyState();
 
   // request
-  void Open(const nsAString& aMethod, const nsAString& aUrl, bool aAsync,
+  void Open(const nsACString& aMethod, const nsAString& aUrl, bool aAsync,
             const mozilla::dom::Optional<nsAString>& aUser,
             const mozilla::dom::Optional<nsAString>& aPassword,
             ErrorResult& aRv)
   {
-    aRv = Open(NS_ConvertUTF16toUTF8(aMethod), NS_ConvertUTF16toUTF8(aUrl),
+    aRv = Open(aMethod, NS_ConvertUTF16toUTF8(aUrl),
                aAsync, aUser, aPassword);
   }
-  void SetRequestHeader(const nsAString& aHeader, const nsAString& aValue,
+  void SetRequestHeader(const nsACString& aHeader, const nsACString& aValue,
                         ErrorResult& aRv)
   {
-    aRv = SetRequestHeader(NS_ConvertUTF16toUTF8(aHeader),
-                           NS_ConvertUTF16toUTF8(aValue));
+    aRv = SetRequestHeader(aHeader, aValue);
   }
   uint32_t Timeout()
   {
@@ -399,7 +399,7 @@ public:
 
   // response
   uint32_t Status();
-  void GetStatusText(nsString& aStatusText);
+  void GetStatusText(nsCString& aStatusText);
   void GetResponseHeader(const nsACString& aHeader, nsACString& aResult,
                          ErrorResult& aRv);
   void GetResponseHeader(const nsAString& aHeader, nsString& aResult,
@@ -415,7 +415,7 @@ public:
       CopyASCIItoUTF16(result, aResult);
     }
   }
-  void GetAllResponseHeaders(nsString& aResponseHeaders);
+  void GetAllResponseHeaders(nsCString& aResponseHeaders);
   bool IsSafeHeader(const nsACString& aHeaderName, nsIHttpChannel* aHttpChannel);
   void OverrideMimeType(const nsAString& aMimeType)
   {
@@ -473,7 +473,7 @@ public:
   bool AllowUploadProgress();
   void RootJSResultObjects();
 
-  virtual void DisconnectFromOwner();
+  virtual void DisconnectFromOwner() MOZ_OVERRIDE;
 
 protected:
   nsresult DetectCharset();
@@ -657,12 +657,14 @@ protected:
 
   bool mFirstStartRequestSeen;
   bool mInLoadProgressEvent;
-  
+
   nsCOMPtr<nsIAsyncVerifyRedirectCallback> mRedirectCallback;
   nsCOMPtr<nsIChannel> mNewRedirectChannel;
-  
-  JS::Value mResultJSON;
-  JSObject* mResultArrayBuffer;
+
+  JS::Heap<JS::Value> mResultJSON;
+
+  js::ArrayBufferBuilder mArrayBufferBuilder;
+  JS::Heap<JSObject*> mResultArrayBuffer;
 
   void ResetResponse();
 
@@ -719,7 +721,7 @@ class nsXHRParseEndListener : public nsIDOMEventListener
 {
 public:
   NS_DECL_ISUPPORTS
-  NS_IMETHOD HandleEvent(nsIDOMEvent *event)
+  NS_IMETHOD HandleEvent(nsIDOMEvent *event) MOZ_OVERRIDE
   {
     nsCOMPtr<nsIXMLHttpRequest> xhr = do_QueryReferent(mXHR);
     if (xhr) {

@@ -35,6 +35,15 @@ try {
 }
 DEBUG = RIL.DEBUG_RIL || debugPref;
 
+let debug;
+if (DEBUG) {
+  debug = function (s) {
+    dump("-*- RadioInterfaceLayer: " + s + "\n");
+  };
+} else {
+  debug = function (s) {};
+}
+
 const RADIOINTERFACELAYER_CID =
   Components.ID("{2d831c8d-6017-435b-a80c-e5d422810cea}");
 const RILNETWORKINTERFACE_CID =
@@ -53,9 +62,12 @@ const kSmsDeliveryErrorObserverTopic     = "sms-delivery-error";
 const kMozSettingsChangedObserverTopic   = "mozsettings-changed";
 const kSysMsgListenerReadyObserverTopic  = "system-message-listener-ready";
 const kSysClockChangeObserverTopic       = "system-clock-change";
+const kScreenStateChangedTopic           = "screen-state-changed";
 const kTimeNitzAutomaticUpdateEnabled    = "time.nitz.automatic-update.enabled";
 const kTimeNitzAvailable                 = "time.nitz.available";
 const kCellBroadcastSearchList           = "ril.cellbroadcast.searchlist";
+const kCellBroadcastDisabled             = "ril.cellbroadcast.disabled";
+const kPrefenceChangedObserverTopic      = "nsPref:changed";
 
 const DOM_MOBILE_MESSAGE_DELIVERY_RECEIVED = "received";
 const DOM_MOBILE_MESSAGE_DELIVERY_SENDING  = "sending";
@@ -87,26 +99,31 @@ const RIL_IPC_MOBILECONNECTION_MSG_NAMES = [
   "RIL:GetAvailableNetworks",
   "RIL:SelectNetwork",
   "RIL:SelectNetworkAuto",
-  "RIL:GetCardLock",
-  "RIL:UnlockCardLock",
-  "RIL:SetCardLock",
   "RIL:SendMMI",
   "RIL:CancelMMI",
+  "RIL:RegisterMobileConnectionMsg",
+  "RIL:SetCallForwardingOption",
+  "RIL:GetCallForwardingOption",
+  "RIL:SetCallBarringOption",
+  "RIL:GetCallBarringOption",
+  "RIL:SetCallWaitingOption",
+  "RIL:GetCallWaitingOption"
+];
+
+const RIL_IPC_ICCMANAGER_MSG_NAMES = [
   "RIL:SendStkResponse",
   "RIL:SendStkMenuSelection",
   "RIL:SendStkTimerExpiration",
   "RIL:SendStkEventDownload",
+  "RIL:GetCardLockState",
+  "RIL:UnlockCardLock",
+  "RIL:SetCardLock",
   "RIL:IccOpenChannel",
   "RIL:IccExchangeAPDU",
   "RIL:IccCloseChannel",
   "RIL:ReadIccContacts",
   "RIL:UpdateIccContact",
-  "RIL:RegisterMobileConnectionMsg",
-  "RIL:RegisterIccMsg",
-  "RIL:SetCallForwardingOption",
-  "RIL:GetCallForwardingOption",
-  "RIL:SetCallWaitingOption",
-  "RIL:GetCallWaitingOption"
+  "RIL:RegisterIccMsg"
 ];
 
 const RIL_IPC_VOICEMAIL_MSG_NAMES = [
@@ -155,9 +172,9 @@ XPCOMUtils.defineLazyServiceGetter(this, "gSystemWorkerManager",
                                    "nsISystemWorkerManager");
 
 XPCOMUtils.defineLazyGetter(this, "WAP", function () {
-  let WAP = {};
-  Cu.import("resource://gre/modules/WapPushManager.js", WAP);
-  return WAP;
+  let wap = {};
+  Cu.import("resource://gre/modules/WapPushManager.js", wap);
+  return wap;
 });
 
 XPCOMUtils.defineLazyGetter(this, "PhoneNumberUtils", function () {
@@ -217,6 +234,8 @@ XPCOMUtils.defineLazyGetter(this, "gAudioManager", function getAudioManager() {
 
 
 function RadioInterfaceLayer() {
+  this.clientId = 0;
+
   this.dataNetworkInterface = new RILNetworkInterface(this, Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE);
   this.mmsNetworkInterface = new RILNetworkInterface(this, Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_MMS);
   this.suplNetworkInterface = new RILNetworkInterface(this, Ci.nsINetworkInterface.NETWORK_TYPE_MOBILE_SUPL);
@@ -225,6 +244,19 @@ function RadioInterfaceLayer() {
   this.worker = new ChromeWorker("resource://gre/modules/ril_worker.js");
   this.worker.onerror = this.onerror.bind(this);
   this.worker.onmessage = this.onmessage.bind(this);
+
+  let cellBroadcastDisabledPref = false;
+  try {
+    cellBroadcastDisabledPref =
+      Services.prefs.getBoolPref(kCellBroadcastDisabled);
+  } catch(e) {}
+  // Pass initial options to ril_worker.
+  this.worker.postMessage({
+    rilMessageType: "setInitialOptions",
+    debug: debugPref,
+    clientId: this.clientId,
+    cellBroadcastDisabled: cellBroadcastDisabledPref
+  });
 
   this.rilContext = {
     radioState:     RIL.GECKO_RADIOSTATE_UNAVAILABLE,
@@ -280,6 +312,7 @@ function RadioInterfaceLayer() {
   lock.get("ril.data.apn", this);
   lock.get("ril.data.user", this);
   lock.get("ril.data.passwd", this);
+  lock.get("ril.data.authtype", this);
   lock.get("ril.data.httpProxyHost", this);
   lock.get("ril.data.httpProxyPort", this);
   lock.get("ril.data.roaming_enabled", this);
@@ -289,6 +322,7 @@ function RadioInterfaceLayer() {
                                   "ril.data.apn",
                                   "ril.data.user",
                                   "ril.data.passwd",
+                                  "ril.data.authtype",
                                   "ril.data.httpProxyHost",
                                   "ril.data.httpProxyPort"];
 
@@ -296,6 +330,7 @@ function RadioInterfaceLayer() {
   lock.get("ril.mms.apn", this);
   lock.get("ril.mms.user", this);
   lock.get("ril.mms.passwd", this);
+  lock.get("ril.mms.authtype", this);
   lock.get("ril.mms.httpProxyHost", this);
   lock.get("ril.mms.httpProxyPort", this);
   lock.get("ril.mms.mmsc", this);
@@ -304,6 +339,7 @@ function RadioInterfaceLayer() {
   lock.get("ril.supl.apn", this);
   lock.get("ril.supl.user", this);
   lock.get("ril.supl.passwd", this);
+  lock.get("ril.supl.authtype", this);
   lock.get("ril.supl.httpProxyHost", this);
   lock.get("ril.supl.httpProxyPort", this);
 
@@ -332,6 +368,9 @@ function RadioInterfaceLayer() {
   for (let msgname of RIL_IPC_MOBILECONNECTION_MSG_NAMES) {
     ppmm.addMessageListener(msgname, this);
   }
+  for (let msgName of RIL_IPC_ICCMANAGER_MSG_NAMES) {
+    ppmm.addMessageListener(msgName, this);
+  }
   for (let msgname of RIL_IPC_VOICEMAIL_MSG_NAMES) {
     ppmm.addMessageListener(msgname, this);
   }
@@ -342,6 +381,9 @@ function RadioInterfaceLayer() {
   Services.obs.addObserver(this, kMozSettingsChangedObserverTopic, false);
   Services.obs.addObserver(this, kSysMsgListenerReadyObserverTopic, false);
   Services.obs.addObserver(this, kSysClockChangeObserverTopic, false);
+  Services.obs.addObserver(this, kScreenStateChangedTopic, false);
+
+  Services.prefs.addObserver(kCellBroadcastDisabled, this, false);
 
   this._sentSmsEnvelopes = {};
 
@@ -350,11 +392,7 @@ function RadioInterfaceLayer() {
 
   this._targetMessageQueue = [];
 
-  // pass debug pref to ril_worker
-  this.worker.postMessage({rilMessageType: "setDebugEnabled",
-                           enabled: debugPref});
-
-  gSystemWorkerManager.registerRilWorker(0, this.worker);
+  gSystemWorkerManager.registerRilWorker(this.clientId, this.worker);
 }
 RadioInterfaceLayer.prototype = {
 
@@ -389,6 +427,12 @@ RadioInterfaceLayer.prototype = {
     } else if (RIL_IPC_MOBILECONNECTION_MSG_NAMES.indexOf(msg.name) != -1) {
       if (!msg.target.assertPermission("mobileconnection")) {
         debug("MobileConnection message " + msg.name +
+              " from a content process with no 'mobileconnection' privileges.");
+        return null;
+      }
+    } else if (RIL_IPC_ICCMANAGER_MSG_NAMES.indexOf(msg.name) != -1) {
+      if (!msg.target.assertPermission("mobileconnection")) {
+        debug("IccManager message " + msg.name +
               " from a content process with no 'mobileconnection' privileges.");
         return null;
       }
@@ -471,9 +515,9 @@ RadioInterfaceLayer.prototype = {
         this.saveRequestTarget(msg);
         this.selectNetworkAuto(msg.json.requestId);
         break;
-      case "RIL:GetCardLock":
+      case "RIL:GetCardLockState":
         this.saveRequestTarget(msg);
-        this.getCardLock(msg.json);
+        this.getCardLockState(msg.json);
         break;
       case "RIL:UnlockCardLock":
         this.saveRequestTarget(msg);
@@ -539,6 +583,14 @@ RadioInterfaceLayer.prototype = {
       case "RIL:GetCallForwardingOption":
         this.saveRequestTarget(msg);
         this.getCallForwardingOption(msg.json);
+        break;
+      case "RIL:SetCallBarringOption":
+        this.saveRequestTarget(msg);
+        this.setCallBarringOption(msg.json);
+        break;
+      case "RIL:GetCallBarringOption":
+        this.saveRequestTarget(msg);
+        this.getCallBarringOption(msg.json);
         break;
       case "RIL:SetCallWaitingOption":
         this.saveRequestTarget(msg);
@@ -675,7 +727,7 @@ RadioInterfaceLayer.prototype = {
       case "iccimsi":
         this.rilContext.imsi = message.imsi;
         break;
-      case "iccGetCardLock":
+      case "iccGetCardLockState":
       case "iccSetCardLock":
       case "iccUnlockCardLock":
         this.handleIccCardLockResult(message);
@@ -715,6 +767,12 @@ RadioInterfaceLayer.prototype = {
         break;
       case "setCallForward":
         this.handleSetCallForward(message);
+        break;
+      case "queryCallBarringStatus":
+        this.handleQueryCallBarringStatus(message);
+        break;
+      case "setCallBarring":
+        this.handleSetCallBarring(message);
         break;
       case "queryCallWaiting":
         this.handleQueryCallWaiting(message);
@@ -812,7 +870,7 @@ RadioInterfaceLayer.prototype = {
       return;
     }
 
-    for each (let target in targets) {
+    for (let target of targets) {
       target.sendAsyncMessage(message, options);
     }
   },
@@ -916,10 +974,7 @@ RadioInterfaceLayer.prototype = {
     voiceInfo.connected = newInfo.connected;
     voiceInfo.roaming = newInfo.roaming;
     voiceInfo.emergencyCallsOnly = newInfo.emergencyCallsOnly;
-    // Unlike the data registration info, the voice info typically contains
-    // no (useful) radio tech information, so we have to manually set
-    // this here. (TODO GSM only for now, see bug 726098.)
-    voiceInfo.type = "gsm";
+    voiceInfo.type = newInfo.type;
 
     // Make sure we also reset the operator and signal strength information
     // if we drop off the network.
@@ -977,7 +1032,7 @@ RadioInterfaceLayer.prototype = {
    */
   handleDataCallError: function handleDataCallError(message) {
     // Notify data call error only for data APN
-    if (message.apn == this.dataCallSettings["apn"]) {
+    if (message.apn == this.dataCallSettings.apn) {
       this._sendMobileConnectionMessage("RIL:DataError", message);
     }
 
@@ -1141,7 +1196,7 @@ RadioInterfaceLayer.prototype = {
     // hang the system.
 
     // Dequeue and resend messages.
-    for each (let msg in this._targetMessageQueue) {
+    for (let msg of this._targetMessageQueue) {
       this._sendTargetMessage(msg.topic, msg.message, msg.options);
     }
     this._targetMessageQueue = null;
@@ -1199,7 +1254,7 @@ RadioInterfaceLayer.prototype = {
     // true and any of the remaining flags change the setting application
     // should turn this flag to false and then to true in order to reload
     // the new values and reconnect the data call.
-    if (this._oldRilDataEnabledState == this.dataCallSettings["enabled"]) {
+    if (this._oldRilDataEnabledState == this.dataCallSettings.enabled) {
       debug("No changes for ril.data.enabled flag. Nothing to do.");
       return;
     }
@@ -1227,22 +1282,22 @@ RadioInterfaceLayer.prototype = {
     }
 
     if (this.dataNetworkInterface.connected &&
-        (!this.dataCallSettings["enabled"] ||
-         (dataInfo.roaming && !this.dataCallSettings["roaming_enabled"]) ||
-         (wifi_active && this.shareDefaultAPNCounter == 0))) {
+        (!this.dataCallSettings.enabled ||
+         (dataInfo.roaming && !this.dataCallSettings.roaming_enabled) ||
+         (wifi_active && this.shareDefaultAPNCounter === 0))) {
       debug("Data call settings: disconnect data call.");
       this.dataNetworkInterface.disconnect();
       return;
     }
-    if (!this.dataCallSettings["enabled"] || this.dataNetworkInterface.connected) {
+    if (!this.dataCallSettings.enabled || this.dataNetworkInterface.connected) {
       debug("Data call settings: nothing to do.");
       return;
     }
-    if (dataInfo.roaming && !this.dataCallSettings["roaming_enabled"]) {
+    if (dataInfo.roaming && !this.dataCallSettings.roaming_enabled) {
       debug("We're roaming, but data roaming is disabled.");
       return;
     }
-    if (wifi_active && this.shareDefaultAPNCounter == 0) {
+    if (wifi_active && this.shareDefaultAPNCounter === 0) {
       debug("Don't connect data call when Wifi is connected.");
       return;
     }
@@ -1704,7 +1759,7 @@ RadioInterfaceLayer.prototype = {
     let data = this.rilContext.data;
 
     if (datacall.ifname &&
-        datacall.apn == this.dataCallSettings["apn"]) {
+        datacall.apn == this.dataCallSettings.apn) {
       data.connected = (datacall.state == RIL.GECKO_NETWORK_STATE_CONNECTED);
       this._sendMobileConnectionMessage("RIL:DataInfoChanged", data);
     }
@@ -1874,6 +1929,16 @@ RadioInterfaceLayer.prototype = {
     this._sendRequestResults(messageType, message);
   },
 
+  handleQueryCallBarringStatus: function handleQueryCallBarringStatus(message) {
+    debug("handleQueryCallBarringStatus: " + JSON.stringify(message));
+    this._sendRequestResults("RIL:GetCallBarringOption", message);
+  },
+
+  handleSetCallBarring: function handleSetCallBarring(message) {
+    debug("handleSetCallBarring: " + JSON.stringify(message));
+    this._sendRequestResults("RIL:SetCallBarringOption", message);
+  },
+
   handleQueryCallWaiting: function handleQueryCallWaiting(message) {
     debug("handleQueryCallWaiting: " + JSON.stringify(message));
     this._sendRequestResults("RIL:GetCallWaitingOption", message);
@@ -1883,6 +1948,7 @@ RadioInterfaceLayer.prototype = {
     debug("handleSetCallWaiting: " + JSON.stringify(message));
     this._sendRequestResults("RIL:SetCallWaitingOption", message);
   },
+
   // nsIObserver
 
   observe: function observe(subject, topic, data) {
@@ -1897,6 +1963,18 @@ RadioInterfaceLayer.prototype = {
         let setting = JSON.parse(data);
         this.handleSettingsChange(setting.key, setting.value, setting.message);
         break;
+      case kPrefenceChangedObserverTopic:
+        if (data === kCellBroadcastDisabled) {
+          let value = false;
+          try {
+            value = Services.prefs.getBoolPref(kCellBroadcastDisabled);
+          } catch(e) {}
+          this.worker.postMessage({
+            rilMessageType: "setCellBroadcastDisabled",
+            disabled: value
+          });
+        }
+        break;
       case "xpcom-shutdown":
         ppmm.removeMessageListener("child-process-shutdown", this);
         for (let msgname of RIL_IPC_TELEPHONY_MSG_NAMES) {
@@ -1904,6 +1982,9 @@ RadioInterfaceLayer.prototype = {
         }
         for (let msgname of RIL_IPC_MOBILECONNECTION_MSG_NAMES) {
           ppmm.removeMessageListener(msgname, this);
+        }
+        for (let msgName of RIL_IPC_ICCMANAGER_MSG_NAMES) {
+          ppmm.removeMessageListener(msgName, this);
         }
         for (let msgname of RIL_IPC_VOICEMAIL_MSG_NAMES) {
           ppmm.removeMessageListener(msgname, this);
@@ -1921,11 +2002,17 @@ RadioInterfaceLayer.prototype = {
         Services.obs.removeObserver(this, "xpcom-shutdown");
         Services.obs.removeObserver(this, kMozSettingsChangedObserverTopic);
         Services.obs.removeObserver(this, kSysClockChangeObserverTopic);
+        Services.obs.removeObserver(this, kScreenStateChangedTopic);
+        Services.prefs.removeObserver(kCellBroadcastDisabled, this);
         break;
       case kSysClockChangeObserverTopic:
         if (this._lastNitzMessage) {
           this._lastNitzMessage.receiveTimeInMS += parseInt(data, 10);
         }
+        break;
+      case kScreenStateChangedTopic:
+        debug("Received a screen-state-changed event: " + JSON.stringify(data));
+        this.setScreenState(data);
         break;
     }
   },
@@ -1987,12 +2074,13 @@ RadioInterfaceLayer.prototype = {
         this.setPreferredNetworkType(aResult);
         break;
       case "ril.data.enabled":
-        this._oldRilDataEnabledState = this.dataCallSettings["enabled"];
-        // Fall through!
+        this._oldRilDataEnabledState = this.dataCallSettings.enabled;
+        // Fall through.
       case "ril.data.roaming_enabled":
       case "ril.data.apn":
       case "ril.data.user":
       case "ril.data.passwd":
+      case "ril.data.authtype":
       case "ril.data.httpProxyHost":
       case "ril.data.httpProxyPort":
         let key = aName.slice(9);
@@ -2007,6 +2095,7 @@ RadioInterfaceLayer.prototype = {
       case "ril.mms.apn":
       case "ril.mms.user":
       case "ril.mms.passwd":
+      case "ril.mms.authtype":
       case "ril.mms.httpProxyHost":
       case "ril.mms.httpProxyPort":
       case "ril.mms.mmsc":
@@ -2018,6 +2107,7 @@ RadioInterfaceLayer.prototype = {
       case "ril.supl.apn":
       case "ril.supl.user":
       case "ril.supl.passwd":
+      case "ril.supl.authtype":
       case "ril.supl.httpProxyHost":
       case "ril.supl.httpProxyPort":
         key = aName.slice(9);
@@ -2035,7 +2125,7 @@ RadioInterfaceLayer.prototype = {
         debug("'" + kCellBroadcastSearchList + "' is now " + aResult);
         this.setCellBroadcastSearchList(aResult);
         break;
-    };
+    }
   },
 
   handleError: function handleError(aErrorMessage) {
@@ -2047,7 +2137,7 @@ RadioInterfaceLayer.prototype = {
 
     // Clean data call setting.
     this.dataCallSettings = {};
-    this.dataCallSettings["enabled"] = false;
+    this.dataCallSettings.enabled = false;
   },
 
   // nsIRadioWorker
@@ -2150,6 +2240,14 @@ RadioInterfaceLayer.prototype = {
                              requestId: requestId});
   },
 
+  setScreenState: function setScreenState(state) {
+    debug("setScreenState: " + JSON.stringify(state));
+    this.worker.postMessage({
+      rilMessageType: "setScreenState",
+      on: (state === "on")
+    });
+  },
+
   sendMMI: function sendMMI(message) {
     debug("SendMMI " + JSON.stringify(message));
     message.rilMessageType = "sendMMI";
@@ -2226,6 +2324,18 @@ RadioInterfaceLayer.prototype = {
     message.rilMessageType = "queryCallForwardStatus";
     message.serviceClass = RIL.ICC_SERVICE_CLASS_NONE;
     message.number = null;
+    this.worker.postMessage(message);
+  },
+
+  setCallBarringOption: function setCallBarringingOption(message) {
+    debug("setCallBarringOption: " + JSON.stringify(message));
+    message.rilMessageType = "setCallBarring";
+    this.worker.postMessage(message);
+  },
+
+  getCallBarringOption: function getCallBarringOption(message) {
+    debug("getCallBarringOption: " + JSON.stringify(message));
+    message.rilMessageType = "queryCallBarringStatus";
     this.worker.postMessage(message);
   },
 
@@ -2673,11 +2783,16 @@ RadioInterfaceLayer.prototype = {
     }
 
     let options = this._fragmentText(text, null, strict7BitEncoding);
-    let lastSegment = options.segments[options.segmentMaxSeq - 1];
-    let charsInLastSegment = lastSegment.encodedBodyLength;
-    if (options.dcs == RIL.PDU_DCS_MSG_CODING_16BITS_ALPHABET) {
-      // In UCS2 encoding, encodedBodyLength is in octets.
-      charsInLastSegment /= 2;
+    let charsInLastSegment;
+    if (options.segmentMaxSeq) {
+      let lastSegment = options.segments[options.segmentMaxSeq - 1];
+      charsInLastSegment = lastSegment.encodedBodyLength;
+      if (options.dcs == RIL.PDU_DCS_MSG_CODING_16BITS_ALPHABET) {
+        // In UCS2 encoding, encodedBodyLength is in octets.
+        charsInLastSegment /= 2;
+      }
+    } else {
+      charsInLastSegment = 0;
     }
 
     let result = gMobileMessageService.createSmsSegmentInfo(options.segmentMaxSeq,
@@ -2718,26 +2833,52 @@ RadioInterfaceLayer.prototype = {
       timestamp: Date.now()
     };
 
-    let id = gMobileMessageDatabaseService.saveSendingMessage(sendingMessage,
-                                                              function notifyResult(rv, domMessage) {
-      // TODO bug 832140 handle !Components.isSuccessCode(rv)
-      Services.obs.notifyObservers(domMessage, kSmsSendingObserverTopic, null);
+    let id = gMobileMessageDatabaseService.saveSendingMessage(
+      sendingMessage,
+      function notifyResult(rv, domMessage) {
 
-      // Keep current SMS message info for sent/delivered notifications
-      options.envelopeId = this.createSmsEnvelope({
+        // TODO bug 832140 handle !Components.isSuccessCode(rv)
+        Services.obs.notifyObservers(domMessage, kSmsSendingObserverTopic, null);
+
+        // If the radio is disabled or the SIM card is not ready, just directly
+        // return with the corresponding error code.
+        let errorCode;
+        if (!this._radioEnabled) {
+          debug("Error! Radio is disabled when sending SMS.");
+          errorCode = Ci.nsIMobileMessageCallback.RADIO_DISABLED_ERROR;
+        } else if (this.rilContext.cardState != "ready") {
+          debug("Error! SIM card is not ready when sending SMS.");
+          errorCode = Ci.nsIMobileMessageCallback.NO_SIM_CARD_ERROR;
+        }
+        if (errorCode) {
+          gMobileMessageDatabaseService
+            .setMessageDelivery(domMessage.id,
+                                null,
+                                DOM_MOBILE_MESSAGE_DELIVERY_ERROR,
+                                RIL.GECKO_SMS_DELIVERY_STATUS_ERROR,
+                                function notifyResult(rv, domMessage) {
+            // TODO bug 832140 handle !Components.isSuccessCode(rv)
+            request.notifySendMessageFailed(errorCode);
+            Services.obs.notifyObservers(domMessage, kSmsFailedObserverTopic, null);
+          });
+          return;
+        }
+
+        // Keep current SMS message info for sent/delivered notifications
+        options.envelopeId = this.createSmsEnvelope({
           request: request,
           sms: domMessage,
           requestStatusReport: options.requestStatusReport
-      });
+        });
 
-      if (PhoneNumberUtils.isPlainPhoneNumber(options.number)) {
-        this.worker.postMessage(options);
-      } else {
-        debug('Number ' + options.number + ' is not sendable.');
-        this.handleSmsSendFailed(options);
-      }
+        if (PhoneNumberUtils.isPlainPhoneNumber(options.number)) {
+          this.worker.postMessage(options);
+        } else {
+          debug('Number ' + options.number + ' is not sendable.');
+          this.handleSmsSendFailed(options);
+        }
 
-    }.bind(this));
+      }.bind(this));
   },
 
   registerDataCallCallback: function registerDataCallCallback(callback) {
@@ -2774,7 +2915,7 @@ RadioInterfaceLayer.prototype = {
       return;
     }
     let callbacks = this._datacall_callbacks.slice();
-    for each (let callback in callbacks) {
+    for (let callback of callbacks) {
       if (this._datacall_callbacks.indexOf(callback) == -1) {
         continue;
       }
@@ -2796,10 +2937,11 @@ RadioInterfaceLayer.prototype = {
   usingDefaultAPN: function usingDefaultAPN(apntype) {
     switch (apntype) {
       case "mms":
-        return (this.dataCallSettingsMMS["apn"] == this.dataCallSettings["apn"]);
+        return (this.dataCallSettingsMMS.apn == this.dataCallSettings.apn);
       case "supl":
-        return (this.dataCallSettingsSUPL["apn"] == this.dataCallSettings["apn"]);
-      return false;
+        return (this.dataCallSettingsSUPL.apn == this.dataCallSettings.apn);
+      default:
+        return false;
     }
   },
 
@@ -2892,8 +3034,8 @@ RadioInterfaceLayer.prototype = {
     this.worker.postMessage({rilMessageType: "getDataCallList"});
   },
 
-  getCardLock: function getCardLock(message) {
-    message.rilMessageType = "iccGetCardLock";
+  getCardLockState: function getCardLockState(message) {
+    message.rilMessageType = "iccGetCardLockState";
     this.worker.postMessage(message);
   },
 
@@ -2982,7 +3124,7 @@ RILNetworkInterface.prototype = {
   // nsIRILDataCallback
 
   dataCallError: function dataCallError(message) {
-    if (message.apn != this.dataCallSettings["apn"]) {
+    if (message.apn != this.dataCallSettings.apn) {
       return;
     }
     debug("Data call error on APN: " + message.apn);
@@ -2998,7 +3140,7 @@ RILNetworkInterface.prototype = {
     // If data call for this connection does not exist, it could be state
     // change for new data call.  We only update data call state change
     // if APN name matched.
-    if (!this.cid && datacall.apn != this.dataCallSettings["apn"]) {
+    if (!this.cid && datacall.apn != this.dataCallSettings.apn) {
       return;
     }
     debug("Data call ID: " + datacall.cid + ", interface name: " +
@@ -3087,22 +3229,30 @@ RILNetworkInterface.prototype = {
       this.dataCallSettings = options;
     }
 
-    if (!this.dataCallSettings["apn"]) {
+    if (!this.dataCallSettings.apn) {
       debug("APN name is empty, nothing to do.");
       return;
     }
 
-    this.httpProxyHost = this.dataCallSettings["httpProxyHost"];
-    this.httpProxyPort = this.dataCallSettings["httpProxyPort"];
+    this.httpProxyHost = this.dataCallSettings.httpProxyHost;
+    this.httpProxyPort = this.dataCallSettings.httpProxyPort;
 
-    debug("Going to set up data connection with APN " + this.dataCallSettings["apn"]);
+    debug("Going to set up data connection with APN " + this.dataCallSettings.apn);
     let radioTechType = this.mRIL.rilContext.data.type;
     let radioTechnology = RIL.GECKO_RADIO_TECH.indexOf(radioTechType);
+    let authType = RIL.RIL_DATACALL_AUTH_TO_GECKO.indexOf(this.dataCallSettings["authtype"]);
+    // Use the default authType if the value in database is invalid.
+    // For the case that user might not select the authentication type.
+    if (authType == -1) {
+      debug("Invalid authType " + this.dataCallSettings["authtype"]);
+      authType = RIL.RIL_DATACALL_AUTH_TO_GECKO.indexOf(RIL.GECKO_DATACALL_AUTH_DEFAULT);
+    }
     this.mRIL.setupDataCall(radioTechnology,
-                            this.dataCallSettings["apn"],
-                            this.dataCallSettings["user"],
-                            this.dataCallSettings["passwd"],
-                            RIL.DATACALL_AUTH_PAP_OR_CHAP, "IP");
+                            this.dataCallSettings.apn,
+                            this.dataCallSettings.user,
+                            this.dataCallSettings.passwd,
+                            authType,
+                            "IP");
     this.connecting = true;
   },
 
@@ -3156,11 +3306,3 @@ RILNetworkInterface.prototype = {
 
 this.NSGetFactory = XPCOMUtils.generateNSGetFactory([RadioInterfaceLayer]);
 
-let debug;
-if (DEBUG) {
-  debug = function (s) {
-    dump("-*- RadioInterfaceLayer: " + s + "\n");
-  };
-} else {
-  debug = function (s) {};
-}

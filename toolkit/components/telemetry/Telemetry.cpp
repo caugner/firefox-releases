@@ -314,7 +314,7 @@ private:
   static bool AddonReflector(AddonEntryType *entry, JSContext *cx, JS::Handle<JSObject*> obj);
   static bool CreateHistogramForAddon(const nsACString &name,
                                       AddonHistogramInfo &info);
-  void ReadLateWritesStacks();
+  void ReadLateWritesStacks(nsIFile* aProfileDir);
   AddonMapType mAddonMap;
 
   // This is used for speedy string->Telemetry::ID conversions
@@ -743,14 +743,11 @@ GetFailedLockCount(nsIInputStream* inStream, uint32_t aCount,
 }
 
 nsresult
-GetFailedProfileLockFile(nsIFile* *aFile, nsIFile* aProfileDir = nullptr)
+GetFailedProfileLockFile(nsIFile* *aFile, nsIFile* aProfileDir)
 {
-  nsresult rv;
-  if (aProfileDir) {
-    rv = aProfileDir->Clone(aFile);
-  } else {
-    rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR, aFile);
-  }
+  NS_ENSURE_ARG_POINTER(aProfileDir);
+
+  nsresult rv = aProfileDir->Clone(aFile);
   NS_ENSURE_SUCCESS(rv, rv);
 
   (*aFile)->AppendNative(NS_LITERAL_CSTRING("Telemetry.FailedProfileLocks.txt"));
@@ -761,10 +758,12 @@ class nsFetchTelemetryData : public nsRunnable
 {
 public:
   nsFetchTelemetryData(const char* aShutdownTimeFilename,
-                       nsIFile* aFailedProfileLockFile)
+                       nsIFile* aFailedProfileLockFile,
+                       nsIFile* aProfileDir)
     : mShutdownTimeFilename(aShutdownTimeFilename),
       mFailedProfileLockFile(aFailedProfileLockFile),
-      mTelemetry(TelemetryImpl::sTelemetry)
+      mTelemetry(TelemetryImpl::sTelemetry),
+      mProfileDir(aProfileDir)
   {
   }
 
@@ -772,6 +771,7 @@ private:
   const char* mShutdownTimeFilename;
   nsCOMPtr<nsIFile> mFailedProfileLockFile;
   nsCOMPtr<TelemetryImpl> mTelemetry;
+  nsCOMPtr<nsIFile> mProfileDir;
 
 public:
   void MainThread() {
@@ -786,7 +786,7 @@ public:
     LoadFailedLockCount(mTelemetry->mFailedLockCount);
     mTelemetry->mLastShutdownTime = 
       ReadLastShutdownDuration(mShutdownTimeFilename);
-    mTelemetry->ReadLateWritesStacks();
+    mTelemetry->ReadLateWritesStacks(mProfileDir);
     nsCOMPtr<nsIRunnable> e =
       NS_NewRunnableMethod(this, &nsFetchTelemetryData::MainThread);
     NS_ENSURE_STATE(e);
@@ -921,8 +921,18 @@ TelemetryImpl::AsyncFetchTelemetryData(nsIFetchTelemetryDataCallback *aCallback)
     return NS_OK;
   }
 
+  nsCOMPtr<nsIFile> profileDir;
+  nsresult rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR,
+                                       getter_AddRefs(profileDir));
+  if (NS_FAILED(rv)) {
+    mCachedTelemetryData = true;
+    aCallback->Complete();
+    return NS_OK;
+  }
+
   nsCOMPtr<nsIFile> failedProfileLockFile;
-  nsresult rv = GetFailedProfileLockFile(getter_AddRefs(failedProfileLockFile));
+  rv = GetFailedProfileLockFile(getter_AddRefs(failedProfileLockFile),
+                                profileDir);
   if (NS_FAILED(rv)) {
     mCachedTelemetryData = true;
     aCallback->Complete();
@@ -930,8 +940,10 @@ TelemetryImpl::AsyncFetchTelemetryData(nsIFetchTelemetryDataCallback *aCallback)
   }
 
   mCallbacks.AppendObject(aCallback);
+
   nsCOMPtr<nsIRunnable> event = new nsFetchTelemetryData(shutdownTimeFilename,
-                                                         failedProfileLockFile);
+                                                         failedProfileLockFile,
+                                                         profileDir);
 
   targetThread->Dispatch(event, NS_DISPATCH_NORMAL);
   return NS_OK;
@@ -1504,8 +1516,8 @@ TelemetryImpl::GetChromeHangs(JSContext *cx, JS::Value *ret)
 
   const size_t length = stacks.GetStackCount();
   for (size_t i = 0; i < length; ++i) {
-    JS::Value duration = INT_TO_JSVAL(mHangReports.GetDuration(i));
-    if (!JS_SetElement(cx, durationArray, i, &duration)) {
+    JS::Rooted<JS::Value> duration(cx, INT_TO_JSVAL(mHangReports.GetDuration(i)));
+    if (!JS_SetElement(cx, durationArray, i, duration.address())) {
       return NS_ERROR_FAILURE;
     }
   }
@@ -1541,8 +1553,8 @@ CreateJSStackObject(JSContext *cx, const CombinedStacks &stacks) {
     if (!moduleInfoArray) {
       return nullptr;
     }
-    JS::Value val = OBJECT_TO_JSVAL(moduleInfoArray);
-    if (!JS_SetElement(cx, moduleArray, moduleIndex, &val)) {
+    JS::Rooted<JS::Value> val(cx, OBJECT_TO_JSVAL(moduleInfoArray));
+    if (!JS_SetElement(cx, moduleArray, moduleIndex, val.address())) {
       return nullptr;
     }
 
@@ -1554,7 +1566,7 @@ CreateJSStackObject(JSContext *cx, const CombinedStacks &stacks) {
       return nullptr;
     }
     val = STRING_TO_JSVAL(str);
-    if (!JS_SetElement(cx, moduleInfoArray, index++, &val)) {
+    if (!JS_SetElement(cx, moduleInfoArray, index++, val.address())) {
       return nullptr;
     }
 
@@ -1564,7 +1576,7 @@ CreateJSStackObject(JSContext *cx, const CombinedStacks &stacks) {
       return nullptr;
     }
     val = STRING_TO_JSVAL(id);
-    if (!JS_SetElement(cx, moduleInfoArray, index++, &val)) {
+    if (!JS_SetElement(cx, moduleInfoArray, index++, val.address())) {
       return nullptr;
     }
   }
@@ -1588,8 +1600,8 @@ CreateJSStackObject(JSContext *cx, const CombinedStacks &stacks) {
       return nullptr;
     }
 
-    JS::Value pcArrayVal = OBJECT_TO_JSVAL(pcArray);
-    if (!JS_SetElement(cx, reportArray, i, &pcArrayVal)) {
+    JS::Rooted<JS::Value> pcArrayVal(cx, OBJECT_TO_JSVAL(pcArray));
+    if (!JS_SetElement(cx, reportArray, i, pcArrayVal.address())) {
       return nullptr;
     }
 
@@ -1603,16 +1615,16 @@ CreateJSStackObject(JSContext *cx, const CombinedStacks &stacks) {
       }
       int modIndex = (std::numeric_limits<uint16_t>::max() == frame.mModIndex) ?
         -1 : frame.mModIndex;
-      JS::Value modIndexVal = INT_TO_JSVAL(modIndex);
-      if (!JS_SetElement(cx, framePair, 0, &modIndexVal)) {
+      JS::Rooted<JS::Value> modIndexVal(cx, INT_TO_JSVAL(modIndex));
+      if (!JS_SetElement(cx, framePair, 0, modIndexVal.address())) {
         return nullptr;
       }
-      JS::Value mOffsetVal = INT_TO_JSVAL(frame.mOffset);
-      if (!JS_SetElement(cx, framePair, 1, &mOffsetVal)) {
+      JS::Rooted<JS::Value> mOffsetVal(cx, INT_TO_JSVAL(frame.mOffset));
+      if (!JS_SetElement(cx, framePair, 1, mOffsetVal.address())) {
         return nullptr;
       }
-      JS::Value framePairVal = OBJECT_TO_JSVAL(framePair);
-      if (!JS_SetElement(cx, pcArray, pcIndex, &framePairVal)) {
+      JS::Rooted<JS::Value> framePairVal(cx, OBJECT_TO_JSVAL(framePair));
+      if (!JS_SetElement(cx, pcArray, pcIndex, framePairVal.address())) {
         return nullptr;
       }
     }
@@ -1710,17 +1722,10 @@ ReadStack(const char *aFileName, Telemetry::ProcessedStack &aStack)
 }
 
 void
-TelemetryImpl::ReadLateWritesStacks()
+TelemetryImpl::ReadLateWritesStacks(nsIFile* aProfileDir)
 {
-  nsCOMPtr<nsIFile> profileDir;
-  nsresult rv = NS_GetSpecialDirectory(NS_APP_USER_PROFILE_50_DIR,
-                                       getter_AddRefs(profileDir));
-  if (!profileDir || NS_FAILED(rv)) {
-    return;
-  }
-
   nsAutoCString nativePath;
-  rv = profileDir->GetNativePath(nativePath);
+  nsresult rv = aProfileDir->GetNativePath(nativePath);
   if (NS_FAILED(rv)) {
     return;
   }

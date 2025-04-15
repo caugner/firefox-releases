@@ -6,3 +6,11 @@
 
 MODULE = 'locale'
 
+CPP_SOURCES += [
+    'nsCollationMacUC.cpp',
+    'nsDateTimeFormatMac.cpp',
+    'nsMacCharset.cpp',
+]
+
+LIBRARY_NAME = 'platlocale_s'
+

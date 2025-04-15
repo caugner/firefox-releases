@@ -1444,7 +1444,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   virtual nsresult GetSuccessResult(JSContext* aCx,
-                                    jsval* aVal) MOZ_OVERRIDE;
+                                    JS::MutableHandle<JS::Value> aVal) MOZ_OVERRIDE;
 
   virtual nsresult
   OnExclusiveAccessAcquired() MOZ_OVERRIDE;
@@ -1515,7 +1515,7 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
 
   nsresult GetSuccessResult(JSContext* aCx,
-                            jsval* aVal);
+                            JS::MutableHandle<JS::Value> aVal);
 
   void ReleaseMainThreadObjects()
   {
@@ -2323,7 +2323,7 @@ OpenDatabaseHelper::EnsureSuccessResult()
 
 nsresult
 OpenDatabaseHelper::GetSuccessResult(JSContext* aCx,
-                                     jsval* aVal)
+                                     JS::MutableHandle<JS::Value> aVal)
 {
   // Be careful not to load the database twice.
   if (!mDatabase) {
@@ -2407,10 +2407,10 @@ OpenDatabaseHelper::DispatchErrorEvent()
     return;
   }
 
-  nsCOMPtr<nsIDOMDOMError> error;
-  DebugOnly<nsresult> rv =
-    mOpenDBRequest->GetError(getter_AddRefs(error));
-  NS_ASSERTION(NS_SUCCEEDED(rv), "This shouldn't be failing at this point!");
+  ErrorResult rv;
+  nsRefPtr<DOMError> error = mOpenDBRequest->GetError(rv);
+
+  NS_ASSERTION(!rv.Failed(), "This shouldn't be failing at this point!");
   if (!error) {
     mOpenDBRequest->SetError(mResultCode);
   }
@@ -2471,7 +2471,7 @@ SetVersionHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
 
 nsresult
 SetVersionHelper::GetSuccessResult(JSContext* aCx,
-                                   jsval* aVal)
+                                   JS::MutableHandle<JS::Value> aVal)
 {
   DatabaseInfo* info = mDatabase->Info();
   info->version = mRequestedVersion;
@@ -2679,7 +2679,7 @@ DeleteDatabaseHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
 }
 
 nsresult
-DeleteDatabaseHelper::GetSuccessResult(JSContext* aCx, jsval* aVal)
+DeleteDatabaseHelper::GetSuccessResult(JSContext* aCx, JS::MutableHandle<JS::Value> aVal)
 {
   return NS_OK;
 }

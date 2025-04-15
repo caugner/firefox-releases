@@ -6,3 +6,13 @@
 
 MODULE = 'unicharutil'
 
+CPP_SOURCES += [
+    'nsCaseConversionImp2.cpp',
+    'nsCategoryImp.cpp',
+    'nsEntityConverter.cpp',
+    'nsSaveAsCharset.cpp',
+    'nsUnicodeNormalizer.cpp',
+]
+
+LIBRARY_NAME = 'ucharucomp_s'
+

@@ -6,3 +6,10 @@
 
 MODULE = 'rdf'
 
+CPP_SOURCES += [
+    'nsRDFDataSourceDS.cpp',
+    'nsRDFDataSourceFactory.cpp',
+]
+
+LIBRARY_NAME = 'rdfdsds'
+

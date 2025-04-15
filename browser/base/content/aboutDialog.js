@@ -123,6 +123,11 @@ function appUpdater()
     return;
   }
 
+  if (this.aus.isOtherInstanceHandlingUpdates) {
+    this.selectPanel("otherInstanceHandlingUpdates");
+    return;
+  }
+
   if (this.isDownloading) {
     this.startDownload();
     return;
@@ -144,7 +149,7 @@ appUpdater.prototype =
   // true when there is an update already staged / ready to be applied.
   get isPending() {
     if (this.update) {
-      return this.update.state == "pending" || 
+      return this.update.state == "pending" ||
              this.update.state == "pending-service";
     }
     return this.um.activeUpdate &&
@@ -296,6 +301,15 @@ appUpdater.prototype =
                            selectUpdate(aUpdates, aUpdates.length);
       if (!gAppUpdater.update) {
         gAppUpdater.selectPanel("noUpdatesFound");
+        return;
+      }
+
+      if (gAppUpdater.update.unsupported) {
+        if (gAppUpdater.update.detailsURL) {
+          let unsupportedLink = document.getElementById("unsupportedLink");
+          unsupportedLink.href = gAppUpdater.update.detailsURL;
+        }
+        gAppUpdater.selectPanel("unsupportedSystem");
         return;
       }
 
@@ -472,7 +486,7 @@ appUpdater.prototype =
     this.aus.pauseDownload();
     let state = this.aus.downloadUpdate(this.update, false);
     if (state == "failed") {
-      this.selectPanel("downloadFailed");      
+      this.selectPanel("downloadFailed");
       return;
     }
 

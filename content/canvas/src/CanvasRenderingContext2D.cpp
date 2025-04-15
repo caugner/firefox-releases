@@ -107,6 +107,10 @@
 #include "gfxWindowsPlatform.h"
 #endif
 
+#ifdef MOZ_WIDGET_GONK
+#include "mozilla/layers/ShadowLayers.h"
+#endif
+
 // windows.h (included by chromium code) defines this, in its infinite wisdom
 #undef DrawText
 
@@ -121,10 +125,6 @@ namespace mgfx = mozilla::gfx;
 
 namespace mozilla {
 namespace dom {
-
-static float kDefaultFontSize = 10.0;
-static NS_NAMED_LITERAL_STRING(kDefaultFontName, "sans-serif");
-static NS_NAMED_LITERAL_STRING(kDefaultFontStyle, "10px sans-serif");
 
 // Cap sigma to avoid overly large temp surfaces.
 const Float SIGMA_MAX = 100;
@@ -441,6 +441,11 @@ public:
       static_cast<CanvasRenderingContext2DUserData*>(aData);
     CanvasRenderingContext2D* context = self->mContext;
     if (self->mContext && context->mGLContext) {
+      if (self->mContext->mTarget != nullptr) {
+        // Since SkiaGL default to store drawing command until flush
+        // We will have to flush it before present.
+        self->mContext->mTarget->Flush();
+      }
       context->mGLContext->MakeCurrent();
       context->mGLContext->PublishFrame();
     }
@@ -616,7 +621,6 @@ CanvasRenderingContext2D::Reset()
 
   // Since the target changes the backing texture will change, and this will
   // no longer be valid.
-  mThebesSurface = nullptr;
   mIsEntireFrameInvalid = false;
   mPredictManyRedrawCalls = false;
 
@@ -708,11 +712,6 @@ CanvasRenderingContext2D::Redraw()
     return NS_OK;
   }
 
-  if (!mThebesSurface)
-    mThebesSurface =
-      gfxPlatform::GetPlatform()->GetThebesSurfaceForDrawTarget(mTarget);
-  mThebesSurface->MarkDirty();
-
   nsSVGEffects::InvalidateDirectRenderingObservers(mCanvasElement);
 
   mCanvasElement->InvalidateCanvasContent(nullptr);
@@ -739,11 +738,6 @@ CanvasRenderingContext2D::Redraw(const mgfx::Rect &r)
     NS_ASSERTION(mDocShell, "Redraw with no canvas element or docshell!");
     return;
   }
-
-  if (!mThebesSurface)
-    mThebesSurface =
-      gfxPlatform::GetPlatform()->GetThebesSurfaceForDrawTarget(mTarget);
-  mThebesSurface->MarkDirty();
 
   nsSVGEffects::InvalidateDirectRenderingObservers(mCanvasElement);
 
@@ -793,11 +787,23 @@ CanvasRenderingContext2D::EnsureTarget()
          SurfaceCaps caps = SurfaceCaps::ForRGBA();
          caps.preserve = true;
 
+#ifdef MOZ_WIDGET_GONK
+         layers::ShadowLayerForwarder *forwarder = layerManager->AsShadowForwarder();
+         if (forwarder) {
+           caps.surfaceAllocator = static_cast<layers::ISurfaceAllocator*>(forwarder);
+         }
+#endif
+
          mGLContext = mozilla::gl::GLContextProvider::CreateOffscreen(gfxIntSize(size.width,
                                                                                  size.height),
                                                                       caps,
                                                                       mozilla::gl::GLContext::ContextFlagsNone);
-         mTarget = gfxPlatform::GetPlatform()->CreateDrawTargetForFBO(0, mGLContext, size, format);
+
+         if (mGLContext) {
+           mTarget = gfxPlatform::GetPlatform()->CreateDrawTargetForFBO(0, mGLContext, size, format);
+         } else {
+           mTarget = layerManager->CreateDrawTarget(size, format);
+         }
        } else
 #endif
          mTarget = layerManager->CreateDrawTarget(size, format);
@@ -881,7 +887,6 @@ CanvasRenderingContext2D::InitializeWithSurface(nsIDocShell *shell,
                                                 int32_t height)
 {
   mDocShell = shell;
-  mThebesSurface = surface;
 
   SetDimensions(width, height);
   mTarget = gfxPlatform::GetPlatform()->
@@ -1309,7 +1314,7 @@ WrapStyle(JSContext* cx, JSObject* objArg,
     case CanvasRenderingContext2D::CMG_STYLE_GRADIENT:
     {
       JS::Rooted<JSObject*> obj(cx, objArg);
-      ok = dom::WrapObject(cx, obj, supports, v.address());
+      ok = dom::WrapObject(cx, obj, supports, &v);
       break;
     }
     default:
@@ -2698,12 +2703,14 @@ gfxFontGroup *CanvasRenderingContext2D::GetCurrentFontStyle()
   // use lazy initilization for the font group since it's rather expensive
   if (!CurrentState().fontGroup) {
     ErrorResult err;
+    NS_NAMED_LITERAL_STRING(kDefaultFontStyle, "10px sans-serif");
+    static float kDefaultFontSize = 10.0;
     SetFont(kDefaultFontStyle, err);
     if (err.Failed()) {
       gfxFontStyle style;
       style.size = kDefaultFontSize;
       CurrentState().fontGroup =
-        gfxPlatform::GetPlatform()->CreateFontGroup(kDefaultFontName,
+        gfxPlatform::GetPlatform()->CreateFontGroup(NS_LITERAL_STRING("sans-serif"),
                                                     &style,
                                                     nullptr);
       if (CurrentState().fontGroup) {
@@ -3202,18 +3209,55 @@ CanvasRenderingContext2D::DrawWindow(nsIDOMWindow* window, double x,
   // save and restore it
   Matrix matrix = mTarget->GetTransform();
   nsRefPtr<gfxContext> thebes;
-  if (gfxPlatform::GetPlatform()->SupportsAzureContent()) {
+  nsRefPtr<gfxASurface> drawSurf;
+  if (gfxPlatform::GetPlatform()->SupportsAzureContentForDrawTarget(mTarget)) {
     thebes = new gfxContext(mTarget);
+    thebes->SetMatrix(gfxMatrix(matrix._11, matrix._12, matrix._21,
+                                matrix._22, matrix._31, matrix._32));
   } else {
-    nsRefPtr<gfxASurface> drawSurf;
-    GetThebesSurface(getter_AddRefs(drawSurf));
+    drawSurf =
+      gfxPlatform::GetPlatform()->CreateOffscreenSurface(gfxIntSize(ceil(w), ceil(h)),
+                                                         gfxASurface::CONTENT_COLOR_ALPHA);
+    if (!drawSurf) {
+      error.Throw(NS_ERROR_FAILURE);
+      return;
+    }
+
+    drawSurf->SetDeviceOffset(gfxPoint(-floor(x), -floor(y)));
     thebes = new gfxContext(drawSurf);
+    thebes->Translate(gfxPoint(floor(x), floor(y)));
   }
-  thebes->SetMatrix(gfxMatrix(matrix._11, matrix._12, matrix._21,
-                              matrix._22, matrix._31, matrix._32));
+
   nsCOMPtr<nsIPresShell> shell = presContext->PresShell();
   unused << shell->RenderDocument(r, renderDocFlags, backgroundColor, thebes);
-  mTarget->SetTransform(matrix);
+  if (drawSurf) {
+    gfxIntSize size = drawSurf->GetSize();
+
+    drawSurf->SetDeviceOffset(gfxPoint(0, 0));
+    nsRefPtr<gfxImageSurface> img = drawSurf->GetAsReadableARGB32ImageSurface();
+    if (!img || !img->Data()) {
+      error.Throw(NS_ERROR_FAILURE);
+      return;
+    }
+
+    // TODO: This function makes a copy of the data, which really isn't
+    // required here.
+    RefPtr<SourceSurface> data =
+      mTarget->CreateSourceSurfaceFromData(img->Data(),
+                                           IntSize(size.width, size.height),
+                                           img->Stride(),
+                                           FORMAT_B8G8R8A8);
+    if (!data) {
+      error.Throw(NS_ERROR_OUT_OF_MEMORY);
+      return;
+    }
+    
+    mgfx::Rect rect(0, 0, w, h);
+    mTarget->DrawSurface(data, rect, rect);
+    mTarget->Flush();
+  } else {
+    mTarget->SetTransform(matrix);
+  }
 
   // note that x and y are coordinates in the document that
   // we're drawing; x and y are drawn to 0,0 in current user
@@ -3657,20 +3701,15 @@ NS_IMETHODIMP
 CanvasRenderingContext2D::GetThebesSurface(gfxASurface **surface)
 {
   EnsureTarget();
-  if (!mThebesSurface) {
-    mThebesSurface =
+
+  nsRefPtr<gfxASurface> thebesSurface =
       gfxPlatform::GetPlatform()->GetThebesSurfaceForDrawTarget(mTarget);
 
-    if (!mThebesSurface) {
-      return NS_ERROR_FAILURE;
-    }
-  } else {
-    // Normally GetThebesSurfaceForDrawTarget will handle the flush, when
-    // we're returning a cached ThebesSurface we need to flush here.
-    mTarget->Flush();
+  if (!thebesSurface) {
+    return NS_ERROR_FAILURE;
   }
 
-  *surface = mThebesSurface;
+  *surface = thebesSurface;
   NS_ADDREF(*surface);
 
   return NS_OK;

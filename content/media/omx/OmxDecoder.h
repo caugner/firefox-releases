@@ -1,3 +1,7 @@
+#include <stagefright/foundation/ABase.h>
+#include <stagefright/foundation/AHandlerReflector.h>
+#include <stagefright/foundation/ALooper.h>
+#include <stagefright/MediaSource.h>
 #include <stagefright/DataSource.h>
 #include <stagefright/MediaSource.h>
 #include <utils/RefBase.h>
@@ -8,6 +12,7 @@
 #include "MPAPI.h"
 #include "MediaResource.h"
 #include "AbstractMediaDecoder.h"
+#include "OMXCodecProxy.h"
 
 namespace android {
 class OmxDecoder;
@@ -23,7 +28,7 @@ class VideoGraphicBuffer : public GraphicBufferLocked {
   public:
     VideoGraphicBuffer(const android::wp<android::OmxDecoder> aOmxDecoder,
                        android::MediaBuffer *aBuffer,
-                       SurfaceDescriptor *aDescriptor);
+                       SurfaceDescriptor& aDescriptor);
     ~VideoGraphicBuffer();
     void Unlock();
 };
@@ -38,6 +43,7 @@ class MediaStreamSource : public DataSource {
   typedef mozilla::MediaResource MediaResource;
   typedef mozilla::AbstractMediaDecoder AbstractMediaDecoder;
 
+  Mutex mLock;
   nsRefPtr<MediaResource> mResource;
   AbstractMediaDecoder *mDecoder;
 public:
@@ -67,7 +73,7 @@ private:
   MediaStreamSource &operator=(const MediaStreamSource &);
 };
 
-class OmxDecoder : public RefBase {
+class OmxDecoder : public OMXCodecProxy::EventListener {
   typedef MPAPI::AudioFrame AudioFrame;
   typedef MPAPI::VideoFrame VideoFrame;
   typedef mozilla::MediaResource MediaResource;
@@ -79,12 +85,16 @@ class OmxDecoder : public RefBase {
     kHardwareCodecsOnly = 16,
   };
 
+  enum {
+    kNotifyPostReleaseVideoBuffer = 'noti'
+  };
+
   AbstractMediaDecoder *mDecoder;
   nsRefPtr<MediaResource> mResource;
   sp<GonkNativeWindow> mNativeWindow;
   sp<GonkNativeWindowClient> mNativeWindowClient;
   sp<MediaSource> mVideoTrack;
-  sp<MediaSource> mVideoSource;
+  sp<OMXCodecProxy> mVideoSource;
   sp<MediaSource> mAudioTrack;
   sp<MediaSource> mAudioSource;
   int32_t mVideoWidth;
@@ -109,6 +119,9 @@ class OmxDecoder : public RefBase {
   // OMXCodec does not accept MediaBuffer during seeking. If MediaBuffer is
   //  returned to OMXCodec during seeking, OMXCodec calls assert.
   Vector<MediaBuffer *> mPendingVideoBuffers;
+  // The lock protects mPendingVideoBuffers.
+  Mutex mPendingVideoBuffersLock;
+
   // Show if OMXCodec is seeking.
   bool mIsVideoSeeking;
   // The lock protects video MediaBuffer release()'s pending operations called
@@ -116,6 +129,16 @@ class OmxDecoder : public RefBase {
   //  seeking. Holding mSeekLock long time could affect to video rendering.
   // Holding time should be minimum.
   Mutex mSeekLock;
+
+  // ALooper is a message loop used in stagefright.
+  // It creates a thread for messages and handles messages in the thread.
+  // ALooper is a clone of Looper in android Java.
+  // http://developer.android.com/reference/android/os/Looper.html
+  sp<ALooper> mLooper;
+  // deliver a message to a wrapped object(OmxDecoder).
+  // AHandlerReflector is similar to Handler in android Java.
+  // http://developer.android.com/reference/android/os/Handler.html
+  sp<AHandlerReflector<OmxDecoder> > mReflector;
 
   // 'true' if a read from the audio stream was done while reading the metadata
   bool mAudioMetadataRead;
@@ -140,7 +163,15 @@ public:
   OmxDecoder(MediaResource *aResource, AbstractMediaDecoder *aDecoder);
   ~OmxDecoder();
 
+  // MediaResourceManagerClient::EventListener
+  virtual void statusChanged();
+
   bool Init();
+  bool TryLoad();
+  bool IsDormantNeeded();
+  bool IsWaitingMediaResources();
+  bool AllocateMediaResources();
+  void ReleaseMediaResources();
   bool SetVideoFormat();
   bool SetAudioFormat();
 
@@ -175,13 +206,18 @@ public:
     return mResource;
   }
 
-  bool ReleaseVideoBuffer(MediaBuffer *aBuffer);
-
   //Change decoder into a playing state
   nsresult Play();
 
   //Change decoder into a paused state
   void Pause();
+
+  // Post kNotifyPostReleaseVideoBuffer message to OmxDecoder via ALooper.
+  void PostReleaseVideoBuffer(MediaBuffer *aBuffer);
+  // Receive a message from AHandlerReflector.
+  // Called on ALooper thread.
+  void onMessageReceived(const sp<AMessage> &msg);
+
 };
 
 }

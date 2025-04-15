@@ -4,14 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsnum_h___
-#define jsnum_h___
+#ifndef jsnum_h
+#define jsnum_h
 
 #include "mozilla/FloatingPoint.h"
 
-#include <math.h>
-
-#include "jsobj.h"
+#include "jscntxt.h"
 
 #include "vm/NumericConversions.h"
 
@@ -107,6 +105,15 @@ NumberToCString(JSContext *cx, ToCStringBuf *cbuf, double d, int base = 10);
  * may be precisely represented using the IEEE-754 double-precision format.
  */
 const double DOUBLE_INTEGRAL_PRECISION_LIMIT = uint64_t(1) << 53;
+
+/*
+ * Parse a decimal number encoded in |chars|.  The decimal number must be
+ * sufficiently small that it will not overflow the integrally-precise range of
+ * the double type -- that is, the number will be smaller than
+ * DOUBLE_INTEGRAL_PRECISION_LIMIT
+ */
+extern double
+ParseDecimalNumber(const JS::TwoByteChars chars);
 
 /*
  * Compute the positive integer of the given base described immediately at the
@@ -258,4 +265,4 @@ SafeMul(int32_t one, int32_t two, int32_t *res)
 
 } /* namespace js */
 
-#endif /* jsnum_h___ */
+#endif /* jsnum_h */

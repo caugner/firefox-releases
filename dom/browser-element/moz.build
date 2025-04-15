@@ -24,3 +24,18 @@ EXPORTS.mozilla += [
     'BrowserElementParent.h',
 ]
 
+CPP_SOURCES += [
+    'BrowserElementParent.cpp',
+    'nsAsyncScrollEventDetail.cpp',
+    'nsOpenWindowEventDetail.cpp',
+]
+
+EXTRA_COMPONENTS += [
+    'BrowserElementParent.js',
+    'BrowserElementParent.manifest',
+]
+
+EXTRA_JS_MODULES += [
+    'BrowserElementParent.jsm',
+    'BrowserElementPromptService.jsm',
+]

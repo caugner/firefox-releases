@@ -12,3 +12,9 @@ EXPORTS.mozilla.browser += [
     'DirectoryProvider.h',
 ]
 
+CPP_SOURCES += [
+    'DirectoryProvider.cpp',
+]
+
+LIBRARY_NAME = 'browserdir_s'
+

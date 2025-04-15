@@ -68,6 +68,9 @@ public:
         case PanningModelType::HRTF:
           mPanningModelFunction = &PannerNodeEngine::HRTFPanningFunction;
           break;
+        default:
+          NS_NOTREACHED("We should never see the alternate names here");
+          break;
       }
       break;
     case PannerNode::DISTANCE_MODEL:
@@ -81,6 +84,9 @@ public:
           break;
         case DistanceModelType::Exponential:
           mDistanceModelFunction = &PannerNodeEngine::ExponentialGainFunction;
+          break;
+        default:
+          NS_NOTREACHED("We should never see the alternate names here");
           break;
       }
       break;
@@ -326,7 +332,7 @@ PannerNodeEngine::DistanceAndConeGain(AudioChunk* aChunk, float aGain)
   float* samples = static_cast<float*>(const_cast<void*>(*aChunk->mChannelData.Elements()));
   uint32_t channelCount = aChunk->mChannelData.Length();
 
-  AudioBlockInPlaceScale(samples, channelCount, aGain);
+  AudioBufferInPlaceScale(samples, channelCount, aGain);
 }
 
 // This algorithm is specicied in the webaudio spec.

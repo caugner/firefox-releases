@@ -77,10 +77,12 @@ TextureHost::TextureHost()
 TextureHost::~TextureHost()
 {
   if (mBuffer) {
-    if (mDeAllocator) {
-      mDeAllocator->DestroySharedSurface(mBuffer);
-    } else {
-      MOZ_ASSERT(mBuffer->type() == SurfaceDescriptor::Tnull_t);
+    if (!(mFlags & OwnByClient)) {
+      if (mDeAllocator) {
+        mDeAllocator->DestroySharedSurface(mBuffer);
+      } else {
+        MOZ_ASSERT(mBuffer->type() == SurfaceDescriptor::Tnull_t);
+      }
     }
     delete mBuffer;
   }
@@ -89,9 +91,10 @@ TextureHost::~TextureHost()
 
 void
 TextureHost::Update(const SurfaceDescriptor& aImage,
-                    nsIntRegion* aRegion)
+                    nsIntRegion* aRegion,
+                    nsIntPoint* aOffset)
 {
-  UpdateImpl(aImage, aRegion);
+  UpdateImpl(aImage, aRegion, aOffset);
 }
 
 void

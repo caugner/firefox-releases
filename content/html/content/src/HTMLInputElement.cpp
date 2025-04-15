@@ -133,6 +133,7 @@ UploadLastDir* HTMLInputElement::gUploadLastDir;
 static const nsAttrValue::EnumTable kInputTypeTable[] = {
   { "button", NS_FORM_INPUT_BUTTON },
   { "checkbox", NS_FORM_INPUT_CHECKBOX },
+  { "color", NS_FORM_INPUT_COLOR },
   { "date", NS_FORM_INPUT_DATE },
   { "email", NS_FORM_INPUT_EMAIL },
   { "file", NS_FORM_INPUT_FILE },
@@ -153,7 +154,7 @@ static const nsAttrValue::EnumTable kInputTypeTable[] = {
 };
 
 // Default type is 'text'.
-static const nsAttrValue::EnumTable* kInputDefaultType = &kInputTypeTable[15];
+static const nsAttrValue::EnumTable* kInputDefaultType = &kInputTypeTable[16];
 
 static const uint8_t NS_INPUT_AUTOCOMPLETE_OFF     = 0;
 static const uint8_t NS_INPUT_AUTOCOMPLETE_ON      = 1;
@@ -387,6 +388,24 @@ HTMLInputElement::AsyncClickHandler::AsyncClickHandler(HTMLInputElement* aInput)
 
 NS_IMETHODIMP
 HTMLInputElement::AsyncClickHandler::Run()
+{
+  if (mInput->GetType() == NS_FORM_INPUT_FILE) {
+    return InitFilePicker();
+  } else if (mInput->GetType() == NS_FORM_INPUT_COLOR) {
+    return InitColorPicker();
+  }
+  return NS_ERROR_FAILURE;
+}
+
+nsresult
+HTMLInputElement::AsyncClickHandler::InitColorPicker()
+{
+  // TODO
+  return NS_OK;
+}
+
+nsresult
+HTMLInputElement::AsyncClickHandler::InitFilePicker()
 {
   // Get parent nsPIDOMWindow object.
   nsCOMPtr<nsIDocument> doc = mInput->OwnerDoc();
@@ -715,18 +734,18 @@ NS_IMPL_RELEASE_INHERITED(HTMLInputElement, Element)
 
 // QueryInterface implementation for HTMLInputElement
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLInputElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE8(HTMLInputElement,
-                                   nsIDOMHTMLInputElement,
-                                   nsITextControlElement,
-                                   nsIPhonetic,
-                                   imgINotificationObserver,
-                                   nsIImageLoadingContent,
-                                   imgIOnloadBlocker,
-                                   nsIDOMNSEditableElement,
-                                   nsIConstraintValidation)
-  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLInputElement,
-                                               nsGenericHTMLFormElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLFormElement)
+  NS_INTERFACE_TABLE_INHERITED8(HTMLInputElement,
+                                nsIDOMHTMLInputElement,
+                                nsITextControlElement,
+                                nsIPhonetic,
+                                imgINotificationObserver,
+                                nsIImageLoadingContent,
+                                imgIOnloadBlocker,
+                                nsIDOMNSEditableElement,
+                                nsIConstraintValidation)
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+NS_ELEMENT_INTERFACE_MAP_END
 
 // nsIConstraintValidation
 NS_IMPL_NSICONSTRAINTVALIDATION_EXCEPT_SETCUSTOMVALIDITY(HTMLInputElement)
@@ -2305,7 +2324,7 @@ HTMLInputElement::MaybeSubmitForm(nsPresContext* aPresContext)
     // bug 592124.
     // If there's only one text control, just submit the form
     // Hold strong ref across the event
-    nsRefPtr<nsHTMLFormElement> form = mForm;
+    nsRefPtr<mozilla::dom::HTMLFormElement> form = mForm;
     nsFormEvent event(true, NS_FORM_SUBMIT);
     nsEventStatus status = nsEventStatus_eIgnore;
     shell->HandleDOMEventWithTarget(mForm, &event, &status);
@@ -2749,13 +2768,15 @@ HTMLInputElement::ShouldPreventDOMActivateDispatch(EventTarget* aOriginalTarget)
 void
 HTMLInputElement::MaybeFireAsyncClickHandler(nsEventChainPostVisitor& aVisitor)
 {
-  // Open a file picker when we receive a click on a <input type='file'>.
+  // Open a file picker when we receive a click on a <input type='file'>, or
+  // open a color picker when we receive a click on a <input type='color'>.
   // A click is handled in the following cases:
   // - preventDefault() has not been called (or something similar);
   // - it's the left mouse button.
   // We do not prevent non-trusted click because authors can already use
   // .click(). However, the file picker will follow the rules of popup-blocking.
-  if (mType == NS_FORM_INPUT_FILE && NS_IS_MOUSE_LEFT_CLICK(aVisitor.mEvent) &&
+  if ((mType == NS_FORM_INPUT_FILE || mType == NS_FORM_INPUT_COLOR) &&
+      NS_IS_MOUSE_LEFT_CLICK(aVisitor.mEvent) &&
       !aVisitor.mEvent->mFlags.mDefaultPrevented) {
     FireAsyncClickHandler();
   }
@@ -3144,7 +3165,7 @@ HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
                               HasAttr(kNameSpaceID_None, nsGkAtoms::formnovalidate) ||
                               mForm->CheckValidFormSubmission())) {
               // Hold a strong ref while dispatching
-              nsRefPtr<nsHTMLFormElement> form(mForm);
+              nsRefPtr<mozilla::dom::HTMLFormElement> form(mForm);
               presShell->HandleDOMEventWithTarget(mForm, &event, &status);
               aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
             }
@@ -3552,7 +3573,33 @@ HTMLInputElement::SanitizeValue(nsAString& aValue)
         }
       }
       break;
+    case NS_FORM_INPUT_COLOR:
+      {
+        if (IsValidSimpleColor(aValue)) {
+          ToLowerCase(aValue);
+        } else {
+          // Set default (black) color, if aValue wasn't parsed correctly.
+          aValue.AssignLiteral("#000000");
+        }
+      }
+      break;
   }
+}
+
+bool HTMLInputElement::IsValidSimpleColor(const nsAString& aValue) const
+{
+  if (aValue.Length() != 7 || aValue.First() != '#') {
+    return false;
+  }
+
+  for (int i = 1; i < 7; ++i) {
+    if (!nsCRT::IsAsciiDigit(aValue[i]) &&
+        !(aValue[i] >= 'a' && aValue[i] <= 'f') &&
+        !(aValue[i] >= 'A' && aValue[i] <= 'F')) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool
@@ -3760,7 +3807,9 @@ HTMLInputElement::ParseAttribute(int32_t aNamespaceID,
         if ((IsExperimentalMobileType(newType) &&
              !Preferences::GetBool("dom.experimental_forms", false)) ||
             (newType == NS_FORM_INPUT_RANGE &&
-             !Preferences::GetBool("dom.experimental_forms_range", false))) {
+             !Preferences::GetBool("dom.experimental_forms_range", false)) ||
+            (newType == NS_FORM_INPUT_COLOR &&
+             !Preferences::GetBool("dom.forms.color", false))) {
           newType = kInputDefaultType->value;
           aResult.SetTo(newType, &aValue);
         }
@@ -4864,6 +4913,7 @@ HTMLInputElement::GetValueMode() const
     case NS_FORM_INPUT_RANGE:
     case NS_FORM_INPUT_DATE:
     case NS_FORM_INPUT_TIME:
+    case NS_FORM_INPUT_COLOR:
       return VALUE_MODE_VALUE;
     default:
       NS_NOTYETIMPLEMENTED("Unexpected input type in GetValueMode()");
@@ -4897,8 +4947,7 @@ HTMLInputElement::DoesReadOnlyApply() const
     case NS_FORM_INPUT_FILE:
     case NS_FORM_INPUT_CHECKBOX:
     case NS_FORM_INPUT_RANGE:
-    // TODO:
-    // case NS_FORM_INPUT_COLOR:
+    case NS_FORM_INPUT_COLOR:
       return false;
 #ifdef DEBUG
     case NS_FORM_INPUT_TEXT:
@@ -4932,8 +4981,7 @@ HTMLInputElement::DoesRequiredApply() const
     case NS_FORM_INPUT_RESET:
     case NS_FORM_INPUT_SUBMIT:
     case NS_FORM_INPUT_RANGE:
-    // TODO:
-    // case NS_FORM_INPUT_COLOR:
+    case NS_FORM_INPUT_COLOR:
       return false;
 #ifdef DEBUG
     case NS_FORM_INPUT_RADIO:
@@ -5008,6 +5056,7 @@ HTMLInputElement::DoesMinMaxApply() const
     case NS_FORM_INPUT_TEL:
     case NS_FORM_INPUT_EMAIL:
     case NS_FORM_INPUT_URL:
+    case NS_FORM_INPUT_COLOR:
       return false;
     default:
       NS_NOTYETIMPLEMENTED("Unexpected input type in DoesRequiredApply()");
@@ -5041,8 +5090,6 @@ HTMLInputElement::GetStep() const
     step = GetDefaultStep();
   }
 
-  // TODO: This multiplication can lead to inexact results, we should use a
-  // type that supports a better precision than double. Bug 783607.
   return step * GetStepScaleFactor();
 }
 
@@ -5231,15 +5278,6 @@ HTMLInputElement::HasStepMismatch() const
   Decimal step = GetStep();
   if (step == kStepAny) {
     return false;
-  }
-
-  if (mType == NS_FORM_INPUT_DATE) {
-    // The multiplication by the stepScaleFactor for date can easily lead
-    // to precision loss, since in most use cases this value should be
-    // an integer (millisecond precision), we can get rid of the precision
-    // loss by rounding step. This will however lead to erroneous results
-    // when step was intented to have a precision superior to a millisecond.
-    step = step.round();
   }
 
   // Value has to be an integral multiple of step.

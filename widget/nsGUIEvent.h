@@ -349,7 +349,9 @@ enum nsEventStructType {
 #define NS_SIMPLE_GESTURE_ROTATE         (NS_SIMPLE_GESTURE_EVENT_START+9)
 #define NS_SIMPLE_GESTURE_TAP            (NS_SIMPLE_GESTURE_EVENT_START+10)
 #define NS_SIMPLE_GESTURE_PRESSTAP       (NS_SIMPLE_GESTURE_EVENT_START+11)
-#define NS_SIMPLE_GESTURE_EDGEUI         (NS_SIMPLE_GESTURE_EVENT_START+12)
+#define NS_SIMPLE_GESTURE_EDGE_STARTED   (NS_SIMPLE_GESTURE_EVENT_START+12)
+#define NS_SIMPLE_GESTURE_EDGE_CANCELED  (NS_SIMPLE_GESTURE_EVENT_START+13)
+#define NS_SIMPLE_GESTURE_EDGE_COMPLETED (NS_SIMPLE_GESTURE_EVENT_START+14)
 
 // These are used to send native events to plugins.
 #define NS_PLUGIN_EVENT_START            3600
@@ -401,6 +403,7 @@ enum nsEventStructType {
 
 #define NS_WEBAUDIO_EVENT_START      4350
 #define NS_AUDIO_PROCESS             (NS_WEBAUDIO_EVENT_START)
+#define NS_AUDIO_COMPLETE            (NS_WEBAUDIO_EVENT_START + 1)
 
 // script notification events
 #define NS_NOTIFYSCRIPT_START        4500
@@ -1332,8 +1335,7 @@ public:
     deltaMode(nsIDOMWheelEvent::DOM_DELTA_PIXEL),
     customizedByUserPrefs(false), isMomentum(false), isPixelOnlyDevice(false),
     lineOrPageDeltaX(0), lineOrPageDeltaY(0), scrollType(SCROLL_DEFAULT),
-    overflowDeltaX(0.0), overflowDeltaY(0.0),
-    viewPortIsScrollTargetParent(false)
+    overflowDeltaX(0.0), overflowDeltaY(0.0)
   {
   }
 
@@ -1412,11 +1414,6 @@ public:
   //       it would need to check the deltaX and deltaY.
   double overflowDeltaX;
   double overflowDeltaY;
-
-  // Whether or not the parent of the currently scrolled frame is the ViewPort.
-  // This is false in situations when an element on the page is being scrolled
-  // (such as a text field), but true when the 'page' is being scrolled.
-  bool viewPortIsScrollTargetParent;
 };
 
 } // namespace widget
@@ -1547,20 +1544,6 @@ public:
     SCROLL_ACTION_LINE,
     SCROLL_ACTION_PAGE
   };
-};
-
-class nsFocusEvent : public nsEvent
-{
-public:
-  nsFocusEvent(bool isTrusted, uint32_t msg)
-    : nsEvent(isTrusted, msg, NS_FOCUS_EVENT),
-      fromRaise(false),
-      isRefocus(false)
-  {
-  }
-
-  bool fromRaise;
-  bool isRefocus;
 };
 
 class nsSelectionEvent : public nsGUIEvent
@@ -1715,16 +1698,34 @@ public:
 /**
  * DOM UIEvent
  */
-class nsUIEvent : public nsEvent
+class nsUIEvent : public nsGUIEvent
 {
 public:
   nsUIEvent(bool isTrusted, uint32_t msg, int32_t d)
-    : nsEvent(isTrusted, msg, NS_UI_EVENT),
+    : nsGUIEvent(isTrusted, msg, nullptr, NS_UI_EVENT),
       detail(d)
   {
   }
 
   int32_t detail;
+};
+
+class nsFocusEvent : public nsUIEvent
+{
+public:
+  nsFocusEvent(bool isTrusted, uint32_t msg)
+    : nsUIEvent(isTrusted, msg, 0),
+      fromRaise(false),
+      isRefocus(false)
+  {
+    eventStructType = NS_FOCUS_EVENT;
+  }
+
+  /// The possible related target
+  nsCOMPtr<mozilla::dom::EventTarget> relatedTarget;
+
+  bool fromRaise;
+  bool isRefocus;
 };
 
 /**

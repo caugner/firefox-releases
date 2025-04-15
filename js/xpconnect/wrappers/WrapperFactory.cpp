@@ -11,6 +11,7 @@
 #include "AccessCheck.h"
 #include "XPCWrapper.h"
 #include "ChromeObjectWrapper.h"
+#include "WrapperFactory.h"
 
 #include "xpcprivate.h"
 #include "XPCMaps.h"
@@ -151,11 +152,6 @@ WrapperFactory::PrepareForWrapping(JSContext *cx, HandleObject scope,
     // We should never get a proxy here (the JS engine unwraps those for us).
     MOZ_ASSERT(!IsWrapper(obj));
 
-    // As soon as an object is wrapped in a security wrapper, it morphs to be
-    // a fat wrapper. (see also: bug XXX).
-    if (IS_SLIM_WRAPPER(obj) && !MorphSlimWrapper(cx, obj))
-        return nullptr;
-
     // If the object being wrapped is a prototype for a standard class and the
     // wrapper does not subsumes the wrappee, use the one from the content
     // compartment. This is generally safer all-around, and in the COW case this
@@ -200,10 +196,10 @@ WrapperFactory::PrepareForWrapping(JSContext *cx, HandleObject scope,
     // those objects in a security wrapper, then we need to hand back the
     // wrapper for the new scope instead. Also, global objects don't move
     // between scopes so for those we also want to return the wrapper. So...
-    if (!IS_WN_WRAPPER(obj) || !js::GetObjectParent(obj))
+    if (!IS_WN_REFLECTOR(obj) || !js::GetObjectParent(obj))
         return DoubleWrap(cx, obj, flags);
 
-    XPCWrappedNative *wn = static_cast<XPCWrappedNative *>(xpc_GetJSPrivate(obj));
+    XPCWrappedNative *wn = XPCWrappedNative::Get(obj);
 
     JSAutoCompartment ac(cx, obj);
     XPCCallContext ccx(JS_CALLER, cx, obj);
@@ -293,29 +289,29 @@ WrapperFactory::PrepareForWrapping(JSContext *cx, HandleObject scope,
     // so we don't have to.
     RootedValue v(cx);
     nsresult rv =
-        nsXPConnect::FastGetXPConnect()->WrapNativeToJSVal(cx, wrapScope, wn->Native(), nullptr,
-                                                           &NS_GET_IID(nsISupports), false,
-                                                           v.address(), getter_AddRefs(holder));
-    if (NS_SUCCEEDED(rv)) {
-        obj = JSVAL_TO_OBJECT(v);
-        NS_ASSERTION(IS_WN_WRAPPER(obj), "bad object");
+        nsXPConnect::XPConnect()->WrapNativeToJSVal(cx, wrapScope, wn->Native(), nullptr,
+                                                    &NS_GET_IID(nsISupports), false,
+                                                    v.address(), getter_AddRefs(holder));
+    NS_ENSURE_SUCCESS(rv, nullptr);
 
-        // Because the underlying native didn't have a PreCreate hook, we had
-        // to a new (or possibly pre-existing) XPCWN in our compartment.
-        // This could be a problem for chrome code that passes XPCOM objects
-        // across compartments, because the effects of QI would disappear across
-        // compartments.
-        //
-        // So whenever we pull an XPCWN across compartments in this manner, we
-        // give the destination object the union of the two native sets. We try
-        // to do this cleverly in the common case to avoid too much overhead.
-        XPCWrappedNative *newwn = static_cast<XPCWrappedNative *>(xpc_GetJSPrivate(obj));
-        XPCNativeSet *unionSet = XPCNativeSet::GetNewOrUsed(ccx, newwn->GetSet(),
-                                                            wn->GetSet(), false);
-        if (!unionSet)
-            return nullptr;
-        newwn->SetSet(unionSet);
-    }
+    obj = JSVAL_TO_OBJECT(v);
+    NS_ASSERTION(IS_WN_REFLECTOR(obj), "bad object");
+
+    // Because the underlying native didn't have a PreCreate hook, we had
+    // to a new (or possibly pre-existing) XPCWN in our compartment.
+    // This could be a problem for chrome code that passes XPCOM objects
+    // across compartments, because the effects of QI would disappear across
+    // compartments.
+    //
+    // So whenever we pull an XPCWN across compartments in this manner, we
+    // give the destination object the union of the two native sets. We try
+    // to do this cleverly in the common case to avoid too much overhead.
+    XPCWrappedNative *newwn = XPCWrappedNative::Get(obj);
+    XPCNativeSet *unionSet = XPCNativeSet::GetNewOrUsed(newwn->GetSet(),
+                                                        wn->GetSet(), false);
+    if (!unionSet)
+        return nullptr;
+    newwn->SetSet(unionSet);
 
     return DoubleWrap(cx, obj, flags);
 }
@@ -521,11 +517,11 @@ WrapperFactory::WrapForSameCompartment(JSContext *cx, HandleObject objArg)
 
     MOZ_ASSERT(!dom::IsDOMObject(obj));
 
-    if (!IS_WN_WRAPPER(obj))
+    if (!IS_WN_REFLECTOR(obj))
         return obj;
 
     // Extract the WN. It should exist.
-    XPCWrappedNative *wn = static_cast<XPCWrappedNative *>(xpc_GetJSPrivate(obj));
+    XPCWrappedNative *wn = XPCWrappedNative::Get(obj);
     MOZ_ASSERT(wn, "Trying to wrap a dead WN!");
 
     // The WN knows what to do.
@@ -677,7 +673,7 @@ FixWaiverAfterTransplant(JSContext *cx, HandleObject oldWaiver, HandleObject new
 }
 
 JSObject *
-TransplantObject(JSContext *cx, JSObject *origobj, JSObject *target)
+TransplantObject(JSContext *cx, JS::HandleObject origobj, JS::HandleObject target)
 {
     RootedObject oldWaiver(cx, WrapperFactory::GetXrayWaiver(origobj));
     RootedObject newIdentity(cx, JS_TransplantObject(cx, origobj, target));
@@ -691,8 +687,8 @@ TransplantObject(JSContext *cx, JSObject *origobj, JSObject *target)
 
 JSObject *
 TransplantObjectWithWrapper(JSContext *cx,
-                            JSObject *origobj, JSObject *origwrapper,
-                            JSObject *targetobj, JSObject *targetwrapper)
+                            HandleObject origobj, HandleObject origwrapper,
+                            HandleObject targetobj, HandleObject targetwrapper)
 {
     RootedObject oldWaiver(cx, WrapperFactory::GetXrayWaiver(origobj));
     RootedObject newSameCompartmentWrapper(cx,

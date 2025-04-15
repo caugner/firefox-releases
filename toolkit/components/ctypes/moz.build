@@ -8,3 +8,9 @@ TEST_DIRS += ['tests']
 
 MODULE = 'jsctypes'
 
+CPP_SOURCES += [
+    'ctypes.cpp',
+]
+
+LIBRARY_NAME = 'jsctypes'
+

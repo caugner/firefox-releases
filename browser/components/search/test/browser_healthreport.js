@@ -4,6 +4,7 @@
 "use strict";
 
 function test() {
+  requestLongerTimeout(2);
   waitForExplicitFinish();
 
   try {
@@ -66,7 +67,7 @@ function test() {
         }
 
         EventUtils.synthesizeKey("VK_RETURN", {});
-        executeSoon(afterSearch);
+        executeSoon(() => executeSoon(afterSearch));
       });
     });
   }

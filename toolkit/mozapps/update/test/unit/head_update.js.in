@@ -6,6 +6,9 @@ const INSTALL_LOCALE = "@AB_CD@";
 const APP_BIN_NAME = "@MOZ_APP_NAME@";
 const BIN_SUFFIX = "@BIN_SUFFIX@";
 
+const APP_INFO_NAME = "XPCShell";
+const APP_INFO_VENDOR = "Mozilla";
+
 #ifdef XP_UNIX
 const APP_BIN_SUFFIX = "-bin";
 #else
@@ -352,6 +355,7 @@ function cleanUp() {
  */
 function setDefaultPrefs() {
   Services.prefs.setBoolPref(PREF_APP_UPDATE_ENABLED, true);
+  Services.prefs.setBoolPref(PREF_APP_UPDATE_METRO_ENABLED, true);
   // Don't display UI for a successful installation. Some apps may not set this
   // pref to false like Firefox does.
   Services.prefs.setBoolPref(PREF_APP_UPDATE_SHOW_INSTALLED_UI, false);
@@ -364,7 +368,7 @@ function setDefaultPrefs() {
  * update service stub.
  */
 function standardInit() {
-  createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "1.0", "2.0");
+  createAppInfo("xpcshell@tests.mozilla.org", APP_INFO_NAME, "1.0", "2.0");
   setDefaultPrefs();
   // Initialize the update service stub component
   initUpdateServiceStub();
@@ -936,6 +940,7 @@ function runUpdateUsingService(aInitialStatus, aExpectedStatus,
   // Override the update root directory
   gEnvUpdateRootOverride = updatesDir.path;
   gEnvAppDirOverride = getApplyDirFile(null).path;
+  gEnvSKipUpdateDirHashing = true;
 
   if (gSwitchApp) {
     // We want to set the env vars again
@@ -1880,7 +1885,7 @@ function createAppInfo(id, name, version, platformVersion) {
   const XULAPPINFO_CONTRACTID = "@mozilla.org/xre/app-info;1";
   const XULAPPINFO_CID = Components.ID("{c763b610-9d49-455a-bbd2-ede71682a1ac}");
   var XULAppInfo = {
-    vendor: "Mozilla",
+    vendor: APP_INFO_VENDOR,
     name: name,
     ID: id,
     version: version,
@@ -2100,8 +2105,6 @@ XPCOMUtils.defineLazyGetter(this, "gAppBinPath", function test_gAppBinPath() {
   return null;
 });
 
-let gWindowsBinDir = null;
-
 /**
  * This dummy function just returns false.  Tests which wish to adjust the app
  * directory on Mac OS X should define a real version of this function.
@@ -2109,6 +2112,53 @@ let gWindowsBinDir = null;
 function shouldAdjustPathsOnMac() {
   return false;
 }
+
+/**
+ * This function copies the entire process directory over to a new one which we
+ * can write to, so that we can test under Windows which holds locks on opened
+ * files.
+ */
+function adjustPathsOnWindows() {
+  // We copy the entire GRE directory into another location so that xpcshell
+  // running doesn't prevent the updater from moving stuff around.
+  let tmpDir = do_get_profile();
+  tmpDir.append("ExecutableDir.tmp");
+  tmpDir.createUnique(tmpDir.DIRECTORY_TYPE, 0755);
+  let procDir = getCurrentProcessDir();
+  copyDirRecursive(procDir, tmpDir, "bin");
+  let newDir = tmpDir.clone();
+  newDir.append("bin");
+  gWindowsBinDir = newDir;
+  logTestInfo("Using this new bin directory: " + gWindowsBinDir.path);
+  // Note that this directory will be deleted as part of the xpcshell teardown,
+  // so we don't need to remove it explicitly.
+
+  // We need to make NS_GRE_DIR point to the new bindir, since
+  // nsUpdateProcessor::ProcessUpdate uses NS_GRE_DIR to construct the
+  // destination path name which would be passed to updater.exe.
+  let dirProvider = {
+    getFile: function DP_getFile(prop, persistent) {
+      persistent.value = true;
+      if (prop == NS_GRE_DIR)
+        return getAppDir();
+      return null;
+    },
+    QueryInterface: function(iid) {
+      if (iid.equals(AUS_Ci.nsIDirectoryServiceProvider) ||
+          iid.equals(AUS_Ci.nsISupports))
+        return this;
+      throw AUS_Cr.NS_ERROR_NO_INTERFACE;
+    }
+  };
+  let ds = Services.dirsvc.QueryInterface(AUS_Ci.nsIDirectoryService);
+  ds.QueryInterface(AUS_Ci.nsIProperties).undefine(NS_GRE_DIR);
+  ds.registerProvider(dirProvider);
+  do_register_cleanup(function() {
+    ds.unregisterProvider(dirProvider);
+  });
+}
+
+let gWindowsBinDir = null;
 
 /**
  * This function returns the current process directory on Windows and Linux, and
@@ -2127,6 +2177,38 @@ function getAppDir() {
   }
   return dir;
 }
+
+/**
+ * The observer for the call to nsIProcess:runAsync.
+ */
+let gProcessObserver = {
+  observe: function PO_observe(subject, topic, data) {
+    logTestInfo("topic " + topic + ", process exitValue " + gProcess.exitValue);
+    if (gAppTimer) {
+      gAppTimer.cancel();
+      gAppTimer = null;
+    }
+    if (topic != "process-finished" || gProcess.exitValue != 0) {
+      do_throw("Failed to launch application");
+    }
+    do_timeout(CHECK_TIMEOUT_MILLI, checkUpdateFinished);
+  },
+  QueryInterface: XPCOMUtils.generateQI([AUS_Ci.nsIObserver])
+};
+
+/**
+ * The timer callback to kill the process if it takes too long.
+ */
+let gTimerCallback = {
+  notify: function TC_notify(aTimer) {
+    gAppTimer = null;
+    if (gProcess.isRunning) {
+      gProcess.kill();
+    }
+    do_throw("launch application timer expired");
+  },
+  QueryInterface: XPCOMUtils.generateQI([AUS_Ci.nsITimerCallback])
+};
 
 /**
  * Gets the nsIFile references for the shell script to retrieve the Mac OS X
@@ -2161,6 +2243,7 @@ let gEnvDyldLibraryPath;
 let gEnvLdLibraryPath;
 let gEnvUpdateRootOverride = null;
 let gEnvAppDirOverride = null;
+let gEnvSKipUpdateDirHashing = false;
 
 /**
  * Sets the environment that will be used by the application process when it is
@@ -2239,6 +2322,10 @@ function setEnvironment() {
   }
 
   env.set("XPCOM_DEBUG_BREAK", "warn");
+
+  if (IS_WIN && gEnvSKipUpdateDirHashing) {
+    env.set("MOZ_UPDATE_NO_HASH_DIR", "1");
+  }
 
   if (gEnvUpdateRootOverride) {
     logTestInfo("setting the MOZ_UPDATE_ROOT_OVERRIDE environment variable to " +

@@ -6,3 +6,15 @@
 
 MODULE = 'caps'
 
+CPP_SOURCES += [
+    'nsJSPrincipals.cpp',
+    'nsNullPrincipal.cpp',
+    'nsNullPrincipalURI.cpp',
+    'nsPrincipal.cpp',
+    'nsScriptSecurityManager.cpp',
+    'nsSecurityManagerFactory.cpp',
+    'nsSystemPrincipal.cpp',
+]
+
+LIBRARY_NAME = 'caps_s'
+

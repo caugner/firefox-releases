@@ -41,6 +41,7 @@
 
 #include "nsIScriptContext.h"
 #include "nsBindingManager.h"
+#include "nsCxPusher.h"
 
 #include "nsThreadUtils.h"
 #include "mozilla/dom/NodeListBinding.h"
@@ -1171,7 +1172,8 @@ nsBindingManager::GetBindingImplementation(nsIContent* aContent, REFNSIID aIID,
 
       nsIDocument* doc = aContent->OwnerDoc();
 
-      nsIScriptGlobalObject *global = doc->GetScriptGlobalObject();
+      nsCOMPtr<nsIScriptGlobalObject> global =
+        do_QueryInterface(doc->GetWindow());
       if (!global)
         return NS_NOINTERFACE;
 

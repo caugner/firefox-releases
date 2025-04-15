@@ -101,7 +101,7 @@ ThebesLayerComposite::RenderLayer(const nsIntPoint& aOffset,
 
 #ifdef MOZ_DUMP_PAINTING
   if (gfxUtils::sDumpPainting) {
-    nsRefPtr<gfxImageSurface> surf = mBuffer->Dump();
+    nsRefPtr<gfxImageSurface> surf = mBuffer->GetAsSurface();
     WriteSnapshotToDumpFile(this, surf);
   }
 #endif
@@ -165,8 +165,8 @@ ThebesLayerComposite::GetEffectiveResolution()
   gfxSize resolution(1, 1);
   for (ContainerLayer* parent = GetParent(); parent; parent = parent->GetParent()) {
     const FrameMetrics& metrics = parent->GetFrameMetrics();
-    resolution.width *= metrics.mResolution.width;
-    resolution.height *= metrics.mResolution.height;
+    resolution.width *= metrics.mResolution.scale;
+    resolution.height *= metrics.mResolution.scale;
   }
 
   return resolution;
@@ -199,8 +199,8 @@ ThebesLayerComposite::GetDisplayPort()
                                 metrics.mDisplayPort.height);
           displayPort.ScaleRoundOut(parentResolution.width, parentResolution.height);
       }
-      parentResolution.width /= metrics.mResolution.width;
-      parentResolution.height /= metrics.mResolution.height;
+      parentResolution.width /= metrics.mResolution.scale;
+      parentResolution.height /= metrics.mResolution.scale;
     }
     if (parent->UseIntermediateSurface()) {
       transform.PreMultiply(parent->GetTransform());
@@ -237,25 +237,30 @@ ThebesLayerComposite::GetCompositionBounds()
       scrollableLayer = parent;
     if (!parentMetrics.mDisplayPort.IsEmpty() && scrollableLayer) {
       // Get the composition bounds, so as not to waste rendering time.
-      compositionBounds = gfxRect(parentMetrics.mCompositionBounds);
+      compositionBounds = gfxRect(parentMetrics.mCompositionBounds.x,
+                                  parentMetrics.mCompositionBounds.y,
+                                  parentMetrics.mCompositionBounds.width,
+                                  parentMetrics.mCompositionBounds.height);
 
       // Calculate the scale transform applied to the root layer to determine
       // the content resolution.
       Layer* rootLayer = Manager()->GetRoot();
       const gfx3DMatrix& rootTransform = rootLayer->GetTransform();
-      float scaleX = rootTransform.GetXScale();
-      float scaleY = rootTransform.GetYScale();
+      LayerToCSSScale scale(rootTransform.GetXScale(),
+                            rootTransform.GetYScale());
 
       // Get the content document bounds, in screen-space.
       const FrameMetrics& metrics = scrollableLayer->GetFrameMetrics();
-      const nsIntSize& contentSize = metrics.mContentRect.Size();
+      const LayerIntRect content = RoundedToInt(metrics.mScrollableRect / scale);
+      // !!! WTF. this code is just wrong. See bug 881451.
       gfx::Point scrollOffset =
-        gfx::Point((metrics.mScrollOffset.x * metrics.LayersPixelsPerCSSPixel().width) / scaleX,
-                   (metrics.mScrollOffset.y * metrics.LayersPixelsPerCSSPixel().height) / scaleY);
-      const nsIntPoint& contentOrigin = metrics.mContentRect.TopLeft() -
-        nsIntPoint(NS_lround(scrollOffset.x), NS_lround(scrollOffset.y));
+        gfx::Point((metrics.mScrollOffset.x * metrics.LayersPixelsPerCSSPixel().scale) / scale.scale,
+                   (metrics.mScrollOffset.y * metrics.LayersPixelsPerCSSPixel().scale) / scale.scale);
+      const nsIntPoint contentOrigin(
+        content.x - NS_lround(scrollOffset.x),
+        content.y - NS_lround(scrollOffset.y));
       gfxRect contentRect = gfxRect(contentOrigin.x, contentOrigin.y,
-                                    contentSize.width, contentSize.height);
+                                    content.width, content.height);
       gfxRect contentBounds = scrollableLayer->GetEffectiveTransform().
         TransformBounds(contentRect);
 

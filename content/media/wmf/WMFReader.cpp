@@ -15,6 +15,9 @@
 #include "ImageContainer.h"
 #include "Layers.h"
 #include "mozilla/layers/LayersTypes.h"
+#include "WinUtils.h"
+
+using namespace mozilla::widget;
 
 #ifndef MOZ_SAMPLE_TYPE_FLOAT32
 #error We expect 32bit float audio samples on desktop for the Windows Media Foundation media backend.
@@ -52,7 +55,6 @@ WMFReader::WMFReader(AbstractMediaDecoder* aDecoder)
     mAudioFrameOffset(0),
     mHasAudio(false),
     mHasVideo(false),
-    mCanSeek(false),
     mUseHwAccel(false),
     mMustRecaptureAudioPosition(true),
     mIsMP3Enabled(WMFDecoder::IsMP3Supported()),
@@ -102,7 +104,10 @@ WMFReader::OnDecodeThreadFinish()
 bool
 WMFReader::InitializeDXVA()
 {
-  if (!Preferences::GetBool("media.windows-media-foundation.use-dxva", false)) {
+  if (!Preferences::GetBool("media.windows-media-foundation.use-dxva", false) ||
+      WinUtils::GetWindowsVersion() == WinUtils::VISTA_VERSION) {
+    // Don't use DXVA on Vista until bug 901944's fix has time to bake on
+    // the release train.
     return false;
   }
 
@@ -129,9 +134,18 @@ WMFReader::InitializeDXVA()
   }
 
   mDXVA2Manager = DXVA2Manager::Create();
-  NS_ENSURE_TRUE(mDXVA2Manager, false);
 
-  return true;
+  return mDXVA2Manager != nullptr;
+}
+
+static bool
+IsVideoContentType(const nsCString& aContentType)
+{
+  NS_NAMED_LITERAL_CSTRING(video, "video");
+  if (FindInReadable(video, aContentType)) {
+    return true;
+  }
+  return false;
 }
 
 nsresult
@@ -154,7 +168,11 @@ WMFReader::Init(MediaDecoderReader* aCloneDonor)
   rv = mByteStream->Init();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  mUseHwAccel = InitializeDXVA();
+  if (IsVideoContentType(mDecoder->GetResource()->GetContentType())) {
+    mUseHwAccel = InitializeDXVA();
+  } else {
+    mUseHwAccel = false;
+  }
 
   return NS_OK;
 }
@@ -582,6 +600,12 @@ WMFReader::ReadMetadata(VideoInfo* aInfo,
     if (FAILED(hr)) {
       LOG("Failed to set DXVA2 D3D Device manager on decoder");
       mUseHwAccel = false;
+      // Re-run the configuration process, so that the output video format
+      // is set correctly to reflect that hardware acceleration is disabled.
+      // Without this, we'd be running with !mUseHwAccel and the output format
+      // set to NV12, which is the format we expect when using hardware
+      // acceleration. This would cause us to misinterpret the frame contents.
+      hr = ConfigureVideoDecoder();      
     }
   }
   if (mInfo.mHasVideo) {
@@ -591,14 +615,21 @@ WMFReader::ReadMetadata(VideoInfo* aInfo,
   // Abort if both video and audio failed to initialize.
   NS_ENSURE_TRUE(mInfo.mHasAudio || mInfo.mHasVideo, NS_ERROR_FAILURE);
 
+  // Get the duration, and report it to the decoder if we have it.
   int64_t duration = 0;
-  if (SUCCEEDED(GetSourceReaderDuration(mSourceReader, duration))) {
+  hr = GetSourceReaderDuration(mSourceReader, duration);
+  if (SUCCEEDED(hr)) {
     ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
     mDecoder->SetMediaDuration(duration);
   }
-
-  hr = GetSourceReaderCanSeek(mSourceReader, mCanSeek);
-  NS_ASSERTION(SUCCEEDED(hr), "Can't determine if resource is seekable");
+  // We can seek if we get a duration *and* the reader reports that it's
+  // seekable.
+  bool canSeek = false;
+  if (FAILED(hr) ||
+      FAILED(GetSourceReaderCanSeek(mSourceReader, canSeek)) ||
+      !canSeek) {
+    mDecoder->SetMediaSeekable(false);
+  }
 
   *aInfo = mInfo;
   *aTags = nullptr;
@@ -733,6 +764,8 @@ WMFReader::DecodeAudioData()
   LOG("Decoded audio sample! timestamp=%lld duration=%lld currentLength=%u",
       timestamp, duration, currentLength);
   #endif
+
+  NotifyBytesConsumed();
 
   return true;
 }
@@ -969,7 +1002,18 @@ WMFReader::DecodeVideoFrame(bool &aKeyframeSkip,
     return false;
   }
 
+  NotifyBytesConsumed();
+
   return true;
+}
+
+void
+WMFReader::NotifyBytesConsumed()
+{
+  uint32_t bytesConsumed = mByteStream->GetAndResetBytesConsumedCount();
+  if (bytesConsumed > 0) {
+    mDecoder->NotifyBytesConsumed(bytesConsumed);
+  }
 }
 
 nsresult
@@ -981,9 +1025,11 @@ WMFReader::Seek(int64_t aTargetUs,
   LOG("WMFReader::Seek() %lld", aTargetUs);
 
   NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
-  if (!mCanSeek) {
-    return NS_ERROR_FAILURE;
-  }
+#ifdef DEBUG
+  bool canSeek = false;
+  GetSourceReaderCanSeek(mSourceReader, canSeek);
+  NS_ASSERTION(canSeek, "WMFReader::Seek() should only be called if we can seek!");
+#endif
 
   nsresult rv = ResetDecode();
   NS_ENSURE_SUCCESS(rv, rv);

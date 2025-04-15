@@ -1918,7 +1918,9 @@ NS_RelaxStrictFileOriginPolicy(nsIURI *aTargetURI,
       NS_FAILED(sourceFileURL->GetFile(getter_AddRefs(sourceFile))) ||
       !targetFile || !sourceFile ||
       NS_FAILED(targetFile->Normalize()) ||
+#ifndef MOZ_WIDGET_ANDROID
       NS_FAILED(sourceFile->Normalize()) ||
+#endif
       (!aAllowDirectoryTarget &&
        (NS_FAILED(targetFile->IsDirectory(&targetIsDir)) || targetIsDir))) {
     return false;
@@ -1930,19 +1932,26 @@ NS_RelaxStrictFileOriginPolicy(nsIURI *aTargetURI,
   // inherit its source principal and be scriptable by that source.
   //
   bool sourceIsDir;
-  bool contained = false;
+  bool allowed = false;
   nsresult rv = sourceFile->IsDirectory(&sourceIsDir);
   if (NS_SUCCEEDED(rv) && sourceIsDir) {
-    rv = sourceFile->Contains(targetFile, true, &contained);
+    rv = sourceFile->Contains(targetFile, true, &allowed);
   } else {
     nsCOMPtr<nsIFile> sourceParent;
     rv = sourceFile->GetParent(getter_AddRefs(sourceParent));
     if (NS_SUCCEEDED(rv) && sourceParent) {
-      rv = sourceParent->Contains(targetFile, true, &contained);
+      rv = sourceParent->Equals(targetFile, &allowed);
+      if (NS_FAILED(rv) || !allowed) {
+        rv = sourceParent->Contains(targetFile, true, &allowed);
+      } else {
+        MOZ_ASSERT(aAllowDirectoryTarget,
+                   "sourceFile->Parent == targetFile, but targetFile "
+                   "should've been disallowed if it is a directory");
+      }
     }
   }
 
-  if (NS_SUCCEEDED(rv) && contained) {
+  if (NS_SUCCEEDED(rv) && allowed) {
     return true;
   }
 

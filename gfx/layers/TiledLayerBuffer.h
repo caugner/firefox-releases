@@ -111,6 +111,10 @@ public:
   bool RemoveTile(int x, int y, Tile& aRemovedTile);
 
   uint16_t GetTileLength() const { return TILEDLAYERBUFFER_TILE_SIZE; }
+
+#ifdef MOZ_WIDGET_ANDROID
+  MOZ_NEVER_INLINE // bug 881018 causes wrong results when GetScaledTileLength is inlined
+#endif
   uint32_t GetScaledTileLength() const { return TILEDLAYERBUFFER_TILE_SIZE / mResolution; }
 
   unsigned int GetTileCount() const { return mRetainedTiles.Length(); }
@@ -144,6 +148,10 @@ public:
     mResolution = aResolution;
   }
   bool IsLowPrecision() const { return mResolution < 1; }
+
+  typedef Tile* Iterator;
+  Iterator TilesBegin() { return mRetainedTiles.Elements(); }
+  Iterator TilesEnd() { return mRetainedTiles.Elements() + mRetainedTiles.Length(); }
 
 protected:
   // The implementor should call Update() to change

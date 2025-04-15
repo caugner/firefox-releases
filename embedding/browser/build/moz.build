@@ -6,3 +6,9 @@
 
 MODULE = 'webbrwsr'
 
+CPP_SOURCES += [
+    'nsWebBrowserModule.cpp',
+]
+
+LIBRARY_NAME = 'webbrwsr'
+

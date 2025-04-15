@@ -6,12 +6,9 @@
 
 /* JS Array interface. */
 
-#ifndef jsarray_h___
-#define jsarray_h___
+#ifndef jsarray_h
+#define jsarray_h
 
-#include "jsatom.h"
-#include "jscntxt.h"
-#include "jsprvtd.h"
 #include "jspubtd.h"
 #include "jsobj.h"
 
@@ -87,10 +84,6 @@ WouldDefinePastNonwritableLength(JSContext *cx, HandleObject obj, uint32_t index
 extern bool
 CanonicalizeArrayLengthValue(JSContext *cx, HandleValue v, uint32_t *canonicalized);
 
-/* Get the common shape used by all dense arrays with a prototype at globalObj. */
-extern Shape *
-GetDenseArrayShape(JSContext *cx, HandleObject globalObj);
-
 extern JSBool
 GetLengthProperty(JSContext *cx, HandleObject obj, uint32_t *lengthp);
 
@@ -153,4 +146,4 @@ js_NewbornArrayPush(JSContext *cx, js::HandleObject obj, const js::Value &v);
 JSBool
 js_Array(JSContext *cx, unsigned argc, js::Value *vp);
 
-#endif /* jsarray_h___ */
+#endif /* jsarray_h */

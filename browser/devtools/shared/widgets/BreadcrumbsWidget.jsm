@@ -11,25 +11,13 @@ const Cu = Components.utils;
 const ENSURE_SELECTION_VISIBLE_DELAY = 50; // ms
 
 Cu.import("resource:///modules/devtools/ViewHelpers.jsm");
+Cu.import("resource:///modules/devtools/shared/event-emitter.js");
 
 this.EXPORTED_SYMBOLS = ["BreadcrumbsWidget"];
 
 /**
  * A breadcrumb-like list of items.
- *
- * You can use this widget alone, but it works great with a MenuContainer!
- * In that case, you should never need to access the methods in the
- * BreadcrumbsWidget directly, use the wrapper MenuContainer instance instead.
- *
- * @see ViewHelpers.jsm
- *
- * function MyView() {
- *   this.node = new BreadcrumbsWidget(document.querySelector(".my-node"));
- * }
- * ViewHelpers.create({ constructor: MyView, proto: MenuContainer.prototype }, {
- *   myMethod: function() {},
- *   ...
- * });
+ * This widget should be used in tandem with the WidgetMethods in ViewHelpers.jsm
  *
  * @param nsIDOMNode aNode
  *        The element associated with the widget.
@@ -45,6 +33,8 @@ this.BreadcrumbsWidget = function BreadcrumbsWidget(aNode) {
   this._list.setAttribute("flex", "1");
   this._list.setAttribute("orient", "horizontal");
   this._list.setAttribute("clicktoscroll", "true")
+  this._list.addEventListener("keypress", e => this.emit("keyPress", e), false);
+  this._list.addEventListener("mousedown", e => this.emit("mousePress", e), false);
   this._parent.appendChild(this._list);
 
   // By default, hide the arrows. We let the arrowscrollbox show them
@@ -53,6 +43,9 @@ this.BreadcrumbsWidget = function BreadcrumbsWidget(aNode) {
   this._list._scrollButtonDown.collapsed = true;
   this._list.addEventListener("underflow", this._onUnderflow.bind(this), false);
   this._list.addEventListener("overflow", this._onOverflow.bind(this), false);
+
+  // This widget emits events that can be handled in a MenuContainer.
+  EventEmitter.decorate(this);
 
   // Delegate some of the associated node's methods to satisfy the interface
   // required by MenuContainer instances.
@@ -71,7 +64,7 @@ BreadcrumbsWidget.prototype = {
    * @return nsIDOMNode
    *         The element associated with the displayed item.
    */
-  insertItemAt: function BCW_insertItemAt(aIndex, aContents) {
+  insertItemAt: function(aIndex, aContents) {
     let list = this._list;
     let breadcrumb = new Breadcrumb(this, aContents);
     return list.insertBefore(breadcrumb._target, list.childNodes[aIndex]);
@@ -85,7 +78,7 @@ BreadcrumbsWidget.prototype = {
    * @return nsIDOMNode
    *         The element associated with the displayed item.
    */
-  getItemAtIndex: function BCW_getItemAtIndex(aIndex) {
+  getItemAtIndex: function(aIndex) {
     return this._list.childNodes[aIndex];
   },
 
@@ -95,7 +88,7 @@ BreadcrumbsWidget.prototype = {
    * @param nsIDOMNode aChild
    *        The element associated with the displayed item.
    */
-  removeChild: function BCW_removeChild(aChild) {
+  removeChild: function(aChild) {
     this._list.removeChild(aChild);
 
     if (this._selectedItem == aChild) {
@@ -106,7 +99,7 @@ BreadcrumbsWidget.prototype = {
   /**
    * Removes all of the child nodes from this container.
    */
-  removeAllItems: function BCW_removeAllItems() {
+  removeAllItems: function() {
     let list = this._list;
 
     while (list.hasChildNodes()) {
@@ -154,7 +147,7 @@ BreadcrumbsWidget.prototype = {
   /**
    * The underflow and overflow listener for the arrowscrollbox container.
    */
-  _onUnderflow: function BCW__onUnderflow({target}) {
+  _onUnderflow: function({ target }) {
     if (target != this._list) {
       return;
     }
@@ -166,7 +159,7 @@ BreadcrumbsWidget.prototype = {
   /**
    * The underflow and overflow listener for the arrowscrollbox container.
    */
-  _onOverflow: function BCW__onOverflow({target}) {
+  _onOverflow: function({ target }) {
     if (target != this._list) {
       return;
     }

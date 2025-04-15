@@ -341,7 +341,9 @@ pid_t gettid()
   return (pid_t) syscall(SYS_thread_selfid);
 }
 
-bool Sampler::RegisterCurrentThread(const char* aName, PseudoStack* aPseudoStack, bool aIsMainThread)
+bool Sampler::RegisterCurrentThread(const char* aName,
+                                    PseudoStack* aPseudoStack,
+                                    bool aIsMainThread, void* stackTop)
 {
   if (!Sampler::sRegisteredThreadsMutex)
     return false;
@@ -351,23 +353,13 @@ bool Sampler::RegisterCurrentThread(const char* aName, PseudoStack* aPseudoStack
   ThreadInfo* info = new ThreadInfo(aName, gettid(),
     aIsMainThread, aPseudoStack);
 
-  bool profileThread = sActiveSampler &&
-    (aIsMainThread || sActiveSampler->ProfileThreads());
-
-  if (profileThread) {
-    // We need to create the ThreadProfile now
-    info->SetProfile(new ThreadProfile(info->Name(),
-                                       sActiveSampler->EntrySize(),
-                                       info->Stack(),
-                                       info->ThreadId(),
-                                       info->GetPlatformData(),
-                                       aIsMainThread));
-    if (sActiveSampler->ProfileJS()) {
-      info->Profile()->GetPseudoStack()->enableJSSampling();
-    }
+  if (sActiveSampler) {
+    sActiveSampler->RegisterThread(info);
   }
 
   sRegisteredThreads->push_back(info);
+
+  uwt__register_thread_for_profiling(stackTop);
   return true;
 }
 

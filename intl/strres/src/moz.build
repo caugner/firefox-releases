@@ -6,3 +6,10 @@
 
 MODULE = 'intl'
 
+CPP_SOURCES += [
+    'nsStringBundle.cpp',
+    'nsStringBundleTextOverride.cpp',
+]
+
+LIBRARY_NAME = 'strres_s'
+

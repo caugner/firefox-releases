@@ -46,6 +46,7 @@ function run_test() {
     return;
   }
 
+  gEnvSKipUpdateDirHashing = true;
   let channel = Services.prefs.getCharPref(PREF_APP_UPDATE_CHANNEL);
   let patches = getLocalPatchString(null, null, null, null, null, "true",
                                     STATE_PENDING);
@@ -205,38 +206,6 @@ function end_test() {
 
   cleanUp();
 }
-
-/**
- * The observer for the call to nsIProcess:runAsync.
- */
-let gProcessObserver = {
-  observe: function PO_observe(subject, topic, data) {
-    logTestInfo("topic " + topic + ", process exitValue " + gProcess.exitValue);
-    if (gAppTimer) {
-      gAppTimer.cancel();
-      gAppTimer = null;
-    }
-    if (topic != "process-finished" || gProcess.exitValue != 0) {
-      do_throw("Failed to launch application");
-    }
-    do_timeout(CHECK_TIMEOUT_MILLI, checkUpdateFinished);
-  },
-  QueryInterface: XPCOMUtils.generateQI([AUS_Ci.nsIObserver])
-};
-
-/**
- * The timer callback to kill the process if it takes too long.
- */
-let gTimerCallback = {
-  notify: function TC_notify(aTimer) {
-    gAppTimer = null;
-    if (gProcess.isRunning) {
-      gProcess.kill();
-    }
-    do_throw("launch application timer expired");
-  },
-  QueryInterface: XPCOMUtils.generateQI([AUS_Ci.nsITimerCallback])
-};
 
 /**
  * Gets the directory where the update adds / removes the files contained in the

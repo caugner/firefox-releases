@@ -97,8 +97,9 @@ LayerManagerComposite::~LayerManagerComposite()
 bool
 LayerManagerComposite::Initialize()
 {
+  bool result = mCompositor->Initialize();
   mComposer2D = mCompositor->GetWidget()->GetComposer2D();
-  return mCompositor->Initialize();
+  return result;
 }
 
 void
@@ -434,7 +435,7 @@ GetRegionArea(const nsIntRegion& aRegion)
 
 #ifdef MOZ_ANDROID_OMTC
 static float
-GetDisplayportCoverage(const gfx::Rect& aDisplayPort,
+GetDisplayportCoverage(const CSSRect& aDisplayPort,
                        const gfx3DMatrix& aTransformToScreen,
                        const nsIntRect& aScreenRect)
 {
@@ -658,6 +659,7 @@ LayerComposite::LayerComposite(LayerManagerComposite *aManager)
   , mCompositor(aManager->GetCompositor())
   , mShadowOpacity(1.0)
   , mUseShadowClipRect(false)
+  , mShadowTransformSetByAnimation(false)
   , mDestroyed(false)
 { }
 

@@ -36,6 +36,7 @@ callback interface TestSingleOperationCallbackInterface {
 };
 
 enum TestEnum {
+  "1",
   "a",
   "b"
 };
@@ -101,6 +102,7 @@ interface OnlyForUseInConstructor {
  Constructor(unsigned long num, boolean? boolArg),
  Constructor(TestInterface? iface),
  Constructor(long arg1, IndirectlyImplementedInterface iface),
+ Constructor(Date arg1),
  // Constructor(long arg1, long arg2, (TestInterface or OnlyForUseInConstructor) arg3),
  NamedConstructor=Test,
  NamedConstructor=Test(DOMString str),
@@ -116,7 +118,9 @@ interface TestInterface {
   void passByte(byte arg);
   byte receiveByte();
   void passOptionalByte(optional byte arg);
+  void passOptionalUndefinedMissingByte([TreatUndefinedAs=Missing] optional byte arg);
   void passOptionalByteWithDefault(optional byte arg = 0);
+  void passOptionalUndefinedMissingByteWithDefault([TreatUndefinedAs=Missing] optional byte arg = 0);
   void passNullableByte(byte? arg);
   void passOptionalNullableByte(optional byte? arg);
   void passVariadicByte(byte... arg);
@@ -334,6 +338,9 @@ interface TestInterface {
   sequence<DOMString> receiveStringSequence();
   void passStringSequence(sequence<DOMString> arg);
 
+  sequence<ByteString> receiveByteStringSequence();
+  void passByteStringSequence(sequence<ByteString> arg);
+
   sequence<any> receiveAnySequence();
   sequence<any>? receiveNullableAnySequence();
   sequence<sequence<any>> receiveAnySequenceSequence();
@@ -362,14 +369,23 @@ interface TestInterface {
   void passFloat64Array(Float64Array arg);
   Uint8Array receiveUint8Array();
 
-  // String types
+  // DOMString types
   void passString(DOMString arg);
   void passNullableString(DOMString? arg);
   void passOptionalString(optional DOMString arg);
+  void passOptionalUndefinedMissingString([TreatUndefinedAs=Missing] optional DOMString arg);
   void passOptionalStringWithDefaultValue(optional DOMString arg = "abc");
+  void passOptionalUndefinedMissingStringWithDefaultValue([TreatUndefinedAs=Missing] optional DOMString arg = "abc");
   void passOptionalNullableString(optional DOMString? arg);
   void passOptionalNullableStringWithDefaultValue(optional DOMString? arg = null);
   void passVariadicString(DOMString... arg);
+
+  // ByteString types
+  void passByteString(ByteString arg);
+  void passNullableByteString(ByteString? arg);
+  void passOptionalByteString(optional ByteString arg);
+  void passOptionalNullableByteString(optional ByteString? arg);
+  void passVariadicByteString(ByteString... arg);
 
   // Enumerated types
   void passEnum(TestEnum arg);

@@ -243,7 +243,6 @@ public: // construction, destruction
   static IDispatch *NativeAccessible(nsIAccessible *aXPAccessible);
 
 protected:
-  virtual nsresult FirePlatformEvent(AccEvent* aEvent);
 
   /**
    * Creates ITypeInfo for LIBID_Accessibility if it's needed and returns it.
@@ -269,7 +268,8 @@ protected:
     NAVRELATION_PARENT_WINDOW_OF = 0x100c,
     NAVRELATION_DEFAULT_BUTTON = 0x100d,
     NAVRELATION_DESCRIBED_BY = 0x100e,
-    NAVRELATION_DESCRIPTION_FOR = 0x100f
+    NAVRELATION_DESCRIPTION_FOR = 0x100f,
+    NAVRELATION_NODE_PARENT_OF = 0x1010
   };
 };
 

@@ -18,7 +18,7 @@
  *     callback - callback that is called when results are available or an error occurs.
  *       The callback is passed a result array containing each found entry. Each element in
  *       the array is an object containing a property for each search term specified by 'terms'.
- * count(terms, queryData, callback)
+ * count(queryData, callback)
  *   Find the number of stored entries that match the given criteria.
  *     queryData - array of objects that indicate the query. See the search method for details.
  *     callback - callback that is called when results are available or an error occurs.
@@ -69,6 +69,11 @@
  *  firstUsedEnd - search for entries created before or at this time
  *  lastUsedStart - search for entries last accessed after or at this time
  *  lastUsedEnd - search for entries last accessed before or at this time
+ *  newGuid - a special case valid only for 'update' and allows the guid for
+ *            an existing record to be updated. The 'guid' term is the only
+ *            other term which can be used (ie, you can not also specify a
+ *            fieldname, value etc) and indicates the guid of the existing
+ *            record that should be updated.
  *
  * In all of the above methods, the callback argument should be an object with
  * handleResult(result), handleFailure(error) and handleCompletion(reason) functions.
@@ -78,7 +83,7 @@
  * an error occurred.
  */
 
-EXPORTED_SYMBOLS = [ "FormHistory" ];
+this.EXPORTED_SYMBOLS = ["FormHistory"];
 
 const Cc = Components.classes;
 const Ci = Components.interfaces;
@@ -206,8 +211,14 @@ const searchFilters = [
 ];
 
 function validateOpData(aData, aDataType) {
+  let thisValidFields = validFields;
+  // A special case to update the GUID - in this case there can be a 'newGuid'
+  // field and of the normally valid fields, only 'guid' is accepted.
+  if (aDataType == "Update" && "newGuid" in aData) {
+    thisValidFields = ["guid", "newGuid"];
+  }
   for (let field in aData) {
-    if (field != "op" && validFields.indexOf(field) == -1) {
+    if (field != "op" && thisValidFields.indexOf(field) == -1) {
       throw Components.Exception(
         aDataType + " query contains an unrecognized field: " + field,
         Cr.NS_ERROR_ILLEGAL_VALUE);
@@ -309,8 +320,8 @@ function makeUpdateStatement(aGuid, aNewData, aBindingArrays) {
                                Cr.NS_ERROR_ILLEGAL_VALUE);
   }
 
-  query += queryTerms + " WHERE guid = :guid";
-  aNewData["guid"] = aGuid;
+  query += queryTerms + " WHERE guid = :existing_guid";
+  aNewData["existing_guid"] = aGuid;
 
   return dbCreateAsyncStatement(query, aNewData, aBindingArrays);
 }
@@ -632,12 +643,18 @@ function updateFormHistoryWrite(aChanges, aCallbacks) {
         if ("timeDeleted" in change)
           delete change.timeDeleted;
         stmt = makeRemoveStatement(change, bindingArrays);
-        notifications.push([ "formhistory-remove", null ]);
+        notifications.push([ "formhistory-remove", change.guid ]);
         break;
       case "update":
         log("Update form history " + change);
         let guid = change.guid;
         delete change.guid;
+        // a special case for updating the GUID - the new value can be
+        // specified in newGuid.
+        if (change.newGuid) {
+          change.guid = change.newGuid
+          delete change.newGuid;
+        }
         stmt = makeUpdateStatement(guid, change, bindingArrays);
         notifications.push([ "formhistory-update", guid ]);
         break;
@@ -754,7 +771,7 @@ function expireOldEntriesVacuum(aExpireTime, aBeginningCount) {
   });
 }
 
-const FormHistory = {
+this.FormHistory = {
   search : function formHistorySearch(aSelectTerms, aSearchData, aCallbacks) {
     // if no terms selected, select everything
     aSelectTerms = (aSelectTerms) ?  aSelectTerms : validFields;
@@ -886,6 +903,7 @@ const FormHistory = {
       }
 
       numSearches++;
+      let changeToUpdate = change;
       FormHistory.search(
         [ "guid" ],
         {
@@ -909,7 +927,7 @@ const FormHistory = {
             }
 
             this.foundResult = true;
-            change.guid = aResult["guid"];
+            changeToUpdate.guid = aResult["guid"];
           },
 
           handleError : function(aError) {

@@ -9,10 +9,7 @@ VPATH           = @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-LIBRARY_NAME      = webvtt
-
 DEFINES += \
-  -DWEBVTT_NO_CONFIG_H=1 \
   -DWEBVTT_STATIC=1 \
   $(NULL)
 

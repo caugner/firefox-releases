@@ -51,18 +51,10 @@
           this.removeEventListener("pageshow", this.onPageShow, true);
           this.removeEventListener("pagehide", this.onPageHide, true);
           this.removeEventListener("DOMPopupBlocked", this.onPopupBlocked, true);
+
+          this.setAttribute("autoscrollpopup", "autoscrollerid");
         ]]>
       </constructor>
-
-      <field name="_securityUI">null</field>
-      <property name="securityUI">
-        <getter><![CDATA[
-          return this._securityUI || {};
-        ]]></getter>
-        <setter><![CDATA[
-          this._securityUI = val;
-        ]]></setter>
-      </property>
 
       <field name="_searchEngines">[]</field>
       <property name="searchEngines"
@@ -134,7 +126,7 @@
         * rectBrowserToClient
         *  Converts a rect (left, top, right, bottom).
         *
-        * @param aMessage - message manager message
+        * @param aRect - rect to convert
         * @param aIgnoreScroll ignore root frame scroll.
         * @param aIgnoreScale ignore current scale factor.
         * @return { left:, top:, right:, bottom: }
@@ -463,10 +455,6 @@
                 }
 
                 let data = this._getIdentityData(SSLStatus);
-                this._browser._securityUI = {
-                  SSLStatus: SSLStatus ? {serverCert: data} : null,
-                  state: json.state
-                }
                 this._browser.updateWindowId(json.contentWindowId);
                 break;
             }
@@ -509,7 +497,11 @@
 
               // Check whether this site is a security exception.
               let currentURI = this._browser.webNavigation._currentURI;
-              result.isException = !!this._overrideService.hasMatchingOverride(currentURI.asciiHost, currentURI.port, cert, {}, {});
+	      if (currentURI) {
+                result.isException = this._overrideService.hasMatchingOverride(currentURI.asciiHost, currentURI.port, cert, {}, {});
+              } else {
+	        result.isException = false;
+	      }
             }
 
             return result;

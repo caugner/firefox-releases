@@ -13,6 +13,7 @@ extern "C"
 {
 #include "ccapi_call.h"
 #include "ccapi_call_info.h"
+#include "fsmdef_states.h"
 }
 
 static const char* logTag = "CC_SIPCCCallInfo";
@@ -54,6 +55,16 @@ CC_LinePtr CC_SIPCCCallInfo::getLine ()
 cc_call_state_t CC_SIPCCCallInfo::getCallState()
 {
     return CCAPI_CallInfo_getCallState(callinfo_ref);
+}
+
+fsmdef_states_t CC_SIPCCCallInfo::getFsmState() const
+{
+    return CCAPI_CallInfo_getFsmState(callinfo_ref);
+}
+
+std::string CC_SIPCCCallInfo::fsmStateToString (fsmdef_states_t state) const
+{
+  return fsmdef_state_name(state);
 }
 
 std::string CC_SIPCCCallInfo::callStateToString (cc_call_state_t state)
@@ -115,11 +126,11 @@ std::string CC_SIPCCCallInfo::callStateToString (cc_call_state_t state)
       case WAITINGFORDIGITS:
         statestr = "WAITINGFORDIGITS";
         break;
-      case CREATEOFFER:
-        statestr = "CREATEOFFER";
+      case CREATEOFFERSUCCESS:
+        statestr = "CREATEOFFERSUCCESS";
         break;
-      case CREATEANSWER:
-        statestr = "CREATEANSWER";
+      case CREATEANSWERSUCCESS:
+        statestr = "CREATEANSWERSUCCESS";
         break;
       case CREATEOFFERERROR:
         statestr = "CREATEOFFERERROR";
@@ -127,11 +138,11 @@ std::string CC_SIPCCCallInfo::callStateToString (cc_call_state_t state)
       case CREATEANSWERERROR:
         statestr = "CREATEANSWERERROR";
         break;
-      case SETLOCALDESC:
-        statestr = "SETLOCALDESC";
+      case SETLOCALDESCSUCCESS:
+        statestr = "SETLOCALDESCSUCCESS";
         break;
-      case SETREMOTEDESC:
-        statestr = "SETREMOTEDESC";
+      case SETREMOTEDESCSUCCESS:
+        statestr = "SETREMOTEDESCSUCCESS";
         break;
       case UPDATELOCALDESC:
         statestr = "UPDATELOCALDESC";

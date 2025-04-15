@@ -6,9 +6,10 @@
 
 XPIDL_SOURCES += [
     'SimToolKit.idl',
-    'nsIDOMICCCardLockErrorEvent.idl',
+    'nsIDOMIccCardLockErrorEvent.idl',
     'nsIDOMIccManager.idl',
     'nsIIccProvider.idl',
+    'nsINavigatorIccManager.idl',
 ]
 
 XPIDL_MODULE = 'dom_icc'

@@ -13,3 +13,15 @@ EXPORTS += [
 EXPORTS.mozilla.dom += [
     'ImageDocument.h',
 ]
+
+CPP_SOURCES += [
+    'ImageDocument.cpp',
+    'MediaDocument.cpp',
+    'PluginDocument.cpp',
+    'VideoDocument.cpp',
+    'nsHTMLContentSink.cpp',
+    'nsHTMLDocument.cpp',
+]
+
+LIBRARY_NAME = 'gkconhtmldoc_s'
+

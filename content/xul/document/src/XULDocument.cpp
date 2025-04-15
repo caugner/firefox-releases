@@ -324,17 +324,11 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(XULDocument, XMLDocument)
     // document, so we'll traverse the table here instead of from the element.
     if (tmp->mTemplateBuilderTable)
         tmp->mTemplateBuilderTable->EnumerateRead(TraverseTemplateBuilders, &cb);
-        
+
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCurrentPrototype)
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMasterPrototype)
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCommandDispatcher)
-
-    uint32_t i, count = tmp->mPrototypes.Length();
-    for (i = 0; i < count; ++i) {
-        NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mPrototypes[i]");
-        cb.NoteXPCOMChild(static_cast<nsIScriptGlobalObjectOwner*>(tmp->mPrototypes[i]));
-    }
-
+    NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPrototypes);
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLocalStore)
 
     if (tmp->mOverlayLoadObservers.IsInitialized())
@@ -357,14 +351,10 @@ NS_IMPL_RELEASE_INHERITED(XULDocument, XMLDocument)
 
 // QueryInterface implementation for XULDocument
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(XULDocument)
-    NS_DOCUMENT_INTERFACE_TABLE_BEGIN(XULDocument)
-      NS_INTERFACE_TABLE_ENTRY(XULDocument, nsIXULDocument)
-      NS_INTERFACE_TABLE_ENTRY(XULDocument, nsIDOMXULDocument)
-      NS_INTERFACE_TABLE_ENTRY(XULDocument, nsIStreamLoaderObserver)
-      NS_INTERFACE_TABLE_ENTRY(XULDocument, nsICSSLoaderObserver)
-    NS_OFFSET_AND_INTERFACE_TABLE_END
-    NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
-NS_INTERFACE_MAP_END_INHERITING(XMLDocument)
+    NS_INTERFACE_TABLE_INHERITED4(XULDocument, nsIXULDocument,
+                                  nsIDOMXULDocument, nsIStreamLoaderObserver,
+                                  nsICSSLoaderObserver)
+NS_INTERFACE_TABLE_TAIL_INHERITING(XMLDocument)
 
 
 //----------------------------------------------------------------------
@@ -1218,13 +1208,6 @@ XULDocument::ResolveForwardReferences()
     }
 
     mForwardReferences.Clear();
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-XULDocument::GetScriptGlobalObjectOwner(nsIScriptGlobalObjectOwner** aGlobalOwner)
-{
-    NS_IF_ADDREF(*aGlobalOwner = mMasterPrototype);
     return NS_OK;
 }
 
@@ -3548,7 +3531,8 @@ XULDocument::OnStreamComplete(nsIStreamLoader* aLoader,
                                             EmptyString(), this, stringStr);
         if (NS_SUCCEEDED(rv)) {
             rv = scriptProto->Compile(stringStr.get(), stringStr.Length(),
-                                      uri, 1, this, mCurrentPrototype);
+                                      uri, 1, this,
+                                      mCurrentPrototype->GetScriptGlobalObject());
         }
 
         aStatus = rv;
@@ -3644,7 +3628,8 @@ XULDocument::OnStreamComplete(nsIStreamLoader* aLoader,
 
 
 nsresult
-XULDocument::ExecuteScript(nsIScriptContext * aContext, JSScript* aScriptObject)
+XULDocument::ExecuteScript(nsIScriptContext * aContext,
+                           JS::Handle<JSScript*> aScriptObject)
 {
     NS_PRECONDITION(aScriptObject != nullptr && aContext != nullptr, "null ptr");
     if (! aScriptObject || ! aContext)

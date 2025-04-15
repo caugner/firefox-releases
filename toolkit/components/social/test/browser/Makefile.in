@@ -10,6 +10,9 @@ relativesrcdir  = @relativesrcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
+ifdef MOZ_SOCIAL
+# social is turned off for android
+
 MOCHITEST_BROWSER_FILES = \
   head.js \
   data.json \
@@ -25,5 +28,7 @@ MOCHITEST_BROWSER_FILES = \
   eventsource.resource \
   eventsource.resource^headers^ \
   $(NULL)
+
+endif
 
 include $(topsrcdir)/config/rules.mk

@@ -122,11 +122,14 @@ public:
   bool AppendFontFaceRules(nsPresContext* aPresContext,
                            nsTArray<nsFontFaceRuleContainer>& aArray);
 
-  bool AppendKeyframesRules(nsPresContext* aPresContext,
-                            nsTArray<nsCSSKeyframesRule*>& aArray);
+  nsCSSKeyframesRule* KeyframesRuleForName(nsPresContext* aPresContext,
+                                           const nsString& aName);
 
   bool AppendPageRules(nsPresContext* aPresContext,
                        nsTArray<nsCSSPageRule*>& aArray);
+
+  bool AppendFontFeatureValuesRules(nsPresContext* aPresContext,
+                              nsTArray<nsCSSFontFeatureValuesRule*>& aArray);
 
   /**
    * Returns the scope element for the scoped style sheets this rule

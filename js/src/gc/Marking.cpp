@@ -4,19 +4,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "gc/Marking.h"
+
 #include "mozilla/DebugOnly.h"
 
-#include "jsprf.h"
-#include "jsstr.h"
-
-#include "gc/Marking.h"
-#include "gc/Nursery-inl.h"
-#include "methodjit/MethodJIT.h"
+#include "jit/IonCode.h"
 #include "vm/Shape.h"
 
-#include "jsobjinlines.h"
+#include "jscompartmentinlines.h"
 
-#include "ion/IonCode.h"
+#include "gc/Nursery-inl.h"
 #include "vm/Shape-inl.h"
 #include "vm/String-inl.h"
 
@@ -82,10 +79,11 @@ namespace gc {
 
 static void MarkChildren(JSTracer *trc, JSString *str);
 static void MarkChildren(JSTracer *trc, JSScript *script);
+static void MarkChildren(JSTracer *trc, LazyScript *lazy);
 static void MarkChildren(JSTracer *trc, Shape *shape);
 static void MarkChildren(JSTracer *trc, BaseShape *base);
 static void MarkChildren(JSTracer *trc, types::TypeObject *type);
-static void MarkChildren(JSTracer *trc, ion::IonCode *code);
+static void MarkChildren(JSTracer *trc, jit::IonCode *code);
 
 } /* namespace gc */
 } /* namespace js */
@@ -352,7 +350,7 @@ Is##base##AboutToBeFinalized(EncapsulatedPtr<type> *thingp)                     
 
 DeclMarkerImpl(BaseShape, BaseShape)
 DeclMarkerImpl(BaseShape, UnownedBaseShape)
-DeclMarkerImpl(IonCode, ion::IonCode)
+DeclMarkerImpl(IonCode, jit::IonCode)
 DeclMarkerImpl(Object, ArgumentsObject)
 DeclMarkerImpl(Object, ArrayBufferObject)
 DeclMarkerImpl(Object, DebugScopeObject)
@@ -361,6 +359,7 @@ DeclMarkerImpl(Object, JSObject)
 DeclMarkerImpl(Object, JSFunction)
 DeclMarkerImpl(Object, ScopeObject)
 DeclMarkerImpl(Script, JSScript)
+DeclMarkerImpl(LazyScript, LazyScript)
 DeclMarkerImpl(Shape, Shape)
 DeclMarkerImpl(String, JSAtom)
 DeclMarkerImpl(String, JSString)
@@ -391,6 +390,9 @@ gc::MarkKind(JSTracer *trc, void **thingp, JSGCTraceKind kind)
       case JSTRACE_SCRIPT:
         MarkInternal(trc, reinterpret_cast<JSScript **>(thingp));
         break;
+      case JSTRACE_LAZY_SCRIPT:
+        MarkInternal(trc, reinterpret_cast<LazyScript **>(thingp));
+        break;
       case JSTRACE_SHAPE:
         MarkInternal(trc, reinterpret_cast<Shape **>(thingp));
         break;
@@ -401,7 +403,7 @@ gc::MarkKind(JSTracer *trc, void **thingp, JSGCTraceKind kind)
         MarkInternal(trc, reinterpret_cast<types::TypeObject **>(thingp));
         break;
       case JSTRACE_IONCODE:
-        MarkInternal(trc, reinterpret_cast<ion::IonCode **>(thingp));
+        MarkInternal(trc, reinterpret_cast<jit::IonCode **>(thingp));
         break;
     }
 }
@@ -511,24 +513,6 @@ MarkValueInternal(JSTracer *trc, Value *v)
     }
 }
 
-static inline void
-MarkValueInternalMaybeNullPayload(JSTracer *trc, Value *v)
-{
-    if (v->isMarkable()) {
-        void *thing = v->toGCThing();
-        if (thing) {
-            JS_SET_TRACING_LOCATION(trc, (void *)v);
-            MarkKind(trc, &thing, v->gcKind());
-            if (v->isString())
-                v->setString((JSString *)thing);
-            else
-                v->setObjectOrNull((JSObject *)thing);
-            return;
-        }
-    }
-    JS_UNSET_TRACING_LOCATION(trc);
-}
-
 void
 gc::MarkValue(JSTracer *trc, EncapsulatedValue *v, const char *name)
 {
@@ -576,16 +560,6 @@ gc::MarkValueRootRange(JSTracer *trc, size_t len, Value *vec, const char *name)
     for (size_t i = 0; i < len; ++i) {
         JS_SET_TRACING_INDEX(trc, name, i);
         MarkValueInternal(trc, &vec[i]);
-    }
-}
-
-void
-gc::MarkValueRootRangeMaybeNullPayload(JSTracer *trc, size_t len, Value *vec, const char *name)
-{
-    JS_ROOT_MARKING_ASSERT(trc);
-    for (size_t i = 0; i < len; ++i) {
-        JS_SET_TRACING_INDEX(trc, name, i);
-        MarkValueInternalMaybeNullPayload(trc, &vec[i]);
     }
 }
 
@@ -794,6 +768,20 @@ PushMarkStack(GCMarker *gcmarker, JSScript *thing)
 }
 
 static void
+PushMarkStack(GCMarker *gcmarker, LazyScript *thing)
+{
+    JS_COMPARTMENT_ASSERT(gcmarker->runtime, thing);
+    JS_ASSERT(!IsInsideNursery(thing->runtime(), thing));
+
+    /*
+     * We mark lazy scripts directly rather than pushing on the stack as they
+     * only refer to normal scripts and to strings, and cannot recurse.
+     */
+    if (thing->markIfUnmarked(gcmarker->getMarkColor()))
+        MarkChildren(gcmarker, thing);
+}
+
+static void
 ScanShape(GCMarker *gcmarker, Shape *shape);
 
 static void
@@ -808,7 +796,7 @@ PushMarkStack(GCMarker *gcmarker, Shape *thing)
 }
 
 static void
-PushMarkStack(GCMarker *gcmarker, ion::IonCode *thing)
+PushMarkStack(GCMarker *gcmarker, jit::IonCode *thing)
 {
     JS_COMPARTMENT_ASSERT(gcmarker->runtime, thing);
     JS_ASSERT(!IsInsideNursery(thing->runtime(), thing));
@@ -866,6 +854,9 @@ ScanBaseShape(GCMarker *gcmarker, BaseShape *base)
     } else if (GlobalObject *global = base->compartment()->maybeGlobal()) {
         PushMarkStack(gcmarker, global);
     }
+
+    if (JSObject *metadata = base->getObjectMetadata())
+        PushMarkStack(gcmarker, metadata);
 
     /*
      * All children of the owned base shape are consistent with its
@@ -999,6 +990,12 @@ gc::MarkChildren(JSTracer *trc, JSScript *script)
 }
 
 static void
+gc::MarkChildren(JSTracer *trc, LazyScript *lazy)
+{
+    lazy->markChildren(trc);
+}
+
+static void
 gc::MarkChildren(JSTracer *trc, Shape *shape)
 {
     shape->markChildren(trc);
@@ -1123,7 +1120,7 @@ gc::MarkChildren(JSTracer *trc, types::TypeObject *type)
 }
 
 static void
-gc::MarkChildren(JSTracer *trc, ion::IonCode *code)
+gc::MarkChildren(JSTracer *trc, jit::IonCode *code)
 {
 #ifdef JS_ION
     code->trace(trc);
@@ -1154,6 +1151,10 @@ gc::PushArena(GCMarker *gcmarker, ArenaHeader *aheader)
         PushArenaTyped<JSScript>(gcmarker, aheader);
         break;
 
+      case JSTRACE_LAZY_SCRIPT:
+        PushArenaTyped<LazyScript>(gcmarker, aheader);
+        break;
+
       case JSTRACE_SHAPE:
         PushArenaTyped<js::Shape>(gcmarker, aheader);
         break;
@@ -1167,7 +1168,7 @@ gc::PushArena(GCMarker *gcmarker, ArenaHeader *aheader)
         break;
 
       case JSTRACE_IONCODE:
-        PushArenaTyped<js::ion::IonCode>(gcmarker, aheader);
+        PushArenaTyped<js::jit::IonCode>(gcmarker, aheader);
         break;
     }
 }
@@ -1176,7 +1177,7 @@ struct SlotArrayLayout
 {
     union {
         HeapSlot *end;
-        HeapSlot::Kind kind;
+        uintptr_t kind;
     };
     union {
         HeapSlot *start;
@@ -1293,7 +1294,7 @@ GCMarker::processMarkStackOther(SliceBudget &budget, uintptr_t tag, uintptr_t ad
         else
             pushObject(obj);
     } else if (tag == IonCodeTag) {
-        MarkChildren(this, reinterpret_cast<ion::IonCode *>(addr));
+        MarkChildren(this, reinterpret_cast<jit::IonCode *>(addr));
     } else if (tag == ArenaTag) {
         ArenaHeader *aheader = reinterpret_cast<ArenaHeader *>(addr);
         AllocKind thingKind = aheader->getAllocKind();
@@ -1502,12 +1503,16 @@ js::TraceChildren(JSTracer *trc, void *thing, JSGCTraceKind kind)
         MarkChildren(trc, static_cast<JSScript *>(thing));
         break;
 
+      case JSTRACE_LAZY_SCRIPT:
+        MarkChildren(trc, static_cast<LazyScript *>(thing));
+        break;
+
       case JSTRACE_SHAPE:
         MarkChildren(trc, static_cast<Shape *>(thing));
         break;
 
       case JSTRACE_IONCODE:
-        MarkChildren(trc, (js::ion::IonCode *)thing);
+        MarkChildren(trc, (js::jit::IonCode *)thing);
         break;
 
       case JSTRACE_BASE_SHAPE:

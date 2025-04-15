@@ -6,3 +6,9 @@
 
 MODULE = 'imgbmpe'
 
+CPP_SOURCES += [
+    'nsBMPEncoder.cpp',
+]
+
+LIBRARY_NAME = 'imgbmpe_s'
+

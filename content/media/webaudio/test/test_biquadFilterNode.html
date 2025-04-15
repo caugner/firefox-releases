@@ -16,8 +16,6 @@ function near(a, b, msg) {
 
 SimpleTest.waitForExplicitFinish();
 addLoadEvent(function() {
-  SpecialPowers.setBoolPref("media.webaudio.enabled", true);
-
   var context = new AudioContext();
   var buffer = context.createBuffer(1, 2048, context.sampleRate);
   for (var i = 0; i < 2048; ++i) {
@@ -57,6 +55,8 @@ addLoadEvent(function() {
     "allpass",
   ];
   for (var i = 0; i < types.length; ++i) {
+    filter.type = filter[types[i].toUpperCase()];
+    is(filter.type, types[i], "Correct alternname type enum value");
     filter.type = types[i];
   }
 
@@ -66,7 +66,6 @@ addLoadEvent(function() {
     source.disconnect();
     filter.disconnect();
 
-    SpecialPowers.clearUserPref("media.webaudio.enabled");
     SimpleTest.finish();
   });
 });

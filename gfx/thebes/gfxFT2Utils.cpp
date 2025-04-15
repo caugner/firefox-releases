@@ -117,10 +117,12 @@ gfxFT2LockedFace::GetMetrics(gfxFont::Metrics* aMetrics,
 
         // maxAscent/maxDescent get used for frame heights, and some fonts
         // don't have the HHEA table ascent/descent set (bug 279032).
-        if (aMetrics->emAscent > aMetrics->maxAscent)
-            aMetrics->maxAscent = aMetrics->emAscent;
-        if (aMetrics->emDescent > aMetrics->maxDescent)
-            aMetrics->maxDescent = aMetrics->emDescent;
+        // We use NS_round here to parallel the pixel-rounded values that
+        // freetype gives us for ftMetrics.ascender/descender.
+        aMetrics->maxAscent =
+            std::max(aMetrics->maxAscent, NS_round(aMetrics->emAscent));
+        aMetrics->maxDescent =
+            std::max(aMetrics->maxDescent, NS_round(aMetrics->emDescent));
     } else {
         aMetrics->emAscent = aMetrics->maxAscent;
         aMetrics->emDescent = aMetrics->maxDescent;
@@ -316,31 +318,6 @@ gfxFT2LockedFace::GetUVSGlyph(uint32_t aCharCode, uint32_t aVariantSelector)
 #endif
 
     return (*sGetCharVariantPtr)(mFace, aCharCode, aVariantSelector);
-}
-
-bool
-gfxFT2LockedFace::GetFontTable(uint32_t aTag, FallibleTArray<uint8_t>& aBuffer)
-{
-    if (!mFace || !FT_IS_SFNT(mFace))
-        return false;
-
-    FT_ULong length = 0;
-    // TRUETYPE_TAG is defined equivalent to FT_MAKE_TAG
-    FT_Error error = FT_Load_Sfnt_Table(mFace, aTag, 0, NULL, &length);
-    if (error != 0)
-        return false;
-
-    if (MOZ_UNLIKELY(length > static_cast<FallibleTArray<uint8_t>::size_type>(-1))
-        || MOZ_UNLIKELY(!aBuffer.SetLength(length)))
-        return false;
-        
-    error = FT_Load_Sfnt_Table(mFace, aTag, 0, aBuffer.Elements(), &length);
-    if (MOZ_UNLIKELY(error != 0)) {
-        aBuffer.Clear();
-        return false;
-    }
-
-    return true;
 }
 
 uint32_t

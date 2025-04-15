@@ -25,42 +25,7 @@ NS_IMPL_RELEASE_INHERITED(DelayNode, AudioNode)
 
 class DelayNodeEngine : public AudioNodeEngine
 {
-  class PlayingRefChanged : public nsRunnable
-  {
-  public:
-    enum ChangeType { ADDREF, RELEASE };
-    PlayingRefChanged(AudioNodeStream* aStream, ChangeType aChange)
-      : mStream(aStream)
-      , mChange(aChange)
-    {
-    }
-
-    NS_IMETHOD Run()
-    {
-      nsRefPtr<DelayNode> node;
-      {
-        // No need to keep holding the lock for the whole duration of this
-        // function, since we're holding a strong reference to it, so if
-        // we can obtain the reference, we will hold the node alive in
-        // this function.
-        MutexAutoLock lock(mStream->Engine()->NodeMutex());
-        node = static_cast<DelayNode*>(mStream->Engine()->Node());
-      }
-      if (node) {
-        if (mChange == ADDREF) {
-          node->mPlayingRef.Take(node);
-        } else if (mChange == RELEASE) {
-          node->mPlayingRef.Drop(node);
-        }
-      }
-      return NS_OK;
-    }
-
-  private:
-    nsRefPtr<AudioNodeStream> mStream;
-    ChangeType mChange;
-  };
-
+  typedef PlayingRefChangeHandler<DelayNode> PlayingRefChanged;
 public:
   DelayNodeEngine(AudioNode* aNode, AudioDestinationNode* aDestination)
     : AudioNodeEngine(aNode)
@@ -84,7 +49,9 @@ public:
     DELAY,
     MAX_DELAY
   };
-  void SetTimelineParameter(uint32_t aIndex, const AudioParamTimeline& aValue) MOZ_OVERRIDE
+  void SetTimelineParameter(uint32_t aIndex,
+                            const AudioParamTimeline& aValue,
+                            TrackRate aSampleRate) MOZ_OVERRIDE
   {
     switch (aIndex) {
     case DELAY:
@@ -105,7 +72,7 @@ public:
     }
   }
 
-  bool EnsureBuffer(uint32_t aNumberOfChannels)
+  bool EnsureBuffer(uint32_t aNumberOfChannels, TrackRate aSampleRate)
   {
     if (aNumberOfChannels == 0) {
       return false;
@@ -114,7 +81,7 @@ public:
       if (!mBuffer.SetLength(aNumberOfChannels)) {
         return false;
       }
-      const int32_t numFrames = NS_lround(mMaxDelay) * IdealAudioRate();
+      const int32_t numFrames = ceil(mMaxDelay * aSampleRate);
       for (uint32_t channel = 0; channel < aNumberOfChannels; ++channel) {
         if (!mBuffer[channel].SetLength(numFrames)) {
           return false;
@@ -144,15 +111,20 @@ public:
     if (!mBuffer.IsEmpty() &&
         mLeftOverData == INT32_MIN &&
         aStream->AllInputsFinished()) {
-      mLeftOverData = static_cast<int32_t>(mCurrentDelayTime * IdealAudioRate());
+      mLeftOverData = static_cast<int32_t>(mCurrentDelayTime * aStream->SampleRate()) - WEBAUDIO_BLOCK_SIZE;
 
-      nsRefPtr<PlayingRefChanged> refchanged =
-        new PlayingRefChanged(aStream, PlayingRefChanged::ADDREF);
-      NS_DispatchToMainThread(refchanged);
+      if (mLeftOverData > 0) {
+        nsRefPtr<PlayingRefChanged> refchanged =
+          new PlayingRefChanged(aStream, PlayingRefChanged::ADDREF);
+        NS_DispatchToMainThread(refchanged);
+      }
     } else if (mLeftOverData != INT32_MIN) {
       mLeftOverData -= WEBAUDIO_BLOCK_SIZE;
       if (mLeftOverData <= 0) {
-        mLeftOverData = INT32_MIN;
+        // Continue spamming the main thread with messages until we are destroyed.
+        // This isn't great, but it ensures a message will get through even if
+        // some are ignored by DelayNode::AcceptPlayingRefRelease
+        mLeftOverData = 0;
         playedBackAllLeftOvers = true;
 
         nsRefPtr<PlayingRefChanged> refchanged =
@@ -161,7 +133,7 @@ public:
       }
     }
 
-    if (!EnsureBuffer(numChannels)) {
+    if (!EnsureBuffer(numChannels, aStream->SampleRate())) {
       aOutput->SetNull(0);
       return;
     }
@@ -169,9 +141,9 @@ public:
     AllocateAudioBlock(numChannels, aOutput);
 
     double delayTime = 0;
-    float computedDelay[WEBAUDIO_BLOCK_SIZE];
+    double computedDelay[WEBAUDIO_BLOCK_SIZE];
     // Use a smoothing range of 20ms
-    const double smoothingRate = WebAudioUtils::ComputeSmoothingRate(0.02, IdealAudioRate());
+    const double smoothingRate = WebAudioUtils::ComputeSmoothingRate(0.02, aStream->SampleRate());
 
     if (mDelay.HasSimpleValue()) {
       delayTime = std::max(0.0, std::min(mMaxDelay, double(mDelay.GetValue())));
@@ -215,7 +187,7 @@ public:
         // from currentDelayTime seconds in the past.  We also interpolate the two input
         // frames in case the read position does not match an integer index.
         double readPosition = writeIndex + bufferLength -
-                              (currentDelayTime * IdealAudioRate());
+                              (currentDelayTime * aStream->SampleRate());
         if (readPosition >= bufferLength) {
           readPosition -= bufferLength;
         }
@@ -275,6 +247,7 @@ DelayNode::DelayNode(AudioContext* aContext, double aMaxDelay)
               2,
               ChannelCountMode::Max,
               ChannelInterpretation::Speakers)
+  , mMediaStreamGraphUpdateIndexAtLastInputConnection(0)
   , mDelay(new AudioParam(this, SendDelayToStream, 0.0f))
 {
   DelayNodeEngine* engine = new DelayNodeEngine(this, aContext->Destination());

@@ -32,6 +32,7 @@
 #include "platform.h"
 #include "TableTicker.h"
 #include "ProfileEntry.h"
+#include "UnwinderThread2.h"
 
 class PlatformData : public Malloced {
  public:
@@ -261,7 +262,9 @@ void OS::Sleep(int milliseconds) {
   ::Sleep(milliseconds);
 }
 
-bool Sampler::RegisterCurrentThread(const char* aName, PseudoStack* aPseudoStack, bool aIsMainThread)
+bool Sampler::RegisterCurrentThread(const char* aName,
+                                    PseudoStack* aPseudoStack,
+                                    bool aIsMainThread, void* stackTop)
 {
   if (!Sampler::sRegisteredThreadsMutex)
     return false;
@@ -271,23 +274,13 @@ bool Sampler::RegisterCurrentThread(const char* aName, PseudoStack* aPseudoStack
   ThreadInfo* info = new ThreadInfo(aName, GetCurrentThreadId(),
     aIsMainThread, aPseudoStack);
 
-  bool profileThread = sActiveSampler &&
-    (aIsMainThread || sActiveSampler->ProfileThreads());
-
-  if (profileThread) {
-    // We need to create the ThreadProfile now
-    info->SetProfile(new ThreadProfile(info->Name(),
-                                       sActiveSampler->EntrySize(),
-                                       info->Stack(),
-                                       GetCurrentThreadId(),
-                                       info->GetPlatformData(),
-                                       aIsMainThread));
-    if (sActiveSampler->ProfileJS()) {
-      info->Profile()->GetPseudoStack()->enableJSSampling();
-    }
+  if (sActiveSampler) {
+    sActiveSampler->RegisterThread(info);
   }
 
   sRegisteredThreads->push_back(info);
+
+  uwt__register_thread_for_profiling(stackTop);
   return true;
 }
 

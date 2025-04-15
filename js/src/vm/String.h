@@ -4,15 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef String_h_
-#define String_h_
+#ifndef vm_String_h
+#define vm_String_h
 
-#include "mozilla/Attributes.h"
-#include "mozilla/GuardObjects.h"
 #include "mozilla/PodOperations.h"
 
 #include "jsapi.h"
-#include "jsatom.h"
 #include "jsfriendapi.h"
 #include "jsstr.h"
 
@@ -269,6 +266,7 @@ class JSString : public js::gc::Cell
 
     inline const jschar *getChars(JSContext *cx);
     inline const jschar *getCharsZ(JSContext *cx);
+    inline bool getChar(JSContext *cx, size_t index, jschar *code);
 
     /* Fallible conversions to more-derived string types. */
 
@@ -621,7 +619,7 @@ class Rooted<JSStableString *>
 
     Rooted & operator =(JSStableString *value)
     {
-        JS_ASSERT(!js::RootMethods<JSStableString *>::poisoned(value));
+        JS_ASSERT(!js::GCMethods<JSStableString *>::poisoned(value));
         rooter.setString(value);
         return *this;
     }
@@ -891,6 +889,40 @@ JSString::getChars(JSContext *cx)
     return NULL;
 }
 
+JS_ALWAYS_INLINE bool
+JSString::getChar(JSContext *cx, size_t index, jschar *code)
+{
+    JS_ASSERT(index < length());
+
+    /*
+     * Optimization for one level deep ropes.
+     * This is common for the following pattern:
+     *
+     * while() {
+     *   text = text.substr(0, x) + "bla" + text.substr(x)
+     *   test.charCodeAt(x + 1)
+     * }
+     */
+    const jschar *chars;
+    if (isRope()) {
+        JSRope *rope = &asRope();
+        if (uint32_t(index) < rope->leftChild()->length()) {
+            chars = rope->leftChild()->getChars(cx);
+        } else {
+            chars = rope->rightChild()->getChars(cx);
+            index -= rope->leftChild()->length();
+        }
+    } else {
+        chars = getChars(cx);
+    }
+
+    if (!chars)
+        return false;
+
+    *code = chars[index];
+    return true;
+}
+
 JS_ALWAYS_INLINE const jschar *
 JSString::getCharsZ(JSContext *cx)
 {
@@ -960,4 +992,4 @@ JSAtom::asPropertyName()
     return static_cast<js::PropertyName *>(this);
 }
 
-#endif
+#endif /* vm_String_h */

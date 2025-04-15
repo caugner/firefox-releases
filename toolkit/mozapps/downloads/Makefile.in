@@ -10,8 +10,7 @@ VPATH     = @srcdir@
 
 include $(topsrcdir)/config/config.mk
 
-EXTRA_COMPONENTS = nsHelperAppDlg.manifest
-EXTRA_PP_COMPONENTS = nsHelperAppDlg.js
+DISABLED_EXTRA_COMPONENTS = nsHelperAppDlg.manifest
 
 EXTRA_JS_MODULES = \
   DownloadLastDir.jsm \

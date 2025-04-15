@@ -136,10 +136,9 @@ class ShadowLayerForwarder : public CompositableForwarder
 {
   friend class AutoOpenSurface;
   friend class TextureClientShmem;
+  friend class ContentClientIncremental;
 
 public:
-  typedef gfxASurface::gfxContentType gfxContentType;
-
   virtual ~ShadowLayerForwarder();
 
   /**
@@ -152,6 +151,9 @@ public:
                                    const SurfaceDescriptor& aDescriptor,
                                    const TextureInfo& aTextureInfo,
                                    const SurfaceDescriptor* aDescriptorOnWhite = nullptr) MOZ_OVERRIDE;
+  virtual void CreatedIncrementalBuffer(CompositableClient* aCompositable,
+                                        const TextureInfo& aTextureInfo,
+                                        const nsIntRect& aBufferRect) MOZ_OVERRIDE;
   virtual void CreatedDoubleBuffer(CompositableClient* aCompositable,
                                    const SurfaceDescriptor& aFrontDescriptor,
                                    const SurfaceDescriptor& aBackDescriptor,
@@ -288,6 +290,13 @@ public:
                                    const ThebesBufferData& aThebesBufferData,
                                    const nsIntRegion& aUpdatedRegion) MOZ_OVERRIDE;
 
+  virtual void UpdateTextureIncremental(CompositableClient* aCompositable,
+                                        TextureIdentifier aTextureId,
+                                        SurfaceDescriptor& aDescriptor,
+                                        const nsIntRegion& aUpdatedRegion,
+                                        const nsIntRect& aBufferRect,
+                                        const nsIntPoint& aBufferRotation) MOZ_OVERRIDE;
+
   /**
    * Communicate the picture rect of an image to the compositor
    */
@@ -314,6 +323,8 @@ public:
    */
   bool HasShadowManager() const { return !!mShadowManager; }
   PLayerTransactionChild* GetShadowManager() const { return mShadowManager; }
+
+  virtual void WindowOverlayChanged() { mWindowOverlayChanged = true; }
 
   /**
    * The following Alloc/Open/Destroy interfaces abstract over the
@@ -379,8 +390,10 @@ protected:
   PLayerTransactionChild* mShadowManager;
 
 #ifdef MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
+  // from ISurfaceAllocator
   virtual PGrallocBufferChild* AllocGrallocBuffer(const gfxIntSize& aSize,
-                                                  gfxASurface::gfxContentType aContent,
+                                                  uint32_t aFormat,
+                                                  uint32_t aUsage,
                                                   MaybeMagicGrallocBufferHandle* aHandle) MOZ_OVERRIDE;
 #endif
 
@@ -433,6 +446,7 @@ private:
 
   bool mIsFirstPaint;
   bool mDrawColoredBorders;
+  bool mWindowOverlayChanged;
 };
 
 class CompositableClient;

@@ -6,3 +6,9 @@
 
 MODULE = 'omxpluginsony'
 
+CPP_SOURCES += [
+    'OmxPluginSony.cpp',
+]
+
+LIBRARY_NAME = 'omxpluginsony'
+

@@ -27,8 +27,8 @@ class AutoResolveRefLayers;
 
 // Represents (affine) transforms that are calculated from a content view.
 struct ViewTransform {
-  ViewTransform(gfxPoint aTranslation = gfxPoint(),
-                gfxSize aScale = gfxSize(1, 1))
+  ViewTransform(LayerPoint aTranslation = LayerPoint(),
+                LayoutDeviceToScreenScale aScale = LayoutDeviceToScreenScale())
     : mTranslation(aTranslation)
     , mScale(aScale)
   {}
@@ -36,12 +36,12 @@ struct ViewTransform {
   operator gfx3DMatrix() const
   {
     return
-      gfx3DMatrix::ScalingMatrix(mScale.width, mScale.height, 1) *
-      gfx3DMatrix::Translation(mTranslation.x, mTranslation.y, 0);
+      gfx3DMatrix::Translation(mTranslation.x, mTranslation.y, 0) *
+      gfx3DMatrix::ScalingMatrix(mScale.scale, mScale.scale, 1);
   }
 
-  gfxPoint mTranslation;
-  gfxSize mScale;
+  LayerPoint mTranslation;
+  LayoutDeviceToScreenScale mScale;
 };
 
 /**
@@ -57,9 +57,7 @@ class AsyncCompositionManager MOZ_FINAL : public RefCounted<AsyncCompositionMana
   friend class AutoResolveRefLayers;
 public:
   AsyncCompositionManager(LayerManagerComposite* aManager)
-    : mXScale(1.0)
-    , mYScale(1.0)
-    , mLayerManager(aManager)
+    : mLayerManager(aManager)
     , mIsFirstPaint(false)
     , mLayersUpdated(false)
     , mReadyForCompose(true)
@@ -108,8 +106,6 @@ public:
   // particular document.
   bool IsFirstPaint() { return mIsFirstPaint; }
 
-  void SetTransformation(float aScale, const nsIntPoint& aScrollOffset);
-
 private:
   void TransformScrollableLayer(Layer* aLayer, const gfx3DMatrix& aRootTransform);
   // Return true if an AsyncPanZoomController content transform was
@@ -118,27 +114,26 @@ private:
   bool ApplyAsyncContentTransformToTree(TimeStamp aCurrentFrame, Layer* aLayer,
                                         bool* aWantNextFrame);
 
-  void SetFirstPaintViewport(const nsIntPoint& aOffset,
-                             float aZoom,
-                             const nsIntRect& aPageRect,
-                             const gfx::Rect& aCssPageRect);
-  void SetPageRect(const gfx::Rect& aCssPageRect);
-  void SyncViewportInfo(const nsIntRect& aDisplayPort,
-                        float aDisplayResolution,
+  void SetFirstPaintViewport(const LayerIntPoint& aOffset,
+                             const CSSToLayerScale& aZoom,
+                             const CSSRect& aCssPageRect);
+  void SetPageRect(const CSSRect& aCssPageRect);
+  void SyncViewportInfo(const LayerIntRect& aDisplayPort,
+                        const CSSToLayerScale& aDisplayResolution,
                         bool aLayersUpdated,
-                        nsIntPoint& aScrollOffset,
-                        float& aScaleX, float& aScaleY,
+                        ScreenPoint& aScrollOffset,
+                        CSSToScreenScale& aScale,
                         gfx::Margin& aFixedLayerMargins,
-                        gfx::Point& aOffset);
-  void SyncFrameMetrics(const gfx::Point& aScrollOffset,
+                        ScreenPoint& aOffset);
+  void SyncFrameMetrics(const ScreenPoint& aScrollOffset,
                         float aZoom,
-                        const gfx::Rect& aCssPageRect,
+                        const CSSRect& aCssPageRect,
                         bool aLayersUpdated,
-                        const gfx::Rect& aDisplayPort,
-                        float aDisplayResolution,
+                        const CSSRect& aDisplayPort,
+                        const CSSToLayerScale& aDisplayResolution,
                         bool aIsFirstPaint,
                         gfx::Margin& aFixedLayerMargins,
-                        gfx::Point& aOffset);
+                        ScreenPoint& aOffset);
 
   /**
    * Recursively applies the given translation to all top-level fixed position
@@ -167,10 +162,7 @@ private:
   void DetachRefLayers();
 
   TargetConfig mTargetConfig;
-  float mXScale;
-  float mYScale;
-  nsIntPoint mScrollOffset;
-  nsIntRect mContentRect;
+  CSSRect mContentRect;
 
   nsRefPtr<LayerManagerComposite> mLayerManager;
   // When this flag is set, the next composition will be the first for a

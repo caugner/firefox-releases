@@ -224,6 +224,10 @@ TiledContentHost::RenderLayerBuffer(TiledLayerBufferComposite& aLayerBuffer,
                                     nsIntRect aVisibleRect,
                                     gfx::Matrix4x4 aTransform)
 {
+  if (!mCompositor) {
+    NS_WARNING("Can't render tiled content host - no compositor");
+    return;
+  }
   float resolution = aLayerBuffer.GetResolution();
   gfxSize layerScale(1, 1);
   // We assume that the current frame resolution is the one used in our primary
@@ -312,6 +316,30 @@ TiledContentHost::PrintInfo(nsACString& aTo, const char* aPrefix)
 }
 #endif
 
+void
+TiledContentHost::Dump(FILE* aFile,
+                       const char* aPrefix,
+                       bool aDumpHtml)
+{
+  if (!aFile) {
+    aFile = stderr;
+  }
+
+  TiledLayerBufferComposite::Iterator it = mVideoMemoryTiledBuffer.TilesBegin();
+  TiledLayerBufferComposite::Iterator stop = mVideoMemoryTiledBuffer.TilesEnd();
+  if (aDumpHtml) {
+    fprintf(aFile, "<ul>");
+  }
+  for (;it != stop; ++it) {
+    fprintf(aFile, "%s", aPrefix);
+    fprintf(aFile, aDumpHtml ? "<li> <a href=" : "Tile ");
+    DumpTextureHost(aFile, it->mTextureHost);
+    fprintf(aFile, aDumpHtml ? " >Tile</a></li>" : " ");
+  }
+    if (aDumpHtml) {
+    fprintf(aFile, "</ul>");
+  }
+}
 
 } // namespace
 } // namespace

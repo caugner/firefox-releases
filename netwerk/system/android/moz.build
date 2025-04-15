@@ -6,3 +6,9 @@
 
 MODULE = 'necko'
 
+CPP_SOURCES += [
+    'nsAndroidNetworkLinkService.cpp',
+]
+
+LIBRARY_NAME = 'neckosystem_s'
+

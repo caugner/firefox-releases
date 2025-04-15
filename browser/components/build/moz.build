@@ -10,3 +10,9 @@ EXPORTS += [
     'nsBrowserCompsCID.h',
 ]
 
+CPP_SOURCES += [
+    'nsModule.cpp',
+]
+
+LIBRARY_NAME = 'browsercomps'
+

@@ -53,3 +53,11 @@ EXPORTS.gmock.internal += [
     'gmock/include/gmock/internal/gmock-port.h',
 ]
 
+CPP_SOURCES += [
+    'GTestRunner.cpp',
+    'gmock-all.cc',
+    'gtest-all.cc',
+]
+
+LIBRARY_NAME = 'gtest'
+

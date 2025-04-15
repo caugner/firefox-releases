@@ -11,15 +11,8 @@
 namespace mozilla {
 namespace dom {
 
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(DOMCursor,
-                                                  DOMRequest)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCallback)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(DOMCursor,
-                                                DOMRequest)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mCallback)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_INHERITED_1(DOMCursor, DOMRequest,
+                                     mCallback)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(DOMCursor)
   NS_INTERFACE_MAP_ENTRY(nsIDOMDOMCursor)
@@ -27,9 +20,6 @@ NS_INTERFACE_MAP_END_INHERITING(DOMRequest)
 
 NS_IMPL_ADDREF_INHERITED(DOMCursor, DOMRequest)
 NS_IMPL_RELEASE_INHERITED(DOMCursor, DOMRequest)
-
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(DOMCursor, DOMRequest)
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 DOMCursor::DOMCursor(nsIDOMWindow* aWindow, nsICursorContinueCallback* aCallback)
   : DOMRequest(aWindow)
@@ -44,9 +34,7 @@ DOMCursor::Reset()
   MOZ_ASSERT(!mFinished);
 
   // Reset the request state so we can FireSuccess() again.
-  if (mRooted) {
-    UnrootResultVal();
-  }
+  mResult = JSVAL_VOID;
   mDone = false;
 }
 
@@ -55,7 +43,7 @@ DOMCursor::FireDone()
 {
   Reset();
   mFinished = true;
-  FireSuccess(JSVAL_VOID);
+  FireSuccess(JS::UndefinedHandleValue);
 }
 
 NS_IMETHODIMP

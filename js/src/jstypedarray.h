@@ -33,6 +33,8 @@ class ArrayBufferObject : public JSObject
     static bool fun_slice_impl(JSContext *cx, CallArgs args);
 
   public:
+    static Class class_;
+
     static Class protoClass;
     static const JSFunctionSpec jsfuncs[];
 
@@ -139,6 +141,7 @@ class ArrayBufferObject : public JSObject
                               uint8_t **data);
 
     static inline void setElementsHeader(js::ObjectElements *header, uint32_t bytes);
+    static inline uint32_t getElementsHeaderInitializedLength(const js::ObjectElements *header);
 
     void addView(JSObject *view);
 
@@ -341,6 +344,7 @@ TypedArrayShift(ArrayBufferView::ViewType viewType)
 class DataViewObject : public JSObject, public BufferView
 {
 public:
+    static Class class_;
 
 private:
     static Class protoClass;

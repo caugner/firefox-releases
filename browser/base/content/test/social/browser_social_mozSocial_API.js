@@ -28,15 +28,15 @@ var tests = {
     }
 
     function triggerIconPanel() {
-      let statusIcon = document.getElementById("social-provider-button").nextSibling;
-      info("status icon is " + statusIcon);
       waitForCondition(function() {
-        statusIcon = document.getElementById("social-provider-button").nextSibling;
-        info("status icon is " + statusIcon);
-        return !!statusIcon;
+        let mButton = document.getElementById("social-mark-button");
+        let pButton = document.getElementById("social-provider-button");
+        // wait for a new button to be inserted inbetween the provider and mark
+        // button
+        return pButton.nextSibling != mButton;
       }, function() {
         // Click the button to trigger its contentPanel
-        let panel = document.getElementById("social-notification-panel");
+        let statusIcon = document.getElementById("social-provider-button").nextSibling;
         EventUtils.synthesizeMouseAtCenter(statusIcon, {});
       }, "Status icon didn't become non-hidden");
     }

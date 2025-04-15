@@ -117,8 +117,10 @@ this.Social = {
 
     // Disable the previous provider, if any, since we want only one provider to
     // be enabled at once.
-    if (this._provider)
+    if (this._provider) {
       this._provider.enabled = false;
+      this.closeChatWindows();
+    }
 
     this._provider = provider;
 
@@ -152,7 +154,7 @@ this.Social = {
     this.initialized = true;
 
     // Retrieve the current set of providers, and set the current provider.
-    SocialService.getProviderList(function (providers) {
+    SocialService.getOrderedProviderList(function (providers) {
       this._updateProviderCache(providers);
     }.bind(this));
 
@@ -162,6 +164,23 @@ this.Social = {
       if (topic == "provider-added" || topic == "provider-removed") {
         this._updateProviderCache(data);
         Services.obs.notifyObservers(null, "social:providers-changed", null);
+        return;
+      }
+      if (topic == "provider-update") {
+        // a provider has self-updated its manifest, we need to update our
+        // cache and possibly reload if it was the current provider.
+        let provider = data;
+        SocialService.getOrderedProviderList(function(providers) {
+          Social._updateProviderCache(providers);
+          Services.obs.notifyObservers(null, "social:providers-changed", null);
+          // if we need a reload, do it now
+          if (provider.enabled) {
+            Social.enabled = false;
+            Services.tm.mainThread.dispatch(function() {
+              Social.enabled = true;
+            }, Components.interfaces.nsIThread.DISPATCH_NORMAL);
+          }
+        });
       }
     }.bind(this));
   },
@@ -192,6 +211,15 @@ this.Social = {
   },
   get enabled() {
     return this.provider != null;
+  },
+
+  closeChatWindows: function() {
+    // close all windows of type Social:Chat
+    let windows = Services.wm.getEnumerator("Social:Chat");
+    while (windows.hasMoreElements()) {
+      let win = windows.getNext();
+      win.close();
+    }
   },
 
   toggle: function Social_toggle() {
@@ -230,8 +258,8 @@ this.Social = {
     SocialService.installProvider(doc, data, installCallback);
   },
 
-  uninstallProvider: function(origin) {
-    SocialService.uninstallProvider(origin);
+  uninstallProvider: function(origin, aCallback) {
+    SocialService.uninstallProvider(origin, aCallback);
   },
 
   // Activation functionality

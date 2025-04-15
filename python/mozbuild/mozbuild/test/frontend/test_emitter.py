@@ -124,16 +124,33 @@ class TestEmitterBasic(unittest.TestCase):
         self.assertIsInstance(objs[0], DirectoryTraversal)
         self.assertIsInstance(objs[1], VariablePassthru)
 
+        wanted = dict(
+            ASFILES=['fans.asm', 'tans.s'],
+            CMMSRCS=['fans.mm', 'tans.mm'],
+            CSRCS=['fans.c', 'tans.c'],
+            DEFINES=['-Dfans', '-Dtans'],
+            EXTRA_COMPONENTS=['fans.js', 'tans.js'],
+            EXTRA_PP_COMPONENTS=['fans.pp.js', 'tans.pp.js'],
+            HOST_CSRCS=['fans.c', 'tans.c'],
+            HOST_LIBRARY_NAME='host_fans',
+            LIBRARY_NAME='lib_name',
+            LIBS=['fans.lib', 'tans.lib'],
+            SDK_LIBRARY=['fans.sdk', 'tans.sdk'],
+            SHARED_LIBRARY_LIBS=['fans.sll', 'tans.sll'],
+            SIMPLE_PROGRAMS=['fans.x', 'tans.x'],
+            SSRCS=['fans.S', 'tans.S'],
+            XPIDLSRCS=['bar.idl', 'biz.idl', 'foo.idl'],
+            XPIDL_MODULE='module_name',
+            XPIDL_FLAGS=['-Idir1', '-Idir2', '-Idir3'],
+            )
+
         variables = objs[1].variables
-        self.assertEqual(len(variables), 3)
-        self.assertIn('XPIDLSRCS', variables)
-        self.assertEqual(variables['XPIDLSRCS'],
-            ['foo.idl', 'bar.idl', 'biz.idl'])
-        self.assertIn('XPIDL_MODULE', variables)
-        self.assertEqual(variables['XPIDL_MODULE'], 'module_name')
-        self.assertIn('XPIDL_FLAGS', variables)
-        self.assertEqual(variables['XPIDL_FLAGS'],
-            ['-Idir1', '-Idir2', '-Idir3'])
+        self.assertEqual(len(variables), len(wanted))
+
+        for var, val in wanted.items():
+            # print("test_variable_passthru[%s]" % var)
+            self.assertIn(var, variables)
+            self.assertEqual(variables[var], val)
 
     def test_exports(self):
         reader = self.reader('exports')

@@ -1519,7 +1519,7 @@ static void luUpgradeMerge(enum usage_level ul, const char *command)
     FPS "%-20s \n%-20s Cert database directory to upgrade from\n",
         "   --source-dir certdir", "");
     FPS "%-20s \n%-20s Cert & Key database prefix of the upgrade database\n",
-        "   --soruce-prefix dbprefix", "");
+        "   --source-prefix dbprefix", "");
     FPS "%-20s \n%-20s Unique identifier for the upgrade database\n",
         "   --upgrade-id uniqueID", "");
     FPS "%-20s \n%-20s Name of the token while it is in upgrade state\n",
@@ -3158,7 +3158,8 @@ merge_fail:
 	certutil.commands[cmd_AddEmailCert].activated) {
 	PRBool isCreate = certutil.commands[cmd_CreateNewCert].activated;
 	rv = SECU_ReadDERFromFile(isCreate ? &certReqDER : &certDER, inFile,
-				  certutil.options[opt_ASCIIForIO].activated);
+				  certutil.options[opt_ASCIIForIO].activated,
+				  PR_TRUE);
 	if (rv)
 	    goto shutdown;
     }
@@ -3229,6 +3230,10 @@ merge_fail:
     if (certutil.commands[cmd_CreateAndAddCert].activated ||
          certutil.commands[cmd_AddCert].activated ||
 	 certutil.commands[cmd_AddEmailCert].activated) {
+	if (strstr(certutil.options[opt_Trust].arg, "u")) {
+	    fprintf(stderr, "Notice: Trust flag u is set automatically if the "
+			    "private key is present.\n");
+	}
 	rv = AddCert(slot, certHandle, name, 
 	             certutil.options[opt_Trust].arg,
 	             &certDER,

@@ -34,6 +34,7 @@ interface AudioParam {
     void setValueCurveAtTime(Float32Array values, double startTime, double duration);
 
     // Cancels all scheduled parameter changes with times greater than or equal to startTime. 
+    [Throws]
     void cancelScheduledValues(double startTime);
 
 };
@@ -45,7 +46,7 @@ interface AudioParam {
 [PrefControlled]
 partial interface AudioParam {
     // Same as setTargetAtTime()
-    [Throws]
+    [Throws,Pref="media.webaudio.legacy.AudioParam"]
     void setTargetValueAtTime(float target, double startTime, double timeConstant);
 };
 

@@ -13,14 +13,9 @@ MODULE_NAME	= docshell_provider
 
 include $(DEPTH)/config/autoconf.mk
 
-LIBRARY_NAME	= docshell
 EXPORT_LIBRARY = 1
 LIBXUL_LIBRARY	= 1
 
-
-CPPSRCS		= \
-		nsDocShellModule.cpp		\
-		$(NULL)
 
 SHARED_LIBRARY_LIBS= \
 		../base/$(LIB_PREFIX)basedocshell_s.$(LIB_SUFFIX) \

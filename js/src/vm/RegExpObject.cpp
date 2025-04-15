@@ -4,16 +4,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "vm/RegExpObject.h"
+
 #include "frontend/TokenStream.h"
+
 #include "vm/MatchPairs.h"
-#include "vm/RegExpStatics.h"
 #include "vm/StringBuffer.h"
-#include "vm/Xdr.h"
 
 #include "jsobjinlines.h"
 
 #include "vm/RegExpObject-inl.h"
 #include "vm/RegExpStatics-inl.h"
+#include "vm/Xdr.h"
 
 using namespace js;
 using js::frontend::TokenStream;
@@ -37,12 +39,12 @@ RegExpObjectBuilder::getOrCreate()
 
     // Note: RegExp objects are always allocated in the tenured heap. This is
     // not strictly required, but simplifies embedding them in jitcode.
-    JSObject *obj = NewBuiltinClassInstance(cx, &RegExpClass, TenuredObject);
+    JSObject *obj = NewBuiltinClassInstance(cx, &RegExpObject::class_, TenuredObject);
     if (!obj)
         return false;
     obj->initPrivate(NULL);
 
-    reobj_ = &obj->asRegExp();
+    reobj_ = &obj->as<RegExpObject>();
     return true;
 }
 
@@ -53,13 +55,13 @@ RegExpObjectBuilder::getOrCreateClone(RegExpObject *proto)
 
     // Note: RegExp objects are always allocated in the tenured heap. This is
     // not strictly required, but simplifies embedding them in jitcode.
-    JSObject *clone = NewObjectWithGivenProto(cx, &RegExpClass, proto, proto->getParent(),
+    JSObject *clone = NewObjectWithGivenProto(cx, &RegExpObject::class_, proto, proto->getParent(),
                                               TenuredObject);
     if (!clone)
         return false;
     clone->initPrivate(NULL);
 
-    reobj_ = &clone->asRegExp();
+    reobj_ = &clone->as<RegExpObject>();
     return true;
 }
 
@@ -96,7 +98,7 @@ RegExpObjectBuilder::clone(Handle<RegExpObject *> other, Handle<RegExpObject *> 
      * the clone -- if the |RegExpStatics| provides more flags we'll
      * need a different |RegExpShared|.
      */
-    RegExpStatics *res = proto->getParent()->asGlobal().getRegExpStatics();
+    RegExpStatics *res = proto->getParent()->as<GlobalObject>().getRegExpStatics();
     RegExpFlag origFlags = other->getFlags();
     RegExpFlag staticsFlags = res->getFlags();
     if ((origFlags & staticsFlags) != staticsFlags) {
@@ -207,7 +209,7 @@ regexp_trace(JSTracer *trc, JSObject *obj)
         obj->setPrivate(NULL);
 }
 
-Class js::RegExpClass = {
+Class RegExpObject::class_ = {
     js_RegExp_str,
     JSCLASS_HAS_PRIVATE | JSCLASS_IMPLEMENTS_BARRIERS |
     JSCLASS_HAS_RESERVED_SLOTS(RegExpObject::RESERVED_SLOTS) |
@@ -263,7 +265,7 @@ RegExpObject::createShared(JSContext *cx, RegExpGuard *g)
     Rooted<RegExpObject*> self(cx, this);
 
     JS_ASSERT(!maybeShared());
-    if (!cx->compartment->regExps.get(cx, getSource(), getFlags(), g))
+    if (!cx->compartment()->regExps.get(cx, getSource(), getFlags(), g))
         return false;
 
     self->setShared(cx, **g);
@@ -273,7 +275,7 @@ RegExpObject::createShared(JSContext *cx, RegExpGuard *g)
 Shape *
 RegExpObject::assignInitialShape(JSContext *cx)
 {
-    JS_ASSERT(isRegExp());
+    JS_ASSERT(is<RegExpObject>());
     JS_ASSERT(nativeEmpty());
 
     JS_STATIC_ASSERT(LAST_INDEX_SLOT == 0);
@@ -479,7 +481,7 @@ RegExpShared::compile(JSContext *cx, JSLinearString &pattern, bool matchOnly)
 
 #if ENABLE_YARR_JIT
     if (isJITRuntimeEnabled(cx) && !yarrPattern.m_containsBackreferences) {
-        JSC::ExecutableAllocator *execAlloc = cx->runtime->getExecAlloc(cx);
+        JSC::ExecutableAllocator *execAlloc = cx->runtime()->getExecAlloc(cx);
         if (!execAlloc)
             return false;
 
@@ -496,7 +498,7 @@ RegExpShared::compile(JSContext *cx, JSLinearString &pattern, bool matchOnly)
     codeBlock.setFallBack(true);
 #endif
 
-    WTF::BumpPointerAllocator *bumpAlloc = cx->runtime->getBumpPointerAllocator(cx);
+    WTF::BumpPointerAllocator *bumpAlloc = cx->runtime()->getBumpPointerAllocator(cx);
     if (!bumpAlloc) {
         js_ReportOutOfMemory(cx);
         return false;
@@ -581,7 +583,9 @@ RegExpShared::executeMatchOnly(JSContext *cx, const jschar *chars, size_t length
     if (!compileMatchOnlyIfNecessary(cx))
         return RegExpRunStatus_Error;
 
+#ifdef DEBUG
     const size_t origLength = length;
+#endif
     size_t start = *lastIndex;
     size_t displacement = 0;
 
@@ -621,11 +625,15 @@ RegExpShared::executeMatchOnly(JSContext *cx, const jschar *chars, size_t length
     if (result == JSC::Yarr::offsetNoMatch)
         return RegExpRunStatus_Success_NotFound;
 
+    match = MatchPair(result, matches[0].limit);
+    match.displace(displacement);
+
+#ifdef DEBUG
     matches.displace(displacement);
     matches.checkAgainst(origLength);
+#endif
 
-    *lastIndex = matches[0].limit;
-    match = MatchPair(result + displacement, matches[0].limit);
+    *lastIndex = match.limit;
     return RegExpRunStatus_Success;
 }
 
@@ -683,7 +691,7 @@ RegExpCompartment::get(JSContext *cx, JSAtom *source, RegExpFlag flags, RegExpGu
         return true;
     }
 
-    ScopedJSDeletePtr<RegExpShared> shared(cx->new_<RegExpShared>(cx->runtime, source, flags));
+    ScopedJSDeletePtr<RegExpShared> shared(cx->new_<RegExpShared>(cx->runtime(), source, flags));
     if (!shared)
         return false;
 
@@ -730,8 +738,8 @@ JSObject *
 js::CloneRegExpObject(JSContext *cx, JSObject *obj_, JSObject *proto_)
 {
     RegExpObjectBuilder builder(cx);
-    Rooted<RegExpObject*> regex(cx, &obj_->asRegExp());
-    Rooted<RegExpObject*> proto(cx, &proto_->asRegExp());
+    Rooted<RegExpObject*> regex(cx, &obj_->as<RegExpObject>());
+    Rooted<RegExpObject*> proto(cx, &proto_->as<RegExpObject>());
     return builder.clone(regex, proto);
 }
 
@@ -783,7 +791,7 @@ js::XDRScriptRegExpObject(XDRState<mode> *xdr, HeapPtrObject *objp)
 
     if (mode == XDR_ENCODE) {
         JS_ASSERT(objp);
-        RegExpObject &reobj = (*objp)->asRegExp();
+        RegExpObject &reobj = (*objp)->as<RegExpObject>();
         source = reobj.getSource();
         flagsword = reobj.getFlags();
     }

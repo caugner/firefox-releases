@@ -11,3 +11,10 @@ EXPORTS += [
     'WaveReader.h',
 ]
 
+CPP_SOURCES += [
+    'WaveDecoder.cpp',
+    'WaveReader.cpp',
+]
+
+LIBRARY_NAME = 'gkconwave_s'
+

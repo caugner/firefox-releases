@@ -4,10 +4,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsfuninlines_h___
-#define jsfuninlines_h___
+#ifndef jsfuninlines_h
+#define jsfuninlines_h
 
 #include "jsfun.h"
+
 #include "jsscript.h"
 
 #include "vm/GlobalObject.h"
@@ -118,7 +119,7 @@ SameTraceType(const Value &lhs, const Value &rhs)
 {
     return SameType(lhs, rhs) &&
            (lhs.isPrimitive() ||
-            lhs.toObject().isFunction() == rhs.toObject().isFunction());
+            lhs.toObject().is<JSFunction>() == rhs.toObject().is<JSFunction>());
 }
 
 /* Valueified JS_IsConstructing. */
@@ -127,8 +128,8 @@ IsConstructing(const Value *vp)
 {
 #ifdef DEBUG
     JSObject *callee = &JS_CALLEE(cx, vp).toObject();
-    if (callee->isFunction()) {
-        JSFunction *fun = callee->toFunction();
+    if (callee->is<JSFunction>()) {
+        JSFunction *fun = &callee->as<JSFunction>();
         JS_ASSERT(fun->isNativeConstructor());
     } else {
         JS_ASSERT(callee->getClass()->construct != NULL);
@@ -163,17 +164,37 @@ SkipScopeParent(JSObject *parent)
 {
     if (!parent)
         return NULL;
-    while (parent->isScope())
-        parent = &parent->asScope().enclosingScope();
+    while (parent->is<ScopeObject>())
+        parent = &parent->as<ScopeObject>().enclosingScope();
     return parent;
 }
 
+inline bool
+CanReuseFunctionForClone(JSContext *cx, HandleFunction fun)
+{
+    if (!fun->hasSingletonType())
+        return false;
+    if (fun->isInterpretedLazy()) {
+        LazyScript *lazy = fun->lazyScript();
+        if (lazy->hasBeenCloned())
+            return false;
+        lazy->setHasBeenCloned();
+    } else {
+        JSScript *script = fun->nonLazyScript();
+        if (script->hasBeenCloned)
+            return false;
+        script->hasBeenCloned = true;
+    }
+    return true;
+}
+
 inline JSFunction *
-CloneFunctionObjectIfNotSingleton(JSContext *cx, HandleFunction fun, HandleObject parent)
+CloneFunctionObjectIfNotSingleton(JSContext *cx, HandleFunction fun, HandleObject parent,
+                                  NewObjectKind newKind = GenericObject)
 {
     /*
      * For attempts to clone functions at a function definition opcode,
-     * don't perform the clone if the function has singleton type. This
+     * try to avoid the the clone if the function has singleton type. This
      * was called pessimistically, and we need to preserve the type's
      * property that if it is singleton there is only a single object
      * with its type in existence.
@@ -183,16 +204,12 @@ CloneFunctionObjectIfNotSingleton(JSContext *cx, HandleFunction fun, HandleObjec
      * cases, fall through to CloneFunctionObject, which will deep clone
      * the function's script.
      */
-    if (fun->hasSingletonType()) {
-        RootedScript script(cx, fun->getOrCreateScript(cx));
-        if (!script->hasBeenCloned) {
-            script->hasBeenCloned = true;
-            Rooted<JSObject*> obj(cx, SkipScopeParent(parent));
-            if (!JSObject::setParent(cx, fun, obj))
-                return NULL;
-            fun->setEnvironment(parent);
-            return fun;
-        }
+    if (CanReuseFunctionForClone(cx, fun)) {
+        RootedObject obj(cx, SkipScopeParent(parent));
+        if (!JSObject::setParent(cx, fun, obj))
+            return NULL;
+        fun->setEnvironment(parent);
+        return fun;
     }
 
     // These intermediate variables are needed to avoid link errors on some
@@ -202,10 +219,44 @@ CloneFunctionObjectIfNotSingleton(JSContext *cx, HandleFunction fun, HandleObjec
     gc::AllocKind kind = fun->isExtended()
                          ? extendedFinalizeKind
                          : finalizeKind;
-    return CloneFunctionObject(cx, fun, parent, kind);
+    return CloneFunctionObject(cx, fun, parent, kind, newKind);
 }
 
 } /* namespace js */
+
+inline bool
+JSFunction::isHeavyweight() const
+{
+    JS_ASSERT(!isInterpretedLazy());
+
+    if (isNative())
+        return false;
+
+    // Note: this should be kept in sync with FunctionBox::isHeavyweight().
+    return nonLazyScript()->bindings.hasAnyAliasedBindings() ||
+           nonLazyScript()->funHasExtensibleScope ||
+           nonLazyScript()->funNeedsDeclEnvObject;
+}
+
+inline JSScript *
+JSFunction::existingScript()
+{
+    JS_ASSERT(isInterpreted());
+    if (isInterpretedLazy()) {
+        js::LazyScript *lazy = lazyScript();
+        JSScript *script = lazy->maybeScript();
+        JS_ASSERT(script);
+
+        if (zone()->needsBarrier())
+            js::LazyScript::writeBarrierPre(lazy);
+
+        flags &= ~INTERPRETED_LAZY;
+        flags |= INTERPRETED;
+        initScript(script);
+    }
+    JS_ASSERT(hasScript());
+    return u.i.s.script_;
+}
 
 inline void
 JSFunction::setScript(JSScript *script_)
@@ -221,10 +272,20 @@ JSFunction::initScript(JSScript *script_)
     mutableScript().init(script_);
 }
 
+inline void
+JSFunction::initLazyScript(js::LazyScript *lazy)
+{
+    JS_ASSERT(isInterpreted());
+
+    flags &= ~INTERPRETED;
+    flags |= INTERPRETED_LAZY;
+
+    u.i.s.lazy_ = lazy;
+}
+
 inline JSObject *
 JSFunction::getBoundFunctionTarget() const
 {
-    JS_ASSERT(isFunction());
     JS_ASSERT(isBoundFunction());
 
     /* Bound functions abuse |parent| to store their target function. */
@@ -234,7 +295,7 @@ JSFunction::getBoundFunctionTarget() const
 inline bool
 js::Class::isCallable() const
 {
-    return this == &js::FunctionClass || call;
+    return this == &JSFunction::class_ || call;
 }
 
-#endif /* jsfuninlines_h___ */
+#endif /* jsfuninlines_h */

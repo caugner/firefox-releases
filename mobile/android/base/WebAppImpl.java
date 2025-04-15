@@ -158,17 +158,30 @@ public class WebAppImpl extends GeckoApp {
             case SELECTED:
             case LOCATION_CHANGE:
                 if (Tabs.getInstance().isSelectedTab(tab)) {
-                    try {
-                        String title = tab.getURL();
-                        URL page = new URL(title);
-                        mTitlebarText.setText(page.getProtocol() + "://" + page.getHost());
+                    final String urlString = tab.getURL();
+                    final URL url;
 
-                        if (mOrigin != null && mOrigin.getHost().equals(page.getHost()))
-                            mTitlebar.setVisibility(View.GONE);
-                        else
-                            mTitlebar.setVisibility(View.VISIBLE);
+                    try {
+                        url = new URL(urlString);
                     } catch (java.net.MalformedURLException ex) {
-                        Log.e(LOGTAG, "Unable to parse url: ", ex);
+                        mTitlebarText.setText(urlString);
+
+                        // If we can't parse the url, and its an app protocol hide
+                        // the titlebar and return, otherwise show the titlebar
+                        // and the full url
+                        if (!urlString.startsWith("app://")) {
+                            mTitlebar.setVisibility(View.VISIBLE);
+                        } else {
+                            mTitlebar.setVisibility(View.GONE);
+                        }
+                        return;
+                    }
+
+                    if (mOrigin != null && mOrigin.getHost().equals(url.getHost())) {
+                        mTitlebar.setVisibility(View.GONE);
+                    } else {
+                        mTitlebarText.setText(url.getProtocol() + "://" + url.getHost());
+                        mTitlebar.setVisibility(View.VISIBLE);
                     }
                 }
                 break;
@@ -202,8 +215,8 @@ public class WebAppImpl extends GeckoApp {
     }
 
     @Override
-    protected void connectGeckoLayerClient() {
-        super.connectGeckoLayerClient();
-        getLayerView().setOverScrollMode(View.OVER_SCROLL_NEVER);
+    protected void geckoConnected() {
+        super.geckoConnected();
+        mLayerView.setOverScrollMode(View.OVER_SCROLL_NEVER);
     }
 };

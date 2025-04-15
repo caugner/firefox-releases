@@ -10,3 +10,13 @@ EXPORTS += [
     'SkANP.h',
 ]
 
+CPP_SOURCES += [
+    'ANPCanvas.cpp',
+    'ANPPaint.cpp',
+    'ANPPath.cpp',
+    'ANPTypeface.cpp',
+    'SkANP.cpp',
+]
+
+LIBRARY_NAME = 'skia_npapi'
+

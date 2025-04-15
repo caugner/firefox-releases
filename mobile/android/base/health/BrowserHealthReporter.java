@@ -121,7 +121,7 @@ public class BrowserHealthReporter implements GeckoEventListener {
      * @return non-null Health Report.
      */
     public JSONObject generateReport() throws JSONException {
-        GeckoProfile profile = GeckoAppShell.getProfile();
+        GeckoProfile profile = GeckoAppShell.getGeckoInterface().getProfile();
         String profilePath = profile.getDir().getAbsolutePath();
 
         long since = System.currentTimeMillis() - HealthReportConstants.MILLISECONDS_PER_SIX_MONTHS;

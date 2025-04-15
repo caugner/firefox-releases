@@ -220,7 +220,8 @@ private:
   }
 
   static JSBool
-  GetProperty(JSContext* aCx, JSHandleObject aObj, JSHandleId aIdval, JSMutableHandleValue aVp)
+  GetProperty(JSContext* aCx, JS::Handle<JSObject*> aObj, JS::Handle<jsid> aIdval,
+              JS::MutableHandle<JS::Value> aVp)
   {
     JS_ASSERT(JSID_IS_INT(aIdval));
 
@@ -236,7 +237,8 @@ private:
   }
 
   static JSBool
-  GetConstant(JSContext* aCx, JSHandleObject aObj, JSHandleId idval, JSMutableHandleValue aVp)
+  GetConstant(JSContext* aCx, JS::Handle<JSObject*> aObj, JS::Handle<jsid> idval,
+              JS::MutableHandle<JS::Value> aVp)
   {
     JS_ASSERT(JSID_IS_INT(idval));
     JS_ASSERT(JSID_TO_INT(idval) >= CAPTURING_PHASE &&
@@ -505,7 +507,8 @@ private:
   }
 
   static JSBool
-  GetProperty(JSContext* aCx, JSHandleObject aObj, JSHandleId aIdval, JSMutableHandleValue aVp)
+  GetProperty(JSContext* aCx, JS::Handle<JSObject*> aObj, JS::Handle<jsid> aIdval,
+              JS::MutableHandle<JS::Value> aVp)
   {
     JS_ASSERT(JSID_IS_INT(aIdval));
 
@@ -712,7 +715,8 @@ private:
   }
 
   static JSBool
-  GetProperty(JSContext* aCx, JSHandleObject aObj, JSHandleId aIdval, JSMutableHandleValue aVp)
+  GetProperty(JSContext* aCx, JS::Handle<JSObject*> aObj, JS::Handle<jsid> aIdval,
+              JS::MutableHandle<JS::Value> aVp)
   {
     JS_ASSERT(JSID_IS_INT(aIdval));
 
@@ -790,7 +794,6 @@ class ProgressEvent : public Event
 {
   static JSClass sClass;
   static const JSPropertySpec sProperties[];
-  static const JSFunctionSpec sFunctions[];
 
 public:
   static JSClass*
@@ -803,7 +806,7 @@ public:
   InitClass(JSContext* aCx, JSObject* aObj, JSObject* aParentProto)
   {
     return JS_InitClass(aCx, aObj, aParentProto, &sClass, Construct, 0,
-                        sProperties, sFunctions, NULL, NULL);
+                        sProperties, NULL, NULL, NULL);
   }
 
   static JSObject*
@@ -892,7 +895,8 @@ private:
   }
 
   static JSBool
-  GetProperty(JSContext* aCx, JSHandleObject aObj, JSHandleId aIdval, JSMutableHandleValue aVp)
+  GetProperty(JSContext* aCx, JS::Handle<JSObject*> aObj, JS::Handle<jsid> aIdval,
+              JS::MutableHandle<JS::Value> aVp)
   {
     JS_ASSERT(JSID_IS_INT(aIdval));
 
@@ -907,33 +911,6 @@ private:
     }
 
     aVp.set(JS_GetReservedSlot(aObj, slot));
-    return true;
-  }
-
-  static JSBool
-  InitProgressEvent(JSContext* aCx, unsigned aArgc, jsval* aVp)
-  {
-    JS::Rooted<JSObject*> obj(aCx, JS_THIS_OBJECT(aCx, aVp));
-    if (!obj) {
-      return false;
-    }
-
-    ProgressEvent* event = GetInstancePrivate(aCx, obj, sFunctions[0].name);
-    if (!event) {
-      return false;
-    }
-
-    JS::Rooted<JSString*> type(aCx);
-    JSBool bubbles, cancelable, lengthComputable;
-    double loaded, total;
-    if (!JS_ConvertArguments(aCx, aArgc, JS_ARGV(aCx, aVp), "Sbbbdd", type.address(),
-                             &bubbles, &cancelable, &lengthComputable, &loaded,
-                             &total)) {
-      return false;
-    }
-
-    InitProgressEventCommon(obj, event, type, bubbles, cancelable,
-                            lengthComputable, loaded, total, false);
     return true;
   }
 };
@@ -953,11 +930,6 @@ const JSPropertySpec ProgressEvent::sProperties[] = {
   { "total", SLOT_total, PROPERTY_FLAGS, JSOP_WRAPPER(GetProperty),
     JSOP_WRAPPER(js_GetterOnlyPropertyStub) },
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
-};
-
-const JSFunctionSpec ProgressEvent::sFunctions[] = {
-  JS_FN("initProgressEvent", InitProgressEvent, 6, FUNCTION_FLAGS),
-  JS_FS_END
 };
 
 Event*

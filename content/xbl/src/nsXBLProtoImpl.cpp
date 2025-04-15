@@ -9,6 +9,7 @@
 #include "nsIContent.h"
 #include "nsIDocument.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptGlobalObjectOwner.h"
 #include "nsIScriptContext.h"
@@ -19,27 +20,6 @@
 #include "nsXBLProtoImplProperty.h"
 
 using namespace mozilla;
-
-// Checks that the version is not modified in a given scope.
-class AutoVersionChecker
-{
-  DebugOnly<JSContext *> const cx;
-  DebugOnly<JSVersion> versionBefore;
-
-public:
-  explicit AutoVersionChecker(JSContext *aCx) : cx(aCx) {
-#ifdef DEBUG
-    versionBefore = JS_GetVersion(cx);
-#endif
-  }
-
-  ~AutoVersionChecker() {
-#ifdef DEBUG
-    JSVersion versionAfter = JS_GetVersion(cx);
-    NS_ABORT_IF_FALSE(versionAfter == versionBefore, "version must not change");
-#endif
-  }
-};
 
 nsresult
 nsXBLProtoImpl::InstallImplementation(nsXBLPrototypeBinding* aPrototypeBinding,
@@ -67,6 +47,7 @@ nsXBLProtoImpl::InstallImplementation(nsXBLPrototypeBinding* aPrototypeBinding,
   // This function also has the side effect of building up the prototype implementation if it has
   // not been built already.
   nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
+  JSAutoRequest ar(context->GetNativeContext());
   JS::Rooted<JSObject*> targetClassObject(context->GetNativeContext(), nullptr);
   bool targetObjectIsNew = false;
   nsresult rv = InitTargetObjects(aPrototypeBinding, context,
@@ -83,13 +64,11 @@ nsXBLProtoImpl::InstallImplementation(nsXBLPrototypeBinding* aPrototypeBinding,
   if (!targetObjectIsNew)
     return NS_OK;
 
-  JS::Rooted<JSObject*> targetScriptObject(context->GetNativeContext());
-  holder->GetJSObject(targetScriptObject.address());
+  JS::Rooted<JSObject*> targetScriptObject(context->GetNativeContext(),
+                                           holder->GetJSObject());
 
   AutoPushJSContext cx(context->GetNativeContext());
-  JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, targetClassObject);
-  AutoVersionChecker avc(cx);
 
   // Walk our member list and install each one in turn.
   for (nsXBLProtoImplMember* curr = mMembers;
@@ -177,8 +156,8 @@ nsXBLProtoImpl::InitTargetObjects(nsXBLPrototypeBinding* aBinding,
   AutoPushJSContext cx(aContext->GetNativeContext());
   JS::Rooted<JSObject*> global(cx, sgo->GetGlobalJSObject());
   nsCOMPtr<nsIXPConnectJSObjectHolder> wrapper;
-  JS::Value v;
-  rv = nsContentUtils::WrapNative(cx, global, aBoundElement, &v,
+  JS::Rooted<JS::Value> v(cx);
+  rv = nsContentUtils::WrapNative(cx, global, aBoundElement, v.address(),
                                   getter_AddRefs(wrapper));
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -193,7 +172,7 @@ nsXBLProtoImpl::InitTargetObjects(nsXBLPrototypeBinding* aBinding,
     return rv;
   }
 
-  nsContentUtils::PreserveWrapper(aBoundElement, aBoundElement);
+  aBoundElement->PreserveWrapper(aBoundElement);
 
   wrapper.swap(*aScriptObjectHolder);
   
@@ -229,8 +208,6 @@ nsXBLProtoImpl::CompilePrototypeMembers(nsXBLPrototypeBinding* aBinding)
   MOZ_ASSERT(classObject);
   mClassObject = classObject;
 
-  AutoVersionChecker avc(cx);
-
   // Now that we have a class object installed, we walk our member list and compile each of our
   // properties and methods in turn.
   for (nsXBLProtoImplMember* curr = mMembers;
@@ -261,7 +238,7 @@ nsXBLProtoImpl::LookupMember(JSContext* aCx, nsString& aName,
 }
 
 void
-nsXBLProtoImpl::Trace(TraceCallback aCallback, void *aClosure) const
+nsXBLProtoImpl::Trace(const TraceCallbacks& aCallbacks, void *aClosure)
 {
   // If we don't have a class object then we either didn't compile members
   // or we only have fields, in both cases there are no cycles through our
@@ -272,7 +249,7 @@ nsXBLProtoImpl::Trace(TraceCallback aCallback, void *aClosure) const
 
   nsXBLProtoImplMember *member;
   for (member = mMembers; member; member = member->GetNext()) {
-    member->Trace(aCallback, aClosure);
+    member->Trace(aCallbacks, aClosure);
   }
 }
 
@@ -299,7 +276,6 @@ nsXBLProtoImpl::FindField(const nsString& aFieldName) const
 bool
 nsXBLProtoImpl::ResolveAllFields(JSContext *cx, JS::Handle<JSObject*> obj) const
 {
-  AutoVersionChecker avc(cx);
   for (nsXBLProtoImplField* f = mFields; f; f = f->GetNext()) {
     // Using OBJ_LOOKUP_PROPERTY is a pain, since what we have is a
     // PRUnichar* for the property name.  Let's just use the public API and

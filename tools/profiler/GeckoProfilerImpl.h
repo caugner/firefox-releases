@@ -52,9 +52,9 @@ extern bool stack_key_initialized;
 #endif
 
 static inline
-void profiler_init()
+void profiler_init(void* stackTop)
 {
-  mozilla_sampler_init();
+  mozilla_sampler_init(stackTop);
 }
 
 static inline
@@ -65,9 +65,10 @@ void profiler_shutdown()
 
 static inline
 void profiler_start(int aProfileEntries, int aInterval,
-                       const char** aFeatures, uint32_t aFeatureCount)
+                       const char** aFeatures, uint32_t aFeatureCount,
+                       const char** aThreadNameFilters, uint32_t aFilterCount)
 {
-  mozilla_sampler_start(aProfileEntries, aInterval, aFeatures, aFeatureCount);
+  mozilla_sampler_start(aProfileEntries, aInterval, aFeatures, aFeatureCount, aThreadNameFilters, aFilterCount);
 }
 
 static inline
@@ -141,9 +142,9 @@ void profiler_unlock()
 }
 
 static inline
-void profiler_register_thread(const char* name)
+void profiler_register_thread(const char* name, void* stackTop)
 {
-  mozilla_sampler_register_thread(name);
+  mozilla_sampler_register_thread(name, stackTop);
 }
 
 static inline
@@ -167,6 +168,16 @@ static inline
 double profiler_time()
 {
   return mozilla_sampler_time();
+}
+
+static inline
+bool profiler_in_privacy_mode()
+{
+  PseudoStack *stack = tlsPseudoStack.get();
+  if (!stack) {
+    return false;
+  }
+  return stack->mPrivacyMode;
 }
 
 // we want the class and function name but can't easily get that using preprocessor macros
@@ -241,7 +252,7 @@ class MOZ_STACK_CLASS SamplerStackFramePrintfRAII {
 public:
   // we only copy the strings at save time, so to take multiple parameters we'd need to copy them then.
   SamplerStackFramePrintfRAII(const char *aDefault, uint32_t line, const char *aFormat, ...) {
-    if (profiler_is_active()) {
+    if (profiler_is_active() && !profiler_in_privacy_mode()) {
       va_list args;
       va_start(args, aFormat);
       char buff[SAMPLER_MAX_STRING];
@@ -321,6 +332,11 @@ inline void mozilla_sampler_add_marker(const char *aMarker)
   // Don't insert a marker if we're not profiling to avoid
   // the heap copy (malloc).
   if (!profiler_is_active()) {
+    return;
+  }
+
+  // Don't add a marker if we don't want to include personal information
+  if (profiler_in_privacy_mode()) {
     return;
   }
 

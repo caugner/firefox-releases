@@ -11,7 +11,7 @@ function test() {
 
     // This is receiving over 80 KB of json and will populate over 6000 items
     // in a variables view instance. Debug builds are slow.
-    requestLongerTimeout(3);
+    requestLongerTimeout(4);
 
     let { document, L10N, SourceEditor, NetMonitorView } = aMonitor.panelWin;
     let { RequestsMenu } = NetMonitorView;
@@ -29,15 +29,15 @@ function test() {
           time: true
         });
 
-      EventUtils.sendMouseEvent({ type: "mousedown" },
-        document.getElementById("details-pane-toggle"));
-      EventUtils.sendMouseEvent({ type: "mousedown" },
-        document.querySelectorAll("#details-pane tab")[3]);
-
       aMonitor.panelWin.once("NetMonitor:ResponseBodyAvailable", () => {
         testResponseTab();
         teardown(aMonitor).then(finish);
       });
+
+      EventUtils.sendMouseEvent({ type: "mousedown" },
+        document.getElementById("details-pane-toggle"));
+      EventUtils.sendMouseEvent({ type: "mousedown" },
+        document.querySelectorAll("#details-pane tab")[3]);
 
       function testResponseTab() {
         let tab = document.querySelectorAll("#details-pane tab")[3];
@@ -46,14 +46,15 @@ function test() {
         is(tab.getAttribute("selected"), "true",
           "The response tab in the network details pane should be selected.");
 
+        is(tabpanel.querySelector("#response-content-info-header")
+          .hasAttribute("hidden"), true,
+          "The response info header doesn't have the intended visibility.");
         is(tabpanel.querySelector("#response-content-json-box")
           .hasAttribute("hidden"), false,
           "The response content json box doesn't have the intended visibility.");
-
         is(tabpanel.querySelector("#response-content-textarea-box")
           .hasAttribute("hidden"), true,
           "The response content textarea box doesn't have the intended visibility.");
-
         is(tabpanel.querySelector("#response-content-image-box")
           .hasAttribute("hidden"), true,
           "The response content image box doesn't have the intended visibility.");

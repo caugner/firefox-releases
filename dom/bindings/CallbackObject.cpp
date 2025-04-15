@@ -11,6 +11,7 @@
 #include "nsIScriptContext.h"
 #include "nsPIDOMWindow.h"
 #include "nsJSUtils.h"
+#include "nsCxPusher.h"
 #include "nsIScriptSecurityManager.h"
 #include "xpcprivate.h"
 
@@ -42,8 +43,6 @@ CallbackObject::CallSetup::CallSetup(JS::Handle<JSObject*> aCallback,
   , mErrorResult(aRv)
   , mExceptionHandling(aExceptionHandling)
 {
-  xpc_UnmarkGrayObject(aCallback);
-
   // We need to produce a useful JSContext here.  Ideally one that the callback
   // is in some sense associated with, so that we can sort of treat it as a
   // "script entry point".  Though once we actually have script entry points,
@@ -89,11 +88,19 @@ CallbackObject::CallSetup::CallSetup(JS::Handle<JSObject*> aCallback,
     cx = nsContentUtils::GetSafeJSContext();
   }
 
-  // Victory!  We have a JSContext.  Now do the things we need a JSContext for.
-  mAr.construct(cx);
-
   // Make sure our JSContext is pushed on the stack.
   mCxPusher.Push(cx);
+
+  // Unmark the callable, and stick it in a Rooted before it can go gray again.
+  // Nothing before us in this function can trigger a CC, so it's safe to wait
+  // until here it do the unmark. This allows us to order the following two
+  // operations _after_ the Push() above, which lets us take advantage of the
+  // JSAutoRequest embedded in the pusher.
+  //
+  // We can do this even though we're not in the right compartment yet, because
+  // Rooted<> does not care about compartments.
+  xpc_UnmarkGrayObject(aCallback);
+  mRootedCallable.construct(cx, aCallback);
 
   // After this point we guarantee calling ScriptEvaluated() if we
   // have an nsIScriptContext.
@@ -108,14 +115,6 @@ CallbackObject::CallSetup::CallSetup(JS::Handle<JSObject*> aCallback,
   // getting principals from wrappers is silly.
   nsresult rv = nsContentUtils::GetSecurityManager()->
     CheckFunctionAccess(cx, js::UncheckedUnwrap(aCallback), nullptr);
-
-  // Construct a termination func holder even if we're not planning to
-  // run any script.  We need this because we're going to call
-  // ScriptEvaluated even if we don't run the script...  See XXX
-  // comment above.
-  if (ctx) {
-    mTerminationFuncHolder.construct(static_cast<nsJSContext*>(ctx));
-  }
 
   if (NS_FAILED(rv)) {
     // Security check failed.  We're done here.
@@ -196,14 +195,9 @@ CallbackObjectHolderBase::ToXPCOMCallback(CallbackObject* aCallback,
   JS::Rooted<JSObject*> callback(cx, aCallback->Callback());
 
   JSAutoCompartment ac(cx, callback);
-  XPCCallContext ccx(NATIVE_CALLER, cx);
-  if (!ccx.IsValid()) {
-    return nullptr;
-  }
-
   nsRefPtr<nsXPCWrappedJS> wrappedJS;
   nsresult rv =
-    nsXPCWrappedJS::GetNewOrUsed(ccx, callback, aIID,
+    nsXPCWrappedJS::GetNewOrUsed(callback, aIID,
                                  nullptr, getter_AddRefs(wrappedJS));
   if (NS_FAILED(rv) || !wrappedJS) {
     return nullptr;

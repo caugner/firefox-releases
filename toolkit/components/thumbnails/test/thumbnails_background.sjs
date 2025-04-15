@@ -8,7 +8,7 @@ var timer;
 
 function handleRequest(req, resp) {
   resp.processAsync();
-  resp.setHeader("Cache-Control", "no-cache", false);
+  resp.setHeader("Cache-Control", "no-cache, no-store", false);
   resp.setHeader("Content-Type", "text/html;charset=utf-8", false);
 
   let opts = {};
@@ -16,6 +16,16 @@ function handleRequest(req, resp) {
     opts = JSON.parse(decodeURIComponent(req.queryString));
   }
   catch (err) {}
+
+  if (opts.setGreenCookie)
+    resp.setHeader("Set-Cookie", "green", false);
+
+  if (req.hasHeader("Cookie") &&
+      req.getHeader("Cookie").split(";").indexOf("green") >= 0) {
+    resp.write('<html style="background: #0f0;"></html>');
+    resp.finish();
+    return;
+  }
 
   if (opts.redirect) {
     resp.setHeader("Location", opts.redirect);

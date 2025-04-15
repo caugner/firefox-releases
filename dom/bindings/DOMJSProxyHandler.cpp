@@ -29,16 +29,14 @@ jsid s_length_id = JSID_VOID;
 bool
 DefineStaticJSVals(JSContext* cx)
 {
-  JSAutoRequest ar(cx);
-
   return InternJSString(cx, s_length_id, "length");
 }
 
 
 int HandlerFamily;
 
-js::ListBaseShadowsResult
-DOMListShadows(JSContext* cx, JSHandleObject proxy, JSHandleId id)
+js::DOMProxyShadowsResult
+DOMProxyShadows(JSContext* cx, JS::Handle<JSObject*> proxy, JS::Handle<jsid> id)
 {
   JS::Value v = js::GetProxyExtra(proxy, JSPROXYSLOT_EXPANDO);
   if (v.isObject()) {
@@ -61,15 +59,15 @@ DOMListShadows(JSContext* cx, JSHandleObject proxy, JSHandleId id)
 }
 
 // Store the information for the specialized ICs.
-struct SetListBaseInformation
+struct SetDOMProxyInformation
 {
-  SetListBaseInformation() {
-    js::SetListBaseInformation((void*) &HandlerFamily,
-                               js::JSSLOT_PROXY_EXTRA + JSPROXYSLOT_EXPANDO, DOMListShadows);
+  SetDOMProxyInformation() {
+    js::SetDOMProxyInformation((void*) &HandlerFamily,
+                               js::JSSLOT_PROXY_EXTRA + JSPROXYSLOT_EXPANDO, DOMProxyShadows);
   }
 };
 
-SetListBaseInformation gSetListBaseInformation;
+SetDOMProxyInformation gSetDOMProxyInformation;
 
 // static
 JSObject*
@@ -91,12 +89,6 @@ DOMProxyHandler::GetAndClearExpandoObject(JSObject* obj)
     if (v.isUndefined()) {
       return nullptr;
     }
-
-    nsISupports* native = UnwrapDOMObject<nsISupports>(obj);
-    nsWrapperCache* cache;
-    CallQueryInterface(native, &cache);
-    cache->SetPreservingWrapper(false);
-    nsContentUtils::DropJSObjects(native);
     expandoAndGeneration->expando = UndefinedValue();
   }
 
@@ -134,7 +126,7 @@ DOMProxyHandler::EnsureExpandoObject(JSContext* cx, JS::Handle<JSObject*> obj)
   nsWrapperCache* cache;
   CallQueryInterface(native, &cache);
   if (expandoAndGeneration) {
-    nsContentUtils::PreserveWrapper(native, cache);
+    cache->PreserveWrapper(native);
     expandoAndGeneration->expando.setObject(*expando);
 
     return expando;
@@ -304,8 +296,6 @@ DOMProxyHandler::AppendNamedPropertyIds(JSContext* cx,
 int32_t
 IdToInt32(JSContext* cx, JS::Handle<jsid> id)
 {
-  JSAutoRequest ar(cx);
-
   JS::Value idval;
   double array_index;
   int32_t i;

@@ -160,7 +160,7 @@ gfxContext::CurrentSurface(gfxFloat *dx, gfxFloat *dy)
       *dx = *dy = 0;
     }
     // An Azure context doesn't have a surface backing it.
-    return NULL;
+    return nullptr;
   }
 }
 
@@ -249,7 +249,7 @@ already_AddRefed<gfxPath> gfxContext::CopyPath() const
     return path.forget();
   } else {
     // XXX - This is not yet supported for Azure.
-    return NULL;
+    return nullptr;
   }
 }
 
@@ -1397,13 +1397,47 @@ gfxContext::GetPattern()
 
 
 // masking
-
 void
 gfxContext::Mask(gfxPattern *pattern)
 {
   if (mCairo) {
     cairo_mask(mCairo, pattern->CairoPattern());
   } else {
+    if (pattern->Extend() == gfxPattern::EXTEND_NONE) {
+      // In this situation the mask will be fully transparent (i.e. nothing
+      // will be drawn) outside of the bounds of the surface. We can support
+      // that by clipping out drawing to that area.
+      Point offset;
+      if (pattern->IsAzure()) {
+        // This is an Azure pattern. i.e. this was the result of a PopGroup and
+        // then the extend mode was changed to EXTEND_NONE.
+        // XXX - We may need some additional magic here in theory to support
+        // device offsets in these patterns, but no problems have been observed
+        // yet because of this. And it would complicate things a little further.
+        offset = Point(0.f, 0.f);
+      } else if (pattern->GetType() == gfxPattern::PATTERN_SURFACE) {
+        nsRefPtr<gfxASurface> asurf = pattern->GetSurface();
+        gfxPoint deviceOffset = asurf->GetDeviceOffset();
+        offset = Point(-deviceOffset.x, -deviceOffset.y);
+
+        // this lets GetAzureSurface work
+        pattern->GetPattern(mDT);
+      }
+
+      if (pattern->IsAzure() || pattern->GetType() == gfxPattern::PATTERN_SURFACE) {
+        RefPtr<SourceSurface> mask = pattern->GetAzureSurface();
+        Matrix mat = ToMatrix(pattern->GetInverseMatrix());
+        Matrix old = mTransform;
+        // add in the inverse of the pattern transform so that when we
+        // MaskSurface we are transformed to the place matching the pattern transform
+        mat = mat * mTransform;
+
+        ChangeTransform(mat);
+        mDT->MaskSurface(GeneralPattern(this), mask, offset, DrawOptions(1.0f, CurrentState().op, CurrentState().aaMode));
+        ChangeTransform(old);
+        return;
+      }
+    }
     mDT->Mask(GeneralPattern(this), *pattern->GetPattern(mDT), DrawOptions(1.0f, CurrentState().op, CurrentState().aaMode));
   }
 }
@@ -1420,9 +1454,11 @@ gfxContext::Mask(gfxASurface *surface, const gfxPoint& offset)
       gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(mDT, surface);
 
     gfxPoint pt = surface->GetDeviceOffset();
-    mDT->Mask(GeneralPattern(this), 
-              SurfacePattern(sourceSurf, EXTEND_CLAMP,
-                             Matrix(1.0f, 0, 0, 1.0f, Float(offset.x - pt.x), Float(offset.y - pt.y))),
+
+    // We clip here to bind to the mask surface bounds, see above.
+    mDT->MaskSurface(GeneralPattern(this), 
+              sourceSurf,
+              Point(offset.x - pt.x, offset.y -  pt.y),
               DrawOptions(1.0f, CurrentState().op, CurrentState().aaMode));
   }
 }
@@ -1666,7 +1702,7 @@ gfxContext::GetFlattenedPath()
     return path.forget();
   } else {
     // XXX - Used by SVG, needs fixing.
-    return NULL;
+    return nullptr;
   }
 }
 

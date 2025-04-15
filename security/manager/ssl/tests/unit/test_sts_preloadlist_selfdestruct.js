@@ -1,8 +1,3 @@
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cu = Components.utils;
-
-Cu.import("resource://gre/modules/Services.jsm");
 // This test uses bugzilla.mozilla.org given that it is likely to remain
 // on the preload list for a long time.
 

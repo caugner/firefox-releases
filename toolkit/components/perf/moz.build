@@ -6,3 +6,9 @@
 
 MODULE = 'jsperf'
 
+CPP_SOURCES += [
+    'PerfMeasurement.cpp',
+]
+
+LIBRARY_NAME = 'jsperf'
+

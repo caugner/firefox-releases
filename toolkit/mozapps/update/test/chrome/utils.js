@@ -123,6 +123,7 @@ const PAGEID_CHECKING         = "checking";              // Done
 const PAGEID_PLUGIN_UPDATES   = "pluginupdatesfound";
 const PAGEID_NO_UPDATES_FOUND = "noupdatesfound";        // Done
 const PAGEID_MANUAL_UPDATE    = "manualUpdate"; // Tested on license load failure
+const PAGEID_UNSUPPORTED      = "unsupported";           // Done
 const PAGEID_INCOMPAT_CHECK   = "incompatibleCheck";     // Done
 const PAGEID_FOUND_BASIC      = "updatesfoundbasic";     // Done
 const PAGEID_FOUND_BILLBOARD  = "updatesfoundbillboard"; // Done
@@ -171,6 +172,7 @@ var gCloseWindowTimeoutCounter = 0;
 // The following vars are for restoring previous preference values (if present)
 // when the test finishes.
 var gAppUpdateEnabled;            // app.update.enabled
+var gAppUpdateMetroEnabled;       // app.update.metro.enabled
 var gAppUpdateServiceEnabled;     // app.update.service.enabled
 var gAppUpdateStagingEnabled;     // app.update.staging.enabled
 var gAppUpdateURLDefault;         // app.update.url (default prefbranch)
@@ -552,6 +554,7 @@ function getExpectedButtonStates() {
       return { extra1: { disabled: false, hidden: false } };
     case PAGEID_NO_UPDATES_FOUND:
     case PAGEID_MANUAL_UPDATE:
+    case PAGEID_UNSUPPORTED:
     case PAGEID_ERRORS:
     case PAGEID_ERROR_EXTRA:
     case PAGEID_INSTALLED:
@@ -839,6 +842,11 @@ function setupPrefs() {
   }
   Services.prefs.setBoolPref(PREF_APP_UPDATE_ENABLED, true);
 
+  if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_METRO_ENABLED)) {
+    gAppUpdateMetroEnabled = Services.prefs.getBoolPref(PREF_APP_UPDATE_METRO_ENABLED);
+  }
+  Services.prefs.setBoolPref(PREF_APP_UPDATE_METRO_ENABLED, true);
+
   if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_SERVICE_ENABLED)) {
     gAppUpdateServiceEnabled = Services.prefs.getBoolPref(PREF_APP_UPDATE_SERVICE_ENABLED);
   }
@@ -855,7 +863,6 @@ function setupPrefs() {
   let extUpdateUrl = URL_UPDATE + "?addonID=%ITEM_ID%&platformVersion=" +
                      getNewerPlatformVersion();
   Services.prefs.setCharPref(PREF_EXTENSIONS_UPDATE_URL, extUpdateUrl);
-  debugDump("extensions.update.url: " + extUpdateUrl);
 
   Services.prefs.setIntPref(PREF_APP_UPDATE_IDLETIME, 0);
   Services.prefs.setIntPref(PREF_APP_UPDATE_PROMPTWAITTIME, 0);
@@ -913,6 +920,13 @@ function resetPrefs() {
     Services.prefs.clearUserPref(PREF_APP_UPDATE_ENABLED);
   }
 
+  if (gAppUpdateMetroEnabled !== undefined) {
+    Services.prefs.setBoolPref(PREF_APP_UPDATE_METRO_ENABLED, gAppUpdateMetroEnabled);
+  }
+  else if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_METRO_ENABLED)) {
+    Services.prefs.clearUserPref(PREF_APP_UPDATE_METRO_ENABLED);
+  }
+
   if (gAppUpdateServiceEnabled !== undefined) {
     Services.prefs.setBoolPref(PREF_APP_UPDATE_SERVICE_ENABLED, gAppUpdateServiceEnabled);
   }
@@ -948,6 +962,10 @@ function resetPrefs() {
 
   if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_SHOW_INSTALLED_UI)) {
     Services.prefs.clearUserPref(PREF_APP_UPDATE_SHOW_INSTALLED_UI);
+  }
+
+  if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_NOTIFIEDUNSUPPORTED)) {
+    Services.prefs.clearUserPref(PREF_APP_UPDATE_NOTIFIEDUNSUPPORTED);
   }
 
   if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_LOG)) {

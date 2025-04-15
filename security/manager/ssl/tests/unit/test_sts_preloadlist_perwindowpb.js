@@ -1,7 +1,3 @@
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-
-Components.utils.import("resource://gre/modules/Services.jsm");
 // This test attempts to use only domains that are likely to remain on the
 // preload list for a long time. Currently this includes bugzilla.mozilla.org
 // and login.persona.org because they are Mozilla properties and we are

@@ -6,3 +6,9 @@
 
 MODULE = 'imgpnge'
 
+CPP_SOURCES += [
+    'nsPNGEncoder.cpp',
+]
+
+LIBRARY_NAME = 'imgpnge_s'
+

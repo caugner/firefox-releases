@@ -7,15 +7,6 @@
 const {Cc, Ci, Cu} = require("chrome");
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-
-// Add a couple of globals that we use all over this package.
-let loaderOptions = require("@loader/options")
-
-loaderOptions.globals.loader = {
-  lazyGetter: XPCOMUtils.defineLazyGetter.bind(XPCOMUtils),
-  lazyImporter: XPCOMUtils.defineLazyModuleGetter.bind(XPCOMUtils)
-};
-
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource:///modules/devtools/gDevTools.jsm");
 
@@ -116,12 +107,13 @@ Tools.inspector = {
 
 Tools.jsdebugger = {
   id: "jsdebugger",
-  key: l10n("open.commandkey", debuggerStrings),
+  key: l10n("debuggerMenu.commandkey", debuggerStrings),
   accesskey: l10n("debuggerMenu.accesskey", debuggerStrings),
   modifiers: osString == "Darwin" ? "accel,alt" : "accel,shift",
   ordinal: 3,
   visibilityswitch: "devtools.debugger.enabled",
   icon: "chrome://browser/skin/devtools/tool-debugger.png",
+  highlightedicon: "chrome://browser/skin/devtools/tool-debugger-paused.png",
   url: "chrome://browser/content/devtools/debugger.xul",
   label: l10n("ToolboxDebugger.label", debuggerStrings),
   tooltip: l10n("ToolboxDebugger.tooltip", debuggerStrings),
@@ -167,7 +159,7 @@ Tools.jsprofiler = {
   icon: "chrome://browser/skin/devtools/tool-profiler.png",
   url: "chrome://browser/content/devtools/profiler.xul",
   label: l10n("profiler.label", profilerStrings),
-  tooltip: l10n("profiler.tooltip", profilerStrings),
+  tooltip: l10n("profiler.tooltip2", profilerStrings),
 
   isTargetSupported: function (target) {
     return true;

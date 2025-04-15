@@ -10,8 +10,8 @@
  * web workers.
  */
 
-#ifndef jsworkers_h___
-#define jsworkers_h___
+#ifndef jsworkers_h
+#define jsworkers_h
 
 #include "mozilla/GuardObjects.h"
 #include "mozilla/PodOperations.h"
@@ -19,11 +19,13 @@
 #include "jscntxt.h"
 #include "jslock.h"
 
-#include "ion/Ion.h"
+#include "jit/Ion.h"
 
 namespace js {
 
-namespace ion {
+struct AsmJSParallelTask;
+
+namespace jit {
   class IonBuilder;
 }
 
@@ -47,7 +49,7 @@ class WorkerThreadState
     };
 
     /* Shared worklist for Ion worker threads. */
-    js::Vector<ion::IonBuilder*, 0, SystemAllocPolicy> ionWorklist;
+    js::Vector<jit::IonBuilder*, 0, SystemAllocPolicy> ionWorklist;
 
     /* Worklist for AsmJS worker threads. */
     js::Vector<AsmJSParallelTask*, 0, SystemAllocPolicy> asmJSWorklist;
@@ -145,7 +147,7 @@ struct WorkerThread
     bool terminate;
 
     /* Any builder currently being compiled by Ion on this thread. */
-    ion::IonBuilder *ionBuilder;
+    jit::IonBuilder *ionBuilder;
 
     /* Any AsmJS data currently being optimized by Ion on this thread. */
     AsmJSParallelTask *asmData;
@@ -165,9 +167,9 @@ inline bool
 OffThreadCompilationEnabled(JSContext *cx)
 {
 #ifdef JS_PARALLEL_COMPILATION
-    return ion::js_IonOptions.parallelCompilation
-        && cx->runtime->useHelperThreads()
-        && cx->runtime->helperThreadCount() != 0;
+    return jit::js_IonOptions.parallelCompilation
+        && cx->runtime()->useHelperThreads()
+        && cx->runtime()->helperThreadCount() != 0;
 #else
     return false;
 #endif
@@ -188,7 +190,7 @@ StartOffThreadAsmJSCompile(JSContext *cx, AsmJSParallelTask *asmData);
  * generated and read everything needed from the VM state.
  */
 bool
-StartOffThreadIonCompile(JSContext *cx, ion::IonBuilder *builder);
+StartOffThreadIonCompile(JSContext *cx, jit::IonBuilder *builder);
 
 /*
  * Cancel a scheduled or in progress Ion compilation for script. If script is
@@ -255,4 +257,4 @@ class AutoUnlockWorkerThreadState
 
 } /* namespace js */
 
-#endif // jsworkers_h___
+#endif /* jsworkers_h */

@@ -12,3 +12,10 @@ EXPORTS += [
     'RawStructs.h',
 ]
 
+CPP_SOURCES += [
+    'RawDecoder.cpp',
+    'RawReader.cpp',
+]
+
+LIBRARY_NAME = 'gkconraw_s'
+

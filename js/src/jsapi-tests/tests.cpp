@@ -23,8 +23,8 @@ bool JSAPITest::init()
     JS::RootedObject global(cx, createGlobal());
     if (!global)
         return false;
-    oldCompartment = JS_EnterCompartment(cx, global);
-    return oldCompartment != NULL;
+    JS_EnterCompartment(cx, global);
+    return true;
 }
 
 bool JSAPITest::exec(const char *bytes, const char *filename, int lineno)
@@ -51,7 +51,9 @@ bool JSAPITest::definePrint()
 JSObject * JSAPITest::createGlobal(JSPrincipals *principals)
 {
     /* Create the global object. */
-    global = JS_NewGlobalObject(cx, getGlobalClass(), principals);
+    JS::CompartmentOptions options;
+    options.setVersion(JSVERSION_LATEST);
+    global = JS_NewGlobalObject(cx, getGlobalClass(), principals, options);
     if (!global)
         return NULL;
     JS_AddNamedObjectRoot(cx, &global, "test-global");

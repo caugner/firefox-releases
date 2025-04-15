@@ -7,9 +7,9 @@
 
 #include "nsCoord.h"
 #include "nsCSSProperty.h"
+#include "gfxFontFeatures.h"
 #include "nsIPrincipal.h"
 #include "nsSubstring.h"
-#include "gfxFontFeatures.h"
 
 class nsCSSValue;
 class nsStringComparator;
@@ -52,6 +52,20 @@ public:
 
   static void AppendFontFeatureSettings(const nsCSSValue& src,
                                         nsAString& aResult);
+
+  // convert bitmask value to keyword name for a functional alternate
+  static void GetFunctionalAlternatesName(int32_t aFeature,
+                                          nsAString& aFeatureName);
+
+  // Append functional font-variant-alternates values to string
+  static void
+  SerializeFunctionalAlternates(const nsTArray<gfxAlternateValue>& aAlternates,
+                                nsAString& aResult);
+
+  // List of functional font-variant-alternates values to feature/value pairs
+  static void
+  ComputeFunctionalAlternates(const nsCSSValueList* aList,
+                              nsTArray<gfxAlternateValue>& aAlternateValues);
 
   /*
    * Convert an author-provided floating point number to an integer (0

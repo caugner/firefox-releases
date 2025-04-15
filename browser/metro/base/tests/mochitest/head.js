@@ -118,15 +118,24 @@ function showNotification()
 function getSelection(aElement) {
   if (!aElement)
     return null;
-  // editable element
+
+  // chrome text edit
+  if (aElement instanceof Ci.nsIDOMXULTextBoxElement) {
+    return aElement.QueryInterface(Components.interfaces.nsIDOMXULTextBoxElement)
+                   .editor.selection;
+  }
+
+  // editable content element
   if (aElement instanceof Ci.nsIDOMNSEditableElement) {
     return aElement.QueryInterface(Ci.nsIDOMNSEditableElement)
-                 .editor.selection;
+                   .editor.selection;
   }
+
   // document or window
   if (aElement instanceof HTMLDocument || aElement instanceof Window) {
     return aElement.getSelection();
   }
+
   // browser
   return aElement.contentWindow.getSelection();
 };
@@ -156,20 +165,28 @@ function clearSelection(aTarget) {
 function hideContextUI()
 {
   purgeEventQueue();
-  if (ContextUI.isVisible) {
-    let promise = waitForEvent(Elements.tray, "transitionend", null, Elements.tray);
-    if (ContextUI.dismiss())
-    {
-      info("ContextUI dismissed, waiting...");
-      return promise;
+
+  return Task.spawn(function() {
+    if (ContextUI.isExpanded) {
+      let promise = waitForEvent(Elements.tray, "transitionend", null, Elements.tray);
+      if (ContextUI.dismiss())
+      {
+        info("ContextUI dismissed, waiting...");
+        yield promise;
+      }
     }
-    return true;
-  }
+
+    if (Elements.contextappbar.isShowing) {
+      let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
+      Elements.contextappbar.dismiss();
+      yield promise;
+    }
+  });
 }
 
 function showNavBar()
 {
-  let promise = waitForEvent(Elements.tray, "transitionend");
+  let promise = waitForEvent(Elements.navbar, "transitionend");
   if (!ContextUI.isVisible) {
     ContextUI.displayNavbar();
     return promise;
@@ -180,7 +197,7 @@ function fireAppBarDisplayEvent()
 {
   let promise = waitForEvent(Elements.tray, "transitionend");
   let event = document.createEvent("Events");
-  event.initEvent("MozEdgeUIGesture", true, false);
+  event.initEvent("MozEdgeUICompleted", true, false);
   gWindow.dispatchEvent(event);
   purgeEventQueue();
   return promise;
@@ -253,9 +270,10 @@ function cleanUpOpenedTabs() {
 function waitForEvent(aSubject, aEventName, aTimeoutMs, aTarget) {
   let eventDeferred = Promise.defer();
   let timeoutMs = aTimeoutMs || kDefaultWait;
+  let stack = new Error().stack;
   let timerID = setTimeout(function wfe_canceller() {
     aSubject.removeEventListener(aEventName, onEvent);
-    eventDeferred.reject( new Error(aEventName+" event timeout") );
+    eventDeferred.reject( new Error(aEventName+" event timeout at " + stack) );
   }, timeoutMs);
 
   function onEvent(aEvent) {
@@ -568,6 +586,14 @@ function sendTap(aWindow, aX, aY) {
     }, aWindow);
 }
 
+function sendElementTap(aWindow, aElement, aX, aY) {
+  let rect = aElement.getBoundingClientRect();
+  EventUtils.synthesizeMouseAtPoint(rect.left + aX, rect.top + aY, {
+      clickCount: 1,
+      inputSource: Ci.nsIDOMMouseEvent.MOZ_SOURCE_TOUCH
+    }, aWindow);
+}
+
 /*
  * sendTouchDrag - sends a touch series composed of a touchstart,
  * touchmove, and touchend w3c event.
@@ -620,6 +646,22 @@ TouchDragAndHold.prototype = {
       info("[0] touchstart " + aStartX + " x " + aStartY);
     }
     EventUtils.synthesizeTouchAtPoint(aStartX, aStartY, { type: "touchstart" }, aWindow);
+    let self = this;
+    setTimeout(function () { self.callback(); }, this._timeoutStep);
+    return this._defer.promise;
+  },
+
+  move: function move(aEndX, aEndY) {
+    if (this._win == null)
+      return;
+    if (this._debug) {
+      info("[0] continuation to " + aEndX + " x " + aEndY);
+    }
+    this._defer = Promise.defer();
+    this._step = { steps: 0,
+                   x: (aEndX - this._endPoint.xPos) / this._numSteps,
+                   y: (aEndY - this._endPoint.yPos) / this._numSteps };
+    this._endPoint = { xPos: aEndX, yPos: aEndY };
     let self = this;
     setTimeout(function () { self.callback(); }, this._timeoutStep);
     return this._defer.promise;

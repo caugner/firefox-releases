@@ -6,3 +6,9 @@
 
 MODULE = 'imgicon'
 
+CPP_SOURCES += [
+    'nsIconChannel.cpp',
+]
+
+LIBRARY_NAME = 'imgicongtk_s'
+

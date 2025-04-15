@@ -8,6 +8,7 @@
 
 #include "sigslot.h"
 
+#include "logging.h"
 #include "nsThreadUtils.h"
 #include "nsXPCOM.h"
 #include "nss.h"
@@ -15,7 +16,6 @@
 #include "sslproto.h"
 
 #include "dtlsidentity.h"
-#include "logging.h"
 #include "mozilla/RefPtr.h"
 #include "FakeMediaStreams.h"
 #include "FakeMediaStreamsImpl.h"
@@ -54,7 +54,7 @@ class TestAgent {
       audio_pipeline_(),
       video_flow_(new TransportFlow()),
       video_prsock_(new TransportLayerPrsock()),
-      video_config_(120, "VP8", 640, 480),
+      video_config_(120, "VP8"),
       video_conduit_(mozilla::VideoSessionConduit::Create()),
       video_(),
       video_pipeline_() {

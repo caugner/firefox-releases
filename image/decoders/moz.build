@@ -8,7 +8,7 @@ toolkit = CONFIG['MOZ_WIDGET_TOOLKIT']
 
 # The Icon Channel stuff really shouldn't live in decoders/icon, but we'll
 # fix that another time.
-if toolkit == 'gtk2':
+if CONFIG['MOZ_WIDGET_GTK']:
     DIRS += ['icon/gtk', 'icon']
 elif toolkit == 'qt':
     DIRS += ['icon/qt', 'icon']
@@ -24,4 +24,20 @@ elif toolkit == 'android':
     DIRS += ['icon/android', 'icon']
 
 MODULE = 'imgdecoders'
+
+CPP_SOURCES += [
+    'nsBMPDecoder.cpp',
+    'nsGIFDecoder2.cpp',
+    'nsICODecoder.cpp',
+    'nsIconDecoder.cpp',
+    'nsJPEGDecoder.cpp',
+    'nsPNGDecoder.cpp',
+]
+
+if CONFIG['MOZ_WBMP']:
+    CPP_SOURCES += [
+        'nsWBMPDecoder.cpp',
+    ]
+
+LIBRARY_NAME = 'imgdecoders_s'
 

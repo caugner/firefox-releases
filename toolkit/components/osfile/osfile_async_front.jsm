@@ -111,11 +111,6 @@ let clone = function clone(object, refs = noRefs) {
   return result;
 };
 
-/**
- * A shared constant used to normalize a set of options to nothing.
- */
-const noOptions = {};
-
 let worker = new PromiseWorker(
   "resource://gre/modules/osfile/osfile_async_worker.js", LOG);
 let Scheduler = {
@@ -140,11 +135,16 @@ let Scheduler = {
         if (!("durationMs" in data)) {
           return data.ok;
         }
+        // Bug 874425 demonstrates that two successive calls to Date.now()
+        // can actually produce an interval with negative duration.
+        // We assume that this is due to an operation that is so short
+        // that Date.now() is not monotonic, so we round this up to 0.
+        let durationMs = Math.max(0, data.durationMs);
         // Accumulate (or initialize) outExecutionDuration
         if (typeof options.outExecutionDuration == "number") {
-          options.outExecutionDuration += data.durationMs;
+          options.outExecutionDuration += durationMs;
         } else {
-          options.outExecutionDuration = data.durationMs;
+          options.outExecutionDuration = durationMs;
         }
         return data.ok;
       },
@@ -313,7 +313,7 @@ File.prototype = {
    * @resolves {number} The number of bytes effectively read.
    * @rejects {OS.File.Error}
    */
-  readTo: function readTo(buffer, options = noOptions) {
+  readTo: function readTo(buffer, options = {}) {
     // If |buffer| is a typed array and there is no |bytes| options, we
     // need to extract the |byteLength| now, as it will be lost by
     // communication
@@ -351,7 +351,7 @@ File.prototype = {
    *
    * @return {number} The number of bytes actually written.
    */
-  write: function write(buffer, options = noOptions) {
+  write: function write(buffer, options = {}) {
     // If |buffer| is a typed array and there is no |bytes| options,
     // we need to extract the |byteLength| now, as it will be lost
     // by communication
@@ -652,7 +652,7 @@ File.exists = function exists(path) {
  * @return {promise}
  * @resolves {number} The number of bytes actually written.
  */
-File.writeAtomic = function writeAtomic(path, buffer, options = noOptions) {
+File.writeAtomic = function writeAtomic(path, buffer, options = {}) {
   // Copy |options| to avoid modifying the original object but preserve the
   // reference to |outExecutionDuration| option if it is passed.
   options = clone(options, ["outExecutionDuration"]);

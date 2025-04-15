@@ -4,10 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef ScopeObject_h___
-#define ScopeObject_h___
-
-#include "mozilla/GuardObjects.h"
+#ifndef vm_ScopeObject_h
+#define vm_ScopeObject_h
 
 #include "jscntxt.h"
 #include "jsobj.h"
@@ -59,7 +57,7 @@ class StaticScopeIter
     bool onNamedLambda;
 
   public:
-    explicit StaticScopeIter(JSContext *cx, HandleObject obj);
+    explicit StaticScopeIter(JSContext *cx, JSObject *obj);
 
     bool done() const;
     void operator++(int);
@@ -105,6 +103,10 @@ ScopeCoordinateToStaticScopeShape(JSContext *cx, JSScript *script, jsbytecode *p
 /* Return the name being accessed by the given ALIASEDVAR op. */
 extern PropertyName *
 ScopeCoordinateName(JSContext *cx, JSScript *script, jsbytecode *pc);
+
+/* Return the function script accessed by the given ALIASEDVAR op, or NULL. */
+extern JSScript *
+ScopeCoordinateFunctionScript(JSContext *cx, JSScript *script, jsbytecode *pc);
 
 /*****************************************************************************/
 
@@ -157,7 +159,9 @@ class ScopeObject : public JSObject
      * does not derive ScopeObject (it has a completely different layout), the
      * enclosing scope of a ScopeObject is necessarily non-null.
      */
-    inline JSObject &enclosingScope() const;
+    inline JSObject &enclosingScope() const {
+        return getReservedSlot(SCOPE_CHAIN_SLOT).toObject();
+    }
     inline void setEnclosingScope(HandleObject obj);
 
     /*
@@ -167,7 +171,7 @@ class ScopeObject : public JSObject
      * take a ScopeCoordinate instead of just the slot index.
      */
     inline const Value &aliasedVar(ScopeCoordinate sc);
-    inline void setAliasedVar(ScopeCoordinate sc, const Value &v);
+    inline void setAliasedVar(JSContext *cx, ScopeCoordinate sc, PropertyName *name, const Value &v);
 
     /* For jit access. */
     static inline size_t offsetOfEnclosingScope();
@@ -185,9 +189,11 @@ class CallObject : public ScopeObject
     create(JSContext *cx, HandleScript script, HandleObject enclosing, HandleFunction callee);
 
   public:
+    static Class class_;
+
     /* These functions are internal and are exposed only for JITs. */
     static CallObject *
-    create(JSContext *cx, HandleShape shape, HandleTypeObject type, HeapSlot *slots);
+    create(JSContext *cx, HandleScript script, HandleShape shape, HandleTypeObject type, HeapSlot *slots);
 
     static CallObject *
     createTemplateObject(JSContext *cx, HandleScript script, gc::InitialHeap heap);
@@ -210,7 +216,7 @@ class CallObject : public ScopeObject
 
     /* Get/set the aliased variable referred to by 'bi'. */
     inline const Value &aliasedVar(AliasedFormalIter fi);
-    inline void setAliasedVar(AliasedFormalIter fi, const Value &v);
+    inline void setAliasedVar(JSContext *cx, AliasedFormalIter fi, PropertyName *name, const Value &v);
 
     /* For jit access. */
     static inline size_t offsetOfCallee();
@@ -227,6 +233,8 @@ class DeclEnvObject : public ScopeObject
   public:
     static const uint32_t RESERVED_SLOTS = 2;
     static const gc::AllocKind FINALIZE_KIND = gc::FINALIZE_OBJECT2;
+
+    static Class class_;
 
     static DeclEnvObject *
     createTemplateObject(JSContext *cx, HandleFunction fun, gc::InitialHeap heap);
@@ -259,6 +267,8 @@ class WithObject : public NestedScopeObject
     static const unsigned RESERVED_SLOTS = 3;
     static const gc::AllocKind FINALIZE_KIND = gc::FINALIZE_OBJECT4_BACKGROUND;
 
+    static Class class_;
+
     static WithObject *
     create(JSContext *cx, HandleObject proto, HandleObject enclosing, uint32_t depth);
 
@@ -274,6 +284,8 @@ class BlockObject : public NestedScopeObject
   public:
     static const unsigned RESERVED_SLOTS = 2;
     static const gc::AllocKind FINALIZE_KIND = gc::FINALIZE_OBJECT4_BACKGROUND;
+
+    static Class class_;
 
     /* Return the number of variables associated with this block. */
     inline uint32_t slotCount() const;
@@ -613,4 +625,27 @@ class DebugScopes
 };
 
 }  /* namespace js */
-#endif /* ScopeObject_h___ */
+
+template<>
+inline bool
+JSObject::is<js::NestedScopeObject>() const
+{
+    return is<js::BlockObject>() || is<js::WithObject>();
+}
+
+template<>
+inline bool
+JSObject::is<js::ScopeObject>() const
+{
+    return is<js::CallObject>() || is<js::DeclEnvObject>() || is<js::NestedScopeObject>();
+}
+
+template<>
+inline bool
+JSObject::is<js::DebugScopeObject>() const
+{
+    extern bool js_IsDebugScopeSlow(JSObject *obj);
+    return getClass() == &js::ObjectProxyClass && js_IsDebugScopeSlow(const_cast<JSObject*>(this));
+}
+
+#endif /* vm_ScopeObject_h */

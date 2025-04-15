@@ -2,11 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include <iostream>
+#include <ostream>
 #include <fstream>
 #include <sstream>
 #include <errno.h>
 
+#include "IOInterposer.h"
+#include "ProfilerIOInterposeObserver.h"
 #include "platform.h"
 #include "PlatformMacros.h"
 #include "prenv.h"
@@ -55,6 +57,8 @@ std::vector<ThreadInfo*>* Sampler::sRegisteredThreads = nullptr;
 mozilla::Mutex* Sampler::sRegisteredThreadsMutex = nullptr;
 
 TableTicker* Sampler::sActiveSampler;
+
+static mozilla::ProfilerIOInterposeObserver* sInterposeObserver = nullptr;
 
 void Sampler::Startup() {
   sRegisteredThreads = new std::vector<ThreadInfo*>();
@@ -252,7 +256,7 @@ void read_profiler_env_vars()
 ////////////////////////////////////////////////////////////////////////
 // BEGIN externally visible functions
 
-void mozilla_sampler_init()
+void mozilla_sampler_init(void* stackTop)
 {
   sInitCount++;
 
@@ -271,7 +275,7 @@ void mozilla_sampler_init()
   PseudoStack *stack = new PseudoStack();
   tlsPseudoStack.set(stack);
 
-  Sampler::RegisterCurrentThread("Gecko", stack, true);
+  Sampler::RegisterCurrentThread("Gecko", stack, true, stackTop);
 
   // Read mode settings from MOZ_PROFILER_MODE and interval
   // settings from MOZ_PROFILER_INTERVAL and stack-scan threshhold
@@ -280,6 +284,9 @@ void mozilla_sampler_init()
 
   // Allow the profiler to be started using signals
   OS::RegisterStartHandler();
+
+  // Initialize (but don't enable) I/O interposing
+  sInterposeObserver = new mozilla::ProfilerIOInterposeObserver();
 
   // We can't open pref so we use an environment variable
   // to know if we should trigger the profiler on startup
@@ -296,7 +303,9 @@ void mozilla_sampler_init()
 #endif
                          };
   profiler_start(PROFILE_DEFAULT_ENTRY, PROFILE_DEFAULT_INTERVAL,
-                         features, sizeof(features)/sizeof(const char*));
+                         features, sizeof(features)/sizeof(const char*),
+                         // TODO Add env variable to select threads
+                         NULL, 0);
   LOG("END   mozilla_sampler_init");
 }
 
@@ -322,6 +331,10 @@ void mozilla_sampler_shutdown()
   }
 
   profiler_stop();
+
+  delete sInterposeObserver;
+  sInterposeObserver = nullptr;
+  mozilla::IOInterposer::ClearInstance();
 
   Sampler::Shutdown();
 
@@ -391,6 +404,10 @@ const char** mozilla_sampler_get_features()
     "js",
     // Profile the registered secondary threads.
     "threads",
+    // Do not include user-identifiable information
+    "privacy",
+    // Add main thread I/O to the profile
+    "mainthreadio",
     NULL
   };
 
@@ -399,21 +416,17 @@ const char** mozilla_sampler_get_features()
 
 // Values are only honored on the first start
 void mozilla_sampler_start(int aProfileEntries, int aInterval,
-                           const char** aFeatures, uint32_t aFeatureCount)
+                           const char** aFeatures, uint32_t aFeatureCount,
+                           const char** aThreadNameFilters, uint32_t aFilterCount)
+
 {
   if (!stack_key_initialized)
-    profiler_init();
+    profiler_init(NULL);
 
   /* If the sampling interval was set using env vars, use that
      in preference to anything else. */
   if (sUnwindInterval > 0)
     aInterval = sUnwindInterval;
-
-  PseudoStack *stack = tlsPseudoStack.get();
-  if (!stack) {
-    ASSERT(false);
-    return;
-  }
 
   // Reset the current state if the profiler is running
   profiler_stop();
@@ -421,18 +434,16 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
   TableTicker* t;
   t = new TableTicker(aInterval ? aInterval : PROFILE_DEFAULT_INTERVAL,
                       aProfileEntries ? aProfileEntries : PROFILE_DEFAULT_ENTRY,
-                      aFeatures, aFeatureCount);
+                      aFeatures, aFeatureCount,
+                      aThreadNameFilters, aFilterCount);
   if (t->HasUnwinderThread()) {
-    int aLocal;
-    uwt__register_thread_for_profiling( &aLocal );
-
     // Create the unwinder thread.  ATM there is only one.
     uwt__init();
   }
 
   tlsTicker.set(t);
   t->Start();
-  if (t->ProfileJS()) {
+  if (t->ProfileJS() || t->InPrivacyMode()) {
       mozilla::MutexAutoLock lock(*Sampler::sRegisteredThreadsMutex);
       std::vector<ThreadInfo*> threads = t->GetRegisteredThreads();
 
@@ -442,7 +453,12 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
         if (!thread_profile) {
           continue;
         }
-        thread_profile->GetPseudoStack()->enableJSSampling();
+        if (t->ProfileJS()) {
+          thread_profile->GetPseudoStack()->enableJSSampling();
+        }
+        if (t->InPrivacyMode()) {
+          thread_profile->GetPseudoStack()->mPrivacyMode = true;
+        }
       }
   }
 
@@ -457,6 +473,10 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
   }
 #endif
 
+  if (t->AddMainThreadIO()) {
+    mozilla::IOInterposer::GetInstance()->Enable(true);
+  }
+
   sIsProfiling = true;
 
   nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
@@ -467,7 +487,7 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
 void mozilla_sampler_stop()
 {
   if (!stack_key_initialized)
-    profiler_init();
+    profiler_init(NULL);
 
   TableTicker *t = tlsTicker.get();
   if (!t) {
@@ -488,15 +508,18 @@ void mozilla_sampler_stop()
   t->Stop();
   delete t;
   tlsTicker.set(NULL);
-  PseudoStack *stack = tlsPseudoStack.get();
-  ASSERT(stack != NULL);
 
-  if (disableJS)
+  if (disableJS) {
+    PseudoStack *stack = tlsPseudoStack.get();
+    ASSERT(stack != NULL);
     stack->disableJSSampling();
+  }
 
   if (unwinderThreader) {
     uwt__deinit();
   }
+
+  mozilla::IOInterposer::GetInstance()->Enable(false);
 
   sIsProfiling = false;
 
@@ -559,12 +582,12 @@ void mozilla_sampler_unlock()
     os->NotifyObservers(nullptr, "profiler-unlocked", nullptr);
 }
 
-bool mozilla_sampler_register_thread(const char* aName)
+bool mozilla_sampler_register_thread(const char* aName, void* stackTop)
 {
   PseudoStack* stack = new PseudoStack();
   tlsPseudoStack.set(stack);
 
-  return Sampler::RegisterCurrentThread(aName, stack, false);
+  return Sampler::RegisterCurrentThread(aName, stack, false, stackTop);
 }
 
 void mozilla_sampler_unregister_thread()

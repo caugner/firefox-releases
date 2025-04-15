@@ -525,18 +525,27 @@ private:
     mRuntime = JS_NewRuntime(sRuntimeHeapSize, JS_NO_HELPER_THREADS);
     NS_ENSURE_TRUE(mRuntime, NS_ERROR_OUT_OF_MEMORY);
 
+    /*
+     * Not setting this will cause JS_CHECK_RECURSION to report false
+     * positives
+     */ 
+    JS_SetNativeStackQuota(mRuntime, 128 * sizeof(size_t) * 1024); 
+
     mContext = JS_NewContext(mRuntime, 0);
     NS_ENSURE_TRUE(mContext, NS_ERROR_OUT_OF_MEMORY);
 
     JSAutoRequest ar(mContext);
 
-    mGlobal = JS_NewGlobalObject(mContext, &sGlobalClass, nullptr, JS::SystemZone);
+    JS::CompartmentOptions options;
+    options.setZone(JS::SystemZone)
+           .setVersion(JSVERSION_LATEST);
+    mGlobal = JS_NewGlobalObject(mContext, &sGlobalClass, nullptr, options);
     NS_ENSURE_TRUE(mGlobal, NS_ERROR_OUT_OF_MEMORY);
 
+    JSAutoCompartment ac(mContext, mGlobal);
     JS_SetGlobalObject(mContext, mGlobal);
     JS_InitStandardClasses(mContext, mGlobal);
 
-    JS_SetVersion(mContext, JSVERSION_LATEST);
     JS_SetErrorReporter(mContext, PACErrorReporter);
 
     if (!JS_DefineFunctions(mContext, mGlobal, PACGlobalFunctions))
@@ -585,6 +594,7 @@ ProxyAutoConfig::SetupJS()
     return NS_ERROR_FAILURE;
 
   JSAutoRequest ar(mJSRuntime->Context());
+  JSAutoCompartment ac(mJSRuntime->Context(), mJSRuntime->Global());
 
   sRunning = this;
   JSScript *script = JS_CompileScript(mJSRuntime->Context(),
@@ -626,6 +636,7 @@ ProxyAutoConfig::GetProxyForURI(const nsCString &aTestURI,
 
   JSContext *cx = mJSRuntime->Context();
   JSAutoRequest ar(cx);
+  JSAutoCompartment ac(cx, mJSRuntime->Global());
 
   // the sRunning flag keeps a new PAC file from being installed
   // while the event loop is spinning on a DNS function. Don't early return.
@@ -665,6 +676,7 @@ ProxyAutoConfig::GC()
   if (!mJSRuntime || !mJSRuntime->IsOK())
     return;
 
+  JSAutoCompartment ac(mJSRuntime->Context(), mJSRuntime->Global());
   JS_MaybeGC(mJSRuntime->Context());
 }
 

@@ -21,3 +21,19 @@ EXPORTS.mozilla.net += [
     'DNS.h',
 ]
 
+CSRCS += [
+    'nameprep.c',
+    'punycode.c',
+    'race.c',
+]
+
+CPP_SOURCES += [
+    'DNS.cpp',
+    'nsDNSService2.cpp',
+    'nsEffectiveTLDService.cpp',
+    'nsHostResolver.cpp',
+    'nsIDNService.cpp',
+]
+
+LIBRARY_NAME = 'neckodns_s'
+

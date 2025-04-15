@@ -20,33 +20,18 @@
 #include "nsIStyleSheet.h"
 #include "pldhash.h"
 #include "mozilla/Attributes.h"
+#include "nsString.h"
 
 class nsMappedAttributes;
 
-class nsHTMLStyleSheet MOZ_FINAL : public nsIStyleSheet,
-                                   public nsIStyleRuleProcessor
+class nsHTMLStyleSheet MOZ_FINAL : public nsIStyleRuleProcessor
 {
 public:
-  nsHTMLStyleSheet(nsIURI* aURL, nsIDocument* aDocument);
+  nsHTMLStyleSheet(nsIDocument* aDocument);
+
+  void SetOwningDocument(nsIDocument* aDocument);
 
   NS_DECL_ISUPPORTS
-
-  // nsIStyleSheet api
-  virtual nsIURI* GetSheetURI() const;
-  virtual nsIURI* GetBaseURI() const MOZ_OVERRIDE;
-  virtual void GetTitle(nsString& aTitle) const MOZ_OVERRIDE;
-  virtual void GetType(nsString& aType) const MOZ_OVERRIDE;
-  virtual bool HasRules() const MOZ_OVERRIDE;
-  virtual bool IsApplicable() const MOZ_OVERRIDE;
-  virtual void SetEnabled(bool aEnabled) MOZ_OVERRIDE;
-  virtual bool IsComplete() const MOZ_OVERRIDE;
-  virtual void SetComplete() MOZ_OVERRIDE;
-  virtual nsIStyleSheet* GetParentSheet() const MOZ_OVERRIDE;  // will be null
-  virtual nsIDocument* GetOwningDocument() const MOZ_OVERRIDE;
-  virtual void SetOwningDocument(nsIDocument* aDocumemt) MOZ_OVERRIDE;
-#ifdef DEBUG
-  virtual void List(FILE* out = stdout, int32_t aIndent = 0) const MOZ_OVERRIDE;
-#endif
 
   // nsIStyleRuleProcessor API
   virtual void RulesMatching(ElementRuleProcessorData* aData) MOZ_OVERRIDE;
@@ -66,7 +51,7 @@ public:
     const MOZ_MUST_OVERRIDE MOZ_OVERRIDE;
   size_t DOMSizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const;
 
-  void Reset(nsIURI* aURL);
+  void Reset();
   nsresult SetLinkColor(nscolor aColor);
   nsresult SetActiveLinkColor(nscolor aColor);
   nsresult SetVisitedLinkColor(nscolor aColor);
@@ -75,6 +60,8 @@ public:
   already_AddRefed<nsMappedAttributes>
     UniqueMappedAttributes(nsMappedAttributes* aMapped);
   void DropMappedAttributes(nsMappedAttributes* aMapped);
+
+  nsIStyleRule* LangRuleFor(const nsString& aLanguage);
 
 private: 
   nsHTMLStyleSheet(const nsHTMLStyleSheet& aCopy) MOZ_DELETE;
@@ -91,7 +78,7 @@ private:
     NS_DECL_ISUPPORTS
 
     // nsIStyleRule interface
-    virtual void MapRuleInfoInto(nsRuleData* aRuleData);
+    virtual void MapRuleInfoInto(nsRuleData* aRuleData) MOZ_OVERRIDE;
   #ifdef DEBUG
     virtual void List(FILE* out = stdout, int32_t aIndent = 0) const MOZ_OVERRIDE;
   #endif
@@ -112,7 +99,7 @@ private:
     NS_DECL_ISUPPORTS
 
     // nsIStyleRule interface
-    virtual void MapRuleInfoInto(nsRuleData* aRuleData) = 0;
+    virtual void MapRuleInfoInto(nsRuleData* aRuleData) MOZ_OVERRIDE = 0;
   #ifdef DEBUG
     virtual void List(FILE* out = stdout, int32_t aIndent = 0) const MOZ_OVERRIDE;
   #endif
@@ -125,7 +112,7 @@ private:
   public:
     TableTHRule() {}
 
-    virtual void MapRuleInfoInto(nsRuleData* aRuleData);
+    virtual void MapRuleInfoInto(nsRuleData* aRuleData) MOZ_OVERRIDE;
   };
 
   // Rule to handle quirk table colors
@@ -133,10 +120,29 @@ private:
   public:
     TableQuirkColorRule() {}
 
-    virtual void MapRuleInfoInto(nsRuleData* aRuleData);
+    virtual void MapRuleInfoInto(nsRuleData* aRuleData) MOZ_OVERRIDE;
   };
 
-  nsCOMPtr<nsIURI>        mURL;
+public: // for mLangRuleTable structures only
+
+  // Rule to handle xml:lang attributes, of which we have exactly one
+  // per language string, maintained in mLangRuleTable.
+  class LangRule MOZ_FINAL : public nsIStyleRule {
+  public:
+    LangRule(const nsSubstring& aLang) : mLang(aLang) {}
+
+    NS_DECL_ISUPPORTS
+
+    // nsIStyleRule interface
+    virtual void MapRuleInfoInto(nsRuleData* aRuleData) MOZ_OVERRIDE;
+  #ifdef DEBUG
+    virtual void List(FILE* out = stdout, int32_t aIndent = 0) const MOZ_OVERRIDE;
+  #endif
+
+    nsString mLang;
+  };
+
+private:
   nsIDocument*            mDocument;
   nsRefPtr<HTMLColorRule> mLinkRule;
   nsRefPtr<HTMLColorRule> mVisitedRule;
@@ -145,6 +151,7 @@ private:
   nsRefPtr<TableTHRule>   mTableTHRule;
 
   PLDHashTable            mMappedAttrTable;
+  PLDHashTable            mLangRuleTable;
 };
 
 #endif /* !defined(nsHTMLStyleSheet_h_) */

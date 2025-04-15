@@ -62,6 +62,17 @@ struct SurfaceDescriptorGralloc {
    * prevent its consumer from mistakenly freeing the buffer.
    */
   bool external;
+
+  /**
+   * This gralloc buffer will be treated as if the RB bytes are swapped.
+   * This is useful for rendering using Cairo/Thebes, because there is no
+   * BGRX Android pixel format, and so we have to do byte swapping.
+   *
+   * For example, if the GraphicBuffer has an Android pixel format of
+   * PIXEL_FORMAT_RGBA_8888 and isRBSwapped is true, when it is sampled
+   * (for example, with GL), a BGRA shader should be used.
+   */
+  bool isRBSwapped;
 };
 
 struct SurfaceStreamDescriptor {
@@ -71,7 +82,6 @@ struct SurfaceStreamDescriptor {
 
 struct YCbCrImage {
   Shmem data;
-  size_t offset;
   uint64_t owner;
 };
 
@@ -83,6 +93,13 @@ struct RGBImage {
   uint64_t owner;
 };
 
+struct MemoryImage {
+  uintptr_t data;
+  gfxIntSize size;
+  uint32_t stride;
+  uint32_t format;
+};
+
 union SurfaceDescriptor {
   Shmem;
   SurfaceDescriptorD3D10;
@@ -92,6 +109,7 @@ union SurfaceDescriptor {
   RGBImage;
   SharedTextureDescriptor;
   SurfaceStreamDescriptor;
+  MemoryImage;
   null_t;
 };
 

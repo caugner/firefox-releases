@@ -40,6 +40,26 @@ function promiseSocialUrlNotRemembered(url) {
 
 let gURLsNotRemembered = [];
 
+
+function checkProviderPrefsEmpty(isError) {
+  let MANIFEST_PREFS = Services.prefs.getBranch("social.manifest.");
+  let prefs = MANIFEST_PREFS.getChildList("", []);
+  let c = 0;
+  for (let pref of prefs) {
+    if (MANIFEST_PREFS.prefHasUserValue(pref)) {
+      info("provider [" + pref + "] manifest left installed from previous test");
+      c++;
+    }
+  }
+  is(c, 0, "all provider prefs uninstalled from previous test");
+  is(Social.providers.length, 0, "all providers uninstalled from previous test " + Social.providers.length);
+}
+
+function defaultFinishChecks() {
+  checkProviderPrefsEmpty(true);
+  finish();
+}
+
 function runSocialTestWithProvider(manifest, callback, finishcallback) {
   let SocialService = Cu.import("resource://gre/modules/SocialService.jsm", {}).SocialService;
 
@@ -67,7 +87,7 @@ function runSocialTestWithProvider(manifest, callback, finishcallback) {
   function finishIfDone(callFinish) {
     finishCount++;
     if (finishCount == manifests.length)
-      Task.spawn(finishCleanUp).then(finishcallback || finish);
+      Task.spawn(finishCleanUp).then(finishcallback || defaultFinishChecks);
   }
   function removeAddedProviders(cleanup) {
     manifests.forEach(function (m) {
@@ -128,6 +148,8 @@ function runSocialTestWithProvider(manifest, callback, finishcallback) {
 
 function runSocialTests(tests, cbPreTest, cbPostTest, cbFinish) {
   let testIter = Iterator(tests);
+  let providersAtStart = Social.providers.length;
+  info("runSocialTests: start test run with " + providersAtStart + " providers");
 
   if (cbPreTest === undefined) {
     cbPreTest = function(cb) {cb()};
@@ -142,7 +164,9 @@ function runSocialTests(tests, cbPreTest, cbPostTest, cbFinish) {
       [name, func] = testIter.next();
     } catch (err if err instanceof StopIteration) {
       // out of items:
-      (cbFinish || finish)();
+      (cbFinish || defaultFinishChecks)();
+      is(providersAtStart, Social.providers.length,
+         "runSocialTests: finish test run with " + Social.providers.length + " providers");
       return;
     }
     // We run on a timeout as the frameworker also makes use of timeouts, so
@@ -153,6 +177,7 @@ function runSocialTests(tests, cbPreTest, cbPostTest, cbFinish) {
         cbPostTest(runNextTest);
       }
       cbPreTest(function() {
+        is(providersAtStart, Social.providers.length, "pre-test: no new providers left enabled");
         info("sub-test " + name + " starting");
         try {
           func.call(tests, cleanupAndRunNextTest);
@@ -272,26 +297,6 @@ function resetBuiltinManifestPref(name) {
      Services.prefs.PREF_INVALID, "default manifest removed");
 }
 
-function addWindowListener(aURL, aCallback) {
-  Services.wm.addListener({
-    onOpenWindow: function(aXULWindow) {
-      info("window opened, waiting for focus");
-      Services.wm.removeListener(this);
-
-      var domwindow = aXULWindow.QueryInterface(Ci.nsIInterfaceRequestor)
-                                .getInterface(Ci.nsIDOMWindow);
-      waitForFocus(function() {
-        is(domwindow.document.location.href, aURL, "window opened and focused");
-        executeSoon(function() {
-          aCallback(domwindow);
-        });
-      }, domwindow);
-    },
-    onCloseWindow: function(aXULWindow) { },
-    onWindowTitleChange: function(aXULWindow, aNewTitle) { }
-  });
-}
-
 function addTab(url, callback) {
   let tab = gBrowser.selectedTab = gBrowser.addTab(url, {skipAnimation: true});
   tab.linkedBrowser.addEventListener("load", function tabLoad(event) {
@@ -319,5 +324,182 @@ function loadIntoTab(tab, url, callback) {
     executeSoon(function() {callback(tab)});
   }, true);
   tab.linkedBrowser.loadURI(url);
+}
+
+
+// chat test help functions
+
+// And lots of helpers for the resize tests.
+function get3ChatsForCollapsing(mode, cb) {
+  // We make one chat, then measure its size.  We then resize the browser to
+  // ensure a second can be created fully visible but a third can not - then
+  // create the other 2.  first will will be collapsed, second fully visible
+  // and the third also visible and the "selected" one.
+  // To make our life easier we don't go via the worker and ports so we get
+  // more control over creation *and* to make the code much simpler.  We
+  // assume the worker/port stuff is individually tested above.
+  let chatbar = window.SocialChatBar.chatbar;
+  let chatWidth = undefined;
+  let num = 0;
+  is(chatbar.childNodes.length, 0, "chatbar starting empty");
+  is(chatbar.menupopup.childNodes.length, 0, "popup starting empty");
+
+  makeChat(mode, "first chat", function() {
+    // got the first one.
+    checkPopup();
+    ok(chatbar.menupopup.parentNode.collapsed, "menu selection isn't visible");
+    // we kinda cheat here and get the width of the first chat, assuming
+    // that all future chats will have the same width when open.
+    chatWidth = chatbar.calcTotalWidthOf(chatbar.selectedChat);
+    let desired = chatWidth * 2.5;
+    resizeWindowToChatAreaWidth(desired, function(sizedOk) {
+      ok(sizedOk, "can't do any tests without this width");
+      checkPopup();
+      makeChat(mode, "second chat", function() {
+        is(chatbar.childNodes.length, 2, "now have 2 chats");
+        checkPopup();
+        // and create the third.
+        makeChat(mode, "third chat", function() {
+          is(chatbar.childNodes.length, 3, "now have 3 chats");
+          checkPopup();
+          // XXX - this is a hacky implementation detail around the order of
+          // the chats.  Ideally things would be a little more sane wrt the
+          // other in which the children were created.
+          let second = chatbar.childNodes[2];
+          let first = chatbar.childNodes[1];
+          let third = chatbar.childNodes[0];
+          ok(first.collapsed && !second.collapsed && !third.collapsed, "collapsed state as promised");
+          is(chatbar.selectedChat, third, "third is selected as promised")
+          info("have 3 chats for collapse testing - starting actual test...");
+          cb(first, second, third);
+        }, mode);
+      }, mode);
+    });
+  }, mode);
+}
+
+function makeChat(mode, uniqueid, cb) {
+  info("making a chat window '" + uniqueid +"'");
+  const chatUrl = "https://example.com/browser/browser/base/content/test/social/social_chat.html";
+  let provider = Social.provider;
+  let isOpened = window.SocialChatBar.openChat(provider, chatUrl + "?id=" + uniqueid, function(chat) {
+    info("chat window has opened");
+    // we can't callback immediately or we might close the chat during
+    // this event which upsets the implementation - it is only 1/2 way through
+    // handling the load event.
+    chat.document.title = uniqueid;
+    executeSoon(cb);
+  }, mode);
+  if (!isOpened) {
+    ok(false, "unable to open chat window, no provider? more failures to come");
+    executeSoon(cb);
+  }
+}
+
+function checkPopup() {
+  // popup only showing if any collapsed popup children.
+  let chatbar = window.SocialChatBar.chatbar;
+  let numCollapsed = 0;
+  for (let chat of chatbar.childNodes) {
+    if (chat.collapsed) {
+      numCollapsed += 1;
+      // and it have a menuitem weakmap
+      is(chatbar.menuitemMap.get(chat).nodeName, "menuitem", "collapsed chat has a menu item");
+    } else {
+      ok(!chatbar.menuitemMap.has(chat), "open chat has no menu item");
+    }
+  }
+  is(chatbar.menupopup.parentNode.collapsed, numCollapsed == 0, "popup matches child collapsed state");
+  is(chatbar.menupopup.childNodes.length, numCollapsed, "popup has correct count of children");
+  // todo - check each individual elt is what we expect?
+}
+// Resize the main window so the chat area's boxObject is |desired| wide.
+// Does a callback passing |true| if the window is now big enough or false
+// if we couldn't resize large enough to satisfy the test requirement.
+function resizeWindowToChatAreaWidth(desired, cb, count = 0) {
+  let current = window.SocialChatBar.chatbar.getBoundingClientRect().width;
+  let delta = desired - current;
+  info(count + ": resizing window so chat area is " + desired + " wide, currently it is "
+       + current + ".  Screen avail is " + window.screen.availWidth
+       + ", current outer width is " + window.outerWidth);
+
+  // WTF?  Sometimes we will get fractional values due to the - err - magic
+  // of DevPointsPerCSSPixel etc, so we allow a couple of pixels difference.
+  let widthDeltaCloseEnough = function(d) {
+    return Math.abs(d) < 2;
+  }
+
+  // attempting to resize by (0,0), unsurprisingly, doesn't cause a resize
+  // event - so just callback saying all is well.
+  if (widthDeltaCloseEnough(delta)) {
+    info(count + ": skipping this as screen width is close enough");
+    executeSoon(function() {
+      cb(true);
+    });
+    return;
+  }
+  // On lo-res screens we may already be maxed out but still smaller than the
+  // requested size, so asking to resize up also will not cause a resize event.
+  // So just callback now saying the test must be skipped.
+  if (window.screen.availWidth - window.outerWidth < delta) {
+    info(count + ": skipping this as screen available width is less than necessary");
+    executeSoon(function() {
+      cb(false);
+    });
+    return;
+  }
+  function resize_handler(event) {
+    // for whatever reason, sometimes we get called twice for different event
+    // phases, only handle one of them.
+    if (event.eventPhase != event.AT_TARGET)
+      return;
+    // we did resize - but did we get far enough to be able to continue?
+    let newSize = window.SocialChatBar.chatbar.getBoundingClientRect().width;
+    let sizedOk = widthDeltaCloseEnough(newSize - desired);
+    if (!sizedOk)
+      return;
+    window.removeEventListener("resize", resize_handler);
+    info(count + ": resized window width is " + newSize);
+    executeSoon(function() {
+      cb(sizedOk);
+    });
+  }
+  // Otherwise we request resize and expect a resize event
+  window.addEventListener("resize", resize_handler);
+  window.resizeBy(delta, 0);
+}
+
+function resizeAndCheckWidths(first, second, third, checks, cb) {
+  if (checks.length == 0) {
+    cb(); // nothing more to check!
+    return;
+  }
+  let count = checks.length;
+  let [width, numExpectedVisible, why] = checks.shift();
+  info("<< Check " + count + ": " + why);
+  info(count + ": " + "resizing window to " + width + ", expect " + numExpectedVisible + " visible items");
+  resizeWindowToChatAreaWidth(width, function(sizedOk) {
+    checkPopup();
+    ok(sizedOk, count+": window resized correctly");
+    if (sizedOk) {
+      let numVisible = [first, second, third].filter(function(item) !item.collapsed).length;
+      is(numVisible, numExpectedVisible, count + ": " + "correct number of chats visible");
+    }
+    info(">> Check " + count);
+    resizeAndCheckWidths(first, second, third, checks, cb);
+  }, count);
+}
+
+function getPopupWidth() {
+  let popup = window.SocialChatBar.chatbar.menupopup;
+  ok(!popup.parentNode.collapsed, "asking for popup width when it is visible");
+  let cs = document.defaultView.getComputedStyle(popup.parentNode);
+  let margins = parseInt(cs.marginLeft) + parseInt(cs.marginRight);
+  return popup.parentNode.getBoundingClientRect().width + margins;
+}
+
+function closeAllChats() {
+  let chatbar = window.SocialChatBar.chatbar;
+  chatbar.removeAll();
 }
 

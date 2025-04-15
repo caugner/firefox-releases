@@ -10,26 +10,18 @@ const Cu = Components.utils;
 
 const ENSURE_SELECTION_VISIBLE_DELAY = 50; // ms
 
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource:///modules/devtools/ViewHelpers.jsm");
+Cu.import("resource:///modules/devtools/shared/event-emitter.js");
+
+XPCOMUtils.defineLazyModuleGetter(this, "NetworkHelper",
+  "resource://gre/modules/devtools/NetworkHelper.jsm");
 
 this.EXPORTED_SYMBOLS = ["SideMenuWidget"];
 
 /**
  * A simple side menu, with the ability of grouping menu items.
- *
- * You can use this widget alone, but it works great with a MenuContainer!
- * In that case, you should never need to access the methods in the
- * SideMenuWidget directly, use the wrapper MenuContainer instance instead.
- *
- * @see ViewHelpers.jsm
- *
- * function MyView() {
- *   this.node = new SideMenuWidget(document.querySelector(".my-node"));
- * }
- * ViewHelpers.create({ constructor: MyView, proto: MenuContainer.prototype }, {
- *   myMethod: function() {},
- *   ...
- * });
+ * This widget should be used in tandem with the WidgetMethods in ViewHelpers.jsm
  *
  * @param nsIDOMNode aNode
  *        The element associated with the widget.
@@ -48,6 +40,9 @@ this.SideMenuWidget = function SideMenuWidget(aNode, aShowArrows = true) {
   this._list.setAttribute("flex", "1");
   this._list.setAttribute("orient", "vertical");
   this._list.setAttribute("with-arrow", aShowArrows);
+  this._list.setAttribute("tabindex", "0");
+  this._list.addEventListener("keypress", e => this.emit("keyPress", e), false);
+  this._list.addEventListener("mousedown", e => this.emit("mousePress", e), false);
   this._parent.appendChild(this._list);
   this._boxObject = this._list.boxObject.QueryInterface(Ci.nsIScrollBoxObject);
 
@@ -55,6 +50,9 @@ this.SideMenuWidget = function SideMenuWidget(aNode, aShowArrows = true) {
   this._groupsByName = new Map(); // Can't use a WeakMap because keys are strings.
   this._orderedGroupElementsArray = [];
   this._orderedMenuElementsArray = [];
+
+  // This widget emits events that can be handled in a MenuContainer.
+  EventEmitter.decorate(this);
 
   // Delegate some of the associated node's methods to satisfy the interface
   // required by MenuContainer instances.
@@ -96,17 +94,28 @@ SideMenuWidget.prototype = {
    * @return nsIDOMNode
    *         The element associated with the displayed item.
    */
-  insertItemAt: function SMW_insertItemAt(aIndex, aContents, aTooltip = "", aGroup = "") {
+  insertItemAt: function(aIndex, aContents, aTooltip = "", aGroup = "") {
+    aTooltip = NetworkHelper.convertToUnicode(unescape(aTooltip));
+    aGroup = NetworkHelper.convertToUnicode(unescape(aGroup));
+
     // Invalidate any notices set on this widget.
     this.removeAttribute("notice");
 
+    // Maintaining scroll position at the bottom when a new item is inserted
+    // depends on several factors (the order of testing is important to avoid
+    // needlessly expensive operations that may cause reflows):
     let maintainScrollAtBottom =
+      // 1. The behavior should be enabled,
       this.autoscrollWithAppendedItems &&
+      // 2. There shouldn't currently be any selected item in the list.
+      !this._selectedItem &&
+      // 3. The new item should be appended at the end of the list.
       (aIndex < 0 || aIndex >= this._orderedMenuElementsArray.length) &&
+      // 4. The list should already be scrolled at the bottom.
       (this._list.scrollTop + this._list.clientHeight >= this._list.scrollHeight);
 
-    let group = this._getGroupForName(aGroup);
-    let item = this._getItemForGroup(group, aContents, aTooltip);
+    let group = this._getMenuGroupForName(aGroup);
+    let item = this._getMenuItemForGroup(group, aContents, aTooltip);
     let element = item.insertSelfAt(aIndex);
 
     if (this.maintainSelectionVisible) {
@@ -127,7 +136,7 @@ SideMenuWidget.prototype = {
    * @return nsIDOMNode
    *         The element associated with the displayed item.
    */
-  getItemAtIndex: function SMW_getItemAtIndex(aIndex) {
+  getItemAtIndex: function(aIndex) {
     return this._orderedMenuElementsArray[aIndex];
   },
 
@@ -137,7 +146,7 @@ SideMenuWidget.prototype = {
    * @param nsIDOMNode aChild
    *        The element associated with the displayed item.
    */
-  removeChild: function SMW_removeChild(aChild) {
+  removeChild: function(aChild) {
     if (aChild.className == "side-menu-widget-item-contents") {
       // Remove the item itself, not the contents.
       aChild.parentNode.remove();
@@ -157,7 +166,7 @@ SideMenuWidget.prototype = {
   /**
    * Removes all of the child nodes from this container.
    */
-  removeAllItems: function SMW_removeAllItems() {
+  removeAllItems: function() {
     let parent = this._parent;
     let list = this._list;
 
@@ -208,7 +217,7 @@ SideMenuWidget.prototype = {
    * Ensures the selected element is visible.
    * @see SideMenuWidget.prototype.ensureElementIsVisible.
    */
-  ensureSelectionIsVisible: function SMW_ensureSelectionIsVisible(aFlags) {
+  ensureSelectionIsVisible: function(aFlags) {
     this.ensureElementIsVisible(this.selectedItem, aFlags);
   },
 
@@ -222,7 +231,7 @@ SideMenuWidget.prototype = {
    *        - withGroup: true if the group header should also be made visible, if possible
    *        - delayed: wait a few cycles before ensuring the selection is visible
    */
-  ensureElementIsVisible: function SMW_ensureElementIsVisible(aElement, aFlags = {}) {
+  ensureElementIsVisible: function(aElement, aFlags = {}) {
     if (!aElement) {
       return;
     }
@@ -248,7 +257,7 @@ SideMenuWidget.prototype = {
   /**
    * Shows all the groups, even the ones with no visible children.
    */
-  showEmptyGroups: function SMW_showEmptyGroups() {
+  showEmptyGroups: function() {
     for (let group of this._orderedGroupElementsArray) {
       group.hidden = false;
     }
@@ -257,7 +266,7 @@ SideMenuWidget.prototype = {
   /**
    * Hides all the groups which have no visible children.
    */
-  hideEmptyGroups: function SMW_hideEmptyGroups() {
+  hideEmptyGroups: function() {
     let visibleChildNodes = ".side-menu-widget-item-contents:not([hidden=true])";
 
     for (let group of this._orderedGroupElementsArray) {
@@ -276,7 +285,7 @@ SideMenuWidget.prototype = {
    * @return string
    *         The current attribute value.
    */
-  getAttribute: function SMW_getAttribute(aName) {
+  getAttribute: function(aName) {
     return this._parent.getAttribute(aName);
   },
 
@@ -288,7 +297,7 @@ SideMenuWidget.prototype = {
    * @param string aValue
    *        The desired attribute value.
    */
-  setAttribute: function SMW_setAttribute(aName, aValue) {
+  setAttribute: function(aName, aValue) {
     this._parent.setAttribute(aName, aValue);
 
     if (aName == "notice") {
@@ -302,7 +311,7 @@ SideMenuWidget.prototype = {
    * @param string aName
    *        The name of the attribute.
    */
-  removeAttribute: function SMW_removeAttribute(aName) {
+  removeAttribute: function(aName) {
     this._parent.removeAttribute(aName);
 
     if (aName == "notice") {
@@ -325,7 +334,7 @@ SideMenuWidget.prototype = {
   /**
    * Creates and appends a label representing a notice in this container.
    */
-  _appendNotice: function DVSL__appendNotice() {
+  _appendNotice: function() {
     if (this._noticeTextNode || !this._noticeTextValue) {
       return;
     }
@@ -347,7 +356,7 @@ SideMenuWidget.prototype = {
   /**
    * Removes the label representing a notice in this container.
    */
-  _removeNotice: function DVSL__removeNotice() {
+  _removeNotice: function() {
     if (!this._noticeTextNode) {
       return;
     }
@@ -366,7 +375,7 @@ SideMenuWidget.prototype = {
    * @return SideMenuGroup
    *         The newly created group.
    */
-  _getGroupForName: function SMW__getGroupForName(aName) {
+  _getMenuGroupForName: function(aName) {
     let cachedGroup = this._groupsByName.get(aName);
     if (cachedGroup) {
       return cachedGroup;
@@ -380,7 +389,7 @@ SideMenuWidget.prototype = {
 
   /**
    * Gets a menu item to be displayed inside a group.
-   * @see SideMenuWidget.prototype._getGroupForName
+   * @see SideMenuWidget.prototype._getMenuGroupForName
    *
    * @param SideMenuGroup aGroup
    *        The group to contain the menu item.
@@ -389,7 +398,7 @@ SideMenuWidget.prototype = {
    * @param string aTooltip [optional]
    *        A tooltip attribute for the displayed item.
    */
-  _getItemForGroup: function SMW__getItemForGroup(aGroup, aContents, aTooltip) {
+  _getMenuItemForGroup: function(aGroup, aContents, aTooltip) {
     return new SideMenuItem(aGroup, aContents, aTooltip, this._showArrows);
   },
 
@@ -464,7 +473,7 @@ SideMenuGroup.prototype = {
    * @param number aIndex
    *        The position in the container intended for this group.
    */
-  insertSelfAt: function SMG_insertSelfAt(aIndex) {
+  insertSelfAt: function(aIndex) {
     let ownerList = this.ownerView._list;
     let groupsArray = this._orderedGroupElementsArray;
 
@@ -483,7 +492,7 @@ SideMenuGroup.prototype = {
    * @return number
    *         The expected index.
    */
-  findExpectedIndexForSelf: function SMG_findExpectedIndexForSelf() {
+  findExpectedIndexForSelf: function() {
     let identifier = this.identifier;
     let groupsArray = this._orderedGroupElementsArray;
 
@@ -561,7 +570,7 @@ SideMenuItem.prototype = {
    * @return nsIDOMNode
    *         The element associated with the displayed item.
    */
-  insertSelfAt: function SMI_insertSelfAt(aIndex) {
+  insertSelfAt: function(aIndex) {
     let ownerList = this.ownerView._list;
     let menuArray = this._orderedMenuElementsArray;
 

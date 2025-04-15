@@ -4,15 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jscompartment_h___
-#define jscompartment_h___
+#ifndef jscompartment_h
+#define jscompartment_h
 
-#include "mozilla/Attributes.h"
-#include "mozilla/GuardObjects.h"
 #include "mozilla/Util.h"
 
 #include "jscntxt.h"
-#include "jsfun.h"
 #include "jsgc.h"
 #include "jsobj.h"
 
@@ -23,7 +20,7 @@
 
 namespace js {
 
-namespace ion {
+namespace jit {
 class IonCompartment;
 }
 
@@ -65,6 +62,7 @@ struct CrossCompartmentKey
         ObjectWrapper,
         StringWrapper,
         DebuggerScript,
+        DebuggerSource,
         DebuggerObject,
         DebuggerEnvironment
     };
@@ -122,6 +120,7 @@ class DebugScopes;
 struct JSCompartment
 {
     JS::Zone                     *zone_;
+    JS::CompartmentOptions       options_;
 
     JSRuntime                    *rt;
     JSPrincipals                 *principals;
@@ -140,9 +139,12 @@ struct JSCompartment
   public:
     void enter() { enterCompartmentDepth++; }
     void leave() { enterCompartmentDepth--; }
+    bool hasBeenEntered() { return !!enterCompartmentDepth; }
 
     JS::Zone *zone() { return zone_; }
     const JS::Zone *zone() const { return zone_; }
+    JS::CompartmentOptions &options() { return options_; }
+    const JS::CompartmentOptions &options() const { return options_; }
 
     /*
      * Nb: global_ might be NULL, if (a) it's the atoms compartment, or (b) the
@@ -180,6 +182,8 @@ struct JSCompartment
     js::types::TypeCompartment   types;
 
     void                         *data;
+
+    js::ObjectMetadataCallback   objectMetadataCallback;
 
   private:
     js::WrapperMap               crossCompartmentWrappers;
@@ -256,7 +260,7 @@ struct JSCompartment
     unsigned                     debugModeBits;  // see debugMode() below
 
   public:
-    JSCompartment(JS::Zone *zone);
+    JSCompartment(JS::Zone *zone, const JS::CompartmentOptions &options);
     ~JSCompartment();
 
     bool init(JSContext *cx);
@@ -368,11 +372,11 @@ struct JSCompartment
 
 #ifdef JS_ION
   private:
-    js::ion::IonCompartment *ionCompartment_;
+    js::jit::IonCompartment *ionCompartment_;
 
   public:
     bool ensureIonCompartmentExists(JSContext *cx);
-    js::ion::IonCompartment *ionCompartment() {
+    js::jit::IonCompartment *ionCompartment() {
         return ionCompartment_;
     }
 #endif
@@ -408,13 +412,7 @@ class js::AutoDebugModeGC
 inline bool
 JSContext::typeInferenceEnabled() const
 {
-    return compartment->zone()->types.inferenceEnabled;
-}
-
-inline bool
-JSContext::jaegerCompilationAllowed() const
-{
-    return compartment->zone()->types.jaegerCompilationAllowed;
+    return compartment()->zone()->types.inferenceEnabled;
 }
 
 inline js::Handle<js::GlobalObject*>
@@ -426,7 +424,7 @@ JSContext::global() const
      * barrier on it. Once the compartment is popped, the handle is no longer
      * safe to use.
      */
-    return js::Handle<js::GlobalObject*>::fromMarkedLocation(compartment->global_.unsafeGet());
+    return js::Handle<js::GlobalObject*>::fromMarkedLocation(compartment()->global_.unsafeGet());
 }
 
 namespace js {
@@ -436,13 +434,13 @@ class AssertCompartmentUnchanged
   public:
     AssertCompartmentUnchanged(JSContext *cx
                                 MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : cx(cx), oldCompartment(cx->compartment)
+      : cx(cx), oldCompartment(cx->compartment())
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
     ~AssertCompartmentUnchanged() {
-        JS_ASSERT(cx->compartment == oldCompartment);
+        JS_ASSERT(cx->compartment() == oldCompartment);
     }
 
   protected:
@@ -458,6 +456,7 @@ class AutoCompartment
 
   public:
     inline AutoCompartment(JSContext *cx, JSObject *target);
+    inline AutoCompartment(JSContext *cx, JSCompartment *target);
     inline ~AutoCompartment();
 
     JSContext *context() const { return cx_; }
@@ -564,5 +563,4 @@ class AutoWrapperRooter : private AutoGCRooter {
 
 } /* namespace js */
 
-#endif /* jscompartment_h___ */
-
+#endif /* jscompartment_h */

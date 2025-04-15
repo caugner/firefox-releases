@@ -25,7 +25,7 @@ const CHUNK_SIZE = 20;
 const REVISION_STORE = "revision";
 const REVISION_KEY = "revision";
 
-function ContactDispatcher(aContacts, aFullContacts, aCallback, aNewTxn, aClearDispatcher) {
+function ContactDispatcher(aContacts, aFullContacts, aCallback, aNewTxn, aClearDispatcher, aFailureCb) {
   let nextIndex = 0;
 
   let sendChunk;
@@ -66,6 +66,8 @@ function ContactDispatcher(aContacts, aFullContacts, aCallback, aNewTxn, aClearD
               }
             }
           }
+        }, null, function(errorMsg) {
+          aFailureCb(errorMsg);
         });
       } catch (e) {
         aClearDispatcher();
@@ -435,7 +437,8 @@ ContactDB.prototype = {
       impp:            [],
       anniversary:     null,
       sex:             null,
-      genderIdentity:  null
+      genderIdentity:  null,
+      key:             [],
     };
 
     contact.search = {
@@ -445,7 +448,7 @@ ContactDB.prototype = {
       category:        [],
       tel:             [],
       exactTel:        [],
-      parsedTel:       []
+      parsedTel:       [],
     };
 
     for (let field in aContact.properties) {
@@ -454,7 +457,7 @@ ContactDB.prototype = {
       if (aContact.properties[field] && contact.search[field]) {
         for (let i = 0; i <= aContact.properties[field].length; i++) {
           if (aContact.properties[field][i]) {
-            if (field == "tel") {
+            if (field == "tel" && aContact.properties[field][i].value) {
               let number = aContact.properties.tel[i].value.toString();
               let normalized = PhoneNumberUtils.normalize(number);
               // We use an object here to avoid duplicates
@@ -479,7 +482,11 @@ ContactDB.prototype = {
                   matchSearch[parsedNumber.nationalNumber] = 1;
                   matchSearch[parsedNumber.internationalNumber] = 1;
                   matchSearch[PhoneNumberUtils.normalize(parsedNumber.nationalFormat)] = 1;
-                  matchSearch[PhoneNumberUtils.normalize(parsedNumber.internationalFormat)] = 1
+                  matchSearch[PhoneNumberUtils.normalize(parsedNumber.internationalFormat)] = 1;
+
+                  if (this.substringMatching && normalized.length > this.substringMatching) {
+                    matchSearch[normalized.slice(-this.substringMatching)] = 1;
+                  }
                 }
 
                 // containsSearch holds incremental search values for:
@@ -500,7 +507,7 @@ ContactDB.prototype = {
               for (let num in matchSearch) {
                 contact.search.parsedTel.push(num);
               }
-            } else if (field == "impp" || field == "email") {
+            } else if ((field == "impp" || field == "email") && aContact.properties[field][i].value) {
               let value = aContact.properties[field][i].value;
               if (value && typeof value == "string") {
                 contact.search[field].push(value.toLowerCase());
@@ -547,7 +554,7 @@ ContactDB.prototype = {
     record.updated = new Date();
   },
 
-  removeObjectFromCache: function CDB_removeObjectFromCache(aObjectId, aCallback) {
+  removeObjectFromCache: function CDB_removeObjectFromCache(aObjectId, aCallback, aFailureCb) {
     if (DEBUG) debug("removeObjectFromCache: " + aObjectId);
     if (!aObjectId) {
       if (DEBUG) debug("No object ID passed");
@@ -570,16 +577,19 @@ ContactDB.prototype = {
           aCallback();
         }
       }.bind(this);
-    }.bind(this));
+    }.bind(this), null,
+    function(errorMsg) {
+      aFailureCb(errorMsg);
+    });
   },
 
   // Invalidate the entire cache. It will be incrementally regenerated on demand
   // See getCacheForQuery
-  invalidateCache: function CDB_invalidateCache() {
+  invalidateCache: function CDB_invalidateCache(aErrorCb) {
     if (DEBUG) debug("invalidate cache");
     this.newTxn("readwrite", SAVED_GETALL_STORE_NAME, function (txn, store) {
       store.clear();
-    });
+    }, aErrorCb);
   },
 
   incrementRevision: function CDB_incrementRevision(txn) {
@@ -615,7 +625,7 @@ ContactDB.prototype = {
             store.put(contact);
           }
         }
-        this.invalidateCache();
+        this.invalidateCache(errorCb);
       }.bind(this);
 
       this.incrementRevision(txn);
@@ -631,7 +641,7 @@ ContactDB.prototype = {
         };
         this.incrementRevision(txn);
       }.bind(this), null, aErrorCb);
-    }.bind(this));
+    }.bind(this), aErrorCb);
   },
 
   clear: function clear(aSuccessCb, aErrorCb) {
@@ -653,7 +663,7 @@ ContactDB.prototype = {
         // save contact ids in cache
         this.newTxn("readwrite", SAVED_GETALL_STORE_NAME, function(txn, store) {
           store.put(contactsArray.map(function(el) el.id), aQuery);
-        });
+        }, null, aFailureCb);
 
         // send full contacts
         aSuccessCb(contactsArray, true);
@@ -665,7 +675,7 @@ ContactDB.prototype = {
     JSON.parse(aQuery));
   },
 
-  getCacheForQuery: function CDB_getCacheForQuery(aQuery, aSuccessCb) {
+  getCacheForQuery: function CDB_getCacheForQuery(aQuery, aSuccessCb, aFailureCb) {
     if (DEBUG) debug("getCacheForQuery");
     // Here we try to get the cached results for query `aQuery'. If they don't
     // exist, it means the cache was invalidated and needs to be recreated, so
@@ -681,10 +691,10 @@ ContactDB.prototype = {
           this.createCacheForQuery(aQuery, aSuccessCb);
         }
       }.bind(this);
-      req.onerror = function() {
-
+      req.onerror = function(e) {
+        aFailureCb(e.target.errorMessage);
       };
-    }.bind(this));
+    }.bind(this), null, aFailureCb);
   },
 
   sendNow: function CDB_sendNow(aCursorId) {
@@ -693,7 +703,8 @@ ContactDB.prototype = {
     }
   },
 
-  _clearDispatcher: function CDB_clearDispatcher(aCursorId) {
+  clearDispatcher: function CDB_clearDispatcher(aCursorId) {
+    if (DEBUG) debug("clearDispatcher: " + aCursorId);
     if (aCursorId in this._dispatcher) {
       delete this._dispatcher[aCursorId];
     }
@@ -709,15 +720,16 @@ ContactDB.prototype = {
       // object store again.
       if (aCachedResults && aCachedResults.length > 0) {
         let newTxnFn = this.newTxn.bind(this);
-        let clearDispatcherFn = this._clearDispatcher.bind(this, aCursorId);
+        let clearDispatcherFn = this.clearDispatcher.bind(this, aCursorId);
         this._dispatcher[aCursorId] = new ContactDispatcher(aCachedResults, aFullContacts,
-                                                            aSuccessCb, newTxnFn, clearDispatcherFn);
+                                                            aSuccessCb, newTxnFn,
+                                                            clearDispatcherFn, aFailureCb);
         this._dispatcher[aCursorId].sendNow();
       } else { // no contacts
         if (DEBUG) debug("query returned no contacts");
         aSuccessCb(null);
       }
-    }.bind(this));
+    }.bind(this), aFailureCb);
   },
 
   getRevision: function CDB_getRevision(aSuccessCb) {
@@ -725,7 +737,16 @@ ContactDB.prototype = {
     this.newTxn("readonly", REVISION_STORE, function (txn, store) {
       store.get(REVISION_KEY).onsuccess = function (e) {
         aSuccessCb(e.target.result);
-      }
+      };
+    });
+  },
+
+  getCount: function CDB_getCount(aSuccessCb) {
+    if (DEBUG) debug("getCount");
+    this.newTxn("readonly", STORE_NAME, function (txn, store) {
+      store.count().onsuccess = function (e) {
+        aSuccessCb(e.target.result);
+      };
     });
   },
 
@@ -738,28 +759,35 @@ ContactDB.prototype = {
     if (!aFindOptions)
       return;
     if (aFindOptions.sortBy != "undefined") {
+      const sortOrder = aFindOptions.sortOrder;
+      const sortBy = aFindOptions.sortBy == "familyName" ? [ "familyName", "givenName" ] : [ "givenName" , "familyName" ];
+
       aResults.sort(function (a, b) {
         let x, y;
         let result = 0;
-        let sortOrder = aFindOptions.sortOrder;
-        let sortBy = aFindOptions.sortBy == "familyName" ? [ "familyName", "givenName" ] : [ "givenName" , "familyName" ];
         let xIndex = 0;
         let yIndex = 0;
 
         do {
           while (xIndex < sortBy.length && !x) {
-            x = a.properties[sortBy[xIndex]] && a.properties[sortBy[xIndex]][0] ? a.properties[sortBy[xIndex]][0].toLowerCase() : null;
+            x = a.properties[sortBy[xIndex]];
+            if (x) {
+              x = x.join("").toLowerCase();
+            }
             xIndex++;
           }
           if (!x) {
-            return sortOrder == 'descending' ? 1 : -1;
+            return sortOrder == "descending" ? 1 : -1;
           }
           while (yIndex < sortBy.length && !y) {
-            y = b.properties[sortBy[yIndex]] && b.properties[sortBy[yIndex]][0] ? b.properties[sortBy[yIndex]][0].toLowerCase() : null;
+            y = b.properties[sortBy[yIndex]];
+            if (y) {
+              y = y.join("").toLowerCase();
+            }
             yIndex++;
           }
           if (!y) {
-            return sortOrder == 'ascending' ? 1 : -1;
+            return sortOrder == "ascending" ? 1 : -1;
           }
 
           result = x.localeCompare(y);
@@ -767,7 +795,7 @@ ContactDB.prototype = {
           y = null;
         } while (result == 0);
 
-        return sortOrder == 'ascending' ? result : -result;
+        return sortOrder == "ascending" ? result : -result;
       });
     }
     if (aFindOptions.filterLimit && aFindOptions.filterLimit != 0) {
@@ -792,7 +820,8 @@ ContactDB.prototype = {
     if (DEBUG) debug("ContactDB:find val:" + aOptions.filterValue + " by: " + aOptions.filterBy + " op: " + aOptions.filterOp);
     let self = this;
     this.newTxn("readonly", STORE_NAME, function (txn, store) {
-      if (aOptions && (["equals", "contains", "match"].indexOf(aOptions.filterOp) >= 0)) {
+      let filterOps = ["equals", "contains", "match", "startsWith"];
+      if (aOptions && (filterOps.indexOf(aOptions.filterOp) >= 0)) {
         self._findWithIndex(txn, store, aOptions);
       } else {
         self._findAll(txn, store, aOptions);
@@ -838,7 +867,8 @@ ContactDB.prototype = {
         let index = store.index(key);
         let filterValue = options.filterValue;
         if (key == "tel") {
-          filterValue = PhoneNumberUtils.normalize(filterValue);
+          filterValue = PhoneNumberUtils.normalize(filterValue,
+                                                   /*numbersOnly*/ true);
         }
         request = index.mozGetAll(filterValue, limit);
       } else if (options.filterOp == "match") {
@@ -849,15 +879,37 @@ ContactDB.prototype = {
         }
 
         let index = store.index("telMatch");
-        let normalized = PhoneNumberUtils.normalize(options.filterValue)
+        let normalized = PhoneNumberUtils.normalize(options.filterValue,
+                                                    /*numbersOnly*/ true);
+
+        // Some countries need special handling for number matching. Bug 877302
+        if (this.substringMatching && normalized.length > this.substringMatching) {
+          normalized = normalized.slice(-this.substringMatching);
+        }
         request = index.mozGetAll(normalized, limit);
       } else {
-        // not case sensitive
-        let tmp = options.filterValue.toString().toLowerCase();
-        if (key === 'tel') {
-          tmp = PhoneNumberUtils.normalize(tmp);
+        // XXX: "contains" should be handled separately, this is "startsWith"
+        if (options.filterOp === 'contains' && key !== 'tel') {
+          dump("ContactDB: 'contains' only works for 'tel'. Falling back " +
+               "to 'startsWith'.\n");
         }
-        let range = this._global.IDBKeyRange.bound(tmp, tmp + "\uFFFF");
+        // not case sensitive
+        let lowerCase = options.filterValue.toString().toLowerCase();
+        if (key === "tel") {
+          let origLength = lowerCase.length;
+          let tmp = PhoneNumberUtils.normalize(lowerCase, /*numbersOnly*/ true);
+          if (tmp.length != origLength) {
+            let NON_SEARCHABLE_CHARS = /[^#+\*\d\s()-]/;
+            // e.g. number "123". find with "(123)" but not with "123a"
+            if (tmp === "" || NON_SEARCHABLE_CHARS.test(lowerCase)) {
+              if (DEBUG) debug("Call continue!");
+              continue;
+            }
+            lowerCase = tmp;
+          }
+        }
+        if (DEBUG) debug("lowerCase: " + lowerCase);
+        let range = this._global.IDBKeyRange.bound(lowerCase, lowerCase + "\uFFFF");
         let index = store.index(key + "LowerCase");
         request = index.mozGetAll(range, limit);
       }
@@ -888,7 +940,12 @@ ContactDB.prototype = {
     }.bind(this);
   },
 
+  // Enable special phone number substring matching. Does not update existing DB entries.
+  enableSubstringMatching: function enableSubstringMatching(aDigits) {
+    this.substringMatching = aDigits;
+  },
+
   init: function init(aGlobal) {
-      this.initDBHelper(DB_NAME, DB_VERSION, [STORE_NAME, SAVED_GETALL_STORE_NAME, REVISION_STORE], aGlobal);
+    this.initDBHelper(DB_NAME, DB_VERSION, [STORE_NAME, SAVED_GETALL_STORE_NAME, REVISION_STORE], aGlobal);
   }
 };

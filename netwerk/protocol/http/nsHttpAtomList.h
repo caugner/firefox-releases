@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /******
-  This file contains the list of all HTTP atoms 
+  This file contains the list of all HTTP atoms
   See nsHttp.h for access to the atoms.
 
   It is designed to be used as inline input to nsHttp.cpp *only*
@@ -23,7 +23,6 @@ HTTP_ATOM(Accept_Language,           "Accept-Language")
 HTTP_ATOM(Accept_Ranges,             "Accept-Ranges")
 HTTP_ATOM(Age,                       "Age")
 HTTP_ATOM(Allow,                     "Allow")
-HTTP_ATOM(Alternate_Protocol,        "Alternate-Protocol")
 HTTP_ATOM(Assoc_Req,                 "Assoc-Req")
 HTTP_ATOM(Authentication,            "Authentication")
 HTTP_ATOM(Authorization,             "Authorization")

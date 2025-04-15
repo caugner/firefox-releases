@@ -6,3 +6,9 @@
 
 MODULE = 'i18n'
 
+CPP_SOURCES += [
+    'nsI18nModule.cpp',
+]
+
+LIBRARY_NAME = 'i18n'
+

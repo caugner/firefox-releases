@@ -12,8 +12,6 @@
 
 SimpleTest.waitForExplicitFinish();
 addLoadEvent(function() {
-  SpecialPowers.setBoolPref("media.webaudio.enabled", true);
-
   var context = new AudioContext();
   var buffer = context.createBuffer(1, 2048, context.sampleRate);
   for (var i = 0; i < 2048; ++i) {
@@ -58,7 +56,6 @@ addLoadEvent(function() {
           }, function(source) {
             source.stop();
           }, function() {
-            SpecialPowers.clearUserPref("media.webaudio.enabled");
             SimpleTest.finish();
           });
         });
@@ -90,6 +87,10 @@ function createNode(context, buffer, destination) {
   is(source.channelCount, 2, "source node has 2 input channels by default");
   is(source.channelCountMode, "max", "Correct channelCountMode for the source node");
   is(source.channelInterpretation, "speakers", "Correct channelCountInterpretation for the source node");
+
+  expectException(function() {
+    source.channelCount = 0;
+  }, DOMException.NOT_SUPPORTED_ERR);
 
   source.buffer = buffer;
   ok(source.buffer, "Source node should have a buffer now");

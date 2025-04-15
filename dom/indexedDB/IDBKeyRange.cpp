@@ -52,8 +52,8 @@ ReturnKeyRange(JSContext* aCx,
     return false;
   }
 
-  JS::Rooted<JSObject*> result(aCx);
-  if (NS_FAILED(holder->GetJSObject(result.address()))) {
+  JS::Rooted<JSObject*> result(aCx, holder->GetJSObject());
+  if (!result) {
     JS_ReportError(aCx, "Couldn't get JSObject from wrapper.");
     return false;
   }
@@ -363,7 +363,7 @@ IDBKeyRange::GetLower(JSContext* aCx,
       mRooted = true;
     }
 
-    nsresult rv = Lower().ToJSVal(aCx, &mCachedLowerVal);
+    nsresult rv = Lower().ToJSVal(aCx, mCachedLowerVal);
     NS_ENSURE_SUCCESS(rv, rv);
 
     mHaveCachedLowerVal = true;
@@ -385,7 +385,7 @@ IDBKeyRange::GetUpper(JSContext* aCx,
       mRooted = true;
     }
 
-    nsresult rv = Upper().ToJSVal(aCx, &mCachedUpperVal);
+    nsresult rv = Upper().ToJSVal(aCx, mCachedUpperVal);
     NS_ENSURE_SUCCESS(rv, rv);
 
     mHaveCachedUpperVal = true;

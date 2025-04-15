@@ -12,7 +12,6 @@ TEST_DIRS += ['tests/mochitest']
 XPIDL_SOURCES += [
     'nsIDOMMediaStream.idl',
     'nsIDOMNavigatorUserMedia.idl',
-    'nsIDOMRTCPeerConnection.idl',
     'nsIMediaManager.idl',
 ]
 
@@ -24,3 +23,11 @@ EXPORTS.mozilla += [
     'MediaManager.h',
 ]
 
+CPP_SOURCES += [
+    'MediaManager.cpp',
+]
+
+EXTRA_COMPONENTS += [
+    'PeerConnection.js',
+    'PeerConnection.manifest',
+]

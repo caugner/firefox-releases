@@ -1108,7 +1108,6 @@ var gCSSProperties = {
 			"translate(calc(5px - 10% * 3))",
 			"translate(calc(5px - 3 * 10%), 50px)",
 			"translate(-50px, calc(5px - 10% * 3))",
-		].concat(SpecialPowers.getBoolPref("layout.3d-transforms.enabled") ? [
 			"translatez(1px)", "translatez(4em)", "translatez(-4px)",
 			"translatez(0px)", "translatez(2px) translatez(5px)",
 			"translate3d(3px, 4px, 5px)", "translate3d(2em, 3px, 1em)",
@@ -1118,7 +1117,7 @@ var gCSSProperties = {
 			"rotate3d(-3, 7, 0, 12rad)", "rotatex(15deg)", "rotatey(-12grad)",
 			"rotatez(72rad)", "rotatex(0.125turn)", "perspective(1000px)",
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)",
-		] : []),
+		],
 		invalid_values: ["1px", "#0000ff", "red", "auto",
 			"translatex(1)", "translatey(1)", "translate(2)",
 			"translate(-3, -4)",
@@ -1135,8 +1134,7 @@ var gCSSProperties = {
 			"translatex(-moz-max(5px,10%))",
 			"translate(10px, calc(min(5px,10%)))",
 			"translate(calc(max(5px,10%)), 10%)",
-			"matrix(1, 0, 0, 1, max(5px * 3), calc(10% - 3px))"
-		].concat(SpecialPowers.getBoolPref("layout.3d-transforms.enabled") ? [
+			"matrix(1, 0, 0, 1, max(5px * 3), calc(10% - 3px))",
 			"perspective(0px)", "perspective(-10px)", "matrix3d(dinosaur)",
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)",
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)",
@@ -1145,7 +1143,7 @@ var gCSSProperties = {
 			"rotatey(words)", "rotatex(7)", "translate3d(3px, 4px, 1px, 7px)",
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13px, 14em, 15px, 16)",
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 20%, 10%, 15, 16)"
-		] : [])
+		],
 	},
 	"transform-origin": {
 		domProp: "transformOrigin",
@@ -1169,11 +1167,10 @@ var gCSSProperties = {
 			"calc(20px + 1em) calc(20px / 2)",
 			"calc(20px + 50%) calc(50% - 10px)",
 			"calc(-20px) calc(-50%)",
-			"calc(-20%) calc(-50%)"
-		].concat(SpecialPowers.getBoolPref("layout.3d-transforms.enabled") ? [
+			"calc(-20%) calc(-50%)",
 			"6px 5px 5px",
 			"top center 10px"
-		] : []),
+		],
 		invalid_values: ["red", "auto", "none", "0.5 0.5", "40px #0000ff",
 						 "border", "center red", "right diagonal",
 						 "#00ffff bottom"]
@@ -2339,7 +2336,7 @@ var gCSSProperties = {
 		inherited: true,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "auto" ],
-		other_values: [ "crosshair", "default", "pointer", "move", "e-resize", "ne-resize", "nw-resize", "n-resize", "se-resize", "sw-resize", "s-resize", "w-resize", "text", "wait", "help", "progress", "copy", "alias", "context-menu", "cell", "not-allowed", "col-resize", "row-resize", "no-drop", "vertical-text", "all-scroll", "nesw-resize", "nwse-resize", "ns-resize", "ew-resize", "none", "-moz-grab", "-moz-grabbing", "-moz-zoom-in", "-moz-zoom-out", "url(foo.png), move", "url(foo.png) 5 7, move", "url(foo.png) 12 3, url(bar.png), no-drop", "url(foo.png), url(bar.png) 7 2, wait", "url(foo.png) 3 2, url(bar.png) 7 9, pointer" ],
+		other_values: [ "crosshair", "default", "pointer", "move", "e-resize", "ne-resize", "nw-resize", "n-resize", "se-resize", "sw-resize", "s-resize", "w-resize", "text", "wait", "help", "progress", "copy", "alias", "context-menu", "cell", "not-allowed", "col-resize", "row-resize", "no-drop", "vertical-text", "all-scroll", "nesw-resize", "nwse-resize", "ns-resize", "ew-resize", "none", "zoom-in", "zoom-out", "-moz-grab", "-moz-grabbing", "-moz-zoom-in", "-moz-zoom-out", "url(foo.png), move", "url(foo.png) 5 7, move", "url(foo.png) 12 3, url(bar.png), no-drop", "url(foo.png), url(bar.png) 7 2, wait", "url(foo.png) 3 2, url(bar.png) 7 9, pointer" ],
 		invalid_values: [ "url(foo.png)", "url(foo.png) 5 5" ]
 	},
 	"direction": {
@@ -2403,7 +2400,7 @@ var gCSSProperties = {
 		  // Gecko-specific system fonts
 		  "-moz-window", "-moz-document", "-moz-desktop", "-moz-info", "-moz-dialog", "-moz-button", "-moz-pull-down-menu", "-moz-list", "-moz-field", "-moz-workspace",
 		],
-		invalid_values: [ "9 fantasy" ]
+		invalid_values: [ "9 fantasy", "-2px fantasy" ]
 	},
 	"font-family": {
 		domProp: "fontFamily",
@@ -2491,7 +2488,7 @@ var gCSSProperties = {
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "normal" ],
 		other_values: [ "small-caps" ],
-		invalid_values: []
+		invalid_values: [ "small-caps normal" ]
 	},
 	"font-weight": {
 		domProp: "fontWeight",
@@ -3740,7 +3737,6 @@ var gCSSProperties = {
 			"matrix(1, 2, 3, 4, 5%, 6%)",
 			"matrix(1, 2, 3, 4, 5px, 6em)",
 			"matrix(1, 0, 0, 1, calc(5px * 3), calc(10% - 3px))",
-		].concat(SpecialPowers.getBoolPref("layout.3d-transforms.enabled") ? [
 			"translatez(1px)", "translatez(4em)", "translatez(-4px)",
 			"translatez(0px)", "translatez(2px) translatez(5px)",
 			"translate3d(3px, 4px, 5px)", "translate3d(2em, 3px, 1em)",
@@ -3753,7 +3749,7 @@ var gCSSProperties = {
 			/* valid only when prefixed */
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13px, 14em, 15px, 16)",
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 20%, 10%, 15, 16)",
-		] : []),
+		],
 		invalid_values: ["1px", "#0000ff", "red", "auto",
 			"translatex(1)", "translatey(1)", "translate(2)",
 			"translate(-3, -4)",
@@ -3768,15 +3764,14 @@ var gCSSProperties = {
 			"translatex(-moz-max(5px,10%))",
 			"translate(10px, calc(min(5px,10%)))",
 			"translate(calc(max(5px,10%)), 10%)",
-			"matrix(1, 0, 0, 1, max(5px * 3), calc(10% - 3px))"
-		].concat(SpecialPowers.getBoolPref("layout.3d-transforms.enabled") ? [
+			"matrix(1, 0, 0, 1, max(5px * 3), calc(10% - 3px))",
 			"perspective(0px)", "perspective(-10px)", "matrix3d(dinosaur)",
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17)",
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15)",
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15%, 16)",
 			"matrix3d(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16px)",
 			"rotatey(words)", "rotatex(7)", "translate3d(3px, 4px, 1px, 7px)",
-		] : [])
+		],
 	},
 	"-moz-transform-origin": {
 		domProp: "MozTransformOrigin",
@@ -3801,11 +3796,10 @@ var gCSSProperties = {
 			"calc(20px + 1em) calc(20px / 2)",
 			"calc(20px + 50%) calc(50% - 10px)",
 			"calc(-20px) calc(-50%)",
-			"calc(-20%) calc(-50%)"
-		].concat(SpecialPowers.getBoolPref("layout.3d-transforms.enabled") ? [
+			"calc(-20%) calc(-50%)",
 			"6px 5px 5px",
 			"top center 10px"
-		] : []),
+		],
 		invalid_values: ["red", "auto", "none", "0.5 0.5", "40px #0000ff",
 						 "border", "center red", "right diagonal",
 						 "#00ffff bottom"]
@@ -4255,6 +4249,145 @@ if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
 	}
 	gCSSProperties["display"].other_values.push("flex");
 	gCSSProperties["display"].other_values.push("inline-flex");
+}
+
+if (SpecialPowers.getBoolPref("layout.css.vertical-text.enabled")) {
+	var verticalTextProperties = {
+		"writing-mode": {
+			domProp: "writingMode",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "horizontal-tb" ],
+			other_values: [ "vertical-lr", "vertical-rl" ],
+			invalid_values: [ "10px", "30%", "justify", "auto", "1em" ]
+		}
+	};
+	for (var prop in verticalTextProperties) {
+		gCSSProperties[prop] = verticalTextProperties[prop];
+	}
+}
+
+if (SpecialPowers.getBoolPref("layout.css.font-features.enabled")) {
+	var fontFeatureProperties = {
+		"font-kerning": {
+			domProp: "fontKerning",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "auto" ],
+			other_values: [ "normal", "none" ],
+			invalid_values: [ "on" ]
+		},
+		"font-variant-alternates": {
+			domProp: "fontVariantAlternates",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "normal" ],
+			other_values: [ "historical-forms",
+	                        "styleset(alt-a, alt-b)", "character-variant(a, b, c)", "annotation(circled)",
+	                        "swash(squishy)", "styleset(complex\\ blob, a)", "annotation(\\62 lah)" ],
+			invalid_values: [ "historical-forms normal", "historical-forms historical-forms",
+	                          "swash", "swash(3)", "annotation(a, b)", "ornaments(a,b)",
+	                          "styleset(1234blah)", "annotation(a), annotation(b)", "annotation(a) normal" ]
+		},
+	 	"font-variant-caps": {
+			domProp: "fontVariantCaps",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "normal" ],
+			other_values: [ "small-caps", "all-small-caps", "petite-caps", "all-petite-caps", "titling-caps", "unicase" ],
+			invalid_values: [ "normal small-caps", "petite-caps normal", "unicase unicase" ]
+		},
+		"font-variant-east-asian": {
+			domProp: "fontVariantEastAsian",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "normal" ],
+			other_values: [ "jis78", "jis83", "jis90", "jis04", "simplified", "traditional", "full-width", "proportional-width", "ruby",
+			                "jis78 full-width", "jis78 full-width ruby", "simplified proportional-width", "ruby simplified" ],
+			invalid_values: [ "jis78 normal", "jis90 jis04", "simplified traditional", "full-width proportional-width",
+	                          "ruby simplified ruby", "jis78 ruby simplified" ]
+		},
+		"font-variant-ligatures": {
+			domProp: "fontVariantLigatures",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "normal" ],
+			other_values: [ "common-ligatures", "no-common-ligatures", "discretionary-ligatures", "no-discretionary-ligatures",
+			                "historical-ligatures", "no-historical-ligatures", "contextual", "no-contextual",
+			                "common-ligatures no-discretionary-ligatures", "contextual no-discretionary-ligatures",
+			                "historical-ligatures no-common-ligatures", "no-historical-ligatures discretionary-ligatures",
+			                "common-ligatures no-discretionary-ligatures historical-ligatures no-contextual" ],
+			invalid_values: [ "common-ligatures normal", "common-ligatures no-common-ligatures", "common-ligatures common-ligatures",
+			                  "no-historical-ligatures historical-ligatures", "no-discretionary-ligatures discretionary-ligatures",
+			                  "no-contextual contextual", "common-ligatures no-discretionary-ligatures no-common-ligatures" ]
+		},
+		"font-variant-numeric": {
+			domProp: "fontVariantNumeric",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "normal" ],
+			other_values: [ "lining-nums", "oldstyle-nums", "proportional-nums", "tabular-nums", "diagonal-fractions",
+			                "stacked-fractions", "slashed-zero", "ordinal", "lining-nums diagonal-fractions",
+			                "tabular-nums stacked-fractions", "tabular-nums slashed-zero stacked-fractions",
+			                "proportional-nums slashed-zero diagonal-fractions oldstyle-nums ordinal" ],
+			invalid_values: [ "lining-nums normal", "lining-nums oldstyle-nums", "lining-nums normal slashed-zero ordinal",
+			                  "proportional-nums tabular-nums", "diagonal-fractions stacked-fractions", "slashed-zero diagonal-fractions slashed-zero",
+			                  "lining-nums slashed-zero diagonal-fractions oldstyle-nums", "diagonal-fractions diagonal-fractions" ]
+		},
+		"font-variant-position": {
+			domProp: "fontVariantPosition",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "normal" ],
+			other_values: [ "super", "sub" ],
+			invalid_values: [ "normal sub", "super sub" ]
+		},
+		"font-synthesis": {
+			domProp: "fontSynthesis",
+			inherited: true,
+			type: CSS_TYPE_LONGHAND,
+			initial_values: [ "weight style" ],
+			other_values: [ "none", "weight", "style" ],
+			invalid_values: [ "weight none", "style none", "none style", "weight 10px", "weight weight", "style style" ]
+		},
+		// aliases for prefixed properties
+		"font-feature-settings": {
+			domProp: "fontFeatureSettings",
+			inherited: true,
+			type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+			alias_for: "-moz-font-feature-settings",
+			subproperties: [ "-moz-font-feature-settings" ],
+			initial_values: [ "normal" ],
+			other_values: [
+				"'liga' on", "'liga'", "\"liga\" 1", "'liga', 'clig' 1",
+				"\"liga\" off", "\"liga\" 0", '"cv01" 3, "cv02" 4',
+				'"cswh", "smcp" off, "salt" 4', '"cswh" 1, "smcp" off, "salt" 4',
+				'"cswh" 0, \'blah\', "liga", "smcp" off, "salt" 4',
+				'"liga"        ,"smcp" 0         , "blah"'
+			],
+			invalid_values: [
+				'liga', 'liga 1', 'liga normal', '"liga" normal', 'normal liga',
+				'normal "liga"', 'normal, "liga"', '"liga=1"', "'foobar' on",
+				'"blahblah" 0', '"liga" 3.14', '"liga" 1 3.14', '"liga" 1 normal',
+				'"liga" 1 off', '"liga" on off', '"liga" , 0 "smcp"', '"liga" "smcp"'
+			]
+		},
+		"font-language-override": {
+			domProp: "fontLanguageOverride",
+			inherited: true,
+			type: CSS_TYPE_SHORTHAND_AND_LONGHAND,
+			alias_for: "-moz-font-language-override",
+			subproperties: [ "-moz-font-language-override" ],
+			initial_values: [ "normal" ],
+			other_values: [ "'ENG'", "'TRK'", "\"TRK\"", "'N\\'Ko'" ],
+			invalid_values: [ "TRK", "ja" ]
+		}
+	};
+	for (var prop in fontFeatureProperties) {
+		gCSSProperties[prop] = fontFeatureProperties[prop];
+	}
+	var fontAdditions = [ "font-kerning", "font-synthesis", "font-variant-alternates", "font-variant-caps", "font-variant-east-asian", "font-variant-ligatures", "font-variant-numeric", "font-variant-position" ];
+	gCSSProperties["font"].subproperties = gCSSProperties["font"].subproperties.concat(fontAdditions);
 }
 
 if (SpecialPowers.getBoolPref("layout.css.masking.enabled")) {

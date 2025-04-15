@@ -24,6 +24,9 @@ const SYS_USB_STATE_PROPERTY          = "sys.usb.state";
 const USB_FUNCTION_RNDIS  = "rndis";
 const USB_FUNCTION_ADB    = "adb";
 
+const kNetdInterfaceChangedTopic = "netd-interface-change";
+const kNetdBandwidthControlTopic = "netd-bandwidth-control";
+
 // Retry 20 times (2 seconds) for usb state transition.
 const USB_FUNCTION_RETRY_TIMES = 20;
 // Check "sys.usb.state" every 100ms.
@@ -41,10 +44,19 @@ const NETD_COMMAND_ERROR        = 500;
 // 6xx - Unsolicited broadcasts
 const NETD_COMMAND_UNSOLICITED  = 600;
 
+// Broadcast messages
+const NETD_COMMAND_INTERFACE_CHANGE     = 600;
+const NETD_COMMAND_BANDWIDTH_CONTROLLER = 601;
+
 importScripts("systemlibs.js");
 
 function netdResponseType(code) {
   return Math.floor(code/100)*100;
+}
+
+function isBroadcastMessage(code) {
+  let type = netdResponseType(code);
+  return (type == NETD_COMMAND_UNSOLICITED);
 }
 
 function isError(code) {
@@ -55,6 +67,22 @@ function isError(code) {
 function isComplete(code) {
   let type = netdResponseType(code);
   return (type != NETD_COMMAND_PROCEEDING);
+}
+
+function sendBroadcastMessage(code, reason) {
+  let topic = null;
+  switch (code) {
+    case NETD_COMMAND_INTERFACE_CHANGE:
+      topic = "netd-interface-change";
+      break;
+    case NETD_COMMAND_BANDWIDTH_CONTROLLER:
+      topic = "netd-bandwidth-control";
+      break;
+  }
+
+  if (topic) {
+    postMessage({id: 'broadcast', topic: topic, reason: reason});
+  }
 }
 
 let gWifiFailChain = [stopSoftAP,
@@ -88,9 +116,6 @@ function usbTetheringFail(params) {
   postMessage(params);
   // Try to roll back to ensure
   // we don't leave the network systems in limbo.
-  let functionChain = [setIpForwardingEnabled,
-                       stopTethering];
-
   // This parameter is used to disable ipforwarding.
   params.enable = false;
   chain(params, gUSBFailChain, null);
@@ -115,6 +140,18 @@ function networkInterfaceStatsSuccess(params) {
   // Notify the main thread.
   params.txBytes = parseFloat(params.resultReason);
 
+  postMessage(params);
+  return true;
+}
+
+function updateUpStreamSuccess(params) {
+  // Notify the main thread.
+  postMessage(params);
+  return true;
+}
+
+function updateUpStreamFail(params) {
+  // Notify the main thread.
   postMessage(params);
   return true;
 }
@@ -201,20 +238,30 @@ function removeDefaultRoute(options) {
  * Add host route for given network interface.
  */
 function addHostRoute(options) {
-  libnetutils.ifc_add_route(options.ifname, options.dns1, 32, options.gateway);
-  libnetutils.ifc_add_route(options.ifname, options.dns2, 32, options.gateway);
-  libnetutils.ifc_add_route(options.ifname, options.httpproxy, 32, options.gateway);
-  libnetutils.ifc_add_route(options.ifname, options.mmsproxy, 32, options.gateway);
+  for (let i = 0; i < options.hostnames.length; i++) {
+    libnetutils.ifc_add_route(options.ifname, options.hostnames[i], 32, options.gateway);
+  }
 }
 
 /**
  * Remove host route for given network interface.
  */
 function removeHostRoute(options) {
-  libnetutils.ifc_remove_route(options.ifname, options.dns1, 32, options.gateway);
-  libnetutils.ifc_remove_route(options.ifname, options.dns2, 32, options.gateway);
-  libnetutils.ifc_remove_route(options.ifname, options.httpproxy, 32, options.gateway);
-  libnetutils.ifc_remove_route(options.ifname, options.mmsproxy, 32, options.gateway);
+  for (let i = 0; i < options.hostnames.length; i++) {
+    libnetutils.ifc_remove_route(options.ifname, options.hostnames[i], 32, options.gateway);
+  }
+}
+
+function removeNetworkRoute(options) {
+  let ipvalue = netHelpers.stringToIP(options.ip);
+  let netmaskvalue = netHelpers.stringToIP(options.netmask);
+  let subnet = netmaskvalue & ipvalue;
+  let dst = netHelpers.ipToString(subnet);
+  let prefixLength = netHelpers.getMaskLength(netmaskvalue);
+  let gateway = "0.0.0.0";
+
+  libnetutils.ifc_remove_default_route(options.ifname);
+  libnetutils.ifc_remove_route(options.ifname, dst, prefixLength, gateway);
 }
 
 let gCommandQueue = [];
@@ -253,6 +300,12 @@ function onNetdMessage(data) {
 
   // 1xx response code regards as command is proceeding, we need to wait for
   // final response code such as 2xx, 4xx and 5xx before sending next command.
+  if (isBroadcastMessage(code)) {
+    sendBroadcastMessage(code, reason);
+    nextNetdCommand();
+    return;
+  }
+
   if (isComplete(code)) {
     gPending = false;
   }
@@ -395,6 +448,18 @@ function setAccessPoint(params, callback) {
                 " " + params.security +
                 " \"" + escapeQuote(params.key) + "\"" +
                 " " + "6 0 8";
+  return doCommand(command, callback);
+}
+
+function cleanUpStream(params, callback) {
+  let command = "nat disable " + params.previous.internalIfname + " " +
+                params.previous.externalIfname + " " + "0";
+  return doCommand(command, callback);
+}
+
+function createUpStream(params, callback) {
+  let command = "nat enable " + params.current.internalIfname + " " +
+                params.current.externalIfname + " " + "0";
   return doCommand(command, callback);
 }
 
@@ -570,6 +635,16 @@ function setWifiTethering(params) {
     chain(params, gWifiDisableChain, wifiTetheringFail);
   }
   return true;
+}
+
+let gUpdateUpStreamChain = [cleanUpStream,
+                            createUpStream,
+                            updateUpStreamSuccess];
+/**
+ * handling upstream interface change event.
+ */
+function updateUpStream(params) {
+  chain(params, gUpdateUpStreamChain, updateUpStreamFail);
 }
 
 let gUSBEnableChain = [setInterfaceUp,

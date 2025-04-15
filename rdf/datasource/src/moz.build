@@ -6,3 +6,10 @@
 
 MODULE = 'rdf'
 
+CPP_SOURCES += [
+    'nsFileSystemDataSource.cpp',
+    'nsLocalStore.cpp',
+]
+
+LIBRARY_NAME = 'rdfdatasource_s'
+

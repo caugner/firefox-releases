@@ -38,7 +38,8 @@ nsInProcessTabChildGlobal::DoSendSyncMessage(const nsAString& aMessage,
   }
   if (mChromeMessageManager) {
     nsRefPtr<nsFrameMessageManager> mm = mChromeMessageManager;
-    mm->ReceiveMessage(mOwner, aMessage, true, &aData, nullptr, aJSONRetVal);
+    mm->ReceiveMessage(mOwner, aMessage, true, &aData, JS::NullPtr(),
+                       aJSONRetVal);
   }
   return true;
 }
@@ -73,7 +74,7 @@ public:
 
       nsRefPtr<nsFrameMessageManager> mm = mTabChild->mChromeMessageManager;
       mm->ReceiveMessage(mTabChild->mOwner, mMessage, false, &data,
-                         nullptr, nullptr, nullptr);
+                         JS::NullPtr(), nullptr);
     }
     return NS_OK;
   }
@@ -117,7 +118,6 @@ nsInProcessTabChildGlobal::nsInProcessTabChildGlobal(nsIDocShell* aShell,
 
 nsInProcessTabChildGlobal::~nsInProcessTabChildGlobal()
 {
-  NS_ASSERTION(!mCx, "Couldn't release JSContext?!?");
 }
 
 /* [notxpcom] boolean markForCC (); */
@@ -140,7 +140,6 @@ nsInProcessTabChildGlobal::Init()
                    "Couldn't initialize nsInProcessTabChildGlobal");
   mMessageManager = new nsFrameMessageManager(this,
                                               nullptr,
-                                              mCx,
                                               mozilla::dom::ipc::MM_CHILD);
   return NS_OK;
 }
@@ -247,9 +246,7 @@ nsInProcessTabChildGlobal::DelayedDisconnect()
 
   if (!mLoadingScript) {
     nsContentUtils::ReleaseWrapper(static_cast<EventTarget*>(this), this);
-    if (mCx) {
-      DestroyCx();
-    }
+    mGlobal = nullptr;
   } else {
     mDelayedDisconnect = true;
   }

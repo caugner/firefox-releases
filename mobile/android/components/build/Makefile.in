@@ -10,19 +10,12 @@ VPATH		= @srcdir@
 include $(DEPTH)/config/autoconf.mk
 
 MODULE_NAME     = nsBrowserCompsModule
-LIBRARY_NAME    = browsercomps
 LIBXUL_LIBRARY  = 1
 
 IS_COMPONENT	= 1
 EXPORT_LIBRARY  = 1
 
-CPPSRCS = \
-	nsBrowserModule.cpp \
-	nsShellService.cpp \
-	$(NULL)
-
 ifdef MOZ_ANDROID_HISTORY
-CPPSRCS += nsAndroidHistory.cpp
 LOCAL_INCLUDES += \
 	-I$(topsrcdir)/docshell/base \
 	-I$(topsrcdir)/content/base/src \

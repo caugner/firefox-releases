@@ -6,3 +6,10 @@
 
 MODULE = 'transformiix'
 
+CPP_SOURCES += [
+    'txXMLParser.cpp',
+    'txXMLUtils.cpp',
+]
+
+LIBRARY_NAME = 'txxml_s'
+

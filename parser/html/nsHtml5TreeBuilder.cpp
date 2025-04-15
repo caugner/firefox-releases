@@ -595,7 +595,8 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
           case NS_HTML5TREE_BUILDER_RUBY_OR_SPAN_OR_SUB_OR_SUP_OR_VAR:
           case NS_HTML5TREE_BUILDER_DD_OR_DT:
           case NS_HTML5TREE_BUILDER_UL_OR_OL_OR_DL:
-          case NS_HTML5TREE_BUILDER_EMBED_OR_IMG:
+          case NS_HTML5TREE_BUILDER_EMBED:
+          case NS_HTML5TREE_BUILDER_IMG:
           case NS_HTML5TREE_BUILDER_H1_OR_H2_OR_H3_OR_H4_OR_H5_OR_H6:
           case NS_HTML5TREE_BUILDER_HEAD:
           case NS_HTML5TREE_BUILDER_HR:
@@ -967,7 +968,8 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
           case NS_HTML5TREE_BUILDER_TABLE:
           case NS_HTML5TREE_BUILDER_AREA_OR_WBR:
           case NS_HTML5TREE_BUILDER_BR:
-          case NS_HTML5TREE_BUILDER_EMBED_OR_IMG:
+          case NS_HTML5TREE_BUILDER_EMBED:
+          case NS_HTML5TREE_BUILDER_IMG:
           case NS_HTML5TREE_BUILDER_INPUT:
           case NS_HTML5TREE_BUILDER_KEYGEN:
           case NS_HTML5TREE_BUILDER_HR:
@@ -1176,7 +1178,7 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
               NS_HTML5_BREAK(starttagloop);
             }
             case NS_HTML5TREE_BUILDER_BR:
-            case NS_HTML5TREE_BUILDER_EMBED_OR_IMG:
+            case NS_HTML5TREE_BUILDER_EMBED:
             case NS_HTML5TREE_BUILDER_AREA_OR_WBR: {
               reconstructTheActiveFormattingElements();
             }
@@ -1201,6 +1203,7 @@ nsHtml5TreeBuilder::startTag(nsHtml5ElementName* elementName, nsHtml5HtmlAttribu
               elementName = nsHtml5ElementName::ELT_IMG;
               NS_HTML5_CONTINUE(starttagloop);
             }
+            case NS_HTML5TREE_BUILDER_IMG:
             case NS_HTML5TREE_BUILDER_KEYGEN:
             case NS_HTML5TREE_BUILDER_INPUT: {
               reconstructTheActiveFormattingElements();
@@ -2620,7 +2623,8 @@ nsHtml5TreeBuilder::endTag(nsHtml5ElementName* elementName)
           case NS_HTML5TREE_BUILDER_MENUITEM:
 #endif
           case NS_HTML5TREE_BUILDER_PARAM_OR_SOURCE_OR_TRACK:
-          case NS_HTML5TREE_BUILDER_EMBED_OR_IMG:
+          case NS_HTML5TREE_BUILDER_EMBED:
+          case NS_HTML5TREE_BUILDER_IMG:
           case NS_HTML5TREE_BUILDER_IMAGE:
           case NS_HTML5TREE_BUILDER_INPUT:
           case NS_HTML5TREE_BUILDER_KEYGEN:
@@ -3233,6 +3237,7 @@ nsHtml5TreeBuilder::resetTheInsertionMode()
       }
     }
     if (nsHtml5Atoms::template_ == name) {
+      MOZ_ASSERT(templateModePtr >= 0);
       mode = templateModeStack[templateModePtr];
       return;
     } else if (nsHtml5Atoms::select == name) {
@@ -4134,7 +4139,9 @@ nsHtml5TreeBuilder::newSnapshot()
       stackCopy[i]->retain();
     }
   }
-  return new nsHtml5StateSnapshot(stackCopy, listCopy, formPointer, headPointer, deepTreeSurrogateParent, mode, originalMode, framesetOk, needToDropLF, quirks);
+  jArray<int32_t,int32_t> templateModeStackCopy = jArray<int32_t,int32_t>::newJArray(templateModePtr + 1);
+  nsHtml5ArrayCopy::arraycopy(templateModeStack, templateModeStackCopy, templateModeStackCopy.length);
+  return new nsHtml5StateSnapshot(stackCopy, listCopy, templateModeStackCopy, formPointer, headPointer, deepTreeSurrogateParent, mode, originalMode, framesetOk, needToDropLF, quirks);
 }
 
 bool 
@@ -4144,7 +4151,9 @@ nsHtml5TreeBuilder::snapshotMatches(nsAHtml5TreeBuilderState* snapshot)
   int32_t stackLen = snapshot->getStackLength();
   jArray<nsHtml5StackNode*,int32_t> listCopy = snapshot->getListOfActiveFormattingElements();
   int32_t listLen = snapshot->getListOfActiveFormattingElementsLength();
-  if (stackLen != currentPtr + 1 || listLen != listPtr + 1 || formPointer != snapshot->getFormPointer() || headPointer != snapshot->getHeadPointer() || deepTreeSurrogateParent != snapshot->getDeepTreeSurrogateParent() || mode != snapshot->getMode() || originalMode != snapshot->getOriginalMode() || framesetOk != snapshot->isFramesetOk() || needToDropLF != snapshot->isNeedToDropLF() || quirks != snapshot->isQuirks()) {
+  jArray<int32_t,int32_t> templateModeStackCopy = snapshot->getTemplateModeStack();
+  int32_t templateModeStackLen = snapshot->getTemplateModeStackLength();
+  if (stackLen != currentPtr + 1 || listLen != listPtr + 1 || templateModeStackLen != templateModePtr + 1 || formPointer != snapshot->getFormPointer() || headPointer != snapshot->getHeadPointer() || deepTreeSurrogateParent != snapshot->getDeepTreeSurrogateParent() || mode != snapshot->getMode() || originalMode != snapshot->getOriginalMode() || framesetOk != snapshot->isFramesetOk() || needToDropLF != snapshot->isNeedToDropLF() || quirks != snapshot->isQuirks()) {
     return false;
   }
   for (int32_t i = listLen - 1; i >= 0; i--) {
@@ -4162,6 +4171,11 @@ nsHtml5TreeBuilder::snapshotMatches(nsAHtml5TreeBuilderState* snapshot)
       return false;
     }
   }
+  for (int32_t i = templateModeStackLen - 1; i >= 0; i--) {
+    if (templateModeStackCopy[i] != templateModeStack[i]) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -4172,6 +4186,8 @@ nsHtml5TreeBuilder::loadState(nsAHtml5TreeBuilderState* snapshot, nsHtml5AtomTab
   int32_t stackLen = snapshot->getStackLength();
   jArray<nsHtml5StackNode*,int32_t> listCopy = snapshot->getListOfActiveFormattingElements();
   int32_t listLen = snapshot->getListOfActiveFormattingElementsLength();
+  jArray<int32_t,int32_t> templateModeStackCopy = snapshot->getTemplateModeStack();
+  int32_t templateModeStackLen = snapshot->getTemplateModeStackLength();
   for (int32_t i = 0; i <= listPtr; i++) {
     if (listOfActiveFormattingElements[i]) {
       listOfActiveFormattingElements[i]->release();
@@ -4188,6 +4204,10 @@ nsHtml5TreeBuilder::loadState(nsAHtml5TreeBuilderState* snapshot, nsHtml5AtomTab
     stack = jArray<nsHtml5StackNode*,int32_t>::newJArray(stackLen);
   }
   currentPtr = stackLen - 1;
+  if (templateModeStack.length < templateModeStackLen) {
+    templateModeStack = jArray<int32_t,int32_t>::newJArray(templateModeStackLen);
+  }
+  templateModePtr = templateModeStackLen - 1;
   for (int32_t i = 0; i < listLen; i++) {
     nsHtml5StackNode* node = listCopy[i];
     if (node) {
@@ -4208,6 +4228,7 @@ nsHtml5TreeBuilder::loadState(nsAHtml5TreeBuilderState* snapshot, nsHtml5AtomTab
       stack[i]->retain();
     }
   }
+  nsHtml5ArrayCopy::arraycopy(templateModeStackCopy, templateModeStack, templateModeStackLen);
   formPointer = snapshot->getFormPointer();
   headPointer = snapshot->getHeadPointer();
   deepTreeSurrogateParent = snapshot->getDeepTreeSurrogateParent();
@@ -4259,6 +4280,12 @@ nsHtml5TreeBuilder::getStack()
   return stack;
 }
 
+jArray<int32_t,int32_t> 
+nsHtml5TreeBuilder::getTemplateModeStack()
+{
+  return templateModeStack;
+}
+
 int32_t 
 nsHtml5TreeBuilder::getMode()
 {
@@ -4299,6 +4326,12 @@ int32_t
 nsHtml5TreeBuilder::getStackLength()
 {
   return currentPtr + 1;
+}
+
+int32_t 
+nsHtml5TreeBuilder::getTemplateModeStackLength()
+{
+  return templateModePtr + 1;
 }
 
 void

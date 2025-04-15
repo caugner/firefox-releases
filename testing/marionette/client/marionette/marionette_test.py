@@ -31,6 +31,57 @@ class CommonTestCase(unittest.TestCase):
         self.loglines = None
         self.duration = 0
 
+    def run(self, result=None):
+        orig_result = result
+        if result is None:
+            result = self.defaultTestResult()
+            startTestRun = getattr(result, 'startTestRun', None)
+            if startTestRun is not None:
+                startTestRun()
+
+        self._resultForDoCleanups = result
+        result.startTest(self)
+
+        testMethod = getattr(self, self._testMethodName)
+        try:
+            success = False
+            try:
+                self.setUp()
+            except KeyboardInterrupt:
+                raise
+            except:
+                result.addError(self, sys.exc_info())
+            else:
+                try:
+                    testMethod()
+                except KeyboardInterrupt:
+                    raise
+                except AssertionError:
+                    result.addFailure(self, sys.exc_info())
+                except:
+                    result.addError(self, sys.exc_info())
+                else:
+                    success = True
+                try:
+                    self.tearDown()
+                except KeyboardInterrupt:
+                    raise
+                except:
+                    result.addError(self, sys.exc_info())
+                    success = False
+            # Here we could handle doCleanups() instead of calling cleanTest directly
+            self.cleanTest()
+
+            if success:
+                result.addSuccess(self)
+
+        finally:
+            result.stopTest(self)
+            if orig_result is None:
+                stopTestRun = getattr(result, 'stopTestRun', None)
+                if stopTestRun is not None:
+                    stopTestRun()
+
     @classmethod
     def match(cls, filename):
         """
@@ -87,12 +138,25 @@ permissions.forEach(function (perm) {
         self.marionette = self._marionette_weakref()
         if self.marionette.session is None:
             self.marionette.start_session()
+        if self.marionette.timeout is not None:
+            self.marionette.timeouts(self.marionette.TIMEOUT_SEARCH, self.marionette.timeout)
+            self.marionette.timeouts(self.marionette.TIMEOUT_SCRIPT, self.marionette.timeout)
+            self.marionette.timeouts(self.marionette.TIMEOUT_PAGE, self.marionette.timeout)
+        else:
+            self.marionette.timeouts(self.marionette.TIMEOUT_PAGE, 30000)
 
     def tearDown(self):
+        self._deleteSession()
+
+    def cleanTest(self):
+        self._deleteSession()
+
+    def _deleteSession(self):
         self.duration = time.time() - self.start_time
-        if self.marionette.session is not None:
-            self.loglines = self.marionette.get_logs()
-            self.marionette.delete_session()
+        if hasattr(self.marionette, 'session'):
+            if self.marionette.session is not None:
+                self.loglines = self.marionette.get_logs()
+                self.marionette.delete_session()
         self.marionette = None
 
 class MarionetteTestCase(CommonTestCase):
@@ -153,6 +217,15 @@ class MarionetteTestCase(CommonTestCase):
             qemu = self.marionette.extra_emulators[self.extra_emulator_index]
         return qemu
 
+    def wait_for_condition(self, method, timeout=30):
+        timeout = float(timeout) + time.time()
+        while time.time() < timeout:
+            value = method(self.marionette)
+            if value:
+                return value
+            time.sleep(0.5)
+        else:
+            raise TimeoutException("wait_for_condition timed out")
 
 class MarionetteJSTestCase(CommonTestCase):
 

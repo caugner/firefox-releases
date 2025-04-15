@@ -6,3 +6,10 @@
 
 MODULE = 'necko'
 
+CPP_SOURCES += [
+    'nsDataChannel.cpp',
+    'nsDataHandler.cpp',
+]
+
+LIBRARY_NAME = 'nkdata_s'
+

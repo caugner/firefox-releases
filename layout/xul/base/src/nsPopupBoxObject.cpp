@@ -14,6 +14,7 @@
 #include "nsGkAtoms.h"
 #include "nsMenuPopupFrame.h"
 #include "nsClientRect.h"
+#include "nsView.h"
 
 class nsPopupBoxObject : public nsBoxObject,
                          public nsIPopupBoxObject
@@ -352,6 +353,23 @@ nsPopupBoxObject::GetAlignmentPosition(nsAString& positionStr)
       break;
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsPopupBoxObject::GetAlignmentOffset(int32_t *aAlignmentOffset)
+{
+  nsMenuPopupFrame *menuPopupFrame = do_QueryFrame(GetFrame(true));
+  if (!menuPopupFrame)
+    return NS_OK;
+
+  int32_t pp = nsDeviceContext::AppUnitsPerCSSPixel();
+  // Note that the offset might be along either the X or Y axis, but for the
+  // sake of simplicity we use a point with only the X axis set so we can
+  // use ToNearestPixels().
+  nsPoint appOffset(menuPopupFrame->GetAlignmentOffset(), 0);
+  nsIntPoint popupOffset = appOffset.ToNearestPixels(pp);
+  *aAlignmentOffset = popupOffset.x;
   return NS_OK;
 }
 

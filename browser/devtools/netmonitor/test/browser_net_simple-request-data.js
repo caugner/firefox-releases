@@ -29,10 +29,10 @@ function test() {
       let requestItem = RequestsMenu.getItemAtIndex(0);
       let target = requestItem.target;
 
-      is(typeof requestItem.attachment.id, "string",
-        "The attached id is incorrect.");
-      isnot(requestItem.attachment.id, "",
-        "The attached id should not be empty.");
+      is(typeof requestItem.value, "string",
+        "The attached request id is incorrect.");
+      isnot(requestItem.value, "",
+        "The attached request id should not be empty.");
 
       is(typeof requestItem.attachment.startedDeltaMillis, "number",
         "The attached startedDeltaMillis is incorrect.");
@@ -86,8 +86,10 @@ function test() {
 
       ok(requestItem.attachment.requestHeaders,
         "There should be a requestHeaders attachment available.");
-      is(requestItem.attachment.requestHeaders.headers.length, 7,
+      ok(requestItem.attachment.requestHeaders.headers.length >= 6,
         "The requestHeaders attachment has an incorrect |headers| property.");
+      // Can't test for an exact total number of headers, because it seems to
+      // vary across pgo/non-pgo builds.
       isnot(requestItem.attachment.requestHeaders.headersSize, 0,
         "The requestHeaders attachment has an incorrect |headersSize| property.");
       // Can't test for the exact request headers size because the value may
@@ -164,7 +166,7 @@ function test() {
       verifyRequestItemTarget(requestItem, "GET", SIMPLE_SJS, {
         type: "plain",
         fullMimeType: "text/plain; charset=utf-8",
-        size: L10N.getFormatStr("networkMenu.sizeKB", 0.01),
+        size: L10N.getFormatStrWithNumbers("networkMenu.sizeKB", 0.01),
       });
     });
 
@@ -183,7 +185,7 @@ function test() {
       verifyRequestItemTarget(requestItem, "GET", SIMPLE_SJS, {
         type: "plain",
         fullMimeType: "text/plain; charset=utf-8",
-        size: L10N.getFormatStr("networkMenu.sizeKB", 0.01),
+        size: L10N.getFormatStrWithNumbers("networkMenu.sizeKB", 0.01),
       });
     });
 

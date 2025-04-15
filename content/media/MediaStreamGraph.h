@@ -277,9 +277,11 @@ public:
     , mMainThreadDestroyed(false)
     , mGraph(nullptr)
   {
+    MOZ_COUNT_CTOR(MediaStream);
   }
   virtual ~MediaStream()
   {
+    MOZ_COUNT_DTOR(MediaStream);
     NS_ASSERTION(mMainThreadDestroyed, "Should have been destroyed already");
     NS_ASSERTION(mMainThreadListeners.IsEmpty(),
                  "All main thread listeners should have been removed");
@@ -294,6 +296,7 @@ public:
    * Sets the graph that owns this stream.  Should only be called once.
    */
   void SetGraphImpl(MediaStreamGraphImpl* aGraph);
+  void SetGraphImpl(MediaStreamGraph* aGraph);
 
   // Control API.
   // Since a stream can be played multiple ways, we need to combine independent
@@ -302,20 +305,20 @@ public:
   // a single audio output stream is used; the volumes are combined.
   // Currently only the first enabled audio track is played.
   // XXX change this so all enabled audio tracks are mixed and played.
-  void AddAudioOutput(void* aKey);
-  void SetAudioOutputVolume(void* aKey, float aVolume);
-  void RemoveAudioOutput(void* aKey);
+  virtual void AddAudioOutput(void* aKey);
+  virtual void SetAudioOutputVolume(void* aKey, float aVolume);
+  virtual void RemoveAudioOutput(void* aKey);
   // Since a stream can be played multiple ways, we need to be able to
   // play to multiple VideoFrameContainers.
   // Only the first enabled video track is played.
-  void AddVideoOutput(VideoFrameContainer* aContainer);
-  void RemoveVideoOutput(VideoFrameContainer* aContainer);
+  virtual void AddVideoOutput(VideoFrameContainer* aContainer);
+  virtual void RemoveVideoOutput(VideoFrameContainer* aContainer);
   // Explicitly block. Useful for example if a media element is pausing
   // and we need to stop its stream emitting its buffered data.
-  void ChangeExplicitBlockerCount(int32_t aDelta);
+  virtual void ChangeExplicitBlockerCount(int32_t aDelta);
   // Events will be dispatched by calling methods of aListener.
-  void AddListener(MediaStreamListener* aListener);
-  void RemoveListener(MediaStreamListener* aListener);
+  virtual void AddListener(MediaStreamListener* aListener);
+  virtual void RemoveListener(MediaStreamListener* aListener);
   // A disabled track has video replaced by black, and audio replaced by
   // silence.
   void SetTrackEnabled(TrackID aTrackID, bool aEnabled);
@@ -427,8 +430,14 @@ public:
   GraphTime StreamTimeToGraphTime(StreamTime aTime);
   bool IsFinishedOnGraphThread() { return mFinished; }
   void FinishOnGraphThread();
+  /**
+   * Identify which graph update index we are currently processing.
+   */
+  int64_t GetProcessingGraphUpdateIndex();
 
   bool HasCurrentData() { return mHasCurrentData; }
+
+  StreamBuffer::Track* EnsureTrack(TrackID aTrack, TrackRate aSampleRate);
 
   void ApplyTrackDisabling(TrackID aTrackID, MediaSegment* aSegment);
 
@@ -436,6 +445,12 @@ public:
   {
     NS_ASSERTION(NS_IsMainThread(), "Only use DOMMediaStream on main thread");
     return mWrapper;
+  }
+
+  // Return true if the main thread needs to observe updates from this stream.
+  virtual bool MainThreadNeedsUpdates() const
+  {
+    return true;
   }
 
 protected:
@@ -932,19 +947,26 @@ public:
   // Internal AudioNodeStreams can only pass their output to another
   // AudioNode, whereas external AudioNodeStreams can pass their output
   // to an nsAudioStream for playback.
-  enum AudioNodeStreamKind { INTERNAL_STREAM, EXTERNAL_STREAM };
+  enum AudioNodeStreamKind { SOURCE_STREAM, INTERNAL_STREAM, EXTERNAL_STREAM };
   /**
    * Create a stream that will process audio for an AudioNode.
-   * Takes ownership of aEngine.
+   * Takes ownership of aEngine.  aSampleRate is the sampling rate used
+   * for the stream.  If 0 is passed, the sampling rate of the engine's
+   * node will get used.
    */
   AudioNodeStream* CreateAudioNodeStream(AudioNodeEngine* aEngine,
-                                         AudioNodeStreamKind aKind);
+                                         AudioNodeStreamKind aKind,
+                                         TrackRate aSampleRate = 0);
   /**
    * Returns the number of graph updates sent. This can be used to track
    * whether a given update has been processed by the graph thread and reflected
    * in main-thread stream state.
    */
   int64_t GetCurrentGraphUpdateIndex() { return mGraphUpdatesSent; }
+  /**
+   * Start processing non-realtime for a specific number of ticks.
+   */
+  void StartNonRealtimeProcessing(uint32_t aTicksToProcess);
 
   /**
    * Media graph thread only.

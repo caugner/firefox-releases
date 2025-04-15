@@ -140,9 +140,9 @@ nsBMPDecoder::FinishInternal()
         PostInvalidation(r);
 
         if (mUseAlphaData) {
-          PostFrameStop(RasterImage::kFrameHasAlpha);
+          PostFrameStop(FrameBlender::kFrameHasAlpha);
         } else {
-          PostFrameStop(RasterImage::kFrameOpaque);
+          PostFrameStop(FrameBlender::kFrameOpaque);
         }
         PostDecodeDone();
     }
@@ -243,6 +243,11 @@ nsBMPDecoder::WriteInternal(const char* aBuffer, uint32_t aCount)
         // Reject extremely wide images to keep the math sane
         const int32_t k64KWidth = 0x0000FFFF;
         if (mBIH.width < 0 || mBIH.width > k64KWidth) {
+            PostDataError();
+            return;
+        }
+
+        if (mBIH.height == INT_MIN) {
             PostDataError();
             return;
         }

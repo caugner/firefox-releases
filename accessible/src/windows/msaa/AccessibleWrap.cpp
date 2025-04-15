@@ -919,6 +919,9 @@ AccessibleWrap::accNavigate(
     case NAVRELATION_DESCRIPTION_FOR:
       xpRelation = nsIAccessibleRelation::RELATION_DESCRIPTION_FOR;
       break;
+    case NAVRELATION_NODE_PARENT_OF:
+      xpRelation = nsIAccessibleRelation::RELATION_NODE_PARENT_OF;
+      break;
 
     default:
       return E_INVALIDARG;
@@ -1251,6 +1254,10 @@ AccessibleWrap::get_states(AccessibleStates *aStates)
     *aStates |= IA2_STATE_TRANSIENT;
   if (state & states::VERTICAL)
     *aStates |= IA2_STATE_VERTICAL;
+  if (state & states::CHECKED)
+    *aStates |= IA2_STATE_CHECKABLE;
+  if (state & states::PINNED)
+    *aStates |= IA2_STATE_PINNED;
 
   return S_OK;
 
@@ -1505,15 +1512,6 @@ AccessibleWrap::HandleAccEvent(AccEvent* aEvent)
   nsresult rv = Accessible::HandleAccEvent(aEvent);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  return FirePlatformEvent(aEvent);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// AccessibleWrap
-
-nsresult
-AccessibleWrap::FirePlatformEvent(AccEvent* aEvent)
-{
   // Don't fire native MSAA events or mess with the system caret
   // when running in metro mode. This confuses input focus tracking
   // in metro's UIA implementation.
@@ -1582,6 +1580,9 @@ AccessibleWrap::FirePlatformEvent(AccEvent* aEvent)
 
   return NS_OK;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// AccessibleWrap
 
 //------- Helper methods ---------
 

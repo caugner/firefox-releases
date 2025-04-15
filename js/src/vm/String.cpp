@@ -4,15 +4,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "vm/String.h"
+
 #include "mozilla/PodOperations.h"
 #include "mozilla/RangedPtr.h"
 
 #include "gc/Marking.h"
 
-#include "String.h"
-#include "String-inl.h"
+#include "jscompartmentinlines.h"
 
-#include "jsobjinlines.h"
+#include "String-inl.h"
 
 using namespace js;
 
@@ -204,15 +205,36 @@ JSRope::flattenInternal(JSContext *maybecx)
     jschar *pos;
     JSRuntime *rt = runtime();
 
-    if (this->leftChild()->isExtensible()) {
-        JSExtensibleString &left = this->leftChild()->asExtensible();
+    /* Find the left most string, containing the first string. */
+    JSRope *leftMostRope = this;
+    while (leftMostRope->leftChild()->isRope())
+        leftMostRope = &leftMostRope->leftChild()->asRope();
+
+    if (leftMostRope->leftChild()->isExtensible()) {
+        JSExtensibleString &left = leftMostRope->leftChild()->asExtensible();
         size_t capacity = left.capacity();
         if (capacity >= wholeLength) {
-            if (b == WithIncrementalBarrier) {
-                JSString::writeBarrierPre(d.u1.left);
-                JSString::writeBarrierPre(d.s.u2.right);
+            /*
+             * Simulate a left-most traversal from the root to leftMost->leftChild()
+             * via first_visit_node
+             */
+            while (str != leftMostRope) {
+                JS_ASSERT(str->isRope());
+                if (b == WithIncrementalBarrier) {
+                    JSString::writeBarrierPre(str->d.u1.left);
+                    JSString::writeBarrierPre(str->d.s.u2.right);
+                }
+                JSString *child = str->d.u1.left;
+                str->d.u1.chars = left.chars();
+                child->d.s.u3.parent = str;
+                child->d.lengthAndFlags = 0x200;
+                str = child;
             }
-
+            if (b == WithIncrementalBarrier) {
+                JSString::writeBarrierPre(str->d.u1.left);
+                JSString::writeBarrierPre(str->d.s.u2.right);
+            }
+            str->d.u1.chars = left.chars();
             wholeCapacity = capacity;
             wholeChars = const_cast<jschar *>(left.chars());
             size_t bits = left.d.lengthAndFlags;
@@ -478,7 +500,7 @@ const StaticStrings::SmallChar StaticStrings::toSmallChar[] = { R7(0) };
 bool
 StaticStrings::init(JSContext *cx)
 {
-    AutoEnterAtomsCompartment ac(cx);
+    AutoCompartment ac(cx, cx->runtime()->atomsCompartment);
 
     for (uint32_t i = 0; i < UNIT_STATIC_LIMIT; i++) {
         jschar buffer[] = { jschar(i), '\0' };

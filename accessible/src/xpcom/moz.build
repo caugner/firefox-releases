@@ -10,3 +10,12 @@ EXPORTS += [
     'xpcAccEvents.h',
 ]
 
+CPP_SOURCES += [
+    'nsAccessibleRelation.cpp',
+    'xpcAccEvents.cpp',
+    'xpcAccessibleTable.cpp',
+    'xpcAccessibleTableCell.cpp',
+]
+
+LIBRARY_NAME = 'accessibility_xpcom_s'
+

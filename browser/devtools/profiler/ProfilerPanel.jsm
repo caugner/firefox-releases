@@ -10,7 +10,10 @@ Cu.import("resource:///modules/devtools/gDevTools.jsm");
 Cu.import("resource:///modules/devtools/ProfilerController.jsm");
 Cu.import("resource:///modules/devtools/ProfilerHelpers.jsm");
 Cu.import("resource:///modules/devtools/shared/event-emitter.js");
+Cu.import("resource:///modules/devtools/SideMenuWidget.jsm");
+Cu.import("resource:///modules/devtools/ViewHelpers.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/devtools/Console.jsm");
 
 this.EXPORTED_SYMBOLS = ["ProfilerPanel"];
 
@@ -22,6 +25,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "DebuggerServer",
 
 XPCOMUtils.defineLazyModuleGetter(this, "Services",
   "resource://gre/modules/Services.jsm");
+
+const PROFILE_IDLE = 0;
+const PROFILE_RUNNING = 1;
+const PROFILE_COMPLETED = 2;
 
 /**
  * An instance of a profile UI. Profile UI consists of
@@ -54,6 +61,7 @@ function ProfileUI(uid, name, panel) {
   this.isStarted = false;
   this.isFinished = false;
 
+  this.messages = [];
   this.panel = panel;
   this.uid = uid;
   this.name = name;
@@ -76,14 +84,6 @@ function ProfileUI(uid, name, panel) {
 
     switch (event.data.status) {
       case "loaded":
-        if (this.panel._runningUid !== null) {
-          this.iframe.contentWindow.postMessage(JSON.stringify({
-            uid: this._runningUid,
-            isCurrent: this._runningUid === uid,
-            task: "onStarted"
-          }), "*");
-        }
-
         this.isReady = true;
         this.emit("ready");
         break;
@@ -106,6 +106,22 @@ function ProfileUI(uid, name, panel) {
 }
 
 ProfileUI.prototype = {
+  /**
+   * Returns a contentWindow of the iframe pointing to Cleopatra
+   * if it exists and can be accessed. Otherwise returns null.
+   */
+  get contentWindow() {
+    if (!this.iframe) {
+      return null;
+    }
+
+    try {
+      return this.iframe.contentWindow;
+    } catch (err) {
+      return null;
+    }
+  },
+
   show: function PUI_show() {
     this.iframe.removeAttribute("hidden");
   },
@@ -126,44 +142,27 @@ ProfileUI.prototype = {
    */
   parse: function PUI_parse(data, onParsed) {
     if (!this.isReady) {
-      return;
+      return void this.on("ready", this.parse.bind(this, data, onParsed));
     }
 
-    let win = this.iframe.contentWindow;
+    this.message({ task: "receiveProfileData", rawProfile: data }).then(() => {
+      let poll = () => {
+        let wait = this.panel.window.setTimeout.bind(null, poll, 100);
+        let trail = this.contentWindow.gBreadcrumbTrail;
 
-    win.postMessage(JSON.stringify({
-      task: "receiveProfileData",
-      rawProfile: data
-    }), "*");
+        if (!trail) {
+          return wait();
+        }
 
-    let poll = function pollBreadcrumbs() {
-      let wait = this.panel.window.setTimeout.bind(null, poll, 100);
-      let trail = win.gBreadcrumbTrail;
+        if (!trail._breadcrumbs || !trail._breadcrumbs.length) {
+          return wait();
+        }
 
-      if (!trail) {
-        return wait();
-      }
+        onParsed();
+      };
 
-      if (!trail._breadcrumbs || !trail._breadcrumbs.length) {
-        return wait();
-      }
-
-      onParsed();
-    }.bind(this);
-
-    poll();
-  },
-
-  /**
-   * Update profile's label in the sidebar.
-   *
-   * @param string text
-   *   New text for the label.
-   */
-  updateLabel: function PUI_udpateLabel(text) {
-    let doc = this.panel.document;
-    let label = doc.querySelector("li#profile-" + this.uid + "> h1");
-    label.textContent = text;
+      poll();
+    });
   },
 
   /**
@@ -171,37 +170,90 @@ ProfileUI.prototype = {
    * so that it could update the UI. Also, once started, we add a
    * star to the profile name to indicate which profile is currently
    * running.
+   *
+   * @param function startFn
+   *        A function to use instead of the default
+   *        this.panel.startProfiling. Useful when you
+   *        need mark panel as started after the profiler
+   *        has been started elsewhere. It must take two
+   *        params and call the second one.
    */
-  start: function PUI_start() {
+  start: function PUI_start(startFn) {
     if (this.isStarted || this.isFinished) {
       return;
     }
 
-    this.panel.startProfiling(this.name, function onStart() {
+    startFn = startFn || this.panel.startProfiling.bind(this.panel);
+    startFn(this.name, () => {
       this.isStarted = true;
-      this.updateLabel(this.name + " *");
-      this.panel.broadcast(this.uid, {task: "onStarted"});
+      this.panel.sidebar.setProfileState(this, PROFILE_RUNNING);
+      this.panel.broadcast(this.uid, {task: "onStarted"}); // Do we really need this?
       this.emit("started");
-    }.bind(this));
+    });
   },
 
   /**
    * Stop profiling and, once stopped, notify the underlying page so
    * that it could update the UI and remove a star from the profile
    * name.
+   *
+   * @param function stopFn
+   *        A function to use instead of the default
+   *        this.panel.stopProfiling. Useful when you
+   *        need mark panel as stopped after the profiler
+   *        has been stopped elsewhere. It must take two
+   *        params and call the second one.
    */
-  stop: function PUI_stop() {
+  stop: function PUI_stop(stopFn) {
     if (!this.isStarted || this.isFinished) {
       return;
     }
 
-    this.panel.stopProfiling(this.name, function onStop() {
+    stopFn = stopFn || this.panel.stopProfiling.bind(this.panel);
+    stopFn(this.name, () => {
       this.isStarted = false;
       this.isFinished = true;
-      this.updateLabel(this.name);
+      this.panel.sidebar.setProfileState(this, PROFILE_COMPLETED);
       this.panel.broadcast(this.uid, {task: "onStopped"});
       this.emit("stopped");
-    }.bind(this));
+    });
+  },
+
+  /**
+   * Send a message to Cleopatra instance. If a message cannot be
+   * sent, this method queues it for later.
+   *
+   * @param object data JSON data to send (must be serializable)
+   * @return promise
+   */
+  message: function PIU_message(data) {
+    let deferred = Promise.defer();
+    let win = this.contentWindow;
+    data = JSON.stringify(data);
+
+    if (win) {
+      win.postMessage(data, "*");
+      deferred.resolve();
+    } else {
+      this.messages.push({ data: data, onSuccess: () => deferred.resolve() });
+    }
+
+    return deferred.promise;
+  },
+
+  /**
+   * Send all queued messages (see this.message for more info)
+   */
+  flushMessages: function PIU_flushMessages() {
+    if (!this.contentWindow) {
+      return;
+    }
+
+    let msg;
+    while (msg = this.messages.shift()) {
+      this.contentWindow.postMessage(msg.data, "*");
+      msg.onSuccess();
+    }
   },
 
   /**
@@ -212,8 +264,42 @@ ProfileUI.prototype = {
     this.panel = null;
     this.uid = null;
     this.iframe = null;
+    this.messages = null;
   }
 };
+
+function SidebarView(el) {
+  EventEmitter.decorate(this);
+  this.widget = new SideMenuWidget(el);
+}
+
+SidebarView.prototype = Heritage.extend(WidgetMethods, {
+  getItemByProfile: function (profile) {
+    return this.getItemForPredicate(item => item.attachment.uid === profile.uid);
+  },
+
+  setProfileState: function (profile, state) {
+    let item = this.getItemByProfile(profile);
+    let label = item.target.querySelector(".profiler-sidebar-item > span");
+
+    switch (state) {
+      case PROFILE_IDLE:
+        label.textContent = L10N.getStr("profiler.stateIdle");
+        break;
+      case PROFILE_RUNNING:
+        label.textContent = L10N.getStr("profiler.stateRunning");
+        break;
+      case PROFILE_COMPLETED:
+        label.textContent = L10N.getStr("profiler.stateCompleted");
+        break;
+      default: // Wrong state, do nothing.
+        return;
+    }
+
+    item.attachment.state = state;
+    this.emit("stateChanged", item);
+  }
+});
 
 /**
  * Profiler panel. It is responsible for creating and managing
@@ -249,6 +335,7 @@ function ProfilerPanel(frame, toolbox) {
 
   this.profiles = new Map();
   this._uid = 0;
+  this._msgQueue = {};
 
   EventEmitter.decorate(this);
 }
@@ -260,18 +347,27 @@ ProfilerPanel.prototype = {
   target:      null,
   controller:  null,
   profiles:    null,
+  sidebar:     null,
 
   _uid:        null,
   _activeUid:  null,
   _runningUid: null,
   _browserWin: null,
+  _msgQueue:   null,
 
   get activeProfile() {
     return this.profiles.get(this._activeUid);
   },
 
   set activeProfile(profile) {
+    if (this._activeUid === profile.uid)
+      return;
+
+    if (this.activeProfile)
+      this.activeProfile.hide();
+
     this._activeUid = profile.uid;
+    profile.show();
   },
 
   get browserWindow() {
@@ -296,41 +392,59 @@ ProfilerPanel.prototype = {
    * @return Promise
    */
   open: function PP_open() {
-    let promise;
     // Local profiling needs to make the target remote.
-    if (!this.target.isRemote) {
-      promise = this.target.makeRemote();
-    } else {
-      promise = Promise.resolve(this.target);
-    }
+    let target = this.target;
+    let promise = !target.isRemote ? target.makeRemote() : Promise.resolve(target);
 
     return promise
-      .then(function(target) {
+      .then((target) => {
         let deferred = Promise.defer();
-        this.controller = new ProfilerController(this.target);
 
-        this.controller.connect(function onConnect() {
+        this.controller = new ProfilerController(this.target);
+        this.sidebar = new SidebarView(this.document.querySelector("#profiles-list"));
+        this.sidebar.widget.addEventListener("select", (ev) => {
+          if (!ev.detail)
+            return;
+
+          let profile = this.profiles.get(ev.detail.attachment.uid);
+          this.activeProfile = profile;
+
+          if (profile.isReady) {
+            profile.flushMessages();
+            return void this.emit("profileSwitched", profile.uid);
+          }
+
+          profile.once("ready", () => {
+            profile.flushMessages();
+            this.emit("profileSwitched", profile.uid);
+          });
+        });
+
+        this.controller.connect(() => {
           let create = this.document.getElementById("profiler-create");
-          create.addEventListener("click", function (ev) {
-            this.createProfile()
-          }.bind(this), false);
+          create.addEventListener("click", () => this.createProfile(), false);
           create.removeAttribute("disabled");
 
           let profile = this.createProfile();
-          this.switchToProfile(profile, function () {
+          let onSwitch = (_, uid) => {
+            if (profile.uid !== uid)
+              return;
+
+            this.off("profileSwitched", onSwitch);
             this.isReady = true;
             this.emit("ready");
 
             deferred.resolve(this);
-          }.bind(this))
-        }.bind(this));
+          };
+
+          this.on("profileSwitched", onSwitch);
+          this.sidebar.selectedItem = this.sidebar.getItemByProfile(profile);
+        });
 
         return deferred.promise;
-      }.bind(this))
-      .then(null, function onError(reason) {
-        Cu.reportError("ProfilerPanel open failed. " +
-                       reason.error + ": " + reason.message);
-      });
+      })
+      .then(null, (reason) =>
+        Cu.reportError("ProfilePanel open failed: " + reason.message));
   },
 
   /**
@@ -350,68 +464,38 @@ ProfilerPanel.prototype = {
       return this.getProfileByName(name);
     }
 
-    let uid  = ++this._uid;
-    let list = this.document.getElementById("profiles-list");
-    let item = this.document.createElement("li");
-    let wrap = this.document.createElement("h1");
-    name = name || L10N.getFormatStr("profiler.profileName", [uid]);
+    let uid = ++this._uid;
 
-    item.setAttribute("id", "profile-" + uid);
-    item.setAttribute("data-uid", uid);
-    item.addEventListener("click", function (ev) {
-      this.switchToProfile(this.profiles.get(uid));
-    }.bind(this), false);
+    // If profile is anonymous, increase its UID until we get
+    // to the unused name. This way if someone manually creates
+    // a profile named say 'Profile 2' we won't create a dup
+    // with the same name. We will just skip over uid 2.
 
-    wrap.className = "profile-name";
-    wrap.textContent = name;
+    if (!name) {
+      name = L10N.getFormatStr("profiler.profileName", [uid]);
+      while (this.getProfileByName(name)) {
+        uid = ++this._uid;
+        name = L10N.getFormatStr("profiler.profileName", [uid]);
+      }
+    }
 
-    item.appendChild(wrap);
-    list.appendChild(item);
+    let box = this.document.createElement("vbox");
+    box.className = "profiler-sidebar-item";
+    box.id = "profile-" + uid;
+    let h3 = this.document.createElement("h3");
+    h3.textContent = name;
+    let span = this.document.createElement("span");
+    span.textContent = L10N.getStr("profiler.stateIdle");
+    box.appendChild(h3);
+    box.appendChild(span);
+
+    this.sidebar.push([box], { attachment: { uid: uid, name: name, state: PROFILE_IDLE } });
 
     let profile = new ProfileUI(uid, name, this);
     this.profiles.set(uid, profile);
 
     this.emit("profileCreated", uid);
     return profile;
-  },
-
-  /**
-   * Switches to a different profile by making its instance an
-   * active one.
-   *
-   * @param ProfileUI profile
-   *   A profile instance to switch to.
-   * @param function onLoad
-   *   A function to call when profile instance is ready.
-   *   If the instance is already loaded, onLoad will be
-   *   called synchronously.
-   */
-  switchToProfile: function PP_switchToProfile(profile, onLoad=function() {}) {
-    let doc = this.document;
-
-    if (this.activeProfile) {
-      this.activeProfile.hide();
-    }
-
-    let active = doc.querySelector("#profiles-list > li.splitview-active");
-    if (active) {
-      active.className = "";
-    }
-
-    doc.getElementById("profile-" + profile.uid).className = "splitview-active";
-    profile.show();
-    this.activeProfile = profile;
-
-    if (profile.isReady) {
-      this.emit("profileSwitched", profile.uid);
-      onLoad();
-      return;
-    }
-
-    profile.once("ready", function () {
-      this.emit("profileSwitched", profile.uid);
-      onLoad();
-    }.bind(this));
   },
 
   /**
@@ -422,15 +506,14 @@ ProfilerPanel.prototype = {
    *   that profiling had been successfuly started.
    */
   startProfiling: function PP_startProfiling(name, onStart) {
-    this.controller.start(name, function (err) {
+    this.controller.start(name, (err) => {
       if (err) {
-        Cu.reportError("ProfilerController.start: " + err.message);
-        return;
+        return void Cu.reportError("ProfilerController.start: " + err.message);
       }
 
       onStart();
       this.emit("started");
-    }.bind(this));
+    });
   },
 
   /**
@@ -504,6 +587,28 @@ ProfilerPanel.prototype = {
   },
 
   /**
+   * Iterates over each available profile and calls
+   * a callback with it as a parameter.
+   *
+   * @param function cb a callback to call
+   */
+  eachProfile: function PP_eachProfile(cb) {
+    let uid = this._uid;
+
+    if (!this.profiles) {
+      return;
+    }
+
+    while (uid >= 0) {
+      if (this.profiles.has(uid)) {
+        cb(this.profiles.get(uid));
+      }
+
+      uid -= 1;
+    }
+  },
+
+  /**
    * Broadcast messages to all Cleopatra instances.
    *
    * @param number target
@@ -524,18 +629,13 @@ ProfilerPanel.prototype = {
       this._runningUid = null;
     }
 
-    let uid = this._uid;
-    while (uid >= 0) {
-      if (this.profiles.has(uid)) {
-        let iframe = this.profiles.get(uid).iframe;
-        iframe.contentWindow.postMessage(JSON.stringify({
-          uid: target,
-          isCurrent: target === uid,
-          task: data.task
-        }), "*");
-      }
-      uid -= 1;
-    }
+    this.eachProfile((profile) => {
+      profile.message({
+        uid: target,
+        isCurrent: target === profile.uid,
+        task: data.task
+      });
+    });
   },
 
   /**

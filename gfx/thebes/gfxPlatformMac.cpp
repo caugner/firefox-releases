@@ -95,12 +95,9 @@ already_AddRefed<gfxASurface>
 gfxPlatformMac::CreateOffscreenSurface(const gfxIntSize& size,
                                        gfxASurface::gfxContentType contentType)
 {
-    gfxASurface *newSurface = nullptr;
-
-    newSurface = new gfxQuartzSurface(size, OptimalFormatForContent(contentType));
-
-    NS_IF_ADDREF(newSurface);
-    return newSurface;
+    nsRefPtr<gfxASurface> newSurface =
+      new gfxQuartzSurface(size, OptimalFormatForContent(contentType));
+    return newSurface.forget();
 }
 
 already_AddRefed<gfxASurface>
@@ -127,8 +124,8 @@ gfxPlatformMac::OptimizeImage(gfxImageSurface *aSurface,
         isurf = new gfxImageSurface (surfaceSize, format);
         if (!isurf->CopyFrom (aSurface)) {
             // don't even bother doing anything more
-            NS_ADDREF(aSurface);
-            return aSurface;
+            nsRefPtr<gfxASurface> ret = aSurface;
+            return ret.forget();
         }
     }
 
@@ -432,6 +429,17 @@ gfxPlatformMac::UseAcceleratedCanvas()
 {
   // Lion or later is required
   return OSXVersion() >= 0x1070 && Preferences::GetBool("gfx.canvas.azure.accelerated", false);
+}
+
+bool
+gfxPlatformMac::SupportsOffMainThreadCompositing()
+{
+  // 10.6.X has crashes on tinderbox with OMTC, so disable it
+  // for now.
+  if (OSXVersion() >= 0x1070) {
+    return true;
+  }
+  return GetPrefLayersOffMainThreadCompositionForceEnabled();
 }
 
 qcms_profile *

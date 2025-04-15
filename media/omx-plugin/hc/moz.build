@@ -6,3 +6,9 @@
 
 MODULE = 'omxpluginhc'
 
+CPP_SOURCES += [
+    'OmxPluginHoneycomb.cpp',
+]
+
+LIBRARY_NAME = 'omxpluginhc'
+

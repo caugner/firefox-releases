@@ -51,6 +51,7 @@
 #include "nsIDocument.h"
 #include "mozilla/Preferences.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 
 using namespace mozilla;
 
@@ -167,20 +168,19 @@ nsHTTPIndex::OnFTPControlLog(bool server, const char *msg)
 
     nsString unicodeMsg;
     unicodeMsg.AssignWithConversion(msg);
-    JSAutoRequest ar(cx);
     JSString* jsMsgStr = JS_NewUCStringCopyZ(cx, (jschar*) unicodeMsg.get());
     NS_ENSURE_TRUE(jsMsgStr, NS_ERROR_OUT_OF_MEMORY);
 
     params[0] = BOOLEAN_TO_JSVAL(server);
     params[1] = STRING_TO_JSVAL(jsMsgStr);
 
-    JS::Value val;
+    JS::Rooted<JS::Value> val(cx);
     JS_CallFunctionName(cx,
                         global,
                         "OnFTPControlLog",
                         2,
                         params,
-                        &val);
+                        val.address());
     return NS_OK;
 }
 
@@ -253,16 +253,14 @@ nsHTTPIndex::OnStartRequest(nsIRequest *request, nsISupports* aContext)
     NS_ASSERTION(NS_SUCCEEDED(rv), "unable to xpconnect-wrap http-index");
     if (NS_FAILED(rv)) return rv;
 
-    JS::Rooted<JSObject*> jsobj(cx);
-    rv = wrapper->GetJSObject(jsobj.address());
-    NS_ASSERTION(NS_SUCCEEDED(rv),
+    JS::Rooted<JSObject*> jsobj(cx, wrapper->GetJSObject());
+    NS_ASSERTION(jsobj,
                  "unable to get jsobj from xpconnect wrapper");
-    if (NS_FAILED(rv)) return rv;
+    if (!jsobj) return NS_ERROR_UNEXPECTED;
 
     JS::Rooted<JS::Value> jslistener(cx, OBJECT_TO_JSVAL(jsobj));
 
     // ...and stuff it into the global context
-    JSAutoRequest ar(cx);
     bool ok = JS_SetProperty(cx, global, "HTTPIndex", jslistener.address());
     NS_ASSERTION(ok, "unable to set Listener property");
     if (!ok)

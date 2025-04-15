@@ -1525,29 +1525,32 @@ nsEventStateManager::IsRemoteTarget(nsIContent* target) {
   return false;
 }
 
-/*static*/ void
-nsEventStateManager::MapEventCoordinatesForChildProcess(nsFrameLoader* aFrameLoader,
-                                                        nsEvent* aEvent)
+/*static*/ nsIntPoint
+nsEventStateManager::GetChildProcessOffset(nsFrameLoader* aFrameLoader,
+                                           const nsEvent& aEvent)
 {
   // The "toplevel widget" in child processes is always at position
   // 0,0.  Map the event coordinates to match that.
   nsIFrame* targetFrame = aFrameLoader->GetPrimaryFrameOfOwningContent();
   if (!targetFrame) {
-    return;
+    return nsIntPoint();
   }
   nsPresContext* presContext = targetFrame->PresContext();
 
+  // Find out how far we're offset from the nearest widget.
+  nsPoint pt = nsLayoutUtils::GetEventCoordinatesRelativeTo(&aEvent,
+                                                            targetFrame);
+  return pt.ToNearestPixels(presContext->AppUnitsPerDevPixel());
+}
+
+/*static*/ void
+nsEventStateManager::MapEventCoordinatesForChildProcess(
+  const nsIntPoint& aOffset, nsEvent* aEvent)
+{
   if (aEvent->eventStructType != NS_TOUCH_EVENT) {
-    nsPoint pt = nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent,
-                                                              targetFrame);
-    aEvent->refPoint = pt.ToNearestPixels(presContext->AppUnitsPerDevPixel());
+    aEvent->refPoint = aOffset;
   } else {
     aEvent->refPoint = nsIntPoint();
-    // Find out how far we're offset from the nearest widget.
-    nsPoint offset =
-      nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, targetFrame);
-    nsIntPoint intOffset =
-      offset.ToNearestPixels(presContext->AppUnitsPerDevPixel());
     nsTouchEvent* touchEvent = static_cast<nsTouchEvent*>(aEvent);
     // Then offset all the touch points by that distance, to put them
     // in the space where top-left is 0,0.
@@ -1555,10 +1558,18 @@ nsEventStateManager::MapEventCoordinatesForChildProcess(nsFrameLoader* aFrameLoa
     for (uint32_t i = 0; i < touches.Length(); ++i) {
       nsIDOMTouch* touch = touches[i];
       if (touch) {
-        touch->mRefPoint += intOffset;
+        touch->mRefPoint += aOffset;
       }
     }
   }
+}
+
+/*static*/ void
+nsEventStateManager::MapEventCoordinatesForChildProcess(nsFrameLoader* aFrameLoader,
+                                                        nsEvent* aEvent)
+{
+  nsIntPoint offset = GetChildProcessOffset(aFrameLoader, *aEvent);
+  MapEventCoordinatesForChildProcess(offset, aEvent);
 }
 
 bool
@@ -2661,12 +2672,6 @@ nsEventStateManager::ComputeScrollTarget(nsIFrame* aTargetFrame,
       nsIScrollableFrame* frameToScroll =
         lastScrollFrame->GetScrollTargetFrame();
       if (frameToScroll) {
-        nsIFrame* activeRootFrame = nsLayoutUtils::GetActiveScrolledRootFor(
-                                      lastScrollFrame, nullptr);
-        if (!nsLayoutUtils::GetCrossDocParentFrame(activeRootFrame)) {
-          // Record the fact that the scroll occurred on the top-level page.
-          aEvent->viewPortIsScrollTargetParent = true;
-        }
         return frameToScroll;
       }
     }
@@ -2732,14 +2737,7 @@ nsEventStateManager::ComputeScrollTarget(nsIFrame* aTargetFrame,
       aTargetFrame->PresContext()->FrameManager()->GetRootFrame());
   aOptions =
     static_cast<ComputeScrollTargetOptions>(aOptions & ~START_FROM_PARENT);
-  if (newFrame) {
-    return ComputeScrollTarget(newFrame, aEvent, aOptions);
-  }
-
-  // Record the fact that the scroll occurred past the bounds of the top-level
-  // page.
-  aEvent->viewPortIsScrollTargetParent = true;
-  return nullptr;
+  return newFrame ? ComputeScrollTarget(newFrame, aEvent, aOptions) : nullptr;
 }
 
 nsSize
@@ -3770,10 +3768,10 @@ nsEventStateManager::SetCursor(int32_t aCursor, imgIContainer* aContainer,
   case NS_STYLE_CURSOR_SPINNING:
     c = eCursor_spinning;
     break;
-  case NS_STYLE_CURSOR_MOZ_ZOOM_IN:
+  case NS_STYLE_CURSOR_ZOOM_IN:
     c = eCursor_zoom_in;
     break;
-  case NS_STYLE_CURSOR_MOZ_ZOOM_OUT:
+  case NS_STYLE_CURSOR_ZOOM_OUT:
     c = eCursor_zoom_out;
     break;
   case NS_STYLE_CURSOR_NOT_ALLOWED:

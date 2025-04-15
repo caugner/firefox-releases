@@ -33,7 +33,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "VariablesView",
                                   "resource:///modules/devtools/VariablesView.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "devtools",
-                                  "resource:///modules/devtools/gDevTools.jsm");
+                                  "resource://gre/modules/devtools/Loader.jsm");
+
+let Telemetry = devtools.require("devtools/shared/telemetry");
 
 const SCRATCHPAD_CONTEXT_CONTENT = 1;
 const SCRATCHPAD_CONTEXT_BROWSER = 2;
@@ -46,6 +48,10 @@ const BUTTON_POSITION_DONT_SAVE = 2;
 const BUTTON_POSITION_REVERT = 0;
 const VARIABLES_VIEW_URL = "chrome://browser/content/devtools/widgets/VariablesView.xul";
 
+// Because we have no constructor / destructor where we can log metrics we need
+// to do so here.
+let telemetry = new Telemetry();
+telemetry.toolOpened("scratchpad");
 
 /**
  * The scratchpad object handles the Scratchpad window functionality.
@@ -267,7 +273,7 @@ var Scratchpad = {
   get sidebar()
   {
     if (!this._sidebar) {
-      this._sidebar = new ScratchpadSidebar();
+      this._sidebar = new ScratchpadSidebar(this);
     }
     return this._sidebar;
   },
@@ -469,7 +475,7 @@ var Scratchpad = {
         this.sidebar.open(aString, aResult).then(resolve, reject);
       }
     }, reject);
-    
+
     return deferred.promise;
   },
 
@@ -876,7 +882,7 @@ var Scratchpad = {
 
   /**
    * Clear a range of files from the list.
-   * 
+   *
    * @param integer aIndex
    *        Index of file in menu to remove.
    * @param integer aLength
@@ -1060,7 +1066,7 @@ var Scratchpad = {
    */
   openErrorConsole: function SP_openErrorConsole()
   {
-    this.browserWindow.toJavaScriptConsole();
+    this.browserWindow.HUDConsoleUI.toggleBrowserConsole();
   },
 
   /**
@@ -1390,6 +1396,7 @@ var Scratchpad = {
       }
 
       if (shouldClose) {
+        telemetry.toolClosed("scratchpad");
         window.close();
       }
       if (aCallback) {
@@ -1474,12 +1481,12 @@ var Scratchpad = {
  * Encapsulates management of the sidebar containing the VariablesView for
  * object inspection.
  */
-function ScratchpadSidebar()
+function ScratchpadSidebar(aScratchpad)
 {
   let ToolSidebar = devtools.require("devtools/framework/sidebar").ToolSidebar;
   let tabbox = document.querySelector("#scratchpad-sidebar");
-  this._sidebar = new ToolSidebar(tabbox, this);
-  this._splitter = document.querySelector(".devtools-side-splitter");
+  this._sidebar = new ToolSidebar(tabbox, this, "scratchpad");
+  this._scratchpad = aScratchpad;
 }
 
 ScratchpadSidebar.prototype = {
@@ -1487,11 +1494,6 @@ ScratchpadSidebar.prototype = {
    * The ToolSidebar for this sidebar.
    */
   _sidebar: null,
-
-  /*
-   * The splitter element between the sidebar and the editor.
-   */
-  _splitter: null,
 
   /*
    * The VariablesView for this sidebar.
@@ -1524,7 +1526,11 @@ ScratchpadSidebar.prototype = {
       if (!this.variablesView) {
         let window = this._sidebar.getWindowForTab("variablesview");
         let container = window.document.querySelector("#variables");
-        this.variablesView = new VariablesView(container);
+        this.variablesView = new VariablesView(container, {
+          searchEnabled: true,
+          searchPlaceholder: this._scratchpad.strings
+                             .GetStringFromName("propertiesFilterPlaceholder")
+        });
       }
       this._update(aObject).then(() => deferred.resolve());
     };
@@ -1548,7 +1554,6 @@ ScratchpadSidebar.prototype = {
     if (!this.visible) {
       this.visible = true;
       this._sidebar.show();
-      this._splitter.setAttribute("state", "open");
     }
   },
 
@@ -1560,7 +1565,6 @@ ScratchpadSidebar.prototype = {
     if (this.visible) {
       this.visible = false;
       this._sidebar.hide();
-      this._splitter.setAttribute("state", "collapsed");
     }
   },
 

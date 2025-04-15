@@ -12,18 +12,27 @@ function test() {
   runTests();
 }
 
+function scrollToEnd() {
+  let startBox = document.getElementById("start-scrollbox");
+  let [, scrollInterface] = ScrollUtils.getScrollboxFromElement(startBox);
+
+  scrollInterface.scrollBy(50000, 0);
+}
+
 function setup() {
   PanelUI.hide();
   HistoryTestHelper.setup();
 
-  if (StartUI.isStartPageVisible)
-    return;
+  if (!StartUI.isStartPageVisible) {
+    yield addTab("about:start");
 
-  yield addTab("about:start");
+    yield waitForCondition(() => StartUI.isStartPageVisible);
 
-  yield waitForCondition(() => StartUI.isStartPageVisible);
+    yield hideContextUI();
+  }
 
-  yield hideContextUI();
+  // Scroll to make sure all tiles are visible.
+  scrollToEnd();
 }
 
 function tearDown() {
@@ -144,13 +153,13 @@ gTests.push({
 
     let item = gStartView._set.getItemsByUrl(uriFromIndex(2))[0];
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item, 10, 10);
     yield promise;
 
     ok(!unpinButton.hidden, "Unpin button is visible.");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     unpinButton.click();
     yield promise;
 
@@ -166,7 +175,8 @@ gTests.push({
     let item2 = gStartView._set.getItemsByUrl(uriFromIndex(5))[0];
     let item3 = gStartView._set.getItemsByUrl(uriFromIndex(12))[0];
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    scrollToEnd();
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item1, 10, 10);
     sendContextMenuClickToElement(window, item2, 10, 10);
     sendContextMenuClickToElement(window, item3, 10, 10);
@@ -174,7 +184,7 @@ gTests.push({
 
     ok(!unpinButton.hidden, "Unpin button is visible.");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     EventUtils.synthesizeMouse(unpinButton, 10, 10, {}, window);
     yield promise;
 
@@ -201,7 +211,7 @@ gTests.push({
     let item = gStartView._set.getItemsByUrl(uriFromIndex(2))[0];
     let initialLocation = gStartView._set.getIndexOfItem(item);
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item, 10, 10);
     yield promise;
 
@@ -218,7 +228,7 @@ gTests.push({
     ok(!restoreButton.hidden, "Restore button is visible.");
     ok(gStartView._set.itemCount === gStartView._limit, "Grid repopulated");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     EventUtils.synthesizeMouse(restoreButton, 10, 10, {}, window);
     yield promise;
 
@@ -231,7 +241,7 @@ gTests.push({
 
     let item = gStartView._set.getItemsByUrl(uriFromIndex(2))[0];
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item, 10, 10);
     yield promise;
 
@@ -249,8 +259,8 @@ gTests.push({
     ok(HistoryTestHelper._nodes[uriFromIndex(2)], "Item not deleted yet");
     ok(!restoreButton.hidden, "Restore button is visible.");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
-    Elements.appbar.dismiss();
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
+    Elements.contextappbar.dismiss();
     yield promise;
 
     item = gStartView._set.getItemsByUrl(uriFromIndex(2))[0];
@@ -269,7 +279,8 @@ gTests.push({
     let initialLocation2 = gStartView._set.getIndexOfItem(item2);
     let initialLocation3 = gStartView._set.getIndexOfItem(item3);
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    scrollToEnd();
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item1, 10, 10);
     sendContextMenuClickToElement(window, item2, 10, 10);
     sendContextMenuClickToElement(window, item3, 10, 10);
@@ -293,7 +304,7 @@ gTests.push({
     ok(!restoreButton.hidden, "Restore button is visible.");
     ok(gStartView._set.itemCount === gStartView._limit - 1, "Grid repopulated");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     EventUtils.synthesizeMouse(restoreButton, 10, 10, {}, window);
     yield promise;
 
@@ -313,7 +324,8 @@ gTests.push({
     let item2 = gStartView._set.getItemsByUrl(uriFromIndex(5))[0];
     let item3 = gStartView._set.getItemsByUrl(uriFromIndex(12))[0];
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    scrollToEnd();
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item1, 10, 10);
     sendContextMenuClickToElement(window, item2, 10, 10);
     sendContextMenuClickToElement(window, item3, 10, 10);
@@ -337,8 +349,8 @@ gTests.push({
     ok(!restoreButton.hidden, "Restore button is visible.");
     ok(gStartView._set.itemCount === gStartView._limit - 1, "Grid repopulated");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
-    Elements.appbar.dismiss();
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
+    Elements.contextappbar.dismiss();
     yield promise;
 
     item1 = gStartView._set.getItemsByUrl(uriFromIndex(0))[0];
@@ -366,7 +378,7 @@ gTests.push({
 
     let item = gPanelView._set.getItemsByUrl(uriFromIndex(2))[0];
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item, 10, 10);
     yield promise;
 
@@ -374,7 +386,7 @@ gTests.push({
 
     ok(!unpinButton.hidden, "Unpin button is visible.");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     EventUtils.synthesizeMouse(unpinButton, 10, 10, {}, window);
     yield promise;
 
@@ -391,7 +403,8 @@ gTests.push({
     let item2 = gPanelView._set.getItemsByUrl(uriFromIndex(5))[0];
     let item3 = gPanelView._set.getItemsByUrl(uriFromIndex(12))[0];
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    scrollToEnd();
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item1, 10, 10);
     sendContextMenuClickToElement(window, item2, 10, 10);
     sendContextMenuClickToElement(window, item3, 10, 10);
@@ -399,7 +412,7 @@ gTests.push({
 
     ok(!unpinButton.hidden, "Unpin button is visible.");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     EventUtils.synthesizeMouse(unpinButton, 10, 10, {}, window);
     yield promise;
 
@@ -418,7 +431,7 @@ gTests.push({
 
     let item = gPanelView._set.getItemsByUrl(uriFromIndex(2))[0];
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item, 10, 10);
     yield promise;
 
@@ -427,7 +440,7 @@ gTests.push({
 
     ok(!pinButton.hidden, "Pin button is visible.");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     EventUtils.synthesizeMouse(pinButton, 10, 10, {}, window);
     yield promise;
 
@@ -444,7 +457,8 @@ gTests.push({
     let item2 = gPanelView._set.getItemsByUrl(uriFromIndex(5))[0];
     let item3 = gPanelView._set.getItemsByUrl(uriFromIndex(12))[0];
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    scrollToEnd();
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item1, 10, 10);
     sendContextMenuClickToElement(window, item2, 10, 10);
     sendContextMenuClickToElement(window, item3, 10, 10);
@@ -455,7 +469,7 @@ gTests.push({
 
     ok(!pinButton.hidden, "pin button is visible.");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     EventUtils.synthesizeMouse(pinButton, 10, 10, {}, window);
     yield promise;
 
@@ -486,7 +500,7 @@ gTests.push({
 
     let item = gPanelView._set.getItemsByUrl(uriFromIndex(2))[0];
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item, 10, 10);
     yield promise;
 
@@ -504,8 +518,8 @@ gTests.push({
     ok(HistoryTestHelper._nodes[uriFromIndex(2)], "Item exists");
     ok(!restoreButton.hidden, "Restore button is visible.");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
-    Elements.appbar.dismiss();
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
+    Elements.contextappbar.dismiss();
     yield promise;
 
     item = gPanelView._set.getItemsByUrl(uriFromIndex(2))[0];
@@ -521,7 +535,8 @@ gTests.push({
     let item2 = gPanelView._set.getItemsByUrl(uriFromIndex(5))[0];
     let item3 = gPanelView._set.getItemsByUrl(uriFromIndex(12))[0];
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
+    scrollToEnd();
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
     sendContextMenuClickToElement(window, item1, 10, 10);
     sendContextMenuClickToElement(window, item2, 10, 10);
     sendContextMenuClickToElement(window, item3, 10, 10);
@@ -546,8 +561,8 @@ gTests.push({
     ok(HistoryTestHelper._nodes[uriFromIndex(0)] && HistoryTestHelper._nodes[uriFromIndex(5)] && HistoryTestHelper._nodes[uriFromIndex(12)],
       "Items not deleted yet");
 
-    let promise = waitForEvent(Elements.appbar, "transitionend", null, Elements.appbar);
-    Elements.appbar.dismiss();
+    let promise = waitForEvent(Elements.contextappbar, "transitionend", null, Elements.contextappbar);
+    Elements.contextappbar.dismiss();
     yield promise;
 
     item1 = gPanelView._set.getItemsByUrl(uriFromIndex(0))[0];

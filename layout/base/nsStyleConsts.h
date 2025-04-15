@@ -345,8 +345,8 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_CURSOR_GRAB                    21
 #define NS_STYLE_CURSOR_GRABBING                22
 #define NS_STYLE_CURSOR_SPINNING                23
-#define NS_STYLE_CURSOR_MOZ_ZOOM_IN             24
-#define NS_STYLE_CURSOR_MOZ_ZOOM_OUT            25
+#define NS_STYLE_CURSOR_ZOOM_IN                 24
+#define NS_STYLE_CURSOR_ZOOM_OUT                25
 #define NS_STYLE_CURSOR_NOT_ALLOWED             26
 #define NS_STYLE_CURSOR_COL_RESIZE              27
 #define NS_STYLE_CURSOR_ROW_RESIZE              28
@@ -363,6 +363,11 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_DIRECTION_LTR                  0
 #define NS_STYLE_DIRECTION_RTL                  1
 #define NS_STYLE_DIRECTION_INHERIT              2
+
+// See nsStyleVisibility
+#define NS_STYLE_WRITING_MODE_HORIZONTAL_TB     0
+#define NS_STYLE_WRITING_MODE_VERTICAL_LR       1
+#define NS_STYLE_WRITING_MODE_VERTICAL_RL       2
 
 // See nsStyleDisplay
 #define NS_STYLE_DISPLAY_NONE                   0
@@ -393,12 +398,9 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_DISPLAY_POPUP                  27
 #define NS_STYLE_DISPLAY_GROUPBOX               28
 #endif
-#ifdef MOZ_FLEXBOX
 #define NS_STYLE_DISPLAY_FLEX                   29
 #define NS_STYLE_DISPLAY_INLINE_FLEX            30
-#endif // MOZ_FLEXBOX
 
-#ifdef MOZ_FLEXBOX
 // See nsStylePosition
 #define NS_STYLE_ALIGN_ITEMS_FLEX_START         0
 #define NS_STYLE_ALIGN_ITEMS_FLEX_END           1
@@ -432,7 +434,6 @@ static inline mozilla::css::Side operator++(mozilla::css::Side& side, int) {
 #define NS_STYLE_JUSTIFY_CONTENT_CENTER         2
 #define NS_STYLE_JUSTIFY_CONTENT_SPACE_BETWEEN  3
 #define NS_STYLE_JUSTIFY_CONTENT_SPACE_AROUND   4
-#endif // MOZ_FLEXBOX
 
 // See nsStyleDisplay
 #define NS_STYLE_FLOAT_NONE                     0

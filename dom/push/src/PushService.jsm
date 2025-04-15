@@ -20,6 +20,9 @@ Cu.import("resource://gre/modules/Timer.jsm");
 Cu.import("resource://gre/modules/Preferences.jsm");
 Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 
+XPCOMUtils.defineLazyModuleGetter(this, "AlarmService",
+                                  "resource://gre/modules/AlarmService.jsm");
+
 this.EXPORTED_SYMBOLS = ["PushService"];
 
 const prefs = new Preferences("services.push.");
@@ -87,7 +90,8 @@ this.PushDB.prototype = {
       function txnCb(aTxn, aStore) {
         debug("Going to put " + aChannelRecord.channelID);
         aStore.put(aChannelRecord).onsuccess = function setTxnResult(aEvent) {
-          debug("Request successful. Updated record ID: " + aEvent.target.result);
+          debug("Request successful. Updated record ID: " +
+                aEvent.target.result);
         };
       },
       aSuccessCb,
@@ -267,12 +271,12 @@ this.PushWebSocketListener.prototype = {
 // websocket states
 // websocket is off
 const STATE_SHUT_DOWN = 0;
-// websocket has been opened on client side, waiting for successful open
+// Websocket has been opened on client side, waiting for successful open.
 // (_wsOnStart)
 const STATE_WAITING_FOR_WS_START = 1;
-// websocket opened, hello sent, waiting for server reply (_handleHelloReply)
+// Websocket opened, hello sent, waiting for server reply (_handleHelloReply).
 const STATE_WAITING_FOR_HELLO = 2;
-// websocket operational, handshake completed, begin protocol messaging
+// Websocket operational, handshake completed, begin protocol messaging.
 const STATE_READY = 3;
 
 /**
@@ -283,35 +287,40 @@ const STATE_READY = 3;
 this.PushService = {
   observe: function observe(aSubject, aTopic, aData) {
     switch (aTopic) {
-      case "final-ui-startup":
-        Services.obs.removeObserver(this, "final-ui-startup");
-        this.init();
-        break;
-      case "profile-change-teardown":
-        Services.obs.removeObserver(this, "profile-change-teardown");
-        this._shutdown();
-        break;
-      case "network-interface-state-changed":
-        debug("network-interface-state-changed");
-
+      /*
+       * We need to call uninit() on shutdown to clean up things that modules aren't very good
+       * at automatically cleaning up, so we don't get shutdown leaks on browser shutdown.
+       */
+      case "xpcom-shutdown":
+        this.uninit();
+      case "network-active-changed":         /* On B2G. */
+      case "network:offline-status-changed": /* On desktop. */
+        // In case of network-active-changed, always disconnect existing
+        // connections. In case of offline-status changing from offline to
+        // online, it is likely that these statements will be no-ops.
         if (this._udpServer) {
           this._udpServer.close();
         }
 
         this._shutdownWS();
 
-        // Check to see if we need to do anything.
-        this._db.getAllChannelIDs(function(channelIDs) {
-          if (channelIDs.length > 0) {
-            this._beginWSSetup();
-          }
-        }.bind(this));
+        // Try to connect if network-active-changed or the offline-status
+        // changed to online.
+        if (aTopic === "network-active-changed" || aData === "online") {
+          this._startListeningIfChannelsPresent();
+        }
         break;
       case "nsPref:changed":
         if (aData == "services.push.serverURL") {
           debug("services.push.serverURL changed! websocket. new value " +
                 prefs.get("serverURL"));
           this._shutdownWS();
+        } else if (aData == "services.push.connection.enabled") {
+          if (prefs.get("connection.enabled")) {
+            this._startListeningIfChannelsPresent();
+          } else {
+            this._shutdownWS();
+          }
         }
         break;
       case "timer-callback":
@@ -333,9 +342,6 @@ this.PushService = {
             }
           }
         }
-        else if (aSubject == this._retryTimeoutTimer) {
-          this._beginWSSetup();
-        }
         break;
       case "webapps-uninstall":
         debug("webapps-uninstall");
@@ -351,7 +357,8 @@ this.PushService = {
           debug("Got " + records.length);
           for (var i = 0; i < records.length; i++) {
             this._db.delete(records[i].channelID, null, function() {
-              debug("app uninstall: " + app.manifestURL + " Could not delete entry " + records[i].channelID);
+              debug("app uninstall: " + app.manifestURL +
+                    " Could not delete entry " + records[i].channelID);
             });
             // courtesy, but don't establish a connection
             // just for it
@@ -389,25 +396,6 @@ this.PushService = {
   _currentState: STATE_SHUT_DOWN,
   _requestTimeout: 0,
   _requestTimeoutTimer: null,
-
-  /**
-   * How retries work:  The goal is to ensure websocket is always up on
-   * networks not supporting UDP. So the websocket should only be shutdown if
-   * onServerClose indicates UDP wakeup.  If WS is closed due to socket error,
-   * _socketError() is called.  The retry timer is started and when it times
-   * out, beginWSSetup() is called again.
-   *
-   * On a successful connection, the timer is cancelled if it is running and
-   * the values are reset to defaults.
-   *
-   * If we are in the middle of a timeout (i.e. waiting), but
-   * a register/unregister is called, we don't want to wait around anymore.
-   * _sendRequest will automatically call beginWSSetup(), which will cancel the
-   * timer. In addition since the state will have changed, even if a pending
-   * timer event comes in (because the timer fired the event before it was
-   * cancelled), so the connection won't be reset.
-   */
-  _retryTimeoutTimer: null,
   _retryFailCount: 0,
 
   /**
@@ -427,10 +415,6 @@ this.PushService = {
     if (!prefs.get("enabled"))
         return null;
 
-    Services.obs.addObserver(this, "profile-change-teardown", false);
-    Services.obs.addObserver(this, "network-interface-state-changed",
-                             false);
-    Services.obs.addObserver(this, "webapps-uninstall", false);
     this._db = new PushDB(this);
 
     let ppmm = Cc["@mozilla.org/parentprocessmessagemanager;1"]
@@ -440,46 +424,73 @@ this.PushService = {
         ppmm.addMessageListener(msgName, this);
     }.bind(this));
 
+    this._alarmID = null;
+
     this._requestTimeout = prefs.get("requestTimeout");
 
     this._udpPort = prefs.get("udp.port");
 
-    this._db.getAllChannelIDs(
-      function(channelIDs) {
-        if (channelIDs.length > 0) {
-          debug("Found registered channelIDs. Starting WebSocket");
-          this._beginWSSetup();
-        }
-      }.bind(this),
+    this._startListeningIfChannelsPresent();
 
-      function(error) {
-        debug("db error " + error);
-      }
-    );
+    Services.obs.addObserver(this, "xpcom-shutdown", false);
+    Services.obs.addObserver(this, "webapps-uninstall", false);
+
+    // On B2G the NetworkManager interface fires a network-active-changed
+    // event.
+    //
+    // The "active network" is based on priority - i.e. Wi-Fi has higher
+    // priority than data. The PushService should just use the preferred
+    // network, and not care about all interface changes.
+    // network-active-changed is not fired when the network goes offline, but
+    // socket connections time out. The check for Services.io.offline in
+    // _beginWSSetup() prevents unnecessary retries.  When the network comes
+    // back online, network-active-changed is fired.
+    //
+    // On non-B2G platforms, the offline-status-changed event is used to know
+    // when to (dis)connect. It may not fire if the underlying OS changes
+    // networks; in such a case we rely on timeout.
+    //
+    // On B2G both events fire, one after the other, when the network goes
+    // online, so we explicitly check for the presence of NetworkManager and
+    // don't add an observer for offline-status-changed on B2G.
+    Services.obs.addObserver(this, this._getNetworkStateChangeEventName(), false);
 
     // This is only used for testing. Different tests require connecting to
     // slightly different URLs.
     prefs.observe("serverURL", this);
+    // Used to monitor if the user wishes to disable Push.
+    prefs.observe("connection.enabled", this);
+
+    this._started = true;
   },
 
   _shutdownWS: function() {
     debug("shutdownWS()");
     this._currentState = STATE_SHUT_DOWN;
     this._willBeWokenUpByUDP = false;
+
     if (this._wsListener)
       this._wsListener._pushService = null;
     try {
         this._ws.close(0, null);
     } catch (e) {}
     this._ws = null;
+
+    this._waitingForPong = false;
+    this._stopAlarm();
   },
 
-  _shutdown: function() {
-    debug("_shutdown()");
+  uninit: function() {
+    if (!this._started)
+      return;
 
-    Services.obs.removeObserver(this, "network-interface-state-changed",
-                                false);
+    debug("uninit()");
+
+    prefs.ignore("connection.enabled", this);
+    prefs.ignore("serverURL", this);
+    Services.obs.removeObserver(this, this._getNetworkStateChangeEventName());
     Services.obs.removeObserver(this, "webapps-uninstall", false);
+    Services.obs.removeObserver(this, "xpcom-shutdown", false);
 
     if (this._db) {
       this._db.close();
@@ -498,40 +509,44 @@ this.PushService = {
     // At this point, profile-change-net-teardown has already fired, so the
     // WebSocket has been closed with NS_ERROR_ABORT (if it was up) and will
     // try to reconnect. Stop the timer.
-    if (this._retryTimeoutTimer)
-      this._retryTimeoutTimer.cancel();
+    this._stopAlarm();
 
-    if (this._requestTimeoutTimer)
+    if (this._requestTimeoutTimer) {
       this._requestTimeoutTimer.cancel();
+    }
 
     debug("shutdown complete!");
   },
 
-  // aStatusCode is an NS error from Components.results
-  _socketError: function(aStatusCode) {
-    debug("socketError()");
+  /**
+   * How retries work:  The goal is to ensure websocket is always up on
+   * networks not supporting UDP. So the websocket should only be shutdown if
+   * onServerClose indicates UDP wakeup.  If WS is closed due to socket error,
+   * _reconnectAfterBackoff() is called.  The retry alarm is started and when
+   * it times out, beginWSSetup() is called again.
+   *
+   * On a successful connection, the alarm is cancelled in
+   * wsOnMessageAvailable() when the ping alarm is started.
+   *
+   * If we are in the middle of a timeout (i.e. waiting), but
+   * a register/unregister is called, we don't want to wait around anymore.
+   * _sendRequest will automatically call beginWSSetup(), which will cancel the
+   * timer. In addition since the state will have changed, even if a pending
+   * timer event comes in (because the timer fired the event before it was
+   * cancelled), so the connection won't be reset.
+   */
+  _reconnectAfterBackoff: function() {
+    debug("reconnectAfterBackoff()");
 
-    // Calculate new timeout, but cap it to
+    // Calculate new timeout, but cap it to pingInterval.
     var retryTimeout = prefs.get("retryBaseInterval") *
                        Math.pow(2, this._retryFailCount);
-
-    // It is easier to express the max interval as a pref in milliseconds,
-    // rather than have it as a number and make people do the calculation of
-    // retryBaseInterval * 2^maxRetryFailCount.
-    retryTimeout = Math.min(retryTimeout, prefs.get("maxRetryInterval"));
+    retryTimeout = Math.min(retryTimeout, prefs.get("pingInterval"));
 
     this._retryFailCount++;
 
     debug("Retry in " + retryTimeout + " Try number " + this._retryFailCount);
-
-    if (!this._retryTimeoutTimer) {
-      this._retryTimeoutTimer = Cc["@mozilla.org/timer;1"]
-                                  .createInstance(Ci.nsITimer);
-    }
-
-    this._retryTimeoutTimer.init(this,
-                                 retryTimeout,
-                                 Ci.nsITimer.TYPE_ONE_SHOT);
+    this._setAlarm(retryTimeout);
   },
 
   _beginWSSetup: function() {
@@ -539,6 +554,19 @@ this.PushService = {
     if (this._currentState != STATE_SHUT_DOWN) {
       debug("_beginWSSetup: Not in shutdown state! Current state " +
             this._currentState);
+      return;
+    }
+
+    if (!prefs.get("connection.enabled")) {
+      debug("_beginWSSetup: connection.enabled is not set to true. Aborting.");
+      return;
+    }
+
+    // Stop any pending reconnects scheduled for the near future.
+    this._stopAlarm();
+
+    if (Services.io.offline) {
+      debug("Network is offline.");
       return;
     }
 
@@ -570,12 +598,108 @@ this.PushService = {
       return;
     }
 
+
     debug("serverURL: " + uri.spec);
     this._wsListener = new PushWebSocketListener(this);
     this._ws.protocol = "push-notification";
-    this._ws.pingInterval = prefs.get("websocketPingInterval");
     this._ws.asyncOpen(uri, serverURL, this._wsListener, null);
     this._currentState = STATE_WAITING_FOR_WS_START;
+  },
+
+  _startListeningIfChannelsPresent: function() {
+    // Check to see if we need to do anything.
+    this._db.getAllChannelIDs(function(channelIDs) {
+      if (channelIDs.length > 0) {
+        this._beginWSSetup();
+      }
+    }.bind(this));
+  },
+
+  /** |delay| should be in milliseconds. */
+  _setAlarm: function(delay) {
+    // Stop any existing alarm.
+    this._stopAlarm();
+
+    AlarmService.add(
+      {
+        date: new Date(Date.now() + delay),
+        ignoreTimezone: true
+      },
+      this._onAlarmFired.bind(this),
+      function onSuccess(alarmID) {
+        this._alarmID = alarmID;
+        debug("Set alarm " + delay + " in the future " + this._alarmID);
+      }.bind(this)
+    )
+  },
+
+  _stopAlarm: function() {
+    if (this._alarmID !== null) {
+      debug("Stopped existing alarm " + this._alarmID);
+      AlarmService.remove(this._alarmID);
+      this._alarmID = null;
+    }
+  },
+
+  /**
+   * There is only one alarm active at any time. This alarm has 3 intervals
+   * corresponding to 3 tasks.
+   *
+   * 1) Reconnect on ping timeout.
+   *    If we haven't received any messages from the server by the time this
+   *    alarm fires, the connection is closed and PushService tries to
+   *    reconnect, repurposing the alarm for (3).
+   *
+   * 2) Send a ping.
+   *    The protocol sends a ping ({}) on the wire every pingInterval ms. Once
+   *    it sends the ping, the alarm goes to task (1) which is waiting for
+   *    a pong. If data is received after the ping is sent,
+   *    _wsOnMessageAvailable() will reset the ping alarm (which cancels
+   *    waiting for the pong). So as long as the connection is fine, pong alarm
+   *    never fires.
+   *
+   * 3) Reconnect after backoff.
+   *    The alarm is set by _reconnectAfterBackoff() and increases in duration
+   *    every time we try and fail to connect.  When it triggers, websocket
+   *    setup begins again. On successful socket setup, the socket starts
+   *    receiving messages. The alarm now goes to (2) where it monitors the
+   *    WebSocket by sending a ping.  Since incoming data is a sign of the
+   *    connection being up, the ping alarm is reset every time data is
+   *    received.
+   */
+  _onAlarmFired: function() {
+    // Conditions are arranged in decreasing specificity.
+    // i.e. when _waitingForPong is true, other conditions are also true.
+    if (this._waitingForPong) {
+      debug("Did not receive pong in time. Reconnecting WebSocket.");
+      this._shutdownWS();
+      this._reconnectAfterBackoff();
+    }
+    else if (this._currentState == STATE_READY) {
+      // Send a ping.
+      // Bypass the queue; we don't want this to be kept pending.
+      this._ws.sendMsg('{}');
+      debug("Sent ping.");
+      this._waitingForPong = true;
+      this._setAlarm(prefs.get("requestTimeout"));
+    }
+    else if (this._alarmID !== null) {
+      debug("reconnect alarm fired.");
+      // Reconnect after back-off.
+      // The check for a non-null _alarmID prevents a situation where the alarm
+      // fires, but _shutdownWS() is called from another code-path (e.g.
+      // network state change) and we don't want to reconnect.
+      //
+      // It also handles the case where _beginWSSetup() is called from another
+      // code-path.
+      //
+      // alarmID will be non-null only when no shutdown/connect is
+      // called between _reconnectAfterBackoff() setting the alarm and the
+      // alarm firing.
+
+      // Websocket is shut down. Backoff interval expired, try to connect.
+      this._beginWSSetup();
+    }
   },
 
   /**
@@ -1058,6 +1182,12 @@ this.PushService = {
     }
 
     this._db.getByPushEndpoint(aPageRecord.pushEndpoint, function(record) {
+      // If the endpoint didn't exist, let's just fail.
+      if (record === undefined) {
+        fail("NotFoundError");
+        return;
+      }
+
       // Non-owner tried to unregister, say success, but don't do anything.
       if (record.manifestURL !== aPageRecord.manifestURL) {
         aMessageManager.sendAsyncMessage("PushService:Unregister:OK", {
@@ -1128,9 +1258,6 @@ this.PushService = {
       return;
     }
 
-    if (this._retryTimeoutTimer)
-      this._retryTimeoutTimer.cancel();
-
     // Since we've had a successful connection reset the retry fail count.
     this._retryFailCount = 0;
 
@@ -1177,17 +1304,25 @@ this.PushService = {
   _wsOnStop: function(context, statusCode) {
     debug("wsOnStop()");
 
+    this._shutdownWS();
+
     if (statusCode != Cr.NS_OK &&
         !(statusCode == Cr.NS_BASE_STREAM_CLOSED && this._willBeWokenUpByUDP)) {
       debug("Socket error " + statusCode);
-      this._socketError(statusCode);
+      this._reconnectAfterBackoff();
     }
 
-    this._shutdownWS();
   },
 
   _wsOnMessageAvailable: function(context, message) {
     debug("wsOnMessageAvailable() " + message);
+
+    this._waitingForPong = false;
+
+    // Reset the ping timer.  Note: This path is executed at every step of the
+    // handshake, so this alarm does not need to be set explicitly at startup.
+    this._setAlarm(prefs.get("pingInterval"));
+
     var reply = undefined;
     try {
       reply = JSON.parse(message);
@@ -1229,7 +1364,7 @@ this.PushService = {
   /**
    * The websocket should never be closed. Since we don't call ws.close(),
    * _wsOnStop() receives error code NS_BASE_STREAM_CLOSED (see comment in that
-   * function), which calls socketError and re-establishes the WebSocket
+   * function), which calls reconnect and re-establishes the WebSocket
    * connection.
    *
    * If the server said it'll use UDP for wakeup, we set _willBeWokenUpByUDP
@@ -1293,9 +1428,9 @@ this.PushService = {
   },
 
   /**
-   * Get mobile network information to decide if the client is capable of being woken
-   * up by UDP (which currently just means having an mcc and mnc along with an
-   * IP).
+   * Get mobile network information to decide if the client is capable of being
+   * woken up by UDP (which currently just means having an mcc and mnc along
+   * with an IP).
    */
   _getNetworkState: function() {
     debug("getNetworkState()");
@@ -1321,7 +1456,15 @@ this.PushService = {
       mnc: 0,
       ip: undefined
     };
+  },
+
+  // utility function used to add/remove observers in init() and shutdown()
+  _getNetworkStateChangeEventName: function() {
+    try {
+      Cc["@mozilla.org/network/manager;1"].getService(Ci.nsINetworkManager);
+      return "network-active-changed";
+    } catch (e) {
+      return "network:offline-status-changed";
+    }
   }
 }
-
-PushService.init();

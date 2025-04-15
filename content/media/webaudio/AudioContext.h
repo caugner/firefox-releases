@@ -46,17 +46,26 @@ class AudioListener;
 class BiquadFilterNode;
 class ChannelMergerNode;
 class ChannelSplitterNode;
+class ConvolverNode;
 class DelayNode;
 class DynamicsCompressorNode;
 class GainNode;
 class GlobalObject;
+class MediaStreamAudioDestinationNode;
+class OfflineRenderSuccessCallback;
 class PannerNode;
 class ScriptProcessorNode;
+class WaveShaperNode;
+class PeriodicWave;
 
 class AudioContext MOZ_FINAL : public nsDOMEventTargetHelper,
                                public EnableWebAudioCheck
 {
-  explicit AudioContext(nsPIDOMWindow* aParentWindow);
+  AudioContext(nsPIDOMWindow* aParentWindow,
+               bool aIsOffline,
+               uint32_t aNumberOfChannels = 0,
+               uint32_t aLength = 0,
+               float aSampleRate = 0.0f);
   ~AudioContext();
 
 public:
@@ -76,8 +85,21 @@ public:
   virtual JSObject* WrapObject(JSContext* aCx,
                                JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
+  using nsDOMEventTargetHelper::DispatchTrustedEvent;
+
+  // Constructor for regular AudioContext
   static already_AddRefed<AudioContext>
   Constructor(const GlobalObject& aGlobal, ErrorResult& aRv);
+
+  // Constructor for offline AudioContext
+  static already_AddRefed<AudioContext>
+  Constructor(const GlobalObject& aGlobal,
+              uint32_t aNumberOfChannels,
+              uint32_t aLength,
+              float aSampleRate,
+              ErrorResult& aRv);
+
+  // AudioContext methods
 
   AudioDestinationNode* Destination() const
   {
@@ -86,7 +108,7 @@ public:
 
   float SampleRate() const
   {
-    return float(IdealAudioRate());
+    return mSampleRate;
   }
 
   double CurrentTime() const;
@@ -103,6 +125,9 @@ public:
   already_AddRefed<AudioBuffer>
   CreateBuffer(JSContext* aJSContext, ArrayBuffer& aBuffer,
                bool aMixToMono, ErrorResult& aRv);
+
+  already_AddRefed<MediaStreamAudioDestinationNode>
+  CreateMediaStreamDestination(ErrorResult& aRv);
 
   already_AddRefed<ScriptProcessorNode>
   CreateScriptProcessor(uint32_t aBufferSize,
@@ -126,6 +151,9 @@ public:
   already_AddRefed<GainNode>
   CreateGain();
 
+  already_AddRefed<WaveShaperNode>
+  CreateWaveShaper();
+
   already_AddRefed<GainNode>
   CreateGainNode()
   {
@@ -144,6 +172,9 @@ public:
   already_AddRefed<PannerNode>
   CreatePanner();
 
+  already_AddRefed<ConvolverNode>
+  CreateConvolver();
+
   already_AddRefed<ChannelSplitterNode>
   CreateChannelSplitter(uint32_t aNumberOfOutputs, ErrorResult& aRv);
 
@@ -156,11 +187,19 @@ public:
   already_AddRefed<BiquadFilterNode>
   CreateBiquadFilter();
 
+  already_AddRefed<PeriodicWave>
+  CreatePeriodicWave(const Float32Array& aRealData, const Float32Array& aImagData,
+                     ErrorResult& aRv);
+
   void DecodeAudioData(const ArrayBuffer& aBuffer,
                        DecodeSuccessCallback& aSuccessCallback,
                        const Optional<OwningNonNull<DecodeErrorCallback> >& aFailureCallback);
 
-  uint32_t GetRate() const { return IdealAudioRate(); }
+  // OfflineAudioContext methods
+  void StartRendering();
+  IMPL_EVENT_HANDLER(complete)
+
+  bool IsOffline() const { return mIsOffline; }
 
   MediaStreamGraph* Graph() const;
   MediaStream* DestinationStream() const;
@@ -169,18 +208,27 @@ public:
   void UnregisterScriptProcessorNode(ScriptProcessorNode* aNode);
   void UpdatePannerSource();
 
+  uint32_t MaxChannelCount() const;
+
+  void Mute() const;
+  void Unmute() const;
+
   JSContext* GetJSContext() const;
 
 private:
   void RemoveFromDecodeQueue(WebAudioDecodeJob* aDecodeJob);
+  void ShutdownDecoder();
 
   friend struct ::mozilla::WebAudioDecodeJob;
 
 private:
+  // Note that it's important for mSampleRate to be initialized before
+  // mDestination, as mDestination's constructor needs to access it!
+  const float mSampleRate;
   nsRefPtr<AudioDestinationNode> mDestination;
   nsRefPtr<AudioListener> mListener;
   MediaBufferDecoder mDecoder;
-  nsTArray<nsAutoPtr<WebAudioDecodeJob> > mDecodeJobs;
+  nsTArray<nsRefPtr<WebAudioDecodeJob> > mDecodeJobs;
   // Two hashsets containing all the PannerNodes and AudioBufferSourceNodes,
   // to compute the doppler shift, and also to stop AudioBufferSourceNodes.
   // These are all weak pointers.
@@ -189,6 +237,9 @@ private:
   // Hashset containing all ScriptProcessorNodes in order to stop them.
   // These are all weak pointers.
   nsTHashtable<nsPtrHashKey<ScriptProcessorNode> > mScriptProcessorNodes;
+  // Number of channels passed in the OfflineAudioContext ctor.
+  uint32_t mNumberOfChannels;
+  bool mIsOffline;
 };
 
 }

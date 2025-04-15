@@ -9,6 +9,17 @@ MODULE = 'content'
 EXPORTS += [
     'GStreamerDecoder.h',
     'GStreamerFormatHelper.h',
+    'GStreamerLoader.h',
     'GStreamerReader.h',
 ]
+
+CPP_SOURCES += [
+    'GStreamerDecoder.cpp',
+    'GStreamerFormatHelper.cpp',
+    'GStreamerReader.cpp',
+    'GStreamerMozVideoBuffer.cpp',
+    'GStreamerLoader.cpp',
+]
+
+LIBRARY_NAME = 'gkcongstreamer_s'
 

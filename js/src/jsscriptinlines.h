@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsscriptinlines_h___
-#define jsscriptinlines_h___
+#ifndef jsscriptinlines_h
+#define jsscriptinlines_h
 
 #include "jsautooplen.h"
 #include "jscntxt.h"
@@ -13,10 +13,12 @@
 #include "jsopcode.h"
 #include "jsscript.h"
 
-#include "ion/AsmJS.h"
+#include "jit/AsmJS.h"
 #include "vm/GlobalObject.h"
 #include "vm/RegExpObject.h"
 #include "vm/Shape.h"
+
+#include "jscompartmentinlines.h"
 
 #include "vm/Shape-inl.h"
 
@@ -84,28 +86,21 @@ SetFrameArgumentsObject(JSContext *cx, AbstractFramePtr frame,
 
 } // namespace js
 
-inline const char *
-JSScript::filename() const
-{
-    JS_ASSERT(scriptSource_);
-    return scriptSource()->filename();
-}
-
 inline void
 JSScript::setFunction(JSFunction *fun)
 {
+    JS_ASSERT(fun->isTenured());
     function_ = fun;
 }
 
 inline JSFunction *
 JSScript::getFunction(size_t index)
 {
-    JSObject *funobj = getObject(index);
+    JSFunction *fun = &getObject(index)->as<JSFunction>();
 #ifdef DEBUG
-    JSFunction *fun = funobj->toFunction();
     JS_ASSERT_IF(fun->isNative(), IsAsmJSModuleNative(fun->native()));
 #endif
-    return funobj->toFunction();
+    return fun;
 }
 
 inline JSFunction *
@@ -131,7 +126,7 @@ JSScript::getRegExp(size_t index)
     js::ObjectArray *arr = regexps();
     JS_ASSERT(uint32_t(index) < arr->length);
     JSObject *obj = arr->vector[index];
-    JS_ASSERT(obj->isRegExp());
+    JS_ASSERT(obj->is<js::RegExpObject>());
     return (js::RegExpObject *) obj;
 }
 
@@ -157,24 +152,6 @@ JSScript::global() const
     return *compartment()->maybeGlobal();
 }
 
-#ifdef JS_METHODJIT
-inline bool
-JSScript::ensureHasMJITInfo(JSContext *cx)
-{
-    if (mJITInfo)
-        return true;
-    mJITInfo = cx->new_<JITScriptSet>();
-    return mJITInfo != NULL;
-}
-
-inline void
-JSScript::destroyMJITInfo(js::FreeOp *fop)
-{
-    fop->delete_(mJITInfo);
-    mJITInfo = NULL;
-}
-#endif /* JS_METHODJIT */
-
 inline void
 JSScript::writeBarrierPre(JSScript *script)
 {
@@ -184,7 +161,7 @@ JSScript::writeBarrierPre(JSScript *script)
 
     JS::Zone *zone = script->zone();
     if (zone->needsBarrier()) {
-        JS_ASSERT(!zone->rt->isHeapBusy());
+        JS_ASSERT(!zone->rt->isHeapMajorCollecting());
         JSScript *tmp = script;
         MarkScriptUnbarriered(zone->barrierTracer(), &tmp, "write barrier");
         JS_ASSERT(tmp == script);
@@ -197,6 +174,23 @@ JSScript::writeBarrierPost(JSScript *script, void *addr)
 {
 }
 
+/* static */ inline void
+js::LazyScript::writeBarrierPre(js::LazyScript *lazy)
+{
+#ifdef JSGC_INCREMENTAL
+    if (!lazy)
+        return;
+
+    JS::Zone *zone = lazy->zone();
+    if (zone->needsBarrier()) {
+        JS_ASSERT(!zone->rt->isHeapMajorCollecting());
+        js::LazyScript *tmp = lazy;
+        MarkLazyScriptUnbarriered(zone->barrierTracer(), &tmp, "write barrier");
+        JS_ASSERT(tmp == lazy);
+    }
+#endif
+}
+
 inline JSPrincipals *
 JSScript::principals()
 {
@@ -207,14 +201,14 @@ inline JSFunction *
 JSScript::originalFunction() const {
     if (!isCallsiteClone)
         return NULL;
-    return enclosingScopeOrOriginalFunction_->toFunction();
+    return &enclosingScopeOrOriginalFunction_->as<JSFunction>();
 }
 
 inline void
 JSScript::setOriginalFunctionObject(JSObject *fun) {
     JS_ASSERT(isCallsiteClone);
-    JS_ASSERT(fun->isFunction());
+    JS_ASSERT(fun->is<JSFunction>());
     enclosingScopeOrOriginalFunction_ = fun;
 }
 
-#endif /* jsscriptinlines_h___ */
+#endif /* jsscriptinlines_h */

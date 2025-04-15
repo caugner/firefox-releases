@@ -45,6 +45,17 @@ try {
 } 
 catch (e) { }
 
+// Only if building of places is enabled.
+if (runningInParent &&
+    "mozIAsyncHistory" in Components.interfaces) {
+  // Ensure places history is enabled for xpcshell-tests as some non-FF
+  // apps disable it.
+  let (prefs = Components.classes["@mozilla.org/preferences-service;1"]
+               .getService(Components.interfaces.nsIPrefBranch)) {
+    prefs.setBoolPref("places.history.enabled", true);
+  };
+}
+
 try {
   if (runningInParent) {
     let prefs = Components.classes["@mozilla.org/preferences-service;1"]
@@ -111,8 +122,8 @@ function _Timer(func, delay) {
 }
 _Timer.prototype = {
   QueryInterface: function(iid) {
-    if (iid.Equals(Components.interfaces.nsITimerCallback) ||
-        iid.Equals(Components.interfaces.nsISupports))
+    if (iid.equals(Components.interfaces.nsITimerCallback) ||
+        iid.equals(Components.interfaces.nsISupports))
       return this;
 
     throw Components.results.NS_ERROR_NO_INTERFACE;
@@ -189,7 +200,7 @@ function _dump_exception_stack(stack) {
  * @note Idle service is overridden by default.  If a test requires it, it will
  *       have to call do_get_idle() function at least once before use.
  */
-_fakeIdleService = {
+var _fakeIdleService = {
   get registrar() {
     delete this.registrar;
     return this.registrar =
@@ -392,6 +403,9 @@ function _load_files(aFiles) {
   aFiles.forEach(loadTailFile);
 }
 
+function _wrap_with_quotes_if_necessary(val) {
+  return typeof val == "string" ? '"' + val + '"' : val;
+}
 
 /************** Functions to be used from the tests **************/
 
@@ -400,6 +414,7 @@ function _load_files(aFiles) {
  */
 function do_print(msg) {
   var caller_stack = Components.stack.caller;
+  msg = _wrap_with_quotes_if_necessary(msg);
   _dump("TEST-INFO | " + caller_stack.filename + " | " + msg + "\n");
 }
 
@@ -538,24 +553,9 @@ function _do_check_neq(left, right, stack, todo) {
   if (!stack)
     stack = Components.stack.caller;
 
-  var text = left + " != " + right;
-  if (left == right) {
-    if (!todo) {
-      do_throw(text, stack);
-    } else {
-      ++_todoChecks;
-      _dump("TEST-KNOWN-FAIL | " + stack.filename + " | [" + stack.name +
-            " : " + stack.lineNumber + "] " + text +"\n");
-    }
-  } else {
-    if (!todo) {
-      ++_passedChecks;
-      _dump("TEST-PASS | " + stack.filename + " | [" + stack.name + " : " +
-            stack.lineNumber + "] " + text + "\n");
-    } else {
-      do_throw_todo(text, stack);
-    }
-  }
+  var text = _wrap_with_quotes_if_necessary(left) + " != " +
+             _wrap_with_quotes_if_necessary(right);
+  do_report_result(left != right, text, stack, todo);
 }
 
 function do_check_neq(left, right, stack) {
@@ -596,7 +596,8 @@ function _do_check_eq(left, right, stack, todo) {
   if (!stack)
     stack = Components.stack.caller;
 
-  var text = left + " == " + right;
+  var text = _wrap_with_quotes_if_necessary(left) + " == " +
+             _wrap_with_quotes_if_necessary(right);
   do_report_result(left == right, text, stack, todo);
 }
 

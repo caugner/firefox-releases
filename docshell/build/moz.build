@@ -10,3 +10,9 @@ EXPORTS += [
     'nsDocShellCID.h',
 ]
 
+CPP_SOURCES += [
+    'nsDocShellModule.cpp',
+]
+
+LIBRARY_NAME = 'docshell'
+

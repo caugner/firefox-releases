@@ -179,9 +179,12 @@ nsresult PeerConnectionMedia::Init(const std::vector<NrIceStunServer>& stun_serv
   // Create three streams to start with.
   // One each for audio, video and DataChannel
   // TODO: this will be re-visited
-  RefPtr<NrIceMediaStream> audioStream = mIceCtx->CreateStream("stream1", 2);
-  RefPtr<NrIceMediaStream> videoStream = mIceCtx->CreateStream("stream2", 2);
-  RefPtr<NrIceMediaStream> dcStream = mIceCtx->CreateStream("stream3", 2);
+  RefPtr<NrIceMediaStream> audioStream =
+    mIceCtx->CreateStream((mParent->GetHandle()+"/stream1/audio").c_str(), 2);
+  RefPtr<NrIceMediaStream> videoStream =
+    mIceCtx->CreateStream((mParent->GetHandle()+"/stream2/video").c_str(), 2);
+  RefPtr<NrIceMediaStream> dcStream =
+    mIceCtx->CreateStream((mParent->GetHandle()+"/stream3/data").c_str(), 2);
 
   if (!audioStream) {
     CSFLogError(logTag, "%s: audio stream is NULL", __FUNCTION__);
@@ -393,7 +396,8 @@ PeerConnectionMedia::AddRemoteStream(nsRefPtr<RemoteSourceStreamInfo> aInfo,
 nsresult
 PeerConnectionMedia::AddRemoteStreamHint(int aIndex, bool aIsVideo)
 {
-  if (aIndex >= mRemoteSourceStreams.Length()) {
+  if (aIndex < 0 ||
+      static_cast<unsigned int>(aIndex) >= mRemoteSourceStreams.Length()) {
     return NS_ERROR_ILLEGAL_VALUE;
   }
 

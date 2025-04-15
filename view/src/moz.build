@@ -6,3 +6,10 @@
 
 MODULE = 'view'
 
+CPP_SOURCES += [
+    'nsView.cpp',
+    'nsViewManager.cpp',
+]
+
+LIBRARY_NAME = 'gkview_s'
+

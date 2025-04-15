@@ -157,6 +157,7 @@ skip-if(B2G) fails-if(cocoaWidget) HTTP(..) == arabic-fallback-1.html arabic-fal
 fails-if(cocoaWidget) HTTP(..) == arabic-fallback-2.html arabic-fallback-2-ref.html
 fails-if(cocoaWidget) HTTP(..) == arabic-fallback-3.html arabic-fallback-3-ref.html
 fails-if(!cocoaWidget) HTTP(..) != arabic-fallback-4.html arabic-fallback-4-notref.html
+== arabic-marks-1.html arabic-marks-1-ref.html
 
 == 726392-1.html 726392-1-ref.html
 == 726392-2.html 726392-2-ref.html
@@ -179,8 +180,8 @@ pref(gfx.font_rendering.graphite.enabled,true) HTTP(..) != graphite-03a.html gra
 pref(gfx.font_rendering.graphite.enabled,true) HTTP(..) != graphite-03b.html graphite-03-notref.html
 pref(gfx.font_rendering.graphite.enabled,false) HTTP(..) != graphite-01.html graphite-01-ref.html
 pref(gfx.font_rendering.graphite.enabled,false) HTTP(..) != graphite-02.html graphite-02-ref.html
-# test 03a (lang setting in Padauk font) now works in opentype/harfbuzz as well, but not on Windows (using Uniscribe/DirectWrite)
-fails-if(winWidget) pref(gfx.font_rendering.graphite.enabled,false) HTTP(..) != graphite-03a.html graphite-03-notref.html
+# test 03a (lang setting in Padauk font) now works in opentype/harfbuzz as well, but not on Windows 7/8 (using Uniscribe/DirectWrite)
+fails-if(/^Windows\x20NT\x206\.[12]/.test(http.oscpu)) pref(gfx.font_rendering.graphite.enabled,false) HTTP(..) != graphite-03a.html graphite-03-notref.html
 pref(gfx.font_rendering.graphite.enabled,false) HTTP(..) == graphite-03b.html graphite-03-notref.html
 
 # tests for graphite rendering with valid and invalid lang tags
@@ -218,6 +219,26 @@ pref(gfx.font_rendering.graphite.enabled,true) HTTP(..) == glyph-decomposition-g
 == auto-hyphenation-8.html auto-hyphenation-8-ref.html
 == auto-hyphenation-9.html auto-hyphenation-9-ref.html
 == auto-hyphenation-10.html auto-hyphenation-10-ref.html
+== auto-hyphenation-xmllang-1.xhtml auto-hyphenation-1-ref.html
+!= auto-hyphenation-xmllang-1.xhtml auto-hyphenation-1-notref.html
+== auto-hyphenation-xmllang-1a.xhtml auto-hyphenation-1-ref.html
+== auto-hyphenation-xmllang-2.xhtml auto-hyphenation-2-ref.html
+== auto-hyphenation-xmllang-3.xhtml auto-hyphenation-3-ref.html
+== auto-hyphenation-xmllang-4.xhtml auto-hyphenation-4-ref.html
+== auto-hyphenation-xmllang-5.xhtml auto-hyphenation-5-ref.html
+== auto-hyphenation-xmllang-6.xhtml auto-hyphenation-6-ref.html
+== auto-hyphenation-xmllang-7.xhtml auto-hyphenation-7-ref.html
+== auto-hyphenation-xmllang-8.xhtml auto-hyphenation-8-ref.html
+== auto-hyphenation-xmllang-9.xhtml auto-hyphenation-9-ref.html
+== auto-hyphenation-xmllang-10.xhtml auto-hyphenation-10-ref.html
+== auto-hyphenation-xmllang-11a.xhtml auto-hyphenation-1-ref.html
+== auto-hyphenation-xmllang-11b.xhtml auto-hyphenation-1-ref.html
+== auto-hyphenation-xmllang-12a.xhtml auto-hyphenation-4-ref.html
+== auto-hyphenation-xmllang-12b.xhtml auto-hyphenation-4-ref.html
+== auto-hyphenation-xmllang-13a.xhtml auto-hyphenation-1-ref.html
+== auto-hyphenation-xmllang-13b.xhtml auto-hyphenation-1-ref.html
+== auto-hyphenation-xmllang-14a.xhtml auto-hyphenation-4-ref.html
+== auto-hyphenation-xmllang-14b.xhtml auto-hyphenation-4-ref.html
 == auto-hyphenation-af-1.html auto-hyphenation-af-1-ref.html
 == auto-hyphenation-bg-1.html auto-hyphenation-bg-1-ref.html
 == auto-hyphenation-ca-1.html auto-hyphenation-ca-1-ref.html

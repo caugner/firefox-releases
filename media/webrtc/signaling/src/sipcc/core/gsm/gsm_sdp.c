@@ -4810,7 +4810,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean initial
            actual behavior. This really needs to be a negotiation, with the
            results of the negotiation propagating into the codec configuration.
            See Bug 880067. */
-        if (media_type == SDP_MEDIA_VIDEO) {
+        if (media && media_type == SDP_MEDIA_VIDEO) {
             gsmsdp_set_rtcp_fb_nack_attribute(media->level, sdp_p->src_sdp,
                                               SDP_ALL_PAYLOADS,
                                               SDP_RTCP_FB_NACK_UNSPECIFIED);
@@ -4902,7 +4902,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean initial
                            TODO(adam@nostrum.com): Figure out how to notify
                            when streams gain tracks */
                         ui_on_remote_stream_added(evOnRemoteStreamAdd,
-                            dcb_p->line, dcb_p->call_id,
+                            fcb_p->state, dcb_p->line, dcb_p->call_id,
                             dcb_p->caller_id.call_instance_id,
                             dcb_p->remote_media_stream_tbl->streams[j]);
 

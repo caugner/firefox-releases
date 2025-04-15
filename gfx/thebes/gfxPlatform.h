@@ -139,7 +139,7 @@ GetBackendName(mozilla::gfx::BackendType aBackend)
   MOZ_NOT_REACHED("Incomplete switch");
 }
 
-class THEBES_API gfxPlatform {
+class gfxPlatform {
 public:
     /**
      * Return a pointer to the current active platform.
@@ -227,9 +227,22 @@ public:
       CreateDrawTargetForFBO(unsigned int aFBOID, mozilla::gl::GLContext* aGLContext,
                              const mozilla::gfx::IntSize& aSize, mozilla::gfx::SurfaceFormat aFormat);
 
+    /**
+     * Returns true if we will render content using Azure using a gfxPlatform
+     * provided DrawTarget.
+     */
     bool SupportsAzureContent() {
       return GetContentBackend() != mozilla::gfx::BACKEND_NONE;
     }
+
+    /**
+     * Returns true if we should use Azure to render content with aTarget. For
+     * example, it is possible that we are using Direct2D for rendering and thus
+     * using Azure. But we want to render to a CairoDrawTarget, in which case
+     * SupportsAzureContent will return true but SupportsAzureContentForDrawTarget
+     * will return false.
+     */
+    bool SupportsAzureContentForDrawTarget(mozilla::gfx::DrawTarget* aTarget);
 
     virtual bool UseAcceleratedSkiaCanvas();
 
@@ -365,6 +378,11 @@ public:
     bool UseCmapsDuringSystemFallback();
 
     /**
+     * Whether to render SVG glyphs within an OpenType font wrapper
+     */
+    bool OpenTypeSVGEnabled();
+
+    /**
      * Whether to use the SIL Graphite rendering engine
      * (for fonts that include Graphite tables)
      */
@@ -444,6 +462,7 @@ public:
      * only once, and remain the same until restart.
      */
     static bool GetPrefLayersOffMainThreadCompositionEnabled();
+    static bool GetPrefLayersOffMainThreadCompositionForceEnabled();
     static bool GetPrefLayersAccelerationForceEnabled();
     static bool GetPrefLayersAccelerationDisabled();
     static bool GetPrefLayersPreferOpenGL();
@@ -588,6 +607,7 @@ protected:
 
     int8_t  mAllowDownloadableFonts;
     int8_t  mGraphiteShapingEnabled;
+    int8_t  mOpenTypeSVGEnabled;
 
     int8_t  mBidiNumeralOption;
 
@@ -610,6 +630,8 @@ private:
 
     virtual qcms_profile* GetPlatformCMSOutputProfile();
 
+    virtual bool SupportsOffMainThreadCompositing() { return true; }
+
     nsRefPtr<gfxASurface> mScreenReferenceSurface;
     nsTArray<uint32_t> mCJKPrefLangs;
     nsCOMPtr<nsIObserver> mSRGBOverrideObserver;
@@ -622,6 +644,8 @@ private:
     mozilla::gfx::BackendType mFallbackCanvasBackend;
     // The backend to use for content
     mozilla::gfx::BackendType mContentBackend;
+    // Bitmask of backend types we can use to render content
+    uint32_t mContentBackendBitmask;
 
     mozilla::widget::GfxInfoCollector<gfxPlatform> mAzureCanvasBackendCollector;
     bool mWorkAroundDriverBugs;

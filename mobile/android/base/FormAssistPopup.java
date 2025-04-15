@@ -213,7 +213,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
     }
 
     private void positionAndShowPopup() {
-        positionAndShowPopup(GeckoApp.mAppContext.getLayerView().getViewportMetrics());
+        positionAndShowPopup(GeckoAppShell.getLayerView().getViewportMetrics());
     }
 
     private void positionAndShowPopup(ImmutableViewportMetrics aMetrics) {
@@ -221,7 +221,7 @@ public class FormAssistPopup extends RelativeLayout implements GeckoEventListene
 
         // Don't show the form assist popup when using fullscreen VKB
         InputMethodManager imm =
-                (InputMethodManager) GeckoApp.mAppContext.getSystemService(Context.INPUT_METHOD_SERVICE);
+                (InputMethodManager) GeckoAppShell.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
         if (imm.isFullscreenMode())
             return;
 

@@ -6,3 +6,9 @@
 
 MODULE = 'imglib2'
 
+CPP_SOURCES += [
+    'nsImageModule.cpp',
+]
+
+LIBRARY_NAME = 'imglib2'
+

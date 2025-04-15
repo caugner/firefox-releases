@@ -29,7 +29,7 @@ public:
   {
     nsString mResponseText;
     uint32_t mStatus;
-    nsString mStatusText;
+    nsCString mStatusText;
     uint16_t mReadyState;
     jsval mResponse;
     nsresult mResponseTextResult;
@@ -105,7 +105,8 @@ public:
   }                                                                            \
                                                                                \
   void                                                                         \
-  SetOn##_type(JSContext* /* unused */, JSObject* aListener, ErrorResult& aRv) \
+  SetOn##_type(JSContext* /* unused */,  JS::Handle<JSObject*> aListener,      \
+               ErrorResult& aRv)                                               \
   {                                                                            \
     SetEventListener(NS_LITERAL_STRING(#_type), aListener, aRv);               \
   }
@@ -121,12 +122,12 @@ public:
   }
 
   void
-  Open(const nsAString& aMethod, const nsAString& aUrl, bool aAsync,
+  Open(const nsACString& aMethod, const nsAString& aUrl, bool aAsync,
        const Optional<nsAString>& aUser, const Optional<nsAString>& aPassword,
        ErrorResult& aRv);
 
   void
-  SetRequestHeader(const nsAString& aHeader, const nsAString& aValue,
+  SetRequestHeader(const nsACString& aHeader, const nsACString& aValue,
                    ErrorResult& aRv);
 
   uint32_t
@@ -198,17 +199,17 @@ public:
   }
 
   void
-  GetStatusText(nsAString& aStatusText) const
+  GetStatusText(nsACString& aStatusText) const
   {
     aStatusText = mStateData.mStatusText;
   }
 
   void
-  GetResponseHeader(const nsAString& aHeader, nsAString& aResponseHeader,
+  GetResponseHeader(const nsACString& aHeader, nsACString& aResponseHeader,
                     ErrorResult& aRv);
 
   void
-  GetAllResponseHeaders(nsAString& aResponseHeaders, ErrorResult& aRv);
+  GetAllResponseHeaders(nsACString& aResponseHeaders, ErrorResult& aRv);
 
   void
   OverrideMimeType(const nsAString& aMimeType, ErrorResult& aRv);

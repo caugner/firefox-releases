@@ -32,6 +32,7 @@ const PREF_APP_UPDATE_CERT_ERRORS         = "app.update.cert.errors";
 const PREF_APP_UPDATE_CERT_MAXERRORS      = "app.update.cert.maxErrors";
 const PREF_APP_UPDATE_CERT_REQUIREBUILTIN = "app.update.cert.requireBuiltIn";
 const PREF_APP_UPDATE_ENABLED             = "app.update.enabled";
+const PREF_APP_UPDATE_METRO_ENABLED       = "app.update.metro.enabled";
 const PREF_APP_UPDATE_IDLETIME            = "app.update.idletime";
 const PREF_APP_UPDATE_INCOMPATIBLE_MODE   = "app.update.incompatible.mode";
 const PREF_APP_UPDATE_INTERVAL            = "app.update.interval";
@@ -43,6 +44,7 @@ const PREF_APP_UPDATE_PROMPTWAITTIME      = "app.update.promptWaitTime";
 const PREF_APP_UPDATE_SHOW_INSTALLED_UI   = "app.update.showInstalledUI";
 const PREF_APP_UPDATE_SILENT              = "app.update.silent";
 const PREF_APP_UPDATE_STAGING_ENABLED     = "app.update.staging.enabled";
+const PREF_APP_UPDATE_NOTIFIEDUNSUPPORTED = "app.update.notifiedUnsupported";
 const PREF_APP_UPDATE_URL                 = "app.update.url";
 const PREF_APP_UPDATE_URL_DETAILS         = "app.update.url.details";
 const PREF_APP_UPDATE_URL_OVERRIDE        = "app.update.url.override";
@@ -180,6 +182,7 @@ const DEFAULT_SOCKET_MAX_ERRORS = 10;
 const DEFAULT_UPDATE_RETRY_TIMEOUT = 2000;
 
 var gLocale     = null;
+
 #ifdef MOZ_B2G
 var gVolumeMountLock = null;
 XPCOMUtils.defineLazyGetter(this, "gExtStorage", function aus_gExtStorage() {
@@ -385,6 +388,109 @@ function testWriteAccess(updateTestFile, createDirectory) {
   updateTestFile.remove(false);
 }
 
+#ifdef XP_WIN
+
+/**
+ * Closes a Win32 handle
+ *
+ * @param handle The handle to close
+ */
+function closeHandle(handle) {
+  var lib = ctypes.open("kernel32.dll");
+  var CloseHandle = lib.declare("CloseHandle",
+                                ctypes.winapi_abi,
+                                ctypes.int32_t, /* success */
+                                ctypes.void_t.ptr); /* handle */
+  CloseHandle(handle);
+  lib.close();
+}
+
+/**
+ * Creates a mutex.
+ *
+ * @param aAllowExisting false if the function should fail if the mutex exists
+ * @return The Win32 handle to the mutex
+ */
+function createMutex(name, aAllowExisting) {
+  if (aAllowExisting === undefined) {
+    aAllowExisting = true;
+  }
+
+  Components.utils.import("resource://gre/modules/ctypes.jsm");
+  const INITIAL_OWN = 1;
+  const ERROR_ALREADY_EXISTS = 0xB7;
+  var lib = ctypes.open("kernel32.dll");
+  var CreateMutexW = lib.declare("CreateMutexW",
+                                 ctypes.winapi_abi,
+                                 ctypes.void_t.ptr, /* return handle */
+                                 ctypes.void_t.ptr, /* security attributes */
+                                 ctypes.int32_t, /* initial owner */
+                                 ctypes.jschar.ptr); /* name */
+
+  var handle = CreateMutexW(null, INITIAL_OWN, name);
+  var alreadyExists = ctypes.winLastError == ERROR_ALREADY_EXISTS;
+  if (handle && !handle.isNull() && !aAllowExisting && alreadyExists) {
+    closeHandle(handle);
+    handle = null;
+  }
+  lib.close();
+
+  if (handle && handle.isNull())
+    handle = null;
+
+  return handle;
+}
+
+/**
+ * Determines a unique mutex name for the installation
+ *
+ * @param aGlobal true if the function should return a global mutex. A global
+ *                mutex is valid across different sessions
+ * @return Global mutex path
+ */
+function getPerInstallationMutexName(aGlobal) {
+  if (aGlobal === undefined) {
+    aGobal = true;
+  }
+  let hasher = Components.classes["@mozilla.org/security/hash;1"].
+              createInstance(Components.interfaces.nsICryptoHash);
+    hasher.init(hasher.SHA1);
+
+  Components.utils.import("resource://gre/modules/Services.jsm");
+  var exeFile = Services.dirsvc.get(KEY_EXECUTABLE, Components.interfaces.nsILocalFile);
+
+  let converter = Components.classes["@mozilla.org/intl/scriptableunicodeconverter"].
+                  createInstance(Components.interfaces.nsIScriptableUnicodeConverter);
+  converter.charset = "UTF-8";
+  var data = converter.convertToByteArray(exeFile.path.toLowerCase());
+
+  hasher.update(data, data.length);
+  return (aGlobal ? "Global\\" : "") + "MozillaUpdateMutex-" + hasher.finish(true);
+}
+#endif // XP_WIN
+
+/**
+ * Whether or not the current instance has the update mutex. The update mutex
+ * gives protection against 2 applications from the same installation updating:
+ * 1) Running multiple profiles from the same installation path
+ * 2) Running a Metro and Desktop application at the same time from the same
+ *    path
+ * 3) 2 applications running in 2 different user sessions from the same path
+ *
+ * @return true if this instance holds the update mutex
+ */
+function hasUpdateMutex() {
+#ifdef XP_WIN
+  if (!this._updateMutexHandle) {
+    this._updateMutexHandle = createMutex(getPerInstallationMutexName(true), false);
+  }
+
+  return !!this._updateMutexHandle;
+#else
+  return true;
+#endif // XP_WIN
+}
+
 XPCOMUtils.defineLazyGetter(this, "gCanApplyUpdates", function aus_gCanApplyUpdates() {
   function submitHasPermissionsTelemetryPing(val) {
     try {
@@ -480,6 +586,13 @@ XPCOMUtils.defineLazyGetter(this, "gCanApplyUpdates", function aus_gCanApplyUpda
     return false;
   }
 
+  if (!hasUpdateMutex()) {
+    LOG("gCanApplyUpdates - unable to apply updates because another instance" +
+        "of the application is already handling updates for this " +
+        "installation.");
+    return false;
+  }
+
   LOG("gCanApplyUpdates - able to apply updates");
   submitHasPermissionsTelemetryPing(true);
   return true;
@@ -506,6 +619,13 @@ function getCanStageUpdates() {
     return true;
   }
 #endif
+
+  if (!hasUpdateMutex()) {
+    LOG("getCanStageUpdates - unable to apply updates because another " +
+        "instance of the application is already handling updates for this " +
+        "installation.");
+    return false;
+  }
 
   /**
    * Whether or not the application can stage an update for the current session.
@@ -547,6 +667,37 @@ function getCanStageUpdates() {
   return canStageUpdatesSession;
 }
 
+XPCOMUtils.defineLazyGetter(this, "gIsMetro", function aus_gIsMetro() {
+#ifdef XP_WIN
+#ifdef MOZ_METRO
+  try {
+    let metroUtils = Cc["@mozilla.org/windows-metroutils;1"].
+                    createInstance(Ci.nsIWinMetroUtils);
+    return metroUtils && metroUtils.immersive;
+  } catch (e) {}
+#endif
+#endif
+
+  return false;
+});
+
+XPCOMUtils.defineLazyGetter(this, "gMetroUpdatesEnabled", function aus_gMetroUpdatesEnabled() {
+#ifdef XP_WIN
+#ifdef MOZ_METRO
+  if (gIsMetro) {
+    let metroUpdate = getPref("getBoolPref", PREF_APP_UPDATE_METRO_ENABLED, true);
+    if (!metroUpdate) {
+      LOG("gMetroUpdatesEnabled - unable to automatically check for metro " +
+          "updates, disabled by pref");
+      return false;
+    }
+  }
+#endif
+#endif
+
+  return true;
+});
+
 XPCOMUtils.defineLazyGetter(this, "gCanCheckForUpdates", function aus_gCanCheckForUpdates() {
   // If the administrator has disabled app update and locked the preference so
   // users can't check for updates. This preference check is ok in this lazy
@@ -555,6 +706,10 @@ XPCOMUtils.defineLazyGetter(this, "gCanCheckForUpdates", function aus_gCanCheckF
   if (!enabled && Services.prefs.prefIsLocked(PREF_APP_UPDATE_ENABLED)) {
     LOG("gCanCheckForUpdates - unable to automatically check for updates, " +
         "the preference is disabled and admistratively locked.");
+    return false;
+  }
+
+  if (!gMetroUpdatesEnabled) {
     return false;
   }
 
@@ -568,6 +723,13 @@ XPCOMUtils.defineLazyGetter(this, "gCanCheckForUpdates", function aus_gCanCheckF
   if (!gOSVersion) {
     LOG("gCanCheckForUpdates - unable to check for updates, unknown OS " +
         "version");
+    return false;
+  }
+
+  if (!hasUpdateMutex()) {
+    LOG("gCanCheckForUpdates - unable to apply updates because another " +
+        "instance of the application is already handling updates for this " +
+        "installation.");
     return false;
   }
 
@@ -1400,8 +1562,8 @@ function Update(update) {
   this.isCompleteUpdate = false;
   this.isOSUpdate = false;
   this.showPrompt = false;
-  this.showSurvey = false;
   this.showNeverForVersion = false;
+  this.unsupported = false;
   this.channel = "default";
   this.promptWaitTime = getPref("getIntPref", PREF_APP_UPDATE_PROMPTWAITTIME, 43200);
 
@@ -1426,7 +1588,7 @@ function Update(update) {
     this._patches.push(patch);
   }
 
-  if (0 == this._patches.length)
+  if (this._patches.length == 0 && !update.hasAttribute("unsupported"))
     throw Cr.NS_ERROR_ILLEGAL_VALUE;
 
   // Fallback to the behavior prior to bug 530872 if the update does not have an
@@ -1471,8 +1633,8 @@ function Update(update) {
       if(!isNaN(attr.value))
         this.promptWaitTime = parseInt(attr.value);
     }
-    else if (attr.name == "showSurvey")
-      this.showSurvey = attr.value == "true";
+    else if (attr.name == "unsupported")
+      this.unsupported = attr.value == "true";
     else if (attr.name == "version") {
       // Prevent version from replacing displayVersion if displayVersion is
       // present in the update xml.
@@ -1611,7 +1773,6 @@ Update.prototype = {
     update.setAttribute("showNeverForVersion", this.showNeverForVersion);
     update.setAttribute("showPrompt", this.showPrompt);
     update.setAttribute("promptWaitTime", this.promptWaitTime);
-    update.setAttribute("showSurvey", this.showSurvey);
     update.setAttribute("type", this.type);
     // for backwards compatibility in case the user downgrades
     update.setAttribute("version", this.displayVersion);
@@ -1629,6 +1790,8 @@ Update.prototype = {
       update.setAttribute("previousAppVersion", this.previousAppVersion);
     if (this.statusText)
       update.setAttribute("statusText", this.statusText);
+    if (this.unsupported)
+      update.setAttribute("unsupported", this.unsupported);
     updates.documentElement.appendChild(update);
 
     for (var p in this._properties) {
@@ -1932,6 +2095,8 @@ UpdateService.prototype = {
       // version.
       this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_ENABLED,
                                       "UPDATER_UPDATES_ENABLED");
+      this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_METRO_ENABLED,
+                                      "UPDATER_UPDATES_METRO_ENABLED");
       this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_AUTO,
                                       "UPDATER_UPDATES_AUTOMATIC");
       this._sendBoolPrefTelemetryPing(PREF_APP_UPDATE_STAGING_ENABLED,
@@ -2214,6 +2379,9 @@ UpdateService.prototype = {
     if (updates.length == 0)
       return null;
 
+    if (updates.length == 1 && updates[0].unsupported)
+      return updates[0];
+
     // Choose the newest of the available minor and major updates.
     var majorUpdate = null;
     var minorUpdate = null;
@@ -2291,14 +2459,30 @@ UpdateService.prototype = {
       return;
     }
 
-    var update = this.selectUpdate(updates, updates.length);
-    if (!update)
-      return;
-
     var updateEnabled = getPref("getBoolPref", PREF_APP_UPDATE_ENABLED, true);
     if (!updateEnabled) {
       LOG("UpdateService:_selectAndInstallUpdate - not prompting because " +
           "update is disabled");
+      return;
+    }
+
+    if (!gMetroUpdatesEnabled) {
+      return;
+    }
+
+    var update = this.selectUpdate(updates, updates.length);
+    if (!update) {
+      return;
+    }
+
+    if (update.unsupported) {
+      LOG("UpdateService:_selectAndInstallUpdate - update not supported for " +
+          "this system");
+      if (!getPref("getBoolPref", PREF_APP_UPDATE_NOTIFIEDUNSUPPORTED, false)) {
+        LOG("UpdateService:_selectAndInstallUpdate - notifying that the " +
+            "update is not supported for this system");
+        this._showPrompt(update);
+      }
       return;
     }
 
@@ -2339,14 +2523,18 @@ UpdateService.prototype = {
       LOG("UpdateService:_selectAndInstallUpdate - prompting because the " +
           "update snippet specified showPrompt");
       this._showPrompt(update);
-      return;
+      if (!gIsMetro) {
+        return;
+      }
     }
 
     if (!getPref("getBoolPref", PREF_APP_UPDATE_AUTO, true)) {
       LOG("UpdateService:_selectAndInstallUpdate - prompting because silent " +
           "install is disabled");
       this._showPrompt(update);
-      return;
+      if (!gIsMetro) {
+        return;
+      }
     }
 
     if (getPref("getIntPref", PREF_APP_UPDATE_MODE, 1) == 0) {
@@ -2555,6 +2743,14 @@ UpdateService.prototype = {
   /**
    * See nsIUpdateService.idl
    */
+  get isOtherInstanceHandlingUpdates() {
+    return !hasUpdateMutex();
+  },
+
+
+  /**
+   * See nsIUpdateService.idl
+   */
   addDownloadListener: function AUS_addDownloadListener(listener) {
     if (!this._downloader) {
       LOG("UpdateService:addDownloadListener - no downloader!");
@@ -2628,29 +2824,6 @@ UpdateService.prototype = {
     update.previousAppVersion = Services.appinfo.version;
     this._downloader = new Downloader(background, this);
     return this._downloader.downloadUpdate(update);
-  },
-
-  /**
-   * See nsIUpdateService.idl
-   */
-  applyUpdateInBackground: function AUS_applyUpdateInBackground(update) {
-    // If we can't stage an update, then just bail out!
-    if (!getCanStageUpdates()) {
-      return;
-    }
-
-    LOG("UpdateService:applyUpdateInBackground called with the following update: " +
-        update.name);
-
-    // Initiate the update in the background
-    try {
-      Cc["@mozilla.org/updates/update-processor;1"].
-        createInstance(Ci.nsIUpdateProcessor).
-        processUpdate(update);
-    } catch (e) {
-      // Fail gracefully in case the application does not support the update
-      // processor service.
-    }
   },
 
   /**
@@ -3146,7 +3319,7 @@ Checker.prototype = {
     }
 
     if (updatesElement.nodeName != "updates") {
-      LOG("Checker:updates get - unexpected node name!");
+      LOG("Checker:_updates get - unexpected node name!");
       throw new Error("Unexpected node name, expected: updates, got: " +
                       updatesElement.nodeName);
     }
@@ -3163,7 +3336,7 @@ Checker.prototype = {
       try {
         var update = new Update(updateElement);
       } catch (e) {
-        LOG("Checker:updates get - invalid <update/>, ignoring...");
+        LOG("Checker:_updates get - invalid <update/>, ignoring...");
         continue;
       }
       update.serviceURL = this.getUpdateURL(this._forced);
@@ -3223,7 +3396,7 @@ Checker.prototype = {
       if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_BACKGROUNDERRORS))
         Services.prefs.clearUserPref(PREF_APP_UPDATE_BACKGROUNDERRORS);
 
-      // Tell the Update Service about the updates
+      // Tell the callback about the updates
       this._callback.onCheckComplete(event.target, updates, updates.length);
     }
     catch (e) {
@@ -3284,6 +3457,10 @@ Checker.prototype = {
    */
   _enabled: true,
   get enabled() {
+    if (!gMetroUpdatesEnabled) {
+      return false;
+    }
+
     return getPref("getBoolPref", PREF_APP_UPDATE_ENABLED, true) &&
            gCanCheckForUpdates && this._enabled;
   },

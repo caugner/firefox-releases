@@ -50,7 +50,6 @@ using mozilla::DefaultXDisplay;
 #include "nsIAppShell.h"
 #include "nsIDOMHTMLAppletElement.h"
 #include "nsIObjectLoadingContent.h"
-#include "nsObjectLoadingContent.h"
 #include "nsAttrName.h"
 #include "nsIFocusManager.h"
 #include "nsFocusManager.h"
@@ -1153,13 +1152,8 @@ nsresult nsPluginInstanceOwner::EnsureCachedAttrParamArrays()
   if (isJava) {
     nsCOMPtr<nsIObjectLoadingContent> objlc = do_QueryInterface(mContent);
     NS_ENSURE_TRUE(objlc, NS_ERROR_UNEXPECTED);
-    // XXX(johns): This is on nsIObjectLoadingContent on trunk, but this
-    //             temporary hack is used on branches where we know nsIObjLC is
-    //             provided by a local nsObjLC class to avoid changing the IID
-    nsObjectLoadingContent *objlc_direct =
-      static_cast<nsObjectLoadingContent *>(objlc.get());
     nsCOMPtr<nsIURI> codebaseURI;
-    nsresult rv = objlc_direct->GetBaseURI(getter_AddRefs(codebaseURI));
+    nsresult rv = objlc->GetBaseURI(getter_AddRefs(codebaseURI));
     NS_ENSURE_SUCCESS(rv, rv);
     codebaseURI->GetSpec(codebaseStr);
     if (!mContent->HasAttr(kNameSpaceID_None, nsGkAtoms::codebase)) {

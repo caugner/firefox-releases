@@ -98,6 +98,20 @@ public final class GeckoJarReader {
         return new NativeZip(fileUrl.getPath());
     }
 
+    // Public for testing only.
+    public static InputStream getStream(String url) {
+        Stack<String> jarUrls = parseUrl(url);
+        try {
+            NativeZip zip = getZipFile(jarUrls.pop());
+            return getStream(zip, jarUrls, url);
+        } catch (Exception ex) {
+            // Some JNI code throws IllegalArgumentException on a bad file name;
+            // swallow the error and return null.  We could also see legitimate
+            // IOExceptions here.
+            return null;
+        }
+    }
+
     private static InputStream getStream(NativeZip zip, Stack<String> jarUrls, String origUrl) {
         InputStream inputStream = null;
 
@@ -110,8 +124,9 @@ public final class GeckoJarReader {
                 try {
                     zip = new NativeZip(inputStream);
                 } catch (IllegalArgumentException e) {
-                    Log.e(LOGTAG, "!!! BUG 849589 !!! origUrl=" + origUrl, e);
-                    return null;
+                    String description = "!!! BUG 849589 !!! origUrl=" + origUrl;
+                    Log.e(LOGTAG, description, e);
+                    throw new IllegalArgumentException(description);
                 }
             }
 

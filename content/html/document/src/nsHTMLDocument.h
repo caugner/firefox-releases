@@ -6,6 +6,7 @@
 #ifndef nsHTMLDocument_h___
 #define nsHTMLDocument_h___
 
+#include "mozilla/Attributes.h"
 #include "nsDocument.h"
 #include "nsIHTMLDocument.h"
 #include "nsIDOMHTMLDocument.h"
@@ -18,11 +19,6 @@
 #include "nsIHttpChannel.h"
 #include "nsHTMLStyleSheet.h"
 
-// Document.Write() related
-#include "nsIWyciwygChannel.h"
-#include "nsILoadGroup.h"
-#include "nsNetUtil.h"
-
 #include "nsICommandManager.h"
 #include "mozilla/dom/HTMLSharedElement.h"
 #include "nsDOMEvent.h"
@@ -33,6 +29,8 @@ class nsIURI;
 class nsIMarkupDocumentViewer;
 class nsIDocShell;
 class nsICachingChannel;
+class nsIWyciwygChannel;
+class nsILoadGroup;
 
 class nsHTMLDocument : public nsDocument,
                        public nsIHTMLDocument,
@@ -43,16 +41,17 @@ public:
   using nsDocument::GetPlugins;
 
   nsHTMLDocument();
-  virtual nsresult Init();
+  ~nsHTMLDocument();
+  virtual nsresult Init() MOZ_OVERRIDE;
 
-  NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
+  NS_DECL_ISUPPORTS_INHERITED
+  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(nsHTMLDocument,
+                                                         nsDocument)
 
-  NS_IMETHOD_(nsrefcnt) AddRef(void);
-  NS_IMETHOD_(nsrefcnt) Release(void);
-
-  virtual void Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup);
+  // nsIDocument
+  virtual void Reset(nsIChannel* aChannel, nsILoadGroup* aLoadGroup) MOZ_OVERRIDE;
   virtual void ResetToURI(nsIURI* aURI, nsILoadGroup* aLoadGroup,
-                          nsIPrincipal* aPrincipal);
+                          nsIPrincipal* aPrincipal) MOZ_OVERRIDE;
 
   virtual already_AddRefed<nsIPresShell> CreateShell(nsPresContext* aContext,
                                                      nsViewManager* aViewManager,
@@ -64,16 +63,22 @@ public:
                                      nsISupports* aContainer,
                                      nsIStreamListener **aDocListener,
                                      bool aReset = true,
-                                     nsIContentSink* aSink = nullptr);
-  virtual void StopDocumentLoad();
+                                     nsIContentSink* aSink = nullptr) MOZ_OVERRIDE;
+  virtual void StopDocumentLoad() MOZ_OVERRIDE;
 
-  virtual void BeginLoad();
+  virtual void BeginLoad() MOZ_OVERRIDE;
+  virtual void EndLoad() MOZ_OVERRIDE;
 
-  virtual void EndLoad();
+  virtual NS_HIDDEN_(void) Destroy() MOZ_OVERRIDE
+  {
+    mAll = nullptr;
+    nsDocument::Destroy();
+  }
 
-  virtual void SetCompatibilityMode(nsCompatibility aMode);
+  // nsIHTMLDocument
+  virtual void SetCompatibilityMode(nsCompatibility aMode) MOZ_OVERRIDE;
 
-  virtual bool IsWriting()
+  virtual bool IsWriting() MOZ_OVERRIDE
   {
     return mWriteLevel != uint32_t(0);
   }
@@ -112,31 +117,29 @@ public:
   nsISupports *GetDocumentAllResult(const nsAString& aID,
                                     nsWrapperCache **aCache,
                                     nsresult *aResult);
+  JSObject* GetAll(JSContext* aCx, mozilla::ErrorResult& aRv);
 
   nsISupports* ResolveName(const nsAString& aName, nsWrapperCache **aCache);
-  virtual already_AddRefed<nsISupports> ResolveName(const nsAString& aName,
-                                                    nsIContent *aForm,
-                                                    nsWrapperCache **aCache);
 
-  virtual void AddedForm();
-  virtual void RemovedForm();
-  virtual int32_t GetNumFormsSynchronous();
-  virtual void TearingDownEditor(nsIEditor *aEditor);
-  virtual void SetIsXHTML(bool aXHTML) { mIsRegularHTML = !aXHTML; }
-  virtual void SetDocWriteDisabled(bool aDisabled)
+  virtual void AddedForm() MOZ_OVERRIDE;
+  virtual void RemovedForm() MOZ_OVERRIDE;
+  virtual int32_t GetNumFormsSynchronous() MOZ_OVERRIDE;
+  virtual void TearingDownEditor(nsIEditor *aEditor) MOZ_OVERRIDE;
+  virtual void SetIsXHTML(bool aXHTML) MOZ_OVERRIDE { mIsRegularHTML = !aXHTML; }
+  virtual void SetDocWriteDisabled(bool aDisabled) MOZ_OVERRIDE
   {
     mDisableDocWrite = aDisabled;
   }
 
-  nsresult ChangeContentEditableCount(nsIContent *aElement, int32_t aChange);
+  nsresult ChangeContentEditableCount(nsIContent *aElement, int32_t aChange) MOZ_OVERRIDE;
   void DeferredContentEditableCountChange(nsIContent *aElement);
 
-  virtual EditingState GetEditingState()
+  virtual EditingState GetEditingState() MOZ_OVERRIDE
   {
     return mEditingState;
   }
 
-  virtual void DisableCookieAccess()
+  virtual void DisableCookieAccess() MOZ_OVERRIDE
   {
     mDisableCookieAccess = true;
   }
@@ -157,27 +160,23 @@ public:
   };
   friend class nsAutoEditingState;
 
-  void EndUpdate(nsUpdateType aUpdateType);
+  void EndUpdate(nsUpdateType aUpdateType) MOZ_OVERRIDE;
 
-  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsHTMLDocument, nsDocument)
+  virtual nsresult SetEditingState(EditingState aState) MOZ_OVERRIDE;
 
-  virtual nsresult SetEditingState(EditingState aState);
+  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE;
 
-  virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const;
-
-  virtual NS_HIDDEN_(void) RemovedFromDocShell();
+  virtual NS_HIDDEN_(void) RemovedFromDocShell() MOZ_OVERRIDE;
 
   virtual mozilla::dom::Element *GetElementById(const nsAString& aElementId)
   {
     return nsDocument::GetElementById(aElementId);
   }
 
-  virtual nsXPCClassInfo* GetClassInfo();
-
-  virtual void DocSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const;
+  virtual void DocSizeOfExcludingThis(nsWindowSizes* aWindowSizes) const MOZ_OVERRIDE;
   // DocSizeOfIncludingThis is inherited from nsIDocument.
 
-  virtual bool WillIgnoreCharsetOverride();
+  virtual bool WillIgnoreCharsetOverride() MOZ_OVERRIDE;
 
   // WebIDL API
   virtual JSObject* WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
@@ -256,7 +255,7 @@ public:
     return nsIDocument::GetLocation();
   }
 
-  virtual nsHTMLDocument* AsHTMLDocument() { return this; }
+  virtual nsHTMLDocument* AsHTMLDocument() MOZ_OVERRIDE { return this; }
 
 protected:
   nsresult GetBodySize(int32_t* aWidth,
@@ -303,6 +302,8 @@ protected:
   nsRefPtr<nsContentList> mForms;
   nsRefPtr<nsContentList> mFormControls;
 
+  JS::Heap<JSObject*> mAll;
+
   /** # of forms in the document, synchronously set */
   int32_t mNumForms;
 
@@ -329,7 +330,7 @@ protected:
                                 nsACString& aCharset);
 
   // Override so we can munge the charset on our wyciwyg channel as needed.
-  virtual void SetDocumentCharacterSet(const nsACString& aCharSetID);
+  virtual void SetDocumentCharacterSet(const nsACString& aCharSetID) MOZ_OVERRIDE;
 
   // Tracks if we are currently processing any document.write calls (either
   // implicit or explicit). Note that if a write call writes out something which

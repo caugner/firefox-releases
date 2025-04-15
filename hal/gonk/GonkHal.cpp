@@ -34,6 +34,7 @@
 #include "hardware_legacy/uevent.h"
 #include "hardware_legacy/vibrator.h"
 #include "hardware_legacy/power.h"
+#include "libdisplay/GonkDisplay.h"
 
 #include "base/message_loop.h"
 
@@ -513,7 +514,7 @@ GetScreenEnabled()
 void
 SetScreenEnabled(bool enabled)
 {
-  set_screen_state(enabled);
+  GetGonkDisplay()->SetEnabled(enabled);
   sScreenEnabled = enabled;
 }
 
@@ -1165,7 +1166,7 @@ SetNiceForPid(int aPid, int aNice)
     }
 
     int newtaskpriority =
-      std::max(origtaskpriority + aNice - origProcPriority, origProcPriority);
+      std::max(origtaskpriority - origProcPriority + aNice, aNice);
     rv = setpriority(PRIO_PROCESS, tid, newtaskpriority);
 
     if (rv) {

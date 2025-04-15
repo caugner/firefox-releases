@@ -56,15 +56,9 @@ public final class Distribution {
                     return;
                 }
 
-                // This pref stores the path to the distribution directory. If it is null, Gecko
-                // looks for distribution files in /data/data/org.mozilla.xxx/distribution.
-                String pathKeyName = context.getPackageName() + ".distribution_path";
-                String distPath = null;
-
                 // Send a message to Gecko if we've set a distribution.
                 if (state == STATE_SET) {
-                    distPath = settings.getString(pathKeyName, null);
-                    GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Distribution:Set", distPath));
+                    GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Distribution:Set", ""));
                     return;
                 }
 
@@ -81,13 +75,11 @@ public final class Distribution {
                     File distDir = new File("/system/" + context.getPackageName() + "/distribution");
                     if (distDir.exists()) {
                         distributionSet = true;
-                        distPath = distDir.getPath();
-                        settings.edit().putString(pathKeyName, distPath).commit();
                     }
                 }
 
                 if (distributionSet) {
-                    GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Distribution:Set", distPath));
+                    GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Distribution:Set", ""));
                     settings.edit().putInt(keyName, STATE_SET).commit();
                 } else {
                     settings.edit().putInt(keyName, STATE_NONE).commit();
@@ -155,18 +147,35 @@ public final class Distribution {
         InputStream inputStream = null;
         try {
             if (state == STATE_UNKNOWN) {
-                // If the distribution hasn't been set yet, get bookmarks.json out of the APK
+                // If the distribution hasn't been set yet, first look for bookmarks.json in the APK.
                 File applicationPackage = new File(context.getPackageResourcePath());
                 zip = new ZipFile(applicationPackage);
                 ZipEntry zipEntry = zip.getEntry("distribution/bookmarks.json");
-                if (zipEntry == null) {
-                    return null;
+                if (zipEntry != null) {
+                    inputStream = zip.getInputStream(zipEntry);
+                } else {
+                    // If there's no bookmarks.json in the APK, but there is a preferences.json,
+                    // don't create any distribution bookmarks.
+                    zipEntry = zip.getEntry("distribution/preferences.json");
+                    if (zipEntry != null) {
+                        return null;
+                    }
+                    // Otherwise, look for bookmarks.json in the /system directory.
+                    File systemFile = new File("/system/" + context.getPackageName() + "/distribution/bookmarks.json");
+                    if (!systemFile.exists()) {
+                        return null;
+                    }
+                    inputStream = new FileInputStream(systemFile);
                 }
-                inputStream = zip.getInputStream(zipEntry);
             } else {
-                // Otherwise, get bookmarks.json out of the data directory
-                File dataDir = new File(context.getApplicationInfo().dataDir);
-                File file = new File(dataDir, "distribution/bookmarks.json");
+                // Otherwise, first look for the distribution in the data directory.
+                File distDir = new File(context.getApplicationInfo().dataDir, "distribution");
+                if (!distDir.exists()) {
+                    // If that doesn't exist, then we must be using a distribution from the system directory.
+                    distDir = new File("/system/" + context.getPackageName() + "/distribution");
+                }
+
+                File file = new File(distDir, "bookmarks.json");
                 inputStream = new FileInputStream(file);
             }
 

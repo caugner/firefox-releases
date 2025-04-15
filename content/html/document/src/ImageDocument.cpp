@@ -81,8 +81,7 @@ ImageListener::OnStartRequest(nsIRequest* request, nsISupports *ctxt)
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsPIDOMWindow> domWindow =
-    do_QueryInterface(imgDoc->GetScriptGlobalObject());
+  nsCOMPtr<nsPIDOMWindow> domWindow = imgDoc->GetWindow();
   NS_ENSURE_TRUE(domWindow, NS_ERROR_UNEXPECTED);
 
   // Do a ShouldProcess check to see whether to keep loading the image.
@@ -137,25 +136,16 @@ ImageDocument::~ImageDocument()
 }
 
 
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(ImageDocument, MediaDocument)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mImageContent)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(ImageDocument, MediaDocument)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mImageContent)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_INHERITED_1(ImageDocument, MediaDocument,
+                                     mImageContent)
 
 NS_IMPL_ADDREF_INHERITED(ImageDocument, MediaDocument)
 NS_IMPL_RELEASE_INHERITED(ImageDocument, MediaDocument)
 
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(ImageDocument)
-  NS_HTML_DOCUMENT_INTERFACE_TABLE_BEGIN(ImageDocument)
-    NS_INTERFACE_TABLE_ENTRY(ImageDocument, nsIImageDocument)
-    NS_INTERFACE_TABLE_ENTRY(ImageDocument, imgINotificationObserver)
-    NS_INTERFACE_TABLE_ENTRY(ImageDocument, nsIDOMEventListener)
-  NS_OFFSET_AND_INTERFACE_TABLE_END
-  NS_OFFSET_AND_INTERFACE_TABLE_TO_MAP_SEGUE
-NS_INTERFACE_MAP_END_INHERITING(MediaDocument)
+  NS_INTERFACE_TABLE_INHERITED3(ImageDocument, nsIImageDocument,
+                                imgINotificationObserver, nsIDOMEventListener)
+NS_INTERFACE_TABLE_TAIL_INHERITING(MediaDocument)
 
 
 nsresult
@@ -216,11 +206,6 @@ ImageDocument::Destroy()
     if (mObservingImageLoader) {
       nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(mImageContent);
       if (imageLoader) {
-        // Push a null JSContext on the stack so that code that
-        // nsImageLoadingContent doesn't think it's being called by JS.  See
-        // Bug 631241
-        nsCxPusher pusher;
-        pusher.PushNull();
         imageLoader->RemoveObserver(this);
       }
     }
@@ -350,6 +335,11 @@ ImageDocument::ShrinkToFit()
   // origin now that we're showing a shrunk-to-window version.
   ScrollImageTo(0, 0, false);
 
+  if (!mImageContent) {
+    // ScrollImageTo flush destroyed our content.
+    return;
+  }
+
   SetModeClass(eShrinkToFit);
   
   mImageIsResized = true;
@@ -381,7 +371,7 @@ ImageDocument::ScrollImageTo(int32_t aX, int32_t aY, bool restoreImage)
     FlushPendingNotifications(Flush_Layout);
   }
 
-  nsIPresShell *shell = GetShell();
+  nsCOMPtr<nsIPresShell> shell = GetShell();
   if (!shell)
     return;
 
@@ -607,12 +597,6 @@ ImageDocument::CreateSyntheticDocument()
 
   nsAutoCString src;
   mDocumentURI->GetSpec(src);
-
-  // Push a null JSContext on the stack so that code that runs within
-  // the below code doesn't think it's being called by JS. See bug
-  // 604262.
-  nsCxPusher pusher;
-  pusher.PushNull();
 
   NS_ConvertUTF8toUTF16 srcString(src);
   // Make sure not to start the image load from here...

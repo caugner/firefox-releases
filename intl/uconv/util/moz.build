@@ -6,3 +6,12 @@
 
 MODULE = 'uconv'
 
+CPP_SOURCES += [
+    'nsUCConstructors.cpp',
+    'nsUCSupport.cpp',
+    'nsUnicodeDecodeHelper.cpp',
+    'nsUnicodeEncodeHelper.cpp',
+]
+
+LIBRARY_NAME = 'ucvutil_s'
+

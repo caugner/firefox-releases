@@ -28,6 +28,8 @@
 #include "nsCrossSiteListenerProxy.h"
 #include "nsIContentSecurityPolicy.h"
 #include "nsChannelPolicy.h"
+#include "nsIDocShell.h"
+#include "nsIWebNavigation.h"
 
 #include "nsIConsoleService.h"
 
@@ -306,6 +308,7 @@ nsUserFontSet::Destroy()
 {
   mPresContext = nullptr;
   mLoaders.EnumerateEntries(DestroyIterator, nullptr);
+  mRules.Clear();
 }
 
 void
@@ -806,7 +809,8 @@ nsUserFontSet::LogMessage(gfxMixedFontFamily *aFamily,
 
 nsresult
 nsUserFontSet::CheckFontLoad(const gfxFontFaceSrc *aFontFaceSrc,
-                             nsIPrincipal **aPrincipal)
+                             nsIPrincipal **aPrincipal,
+                             bool *aBypassCache)
 {
   // check same-site origin
   nsIPresShell *ps = mPresContext->PresShell();
@@ -830,8 +834,28 @@ nsUserFontSet::CheckFontLoad(const gfxFontFaceSrc *aFontFaceSrc,
     *aPrincipal = aFontFaceSrc->mOriginPrincipal;
   }
 
-  return nsFontFaceLoader::CheckLoadAllowed(*aPrincipal, aFontFaceSrc->mURI,
-                                            ps->GetDocument());
+  nsresult rv = nsFontFaceLoader::CheckLoadAllowed(*aPrincipal,
+                                                   aFontFaceSrc->mURI,
+                                                   ps->GetDocument());
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  *aBypassCache = false;
+  nsCOMPtr<nsISupports> container = ps->GetDocument()->GetContainer();
+  if (container) {
+    nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(container);
+    if (docShell) {
+      uint32_t loadType;
+      if (NS_SUCCEEDED(docShell->GetLoadType(&loadType))) {
+        if ((loadType >> 16) & nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE) {
+          *aBypassCache = true;
+        }
+      }
+    }
+  }
+
+  return rv;
 }
 
 nsresult
@@ -914,4 +938,21 @@ nsUserFontSet::SyncLoadFontData(gfxProxyFontEntry *aFontToLoad,
   }
 
   return NS_OK;
+}
+
+bool
+nsUserFontSet::GetPrivateBrowsing()
+{
+  nsIPresShell *ps = mPresContext->PresShell();
+  if (!ps) {
+    return false;
+  }
+
+  nsCOMPtr<nsISupports> container = ps->GetDocument()->GetContainer();
+  if (!container) {
+    return false;
+  }
+
+  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(container);
+  return loadContext && loadContext->UsePrivateBrowsing();
 }

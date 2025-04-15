@@ -34,12 +34,12 @@ NS_IMPL_ADDREF_INHERITED(HTMLAudioElement, HTMLMediaElement)
 NS_IMPL_RELEASE_INHERITED(HTMLAudioElement, HTMLMediaElement)
 
 NS_INTERFACE_TABLE_HEAD(HTMLAudioElement)
-NS_HTML_CONTENT_INTERFACE_TABLE4(HTMLAudioElement, nsIDOMHTMLMediaElement,
-                                 nsIDOMHTMLAudioElement, nsITimerCallback,
-                                 nsIAudioChannelAgentCallback)
-NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLAudioElement,
-                                             HTMLMediaElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+  NS_HTML_CONTENT_INTERFACES(HTMLMediaElement)
+  NS_INTERFACE_TABLE_INHERITED4(HTMLAudioElement, nsIDOMHTMLMediaElement,
+                                nsIDOMHTMLAudioElement, nsITimerCallback,
+                                nsIAudioChannelAgentCallback)
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+NS_ELEMENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLAudioElement)
 
@@ -129,7 +129,7 @@ HTMLAudioElement::MozSetup(uint32_t aChannels, uint32_t aRate, ErrorResult& aRv)
   }
 
   MetadataLoaded(aChannels, aRate, true, false, nullptr);
-  mAudioStream->SetVolume(mVolume);
+  mAudioStream->SetVolume(mMuted ? 0.0 : mVolume);
 }
 
 uint32_t
@@ -248,11 +248,12 @@ HTMLAudioElement::CanPlayChanged(bool canPlay)
     return HTMLMediaElement::CanPlayChanged(canPlay);
   }
 #ifdef MOZ_B2G
-  if (mChannelSuspended == !canPlay) {
-    return NS_OK;
+  if (canPlay) {
+    SetMutedInternal(mMuted & ~MUTED_BY_AUDIO_CHANNEL);
+  } else {
+    SetMutedInternal(mMuted | MUTED_BY_AUDIO_CHANNEL);
   }
-  mChannelSuspended = !canPlay;
-  SetMutedInternal(mChannelSuspended);
+
 #endif
   return NS_OK;
 }
@@ -299,6 +300,7 @@ HTMLAudioElement::UpdateAudioChannelPlayingState()
     if (mPlayingThroughTheAudioChannel) {
       bool canPlay;
       mAudioChannelAgent->StartPlaying(&canPlay);
+      CanPlayChanged(canPlay);
     } else {
       mAudioChannelAgent->StopPlaying();
       mAudioChannelAgent = nullptr;
