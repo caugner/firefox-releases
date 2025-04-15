@@ -324,7 +324,7 @@ sdb_getTempDir(sqlite3 *sqlDB)
 /*
  * Map SQL_LITE errors to PKCS #11 errors as best we can.
  */
-static int 
+static CK_RV
 sdb_mapSQLError(sdbDataType type, int sqlerr)
 {
     switch (sqlerr) {
@@ -731,6 +731,7 @@ sdb_FindObjectsInit(SDB *sdb, const CK_ATTRIBUTE *template, CK_ULONG count,
 
 loser: 
     if (findstmt) {
+	sqlite3_reset(findstmt);
 	sqlite3_finalize(findstmt);
     }
     if (sqlDB) {
@@ -1718,7 +1719,9 @@ sdb_init(char *dbname, char *table, sdbDataType type, int *inUpdate,
      * a database */
     if (create) {
 	/* NO NSPR call for this? :( */
+#ifndef WINCE
 	chmod (dbname, 0600);
+#endif
     }
 
     if (flags != SDB_RDONLY) {
@@ -1975,8 +1978,10 @@ s_open(const char *directory, const char *certPrefix, const char *keyPrefix,
     int inUpdate;
     PRUint32 accessOps;
 
-    *certdb = NULL;
-    *keydb = NULL;
+    if (certdb) 
+	*certdb = NULL;
+    if (keydb) 
+	*keydb = NULL;
     *newInit = 0;
 
 #ifdef SQLITE_UNSAFE_THREADS

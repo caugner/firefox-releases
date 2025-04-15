@@ -80,7 +80,10 @@ static void invalid_source(struct mem_source *mem, const char *reason)
 
 static uint32_t read_u32(struct mem_source *mem, size_t offset)
 {
-	if (offset + 4 > mem->size) {
+	/* Subtract from mem->size instead of the more intuitive adding to offset.
+	 * This avoids overflowing offset. The subtraction is safe because
+	 * mem->size is guaranteed to be > 4 */
+	if (offset > mem->size - 4) {
 		invalid_source(mem, "Invalid offset");
 		return 0;
 	} else {
@@ -90,7 +93,7 @@ static uint32_t read_u32(struct mem_source *mem, size_t offset)
 
 static uint16_t read_u16(struct mem_source *mem, size_t offset)
 {
-	if (offset + 2 > mem->size) {
+	if (offset > mem->size - 2) {
 		invalid_source(mem, "Invalid offset");
 		return 0;
 	} else {
@@ -100,7 +103,7 @@ static uint16_t read_u16(struct mem_source *mem, size_t offset)
 
 static uint8_t read_u8(struct mem_source *mem, size_t offset)
 {
-	if (offset + 1 > mem->size) {
+	if (offset > mem->size - 1) {
 		invalid_source(mem, "Invalid offset");
 		return 0;
 	} else {
@@ -197,7 +200,7 @@ struct tag_index {
 static struct tag_index read_tag_table(qcms_profile *profile, struct mem_source *mem)
 {
 	struct tag_index index = {0, NULL};
-	int i;
+	unsigned int i;
 
 	index.count = read_u32(mem, 128);
 	if (index.count > MAX_TAG_COUNT) {
@@ -223,18 +226,41 @@ static struct tag_index read_tag_table(qcms_profile *profile, struct mem_source 
 qcms_bool qcms_profile_is_bogus(qcms_profile *profile)
 {
        float sum[3], target[3], tolerance[3];
+       float rX, rY, rZ, gX, gY, gZ, bX, bY, bZ;
+       bool negative;
        unsigned i;
 
-       // Sum the values
-       sum[0] = s15Fixed16Number_to_float(profile->redColorant.X) +
-	       s15Fixed16Number_to_float(profile->greenColorant.X) +
-	       s15Fixed16Number_to_float(profile->blueColorant.X);
-       sum[1] = s15Fixed16Number_to_float(profile->redColorant.Y) +
-	       s15Fixed16Number_to_float(profile->greenColorant.Y) +
-	       s15Fixed16Number_to_float(profile->blueColorant.Y);
-       sum[2] = s15Fixed16Number_to_float(profile->redColorant.Z) +
-	       s15Fixed16Number_to_float(profile->greenColorant.Z) +
-	       s15Fixed16Number_to_float(profile->blueColorant.Z);
+       // We currently only check the bogosity of RGB profiles
+       if (profile->color_space != RGB_SIGNATURE)
+	       return false;
+
+       rX = s15Fixed16Number_to_float(profile->redColorant.X);
+       rY = s15Fixed16Number_to_float(profile->redColorant.Y);
+       rZ = s15Fixed16Number_to_float(profile->redColorant.Z);
+
+       gX = s15Fixed16Number_to_float(profile->greenColorant.X);
+       gY = s15Fixed16Number_to_float(profile->greenColorant.Y);
+       gZ = s15Fixed16Number_to_float(profile->greenColorant.Z);
+
+       bX = s15Fixed16Number_to_float(profile->blueColorant.X);
+       bY = s15Fixed16Number_to_float(profile->blueColorant.Y);
+       bZ = s15Fixed16Number_to_float(profile->blueColorant.Z);
+
+       // Check if any of the XYZ values are negative (see mozilla bug 498245)
+       // CIEXYZ tristimulus values cannot be negative according to the spec.
+       negative =
+	       (rX < 0) || (rY < 0) || (rZ < 0) ||
+	       (gX < 0) || (gY < 0) || (gZ < 0) ||
+	       (bX < 0) || (bY < 0) || (bZ < 0);
+
+       if (negative)
+	       return true;
+
+
+       // Sum the values; they should add up to something close to white
+       sum[0] = rX + gX + bX;
+       sum[1] = rY + gY + bY;
+       sum[2] = rZ + gZ + bZ;
 
        // Build our target vector (see mozilla bug 460629)
        target[0] = 0.96420;
@@ -271,7 +297,7 @@ qcms_bool qcms_profile_is_bogus(qcms_profile *profile)
 
 static struct tag *find_tag(struct tag_index index, uint32_t tag_id)
 {
-	int i;
+	unsigned int i;
 	struct tag *tag = NULL;
 	for (i = 0; i < index.count; i++) {
 		if (index.tags[i].signature == tag_id) {
@@ -288,7 +314,7 @@ static struct tag *find_tag(struct tag_index index, uint32_t tag_id)
 
 static struct XYZNumber read_tag_XYZType(struct mem_source *src, struct tag_index index, uint32_t tag_id)
 {
-	struct XYZNumber num = {0};
+	struct XYZNumber num = {0, 0, 0};
 	struct tag *tag = find_tag(index, tag_id);
 	if (tag) {
 		uint32_t offset = tag->offset;
@@ -313,7 +339,7 @@ static struct curveType *read_tag_curveType(struct mem_source *src, struct tag_i
 		uint32_t offset = tag->offset;
 		uint32_t type = read_u32(src, offset);
 		uint32_t count = read_u32(src, offset+8);
-		int i;
+		unsigned int i;
 
 		if (type != CURVE_TYPE) {
 			invalid_source(src, "unexpected type, expected CURV");
@@ -645,6 +671,7 @@ qcms_profile* qcms_profile_from_memory(const void *mem, size_t size)
 	source.buf = mem;
 	source.size = size;
 	source.valid = true;
+
 	length = read_u32(src, 0);
 	if (length <= size) {
 		// shrink the area that we can read if appropriate
@@ -652,6 +679,10 @@ qcms_profile* qcms_profile_from_memory(const void *mem, size_t size)
 	} else {
 		return INVALID_PROFILE;
 	}
+
+	/* ensure that the profile size is sane so it's easier to reason about */
+	if (source.size <= 64 || source.size >= MAX_PROFILE_SIZE)
+		return INVALID_PROFILE;
 
 	profile = qcms_profile_create();
 	if (!profile)
@@ -765,8 +796,10 @@ qcms_profile* qcms_profile_from_file(FILE *file)
 
 	/* read the rest profile */
 	read_length = fread((unsigned char*)data + sizeof(length_be), 1, remaining_length, file);
-	if (read_length != remaining_length)
+	if (read_length != remaining_length) {
+		free(data);
 		return INVALID_PROFILE;
+	}
 
 	profile = qcms_profile_from_memory(data, length);
 	free(data);

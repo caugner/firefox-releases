@@ -93,7 +93,7 @@ JSExtendedClass sXPC_SOW_JSClass = {
     XPC_SOW_AddProperty, XPC_SOW_DelProperty,
     XPC_SOW_GetProperty, XPC_SOW_SetProperty,
     XPC_SOW_Enumerate,   (JSResolveOp)XPC_SOW_NewResolve,
-    XPC_SOW_Convert,     JS_FinalizeStub,
+    XPC_SOW_Convert,     nsnull,
     nsnull,              XPC_SOW_CheckAccess,
     nsnull,              nsnull,
     nsnull,              XPC_SOW_HasInstance,
@@ -160,6 +160,7 @@ GetWrappedObject(JSContext *cx, JSObject *wrapper)
   return XPCWrapper::UnwrapGeneric(cx, &sXPC_SOW_JSClass, wrapper);
 }
 
+// If you change this code, change also nsContentUtils::CanAccessNativeAnon()!
 JSBool
 AllowedToAct(JSContext *cx, jsval idval)
 {
@@ -183,6 +184,8 @@ AllowedToAct(JSContext *cx, jsval idval)
 
     // Some code is running, we can't make the assumption, as above, but we
     // can't use a native frame, so clear fp.
+    fp = nsnull;
+  } else if (!fp->script) {
     fp = nsnull;
   }
 
@@ -697,6 +700,13 @@ JSBool
 XPC_SOW_WrapObject(JSContext *cx, JSObject *parent, jsval v,
                    jsval *vp)
 {
+  // Slim wrappers don't expect to be wrapped, so morph them to fat wrappers
+  // if we're about to wrap one.
+  JSObject *innerObj = JSVAL_TO_OBJECT(v);
+  if (IS_SLIM_WRAPPER(innerObj) && !MorphSlimWrapper(cx, innerObj)) {
+    return ThrowException(NS_ERROR_FAILURE, cx);
+  }
+
   JSObject *wrapperObj =
     JS_NewObjectWithGivenProto(cx, &sXPC_SOW_JSClass.base, NULL, parent);
   if (!wrapperObj) {

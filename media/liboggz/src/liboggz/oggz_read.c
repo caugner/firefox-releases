@@ -36,11 +36,7 @@
  * Conrad Parker <conrad@annodex.net>
  */
 
-#ifdef WIN32
-#include "config_win32.h"
-#else
 #include "config.h"
-#endif
 
 #if OGGZ_CONFIG_READ
 
@@ -64,7 +60,7 @@
 #include "oggz_compat.h"
 #include "oggz_private.h"
 
-#include <oggz/oggz_stream.h>
+#include "oggz/oggz_stream.h"
 
 /* #define DEBUG */
 /* #define DEBUG_VERBOSE */
@@ -257,12 +253,28 @@ oggz_read_free_pbuffer_entry(OggzBufferedPacket *p) {
 }
 
 OggzDListIterResponse
+oggz_read_free_pbuffers(void *elem)
+{
+  OggzBufferedPacket *p = (OggzBufferedPacket *)elem;
+
+  oggz_read_free_pbuffer_entry(p);
+
+  return DLIST_ITER_CONTINUE;
+}
+
+OggzDListIterResponse
 oggz_read_update_gp(void *elem) {
 
   OggzBufferedPacket *p = (OggzBufferedPacket *)elem;
 
   if (p->calced_granulepos == -1 && p->stream->last_granulepos != -1) {
     int content = oggz_stream_get_content(p->oggz, p->serialno);
+
+    /* Cancel the iteration (backwards through buffered packets)
+     * if we don't know the codec */
+    if (content < 0 || content >= OGGZ_CONTENT_UNKNOWN)
+      return DLIST_ITER_CANCEL;
+
     p->calced_granulepos = 
       oggz_auto_calculate_gp_backwards(content, p->stream->last_granulepos,
       p->stream, &(p->packet), p->stream->last_packet);
@@ -395,32 +407,28 @@ oggz_read_sync (OGGZ * oggz)
           granulepos = op->granulepos;
 
           content = oggz_stream_get_content(oggz, serialno);
-  
-          /*
-           * if we have no metrics for this stream yet, then generate them
-           */      
-          if 
-          (
-            (!stream->metric || (content == OGGZ_CONTENT_SKELETON)) 
-            && 
-            (oggz->flags & OGGZ_AUTO)
-          ) 
-          {
-            oggz_auto_read_bos_packet (oggz, op, serialno, NULL);
-          }
+          if (content < 0 || content >= OGGZ_CONTENT_UNKNOWN) {
+            reader->current_granulepos = granulepos;
+	  } else {
+            /* if we have no metrics for this stream yet, then generate them */      
+            if ((!stream->metric || content == OGGZ_CONTENT_SKELETON) && 
+                (oggz->flags & OGGZ_AUTO)) {
+              oggz_auto_read_bos_packet (oggz, op, serialno, NULL);
+            }
 
-          /* attempt to determine granulepos for this packet */
-          if (oggz->flags & OGGZ_AUTO) {
-            reader->current_granulepos = 
-              oggz_auto_calculate_granulepos (content, granulepos, stream, op); 
-            /* make sure that we accept any "real" gaps in the granulepos
-             */
-            if (granulepos != -1 && reader->current_granulepos < granulepos) {
+            /* attempt to determine granulepos for this packet */
+            if (oggz->flags & OGGZ_AUTO) {
+              reader->current_granulepos = 
+                oggz_auto_calculate_granulepos (content, granulepos, stream, op); 
+              /* make sure that we accept any "real" gaps in the granulepos */
+              if (granulepos != -1 && reader->current_granulepos < granulepos) {
+                reader->current_granulepos = granulepos;
+              }
+            } else {
               reader->current_granulepos = granulepos;
             }
-          } else {
-            reader->current_granulepos = granulepos;
-          }
+	  }
+
           stream->last_granulepos = reader->current_granulepos;
         
           /* set unit on last packet of page */
@@ -499,9 +507,7 @@ oggz_read_sync (OGGZ * oggz)
     }
 
     /* If we've got a stop already, don't read more data in */
-    if (cb_ret == OGGZ_STOP_OK || 
-	cb_ret == OGGZ_STOP_ERR || 
-	cb_ret == OGGZ_ERR_HOLE_IN_DATA) 
+    if (cb_ret < 0 || cb_ret == OGGZ_STOP_OK) 
       return cb_ret;
 
     if(oggz_read_get_next_page (oggz, &og) < 0)

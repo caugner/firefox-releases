@@ -61,6 +61,8 @@
 
 class BRFrame : public nsFrame {
 public:
+  NS_DECL_FRAMEARENA_HELPERS
+
   friend nsIFrame* NS_NewBRFrame(nsIPresShell* aPresShell, nsStyleContext* aContext);
 
   virtual ContentOffsets CalcContentOffsetsFromFramePoint(nsPoint aPoint);
@@ -103,6 +105,8 @@ NS_NewBRFrame(nsIPresShell* aPresShell, nsStyleContext* aContext)
   return new (aPresShell) BRFrame(aContext);
 }
 
+NS_IMPL_FRAMEARENA_HELPERS(BRFrame)
+
 BRFrame::~BRFrame()
 {
 }
@@ -142,18 +146,15 @@ BRFrame::Reflow(nsPresContext* aPresContext,
 
       // We also do this in strict mode because BR should act like a
       // normal inline frame.  That line-height is used is important
-      // here for cases where the line-height is less that 1.
+      // here for cases where the line-height is less than 1.
       nsLayoutUtils::SetFontFromStyle(aReflowState.rendContext, mStyleContext);
       nsCOMPtr<nsIFontMetrics> fm;
       aReflowState.rendContext->GetFontMetrics(*getter_AddRefs(fm));
       if (fm) {
-        nscoord ascent, descent;
-        fm->GetMaxAscent(ascent);
-        fm->GetMaxDescent(descent);
-        nscoord logicalHeight = aReflowState.CalcLineHeight(this);
-        nscoord leading = logicalHeight - ascent - descent;
+        nscoord logicalHeight = aReflowState.CalcLineHeight();
         aMetrics.height = logicalHeight;
-        aMetrics.ascent = ascent + (leading/2);
+        aMetrics.ascent =
+          nsLayoutUtils::GetCenteredFontBaseline(fm, logicalHeight);
       }
       else {
         aMetrics.ascent = aMetrics.height = 0;
@@ -281,7 +282,7 @@ NS_IMETHODIMP BRFrame::GetAccessible(nsIAccessible** aAccessible)
     // "bogus node" used when there is no text in the control
     return NS_ERROR_FAILURE;
   }
-  return accService->CreateHTMLBRAccessible(static_cast<nsIFrame*>(this), aAccessible);
+  return accService->CreateHTMLBRAccessible(this, aAccessible);
 }
 #endif
 

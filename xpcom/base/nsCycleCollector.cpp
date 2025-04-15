@@ -143,13 +143,21 @@
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
 #include "nsTPtrArray.h"
-#include "nsVoidArray.h" // for nsCStringArray
+#include "nsTArray.h"
 
 #include <stdio.h>
 #include <string.h>
 #ifdef WIN32
 #include <io.h>
 #include <process.h>
+#endif
+
+#ifdef DEBUG_CC
+#define IF_DEBUG_CC_PARAM(_p) , _p
+#define IF_DEBUG_CC_ONLY_PARAM(_p) _p
+#else
+#define IF_DEBUG_CC_PARAM(_p)
+#define IF_DEBUG_CC_ONLY_PARAM(_p)
 #endif
 
 #define DEFAULT_SHUTDOWN_COLLECTIONS 5
@@ -449,7 +457,7 @@ struct PtrInfo
     PtrInfo* mShortestPathToExpectedGarbage;
     nsCString* mShortestPathToExpectedGarbageEdgeName;
 
-    nsCStringArray mEdgeNames;
+    nsTArray<nsCString> mEdgeNames;
 #endif
 
     PtrInfo(void *aPointer, nsCycleCollectionParticipant *aParticipant
@@ -477,7 +485,7 @@ struct PtrInfo
 #ifdef DEBUG_CC
     void Destroy() {
         PL_strfree(mName);
-        mEdgeNames.~nsCStringArray();
+        mEdgeNames.~nsTArray<nsCString>();
     }
 #endif
 
@@ -644,6 +652,9 @@ static void
 WriteGraph(FILE *stream, GCGraph &graph, const void *redPtr);
 #endif
 
+static inline void
+ToParticipant(nsISupports *s, nsXPCOMCycleCollectionParticipant **cp);
+
 struct nsPurpleBuffer
 {
 private:
@@ -717,8 +728,12 @@ public:
 
     void FreeBlocks()
     {
+        if (mCount > 0)
+            UnmarkRemainingPurple(&mFirstBlock);
         Block *b = mFirstBlock.mNext; 
         while (b) {
+            if (mCount > 0)
+                UnmarkRemainingPurple(b);
             Block *next = b->mNext;
             delete b;
             b = next;
@@ -726,9 +741,32 @@ public:
         mFirstBlock.mNext = nsnull;
     }
 
+    void UnmarkRemainingPurple(Block *b)
+    {
+        for (nsPurpleBufferEntry *e = b->mEntries,
+                              *eEnd = e + NS_ARRAY_LENGTH(b->mEntries);
+             e != eEnd; ++e) {
+            if (!(PRUword(e->mObject) & PRUword(1))) {
+                // This is a real entry (rather than something on the
+                // free list).
+                if (e->mObject) {
+                    nsXPCOMCycleCollectionParticipant *cp;
+                    ToParticipant(e->mObject, &cp);
+
+                    cp->UnmarkPurple(e->mObject);
+                }
+
+                if (--mCount == 0)
+                    break;
+            }
+        }
+    }
+
     void SelectPointers(GCGraphBuilder &builder);
 
 #ifdef DEBUG_CC
+    void NoteAll(GCGraphBuilder &builder);
+
     PRBool Exists(void *p) const
     {
         return mNormalObjects.GetEntry(p) || mCompatObjects.GetEntry(p);
@@ -857,7 +895,7 @@ nsPurpleBuffer::SelectPointers(GCGraphBuilder &aBuilder)
             if (!(PRUword(e->mObject) & PRUword(1))) {
                 // This is a real entry (rather than something on the
                 // free list).
-                if (AddPurpleRoot(aBuilder, e->mObject)) {
+                if (!e->mObject || AddPurpleRoot(aBuilder, e->mObject)) {
 #ifdef DEBUG_CC
                     mNormalObjects.RemoveEntry(e->mObject);
 #endif
@@ -902,6 +940,10 @@ struct nsCycleCollectionXPCOMRuntime :
 
     inline nsCycleCollectionParticipant *ToParticipant(void *p);
 
+    void CommenceShutdown()
+    {
+    }
+
 #ifdef DEBUG_CC
     virtual void PrintAllReferencesTo(void *p) {}
 #endif
@@ -928,6 +970,7 @@ struct nsCycleCollector
 
     void RegisterRuntime(PRUint32 langID, 
                          nsCycleCollectionLanguageRuntime *rt);
+    nsCycleCollectionLanguageRuntime * GetRuntime(PRUint32 langID);
     void ForgetRuntime(PRUint32 langID);
 
     void SelectPurple(GCGraphBuilder &builder);
@@ -1081,7 +1124,7 @@ Fault(const char *msg, const void *ptr=nsnull)
     // Report to observers off an event so we don't run JS under GC
     // (which is where we might be right now).
     nsCOMPtr<nsIRunnable> ev = new CCRunnableFaultReport(str);
-    NS_DispatchToCurrentThread(ev);
+    NS_DispatchToMainThread(ev);
 }
 
 #ifdef DEBUG_CC
@@ -1115,7 +1158,15 @@ Fault(const char *msg, PtrInfo *pi)
 }
 #endif
 
-
+static inline bool
+CheckMainThreadIfFast()
+{
+#if defined(XP_WIN) || defined(NS_TLS)
+    return NS_IsMainThread();
+#else
+    return true;
+#endif
+}
 
 static nsISupports *
 canonicalize(nsISupports *in)
@@ -1260,21 +1311,15 @@ public:
     NS_IMETHOD_(void) NoteXPCOMRoot(nsISupports *root);
 
 private:
-#ifdef DEBUG_CC
     NS_IMETHOD_(void) DescribeNode(CCNodeType type, nsrefcnt refCount,
                                    size_t objSz, const char *objName);
-#else
-    NS_IMETHOD_(void) DescribeNode(CCNodeType type, nsrefcnt refCount);
-#endif
     NS_IMETHOD_(void) NoteRoot(PRUint32 langID, void *child,
                                nsCycleCollectionParticipant* participant);
     NS_IMETHOD_(void) NoteXPCOMChild(nsISupports *child);
     NS_IMETHOD_(void) NoteNativeChild(void *child,
                                      nsCycleCollectionParticipant *participant);
     NS_IMETHOD_(void) NoteScriptChild(PRUint32 langID, void *child);
-#ifdef DEBUG_CC
     NS_IMETHOD_(void) NoteNextEdgeName(const char* name);
-#endif
 };
 
 GCGraphBuilder::GCGraphBuilder(GCGraph &aGraph,
@@ -1286,6 +1331,11 @@ GCGraphBuilder::GCGraphBuilder(GCGraph &aGraph,
     if (!PL_DHashTableInit(&mPtrToNodeMap, &PtrNodeOps, nsnull,
                            sizeof(PtrToNodeEntry), 32768))
         mPtrToNodeMap.ops = nsnull;
+#ifdef DEBUG_CC
+    // Do we need to set these all the time?
+    mFlags |= nsCycleCollectionTraversalCallback::WANT_DEBUG_INFO |
+              nsCycleCollectionTraversalCallback::WANT_ALL_TRACES;
+#endif
 }
 
 GCGraphBuilder::~GCGraphBuilder()
@@ -1300,6 +1350,9 @@ GCGraphBuilder::AddNode(void *s, nsCycleCollectionParticipant *aParticipant
                        )
 {
     PtrToNodeEntry *e = static_cast<PtrToNodeEntry*>(PL_DHashTableOperate(&mPtrToNodeMap, s, PL_DHASH_ADD));
+    if (!e)
+        return nsnull;
+
     PtrInfo *result;
     if (!e->mNode) {
         // New entry.
@@ -1375,12 +1428,8 @@ GCGraphBuilder::NoteRoot(PRUint32 langID, void *root,
 }
 
 NS_IMETHODIMP_(void)
-#ifdef DEBUG_CC
 GCGraphBuilder::DescribeNode(CCNodeType type, nsrefcnt refCount,
                              size_t objSz, const char *objName)
-#else
-GCGraphBuilder::DescribeNode(CCNodeType type, nsrefcnt refCount)
-#endif
 {
 #ifdef DEBUG_CC
     mCurrPi->mBytes = objSz;
@@ -1424,7 +1473,7 @@ GCGraphBuilder::NoteXPCOMChild(nsISupports *child)
             return;
         mEdgeBuilder.Add(childPi);
 #ifdef DEBUG_CC
-        mCurrPi->mEdgeNames.AppendCString(edgeName);
+        mCurrPi->mEdgeNames.AppendElement(edgeName);
 #endif
         ++childPi->mInternalRefs;
     }
@@ -1448,7 +1497,7 @@ GCGraphBuilder::NoteNativeChild(void *child,
         return;
     mEdgeBuilder.Add(childPi);
 #ifdef DEBUG_CC
-    mCurrPi->mEdgeNames.AppendCString(edgeName);
+    mCurrPi->mEdgeNames.AppendElement(edgeName);
 #endif
     ++childPi->mInternalRefs;
 }
@@ -1483,18 +1532,18 @@ GCGraphBuilder::NoteScriptChild(PRUint32 langID, void *child)
         return;
     mEdgeBuilder.Add(childPi);
 #ifdef DEBUG_CC
-    mCurrPi->mEdgeNames.AppendCString(edgeName);
+    mCurrPi->mEdgeNames.AppendElement(edgeName);
 #endif
     ++childPi->mInternalRefs;
 }
 
-#ifdef DEBUG_CC
 NS_IMETHODIMP_(void)
 GCGraphBuilder::NoteNextEdgeName(const char* name)
 {
+#ifdef DEBUG_CC
     mNextEdgeName = name;
-}
 #endif
+}
 
 static PRBool
 AddPurpleRoot(GCGraphBuilder &builder, nsISupports *root)
@@ -1516,6 +1565,33 @@ AddPurpleRoot(GCGraphBuilder &builder, nsISupports *root)
 
     return PR_TRUE;
 }
+
+#ifdef DEBUG_CC
+static PLDHashOperator
+noteAllCallback(nsVoidPtrHashKey* key, void* userArg)
+{
+    GCGraphBuilder *builder = static_cast<GCGraphBuilder*>(userArg);
+    builder->NoteXPCOMRoot(
+      static_cast<nsISupports *>(const_cast<void*>(key->GetKey())));
+    return PL_DHASH_NEXT;
+}
+
+void
+nsPurpleBuffer::NoteAll(GCGraphBuilder &builder)
+{
+    mCompatObjects.EnumerateEntries(noteAllCallback, &builder);
+
+    for (Block *b = &mFirstBlock; b; b = b->mNext) {
+        for (nsPurpleBufferEntry *e = b->mEntries,
+                              *eEnd = e + NS_ARRAY_LENGTH(b->mEntries);
+            e != eEnd; ++e) {
+            if (!(PRUword(e->mObject) & PRUword(1)) && e->mObject) {
+                builder.NoteXPCOMRoot(e->mObject);
+            }
+        }
+    }
+}
+#endif
 
 void 
 nsCycleCollector::SelectPurple(GCGraphBuilder &builder)
@@ -1952,6 +2028,14 @@ nsCycleCollector::RegisterRuntime(PRUint32 langID,
     mRuntimes[langID] = rt;
 }
 
+nsCycleCollectionLanguageRuntime *
+nsCycleCollector::GetRuntime(PRUint32 langID)
+{
+    if (langID > nsIProgrammingLanguage::MAX)
+        return nsnull;
+
+    return mRuntimes[langID];
+}
 
 void 
 nsCycleCollector::ForgetRuntime(PRUint32 langID)
@@ -2131,6 +2215,9 @@ nsCycleCollector_isScanSafe(nsISupports *s)
 PRBool
 nsCycleCollector::Suspect(nsISupports *n)
 {
+    if (!CheckMainThreadIfFast())
+        return PR_FALSE;
+
     // Re-entering ::Suspect during collection used to be a fault, but
     // we are canonicalizing nsISupports pointers using QI, so we will
     // see some spurious refcount traffic here. 
@@ -2140,7 +2227,6 @@ nsCycleCollector::Suspect(nsISupports *n)
 
     NS_ASSERTION(nsCycleCollector_isScanSafe(n),
                  "suspected a non-scansafe pointer");
-    NS_ASSERTION(NS_IsMainThread(), "trying to suspect from non-main thread");
 
     if (mParams.mDoNothing)
         return PR_FALSE;
@@ -2170,6 +2256,13 @@ nsCycleCollector::Suspect(nsISupports *n)
 PRBool
 nsCycleCollector::Forget(nsISupports *n)
 {
+    if (!CheckMainThreadIfFast()) {
+        if (!mParams.mDoNothing) {
+            Fault("Forget called off main thread");
+        }
+        return PR_TRUE; // it's as good as forgotten
+    }
+
     // Re-entering ::Forget during collection used to be a fault, but
     // we are canonicalizing nsISupports pointers using QI, so we will
     // see some spurious refcount traffic here. 
@@ -2177,8 +2270,6 @@ nsCycleCollector::Forget(nsISupports *n)
     if (mScanInProgress)
         return PR_FALSE;
 
-    NS_ASSERTION(NS_IsMainThread(), "trying to forget from non-main thread");
-    
     if (mParams.mDoNothing)
         return PR_TRUE; // it's as good as forgotten
 
@@ -2204,6 +2295,9 @@ nsCycleCollector::Forget(nsISupports *n)
 nsPurpleBufferEntry*
 nsCycleCollector::Suspect2(nsISupports *n)
 {
+    if (!CheckMainThreadIfFast())
+        return nsnull;
+
     // Re-entering ::Suspect during collection used to be a fault, but
     // we are canonicalizing nsISupports pointers using QI, so we will
     // see some spurious refcount traffic here. 
@@ -2213,7 +2307,6 @@ nsCycleCollector::Suspect2(nsISupports *n)
 
     NS_ASSERTION(nsCycleCollector_isScanSafe(n),
                  "suspected a non-scansafe pointer");
-    NS_ASSERTION(NS_IsMainThread(), "trying to suspect from non-main thread");
 
     if (mParams.mDoNothing)
         return nsnull;
@@ -2244,6 +2337,9 @@ nsCycleCollector::Suspect2(nsISupports *n)
 PRBool
 nsCycleCollector::Forget2(nsPurpleBufferEntry *e)
 {
+    if (!CheckMainThreadIfFast())
+        return PR_FALSE;
+
     // Re-entering ::Forget during collection used to be a fault, but
     // we are canonicalizing nsISupports pointers using QI, so we will
     // see some spurious refcount traffic here. 
@@ -2251,8 +2347,6 @@ nsCycleCollector::Forget2(nsPurpleBufferEntry *e)
     if (mScanInProgress)
         return PR_FALSE;
 
-    NS_ASSERTION(NS_IsMainThread(), "trying to forget from non-main thread");
-    
 #ifdef DEBUG_CC
     mStats.mForgetNode++;
 
@@ -2363,6 +2457,8 @@ nsCycleCollector::Collect(PRUint32 aTryCollections)
 #endif
         mWhiteNodes->Clear();
         ClearGraph();
+
+        mParams.mDoNothing = PR_FALSE;
 
         if (!collected)
             break;
@@ -2556,6 +2652,11 @@ nsCycleCollector::Shutdown()
     // Here we want to run a final collection and then permanently
     // disable the collector because the program is shutting down.
 
+    for (PRUint32 i = 0; i <= nsIProgrammingLanguage::MAX; ++i) {
+        if (mRuntimes[i])
+            mRuntimes[i]->CommenceShutdown();
+    }
+
     Collect(SHUTDOWN_COLLECTIONS(mParams));
 
 #ifdef DEBUG_CC
@@ -2636,19 +2737,25 @@ nsCycleCollector::ExplainLiveExpectedGarbage()
     {
         GCGraphBuilder builder(mGraph, mRuntimes);
 
+        // Instead of adding roots from the purple buffer, we add them
+        // from the list of nodes we were expected to collect.
+        // Put the expected garbage in *before* calling
+        // BeginCycleCollection so that we can separate the expected
+        // garbage from the NoteRoot calls in such a way that something
+        // that's in both is considered expected garbage.
+        mExpectedGarbage.EnumerateEntries(&AddExpectedGarbage, &builder);
+
+        PRUint32 expectedGarbageCount = builder.Count();
+
         for (PRUint32 i = 0; i <= nsIProgrammingLanguage::MAX; ++i) {
             if (mRuntimes[i])
                 mRuntimes[i]->BeginCycleCollection(builder);
         }
 
-        // This might fail to explain expected garbage that's also in
-        // the set of roots added by the runtimes (what used to be
-        // called suspectCurrent), but that seems pretty unlikely.
-        PRUint32 suspectCurrentCount = builder.Count();
-
-        // Instead of adding roots from the purple buffer, we add them
-        // from the list of nodes we were expected to collect.
-        mExpectedGarbage.EnumerateEntries(&AddExpectedGarbage, &builder);
+        // But just for extra information, add entries from the purple
+        // buffer too, since it may give us extra information about
+        // traversal deficiencies.
+        mPurpleBuf.NoteAll(builder);
 
         MarkRoots(builder);
         ScanRoots();
@@ -2666,7 +2773,12 @@ nsCycleCollector::ExplainLiveExpectedGarbage()
                     findCycleRoots = PR_TRUE;
                 }
 
-                if (pi->mInternalRefs != pi->mRefCount && i >= suspectCurrentCount) {
+                if (pi->mInternalRefs != pi->mRefCount &&
+                    (i < expectedGarbageCount || i >= mGraph.mRootCount)) {
+                    // This check isn't particularly useful anymore
+                    // given that we need to enter this part for i >=
+                    // mGraph.mRootCount and there are plenty of
+                    // NoteRoot roots.
                     describeExtraRefcounts = PR_TRUE;
                 }
                 ++i;
@@ -2694,7 +2806,7 @@ nsCycleCollector::ExplainLiveExpectedGarbage()
             NodePool::Enumerator etor_roots(mGraph.mNodes);
             for (PRUint32 i = 0; i < mGraph.mRootCount; ++i) {
                 PtrInfo *root_pi = etor_roots.GetNext();
-                if (i >= suspectCurrentCount) {
+                if (i < expectedGarbageCount) {
                     root_pi->mSCCIndex = INDEX_REACHED;
                     root_pi->mShortestPathToExpectedGarbage = root_pi;
                     queue.Push(root_pi);
@@ -2846,14 +2958,25 @@ nsCycleCollector::ExplainLiveExpectedGarbage()
                     while (!queue.IsDone()) {
                         PtrInfo *pi = queue.GetNext();
                         if (pi->mColor == white) {
-                            printf("nsCycleCollector: %s %p in component %d\n"
-                                   "  was not collected due to missing call to "
-                                   "suspect, failure to unlink,\n"
-                                   "  or deficiency in traverse that causes "
-                                   "cycles referenced only from other\n"
-                                   "  cycles to require multiple rounds of cycle "
-                                   "collection\n",
-                                   pi->mName, pi->mPointer, pi->mSCCIndex);
+                            if (pi->mLangID ==
+                                    nsIProgrammingLanguage::CPLUSPLUS &&
+                                mPurpleBuf.Exists(pi->mPointer)) {
+                                printf(
+"nsCycleCollector: %s %p in component %d\n"
+"  which was reference counted during the root/unlink/unroot phase of the\n"
+"  last collection was not collected due to failure to unlink (see other\n"
+"  warnings) or deficiency in traverse that causes cycles referenced only\n"
+"  from other cycles to require multiple rounds of cycle collection in which\n"
+"  this object was likely the reachable object\n",
+                                       pi->mName, pi->mPointer, pi->mSCCIndex);
+                            } else {
+                                printf(
+"nsCycleCollector: %s %p in component %d\n"
+"  was not collected due to missing call to suspect, failure to unlink (see\n"
+"  other warnings), or deficiency in traverse that causes cycles referenced\n"
+"  only from other cycles to require multiple rounds of cycle collection\n",
+                                       pi->mName, pi->mPointer, pi->mSCCIndex);
+                            }
                             if (pi->mShortestPathToExpectedGarbage)
                                 PrintPathToExpectedGarbage(pi);
                         }
@@ -2904,7 +3027,7 @@ nsCycleCollector::CreateReversedEdges()
         for (EdgePool::Iterator e = pi->mFirstChild, e_end = pi->mLastChild;
              e != e_end; ++e) {
             current->mTarget = pi;
-            current->mEdgeName = pi->mEdgeNames.CStringAt(i);
+            current->mEdgeName = &pi->mEdgeNames[i];
             current->mNext = (*e)->mReversedEdges;
             (*e)->mReversedEdges = current;
             ++current;
@@ -2955,6 +3078,13 @@ nsCycleCollector_registerRuntime(PRUint32 langID,
         sCollector->RegisterRuntime(langID, rt);
 }
 
+nsCycleCollectionLanguageRuntime *
+nsCycleCollector_getRuntime(PRUint32 langID)
+{
+    if (sCollector)
+        sCollector->GetRuntime(langID);
+    return nsnull;
+}
 
 void 
 nsCycleCollector_forgetRuntime(PRUint32 langID)

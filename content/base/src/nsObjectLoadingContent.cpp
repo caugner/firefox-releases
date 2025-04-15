@@ -52,6 +52,7 @@
 #include "nsIObjectFrame.h"
 #include "nsIPluginDocument.h"
 #include "nsIPluginHost.h"
+#include "nsIPluginInstance.h"
 #include "nsIPresShell.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptSecurityManager.h"
@@ -61,6 +62,7 @@
 #include "nsIWebNavigation.h"
 #include "nsIWebNavigationInfo.h"
 #include "nsIScriptChannel.h"
+#include "nsIBlocklistService.h"
 
 #include "nsPluginError.h"
 
@@ -84,8 +86,6 @@
 
 #include "nsObjectLoadingContent.h"
 #include "mozAutoDocUpdate.h"
-
-static NS_DEFINE_CID(kCPluginManagerCID, NS_PLUGINMANAGER_CID);
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gObjectLog = PR_NewLogModule("objlc");
@@ -137,7 +137,7 @@ nsAsyncInstantiateEvent::Run()
 
   nsIFrame* objectFrame = nsnull;
   if (frame) {
-    CallQueryInterface(frame, &objectFrame);
+    objectFrame = do_QueryFrame(frame);
   }
 
   if (objectFrame &&
@@ -197,6 +197,9 @@ nsPluginErrorEvent::Run()
       break;
     case ePluginBlocklisted:
       type = NS_LITERAL_STRING("PluginBlocklisted");
+      break;
+    case ePluginOutdated:
+      type = NS_LITERAL_STRING("PluginOutdated");
       break;
     default:
       return NS_OK;
@@ -301,7 +304,7 @@ IsSupportedImage(const nsCString& aMimeType)
 static PRBool
 IsSupportedPlugin(const nsCString& aMIMEType)
 {
-  nsCOMPtr<nsIPluginHost> host(do_GetService("@mozilla.org/plugin/host;1"));
+  nsCOMPtr<nsIPluginHost> host(do_GetService(MOZ_PLUGIN_HOST_CONTRACTID));
   if (!host) {
     return PR_FALSE;
   }
@@ -339,7 +342,7 @@ IsPluginEnabledByExtension(nsIURI* uri, nsCString& mimeType)
   if (ext.IsEmpty())
     return PR_FALSE;
 
-  nsCOMPtr<nsIPluginHost> host(do_GetService("@mozilla.org/plugin/host;1"));
+  nsCOMPtr<nsIPluginHost> host(do_GetService(MOZ_PLUGIN_HOST_CONTRACTID));
   const char* typeFromExt;
   if (host &&
       NS_SUCCEEDED(host->IsPluginEnabledForExtension(ext.get(), typeFromExt))) {
@@ -411,11 +414,15 @@ nsObjectLoadingContent::OnStartRequest(nsIRequest *aRequest,
   // true:
   //
   // 1) The channel type is application/octet-stream and we have a
-  //    type hint
+  //    type hint and the type hint is not a document type.
   // 2) Our type hint is a type that we support with a plugin.
 
   if ((channelType.EqualsASCII(APPLICATION_OCTET_STREAM) && 
-       !mContentType.IsEmpty()) ||
+       !mContentType.IsEmpty() &&
+       GetTypeOfContent(mContentType) != eType_Document) ||
+      // Need to check IsSupportedPlugin() in addition to GetTypeOfContent()
+      // because otherwise the default plug-in's catch-all behavior would
+      // confuse things.
       (IsSupportedPlugin(mContentType) && 
        GetTypeOfContent(mContentType) == eType_Plugin)) {
     // Set the type we'll use for dispatch on the channel.  Otherwise we could
@@ -505,14 +512,10 @@ nsObjectLoadingContent::OnStartRequest(nsIRequest *aRequest,
       break;
     case eType_Document: {
       if (!mFrameLoader) {
-        if (!thisContent->IsInDoc()) {
-          // XXX frameloaders can't deal with not being in a document
+        mFrameLoader = nsFrameLoader::Create(thisContent);
+        if (!mFrameLoader) {
           Fallback(PR_FALSE);
           return NS_ERROR_UNEXPECTED;
-        }
-        mFrameLoader = new nsFrameLoader(thisContent);
-        if (!mFrameLoader) {
-          return NS_ERROR_OUT_OF_MEMORY;
         }
       }
 
@@ -527,6 +530,13 @@ nsObjectLoadingContent::OnStartRequest(nsIRequest *aRequest,
         // bug 300540; when that's fixed, this if statement can be removed.
         mType = newType;
         notifier.Notify();
+
+        if (!mFrameLoader) {
+          // mFrameLoader got nulled out when we notified, which most
+          // likely means the node was removed from the
+          // document. Abort the load that just started.
+          return NS_BINDING_ABORTED;
+        }
       }
 
       // We're loading a document, so we have to set LOAD_DOCUMENT_URI
@@ -568,8 +578,7 @@ nsObjectLoadingContent::OnStartRequest(nsIRequest *aRequest,
       }
 
       {
-        nsIFrame *nsiframe;
-        CallQueryInterface(frame, &nsiframe);
+        nsIFrame *nsiframe = do_QueryFrame(frame);
 
         nsWeakFrame weakFrame(nsiframe);
 
@@ -758,12 +767,11 @@ nsObjectLoadingContent::EnsureInstantiation(nsIPluginInstance** aInstance)
     }
   }
 
-  nsIFrame *nsiframe;
-  CallQueryInterface(frame, &nsiframe);
+  nsIFrame *nsiframe = do_QueryFrame(frame);
 
   if (nsiframe->GetStateBits() & NS_FRAME_FIRST_REFLOW) {
     // A frame for this plugin element already exists now, but it has
-    // not been reflown yet. Force a reflow now so that we don't end
+    // not been reflowed yet. Force a reflow now so that we don't end
     // up initializing a plugin before knowing its size. Also re-fetch
     // the frame, as flushing can cause the frame to be deleted.
     frame = GetExistingFrame(eFlushLayout);
@@ -772,7 +780,7 @@ nsObjectLoadingContent::EnsureInstantiation(nsIPluginInstance** aInstance)
       return NS_OK;
     }
 
-    CallQueryInterface(frame, &nsiframe);
+    nsiframe = do_QueryFrame(frame);
   }
 
   nsWeakFrame weakFrame(nsiframe);
@@ -827,8 +835,7 @@ nsObjectLoadingContent::HasNewFrame(nsIObjectFrame* aFrame)
       }
     }
 
-    nsIFrame* frame = nsnull;
-    CallQueryInterface(aFrame, &frame);
+    nsIFrame* frame = do_QueryFrame(aFrame);
     nsCOMPtr<nsIRunnable> event =
       new nsAsyncInstantiateEvent(this, frame, mContentType, mURI);
     if (!event) {
@@ -879,7 +886,6 @@ nsObjectLoadingContent::GetInterface(const nsIID & aIID, void **aResult)
     NS_ADDREF(sink);
     return NS_OK;
   }
-
   return NS_NOINTERFACE;
 }
 
@@ -1147,15 +1153,10 @@ nsObjectLoadingContent::LoadObject(nsIURI* aURI,
       // Must have a frameloader before creating a frame, or the frame will
       // create its own.
       if (!mFrameLoader && newType == eType_Document) {
-        if (!thisContent->IsInDoc()) {
-          // XXX frameloaders can't deal with not being in a document
+        mFrameLoader = nsFrameLoader::Create(thisContent);
+        if (!mFrameLoader) {
           mURI = nsnull;
           return NS_OK;
-        }
-
-        mFrameLoader = new nsFrameLoader(thisContent);
-        if (!mFrameLoader) {
-          return NS_ERROR_OUT_OF_MEMORY;
         }
       }
 
@@ -1587,7 +1588,7 @@ nsObjectLoadingContent::TypeForClassID(const nsAString& aClassID,
                                        nsACString& aType)
 {
   // Need a plugin host for any class id support
-  nsCOMPtr<nsIPluginHost> pluginHost(do_GetService(kCPluginManagerCID));
+  nsCOMPtr<nsIPluginHost> pluginHost(do_GetService(MOZ_PLUGIN_HOST_CONTRACTID));
   if (!pluginHost) {
     return NS_ERROR_NOT_AVAILABLE;
   }
@@ -1674,8 +1675,7 @@ nsObjectLoadingContent::GetExistingFrame(FlushType aFlushType)
     aFlushType = eDontFlush;
   } while (1);
 
-  nsIObjectFrame* objFrame;
-  CallQueryInterface(frame, &objFrame);
+  nsIObjectFrame* objFrame = do_QueryFrame(frame);
   return objFrame;
 }
 
@@ -1711,16 +1711,15 @@ nsObjectLoadingContent::TryInstantiate(const nsACString& aMIMEType,
 
   if (!instance) {
     // The frame has no plugin instance yet. If the frame hasn't been
-    // reflown yet, do nothing as once the reflow happens we'll end up
+    // reflowed yet, do nothing as once the reflow happens we'll end up
     // instantiating the plugin with the correct size n' all (which
     // isn't known until we've done the first reflow). But if the
     // frame does have a plugin instance already, be sure to
     // re-instantiate the plugin as its source or whatnot might have
     // chanced since it was instantiated.
-    nsIFrame* iframe;
-    CallQueryInterface(frame, &iframe);
+    nsIFrame* iframe = do_QueryFrame(frame);
     if (iframe->GetStateBits() & NS_FRAME_FIRST_REFLOW) {
-      LOG(("OBJLC [%p]: Frame hasn't been reflown yet\n", this));
+      LOG(("OBJLC [%p]: Frame hasn't been reflowed yet\n", this));
       return NS_OK; // Not a failure to have no frame
     }
   }
@@ -1749,17 +1748,20 @@ nsObjectLoadingContent::Instantiate(nsIObjectFrame* aFrame,
     IsPluginEnabledByExtension(aURI, typeToUse);
   }
 
+  nsCOMPtr<nsIContent> thisContent = 
+    do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
+  NS_ASSERTION(thisContent, "must be a content");
+  
   nsCOMPtr<nsIURI> baseURI;
   if (!aURI) {
     // We need some URI. If we have nothing else, use the base URI.
     // XXX(biesi): The code used to do this. Not sure why this is correct...
-    nsCOMPtr<nsIContent> thisContent = 
-      do_QueryInterface(static_cast<nsIImageLoadingContent*>(this));
-    NS_ASSERTION(thisContent, "must be a content");
-
     GetObjectBaseURI(thisContent, getter_AddRefs(baseURI));
     aURI = baseURI;
   }
+
+  nsIFrame *nsiframe = do_QueryFrame(aFrame);
+  nsWeakFrame weakFrame(nsiframe);
 
   // We'll always have a type or a URI by the time we get here
   NS_ASSERTION(aURI || !typeToUse.IsEmpty(), "Need a URI or a type");
@@ -1768,6 +1770,26 @@ nsObjectLoadingContent::Instantiate(nsIObjectFrame* aFrame,
   nsresult rv = aFrame->Instantiate(typeToUse.get(), aURI);
 
   mInstantiating = oldInstantiatingValue;
+
+  nsCOMPtr<nsIPluginInstance> pluginInstance;
+  if (weakFrame.IsAlive()) {
+    aFrame->GetPluginInstance(*getter_AddRefs(pluginInstance));
+  }
+  if (pluginInstance) {
+    nsCOMPtr<nsIPluginTag> pluginTag;
+    nsCOMPtr<nsIPluginHost> host(do_GetService(MOZ_PLUGIN_HOST_CONTRACTID));
+    host->GetPluginTagForInstance(pluginInstance, getter_AddRefs(pluginTag));
+
+    nsCOMPtr<nsIBlocklistService> blocklist =
+      do_GetService("@mozilla.org/extensions/blocklist;1");
+    if (blocklist) {
+      PRUint32 blockState = nsIBlocklistService::STATE_NOT_BLOCKED;
+      blocklist->GetPluginBlocklistState(pluginTag, EmptyString(),
+                                         EmptyString(), &blockState);
+      if (blockState == nsIBlocklistService::STATE_OUTDATED)
+        FirePluginError(thisContent, ePluginOutdated);
+    }
+  }
 
   return rv;
 }
@@ -1839,7 +1861,7 @@ nsObjectLoadingContent::GetPluginSupportState(nsIContent* aContent,
 /* static */ PluginSupportState
 nsObjectLoadingContent::GetPluginDisabledState(const nsCString& aContentType)
 {
-  nsCOMPtr<nsIPluginHost> host(do_GetService("@mozilla.org/plugin/host;1"));
+  nsCOMPtr<nsIPluginHost> host(do_GetService(MOZ_PLUGIN_HOST_CONTRACTID));
   if (!host) {
     return ePluginUnsupported;
   }
@@ -1850,3 +1872,17 @@ nsObjectLoadingContent::GetPluginDisabledState(const nsCString& aContentType)
     return ePluginBlocklisted;
   return ePluginUnsupported;
 }
+
+NS_IMETHODIMP
+nsObjectLoadingContent::SetAbsoluteScreenPosition(nsIDOMElement* element,
+                                                  nsIDOMClientRect* position,
+                                                  nsIDOMClientRect* clip)
+{
+  nsIObjectFrame* frame = GetExistingFrame(eFlushLayout);
+  if (!frame)
+    return NS_ERROR_NOT_AVAILABLE;
+
+  return frame->SetAbsoluteScreenPosition(element, position, clip);
+}
+
+

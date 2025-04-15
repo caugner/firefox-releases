@@ -41,6 +41,14 @@
 // and because they're constants it's not safe to redefine them.  Scope leakage
 // sucks.
 
+// Disable automatic network detection, so tests work correctly when
+// not connected to a network.
+let (ios = Cc["@mozilla.org/network/io-service;1"]
+           .getService(Ci.nsIIOService2)) {
+  ios.manageOfflineStatus = false;
+  ios.offline = false;
+}
+
 const SERVER_PORT = 8888;
 var server; // for use in the shutdown handler, if necessary
 
@@ -192,6 +200,9 @@ function createMochitestServer(serverBasePath)
   server.registerPathHandler("/server/shutdown", serverShutdown);
   server.registerContentType("sjs", "sjs"); // .sjs == CGI-like functionality
   server.registerContentType("jar", "application/x-jar");
+  server.registerContentType("ogg", "application/ogg");
+  server.registerContentType("ogv", "video/ogg");
+  server.registerContentType("oga", "audio/ogg");
   server.setIndexHandler(defaultDirHandler);
 
   processLocations(server);

@@ -49,6 +49,7 @@
 #include "nsIJSContextStack.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsICryptoHash.h"
+#include "nsIX509Cert.h"
 
 //
 // nsXPITriggerItem
@@ -118,16 +119,6 @@ nsXPITriggerItem::~nsXPITriggerItem()
     MOZ_COUNT_DTOR(nsXPITriggerItem);
 }
 
-PRBool nsXPITriggerItem::IsRelativeURL()
-{
-    PRInt32 cpos = mURL.FindChar(':');
-    if (cpos == kNotFound)
-        return PR_TRUE;
-
-    PRInt32 spos = mURL.FindChar('/');
-    return (cpos > spos);
-}
-
 const PRUnichar*
 nsXPITriggerItem::GetSafeURLString()
 {
@@ -163,10 +154,17 @@ nsXPITriggerItem::SetPrincipal(nsIPrincipal* aPrincipal)
     PRBool hasCert;
     aPrincipal->GetHasCertificate(&hasCert);
     if (hasCert) {
+        nsCOMPtr<nsISupports> certificate;
+        aPrincipal->GetCertificate(getter_AddRefs(certificate));
+
+        nsCOMPtr<nsIX509Cert> x509 = do_QueryInterface(certificate);
+        if (x509) {
+            x509->GetCommonName(mCertName);
+            if (mCertName.Length() > 0)
+                return;
+        }
+
         nsCAutoString prettyName;
-        // XXXbz should this really be using the prettyName?  Perhaps
-        // it wants to get the subjectName or nsIX509Cert and display
-        // it sanely?
         aPrincipal->GetPrettyName(prettyName);
         CopyUTF8toUTF16(prettyName, mCertName);
     }
@@ -353,7 +351,7 @@ void nsXPITriggerInfo::SendStatus(const PRUnichar* URL, PRInt32 status)
         if ( NS_FAILED( rv ) )
         {
             // couldn't get event queue -- maybe window is gone or
-            // some similarly catastrophic occurrance
+            // some similarly catastrophic occurrence
             NS_WARNING("failed to dispatch XPITriggerEvent");
         }
     }

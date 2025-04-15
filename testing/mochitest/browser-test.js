@@ -31,8 +31,22 @@ function Tester(aTests, aDumper, aCallback) {
   this.dumper = aDumper;
   this.tests = aTests;
   this.callback = aCallback;
+  this._cs = Cc["@mozilla.org/consoleservice;1"].
+             getService(Ci.nsIConsoleService);
+
+  var scriptLoader = Cc["@mozilla.org/moz/jssubscript-loader;1"].
+                     getService(Ci.mozIJSSubScriptLoader);
+  scriptLoader.loadSubScript("chrome://mochikit/content/tests/SimpleTest/EventUtils.js", this.EventUtils);
+  // Avoid polluting this scope with packed.js contents.
+  var simpleTestScope = {};
+  scriptLoader.loadSubScript("chrome://mochikit/content/MochiKit/packed.js", simpleTestScope);
+  scriptLoader.loadSubScript("chrome://mochikit/content/tests/SimpleTest/SimpleTest.js", simpleTestScope);
+  this.SimpleTest = simpleTestScope.SimpleTest;
 }
 Tester.prototype = {
+  EventUtils: {},
+  SimpleTest: {},
+
   checker: null,
   currentTestIndex: -1,
   get currentTest() {
@@ -47,6 +61,7 @@ Tester.prototype = {
 
   start: function Tester_start() {
     this.dumper.dump("*** Start BrowserChrome Test Results ***\n");
+    this._cs.registerListener(this);
 
     if (this.tests.length)
       this.execTest();
@@ -55,15 +70,19 @@ Tester.prototype = {
   },
 
   finish: function Tester_finish(aSkipSummary) {
+    this._cs.unregisterListener(this);
+
     if (this.tests.length) {
       this.dumper.dump("\nBrowser Chrome Test Summary\n");
-  
+
       function sum(a,b) a+b;
       var passCount = this.tests.map(function (f) f.passCount).reduce(sum);
       var failCount = this.tests.map(function (f) f.failCount).reduce(sum);
       var todoCount = this.tests.map(function (f) f.todoCount).reduce(sum);
-  
-      this.dumper.dump("\tPass: " + passCount + "\n\tFail: " + failCount + "\n\tTodo: " + todoCount + "\n");  
+
+      this.dumper.dump("\tPassed: " + passCount + "\n" +
+                       "\tFailed: " + failCount + "\n" +
+                       "\tTodo: " + todoCount + "\n");
     } else {
       this.dumper.dump("TEST-UNEXPECTED-FAIL | (browser-test.js) | " +
                        "No tests to run. Did you pass an invalid --test-path?");
@@ -79,9 +98,29 @@ Tester.prototype = {
     this.tests = null;
   },
 
+  observe: function Tester_observe(aConsoleMessage) {
+    var msg = "Console message: " + aConsoleMessage.message;
+    this.currentTest.addResult(new testMessage(msg));
+  },
+
   execTest: function Tester_execTest() {
     if (this.done) {
       this.finish();
+      return;
+    }
+
+    // Make sure the window is raised before each test.
+    let fm = Cc["@mozilla.org/focus-manager;1"].getService(Ci.nsIFocusManager);
+    if (fm.activeWindow != window) {
+      this.dumper.dump("Waiting for window activation...\n");
+      let self = this;
+      window.addEventListener("activate", function () {
+        window.removeEventListener("activate", arguments.callee, false);
+        setTimeout(function () {
+          self.execTest();
+        }, 0);
+      }, false);
+      window.focus();
       return;
     }
 
@@ -92,6 +131,10 @@ Tester.prototype = {
 
     // Load the tests into a testscope
     this.currentTest.scope = new testScope(this, this.currentTest);
+
+    // Import utils in the test scope.
+    this.currentTest.scope.EventUtils = this.EventUtils;
+    this.currentTest.scope.SimpleTest = this.SimpleTest;
 
     var scriptLoader = Cc["@mozilla.org/moz/jssubscript-loader;1"].
                        getService(Ci.mozIJSSubScriptLoader);
@@ -118,23 +161,37 @@ Tester.prototype = {
         self.execTest();
       }, TIMEOUT_SECONDS * 1000);
     }
+  },
+
+  QueryInterface: function(aIID) {
+    if (aIID.equals(Ci.nsIConsoleListener) ||
+        aIID.equals(Ci.nsISupports))
+      return this;
+
+    throw Components.results.NS_ERROR_NO_INTERFACE;
   }
 };
 
 function testResult(aCondition, aName, aDiag, aIsTodo) {
-  aName = aName || "";
+  this.msg = aName || "";
 
+  this.info = false;
   this.pass = !!aCondition;
   this.todo = aIsTodo;
-  this.msg = aName;
+
   if (this.pass) {
     if (aIsTodo)
       this.result = "TEST-KNOWN-FAIL";
     else
       this.result = "TEST-PASS";
   } else {
-    if (aDiag)
+    if (aDiag) {
+      if (typeof aDiag == "object" && "fileName" in aDiag) {
+        // we have an exception - print filename and linenumber information
+        this.msg += " at " + aDiag.fileName + ":" + aDiag.lineNumber;
+      }
       this.msg += " - " + aDiag;
+    }
     if (aIsTodo)
       this.result = "TEST-UNEXPECTED-PASS";
     else
@@ -142,13 +199,15 @@ function testResult(aCondition, aName, aDiag, aIsTodo) {
   }
 }
 
+function testMessage(aName) {
+  this.msg = aName || "";
+  this.info = true;
+  this.result = "TEST-INFO";
+}
+
 // Need to be careful adding properties to this object, since its properties
 // cannot conflict with global variables used in tests.
 function testScope(aTester, aTest) {
-  var scriptLoader = Cc["@mozilla.org/moz/jssubscript-loader;1"].
-                     getService(Ci.mozIJSSubScriptLoader);
-  scriptLoader.loadSubScript("chrome://mochikit/content/tests/SimpleTest/EventUtils.js", this.EventUtils);
-
   this.__tester = aTester;
   this.__browserTest = aTest;
 
@@ -171,6 +230,9 @@ function testScope(aTester, aTest) {
   this.todo_isnot = function test_todo_isnot(a, b, name) {
     self.todo(a != b, name, "Didn't expect " + a + ", but got it");
   };
+  this.info = function test_info(name) {
+    self.__browserTest.addResult(new testMessage(name));
+  };
 
   this.executeSoon = function test_executeSoon(func) {
     let tm = Cc["@mozilla.org/thread-manager;1"].getService(Ci.nsIThreadManager);
@@ -184,6 +246,10 @@ function testScope(aTester, aTest) {
 
   this.waitForExplicitFinish = function test_WFEF() {
     self.__done = false;
+  };
+
+  this.waitForFocus = function (callback, targetWindow) {
+    self.SimpleTest.waitForFocus(callback, targetWindow);
   };
 
   this.finish = function test_finish() {
@@ -203,5 +269,6 @@ testScope.prototype = {
   __done: true,
   __waitTimer: null,
 
-  EventUtils: {}
+  EventUtils: {},
+  SimpleTest: {}
 };

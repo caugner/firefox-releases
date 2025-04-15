@@ -44,6 +44,11 @@ relativesrcdir = build/pgo
 
 include $(DEPTH)/config/autoconf.mk
 
+DIRS = \
+  blueprint \
+  js-input \
+  $(NULL)
+
 include $(topsrcdir)/config/rules.mk
 
 # We install to _profile/pgo
@@ -53,13 +58,14 @@ include $(topsrcdir)/build/automation-build.mk
 # Stuff to make a build with a profile
 
 _PGO_FILES = 	\
-		automation.py \
-		profileserver.py \
-		genpgocert.py \
-		index.html \
-		quit.js \
-		server-locations.txt \
-		$(NULL)
+  automation.py \
+  $(CURDIR)/automationutils.py \
+  profileserver.py \
+  genpgocert.py \
+  index.html \
+  server-locations.txt \
+  favicon.ico \
+  $(NULL)
 
 genpgocert.py: genpgocert.py.in
 	$(PYTHON) $(topsrcdir)/config/Preprocessor.py \
@@ -69,7 +75,7 @@ profileserver.py: profileserver.py.in
 	$(PYTHON) $(topsrcdir)/config/Preprocessor.py $^ > $@
 	chmod +x $@
 
-GARBAGE += automation.py profileserver.py genpgocert.py
+GARBAGE += profileserver.py genpgocert.py
 
 libs:: $(_PGO_FILES)
 	$(INSTALL) $^ $(_PROFILE_DIR)

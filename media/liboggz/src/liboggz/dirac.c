@@ -2,11 +2,7 @@
   dirac.c
 */
 
-#ifdef WIN32
-#include "config_win32.h"
-#else
 #include "config.h"
-#endif
 
 #ifdef HAVE_STDINT_H
 #include <stdint.h>
@@ -113,7 +109,7 @@ dirac_bool ( dirac_bs_t *p_bs )
   return dirac_bs_read ( p_bs, 1 );
 }
 
-void
+int
 dirac_parse_info (dirac_info *info, unsigned char * data, long len)
 {
   dirac_bs_t bs;
@@ -156,6 +152,10 @@ dirac_parse_info (dirac_info *info, unsigned char * data, long len)
   info->level = dirac_uint( &bs ); /* level */
   info->video_format = video_format = dirac_uint( &bs ); /* index */
 
+  if (video_format >= (sizeof(dirac_fsize_tbl) / sizeof(dirac_fsize_tbl[0]))) {
+    return -1; 
+  }
+
   info->width = dirac_fsize_tbl[video_format].width;
   info->height = dirac_fsize_tbl[video_format].height;
   if (dirac_bool( &bs )) {
@@ -191,4 +191,6 @@ dirac_parse_info (dirac_info *info, unsigned char * data, long len)
       info->fps_denominator = dirac_uint( &bs );
     }
   }
+
+  return 0;
 }

@@ -25,7 +25,7 @@
 #include <assert.h>
 #include "qcmsint.h"
 
-#if defined(_M_IX86) || defined(__i386__)
+#if defined(_M_IX86) || defined(__i386__) || defined(__x86_64__) || defined(_M_AMD64)
 #define X86
 #endif
 
@@ -547,17 +547,30 @@ qcms_bool set_rgb_colorants(qcms_profile *profile, qcms_CIE_xyY white_point, qcm
 	return true;
 }
 
-static uint16_t *invert_lut(uint16_t *table, int length)
+/*
+ The number of entries needed to invert a lookup table should not
+ necessarily be the same as the original number of entries.  This is
+ especially true of lookup tables that have a small number of entries.
+
+ For example:
+ Using a table like:
+    {0, 3104, 14263, 34802, 65535}
+ invert_lut will produce an inverse of:
+    {3, 34459, 47529, 56801, 65535}
+ which has an maximum error of about 9855 (pixel difference of ~38.346)
+
+ For now, we punt the decision of output size to the caller. */
+static uint16_t *invert_lut(uint16_t *table, int length, int out_length)
 {
 	int i;
-	/* for now we invert the lut by creating a lut of the same size
+	/* for now we invert the lut by creating a lut of size out_length
 	 * and attempting to lookup a value for each entry using lut_inverse_interp16 */
-	uint16_t *output = malloc(sizeof(uint16_t)*length);
+	uint16_t *output = malloc(sizeof(uint16_t)*out_length);
 	if (!output)
 		return NULL;
 
-	for (i = 0; i < length; i++) {
-		double x = ((double) i * 65535.) / (double) (length - 1);
+	for (i = 0; i < out_length; i++) {
+		double x = ((double) i * 65535.) / (double) (out_length - 1);
 		uint16_fract_t input = floor(x + .5);
 		output[i] = lut_inverse_interp16(input, table, length);
 	}
@@ -638,7 +651,7 @@ static void qcms_transform_data_rgb_out_pow(qcms_transform *transform, unsigned 
 
 static void qcms_transform_data_gray_out_lut(qcms_transform *transform, unsigned char *src, unsigned char *dest, size_t length)
 {
-	int i;
+	unsigned int i;
 	for (i = 0; i < length; i++) {
 		float out_device_r, out_device_g, out_device_b;
 		unsigned char device = *src++;
@@ -655,9 +668,15 @@ static void qcms_transform_data_gray_out_lut(qcms_transform *transform, unsigned
 	}
 }
 
+/* Alpha is not corrected.
+   A rationale for this is found in Alvy Ray's "Should Alpha Be Nonlinear If
+   RGB Is?" Tech Memo 17 (December 14, 1998).
+	See: ftp://ftp.alvyray.com/Acrobat/17_Nonln.pdf
+*/
+
 static void qcms_transform_data_graya_out_lut(qcms_transform *transform, unsigned char *src, unsigned char *dest, size_t length)
 {
-	int i;
+	unsigned int i;
 	for (i = 0; i < length; i++) {
 		float out_device_r, out_device_g, out_device_b;
 		unsigned char device = *src++;
@@ -679,7 +698,7 @@ static void qcms_transform_data_graya_out_lut(qcms_transform *transform, unsigne
 
 static void qcms_transform_data_gray_out_precache(qcms_transform *transform, unsigned char *src, unsigned char *dest, size_t length)
 {
-	int i;
+	unsigned int i;
 	for (i = 0; i < length; i++) {
 		unsigned char device = *src++;
 		uint16_t gray;
@@ -697,7 +716,7 @@ static void qcms_transform_data_gray_out_precache(qcms_transform *transform, uns
 
 static void qcms_transform_data_graya_out_precache(qcms_transform *transform, unsigned char *src, unsigned char *dest, size_t length)
 {
-	int i;
+	unsigned int i;
 	for (i = 0; i < length; i++) {
 		unsigned char device = *src++;
 		unsigned char alpha = *src++;
@@ -780,9 +799,14 @@ void qcms_transform_data_rgb_out_lut_sse_intrin(qcms_transform *transform, unsig
 	}
 }
 #endif
+
+#if defined(_MSC_VER) && defined(_M_AMD64)
+#include <emmintrin.h>
+#endif
+
 static void qcms_transform_data_rgb_out_lut_sse(qcms_transform *transform, unsigned char *src, unsigned char *dest, size_t length)
 {
-	int i;
+	unsigned int i;
 	float (*mat)[4] = transform->matrix;
         char input_back[32];
 	/* Ensure we have a buffer that's 16 byte aligned regardless of the original
@@ -793,6 +817,8 @@ static void qcms_transform_data_rgb_out_lut_sse(qcms_transform *transform, unsig
         /* share input and output locations to save having to keep the
          * locations in separate registers */
         uint32_t* output = (uint32_t*)input;
+
+        input[3] = 0; /* initialize the unused 4th element of the input array */
 	for (i = 0; i < length; i++) {
 		const float *clampMax = &clampMaxValue;
 
@@ -847,7 +873,7 @@ static void qcms_transform_data_rgb_out_lut_sse(qcms_transform *transform, unsig
                         , "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7"
 #endif
                       );
-#else
+#elif defined(_MSC_VER) && defined(_M_IX86)
                 __asm {
                       mov      eax, mat
                       mov      ecx, clampMax
@@ -883,6 +909,33 @@ static void qcms_transform_data_rgb_out_lut_sse(qcms_transform *transform, unsig
                       cvtps2dq xmm1, xmm1
                       movdqa   [ebx], xmm1
                 }
+#elif defined(_MSC_VER) && defined(_M_AMD64)
+                {
+                        __m128 xmm0, xmm1, xmm2, xmm3, xmm5, xmm6, xmm7;
+
+                        xmm1 = _mm_load_ps((__m128*)mat);
+                        xmm2 = _mm_load_ps(((__m128*)mat) + 1);
+                        xmm3 = _mm_load_ps(((__m128*)mat) + 2);
+                        xmm0 = _mm_load_ps((__m128*)input);
+
+                        xmm1 = _mm_mul_ps(xmm1, _mm_shuffle_ps(xmm0, xmm0, _MM_SHUFFLE(0,0,0,0)));
+                        xmm2 = _mm_mul_ps(xmm2, _mm_shuffle_ps(xmm0, xmm0, _MM_SHUFFLE(1,1,1,1)));
+                        xmm3 = _mm_mul_ps(xmm3, _mm_shuffle_ps(xmm0, xmm0, _MM_SHUFFLE(2,2,2,2)));
+
+                        xmm1 = _mm_add_ps(xmm1, _mm_add_ps(xmm2, xmm3));
+
+                        xmm7 = _mm_load_ss(clampMax);
+                        xmm7 = _mm_shuffle_ps(xmm7, xmm7, _MM_SHUFFLE(0,0,0,0));
+                        xmm1 = _mm_min_ps(xmm1, xmm7);
+                        xmm6 = _mm_xor_ps(xmm6, xmm6);
+                        xmm1 = _mm_max_ps(xmm1, xmm6);
+                        xmm5 = _mm_load_ss(&floatScale);
+                        xmm5 = _mm_shuffle_ps(xmm5, xmm5, _MM_SHUFFLE(0,0,0,0));
+                        xmm1 = _mm_mul_ps(xmm1, xmm5);
+                        _mm_store_si128((__m128i*)input, _mm_cvtps_epi32(xmm1));
+                }
+#else
+#error "Unknown platform"
 #endif
 
 		*dest++ = transform->output_table_r->data[output[0]];
@@ -893,7 +946,7 @@ static void qcms_transform_data_rgb_out_lut_sse(qcms_transform *transform, unsig
 
 static void qcms_transform_data_rgba_out_lut_sse(qcms_transform *transform, unsigned char *src, unsigned char *dest, size_t length)
 {
-	int i;
+	unsigned int i;
 	float (*mat)[4] = transform->matrix;
         char input_back[32];
 	/* align input on 16 byte boundary */
@@ -956,7 +1009,7 @@ static void qcms_transform_data_rgba_out_lut_sse(qcms_transform *transform, unsi
                         , "%xmm0", "%xmm1", "%xmm2", "%xmm3", "%xmm4", "%xmm5", "%xmm6", "%xmm7"
 #endif
                       );
-#else
+#elif defined(_MSC_VER) && defined(_M_IX86)
                 __asm {
                       mov      eax, mat
                       mov      ecx, clampMax
@@ -992,6 +1045,33 @@ static void qcms_transform_data_rgba_out_lut_sse(qcms_transform *transform, unsi
                       cvtps2dq xmm1, xmm1
                       movdqa   [ebx], xmm1
                 }
+#elif defined(_MSC_VER) && defined(_M_AMD64)
+                {
+                        __m128 xmm0, xmm1, xmm2, xmm3, xmm5, xmm6, xmm7;
+
+                        xmm1 = _mm_load_ps((__m128*)mat);
+                        xmm2 = _mm_load_ps(((__m128*)mat) + 1);
+                        xmm3 = _mm_load_ps(((__m128*)mat) + 2);
+                        xmm0 = _mm_load_ps((__m128*)input);
+
+                        xmm1 = _mm_mul_ps(xmm1, _mm_shuffle_ps(xmm0, xmm0, _MM_SHUFFLE(0,0,0,0)));
+                        xmm2 = _mm_mul_ps(xmm2, _mm_shuffle_ps(xmm0, xmm0, _MM_SHUFFLE(1,1,1,1)));
+                        xmm3 = _mm_mul_ps(xmm3, _mm_shuffle_ps(xmm0, xmm0, _MM_SHUFFLE(2,2,2,2)));
+
+                        xmm1 = _mm_add_ps(xmm1, _mm_add_ps(xmm2, xmm3));
+
+                        xmm7 = _mm_load_ss(clampMax);
+                        xmm7 = _mm_shuffle_ps(xmm7, xmm7, _MM_SHUFFLE(0,0,0,0));
+                        xmm1 = _mm_min_ps(xmm1, xmm7);
+                        xmm6 = _mm_xor_ps(xmm6, xmm6);
+                        xmm1 = _mm_max_ps(xmm1, xmm6);
+                        xmm5 = _mm_load_ss(&floatScale);
+                        xmm5 = _mm_shuffle_ps(xmm5, xmm5, _MM_SHUFFLE(0,0,0,0));
+                        xmm1 = _mm_mul_ps(xmm1, xmm5);
+                        _mm_store_si128((__m128i*)input, _mm_cvtps_epi32(xmm1));
+                }
+#else
+#error "Unknown platform"
 #endif
 
 		*dest++ = transform->output_table_r->data[output[0]];
@@ -1004,7 +1084,7 @@ static void qcms_transform_data_rgba_out_lut_sse(qcms_transform *transform, unsi
 
 static void qcms_transform_data_rgb_out_lut_precache(qcms_transform *transform, unsigned char *src, unsigned char *dest, size_t length)
 {
-	int i;
+	unsigned int i;
 	float (*mat)[4] = transform->matrix;
 	for (i = 0; i < length; i++) {
 		unsigned char device_r = *src++;
@@ -1037,7 +1117,7 @@ static void qcms_transform_data_rgb_out_lut_precache(qcms_transform *transform, 
 
 static void qcms_transform_data_rgba_out_lut_precache(qcms_transform *transform, unsigned char *src, unsigned char *dest, size_t length)
 {
-	int i;
+	unsigned int i;
 	float (*mat)[4] = transform->matrix;
 	for (i = 0; i < length; i++) {
 		unsigned char device_r = *src++;
@@ -1072,7 +1152,7 @@ static void qcms_transform_data_rgba_out_lut_precache(qcms_transform *transform,
 
 static void qcms_transform_data_rgb_out_lut(qcms_transform *transform, unsigned char *src, unsigned char *dest, size_t length)
 {
-	int i;
+	unsigned int i;
 	float (*mat)[4] = transform->matrix;
 	for (i = 0; i < length; i++) {
 		unsigned char device_r = *src++;
@@ -1104,7 +1184,7 @@ static void qcms_transform_data_rgb_out_lut(qcms_transform *transform, unsigned 
 
 static void qcms_transform_data_rgba_out_lut(qcms_transform *transform, unsigned char *src, unsigned char *dest, size_t length)
 {
-	int i;
+	unsigned int i;
 	float (*mat)[4] = transform->matrix;
 	for (i = 0; i < length; i++) {
 		unsigned char device_r = *src++;
@@ -1286,10 +1366,17 @@ qcms_bool compute_precache(struct curveType *trc, uint8_t *output)
 	} else if (trc->count == 1) {
 		compute_precache_pow(output, 1./u8Fixed8Number_to_float(trc->data[0]));
 	} else {
-		uint16_t *inverted = invert_lut(trc->data, trc->count);
+		uint16_t *inverted;
+		int inverted_size = trc->count;
+		//XXX: the choice of a minimum of 256 here is not backed by any theory, measurement or data, however it is what lcms uses.
+		// the maximum number we would need is 65535 because that's the accuracy used for computing the precache table
+		if (inverted_size < 256)
+			inverted_size = 256;
+
+		inverted = invert_lut(trc->data, trc->count, inverted_size);
 		if (!inverted)
 			return false;
-		compute_precache_lut(output, inverted, trc->count);
+		compute_precache_lut(output, inverted, inverted_size);
 		free(inverted);
 	}
 	return true;
@@ -1343,7 +1430,9 @@ static void cpuid(uint32_t fxn, uint32_t *a, uint32_t *b, uint32_t *c, uint32_t 
 #define SSE2_EDX_MASK (1UL << 26)
 static qcms_bool sse2_available(void)
 {
-#ifdef HAS_CPUID
+#if defined(__x86_64__) || defined(_M_AMD64)
+       return true;
+#elif defined(HAS_CPUID)
        static int has_sse2 = -1;
        uint32_t a, b, c, d;
        uint32_t function = 0x00000001;
@@ -1362,7 +1451,6 @@ static qcms_bool sse2_available(void)
        return false;
 }
 
-
 void build_output_lut(struct curveType *trc,
 		uint16_t **output_gamma_lut, size_t *output_gamma_lut_length)
 {
@@ -1374,8 +1462,12 @@ void build_output_lut(struct curveType *trc,
 		*output_gamma_lut = build_pow_table(gamma, 4096);
 		*output_gamma_lut_length = 4096;
 	} else {
-		*output_gamma_lut = invert_lut(trc->data, trc->count);
+		//XXX: the choice of a minimum of 256 here is not backed by any theory, measurement or data, however it is what lcms uses.
 		*output_gamma_lut_length = trc->count;
+		if (*output_gamma_lut_length < 256)
+			*output_gamma_lut_length = 256;
+
+		*output_gamma_lut = invert_lut(trc->data, trc->count, *output_gamma_lut_length);
 	}
 
 }

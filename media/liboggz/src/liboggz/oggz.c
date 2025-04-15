@@ -30,11 +30,7 @@
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifdef WIN32
-#include "config_win32.h"
-#else
 #include "config.h"
-#endif
 
 #include <assert.h>
 #include <stdlib.h>
@@ -219,7 +215,7 @@ oggz_close (OGGZ * oggz)
   oggz_vector_foreach (oggz->streams, oggz_stream_clear);
   oggz_vector_delete (oggz->streams);
 
-  assert(oggz_dlist_is_empty(oggz->packet_buffer));
+  oggz_dlist_deliter(oggz->packet_buffer, oggz_read_free_pbuffers);
   oggz_dlist_delete(oggz->packet_buffer);
   
   if (oggz->metric_internal)
@@ -351,6 +347,7 @@ oggz_add_stream (OGGZ * oggz, long serialno)
   stream->preroll = 0;
   stream->granulerate_n = 1;
   stream->granulerate_d = 1;
+  stream->first_granule = 0;
   stream->basegranule = 0;
   stream->granuleshift = 0;
 

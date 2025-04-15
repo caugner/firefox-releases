@@ -33,7 +33,7 @@
  * the terms of any one of the MPL, the GPL or the LGPL.
  *
  * ***** END LICENSE BLOCK ***** */
-/* $Id: nsslowhash.c,v 1.2 2008/11/27 15:20:44 wtc%google.com Exp $ */
+/* $Id: nsslowhash.c,v 1.4 2009/06/09 23:34:06 rrelyea%redhat.com Exp $ */
 
 #include "stubs.h"
 #include "prtypes.h"
@@ -267,7 +267,29 @@ struct NSSLOWHASHContextStr {
    
 };
 
+static int nsslow_GetFIPSEnabled(void) {
+#ifdef LINUX
+    FILE *f;
+    char d;
+    size_t size;
+
+    f = fopen("/proc/sys/crypto/fips_enabled", "r");
+    if (!f)
+        return 1;
+
+    size = fread(&d, 1, 1, f);
+    fclose(f);
+    if (size != 1)
+        return 0;
+    if (d != '1')
+        return 0;
+#endif
+    return 1;
+}
+
+
 static int post = 0;
+static int post_failed = 0;
 
 static NSSLOWInitContext dummyContext = { 0 };
 
@@ -281,11 +303,16 @@ NSSLOW_Init(void)
 
     rv = FREEBL_InitStubs();
     nsprAvailable = (rv ==  SECSuccess ) ? PR_TRUE : PR_FALSE;
+
+    if (post_failed) {
+	return NULL;
+    }
 	
 
-    if (!post) {
+    if (!post && nsslow_GetFIPSEnabled()) {
 	crv = freebl_fipsPowerUpSelfTest();
 	if (crv != CKR_OK) {
+	    post_failed = 1;
 	    return NULL;
 	}
     }
@@ -302,11 +329,25 @@ NSSLOW_Shutdown(NSSLOWInitContext *context)
    return;
 }
 
+void
+NSSLOW_Reset(NSSLOWInitContext *context)
+{
+   PORT_Assert(context == &dummyContext);
+   post_failed = 0;
+   post = 0;
+   return;
+}
+
 NSSLOWHASHContext *
 NSSLOWHASH_NewContext(NSSLOWInitContext *initContext, 
 			HASH_HashType hashType)
 {
    NSSLOWHASHContext *context;
+
+   if (post_failed) {
+	PORT_SetError(SEC_ERROR_PKCS11_DEVICE_ERROR);
+	return NULL;
+   }
 
    if (initContext != &dummyContext) {
 	PORT_SetError(SEC_ERROR_INVALID_ARGS);

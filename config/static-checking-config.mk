@@ -12,6 +12,7 @@ TREEHYDRA_MODULES = \
   $(topsrcdir)/xpcom/analysis/stack.js \
   $(topsrcdir)/xpcom/analysis/flow.js \
   $(topsrcdir)/js/src/jsstack.js \
+  $(topsrcdir)/layout/generic/frame-verify.js \
   $(NULL)
 
 DEHYDRA_ARGS = \

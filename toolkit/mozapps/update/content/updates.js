@@ -49,10 +49,11 @@ const CoR = Components.results;
 const XMLNS_XUL               = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
 
 const PREF_UPDATE_MANUAL_URL        = "app.update.url.manual";
-const PREF_APP_UPDATE_LOG_BRANCH    = "app.update.log.";
+const PREF_APP_UPDATE_LOG           = "app.update.log";
 const PREF_UPDATE_TEST_LOOP         = "app.update.test.loop";
 const PREF_UPDATE_NEVER_BRANCH      = "app.update.never.";
 const PREF_AUTO_UPDATE_ENABLED      = "app.update.enabled";
+const PREF_PLUGINS_UPDATEURL        = "plugins.update.url";
 
 const UPDATE_TEST_LOOP_INTERVAL     = 2000;
 
@@ -70,7 +71,7 @@ const SRCEVT_BACKGROUND       = 2;
 
 var gConsole    = null;
 var gPref       = null;
-var gLogEnabled = { };
+var gLogEnabled = false;
 
 /**
  * Logs a string to the error console.
@@ -78,7 +79,7 @@ var gLogEnabled = { };
  *          The string to write to the error console..
  */
 function LOG(module, string) {
-  if (module in gLogEnabled || "all" in gLogEnabled) {
+  if (gLogEnabled) {
     dump("*** AUS:UI " + module + ":" + string + "\n");
     gConsole.logStringMessage("AUS:UI " + module + ":" + string);
   }
@@ -222,7 +223,7 @@ var gUpdates = {
     //
     // Encode version since it could be a non-ascii string (bug 359093)
     var neverPrefName = PREF_UPDATE_NEVER_BRANCH +
-                       encodeURIComponent(gUpdates.update.version);
+                        encodeURIComponent(gUpdates.update.version);
     gPref.setBoolPref(neverPrefName, true);
     this.wiz.cancel();
   },
@@ -311,7 +312,7 @@ var gUpdates = {
             getService(CoI.nsIPrefBranch2);
     gConsole = CoC["@mozilla.org/consoleservice;1"].
                getService(CoI.nsIConsoleService);
-    this._initLoggingPrefs();
+    gLogEnabled = getPref("getBoolPref", PREF_APP_UPDATE_LOG, false)
 
     this.strings = document.getElementById("updateStrings");
     var brandStrings = document.getElementById("brandStrings");
@@ -336,26 +337,6 @@ var gUpdates = {
     var startPage = this.startPage;
     LOG("gUpdates", "onLoad - setting current page to startpage " + startPage.id);
     gUpdates.wiz.currentPage = startPage;
-  },
-
-  /**
-   * Initialize Logging preferences, formatted like so:
-   *  app.update.log.<moduleName> = <true|false>
-   */
-  _initLoggingPrefs: function() {
-    try {
-      var ps = CoC["@mozilla.org/preferences-service;1"].
-               getService(CoI.nsIPrefService);
-      var logBranch = ps.getBranch(PREF_APP_UPDATE_LOG_BRANCH);
-      var modules = logBranch.getChildList("", { value: 0 });
-
-      for (var i = 0; i < modules.length; ++i) {
-        if (logBranch.prefHasUserValue(modules[i]))
-          gLogEnabled[modules[i]] = logBranch.getBoolPref(modules[i]);
-      }
-    }
-    catch (e) {
-    }
   },
 
   /**
@@ -539,6 +520,62 @@ var gCheckingPage = {
 };
 
 /**
+ * The "You have outdated plugins" page
+ */
+var gPluginsPage = {
+  /**
+   * URL of the plugin updates page
+   */
+  _url: null,
+  
+  /**
+   * Initialize
+   */
+  onPageShow: function() {
+    if (gPref.getPrefType(PREF_PLUGINS_UPDATEURL) == gPref.PREF_INVALID) {
+      gUpdates.wiz.goTo("noupdatesfound");
+      return;
+    }
+    
+    var formatter = CoC["@mozilla.org/toolkit/URLFormatterService;1"].
+                       getService(CoI.nsIURLFormatter);
+    this._url = formatter.formatURLPref(PREF_PLUGINS_UPDATEURL);
+    var link = document.getElementById("pluginupdateslink");
+    link.setAttribute("href", this._url);
+
+
+    var phs = CoC["@mozilla.org/plugin/host;1"].
+                 getService(CoI.nsIPluginHost);
+    var plugins = phs.getPluginTags({});
+    var blocklist = CoC["@mozilla.org/extensions/blocklist;1"].
+                      getService(CoI.nsIBlocklistService);
+
+    var hasOutdated = false;
+    for (let i = 0; i < plugins.length; i++) {
+      let pluginState = blocklist.getPluginBlocklistState(plugins[i]);
+      if (pluginState == CoI.nsIBlocklistService.STATE_OUTDATED) {
+        hasOutdated = true;
+        break;
+      }
+    }
+    if (!hasOutdated) {
+      gUpdates.wiz.goTo("noupdatesfound");
+      return;
+    }
+
+    gUpdates.setButtons(null, null, "okButton", true);
+    gUpdates.wiz.getButton("finish").focus();
+  },
+  
+  /**
+   * Finish button clicked.
+   */
+  onWizardFinish: function() {
+    openURL(this._url);
+  }
+};
+
+/**
  * The "No Updates Are Available" page
  */
 var gNoUpdatesPage = {
@@ -588,6 +625,15 @@ var gIncompatibleCheckPage = {
    * Initialize
    */
   onPageShow: function() {
+    var aus = CoC["@mozilla.org/updates/update-service;1"].
+              getService(CoI.nsIApplicationUpdateService2);
+    // Display the manual update page if the user is unable to apply the update
+    if (!aus.canApplyUpdates) {
+      gUpdates.wiz.currentPage.setAttribute("next", "manualUpdate");
+      gUpdates.wiz.advance();
+      return;
+    }
+
     var ai = CoC["@mozilla.org/xre/app-info;1"].getService(CoI.nsIXULAppInfo);
     var vc = CoC["@mozilla.org/xpcom/version-comparator;1"].
              getService(CoI.nsIVersionComparator);
@@ -600,14 +646,14 @@ var gIncompatibleCheckPage = {
 
     var em = CoC["@mozilla.org/extensions/manager;1"].
              getService(CoI.nsIExtensionManager);
-    this.addons = em.getIncompatibleItemList("", gUpdates.update.extensionVersion,
+    this.addons = em.getIncompatibleItemList(gUpdates.update.extensionVersion,
                                              gUpdates.update.platformVersion,
                                              CoI.nsIUpdateItem.TYPE_ANY, false,
                                              { });
     if (this.addons.length > 0) {
       // Don't include add-ons that are already incompatible with the current
       // version of the application
-      var addons = em.getIncompatibleItemList("", null, null,
+      var addons = em.getIncompatibleItemList(null, null,
                                               CoI.nsIUpdateItem.TYPE_ANY, false,
                                               { });
       for (var i = 0; i < addons.length; ++i) {
@@ -640,6 +686,7 @@ var gIncompatibleCheckPage = {
              getService(CoI.nsIExtensionManager);
     em.update(this.addons, this.addons.length,
               CoI.nsIExtensionManager.UPDATE_NOTIFY_NEWVERSION, this,
+              CoI.nsIExtensionManager.UPDATE_WHEN_NEW_APP_DETECTED,
               gUpdates.update.extensionVersion, gUpdates.update.platformVersion);
   },
 
@@ -705,6 +752,31 @@ var gIncompatibleCheckPage = {
 };
 
 /**
+ * The "Unable to Update" page. Provides the user information about why they
+ * were unable to update and a manual download url.
+ */
+var gManualUpdatePage = {
+  onPageShow: function() {
+    var formatter = CoC["@mozilla.org/toolkit/URLFormatterService;1"].
+                    getService(CoI.nsIURLFormatter);
+    var manualURL = formatter.formatURLPref(PREF_UPDATE_MANUAL_URL);
+    var manualUpdateLinkLabel = document.getElementById("manualUpdateLinkLabel");
+    manualUpdateLinkLabel.value = manualURL;
+    manualUpdateLinkLabel.setAttribute("url", manualURL);
+
+    // Prevent multiple notifications for the same update when the user is
+    // unable to apply updates.
+    // Encode version since it could be a non-ascii string (bug 359093)
+    var neverPrefName = PREF_UPDATE_NEVER_BRANCH +
+                        encodeURIComponent(gUpdates.update.version);
+    gPref.setBoolPref(neverPrefName, true);
+
+    gUpdates.setButtons(null, null, "okButton", true);
+    gUpdates.wiz.getButton("finish").focus();
+  }
+};
+
+/**
  * The "Updates Are Available" page. Provides the user information about the
  * available update.
  */
@@ -736,10 +808,12 @@ var gUpdatesAvailablePage = {
         gUpdates.wiz.currentPage.setAttribute("next", "incompatibleList");
     }
 
-    var updateName = gUpdates.getAUSString("updateName", [gUpdates.brandName,
-                                                          gUpdates.update.version]);
-    if (gUpdates.update.channel == "nightly")
+    var updateName = gUpdates.update.name;
+    if (gUpdates.update.channel == "nightly") {
+      updateName = gUpdates.getAUSString("updateName", [gUpdates.brandName,
+                                                        gUpdates.update.version]);
       updateName = updateName + " " + gUpdates.update.buildID + " nightly";
+    }
     var updateNameElement = document.getElementById("updateName");
     updateNameElement.value = updateName;
     var updateTypeElement = document.getElementById("updateType");

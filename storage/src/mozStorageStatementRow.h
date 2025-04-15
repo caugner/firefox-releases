@@ -1,5 +1,6 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+ * vim: sw=2 ts=2 et lcs=trail\:.,tab\:>~ :
+ * ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
  * The contents of this file are subject to the Mozilla Public License Version
@@ -41,32 +42,29 @@
 
 #include "mozIStorageStatementWrapper.h"
 #include "nsIXPCScriptable.h"
-#include "mozStorageStatement.h"
-#include "nsString.h"
-#include "nsVoidArray.h"
 
-class mozStorageStatementRow : public mozIStorageStatementRow,
-                               public nsIXPCScriptable
+namespace mozilla {
+namespace storage {
+
+class Statement;
+
+class StatementRow : public mozIStorageStatementRow
+                   , public nsIXPCScriptable
 {
 public:
-    mozStorageStatementRow(mozStorageStatement *aStatement);
+  NS_DECL_ISUPPORTS
+  NS_DECL_MOZISTORAGESTATEMENTROW
+  NS_DECL_NSIXPCSCRIPTABLE
 
-    // nsISupports interface
-    NS_DECL_ISUPPORTS
-
-    // mozIStorageStatementRow interface (empty)
-    NS_DECL_MOZISTORAGESTATEMENTROW
-
-    // nsIXPCScriptable interface
-    NS_DECL_NSIXPCSCRIPTABLE
+  StatementRow(Statement *aStatement);
 protected:
-    sqlite3_stmt* NativeStatement() {
-        return mStatement->GetNativeStatementPointer();
-    }
 
-    mozStorageStatement *mStatement;
+  Statement *mStatement;
 
-    friend class mozStorageStatement;
+  friend class Statement;
 };
+
+} // namespace storage
+} // namespace mozilla
 
 #endif /* _MOZSTORAGESTATEMENTROW_H_ */

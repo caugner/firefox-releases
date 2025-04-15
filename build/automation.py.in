@@ -48,7 +48,8 @@ import signal
 import subprocess
 import sys
 import threading
-import glob
+
+from automationutils import checkForCrashes
 
 """
 Runs the browser from a script, and provides useful utilities
@@ -69,14 +70,16 @@ __all__ = [
            "DEFAULT_APP",
            "CERTS_SRC_DIR",
            "environment",
-           "dumpLeakLog",
-           "processLeakLog",
+           "IS_TEST_BUILD",
+           "IS_DEBUG_BUILD",
+           "SYMBOLS_PATH",
           ]
 
 # These are generated in mozilla/build/Makefile.in
 #expand DIST_BIN = __XPC_BIN_PATH__
 #expand IS_WIN32 = len("__WIN32__") != 0
 #expand IS_MAC = __IS_MAC__ != 0
+#expand IS_LINUX = __IS_LINUX__ != 0
 #ifdef IS_CYGWIN
 #expand IS_CYGWIN = __IS_CYGWIN__ == 1
 #else
@@ -84,6 +87,7 @@ IS_CYGWIN = False
 #endif
 #expand IS_CAMINO = __IS_CAMINO__ != 0
 #expand BIN_SUFFIX = __BIN_SUFFIX__
+#expand PERL = __PERL__
 
 UNIXISH = not IS_WIN32 and not IS_MAC
 
@@ -125,7 +129,7 @@ class Process(subprocess.Popen):
         try:
           subprocess.Popen(["kill", "-f", pid]).wait()
         except:
-          log.info("TEST-UNEXPECTED-FAIL | (automation.py) | Missing 'kill' utility to kill process with pid=%s. Kill it manually!", pid)
+          log.info("TEST-UNEXPECTED-FAIL | automation.py | Missing 'kill' utility to kill process with pid=%s. Kill it manually!", pid)
       else:
         # Windows XP and later.
         subprocess.Popen(["taskkill", "/F", "/PID", pid]).wait()
@@ -245,13 +249,28 @@ user_pref("layout.debug.enable_data_xbl", true);
 user_pref("browser.EULA.override", true);
 user_pref("javascript.options.jit.content", true);
 user_pref("gfx.color_management.force_srgb", true);
+user_pref("network.manage-offline-status", false);
+user_pref("test.mousescroll", true);
 user_pref("security.default_personal_cert", "Select Automatically"); // Need to client auth test be w/o any dialogs
 user_pref("network.http.prompt-temp-redirect", false);
+user_pref("svg.smil.enabled", true); // Needed for SMIL mochitests until bug 482402 lands
 user_pref("media.cache_size", 100);
+user_pref("security.warn_viewing_mixed", false);
 
 user_pref("geo.wifi.uri", "http://localhost:8888/tests/dom/tests/mochitest/geolocation/network_geolocation.sjs");
+user_pref("geo.wifi.testing", true);
+
 user_pref("camino.warn_when_closing", false); // Camino-only, harmless to others
+
+// Make url-classifier updates so rare that they won't affect tests
+user_pref("urlclassifier.updateinterval", 172800);
+// Point the url-classifier to the local testing server for fast failures
+user_pref("browser.safebrowsing.provider.0.gethashURL", "http://localhost:8888/safebrowsing-dummy/gethash");
+user_pref("browser.safebrowsing.provider.0.keyURL", "http://localhost:8888/safebrowsing-dummy/newkey");
+user_pref("browser.safebrowsing.provider.0.lookupURL", "http://localhost:8888/safebrowsing-dummy/lookup");
+user_pref("browser.safebrowsing.provider.0.updateURL", "http://localhost:8888/safebrowsing-dummy/update");
 """
+  
   prefs.append(part)
 
   locations = readLocations()
@@ -385,7 +404,7 @@ def fillCertificateDB(profileDir, certPath, utilityPath, xrePath):
   os.unlink(pwfilePath)
   return 0
 
-def environment(env = None, xrePath = DIST_BIN):
+def environment(env = None, xrePath = DIST_BIN, crashreporter = True):
   if env == None:
     env = dict(os.environ)
 
@@ -400,133 +419,16 @@ def environment(env = None, xrePath = DIST_BIN):
   elif IS_WIN32:
     env["PATH"] = env["PATH"] + ";" + ldLibraryPath
 
-  env['MOZ_CRASHREPORTER_NO_REPORT'] = '1'
-  env['MOZ_CRASHREPORTER'] = '1'
+  if crashreporter:
+    env['MOZ_CRASHREPORTER_NO_REPORT'] = '1'
+    env['MOZ_CRASHREPORTER'] = '1'
 
   return env
 
-def checkForCrashes(profileDir, symbolsPath):
-  stackwalkPath = os.environ.get('MINIDUMP_STACKWALK', None)
-
-  foundCrash = False
-  dumps = glob.glob(os.path.join(profileDir, 'minidumps', '*.dmp'))
-  for d in dumps:
-    log.info("TEST-UNEXPECTED-FAIL | (automation.py) | Browser crashed (minidump found)")
-    if symbolsPath and stackwalkPath:
-      nullfd = open(os.devnull, 'w')
-      # eat minidump_stackwalk errors
-      subprocess.call([stackwalkPath, d, symbolsPath], stderr=nullfd)
-      nullfd.close()
-    os.remove(d)
-    foundCrash = True
-  return foundCrash
 
 ###############
 # RUN THE APP #
 ###############
-
-def dumpLeakLog(leakLogFile, filter = False):
-  """Process the leak log, without parsing it.
-
-  Use this function if you want the raw log only.
-  Use it preferably with the |XPCOM_MEM_LEAK_LOG| environment variable.
-  """
-
-  # Don't warn (nor "info") if the log file is not there.
-  if not os.path.exists(leakLogFile):
-    return
-
-  leaks = open(leakLogFile, "r")
-  leakReport = leaks.read()
-  leaks.close()
-
-  # Only |XPCOM_MEM_LEAK_LOG| reports can be actually filtered out.
-  # Only check whether an actual leak was reported.
-  if filter and not "0 TOTAL " in leakReport:
-    return
-
-  # Simply copy the log.
-  log.info(leakReport.rstrip("\n"))
-
-def processLeakLog(leakLogFile, leakThreshold = 0):
-  """Process the leak log, parsing it.
-
-  Use this function if you want an additional PASS/FAIL summary.
-  It must be used with the |XPCOM_MEM_BLOAT_LOG| environment variable.
-  """
-
-  if not os.path.exists(leakLogFile):
-    log.info("WARNING refcount logging is off, so leaks can't be detected!")
-    return
-
-  #                  Per-Inst  Leaked      Total  Rem ...
-  #   0 TOTAL              17     192  419115886    2 ...
-  # 833 nsTimerImpl        60     120      24726    2 ...
-  lineRe = re.compile(r"^\s*\d+\s+(?P<name>\S+)\s+"
-                      r"(?P<size>-?\d+)\s+(?P<bytesLeaked>-?\d+)\s+"
-                      r"-?\d+\s+(?P<numLeaked>-?\d+)")
-
-  leaks = open(leakLogFile, "r")
-  for line in leaks:
-    matches = lineRe.match(line)
-    if (matches and
-        int(matches.group("numLeaked")) == 0 and
-        matches.group("name") != "TOTAL"):
-      continue
-    log.info(line.rstrip())
-  leaks.close()
-
-  leaks = open(leakLogFile, "r")
-  seenTotal = False
-  prefix = "TEST-PASS"
-  for line in leaks:
-    matches = lineRe.match(line)
-    if not matches:
-      continue
-    name = matches.group("name")
-    size = int(matches.group("size"))
-    bytesLeaked = int(matches.group("bytesLeaked"))
-    numLeaked = int(matches.group("numLeaked"))
-    if size < 0 or bytesLeaked < 0 or numLeaked < 0:
-      log.info("TEST-UNEXPECTED-FAIL | runtests-leaks | negative leaks caught!")
-      if name == "TOTAL":
-        seenTotal = True
-    elif name == "TOTAL":
-      seenTotal = True
-      # Check for leaks.
-      if bytesLeaked < 0 or bytesLeaked > leakThreshold:
-        prefix = "TEST-UNEXPECTED-FAIL"
-        leakLog = "TEST-UNEXPECTED-FAIL | runtests-leaks | leaked" \
-                  " %d bytes during test execution" % bytesLeaked
-      elif bytesLeaked > 0:
-        leakLog = "TEST-PASS | runtests-leaks | WARNING leaked" \
-                  " %d bytes during test execution" % bytesLeaked
-      else:
-        leakLog = "TEST-PASS | runtests-leaks | no leaks detected!"
-      # Remind the threshold if it is not 0, which is the default/goal.
-      if leakThreshold != 0:
-        leakLog += " (threshold set at %d bytes)" % leakThreshold
-      # Log the information.
-      log.info(leakLog)
-    else:
-      if numLeaked != 0:
-        if numLeaked > 1:
-          instance = "instances"
-          rest = " each (%s bytes total)" % matches.group("bytesLeaked")
-        else:
-          instance = "instance"
-          rest = ""
-        log.info("%(prefix)s | runtests-leaks | leaked %(numLeaked)d %(instance)s of %(name)s "
-                 "with size %(size)s bytes%(rest)s" %
-                 { "prefix": prefix,
-                   "numLeaked": numLeaked,
-                   "instance": instance,
-                   "name": name,
-                   "size": matches.group("size"),
-                   "rest": rest })
-  if not seenTotal:
-    log.info("TEST-UNEXPECTED-FAIL | runtests-leaks | missing output line for total leaks!")
-  leaks.close()
 
 def runApp(testURL, env, app, profileDir, extraArgs,
            runSSLTunnel = False, utilityPath = DIST_BIN,
@@ -538,13 +440,13 @@ def runApp(testURL, env, app, profileDir, extraArgs,
     # create certificate database for the profile
     certificateStatus = fillCertificateDB(profileDir, certPath, utilityPath, xrePath)
     if certificateStatus != 0:
-      log.info("TEST-UNEXPECTED FAIL | (automation.py) | Certificate integration failed")
+      log.info("TEST-UNEXPECTED FAIL | automation.py | Certificate integration failed")
       return certificateStatus
 
     # start ssltunnel to provide https:// URLs capability
     ssltunnel = os.path.join(utilityPath, "ssltunnel" + BIN_SUFFIX)
     ssltunnelProcess = Process([ssltunnel, os.path.join(profileDir, "ssltunnel.cfg")], env = environment(xrePath = xrePath))
-    log.info("INFO | (automation.py) | SSL tunnel pid: %d", ssltunnelProcess.pid)
+    log.info("INFO | automation.py | SSL tunnel pid: %d", ssltunnelProcess.pid)
 
   # now run with the profile we created
   cmd = app
@@ -583,24 +485,43 @@ def runApp(testURL, env, app, profileDir, extraArgs,
   else:
     outputPipe = subprocess.PIPE
 
-  proc = Process([cmd] + args, env = environment(env, xrePath = xrePath),
-          stdout = outputPipe, stderr = subprocess.STDOUT)
-  log.info("INFO | (automation.py) | Application pid: %d", proc.pid)
+  proc = Process([cmd] + args,
+                 env = environment(env, xrePath = xrePath,
+                                   crashreporter = not debuggerInfo),
+                 stdout = outputPipe,
+                 stderr = subprocess.STDOUT)
+  log.info("INFO | automation.py | Application pid: %d", proc.pid)
 
+  stackFixerProcess = None
   if outputPipe is None:
     log.info("TEST-INFO: Not logging stdout or stderr due to debugger connection")
   else:
-    line = proc.stdout.readline()
+    logsource = proc.stdout
+    if IS_DEBUG_BUILD:
+      stackFixerCommand = None
+      if IS_MAC:
+        stackFixerCommand = "fix-macosx-stack.pl"
+      elif IS_LINUX:
+        stackFixerCommand = "fix-linux-stack.pl"
+      if stackFixerCommand is not None:
+        stackFixerProcess = Process([PERL, os.path.join(utilityPath, stackFixerCommand)], stdin=logsource, stdout=subprocess.PIPE)
+        logsource = stackFixerProcess.stdout
+
+    line = logsource.readline()
     while line != "":
       log.info(line.rstrip())
-      line = proc.stdout.readline()
+      line = logsource.readline()
 
   status = proc.wait()
   if status != 0:
-    log.info("TEST-UNEXPECTED-FAIL | (automation.py) | Exited with code %d during test run", status)
-  log.info("INFO | (automation.py) | Application ran for: %s", str(datetime.now() - startTime))
+    log.info("TEST-UNEXPECTED-FAIL | automation.py | Exited with code %d during test run", status)
+  if stackFixerProcess is not None:
+    status = stackFixerProcess.wait()
+    if status != 0:
+      log.info("TEST-UNEXPECTED-FAIL | automation.py | Stack fixer process exited with code %d during test run", status)
+  log.info("INFO | automation.py | Application ran for: %s", str(datetime.now() - startTime))
 
-  if checkForCrashes(profileDir, symbolsPath):
+  if checkForCrashes(os.path.join(profileDir, "minidumps"), symbolsPath):
     status = -1
 
   if IS_TEST_BUILD and runSSLTunnel:

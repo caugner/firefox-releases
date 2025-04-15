@@ -43,17 +43,37 @@ relativesrcdir	= layout/base/tests
 
 include $(DEPTH)/config/autoconf.mk
 
+DIRS += \
+  chrome \
+  $(NULL)
+
+# We can't use CPP_UNIT_TESTS for TestPoisonArea because libxpcom
+# (which it does not need) isn't available at this point in the build.
+
+BARE_UNIT_TESTS = \
+		TestPoisonArea.cpp \
+		$(NULL)
+
+CPPSRCS += $(BARE_UNIT_TESTS)
+SIMPLE_PROGRAMS += $(BARE_UNIT_TESTS:.cpp=$(BIN_SUFFIX))
+
 include $(topsrcdir)/config/rules.mk
+
 
 DEFINES += -D_IMPL_NS_LAYOUT
 
 _TEST_FILES =	\
+		bug369950-subframe.xml \
+		bug495648.rdf \
+		decoration_line_rendering.js \
+		region_lib.js \
+		scrolling_helper.html \
 		test_bug66619.html \
 		test_bug114649.html \
+		$(warning test_bug369950.html disabled due to random orange; see bug 492575) \
 		test_bug386575.xhtml \
 		test_bug388019.html \
 		test_bug394057.html \
-		test_bug396024.html \
 		test_bug399284.html \
 		test_bug399951.html \
 		test_bug404209.xhtml \
@@ -70,10 +90,10 @@ _TEST_FILES =	\
 		test_bug435293-scale.html \
 		test_bug435293-interaction.html \
 		test_bug435293-skew.html \
-		test_bug482976.html \
-		test_printpreview.html \
 		test_bug495648.xul \
-		bug495648.rdf \
+		test_bug514127.html \
+		test_bug518777.html \
+		test_scrolling.html \
 		$(NULL)
 # test_bug396024.html is currently disabled because it interacts badly with
 # the "You can't print-preview while the page is loading" dialog.
@@ -165,8 +185,15 @@ _TEST_FILES += \
 		test_bug467672-5g.html \
 		bug467672-5.html \
 		bug467672-5-ref.html \
+		test_bug499538-1.html \
 		$(NULL)
 endif
 
 libs:: $(_TEST_FILES)
 	$(INSTALL) $(foreach f,$^,"$f") $(DEPTH)/_tests/testing/mochitest/tests/$(relativesrcdir)
+
+check::
+	@$(EXIT_ON_ERROR) \
+	  for f in $(subst .cpp,,$(BARE_UNIT_TESTS)); do \
+	    $(RUN_TEST_PROGRAM) $(DIST)/bin/$$f; \
+	  done

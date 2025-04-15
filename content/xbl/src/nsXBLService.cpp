@@ -74,6 +74,7 @@
 #include "nsSyncLoadService.h"
 #include "nsIDOM3Node.h"
 #include "nsContentPolicyUtils.h"
+#include "nsTArray.h"
 
 #include "nsIPresShell.h"
 #include "nsIDocumentObserver.h"
@@ -118,43 +119,8 @@ IsAncestorBinding(nsIDocument* aDocument,
     if (!binding) {
       continue;
     }
-    PRBool equal;
-    nsresult rv;
-    nsCOMPtr<nsIURL> childBindingURL = do_QueryInterface(aChildBindingURI);
-    nsCAutoString childRef;
-    if (childBindingURL &&
-        NS_SUCCEEDED(childBindingURL->GetRef(childRef)) &&
-        childRef.IsEmpty()) {
-      // If the child URL has no ref, we need to strip away the ref from the
-      // URI we're comparing it to, since the child URL will end up pointing
-      // to the first binding defined at its URI, and that could be the same
-      // binding that's referred to more specifically by the already attached
-      // binding's URI via its ref.
 
-      // This means we'll get false positives if someone refers to the first
-      // binding at a given URI without a ref and also binds a parent or child
-      // to a different binding at that URI *with* a ref, but that shouldn't
-      // ever be necessary so we don't need to support it.
-      nsCOMPtr<nsIURI> compareURI;
-      rv = binding->PrototypeBinding()->BindingURI()->Clone(getter_AddRefs(compareURI));
-      NS_ENSURE_SUCCESS(rv, PR_TRUE); // assume the worst
-
-      nsCOMPtr<nsIURL> compareURL = do_QueryInterface(compareURI, &rv);
-      NS_ENSURE_SUCCESS(rv, PR_TRUE); // assume the worst
-      
-      rv = compareURL->SetRef(EmptyCString());
-      NS_ENSURE_SUCCESS(rv, PR_TRUE); // assume the worst
-
-      rv = compareURL->Equals(aChildBindingURI, &equal);
-    } else {
-      // Just compare the URIs
-      rv = binding->PrototypeBinding()->BindingURI()->Equals(aChildBindingURI,
-                                                             &equal);
-    }
-
-    NS_ENSURE_SUCCESS(rv, PR_TRUE); // assume the worst
-
-    if (equal) {
+    if (binding->PrototypeBinding()->CompareBindingURI(aChildBindingURI)) {
       ++bindingRecursion;
       if (bindingRecursion < NS_MAX_XBL_BINDING_RECURSION) {
         continue;
@@ -332,7 +298,7 @@ private:
   nsXBLService* mXBLService; // [WEAK]
 
   nsCOMPtr<nsIStreamListener> mInner;
-  nsAutoVoidArray mBindingRequests;
+  nsAutoTArray<nsXBLBindingRequest*, 8> mBindingRequests;
   
   nsCOMPtr<nsIWeakReference> mBoundDocument;
   nsCOMPtr<nsIXMLContentSink> mSink; // Only set until OnStartRequest
@@ -355,8 +321,8 @@ nsXBLStreamListener::nsXBLStreamListener(nsXBLService* aXBLService,
 
 nsXBLStreamListener::~nsXBLStreamListener()
 {
-  for (PRInt32 i = 0; i < mBindingRequests.Count(); i++) {
-    nsXBLBindingRequest* req = (nsXBLBindingRequest*)mBindingRequests.ElementAt(i);
+  for (PRUint32 i = 0; i < mBindingRequests.Length(); i++) {
+    nsXBLBindingRequest* req = mBindingRequests.ElementAt(i);
     nsXBLBindingRequest::Destroy(mXBLService->mPool, req);
   }
 }
@@ -421,9 +387,9 @@ PRBool
 nsXBLStreamListener::HasRequest(nsIURI* aURI, nsIContent* aElt)
 {
   // XXX Could be more efficient.
-  PRUint32 count = mBindingRequests.Count();
+  PRUint32 count = mBindingRequests.Length();
   for (PRUint32 i = 0; i < count; i++) {
-    nsXBLBindingRequest* req = (nsXBLBindingRequest*)mBindingRequests.ElementAt(i);
+    nsXBLBindingRequest* req = mBindingRequests.ElementAt(i);
     PRBool eq;
     if (req->mBoundElement == aElt &&
         NS_SUCCEEDED(req->mBindingURI->Equals(aURI, &eq)) && eq)
@@ -438,7 +404,7 @@ nsXBLStreamListener::Load(nsIDOMEvent* aEvent)
 {
   nsresult rv = NS_OK;
   PRUint32 i;
-  PRUint32 count = mBindingRequests.Count();
+  PRUint32 count = mBindingRequests.Length();
 
   // Get the binding document; note that we don't hold onto it in this object
   // to avoid creating a cycle
@@ -460,7 +426,7 @@ nsXBLStreamListener::Load(nsIDOMEvent* aEvent)
     // We need to get the sink's notifications flushed and then make the binding
     // ready.
     if (count > 0) {
-      nsXBLBindingRequest* req = (nsXBLBindingRequest*)mBindingRequests.ElementAt(0);
+      nsXBLBindingRequest* req = mBindingRequests.ElementAt(0);
       nsIDocument* document = req->mBoundElement->GetCurrentDoc();
       if (document)
         document->FlushPendingNotifications(Flush_ContentAndNotify);
@@ -500,7 +466,7 @@ nsXBLStreamListener::Load(nsIDOMEvent* aEvent)
     // Notify all pending requests that their bindings are
     // ready and can be installed.
     for (i = 0; i < count; i++) {
-      nsXBLBindingRequest* req = (nsXBLBindingRequest*)mBindingRequests.ElementAt(i);
+      nsXBLBindingRequest* req = mBindingRequests.ElementAt(i);
       req->DocumentLoaded(bindingDocument);
     }
   }
@@ -598,9 +564,7 @@ nsXBLService::LoadBindings(nsIContent* aContent, nsIURI* aURL,
       }
       else {
         // See if the URIs match.
-        nsIURI* uri = styleBinding->PrototypeBinding()->BindingURI();
-        PRBool equal;
-        if (NS_SUCCEEDED(uri->Equals(aURL, &equal)) && equal)
+        if (styleBinding->PrototypeBinding()->CompareBindingURI(aURL))
           return NS_OK;
         FlushStyleBindings(aContent);
         binding = nsnull;
@@ -656,23 +620,27 @@ nsXBLService::LoadBindings(nsIContent* aContent, nsIURI* aURL,
     }
   }
 
-  // Set the binding's bound element.
-  newBinding->SetBoundElement(aContent);
+  {
+    nsAutoScriptBlocker scriptBlocker;
 
-  // Tell the binding to build the anonymous content.
-  newBinding->GenerateAnonymousContent();
+    // Set the binding's bound element.
+    newBinding->SetBoundElement(aContent);
 
-  // Tell the binding to install event handlers
-  newBinding->InstallEventHandlers();
+    // Tell the binding to build the anonymous content.
+    newBinding->GenerateAnonymousContent();
 
-  // Set up our properties
-  rv = newBinding->InstallImplementation();
-  NS_ENSURE_SUCCESS(rv, rv);
+    // Tell the binding to install event handlers
+    newBinding->InstallEventHandlers();
 
-  // Figure out if we have any scoped sheets.  If so, we do a second resolve.
-  *aResolveStyle = newBinding->HasStyleSheets();
+    // Set up our properties
+    rv = newBinding->InstallImplementation();
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // Figure out if we have any scoped sheets.  If so, we do a second resolve.
+    *aResolveStyle = newBinding->HasStyleSheets();
   
-  newBinding.swap(*aBinding);
+    newBinding.swap(*aBinding);
+  }
 
   return NS_OK; 
 }
@@ -882,8 +850,6 @@ nsXBLService::GetBinding(nsIContent* aBoundElement, nsIURI* aURI,
   if (!aURI)
     return NS_ERROR_FAILURE;
 
-  NS_ENSURE_TRUE(aDontExtendURIs.AppendElement(aURI), NS_ERROR_OUT_OF_MEMORY);
-
   nsCAutoString ref;
   nsCOMPtr<nsIURL> url(do_QueryInterface(aURI));
   if (url)
@@ -912,6 +878,14 @@ nsXBLService::GetBinding(nsIContent* aBoundElement, nsIURI* aURI,
   NS_ASSERTION(protoBinding, "Unable to locate an XBL binding.");
   if (!protoBinding)
     return NS_ERROR_FAILURE;
+
+  NS_ENSURE_TRUE(aDontExtendURIs.AppendElement(protoBinding->BindingURI()),
+                 NS_ERROR_OUT_OF_MEMORY);
+  nsCOMPtr<nsIURI> altBindingURI = protoBinding->AlternateBindingURI();
+  if (altBindingURI) {
+    NS_ENSURE_TRUE(aDontExtendURIs.AppendElement(altBindingURI),
+                   NS_ERROR_OUT_OF_MEMORY);
+  }
 
   nsCOMPtr<nsIContent> child = protoBinding->GetBindingElement();
 
@@ -1300,7 +1274,13 @@ nsXBLService::FetchBindingDocument(nsIContent* aBoundElement, nsIDocument* aBoun
     xblListener->AddRequest(req);
 
     // Now kick off the async read.
-    channel->AsyncOpen(xblListener, nsnull);
+    rv = channel->AsyncOpen(xblListener, nsnull);
+    if (NS_FAILED(rv)) {
+      // Well, we won't be getting a load.  Make sure to clean up our stuff!
+      if (bindingManager) {
+        bindingManager->RemoveLoadingDocListener(aDocumentURI);
+      }
+    }
     return NS_OK;
   }
 

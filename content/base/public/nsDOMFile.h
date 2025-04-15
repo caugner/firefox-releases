@@ -41,7 +41,9 @@
 
 #include "nsICharsetDetectionObserver.h"
 #include "nsIDOMFile.h"
+#include "nsIDOMFileInternal.h"
 #include "nsIDOMFileList.h"
+#include "nsIDOMFileError.h"
 #include "nsIInputStream.h"
 #include "nsCOMArray.h"
 #include "nsCOMPtr.h"
@@ -52,11 +54,13 @@ class nsIFile;
 class nsIInputStream;
 
 class nsDOMFile : public nsIDOMFile,
+                  public nsIDOMFileInternal,
                   public nsICharsetDetectionObserver
 {
 public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIDOMFILE
+  NS_DECL_NSIDOMFILEINTERNAL
 
   nsDOMFile(nsIFile *aFile)
     : mFile(aFile)
@@ -112,6 +116,18 @@ public:
 
 private:
   nsCOMArray<nsIDOMFile> mFiles;
+};
+
+class nsDOMFileError : public nsIDOMFileError
+{
+public:
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIDOMFILEERROR
+
+  nsDOMFileError(PRUint16 aErrorCode) : mCode(aErrorCode) {}
+
+private:
+  PRUint16 mCode;
 };
 
 #endif

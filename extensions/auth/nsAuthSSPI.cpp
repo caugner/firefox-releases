@@ -20,6 +20,7 @@
  *
  * Contributor(s):
  *   Darin Fisher <darin@meer.net>
+ *   Jim Mathies <jmathies@mozilla.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -228,13 +229,9 @@ nsAuthSSPI::Init(const char *serviceName,
 {
     LOG(("  nsAuthSSPI::Init\n"));
 
-    // we don't expect to be passed any user credentials
-    NS_ASSERTION(!domain && !username && !password, "unexpected credentials");
-
-    // if we're configured for SPNEGO (Negotiate) or Kerberos, then it's critical 
-    // that the caller supply a service name to be used.
-    if (mPackage != PACKAGE_TYPE_NTLM)
-        NS_ENSURE_TRUE(serviceName && *serviceName, NS_ERROR_INVALID_ARG);
+    // The caller must supply a service name to be used. (For why we now require
+    // a service name for NTLM, see bug 487872.)
+    NS_ENSURE_TRUE(serviceName && *serviceName, NS_ERROR_INVALID_ARG);
 
     nsresult rv;
 
@@ -247,13 +244,26 @@ nsAuthSSPI::Init(const char *serviceName,
     SEC_WCHAR *package;
 
     package = (SEC_WCHAR *) pTypeName[(int)mPackage];
-    if (mPackage != PACKAGE_TYPE_NTLM)
-    {
+
+    if (mPackage == PACKAGE_TYPE_NTLM) {
+        // (bug 535193) For NTLM, just use the uri host, do not do canonical host lookups.
+        // The incoming serviceName is in the format: "protocol@hostname", SSPI expects
+        // "<service class>/<hostname>", so swap the '@' for a '/'.
+        mServiceName.Assign(serviceName);
+        PRInt32 index = mServiceName.FindChar('@');
+        if (index == kNotFound)
+            return NS_ERROR_UNEXPECTED;
+        mServiceName.Replace(index, 1, '/');
+    }
+    else {
+        // Kerberos requires the canonical host, MakeSN takes care of this through a
+        // DNS lookup.
         rv = MakeSN(serviceName, mServiceName);
         if (NS_FAILED(rv))
             return rv;
-        mServiceFlags = serviceFlags;
     }
+
+    mServiceFlags = serviceFlags;
 
     SECURITY_STATUS rc;
 
@@ -268,18 +278,39 @@ nsAuthSSPI::Init(const char *serviceName,
 
     TimeStamp useBefore;
 
+    SEC_WINNT_AUTH_IDENTITY_W ai;
+    SEC_WINNT_AUTH_IDENTITY_W *pai = nsnull;
+    
+    // domain, username, and password will be null if nsHttpNTLMAuth's ChallengeReceived
+    // returns false for identityInvalid. Use default credentials in this case by passing
+    // null for pai.
+    if (username && password) {
+        // Keep a copy of these strings for the duration
+        mUsername.Assign(username);
+        mPassword.Assign(password);
+        mDomain.Assign(domain);
+        ai.Domain = reinterpret_cast<unsigned short*>(mDomain.BeginWriting());
+        ai.DomainLength = mDomain.Length();
+        ai.User = reinterpret_cast<unsigned short*>(mUsername.BeginWriting());
+        ai.UserLength = mUsername.Length();
+        ai.Password = reinterpret_cast<unsigned short*>(mPassword.BeginWriting());
+        ai.PasswordLength = mPassword.Length();
+        ai.Flags = SEC_WINNT_AUTH_IDENTITY_UNICODE;
+        pai = &ai;
+    }
+
     rc = (sspi->AcquireCredentialsHandleW)(NULL,
                                            package,
                                            SECPKG_CRED_OUTBOUND,
                                            NULL,
-                                           NULL,
+                                           pai,
                                            NULL,
                                            NULL,
                                            &mCred,
                                            &useBefore);
     if (rc != SEC_E_OK)
         return NS_ERROR_UNEXPECTED;
-
+    LOG(("AcquireCredentialsHandle() succeeded.\n"));
     return NS_OK;
 }
 
@@ -298,6 +329,11 @@ nsAuthSSPI::GetNextToken(const void *inToken,
     SecBuffer ib, ob;
 
     LOG(("entering nsAuthSSPI::GetNextToken()\n"));
+
+    if (!mCred.dwLower && !mCred.dwUpper) {
+        LOG(("nsAuthSSPI::GetNextToken(), not initialized. exiting."));
+        return NS_ERROR_NOT_INITIALIZED;
+    }
 
     if (mServiceFlags & REQ_DELEGATE)
         ctxReq |= ISC_REQ_DELEGATE;
@@ -338,11 +374,7 @@ nsAuthSSPI::GetNextToken(const void *inToken,
     memset(ob.pvBuffer, 0, ob.cbBuffer);
 
     NS_ConvertUTF8toUTF16 wSN(mServiceName);
-    SEC_WCHAR *sn;
-    if (mPackage == PACKAGE_TYPE_NTLM)
-        sn = NULL;
-    else
-        sn = (SEC_WCHAR *) wSN.get();
+    SEC_WCHAR *sn = (SEC_WCHAR *) wSN.get();
 
     rc = (sspi->InitializeSecurityContextW)(&mCred,
                                             ctxIn,
@@ -357,6 +389,14 @@ nsAuthSSPI::GetNextToken(const void *inToken,
                                             &ctxAttr,
                                             &ignored);
     if (rc == SEC_I_CONTINUE_NEEDED || rc == SEC_E_OK) {
+
+#ifdef PR_LOGGING
+        if (rc == SEC_E_OK)
+            LOG(("InitializeSecurityContext: succeeded.\n"));
+        else
+            LOG(("InitializeSecurityContext: continue.\n"));
+#endif
+
         if (!ob.cbBuffer) {
             nsMemory::Free(ob.pvBuffer);
             ob.pvBuffer = NULL;
@@ -412,13 +452,22 @@ nsAuthSSPI::Unwrap(const void *inToken,
                                 );
 
     if (SEC_SUCCESS(rc)) {
-        *outToken = ib[1].pvBuffer;
+        // check if ib[1].pvBuffer is really just ib[0].pvBuffer, in which
+        // case we can let the caller free it. Otherwise, we need to
+        // clone it, and free the original
+        if (ib[0].pvBuffer == ib[1].pvBuffer) {
+            *outToken = ib[1].pvBuffer;
+        }
+        else {
+            *outToken = nsMemory::Clone(ib[1].pvBuffer, ib[1].cbBuffer);
+            nsMemory::Free(ib[0].pvBuffer);
+            if (!*outToken)
+                return NS_ERROR_OUT_OF_MEMORY;
+        }
         *outTokenLen = ib[1].cbBuffer;
     }
     else
-        nsMemory::Free(ib[1].pvBuffer);
-
-    nsMemory::Free(ib[0].pvBuffer);
+        nsMemory::Free(ib[0].pvBuffer);
 
     if (!SEC_SUCCESS(rc))
         return NS_ERROR_FAILURE;

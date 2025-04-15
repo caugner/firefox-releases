@@ -95,18 +95,22 @@ ifneq (,$(filter WINCE WINNT,$(OS_ARCH)))
 XPIDLSRCS += nsIWinAppHelper.idl
 endif
 
-EXPORTS = \
-	xrecore.h \
-	nsXULAppAPI.h \
-	$(NULL)
-
 CPPSRCS = \
 	nsAppRunner.cpp \
 	nsConsoleWriter.cpp \
 	nsXREDirProvider.cpp \
 	nsNativeAppSupportBase.cpp \
 	nsAppData.cpp \
+	nsSigHandlers.cpp \
 	$(NULL)
+
+ifdef MOZ_SPLASHSCREEN
+ifeq ($(OS_ARCH),WINCE)
+CPPSRCS += nsSplashScreenWin.cpp
+else
+CPPSRCS += nsSplashScreenDummy.cpp
+endif
+endif
 
 DEFINES += -DIMPL_XREAPI
 
@@ -145,16 +149,10 @@ endif
 ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
 CMMSRCS += MacLaunchHelper.mm
 CPPSRCS += nsCommandLineServiceMac.cpp
-LOCAL_INCLUDES += -I$(topsrcdir)/xpfe/bootstrap/appleevents
 OS_CXXFLAGS += -fexceptions
-SHARED_LIBRARY_LIBS += $(DEPTH)/xpfe/bootstrap/appleevents/$(LIB_PREFIX)appleevents_s.$(LIB_SUFFIX)
 endif
 ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
 CMMSRCS += MacApplicationDelegate.mm
-endif
-
-ifneq (,$(filter-out OS2 WINNT,$(OS_ARCH)))
-CPPSRCS	  += nsSigHandlers.cpp
 endif
 
 SHARED_LIBRARY_LIBS += ../profile/src/$(LIB_PREFIX)profile_s.$(LIB_SUFFIX)
@@ -230,7 +228,10 @@ ifdef BUILD_STATIC_LIBS
 DEFINES += -D_BUILD_STATIC_BIN
 endif
 
-DEFINES += -DOS_TARGET=\"$(OS_TARGET)\"
+DEFINES += \
+  -DOS_TARGET=\"$(OS_TARGET)\" \
+  -DMOZ_WIDGET_TOOLKIT=\"$(MOZ_WIDGET_TOOLKIT)\"
+
 ifdef TARGET_XPCOM_ABI
 DEFINES += \
 	-DTARGET_XPCOM_ABI=\"$(TARGET_XPCOM_ABI)\" \

@@ -42,7 +42,7 @@
 #include "nsDeviceContextSpecOS2.h"
 
 #include "nsReadableUtils.h"
-#include "nsISupportsArray.h"
+#include "nsTArray.h"
 
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
@@ -82,21 +82,21 @@ public:
 
   PRBool    PrintersAreAllocated()       { return mGlobalPrinterList != nsnull; }
   PRInt32   GetNumPrinters()             { return mGlobalNumPrinters; }
-  nsString* GetStringAt(PRInt32 aInx)    { return mGlobalPrinterList->StringAt(aInx); }
+  nsString* GetStringAt(PRInt32 aInx)    { return &mGlobalPrinterList->ElementAt(aInx); }
   void      GetDefaultPrinterName(PRUnichar*& aDefaultPrinterName);
 
 protected:
   GlobalPrinters() {}
 
   static GlobalPrinters mGlobalPrinters;
-  static nsStringArray* mGlobalPrinterList;
+  static nsTArray<nsString>* mGlobalPrinterList;
   static ULONG          mGlobalNumPrinters;
 
 };
 //---------------
 // static members
 GlobalPrinters GlobalPrinters::mGlobalPrinters;
-nsStringArray* GlobalPrinters::mGlobalPrinterList = nsnull;
+nsTArray<nsString>* GlobalPrinters::mGlobalPrinterList = nsnull;
 ULONG          GlobalPrinters::mGlobalNumPrinters = 0;
 //---------------
 
@@ -346,11 +346,13 @@ NS_IMETHODIMP nsDeviceContextSpecOS2::GetSurfaceForPrinter(gfxASurface **surface
 
   PRInt16 outputFormat;
   mPrintSettings->GetOutputFormat(&outputFormat);
-  // for now always set the output format to PDF, see bug 415522:
-  printf("print output format is %d but we are setting it to %d (PDF)\n",
-         outputFormat, nsIPrintSettings::kOutputFormatPDF);
-  outputFormat = nsIPrintSettings::kOutputFormatPDF;
-  mPrintSettings->SetOutputFormat(outputFormat); // save PDF format in settings
+  int printerDest;
+  GetDestination(printerDest);
+  if (printerDest != printPreview) {
+    // for now always set the output format to PDF, see bug 415522
+    outputFormat = nsIPrintSettings::kOutputFormatPDF;
+    mPrintSettings->SetOutputFormat(outputFormat); // save PDF format in settings
+  }
 
   if (outputFormat == nsIPrintSettings::kOutputFormatPDF) {
     nsXPIDLString filename;
@@ -402,12 +404,9 @@ NS_IMETHODIMP nsDeviceContextSpecOS2::GetSurfaceForPrinter(gfxASurface **surface
     newSurface = new(std::nothrow) gfxPDFSurface(stream, gfxSize(width, height));
   } else {
     int numCopies = 0;
-    int printerDest = 0;
-    char *filename = nsnull;
-
     GetCopies(numCopies);
-    GetDestination(printerDest);
-    if (!printerDest) {
+    char *filename = nsnull;
+    if (printerDest == printToFile) {
       GetPath(&filename);
     }
     mPrintingStarted = PR_TRUE;
@@ -575,7 +574,7 @@ NS_IMETHODIMP nsPrinterEnumeratorOS2::GetPrinterNameList(nsIStringEnumerator **a
   }
 
   ULONG numPrinters = GlobalPrinters::GetInstance()->GetNumPrinters();
-  nsStringArray *printers = new nsStringArray(numPrinters);
+  nsTArray<nsString> *printers = new nsTArray<nsString>(numPrinters);
   if (!printers) {
     GlobalPrinters::GetInstance()->FreeGlobalPrinters();
     return NS_ERROR_OUT_OF_MEMORY;
@@ -584,7 +583,7 @@ NS_IMETHODIMP nsPrinterEnumeratorOS2::GetPrinterNameList(nsIStringEnumerator **a
   ULONG count = 0;
   while( count < numPrinters )
   {
-    printers->AppendString(*GlobalPrinters::GetInstance()->GetStringAt(count++));
+    printers->AppendElement(*GlobalPrinters::GetInstance()->GetStringAt(count++));
   }
   GlobalPrinters::GetInstance()->FreeGlobalPrinters();
 
@@ -654,7 +653,7 @@ nsresult GlobalPrinters::InitializeGlobalPrinters ()
   if (!mGlobalNumPrinters) 
     return NS_ERROR_GFX_PRINTER_NO_PRINTER_AVAILABLE; 
 
-  mGlobalPrinterList = new nsStringArray();
+  mGlobalPrinterList = new nsTArray<nsString>();
   if (!mGlobalPrinterList) 
      return NS_ERROR_OUT_OF_MEMORY;
 
@@ -670,7 +669,7 @@ nsresult GlobalPrinters::InitializeGlobalPrinters ()
     PRInt32 printerNameLength;
     rv = MultiByteToWideChar(0, printer, strlen(printer),
                              printerName, printerNameLength);
-    mGlobalPrinterList->AppendString(nsDependentString(printerName.Elements()));
+    mGlobalPrinterList->AppendElement(nsDependentString(printerName.Elements()));
 
     // store printer description in prefs for the print dialog
     if (!prefFailed) {

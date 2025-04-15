@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: sw=4 ts=4 sts=4
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
+ * vim: sw=2 ts=2 et lcs=trail\:.,tab\:>~ :
  * ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -38,58 +38,69 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef _MOZSTORAGEPRIVATEHELPERS_H_
-#define _MOZSTORAGEPRIVATEHELPERS_H_
-
-#include "mozStorage.h"
+#ifndef _mozStoragePrivateHelpers_h_
+#define _mozStoragePrivateHelpers_h_
 
 /**
  * This file contains convenience methods for mozStorage.
  */
 
+#include "sqlite3.h"
+#include "nsIVariant.h"
+#include "mozStorage.h"
+#include "jsapi.h"
+
+class mozIStorageStatement;
+
+namespace mozilla {
+namespace storage {
+
+////////////////////////////////////////////////////////////////////////////////
+//// Macros
+
+#define ENSURE_INDEX_VALUE(aIndex, aCount) \
+  NS_ENSURE_TRUE(aIndex < aCount, NS_ERROR_INVALID_ARG)
+
+////////////////////////////////////////////////////////////////////////////////
+//// Functions
+
 /**
  * Converts a SQLite return code to an nsresult return code.
  *
- * @param srv The SQLite return code.
- * @return The corresponding nsresult code.
+ * @param aSQLiteResultCode
+ *        The SQLite return code to convert.
+ * @returns the corresponding nsresult code for aSQLiteResultCode.
  */
-static nsresult
-ConvertResultCode(int srv)
-{
-    switch (srv) {
-        case SQLITE_OK:
-        case SQLITE_ROW:
-        case SQLITE_DONE:
-            return NS_OK;
-        case SQLITE_CORRUPT:
-        case SQLITE_NOTADB:
-            return NS_ERROR_FILE_CORRUPTED;
-        case SQLITE_PERM:
-        case SQLITE_CANTOPEN:
-            return NS_ERROR_FILE_ACCESS_DENIED;
-        case SQLITE_BUSY:
-            return NS_ERROR_STORAGE_BUSY;
-        case SQLITE_LOCKED:
-            return NS_ERROR_FILE_IS_LOCKED;
-        case SQLITE_READONLY:
-            return NS_ERROR_FILE_READ_ONLY;
-        case SQLITE_IOERR:
-            return NS_ERROR_STORAGE_IOERR;
-        case SQLITE_FULL:
-        case SQLITE_TOOBIG:
-            return NS_ERROR_FILE_NO_DEVICE_SPACE;
-        case SQLITE_NOMEM:
-            return NS_ERROR_OUT_OF_MEMORY;
-        case SQLITE_MISUSE:
-            return NS_ERROR_UNEXPECTED;
-        case SQLITE_ABORT:
-        case SQLITE_INTERRUPT:
-            return NS_ERROR_ABORT;
-    }
+nsresult convertResultCode(int aSQLiteResultCode);
 
-    // generic error
-    return NS_ERROR_FAILURE;
-}
+/**
+ * Checks the performance of a SQLite statement and logs a warning with
+ * NS_WARNING.  Currently this only checks the number of sort operations done
+ * on a statement, and if more than zero have been done, the statement can be
+ * made faster with the careful use of an index.
+ *
+ * @param aStatement
+ *        The sqlite3_stmt object to check.
+ */
+void checkAndLogStatementPerformance(sqlite3_stmt *aStatement);
 
-#endif // _MOZSTORAGEPRIVATEHELPERS_H_
+/**
+ *
+ */
+bool
+bindJSValue(JSContext *aCtx,
+            mozIStorageStatement *aStatement,
+            int aIdx,
+            jsval aValue);
 
+/**
+ * Used to convert an nsIVariant to the proper SQLite type.
+ */
+template <typename T>
+int variantToSQLiteT(T aObj, nsIVariant *aValue);
+#include "variantToSQLiteT_impl.h" // To keep this file easier to read.
+
+} // namespace storage
+} // namespace mozilla
+
+#endif // _mozStoragePrivateHelpers_h_

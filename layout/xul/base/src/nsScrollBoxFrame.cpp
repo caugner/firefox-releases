@@ -49,6 +49,8 @@
 class nsAutoRepeatBoxFrame : public nsButtonBoxFrame
 {
 public:
+  NS_DECL_FRAMEARENA_HELPERS
+
   friend nsIFrame* NS_NewAutoRepeatBoxFrame(nsIPresShell* aPresShell,
                                             nsStyleContext* aContext);
 
@@ -94,13 +96,20 @@ nsIFrame*
 NS_NewAutoRepeatBoxFrame (nsIPresShell* aPresShell, nsStyleContext* aContext)
 {
   return new (aPresShell) nsAutoRepeatBoxFrame (aPresShell, aContext);
-} // NS_NewScrollBarButtonFrame
+}
+
+NS_IMPL_FRAMEARENA_HELPERS(nsAutoRepeatBoxFrame)
 
 NS_IMETHODIMP
 nsAutoRepeatBoxFrame::HandleEvent(nsPresContext* aPresContext, 
                                       nsGUIEvent* aEvent,
                                       nsEventStatus* aEventStatus)
 {  
+  NS_ENSURE_ARG_POINTER(aEventStatus);
+  if (nsEventStatus_eConsumeNoDefault == *aEventStatus) {
+    return NS_OK;
+  }
+
   switch(aEvent->message)
   {
     // repeat mode may be "hover" for repeating while the mouse is hovering
@@ -139,9 +148,9 @@ nsAutoRepeatBoxFrame::HandlePress(nsPresContext* aPresContext,
                                   nsEventStatus* aEventStatus)
 {
   if (!IsActivatedOnHover()) {
+    StartRepeat();
     mTrustedEvent = NS_IS_TRUSTED_EVENT(aEvent);
     DoMouseClick(aEvent, mTrustedEvent);
-    StartRepeat();
   }
 
   return NS_OK;

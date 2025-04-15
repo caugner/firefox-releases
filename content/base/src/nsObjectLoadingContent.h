@@ -64,6 +64,7 @@ enum PluginSupportState {
   ePluginDisabled,     // The plugin has been explicitly disabled by the
                        // user.
   ePluginBlocklisted,  // The plugin is blocklisted and disabled
+  ePluginOutdated,     // The plugin is considered outdated, but not disabled
   ePluginOtherState    // Something else (e.g. not a plugin at all as far
                        // as we can tell).
 };
@@ -90,6 +91,7 @@ class nsObjectLoadingContent : public nsImageLoadingContent
                              , public nsIStreamListener
                              , public nsIFrameLoaderOwner
                              , public nsIObjectLoadingContent
+                             , public nsIObjectLoadingContent_MOZILLA_1_9_2_BRANCH
                              , public nsIInterfaceRequestor
                              , public nsIChannelEventSink
 {
@@ -115,6 +117,7 @@ class nsObjectLoadingContent : public nsImageLoadingContent
     NS_DECL_NSISTREAMLISTENER
     NS_DECL_NSIFRAMELOADEROWNER
     NS_DECL_NSIOBJECTLOADINGCONTENT
+    NS_DECL_NSIOBJECTLOADINGCONTENT_MOZILLA_1_9_2_BRANCH
     NS_DECL_NSIINTERFACEREQUESTOR
     NS_DECL_NSICHANNELEVENTSINK
 

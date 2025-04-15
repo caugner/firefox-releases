@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: sw=2 ts=2 sts=2 expandtab
+ * vim: sw=2 ts=2 et lcs=trail\:.,tab\:>~ :
  * ***** BEGIN LICENSE BLOCK *****
  * Version: MPL 1.1/GPL 2.0/LGPL 2.1
  *
@@ -39,34 +39,44 @@
 
 #include "mozStorageError.h"
 
+namespace mozilla {
+namespace storage {
+
 ////////////////////////////////////////////////////////////////////////////////
-//// mozStorageError
+//// Error
+
+Error::Error(int aResult,
+             const char *aMessage)
+: mResult(aResult)
+, mMessage(aMessage)
+{
+}
 
 /**
  * Note:  This object is only ever accessed on one thread at a time.  It it not
  *        threadsafe, but it does need threadsafe AddRef and Release.
  */
-NS_IMPL_THREADSAFE_ISUPPORTS1(mozStorageError, mozIStorageError)
-
-mozStorageError::mozStorageError(int aResult, const char *aMessage) :
-    mResult(aResult)
-  , mMessage(aMessage)
-{
-}
+NS_IMPL_THREADSAFE_ISUPPORTS1(
+  Error,
+  mozIStorageError
+)
 
 ////////////////////////////////////////////////////////////////////////////////
 //// mozIStorageError
 
 NS_IMETHODIMP
-mozStorageError::GetResult(PRInt32 *_result)
+Error::GetResult(PRInt32 *_result)
 {
   *_result = mResult;
   return NS_OK;
 }
 
 NS_IMETHODIMP
-mozStorageError::GetMessage(nsACString &_message)
+Error::GetMessage(nsACString &_message)
 {
   _message = mMessage;
   return NS_OK;
 }
+
+} // namespace storage
+} // namespace mozilla

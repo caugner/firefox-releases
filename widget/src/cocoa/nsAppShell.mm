@@ -67,6 +67,79 @@ extern PRUint32          gLastModifierState;
 // defined in nsCocoaWindow.mm
 extern PRInt32             gXULModalLevel;
 
+#ifndef __LP64__
+#include <dlfcn.h>
+
+void (*WebKit_WebInitForCarbon)() = NULL;
+
+// Plugins may exist that use the WebKit framework.  Those that are
+// Carbon-based need to call WebKit's WebInitForCarbon() method.  There
+// currently appears to be only one Carbon WebKit plugin --
+// DivXBrowserPlugin (included with the DivX Web Player,
+// http://www.divx.com/en/downloads/divx/mac).  See bug 509130.
+//
+// The source-code for WebInitForCarbon() is in the WebKit source tree's
+// WebKit/mac/Carbon/CarbonUtils.mm file.  Among other things it installs
+// an idle timer on the main event loop, whose target is the PoolCleaner()
+// function (also in CarbonUtils.mm).  WebInitForCarbon() allocates an
+// NSAutoreleasePool object which it stores in the global sPool variable.
+// PoolCleaner() periodically releases/drains sPool and creates another
+// NSAutoreleasePool object to take its place.  The intention is to ensure
+// an autorelease pool is in place for whatever Objective-C code may be
+// called by WebKit code, and that it periodically gets "cleaned".  But
+// PoolCleaner()'s periodic cleaning has a very bad effect on us -- it
+// causes objects to be deleted prematurely, so that attempts to access them
+// cause crashes.  This is probably because, when WebInitForCarbon() is
+// called from a plugin in a Cocoa browser, one or more autorelease pools
+// are already in place.  So, other things being equal, PoolCleaner() should
+// have a similar effect on any Cocoa app that hosts a Carbon WebKit plugin.
+//
+// PoolCleaner() only "works" if the autorelease pool count (returned by
+// WKGetNSAutoreleasePoolCount(), stored in numPools) is the same as when
+// sPool was last set.  So we can permanently disable it by ensuring that,
+// when sPool is first set, numPools gets set to a value that it will never
+// have again until just after the app shell is destroyed.  To accomplish
+// this we need to call WebInitForCarbon() ourselves, before any plugin
+// calls it (subsequent calls to WebInitForCarbon() (after the first) are
+// no-ops):  We release all of the app shell's autorelease pools (including
+// mMainPool) just before calling WebInitForCarbon(), then restore mMainPool
+// just afterwards (before the idle timer has time to call PoolCleaner()).
+//
+// WKGetNSAutoreleasePoolCount() only works on OS X 10.5 and below -- not on
+// OS X 10.6 and above.  So PoolCleaner() is always disabled on 10.6 and
+// above -- we needn't do anything to explicitly disable it.
+//
+// WKGetNSAutoreleasePoolCount() is a thin wrapper around the following code:
+//
+//   unsigned count = NSPushAutoreleasePool(0);
+//   NSPopAutoreleasePool(count);
+//   return count;
+//
+// NSPushAutoreleasePool() and NSPopAutoreleasePool() are undocumented
+// functions from the Foundation framework.  On OS X 10.5.X and below their
+// declarations are (as best I can tell) as follows.  ('capacity' is
+// presumably the initial capacity, in number of items, of the autorelease
+// pool to be created.)
+//
+//   unsigned NSPushAutoreleasePool(unsigned capacity);
+//   void NSPopAutoreleasePool(unsigned offset);
+//
+// But as of OS X 10.6 these functions appear to have changed as follows:
+//
+//   AutoreleasePool *NSPushAutoreleasePool(unsigned capacity);
+//   void NSPopAutoreleasePool(AutoreleasePool *aPool);
+static void InitCarbonWebKit()
+{
+  if (!WebKit_WebInitForCarbon) {
+    void* webkithandle = dlopen("/System/Library/Frameworks/WebKit.framework/WebKit", RTLD_LAZY);
+    if (webkithandle)
+      *(void **)(&WebKit_WebInitForCarbon) = dlsym(webkithandle, "WebInitForCarbon");
+  }
+  if (WebKit_WebInitForCarbon)
+    WebKit_WebInitForCarbon();
+}
+#endif // __LP64__
+
 static PRBool gAppShellMethodsSwizzled = PR_FALSE;
 // List of current Cocoa app-modal windows (nested if more than one).
 nsCocoaAppModalWindowList *gCocoaAppModalWindowList = NULL;
@@ -210,6 +283,7 @@ nsAppShell::nsAppShell()
 , mHadMoreEventsCount(0)
 , mRecursionDepth(0)
 , mNativeEventCallbackDepth(0)
+, mNativeEventScheduledDepth(0)
 {
   // mMainPool sits low on the autorelease pool stack to serve as a catch-all
   // for autoreleased objects on this thread.  Because it won't be popped
@@ -218,6 +292,10 @@ nsAppShell::nsAppShell()
   //
   // Objects autoreleased to this pool may result in warnings in the future.
   mMainPool = [[NSAutoreleasePool alloc] init];
+
+  // A Cocoa event loop is running here if (and only if) we've been embedded
+  // by a Cocoa app (like Camino).
+  mRunningCocoaEmbedded = [NSApp isRunning] ? PR_TRUE : PR_FALSE;
 }
 
 nsAppShell::~nsAppShell()
@@ -240,27 +318,30 @@ nsAppShell::~nsAppShell()
   }
 
   [mDelegate release];
-  // When you quit Camino with at least one window open, embedding is shut
-  // down (by a call to NS_TermEmbedding()) and we (the current appshell)
-  // are destroyed as the last browser window (class BrowserWindow) is closed.
-  // (The call to NS_TermEmbedding() is ultimately made from
-  // [BrowserWindowController windowWillClose:].)  This means that some code
-  // runs _after_ the appshell is destroyed.  This code assumes that various
-  // objects which have a retain count >= 1 will remain in existence, and that
-  // an autorelease pool will still be available.  But because mMainPool sits
-  // so low on the autorelease stack, if we release it here there's a good
-  // chance that all the aforementioned objects (including the other
-  // autorelease pools) will be released, and havoc will result.
+  // Cocoa-based embedders (like Camino) call NS_TermEmbedding() (which
+  // destroys us) before their own Cocoa infrastructure is fully shut down.
+  // This infrastructure assumes that various objects which have a retain
+  // count >= 1 will remain in existence, and that an autorelease pool will
+  // still be available.  But because mMainPool sits so low on the autorelease
+  // stack, if we release it here there's a good chance that all the
+  // aforementioned objects (including the other autorelease pools) will be
+  // released, and havoc will result.
   //
-  // So if we've been terminated using [NSApplication terminate:] (which
-  // Camino always uses), we don't release mMainPool here.  This won't cause
-  // leaks, because after [NSApplication terminate:] sends an
-  // NSApplicationWillTerminate notification it calls [NSApplication
-  // _deallocHardCore:], which (after it uses [NSArray
+  // So if we've been called from a Cocoa embedder, or in general if we've
+  // been terminated using [NSApplication terminate:], we don't release
+  // mMainPool here.  This won't cause leaks, because after [NSApplication
+  // terminate:] sends an NSApplicationWillTerminate notification it calls
+  // [NSApplication _deallocHardCore:], which (after it uses [NSArray
   // makeObjectsPerformSelector:] to close all remaining windows) calls
   // [NSAutoreleasePool releaseAllPools] (to release all autorelease pools
   // on the current thread, which is the main thread).
-  if (!mNotifiedWillTerminate)
+  //
+  // Cocoa embedders will almost certainly be terminated using [NSApplication
+  // terminate:].  But we can be called from a Cocoa embedder's will-terminate
+  // notification handler before our own is called (so that
+  // mNotifiedWillTerminate isn't yet TRUE).  To avoid this, we also check
+  // mRunningCocoaEmbedded here.  See bug 471948.
+  if (!mNotifiedWillTerminate && !mRunningCocoaEmbedded)
     [mMainPool release];
 
   NS_OBJC_END_TRY_ABORT_BLOCK
@@ -351,6 +432,14 @@ nsAppShell::Init()
 
   [localPool release];
 
+#ifndef __LP64__
+  if (!nsToolkit::OnSnowLeopardOrLater()) {
+    [mMainPool release];
+    InitCarbonWebKit();
+    mMainPool = [[NSAutoreleasePool alloc] init];
+  }
+#endif
+
   return rv;
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
@@ -421,9 +510,45 @@ nsAppShell::ProcessGeckoEvents(void* aInfo)
                                          data2:0]
            atStart:NO];
 
-  // Each Release() here is balanced by exactly one AddRef() in
-  // ScheduleNativeEventCallback().
-  NS_RELEASE(self);
+  // Normally every call to ScheduleNativeEventCallback() results in
+  // exactly one call to ProcessGeckoEvents().  So each Release() here
+  // normally balances exactly one AddRef() in ScheduleNativeEventCallback().
+  // But if Exit() is called just after ScheduleNativeEventCallback(), the
+  // corresponding call to ProcessGeckoEvents() will never happen.  We check
+  // for this possibility in two different places -- here and in Exit()
+  // itself.  If we find here that Exit() has been called (that mTerminated
+  // is PR_TRUE), it's because we've been called recursively, that Exit() was
+  // called from self->NativeEventCallback() above, and that we're unwinding
+  // the recursion.  In this case we'll never be called again, and we balance
+  // here any extra calls to ScheduleNativeEventCallback().
+  //
+  // When ProcessGeckoEvents() is called recursively, it's because of a
+  // call to ScheduleNativeEventCallback() from NativeEventCallback().  We
+  // balance the "extra" AddRefs here (rather than always in Exit()) in order
+  // to ensure that 'self' stays alive until the end of this method.  We also
+  // make sure not to finish the balancing until all the recursion has been
+  // unwound.
+  if (self->mTerminated) {
+    PRInt32 releaseCount = 0;
+    if (self->mNativeEventScheduledDepth > self->mNativeEventCallbackDepth) {
+      releaseCount = PR_AtomicSet(&self->mNativeEventScheduledDepth,
+                                  self->mNativeEventCallbackDepth);
+    }
+    while (releaseCount-- > self->mNativeEventCallbackDepth)
+      self->Release();
+  } else {
+    // As best we can tell, every call to ProcessGeckoEvents() is triggered
+    // by a call to ScheduleNativeEventCallback().  But we've seen a few
+    // (non-reproducible) cases of double-frees that *might* have been caused
+    // by spontaneous calls (from the OS) to ProcessGeckoEvents().  So we
+    // deal with that possibility here.
+    if (PR_AtomicDecrement(&self->mNativeEventScheduledDepth) < 0) {
+      PR_AtomicSet(&self->mNativeEventScheduledDepth, 0);
+      NS_WARNING("Spontaneous call to ProcessGeckoEvents()!");
+    } else {
+      self->Release();
+    }
+  }
 
   NS_OBJC_END_TRY_ABORT_BLOCK;
 }
@@ -484,9 +609,11 @@ nsAppShell::ScheduleNativeEventCallback()
   if (mTerminated)
     return;
 
-  // Each AddRef() here is balanced by exactly one Release() in
-  // ProcessGeckoEvents().
+  // Each AddRef() here is normally balanced by exactly one Release() in
+  // ProcessGeckoEvents().  But there are exceptions, for which see
+  // ProcessGeckoEvents() and Exit().
   NS_ADDREF_THIS();
+  PR_AtomicIncrement(&mNativeEventScheduledDepth);
 
   // This will invoke ProcessGeckoEvents on the main thread.
   ::CFRunLoopSourceSignal(mCFRunLoopSource);
@@ -761,6 +888,18 @@ nsAppShell::Exit(void)
     [NSApp stop:nsnull];
   [NSApp stop:nsnull];
 
+  // A call to Exit() just after a call to ScheduleNativeEventCallback()
+  // prevents the (normally) matching call to ProcessGeckoEvents() from
+  // happening.  If we've been called from ProcessGeckoEvents() (as usually
+  // happens), we take care of it there.  But if we have an unbalanced call
+  // to ScheduleNativeEventCallback() and ProcessGeckoEvents() isn't on the
+  // stack, we need to take care of the problem here.
+  if (!mNativeEventCallbackDepth && mNativeEventScheduledDepth) {
+    PRInt32 releaseCount = PR_AtomicSet(&mNativeEventScheduledDepth, 0);
+    while (releaseCount-- > 0)
+      NS_RELEASE_THIS();
+  }
+
   return nsBaseAppShell::Exit();
 
   NS_OBJC_END_TRY_ABORT_BLOCK_NSRESULT;
@@ -913,7 +1052,7 @@ nsAppShell::AfterProcessNextEvent(nsIThreadInternal *aThread,
   NSString *sender = [aNotification object];
   if (!sender || ![sender isEqualToString:@"org.mozilla.gecko.PopupWindow"]) {
     if (gRollupListener && gRollupWidget)
-      gRollupListener->Rollup(nsnull);
+      gRollupListener->Rollup(nsnull, nsnull);
   }
 
   NS_OBJC_END_TRY_ABORT_BLOCK;

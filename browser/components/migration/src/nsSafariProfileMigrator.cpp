@@ -215,35 +215,41 @@ CFPropertyListRef CopyPListFromFile(nsILocalFile* aPListFile)
 {
   PRBool exists;
   aPListFile->Exists(&exists);
-  nsCAutoString filePath;
-  aPListFile->GetNativePath(filePath);
   if (!exists)
     return nsnull;
+
+  nsCAutoString filePath;
+  aPListFile->GetNativePath(filePath);
 
   nsCOMPtr<nsILocalFileMac> macFile(do_QueryInterface(aPListFile));
   CFURLRef urlRef;
   macFile->GetCFURL(&urlRef);
 
-  CFDataRef resourceData;
-
+  // It is possible for CFURLCreateDataAndPropertiesFromResource to allocate resource
+  // data and then return a failure so be careful to check both and clean up properly.
   SInt32 errorCode;
-  Boolean status = ::CFURLCreateDataAndPropertiesFromResource(kCFAllocatorDefault,
-                                                              urlRef,
-                                                              &resourceData,
-                                                              NULL,
-                                                              NULL,
-                                                              &errorCode);
-  if (!status)
-    return nsnull;
+  CFDataRef resourceData = NULL;
+  Boolean dataSuccess = ::CFURLCreateDataAndPropertiesFromResource(kCFAllocatorDefault,
+                                                                   urlRef,
+                                                                   &resourceData,
+                                                                   NULL,
+                                                                   NULL,
+                                                                   &errorCode);
 
-  CFPropertyListRef result = ::CFPropertyListCreateFromXMLData(kCFAllocatorDefault,
-                                                               resourceData,
-                                                               kCFPropertyListImmutable,
-                                                               NULL);
-  ::CFRelease(resourceData);
+  CFPropertyListRef propertyList = NULL;
+  if (resourceData) {
+    if (dataSuccess) {
+      propertyList = ::CFPropertyListCreateFromXMLData(kCFAllocatorDefault,
+                                                       resourceData,
+                                                       kCFPropertyListImmutable,
+                                                       NULL);
+    }
+    ::CFRelease(resourceData);
+  }
+
   ::CFRelease(urlRef);
 
-  return result;
+  return propertyList;
 }
 
 CFDictionaryRef CopySafariPrefs()
@@ -347,7 +353,6 @@ nsSafariProfileMigrator::PrefTransform gTransforms[] = {
   { CFSTR("WebKitDefaultFixedFontSize"),  _SPM(INT),      "font.size.fixed.",               _SPM(SetFontSize), PR_FALSE, -1 },
   { CFSTR("WebKitMinimumFontSize"),       _SPM(INT),      "font.minimum-size.",             _SPM(SetFontSize), PR_FALSE, -1 },
   { CFSTR("WebKitDisplayImagesKey"),      _SPM(BOOL),     "permissions.default.image",      _SPM(SetDisplayImages), PR_FALSE, -1 },
-  { CFSTR("WebKitJavaEnabled"),           _SPM(BOOL),     "security.enable_java",           _SPM(SetBool), PR_FALSE, -1 },
   { CFSTR("WebKitJavaScriptEnabled"),     _SPM(BOOL),     "javascript.enabled",             _SPM(SetBool), PR_FALSE, -1 },
   { CFSTR("WebKitJavaScriptCanOpenWindowsAutomatically"),
                                           _SPM(BOOL),     "dom.disable_open_during_load",   _SPM(SetBoolInverted), PR_FALSE, -1 }
@@ -1255,14 +1260,14 @@ nsSafariProfileMigrator::GetSourceHomePageURL(nsACString& aResult)
 
   // Let's first check if there's a home page key in the com.apple.safari file...
   CFDictionaryRef safariPrefs = CopySafariPrefs();
-  if (GetDictionaryCStringValue(safariPrefs,
-                                CFSTR(SAFARI_HOME_PAGE_PREF),
-                                aResult, kCFStringEncodingUTF8)) {
+  if (safariPrefs) {
+    PRBool foundPref = GetDictionaryCStringValue(safariPrefs,
+                                                 CFSTR(SAFARI_HOME_PAGE_PREF),
+                                                 aResult, kCFStringEncodingUTF8);
     ::CFRelease(safariPrefs);
-    return NS_OK;
+    if (foundPref)
+      return NS_OK;
   }
-
-  ::CFRelease(safariPrefs);
 
   // Couldn't find the home page in com.apple.safai, time to check
   // com.apple.internetconfig for this key!

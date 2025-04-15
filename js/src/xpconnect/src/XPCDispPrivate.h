@@ -323,7 +323,7 @@ public:
     JSBool IsMarked() const;
 private:
     JSBool mMarked;
-    nsVoidArray mIDArray;
+    nsTArray<jsid> mIDArray;
 };
 
 /**
@@ -367,7 +367,7 @@ public:
          */
         PRUint32 Length() const;
     private:
-        nsVoidArray      mArray;
+        nsTArray<FUNCDESC> mArray;
         /**
          * Initializes a function description object
          * @param ccx XPConnect context
@@ -1139,14 +1139,6 @@ public:
      * Disables the IDispatch extension
      */
     static void Disable() { mIsEnabled = PR_FALSE; }
-    /**
-     * Initializes the IDispatch support system
-     * this exposes the ActiveXObject and COMObject to JS
-     * @param aJSContext a JS context
-     * @param aGlobalJSObj a global JS object
-     */
-    static JSBool Initialize(JSContext * aJSContext,
-                             JSObject* aGlobalJSObj);
     /**
      * This is the define property for the IDispatch system. It called from
      * the XPConnect's DefineProperty

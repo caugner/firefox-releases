@@ -37,18 +37,17 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#include "nsXPCOM.h"
+#include "mozilla/XPCOM.h"
+
 #include "nsXPCOMPrivate.h"
 #include "nsXPCOMCIDInternal.h"
-#include "nscore.h"
-#include "nsIClassInfoImpl.h"
+
 #include "nsStaticComponents.h"
 #include "prlink.h"
-#include "nsCOMPtr.h"
+
 #include "nsObserverList.h"
 #include "nsObserverService.h"
 #include "nsProperties.h"
-#include "nsIProperties.h"
 #include "nsPersistentProperties.h"
 #include "nsScriptableInputStream.h"
 #include "nsBinaryStream.h"
@@ -76,6 +75,10 @@
 #include "nsThreadManager.h"
 #include "nsThreadPool.h"
 
+#ifdef DEBUG
+#include "BlockingResourceBase.h"
+#endif // ifdef DEBUG
+
 #include "nsIProxyObjectManager.h"
 #include "nsProxyEventPrivate.h"  // access to the impl of nsProxyObjectManager for the generic factory registration.
 
@@ -85,7 +88,6 @@
 
 #include "nsTimerImpl.h"
 #include "TimerThread.h"
-#include "nsTimeStamp.h"
 
 #include "nsThread.h"
 #include "nsProcess.h"
@@ -121,6 +123,8 @@ NS_DECL_CLASSINFO(nsStringInputStream)
 
 #include "nsUUIDGenerator.h"
 
+#include "nsIOUtil.h"
+
 #ifdef GC_LEAK_DETECTOR
 #include "nsLeakDetector.h"
 #endif
@@ -140,8 +144,6 @@ NS_DECL_CLASSINFO(nsStringInputStream)
 #include "nsMemoryReporterManager.h"
 
 #include <locale.h>
-
-#include "nsXPCOM.h"
 
 using mozilla::TimeStamp;
 
@@ -203,7 +205,6 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsSupportsDoubleImpl)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSupportsVoidImpl)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsSupportsInterfacePointerImpl)
 
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsArray)
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsConsoleService, Init)
 NS_DECL_CLASSINFO(nsConsoleService)
 NS_GENERIC_FACTORY_CONSTRUCTOR(nsAtomService)
@@ -234,7 +235,9 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(nsMacUtilsImpl)
 
 NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsSystemInfo, Init)
 
-NS_GENERIC_FACTORY_CONSTRUCTOR(nsMemoryReporterManager)
+NS_GENERIC_FACTORY_CONSTRUCTOR_INIT(nsMemoryReporterManager, Init)
+
+NS_GENERIC_FACTORY_CONSTRUCTOR(nsIOUtil)
 
 static NS_METHOD
 nsThreadManagerGetSingleton(nsISupports* outer,
@@ -486,6 +489,7 @@ static const nsModuleComponentInfo components[] = {
     COMPONENT(SYSTEMINFO, nsSystemInfoConstructor),
 #define NS_MEMORY_REPORTER_MANAGER_CLASSNAME "Memory Reporter Manager"
     COMPONENT(MEMORY_REPORTER_MANAGER, nsMemoryReporterManagerConstructor),
+    COMPONENT(IOUTIL, nsIOUtilConstructor),
 };
 
 #undef COMPONENT
@@ -701,9 +705,6 @@ NS_InitXPCOM3(nsIServiceManager* *result,
     // to the directory service.
     nsDirectoryService::gService->RegisterCategoryProviders();
 
-    // Initialize memory flusher
-    nsMemoryImpl::InitFlusher();
-
     // Notify observers of xpcom autoregistration start
     NS_CreateServicesFromCategory(NS_XPCOM_STARTUP_CATEGORY, 
                                   nsnull,
@@ -737,6 +738,14 @@ NS_InitXPCOM3(nsIServiceManager* *result,
 EXPORT_XPCOM_API(nsresult)
 NS_ShutdownXPCOM(nsIServiceManager* servMgr)
 {
+    return mozilla::ShutdownXPCOM(servMgr);
+}
+
+namespace mozilla {
+
+nsresult
+ShutdownXPCOM(nsIServiceManager* servMgr)
+{
     NS_ENSURE_STATE(NS_IsMainThread());
 
     nsresult rv;
@@ -756,6 +765,10 @@ NS_ShutdownXPCOM(nsIServiceManager* servMgr)
 
         if (observerService)
         {
+            (void) observerService->
+                NotifyObservers(nsnull, NS_XPCOM_WILL_SHUTDOWN_OBSERVER_ID,
+                                nsnull);
+
             nsCOMPtr<nsIServiceManager> mgr;
             rv = NS_GetServiceManager(getter_AddRefs(mgr));
             if (NS_SUCCEEDED(rv))
@@ -874,6 +887,7 @@ NS_ShutdownXPCOM(nsIServiceManager* servMgr)
     nsComponentManagerImpl::gComponentManager = nsnull;
 
 #ifdef DEBUG
+    // FIXME BUG 456272: this should disappear
     _FreeAutoLockStatics();
 #endif
 
@@ -884,6 +898,22 @@ NS_ShutdownXPCOM(nsIServiceManager* servMgr)
     NS_IF_RELEASE(gDebug);
 
     TimeStamp::Shutdown();
+
+#ifdef DEBUG
+    /* FIXME bug 491977: This is only going to operate on the
+     * BlockingResourceBase which is compiled into
+     * libxul/libxpcom_core.so. Anyone using external linkage will
+     * have their own copy of BlockingResourceBase statics which will
+     * not be freed by this method.
+     *
+     * It sounds like what we really want is to be able to register a
+     * callback function to call at XPCOM shutdown.  Note that with
+     * this solution, however, we need to guarantee that
+     * BlockingResourceBase::Shutdown() runs after all other shutdown
+     * functions.
+     */
+    BlockingResourceBase::Shutdown();
+#endif
     
     NS_LogTerm();
 
@@ -894,3 +924,5 @@ NS_ShutdownXPCOM(nsIServiceManager* servMgr)
 
     return NS_OK;
 }
+
+} // namespace mozilla

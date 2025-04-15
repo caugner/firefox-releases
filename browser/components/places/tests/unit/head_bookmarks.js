@@ -54,26 +54,14 @@ function LOG(aMsg) {
   print(aMsg);
 }
 
+var gProfD = do_get_profile();
 var dirSvc = Cc["@mozilla.org/file/directory_service;1"].
              getService(Ci.nsIProperties);
-// Remove '/unit/*.js'.
-var gTestRoot = __LOCATION__.parent.parent;
-gTestRoot.normalize();
-
-// Need to create and register a profile folder.
-var gProfD = gTestRoot.clone();
-gProfD.append("profile");
-if (gProfD.exists())
-  gProfD.remove(true);
-gProfD.create(Ci.nsIFile.DIRECTORY_TYPE, 0755);
 
 var dirProvider = {
   getFile: function(prop, persistent) {
     persistent.value = true;
-    if (prop == NS_APP_USER_PROFILE_50_DIR ||
-        prop == NS_APP_PROFILE_DIR_STARTUP)
-      return gProfD.clone();
-    else if (prop == NS_APP_BOOKMARKS_50_FILE) {
+    if (prop == NS_APP_BOOKMARKS_50_FILE) {
       var bmarks = gProfD.clone();
       bmarks.append("bookmarks.html");
       return bmarks;
@@ -125,9 +113,6 @@ registrar.registerFactory(Components.ID("{fbfae60b-64a4-44ef-a911-08ceb70b9f31}"
                           "XULAppInfo", "@mozilla.org/xre/app-info;1",
                           XULAppInfoFactory);
 
-var updateSvc = Cc["@mozilla.org/updates/update-service;1"].
-                getService(Ci.nsISupports);
-
 var iosvc = Cc["@mozilla.org/network/io-service;1"].getService(Ci.nsIIOService);
 
 function uri(spec) {
@@ -171,8 +156,15 @@ let gTestDir = do_get_cwd();
 const FILENAME_BOOKMARKS_HTML = "bookmarks.html";
 let backup_date = new Date().toLocaleFormat("%Y-%m-%d");
 const FILENAME_BOOKMARKS_JSON = "bookmarks-" + backup_date + ".json";
-// Number of smart bookmarks we have on the toolbar
+
+// Smart bookmarks constants.
+const SMART_BOOKMARKS_VERSION = 2;
 const SMART_BOOKMARKS_ON_TOOLBAR = 1;
+const SMART_BOOKMARKS_ON_MENU = 3; // Takes in count the additional separator.
+
+// Default bookmarks constants.
+const DEFAULT_BOOKMARKS_ON_TOOLBAR = 2;
+const DEFAULT_BOOKMARKS_ON_MENU = 3;
 
 /**
  * Creates a bookmarks.html file in the profile folder from a given source file.
@@ -326,4 +318,14 @@ function dump_table(aName)
   stmt.reset();
   stmt.finalize();
   stmt = null;
+}
+
+/**
+ * Flushes any events in the event loop of the main thread.
+ */
+function flush_main_thread_events()
+{
+  let tm = Cc["@mozilla.org/thread-manager;1"].getService(Ci.nsIThreadManager);
+  while (tm.mainThread.hasPendingEvents())
+    tm.mainThread.processNextEvent(false);
 }

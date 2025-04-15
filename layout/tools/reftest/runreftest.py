@@ -20,6 +20,7 @@
 # the Initial Developer. All Rights Reserved.
 #
 # Contributor(s):
+#   Serge Gautherie <sgautherie.bz@free.fr>
 #   Ted Mielczarek <ted.mielczarek@gmail.com>
 #
 # Alternatively, the contents of this file may be used under the terms of
@@ -44,6 +45,7 @@ import sys, shutil, os, os.path
 SCRIPT_DIRECTORY = os.path.abspath(os.path.realpath(os.path.dirname(sys.argv[0])))
 sys.path.append(SCRIPT_DIRECTORY)
 import automation
+from automationutils import addCommonOptions, processLeakLog
 from optparse import OptionParser
 from tempfile import mkdtemp
 
@@ -55,18 +57,15 @@ def getFullPath(path):
   return os.path.normpath(os.path.join(oldcwd, os.path.expanduser(path)))
 
 def createReftestProfile(options, profileDir):
-  "Sets up a clean profile for reftest."
+  "Sets up a profile for reftest."
 
-  # Start with a clean slate.
-  shutil.rmtree(profileDir, True)
-  os.mkdir(profileDir)
-  # reftest should only need the dump pref set
+  # Set preferences.
   prefsFile = open(os.path.join(profileDir, "user.js"), "w")
   prefsFile.write("""user_pref("browser.dom.window.dump.enabled", true);
 """)
   prefsFile.write('user_pref("reftest.timeout", %d);' % options.timeout)
-
   prefsFile.close()
+
   # install the reftest extension bits into the profile
   profileExtensionsPath = os.path.join(profileDir, "extensions")
   os.mkdir(profileExtensionsPath)
@@ -77,22 +76,17 @@ def createReftestProfile(options, profileDir):
 
 def main():
   parser = OptionParser()
+
+  # we want to pass down everything from automation.__all__
+  addCommonOptions(parser, defaults=dict(zip(automation.__all__, [getattr(automation, x) for x in automation.__all__])))
   parser.add_option("--appname",
                     action = "store", type = "string", dest = "app",
                     default = os.path.join(SCRIPT_DIRECTORY, automation.DEFAULT_APP),
                     help = "absolute path to application, overriding default")
-  parser.add_option("--xre-path",
-                    action = "store", type = "string", dest = "xrePath",
-                    default = None, # default is set below
-                    help = "absolute path to directory containing XRE (probably xulrunner)")
   parser.add_option("--extra-profile-file",
                     action = "append", dest = "extraProfileFiles",
                     default = [],
                     help = "copy specified files/dirs to testing profile")
-  parser.add_option("--symbols-path",
-                    action = "store", type = "string", dest = "symbolsPath",
-                    default = automation.SYMBOLS_PATH,
-                    help = "absolute path to directory containing breakpad symbols")
   parser.add_option("--timeout",              
                     action = "store", dest = "timeout", type = "int", 
                     default = 5 * 60 * 1000, # 5 minutes per bug 479518
@@ -104,6 +98,11 @@ def main():
                            "refcounted objects (or bytes in classes with "
                            "MOZ_COUNT_CTOR and MOZ_COUNT_DTOR) is greater "
                            "than the given number")
+  parser.add_option("--utility-path",
+                    action = "store", type = "string", dest = "utilityPath",
+                    default = automation.DIST_BIN,
+                    help = "absolute path to directory containing utility "
+                           "programs (xpcshell, ssltunnel, certutil)")
 
   options, args = parser.parse_args()
 
@@ -124,6 +123,9 @@ Are you executing $objdir/_tests/reftest/runreftest.py?""" \
     # allow relative paths
     options.xrePath = getFullPath(options.xrePath)
 
+  options.symbolsPath = getFullPath(options.symbolsPath)
+  options.utilityPath = getFullPath(options.utilityPath)
+
   profileDir = None
   try:
     profileDir = mkdtemp()
@@ -135,8 +137,9 @@ Are you executing $objdir/_tests/reftest/runreftest.py?""" \
 
     # These variables are necessary for correct application startup; change
     # via the commandline at your own risk.
+    # NO_EM_RESTART: will do a '-silent' run instead.
     browserEnv["NO_EM_RESTART"] = "1"
-    browserEnv["XPCOM_DEBUG_BREAK"] = "warn"
+    browserEnv["XPCOM_DEBUG_BREAK"] = "stack"
     if automation.UNIXISH:
       browserEnv["LD_LIBRARY_PATH"] = options.xrePath
       browserEnv["MOZILLA_FIVE_HOME"] = options.xrePath
@@ -151,10 +154,11 @@ Are you executing $objdir/_tests/reftest/runreftest.py?""" \
     automation.log.info("REFTEST INFO | runreftest.py | Performing extension manager registration: start.\n")
     # Don't care about this |status|: |runApp()| reporting it should be enough.
     status = automation.runApp(None, browserEnv, options.app, profileDir,
-                               extraArgs = ["-silent"],
-                               symbolsPath=options.symbolsPath,
-                               xrePath=options.xrePath)
-    # We don't care to call |automation.processLeakLog()| for this step.
+                               ["-silent"],
+                               utilityPath = options.utilityPath,
+                               xrePath=options.xrePath,
+                               symbolsPath=options.symbolsPath)
+    # We don't care to call |processLeakLog()| for this step.
     automation.log.info("\nREFTEST INFO | runreftest.py | Performing extension manager registration: end.")
 
     # Remove the leak detection file so it can't "leak" to the tests run.
@@ -166,13 +170,14 @@ Are you executing $objdir/_tests/reftest/runreftest.py?""" \
     automation.log.info("REFTEST INFO | runreftest.py | Running tests: start.\n")
     reftestlist = getFullPath(args[0])
     status = automation.runApp(None, browserEnv, options.app, profileDir,
-                               extraArgs = ["-reftest", reftestlist],
-                               symbolsPath=options.symbolsPath,
-                               xrePath=options.xrePath)
-    automation.processLeakLog(leakLogFile, options.leakThreshold)
+                               ["-reftest", reftestlist],
+                               utilityPath = options.utilityPath,
+                               xrePath=options.xrePath,
+                               symbolsPath=options.symbolsPath)
+    processLeakLog(leakLogFile, options.leakThreshold)
     automation.log.info("\nREFTEST INFO | runreftest.py | Running tests: end.")
   finally:
-    if profileDir is not None:
+    if profileDir:
       shutil.rmtree(profileDir)
   sys.exit(status)
 

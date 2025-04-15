@@ -832,8 +832,9 @@ PK11PasswordPrompt(PK11SlotInfo* slot, PRBool retry, void* arg) {
       rv = NS_ERROR_NOT_AVAILABLE;
     }
     else {
+      PRBool checkState;
       rv = proxyPrompt->PromptPassword(nsnull, promptString.get(),
-                                       &password, nsnull, nsnull, &value);
+                                       &password, nsnull, &checkState, &value);
     }
   }
   
@@ -948,9 +949,10 @@ void PR_CALLBACK HandshakeCallback(PRFileDesc* fd, void* client_data) {
     status->mHaveKeyLengthAndCipher = PR_TRUE;
     status->mKeyLength = keyLength;
     status->mSecretKeyLength = encryptBits;
-    status->mCipherName.Adopt(cipherName);
+    status->mCipherName.Assign(cipherName);
   }
 
+  PORT_Free(cipherName);
   PR_FREEIF(certOrgName);
   PR_Free(signer);
 }
@@ -1104,6 +1106,28 @@ static struct OCSPDefaultResponders myDefaultOCSPResponders[] = {
     "CN=Network Solutions EV SSL CA,O=Network Solutions L.L.C.,C=US",
     nsnull, "tk6FnYQfGx3UUolOB5Yt+d7xj8w=", nsnull,
     "http://ocsp.netsolssl.com"
+  },
+  /* GlobalSign */
+  {
+    "CN=GlobalSign Root CA,OU=Root CA,O=GlobalSign nv-sa,C=BE",
+    nsnull, "YHtmGkUNl8qJUC99BM00qP/8/Us=", nsnull,
+    "http://ocsp.globalsign.com/ExtendedSSLCACross"
+  },
+  {
+    "CN=GlobalSign,O=GlobalSign,OU=GlobalSign Root CA - R2",
+    nsnull, "m+IHV2ccHsBqBt5ZtJot39wZhi4=", nsnull,
+    "http://ocsp.globalsign.com/ExtendedSSLCA"
+  },
+  {
+    "CN=GlobalSign Extended Validation CA,O=GlobalSign,OU=Extended Validation CA",
+    nsnull, "NLH5yYxrNUTMCGkK7uOjuVy/FuA=", nsnull,
+    "http://ocsp.globalsign.com/ExtendedSSL"
+  },
+  /* Trustwave */
+  {
+    "CN=SecureTrust CA,O=SecureTrust Corporation,C=US",
+    nsnull, "QjK2FvoE/f5dS3rD/fdMQB1aQ68=", nsnull,
+    "http://ocsp.trustwave.com"
   }
 };
 

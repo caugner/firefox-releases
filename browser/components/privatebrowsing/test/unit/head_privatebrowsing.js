@@ -42,6 +42,7 @@ const Cu = Components.utils;
 
 const kPrivateBrowsingNotification = "private-browsing";
 const kPrivateBrowsingCancelVoteNotification = "private-browsing-cancel-vote";
+const kPrivateBrowsingTransitionCompleteNotification = "private-browsing-transition-complete";
 const kEnter = "enter";
 const kExit = "exit";
 
@@ -53,6 +54,12 @@ function LOG(aMsg) {
   Cc["@mozilla.org/consoleservice;1"].getService(Ci.nsIConsoleService).
                                       logStringMessage(aMsg);
   print(aMsg);
+}
+
+function uri(spec) {
+  return Cc["@mozilla.org/network/io-service;1"].
+         getService(Ci.nsIIOService).
+         newURI(spec, null, null);
 }
 
 // If there's no location registered for the profile direcotry, register one now.
@@ -88,6 +95,11 @@ if (!profileDir) {
   dirSvc.QueryInterface(Ci.nsIDirectoryService).registerProvider(provider);
 }
 
+// Do not attempt to restore any session since we don't have any windows
+Cc["@mozilla.org/preferences-service;1"].
+  getService(Ci.nsIPrefBranch).
+  setBoolPref("browser.privatebrowsing.keep_current_session", true);
+
 /**
  * Removes any files that could make our tests fail.
  */
@@ -109,6 +121,15 @@ function cleanUp()
   }
 }
 cleanUp();
+
+/**
+ * Finalize Places statements during quit-application in order to prevent leaks
+ */
+function shutdownPlaces() {
+  let os = Cc["@mozilla.org/observer-service;1"].
+           getService(Ci.nsIObserverService);
+  os.notifyObservers(null, "quit-application", null);
+}
 
 var PRIVATEBROWSING_CONTRACT_ID;
 function run_test_on_all_services() {

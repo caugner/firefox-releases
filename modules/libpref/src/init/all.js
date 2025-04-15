@@ -59,7 +59,11 @@ pref("general.warnOnAboutConfig", true);
 pref("browser.bookmarks.max_backups",       5);
 
 pref("browser.cache.disk.enable",           true);
+#ifndef WINCE
 pref("browser.cache.disk.capacity",         51200);
+#else
+pref("browser.cache.disk.capacity",         20000);
+#endif
 pref("browser.cache.memory.enable",         true);
 //pref("browser.cache.memory.capacity",     -1);
 // -1 = determine dynamically, 0 = none, n = memory capacity in kilobytes
@@ -68,6 +72,7 @@ pref("browser.cache.disk_cache_ssl",        false);
 pref("browser.cache.check_doc_frequency",   3);
 
 pref("browser.cache.offline.enable",           true);
+#ifndef WINCE
 // offline cache capacity in kilobytes
 pref("browser.cache.offline.capacity",         512000);
 
@@ -78,11 +83,19 @@ pref("offline-apps.quota.max",        204800);
 // the user should be warned if offline app disk usage exceeds this amount
 // (in kilobytes)
 pref("offline-apps.quota.warn",        51200);
+#else
+// Limited disk space on WinCE, tighten limits.
+pref("browser.cache.offline.capacity", 15000);
+pref("offline-apps.quota.max",          7000);
+pref("offline-apps.quota.warn",         4000);
+#endif
 
 // Fastback caching - if this pref is negative, then we calculate the number
 // of content viewers to cache based on the amount of available memory.
 pref("browser.sessionhistory.max_total_viewers", -1);
 
+pref("ui.use_native_colors", true);
+pref("ui.use_native_popup_windows", false);
 pref("browser.display.use_document_fonts",  1);  // 0 = never, 1 = quick, 2 = always
 pref("browser.display.use_document_colors", true);
 pref("browser.display.use_system_colors",   false);
@@ -102,6 +115,7 @@ pref("browser.visited_color",               "#551A8B");
 pref("browser.underline_anchors",           true);
 pref("browser.blink_allowed",               true);
 pref("browser.enable_automatic_image_resizing", false);
+pref("browser.enable_click_image_resizing", true);
 
 // See http://whatwg.org/specs/web-apps/current-work/#ping
 pref("browser.send_pings", false);
@@ -158,6 +172,8 @@ pref("gfx.downloadable_fonts.enabled", true);
 
 pref("accessibility.browsewithcaret", false);
 pref("accessibility.warn_on_browsewithcaret", true);
+
+pref("accessibility.browsewithcaret_shortcut.enabled", true);
 
 #ifndef XP_MACOSX
 // Tab focus model bit field:
@@ -229,9 +245,6 @@ pref("nglayout.events.dispatchLeftClickOnly", true);
 
 // whether or not to draw images while dragging
 pref("nglayout.enable_drag_images", true);
-
-// whether or not to use xbl form controls
-pref("nglayout.debug.enable_xbl_forms", false);
 
 // scrollbar snapping region
 // 0 - off
@@ -522,7 +535,6 @@ pref("dom.storage.enabled", true);
 pref("dom.storage.default_quota",      5120);
 
 // Parsing perf prefs. For now just mimic what the old code did.
-pref("content.sink.event_probe_rate", 3);
 #ifndef XP_WIN
 pref("content.sink.pending_event_mode", 0);
 #endif
@@ -536,14 +548,18 @@ pref("privacy.popups.disable_from_plugins", 2);
 pref("dom.event.contextmenu.enabled",       true);
 
 pref("javascript.enabled",                  true);
-pref("javascript.allow.mailnews",           false);
 pref("javascript.options.strict",           false);
 pref("javascript.options.relimit",          false);
 pref("javascript.options.jit.content",      true);
-pref("javascript.options.jit.chrome",       false);
+pref("javascript.options.jit.chrome",       true);
+// This preference limits the memory usage of javascript.
+// If you want to change these values for your device,
+// please find Bug 417052 comment 17 and Bug 456721
+// Comment 32.
+pref("javascript.options.mem.high_water_mark", 32);
+pref("javascript.options.mem.gc_frequency",   1600);
 
 // advanced prefs
-pref("security.enable_java",                true);
 pref("advanced.mailftp",                    false);
 pref("image.animation_mode",                "normal");
 
@@ -615,7 +631,12 @@ pref("network.http.default-socket-type", "");
 
 pref("network.http.keep-alive", true); // set it to false in case of problems
 pref("network.http.proxy.keep-alive", true);
-pref("network.http.keep-alive.timeout", 300);
+// There is a problem with some IIS7 servers that don't close the connection
+// properly after it times out (bug #491541). Default timeout on IIS7 is
+// 120 seconds. We need to reuse or drop the connection within this time.
+// We set the timeout a little shorter to keep a reserve for cases when
+// the packet is lost or delayed on the route.
+pref("network.http.keep-alive.timeout", 115);
 
 // limit the absolute number of http connections.
 pref("network.http.max-connections", 30);
@@ -812,6 +833,15 @@ pref("network.auth.use-sspi", true);
 
 #endif
 
+// Controls which NTLM authentication implementation we default to. True forces
+// the use of our generic (internal) NTLM authentication implementation vs. any
+// native implementation provided by the os. This pref is for diagnosing issues
+// with native NTLM. (See bug 520607 for details.) Using generic NTLM authentication
+// can expose the user to reflection attack vulnerabilities. Do not change this
+// unless you know what you're doing!
+// This pref should be removed 6 months after the release of firefox 3.6. 
+pref("network.auth.force-generic-ntlm", false);
+
 // The following prefs are used to enable automatic use of the operating
 // system's NTLM implementation to silently authenticate the user with their
 // Window's domain logon.  The trusted-uris pref follows the format of the
@@ -855,7 +885,6 @@ pref("network.proxy.no_proxies_on",         "localhost, 127.0.0.1");
 pref("network.proxy.failover_timeout",      1800); // 30 minutes
 pref("network.online",                      true); //online/offline
 pref("network.cookie.cookieBehavior",       0); // 0-Accept, 1-dontAcceptForeign, 2-dontUse
-pref("network.cookie.disableCookieForMailNews", true); // disable all cookies for mail
 pref("network.cookie.lifetimePolicy",       0); // accept normally, 1-askBeforeAccepting, 2-acceptForSession,3-acceptForNDays
 pref("network.cookie.alwaysAcceptSessionCookies", false);
 pref("network.cookie.prefsMigrated",        false);
@@ -882,7 +911,7 @@ pref("intl.charsetmenu.browser.more2",      "chrome://global/locale/intl.propert
 pref("intl.charsetmenu.browser.more3",      "chrome://global/locale/intl.properties");
 pref("intl.charsetmenu.browser.more4",      "chrome://global/locale/intl.properties");
 pref("intl.charsetmenu.browser.more5",      "chrome://global/locale/intl.properties");
-pref("intl.charsetmenu.browser.unicode",    "chrome://global/locale/intl.properties");
+pref("intl.charsetmenu.browser.unicode",    "UTF-8, UTF-16LE, UTF-16BE, UTF-32, UTF-32LE, UTF-32BE");
 pref("intl.charsetmenu.mailedit",           "chrome://global/locale/intl.properties");
 pref("intl.charsetmenu.browser.cache",      "");
 pref("intl.charsetmenu.mailview.cache",     "");
@@ -897,6 +926,11 @@ pref("intl.locale.matchOS",                 false);
 // for ISO-8859-1
 pref("intl.fallbackCharsetList.ISO-8859-1", "windows-1252");
 pref("font.language.group",                 "chrome://global/locale/intl.properties");
+
+// these locales have right-to-left UI
+pref("intl.uidirection.ar", "rtl");
+pref("intl.uidirection.he", "rtl");
+pref("intl.uidirection.fa", "rtl");
 
 pref("font.mathfont-family", "STIXNonUnicode, STIXSize1, STIXGeneral, Standard Symbols L, DejaVu Sans, Cambria Math");
 
@@ -946,9 +980,28 @@ pref("mousewheel.transaction.ignoremovedelay", 100);
 // Macbook touchpad two finger pixel scrolling
 pref("mousewheel.enable_pixel_scrolling", true);
 
+// prefs for app level mouse wheel scrolling acceleration.
+// number of mousewheel clicks when acceleration starts
+// acceleration can be turned off if pref is set to -1
+pref("mousewheel.acceleration.start", -1);
+// factor to be multiplied for constant acceleration
+pref("mousewheel.acceleration.factor", 10);
+
+// Prefs for override the system mouse wheel scrolling speed on the root
+// content of the web pages.  When
+// "mousewheel.system_scroll_override_on_root_content.enabled" is true and the system
+// scrolling speed isn't customized by the user, the root content scrolling
+// speed is multiplied by the following factors.  The value will be used as
+// 1/100.  E.g., 200 means 2.00.
+// NOTE: Even if "mousewheel.system_scroll_override_on_root_content.enabled" is
+// true, when Gecko detects the user customized the system scrolling speed
+// settings, the override isn't executed.
+pref("mousewheel.system_scroll_override_on_root_content.vertical.factor", 200);
+pref("mousewheel.system_scroll_override_on_root_content.horizontal.factor", 200);
+
 // 0=lines, 1=pages, 2=history , 3=text size
 pref("mousewheel.withnokey.action",0);
-pref("mousewheel.withnokey.numlines",1);	
+pref("mousewheel.withnokey.numlines",6);
 pref("mousewheel.withnokey.sysnumlines",true);
 pref("mousewheel.withcontrolkey.action",0);
 pref("mousewheel.withcontrolkey.numlines",1);
@@ -1094,7 +1147,7 @@ pref("layout.css.report_errors", true);
 // Should the :visited selector ever match (otherwise :link matches instead)?
 pref("layout.css.visited_links_enabled", true);
 
-// Override DPI. A value of -1 means use the maximum of 96 and the system DPI.
+// Override DPI. A value of -1 means use the maxium of 96 and the system DPI.
 // A value of 0 means use the system DPI. A positive value is used as the DPI.
 // This sets the physical size of a device pixel and thus controls the
 // interpretation of physical units such as "pt".
@@ -1104,7 +1157,7 @@ pref("layout.css.dpi", -1);
 // automatically based on the DPI. A positive value is used as-is. This effectively
 // controls the size of a CSS "px". This is only used for pixel-based
 // (screen) output devices.
-pref("layout.css.devPixelsPerPx", -1);
+pref("layout.css.devPixelsPerPx", "-1");
 
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
@@ -1162,11 +1215,11 @@ pref("gestures.enable_single_finger_input", true);
 pref("editor.resizing.preserve_ratio",       true);
 pref("editor.positioning.offset",            0);
 
-// Disable slow script warnings for chrome by default - bug 492410
-pref("dom.max_chrome_script_run_time", 0);
+pref("dom.max_chrome_script_run_time", 20);
 pref("dom.max_script_run_time", 10);
 
 pref("svg.enabled", true);
+pref("svg.smil.enabled", false);
 
 pref("font.minimum-size.ar", 0);
 pref("font.minimum-size.x-armn", 0);
@@ -1201,6 +1254,7 @@ pref("font.minimum-size.x-unicode", 0);
 pref("font.minimum-size.x-user-def", 0);
 
 #ifdef XP_WIN
+
 pref("font.name.serif.ar", "Times New Roman");
 pref("font.name.sans-serif.ar", "Arial");
 pref("font.name.monospace.ar", "Courier New");
@@ -1281,7 +1335,7 @@ pref("font.name-list.monospace.zh-CN", "MS Song, SimSun");
 // Per Taiwanese users' demand. They don't want to use TC fonts for
 // rendering Latin letters. (bug 88579)
 pref("font.name.serif.zh-TW", "Times New Roman"); 
-pref("font.name.sans-serif.zh-TW", "Arial"); 
+pref("font.name.sans-serif.zh-TW", "Arial");
 pref("font.name.monospace.zh-TW", "細明體");  // MingLiU
 pref("font.name-list.serif.zh-TW", "PMingLiu, MingLiU"); 
 pref("font.name-list.sans-serif.zh-TW", "PMingLiU, MingLiU");
@@ -1290,7 +1344,7 @@ pref("font.name-list.monospace.zh-TW", "MingLiU");
 // hkscsm3u.ttf (HKSCS-2001) :  http://www.microsoft.com/hk/hkscs 
 // Hong Kong users have the same demand about glyphs for Latin letters (bug 88579) 
 pref("font.name.serif.zh-HK", "Times New Roman"); 
-pref("font.name.sans-serif.zh-HK", "Arial"); 
+pref("font.name.sans-serif.zh-HK", "Arial");
 pref("font.name.monospace.zh-HK", "細明體_HKSCS"); 
 pref("font.name-list.serif.zh-HK", "MingLiu_HKSCS, Ming(for ISO10646), MingLiU"); 
 pref("font.name-list.sans-serif.zh-HK", "MingLiU_HKSCS, Ming(for ISO10646), MingLiU");  
@@ -1574,9 +1628,27 @@ pref("intl.jis0208.map", "CP932");
 // Switch the keyboard layout per window
 pref("intl.keyboard.per_window_layout", false);
 
+// Enable/Disable TSF support
+pref("intl.enable_tsf_support", false);
+
+// We need to notify the layout change to TSF, but we cannot check the actual
+// change now, therefore, we always notify it by this fequency.
+pref("intl.tsf.on_layout_change_interval", 100);
+
+#ifdef WINCE
+// bug 506798 - can't type in bookmarks panel on WinCE
+pref("ui.panel.default_level_parent", true);
+#else
 // See bug 448927, on topmost panel, some IMEs are not usable on Windows.
 pref("ui.panel.default_level_parent", false);
+#endif
 
+pref("mousewheel.system_scroll_override_on_root_content.enabled", true);
+
+// Bug 514927
+// Enables or disabled the TrackPoint hack, -1 is autodetect, 0 is off,
+// and 1 is on.  Set this to 1 if TrackPoint scrolling is not working.
+pref("ui.trackpoint_hack.enabled", -1);
 # WINNT
 #endif
 
@@ -1585,6 +1657,11 @@ pref("ui.panel.default_level_parent", false);
 pref("browser.drag_out_of_frame_style", 1);
 pref("ui.key.saveLink.shift", false); // true = shift, false = meta
 pref("ui.click_hold_context_menus", false);
+
+#ifndef __LP64__
+// whether to always use ATSUI for text even if CoreText is available
+pref("gfx.force_atsui_text", false);
+#endif
 
 // default fonts (in UTF8 and using canonical names)
 // to determine canonical font names, use a debug build and 
@@ -1994,6 +2071,8 @@ pref("print.print_extra_margin", 90); // twips (90 twips is an eigth of an inch)
 // See bug 404131, topmost <panel> element wins to Dashboard on MacOSX.
 pref("ui.panel.default_level_parent", false);
 
+pref("mousewheel.system_scroll_override_on_root_content.enabled", false);
+
 # XP_MACOSX
 #endif
 
@@ -2195,6 +2274,8 @@ pref("network.dns.disableIPv6", true);
 // change this value.
 pref("ui.panel.default_level_parent", false);
 
+pref("mousewheel.system_scroll_override_on_root_content.enabled", false);
+
 # OS2
 #endif
 
@@ -2288,6 +2369,8 @@ pref("browser.download.dir", "/boot/home/Downloads");
 // see bug 451015. If there are other problems by this value, we may need to
 // change this value.
 pref("ui.panel.default_level_parent", false);
+
+pref("mousewheel.system_scroll_override_on_root_content.enabled", false);
 
 # BeOS
 #endif
@@ -2561,6 +2644,8 @@ pref("print.postscript.print_command", "lpr ${MOZ_PRINTER_NAME:+-P\"$MOZ_PRINTER
 // So, we have no reasons we should use non-toplevel window for popup.
 pref("ui.panel.default_level_parent", true);
 
+pref("mousewheel.system_scroll_override_on_root_content.enabled", false);
+
 # XP_UNIX
 #endif
 #endif
@@ -2696,6 +2781,16 @@ pref("signon.SignonFileName3",              "signons3.txt"); // obsolete
 pref("signon.autofillForms",                true); 
 pref("signon.debug",                        false); // logs to Error Console
 
+// Satchel (Form Manager) prefs
+pref("browser.formfill.debug",            false);
+pref("browser.formfill.enable",           true);
+pref("browser.formfill.agedWeight",       2);
+pref("browser.formfill.bucketSize",       1);
+pref("browser.formfill.maxTimeGroupings", 25);
+pref("browser.formfill.timeGroupingSize", 604800);
+pref("browser.formfill.boundaryWeight",   25);
+pref("browser.formfill.prefixWeight",     5);
+
 // Zoom prefs
 pref("browser.zoom.full", false);
 pref("zoom.minPercent", 30);
@@ -2709,6 +2804,9 @@ pref("image.cache.size", 5242880);
 // Size is given a weight of 1000 - timeweight.
 pref("image.cache.timeweight", 500);
 
+// The default Accept header sent for images loaded over HTTP(S)
+pref("image.http.accept", "image/png,image/*;q=0.8,*/*;q=0.5");
+
 #ifdef XP_WIN
 #ifndef WINCE
 // The default TCP send window on Windows is too small, and autotuning only occurs on receive
@@ -2716,5 +2814,13 @@ pref("network.tcp.sendbuffer", 131072);
 #endif
 #endif
 
+#ifdef WINCE
+pref("mozilla.widget.disable-native-theme", true);
+pref("gfx.color_management.mode", 0);
+#endif
+
 // Enable/Disable the geolocation API for content
 pref("geo.enabled", true);
+
+// Enable/Disable HTML5 parser
+pref("html5.enable", false);

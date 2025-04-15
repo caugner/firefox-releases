@@ -46,7 +46,7 @@
 #include "gfxWindowsSurface.h"
 #endif
 
-#ifdef CAIRO_HAS_XLIB_SURFACE
+#ifdef MOZ_X11
 #include "gfxXlibSurface.h"
 #endif
 
@@ -55,12 +55,16 @@
 #include "gfxQuartzImageSurface.h"
 #endif
 
-#ifdef CAIRO_HAS_DIRECTFB_SURFACE
+#ifdef MOZ_DFB
 #include "gfxDirectFBSurface.h"
 #endif
 
 #ifdef CAIRO_HAS_QPAINTER_SURFACE
 #include "gfxQPainterSurface.h"
+#endif
+
+#ifdef CAIRO_HAS_DDRAW_SURFACE
+#include "gfxDDrawSurface.h"
 #endif
 
 #include <stdio.h>
@@ -158,7 +162,7 @@ gfxASurface::Wrap (cairo_surface_t *csurf)
         result = new gfxWindowsSurface(csurf);
     }
 #endif
-#ifdef CAIRO_HAS_XLIB_SURFACE
+#ifdef MOZ_X11
     else if (stype == CAIRO_SURFACE_TYPE_XLIB) {
         result = new gfxXlibSurface(csurf);
     }
@@ -171,7 +175,7 @@ gfxASurface::Wrap (cairo_surface_t *csurf)
         result = new gfxQuartzImageSurface(csurf);
     }
 #endif
-#ifdef CAIRO_HAS_DIRECTFB_SURFACE
+#ifdef MOZ_DFB
     else if (stype == CAIRO_SURFACE_TYPE_DIRECTFB) {
         result = new gfxDirectFBSurface(csurf);
     }
@@ -179,6 +183,11 @@ gfxASurface::Wrap (cairo_surface_t *csurf)
 #ifdef CAIRO_HAS_QPAINTER_SURFACE
     else if (stype == CAIRO_SURFACE_TYPE_QPAINTER) {
         result = new gfxQPainterSurface(csurf);
+    }
+#endif
+#ifdef CAIRO_HAS_DDRAW_SURFACE
+    else if (stype == CAIRO_SURFACE_TYPE_DDRAW) {
+        result = new gfxDDrawSurface(csurf);
     }
 #endif
     else {

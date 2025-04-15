@@ -24,6 +24,8 @@
  *   Darin Fisher <darin@meer.net>
  *   Daniel Witte <dwitte@stanford.edu>
  *   Ehsan Akhgari <ehsan.akhgari@gmail.com>
+ *   Kathleen Brade <brade@pearlcrescent.com>
+ *   Mark Smith <mcs@pearlcrescent.com>
  *
  * Alternatively, the contents of this file may be used under the terms of
  * either the GNU General Public License Version 2 or later (the "GPL"), or
@@ -50,9 +52,8 @@
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
 #include "nsIPrefBranch2.h"
-#include "nsIDocShell.h"
-#include "nsIWebNavigation.h"
 #include "nsIChannel.h"
+#include "nsIHttpChannelInternal.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMDocument.h"
 #include "nsIPrincipal.h"
@@ -80,9 +81,6 @@ static const PRBool kDefaultPolicy = PR_TRUE;
 static const char kCookiesLifetimePolicy[] = "network.cookie.lifetimePolicy";
 static const char kCookiesLifetimeDays[] = "network.cookie.lifetime.days";
 static const char kCookiesAlwaysAcceptSession[] = "network.cookie.alwaysAcceptSessionCookies";
-#ifdef MOZ_MAIL_NEWS
-static const char kCookiesDisabledForMailNews[] = "network.cookie.disableCookieForMailNews";
-#endif
 
 static const char kCookiesPrefsMigrated[] = "network.cookie.prefsMigrated";
 // obsolete pref names for migration
@@ -127,9 +125,6 @@ nsCookiePermission::Init()
     prefBranch->AddObserver(kCookiesLifetimePolicy, this, PR_FALSE);
     prefBranch->AddObserver(kCookiesLifetimeDays, this, PR_FALSE);
     prefBranch->AddObserver(kCookiesAlwaysAcceptSession, this, PR_FALSE);
-#ifdef MOZ_MAIL_NEWS
-    prefBranch->AddObserver(kCookiesDisabledForMailNews, this, PR_FALSE);
-#endif
     PrefChanged(prefBranch, nsnull);
 
     // migration code for original cookie prefs
@@ -183,12 +178,6 @@ nsCookiePermission::PrefChanged(nsIPrefBranch *aPrefBranch,
   if (PREF_CHANGED(kCookiesAlwaysAcceptSession) &&
       NS_SUCCEEDED(aPrefBranch->GetBoolPref(kCookiesAlwaysAcceptSession, &val)))
     mCookiesAlwaysAcceptSession = val;
-
-#ifdef MOZ_MAIL_NEWS
-  if (PREF_CHANGED(kCookiesDisabledForMailNews) &&
-      NS_SUCCEEDED(aPrefBranch->GetBoolPref(kCookiesDisabledForMailNews, &val)))
-    mCookiesDisabledForMailNews = val;
-#endif
 }
 
 NS_IMETHODIMP
@@ -209,27 +198,11 @@ nsCookiePermission::CanAccess(nsIURI         *aURI,
                               nsCookieAccess *aResult)
 {
 #ifdef MOZ_MAIL_NEWS
-  // disable cookies in mailnews if user's prefs say so
-  if (mCookiesDisabledForMailNews) {
-    //
-    // try to examine the "app type" of the window owning this request.  if it
-    // or some ancestor is of type APP_TYPE_MAIL, then assume this URI is being
-    // loaded from within mailnews.
-    PRBool isMail = PR_FALSE;
-    if (aChannel) {
-      nsCOMPtr<nsILoadContext> ctx;
-      NS_QueryNotificationCallbacks(aChannel, ctx);
-      if (ctx) {
-        PRBool temp;
-        isMail =
-          NS_FAILED(ctx->IsAppOfType(nsIDocShell::APP_TYPE_MAIL, &temp)) ||
-          temp;
-      }
-    }
-    if (isMail || IsFromMailNews(aURI)) {
-      *aResult = ACCESS_DENY;
-      return NS_OK;
-    }
+  // If this URI is a mailnews one (e.g. imap etc), don't allow cookies for
+  // it.
+  if (IsFromMailNews(aURI)) {
+    *aResult = ACCESS_DENY;
+    return NS_OK;
   }
 #endif // MOZ_MAIL_NEWS
   
@@ -426,21 +399,22 @@ nsCookiePermission::GetOriginatingURI(nsIChannel  *aChannel,
    * the window owning the load, and from there, we find the top same-type
    * window and its URI. there are several possible cases:
    *
-   * 1) no channel. this will occur for plugins using the nsICookieStorage
-   *    interface, since they have none to provide. other consumers should
-   *    have a channel.
+   * 1) no channel.
    *
-   * 2) a channel, but no window. this can occur when the consumer kicking
+   * 2) a channel with the "force allow third party cookies" option set.
+   *    since we may not have a window, we return the channel URI in this case.
+   *
+   * 3) a channel, but no window. this can occur when the consumer kicking
    *    off the load doesn't provide one to the channel, and should be limited
    *    to loads of certain types of resources.
    *
-   * 3) a window equal to the top window of same type, with the channel its
+   * 4) a window equal to the top window of same type, with the channel its
    *    document channel. this covers the case of a freshly kicked-off load
    *    (e.g. the user typing something in the location bar, or clicking on a
    *    bookmark), where the window's URI hasn't yet been set, and will be
    *    bogus. we return the channel URI in this case.
    *
-   * 4) Anything else. this covers most cases for an ordinary page load from
+   * 5) Anything else. this covers most cases for an ordinary page load from
    *    the location bar, and will catch nested frames within a page, image
    *    loads, etc. we return the URI of the root window's document's principal
    *    in this case.
@@ -452,6 +426,22 @@ nsCookiePermission::GetOriginatingURI(nsIChannel  *aChannel,
   if (!aChannel)
     return NS_ERROR_NULL_POINTER;
 
+  // case 2)
+  nsCOMPtr<nsIHttpChannelInternal> httpChannelInternal = do_QueryInterface(aChannel);
+  if (httpChannelInternal)
+  {
+    PRBool doForce = PR_FALSE;
+    if (NS_SUCCEEDED(httpChannelInternal->GetForceAllowThirdPartyCookie(&doForce)) && doForce)
+    {
+      // return the channel's URI (we may not have a window)
+      aChannel->GetURI(aURI);
+      if (!*aURI)
+        return NS_ERROR_NULL_POINTER;
+
+      return NS_OK;
+    }
+  }
+
   // find the associated window and its top window
   nsCOMPtr<nsILoadContext> ctx;
   NS_QueryNotificationCallbacks(aChannel, ctx);
@@ -461,11 +451,11 @@ nsCookiePermission::GetOriginatingURI(nsIChannel  *aChannel,
     ctx->GetAssociatedWindow(getter_AddRefs(ourWin));
   }
 
-  // case 2)
+  // case 3)
   if (!topWin)
     return NS_ERROR_INVALID_ARG;
 
-  // case 3)
+  // case 4)
   if (ourWin == topWin) {
     // Check whether this is the document channel for this window (representing
     // a load of a new page).  This is a bit of a nasty hack, but we will
@@ -483,7 +473,7 @@ nsCookiePermission::GetOriginatingURI(nsIChannel  *aChannel,
     }
   }
 
-  // case 4) - get the originating URI from the top window's principal
+  // case 5) - get the originating URI from the top window's principal
   nsCOMPtr<nsIScriptObjectPrincipal> scriptObjPrin = do_QueryInterface(topWin);
   NS_ENSURE_TRUE(scriptObjPrin, NS_ERROR_UNEXPECTED);
 

@@ -49,6 +49,7 @@ public:
   nsMIMEInfoUnix(const nsACString& aMIMEType) : nsMIMEInfoImpl(aMIMEType) {}
   nsMIMEInfoUnix(const nsACString& aType, HandlerClass aClass) :
     nsMIMEInfoImpl(aType, aClass) {}
+  static PRBool HandlerExists(const char *aProtocolScheme);
 
 protected:
   NS_IMETHOD GetHasDefaultHandler(PRBool *_retval);
@@ -57,6 +58,7 @@ protected:
 
   virtual NS_HIDDEN_(nsresult) LaunchDefaultWithFile(nsIFile *aFile);
 #ifdef MOZ_PLATFORM_HILDON
+  nsresult LaunchDefaultWithDBus(const char *aFilePath);
   NS_IMETHOD GetPossibleApplicationHandlers(nsIMutableArray * *aPossibleAppHandlers);
 #endif
 };

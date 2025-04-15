@@ -58,6 +58,8 @@
 
 class nsIURI;
 class nsCSSFontFaceRule;
+class nsRuleWalker;
+struct RuleProcessorData;
 
 class nsEmptyStyleRule : public nsIStyleRule
 {
@@ -95,9 +97,16 @@ class nsStyleSet
   already_AddRefed<nsStyleContext>
   ResolveStyleFor(nsIContent* aContent, nsStyleContext* aParentContext);
 
-  // get a style context from some rules
+  // Get a style context (with the given parent and pseudo-tag) for a
+  // sequence of style rules consisting of the concatenation of:
+  //  (1) the rule sequence represented by aRuleNode (which is the empty
+  //      sequence if aRuleNode is null or the root of the rule tree), and
+  //  (2) the rules in the |aRules| array.
   already_AddRefed<nsStyleContext>
-  ResolveStyleForRules(nsStyleContext* aParentContext, const nsCOMArray<nsIStyleRule> &rules);
+  ResolveStyleForRules(nsStyleContext* aParentContext,
+                       nsIAtom* aPseudoTag,
+                       nsRuleNode *aRuleNode,
+                       const nsCOMArray<nsIStyleRule> &aRules);
 
   // Get a style context for a non-element (which no rules will match),
   // such as text nodes, placeholder frames, and the nsFirstLetterFrame
@@ -255,11 +264,13 @@ class nsStyleSet
   nsresult GatherRuleProcessors(sheetType aType);
 
   void AddImportantRules(nsRuleNode* aCurrLevelNode,
-                         nsRuleNode* aLastPrevLevelNode);
+                         nsRuleNode* aLastPrevLevelNode,
+                         nsRuleWalker* aRuleWalker);
 
-  // Move mRuleWalker forward by the appropriate rule if we need to add
+  // Move aRuleWalker forward by the appropriate rule if we need to add
   // a rule due to property restrictions on pseudo-elements.
-  void WalkRestrictionRule(nsIAtom* aPseudoType);
+  void WalkRestrictionRule(nsIAtom* aPseudoType,
+                           nsRuleWalker* aRuleWalker);
 
 #ifdef DEBUG
   // Just like AddImportantRules except it doesn't actually add anything; it
@@ -278,7 +289,7 @@ class nsStyleSet
   // Enumerate the rules in a way that cares about the order of the
   // rules.
   void FileRules(nsIStyleRuleProcessor::EnumFunc aCollectorFunc,
-                 RuleProcessorData* aData);
+                 RuleProcessorData* aData, nsRuleWalker* aRuleWalker);
 
   // Enumerate all the rules in a way that doesn't care about the order
   // of the rules and break out if the enumeration is halted.
@@ -287,6 +298,7 @@ class nsStyleSet
 
   already_AddRefed<nsStyleContext> GetContext(nsPresContext* aPresContext,
                                               nsStyleContext* aParentContext,
+                                              nsRuleNode* aRuleNode,
                                               nsIAtom* aPseudoTag);
 
   nsPresContext* PresContext() { return mRuleTree->GetPresContext(); }
@@ -310,8 +322,6 @@ class nsStyleSet
   nsRuleNode* mRuleTree; // This is the root of our rule tree.  It is a
                          // lexicographic tree of matched rules that style
                          // contexts use to look up properties.
-  nsRuleWalker* mRuleWalker; // This is an instance of a rule walker that can
-                             // be used to navigate through our tree.
 
   PRInt32 mDestroyedCount; // used to batch style context GC
   nsTArray<nsStyleContext*> mRoots; // style contexts with no parent

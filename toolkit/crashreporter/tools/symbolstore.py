@@ -354,20 +354,21 @@ def GetVCSFilename(file, srcdirs):
             if os.path.isdir(os.path.join(path, "CVS")):
                 fileInfo = CVSFileInfo(file, srcdir)
                 if fileInfo:
-                   root = fileInfo.root
+                    root = fileInfo.root
             elif os.path.isdir(os.path.join(path, ".svn")) or \
                  os.path.isdir(os.path.join(path, "_svn")):
                  fileInfo = SVNFileInfo(file);
             elif os.path.isdir(os.path.join(srcdir, '.hg')) and \
                  IsInDir(file, srcdir):
                  fileInfo = HGFileInfo(file, srcdir)
-            
-            if fileInfo:
+
+            if fileInfo: 
                 vcsFileInfoCache[file] = fileInfo
                 break
-    
+
     if fileInfo:
         file = fileInfo.filename
+        root = fileInfo.root
 
     # we want forward slashes on win32 paths
     return (file.replace("\\", "/"), root)
@@ -381,15 +382,15 @@ def GetPlatformSpecificDumper(**kwargs):
             'sunos5': Dumper_Solaris,
             'darwin': Dumper_Mac}[sys.platform](**kwargs)
 
-def SourceIndex(fileStream, outputPath, cvs_root):
+def SourceIndex(fileStream, outputPath, vcs_root):
     """Takes a list of files, writes info to a data block in a .stream file"""
     # Creates a .pdb.stream file in the mozilla\objdir to be used for source indexing
     # Create the srcsrv data block that indexes the pdb file
     result = True
     pdbStreamFile = open(outputPath, "w")
-    pdbStreamFile.write('''SRCSRV: ini ------------------------------------------------\r\nVERSION=1\r\nSRCSRV: variables ------------------------------------------\r\nCVS_EXTRACT_CMD=%fnchdir%(%targ%)cvs.exe -d %fnvar%(%var2%) checkout -r %var4% -d %var4% -N %var3%\r\nMYSERVER=''')
-    pdbStreamFile.write(cvs_root)
-    pdbStreamFile.write('''\r\nSRCSRVTRG=%targ%\%var4%\%fnbksl%(%var3%)\r\nSRCSRVCMD=%CVS_EXTRACT_CMD%\r\nSRCSRV: source files ---------------------------------------\r\n''')
+    pdbStreamFile.write('''SRCSRV: ini ------------------------------------------------\r\nVERSION=2\r\nINDEXVERSION=2\r\nVERCTRL=http\r\nSRCSRV: variables ------------------------------------------\r\nHGSERVER=''')
+    pdbStreamFile.write(vcs_root)
+    pdbStreamFile.write('''\r\nSRCSRVVERCTRL=http\r\nHTTP_EXTRACT_TARGET=%hgserver%/raw-file/%var3%/%var2%\r\nSRCSRVTRG=%http_extract_target%\r\nSRCSRV: source files ---------------------------------------\r\n''')
     pdbStreamFile.write(fileStream) # can't do string interpolation because the source server also uses this and so there are % in the above
     pdbStreamFile.write("SRCSRV: end ------------------------------------------------\r\n\n")
     pdbStreamFile.close()
@@ -450,7 +451,7 @@ class Dumper:
         return file
 
     # This is a no-op except on Win32
-    def SourceServerIndexing(self, debug_file, guid, sourceFileStream, cvs_root):
+    def SourceServerIndexing(self, debug_file, guid, sourceFileStream, vcs_root):
         return ""
 
     # subclasses override this if they want to support this
@@ -484,11 +485,12 @@ class Dumper:
     def ProcessFile(self, file):
         """Dump symbols from this file into a symbol file, stored
         in the proper directory structure in  |symbol_path|."""
+        print >> sys.stderr, "Processing file: %s" % file
         result = False
         sourceFileStream = ''
-        # tries to get cvsroot from the .mozconfig first - if it's not set
-        # the tinderbox cvs_path will be assigned further down
-        cvs_root = os.environ.get("SRCSRV_ROOT")
+        # tries to get the vcs root from the .mozconfig first - if it's not set
+        # the tinderbox vcs path will be assigned further down
+        vcs_root = os.environ.get("SRCSRV_ROOT")
         for arch in self.archs:
             try:
                 cmd = os.popen("%s %s %s" % (self.dump_syms, arch, file), "r")
@@ -517,38 +519,38 @@ class Dumper:
                             (x, index, filename) = line.split(None, 2)
                             if sys.platform == "sunos5":
                                 for srcdir in self.srcdirs:
-                                  start = filename.find(srcdir)
-                                  if start != -1:
-                                    filename = filename[start:]
-                                    break
-
+                                    start = filename.find(self.srcdir)
+                                    if start != -1:
+                                        filename = filename[start:]
+                                        break
                             filename = self.FixFilenameCase(filename.rstrip())
                             sourcepath = filename
                             if self.vcsinfo:
                                 (filename, rootname) = GetVCSFilename(filename, self.srcdirs)
-                                # sets cvs_root in case the loop through files were to end on an empty rootname
-                                if cvs_root is None:
+                                # sets vcs_root in case the loop through files were to end on an empty rootname
+                                if vcs_root is None:
                                   if rootname:
-                                     cvs_root = rootname
-                            # gather up files with cvs for indexing   
-                            if filename.startswith("cvs"):
+                                     vcs_root = rootname
+                            # gather up files with hg for indexing   
+                            if filename.startswith("hg"):
                                 (ver, checkout, source_file, revision) = filename.split(":", 3)
-                                sourceFileStream += sourcepath + "*MYSERVER*" + source_file + '*' + revision + "\r\n"
+                                sourceFileStream += sourcepath + "*" + source_file + '*' + revision + "\r\n"
                             f.write("FILE %s %s\n" % (index, filename))
                         else:
                             # pass through all other lines unchanged
                             f.write(line)
+                            # we want to return true only if at least one line is not a MODULE or FILE line
+                            result = True
                     f.close()
                     cmd.close()
                     # we output relative paths so callers can get a list of what
                     # was generated
                     print rel_path
+                    if self.srcsrv and vcs_root:
+                        # add source server indexing to the pdb file
+                        self.SourceServerIndexing(file, guid, sourceFileStream, vcs_root)
                     if self.copy_debug:
                         self.CopyDebug(file, debug_file, guid)
-                    if self.srcsrv:
-                        # Call on SourceServerIndexing
-                        result = self.SourceServerIndexing(debug_file, guid, sourceFileStream, cvs_root)
-                    result = True
             except StopIteration:
                 pass
             except:
@@ -612,22 +614,19 @@ class Dumper_Win32(Dumper):
         else:
             print rel_path
         
-    def SourceServerIndexing(self, debug_file, guid, sourceFileStream, cvs_root):
+    def SourceServerIndexing(self, debug_file, guid, sourceFileStream, vcs_root):
         # Creates a .pdb.stream file in the mozilla\objdir to be used for source indexing
-        cwd = os.getcwd()
+        debug_file = os.path.abspath(debug_file)
         streamFilename = debug_file + ".stream"
-        stream_output_path = os.path.join(cwd, streamFilename)
+        stream_output_path = os.path.abspath(streamFilename)
         # Call SourceIndex to create the .stream file
-        result = SourceIndex(sourceFileStream, stream_output_path, cvs_root)
-        
+        result = SourceIndex(sourceFileStream, stream_output_path, vcs_root)
         if self.copy_debug:
             pdbstr_path = os.environ.get("PDBSTR_PATH")
             pdbstr = os.path.normpath(pdbstr_path)
-            pdb_rel_path = os.path.join(debug_file, guid, debug_file)
-            pdb_filename = os.path.normpath(os.path.join(self.symbol_path, pdb_rel_path))
-            # move to the dir with the stream files to call pdbstr
-            os.chdir(os.path.dirname(stream_output_path))
-            os.spawnv(os.P_WAIT, pdbstr, [pdbstr, "-w", "-p:" + pdb_filename, "-i:" + streamFilename, "-s:srcsrv"])
+            call([pdbstr, "-w", "-p:" + os.path.basename(debug_file),
+                  "-i:" + os.path.basename(streamFilename), "-s:srcsrv"],
+                 cwd=os.path.dirname(stream_output_path))
             # clean up all the .stream files when done
             os.remove(stream_output_path)
         return result
@@ -655,7 +654,7 @@ class Dumper_Linux(Dumper):
                                 debug_file + ".dbg")
         full_path = os.path.normpath(os.path.join(self.symbol_path,
                                                   rel_path))
-        shutil.copyfile(file_dbg, full_path)
+        shutil.move(file_dbg, full_path)
         # gzip the shipped debug files
         os.system("gzip %s" % full_path)
         print rel_path + ".gz"
@@ -708,9 +707,32 @@ class Dumper_Mac(Dumper):
         os.system("dsymutil %s %s >/dev/null" % (' '.join([a.replace('-a ', '--arch=') for a in self.archs]),
                                       file))
         res = Dumper.ProcessFile(self, dsymbundle)
-        if not self.copy_debug:
-            shutil.rmtree(dsymbundle)
+        # CopyDebug will already have been run from Dumper.ProcessFile
+        shutil.rmtree(dsymbundle)
+
+        # fallback for DWARF-less binaries
+        if not res:
+            print >> sys.stderr, "Couldn't read DWARF symbols in: %s" % dsymbundle
+            res = Dumper.ProcessFile(self, file)
+
         return res
+
+    def CopyDebug(self, file, debug_file, guid):
+        """ProcessFile has already produced a dSYM bundle, so we should just
+        copy that to the destination directory. However, we'll package it
+        into a .tar.bz2 because the debug symbols are pretty huge, and
+        also because it's a bundle, so it's a directory. |file| here is the
+        dSYM bundle, and |debug_file| is the original filename."""
+        rel_path = os.path.join(debug_file,
+                                guid,
+                                os.path.basename(file) + ".tar.bz2")
+        full_path = os.path.abspath(os.path.join(self.symbol_path,
+                                                  rel_path))
+        success = call(["tar", "cjf", full_path, os.path.basename(file)],
+                       cwd=os.path.dirname(file),
+                       stdout=open("/dev/null","w"), stderr=STDOUT)
+        if success == 0 and os.path.exists(full_path):
+            print rel_path
 
 # Entry point if called as a standalone program
 def main():

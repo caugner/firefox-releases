@@ -38,6 +38,7 @@
 #ifndef nsNativeThemeColors_h_
 #define nsNativeThemeColors_h_
 
+#include "nsToolkit.h"
 #import <Cocoa/Cocoa.h>
 
 enum ColorName {
@@ -65,9 +66,25 @@ static const int sLeopardThemeColors[][2] = {
   { 0x96, 0xCF }  // gradient end
 };
 
+static const int sSnowLeopardThemeColors[][2] = {
+  /* { active window, inactive window } */
+  // titlebar and toolbar:
+  { 0xD1, 0xEE }, // start grey
+  { 0xA7, 0xD8 }, // end grey
+  { 0x51, 0x99 }, // bottom separator line
+  { 0xD0, 0xF1 }, // top separator line
+  // statusbar:
+  { 0x51, 0x99 }, // first top border
+  { 0xE8, 0xF6 }, // second top border
+  { 0xCB, 0xEA }, // gradient start
+  { 0xA7, 0xDE }  // gradient end
+};
 
 static int NativeGreyColorAsInt(ColorName name, BOOL isMain)
 {
+  if (nsToolkit::OnSnowLeopardOrLater())
+    return sSnowLeopardThemeColors[name][isMain ? 0 : 1];
+
   return sLeopardThemeColors[name][isMain ? 0 : 1];
 }
 
@@ -76,9 +93,12 @@ static float NativeGreyColorAsFloat(ColorName name, BOOL isMain)
   return NativeGreyColorAsInt(name, isMain) / 255.0f;
 }
 
-static NSColor* NativeGreyColorAsNSColor(ColorName name, BOOL isMain)
+static void DrawNativeGreyColorInRect(CGContextRef context, ColorName name,
+                                      CGRect rect, BOOL isMain)
 {
-  return [NSColor colorWithDeviceWhite:NativeGreyColorAsFloat(name, isMain) alpha:1.0f];
+  float grey = NativeGreyColorAsFloat(name, isMain);
+  CGContextSetRGBFillColor(context, grey, grey, grey, 1.0f);
+  CGContextFillRect(context, rect);
 }
 
 #endif // nsNativeThemeColors_h_

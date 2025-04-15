@@ -61,12 +61,9 @@ const char* XPCJSRuntime::mStrings[] = {
     "createInstance",       // IDX_CREATE_INSTANCE
     "item",                 // IDX_ITEM
     "__proto__",            // IDX_PROTO
-    "__iterator__"          // IDX_ITERATOR
-#ifdef XPC_IDISPATCH_SUPPORT
-    , "GeckoActiveXObject"  // IDX_ACTIVEX_OBJECT
-    , "COMObject"           // IDX_COMOBJECT
-    , "supports"            // IDX_ACTIVEX_SUPPORTS
-#endif
+    "__iterator__",         // IDX_ITERATOR
+    "__parent__",           // IDX_PARENT
+    "__exposedProps__"      // IDX_EXPOSEDPROPS
 };
 
 /***************************************************************************/
@@ -75,7 +72,7 @@ const char* XPCJSRuntime::mStrings[] = {
 struct JSDyingJSObjectData
 {
     JSContext* cx;
-    nsVoidArray* array;
+    nsTArray<nsXPCWrappedJS*>* array;
 };
 
 static JSDHashOperator
@@ -119,7 +116,6 @@ static JSDHashOperator
 NativeInterfaceSweeper(JSDHashTable *table, JSDHashEntryHdr *hdr,
                        uint32 number, void *arg)
 {
-    CX_AND_XPCRT_Data* data = (CX_AND_XPCRT_Data*) arg;
     XPCNativeInterface* iface = ((IID2NativeInterfaceMap::Entry*)hdr)->value;
     if(iface->IsMarked())
     {
@@ -132,7 +128,7 @@ NativeInterfaceSweeper(JSDHashTable *table, JSDHashEntryHdr *hdr,
             JS_GetStringBytes(JSVAL_TO_STRING(iface->GetName())));
 #endif
 
-    XPCNativeInterface::DestroyInstance(data->cx, data->rt, iface);
+    XPCNativeInterface::DestroyInstance(iface);
     return JS_DHASH_REMOVE;
 }
 
@@ -414,13 +410,13 @@ void XPCJSRuntime::AddXPConnectRoots(JSContext* cx,
     JSContext *iter = nsnull, *acx;
     while((acx = JS_ContextIterator(GetJSRuntime(), &iter)))
     {
-#ifndef DEBUG_CC
-        // Only skip JSContexts with outstanding requests if DEBUG_CC is not
-        // defined, else we do want to know about all JSContexts to get better
-        // graphs and explanations.
-        if(nsXPConnect::GetXPConnect()->GetRequestDepth(acx) != 0)
+        // Only skip JSContexts with outstanding requests if the
+        // callback does not want all traces (a debug feature).
+        // Otherwise, we do want to know about all JSContexts to get
+        // better graphs and explanations.
+        if(!cb.WantAllTraces() &&
+           nsXPConnect::GetXPConnect()->GetRequestDepth(acx) != 0)
             continue;
-#endif
         cb.NoteRoot(nsIProgrammingLanguage::CPLUSPLUS, acx,
                     nsXPConnect::JSContextParticipant());
     }
@@ -448,7 +444,8 @@ void XPCJSRuntime::UnrootContextGlobals()
     {
         NS_ASSERTION(!JS_HAS_OPTION(acx, JSOPTION_UNROOTED_GLOBAL),
                      "unrooted global should be set only during CC");
-        if(nsXPConnect::GetXPConnect()->GetRequestDepth(acx) == 0)
+        if(XPCPerThreadData::IsMainThread(acx) &&
+           nsXPConnect::GetXPConnect()->GetRequestDepth(acx) == 0)
         {
             JS_ClearNewbornRoots(acx);
             if(acx->globalObject)
@@ -476,11 +473,26 @@ void XPCJSRuntime::RootContextGlobals()
 }
 #endif
 
+template<class T> static void
+DoDeferredRelease(nsTArray<T> &array)
+{
+    while(1)
+    {
+        PRUint32 count = array.Length();
+        if(!count)
+        {
+            array.Compact();
+            break;
+        }
+        T wrapper = array[count-1];
+        array.RemoveElementAt(count-1);
+        NS_RELEASE(wrapper);
+    }
+}
+
 // static
 JSBool XPCJSRuntime::GCCallback(JSContext *cx, JSGCStatus status)
 {
-    nsVoidArray* dyingWrappedJSArray;
-
     XPCJSRuntime* self = nsXPConnect::GetRuntimeInstance();
     if(self)
     {
@@ -505,14 +517,15 @@ JSBool XPCJSRuntime::GCCallback(JSContext *cx, JSGCStatus status)
                     self->mThreadRunningGC = PR_GetCurrentThread();
                 }
 
-                dyingWrappedJSArray = &self->mWrappedJSToReleaseArray;
+                nsTArray<nsXPCWrappedJS*>* dyingWrappedJSArray =
+                    &self->mWrappedJSToReleaseArray;
 
                 {
                     JSDyingJSObjectData data = {cx, dyingWrappedJSArray};
 
                     // Add any wrappers whose JSObjects are to be finalized to
-                    // this array. Note that this is a nsVoidArray because
-                    // we do not want to be changing the refcount of these wrappers.
+                    // this array. Note that we do not want to be changing the
+                    // refcount of these wrappers.
                     // We add them to the array now and Release the array members
                     // later to avoid the posibility of doing any JS GCThing
                     // allocations during the gc cycle.
@@ -542,23 +555,7 @@ JSBool XPCJSRuntime::GCCallback(JSContext *cx, JSGCStatus status)
 
                 // Release all the members whose JSObjects are now known
                 // to be dead.
-
-                dyingWrappedJSArray = &self->mWrappedJSToReleaseArray;
-                while(1)
-                {
-                    nsXPCWrappedJS* wrapper;
-                    PRInt32 count = dyingWrappedJSArray->Count();
-                    if(!count)
-                    {
-                        dyingWrappedJSArray->Compact();
-                        break;
-                    }
-                    wrapper = static_cast<nsXPCWrappedJS*>
-                        (dyingWrappedJSArray->ElementAt(count-1));
-                    dyingWrappedJSArray->RemoveElementAt(count-1);
-                    NS_RELEASE(wrapper);
-                }
-
+                DoDeferredRelease(self->mWrappedJSToReleaseArray);
 
 #ifdef XPC_REPORT_NATIVE_INTERFACE_AND_SET_FLUSHING
                 printf("--------------------------------------------------------------\n");
@@ -644,10 +641,8 @@ JSBool XPCJSRuntime::GCCallback(JSContext *cx, JSGCStatus status)
                 self->mNativeSetMap->
                     Enumerate(NativeSetSweeper, nsnull);
 
-                CX_AND_XPCRT_Data data = {cx, self};
-
                 self->mIID2NativeInterfaceMap->
-                    Enumerate(NativeInterfaceSweeper, &data);
+                    Enumerate(NativeInterfaceSweeper, nsnull);
 
 #ifdef DEBUG
                 XPCWrappedNativeScope::ASSERT_NoInterfaceSetsAreMarked();
@@ -758,27 +753,11 @@ JSBool XPCJSRuntime::GCCallback(JSContext *cx, JSGCStatus status)
                 // events above.
 
                 // Do any deferred released of native objects.
-                nsVoidArray* array = &self->mNativesToReleaseArray;
 #ifdef XPC_TRACK_DEFERRED_RELEASES
                 printf("XPC - Begin deferred Release of %d nsISupports pointers\n",
-                       array->Count());
+                       self->mNativesToReleaseArray.Length());
 #endif
-                while(1)
-                {
-                    nsISupports* obj;
-                    {
-                        PRInt32 count = array->Count();
-                        if(!count)
-                        {
-                            array->Compact();
-                            break;
-                        }
-                        obj = reinterpret_cast<nsISupports*>
-                            (array->ElementAt(count-1));
-                        array->RemoveElementAt(count-1);
-                    }
-                    NS_RELEASE(obj);
-                }
+                DoDeferredRelease(self->mNativesToReleaseArray);
 #ifdef XPC_TRACK_DEFERRED_RELEASES
                 printf("XPC - End deferred Releases\n");
 #endif
@@ -1115,11 +1094,13 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
         xpc_InstallJSDebuggerKeywordHandler(mJSRuntime);
 #endif
 
-    AutoLockJSGC lock(mJSRuntime);
+    if (mWatchdogWakeup) {
+        AutoLockJSGC lock(mJSRuntime);
 
-    mWatchdogThread = PR_CreateThread(PR_USER_THREAD, WatchdogMain, this,
-                                      PR_PRIORITY_NORMAL, PR_LOCAL_THREAD,
-                                      PR_UNJOINABLE_THREAD, 0);
+        mWatchdogThread = PR_CreateThread(PR_USER_THREAD, WatchdogMain, this,
+                                          PR_PRIORITY_NORMAL, PR_LOCAL_THREAD,
+                                          PR_UNJOINABLE_THREAD, 0);
+    }
 }
 
 // static
@@ -1192,14 +1173,14 @@ XPCJSRuntime::DeferredRelease(nsISupports* obj)
 {
     NS_ASSERTION(obj, "bad param");
 
-    if(!mNativesToReleaseArray.Count())
+    if(mNativesToReleaseArray.IsEmpty())
     {
         // This array sometimes has 1000's
         // of entries, and usually has 50-200 entries. Avoid lots
         // of incremental grows.  We compact it down when we're done.
-        mNativesToReleaseArray.SizeTo(256);
+        mNativesToReleaseArray.SetCapacity(256);
     }
-    return mNativesToReleaseArray.AppendElement(obj);
+    return mNativesToReleaseArray.AppendElement(obj) != nsnull;
 }
 
 /***************************************************************************/
@@ -1241,7 +1222,7 @@ XPCJSRuntime::DebugDump(PRInt16 depth)
 
         XPC_LOG_ALWAYS(("mWrappedJSToReleaseArray @ %x with %d wrappers(s)", \
                          &mWrappedJSToReleaseArray,
-                         mWrappedJSToReleaseArray.Count()));
+                         mWrappedJSToReleaseArray.Length()));
 
         int cxCount = 0;
         JSContext* iter = nsnull;

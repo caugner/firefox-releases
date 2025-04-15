@@ -70,13 +70,13 @@ NSSCleanupAutoPtrClass_WithParam(SECItem, SECITEM_FreeItem, TrueParam, PR_TRUE)
 
 struct nsMyTrustedEVInfo
 {
-  char *dotted_oid;
-  char *oid_name; // Set this to null to signal an invalid structure,
+  const char *dotted_oid;
+  const char *oid_name; // Set this to null to signal an invalid structure,
                   // (We can't have an empty list, so we'll use a dummy entry)
   SECOidTag oid_tag;
-  char *ev_root_sha1_fingerprint;
-  char *issuer_base64;
-  char *serial_base64;
+  const char *ev_root_sha1_fingerprint;
+  const char *issuer_base64;
+  const char *serial_base64;
   CERTCertificate *cert;
 };
 
@@ -406,11 +406,22 @@ static struct nsMyTrustedEVInfo myTrustedEVInfos[] = {
     nsnull
   },
   {
+    // CN=Buypass Class 3 CA 1,O=Buypass AS-983163327,C=NO
+    "2.16.578.1.26.1.3.3",
+    "Buypass Class 3 CA 1", // for real entries use a string like "Sample INVALID EV OID"
+    SEC_OID_UNKNOWN,
+    "61:57:3A:11:DF:0E:D8:7E:D5:92:65:22:EA:D0:56:D7:44:B3:23:71",
+    "MEsxCzAJBgNVBAYTAk5PMR0wGwYDVQQKDBRCdXlwYXNzIEFTLTk4MzE2MzMyNzEd"
+    "MBsGA1UEAwwUQnV5cGFzcyBDbGFzcyAzIENBIDE=",
+    "Ag==",
+    nsnull
+  },
+  {
     // OU=Sample Certification Authority,O=\"Sample, Inc.\",C=US
     "0.0.0.0",
     0, // for real entries use a string like "Sample INVALID EV OID"
     SEC_OID_UNKNOWN,
-    "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33",
+    "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33", //UPPERCASE!
     "Cg==",
     "Cg==",
     nsnull
@@ -454,11 +465,12 @@ nsMyTrustedEVInfoClass::nsMyTrustedEVInfoClass()
 
 nsMyTrustedEVInfoClass::~nsMyTrustedEVInfoClass()
 {
-  free(dotted_oid);
-  free(oid_name);
-  free(ev_root_sha1_fingerprint);
-  free(issuer_base64);
-  free(serial_base64);
+  // Cast away const-ness in order to free these strings
+  free(const_cast<char*>(dotted_oid));
+  free(const_cast<char*>(oid_name));
+  free(const_cast<char*>(ev_root_sha1_fingerprint));
+  free(const_cast<char*>(issuer_base64));
+  free(const_cast<char*>(serial_base64));
   if (cert)
     CERT_DestroyCertificate(cert);
 }
@@ -889,19 +901,21 @@ static SECStatus getFirstEVPolicy(CERTCertificate *cert, SECOidTag &outOidTag)
     
       policyInfos = policies->policyInfos;
 
+      PRBool found = PR_FALSE;
       while (*policyInfos != NULL) {
         policyInfo = *policyInfos++;
 
         SECOidTag oid_tag = SECOID_FindOIDTag(&policyInfo->policyID);
-        if (oid_tag == SEC_OID_UNKNOWN) // not in our list of OIDs accepted for EV
-          continue;
-
-        if (!isEVPolicy(oid_tag))
-          continue;
-
-        outOidTag = oid_tag;
-        return SECSuccess;
+        if (oid_tag != SEC_OID_UNKNOWN && isEVPolicy(oid_tag)) {
+          // in our list of OIDs accepted for EV
+          outOidTag = oid_tag;
+          found = PR_TRUE;
+          break;
+        }
       }
+      CERT_DestroyCertificatePoliciesExtension(policies);
+      if (found)
+        return SECSuccess;
     }
   }
 

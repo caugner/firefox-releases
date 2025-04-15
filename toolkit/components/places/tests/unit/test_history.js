@@ -38,14 +38,11 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-// Get history service
-try {
-  var histsvc = Cc["@mozilla.org/browser/nav-history-service;1"].getService(Ci.nsINavHistoryService);
-  var gh = Cc["@mozilla.org/browser/global-history;2"].
-           getService(Ci.nsIGlobalHistory2);
-} catch(ex) {
-  do_throw("Could not get history service\n");
-} 
+// Get history services
+var histsvc = Cc["@mozilla.org/browser/nav-history-service;1"].
+              getService(Ci.nsINavHistoryService);
+var gh = histsvc.QueryInterface(Ci.nsIGlobalHistory2);
+var bh = histsvc.QueryInterface(Ci.nsIBrowserHistory);
 
 /**
  * Adds a test URI visit to the database, and checks for a valid place ID.
@@ -201,10 +198,14 @@ function run_test() {
   // get direct db connection
   var db = histsvc.QueryInterface(Ci.nsPIPlacesDatabase).DBConnection;
   var q = "SELECT id FROM moz_bookmarks";
+  var statement;
   try {
-    var statement = db.createStatement(q);
+     statement = db.createStatement(q);
   } catch(ex) {
     do_throw("bookmarks table does not have id field, schema is too old!");
+  }
+  finally {
+    statement.finalize();
   }
 
   // bug 394741 - regressed history text searches
@@ -231,8 +232,6 @@ function run_test() {
   histFile.append("history.dat");
   do_check_true(histFile.exists());
 
-  var globalHistory = Components.classes["@mozilla.org/browser/global-history;2"]
-                                .getService(Components.interfaces.nsIBrowserHistory);
-  globalHistory.removeAllPages();
+  bh.removeAllPages();
   do_check_false(histFile.exists());
 }

@@ -56,11 +56,13 @@ DIRS += \
 	apppicker \
 	filepicker \
 	console \
+	cookie \
 	exthelper \
 	viewconfig \
 	typeaheadfind \
 	parentalcontrols \
 	passwordmgr \
+	aboutmemory \
 	$(NULL)
 
 ifneq (,$(filter cocoa, $(MOZ_WIDGET_TOOLKIT)))
@@ -85,26 +87,18 @@ ifdef MOZ_VIEW_SOURCE
 DIRS +=	viewsource
 endif
 
-ifndef MOZ_SUITE
-ifndef MOZ_THUNDERBIRD
-DIRS +=	search
-endif
-endif
-
 ifdef MOZ_XUL
 DIRS += \
-	autocomplete \
-	$(NULL)
+  autocomplete \
+  satchel \
+  $(NULL)
 endif
 
 ifndef MOZ_THUNDERBIRD
-DIRS +=	\
-	cookie \
-	$(NULL)
 
-ifdef MOZ_XUL
-DIRS += satchel
-endif # MOZ_XUL
+ifndef MOZ_SUITE
+DIRS +=	search
+endif
 
 endif # MOZ_THUNDERBIRD
 
@@ -114,6 +108,10 @@ endif
 
 ifdef MOZ_URL_CLASSIFIER
 DIRS += url-classifier
+endif
+
+ifdef MOZ_FASTSTART
+DIRS += faststart
 endif
 
 DIRS += \

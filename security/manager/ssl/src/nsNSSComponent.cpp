@@ -280,7 +280,7 @@ nsTokenEventRunnable::Run()
 PRBool EnsureNSSInitialized(EnsureNSSOperator op)
 {
   static PRBool loading = PR_FALSE;
-  static PRBool haveLoaded = PR_FALSE;
+  static PRInt32 haveLoaded = 0;
 
   switch (op)
   {
@@ -296,7 +296,7 @@ PRBool EnsureNSSInitialized(EnsureNSSOperator op)
   case nssInitSucceeded:
     NS_ASSERTION(loading, "Bad call to EnsureNSSInitialized(nssInitSucceeded)");
     loading = PR_FALSE;
-    haveLoaded = PR_TRUE;
+    PR_AtomicSet(&haveLoaded, 1);
     return PR_TRUE;
 
   case nssInitFailed:
@@ -305,7 +305,7 @@ PRBool EnsureNSSInitialized(EnsureNSSOperator op)
     // no break
 
   case nssShutdown:
-    haveLoaded = PR_FALSE;
+    PR_AtomicSet(&haveLoaded, 0);
     return PR_FALSE;
 
     // In this case we are called from a component to ensure nss initilization.
@@ -313,11 +313,11 @@ PRBool EnsureNSSInitialized(EnsureNSSOperator op)
     // call do_GetService for nss component to ensure it.
   case nssEnsure:
     // We are reentered during nss component creation or nss component is already up
-    if (haveLoaded || loading)
+    if (PR_AtomicAdd(&haveLoaded, 0) || loading)
       return PR_TRUE;
 
     {
-    nsCOMPtr<nsISupports> nssComponent
+    nsCOMPtr<nsINSSComponent> nssComponent
       = do_GetService(PSM_COMPONENT_CONTRACTID);
 
     // Nss component failed to initialize, inform the caller of that fact.
@@ -325,7 +325,9 @@ PRBool EnsureNSSInitialized(EnsureNSSOperator op)
     if (!nssComponent)
       return PR_FALSE;
 
-    return PR_TRUE;
+    PRBool isInitialized;
+    nsresult rv = nssComponent->IsNSSInitialized(&isInitialized);
+    return NS_SUCCEEDED(rv) && isInitialized;
     }
 
   default:
@@ -1059,6 +1061,7 @@ static CipherPref CipherPrefs[] = {
  {"security.ssl3.dhe_dss_des_sha", SSL_DHE_DSS_WITH_DES_CBC_SHA}, // 56-bit DES encryption with DSA, DHE, and a SHA1 MAC
  {"security.ssl3.rsa_null_sha", SSL_RSA_WITH_NULL_SHA}, // No encryption with RSA authentication and a SHA1 MAC
  {"security.ssl3.rsa_null_md5", SSL_RSA_WITH_NULL_MD5}, // No encryption with RSA authentication and an MD5 MAC
+ {"security.ssl3.rsa_seed_sha", TLS_RSA_WITH_SEED_CBC_SHA}, // SEED encryption with RSA and a SHA1 MAC
  {NULL, 0} /* end marker */
 };
 
@@ -1666,7 +1669,9 @@ nsNSSComponent::InitializeNSS(PRBool showWarningBox)
 
       // Now only set SSL/TLS ciphers we knew about at compile time
       for (CipherPref* cp = CipherPrefs; cp->pref; ++cp) {
-        mPrefBranch->GetBoolPref(cp->pref, &enabled);
+        rv = mPrefBranch->GetBoolPref(cp->pref, &enabled);
+        if (NS_FAILED(rv))
+          enabled = PR_FALSE;
 
         SSL_CipherPrefSetDefault(cp->id, enabled);
       }
@@ -1749,6 +1754,7 @@ nsNSSComponent::ShutdownNSS()
     CleanupIdentityInfo();
     PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("evaporating psm resources\n"));
     mShutdownObjectList->evaporateAllNSSResources();
+    EnsureNSSInitialized(nssShutdown);
     if (SECSuccess != ::NSS_Shutdown()) {
       PR_LOG(gPIPNSSLog, PR_LOG_ALWAYS, ("NSS SHUTDOWN FAILURE\n"));
       rv = NS_ERROR_FAILURE;
@@ -2534,19 +2540,48 @@ nsNSSComponent::GetClientAuthRememberService(nsClientAuthRememberService **cars)
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsNSSComponent::IsNSSInitialized(PRBool *initialized)
+{
+  nsAutoLock lock(mutex);
+  *initialized = mNSSInitialized;
+  return NS_OK;
+}
+
 //---------------------------------------------
 // Implementing nsICryptoHash
 //---------------------------------------------
 
 nsCryptoHash::nsCryptoHash()
   : mHashContext(nsnull)
+  , mInitialized(PR_FALSE)
 {
 }
 
 nsCryptoHash::~nsCryptoHash()
 {
+  nsNSSShutDownPreventionLock locker;
+
+  if (isAlreadyShutDown())
+    return;
+
+  destructorSafeDestroyNSSReference();
+  shutdown(calledFromObject);
+}
+
+void nsCryptoHash::virtualDestroyNSSReference()
+{
+  destructorSafeDestroyNSSReference();
+}
+
+void nsCryptoHash::destructorSafeDestroyNSSReference()
+{
+  if (isAlreadyShutDown())
+    return;
+
   if (mHashContext)
     HASH_Destroy(mHashContext);
+  mHashContext = nsnull;
 }
 
 NS_IMPL_ISUPPORTS1(nsCryptoHash, nsICryptoHash)
@@ -2554,14 +2589,30 @@ NS_IMPL_ISUPPORTS1(nsCryptoHash, nsICryptoHash)
 NS_IMETHODIMP 
 nsCryptoHash::Init(PRUint32 algorithm)
 {
-  if (mHashContext)
-    HASH_Destroy(mHashContext);
+  nsNSSShutDownPreventionLock locker;
 
-  mHashContext = HASH_Create((HASH_HashType) algorithm);
+  HASH_HashType hashType = (HASH_HashType)algorithm;
+  if (mHashContext)
+  {
+    if ((!mInitialized) && (HASH_GetType(mHashContext) == hashType))
+    {
+      mInitialized = PR_TRUE;
+      HASH_Begin(mHashContext);
+      return NS_OK;
+    }
+
+    // Destroy current hash context if the type was different
+    // or Finish method wasn't called.
+    HASH_Destroy(mHashContext);
+    mInitialized = PR_FALSE;
+  }
+
+  mHashContext = HASH_Create(hashType);
   if (!mHashContext)
     return NS_ERROR_INVALID_ARG;
 
   HASH_Begin(mHashContext);
+  mInitialized = PR_TRUE;
   return NS_OK; 
 }
 
@@ -2592,7 +2643,9 @@ nsCryptoHash::InitWithString(const nsACString & aAlgorithm)
 NS_IMETHODIMP
 nsCryptoHash::Update(const PRUint8 *data, PRUint32 len)
 {
-  if (!mHashContext)
+  nsNSSShutDownPreventionLock locker;
+  
+  if (!mInitialized)
     return NS_ERROR_NOT_INITIALIZED;
 
   HASH_Update(mHashContext, data, len);
@@ -2602,7 +2655,7 @@ nsCryptoHash::Update(const PRUint8 *data, PRUint32 len)
 NS_IMETHODIMP
 nsCryptoHash::UpdateFromStream(nsIInputStream *data, PRUint32 len)
 {
-  if (!mHashContext)
+  if (!mInitialized)
     return NS_ERROR_NOT_INITIALIZED;
 
   if (!data)
@@ -2650,7 +2703,9 @@ nsCryptoHash::UpdateFromStream(nsIInputStream *data, PRUint32 len)
 NS_IMETHODIMP
 nsCryptoHash::Finish(PRBool ascii, nsACString & _retval)
 {
-  if (!mHashContext)
+  nsNSSShutDownPreventionLock locker;
+  
+  if (!mInitialized)
     return NS_ERROR_NOT_INITIALIZED;
   
   PRUint32 hashLen = 0;
@@ -2658,9 +2713,8 @@ nsCryptoHash::Finish(PRBool ascii, nsACString & _retval)
   unsigned char* pbuffer = buffer;
 
   HASH_End(mHashContext, pbuffer, &hashLen, HASH_LENGTH_MAX);
-  HASH_Destroy(mHashContext);
 
-  mHashContext = nsnull;
+  mInitialized = PR_FALSE;
 
   if (ascii)
   {
@@ -2691,13 +2745,35 @@ nsCryptoHMAC::nsCryptoHMAC()
 
 nsCryptoHMAC::~nsCryptoHMAC()
 {
+  nsNSSShutDownPreventionLock locker;
+
+  if (isAlreadyShutDown())
+    return;
+
+  destructorSafeDestroyNSSReference();
+  shutdown(calledFromObject);
+}
+
+void nsCryptoHMAC::virtualDestroyNSSReference()
+{
+  destructorSafeDestroyNSSReference();
+}
+
+void nsCryptoHMAC::destructorSafeDestroyNSSReference()
+{
+  if (isAlreadyShutDown())
+    return;
+
   if (mHMACContext)
     PK11_DestroyContext(mHMACContext, PR_TRUE);
+  mHMACContext = nsnull;
 }
 
 /* void init (in unsigned long aAlgorithm, in nsIKeyObject aKeyObject); */
 NS_IMETHODIMP nsCryptoHMAC::Init(PRUint32 aAlgorithm, nsIKeyObject *aKeyObject)
 {
+  nsNSSShutDownPreventionLock locker;
+
   if (mHMACContext)
   {
     PK11_DestroyContext(mHMACContext, PR_TRUE);
@@ -2754,6 +2830,8 @@ NS_IMETHODIMP nsCryptoHMAC::Init(PRUint32 aAlgorithm, nsIKeyObject *aKeyObject)
 /* void update ([array, size_is (aLen), const] in octet aData, in unsigned long aLen); */
 NS_IMETHODIMP nsCryptoHMAC::Update(const PRUint8 *aData, PRUint32 aLen)
 {
+  nsNSSShutDownPreventionLock locker;
+
   if (!mHMACContext)
     return NS_ERROR_NOT_INITIALIZED;
 
@@ -2819,6 +2897,8 @@ NS_IMETHODIMP nsCryptoHMAC::UpdateFromStream(nsIInputStream *aStream, PRUint32 a
 /* ACString finish (in PRBool aASCII); */
 NS_IMETHODIMP nsCryptoHMAC::Finish(PRBool aASCII, nsACString & _retval)
 {
+  nsNSSShutDownPreventionLock locker;
+
   if (!mHMACContext)
     return NS_ERROR_NOT_INITIALIZED;
   
@@ -2846,6 +2926,8 @@ NS_IMETHODIMP nsCryptoHMAC::Finish(PRBool aASCII, nsACString & _retval)
 /* void reset (); */
 NS_IMETHODIMP nsCryptoHMAC::Reset()
 {
+  nsNSSShutDownPreventionLock locker;
+
   SECStatus ss = PK11_DigestBegin(mHMACContext);
   NS_ENSURE_TRUE(ss == SECSuccess, NS_ERROR_FAILURE);
 

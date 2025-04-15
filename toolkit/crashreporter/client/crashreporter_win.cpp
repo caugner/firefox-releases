@@ -56,7 +56,8 @@
 #include "common/windows/string_utils-inl.h"
 
 #define CRASH_REPORTER_VALUE L"Enabled"
-#define SUBMIT_REPORT_VALUE  L"SubmitReport"
+#define SUBMIT_REPORT_VALUE  L"SubmitCrashReport"
+#define SUBMIT_REPORT_OLD    L"SubmitReport"
 #define INCLUDE_URL_VALUE    L"IncludeURL"
 #define EMAIL_ME_VALUE       L"EmailMe"
 #define EMAIL_VALUE          L"Email"
@@ -157,6 +158,24 @@ static bool GetBoolValue(HKEY hRegKey, LPCTSTR valueName, DWORD* value)
   return false;
 }
 
+// Removes a value from HKEY_LOCAL_MACHINE and HKEY_CURRENT_USER, if it exists.
+static void RemoveUnusedValues(const wchar_t* key, LPCTSTR valueName)
+{
+  HKEY hRegKey;
+
+  if (RegOpenKeyEx(HKEY_LOCAL_MACHINE, key, 0, KEY_SET_VALUE, &hRegKey) 
+      == ERROR_SUCCESS) {
+    RegDeleteValue(hRegKey, valueName);
+    RegCloseKey(hRegKey);
+  }
+
+  if (RegOpenKeyEx(HKEY_CURRENT_USER, key, 0, KEY_SET_VALUE, &hRegKey) 
+      == ERROR_SUCCESS) {
+    RegDeleteValue(hRegKey, valueName);
+    RegCloseKey(hRegKey);
+  }
+}
+
 static bool CheckBoolKey(const wchar_t* key,
                          const wchar_t* valueName,
                          bool* enabled)
@@ -189,6 +208,10 @@ static bool CheckBoolKey(const wchar_t* key,
 static void SetBoolKey(const wchar_t* key, const wchar_t* value, bool enabled)
 {
   HKEY hRegKey;
+
+  // remove the old value from the registry if it exists
+  RemoveUnusedValues(key, SUBMIT_REPORT_OLD);
+
   if (RegCreateKey(HKEY_CURRENT_USER, key, &hRegKey) == ERROR_SUCCESS) {
     DWORD data = (enabled ? 1 : 0);
     RegSetValueEx(hRegKey, value, 0, REG_DWORD, (LPBYTE)&data, sizeof(data));
@@ -1337,20 +1360,45 @@ bool UIGetSettingsPath(const string& vendor,
                        string& settings_path)
 {
   wchar_t path[MAX_PATH];
-  if(SUCCEEDED(SHGetFolderPath(NULL,
-                               CSIDL_APPDATA,
-                               NULL,
-                               0,
-                               path)))  {
-    if (!vendor.empty()) {
-      PathAppend(path, UTF8ToWide(vendor).c_str());
-    }
-    PathAppend(path, UTF8ToWide(product).c_str());
-    PathAppend(path, L"Crash Reports");
-    settings_path = WideToUTF8(path);
-    return true;
+  HRESULT hRes = SHGetFolderPath(NULL,
+                                 CSIDL_APPDATA,
+                                 NULL,
+                                 0,
+                                 path);
+  if (FAILED(hRes)) {
+    // This provides a fallback for getting the path to APPDATA by querying the
+    // registry when the call to SHGetFolderPath is unable to provide this path
+    // (Bug 513958).
+    HKEY key;
+    DWORD type, size, dwRes;
+    dwRes = ::RegOpenKeyExW(HKEY_CURRENT_USER,
+                            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Folders",
+                            0,
+                            KEY_READ,
+                            &key);
+    if (dwRes != ERROR_SUCCESS)
+      return false;
+
+    dwRes = RegQueryValueExW(key,
+                             L"AppData",
+                             NULL,
+                             &type,
+                             (LPBYTE)&path,
+                             &size);
+    ::RegCloseKey(key);
+    // The call to RegQueryValueExW must succeed, the type must be REG_SZ, the
+    // buffer size must not equal 0, and the buffer size be a multiple of 2.
+    if (dwRes != ERROR_SUCCESS || type != REG_SZ || size == 0 || size % 2 != 0)
+        return false;
   }
-  return false;
+
+  if (!vendor.empty()) {
+    PathAppend(path, UTF8ToWide(vendor).c_str());
+  }
+  PathAppend(path, UTF8ToWide(product).c_str());
+  PathAppend(path, L"Crash Reports");
+  settings_path = WideToUTF8(path);
+  return true;
 }
 
 bool UIEnsurePathExists(const string& path)

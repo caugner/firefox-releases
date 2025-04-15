@@ -56,9 +56,8 @@ var gAdvancedPane = {
       advancedPrefs.selectedTab = document.getElementById(extraArgs["advancedTab"]);
     } else {
       var preference = document.getElementById("browser.preferences.advanced.selectedTabIndex");
-      if (preference.value === null)
-        return;
-      advancedPrefs.selectedIndex = preference.value;
+      if (preference.value !== null)
+        advancedPrefs.selectedIndex = preference.value;
     }
 
 #ifdef MOZ_UPDATER
@@ -404,12 +403,12 @@ var gAdvancedPane = {
   {
     var aus = 
         Components.classes["@mozilla.org/updates/update-service;1"].
-        getService(Components.interfaces.nsIApplicationUpdateService);
+        getService(Components.interfaces.nsIApplicationUpdateService2);
 
     var enabledPref = document.getElementById("app.update.enabled");
     var enableAppUpdate = document.getElementById("enableAppUpdate");
 
-    enableAppUpdate.disabled = !aus.canUpdate || enabledPref.locked;
+    enableAppUpdate.disabled = !aus.canCheckForUpdates || enabledPref.locked;
   },
 
   /**

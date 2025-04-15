@@ -116,6 +116,7 @@ EXPORTS
         sqlite3_mutex_leave
         sqlite3_mutex_try
         sqlite3_mprintf
+        sqlite3_next_stmt
         sqlite3_open
         sqlite3_open_v2
         sqlite3_open16
@@ -134,6 +135,7 @@ EXPORTS
         sqlite3_result_double
         sqlite3_result_error
         sqlite3_result_error16
+        sqlite3_result_error_nomem
         sqlite3_result_int
         sqlite3_result_int64
         sqlite3_result_null
@@ -150,6 +152,7 @@ EXPORTS
         sqlite3_snprintf
         sqlite3_sql
         sqlite3_step
+        sqlite3_stmt_status
         sqlite3_thread_cleanup
         sqlite3_total_changes
         sqlite3_trace
@@ -173,3 +176,7 @@ EXPORTS
         sqlite3_vfs_unregister
         sqlite3_vfs_register
         sqlite3_vmprintf
+#ifdef SQLITE_DEBUG
+        sqlite3_mutex_held
+        sqlite3_mutex_notheld
+#endif

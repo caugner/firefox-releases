@@ -109,7 +109,8 @@
                        //file.
 
 NSSCleanupAutoPtrClass(CERTCertificate, CERT_DestroyCertificate)
-NSSCleanupAutoPtrClass(char, PR_FREEIF)
+NSSCleanupAutoPtrClass(char, PL_strfree)
+NSSCleanupAutoPtrClass(void, PR_FREEIF)
 NSSCleanupAutoPtrClass_WithParam(PRArenaPool, PORT_FreeArena, FalseParam, PR_FALSE)
 
 /* SSM_UserCertChoice: enum for cert choice info */
@@ -218,6 +219,7 @@ nsNSSSocketInfo::nsNSSSocketInfo()
     mHasCleartextPhase(PR_FALSE),
     mHandshakeInProgress(PR_FALSE),
     mAllowTLSIntoleranceTimeout(PR_TRUE),
+    mRememberClientAuthCertificate(PR_FALSE),
     mHandshakeStartTime(0),
     mPort(0)
 {
@@ -267,14 +269,14 @@ nsNSSSocketInfo::SetHandshakePending(PRBool aHandshakePending)
 nsresult
 nsNSSSocketInfo::SetHostName(const char* host)
 {
-  mHostName.Adopt(host ? nsCRT::strdup(host) : 0);
+  mHostName.Adopt(host ? NS_strdup(host) : 0);
   return NS_OK;
 }
 
 nsresult
 nsNSSSocketInfo::GetHostName(char **host)
 {
-  *host = (mHostName) ? nsCRT::strdup(mHostName) : nsnull;
+  *host = (mHostName) ? NS_strdup(mHostName) : nsnull;
   return NS_OK;
 }
 
@@ -400,8 +402,9 @@ nsNSSSocketInfo::EnsureDocShellDependentStuffKnown()
                          docshell.get(),
                          NS_PROXY_SYNC,
                          getter_AddRefs(proxiedDocShell));
-    nsISecureBrowserUI* secureUI;
-    proxiedDocShell->GetSecurityUI(&secureUI);
+    nsISecureBrowserUI* secureUI = nsnull;
+    if (proxiedDocShell)
+      proxiedDocShell->GetSecurityUI(&secureUI);
     if (secureUI)
     {
       nsCOMPtr<nsIThread> mainThread(do_GetMainThread());
@@ -597,12 +600,26 @@ NS_IMETHODIMP
 nsNSSSocketInfo::Write(nsIObjectOutputStream* stream) {
   stream->WriteCompoundObject(NS_ISUPPORTS_CAST(nsIX509Cert*, mCert),
                               NS_GET_IID(nsISupports), PR_TRUE);
+
+  // Store the version number of the binary stream data format.
+  // The 0xFFFF0000 mask is included to the version number
+  // to distinguish version number from mSecurityState
+  // field stored in times before versioning has been introduced.
+  // This mask value has been chosen as mSecurityState could
+  // never be assigned such value.
+  PRUint32 version = 2;
+  stream->Write32(version | 0xFFFF0000);
   stream->Write32(mSecurityState);
   stream->WriteWStringZ(mShortDesc.get());
   stream->WriteWStringZ(mErrorMessage.get());
 
   stream->WriteCompoundObject(NS_ISUPPORTS_CAST(nsISSLStatus*, mSSLStatus),
                               NS_GET_IID(nsISupports), PR_TRUE);
+
+  stream->Write32((PRUint32)mSubRequestsHighSecurity);
+  stream->Write32((PRUint32)mSubRequestsLowSecurity);
+  stream->Write32((PRUint32)mSubRequestsBrokenSecurity);
+  stream->Write32((PRUint32)mSubRequestsNoSecurity);
   return NS_OK;
 }
 
@@ -612,12 +629,37 @@ nsNSSSocketInfo::Read(nsIObjectInputStream* stream) {
   stream->ReadObject(PR_TRUE, getter_AddRefs(obj));
   mCert = reinterpret_cast<nsNSSCertificate*>(obj.get());
 
-  stream->Read32(&mSecurityState);
+  PRUint32 version;
+  stream->Read32(&version);
+  // If the version field we have just read is not masked with 0xFFFF0000
+  // then it is stored mSecurityState field and this is version 1 of
+  // the binary data stream format.
+  if ((version & 0xFFFF0000) == 0xFFFF0000) {
+      version &= ~0xFFFF0000;
+      stream->Read32(&mSecurityState);
+  }
+  else {
+      mSecurityState = version;
+      version = 1;
+  }
   stream->ReadString(mShortDesc);
   stream->ReadString(mErrorMessage);
 
   stream->ReadObject(PR_TRUE, getter_AddRefs(obj));
   mSSLStatus = reinterpret_cast<nsSSLStatus*>(obj.get());
+
+  if (version >= 2) {
+    stream->Read32((PRUint32*)&mSubRequestsHighSecurity);
+    stream->Read32((PRUint32*)&mSubRequestsLowSecurity);
+    stream->Read32((PRUint32*)&mSubRequestsBrokenSecurity);
+    stream->Read32((PRUint32*)&mSubRequestsNoSecurity);
+  }
+  else {
+    mSubRequestsHighSecurity = 0;
+    mSubRequestsLowSecurity = 0;
+    mSubRequestsBrokenSecurity = 0;
+    mSubRequestsNoSecurity = 0;
+  }
   return NS_OK;
 }
 
@@ -787,6 +829,11 @@ void nsSSLIOLayerHelpers::Cleanup()
   if (mTLSIntolerantSites) {
     delete mTLSIntolerantSites;
     mTLSIntolerantSites = nsnull;
+  }
+
+  if (mTLSTolerantSites) {
+    delete mTLSTolerantSites;
+    mTLSTolerantSites = nsnull;
   }
 
   if (mSharedPollableEvent)
@@ -1516,7 +1563,7 @@ nsPSMRememberCertErrorsTable::GetHostPortKey(nsNSSSocketInfo* infoObject,
   rv = infoObject->GetPort(&port);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  result.Assign(hostName.get());
+  result.Assign(hostName);
   result.Append(':');
   result.AppendInt(port);
 
@@ -1582,6 +1629,18 @@ nsPSMRememberCertErrorsTable::LookupCertErrorBits(nsNSSSocketInfo* infoObject,
   status->mIsUntrusted = bits.mIsUntrusted;
 }
 
+void
+nsSSLIOLayerHelpers::getSiteKey(nsNSSSocketInfo *socketInfo, nsCSubstring &key)
+{
+  PRInt32 port;
+  socketInfo->GetPort(&port);
+
+  nsXPIDLCString host;
+  socketInfo->GetHostName(getter_Copies(host));
+
+  key = host + NS_LITERAL_CSTRING(":") + nsPrintfCString("%d", port);
+}
+
 // Call this function to report a site that is possibly TLS intolerant.
 // This function will return true, if the given socket is currently using TLS.
 PRBool
@@ -1589,20 +1648,48 @@ nsSSLIOLayerHelpers::rememberPossibleTLSProblemSite(PRFileDesc* ssl_layer_fd, ns
 {
   PRBool currentlyUsesTLS = PR_FALSE;
 
-  SSL_OptionGet(ssl_layer_fd, SSL_ENABLE_TLS, &currentlyUsesTLS);
-  if (currentlyUsesTLS) {
-    // Add this site to the list of TLS intolerant sites.
-    PRInt32 port;
-    nsXPIDLCString host;
-    socketInfo->GetPort(&port);
-    socketInfo->GetHostName(getter_Copies(host));
-    nsCAutoString key;
-    key = host + NS_LITERAL_CSTRING(":") + nsPrintfCString("%d", port);
+  nsCAutoString key;
+  getSiteKey(socketInfo, key);
 
+  SSL_OptionGet(ssl_layer_fd, SSL_ENABLE_TLS, &currentlyUsesTLS);
+  if (!currentlyUsesTLS) {
+    // We were not using TLS but failed with an intolerant error using
+    // a different protocol. To give TLS a try on next connection attempt again
+    // drop this site from the list of intolerant sites. TLS failure might be 
+    // caused only by a traffic congestion while the server is TLS tolerant.
+    removeIntolerantSite(key);
+    return PR_FALSE;
+  }
+
+  PRBool enableSSL3 = PR_FALSE;
+  SSL_OptionGet(ssl_layer_fd, SSL_ENABLE_SSL3, &enableSSL3);
+  PRBool enableSSL2 = PR_FALSE;
+  SSL_OptionGet(ssl_layer_fd, SSL_ENABLE_SSL2, &enableSSL2);
+  if (enableSSL3 || enableSSL2) {
+    // Add this site to the list of TLS intolerant sites.
     addIntolerantSite(key);
   }
   
   return currentlyUsesTLS;
+}
+
+void
+nsSSLIOLayerHelpers::rememberTolerantSite(PRFileDesc* ssl_layer_fd, 
+                                          nsNSSSocketInfo *socketInfo)
+{
+  PRBool usingSecurity = PR_FALSE;
+  PRBool currentlyUsesTLS = PR_FALSE;
+  SSL_OptionGet(ssl_layer_fd, SSL_SECURITY, &usingSecurity);
+  SSL_OptionGet(ssl_layer_fd, SSL_ENABLE_TLS, &currentlyUsesTLS);
+  if (!usingSecurity || !currentlyUsesTLS) {
+    return;
+  }
+
+  nsCAutoString key;
+  getSiteKey(socketInfo, key);
+
+  nsAutoLock lock(mutex);
+  nsSSLIOLayerHelpers::mTLSTolerantSites->Put(key);
 }
 
 static PRStatus PR_CALLBACK
@@ -1879,6 +1966,7 @@ PRDescIdentity nsSSLIOLayerHelpers::nsSSLIOLayerIdentity;
 PRIOMethods nsSSLIOLayerHelpers::nsSSLIOLayerMethods;
 PRLock *nsSSLIOLayerHelpers::mutex = nsnull;
 nsCStringHashSet *nsSSLIOLayerHelpers::mTLSIntolerantSites = nsnull;
+nsCStringHashSet *nsSSLIOLayerHelpers::mTLSTolerantSites = nsnull;
 nsPSMRememberCertErrorsTable *nsSSLIOLayerHelpers::mHostsWithCertErrors = nsnull;
 PRFileDesc *nsSSLIOLayerHelpers::mSharedPollableEvent = nsnull;
 nsNSSSocketInfo *nsSSLIOLayerHelpers::mSocketOwningPollableEvent = nsnull;
@@ -2089,8 +2177,17 @@ nsresult nsSSLIOLayerHelpers::Init()
 
   mTLSIntolerantSites->Init(1);
 
+  mTLSTolerantSites = new nsCStringHashSet();
+  if (!mTLSTolerantSites)
+    return NS_ERROR_OUT_OF_MEMORY;
+
+  // Initialize the tolerant site hashtable to 16 items at the start seems
+  // reasonable as most servers are TLS tolerant. We just want to lower 
+  // the rate of hashtable array reallocation.
+  mTLSTolerantSites->Init(16);
+
   mHostsWithCertErrors = new nsPSMRememberCertErrorsTable();
-  if (!mHostsWithCertErrors)
+  if (!mHostsWithCertErrors || !mHostsWithCertErrors->mErrorHosts.IsInitialized())
     return NS_ERROR_OUT_OF_MEMORY;
 
   return NS_OK;
@@ -2099,7 +2196,15 @@ nsresult nsSSLIOLayerHelpers::Init()
 void nsSSLIOLayerHelpers::addIntolerantSite(const nsCString &str)
 {
   nsAutoLock lock(mutex);
-  nsSSLIOLayerHelpers::mTLSIntolerantSites->Put(str);
+  // Remember intolerant site only if it is not known as tolerant
+  if (!mTLSTolerantSites->Contains(str))
+    nsSSLIOLayerHelpers::mTLSIntolerantSites->Put(str);
+}
+
+void nsSSLIOLayerHelpers::removeIntolerantSite(const nsCString &str)
+{
+  nsAutoLock lock(mutex);
+  nsSSLIOLayerHelpers::mTLSIntolerantSites->Remove(str);
 }
 
 PRBool nsSSLIOLayerHelpers::isKnownAsIntolerantSite(const nsCString &str)
@@ -2885,7 +2990,8 @@ if (!hasRemembered)
 
     /* Get CN and O of the subject and O of the issuer */
     char *ccn = CERT_GetCommonName(&serverCert->subject);
-    charCleaner ccnCleaner(ccn);
+    void *v = ccn;
+    voidCleaner ccnCleaner(v);
     NS_ConvertUTF8toUTF16 cn(ccn);
 
     PRInt32 port;

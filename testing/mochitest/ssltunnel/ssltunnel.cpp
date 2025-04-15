@@ -56,6 +56,7 @@
 #include "prio.h"
 #include "prnetdb.h"
 #include "prtpool.h"
+#include "prtypes.h"
 #include "nss.h"
 #include "pk11func.h"
 #include "key.h"
@@ -157,9 +158,9 @@ private:
 
 // These are suggestions. If the number of ports to proxy on * 2
 // is greater than either of these, then we'll use that value instead.
-const PRInt32 INITIAL_THREADS = 1;
-const PRInt32 MAX_THREADS = 5;
-const PRInt32 DEFAULT_STACKSIZE = (512 * 1024);
+const PRUint32 INITIAL_THREADS = 1;
+const PRUint32 MAX_THREADS = 5;
+const PRUint32 DEFAULT_STACKSIZE = (512 * 1024);
 
 // global data
 string nssconfigdir;
@@ -243,7 +244,7 @@ bool ConfigureSSLServerSocket(PRFileDesc* socket, server_info_t* si, string &cer
   AutoCert cert(PK11_FindCertFromNickname(
       certnick, NULL));
   if (!cert) {
-    fprintf(stderr, "Failed to find cert %s\n", si->cert_nickname.c_str());
+    fprintf(stderr, "Failed to find cert %s\n", certnick);
     return false;
   }
 
@@ -401,11 +402,15 @@ void HandleConnection(void* data)
         PRInt16 &in_flags2 = sockets[s2].in_flags;
         sockets[s].out_flags = 0;
 
-        if (out_flags & PR_POLL_EXCEPT)
+        if (out_flags & (PR_POLL_EXCEPT | PR_POLL_ERR | PR_POLL_HUP))
         {
           client_error = true;
+          // We got a fatal error state on the socket. Clear the output buffer
+          // for this socket to break the main loop, we will never more be able
+          // to send those data anyway.
+          buffers[s2].bufferhead = buffers[s2].buffertail = buffers[s2].buffer;
           continue;
-        } // PR_POLL_EXCEPT handling
+        } // PR_POLL_EXCEPT, PR_POLL_ERR, PR_POLL_HUP handling
 
         if (out_flags & PR_POLL_READ && buffers[s].free())
         {
@@ -478,8 +483,12 @@ void HandleConnection(void* data)
 
           if (bytesWrite < 0)
           {
-            if (PR_GetError() != PR_WOULD_BLOCK_ERROR)
+            if (PR_GetError() != PR_WOULD_BLOCK_ERROR) {
               client_error = true;
+              // We got a fatal error while writting the buffer. Clear it to break
+              // the main loop, we will never more be able to send it.
+              buffers[s2].bufferhead = buffers[s2].buffertail = buffers[s2].buffer;
+            }
           }
           else
           {
@@ -582,7 +591,7 @@ char* password_func(PK11SlotInfo* slot, PRBool retry, void* arg)
   if (retry)
     return NULL;
 
-  return "";
+  return PL_strdup("");
 }
 
 server_info_t* findServerInfo(int portnumber)
@@ -821,7 +830,7 @@ PRIntn freeClientAuthHashItems(PLHashEntry *he, PRIntn i, void *arg)
 
 int main(int argc, char** argv)
 {
-  char* configFilePath;
+  const char* configFilePath;
   if (argc == 1)
     configFilePath = "ssltunnel.cfg";
   else
@@ -859,10 +868,8 @@ int main(int argc, char** argv)
   }
 
   // create a thread pool to handle connections
-  threads = PR_CreateThreadPool(std::max<PRInt32>(INITIAL_THREADS,
-                                                  servers.size()*2),
-                                std::max<PRInt32>(MAX_THREADS,
-                                                  servers.size()*2),
+  threads = PR_CreateThreadPool(PR_MAX(INITIAL_THREADS, servers.size()*2),
+                                PR_MAX(MAX_THREADS, servers.size()*2),
                                 DEFAULT_STACKSIZE);
   if (!threads) {
     fprintf(stderr, "Failed to create thread pool\n");

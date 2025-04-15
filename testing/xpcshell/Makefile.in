@@ -57,7 +57,11 @@ include $(topsrcdir)/config/rules.mk
 TEST_HARNESS_FILES := \
   runxpcshelltests.py \
   head.js \
-  tail.js \
+  $(NULL)
+
+# Extra files needed from $(topsrcdir)/build
+EXTRA_BUILD_FILES := \
+  automationutils.py \
   $(NULL)
 
 # Components / typelibs that don't get packaged with
@@ -72,5 +76,6 @@ PKG_STAGE = $(DIST)/test-package-stage
 stage-package:
 	$(NSINSTALL) -D $(PKG_STAGE)/xpcshell/tests
 	@(cd $(srcdir) && tar $(TAR_CREATE_FLAGS) - $(TEST_HARNESS_FILES)) | (cd $(PKG_STAGE)/xpcshell && tar -xf -)
+	@(cd $(topsrcdir)/build && tar $(TAR_CREATE_FLAGS) - $(EXTRA_BUILD_FILES)) | (cd $(PKG_STAGE)/xpcshell && tar -xf -)
 	@(cd $(DEPTH)/_tests/xpcshell/ && tar $(TAR_CREATE_FLAGS) - *) | (cd $(PKG_STAGE)/xpcshell/tests && tar -xf -)
 	@(cd $(DIST)/bin/components && tar $(TAR_CREATE_FLAGS) - $(TEST_HARNESS_COMPONENTS)) | (cd $(PKG_STAGE)/bin/components && tar -xf -)

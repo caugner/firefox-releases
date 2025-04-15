@@ -53,7 +53,7 @@
 #define FLAG_RESOLVING 0x4
 
 #define HAS_FLAGS(_val, _flags) \
-  ((PRUint32(JSVAL_TO_INT(_val)) & (_flags)) != 0)
+  ((_val) != JSVAL_VOID && (PRUint32(JSVAL_TO_INT(_val)) & (_flags)) != 0)
 
 #define NATIVE_HAS_FLAG(_wn, _flag)                \
   ((_wn)->GetScriptableInfo() &&                   \
@@ -111,6 +111,7 @@ XPC_XOW_ClassNeedsXOW(const char *name)
   return JS_FALSE;
 }
 
+extern JSExtendedClass sXPC_COW_JSClass;
 extern JSExtendedClass sXPC_SJOW_JSClass;
 extern JSExtendedClass sXPC_SOW_JSClass;
 extern JSExtendedClass sXPC_XOW_JSClass;
@@ -194,8 +195,8 @@ public:
   /**
    * Returns the script security manager used by XPConnect.
    */
-  static nsIScriptSecurityManager *GetSecurityManager() {
-    extern nsIScriptSecurityManager *gScriptSecurityManager;
+  static nsIScriptSecurityManager_1_9_2 *GetSecurityManager() {
+    extern nsIScriptSecurityManager_1_9_2 *gScriptSecurityManager;
 
     return gScriptSecurityManager;
   }
@@ -272,6 +273,21 @@ public:
    */
   static JSObject *UnwrapXOW(JSContext *cx, JSObject *wrapper) {
     wrapper = UnwrapGeneric(cx, &sXPC_XOW_JSClass, wrapper);
+    if (!wrapper) {
+      return nsnull;
+    }
+
+    nsresult rv = CanAccessWrapper(cx, wrapper);
+    if (NS_FAILED(rv)) {
+      JS_ClearPendingException(cx);
+      wrapper = nsnull;
+    }
+
+    return wrapper;
+  }
+
+  static JSObject *UnwrapCOW(JSContext *cx, JSObject *wrapper) {
+    wrapper = UnwrapGeneric(cx, &sXPC_COW_JSClass, wrapper);
     if (!wrapper) {
       return nsnull;
     }
@@ -377,7 +393,6 @@ public:
                                uintN argc, jsval *argv, jsval *rval,
                                JSBool isNativeWrapper);
 
-private:
   /**
    * Looks up a property on obj. If it exists, then the parameters are filled
    * in with useful values.

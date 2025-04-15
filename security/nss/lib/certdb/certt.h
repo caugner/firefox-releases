@@ -36,7 +36,7 @@
 /*
  * certt.h - public data structures for the certificate library
  *
- * $Id: certt.h,v 1.49 2009/03/21 01:40:34 nelson%bolyard.com Exp $
+ * $Id: certt.h,v 1.52 2009/05/29 18:10:38 alexei.volkov.bugs%sun.com Exp $
  */
 #ifndef _CERTT_H_
 #define _CERTT_H_
@@ -940,12 +940,17 @@ typedef enum {
    cert_pi_certStores      = 10,/* Bitmask of Cert Store flags (see below)
 				 * Set in value.scalar.ui */
    cert_pi_trustAnchors    = 11,/* Specify the list of trusted roots to 
-				 * validate against. If the list in NULL all
-				 * default trusted roots are used.
+				 * validate against. 
+				 * The default set of trusted roots, these are
+				 * root CA certs from libnssckbi.so or CA
+				 * certs trusted by user, are used in any of
+				 * the following cases:
+				 *      * when the parameter is not set.
+				 *      * when the list of trust anchors is empty.
 				 * Specified in value.pointer.chain */
    cert_pi_useAIACertFetch = 12, /* Enables cert fetching using AIA extension.
-				 * Default is off.
-                                     * Value is in value.scalar.b */
+				 * In NSS 3.12.1 or later. Default is off.
+				 * Value is in value.scalar.b */
    cert_pi_max                  /* SPECIAL: signifies maximum allowed value,
 				 *  can increase in future releases */
 } CERTValParamInType;
@@ -1111,6 +1116,8 @@ typedef enum {
  *     After the individual tests have been executed, we must have
  *     been able to find fresh information using at least one method.
  *     If we were unable to find fresh info, it's a failure.
+ *     This setting overrides the CERT_REV_M_FAIL_ON_MISSING_FRESH_INFO
+ *     flag on all methods.
  */
 #define CERT_REV_MI_NO_OVERALL_INFO_REQUIREMENT       0L
 #define CERT_REV_MI_REQUIRE_SOME_FRESH_INFO_AVAILABLE 2L

@@ -65,6 +65,10 @@ function run_test()
     return;
   }
 
+  let prefs = Cc["@mozilla.org/preferences-service;1"].
+              getService(Ci.nsIPrefBranch);
+  prefs.setBoolPref("browser.privatebrowsing.keep_current_session", true);
+
   pb.privateBrowsingEnabled = true;
   do_check_eq(gDownloadLastDir.file, null);
 
@@ -78,4 +82,5 @@ function run_test()
 
   pb.privateBrowsingEnabled = false;
   do_check_eq(gDownloadLastDir.file, null);
+  prefs.clearUserPref("browser.privatebrowsing.keep_current_session");
 }

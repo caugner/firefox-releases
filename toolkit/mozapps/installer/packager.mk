@@ -40,49 +40,39 @@
 
 include $(MOZILLA_DIR)/toolkit/mozapps/installer/package-name.mk
 
-# This is how we create the Unix binary packages we release to the public.
-# Currently the only format is tar.gz (TGZ), but it should be fairly easy
-# to add .rpm (RPM) and .deb (DEB) later.
+# This is how we create the binary packages we release to the public.
 
 ifndef MOZ_PKG_FORMAT
 ifneq (,$(filter mac cocoa,$(MOZ_WIDGET_TOOLKIT)))
 MOZ_PKG_FORMAT  = DMG
 else
-ifeq (,$(filter-out OS2 WINNT BeOS, $(OS_ARCH)))
+ifeq (,$(filter-out OS2 WINNT WINCE BeOS, $(OS_ARCH)))
 MOZ_PKG_FORMAT  = ZIP
-ifeq ($(OS_ARCH),OS2)
-INSTALLER_DIR   = os2
-else
-ifeq ($(OS_ARCH), WINNT)
-INSTALLER_DIR   = windows
-endif
-endif
 else
 ifeq (,$(filter-out SunOS, $(OS_ARCH)))
-MOZ_PKG_FORMAT  = BZ2
+   MOZ_PKG_FORMAT  = BZ2
 else
-ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
-MOZ_PKG_FORMAT  = BZ2
-else
-ifeq (,$(filter-out WINCE, $(OS_ARCH)))
-MOZ_PKG_CAB_SCRIPT ?= $(error MOZ_PKG_CAB_SCRIPT not specified)
-MOZ_PKG_CAB_INF ?= $(error MOZ_PKG_CAB_INF not specified)
-MOZ_PKG_FORMAT  = CAB
-else
-ifeq (,$(filter-out WINCE, $(OS_ARCH)))
-MOZ_PKG_CAB_SCRIPT ?= $(error MOZ_PKG_CAB_SCRIPT not specified)
-MOZ_PKG_CAB_INF ?= $(error MOZ_PKG_CAB_INF not specified)
-MOZ_PKG_FORMAT  = CAB
-else
-MOZ_PKG_FORMAT  = TGZ
+   ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
+      MOZ_PKG_FORMAT  = BZ2
+   else
+      MOZ_PKG_FORMAT  = TGZ
+   endif
 endif
-endif
-endif
-endif
-INSTALLER_DIR   = unix
 endif
 endif
 endif # MOZ_PKG_FORMAT
+
+ifeq ($(OS_ARCH),OS2)
+INSTALLER_DIR   = os2
+else
+ifneq (,$(filter WINNT WINCE,$(OS_ARCH)))
+INSTALLER_DIR   = windows
+else
+ifneq (cocoa,$(MOZ_WIDGET_TOOLKIT))
+INSTALLER_DIR   = unix
+endif
+endif
+endif
 
 PACKAGE       = $(PKG_PATH)$(PKG_BASENAME)$(PKG_SUFFIX)
 
@@ -92,6 +82,20 @@ SDK_SUFFIX    = $(PKG_SUFFIX)
 SDK           = $(PKG_PATH)$(PKG_BASENAME).sdk$(SDK_SUFFIX)
 
 MAKE_PACKAGE	= $(error What is a $(MOZ_PKG_FORMAT) package format?);
+MAKE_CAB	= $(error Don't know how to make a CAB!);
+
+ifdef WINCE
+ifndef WINCE_WINDOWS_MOBILE
+CABARGS += -s
+endif
+ifdef MOZ_FASTSTART
+CABARGS += -faststart
+endif
+VSINSTALLDIR ?= $(error VSINSTALLDIR not set, must be set to the Visual Studio install directory)
+MAKE_CAB	= $(PYTHON) $(topsrcdir)/build/package/wince/make_wince_cab.py \
+	$(CABARGS) "$(VSINSTALLDIR)/SmartDevices/SDK/SDKTools/cabwiz.exe" \
+	"$(MOZ_PKG_DIR)" "$(MOZ_APP_DISPLAYNAME)" "$(PKG_PATH)$(PKG_BASENAME).cab"
+endif
 
 CREATE_FINAL_TAR = $(TAR) -c --owner=0 --group=0 --numeric-owner \
   --mode="go-w" -f
@@ -123,15 +127,8 @@ MAKE_SDK = $(ZIP) -r9D $(SDK) $(MOZ_APP_NAME)-sdk
 endif
 ifeq ($(MOZ_PKG_FORMAT),CAB)
 PKG_SUFFIX	= .cab
-MAKE_PACKAGE = $(MOZ_PKG_CAB_SCRIPT) "$(VSINSTALLDIR)" "$(topsrcdir)" "$(MOZ_PKG_DIR)" "$(MOZ_PKG_CAB_INF)" "$(MOZ_APP_NAME)" "$(PACKAGE)"
-UNMAKE_PACKAGE	= $(UNZIP) $(UNPACKAGE)
-MAKE_SDK = $(ZIP) -r9D $(SDK) $(MOZ_APP_NAME)-sdk
-endif
-ifeq ($(MOZ_PKG_FORMAT),CAB)
-PKG_SUFFIX	= .cab
-MAKE_PACKAGE = $(MOZ_PKG_CAB_SCRIPT) "$(VSINSTALLDIR)" "$(topsrcdir)" "$(MOZ_PKG_DIR)" "$(MOZ_PKG_CAB_INF)" "$(MOZ_APP_NAME)" "$(PACKAGE)"
-UNMAKE_PACKAGE	= $(UNZIP) $(UNPACKAGE)
-MAKE_SDK = $(ZIP) -r9D $(SDK) $(MOZ_APP_NAME)-sdk
+MAKE_PACKAGE	= $(MAKE_CAB)
+UNMAKE_PACKAGE	= $(error Unpacking CAB files is not supported)
 endif
 ifeq ($(MOZ_PKG_FORMAT),DMG)
 ifndef _APPNAME
@@ -171,26 +168,20 @@ endif
 MAKE_PACKAGE	= $(_ABS_MOZSRCDIR)/build/package/mac_osx/pkg-dmg \
   --source "$(PKG_DMG_SOURCE)" --target "$(PACKAGE)" \
   --volname "$(MOZ_APP_DISPLAYNAME)" $(PKG_DMG_FLAGS)
+_ABS_DIST = $(call core_abspath,$(DIST))
 UNMAKE_PACKAGE	= \
   set -ex; \
-  function cleanup() { \
-    hdiutil detach $${DEV_NAME} || \
-     { sleep 5 && hdiutil detach $${DEV_NAME} -force; }; \
-    return $$1 && $$?; \
-  }; \
-  unset NEXT_ROOT; \
-  export PAGER=true; \
-  expect $(_ABS_MOZSRCDIR)/build/package/mac_osx/installdmg.ex $(UNPACKAGE) | tee hdi.output; \
-  DEV_NAME=`perl -n -e 'if($$_=~/(\/dev\/disk[^ ]*)/) {print $$1."\n";exit;}'< hdi.output`; \
-  MOUNTPOINT=`perl -n -e 'split(/\/dev\/disk[^ ]*/,$$_,2);if($$_[1]=~/(\/.[^\r]*)/) {print $$1;exit;}'< hdi.output` || cleanup 1; \
-  rsync -a "$${MOUNTPOINT}/$(_APPNAME)" $(MOZ_PKG_DIR) || cleanup 1; \
+  rm -rf $(_ABS_DIST)/unpack.tmp; \
+  mkdir -p $(_ABS_DIST)/unpack.tmp; \
+  $(_ABS_MOZSRCDIR)/build/package/mac_osx/unpack-diskimage $(UNPACKAGE) /tmp/$(MOZ_PKG_APPNAME)-unpack $(_ABS_DIST)/unpack.tmp; \
+  rsync -a "$(_ABS_DIST)/unpack.tmp/$(_APPNAME)" $(MOZ_PKG_DIR); \
   test -n "$(MOZ_PKG_MAC_DSSTORE)" && \
-    { rsync -a "$${MOUNTPOINT}/.DS_Store" "$(MOZ_PKG_MAC_DSSTORE)" || cleanup 1; }; \
+    rsync -a "$(_ABS_DIST)/unpack.tmp/.DS_Store" "$(MOZ_PKG_MAC_DSSTORE)"; \
   test -n "$(MOZ_PKG_MAC_BACKGROUND)" && \
-    { rsync -a "$${MOUNTPOINT}/.background/`basename "$(MOZ_PKG_MAC_BACKGROUND)"`" "$(MOZ_PKG_MAC_BACKGROUND)" || cleanup 1; }; \
+    rsync -a "$(_ABS_DIST)/unpack.tmp/.background/`basename "$(MOZ_PKG_MAC_BACKGROUND)"`" "$(MOZ_PKG_MAC_BACKGROUND)"; \
   test -n "$(MOZ_PKG_MAC_ICON)" && \
-    { rsync -a "$${MOUNTPOINT}/.VolumeIcon.icns" "$(MOZ_PKG_MAC_ICON)" || cleanup 1; }; \
-  cleanup 0; \
+    rsync -a "$(_ABS_DIST)/unpack.tmp/.VolumeIcon.icns" "$(MOZ_PKG_MAC_ICON)"; \
+  rm -rf $(_ABS_DIST)/unpack.tmp; \
   if test -n "$(MOZ_PKG_MAC_RSRC)" ; then \
     cp $(UNPACKAGE) $(MOZ_PKG_APPNAME).tmp.dmg && \
     hdiutil unflatten $(MOZ_PKG_APPNAME).tmp.dmg && \
@@ -227,6 +218,7 @@ endif
 endif
 
 SOFTOKN		= $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(DLL_PREFIX)softokn3$(NSS_DLL_SUFFIX)
+NSSDBM		= $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(DLL_PREFIX)nssdbm3$(NSS_DLL_SUFFIX)
 FREEBL		= $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(DLL_PREFIX)freebl3$(NSS_DLL_SUFFIX)
 FREEBL_32FPU	= $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(DLL_PREFIX)freebl_32fpu_3$(DLL_SUFFIX)
 FREEBL_32INT	= $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(DLL_PREFIX)freebl_32int_3$(DLL_SUFFIX)
@@ -235,6 +227,7 @@ FREEBL_64FPU	= $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(DLL_PREFIX)freebl
 FREEBL_64INT	= $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/$(DLL_PREFIX)freebl_64int_3$(DLL_SUFFIX)
 
 SIGN_NSS	+= $(SIGN_CMD) $(SOFTOKN); \
+	$(SIGN_CMD) $(NSSDBM); \
 	if test -f $(FREEBL); then $(SIGN_CMD) $(FREEBL); fi; \
 	if test -f $(FREEBL_32FPU); then $(SIGN_CMD) $(FREEBL_32FPU); fi; \
 	if test -f $(FREEBL_32INT); then $(SIGN_CMD) $(FREEBL_32INT); fi; \
@@ -274,7 +267,6 @@ NO_PKG_FILES += \
 	certutil* \
 	pk12util* \
 	winEmbed.exe \
-	os2Embed.exe \
 	chrome/chrome.rdf \
 	chrome/app-chrome.manifest \
 	chrome/overlayinfo \
@@ -291,7 +283,7 @@ ifndef PACKAGER_NO_LIBS
 libs:: make-package
 endif
 
-DEFINES += -DDLL_PREFIX=$(DLL_PREFIX) -DDLL_SUFFIX=$(DLL_SUFFIX)
+DEFINES += -DDLL_PREFIX=$(DLL_PREFIX) -DDLL_SUFFIX=$(DLL_SUFFIX) -DBIN_SUFFIX=$(BIN_SUFFIX)
 
 ifdef MOZ_PKG_REMOVALS
 MOZ_PKG_REMOVALS_GEN = removed-files
@@ -317,7 +309,7 @@ STRIP_FLAGS	=
 PLATFORM_EXCLUDE_LIST = ! -name "*.ico" ! -name "$(MOZ_PKG_APPNAME).exe"
 endif
 
-ifneq (,$(filter WINNT OS2,$(OS_ARCH)))
+ifneq (,$(filter WINNT WINCE OS2,$(OS_ARCH)))
 PKGCP_OS = dos
 else
 PKGCP_OS = unix
@@ -373,10 +365,10 @@ stage-package: $(MOZ_PKG_MANIFEST) $(MOZ_PKG_REMOVALS_GEN)
 	@mkdir $(DIST)/$(MOZ_PKG_DIR)
 ifdef MOZ_PKG_MANIFEST
 	$(RM) -rf $(DIST)/xpt
-	$(call PACKAGER_COPY, "$(DIST)",\
-		 "$(DIST)/$(MOZ_PKG_DIR)", \
+	$(call PACKAGER_COPY, "$(call core_abspath,$(DIST))",\
+		 "$(call core_abspath,$(DIST)/$(MOZ_PKG_DIR))", \
 		"$(MOZ_PKG_MANIFEST)", "$(PKGCP_OS)", 1, 0, 1)
-	$(PERL) $(MOZILLA_DIR)/xpinstall/packager/xptlink.pl -s $(DIST) -d $(DIST)/xpt -f $(DIST)/$(MOZ_PKG_DIR)/components -v -x "$(XPIDL_LINK)"
+	$(PERL) $(MOZILLA_DIR)/xpinstall/packager/xptlink.pl -s $(DIST) -d $(DIST)/xpt -f $(DIST)/$(MOZ_PKG_DIR)/$(_BINPATH)/components -v -x "$(XPIDL_LINK)"
 else # !MOZ_PKG_MANIFEST
 ifeq ($(MOZ_PKG_FORMAT),DMG)
 # If UNIVERSAL_BINARY, the package will be made from an already-prepared
@@ -390,6 +382,10 @@ endif
 endif
 else
 	@cd $(DIST)/bin && tar $(TAR_CREATE_FLAGS) - * | (cd ../$(MOZ_PKG_DIR); tar -xf -)
+	@echo "Linking XPT files..."
+	@rm -rf $(DIST)/xpt
+	@$(NSINSTALL) -D $(DIST)/xpt
+	@($(XPIDL_LINK) $(DIST)/xpt/$(MOZ_PKG_APPNAME).xpt $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)/components/*.xpt && rm -f $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)/components/*.xpt && cp $(DIST)/xpt/$(MOZ_PKG_APPNAME).xpt $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)/components) || echo No *.xpt files found in: $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)/components/.  Continuing...
 endif # DMG
 endif # MOZ_PKG_MANIFEST
 ifndef PKG_SKIP_STRIP
@@ -418,7 +414,14 @@ ifndef PKG_SKIP_STRIP
 			$(PLATFORM_EXCLUDE_LIST) \
 			-exec $(STRIP) $(STRIP_FLAGS) {} >/dev/null 2>&1 \;
 	$(SIGN_NSS)
-endif
+else
+ifdef UNIVERSAL_BINARY
+# universal binaries will have had their .chk files removed prior to the unify
+# step, and if they're also --disable-install-strip then they won't get
+# re-signed in the block above.
+	$(SIGN_NSS)
+endif # UNIVERSAL_BINARY
+endif # PKG_SKIP_STRIP
 	@echo "Removing unpackaged files..."
 ifdef NO_PKG_FILES
 	cd $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH); rm -rf $(NO_PKG_FILES)
@@ -427,7 +430,7 @@ ifdef MOZ_PKG_REMOVALS
 	$(SYSINSTALL) $(IFLAGS1) $(MOZ_PKG_REMOVALS_GEN) $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)
 endif # MOZ_PKG_REMOVALS
 
-make-package: stage-package
+make-package: stage-package $(PACKAGE_XULRUNNER)
 	@echo "Compressing..."
 	$(NSINSTALL) -D $(DIST)/$(PKG_PATH)
 	cd $(DIST) && $(MAKE_PACKAGE)
@@ -435,14 +438,15 @@ make-package: stage-package
 # The install target will install the application to prefix/lib/appname-version
 # In addition if INSTALL_SDK is set, it will install the development headers,
 # libraries, and IDL files as follows:
-# dist/sdk/include -> prefix/include/appname-version/stable
-# dist/include -> prefix/include/appname-version/unstable
-# dist/sdk/idl -> prefix/share/idl/appname-version/stable
-# dist/idl -> prefix/share/idl/appname-version/unstable
+# dist/include -> prefix/include/appname-version
+# dist/idl -> prefix/share/idl/appname-version
 # dist/sdk/lib -> prefix/lib/appname-devel-version/lib
 # prefix/lib/appname-devel-version/* symlinks to the above directories
 install:: stage-package
-ifneq (,$(filter WINNT Darwin,$(OS_ARCH)))
+ifneq (,$(filter WINNT WINCE,$(OS_ARCH)))
+	$(error "make install" is not supported on this platform. Use "make package" instead.)
+endif
+ifeq (bundle,$(MOZ_FS_LAYOUT))
 	$(error "make install" is not supported on this platform. Use "make package" instead.)
 endif
 	$(NSINSTALL) -D $(DESTDIR)$(installdir)
@@ -452,33 +456,23 @@ endif
 	$(RM) -f $(DESTDIR)$(bindir)/$(MOZ_APP_NAME)
 	ln -s $(installdir)/$(MOZ_APP_NAME) $(DESTDIR)$(bindir)
 ifdef INSTALL_SDK # Here comes the hard part
-# include directory is stable (dist/sdk/include) and unstable (dist/include)
-	$(NSINSTALL) -D $(DESTDIR)$(includedir)/stable
-	$(NSINSTALL) -D $(DESTDIR)$(includedir)/unstable
-	(cd $(DIST)/sdk/include && tar $(TAR_CREATE_FLAGS) - .) | \
-	  (cd $(DESTDIR)$(includedir)/stable && tar -xf -)
-# The dist/include has module subdirectories that we need to flatten
-	find $(DIST)/include -xtype f -exec $(SYSINSTALL) $(IFLAGS1) {} $(DESTDIR)$(includedir)/unstable \;
-# IDL directory is stable (dist/sdk/idl) and unstable (dist/idl)
-	$(NSINSTALL) -D $(DESTDIR)$(idldir)/stable 
-	$(NSINSTALL) -D $(DESTDIR)$(idldir)/unstable
-	(cd $(DIST)/sdk/idl && tar $(TAR_CREATE_FLAGS) - .) | \
-	  (cd $(DESTDIR)$(idldir)/stable && tar -xf -)
+	$(NSINSTALL) -D $(DESTDIR)$(includedir)
+	(cd $(DIST)/include && tar $(TAR_CREATE_FLAGS) - .) | \
+	  (cd $(DESTDIR)$(includedir) && tar -xf -)
+	$(NSINSTALL) -D $(DESTDIR)$(idldir)
 	(cd $(DIST)/idl && tar $(TAR_CREATE_FLAGS) - .) | \
-	  (cd $(DESTDIR)$(idldir)/unstable && tar -xf -)
+	  (cd $(DESTDIR)$(idldir) && tar -xf -)
 # SDK directory is the libs + a bunch of symlinks
 	$(NSINSTALL) -D $(DESTDIR)$(sdkdir)/sdk/lib
-	if test -f $(DIST)/sdk/include/xpcom-config.h; then \
-	  $(SYSINSTALL) $(IFLAGS1) $(DIST)/sdk/include/xpcom-config.h $(DESTDIR)$(sdkdir); \
+	if test -f $(DIST)/include/xpcom-config.h; then \
+	  $(SYSINSTALL) $(IFLAGS1) $(DIST)/include/xpcom-config.h $(DESTDIR)$(sdkdir); \
 	fi
 	(cd $(DIST)/sdk/lib && tar $(TAR_CREATE_FLAGS) - .) | (cd $(DESTDIR)$(sdkdir)/sdk/lib && tar -xf -)
-	$(RM) -f $(DESTDIR)$(sdkdir)/lib $(DESTDIR)$(sdkdir)/bin $(DESTDIR)$(sdkdir)/sdk/include $(DESTDIR)$(sdkdir)/include $(DESTDIR)$(sdkdir)/sdk/idl $(DESTDIR)$(sdkdir)/idl
+	$(RM) -f $(DESTDIR)$(sdkdir)/lib $(DESTDIR)$(sdkdir)/bin $(DESTDIR)$(sdkdir)/include $(DESTDIR)$(sdkdir)/include $(DESTDIR)$(sdkdir)/sdk/idl $(DESTDIR)$(sdkdir)/idl
 	ln -s $(sdkdir)/sdk/lib $(DESTDIR)$(sdkdir)/lib
 	ln -s $(installdir) $(DESTDIR)$(sdkdir)/bin
-	ln -s $(includedir)/stable $(DESTDIR)$(sdkdir)/sdk/include
-	ln -s $(includedir)/unstable $(DESTDIR)$(sdkdir)/include
-	ln -s $(idldir)/stable $(DESTDIR)$(sdkdir)/sdk/idl
-	ln -s $(idldir)/unstable $(DESTDIR)$(sdkdir)/idl
+	ln -s $(includedir) $(DESTDIR)$(sdkdir)/include
+	ln -s $(idldir) $(DESTDIR)$(sdkdir)/idl
 endif # INSTALL_SDK
 
 make-sdk:
@@ -509,6 +503,9 @@ make-sdk:
 ifeq ($(OS_TARGET), WINNT)
 INSTALLER_PACKAGE = $(DIST)/$(PKG_INST_PATH)$(PKG_INST_BASENAME).exe
 endif
+ifeq ($(OS_TARGET), WINCE)
+INSTALLER_PACKAGE = $(DIST)/$(PKG_PATH)$(PKG_BASENAME).cab
+endif
 
 # These are necessary because some of our packages/installers contain spaces
 # in their filenames and GNU Make's $(wildcard) function doesn't properly
@@ -523,7 +520,7 @@ upload:
 		$(call QUOTED_WILDCARD,$(INSTALLER_PACKAGE)) \
 		$(call QUOTED_WILDCARD,$(DIST)/$(COMPLETE_MAR)) \
 		$(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(TEST_PACKAGE)) \
-		$(call QUOTED_WILDCARD,$(DIST)/$(SYMBOL_ARCHIVE_BASENAME).zip) \
+		$(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip) \
 		$(call QUOTED_WILDCARD,$(DIST)/$(SDK)) \
 		$(if $(UPLOAD_EXTRA_FILES), $(foreach f, $(UPLOAD_EXTRA_FILES), $(wildcard $(DIST)/$(f))))
 

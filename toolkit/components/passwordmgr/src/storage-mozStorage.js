@@ -1015,8 +1015,13 @@ LoginManagerStorage_mozStorage.prototype = {
 
             // Wrap in a transaction for better performance.
             this._dbConnection.beginTransaction();
-            for each (let login in logins)
-                this._addLogin(login, true);
+            for each (let login in logins) {
+                try {
+                    this._addLogin(login, true);
+                } catch (e) {
+                    this.log("_importLegacySignons failed to add login: " + e);
+                }
+            }
             let disabledHosts = legacy.getAllDisabledHosts({});
             for each (let hostname in disabledHosts)
                 this.setLoginSavingEnabled(hostname, false);
@@ -1141,8 +1146,10 @@ LoginManagerStorage_mozStorage.prototype = {
         this._base64checked = true;
         // Ignore failures, will try again next session...
 
+        this.log("Reencrypting Base64 logins");
+        this._dbConnection.beginTransaction();
         try {
-            let [logins, ids] = this._searchLogins({ encType: 0 });
+            let [logins, ids] = this._searchLogins({ encType: ENCTYPE_BASE64 });
 
             if (!logins.length)
                 return;
@@ -1152,10 +1159,37 @@ LoginManagerStorage_mozStorage.prototype = {
             if (userCanceled)
                 return;
 
-            for each (let login in logins)
-                this.modifyLogin(login, login);
+            let encUsername, encPassword, stmt;
+            for each (let login in logins) {
+                [encUsername, encPassword, userCanceled] = this._encryptLogin(login);
+                if (userCanceled)
+                    throw "User canceled master password entry, login not modified.";
+                let query =
+                    "UPDATE moz_logins " +
+                    "SET encryptedUsername = :encryptedUsername, " +
+                        "encryptedPassword = :encryptedPassword, " +
+                        "encType = :encType " +
+                    "WHERE guid = :guid";
+                let params = {
+                    encryptedUsername: encUsername,
+                    encryptedPassword: encPassword,
+                    encType:           ENCTYPE_SDR,
+                    guid:              login.guid
+                };
+                try {
+                    stmt = this._dbCreateStatement(query, params);
+                    stmt.execute();
+                } catch (e) {
+                    // Ignore singular errors, continue trying to update others.
+                    this.log("_reencryptBase64Logins caught error: " + e);
+                } finally {
+                    stmt.reset();
+                }
+            }
         } catch (e) {
-            this.log("_reencryptBase64Logins caught error: " + e);
+            this.log("_reencryptBase64Logins failed: " + e);
+        } finally {
+            this._dbConnection.commitTransaction();
         }
     },
 
@@ -1255,11 +1289,7 @@ LoginManagerStorage_mozStorage.prototype = {
         // Memoize the statements
         if (!wrappedStmt) {
             this.log("Creating new statement for query: " + query);
-            let stmt = this._dbConnection.createStatement(query);
-
-            wrappedStmt = Cc["@mozilla.org/storage/statement-wrapper;1"].
-                          createInstance(Ci.mozIStorageStatementWrapper);
-            wrappedStmt.initialize(stmt);
+            wrappedStmt = this._dbConnection.createStatement(query);
             this._dbStmts[query] = wrappedStmt;
         }
         // Replace parameters, must be done 1 at a time
@@ -1566,8 +1596,8 @@ LoginManagerStorage_mozStorage.prototype = {
         }
 
         // Finalize all statements to free memory, avoid errors later
-        for (let i = 0; i < this._dbStmts.length; i++)
-            this._dbStmts[i].statement.finalize();
+        for each (let stmt in this._dbStmts)
+            stmt.finalize();
         this._dbStmts = [];
 
         // Close the connection, ignore 'already closed' error

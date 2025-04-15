@@ -37,7 +37,7 @@
 /*
  * cert.h - public data structures and prototypes for the certificate library
  *
- * $Id: cert.h,v 1.76 2009/03/20 18:03:57 nelson%bolyard.com Exp $
+ * $Id: cert.h,v 1.78 2009/05/14 01:33:36 julien.pierre.boogz%sun.com Exp $
  */
 
 #ifndef _CERT_H_
@@ -1525,7 +1525,7 @@ CERT_GetSPKIDigest(PLArenaPool *arena, const CERTCertificate *cert,
 
 
 SECStatus CERT_CheckCRL(CERTCertificate* cert, CERTCertificate* issuer,
-                        SECItem* dp, PRTime t, void* wincx);
+                        const SECItem* dp, PRTime t, void* wincx);
 
 
 /*
@@ -1610,25 +1610,25 @@ CERT_EncodeNoticeReference(PLArenaPool *arena,
  * Returns a pointer to a static structure.
  */
 extern const CERTRevocationFlags*
-CERT_GetPKIXVerifyNistRevocationPolicy();
+CERT_GetPKIXVerifyNistRevocationPolicy(void);
 
 /*
  * Returns a pointer to a static structure.
  */
 extern const CERTRevocationFlags*
-CERT_GetClassicOCSPEnabledSoftFailurePolicy();
+CERT_GetClassicOCSPEnabledSoftFailurePolicy(void);
 
 /*
  * Returns a pointer to a static structure.
  */
 extern const CERTRevocationFlags*
-CERT_GetClassicOCSPEnabledHardFailurePolicy();
+CERT_GetClassicOCSPEnabledHardFailurePolicy(void);
 
 /*
  * Returns a pointer to a static structure.
  */
 extern const CERTRevocationFlags*
-CERT_GetClassicOCSPDisabledPolicy();
+CERT_GetClassicOCSPDisabledPolicy(void);
 
 /*
  * Verify a Cert with libpkix
@@ -1662,7 +1662,7 @@ SECStatus CERT_SetUsePKIXForValidation(PRBool enable);
 
 /* The function return PR_TRUE if cert validation should use
  * libpkix cert validation engine. */
-PRBool CERT_GetUsePKIXForValidation();
+PRBool CERT_GetUsePKIXForValidation(void);
 
 SEC_END_PROTOS
 

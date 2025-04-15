@@ -224,6 +224,8 @@ components\pipnss.dll
 components\pipnss.xpt
 nssutil3.dll
 nss3.dll
+nssdbm3.chk
+nssdbm3.dll
 smime3.dll
 softokn3.chk
 softokn3.dll
@@ -248,8 +250,8 @@ res\contenteditable.css
 res\designmode.css
 res\arrow.gif
 res\arrowd.gif
-res\loading-image.gif
-res\broken-image.gif
+res\loading-image.png
+res\broken-image.png
 res\entityTables\html40Special.properties
 res\entityTables\htmlEntityVersions.properties
 res\entityTables\html40Latin1.properties

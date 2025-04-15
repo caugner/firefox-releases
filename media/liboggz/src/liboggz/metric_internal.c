@@ -30,15 +30,11 @@
    SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#ifdef WIN32
-#include "config_win32.h"
-#else
 #include "config.h"
-#endif
 
 #include "oggz_private.h"
 
-#include <oggz/oggz_stream.h>
+#include "oggz/oggz_stream.h"
 
 static ogg_int64_t
 oggz_metric_dirac (OGGZ * oggz, long serialno,
@@ -84,7 +80,8 @@ oggz_metric_default_granuleshift (OGGZ * oggz, long serialno,
 
   iframe = granulepos >> stream->granuleshift;
   pframe = granulepos - (iframe << stream->granuleshift);
-  granulepos = (iframe + pframe);
+  granulepos = iframe + pframe;
+  if (granulepos > 0) granulepos -= stream->first_granule;
 
   units = granulepos * stream->granulerate_d / stream->granulerate_n;
 
@@ -202,6 +199,22 @@ oggz_get_granulerate (OGGZ * oggz, long serialno,
   *granulerate_d = stream->granulerate_d / OGGZ_AUTO_MULT;
 
   return 0;
+}
+
+int
+oggz_set_first_granule (OGGZ * oggz, long serialno,
+		        ogg_int64_t first_granule)
+{
+  oggz_stream_t * stream;
+
+  if (oggz == NULL) return OGGZ_ERR_BAD_OGGZ;
+
+  stream = oggz_get_stream (oggz, serialno);
+  if (stream == NULL) return OGGZ_ERR_BAD_SERIALNO;
+
+  stream->first_granule = first_granule;
+
+  return oggz_metric_update (oggz, serialno);
 }
 
 /** DEPRECATED **/

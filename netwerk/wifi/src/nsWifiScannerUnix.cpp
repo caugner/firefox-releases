@@ -66,14 +66,10 @@ typedef  int (*iw_stats_t)(int skfd,
 			   const iwrange *range,
 			   int has_range);
 
-
-static iw_open_t iw_open = nsnull;
-static iw_enum_t iw_enum = nsnull;
-static iw_stats_t iw_stats = nsnull;
-
 static int scan_wifi(int skfd, char* ifname, char* args[], int count)
 {
   nsCOMArray<nsWifiAccessPoint>* accessPoints = (nsCOMArray<nsWifiAccessPoint>*) args[0];
+  iw_stats_t iw_stats = (iw_stats_t) args[1];
 
   struct iwreq wrq;
 
@@ -99,8 +95,7 @@ static int scan_wifi(int skfd, char* ifname, char* args[], int count)
     return 0;
   }
   
-  buffer[wrq.u.essid.length] = 0;
-  strncpy(ap->mSsid, buffer, 32);
+  ap->setSSID(buffer, wrq.u.essid.length);
 
   result = iw_get_ext(skfd, ifname, SIOCGIWAP, &wrq);
   if (result < 0) {
@@ -118,9 +113,9 @@ static int scan_wifi(int skfd, char* ifname, char* args[], int count)
   }
 
   if(stats.qual.level > range.max_qual.level)
-    ap->mSignal = stats.qual.level - 0x100;
+    ap->setSignal(stats.qual.level - 0x100);
   else
-    ap->mSignal = 0;
+    ap->setSignal(0);
 
   accessPoints->AppendObject(ap);
   return 0;
@@ -133,17 +128,20 @@ nsWifiMonitor::DoScan()
   if (!iwlib_handle) {
     iwlib_handle = dlopen("libiw.so.29", RTLD_NOW);
     if (!iwlib_handle) {
-      LOG(("Could not load libiw\n"));
-      return NS_ERROR_NOT_AVAILABLE;
+      iwlib_handle = dlopen("libiw.so.30", RTLD_NOW);
+      if (!iwlib_handle) {
+        LOG(("Could not load libiw\n"));
+        return NS_ERROR_NOT_AVAILABLE;
+      }
     }
   }
   else {
     LOG(("Loaded libiw\n"));
   }
 
-  iw_open = (iw_open_t) dlsym(iwlib_handle, "iw_sockets_open");
-  iw_enum = (iw_enum_t) dlsym(iwlib_handle, "iw_enum_devices");
-  iw_stats = (iw_stats_t)dlsym(iwlib_handle, "iw_get_stats");
+  iw_open_t iw_open = (iw_open_t) dlsym(iwlib_handle, "iw_sockets_open");
+  iw_enum_t iw_enum = (iw_enum_t) dlsym(iwlib_handle, "iw_enum_devices");
+  iw_stats_t iw_stats = (iw_stats_t)dlsym(iwlib_handle, "iw_get_stats");
 
   if (!iw_open || !iw_enum || !iw_stats) {
     dlclose(iwlib_handle);
@@ -161,7 +159,7 @@ nsWifiMonitor::DoScan()
   nsCOMArray<nsWifiAccessPoint> lastAccessPoints;
   nsCOMArray<nsWifiAccessPoint> accessPoints;
 
-  char* args[] = {(char*) &accessPoints, nsnull };
+  char* args[] = {(char*) &accessPoints, (char*) iw_stats, nsnull };
  
   while (mKeepGoing == PR_TRUE) {
 
@@ -189,9 +187,11 @@ nsWifiMonitor::DoScan()
     {
       PRUint32 resultCount = lastAccessPoints.Count();
       nsIWifiAccessPoint** result = static_cast<nsIWifiAccessPoint**> (nsMemory::Alloc(sizeof(nsIWifiAccessPoint*) * resultCount));
-      if (!result)
+      if (!result) {
+        dlclose(iwlib_handle);
         return NS_ERROR_OUT_OF_MEMORY;
-      
+      }
+
       for (PRUint32 i = 0; i < resultCount; i++)
         result[i] = lastAccessPoints[i];
 
