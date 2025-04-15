@@ -92,6 +92,7 @@ enum DeviceFamily {
   Bug1137716,
   Bug1116812,
   Bug1155608,
+  Bug1207665,
   DeviceFamilyMax
 };
 
@@ -276,7 +277,7 @@ ParseDriverVersion(const nsAString& aVersion, uint64_t *aNumericVersion)
 #endif
 }
 
-}
-}
+} // namespace widget
+} // namespace mozilla
 
 #endif /*__mozilla_widget_GfxDriverInfo_h__ */

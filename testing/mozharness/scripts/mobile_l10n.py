@@ -148,7 +148,7 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
             rc = self.query_release_config()
             repack_env['EN_US_BINARY_URL'] = c['base_en_us_binary_url'] % replace_dict
         if 'MOZ_SIGNING_SERVERS' in os.environ:
-            repack_env['MOZ_SIGN_CMD'] = subprocess.list2cmdline(self.query_moz_sign_cmd(formats='jar'))
+            repack_env['MOZ_SIGN_CMD'] = subprocess.list2cmdline(self.query_moz_sign_cmd(formats=['jar']))
         self.repack_env = repack_env
         return self.repack_env
 
@@ -363,7 +363,6 @@ class MobileSingleLocale(MockMixin, LocalesMixin, ReleaseMixin,
         if self.config.get("tooltool_config"):
             self.tooltool_fetch(
                 self.config['tooltool_config']['manifest'],
-                bootstrap_cmd=self.config['tooltool_config']['bootstrap_cmd'],
                 output_dir=self.config['tooltool_config']['output_dir'] % self.query_abs_dirs(),
             )
         self._setup_configure()
