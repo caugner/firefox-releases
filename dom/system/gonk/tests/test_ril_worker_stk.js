@@ -342,6 +342,47 @@ add_test(function test_write_length() {
 });
 
 // Test Proactive commands.
+/**
+ * Verify Proactive command helper : searchForNextTag
+ */
+add_test(function test_stk_proactive_command_search_next_tag() {
+  let worker = newUint8Worker();
+  let pduHelper = worker.GsmPDUHelper;
+  let berHelper = worker.BerTlvHelper;
+  let stkHelper = worker.StkProactiveCmdHelper;
+
+  let tag_test = [
+    0xD0,
+    0x3C,
+    0x85, 0x0A, 0x61, 0x6C, 0x70, 0x68, 0x61, 0x20, 0x69, 0x64, 0x20, 0x31,
+    0x85, 0x0A, 0x61, 0x6C, 0x70, 0x68, 0x61, 0x20, 0x69, 0x64, 0x20, 0x32,
+    0x85, 0x0A, 0x61, 0x6C, 0x70, 0x68, 0x61, 0x20, 0x69, 0x64, 0x20, 0x33,
+    0x85, 0x0A, 0x61, 0x6C, 0x70, 0x68, 0x61, 0x20, 0x69, 0x64, 0x20, 0x34,
+    0x85, 0x0A, 0x61, 0x6C, 0x70, 0x68, 0x61, 0x20, 0x69, 0x64, 0x20, 0x35];
+
+  for (let i = 0; i < tag_test.length; i++) {
+    pduHelper.writeHexOctet(tag_test[i]);
+  }
+
+  let berTlv = berHelper.decode(tag_test.length);
+  let iter = Iterator(berTlv.value);
+  let tlv = stkHelper.searchForNextTag(COMPREHENSIONTLV_TAG_ALPHA_ID, iter);
+  do_check_eq(tlv.value.identifier, "alpha id 1");
+
+  tlv = stkHelper.searchForNextTag(COMPREHENSIONTLV_TAG_ALPHA_ID, iter);
+  do_check_eq(tlv.value.identifier, "alpha id 2");
+
+  tlv = stkHelper.searchForNextTag(COMPREHENSIONTLV_TAG_ALPHA_ID, iter);
+  do_check_eq(tlv.value.identifier, "alpha id 3");
+
+  tlv = stkHelper.searchForNextTag(COMPREHENSIONTLV_TAG_ALPHA_ID, iter);
+  do_check_eq(tlv.value.identifier, "alpha id 4");
+
+  tlv = stkHelper.searchForNextTag(COMPREHENSIONTLV_TAG_ALPHA_ID, iter);
+  do_check_eq(tlv.value.identifier, "alpha id 5");
+
+  run_next_test();
+});
 
 /**
  * Verify Proactive Command : Refresh
@@ -617,6 +658,176 @@ add_test(function test_stk_proactive_command_more_time() {
 });
 
 /**
+ * Verify Proactive Command : Select Item
+ */
+add_test(function test_stk_proactive_command_select_item() {
+  let worker = newUint8Worker();
+  let pduHelper = worker.GsmPDUHelper;
+  let berHelper = worker.BerTlvHelper;
+  let stkHelper = worker.StkProactiveCmdHelper;
+  let stkFactory = worker.StkCommandParamsFactory;
+
+  let select_item_1 = [
+    0xD0,
+    0x33,
+    0x81, 0x03, 0x01, 0x24, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x05, 0x54, 0x69, 0x74, 0x6C, 0x65,
+    0x8F, 0x07, 0x01, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x31,
+    0x8F, 0x07, 0x02, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x32,
+    0x8F, 0x07, 0x03, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x33,
+    0x18, 0x03, 0x10, 0x15, 0x20,
+    0x90, 0x01, 0x01
+  ];
+
+  for(let i = 0 ; i < select_item_1.length; i++) {
+    pduHelper.writeHexOctet(select_item_1[i]);
+  }
+
+  let berTlv = berHelper.decode(select_item_1.length);
+  let ctlvs = berTlv.value;
+  let tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_SELECT_ITEM);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  let menu = stkFactory.createParam(tlv.value, ctlvs);
+  do_check_eq(menu.title, "Title");
+  do_check_eq(menu.items[0].identifier, 1);
+  do_check_eq(menu.items[0].text, "item 1");
+  do_check_eq(menu.items[1].identifier, 2);
+  do_check_eq(menu.items[1].text, "item 2");
+  do_check_eq(menu.items[2].identifier, 3);
+  do_check_eq(menu.items[2].text, "item 3");
+  do_check_eq(menu.nextActionList[0], STK_CMD_SET_UP_CALL);
+  do_check_eq(menu.nextActionList[1], STK_CMD_LAUNCH_BROWSER);
+  do_check_eq(menu.nextActionList[2], STK_CMD_PLAY_TONE);
+  do_check_eq(menu.defaultItem, 0x00);
+
+  let select_item_2 = [
+    0xD0,
+    0x33,
+    0x81, 0x03, 0x01, 0x24, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x05, 0x54, 0x69, 0x74, 0x6C, 0x65,
+    0x8F, 0x07, 0x01, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x31,
+    0x8F, 0x07, 0x02, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x32,
+    0x8F, 0x07, 0x03, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x33,
+    0x18, 0x03, 0x00, 0x15, 0x81,
+    0x90, 0x01, 0x03
+  ];
+
+  for(let i = 0 ; i < select_item_2.length; i++) {
+    pduHelper.writeHexOctet(select_item_2[i]);
+  }
+
+  berTlv = berHelper.decode(select_item_2.length);
+  ctlvs = berTlv.value;
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_SELECT_ITEM);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  menu = stkFactory.createParam(tlv.value, ctlvs);
+  do_check_eq(menu.title, "Title");
+  do_check_eq(menu.items[0].identifier, 1);
+  do_check_eq(menu.items[0].text, "item 1");
+  do_check_eq(menu.items[1].identifier, 2);
+  do_check_eq(menu.items[1].text, "item 2");
+  do_check_eq(menu.items[2].identifier, 3);
+  do_check_eq(menu.items[2].text, "item 3");
+  do_check_eq(menu.nextActionList[0], STK_NEXT_ACTION_NULL);
+  do_check_eq(menu.nextActionList[1], STK_CMD_LAUNCH_BROWSER);
+  do_check_eq(menu.nextActionList[2], STK_NEXT_ACTION_END_PROACTIVE_SESSION);
+  do_check_eq(menu.defaultItem, 0x02);
+
+  run_next_test();
+});
+
+/**
+ * Verify Proactive Command : Set Up Menu
+ */
+add_test(function test_stk_proactive_command_set_up_menu() {
+  let worker = newUint8Worker();
+  let pduHelper = worker.GsmPDUHelper;
+  let berHelper = worker.BerTlvHelper;
+  let stkHelper = worker.StkProactiveCmdHelper;
+  let stkFactory = worker.StkCommandParamsFactory;
+
+  let set_up_menu_1 = [
+    0xD0,
+    0x30,
+    0x81, 0x03, 0x01, 0x25, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x05, 0x54, 0x69, 0x74, 0x6C, 0x65,
+    0x8F, 0x07, 0x01, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x31,
+    0x8F, 0x07, 0x02, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x32,
+    0x8F, 0x07, 0x03, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x33,
+    0x18, 0x03, 0x10, 0x15, 0x20
+  ];
+
+  for(let i = 0 ; i < set_up_menu_1.length; i++) {
+    pduHelper.writeHexOctet(set_up_menu_1[i]);
+  }
+
+  let berTlv = berHelper.decode(set_up_menu_1.length);
+  let ctlvs = berTlv.value;
+  let tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_SET_UP_MENU);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  let menu = stkFactory.createParam(tlv.value, ctlvs);
+  do_check_eq(menu.title, "Title");
+  do_check_eq(menu.items[0].identifier, 1);
+  do_check_eq(menu.items[0].text, "item 1");
+  do_check_eq(menu.items[1].identifier, 2);
+  do_check_eq(menu.items[1].text, "item 2");
+  do_check_eq(menu.items[2].identifier, 3);
+  do_check_eq(menu.items[2].text, "item 3");
+  do_check_eq(menu.nextActionList[0], STK_CMD_SET_UP_CALL);
+  do_check_eq(menu.nextActionList[1], STK_CMD_LAUNCH_BROWSER);
+  do_check_eq(menu.nextActionList[2], STK_CMD_PLAY_TONE);
+
+  let set_up_menu_2 = [
+    0xD0,
+    0x30,
+    0x81, 0x03, 0x01, 0x25, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x05, 0x54, 0x69, 0x74, 0x6C, 0x65,
+    0x8F, 0x07, 0x01, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x31,
+    0x8F, 0x07, 0x02, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x32,
+    0x8F, 0x07, 0x03, 0x69, 0x74, 0x65, 0x6D, 0x20, 0x33,
+    0x18, 0x03, 0x81, 0x00, 0x00
+  ];
+
+  for(let i = 0 ; i < set_up_menu_2.length; i++) {
+    pduHelper.writeHexOctet(set_up_menu_2[i]);
+  }
+
+  berTlv = berHelper.decode(set_up_menu_2.length);
+  ctlvs = berTlv.value;
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_SET_UP_MENU);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  let menu = stkFactory.createParam(tlv.value, ctlvs);
+  do_check_eq(menu.title, "Title");
+  do_check_eq(menu.items[0].identifier, 1);
+  do_check_eq(menu.items[0].text, "item 1");
+  do_check_eq(menu.items[1].identifier, 2);
+  do_check_eq(menu.items[1].text, "item 2");
+  do_check_eq(menu.items[2].identifier, 3);
+  do_check_eq(menu.items[2].text, "item 3");
+  do_check_eq(menu.nextActionList[0], STK_NEXT_ACTION_END_PROACTIVE_SESSION);
+  do_check_eq(menu.nextActionList[1], STK_NEXT_ACTION_NULL);
+  do_check_eq(menu.nextActionList[2], STK_NEXT_ACTION_NULL);
+
+  run_next_test();
+});
+
+/**
  * Verify Proactive Command : Set Up Call
  */
 add_test(function test_stk_proactive_command_set_up_call() {
@@ -764,6 +975,110 @@ add_test(function test_stk_proactive_command_provide_local_information() {
 });
 
 /**
+ * Verify Proactive command : BIP Messages
+ */
+add_test(function test_stk_proactive_command_open_channel() {
+  let worker = newUint8Worker();
+  let pduHelper = worker.GsmPDUHelper;
+  let berHelper = worker.BerTlvHelper;
+  let stkHelper = worker.StkProactiveCmdHelper;
+
+  // Open Channel
+  let open_channel = [
+    0xD0,
+    0x0F,
+    0x81, 0x03, 0x01, 0x40, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x04, 0x4F, 0x70, 0x65, 0x6E //alpha id: "Open"
+  ];
+
+  for (let i = 0; i < open_channel.length; i++) {
+    pduHelper.writeHexOctet(open_channel[i]);
+  }
+
+  let berTlv = berHelper.decode(open_channel.length);
+  let ctlvs = berTlv.value;
+  let tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_OPEN_CHANNEL);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+  do_check_eq(tlv.value.identifier, "Open");
+
+  // Close Channel
+  let close_channel = [
+    0xD0,
+    0x10,
+    0x81, 0x03, 0x01, 0x41, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x05, 0x43, 0x6C, 0x6F, 0x73, 0x65 //alpha id: "Close"
+  ];
+
+  for (let i = 0; i < close_channel.length; i++) {
+    pduHelper.writeHexOctet(close_channel[i]);
+  }
+
+  berTlv = berHelper.decode(close_channel.length);
+  ctlvs = berTlv.value;
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_CLOSE_CHANNEL);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+  do_check_eq(tlv.value.identifier, "Close");
+
+  // Receive Data
+  let receive_data = [
+    0XD0,
+    0X12,
+    0x81, 0x03, 0x01, 0x42, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x07, 0x52, 0x65, 0x63, 0x65, 0x69, 0x76, 0x65 //alpha id: "Receive"
+  ];
+
+  for (let i = 0; i < receive_data.length; i++) {
+    pduHelper.writeHexOctet(receive_data[i]);
+  }
+
+  berTlv = berHelper.decode(receive_data.length);
+  ctlvs = berTlv.value;
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_RECEIVE_DATA);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+  do_check_eq(tlv.value.identifier, "Receive");
+
+  // Send Data
+  let send_data = [
+    0xD0,
+    0x0F,
+    0x81, 0x03, 0x01, 0x43, 0x00,
+    0x82, 0x02, 0x81, 0x82,
+    0x85, 0x04, 0x53, 0x65, 0x6E, 0x64 //alpha id: "Send"
+  ];
+
+  for (let i = 0; i < send_data.length; i++) {
+    pduHelper.writeHexOctet(send_data[i]);
+  }
+
+  berTlv = berHelper.decode(send_data.length);
+  ctlvs = berTlv.value;
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_COMMAND_DETAILS, ctlvs);
+  do_check_eq(tlv.value.commandNumber, 0x01);
+  do_check_eq(tlv.value.typeOfCommand, STK_CMD_SEND_DATA);
+  do_check_eq(tlv.value.commandQualifier, 0x00);
+
+  tlv = stkHelper.searchForTag(COMPREHENSIONTLV_TAG_ALPHA_ID, ctlvs);
+  do_check_eq(tlv.value.identifier, "Send");
+
+  run_next_test();
+});
+
+/**
  * Verify Event Download Command : Location Status
  */
 add_test(function test_stk_event_download_location_status() {
@@ -852,6 +1167,7 @@ add_test(function test_stk_event_download_language_selection() {
   let worker = newUint8SupportOutgoingIndexWorker();
   let buf = worker.Buf;
   let pduHelper = worker.GsmPDUHelper;
+  let iccHelper = worker.ICCPDUHelper;
 
   buf.sendParcel = function () {
     // Type
@@ -889,7 +1205,7 @@ add_test(function test_stk_event_download_language_selection() {
     // Language, Type-Length-Value
     do_check_eq(pduHelper.readHexOctet(), COMPREHENSIONTLV_TAG_LANGUAGE);
     do_check_eq(pduHelper.readHexOctet(), 2);
-    do_check_eq(pduHelper.read8BitUnpackedToString(2), "zh");
+    do_check_eq(iccHelper.read8BitUnpackedToString(2), "zh");
 
     run_next_test();
   };

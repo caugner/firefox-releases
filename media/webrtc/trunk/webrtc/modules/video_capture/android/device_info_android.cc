@@ -8,13 +8,13 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "device_info_android.h"
+#include "webrtc/modules/video_capture/android/device_info_android.h"
 
 #include <stdio.h>
 
-#include "ref_count.h"
-#include "trace.h"
-#include "video_capture_android.h"
+#include "webrtc/modules/video_capture/android/video_capture_android.h"
+#include "webrtc/system_wrappers/interface/ref_count.h"
+#include "webrtc/system_wrappers/interface/trace.h"
 
 #include "AndroidJNIWrapper.h"
 
@@ -105,7 +105,7 @@ int32_t DeviceInfoAndroid::GetDeviceName(
   if (cid != NULL) {
     jobject javaDeviceNameObj = env->CallObjectMethod(javaCmDevInfoObject,
                                                       cid, deviceNumber);
-    if (javaDeviceNameObj == NULL) {
+    if (javaDeviceNameObj == NULL || jniFrame.CheckForException()) {
       WEBRTC_TRACE(webrtc::kTraceError, webrtc::kTraceVideoCapture, _id,
                    "%s: Failed to get device name for device %d.",
                    __FUNCTION__, (int) deviceNumber);
@@ -154,11 +154,12 @@ int32_t DeviceInfoAndroid::GetDeviceName(
 
 int32_t DeviceInfoAndroid::CreateCapabilityMap(
     const char* deviceUniqueIdUTF8) {
-  MapItem* item = NULL;
-  while ((item = _captureCapabilities.Last())) {
-    delete (VideoCaptureCapability*) item->GetItem();
-    _captureCapabilities.Erase(item);
-  }
+  for (std::map<int, VideoCaptureCapability*>::iterator it =
+           _captureCapabilities.begin();
+       it != _captureCapabilities.end();
+       ++it)
+    delete it->second;
+  _captureCapabilities.clear();
 
   AutoLocalJNIFrame jniFrame;
   JNIEnv* env = jniFrame.GetEnv();
@@ -199,7 +200,7 @@ int32_t DeviceInfoAndroid::CreateCapabilityMap(
   // Call the java class and get an array with capabilities back.
   jobject javaCapabilitiesObj = env->CallObjectMethod(javaCmDevInfoObject,
                                                       cid, capureIdString);
-  if (!javaCapabilitiesObj) {
+  if (!javaCapabilitiesObj || jniFrame.CheckForException()) {
     WEBRTC_TRACE(webrtc::kTraceError, webrtc::kTraceVideoCapture, _id,
                  "%s: Failed to call java GetCapabilityArray.",
                  __FUNCTION__);
@@ -232,7 +233,7 @@ int32_t DeviceInfoAndroid::CreateCapabilityMap(
     WEBRTC_TRACE(webrtc::kTraceInfo, webrtc::kTraceVideoCapture, _id,
                  "%s: Cap width %d, height %d, fps %d", __FUNCTION__,
                  cap->width, cap->height, cap->maxFPS);
-    _captureCapabilities.Insert(i, cap);
+    _captureCapabilities[i] = cap;
   }
 
   _lastUsedDeviceNameLength = strlen((char*) deviceUniqueIdUTF8);
@@ -245,9 +246,9 @@ int32_t DeviceInfoAndroid::CreateCapabilityMap(
   env->DeleteGlobalRef(javaCapClass);
 
   WEBRTC_TRACE(webrtc::kTraceInfo, webrtc::kTraceVideoCapture, _id,
-               "CreateCapabilityMap %d", _captureCapabilities.Size());
+               "CreateCapabilityMap %d", _captureCapabilities.size());
 
-  return _captureCapabilities.Size();
+  return _captureCapabilities.size();
 }
 
 int32_t DeviceInfoAndroid::GetOrientation(

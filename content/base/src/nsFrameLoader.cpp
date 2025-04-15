@@ -123,12 +123,6 @@ public:
 
 NS_IMPL_ISUPPORTS1(nsContentView, nsIContentView)
 
-bool
-nsContentView::IsRoot() const
-{
-  return mScrollId == FrameMetrics::ROOT_SCROLL_ID;
-}
-
 nsresult
 nsContentView::Update(const ViewConfig& aConfig)
 {
@@ -290,6 +284,7 @@ nsFrameLoader::nsFrameLoader(Element* aOwner, bool aNetworkCreated)
   , mChildID(0)
   , mRenderMode(RENDER_MODE_DEFAULT)
   , mEventMode(EVENT_MODE_NORMAL_DISPATCH)
+  , mPendingFrameSent(false)
 {
   ResetPermissionManagerStatus();
 }
@@ -419,6 +414,37 @@ nsFrameLoader::ReallyStartLoading()
   return rv;
 }
 
+class DelayedStartLoadingRunnable : public nsRunnable
+{
+public:
+  DelayedStartLoadingRunnable(nsFrameLoader* aFrameLoader)
+    : mFrameLoader(aFrameLoader)
+  {
+  }
+
+  NS_IMETHOD Run()
+  {
+    // Retry the request.
+    mFrameLoader->ReallyStartLoading();
+
+    // We delayed nsFrameLoader::ReallyStartLoading() after the child process is
+    // ready and might not be able to notify the remote browser in
+    // UpdatePositionAndSize() when reflow finished. Retrigger reflow.
+    nsIFrame* frame = mFrameLoader->GetPrimaryFrameOfOwningContent();
+    if (!frame) {
+      return NS_OK;
+    }
+    frame->InvalidateFrame();
+    frame->PresContext()->PresShell()->
+      FrameNeedsReflow(frame, nsIPresShell::eResize, NS_FRAME_IS_DIRTY);
+
+    return NS_OK;
+  }
+
+private:
+  nsRefPtr<nsFrameLoader> mFrameLoader;
+};
+
 nsresult
 nsFrameLoader::ReallyStartLoadingInternal()
 {
@@ -433,6 +459,22 @@ nsFrameLoader::ReallyStartLoadingInternal()
 
   if (mRemoteFrame) {
     if (!mRemoteBrowser) {
+      if (!mPendingFrameSent) {
+        nsCOMPtr<nsIObserverService> os = services::GetObserverService();
+        if (OwnerIsBrowserOrAppFrame() && os && !mRemoteBrowserInitialized) {
+          os->NotifyObservers(NS_ISUPPORTS_CAST(nsIFrameLoader*, this),
+                              "remote-browser-frame-pending", nullptr);
+          mPendingFrameSent = true;
+        }
+      }
+      if (Preferences::GetBool("dom.ipc.processPrelaunch.enabled", false) &&
+          !ContentParent::PreallocatedProcessReady()) {
+
+        ContentParent::RunAfterPreallocatedProcessReady(
+            new DelayedStartLoadingRunnable(this));
+        return NS_ERROR_FAILURE;
+      }
+
       TryRemoteBrowser();
 
       if (!mRemoteBrowser) {
@@ -955,6 +997,11 @@ nsFrameLoader::ShowRemoteFrame(const nsIntSize& size,
 
     nsCOMPtr<nsIObserverService> os = services::GetObserverService();
     if (OwnerIsBrowserOrAppFrame() && os && !mRemoteBrowserInitialized) {
+      if (!mPendingFrameSent) {
+        os->NotifyObservers(NS_ISUPPORTS_CAST(nsIFrameLoader*, this),
+                            "remote-browser-frame-pending", nullptr);
+        mPendingFrameSent = true;
+      }
       os->NotifyObservers(NS_ISUPPORTS_CAST(nsIFrameLoader*, this),
                           "remote-browser-frame-shown", nullptr);
       mRemoteBrowserInitialized = true;
@@ -1254,19 +1301,11 @@ nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
     otherTabChild->SetChromeMessageManager(ourMessageManager);
   }
   // Swap and setup things in parent message managers.
-  nsFrameMessageManager* ourParentManager = mMessageManager ?
-    mMessageManager->GetParentManager() : nullptr;
-  nsFrameMessageManager* otherParentManager = aOther->mMessageManager ?
-    aOther->mMessageManager->GetParentManager() : nullptr;
   if (mMessageManager) {
-    mMessageManager->RemoveFromParent();
-    mMessageManager->SetParentManager(otherParentManager);
-    mMessageManager->SetCallback(aOther, false);
+    mMessageManager->SetCallback(aOther);
   }
   if (aOther->mMessageManager) {
-    aOther->mMessageManager->RemoveFromParent();
-    aOther->mMessageManager->SetParentManager(ourParentManager);
-    aOther->mMessageManager->SetCallback(this, false);
+    aOther->mMessageManager->SetCallback(this);
   }
   mMessageManager.swap(aOther->mMessageManager);
 
@@ -2038,7 +2077,9 @@ nsFrameLoader::TryRemoteBrowser()
   nsCOMPtr<mozIApplication> ownApp = GetOwnApp();
   nsCOMPtr<mozIApplication> containingApp = GetContainingApp();
   ScrollingBehavior scrollingBehavior = DEFAULT_SCROLLING;
-  if (mOwnerContent->AttrValueIs(kNameSpaceID_None,
+
+  if (Preferences::GetBool("dom.browser_frames.useAsyncPanZoom", false) ||
+      mOwnerContent->AttrValueIs(kNameSpaceID_None,
                                  nsGkAtoms::mozasyncpanzoom,
                                  nsGkAtoms::_true,
                                  eCaseMatters)) {
@@ -2215,8 +2256,10 @@ public:
                         nsFrameLoader* aFrameLoader,
                         const nsAString& aMessage,
                         const StructuredCloneData& aData,
-                        JS::Handle<JSObject *> aCpows)
-    : mRuntime(js::GetRuntime(aCx)), mFrameLoader(aFrameLoader), mMessage(aMessage), mCpows(aCpows)
+                        JS::Handle<JSObject *> aCpows,
+                        nsIPrincipal* aPrincipal)
+    : mRuntime(js::GetRuntime(aCx)), mFrameLoader(aFrameLoader)
+    , mMessage(aMessage), mCpows(aCpows), mPrincipal(aPrincipal)
   {
     if (aData.mDataLength && !mData.copy(aData.mData, aData.mDataLength)) {
       NS_RUNTIMEABORT("OOM");
@@ -2249,7 +2292,7 @@ public:
 
       nsRefPtr<nsFrameMessageManager> mm = tabChild->GetInnerManager();
       mm->ReceiveMessage(static_cast<EventTarget*>(tabChild), mMessage,
-                         false, &data, &cpows, nullptr);
+                         false, &data, &cpows, mPrincipal, nullptr);
     }
     return NS_OK;
   }
@@ -2259,13 +2302,15 @@ public:
   JSAutoStructuredCloneBuffer mData;
   StructuredCloneClosure mClosure;
   JSObject* mCpows;
+  nsCOMPtr<nsIPrincipal> mPrincipal;
 };
 
 bool
 nsFrameLoader::DoSendAsyncMessage(JSContext* aCx,
                                   const nsAString& aMessage,
                                   const StructuredCloneData& aData,
-                                  JS::Handle<JSObject *> aCpows)
+                                  JS::Handle<JSObject *> aCpows,
+                                  nsIPrincipal* aPrincipal)
 {
   TabParent* tabParent = mRemoteBrowser;
   if (tabParent) {
@@ -2278,11 +2323,14 @@ nsFrameLoader::DoSendAsyncMessage(JSContext* aCx,
     if (aCpows && !cp->GetCPOWManager()->Wrap(aCx, aCpows, &cpows)) {
       return false;
     }
-    return tabParent->SendAsyncMessage(nsString(aMessage), data, cpows);
+    return tabParent->SendAsyncMessage(nsString(aMessage), data, cpows,
+                                       aPrincipal);
   }
 
   if (mChildMessageManager) {
-    nsRefPtr<nsIRunnable> ev = new nsAsyncMessageToChild(aCx, this, aMessage, aData, aCpows);
+    nsRefPtr<nsIRunnable> ev = new nsAsyncMessageToChild(aCx, this, aMessage,
+                                                         aData, aCpows,
+                                                         aPrincipal);
     NS_DispatchToCurrentThread(ev);
     return true;
   }
@@ -2369,7 +2417,7 @@ nsFrameLoader::GetRootContentView(nsIContentView** aContentView)
     return NS_OK;
   }
 
-  nsContentView* view = rfp->GetContentView();
+  nsContentView* view = rfp->GetRootContentView();
   NS_ABORT_IF_FALSE(view, "Should always be able to create root scrollable!");
   nsRefPtr<nsIContentView>(view).forget(aContentView);
 
@@ -2391,8 +2439,8 @@ nsFrameLoader::EnsureMessageManager()
   }
 
   if (mMessageManager) {
-    if (ShouldUseRemoteProcess()) {
-      mMessageManager->SetCallback(mRemoteBrowserShown ? this : nullptr);
+    if (ShouldUseRemoteProcess() && mRemoteBrowserShown) {
+      mMessageManager->InitWithCallback(this);
     }
     return NS_OK;
   }
@@ -2422,7 +2470,7 @@ nsFrameLoader::EnsureMessageManager()
     mChildMessageManager =
       new nsInProcessTabChildGlobal(mDocShell, mOwnerContent, mMessageManager);
     // Force pending frame scripts to be loaded.
-    mMessageManager->SetCallback(this);
+    mMessageManager->InitWithCallback(this);
   }
   return NS_OK;
 }

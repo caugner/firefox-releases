@@ -15,6 +15,4 @@ TEST_TOOL_DIRS += [
   'compiled',
 ]
 
-MODULE = 'pipnss'
-
 XPCSHELL_TESTS_MANIFESTS += ['unit/xpcshell.ini']

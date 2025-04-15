@@ -171,6 +171,8 @@ public:
   void BeginPath();
   void Fill(const CanvasWindingRule& winding);
   void Stroke();
+  void DrawSystemFocusRing(mozilla::dom::Element& element);
+  bool DrawCustomFocusRing(mozilla::dom::Element& element);
   void Clip(const CanvasWindingRule& winding);
   bool IsPointInPath(double x, double y, const CanvasWindingRule& winding);
   bool IsPointInStroke(double x, double y);
@@ -411,6 +413,7 @@ public:
   // this rect is in canvas device space
   void Redraw(const mozilla::gfx::Rect &r);
   NS_IMETHOD Redraw(const gfxRect &r) MOZ_OVERRIDE { Redraw(ToRect(r)); return NS_OK; }
+  NS_IMETHOD SetContextOptions(JSContext* aCx, JS::Handle<JS::Value> aOptions) MOZ_OVERRIDE;
 
   // this rect is in mTarget's current user space
   void RedrawUser(const gfxRect &r);

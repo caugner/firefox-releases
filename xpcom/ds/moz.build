@@ -43,8 +43,6 @@ if CONFIG['OS_ARCH'] == 'WINNT':
 
 XPIDL_MODULE = 'xpcom_ds'
 
-MODULE = 'xpcom'
-
 EXPORTS += [
     'nsArray.h',
     'nsAtomService.h',
@@ -72,7 +70,7 @@ EXPORTS.mozilla += [
     'TimeStamp.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'nsArray.cpp',
     'nsAtomService.cpp',
     'nsAtomTable.cpp',
@@ -82,15 +80,20 @@ SOURCES += [
     'nsINIParserImpl.cpp',
     'nsObserverList.cpp',
     'nsObserverService.cpp',
-    'nsPersistentProperties.cpp',
     'nsProperties.cpp',
-    'nsStaticNameTable.cpp',
     'nsStringEnumerator.cpp',
     'nsSupportsArray.cpp',
     'nsSupportsArrayEnumerator.cpp',
     'nsSupportsPrimitives.cpp',
     'nsVariant.cpp',
     'TimeStamp.cpp',
+]
+
+# These two files cannot be built in unified mode because they use the
+# PL_ARENA_CONST_ALIGN_MASK macro with plarena.h.
+SOURCES += [
+    'nsPersistentProperties.cpp',
+    'nsStaticNameTable.cpp',
 ]
 
 if CONFIG['OS_ARCH'] == 'WINNT':
@@ -105,7 +108,7 @@ elif CONFIG['OS_ARCH'] == 'Darwin':
     SOURCES += [
         'TimeStamp_darwin.cpp',
     ]
-else:
+elif CONFIG['COMPILE_ENVIRONMENT']:
     error('No TimeStamp implementation on this platform.  Build will not succeed')
 
 EXTRA_COMPONENTS += [
@@ -113,12 +116,12 @@ EXTRA_COMPONENTS += [
     'nsINIProcessor.manifest',
 ]
 
-LIBRARY_NAME = 'xpcomds_s'
-
-LIBXUL_LIBRARY = True
+FAIL_ON_WARNINGS = True
 
 MSVC_ENABLE_PGO = True
 
 LOCAL_INCLUDES += [
     '../io',
 ]
+
+FINAL_LIBRARY = 'xpcom_core'

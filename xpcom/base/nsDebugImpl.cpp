@@ -77,7 +77,6 @@ Break(const char *aMsg);
 
 using namespace mozilla;
 
-static bool sIsMultiprocess = false;
 static const char *sMultiprocessDescription = nullptr;
 
 static Atomic<int32_t> gAssertionCount;
@@ -180,7 +179,6 @@ nsDebugImpl::GetIsDebuggerAttached(bool* aResult)
 /* static */ void
 nsDebugImpl::SetMultiprocessMode(const char *aDesc)
 {
-  sIsMultiprocess = true;
   sMultiprocessDescription = aDesc;
 }
 
@@ -315,15 +313,12 @@ NS_DebugBreak(uint32_t aSeverity, const char *aStr, const char *aExpr,
 
 #  define PrintToBuffer(...) PR_sxprintf(StuffFixedBuffer, &buf, __VA_ARGS__)
 
-   // If we're multiprocess, print "[PID]" or "[Desc PID]" at the beginning of
-   // the message.
-   if (sIsMultiprocess) {
-     PrintToBuffer("[");
-     if (sMultiprocessDescription) {
-       PrintToBuffer("%s ", sMultiprocessDescription);
-     }
-     PrintToBuffer("%d] ", base::GetCurrentProcId());
+   // Print "[PID]" or "[Desc PID]" at the beginning of the message.
+   PrintToBuffer("[");
+   if (sMultiprocessDescription) {
+     PrintToBuffer("%s ", sMultiprocessDescription);
    }
+   PrintToBuffer("%d] ", base::GetCurrentProcId());
 
    PrintToBuffer("%s: ", sevString);
 
@@ -483,8 +478,8 @@ Break(const char *aMsg)
      */
     PROCESS_INFORMATION pi;
     STARTUPINFOW si;
-    PRUnichar executable[MAX_PATH];
-    PRUnichar* pName;
+    wchar_t executable[MAX_PATH];
+    wchar_t* pName;
 
     memset(&pi, 0, sizeof(pi));
 
@@ -493,13 +488,13 @@ Break(const char *aMsg)
     si.wShowWindow = SW_SHOW;
 
     // 2nd arg of CreateProcess is in/out
-    PRUnichar *msgCopy = (PRUnichar*) _alloca((strlen(aMsg) + 1)*sizeof(PRUnichar));
-    wcscpy(msgCopy  , (PRUnichar*)NS_ConvertUTF8toUTF16(aMsg).get());
+    wchar_t *msgCopy = (wchar_t*) _alloca((strlen(aMsg) + 1)*sizeof(wchar_t));
+    wcscpy(msgCopy, NS_ConvertUTF8toUTF16(aMsg).get());
 
-    if(GetModuleFileNameW(GetModuleHandleW(L"xpcom.dll"), (LPWCH)executable, MAX_PATH) &&
+    if(GetModuleFileNameW(GetModuleHandleW(L"xpcom.dll"), executable, MAX_PATH) &&
        nullptr != (pName = wcsrchr(executable, '\\')) &&
-       nullptr != wcscpy((WCHAR*)pName + 1, L"windbgdlg.exe") &&
-       CreateProcessW((LPCWSTR)executable, (LPWSTR)msgCopy, nullptr, nullptr,
+       nullptr != wcscpy(pName + 1, L"windbgdlg.exe") &&
+       CreateProcessW(executable, msgCopy, nullptr, nullptr,
                       false, DETACHED_PROCESS | NORMAL_PRIORITY_CLASS,
                       nullptr, nullptr, &si, &pi)) {
       WaitForSingleObject(pi.hProcess, INFINITE);
@@ -565,7 +560,8 @@ static const nsDebugImpl kImpl;
 nsresult
 nsDebugImpl::Create(nsISupports* outer, const nsIID& aIID, void* *aInstancePtr)
 {
-  NS_ENSURE_NO_AGGREGATION(outer);
+  if (NS_WARN_IF(outer))
+    return NS_ERROR_NO_AGGREGATION;
 
   return const_cast<nsDebugImpl*>(&kImpl)->
     QueryInterface(aIID, aInstancePtr);

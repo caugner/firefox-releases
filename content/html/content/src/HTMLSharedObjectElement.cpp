@@ -8,7 +8,6 @@
 #include "mozilla/dom/HTMLEmbedElementBinding.h"
 #include "mozilla/dom/HTMLAppletElementBinding.h"
 #include "mozilla/dom/ElementInlines.h"
-#include "mozilla/Util.h"
 
 #include "nsIDocument.h"
 #include "nsIPluginDocument.h"
@@ -260,9 +259,9 @@ MapAttributesIntoRuleExceptHidden(const nsMappedAttributes *aAttributes,
   nsGenericHTMLElement::MapCommonAttributesIntoExceptHidden(aAttributes, aData);
 }
 
-static void
-MapAttributesIntoRule(const nsMappedAttributes *aAttributes,
-                      nsRuleData *aData)
+void
+HTMLSharedObjectElement::MapAttributesIntoRule(const nsMappedAttributes *aAttributes,
+                                               nsRuleData *aData)
 {
   MapAttributesIntoRuleBase(aAttributes, aData);
   nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aData);

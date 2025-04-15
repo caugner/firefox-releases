@@ -17,12 +17,12 @@
 #include "nsSegmentedBuffer.h"
 #include "nsStreamUtils.h"
 #include "nsCOMPtr.h"
-#include "prbit.h"
 #include "nsIInputStream.h"
 #include "nsISeekableStream.h"
 #include "prlog.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Likely.h"
+#include "mozilla/MathAlgorithms.h"
 
 #if defined(PR_LOGGING)
 //
@@ -44,6 +44,9 @@ GetStorageStreamLog()
         sLog = PR_NewLogModule("nsStorageStream");
     return sLog;
 }
+#endif
+#ifdef LOG
+#undef LOG
 #endif
 #define LOG(args) PR_LOG(GetStorageStreamLog(), PR_LOG_DEBUG, args)
 
@@ -72,7 +75,7 @@ nsStorageStream::Init(uint32_t segmentSize, uint32_t maxSize,
         return NS_ERROR_OUT_OF_MEMORY;
     
     mSegmentSize = segmentSize;
-    mSegmentSizeLog2 = PR_FloorLog2(segmentSize);
+    mSegmentSizeLog2 = mozilla::FloorLog2(segmentSize);
 
     // Segment size must be a power of two
     if (mSegmentSize != ((uint32_t)1 << mSegmentSizeLog2))
@@ -85,8 +88,10 @@ NS_IMETHODIMP
 nsStorageStream::GetOutputStream(int32_t aStartingOffset, 
                                  nsIOutputStream * *aOutputStream)
 {
-    NS_ENSURE_ARG(aOutputStream);
-    NS_ENSURE_TRUE(mSegmentedBuffer, NS_ERROR_NOT_INITIALIZED);
+    if (NS_WARN_IF(!aOutputStream))
+        return NS_ERROR_INVALID_ARG;
+    if (NS_WARN_IF(!mSegmentedBuffer))
+        return NS_ERROR_NOT_INITIALIZED;
     
     if (mWriteInProgress)
         return NS_ERROR_NOT_AVAILABLE;
@@ -113,7 +118,8 @@ nsStorageStream::GetOutputStream(int32_t aStartingOffset,
 NS_IMETHODIMP
 nsStorageStream::Close()
 {
-    NS_ENSURE_TRUE(mSegmentedBuffer, NS_ERROR_NOT_INITIALIZED);
+    if (NS_WARN_IF(!mSegmentedBuffer))
+        return NS_ERROR_NOT_INITIALIZED;
     
     mWriteInProgress = false;
     
@@ -142,14 +148,14 @@ nsStorageStream::Flush()
 NS_IMETHODIMP
 nsStorageStream::Write(const char *aBuffer, uint32_t aCount, uint32_t *aNumWritten)
 {
-    NS_ENSURE_TRUE(mSegmentedBuffer, NS_ERROR_NOT_INITIALIZED);
+    if (NS_WARN_IF(!aNumWritten) || NS_WARN_IF(!aBuffer))
+        return NS_ERROR_INVALID_ARG;
+    if (NS_WARN_IF(!mSegmentedBuffer))
+        return NS_ERROR_NOT_INITIALIZED;
     
     const char* readCursor;
     uint32_t count, availableInSegment, remaining;
     nsresult rv = NS_OK;
-
-    NS_ENSURE_ARG_POINTER(aNumWritten);
-    NS_ENSURE_ARG(aBuffer);
 
     LOG(("nsStorageStream [%p] Write mWriteCursor=%x mSegmentEnd=%x aCount=%d\n",
         this, mWriteCursor, mSegmentEnd, aCount));
@@ -220,7 +226,6 @@ nsStorageStream::IsNonBlocking(bool *aNonBlocking)
 NS_IMETHODIMP
 nsStorageStream::GetLength(uint32_t *aLength)
 {
-    NS_ENSURE_ARG(aLength);
     *aLength = mLogicalLength;
     return NS_OK;
 }
@@ -229,7 +234,8 @@ nsStorageStream::GetLength(uint32_t *aLength)
 NS_IMETHODIMP
 nsStorageStream::SetLength(uint32_t aLength)
 {
-    NS_ENSURE_TRUE(mSegmentedBuffer, NS_ERROR_NOT_INITIALIZED);
+    if (NS_WARN_IF(!mSegmentedBuffer))
+        return NS_ERROR_NOT_INITIALIZED;
     
     if (mWriteInProgress)
         return NS_ERROR_NOT_AVAILABLE;
@@ -254,8 +260,6 @@ nsStorageStream::SetLength(uint32_t aLength)
 NS_IMETHODIMP
 nsStorageStream::GetWriteInProgress(bool *aWriteInProgress)
 {
-    NS_ENSURE_ARG(aWriteInProgress);
-
     *aWriteInProgress = mWriteInProgress;
     return NS_OK;
 }
@@ -263,7 +267,8 @@ nsStorageStream::GetWriteInProgress(bool *aWriteInProgress)
 NS_METHOD
 nsStorageStream::Seek(int32_t aPosition)
 {
-    NS_ENSURE_TRUE(mSegmentedBuffer, NS_ERROR_NOT_INITIALIZED);
+    if (NS_WARN_IF(!mSegmentedBuffer))
+        return NS_ERROR_NOT_INITIALIZED;
     
     // An argument of -1 means "seek to end of stream"
     if (aPosition == -1)
@@ -337,7 +342,7 @@ protected:
 
 private:
     nsStorageStream* mStorageStream;
-    uint32_t         mReadCursor;    // Next memory location to read byte, or NULL
+    uint32_t         mReadCursor;    // Next memory location to read byte, or 0
     uint32_t         mSegmentEnd;    // One byte past end of current buffer segment
     uint32_t         mSegmentNum;    // Segment number containing read cursor
     uint32_t         mSegmentSize;   // All segments, except the last, are of this size
@@ -355,7 +360,8 @@ NS_IMPL_ISUPPORTS2(nsStorageInputStream,
 NS_IMETHODIMP
 nsStorageStream::NewInputStream(int32_t aStartingOffset, nsIInputStream* *aInputStream)
 {
-    NS_ENSURE_TRUE(mSegmentedBuffer, NS_ERROR_NOT_INITIALIZED);
+    if (NS_WARN_IF(!mSegmentedBuffer))
+        return NS_ERROR_NOT_INITIALIZED;
 
     nsStorageInputStream *inputStream = new nsStorageInputStream(this, mSegmentSize);
     if (!inputStream)
@@ -521,8 +527,6 @@ nsStorageInputStream::Seek(uint32_t aPosition)
 nsresult
 NS_NewStorageStream(uint32_t segmentSize, uint32_t maxSize, nsIStorageStream **result)
 {
-    NS_ENSURE_ARG(result);
-
     nsStorageStream* storageStream = new nsStorageStream();
     if (!storageStream) return NS_ERROR_OUT_OF_MEMORY;
     
@@ -535,3 +539,7 @@ NS_NewStorageStream(uint32_t segmentSize, uint32_t maxSize, nsIStorageStream **r
     *result = storageStream;
     return NS_OK;
 }
+
+// Undefine LOG, so that other .cpp files (or their includes) won't complain
+// about it already being defined, when we build in unified mode.
+#undef LOG

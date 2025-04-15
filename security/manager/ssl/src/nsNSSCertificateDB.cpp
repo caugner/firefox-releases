@@ -55,9 +55,6 @@ using mozilla::psm::SharedSSLState;
 extern PRLogModuleInfo* gPIPNSSLog;
 #endif
 
-static NS_DEFINE_CID(kNSSComponentCID, NS_NSSCOMPONENT_CID);
-
-
 NS_IMPL_ISUPPORTS2(nsNSSCertificateDB, nsIX509CertDB, nsIX509CertDB2)
 
 nsNSSCertificateDB::nsNSSCertificateDB()
@@ -526,11 +523,11 @@ ImportCertsIntoPermanentStorage(const ScopedCERTCertList &certChain, const SECCe
        chainNode = CERT_LIST_NEXT(chainNode), i++) {
     rawArray[i] = &chainNode->cert->derCert;
   }
-  CERT_ImportCerts(certdb, usage, chainLen,
-                   rawArray,  nullptr, true, caOnly, nullptr);
+  SECStatus srv = CERT_ImportCerts(certdb, usage, chainLen, rawArray,
+                                   nullptr, true, caOnly, nullptr);
 
-  PORT_Free(rawArray);   
-  return SECSuccess;
+  PORT_Free(rawArray);
+  return srv;
 } 
 
 
@@ -806,7 +803,10 @@ nsNSSCertificateDB::ImportValidCACertsInList(CERTCertList *certList, nsIInterfac
       continue;
     }
 
-    ImportCertsIntoPermanentStorage(certChain, certUsageAnyCA, true);
+    rv = ImportCertsIntoPermanentStorage(certChain, certUsageAnyCA, true);
+    if (rv != SECSuccess) {
+      return NS_ERROR_FAILURE;
+    }
   }
   
   return NS_OK;
@@ -817,6 +817,8 @@ void nsNSSCertificateDB::DisplayCertificateAlert(nsIInterfaceRequestor *ctx,
                                                  nsIX509Cert *certToShow,
                                                  const nsNSSShutDownPreventionLock &/*proofOfLock*/)
 {
+  static NS_DEFINE_CID(kNSSComponentCID, NS_NSSCOMPONENT_CID);
+
   if (!NS_IsMainThread()) {
     NS_ERROR("nsNSSCertificateDB::DisplayCertificateAlert called off the main thread");
     return;
@@ -1393,6 +1395,10 @@ NS_IMETHODIMP
 nsNSSCertificateDB::ConstructX509FromBase64(const char *base64,
                                             nsIX509Cert **_retval)
 {
+  nsNSSShutDownPreventionLock locker;
+  if (isAlreadyShutDown()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
   NS_ENSURE_ARG_POINTER(_retval);
 
   // sure would be nice to have a smart pointer class for PL_ allocations
@@ -1416,10 +1422,6 @@ nsNSSCertificateDB::ConstructX509FromBase64(const char *base64,
       lengthDER--;
   }
 
-  nsNSSShutDownPreventionLock locker;
-  if (isAlreadyShutDown()) {
-    return NS_ERROR_NOT_AVAILABLE;
-  }
 
   SECItem secitem_cert;
   secitem_cert.type = siDERCertBuffer;
@@ -1450,6 +1452,8 @@ nsNSSCertificateDB::get_default_nickname(CERTCertificate *cert,
                                          nsCString &nickname,
                                          const nsNSSShutDownPreventionLock &/*proofOfLock*/)
 {
+  static NS_DEFINE_CID(kNSSComponentCID, NS_NSSCOMPONENT_CID);
+
   nickname.Truncate();
 
   nsresult rv;
@@ -1642,7 +1646,7 @@ nsNSSCertificateDB::GetCerts(nsIX509CertList **_retval)
 
   // nsNSSCertList 1) adopts certList, and 2) handles the nullptr case fine.
   // (returns an empty list) 
-  nssCertList = new nsNSSCertList(certList, true);
+  nssCertList = new nsNSSCertList(certList, locker);
 
   *_retval = nssCertList;
   NS_ADDREF(*_retval);
@@ -1669,5 +1673,79 @@ nsNSSCertificateDB::GetRecentBadCerts(bool isPrivate, nsIRecentBadCerts** result
     }
     NS_ADDREF(*result = mPublicRecentBadCerts);
   }
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNSSCertificateDB::VerifyCertNow(nsIX509Cert* aCert,
+                                  int64_t /*SECCertificateUsage*/ aUsage,
+                                  uint32_t aFlags,
+                                  nsIX509CertList** verifiedChain,
+                                  bool* aHasEVPolicy,
+                                  int32_t* /*PRErrorCode*/ _retval )
+{
+  NS_ENSURE_ARG_POINTER(aCert);
+  NS_ENSURE_ARG_POINTER(aHasEVPolicy);
+  NS_ENSURE_ARG_POINTER(verifiedChain);
+  NS_ENSURE_ARG_POINTER(_retval);
+
+  *verifiedChain = nullptr;
+  *aHasEVPolicy = false;
+  *_retval = PR_UNKNOWN_ERROR;
+
+  nsNSSShutDownPreventionLock locker;
+  if (isAlreadyShutDown()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  nsresult rv;
+#ifndef NSS_NO_LIBPKIX
+  nsCOMPtr<nsINSSComponent> inss = do_GetService(PSM_COMPONENT_CONTRACTID, &rv);
+  if (NS_FAILED(rv)) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+  inss->EnsureIdentityInfoLoaded();
+#endif
+
+  nsCOMPtr<nsIX509Cert2> x509Cert = do_QueryInterface(aCert);
+  if (!x509Cert) {
+    return NS_ERROR_INVALID_ARG;
+  }
+  ScopedCERTCertificate nssCert(x509Cert->GetCert());
+
+  RefPtr<CertVerifier> certVerifier(GetDefaultCertVerifier());
+  NS_ENSURE_TRUE(certVerifier, NS_ERROR_FAILURE);
+
+  CERTCertList* resultChain = nullptr;
+  SECOidTag evOidPolicy;
+  SECStatus srv;
+
+  srv = certVerifier->VerifyCert(nssCert,
+                                 aUsage, PR_Now(),
+                                 nullptr, // Assume no context
+                                 aFlags,
+                                 &resultChain,
+                                 &evOidPolicy,
+                                 nullptr);
+
+  PRErrorCode error = PR_GetError();
+
+  nsCOMPtr<nsIX509CertList> nssCertList;
+  // This adopts the list
+  nssCertList = new nsNSSCertList(resultChain, locker);
+  NS_ENSURE_TRUE(nssCertList, NS_ERROR_FAILURE);
+
+  if (srv == SECSuccess) {
+    if (evOidPolicy != SEC_OID_UNKNOWN) {
+      *aHasEVPolicy = true;
+    }
+    *_retval = 0;
+  } else {
+    NS_ENSURE_TRUE(evOidPolicy == SEC_OID_UNKNOWN, NS_ERROR_FAILURE);
+    NS_ENSURE_TRUE(error != 0, NS_ERROR_FAILURE);
+    *_retval = error;
+  }
+  nssCertList.forget(verifiedChain);
+
   return NS_OK;
 }

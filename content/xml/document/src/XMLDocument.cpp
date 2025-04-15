@@ -40,7 +40,6 @@
 #include "nsJSUtils.h"
 #include "nsCRT.h"
 #include "nsIAuthPrompt.h"
-#include "nsIScriptGlobalObjectOwner.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsContentPolicyUtils.h"
 #include "nsIDOMUserDataHandler.h"
@@ -275,15 +274,6 @@ XMLDocument::SetAsync(bool aAsync)
   return NS_OK;
 }
 
-static void
-ReportUseOfDeprecatedMethod(nsIDocument *aDoc, const char* aWarning)
-{
-  nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
-                                  NS_LITERAL_CSTRING("DOM3 Load"), aDoc,
-                                  nsContentUtils::eDOM_PROPERTIES,
-                                  aWarning);
-}
-
 NS_IMETHODIMP
 XMLDocument::Load(const nsAString& aUrl, bool *aReturn)
 {
@@ -303,7 +293,7 @@ XMLDocument::Load(const nsAString& aUrl, ErrorResult& aRv)
     return false;
   }
 
-  ReportUseOfDeprecatedMethod(this, "UseOfDOM3LoadMethodWarning");
+  WarnOnceAbout(nsIDocument::eUseOfDOM3LoadMethod);
 
   nsCOMPtr<nsIDocument> callingDoc = nsContentUtils::GetDocumentFromContext();
 

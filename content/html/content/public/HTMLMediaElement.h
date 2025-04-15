@@ -17,6 +17,7 @@
 #include "DecoderTraits.h"
 #include "nsIAudioChannelAgent.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/AudioChannelBinding.h"
 #include "mozilla/dom/TextTrackManager.h"
 
 // Define to output information on decoding and painting framerate
@@ -368,6 +369,10 @@ public:
     return mNetworkState;
   }
 
+  // Called by the media decoder object, on the main thread,
+  // when the connection between Rtsp server and client gets lost.
+  void ResetConnectionState() MOZ_FINAL MOZ_OVERRIDE;
+
   // XPCOM GetPreload() is OK
   void SetPreload(const nsAString& aValue, ErrorResult& aRv)
   {
@@ -513,12 +518,8 @@ public:
 
   double MozFragmentEnd();
 
-  // XPCOM GetMozAudioChannelType() is OK
-
-  void SetMozAudioChannelType(const nsAString& aValue, ErrorResult& aRv)
-  {
-    SetHTMLAttr(nsGkAtoms::mozaudiochannel, aValue, aRv);
-  }
+  AudioChannel MozAudioChannelType() const;
+  void SetMozAudioChannelType(AudioChannel aValue, ErrorResult& aRv);
 
   TextTrackList* TextTracks() const;
 

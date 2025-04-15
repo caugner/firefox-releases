@@ -9,7 +9,7 @@ XPIDL_SOURCES += [
     'nsIScriptableUnescapeHTML.idl',
 ]
 
-MODULE = 'html5'
+XPIDL_MODULE = 'html5'
 
 EXPORTS += [
     'jArray.h',
@@ -47,7 +47,7 @@ EXPORTS += [
     'nsParserUtils.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'nsHtml5Atom.cpp',
     'nsHtml5Atoms.cpp',
     'nsHtml5AtomTable.cpp',
@@ -83,9 +83,8 @@ SOURCES += [
     'nsParserUtils.cpp',
 ]
 
-LIBRARY_NAME = 'html5p_s'
-
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
 
+FINAL_LIBRARY = 'gklayout'
+
+# DEFINES['ENABLE_VOID_MENUITEM'] = True

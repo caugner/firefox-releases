@@ -38,6 +38,7 @@
 #include "nsIDOMWindow.h"
 #include "nsPIDOMWindow.h"
 #include "nsDisplayList.h"
+#include "nsFocusManager.h"
 
 #include "nsTArray.h"
 
@@ -75,6 +76,7 @@
 #include "mozilla/dom/TypedArray.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/PathHelpers.h"
+#include "mozilla/gfx/DataSurfaceHelpers.h"
 #include "mozilla/ipc/DocumentRendererParent.h"
 #include "mozilla/ipc/PDocumentRendererParent.h"
 #include "mozilla/MathAlgorithms.h"
@@ -89,18 +91,18 @@
 #include "mozilla/dom/TextMetrics.h"
 #include "mozilla/dom/UnionTypes.h"
 #include "nsGlobalWindow.h"
+#include "GLContext.h"
+#include "GLContextProvider.h"
 
 #ifdef USE_SKIA_GPU
 #undef free // apparently defined by some windows header, clashing with a free()
             // method in SkTypes.h
-#include "GLContext.h"
-#include "GLContextProvider.h"
 #include "GLContextSkia.h"
 #include "SurfaceTypes.h"
 #include "nsIGfxInfo.h"
+#endif
 using mozilla::gl::GLContext;
 using mozilla::gl::GLContextProvider;
-#endif
 
 #ifdef XP_WIN
 #include "gfxWindowsPlatform.h"
@@ -886,7 +888,7 @@ CanvasRenderingContext2D::EnsureTarget()
     static bool registered = false;
     if (!registered) {
       registered = true;
-      NS_RegisterMemoryReporter(new Canvas2dPixelsReporter());
+      RegisterStrongMemoryReporter(new Canvas2dPixelsReporter());
     }
 
     gCanvasAzureMemoryUsed += mWidth * mHeight * 4;
@@ -1053,6 +1055,26 @@ CanvasRenderingContext2D::Render(gfxContext *ctx, GraphicsFilter aFilter, uint32
   return rv;
 }
 
+NS_IMETHODIMP
+CanvasRenderingContext2D::SetContextOptions(JSContext* aCx, JS::Handle<JS::Value> aOptions)
+{
+  if (aOptions.isNullOrUndefined()) {
+    return NS_OK;
+  }
+
+  ContextAttributes2D attributes;
+  NS_ENSURE_TRUE(attributes.Init(aCx, aOptions), NS_ERROR_UNEXPECTED);
+
+#ifdef USE_SKIA_GPU
+  if (Preferences::GetBool("gfx.canvas.willReadFrequently.enable", false)) {
+    // Use software when there is going to be a lot of readback
+    mForceSoftware = attributes.mWillReadFrequently;
+  }
+#endif
+
+  return NS_OK;
+}
+
 void
 CanvasRenderingContext2D::GetImageBuffer(uint8_t** aImageBuffer,
                                          int32_t* aFormat)
@@ -1060,40 +1082,18 @@ CanvasRenderingContext2D::GetImageBuffer(uint8_t** aImageBuffer,
   *aImageBuffer = nullptr;
   *aFormat = 0;
 
-  nsRefPtr<gfxASurface> surface;
-  nsresult rv = GetThebesSurface(getter_AddRefs(surface));
-  if (NS_FAILED(rv)) {
+  EnsureTarget();
+  RefPtr<SourceSurface> snapshot = mTarget->Snapshot();
+  if (!snapshot) {
     return;
   }
 
-  static const fallible_t fallible = fallible_t();
-  uint8_t* imageBuffer = new (fallible) uint8_t[mWidth * mHeight * 4];
-  if (!imageBuffer) {
+  RefPtr<DataSourceSurface> data = snapshot->GetDataSurface();
+  if (!data || data->GetSize() != IntSize(mWidth, mHeight)) {
     return;
   }
 
-  nsRefPtr<gfxImageSurface> imgsurf =
-    new gfxImageSurface(imageBuffer,
-                        gfxIntSize(mWidth, mHeight),
-                        mWidth * 4,
-                        gfxImageFormatARGB32);
-
-  if (!imgsurf || imgsurf->CairoStatus()) {
-    delete[] imageBuffer;
-    return;
-  }
-
-  nsRefPtr<gfxContext> ctx = new gfxContext(imgsurf);
-  if (!ctx || ctx->HasError()) {
-    delete[] imageBuffer;
-    return;
-  }
-
-  ctx->SetOperator(gfxContext::OPERATOR_SOURCE);
-  ctx->SetSource(surface, gfxPoint(0, 0));
-  ctx->Paint();
-
-  *aImageBuffer = imageBuffer;
+  *aImageBuffer = SurfaceToPackedBGRA(data);
   *aFormat = imgIEncoder::INPUT_FORMAT_HOSTARGB;
 }
 
@@ -1102,17 +1102,17 @@ CanvasRenderingContext2D::GetInputStream(const char *aMimeType,
                                          const PRUnichar *aEncoderOptions,
                                          nsIInputStream **aStream)
 {
-  nsAutoArrayPtr<uint8_t> imageBuffer;
-  int32_t format = 0;
-  GetImageBuffer(getter_Transfers(imageBuffer), &format);
-  if (!imageBuffer) {
-    return NS_ERROR_FAILURE;
-  }
-
   nsCString enccid("@mozilla.org/image/encoder;2?type=");
   enccid += aMimeType;
   nsCOMPtr<imgIEncoder> encoder = do_CreateInstance(enccid.get());
   if (!encoder) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsAutoArrayPtr<uint8_t> imageBuffer;
+  int32_t format = 0;
+  GetImageBuffer(getter_Transfers(imageBuffer), &format);
+  if (!imageBuffer) {
     return NS_ERROR_FAILURE;
   }
 
@@ -1731,6 +1731,90 @@ CanvasRenderingContext2D::Stroke()
   Redraw();
 }
 
+void CanvasRenderingContext2D::DrawSystemFocusRing(mozilla::dom::Element& aElement)
+{
+  EnsureUserSpacePath();
+
+  if (!mPath) {
+    return;
+  }
+
+  if(DrawCustomFocusRing(aElement)) {
+    Save();
+
+    // set state to conforming focus state
+    ContextState& state = CurrentState();
+    state.globalAlpha = 1.0;
+    state.shadowBlur = 0;
+    state.shadowOffset.x = 0;
+    state.shadowOffset.y = 0;
+    state.op = mozilla::gfx::OP_OVER;
+
+    state.lineCap = CAP_BUTT;
+    state.lineJoin = mozilla::gfx::JOIN_MITER_OR_BEVEL;
+    state.lineWidth = 1;
+    CurrentState().dash.Clear();
+
+    // color and style of the rings is the same as for image maps
+    // set the background focus color
+    CurrentState().SetColorStyle(STYLE_STROKE, NS_RGBA(255, 255, 255, 255));
+    // draw the focus ring
+    Stroke();
+
+    // set dashing for foreground
+    FallibleTArray<mozilla::gfx::Float>& dash = CurrentState().dash;
+    dash.AppendElement(1);
+    dash.AppendElement(1);
+
+    // set the foreground focus color
+    CurrentState().SetColorStyle(STYLE_STROKE, NS_RGBA(0,0,0, 255));
+    // draw the focus ring
+    Stroke();
+
+    Restore();
+  }
+}
+
+bool CanvasRenderingContext2D::DrawCustomFocusRing(mozilla::dom::Element& aElement)
+{
+  EnsureUserSpacePath();
+
+  HTMLCanvasElement* canvas = GetCanvas();
+
+  if (!canvas|| !nsContentUtils::ContentIsDescendantOf(&aElement, canvas)) {
+    return false;
+  }
+
+  nsIFocusManager* fm = nsFocusManager::GetFocusManager();
+  if (fm) {
+    // check that the element i focused
+    nsCOMPtr<nsIDOMElement> focusedElement;
+    fm->GetFocusedElement(getter_AddRefs(focusedElement));
+    if (SameCOMIdentity(aElement.AsDOMNode(), focusedElement)) {
+      // get the bounds of the current path
+      mgfx::Rect bounds;
+      bounds = mPath->GetBounds(mTarget->GetTransform());
+
+      // and set them as the accessible area
+      nsRect rect(canvas->ClientLeft() + bounds.x, canvas->ClientTop() + bounds.y,
+               bounds.width, bounds.height);
+      rect.x *= AppUnitsPerCSSPixel();
+      rect.y *= AppUnitsPerCSSPixel();
+      rect.width *= AppUnitsPerCSSPixel();
+      rect.height *= AppUnitsPerCSSPixel();
+
+      nsIFrame* frame = aElement.GetPrimaryFrame();
+      if(frame) {
+        frame->SetRect(rect);
+      }
+
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void
 CanvasRenderingContext2D::Clip(const CanvasWindingRule& winding)
 {
@@ -1937,6 +2021,7 @@ CanvasRenderingContext2D::EnsureUserSpacePath(const CanvasWindingRule& winding)
   if (mPath && mPath->GetFillRule() != fillRule) {
     mPathBuilder = mPath->CopyToBuilder(fillRule);
     mPath = mPathBuilder->Finish();
+    mPathBuilder = nullptr;
   }
 
   NS_ASSERTION(mPath, "mPath should exist");
@@ -2143,11 +2228,13 @@ CanvasRenderingContext2D::SetFont(const nsAString& font,
 
   fontStyle->mFont.AddFontFeaturesToStyle(&style);
 
+  nsPresContext *c = presShell->GetPresContext();
   CurrentState().fontGroup =
       gfxPlatform::GetPlatform()->CreateFontGroup(fontStyle->mFont.name,
                                                   &style,
-                                                  presShell->GetPresContext()->GetUserFontSet());
+                                                  c->GetUserFontSet());
   NS_ASSERTION(CurrentState().fontGroup, "Could not get font group");
+  CurrentState().fontGroup->SetTextPerfMetrics(c->GetTextPerfMetrics());
 
   // The font getter is required to be reserialized based on what we
   // parsed (including having line-height removed).  (Older drafts of
@@ -2582,7 +2669,7 @@ CanvasRenderingContext2D::DrawOrMeasureText(const nsAString& aRawText,
   GetAppUnitsValues(&processor.mAppUnitsPerDevPixel, nullptr);
   processor.mPt = gfxPoint(aX, aY);
   processor.mThebes =
-    new gfxContext(gfxPlatform::GetPlatform()->ScreenReferenceSurface());
+    new gfxContext(gfxPlatform::GetPlatform()->ScreenReferenceDrawTarget());
 
   // If we don't have a target then we don't have a transform. A target won't
   // be needed in the case where we're measuring the text size. This allows
@@ -2745,6 +2832,12 @@ gfxFontGroup *CanvasRenderingContext2D::GetCurrentFontStyle()
                                                     nullptr);
       if (CurrentState().fontGroup) {
         CurrentState().font = kDefaultFontStyle;
+
+        nsIPresShell* presShell = GetPresShell();
+        if (presShell) {
+          CurrentState().fontGroup->SetTextPerfMetrics(
+            presShell->GetPresContext()->GetTextPerfMetrics());
+        }
       } else {
         NS_ERROR("Default canvas font is invalid");
       }
@@ -3043,6 +3136,15 @@ CanvasRenderingContext2D::DrawImage(const HTMLImageOrCanvasOrVideoElement& image
     }
 
     imgSize = res.mSize;
+
+    // Scale sw/sh based on aspect ratio
+    if (image.IsHTMLVideoElement()) {
+      HTMLVideoElement* video = &image.GetAsHTMLVideoElement();
+      int32_t displayWidth = video->VideoWidth();
+      int32_t displayHeight = video->VideoHeight();
+      sw *= (double)imgSize.width / (double)displayWidth;
+      sh *= (double)imgSize.height / (double)displayHeight;
+    }
 
     if (mCanvasElement) {
       CanvasUtils::DoDrawImageSecurityCheck(mCanvasElement,
@@ -3921,7 +4023,10 @@ CanvasRenderingContext2D::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
     CanvasRenderingContext2DUserData* userData =
       static_cast<CanvasRenderingContext2DUserData*>(
         aOldLayer->GetUserData(&g2DContextLayerUserData));
-    if (userData && userData->IsForContext(this)) {
+
+    CanvasLayer::Data data;
+    data.mGLContext = static_cast<GLContext*>(mTarget->GetGLContext());
+    if (userData && userData->IsForContext(this) && aOldLayer->IsDataValid(data)) {
       nsRefPtr<CanvasLayer> ret = aOldLayer;
       return ret.forget();
     }

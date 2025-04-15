@@ -25,13 +25,13 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsMimeTypeArray)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_2(nsMimeTypeArray,
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_3(nsMimeTypeArray,
                                         mWindow,
-                                        mMimeTypes)
+                                        mMimeTypes,
+                                        mHiddenMimeTypes)
 
 nsMimeTypeArray::nsMimeTypeArray(nsPIDOMWindow* aWindow)
-  : mWindow(aWindow),
-    mPluginMimeTypeCount(0)
+  : mWindow(aWindow)
 {
   SetIsDOMBinding();
 }
@@ -50,7 +50,7 @@ void
 nsMimeTypeArray::Refresh()
 {
   mMimeTypes.Clear();
-  mPluginMimeTypeCount = 0;
+  mHiddenMimeTypes.Clear();
 }
 
 nsPIDOMWindow*
@@ -79,13 +79,9 @@ nsMimeTypeArray::IndexedGetter(uint32_t aIndex, bool &aFound)
 {
   aFound = false;
 
-  if (mMimeTypes.IsEmpty()) {
-    EnsureMimeTypes();
-  }
+  EnsurePluginMimeTypes();
 
-  MOZ_ASSERT(mMimeTypes.Length() >= mPluginMimeTypeCount);
-
-  if (aIndex >= mPluginMimeTypeCount) {
+  if (aIndex >= mMimeTypes.Length()) {
     return nullptr;
   }
 
@@ -94,21 +90,35 @@ nsMimeTypeArray::IndexedGetter(uint32_t aIndex, bool &aFound)
   return mMimeTypes[aIndex];
 }
 
+static nsMimeType*
+FindMimeType(const nsTArray<nsRefPtr<nsMimeType> >& aMimeTypes,
+             const nsAString& aType)
+{
+  for (uint32_t i = 0; i < aMimeTypes.Length(); ++i) {
+    nsMimeType* mimeType = aMimeTypes[i];
+    if (aType.Equals(mimeType->Type())) {
+      return mimeType;
+    }
+  }
+
+  return nullptr;
+}
+
 nsMimeType*
 nsMimeTypeArray::NamedGetter(const nsAString& aName, bool &aFound)
 {
   aFound = false;
 
-  if (mMimeTypes.IsEmpty()) {
-    EnsureMimeTypes();
+  EnsurePluginMimeTypes();
+
+  nsMimeType* mimeType = FindMimeType(mMimeTypes, aName);
+  if (!mimeType) {
+    mimeType = FindMimeType(mHiddenMimeTypes, aName);
   }
 
-  for (uint32_t i = 0; i < mMimeTypes.Length(); ++i) {
-    if (aName.Equals(mMimeTypes[i]->Type())) {
-      aFound = true;
-
-      return mMimeTypes[i];
-    }
+  if (mimeType) {
+    aFound = true;
+    return mimeType;
   }
 
   // Now let's check with the MIME service.
@@ -152,8 +162,10 @@ nsMimeTypeArray::NamedGetter(const nsAString& aName, bool &aFound)
   // If we got here, we support this type!  Say so.
   aFound = true;
 
+  // We don't want navigator.mimeTypes enumeration to expose MIME types with
+  // application handlers, so add them to the list of hidden MIME types.
   nsMimeType *mt = new nsMimeType(mWindow, aName);
-  mMimeTypes.AppendElement(mt);
+  mHiddenMimeTypes.AppendElement(mt);
 
   return mt;
 }
@@ -161,21 +173,15 @@ nsMimeTypeArray::NamedGetter(const nsAString& aName, bool &aFound)
 uint32_t
 nsMimeTypeArray::Length()
 {
-  if (mMimeTypes.IsEmpty()) {
-    EnsureMimeTypes();
-  }
+  EnsurePluginMimeTypes();
 
-  MOZ_ASSERT(mMimeTypes.Length() >= mPluginMimeTypeCount);
-
-  return mPluginMimeTypeCount;
+  return mMimeTypes.Length();
 }
 
 void
 nsMimeTypeArray::GetSupportedNames(nsTArray< nsString >& aRetval)
 {
-  if (mMimeTypes.IsEmpty()) {
-    EnsureMimeTypes();
-  }
+  EnsurePluginMimeTypes();
 
   for (uint32_t i = 0; i < mMimeTypes.Length(); ++i) {
     aRetval.AppendElement(mMimeTypes[i]->Type());
@@ -183,9 +189,9 @@ nsMimeTypeArray::GetSupportedNames(nsTArray< nsString >& aRetval)
 }
 
 void
-nsMimeTypeArray::EnsureMimeTypes()
+nsMimeTypeArray::EnsurePluginMimeTypes()
 {
-  if (!mMimeTypes.IsEmpty() || !mWindow) {
+  if (!mMimeTypes.IsEmpty() || !mHiddenMimeTypes.IsEmpty() || !mWindow) {
     return;
   }
 
@@ -203,16 +209,7 @@ nsMimeTypeArray::EnsureMimeTypes()
     return;
   }
 
-  nsTArray<nsRefPtr<nsPluginElement> > plugins;
-  pluginArray->GetPlugins(plugins);
-
-  for (uint32_t i = 0; i < plugins.Length(); ++i) {
-    nsPluginElement *plugin = plugins[i];
-
-    mMimeTypes.AppendElements(plugin->MimeTypes());
-  }
-
-  mPluginMimeTypeCount = mMimeTypes.Length();
+  pluginArray->GetMimeTypes(mMimeTypes, mHiddenMimeTypes);
 }
 
 NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(nsMimeType, AddRef)

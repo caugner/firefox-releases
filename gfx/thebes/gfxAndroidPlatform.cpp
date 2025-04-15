@@ -97,8 +97,7 @@ gfxAndroidPlatform::gfxAndroidPlatform()
     FT_New_Library(&sFreetypeMemoryRecord, &gPlatformFTLibrary);
     FT_Add_Default_Modules(gPlatformFTLibrary);
 
-    mFreetypeReporter = new FreetypeReporter();
-    NS_RegisterMemoryReporter(mFreetypeReporter);
+    RegisterStrongMemoryReporter(new FreetypeReporter());
 
     nsCOMPtr<nsIScreenManager> screenMgr = do_GetService("@mozilla.org/gfx/screenmanager;1");
     nsCOMPtr<nsIScreen> screen;
@@ -120,8 +119,6 @@ gfxAndroidPlatform::~gfxAndroidPlatform()
 {
     cairo_debug_reset_static_data();
 
-    NS_UnregisterMemoryReporter(mFreetypeReporter);
-
     FT_Done_Library(gPlatformFTLibrary);
     gPlatformFTLibrary = nullptr;
 }
@@ -134,6 +131,19 @@ gfxAndroidPlatform::CreateOffscreenSurface(const gfxIntSize& size,
     newSurface = new gfxImageSurface(size, OptimalFormatForContent(contentType));
 
     return newSurface.forget();
+}
+
+already_AddRefed<gfxASurface>
+gfxAndroidPlatform::OptimizeImage(gfxImageSurface *aSurface,
+                                  gfxImageFormat format)
+{
+    /* Android/Gonk have no special offscreen surfaces so we can avoid a copy */
+    if (OptimalFormatForContent(gfxASurface::ContentFromFormat(format)) ==
+        format) {
+        return nullptr;
+    }
+
+    return gfxPlatform::OptimizeImage(aSurface, format);
 }
 
 static bool

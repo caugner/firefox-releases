@@ -93,7 +93,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsJSScriptTimeoutHandler)
         JS_GetObjectFunction(js::UncheckedUnwrap(tmp->mFunction->Callable()));
       if (fun && JS_GetFunctionId(fun)) {
         JSFlatString *funId = JS_ASSERT_STRING_IS_FLAT(JS_GetFunctionId(fun));
-        size_t size = 1 + JS_PutEscapedFlatString(NULL, 0, funId, 0);
+        size_t size = 1 + JS_PutEscapedFlatString(nullptr, 0, funId, 0);
         char *funIdName = new char[size];
         if (funIdName) {
           JS_PutEscapedFlatString(funIdName, size, funId, 0);
@@ -181,7 +181,7 @@ CheckCSPForEval(JSContext* aCx, nsGlobalWindow* aWindow, ErrorResult& aError)
     }
 
     csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_EVAL,
-                             fileNameString, scriptSample, lineNum);
+                             fileNameString, scriptSample, lineNum, EmptyString());
   }
 
   return allowsEval;
@@ -317,7 +317,8 @@ nsJSScriptTimeoutHandler::Init(nsGlobalWindow *aWindow, bool *aIsInterval,
   case JSTYPE_STRING:
   case JSTYPE_OBJECT:
     {
-      JSString *str = ::JS_ValueToString(cx, argv[0]);
+      JS::Rooted<JS::Value> arg(cx, argv[0]);
+      JSString *str = JS::ToString(cx, arg);
       if (!str)
         return NS_ERROR_OUT_OF_MEMORY;
 

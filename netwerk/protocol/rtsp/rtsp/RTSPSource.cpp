@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "RtspPrlog.h"
 #include "RTSPSource.h"
 #include "ARTPConnection.h"
 #include "RTSPConnectionHandler.h"
@@ -28,13 +29,6 @@
 #include "nsString.h"
 #include "nsStringStream.h"
 #include "nsAutoPtr.h"
-#include "prlog.h"
-
-extern PRLogModuleInfo* gRtspLog;
-#define LOGI(msg, ...) PR_LOG(gRtspLog, PR_LOG_ALWAYS, (msg, ##__VA_ARGS__))
-#define LOGV(msg, ...) PR_LOG(gRtspLog, PR_LOG_DEBUG, (msg, ##__VA_ARGS__))
-#define LOGE(msg, ...) PR_LOG(gRtspLog, PR_LOG_ERROR, (msg, ##__VA_ARGS__))
-#define LOGW(msg, ...) PR_LOG(gRtspLog, PR_LOG_WARNING, (msg, ##__VA_ARGS__))
 
 using namespace mozilla;
 using namespace mozilla::net;
@@ -226,8 +220,9 @@ void RTSPSource::performPause() {
     for (size_t i = 0; i < mTracks.size(); ++i) {
       TrackInfo *info = &mTracks.editItemAt(i);
       info->mLatestPausedUnit = 0;
-      mLatestPausedUnit = 0;
     }
+    mLatestPausedUnit = 0;
+
     mState = PAUSING;
     mHandler->pause();
 }
@@ -248,8 +243,8 @@ void RTSPSource::performSeek(int64_t seekTimeUs) {
     for (size_t i = 0; i < mTracks.size(); ++i) {
       TrackInfo *info = &mTracks.editItemAt(i);
       info->mLatestPausedUnit = 0;
-      mLatestPausedUnit = 0;
     }
+    mLatestPausedUnit = 0;
 
     mState = SEEKING;
     mHandler->seek(seekTimeUs);
@@ -316,6 +311,14 @@ void RTSPSource::onMessageReceived(const sp<AMessage> &msg) {
         case RtspConnectionHandler::kWhatSeekDone:
         {
             mState = PLAYING;
+            // Even if we have reset mLatestPausedUnit in performSeek(),
+            // it's still possible that kWhatPausedDone event may arrive
+            // because of previous performPause() command.
+            for (size_t i = 0; i < mTracks.size(); ++i) {
+                TrackInfo *info = &mTracks.editItemAt(i);
+                info->mLatestPausedUnit = 0;
+            }
+            mLatestPausedUnit = 0;
             break;
         }
 
@@ -455,10 +458,15 @@ void RTSPSource::onMessageReceived(const sp<AMessage> &msg) {
 
 void RTSPSource::onConnected(bool isSeekable)
 {
-    CHECK(mAudioTrack == NULL);
-    CHECK(mVideoTrack == NULL);
     CHECK(mHandler != NULL);
     CHECK(mListener != NULL);
+
+    // Clean up audio and video tracks.
+    // In the case of RTSP reconnect, audio/video tracks might be created by
+    // previous onConnected event.
+    mAudioTrack = NULL;
+    mVideoTrack = NULL;
+    mTracks.clear();
 
     size_t numTracks = mHandler->countTracks();
     for (size_t i = 0; i < numTracks; ++i) {
@@ -550,12 +558,11 @@ void RTSPSource::onDisconnected(const sp<AMessage> &msg) {
     status_t err;
     CHECK(msg != NULL);
     CHECK(msg->findInt32("result", &err));
-    CHECK_NE(err, (status_t)OK);
 
-    CHECK(mLooper != NULL);
-    CHECK(mHandler != NULL);
-    mLooper->unregisterHandler(mHandler->id());
-    mHandler.clear();
+    if ((mLooper != NULL) && (mHandler != NULL)) {
+      mLooper->unregisterHandler(mHandler->id());
+      mHandler.clear();
+    }
 
     mState = DISCONNECTED;
     mFinalResult = err;
@@ -564,18 +571,20 @@ void RTSPSource::onDisconnected(const sp<AMessage> &msg) {
         finishDisconnectIfPossible();
     }
     if (mListener) {
-      // err is always set to UNKNOWN_ERROR from
-      // Android right now, rename err to NS_ERROR_NOT_CONNECTED.
-      mListener->OnDisconnected(0, NS_ERROR_NOT_CONNECTED);
+      if (err == OK) {
+        mListener->OnDisconnected(0, NS_OK);
+      } else {
+        mListener->OnDisconnected(0, NS_ERROR_NET_TIMEOUT);
+      }
     }
     mAudioTrack = NULL;
     mVideoTrack = NULL;
+    mTracks.clear();
 }
 
 void RTSPSource::finishDisconnectIfPossible() {
     if (mState != DISCONNECTED) {
         mHandler->disconnect();
-        return;
     }
 
     (new AMessage)->postReply(mDisconnectReplyID);

@@ -35,7 +35,6 @@ namespace dom {
 class GlobalObject;
 class SourceBuffer;
 class SourceBufferList;
-class TimeRanges;
 template <typename T> class Optional;
 
 #define MOZILLA_DOM_MEDIASOURCE_IMPLEMENTATION_IID \
@@ -79,8 +78,6 @@ public:
 
   // Set mReadyState to aState and fire the required events at the MediaSource.
   void SetReadyState(MediaSourceReadyState aState);
-
-  void GetBuffered(TimeRanges* aRanges);
 
  // Used by SourceBuffer to call CreateSubDecoder.
   MediaSourceDecoder* GetDecoder()

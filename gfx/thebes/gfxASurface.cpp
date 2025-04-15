@@ -631,20 +631,10 @@ PR_STATIC_ASSERT(uint32_t(CAIRO_SURFACE_TYPE_SKIA) ==
 
 static int64_t gSurfaceMemoryUsed[gfxSurfaceTypeMax] = { 0 };
 
-class SurfaceMemoryReporter MOZ_FINAL :
-    public nsIMemoryReporter
+class SurfaceMemoryReporter MOZ_FINAL : public MemoryMultiReporter
 {
 public:
-    SurfaceMemoryReporter()
-    { }
-
-    NS_DECL_ISUPPORTS
-
-    NS_IMETHOD GetName(nsACString &name)
-    {
-        name.AssignLiteral("gfx-surface");
-        return NS_OK;
-    }
+    SurfaceMemoryReporter() { }
 
     NS_IMETHOD CollectReports(nsIMemoryReporterCallback *aCb,
                               nsISupports *aClosure)
@@ -673,8 +663,6 @@ public:
     }
 };
 
-NS_IMPL_ISUPPORTS1(SurfaceMemoryReporter, nsIMemoryReporter)
-
 void
 gfxASurface::RecordMemoryUsedForSurfaceType(gfxSurfaceType aType,
                                             int32_t aBytes)
@@ -686,7 +674,7 @@ gfxASurface::RecordMemoryUsedForSurfaceType(gfxSurfaceType aType,
 
     static bool registered = false;
     if (!registered) {
-        NS_RegisterMemoryReporter(new SurfaceMemoryReporter());
+        RegisterStrongMemoryReporter(new SurfaceMemoryReporter());
         registered = true;
     }
 

@@ -219,6 +219,7 @@ MemoryTextureClient::Allocate(uint32_t aSize)
     NS_WARNING("Failed to allocate buffer");
     return false;
   }
+  GfxMemoryImageReporter::DidAlloc(mBuffer);
   mBufSize = aSize;
   return true;
 }
@@ -236,9 +237,10 @@ MemoryTextureClient::MemoryTextureClient(CompositableClient* aCompositable,
 MemoryTextureClient::~MemoryTextureClient()
 {
   MOZ_COUNT_DTOR(MemoryTextureClient);
-  if (ShouldDeallocateInDestructor()) {
+  if (ShouldDeallocateInDestructor() && mBuffer) {
     // if the buffer has never been shared we must deallocate it or ir would
     // leak.
+    GfxMemoryImageReporter::WillFree(mBuffer);
     delete mBuffer;
   }
 }
@@ -308,7 +310,7 @@ BufferTextureClient::GetAsSurface()
 }
 
 bool
-BufferTextureClient::AllocateForSurface(gfx::IntSize aSize)
+BufferTextureClient::AllocateForSurface(gfx::IntSize aSize, TextureAllocationFlags aFlags)
 {
   MOZ_ASSERT(IsValid());
   MOZ_ASSERT(mFormat != gfx::FORMAT_YUV, "This textureClient cannot use YCbCr data");
@@ -318,10 +320,28 @@ BufferTextureClient::AllocateForSurface(gfx::IntSize aSize)
   if (!Allocate(bufSize)) {
     return false;
   }
+
+  if (aFlags & ALLOC_CLEAR_BUFFER) {
+    memset(GetBuffer(), 0, bufSize);
+  }
+
   ImageDataSerializer serializer(GetBuffer());
   serializer.InitializeBufferInfo(aSize, mFormat);
   mSize = aSize;
   return true;
+}
+
+TemporaryRef<gfx::DrawTarget>
+BufferTextureClient::GetAsDrawTarget()
+{
+  MOZ_ASSERT(IsValid());
+
+  ImageDataSerializer serializer(GetBuffer());
+  if (!serializer.IsValid()) {
+    return nullptr;
+  }
+
+  return serializer.GetAsDrawTarget();
 }
 
 bool
@@ -392,6 +412,15 @@ DeprecatedTextureClient::~DeprecatedTextureClient()
   MOZ_COUNT_DTOR(DeprecatedTextureClient);
   MOZ_ASSERT(mDescriptor.type() == SurfaceDescriptor::T__None, "Need to release surface!");
 }
+
+void
+DeprecatedTextureClient::OnActorDestroy()
+{
+  if (ISurfaceAllocator::IsShmem(&mDescriptor)) {
+    mDescriptor = SurfaceDescriptor();
+  }
+}
+
 
 DeprecatedTextureClientShmem::DeprecatedTextureClientShmem(CompositableForwarder* aForwarder,
                                        const TextureInfo& aTextureInfo)
@@ -514,11 +543,12 @@ DeprecatedTextureClientShmem::LockDrawTarget()
 void
 DeprecatedTextureClientShmem::Unlock()
 {
-  mSurface = nullptr;
-  mSurfaceAsImage = nullptr;
+  if (mSurface) {
+    mSurface = nullptr;
+    mSurfaceAsImage = nullptr;
+    ShadowLayerForwarder::CloseDescriptor(mDescriptor);
+  }
   mDrawTarget = nullptr;
-
-  ShadowLayerForwarder::CloseDescriptor(mDescriptor);
 }
 
 gfxImageSurface*

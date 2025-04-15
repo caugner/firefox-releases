@@ -274,6 +274,7 @@ var BrowserApp = {
 
     Services.androidBridge.browserApp = this;
 
+    Services.obs.addObserver(this, "Locale:Changed", false);
     Services.obs.addObserver(this, "Tab:Load", false);
     Services.obs.addObserver(this, "Tab:Selected", false);
     Services.obs.addObserver(this, "Tab:Closed", false);
@@ -328,7 +329,6 @@ var BrowserApp = {
     IndexedDB.init();
     HealthReportStatusListener.init();
     XPInstallObserver.init();
-    ClipboardHelper.init();
     CharacterEncoding.init();
     ActivityObserver.init();
     WebappsUI.init();
@@ -338,7 +338,6 @@ var BrowserApp = {
     DesktopUserAgent.init();
     Distribution.init();
     Tabs.init();
-    UITelemetry.init();
 #ifdef ACCESSIBILITY
     AccessFu.attach(window);
 #endif
@@ -411,12 +410,21 @@ var BrowserApp = {
     return "";
   },
 
+  /**
+   * Pass this a locale string, such as "fr" or "es_ES".
+   */
+  setLocale: function (locale) {
+    console.log("browser.js: requesting locale set: " + locale);
+    sendMessageToJava({ type: "Locale:Set", locale: locale });
+  },
+
   initContextMenu: function ba_initContextMenu() {
     // TODO: These should eventually move into more appropriate classes
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.openInNewTab"),
       NativeWindow.contextmenus.linkOpenableNonPrivateContext,
       function(aTarget) {
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
+        ContentAreaUtils.urlSecurityCheck(url, aTarget.ownerDocument.nodePrincipal);
         BrowserApp.addTab(url, { selected: false, parentId: BrowserApp.selectedTab.id });
 
         let newtabStrings = Strings.browser.GetStringFromName("newtabpopup.opened");
@@ -428,6 +436,7 @@ var BrowserApp = {
       NativeWindow.contextmenus.linkOpenableContext,
       function(aTarget) {
         let url = NativeWindow.contextmenus._getLinkURL(aTarget);
+        ContentAreaUtils.urlSecurityCheck(url, aTarget.ownerDocument.nodePrincipal);
         BrowserApp.addTab(url, { selected: false, parentId: BrowserApp.selectedTab.id, isPrivate: true });
 
         let newtabStrings = Strings.browser.GetStringFromName("newprivatetabpopup.opened");
@@ -784,7 +793,6 @@ var BrowserApp = {
     let tab = this.getTabForBrowser(aBrowser);
     if (tab) {
       if (!tab.aboutHomePage) tab.aboutHomePage = ("aboutHomePage" in aParams) ? aParams.aboutHomePage : "";
-      if ("showProgress" in aParams) tab.showProgress = aParams.showProgress;
       if ("userSearch" in aParams) tab.userSearch = aParams.userSearch;
     }
 
@@ -1395,14 +1403,17 @@ var BrowserApp = {
           }
         }
 
-        // Don't show progress throbber for about:home or about:reader
-        if (!shouldShowProgress(url))
-          params.showProgress = false;
-
-        if (data.newTab)
+        if (data.newTab) {
           this.addTab(url, params);
-        else
+        } else {
+          if (data.tabId) {
+            // Use a specific browser instead of the selected browser, if it exists
+            let specificBrowser = this.getTabForId(data.tabId).browser;
+            if (specificBrowser)
+              browser = specificBrowser;
+          }
           this.loadURI(url, browser, params);
+        }
         break;
       }
 
@@ -1495,6 +1506,17 @@ var BrowserApp = {
         this.notifyPrefObservers(aData);
         break;
 
+      case "Locale:Changed":
+        // The value provided to Locale:Changed should be a BCP47 language tag
+        // understood by Gecko -- for example, "es-ES" or "de".
+        console.log("Locale:Changed: " + aData);
+
+        // TODO: do we need to be more nuanced here -- e.g., checking for the
+        // OS locale -- or should it always be false on Fennec?
+        Services.prefs.setBoolPref("intl.locale.matchOS", false);
+        Services.prefs.setCharPref("general.useragent.locale", aData);
+        break;
+
       default:
         dump('BrowserApp.observe: unexpected topic "' + aTopic + '"\n');
         break;
@@ -1511,6 +1533,10 @@ var BrowserApp = {
   // nsIAndroidBrowserApp
   getBrowserTab: function(tabId) {
     return this.getTabForId(tabId);
+  },
+
+  getUITelemetryObserver: function() {
+    return UITelemetry;
   },
 
   getPreferences: function getPreferences(requestId, prefNames, count) {
@@ -1719,6 +1745,10 @@ var NativeWindow = {
    *                     the checked state as an argument.                   
    */
     show: function(aMessage, aValue, aButtons, aTabID, aOptions) {
+      if (aButtons == null) {
+        aButtons = [];
+      }
+
       aButtons.forEach((function(aButton) {
         this._callbacks[this._callbacksId] = { cb: aButton.callback, prompt: this._promptId };
         aButton.callback = this._callbacksId;
@@ -2093,8 +2123,15 @@ var NativeWindow = {
         this._target = null;
         BrowserEventHandler._cancelTapHighlight();
 
-        if (SelectionHandler.canSelect(target))
-          SelectionHandler.startSelection(target, aX, aY);
+        if (SelectionHandler.canSelect(target)) {
+          if (!SelectionHandler.startSelection(target, {
+              mode: SelectionHandler.SELECT_AT_POINT,
+              x: aX,
+              y: aY
+            })) {
+            SelectionHandler.attachCaret(target);
+          }
+        }
       }
     },
 
@@ -2571,7 +2608,6 @@ function Tab(aURL, aParams) {
   this.browser = null;
   this.id = 0;
   this.lastTouchedAt = Date.now();
-  this.showProgress = true;
   this._zoom = 1.0;
   this._drawZoom = 1.0;
   this._fixedMarginLeft = 0;
@@ -2726,9 +2762,6 @@ Tab.prototype = {
       let postData = ("postData" in aParams && aParams.postData) ? aParams.postData.value : null;
       let referrerURI = "referrerURI" in aParams ? aParams.referrerURI : null;
       let charset = "charset" in aParams ? aParams.charset : null;
-
-      // This determines whether or not we show the progress throbber in the urlbar
-      this.showProgress = "showProgress" in aParams ? aParams.showProgress : true;
 
       // The search term the user entered to load the current URL
       this.userSearch = "userSearch" in aParams ? aParams.userSearch : "";
@@ -2913,7 +2946,7 @@ Tab.prototype = {
     // we should never be drawing background tabs at resolutions other than the user-
     // visible zoom. for foreground tabs, however, if we are drawing at some other
     // resolution, we need to set the resolution as specified.
-    let cwu = window.top.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
+    let cwu = this.browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
     if (BrowserApp.selectedTab == this) {
       if (resolution != this._drawZoom) {
         this._drawZoom = resolution;
@@ -2931,8 +2964,6 @@ Tab.prototype = {
     let geckoScrollX = this.browser.contentWindow.scrollX;
     let geckoScrollY = this.browser.contentWindow.scrollY;
     aDisplayPort = this._dirtiestHackEverToWorkAroundGeckoRounding(aDisplayPort, geckoScrollX, geckoScrollY);
-
-    cwu = this.browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
 
     let displayPort = {
       x: (aDisplayPort.left / resolution) - geckoScrollX,
@@ -3186,7 +3217,7 @@ Tab.prototype = {
     if (aForce || !fuzzyEquals(aZoom, this._zoom)) {
       this._zoom = aZoom;
       if (BrowserApp.selectedTab == this) {
-        let cwu = window.top.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
+        let cwu = this.browser.contentWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
         this._drawZoom = aZoom;
         cwu.setResolution(aZoom / window.devicePixelRatio, aZoom / window.devicePixelRatio);
       }
@@ -3478,6 +3509,60 @@ Tab.prototype = {
             };
             sendMessageToJava(json);
           } catch (e) {}
+        } else if (list.indexOf("[search]" != -1)) {
+          let type = target.type && target.type.toLowerCase();
+
+          // Replace all starting or trailing spaces or spaces before "*;" globally w/ "".
+          type = type.replace(/^\s+|\s*(?:;.*)?$/g, "");
+
+          // Check that type matches opensearch.
+          let isOpenSearch = (type == "application/opensearchdescription+xml");
+          if (isOpenSearch && target.title && /^(?:https?|ftp):/i.test(target.href)) {
+            let visibleEngines = Services.search.getVisibleEngines();
+            // NOTE: Engines are currently identified by name, but this can be changed
+            // when Engines are identified by URL (see bug 335102).
+            if (visibleEngines.some(function(e) {
+              return e.name == target.title;
+            })) {
+              // This engine is already present, do nothing.
+              return;
+            }
+
+            if (this.browser.engines) {
+              // This engine has already been handled, do nothing.
+              if (this.browser.engines.some(function(e) {
+                return e.url == target.href;
+              })) {
+                  return;
+              }
+            } else {
+              this.browser.engines = [];
+            }
+
+            // Get favicon.
+            let iconURL = target.ownerDocument.documentURIObject.prePath + "/favicon.ico";
+
+            let newEngine = {
+              title: target.title,
+              url: target.href,
+              iconURL: iconURL
+            };
+
+            this.browser.engines.push(newEngine);
+
+            // Don't send a message to display engines if we've already handled an engine.
+            if (this.browser.engines.length > 1)
+              return;
+
+            // Broadcast message that this tab contains search engines that should be visible.
+            let newEngineMessage = {
+              type: "Link:OpenSearch",
+              tabID: this.id,
+              visible: true
+            };
+
+            sendMessageToJava(newEngineMessage);
+          }
         }
         break;
       }
@@ -3632,10 +3717,11 @@ Tab.prototype = {
         return;
       }
 
-      // Check to see if we restoring the content from a previous presentation (session)
-      // since there should be no real network activity
-      let restoring = aStateFlags & Ci.nsIWebProgressListener.STATE_RESTORING;
-      let showProgress = restoring ? false : this.showProgress;
+      // Clear page-specific opensearch engines and feeds for a new request.
+      if (aStateFlags & Ci.nsIWebProgressListener.STATE_START && aRequest && aWebProgress.isTopLevel) {
+        this.browser.engines = null;
+        this.browser.feeds = null;
+      }
 
       // true if the page loaded successfully (i.e., no 404s or other errors)
       let success = false; 
@@ -3651,6 +3737,11 @@ Tab.prototype = {
         success = aRequest.QueryInterface(Components.interfaces.nsIHttpChannel).requestSucceeded;
       } catch (e) { }
 
+      // Check to see if we restoring the content from a previous presentation (session)
+      // since there should be no real network activity
+      let restoring = aStateFlags & Ci.nsIWebProgressListener.STATE_RESTORING;
+      let showProgress = restoring ? false : shouldShowProgress(uri);
+
       let message = {
         type: "Content:StateChange",
         tabID: this.id,
@@ -3660,9 +3751,6 @@ Tab.prototype = {
         success: success
       };
       sendMessageToJava(message);
-
-      // Reset showProgress after state change
-      this.showProgress = true;
     }
   },
 
@@ -4197,7 +4285,9 @@ var BrowserEventHandler = {
     if (closest) {
       let uri = this._getLinkURI(closest);
       if (uri) {
-        Services.io.QueryInterface(Ci.nsISpeculativeConnect).speculativeConnect(uri, null);
+        try {
+          Services.io.QueryInterface(Ci.nsISpeculativeConnect).speculativeConnect(uri, null);
+        } catch (e) {}
       }
       this._doTapHighlight(closest);
     }
@@ -4306,15 +4396,15 @@ var BrowserEventHandler = {
               element = ElementTouchHelper.anyElementFromPoint(x, y);
             }
 
+            // Was the element already focused before it was clicked?
+            let isFocused = (element == BrowserApp.getFocusedInput(BrowserApp.selectedBrowser));
+
             this._sendMouseEvent("mousemove", element, x, y);
             this._sendMouseEvent("mousedown", element, x, y);
             this._sendMouseEvent("mouseup",   element, x, y);
 
-            // See if its an input element, and it isn't disabled, nor handled by Android native dialog
-            if (!element.disabled &&
-                !InputWidgetHelper.hasInputWidget(element) &&
-                ((element instanceof HTMLInputElement && element.mozIsTextField(false)) ||
-                (element instanceof HTMLTextAreaElement)))
+            // If the element was previously focused, show the caret attached to it.
+            if (isFocused)
               SelectionHandler.attachCaret(element);
 
             // scrollToFocusedInput does its own checks to find out if an element should be zoomed into
@@ -6103,36 +6193,6 @@ var ClipboardHelper = {
   // Recorded so search with option can be removed/replaced when default engine changed.
   _searchMenuItem: -1,
 
-  init: function() {
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copy"), ClipboardHelper.getCopyContext(false), ClipboardHelper.copy.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.copyAll"), ClipboardHelper.getCopyContext(true), ClipboardHelper.copy.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.selectWord"), ClipboardHelper.selectWordContext, ClipboardHelper.selectWord.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.selectAll"), ClipboardHelper.selectAllContext, ClipboardHelper.selectAll.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.share"), ClipboardHelper.shareContext, ClipboardHelper.share.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.paste"), ClipboardHelper.pasteContext, ClipboardHelper.paste.bind(ClipboardHelper));
-    NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.changeInputMethod"), NativeWindow.contextmenus.textContext, ClipboardHelper.inputMethod.bind(ClipboardHelper));
-
-    // We add this contextmenu item right before the menu is built to avoid having to initialise the search service early.
-    Services.obs.addObserver(this, "before-build-contextmenu", false);
-  },
-
-  uninit: function ch_uninit() {
-    Services.obs.removeObserver(this, "before-build-contextmenu");
-  },
-
-  observe: function observe(aSubject, aTopic) {
-    if (aTopic == "before-build-contextmenu") {
-      this._setSearchMenuItem();
-    }
-  },
-
-  _setSearchMenuItem: function setSearchMenuItem() {
-    if (this._searchMenuItem) {
-      NativeWindow.contextmenus.remove(this._searchMenuItem);
-    }
-    this._searchMenuItem = NativeWindow.contextmenus.add(Strings.browser.formatStringFromName("contextmenu.search", [Services.search.defaultEngine.name], 1), ClipboardHelper.searchWithContext, ClipboardHelper.searchWith.bind(ClipboardHelper));
-  },
-
   get clipboardHelper() {
     delete this.clipboardHelper;
     return this.clipboardHelper = Cc["@mozilla.org/widget/clipboardhelper;1"].getService(Ci.nsIClipboardHelper);
@@ -6144,7 +6204,7 @@ var ClipboardHelper = {
   },
 
   copy: function(aElement, aX, aY) {
-    if (SelectionHandler.shouldShowContextMenu(aX, aY)) {
+    if (SelectionHandler.isSelectionActive()) {
       SelectionHandler.copySelection();
       return;
     }
@@ -6160,11 +6220,11 @@ var ClipboardHelper = {
   },
 
   selectWord: function(aElement, aX, aY) {
-    SelectionHandler.startSelection(aElement, aX, aY);
-  },
-
-  selectAll: function(aElement, aX, aY) {
-    SelectionHandler.selectAll(aElement, aX, aY);
+    SelectionHandler.startSelection(aElement, {
+      mode: SelectionHandler.SELECT_AT_POINT,
+      x: aX,
+      y: aY
+    });
   },
 
   searchWith: function(aElement) {
@@ -6191,7 +6251,7 @@ var ClipboardHelper = {
     return {
       matches: function(aElement, aX, aY) {
         // Do not show "Copy All" for normal non-input text selection.
-        if (!isCopyAll && SelectionHandler.shouldShowContextMenu(aX, aY))
+        if (!isCopyAll && SelectionHandler.isSelectionActive())
           return true;
 
         if (NativeWindow.contextmenus.textContext.matches(aElement)) {
@@ -6224,7 +6284,7 @@ var ClipboardHelper = {
 
   selectAllContext: {
     matches: function selectAllContextMatches(aElement, aX, aY) {
-      if (SelectionHandler.shouldShowContextMenu(aX, aY))
+      if (SelectionHandler.isSelectionActive())
         return true;
 
       if (NativeWindow.contextmenus.textContext.matches(aElement))
@@ -6236,13 +6296,13 @@ var ClipboardHelper = {
 
   shareContext: {
     matches: function shareContextMatches(aElement, aX, aY) {
-      return SelectionHandler.shouldShowContextMenu(aX, aY);
+      return SelectionHandler.isSelectionActive();
     }
   },
 
   searchWithContext: {
     matches: function searchWithContextMatches(aElement, aX, aY) {
-      return SelectionHandler.shouldShowContextMenu(aX, aY);
+      return SelectionHandler.isSelectionActive();
     }
   },
 
@@ -6251,6 +6311,16 @@ var ClipboardHelper = {
       if (NativeWindow.contextmenus.textContext.matches(aElement)) {
         let flavors = ["text/unicode"];
         return ClipboardHelper.clipboard.hasDataMatchingFlavors(flavors, flavors.length, Ci.nsIClipboard.kGlobalClipboard);
+      }
+      return false;
+    }
+  },
+
+  cutContext: {
+    matches: function(aElement) {
+      let copyctx = ClipboardHelper.getCopyContext(false);
+      if (NativeWindow.contextmenus.textContext.matches(aElement)) {
+        return copyctx.matches(aElement);
       }
       return false;
     }
@@ -6555,20 +6625,50 @@ var SearchEngines = {
   PREF_SUGGEST_PROMPTED: "browser.search.suggest.prompted",
 
   init: function init() {
+    Services.obs.addObserver(this, "SearchEngines:Add", false);
     Services.obs.addObserver(this, "SearchEngines:Get", false);
     Services.obs.addObserver(this, "SearchEngines:GetVisible", false);
     Services.obs.addObserver(this, "SearchEngines:SetDefault", false);
     Services.obs.addObserver(this, "SearchEngines:Remove", false);
-    let contextName = Strings.browser.GetStringFromName("contextmenu.addSearchEngine");
+
     let filter = {
       matches: function (aElement) {
-        return (aElement.form && NativeWindow.contextmenus.textContext.matches(aElement));
+        // Copied from body of isTargetAKeywordField function in nsContextMenu.js
+        if(!(aElement instanceof HTMLInputElement))
+          return false;
+        let form = aElement.form;
+        if (!form || aElement.type == "password")
+          return false;
+
+        let method = form.method.toUpperCase();
+
+        // These are the following types of forms we can create keywords for:
+        //
+        // method    encoding type        can create keyword
+        // GET       *                                   YES
+        //           *                                   YES
+        // POST      *                                   YES
+        // POST      application/x-www-form-urlencoded   YES
+        // POST      text/plain                          NO ( a little tricky to do)
+        // POST      multipart/form-data                 NO
+        // POST      everything else                     YES
+        return (method == "GET" || method == "") ||
+               (form.enctype != "text/plain") && (form.enctype != "multipart/form-data");
       }
     };
-    this._contextMenuId = NativeWindow.contextmenus.add(contextName, filter, this.addEngine);
+    SelectionHandler.actions.SEARCH_ADD = {
+      id: "add_search_action",
+      label: Strings.browser.GetStringFromName("contextmenu.addSearchEngine"),
+      icon: "drawable://ic_url_bar_search",
+      selector: filter,
+      action: function(aElement) {
+        SearchEngines.addEngine(aElement);
+      }
+    }
   },
 
   uninit: function uninit() {
+    Services.obs.removeObserver(this, "SearchEngines:Add");
     Services.obs.removeObserver(this, "SearchEngines:Get");
     Services.obs.removeObserver(this, "SearchEngines:GetVisible");
     Services.obs.removeObserver(this, "SearchEngines:SetDefault");
@@ -6631,7 +6731,9 @@ var SearchEngines = {
     let searchURI = Services.search.defaultEngine.getSubmission("dummy").uri;
     let callbacks = window.QueryInterface(Ci.nsIInterfaceRequestor)
                           .getInterface(Ci.nsIWebNavigation).QueryInterface(Ci.nsILoadContext);
-    connector.speculativeConnect(searchURI, callbacks);
+    try {
+      connector.speculativeConnect(searchURI, callbacks);
+    } catch (e) {}
   },
 
   _handleSearchEnginesGetAll: function _handleSearchEnginesGetAll(rv) {
@@ -6650,6 +6752,9 @@ var SearchEngines = {
   observe: function observe(aSubject, aTopic, aData) {
     let engine;
     switch(aTopic) {
+      case "SearchEngines:Add":
+        this.displaySearchEnginesList(aData);
+        break;
       case "SearchEngines:GetVisible":
         Services.search.init(this._handleSearchEnginesGetVisible.bind(this));
         break;
@@ -6674,6 +6779,64 @@ var SearchEngines = {
         dump("Unexpected message type observed: " + aTopic);
         break;
     }
+  },
+
+  // Display context menu listing names of the search engines available to be added.
+  displaySearchEnginesList: function displaySearchEnginesList(aData) {
+    let data = JSON.parse(aData);
+    let tab = BrowserApp.getTabForId(data.tabId);
+
+    if (!tab)
+      return;
+
+    let browser = tab.browser;
+    let engines = browser.engines;
+
+    let p = new Prompt({
+      window: browser.contentWindow
+    }).setSingleChoiceItems(engines.map(function(e) {
+      return { label: e.title };
+    })).show((function(data) {
+      if (data.button == -1)
+        return;
+
+      this.addOpenSearchEngine(engines[data.button]);
+      engines.splice(data.button, 1);
+
+      if (engines.length < 1) {
+        // Broadcast message that there are no more add-able search engines.
+        let newEngineMessage = {
+          type: "Link:OpenSearch",
+          tabID: tab.id,
+          visible: false
+        };
+
+        sendMessageToJava(newEngineMessage);
+      }
+    }).bind(this));
+  },
+
+  addOpenSearchEngine: function addOpenSearchEngine(engine) {
+    Services.search.addEngine(engine.url, Ci.nsISearchEngine.DATA_XML, engine.iconURL, false, {
+      onSuccess: function() {
+        // Display a toast confirming addition of new search engine.
+        NativeWindow.toast.show(Strings.browser.formatStringFromName("alertSearchEngineAddedToast", [engine.title], 1), "long");
+      },
+
+      onError: function(aCode) {
+        let errorMessage;
+        if (aCode == 2) {
+          // Engine is a duplicate.
+          errorMessage = "alertSearchEngineDuplicateToast";
+
+        } else {
+          // Unknown failure. Display general error message.
+          errorMessage = "alertSearchEngineErrorToast";
+        }
+
+        NativeWindow.toast.show(Strings.browser.formatStringFromName(errorMessage, [engine.title], 1), "long");
+      }
+    });
   },
 
   addEngine: function addEngine(aElement) {
@@ -7117,6 +7280,7 @@ var RemoteDebugger = {
     // Make prompt. Note: button order is in reverse.
     let prompt = new Prompt({
       window: null,
+      hint: "remotedebug",
       title: title,
       message: msg,
       buttons: [ agree, cancel, disable ],
@@ -7601,6 +7765,7 @@ let Reader = {
     let browser = document.createElement("browser");
     browser.setAttribute("type", "content");
     browser.setAttribute("collapsed", "true");
+    browser.setAttribute("disablehistory", "true");
 
     document.documentElement.appendChild(browser);
     browser.stop();
@@ -7970,34 +8135,63 @@ var Distribution = {
 };
 
 var Tabs = {
-  // This object provides functions to manage a most-recently-used list
-  // of tabs. Each tab has a timestamp associated with it that indicates when
-  // it was last touched.
-
   _enableTabExpiration: false,
+  _domains: new Set(),
 
   init: function() {
-    // on low-memory platforms, always allow tab expiration. on high-mem
-    // platforms, allow it to be turned on once we hit a low-mem situation
+    // On low-memory platforms, always allow tab expiration. On high-mem
+    // platforms, allow it to be turned on once we hit a low-mem situation.
     if (BrowserApp.isOnLowMemoryPlatform) {
       this._enableTabExpiration = true;
     } else {
       Services.obs.addObserver(this, "memory-pressure", false);
     }
+
+    Services.obs.addObserver(this, "Session:Prefetch", false);
+
+    BrowserApp.deck.addEventListener("pageshow", this, false);
   },
 
   uninit: function() {
     if (!this._enableTabExpiration) {
-      // if _enableTabExpiration is true then we won't have this
+      // If _enableTabExpiration is true then we won't have this
       // observer registered any more.
       Services.obs.removeObserver(this, "memory-pressure");
     }
+
+    Services.obs.removeObserver(this, "Session:Prefetch");
+
+    BrowserApp.deck.removeEventListener("pageshow", this);
   },
 
   observe: function(aSubject, aTopic, aData) {
-    if (aTopic == "memory-pressure" && aData != "heap-minimize") {
-      this._enableTabExpiration = true;
-      Services.obs.removeObserver(this, "memory-pressure");
+    switch (aTopic) {
+      case "memory-pressure":
+        if (aData != "heap-minimize") {
+          this._enableTabExpiration = true;
+          Services.obs.removeObserver(this, "memory-pressure");
+        }
+        break;
+      case "Session:Prefetch":
+        if (aData) {
+          let uri = Services.io.newURI(aData, null, null);
+          if (uri && !this._domains.has(uri.host)) {
+            try {
+              Services.io.QueryInterface(Ci.nsISpeculativeConnect).speculativeConnect(uri, null);
+              this._domains.add(uri.host);
+            } catch (e) {}
+          }
+        }
+        break;
+    }
+  },
+
+  handleEvent: function(aEvent) {
+    switch (aEvent.type) {
+      case "pageshow":
+        // Clear the domain cache whenever a page get loaded into any browser.
+        this._domains.clear();
+        break;
     }
   },
 
@@ -8005,30 +8199,32 @@ var Tabs = {
     aTab.lastTouchedAt = Date.now();
   },
 
+  // Manage the most-recently-used list of tabs. Each tab has a timestamp
+  // associated with it that indicates when it was last touched.
   expireLruTab: function() {
     if (!this._enableTabExpiration) {
       return false;
     }
     let expireTimeMs = Services.prefs.getIntPref("browser.tabs.expireTime") * 1000;
     if (expireTimeMs < 0) {
-      // this behaviour is disabled
+      // This behaviour is disabled.
       return false;
     }
     let tabs = BrowserApp.tabs;
     let selected = BrowserApp.selectedTab;
     let lruTab = null;
-    // find the least recently used non-zombie tab
+    // Find the least recently used non-zombie tab.
     for (let i = 0; i < tabs.length; i++) {
       if (tabs[i] == selected || tabs[i].browser.__SS_restore) {
-        // this tab is selected or already a zombie, skip it
+        // This tab is selected or already a zombie, skip it.
         continue;
       }
       if (lruTab == null || tabs[i].lastTouchedAt < lruTab.lastTouchedAt) {
         lruTab = tabs[i];
       }
     }
-    // if the tab was last touched more than browser.tabs.expireTime seconds ago,
-    // zombify it
+    // If the tab was last touched more than browser.tabs.expireTime seconds ago,
+    // zombify it.
     if (lruTab) {
       let tabAgeMs = Date.now() - lruTab.lastTouchedAt;
       if (tabAgeMs > expireTimeMs) {
@@ -8040,7 +8236,7 @@ var Tabs = {
     return false;
   },
 
-  // for debugging
+  // For debugging
   dump: function(aPrefix) {
     let tabs = BrowserApp.tabs;
     for (let i = 0; i < tabs.length; i++) {

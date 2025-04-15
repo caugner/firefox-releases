@@ -5,6 +5,7 @@
 #include "FocusManager.h"
 
 #include "Accessible-inl.h"
+#include "AccIterator.h"
 #include "DocAccessible-inl.h"
 #include "nsAccessibilityService.h"
 #include "nsAccUtils.h"
@@ -286,10 +287,38 @@ FocusManager::ProcessFocusEvent(AccEvent* aEvent)
   }
 
   // Fire menu start/end events for ARIA menus.
-  if (target->ARIARole() == roles::MENUITEM) {
+  if (target->IsARIARole(nsGkAtoms::menuitem)) {
     // The focus was moved into menu.
-    Accessible* ARIAMenubar =
-      nsAccUtils::GetAncestorWithRole(target, roles::MENUBAR);
+    bool tryOwnsParent = true;
+    Accessible* ARIAMenubar = nullptr;
+    Accessible* child = target;
+    Accessible* parent = child->Parent();
+    while (parent) {
+      nsRoleMapEntry* roleMap = parent->ARIARoleMap();
+      if (roleMap) {
+        if (roleMap->Is(nsGkAtoms::menubar)) {
+          ARIAMenubar = parent;
+          break;
+        }
+
+        // Go up in the parent chain of the menu hierarchy.
+        if (roleMap->Is(nsGkAtoms::menuitem) || roleMap->Is(nsGkAtoms::menu)) {
+          child = parent;
+          parent = child->Parent();
+          tryOwnsParent = true;
+          continue;
+        }
+      }
+
+      // If no required context role then check aria-owns relation.
+      if (!tryOwnsParent)
+        break;
+
+      RelatedAccIterator iter(child->Document(), child->GetContent(),
+                              nsGkAtoms::aria_owns);
+      parent = iter.Next();
+      tryOwnsParent = false;
+    }
 
     if (ARIAMenubar != mActiveARIAMenubar) {
       // Leaving ARIA menu. Fire menu_end event on current menubar.

@@ -14,11 +14,10 @@ XPIDL_SOURCES += [
     'nsIPluginInputStream.idl',
     'nsIPluginInstanceOwner.idl',
     'nsIPluginTag.idl',
-    'nsIPluginTagInfo.idl',
     'nspluginroot.idl',
 ]
 
-MODULE = 'plugin'
+XPIDL_MODULE = 'plugin'
 
 EXPORTS += [
     'npapi.h',
@@ -42,50 +41,55 @@ EXPORTS.mozilla += [
     'PluginPRLibrary.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'nsJSNPRuntime.cpp',
+    'nsPluginInstanceOwner.cpp',
+    'nsPluginModule.cpp',
+    'nsPluginPlayPreviewInfo.cpp',
+    'PluginPRLibrary.cpp',
+]
+
+# These files cannot be built in unified mode because they force NSPR logging.
+SOURCES += [
     'nsNPAPIPlugin.cpp',
     'nsNPAPIPluginInstance.cpp',
     'nsNPAPIPluginStreamListener.cpp',
     'nsPluginHost.cpp',
-    'nsPluginInstanceOwner.cpp',
-    'nsPluginModule.cpp',
-    'nsPluginPlayPreviewInfo.cpp',
     'nsPluginStreamListenerPeer.cpp',
     'nsPluginTags.cpp',
-    'PluginPRLibrary.cpp',
 ]
 
 if CONFIG['OS_ARCH'] == 'WINNT':
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'nsPluginDirServiceProvider.cpp',
         'nsPluginNativeWindowWin.cpp',
         'nsPluginsDirWin.cpp',
     ]
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'os2':
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'nsPluginNativeWindowOS2.cpp',
         'nsPluginsDirOS2.cpp',
     ]
 elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'nsPluginNativeWindow.cpp',
         'nsPluginsDirDarwin.cpp',
     ]
 else:
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'nsPluginsDirUnix.cpp',
     ]
     if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gtk2':
+        # This file cannot be built in unified mode because of name clashes in X11 headers.
         SOURCES += [
             'nsPluginNativeWindowGtk2.cpp',
         ]
     elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'qt':
-        SOURCES += [
+        UNIFIED_SOURCES += [
             'nsPluginNativeWindowQt.cpp',
         ]
     else:
-        SOURCES += [
+        UNIFIED_SOURCES += [
             'nsPluginNativeWindow.cpp',
         ]
 
@@ -95,19 +99,32 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] != 'android':
     # Therefore, enable FAIL_ON_WARNINGS only on non-Android platforms.
     FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
-
-LIBRARY_NAME = 'gkplugin'
-
-EXPORT_LIBRARY = True
 
 LOCAL_INCLUDES += [
     '/content/base/src',
     '/dom/base',
+    '/gfx/skia/include/config',
+    '/gfx/skia/include/core',
     '/layout/generic',
-    '/layout/xul/base/src',
+    '/layout/xul',
+    '/widget/android',
+    '/widget/xpwidgets',
+    '/xpcom/base',
 ]
 
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android':
+    LOCAL_INCLUDES += [
+        '/dom/plugins/base/android',
+    ]
+
+if CONFIG['OS_ARCH'] == 'WINNT':
+    LOCAL_INCLUDES += [
+        '/xpcom/base',
+    ]
+
 include('/ipc/chromium/chromium-config.mozbuild')
+
+DEFINES['SK_BUILD_FOR_ANDROID_NDK'] = True
+
+FINAL_LIBRARY = 'xul'

@@ -72,6 +72,10 @@ public:
                            const Rect &aSource,
                            const DrawSurfaceOptions &aSurfOptions = DrawSurfaceOptions(),
                            const DrawOptions &aOptions = DrawOptions());
+  virtual void DrawFilter(FilterNode *aNode,
+                          const Rect &aSourceRect,
+                          const Point &aDestPoint,
+                          const DrawOptions &aOptions = DrawOptions());
   virtual void DrawSurfaceWithShadow(SourceSurface *aSurface,
                                      const Point &aDest,
                                      const Color &aColor,
@@ -146,9 +150,13 @@ public:
                         uint32_t aNumStops,
                         ExtendMode aExtendMode = EXTEND_CLAMP) const;
 
+  virtual TemporaryRef<FilterNode> CreateFilter(FilterType aType);
+
   virtual void *GetNativeSurface(NativeSurfaceType aType);
 
   bool Init(cairo_surface_t* aSurface, const IntSize& aSize);
+  bool Init(const IntSize& aSize, SurfaceFormat aFormat);
+  bool Init(unsigned char* aData, const IntSize &aSize, int32_t aStride, SurfaceFormat aFormat);
 
   virtual void SetTransform(const Matrix& aTransform);
 
@@ -158,6 +166,10 @@ public:
   void PrepareForDrawing(cairo_t* aContext, const Path* aPath = nullptr);
 
   static cairo_surface_t *GetDummySurface();
+
+  static TemporaryRef<SourceSurface>
+      CreateSourceSurfaceForCairoSurface(cairo_surface_t* aSurface,
+                                         SurfaceFormat aFormat);
 
 private: // methods
   // Init cairo surface without doing a cairo_surface_reference() call.

@@ -229,7 +229,7 @@ CssHtmlTree.processTemplate = function CssHtmlTree_processTemplate(aTemplate,
 };
 
 XPCOMUtils.defineLazyGetter(CssHtmlTree, "_strings", function() Services.strings
-        .createBundle("chrome://browser/locale/devtools/styleinspector.properties"));
+        .createBundle("chrome://global/locale/devtools/styleinspector.properties"));
 
 XPCOMUtils.defineLazyGetter(this, "clipboardHelper", function() {
   return Cc["@mozilla.org/widget/clipboardhelper;1"].
@@ -1239,9 +1239,11 @@ SelectorView.prototype = {
     }
 
     let contentDoc = null;
-    let rawNode = this.tree.viewedElement.rawNode();
-    if (rawNode) {
-      contentDoc = rawNode.ownerDocument;
+    if (this.tree.viewedElement.isLocal_toBeDeprecated()) {
+      let rawNode = this.tree.viewedElement.rawNode();
+      if (rawNode) {
+        contentDoc = rawNode.ownerDocument;
+      }
     }
 
     let viewSourceUtils = inspector.viewSourceUtils;

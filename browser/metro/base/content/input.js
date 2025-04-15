@@ -27,13 +27,6 @@ const kMaxVelocity = 6;
  * prefs
  */
 
-// A debug pref that when set makes us treat all precise pointer input
-// as imprecise touch input. For debugging purposes only. Note there are
-// subtle event sequencing differences in this feature when running on
-// the desktop using the win32 widget backend and the winrt widget backend
-// in metro. Fixing something in this mode does not insure the bug is
-// in metro.
-const kDebugMouseInputPref = "metro.debug.treatmouseastouch";
 // Display rects around selection ranges. Useful in debugging
 // selection problems.
 const kDebugSelectionDisplayPref = "metro.debug.selection.displayRanges";
@@ -93,7 +86,6 @@ var TouchModule = {
 
     // capture phase events
     window.addEventListener("CancelTouchSequence", this, true);
-    window.addEventListener("dblclick", this, true);
     window.addEventListener("keydown", this, true);
     window.addEventListener("MozMouseHittest", this, true);
 
@@ -103,16 +95,9 @@ var TouchModule = {
     window.addEventListener("touchmove", this, false);
     window.addEventListener("touchend", this, false);
 
-    try {
-      this._treatMouseAsTouch = Services.prefs.getBoolPref(kDebugMouseInputPref);
-    } catch (e) {}
+    Services.obs.addObserver(this, "Gesture:SingleTap", false);
+    Services.obs.addObserver(this, "Gesture:DoubleTap", false);
   },
-
-  /*
-   * Mouse input source tracking
-   */
-
-  _treatMouseAsTouch: false,
 
   /*
    * Events
@@ -144,26 +129,21 @@ var TouchModule = {
           case "touchend":
             this._onTouchEnd(aEvent);
             break;
-          case "dblclick":
-            // XXX This will get picked up somewhere below us for "double tap to zoom"
-            // once we get omtc and the apzc. Currently though dblclick is delivered to
-            // content and triggers selection of text, so fire up the SelectionHelperUI
-            // once selection is present.
-            if (!InputSourceHelper.isPrecise &&
-                !SelectionHelperUI.isActive &&
-                !FindHelperUI.isActive) {
-              setTimeout(function () {
-                SelectionHelperUI.attachEditSession(Browser.selectedTab.browser,
-                                                    aEvent.clientX, aEvent.clientY);
-              }, 50);
-            }
-            break;
           case "keydown":
             this._handleKeyDown(aEvent);
             break;
           case "MozMouseHittest":
-            // Used by widget to hit test chrome vs content
-            if (aEvent.target.ownerDocument == document) {
+            // Used by widget to hit test chrome vs content. Make sure the XUl scrollbars
+            // are counted as "chrome". Since the XUL scrollbars have sub-elements we walk
+            // the parent chain to ensure we catch all of those as well.
+            let onScrollbar = false;
+            for (let node = aEvent.originalTarget; node instanceof XULElement; node = node.parentNode) {
+              if (node.tagName == 'scrollbar') {
+                onScrollbar = true;
+                break;
+              }
+            }
+            if (onScrollbar || aEvent.target.ownerDocument == document) {
               aEvent.preventDefault();
             }
             aEvent.stopPropagation();
@@ -200,6 +180,16 @@ var TouchModule = {
     }
   },
 
+  observe: function BrowserUI_observe(aSubject, aTopic, aData) {
+    switch (aTopic) {
+      case "Gesture:SingleTap":
+      case "Gesture:DoubleTap":
+        Browser.selectedBrowser.messageManager.sendAsyncMessage(aTopic, JSON.parse(aData));
+        break;
+    }
+  },
+
+
   sample: function sample(aTimeStamp) {
     this._waitingForPaint = false;
   },
@@ -221,15 +211,6 @@ var TouchModule = {
   },
 
   _onContextMenu: function _onContextMenu(aEvent) {
-    // Special case when running on the desktop, fire off
-    // a edge ui event when we get the contextmenu event.
-    if (this._treatMouseAsTouch) {
-      let event = document.createEvent("Events");
-      event.initEvent("MozEdgeUICompleted", true, false);
-      window.dispatchEvent(event);
-      return;
-    }
-
     // bug 598965 - chrome UI should stop to be pannable once the
     // context menu has appeared.
     if (ContextMenuUI.popupState) {
@@ -321,12 +302,6 @@ var TouchModule = {
       this._isCancellable = false;
       if (aEvent.defaultPrevented) {
         this._isCancelled = true;
-      }
-      // Help out chrome ui elements that want input.js vs. apz scrolling: call
-      // preventDefault when apz is enabled on anything that isn't in the
-      // browser.
-      if (APZCObserver.enabled && aEvent.target.ownerDocument == document) {
-        aEvent.preventDefault();
       }
     }
 

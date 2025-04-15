@@ -63,9 +63,9 @@
 #include "nsTreeUtils.h"
 #include "nsXBLPrototypeBinding.h"
 #include "nsXBLBinding.h"
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Services.h"
-#include "mozilla/Util.h"
 #include "nsDeckFrame.h"
 
 #ifdef MOZ_XUL
@@ -200,8 +200,7 @@ nsAccessibilityService::GetRootDocumentAccessible(nsIPresShell* aPresShell,
   nsIPresShell* ps = aPresShell;
   nsIDocument* documentNode = aPresShell->GetDocument();
   if (documentNode) {
-    nsCOMPtr<nsISupports> container = documentNode->GetContainer();
-    nsCOMPtr<nsIDocShellTreeItem> treeItem(do_QueryInterface(container));
+    nsCOMPtr<nsIDocShellTreeItem> treeItem(documentNode->GetDocShell());
     if (treeItem) {
       nsCOMPtr<nsIDocShellTreeItem> rootTreeItem;
       treeItem->GetRootTreeItem(getter_AddRefs(rootTreeItem));
@@ -1254,11 +1253,7 @@ nsAccessibilityService::CreateAccessibleByType(nsIContent* aContent,
     accessible = new XULMenubarAccessible(aContent, aDoc);
 
   } else if (role.EqualsLiteral("xul:menulist")) {
-      if (aContent->AttrValueIs(kNameSpaceID_None, nsGkAtoms::droppable,
-                                nsGkAtoms::_false, eCaseMatters))
-      accessible = new XULTextFieldAccessible(aContent, aDoc);
-      else
-      accessible = new XULComboboxAccessible(aContent, aDoc);
+    accessible = new XULComboboxAccessible(aContent, aDoc);
 
   } else if (role.EqualsLiteral("xul:menuitem")) {
     accessible = new XULMenuitemAccessibleWrap(aContent, aDoc);
@@ -1315,7 +1310,7 @@ nsAccessibilityService::CreateAccessibleByType(nsIContent* aContent,
     accessible = new XULLabelAccessible(aContent, aDoc);
 
   } else if (role.EqualsLiteral("xul:textbox")) {
-    accessible = new XULTextFieldAccessible(aContent, aDoc);
+    accessible = new EnumRoleAccessible(aContent, aDoc, roles::SECTION);
 
   } else if (role.EqualsLiteral("xul:thumb")) {
     accessible = new XULThumbAccessible(aContent, aDoc);
@@ -1538,6 +1533,9 @@ nsAccessibilityService::CreateAccessibleByFrameType(nsIFrame* aFrame,
       break;
     case eHTMLRangeType:
       newAcc = new HTMLRangeAccessible(aContent, document);
+      break;
+    case eHTMLSpinnerType:
+      newAcc = new HTMLSpinnerAccessible(aContent, document);
       break;
     case eHTMLTableType:
       newAcc = new HTMLTableAccessibleWrap(aContent, document);

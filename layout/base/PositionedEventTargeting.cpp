@@ -174,6 +174,16 @@ IsElementClickable(nsIFrame* aFrame, nsIAtom* stopAt = nullptr)
           tag == nsGkAtoms::label) {
         return true;
       }
+      // Bug 921928: we don't have access to the content of remote iframe.
+      // So fluffing won't go there. We do an optimistic assumption here:
+      // that the content of the remote iframe needs to be a target.
+      if (tag == nsGkAtoms::iframe &&
+          content->AttrValueIs(kNameSpaceID_None, nsGkAtoms::mozbrowser,
+                               nsGkAtoms::_true, eIgnoreCase) &&
+          content->AttrValueIs(kNameSpaceID_None, nsGkAtoms::Remote,
+                               nsGkAtoms::_true, eIgnoreCase)) {
+        return true;
+      }
     } else if (content->IsXUL()) {
       nsIAtom* tag = content->Tag();
       // See nsCSSFrameConstructor::FindXULTagData. This code is not
@@ -217,9 +227,22 @@ AppUnitsFromMM(nsIFrame* aFrame, uint32_t aMM, bool aVertical)
   return NSToCoordRound(result);
 }
 
+/**
+ * Clip aRect with the bounds of aFrame in the coordinate system of
+ * aRootFrame. aRootFrame is an ancestor of aFrame.
+ */
+static nsRect
+ClipToFrame(nsIFrame* aRootFrame, nsIFrame* aFrame, nsRect& aRect)
+{
+  nsRect bound = nsLayoutUtils::TransformFrameRectToAncestor(
+    aFrame, nsRect(nsPoint(0, 0), aFrame->GetSize()), aRootFrame);
+  nsRect result = bound.Intersect(aRect);
+  return result;
+}
+
 static nsRect
 GetTargetRect(nsIFrame* aRootFrame, const nsPoint& aPointRelativeToRootFrame,
-              const EventRadiusPrefs* aPrefs)
+              nsIFrame* aRestrictToDescendants, const EventRadiusPrefs* aPrefs)
 {
   nsMargin m(AppUnitsFromMM(aRootFrame, aPrefs->mSideRadii[0], true),
              AppUnitsFromMM(aRootFrame, aPrefs->mSideRadii[1], false),
@@ -227,7 +250,7 @@ GetTargetRect(nsIFrame* aRootFrame, const nsPoint& aPointRelativeToRootFrame,
              AppUnitsFromMM(aRootFrame, aPrefs->mSideRadii[3], false));
   nsRect r(aPointRelativeToRootFrame, nsSize(0,0));
   r.Inflate(m);
-  return r;
+  return ClipToFrame(aRootFrame, aRestrictToDescendants, r);
 }
 
 static float
@@ -352,13 +375,6 @@ FindFrameTargetedByInputEvent(const WidgetGUIEvent* aEvent,
     return target;
   }
 
-  nsRect targetRect = GetTargetRect(aRootFrame, aPointRelativeToRootFrame, prefs);
-  nsAutoTArray<nsIFrame*,8> candidates;
-  nsresult rv = nsLayoutUtils::GetFramesForArea(aRootFrame, targetRect, candidates, flags);
-  if (NS_FAILED(rv)) {
-    return target;
-  }
-
   // If the exact target is non-null, only consider candidate targets in the same
   // document as the exact target. Otherwise, if an ancestor document has
   // a mouse event handler for example, targets that are !IsElementClickable can
@@ -366,6 +382,15 @@ FindFrameTargetedByInputEvent(const WidgetGUIEvent* aEvent,
   // would be targeted instead.
   nsIFrame* restrictToDescendants = target ?
     target->PresContext()->PresShell()->GetRootFrame() : aRootFrame;
+
+  nsRect targetRect = GetTargetRect(aRootFrame, aPointRelativeToRootFrame,
+                                    restrictToDescendants, prefs);
+  nsAutoTArray<nsIFrame*,8> candidates;
+  nsresult rv = nsLayoutUtils::GetFramesForArea(aRootFrame, targetRect, candidates, flags);
+  if (NS_FAILED(rv)) {
+    return target;
+  }
+
   nsIFrame* closestClickable =
     GetClosest(aRootFrame, aPointRelativeToRootFrame, targetRect, prefs,
                restrictToDescendants, candidates);

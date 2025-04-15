@@ -7,7 +7,7 @@
 
 // This must occur *after* layers/PLayerTransaction.h to avoid
 // typedefs conflicts.
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "ThebesLayerD3D10.h"
 #include "gfxPlatform.h"
@@ -414,36 +414,19 @@ ThebesLayerD3D10::DrawRegion(nsIntRegion &aRegion, SurfaceMode aMode)
     destinationSurface = mD2DSurface;
   }
 
-  nsRefPtr<gfxContext> context;
-  if (mDrawTarget) {
-    context = new gfxContext(mDrawTarget);
-  } else {
-    context = new gfxContext(destinationSurface);
-  }
+  MOZ_ASSERT(mDrawTarget);
+  nsRefPtr<gfxContext> context = new gfxContext(mDrawTarget);
 
   context->Translate(gfxPoint(-visibleRect.x, -visibleRect.y));
-
-  if (mD2DSurface) {
-    if (aMode == SURFACE_SINGLE_CHANNEL_ALPHA) {
-      context->Save();
-      gfxUtils::ClipToRegionSnapped(context, aRegion);
-      context->SetOperator(gfxContext::OPERATOR_CLEAR);
-      context->Paint();
-      context->Restore();
+  if (aMode == SURFACE_SINGLE_CHANNEL_ALPHA) {
+    nsIntRegionRectIterator iter(aRegion);
+    const nsIntRect *iterRect;
+    while ((iterRect = iter.Next())) {
+      mDrawTarget->ClearRect(Rect(iterRect->x, iterRect->y, iterRect->width, iterRect->height));
     }
-
-    mD2DSurface->SetSubpixelAntialiasingEnabled(!(mContentFlags & CONTENT_COMPONENT_ALPHA));
-  } else {
-    if (aMode == SURFACE_SINGLE_CHANNEL_ALPHA) {
-      nsIntRegionRectIterator iter(aRegion);
-      const nsIntRect *iterRect;
-      while ((iterRect = iter.Next())) {
-        mDrawTarget->ClearRect(Rect(iterRect->x, iterRect->y, iterRect->width, iterRect->height));
-      }
-    }
-
-    mDrawTarget->SetPermitSubpixelAA(!(mContentFlags & CONTENT_COMPONENT_ALPHA));
   }
+
+  mDrawTarget->SetPermitSubpixelAA(!(mContentFlags & CONTENT_COMPONENT_ALPHA));
 
   LayerManagerD3D10::CallbackInfo cbInfo = mD3DManager->GetCallbackInfo();
   cbInfo.Callback(this, context, aRegion, CLIP_DRAW, nsIntRegion(), cbInfo.CallbackData);

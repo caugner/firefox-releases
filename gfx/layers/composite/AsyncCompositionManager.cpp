@@ -326,6 +326,16 @@ AsyncCompositionManager::AlignFixedAndStickyLayers(Layer* aLayer,
     return;
   }
 
+  // Fixed layers are relative to their nearest scrollable layer, so when we
+  // encounter a scrollable layer, reset the transform to that layer and remove
+  // the fixed margins.
+  if (aLayer->AsContainerLayer() &&
+      aLayer->AsContainerLayer()->GetFrameMetrics().IsScrollable() &&
+      aLayer != aTransformedSubtreeRoot) {
+    AlignFixedAndStickyLayers(aLayer, aLayer, aLayer->GetTransform(), LayerMargin(0, 0, 0, 0));
+    return;
+  }
+
   for (Layer* child = aLayer->GetFirstChild();
        child; child = child->GetNextSibling()) {
     AlignFixedAndStickyLayers(child, aTransformedSubtreeRoot,
@@ -484,14 +494,8 @@ AsyncCompositionManager::ApplyAsyncContentTransformToTree(TimeStamp aCurrentFram
                                                  &treeTransform,
                                                  scrollOffset);
 
-    const gfx3DMatrix& rootTransform = mLayerManager->GetRoot()->GetTransform();
     const FrameMetrics& metrics = container->GetFrameMetrics();
-    // XXX We use rootTransform instead of metrics.mResolution here because on
-    // Fennec the resolution is set on the root layer rather than the scrollable layer.
-    // The SyncFrameMetrics call and the paintScale variable are used on Fennec only
-    // so it doesn't affect any other platforms. See bug 732971.
-    CSSToLayerScale paintScale = metrics.mDevPixelsPerCSSPixel
-      / LayerToLayoutDeviceScale(rootTransform.GetXScale(), rootTransform.GetYScale());
+    CSSToLayerScale paintScale = metrics.LayersPixelsPerCSSPixel();
     CSSRect displayPort(metrics.mCriticalDisplayPort.IsEmpty() ?
                         metrics.mDisplayPort : metrics.mCriticalDisplayPort);
     LayerMargin fixedLayerMargins(0, 0, 0, 0);
@@ -507,9 +511,9 @@ AsyncCompositionManager::ApplyAsyncContentTransformToTree(TimeStamp aCurrentFram
     mLayerManager->GetCompositor()->SetScreenRenderOffset(offset);
 
     gfx3DMatrix transform(gfx3DMatrix(treeTransform) * aLayer->GetTransform());
-    // The transform already takes the resolution scale into account.  Since we
-    // will apply the resolution scale again when computing the effective
-    // transform, we must apply the inverse resolution scale here.
+    // GetTransform already takes the pre- and post-scale into account.  Since we
+    // will apply the pre- and post-scale again when computing the effective
+    // transform, we must apply the inverses here.
     transform.Scale(1.0f/container->GetPreXScale(),
                     1.0f/container->GetPreYScale(),
                     1);
@@ -522,15 +526,7 @@ AsyncCompositionManager::ApplyAsyncContentTransformToTree(TimeStamp aCurrentFram
 
     // Apply resolution scaling to the old transform - the layer tree as it is
     // doesn't have the necessary transform to display correctly.
-#ifdef MOZ_WIDGET_ANDROID
-    // XXX We use rootTransform instead of the resolution on the individual layer's
-    // FrameMetrics on Fennec because the resolution is set on the root layer rather
-    // than the scrollable layer. See bug 732971. On non-Fennec we do the right thing.
-    LayoutDeviceToLayerScale resolution(1.0 / rootTransform.GetXScale(),
-                                        1.0 / rootTransform.GetYScale());
-#else
     LayoutDeviceToLayerScale resolution = metrics.mCumulativeResolution;
-#endif
     oldTransform.Scale(resolution.scale, resolution.scale, 1);
 
     AlignFixedAndStickyLayers(aLayer, aLayer, oldTransform, fixedLayerMargins);
@@ -538,11 +534,93 @@ AsyncCompositionManager::ApplyAsyncContentTransformToTree(TimeStamp aCurrentFram
     appliedTransform = true;
   }
 
+  if (container->GetScrollbarDirection() != Layer::NONE) {
+    ApplyAsyncTransformToScrollbar(container);
+  }
   return appliedTransform;
 }
 
+static bool
+LayerHasNonContainerDescendants(ContainerLayer* aContainer)
+{
+  for (Layer* child = aContainer->GetFirstChild();
+       child; child = child->GetNextSibling()) {
+    ContainerLayer* container = child->AsContainerLayer();
+    if (!container || LayerHasNonContainerDescendants(container)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void
-AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer, const LayoutDeviceToLayerScale& aResolution)
+AsyncCompositionManager::ApplyAsyncTransformToScrollbar(ContainerLayer* aLayer)
+{
+  // If this layer corresponds to a scrollbar, then search backwards through the
+  // siblings until we find the container layer with the right ViewID; this is
+  // the content that this scrollbar is for. Pick up the transient async transform
+  // from that layer and use it to update the scrollbar position.
+  // Note that it is possible that the content layer is no longer there; in
+  // this case we don't need to do anything because there can't be an async
+  // transform on the content.
+  // We only apply the transform if the scroll-target layer has non-container
+  // children (i.e. when it has some possibly-visible content). This is to
+  // avoid moving scroll-bars in the situation that only a scroll information
+  // layer has been built for a scroll frame, as this would result in a
+  // disparity between scrollbars and visible content.
+  for (Layer* scrollTarget = aLayer->GetPrevSibling();
+       scrollTarget;
+       scrollTarget = scrollTarget->GetPrevSibling()) {
+    if (!scrollTarget->AsContainerLayer()) {
+      continue;
+    }
+    AsyncPanZoomController* apzc = scrollTarget->AsContainerLayer()->GetAsyncPanZoomController();
+    if (!apzc) {
+      continue;
+    }
+    const FrameMetrics& metrics = scrollTarget->AsContainerLayer()->GetFrameMetrics();
+    if (metrics.mScrollId != aLayer->GetScrollbarTargetContainerId()) {
+      continue;
+    }
+    if (!LayerHasNonContainerDescendants(scrollTarget->AsContainerLayer())) {
+      return;
+    }
+
+    gfx3DMatrix asyncTransform = gfx3DMatrix(apzc->GetCurrentAsyncTransform());
+    gfx3DMatrix nontransientTransform = apzc->GetNontransientAsyncTransform();
+    gfx3DMatrix transientTransform = asyncTransform * nontransientTransform.Inverse();
+
+    gfx3DMatrix scrollbarTransform;
+    if (aLayer->GetScrollbarDirection() == Layer::VERTICAL) {
+      float scale = metrics.CalculateCompositedRectInCssPixels().height / metrics.mScrollableRect.height;
+      scrollbarTransform.ScalePost(1.f, 1.f / transientTransform.GetYScale(), 1.f);
+      scrollbarTransform.TranslatePost(gfxPoint3D(0, -transientTransform._42 * scale, 0));
+    }
+    if (aLayer->GetScrollbarDirection() == Layer::HORIZONTAL) {
+      float scale = metrics.CalculateCompositedRectInCssPixels().width / metrics.mScrollableRect.width;
+      scrollbarTransform.ScalePost(1.f / transientTransform.GetXScale(), 1.f, 1.f);
+      scrollbarTransform.TranslatePost(gfxPoint3D(-transientTransform._41 * scale, 0, 0));
+    }
+
+    gfx3DMatrix transform = scrollbarTransform * aLayer->GetTransform();
+    // GetTransform already takes the pre- and post-scale into account.  Since we
+    // will apply the pre- and post-scale again when computing the effective
+    // transform, we must apply the inverses here.
+    transform.Scale(1.0f/aLayer->GetPreXScale(),
+                    1.0f/aLayer->GetPreYScale(),
+                    1);
+    transform.ScalePost(1.0f/aLayer->GetPostXScale(),
+                        1.0f/aLayer->GetPostYScale(),
+                        1);
+    aLayer->AsLayerComposite()->SetShadowTransform(transform);
+
+    return;
+  }
+}
+
+void
+AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer)
 {
   LayerComposite* layerComposite = aLayer->AsLayerComposite();
   ContainerLayer* container = aLayer->AsContainerLayer();
@@ -555,7 +633,7 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer, const LayoutDev
 
   gfx3DMatrix treeTransform;
 
-  CSSToLayerScale geckoZoom = metrics.mDevPixelsPerCSSPixel * aResolution;
+  CSSToLayerScale geckoZoom = metrics.LayersPixelsPerCSSPixel();
 
   LayerIntPoint scrollOffsetLayerPixels = RoundedToInt(metrics.mScrollOffset * geckoZoom);
 
@@ -606,9 +684,9 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer, const LayoutDev
   // transformation we need to apply.
   LayerToScreenScale zoomAdjust = userZoom / geckoZoom;
 
-  LayerIntPoint geckoScroll(0, 0);
+  LayerPoint geckoScroll(0, 0);
   if (metrics.IsScrollable()) {
-    geckoScroll = scrollOffsetLayerPixels;
+    geckoScroll = metrics.mScrollOffset * geckoZoom;
   }
 
   LayerPoint translation = (userScroll / zoomAdjust) - geckoScroll;
@@ -633,7 +711,7 @@ AsyncCompositionManager::TransformScrollableLayer(Layer* aLayer, const LayoutDev
 
   // Apply resolution scaling to the old transform - the layer tree as it is
   // doesn't have the necessary transform to display correctly.
-  oldTransform.Scale(aResolution.scale, aResolution.scale, 1);
+  oldTransform.Scale(metrics.mResolution.scale, metrics.mResolution.scale, 1);
 
   // Make sure that overscroll and under-zoom are represented in the old
   // transform so that fixed position content moves and scales accordingly.
@@ -706,18 +784,7 @@ AsyncCompositionManager::TransformShadowTree(TimeStamp aCurrentFrame)
 
     for (uint32_t i = 0; i < scrollableLayers.Length(); i++) {
       if (scrollableLayers[i]) {
-#ifdef MOZ_WIDGET_ANDROID
-        // XXX We use rootTransform instead of the resolution on the individual layer's
-        // FrameMetrics on Fennec because the resolution is set on the root layer rather
-        // than the scrollable layer. See bug 732971. On non-Fennec we do the right thing.
-        const gfx3DMatrix& rootTransform = root->GetTransform();
-        LayoutDeviceToLayerScale resolution(1.0 / rootTransform.GetXScale(),
-                                            1.0 / rootTransform.GetYScale());
-#else
-        LayoutDeviceToLayerScale resolution =
-            scrollableLayers[i]->AsContainerLayer()->GetFrameMetrics().mCumulativeResolution;
-#endif
-        TransformScrollableLayer(scrollableLayers[i], resolution);
+        TransformScrollableLayer(scrollableLayers[i]);
       }
     }
   }

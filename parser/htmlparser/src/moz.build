@@ -4,9 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'htmlparser'
-
-SOURCES += [
+UNIFIED_SOURCES += [
     'CNavDTD.cpp',
     'CParserContext.cpp',
     'nsElementTable.cpp',
@@ -24,7 +22,6 @@ SOURCES += [
 
 LIBRARY_NAME = 'htmlpars'
 
-LIBXUL_LIBRARY = True
+FAIL_ON_WARNINGS = True
 
-EXPORT_LIBRARY = True
-
+FINAL_LIBRARY = 'xul'

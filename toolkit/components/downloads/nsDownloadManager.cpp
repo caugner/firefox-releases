@@ -52,6 +52,7 @@
 
 #ifdef MOZ_WIDGET_ANDROID
 #include "AndroidBridge.h"
+using namespace mozilla::widget::android;
 #endif
 
 #ifdef MOZ_WIDGET_GTK
@@ -2724,7 +2725,8 @@ nsDownload::SetState(DownloadState aState)
                   NS_LITERAL_STRING(DOWNLOAD_MANAGER_ALERT_ICON), title,
                   message, !removeWhenDone,
                   mPrivate ? NS_LITERAL_STRING("private") : NS_LITERAL_STRING("non-private"),
-                  mDownloadManager, EmptyString(), NS_LITERAL_STRING("auto"), EmptyString());
+                  mDownloadManager, EmptyString(), NS_LITERAL_STRING("auto"),
+                  EmptyString(), nullptr);
             }
         }
       }
@@ -2796,7 +2798,7 @@ nsDownload::SetState(DownloadState aState)
         if (mimeInfo)
           mimeInfo->GetMIMEType(contentType);
 
-        mozilla::AndroidBridge::Bridge()->ScanMedia(path, NS_ConvertUTF8toUTF16(contentType));
+        GeckoAppShell::ScanMedia(path, NS_ConvertUTF8toUTF16(contentType));
 #endif
       }
 

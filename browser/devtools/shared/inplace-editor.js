@@ -183,6 +183,7 @@ function InplaceEditor(aOptions, aEvent)
 
   this._createInput();
   this._autosize();
+  this.inputCharWidth = this._getInputCharWidth();
 
   // Pull out character codes for advanceChars, listing the
   // characters that should trigger a blur.
@@ -333,6 +334,18 @@ InplaceEditor.prototype = {
     }
 
     this.input.style.width = width + "px";
+  },
+
+  /**
+   * Get the width of a single character in the input to properly position the
+   * autocompletion popup.
+   */
+  _getInputCharWidth: function InplaceEditor_getInputCharWidth()
+  {
+    // Just make the text content to be 'x' to get the width of any character in
+    // a monospace font.
+    this._measurement.textContent = "x";
+    return this._measurement.offsetWidth;
   },
 
    /**
@@ -1003,22 +1016,36 @@ InplaceEditor.prototype = {
       if (!query) {
         return;
       }
-
       let list = [];
       if (this.contentType == CONTENT_TYPES.CSS_PROPERTY) {
         list = CSSPropertyList;
       } else if (this.contentType == CONTENT_TYPES.CSS_VALUE) {
-        list = domUtils.getCSSValuesForProperty(this.property.name);
+        // Get the last query to be completed before the caret.
+        let match = /([^\s,.\/]+$)/.exec(query);
+        if (match) {
+          startCheckQuery = match[0];
+        } else {
+          startCheckQuery = "";
+        }
+
+        list =
+          ["!important", ...domUtils.getCSSValuesForProperty(this.property.name)];
       } else if (this.contentType == CONTENT_TYPES.CSS_MIXED &&
                  /^\s*style\s*=/.test(query)) {
         // Detecting if cursor is at property or value;
-        let match = query.match(/([:;"'=]?)\s*([^"';:= ]+)$/);
+        let match = query.match(/([:;"'=]?)\s*([^"';:=]+)$/);
         if (match && match.length == 3) {
           if (match[1] == ":") { // We are in CSS value completion
             let propertyName =
-              query.match(/[;"'=]\s*([^"';:= ]+)\s*:\s*[^"';:= ]+$/)[1];
-            list = domUtils.getCSSValuesForProperty(propertyName);
-            startCheckQuery = match[2];
+              query.match(/[;"'=]\s*([^"';:= ]+)\s*:\s*[^"';:=]+$/)[1];
+            list =
+              ["!important;", ...domUtils.getCSSValuesForProperty(propertyName)];
+            let matchLastQuery = /([^\s,.\/]+$)/.exec(match[2]);
+            if (matchLastQuery) {
+              startCheckQuery = matchLastQuery[0];
+            } else {
+              startCheckQuery = "";
+            }
           } else if (match[1]) { // We are in CSS property name completion
             list = CSSPropertyList;
             startCheckQuery = match[2];
@@ -1030,9 +1057,8 @@ InplaceEditor.prototype = {
           }
         }
       }
-
       list.some(item => {
-        if (item.startsWith(startCheckQuery)) {
+        if (startCheckQuery && item.startsWith(startCheckQuery)) {
           input.value = query + item.slice(startCheckQuery.length) +
                         input.value.slice(query.length);
           input.setSelectionRange(query.length, query.length + item.length -
@@ -1050,7 +1076,7 @@ InplaceEditor.prototype = {
       let finalList = [];
       let length = list.length;
       for (let i = 0, count = 0; i < length && count < MAX_POPUP_ENTRIES; i++) {
-        if (list[i].startsWith(startCheckQuery)) {
+        if (startCheckQuery && list[i].startsWith(startCheckQuery)) {
           count++;
           finalList.push({
             preLabel: startCheckQuery,
@@ -1069,8 +1095,11 @@ InplaceEditor.prototype = {
       }
 
       if (finalList.length > 1) {
+        // Calculate the offset for the popup to be opened.
+        let x = (this.input.selectionStart - startCheckQuery.length) *
+                this.inputCharWidth;
         this.popup.setItems(finalList);
-        this.popup.openPopup(this.input);
+        this.popup.openPopup(this.input, x);
       } else {
         this.popup.hidePopup();
       }

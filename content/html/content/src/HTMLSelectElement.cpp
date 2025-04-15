@@ -11,7 +11,6 @@
 #include "mozilla/dom/HTMLOptGroupElement.h"
 #include "mozilla/dom/HTMLOptionElement.h"
 #include "mozilla/dom/HTMLSelectElementBinding.h"
-#include "mozilla/Util.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsContentList.h"
 #include "nsError.h"
@@ -1426,9 +1425,9 @@ HTMLSelectElement::ParseAttribute(int32_t aNamespaceID,
                                               aResult);
 }
 
-static void
-MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
-                      nsRuleData* aData)
+void
+HTMLSelectElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
+                                         nsRuleData* aData)
 {
   nsGenericHTMLFormElementWithState::MapImageAlignAttributeInto(aAttributes, aData);
   nsGenericHTMLFormElementWithState::MapCommonAttributesInto(aAttributes, aData);

@@ -294,10 +294,20 @@ Section "Uninstall"
 
 !ifdef MOZ_METRO
   ${If} ${AtLeastWin8}
-    ${un.CleanupMetroBrowserHandlerValues} ${DELEGATE_EXECUTE_HANDLER_ID}
+    ${un.CleanupMetroBrowserHandlerValues} ${DELEGATE_EXECUTE_HANDLER_ID} \
+                                           "FirefoxURL" \
+                                           "FirefoxHTML"
   ${EndIf}
   ${ResetWin8PromptKeys}
   ${ResetWin8MetroSplash}
+!else
+  ; The metro browser is not enabled by mozconfig.
+  ${If} ${AtLeastWin8}
+    ${RemoveDEHRegistration} ${DELEGATE_EXECUTE_HANDLER_ID} \
+                             $AppUserModelID \
+                             "FirefoxURL" \
+                             "FirefoxHTML"
+  ${EndIf}
 !endif
 
   ${un.RegCleanAppHandler} "FirefoxURL"

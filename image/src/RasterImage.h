@@ -25,6 +25,7 @@
 #include "nsTArray.h"
 #include "imgFrame.h"
 #include "nsThreadUtils.h"
+#include "DecodeStrategy.h"
 #include "DiscardTracker.h"
 #include "Orientation.h"
 #include "nsIObserver.h"
@@ -311,6 +312,8 @@ public:
     eShutdownIntent_AllCount    = 3
   };
 
+  // Decode strategy
+
 private:
   already_AddRefed<imgStatusTracker> CurrentStatusTracker()
   {
@@ -403,7 +406,7 @@ private:
      * Decode aImg for a short amount of time, and post the remainder to the
      * queue.
      */
-    void DecodeABitOf(RasterImage* aImg);
+    void DecodeABitOf(RasterImage* aImg, DecodeStrategy aStrategy);
 
     /**
      * Ask the DecodePool to stop decoding this image.  Internally, we also
@@ -452,6 +455,7 @@ private:
      * UNTIL_DONE_BYTES, decode until all bytesToDecode bytes are decoded.
      */
     nsresult DecodeSomeOfImage(RasterImage* aImg,
+                               DecodeStrategy aStrategy,
                                DecodeType aDecodeType = DECODE_TYPE_UNTIL_TIME,
                                uint32_t bytesToDecode = 0);
 
@@ -660,6 +664,10 @@ private: // data
   bool                       mInDecoder;
   // END LOCKED MEMBER VARIABLES
 
+  // Notification state. Used to avoid recursive notifications.
+  ImageStatusDiff            mStatusDiff;
+  bool                       mNotifying:1;
+
   // Boolean flags (clustered together to conserve space):
   bool                       mHasSize:1;       // Has SetSize() been called?
   bool                       mDecodeOnDraw:1;  // Decoding on draw?
@@ -691,11 +699,15 @@ private: // data
   bool                       mPendingError:1;
 
   // Decoding
+  nsresult RequestDecodeIfNeeded(nsresult aStatus,
+                                 eShutdownIntent aIntent,
+                                 bool aDone,
+                                 bool aWasSize);
   nsresult WantDecodedFrames();
   nsresult SyncDecode();
-  nsresult InitDecoder(bool aDoSizeDecode, bool aIsSynchronous = false);
-  nsresult WriteToDecoder(const char *aBuffer, uint32_t aCount);
-  nsresult DecodeSomeData(uint32_t aMaxBytes);
+  nsresult InitDecoder(bool aDoSizeDecode);
+  nsresult WriteToDecoder(const char *aBuffer, uint32_t aCount, DecodeStrategy aStrategy);
+  nsresult DecodeSomeData(uint32_t aMaxBytes, DecodeStrategy aStrategy);
   bool     IsDecodeFinished();
   TimeStamp mDrawStartTime;
 

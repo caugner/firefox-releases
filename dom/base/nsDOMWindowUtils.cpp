@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/layers/CompositorParent.h"
-#include "mozilla/layers/PLayerTransactionChild.h"
+#include "mozilla/layers/LayerTransactionChild.h"
 #include "nsPresContext.h"
 #include "nsDOMClassInfoID.h"
 #include "nsError.h"
@@ -83,6 +83,7 @@
 #include "nsIDocShellTreeOwner.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "GeckoProfiler.h"
+#include "mozilla/Preferences.h"
 
 #ifdef XP_WIN
 #undef GetClassName
@@ -855,6 +856,45 @@ nsDOMWindowUtils::SendTouchEvent(const nsAString& aType,
                                  bool aIgnoreRootScrollFrame,
                                  bool *aPreventDefault)
 {
+  return SendTouchEventCommon(aType, aIdentifiers, aXs, aYs, aRxs, aRys,
+                              aRotationAngles, aForces, aCount, aModifiers,
+                              aIgnoreRootScrollFrame, false, aPreventDefault);
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::SendTouchEventToWindow(const nsAString& aType,
+                                         uint32_t* aIdentifiers,
+                                         int32_t* aXs,
+                                         int32_t* aYs,
+                                         uint32_t* aRxs,
+                                         uint32_t* aRys,
+                                         float* aRotationAngles,
+                                         float* aForces,
+                                         uint32_t aCount,
+                                         int32_t aModifiers,
+                                         bool aIgnoreRootScrollFrame,
+                                         bool* aPreventDefault)
+{
+  return SendTouchEventCommon(aType, aIdentifiers, aXs, aYs, aRxs, aRys,
+                              aRotationAngles, aForces, aCount, aModifiers,
+                              aIgnoreRootScrollFrame, true, aPreventDefault);
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::SendTouchEventCommon(const nsAString& aType,
+                                       uint32_t* aIdentifiers,
+                                       int32_t* aXs,
+                                       int32_t* aYs,
+                                       uint32_t* aRxs,
+                                       uint32_t* aRys,
+                                       float* aRotationAngles,
+                                       float* aForces,
+                                       uint32_t aCount,
+                                       int32_t aModifiers,
+                                       bool aIgnoreRootScrollFrame,
+                                       bool aToWindow,
+                                       bool* aPreventDefault)
+{
   if (!nsContentUtils::IsCallerChrome()) {
     return NS_ERROR_DOM_SECURITY_ERR;
   }
@@ -899,6 +939,27 @@ nsDOMWindowUtils::SendTouchEvent(const nsAString& aType,
   }
 
   nsEventStatus status;
+  if (aToWindow) {
+    nsCOMPtr<nsIPresShell> presShell = presContext->PresShell();
+    if (!presShell) {
+      return NS_ERROR_FAILURE;
+    }
+
+    nsViewManager* viewManager = presShell->GetViewManager();
+    if (!viewManager) {
+      return NS_ERROR_FAILURE;
+    }
+
+    nsView* view = viewManager->GetRootView();
+    if (!view) {
+      return NS_ERROR_FAILURE;
+    }
+
+    status = nsEventStatus_eIgnore;
+    *aPreventDefault = (status == nsEventStatus_eConsumeNoDefault);
+    return presShell->HandleEvent(view->GetFrame(), &event, false, &status);
+  }
+
   nsresult rv = widget->DispatchEvent(&event, status);
   *aPreventDefault = (status == nsEventStatus_eConsumeNoDefault);
   return rv;
@@ -1086,6 +1147,63 @@ nsDOMWindowUtils::SendNativeMouseScrollEvent(int32_t aScreenX,
                                                   aDeltaX, aDeltaY, aDeltaZ,
                                                   aModifierFlags,
                                                   aAdditionalFlags);
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::SendNativeTouchPoint(uint32_t aPointerId,
+                                       uint32_t aTouchState,
+                                       int32_t aScreenX,
+                                       int32_t aScreenY,
+                                       double aPressure,
+                                       uint32_t aOrientation)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget) {
+    return NS_ERROR_FAILURE;
+  }
+
+  if (aPressure < 0 || aPressure > 1 || aOrientation > 359) {
+    return NS_ERROR_INVALID_ARG;
+  }
+
+  return widget->SynthesizeNativeTouchPoint(aPointerId,
+                                            (nsIWidget::TouchPointerState)aTouchState,
+                                            nsIntPoint(aScreenX, aScreenY),
+                                            aPressure, aOrientation);
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::SendNativeTouchTap(int32_t aScreenX,
+                                     int32_t aScreenY,
+                                     bool aLongTap)
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget) {
+    return NS_ERROR_FAILURE;
+  }
+  return widget->SynthesizeNativeTouchTap(nsIntPoint(aScreenX, aScreenY), aLongTap);
+}
+
+NS_IMETHODIMP
+nsDOMWindowUtils::ClearNativeTouchSequence()
+{
+  if (!nsContentUtils::IsCallerChrome()) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  nsCOMPtr<nsIWidget> widget = GetWidget();
+  if (!widget) {
+    return NS_ERROR_FAILURE;
+  }
+  return widget->ClearNativeTouchSequence();
 }
 
 NS_IMETHODIMP
@@ -1473,17 +1591,16 @@ nsDOMWindowUtils::SuppressEventHandling(bool aSuppress)
   NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
 
   if (aSuppress) {
-    doc->SuppressEventHandling();
+    doc->SuppressEventHandling(nsIDocument::eEvents);
   } else {
-    doc->UnsuppressEventHandlingAndFireEvents(true);
+    doc->UnsuppressEventHandlingAndFireEvents(nsIDocument::eEvents, true);
   }
 
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsDOMWindowUtils::GetScrollXY(bool aFlushLayout, int32_t* aScrollX, int32_t* aScrollY)
-{
+static nsresult
+getScrollXYAppUnits(nsWeakPtr mWindow, bool aFlushLayout, nsPoint& aScrollPos) {
   if (!nsContentUtils::IsCallerChrome()) {
     return NS_ERROR_DOM_SECURITY_ERR;
   }
@@ -1498,15 +1615,22 @@ nsDOMWindowUtils::GetScrollXY(bool aFlushLayout, int32_t* aScrollX, int32_t* aSc
     doc->FlushPendingNotifications(Flush_Layout);
   }
 
-  nsPoint scrollPos(0,0);
   nsIPresShell *presShell = doc->GetShell();
   if (presShell) {
     nsIScrollableFrame* sf = presShell->GetRootScrollFrameAsScrollable();
     if (sf) {
-      scrollPos = sf->GetScrollPosition();
+      aScrollPos = sf->GetScrollPosition();
     }
   }
+  return NS_OK;
+}
 
+NS_IMETHODIMP
+nsDOMWindowUtils::GetScrollXY(bool aFlushLayout, int32_t* aScrollX, int32_t* aScrollY)
+{
+  nsPoint scrollPos(0,0);
+  nsresult rv = getScrollXYAppUnits(mWindow, aFlushLayout, scrollPos);
+  NS_ENSURE_SUCCESS(rv, rv);
   *aScrollX = nsPresContext::AppUnitsToIntCSSPixels(scrollPos.x);
   *aScrollY = nsPresContext::AppUnitsToIntCSSPixels(scrollPos.y);
 
@@ -1514,18 +1638,13 @@ nsDOMWindowUtils::GetScrollXY(bool aFlushLayout, int32_t* aScrollX, int32_t* aSc
 }
 
 NS_IMETHODIMP
-nsDOMWindowUtils::ScrollToCSSPixelsApproximate(float aX, float aY, bool* aRetVal)
+nsDOMWindowUtils::GetScrollXYFloat(bool aFlushLayout, float* aScrollX, float* aScrollY)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
-  NS_ENSURE_STATE(window);
-
-  nsIScrollableFrame* sf = static_cast<nsGlobalWindow*>(window.get())->GetScrollFrame();
-  if (sf) {
-    sf->ScrollToCSSPixelsApproximate(CSSPoint(aX, aY));
-  }
-  if (aRetVal) {
-    *aRetVal = (sf != nullptr);
-  }
+  nsPoint scrollPos(0,0);
+  nsresult rv = getScrollXYAppUnits(mWindow, aFlushLayout, scrollPos);
+  NS_ENSURE_SUCCESS(rv, rv);
+  *aScrollX = nsPresContext::AppUnitsToFloatCSSPixels(scrollPos.x);
+  *aScrollY = nsPresContext::AppUnitsToFloatCSSPixels(scrollPos.y);
 
   return NS_OK;
 }
@@ -1697,22 +1816,6 @@ nsDOMWindowUtils::FindElementWithViewId(nsViewID aID,
 {
   if (!nsContentUtils::IsCallerChrome()) {
     return NS_ERROR_DOM_SECURITY_ERR;
-  }
-
-  if (aID == FrameMetrics::ROOT_SCROLL_ID) {
-    nsPresContext* presContext = GetPresContext();
-    if (!presContext) {
-      return NS_ERROR_NOT_AVAILABLE;
-    }
-
-    nsIDocument* document = presContext->Document();
-    Element* rootElement = document->GetRootElement();
-    if (!rootElement) {
-      return NS_ERROR_NOT_AVAILABLE;
-    }
-
-    CallQueryInterface(rootElement, aResult);
-    return NS_OK;
   }
 
   nsRefPtr<nsIContent> content = nsLayoutUtils::FindContentFor(aID);
@@ -2258,14 +2361,18 @@ nsDOMWindowUtils::StartFrameTimeRecording(uint32_t *startIndex)
   if (!mgr)
     return NS_ERROR_FAILURE;
 
-  *startIndex = mgr->StartFrameTimeRecording();
+  const uint32_t kRecordingMinSize = 60 * 10; // 10 seconds @60 fps.
+  const uint32_t kRecordingMaxSize = 60 * 60 * 60; // One hour
+  uint32_t bufferSize = Preferences::GetUint("toolkit.framesRecording.bufferSize", uint32_t(0));
+  bufferSize = std::min(bufferSize, kRecordingMaxSize);
+  bufferSize = std::max(bufferSize, kRecordingMinSize);
+  *startIndex = mgr->StartFrameTimeRecording(bufferSize);
 
   return NS_OK;
 }
 
 NS_IMETHODIMP
 nsDOMWindowUtils::StopFrameTimeRecording(uint32_t   startIndex,
-                                         float    **paintTimes,
                                          uint32_t  *frameCount,
                                          float    **frameIntervals)
 {
@@ -2275,7 +2382,6 @@ nsDOMWindowUtils::StopFrameTimeRecording(uint32_t   startIndex,
 
   NS_ENSURE_ARG_POINTER(frameCount);
   NS_ENSURE_ARG_POINTER(frameIntervals);
-  NS_ENSURE_ARG_POINTER(paintTimes);
 
   nsCOMPtr<nsIWidget> widget = GetWidget();
   if (!widget)
@@ -2286,22 +2392,14 @@ nsDOMWindowUtils::StopFrameTimeRecording(uint32_t   startIndex,
     return NS_ERROR_FAILURE;
 
   nsTArray<float> tmpFrameIntervals;
-  nsTArray<float> tmpPaintTimes;
-  mgr->StopFrameTimeRecording(startIndex, tmpFrameIntervals, tmpPaintTimes);
+  mgr->StopFrameTimeRecording(startIndex, tmpFrameIntervals);
   *frameCount = tmpFrameIntervals.Length();
 
   *frameIntervals = (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
-  *paintTimes =     (float*)nsMemory::Alloc(*frameCount * sizeof(float*));
 
   /* copy over the frame intervals and paint times into the arrays we just allocated */
   for (uint32_t i = 0; i < *frameCount; i++) {
     (*frameIntervals)[i] = tmpFrameIntervals[i];
-#ifndef MOZ_WIDGET_GONK
-    (*paintTimes)[i] = tmpPaintTimes[i];
-#else
-    // Waiting for bug 830475 to work on B2G.
-    (*paintTimes)[i] = 0;
-#endif
   }
 
   return NS_OK;
@@ -3422,7 +3520,7 @@ nsDOMWindowUtils::GetOMTAOrComputedStyle(nsIDOMNode* aNode,
       if (layer) {
         float value;
         ShadowLayerForwarder* forwarder = layer->Manager()->AsShadowForwarder();
-        if (forwarder) {
+        if (forwarder && forwarder->HasShadowManager()) {
           forwarder->GetShadowManager()->SendGetOpacity(layer->AsShadowableLayer()->GetShadow(), &value);
           cssValue = new nsROCSSPrimitiveValue;
           cssValue->SetNumber(value);
@@ -3433,7 +3531,7 @@ nsDOMWindowUtils::GetOMTAOrComputedStyle(nsIDOMNode* aNode,
       if (layer) {
         gfx3DMatrix matrix;
         ShadowLayerForwarder* forwarder = layer->Manager()->AsShadowForwarder();
-        if (forwarder) {
+        if (forwarder && forwarder->HasShadowManager()) {
           forwarder->GetShadowManager()->SendGetTransform(layer->AsShadowableLayer()->GetShadow(), &matrix);
           cssValue = nsComputedDOMStyle::MatrixToCSSValue(matrix);
         }

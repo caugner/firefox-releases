@@ -71,16 +71,10 @@ gfxFontListPrefObserver::Observe(nsISupports     *aSubject,
     return NS_OK;
 }
 
-NS_IMPL_ISUPPORTS1(gfxPlatformFontList::MemoryReporter, nsIMemoryReporter)
-
 NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(FontListMallocSizeOf)
 
-NS_IMETHODIMP
-gfxPlatformFontList::MemoryReporter::GetName(nsACString &aName)
-{
-    aName.AssignLiteral("font-list");
-    return NS_OK;
-}
+gfxPlatformFontList::MemoryReporter::MemoryReporter()
+{}
 
 NS_IMETHODIMP
 gfxPlatformFontList::MemoryReporter::CollectReports
@@ -142,7 +136,7 @@ gfxPlatformFontList::gfxPlatformFontList(bool aNeedFullnamePostscriptNames)
     NS_ADDREF(gFontListPrefObserver);
     Preferences::AddStrongObservers(gFontListPrefObserver, kObservedPrefs);
 
-    NS_RegisterMemoryReporter(new MemoryReporter);
+    RegisterStrongMemoryReporter(new MemoryReporter());
 }
 
 gfxPlatformFontList::~gfxPlatformFontList()
@@ -695,9 +689,12 @@ gfxPlatformFontList::InitLoader()
     mNumFamilies = mFontFamiliesToLoad.Length();
 }
 
+#define FONT_LOADER_MAX_TIMESLICE 100  // max time for one pass through RunLoader = 100ms
+
 bool
 gfxPlatformFontList::RunLoader()
 {
+    TimeStamp start = TimeStamp::Now();
     uint32_t i, endIndex = (mStartIndex + mIncrement < mNumFamilies ? mStartIndex + mIncrement : mNumFamilies);
     bool loadCmaps = !UsesSystemFallback() ||
         gfxPlatform::GetPlatform()->UseCmapsDuringSystemFallback();
@@ -726,6 +723,14 @@ gfxPlatformFontList::RunLoader()
 
         // check whether the family can be considered "simple" for style matching
         familyEntry->CheckForSimpleFamily();
+
+        // limit the time spent reading fonts in one pass
+        TimeDuration elapsed = TimeStamp::Now() - start;
+        if (elapsed.ToMilliseconds() > FONT_LOADER_MAX_TIMESLICE &&
+                i + 1 != endIndex) {
+            endIndex = i + 1;
+            break;
+        }
     }
 
     mStartIndex = endIndex;

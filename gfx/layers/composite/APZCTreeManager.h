@@ -18,6 +18,7 @@
 #include "nsCOMPtr.h"                   // for already_AddRefed
 #include "nsISupportsImpl.h"
 #include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
+#include "mozilla/Vector.h"             // for mozilla::Vector
 
 class gfx3DMatrix;
 template <class E> class nsTArray;
@@ -30,64 +31,6 @@ namespace layers {
 class Layer;
 class AsyncPanZoomController;
 class CompositorParent;
-
-/**
- * This class allows us to uniquely identify a scrollable layer. The
- * mLayersId identifies the layer tree (corresponding to a child process
- * and/or tab) that the scrollable layer belongs to. The mPresShellId
- * is a temporal identifier (corresponding to the document loaded that
- * contains the scrollable layer, which may change over time). The
- * mScrollId corresponds to the actual frame that is scrollable.
- */
-struct ScrollableLayerGuid {
-  uint64_t mLayersId;
-  uint32_t mPresShellId;
-  FrameMetrics::ViewID mScrollId;
-
-  ScrollableLayerGuid(uint64_t aLayersId, uint32_t aPresShellId,
-                      FrameMetrics::ViewID aScrollId)
-    : mLayersId(aLayersId)
-    , mPresShellId(aPresShellId)
-    , mScrollId(aScrollId)
-  {
-    MOZ_COUNT_CTOR(ScrollableLayerGuid);
-  }
-
-  ScrollableLayerGuid(uint64_t aLayersId, const FrameMetrics& aMetrics)
-    : mLayersId(aLayersId)
-    , mPresShellId(aMetrics.mPresShellId)
-    , mScrollId(aMetrics.mScrollId)
-  {
-    MOZ_COUNT_CTOR(ScrollableLayerGuid);
-  }
-
-  ScrollableLayerGuid(uint64_t aLayersId)
-    : mLayersId(aLayersId)
-    , mPresShellId(0)
-    , mScrollId(FrameMetrics::ROOT_SCROLL_ID)
-  {
-    MOZ_COUNT_CTOR(ScrollableLayerGuid);
-    // TODO: get rid of this constructor once all callers know their
-    // presShellId and scrollId
-  }
-
-  ~ScrollableLayerGuid()
-  {
-    MOZ_COUNT_DTOR(ScrollableLayerGuid);
-  }
-
-  bool operator==(const ScrollableLayerGuid& other) const
-  {
-    return mLayersId == other.mLayersId
-        && mPresShellId == other.mPresShellId
-        && mScrollId == other.mScrollId;
-  }
-
-  bool operator!=(const ScrollableLayerGuid& other) const
-  {
-    return !(*this == other);
-  }
-};
 
 /**
  * This class manages the tree of AsyncPanZoomController instances. There is one
@@ -142,8 +85,13 @@ public:
    * General handler for incoming input events. Manipulates the frame metrics
    * based on what type of input it is. For example, a PinchGestureEvent will
    * cause scaling. This should only be called externally to this class.
+   *
+   * @param aEvent input event object, will not be modified
+   * @param aOutTargetGuid returns the guid of the apzc this event was
+   * delivered to. May be null.
    */
-  nsEventStatus ReceiveInputEvent(const InputData& aEvent);
+  nsEventStatus ReceiveInputEvent(const InputData& aEvent,
+                                  ScrollableLayerGuid* aOutTargetGuid);
 
   /**
    * WidgetInputEvent handler. Sets |aOutEvent| (which is assumed to be an
@@ -158,9 +106,12 @@ public:
    * to the appropriate apz as such.
    *
    * @param aEvent input event object, will not be modified
+   * @param aOutTargetGuid returns the guid of the apzc this event was
+   * delivered to. May be null.
    * @param aOutEvent event object transformed to DOM coordinate space.
    */
   nsEventStatus ReceiveInputEvent(const WidgetInputEvent& aEvent,
+                                  ScrollableLayerGuid* aOutTargetGuid,
                                   WidgetInputEvent* aOutEvent);
 
   /**
@@ -168,34 +119,20 @@ public:
    * WidgetInputEvent. Must be called on the main thread.
    *
    * @param aEvent input event object
+   * @param aOutTargetGuid returns the guid of the apzc this event was
+   * delivered to. May be null.
    */
-  nsEventStatus ReceiveInputEvent(WidgetInputEvent& aEvent);
+  nsEventStatus ReceiveInputEvent(WidgetInputEvent& aEvent,
+                                  ScrollableLayerGuid* aOutTargetGuid);
 
   /**
-   * Updates the composition bounds, i.e. the dimensions of the final size of
-   * the frame this is tied to during composition onto, in device pixels. In
-   * general, this will just be:
-   * { x = 0, y = 0, width = surface.width, height = surface.height }, however
-   * there is no hard requirement for this.
-   */
-  void UpdateCompositionBounds(const ScrollableLayerGuid& aGuid,
-                               const ScreenIntRect& aCompositionBounds);
-
-  /**
-   * We are scrolling a subframe, so disable our machinery until we hit
-   * a touch end or a new touch start. This prevents us from accidentally
-   * panning both the subframe and the parent frame.
+   * A helper for transforming coordinates to gecko coordinate space.
    *
-   * XXX/bug 775452: We should eventually be supporting async scrollable
-   * subframes.
+   * @param aPoint point to transform
+   * @param aOutTransformedPoint resulting transformed point
    */
-  void CancelDefaultPanZoom(const ScrollableLayerGuid& aGuid);
-
-  /**
-   * We have found a scrollable subframe, so we need to delay the scrolling
-   * gesture executed and let subframe do the scrolling first.
-   */
-  void DetectScrollableSubframe(const ScrollableLayerGuid& aGuid);
+  void TransformCoordinateToGecko(const ScreenIntPoint& aPoint,
+                                  LayoutDeviceIntPoint* aOutTransformedPoint);
 
   /**
    * Kicks an animation to zoom to a rect. This may be either a zoom out or zoom
@@ -216,21 +153,9 @@ public:
 
   /**
    * Updates any zoom constraints contained in the <meta name="viewport"> tag.
-   * We try to obey everything it asks us elsewhere, but here we only handle
-   * minimum-scale, maximum-scale, and user-scalable.
    */
   void UpdateZoomConstraints(const ScrollableLayerGuid& aGuid,
-                             bool aAllowZoom,
-                             const CSSToScreenScale& aMinScale,
-                             const CSSToScreenScale& aMaxScale);
-
-  /**
-   * Update mFrameMetrics.mScrollOffset to the given offset.
-   * This is necessary in cases where a scroll is not caused by user
-   * input (for example, a content scrollTo()).
-   */
-  void UpdateScrollOffset(const ScrollableLayerGuid& aGuid,
-                          const CSSPoint& aScrollOffset);
+                             const ZoomConstraints& aConstraints);
 
   /**
    * Cancels any currently running animation. Note that all this does is set the
@@ -251,7 +176,7 @@ public:
   /**
    * Tests if a screen point intersect an apz in the tree.
    */
-  bool HitTestAPZC(const ScreenPoint& aPoint);
+  bool HitTestAPZC(const ScreenIntPoint& aPoint);
 
   /**
    * Set the dpi value used by all AsyncPanZoomControllers.
@@ -265,16 +190,43 @@ public:
   static float GetDPI() { return sDPI; }
 
   /**
-   * This is a callback for AsyncPanZoomController to call when a touch-move
-   * event causes overscroll. The overscroll will be passed on to the parent
-   * APZC. |aStartPoint| and |aEndPoint| are in |aAPZC|'s transformed screen
-   * coordinates (i.e. the same coordinates in which touch points are given to
-   * APZCs). The amount of the overscroll is represented by two points rather
-   * than a displacement because with certain 3D transforms, the same
-   * displacement between different points in transformed coordinates can
-   * represent different displacements in untransformed coordinates.
+   * This is a callback for AsyncPanZoomController to call when it wants to
+   * scroll in response to a touch-move event, or when it needs to hand off
+   * overscroll to the next APZC. Note that because of scroll grabbing, the
+   * first APZC to scroll may not be the one that is receiving the touch events.
+   *
+   * |aAPZC| is the APZC that received the touch events triggering the scroll
+   *   (in the case of an initial scroll), or the last APZC to scroll (in the
+   *   case of overscroll)
+   * |aStartPoint| and |aEndPoint| are in |aAPZC|'s transformed screen
+   *   coordinates (i.e. the same coordinates in which touch points are given to
+   *   APZCs). The amount of (over)scroll is represented by two points rather
+   *   than a displacement because with certain 3D transforms, the same
+   *   displacement between different points in transformed coordinates can
+   *   represent different displacements in untransformed coordinates.
+   * |aOverscrollHandoffChainIndex| is the next position in the overscroll
+   *   handoff chain that should be scrolled.
+   *
+   * The way this method works is best illustrated with an example.
+   * Consider three nested APZCs, A, B, and C, with C being the innermost one.
+   * Say B is scroll-grabbing.
+   * The touch events go to C because it's the innermost one (so e.g. taps
+   * should go through C), but the overscroll handoff chain is B -> C -> A
+   * because B is scroll-grabbing.
+   * For convenience I'll refer to the three APZC objects as A, B, and C, and
+   * to the tree manager object as TM.
+   * Here's what happens when C receives a touch-move event:
+   *   - C.TrackTouch() calls TM.DispatchScroll() with index = 0.
+   *   - TM.DispatchScroll() calls B.AttemptScroll() (since B is at index 0 in the chain).
+   *   - B.AttemptScroll() scrolls B. If there is overscroll, it calls TM.DispatchScroll() with index = 1.
+   *   - TM.DispatchScroll() calls C.AttemptScroll() (since C is at index 1 in the chain)
+   *   - C.AttemptScroll() scrolls C. If there is overscroll, it calls TM.DispatchScroll() with index = 2.
+   *   - TM.DispatchScroll() calls A.AttemptScroll() (since A is at index 2 in the chain)
+   *   - A.AttemptScroll() scrolls A. If there is overscroll, it calls TM.DispatchScroll() with index = 3.
+   *   - TM.DispatchScroll() discards the rest of the scroll as there are no more elements in the chain.
    */
-  void HandleOverscroll(AsyncPanZoomController* aAPZC, ScreenPoint aStartPoint, ScreenPoint aEndPoint);
+  void DispatchScroll(AsyncPanZoomController* aAPZC, ScreenPoint aStartPoint, ScreenPoint aEndPoint,
+                      uint32_t aOverscrollHandoffChainIndex);
 
 protected:
   /**
@@ -283,6 +235,10 @@ protected:
    */
   virtual void AssertOnCompositorThread();
 
+  /*
+   * Build the chain of APZCs that will handle overscroll for a pan starting at |aInitialTarget|.
+   */
+  void BuildOverscrollHandoffChain(const nsRefPtr<AsyncPanZoomController>& aInitialTarget);
 public:
   /* Some helper functions to find an APZC given some identifying input. These functions
      lock the tree of APZCs while they find the right one, and then return an addref'd
@@ -293,17 +249,19 @@ public:
   already_AddRefed<AsyncPanZoomController> GetTargetAPZC(const ScrollableLayerGuid& aGuid);
   already_AddRefed<AsyncPanZoomController> GetTargetAPZC(const ScreenPoint& aPoint);
   void GetInputTransforms(AsyncPanZoomController *aApzc, gfx3DMatrix& aTransformToApzcOut,
-                          gfx3DMatrix& aTransformToScreenOut);
+                          gfx3DMatrix& aTransformToGeckoOut);
 private:
   /* Helpers */
   AsyncPanZoomController* FindTargetAPZC(AsyncPanZoomController* aApzc, const ScrollableLayerGuid& aGuid);
   AsyncPanZoomController* GetAPZCAtPoint(AsyncPanZoomController* aApzc, const gfxPoint& aHitTestPoint);
-  AsyncPanZoomController* CommonAncestor(AsyncPanZoomController* aApzc1, AsyncPanZoomController* aApzc2);
-  AsyncPanZoomController* RootAPZCForLayersId(AsyncPanZoomController* aApzc);
-  AsyncPanZoomController* GetTouchInputBlockAPZC(const WidgetTouchEvent& aEvent, ScreenPoint aPoint);
-  nsEventStatus ProcessTouchEvent(const WidgetTouchEvent& touchEvent, WidgetTouchEvent* aOutEvent);
-  nsEventStatus ProcessMouseEvent(const WidgetMouseEvent& mouseEvent, WidgetMouseEvent* aOutEvent);
-  nsEventStatus ProcessEvent(const WidgetInputEvent& inputEvent, WidgetInputEvent* aOutEvent);
+  already_AddRefed<AsyncPanZoomController> CommonAncestor(AsyncPanZoomController* aApzc1, AsyncPanZoomController* aApzc2);
+  already_AddRefed<AsyncPanZoomController> RootAPZCForLayersId(AsyncPanZoomController* aApzc);
+  already_AddRefed<AsyncPanZoomController> GetTouchInputBlockAPZC(const WidgetTouchEvent& aEvent, ScreenPoint aPoint);
+  nsEventStatus ProcessTouchEvent(const WidgetTouchEvent& touchEvent, ScrollableLayerGuid* aOutTargetGuid, WidgetTouchEvent* aOutEvent);
+  nsEventStatus ProcessMouseEvent(const WidgetMouseEvent& mouseEvent, ScrollableLayerGuid* aOutTargetGuid, WidgetMouseEvent* aOutEvent);
+  nsEventStatus ProcessEvent(const WidgetInputEvent& inputEvent, ScrollableLayerGuid* aOutTargetGuid, WidgetInputEvent* aOutEvent);
+  void UpdateZoomConstraintsRecursively(AsyncPanZoomController* aApzc,
+                                        const ZoomConstraints& aConstraints);
 
   /**
    * Recursive helper function to build the APZC tree. The tree of APZC instances has
@@ -337,14 +295,22 @@ private:
    * input delivery thread, and so does not require locking.
    */
   nsRefPtr<AsyncPanZoomController> mApzcForInputBlock;
+  /* The number of touch points we are tracking that are currently on the screen. */
+  uint32_t mTouchCount;
   /* The transform from root screen coordinates into mApzcForInputBlock's
    * screen coordinates, as returned through the 'aTransformToApzcOut' parameter
    * of GetInputTransform(), at the start of the input block. This is cached
    * because this transform can change over the course of the input block,
-   * but for some operations we need to use the initial tranform.
+   * but for some operations we need to use the initial transform.
    * Meaningless if mApzcForInputBlock is nullptr.
    */
   gfx3DMatrix mCachedTransformToApzcForInputBlock;
+  /* The chain of APZCs that will handle pans for the current touch input
+   * block, in the order in which they will be scrolled. When one APZC has
+   * been scrolled as far as it can, any overscroll will be handed off to
+   * the next APZC in the chain.
+   */
+  Vector< nsRefPtr<AsyncPanZoomController> > mOverscrollHandoffChain;
 
   static float sDPI;
 };

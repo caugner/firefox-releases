@@ -7,15 +7,13 @@
 #define MediaResource_h_
 
 #include "mozilla/Mutex.h"
-#ifdef MOZ_DASH
-#include "mozilla/ReentrantMonitor.h"
-#endif
 #include "nsIChannel.h"
 #include "nsIURI.h"
 #include "nsIStreamingProtocolController.h"
 #include "nsIStreamListener.h"
 #include "nsIChannelEventSink.h"
 #include "nsIInterfaceRequestor.h"
+#include "nsProxyRelease.h"
 #include "MediaCache.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/TimeStamp.h"
@@ -362,19 +360,6 @@ public:
    */
   virtual nsresult Open(nsIStreamListener** aStreamListener) = 0;
 
-#ifdef MOZ_DASH
-  /**
-   * Open the stream using a specific byte range only. Creates a stream
-   * listener and returns it in aStreamListener; this listener needs to be
-   * notified of incoming data. Byte range is specified in aByteRange.
-   */
-  virtual nsresult OpenByteRange(nsIStreamListener** aStreamListener,
-                                 MediaByteRange const &aByteRange)
-  {
-    return Open(aStreamListener);
-  }
-#endif
-
   /**
    * Fills aRanges with MediaByteRanges representing the data which is cached
    * in the media cache. Stream should be pinned during call and while
@@ -411,7 +396,7 @@ protected:
 
 class BaseMediaResource : public MediaResource {
 public:
-  virtual nsIURI* URI() const { return mURI; }
+  virtual nsIURI* URI() const { return const_cast<nsIURI*>(mURI.get()); }
   virtual void MoveLoadsToBackground();
 
 protected:
@@ -420,8 +405,8 @@ protected:
                     nsIURI* aURI,
                     const nsACString& aContentType) :
     mDecoder(aDecoder),
-    mChannel(aChannel),
-    mURI(aURI),
+    mChannel(new nsMainThreadPtrHolder<nsIChannel>(aChannel)),
+    mURI(new nsMainThreadPtrHolder<nsIURI>(aURI)),
     mContentType(aContentType),
     mLoadInBackground(false)
   {
@@ -454,11 +439,11 @@ protected:
 
   // Channel used to download the media data. Must be accessed
   // from the main thread only.
-  nsCOMPtr<nsIChannel> mChannel;
+  nsMainThreadPtrHandle<nsIChannel> mChannel;
 
   // URI in case the stream needs to be re-opened. Access from
   // main thread only.
-  nsCOMPtr<nsIURI> mURI;
+  nsMainThreadPtrHandle<nsIURI> mURI;
 
   // Content-Type of the channel. This is copied from the nsIChannel when the
   // MediaResource is created. This is constant, so accessing from any thread
@@ -522,10 +507,6 @@ public:
 
   // Main thread
   virtual nsresult Open(nsIStreamListener** aStreamListener);
-#ifdef MOZ_DASH
-  virtual nsresult OpenByteRange(nsIStreamListener** aStreamListener,
-                                 MediaByteRange const & aByteRange);
-#endif
   virtual nsresult Close();
   virtual void     Suspend(bool aCloseImmediately);
   virtual void     Resume();
@@ -666,20 +647,6 @@ protected:
 
   // Start and end offset of the bytes to be requested.
   MediaByteRange mByteRange;
-
-#ifdef MOZ_DASH
-  // True if resource was opened with a byte rage request.
-  bool mByteRangeDownloads;
-
-  // Set to false once first byte range request has been made.
-  bool mByteRangeFirstOpen;
-
-  // For byte range requests, set to the offset requested in |Seek|.
-  // Used in |CacheClientSeek| to find the originally requested byte range.
-  // Read/Write on multiple threads; use |mSeekMonitor|.
-  ReentrantMonitor mSeekOffsetMonitor;
-  int64_t mSeekOffset;
-#endif
 
   // True if the stream can seek into unbuffered ranged, i.e. if the
   // connection supports byte range requests.

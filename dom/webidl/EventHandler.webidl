@@ -10,17 +10,17 @@
  * Opera Software ASA. You are granted a license to use, reproduce
  * and create derivative works of this document.
  */
-[TreatNonCallableAsNull]
+[TreatNonObjectAsNull]
 callback EventHandlerNonNull = any (Event event);
 typedef EventHandlerNonNull? EventHandler;
 
-[TreatNonCallableAsNull]
+[TreatNonObjectAsNull]
 // https://www.w3.org/Bugs/Public/show_bug.cgi?id=23489
 //callback OnBeforeUnloadEventHandlerNonNull = DOMString (Event event);
 callback OnBeforeUnloadEventHandlerNonNull = DOMString? (Event event);
 typedef OnBeforeUnloadEventHandlerNonNull? OnBeforeUnloadEventHandler;
 
-[TreatNonCallableAsNull]
+[TreatNonObjectAsNull]
 callback OnErrorEventHandlerNonNull = boolean ((Event or DOMString) event, optional DOMString source, optional unsigned long lineno, optional unsigned long column);
 typedef OnErrorEventHandlerNonNull? OnErrorEventHandler;
 
@@ -87,6 +87,22 @@ interface GlobalEventHandlers {
            attribute EventHandler ontimeupdate;
            attribute EventHandler onvolumechange;
            attribute EventHandler onwaiting;
+
+           // Pointer events handlers
+           [Pref="dom.w3c_pointer_events.enabled"]
+           attribute EventHandler onpointerdown;
+           [Pref="dom.w3c_pointer_events.enabled"]
+           attribute EventHandler onpointerup;
+           [Pref="dom.w3c_pointer_events.enabled"]
+           attribute EventHandler onpointermove;
+           [Pref="dom.w3c_pointer_events.enabled"]
+           attribute EventHandler onpointerout;
+           [Pref="dom.w3c_pointer_events.enabled"]
+           attribute EventHandler onpointerover;
+           [Pref="dom.w3c_pointer_events.enabled"]
+           attribute EventHandler onpointerenter;
+           [Pref="dom.w3c_pointer_events.enabled"]
+           attribute EventHandler onpointerleave;
 
            // Mozilla-specific handlers
            attribute EventHandler onmozfullscreenchange;

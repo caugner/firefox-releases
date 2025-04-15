@@ -1168,13 +1168,7 @@ nsComboboxControlFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
   if (!aElements.AppendElement(mDisplayContent))
     return NS_ERROR_OUT_OF_MEMORY;
 
-  nsCOMPtr<nsINodeInfo> nodeInfo;
-  nodeInfo = nimgr->GetNodeInfo(nsGkAtoms::button, nullptr, kNameSpaceID_XHTML,
-                                nsIDOMNode::ELEMENT_NODE);
-
-  // create button which drops the list down
-  NS_NewHTMLElement(getter_AddRefs(mButtonContent), nodeInfo.forget(),
-                    dom::NOT_FROM_PARSER);
+  mButtonContent = mContent->OwnerDoc()->CreateHTMLElement(nsGkAtoms::button);
   if (!mButtonContent)
     return NS_ERROR_OUT_OF_MEMORY;
 
@@ -1394,7 +1388,7 @@ nsComboboxControlFrame::SetInitialChildList(ChildListID     aListID,
   //nsIRollupListener
 //----------------------------------------------------------------------
 bool
-nsComboboxControlFrame::Rollup(uint32_t aCount, nsIContent** aLastRolledUp)
+nsComboboxControlFrame::Rollup(uint32_t aCount, const nsIntPoint* pos, nsIContent** aLastRolledUp)
 {
   if (!mDroppedDown)
     return false;

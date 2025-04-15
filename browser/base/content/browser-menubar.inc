@@ -38,6 +38,15 @@
                           command="Browser:OpenFile"
                           key="openFileKb"
                           accesskey="&openFileCmd.accesskey;"/>
+#ifdef HAVE_SHELL_SERVICE
+#ifdef XP_WIN
+#ifdef MOZ_METRO
+                <menuitem id="menu_switchToMetro"
+                          label="&switchToMetroCmd2.label;"
+                          oncommand="SwitchToMetro()"/>
+#endif
+#endif
+#endif
                 <menuitem id="menu_close"
                           class="show-only-for-keyboard"
                           label="&closeCmd.label;"
@@ -523,9 +532,9 @@
                   <menuitem id="menu_devAppMgr"
                             observes="devtoolsMenuBroadcaster_DevAppMgr"
                             accesskey="&devAppMgrMenu.accesskey;"/>
-                  <menuitem id="menu_chromeDebugger"
-                            observes="devtoolsMenuBroadcaster_ChromeDebugger"
-                            accesskey="&chromeDebuggerMenu.accesskey;"/>
+                  <menuitem id="menu_browserToolbox"
+                            observes="devtoolsMenuBroadcaster_BrowserToolbox"
+                            accesskey="&browserToolboxMenu.accesskey;"/>
                   <menuitem id="menu_browserConsole"
                             observes="devtoolsMenuBroadcaster_BrowserConsole"
                             accesskey="&browserConsoleCmd.accesskey;"/>

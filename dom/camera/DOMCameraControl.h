@@ -66,12 +66,17 @@ public:
   void SetMeteringAreas(JSContext* aCx, JS::Handle<JS::Value> aAreas, ErrorResult& aRv);
   JS::Value GetFocusAreas(JSContext* aCx, ErrorResult& aRv);
   void SetFocusAreas(JSContext* aCx, JS::Handle<JS::Value> aAreas, ErrorResult& aRv);
+  JS::Value GetPictureSize(JSContext* aCx, ErrorResult& aRv);
+  void SetPictureSize(JSContext* aCx, JS::Handle<JS::Value> aSize, ErrorResult& aRv);
+  JS::Value GetThumbnailSize(JSContext* aCx, ErrorResult& aRv);
+  void SetThumbnailSize(JSContext* aCx, JS::Handle<JS::Value> aSize, ErrorResult& aRv);
   double GetFocalLength(ErrorResult& aRv);
   double GetFocusDistanceNear(ErrorResult& aRv);
   double GetFocusDistanceOptimum(ErrorResult& aRv);
   double GetFocusDistanceFar(ErrorResult& aRv);
   void SetExposureCompensation(const dom::Optional<double>& aCompensation, ErrorResult& aRv);
   double GetExposureCompensation(ErrorResult& aRv);
+  int32_t SensorAngle();
   already_AddRefed<nsICameraShutterCallback> GetOnShutter(ErrorResult& aRv);
   void SetOnShutter(nsICameraShutterCallback* aCb, ErrorResult& aRv);
   already_AddRefed<nsICameraClosedCallback> GetOnClosed(ErrorResult& aRv);
@@ -100,7 +105,7 @@ private:
   nsDOMCameraControl& operator=(const nsDOMCameraControl&) MOZ_DELETE;
 
   virtual JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
-  already_AddRefed<nsHashPropertyBag> CreateRecordingDeviceEventsSubject();
+  nsresult NotifyRecordingStatusChange(const nsString& aMsg);
 
 protected:
   /* additional members */

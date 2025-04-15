@@ -83,7 +83,7 @@ public:
   }
 
 protected:
-  JS::RootedObject mGlobalJSObject;
+  JS::Rooted<JSObject*> mGlobalJSObject;
   JSContext* mCx;
   mutable nsISupports* mGlobalObject;
   mutable nsCOMPtr<nsISupports> mGlobalObjectRef;
@@ -459,7 +459,7 @@ GetWrapperCache(nsGlobalWindow*)
 inline nsWrapperCache*
 GetWrapperCache(void* p)
 {
-  return NULL;
+  return nullptr;
 }
 
 // Helper template for smart pointers to resolve ambiguity between

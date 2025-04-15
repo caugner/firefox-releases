@@ -11,9 +11,11 @@
 #include <math.h>
 
 #include "DrawMode.h"
+#include "gfx2DGlue.h"
 #include "gfxMatrix.h"
 #include "gfxPoint.h"
 #include "gfxRect.h"
+#include "mozilla/gfx/Rect.h"
 #include "nsAlgorithm.h"
 #include "nsChangeHint.h"
 #include "nsColor.h"
@@ -59,6 +61,9 @@ class SVGPreserveAspectRatio;
 namespace dom {
 class Element;
 } // namespace dom
+namespace gfx {
+class SourceSurface;
+}
 } // namespace mozilla
 
 // SVG Frame state bits
@@ -134,28 +139,26 @@ class Element;
 
 bool NS_SVGDisplayListHitTestingEnabled();
 bool NS_SVGDisplayListPaintingEnabled();
-bool NS_SVGTextCSSFramesEnabled();
 
 /**
  * Sometimes we need to distinguish between an empty box and a box
  * that contains an element that has no size e.g. a point at the origin.
  */
 class SVGBBox {
+  typedef mozilla::gfx::Rect Rect;
+
 public:
   SVGBBox() 
     : mIsEmpty(true) {}
 
-  SVGBBox(const gfxRect& aRect) 
+  SVGBBox(const Rect& aRect)
     : mBBox(aRect), mIsEmpty(false) {}
 
-  SVGBBox& operator=(const gfxRect& aRect) {
-    mBBox = aRect;
-    mIsEmpty = false;
-    return *this;
-  }
+  SVGBBox(const gfxRect& aRect)
+    : mBBox(ToRect(aRect)), mIsEmpty(false) {}
 
-  operator const gfxRect& () const {
-    return mBBox;
+  gfxRect ToThebesRect() const {
+    return ThebesRect(mBBox);
   }
 
   bool IsEmpty() const {
@@ -171,8 +174,8 @@ public:
   }
 
 private:
-  gfxRect mBBox;
-  bool    mIsEmpty;
+  Rect mBBox;
+  bool mIsEmpty;
 };
 
 // GRRR WINDOWS HATE HATE HATE
@@ -290,15 +293,6 @@ public:
                                int32_t aStride,
                                const nsIntRect &aRect,
                                float aOpacity);
-
-  /*
-   * Converts a nsStyleCoord into a userspace value.  Handles units
-   * Factor (straight userspace), Coord (dimensioned), and Percent (of
-   * the current SVG viewport)
-   */
-  static float CoordToFloat(nsPresContext *aPresContext,
-                            nsSVGElement *aContent,
-                            const nsStyleCoord &aCoord);
 
   /**
    * Gets the nearest nsSVGInnerSVGFrame or nsSVGOuterSVGFrame frame. aFrame
@@ -482,9 +476,16 @@ public:
   GetClipRectForFrame(nsIFrame *aFrame,
                       float aX, float aY, float aWidth, float aHeight);
 
+  /**
+   * Composites a surface into a context with a given surface offset and an
+   * additional transform. Supports both Thebes and DrawTarget drawing.
+   * If aSurface is null, aSourceSurface will be used instead.
+   */
   static void CompositeSurfaceMatrix(gfxContext *aContext,
                                      gfxASurface *aSurface,
-                                     const gfxMatrix &aCTM, float aOpacity);
+                                     mozilla::gfx::SourceSurface *aSourceSurface,
+                                     const gfxPoint &aSurfaceOffset,
+                                     const gfxMatrix &aCTM);
 
   static void CompositePatternMatrix(gfxContext *aContext,
                                      gfxPattern *aPattern,
@@ -506,10 +507,6 @@ public:
    * push/pop group. */
   static bool
   CanOptimizeOpacity(nsIFrame *aFrame);
-
-  /* Calculate the maximum expansion of a matrix */
-  static float
-  MaxExpansion(const gfxMatrix &aMatrix);
 
   /**
    * Take the CTM to userspace for an element, and adjust it to a CTM to its

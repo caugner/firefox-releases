@@ -20,8 +20,6 @@
 namespace mozilla {
 namespace layers {
 
-static const float EPSILON = 0.0001f;
-
 /**
  * Maximum acceleration that can happen between two frames. Velocity is
  * throttled if it's above this. This may happen if a time delta is very low,
@@ -33,7 +31,7 @@ static float gMaxEventAcceleration = 999.0f;
 /**
  * Amount of friction applied during flings.
  */
-static float gFlingFriction = 0.006f;
+static float gFlingFriction = 0.002f;
 
 /**
  * Threshold for velocity beneath which we turn off any acceleration we had
@@ -63,7 +61,7 @@ static float gFlingStoppedThreshold = 0.01f;
  * On touch end we calculate the average velocity in order to compensate
  * touch/mouse drivers misbehaviour.
  */
-static int gMaxVelocityQueueSize = 5;
+static uint32_t gMaxVelocityQueueSize = 5;
 
 static void ReadAxisPrefs()
 {
@@ -72,7 +70,7 @@ static void ReadAxisPrefs()
   Preferences::AddFloatVarCache(&gVelocityThreshold, "apz.velocity_threshold", gVelocityThreshold);
   Preferences::AddFloatVarCache(&gAccelerationMultiplier, "apz.acceleration_multiplier", gAccelerationMultiplier);
   Preferences::AddFloatVarCache(&gFlingStoppedThreshold, "apz.fling_stopped_threshold", gFlingStoppedThreshold);
-  Preferences::AddIntVarCache(&gMaxVelocityQueueSize, "apz.max_velocity_queue_size", gMaxVelocityQueueSize);
+  Preferences::AddUintVarCache(&gMaxVelocityQueueSize, "apz.max_velocity_queue_size", gMaxVelocityQueueSize);
 }
 
 class ReadAxisPref MOZ_FINAL : public nsRunnable {
@@ -103,14 +101,14 @@ Axis::Axis(AsyncPanZoomController* aAsyncPanZoomController)
   : mPos(0),
     mVelocity(0.0f),
     mAcceleration(0),
-    mScrollingDisabled(false),
+    mAxisLocked(false),
     mAsyncPanZoomController(aAsyncPanZoomController)
 {
   InitAxisPrefs();
 }
 
 void Axis::UpdateWithTouchAtDevicePoint(int32_t aPos, const TimeDuration& aTimeDelta) {
-  float newVelocity = mScrollingDisabled ? 0 : (mPos - aPos) / aTimeDelta.ToMilliseconds();
+  float newVelocity = mAxisLocked ? 0 : (mPos - aPos) / aTimeDelta.ToMilliseconds();
 
   bool curVelocityBelowThreshold = fabsf(newVelocity) < gVelocityThreshold;
   bool directionChange = (mVelocity > 0) != (newVelocity > 0);
@@ -134,12 +132,20 @@ void Axis::UpdateWithTouchAtDevicePoint(int32_t aPos, const TimeDuration& aTimeD
 void Axis::StartTouch(int32_t aPos) {
   mStartPos = aPos;
   mPos = aPos;
-  mScrollingDisabled = false;
+  mAxisLocked = false;
 }
 
-float Axis::AdjustDisplacement(float aDisplacement, float& aOverscrollAmountOut) {
-  if (mScrollingDisabled) {
+float Axis::AdjustDisplacement(float aDisplacement, float& aOverscrollAmountOut,
+                               bool aScrollingDisabled) {
+  if (mAxisLocked) {
     aOverscrollAmountOut = 0;
+    return 0;
+  }
+
+  if (aScrollingDisabled) {
+    // Scrolling is disabled on this axis, stop scrolling.
+    aOverscrollAmountOut = aDisplacement;
+    mAcceleration = 0;
     return 0;
   }
 
@@ -194,7 +200,7 @@ void Axis::CancelTouch() {
 }
 
 bool Axis::Scrollable() {
-    if (mScrollingDisabled) {
+    if (mAxisLocked) {
         return false;
     }
     return GetCompositionLength() < GetPageLength();
@@ -293,7 +299,7 @@ float Axis::ScaleWillOverscrollAmount(float aScale, float aFocus) {
 }
 
 float Axis::GetVelocity() {
-  return mScrollingDisabled ? 0 : mVelocity;
+  return mAxisLocked ? 0 : mVelocity;
 }
 
 float Axis::GetAccelerationFactor() {

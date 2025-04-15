@@ -14,18 +14,13 @@ XPIDL_SOURCES += [
 
 XPIDL_MODULE = 'necko_socket'
 
-MODULE = 'necko'
-
-SOURCES += [
+UNIFIED_SOURCES += [
     'nsSocketProviderService.cpp',
     'nsSOCKSIOLayer.cpp',
     'nsSOCKSSocketProvider.cpp',
     'nsUDPSocketProvider.cpp',
 ]
 
-LIBRARY_NAME = 'neckosocket_s'
-
 FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
+FINAL_LIBRARY = 'necko'

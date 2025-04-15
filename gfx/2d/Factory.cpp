@@ -51,6 +51,8 @@
 
 #include "Logging.h"
 
+#include "mozilla/CheckedInt.h"
+
 #ifdef PR_LOGGING
 PRLogModuleInfo *
 GetGFX2DLog()
@@ -68,6 +70,8 @@ enum CPUIDRegister { eax = 0, ebx = 1, ecx = 2, edx = 3 };
 
 #ifdef HAVE_CPUID_H
 
+#if !(defined(__SSE2__) || defined(_M_X64) || \
+     (defined(_M_IX86_FP) && _M_IX86_FP >= 2))
 // cpuid.h is available on gcc 4.3 and higher on i386 and x86_64
 #include <cpuid.h>
 
@@ -78,6 +82,7 @@ HasCPUIDBit(unsigned int level, CPUIDRegister reg, unsigned int bit)
   return __get_cpuid(level, &regs[0], &regs[1], &regs[2], &regs[3]) &&
          (regs[reg] & bit);
 }
+#endif
 
 #define HAVE_CPU_DETECTION
 #else
@@ -178,9 +183,58 @@ Factory::HasSSE2()
 #endif
 }
 
+bool
+Factory::CheckSurfaceSize(const IntSize &sz, int32_t limit)
+{
+  if (sz.width < 0 || sz.height < 0) {
+    gfxDebug() << "Surface width or height < 0!";
+    return false;
+  }
+
+  // reject images with sides bigger than limit
+  if (limit && (sz.width > limit || sz.height > limit)) {
+    gfxDebug() << "Surface size too large (exceeds caller's limit)!";
+    return false;
+  }
+
+  // make sure the surface area doesn't overflow a int32_t
+  CheckedInt<int32_t> tmp = sz.width;
+  tmp *= sz.height;
+  if (!tmp.isValid()) {
+    gfxDebug() << "Surface size too large (would overflow)!";
+    return false;
+  }
+
+  // assuming 4 bytes per pixel, make sure the allocation size
+  // doesn't overflow a int32_t either
+  CheckedInt<int32_t> stride = sz.width;
+  stride *= 4;
+
+  // When aligning the stride to 16 bytes, it can grow by up to 15 bytes.
+  stride += 16 - 1;
+
+  if (!stride.isValid()) {
+    gfxDebug() << "Surface size too large (stride overflows int32_t)!";
+    return false;
+  }
+
+  CheckedInt<int32_t> numBytes = GetAlignedStride<16>(sz.width * 4);
+  numBytes *= sz.height;
+  if (!numBytes.isValid()) {
+    gfxDebug() << "Surface size too large (allocation size would overflow int32_t)!";
+    return false;
+  }
+
+  return true;
+}
+
 TemporaryRef<DrawTarget>
 Factory::CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFormat aFormat)
 {
+  if (!CheckSurfaceSize(aSize)) {
+    return nullptr;
+  }
+
   RefPtr<DrawTarget> retVal;
   switch (aBackend) {
 #ifdef WIN32
@@ -227,6 +281,17 @@ Factory::CreateDrawTarget(BackendType aBackend, const IntSize &aSize, SurfaceFor
       break;
     }
 #endif
+#ifdef USE_CAIRO
+  case BACKEND_CAIRO:
+    {
+      RefPtr<DrawTargetCairo> newTarget;
+      newTarget = new DrawTargetCairo();
+      if (newTarget->Init(aSize, aFormat)) {
+        retVal = newTarget;
+      }
+      break;
+    }
+#endif
   default:
     gfxDebug() << "Invalid draw target type specified.";
     return nullptr;
@@ -259,6 +324,10 @@ Factory::CreateDrawTargetForData(BackendType aBackend,
                                  int32_t aStride, 
                                  SurfaceFormat aFormat)
 {
+  if (!CheckSurfaceSize(aSize)) {
+    return nullptr;
+  }
+
   RefPtr<DrawTarget> retVal;
 
   switch (aBackend) {
@@ -280,19 +349,32 @@ Factory::CreateDrawTargetForData(BackendType aBackend,
       break;
     }
 #endif
+#ifdef USE_CAIRO
+  case BACKEND_CAIRO:
+    {
+      RefPtr<DrawTargetCairo> newTarget;
+      newTarget = new DrawTargetCairo();
+      if (newTarget->Init(aData, aSize, aStride, aFormat)) {
+        retVal = newTarget;
+      }
+      break;
+    }
+#endif
   default:
     gfxDebug() << "Invalid draw target type specified.";
     return nullptr;
   }
 
   if (mRecorder && retVal) {
-    RefPtr<DrawTarget> recordDT = new DrawTargetRecording(mRecorder, retVal);
+    RefPtr<DrawTarget> recordDT = new DrawTargetRecording(mRecorder, retVal, true);
     return recordDT;
   }
 
-  gfxDebug() << "Failed to create DrawTarget, Type: " << aBackend << " Size: " << aSize;
-  // Failed
-  return nullptr;
+  if (!retVal) {
+    gfxDebug() << "Failed to create DrawTarget, Type: " << aBackend << " Size: " << aSize;
+  }
+
+  return retVal;
 }
 
 TemporaryRef<ScaledFont>
@@ -390,7 +472,7 @@ Factory::CreateDrawTargetForD3D10Texture(ID3D10Texture2D *aTexture, SurfaceForma
     RefPtr<DrawTarget> retVal = newTarget;
 
     if (mRecorder) {
-      retVal = new DrawTargetRecording(mRecorder, retVal);
+      retVal = new DrawTargetRecording(mRecorder, retVal, true);
     }
 
     return retVal;
@@ -521,6 +603,14 @@ Factory::SetGlobalSkiaCacheLimits(int aCount, int aSizeInBytes)
 }
 #endif // USE_SKIA_GPU
 
+void
+Factory::PurgeAllCaches()
+{
+#ifdef USE_SKIA_GPU
+  DrawTargetSkia::PurgeAllCaches();
+#endif
+}
+
 #ifdef USE_SKIA_FREETYPE
 TemporaryRef<GlyphRenderingOptions>
 Factory::CreateCairoGlyphRenderingOptions(FontHinting aHinting, bool aAutoHinting)
@@ -547,9 +637,21 @@ Factory::CreateDrawTargetForCairoSurface(cairo_surface_t* aSurface, const IntSiz
   }
 
   if (mRecorder && retVal) {
-    RefPtr<DrawTarget> recordDT = new DrawTargetRecording(mRecorder, retVal);
+    RefPtr<DrawTarget> recordDT = new DrawTargetRecording(mRecorder, retVal, true);
     return recordDT;
   }
+#endif
+  return retVal;
+}
+
+TemporaryRef<SourceSurface>
+Factory::CreateSourceSurfaceForCairoSurface(cairo_surface_t* aSurface,
+                                            SurfaceFormat aFormat)
+{
+  RefPtr<SourceSurface> retVal;
+
+#ifdef USE_CAIRO
+  retVal = DrawTargetCairo::CreateSourceSurfaceForCairoSurface(aSurface, aFormat);
 #endif
   return retVal;
 }
@@ -596,6 +698,10 @@ TemporaryRef<DataSourceSurface>
 Factory::CreateDataSourceSurface(const IntSize &aSize,
                                  SurfaceFormat aFormat)
 {
+  if (!CheckSurfaceSize(aSize)) {
+    return nullptr;
+  }
+
   RefPtr<SourceSurfaceAlignedRawData> newSurf = new SourceSurfaceAlignedRawData();
   if (newSurf->Init(aSize, aFormat)) {
     return newSurf;

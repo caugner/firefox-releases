@@ -3,15 +3,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-FORCE_SHARED_LIB = 1
-
 # Don't use STL wrappers; nptest isn't Gecko code
 STL_FLAGS =
 
 # must link statically with the CRT; nptest isn't Gecko code
 USE_STATIC_LIBS = 1
-
-VPATH += $(topsrcdir)/build
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),qt)
 include $(topsrcdir)/config/config.mk

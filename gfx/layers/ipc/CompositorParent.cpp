@@ -144,7 +144,17 @@ bool CompositorParent::CreateThread()
   }
   sCompositorThreadRefCount = 1;
   sCompositorThread = new Thread("Compositor");
-  if (!sCompositorThread->Start()) {
+
+  Thread::Options options;
+  /* Timeout values are powers-of-two to enable us get better data.
+     128ms is chosen for transient hangs because 8Hz should be the minimally
+     acceptable goal for Compositor responsiveness (normal goal is 60Hz). */
+  options.transient_hang_timeout = 128; // milliseconds
+  /* 8192ms is chosen for permanent hangs because it's several seconds longer
+     than the default hang timeout on major platforms (about 5 seconds). */
+  options.permanent_hang_timeout = 8192; // milliseconds
+
+  if (!sCompositorThread->StartWithOptions(options)) {
     delete sCompositorThread;
     sCompositorThread = nullptr;
     return false;
@@ -317,7 +327,38 @@ CompositorParent::RecvFlushRendering()
   // and do it immediately instead.
   if (mCurrentCompositeTask) {
     mCurrentCompositeTask->Cancel();
+    mCurrentCompositeTask = nullptr;
     ComposeToTarget(nullptr);
+  }
+  return true;
+}
+
+bool
+CompositorParent::RecvNotifyRegionInvalidated(const nsIntRegion& aRegion)
+{
+  if (mLayerManager) {
+    mLayerManager->AddInvalidRegion(aRegion);
+  }
+  return true;
+}
+
+bool
+CompositorParent::RecvStartFrameTimeRecording(const int32_t& aBufferSize, uint32_t* aOutStartIndex)
+{
+  if (mLayerManager) {
+    *aOutStartIndex = mLayerManager->StartFrameTimeRecording(aBufferSize);
+  } else {
+    *aOutStartIndex = 0;
+  }
+  return true;
+}
+
+bool
+CompositorParent::RecvStopFrameTimeRecording(const uint32_t& aStartIndex,
+                                             InfallibleTArray<float>* intervals)
+{
+  if (mLayerManager) {
+    mLayerManager->StopFrameTimeRecording(aStartIndex, *intervals);
   }
   return true;
 }
@@ -468,6 +509,10 @@ CompositorParent::NotifyShadowTreeTransaction(uint64_t aId, bool aIsFirstPaint)
   ScheduleComposition();
 }
 
+// Used when layout.frame_rate is -1. Needs to be kept in sync with
+// DEFAULT_FRAME_RATE in nsRefreshDriver.cpp.
+static const int32_t kDefaultFrameRate = 60;
+
 void
 CompositorParent::ScheduleComposition()
 {
@@ -480,19 +525,29 @@ CompositorParent::ScheduleComposition()
   if (!initialComposition)
     delta = TimeStamp::Now() - mLastCompose;
 
+  int32_t rate = gfxPlatform::GetPrefLayoutFrameRate();
+  if (rate < 0) {
+    // TODO: The main thread frame scheduling code consults the actual monitor
+    // refresh rate in this case. We should do the same.
+    rate = kDefaultFrameRate;
+  }
+
+  // If rate == 0 (ASAP mode), minFrameDelta must be 0 so there's no delay.
+  TimeDuration minFrameDelta = TimeDuration::FromMilliseconds(
+    rate == 0 ? 0.0 : std::max(0.0, 1000.0 / rate));
+
 #ifdef COMPOSITOR_PERFORMANCE_WARNING
-  mExpectedComposeTime = TimeStamp::Now() + TimeDuration::FromMilliseconds(15);
+  mExpectedComposeTime = TimeStamp::Now() + minFrameDelta;
 #endif
 
   mCurrentCompositeTask = NewRunnableMethod(this, &CompositorParent::Composite);
 
-  // Since 60 fps is the maximum frame rate we can acheive, scheduling composition
-  // events less than 15 ms apart wastes computation..
-  if (!initialComposition && delta.ToMilliseconds() < 15) {
+  if (!initialComposition && delta < minFrameDelta) {
+    TimeDuration delay = minFrameDelta - delta;
 #ifdef COMPOSITOR_PERFORMANCE_WARNING
-    mExpectedComposeTime = TimeStamp::Now() + TimeDuration::FromMilliseconds(15 - delta.ToMilliseconds());
+    mExpectedComposeTime = TimeStamp::Now() + delay;
 #endif
-    ScheduleTask(mCurrentCompositeTask, 15 - delta.ToMilliseconds());
+    ScheduleTask(mCurrentCompositeTask, delay.ToMilliseconds());
   } else {
     ScheduleTask(mCurrentCompositeTask, 0);
   }
@@ -501,6 +556,16 @@ CompositorParent::ScheduleComposition()
 void
 CompositorParent::Composite()
 {
+  if (CanComposite()) {
+    mLayerManager->BeginTransaction();
+  }
+  CompositeInTransaction();
+}
+
+void
+CompositorParent::CompositeInTransaction()
+{
+  profiler_tracing("Paint", "Composite", TRACING_INTERVAL_START);
   PROFILER_LABEL("CompositorParent", "Composite");
   NS_ABORT_IF_FALSE(CompositorThreadID() == PlatformThread::CurrentId(),
                     "Composite can only be called on the compositor thread");
@@ -535,11 +600,16 @@ CompositorParent::Composite()
 #ifdef MOZ_DUMP_PAINTING
   static bool gDumpCompositorTree = false;
   if (gDumpCompositorTree) {
-    fprintf(stdout, "Painting --- compositing layer tree:\n");
-    mLayerManager->Dump(stdout, "", false);
+    printf_stderr("Painting --- compositing layer tree:\n");
+    mLayerManager->Dump();
   }
 #endif
+  mLayerManager->SetDebugOverlayWantsNextFrame(false);
   mLayerManager->EndEmptyTransaction();
+
+  if (mLayerManager->DebugOverlayWantsNextFrame()) {
+    ScheduleComposition();
+  }
 
 #ifdef COMPOSITOR_PERFORMANCE_WARNING
   if (mExpectedComposeTime + TimeDuration::FromMilliseconds(15) < TimeStamp::Now()) {
@@ -563,7 +633,7 @@ CompositorParent::ComposeToTarget(DrawTarget* aTarget)
   mLayerManager->BeginTransactionWithDrawTarget(aTarget);
   // Since CanComposite() is true, Composite() must end the layers txn
   // we opened above.
-  Composite();
+  CompositeInTransaction();
 }
 
 bool
@@ -628,10 +698,7 @@ CompositorParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
     }
   }
   ScheduleComposition();
-  LayerManagerComposite *layerComposite = mLayerManager->AsLayerManagerComposite();
-  if (layerComposite) {
-    layerComposite->NotifyShadowTreeTransaction();
-  }
+  mLayerManager->NotifyShadowTreeTransaction();
 }
 
 void
@@ -656,7 +723,7 @@ CompositorParent::InitializeLayerManager(const nsTArray<LayersBackend>& aBackend
         new LayerManagerComposite(new CompositorD3D11(mWidget));
     } else if (aBackendHints[i] == LAYERS_D3D9) {
       layerManager =
-        new LayerManagerComposite(new CompositorD3D9(mWidget));
+        new LayerManagerComposite(new CompositorD3D9(this, mWidget));
 #endif
     }
 
@@ -691,20 +758,24 @@ CompositorParent::AllocPLayerTransactionParent(const nsTArray<LayersBackend>& aB
   if (!mLayerManager) {
     NS_WARNING("Failed to initialise Compositor");
     *aSuccess = false;
-    return new LayerTransactionParent(nullptr, this, 0);
+    LayerTransactionParent* p = new LayerTransactionParent(nullptr, this, 0);
+    p->AddIPDLReference();
+    return p;
   }
 
   mCompositionManager = new AsyncCompositionManager(mLayerManager);
+  *aSuccess = true;
 
   *aTextureFactoryIdentifier = mLayerManager->GetTextureFactoryIdentifier();
-  *aSuccess = true;
-  return new LayerTransactionParent(mLayerManager, this, 0);
+  LayerTransactionParent* p = new LayerTransactionParent(mLayerManager, this, 0);
+  p->AddIPDLReference();
+  return p;
 }
 
 bool
 CompositorParent::DeallocPLayerTransactionParent(PLayerTransactionParent* actor)
 {
-  delete actor;
+  static_cast<LayerTransactionParent*>(actor)->ReleaseIPDLReference();
   return true;
 }
 
@@ -889,6 +960,9 @@ public:
                                 SurfaceDescriptor* aOutSnapshot)
   { return true; }
   virtual bool RecvFlushRendering() MOZ_OVERRIDE { return true; }
+  virtual bool RecvNotifyRegionInvalidated(const nsIntRegion& aRegion) { return true; }
+  virtual bool RecvStartFrameTimeRecording(const int32_t& aBufferSize, uint32_t* aOutStartIndex) MOZ_OVERRIDE { return true; }
+  virtual bool RecvStopFrameTimeRecording(const uint32_t& aStartIndex, InfallibleTArray<float>* intervals) MOZ_OVERRIDE  { return true; }
 
   virtual PLayerTransactionParent*
     AllocPLayerTransactionParent(const nsTArray<LayersBackend>& aBackendHints,
@@ -1002,14 +1076,18 @@ CrossProcessCompositorParent::AllocPLayerTransactionParent(const nsTArray<Layers
     LayerManagerComposite* lm = sIndirectLayerTrees[aId].mParent->GetLayerManager();
     *aTextureFactoryIdentifier = lm->GetTextureFactoryIdentifier();
     *aSuccess = true;
-    return new LayerTransactionParent(lm, this, aId);
+    LayerTransactionParent* p = new LayerTransactionParent(lm, this, aId);
+    p->AddIPDLReference();
+    return p;
   }
 
   NS_WARNING("Created child without a matching parent?");
   // XXX: should be false, but that causes us to fail some tests on Mac w/ OMTC.
   // Bug 900745. change *aSuccess to false to see test failures.
   *aSuccess = true;
-  return new LayerTransactionParent(nullptr, this, aId);
+  LayerTransactionParent* p = new LayerTransactionParent(nullptr, this, aId);
+  p->AddIPDLReference();
+  return p;
 }
 
 bool
@@ -1017,7 +1095,7 @@ CrossProcessCompositorParent::DeallocPLayerTransactionParent(PLayerTransactionPa
 {
   LayerTransactionParent* slp = static_cast<LayerTransactionParent*>(aLayers);
   RemoveIndirectTree(slp->GetId());
-  delete aLayers;
+  static_cast<LayerTransactionParent*>(aLayers)->ReleaseIPDLReference();
   return true;
 }
 

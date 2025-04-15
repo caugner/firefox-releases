@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'mar'
-
 if CONFIG['MOZ_ENABLE_SIGNMAR']:
     PROGRAM = 'signmar'
 
@@ -13,3 +11,11 @@ SOURCES = [
     'mar.c',
 ]
 HOST_SOURCES += SOURCES
+
+HOST_PROGRAM = 'mar'
+
+for var in ('MAR_CHANNEL_ID', 'MOZ_APP_VERSION'):
+    DEFINES[var] = '"%s"' % CONFIG[var]
+
+if not CONFIG['MOZ_ENABLE_SIGNMAR']:
+    DEFINES['NO_SIGN_VERIFY'] = True

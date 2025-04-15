@@ -29,6 +29,11 @@ protected:
                              JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
 public:
+  virtual FilterPrimitiveDescription
+    GetPrimitiveDescription(nsSVGFilterInstance* aInstance,
+                            const IntRect& aFilterSubregion,
+                            const nsTArray<bool>& aInputsAreTainted,
+                            nsTArray<mozilla::RefPtr<SourceSurface>>& aInputImages) MOZ_OVERRIDE;
   virtual bool AttributeAffectsRendering(
           int32_t aNameSpaceID, nsIAtom* aAttribute) const;
 
@@ -40,11 +45,6 @@ public:
   already_AddRefed<SVGAnimatedNumber> DiffuseConstant();
   already_AddRefed<SVGAnimatedNumber> KernelUnitLengthX();
   already_AddRefed<SVGAnimatedNumber> KernelUnitLengthY();
-
-protected:
-  virtual void LightPixel(const float *N, const float *L,
-                          nscolor color, uint8_t *targetData);
-
 };
 
 } // namespace dom

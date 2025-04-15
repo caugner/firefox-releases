@@ -11,9 +11,9 @@ XPIDL_SOURCES += [
     'nsICookiePromptService.idl',
 ]
 
-MODULE = 'cookie'
+XPIDL_MODULE = 'cookie'
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'nsCookieModule.cpp',
     'nsCookiePermission.cpp',
     'nsCookiePromptService.cpp',
@@ -22,13 +22,8 @@ SOURCES += [
     'nsPopupWindowManager.cpp',
 ]
 
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
-
-LIBRARY_NAME = 'cookie'
-
-EXPORT_LIBRARY = True
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'xul'

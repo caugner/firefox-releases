@@ -139,7 +139,20 @@ hb_buffer_t::make_room_for (unsigned int num_in,
   return true;
 }
 
-void *
+bool
+hb_buffer_t::shift_forward (unsigned int count)
+{
+  assert (have_output);
+  if (unlikely (!ensure (len + count))) return false;
+
+  memmove (info + idx + count, info + idx, (len - idx) * sizeof (info[0]));
+  len += count;
+  idx += count;
+
+  return true;
+}
+
+hb_buffer_t::scratch_buffer_t *
 hb_buffer_t::get_scratch_buffer (unsigned int *size)
 {
   have_output = false;
@@ -148,8 +161,9 @@ hb_buffer_t::get_scratch_buffer (unsigned int *size)
   out_len = 0;
   out_info = info;
 
-  *size = allocated * sizeof (pos[0]);
-  return pos;
+  assert ((uintptr_t) pos % sizeof (scratch_buffer_t) == 0);
+  *size = allocated * sizeof (pos[0]) / sizeof (scratch_buffer_t);
+  return (scratch_buffer_t *) (void *) pos;
 }
 
 
@@ -343,6 +357,44 @@ hb_buffer_t::copy_glyph (void)
   out_info[out_len] = info[idx];
 
   out_len++;
+}
+
+bool
+hb_buffer_t::move_to (unsigned int i)
+{
+  if (!have_output)
+  {
+    assert (i <= len);
+    idx = i;
+    return true;
+  }
+
+  assert (i <= out_len + (len - idx));
+
+  if (out_len < i)
+  {
+    unsigned int count = i - out_len;
+    if (unlikely (!make_room_for (count, count))) return false;
+
+    memmove (out_info + out_len, info + idx, count * sizeof (out_info[0]));
+    idx += count;
+    out_len += count;
+  }
+  else if (out_len > i)
+  {
+    /* Tricky part: rewinding... */
+    unsigned int count = out_len - i;
+
+    if (unlikely (idx < count && !shift_forward (count + 32))) return false;
+
+    assert (idx >= count);
+
+    idx -= count;
+    out_len -= count;
+    memmove (info + idx, out_info + out_len, count * sizeof (out_info[0]));
+  }
+
+  return true;
 }
 
 void
@@ -1098,7 +1150,10 @@ hb_buffer_set_length (hb_buffer_t  *buffer,
   buffer->len = length;
 
   if (!length)
+  {
+    buffer->content_type = HB_BUFFER_CONTENT_TYPE_INVALID;
     buffer->clear_context (0);
+  }
   buffer->clear_context (1);
 
   return true;

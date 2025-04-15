@@ -33,7 +33,7 @@ class nsVideoFrame : public nsContainerFrame, public nsIAnonymousContentCreator
 public:
   typedef mozilla::layers::Layer Layer;
   typedef mozilla::layers::LayerManager LayerManager;
-  typedef mozilla::FrameLayerBuilder::ContainerParameters ContainerParameters;
+  typedef mozilla::ContainerLayerParameters ContainerLayerParameters;
 
   nsVideoFrame(nsStyleContext* aContext);
 
@@ -96,7 +96,7 @@ public:
   already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
                                      LayerManager* aManager,
                                      nsDisplayItem* aItem,
-                                     const ContainerParameters& aContainerParameters);
+                                     const ContainerLayerParameters& aContainerParameters);
 
 protected:
 
@@ -112,7 +112,7 @@ protected:
   // Sets the mPosterImage's src attribute to be the video's poster attribute,
   // if we're the frame for a video element. Only call on frames for video
   // elements, not for frames for audio elements.
-  nsresult UpdatePosterSource(bool aNotify);
+  void UpdatePosterSource(bool aNotify);
 
   virtual ~nsVideoFrame();
 

@@ -4,9 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'accessibility'
-
-SOURCES += [
+UNIFIED_SOURCES += [
     'HTMLCanvasAccessible.cpp',
     'HTMLElementAccessibles.cpp',
     'HTMLFormControlAccessible.cpp',
@@ -17,14 +15,10 @@ SOURCES += [
     'HTMLTableAccessible.cpp',
 ]
 
-LIBRARY_NAME = 'accessibility_html_s'
-
-LIBXUL_LIBRARY = True
-
 LOCAL_INCLUDES += [
     '../../../layout/generic',
     '../../../layout/tables',
-    '../../../layout/xul/base/src',
+    '../../../layout/xul',
     '../base',
     '../generic',
     '../xpcom',
@@ -47,3 +41,5 @@ else:
     LOCAL_INCLUDES += [
         '../other',
     ]
+
+FINAL_LIBRARY = 'xul'

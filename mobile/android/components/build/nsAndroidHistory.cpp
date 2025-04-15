@@ -54,10 +54,7 @@ nsAndroidHistory::RegisterVisitedCallback(nsIURI *aURI, Link *aContent)
   }
   list->AppendElement(aContent);
 
-  AndroidBridge *bridge = AndroidBridge::Bridge();
-  if (bridge) {
-    bridge->CheckURIVisited(uriString);
-  }
+ GeckoAppShell::CheckURIVisited(uriString);
 
   return NS_OK;
 }
@@ -141,23 +138,21 @@ nsAndroidHistory::VisitURI(nsIURI *aURI, nsIURI *aLastVisitedURI, uint32_t aFlag
   if (aFlags & VisitFlags::UNRECOVERABLE_ERROR)
     return NS_OK;
 
-  AndroidBridge *bridge = AndroidBridge::Bridge();
-  if (bridge) {
-    nsAutoCString uri;
-    rv = aURI->GetSpec(uri);
-    if (NS_FAILED(rv)) return rv;
-    NS_ConvertUTF8toUTF16 uriString(uri);
-    bridge->MarkURIVisited(uriString);
+  nsAutoCString uri;
+  rv = aURI->GetSpec(uri);
+  if (NS_FAILED(rv)) return rv;
+  NS_ConvertUTF8toUTF16 uriString(uri);
+  GeckoAppShell::MarkURIVisited(uriString);
 
-    AppendToRecentlyVisitedURIs(aURI);
+  AppendToRecentlyVisitedURIs(aURI);
 
-    // Finally, notify that we've been visited.
-    nsCOMPtr<nsIObserverService> obsService =
-      mozilla::services::GetObserverService();
-    if (obsService) {
-      obsService->NotifyObservers(aURI, NS_LINK_VISITED_EVENT_TOPIC, nullptr);
-    }
+  // Finally, notify that we've been visited.
+  nsCOMPtr<nsIObserverService> obsService =
+    mozilla::services::GetObserverService();
+  if (obsService) {
+    obsService->NotifyObservers(aURI, NS_LINK_VISITED_EVENT_TOPIC, nullptr);
   }
+
   return NS_OK;
 }
 
@@ -172,13 +167,12 @@ nsAndroidHistory::SetURITitle(nsIURI *aURI, const nsAString& aTitle)
     return NS_OK;
   }
 
-  AndroidBridge *bridge = AndroidBridge::Bridge();
-  if (bridge) {
+  if (AndroidBridge::Bridge()) {
     nsAutoCString uri;
     nsresult rv = aURI->GetSpec(uri);
     if (NS_FAILED(rv)) return rv;
     NS_ConvertUTF8toUTF16 uriString(uri);
-    bridge->SetURITitle(uriString, aTitle);
+    GeckoAppShell::SetURITitle(uriString, aTitle);
   }
   return NS_OK;
 }

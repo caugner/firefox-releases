@@ -10,6 +10,7 @@
 #include "ThreeDPoint.h"
 #include "AudioChannelFormat.h"
 #include "AudioParamTimeline.h"
+#include "AudioContext.h"
 
 using namespace mozilla::dom;
 
@@ -30,7 +31,7 @@ AudioNodeStream::~AudioNodeStream()
 }
 
 void
-AudioNodeStream::SetStreamTimeParameter(uint32_t aIndex, MediaStream* aRelativeToStream,
+AudioNodeStream::SetStreamTimeParameter(uint32_t aIndex, AudioContext* aContext,
                                         double aStreamTime)
 {
   class Message : public ControlMessage {
@@ -50,7 +51,9 @@ AudioNodeStream::SetStreamTimeParameter(uint32_t aIndex, MediaStream* aRelativeT
   };
 
   MOZ_ASSERT(this);
-  GraphImpl()->AppendMessage(new Message(this, aIndex, aRelativeToStream, aStreamTime));
+  GraphImpl()->AppendMessage(new Message(this, aIndex,
+      aContext->DestinationStream(),
+      aContext->DOMTimeToStreamTime(aStreamTime)));
 }
 
 void
@@ -413,7 +416,8 @@ AudioNodeStream::ProduceOutput(GraphTime aFrom, GraphTime aTo)
   uint16_t outputCount = std::max(uint16_t(1), mEngine->OutputCount());
   mLastChunks.SetLength(outputCount);
 
-  if (mMuted) {
+  bool blocked = mBlocked.GetAt(aFrom);
+  if (mMuted || blocked) {
     for (uint16_t i = 0; i < outputCount; ++i) {
       mLastChunks[i].SetNull(WEBAUDIO_BLOCK_SIZE);
     }
@@ -438,15 +442,17 @@ AudioNodeStream::ProduceOutput(GraphTime aFrom, GraphTime aTo)
     if (finished) {
       mMarkAsFinishedAfterThisBlock = true;
     }
-  }
 
-  if (mDisabledTrackIDs.Contains(static_cast<TrackID>(AUDIO_TRACK))) {
-    for (uint32_t i = 0; i < mLastChunks.Length(); ++i) {
-      mLastChunks[i].SetNull(WEBAUDIO_BLOCK_SIZE);
+    if (mDisabledTrackIDs.Contains(static_cast<TrackID>(AUDIO_TRACK))) {
+      for (uint32_t i = 0; i < outputCount; ++i) {
+        mLastChunks[i].SetNull(WEBAUDIO_BLOCK_SIZE);
+      }
     }
   }
 
-  AdvanceOutputSegment();
+  if (!blocked) {
+    AdvanceOutputSegment();
+  }
 }
 
 void

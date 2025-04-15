@@ -383,16 +383,19 @@ this.Text = {
    *        A wrapped object to store encoded raw data.
    * @param text
    *        String text of one character to be encoded.
+   * @param asciiOnly
+   *        A boolean to decide if it's only allowed to encode ASCII (0 ~ 127).
    *
    * @throws CodeError if a control character got.
    */
-  encode: function encode(data, text) {
+  encode: function encode(data, text, asciiOnly) {
     if (!text) {
       throw new CodeError("Text: empty string");
     }
 
     let code = text.charCodeAt(0);
-    if ((code < CTLS) || (code == DEL) || (code > 255)) {
+    if ((code < CTLS) || (code == DEL) || (code > 255) ||
+        (code >= 128 && asciiOnly)) {
       throw new CodeError("Text: invalid char code " + code);
     }
     Octet.encode(data, code);
@@ -425,11 +428,13 @@ this.NullTerminatedTexts = {
    *        A wrapped object to store encoded raw data.
    * @param str
    *        A String to be encoded.
+   * @param asciiOnly
+   *        A boolean to decide if it's only allowed to encode ASCII (0 ~ 127).
    */
-  encode: function encode(data, str) {
+  encode: function encode(data, str, asciiOnly) {
     if (str) {
       for (let i = 0; i < str.length; i++) {
-        Text.encode(data, str.charAt(i));
+        Text.encode(data, str.charAt(i), asciiOnly);
       }
     }
     Octet.encode(data, 0);
@@ -590,8 +595,10 @@ this.TextString = {
    *        A wrapped object to store encoded raw data.
    * @param str
    *        A String to be encoded.
+   * @param asciiOnly
+   *        A boolean to decide if it's only allowed to encode ASCII (0 ~ 127).
    */
-  encode: function encode(data, str) {
+  encode: function encode(data, str, asciiOnly) {
     if (!str) {
       Octet.encode(data, 0);
       return;
@@ -599,10 +606,14 @@ this.TextString = {
 
     let firstCharCode = str.charCodeAt(0);
     if (firstCharCode >= 128) {
+      if (asciiOnly) {
+        throw new CodeError("Text: invalid char code " + code);
+      }
+
       Octet.encode(data, 127);
     }
 
-    NullTerminatedTexts.encode(data, str);
+    NullTerminatedTexts.encode(data, str, asciiOnly);
   },
 };
 
@@ -2446,17 +2457,18 @@ this.PduHelper = {
 
       // Encode headersLen, DataLen
       let headersLen = data.offset;
+      let content = part.content;
       UintVar.encode(data, headersLen);
-      if (typeof part.content === "string") {
+      if (typeof content === "string") {
         let charset;
         if (contentType && contentType.params && contentType.params.charset &&
           contentType.params.charset.charset) {
           charset = contentType.params.charset.charset;
         }
-        part.content = this.encodeStringContent(part.content, charset);
-        UintVar.encode(data, part.content.length);
+        content = this.encodeStringContent(content, charset);
+        UintVar.encode(data, content.length);
       } else if (part.content instanceof Uint8Array) {
-        UintVar.encode(data, part.content.length);
+        UintVar.encode(data, content.length);
       } else {
         throw new TypeError();
       }
@@ -2470,7 +2482,7 @@ this.PduHelper = {
       // Append per-part header
       this.appendArrayToMultiStream(multiStream, data.array, data.offset);
       // Append part content
-      this.appendArrayToMultiStream(multiStream, part.content, part.content.length);
+      this.appendArrayToMultiStream(multiStream, content, content.length);
     }
   },
 };

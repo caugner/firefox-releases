@@ -42,6 +42,10 @@ extern "C" {
   typedef int (*dl_phdr_cb)(struct dl_phdr_info *, size_t, void *);
   int __wrap_dl_iterate_phdr(dl_phdr_cb callback, void *data);
 
+#ifdef __ARM_EABI__
+  const void *__wrap___gnu_Unwind_Find_exidx(void *pc, int *pcount);
+#endif
+
 /**
  * faulty.lib public API
  */
@@ -92,7 +96,7 @@ public:
    * of the leaf name.
    */
   LibHandle(const char *path)
-  : directRefCnt(0), path(path ? strdup(path) : NULL), mappable(NULL) { }
+  : directRefCnt(0), path(path ? strdup(path) : nullptr), mappable(nullptr) { }
 
   /**
    * Destructor.
@@ -181,6 +185,14 @@ public:
    */
   void MappableMUnmap(void *addr, size_t length) const;
 
+#ifdef __ARM_EABI__
+  /**
+   * Find the address and entry count of the ARM.exidx section
+   * associated with the library
+   */
+  virtual const void *FindExidx(int *pcount) const = 0;
+#endif
+
 protected:
   /**
    * Returns a mappable object for use by MappableMMap and related functions.
@@ -255,6 +267,10 @@ public:
   virtual void *GetSymbolPtr(const char *symbol) const;
   virtual bool Contains(void *addr) const { return false; /* UNIMPLEMENTED */ }
 
+#ifdef __ARM_EABI__
+  virtual const void *FindExidx(int *pcount) const;
+#endif
+
 protected:
   virtual Mappable *GetMappable() const;
 
@@ -271,7 +287,7 @@ protected:
    */
   void Forget()
   {
-    dlhandle = NULL;
+    dlhandle = nullptr;
   }
 
 private:
@@ -365,7 +381,7 @@ public:
    * directory containing that parent library for the library to load.
    */
   mozilla::TemporaryRef<LibHandle> Load(const char *path, int flags,
-                                        LibHandle *parent = NULL);
+                                        LibHandle *parent = nullptr);
 
   /**
    * Returns the handle of the library containing the given address in
@@ -559,7 +575,7 @@ private:
 
       bool operator<(const iterator &other) const
       {
-        if (other.item == NULL)
+        if (other.item == nullptr)
           return item ? true : false;
         MOZ_CRASH("DebuggerHelper::iterator::operator< called with something else than DebuggerHelper::end()");
       }
@@ -573,12 +589,12 @@ private:
 
     iterator begin() const
     {
-      return iterator(dbg ? dbg->r_map : NULL);
+      return iterator(dbg ? dbg->r_map : nullptr);
     }
 
     iterator end() const
     {
-      return iterator(NULL);
+      return iterator(nullptr);
     }
 
   private:

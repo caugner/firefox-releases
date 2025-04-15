@@ -19,6 +19,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource:///modules/devtools/gDevTools.jsm");
 Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
+Cu.import("resource:///modules/devtools/DOMHelpers.jsm");
 
 loader.lazyGetter(this, "Hosts", () => require("devtools/framework/toolbox-hosts").Hosts);
 
@@ -55,8 +56,10 @@ loader.lazyGetter(this, "Requisition", () => {
  *        Tool to select initially
  * @param {Toolbox.HostType} hostType
  *        Type of host that will host the toolbox (e.g. sidebar, window)
+ * @param {object} hostOptions
+ *        Options for host specifically
  */
-function Toolbox(target, selectedTool, hostType) {
+function Toolbox(target, selectedTool, hostType, hostOptions) {
   this._target = target;
   this._toolPanels = new Map();
   this._telemetry = new Telemetry();
@@ -64,6 +67,7 @@ function Toolbox(target, selectedTool, hostType) {
   this._toolRegistered = this._toolRegistered.bind(this);
   this._toolUnregistered = this._toolUnregistered.bind(this);
   this._refreshHostTitle = this._refreshHostTitle.bind(this);
+  this._splitConsoleOnKeypress = this._splitConsoleOnKeypress.bind(this)
   this.destroy = this.destroy.bind(this);
 
   this._target.on("close", this.destroy);
@@ -79,7 +83,7 @@ function Toolbox(target, selectedTool, hostType) {
   }
   this._defaultToolId = selectedTool;
 
-  this._host = this._createHost(hostType);
+  this._host = this._createHost(hostType, hostOptions);
 
   EventEmitter.decorate(this);
 
@@ -99,7 +103,8 @@ exports.Toolbox = Toolbox;
 Toolbox.HostType = {
   BOTTOM: "bottom",
   SIDE: "side",
-  WINDOW: "window"
+  WINDOW: "window",
+  CUSTOM: "custom"
 };
 
 Toolbox.prototype = {
@@ -178,6 +183,13 @@ Toolbox.prototype = {
   },
 
   /**
+   * Get the toggled state of the split console
+   */
+  get splitConsole() {
+    return this._splitConsole;
+  },
+
+  /**
    * Open the toolbox
    */
   open: function() {
@@ -187,8 +199,6 @@ Toolbox.prototype = {
       let deferred = promise.defer();
 
       let domReady = () => {
-        iframe.removeEventListener("DOMContentLoaded", domReady, true);
-
         this.isReady = true;
 
         let closeButton = this.doc.getElementById("toolbox-close");
@@ -211,8 +221,10 @@ Toolbox.prototype = {
         });
       };
 
-      iframe.addEventListener("DOMContentLoaded", domReady, true);
       iframe.setAttribute("src", this._URL);
+
+      let domHelper = new DOMHelpers(iframe.contentWindow);
+      domHelper.onceDOMReady(domReady);
 
       return deferred.promise;
     });
@@ -225,11 +237,67 @@ Toolbox.prototype = {
     }, true);
   },
 
+  _isResponsiveModeActive: function() {
+    let responsiveModeActive = false;
+    if (this.target.isLocalTab) {
+      let tab = this.target.tab;
+      let browserWindow = tab.ownerDocument.defaultView;
+      let responsiveUIManager = browserWindow.ResponsiveUI.ResponsiveUIManager;
+      responsiveModeActive = responsiveUIManager.isActiveForTab(tab);
+    }
+    return responsiveModeActive;
+  },
+
+  _splitConsoleOnKeypress: function(e) {
+    let responsiveModeActive = this._isResponsiveModeActive();
+    if (e.keyCode === e.DOM_VK_ESCAPE && !responsiveModeActive) {
+      this.toggleSplitConsole();
+    }
+  },
+
   _addToolSwitchingKeys: function() {
     let nextKey = this.doc.getElementById("toolbox-next-tool-key");
     nextKey.addEventListener("command", this.selectNextTool.bind(this), true);
     let prevKey = this.doc.getElementById("toolbox-previous-tool-key");
     prevKey.addEventListener("command", this.selectPreviousTool.bind(this), true);
+
+    // Split console uses keypress instead of command so the event can be
+    // cancelled with stopPropagation on the keypress, and not preventDefault.
+    this.doc.addEventListener("keypress", this._splitConsoleOnKeypress, false);
+  },
+
+  /**
+   * Make sure that the console is showing up properly based on all the
+   * possible conditions.
+   *   1) If the console tab is selected, then regardless of split state
+   *      it should take up the full height of the deck, and we should
+   *      hide the deck and splitter.
+   *   2) If the console tab is not selected and it is split, then we should
+   *      show the splitter, deck, and console.
+   *   3) If the console tab is not selected and it is *not* split,
+   *      then we should hide the console and splitter, and show the deck
+   *      at full height.
+   */
+  _refreshConsoleDisplay: function() {
+    let deck = this.doc.getElementById("toolbox-deck");
+    let webconsolePanel = this.doc.getElementById("toolbox-panel-webconsole");
+    let splitter = this.doc.getElementById("toolbox-console-splitter");
+    let openedConsolePanel = this.currentToolId === "webconsole";
+
+    if (openedConsolePanel) {
+      deck.setAttribute("collapsed", "true");
+      splitter.setAttribute("hidden", "true");
+      webconsolePanel.removeAttribute("collapsed");
+    } else {
+      deck.removeAttribute("collapsed");
+      if (this._splitConsole) {
+        webconsolePanel.removeAttribute("collapsed");
+        splitter.removeAttribute("hidden");
+      } else {
+        webconsolePanel.setAttribute("collapsed", "true");
+        splitter.setAttribute("hidden", "true");
+      }
+    }
   },
 
   /**
@@ -387,6 +455,7 @@ Toolbox.prototype = {
     for (let type in Toolbox.HostType) {
       let position = Toolbox.HostType[type];
       if (position == this.hostType ||
+          position == Toolbox.HostType.CUSTOM ||
           (!sideEnabled && position == Toolbox.HostType.SIDE)) {
         continue;
       }
@@ -492,10 +561,16 @@ Toolbox.prototype = {
       radio.setAttribute("flex", "1");
     }
 
+    if (!toolDefinition.bgTheme) {
+      toolDefinition.bgTheme = "theme-toolbar";
+    }
     let vbox = this.doc.createElement("vbox");
-    vbox.className = "toolbox-panel";
-    vbox.id = "toolbox-panel-" + id;
+    vbox.className = "toolbox-panel " + toolDefinition.bgTheme;
 
+    // There is already a container for the webconsole frame.
+    if (!this.doc.getElementById("toolbox-panel-" + id)) {
+      vbox.id = "toolbox-panel-" + id;
+    }
 
     // If there is no tab yet, or the ordinal to be added is the largest one.
     if (tabs.childNodes.length == 0 ||
@@ -550,12 +625,14 @@ Toolbox.prototype = {
     iframe.setAttribute("flex", 1);
     iframe.setAttribute("forceOwnRefreshDriver", "");
     iframe.tooltip = "aHTMLTooltip";
+    iframe.style.visibility = "hidden";
 
     let vbox = this.doc.getElementById("toolbox-panel-" + id);
     vbox.appendChild(iframe);
 
     let onLoad = () => {
-      iframe.removeEventListener("DOMContentLoaded", onLoad, true);
+      // Prevent flicker while loading by waiting to make visible until now.
+      iframe.style.visibility = "visible";
 
       let built = definition.build(iframe.contentWindow, this);
       promise.resolve(built).then((panel) => {
@@ -566,8 +643,25 @@ Toolbox.prototype = {
       });
     };
 
-    iframe.addEventListener("DOMContentLoaded", onLoad, true);
     iframe.setAttribute("src", definition.url);
+
+    // Depending on the host, iframe.contentWindow is not always
+    // defined at this moment. If it is not defined, we use an
+    // event listener on the iframe DOM node. If it's defined,
+    // we use the chromeEventHandler. We can't use a listener
+    // on the DOM node every time because this won't work
+    // if the (xul chrome) iframe is loaded in a content docshell.
+    if (iframe.contentWindow) {
+      let domHelper = new DOMHelpers(iframe.contentWindow);
+      domHelper.onceDOMReady(onLoad);
+    } else {
+      let callback = () => {
+        iframe.removeEventListener("DOMContentLoaded", callback);
+        onLoad();
+      }
+      iframe.addEventListener("DOMContentLoaded", callback);
+    }
+
     return deferred.promise;
   },
 
@@ -585,7 +679,6 @@ Toolbox.prototype = {
 
     let tab = this.doc.getElementById("toolbox-tab-" + id);
     tab.setAttribute("selected", "true");
-
 
     if (this.currentToolId == id) {
       // re-focus tool to get key events again
@@ -629,6 +722,7 @@ Toolbox.prototype = {
     deck.selectedIndex = index;
 
     this.currentToolId = id;
+    this._refreshConsoleDisplay();
     if (id != "options") {
       Services.prefs.setCharPref(this._prefs.LAST_TOOL, id);
     }
@@ -651,6 +745,27 @@ Toolbox.prototype = {
   focusTool: function(id) {
     let iframe = this.doc.getElementById("toolbox-panel-iframe-" + id);
     iframe.focus();
+  },
+
+  /**
+   * Toggles the split state of the webconsole.  If the webconsole panel
+   * is already selected, then this command is ignored.
+   */
+  toggleSplitConsole: function() {
+    let openedConsolePanel = this.currentToolId === "webconsole";
+
+    // Don't allow changes when console is open, since it could be confusing
+    if (!openedConsolePanel) {
+      this._splitConsole = !this._splitConsole;
+      this._refreshConsoleDisplay();
+      this.emit("split-console");
+
+      if (this._splitConsole) {
+        this.loadTool("webconsole").then(() => {
+          this.focusTool("webconsole");
+        });
+      }
+    }
   },
 
   /**
@@ -732,13 +847,13 @@ Toolbox.prototype = {
    * @return {Host} host
    *        The created host object
    */
-  _createHost: function(hostType) {
+  _createHost: function(hostType, options) {
     if (!Hosts[hostType]) {
       throw new Error("Unknown hostType: " + hostType);
     }
 
     // clean up the toolbox if its window is closed
-    let newHost = new Hosts[hostType](this.target.tab);
+    let newHost = new Hosts[hostType](this.target.tab, options);
     newHost.on("window-closed", this.destroy);
     return newHost;
   },
@@ -762,11 +877,13 @@ Toolbox.prototype = {
       iframe.swapFrameLoaders(this.frame);
 
       this._host.off("window-closed", this.destroy);
-      this._host.destroy();
+      this.destroyHost();
 
       this._host = newHost;
 
-      Services.prefs.setCharPref(this._prefs.LAST_HOST, this._host.type);
+      if (this.hostType != Toolbox.HostType.CUSTOM) {
+        Services.prefs.setCharPref(this._prefs.LAST_HOST, this._host.type);
+      }
 
       this._buildDockButtons();
       this._addKeysToWindow();
@@ -848,6 +965,17 @@ Toolbox.prototype = {
   },
 
   /**
+   * Destroy the current host, and remove event listeners from its frame.
+   *
+   * @return {promise} to be resolved when the host is destroyed.
+   */
+  destroyHost: function() {
+    this.doc.removeEventListener("keypress",
+      this._splitConsoleOnKeypress, false);
+    return this._host.destroy();
+  },
+
+  /**
    * Remove all UI elements, detach from target and clear up
    */
   destroy: function() {
@@ -888,7 +1016,7 @@ Toolbox.prototype = {
       container.removeChild(container.firstChild);
     }
 
-    outstanding.push(this._host.destroy());
+    outstanding.push(this.destroyHost());
 
     this._telemetry.destroy();
 

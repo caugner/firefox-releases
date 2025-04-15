@@ -15,6 +15,11 @@
 #include "Tools.h"
 #include <algorithm>
 #include "mozilla/Constants.h"
+#include "FilterNodeSoftware.h"
+
+#ifdef USE_D2D1_1
+#include "FilterNodeD2D1.h"
+#endif
 
 #include <dwrite.h>
 
@@ -85,9 +90,7 @@ public:
     }
     mDT->mDevice->CopyResource(tmpTexture, mDT->mTexture);
 
-    D2D1_BITMAP_PROPERTIES props =
-      D2D1::BitmapProperties(D2D1::PixelFormat(DXGIFormat(format),
-                             AlphaMode(format)));
+    D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(D2DPixelFormat(format));
 
     RefPtr<IDXGISurface> surf;
 
@@ -306,7 +309,7 @@ DrawTargetD2D::GetBitmapForSurface(SourceSurface *aSurface,
                             (uint32_t)aSource.x * BytesPerPixel(srcSurf->GetFormat());
 
       D2D1_BITMAP_PROPERTIES props =
-        D2D1::BitmapProperties(D2D1::PixelFormat(DXGIFormat(srcSurf->GetFormat()), AlphaMode(srcSurf->GetFormat())));
+        D2D1::BitmapProperties(D2DPixelFormat(srcSurf->GetFormat()));
       mRT->CreateBitmap(D2D1::SizeU(UINT32(aSource.width), UINT32(aSource.height)), data, stride, props, byRef(bitmap));
 
       // subtract the integer part leaving the fractional part
@@ -344,6 +347,46 @@ DrawTargetD2D::DrawSurface(SourceSurface *aSurface,
   rt->DrawBitmap(bitmap, D2DRect(aDest), aOptions.mAlpha, D2DFilter(aSurfOptions.mFilter), D2DRect(srcRect));
 
   FinalizeRTForOperation(aOptions.mCompositionOp, ColorPattern(Color()), aDest);
+}
+
+void
+DrawTargetD2D::DrawFilter(FilterNode *aNode,
+                          const Rect &aSourceRect,
+                          const Point &aDestPoint,
+                          const DrawOptions &aOptions)
+{
+#ifdef USE_D2D1_1
+  RefPtr<ID2D1DeviceContext> dc;
+  HRESULT hr;
+  
+  hr = mRT->QueryInterface((ID2D1DeviceContext**)byRef(dc));
+
+  if (SUCCEEDED(hr) && aNode->GetBackendType() == FILTER_BACKEND_DIRECT2D1_1) {
+    ID2D1RenderTarget *rt = GetRTForOperation(aOptions.mCompositionOp, ColorPattern(Color()));
+  
+    PrepareForDrawing(rt);
+
+    rt->SetAntialiasMode(D2DAAMode(aOptions.mAntialiasMode));
+    hr = rt->QueryInterface((ID2D1DeviceContext**)byRef(dc));
+
+    if (SUCCEEDED(hr)) {
+      dc->DrawImage(static_cast<FilterNodeD2D1*>(aNode)->OutputEffect(), D2DPoint(aDestPoint), D2DRect(aSourceRect));
+
+      Rect destRect = aSourceRect;
+      destRect.MoveBy(aDestPoint);
+      FinalizeRTForOperation(aOptions.mCompositionOp, ColorPattern(Color()), destRect);
+      return;
+    }
+  }
+#endif
+
+  if (aNode->GetBackendType() != FILTER_BACKEND_SOFTWARE) {
+    gfxWarning() << "Invalid filter backend passed to DrawTargetD2D!";
+    return;
+  }
+
+  FilterNodeSoftware* filter = static_cast<FilterNodeSoftware*>(aNode);
+  filter->Draw(this, aSourceRect, aDestPoint, aOptions);
 }
 
 void
@@ -773,26 +816,7 @@ DrawTargetD2D::CopySurface(SourceSurface *aSurface,
   mRT->Clear(D2D1::ColorF(0, 0.0f));
   mRT->PopAxisAlignedClip();
 
-  RefPtr<ID2D1Bitmap> bitmap;
-
-  switch (aSurface->GetType()) {
-  case SURFACE_D2D1_BITMAP:
-    {
-      SourceSurfaceD2D *srcSurf = static_cast<SourceSurfaceD2D*>(aSurface);
-      bitmap = srcSurf->GetBitmap();
-    }
-    break;
-  case SURFACE_D2D1_DRAWTARGET:
-    {
-      SourceSurfaceD2DTarget *srcSurf = static_cast<SourceSurfaceD2DTarget*>(aSurface);
-      bitmap = srcSurf->GetBitmap(mRT);
-      AddDependencyOnSource(srcSurf);
-    }
-    break;
-  default:
-    return;
-  }
-
+  RefPtr<ID2D1Bitmap> bitmap = GetBitmapForSurface(aSurface, srcRect);
   if (!bitmap) {
     return;
   }
@@ -1242,6 +1266,20 @@ DrawTargetD2D::CreateGradientStops(GradientStop *rawStops, uint32_t aNumStops, E
   }
 
   return new GradientStopsD2D(stopCollection);
+}
+
+TemporaryRef<FilterNode>
+DrawTargetD2D::CreateFilter(FilterType aType)
+{
+#ifdef USE_D2D1_1
+  RefPtr<ID2D1DeviceContext> dc;
+  HRESULT hr = mRT->QueryInterface((ID2D1DeviceContext**)byRef(dc));
+
+  if (SUCCEEDED(hr)) {
+    return FilterNodeD2D1::Create(this, dc, aType);
+  }
+#endif
+  return FilterNodeSoftware::Create(aType);
 }
 
 void*

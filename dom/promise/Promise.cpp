@@ -11,6 +11,7 @@
 #include "mozilla/dom/PromiseBinding.h"
 #include "mozilla/Preferences.h"
 #include "PromiseCallback.h"
+#include "PromiseNativeHandler.h"
 #include "nsContentUtils.h"
 #include "nsPIDOMWindow.h"
 #include "WorkerPrivate.h"
@@ -21,6 +22,10 @@
 
 namespace mozilla {
 namespace dom {
+
+using namespace workers;
+
+NS_IMPL_ISUPPORTS0(PromiseNativeHandler)
 
 // PromiseTask
 
@@ -51,36 +56,65 @@ private:
   nsRefPtr<Promise> mPromise;
 };
 
-// This class processes the promise's callbacks with promise's result.
-class PromiseResolverTask MOZ_FINAL : public nsRunnable
+class WorkerPromiseTask MOZ_FINAL : public WorkerRunnable
 {
 public:
-  PromiseResolverTask(Promise* aPromise,
-                      JS::Handle<JS::Value> aValue,
-                      Promise::PromiseState aState)
+  WorkerPromiseTask(WorkerPrivate* aWorkerPrivate, Promise* aPromise)
+    : WorkerRunnable(aWorkerPrivate, WorkerThread,
+                     UnchangedBusyCount, SkipWhenClearing)
+    , mPromise(aPromise)
+  {
+    MOZ_ASSERT(aPromise);
+    MOZ_COUNT_CTOR(WorkerPromiseTask);
+  }
+
+  ~WorkerPromiseTask()
+  {
+    MOZ_COUNT_DTOR(WorkerPromiseTask);
+  }
+
+  bool
+  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
+  {
+    mPromise->mTaskPending = false;
+    mPromise->RunTask();
+    return true;
+  }
+
+private:
+  nsRefPtr<Promise> mPromise;
+};
+
+class PromiseResolverMixin
+{
+public:
+  PromiseResolverMixin(Promise* aPromise,
+                       JS::Handle<JS::Value> aValue,
+                       Promise::PromiseState aState)
     : mPromise(aPromise)
     , mValue(aValue)
     , mState(aState)
   {
     MOZ_ASSERT(aPromise);
     MOZ_ASSERT(mState != Promise::Pending);
-    MOZ_COUNT_CTOR(PromiseResolverTask);
+    MOZ_COUNT_CTOR(PromiseResolverMixin);
 
-    JSContext* cx = nsContentUtils::GetSafeJSContext();
+    JSContext* cx = nsContentUtils::GetDefaultJSContextForThread();
 
     /* It's safe to use unsafeGet() here: the unsafeness comes from the
      * possibility of updating the value of mJSObject without triggering the
      * barriers.  However if the value will always be marked, post barriers
      * unnecessary. */
     JS_AddNamedValueRootRT(JS_GetRuntime(cx), mValue.unsafeGet(),
-                           "PromiseResolverTask.mValue");
+                           "PromiseResolverMixin.mValue");
   }
 
-  ~PromiseResolverTask()
+  virtual ~PromiseResolverMixin()
   {
-    MOZ_COUNT_DTOR(PromiseResolverTask);
+    NS_ASSERT_OWNINGTHREAD(PromiseResolverMixin);
+    MOZ_COUNT_DTOR(PromiseResolverMixin);
 
-    JSContext* cx = nsContentUtils::GetSafeJSContext();
+    JSContext* cx = nsContentUtils::GetDefaultJSContextForThread();
 
     /* It's safe to use unsafeGet() here: the unsafeness comes from the
      * possibility of updating the value of mJSObject without triggering the
@@ -89,18 +123,66 @@ public:
     JS_RemoveValueRootRT(JS_GetRuntime(cx), mValue.unsafeGet());
   }
 
-  NS_IMETHOD Run()
+protected:
+  void
+  RunInternal()
   {
+    NS_ASSERT_OWNINGTHREAD(PromiseResolverMixin);
     mPromise->RunResolveTask(
       JS::Handle<JS::Value>::fromMarkedLocation(mValue.address()),
       mState, Promise::SyncTask);
-    return NS_OK;
   }
 
 private:
   nsRefPtr<Promise> mPromise;
   JS::Heap<JS::Value> mValue;
   Promise::PromiseState mState;
+  NS_DECL_OWNINGTHREAD;
+};
+
+// This class processes the promise's callbacks with promise's result.
+class PromiseResolverTask MOZ_FINAL : public nsRunnable,
+                                      public PromiseResolverMixin
+{
+public:
+  PromiseResolverTask(Promise* aPromise,
+                      JS::Handle<JS::Value> aValue,
+                      Promise::PromiseState aState)
+    : PromiseResolverMixin(aPromise, aValue, aState)
+  {}
+
+  ~PromiseResolverTask()
+  {}
+
+  NS_IMETHOD Run()
+  {
+    RunInternal();
+    return NS_OK;
+  }
+};
+
+class WorkerPromiseResolverTask MOZ_FINAL : public WorkerRunnable,
+                                            public PromiseResolverMixin
+{
+public:
+  WorkerPromiseResolverTask(WorkerPrivate* aWorkerPrivate,
+                            Promise* aPromise,
+                            JS::Handle<JS::Value> aValue,
+                            Promise::PromiseState aState)
+    : WorkerRunnable(aWorkerPrivate, WorkerThread,
+                     UnchangedBusyCount, SkipWhenClearing),
+      PromiseResolverMixin(aPromise, aValue, aState)
+  {}
+
+  ~WorkerPromiseResolverTask()
+  {}
+
+  bool
+  WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate)
+  {
+    RunInternal();
+    return true;
+  }
 };
 
 // Promise
@@ -164,26 +246,22 @@ Promise::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 }
 
 /* static */ bool
-Promise::PrefEnabled()
-{
-  return Preferences::GetBool("dom.promise.enabled", false);
-}
-
-/* static */ bool
 Promise::EnabledForScope(JSContext* aCx, JSObject* /* unused */)
 {
+  if (NS_IsMainThread()) {
+    // No direct return so the chrome/certified app checks happen below.
+    if (Preferences::GetBool("dom.promise.enabled", false)) {
+      return true;
+    }
+  } else {
+    WorkerPrivate* workerPrivate = GetWorkerPrivateFromContext(aCx);
+    return workerPrivate->PromiseEnabled() || workerPrivate->UsesSystemPrincipal();
+  }
   // Enable if the pref is enabled or if we're chrome or if we're a
   // certified app.
-  if (PrefEnabled()) {
-    return true;
-  }
-
   // Note that we have no concept of a certified app in workers.
   // XXXbz well, why not?
-  if (!NS_IsMainThread()) {
-    return workers::GetWorkerPrivateFromContext(aCx)->IsChromeWorker();
-  }
-
+  // FIXME(nsm): Remove these checks once promises are enabled by default.
   nsIPrincipal* prin = nsContentUtils::GetSubjectPrincipal();
   return nsContentUtils::IsSystemPrincipal(prin) ||
     prin->GetAppStatus() == nsIPrincipal::APP_STATUS_CERTIFIED;
@@ -191,25 +269,25 @@ Promise::EnabledForScope(JSContext* aCx, JSObject* /* unused */)
 
 void
 Promise::MaybeResolve(JSContext* aCx,
-                      const Optional<JS::Handle<JS::Value> >& aValue)
+                      JS::Handle<JS::Value> aValue)
 {
   MaybeResolveInternal(aCx, aValue);
 }
 
 void
 Promise::MaybeReject(JSContext* aCx,
-                     const Optional<JS::Handle<JS::Value> >& aValue)
+                     JS::Handle<JS::Value> aValue)
 {
   MaybeRejectInternal(aCx, aValue);
 }
 
 static void
 EnterCompartment(Maybe<JSAutoCompartment>& aAc, JSContext* aCx,
-                 const Optional<JS::Handle<JS::Value> >& aValue)
+                 JS::Handle<JS::Value> aValue)
 {
   // FIXME Bug 878849
-  if (aValue.WasPassed() && aValue.Value().isObject()) {
-    JS::Rooted<JSObject*> rooted(aCx, &aValue.Value().toObject());
+  if (aValue.isObject()) {
+    JS::Rooted<JSObject*> rooted(aCx, &aValue.toObject());
     aAc.construct(aCx, rooted);
   }
 }
@@ -230,22 +308,17 @@ Promise::JSCallback(JSContext *aCx, unsigned aArgc, JS::Value *aVp)
   MOZ_ASSERT(v.isObject());
 
   Promise* promise;
-  if (NS_FAILED(UNWRAP_OBJECT(Promise, aCx, &v.toObject(), promise))) {
+  if (NS_FAILED(UNWRAP_OBJECT(Promise, &v.toObject(), promise))) {
     return Throw(aCx, NS_ERROR_UNEXPECTED);
-  }
-
-  Optional<JS::Handle<JS::Value> > value(aCx);
-  if (aArgc) {
-    value.Value() = args[0];
   }
 
   v = js::GetFunctionNativeReserved(&args.callee(), SLOT_TASK);
   PromiseCallback::Task task = static_cast<PromiseCallback::Task>(v.toInt32());
 
   if (task == PromiseCallback::Resolve) {
-    promise->MaybeResolveInternal(aCx, value);
+    promise->MaybeResolveInternal(aCx, args.get(0));
   } else {
-    promise->MaybeRejectInternal(aCx, value);
+    promise->MaybeRejectInternal(aCx, args.get(0));
   }
 
   return true;
@@ -280,10 +353,15 @@ Promise::Constructor(const GlobalObject& aGlobal,
                      PromiseInit& aInit, ErrorResult& aRv)
 {
   JSContext* cx = aGlobal.GetContext();
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
-  if (!window) {
-    aRv.Throw(NS_ERROR_UNEXPECTED);
-    return nullptr;
+  nsCOMPtr<nsPIDOMWindow> window;
+
+  // On workers, let the window be null.
+  if (MOZ_LIKELY(NS_IsMainThread())) {
+    window = do_QueryInterface(aGlobal.GetAsSupports());
+    if (!window) {
+      aRv.Throw(NS_ERROR_UNEXPECTED);
+      return nullptr;
+    }
   }
 
   nsRefPtr<Promise> promise = new Promise(window);
@@ -309,8 +387,8 @@ Promise::Constructor(const GlobalObject& aGlobal,
   aRv.WouldReportJSException();
 
   if (aRv.IsJSException()) {
-    Optional<JS::Handle<JS::Value> > value(cx);
-    aRv.StealJSException(cx, &value.Value());
+    JS::Rooted<JS::Value> value(cx);
+    aRv.StealJSException(cx, &value);
 
     Maybe<JSAutoCompartment> ac;
     EnterCompartment(ac, cx, value);
@@ -322,55 +400,61 @@ Promise::Constructor(const GlobalObject& aGlobal,
 
 /* static */ already_AddRefed<Promise>
 Promise::Resolve(const GlobalObject& aGlobal, JSContext* aCx,
-                 JS::Handle<JS::Value> aValue, ErrorResult& aRv)
+                 const Optional<JS::Handle<JS::Value>>& aValue, ErrorResult& aRv)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
-  if (!window) {
-    aRv.Throw(NS_ERROR_UNEXPECTED);
-    return nullptr;
+  nsCOMPtr<nsPIDOMWindow> window;
+  if (MOZ_LIKELY(NS_IsMainThread())) {
+    window = do_QueryInterface(aGlobal.GetAsSupports());
+    if (!window) {
+      aRv.Throw(NS_ERROR_UNEXPECTED);
+      return nullptr;
+    }
   }
 
   nsRefPtr<Promise> promise = new Promise(window);
 
-  Optional<JS::Handle<JS::Value> > value(aCx, aValue);
-  promise->MaybeResolveInternal(aCx, value);
+  promise->MaybeResolveInternal(aCx,
+    aValue.WasPassed() ? aValue.Value() : JS::UndefinedHandleValue);
   return promise.forget();
 }
 
 /* static */ already_AddRefed<Promise>
 Promise::Reject(const GlobalObject& aGlobal, JSContext* aCx,
-                JS::Handle<JS::Value> aValue, ErrorResult& aRv)
+                const Optional<JS::Handle<JS::Value>>& aValue, ErrorResult& aRv)
 {
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
-  if (!window) {
-    aRv.Throw(NS_ERROR_UNEXPECTED);
-    return nullptr;
+  nsCOMPtr<nsPIDOMWindow> window;
+  if (MOZ_LIKELY(NS_IsMainThread())) {
+    window = do_QueryInterface(aGlobal.GetAsSupports());
+    if (!window) {
+      aRv.Throw(NS_ERROR_UNEXPECTED);
+      return nullptr;
+    }
   }
 
   nsRefPtr<Promise> promise = new Promise(window);
 
-  Optional<JS::Handle<JS::Value> > value(aCx, aValue);
-  promise->MaybeRejectInternal(aCx, value);
+  promise->MaybeRejectInternal(aCx,
+    aValue.WasPassed() ? aValue.Value() : JS::UndefinedHandleValue);
   return promise.forget();
 }
 
 already_AddRefed<Promise>
-Promise::Then(const Optional<OwningNonNull<AnyCallback> >& aResolveCallback,
-              const Optional<OwningNonNull<AnyCallback> >& aRejectCallback)
+Promise::Then(const Optional<nsRefPtr<AnyCallback>>& aResolveCallback,
+              const Optional<nsRefPtr<AnyCallback>>& aRejectCallback)
 {
   nsRefPtr<Promise> promise = new Promise(GetParentObject());
 
   nsRefPtr<PromiseCallback> resolveCb =
     PromiseCallback::Factory(promise,
                              aResolveCallback.WasPassed()
-                               ? &aResolveCallback.Value()
+                               ? aResolveCallback.Value()
                                : nullptr,
                              PromiseCallback::Resolve);
 
   nsRefPtr<PromiseCallback> rejectCb =
     PromiseCallback::Factory(promise,
                              aRejectCallback.WasPassed()
-                               ? &aRejectCallback.Value()
+                               ? aRejectCallback.Value()
                                : nullptr,
                              PromiseCallback::Reject);
 
@@ -380,10 +464,22 @@ Promise::Then(const Optional<OwningNonNull<AnyCallback> >& aResolveCallback,
 }
 
 already_AddRefed<Promise>
-Promise::Catch(const Optional<OwningNonNull<AnyCallback> >& aRejectCallback)
+Promise::Catch(const Optional<nsRefPtr<AnyCallback>>& aRejectCallback)
 {
-  Optional<OwningNonNull<AnyCallback> > resolveCb;
+  Optional<nsRefPtr<AnyCallback>> resolveCb;
   return Then(resolveCb, aRejectCallback);
+}
+
+void
+Promise::AppendNativeHandler(PromiseNativeHandler* aRunnable)
+{
+  nsRefPtr<PromiseCallback> resolveCb =
+  new NativePromiseCallback(aRunnable, Resolved);
+
+  nsRefPtr<PromiseCallback> rejectCb =
+  new NativePromiseCallback(aRunnable, Rejected);
+
+  AppendCallbacks(resolveCb, rejectCb);
 }
 
 void
@@ -403,8 +499,15 @@ Promise::AppendCallbacks(PromiseCallback* aResolveCallback,
   // callbacks with promise's result. If promise's state is rejected, queue a
   // task to process our reject callbacks with promise's result.
   if (mState != Pending && !mTaskPending) {
-    nsRefPtr<PromiseTask> task = new PromiseTask(this);
-    NS_DispatchToCurrentThread(task);
+    if (MOZ_LIKELY(NS_IsMainThread())) {
+      nsRefPtr<PromiseTask> task = new PromiseTask(this);
+      NS_DispatchToCurrentThread(task);
+    } else {
+      WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
+      MOZ_ASSERT(worker);
+      nsRefPtr<WorkerPromiseTask> task = new WorkerPromiseTask(worker, this);
+      worker->Dispatch(task);
+    }
     mTaskPending = true;
   }
 }
@@ -420,8 +523,9 @@ Promise::RunTask()
   mResolveCallbacks.Clear();
   mRejectCallbacks.Clear();
 
-  JSAutoRequest ar(nsContentUtils::GetSafeJSContext());
-  Optional<JS::Handle<JS::Value> > value(nsContentUtils::GetSafeJSContext(), mResult);
+  JSContext* cx = nsContentUtils::GetDefaultJSContextForThread();
+  JSAutoRequest ar(cx);
+  JS::Rooted<JS::Value> value(cx, mResult);
 
   for (uint32_t i = 0; i < callbacks.Length(); ++i) {
     callbacks[i]->Call(value);
@@ -442,21 +546,33 @@ Promise::MaybeReportRejected()
 
   MOZ_ASSERT(mResult.isObject(), "How did we get a JSErrorReport?");
 
-  nsCOMPtr<nsPIDOMWindow> win =
-    do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(&mResult.toObject()));
+  // Remains null in case of worker.
+  nsCOMPtr<nsPIDOMWindow> win;
+  bool isChromeError = false;
+
+  if (MOZ_LIKELY(NS_IsMainThread())) {
+    win =
+      do_QueryInterface(nsJSUtils::GetStaticScriptGlobal(&mResult.toObject()));
+    nsIPrincipal* principal = nsContentUtils::GetObjectPrincipal(&mResult.toObject());
+    isChromeError = nsContentUtils::IsSystemPrincipal(principal);
+  } else {
+    WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
+    MOZ_ASSERT(worker);
+    isChromeError = worker->IsChromeWorker();
+  }
 
   // Now post an event to do the real reporting async
-  NS_DispatchToCurrentThread(
+  NS_DispatchToMainThread(
     new AsyncErrorReporter(JS_GetObjectRuntime(&mResult.toObject()),
                            report,
                            nullptr,
-                           nsContentUtils::GetObjectPrincipal(&mResult.toObject()),
+                           isChromeError,
                            win));
 }
 
 void
 Promise::MaybeResolveInternal(JSContext* aCx,
-                              const Optional<JS::Handle<JS::Value> >& aValue,
+                              JS::Handle<JS::Value> aValue,
                               PromiseTaskSync aAsynchronous)
 {
   if (mResolvePending) {
@@ -468,7 +584,7 @@ Promise::MaybeResolveInternal(JSContext* aCx,
 
 void
 Promise::MaybeRejectInternal(JSContext* aCx,
-                             const Optional<JS::Handle<JS::Value> >& aValue,
+                             JS::Handle<JS::Value> aValue,
                              PromiseTaskSync aAsynchronous)
 {
   if (mResolvePending) {
@@ -480,16 +596,16 @@ Promise::MaybeRejectInternal(JSContext* aCx,
 
 void
 Promise::ResolveInternal(JSContext* aCx,
-                         const Optional<JS::Handle<JS::Value> >& aValue,
+                         JS::Handle<JS::Value> aValue,
                          PromiseTaskSync aAsynchronous)
 {
   mResolvePending = true;
 
   // TODO: Bug 879245 - Then-able objects
-  if (aValue.WasPassed() && aValue.Value().isObject()) {
-    JS::Rooted<JSObject*> valueObj(aCx, &aValue.Value().toObject());
+  if (aValue.isObject()) {
+    JS::Rooted<JSObject*> valueObj(aCx, &aValue.toObject());
     Promise* nextPromise;
-    nsresult rv = UNWRAP_OBJECT(Promise, aCx, valueObj, nextPromise);
+    nsresult rv = UNWRAP_OBJECT(Promise, valueObj, nextPromise);
 
     if (NS_SUCCEEDED(rv)) {
       nsRefPtr<PromiseCallback> resolveCb = new ResolvePromiseCallback(this);
@@ -503,13 +619,12 @@ Promise::ResolveInternal(JSContext* aCx,
   // value. Otherwise, the synchronous flag is unset, queue a task to process
   // own resolve callbacks with value. Otherwise, the synchronous flag is
   // unset, queue a task to process our resolve callbacks with value.
-  RunResolveTask(aValue.WasPassed() ? aValue.Value() : JS::UndefinedHandleValue,
-                 Resolved, aAsynchronous);
+  RunResolveTask(aValue, Resolved, aAsynchronous);
 }
 
 void
 Promise::RejectInternal(JSContext* aCx,
-                        const Optional<JS::Handle<JS::Value> >& aValue,
+                        JS::Handle<JS::Value> aValue,
                         PromiseTaskSync aAsynchronous)
 {
   mResolvePending = true;
@@ -517,8 +632,7 @@ Promise::RejectInternal(JSContext* aCx,
   // If the synchronous flag is set, process our reject callbacks with
   // value. Otherwise, the synchronous flag is unset, queue a task to process
   // promise's reject callbacks with value.
-  RunResolveTask(aValue.WasPassed() ? aValue.Value() : JS::UndefinedHandleValue,
-                 Rejected, aAsynchronous);
+  RunResolveTask(aValue, Rejected, aAsynchronous);
 }
 
 void
@@ -529,9 +643,17 @@ Promise::RunResolveTask(JS::Handle<JS::Value> aValue,
   // If the synchronous flag is unset, queue a task to process our
   // accept callbacks with value.
   if (aAsynchronous == AsyncTask) {
-    nsRefPtr<PromiseResolverTask> task =
-      new PromiseResolverTask(this, aValue, aState);
-    NS_DispatchToCurrentThread(task);
+    if (MOZ_LIKELY(NS_IsMainThread())) {
+      nsRefPtr<PromiseResolverTask> task =
+        new PromiseResolverTask(this, aValue, aState);
+      NS_DispatchToCurrentThread(task);
+    } else {
+      WorkerPrivate* worker = GetCurrentThreadWorkerPrivate();
+      MOZ_ASSERT(worker);
+      nsRefPtr<WorkerPromiseResolverTask> task =
+        new WorkerPromiseResolverTask(worker, this, aValue, aState);
+      worker->Dispatch(task);
+    }
     return;
   }
 

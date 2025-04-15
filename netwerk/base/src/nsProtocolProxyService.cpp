@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/Util.h"
 
 #include "nsProtocolProxyService.h"
 #include "nsProxyInfo.h"
@@ -36,16 +36,9 @@ using namespace mozilla;
 
 #include "prlog.h"
 #if defined(PR_LOGGING)
-static PRLogModuleInfo *
-GetProxyLog()
-{
-    static PRLogModuleInfo *sLog;
-    if (!sLog)
-        sLog = PR_NewLogModule("proxy");
-    return sLog;
-}
 #endif
-#define LOG(args) PR_LOG(GetProxyLog(), PR_LOG_DEBUG, args)
+#undef LOG
+#define LOG(args) PR_LOG(net::GetProxyLog(), PR_LOG_DEBUG, args)
 
 //----------------------------------------------------------------------------
 

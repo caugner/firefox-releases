@@ -209,7 +209,8 @@ let Util = {
             aURL == "about:blank" ||
             aURL == "about:empty" ||
             aURL == "about:home" ||
-            aURL == "about:start");
+            aURL == "about:newtab" ||
+            aURL.startsWith("about:newtab"));
   },
 
   // Title to use for emptyURL tabs.

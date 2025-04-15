@@ -1,4 +1,5 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11,7 +12,6 @@
 #include "nsDOMClassInfoID.h"
 #include "nsError.h"
 #include "nsICharsetDetector.h"
-#include "nsICharsetConverterManager.h"
 #include "nsIClassInfo.h"
 #include "nsIConverterInputStream.h"
 #include "nsIDocument.h"
@@ -645,15 +645,10 @@ nsDOMMemoryFile::DataOwner::sMemoryReporterRegistered;
 NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(DOMMemoryFileDataOwnerMallocSizeOf)
 
 class nsDOMMemoryFileDataOwnerMemoryReporter MOZ_FINAL
-  : public nsIMemoryReporter
+  : public MemoryMultiReporter
 {
-  NS_DECL_THREADSAFE_ISUPPORTS
-
-  NS_IMETHOD GetName(nsACString& aName)
-  {
-    aName.AssignASCII("dom-memory-file-data-owner");
-    return NS_OK;
-  }
+public:
+  nsDOMMemoryFileDataOwnerMemoryReporter() {}
 
   NS_IMETHOD CollectReports(nsIMemoryReporterCallback *aCallback,
                             nsISupports *aClosure)
@@ -728,9 +723,6 @@ class nsDOMMemoryFileDataOwnerMemoryReporter MOZ_FINAL
   }
 };
 
-NS_IMPL_ISUPPORTS1(nsDOMMemoryFileDataOwnerMemoryReporter,
-                   nsIMemoryReporter)
-
 /* static */ void
 nsDOMMemoryFile::DataOwner::EnsureMemoryReporterRegistered()
 {
@@ -739,9 +731,7 @@ nsDOMMemoryFile::DataOwner::EnsureMemoryReporterRegistered()
     return;
   }
 
-  nsRefPtr<nsDOMMemoryFileDataOwnerMemoryReporter> reporter = new
-    nsDOMMemoryFileDataOwnerMemoryReporter();
-  NS_RegisterMemoryReporter(reporter);
+  RegisterStrongMemoryReporter(new nsDOMMemoryFileDataOwnerMemoryReporter());
 
   sMemoryReporterRegistered = true;
 }

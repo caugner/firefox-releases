@@ -25,6 +25,23 @@ var Appbar = {
 
     // tilegroup selection events for all modules get bubbled up
     window.addEventListener("selectionchange", this, false);
+    Services.obs.addObserver(this, "metro_on_async_tile_created", false);
+
+    // gather appbar telemetry data
+    try {
+      UITelemetry.addSimpleMeasureFunction("metro-appbar",
+                                           this.getAppbarMeasures.bind(this));
+    } catch (ex) {
+      // swallow exception that occurs if metro-appbar measure is already set up
+    }
+  },
+
+  observe: function(aSubject, aTopic, aData) {
+    switch (aTopic) {
+      case "metro_on_async_tile_created":
+        this._updatePinButton();
+        break;
+    }
   },
 
   handleEvent: function Appbar_handleEvent(aEvent) {
@@ -115,8 +132,11 @@ var Appbar = {
   onMenuButton: function(aEvent) {
       let typesArray = [];
 
-      if (!BrowserUI.isStartTabVisible)
+      if (!BrowserUI.isStartTabVisible) {
         typesArray.push("find-in-page");
+        if (ContextCommands.getPageSource())
+          typesArray.push("view-page-source");
+      }
       if (ContextCommands.getStoreLink())
         typesArray.push("ms-meta-data");
       if (ConsolePanelView.enabled)
@@ -124,16 +144,7 @@ var Appbar = {
       if (!Services.metro.immersive)
         typesArray.push("open-jsshell");
 
-      try {
-        // If we have a valid http or https URI then show the view on desktop
-        // menu item.
-        let uri = Services.io.newURI(Browser.selectedBrowser.currentURI.spec,
-                                     null, null);
-        if (uri.schemeIs('http') || uri.schemeIs('https')) {
-          typesArray.push("view-on-desktop");
-        }
-      } catch(ex) {
-      }
+      typesArray.push("view-on-desktop");
 
       var x = this.menuButton.getBoundingClientRect().left;
       var y = Elements.toolbar.getBoundingClientRect().top;
@@ -151,16 +162,13 @@ var Appbar = {
   },
 
   onViewOnDesktop: function() {
-    try {
-      // Make sure we have a valid URI so Windows doesn't prompt
-      // with an unrecognized command, select default program window
-      var uri = Services.io.newURI(Browser.selectedBrowser.currentURI.spec,
-                                   null, null);
-      if (uri.schemeIs('http') || uri.schemeIs('https')) {
-        Services.metro.launchInDesktop(Browser.selectedBrowser.currentURI.spec, "");
-      }
-    } catch(ex) {
-    }
+    let appStartup = Components.classes["@mozilla.org/toolkit/app-startup;1"].
+      getService(Components.interfaces.nsIAppStartup);
+
+    Services.prefs.setBoolPref('browser.sessionstore.resume_session_once', true);
+    this._incrementCountableEvent("switch-to-desktop-button");
+    appStartup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit |
+                    Components.interfaces.nsIAppStartup.eRestart);
   },
 
   onAutocompleteCloseButton: function () {
@@ -283,6 +291,22 @@ var Appbar = {
     }
   },
 
+  // track certain appbar events and interactions for the UITelemetry probe
+  _countableEvents: {},
+
+  _incrementCountableEvent: function(aName) {
+    if (!(aName in this._countableEvents)) {
+      this._countableEvents[aName] = 0;
+    }
+    this._countableEvents[aName]++;
+  },
+
+  getAppbarMeasures: function() {
+    return {
+      countableEvents: this._countableEvents
+    };
+  },
+
   _updatePinButton: function() {
     this.pinButton.checked = Browser.isSitePinned();
   },
@@ -292,4 +316,5 @@ var Appbar = {
       this.starButton.checked = isStarred;
     }.bind(this));
   },
+
 };

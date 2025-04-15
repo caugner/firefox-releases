@@ -195,9 +195,8 @@ nsXBLProtoImplMethod::CompileMember(const nsCString& aClassStr,
   options.setFileAndLine(functionUri.get(),
                          uncompiledMethod->mBodyText.GetLineNumber())
          .setVersion(JSVERSION_LATEST);
-  JS::RootedObject rootedNull(cx, nullptr); // See bug 781070.
-  JS::RootedObject methodObject(cx);
-  nsresult rv = nsJSUtils::CompileFunction(cx, rootedNull, options, cname,
+  JS::Rooted<JSObject*> methodObject(cx);
+  nsresult rv = nsJSUtils::CompileFunction(cx, JS::NullPtr(), options, cname,
                                            paramCount,
                                            const_cast<const char**>(args),
                                            body, methodObject.address());
@@ -218,7 +217,7 @@ nsXBLProtoImplMethod::CompileMember(const nsCString& aClassStr,
 void
 nsXBLProtoImplMethod::Trace(const TraceCallbacks& aCallbacks, void *aClosure)
 {
-  if (IsCompiled() && GetCompiledMethod()) {
+  if (IsCompiled() && GetCompiledMethodPreserveColor()) {
     aCallbacks.Trace(&mMethod.AsHeapObject(), "mMethod", aClosure);
   }
 }
@@ -247,7 +246,7 @@ nsXBLProtoImplMethod::Write(nsIObjectOutputStream* aStream)
 {
   AssertInCompilationScope();
   MOZ_ASSERT(IsCompiled());
-  if (GetCompiledMethod()) {
+  if (GetCompiledMethodPreserveColor()) {
     nsresult rv = aStream->Write8(XBLBinding_Serialize_Method);
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -329,12 +328,12 @@ nsXBLProtoImplAnonymousMethod::Execute(nsIContent* aBoundElement)
 
   // Now call the method
 
-  // Check whether it's OK to call the method.
-  rv = nsContentUtils::GetSecurityManager()->CheckFunctionAccess(cx, method,
-                                                                 thisObject);
+  // Check whether script is enabled.
+  bool scriptAllowed = nsContentUtils::GetSecurityManager()->
+                         ScriptAllowed(js::GetGlobalForObjectCrossCompartment(method));
 
   bool ok = true;
-  if (NS_SUCCEEDED(rv)) {
+  if (scriptAllowed) {
     JS::Rooted<JS::Value> retval(cx);
     ok = ::JS_CallFunctionValue(cx, thisObject, OBJECT_TO_JSVAL(method),
                                 0 /* argc */, nullptr /* argv */, retval.address());
@@ -358,7 +357,7 @@ nsXBLProtoImplAnonymousMethod::Write(nsIObjectOutputStream* aStream,
 {
   AssertInCompilationScope();
   MOZ_ASSERT(IsCompiled());
-  if (GetCompiledMethod()) {
+  if (GetCompiledMethodPreserveColor()) {
     nsresult rv = aStream->Write8(aType);
     NS_ENSURE_SUCCESS(rv, rv);
 

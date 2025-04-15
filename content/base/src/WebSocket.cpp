@@ -21,7 +21,6 @@
 #include "nsError.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIURL.h"
-#include "nsICharsetConverterManager.h"
 #include "nsIUnicodeEncoder.h"
 #include "nsThreadUtils.h"
 #include "nsIDOMMessageEvent.h"
@@ -671,7 +670,7 @@ WebSocket::Init(JSContext* aCx,
   NS_ENSURE_SUCCESS(rv, rv);
 
   unsigned lineno;
-  JS::RootedScript script(aCx);
+  JS::Rooted<JSScript*> script(aCx);
   if (JS_DescribeScriptedCaller(aCx, &script, &lineno)) {
     mScriptFile = JS_GetScriptFilename(aCx, script);
     mScriptLine = lineno;

@@ -10,7 +10,10 @@ import platform
 import os
 import re
 import shlex
-from mozbuild.util import FileAvoidWrite
+from mozbuild.util import (
+    FileAvoidWrite,
+    shell_quote,
+)
 
 generator_wants_sorted_dependencies = True
 
@@ -39,9 +42,6 @@ EXTERNALLY_MANAGED_MAKE_FILE := 1
 """
 
 COMMON_FOOTER = """
-# Skip rules that deal with regenerating Makefiles from Makefile.in files.
-NO_MAKEFILE_RULE = 1
-NO_SUBMAKEFILES_RULE = 1
 
 include %(common_mk_path)s
 """
@@ -75,7 +75,7 @@ endif
 ifeq (WINNT,$(OS_TARGET))
 # These get set via VC project file settings for normal GYP builds.
 DEFINES += -DUNICODE -D_UNICODE
-LOCAL_INCLUDES += -I"$(MOZ_DIRECTX_SDK_PATH)/include"
+LOCAL_INCLUDES += -I'$(MOZ_DIRECTX_SDK_PATH)/include'
 endif
 
 # Don't use STL wrappers when compiling Google code.
@@ -97,7 +97,7 @@ endif
 
 define COPY_SRC
 $(notdir $(1)): $(1)
-	$$(INSTALL) $$(IFLAGS1) "$$<" .
+	$$(INSTALL) $$(IFLAGS1) '$$<' .
 
 endef # COPY_SRC
 ifdef COPY_SRCS
@@ -315,7 +315,7 @@ class MakefileGenerator(object):
       #XXX: this sucks
       defines = config.get('defines')
       if defines:
-        data['DEFINES_%s' % configname] = ["-D%s" % d for d in defines]
+        data['DEFINES_%s' % configname] = [shell_quote("-D%s" % d) for d in defines]
       includes = []
       for i in config.get('include_dirs', []):
         # Make regular paths into srcdir-relative paths, leave

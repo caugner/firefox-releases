@@ -35,6 +35,7 @@
 #include "nsTArrayForwardDeclare.h"     // for AutoInfallibleTArray
 #include "nsThreadUtils.h"              // for NS_IsMainThread
 #include "nsXULAppAPI.h"                // for XRE_GetIOMessageLoop
+#include "mozilla/StaticPtr.h"          // for StaticRefPtr
 
 struct nsIntRect;
  
@@ -198,8 +199,8 @@ ImageBridgeChild::UpdatePictureRect(CompositableClient* aCompositable,
 }
 
 // Singleton
-static ImageBridgeChild *sImageBridgeChildSingleton = nullptr;
-static nsRefPtr<ImageBridgeParent> sImageBridgeParentSingleton;
+static StaticRefPtr<ImageBridgeChild> sImageBridgeChildSingleton;
+static StaticRefPtr<ImageBridgeParent> sImageBridgeParentSingleton;
 static Thread *sImageBridgeChildThread = nullptr;
 
 // dispatched function
@@ -224,7 +225,6 @@ static void DeleteImageBridgeSync(ReentrantMonitor *aBarrier, bool *aDone)
 
   NS_ABORT_IF_FALSE(InImageBridgeChildThread(),
                     "Should be in ImageBridgeChild thread.");
-  delete sImageBridgeChildSingleton;
   sImageBridgeChildSingleton = nullptr;
   sImageBridgeParentSingleton = nullptr;
   *aDone = true;
@@ -535,6 +535,28 @@ ImageBridgeChild::EndTransaction()
       compositable->OnReplyTextureRemoved(rep.textureId());
       break;
     }
+    case EditReply::TReturnReleaseFence: {
+      const ReturnReleaseFence& rep = reply.get_ReturnReleaseFence();
+      FenceHandle fence = rep.fence();
+      if (!fence.IsValid()) {
+        break;
+      }
+      CompositableClient* compositable
+        = static_cast<CompositableChild*>(rep.compositableChild())->GetCompositableClient();
+      RefPtr<TextureClient> texture = compositable->GetAddedTextureClient(rep.textureId());
+      if (texture) {
+        texture->SetReleaseFenceHandle(fence);
+        break;
+      }
+      // This happens when the TextureClient was destroyed but the TextureClientData is
+      // still alive.
+      TextureClientData* data = compositable->GetRemovingTextureClientData(rep.textureId());
+      if (data) {
+        data->SetReleaseFenceHandle(fence);
+        break;
+      }
+      break;
+    }
     default:
       NS_RUNTIMEABORT("not reached");
     }
@@ -829,7 +851,7 @@ ImageBridgeChild::AllocShmem(size_t aSize,
 // NewRunnableFunction accepts a limited number of parameters so we need a
 // struct here
 struct AllocShmemParams {
-  ISurfaceAllocator* mAllocator;
+  RefPtr<ISurfaceAllocator> mAllocator;
   size_t mSize;
   ipc::SharedMemory::SharedMemoryType mType;
   ipc::Shmem* mShmem;

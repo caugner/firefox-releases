@@ -394,6 +394,8 @@ RasterImage::RasterImage(imgStatusTracker* aStatusTracker,
   mDecoder(nullptr),
   mBytesDecoded(0),
   mInDecoder(false),
+  mStatusDiff(ImageStatusDiff::NoChange()),
+  mNotifying(false),
   mHasSize(false),
   mDecodeOnDraw(false),
   mMultipart(false),
@@ -1436,12 +1438,13 @@ RasterImage::StartAnimation()
   EnsureAnimExists();
 
   imgFrame* currentFrame = GetCurrentImgFrame();
-  if (currentFrame) {
-    if (currentFrame->GetTimeout() < 0) { // -1 means display this frame forever
-      mAnimationFinished = true;
-      return NS_ERROR_ABORT;
-    }
+  // A timeout of -1 means we should display this frame forever.
+  if (currentFrame && currentFrame->GetTimeout() < 0) {
+    mAnimationFinished = true;
+    return NS_ERROR_ABORT;
+  }
 
+  if (mAnim) {
     // We need to set the time that this initial frame was first displayed, as
     // this is used in AdvanceFrame().
     mAnim->InitAnimationFrameTimeIfNecessary();
@@ -1457,12 +1460,15 @@ RasterImage::StopAnimation()
 {
   NS_ABORT_IF_FALSE(mAnimating, "Should be animating!");
 
-  if (mError)
-    return NS_ERROR_FAILURE;
+  nsresult rv = NS_OK;
+  if (mError) {
+    rv = NS_ERROR_FAILURE;
+  } else {
+    mAnim->SetAnimationFrameTime(TimeStamp());
+  }
 
-  mAnim->SetAnimationFrameTime(TimeStamp());
-
-  return NS_OK;
+  mAnimating = false;
+  return rv;
 }
 
 //******************************************************************************
@@ -1483,9 +1489,7 @@ RasterImage::ResetAnimation()
     StopAnimation();
 
   mFrameBlender.ResetAnimation();
-  if (mAnim) {
-    mAnim->ResetAnimation();
-  }
+  mAnim->ResetAnimation();
 
   UpdateImageContainer();
 
@@ -1498,13 +1502,9 @@ RasterImage::ResetAnimation()
     mStatusTracker->FrameChanged(&rect);
   }
 
-  if (ShouldAnimate()) {
-    StartAnimation();
-    // The animation may not have been running before, if mAnimationFinished
-    // was false (before we changed it to true in this function). So, mark the
-    // animation as running.
-    mAnimating = true;
-  }
+  // Start the animation again. It may not have been running before, if
+  // mAnimationFinished was true before entering this function.
+  EvaluateAnimation();
 
   return NS_OK;
 }
@@ -1573,10 +1573,8 @@ RasterImage::AddSourceData(const char *aBuffer, uint32_t aCount)
   // so that there's no gap for anything to miss us.
   if (mMultipart && mBytesDecoded == 0) {
     // Our previous state may have been animated, so let's clean up
-    if (mAnimating) {
+    if (mAnimating)
       StopAnimation();
-      mAnimating = false;
-    }
     mAnimationFinished = false;
     if (mAnim) {
       delete mAnim;
@@ -1593,10 +1591,10 @@ RasterImage::AddSourceData(const char *aBuffer, uint32_t aCount)
   // write the data directly to the decoder. (If we haven't gotten the size,
   // we'll queue up the data and write it out when we do.)
   if (!StoringSourceData() && mHasSize) {
-    mDecoder->SetSynchronous(true);
-    rv = WriteToDecoder(aBuffer, aCount);
-    mDecoder->SetSynchronous(false);
-    CONTAINER_ENSURE_SUCCESS(rv);
+    {
+      rv = WriteToDecoder(aBuffer, aCount, DECODE_SYNC);
+      CONTAINER_ENSURE_SUCCESS(rv);
+    }
 
     // We're not storing source data, so this data is probably coming straight
     // from the network. In this case, we want to display data as soon as we
@@ -1965,7 +1963,7 @@ RasterImage::StoringSourceData() const {
 // Sets up a decoder for this image. It is an error to call this function
 // when decoding is already in process (ie - when mDecoder is non-null).
 nsresult
-RasterImage::InitDecoder(bool aDoSizeDecode, bool aIsSynchronous /* = false */)
+RasterImage::InitDecoder(bool aDoSizeDecode)
 {
   // Ensure that the decoder is not already initialized
   NS_ABORT_IF_FALSE(!mDecoder, "Calling InitDecoder() while already decoding!");
@@ -2030,7 +2028,6 @@ RasterImage::InitDecoder(bool aDoSizeDecode, bool aIsSynchronous /* = false */)
   mDecoder->SetObserver(mDecodeRequest->mStatusTracker->GetDecoderObserver());
   mDecoder->SetSizeDecode(aDoSizeDecode);
   mDecoder->SetDecodeFlags(mFrameDecodeFlags);
-  mDecoder->SetSynchronous(aIsSynchronous);
   if (!aDoSizeDecode) {
     // We already have the size; tell the decoder so it can preallocate a
     // frame.  By default, we create an ARGB frame with no offset. If decoders
@@ -2139,7 +2136,7 @@ RasterImage::ShutdownDecoder(eShutdownIntent aIntent)
 
 // Writes the data to the decoder, updating the total number of bytes written.
 nsresult
-RasterImage::WriteToDecoder(const char *aBuffer, uint32_t aCount)
+RasterImage::WriteToDecoder(const char *aBuffer, uint32_t aCount, DecodeStrategy aStrategy)
 {
   mDecodingMonitor.AssertCurrentThreadIn();
 
@@ -2149,7 +2146,7 @@ RasterImage::WriteToDecoder(const char *aBuffer, uint32_t aCount)
   // Write
   nsRefPtr<Decoder> kungFuDeathGrip = mDecoder;
   mInDecoder = true;
-  mDecoder->Write(aBuffer, aCount);
+  mDecoder->Write(aBuffer, aCount, aStrategy);
   mInDecoder = false;
 
   CONTAINER_ENSURE_SUCCESS(mDecoder->GetDecoderError());
@@ -2317,14 +2314,7 @@ RasterImage::RequestDecodeCore(RequestDecodeType aDecodeType)
   // to finish decoding.
   if (!mDecoded && !mInDecoder && mHasSourceData && aDecodeType == SYNCHRONOUS_NOTIFY_AND_SOME_DECODE) {
     PROFILER_LABEL_PRINTF("RasterImage", "DecodeABitOf", "%s", GetURIString().get());
-    mDecoder->SetSynchronous(true);
-
-    DecodePool::Singleton()->DecodeABitOf(this);
-
-    // DecodeABitOf can destroy mDecoder.
-    if (mDecoder) {
-      mDecoder->SetSynchronous(false);
-    }
+    DecodePool::Singleton()->DecodeABitOf(this, DECODE_SYNC);
     return NS_OK;
   }
 
@@ -2402,14 +2392,12 @@ RasterImage::SyncDecode()
 
   // If we don't have a decoder, create one
   if (!mDecoder) {
-    rv = InitDecoder(/* aDoSizeDecode = */ false, /* aIsSynchronous = */ true);
+    rv = InitDecoder(/* aDoSizeDecode = */ false);
     CONTAINER_ENSURE_SUCCESS(rv);
-  } else {
-    mDecoder->SetSynchronous(true);
   }
 
   // Write everything we have
-  rv = DecodeSomeData(mSourceData.Length() - mBytesDecoded);
+  rv = DecodeSomeData(mSourceData.Length() - mBytesDecoded, DECODE_SYNC);
   CONTAINER_ENSURE_SUCCESS(rv);
 
   // When we're doing a sync decode, we want to get as much information from the
@@ -2423,11 +2411,9 @@ RasterImage::SyncDecode()
 
   rv = FinishedSomeDecoding();
   CONTAINER_ENSURE_SUCCESS(rv);
-
+  
+  // If our decoder's still open, there's still work to be done.
   if (mDecoder) {
-    mDecoder->SetSynchronous(false);
-
-    // If our decoder's still open, there's still work to be done.
     DecodePool::Singleton()->RequestDecode(this);
   }
 
@@ -2755,7 +2741,7 @@ RasterImage::RequestDiscard()
 
 // Flushes up to aMaxBytes to the decoder.
 nsresult
-RasterImage::DecodeSomeData(uint32_t aMaxBytes)
+RasterImage::DecodeSomeData(uint32_t aMaxBytes, DecodeStrategy aStrategy)
 {
   // We should have a decoder if we get here
   NS_ABORT_IF_FALSE(mDecoder, "trying to decode without decoder!");
@@ -2767,7 +2753,7 @@ RasterImage::DecodeSomeData(uint32_t aMaxBytes)
   // passing it a null buffer.
   if (mDecodeRequest->mAllocatedNewFrame) {
     mDecodeRequest->mAllocatedNewFrame = false;
-    nsresult rv = WriteToDecoder(nullptr, 0);
+    nsresult rv = WriteToDecoder(nullptr, 0, aStrategy);
     if (NS_FAILED(rv) || mDecoder->NeedsNewFrame()) {
       return rv;
     }
@@ -2783,7 +2769,8 @@ RasterImage::DecodeSomeData(uint32_t aMaxBytes)
   uint32_t bytesToDecode = std::min(aMaxBytes,
                                     mSourceData.Length() - mBytesDecoded);
   nsresult rv = WriteToDecoder(mSourceData.Elements() + mBytesDecoded,
-                               bytesToDecode);
+                               bytesToDecode,
+                               aStrategy);
 
   return rv;
 }
@@ -2935,6 +2922,33 @@ RasterImage::GetFramesNotified(uint32_t *aFramesNotified)
 #endif
 
 nsresult
+RasterImage::RequestDecodeIfNeeded(nsresult aStatus,
+                                   eShutdownIntent aIntent,
+                                   bool aDone,
+                                   bool aWasSize)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  // If we were a size decode and a full decode was requested, now's the time.
+  if (NS_SUCCEEDED(aStatus) &&
+      aIntent != eShutdownIntent_Error &&
+      aDone &&
+      aWasSize &&
+      mWantFullDecode) {
+    mWantFullDecode = false;
+
+    // If we're not meant to be storing source data and we just got the size,
+    // we need to synchronously flush all the data we got to a full decoder.
+    // When that decoder is shut down, we'll also clear our source data.
+    return StoringSourceData() ? RequestDecode()
+                               : SyncDecode();
+  }
+
+  // We don't need a full decode right now, so just return the existing status.
+  return aStatus;
+}
+
+nsresult
 RasterImage::FinishedSomeDecoding(eShutdownIntent aIntent /* = eShutdownIntent_Done */,
                                   DecodeRequest* aRequest /* = nullptr */)
 {
@@ -3002,36 +3016,36 @@ RasterImage::FinishedSomeDecoding(eShutdownIntent aIntent /* = eShutdownIntent_D
     }
   }
 
-  ImageStatusDiff diff;
-  if (request) {
-    diff = image->mStatusTracker->Difference(request->mStatusTracker);
-    image->mStatusTracker->ApplyDifference(diff);
+  ImageStatusDiff diff =
+    request ? image->mStatusTracker->Difference(request->mStatusTracker)
+            : image->mStatusTracker->DecodeStateAsDifference();
+  image->mStatusTracker->ApplyDifference(diff);
+
+  if (mNotifying) {
+    // Accumulate the status changes. We don't permit recursive notifications
+    // because they cause subtle concurrency bugs, so we'll delay sending out
+    // the notifications until we pop back to the lowest invocation of
+    // FinishedSomeDecoding on the stack.
+    NS_WARNING("Recursively notifying in RasterImage::FinishedSomeDecoding!");
+    mStatusDiff.Combine(diff);
   } else {
-    diff = image->mStatusTracker->DecodeStateAsDifference();
-  }
+    MOZ_ASSERT(mStatusDiff.IsNoChange(), "Shouldn't have an accumulated change at this point");
 
-  {
-    // Then, tell the observers what has happened.
-    image->mStatusTracker->SyncNotifyDifference(diff);
+    while (!diff.IsNoChange()) {
+      // Tell the observers what happened.
+      mNotifying = true;
+      image->mStatusTracker->SyncNotifyDifference(diff);
+      mNotifying = false;
 
-    // If we were a size decode and a full decode was requested, now's the time.
-    if (NS_SUCCEEDED(rv) && aIntent != eShutdownIntent_Error && done &&
-        wasSize && image->mWantFullDecode) {
-      image->mWantFullDecode = false;
-
-      // If we're not meant to be storing source data and we just got the size,
-      // we need to synchronously flush all the data we got to a full decoder.
-      // When that decoder is shut down, we'll also clear our source data.
-      if (!image->StoringSourceData()) {
-        rv = image->SyncDecode();
-      } else {
-        rv = image->RequestDecode();
-      }
+      // Gather any status changes that may have occurred as a result of sending
+      // out the previous notifications. If there were any, we'll send out
+      // notifications for them next.
+      diff = mStatusDiff;
+      mStatusDiff = ImageStatusDiff::NoChange();
     }
-
   }
 
-  return rv;
+  return RequestDecodeIfNeeded(rv, aIntent, done, wasSize);
 }
 
 NS_IMPL_ISUPPORTS1(RasterImage::DecodePool,
@@ -3177,7 +3191,7 @@ RasterImage::DecodePool::RequestDecode(RasterImage* aImg)
 }
 
 void
-RasterImage::DecodePool::DecodeABitOf(RasterImage* aImg)
+RasterImage::DecodePool::DecodeABitOf(RasterImage* aImg, DecodeStrategy aStrategy)
 {
   MOZ_ASSERT(NS_IsMainThread());
   aImg->mDecodingMonitor.AssertCurrentThreadIn();
@@ -3189,7 +3203,7 @@ RasterImage::DecodePool::DecodeABitOf(RasterImage* aImg)
     }
   }
 
-  DecodeSomeOfImage(aImg);
+  DecodeSomeOfImage(aImg, aStrategy);
 
   aImg->FinishedSomeDecoding();
 
@@ -3257,7 +3271,7 @@ RasterImage::DecodePool::DecodeJob::Run()
     type = DECODE_TYPE_UNTIL_TIME;
   }
 
-  DecodePool::Singleton()->DecodeSomeOfImage(mImage, type, mRequest->mBytesToDecode);
+  DecodePool::Singleton()->DecodeSomeOfImage(mImage, DECODE_ASYNC, type, mRequest->mBytesToDecode);
 
   uint32_t bytesDecoded = mImage->mBytesDecoded - oldByteCount;
 
@@ -3302,7 +3316,9 @@ RasterImage::DecodePool::DecodeUntilSizeAvailable(RasterImage* aImg)
     }
   }
 
-  nsresult rv = DecodeSomeOfImage(aImg, DECODE_TYPE_UNTIL_SIZE);
+  // We use DECODE_ASYNC here because we just want to get the size information
+  // here and defer the rest of the work.
+  nsresult rv = DecodeSomeOfImage(aImg, DECODE_ASYNC, DECODE_TYPE_UNTIL_SIZE);
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -3320,6 +3336,7 @@ RasterImage::DecodePool::DecodeUntilSizeAvailable(RasterImage* aImg)
 
 nsresult
 RasterImage::DecodePool::DecodeSomeOfImage(RasterImage* aImg,
+                                           DecodeStrategy aStrategy,
                                            DecodeType aDecodeType /* = DECODE_TYPE_UNTIL_TIME */,
                                            uint32_t bytesToDecode /* = 0 */)
 {
@@ -3339,7 +3356,7 @@ RasterImage::DecodePool::DecodeSomeOfImage(RasterImage* aImg,
 
   // If we're doing synchronous decodes, and we're waiting on a new frame for
   // this image, get it now.
-  if (aImg->mDecoder->IsSynchronous() && aImg->mDecoder->NeedsNewFrame()) {
+  if (aStrategy == DECODE_SYNC && aImg->mDecoder->NeedsNewFrame()) {
     MOZ_ASSERT(NS_IsMainThread());
 
     aImg->mDecoder->AllocateFrame();
@@ -3388,7 +3405,7 @@ RasterImage::DecodePool::DecodeSomeOfImage(RasterImage* aImg,
          (aImg->mDecodeRequest && aImg->mDecodeRequest->mAllocatedNewFrame)) {
     chunkCount++;
     uint32_t chunkSize = std::min(bytesToDecode, maxBytes);
-    nsresult rv = aImg->DecodeSomeData(chunkSize);
+    nsresult rv = aImg->DecodeSomeData(chunkSize, aStrategy);
     if (NS_FAILED(rv)) {
       aImg->DoError();
       return rv;

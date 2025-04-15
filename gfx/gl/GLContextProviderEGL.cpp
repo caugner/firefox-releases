@@ -3,8 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/ArrayUtils.h"
+
 #include "GLContext.h"
-#include "mozilla/Util.h"
 
 #if defined(XP_UNIX)
 
@@ -109,6 +110,9 @@ public:
 
 #include "gfxCrashReporterUtils.h"
 
+#include "ScopedGLHelpers.h"
+#include "GLBlitHelper.h"
+
 using namespace mozilla::gfx;
 
 #ifdef MOZ_WIDGET_GONK
@@ -126,11 +130,6 @@ namespace gl {
 #define ADD_ATTR_1(_array, _k) do {             \
     (_array).AppendElement(_k);                 \
 } while (0)
-
-#ifndef MOZ_ANDROID_OMTC
-static EGLSurface
-CreateSurfaceForWindow(nsIWidget *aWidget, EGLConfig config);
-#endif
 
 static bool
 CreateConfig(EGLConfig* aConfig);
@@ -180,6 +179,39 @@ is_power_of_two(int v)
         return true;
 
     return (v & (v-1)) == 0;
+}
+
+static void
+DestroySurface(EGLSurface oldSurface) {
+    if (oldSurface != EGL_NO_SURFACE) {
+        sEGLLibrary.fMakeCurrent(EGL_DISPLAY(),
+                                 EGL_NO_SURFACE, EGL_NO_SURFACE,
+                                 EGL_NO_CONTEXT);
+        sEGLLibrary.fDestroySurface(EGL_DISPLAY(), oldSurface);
+    }
+}
+
+static EGLSurface
+CreateSurfaceForWindow(nsIWidget* widget, const EGLConfig& config) {
+    EGLSurface newSurface = EGL_NO_SURFACE;
+
+    #ifdef MOZ_ANDROID_OMTC
+        mozilla::AndroidBridge::Bridge()->RegisterCompositor();
+        newSurface = mozilla::AndroidBridge::Bridge()->CreateEGLSurfaceForCompositor();
+        if (newSurface == EGL_NO_SURFACE) {
+            return EGL_NO_SURFACE;
+        }
+    #else
+        MOZ_ASSERT(widget != nullptr);
+        newSurface = sEGLLibrary.fCreateWindowSurface(EGL_DISPLAY(), config, GET_NATIVE_WINDOW(widget), 0);
+        #ifdef MOZ_WIDGET_GONK
+            gScreenBounds.x = 0;
+            gScreenBounds.y = 0;
+            sEGLLibrary.fQuerySurface(EGL_DISPLAY(), newSurface, LOCAL_EGL_WIDTH, &gScreenBounds.width);
+            sEGLLibrary.fQuerySurface(EGL_DISPLAY(), newSurface, LOCAL_EGL_HEIGHT, &gScreenBounds.height);
+        #endif
+    #endif
+    return newSurface;
 }
 
 class GLContextEGL : public GLContext
@@ -242,16 +274,14 @@ public:
         : GLContext(caps, shareContext, isOffscreen)
         , mConfig(config)
         , mSurface(surface)
-        , mCurSurface(surface)
+        , mSurfaceOverride(EGL_NO_SURFACE)
         , mContext(context)
-        , mPlatformContext(nullptr)
         , mThebesSurface(nullptr)
         , mBound(false)
         , mIsPBuffer(false)
         , mIsDoubleBuffered(false)
         , mCanBindToTexture(false)
         , mShareWithEGLImage(false)
-        , mTemporaryEGLImageTexture(0)
     {
         // any EGL contexts will always be GLESv2
         SetProfileVersion(ContextProfile::OpenGLES, 200);
@@ -274,29 +304,14 @@ public:
 
     ~GLContextEGL()
     {
-        if (MakeCurrent()) {
-            if (mTemporaryEGLImageTexture != 0) {
-                fDeleteTextures(1, &mTemporaryEGLImageTexture);
-                mTemporaryEGLImageTexture = 0;
-            }
-        }
-
         MarkDestroyed();
-
-        // If mGLWidget is non-null, then we've been given it by the GL context provider,
-        // and it's managed by the widget implementation. In this case, We can't destroy
-        // our contexts.
-        if (mPlatformContext)
-            return;
 
 #ifdef DEBUG
         printf_stderr("Destroying context %p surface %p on display %p\n", mContext, mSurface, EGL_DISPLAY());
 #endif
 
         sEGLLibrary.fDestroyContext(EGL_DISPLAY(), mContext);
-        if (mSurface && !mPlatformContext) {
-            sEGLLibrary.fDestroySurface(EGL_DISPLAY(), mSurface);
-        }
+        mozilla::gl::DestroySurface(mSurface);
     }
 
     GLContextType GetContextType() {
@@ -319,16 +334,16 @@ public:
 #endif
             }
 
+        SetupLookupFunction();
+        if (!InitWithPrefix("gl", true))
+            return false;
+
         bool current = MakeCurrent();
         if (!current) {
             gfx::LogFailure(NS_LITERAL_CSTRING(
                 "Couldn't get device attachments for device."));
             return false;
         }
-
-        SetupLookupFunction();
-        if (!InitWithPrefix("gl", true))
-            return false;
 
         PR_STATIC_ASSERT(sizeof(GLint) >= sizeof(int32_t));
         mMaxTextureImageSize = INT32_MAX;
@@ -422,15 +437,7 @@ public:
     }
 #endif
 
-    virtual void MakeCurrent_EGLSurface(void* surf) {
-        EGLSurface eglSurface = (EGLSurface)surf;
-        if (!eglSurface)
-            eglSurface = mSurface;
-
-        if (eglSurface == mCurSurface)
-            return;
-
-        // Else, surface changed...
+    virtual void SetEGLSurfaceOverride(EGLSurface surf) MOZ_OVERRIDE {
         if (Screen()) {
             /* Blit `draw` to `read` if we need to, before we potentially juggle
              * `read` around. If we don't, we might attach a different `read`,
@@ -440,7 +447,7 @@ public:
             Screen()->AssureBlitted();
         }
 
-        mCurSurface = eglSurface;
+        mSurfaceOverride = surf ? (EGLSurface) surf : mSurface;
         MakeCurrent(true);
     }
 
@@ -451,10 +458,12 @@ public:
         // where MakeCurrent with an already-current context is
         // still expensive.
         if (aForce || sEGLLibrary.fGetCurrentContext() != mContext) {
+            EGLSurface surface = mSurfaceOverride != EGL_NO_SURFACE
+                                 ? mSurfaceOverride
+                                 : mSurface;
             succeeded = sEGLLibrary.fMakeCurrent(EGL_DISPLAY(),
-                                                 mCurSurface, mCurSurface,
+                                                 surface, surface,
                                                  mContext);
-            
             int eglError = sEGLLibrary.fGetError();
             if (!succeeded) {
                 if (eglError == LOCAL_EGL_CONTEXT_LOST) {
@@ -478,33 +487,28 @@ public:
 
     virtual bool
     RenewSurface() {
-        sEGLLibrary.fMakeCurrent(EGL_DISPLAY(), EGL_NO_SURFACE, EGL_NO_SURFACE,
-                                 EGL_NO_CONTEXT);
-        if (!mSurface) {
-#ifdef MOZ_ANDROID_OMTC
-            mSurface = mozilla::AndroidBridge::Bridge()->ProvideEGLSurface();
-            if (!mSurface) {
-                return false;
-            }
-#else
-            EGLConfig config;
-            CreateConfig(&config);
-            mSurface = CreateSurfaceForWindow(nullptr, config);
+#ifndef MOZ_WIDGET_ANDROID
+        MOZ_CRASH("unimplemented");
+        // to support this on non-Android platforms, need to keep track of the nsIWidget that
+        // this GLContext was created for (with CreateForWindow) so that we know what to
+        // pass again to CreateSurfaceForWindow below.
+        // The reason why Android doesn't need this is that it delegates EGLSurface creation to
+        // Java code which is the only thing that knows about our actual widget.
 #endif
+        // unconditionally release the surface and create a new one. Don't try to optimize this away.
+        // If we get here, then by definition we know that we want to get a new surface.
+        ReleaseSurface();
+        mSurface = mozilla::gl::CreateSurfaceForWindow(nullptr, mConfig); // the nullptr here is where we assume Android.
+        if (mSurface == EGL_NO_SURFACE) {
+            return false;
         }
-        return sEGLLibrary.fMakeCurrent(EGL_DISPLAY(),
-                                        mSurface, mSurface,
-                                        mContext);
+        return MakeCurrent(true);
     }
 
     virtual void
     ReleaseSurface() {
-        if (mSurface && !mPlatformContext) {
-            sEGLLibrary.fMakeCurrent(EGL_DISPLAY(), EGL_NO_SURFACE, EGL_NO_SURFACE,
-                                     EGL_NO_CONTEXT);
-            sEGLLibrary.fDestroySurface(EGL_DISPLAY(), mSurface);
-            mSurface = nullptr;
-        }
+        DestroySurface(mSurface);
+        mSurface = nullptr;
     }
 
     bool SetupLookupFunction()
@@ -526,7 +530,7 @@ public:
 
     bool SwapBuffers()
     {
-        if (mSurface && !mPlatformContext) {
+        if (mSurface) {
 #ifdef MOZ_WIDGET_GONK
             if (!mIsOffscreen) {
                 if (mHwc) {
@@ -541,28 +545,11 @@ public:
             return false;
         }
     }
-    // GLContext interface - returns Tiled Texture Image in our case
-    virtual already_AddRefed<TextureImage>
-    CreateTextureImage(const nsIntSize& aSize,
-                       TextureImage::ContentType aContentType,
-                       GLenum aWrapMode,
-                       TextureImage::Flags aFlags = TextureImage::NoFlags,
-                       TextureImage::ImageFormat aImageFormat = gfxImageFormatUnknown);
 
-    // a function to generate Tiles for Tiled Texture Image
-    virtual already_AddRefed<TextureImage>
-    TileGenFunc(const nsIntSize& aSize,
-                TextureImage::ContentType aContentType,
-                TextureImage::Flags aFlags = TextureImage::NoFlags,
-                TextureImage::ImageFormat aImageFormat = gfxImageFormatUnknown) MOZ_OVERRIDE;
     // hold a reference to the given surface
     // for the lifetime of this context.
     void HoldSurface(gfxASurface *aSurf) {
         mThebesSurface = aSurf;
-    }
-
-    void SetPlatformContext(void *context) {
-        mPlatformContext = context;
     }
 
     EGLContext Context() {
@@ -580,27 +567,13 @@ public:
     static already_AddRefed<GLContextEGL>
     CreateEGLPBufferOffscreenContext(const gfxIntSize& size);
 
-    virtual SharedTextureHandle CreateSharedHandle(SharedTextureShareType shareType,
-                                                   void* buffer,
-                                                   SharedTextureBufferType bufferType);
-    virtual void UpdateSharedHandle(SharedTextureShareType shareType,
-                                    SharedTextureHandle sharedHandle);
-    virtual void ReleaseSharedHandle(SharedTextureShareType shareType,
-                                     SharedTextureHandle sharedHandle);
-    virtual bool GetSharedHandleDetails(SharedTextureShareType shareType,
-                                        SharedTextureHandle sharedHandle,
-                                        SharedHandleDetails& details);
-    virtual bool AttachSharedHandle(SharedTextureShareType shareType,
-                                    SharedTextureHandle sharedHandle);
-
 protected:
     friend class GLContextProviderEGL;
 
     EGLConfig  mConfig;
     EGLSurface mSurface;
-    EGLSurface mCurSurface;
+    EGLSurface mSurfaceOverride;
     EGLContext mContext;
-    void *mPlatformContext;
     nsRefPtr<gfxASurface> mThebesSurface;
     bool mBound;
 
@@ -611,10 +584,6 @@ protected:
 #ifdef MOZ_WIDGET_GONK
     nsRefPtr<HwcComposer2D> mHwc;
 #endif
-
-    // A dummy texture ID that can be used when we need a texture object whose
-    // images we're going to define with EGLImageTargetTexture2D.
-    GLuint mTemporaryEGLImageTexture;
 
     static EGLSurface CreatePBufferSurfaceTryingPowerOfTwo(EGLConfig config,
                                                            EGLenum bindToTextureFormat,
@@ -662,360 +631,10 @@ protected:
     }
 };
 
-
-enum SharedHandleType {
-    SharedHandleType_Image
-#ifdef MOZ_WIDGET_ANDROID
-    , SharedHandleType_SurfaceTexture
-#endif
-};
-
-class SharedTextureHandleWrapper
-{
-public:
-    SharedTextureHandleWrapper(SharedHandleType aHandleType) : mHandleType(aHandleType)
-    {
-    }
-
-    virtual ~SharedTextureHandleWrapper()
-    {
-    }
-
-    SharedHandleType Type() { return mHandleType; }
-
-    SharedHandleType mHandleType;
-};
-
-#ifdef MOZ_WIDGET_ANDROID
-
-class SurfaceTextureWrapper: public SharedTextureHandleWrapper
-{
-public:
-    SurfaceTextureWrapper(nsSurfaceTexture* aSurfaceTexture) :
-        SharedTextureHandleWrapper(SharedHandleType_SurfaceTexture)
-        , mSurfaceTexture(aSurfaceTexture)
-    {
-    }
-
-    virtual ~SurfaceTextureWrapper() {
-        mSurfaceTexture = nullptr;
-    }
-
-    nsSurfaceTexture* SurfaceTexture() { return mSurfaceTexture; }
-
-    nsRefPtr<nsSurfaceTexture> mSurfaceTexture;
-};
-
-#endif // MOZ_WIDGET_ANDROID
-
-class EGLTextureWrapper : public SharedTextureHandleWrapper
-{
-public:
-    EGLTextureWrapper() :
-        SharedTextureHandleWrapper(SharedHandleType_Image)
-        , mEGLImage(nullptr)
-        , mSyncObject(nullptr)
-    {
-    }
-
-    // Args are the active GL context, and a texture in that GL
-    // context for which to create an EGLImage.  After the EGLImage
-    // is created, the texture is unused by EGLTextureWrapper.
-    bool CreateEGLImage(GLContextEGL *ctx, GLuint texture) {
-        MOZ_ASSERT(!mEGLImage && texture && sEGLLibrary.HasKHRImageBase());
-        static const EGLint eglAttributes[] = {
-            LOCAL_EGL_NONE
-        };
-        EGLContext eglContext = (EGLContext)ctx->GetEGLContext();
-        mEGLImage = sEGLLibrary.fCreateImage(EGL_DISPLAY(), eglContext, LOCAL_EGL_GL_TEXTURE_2D,
-                                             (EGLClientBuffer)texture, eglAttributes);
-        if (!mEGLImage) {
-#ifdef DEBUG
-            printf_stderr("Could not create EGL images: ERROR (0x%04x)\n", sEGLLibrary.fGetError());
-#endif
-            return false;
-        }
-        return true;
-    }
-
-    virtual ~EGLTextureWrapper() {
-        if (mEGLImage) {
-            sEGLLibrary.fDestroyImage(EGL_DISPLAY(), mEGLImage);
-            mEGLImage = nullptr;
-        }
-    }
-
-    const EGLImage GetEGLImage() {
-        return mEGLImage;
-    }
-
-    // Insert a sync point on the given context, which should be the current active
-    // context.
-    bool MakeSync(GLContext *ctx) {
-        MOZ_ASSERT(mSyncObject == nullptr);
-
-        if (sEGLLibrary.IsExtensionSupported(GLLibraryEGL::KHR_fence_sync)) {
-            mSyncObject = sEGLLibrary.fCreateSync(EGL_DISPLAY(), LOCAL_EGL_SYNC_FENCE, nullptr);
-            // We need to flush to make sure the sync object enters the command stream;
-            // we can't use EGL_SYNC_FLUSH_COMMANDS_BIT at wait time, because the wait
-            // happens on a different thread/context.
-            ctx->fFlush();
-        }
-
-        if (mSyncObject == EGL_NO_SYNC) {
-            // we failed to create one, so just do a finish
-            ctx->fFinish();
-        }
-
-        return true;
-    }
-
-    bool WaitSync() {
-        if (!mSyncObject) {
-            // if we have no sync object, then we did a Finish() earlier
-            return true;
-        }
-
-        // wait at most 1 second; this should really be never/rarely hit
-        const uint64_t ns_per_ms = 1000 * 1000;
-        EGLTime timeout = 1000 * ns_per_ms;
-
-        EGLint result = sEGLLibrary.fClientWaitSync(EGL_DISPLAY(), mSyncObject, 0, timeout);
-        sEGLLibrary.fDestroySync(EGL_DISPLAY(), mSyncObject);
-        mSyncObject = nullptr;
-
-        return result == LOCAL_EGL_CONDITION_SATISFIED;
-    }
-
-private:
-    EGLImage mEGLImage;
-    EGLSync mSyncObject;
-};
-
-void
-GLContextEGL::UpdateSharedHandle(SharedTextureShareType shareType,
-                                 SharedTextureHandle sharedHandle)
-{
-    if (shareType != SameProcess) {
-        NS_ERROR("Implementation not available for this sharing type");
-        return;
-    }
-
-    SharedTextureHandleWrapper* wrapper = reinterpret_cast<SharedTextureHandleWrapper*>(sharedHandle);
-
-    NS_ASSERTION(wrapper->Type() == SharedHandleType_Image, "Expected EGLImage shared handle");
-    NS_ASSERTION(mShareWithEGLImage, "EGLImage not supported or disabled in runtime");
-
-    EGLTextureWrapper* wrap = reinterpret_cast<EGLTextureWrapper*>(wrapper);
-    // We need to copy the current GLContext drawing buffer to the texture
-    // exported by the EGLImage.  Need to save both the read FBO and the texture
-    // binding, because we're going to munge them to do this.
-    ScopedBindTexture autoTex(this, mTemporaryEGLImageTexture);
-    fEGLImageTargetTexture2D(LOCAL_GL_TEXTURE_2D, wrap->GetEGLImage());
-
-    // CopyTexSubImage2D, is ~2x slower than simple FBO render to texture with
-    // draw quads, but if we want that, we need to assure that our default
-    // framebuffer is texture-backed.
-    gfxIntSize size = OffscreenSize();
-    BlitFramebufferToTexture(0, mTemporaryEGLImageTexture, size, size);
-
-    // Make sure our copy is finished, so that we can be ready to draw
-    // in different thread GLContext.  If we have KHR_fence_sync, then
-    // we insert a sync object, otherwise we have to do a GuaranteeResolve.
-    wrap->MakeSync(this);
-}
-
-SharedTextureHandle
-GLContextEGL::CreateSharedHandle(SharedTextureShareType shareType,
-                                 void* buffer,
-                                 SharedTextureBufferType bufferType)
-{
-    // Both EGLImage and SurfaceTexture only support same-process currently, but
-    // it's possible to make SurfaceTexture work across processes. We should do that.
-    if (shareType != SameProcess)
-        return 0;
-
-    switch (bufferType) {
-#ifdef MOZ_WIDGET_ANDROID
-    case SharedTextureBufferType::SurfaceTexture:
-        if (!IsExtensionSupported(GLContext::OES_EGL_image_external)) {
-            NS_WARNING("Missing GL_OES_EGL_image_external");
-            return 0;
-        }
-
-        return (SharedTextureHandle) new SurfaceTextureWrapper(reinterpret_cast<nsSurfaceTexture*>(buffer));
-#endif
-    case SharedTextureBufferType::TextureID: {
-        if (!mShareWithEGLImage)
-            return 0;
-
-        GLuint texture = (uintptr_t)buffer;
-        EGLTextureWrapper* tex = new EGLTextureWrapper();
-        if (!tex->CreateEGLImage(this, texture)) {
-            NS_ERROR("EGLImage creation for EGLTextureWrapper failed");
-            delete tex;
-            return 0;
-        }
-
-        return (SharedTextureHandle)tex;
-    }
-    default:
-        NS_ERROR("Unknown shared texture buffer type");
-        return 0;
-    }
-}
-
-void GLContextEGL::ReleaseSharedHandle(SharedTextureShareType shareType,
-                                       SharedTextureHandle sharedHandle)
-{
-    if (shareType != SameProcess) {
-        NS_ERROR("Implementation not available for this sharing type");
-        return;
-    }
-
-    SharedTextureHandleWrapper* wrapper = reinterpret_cast<SharedTextureHandleWrapper*>(sharedHandle);
-
-    switch (wrapper->Type()) {
-#ifdef MOZ_WIDGET_ANDROID
-    case SharedHandleType_SurfaceTexture:
-        delete wrapper;
-        break;
-#endif
-    
-    case SharedHandleType_Image: {
-        NS_ASSERTION(mShareWithEGLImage, "EGLImage not supported or disabled in runtime");
-
-        EGLTextureWrapper* wrap = (EGLTextureWrapper*)sharedHandle;
-        delete wrap;
-        break;
-    }
-
-    default:
-        NS_ERROR("Unknown shared handle type");
-        return;
-    }
-}
-
-bool GLContextEGL::GetSharedHandleDetails(SharedTextureShareType shareType,
-                                          SharedTextureHandle sharedHandle,
-                                          SharedHandleDetails& details)
-{
-    if (shareType != SameProcess)
-        return false;
-
-    SharedTextureHandleWrapper* wrapper = reinterpret_cast<SharedTextureHandleWrapper*>(sharedHandle);
-
-    switch (wrapper->Type()) {
-#ifdef MOZ_WIDGET_ANDROID
-    case SharedHandleType_SurfaceTexture: {
-        SurfaceTextureWrapper* surfaceWrapper = reinterpret_cast<SurfaceTextureWrapper*>(wrapper);
-
-        details.mTarget = LOCAL_GL_TEXTURE_EXTERNAL;
-        details.mTextureFormat = FORMAT_R8G8B8A8;
-        surfaceWrapper->SurfaceTexture()->GetTransformMatrix(details.mTextureTransform);
-        break;
-    }
-#endif
-
-    case SharedHandleType_Image:
-        details.mTarget = LOCAL_GL_TEXTURE_2D;
-        details.mTextureFormat = FORMAT_R8G8B8A8;
-        break;
-
-    default:
-        NS_ERROR("Unknown shared handle type");
-        return false;
-    }
-
-    return true;
-}
-
-bool GLContextEGL::AttachSharedHandle(SharedTextureShareType shareType,
-                                      SharedTextureHandle sharedHandle)
-{
-    if (shareType != SameProcess)
-        return false;
-
-    SharedTextureHandleWrapper* wrapper = reinterpret_cast<SharedTextureHandleWrapper*>(sharedHandle);
-
-    switch (wrapper->Type()) {
-#ifdef MOZ_WIDGET_ANDROID
-    case SharedHandleType_SurfaceTexture: {
-#ifndef DEBUG
-        /**
-         * NOTE: SurfaceTexture spams us if there are any existing GL errors, so we'll clear
-         * them here in order to avoid that.
-         */
-        GetAndClearError();
-#endif
-        SurfaceTextureWrapper* surfaceTextureWrapper = reinterpret_cast<SurfaceTextureWrapper*>(wrapper);
-
-        // FIXME: SurfaceTexture provides a transform matrix which is supposed to
-        // be applied to the texture coordinates. We should return that here
-        // so we can render correctly. Bug 775083
-        surfaceTextureWrapper->SurfaceTexture()->UpdateTexImage();
-        break;
-    }
-#endif // MOZ_WIDGET_ANDROID
-
-    case SharedHandleType_Image: {
-        NS_ASSERTION(mShareWithEGLImage, "EGLImage not supported or disabled in runtime");
-
-        EGLTextureWrapper* wrap = (EGLTextureWrapper*)sharedHandle;
-        wrap->WaitSync();
-        fEGLImageTargetTexture2D(LOCAL_GL_TEXTURE_2D, wrap->GetEGLImage());
-        break;
-    }
-
-    default:
-        NS_ERROR("Unknown shared handle type");
-        return false;
-    }
-
-    return true;
-}
-
 bool
 GLContextEGL::ResizeOffscreen(const gfxIntSize& aNewSize)
 {
 	return ResizeScreenBuffer(aNewSize);
-}
-
-already_AddRefed<TextureImage>
-GLContextEGL::CreateTextureImage(const nsIntSize& aSize,
-                                 TextureImage::ContentType aContentType,
-                                 GLenum aWrapMode,
-                                 TextureImage::Flags aFlags,
-                                 TextureImage::ImageFormat aImageFormat)
-{
-    nsRefPtr<TextureImage> t = new gl::TiledTextureImage(this, aSize, aContentType, aFlags, aImageFormat);
-    return t.forget();
-}
-
-already_AddRefed<TextureImage>
-GLContextEGL::TileGenFunc(const nsIntSize& aSize,
-                          TextureImage::ContentType aContentType,
-                          TextureImage::Flags aFlags,
-                          TextureImage::ImageFormat aImageFormat)
-{
-  MakeCurrent();
-
-  GLuint texture;
-  fGenTextures(1, &texture);
-
-  nsRefPtr<TextureImageEGL> teximage =
-      new TextureImageEGL(texture, aSize, LOCAL_GL_CLAMP_TO_EDGE, aContentType,
-                          this, aFlags, TextureImage::Created, aImageFormat);
-  
-  teximage->BindTexture(LOCAL_GL_TEXTURE0);
-
-  GLint texfilter = aFlags & TextureImage::UseNearestFilter ? LOCAL_GL_NEAREST : LOCAL_GL_LINEAR;
-  fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_MIN_FILTER, texfilter);
-  fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_MAG_FILTER, texfilter);
-  fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_WRAP_S, LOCAL_GL_CLAMP_TO_EDGE);
-  fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_WRAP_T, LOCAL_GL_CLAMP_TO_EDGE);
-
-  return teximage.forget();
 }
 
 static const EGLint kEGLConfigAttribsOffscreenPBuffer[] = {
@@ -1124,6 +743,11 @@ CreateConfig(EGLConfig* aConfig)
         if (depth == 16) {
             return CreateConfig(aConfig, 24);
         }
+        // Bug 970096
+        // Some devices that have 24 bit screens only support 16 bit OpenGL?
+        if (depth == 24) {
+            return CreateConfig(aConfig, 16);
+        }
 #endif
         return false;
     } else {
@@ -1131,79 +755,26 @@ CreateConfig(EGLConfig* aConfig)
     }
 }
 
-// When MOZ_ANDROID_OMTC is defined,
-// use mozilla::AndroidBridge::Bridge()->ProvideEGLSurface() instead.
-#ifndef MOZ_ANDROID_OMTC
-static EGLSurface
-CreateSurfaceForWindow(nsIWidget *aWidget, EGLConfig config)
-{
-    EGLSurface surface;
-
-#ifdef DEBUG
-    sEGLLibrary.DumpEGLConfig(config);
-#endif
-
-#if !defined(MOZ_WIDGET_ANDROID)
-    surface = sEGLLibrary.fCreateWindowSurface(EGL_DISPLAY(), config, GET_NATIVE_WINDOW(aWidget), 0);
-#endif
-
-#ifdef MOZ_WIDGET_GONK
-    gScreenBounds.x = 0;
-    gScreenBounds.y = 0;
-    sEGLLibrary.fQuerySurface(EGL_DISPLAY(), surface, LOCAL_EGL_WIDTH, &gScreenBounds.width);
-    sEGLLibrary.fQuerySurface(EGL_DISPLAY(), surface, LOCAL_EGL_HEIGHT, &gScreenBounds.height);
-#endif
-
-    return surface;
-}
-#endif
-
 already_AddRefed<GLContext>
 GLContextProviderEGL::CreateForWindow(nsIWidget *aWidget)
 {
     if (!sEGLLibrary.EnsureInitialized()) {
+        MOZ_CRASH("Failed to load EGL library!\n");
         return nullptr;
     }
 
     bool doubleBuffered = true;
 
-    bool hasNativeContext = aWidget->HasGLContext();
-    EGLContext eglContext = sEGLLibrary.fGetCurrentContext();
-    if (hasNativeContext && eglContext) {
-        void* platformContext = eglContext;
-        SurfaceCaps caps = SurfaceCaps::Any();
-        EGLConfig config = EGL_NO_CONFIG;
-        EGLSurface surface = sEGLLibrary.fGetCurrentSurface(LOCAL_EGL_DRAW);
-        nsRefPtr<GLContextEGL> glContext =
-            new GLContextEGL(caps,
-                             nullptr, false,
-                             config, surface, eglContext);
-
-        if (!glContext->Init())
-            return nullptr;
-
-        glContext->MakeCurrent();
-        glContext->SetIsDoubleBuffered(doubleBuffered);
-        glContext->SetPlatformContext(platformContext);
-
-        return glContext.forget();
-    }
-
     EGLConfig config;
     if (!CreateConfig(&config)) {
-        printf_stderr("Failed to create EGL config!\n");
+        MOZ_CRASH("Failed to create EGLConfig!\n");
         return nullptr;
     }
 
-#ifdef MOZ_ANDROID_OMTC
-    mozilla::AndroidBridge::Bridge()->RegisterCompositor();
-    EGLSurface surface = mozilla::AndroidBridge::Bridge()->ProvideEGLSurface();
-#else
-    EGLSurface surface = CreateSurfaceForWindow(aWidget, config);
-#endif
+    EGLSurface surface = mozilla::gl::CreateSurfaceForWindow(aWidget, config);
 
-    if (!surface) {
-        printf_stderr("Failed to create EGLSurface!\n");
+    if (surface == EGL_NO_SURFACE) {
+        MOZ_CRASH("Failed to create EGLSurface!\n");
         return nullptr;
     }
 
@@ -1214,7 +785,8 @@ GLContextProviderEGL::CreateForWindow(nsIWidget *aWidget)
                                       config, surface);
 
     if (!glContext) {
-        sEGLLibrary.fDestroySurface(EGL_DISPLAY(), surface);
+        MOZ_CRASH("Failed to create EGLContext!\n");
+        DestroySurface(surface);
         return nullptr;
     }
 

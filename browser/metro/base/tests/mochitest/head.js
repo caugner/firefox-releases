@@ -213,11 +213,22 @@ function hideContextUI()
 
 function showNavBar()
 {
-  let promise = waitForEvent(Elements.navbar, "transitionend");
   if (!ContextUI.navbarVisible) {
+    let promise = waitForEvent(Elements.navbar, "transitionend");
     ContextUI.displayNavbar();
     return promise;
   }
+  return Promise.resolve(null);
+}
+
+function hideNavBar()
+{
+  if (ContextUI.navbarVisible) {
+    let promise = waitForEvent(Elements.navbar, "transitionend");
+    ContextUI.dismissNavbar();
+    return promise;
+  }
+  return Promise.resolve(null);
 }
 
 function fireAppBarDisplayEvent()
@@ -299,8 +310,14 @@ function addTab(aUrl) {
 function cleanUpOpenedTabs() {
   let tab;
   while(tab = gOpenedTabs.shift()) {
+    cleanupNotificationsForBrowser(tab.browser);
     Browser.closeTab(Browser.getTabFromChrome(tab.chromeTab), { forceClose: true })
   }
+}
+
+function cleanupNotificationsForBrowser(aBrowser) {
+  let notificationBox = Browser.getNotificationBox(aBrowser);
+  notificationBox && notificationBox.removeAllNotifications(true);
 }
 
 /**
@@ -348,6 +365,22 @@ function waitForEvent(aSubject, aEventName, aTimeoutMs, aTarget) {
   }
   aSubject.addEventListener(aEventName, listener, false);
   return eventDeferred.promise.then(cleanup, cleanup);
+}
+
+/**
+ * Wait for an nsIMessageManager IPC message.
+ */
+function waitForMessage(aName, aMessageManager) {
+  let deferred = Promise.defer();
+  let manager = aMessageManager || messageManager;
+  function listener(aMessage) {
+    deferred.resolve(aMessage);
+  }
+  manager.addMessageListener(aName, listener);
+  function cleanup(aEventOrError) {
+    manager.removeMessageListener(aName, listener);
+  }
+  return deferred.promise.then(cleanup, cleanup);
 }
 
 /**
@@ -492,7 +525,7 @@ function waitForImageLoad(aWindow, aImageId) {
  * @param aTimeoutMs the number of miliseconds to wait before giving up
  * @returns a Promise that resolves to true, or to an Error
  */
-function waitForObserver(aObsEvent, aTimeoutMs) {
+function waitForObserver(aObsEvent, aTimeoutMs, aObsData) {
   try {
 
   let deferred = Promise.defer();
@@ -513,7 +546,8 @@ function waitForObserver(aObsEvent, aTimeoutMs) {
     },
 
     observe: function (aSubject, aTopic, aData) {
-      if (aTopic == aObsEvent) {
+      if (aTopic == aObsEvent &&
+        (!aObsData || (aObsData == aData))) {
         this.onEvent();
       }
     },
@@ -540,9 +574,31 @@ function waitForObserver(aObsEvent, aTimeoutMs) {
   }
 }
 
+
 /*=============================================================================
-  Native input synthesis helpers
-=============================================================================*/
+ * Input mode helpers - these helpers notify observers to metro_precise_input
+ * and metro_imprecise_input respectively, triggering the same behaviour as user touch or mouse input
+ *
+ * Usage: let promise = waitForObservers("metro_imprecise_input");
+ *        notifyImprecise();
+ *        yield promise; // you are now in imprecise mode
+ *===========================================================================*/
+function notifyPrecise()
+{
+  Services.obs.notifyObservers(null, "metro_precise_input", null);
+}
+
+function notifyImprecise()
+{
+  Services.obs.notifyObservers(null, "metro_imprecise_input", null);
+}
+
+/*=============================================================================
+ * Native input helpers - these helpers send input directly to the os
+ * generating os level input events that get processed by widget and
+ * apzc logic.
+ *===========================================================================*/
+
 // Keyboard layouts for use with synthesizeNativeKey
 const usEnglish = 0x409;
 const arSpanish = 0x2C0A;
@@ -623,6 +679,36 @@ function synthesizeNativeMouseMUp(aElement, aOffsetX, aOffsetY) {
                         aOffsetY,
                         0x0040);  // MOUSEEVENTF_MIDDLEUP
 }
+
+// WARNING: these calls can trigger the soft keyboard on tablets, but not
+// on test slaves (bug 947428).
+// WARNING: When testing the apzc, be careful of bug 933990. Events sent
+// shortly after loading a page may get ignored.
+
+function sendNativeLongTap(aElement, aX, aY) {
+  let coords = logicalCoordsForElement(aElement, aX, aY);
+  Browser.windowUtils.sendNativeTouchTap(coords.x, coords.y, true);
+}
+
+function sendNativeTap(aElement, aX, aY) {
+  let coords = logicalCoordsForElement(aElement, aX, aY);
+  Browser.windowUtils.sendNativeTouchTap(coords.x, coords.y, false);
+}
+
+function sendNativeDoubleTap(aElement, aX, aY) {
+  let coords = logicalCoordsForElement(aElement, aX, aY);
+  Browser.windowUtils.sendNativeTouchTap(coords.x, coords.y, false);
+  Browser.windowUtils.sendNativeTouchTap(coords.x, coords.y, false);
+}
+
+function clearNativeTouchSequence() {
+  Browser.windowUtils.clearNativeTouchSequence();
+}
+
+/*=============================================================================
+ * Synthesized event helpers - these helpers synthesize input events that get
+ * dispatched directly to the dom. As such widget and apzc logic is bypassed.
+ *===========================================================================*/
 
 /*
  * logicalCoordsForElement - given coordinates relative to top-left of
@@ -768,13 +854,44 @@ TouchDragAndHold.prototype = {
   _numSteps: 50,
   _debug: false,
   _win: null,
+  _native: false,
+  _pointerId: 1,
+  _dui: Components.interfaces.nsIDOMWindowUtils,
+
+  set useNativeEvents(aValue) {
+    this._native = aValue;
+  },
+
+  set stepTimeout(aValue) {
+    this._timeoutStep = aValue;
+  },
+
+  set numSteps(aValue) {
+    this._numSteps = aValue;
+  },
+
+  set nativePointerId(aValue) {
+    this._pointerId = aValue;
+  },
 
   callback: function callback() {
     if (this._win == null)
       return;
+
+    if (this._debug) {
+      SelectionHelperUI.debugDisplayDebugPoint(this._currentPoint.xPos,
+        this._currentPoint.yPos, 5, "#FF0000", true);
+    }
+
     if (++this._step.steps >= this._numSteps) {
-      EventUtils.synthesizeTouchAtPoint(this._endPoint.xPos, this._endPoint.yPos,
-                                        { type: "touchmove" }, this._win);
+      if (this._native) {
+        this._utils.sendNativeTouchPoint(this._pointerId, this._dui.TOUCH_CONTACT,
+                                         this._endPoint.xPos, this._endPoint.yPos,
+                                         1, 90);
+      } else {
+        EventUtils.synthesizeTouchAtPoint(this._endPoint.xPos, this._endPoint.yPos,
+                                          { type: "touchmove" }, this._win);
+      }
       this._defer.resolve();
       return;
     }
@@ -783,8 +900,16 @@ TouchDragAndHold.prototype = {
     if (this._debug) {
       info("[" + this._step.steps + "] touchmove " + this._currentPoint.xPos + " x " + this._currentPoint.yPos);
     }
-    EventUtils.synthesizeTouchAtPoint(this._currentPoint.xPos, this._currentPoint.yPos,
-                                      { type: "touchmove" }, this._win);
+
+    if (this._native) {
+      this._utils.sendNativeTouchPoint(this._pointerId, this._dui.TOUCH_CONTACT,
+                                       this._currentPoint.xPos, this._currentPoint.yPos,
+                                       1, 90);
+    } else {
+      EventUtils.synthesizeTouchAtPoint(this._currentPoint.xPos, this._currentPoint.yPos,
+                                        { type: "touchmove" }, this._win);
+    }
+
     let self = this;
     setTimeout(function () { self.callback(); }, this._timeoutStep);
   },
@@ -792,13 +917,22 @@ TouchDragAndHold.prototype = {
   start: function start(aWindow, aStartX, aStartY, aEndX, aEndY) {
     this._defer = Promise.defer();
     this._win = aWindow;
+    this._utils = aWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                         .getInterface(Ci.nsIDOMWindowUtils);
     this._endPoint = { xPos: aEndX, yPos: aEndY };
     this._currentPoint = { xPos: aStartX, yPos: aStartY };
     this._step = { steps: 0, x: (aEndX - aStartX) / this._numSteps, y: (aEndY - aStartY) / this._numSteps };
     if (this._debug) {
       info("[0] touchstart " + aStartX + " x " + aStartY);
     }
-    EventUtils.synthesizeTouchAtPoint(aStartX, aStartY, { type: "touchstart" }, aWindow);
+    // flush layout, bug 914847
+    this._utils.elementFromPoint(aStartX, aStartY, false, true);
+    if (this._native) {
+      this._utils.sendNativeTouchPoint(this._pointerId, this._dui.TOUCH_CONTACT,
+                                       aStartX, aStartY, 1, 90);
+    } else {
+      EventUtils.synthesizeTouchAtPoint(aStartX, aStartY, { type: "touchstart" }, aWindow);
+    }
     let self = this;
     setTimeout(function () { self.callback(); }, this._timeoutStep);
     return this._defer.promise;
@@ -820,12 +954,19 @@ TouchDragAndHold.prototype = {
     return this._defer.promise;
   },
 
-  end: function start() {
+  end: function end() {
     if (this._debug) {
       info("[" + this._step.steps + "] touchend " + this._endPoint.xPos + " x " + this._endPoint.yPos);
+      SelectionHelperUI.debugClearDebugPoints();
     }
-    EventUtils.synthesizeTouchAtPoint(this._endPoint.xPos, this._endPoint.yPos,
-                                      { type: "touchend" }, this._win);
+    if (this._native) {
+      this._utils.sendNativeTouchPoint(this._pointerId, this._dui.TOUCH_REMOVE,
+                                       this._endPoint.xPos, this._endPoint.yPos,
+                                       1, 90);
+    } else {
+      EventUtils.synthesizeTouchAtPoint(this._endPoint.xPos, this._endPoint.yPos,
+                                        { type: "touchend" }, this._win);
+    }
     this._win = null;
   },
 };

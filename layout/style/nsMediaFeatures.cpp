@@ -113,14 +113,18 @@ static nsSize
 GetDeviceSize(nsPresContext* aPresContext)
 {
     nsSize size;
-    if (aPresContext->IsRootPaginatedDocument())
+
+    if (aPresContext->IsDeviceSizePageSize()) {
+        size = GetSize(aPresContext);
+    } else if (aPresContext->IsRootPaginatedDocument()) {
         // We want the page size, including unprintable areas and margins.
         // XXX The spec actually says we want the "page sheet size", but
         // how is that different?
         size = aPresContext->GetPageSize();
-    else
+    } else {
         GetDeviceContextFor(aPresContext)->
             GetDeviceSurfaceDimensions(size.width, size.height);
+    }
     return size;
 }
 
@@ -490,6 +494,13 @@ nsMediaFeatures::features[] = {
         nsMediaFeature::eBoolInteger,
         { nullptr },
         GetIsResourceDocument
+    },
+    {
+        &nsGkAtoms::_moz_color_picker_available,
+        nsMediaFeature::eMinMaxNotAllowed,
+        nsMediaFeature::eBoolInteger,
+        { &nsGkAtoms::color_picker_available },
+        GetSystemMetric
     },
     {
         &nsGkAtoms::_moz_scrollbar_start_backward,

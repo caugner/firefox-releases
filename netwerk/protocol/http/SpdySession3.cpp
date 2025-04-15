@@ -184,22 +184,6 @@ SpdySession3::LogIO(SpdySession3 *self, SpdyStream3 *stream, const char *label,
   }
 }
 
-typedef nsresult  (*Control_FX) (SpdySession3 *self);
-static Control_FX sControlFunctions[] =
-{
-  nullptr,
-  SpdySession3::HandleSynStream,
-  SpdySession3::HandleSynReply,
-  SpdySession3::HandleRstStream,
-  SpdySession3::HandleSettings,
-  SpdySession3::HandleNoop,
-  SpdySession3::HandlePing,
-  SpdySession3::HandleGoAway,
-  SpdySession3::HandleHeaders,
-  SpdySession3::HandleWindowUpdate,
-  SpdySession3::HandleCredential
-};
-
 bool
 SpdySession3::RoomForMoreConcurrent()
 {
@@ -1815,6 +1799,22 @@ SpdySession3::WriteSegments(nsAHttpSegmentWriter *writer,
                            uint32_t count,
                            uint32_t *countWritten)
 {
+  typedef nsresult  (*Control_FX) (SpdySession3 *self);
+  static const Control_FX sControlFunctions[] =
+  {
+    nullptr,
+    SpdySession3::HandleSynStream,
+    SpdySession3::HandleSynReply,
+    SpdySession3::HandleRstStream,
+    SpdySession3::HandleSettings,
+    SpdySession3::HandleNoop,
+    SpdySession3::HandlePing,
+    SpdySession3::HandleGoAway,
+    SpdySession3::HandleHeaders,
+    SpdySession3::HandleWindowUpdate,
+    SpdySession3::HandleCredential
+  };
+
   MOZ_ASSERT(PR_GetCurrentThread() == gSocketThread);
 
   nsresult rv;
@@ -2026,9 +2026,10 @@ SpdySession3::WriteSegments(nsAHttpSegmentWriter *writer,
 
     mLastDataReadEpoch = mLastReadEpoch;
 
-    if (rv == NS_BASE_STREAM_CLOSED) {
+    if (SoftStreamError(rv)) {
       // This will happen when the transaction figures out it is EOF, generally
-      // due to a content-length match being made
+      // due to a content-length match being made. Return OK from this function
+      // otherwise the whole session would be torn down.
       SpdyStream3 *stream = mInputFrameDataStream;
 
       // if we were doing PROCESSING_COMPLETE_HEADERS need to pop the state
@@ -2039,9 +2040,9 @@ SpdySession3::WriteSegments(nsAHttpSegmentWriter *writer,
         ResetDownstreamState();
       LOG3(("SpdySession3::WriteSegments session=%p stream=%p 0x%X "
             "needscleanup=%p. cleanup stream based on "
-            "stream->writeSegments returning BASE_STREAM_CLOSED\n",
+            "stream->writeSegments returning code %X\n",
             this, stream, stream ? stream->StreamID() : 0,
-            mNeedsCleanup));
+            mNeedsCleanup, rv));
       CleanupStream(stream, NS_OK, RST_CANCEL);
       MOZ_ASSERT(!mNeedsCleanup, "double cleanup out of data frame");
       mNeedsCleanup = nullptr;                     /* just in case */
@@ -2579,6 +2580,11 @@ SpdySession3::Caps()
 {
   MOZ_ASSERT(false, "SpdySession3::Caps()");
   return 0;
+}
+
+void
+SpdySession3::SetDNSWasRefreshed()
+{
 }
 
 uint64_t

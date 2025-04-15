@@ -7,7 +7,7 @@
 
 #include "nsCoord.h"
 #include "nsCSSProperty.h"
-#include "nsStringFwd.h"
+#include "nsString.h"
 
 class nsCSSValue;
 class nsStringComparator;
@@ -57,6 +57,11 @@ public:
   static void AppendFontFeatureSettings(const nsCSSValue& src,
                                         nsAString& aResult);
 
+  static void AppendCSSNumber(float aNumber, nsAString& aResult)
+  {
+    aResult.AppendFloat(aNumber);
+  }
+
   // convert bitmask value to keyword name for a functional alternate
   static void GetFunctionalAlternatesName(int32_t aFeature,
                                           nsAString& aFeatureName);
@@ -98,15 +103,32 @@ public:
                                    bool aWhitespaceIsSignificant);
   /*
    *  Does this principal have a CSP that blocks the application of
-   *  inline styles ? Returns false if application of the style should
+   *  inline styles? Returns false if application of the style should
    *  be blocked.
    *
-   *  Note that the principal passed in here needs to be the principal
-   *  of the document, not of the style sheet. The document's principal
-   *  is where any Content Security Policy that should be used to
-   *  block or allow inline styles will be located.
+   *  @param aContent
+   *      The <style> element that the caller wants to know whether to honor.
+   *      Included to check the nonce attribute if one is provided. Allowed to
+   *      be null, if this is for something other than a <style> element (in
+   *      which case nonces won't be checked).
+   *  @param aPrincipal
+   *      The principal of the of the document (*not* of the style sheet).
+   *      The document's principal is where any Content Security Policy that
+   *      should be used to block or allow inline styles will be located.
+   *  @param aSourceURI
+   *      URI of document containing inline style (for reporting violations)
+   *  @param aLineNumber
+   *      Line number of inline style element in the containing document (for
+   *      reporting violations)
+   *  @param aStyleText
+   *      Contents of the inline style element (for reporting violations)
+   *  @param aRv
+   *      Return error code in case of failure
+   *  @return
+   *      Does CSP allow application of the specified inline style?
    */
-  static bool CSPAllowsInlineStyle(nsIPrincipal* aPrincipal,
+  static bool CSPAllowsInlineStyle(nsIContent* aContent,
+                                   nsIPrincipal* aPrincipal,
                                    nsIURI* aSourceURI,
                                    uint32_t aLineNumber,
                                    const nsSubstring& aStyleText,

@@ -40,9 +40,9 @@ public:
   virtual Element* GetElementAt(uint32_t index);
   virtual nsINode* GetParentObject() MOZ_OVERRIDE;
 
-  virtual JSObject* NamedItem(JSContext* aCx, const nsAString& aName,
-                              ErrorResult& aError);
-  virtual void GetSupportedNames(nsTArray<nsString>& aNames);
+  virtual Element*
+  GetFirstNamedElement(const nsAString& aName, bool& aFound) MOZ_OVERRIDE;
+
   void
   NamedGetter(const nsAString& aName,
               bool& aFound,
@@ -54,6 +54,7 @@ public:
     bool dummy;
     NamedGetter(aName, dummy, aResult);
   }
+  virtual void GetSupportedNames(nsTArray<nsString>& aNames);
 
   nsresult AddElementToTable(nsGenericHTMLFormElement* aChild,
                              const nsAString& aName);
@@ -78,8 +79,15 @@ public:
   nsresult GetSortedControls(nsTArray<nsGenericHTMLFormElement*>& aControls) const;
 
   // nsWrapperCache
-  virtual JSObject*
-  WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
+  using nsWrapperCache::GetWrapperPreserveColor;
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
+protected:
+  virtual JSObject* GetWrapperPreserveColorInternal() MOZ_OVERRIDE
+  {
+    return nsWrapperCache::GetWrapperPreserveColor();
+  }
+public:
 
   static bool ShouldBeInElements(nsIFormControl* aFormControl);
 

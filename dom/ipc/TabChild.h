@@ -8,9 +8,6 @@
 #define mozilla_dom_TabChild_h
 
 #include "mozilla/dom/PBrowserChild.h"
-#ifdef DEBUG
-#include "PCOMContentPermissionRequestChild.h"
-#endif /* DEBUG */
 #include "nsIWebNavigation.h"
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
@@ -35,6 +32,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/TabContext.h"
 #include "mozilla/EventForwards.h"
+#include "mozilla/layers/CompositorTypes.h"
 
 struct gfxMatrix;
 class nsICachedFileDescriptorListener;
@@ -43,10 +41,6 @@ class nsIDOMWindowUtils;
 namespace mozilla {
 namespace layout {
 class RenderFrameChild;
-}
-
-namespace layers {
-struct TextureFactoryIdentifier;
 }
 
 namespace dom {
@@ -69,23 +63,27 @@ public:
   NS_IMETHOD SendSyncMessage(const nsAString& aMessageName,
                              const JS::Value& aObject,
                              const JS::Value& aRemote,
+                             nsIPrincipal* aPrincipal,
                              JSContext* aCx,
                              uint8_t aArgc,
                              JS::Value* aRetval)
   {
     return mMessageManager
-      ? mMessageManager->SendSyncMessage(aMessageName, aObject, aRemote, aCx, aArgc, aRetval)
+      ? mMessageManager->SendSyncMessage(aMessageName, aObject, aRemote,
+                                         aPrincipal, aCx, aArgc, aRetval)
       : NS_ERROR_NULL_POINTER;
   }
   NS_IMETHOD SendRpcMessage(const nsAString& aMessageName,
                             const JS::Value& aObject,
                             const JS::Value& aRemote,
+                            nsIPrincipal* aPrincipal,
                             JSContext* aCx,
                             uint8_t aArgc,
                             JS::Value* aRetval)
   {
     return mMessageManager
-      ? mMessageManager->SendRpcMessage(aMessageName, aObject, aRemote, aCx, aArgc, aRetval)
+      ? mMessageManager->SendRpcMessage(aMessageName, aObject, aRemote,
+                                        aPrincipal, aCx, aArgc, aRetval)
       : NS_ERROR_NULL_POINTER;
   }
   NS_IMETHOD GetContent(nsIDOMWindow** aContent) MOZ_OVERRIDE;
@@ -200,12 +198,14 @@ public:
                                        const nsAString& aMessage,
                                        const mozilla::dom::StructuredCloneData& aData,
                                        JS::Handle<JSObject *> aCpows,
+                                       nsIPrincipal* aPrincipal,
                                        InfallibleTArray<nsString>* aJSONRetVal,
                                        bool aIsSync) MOZ_OVERRIDE;
     virtual bool DoSendAsyncMessage(JSContext* aCx,
                                     const nsAString& aMessage,
                                     const mozilla::dom::StructuredCloneData& aData,
-                                    JS::Handle<JSObject *> aCpows) MOZ_OVERRIDE;
+                                    JS::Handle<JSObject *> aCpows,
+                                    nsIPrincipal* aPrincipal) MOZ_OVERRIDE;
 
     virtual bool RecvLoadURL(const nsCString& uri);
     virtual bool RecvCacheFileDescriptor(const nsString& aPath,
@@ -217,6 +217,9 @@ public:
     virtual bool RecvHandleDoubleTap(const CSSIntPoint& aPoint);
     virtual bool RecvHandleSingleTap(const CSSIntPoint& aPoint);
     virtual bool RecvHandleLongTap(const CSSIntPoint& aPoint);
+    virtual bool RecvHandleLongTapUp(const CSSIntPoint& aPoint);
+    virtual bool RecvNotifyTransformBegin(const ViewID& aViewId);
+    virtual bool RecvNotifyTransformEnd(const ViewID& aViewId);
     virtual bool RecvActivate();
     virtual bool RecvDeactivate();
     virtual bool RecvMouseEvent(const nsString& aType,
@@ -229,8 +232,10 @@ public:
     virtual bool RecvRealMouseEvent(const mozilla::WidgetMouseEvent& event);
     virtual bool RecvRealKeyEvent(const mozilla::WidgetKeyboardEvent& event);
     virtual bool RecvMouseWheelEvent(const mozilla::WidgetWheelEvent& event);
-    virtual bool RecvRealTouchEvent(const WidgetTouchEvent& event);
-    virtual bool RecvRealTouchMoveEvent(const WidgetTouchEvent& event);
+    virtual bool RecvRealTouchEvent(const WidgetTouchEvent& aEvent,
+                                    const ScrollableLayerGuid& aGuid);
+    virtual bool RecvRealTouchMoveEvent(const WidgetTouchEvent& aEvent,
+                                        const ScrollableLayerGuid& aGuid);
     virtual bool RecvKeyEvent(const nsString& aType,
                               const int32_t&  aKeyCode,
                               const int32_t&  aCharCode,
@@ -243,7 +248,8 @@ public:
     virtual bool RecvLoadRemoteScript(const nsString& aURL);
     virtual bool RecvAsyncMessage(const nsString& aMessage,
                                   const ClonedMessageData& aData,
-                                  const InfallibleTArray<CpowEntry>& aCpows);
+                                  const InfallibleTArray<CpowEntry>& aCpows,
+                                  const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
 
     virtual PDocumentRendererChild*
     AllocPDocumentRendererChild(const nsRect& documentRect, const gfxMatrix& transform,
@@ -273,16 +279,11 @@ public:
                                nsIDialogParamBlock* aParams);
 
 #ifdef DEBUG
-    virtual PContentPermissionRequestChild* SendPContentPermissionRequestConstructor(PContentPermissionRequestChild* aActor,
-                                                                                     const nsCString& aType,
-                                                                                     const nsCString& aAccess,
-                                                                                     const IPC::Principal& aPrincipal)
-    {
-      PCOMContentPermissionRequestChild* child = static_cast<PCOMContentPermissionRequestChild*>(aActor);
-      PContentPermissionRequestChild* request = PBrowserChild::SendPContentPermissionRequestConstructor(aActor, aType, aAccess, aPrincipal);
-      child->mIPCOpen = true;
-      return request;
-    }
+    virtual PContentPermissionRequestChild*
+    SendPContentPermissionRequestConstructor(PContentPermissionRequestChild* aActor,
+                                             const nsCString& aType,
+                                             const nsCString& aAccess,
+                                             const IPC::Principal& aPrincipal);
 #endif /* DEBUG */
 
     virtual PContentPermissionRequestChild* AllocPContentPermissionRequestChild(const nsCString& aType,
@@ -455,6 +456,8 @@ private:
 
     // Get the DOMWindowUtils for the top-level window in this tab.
     already_AddRefed<nsIDOMWindowUtils> GetDOMWindowUtils();
+    // Get the Document for the top-level window in this tab.
+    already_AddRefed<nsIDocument> GetDocument();
 
     class CachedFileDescriptorInfo;
     class CachedFileDescriptorCallbackRunnable;
@@ -463,7 +466,7 @@ private:
     nsCOMPtr<nsIWebNavigation> mWebNav;
     nsCOMPtr<nsIWidget> mWidget;
     nsCOMPtr<nsIURI> mLastURI;
-    FrameMetrics mLastMetrics;
+    FrameMetrics mLastRootMetrics;
     RenderFrameChild* mRemoteFrame;
     nsRefPtr<ContentChild> mManager;
     nsRefPtr<TabChildGlobal> mTabChildGlobal;
@@ -493,6 +496,8 @@ private:
     bool mTriedBrowserInit;
     ScreenOrientation mOrientation;
     bool mUpdateHitRegion;
+    bool mContextMenuHandled;
+    bool mWaitingTouchListeners;
 
     DISALLOW_EVIL_CONSTRUCTORS(TabChild);
 };

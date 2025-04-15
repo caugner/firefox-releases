@@ -18,6 +18,7 @@
 #include "nsToolkit.h"
 #include "nsString.h"
 #include "nsTArray.h"
+#include "gfxWindowsPlatform.h"
 #include "gfxWindowsSurface.h"
 #include "nsWindowDbg.h"
 #include "cairo.h"
@@ -436,6 +437,7 @@ protected:
   static void             ActivateOtherWindowHelper(HWND aWnd);
   void                    ClearCachedResources();
   nsIWidgetListener*      GetPaintListener();
+  static bool             IsRenderMode(gfxWindowsPlatform::RenderMode aMode);
 
 protected:
   nsCOMPtr<nsIWidget>   mParent;
@@ -527,6 +529,8 @@ protected:
   // Graphics
   HDC                   mPaintDC; // only set during painting
   HDC                   mCompositeDC; // only set during StartRemoteDrawing
+
+  nsIntRect             mLastPaintBounds;
 
 #ifdef CAIRO_HAS_D2D_SURFACE
   nsRefPtr<gfxD2DSurface>    mD2DWindowSurface; // Surface for this window.

@@ -49,7 +49,7 @@ BreakpointStore.prototype = {
    *            the whole line)
    *          - actor (optional)
    */
-  addBreakpoint: function BS_addBreakpoint(aBreakpoint) {
+  addBreakpoint: function (aBreakpoint) {
     let { url, line, column } = aBreakpoint;
 
     if (column != null) {
@@ -79,7 +79,7 @@ BreakpointStore.prototype = {
    *          - line
    *          - column (optional)
    */
-  removeBreakpoint: function BS_removeBreakpoint({ url, line, column }) {
+  removeBreakpoint: function ({ url, line, column }) {
     if (column != null) {
       if (this._breakpoints[url]) {
         if (this._breakpoints[url][line]) {
@@ -115,7 +115,7 @@ BreakpointStore.prototype = {
    *          - line
    *          - column (optional)
    */
-  getBreakpoint: function BS_getBreakpoint(aLocation) {
+  getBreakpoint: function (aLocation) {
     let { url, line, column } = aLocation;
     dbg_assert(url != null);
     dbg_assert(line != null);
@@ -141,7 +141,7 @@ BreakpointStore.prototype = {
    *          - column (optional)
    * @returns The stored breakpoint if it exists, null otherwise.
    */
-  hasBreakpoint: function BS_hasBreakpoint(aLocation) {
+  hasBreakpoint: function (aLocation) {
     let { url, line, column } = aLocation;
     dbg_assert(url != null);
     dbg_assert(line != null);
@@ -167,7 +167,7 @@ BreakpointStore.prototype = {
    *          - line (optional; requires the url property)
    *          - column (optional; requires the line property)
    */
-  findBreakpoints: function BS_findBreakpoints(aSearchParams={}) {
+  findBreakpoints: function (aSearchParams={}) {
     if (aSearchParams.column != null) {
       dbg_assert(aSearchParams.line != null);
     }
@@ -191,7 +191,7 @@ BreakpointStore.prototype = {
     }
   },
 
-  _iterUrls: function BS__iterUrls(aUrl) {
+  _iterUrls: function (aUrl) {
     if (aUrl) {
       if (this._breakpoints[aUrl] || this._wholeLineBreakpoints[aUrl]) {
         yield aUrl;
@@ -209,7 +209,7 @@ BreakpointStore.prototype = {
     }
   },
 
-  _iterLines: function BS__iterLines(aUrl, aLine) {
+  _iterLines: function (aUrl, aLine) {
     if (aLine != null) {
       if ((this._wholeLineBreakpoints[aUrl]
            && this._wholeLineBreakpoints[aUrl][aLine])
@@ -237,7 +237,7 @@ BreakpointStore.prototype = {
     }
   },
 
-  _iterColumns: function BS__iterColumns(aUrl, aLine, aColumn) {
+  _iterColumns: function (aUrl, aLine, aColumn) {
     if (!this._breakpoints[aUrl] || !this._breakpoints[aUrl][aLine]) {
       return;
     }
@@ -403,9 +403,7 @@ EventLoop.prototype = {
  *
  * @param aHooks object
  *        An object with preNest and postNest methods for calling when entering
- *        and exiting a nested event loop, addToParentPool and
- *        removeFromParentPool methods for handling the lifetime of actors that
- *        will outlive the thread, like breakpoints.
+ *        and exiting a nested event loop.
  * @param aGlobal object [optional]
  *        An optional (for content debugging only) reference to the content
  *        window.
@@ -513,7 +511,7 @@ ThreadActor.prototype = {
    * them in a stack) because we can pause within client evals.
    */
   _threadPauseEventLoops: null,
-  _pushThreadPause: function TA__pushThreadPause() {
+  _pushThreadPause: function () {
     if (!this._threadPauseEventLoops) {
       this._threadPauseEventLoops = [];
     }
@@ -521,18 +519,19 @@ ThreadActor.prototype = {
     this._threadPauseEventLoops.push(eventLoop);
     eventLoop.enter();
   },
-  _popThreadPause: function TA__popThreadPause() {
+  _popThreadPause: function () {
     const eventLoop = this._threadPauseEventLoops.pop();
     dbg_assert(eventLoop, "Should have an event loop.");
     eventLoop.resolve();
   },
 
-  clearDebuggees: function TA_clearDebuggees() {
+  /**
+   * Remove all debuggees and clear out the thread's sources.
+   */
+  clearDebuggees: function () {
     if (this.dbg) {
       this.dbg.removeAllDebuggees();
     }
-    this.conn.removeActorPool(this._threadLifetimePool || undefined);
-    this._threadLifetimePool = null;
     this._sources = null;
   },
 
@@ -541,7 +540,7 @@ ThreadActor.prototype = {
    *
    * @returns the Debugger.Object that corresponds to the global.
    */
-  addDebuggee: function TA_addDebuggee(aGlobal) {
+  addDebuggee: function (aGlobal) {
     let globalDebugObject;
     try {
       globalDebugObject = this.dbg.addDebuggee(aGlobal);
@@ -555,7 +554,7 @@ ThreadActor.prototype = {
   /**
    * Initialize the Debugger.
    */
-  _initDebugger: function TA__initDebugger() {
+  _initDebugger: function () {
     this.dbg = new Debugger();
     this.dbg.uncaughtExceptionHook = this.uncaughtExceptionHook.bind(this);
     this.dbg.onDebuggerStatement = this.onDebuggerStatement.bind(this);
@@ -568,7 +567,7 @@ ThreadActor.prototype = {
   /**
    * Remove a debuggee global from the JSInspector.
    */
-  removeDebugee: function TA_removeDebuggee(aGlobal) {
+  removeDebugee: function (aGlobal) {
     try {
       this.dbg.removeDebuggee(aGlobal);
     } catch(ex) {
@@ -582,7 +581,7 @@ ThreadActor.prototype = {
    *
    * @returns the Debugger.Object that corresponds to the window.
    */
-  _addDebuggees: function TA__addDebuggees(aWindow) {
+  _addDebuggees: function (aWindow) {
     let globalDebugObject = this.addDebuggee(aWindow);
     let frames = aWindow.frames;
     if (frames) {
@@ -598,7 +597,7 @@ ThreadActor.prototype = {
    * depending on the debugging context being required (chrome or content).
    */
   globalManager: {
-    findGlobals: function TA_findGlobals() {
+    findGlobals: function () {
       this.globalDebugObject = this._addDebuggees(this.global);
     },
 
@@ -609,7 +608,7 @@ ThreadActor.prototype = {
      * @param aGlobal Debugger.Object
      *        The new global object that was created.
      */
-    onNewGlobal: function TA_onNewGlobal(aGlobal) {
+    onNewGlobal: function (aGlobal) {
       // Content debugging only cares about new globals in the contant window,
       // like iframe children.
       if (aGlobal.hostAnnotations &&
@@ -627,7 +626,7 @@ ThreadActor.prototype = {
     }
   },
 
-  disconnect: function TA_disconnect() {
+  disconnect: function () {
     dumpn("in ThreadActor.prototype.disconnect");
     if (this._state == "paused") {
       this.onResume();
@@ -636,6 +635,8 @@ ThreadActor.prototype = {
     this._state = "exited";
 
     this.clearDebuggees();
+    this.conn.removeActorPool(this._threadLifetimePool);
+    this._threadLifetimePool = null;
 
     if (this._prettyPrintWorker) {
       this._prettyPrintWorker.removeEventListener(
@@ -656,12 +657,12 @@ ThreadActor.prototype = {
   /**
    * Disconnect the debugger and put the actor in the exited state.
    */
-  exit: function TA_exit() {
+  exit: function () {
     this.disconnect();
   },
 
   // Request handlers
-  onAttach: function TA_onAttach(aRequest) {
+  onAttach: function (aRequest) {
     if (this.state === "exited") {
       return { type: "exited" };
     }
@@ -706,7 +707,7 @@ ThreadActor.prototype = {
     }
   },
 
-  onDetach: function TA_onDetach(aRequest) {
+  onDetach: function (aRequest) {
     this.disconnect();
     dumpn("ThreadActor.prototype.onDetach: returning 'detached' packet");
     return {
@@ -714,7 +715,7 @@ ThreadActor.prototype = {
     };
   },
 
-  onReconfigure: function TA_onReconfigure(aRequest) {
+  onReconfigure: function (aRequest) {
     if (this.state == "exited") {
       return { error: "wrongState" };
     }
@@ -738,8 +739,7 @@ ThreadActor.prototype = {
    *        Hook to modify the packet before it is sent. Feel free to return a
    *        promise.
    */
-  _pauseAndRespond: function TA__pauseAndRespond(aFrame, aReason,
-                                                 onPacket=function (k) { return k; }) {
+  _pauseAndRespond: function (aFrame, aReason, onPacket=function (k) { return k; }) {
     try {
       let packet = this._paused(aFrame);
       if (!packet) {
@@ -777,7 +777,7 @@ ThreadActor.prototype = {
    *        The request packet received over the RDP.
    * @returns A response packet.
    */
-  _forceCompletion: function TA__forceCompletion(aRequest) {
+  _forceCompletion: function (aRequest) {
     // TODO: remove this when Debugger.Frame.prototype.pop is implemented in
     // bug 736733.
     return {
@@ -786,7 +786,7 @@ ThreadActor.prototype = {
     };
   },
 
-  _makeOnEnterFrame: function TA__makeOnEnterFrame({ pauseAndRespond }) {
+  _makeOnEnterFrame: function ({ pauseAndRespond }) {
     return aFrame => {
       const generatedLocation = getFrameLocation(aFrame);
       let { url } = this.synchronize(this.sources.getOriginalLocation(
@@ -798,7 +798,7 @@ ThreadActor.prototype = {
     };
   },
 
-  _makeOnPop: function TA__makeOnPop({ thread, pauseAndRespond, createValueGrip }) {
+  _makeOnPop: function ({ thread, pauseAndRespond, createValueGrip }) {
     return function (aCompletion) {
       // onPop is called with 'this' set to the current frame.
 
@@ -830,8 +830,8 @@ ThreadActor.prototype = {
     };
   },
 
-  _makeOnStep: function TA__makeOnStep({ thread, pauseAndRespond, startFrame,
-                                         startLocation }) {
+  _makeOnStep: function ({ thread, pauseAndRespond, startFrame,
+                           startLocation }) {
     return function () {
       // onStep is called with 'this' set to the current frame.
 
@@ -876,7 +876,7 @@ ThreadActor.prototype = {
   /**
    * Define the JS hook functions for stepping.
    */
-  _makeSteppingHooks: function TA__makeSteppingHooks(aStartLocation) {
+  _makeSteppingHooks: function (aStartLocation) {
     // Bind these methods and state because some of the hooks are called
     // with 'this' set to the current frame. Rather than repeating the
     // binding in each _makeOnX method, just do it once here and pass it
@@ -907,7 +907,7 @@ ThreadActor.prototype = {
    * @returns A promise that resolves to true once the hooks are attached, or is
    *          rejected with an error packet.
    */
-  _handleResumeLimit: function TA__handleResumeLimit(aRequest) {
+  _handleResumeLimit: function (aRequest) {
     let steppingType = aRequest.resumeLimit.type;
     if (["step", "next", "finish"].indexOf(steppingType) == -1) {
       return reject({ error: "badParameterType",
@@ -949,7 +949,7 @@ ThreadActor.prototype = {
    * @param Debugger.Frame aFrame
    *        The frame we want to clear the stepping hooks from.
    */
-  _clearSteppingHooks: function TA__clearSteppingHooks(aFrame) {
+  _clearSteppingHooks: function (aFrame) {
     while (aFrame) {
       aFrame.onStep = undefined;
       aFrame.onPop = undefined;
@@ -963,7 +963,7 @@ ThreadActor.prototype = {
    * @param Object aRequest
    *        The resume request packet received over the RDP.
    */
-  _maybeListenToEvents: function TA__maybeListenToEvents(aRequest) {
+  _maybeListenToEvents: function (aRequest) {
     // Break-on-DOMEvents is only supported in content debugging.
     let events = aRequest.pauseOnDOMEvents;
     if (this.global && events &&
@@ -979,7 +979,7 @@ ThreadActor.prototype = {
   /**
    * Handle a protocol request to resume execution of the debuggee.
    */
-  onResume: function TA_onResume(aRequest) {
+  onResume: function (aRequest) {
     if (this._state !== "paused") {
       return {
         error: "wrongState",
@@ -1161,7 +1161,7 @@ ThreadActor.prototype = {
   /**
    * Helper method that returns the next frame when stepping.
    */
-  _getNextStepFrame: function TA__getNextStepFrame(aFrame) {
+  _getNextStepFrame: function (aFrame) {
     let stepFrame = aFrame.reportedPop ? aFrame.older : aFrame;
     if (!stepFrame || !stepFrame.script) {
       stepFrame = null;
@@ -1169,7 +1169,7 @@ ThreadActor.prototype = {
     return stepFrame;
   },
 
-  onClientEvaluate: function TA_onClientEvaluate(aRequest) {
+  onClientEvaluate: function (aRequest) {
     if (this.state !== "paused") {
       return { error: "wrongState",
                message: "Debuggee must be paused to evaluate code." };
@@ -1205,7 +1205,7 @@ ThreadActor.prototype = {
     return packet;
   },
 
-  onFrames: function TA_onFrames(aRequest) {
+  onFrames: function (aRequest) {
     if (this.state !== "paused") {
       return { error: "wrongState",
                message: "Stack frames are only available while the debuggee is paused."};
@@ -1247,7 +1247,7 @@ ThreadActor.prototype = {
     });
   },
 
-  onReleaseMany: function TA_onReleaseMany(aRequest) {
+  onReleaseMany: function (aRequest) {
     if (!aRequest.actors) {
       return { error: "missingParameter",
                message: "no actors were specified" };
@@ -1271,7 +1271,7 @@ ThreadActor.prototype = {
   /**
    * Handle a protocol request to set a breakpoint.
    */
-  onSetBreakpoint: function TA_onSetBreakpoint(aRequest) {
+  onSetBreakpoint: function (aRequest) {
     if (this.state !== "paused") {
       return { error: "wrongState",
                message: "Breakpoints can only be set while the debuggee is paused."};
@@ -1355,7 +1355,7 @@ ThreadActor.prototype = {
    *        The location of the breakpoint (in the generated source, if source
    *        mapping).
    */
-  _setBreakpoint: function TA__setBreakpoint(aLocation) {
+  _setBreakpoint: function (aLocation) {
     let actor;
     let storedBp = this.breakpointStore.getBreakpoint(aLocation);
     if (storedBp.actor) {
@@ -1366,7 +1366,7 @@ ThreadActor.prototype = {
         line: aLocation.line,
         column: aLocation.column
       });
-      this._hooks.addToParentPool(actor);
+      this.threadLifetimePool.addActor(actor);
     }
 
     // Find all scripts matching the given location
@@ -1508,9 +1508,9 @@ ThreadActor.prototype = {
    *        A Map object which maps Debugger.Script instances to arrays of
    *        offset mappings. This is an out param.
    */
-  _findClosestOffsetMappings: function TA__findClosestOffsetMappings(aTargetLocation,
-                                                                     aScript,
-                                                                     aScriptsAndOffsetMappings) {
+  _findClosestOffsetMappings: function (aTargetLocation,
+                                        aScript,
+                                        aScriptsAndOffsetMappings) {
     // If we are given a column, we will try and break only at that location,
     // otherwise we will break anytime we get on that line.
 
@@ -1561,22 +1561,21 @@ ThreadActor.prototype = {
 
   /**
    * Get the script and source lists from the debugger.
-   *
-   * TODO bug 637572: we should be dealing with sources directly, not inferring
-   * them through scripts.
    */
-  _discoverSources: function TA__discoverSources() {
+  _discoverSources: function () {
     // Only get one script per url.
-    let scriptsByUrl = {};
+    const sourcesToScripts = new Map();
     for (let s of this.dbg.findScripts()) {
-      scriptsByUrl[s.url] = s;
+      if (s.source) {
+        sourcesToScripts.set(s.source, s);
+      }
     }
 
-    return all([this.sources.sourcesForScript(scriptsByUrl[s])
-                for (s of Object.keys(scriptsByUrl))]);
+    return all([this.sources.sourcesForScript(script)
+                for (script of sourcesToScripts.values())]);
   },
 
-  onSources: function TA_onSources(aRequest) {
+  onSources: function (aRequest) {
     return this._discoverSources().then(() => {
       return {
         sources: [s.form() for (s of this.sources.iter())]
@@ -1602,7 +1601,7 @@ ThreadActor.prototype = {
   /**
    * Handle a protocol request to pause the debuggee.
    */
-  onInterrupt: function TA_onInterrupt(aRequest) {
+  onInterrupt: function (aRequest) {
     if (this.state == "exited") {
       return { type: "exited" };
     } else if (this.state == "paused") {
@@ -1642,7 +1641,7 @@ ThreadActor.prototype = {
   /**
    * Handle a protocol request to retrieve all the event listeners on the page.
    */
-  onEventListeners: function TA_onEventListeners(aRequest) {
+  onEventListeners: function (aRequest) {
     // This request is only supported in content debugging.
     if (!this.global) {
       return {
@@ -1665,9 +1664,9 @@ ThreadActor.prototype = {
         // Create a form object for serializing the listener via the protocol.
         let listenerForm = Object.create(null);
         let listener = handler.listenerObject;
-        // Native event listeners don't provide any listenerObject and are not
-        // that useful to a JS debugger.
-        if (!listener) {
+        // Native event listeners don't provide any listenerObject or type and
+        // are not that useful to a JS debugger.
+        if (!listener || !handler.type) {
           continue;
         }
 
@@ -1695,7 +1694,7 @@ ThreadActor.prototype = {
   /**
    * Return the Debug.Frame for a frame mentioned by the protocol.
    */
-  _requestFrame: function TA_requestFrame(aFrameID) {
+  _requestFrame: function (aFrameID) {
     if (!aFrameID) {
       return this.youngestFrame;
     }
@@ -1707,7 +1706,7 @@ ThreadActor.prototype = {
     return undefined;
   },
 
-  _paused: function TA__paused(aFrame) {
+  _paused: function (aFrame) {
     // We don't handle nested pauses correctly.  Don't try - if we're
     // paused, just continue running whatever code triggered the pause.
     // We don't want to actually have nested pauses (although we
@@ -1774,7 +1773,7 @@ ThreadActor.prototype = {
     return packet;
   },
 
-  _resumed: function TA_resumed() {
+  _resumed: function () {
     this._state = "running";
 
     // Drop the actors in the pause actor pool.
@@ -1791,7 +1790,7 @@ ThreadActor.prototype = {
    *
    * @returns A list of actor IDs whose frames have been popped.
    */
-  _updateFrames: function TA_updateFrames() {
+  _updateFrames: function () {
     let popped = [];
 
     // Create the actor pool that will hold the still-living frames.
@@ -1820,7 +1819,7 @@ ThreadActor.prototype = {
     return popped;
   },
 
-  _createFrameActor: function TA_createFrameActor(aFrame) {
+  _createFrameActor: function (aFrame) {
     if (aFrame.actor) {
       return aFrame.actor;
     }
@@ -1844,7 +1843,7 @@ ThreadActor.prototype = {
    *         functions or functions scoped to a non-debuggee global.
    */
   createEnvironmentActor:
-  function TA_createEnvironmentActor(aEnvironment, aPool) {
+  function (aEnvironment, aPool) {
     if (!aEnvironment) {
       return undefined;
     }
@@ -1864,7 +1863,7 @@ ThreadActor.prototype = {
    * Create a grip for the given debuggee value.  If the value is an
    * object, will create an actor with the given lifetime.
    */
-  createValueGrip: function TA_createValueGrip(aValue, aPool=false) {
+  createValueGrip: function (aValue, aPool=false) {
     if (!aPool) {
       aPool = this._pausePool;
     }
@@ -1906,7 +1905,7 @@ ThreadActor.prototype = {
    * Debugger-provided completion value.
    */
   createProtocolCompletionValue:
-  function TA_createProtocolCompletionValue(aCompletion) {
+  function (aCompletion) {
     let protoValue = {};
     if ("return" in aCompletion) {
       protoValue.return = this.createValueGrip(aCompletion.return);
@@ -1928,7 +1927,7 @@ ThreadActor.prototype = {
    * @param aPool ActorPool
    *        The actor pool where the new object actor will be added.
    */
-  objectGrip: function TA_objectGrip(aValue, aPool) {
+  objectGrip: function (aValue, aPool) {
     if (!aPool.objectActors) {
       aPool.objectActors = new WeakMap();
     }
@@ -1951,7 +1950,7 @@ ThreadActor.prototype = {
    * @param aValue Debugger.Object
    *        The debuggee object value.
    */
-  pauseObjectGrip: function TA_pauseObjectGrip(aValue) {
+  pauseObjectGrip: function (aValue) {
     if (!this._pausePool) {
       throw "Object grip requested while not paused.";
     }
@@ -1965,7 +1964,7 @@ ThreadActor.prototype = {
    * @param aActor object
    *        The object actor.
    */
-  threadObjectGrip: function TA_threadObjectGrip(aActor) {
+  threadObjectGrip: function (aActor) {
     // We want to reuse the existing actor ID, so we just remove it from the
     // current pool's weak map and then let pool.addActor do the rest.
     aActor.registeredPool.objectActors.delete(aActor.obj);
@@ -1980,7 +1979,7 @@ ThreadActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onThreadGrips: function OA_onThreadGrips(aRequest) {
+  onThreadGrips: function (aRequest) {
     if (this.state != "paused") {
       return { error: "wrongState" };
     }
@@ -2007,7 +2006,7 @@ ThreadActor.prototype = {
    * @param aPool ActorPool
    *        The actor pool where the new actor will be added.
    */
-  longStringGrip: function TA_longStringGrip(aString, aPool) {
+  longStringGrip: function (aString, aPool) {
     if (!aPool.longStringActors) {
       aPool.longStringActors = {};
     }
@@ -2028,7 +2027,7 @@ ThreadActor.prototype = {
    * @param aString String
    *        The string we are creating a grip for.
    */
-  pauseLongStringGrip: function TA_pauseLongStringGrip (aString) {
+  pauseLongStringGrip: function (aString) {
     return this.longStringGrip(aString, this._pausePool);
   },
 
@@ -2038,7 +2037,7 @@ ThreadActor.prototype = {
    * @param aString String
    *        The string we are creating a grip for.
    */
-  threadLongStringGrip: function TA_pauseLongStringGrip (aString) {
+  threadLongStringGrip: function (aString) {
     return this.longStringGrip(aString, this._threadLifetimePool);
   },
 
@@ -2049,7 +2048,7 @@ ThreadActor.prototype = {
    * @param aString String
    *        The string we are checking the length of.
    */
-  _stringIsLong: function TA__stringIsLong(aString) {
+  _stringIsLong: function (aString) {
     return aString.length >= DebuggerServer.LONG_STRING_LENGTH;
   },
 
@@ -2063,7 +2062,7 @@ ThreadActor.prototype = {
    * @param aException exception
    *        The exception that was thrown in the debugger code.
    */
-  uncaughtExceptionHook: function TA_uncaughtExceptionHook(aException) {
+  uncaughtExceptionHook: function (aException) {
     dumpn("Got an exception: " + aException.message + "\n" + aException.stack);
   },
 
@@ -2074,7 +2073,7 @@ ThreadActor.prototype = {
    * @param aFrame Debugger.Frame
    *        The stack frame that contained the debugger statement.
    */
-  onDebuggerStatement: function TA_onDebuggerStatement(aFrame) {
+  onDebuggerStatement: function (aFrame) {
     // Don't pause if we are currently stepping (in or over) or the frame is
     // black-boxed.
     const generatedLocation = getFrameLocation(aFrame);
@@ -2095,7 +2094,7 @@ ThreadActor.prototype = {
    * @param aValue object
    *        The exception that was thrown.
    */
-  onExceptionUnwind: function TA_onExceptionUnwind(aFrame, aValue) {
+  onExceptionUnwind: function (aFrame, aValue) {
     let willBeCaught = false;
     for (let frame = aFrame; frame != null; frame = frame.older) {
       if (frame.script.isInCatchScope(frame.offset)) {
@@ -2143,12 +2142,12 @@ ThreadActor.prototype = {
    * @param aGlobal Debugger.Object
    *        A Debugger.Object instance whose referent is the global object.
    */
-  onNewScript: function TA_onNewScript(aScript, aGlobal) {
+  onNewScript: function (aScript, aGlobal) {
     this._addScript(aScript);
     this.sources.sourcesForScript(aScript);
   },
 
-  onNewSource: function TA_onNewSource(aSource) {
+  onNewSource: function (aSource) {
     this.conn.send({
       from: this.actorID,
       type: "newSource",
@@ -2164,7 +2163,7 @@ ThreadActor.prototype = {
    *        The url of the script's source that will be stored.
    * @returns true, if the script can be added, false otherwise.
    */
-  _allowSource: function TA__allowSource(aSourceUrl) {
+  _allowSource: function (aSourceUrl) {
     // Ignore anything we don't have a URL for (eval scripts, for example).
     if (!aSourceUrl)
       return false;
@@ -2182,7 +2181,7 @@ ThreadActor.prototype = {
   /**
    * Restore any pre-existing breakpoints to the scripts that we have access to.
    */
-  _restoreBreakpoints: function TA__restoreBreakpoints() {
+  _restoreBreakpoints: function () {
     for (let s of this.dbg.findScripts()) {
       this._addScript(s);
     }
@@ -2195,7 +2194,7 @@ ThreadActor.prototype = {
    *        The source script that will be stored.
    * @returns true, if the script was added; false otherwise.
    */
-  _addScript: function TA__addScript(aScript) {
+  _addScript: function (aScript) {
     if (!this._allowSource(aScript.url)) {
       return false;
     }
@@ -2221,7 +2220,7 @@ ThreadActor.prototype = {
   /**
    * Get prototypes and properties of multiple objects.
    */
-  onPrototypesAndProperties: function TA_onPrototypesAndProperties(aRequest) {
+  onPrototypesAndProperties: function (aRequest) {
     let result = {};
     for (let actorID of aRequest.actors) {
       // This code assumes that there are no lazily loaded actors returned
@@ -2301,7 +2300,7 @@ function PauseScopedActor()
  * @param aMethod Function
  *        The function we are decorating.
  */
-PauseScopedActor.withPaused = function PSA_withPaused(aMethod) {
+PauseScopedActor.withPaused = function (aMethod) {
   return function () {
     if (this.isPaused()) {
       return aMethod.apply(this, arguments);
@@ -2316,7 +2315,7 @@ PauseScopedActor.prototype = {
   /**
    * Returns true if we are in the paused state.
    */
-  isPaused: function PSA_isPaused() {
+  isPaused: function () {
     // When there is not a ThreadActor available (like in the webconsole) we
     // have to be optimistic and assume that we are paused so that we can
     // respond to requests.
@@ -2326,7 +2325,7 @@ PauseScopedActor.prototype = {
   /**
    * Returns the wrongState response packet for this actor.
    */
-  _wrongState: function PSA_wrongState() {
+  _wrongState: function () {
     return {
       error: "wrongState",
       message: this.constructor.name +
@@ -2392,7 +2391,7 @@ SourceActor.prototype = {
     return this.threadActor.prettyPrintWorker;
   },
 
-  form: function SA_form() {
+  form: function () {
     return {
       actor: this.actorID,
       url: this._url,
@@ -2402,13 +2401,13 @@ SourceActor.prototype = {
     };
   },
 
-  disconnect: function SA_disconnect() {
+  disconnect: function () {
     if (this.registeredPool && this.registeredPool.sourceActors) {
       delete this.registeredPool.sourceActors[this.actorID];
     }
   },
 
-  _getSourceText: function SA__getSourceText() {
+  _getSourceText: function () {
     const toResolvedContent = t => resolve({
       content: t,
       contentType: this._contentType
@@ -2432,7 +2431,7 @@ SourceActor.prototype = {
   /**
    * Handler for the "source" packet.
    */
-  onSource: function SA_onSource() {
+  onSource: function () {
     return resolve(this._init)
       .then(this._getSourceText)
       .then(({ content, contentType }) => {
@@ -2492,7 +2491,7 @@ SourceActor.prototype = {
    *          is resolved with `{ code, mappings }` where `code` is the pretty
    *          printed code, and `mappings` is an array of source mappings.
    */
-  _sendToPrettyPrintWorker: function SA__sendToPrettyPrintWorker(aIndent) {
+  _sendToPrettyPrintWorker: function (aIndent) {
     return ({ content }) => {
       const deferred = promise.defer();
       const id = Math.random();
@@ -2530,7 +2529,7 @@ SourceActor.prototype = {
    *
    * Note that the source map is modified in place.
    */
-  _invertSourceMap: function SA__invertSourceMap({ code, mappings }) {
+  _invertSourceMap: function ({ code, mappings }) {
     const generator = new SourceMapGenerator({ file: this._url });
     return DevToolsUtils.yieldingEach(mappings, m => {
       let mapping = {
@@ -2587,7 +2586,7 @@ SourceActor.prototype = {
    * pretty printing a source mapped source, we need to compose the existing
    * source map with our new one.
    */
-  _saveMap: function SA__saveMap({ map }) {
+  _saveMap: function ({ map }) {
     if (this._sourceMap) {
       // Compose the source maps
       this._oldSourceMap = this._sourceMap;
@@ -2605,7 +2604,7 @@ SourceActor.prototype = {
   /**
    * Handler for the "disablePrettyPrint" packet.
    */
-  onDisablePrettyPrint: function SA_onDisablePrettyPrint() {
+  onDisablePrettyPrint: function () {
     this._sourceMap = this._oldSourceMap;
     this.threadActor.sources.saveSourceMap(this._sourceMap,
                                            this._generatedSource || this._url);
@@ -2616,7 +2615,7 @@ SourceActor.prototype = {
   /**
    * Handler for the "blackbox" packet.
    */
-  onBlackBox: function SA_onBlackBox(aRequest) {
+  onBlackBox: function (aRequest) {
     this.threadActor.sources.blackBox(this.url);
     let packet = {
       from: this.actorID
@@ -2632,7 +2631,7 @@ SourceActor.prototype = {
   /**
    * Handler for the "unblackbox" packet.
    */
-  onUnblackBox: function SA_onUnblackBox(aRequest) {
+  onUnblackBox: function (aRequest) {
     this.threadActor.sources.unblackBox(this.url);
     return {
       from: this.actorID
@@ -2648,6 +2647,146 @@ SourceActor.prototype.requestTypes = {
   "disablePrettyPrint": SourceActor.prototype.onDisablePrettyPrint
 };
 
+
+/**
+ * Determine if a given value is non-primitive.
+ *
+ * @param Any aValue
+ *        The value to test.
+ * @return Boolean
+ *         Whether the value is non-primitive.
+ */
+function isObject(aValue) {
+  const type = typeof aValue;
+  return type == "object" ? aValue !== null : type == "function";
+}
+
+/**
+ * Create a function that can safely stringify Debugger.Objects of a given
+ * builtin type.
+ *
+ * @param Function aCtor
+ *        The builtin class constructor.
+ * @return Function
+ *         The stringifier for the class.
+ */
+function createBuiltinStringifier(aCtor) {
+  return aObj => aCtor.prototype.toString.call(aObj.unsafeDereference());
+}
+
+/**
+ * Stringify a Debugger.Object-wrapped Error instance.
+ *
+ * @param Debugger.Object aObj
+ *        The object to stringify.
+ * @return String
+ *         The stringification of the object.
+ */
+function errorStringify(aObj) {
+  let name = DevToolsUtils.getProperty(aObj, "name");
+  if (name === "" || name === undefined) {
+    name = aObj.class;
+  } else if (isObject(name)) {
+    name = stringify(name);
+  }
+
+  let message = DevToolsUtils.getProperty(aObj, "message");
+  if (isObject(message)) {
+    message = stringify(message);
+  }
+
+  if (message === "" || message === undefined) {
+    return name;
+  }
+  return name + ": " + message;
+}
+
+/**
+ * Stringify a Debugger.Object based on its class.
+ *
+ * @param Debugger.Object aObj
+ *        The object to stringify.
+ * @return String
+ *         The stringification for the object.
+ */
+function stringify(aObj) {
+  if (Cu.isDeadWrapper(aObj)) {
+    const error = new Error("Dead object encountered.");
+    DevToolsUtils.reportException("stringify", error);
+    return "<dead object>";
+  }
+  const stringifier = stringifiers[aObj.class] || stringifiers.Object;
+  return stringifier(aObj);
+}
+
+// Used to prevent infinite recursion when an array is found inside itself.
+let seen = null;
+
+let stringifiers = {
+  Error: errorStringify,
+  EvalError: errorStringify,
+  RangeError: errorStringify,
+  ReferenceError: errorStringify,
+  SyntaxError: errorStringify,
+  TypeError: errorStringify,
+  URIError: errorStringify,
+  Boolean: createBuiltinStringifier(Boolean),
+  Function: createBuiltinStringifier(Function),
+  Number: createBuiltinStringifier(Number),
+  RegExp: createBuiltinStringifier(RegExp),
+  String: createBuiltinStringifier(String),
+  Object: obj => "[object " + obj.class + "]",
+  Array: obj => {
+    // If we're at the top level then we need to create the Set for tracking
+    // previously stringified arrays.
+    const topLevel = !seen;
+    if (topLevel) {
+      seen = new Set();
+    } else if (seen.has(obj)) {
+      return "";
+    }
+
+    seen.add(obj);
+
+    const len = DevToolsUtils.getProperty(obj, "length");
+    let string = "";
+
+    // The following check is only required because the debuggee could possibly
+    // be a Proxy and return any value. For normal objects, array.length is
+    // always a non-negative integer.
+    if (typeof len == "number" && len > 0) {
+      for (let i = 0; i < len; i++) {
+        const desc = obj.getOwnPropertyDescriptor(i);
+        if (desc) {
+          const { value } = desc;
+          if (value != null) {
+            string += isObject(value) ? stringify(value) : value;
+          }
+        }
+
+        if (i < len - 1) {
+          string += ",";
+        }
+      }
+    }
+
+    if (topLevel) {
+      seen = null;
+    }
+
+    return string;
+  },
+  DOMException: obj => {
+    const message = DevToolsUtils.getProperty(obj, "message") || "<no message>";
+    const result = (+DevToolsUtils.getProperty(obj, "result")).toString(16);
+    const code = DevToolsUtils.getProperty(obj, "code");
+    const name = DevToolsUtils.getProperty(obj, "name") || "<unknown>";
+
+    return '[Exception... "' + message + '" ' +
+           'code: "' + code +'" ' +
+           'nsresult: "0x' + result + ' (' + name + ')"]';
+  }
+};
 
 /**
  * Creates an actor for the specified object.
@@ -2666,12 +2805,10 @@ function ObjectActor(aObj, aThreadActor)
 ObjectActor.prototype = {
   actorPrefix: "obj",
 
-  _forcedMagicProps: false,
-
   /**
    * Returns a grip for this actor for returning in a protocol message.
    */
-  grip: function OA_grip() {
+  grip: function () {
     let g = {
       "type": "object",
       "class": this.obj.class,
@@ -2702,12 +2839,6 @@ ObjectActor.prototype = {
         // with "permission denied" errors for some functions.
         dumpn(e);
       }
-
-      // Add source location information.
-      if (this.obj.script) {
-        g.url = this.obj.script.url;
-        g.line = this.obj.script.startLine;
-      }
     }
 
     return g;
@@ -2716,7 +2847,7 @@ ObjectActor.prototype = {
   /**
    * Releases this actor from the pool.
    */
-  release: function OA_release() {
+  release: function () {
     if (this.registeredPool.objectActors) {
       this.registeredPool.objectActors.delete(this.obj);
     }
@@ -2724,24 +2855,45 @@ ObjectActor.prototype = {
   },
 
   /**
-   * Force the magic Error properties to appear.
+   * Handle a protocol request to provide the definition site of this function
+   * object.
+   *
+   * @param aRequest object
+   *        The protocol request object.
    */
-  _forceMagicProperties: function OA__forceMagicProperties() {
-    if (this._forcedMagicProps) {
-      return;
+  onDefinitionSite: function OA_onDefinitionSite(aRequest) {
+    if (this.obj.class != "Function") {
+      return {
+        from: this.actorID,
+        error: "objectNotFunction",
+        message: this.actorID + " is not a function."
+      };
     }
 
-    const MAGIC_ERROR_PROPERTIES = [
-      "message", "stack", "fileName", "lineNumber", "columnNumber"
-    ];
-
-    if (this.obj.class.endsWith("Error")) {
-      for (let property of MAGIC_ERROR_PROPERTIES) {
-        this._propertyDescriptor(property);
-      }
+    if (!this.obj.script) {
+      return {
+        from: this.actorID,
+        error: "noScript",
+        message: this.actorID + " has no Debugger.Script"
+      };
     }
 
-    this._forcedMagicProps = true;
+    const generatedLocation = {
+      url: this.obj.script.url,
+      line: this.obj.script.startLine,
+      // TODO bug 901138: use Debugger.Script.prototype.startColumn.
+      column: 0
+    };
+
+    return this.threadActor.sources.getOriginalLocation(generatedLocation)
+      .then(({ url, line, column }) => {
+        return {
+          from: this.actorID,
+          url: url,
+          line: line,
+          column: column
+        };
+      });
   },
 
   /**
@@ -2751,8 +2903,7 @@ ObjectActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onOwnPropertyNames: function OA_onOwnPropertyNames(aRequest) {
-    this._forceMagicProperties();
+  onOwnPropertyNames: function (aRequest) {
     return { from: this.actorID,
              ownPropertyNames: this.obj.getOwnPropertyNames() };
   },
@@ -2764,8 +2915,7 @@ ObjectActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onPrototypeAndProperties: function OA_onPrototypeAndProperties(aRequest) {
-    this._forceMagicProperties();
+  onPrototypeAndProperties: function (aRequest) {
     let ownProperties = Object.create(null);
     let names;
     try {
@@ -2798,7 +2948,7 @@ ObjectActor.prototype = {
    *         An object that maps property names to safe getter descriptors as
    *         defined by the remote debugging protocol.
    */
-  _findSafeGetterValues: function OA__findSafeGetterValues(aOwnProperties)
+  _findSafeGetterValues: function (aOwnProperties)
   {
     let safeGetterValues = Object.create(null);
     let obj = this.obj;
@@ -2866,7 +3016,7 @@ ObjectActor.prototype = {
    *         A Set of names of safe getters. This result is cached for each
    *         Debugger.Object.
    */
-  _findSafeGetters: function OA__findSafeGetters(aObject)
+  _findSafeGetters: function (aObject)
   {
     if (aObject._safeGetters) {
       return aObject._safeGetters;
@@ -2885,9 +3035,7 @@ ObjectActor.prototype = {
         continue;
       }
 
-      let fn = desc.get;
-      if (fn && fn.callable && fn.class == "Function" &&
-          fn.script === undefined) {
+      if (DevToolsUtils.hasSafeGetter(desc)) {
         getters.add(name);
       }
     }
@@ -2902,7 +3050,7 @@ ObjectActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onPrototype: function OA_onPrototype(aRequest) {
+  onPrototype: function (aRequest) {
     return { from: this.actorID,
              prototype: this.threadActor.createValueGrip(this.obj.proto) };
   },
@@ -2914,7 +3062,7 @@ ObjectActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onProperty: function OA_onProperty(aRequest) {
+  onProperty: function (aRequest) {
     if (!aRequest.name) {
       return { error: "missingParameter",
                message: "no property name was specified" };
@@ -2930,35 +3078,10 @@ ObjectActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onDisplayString: function OA_onDisplayString(aRequest) {
-    let toString;
-    try {
-      // Attempt to locate the object's "toString" method.
-      let obj = this.obj;
-      do {
-        let desc = obj.getOwnPropertyDescriptor("toString");
-        if (desc) {
-          toString = desc.value;
-          break;
-        }
-        obj = obj.proto;
-      } while ((obj));
-    } catch (e) {
-      dumpn(e);
-    }
-
-    let result = null;
-    if (toString && toString.callable) {
-      // If a toString method was found then call it on the object.
-      let ret = toString.call(this.obj).return;
-      if (typeof ret == "string") {
-        // Only use the result if it was a returned string.
-        result = ret;
-      }
-    }
-
+  onDisplayString: function (aRequest) {
+    const string = stringify(this.obj);
     return { from: this.actorID,
-             displayString: this.threadActor.createValueGrip(result) };
+             displayString: this.threadActor.createValueGrip(string) };
   },
 
   /**
@@ -2968,7 +3091,7 @@ ObjectActor.prototype = {
    * @param string aName
    *        The property that the descriptor is generated for.
    */
-  _propertyDescriptor: function OA_propertyDescriptor(aName) {
+  _propertyDescriptor: function (aName) {
     let desc;
     try {
       desc = this.obj.getOwnPropertyDescriptor(aName);
@@ -3013,7 +3136,7 @@ ObjectActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onDecompile: function OA_onDecompile(aRequest) {
+  onDecompile: function (aRequest) {
     if (this.obj.class !== "Function") {
       return { error: "objectNotFunction",
                message: "decompile request is only valid for object grips " +
@@ -3030,7 +3153,7 @@ ObjectActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onParameterNames: function OA_onParameterNames(aRequest) {
+  onParameterNames: function (aRequest) {
     if (this.obj.class !== "Function") {
       return { error: "objectNotFunction",
                message: "'parameterNames' request is only valid for object " +
@@ -3046,7 +3169,7 @@ ObjectActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onRelease: function OA_onRelease(aRequest) {
+  onRelease: function (aRequest) {
     this.release();
     return {};
   },
@@ -3057,7 +3180,7 @@ ObjectActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onScope: function OA_onScope(aRequest) {
+  onScope: function (aRequest) {
     if (this.obj.class !== "Function") {
       return { error: "objectNotFunction",
                message: "scope request is only valid for object grips with a" +
@@ -3076,6 +3199,7 @@ ObjectActor.prototype = {
 };
 
 ObjectActor.prototype.requestTypes = {
+  "definitionSite": ObjectActor.prototype.onDefinitionSite,
   "parameterNames": ObjectActor.prototype.onParameterNames,
   "prototypeAndProperties": ObjectActor.prototype.onPrototypeAndProperties,
   "prototype": ObjectActor.prototype.onPrototype,
@@ -3128,7 +3252,7 @@ update(PauseScopedObjectActor.prototype, {
    * @param aRequest object
    *        The protocol request object.
    */
-  onThreadGrip: PauseScopedActor.withPaused(function OA_onThreadGrip(aRequest) {
+  onThreadGrip: PauseScopedActor.withPaused(function (aRequest) {
     this.threadActor.threadObjectGrip(this);
     return {};
   }),
@@ -3139,7 +3263,7 @@ update(PauseScopedObjectActor.prototype, {
    * @param aRequest object
    *        The protocol request object.
    */
-  onRelease: PauseScopedActor.withPaused(function OA_onRelease(aRequest) {
+  onRelease: PauseScopedActor.withPaused(function (aRequest) {
     if (this.registeredPool !== this.threadActor.threadLifetimePool) {
       return { error: "notReleasable",
                message: "Only thread-lifetime actors can be released." };
@@ -3172,7 +3296,7 @@ LongStringActor.prototype = {
 
   actorPrefix: "longString",
 
-  disconnect: function LSA_disconnect() {
+  disconnect: function () {
     // Because longStringActors is not a weak map, we won't automatically leave
     // it so we need to manually leave on disconnect so that we don't leak
     // memory.
@@ -3184,7 +3308,7 @@ LongStringActor.prototype = {
   /**
    * Returns a grip for this actor for returning in a protocol message.
    */
-  grip: function LSA_grip() {
+  grip: function () {
     return {
       "type": "longString",
       "initial": this.string.substring(
@@ -3200,7 +3324,7 @@ LongStringActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onSubstring: function LSA_onSubString(aRequest) {
+  onSubstring: function (aRequest) {
     return {
       "from": this.actorID,
       "substring": this.string.substring(aRequest.start, aRequest.end)
@@ -3210,7 +3334,7 @@ LongStringActor.prototype = {
   /**
    * Handle a request to release this LongStringActor instance.
    */
-  onRelease: function LSA_onRelease() {
+  onRelease: function () {
     // TODO: also check if registeredPool === threadActor.threadLifetimePool
     // when the web console moves aray from manually releasing pause-scoped
     // actors.
@@ -3261,7 +3385,7 @@ FrameActor.prototype = {
    * Finalization handler that is called when the actor is being evicted from
    * the pool.
    */
-  disconnect: function FA_disconnect() {
+  disconnect: function () {
     this.conn.removeActorPool(this._frameLifetimePool);
     this._frameLifetimePool = null;
   },
@@ -3269,7 +3393,7 @@ FrameActor.prototype = {
   /**
    * Returns a frame form for use in a protocol message.
    */
-  form: function FA_form() {
+  form: function () {
     let form = { actor: this.actorID,
                  type: this.frame.type };
     if (this.frame.type === "call") {
@@ -3295,7 +3419,7 @@ FrameActor.prototype = {
     return form;
   },
 
-  _args: function FA__args() {
+  _args: function () {
     if (!this.frame.arguments) {
       return [];
     }
@@ -3310,7 +3434,7 @@ FrameActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onPop: function FA_onPop(aRequest) {
+  onPop: function (aRequest) {
     // TODO: remove this when Debugger.Frame.prototype.pop is implemented
     if (typeof this.frame.pop != "function") {
       return { error: "notImplemented",
@@ -3362,7 +3486,7 @@ BreakpointActor.prototype = {
    * @param ThreadActor aThreadActor
    *        The parent thread actor that contains this breakpoint.
    */
-  addScript: function BA_addScript(aScript, aThreadActor) {
+  addScript: function (aScript, aThreadActor) {
     this.threadActor = aThreadActor;
     this.scripts.push(aScript);
   },
@@ -3383,7 +3507,7 @@ BreakpointActor.prototype = {
    * @param aFrame Debugger.Frame
    *        The stack frame that contained the breakpoint.
    */
-  hit: function BA_hit(aFrame) {
+  hit: function (aFrame) {
     // Don't pause if we are currently stepping (in or over) or the frame is
     // black-boxed.
     let { url } = this.threadActor.synchronize(
@@ -3414,10 +3538,10 @@ BreakpointActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onDelete: function BA_onDelete(aRequest) {
+  onDelete: function (aRequest) {
     // Remove from the breakpoint store.
     this.threadActor.breakpointStore.removeBreakpoint(this.location);
-    this.threadActor._hooks.removeFromParentPool(this);
+    this.threadActor.threadLifetimePool.removeActor(this);
     // Remove the actual breakpoint from the associated scripts.
     this.removeScripts();
     return { from: this.actorID };
@@ -3451,7 +3575,7 @@ EnvironmentActor.prototype = {
   /**
    * Return an environment form for use in a protocol message.
    */
-  form: function EA_form() {
+  form: function () {
     let form = { actor: this.actorID };
 
     // What is this environment's type?
@@ -3491,7 +3615,7 @@ EnvironmentActor.prototype = {
    * Return the identifier bindings object as required by the remote protocol
    * specification.
    */
-  _bindings: function EA_bindings() {
+  _bindings: function () {
     let bindings = { arguments: [], variables: {} };
 
     // TODO: this part should be removed in favor of the commented-out part
@@ -3580,7 +3704,7 @@ EnvironmentActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onAssign: function EA_onAssign(aRequest) {
+  onAssign: function (aRequest) {
     // TODO: enable the commented-out part when getVariableDescriptor lands
     // (bug 725815).
     /*let desc = this.obj.getVariableDescriptor(aRequest.name);
@@ -3608,7 +3732,7 @@ EnvironmentActor.prototype = {
    * @param aRequest object
    *        The protocol request object.
    */
-  onBindings: function EA_onBindings(aRequest) {
+  onBindings: function (aRequest) {
     return { from: this.actorID,
              bindings: this._bindings() };
   }
@@ -3667,9 +3791,7 @@ Object.defineProperty(Debugger.Frame.prototype, "line", {
  *
  * @param aHooks object
  *        An object with preNest and postNest methods for calling when entering
- *        and exiting a nested event loop and also addToParentPool and
- *        removeFromParentPool methods for handling the lifetime of actors that
- *        will outlive the thread, like breakpoints.
+ *        and exiting a nested event loop.
  */
 function ChromeDebuggerActor(aConnection, aHooks)
 {
@@ -3697,7 +3819,7 @@ update(ChromeDebuggerActor.prototype, {
    * before use.
    */
   globalManager: {
-    findGlobals: function CDA_findGlobals() {
+    findGlobals: function () {
       // Add every global known to the debugger as debuggee.
       this.dbg.addAllGlobalsAsDebuggees();
     },
@@ -3709,7 +3831,7 @@ update(ChromeDebuggerActor.prototype, {
      * @param aGlobal Debugger.Object
      *        The new global object that was created.
      */
-    onNewGlobal: function CDA_onNewGlobal(aGlobal) {
+    onNewGlobal: function (aGlobal) {
       this.addDebuggee(aGlobal);
       // Notify the client.
       this.conn.send({
@@ -3773,8 +3895,7 @@ ThreadSources.prototype = {
    *        The content type of the source, if immediately available.
    * @returns a SourceActor representing the source at aURL or null.
    */
-  source: function TS_source({ url, sourceMap, generatedSource, text,
-                               contentType }) {
+  source: function ({ url, sourceMap, generatedSource, text, contentType }) {
     if (!this._allow(url)) {
       return null;
     }
@@ -3804,7 +3925,7 @@ ThreadSources.prototype = {
   /**
    * Only to be used when we aren't source mapping.
    */
-  _sourceForScript: function TS__sourceForScript(aScript) {
+  _sourceForScript: function (aScript) {
     const spec = {
       url: aScript.url
     };
@@ -3838,7 +3959,7 @@ ThreadSources.prototype = {
    * use it to find all of |aScript|'s *original* sources; return a promise
    * of an array of source actors for those.
    */
-  sourcesForScript: function TS_sourcesForScript(aScript) {
+  sourcesForScript: function (aScript) {
     if (!this._useSourceMaps || !aScript.sourceMapURL) {
       return resolve([this._sourceForScript(aScript)].filter(isNotNull));
     }
@@ -3865,7 +3986,7 @@ ThreadSources.prototype = {
    * |aScript|; if we already have such a promise extant, return that.
    * |aScript| must have a non-null sourceMapURL.
    */
-  sourceMap: function TS_sourceMap(aScript) {
+  sourceMap: function (aScript) {
     dbg_assert(aScript.sourceMapURL, "Script should have a sourceMapURL");
     let sourceMapURL = this._normalize(aScript.sourceMapURL, aScript.url);
     let map = this._fetchSourceMap(sourceMapURL, aScript.url)
@@ -3878,7 +3999,7 @@ ThreadSources.prototype = {
    * Save the given source map so that we can use it to query source locations
    * down the line.
    */
-  saveSourceMap: function TS_saveSourceMap(aSourceMap, aGeneratedSource) {
+  saveSourceMap: function (aSourceMap, aGeneratedSource) {
     if (!aSourceMap) {
       delete this._sourceMapsByGeneratedSource[aGeneratedSource];
       return null;
@@ -3903,7 +4024,7 @@ ThreadSources.prototype = {
    *        source map, and the source map's sources are relative, we resolve
    *        them from aScriptURL.
    */
-  _fetchSourceMap: function TS__fetchSourceMap(aAbsSourceMapURL, aScriptURL) {
+  _fetchSourceMap: function (aAbsSourceMapURL, aScriptURL) {
     return fetch(aAbsSourceMapURL, { loadFromCache: false })
       .then(({ content }) => {
         let map = new SourceMapConsumer(content);
@@ -3915,8 +4036,7 @@ ThreadSources.prototype = {
   /**
    * Sets the source map's sourceRoot to be relative to the source map url.
    */
-  _setSourceMapRoot: function TS__setSourceMapRoot(aSourceMap, aAbsSourceMapURL,
-                                                   aScriptURL) {
+  _setSourceMapRoot: function (aSourceMap, aAbsSourceMapURL, aScriptURL) {
     const base = this._dirname(
       aAbsSourceMapURL.indexOf("data:") === 0
         ? aScriptURL
@@ -3926,7 +4046,7 @@ ThreadSources.prototype = {
       : base;
   },
 
-  _dirname: function TS__dirname(aPath) {
+  _dirname: function (aPath) {
     return Services.io.newURI(
       ".", null, Services.io.newURI(aPath, null, null)).spec;
   },
@@ -3935,7 +4055,7 @@ ThreadSources.prototype = {
    * Returns a promise of the location in the original source if the source is
    * source mapped, otherwise a promise of the same location.
    */
-  getOriginalLocation: function TS_getOriginalLocation({ url, line, column }) {
+  getOriginalLocation: function ({ url, line, column }) {
     if (url in this._sourceMapsByGeneratedSource) {
       return this._sourceMapsByGeneratedSource[url]
         .then((aSourceMap) => {
@@ -3974,7 +4094,7 @@ ThreadSources.prototype = {
    * the tables this function uses; thus, it won't know that S's original
    * source URLs map to S until P is resolved.
    */
-  getGeneratedLocation: function TS_getGeneratedLocation({ url, line, column }) {
+  getGeneratedLocation: function ({ url, line, column }) {
     if (url in this._sourceMapsByOriginalSource) {
       return this._sourceMapsByOriginalSource[url]
         .then((aSourceMap) => {
@@ -4006,7 +4126,7 @@ ThreadSources.prototype = {
    *        The URL of the source which we are checking whether it is black
    *        boxed or not.
    */
-  isBlackBoxed: function TS_isBlackBoxed(aURL) {
+  isBlackBoxed: function (aURL) {
     return ThreadSources._blackBoxedSources.has(aURL);
   },
 
@@ -4016,7 +4136,7 @@ ThreadSources.prototype = {
    * @param aURL String
    *        The URL of the source which we are black boxing.
    */
-  blackBox: function TS_blackBox(aURL) {
+  blackBox: function (aURL) {
     ThreadSources._blackBoxedSources.add(aURL);
   },
 
@@ -4026,7 +4146,7 @@ ThreadSources.prototype = {
    * @param aURL String
    *        The URL of the source which we are no longer black boxing.
    */
-  unblackBox: function TS_unblackBox(aURL) {
+  unblackBox: function (aURL) {
     ThreadSources._blackBoxedSources.delete(aURL);
   },
 
@@ -4036,7 +4156,7 @@ ThreadSources.prototype = {
    * @param aURL String
    *        The URL of the source that might be pretty printed.
    */
-  isPrettyPrinted: function TS_isPrettyPrinted(aURL) {
+  isPrettyPrinted: function (aURL) {
     return ThreadSources._prettyPrintedSources.has(aURL);
   },
 
@@ -4046,14 +4166,14 @@ ThreadSources.prototype = {
    * @param aURL String
    *        The URL of the source to be pretty printed.
    */
-  prettyPrint: function TS_prettyPrint(aURL, aIndent) {
+  prettyPrint: function (aURL, aIndent) {
     ThreadSources._prettyPrintedSources.set(aURL, aIndent);
   },
 
   /**
    * Return the indent the given URL was pretty printed by.
    */
-  prettyPrintIndent: function TS_prettyPrintIndent(aURL) {
+  prettyPrintIndent: function (aURL) {
     return ThreadSources._prettyPrintedSources.get(aURL);
   },
 
@@ -4063,14 +4183,14 @@ ThreadSources.prototype = {
    * @param aURL String
    *        The URL of the source that is no longer pretty printed.
    */
-  disablePrettyPrint: function TS_disablePrettyPrint(aURL) {
+  disablePrettyPrint: function (aURL) {
     ThreadSources._prettyPrintedSources.delete(aURL);
   },
 
   /**
    * Normalize multiple relative paths towards the base paths on the right.
    */
-  _normalize: function TS__normalize(...aURLs) {
+  _normalize: function (...aURLs) {
     dbg_assert(aURLs.length > 1, "Should have more than 1 URL");
     let base = Services.io.newURI(aURLs.pop(), null, null);
     let url;
@@ -4080,7 +4200,7 @@ ThreadSources.prototype = {
     return base.spec;
   },
 
-  iter: function TS_iter() {
+  iter: function () {
     for (let url in this._sourceActors) {
       yield this._sourceActors[url];
     }

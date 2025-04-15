@@ -158,7 +158,7 @@ XRE_FreeAppDataType XRE_FreeAppData;
 XRE_TelemetryAccumulateType XRE_TelemetryAccumulate;
 XRE_StartupTimelineRecordType XRE_StartupTimelineRecord;
 XRE_mainType XRE_main;
-XRE_DisableWritePoisoningType XRE_DisableWritePoisoning;
+XRE_StopLateWriteChecksType XRE_StopLateWriteChecks;
 
 static const nsDynamicFunctionLoad kXULFuncs[] = {
     { "XRE_GetFileFromPath", (NSFuncPtr*) &XRE_GetFileFromPath },
@@ -167,7 +167,7 @@ static const nsDynamicFunctionLoad kXULFuncs[] = {
     { "XRE_TelemetryAccumulate", (NSFuncPtr*) &XRE_TelemetryAccumulate },
     { "XRE_StartupTimelineRecord", (NSFuncPtr*) &XRE_StartupTimelineRecord },
     { "XRE_main", (NSFuncPtr*) &XRE_main },
-    { "XRE_DisableWritePoisoning", (NSFuncPtr*) &XRE_DisableWritePoisoning },
+    { "XRE_StopLateWriteChecks", (NSFuncPtr*) &XRE_StopLateWriteChecks },
     { nullptr, nullptr }
 };
 
@@ -241,6 +241,7 @@ static int do_main(int argc, char* argv[], nsIFile *xreDirectory)
       // relaunches Metro Firefox with this command line arg.
       mainFlags = XRE_MAIN_FLAG_USE_METRO;
     } else {
+#ifndef RELEASE_BUILD
       // This command-line flag is used to test the metro browser in a desktop
       // environment.
       for (int idx = 1; idx < argc; idx++) {
@@ -252,6 +253,7 @@ static int do_main(int argc, char* argv[], nsIFile *xreDirectory)
           break;
         } 
       }
+#endif
     }
   }
 #endif
@@ -295,13 +297,6 @@ static int do_main(int argc, char* argv[], nsIFile *xreDirectory)
   nsAutoCString path;
   if (NS_FAILED(iniFile->GetNativePath(path))) {
     Output("Couldn't get ini file path.\n");
-    return 255;
-  }
-
-  char appEnv[MAXPATHLEN];
-  snprintf(appEnv, MAXPATHLEN, "XUL_APP_FILE=%s", path.get());
-  if (putenv(appEnv)) {
-    Output("Couldn't set %s.\n", appEnv);
     return 255;
   }
 
@@ -647,7 +642,7 @@ int main(int argc, char* argv[])
   // at least one such write that we don't control (see bug 826029). For
   // now we enable writes again and early exits will have to use exit instead
   // of _exit.
-  XRE_DisableWritePoisoning();
+  XRE_StopLateWriteChecks();
 #endif
 
   return result;

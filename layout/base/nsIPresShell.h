@@ -98,6 +98,7 @@ class Selection;
 namespace dom {
 class Element;
 class Touch;
+class ShadowRoot;
 } // namespace dom
 
 namespace layers{
@@ -418,6 +419,11 @@ public:
   virtual bool IsLayoutFlushObserver() = 0;
 
   /**
+   * Called when document load completes.
+   */
+  virtual NS_HIDDEN_(void) LoadComplete() = 0;
+
+  /**
    * This calls through to the frame manager to get the root frame.
    */
   virtual NS_HIDDEN_(nsIFrame*) GetRootFrameExternal() const;
@@ -521,6 +527,11 @@ public:
   void PostRecreateFramesFor(mozilla::dom::Element* aElement);
   void RestyleForAnimation(mozilla::dom::Element* aElement,
                            nsRestyleHint aHint);
+
+  // ShadowRoot has APIs that can change styles so we only
+  // want to restyle elements in the ShadowRoot and not the whole
+  // document.
+  virtual void RestyleShadowRoot(mozilla::dom::ShadowRoot* aShadowRoot) = 0;
 
   /**
    * Determine if it is safe to flush all pending notifications
@@ -1294,8 +1305,15 @@ public:
   /**
    * Ensures that the refresh driver is running, and schedules a view 
    * manager flush on the next tick.
+   *
+   * @param aType PAINT_DELAYED_COMPRESS : Schedule a paint to be executed after a delay, and
+   * put FrameLayerBuilder in 'compressed' mode that avoids short cut optimizations.
    */
-  virtual void ScheduleViewManagerFlush() = 0;
+  enum PaintType {
+    PAINT_DEFAULT,
+    PAINT_DELAYED_COMPRESS
+  };
+  virtual void ScheduleViewManagerFlush(PaintType aType = PAINT_DEFAULT) = 0;
   virtual void ClearMouseCaptureOnView(nsView* aView) = 0;
   virtual bool IsVisible() = 0;
   virtual void DispatchSynthMouseMove(mozilla::WidgetGUIEvent* aEvent,

@@ -14,7 +14,6 @@
 #include "nsIChannel.h"
 #include "nsICachingChannel.h"
 #include "nsICacheEntryDescriptor.h"
-#include "nsICharsetConverterManager.h"
 #include "nsIInputStream.h"
 #include "CNavDTD.h"
 #include "prenv.h"
@@ -53,10 +52,6 @@ using mozilla::dom::EncodingUtils;
 #define NS_PARSER_FLAG_PENDING_CONTINUE_EVENT 0x00000008
 #define NS_PARSER_FLAG_FLUSH_TOKENS           0x00000020
 #define NS_PARSER_FLAG_CAN_TOKENIZE           0x00000040
-
-static NS_DEFINE_IID(kISupportsIID, NS_ISUPPORTS_IID);
-static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
-static NS_DEFINE_IID(kIParserIID, NS_IPARSER_IID);
 
 //-------------- Begin ParseContinue Event Definition ------------------------
 /*
@@ -131,36 +126,6 @@ public:
 };
 
 //-------------- End ParseContinue Event Definition ------------------------
-
-nsICharsetConverterManager* nsParser::sCharsetConverterManager = nullptr;
-
-/**
- *  This gets called when the htmlparser module is initialized.
- */
-// static
-nsresult
-nsParser::Init()
-{
-  nsresult rv;
-
-  nsCOMPtr<nsICharsetConverterManager> charsetConverter =
-    do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  charsetConverter.swap(sCharsetConverterManager);
-
-  return NS_OK;
-}
-
-
-/**
- *  This gets called when the htmlparser module is shutdown.
- */
-// static
-void nsParser::Shutdown()
-{
-  NS_IF_RELEASE(sCharsetConverterManager);
-}
 
 /**
  *  default constructor

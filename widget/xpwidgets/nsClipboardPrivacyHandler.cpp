@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "nsClipboardPrivacyHandler.h"
 #include "nsITransferable.h"
@@ -90,7 +90,7 @@ nsClipboardPrivacyHandler::Observe(nsISupports *aSubject, char const *aTopic, PR
     // 32-bit/64-bit boundaries, which could lead Explorer to crash.
     // We work around the problem by clearing the clipboard using
     // the usual Win32 API.
-    NS_ENSURE_TRUE(SUCCEEDED(::OleSetClipboard(NULL)), NS_ERROR_FAILURE);
+    NS_ENSURE_TRUE(SUCCEEDED(::OleSetClipboard(nullptr)), NS_ERROR_FAILURE);
 #else
     // Empty the native clipboard by copying an empty transferable
     nsCOMPtr<nsITransferable> nullData =

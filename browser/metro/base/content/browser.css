@@ -29,25 +29,31 @@ appbar {
 flyoutpanel {
   -moz-binding: url('chrome://browser/content/bindings/flyoutpanel.xml#flyoutpanelBinding');
 }
-
 cssthrobber {
   -moz-binding: url('chrome://browser/content/bindings/cssthrobber.xml#cssthrobberBinding');
+}
+label[linewrap] {
+  -moz-binding: url("chrome://browser/content/bindings/bindings.xml#line-wrap-label");
+}
+label[linewrap].text-link, label[onclick][linewrap] {
+  -moz-binding: url("chrome://browser/content/bindings/bindings.xml#line-wrap-text-link");
 }
 
 settings {
   -moz-binding: url("chrome://mozapps/content/extensions/setting.xml#settings");
 }
-
 setting {
   display: none;
 }
-
 autoscroller {
   -moz-binding: url('chrome://browser/content/bindings/popup.xml#element-popup');
 }
 
 notificationbox {
   -moz-binding: url('chrome://browser/content/bindings/notification.xml#notificationbox');
+}
+notification {
+  -moz-binding: url('chrome://browser/content/bindings/notification.xml#notification');
 }
 
 circularprogressindicator {
@@ -189,10 +195,6 @@ dialog.content-dialog {
   -moz-binding: none;
 }
 
-arrowbox {
-  -moz-binding: url("chrome://browser/content/bindings/arrowbox.xml#arrowbox");
-}
-
 /* Disable context menus in textboxes */
 .textbox-input-box,
 .textbox-input-box[spellcheck="true"] {
@@ -206,4 +208,8 @@ textbox {
 /* used in about:config */
 textbox[type="search"] {
   -moz-binding: url("chrome://browser/content/bindings/bindings.xml#search-textbox");
+}
+
+tabmodalprompt {
+  -moz-binding: url("chrome://browser/content/bindings/tabprompts.xml#tabmodalprompt");
 }

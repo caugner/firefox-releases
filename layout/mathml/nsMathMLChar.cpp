@@ -390,7 +390,7 @@ NS_IMPL_ISUPPORTS1(nsGlyphTableList, nsIObserver)
 // Here is the global list of applicable glyph tables that we will be using
 static nsGlyphTableList* gGlyphTableList = nullptr;
 
-static bool gInitialized = false;
+static bool gGlyphTableInitialized = false;
 
 // XPCOM shutdown observer
 NS_IMETHODIMP
@@ -428,7 +428,7 @@ nsGlyphTableList::Finalize()
   else
     rv = NS_ERROR_FAILURE;
 
-  gInitialized = false;
+  gGlyphTableInitialized = false;
   // our oneself will be destroyed when our |Release| is called by the observer
   return rv;
 }
@@ -554,8 +554,8 @@ MathFontEnumCallback(const nsString& aFamily, bool aGeneric, void *aData)
 static nsresult
 InitGlobals(nsPresContext* aPresContext)
 {
-  NS_ASSERTION(!gInitialized, "Error -- already initialized");
-  gInitialized = true;
+  NS_ASSERTION(!gGlyphTableInitialized, "Error -- already initialized");
+  gGlyphTableInitialized = true;
 
   // Allocate the placeholders for the preferred parts and variants
   nsresult rv = NS_ERROR_OUT_OF_MEMORY;
@@ -637,7 +637,7 @@ void
 nsMathMLChar::SetData(nsPresContext* aPresContext,
                       nsString&       aData)
 {
-  if (!gInitialized) {
+  if (!gGlyphTableInitialized) {
     InitGlobals(aPresContext);
   }
   mData = aData;
@@ -924,6 +924,7 @@ SetFontFamily(nsStyleContext*      aStyleContext,
     aRenderingContext.DeviceContext()->GetMetricsFor(font,
       aStyleContext->StyleFont()->mLanguage,
       aStyleContext->PresContext()->GetUserFontSet(),
+      aStyleContext->PresContext()->GetTextPerfMetrics(),
       *getter_AddRefs(fm));
     // Set the font if it is an unicode table
     // or if the same family name has been found
@@ -1312,7 +1313,8 @@ nsMathMLChar::StretchInternal(nsPresContext*           aPresContext,
   nsRefPtr<nsFontMetrics> fm;
   aRenderingContext.DeviceContext()->GetMetricsFor(font,
     mStyleContext->StyleFont()->mLanguage,
-    aPresContext->GetUserFontSet(), *getter_AddRefs(fm));
+    aPresContext->GetUserFontSet(),
+    aPresContext->GetTextPerfMetrics(), *getter_AddRefs(fm));
   aRenderingContext.SetFont(fm);
   aDesiredStretchSize =
     aRenderingContext.GetBoundingMetrics(mData.get(), uint32_t(mData.Length()));
@@ -1868,7 +1870,7 @@ nsMathMLChar::PaintForeground(nsPresContext* aPresContext,
   nsRefPtr<nsFontMetrics> fm;
   aRenderingContext.DeviceContext()->GetMetricsFor(theFont,
     styleContext->StyleFont()->mLanguage,
-    aPresContext->GetUserFontSet(),
+    aPresContext->GetUserFontSet(), aPresContext->GetTextPerfMetrics(),
     *getter_AddRefs(fm));
   aRenderingContext.SetFont(fm);
 

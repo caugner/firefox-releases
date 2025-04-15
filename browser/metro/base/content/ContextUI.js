@@ -26,6 +26,9 @@ var ContextUI = {
     Elements.panelUI.addEventListener('ToolPanelShown', this, false);
     Elements.panelUI.addEventListener('ToolPanelHidden', this, false);
 
+    Elements.tray.addEventListener("mousemove", this, false);
+    Elements.tray.addEventListener("mouseleave", this, false);
+
     window.addEventListener("touchstart", this, true);
     window.addEventListener("mousedown", this, true);
     window.addEventListener("MozEdgeUIStarted", this, true);
@@ -110,7 +113,7 @@ var ContextUI = {
     }
 
     if (shown) {
-      ContentAreaObserver.update(window.innerWidth, window.innerHeight);
+      ContentAreaObserver.updateContentArea();
     }
 
     return shown;
@@ -142,7 +145,7 @@ var ContextUI = {
     }
 
     if (dismissed) {
-      ContentAreaObserver.update(window.innerWidth, window.innerHeight);
+      ContentAreaObserver.updateContentArea();
     }
 
     return dismissed;
@@ -162,8 +165,9 @@ var ContextUI = {
    * Dismiss tab bar after a delay. Fires context ui events.
    */
   dismissTabsWithDelay: function (aDelay) {
-    aDelay = aDelay || kNewTabAnimationDelayMsec;
+    aDelay = aDelay || kForegroundTabAnimationDelay;
     this._clearDelayedTimeout();
+    this._lastTimeoutDelay = aDelay;
     this._hidingId = setTimeout(function () {
         ContextUI.dismissTabs();
       }, aDelay);
@@ -172,6 +176,7 @@ var ContextUI = {
   // Display the nav bar
   displayNavbar: function () {
     Elements.navbar.show();
+    Elements.chromeState.setAttribute("navbar", "visible");
     ContentAreaObserver.updateContentArea();
   },
 
@@ -186,6 +191,7 @@ var ContextUI = {
     if (!BrowserUI.isStartTabVisible) {
       Elements.autocomplete.closePopup();
       Elements.navbar.dismiss();
+      Elements.chromeState.removeAttribute("navbar");
       ContentAreaObserver.updateContentArea();
     }
   },
@@ -224,7 +230,14 @@ var ContextUI = {
     if (this._hidingId) {
       clearTimeout(this._hidingId);
       this._hidingId = 0;
+      this._delayedHide = false;
     }
+  },
+
+  _resetDelayedTimeout: function () {
+    this._hidingId = setTimeout(function () {
+        ContextUI.dismissTabs();
+      }, this._lastTimeoutDelay);
   },
 
   /*******************************************
@@ -289,10 +302,26 @@ var ContextUI = {
     this.dismissContextAppbar();
   },
 
+  onMouseMove: function (aEvent) {
+    if (this._hidingId) {
+      this._clearDelayedTimeout();
+      this._delayedHide = true;
+    }
+  },
+
+  onMouseLeave: function (aEvent) {
+    if (this._delayedHide) {
+      this._delayedHide = false;
+      this._resetDelayedTimeout();
+    }
+  },
+
   handleEvent: function handleEvent(aEvent) {
     switch (aEvent.type) {
       case "URLChanged":
-        this.displayNavbar();
+        if (aEvent.target == Browser.selectedBrowser) {
+          this.displayNavbar();
+        }
         break;
       case "MozEdgeUIStarted":
         this._onEdgeUIStarted(aEvent);
@@ -322,6 +351,12 @@ var ContextUI = {
         }
         this.onDownInput(aEvent);
         break;
+      case "mousemove":
+        this.onMouseMove(aEvent);
+        break;
+      case "mouseleave":
+        this.onMouseLeave(aEvent);
+        break;
       case "touchstart":
         this.onDownInput(aEvent);
         break;
@@ -331,12 +366,8 @@ var ContextUI = {
         break;
       case "AlertActive":
       case "AlertClose":
+      case "TabSelect":
         ContentAreaObserver.updateContentArea();
-        break;
-      case "touchstart":
-        if (!BrowserUI.isStartTabVisible) {
-          this.dismiss();
-        }
         break;
       case "MozFlyoutPanelShowing":
         if (BrowserUI.isStartTabVisible) {

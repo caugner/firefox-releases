@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'pipnss'
-
 EXPORTS += [
     'CryptoTask.h',
     'nsNSSShutDown.h',
@@ -17,10 +15,9 @@ EXPORTS.mozilla += [
     'PublicSSL.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'CertVerifier.cpp',
     'CryptoTask.cpp',
-    'JARSignatureVerification.cpp',
     'nsCertificatePrincipal.cpp',
     'nsCertOverrideService.cpp',
     'nsCertPicker.cpp',
@@ -29,7 +26,6 @@ SOURCES += [
     'nsCMS.cpp',
     'nsCMSSecureMessage.cpp',
     'nsCrypto.cpp',
-    'nsCryptoHash.cpp',
     'nsDataSignatureVerifier.cpp',
     'nsIdentityChecking.cpp',
     'nsKeygenHandler.cpp',
@@ -40,17 +36,14 @@ SOURCES += [
     'nsNSSCertCache.cpp',
     'nsNSSCertHelper.cpp',
     'nsNSSCertificate.cpp',
-    'nsNSSCertificateDB.cpp',
     'nsNSSCertificateFakeTransport.cpp',
     'nsNSSCertTrust.cpp',
     'nsNSSCertValidity.cpp',
     'nsNSSCleaner.cpp',
-    'nsNSSComponent.cpp',
     'nsNSSErrors.cpp',
     'nsNSSIOLayer.cpp',
     'nsNSSModule.cpp',
     'nsNSSShutDown.cpp',
-    'nsNSSVersion.cpp',
     'nsNTLMAuthModule.cpp',
     'nsPK11TokenDB.cpp',
     'nsPKCS11Slot.cpp',
@@ -66,30 +59,40 @@ SOURCES += [
     'nsStreamCipher.cpp',
     'nsTLSSocketProvider.cpp',
     'nsUsageArrayHelper.cpp',
-    'PSMContentListener.cpp',
     'PSMRunnable.cpp',
     'SharedSSLState.cpp',
     'SSLServerCertVerification.cpp',
     'TransportSecurityInfo.cpp',
 ]
 
+# nsNSSCertificateDB.cpp needs to include nscert.h before everything else.
+# The rest cannot be built in unified mode because they want to force NSPR
+# logging.
+SOURCES += [
+    'JARSignatureVerification.cpp',
+    'nsCryptoHash.cpp',
+    'nsNSSCertificateDB.cpp',
+    'nsNSSComponent.cpp',
+    'nsNSSVersion.cpp',
+    'PSMContentListener.cpp',
+]
+
 if not CONFIG['MOZ_DISABLE_CRYPTOLEGACY']:
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'nsSmartCardMonitor.cpp',
     ]
 
 if CONFIG['MOZ_XUL']:
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'nsCertTree.cpp',
     ]
 
-LIBRARY_NAME = 'pipnss'
-
-SOURCES += [
+UNIFIED_SOURCES += [
     'md4.c',
 ]
 
-LIBXUL_LIBRARY = True
+FINAL_LIBRARY = 'xul'
 
-EXPORT_LIBRARY = True
-
+DEFINES['NSS_ENABLE_ECC'] = 'True'
+for var in ('DLL_PREFIX', 'DLL_SUFFIX'):
+    DEFINES[var] = '"%s"' % CONFIG[var]

@@ -8,7 +8,7 @@ interface nsISupports;
 
 [ChromeOnly,
  JSImplementation="@mozilla.org/dom/peerconnectionobserver;1",
- Constructor (object domPC)]
+ Constructor (mozRTCPeerConnection domPC)]
 interface PeerConnectionObserver
 {
   /* JSEP callbacks */
@@ -28,6 +28,10 @@ interface PeerConnectionObserver
   void onGetStatsSuccess(optional RTCStatsReportInternal report);
   void onGetStatsError(unsigned long name, DOMString message);
 
+  /* Logging callbacks */
+  void onGetLoggingSuccess(sequence<DOMString> logs);
+  void onGetLoggingError(unsigned long name, DOMString message);
+
   /* Data channel callbacks */
   void notifyDataChannel(DataChannel channel);
   void notifyConnection();
@@ -45,8 +49,5 @@ interface PeerConnectionObserver
   /* Helper function to access supported constraints defined in webidl. Needs to
    * be in a separate webidl object we hold, so putting it here was convenient.
    */
-// TODO: Bug 863949
-//  MediaConstraintSet getSupportedConstraints(optional
-  object getSupportedConstraints(optional
-      MediaConstraintSet constraints);
+  MediaConstraintSet getSupportedConstraints(optional MediaConstraintSet constraints);
 };

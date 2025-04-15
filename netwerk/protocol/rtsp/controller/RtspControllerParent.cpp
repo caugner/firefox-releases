@@ -19,6 +19,13 @@ PRLogModuleInfo* gRtspLog;
 #undef LOG
 #define LOG(args) PR_LOG(gRtspLog, PR_LOG_DEBUG, args)
 
+#define SEND_DISCONNECT_IF_ERROR(rv)                         \
+  if (NS_FAILED(rv) && mIPCOpen && mTotalTracks > 0) {       \
+    for (int i = 0; i < mTotalTracks; i++) {                 \
+      SendOnDisconnected(i, rv);                             \
+    }                                                        \
+  }
+
 using namespace mozilla::ipc;
 
 namespace mozilla {
@@ -30,6 +37,7 @@ NS_IMPL_ISUPPORTS2(RtspControllerParent,
 
 RtspControllerParent::RtspControllerParent()
   : mIPCOpen(true)
+  , mTotalTracks(0)
 {
 #if defined(PR_LOGGING)
   if (!gRtspLog)
@@ -72,10 +80,10 @@ bool
 RtspControllerParent::RecvPlay()
 {
   LOG(("RtspControllerParent::RecvPlay()"));
-  NS_ENSURE_TRUE(mController, NS_ERROR_NOT_INITIALIZED);
+  NS_ENSURE_TRUE(mController, true);
 
   nsresult rv = mController->Play();
-  NS_ENSURE_SUCCESS(rv, false);
+  SEND_DISCONNECT_IF_ERROR(rv)
   return true;
 }
 
@@ -83,10 +91,10 @@ bool
 RtspControllerParent::RecvPause()
 {
   LOG(("RtspControllerParent::RecvPause()"));
-  NS_ENSURE_TRUE(mController, NS_ERROR_NOT_INITIALIZED);
+  NS_ENSURE_TRUE(mController, true);
 
   nsresult rv = mController->Pause();
-  NS_ENSURE_SUCCESS(rv, false);
+  SEND_DISCONNECT_IF_ERROR(rv)
   return true;
 }
 
@@ -94,10 +102,10 @@ bool
 RtspControllerParent::RecvResume()
 {
   LOG(("RtspControllerParent::RecvResume()"));
-  NS_ENSURE_TRUE(mController, NS_ERROR_NOT_INITIALIZED);
+  NS_ENSURE_TRUE(mController, true);
 
   nsresult rv = mController->Resume();
-  NS_ENSURE_SUCCESS(rv, false);
+  SEND_DISCONNECT_IF_ERROR(rv)
   return true;
 }
 
@@ -105,10 +113,10 @@ bool
 RtspControllerParent::RecvSuspend()
 {
   LOG(("RtspControllerParent::RecvSuspend()"));
-  NS_ENSURE_TRUE(mController, NS_ERROR_NOT_INITIALIZED);
+  NS_ENSURE_TRUE(mController, true);
 
   nsresult rv = mController->Suspend();
-  NS_ENSURE_SUCCESS(rv, false);
+  SEND_DISCONNECT_IF_ERROR(rv)
   return true;
 }
 
@@ -116,10 +124,10 @@ bool
 RtspControllerParent::RecvSeek(const uint64_t& offset)
 {
   LOG(("RtspControllerParent::RecvSeek()"));
-  NS_ENSURE_TRUE(mController, NS_ERROR_NOT_INITIALIZED);
+  NS_ENSURE_TRUE(mController, true);
 
   nsresult rv = mController->Seek(offset);
-  NS_ENSURE_SUCCESS(rv, false);
+  SEND_DISCONNECT_IF_ERROR(rv)
   return true;
 }
 
@@ -127,10 +135,10 @@ bool
 RtspControllerParent::RecvStop()
 {
   LOG(("RtspControllerParent::RecvStop()"));
-  NS_ENSURE_TRUE(mController, NS_ERROR_NOT_INITIALIZED);
+  NS_ENSURE_TRUE(mController, true);
 
   nsresult rv = mController->Stop();
-  NS_ENSURE_SUCCESS(rv, false);
+  NS_ENSURE_SUCCESS(rv, true);
   return true;
 }
 
@@ -183,9 +191,9 @@ RtspControllerParent::OnConnected(uint8_t index,
   InfallibleTArray<RtspMetadataParam> metaData;
   nsCString name;
   name.AssignLiteral("TRACKS");
-  nsresult rv = meta->GetTotalTracks(&int32Value);
+  nsresult rv = meta->GetTotalTracks(&mTotalTracks);
   NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
-  metaData.AppendElement(RtspMetadataParam(name, int32Value));
+  metaData.AppendElement(RtspMetadataParam(name, mTotalTracks));
 
   name.AssignLiteral("MIMETYPE");
   nsCString mimeType;
@@ -244,9 +252,9 @@ RtspControllerParent::OnConnected(uint8_t index,
 
 NS_IMETHODIMP
 RtspControllerParent::OnDisconnected(uint8_t index,
-                                     uint32_t reason)
+                                     nsresult reason)
 {
-  LOG(("RtspControllerParent::OnDisconnected()"));
+  LOG(("RtspControllerParent::OnDisconnected() for track %d reason = 0x%x", index, reason));
   if (!mIPCOpen || !SendOnDisconnected(index, reason)) {
     return NS_ERROR_FAILURE;
   }

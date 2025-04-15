@@ -30,7 +30,6 @@
 #include "nsIPrefBranch.h"
 #include "nsIStringBundle.h"
 #include "nsAuthInformationHolder.h"
-#include "nsICharsetConverterManager.h"
 #include "nsIProtocolProxyService.h"
 #include "nsICancelable.h"
 #include "nsICacheEntryDescriptor.h"
@@ -42,6 +41,10 @@
 #include "nsISocketTransportService.h"
 #include "nsIURI.h"
 #include "nsICacheSession.h"
+
+#ifdef MOZ_WIDGET_GONK
+#include "nsINetworkStatsServiceProxy.h"
+#endif
 
 #if defined(PR_LOGGING)
 extern PRLogModuleInfo* gFTPLog;
@@ -1552,12 +1555,12 @@ nsFtpState::R_pasv() {
 // nsIRequest methods:
 
 static inline
-uint32_t NowInSeconds()
+uint32_t GetFtpTime()
 {
     return uint32_t(PR_Now() / PR_USEC_PER_SEC);
 }
 
-uint32_t nsFtpState::mSessionStartTime = NowInSeconds();
+uint32_t nsFtpState::mSessionStartTime = GetFtpTime();
 
 /* Is this cache entry valid to use for reading?
  * Since we make up an expiration time for ftp, use the following rules:
@@ -1616,7 +1619,7 @@ nsFtpState::CanReadCacheEntry()
     if (NS_FAILED(rv))
         return false;
 
-    return (NowInSeconds() <= time);
+    return (GetFtpTime() <= time);
 }
 
 nsresult
@@ -1684,9 +1687,16 @@ nsFtpState::Init(nsFtpChannel *channel)
 
     mChannel = channel; // a straight ref ptr to the channel
 
+    // initialize counter for network metering
+    mCountRecv = 0;
+
+#ifdef MOZ_WIDGET_GONK
+    NS_GetActiveNetworkInterface(mActiveNetwork);
+#endif
+
     mKeepRunning = true;
     mSuppliedEntityID = channel->EntityID();
-  
+
     if (channel->UploadStream())
         mAction = PUT;
 
@@ -1731,12 +1741,6 @@ nsFtpState::Init(nsFtpChannel *channel)
         // now unescape it... %xx reduced inline to resulting character
         int32_t len = NS_UnescapeURL(fwdPtr);
         mPath.Assign(fwdPtr, len);
-        if (IsUTF8(mPath)) {
-    	    nsAutoCString originCharset;
-    	    rv = mChannel->URI()->GetOriginCharset(originCharset);
-    	    if (NS_SUCCEEDED(rv) && !originCharset.EqualsLiteral("UTF-8"))
-    	        ConvertUTF8PathToCharset(originCharset);
-        }
 
 #ifdef DEBUG
         if (mPath.FindCharInSet(CRLF) >= 0)
@@ -2176,11 +2180,62 @@ nsFtpState::ReadSegments(nsWriteSegmentFun writer, void *closure,
 
     if (mDataStream) {
         nsWriteSegmentThunk thunk = { this, writer, closure };
-        return mDataStream->ReadSegments(NS_WriteSegmentThunk, &thunk, count,
-                                         result);
+        nsresult rv;
+        rv = mDataStream->ReadSegments(NS_WriteSegmentThunk, &thunk, count,
+                                       result);
+        if (NS_SUCCEEDED(rv)) {
+            CountRecvBytes(*result);
+        }
+        return rv;
     }
 
     return nsBaseContentStream::ReadSegments(writer, closure, count, result);
+}
+
+nsresult
+nsFtpState::SaveNetworkStats(bool enforce)
+{
+#ifdef MOZ_WIDGET_GONK
+    // Obtain app id
+    uint32_t appId;
+    bool isInBrowser;
+    NS_GetAppInfo(mChannel, &appId, &isInBrowser);
+
+    // Check if active network and appid are valid.
+    if (!mActiveNetwork || appId == NECKO_NO_APP_ID) {
+        return NS_OK;
+    }
+
+    if (mCountRecv <= 0) {
+        // There is no traffic, no need to save.
+        return NS_OK;
+    }
+
+    // If |enforce| is false, the traffic amount is saved
+    // only when the total amount exceeds the predefined
+    // threshold.
+    if (!enforce && mCountRecv < NETWORK_STATS_THRESHOLD) {
+        return NS_OK;
+    }
+
+    nsresult rv;
+    nsCOMPtr<nsINetworkStatsServiceProxy> networkStatsServiceProxy =
+        do_GetService("@mozilla.org/networkstatsServiceProxy;1", &rv);
+    if (NS_FAILED(rv)) {
+        return rv;
+    }
+
+    networkStatsServiceProxy->SaveAppStats(appId, mActiveNetwork,
+                                           PR_Now() / 1000, mCountRecv,
+                                           0, nullptr);
+
+    // Reset the counters after saving.
+    mCountRecv = 0;
+
+    return NS_OK;
+#else
+    return NS_ERROR_NOT_IMPLEMENTED;
+#endif
 }
 
 NS_IMETHODIMP
@@ -2202,6 +2257,9 @@ nsFtpState::CloseWithStatus(nsresult status)
     }
 
     if (mDataTransport) {
+        // Save the network stats before data transport is closing.
+        SaveNetworkStats(true);
+
         // Shutdown the data transport.
         mDataTransport->Close(NS_ERROR_ABORT);
         mDataTransport = nullptr;
@@ -2389,59 +2447,4 @@ nsFtpState::CheckCache()
     nsresult rv = session->AsyncOpenCacheEntry(key, accessReq, this, false);
     return NS_SUCCEEDED(rv);
 
-}
-
-nsresult
-nsFtpState::ConvertUTF8PathToCharset(const nsACString &aCharset)
-{
-    nsresult rv;
-    NS_ASSERTION(IsUTF8(mPath), "mPath isn't UTF8 string!");
-    NS_ConvertUTF8toUTF16 ucsPath(mPath);
-    nsAutoCString result;
-
-    nsCOMPtr<nsICharsetConverterManager> charsetMgr(
-        do_GetService("@mozilla.org/charset-converter-manager;1", &rv));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    nsCOMPtr<nsIUnicodeEncoder> encoder;
-    rv = charsetMgr->GetUnicodeEncoder(PromiseFlatCString(aCharset).get(),
-                                       getter_AddRefs(encoder));
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    int32_t len = ucsPath.Length();
-    int32_t maxlen;
-
-    rv = encoder->GetMaxLength(ucsPath.get(), len, &maxlen);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    char buf[256], *p = buf;
-    if (uint32_t(maxlen) > sizeof(buf) - 1) {
-        p = (char *) malloc(maxlen + 1);
-        if (!p)
-            return NS_ERROR_OUT_OF_MEMORY;
-    }
-
-    rv = encoder->Convert(ucsPath.get(), &len, p, &maxlen);
-    if (NS_FAILED(rv))
-        goto end;
-    if (rv == NS_ERROR_UENC_NOMAPPING) {
-        NS_WARNING("unicode conversion failed");
-        rv = NS_ERROR_UNEXPECTED;
-        goto end;
-    }
-    p[maxlen] = 0;
-    result.Assign(p);
-
-    len = sizeof(buf) - 1;
-    rv = encoder->Finish(buf, &len);
-    if (NS_FAILED(rv))
-        goto end;
-    buf[len] = 0;
-    result.Append(buf);
-    mPath = result;
-
-end:
-    if (p != buf)
-        free(p);
-    return rv;
 }

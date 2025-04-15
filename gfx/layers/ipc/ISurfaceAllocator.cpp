@@ -27,9 +27,11 @@ using namespace mozilla::ipc;
 namespace mozilla {
 namespace layers {
 
-SharedMemory::SharedMemoryType OptimalShmemType()
+mozilla::Atomic<int32_t> GfxMemoryImageReporter::sAmount(0);
+
+mozilla::ipc::SharedMemory::SharedMemoryType OptimalShmemType()
 {
-  return SharedMemory::TYPE_BASIC;
+  return mozilla::ipc::SharedMemory::TYPE_BASIC;
 }
 
 bool
@@ -44,7 +46,7 @@ ISurfaceAllocator::AllocSharedImageSurface(const gfxIntSize& aSize,
                                gfxContentType aContent,
                                gfxSharedImageSurface** aBuffer)
 {
-  SharedMemory::SharedMemoryType shmemType = OptimalShmemType();
+  mozilla::ipc::SharedMemory::SharedMemoryType shmemType = OptimalShmemType();
   gfxImageFormat format = gfxPlatform::GetPlatform()->OptimalFormatForContent(aContent);
 
   nsRefPtr<gfxSharedImageSurface> back =
@@ -88,6 +90,7 @@ ISurfaceAllocator::AllocSurfaceDescriptorWithCaps(const gfxIntSize& aSize,
     if (!data) {
       return false;
     }
+    GfxMemoryImageReporter::DidAlloc(data);
 #ifdef XP_MACOSX
     // Workaround a bug in Quartz where drawing an a8 surface to another a8
     // surface with OPERATOR_SOURCE still requires the destination to be clear.
@@ -109,12 +112,22 @@ ISurfaceAllocator::AllocSurfaceDescriptorWithCaps(const gfxIntSize& aSize,
   return true;
 }
 
+/* static */ bool
+ISurfaceAllocator::IsShmem(SurfaceDescriptor* aSurface)
+{
+  return aSurface && (aSurface->type() == SurfaceDescriptor::TShmem ||
+                      aSurface->type() == SurfaceDescriptor::TYCbCrImage ||
+                      aSurface->type() == SurfaceDescriptor::TRGBImage);
+}
 
 void
 ISurfaceAllocator::DestroySharedSurface(SurfaceDescriptor* aSurface)
 {
   MOZ_ASSERT(aSurface);
   if (!aSurface) {
+    return;
+  }
+  if (!IPCOpen()) {
     return;
   }
   if (PlatformDestroySharedSurface(aSurface)) {
@@ -135,7 +148,8 @@ ISurfaceAllocator::DestroySharedSurface(SurfaceDescriptor* aSurface)
     case SurfaceDescriptor::TSurfaceDescriptorD3D10:
       break;
     case SurfaceDescriptor::TMemoryImage:
-      delete [] (unsigned char *)aSurface->get_MemoryImage().data();
+      GfxMemoryImageReporter::WillFree((uint8_t*)aSurface->get_MemoryImage().data());
+      delete [] (uint8_t*)aSurface->get_MemoryImage().data();
       break;
     case SurfaceDescriptor::Tnull_t:
     case SurfaceDescriptor::T__None:

@@ -18,6 +18,7 @@
 #include "mozilla/layers/ImageBridgeChild.h"  // for ImageBridgeChild
 #include "mozilla/mozalloc.h"           // for operator delete
 #include "nsISupportsImpl.h"            // for Image::AddRef
+#include "mozilla/ipc/Shmem.h"
 
 class gfxASurface;
 
@@ -44,6 +45,12 @@ SharedPlanarYCbCrImage::~SharedPlanarYCbCrImage() {
   }
 }
 
+DeprecatedSharedPlanarYCbCrImage::DeprecatedSharedPlanarYCbCrImage(ISurfaceAllocator* aAllocator)
+: PlanarYCbCrImage(nullptr)
+, mSurfaceAllocator(aAllocator), mAllocated(false)
+{
+  MOZ_COUNT_CTOR(DeprecatedSharedPlanarYCbCrImage);
+}
 
 DeprecatedSharedPlanarYCbCrImage::~DeprecatedSharedPlanarYCbCrImage() {
   MOZ_COUNT_DTOR(DeprecatedSharedPlanarYCbCrImage);
@@ -119,14 +126,16 @@ SharedPlanarYCbCrImage::AllocateAndGetNewBuffer(uint32_t aSize)
 {
   NS_ABORT_IF_FALSE(!mTextureClient->IsAllocated(), "This image already has allocated data");
   size_t size = YCbCrImageDataSerializer::ComputeMinBufferSize(aSize);
+
+  // get new buffer _without_ setting mBuffer.
+  if (!mTextureClient->Allocate(size)) {
+    return nullptr;
+  }
+
   // update buffer size
   mBufferSize = size;
 
-  // get new buffer _without_ setting mBuffer.
-  bool status = mTextureClient->Allocate(mBufferSize);
-  MOZ_ASSERT(status);
   YCbCrImageDataSerializer serializer(mTextureClient->GetBuffer());
-
   return serializer.GetData();
 }
 
@@ -241,16 +250,18 @@ DeprecatedSharedPlanarYCbCrImage::AllocateAndGetNewBuffer(uint32_t aSize)
 {
   NS_ABORT_IF_FALSE(!mAllocated, "This image already has allocated data");
   size_t size = YCbCrImageDataSerializer::ComputeMinBufferSize(aSize);
+
+  // get new buffer _without_ setting mBuffer.
+  if (!AllocateBuffer(size)) {
+    return nullptr;
+  }
+
   // update buffer size
   mBufferSize = size;
 
-  // get new buffer _without_ setting mBuffer.
-  AllocateBuffer(mBufferSize);
   YCbCrImageDataSerializer serializer(mShmem.get<uint8_t>());
-
   return serializer.GetData();
 }
-
 
 void
 DeprecatedSharedPlanarYCbCrImage::SetDataNoCopy(const Data &aData)
@@ -339,7 +350,7 @@ DeprecatedSharedPlanarYCbCrImage::DropToSurfaceDescriptor(SurfaceDescriptor& aDe
     return false;
   }
   aDesc = YCbCrImage(mShmem, 0);
-  mShmem = Shmem();
+  mShmem = mozilla::ipc::Shmem();
   mAllocated = false;
   return true;
 }

@@ -26,6 +26,7 @@
 #include "AudioSegment.h"
 #include "StreamBuffer.h"
 #include "MediaStreamGraph.h"
+#include "LoadMonitor.h"
 
 // WebRTC library includes follow
 
@@ -44,7 +45,6 @@
 #include "webrtc/video_engine/include/vie_codec.h"
 #include "webrtc/video_engine/include/vie_render.h"
 #include "webrtc/video_engine/include/vie_capture.h"
-#include "webrtc/video_engine/include/vie_file.h"
 #ifdef MOZ_B2G_CAMERA
 #include "CameraPreviewMediaStream.h"
 #include "DOMCameraManager.h"
@@ -117,7 +117,14 @@ public:
 #else
   // ViEExternalRenderer.
   virtual int FrameSizeChange(unsigned int, unsigned int, unsigned int);
-  virtual int DeliverFrame(unsigned char*, int, uint32_t, int64_t);
+  virtual int DeliverFrame(unsigned char*,int, uint32_t , int64_t,
+                           void *handle);
+  /**
+   * Does DeliverFrame() support a null buffer and non-null handle
+   * (video texture)?
+   * XXX Investigate!  Especially for Android/B2G
+   */
+  virtual bool IsTextureSupported() { return false; }
 
   MediaEngineWebRTCVideoSource(webrtc::VideoEngine* aVideoEnginePtr, int aIndex)
     : mVideoEngine(aVideoEnginePtr)
@@ -356,9 +363,11 @@ public:
     , mHasTabVideoSource(false)
   {
     AsyncLatencyLogger::Get(true)->AddRef();
+    mLoadMonitor = new LoadMonitor();
+    mLoadMonitor->Init(mLoadMonitor);
   }
 #else
-  MediaEngineWebRTC();
+  MediaEngineWebRTC(MediaEnginePrefs &aPrefs);
 #endif
   ~MediaEngineWebRTC() {
     Shutdown();
@@ -402,6 +411,8 @@ private:
   nsDOMCameraManager* mCameraManager;
   uint64_t mWindowId;
 #endif
+
+   nsRefPtr<LoadMonitor> mLoadMonitor;
 };
 
 }

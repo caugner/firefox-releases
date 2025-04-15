@@ -27,6 +27,7 @@ const Ci = Components.interfaces;
 let SharedAll = {};
 Cu.import("resource://gre/modules/osfile/osfile_shared_allthreads.jsm", SharedAll);
 Cu.import("resource://gre/modules/Deprecated.jsm", this);
+Cu.import("resource://gre/modules/Timer.jsm", this);
 
 // Boilerplate, to simplify the transition to require()
 let LOG = SharedAll.LOG.bind(SharedAll, "Controller");
@@ -117,6 +118,26 @@ let Scheduler = {
    */
   latestPromise: Promise.resolve("OS.File scheduler hasn't been launched yet"),
 
+  /**
+   * A timer used to automatically shut down the worker after some time.
+   */
+  resetTimer: null,
+
+  restartTimer: function(arg) {
+    let delay;
+    try {
+      delay = Services.prefs.getIntPref("osfile.reset_worker_delay");
+    } catch(e) {
+      // Don't auto-shutdown if we don't have a delay preference set.
+      return;
+    }
+
+    if (this.resetTimer) {
+      clearTimeout(this.resetTimer);
+    }
+    this.resetTimer = setTimeout(File.resetWorker, delay);
+  },
+
   post: function post(...args) {
     if (this.shutdown) {
       LOG("OS.File is not available anymore. The following request has been rejected.", args);
@@ -139,6 +160,12 @@ let Scheduler = {
     let promise = worker.post.apply(worker, args);
     return this.latestPromise = promise.then(
       function onSuccess(data) {
+        // Don't restart the timer when reseting the worker, since that will
+        // lead to an endless "resetWorker()" loop.
+        if (args[0] != "Meta_reset") {
+          Scheduler.restartTimer();
+        }
+
         // Check for duration and return result.
         if (!options) {
           return data.ok;
@@ -167,12 +194,18 @@ let Scheduler = {
         return data.ok;
       },
       function onError(error) {
+        // Don't restart the timer when reseting the worker, since that will
+        // lead to an endless "resetWorker()" loop.
+        if (args[0] != "Meta_reset") {
+          Scheduler.restartTimer();
+        }
+
         // Decode any serialized error
         if (error instanceof PromiseWorker.WorkerError) {
           throw OS.File.Error.fromMsg(error.data);
         }
-        // Extract something meaningful from WorkerErrorEvent
-        if (typeof error == "object" && error && error.constructor.name == "WorkerErrorEvent") {
+        // Extract something meaningful from ErrorEvent
+        if (error instanceof ErrorEvent) {
           let message = error.message;
           if (message == "uncaught exception: [object StopIteration]") {
             throw StopIteration;
@@ -364,6 +397,20 @@ File.prototype = {
     return Scheduler.post("File_prototype_stat", [this._fdmsg], this).then(
       File.Info.fromMsg
     );
+  },
+
+  /**
+   * Set the last access and modification date of the file.
+   * The time stamp resolution is 1 second at best, but might be worse
+   * depending on the platform.
+   *
+   * @return {promise}
+   * @rejects {TypeError}
+   * @rejects {OS.File.Error}
+   */
+  setDates: function setDates(accessDate, modificationDate) {
+    return Scheduler.post("File_prototype_setDates",
+                          [this._fdmsg, accessDate, modificationDate], this);
   },
 
   /**
@@ -562,6 +609,22 @@ File.stat = function stat(path) {
   return Scheduler.post(
     "stat", [Type.path.toMsg(path)],
     path).then(File.Info.fromMsg);
+};
+
+
+/**
+ * Set the last access and modification date of the file.
+ * The time stamp resolution is 1 second at best, but might be worse
+ * depending on the platform.
+ *
+ * @return {promise}
+ * @rejects {TypeError}
+ * @rejects {OS.File.Error}
+ */
+File.setDates = function setDates(path, accessDate, modificationDate) {
+  return Scheduler.post("setDates",
+                        [Type.path.toMsg(path), accessDate, modificationDate],
+                        this);
 };
 
 /**
@@ -850,7 +913,7 @@ let DirectoryIterator = function DirectoryIterator(path, options) {
    * @rejects {StopIteration} If all entries have already been visited
    * or the iterator has been closed.
    */
-  this._itmsg = Scheduler.post(
+  this.__itmsg = Scheduler.post(
     "new_DirectoryIterator", [Type.path.toMsg(path), options],
     path
   );
@@ -859,6 +922,17 @@ let DirectoryIterator = function DirectoryIterator(path, options) {
 DirectoryIterator.prototype = {
   iterator: function () this,
   __iterator__: function () this,
+
+  // Once close() is called, _itmsg should reject with a
+  // StopIteration. However, we don't want to create the promise until
+  // it's needed because it might never be used. In that case, we
+  // would get a warning on the console.
+  get _itmsg() {
+    if (!this.__itmsg) {
+      this.__itmsg = Promise.reject(StopIteration);
+    }
+    return this.__itmsg;
+  },
 
   /**
    * Determine whether the directory exists.
@@ -999,7 +1073,9 @@ DirectoryIterator.prototype = {
     let self = this;
     return this._itmsg.then(
       function withIterator(iterator) {
-        self._itmsg = Promise.reject(StopIteration);
+        // Set __itmsg to null so that the _itmsg getter returns a
+        // rejected StopIteration promise if it's ever used.
+        self.__itmsg = null;
         return Scheduler.post("DirectoryIterator_prototype_close", [iterator]);
       }
     );

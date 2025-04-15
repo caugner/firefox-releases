@@ -20,8 +20,6 @@
 #include "nsIHttpChannel.h"
 #include "nsIStandardURL.h"
 #include "LoadContextInfo.h"
-#include "nsICacheStorageService.h"
-#include "nsICacheStorage.h"
 #include "nsCategoryManagerUtils.h"
 #include "nsIPrefService.h"
 #include "nsIPrefBranch.h"
@@ -145,6 +143,9 @@ nsHttpHandler::nsHttpHandler()
     , mProxyHttpVersion(NS_HTTP_VERSION_1_1)
     , mCapabilities(NS_HTTP_ALLOW_KEEPALIVE)
     , mReferrerLevel(0xff) // by default we always send a referrer
+    , mSpoofReferrerSource(false)
+    , mReferrerTrimmingPolicy(0)
+    , mReferrerXOriginPolicy(0)
     , mFastFallbackToIPv4(false)
     , mProxyPipelining(true)
     , mIdleTimeout(PR_SecondsToInterval(10))
@@ -184,7 +185,6 @@ nsHttpHandler::nsHttpHandler()
     , mAllowExperiments(true)
     , mHandlerActive(false)
     , mEnableSpdy(false)
-    , mSpdyV2(true)
     , mSpdyV3(true)
     , mSpdyV31(true)
     , mCoalesceSpdy(true)
@@ -202,7 +202,7 @@ nsHttpHandler::nsHttpHandler()
     , mRequestTokenBucketMinParallelism(6)
     , mRequestTokenBucketHz(100)
     , mRequestTokenBucketBurst(32)
-    , mCritialRequestPrioritization(true)
+    , mCriticalRequestPrioritization(true)
     , mEthernetBytesRead(0)
     , mEthernetBytesWritten(0)
     , mCellBytesRead(0)
@@ -355,7 +355,6 @@ nsHttpHandler::Init()
         mObserverService->AddObserver(this, "net:prune-dead-connections", true);
         mObserverService->AddObserver(this, "net:failed-to-process-uri-content", true);
         mObserverService->AddObserver(this, "last-pb-context-exited", true);
-        mObserverService->AddObserver(this, "webapps-clear-data", true);
     }
 
     MakeNewRequestTokenBucket();
@@ -903,6 +902,24 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             mReferrerLevel = (uint8_t) clamped(val, 0, 0xff);
     }
 
+    if (PREF_CHANGED(HTTP_PREF("referer.spoofSource"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("referer.spoofSource"), &cVar);
+        if (NS_SUCCEEDED(rv))
+            mSpoofReferrerSource = cVar;
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("referer.trimmingPolicy"))) {
+        rv = prefs->GetIntPref(HTTP_PREF("referer.trimmingPolicy"), &val);
+        if (NS_SUCCEEDED(rv))
+            mReferrerTrimmingPolicy = (uint8_t) clamped(val, 0, 0xff);
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("referer.XOriginPolicy"))) {
+        rv = prefs->GetIntPref(HTTP_PREF("referer.XOriginPolicy"), &val);
+        if (NS_SUCCEEDED(rv))
+            mReferrerXOriginPolicy = (uint8_t) clamped(val, 0, 0xff);
+    }
+
     if (PREF_CHANGED(HTTP_PREF("redirection-limit"))) {
         rv = prefs->GetIntPref(HTTP_PREF("redirection-limit"), &val);
         if (NS_SUCCEEDED(rv))
@@ -1128,12 +1145,6 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             mEnableSpdy = cVar;
     }
 
-    if (PREF_CHANGED(HTTP_PREF("spdy.enabled.v2"))) {
-        rv = prefs->GetBoolPref(HTTP_PREF("spdy.enabled.v2"), &cVar);
-        if (NS_SUCCEEDED(rv))
-            mSpdyV2 = cVar;
-    }
-
     if (PREF_CHANGED(HTTP_PREF("spdy.enabled.v3"))) {
         rv = prefs->GetBoolPref(HTTP_PREF("spdy.enabled.v3"), &cVar);
         if (NS_SUCCEEDED(rv))
@@ -1245,7 +1256,7 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
     if (PREF_CHANGED(HTTP_PREF("rendering-critical-requests-prioritization"))) {
         rv = prefs->GetBoolPref(HTTP_PREF("rendering-critical-requests-prioritization"), &cVar);
         if (NS_SUCCEEDED(rv))
-            mCritialRequestPrioritization = cVar;
+            mCriticalRequestPrioritization = cVar;
     }
 
     // on transition of network.http.diagnostics to true print
@@ -1734,84 +1745,6 @@ nsHttpHandler::GetCacheSessionNameForStoragePolicy(
 // nsHttpHandler::nsIObserver
 //-----------------------------------------------------------------------------
 
-namespace { // anon
-
-class CacheStorageEvictHelper
-{
-public:
-    CacheStorageEvictHelper(uint32_t appId, bool browserOnly)
-      : mAppId(appId), mBrowserOnly(browserOnly) { }
-
-    nsresult Run();
-
-private:
-    nsCOMPtr<nsICacheStorageService> mCacheStorageService;
-    uint32_t mAppId;
-    bool mBrowserOnly;
-
-    nsresult ClearStorage(bool const aPrivate,
-                          bool const aInBrowser,
-                          bool const aAnonymous);
-};
-
-nsresult
-CacheStorageEvictHelper::Run()
-{
-    nsresult rv;
-
-    mCacheStorageService = do_GetService(
-        "@mozilla.org/netwerk/cache-storage-service;1", &rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // Clear all [private X anonymous] combinations
-    rv = ClearStorage(false, mBrowserOnly, false);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = ClearStorage(false, mBrowserOnly, true);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = ClearStorage(true, mBrowserOnly, false);
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = ClearStorage(true, mBrowserOnly, true);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    return NS_OK;
-}
-
-nsresult
-CacheStorageEvictHelper::ClearStorage(bool const aPrivate,
-                                      bool const aInBrowser,
-                                      bool const aAnonymous)
-{
-    nsresult rv;
-
-    nsRefPtr<LoadContextInfo> info = GetLoadContextInfo(
-        aPrivate, mAppId, aInBrowser, aAnonymous);
-
-    nsCOMPtr<nsICacheStorage> storage;
-
-    // Clear disk storage
-    rv = mCacheStorageService->DiskCacheStorage(info, false,
-        getter_AddRefs(storage));
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = storage->AsyncEvictStorage(nullptr);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // Clear memory storage
-    rv = mCacheStorageService->MemoryCacheStorage(info,
-        getter_AddRefs(storage));
-    NS_ENSURE_SUCCESS(rv, rv);
-    rv = storage->AsyncEvictStorage(nullptr);
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    if (!aInBrowser) {
-        rv = ClearStorage(aPrivate, true, aAnonymous);
-        NS_ENSURE_SUCCESS(rv, rv);
-    }
-
-    return NS_OK;
-}
-
-} // anon
-
 NS_IMETHODIMP
 nsHttpHandler::Observe(nsISupports *subject,
                        const char *topic,
@@ -1863,27 +1796,6 @@ nsHttpHandler::Observe(nsISupports *subject,
     }
     else if (strcmp(topic, "last-pb-context-exited") == 0) {
         mPrivateAuthCache.ClearAll();
-    }
-    else if (strcmp(topic, "webapps-clear-data") == 0) {
-        nsCOMPtr<mozIApplicationClearPrivateDataParams> params =
-                do_QueryInterface(subject);
-        if (!params) {
-            NS_ERROR("'webapps-clear-data' notification's subject should be a mozIApplicationClearPrivateDataParams");
-            return NS_ERROR_UNEXPECTED;
-        }
-
-        uint32_t appId;
-        bool browserOnly;
-        nsresult rv = params->GetAppId(&appId);
-        NS_ENSURE_SUCCESS(rv, rv);
-        rv = params->GetBrowserOnly(&browserOnly);
-        NS_ENSURE_SUCCESS(rv, rv);
-
-        MOZ_ASSERT(appId != NECKO_UNKNOWN_APP_ID);
-
-        CacheStorageEvictHelper helper(appId, browserOnly);
-        rv = helper.Run();
-        NS_ENSURE_SUCCESS(rv, rv);
     }
 
     return NS_OK;

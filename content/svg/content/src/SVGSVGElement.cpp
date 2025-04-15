@@ -4,8 +4,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <stdint.h>
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/BasicEvents.h"
-#include "mozilla/Util.h"
 #include "mozilla/Likely.h"
 
 #include "nsGkAtoms.h"
@@ -433,18 +433,6 @@ SVGSVGElement::CreateSVGTransformFromMatrix(SVGMatrix& matrix)
 {
   nsRefPtr<SVGTransform> transform = new SVGTransform(matrix.Matrix());
   return transform.forget();
-}
-
-Element*
-SVGSVGElement::GetElementById(const nsAString& elementId, ErrorResult& rv)
-{
-  nsAutoString selector(NS_LITERAL_STRING("#"));
-  nsStyleUtil::AppendEscapedCSSIdent(PromiseFlatString(elementId), selector);
-  nsIContent* element = QuerySelector(selector, rv);
-  if (!rv.Failed() && element) {
-    return element->AsElement();
-  }
-  return nullptr;
 }
 
 //----------------------------------------------------------------------

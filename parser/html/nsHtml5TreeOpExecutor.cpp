@@ -17,7 +17,6 @@
 #include "nsStyleLinkElement.h"
 #include "nsIDocShell.h"
 #include "nsIScriptGlobalObject.h"
-#include "nsIScriptGlobalObjectOwner.h"
 #include "nsIScriptSecurityManager.h"
 #include "nsIWebShellServices.h"
 #include "nsContentUtils.h"
@@ -649,23 +648,16 @@ nsHtml5TreeOpExecutor::IsScriptEnabled()
 {
   if (!mDocument || !mDocShell)
     return true;
-  nsCOMPtr<nsIScriptGlobalObject> globalObject = do_QueryInterface(mDocument->GetWindow());
+  nsCOMPtr<nsIScriptGlobalObject> globalObject = do_QueryInterface(mDocument->GetInnerWindow());
   // Getting context is tricky if the document hasn't had its
   // GlobalObject set yet
   if (!globalObject) {
-    nsCOMPtr<nsIScriptGlobalObjectOwner> owner = do_GetInterface(mDocShell);
-    NS_ENSURE_TRUE(owner, true);
-    globalObject = do_QueryInterface(mDocument->GetWindow());
+    globalObject = mDocShell->GetScriptGlobalObject();
     NS_ENSURE_TRUE(globalObject, true);
   }
-  nsIScriptContext *scriptContext = globalObject->GetContext();
-  NS_ENSURE_TRUE(scriptContext, true);
-  JSContext* cx = scriptContext->GetNativeContext();
-  NS_ENSURE_TRUE(cx, true);
-  bool enabled = true;
-  nsContentUtils::GetSecurityManager()->
-    CanExecuteScripts(cx, mDocument->NodePrincipal(), &enabled);
-  return enabled;
+  NS_ENSURE_TRUE(globalObject && globalObject->GetGlobalJSObject(), true);
+  return nsContentUtils::GetSecurityManager()->
+           ScriptAllowed(globalObject->GetGlobalJSObject());
 }
 
 void

@@ -14,8 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-MODULE = 'display'
-
 SOURCES += [
     'BootAnimation.cpp',
 ]
@@ -35,7 +33,7 @@ elif CONFIG['ANDROID_VERSION'] == '15':
     SOURCES += [
         'GonkDisplayICS.cpp'
     ]
-else:
+elif CONFIG['COMPILE_ENVIRONMENT']:
     error('Unsupported platform version: %s' % (CONFIG['ANDROID_VERSION']))
 
 LIBRARY_NAME = 'display'
@@ -43,3 +41,5 @@ LIBRARY_NAME = 'display'
 include('/ipc/chromium/chromium-config.mozbuild')
 
 FORCE_STATIC_LIB = True
+
+DEFINES['XPCOM_GLUE'] = True

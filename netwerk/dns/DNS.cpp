@@ -6,6 +6,7 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/mozalloc.h"
+#include "mozilla/ArrayUtils.h"
 #include <string.h>
 
 #ifdef XP_WIN
@@ -177,6 +178,57 @@ bool IsIPAddrV4Mapped(const NetAddr *addr)
   return false;
 }
 
+bool IsIPAddrLocal(const NetAddr *addr)
+{
+  MOZ_ASSERT(addr);
+
+  // IPv4 RFC1918 and Link Local Addresses.
+  if (addr->raw.family == AF_INET) {
+    uint32_t addr32 = ntohl(addr->inet.ip);
+    if (addr32 >> 24 == 0x0A ||    // 10/8 prefix (RFC 1918).
+        addr32 >> 20 == 0xAC1 ||   // 172.16/12 prefix (RFC 1918).
+        addr32 >> 16 == 0xC0A8 ||  // 192.168/16 prefix (RFC 1918).
+        addr32 >> 16 == 0xA9FE) {  // 169.254/16 prefix (Link Local).
+      return true;
+    }
+  }
+  // IPv6 Unique and Link Local Addresses.
+  if (addr->raw.family == AF_INET6) {
+    uint16_t addr16 = ntohs(addr->inet6.ip.u16[0]);
+    if (addr16 >> 9 == 0xfc >> 1 ||   // fc00::/7 Unique Local Address.
+        addr16 >> 6 == 0xfe80 >> 6) { // fe80::/10 Link Local Address.
+      return true;
+    }
+  }
+  // Not an IPv4/6 local address.
+  return false;
+}
+
+bool
+NetAddr::operator == (const NetAddr& other) const
+{
+  if (this->raw.family != other.raw.family) {
+    return false;
+  } else if (this->raw.family == AF_INET) {
+    return (this->inet.port == other.inet.port) &&
+           (this->inet.ip == other.inet.ip);
+  } else if (this->raw.family == AF_INET6) {
+    return (this->inet6.port == other.inet6.port) &&
+           (this->inet6.flowinfo == other.inet6.flowinfo) &&
+           (memcmp(&this->inet6.ip, &other.inet6.ip,
+                   sizeof(this->inet6.ip)) == 0) &&
+           (this->inet6.scope_id == other.inet6.scope_id);
+#if defined(XP_UNIX) || defined(XP_OS2)
+  } else if (this->raw.family == AF_LOCAL) {
+    return PL_strncmp(this->local.path, other.local.path,
+                      ArrayLength(this->local.path));
+#endif
+  }
+  return false;
+}
+
+
+
 NetAddrElement::NetAddrElement(const PRNetAddr *prNetAddr)
 {
   PRNetAddrToNetAddr(prNetAddr, &mAddress);
@@ -247,6 +299,16 @@ AddrInfo::AddAddress(NetAddrElement *address)
   MOZ_ASSERT(address, "Cannot add the address to an uninitialized list");
 
   mAddresses.insertBack(address);
+}
+
+size_t
+AddrInfo::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const
+{
+  size_t n = mallocSizeOf(this);
+  n += mallocSizeOf(mHostName);
+  n += mallocSizeOf(mCanonicalName);
+  n += mAddresses.sizeOfExcludingThis(mallocSizeOf);
+  return n;
 }
 
 } // namespace dns

@@ -4,13 +4,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'auth'
-
 SOURCES += [
-    'nsAuthFactory.cpp',
-    'nsAuthGSSAPI.cpp',
+    'nsAuthFactory.cpp',       # forces NSPR logging
+    'nsAuthGSSAPI.cpp',        # forces NSPR logging
     'nsAuthSASL.cpp',
-    'nsHttpNegotiateAuth.cpp',
+    'nsHttpNegotiateAuth.cpp', # contains constants whose names conflict with constants in other files
 ]
 
 if CONFIG['OS_ARCH'] == 'WINNT':
@@ -20,12 +18,7 @@ if CONFIG['OS_ARCH'] == 'WINNT':
     DEFINES['USE_SSPI'] = True
 else:
     SOURCES += [
-        'nsAuthSambaNTLM.cpp',
+        'nsAuthSambaNTLM.cpp', # forces NSPR logging
     ]
 
-LIBRARY_NAME = 'auth'
-
-LIBXUL_LIBRARY = True
-
-EXPORT_LIBRARY = True
-
+FINAL_LIBRARY = 'xul'

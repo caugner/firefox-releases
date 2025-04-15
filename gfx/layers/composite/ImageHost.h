@@ -21,8 +21,7 @@
 #include "nsCOMPtr.h"                   // for already_AddRefed
 #include "nsRect.h"                     // for nsIntRect
 #include "nscore.h"                     // for nsACString
- 
-class gfxImageSurface;
+
 class nsIntRegion;
 
 namespace mozilla {
@@ -49,7 +48,6 @@ public:
   virtual void Composite(EffectChain& aEffectChain,
                          float aOpacity,
                          const gfx::Matrix4x4& aTransform,
-                         const gfx::Point& aOffset,
                          const gfx::Filter& aFilter,
                          const gfx::Rect& aClipRect,
                          const nsIntRegion* aVisibleRegion = nullptr,
@@ -57,9 +55,9 @@ public:
 
   virtual void UseTextureHost(TextureHost* aTexture) MOZ_OVERRIDE;
 
-  virtual void RemoveTextureHost(uint64_t aTextureID) MOZ_OVERRIDE;
+  virtual void RemoveTextureHost(TextureHost* aTexture) MOZ_OVERRIDE;
 
-  virtual TextureHost* GetTextureHost() MOZ_OVERRIDE;
+  virtual TextureHost* GetAsTextureHost() MOZ_OVERRIDE;
 
   virtual void SetPictureRect(const nsIntRect& aPictureRect) MOZ_OVERRIDE
   {
@@ -69,16 +67,21 @@ public:
 
   virtual LayerRenderState GetRenderState() MOZ_OVERRIDE;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
+  virtual void OnActorDestroy() MOZ_OVERRIDE
+  {
+    if (mFrontBuffer) {
+      mFrontBuffer->OnActorDestroy();
+    }
+  }
+
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix);
-#endif
 
 #ifdef MOZ_DUMP_PAINTING
   virtual void Dump(FILE* aFile=NULL,
                     const char* aPrefix="",
                     bool aDumpHtml=false) MOZ_OVERRIDE;
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 #endif
 
 protected:
@@ -110,7 +113,6 @@ public:
   virtual void Composite(EffectChain& aEffectChain,
                          float aOpacity,
                          const gfx::Matrix4x4& aTransform,
-                         const gfx::Point& aOffset,
                          const gfx::Filter& aFilter,
                          const gfx::Rect& aClipRect,
                          const nsIntRegion* aVisibleRegion = nullptr,
@@ -132,16 +134,21 @@ public:
 
   virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
+  virtual void OnActorDestroy() MOZ_OVERRIDE
+  {
+    if (mDeprecatedTextureHost) {
+      mDeprecatedTextureHost->OnActorDestroy();
+    }
+  }
+
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix);
-#endif
 
 #ifdef MOZ_DUMP_PAINTING
   virtual void Dump(FILE* aFile=nullptr,
                     const char* aPrefix="",
                     bool aDumpHtml=false) MOZ_OVERRIDE;
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 #endif
 
 protected:

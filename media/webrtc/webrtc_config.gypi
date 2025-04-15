@@ -16,11 +16,14 @@
     'enable_protobuf': 0,
     'include_tests': 0,
     'enable_android_opensl': 1,
+    'enable_android_opensl_output': 0,
 # use_system_lib* still seems to be in use in trunk/build
     'use_system_libjpeg': 0,
     'use_system_libvpx': 0,
     'build_libjpeg': 0,
     'build_libvpx': 0,
+    # saves 4MB when webrtc_trace is off
+    'enable_lazy_trace_alloc': 1,
 
     # turn off mandatory use of NEON and instead use NEON detection
     'arm_neon': 0,

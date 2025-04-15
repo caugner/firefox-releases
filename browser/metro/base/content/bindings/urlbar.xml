@@ -173,7 +173,7 @@
 
             let uri;
             try {
-              uri = uriFixup.createFixupURI(inputVal, Ci.nsIURIFixup.FIXUP_FLAG_USE_UTF8);
+              uri = uriFixup.createFixupURI(inputVal, Ci.nsIURIFixup.FIXUP_FLAG_NONE);
             } catch (e) {}
             if (!uri)
               return selectedVal;
@@ -504,13 +504,13 @@
       <xul:vbox class="meta-section" anonid="results-container" flex="1">
         <xul:label class="meta-section-title"
                    value="&autocompleteResultsHeader.label;"/>
-        <richgrid anonid="results" rows="3" flex="1"
+        <richgrid anonid="results" rows="3" flex="1" minSlots="1"
                   seltype="single" nocontext="true" deferlayout="true"/>
       </xul:vbox>
 
       <xul:vbox class="meta-section" flex="1">
         <xul:label anonid="searches-header" class="meta-section-title"/>
-        <richgrid anonid="searches" rows="3" flex="1"
+        <richgrid anonid="searches" rows="3" flex="1" search="true"
                   seltype="single" nocontext="true" deferlayout="true"/>
       </xul:vbox>
     </content>
@@ -549,7 +549,9 @@
         </getter>
         <setter>
           <![CDATA[
-            return this._isGridBound(this._results) ? this._results.selectedItem : null;
+            if (this._isGridBound(this._results)) {
+              this._results.selectedItem = val;
+            }
           ]]>
         </setter>
       </property>
@@ -562,7 +564,9 @@
         </getter>
         <setter>
           <![CDATA[
-            return this._isGridBound(this._results) ? this._results.selectedIndex : -1;
+            if (this._isGridBound(this._results)) {
+              this._results.selectedIndex = val;
+            }
           ]]>
         </setter>
       </property>
@@ -736,12 +740,18 @@
               this._searches.removeItemAt(0, true);
 
             this._engines.forEach(function (anEngine) {
-              let item = this._searches.appendItem(anEngine.name, anEngine.name, true);
+              let item = this._searches.appendItem("", anEngine.name, true);
               item.setAttribute("autocomplete", "true");
               item.setAttribute("search", "true");
 
-              let iconURI = anEngine.iconURI ? anEngine.iconURI.spec : "";
-              item.setAttribute("iconURI", iconURI);
+              let largeImage = anEngine.getIconURLBySize(74,74);
+              if (largeImage) {
+                item.setAttribute("iconsize", "large");
+                item.setAttribute("iconURI", largeImage);
+              } else if (anEngine.iconURI && anEngine.iconURI.spec) {
+                item.setAttribute("iconURI", anEngine.iconURI.spec);
+                item.setAttribute("customColor", "#fff");
+              }
             }.bind(this));
 
             this._searches.arrangeItems();

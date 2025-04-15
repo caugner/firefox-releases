@@ -32,6 +32,7 @@
 #include "nsRegion.h"                   // for nsIntRegion
 #include "nsTArray.h"                   // for nsAutoTArray
 #include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
+#include <vector>
 
 namespace mozilla {
 namespace layers {
@@ -79,9 +80,128 @@ GetOpaqueRect(Layer* aLayer)
   return result;
 }
 
+struct LayerVelocityUserData : public LayerUserData {
+public:
+  LayerVelocityUserData() {
+    MOZ_COUNT_CTOR(LayerVelocityUserData);
+  }
+  ~LayerVelocityUserData() {
+    MOZ_COUNT_DTOR(LayerVelocityUserData);
+  }
+
+  struct VelocityData {
+    VelocityData(TimeStamp frameTime, int scrollX, int scrollY)
+      : mFrameTime(frameTime)
+      , mPoint(scrollX, scrollY)
+    {}
+
+    TimeStamp mFrameTime;
+    gfx::Point mPoint;
+  };
+  std::vector<VelocityData> mData;
+};
+
+static void DrawVelGraph(const nsIntRect& aClipRect,
+                         LayerManagerComposite* aManager,
+                         Layer* aLayer) {
+  static char sLayerVelocityUserDataKey;
+  Compositor* compositor = aManager->GetCompositor();
+  gfx::Rect clipRect(aClipRect.x, aClipRect.y,
+                     aClipRect.width, aClipRect.height);
+
+  TimeStamp now = TimeStamp::Now();
+
+  void* key = reinterpret_cast<void*>(&sLayerVelocityUserDataKey);
+  if (!aLayer->HasUserData(key)) {
+    aLayer->SetUserData(key, new LayerVelocityUserData());
+  }
+
+  LayerVelocityUserData* velocityData =
+    static_cast<LayerVelocityUserData*>(aLayer->GetUserData(key));
+
+  if (velocityData->mData.size() >= 1 &&
+    now > velocityData->mData[velocityData->mData.size() - 1].mFrameTime +
+      TimeDuration::FromMilliseconds(200)) {
+    // clear stale data
+    velocityData->mData.clear();
+  }
+
+  nsIntPoint scrollOffset =
+    aLayer->GetEffectiveVisibleRegion().GetBounds().TopLeft();
+  velocityData->mData.push_back(
+    LayerVelocityUserData::VelocityData(now, scrollOffset.x, scrollOffset.y));
+
+
+  // XXX: Uncomment these lines to enable ScrollGraph logging. This is
+  //      useful for HVGA phones or to output the data to accurate
+  //      graphing software.
+  //printf_stderr("ScrollGraph (%p): %i, %i\n",
+  //  aLayer, scrollOffset.x, scrollOffset.y);
+
+  // Keep a circular buffer of 100.
+  size_t circularBufferSize = 100;
+  if (velocityData->mData.size() > circularBufferSize) {
+    velocityData->mData.erase(velocityData->mData.begin());
+  }
+
+  if (velocityData->mData.size() == 1) {
+    return;
+  }
+
+  // Clear and disable the graph when it's flat
+  for (size_t i = 1; i < velocityData->mData.size(); i++) {
+    if (velocityData->mData[i - 1].mPoint != velocityData->mData[i].mPoint) {
+      break;
+    }
+    if (i == velocityData->mData.size() - 1) {
+      velocityData->mData.clear();
+      return;
+    }
+  }
+
+  if (aLayer->GetEffectiveVisibleRegion().GetBounds().width < 300 ||
+      aLayer->GetEffectiveVisibleRegion().GetBounds().height < 300) {
+    // Don't want a graph for smaller layers
+    return;
+  }
+
+  aManager->SetDebugOverlayWantsNextFrame(true);
+
+  gfx::Matrix4x4 transform;
+  ToMatrix4x4(aLayer->GetEffectiveTransform(), transform);
+  nsIntRect bounds = aLayer->GetEffectiveVisibleRegion().GetBounds();
+  gfx::Rect graphBounds = gfx::Rect(bounds.x, bounds.y,
+                                    bounds.width, bounds.height);
+  gfx::Rect graphRect = gfx::Rect(bounds.x, bounds.y, 200, 100);
+
+  float opacity = 1.0;
+  EffectChain effects;
+  effects.mPrimaryEffect = new EffectSolidColor(gfx::Color(0.2,0,0,1));
+  compositor->DrawQuad(graphRect,
+                       clipRect,
+                       effects,
+                       opacity,
+                       transform);
+
+  std::vector<gfx::Point> graph;
+  int yScaleFactor = 3;
+  for (int32_t i = (int32_t)velocityData->mData.size() - 2; i >= 0; i--) {
+    const gfx::Point& p1 = velocityData->mData[i+1].mPoint;
+    const gfx::Point& p2 = velocityData->mData[i].mPoint;
+    int vel = sqrt((p1.x - p2.x) * (p1.x - p2.x) +
+                   (p1.y - p2.y) * (p1.y - p2.y));
+    graph.push_back(
+      gfx::Point(bounds.x + graphRect.width / circularBufferSize * i,
+                 graphBounds.y + graphRect.height - vel/yScaleFactor));
+  }
+
+  compositor->DrawLines(graph, clipRect, gfx::Color(0,1,0,1),
+                        opacity, transform);
+
+}
+
 template<class ContainerT> void
 ContainerRender(ContainerT* aContainer,
-                const nsIntPoint& aOffset,
                 LayerManagerComposite* aManager,
                 const nsIntRect& aClipRect)
 {
@@ -94,7 +214,6 @@ ContainerRender(ContainerT* aContainer,
 
   RefPtr<CompositingRenderTarget> previousTarget = compositor->GetCurrentRenderTarget();
 
-  nsIntPoint childOffset(aOffset);
   nsIntRect visibleRect = aContainer->GetEffectiveVisibleRegion().GetBounds();
 
   aContainer->mSupportsComponentAlphaChildren = false;
@@ -107,6 +226,7 @@ ContainerRender(ContainerT* aContainer,
     bool surfaceCopyNeeded = false;
     gfx::IntRect surfaceRect = gfx::IntRect(visibleRect.x, visibleRect.y,
                                             visibleRect.width, visibleRect.height);
+    gfx::IntPoint sourcePoint = gfx::IntPoint(visibleRect.x, visibleRect.y);
     // we're about to create a framebuffer backed by textures to use as an intermediate
     // surface. What to do if its size (as given by framebufferRect) would exceed the
     // maximum texture size supported by the GL? The present code chooses the compromise
@@ -131,19 +251,17 @@ ContainerRender(ContainerT* aContainer,
       // not safe.
       if (HasOpaqueAncestorLayer(aContainer) &&
           transform3D.Is2D(&transform) && !transform.HasNonIntegerTranslation()) {
-        mode = gfxPlatform::ComponentAlphaEnabled() ?
-                                            INIT_MODE_COPY : INIT_MODE_CLEAR;
-        surfaceCopyNeeded = (mode == INIT_MODE_COPY);
-        surfaceRect.x += transform.x0;
-        surfaceRect.y += transform.y0;
+        surfaceCopyNeeded = gfxPlatform::ComponentAlphaEnabled();
+        sourcePoint.x += transform.x0;
+        sourcePoint.y += transform.y0;
         aContainer->mSupportsComponentAlphaChildren
           = gfxPlatform::ComponentAlphaEnabled();
       }
     }
 
-    surfaceRect -= gfx::IntPoint(aOffset.x, aOffset.y);
+    sourcePoint -= compositor->GetCurrentRenderTarget()->GetOrigin();
     if (surfaceCopyNeeded) {
-      surface = compositor->CreateRenderTargetFromSource(surfaceRect, previousTarget);
+      surface = compositor->CreateRenderTargetFromSource(surfaceRect, previousTarget, sourcePoint);
     } else {
       surface = compositor->CreateRenderTarget(surfaceRect, mode);
     }
@@ -153,8 +271,6 @@ ContainerRender(ContainerT* aContainer,
     }
 
     compositor->SetRenderTarget(surface);
-    childOffset.x = visibleRect.x;
-    childOffset.y = visibleRect.y;
   } else {
     surface = previousTarget;
     aContainer->mSupportsComponentAlphaChildren = (aContainer->GetContentFlags() & Layer::CONTENT_OPAQUE) ||
@@ -202,8 +318,18 @@ ContainerRender(ContainerT* aContainer,
       // Composer2D will compose this layer so skip GPU composition
       // this time & reset composition flag for next composition phase
       layerToRender->SetLayerComposited(false);
+      if (layerToRender->GetClearFB()) {
+        // Clear layer's visible rect on FrameBuffer with transparent pixels
+        gfx::Rect aRect(clipRect.x, clipRect.y, clipRect.width, clipRect.height);
+        compositor->clearFBRect(&aRect);
+        layerToRender->SetClearFB(false);
+      }
     } else {
-      layerToRender->RenderLayer(childOffset, clipRect);
+      layerToRender->RenderLayer(clipRect);
+    }
+
+    if (gfxPlatform::GetPrefLayersScrollGraph()) {
+      DrawVelGraph(clipRect, aManager, layerToRender->GetLayer());
     }
     // invariant: our GL context should be current here, I don't think we can
     // assert it though
@@ -232,7 +358,7 @@ ContainerRender(ContainerT* aContainer,
     gfx::Rect rect(visibleRect.x, visibleRect.y, visibleRect.width, visibleRect.height);
     gfx::Rect clipRect(aClipRect.x, aClipRect.y, aClipRect.width, aClipRect.height);
     aManager->GetCompositor()->DrawQuad(rect, clipRect, effectChain, opacity,
-                                        transform, gfx::Point(aOffset.x, aOffset.y));
+                                        transform);
   }
 
   if (aContainer->GetFrameMetrics().IsScrollable()) {
@@ -245,7 +371,7 @@ ContainerRender(ContainerT* aContainer,
     gfx::Rect clipRect(aClipRect.x, aClipRect.y, aClipRect.width, aClipRect.height);
     aManager->GetCompositor()->DrawDiagnostics(DIAGNOSTIC_CONTAINER,
                                                rect, clipRect,
-                                               transform, gfx::Point(aOffset.x, aOffset.y));
+                                               transform);
   }
 }
 
@@ -297,10 +423,9 @@ ContainerLayerComposite::GetFirstChildComposite()
 }
 
 void
-ContainerLayerComposite::RenderLayer(const nsIntPoint& aOffset,
-                                     const nsIntRect& aClipRect)
+ContainerLayerComposite::RenderLayer(const nsIntRect& aClipRect)
 {
-  ContainerRender(this, aOffset, mCompositeManager, aClipRect);
+  ContainerRender(this, mCompositeManager, aClipRect);
 }
 
 void
@@ -341,10 +466,9 @@ RefLayerComposite::GetFirstChildComposite()
 }
 
 void
-RefLayerComposite::RenderLayer(const nsIntPoint& aOffset,
-                               const nsIntRect& aClipRect)
+RefLayerComposite::RenderLayer(const nsIntRect& aClipRect)
 {
-  ContainerRender(this, aOffset, mCompositeManager, aClipRect);
+  ContainerRender(this, mCompositeManager, aClipRect);
 }
 
 void

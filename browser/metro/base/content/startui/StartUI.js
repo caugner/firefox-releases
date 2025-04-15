@@ -26,6 +26,12 @@ var StartUI = {
     document.getElementById("bcast_preciseInput").setAttribute("input",
       this.chromeWin.InputSourceHelper.isPrecise ? "precise" : "imprecise");
 
+    let firstRunCount = Services.prefs.getIntPref("browser.firstrun.count");
+    if (firstRunCount > 0) {
+      document.loadOverlay("chrome://browser/content/FirstRunOverlay.xul", null);
+      Services.prefs.setIntPref("browser.firstrun.count", firstRunCount - 1);
+    }
+
     this._adjustDOMforViewState(this.chromeWin.ContentAreaObserver.viewstate);
 
     TopSitesStartView.init();
@@ -35,6 +41,9 @@ var StartUI = {
 
     this.chromeWin.addEventListener("MozPrecisePointer", this, true);
     this.chromeWin.addEventListener("MozImprecisePointer", this, true);
+    this.chromeWin.addEventListener("MozAfterPaint", this, true);
+    this.chromeWin.Elements.panelUI.addEventListener("ToolPanelHidden", this, false);
+
     Services.obs.addObserver(this, "metro_viewstate_changed", false);
   },
 
@@ -107,6 +116,15 @@ var StartUI = {
         aEvent.preventDefault();
         aEvent.stopPropagation();
         break;
+      case "ToolPanelHidden":
+        // After opening panel UI (console) set disableZoom again.
+        this.chromeWin.addEventListener("MozAfterPaint", this, true);
+        break;
+
+      case "MozAfterPaint":
+        this._disableZoom();
+        this.chromeWin.removeEventListener("MozAfterPaint", this, true);
+        break;
     }
   },
 
@@ -116,5 +134,24 @@ var StartUI = {
         this._adjustDOMforViewState(aData);
         break;
     }
+  },
+
+  _disableZoom: function() {
+    let utils = Util.getWindowUtils(window);
+    let viewId;
+    try {
+      viewId = utils.getViewId(document.documentElement);
+    } catch(e) {
+      return;
+    }
+
+    let presShellId = {};
+    utils.getPresShellId(presShellId);
+
+    let notificationData = [
+      presShellId.value,
+      viewId].join(",");
+
+    Services.obs.notifyObservers(null, "apzc-disable-zoom", notificationData);
   }
 };

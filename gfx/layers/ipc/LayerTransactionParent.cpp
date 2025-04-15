@@ -152,6 +152,7 @@ LayerTransactionParent::LayerTransactionParent(LayerManagerComposite* aManager,
   , mShadowLayersManager(aLayersManager)
   , mId(aId)
   , mDestroyed(false)
+  , mIPCOpen(false)
 {
   MOZ_COUNT_CTOR(LayerTransactionParent);
 }
@@ -198,6 +199,9 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
   if (mDestroyed || !layer_manager() || layer_manager()->IsDestroyed()) {
     return true;
   }
+
+  // Clear ReleaseFence handles used in previous transaction.
+  ClearPrevReleaseFenceHandles();
 
   EditReplyVector replyv;
 
@@ -278,12 +282,15 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
                                      common.stickyScrollRangeOuter(),
                                      common.stickyScrollRangeInner());
       }
+      layer->SetScrollbarData(common.scrollbarTargetContainerId(),
+        static_cast<Layer::ScrollDirection>(common.scrollbarDirection()));
       if (PLayerParent* maskLayer = common.maskLayerParent()) {
         layer->SetMaskLayer(cast(maskLayer)->AsLayer());
       } else {
         layer->SetMaskLayer(nullptr);
       }
       layer->SetAnimations(common.animations());
+      layer->SetInvalidRegion(common.invalidRegion());
 
       typedef SpecificLayerAttributes Specific;
       const SpecificLayerAttributes& specific = attrs.specific();

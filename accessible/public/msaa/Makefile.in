@@ -4,21 +4,7 @@
 
 DEFFILE = $(win_srcdir)/AccessibleMarshal.def
 
-DEFINES += -DREGISTER_PROXY_DLL
-
 GARBAGE += $(MIDL_GENERATED_FILES) done_gen dlldata.c
-
-FORCE_SHARED_LIB = 1
-
-CSRCS	= \
-	dlldata.c \
-	ISimpleDOMNode_p.c \
-	ISimpleDOMNode_i.c \
-	ISimpleDOMDocument_p.c \
-	ISimpleDOMDocument_i.c \
-	ISimpleDOMText_p.c \
-	ISimpleDOMText_i.c \
-	$(NULL)
 
 MIDL_GENERATED_FILES = \
 	ISimpleDOMNode.h \

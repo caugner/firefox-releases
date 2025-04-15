@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <string.h>
-#include "prbit.h"
+#include "mozilla/MathAlgorithms.h"
 #include "nsSupportsArray.h"
 #include "nsSupportsArrayEnumerator.h"
 #include "nsIObjectInputStream.h"
@@ -129,7 +129,7 @@ void nsSupportsArray::GrowArrayBy(int32_t aGrowBy)
     // Select the next power-of-two size in bytes above that if newSize is
     // not a power of two.
     if (newSize & (newSize - 1))
-      newSize = 1u << PR_CeilingLog2(newSize);
+      newSize = 1u << mozilla::CeilingLog2(newSize);
 
     newCount = newSize / sizeof(mArray[0]);
   }
@@ -585,7 +585,8 @@ nsSupportsArray::Clone(nsISupportsArray** aResult)
 {
   nsCOMPtr<nsISupportsArray> newArray;
   nsresult rv = NS_NewISupportsArray(getter_AddRefs(newArray));
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_WARN_IF(NS_FAILED(rv)))
+    return rv;
 
   uint32_t count = 0;
   Count(&count);

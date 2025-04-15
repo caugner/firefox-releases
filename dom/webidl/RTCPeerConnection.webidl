@@ -125,6 +125,11 @@ interface mozRTCPeerConnection : EventTarget  {
                  RTCStatsCallback successCallback,
                  RTCPeerConnectionErrorCallback failureCallback);
 
+  [ChromeOnly]
+  void getStatsInternal (MediaStreamTrack? selector,
+                         RTCStatsCallback successCallback,
+                         RTCPeerConnectionErrorCallback failureCallback);
+
   // Data channel.
   RTCDataChannel createDataChannel (DOMString label,
                                     optional RTCDataChannelInit dataChannelDict);
@@ -132,3 +137,19 @@ interface mozRTCPeerConnection : EventTarget  {
   attribute EventHandler onconnection;
   attribute EventHandler onclosedconnection;
 };
+
+callback RTCLogCallback = void (sequence<DOMString> logMessages);
+
+[JSImplementation="@mozilla.org/dom/webrtcglobalinformation;1",
+ ChromeOnly,
+ Constructor ()]
+interface WebrtcGlobalInformation {
+    void getAllStats(RTCStatsCallback callback,
+                     RTCPeerConnectionErrorCallback errorCallback);
+    void getCandPairLogs(DOMString candPairId,
+                         RTCLogCallback callback,
+                         RTCPeerConnectionErrorCallback errorCallback);
+};
+
+
+

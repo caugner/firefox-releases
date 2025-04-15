@@ -397,6 +397,10 @@ nsLookAndFeel::GetIntImpl(IntID aID, int32_t &aResult)
             aResult = 1;
             break;
 
+        case eIntID_ColorPickerAvailable:
+            aResult = 0;
+            break;
+
         case eIntID_WindowsDefaultTheme:
         case eIntID_WindowsThemeIdentifier:
         case eIntID_OperatingSystemVersionIdentifier:
@@ -466,10 +470,7 @@ nsLookAndFeel::GetEchoPasswordImpl()
 {
     if (!mInitializedShowPassword) {
         if (XRE_GetProcessType() == GeckoProcessType_Default) {
-            if (AndroidBridge::Bridge())
-                mShowPassword = AndroidBridge::Bridge()->GetShowPasswordSetting();
-            else
-                NS_ASSERTION(AndroidBridge::Bridge() != nullptr, "AndroidBridge is not available!");
+            mShowPassword = GeckoAppShell::GetShowPasswordSetting();
         } else {
             ContentChild::GetSingleton()->SendGetShowPasswordSetting(&mShowPassword);
         }

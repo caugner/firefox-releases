@@ -13,6 +13,9 @@
 #include "unistd.h"
 #include "dirent.h"
 #include "sys/stat.h"
+#if !defined(ANDROID)
+#include <spawn.h>
+#endif // !defined(ANDROID)
 #endif // defined(XP_UNIX)
 
 #if defined(XP_LINUX)
@@ -25,6 +28,7 @@
 
 #if defined(XP_WIN)
 #include <windows.h>
+#include <accctrl.h>
 #endif // defined(XP_WIN)
 
 #include "jsapi.h"
@@ -136,7 +140,7 @@ struct Paths {
 /**
  * System directories.
  */
-Paths* gPaths = NULL;
+Paths* gPaths = nullptr;
 
 }
 
@@ -303,7 +307,7 @@ void CleanupOSFileConstants()
 /**
  * End marker for ConstantSpec
  */
-#define PROP_END { NULL, JS::UndefinedValue() }
+#define PROP_END { nullptr, JS::UndefinedValue() }
 
 
 // Define missing constants for Android
@@ -504,6 +508,11 @@ static const dom::ConstantSpec gLibcProperties[] =
   // The size of |time_t|.
   { "OSFILE_SIZEOF_TIME_T", INT_TO_JSVAL(sizeof (time_t)) },
 
+#if !defined(ANDROID)
+  // The size of |posix_spawn_file_actions_t|.
+  { "OSFILE_SIZEOF_POSIX_SPAWN_FILE_ACTIONS_T", INT_TO_JSVAL(sizeof (posix_spawn_file_actions_t)) },
+#endif // !defined(ANDROID)
+
   // Defining |dirent|.
   // Size
   { "OSFILE_SIZEOF_DIRENT", INT_TO_JSVAL(sizeof (dirent)) },
@@ -513,6 +522,11 @@ static const dom::ConstantSpec gLibcProperties[] =
   // An upper bound to the length of field |d_name| of struct |dirent|.
   // (may not be exact, depending on padding).
   { "OSFILE_SIZEOF_DIRENT_D_NAME", INT_TO_JSVAL(sizeof (struct dirent) - offsetof (struct dirent, d_name)) },
+
+  // Defining |timeval|.
+  { "OSFILE_SIZEOF_TIMEVAL", INT_TO_JSVAL(sizeof (struct timeval)) },
+  { "OSFILE_OFFSETOF_TIMEVAL_TV_SEC", INT_TO_JSVAL(offsetof (struct timeval, tv_sec)) },
+  { "OSFILE_OFFSETOF_TIMEVAL_TV_USEC", INT_TO_JSVAL(offsetof (struct timeval, tv_usec)) },
 
 #if defined(DT_UNKNOWN)
   // Position of field |d_type| in |dirent|
@@ -646,6 +660,14 @@ static const dom::ConstantSpec gWinProperties[] =
   INT_CONSTANT(MOVEFILE_COPY_ALLOWED),
   INT_CONSTANT(MOVEFILE_REPLACE_EXISTING),
 
+  // GetFileAttributes error constant
+  INT_CONSTANT(INVALID_FILE_ATTRIBUTES),
+
+  // GetNamedSecurityInfo and SetNamedSecurityInfo constants
+  INT_CONSTANT(UNPROTECTED_DACL_SECURITY_INFORMATION),
+  INT_CONSTANT(SE_FILE_OBJECT),
+  INT_CONSTANT(DACL_SECURITY_INFORMATION),
+
   // Errors
   INT_CONSTANT(ERROR_ACCESS_DENIED),
   INT_CONSTANT(ERROR_DIR_NOT_EMPTY),
@@ -671,18 +693,19 @@ JSObject *GetOrCreateObjectProperty(JSContext *cx, JS::Handle<JSObject*> aObject
 {
   JS::Rooted<JS::Value> val(cx);
   if (!JS_GetProperty(cx, aObject, aProperty, &val)) {
-    return NULL;
+    return nullptr;
   }
   if (!val.isUndefined()) {
     if (val.isObject()) {
       return &val.toObject();
     }
 
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
+    JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr,
       JSMSG_UNEXPECTED_TYPE, aProperty, "not an object");
-    return NULL;
+    return nullptr;
   }
-  return JS_DefineObject(cx, aObject, aProperty, NULL, NULL, JSPROP_ENUMERATE);
+  return JS_DefineObject(cx, aObject, aProperty, nullptr, nullptr,
+                         JSPROP_ENUMERATE);
 }
 
 /**
@@ -712,12 +735,12 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
 {
   MOZ_ASSERT(gInitialized);
 
-  if (gPaths == NULL) {
+  if (gPaths == nullptr) {
     // If an initialization error was ignored, we may end up with
-    // |gInitialized == true| but |gPaths == NULL|. We cannot
+    // |gInitialized == true| but |gPaths == nullptr|. We cannot
     // |MOZ_ASSERT| this, as this would kill precompile_cache.js,
     // so we simply return an error.
-    JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL,
+    JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr,
       JSMSG_CANT_OPEN, "OSFileConstants", "initialization has failed");
     return false;
   }
@@ -792,17 +815,16 @@ bool DefineOSFileConstants(JSContext *cx, JS::Handle<JSObject*> global)
   }
 
   // Locate libxul
+  // Note that we don't actually provide the full path, only the name of the
+  // library, which is sufficient to link to the library using js-ctypes.
   {
-    nsAutoString xulPath(gPaths->libDir);
-
-    xulPath.Append(PR_GetDirectorySeparator());
-
 #if defined(XP_MACOSX)
     // Under MacOS X, for some reason, libxul is called simply "XUL"
-    xulPath.Append(NS_LITERAL_STRING("XUL"));
+    nsAutoString xulPath(NS_LITERAL_STRING("XUL"));
 #else
     // On other platforms, libxul is a library "xul" with regular
     // library prefix/suffix
+    nsAutoString xulPath;
     xulPath.Append(NS_LITERAL_STRING(DLL_PREFIX));
     xulPath.Append(NS_LITERAL_STRING("xul"));
     xulPath.Append(NS_LITERAL_STRING(DLL_SUFFIX));

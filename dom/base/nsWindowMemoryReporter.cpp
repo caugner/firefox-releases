@@ -94,20 +94,20 @@ nsWindowMemoryReporter::Init()
   MOZ_ASSERT(!sWindowReporter);
   sWindowReporter = new nsWindowMemoryReporter();
   ClearOnShutdown(&sWindowReporter);
-  NS_RegisterMemoryReporter(sWindowReporter);
+  RegisterStrongMemoryReporter(sWindowReporter);
   RegisterNonJSSizeOfTab(NonJSSizeOfTab);
 
   nsCOMPtr<nsIObserverService> os = services::GetObserverService();
   if (os) {
     // DOM_WINDOW_DESTROYED_TOPIC announces what we call window "detachment",
-    // when a window's docshell is set to NULL.
+    // when a window's docshell is set to nullptr.
     os->AddObserver(sWindowReporter, DOM_WINDOW_DESTROYED_TOPIC,
                     /* weakRef = */ true);
     os->AddObserver(sWindowReporter, "after-minimize-memory-usage",
                     /* weakRef = */ true);
   }
 
-  NS_RegisterMemoryReporter(new GhostWindowsReporter());
+  RegisterStrongMemoryReporter(new GhostWindowsReporter());
   RegisterGhostWindowsDistinguishedAmount(GhostWindowsReporter::DistinguishedAmount);
 }
 
@@ -185,7 +185,7 @@ CollectWindowReports(nsGlobalWindow *aWindow,
 
   // Avoid calling aWindow->GetTop() if there's no outer window.  It will work
   // just fine, but will spew a lot of warnings.
-  nsGlobalWindow *top = NULL;
+  nsGlobalWindow *top = nullptr;
   nsCOMPtr<nsIURI> location;
   if (aWindow->GetOuterWindow()) {
     // Our window should have a null top iff it has a null docshell.
@@ -306,6 +306,11 @@ CollectWindowReports(nsGlobalWindow *aWindow,
               "Memory used by a window's DOM that isn't measured by the "
               "other 'dom/' numbers.");
   aWindowTotalSizes->mDOMOtherSize += windowSizes.mDOMOtherSize;
+
+  REPORT_SIZE("/proto-iface-cache", windowSizes.mProtoIfaceCacheSize,
+              "Memory used for prototype and interface binding caches "
+              "with a window.");
+  aWindowTotalSizes->mProtoIfaceCacheSize += windowSizes.mProtoIfaceCacheSize;
 
   REPORT_SIZE("/property-tables",
               windowSizes.mPropertyTablesSize,
@@ -446,13 +451,6 @@ ReportGhostWindowsEnumerator(nsUint64HashKey* aIDHashKey, void* aClosure)
 }
 
 NS_IMETHODIMP
-nsWindowMemoryReporter::GetName(nsACString &aName)
-{
-  aName.AssignLiteral("window-objects");
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsWindowMemoryReporter::CollectReports(nsIMemoryReporterCallback* aCb,
                                        nsISupports* aClosure)
 {
@@ -480,9 +478,12 @@ nsWindowMemoryReporter::CollectReports(nsIMemoryReporterCallback* aCb,
   WindowPaths topWindowPaths;
 
   // Collect window memory usage.
-  nsWindowSizes windowTotalSizes(NULL);
-  nsCOMPtr<amIAddonManager> addonManager =
-    do_GetService("@mozilla.org/addons/integration;1");
+  nsWindowSizes windowTotalSizes(nullptr);
+  nsCOMPtr<amIAddonManager> addonManager;
+  if (XRE_GetProcessType() == GeckoProcessType_Default) {
+    // Only try to access the service from the main process.
+    addonManager = do_GetService("@mozilla.org/addons/integration;1");
+  }
   for (uint32_t i = 0; i < windows.Length(); i++) {
     rv = CollectWindowReports(windows[i], addonManager,
                               &windowTotalSizes, &ghostWindows,
@@ -524,6 +525,9 @@ nsWindowMemoryReporter::CollectReports(nsIMemoryReporterCallback* aCb,
 
   REPORT("window-objects/dom/other", windowTotalSizes.mDOMOtherSize,
          "This is the sum of all windows' 'dom/other' numbers.");
+
+  REPORT("window-objects/proto-iface-cache", windowTotalSizes.mProtoIfaceCacheSize,
+         "This is the sum of all windows' 'proto-iface-cache' numbers.");
 
   REPORT("window-objects/property-tables",
          windowTotalSizes.mPropertyTablesSize,
@@ -769,7 +773,7 @@ GetNonDetachedWindowDomainsEnumerator(const uint64_t& aId, nsGlobalWindow* aWind
  */
 void
 nsWindowMemoryReporter::CheckForGhostWindows(
-  nsTHashtable<nsUint64HashKey> *aOutGhostIDs /* = NULL */)
+  nsTHashtable<nsUint64HashKey> *aOutGhostIDs /* = nullptr */)
 {
   nsCOMPtr<nsIEffectiveTLDService> tldService = do_GetService(
     NS_EFFECTIVETLDSERVICE_CONTRACTID);

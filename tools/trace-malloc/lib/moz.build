@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'tracemalloc'
-
 EXPORTS += [
     'nsTraceMalloc.h',
 ]
@@ -24,9 +22,9 @@ if CONFIG['OS_ARCH'] == 'WINNT':
         'nsWinTraceMalloc.cpp',
     ]
 
-LIBRARY_NAME = 'tracemalloc'
+FINAL_LIBRARY = 'xpcom_core'
 
-LIBXUL_LIBRARY = True
+if CONFIG['WRAP_SYSTEM_INCLUDES']:
+    DEFINES['WRAP_SYSTEM_INCLUDES'] = True
 
-EXPORT_LIBRARY = True
-
+DEFINES['MOZ_NO_MOZALLOC'] = True

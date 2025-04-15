@@ -175,8 +175,6 @@ public abstract class TreeBuilder<T> implements TokenHandler,
 
     final static int RT_OR_RP = 53;
 
-    final static int COMMAND = 54;
-
     final static int PARAM_OR_SOURCE_OR_TRACK = 55;
 
     final static int MGLYPH_OR_MALIGNMARK = 56;
@@ -834,9 +832,17 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                             if (!"http://www.w3.org/TR/html4/strict.dtd".equals(systemIdentifier)) {
                                 warn("The doctype did not contain the system identifier prescribed by the HTML 4.01 specification. Expected \u201C<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \"http://www.w3.org/TR/html4/strict.dtd\">\u201D.");
                             }
+                        } else if ("-//W3C//DTD XHTML 1.0 Strict//EN".equals(publicIdentifier)) {
+                            if (!"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd".equals(systemIdentifier)) {
+                                warn("The doctype did not contain the system identifier prescribed by the XHTML 1.0 specification. Expected \u201C<!DOCTYPE HTML PUBLIC \"-//W3C//DTD XHTML 1.0 Strict//EN\" \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd\">\u201D.");
+                            }
+                        } else if ("//W3C//DTD XHTML 1.1//EN".equals(publicIdentifier)) {
+                            if (!"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd".equals(systemIdentifier)) {
+                                warn("The doctype did not contain the system identifier prescribed by the XHTML 1.1 specification. Expected \u201C<!DOCTYPE HTML PUBLIC \"//W3C//DTD XHTML 1.1//EN\" \"http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd\">\u201D.");
+                            }
                         } else if (!((systemIdentifier == null || Portability.literalEqualsString(
                                 "about:legacy-compat", systemIdentifier)) && publicIdentifier == null)) {
-                            err("Legacy doctype. Expected e.g. \u201C<!DOCTYPE html>\u201D.");
+                            err("Unexpected doctype. Expected, e.g., \u201C<!DOCTYPE html>\u201D.");
                         }
                         documentModeInternal(DocumentMode.STANDARDS_MODE,
                                 publicIdentifier, systemIdentifier, html4);
@@ -2017,7 +2023,6 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                             case STYLE:
                             case SCRIPT:
                             case TITLE:
-                            case COMMAND:
                             case TEMPLATE:
                                 // Fall through to IN_HEAD
                                 break inbodyloop;
@@ -2473,7 +2478,6 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                                 }
                                 break starttagloop;
                             case BASE:
-                            case COMMAND:
                             case LINK_OR_BASEFONT_OR_BGSOUND:
                                 appendVoidElementToCurrentMayFoster(
                                         elementName,
@@ -2901,16 +2905,15 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                             mode = IN_FRAMESET;
                             attributes = null; // CPP
                             break starttagloop;
-                        case BASE:
+                        case TEMPLATE:
                             errFooBetweenHeadAndBody(name);
                             pushHeadPointerOntoStack();
-                            appendVoidElementToCurrentMayFoster(
-                                    elementName,
-                                    attributes);
-                            selfClosing = false;
-                            pop(); // head
+                            StackNode<T> headOnStack = stack[currentPtr];
+                            startTagTemplateInHead(elementName, attributes);
+                            removeFromStack(headOnStack);
                             attributes = null; // CPP
                             break starttagloop;
+                        case BASE:
                         case LINK_OR_BASEFONT_OR_BGSOUND:
                             errFooBetweenHeadAndBody(name);
                             pushHeadPointerOntoStack();
@@ -3002,7 +3005,7 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                             }
                             break starttagloop;
                         case NOFRAMES:
-                            startTagScriptInHead(elementName, attributes);
+                            startTagGenericRawText(elementName, attributes);
                             attributes = null; // CPP
                             break starttagloop;
                         default:
@@ -3991,6 +3994,9 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                     }
                 case AFTER_HEAD:
                     switch (group) {
+                        case TEMPLATE:
+                            endTagTemplateInHead();
+                            break endtagloop;
                         case HTML:
                         case BODY:
                         case BR:
@@ -4007,8 +4013,7 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                     continue;
                 case AFTER_AFTER_FRAMESET:
                     errStrayEndTag(name);
-                    mode = IN_FRAMESET;
-                    continue;
+                    break endtagloop;
                 case TEXT:
                     // XXX need to manage insertion point here
                     pop();
@@ -4317,8 +4322,11 @@ public abstract class TreeBuilder<T> implements TokenHandler,
             ns = node.ns;
             if (i == 0) {
                 if (!(contextNamespace == "http://www.w3.org/1999/xhtml" && (contextName == "td" || contextName == "th"))) {
-                    name = contextName;
-                    ns = contextNamespace;
+                    if (fragment) {
+                        // Make sure we are parsing a fragment otherwise the context element doesn't make sense.
+                        name = contextName;
+                        ns = contextNamespace;
+                    }
                 } else {
                     mode = framesetOk ? FRAMESET_OK : IN_BODY; // XXX from Hixie's email
                     return;
@@ -4353,7 +4361,6 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                 mode = IN_CAPTION;
                 return;
             } else if ("colgroup" == name) {
-                // TODO: Fragment case. Add error reporting.
                 mode = IN_COLUMN_GROUP;
                 return;
             } else if ("table" == name) {
@@ -4368,7 +4375,6 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                 return;
             }  else if ("head" == name) {
                 if (name == contextName) {
-                    // TODO: Fragment case. Add error reporting.
                     mode = framesetOk ? FRAMESET_OK : IN_BODY; // really
                 } else {
                     mode = IN_HEAD;
@@ -4813,7 +4819,6 @@ public abstract class TreeBuilder<T> implements TokenHandler,
 
     private void pushHeadPointerOntoStack() throws SAXException {
         assert headPointer != null;
-        assert !fragment;
         assert mode == AFTER_HEAD;
         fatal();
         silentPush(new StackNode<T>(ElementName.HEAD, headPointer
@@ -5639,16 +5644,19 @@ public abstract class TreeBuilder<T> implements TokenHandler,
                     charBufferLen = 0;
                     return;
                 }
-                int eltPos = findLastOrRoot(TreeBuilder.TABLE);
-                StackNode<T> node = stack[eltPos];
-                T elt = node.node;
-                if (eltPos == 0) {
-                    appendCharacters(elt, charBuffer, 0, charBufferLen);
+
+                int tablePos = findLastOrRoot(TreeBuilder.TABLE);
+                int templatePos = findLastOrRoot(TreeBuilder.TEMPLATE);
+
+                if (templatePos >= tablePos) {
+                    appendCharacters(stack[templatePos].node, charBuffer, 0, charBufferLen);
                     charBufferLen = 0;
                     return;
                 }
+
+                StackNode<T> tableElt = stack[tablePos];
                 insertFosterParentedCharacters(charBuffer, 0, charBufferLen,
-                        elt, stack[eltPos - 1].node);
+                        tableElt.node, stack[tablePos - 1].node);
                 charBufferLen = 0;
                 return;
             }

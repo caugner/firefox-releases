@@ -41,7 +41,7 @@
 #include "nsPlaceholderFrame.h"
 #include "nsTextFrameUtils.h"
 #include "nsTextRunTransformations.h"
-#include "nsTextFrameTextRunCache.h"
+#include "MathVariantTextRunFactory.h"
 #include "nsExpirationTracker.h"
 #include "nsUnicodeProperties.h"
 
@@ -78,6 +78,10 @@
 #else
 #undef NOISY_REFLOW
 #undef NOISY_TRIM
+#endif
+
+#ifdef DrawText
+#undef DrawText
 #endif
 
 using namespace mozilla;
@@ -213,10 +217,16 @@ NS_DECLARE_FRAME_PROPERTY(TextFrameGlyphObservers, DestroyGlyphObserverList);
 #define TEXT_IN_TEXTRUN_USER_DATA  NS_FRAME_STATE_BIT(29)
 
 // nsTextFrame.h has
+// #define TEXT_OFFSETS_NEED_FIXING         NS_FRAME_STATE_BIT(30)
+
+// nsTextFrame.h has
 // #define TEXT_HAS_NONCOLLAPSED_CHARACTERS NS_FRAME_STATE_BIT(31)
 
 // nsTextFrame.h has
 // #define TEXT_IS_IN_TOKEN_MATHML          NS_FRAME_STATE_BIT(32)
+
+// nsTextFrame.h has
+// #define TEXT_IS_IN_SINGLE_CHAR_MI        NS_FRAME_STATE_BIT(59)
 
 // Set when this text frame is mentioned in the userdata for the
 // uninflated textrun property
@@ -1293,6 +1303,10 @@ BuildTextRuns(gfxContext* aContext, nsTextFrame* aForFrame,
                  "Wrong line container hint");
   }
 
+  if (aForFrame && aForFrame->HasAnyStateBits(TEXT_IS_IN_SINGLE_CHAR_MI)) {
+    aLineContainer->AddStateBits(TEXT_IS_IN_SINGLE_CHAR_MI);
+  }
+
   nsPresContext* presContext = aLineContainer->PresContext();
   BuildTextRunsScanner scanner(presContext, aContext, aLineContainer,
                                aWhichTextRun);
@@ -1816,22 +1830,8 @@ GetHyphenTextRun(gfxTextRun* aTextRun, gfxContext* aContext, nsTextFrame* aTextF
   if (!ctx)
     return nullptr;
 
-  gfxFontGroup* fontGroup = aTextRun->GetFontGroup();
-  uint32_t flags = gfxFontGroup::TEXT_IS_PERSISTENT;
-
-  // only use U+2010 if it is supported by the first font in the group;
-  // it's better to use ASCII '-' from the primary font than to fall back to U+2010
-  // from some other, possibly poorly-matching face
-  static const PRUnichar unicodeHyphen = 0x2010;
-  gfxFont *font = fontGroup->GetFontAt(0);
-  if (font && font->HasCharacter(unicodeHyphen)) {
-    return fontGroup->MakeTextRun(&unicodeHyphen, 1, ctx,
-                                  aTextRun->GetAppUnitsPerDevUnit(), flags);
-  }
-
-  static const uint8_t dash = '-';
-  return fontGroup->MakeTextRun(&dash, 1, ctx,
-                                aTextRun->GetAppUnitsPerDevUnit(), flags);
+  return aTextRun->GetFontGroup()->
+    MakeHyphenTextRun(ctx, aTextRun->GetAppUnitsPerDevUnit());
 }
 
 static gfxFont::Metrics
@@ -1870,6 +1870,7 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
   const void* textPtr = aTextBuffer;
   bool anySmallcapsStyle = false;
   bool anyTextTransformStyle = false;
+  bool anyMathVariantStyle = false;
   uint32_t textFlags = nsTextFrameUtils::TEXT_NO_BREAKS;
 
   if (mCurrentRunContextInfo & nsTextFrameUtils::INCOMING_WHITESPACE) {
@@ -1946,6 +1947,12 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
     fontStyle = f->StyleFont();
     if (NS_STYLE_FONT_VARIANT_SMALL_CAPS == fontStyle->mFont.variant) {
       anySmallcapsStyle = true;
+    }
+    if (NS_MATHML_MATHVARIANT_NONE != fontStyle->mMathVariant) {
+      anyMathVariantStyle = true;
+    } else if (mLineContainer->GetStateBits() & TEXT_IS_IN_SINGLE_CHAR_MI) {
+      textFlags |= nsTextFrameUtils::TEXT_IS_SINGLE_CHAR_MI;
+      anyMathVariantStyle = true;
     }
 
     // Figure out what content is included in this flow.
@@ -2087,6 +2094,10 @@ BuildTextRunsScanner::BuildTextRunForFrames(void* aTextBuffer)
   if (anyTextTransformStyle) {
     transformingFactory =
       new nsCaseTransformTextRunFactory(transformingFactory.forget());
+  }
+  if (anyMathVariantStyle) {
+    transformingFactory =
+      new nsMathVariantTextRunFactory(transformingFactory.forget());
   }
   nsTArray<nsStyleContext*> styles;
   if (transformingFactory) {
@@ -2620,17 +2631,20 @@ GetEndOfTrimmedText(const nsTextFragment* aFrag, const nsStyleText* aStyleText,
 
 nsTextFrame::TrimmedOffsets
 nsTextFrame::GetTrimmedOffsets(const nsTextFragment* aFrag,
-                               bool aTrimAfter)
+                               bool aTrimAfter, bool aPostReflow)
 {
   NS_ASSERTION(mTextRun, "Need textrun here");
-  // This should not be used during reflow. We need our TEXT_REFLOW_FLAGS
-  // to be set correctly.  If our parent wasn't reflowed due to the frame
-  // tree being too deep then the return value doesn't matter.
-  NS_ASSERTION(!(GetStateBits() & NS_FRAME_FIRST_REFLOW) ||
-               (GetParent()->GetStateBits() & NS_FRAME_TOO_DEEP_IN_FRAME_TREE),
-               "Can only call this on frames that have been reflowed");
-  NS_ASSERTION(!(GetStateBits() & NS_FRAME_IN_REFLOW),
-               "Can only call this on frames that are not being reflowed");
+  if (aPostReflow) {
+    // This should not be used during reflow. We need our TEXT_REFLOW_FLAGS
+    // to be set correctly.  If our parent wasn't reflowed due to the frame
+    // tree being too deep then the return value doesn't matter.
+    NS_ASSERTION(!(GetStateBits() & NS_FRAME_FIRST_REFLOW) ||
+                 (GetParent()->GetStateBits() &
+                  NS_FRAME_TOO_DEEP_IN_FRAME_TREE),
+                 "Can only call this on frames that have been reflowed");
+    NS_ASSERTION(!(GetStateBits() & NS_FRAME_IN_REFLOW),
+                 "Can only call this on frames that are not being reflowed");
+  }
 
   TrimmedOffsets offsets = { GetContentOffset(), GetContentLength() };
   const nsStyleText* textStyle = StyleText();
@@ -2639,7 +2653,7 @@ nsTextFrame::GetTrimmedOffsets(const nsTextFragment* aFrag,
   if (textStyle->WhiteSpaceIsSignificant())
     return offsets;
 
-  if (GetStateBits() & TEXT_START_OF_LINE) {
+  if (!aPostReflow || (GetStateBits() & TEXT_START_OF_LINE)) {
     int32_t whitespaceCount =
       GetTrimmableWhitespaceCount(aFrag,
                                   offsets.mStart, offsets.mLength, 1);
@@ -2647,7 +2661,7 @@ nsTextFrame::GetTrimmedOffsets(const nsTextFragment* aFrag,
     offsets.mLength -= whitespaceCount;
   }
 
-  if (aTrimAfter && (GetStateBits() & TEXT_END_OF_LINE)) {
+  if (aTrimAfter && (!aPostReflow || (GetStateBits() & TEXT_END_OF_LINE))) {
     // This treats a trailing 'pre-line' newline as trimmable. That's fine,
     // it's actually what we want since we want whitespace before it to
     // be trimmed.
@@ -2820,6 +2834,8 @@ public:
   // Call this after construction if you're not going to reflow the text
   void InitializeForDisplay(bool aTrimAfter);
 
+  void InitializeForMeasure();
+
   virtual void GetSpacing(uint32_t aStart, uint32_t aLength, Spacing* aSpacing);
   virtual gfxFloat GetHyphenWidth();
   virtual void GetHyphenationBreaks(uint32_t aStart, uint32_t aLength,
@@ -2873,7 +2889,7 @@ public:
   const gfxSkipCharsIterator& GetEndHint() { return mTempIterator; }
 
 protected:
-  void SetupJustificationSpacing();
+  void SetupJustificationSpacing(bool aPostReflow);
 
   void InitFontGroupAndFontMetrics() {
     float inflation = (mWhichTextRun == nsTextFrame::eInflated)
@@ -3183,10 +3199,13 @@ gfxFloat
 PropertyProvider::GetHyphenWidth()
 {
   if (mHyphenWidth < 0) {
-    nsAutoPtr<gfxTextRun> hyphenTextRun(GetHyphenTextRun(mTextRun, nullptr, mFrame));
     mHyphenWidth = mLetterSpacing;
-    if (hyphenTextRun.get()) {
-      mHyphenWidth += hyphenTextRun->GetAdvanceWidth(0, hyphenTextRun->GetLength(), nullptr);
+    nsRefPtr<gfxContext> context(GetReferenceRenderingContext(GetFrame(),
+                                                              nullptr));
+    if (context) {
+      mHyphenWidth +=
+        GetFontGroup()->GetHyphenWidth(context,
+                                       mTextRun->GetAppUnitsPerDevUnit());
     }
   }
   return mHyphenWidth;
@@ -3254,8 +3273,19 @@ PropertyProvider::InitializeForDisplay(bool aTrimAfter)
     mFrame->GetTrimmedOffsets(mFrag, aTrimAfter);
   mStart.SetOriginalOffset(trimmed.mStart);
   mLength = trimmed.mLength;
-  SetupJustificationSpacing();
+  SetupJustificationSpacing(true);
 }
+
+void
+PropertyProvider::InitializeForMeasure()
+{
+  nsTextFrame::TrimmedOffsets trimmed =
+    mFrame->GetTrimmedOffsets(mFrag, true, false);
+  mStart.SetOriginalOffset(trimmed.mStart);
+  mLength = trimmed.mLength;
+  SetupJustificationSpacing(false);
+}
+
 
 static uint32_t GetSkippedDistance(const gfxSkipCharsIterator& aStart,
                                    const gfxSkipCharsIterator& aEnd)
@@ -3295,7 +3325,7 @@ PropertyProvider::FindJustificationRange(gfxSkipCharsIterator* aStart,
 }
 
 void
-PropertyProvider::SetupJustificationSpacing()
+PropertyProvider::SetupJustificationSpacing(bool aPostReflow)
 {
   NS_PRECONDITION(mLength != INT32_MAX, "Can't call this with undefined length");
 
@@ -3307,7 +3337,7 @@ PropertyProvider::SetupJustificationSpacing()
   // called with false for aTrimAfter, we still shouldn't be assigning
   // justification space to any trailing whitespace.
   nsTextFrame::TrimmedOffsets trimmed =
-    mFrame->GetTrimmedOffsets(mFrag, true);
+    mFrame->GetTrimmedOffsets(mFrag, true, aPostReflow);
   end.AdvanceOriginal(trimmed.mLength);
   gfxSkipCharsIterator realEnd(end);
   FindJustificationRange(&start, &end);
@@ -3325,11 +3355,7 @@ PropertyProvider::SetupJustificationSpacing()
     mTextRun->GetAdvanceWidth(mStart.GetSkippedOffset(),
                               GetSkippedDistance(mStart, realEnd), this);
   if (mFrame->GetStateBits() & TEXT_HYPHEN_BREAK) {
-    nsAutoPtr<gfxTextRun> hyphenTextRun(GetHyphenTextRun(mTextRun, nullptr, mFrame));
-    if (hyphenTextRun.get()) {
-      naturalWidth +=
-        hyphenTextRun->GetAdvanceWidth(0, hyphenTextRun->GetLength(), nullptr);
-    }
+    naturalWidth += GetHyphenWidth();
   }
   gfxFloat totalJustificationSpace = mFrame->GetSize().width - naturalWidth;
   if (totalJustificationSpace <= 0) {
@@ -7297,6 +7323,31 @@ nsTextFrame::ComputeTightBounds(gfxContext* aContext) const
   // mAscent should be the same as metrics.mAscent, but it's what we use to
   // paint so that's the one we'll use.
   return RoundOut(metrics.mBoundingBox) + nsPoint(0, mAscent);
+}
+
+/* virtual */ nsresult
+nsTextFrame::GetPrefWidthTightBounds(nsRenderingContext* aContext,
+                                     nscoord* aX,
+                                     nscoord* aXMost)
+{
+  gfxSkipCharsIterator iter =
+    const_cast<nsTextFrame*>(this)->EnsureTextRun(nsTextFrame::eInflated);
+  if (!mTextRun)
+    return NS_ERROR_FAILURE;
+
+  PropertyProvider provider(const_cast<nsTextFrame*>(this), iter,
+                            nsTextFrame::eInflated);
+  provider.InitializeForMeasure();
+
+  gfxTextRun::Metrics metrics =
+        mTextRun->MeasureText(provider.GetStart().GetSkippedOffset(),
+                              ComputeTransformedLength(provider),
+                              gfxFont::TIGHT_HINTED_OUTLINE_EXTENTS,
+                              aContext->ThebesContext(), &provider);
+  *aX = metrics.mBoundingBox.x;
+  *aXMost = metrics.mBoundingBox.XMost();
+
+  return NS_OK;
 }
 
 static bool

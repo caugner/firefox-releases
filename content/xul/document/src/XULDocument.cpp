@@ -21,7 +21,7 @@
 
 */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 // Note the ALPHABETICAL ORDERING
 #include "XULDocument.h"
@@ -38,7 +38,7 @@
 #include "nsIRDFService.h"
 #include "nsIStreamListener.h"
 #include "nsITimer.h"
-#include "nsIDocShell.h"
+#include "nsDocShell.h"
 #include "nsGkAtoms.h"
 #include "nsXMLContentSink.h"
 #include "nsXULContentSink.h"
@@ -90,6 +90,7 @@
 #include "mozilla/Preferences.h"
 #include "nsTextNode.h"
 #include "nsJSUtils.h"
+#include "mozilla/dom/URL.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -100,14 +101,6 @@ using namespace mozilla::dom;
 //
 
 static NS_DEFINE_CID(kParserCID,                 NS_PARSER_CID);
-
-static bool IsChromeURI(nsIURI* aURI)
-{
-    bool isChrome = false;
-    if (NS_SUCCEEDED(aURI->SchemeIs("chrome", &isChrome)) && isChrome)
-        return true;
-    return false;
-}
 
 static bool IsOverlayAllowed(nsIURI* aURI)
 {
@@ -224,6 +217,9 @@ XULDocument::~XULDocument()
     // In case we failed somewhere early on and the forward observer
     // decls never got resolved.
     mForwardReferences.Clear();
+    // Likewise for any references we have to IDs where we might
+    // look for persisted data:
+    mPersistenceIds.Clear();
 
     // Destroy our broadcaster map.
     if (mBroadcasterMap) {
@@ -780,7 +776,7 @@ XULDocument::AddBroadcastListenerFor(Element& aBroadcaster, Element& aListener,
         return;
     }
 
-    static PLDHashTableOps gOps = {
+    static const PLDHashTableOps gOps = {
         PL_DHashAllocTable,
         PL_DHashFreeTable,
         PL_DHashVoidPtrKeyStub,
@@ -2187,6 +2183,11 @@ XULDocument::ApplyPersistentAttributes()
     ApplyPersistentAttributesInternal();
     mApplyingPersistedAttrs = false;
 
+    // After we've applied persistence once, we should only reapply
+    // it to nodes created by overlays
+    mRestrictPersistence = true;
+    mPersistenceIds.Clear();
+
     return NS_OK;
 }
 
@@ -2229,6 +2230,9 @@ XULDocument::ApplyPersistentAttributesInternal()
         nsXULContentUtils::MakeElementID(this, nsDependentCString(uri), id);
 
         if (id.IsEmpty())
+            continue;
+
+        if (mRestrictPersistence && !mPersistenceIds.Contains(id))
             continue;
 
         // This will clear the array if there are no elements.
@@ -2983,6 +2987,15 @@ XULDocument::ResumeWalk()
                     rv = element->AppendChildTo(child, false);
                     if (NS_FAILED(rv)) return rv;
 
+                    // If we're only restoring persisted things on
+                    // some elements, store the ID here to do that.
+                    if (mRestrictPersistence) {
+                        nsIAtom* id = child->GetID();
+                        if (id) {
+                            mPersistenceIds.PutEntry(nsDependentAtomString(id));
+                        }
+                    }
+
                     // do pre-order document-level hookup, but only if
                     // we're in the master document. For an overlay,
                     // this will happen when the overlay is
@@ -3187,8 +3200,7 @@ XULDocument::DoneWalking()
         // Before starting layout, check whether we're a toplevel chrome
         // window.  If we are, set our chrome flags now, so that we don't have
         // to restyle the whole frame tree after StartLayout.
-        nsCOMPtr<nsISupports> container = GetContainer();
-        nsCOMPtr<nsIDocShellTreeItem> item = do_QueryInterface(container);
+        nsCOMPtr<nsIDocShellTreeItem> item = GetDocShell();
         if (item) {
             nsCOMPtr<nsIDocShellTreeOwner> owner;
             item->GetTreeOwner(getter_AddRefs(owner));
@@ -3196,7 +3208,7 @@ XULDocument::DoneWalking()
             if (xulWin) {
                 nsCOMPtr<nsIDocShell> xulWinShell;
                 xulWin->GetDocShell(getter_AddRefs(xulWinShell));
-                if (SameCOMIdentity(xulWinShell, container)) {
+                if (SameCOMIdentity(xulWinShell, item)) {
                     // We're the chrome document!  Apply our chrome flags now.
                     xulWin->ApplyChromeFlags();
                 }
@@ -3660,18 +3672,14 @@ XULDocument::ExecuteScript(nsIScriptContext * aContext,
 
     NS_ENSURE_TRUE(mScriptGlobalObject, NS_ERROR_NOT_INITIALIZED);
 
-    if (!aContext->GetScriptsEnabled())
-        return NS_OK;
-
     // Execute the precompiled script with the given version
     nsAutoMicroTask mt;
     JSContext *cx = aContext->GetNativeContext();
     AutoCxPusher pusher(cx);
     JS::Rooted<JSObject*> global(cx, mScriptGlobalObject->GetGlobalJSObject());
-    // XXXkhuey can this ever be null?
-    if (global) {
-      JS::ExposeObjectToActiveJS(global);
-    }
+    NS_ENSURE_TRUE(global, NS_ERROR_FAILURE);
+    NS_ENSURE_TRUE(nsContentUtils::GetSecurityManager()->ScriptAllowed(global), NS_OK);
+    JS::ExposeObjectToActiveJS(global);
     xpc_UnmarkGrayScript(aScriptObject);
     JSAutoCompartment ac(cx, global);
     JS::Rooted<JS::Value> unused(cx);
@@ -3744,14 +3752,11 @@ XULDocument::CreateElementFromPrototype(nsXULPrototypeElement* aPrototype,
                                                     aPrototype->mNodeInfo->NamespaceID(),
                                                     nsIDOMNode::ELEMENT_NODE);
         if (!newNodeInfo) return NS_ERROR_OUT_OF_MEMORY;
-        nsCOMPtr<nsIContent> content;
         nsCOMPtr<nsINodeInfo> xtfNi = newNodeInfo;
-        rv = NS_NewElement(getter_AddRefs(content), newNodeInfo.forget(),
+        rv = NS_NewElement(getter_AddRefs(result), newNodeInfo.forget(),
                            NOT_FROM_PARSER);
         if (NS_FAILED(rv))
             return rv;
-
-        result = content->AsElement();
 
         rv = AddAttributes(aPrototype, result);
         if (NS_FAILED(rv)) return rv;
@@ -4671,7 +4676,7 @@ XULDocument::ParserObserver::OnStopRequest(nsIRequest *request,
 already_AddRefed<nsPIWindowRoot>
 XULDocument::GetWindowRoot()
 {
-    nsCOMPtr<nsIInterfaceRequestor> ir = do_QueryReferent(mDocumentContainer);
+    nsCOMPtr<nsIInterfaceRequestor> ir(mDocumentContainer);
     nsCOMPtr<nsIDOMWindow> window(do_GetInterface(ir));
     nsCOMPtr<nsPIDOMWindow> piWin(do_QueryInterface(window));
     return piWin ? piWin->GetTopWindowRoot() : nullptr;

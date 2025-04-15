@@ -143,6 +143,9 @@ typedef uint64_t nsFrameState;
 // continuation, e.g. a bidi continuation.
 #define NS_FRAME_IS_FLUID_CONTINUATION              NS_FRAME_STATE_BIT(2)
 
+// For nsIAnonymousContentCreator content that's created using ContentInfo.
+#define NS_FRAME_ANONYMOUSCONTENTCREATOR_CONTENT    NS_FRAME_STATE_BIT(3)
+
 // If this bit is set, then a reference to the frame is being held
 // elsewhere.  The frame may want to send a notification when it is
 // destroyed to allow these references to be cleared.
@@ -326,6 +329,9 @@ typedef uint64_t nsFrameState;
 // Frame is not displayed directly due to it being, or being under, an SVG
 // <defs> element or an SVG resource element (<mask>, <pattern>, etc.)
 #define NS_FRAME_IS_NONDISPLAY                      NS_FRAME_STATE_BIT(53)
+
+// Frame has a LayerActivityProperty property
+#define NS_FRAME_HAS_LAYER_ACTIVITY_PROPERTY        NS_FRAME_STATE_BIT(54)
 
 // Box layout bits
 #define NS_STATE_IS_HORIZONTAL                      NS_FRAME_STATE_BIT(22)
@@ -859,6 +865,12 @@ public:
    * Accessor functions for geometric parent
    */
   nsIFrame* GetParent() const { return mParent; }
+  /**
+   * Set this frame's parent to aParent.
+   * If the frame may have moved into or out of a scrollframe's
+   * frame subtree, StickyScrollContainer::NotifyReparentedFrameAcrossScrollFrameBoundary
+   * must also be called.
+   */
   virtual void SetParent(nsIFrame* aParent) = 0;
 
   /**
@@ -872,6 +884,9 @@ public:
   nsRect GetRect() const { return mRect; }
   nsPoint GetPosition() const { return mRect.TopLeft(); }
   nsSize GetSize() const { return mRect.Size(); }
+  nsRect GetRectRelativeToSelf() const {
+    return nsRect(nsPoint(0, 0), mRect.Size());
+  }
 
   /**
    * When we change the size of the frame's border-box rect, we may need to
@@ -1059,6 +1074,7 @@ public:
   nsRect GetPaddingRectRelativeToSelf() const;
   nsRect GetContentRect() const;
   nsRect GetContentRectRelativeToSelf() const;
+  nsRect GetMarginRectRelativeToSelf() const;
 
   /**
    * The area to paint box-shadows around.  The default is the border rect.
@@ -1830,6 +1846,26 @@ public:
   virtual nsRect ComputeTightBounds(gfxContext* aContext) const;
 
   /**
+   * This function is similar to GetPrefWidth and ComputeTightBounds: it
+   * computes the left and right coordinates of a preferred tight bounding
+   * rectangle for the frame. This is a rectangle that would enclose the pixels
+   * that are drawn if we lay out the element without taking any optional line
+   * breaks. The rectangle is in appunits and relative to the origin of this
+   * frame. Currently, this function is only implemented for nsBlockFrame and
+   * nsTextFrame and is used to determine intrinsic widths of MathML token
+   * elements.
+
+   * @param aContext a rendering context that can be used if we need
+   * to do measurement
+   * @param aX      computed left coordinate of the tight bounding rectangle
+   * @param aXMost  computed intrinsic width of the tight bounding rectangle
+   *
+   */
+  virtual nsresult GetPrefWidthTightBounds(nsRenderingContext* aContext,
+                                           nscoord* aX,
+                                           nscoord* aXMost);
+
+  /**
    * Pre-reflow hook. Before a frame is reflowed this method will be called.
    * This call will always be invoked at least once before a subsequent Reflow
    * and DidReflow call. It may be called more than once, In general you will
@@ -2039,8 +2075,7 @@ public:
    * Returns the offset from this frame to the closest geometric parent that
    * has a view. Also returns the containing view or null in case of error
    */
-  NS_IMETHOD  GetOffsetFromView(nsPoint&  aOffset,
-                                nsView** aView) const = 0;
+  void GetOffsetFromView(nsPoint& aOffset, nsView** aView) const;
 
   /**
    * Returns the nearest widget containing this frame. If this frame has a
@@ -2177,30 +2212,6 @@ public:
   { return mParent && mParent->GetType() == nsGkAtoms::flexContainerFrame; }
 
   /**
-   * Mark this frame as using active layers. This marking will time out
-   * after a short period. This call does no immediate invalidation,
-   * but when the mark times out, we'll invalidate the frame's overflow
-   * area.
-   * @param aChangeHint nsChangeHint_UpdateTransformLayer or
-   * nsChangeHint_UpdateOpacityLayer or 0, depending on whether the change
-   * triggering the activity is a changing transform, changing opacity, or
-   * something else.
-   */
-  void MarkLayersActive(nsChangeHint aHint);
-  /**
-   * Return true if this frame is marked as needing active layers.
-   */
-  bool AreLayersMarkedActive();
-  /**
-   * Return true if this frame is marked as needing active layers.
-   * @param aChangeHint nsChangeHint_UpdateTransformLayer or
-   * nsChangeHint_UpdateOpacityLayer. We return true only if
-   * a change in the transform or opacity has been recorded while layers have
-   * been marked active for this frame.
-   */
-  bool AreLayersMarkedActive(nsChangeHint aChangeHint);
-
-  /**
    * Marks all display items created by this frame as needing a repaint,
    * and calls SchedulePaint() if requested and one is not already pending.
    *
@@ -2301,15 +2312,18 @@ public:
    * do not trigger a reflow should have this called for them by
    * DoApplyRenderingChangeToTree.
    *
-   * @param aFlags PAINT_COMPOSITE_ONLY : No changes have been made
+   * @param aType PAINT_COMPOSITE_ONLY : No changes have been made
    * that require a layer tree update, so only schedule a layer
    * tree composite.
+   * PAINT_DELAYED_COMPRESS : Schedule a paint to be executed after a delay, and
+   * put FrameLayerBuilder in 'compressed' mode that avoids short cut optimizations.
    */
-  enum {
+  enum PaintType {
     PAINT_DEFAULT = 0,
-    PAINT_COMPOSITE_ONLY = 1 << 0
+    PAINT_COMPOSITE_ONLY,
+    PAINT_DELAYED_COMPRESS
   };
-  void SchedulePaint(uint32_t aFlags = PAINT_DEFAULT);
+  void SchedulePaint(PaintType aType = PAINT_DEFAULT);
 
   /**
    * Checks if the layer tree includes a dedicated layer for this 
@@ -3016,6 +3030,13 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
   bool IsContainerForFontSizeInflation() const {
     return GetStateBits() & NS_FRAME_FONT_INFLATION_CONTAINER;
   }
+
+  /**
+   * Returns the content node within the anonymous content that this frame
+   * generated and which corresponds to the specified pseudo-element type,
+   * or nullptr if there is no such anonymous content.
+   */
+  virtual mozilla::dom::Element* GetPseudoElement(nsCSSPseudoElements::Type aType);
 
 protected:
   // Members

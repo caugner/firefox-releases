@@ -103,7 +103,7 @@ public:
     float mYScale;
   };
 
-  nsContentView(nsFrameLoader* aFrameLoader, ViewID aScrollId,
+  nsContentView(nsFrameLoader* aFrameLoader, ViewID aScrollId, bool aIsRoot,
                 ViewConfig aConfig = ViewConfig())
     : mViewportSize(0, 0)
     , mContentSize(0, 0)
@@ -111,10 +111,14 @@ public:
     , mParentScaleY(1.0)
     , mFrameLoader(aFrameLoader)
     , mScrollId(aScrollId)
+    , mIsRoot(aIsRoot)
     , mConfig(aConfig)
   {}
 
-  bool IsRoot() const;
+  bool IsRoot() const
+  {
+    return mIsRoot;
+  }
 
   ViewID GetId() const
   {
@@ -137,6 +141,7 @@ private:
   nsresult Update(const ViewConfig& aConfig);
 
   ViewID mScrollId;
+  bool mIsRoot;
   ViewConfig mConfig;
 };
 
@@ -184,7 +189,8 @@ public:
   virtual bool DoSendAsyncMessage(JSContext* aCx,
                                   const nsAString& aMessage,
                                   const mozilla::dom::StructuredCloneData& aData,
-                                  JS::Handle<JSObject *> aCpows);
+                                  JS::Handle<JSObject *> aCpows,
+                                  nsIPrincipal* aPrincipal) MOZ_OVERRIDE;
   virtual bool CheckPermission(const nsAString& aPermission) MOZ_OVERRIDE;
   virtual bool CheckManifestURL(const nsAString& aManifestURL) MOZ_OVERRIDE;
   virtual bool CheckAppHasPermission(const nsAString& aPermission) MOZ_OVERRIDE;
@@ -453,6 +459,9 @@ private:
   // See nsIFrameLoader.idl. EVENT_MODE_NORMAL_DISPATCH automatically
   // forwards some input events to out-of-process content.
   uint32_t mEventMode;
+
+  // Indicate if we have sent 'remote-browser-frame-pending'.
+  bool mPendingFrameSent;
 };
 
 #endif

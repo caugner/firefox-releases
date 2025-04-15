@@ -84,6 +84,9 @@ public:
      */
     static void JoinAllSubprocesses();
 
+    static bool PreallocatedProcessReady();
+    static void RunAfterPreallocatedProcessReady(nsIRunnable* aRequest);
+
     static already_AddRefed<ContentParent>
     GetNewOrUsed(bool aForBrowserElement = false);
 
@@ -92,7 +95,7 @@ public:
      */
     static already_AddRefed<ContentParent> PreallocateAppProcess();
 
-    static void RunNuwaProcess();
+    static already_AddRefed<ContentParent> RunNuwaProcess();
 
     /**
      * Get or create a content process for the given TabContext.  aFrameElement
@@ -117,7 +120,8 @@ public:
     virtual bool DoSendAsyncMessage(JSContext* aCx,
                                     const nsAString& aMessage,
                                     const mozilla::dom::StructuredCloneData& aData,
-                                    JS::Handle<JSObject *> aCpows) MOZ_OVERRIDE;
+                                    JS::Handle<JSObject *> aCpows,
+                                    nsIPrincipal* aPrincipal) MOZ_OVERRIDE;
     virtual bool CheckPermission(const nsAString& aPermission) MOZ_OVERRIDE;
     virtual bool CheckManifestURL(const nsAString& aManifestURL) MOZ_OVERRIDE;
     virtual bool CheckAppHasPermission(const nsAString& aPermission) MOZ_OVERRIDE;
@@ -139,10 +143,9 @@ public:
 
     bool IsAlive();
     bool IsForApp();
-
-    void SetChildMemoryReports(const InfallibleTArray<MemoryReport>&
-                               childReports);
-    void UnregisterChildMemoryReporter();
+#ifdef MOZ_NUWA_PROCESS
+    bool IsNuwaProcess();
+#endif
 
     GeckoChildProcessHost* Process() {
         return mSubprocess;
@@ -212,14 +215,17 @@ public:
         return PContentParent::RecvPJavaScriptConstructor(aActor);
     }
 
-    virtual bool SendNuwaFork();
-
+    virtual bool RecvRecordingDeviceEvents(const nsString& aRecordingStatus,
+                                           const nsString& aPageURL,
+                                           const bool& aIsAudio,
+                                           const bool& aIsVideo) MOZ_OVERRIDE;
 protected:
     void OnChannelConnected(int32_t pid) MOZ_OVERRIDE;
     virtual void ActorDestroy(ActorDestroyReason why);
     void OnNuwaForkTimeout();
 
     bool ShouldContinueFromReplyTimeout() MOZ_OVERRIDE;
+    bool ShouldSandboxContentProcesses();
 
 private:
     static nsDataHashtable<nsStringHashKey, ContentParent*> *sAppContentParents;
@@ -264,6 +270,11 @@ private:
 
     // The common initialization for the constructors.
     void InitializeMembers();
+
+    // The common initialization logic shared by all constuctors.
+    void InitInternal(ProcessPriority aPriority,
+                      bool aSetupOffMainThreadCompositing,
+                      bool aSendRegisteredChrome);
 
     virtual ~ContentParent();
 
@@ -339,7 +350,7 @@ private:
 
     virtual bool DeallocPIndexedDBParent(PIndexedDBParent* aActor);
 
-    virtual PMemoryReportRequestParent* AllocPMemoryReportRequestParent();
+    virtual PMemoryReportRequestParent* AllocPMemoryReportRequestParent(const uint32_t& generation);
     virtual bool DeallocPMemoryReportRequestParent(PMemoryReportRequestParent* actor);
 
     virtual PTestShellParent* AllocPTestShellParent();
@@ -371,6 +382,13 @@ private:
 
     virtual PFMRadioParent* AllocPFMRadioParent();
     virtual bool DeallocPFMRadioParent(PFMRadioParent* aActor);
+
+    virtual PAsmJSCacheEntryParent* AllocPAsmJSCacheEntryParent(
+                                 const asmjscache::OpenMode& aOpenMode,
+                                 const int64_t& aSizeToWrite,
+                                 const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
+    virtual bool DeallocPAsmJSCacheEntryParent(
+                                   PAsmJSCacheEntryParent* aActor) MOZ_OVERRIDE;
 
     virtual PSpeechSynthesisParent* AllocPSpeechSynthesisParent();
     virtual bool DeallocPSpeechSynthesisParent(PSpeechSynthesisParent* aActor);
@@ -414,23 +432,28 @@ private:
     virtual bool RecvShowAlertNotification(const nsString& aImageUrl, const nsString& aTitle,
                                            const nsString& aText, const bool& aTextClickable,
                                            const nsString& aCookie, const nsString& aName,
-                                           const nsString& aBidi, const nsString& aLang);
+                                           const nsString& aBidi, const nsString& aLang,
+                                           const IPC::Principal& aPrincipal);
 
-    virtual bool RecvCloseAlert(const nsString& aName);
+    virtual bool RecvCloseAlert(const nsString& aName,
+                                const IPC::Principal& aPrincipal);
 
     virtual bool RecvLoadURIExternal(const URIParams& uri);
 
     virtual bool RecvSyncMessage(const nsString& aMsg,
                                  const ClonedMessageData& aData,
                                  const InfallibleTArray<CpowEntry>& aCpows,
+                                 const IPC::Principal& aPrincipal,
                                  InfallibleTArray<nsString>* aRetvals);
     virtual bool AnswerRpcMessage(const nsString& aMsg,
                                   const ClonedMessageData& aData,
                                   const InfallibleTArray<CpowEntry>& aCpows,
+                                  const IPC::Principal& aPrincipal,
                                   InfallibleTArray<nsString>* aRetvals);
     virtual bool RecvAsyncMessage(const nsString& aMsg,
                                   const ClonedMessageData& aData,
-                                  const InfallibleTArray<CpowEntry>& aCpows);
+                                  const InfallibleTArray<CpowEntry>& aCpows,
+                                  const IPC::Principal& aPrincipal);
 
     virtual bool RecvFilePathUpdateNotify(const nsString& aType,
                                           const nsString& aStorageName,
@@ -473,6 +496,10 @@ private:
 
     virtual bool RecvBroadcastVolume(const nsString& aVolumeName);
 
+    virtual bool RecvSpeakerManagerGetSpeakerStatus(bool* aValue);
+
+    virtual bool RecvSpeakerManagerForceSpeaker(const bool& aEnable);
+
     virtual bool RecvSystemMessageHandled() MOZ_OVERRIDE;
 
     virtual bool RecvNuwaReady() MOZ_OVERRIDE;
@@ -498,14 +525,6 @@ private:
 
     uint64_t mChildID;
     int32_t mGeolocationWatchID;
-
-    // This is a reporter holding the reports from the child's last
-    // "child-memory-reporter-update" notification.  To update this, one can
-    // broadcast the topic "child-memory-reporter-request" using the
-    // nsIObserverService.
-    //
-    // Note that this assumes there is at most one child process at a time!
-    nsCOMPtr<nsIMemoryReporter> mChildReporter;
 
     nsString mAppManifestURL;
 
@@ -535,6 +554,7 @@ private:
 
     bool mSendPermissionUpdates;
     bool mIsForBrowser;
+    bool mIsNuwaProcess;
 
     // These variables track whether we've called Close(), CloseWithError()
     // and KillHard() on our channel.

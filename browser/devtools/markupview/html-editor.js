@@ -60,13 +60,15 @@ function HTMLEditor(htmlDocument)
   };
 
   config.extraKeys[ctrl("Enter")] = this.hide;
+  config.extraKeys["F2"] = this.hide;
   config.extraKeys["Esc"] = this.hide.bind(this, false);
 
   this.container.addEventListener("click", this.hide, false);
   this.editorInner.addEventListener("click", stopPropagation, false);
   this.editor = new Editor(config);
 
-  this.editor.appendTo(this.editorInner).then(() => {
+  let iframe = this.editorInner.ownerDocument.createElement("iframe");
+  this.editor.appendTo(this.editorInner, iframe).then(() => {
     this.hide(false);
   }).then(null, (err) => console.log(err.message));
 }
@@ -140,6 +142,8 @@ HTMLEditor.prototype = {
 
     this.editor.refresh();
     this.editor.focus();
+
+    this.emit("popupshown");
   },
 
   /**
@@ -161,9 +165,9 @@ HTMLEditor.prototype = {
     let newValue = this.editor.getText();
     let valueHasChanged = this._originalValue !== newValue;
     let preventCommit = shouldCommit === false || !valueHasChanged;
-    this.emit("popup-hidden", !preventCommit, newValue);
     this._originalValue = undefined;
     this._visible = undefined;
+    this.emit("popuphidden", !preventCommit, newValue);
   },
 
   /**

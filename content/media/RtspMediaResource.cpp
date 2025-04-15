@@ -18,13 +18,13 @@
 
 #ifdef PR_LOGGING
 PRLogModuleInfo* gRtspMediaResourceLog;
-#define LOG(msg, ...) PR_LOG(gRtspMediaResourceLog, PR_LOG_DEBUG, \
-                             (msg, ##__VA_ARGS__))
+#define RTSP_LOG(msg, ...) PR_LOG(gRtspMediaResourceLog, PR_LOG_DEBUG, \
+                                  (msg, ##__VA_ARGS__))
 // Debug logging macro with object pointer and class name.
 #define RTSPMLOG(msg, ...) \
-        LOG("%p [RtspMediaResource]: " msg, this, ##__VA_ARGS__)
+        RTSP_LOG("%p [RtspMediaResource]: " msg, this, ##__VA_ARGS__)
 #else
-#define LOG(msg, ...)
+#define RTSP_LOG(msg, ...)
 #define RTSPMLOG(msg, ...)
 #endif
 
@@ -72,6 +72,7 @@ public:
   void Start() {
     MonitorAutoLock monitor(mMonitor);
     mIsStarted = true;
+    mFrameType = 0;
   }
   void Stop() {
     MonitorAutoLock monitor(mMonitor);
@@ -393,7 +394,7 @@ RtspMediaResource::Listener::OnConnected(uint8_t aTrackIdx,
 }
 
 nsresult
-RtspMediaResource::Listener::OnDisconnected(uint8_t aTrackIdx, uint32_t reason)
+RtspMediaResource::Listener::OnDisconnected(uint8_t aTrackIdx, nsresult reason)
 {
   if (!mResource)
     return NS_OK;
@@ -439,16 +440,55 @@ RtspMediaResource::OnMediaDataAvailable(uint8_t aTrackIdx,
   return NS_OK;
 }
 
+// Bug 962309 - Video RTSP support should be disabled in 1.3
+bool
+RtspMediaResource::IsVideoEnabled()
+{
+  return Preferences::GetBool("media.rtsp.video.enabled", false);
+}
+
+bool
+RtspMediaResource::IsVideo(uint8_t tracks, nsIStreamingProtocolMetaData *meta)
+{
+  bool isVideo = false;
+  for (int i = 0; i < tracks; ++i) {
+    nsCOMPtr<nsIStreamingProtocolMetaData> trackMeta;
+    mMediaStreamController->GetTrackMetaData(i, getter_AddRefs(trackMeta));
+    MOZ_ASSERT(trackMeta);
+    uint32_t w = 0, h = 0;
+    trackMeta->GetWidth(&w);
+    trackMeta->GetHeight(&h);
+    if (w > 0 || h > 0) {
+      isVideo = true;
+      break;
+    }
+  }
+  return isVideo;
+}
+
 nsresult
 RtspMediaResource::OnConnected(uint8_t aTrackIdx,
                                nsIStreamingProtocolMetaData *meta)
 {
   if (mIsConnected) {
+    for (uint32_t i = 0 ; i < mTrackBuffer.Length(); ++i) {
+      mTrackBuffer[i]->Start();
+    }
     return NS_OK;
   }
 
   uint8_t tracks;
   mMediaStreamController->GetTotalTracks(&tracks);
+
+  // If the preference of RTSP video feature is not enabled and the streaming is
+  // video, we give up moving forward.
+  if (!IsVideoEnabled() && IsVideo(tracks, meta)) {
+    // Give up, report error to media element.
+    nsCOMPtr<nsIRunnable> event =
+      NS_NewRunnableMethod(mDecoder, &MediaDecoder::DecodeError);
+    NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
+    return NS_ERROR_FAILURE;
+  }
   uint64_t duration = 0;
   for (int i = 0; i < tracks; ++i) {
     nsCString rtspTrackId("RtspTrack");
@@ -471,6 +511,10 @@ RtspMediaResource::OnConnected(uint8_t aTrackIdx,
     mTrackBuffer.AppendElement(new RtspTrackBuffer(rtspTrackId.get(),
                                                    i, slotSize));
     mTrackBuffer[i]->Start();
+  }
+
+  if (!mDecoder) {
+    return NS_ERROR_FAILURE;
   }
 
   // If the duration is 0, imply the stream is live stream.
@@ -504,7 +548,7 @@ RtspMediaResource::OnConnected(uint8_t aTrackIdx,
 
   MediaDecoderOwner* owner = mDecoder->GetMediaOwner();
   NS_ENSURE_TRUE(owner, NS_ERROR_FAILURE);
-  HTMLMediaElement* element = owner->GetMediaElement();
+  dom::HTMLMediaElement* element = owner->GetMediaElement();
   NS_ENSURE_TRUE(element, NS_ERROR_FAILURE);
 
   element->FinishDecoderSetup(mDecoder, this);
@@ -514,7 +558,7 @@ RtspMediaResource::OnConnected(uint8_t aTrackIdx,
 }
 
 nsresult
-RtspMediaResource::OnDisconnected(uint8_t aTrackIdx, uint32_t aReason)
+RtspMediaResource::OnDisconnected(uint8_t aTrackIdx, nsresult aReason)
 {
   NS_ASSERTION(NS_IsMainThread(), "Don't call on non-main thread");
 
@@ -523,9 +567,25 @@ RtspMediaResource::OnDisconnected(uint8_t aTrackIdx, uint32_t aReason)
     mTrackBuffer[i]->Reset();
   }
 
-  if (aReason == (uint32_t)NS_ERROR_CONNECTION_REFUSED) {
-    mDecoder->NetworkError();
+  // If mDecoder is null pointer, it means this OnDisconnected event is
+  // triggered when media element was destroyed and mDecoder was already
+  // shutdown.
+  if (!mDecoder) {
+    return NS_OK;
   }
+
+  if (aReason == NS_ERROR_NOT_INITIALIZED ||
+      aReason == NS_ERROR_CONNECTION_REFUSED ||
+      aReason == NS_ERROR_NOT_CONNECTED ||
+      aReason == NS_ERROR_NET_TIMEOUT) {
+    RTSPMLOG("Error in OnDisconnected 0x%x", aReason);
+    mDecoder->NetworkError();
+    return NS_OK;
+  }
+
+  // Resetting the decoder and media element when the connection
+  // between Rtsp client and server goes down.
+  mDecoder->ResetConnectionState();
   return NS_OK;
 }
 
@@ -535,7 +595,7 @@ void RtspMediaResource::Suspend(bool aCloseImmediately)
 
   MediaDecoderOwner* owner = mDecoder->GetMediaOwner();
   NS_ENSURE_TRUE_VOID(owner);
-  HTMLMediaElement* element = owner->GetMediaElement();
+  dom::HTMLMediaElement* element = owner->GetMediaElement();
   NS_ENSURE_TRUE_VOID(element);
 
   mMediaStreamController->Suspend();
@@ -548,7 +608,7 @@ void RtspMediaResource::Resume()
 
   MediaDecoderOwner* owner = mDecoder->GetMediaOwner();
   NS_ENSURE_TRUE_VOID(owner);
-  HTMLMediaElement* element = owner->GetMediaElement();
+  dom::HTMLMediaElement* element = owner->GetMediaElement();
   NS_ENSURE_TRUE_VOID(element);
 
   if (mChannel) {
@@ -566,6 +626,12 @@ nsresult RtspMediaResource::Close()
 {
   NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
   mMediaStreamController->Stop();
+  // Since mDecoder is not an nsCOMPtr in BaseMediaResource, we have to
+  // explicitly set it as null pointer in order to prevent misuse from this
+  // object (RtspMediaResource).
+  if (mDecoder) {
+    mDecoder = nullptr;
+  }
   return NS_OK;
 }
 

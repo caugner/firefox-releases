@@ -71,14 +71,13 @@ public:
   // nsIDocumentObserver
   NS_DECL_NSIDOCUMENTOBSERVER
 
-  // nsAccessNode
+  // Accessible
   virtual void Init();
   virtual void Shutdown();
   virtual nsIFrame* GetFrame() const;
   virtual nsINode* GetNode() const { return mDocumentNode; }
   nsIDocument* DocumentNode() const { return mDocumentNode; }
 
-  // Accessible
   virtual mozilla::a11y::ENameValueFlag Name(nsString& aName);
   virtual void Description(nsString& aDescription);
   virtual Accessible* FocusedChild();
@@ -222,7 +221,7 @@ public:
   /**
    * Return the cached accessible by the given unique ID within this document.
    *
-   * @note   the unique ID matches with the uniqueID() of nsAccessNode
+   * @note   the unique ID matches with the uniqueID() of Accessible
    *
    * @param  aUniqueID  [in] the unique ID used to cache the node.
    */
@@ -534,10 +533,16 @@ protected:
   nsCOMPtr<nsIContent> mAnchorJumpElm;
 
   /**
-   * Keep the ARIA attribute old value that is initialized by
-   * AttributeWillChange and used by AttributeChanged notifications.
+   * A generic state (see items below) before the attribute value was changed.
+   * @see AttributeWillChange and AttributeChanged notifications.
    */
-  nsIAtom* mARIAAttrOldValue;
+  union {
+    // ARIA attribute value
+    nsIAtom* mARIAAttrOldValue;
+
+    // True if the accessible state bit was on
+    bool mStateBitWasOn;
+  };
 
   nsTArray<nsRefPtr<DocAccessible> > mChildDocuments;
 

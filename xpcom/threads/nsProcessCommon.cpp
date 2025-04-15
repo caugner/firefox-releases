@@ -11,7 +11,7 @@
  *****************************************************************************
  */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "nsCOMPtr.h"
 #include "nsAutoPtr.h"
@@ -88,7 +88,8 @@ nsProcess::Init(nsIFile* executable)
     if (mExecutable)
         return NS_ERROR_ALREADY_INITIALIZED;
 
-    NS_ENSURE_ARG_POINTER(executable);
+    if (NS_WARN_IF(!executable))
+        return NS_ERROR_INVALID_ARG;
     bool isFile;
 
     //First make sure the file exists
@@ -112,7 +113,7 @@ nsProcess::Init(nsIFile* executable)
 
 #if defined(XP_WIN)
 // Out param `wideCmdLine` must be PR_Freed by the caller.
-static int assembleCmdLine(char *const *argv, PRUnichar **wideCmdLine,
+static int assembleCmdLine(char *const *argv, wchar_t **wideCmdLine,
                            UINT codePage)
 {
     char *const *arg;
@@ -213,7 +214,7 @@ static int assembleCmdLine(char *const *argv, PRUnichar **wideCmdLine,
 
     *p = '\0';
     int32_t numChars = MultiByteToWideChar(codePage, 0, cmdLine, -1, nullptr, 0);
-    *wideCmdLine = (PRUnichar *) PR_MALLOC(numChars*sizeof(PRUnichar));
+    *wideCmdLine = (wchar_t *) PR_MALLOC(numChars*sizeof(wchar_t));
     MultiByteToWideChar(codePage, 0, cmdLine, -1, *wideCmdLine, numChars); 
     PR_Free(cmdLine);
     return 0;
@@ -408,8 +409,10 @@ nsresult
 nsProcess::RunProcess(bool blocking, char **my_argv, nsIObserver* observer,
                       bool holdWeak, bool argsUTF8)
 {
-    NS_ENSURE_TRUE(mExecutable, NS_ERROR_NOT_INITIALIZED);
-    NS_ENSURE_FALSE(mThread, NS_ERROR_ALREADY_INITIALIZED);
+    if (NS_WARN_IF(!mExecutable))
+        return NS_ERROR_NOT_INITIALIZED;
+    if (NS_WARN_IF(mThread))
+        return NS_ERROR_ALREADY_INITIALIZED;
 
     if (observer) {
         if (holdWeak) {
@@ -427,7 +430,7 @@ nsProcess::RunProcess(bool blocking, char **my_argv, nsIObserver* observer,
 
 #if defined(PROCESSMODEL_WINAPI)
     BOOL retVal;
-    PRUnichar *cmdLine = nullptr;
+    wchar_t *cmdLine = nullptr;
 
     // The 'argv' array is null-terminated and always starts with the program path.
     // If the second slot is non-null then arguments are being passed.

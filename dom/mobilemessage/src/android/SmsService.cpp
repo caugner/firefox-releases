@@ -23,13 +23,6 @@ SmsService::GetSmsDefaultServiceId(uint32_t* aServiceId)
 }
 
 NS_IMETHODIMP
-SmsService::HasSupport(bool* aHasSupport)
-{
-  *aHasSupport = true;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 SmsService::GetSegmentInfoForText(const nsAString& aText,
                                   nsIMobileMessageCallback* aRequest)
 {
@@ -44,7 +37,8 @@ SmsService::GetSegmentInfoForText(const nsAString& aText,
 }
 
 NS_IMETHODIMP
-SmsService::Send(const nsAString& aNumber,
+SmsService::Send(uint32_t         aServiceId,
+                 const nsAString& aNumber,
                  const nsAString& aMessage,
                  const bool       aSilent,
                  nsIMobileMessageCallback* aRequest)
@@ -77,6 +71,14 @@ SmsService::RemoveSilentNumber(const nsAString& aNumber)
 {
   NS_NOTYETIMPLEMENTED("Implement me!");
   return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+SmsService::GetSmscAddress(uint32_t aServiceId,
+                           nsIMobileMessageCallback *aRequest)
+{
+  // TODO: bug 878016 - Android backend: implement getSMSCAddress/setSMSCAddress
+  return NS_OK;
 }
 
 } // namespace mobilemessage

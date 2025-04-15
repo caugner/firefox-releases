@@ -8,6 +8,7 @@
 #ifdef MOZ_WIDGET_GONK
 
 #include "mozilla/layers/TextureClient.h"
+#include "ipc/FenceUtils.h" // for FenceHandle
 #include "ISurfaceAllocator.h" // For IsSurfaceDescriptorValid
 #include "mozilla/layers/ShadowLayerUtilsGralloc.h"
 #include <ui/GraphicBuffer.h>
@@ -54,6 +55,8 @@ public:
 
   virtual TextureClientData* DropTextureData() MOZ_OVERRIDE;
 
+  virtual void SetReleaseFenceHandle(FenceHandle aReleaseFenceHandle) MOZ_OVERRIDE;
+
   void InitWith(GrallocBufferActor* aActor, gfx::IntSize aSize);
 
   gfx::IntSize GetSize() const MOZ_OVERRIDE { return mSize; }
@@ -80,7 +83,8 @@ public:
 
   virtual uint8_t* GetBuffer() const MOZ_OVERRIDE;
 
-  virtual bool AllocateForSurface(gfx::IntSize aSize) MOZ_OVERRIDE;
+  virtual bool AllocateForSurface(gfx::IntSize aSize,
+                                  TextureAllocationFlags aFlags = ALLOC_DEFAULT) MOZ_OVERRIDE;
 
   virtual bool AllocateForYCbCr(gfx::IntSize aYSize,
                                 gfx::IntSize aCbCrSize,

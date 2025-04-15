@@ -29,12 +29,12 @@
 #tabs-container {
   background: @panel_dark_color@ @panel_dark_background@;
   padding: 0;
-  -moz-padding-start: @metro_spacing_xnormal@;
+  -moz-padding-start: @metro_spacing_normal@;
   width: 100%;
 }
 
 #tabs {
-  -moz-padding-start: @metro_spacing_large@;
+  -moz-padding-start: 0;
 }
 
 #tabs .tabs-list {
@@ -46,17 +46,19 @@
   overflow: auto;
 }
 
-#tabs > .tabs-scrollbox > .arrowscrollbox-scrollbox {
-  overflow: hidden;
-}
-
+.tabs-scrollbox > .scrollbutton-up[collapsed],
+.tabs-scrollbox > .scrollbutton-down[collapsed],
 #tabs[input="imprecise"] > .tabs-scrollbox > .scrollbutton-up,
 #tabs[input="imprecise"] > .tabs-scrollbox > .scrollbutton-down {
-  visibility: collapse !important;
+  visibility: hidden !important;
+  pointer-events: none;
 }
+
 #tabs > .tabs-scrollbox > .scrollbutton-up {
   list-style-image: url("images/tab-arrows.png") !important;
   -moz-image-region: rect(15px 58px 63px 14px) !important;
+  padding-right: 15px;
+  width: @tabs_scrollarrow_width@;
 }
 #tabs > .tabs-scrollbox > .scrollbutton-up:hover {
   -moz-image-region: rect(14px 102px 62px 58px) !important;
@@ -71,6 +73,8 @@
 #tabs > .tabs-scrollbox > .scrollbutton-down {
   list-style-image: url("images/tab-arrows.png") !important;
   -moz-image-region: rect(73px 58px 121px 14px) !important;
+  padding-left: 15px;
+  width: @tabs_scrollarrow_width@;
 }
 #tabs > .tabs-scrollbox > .scrollbutton-down:hover {
   -moz-image-region: rect(72px 102px 120px 58px) !important;
@@ -80,6 +84,36 @@
 }
 #tabs > .tabs-scrollbox > .scrollbutton-down[disabled] {
   -moz-image-region: rect(73px 196px 121px 152px) !important;
+}
+
+.tabs-scrollbox > .scrollbutton-up:not([disabled]):not([collapsed])::after {
+  content: "";
+  visibility: visible;
+  display: block;
+  background-color: rgb(90, 91, 95);
+  position: absolute;
+  top: 0;
+  left: calc(@tabs_scrollarrow_width@ + @metro_spacing_normal@); /* .scrollbutton-up width + #tabs-container left padding */
+  width: 1px;
+  height: @tabs_height@;
+}
+
+.tabs-scrollbox > .scrollbutton-down:not([disabled]):not([collapsed])::before {
+  content: "";
+  visibility: visible;
+  display: block;
+  background-color: rgb(90, 91, 95);
+  position: absolute;
+  top: 0;
+  right: calc(@tabs_scrollarrow_width@ + @newtab_button_width@); /* .scrollbutton-down width + #newtab-button width */
+  width: 1px;
+  height: @tabs_height@;
+}
+
+/* Hack for bug 965550 */
+.tabs-scrollbox > .arrowscrollbox-scrollbox > .scrollbox-innerbox {
+  -moz-padding-start: calc(2 * @tabs_scrollarrow_width@);
+  -moz-margin-start: calc(-2 * @tabs_scrollarrow_width@);
 }
 
 #tabs-container[viewstate="snapped"] {
@@ -160,6 +194,12 @@ documenttab[selected] .documenttab-selection {
   background: transparent -moz-image-rect(url("chrome://browser/skin/images/tab-overlay.png"), 50%, 100%, 100%, 0%) 50% 50% no-repeat;
 }
 
+.documenttab-crop:-moz-locale-dir(rtl),
+.documenttab-selection:-moz-locale-dir(rtl),
+documenttab[selected] .documenttab-selection:-moz-locale-dir(rtl) {
+  transform: scaleX(-1);
+}
+
 .documenttab-close {
   background: none !important;
   padding: @metro_spacing_small@ !important;
@@ -182,19 +222,22 @@ documenttab[selected] .documenttab-selection {
   list-style-image: url(chrome://browser/skin/images/newtab-default.png);
 
   /* Add some extra padding for a larger target */
-  padding: 18px 25px 30px;
+  padding: 18px 20px 30px 20px;
+  width: @newtab_button_width@;
 }
 
 /* Start UI ----------------------------------------------------------------- */
-
-#content-viewport[startpage] browser {
-  padding-bottom: @toolbar_height@;
-}
 
 #startui-page {
   overflow-x: scroll;
   overflow-y: hidden;
   height: 100%;
+}
+
+#startui-page[viewstate="snapped"],
+#startui-page[viewstate="portrait"] {
+  overflow-x: hidden;
+  overflow-y: scroll;
 }
 
 #startui-body {
@@ -220,6 +263,22 @@ documenttab[selected] .documenttab-selection {
 
 #start-container[viewstate="snapped"] .meta-section:not([expanded]) > richgrid {
   visibility: collapse;
+}
+
+/* Watermark */
+#startui-body::after {
+  content: '';
+  width: 256px;
+  height: 256px;
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  margin-top: -128px;
+  margin-left: -128px;
+  z-index: -1;
+  background-image: url("chrome://browser/skin/images/firefox-watermark.png");
+  background-repeat: no-repeat;
+  background-position: center center;
 }
 
 #autocomplete-overlay {
@@ -251,11 +310,6 @@ documenttab[selected] .documenttab-selection {
   transition-duration: 0s;
   transition-delay:    0s;
   transition-property: padding-bottom;
-}
-#browsers[findbar] browser {
-  /* delay setting padding-bottom until the findbar has transitioned in */
-  transition-delay:    @metro_animation_duration@;
-  padding-bottom: @findbar_height@;
 }
 /* Selection overlay and monocles */
 #page,
@@ -327,10 +381,6 @@ documenttab[selected] .documenttab-selection {
   min-width: @scroller_minimum@;
 }
 
-#browsers[input="imprecise"] browser {
-  overflow: hidden;
-}
-
 /* overlay buttons */
 
 .overlay-button {
@@ -363,14 +413,33 @@ documenttab[selected] .documenttab-selection {
   background-image: url(chrome://browser/skin/images/overlay-plus.png);
 }
 
+@media (min-resolution: @min_res_140pc@) {
+  #overlay-back {
+    background-image: url(chrome://browser/skin/images/overlay-back@1.4x.png);
+  }
+
+  #overlay-plus {
+    background-image: url(chrome://browser/skin/images/overlay-plus@1.4x.png);
+  }
+}
+
+@media (min-resolution: @min_res_180pc@) {
+  #overlay-back {
+    background-image: url(chrome://browser/skin/images/overlay-back@1.8x.png);
+  }
+
+  #overlay-plus {
+    background-image: url(chrome://browser/skin/images/overlay-plus@1.8x.png);
+  }
+}
+
 #overlay-back:-moz-locale-dir(ltr),
 #overlay-plus:-moz-locale-dir(rtl) {
   left: -70px;
   background-position: right 6px center;
 }
 
-#overlay-plus:-moz-locale-dir(ltr),
-#overlay-back:-moz-locale-dir(rtl) {
+#overlay-plus:-moz-locale-dir(ltr) {
   right: -70px;
   background-position: left 6px center;
 }
@@ -423,10 +492,19 @@ documenttab[selected] .documenttab-selection {
   transform: translateX(40px) scale(1.2);
 }
 
-#overlay-plus:-moz-locale-dir(ltr):hover,
-#overlay-back:-moz-locale-dir(rtl):hover {
+#overlay-plus:-moz-locale-dir(ltr):hover {
   background-position: left 12px center;
   transform: translateX(-40px) scale(1.2);
+}
+
+#overlay-back:-moz-locale-dir(rtl):hover {
+  transform: translateX(-40px) scale(1.2) scaleX(-1);
+}
+
+#overlay-back:-moz-locale-dir(rtl) {
+  transform: scaleX(-1);
+  right: -70px;
+  background-position: right 9px center;
 }
 
 #overlay-back[mousedrag],
@@ -448,6 +526,11 @@ documenttab[selected] .documenttab-selection {
   visibility: hidden;
 }
 
+#content-viewport[navbar="visible"] .active-tab-notificationbox:not([count="0"]):not([notificationsVisible="false"]) {
+  padding-bottom: @toolbar_height@;
+}
+
+
 /* Progress meter ---------------------------------------------------------- */
 
 #progress-container {
@@ -459,6 +542,9 @@ documenttab[selected] .documenttab-selection {
   background-color: hsla(210,5%,80%,1);
   box-shadow: 0 1px 0 hsla(210,5%,50%,.1) inset;
   -moz-user-focus: ignore;
+}
+#progress-container[startpage] {
+  visibility: collapse;
 }
 
 #progress-control {
@@ -510,6 +596,11 @@ documenttab[selected] .documenttab-selection {
   position: relative;
   z-index: 1;
   transition: opacity @forward_transition_length@ ease-out;
+}
+
+#back-button:-moz-locale-dir(rtl),
+#forward-button:-moz-locale-dir(rtl) {
+  transform: scaleX(-1);
 }
 
 #back-button[disabled] {
@@ -595,11 +686,6 @@ documenttab[selected] .documenttab-selection {
   border-radius: 0;
   border: 0 none !important;
   padding: 0 !important;
-}
-
-#urlbar-edit > hbox > .textbox-input-box > .textbox-input::-moz-selection {
-  color: white;
-  background-color: @metro_orange@;
 }
 
 #urlbar-edit > hbox > .textbox-input-box > .textbox-input:invalid {
@@ -725,6 +811,7 @@ documenttab[selected] .documenttab-selection {
 /* Contextual toolbar controls */
 
 #toolbar-context-autocomplete,
+.hide-on-start,
 #toolbar-context-page {
   transition-property: opacity, visibility;
   transition-duration: @forward_transition_length@;
@@ -732,7 +819,7 @@ documenttab[selected] .documenttab-selection {
 }
 
 #toolbar-contextual:not([autocomplete]) #toolbar-context-autocomplete,
-#toolbar-contextual[startpage] #toolbar-context-page,
+#toolbar-contextual[startpage] .hide-on-start,
 #toolbar-contextual[autocomplete] #toolbar-context-page {
   opacity: 0;
   visibility: hidden;
@@ -748,13 +835,11 @@ documenttab[selected] .documenttab-selection {
 }
 
 #download-progress {
-  -moz-image-region: rect(0px, 40px, 40px, 0px) !important;
+  list-style-image: url(chrome://browser/skin/images/navbar-download.png);
 }
-#download-progress:hover {
-  -moz-image-region: rect(40px, 40px, 80px, 0px) !important;
-}
-#download-progress:active {
-  -moz-image-region: rect(80px, 40px, 120px, 0px) !important;
+
+#download-progress[progress="100"] {
+  list-style-image: url(chrome://browser/skin/images/navbar-download-finished.png);
 }
 
 #pin-button {
@@ -769,7 +854,19 @@ documenttab[selected] .documenttab-selection {
   list-style-image: url(chrome://browser/skin/images/navbar-menu.png);
 }
 
+#close-button {
+  list-style-image: url(chrome://browser/skin/images/navbar-close.png);
+}
+
 @media (min-resolution: @min_res_140pc@) {
+  #download-progress {
+    list-style-image: url(chrome://browser/skin/images/navbar-download@1.4x.png);
+  }
+
+  #download-progress[progress="100"] {
+    list-style-image: url(chrome://browser/skin/images/navbar-download-finished@1.4x.png);
+  }
+
   #pin-button {
     list-style-image: url(chrome://browser/skin/images/navbar-pin@1.4x.png);
   }
@@ -781,9 +878,21 @@ documenttab[selected] .documenttab-selection {
   #menu-button {
     list-style-image: url(chrome://browser/skin/images/navbar-menu@1.4x.png);
   }
+
+  #close-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-close@1.4x.png);
+  }
 }
 
 @media (min-resolution: @min_res_180pc@) {
+  #download-progress {
+    list-style-image: url(chrome://browser/skin/images/navbar-download@1.8x.png);
+  }
+
+  #download-progress[progress="100"] {
+    list-style-image: url(chrome://browser/skin/images/navbar-download-finished@1.8x.png);
+  }
+
   #pin-button {
     list-style-image: url(chrome://browser/skin/images/navbar-pin@1.8x.png);
   }
@@ -795,18 +904,10 @@ documenttab[selected] .documenttab-selection {
   #menu-button {
     list-style-image: url(chrome://browser/skin/images/navbar-menu@1.8x.png);
   }
-}
 
-#close-button {
-  -moz-image-region: rect(0px, 480px, 40px, 440px);
-}
-
-#close-button:hover:not(:active) {
-  -moz-image-region: rect(40px, 480px, 80px, 440px);
-}
-
-#close-button:active {
-  -moz-image-region: rect(80px, 480px, 120px, 440px);
+  #close-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-close@1.8x.png);
+  }
 }
 
 /* Panel UI ================================================================ */
@@ -823,6 +924,10 @@ documenttab[selected] .documenttab-selection {
   -moz-margin-end: 40px;
   list-style-image: url(chrome://browser/skin/images/navbar-back.png);
   -moz-box-pack: center;
+}
+
+#panel-close-button:-moz-locale-dir(rtl) {
+  transform: scaleX(-1);
 }
 
 @media (min-resolution: @min_res_140pc@) {
@@ -959,50 +1064,79 @@ documenttab[selected] .documenttab-selection {
 }
 
 #pin-selected-button {
-  -moz-image-region: rect(0px, 240px, 40px, 200px) !important;
+  list-style-image: url(chrome://browser/skin/images/navbar-contextual-pin.png);
 }
-#pin-selected-button:hover {
-  -moz-image-region: rect(40px, 240px, 80px, 200px) !important;
-}
-#pin-selected-button:active {
-  -moz-image-region: rect(80px, 240px, 120px, 200px) !important;
-}
+
 #unpin-selected-button {
-  -moz-image-region: rect(0px, 280px, 40px, 240px) !important;
+  list-style-image: url(chrome://browser/skin/images/navbar-contextual-unpin.png);
 }
-#unpin-selected-button:hover {
-  -moz-image-region: rect(40px, 280px, 80px, 240px) !important;
+
+#hide-selected-button {
+  list-style-image: url(chrome://browser/skin/images/navbar-contextual-hide.png);
 }
-#unpin-selected-button:active {
-  -moz-image-region: rect(80px, 280px, 120px, 240px) !important;
-}
+
 #delete-selected-button {
-  -moz-image-region: rect(0px, 480px, 40px, 440px) !important;
+  list-style-image: url(chrome://browser/skin/images/navbar-contextual-delete.png);
 }
-#delete-selected-button:hover {
-  -moz-image-region: rect(40px, 480px, 80px, 440px) !important;
-}
-#delete-selected-button:active {
-  -moz-image-region: rect(80px, 480px, 120px, 440px) !important;
-}
+
 #clear-selected-button {
-  -moz-image-region: rect(0px, 520px, 40px, 480px) !important;
-}
-#clear-selected-button:hover {
-  -moz-image-region: rect(40px, 520px, 80px, 480px) !important;
-}
-#clear-selected-button:active {
-  -moz-image-region: rect(80px, 520px, 120px, 480px) !important;
+  list-style-image: url(chrome://browser/skin/images/navbar-contextual-clear.png);
 }
 
 #restore-selected-button {
-  -moz-image-region: rect(0px, 560px, 40px, 520px) !important;
+  list-style-image: url(chrome://browser/skin/images/navbar-contextual-restore.png);
 }
-#restore-selected-button:hover {
-  -moz-image-region: rect(40px, 560px, 80px, 520px) !important;
+
+@media (min-resolution: @min_res_140pc@) {
+  #pin-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-pin@1.4x.png);
+  }
+
+  #unpin-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-unpin@1.4x.png);
+  }
+
+  #hide-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-hide@1.4x.png);
+  }
+
+  #delete-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-delete@1.4x.png);
+  }
+
+  #clear-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-clear@1.4x.png);
+  }
+
+  #restore-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-restore@1.4x.png);
+  }
 }
-#restore-selected-button:active {
-  -moz-image-region: rect(80px, 560px, 120px, 520px) !important;
+
+@media (min-resolution: @min_res_180pc@) {
+  #pin-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-pin@1.8x.png);
+  }
+
+  #unpin-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-unpin@1.8x.png);
+  }
+
+  #hide-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-hide@1.8x.png);
+  }
+
+  #delete-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-delete@1.8x.png);
+  }
+
+  #clear-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-clear@1.8x.png);
+  }
+
+  #restore-selected-button {
+    list-style-image: url(chrome://browser/skin/images/navbar-contextual-restore@1.8x.png);
+  }
 }
 
 /* Download notifications ======================================================= */
@@ -1140,23 +1274,32 @@ flyoutpanel > settings:first-child {
 
 /* About flyout pane ------------------------------------------------------- */
 
+/* Colors are defined in /browser/branding/<dir>/content/metro-about.css */
+
 #about-flyoutpanel {
-  background-image:url('chrome://browser/skin/images/about-footer.png');
+  background-image: url('chrome://branding/content/metro-about-footer.png');
   background-repeat: no-repeat;
   background-attachment: fixed;
   background-position: right bottom;
 }
 
-#about-product-label {
- font-weight: bold;
+#about-flyoutpanel .text-link {
+  color: inherit;
+}
+
+#about-flyoutpanel > .flyoutpanel-wrapper > .flyoutpanel-header,
+#about-flyoutpanel > .flyoutpanel-wrapper > .flyoutpanel-contents {
+  background-color: inherit;
+  border: none;
+}
+
+#about-policy-label {
+  padding: 1.5em @metro_spacing_large@;
+  margin: 1em -@metro_spacing_large@;
 }
 
 #about-version-label {
  margin-top: 11pt;
-}
-
-#about-policy-label {
- margin-top: 24pt;
 }
 
 #currentChannel {

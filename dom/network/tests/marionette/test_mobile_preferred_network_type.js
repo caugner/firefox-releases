@@ -1,65 +1,153 @@
 /* Any copyright is dedicated to the Public Domain.
- * http://creativecommons.org/publicdomain/zero/1.0/ */
+   http://creativecommons.org/publicdomain/zero/1.0/ */
 
 MARIONETTE_TIMEOUT = 60000;
 
-const KEY = "ril.radio.preferredNetworkType";
-
 SpecialPowers.addPermission("mobileconnection", true, document);
-SpecialPowers.addPermission("settings-read", true, document);
-SpecialPowers.addPermission("settings-write", true, document);
 
-let settings = window.navigator.mozSettings;
+let connection = navigator.mozMobileConnections[0];
+ok(connection instanceof MozMobileConnection,
+   "connection is instanceof " + connection.constructor);
 
-function test_revert_previous_setting_on_invalid_value() {
-  log("Testing reverting to previous setting on invalid value received");
+function testSupportedNetworkTypes() {
+  let supportedNetworkTypes = connection.supportedNetworkTypes;
 
-  let getLock = settings.createLock();
-  let getReq = getLock.get(KEY);
-  getReq.addEventListener("success", function onGetSuccess() {
-    let originalValue = getReq.result[KEY] || "wcdma/gsm";
+  ok(Array.isArray(supportedNetworkTypes), "supportedNetworkTypes should be an array");
+  ok(supportedNetworkTypes.indexOf("gsm") >= 0, "Should support 'gsm'");
+  ok(supportedNetworkTypes.indexOf("wcdma") >= 0, "Should support 'wcdma'");
+  ok(supportedNetworkTypes.indexOf("cdma") >= 0, "Should support 'cdma'");
+  ok(supportedNetworkTypes.indexOf("evdo") >= 0, "Should support 'evdo'");
 
-    let setDone = false;
-    settings.addObserver(KEY, function observer(setting) {
-      // Mark if the invalid value has been set in db and wait.
-      if (setting.settingValue == obj[KEY]) {
-        setDone = true;
-        return;
-      }
+  runNextTest();
+}
 
-      // Skip any change before marking but keep it as original value.
-      if (!setDone) {
-        originalValue = setting.settingValue;
-        return;
-      }
+function setPreferredNetworkType(type, callback) {
+  log("setPreferredNetworkType: " + type);
 
-      settings.removeObserver(KEY, observer);
-      is(setting.settingValue, originalValue, "Settings reverted");
-      window.setTimeout(cleanUp, 0);
-    });
+  let request = connection.setPreferredNetworkType(type);
+  ok(request instanceof DOMRequest,
+     "request instanceof " + request.constructor);
 
-    let obj = {};
-    obj[KEY] = "AnInvalidValue";
-    let setLock = settings.createLock();
-    setLock.set(obj);
-    setLock.addEventListener("error", function onSetError() {
-      ok(false, "cannot set '" + KEY + "'");
+  request.onsuccess = function onsuccess() {
+    ok(true, "request success");
+    callback();
+  }
+  request.onerror = function onerror() {
+    ok(false, request.error);
+    callback();
+  }
+}
+
+function getPreferredNetworkType(callback) {
+  log("getPreferredNetworkType");
+
+  let request = connection.getPreferredNetworkType();
+  ok(request instanceof DOMRequest,
+     "request instanceof " + request.constructor);
+
+  request.onsuccess = function onsuccess() {
+    ok(true, "request success");
+    log("getPreferredNetworkType: " + request.result);
+    callback(request.result);
+  }
+  request.onerror = function onerror() {
+    ok(false, request.error);
+    callback();
+  }
+}
+
+function failToSetPreferredNetworkType(type, expectedError, callback) {
+  log("failToSetPreferredNetworkType: " + type + ", expected error: "
+    + expectedError);
+
+  let request = connection.setPreferredNetworkType(type);
+  ok(request instanceof DOMRequest,
+     "request instanceof " + request.constructor);
+
+  request.onsuccess = function onsuccess() {
+    ok(false, "request should not succeed");
+    callback();
+  }
+  request.onerror = function onerror() {
+    ok(true, "request error");
+    is(request.error.name, expectedError);
+    callback();
+  }
+}
+
+function setAndVerifyNetworkType(type) {
+  setPreferredNetworkType(type, function() {
+    getPreferredNetworkType(function(result) {
+      is(result, type);
+      testPreferredNetworkTypes();
     });
   });
-  getReq.addEventListener("error", function onGetError() {
-    ok(false, "cannot get default value of '" + KEY + "'");
+}
+
+function testPreferredNetworkTypes() {
+  let networkType = supportedTypes.shift();
+  if (!networkType) {
+    runNextTest();
+    return;
+  }
+  setAndVerifyNetworkType(networkType);
+}
+
+function failToSetAndVerifyNetworkType(type, expectedError, previousType) {
+  failToSetPreferredNetworkType(type, expectedError, function() {
+    getPreferredNetworkType(function(result) {
+      // should return the previous selected type.
+      is(result, previousType);
+      testInvalidNetworkTypes();
+    });
   });
+}
+
+function testInvalidNetworkTypes() {
+  let networkType = invalidTypes.shift();
+  if (!networkType) {
+    runNextTest();
+    return;
+  }
+  failToSetAndVerifyNetworkType(networkType, "InvalidParameter",
+                                "wcdma/gsm");
+}
+
+let supportedTypes = [
+  'gsm',
+  'wcdma',
+  'wcdma/gsm-auto',
+  'cdma/evdo',
+  'evdo',
+  'cdma',
+  'wcdma/gsm/cdma/evdo',
+  'wcdma/gsm' // restore to default
+];
+
+let invalidTypes = [
+  ' ',
+  'AnInvalidType'
+];
+
+let tests = [
+  testSupportedNetworkTypes,
+  testPreferredNetworkTypes,
+  testInvalidNetworkTypes
+];
+
+function runNextTest() {
+  let test = tests.shift();
+  if (!test) {
+    cleanUp();
+    return;
+  }
+
+  test();
 }
 
 function cleanUp() {
   SpecialPowers.removePermission("mobileconnection", document);
-  SpecialPowers.removePermission("settings-write", document);
-  SpecialPowers.removePermission("settings-read", document);
-
   finish();
 }
 
-waitFor(test_revert_previous_setting_on_invalid_value, function () {
-  return navigator.mozMobileConnection.voice.connected;
-});
-
+runNextTest();

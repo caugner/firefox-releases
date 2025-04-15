@@ -16,7 +16,7 @@ const XUL_NS      = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.x
 // while shifting to a line which was initially out of view.
 const MAX_VERTICAL_OFFSET = 3;
 
-const promise = require("sdk/core/promise");
+const {Promise: promise} = Cu.import("resource://gre/modules/Promise.jsm", {});
 const events  = require("devtools/shared/event-emitter");
 
 Cu.import("resource://gre/modules/Services.jsm");
@@ -57,7 +57,7 @@ const CM_IFRAME   =
   "    <style>" +
   "      html, body { height: 100%; }" +
   "      body { margin: 0; overflow: hidden; }" +
-  "      .CodeMirror { width: 100%; height: 100% !important; }" +
+  "      .CodeMirror { width: 100%; height: 100% !important; line-height: normal!important}" +
   "    </style>" +
 [ "    <link rel='stylesheet' href='" + style + "'>" for (style of CM_STYLES) ].join("\n") +
   "  </head>" +
@@ -67,8 +67,9 @@ const CM_IFRAME   =
 const CM_MAPPING = [
   "focus",
   "hasFocus",
-  "getCursor",
+  "lineCount",
   "somethingSelected",
+  "getCursor",
   "setSelection",
   "getSelection",
   "replaceSelection",
@@ -76,14 +77,7 @@ const CM_MAPPING = [
   "redo",
   "clearHistory",
   "openDialog",
-  "cursorCoords",
-  "lineCount",
   "refresh"
-];
-
-const CM_JUMP_DIALOG = [
-  L10N.GetStringFromName("gotoLineCmd.promptTitle")
-    + " <input type=text style='width: 10em'/>"
 ];
 
 const { cssProperties, cssValues, cssColors } = getCSSKeywords();
@@ -98,10 +92,6 @@ Editor.modes = {
   vs:   { name: "x-shader/x-vertex" },
   fs:   { name: "x-shader/x-fragment" }
 };
-
-function ctrl(k) {
-  return (Services.appinfo.OS == "Darwin" ? "Cmd-" : "Ctrl-") + k;
-}
 
 /**
  * A very thin wrapper around CodeMirror. Provides a number
@@ -130,29 +120,41 @@ function Editor(config) {
 
   this.version = null;
   this.config = {
-    value:           "",
-    mode:            Editor.modes.text,
-    indentUnit:      tabSize,
-    tabSize:         tabSize,
-    contextMenu:     null,
-    matchBrackets:   true,
-    extraKeys:       {},
-    indentWithTabs:  useTabs,
-    styleActiveLine: true,
-    theme: "mozilla"
+    value:             "",
+    mode:              Editor.modes.text,
+    indentUnit:        tabSize,
+    tabSize:           tabSize,
+    contextMenu:       null,
+    matchBrackets:     true,
+    extraKeys:         {},
+    indentWithTabs:    useTabs,
+    styleActiveLine:   true,
+    autoCloseBrackets: true,
+    theme:             "mozilla"
   };
 
-  // Overwrite default config with user-provided, if needed.
-  Object.keys(config).forEach((k) => this.config[k] = config[k]);
-
   // Additional shortcuts.
-  this.config.extraKeys[ctrl("J")] = (cm) => this.jumpToLine();
-  this.config.extraKeys[ctrl("/")] = "toggleComment";
+  this.config.extraKeys[Editor.keyFor("jumpToLine")] = (cm) => this.jumpToLine(cm);
+  this.config.extraKeys[Editor.keyFor("moveLineUp")] = (cm) => this.moveLineUp();
+  this.config.extraKeys[Editor.keyFor("moveLineDown")] = (cm) => this.moveLineDown();
+  this.config.extraKeys[Editor.keyFor("toggleComment")] = "toggleComment";
 
-  // Disable ctrl-[ and ctrl-] because toolbox uses those
-  // shortcuts.
-  this.config.extraKeys[ctrl("[")] = false;
-  this.config.extraKeys[ctrl("]")] = false;
+  // Disable ctrl-[ and ctrl-] because toolbox uses those shortcuts.
+  this.config.extraKeys[Editor.keyFor("indentLess")] = false;
+  this.config.extraKeys[Editor.keyFor("indentMore")] = false;
+
+  // Overwrite default config with user-provided, if needed.
+  Object.keys(config).forEach((k) => {
+    if (k != "extraKeys")
+      return this.config[k] = config[k];
+
+    if (!config.extraKeys)
+      return;
+
+    Object.keys(config.extraKeys).forEach((key) => {
+      this.config.extraKeys[key] = config.extraKeys[key];
+    });
+  });
 
   // Overwrite default tab behavior. If something is selected,
   // indent those lines. If nothing is selected and we're
@@ -180,15 +182,19 @@ Editor.prototype = {
 
   /**
    * Appends the current Editor instance to the element specified by
-   * the only argument 'el'. This method actually creates and loads
-   * CodeMirror and all its dependencies.
+   * 'el'. You can also provide your won iframe to host the editor as
+   * an optional second parameter. This method actually creates and
+   * loads CodeMirror and all its dependencies.
    *
    * This method is asynchronous and returns a promise.
    */
-  appendTo: function (el) {
+  appendTo: function (el, env) {
     let def = promise.defer();
     let cm  = editors.get(this);
-    let env = el.ownerDocument.createElement("iframe");
+
+    if (!env)
+      env = el.ownerDocument.createElementNS(XUL_NS, "iframe");
+
     env.flex = 1;
 
     if (cm)
@@ -229,6 +235,7 @@ Editor.prototype = {
       }, false);
 
       cm.on("focus", () => this.emit("focus"));
+      cm.on("scroll", () => this.emit("scroll"));
       cm.on("change", () => {
         this.emit("change");
         if (!this._lastDirty) {
@@ -236,8 +243,18 @@ Editor.prototype = {
           this.emit("dirty-change");
         }
       });
-      cm.on("gutterClick", (cm, line) => this.emit("gutterClick", line));
       cm.on("cursorActivity", (cm) => this.emit("cursorActivity"));
+
+      cm.on("gutterClick", (cm, line, gutter, ev) => {
+        let head = { line: line, ch: 0 };
+        let tail = { line: line, ch: this.getText(line).length };
+
+        // Shift-click on a gutter selects the whole line.
+        if (ev.shiftKey)
+          return void cm.setSelection(head, tail);
+
+        this.emit("gutterClick", line);
+      });
 
       win.CodeMirror.defineExtension("l10n", (name) => {
         return L10N.GetStringFromName(name);
@@ -259,63 +276,12 @@ Editor.prototype = {
   },
 
   /**
-   * Returns true if there's something to undo and false otherwise.
+   * Returns the currently active highlighting mode.
+   * See Editor.modes for the list of all suppoert modes.
    */
-  canUndo: function () {
+  getMode: function () {
     let cm = editors.get(this);
-    return cm.historySize().undo > 0;
-  },
-
-  /**
-   * Returns true if there's something to redo and false otherwise.
-   */
-  canRedo: function () {
-    let cm = editors.get(this);
-    return cm.historySize().redo > 0;
-  },
-
-  /**
-   * Calculates and returns one or more {line, ch} objects for
-   * a zero-based index who's value is relative to the start of
-   * the editor's text.
-   *
-   * If only one argument is given, this method returns a single
-   * {line,ch} object. Otherwise it returns an array.
-   */
-  getPosition: function (...args) {
-    let cm = editors.get(this);
-    let res = args.map((ind) => cm.posFromIndex(ind));
-    return args.length === 1 ? res[0] : res;
-  },
-
-  /**
-   * The reverse of getPosition. Similarly to getPosition this
-   * method returns a single value if only one argument was given
-   * and an array otherwise.
-   */
-  getOffset: function (...args) {
-    let cm = editors.get(this);
-    let res = args.map((pos) => cm.indexFromPos(pos));
-    return args.length > 1 ? res : res[0];
-  },
-
-  /**
-   * Returns text from the text area. If line argument is provided
-   * the method returns only that line.
-   */
-  getText: function (line) {
-    let cm = editors.get(this);
-    return line == null ?
-      cm.getValue() : (cm.lineInfo(line) ? cm.lineInfo(line).text : "");
-  },
-
-  /**
-   * Replaces whatever is in the text area with the contents of
-   * the 'value' argument.
-   */
-  setText: function (value) {
-    let cm = editors.get(this);
-    cm.setValue(value);
+    return cm.getOption("mode");
   },
 
   /**
@@ -328,20 +294,26 @@ Editor.prototype = {
   },
 
   /**
-   * Returns the currently active highlighting mode.
-   * See Editor.modes for the list of all suppoert modes.
+   * Returns text from the text area. If line argument is provided
+   * the method returns only that line.
    */
-  getMode: function () {
+  getText: function (line) {
     let cm = editors.get(this);
-    return cm.getOption("mode");
+
+    if (line == null)
+      return cm.getValue();
+
+    let info = cm.lineInfo(line);
+    return info ? cm.lineInfo(line).text : "";
   },
 
   /**
-   * True if the editor is in the read-only mode, false otherwise.
+   * Replaces whatever is in the text area with the contents of
+   * the 'value' argument.
    */
-  isReadOnly: function () {
+  setText: function (value) {
     let cm = editors.get(this);
-    return cm.getOption("readOnly");
+    cm.setValue(value);
   },
 
   /**
@@ -384,59 +356,6 @@ Editor.prototype = {
   },
 
   /**
-   * Marks the contents as clean and returns the current
-   * version number.
-   */
-  setClean: function () {
-    let cm = editors.get(this);
-    this.version = cm.changeGeneration();
-    this._lastDirty = false;
-    this.emit("dirty-change");
-    return this.version;
-  },
-
-  /**
-   * Returns true if contents of the text area are
-   * clean i.e. no changes were made since the last version.
-   */
-  isClean: function () {
-    let cm = editors.get(this);
-    return cm.isClean(this.version);
-  },
-
-  /**
-   * Displays a context menu at the point x:y. The first
-   * argument, container, should be a DOM node that contains
-   * a context menu element specified by the ID from
-   * config.contextMenu.
-   */
-  showContextMenu: function (container, x, y) {
-    if (this.config.contextMenu == null)
-      return;
-
-    let popup = container.getElementById(this.config.contextMenu);
-    popup.openPopupAtScreen(x, y, true);
-  },
-
-  /**
-   * This method opens an in-editor dialog asking for a line to
-   * jump to. Once given, it changes cursor to that line.
-   */
-  jumpToLine: function () {
-    this.openDialog(CM_JUMP_DIALOG, (line) =>
-      this.setCursor({ line: line - 1, ch: 0 }));
-  },
-
-  /**
-   * Returns a {line, ch} object that corresponds to the
-   * left, top coordinates.
-   */
-  getPositionFromCoords: function (left, top) {
-    let cm = editors.get(this);
-    return cm.coordsChar({ left: left, top: top });
-  },
-
-  /**
    * Extends the current selection to the position specified
    * by the provided {line, ch} object.
    */
@@ -446,35 +365,6 @@ Editor.prototype = {
     let anchor = cm.posFromIndex(cursor + pos.start);
     let head   = cm.posFromIndex(cursor + pos.start + pos.length);
     cm.setSelection(anchor, head);
-  },
-
-  /**
-   * Extends an instance of the Editor object with additional
-   * functions. Each function will be called with context as
-   * the first argument. Context is a {ed, cm} object where
-   * 'ed' is an instance of the Editor object and 'cm' is an
-   * instance of the CodeMirror object. Example:
-   *
-   * function hello(ctx, name) {
-   *   let { cm, ed } = ctx;
-   *   cm;   // CodeMirror instance
-   *   ed;   // Editor instance
-   *   name; // 'Mozilla'
-   * }
-   *
-   * editor.extend({ hello: hello });
-   * editor.hello('Mozilla');
-   */
-  extend: function (funcs) {
-    Object.keys(funcs).forEach((name) => {
-      let cm  = editors.get(this);
-      let ctx = { ed: this, cm: cm };
-
-      if (name === "initialize")
-        return void funcs[name](ctx);
-
-      this[name] = funcs[name].bind(null, ctx);
-    });
   },
 
   /**
@@ -630,10 +520,11 @@ Editor.prototype = {
   hasLineClass: function (line, className) {
     let cm = editors.get(this);
     let info = cm.lineInfo(line);
-    if (!info)
+
+    if (!info || !info.wrapClass)
       return false;
 
-    return info.wrapClass == className;
+    return info.wrapClass.split(" ").indexOf(className) != -1;
   },
 
   /**
@@ -650,6 +541,227 @@ Editor.prototype = {
   removeLineClass: function (line, className) {
     let cm = editors.get(this);
     cm.removeLineClass(line, "wrap", className);
+  },
+
+  /**
+   * Mark a range of text inside the two {line, ch} bounds. Since the range may
+   * be modified, for example, when typing text, this method returns a function
+   * that can be used to remove the mark.
+   */
+  markText: function(from, to, className = "marked-text") {
+    let cm = editors.get(this);
+    let mark = cm.markText(from, to, { className: className });
+    return { clear: () => mark.clear() };
+  },
+
+  /**
+   * Calculates and returns one or more {line, ch} objects for
+   * a zero-based index who's value is relative to the start of
+   * the editor's text.
+   *
+   * If only one argument is given, this method returns a single
+   * {line,ch} object. Otherwise it returns an array.
+   */
+  getPosition: function (...args) {
+    let cm = editors.get(this);
+    let res = args.map((ind) => cm.posFromIndex(ind));
+    return args.length === 1 ? res[0] : res;
+  },
+
+  /**
+   * The reverse of getPosition. Similarly to getPosition this
+   * method returns a single value if only one argument was given
+   * and an array otherwise.
+   */
+  getOffset: function (...args) {
+    let cm = editors.get(this);
+    let res = args.map((pos) => cm.indexFromPos(pos));
+    return args.length > 1 ? res : res[0];
+  },
+
+  /**
+   * Returns a {line, ch} object that corresponds to the
+   * left, top coordinates.
+   */
+  getPositionFromCoords: function ({left, top}) {
+    let cm = editors.get(this);
+    return cm.coordsChar({ left: left, top: top });
+  },
+
+  /**
+   * The reverse of getPositionFromCoords. Similarly, returns a {left, top}
+   * object that corresponds to the specified line and character number.
+   */
+  getCoordsFromPosition: function ({line, ch}) {
+    let cm = editors.get(this);
+    return cm.charCoords({ line: ~~line, ch: ~~ch });
+  },
+
+  /**
+   * Returns true if there's something to undo and false otherwise.
+   */
+  canUndo: function () {
+    let cm = editors.get(this);
+    return cm.historySize().undo > 0;
+  },
+
+  /**
+   * Returns true if there's something to redo and false otherwise.
+   */
+  canRedo: function () {
+    let cm = editors.get(this);
+    return cm.historySize().redo > 0;
+  },
+
+  /**
+   * Marks the contents as clean and returns the current
+   * version number.
+   */
+  setClean: function () {
+    let cm = editors.get(this);
+    this.version = cm.changeGeneration();
+    this._lastDirty = false;
+    this.emit("dirty-change");
+    return this.version;
+  },
+
+  /**
+   * Returns true if contents of the text area are
+   * clean i.e. no changes were made since the last version.
+   */
+  isClean: function () {
+    let cm = editors.get(this);
+    return cm.isClean(this.version);
+  },
+
+  /**
+   * True if the editor is in the read-only mode, false otherwise.
+   */
+  isReadOnly: function () {
+    let cm = editors.get(this);
+    return cm.getOption("readOnly");
+  },
+
+  /**
+   * Displays a context menu at the point x:y. The first
+   * argument, container, should be a DOM node that contains
+   * a context menu element specified by the ID from
+   * config.contextMenu.
+   */
+  showContextMenu: function (container, x, y) {
+    if (this.config.contextMenu == null)
+      return;
+
+    let popup = container.getElementById(this.config.contextMenu);
+    popup.openPopupAtScreen(x, y, true);
+  },
+
+  /**
+   * This method opens an in-editor dialog asking for a line to
+   * jump to. Once given, it changes cursor to that line.
+   */
+  jumpToLine: function (cm) {
+    let doc = cm.getWrapperElement().ownerDocument;
+    let div = doc.createElement("div");
+    let inp = doc.createElement("input");
+    let txt = doc.createTextNode(L10N.GetStringFromName("gotoLineCmd.promptTitle"));
+
+    inp.type = "text";
+    inp.style.width = "10em";
+    inp.style.MozMarginStart = "1em";
+
+    div.appendChild(txt);
+    div.appendChild(inp);
+
+    this.openDialog(div, (line) => this.setCursor({ line: line - 1, ch: 0 }));
+  },
+
+  /**
+   * Moves the content of the current line or the lines selected up a line.
+   */
+  moveLineUp: function () {
+    let cm = editors.get(this);
+    let start = cm.getCursor("start");
+    let end = cm.getCursor("end");
+
+    if (start.line === 0)
+      return;
+
+    // Get the text in the lines selected or the current line of the cursor
+    // and append the text of the previous line.
+    let value;
+    if (start.line !== end.line) {
+      value = cm.getRange({ line: start.line, ch: 0 },
+        { line: end.line, ch: cm.getLine(end.line).length }) + "\n";
+    } else {
+      value = cm.getLine(start.line) + "\n";
+    }
+    value += cm.getLine(start.line - 1);
+
+    // Replace the previous line and the currently selected lines with the new
+    // value and maintain the selection of the text.
+    cm.replaceRange(value, { line: start.line - 1, ch: 0 },
+      { line: end.line, ch: cm.getLine(end.line).length });
+    cm.setSelection({ line: start.line - 1, ch: start.ch },
+      { line: end.line - 1, ch: end.ch });
+  },
+
+  /**
+   * Moves the content of the current line or the lines selected down a line.
+   */
+  moveLineDown: function () {
+    let cm = editors.get(this);
+    let start = cm.getCursor("start");
+    let end = cm.getCursor("end");
+
+    if (end.line + 1 === cm.lineCount())
+      return;
+
+    // Get the text of next line and append the text in the lines selected
+    // or the current line of the cursor.
+    let value = cm.getLine(end.line + 1) + "\n";
+    if (start.line !== end.line) {
+      value += cm.getRange({ line: start.line, ch: 0 },
+        { line: end.line, ch: cm.getLine(end.line).length });
+    } else {
+      value += cm.getLine(start.line);
+    }
+
+    // Replace the currently selected lines and the next line with the new
+    // value and maintain the selection of the text.
+    cm.replaceRange(value, { line: start.line, ch: 0 },
+      { line: end.line + 1, ch: cm.getLine(end.line + 1).length});
+    cm.setSelection({ line: start.line + 1, ch: start.ch },
+      { line: end.line + 1, ch: end.ch });
+  },
+
+  /**
+   * Extends an instance of the Editor object with additional
+   * functions. Each function will be called with context as
+   * the first argument. Context is a {ed, cm} object where
+   * 'ed' is an instance of the Editor object and 'cm' is an
+   * instance of the CodeMirror object. Example:
+   *
+   * function hello(ctx, name) {
+   *   let { cm, ed } = ctx;
+   *   cm;   // CodeMirror instance
+   *   ed;   // Editor instance
+   *   name; // 'Mozilla'
+   * }
+   *
+   * editor.extend({ hello: hello });
+   * editor.hello('Mozilla');
+   */
+  extend: function (funcs) {
+    Object.keys(funcs).forEach((name) => {
+      let cm  = editors.get(this);
+      let ctx = { ed: this, cm: cm };
+
+      if (name === "initialize")
+        return void funcs[name](ctx);
+
+      this[name] = funcs[name].bind(null, ctx);
+    });
   },
 
   destroy: function () {
@@ -684,6 +796,16 @@ Editor.accel = function (key, modifiers={}) {
   return (modifiers.shift ? "Shift-" : "") +
          (Services.appinfo.OS == "Darwin" ? "Cmd-" : "Ctrl-") +
          (modifiers.alt ? "Alt-" : "") + key;
+};
+
+/**
+ * Returns a string representation of a shortcut for a
+ * specified command 'cmd'. Cmd- for macs, Ctrl- for other
+ * platforms. Useful when overwriting or disabling default
+ * shortcuts.
+ */
+Editor.keyFor = function (cmd) {
+  return Editor.accel(L10N.GetStringFromName(cmd + ".commandkey"));
 };
 
 // Since Gecko already provide complete and up to date list of CSS property

@@ -260,6 +260,7 @@ private:
   mozilla::dom::CSSValue* DoGetBackgroundRepeat();
   mozilla::dom::CSSValue* DoGetBackgroundClip();
   mozilla::dom::CSSValue* DoGetBackgroundInlinePolicy();
+  mozilla::dom::CSSValue* DoGetBackgroundBlendMode();
   mozilla::dom::CSSValue* DoGetBackgroundOrigin();
   mozilla::dom::CSSValue* DoGetBackgroundSize();
 
@@ -438,12 +439,14 @@ private:
   mozilla::dom::CSSValue* DoGetAnimationPlayState();
 
   /* CSS Flexbox properties */
+  mozilla::dom::CSSValue* DoGetAlignContent();
   mozilla::dom::CSSValue* DoGetAlignItems();
   mozilla::dom::CSSValue* DoGetAlignSelf();
   mozilla::dom::CSSValue* DoGetFlexBasis();
   mozilla::dom::CSSValue* DoGetFlexDirection();
   mozilla::dom::CSSValue* DoGetFlexGrow();
   mozilla::dom::CSSValue* DoGetFlexShrink();
+  mozilla::dom::CSSValue* DoGetFlexWrap();
   mozilla::dom::CSSValue* DoGetOrder();
   mozilla::dom::CSSValue* DoGetJustifyContent();
 

@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "ManifestParser.h"
 
@@ -472,7 +472,7 @@ ParseManifest(NSLocationType type, FileLocation &file, char* buf, bool aChromeOn
   bool isTablet = false;
   if (mozilla::AndroidBridge::Bridge()) {
     mozilla::AndroidBridge::Bridge()->GetStaticStringField("android/os/Build$VERSION", "RELEASE", osVersion);
-    isTablet = mozilla::AndroidBridge::Bridge()->IsTablet();
+    isTablet = mozilla::widget::android::GeckoAppShell::IsTablet();
   }
 #endif
 

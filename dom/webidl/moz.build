@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'dom'
-
 GENERATED_WEBIDL_FILES = [
     'CSS2Properties.webidl',
 ]
@@ -20,12 +18,14 @@ WEBIDL_FILES = [
     'AbstractWorker.webidl',
     'AnalyserNode.webidl',
     'AnimationEvent.webidl',
+    'AppInfo.webidl',
     'AppNotificationServiceOptions.webidl',
     'ArchiveReader.webidl',
     'ArchiveRequest.webidl',
     'Attr.webidl',
     'AudioBuffer.webidl',
     'AudioBufferSourceNode.webidl',
+    'AudioChannel.webidl',
     'AudioContext.webidl',
     'AudioDestinationNode.webidl',
     'AudioListener.webidl',
@@ -65,6 +65,7 @@ WEBIDL_FILES = [
     'CSSValueList.webidl',
     'DataContainerEvent.webidl',
     'DataStore.webidl',
+    'DedicatedWorkerGlobalScope.webidl',
     'DelayNode.webidl',
     'DesktopNotification.webidl',
     'DeviceMotionEvent.webidl',
@@ -118,6 +119,7 @@ WEBIDL_FILES = [
     'HTMLButtonElement.webidl',
     'HTMLCanvasElement.webidl',
     'HTMLCollection.webidl',
+    'HTMLContentElement.webidl',
     'HTMLDataElement.webidl',
     'HTMLDataListElement.webidl',
     'HTMLDirectoryElement.webidl',
@@ -207,6 +209,7 @@ WEBIDL_FILES = [
     'Location.webidl',
     'MediaElementAudioSourceNode.webidl',
     'MediaError.webidl',
+    'MediaList.webidl',
     'MediaRecorder.webidl',
     'MediaSource.webidl',
     'MediaStream.webidl',
@@ -252,6 +255,7 @@ WEBIDL_FILES = [
     'PhoneNumberService.webidl',
     'Plugin.webidl',
     'PluginArray.webidl',
+    'PointerEvent.webidl',
     'Position.webidl',
     'PositionError.webidl',
     'ProcessingInstruction.webidl',
@@ -269,7 +273,9 @@ WEBIDL_FILES = [
     'ScriptProcessorNode.webidl',
     'ScrollAreaEvent.webidl',
     'SettingsManager.webidl',
+    'ShadowRoot.webidl',
     'SharedWorker.webidl',
+    'SharedWorkerGlobalScope.webidl',
     'SimpleGestureEvent.webidl',
     'SourceBuffer.webidl',
     'SourceBufferList.webidl',
@@ -413,8 +419,9 @@ WEBIDL_FILES = [
     'WebSocket.webidl',
     'WheelEvent.webidl',
     'WifiOptions.webidl',
+    'Worker.webidl',
+    'WorkerGlobalScope.webidl',
     'WorkerLocation.webidl',
-    'WorkerMessagePort.webidl',
     'WorkerNavigator.webidl',
     'XMLDocument.webidl',
     'XMLHttpRequest.webidl',
@@ -468,12 +475,6 @@ if CONFIG['MOZ_GAMEPAD']:
         'Gamepad.webidl',
     ]
 
-if CONFIG['MOZ_B2G_RIL']:
-    WEBIDL_FILES += [
-        'MozStkCommandEvent.webidl',
-        'MozVoicemail.webidl',
-    ]
-
 WEBIDL_FILES += [
     'CloseEvent.webidl',
     'CustomEvent.webidl',
@@ -503,6 +504,7 @@ if CONFIG['MOZ_B2G_BT']:
         'BluetoothAdapter.webidl',
         'BluetoothDevice.webidl',
         'BluetoothDeviceEvent.webidl',
+        'BluetoothDiscoveryStateChangedEvent.webidl',
         'BluetoothManager.webidl',
         'BluetoothStatusChangedEvent.webidl',
     ]
@@ -515,11 +517,27 @@ if CONFIG['MOZ_B2G_RIL']:
         'MozCellBroadcast.webidl',
         'MozCellBroadcastEvent.webidl',
         'MozEmergencyCbModeEvent.webidl',
+        'MozIcc.webidl',
+        'MozMobileConnectionArray.webidl',
         'MozOtaStatusEvent.webidl',
+        'MozVoicemail.webidl',
         'MozVoicemailEvent.webidl',
+        'USSDReceivedEvent.webidl',
+    ]
+
+if CONFIG['MOZ_NFC']:
+    WEBIDL_FILES += [
+         'MozNdefRecord.webidl',
+         'MozNfc.webidl',
+         'MozNFCPeer.webidl',
+         'MozNFCTag.webidl',
+    ]
+
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
+    WEBIDL_FILES += [
+        'MozSpeakerManager.webidl',
         'MozWifiConnectionInfoEvent.webidl',
         'MozWifiStatusChangeEvent.webidl',
-        'USSDReceivedEvent.webidl',
     ]
 
 if CONFIG['MOZ_WEBSPEECH']:
@@ -547,13 +565,16 @@ if CONFIG['ENABLE_TESTS']:
 
 GENERATED_EVENTS_WEBIDL_FILES = [
     'BlobEvent.webidl',
+    'CallGroupErrorEvent.webidl',
     'DataStoreChangeEvent.webidl',
     'DeviceLightEvent.webidl',
     'DeviceProximityEvent.webidl',
     'ErrorEvent.webidl',
+    'IccChangeEvent.webidl',
     'MediaStreamEvent.webidl',
     'MozContactChangeEvent.webidl',
     'MozInterAppMessageEvent.webidl',
+    'MozStkCommandEvent.webidl',
     'RTCDataChannelEvent.webidl',
     'RTCPeerConnectionIceEvent.webidl',
     'TrackEvent.webidl',
@@ -566,4 +587,3 @@ if CONFIG['MOZ_GAMEPAD']:
         'GamepadButtonEvent.webidl',
         'GamepadEvent.webidl',
     ]
-

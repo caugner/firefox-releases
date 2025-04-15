@@ -11,6 +11,7 @@ nestegg_free_packet
 nestegg_init
 nestegg_offset_seek
 nestegg_packet_count
+nestegg_packet_discard_padding
 nestegg_packet_data
 nestegg_packet_track
 nestegg_packet_tstamp
@@ -37,11 +38,13 @@ vpx_codec_destroy
 vpx_codec_get_frame
 vpx_codec_peek_stream_info
 vpx_codec_vp8_dx
+vpx_codec_vp9_dx
 vpx_img_free
 vpx_codec_enc_config_set
 vpx_codec_enc_init_ver
 #ifdef MOZ_VP8_ENCODER
 vpx_codec_vp8_cx
+vpx_codec_vp9_cx
 #endif
 vpx_img_set_rect
 vpx_img_wrap
@@ -71,11 +74,19 @@ ogg_sync_init
 ogg_sync_pageseek
 ogg_sync_reset
 ogg_sync_wrote
+vorbis_analysis
+vorbis_analysis_blockout
+vorbis_analysis_buffer
+vorbis_analysis_init
+vorbis_analysis_headerout
+vorbis_analysis_wrote
 vorbis_block_clear
 vorbis_block_init
+vorbis_comment_add_tag
 vorbis_comment_clear
 vorbis_comment_init
 vorbis_dsp_clear
+vorbis_encode_init_vbr
 vorbis_info_clear
 vorbis_info_init
 vorbis_packet_blocksize
@@ -87,7 +98,6 @@ vorbis_synthesis_pcmout
 vorbis_synthesis_read
 vorbis_synthesis_restart
 #endif
-#ifdef MOZ_SPEEX_RESAMPLER
 speex_resampler_init
 speex_resampler_init_frac
 speex_resampler_destroy
@@ -110,8 +120,6 @@ speex_resampler_get_output_latency
 speex_resampler_skip_zeros
 speex_resampler_reset_mem
 speex_resampler_strerror
-#endif
-#ifdef MOZ_CUBEB
 cubeb_destroy
 cubeb_init
 cubeb_get_max_channel_count
@@ -123,7 +131,6 @@ cubeb_stream_init
 cubeb_stream_start
 cubeb_stream_stop
 cubeb_stream_get_latency
-#endif
 #ifdef MOZ_OGG
 th_comment_clear
 th_comment_init

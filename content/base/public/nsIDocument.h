@@ -20,6 +20,7 @@
 #include "nsPropertyTable.h"             // for member
 #include "nsTHashtable.h"                // for member
 #include "mozilla/dom/DocumentBinding.h"
+#include "mozilla/WeakPtr.h"
 #include "Units.h"
 #include "nsExpirationTracker.h"
 #include "nsClassHashtable.h"
@@ -28,6 +29,8 @@ class imgIRequest;
 class nsAString;
 class nsBindingManager;
 class nsCSSStyleSheet;
+class nsIDocShell;
+class nsDocShell;
 class nsDOMNavigationTiming;
 class nsDOMTouchList;
 class nsEventStates;
@@ -696,10 +699,12 @@ public:
 
       // We do not call MarkUsed because it would just slow down lookups and
       // because we're OK expiring things after a few seconds even if they're
-      // being used.
-      nsCSSSelectorList* GetList(const nsAString& aSelector)
+      // being used.  Returns whether we actually had an entry for aSelector.
+      // If we have an entry and *aList is null, that indicates that aSelector
+      // has already been parsed and is not a syntactically valid selector.
+      bool GetList(const nsAString& aSelector, nsCSSSelectorList** aList)
       {
-        return mTable.Get(aSelector);
+        return mTable.Get(aSelector, aList);
       }
 
       ~SelectorCache()
@@ -902,7 +907,7 @@ public:
    * this document. If you're not absolutely sure you need this, use
    * GetWindow().
    */
-  nsPIDOMWindow* GetInnerWindow()
+  nsPIDOMWindow* GetInnerWindow() const
   {
     return mRemovedFromDocShell ? nullptr : mWindow;
   }
@@ -1148,21 +1153,22 @@ public:
    * Set the container (docshell) for this document. Virtual so that
    * docshell can call it.
    */
-  virtual void SetContainer(nsISupports *aContainer);
+  virtual void SetContainer(nsDocShell* aContainer);
 
   /**
    * Get the container (docshell) for this document.
    */
-  already_AddRefed<nsISupports> GetContainer() const
-  {
-    nsCOMPtr<nsISupports> container = do_QueryReferent(mDocumentContainer);
-    return container.forget();
-  }
+  virtual nsISupports* GetContainer() const;
 
   /**
    * Get the container's load context for this document.
    */
   nsILoadContext* GetLoadContext() const;
+
+  /**
+   * Get docshell the for this document.
+   */
+  nsIDocShell* GetDocShell() const;
 
   /**
    * Set and get XML declaration. If aVersion is null there is no declaration.
@@ -1524,7 +1530,7 @@ public:
   void SetDisplayDocument(nsIDocument* aDisplayDocument)
   {
     NS_PRECONDITION(!GetShell() &&
-                    !nsCOMPtr<nsISupports>(GetContainer()) &&
+                    !GetContainer() &&
                     !GetWindow(),
                     "Shouldn't set mDisplayDocument on documents that already "
                     "have a presentation or a docshell or a window");
@@ -1607,7 +1613,10 @@ public:
 
   /**
    * Return true when this document is active, i.e., the active document
-   * in a content viewer.
+   * in a content viewer.  Note that this will return true for bfcached
+   * documents, so this does NOT match the "active document" concept in
+   * the WHATWG spec.  That would correspond to GetInnerWindow() &&
+   * GetInnerWindow()->IsCurrentInnerWindow().
    */
   bool IsActive() const { return mDocumentContainer && !mRemovedFromDocShell; }
 
@@ -1632,20 +1641,31 @@ public:
   // owning Documents needs it to animate; otherwise it can suspend.
   virtual void SetImagesNeedAnimating(bool aAnimating) = 0;
 
+  enum SuppressionType {
+    eAnimationsOnly = 0x1,
+
+    // Note that suppressing events also suppresses animation frames, so
+    // there's no need to split out events in its own bitmask.
+    eEvents = 0x3,
+  };
+
   /**
    * Prevents user initiated events from being dispatched to the document and
    * subdocuments.
    */
-  virtual void SuppressEventHandling(uint32_t aIncrease = 1) = 0;
+  virtual void SuppressEventHandling(SuppressionType aWhat,
+                                     uint32_t aIncrease = 1) = 0;
 
   /**
    * Unsuppress event handling.
    * @param aFireEvents If true, delayed events (focus/blur) will be fired
    *                    asynchronously.
    */
-  virtual void UnsuppressEventHandlingAndFireEvents(bool aFireEvents) = 0;
+  virtual void UnsuppressEventHandlingAndFireEvents(SuppressionType aWhat,
+                                                    bool aFireEvents) = 0;
 
   uint32_t EventHandlingSuppressed() const { return mEventsSuppressed; }
+  uint32_t AnimationsPaused() const { return mAnimationsPaused; }
 
   bool IsEventHandlingEnabled() {
     return !EventHandlingSuppressed() && mScriptGlobalObject;
@@ -1694,7 +1714,7 @@ public:
    * @param aCloneContainer The container for the clone document.
    */
   virtual already_AddRefed<nsIDocument>
-  CreateStaticClone(nsISupports* aCloneContainer);
+  CreateStaticClone(nsIDocShell* aCloneContainer);
 
   /**
    * If this document is a static clone, this returns the original
@@ -1951,6 +1971,12 @@ public:
     return mCreatingStaticClone;
   }
 
+  /**
+   * Creates a new element in the HTML namespace with a local name given by
+   * aTag.
+   */
+  already_AddRefed<Element> CreateHTMLElement(nsIAtom* aTag);
+
   // WebIDL API
   nsIGlobalObject* GetParentObject() const
   {
@@ -2001,6 +2027,15 @@ public:
                                 mozilla::ErrorResult& rv) const;
   already_AddRefed<nsINode>
     ImportNode(nsINode& aNode, bool aDeep, mozilla::ErrorResult& rv) const;
+  already_AddRefed<nsINode>
+    ImportNode(nsINode& aNode, mozilla::ErrorResult& rv)
+  {
+    if (aNode.HasChildNodes()) {
+      // Flag it as an error, not a warning, to make people actually notice.
+      WarnOnceAbout(eUnsafeImportNode, true);
+    }
+    return ImportNode(aNode, true, rv);
+  }
   nsINode* AdoptNode(nsINode& aNode, mozilla::ErrorResult& rv);
   already_AddRefed<nsDOMEvent> CreateEvent(const nsAString& aEventType,
                                            mozilla::ErrorResult& rv) const;
@@ -2216,7 +2251,7 @@ protected:
 
   nsWeakPtr mDocumentLoadGroup;
 
-  nsWeakPtr mDocumentContainer;
+  mozilla::WeakPtr<nsDocShell> mDocumentContainer;
 
   nsCString mCharacterSet;
   int32_t mCharacterSetSource;
@@ -2379,6 +2414,14 @@ protected:
   // caches.
   bool mDidDocumentOpen;
 
+#ifdef DEBUG
+  /**
+   * This is true while FlushPendingLinkUpdates executes.  Calls to
+   * [Un]RegisterPendingLinkUpdate will assert when this is true.
+   */
+  bool mIsLinkUpdateRegistrationsForbidden;
+#endif
+
   // The document's script global object, the object from which the
   // document can get its script context and scope. This is the
   // *inner* window object.
@@ -2427,6 +2470,8 @@ protected:
   nsCOMPtr<nsIDocument> mDisplayDocument;
 
   uint32_t mEventsSuppressed;
+
+  uint32_t mAnimationsPaused;
 
   /**
    * The number number of external scripts (ones with the src attribute) that

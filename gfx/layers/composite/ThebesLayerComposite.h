@@ -53,8 +53,7 @@ public:
 
   virtual TiledLayerComposer* GetTiledLayerComposer() MOZ_OVERRIDE;
 
-  virtual void RenderLayer(const nsIntPoint& aOffset,
-                           const nsIntRect& aClipRect) MOZ_OVERRIDE;
+  virtual void RenderLayer(const nsIntRect& aClipRect) MOZ_OVERRIDE;
 
   virtual void CleanupResources() MOZ_OVERRIDE;
 
@@ -80,14 +79,10 @@ public:
 
 protected:
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual nsACString& PrintInfo(nsACString& aTo, const char* aPrefix) MOZ_OVERRIDE;
-#endif
 
 private:
-  gfxRect GetDisplayPort();
-  gfxSize GetEffectiveResolution();
-  gfxRect GetCompositionBounds();
+  CSSToScreenScale GetEffectiveResolution();
 
   RefPtr<ContentHost> mBuffer;
   bool mRequiresTiledProperties;

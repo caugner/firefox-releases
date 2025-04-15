@@ -15,6 +15,8 @@
 #include "mozilla/layers/CompositorTypes.h"  // for DiagnosticTypes, etc
 #include "mozilla/layers/LayersTypes.h"  // for LayersBackend
 #include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
+#include "nsRegion.h"
+#include <vector>
 
 /**
  * Different elements of a web pages are rendered into separate "layers" before
@@ -121,12 +123,13 @@ class ISurfaceAllocator;
 class NewTextureSource;
 class DataTextureSource;
 class CompositingRenderTarget;
+class PCompositorParent;
+class LayerManagerComposite;
 
 enum SurfaceInitMode
 {
   INIT_MODE_NONE,
-  INIT_MODE_CLEAR,
-  INIT_MODE_COPY
+  INIT_MODE_CLEAR
 };
 
 /**
@@ -176,9 +179,10 @@ enum SurfaceInitMode
 class Compositor : public RefCounted<Compositor>
 {
 public:
-  Compositor()
+  Compositor(PCompositorParent* aParent = nullptr)
     : mCompositorID(0)
     , mDiagnosticTypes(DIAGNOSTIC_NONE)
+    , mParent(aParent)
   {
     MOZ_COUNT_CTOR(Compositor);
   }
@@ -248,10 +252,13 @@ public:
    * Creates a Surface that can be used as a rendering target by this
    * compositor, and initializes the surface by copying from aSource.
    * If aSource is null, then the current screen buffer is used as source.
+   *
+   * aSourcePoint specifies the point in aSource to copy data from.
    */
   virtual TemporaryRef<CompositingRenderTarget>
   CreateRenderTargetFromSource(const gfx::IntRect& aRect,
-                               const CompositingRenderTarget* aSource) = 0;
+                               const CompositingRenderTarget* aSource,
+                               const gfx::IntPoint& aSourcePoint) = 0;
 
   /**
    * Sets the given surface as the target for subsequent calls to DrawQuad.
@@ -278,29 +285,50 @@ public:
   virtual void SetScreenRenderOffset(const ScreenPoint& aOffset) = 0;
 
   /**
-   * Tell the compositor to actually draw a quad. What to do draw and how it is
+   * Tell the compositor to draw a quad. What to do draw and how it is
    * drawn is specified by aEffectChain. aRect is the quad to draw, in user space.
-   * aTransform transforms from user space to screen space. aOffset is the
-   * offset of the render target from 0,0 of the screen. If texture coords are
+   * aTransform transforms from user space to screen space. If texture coords are
    * required, these will be in the primary effect in the effect chain.
    */
   virtual void DrawQuad(const gfx::Rect& aRect, const gfx::Rect& aClipRect,
                         const EffectChain& aEffectChain,
-                        gfx::Float aOpacity, const gfx::Matrix4x4 &aTransform,
-                        const gfx::Point& aOffset) = 0;
+                        gfx::Float aOpacity, const gfx::Matrix4x4 &aTransform) = 0;
+
+  /**
+   * Tell the compositor to draw lines connecting the points. Behaves like
+   * DrawQuad.
+   */
+  virtual void DrawLines(const std::vector<gfx::Point>& aLines, const gfx::Rect& aClipRect,
+                         const gfx::Color& aColor,
+                         gfx::Float aOpacity, const gfx::Matrix4x4 &aTransform)
+  { /* Should turn into pure virtual once implemented in D3D */ }
+
+  /*
+   * Clear aRect on FrameBuffer.
+   */
+  virtual void clearFBRect(const gfx::Rect* aRect) { }
 
   /**
    * Start a new frame.
+   *
+   * aInvalidRect is the invalid region of the screen; it can be ignored for
+   * compositors where the performance for compositing the entire window is
+   * sufficient.
+   *
    * aClipRectIn is the clip rect for the window in window space (optional).
    * aTransform is the transform from user space to window space.
    * aRenderBounds bounding rect for rendering, in user space.
+   *
    * If aClipRectIn is null, this method sets *aClipRectOut to the clip rect
    * actually used for rendering (if aClipRectIn is non-null, we will use that
    * for the clip rect).
+   *
    * If aRenderBoundsOut is non-null, it will be set to the render bounds
-   * actually used by the compositor in window space.
+   * actually used by the compositor in window space. If aRenderBoundsOut
+   * is returned empty, composition should be aborted.
    */
-  virtual void BeginFrame(const gfx::Rect* aClipRectIn,
+  virtual void BeginFrame(const nsIntRegion& aInvalidRegion,
+                          const gfx::Rect* aClipRectIn,
                           const gfxMatrix& aTransform,
                           const gfx::Rect& aRenderBounds,
                           gfx::Rect* aClipRectOut = nullptr,
@@ -349,14 +377,12 @@ public:
   void DrawDiagnostics(DiagnosticFlags aFlags,
                        const gfx::Rect& visibleRect,
                        const gfx::Rect& aClipRect,
-                       const gfx::Matrix4x4& transform,
-                       const gfx::Point& aOffset);
+                       const gfx::Matrix4x4& transform);
 
   void DrawDiagnostics(DiagnosticFlags aFlags,
                        const nsIntRegion& visibleRegion,
                        const gfx::Rect& aClipRect,
-                       const gfx::Matrix4x4& transform,
-                       const gfx::Point& aOffset);
+                       const gfx::Matrix4x4& transform);
 
 
 #ifdef MOZ_DUMP_PAINTING
@@ -401,6 +427,12 @@ public:
    */
   virtual bool Resume() { return true; }
 
+  /**
+   * Call before rendering begins to ensure the compositor is ready to
+   * composite. Returns false if rendering should be aborted.
+   */
+  virtual bool Ready() { return true; }
+
   // XXX I expect we will want to move mWidget into this class and implement
   // these methods properly.
   virtual nsIWidget* GetWidget() const { return nullptr; }
@@ -432,14 +464,14 @@ protected:
   void DrawDiagnosticsInternal(DiagnosticFlags aFlags,
                                const gfx::Rect& aVisibleRect,
                                const gfx::Rect& aClipRect,
-                               const gfx::Matrix4x4& transform,
-                               const gfx::Point& aOffset);
+                               const gfx::Matrix4x4& transform);
 
   bool ShouldDrawDiagnostics(DiagnosticFlags);
 
   uint32_t mCompositorID;
   static LayersBackend sBackend;
   DiagnosticTypes mDiagnosticTypes;
+  PCompositorParent* mParent;
 
   /**
    * We keep track of the total number of pixels filled as we composite the

@@ -49,17 +49,19 @@ var AutofillMenuUI = {
   },
 
   show: function show(aAnchorRect, aSuggestionsList) {
+    this.commands.addEventListener("select", this, true);
+
     this._anchorRect = aAnchorRect;
     this._emptyCommands();
     for (let idx = 0; idx < aSuggestionsList.length; idx++) {
       let item = document.createElement("richlistitem");
       let label = document.createElement("label");
       label.setAttribute("value", aSuggestionsList[idx].label);
+      item.setAttribute("value", aSuggestionsList[idx].value);
       item.setAttribute("data", aSuggestionsList[idx].value);
       item.appendChild(label);
       this.commands.appendChild(item);
     }
-
     this._menuPopup.show(this._positionOptions());
   },
 
@@ -69,7 +71,17 @@ var AutofillMenuUI = {
   },
 
   hide: function hide () {
+    this.commands.removeEventListener("select", this, true);
+
     this._menuPopup.hide();
+  },
+
+  handleEvent: function (aEvent) {
+    switch (aEvent.type) {
+      case "select":
+        FormHelperUI.doAutoComplete(this.commands.value);
+        break;
+    }
   }
 };
 
@@ -206,6 +218,9 @@ var ContextMenuUI = {
   },
 
   hide: function hide () {
+    for (let command of this.commands.querySelectorAll("richlistitem[selected]")) {
+      command.removeAttribute("selected");
+    }
     this._menuPopup.hide();
     this._popupState = null;
   },
@@ -346,9 +361,7 @@ MenuPopup.prototype = {
   get commands() { return this._popup.childNodes[0]; },
 
   show: function (aPositionOptions) {
-    if (this.visible) {
-      this._animateHide().then(() => this._animateShow(aPositionOptions));
-    } else {
+    if (!this.visible) {
       this._animateShow(aPositionOptions);
     }
   },
@@ -428,6 +441,7 @@ MenuPopup.prototype = {
     window.addEventListener("mousedown", this, true);
     window.addEventListener("touchstart", this, true);
     window.addEventListener("scroll", this, true);
+    window.addEventListener("blur", this, true);
     Elements.stack.addEventListener("PopupChanged", this, false);
 
     this._panel.hidden = false;
@@ -458,6 +472,7 @@ MenuPopup.prototype = {
     window.removeEventListener("mousedown", this, true);
     window.removeEventListener("touchstart", this, true);
     window.removeEventListener("scroll", this, true);
+    window.removeEventListener("blur", this, true);
     Elements.stack.removeEventListener("PopupChanged", this, false);
 
     let self = this;
@@ -486,14 +501,50 @@ MenuPopup.prototype = {
   handleEvent: function handleEvent(aEvent) {
     switch (aEvent.type) {
       case "keypress":
-        if (!this._wantTypeBehind) {
+        // this.commands is not holding focus and not processing key events.
+        // Proxying events so that they're handled properly.
+
+        // Avoid recursion
+        if (aEvent.mine)
+          break;
+
+        let ev = document.createEvent("KeyboardEvent");
+        ev.initKeyEvent(
+          "keypress",        //  in DOMString typeArg,
+          false,             //  in boolean canBubbleArg,
+          true,              //  in boolean cancelableArg,
+          null,              //  in nsIDOMAbstractView viewArg,  Specifies UIEvent.view. This value may be null.
+          aEvent.ctrlKey,    //  in boolean ctrlKeyArg,
+          aEvent.altKey,     //  in boolean altKeyArg,
+          aEvent.shiftKey,   //  in boolean shiftKeyArg,
+          aEvent.metaKey,    //  in boolean metaKeyArg,
+          aEvent.keyCode,    //  in unsigned long keyCodeArg,
+          aEvent.charCode);  //  in unsigned long charCodeArg);
+
+        ev.mine = true;
+
+        switch (aEvent.keyCode) {
+          case aEvent.DOM_VK_ESCAPE:
+            this.hide();
+            break;
+
+          case aEvent.DOM_VK_RETURN:
+            this.commands.currentItem.click();
+            break;
+        }
+
+        if (Util.isNavigationKey(aEvent.keyCode)) {
+          aEvent.stopPropagation();
+          aEvent.preventDefault();
+          this.commands.dispatchEvent(ev);
+        } else if (!this._wantTypeBehind) {
           // Hide the context menu so you can't type behind it.
           aEvent.stopPropagation();
           aEvent.preventDefault();
-          if (aEvent.keyCode != aEvent.DOM_VK_ESCAPE)
-            this.hide();
+          this.hide();
         }
         break;
+      case "blur":
       case "mousedown":
       case "touchstart":
       case "scroll":

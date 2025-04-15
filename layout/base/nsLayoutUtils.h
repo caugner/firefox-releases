@@ -58,6 +58,7 @@ struct nsOverflowAreas;
 namespace mozilla {
 class SVGImageContext;
 struct IntrinsicSize;
+struct ContainerLayerParameters;
 namespace dom {
 class DOMRectList;
 class Element;
@@ -65,6 +66,9 @@ class HTMLImageElement;
 class HTMLCanvasElement;
 class HTMLVideoElement;
 } // namespace dom
+namespace layers {
+class Layer;
+}
 } // namespace mozilla
 
 /**
@@ -76,6 +80,8 @@ class nsLayoutUtils
 {
   typedef ::GraphicsFilter GraphicsFilter;
   typedef mozilla::dom::DOMRectList DOMRectList;
+  typedef mozilla::layers::Layer Layer;
+  typedef mozilla::ContainerLayerParameters ContainerLayerParameters;
 
 public:
   typedef mozilla::layers::FrameMetrics FrameMetrics;
@@ -85,14 +91,13 @@ public:
    * Finds previously assigned ViewID for the given content element, if any.
    * Returns whether a ViewID was previously assigned.
    */
-  static bool FindIDFor(nsIContent* aContent, ViewID* aOutViewId);
+  static bool FindIDFor(const nsIContent* aContent, ViewID* aOutViewId);
 
   /**
    * Finds previously assigned or generates a unique ViewID for the given
-   * content element. If aRoot is true, the special ID
-   * FrameMetrics::ROOT_SCROLL_ID is used.
+   * content element.
    */
-  static ViewID FindOrCreateIDFor(nsIContent* aContent, bool aRoot = false);
+  static ViewID FindOrCreateIDFor(nsIContent* aContent);
 
   /**
    * Find content for given ID.
@@ -107,12 +112,12 @@ public:
   /**
    * Get display port for the given element.
    */
-  static bool GetDisplayPort(nsIContent* aContent, nsRect *aResult);
+  static bool GetDisplayPort(nsIContent* aContent, nsRect *aResult = nullptr);
 
   /**
    * Get the critical display port for the given element.
    */
-  static bool GetCriticalDisplayPort(nsIContent* aContent, nsRect* aResult);
+  static bool GetCriticalDisplayPort(nsIContent* aContent, nsRect* aResult = nullptr);
 
   /**
    * Use heuristics to figure out the child list that
@@ -362,26 +367,59 @@ public:
                                         const nsIFrame* aCommonAncestor = nullptr);
 
   /**
-   * Finds the nearest ancestor frame that is the root of an "actively
-   * scrolled" frame subtree, or aStopAtAncestor if there is no
-   * such ancestor before we reach aStopAtAncestor in the ancestor chain.
-   * We expect frames with the same "active scrolled root" to be
-   * scrolled together, so we'll place them in the same ThebesLayer.
+   * Sets the fixed-pos metadata properties on aLayer.
+   * aAnchorRect is the basic anchor rectangle. If aFixedPosFrame is not a viewport
+   * frame, then we pick a corner of aAnchorRect to as the anchor point for the
+   * fixed-pos layer (i.e. the point to remain stable during zooming), based
+   * on which of the fixed-pos frame's CSS absolute positioning offset
+   * properties (top, left, right, bottom) are auto. aAnchorRect is in the
+   * coordinate space of aLayer's container layer (i.e. relative to the reference
+   * frame of the display item which is building aLayer's container layer).
    */
-  static nsIFrame* GetActiveScrolledRootFor(nsIFrame* aFrame,
-                                            const nsIFrame* aStopAtAncestor);
-
-  static nsIFrame* GetActiveScrolledRootFor(nsDisplayItem* aItem,
-                                            nsDisplayListBuilder* aBuilder,
-                                            bool* aShouldFixToViewport = nullptr);
+  static void SetFixedPositionLayerData(Layer* aLayer, const nsIFrame* aViewportFrame,
+                                        const nsRect& aAnchorRect,
+                                        const nsIFrame* aFixedPosFrame,
+                                        nsPresContext* aPresContext,
+                                        const ContainerLayerParameters& aContainerParameters);
 
   /**
-   * Returns true if aActiveScrolledRoot is in a content document,
-   * and its topmost content document ancestor has a root scroll frame with
-   * a displayport set, and aActiveScrolledRoot is scrolled by that scrollframe.
+   * Return true if aPresContext's viewport has a displayport.
+   * Fills in aDisplayPort with the displayport rectangle if non-null.
    */
-  static bool IsScrolledByRootContentDocumentDisplayportScrolling(const nsIFrame* aActiveScrolledRoot,
-                                                                  nsDisplayListBuilder* aBuilder);
+  static bool ViewportHasDisplayPort(nsPresContext* aPresContext,
+                                     nsRect* aDisplayPort = nullptr);
+
+  /**
+   * Return true if aFrame is a fixed-pos frame and is a child of a viewport
+   * which has a displayport. These frames get special treatment from the compositor.
+   * aDisplayPort, if non-null, is set to the display port rectangle (relative to
+   * the viewport).
+   */
+  static bool IsFixedPosFrameInDisplayPort(const nsIFrame* aFrame,
+                                           nsRect* aDisplayPort = nullptr);
+
+  /**
+   * Finds the nearest ancestor frame that is considered to have (or will have)
+   * "animated geometry". For example the scrolled frames of scrollframes which
+   * are actively being scrolled fall into this category. Frames with certain
+   * CSS properties that are being animated (e.g. 'left'/'top' etc) are also
+   * placed in this category. Frames with animated CSS transforms are not
+   * put in this category because they can be handled directly by
+   * nsDisplayTransform.
+   * Stop searching at aStopAtAncestor if there is no such ancestor before it
+   * in the ancestor chain.
+   * Frames with different active geometry roots are in different ThebesLayers,
+   * so that we can animate the geometry root by changing its transform (either
+   * on the main thread or in the compositor).
+   * This function is idempotent: a frame returned by GetAnimatedGeometryRootFor
+   * is always returned again if you pass it to GetAnimatedGeometryRootFor.
+   */
+  static nsIFrame* GetAnimatedGeometryRootFor(nsIFrame* aFrame,
+                                              const nsIFrame* aStopAtAncestor = nullptr);
+
+  static nsIFrame* GetAnimatedGeometryRootFor(nsDisplayItem* aItem,
+                                              nsDisplayListBuilder* aBuilder);
+
 
   /**
     * GetScrollableFrameFor returns the scrollable frame for a scrolled frame
@@ -738,7 +776,8 @@ public:
     PAINT_ALL_CONTINUATIONS = 0x40,
     PAINT_TO_WINDOW = 0x80,
     PAINT_EXISTING_TRANSACTION = 0x100,
-    PAINT_NO_COMPOSITE = 0x200
+    PAINT_NO_COMPOSITE = 0x200,
+    PAINT_COMPRESSED = 0x400
   };
 
   /**
@@ -769,6 +808,8 @@ public:
    * If PAINT_EXISTING_TRANSACTION is set, then BeginTransaction() has already
    * been called on aFrame's widget's layer manager and should not be
    * called again.
+   * If PAINT_COMPRESSED is set, the FrameLayerBuilder should be set to compressed mode
+   * to avoid short cut optimizations.
    *
    * So there are three possible behaviours:
    * 1) PAINT_WIDGET_LAYERS is set and aRenderingContext is null; we paint
@@ -854,12 +895,18 @@ public:
   static nsIFrame* GetContainingBlockForClientRect(nsIFrame* aFrame);
 
   enum {
-    RECTS_ACCOUNT_FOR_TRANSFORMS = 0x01
+    RECTS_ACCOUNT_FOR_TRANSFORMS = 0x01,
+    // Two bits for specifying which box type to use.
+    // With neither bit set (default), use the border box.
+    RECTS_USE_CONTENT_BOX = 0x02,
+    RECTS_USE_PADDING_BOX = 0x04,
+    RECTS_USE_MARGIN_BOX = 0x06, // both bits set
+    RECTS_WHICH_BOX_MASK = 0x06 // bitmask for these two bits
   };
   /**
-   * Collect all CSS border-boxes associated with aFrame and its
-   * continuations, "drilling down" through outer table frames and
-   * some anonymous blocks since they're not real CSS boxes.
+   * Collect all CSS boxes (content, padding, border, or margin) associated
+   * with aFrame and its continuations, "drilling down" through outer table
+   * frames and some anonymous blocks since they're not real CSS boxes.
    * The boxes are positioned relative to aRelativeTo (taking scrolling
    * into account) and passed to the callback in frame-tree order.
    * If aFrame is null, no boxes are returned.
@@ -867,6 +914,9 @@ public:
    * If aFlags includes RECTS_ACCOUNT_FOR_TRANSFORMS, then when converting
    * the boxes into aRelativeTo coordinates, transforms (including CSS
    * and SVG transforms) are taken into account.
+   * If aFlags includes one of RECTS_USE_CONTENT_BOX, RECTS_USE_PADDING_BOX,
+   * or RECTS_USE_MARGIN_BOX, the corresponding type of box is used.
+   * Otherwise (by default), the border box is used.
    */
   static void GetAllInFlowRects(nsIFrame* aFrame, nsIFrame* aRelativeTo,
                                 RectCallback* aCallback, uint32_t aFlags = 0);
@@ -877,6 +927,9 @@ public:
    * If aFlags includes RECTS_ACCOUNT_FOR_TRANSFORMS, then when converting
    * the boxes into aRelativeTo coordinates, transforms (including CSS
    * and SVG transforms) are taken into account.
+   * If aFlags includes one of RECTS_USE_CONTENT_BOX, RECTS_USE_PADDING_BOX,
+   * or RECTS_USE_MARGIN_BOX, the corresponding type of box is used.
+   * Otherwise (by default), the border box is used.
    */
   static nsRect GetAllInFlowRectsUnion(nsIFrame* aFrame, nsIFrame* aRelativeTo,
                                        uint32_t aFlags = 0);
@@ -992,9 +1045,13 @@ public:
    * and margin.
    */
   enum IntrinsicWidthType { MIN_WIDTH, PREF_WIDTH };
+  enum {
+    IGNORE_PADDING = 0x01
+  };
   static nscoord IntrinsicForContainer(nsRenderingContext* aRenderingContext,
                                        nsIFrame* aFrame,
-                                       IntrinsicWidthType aType);
+                                       IntrinsicWidthType aType,
+                                       uint32_t aFlags = 0);
 
   /*
    * Convert nsStyleCoord to nscoord when percentages depend on the
@@ -1122,12 +1179,12 @@ public:
   static gfxFloat GetSnappedBaselineY(nsIFrame* aFrame, gfxContext* aContext,
                                       nscoord aY, nscoord aAscent);
 
-  static void DrawString(const nsIFrame*      aFrame,
-                         nsRenderingContext* aContext,
-                         const PRUnichar*     aString,
-                         int32_t              aLength,
-                         nsPoint              aPoint,
-                         uint8_t              aDirection = NS_STYLE_DIRECTION_INHERIT);
+  static void DrawString(const nsIFrame*       aFrame,
+                         nsRenderingContext*   aContext,
+                         const PRUnichar*      aString,
+                         int32_t               aLength,
+                         nsPoint               aPoint,
+                         nsStyleContext*       aStyleContext = nullptr);
 
   static nscoord GetStringWidth(const nsIFrame*      aFrame,
                                 nsRenderingContext* aContext,
@@ -1631,6 +1688,12 @@ public:
    */
   static bool HasAnimationsForCompositor(nsIContent* aContent,
                                          nsCSSProperty aProperty);
+
+  /**
+   * Returns true if the content node has animations or transitions for the
+   * property.
+   */
+  static bool HasAnimations(nsIContent* aContent, nsCSSProperty aProperty);
 
   /**
    * Checks if off-main-thread animations are enabled.

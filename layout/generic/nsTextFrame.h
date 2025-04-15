@@ -17,6 +17,10 @@
 class nsTextPaintStyle;
 class PropertyProvider;
 
+// This state bit is set on frames whose character data offsets need to be
+// fixed up
+#define TEXT_OFFSETS_NEED_FIXING         NS_FRAME_STATE_BIT(30)
+
 // This state bit is set on frames that have some non-collapsed characters after
 // reflow
 #define TEXT_HAS_NONCOLLAPSED_CHARACTERS NS_FRAME_STATE_BIT(31)
@@ -24,12 +28,23 @@ class PropertyProvider;
 // This state bit is set on children of token MathML elements
 #define TEXT_IS_IN_TOKEN_MATHML          NS_FRAME_STATE_BIT(32)
 
+// This state bit is set on token MathML elements if the token represents an
+// <mi> tag whose inner HTML consists of a single non-whitespace character
+// to allow special rendering behaviour.
+#define TEXT_IS_IN_SINGLE_CHAR_MI        NS_FRAME_STATE_BIT(59)
+
 #define TEXT_HAS_FONT_INFLATION          NS_FRAME_STATE_BIT(61)
 
 typedef nsFrame nsTextFrameBase;
 
 class nsDisplayTextGeometry;
 class nsDisplayText;
+
+class nsTextFrameTextRunCache {
+public:
+  static void Init();
+  static void Shutdown();
+};
 
 class nsTextFrame : public nsTextFrameBase {
 public:
@@ -215,6 +230,9 @@ public:
                              nsSize aMargin, nsSize aBorder, nsSize aPadding,
                              uint32_t aFlags) MOZ_OVERRIDE;
   virtual nsRect ComputeTightBounds(gfxContext* aContext) const MOZ_OVERRIDE;
+  virtual nsresult GetPrefWidthTightBounds(nsRenderingContext* aContext,
+                                           nscoord* aX,
+                                           nscoord* aXMost) MOZ_OVERRIDE;
   NS_IMETHOD Reflow(nsPresContext* aPresContext,
                     nsHTMLReflowMetrics& aMetrics,
                     const nsHTMLReflowState& aReflowState,
@@ -505,7 +523,7 @@ public:
     int32_t GetEnd() const { return mStart + mLength; }
   };
   TrimmedOffsets GetTrimmedOffsets(const nsTextFragment* aFrag,
-                                   bool aTrimAfter);
+                                   bool aTrimAfter, bool aPostReflow = true);
 
   // Similar to Reflow(), but for use from nsLineLayout
   void ReflowText(nsLineLayout& aLineLayout, nscoord aAvailableWidth,

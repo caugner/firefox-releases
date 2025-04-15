@@ -282,12 +282,12 @@ this.PermissionsTable =  { geolocation: {
                              privileged: DENY_ACTION,
                              certified: ALLOW_ACTION
                            },
-                           "keyboard": {
+                           "input": {
                              app: DENY_ACTION,
                              privileged: ALLOW_ACTION,
                              certified: ALLOW_ACTION
                            },
-                           "inputmethod-manage": {
+                           "input-manage": {
                              app: DENY_ACTION,
                              privileged: DENY_ACTION,
                              certified: ALLOW_ACTION
@@ -301,6 +301,22 @@ this.PermissionsTable =  { geolocation: {
                              app: PROMPT_ACTION,
                              privileged: PROMPT_ACTION,
                              certified: PROMPT_ACTION
+                           },
+                           "nfc": {
+                             app: DENY_ACTION,
+                             privileged: DENY_ACTION,
+                             certified: ALLOW_ACTION,
+                             access: ["read", "write"]
+                           },
+                           "nfc-manager": {
+                             app: DENY_ACTION,
+                             privileged: DENY_ACTION,
+                             certified: ALLOW_ACTION
+                           },
+                           "speaker-control": {
+                             app: DENY_ACTION,
+                             privileged: ALLOW_ACTION,
+                             certified: ALLOW_ACTION
                            },
                          };
 

@@ -8,13 +8,13 @@
  *  be found in the AUTHORS file in the root of the source tree.
  */
 
-#include "device_info_ds.h"
+#include "webrtc/modules/video_capture/windows/device_info_ds.h"
 
-#include "../video_capture_config.h"
-#include "../video_capture_delay.h"
-#include "help_functions_ds.h"
-#include "ref_count.h"
-#include "trace.h"
+#include "webrtc/modules/video_capture/video_capture_config.h"
+#include "webrtc/modules/video_capture/video_capture_delay.h"
+#include "webrtc/modules/video_capture/windows/help_functions_ds.h"
+#include "webrtc/system_wrappers/interface/ref_count.h"
+#include "webrtc/system_wrappers/interface/trace.h"
 
 #include <Dvdmedia.h>
 
@@ -71,7 +71,7 @@ DeviceInfoDS* DeviceInfoDS::Create(const int32_t id)
 }
 
 DeviceInfoDS::DeviceInfoDS(const int32_t id)
-    : DeviceInfoImpl(id), _dsDevEnum(NULL), _dsMonikerDevEnum(NULL),
+    : DeviceInfoImpl(id), _dsDevEnum(NULL),
       _CoUninitializeIsRequired(true)
 {
     // 1) Initialize the COM library (make Windows load the DLLs).
@@ -116,7 +116,6 @@ DeviceInfoDS::DeviceInfoDS(const int32_t id)
 
 DeviceInfoDS::~DeviceInfoDS()
 {
-    RELEASE_AND_CLEAR(_dsMonikerDevEnum);
     RELEASE_AND_CLEAR(_dsDevEnum);
     if (_CoUninitializeIsRequired)
     {
@@ -173,7 +172,7 @@ int32_t DeviceInfoDS::GetDeviceInfo(
 {
 
     // enumerate all video capture devices
-    RELEASE_AND_CLEAR(_dsMonikerDevEnum);
+    IEnumMoniker* _dsMonikerDevEnum = NULL;
     HRESULT hr =
         _dsDevEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory,
                                           &_dsMonikerDevEnum, 0);
@@ -182,6 +181,7 @@ int32_t DeviceInfoDS::GetDeviceInfo(
         WEBRTC_TRACE(webrtc::kTraceError, webrtc::kTraceVideoCapture, _id,
                      "Failed to enumerate CLSID_SystemDeviceEnum, error 0x%x."
                      " No webcam exist?", hr);
+        RELEASE_AND_CLEAR(_dsMonikerDevEnum);
         return 0;
     }
 
@@ -227,6 +227,7 @@ int32_t DeviceInfoDS::GetDeviceInfo(
                                              webrtc::kTraceVideoCapture, _id,
                                              "Failed to convert device name to UTF8. %d",
                                              GetLastError());
+                                RELEASE_AND_CLEAR(_dsMonikerDevEnum);
                                 return -1;
                             }
                         }
@@ -258,6 +259,7 @@ int32_t DeviceInfoDS::GetDeviceInfo(
                                                  webrtc::kTraceVideoCapture, _id,
                                                  "Failed to convert device name to UTF8. %d",
                                                  GetLastError());
+                                    RELEASE_AND_CLEAR(_dsMonikerDevEnum);
                                     return -1;
                                 }
                                 if (productUniqueIdUTF8
@@ -285,6 +287,7 @@ int32_t DeviceInfoDS::GetDeviceInfo(
         WEBRTC_TRACE(webrtc::kTraceDebug, webrtc::kTraceVideoCapture, _id, "%s %s",
                      __FUNCTION__, deviceNameUTF8);
     }
+    RELEASE_AND_CLEAR(_dsMonikerDevEnum);
     return index;
 }
 
@@ -303,8 +306,8 @@ IBaseFilter * DeviceInfoDS::GetDeviceFilter(
         return NULL;
     }
 
+    IEnumMoniker* _dsMonikerDevEnum = NULL;
     // enumerate all video capture devices
-    RELEASE_AND_CLEAR(_dsMonikerDevEnum);
     HRESULT hr = _dsDevEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory,
                                                    &_dsMonikerDevEnum, 0);
     if (hr != NOERROR)
@@ -312,6 +315,7 @@ IBaseFilter * DeviceInfoDS::GetDeviceFilter(
         WEBRTC_TRACE(webrtc::kTraceError, webrtc::kTraceVideoCapture, _id,
                      "Failed to enumerate CLSID_SystemDeviceEnum, error 0x%x."
                      " No webcam exist?", hr);
+        RELEASE_AND_CLEAR(_dsMonikerDevEnum);
         return 0;
     }
     _dsMonikerDevEnum->Reset();
@@ -379,27 +383,23 @@ IBaseFilter * DeviceInfoDS::GetDeviceFilter(
             pM->Release();
         }
     }
+    RELEASE_AND_CLEAR(_dsMonikerDevEnum);
     return captureFilter;
 }
 
 int32_t DeviceInfoDS::GetWindowsCapability(
-                              const int32_t capabilityIndex,
-                              VideoCaptureCapabilityWindows& windowsCapability)
+    const int32_t capabilityIndex,
+    VideoCaptureCapabilityWindows& windowsCapability) {
+  ReadLockScoped cs(_apiLock);
 
-{
-    ReadLockScoped cs(_apiLock);
-    // Make sure the number is valid
-    if (capabilityIndex >= _captureCapabilities.Size() || capabilityIndex < 0)
-        return -1;
+  std::map<int, VideoCaptureCapability*>::iterator item =
+      _captureCapabilities.find(capabilityIndex);
+  if (item == _captureCapabilities.end())
+    return -1;
 
-    MapItem* item = _captureCapabilities.Find(capabilityIndex);
-    if (!item)
-        return -1;
-
-    VideoCaptureCapabilityWindows* capPointer =
-                static_cast<VideoCaptureCapabilityWindows*> (item->GetItem());
-    windowsCapability = *capPointer;
-    return 0;
+  windowsCapability =
+      *static_cast<VideoCaptureCapabilityWindows*>(item->second);
+  return 0;
 }
 
 int32_t DeviceInfoDS::CreateCapabilityMap(
@@ -407,14 +407,14 @@ int32_t DeviceInfoDS::CreateCapabilityMap(
 
 {
     // Reset old capability list
-    MapItem* item = NULL;
-    while (item = _captureCapabilities.Last())
-    {
-        VideoCaptureCapabilityWindows* cap =
-            static_cast<VideoCaptureCapabilityWindows*> (item->GetItem());
-        delete cap;
-        _captureCapabilities.Erase(item);
+  for (std::map<int, VideoCaptureCapability*>::iterator it =
+           _captureCapabilities.begin();
+       it != _captureCapabilities.end();
+       ++it) {
+      delete it->second;
     }
+
+    _captureCapabilities.clear();
 
     const int32_t deviceUniqueIdUTF8Length =
         (int32_t) strlen((char*) deviceUniqueIdUTF8);
@@ -696,7 +696,7 @@ int32_t DeviceInfoDS::CreateCapabilityMap(
                                                       productId,
                                                       capability->width,
                                                       capability->height);
-            _captureCapabilities.Insert(index++, capability);
+            _captureCapabilities[index++] = capability;
             WEBRTC_TRACE( webrtc::kTraceInfo, webrtc::kTraceVideoCapture, _id,
                          "Camera capability, width:%d height:%d type:%d fps:%d",
                          capability->width, capability->height,
@@ -717,9 +717,9 @@ int32_t DeviceInfoDS::CreateCapabilityMap(
                                                        + 1);
     memcpy(_lastUsedDeviceName, deviceUniqueIdUTF8, _lastUsedDeviceNameLength+ 1);
     WEBRTC_TRACE(webrtc::kTraceInfo, webrtc::kTraceVideoCapture, _id,
-                 "CreateCapabilityMap %d", _captureCapabilities.Size());
+                 "CreateCapabilityMap %d", _captureCapabilities.size());
 
-    return _captureCapabilities.Size();
+    return static_cast<int32_t>(_captureCapabilities.size());
 }
 
 /* Constructs a product ID from the Windows DevicePath. on a USB device the devicePath contains product id and vendor id.
@@ -827,5 +827,5 @@ int32_t DeviceInfoDS::DisplayCaptureSettingsDialogBox(
     filter->Release();
     return 0;
 }
-} // namespace videocapturemodule
-} // namespace webrtc
+}  // namespace videocapturemodule
+}  // namespace webrtc

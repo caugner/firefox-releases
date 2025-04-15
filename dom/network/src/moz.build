@@ -11,20 +11,31 @@ EXPORTS.mozilla.dom.network += [
     'TCPSocketChild.h',
     'TCPSocketParent.h',
     'Types.h',
+    'UDPSocketChild.h',
+    'UDPSocketParent.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'Connection.cpp',
     'TCPServerSocketChild.cpp',
     'TCPServerSocketParent.cpp',
     'TCPSocketChild.cpp',
     'TCPSocketParent.cpp',
+    'UDPSocketChild.cpp',
+    'UDPSocketParent.cpp',
 ]
 
 if CONFIG['MOZ_B2G_RIL']:
-    SOURCES += [
-        'MobileConnection.cpp',
+    EXPORTS.mozilla.dom.network += [
+        'MobileConnection.h',
+        'MobileConnectionArray.h',
     ]
+    UNIFIED_SOURCES += [
+        'MobileConnection.cpp',
+        'MobileConnectionArray.cpp',
+    ]
+
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
     EXTRA_JS_MODULES = [
         'NetworkStatsDB.jsm',
         'NetworkStatsService.jsm',
@@ -40,7 +51,7 @@ EXTRA_PP_COMPONENTS += [
     'TCPSocket.js',
 ]
 
-if CONFIG['MOZ_B2G_RIL']:
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
     EXTRA_COMPONENTS += [
         'NetworkStatsManager.js',
         'NetworkStatsManager.manifest',
@@ -51,13 +62,15 @@ if CONFIG['MOZ_B2G_RIL']:
 IPDL_SOURCES += [
     'PTCPServerSocket.ipdl',
     'PTCPSocket.ipdl',
+    'PUDPSocket.ipdl',
 ]
 
 FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
-LIBRARY_NAME = 'dom_network_s'
-
 include('/ipc/chromium/chromium-config.mozbuild')
+
+FINAL_LIBRARY = 'gklayout'
+LOCAL_INCLUDES += [
+    '/content/events/src',
+]
 

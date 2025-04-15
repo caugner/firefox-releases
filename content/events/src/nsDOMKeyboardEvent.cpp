@@ -23,6 +23,7 @@ nsDOMKeyboardEvent::nsDOMKeyboardEvent(mozilla::dom::EventTarget* aOwner,
   else {
     mEventIsInternal = true;
     mEvent->time = PR_Now();
+    mEvent->AsKeyboardEvent()->mKeyNameIndex = KEY_NAME_INDEX_USE_STRING;
   }
 }
 
@@ -89,6 +90,20 @@ nsDOMKeyboardEvent::GetMetaKey(bool* aIsDown)
   return NS_OK;
 }
 
+bool
+nsDOMKeyboardEvent::Repeat()
+{
+  return mEvent->AsKeyboardEvent()->mIsRepeat;
+}
+
+NS_IMETHODIMP
+nsDOMKeyboardEvent::GetRepeat(bool* aIsRepeat)
+{
+  NS_ENSURE_ARG_POINTER(aIsRepeat);
+  *aIsRepeat = Repeat();
+  return NS_OK;
+}
+
 NS_IMETHODIMP
 nsDOMKeyboardEvent::GetModifierState(const nsAString& aKey,
                                      bool* aState)
@@ -102,9 +117,7 @@ nsDOMKeyboardEvent::GetModifierState(const nsAString& aKey,
 NS_IMETHODIMP
 nsDOMKeyboardEvent::GetKey(nsAString& aKeyName)
 {
-  if (!mEventIsInternal) {
-    mEvent->AsKeyboardEvent()->GetDOMKeyName(aKeyName);
-  }
+  mEvent->AsKeyboardEvent()->GetDOMKeyName(aKeyName);
   return NS_OK;
 }
 

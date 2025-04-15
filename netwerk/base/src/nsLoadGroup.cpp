@@ -42,6 +42,7 @@ using namespace mozilla::net;
 static PRLogModuleInfo* gLoadGroupLog = nullptr;
 #endif
 
+#undef LOG
 #define LOG(args) PR_LOG(gLoadGroupLog, PR_LOG_DEBUG, args)
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1155,7 +1156,7 @@ nsLoadGroupConnectionInfo::SetSpdyPushCache(mozilla::net::SpdyPushCache *aSpdyPu
 
 nsresult nsLoadGroup::Init()
 {
-    static PLDHashTableOps hash_table_ops =
+    static const PLDHashTableOps hash_table_ops =
     {
         PL_DHashAllocTable,
         PL_DHashFreeTable,
@@ -1178,3 +1179,5 @@ nsresult nsLoadGroup::Init()
 
     return NS_OK;
 }
+
+#undef LOG

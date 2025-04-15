@@ -38,7 +38,7 @@ public:
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(WorkerNavigator)
 
   static already_AddRefed<WorkerNavigator>
-  Create(JSContext* aCx, JS::Handle<JSObject*> aGlobal);
+  Create();
 
   virtual JSObject*
   WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
@@ -52,6 +52,10 @@ public:
     MOZ_COUNT_DTOR(WorkerNavigator);
   }
 
+  void GetAppCodeName(nsString& aAppCodeName) const
+  {
+    aAppCodeName.AssignLiteral("Mozilla");
+  }
   void GetAppName(nsString& aAppName) const
   {
     aAppName = mAppName;
@@ -63,6 +67,14 @@ public:
   void GetPlatform(nsString& aPlatform) const
   {
     aPlatform = mPlatform;
+  }
+  void GetProduct(nsString& aProduct) const
+  {
+    aProduct.AssignLiteral("Gecko");
+  }
+  bool TaintEnabled() const
+  {
+    return false;
   }
   void GetUserAgent(nsString& aUserAgent) const
   {

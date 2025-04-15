@@ -9,6 +9,7 @@
 #include "Workers.h"
 
 #include "mozilla/dom/BindingDeclarations.h"
+#include "mozilla/dom/workers/bindings/MessagePort.h"
 #include "nsDOMEventTargetHelper.h"
 
 class nsIDOMEvent;
@@ -28,7 +29,7 @@ class SharedWorker MOZ_FINAL : public nsDOMEventTargetHelper
   typedef mozilla::ErrorResult ErrorResult;
   typedef mozilla::dom::GlobalObject GlobalObject;
 
-  WorkerPrivate* mWorkerPrivate;
+  nsRefPtr<WorkerPrivate> mWorkerPrivate;
   nsRefPtr<MessagePort> mMessagePort;
   nsTArray<nsCOMPtr<nsIDOMEvent>> mSuspendedEvents;
   uint64_t mSerial;
@@ -76,21 +77,28 @@ public:
   IMPL_EVENT_HANDLER(error)
 
   virtual JSObject*
-  WrapObject(JSContext* aCx, JS::HandleObject aScope) MOZ_OVERRIDE;
+  WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
   virtual nsresult
   PreHandleEvent(nsEventChainPreVisitor& aVisitor) MOZ_OVERRIDE;
 
+  WorkerPrivate*
+  GetWorkerPrivate() const
+  {
+    return mWorkerPrivate;
+  }
+
 private:
   // This class can only be created from the RuntimeService.
-  SharedWorker(nsPIDOMWindow* aWindow, WorkerPrivate* aWorkerPrivate);
+  SharedWorker(nsPIDOMWindow* aWindow,
+               WorkerPrivate* aWorkerPrivate);
 
   // This class is reference-counted and will be destroyed from Release().
   ~SharedWorker();
 
   // Only called by MessagePort.
   void
-  PostMessage(JSContext* aCx, JS::HandleValue aMessage,
+  PostMessage(JSContext* aCx, JS::Handle<JS::Value> aMessage,
               const Optional<Sequence<JS::Value>>& aTransferable,
               ErrorResult& aRv);
 

@@ -29,6 +29,7 @@
 #include "nsIContentSecurityPolicy.h"
 #include "nsIDocShell.h"
 #include "nsIWebNavigation.h"
+#include "nsISupportsPriority.h"
 #include "nsINetworkSeer.h"
 
 #include "nsIConsoleService.h"
@@ -373,6 +374,11 @@ nsUserFontSet::StartLoad(gfxMixedFontFamily* aFamily,
   nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel));
   if (httpChannel)
     httpChannel->SetReferrer(aFontFaceSrc->mReferrer);
+  nsCOMPtr<nsISupportsPriority> priorityChannel(do_QueryInterface(channel));
+  if (priorityChannel) {
+    priorityChannel->AdjustPriority(nsISupportsPriority::PRIORITY_HIGH);
+  }
+
   rv = NS_NewStreamLoader(getter_AddRefs(streamLoader), fontLoader);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -870,15 +876,13 @@ nsUserFontSet::CheckFontLoad(const gfxFontFaceSrc* aFontFaceSrc,
   }
 
   *aBypassCache = false;
-  nsCOMPtr<nsISupports> container = ps->GetDocument()->GetContainer();
-  if (container) {
-    nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(container);
-    if (docShell) {
-      uint32_t loadType;
-      if (NS_SUCCEEDED(docShell->GetLoadType(&loadType))) {
-        if ((loadType >> 16) & nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE) {
-          *aBypassCache = true;
-        }
+
+  nsCOMPtr<nsIDocShell> docShell = ps->GetDocument()->GetDocShell();
+  if (docShell) {
+    uint32_t loadType;
+    if (NS_SUCCEEDED(docShell->GetLoadType(&loadType))) {
+      if ((loadType >> 16) & nsIWebNavigation::LOAD_FLAGS_BYPASS_CACHE) {
+        *aBypassCache = true;
       }
     }
   }
@@ -976,11 +980,6 @@ nsUserFontSet::GetPrivateBrowsing()
     return false;
   }
 
-  nsCOMPtr<nsISupports> container = ps->GetDocument()->GetContainer();
-  if (!container) {
-    return false;
-  }
-
-  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(container);
+  nsCOMPtr<nsILoadContext> loadContext = ps->GetDocument()->GetLoadContext();
   return loadContext && loadContext->UsePrivateBrowsing();
 }

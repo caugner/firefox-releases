@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'soundtouch'
-
 EXPORTS.soundtouch += [
     'FIFOSamplePipe.h',
     'SoundTouch.h',
@@ -13,7 +11,7 @@ EXPORTS.soundtouch += [
     'STTypes.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'AAFilter.cpp',
     'cpu_detect_x86.cpp',
     'FIFOSampleBuffer.cpp',
@@ -25,15 +23,19 @@ SOURCES += [
 
 if CONFIG['INTEL_ARCHITECTURE']:
     if CONFIG['MOZ_SAMPLE_TYPE_FLOAT32']:
-        SOURCES += [
+        UNIFIED_SOURCES += [
             'sse_optimized.cpp',
         ]
     else:
-        SOURCES += [
+        UNIFIED_SOURCES += [
             'mmx_optimized.cpp',
         ]
 
-LIBRARY_NAME = 'soundtouch'
-
 MSVC_ENABLE_PGO = True
+if CONFIG['GKMEDIAS_SHARED_LIBRARY']:
+    NO_VISIBILITY_FLAGS = True
 
+FINAL_LIBRARY = 'gkmedias'
+
+# Use abort() instead of exception in SoundTouch.
+DEFINES['ST_NO_EXCEPTION_HANDLING'] = 1

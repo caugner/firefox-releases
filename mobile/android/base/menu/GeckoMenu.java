@@ -10,6 +10,7 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.view.ActionProvider;
 import android.view.KeyEvent;
 import android.view.LayoutInflater;
@@ -66,7 +67,7 @@ public class GeckoMenu extends ListView
      */
     public static interface ActionItemBarPresenter {
         // Add an action-item.
-        public void addActionItem(View actionItem);
+        public boolean addActionItem(View actionItem);
 
         // Remove an action-item.
         public void removeActionItem(View actionItem);
@@ -114,7 +115,7 @@ public class GeckoMenu extends ListView
         mItems = new ArrayList<GeckoMenuItem>();
         mActionItems = new HashMap<GeckoMenuItem, View>();
 
-        mActionItemBarPresenter =  (DefaultActionItemBar) LayoutInflater.from(context).inflate(R.layout.menu_action_bar, null);
+        mActionItemBarPresenter = (DefaultActionItemBar) LayoutInflater.from(context).inflate(R.layout.menu_action_bar, null);
     }
 
     @Override
@@ -151,7 +152,7 @@ public class GeckoMenu extends ListView
         mItems.add(menuItem);
     }
 
-    private void addActionItem(final GeckoMenuItem menuItem) {
+    private boolean addActionItem(final GeckoMenuItem menuItem) {
         menuItem.setOnShowAsActionChangedListener(this);
 
         if (mActionItems.size() == 0 && 
@@ -170,9 +171,12 @@ public class GeckoMenu extends ListView
             }
         });
 
-        mActionItems.put(menuItem, actionView);
-        mActionItemBarPresenter.addActionItem(actionView);
-        mItems.add(menuItem);
+        if (mActionItemBarPresenter.addActionItem(actionView)) {
+            mActionItems.put(menuItem, actionView);
+            mItems.add(menuItem);
+            return true;
+        }
+        return false;
     }
 
     @Override
@@ -213,18 +217,49 @@ public class GeckoMenu extends ListView
         return subMenu;
     }
 
+    private void removeActionBarView() {
+        // Reset the adapter before removing the header view from a list.
+        setAdapter(null);
+        removeHeaderView((DefaultActionItemBar) mActionItemBarPresenter);
+        setAdapter(mAdapter);
+    }
+
     @Override
     public void clear() {
         for (GeckoMenuItem menuItem : mItems) {
             if (menuItem.hasSubMenu()) {
-                menuItem.getSubMenu().clear();
+                SubMenu sub = menuItem.getSubMenu();
+                if (sub == null) {
+                    continue;
+                }
+                try {
+                    sub.clear();
+                } catch (Exception ex) {
+                    Log.e(LOGTAG, "Couldn't clear submenu.", ex);
+                }
             }
         }
 
         mAdapter.clear();
-
         mItems.clear();
+
+        /*
+         * Reinflating the menu will re-add any action items to the toolbar, so
+         * remove the old ones. This also ensures that any text associated with
+         * these is switched to the correct locale.
+         */
+        if (mActionItemBarPresenter != null) {
+            for (View item : mActionItems.values()) {
+                mActionItemBarPresenter.removeActionItem(item);
+            }
+        }
         mActionItems.clear();
+
+        // Remove the view, too -- the first addActionItem will re-add it,
+        // and this is simpler than changing that logic.
+        if (mActionItemBarPresenter instanceof DefaultActionItemBar) {
+            removeActionBarView();
+        }
     }
 
     @Override
@@ -266,7 +301,7 @@ public class GeckoMenu extends ListView
     @Override
     public boolean hasVisibleItems() {
         for (GeckoMenuItem menuItem : mItems) {
-            if (menuItem.isVisible())
+            if (menuItem.isVisible() && !mActionItems.containsKey(menuItem))
                 return true;
         }
 
@@ -319,10 +354,7 @@ public class GeckoMenu extends ListView
 
             if (mActionItems.size() == 0 && 
                 mActionItemBarPresenter instanceof DefaultActionItemBar) {
-                // Reset the adapter before removing the header view from a list.
-                setAdapter(null);
-                removeHeaderView((DefaultActionItemBar) mActionItemBarPresenter);
-                setAdapter(mAdapter);
+                removeActionBarView();
             }
 
             return;
@@ -362,10 +394,11 @@ public class GeckoMenu extends ListView
     public void onShowAsActionChanged(GeckoMenuItem item, boolean isActionItem) {
         removeItem(item.getItemId());
 
-        if (isActionItem)
-            addActionItem(item);
-        else
-            addItem(item);
+        if (isActionItem && addActionItem(item)) {
+            return;
+        }
+
+        addItem(item);
     }
 
     public void onItemChanged(GeckoMenuItem item) {
@@ -466,19 +499,22 @@ public class GeckoMenu extends ListView
     public static class DefaultActionItemBar extends LinearLayout
                                              implements ActionItemBarPresenter {
         public DefaultActionItemBar(Context context) {
-            super(context);
+            this(context, null);
         }
 
         public DefaultActionItemBar(Context context, AttributeSet attrs) {
             super(context, attrs);
+
+            setWeightSum(3.0f);
         }
 
         @Override
-        public void addActionItem(View actionItem) {
+        public boolean addActionItem(View actionItem) {
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(actionItem.getLayoutParams());
             params.weight = 1.0f;
             actionItem.setLayoutParams(params);
             addView(actionItem);
+            return true;
         }
 
         @Override

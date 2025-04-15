@@ -22,7 +22,6 @@
 #include "mozilla/gfx/Types.h"          // for SurfaceFormat, etc
 #include "mozilla/layers/CompositorTypes.h"  // for TextureFlags
 #include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor
-#include "mozilla/layers/LayersTypes.h"  // for MOZ_LAYERS_HAVE_LOG
 #include "mozilla/layers/TextureHost.h"  // for DeprecatedTextureHost, etc
 #include "mozilla/mozalloc.h"           // for operator delete, etc
 #include "nsAutoPtr.h"                  // for nsRefPtr
@@ -30,12 +29,12 @@
 #include "nsDebug.h"                    // for NS_WARNING
 #include "nsISupportsImpl.h"            // for TextureImage::Release, etc
 #include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
-#include "LayerManagerOGLProgram.h"     // for ShaderProgramType, etc
+#include "OGLShaderProgram.h"           // for ShaderProgramType, etc
 #ifdef MOZ_WIDGET_GONK
 #include <ui/GraphicBuffer.h>
+#if ANDROID_VERSION >= 18
+#include <ui/Fence.h>
 #endif
-#ifdef XP_MACOSX
-#include "mozilla/gfx/MacIOSurface.h"
 #endif
 
 class gfxImageSurface;
@@ -144,6 +143,29 @@ public:
   virtual gfx3DMatrix GetTextureTransform() { return gfx3DMatrix(); }
 
   virtual TextureImageDeprecatedTextureHostOGL* AsTextureImageDeprecatedTextureHost() { return nullptr; }
+};
+
+/**
+ * TextureHostOGL provides the necessary API for platform specific composition.
+ */
+class TextureHostOGL
+{
+public:
+#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
+
+  /**
+   * Store a fence that will signal when the current buffer is no longer being read.
+   * Similar to android's GLConsumer::setReleaseFence()
+   */
+  virtual bool SetReleaseFence(const android::sp<android::Fence>& aReleaseFence);
+
+  /**
+   * Return a releaseFence's Fence and clear a reference to the Fence.
+   */
+  virtual android::sp<android::Fence> GetAndResetReleaseFence();
+protected:
+  android::sp<android::Fence> mReleaseFence;
+#endif
 };
 
 /**
@@ -327,7 +349,7 @@ public:
     return mTextureSource;
   }
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE
   {
     return nullptr; // XXX - implement this (for MOZ_DUMP_PAINTING)
   }
@@ -336,9 +358,7 @@ public:
 
   virtual gfx::IntSize GetSize() const MOZ_OVERRIDE { return mSize; }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "SharedTextureHostOGL"; }
-#endif
 
 protected:
   gfx::IntSize mSize;
@@ -348,108 +368,6 @@ protected:
 
   RefPtr<SharedTextureSourceOGL> mTextureSource;
 };
-
-#ifdef XP_MACOSX
-/**
- * A texture source meant for use with MacIOSurfaceTextureHostOGL.
- *
- * It does not own any GL texture, and attaches its shared handle to one of
- * the compositor's temporary textures when binding.
- */
-class MacIOSurfaceTextureSourceOGL : public NewTextureSource
-                                   , public TextureSourceOGL
-{
-public:
-  MacIOSurfaceTextureSourceOGL(CompositorOGL* aCompositor,
-                               MacIOSurface* aSurface)
-    : mCompositor(aCompositor)
-    , mSurface(aSurface)
-  {}
-
-  virtual TextureSourceOGL* AsSourceOGL() { return this; }
-
-  virtual void BindTexture(GLenum activetex) MOZ_OVERRIDE;
-
-  virtual bool IsValid() const MOZ_OVERRIDE { return !!gl(); }
-
-  virtual gfx::IntSize GetSize() const MOZ_OVERRIDE {
-    return gfx::IntSize(mSurface->GetDevicePixelWidth(),
-                        mSurface->GetDevicePixelHeight());
-  }
-
-  virtual gfx::SurfaceFormat GetFormat() const MOZ_OVERRIDE {
-    return mSurface->HasAlpha() ? gfx::FORMAT_R8G8B8A8 : gfx::FORMAT_B8G8R8X8; }
-
-  virtual GLenum GetTextureTarget() const { return LOCAL_GL_TEXTURE_RECTANGLE_ARB; }
-
-  virtual GLenum GetWrapMode() const MOZ_OVERRIDE { return LOCAL_GL_CLAMP_TO_EDGE; }
-
-  virtual void UnbindTexture() MOZ_OVERRIDE {}
-
-  // MacIOSurfaceTextureSourceOGL doesn't own any gl texture
-  virtual void DeallocateDeviceData() {}
-
-  void SetCompositor(CompositorOGL* aCompositor) {
-    mCompositor = aCompositor;
-  }
-
-  gl::GLContext* gl() const;
-
-protected:
-  CompositorOGL* mCompositor;
-  RefPtr<MacIOSurface> mSurface;
-};
-
-/**
- * A TextureHost for shared MacIOSurface
- *
- * Most of the logic actually happens in MacIOSurfaceTextureSourceOGL.
- */
-class MacIOSurfaceTextureHostOGL : public TextureHost
-{
-public:
-  MacIOSurfaceTextureHostOGL(uint64_t aID,
-                             TextureFlags aFlags,
-                             const SurfaceDescriptorMacIOSurface& aDescriptor);
-
-  // SharedTextureHostOGL doesn't own any GL texture
-  virtual void DeallocateDeviceData() MOZ_OVERRIDE {}
-
-  virtual void SetCompositor(Compositor* aCompositor) MOZ_OVERRIDE;
-
-  virtual bool Lock() MOZ_OVERRIDE;
-
-  virtual gfx::SurfaceFormat GetFormat() const MOZ_OVERRIDE {
-    return mSurface->HasAlpha() ? gfx::FORMAT_R8G8B8A8 : gfx::FORMAT_B8G8R8X8;
-  }
-
-  virtual NewTextureSource* GetTextureSources() MOZ_OVERRIDE
-  {
-    return mTextureSource;
-  }
-
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE
-  {
-    return nullptr; // XXX - implement this (for MOZ_DUMP_PAINTING)
-  }
-
-  gl::GLContext* gl() const;
-
-  virtual gfx::IntSize GetSize() const MOZ_OVERRIDE {
-    return gfx::IntSize(mSurface->GetDevicePixelWidth(),
-                        mSurface->GetDevicePixelHeight());
-  }
-
-#ifdef MOZ_LAYERS_HAVE_LOG
-  virtual const char* Name() { return "MacIOSurfaceTextureHostOGL"; }
-#endif
-
-protected:
-  CompositorOGL* mCompositor;
-  RefPtr<MacIOSurfaceTextureSourceOGL> mTextureSource;
-  RefPtr<MacIOSurface> mSurface;
-};
-#endif
 
 /**
  * DeprecatedTextureHost implementation using a TextureImage as the underlying texture.
@@ -507,7 +425,7 @@ public:
 
   virtual bool Lock() MOZ_OVERRIDE;
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
   // textureSource
   void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE
@@ -572,9 +490,7 @@ public:
     return DeprecatedTextureHost::GetFormat();
   }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "TextureImageDeprecatedTextureHostOGL"; }
-#endif
 
 protected:
   nsRefPtr<gl::TextureImage> mTexture;
@@ -682,11 +598,9 @@ public:
     return mYTexture->GetSize();
   }
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "YCbCrDeprecatedTextureHostOGL"; }
-#endif
 
 private:
   RefPtr<Channel> mYTexture;
@@ -774,11 +688,9 @@ public:
 
   virtual gfx3DMatrix GetTextureTransform() MOZ_OVERRIDE;
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "SharedDeprecatedTextureHostOGL"; }
-#endif
 
 protected:
   void DeleteTextures();
@@ -855,11 +767,9 @@ public:
              GFX_CONTENT_COLOR;
   }
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "SurfaceStreamHostOGL"; }
-#endif
 
   SurfaceStreamHostOGL()
     : mGL(nullptr)
@@ -919,11 +829,9 @@ public:
                                 nsIntRegion* aRegion = nullptr)
   { MOZ_ASSERT(false, "Tiles should not use this path"); }
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "TiledDeprecatedTextureHostOGL"; }
-#endif
 
 protected:
   void DeleteTextures();
@@ -954,6 +862,9 @@ private:
 class GrallocDeprecatedTextureHostOGL
   : public DeprecatedTextureHost
   , public TextureSourceOGL
+#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
+  , public TextureHostOGL
+#endif
 {
 public:
   GrallocDeprecatedTextureHostOGL();
@@ -989,11 +900,9 @@ public:
 
   bool IsValid() const MOZ_OVERRIDE;
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() { return "GrallocDeprecatedTextureHostOGL"; }
-#endif
 
   void BindTexture(GLenum aTextureUnit) MOZ_OVERRIDE;
   void UnbindTexture() MOZ_OVERRIDE {}
@@ -1002,6 +911,15 @@ public:
   {
     return this;
   }
+
+#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
+  virtual TextureHostOGL* AsHostOGL() MOZ_OVERRIDE
+  {
+    return this;
+  }
+#endif
+
+  virtual void SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData);
 
   // only overridden for hacky fix in gecko 23 for bug 862324
   // see bug 865908 about fixing this.

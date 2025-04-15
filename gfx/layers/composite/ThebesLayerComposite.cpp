@@ -9,7 +9,6 @@
 #include "Units.h"                      // for CSSRect, LayerPixel, etc
 #include "gfx2DGlue.h"                  // for ToMatrix4x4
 #include "gfx3DMatrix.h"                // for gfx3DMatrix
-#include "gfxImageSurface.h"            // for gfxImageSurface
 #include "gfxUtils.h"                   // for gfxUtils, etc
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
 #include "mozilla/gfx/Matrix.h"         // for Matrix4x4
@@ -95,8 +94,7 @@ ThebesLayerComposite::GetRenderState()
 }
 
 void
-ThebesLayerComposite::RenderLayer(const nsIntPoint& aOffset,
-                                  const nsIntRect& aClipRect)
+ThebesLayerComposite::RenderLayer(const nsIntRect& aClipRect)
 {
   if (!mBuffer || !mBuffer->IsAttached()) {
     return;
@@ -113,8 +111,14 @@ ThebesLayerComposite::RenderLayer(const nsIntPoint& aOffset,
 
 #ifdef MOZ_DUMP_PAINTING
   if (gfxUtils::sDumpPainting) {
-    nsRefPtr<gfxImageSurface> surf = mBuffer->GetAsSurface();
-    if (surf) {
+    RefPtr<gfx::DataSourceSurface> dSurf = mBuffer->GetAsSurface();
+    if (dSurf) {
+      gfxPlatform *platform = gfxPlatform::GetPlatform();
+      RefPtr<gfx::DrawTarget> dt = platform->CreateDrawTargetForData(dSurf->GetData(),
+                                                                     dSurf->GetSize(),
+                                                                     dSurf->Stride(),
+                                                                     dSurf->GetFormat());
+      nsRefPtr<gfxASurface> surf = platform->GetThebesSurfaceForDrawTarget(dt);
       WriteSnapshotToDumpFile(this, surf);
     }
   }
@@ -127,13 +131,8 @@ ThebesLayerComposite::RenderLayer(const nsIntPoint& aOffset,
 
   TiledLayerProperties tiledLayerProps;
   if (mRequiresTiledProperties) {
-    // calculating these things can be a little expensive, so don't
-    // do them if we don't have to
     tiledLayerProps.mVisibleRegion = visibleRegion;
-    tiledLayerProps.mDisplayPort = GetDisplayPort();
     tiledLayerProps.mEffectiveResolution = GetEffectiveResolution();
-    tiledLayerProps.mCompositionBounds = GetCompositionBounds();
-    tiledLayerProps.mRetainTiles = !(mIsFixedPosition || mStickyPositionData);
     tiledLayerProps.mValidRegion = mValidRegion;
   }
 
@@ -142,7 +141,6 @@ ThebesLayerComposite::RenderLayer(const nsIntPoint& aOffset,
   mBuffer->Composite(effectChain,
                      GetEffectiveOpacity(),
                      transform,
-                     gfx::Point(aOffset.x, aOffset.y),
                      gfx::FILTER_LINEAR,
                      clipRect,
                      &visibleRegion,
@@ -176,126 +174,19 @@ ThebesLayerComposite::CleanupResources()
   mBuffer = nullptr;
 }
 
-gfxSize
+CSSToScreenScale
 ThebesLayerComposite::GetEffectiveResolution()
 {
-  // Work out render resolution by multiplying the resolution of our ancestors.
-  // Only container layers can have frame metrics, so we start off with a
-  // resolution of 1, 1.
-  // XXX For large layer trees, it would be faster to do this once from the
-  //     root node upwards and store the value on each layer.
-  gfxSize resolution(1, 1);
   for (ContainerLayer* parent = GetParent(); parent; parent = parent->GetParent()) {
     const FrameMetrics& metrics = parent->GetFrameMetrics();
-    resolution.width *= metrics.mResolution.scale;
-    resolution.height *= metrics.mResolution.scale;
-  }
-
-  return resolution;
-}
-
-gfxRect
-ThebesLayerComposite::GetDisplayPort()
-{
-  // We use GetTransform instead of GetEffectiveTransform in this function
-  // as we want the transform of the shadowable layers and not that of the
-  // shadow layers, which may have been modified due to async scrolling/
-  // zooming.
-  gfx3DMatrix transform = GetTransform();
-
-  // Find out the area of the nearest display-port to invalidate retained
-  // tiles.
-  gfxRect displayPort;
-  gfxSize parentResolution = GetEffectiveResolution();
-  for (ContainerLayer* parent = GetParent(); parent; parent = parent->GetParent()) {
-    const FrameMetrics& metrics = parent->GetFrameMetrics();
-    if (displayPort.IsEmpty()) {
-      if (!metrics.mDisplayPort.IsEmpty()) {
-          // We use the bounds to cut down on complication/computation time.
-          // This will be incorrect when the transform involves rotation, but
-          // it'd be quite hard to retain invalid tiles correctly in this
-          // situation anyway.
-          displayPort = gfxRect(metrics.mDisplayPort.x,
-                                metrics.mDisplayPort.y,
-                                metrics.mDisplayPort.width,
-                                metrics.mDisplayPort.height);
-          displayPort.ScaleRoundOut(parentResolution.width, parentResolution.height);
-      }
-      parentResolution.width /= metrics.mResolution.scale;
-      parentResolution.height /= metrics.mResolution.scale;
-    }
-    if (parent->UseIntermediateSurface()) {
-      transform.PreMultiply(parent->GetTransform());
+    if (metrics.mScrollId != FrameMetrics::NULL_SCROLL_ID) {
+      return metrics.mZoom;
     }
   }
 
-  // If no display port was found, use the widget size from the layer manager.
-  if (displayPort.IsEmpty()) {
-    LayerManagerComposite* manager = static_cast<LayerManagerComposite*>(Manager());
-    const nsIntSize& widgetSize = manager->GetWidgetSize();
-    displayPort.width = widgetSize.width;
-    displayPort.height = widgetSize.height;
-  }
-
-  // Transform the display port into layer space.
-  displayPort = transform.Inverse().TransformBounds(displayPort);
-
-  return displayPort;
+  return CSSToScreenScale(1.0);
 }
 
-gfxRect
-ThebesLayerComposite::GetCompositionBounds()
-{
-  // Walk up the tree, looking for a display-port - if we find one, we know
-  // that this layer represents a content node and we can use its first
-  // scrollable child, in conjunction with its content area and viewport offset
-  // to establish the screen coordinates to which the content area will be
-  // rendered.
-  gfxRect compositionBounds;
-  ContainerLayer* scrollableLayer = nullptr;
-  for (ContainerLayer* parent = GetParent(); parent; parent = parent->GetParent()) {
-    const FrameMetrics& parentMetrics = parent->GetFrameMetrics();
-    if (parentMetrics.IsScrollable())
-      scrollableLayer = parent;
-    if (!parentMetrics.mDisplayPort.IsEmpty() && scrollableLayer) {
-      // Get the composition bounds, so as not to waste rendering time.
-      compositionBounds = gfxRect(parentMetrics.mCompositionBounds.x,
-                                  parentMetrics.mCompositionBounds.y,
-                                  parentMetrics.mCompositionBounds.width,
-                                  parentMetrics.mCompositionBounds.height);
-
-      // Calculate the scale transform applied to the root layer to determine
-      // the content resolution.
-      Layer* rootLayer = Manager()->GetRoot();
-      const gfx3DMatrix& rootTransform = rootLayer->GetTransform();
-      LayerToCSSScale scale(rootTransform.GetXScale(),
-                            rootTransform.GetYScale());
-
-      // Get the content document bounds, in screen-space.
-      const FrameMetrics& metrics = scrollableLayer->GetFrameMetrics();
-      const LayerIntRect content = RoundedToInt(metrics.mScrollableRect / scale);
-      // !!! WTF. this code is just wrong. See bug 881451.
-      gfx::Point scrollOffset =
-        gfx::Point((metrics.mScrollOffset.x * metrics.LayersPixelsPerCSSPixel().scale) / scale.scale,
-                   (metrics.mScrollOffset.y * metrics.LayersPixelsPerCSSPixel().scale) / scale.scale);
-      const nsIntPoint contentOrigin(
-        content.x - NS_lround(scrollOffset.x),
-        content.y - NS_lround(scrollOffset.y));
-      gfxRect contentRect = gfxRect(contentOrigin.x, contentOrigin.y,
-                                    content.width, content.height);
-      gfxRect contentBounds = scrollableLayer->GetEffectiveTransform().
-        TransformBounds(contentRect);
-
-      // Clip the composition bounds to the content bounds
-      compositionBounds.IntersectRect(compositionBounds, contentBounds);
-      break;
-    }
-  }
-
-  return compositionBounds;
-}
-
-#ifdef MOZ_LAYERS_HAVE_LOG
 nsACString&
 ThebesLayerComposite::PrintInfo(nsACString& aTo, const char* aPrefix)
 {
@@ -308,7 +199,6 @@ ThebesLayerComposite::PrintInfo(nsACString& aTo, const char* aPrefix)
   }
   return aTo;
 }
-#endif
 
 } /* layers */
 } /* mozilla */

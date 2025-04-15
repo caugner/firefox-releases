@@ -18,6 +18,7 @@
 #include "nsIContentViewerContainer.h"
 #include "nsIDOMStorageManager.h"
 #include "nsDocLoader.h"
+#include "mozilla/WeakPtr.h"
 
 // Helper Classes
 #include "nsCOMPtr.h"
@@ -33,7 +34,6 @@
 #include "nsIDocCharset.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIRefreshURI.h"
-#include "nsIScriptGlobalObjectOwner.h"
 #include "nsIWebNavigation.h"
 #include "nsIWebPageDescriptor.h"
 #include "nsIWebProgressListener.h"
@@ -130,7 +130,6 @@ class nsDocShell : public nsDocLoader,
                    public nsITextScroll, 
                    public nsIDocCharset, 
                    public nsIContentViewerContainer,
-                   public nsIScriptGlobalObjectOwner,
                    public nsIRefreshURI,
                    public nsIWebProgressListener,
                    public nsIWebPageDescriptor,
@@ -139,7 +138,8 @@ class nsDocShell : public nsDocLoader,
                    public nsIWebShellServices,
                    public nsILinkHandler,
                    public nsIClipboardCommands,
-                   public nsIDOMStorageManager
+                   public nsIDOMStorageManager,
+                   public mozilla::SupportsWeakPtr<nsDocShell>
 {
     friend class nsDSURIContentListener;
 
@@ -204,9 +204,6 @@ public:
 
     nsDocShellInfoLoadType ConvertLoadTypeToDocShellLoadInfo(uint32_t aLoadType);
     uint32_t ConvertDocShellLoadInfoToLoadType(nsDocShellInfoLoadType aDocShellLoadType);
-
-    // nsIScriptGlobalObjectOwner methods
-    virtual nsIScriptGlobalObject* GetScriptGlobalObject();
 
     // Don't use NS_DECL_NSILOADCONTEXT because some of nsILoadContext's methods
     // are shared with nsIDocShell (appID, etc.) and can't be declared twice.
@@ -669,6 +666,21 @@ protected:
         eFrameTypeApp
     };
 
+    static const nsCString FrameTypeToString(FrameType aFrameType)
+    {
+      switch (aFrameType) {
+      case FrameType::eFrameTypeApp:
+        return NS_LITERAL_CSTRING("app");
+      case FrameType::eFrameTypeBrowser:
+        return NS_LITERAL_CSTRING("browser");
+      case FrameType::eFrameTypeRegular:
+        return NS_LITERAL_CSTRING("regular");
+      default:
+        NS_ERROR("Unknown frame type");
+        return EmptyCString();
+      }
+    }
+
     FrameType GetInheritedFrameType();
 
     bool HasUnloadedParent();
@@ -738,7 +750,8 @@ protected:
     nsCOMPtr<nsIChannel>       mFailedChannel;
     uint32_t                   mFailedLoadType;
 
-    // Set in DoURILoad when the LOAD_RELOAD_ALLOW_MIXED_CONTENT flag is set.
+    // Set in DoURILoad when either the LOAD_RELOAD_ALLOW_MIXED_CONTENT flag or
+    // the LOAD_NORMAL_ALLOW_MIXED_CONTENT flag is set.
     // Checked in nsMixedContentBlocker, to see if the channels match.
     nsCOMPtr<nsIChannel>       mMixedContentChannel;
 
@@ -815,6 +828,13 @@ protected:
     bool                       mIsAppTab;
     bool                       mUseGlobalHistory;
     bool                       mInPrivateBrowsing;
+    bool                       mDeviceSizeIsPageSize;
+
+    // Because scriptability depends on the mAllowJavascript values of our
+    // ancestors, we cache the effective scriptability and recompute it when
+    // it might have changed;
+    bool                       mCanExecuteScripts;
+    void RecomputeCanExecuteScripts();
 
     // This boolean is set to true right before we fire pagehide and generally
     // unset when we embed a new content viewer.  While it's true no navigation

@@ -10,7 +10,9 @@
 Function RegisterCEH
 !ifdef MOZ_METRO
   ${If} ${AtLeastWin8}
-    ${CleanupMetroBrowserHandlerValues} ${DELEGATE_EXECUTE_HANDLER_ID}
+    ${CleanupMetroBrowserHandlerValues} ${DELEGATE_EXECUTE_HANDLER_ID} \
+                                        "FirefoxURL" \
+                                        "FirefoxHTML"
     ${AddMetroBrowserHandlerValues} ${DELEGATE_EXECUTE_HANDLER_ID} \
                                     "$INSTDIR\CommandExecuteHandler.exe" \
                                     $AppUserModelID \
@@ -213,6 +215,14 @@ FunctionEnd
       Sleep 3000
     ${EndIf}
     Call RegisterCEH
+  ${EndIf}
+!else
+  ; The metro browser is not enabled by mozconfig.
+  ${If} ${AtLeastWin8}
+    ${RemoveDEHRegistration} ${DELEGATE_EXECUTE_HANDLER_ID} \
+                             $AppUserModelID \
+                             "FirefoxURL" \
+                             "FirefoxHTML"
   ${EndIf}
 !endif
 !macroend
@@ -1268,6 +1278,9 @@ FunctionEnd
   Push "nspr4.dll"
   Push "nssdbm3.dll"
   Push "mozsqlite3.dll"
+!ifdef MOZ_CONTENT_SANDBOX
+  Push "sandboxbroker.dll"
+!endif
   Push "xpcom.dll"
   Push "crashreporter.exe"
   Push "updater.exe"

@@ -4,12 +4,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'profdirserviceprovider'
-
 include('../src/objs.mozbuild')
 
-SOURCES += modules_profiledirservice_src_csrcs
+UNIFIED_SOURCES += modules_profiledirservice_src_csrcs
 
 LIBRARY_NAME = 'profdirserviceprovidersa_s'
 
 FORCE_STATIC_LIB = True
+
+DEFINES['XPCOM_GLUE'] = 1

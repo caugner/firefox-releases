@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'libglesv2'
-
 # Target: 'preprocessor'
 # src/compiler/preprocessor:
 SOURCES += ['../compiler/preprocessor/' + src for src in [
@@ -21,7 +19,6 @@ SOURCES += ['../compiler/preprocessor/' + src for src in [
     'Token.cpp',
     'Tokenizer.cpp',
 ]]
-
 
 # Target: 'translator_common'
 #   Requires: 'preprocessor'
@@ -90,7 +87,6 @@ else:
         '../compiler/ossource_posix.cpp',
     ]
 
-
 # Target: 'translator_hlsl'
 #   Requires: 'translator_common'
 # src/compiler:
@@ -103,7 +99,6 @@ SOURCES += ['../compiler/' + src for src in [
     'TranslatorHLSL.cpp',
     'UnfoldShortCircuit.cpp',
 ]]
-
 
 # Target: 'libGLESv2'
 #   Requires: 'translator_hlsl'
@@ -177,4 +172,24 @@ SOURCES += ['renderer/' + src for src in [
     'VertexDeclarationCache.cpp',
 ]]
 
+# On Windows, we don't automatically get "lib" prepended, but we need it.
 LIBRARY_NAME = 'libGLESv2'
+
+FORCE_SHARED_LIB = True
+
+LOCAL_INCLUDES += [
+    '..',
+    '../../include',
+    '../../include/KHR',
+]
+
+
+for var in ('LIBGLESV2_EXPORTS', 'ANGLE_BUILD', 'NOMINMAX',
+            '_CRT_SECURE_NO_DEPRECATE', 'ANGLE_DISABLE_TRACE',
+            'COMPILER_IMPLEMENTATION'):
+    DEFINES[var] = True
+
+if not CONFIG['MOZ_DEBUG']:
+    DEFINES['_SECURE_SCL'] = 0
+
+DEFINES['ANGLE_COMPILE_OPTIMIZATION_LEVEL'] = 'D3DCOMPILE_OPTIMIZATION_LEVEL1'

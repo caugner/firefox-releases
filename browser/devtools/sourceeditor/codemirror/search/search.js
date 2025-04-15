@@ -48,8 +48,17 @@
   var queryDialog;
   function doSearch(cm, rev) {
     if (!queryDialog) {
-      queryDialog = cm.l10n('findCmd.promptMessage') +
-        ' <input type="text" style="width: 10em"/>';
+      let doc = cm.getWrapperElement().ownerDocument;
+      let inp = doc.createElement("input");
+      let txt = doc.createTextNode(cm.l10n("findCmd.promptMessage"));
+
+      inp.type = "text";
+      inp.style.width = "10em";
+      inp.style.MozMarginStart = "1em";
+
+      queryDialog = doc.createElement("div");
+      queryDialog.appendChild(txt);
+      queryDialog.appendChild(inp);
     }
 
     var state = getSearchState(cm);
@@ -74,6 +83,7 @@
       if (!cursor.find(rev)) return;
     }
     cm.setSelection(cursor.from(), cursor.to());
+    cm.scrollIntoView({from: cursor.from(), to: cursor.to()});
     state.posFrom = cursor.from(); state.posTo = cursor.to();
   });}
   function clearSearch(cm) {cm.operation(function() {
@@ -112,6 +122,7 @@
                   (start && cursor.from().line == start.line && cursor.from().ch == start.ch)) return;
             }
             cm.setSelection(cursor.from(), cursor.to());
+            cm.scrollIntoView({from: cursor.from(), to: cursor.to()});
             confirmDialog(cm, doReplaceConfirm, "Replace?",
                           [function() {doReplace(match);}, advance]);
           };

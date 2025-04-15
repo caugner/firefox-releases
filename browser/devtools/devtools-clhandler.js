@@ -30,7 +30,7 @@ devtoolsCommandlineHandler.prototype = {
     if (!window) {
       let devtools = Cu.import("resource://gre/modules/devtools/Loader.jsm", {}).devtools;
       // Load the browser devtools main module as the loader's main module.
-      devtools.main("main");
+      Cu.import("resource:///modules/devtools/gDevTools.jsm");
       let hudservice = devtools.require("devtools/webconsole/hudservice");
       let console = Cu.import("resource://gre/modules/devtools/Console.jsm", {}).console;
       hudservice.toggleBrowserConsole().then(null, console.error);
@@ -52,8 +52,8 @@ devtoolsCommandlineHandler.prototype = {
       return;
     }
     if (remoteDebuggingEnabled) {
-      Cu.import("resource:///modules/devtools/DebuggerProcess.jsm");
-      BrowserDebuggerProcess.init();
+      Cu.import("resource:///modules/devtools/ToolboxProcess.jsm");
+      BrowserToolboxProcess.init();
     } else {
       let errorMsg = "Could not run chrome debugger! You need the following prefs " +
                      "to be set to true: " + kDebuggerPrefs.join(", ");
@@ -68,7 +68,7 @@ devtoolsCommandlineHandler.prototype = {
   },
 
   helpInfo : "  -jsconsole         Open the Browser Console.\n" +
-             "  -jsdebugger        Open the Browser Debugger.\n",
+             "  -jsdebugger        Open the Browser Toolbox.\n",
 
   classID: Components.ID("{9e9a9283-0ce9-4e4a-8f1c-ba129a032c32}"),
   QueryInterface: XPCOMUtils.generateQI([Ci.nsICommandLineHandler]),

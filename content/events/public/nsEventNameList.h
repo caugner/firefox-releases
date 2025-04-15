@@ -293,6 +293,48 @@ EVENT(mozpointerlockerror,
       NS_POINTERLOCKERROR,
       EventNameType_HTML,
       NS_EVENT)
+
+EVENT(pointerdown,
+      NS_POINTER_DOWN,
+      EventNameType_All,
+      NS_POINTER_EVENT)
+EVENT(pointermove,
+      NS_POINTER_MOVE,
+      EventNameType_All,
+      NS_POINTER_EVENT)
+EVENT(pointerup,
+      NS_POINTER_UP,
+      EventNameType_All,
+      NS_POINTER_EVENT)
+EVENT(pointercancel,
+      NS_POINTER_CANCEL,
+      EventNameType_All,
+      NS_POINTER_EVENT)
+EVENT(pointerover,
+      NS_POINTER_OVER,
+      EventNameType_All,
+      NS_POINTER_EVENT)
+EVENT(pointerout,
+      NS_POINTER_OUT,
+      EventNameType_All,
+      NS_POINTER_EVENT)
+EVENT(pointerenter,
+      NS_POINTER_ENTER,
+      EventNameType_All,
+      NS_POINTER_EVENT)
+EVENT(pointerleave,
+      NS_POINTER_LEAVE,
+      EventNameType_All,
+      NS_POINTER_EVENT)
+EVENT(gotpointercapture,
+      NS_POINTER_GOT_CAPTURE,
+      EventNameType_All,
+      NS_POINTER_EVENT)
+EVENT(lostpointercapture,
+      NS_POINTER_LOST_CAPTURE,
+      EventNameType_All,
+      NS_POINTER_EVENT)
+
 // Not supported yet; probably never because "wheel" is a better idea.
 // EVENT(mousewheel)
 EVENT(pause,
@@ -588,10 +630,6 @@ NON_IDL_EVENT(MozMousePixelScroll,
               EventNameType_HTMLXUL,
               NS_MOUSE_SCROLL_EVENT)
                                                 
-NON_IDL_EVENT(MozBeforeResize,
-              NS_BEFORERESIZE_EVENT,
-              EventNameType_None,
-              NS_EVENT)
 NON_IDL_EVENT(open,
               NS_OPEN,
               EventNameType_None,
@@ -609,6 +647,11 @@ NON_IDL_EVENT(stop,
 
 NON_IDL_EVENT(warning,
               NS_MEDIARECORDER_WARNING,
+              EventNameType_None,
+              NS_EVENT)
+
+NON_IDL_EVENT(speakerforcedchange,
+              NS_SPEAKERMANAGER_SPEAKERFORCEDCHANGE,
               EventNameType_None,
               NS_EVENT)
 

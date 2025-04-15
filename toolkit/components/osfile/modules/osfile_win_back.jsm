@@ -39,6 +39,7 @@
      let SysAll = require("resource://gre/modules/osfile/osfile_win_allthreads.jsm");
      let LOG = SharedAll.LOG.bind(SharedAll, "Unix", "back");
      let libc = SysAll.libc;
+     let advapi32 = ctypes.open("advapi32.dll");
      let Const = SharedAll.Constants.Win;
 
      /**
@@ -121,8 +122,29 @@
        Type.zero_or_nothing =
          Type.int.withName("zero_or_nothing");
 
+       /**
+        * A C integer holding flags related to NTFS security.
+        */
        Type.SECURITY_ATTRIBUTES =
          Type.void_t.withName("SECURITY_ATTRIBUTES");
+
+       /**
+        * A C integer holding pointers related to NTFS security.
+        */
+       Type.PSID =
+         Type.voidptr_t.withName("PSID");
+
+       Type.PACL =
+         Type.voidptr_t.withName("PACL");
+
+       Type.PSECURITY_DESCRIPTOR =
+         Type.voidptr_t.withName("PSECURITY_DESCRIPTOR");
+
+       /**
+        * A C integer holding Win32 local memory handle.
+        */
+       Type.HLOCAL =
+         Type.voidptr_t.withName("HLOCAL");
 
        Type.FILETIME =
          new SharedAll.Type("FILETIME",
@@ -237,6 +259,12 @@
                     /*filetime*/Type.FILETIME.in_ptr,
                     /*systime*/ Type.SystemTime.out_ptr);
 
+       declareLazyFFI(SysFile, "SystemTimeToFileTime", libc,
+         "SystemTimeToFileTime", ctypes.winapi_abi,
+                    /*return*/   Type.zero_or_nothing,
+                    /*systime*/  Type.SystemTime.in_ptr,
+                    /*filetime*/ Type.FILETIME.out_ptr);
+
        declareLazyFFI(SysFile, "FindFirstFile", libc,
          "FindFirstFileW", ctypes.winapi_abi,
                     /*return*/ Type.find_HANDLE,
@@ -316,6 +344,15 @@
                     /*disthi*/ Type.long.in_ptr,
                     /*method*/ Type.DWORD);
 
+       declareLazyFFI(SysFile, "SetFileTime", libc,
+         "SetFileTime",  ctypes.winapi_abi,
+                    /*return*/   Type.zero_or_nothing,
+                    /*file*/     Type.HANDLE,
+                    /*creation*/ Type.FILETIME.in_ptr,
+                    /*access*/   Type.FILETIME.in_ptr,
+                    /*write*/    Type.FILETIME.in_ptr);
+
+
        declareLazyFFI(SysFile, "WriteFile", libc,
          "WriteFile", ctypes.winapi_abi,
                     /*return*/ Type.zero_or_nothing,
@@ -330,6 +367,45 @@
           "FlushFileBuffers", ctypes.winapi_abi,
                      /*return*/ Type.zero_or_nothing,
                      /*file*/   Type.HANDLE);
+
+        declareLazyFFI(SysFile, "GetFileAttributes", libc,
+          "GetFileAttributesW", ctypes.winapi_abi,
+                     /*return*/   Type.DWORD,
+                     /*fileName*/ Type.path);
+
+        declareLazyFFI(SysFile, "SetFileAttributes", libc,
+          "SetFileAttributesW", ctypes.winapi_abi,
+                     /*return*/         Type.zero_or_nothing,
+                     /*fileName*/       Type.path,
+                     /*fileAttributes*/ Type.DWORD);
+
+        declareLazyFFI(SysFile, "GetNamedSecurityInfo", advapi32,
+          "GetNamedSecurityInfoW", ctypes.winapi_abi,
+                     /*return*/       Type.DWORD,
+                     /*objectName*/   Type.path,
+                     /*objectType*/   Type.DWORD,
+                     /*securityInfo*/ Type.DWORD,
+                     /*sidOwner*/     Type.PSID.out_ptr,
+                     /*sidGroup*/     Type.PSID.out_ptr,
+                     /*dacl*/         Type.PACL.out_ptr,
+                     /*sacl*/         Type.PACL.out_ptr,
+                     /*securityDesc*/ Type.PSECURITY_DESCRIPTOR.out_ptr);
+
+        declareLazyFFI(SysFile, "SetNamedSecurityInfo", advapi32,
+          "SetNamedSecurityInfoW", ctypes.winapi_abi,
+                     /*return*/       Type.DWORD,
+                     /*objectName*/   Type.path,
+                     /*objectType*/   Type.DWORD,
+                     /*securityInfo*/ Type.DWORD,
+                     /*sidOwner*/     Type.PSID,
+                     /*sidGroup*/     Type.PSID,
+                     /*dacl*/         Type.PACL,
+                     /*sacl*/         Type.PACL);
+
+        declareLazyFFI(SysFile, "LocalFree", libc,
+          "LocalFree", ctypes.winapi_abi,
+                     /*return*/       Type.HLOCAL,
+                     /*mem*/          Type.HLOCAL);
      };
 
      exports.OS.Win = {

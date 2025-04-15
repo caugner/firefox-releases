@@ -224,6 +224,7 @@
             android:label="@string/crash_reporter_title"
             android:icon="@drawable/crash_reporter"
             android:theme="@style/Gecko"
+            android:exported="false"
             android:excludeFromRecents="true">
           <intent-filter>
             <action android:name="org.mozilla.gecko.reportCrash" />
@@ -239,7 +240,7 @@
             </intent-filter>
         </activity>
 
-        <activity android:name="org.mozilla.gecko.GeckoPreferences"
+        <activity android:name="org.mozilla.gecko.preferences.GeckoPreferences"
                   android:theme="@style/Gecko.Preferences"
                   android:label="@string/settings_title"
                   android:configChanges="orientation|screenSize"

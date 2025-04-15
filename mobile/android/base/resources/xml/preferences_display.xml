@@ -8,7 +8,7 @@
                   android:title="@string/pref_category_display"
                   android:enabled="false">
 
-    <org.mozilla.gecko.FontSizePreference
+    <org.mozilla.gecko.preferences.FontSizePreference
                     android:key="font.size.inflation.minTwips"
                     android:title="@string/pref_text_size"
                     android:positiveButtonText="@string/pref_font_size_set"
@@ -20,6 +20,9 @@
                     android:entries="@array/pref_titlebar_mode_entries"
                     android:entryValues="@array/pref_titlebar_mode_values"
                     android:persistent="false" />
+
+    <CheckBoxPreference android:key="browser.chrome.dynamictoolbar"
+                        android:title="@string/pref_dynamic_toolbar" />
 
     <PreferenceCategory android:title="@string/pref_category_advanced">
 

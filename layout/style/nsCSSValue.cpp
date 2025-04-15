@@ -23,7 +23,7 @@
 #include "imgRequestProxy.h"
 #include "nsDeviceContext.h"
 
-namespace css = mozilla::css;
+using namespace mozilla;
 
 nsCSSValue::nsCSSValue(int32_t aValue, nsCSSUnit aUnit)
   : mUnit(aUnit)
@@ -909,7 +909,7 @@ nsCSSValue::AppendToString(nsCSSProperty aProperty, nsAString& aResult) const
 
     case eCSSProperty_font_variant_ligatures:
       nsStyleUtil::AppendBitmaskCSSValue(aProperty, intValue,
-                                         NS_FONT_VARIANT_LIGATURES_COMMON,
+                                         NS_FONT_VARIANT_LIGATURES_NONE,
                                          NS_FONT_VARIANT_LIGATURES_NO_CONTEXTUAL,
                                          aResult);
       break;

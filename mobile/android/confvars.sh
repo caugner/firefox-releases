@@ -5,7 +5,7 @@
 MOZ_APP_BASENAME=Fennec
 MOZ_APP_VENDOR=Mozilla
 
-MOZ_APP_VERSION=27.0
+MOZ_APP_VERSION=28.0
 MOZ_APP_UA_NAME=Firefox
 
 MOZ_BRANDING_DIRECTORY=mobile/android/branding/unofficial
@@ -36,7 +36,6 @@ MOZ_ANDROID_HISTORY=1
 MOZ_DISABLE_EXPORT_JS=1
 
 # Needed for building our components as part of libxul
-MOZ_APP_COMPONENT_LIBS="browsercomps"
 MOZ_APP_COMPONENT_INCLUDE=nsBrowserComponents.h
 
 # use custom widget for html:select

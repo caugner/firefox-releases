@@ -38,8 +38,6 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
 
 XPIDL_MODULE = 'xpcom_base'
 
-MODULE = 'xpcom'
-
 EXPORTS += [
     'ErrorList.h',
     'nsAgg.h',
@@ -63,18 +61,19 @@ EXPORTS += [
     'nsWeakPtr.h',
 ]
 
-if CONFIG['MOZ_DEBUG']:
-    EXPORTS += ['pure.h']
-
 if CONFIG['OS_ARCH'] == 'WINNT':
     EXPORTS += [
         'nsWindowsHelpers.h',
     ]
+    if CONFIG['MOZ_DEBUG']:
+        EXPORTS += ['pure.h']
+        SOURCES += ['pure_api.c']
 
 EXPORTS.mozilla += [
     'AvailableMemoryTracker.h',
     'ClearOnShutdown.h',
     'CycleCollectedJSRuntime.h',
+    'Debug.h',
     'nsMemoryInfoDumper.h',
     'StackWalk.h',
     'StaticMutex.h',
@@ -87,14 +86,20 @@ if CONFIG['OS_ARCH'] == 'WINNT':
         'WindowsVersion.h',
     ]
 
+# nsDebugImpl isn't unified because we disable PGO so that NS_ABORT_OOM isn't
+# optimized away oddly.
 SOURCES += [
+    'nsDebugImpl.cpp',
+]
+
+UNIFIED_SOURCES += [
     'AvailableMemoryTracker.cpp',
     'ClearOnShutdown.cpp',
     'CycleCollectedJSRuntime.cpp',
+    'Debug.cpp',
     'nsConsoleMessage.cpp',
     'nsConsoleService.cpp',
     'nsCycleCollector.cpp',
-    'nsDebugImpl.cpp',
     'nsErrorService.cpp',
     'nsGZFileWriter.cpp',
     'nsInterfaceRequestorAgg.cpp',
@@ -120,16 +125,14 @@ elif CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
         'nsCrashOnException.cpp',
     ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'nsErrorAssertsC.c',
 ]
 
 
-LIBXUL_LIBRARY = True
 
 MSVC_ENABLE_PGO = True
 
-LIBRARY_NAME = 'xpcombase_s'
-
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'xpcom_core'

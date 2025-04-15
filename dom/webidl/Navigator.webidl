@@ -32,18 +32,22 @@ Navigator implements NavigatorStorageUtils;
 
 [NoInterfaceObject]
 interface NavigatorID {
+  // WebKit/Blink/Trident/Presto support this (hardcoded "Mozilla").
+  [Constant]
+  readonly attribute DOMString appCodeName; // constant "Mozilla"
+  [Constant]
   readonly attribute DOMString appName;
-  [Throws]
+  [Constant]
   readonly attribute DOMString appVersion;
-  [Throws]
+  [Constant]
   readonly attribute DOMString platform;
-  [Throws]
+  [Constant]
   readonly attribute DOMString userAgent;
+  [Constant]
+  readonly attribute DOMString product; // constant "Gecko"
 
-  // Spec has this as a const, but that's wrong because it should not
-  // be on the interface object.
-  //const DOMString product = "Gecko"; // for historical reasons
-  readonly attribute DOMString product;
+  // Everyone but WebKit/Blink supports this.  See bug 679971.
+  boolean taintEnabled(); // constant false
 };
 
 [NoInterfaceObject]
@@ -111,7 +115,7 @@ Navigator implements NavigatorBattery;
 // https://wiki.mozilla.org/WebAPI/DataStore
 [NoInterfaceObject]
 interface NavigatorDataStore {
-    [Throws, NewObject, Pref="dom.datastore.enabled"]
+    [Throws, NewObject, Func="Navigator::HasDataStoreSupport"]
     Promise getDataStores(DOMString name);
 };
 Navigator implements NavigatorDataStore;
@@ -136,9 +140,6 @@ callback interface MozIdleObserver {
 
 // nsIDOMNavigator
 partial interface Navigator {
-  // WebKit/Blink/Trident/Presto support this (hardcoded "Mozilla").
-  [Throws]
-  readonly attribute DOMString appCodeName;
   [Throws]
   readonly attribute DOMString oscpu;
   // WebKit/Blink support this; Trident/Presto do not.
@@ -157,8 +158,6 @@ partial interface Navigator {
   // WebKit/Blink/Trident/Presto support this.
   [Throws]
   boolean javaEnabled();
-  // Everyone but WebKit/Blink supports this.  See bug 679971.
-  boolean taintEnabled();
 
   /**
    * Navigator requests to add an idle observer to the existing window.
@@ -256,15 +255,8 @@ partial interface Navigator {
 
 #ifdef MOZ_B2G_RIL
 partial interface Navigator {
-  [Throws, Func="Navigator::HasTelephonySupport"]
-  readonly attribute Telephony? mozTelephony;
-};
-
-// nsIMozNavigatorMobileConnection
-interface MozMobileConnection;
-partial interface Navigator {
   [Throws, Func="Navigator::HasMobileConnectionSupport"]
-  readonly attribute MozMobileConnection mozMobileConnection;
+  readonly attribute MozMobileConnectionArray mozMobileConnections;
 };
 
 partial interface Navigator {
@@ -284,6 +276,11 @@ partial interface Navigator {
   readonly attribute MozIccManager? mozIccManager;
 };
 #endif // MOZ_B2G_RIL
+
+partial interface Navigator {
+  [Throws, Func="Navigator::HasTelephonySupport"]
+  readonly attribute Telephony? mozTelephony;
+};
 
 #ifdef MOZ_GAMEPAD
 // https://dvcs.w3.org/hg/gamepad/raw-file/default/gamepad.html#navigator-interface-extension
@@ -340,6 +337,10 @@ partial interface Navigator {
   [Throws, ChromeOnly]
   void mozGetUserMediaDevices(MediaStreamConstraintsInternal constraints,
                               MozGetUserMediaDevicesSuccessCallback onsuccess,
-                              NavigatorUserMediaErrorCallback onerror);
+                              NavigatorUserMediaErrorCallback onerror,
+                              // The originating innerWindowID is needed to
+                              // avoid calling the callbacks if the window has
+                              // navigated away. It is optional only as legacy.
+                              optional unsigned long long innerWindowID = 0);
 };
 #endif // MOZ_MEDIA_NAVIGATOR

@@ -78,6 +78,10 @@ public:
     return FromMilliseconds(aMicroseconds / 1000.0);
   }
 
+  static TimeDuration Forever() {
+    return FromTicks(INT64_MAX);
+  }
+
   TimeDuration operator+(const TimeDuration& aOther) const {
     return TimeDuration::FromTicks(mValue + aOther.mValue);
   }
@@ -114,7 +118,7 @@ public:
   TimeDuration operator/(const int64_t aDivisor) const {
     return TimeDuration::FromTicks(mValue / aDivisor);
   }
-  double operator/(const TimeDuration& aOther) {
+  double operator/(const TimeDuration& aOther) const {
     return static_cast<double>(mValue) / aOther.mValue;
   }
 
@@ -366,19 +370,6 @@ private:
    * When using a system clock, a value is system dependent.
    */
   TimeStampValue mValue;
-
-  /**
-   * First timestamp taken when the class static initializers are run. This
-   * timestamp is used to sanitize timestamps coming from different sources.
-   */
-  static TimeStamp sFirstTimeStamp;
-
-  /**
-   * Timestamp representing the time when the process was created. This field
-   * is populated lazily the first time this information is required and is
-   * replaced every time the process is restarted.
-   */
-  static TimeStamp sProcessCreation;
 };
 
 }

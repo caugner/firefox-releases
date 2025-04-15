@@ -122,7 +122,7 @@ class WebGLContext :
 {
     friend class WebGLContextUserData;
     friend class WebGLMemoryPressureObserver;
-    friend class WebGLMemoryReporterWrapper;
+    friend class WebGLMemoryTracker;
     friend class WebGLExtensionLoseContext;
     friend class WebGLExtensionCompressedTextureS3TC;
     friend class WebGLExtensionCompressedTextureATC;
@@ -371,7 +371,7 @@ public:
         return GetTexParameter(target, pname);
     }
     JS::Value GetUniform(JSContext* cx, WebGLProgram *prog,
-                         WebGLUniformLocation *location, ErrorResult& rv);
+                         WebGLUniformLocation *location);
     already_AddRefed<WebGLUniformLocation>
       GetUniformLocation(WebGLProgram *prog, const nsAString& name);
     void Hint(GLenum target, GLenum mode);
@@ -425,7 +425,7 @@ public:
         nsLayoutUtils::SurfaceFromElementResult res = SurfaceFromElement(elt);
         rv = SurfaceFromElementResultToImageSurface(res, getter_AddRefs(isurf),
                                                     &srcFormat);
-        if (rv.Failed())
+        if (rv.Failed() || !isurf)
             return;
 
         uint32_t byteLength = isurf->Stride() * isurf->Height();
@@ -464,7 +464,7 @@ public:
         nsLayoutUtils::SurfaceFromElementResult res = SurfaceFromElement(elt);
         rv = SurfaceFromElementResultToImageSurface(res, getter_AddRefs(isurf),
                                                     &srcFormat);
-        if (rv.Failed())
+        if (rv.Failed() || !isurf)
             return;
 
         uint32_t byteLength = isurf->Stride() * isurf->Height();
@@ -890,6 +890,7 @@ protected:
     // -------------------------------------------------------------------------
     // WebGL extensions (implemented in WebGLContextExtensions.cpp)
     enum WebGLExtensionID {
+        EXT_sRGB,
         EXT_texture_filter_anisotropic,
         OES_element_index_uint,
         OES_standard_derivatives,
@@ -952,7 +953,7 @@ protected:
     bool ValidateGLSLVariableName(const nsAString& name, const char *info);
     bool ValidateGLSLCharacter(PRUnichar c);
     bool ValidateGLSLString(const nsAString& string, const char *info);
-
+    bool ValidateTexImage2DFormat(GLenum format, const char* info);
     bool ValidateTexImage2DTarget(GLenum target, GLsizei width, GLsizei height, const char* info);
     bool ValidateCompressedTextureSize(GLenum target, GLint level, GLenum format, GLsizei width, GLsizei height, uint32_t byteLength, const char* info);
     bool ValidateLevelWidthHeightForTarget(GLenum target, GLint level, GLsizei width, GLsizei height, const char* info);

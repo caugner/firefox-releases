@@ -3,8 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
-
 #include "HTMLDivElement.h"
 #include "nsGenericHTMLElement.h"
 #include "nsStyleConsts.h"
@@ -62,8 +60,9 @@ HTMLDivElement::ParseAttribute(int32_t aNamespaceID,
                                               aResult);
 }
 
-static void
-MapAttributesIntoRule(const nsMappedAttributes* aAttributes, nsRuleData* aData)
+void
+HTMLDivElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
+                                      nsRuleData* aData)
 {
   nsGenericHTMLElement::MapDivAlignAttributeInto(aAttributes, aData);
   nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aData);

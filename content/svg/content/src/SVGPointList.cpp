@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "SVGPointList.h"
 #include "nsCharSeparatedTokenizer.h"
@@ -60,15 +60,21 @@ SVGPointList::SetValueFromString(const nsAString& aValue)
 
   while (tokenizer.hasMoreTokens()) {
 
+    const nsAString& token = tokenizer.nextToken();
+
+    RangedPtr<const PRUnichar> iter =
+      SVGContentUtils::GetStartRangedPtr(token);
+    const RangedPtr<const PRUnichar> end =
+      SVGContentUtils::GetEndRangedPtr(token);
+
     float x;
-    nsAutoString leftOver;
-    if (!SVGContentUtils::ParseNumber(tokenizer.nextToken(), x, leftOver)) {
+    if (!SVGContentUtils::ParseNumber(iter, end, x)) {
       rv = NS_ERROR_DOM_SYNTAX_ERR;
       break;
     }
 
     float y;
-    if (leftOver.IsEmpty()) {
+    if (iter == end) {
       if (!tokenizer.hasMoreTokens() ||
           !SVGContentUtils::ParseNumber(tokenizer.nextToken(), y)) {
         rv = NS_ERROR_DOM_SYNTAX_ERR;
@@ -77,6 +83,7 @@ SVGPointList::SetValueFromString(const nsAString& aValue)
     } else {
       // It's possible for the token to be 10-30 which has
       // no separator but needs to be parsed as 10, -30
+      const nsAString& leftOver = Substring(iter.get(), end.get());
       if (leftOver[0] != '-' || !SVGContentUtils::ParseNumber(leftOver, y)) {
         rv = NS_ERROR_DOM_SYNTAX_ERR;
         break;

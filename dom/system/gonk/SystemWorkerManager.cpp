@@ -17,20 +17,23 @@
 
 #include "SystemWorkerManager.h"
 
-#include "nsINetworkManager.h"
+#include "nsINetworkService.h"
 #include "nsIWifi.h"
 #include "nsIWorkerHolder.h"
 #include "nsIXPConnect.h"
 
 #include "jsfriendapi.h"
 #include "mozilla/dom/workers/Workers.h"
-#ifdef MOZ_WIDGET_GONK
 #include "mozilla/ipc/Netd.h"
 #include "AutoMounter.h"
 #include "TimeZoneSettingObserver.h"
 #include "AudioManager.h"
-#endif
+#ifdef MOZ_B2G_RIL
 #include "mozilla/ipc/Ril.h"
+#endif
+#ifdef MOZ_NFC
+#include "mozilla/ipc/Nfc.h"
+#endif
 #include "mozilla/ipc/KeyStore.h"
 #include "nsIObserverService.h"
 #include "nsCxPusher.h"
@@ -44,122 +47,15 @@ USING_WORKERS_NAMESPACE
 
 using namespace mozilla::dom::gonk;
 using namespace mozilla::ipc;
-#ifdef MOZ_WIDGET_GONK
 using namespace mozilla::system;
-#endif
-
-#define NS_NETWORKMANAGER_CID \
-  { 0x33901e46, 0x33b8, 0x11e1, \
-  { 0x98, 0x69, 0xf4, 0x6d, 0x04, 0xd2, 0x5b, 0xcc } }
 
 namespace {
 
 NS_DEFINE_CID(kWifiWorkerCID, NS_WIFIWORKER_CID);
-NS_DEFINE_CID(kNetworkManagerCID, NS_NETWORKMANAGER_CID);
+NS_DEFINE_CID(kNetworkServiceCID, NS_INETWORKSERVICE_IID);
 
 // Doesn't carry a reference, we're owned by services.
 SystemWorkerManager *gInstance = nullptr;
-
-class ConnectWorkerToRIL : public WorkerTask
-{
-public:
-  ConnectWorkerToRIL()
-  { }
-
-  virtual bool RunTask(JSContext *aCx);
-};
-
-class SendRilSocketDataTask : public nsRunnable
-{
-public:
-  SendRilSocketDataTask(unsigned long aClientId,
-                        UnixSocketRawData *aRawData)
-    : mRawData(aRawData)
-    , mClientId(aClientId)
-  { }
-
-  NS_IMETHOD Run()
-  {
-    MOZ_ASSERT(NS_IsMainThread());
-    SystemWorkerManager::SendRilRawData(mClientId, mRawData);
-    return NS_OK;
-  }
-
-private:
-  UnixSocketRawData *mRawData;
-  unsigned long mClientId;
-};
-
-bool
-PostToRIL(JSContext *cx, unsigned argc, JS::Value *vp)
-{
-  NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
-
-  if (argc != 2) {
-    JS_ReportError(cx, "Expecting two arguments with the RIL message");
-    return false;
-  }
-
-  JS::Value cv = JS_ARGV(cx, vp)[0];
-  int clientId = cv.toInt32();
-
-  JS::Value v = JS_ARGV(cx, vp)[1];
-
-  JSAutoByteString abs;
-  void *data;
-  size_t size;
-  if (JSVAL_IS_STRING(v)) {
-    JSString *str = JSVAL_TO_STRING(v);
-    if (!abs.encodeUtf8(cx, str)) {
-      return false;
-    }
-
-    data = abs.ptr();
-    size = abs.length();
-  } else if (!JSVAL_IS_PRIMITIVE(v)) {
-    JSObject *obj = JSVAL_TO_OBJECT(v);
-    if (!JS_IsTypedArrayObject(obj)) {
-      JS_ReportError(cx, "Object passed in wasn't a typed array");
-      return false;
-    }
-
-    uint32_t type = JS_GetArrayBufferViewType(obj);
-    if (type != js::ArrayBufferView::TYPE_INT8 &&
-        type != js::ArrayBufferView::TYPE_UINT8 &&
-        type != js::ArrayBufferView::TYPE_UINT8_CLAMPED) {
-      JS_ReportError(cx, "Typed array data is not octets");
-      return false;
-    }
-
-    size = JS_GetTypedArrayByteLength(obj);
-    data = JS_GetArrayBufferViewData(obj);
-  } else {
-    JS_ReportError(cx,
-                   "Incorrect argument. Expecting a string or a typed array");
-    return false;
-  }
-
-  UnixSocketRawData* raw = new UnixSocketRawData(data, size);
-
-  nsRefPtr<SendRilSocketDataTask> task = new SendRilSocketDataTask(clientId, raw);
-  NS_DispatchToMainThread(task);
-  return true;
-}
-
-bool
-ConnectWorkerToRIL::RunTask(JSContext *aCx)
-{
-  // Set up the postRILMessage on the function for worker -> RIL thread
-  // communication.
-  NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
-  NS_ASSERTION(!JS_IsRunning(aCx), "Are we being called somehow?");
-  JSObject *workerGlobal = JS::CurrentGlobalOrNull(aCx);
-
-  return !!JS_DefineFunction(aCx, workerGlobal, "postRILMessage", PostToRIL, 1,
-                             0);
-}
-
-#ifdef MOZ_WIDGET_GONK
 
 bool
 DoNetdCommand(JSContext *cx, unsigned argc, JS::Value *vp)
@@ -306,8 +202,6 @@ NetdReceiver::DispatchNetdEvent::RunTask(JSContext *aCx)
                              argv, argv);
 }
 
-#endif // MOZ_WIDGET_GONK
-
 } // anonymous namespace
 
 SystemWorkerManager::SystemWorkerManager()
@@ -345,14 +239,12 @@ SystemWorkerManager::Init()
 
   InitKeyStore(cx);
 
-#ifdef MOZ_WIDGET_GONK
   InitAutoMounter();
   InitializeTimeZoneSettingObserver();
   rv = InitNetd(cx);
   NS_ENSURE_SUCCESS(rv, rv);
   nsCOMPtr<nsIAudioManager> audioManager =
     do_GetService(NS_AUDIOMANAGER_CONTRACTID);
-#endif
 
   nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
   if (!obs) {
@@ -376,21 +268,18 @@ SystemWorkerManager::Shutdown()
 
   mShutdown = true;
 
-#ifdef MOZ_WIDGET_GONK
   ShutdownAutoMounter();
+
+#ifdef MOZ_B2G_RIL
+  RilConsumer::Shutdown();
 #endif
 
-  for (unsigned long i = 0; i < mRilConsumers.Length(); i++) {
-    if (mRilConsumers[i]) {
-      mRilConsumers[i]->Shutdown();
-      mRilConsumers[i] = nullptr;
-    }
-  }
+#ifdef MOZ_NFC
+  NfcConsumer::Shutdown();
+#endif
 
-#ifdef MOZ_WIDGET_GONK
   StopNetd();
   mNetdWorker = nullptr;
-#endif
 
   nsCOMPtr<nsIWifi> wifi(do_QueryInterface(mWifiWorker));
   if (wifi) {
@@ -433,20 +322,6 @@ SystemWorkerManager::GetInterfaceRequestor()
   return gInstance;
 }
 
-bool
-SystemWorkerManager::SendRilRawData(unsigned long aClientId,
-                                    UnixSocketRawData* aRaw)
-{
-  if ((gInstance->mRilConsumers.Length() <= aClientId) ||
-      !gInstance->mRilConsumers[aClientId] ||
-      gInstance->mRilConsumers[aClientId]->GetConnectionStatus() != SOCKET_CONNECTED) {
-    // Probably shuting down.
-    delete aRaw;
-    return true;
-  }
-  return gInstance->mRilConsumers[aClientId]->SendSocketData(aRaw);
-}
-
 NS_IMETHODIMP
 SystemWorkerManager::GetInterface(const nsIID &aIID, void **aResult)
 {
@@ -457,12 +332,10 @@ SystemWorkerManager::GetInterface(const nsIID &aIID, void **aResult)
                               reinterpret_cast<nsIWifi**>(aResult));
   }
 
-#ifdef MOZ_WIDGET_GONK
-  if (aIID.Equals(NS_GET_IID(nsINetworkManager))) {
+  if (aIID.Equals(NS_GET_IID(nsINetworkService))) {
     return CallQueryInterface(mNetdWorker,
-                              reinterpret_cast<nsINetworkManager**>(aResult));
+                              reinterpret_cast<nsINetworkService**>(aResult));
   }
-#endif
 
   NS_WARNING("Got nothing for the requested IID!");
   return NS_ERROR_NO_INTERFACE;
@@ -473,14 +346,10 @@ SystemWorkerManager::RegisterRilWorker(unsigned int aClientId,
                                        const JS::Value& aWorker,
                                        JSContext *aCx)
 {
+#ifndef MOZ_B2G_RIL
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
   NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(aWorker), NS_ERROR_UNEXPECTED);
-
-  mRilConsumers.EnsureLengthAtLeast(aClientId + 1);
-
-  if (mRilConsumers[aClientId]) {
-    NS_WARNING("RilConsumer already registered");
-    return NS_ERROR_FAILURE;
-  }
 
   JSAutoCompartment ac(aCx, JSVAL_TO_OBJECT(aWorker));
 
@@ -491,22 +360,36 @@ SystemWorkerManager::RegisterRilWorker(unsigned int aClientId,
     return NS_ERROR_FAILURE;
   }
 
-  nsRefPtr<ConnectWorkerToRIL> connection = new ConnectWorkerToRIL();
-  if (!wctd->PostTask(connection)) {
-    NS_WARNING("Failed to connect worker to ril");
-    return NS_ERROR_UNEXPECTED;
-  }
-
-  // Now that we're set up, connect ourselves to the RIL thread.
-  mRilConsumers[aClientId] = new RilConsumer(aClientId, wctd);
-  return NS_OK;
+  return RilConsumer::Register(aClientId, wctd);
+#endif // MOZ_B2G_RIL
 }
 
-#ifdef MOZ_WIDGET_GONK
+nsresult
+SystemWorkerManager::RegisterNfcWorker(const JS::Value& aWorker,
+                                       JSContext* aCx)
+{
+#ifndef MOZ_NFC
+  return NS_ERROR_NOT_IMPLEMENTED;
+#else
+  NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(aWorker), NS_ERROR_UNEXPECTED);
+
+  JSAutoCompartment ac(aCx, JSVAL_TO_OBJECT(aWorker));
+
+  WorkerCrossThreadDispatcher* wctd =
+    GetWorkerCrossThreadDispatcher(aCx, aWorker);
+  if (!wctd) {
+    NS_WARNING("Failed to GetWorkerCrossThreadDispatcher for nfc");
+    return NS_ERROR_FAILURE;
+  }
+
+  return NfcConsumer::Register(wctd);
+#endif // MOZ_NFC
+}
+
 nsresult
 SystemWorkerManager::InitNetd(JSContext *cx)
 {
-  nsCOMPtr<nsIWorkerHolder> worker = do_GetService(kNetworkManagerCID);
+  nsCOMPtr<nsIWorkerHolder> worker = do_GetService(kNetworkServiceCID);
   NS_ENSURE_TRUE(worker, NS_ERROR_FAILURE);
 
   JS::Value workerval;
@@ -535,7 +418,6 @@ SystemWorkerManager::InitNetd(JSContext *cx)
   mNetdWorker = worker;
   return NS_OK;
 }
-#endif
 
 nsresult
 SystemWorkerManager::InitWifi(JSContext *cx)

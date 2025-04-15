@@ -206,6 +206,19 @@
                 onget="return this.webNavigation.currentURI;"
                 readonly="true"/>
 
+      <!--
+        Used by session restore to ensure that currentURI is set so
+        that switch-to-tab works before the tab is fully
+        restored. This function also invokes onLocationChanged
+        listeners in tabbrowser.xml.
+      -->
+      <method name="_setCurrentURI">
+        <parameter name="aURI"/>
+        <body><![CDATA[
+          this.docShell.setCurrentURI(aURI);
+        ]]></body>
+      </method>
+
       <property name="documentURI"
                 onget="return this.contentDocument.documentURIObject;"
                 readonly="true"/>
@@ -660,8 +673,17 @@
       </field>
 
       <property name="userTypedValue"
-                onget="return this._userTypedValue;"
-                onset="this.userTypedClear = 0; return this._userTypedValue = val;"/>
+                onget="return this._userTypedValue;">
+        <setter><![CDATA[
+          this.userTypedClear = 0;
+          this._userTypedValue = val;
+
+          let event = new CustomEvent("UserTypedValueChanged");
+          this.dispatchEvent(event);
+
+          return val;
+        ]]></setter>
+      </property>
 
       <field name="mFormFillAttached">
         false

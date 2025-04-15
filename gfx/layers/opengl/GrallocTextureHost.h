@@ -60,7 +60,7 @@ public:
     mGraphicBuffer = nullptr;
   }
 
-  already_AddRefed<gfxImageSurface> GetAsSurface();
+  TemporaryRef<gfx::DataSourceSurface> GetAsSurface();
 
   GLuint GetGLTexture();
 
@@ -72,6 +72,9 @@ protected:
 };
 
 class GrallocTextureHostOGL : public TextureHost
+#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
+                            , public TextureHostOGL
+#endif
 {
   friend class GrallocBufferActor;
 public:
@@ -104,15 +107,20 @@ public:
     return mTextureSource;
   }
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 18
+  virtual TextureHostOGL* AsHostOGL() MOZ_OVERRIDE
+  {
+    return this;
+  }
+#endif
+
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
   virtual void SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData) MOZ_OVERRIDE;
 
   bool IsValid() const;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() MOZ_OVERRIDE { return "GrallocTextureHostOGL"; }
-#endif
 
 private:
   GrallocBufferActor* mGrallocActor;

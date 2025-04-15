@@ -74,51 +74,10 @@ let Agent = {
   backupPath: OS.Path.join(OS.Constants.Path.profileDir, "sessionstore.bak"),
 
   /**
-   * This method is only intended to be called by _SessionFile.syncRead() and
-   * can be removed when we're not supporting synchronous SessionStore
-   * initialization anymore. When sessionstore.js is read from disk
-   * synchronously the state string must be supplied to the worker manually by
-   * calling this method.
+   * NO-OP to start the worker.
    */
-  setInitialState: function (aState) {
-    // _SessionFile.syncRead() should not be called after startup has finished.
-    // Thus we also don't support any setInitialState() calls after we already
-    // wrote the loadState to disk.
-    if (this.hasWrittenLoadStateOnce) {
-      throw new Error("writeLoadStateOnceAfterStartup() must only be called once.");
-    }
-
-    // Initial state might have been filled by read() already but yet we might
-    // be called by _SessionFile.syncRead() before SessionStore.jsm had a chance
-    // to call writeLoadStateOnceAfterStartup(). It's safe to ignore
-    // setInitialState() calls if this happens.
-    if (!this.initialState) {
-      this.initialState = aState;
-    }
-  },
-
-  /**
-   * Read the session from disk.
-   * In case sessionstore.js does not exist, attempt to read sessionstore.bak.
-   */
-  read: function () {
-    for (let path of [this.path, this.backupPath]) {
-      try {
-        let durationMs = Date.now();
-        let bytes = File.read(path);
-        durationMs = Date.now() - durationMs;
-        this.initialState = Decoder.decode(bytes);
-
-        return {
-          result: this.initialState,
-          telemetry: {FX_SESSION_RESTORE_READ_FILE_MS: durationMs}
-        };
-      } catch (ex if isNoSuchFileEx(ex)) {
-        // Ignore exceptions about non-existent files.
-      }
-    }
-    // No sessionstore data files found. Return an empty string.
-    return {result: ""};
+  init: function () {
+    return {result: true};
   },
 
   /**

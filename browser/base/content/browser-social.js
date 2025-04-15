@@ -207,7 +207,8 @@ SocialUI = {
   _updateActiveUI: function SocialUI_updateActiveUI() {
     // The "active" UI isn't dependent on there being a provider, just on
     // social being "active" (but also chromeless/PB)
-    let enabled = Social.providers.length > 0 && !this._chromeless &&
+    let providers = [p for (p of Social.providers) if (p.sidebarURL)];
+    let enabled = providers.length > 0 && !this._chromeless &&
                   !PrivateBrowsingUtils.isWindowPrivate(window);
     let broadcaster = document.getElementById("socialActiveBroadcaster");
     broadcaster.hidden = !enabled;
@@ -594,6 +595,12 @@ SocialShare = {
       return this.panel.lastChild;
   },
 
+  uninit: function () {
+    if (this.iframe) {
+      this.iframe.remove();
+    }
+  },
+
   _createFrame: function() {
     let panel = this.panel;
     if (!SocialUI.enabled || this.iframe)
@@ -875,7 +882,9 @@ SocialToolbar = {
   // Note: this doesn't actually handle hiding the toolbar button,
   // socialActiveBroadcaster is responsible for that.
   _updateButtonHiddenState: function SocialToolbar_updateButtonHiddenState() {
-    let socialEnabled = SocialUI.enabled;
+    // toolbar button should only show if we have providers with sidebars
+    let providers = [p for (p of Social.providers) if (p.sidebarURL)];
+    let socialEnabled = SocialUI.enabled && providers.length > 0;
     for (let className of ["social-statusarea-separator", "social-statusarea-user"]) {
       for (let element of document.getElementsByClassName(className))
         element.hidden = !socialEnabled;
@@ -946,7 +955,7 @@ SocialToolbar = {
     const CACHE_PREF_NAME = "social.cached.ambientNotificationIcons";
     // provider.profile == undefined means no response yet from the provider
     // to tell us whether the user is logged in or not.
-    if (!SocialUI.enabled ||
+    if (!SocialUI.enabled || !Social.provider.sidebarURL ||
         (!Social.provider.haveLoggedInUser() && Social.provider.profile !== undefined)) {
       // Either no enabled provider, or there is a provider and it has
       // responded with a profile and the user isn't loggedin.  The icons
@@ -1168,7 +1177,7 @@ SocialToolbar = {
       menu.removeChild(providerMenuSep.previousSibling);
     }
     // only show a selection if enabled and there is more than one
-    let providers = [p for (p of Social.providers) if (p.workerURL || p.sidebarURL)];
+    let providers = [p for (p of Social.providers) if (p.sidebarURL)];
     if (providers.length < 2) {
       providerMenuSep.hidden = true;
       return;
@@ -1281,6 +1290,10 @@ SocialSidebar = {
     sbrowser.stop();
     sbrowser.removeAttribute("origin");
     sbrowser.setAttribute("src", "about:blank");
+    // We need to explicitly create a new content viewer because the old one
+    // doesn't get destroyed until about:blank has loaded (which does not happen
+    // as long as the element is hidden).
+    sbrowser.docShell.createAboutBlankContentViewer(null);
     SocialFlyout.unload();
   },
 
@@ -1516,6 +1529,7 @@ SocialStatus = {
           "class": "social-panel-frame",
           "id": notificationFrameId,
           "tooltip": "aHTMLTooltip",
+          "context": "contentAreaContextMenu",
 
           // work around bug 793057 - by making the panel roughly the final size
           // we are more likely to have the anchor in the correct position.

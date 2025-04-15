@@ -228,10 +228,11 @@ nsEventListenerManager::AddEventListenerInternal(
   uint32_t count = mListeners.Length();
   for (uint32_t i = 0; i < count; i++) {
     ls = &mListeners.ElementAt(i);
-    if (ls->mListener == aListener &&
-        ls->mListenerIsHandler == aHandler &&
+    // mListener == aListener is the last one, since it can be a bit slow.
+    if (ls->mListenerIsHandler == aHandler &&
         ls->mFlags == aFlags &&
-        EVENT_TYPE_EQUALS(ls, aType, aTypeAtom, aTypeString, aAllEvents)) {
+        EVENT_TYPE_EQUALS(ls, aType, aTypeAtom, aTypeString, aAllEvents) &&
+        ls->mListener == aListener) {
       return;
     }
   }
@@ -572,14 +573,13 @@ nsEventListenerManager::FindEventHandler(uint32_t aEventType,
 }
 
 nsListenerStruct*
-nsEventListenerManager::SetEventHandlerInternal(nsIScriptContext *aContext,
-                                                JS::Handle<JSObject*> aScopeObject,
+nsEventListenerManager::SetEventHandlerInternal(JS::Handle<JSObject*> aScopeObject,
                                                 nsIAtom* aName,
                                                 const nsAString& aTypeString,
                                                 const nsEventHandler& aHandler,
                                                 bool aPermitUntrustedEvents)
 {
-  MOZ_ASSERT((aContext && aScopeObject) || aHandler.HasEventHandler(),
+  MOZ_ASSERT(aScopeObject || aHandler.HasEventHandler(),
              "Must have one or the other!");
   MOZ_ASSERT(aName || !aTypeString.IsEmpty());
 
@@ -593,9 +593,8 @@ nsEventListenerManager::SetEventHandlerInternal(nsIScriptContext *aContext,
     flags.mListenerIsJSListener = true;
 
     nsCOMPtr<nsIJSEventListener> scriptListener;
-    NS_NewJSEventListener(aContext, aScopeObject, mTarget, aName,
+    NS_NewJSEventListener(aScopeObject, mTarget, aName,
                           aHandler, getter_AddRefs(scriptListener));
-
     EventListenerHolder holder(scriptListener);
     AddEventListenerInternal(holder, eventType, aName, aTypeString, flags,
                              true);
@@ -608,8 +607,8 @@ nsEventListenerManager::SetEventHandlerInternal(nsIScriptContext *aContext,
 
     bool same = scriptListener->GetHandler() == aHandler;
     // Possibly the same listener, but update still the context and scope.
-    scriptListener->SetHandler(aHandler, aContext, aScopeObject);
-    if (mTarget && !same) {
+    scriptListener->SetHandler(aHandler, aScopeObject);
+    if (mTarget && !same && aName) {
       mTarget->EventListenerRemoved(aName);
       mTarget->EventListenerAdded(aName);
     }
@@ -645,31 +644,9 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
     return NS_ERROR_FAILURE;
   }
 
-  nsCOMPtr<nsINode> node(do_QueryInterface(mTarget));
-
   nsCOMPtr<nsIDocument> doc;
-
-  nsCOMPtr<nsIScriptGlobalObject> global;
-
-  if (node) {
-    // Try to get context from doc
-    // XXX sXBL/XBL2 issue -- do we really want the owner here?  What
-    // if that's the XBL document?
-    doc = node->OwnerDoc();
-    MOZ_ASSERT(!doc->IsLoadedAsData(), "Should not get in here at all");
-
-    // We want to allow compiling an event handler even in an unloaded
-    // document, so use GetScopeObject here, not GetScriptHandlingObject.
-    global = do_QueryInterface(doc->GetScopeObject());
-  } else {
-    nsCOMPtr<nsPIDOMWindow> win = GetTargetAsInnerWindow();
-    if (win) {
-      doc = win->GetDoc();
-      global = do_QueryInterface(win);
-    } else {
-      global = do_QueryInterface(mTarget);
-    }
-  }
+  nsCOMPtr<nsIScriptGlobalObject> global =
+    GetScriptGlobalAndDocument(getter_AddRefs(doc));
 
   if (!global) {
     // This can happen; for example this document might have been
@@ -723,7 +700,8 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
         csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_INLINE_SCRIPT,
                                  NS_ConvertUTF8toUTF16(asciiSpec),
                                  scriptSample,
-                                 0);
+                                 0,
+                                 EmptyString());
       }
 
       // return early if CSP wants us to block inline scripts
@@ -743,17 +721,20 @@ nsEventListenerManager::SetEventHandler(nsIAtom *aName,
   nsIScriptContext* context = global->GetScriptContext();
   NS_ENSURE_TRUE(context, NS_ERROR_FAILURE);
 
+  NS_ENSURE_STATE(global->GetGlobalJSObject());
+
   JSAutoRequest ar(context->GetNativeContext());
   JS::Rooted<JSObject*> scope(context->GetNativeContext(),
                               global->GetGlobalJSObject());
 
-  nsListenerStruct* ls = SetEventHandlerInternal(context, scope, aName,
+  nsListenerStruct* ls = SetEventHandlerInternal(scope, aName,
                                                  EmptyString(),
                                                  nsEventHandler(),
                                                  aPermitUntrustedEvents);
 
   if (!aDeferCompilation) {
-    return CompileEventHandlerInternal(ls, true, &aBody);
+    nsCxPusher pusher;
+    return CompileEventHandlerInternal(ls, pusher, &aBody);
   }
 
   return NS_OK;
@@ -774,7 +755,7 @@ nsEventListenerManager::RemoveEventHandler(nsIAtom* aName,
     mListeners.RemoveElementAt(uint32_t(ls - &mListeners.ElementAt(0)));
     mNoListenerForEvent = NS_EVENT_NULL;
     mNoListenerForEventAtom = nullptr;
-    if (mTarget) {
+    if (mTarget && aName) {
       mTarget->EventListenerRemoved(aName);
     }
   }
@@ -782,7 +763,7 @@ nsEventListenerManager::RemoveEventHandler(nsIAtom* aName,
 
 nsresult
 nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerStruct,
-                                                    bool aNeedsCxPush,
+                                                    nsCxPusher& aPusher,
                                                     const nsAString* aBody)
 {
   NS_PRECONDITION(aListenerStruct->GetJSListener(),
@@ -796,14 +777,19 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
   NS_ASSERTION(!listener->GetHandler().HasEventHandler(),
                "What is there to compile?");
 
-  nsIScriptContext *context = listener->GetEventContext();
+  nsCOMPtr<nsIDocument> doc;
+  nsCOMPtr<nsIScriptGlobalObject> global =
+    GetScriptGlobalAndDocument(getter_AddRefs(doc));
+  NS_ENSURE_STATE(global);
+
+  nsIScriptContext* context = global->GetScriptContext();
+  NS_ENSURE_STATE(context);
+
   JSContext *cx = context->GetNativeContext();
   JS::Rooted<JSObject*> handler(cx);
 
-  nsCOMPtr<nsPIDOMWindow> win; // Will end up non-null if mTarget is a window
-
   nsCxPusher pusher;
-  if (aNeedsCxPush) {
+  if (aPusher.GetCurrentScriptContext() != context) {
     pusher.Push(cx);
   }
 
@@ -852,16 +838,6 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
 
     uint32_t lineNo = 0;
     nsAutoCString url (NS_LITERAL_CSTRING("-moz-evil:lying-event-listener"));
-    nsCOMPtr<nsIDocument> doc;
-    if (content) {
-      doc = content->OwnerDoc();
-    } else {
-      win = do_QueryInterface(mTarget);
-      if (win) {
-        doc = win->GetExtantDoc();
-      }
-    }
-
     if (doc) {
       nsIURI *uri = doc->GetDocumentURI();
       if (uri) {
@@ -897,6 +873,7 @@ nsEventListenerManager::CompileEventHandlerInternal(nsListenerStruct *aListenerS
   }
 
   if (handler) {
+    nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(mTarget);
     // Bind it
     JS::Rooted<JSObject*> boundHandler(cx);
     JS::Rooted<JSObject*> scope(cx, listener->GetEventScope());
@@ -935,11 +912,7 @@ nsEventListenerManager::HandleEventSubType(nsListenerStruct* aListenerStruct,
   // compiled the event handler itself
   if ((aListenerStruct->mListenerType == eJSEventListener) &&
       aListenerStruct->mHandlerIsString) {
-    nsIJSEventListener *jslistener = aListenerStruct->GetJSListener();
-    result = CompileEventHandlerInternal(aListenerStruct,
-                                         jslistener->GetEventContext() !=
-                                           aPusher->GetCurrentScriptContext(),
-                                         nullptr);
+    result = CompileEventHandlerInternal(aListenerStruct, *aPusher, nullptr);
     aListenerStruct = nullptr;
   }
 
@@ -983,7 +956,11 @@ nsEventListenerManager::HandleEventInternal(nsPresContext* aPresContext,
   }
 
   nsAutoTObserverArray<nsListenerStruct, 2>::EndLimitedIterator iter(mListeners);
-  nsAutoPopupStatePusher popupStatePusher(nsDOMEvent::GetEventPopupControlState(aEvent));
+  Maybe<nsAutoPopupStatePusher> popupStatePusher;
+  if (mIsMainThreadELM) {
+    popupStatePusher.construct(nsDOMEvent::GetEventPopupControlState(aEvent));
+  }
+
   bool hasListener = false;
   while (iter.HasMore()) {
     if (aEvent->mFlags.mImmediatePropagationStopped) {
@@ -1186,8 +1163,9 @@ nsEventListenerManager::GetListenerInfo(nsCOMArray<nsIEventListenerInfo>* aList)
     // If this is a script handler and we haven't yet
     // compiled the event handler itself go ahead and compile it
     if ((ls.mListenerType == eJSEventListener) && ls.mHandlerIsString) {
+      nsCxPusher pusher;
       CompileEventHandlerInternal(const_cast<nsListenerStruct*>(&ls),
-                                  true, nullptr);
+                                  pusher, nullptr);
     }
     nsAutoString eventType;
     if (ls.mAllEvents) {
@@ -1233,7 +1211,7 @@ nsEventListenerManager::SetEventHandler(nsIAtom* aEventName,
 
   // Untrusted events are always permitted for non-chrome script
   // handlers.
-  SetEventHandlerInternal(nullptr, JS::NullPtr(), aEventName,
+  SetEventHandlerInternal(JS::NullPtr(), aEventName,
                           aTypeString, nsEventHandler(aHandler),
                           !mIsMainThreadELM ||
                           !nsContentUtils::IsCallerChrome());
@@ -1242,17 +1220,28 @@ nsEventListenerManager::SetEventHandler(nsIAtom* aEventName,
 void
 nsEventListenerManager::SetEventHandler(OnErrorEventHandlerNonNull* aHandler)
 {
-  if (!aHandler) {
-    RemoveEventHandler(nsGkAtoms::onerror, EmptyString());
-    return;
-  }
+  if (mIsMainThreadELM) {
+    if (!aHandler) {
+      RemoveEventHandler(nsGkAtoms::onerror, EmptyString());
+      return;
+    }
 
-  // Untrusted events are always permitted for non-chrome script
-  // handlers.
-  SetEventHandlerInternal(nullptr, JS::NullPtr(), nsGkAtoms::onerror,
-                          EmptyString(), nsEventHandler(aHandler),
-                          !mIsMainThreadELM ||
-                          !nsContentUtils::IsCallerChrome());
+    // Untrusted events are always permitted for non-chrome script
+    // handlers.
+    SetEventHandlerInternal(JS::NullPtr(), nsGkAtoms::onerror,
+                            EmptyString(), nsEventHandler(aHandler),
+                            !nsContentUtils::IsCallerChrome());
+  } else {
+    if (!aHandler) {
+      RemoveEventHandler(nullptr, NS_LITERAL_STRING("error"));
+      return;
+    }
+
+    // Untrusted events are always permitted.
+    SetEventHandlerInternal(JS::NullPtr(), nullptr,
+                            NS_LITERAL_STRING("error"),
+                            nsEventHandler(aHandler), true);
+  }
 }
 
 void
@@ -1265,7 +1254,7 @@ nsEventListenerManager::SetEventHandler(OnBeforeUnloadEventHandlerNonNull* aHand
 
   // Untrusted events are always permitted for non-chrome script
   // handlers.
-  SetEventHandlerInternal(nullptr, JS::NullPtr(), nsGkAtoms::onbeforeunload,
+  SetEventHandlerInternal(JS::NullPtr(), nsGkAtoms::onbeforeunload,
                           EmptyString(), nsEventHandler(aHandler),
                           !mIsMainThreadELM ||
                           !nsContentUtils::IsCallerChrome());
@@ -1285,7 +1274,8 @@ nsEventListenerManager::GetEventHandlerInternal(nsIAtom *aEventName,
   nsIJSEventListener *listener = ls->GetJSListener();
     
   if (ls->mHandlerIsString) {
-    CompileEventHandlerInternal(ls, true, nullptr);
+    nsCxPusher pusher;
+    CompileEventHandlerInternal(ls, pusher, nullptr);
   }
 
   const nsEventHandler& handler = listener->GetHandler();
@@ -1336,4 +1326,34 @@ nsEventListenerManager::MarkForCC()
   if (mRefCnt.IsPurple()) {
     mRefCnt.RemovePurple();
   }
+}
+
+already_AddRefed<nsIScriptGlobalObject>
+nsEventListenerManager::GetScriptGlobalAndDocument(nsIDocument** aDoc)
+{
+  nsCOMPtr<nsINode> node(do_QueryInterface(mTarget));
+  nsCOMPtr<nsIDocument> doc;
+  nsCOMPtr<nsIScriptGlobalObject> global;
+  if (node) {
+    // Try to get context from doc
+    // XXX sXBL/XBL2 issue -- do we really want the owner here?  What
+    // if that's the XBL document?
+    doc = node->OwnerDoc();
+    MOZ_ASSERT(!doc->IsLoadedAsData(), "Should not get in here at all");
+
+    // We want to allow compiling an event handler even in an unloaded
+    // document, so use GetScopeObject here, not GetScriptHandlingObject.
+    global = do_QueryInterface(doc->GetScopeObject());
+  } else {
+    nsCOMPtr<nsPIDOMWindow> win = GetTargetAsInnerWindow();
+    if (win) {
+      doc = win->GetExtantDoc();
+      global = do_QueryInterface(win);
+    } else {
+      global = do_QueryInterface(mTarget);
+    }
+  }
+
+  doc.forget(aDoc);
+  return global.forget();
 }

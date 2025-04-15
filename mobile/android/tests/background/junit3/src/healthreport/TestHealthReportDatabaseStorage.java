@@ -3,7 +3,6 @@
 
 package org.mozilla.gecko.background.healthreport;
 
-import java.io.File;
 import java.util.ArrayList;
 
 import org.json.JSONException;
@@ -30,11 +29,6 @@ public class TestHealthReportDatabaseStorage extends FakeProfileTestCase {
     "events_integer",
     "events_textual"
   };
-
-  @Override
-  protected String getCacheSuffix() {
-    return File.separator + "health-" + System.currentTimeMillis() + ".profile";
-  }
 
   public static class MockMeasurementFields implements MeasurementFields {
     @Override
@@ -333,10 +327,6 @@ public class TestHealthReportDatabaseStorage extends FakeProfileTestCase {
       fail("Should throw - event_integer(env) references environments(id), which is given as a non-existent value.");
     } catch (IllegalStateException e) { }
     try {
-      storage.recordDailyDiscrete(nonExistentEnvID, storage.getToday(), discreteFieldID, "iu");
-      fail("Should throw - event_textual(env) references environments(id), which is given as a non-existent value.");
-    } catch (IllegalStateException e) { }
-    try {
       storage.recordDailyLast(nonExistentEnvID, storage.getToday(), discreteFieldID, "iu");
       fail("Should throw - event_textual(env) references environments(id), which is given as a non-existent value.");
     } catch (IllegalStateException e) { }
@@ -346,13 +336,29 @@ public class TestHealthReportDatabaseStorage extends FakeProfileTestCase {
       fail("Should throw - event_integer(field) references fields(id), which is given as a non-existent value.");
     } catch (IllegalStateException e) { }
     try {
-      storage.recordDailyDiscrete(envID, storage.getToday(), nonExistentFieldID, "iu");
-      fail("Should throw - event_textual(field) references fields(id), which is given as a non-existent value.");
-    } catch (IllegalStateException e) { }
-    try {
       storage.recordDailyLast(envID, storage.getToday(), nonExistentFieldID, "iu");
       fail("Should throw - event_textual(field) references fields(id), which is given as a non-existent value.");
     } catch (IllegalStateException e) { }
+
+    // Test dropped events due to constraint violations that do not throw (see bug 961526).
+    final String eventValue = "a value not in the database";
+    assertFalse(isEventInDB(db, eventValue)); // Better safe than sorry.
+
+    storage.recordDailyDiscrete(nonExistentEnvID, storage.getToday(), discreteFieldID, eventValue);
+    assertFalse(isEventInDB(db, eventValue));
+
+    storage.recordDailyDiscrete(envID, storage.getToday(), nonExistentFieldID, "iu");
+    assertFalse(isEventInDB(db, eventValue));
+  }
+
+  private static boolean isEventInDB(final SQLiteDatabase db, final String value) {
+    final Cursor c = db.query("events_textual", new String[] {"value"}, "value = ?",
+        new String[] {value}, null, null, null);
+    try {
+      return c.getCount() > 0;
+    } finally {
+      c.close();
+    }
   }
 
   // Largely taken from testDeleteEnvAndEventsBefore and testDeleteOrphanedAddons.
@@ -386,7 +392,7 @@ public class TestHealthReportDatabaseStorage extends FakeProfileTestCase {
     db.insertOrThrow("events_integer", null, v);
     db.insertOrThrow("events_integer", null, v);
     assertEquals(16, getTotalEventCount(storage));
-    final int nonExistentEnvID = (int) DBHelpers.getNonExistentID(db, "environments");
+    final int nonExistentEnvID = DBHelpers.getNonExistentID(db, "environments");
     assertEquals(1, storage.deleteDataBefore(storage.getGivenDaysAgoMillis(8), nonExistentEnvID));
     assertEquals(14, getTotalEventCount(storage));
 
@@ -436,7 +442,7 @@ public class TestHealthReportDatabaseStorage extends FakeProfileTestCase {
     db.insertOrThrow("events_integer", null, v);
     db.insertOrThrow("events_integer", null, v);
     assertEquals(16, getTotalEventCount(storage));
-    final int nonExistentEnvID = (int) DBHelpers.getNonExistentID(db, "environments");
+    final int nonExistentEnvID = DBHelpers.getNonExistentID(db, "environments");
     assertEquals(1, storage.deleteEnvAndEventsBefore(storage.getGivenDaysAgoMillis(8), nonExistentEnvID));
     assertEquals(14, getTotalEventCount(storage));
 
@@ -559,7 +565,10 @@ public class TestHealthReportDatabaseStorage extends FakeProfileTestCase {
         new PrepopulatedMockHealthReportDatabaseStorage(context, fakeProfileDirectory, 2);
     final SQLiteDatabase db = storage.getDB();
     assertEquals(5, DBHelpers.getRowCount(db, "environments"));
+    assertEquals(5, storage.getEnvironmentCache().size());
+
     storage.pruneEnvironments(1);
+    assertEquals(0, storage.getEnvironmentCache().size());
     assertTrue(!getEnvAppVersions(db).contains("v3"));
     storage.pruneEnvironments(2);
     assertTrue(!getEnvAppVersions(db).contains("v2"));

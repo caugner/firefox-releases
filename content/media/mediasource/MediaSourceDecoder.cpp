@@ -10,10 +10,13 @@
 #include "MediaDecoderReader.h"
 #include "MediaDecoderStateMachine.h"
 #include "mozilla/Assertions.h"
+#include "mozilla/FloatingPoint.h"
 #include "mozilla/dom/HTMLMediaElement.h"
+#include "mozilla/dom/TimeRanges.h"
 #include "mozilla/mozalloc.h"
 #include "nsISupports.h"
 #include "prlog.h"
+#include "MediaSource.h"
 #include "SubBufferDecoder.h"
 #include "SourceBufferResource.h"
 
@@ -117,7 +120,7 @@ private:
   }
 };
 
-MediaSourceDecoder::MediaSourceDecoder(HTMLMediaElement* aElement)
+MediaSourceDecoder::MediaSourceDecoder(dom::HTMLMediaElement* aElement)
   : mMediaSource(nullptr)
   , mVideoReader(nullptr),
     mAudioReader(nullptr)
@@ -144,8 +147,24 @@ MediaSourceDecoder::Load(nsIStreamListener**, MediaDecoder*)
   return NS_OK;
 }
 
+nsresult
+MediaSourceDecoder::GetSeekable(dom::TimeRanges* aSeekable)
+{
+  double duration = mMediaSource->Duration();
+  if (IsNaN(duration)) {
+    // Return empty range.
+  } else if (duration > 0 && mozilla::IsInfinite(duration)) {
+    nsRefPtr<dom::TimeRanges> bufferedRanges = new dom::TimeRanges();
+    GetBuffered(bufferedRanges);
+    aSeekable->Add(0, bufferedRanges->GetFinalEndTime());
+  } else {
+    aSeekable->Add(0, duration);
+  }
+  return NS_OK;
+}
+
 void
-MediaSourceDecoder::AttachMediaSource(MediaSource* aMediaSource)
+MediaSourceDecoder::AttachMediaSource(dom::MediaSource* aMediaSource)
 {
   MOZ_ASSERT(!mMediaSource && !mDecoderStateMachine);
   mMediaSource = aMediaSource;

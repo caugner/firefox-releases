@@ -11,7 +11,9 @@
 #include "gfxTypes.h"
 #include "gfxPoint.h"                   // for gfxIntSize
 #include "mozilla/ipc/SharedMemory.h"   // for SharedMemory, etc
-#include "mozilla/WeakPtr.h"
+#include "mozilla/RefPtr.h"
+#include "nsIMemoryReporter.h"          // for MemoryUniReporter
+#include "mozilla/Atomics.h"            // for Atomic
 
 /*
  * FIXME [bjacob] *** PURE CRAZYNESS WARNING ***
@@ -39,6 +41,8 @@ namespace layers {
 
 class PGrallocBufferChild;
 class MaybeMagicGrallocBufferHandle;
+class MemoryTextureClient;
+class MemoryTextureHost;
 
 enum BufferCapabilities {
   DEFAULT_BUFFER_CAPS = 0,
@@ -56,7 +60,7 @@ enum BufferCapabilities {
 class SurfaceDescriptor;
 
 
-ipc::SharedMemory::SharedMemoryType OptimalShmemType();
+mozilla::ipc::SharedMemory::SharedMemoryType OptimalShmemType();
 bool IsSurfaceDescriptorValid(const SurfaceDescriptor& aSurface);
 bool IsSurfaceDescriptorOwned(const SurfaceDescriptor& aDescriptor);
 bool ReleaseOwnedSurfaceDescriptor(const SurfaceDescriptor& aDescriptor);
@@ -69,10 +73,10 @@ bool ReleaseOwnedSurfaceDescriptor(const SurfaceDescriptor& aDescriptor);
  * These methods should be only called in the ipdl implementor's thread, unless
  * specified otherwise in the implementing class.
  */
-class ISurfaceAllocator : public SupportsWeakPtr<ISurfaceAllocator>
+class ISurfaceAllocator : public AtomicRefCounted<ISurfaceAllocator>
 {
 public:
-ISurfaceAllocator() {}
+  ISurfaceAllocator() {}
 
   /**
    * Allocate shared memory that can be accessed by only one process at a time.
@@ -80,20 +84,20 @@ ISurfaceAllocator() {}
    * message.
    */
   virtual bool AllocShmem(size_t aSize,
-                          ipc::SharedMemory::SharedMemoryType aType,
-                          ipc::Shmem* aShmem) = 0;
+                          mozilla::ipc::SharedMemory::SharedMemoryType aType,
+                          mozilla::ipc::Shmem* aShmem) = 0;
 
   /**
    * Allocate shared memory that can be accessed by both processes at the
    * same time. Safety is left for the user of the memory to care about.
    */
   virtual bool AllocUnsafeShmem(size_t aSize,
-                                ipc::SharedMemory::SharedMemoryType aType,
-                                ipc::Shmem* aShmem) = 0;
+                                mozilla::ipc::SharedMemory::SharedMemoryType aType,
+                                mozilla::ipc::Shmem* aShmem) = 0;
   /**
    * Deallocate memory allocated by either AllocShmem or AllocUnsafeShmem.
    */
-  virtual void DeallocShmem(ipc::Shmem& aShmem) = 0;
+  virtual void DeallocShmem(mozilla::ipc::Shmem& aShmem) = 0;
 
   // was AllocBuffer
   virtual bool AllocSharedImageSurface(const gfxIntSize& aSize,
@@ -119,6 +123,12 @@ ISurfaceAllocator() {}
   {
     return nullptr;
   }
+
+  virtual bool IPCOpen() const { return true; }
+
+  // Returns true if aSurface wraps a Shmem.
+  static bool IsShmem(SurfaceDescriptor* aSurface);
+
 protected:
   // this method is needed for a temporary fix, will be removed after
   // DeprecatedTextureClient/Host rework.
@@ -130,7 +140,41 @@ protected:
                                               SurfaceDescriptor* aBuffer);
 
 
-  ~ISurfaceAllocator() {}
+  virtual ~ISurfaceAllocator() {}
+
+  friend class detail::RefCounted<ISurfaceAllocator, detail::AtomicRefCount>;
+};
+
+class GfxMemoryImageReporter MOZ_FINAL : public mozilla::MemoryUniReporter
+{
+public:
+  GfxMemoryImageReporter()
+    : MemoryUniReporter("explicit/gfx/heap-textures", KIND_HEAP, UNITS_BYTES,
+                        "Heap memory shared between threads by texture clients and hosts.")
+  {
+#ifdef DEBUG
+    // There must be only one instance of this class, due to |sAmount|
+    // being static.
+    static bool hasRun = false;
+    MOZ_ASSERT(!hasRun);
+    hasRun = true;
+#endif
+  }
+
+  static void DidAlloc(void* aPointer)
+  {
+    sAmount += MallocSizeOfOnAlloc(aPointer);
+  }
+
+  static void WillFree(void* aPointer)
+  {
+    sAmount -= MallocSizeOfOnFree(aPointer);
+  }
+
+private:
+  int64_t Amount() MOZ_OVERRIDE { return sAmount; }
+
+  static mozilla::Atomic<int32_t> sAmount;
 };
 
 } // namespace

@@ -22,6 +22,7 @@ using namespace ABI::Windows::System;
 using namespace ABI::Windows::Foundation;
 using namespace Microsoft::WRL;
 using namespace Microsoft::WRL::Wrappers;
+using namespace mozilla::widget;
 
 // Metro specific XRE methods we call from here on an
 // appropriate thread.
@@ -41,6 +42,7 @@ namespace winrt {
 ComPtr<FrameworkView> sFrameworkView;
 ComPtr<MetroApp> sMetroApp;
 ComPtr<ICoreApplication> sCoreApp;
+bool MetroApp::sGeckoShuttingDown = false;
 
 ////////////////////////////////////////////////////
 // IFrameworkViewSource impl.
@@ -83,11 +85,11 @@ MetroApp::Run()
     this, &MetroApp::OnResuming).Get(), &mResumeEvent);
   AssertHRESULT(hr);
 
-  Log("XPCOM startup initialization began");
+  WinUtils::Log("Calling XRE_metroStartup.");
   nsresult rv = XRE_metroStartup(true);
-  Log("XPCOM startup initialization complete");
+  WinUtils::Log("Exiting XRE_metroStartup.");
   if (NS_FAILED(rv)) {
-    Log("XPCOM startup initialization failed, bailing. rv=%X", rv);
+    WinUtils::Log("XPCOM startup initialization failed, bailing. rv=%X", rv);
     CoreExit();
   }
 }
@@ -95,7 +97,7 @@ MetroApp::Run()
 // Free all xpcom related resources before calling the xre shutdown call.
 // Must be called on the metro main thread. Currently called from appshell.
 void
-MetroApp::ShutdownXPCOM()
+MetroApp::Shutdown()
 {
   LogThread();
 
@@ -105,8 +107,10 @@ MetroApp::ShutdownXPCOM()
   }
 
   if (sFrameworkView) {
-    sFrameworkView->ShutdownXPCOM();
+    sFrameworkView->Shutdown();
   }
+
+  MetroApp::sGeckoShuttingDown = true;
 
   // Shut down xpcom
   XRE_metroShutdown();
@@ -153,7 +157,8 @@ HRESULT
 MetroApp::OnAsyncTileCreated(ABI::Windows::Foundation::IAsyncOperation<bool>* aOperation,
                              AsyncStatus aStatus)
 {
-  Log("Async operation status: %d", aStatus);
+  WinUtils::Log("Async operation status: %d", aStatus);
+  MetroUtils::FireObserver("metro_on_async_tile_created");
   return S_OK;
 }
 
@@ -217,12 +222,6 @@ XRE_MetroCoreApplicationRun()
 
   using namespace mozilla::widget::winrt;
 
-#ifdef PR_LOGGING
-  if (!gWindowsLog) {
-    gWindowsLog = PR_NewLogModule("nsWindow");
-  }
-#endif
-
   sMetroApp = Make<MetroApp>();
 
   HStringReference className(RuntimeClass_Windows_ApplicationModel_Core_CoreApplication);
@@ -256,7 +255,7 @@ XRE_MetroCoreApplicationRun()
   hr = sCoreApp->Run(sMetroApp.Get());
   sFrameworkView = nullptr;
 
-  Log("Exiting CoreApplication::Run");
+  WinUtils::Log("Exiting CoreApplication::Run");
 
   sCoreApp = nullptr;
   sMetroApp = nullptr;

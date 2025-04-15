@@ -16,6 +16,8 @@
 namespace mozilla {
 namespace layers {
 
+class CompositableHost;
+
 typedef std::vector<mozilla::layers::EditReply> EditReplyVector;
 
 // Since PCompositble has two potential manager protocols, we can't just call
@@ -31,6 +33,20 @@ protected:
   bool ReceiveCompositableUpdate(const CompositableOperation& aEdit,
                                  EditReplyVector& replyv);
   bool IsOnCompositorSide() const MOZ_OVERRIDE { return true; }
+
+  /**
+   * Return true if this protocol is asynchronous with respect to the content
+   * thread (ImageBridge for instance).
+   */
+  virtual bool IsAsync() const { return false; }
+
+  void ReturnReleaseFenceIfNecessary(CompositableHost* aCompositable,
+                                     EditReplyVector& replyv,
+                                     PCompositableParent* aParent);
+  void ClearPrevReleaseFenceHandles();
+
+protected:
+  std::vector<FenceHandle> mPrevReleaseFenceHandles;
 };
 
 } // namespace

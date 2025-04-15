@@ -66,7 +66,7 @@ const APPMENU_WHITELIST = [
     "appmenuitem_netmonitor",
     "appmenu_devToolbar",
     "appmenu_devAppMgr",
-    "appmenu_chromeDebugger",
+    "appmenu_browserToolbox",
     "appmenu_browserConsole",
     "appmenu_responsiveUI",
     "appmenu_scratchpad",
@@ -93,6 +93,7 @@ const APPMENU_WHITELIST = [
   "appmenu_fullScreen",
   "sync-setup-appmenu",
   "sync-syncnowitem-appmenu",
+  "switch-to-metro",
   "appmenu-quit",
 
   "appmenu_bookmarks:child",

@@ -2,6 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#ifndef mozilla_dom_TCPSocketChild_h
+#define mozilla_dom_TCPSocketChild_h
+
 #include "mozilla/net/PTCPSocketChild.h"
 #include "nsITCPSocketChild.h"
 #include "nsCycleCollectionParticipant.h"
@@ -44,12 +47,15 @@ public:
 
   virtual bool RecvCallback(const nsString& aType,
                             const CallbackData& aData,
-                            const nsString& aReadyState,
-                            const uint32_t& aBuffered) MOZ_OVERRIDE;
+                            const nsString& aReadyState) MOZ_OVERRIDE;
   virtual bool RecvRequestDelete() MOZ_OVERRIDE;
+  virtual bool RecvUpdateBufferedAmount(const uint32_t& aBufferred,
+                                        const uint32_t& aTrackingNumber) MOZ_OVERRIDE;
 private:
   JSObject* mWindowObj;
 };
 
 } // namespace dom
 } // namespace mozilla
+
+#endif

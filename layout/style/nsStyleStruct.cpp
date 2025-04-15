@@ -101,6 +101,7 @@ nsStyleFont::nsStyleFont(const nsStyleFont& aSrc)
   , mSize(aSrc.mSize)
   , mGenericID(aSrc.mGenericID)
   , mScriptLevel(aSrc.mScriptLevel)
+  , mMathVariant(aSrc.mMathVariant)
   , mExplicitLanguage(aSrc.mExplicitLanguage)
   , mAllowZoom(aSrc.mAllowZoom)
   , mScriptUnconstrainedSize(aSrc.mScriptUnconstrainedSize)
@@ -131,6 +132,7 @@ nsStyleFont::Init(nsPresContext* aPresContext)
       NS_POINTS_TO_TWIPS(NS_MATHML_DEFAULT_SCRIPT_MIN_SIZE_PT));
   mScriptLevel = 0;
   mScriptSizeMultiplier = NS_MATHML_DEFAULT_SCRIPT_SIZE_MULTIPLIER;
+  mMathVariant = NS_MATHML_MATHVARIANT_NONE;
   mAllowZoom = true;
 
   nsAutoString language;
@@ -191,7 +193,8 @@ nsChangeHint nsStyleFont::CalcDifference(const nsStyleFont& aOther) const
              "expected mAllowZoom to be the same on both nsStyleFonts");
   if (mSize != aOther.mSize ||
       mLanguage != aOther.mLanguage ||
-      mExplicitLanguage != aOther.mExplicitLanguage) {
+      mExplicitLanguage != aOther.mExplicitLanguage ||
+      mMathVariant != aOther.mMathVariant) {
     return NS_STYLE_HINT_REFLOW;
   }
   return CalcFontDifference(mFont, aOther.mFont);
@@ -230,7 +233,8 @@ nsChangeHint nsStyleFont::CalcFontDifference(const nsFont& aFont1, const nsFont&
       (aFont1.variantNumeric == aFont2.variantNumeric) &&
       (aFont1.variantPosition == aFont2.variantPosition) &&
       (aFont1.fontFeatureSettings == aFont2.fontFeatureSettings) &&
-      (aFont1.languageOverride == aFont2.languageOverride)) {
+      (aFont1.languageOverride == aFont2.languageOverride) &&
+      (aFont1.systemFont == aFont2.systemFont)) {
     if ((aFont1.decorations == aFont2.decorations)) {
       return NS_STYLE_HINT_NONE;
     }
@@ -314,9 +318,8 @@ nsChangeHint nsStyleMargin::CalcDifference(const nsStyleMargin& aOther) const
   }
   // Margin differences can't affect descendant intrinsic sizes and
   // don't need to force children to reflow.
-  return NS_SubtractHint(NS_STYLE_HINT_REFLOW,
-                         NS_CombineHint(nsChangeHint_ClearDescendantIntrinsics,
-                                        nsChangeHint_NeedDirtyReflow));
+  return NS_CombineHint(nsChangeHint_NeedReflow,
+                        nsChangeHint_ClearAncestorIntrinsics);
 }
 
 nsStylePadding::nsStylePadding() {
@@ -757,7 +760,8 @@ nsChangeHint nsStyleXUL::CalcDifference(const nsStyleXUL& aOther) const
       mBoxFlex == aOther.mBoxFlex &&
       mBoxOrient == aOther.mBoxOrient &&
       mBoxPack == aOther.mBoxPack &&
-      mBoxOrdinal == aOther.mBoxOrdinal)
+      mBoxOrdinal == aOther.mBoxOrdinal &&
+      mStretchStack == aOther.mStretchStack)
     return NS_STYLE_HINT_NONE;
   if (mBoxOrdinal != aOther.mBoxOrdinal)
     return NS_STYLE_HINT_FRAMECHANGE;
@@ -1268,9 +1272,11 @@ nsStylePosition::nsStylePosition(void)
   mMaxHeight.SetNoneValue();
   mFlexBasis.SetAutoValue();
   mBoxSizing = NS_STYLE_BOX_SIZING_CONTENT;
+  mAlignContent = NS_STYLE_ALIGN_CONTENT_STRETCH;
   mAlignItems = NS_STYLE_ALIGN_ITEMS_INITIAL_VALUE;
   mAlignSelf = NS_STYLE_ALIGN_SELF_AUTO;
   mFlexDirection = NS_STYLE_FLEX_DIRECTION_ROW;
+  mFlexWrap = NS_STYLE_FLEX_WRAP_NOWRAP;
   mJustifyContent = NS_STYLE_JUSTIFY_CONTENT_FLEX_START;
   mOrder = NS_STYLE_ORDER_INITIAL;
   mFlexGrow = 0.0f;
@@ -1287,6 +1293,18 @@ nsStylePosition::nsStylePosition(const nsStylePosition& aSource)
 {
   MOZ_COUNT_CTOR(nsStylePosition);
   memcpy((nsStylePosition*)this, &aSource, sizeof(nsStylePosition));
+}
+
+static bool
+IsAutonessEqual(const nsStyleSides& aSides1, const nsStyleSides& aSides2)
+{
+  NS_FOR_CSS_SIDES(side) {
+    if ((aSides1.GetUnit(side) == eStyleUnit_Auto) !=
+        (aSides2.GetUnit(side) == eStyleUnit_Auto)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 nsChangeHint nsStylePosition::CalcDifference(const nsStylePosition& aOther) const
@@ -1311,19 +1329,35 @@ nsChangeHint nsStylePosition::CalcDifference(const nsStylePosition& aOther) cons
     return NS_CombineHint(hint, nsChangeHint_AllReflowHints);
   }
 
-  // Properties that apply to flexbox containers:
-
-  // flex-direction can swap a flexbox between vertical & horizontal.
-  // align-items can change the sizing of a flexbox & the positioning
-  // of its children.
+  // Properties that apply to flex containers:
+  // - flex-direction can swap a flex container between vertical & horizontal.
+  // - align-items can change the sizing of a flex container & the positioning
+  //   of its children.
+  // - flex-wrap changes whether a flex container's children are wrapped, which
+  //   impacts their sizing/positioning and hence impacts the container's size.
   if (mAlignItems != aOther.mAlignItems ||
-      mFlexDirection != aOther.mFlexDirection) {
+      mFlexDirection != aOther.mFlexDirection ||
+      mFlexWrap != aOther.mFlexWrap) {
     return NS_CombineHint(hint, nsChangeHint_AllReflowHints);
   }
+
 
   // Changing justify-content on a flexbox might affect the positioning of its
   // children, but it won't affect any sizing.
   if (mJustifyContent != aOther.mJustifyContent) {
+    NS_UpdateHint(hint, nsChangeHint_NeedReflow);
+  }
+
+  // Properties that apply only to multi-line flex containers:
+  // 'align-content' can change the positioning & sizing of a multi-line flex
+  // container's children when there's extra space in the cross axis, but it
+  // shouldn't affect the container's own sizing.
+  //
+  // NOTE: If we get here, we know that mFlexWrap == aOther.mFlexWrap
+  // (otherwise, we would've returned earlier). So it doesn't matter which one
+  // of those we check to see if we're multi-line.
+  if (mFlexWrap != NS_STYLE_FLEX_WRAP_NOWRAP &&
+      mAlignContent != aOther.mAlignContent) {
     NS_UpdateHint(hint, nsChangeHint_NeedReflow);
   }
 
@@ -1357,9 +1391,15 @@ nsChangeHint nsStylePosition::CalcDifference(const nsStylePosition& aOther) cons
   // Note that it is possible that we'll need to reflow when processing
   // restyles, but we don't have enough information to make a good decision
   // right now.
+  // Don't try to handle changes between "auto" and non-auto efficiently;
+  // that's tricky to do and will hardly ever be able to avoid a reflow.
   if (mOffset != aOther.mOffset) {
-    NS_UpdateHint(hint, nsChangeHint(nsChangeHint_RecomputePosition |
-                                     nsChangeHint_UpdateOverflow));
+    if (IsAutonessEqual(mOffset, aOther.mOffset)) {
+      NS_UpdateHint(hint, nsChangeHint(nsChangeHint_RecomputePosition |
+                                       nsChangeHint_UpdateOverflow));
+    } else {
+      return NS_CombineHint(hint, nsChangeHint_AllReflowHints);
+    }
   }
   return hint;
 }
@@ -1896,6 +1936,7 @@ nsStyleBackground::nsStyleBackground()
   , mPositionCount(1)
   , mImageCount(1)
   , mSizeCount(1)
+  , mBlendModeCount(1)
   , mBackgroundColor(NS_RGBA(0, 0, 0, 0))
   , mBackgroundInlinePolicy(NS_STYLE_BG_INLINE_POLICY_CONTINUOUS)
 {
@@ -1913,6 +1954,7 @@ nsStyleBackground::nsStyleBackground(const nsStyleBackground& aSource)
   , mPositionCount(aSource.mPositionCount)
   , mImageCount(aSource.mImageCount)
   , mSizeCount(aSource.mSizeCount)
+  , mBlendModeCount(aSource.mBlendModeCount)
   , mLayers(aSource.mLayers) // deep copy
   , mBackgroundColor(aSource.mBackgroundColor)
   , mBackgroundInlinePolicy(aSource.mBackgroundInlinePolicy)
@@ -1929,6 +1971,7 @@ nsStyleBackground::nsStyleBackground(const nsStyleBackground& aSource)
     mPositionCount = std::max(mPositionCount, count);
     mImageCount = std::max(mImageCount, count);
     mSizeCount = std::max(mSizeCount, count);
+    mBlendModeCount = std::max(mSizeCount, count);
   }
 }
 
@@ -2136,6 +2179,7 @@ nsStyleBackground::Layer::SetInitialValues()
   mClip = NS_STYLE_BG_CLIP_BORDER;
   mOrigin = NS_STYLE_BG_ORIGIN_PADDING;
   mRepeat.SetInitialValues();
+  mBlendMode = NS_STYLE_BLEND_NORMAL;
   mPosition.SetInitialValues();
   mSize.SetInitialValues();
   mImage.SetNull();
@@ -2160,6 +2204,7 @@ nsStyleBackground::Layer::operator==(const Layer& aOther) const
          mClip == aOther.mClip &&
          mOrigin == aOther.mOrigin &&
          mRepeat == aOther.mRepeat &&
+         mBlendMode == aOther.mBlendMode &&
          mPosition == aOther.mPosition &&
          mSize == aOther.mSize &&
          mImage == aOther.mImage;
@@ -2374,6 +2419,19 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
       || mOverflowY != aOther.mOverflowY
       || mResize != aOther.mResize)
     NS_UpdateHint(hint, nsChangeHint_ReconstructFrame);
+
+  if ((mAppearance == NS_THEME_TEXTFIELD &&
+       aOther.mAppearance != NS_THEME_TEXTFIELD) ||
+      (mAppearance != NS_THEME_TEXTFIELD &&
+       aOther.mAppearance == NS_THEME_TEXTFIELD)) {
+    // This is for <input type=number> where we allow authors to specify a
+    // |-moz-appearance:textfield| to get a control without a spinner. (The
+    // spinner is present for |-moz-appearance:number-input| but also other
+    // values such as 'none'.) We need to reframe since we want to use
+    // nsTextControlFrame instead of nsNumberControlFrame if the author
+    // specifies 'textfield'.
+    return nsChangeHint_ReconstructFrame;
+  }
 
   if (mFloats != aOther.mFloats) {
     // Changing which side we float on doesn't affect descendants directly

@@ -24,23 +24,26 @@ using layers::PlanarYCbCrData;
 
 // Verify these values are sane. Once we've checked the frame sizes, we then
 // can do less integer overflow checking.
-PR_STATIC_ASSERT(MAX_VIDEO_WIDTH < PlanarYCbCrImage::MAX_DIMENSION);
-PR_STATIC_ASSERT(MAX_VIDEO_HEIGHT < PlanarYCbCrImage::MAX_DIMENSION);
-PR_STATIC_ASSERT(PlanarYCbCrImage::MAX_DIMENSION < UINT32_MAX / PlanarYCbCrImage::MAX_DIMENSION);
+static_assert(MAX_VIDEO_WIDTH < PlanarYCbCrImage::MAX_DIMENSION,
+              "MAX_VIDEO_WIDTH is too large");
+static_assert(MAX_VIDEO_HEIGHT < PlanarYCbCrImage::MAX_DIMENSION,
+              "MAX_VIDEO_HEIGHT is too large");
+static_assert(PlanarYCbCrImage::MAX_DIMENSION < UINT32_MAX / PlanarYCbCrImage::MAX_DIMENSION,
+              "MAX_DIMENSION*MAX_DIMENSION doesn't fit in 32 bits");
 
 // Un-comment to enable logging of seek bisections.
 //#define SEEK_LOGGING
 
 #ifdef PR_LOGGING
 extern PRLogModuleInfo* gMediaDecoderLog;
-#define LOG(type, msg) PR_LOG(gMediaDecoderLog, type, msg)
+#define DECODER_LOG(type, msg) PR_LOG(gMediaDecoderLog, type, msg)
 #ifdef SEEK_LOGGING
 #define SEEK_LOG(type, msg) PR_LOG(gMediaDecoderLog, type, msg)
 #else
 #define SEEK_LOG(type, msg)
 #endif
 #else
-#define LOG(type, msg)
+#define DECODER_LOG(type, msg)
 #define SEEK_LOG(type, msg)
 #endif
 
@@ -463,12 +466,14 @@ VideoData* MediaDecoderReader::FindStartTime(int64_t& aOutStartTime)
     videoData = DecodeToFirstVideoData();
     if (videoData) {
       videoStartTime = videoData->mTime;
+      DECODER_LOG(PR_LOG_DEBUG, ("MediaDecoderReader::FindStartTime() video=%lld", videoStartTime));
     }
   }
   if (HasAudio()) {
     AudioData* audioData = DecodeToFirstAudioData();
     if (audioData) {
       audioStartTime = audioData->mTime;
+      DECODER_LOG(PR_LOG_DEBUG, ("MediaDecoderReader::FindStartTime() audio=%lld", audioStartTime));
     }
   }
 
@@ -482,7 +487,7 @@ VideoData* MediaDecoderReader::FindStartTime(int64_t& aOutStartTime)
 
 nsresult MediaDecoderReader::DecodeToTarget(int64_t aTarget)
 {
-  LOG(PR_LOG_DEBUG, ("MediaDecoderReader::DecodeToTarget(%lld) Begin", aTarget));
+  DECODER_LOG(PR_LOG_DEBUG, ("MediaDecoderReader::DecodeToTarget(%lld) Begin", aTarget));
 
   // Decode forward to the target frame. Start with video, if we have it.
   if (HasVideo()) {
@@ -526,7 +531,7 @@ nsresult MediaDecoderReader::DecodeToTarget(int64_t aTarget)
         return NS_ERROR_FAILURE;
       }
     }
-    LOG(PR_LOG_DEBUG, ("First video frame after decode is %lld", startTime));
+    DECODER_LOG(PR_LOG_DEBUG, ("First video frame after decode is %lld", startTime));
   }
 
   if (HasAudio()) {
@@ -606,7 +611,7 @@ nsresult MediaDecoderReader::DecodeToTarget(int64_t aTarget)
     }
   }
 
-  LOG(PR_LOG_DEBUG, ("MediaDecoderReader::DecodeToTarget(%lld) End", aTarget));
+  DECODER_LOG(PR_LOG_DEBUG, ("MediaDecoderReader::DecodeToTarget(%lld) End", aTarget));
 
   return NS_OK;
 }

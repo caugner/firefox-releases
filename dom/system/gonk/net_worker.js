@@ -142,16 +142,15 @@ function usbTetheringSuccess(params) {
   return true;
 }
 
-function networkInterfaceStatsFail(params) {
+function networkInterfaceAlarmFail(params) {
   // Notify the main thread.
   postMessage(params);
   return true;
 }
 
-function networkInterfaceStatsSuccess(params) {
+function networkInterfaceAlarmSuccess(params) {
   // Notify the main thread.
-  params.txBytes = parseFloat(params.resultReason);
-
+  params.error = parseFloat(params.resultReason);
   postMessage(params);
   return true;
 }
@@ -555,16 +554,8 @@ function enableNat(params, callback) {
 }
 
 function disableNat(params, callback) {
-  let command;
-
-  // Don't disable nat because others interface still need it.
-  // Send the dummy command to continue the function chain.
-  if ("interfaceList" in params && params.interfaceList.length > 1) {
-    command = DUMMY_COMMAND;
-  } else {
-    command = "nat disable " + params.internalIfname + " " +
-              params.externalIfname + " " + "0";
-  }
+  let command = "nat disable " + params.internalIfname + " " +
+                 params.externalIfname + " " + "0";
   return doCommand(command, callback);
 }
 
@@ -603,15 +594,28 @@ function stopSoftAP(params, callback) {
   return doCommand(command, callback);
 }
 
-function getRxBytes(params, callback) {
-  let command = "interface readrxcounter " + params.ifname;
+function enableAlarm(params, callback) {
+  let command = "bandwidth enable";
   return doCommand(command, callback);
 }
 
-function getTxBytes(params, callback) {
-  params.rxBytes = parseFloat(params.resultReason);
+function disableAlarm(params, callback) {
+  let command = "bandwidth disable";
+  return doCommand(command, callback);
+}
 
-  let command = "interface readtxcounter " + params.ifname;
+function setQuota(params, callback) {
+  let command = "bandwidth setiquota " + params.ifname + " " + parseInt('0xffffffffffffffff');
+  return doCommand(command, callback);
+}
+
+function removeQuota(params, callback) {
+  let command = "bandwidth removeiquota " + params.ifname;
+  return doCommand(command, callback);
+}
+
+function setAlarm(params, callback) {
+  let command = "bandwidth setinterfacealert " + params.ifname + " " + params.threshold;
   return doCommand(command, callback);
 }
 
@@ -904,21 +908,36 @@ function setUSBTethering(params) {
   return true;
 }
 
-let gNetworkInterfaceStatsChain = [getRxBytes,
-                                   getTxBytes,
-                                   networkInterfaceStatsSuccess];
+let gNetworkInterfaceEnableAlarmChain = [enableAlarm,
+                                         setQuota,
+                                         setAlarm,
+                                         networkInterfaceAlarmSuccess];
 
-/**
- * handling main thread's get network interface stats request
- */
-function getNetworkInterfaceStats(params) {
-  debug("getNetworkInterfaceStats: " + params.ifname);
+function enableNetworkInterfaceAlarm(params) {
+  debug("enableNetworkInterfaceAlarms: " + params.ifname);
 
-  params.rxBytes = -1;
-  params.txBytes = -1;
-  params.date = new Date();
+  chain(params, gNetworkInterfaceEnableAlarmChain, networkInterfaceAlarmFail);
+  return true;
+}
 
-  chain(params, gNetworkInterfaceStatsChain, networkInterfaceStatsFail);
+let gNetworkInterfaceDisableAlarmChain = [removeQuota,
+                                          disableAlarm,
+                                          networkInterfaceAlarmSuccess];
+
+function disableNetworkInterfaceAlarm(params) {
+  debug("disableNetworkInterfaceAlarms: " + params.ifname);
+
+  chain(params, gNetworkInterfaceDisableAlarmChain, networkInterfaceAlarmFail);
+  return true;
+}
+
+let gNetworkInterfaceSetAlarmChain = [setAlarm,
+                                      networkInterfaceAlarmSuccess];
+
+function setNetworkInterfaceAlarm(params) {
+  debug("setNetworkInterfaceAlarms: " + params.ifname);
+
+  chain(params, gNetworkInterfaceSetAlarmChain, networkInterfaceAlarmFail);
   return true;
 }
 

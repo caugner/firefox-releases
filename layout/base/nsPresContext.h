@@ -56,6 +56,7 @@ struct nsStyleBackground;
 struct nsStyleBorder;
 class nsIRunnable;
 class gfxUserFontSet;
+class gfxTextPerfMetrics;
 class nsUserFontSet;
 struct nsFontFaceRuleContainer;
 class nsObjectFrame;
@@ -656,8 +657,10 @@ public:
   /**
    * Getter and setter for OMTA time counters
    */
-  bool ThrottledStyleIsUpToDate() const;
-  void TickLastUpdateThrottledStyle();
+  bool ThrottledTransitionStyleIsUpToDate() const;
+  void TickLastUpdateThrottledTransitionStyle();
+  bool ThrottledAnimationStyleIsUpToDate() const;
+  void TickLastUpdateThrottledAnimationStyle();
   bool StyleUpdateForAllAnimationsIsUpToDate();
   void TickLastStyleUpdateForAllAnimations();
 
@@ -788,6 +791,8 @@ public:
    */
   const nscoord* GetBorderWidthTable() { return mBorderWidthTable; }
 
+  gfxTextPerfMetrics *GetTextPerfMetrics() { return mTextPerf; }
+
   bool IsDynamic() { return (mType == eContext_PageLayout || mType == eContext_Galley); }
   bool IsScreen() { return (mMedium == nsGkAtoms::screen ||
                               mType == eContext_PageLayout ||
@@ -848,8 +853,7 @@ public:
   // Ensure that it is safe to hand out CSS rules outside the layout
   // engine by ensuring that all CSS style sheets have unique inners
   // and, if necessary, synchronously rebuilding all style data.
-  // Returns true on success and false on failure (not safe).
-  bool EnsureSafeToHandOutCSSRules();
+  void EnsureSafeToHandOutCSSRules();
 
   void NotifyInvalidation(uint32_t aFlags);
   void NotifyInvalidation(const nsRect& aRect, uint32_t aFlags);
@@ -999,6 +1003,8 @@ public:
   void SetExistThrottledUpdates(bool aExistThrottledUpdates) {
     mExistThrottledUpdates = aExistThrottledUpdates;
   }
+
+  bool IsDeviceSizePageSize();
 
 protected:
   friend class nsRunnableMethod<nsPresContext>;
@@ -1193,6 +1199,9 @@ protected:
   // container for per-context fonts (downloadable, SVG, etc.)
   nsUserFontSet*        mUserFontSet;
 
+  // text performance metrics
+  nsAutoPtr<gfxTextPerfMetrics>   mTextPerf;
+
   nsRect                mVisibleArea;
   nsSize                mPageSize;
   float                 mPageScale;
@@ -1226,8 +1235,10 @@ protected:
 
   mozilla::TimeStamp    mReflowStartTime;
 
-  // last time animations/transition styles were flushed to their primary frames
-  mozilla::TimeStamp    mLastUpdateThrottledStyle;
+  // last time animations styles were flushed to their primary frames
+  mozilla::TimeStamp    mLastUpdateThrottledAnimationStyle;
+  // last time transition styles were flushed to their primary frames
+  mozilla::TimeStamp    mLastUpdateThrottledTransitionStyle;
   // last time we did a full style flush
   mozilla::TimeStamp    mLastStyleUpdateForAllAnimations;
 

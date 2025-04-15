@@ -10,8 +10,6 @@ XPIDL_SOURCES += [
 
 XPIDL_MODULE = 'widget_cocoa'
 
-MODULE = 'widget'
-
 EXPORTS += [
     'mozView.h',
     'nsChangeObserver.h',
@@ -21,22 +19,17 @@ EXPORTS += [
 
 LIBRARY_NAME = 'widget_mac'
 
-LIBXUL_LIBRARY = True
-
-SOURCES += [
+UNIFIED_SOURCES += [
     'GfxInfo.mm',
     'NativeKeyBindings.mm',
     'nsAppShell.mm',
     'nsBidiKeyboard.mm',
-    'nsChildView.mm',
-    'nsClipboard.mm',
     'nsCocoaFeatures.mm',
     'nsCocoaUtils.mm',
     'nsCocoaWindow.mm',
     'nsColorPicker.mm',
     'nsCursorManager.mm',
     'nsDeviceContextSpecX.mm',
-    'nsDragService.mm',
     'nsFilePicker.mm',
     'nsIdleServiceX.mm',
     'nsLookAndFeel.mm',
@@ -60,14 +53,29 @@ SOURCES += [
     'nsToolkit.mm',
     'nsWidgetFactory.mm',
     'nsWindowMap.mm',
-    'TextInputHandler.mm',
+    'OSXNotificationCenter.mm',
     'WidgetTraceEvent.mm',
 ]
 
+# These files cannot be built in unified mode because they force NSPR logging.
+SOURCES += [
+    'nsChildView.mm',
+    'nsClipboard.mm',
+    'nsDragService.mm',
+    'TextInputHandler.mm',
+]
+
 if CONFIG['TARGET_CPU'] == 'x86_64':
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'ComplexTextInputPanel.mm',
     ]
 
-EXPORT_LIBRARY = True
+FINAL_LIBRARY = 'xul'
+LOCAL_INCLUDES += [
+    '../shared',
+    '../xpwidgets',
+    '/layout/forms',
+    '/layout/generic',
+    '/layout/xul',
+]
 

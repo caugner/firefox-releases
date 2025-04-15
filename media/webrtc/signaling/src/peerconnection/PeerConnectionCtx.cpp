@@ -26,6 +26,7 @@
 
 #ifdef MOZILLA_INTERNAL_API
 #include "mozilla/dom/RTCPeerConnectionBinding.h"
+#include "mozilla/Preferences.h"
 #endif
 
 #include "nsIObserverService.h"
@@ -73,6 +74,10 @@ MediaConstraintsExternal::MediaConstraintsExternal(
 #ifdef MOZILLA_INTERNAL_API
   Apply(aSrc.mMandatory.mOfferToReceiveAudio, &c->offer_to_receive_audio, true);
   Apply(aSrc.mMandatory.mOfferToReceiveVideo, &c->offer_to_receive_video, true);
+  if (!Preferences::GetBool("media.peerconnection.video.enabled", true)) {
+    c->offer_to_receive_video.was_passed = true;
+    c->offer_to_receive_video.value = false;
+  }
   Apply(aSrc.mMandatory.mMozDontOfferDataChannel, &c->moz_dont_offer_datachannel,
         true);
   if (aSrc.mOptional.WasPassed()) {
@@ -238,7 +243,7 @@ void PeerConnectionCtx::Destroy() {
   if (gInstance) {
     gInstance->Cleanup();
     delete gInstance;
-    gInstance = NULL;
+    gInstance = nullptr;
   }
 }
 
@@ -325,7 +330,8 @@ void PeerConnectionCtx::onDeviceEvent(ccapi_device_event_e aDeviceEvent,
 
   switch (aDeviceEvent) {
     case CCAPI_DEVICE_EV_STATE:
-      CSFLogDebug(logTag, "%s - %d : %d", __FUNCTION__, state, currentSipccState);
+      CSFLogDebug(logTag, "%s - %d : %d", __FUNCTION__, state,
+                  static_cast<uint32_t>(currentSipccState));
 
       if (CC_STATE_INS == state) {
         // SIPCC is up

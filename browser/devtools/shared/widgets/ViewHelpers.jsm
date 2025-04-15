@@ -405,7 +405,7 @@ ViewHelpers.Prefs.prototype = {
 /**
  * A generic Item is used to describe children present in a Widget.
  * The label, value and description properties are necessarily strings.
- * Iterable via "for (let childItem in parentItem) { }".
+ * Iterable via "for (let childItem of parentItem) { }".
  *
  * @param object aOwnerView
  *        The owner view creating this item.
@@ -513,7 +513,7 @@ Item.prototype = {
     if (aItem.finalize) {
       aItem.finalize(aItem);
     }
-    for (let childItem in aItem) {
+    for (let childItem of aItem) {
       aItem.remove(childItem);
     }
 
@@ -557,7 +557,7 @@ Item.prototype = {
 
 /**
  * Some generic Widget methods handling Item instances.
- * Iterable via "for (let childItem in wrappedView) { }".
+ * Iterable via "for (let childItem of wrappedView) { }".
  *
  * Usage:
  *   function MyView() {
@@ -654,7 +654,7 @@ this.WidgetMethods = {
    *          - relaxed: true if this container should allow dupes & degenerates
    *          - attachment: some attached primitive/object for the item
    *          - attributes: a batch of attributes set to the displayed element
-   *          - finalize: function invokde when the item is removed
+   *          - finalize: function invoked when the item is removed
    * @return Item
    *         The item associated with the displayed element if an unstaged push,
    *         undefined if the item was staged for a later commit.
@@ -733,6 +733,7 @@ this.WidgetMethods = {
     }
     this._widget.removeChild(aItem._target);
     this._untangleItem(aItem);
+    if (!this.itemCount) this.empty();
   },
 
   /**
@@ -1009,7 +1010,9 @@ this.WidgetMethods = {
     // a redundant selection event, so return early.
     if (targetElement != prevElement) {
       this._widget.selectedItem = targetElement;
-      ViewHelpers.dispatchEvent(targetElement || prevElement, "select", aItem);
+      let dispTarget = targetElement || prevElement;
+      let dispName = this.suppressSelectionEvents ? "suppressed-select" : "select";
+      ViewHelpers.dispatchEvent(dispTarget, dispName, aItem);
     }
 
     // Updates this container to reflect the information provided by the
@@ -1043,6 +1046,15 @@ this.WidgetMethods = {
    */
   set selectedValue(aValue)
     this.selectedItem = this._itemsByValue.get(aValue),
+
+  /**
+   * Specifies if "select" events dispatched from the elements in this container
+   * when their respective items are selected should be suppressed or not.
+   *
+   * If this flag is set to true, then consumers of this container won't
+   * be normally notified when items are selected.
+   */
+  suppressSelectionEvents: false,
 
   /**
    * Focus this container the first time an element is inserted?
@@ -1306,6 +1318,14 @@ this.WidgetMethods = {
   },
 
   /**
+   * Shortcut function for getItemForPredicate which works on item attachments.
+   * @see getItemForPredicate
+   */
+  getItemForAttachment: function(aPredicate, aOwner = this) {
+    return this.getItemForPredicate(e => aPredicate(e.attachment));
+  },
+
+  /**
    * Finds the index of an item in the container.
    *
    * @param Item aItem
@@ -1529,7 +1549,7 @@ this.WidgetMethods = {
     if (aItem.finalize) {
       aItem.finalize(aItem);
     }
-    for (let childItem in aItem) {
+    for (let childItem of aItem) {
       aItem.remove(childItem);
     }
 
@@ -1654,9 +1674,7 @@ this.WidgetMethods = {
 /**
  * A generator-iterator over all the items in this container.
  */
-Item.prototype.__iterator__ =
-WidgetMethods.__iterator__ = function() {
-  for (let [, item] of this._itemsByElement) {
-    yield item;
-  }
+Item.prototype["@@iterator"] =
+WidgetMethods["@@iterator"] = function*() {
+  yield* this._itemsByElement.values();
 };

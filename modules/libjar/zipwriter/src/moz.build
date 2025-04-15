@@ -4,9 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'zipwriter'
-
-SOURCES += [
+UNIFIED_SOURCES += [
     'nsDeflateConverter.cpp',
     'nsZipDataStream.cpp',
     'nsZipHeader.cpp',
@@ -15,11 +13,6 @@ SOURCES += [
     'ZipWriterModule.cpp',
 ]
 
-LIBRARY_NAME = 'zipwriter'
-
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
 
-EXPORT_LIBRARY = True
-
+FINAL_LIBRARY = 'xul'

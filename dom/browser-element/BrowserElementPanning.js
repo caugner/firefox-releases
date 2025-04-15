@@ -15,6 +15,12 @@ Cu.import("resource://gre/modules/Geometry.jsm");
 
 var global = this;
 
+const kObservedEvents = [
+  "BEC:ShownModalPrompt",
+  "Activity:Success",
+  "Activity:Error"
+];
+
 const ContentPanning = {
   // Are we listening to touch or mouse events?
   watchedEventsType: '',
@@ -45,29 +51,33 @@ const ContentPanning = {
       this.watchedEventsType = 'mouse';
     }
 
-    // If we are using an AsyncPanZoomController for the parent frame,
-    // it will handle subframe scrolling too. We don't need to listen for
-    // these events.
-    if (!this._asyncPanZoomForViewportFrame) {
-      let els = Cc["@mozilla.org/eventlistenerservice;1"]
-                  .getService(Ci.nsIEventListenerService);
+    let els = Cc["@mozilla.org/eventlistenerservice;1"]
+                .getService(Ci.nsIEventListenerService);
 
-      events.forEach(function(type) {
-        // Using the system group for mouse/touch events to avoid
-        // missing events if .stopPropagation() has been called.
-        els.addSystemEventListener(global, type,
-                                   this.handleEvent.bind(this),
-                                   /* useCapture = */ false);
-      }.bind(this));
-    }
+    events.forEach(function(type) {
+      // Using the system group for mouse/touch events to avoid
+      // missing events if .stopPropagation() has been called.
+      els.addSystemEventListener(global, type,
+                                 this.handleEvent.bind(this),
+                                 /* useCapture = */ false);
+    }.bind(this));
+
+    addEventListener("unload",
+		     this._unloadHandler.bind(this),
+		     /* useCapture = */ false,
+		     /* wantsUntrusted = */ false);
 
     addMessageListener("Viewport:Change", this._recvViewportChange.bind(this));
     addMessageListener("Gesture:DoubleTap", this._recvDoubleTap.bind(this));
-    addEventListener("visibilitychange", this._recvVisibilityChange.bind(this));
-    Services.obs.addObserver(this, "BEC:ShownModalPrompt", false);
+    addEventListener("visibilitychange", this._handleVisibilityChange.bind(this));
+    kObservedEvents.forEach((topic) => {
+      Services.obs.addObserver(this, topic, false);
+    });
   },
 
   handleEvent: function cp_handleEvent(evt) {
+    this._tryDelayMouseEvents();
+
     if (evt.defaultPrevented || evt.multipleActionsPrevented) {
       // clean up panning state even if touchend/mouseup has been preventDefault.
       if(evt.type === 'touchend' || evt.type === 'mouseup') {
@@ -79,13 +89,6 @@ const ContentPanning = {
       }
       return;
     }
-
-    let start = Date.now();
-    let thread = Services.tm.currentThread;
-    while (this._delayEvents && (Date.now() - start) < this._activeDurationMs) {
-      thread.processNextEvent(true);
-    }
-    this._delayEvents = false;
 
     switch (evt.type) {
       case 'mousedown':
@@ -113,9 +116,7 @@ const ContentPanning = {
   },
 
   observe: function cp_observe(subject, topic, data) {
-    if (topic === 'BEC:ShownModalPrompt') {
-      this._resetHover();
-    }
+    this._resetHover();
   },
 
   position: new Point(0 , 0),
@@ -155,23 +156,11 @@ const ContentPanning = {
     let oldTarget = this.target;
     [this.target, this.scrollCallback] = this.getPannable(this.pointerDownTarget);
 
-    // If we found a target, that means we have found a scrollable subframe. In
-    // this case, and if we are using async panning and zooming on the parent
-    // frame, inform the pan/zoom controller that it should not attempt to
-    // handle any touch events it gets until the next batch (meaning the next
-    // time we get a touch end).
-    if (this.target != null && this._asyncPanZoomForViewportFrame) {
-      this.detectingScrolling = true;
-      var os = Cc["@mozilla.org/observer-service;1"].getService(Ci.nsIObserverService);
-      os.notifyObservers(docShell, 'detect-scrollable-subframe', null);
-    }
-
-    // If we have a pointer down target and we're not async
-    // pan/zooming, we may need to fill in for EventStateManager in
-    // setting the active state on the target element.  Set a timer to
+    // If we have a pointer down target, we may need to fill in for EventStateManager
+    // in setting the active state on the target element.  Set a timer to
     // ensure the pointer-down target is active.  (If it's already
     // active, the timer is a no-op.)
-    if (this.pointerDownTarget !== null && !this.detectingScrolling) {
+    if (this.pointerDownTarget !== null) {
       // If there's no possibility this is a drag/pan, activate now.
       // Otherwise wait a little bit to see if the gesture isn't a
       // tap.
@@ -201,7 +190,8 @@ const ContentPanning = {
 
     // We prevent start events to avoid sending a focus event at the end of this
     // touch series. See bug 889717.
-    if (this.panning || this.preventNextClick) {
+    if (docShell.asyncPanZoomEnabled === false &&
+        (this.panning || this.preventNextClick)) {
       evt.preventDefault();
     }
   },
@@ -240,7 +230,7 @@ const ContentPanning = {
         let view = target.ownerDocument ? target.ownerDocument.defaultView
                                         : target;
         view.addEventListener('click', this, true, true);
-      } else {
+      } else if (docShell.asyncPanZoomEnabled === false) {
         // We prevent end events to avoid sending a focus event. See bug 889717.
         evt.preventDefault();
       }
@@ -248,12 +238,7 @@ const ContentPanning = {
       this.notify(this._activationTimer);
 
       this._delayEvents = true;
-      let start = Date.now();
-      let thread = Services.tm.currentThread;
-      while (this._delayEvents && (Date.now() - start) < this._activeDurationMs) {
-        thread.processNextEvent(true);
-      }
-      this._delayEvents = false;
+      this._tryDelayMouseEvents();
     }
 
     this._finishPanning();
@@ -261,12 +246,6 @@ const ContentPanning = {
     // Now that we're done, avoid entraining the thing we just panned.
     this.pointerDownTarget = null;
   },
-
-  // True when there's an async pan-zoom controll watching the
-  // outermost scrollable frame, and we're waiting to see whether
-  // we're going to take over from it and synchronously scroll an
-  // inner scrollable frame.
-  detectingScrolling: false,
 
   onTouchMove: function cp_onTouchMove(evt) {
     if (!this.dragging)
@@ -296,26 +275,11 @@ const ContentPanning = {
     }
 
     let isPan = KineticPanning.isPan();
-    if (!isPan && this.detectingScrolling) {
-      // If panning distance is not large enough and we're waiting to
-      // see whether we should use the sync scroll fallback or not,
-      // don't attempt scrolling.
-      return;
-    }
 
-    let isScroll = this.scrollCallback(delta.scale(-1));
-
-    if (this.detectingScrolling) {
-      this.detectingScrolling = false;
-      // Stop async-pan-zooming if the user is panning the subframe.
-      if (isScroll) {
-        // We're going to drive synchronously scrolling an inner frame.
-        Services.obs.notifyObservers(docShell, 'cancel-default-pan-zoom', null);
-      } else {
-        // Let AsyncPanZoomController handle the scrolling gesture.
-        this.scrollCallback = null;
-        return;
-      }
+    // If the application is not managed by the AsyncPanZoomController, then
+    // scroll manually.
+    if (docShell.asyncPanZoomEnabled === false) {
+      this.scrollCallback(delta.scale(-1));
     }
 
     // If we've detected a pan gesture, cancel the active state of the
@@ -326,7 +290,7 @@ const ContentPanning = {
       this._activationTimer.cancel();
     }
 
-    if (this.panning) {
+    if (this.panning && docShell.asyncPanZoomEnabled === false) {
       // Only do this when we're actually executing a pan gesture.
       // Otherwise synthetic mouse events will be canceled.
       evt.stopPropagation();
@@ -392,13 +356,6 @@ const ContentPanning = {
       node = node.parentNode;
     }
 
-    if (ContentPanning._asyncPanZoomForViewportFrame &&
-        nodeContent === content) {
-        // The parent context is asynchronously panning and zooming our
-        // root scrollable frame, so don't use our synchronous fallback.
-        return null;
-    }
-
     if (nodeContent.scrollMaxX || nodeContent.scrollMaxY) {
       return nodeContent;
     }
@@ -453,6 +410,7 @@ const ContentPanning = {
 
     function scroll(delta) {
       current = root;
+      firstScroll = true;
       while (current) {
         if (doScroll(current, delta)) {
           firstScroll = false;
@@ -498,25 +456,32 @@ const ContentPanning = {
     return this._activeDurationMs = duration;
   },
 
+  _tryDelayMouseEvents: function cp_tryDelayMouseEvents() {
+    let start = Date.now();
+    let thread = Services.tm.currentThread;
+    while (this._delayEvents && (Date.now() - start) < this._activeDurationMs) {
+      thread.processNextEvent(true);
+    }
+    this._delayEvents = false;
+  },
+
   _resetActive: function cp_resetActive() {
-    let elt = this.target || this.pointerDownTarget;
+    let elt = this.pointerDownTarget || this.target;
     let root = elt.ownerDocument || elt.document;
     this._setActive(root.documentElement);
   },
 
   _resetHover: function cp_resetHover() {
     const kStateHover = 0x00000004;
-    let element = content.document.createElement('foo');
-    this._domUtils.setContentState(element, kStateHover);
+    try {
+      let element = content.document.createElement('foo');
+      this._domUtils.setContentState(element, kStateHover);
+    } catch(e) {}
   },
 
   _setActive: function cp_setActive(elt) {
     const kStateActive = 0x00000001;
     this._domUtils.setContentState(elt, kStateActive);
-  },
-
-  get _asyncPanZoomForViewportFrame() {
-    return docShell.asyncPanZoomEnabled;
   },
 
   _recvViewportChange: function(data) {
@@ -595,7 +560,7 @@ const ContentPanning = {
     }
   },
 
-  _recvVisibilityChange: function(evt) {
+  _handleVisibilityChange: function(evt) {
     if (!evt.target.hidden)
       return;
 
@@ -637,17 +602,22 @@ const ContentPanning = {
   _finishPanning: function() {
     this._resetActive();
     this.dragging = false;
-    this.detectingScrolling = false;
     delete this.primaryPointerId;
     this._activationTimer.cancel();
 
-    if (this.panning) {
+    // If there is a scroll action but the application is not managed by
+    // the AsyncPanZoom controller, let's do a manual kinetic panning action.
+    if (this.panning && docShell.asyncPanZoomEnabled === false) {
       KineticPanning.start(this);
     }
+  },
+
+  _unloadHandler: function() {
+    kObservedEvents.forEach((topic) => {
+      Services.obs.removeObserver(this, topic);
+    });
   }
 };
-
-ContentPanning.init();
 
 // Min/max velocity of kinetic panning. This is in pixels/millisecond.
 const kMinVelocity = 0.2;

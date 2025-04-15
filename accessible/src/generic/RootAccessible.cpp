@@ -5,7 +5,7 @@
 
 #include "RootAccessible.h"
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #define CreateEvent CreateEventA
 #include "nsIDOMDocument.h"
@@ -467,12 +467,12 @@ RootAccessible::ProcessDOMEvent(nsIDOMEvent* aDOMEvent)
 
 
 ////////////////////////////////////////////////////////////////////////////////
-// nsAccessNode
+// Accessible
 
 void
 RootAccessible::Shutdown()
 {
-  // Called manually or by nsAccessNode::LastRelease()
+  // Called manually or by Accessible::LastRelease()
   if (!PresShell())
     return;  // Already shutdown
 

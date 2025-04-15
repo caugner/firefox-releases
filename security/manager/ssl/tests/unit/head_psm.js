@@ -15,11 +15,22 @@ let { ctypes } = Cu.import("resource://gre/modules/ctypes.jsm");
 
 let gIsWindows = ("@mozilla.org/windows-registry-key;1" in Cc);
 
+const isDebugBuild = Cc["@mozilla.org/xpcom/debug;1"]
+                       .getService(Ci.nsIDebug2).isDebugBuild;
+
 const SEC_ERROR_BASE = Ci.nsINSSErrorsService.NSS_SEC_ERROR_BASE;
+const SSL_ERROR_BASE = Ci.nsINSSErrorsService.NSS_SSL_ERROR_BASE;
 
 // Sort in numerical order
+const SEC_ERROR_EXPIRED_CERTIFICATE                     = SEC_ERROR_BASE +  11;
 const SEC_ERROR_REVOKED_CERTIFICATE                     = SEC_ERROR_BASE +  12;
+const SEC_ERROR_UNKNOWN_ISSUER                          = SEC_ERROR_BASE +  13;
 const SEC_ERROR_BAD_DATABASE                            = SEC_ERROR_BASE +  18;
+const SEC_ERROR_UNTRUSTED_ISSUER                        = SEC_ERROR_BASE +  20;
+const SEC_ERROR_UNTRUSTED_CERT                          = SEC_ERROR_BASE +  21;
+const SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE              = SEC_ERROR_BASE +  30;
+const SEC_ERROR_CA_CERT_INVALID                         = SEC_ERROR_BASE +  36;
+const SEC_ERROR_INADEQUATE_KEY_USAGE                    = SEC_ERROR_BASE +  90;
 const SEC_ERROR_OCSP_MALFORMED_REQUEST                  = SEC_ERROR_BASE + 120;
 const SEC_ERROR_OCSP_SERVER_ERROR                       = SEC_ERROR_BASE + 121;
 const SEC_ERROR_OCSP_TRY_SERVER_LATER                   = SEC_ERROR_BASE + 122;
@@ -30,6 +41,25 @@ const SEC_ERROR_OCSP_MALFORMED_RESPONSE                 = SEC_ERROR_BASE + 129;
 const SEC_ERROR_OCSP_UNAUTHORIZED_RESPONSE              = SEC_ERROR_BASE + 130;
 const SEC_ERROR_OCSP_OLD_RESPONSE                       = SEC_ERROR_BASE + 132;
 const SEC_ERROR_OCSP_INVALID_SIGNING_CERT               = SEC_ERROR_BASE + 144;
+const SEC_ERROR_CERT_SIGNATURE_ALGORITHM_DISABLED       = SEC_ERROR_BASE + 176;
+
+const SSL_ERROR_BAD_CERT_DOMAIN                         = SSL_ERROR_BASE +  12;
+
+// Certificate Usages
+const certificateUsageSSLClient              = 0x0001;
+const certificateUsageSSLServer              = 0x0002;
+const certificateUsageSSLServerWithStepUp    = 0x0004;
+const certificateUsageSSLCA                  = 0x0008;
+const certificateUsageEmailSigner            = 0x0010;
+const certificateUsageEmailRecipient         = 0x0020;
+const certificateUsageObjectSigner           = 0x0040;
+const certificateUsageUserCertImport         = 0x0080;
+const certificateUsageVerifyCA               = 0x0100;
+const certificateUsageProtectedObjectSigner  = 0x0200;
+const certificateUsageStatusResponder        = 0x0400;
+const certificateUsageAnyCA                  = 0x0800;
+
+const NO_FLAGS = 0;
 
 function readFile(file) {
   let fstream = Cc["@mozilla.org/network/file-input-stream;1"]
@@ -133,11 +163,12 @@ function run_test() {
   do_get_profile();
   add_tls_server_setup("<test-server-name>");
 
-  add_connection_test("<test-name-1>.example.com", Cr.<expected result>,
-                      <ocsp stapling enabled>);
+  add_connection_test("<test-name-1>.example.com",
+                      getXPCOMStatusFromNSS(SEC_ERROR_xxx),
+                      function() { ... },
+                      function(aTransportSecurityInfo) { ... });
   [...]
-  add_connection_test("<test-name-n>.example.com", Cr.<expected result>,
-                      <ocsp stapling enabled>);
+  add_connection_test("<test-name-n>.example.com", Cr.NS_OK);
 
   run_next_test();
 }
@@ -231,14 +262,10 @@ function add_connection_test(aHost, aExpectedResult,
       aBeforeConnect();
     }
     connectTo(aHost).then(function(conn) {
-      dump("hello #0\n");
       do_check_eq(conn.result, aExpectedResult);
-      dump("hello #0.5\n");
       if (aWithSecurityInfo) {
-        dump("hello #1\n");
         aWithSecurityInfo(conn.transport.securityInfo
                               .QueryInterface(Ci.nsITransportSecurityInfo));
-        dump("hello #2\n");
       }
       run_next_test();
     });

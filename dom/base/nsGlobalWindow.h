@@ -341,7 +341,7 @@ public:
   virtual JSObject *GetGlobalJSObject();
 
   // nsIScriptGlobalObject
-  JSObject *FastGetGlobalJSObject()
+  JSObject *FastGetGlobalJSObject() const
   {
     return mJSObject;
   }
@@ -353,9 +353,8 @@ public:
 
   void PoisonOuterWindowProxy(JSObject *aObject);
   virtual void OnFinalize(JSObject* aObject);
-  virtual void SetScriptsEnabled(bool aEnabled, bool aFireTimeouts);
 
-  virtual bool IsBlackForCC();
+  virtual bool IsBlackForCC(bool aTracingNeeded = true);
 
   // nsIScriptObjectPrincipal
   virtual nsIPrincipal* GetPrincipal();
@@ -411,9 +410,12 @@ public:
 
   // nsPIDOMWindow
   virtual NS_HIDDEN_(nsPIDOMWindow*) GetPrivateRoot();
+
+  // Outer windows only.
   virtual NS_HIDDEN_(void) ActivateOrDeactivate(bool aActivate);
   virtual NS_HIDDEN_(void) SetActive(bool aActive);
   virtual NS_HIDDEN_(void) SetIsBackground(bool aIsBackground);
+
   virtual NS_HIDDEN_(void) SetChromeEventHandler(mozilla::dom::EventTarget* aChromeEventHandler);
 
   virtual NS_HIDDEN_(void) SetInitialPrincipalToSubject();
@@ -433,6 +435,7 @@ public:
   {
     return mIsFrozen;
   }
+  virtual NS_HIDDEN_(bool) IsRunningTimeout() { return mTimeoutFiringDepth > 0; }
 
   virtual NS_HIDDEN_(bool) WouldReuseInnerWindow(nsIDocument *aNewDocument);
 
@@ -444,6 +447,7 @@ public:
   void DispatchDOMWindowCreated();
   virtual NS_HIDDEN_(void) SetOpenerWindow(nsIDOMWindow* aOpener,
                                            bool aOriginalOpener);
+
   // Outer windows only.
   virtual NS_HIDDEN_(void) EnsureSizeUpToDate();
 
@@ -519,7 +523,9 @@ public:
   // ShouldPromptToBlockDialogs is implemented in terms of
   // DialogsAreBeingAbused, and will get the scriptable top inner window
   // automatically.
+  // Outer windows only.
   bool ShouldPromptToBlockDialogs();
+  // Inner windows only.
   bool DialogsAreBeingAbused();
 
   // These functions are used for controlling and determining whether dialogs
@@ -528,6 +534,7 @@ public:
   void DisableDialogs();
   bool AreDialogsEnabled();
 
+  // Inner windows only.
   virtual void SetHasAudioAvailableEventListeners();
 
   nsIScriptContext *GetContextInternal()
@@ -582,6 +589,7 @@ public:
   nsresult Observe(nsISupports* aSubject, const char* aTopic,
                    const PRUnichar* aData);
 
+  // Outer windows only.
   void UnblockScriptedClosing();
 
   static void Init();
@@ -610,6 +618,7 @@ public:
   virtual nsresult DispatchAsyncHashchange(nsIURI *aOldURI, nsIURI *aNewURI);
   virtual nsresult DispatchSyncPopState();
 
+  // Inner windows only.
   virtual void EnableDeviceSensor(uint32_t aType);
   virtual void DisableDeviceSensor(uint32_t aType);
 
@@ -617,6 +626,7 @@ public:
   virtual void DisableTimeChangeNotifications();
 
 #ifdef MOZ_B2G
+  // Inner windows only.
   virtual void EnableNetworkEvent(uint32_t aType);
   virtual void DisableNetworkEvent(uint32_t aType);
 #endif // MOZ_B2G
@@ -819,7 +829,9 @@ public:
                      const mozilla::dom::Sequence<JS::Value>& aArguments,
                      mozilla::ErrorResult& aError);
   int32_t SetTimeout(JSContext* aCx, const nsAString& aHandler,
-                     int32_t aTimeout, mozilla::ErrorResult& aError);
+                     int32_t aTimeout,
+                     const mozilla::dom::Sequence<JS::Value>& /* unused */,
+                     mozilla::ErrorResult& aError);
   void ClearTimeout(int32_t aHandle, mozilla::ErrorResult& aError);
   int32_t SetInterval(JSContext* aCx, mozilla::dom::Function& aFunction,
                       const mozilla::dom::Optional<int32_t>& aTimeout,
@@ -827,6 +839,7 @@ public:
                       mozilla::ErrorResult& aError);
   int32_t SetInterval(JSContext* aCx, const nsAString& aHandler,
                       const mozilla::dom::Optional<int32_t>& aTimeout,
+                      const mozilla::dom::Sequence<JS::Value>& /* unused */,
                       mozilla::ErrorResult& aError);
   void ClearInterval(int32_t aHandle, mozilla::ErrorResult& aError);
   void Atob(const nsAString& aAsciiBase64String, nsAString& aBinaryData,
@@ -962,6 +975,7 @@ protected:
 
   // Object Management
   virtual ~nsGlobalWindow();
+  void DropOuterWindowDocs();
   void CleanUp();
   void ClearControllers();
   nsresult FinalClose();
@@ -1119,9 +1133,8 @@ protected:
   already_AddRefed<nsIBaseWindow> GetTreeOwnerWindow();
   already_AddRefed<nsIWebBrowserChrome> GetWebBrowserChrome();
   nsresult SecurityCheckURL(const char *aURL);
-  nsresult BuildURIfromBase(const char *aURL,
-                            nsIURI **aBuiltURI,
-                            bool *aFreeSecurityPass, JSContext **aCXused);
+  nsresult BuildURIfromBase(const char *aURL, nsIURI **aBuiltURI,
+                            JSContext **aCXused);
   bool PopupWhitelisted();
   PopupControlState RevisePopupAbuseLevel(PopupControlState);
   void     FireAbuseEvents(bool aBlocked, bool aWindow,
@@ -1130,6 +1143,7 @@ protected:
                            const nsAString &aPopupWindowFeatures);
   void FireOfflineStatusEvent();
 
+  // Inner windows only.
   nsresult ScheduleNextIdleObserverCallback();
   uint32_t GetFuzzTimeMS();
   nsresult ScheduleActiveTimerCallback();
@@ -1139,13 +1153,17 @@ protected:
                                       int32_t* aRemoveElementIndex);
   virtual nsresult UnregisterIdleObserver(nsIIdleObserver* aIdleObserverPtr);
 
+  // Inner windows only.
   nsresult FireHashchange(const nsAString &aOldURL, const nsAString &aNewURL);
 
   void FlushPendingNotifications(mozFlushType aType);
+
+  // Outer windows only.
   void EnsureReflowFlushAndPaint();
   void CheckSecurityWidthAndHeight(int32_t* width, int32_t* height);
   void CheckSecurityLeftAndTop(int32_t* left, int32_t* top);
 
+  // Outer windows only.
   // Arguments to this function should have values in app units
   void SetCSSViewportWidthAndHeight(nscoord width, nscoord height);
   // Arguments to this function should have values in device pixels
@@ -1155,9 +1173,8 @@ protected:
 
   static void MakeScriptDialogTitle(nsAString &aOutTitle);
 
+  // Outer windows only.
   bool CanMoveResizeWindows();
-
-  bool     GetBlurSuppression();
 
   // If aDoFlush is true, we'll flush our own layout; otherwise we'll try to
   // just flush our parent and only flush ourselves if we think we need to.
@@ -1168,7 +1185,6 @@ protected:
 
   // Outer windows only.
   nsresult GetInnerSize(mozilla::CSSIntSize& aSize);
-
   nsIntSize GetOuterSize(mozilla::ErrorResult& aError);
   void SetOuterSize(int32_t aLengthCSSPixels, bool aIsWidth,
                     mozilla::ErrorResult& aError);
@@ -1181,6 +1197,7 @@ protected:
     return GetParentInternal() != nullptr;
   }
 
+  // Outer windows only.
   // If aLookForCallerOnJSStack is true, this method will look at the JS stack
   // to determine who the caller is.  If it's false, it'll use |this| as the
   // caller.
@@ -1225,6 +1242,7 @@ protected:
   virtual void GetKeyboardIndicators(bool* aShowAccelerators,
                                      bool* aShowFocusRings);
 
+  // Inner windows only.
   void UpdateCanvasFocus(bool aFocusChanged, nsIContent* aNewContent);
 
 public:
@@ -1241,6 +1259,7 @@ protected:
 
   virtual void UpdateParentTarget();
 
+  // Outer windows only.
   bool GetIsTabModalPromptAllowed();
 
   inline int32_t DOMMinTimeoutValue() const;
@@ -1359,6 +1378,10 @@ protected:
   // should be displayed.
   bool                   mFocusByKeyOccurred : 1;
 
+  // Ensure that a call to ResumeTimeouts() after FreeInnerObjects() does nothing.
+  // This member is only used by inner windows.
+  bool                   mInnerObjectsFreed : 1;
+
   // Indicates whether this window wants gamepad input events
   bool                   mHasGamepad : 1;
 #ifdef MOZ_GAMEPAD
@@ -1394,7 +1417,7 @@ protected:
   nsRefPtr<nsDOMWindowUtils>    mWindowUtils;
   nsString                      mStatus;
   nsString                      mDefaultStatus;
-  nsGlobalWindowObserver*       mObserver;
+  nsGlobalWindowObserver*       mObserver; // Inner windows only.
   nsCOMPtr<nsIDOMCrypto>        mCrypto;
 
   nsCOMPtr<nsIDOMStorage>      mLocalStorage;
@@ -1450,6 +1473,12 @@ protected:
 
   nsAutoPtr<nsJSThingHashtable<nsPtrHashKey<nsXBLPrototypeHandler>, JSObject*> > mCachedXBLPrototypeHandlers;
 
+  // mSuspendedDoc is only set on outer windows. It's useful when we get matched
+  // EnterModalState/LeaveModalState calls, in which case the outer window is
+  // responsible for unsuspending events on the document. If we don't (for
+  // example, if the outer window is closed before the LeaveModalState call),
+  // then the inner window whose mDoc is our mSuspendedDoc is responsible for
+  // unsuspending it.
   nsCOMPtr<nsIDocument> mSuspendedDoc;
 
   nsRefPtr<mozilla::dom::indexedDB::IDBFactory> mIndexedDB;

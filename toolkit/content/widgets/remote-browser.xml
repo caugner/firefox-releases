@@ -33,18 +33,9 @@
 
       <field name="_remoteWebNavigation">null</field>
 
-      <property name="webNavigation" readonly="true">
-        <getter>
-          <![CDATA[
-            if (!this._remoteWebNavigation) {
-              let jsm = "resource://gre/modules/RemoteWebNavigation.jsm";
-              let RemoteWebNavigation = Cu.import(jsm, {}).RemoteWebNavigation;
-              this._remoteWebNavigation = new RemoteWebNavigation(this);
-            }
-            return this._remoteWebNavigation;
-          ]]>
-        </getter>
-      </property>
+      <property name="webNavigation"
+                onget="return this._remoteWebNavigation;"
+                readonly="true"/>
 
       <field name="_remoteWebProgress">null</field>
 
@@ -54,8 +45,8 @@
             if (!this._remoteWebProgress) {
               let jsm = "resource://gre/modules/RemoteWebProgress.jsm";
               let RemoteWebProgressManager = Cu.import(jsm, {}).RemoteWebProgressManager;
-              this._remoteWebProgress = new RemoteWebProgressManager(this)
-                                         .topLevelWebProgress;
+              this._remoteWebProgressManager = new RemoteWebProgressManager(this);
+              this._remoteWebProgress = this._remoteWebProgressManager.topLevelWebProgress;
             }
             return this._remoteWebProgress;
       	  ]]>
@@ -76,6 +67,19 @@
       </property>
 
       <field name="_documentURI">null</field>
+
+      <!--
+        Used by session restore to ensure that currentURI is set so
+        that switch-to-tab works before the tab is fully
+        restored. This function also invokes onLocationChanged
+        listeners in tabbrowser.xml.
+      -->
+      <method name="_setCurrentURI">
+        <parameter name="aURI"/>
+        <body><![CDATA[
+          this._remoteWebProgressManager.setCurrentURI(aURI);
+        ]]></body>
+      </method>
 
       <property name="documentURI"
                 onget="return this._documentURI;"
@@ -103,16 +107,31 @@
                 onget="return this.contentWindow ? this.contentWindow.document : null"
                 readonly="true"/>
 
+      <field name="_syncHandler">null</field>
+
+      <property name="syncHandler"
+                onget="return this._syncHandler"
+                readonly="true"/>
+
       <field name="_imageDocument">null</field>
 
       <property name="imageDocument"
                 onget="return this._imageDocument"
                 readonly="true"/>
 
+      <property name="autoCompletePopup"
+                onget="return document.getElementById(this.getAttribute('autocompletepopup'))"
+                readonly="true"/>
+
       <constructor>
         <![CDATA[
+          let jsm = "resource://gre/modules/RemoteWebNavigation.jsm";
+          let RemoteWebNavigation = Cu.import(jsm, {}).RemoteWebNavigation;
+          this._remoteWebNavigation = new RemoteWebNavigation(this);
+
           this.messageManager.addMessageListener("DOMTitleChanged", this);
           this.messageManager.addMessageListener("ImageDocumentLoaded", this);
+          this.messageManager.addMessageListener("SetSyncHandler", this);
           this.messageManager.loadFrameScript("chrome://global/content/browser-child.js", true);
 
           if (this.hasAttribute("selectpopup")) {
@@ -121,7 +140,7 @@
             this.messageManager.loadFrameScript("chrome://global/content/select-child.js", true);
           }
 
-          let jsm = "resource://gre/modules/RemoteController.jsm";
+          jsm = "resource://gre/modules/RemoteController.jsm";
           let RemoteController = Components.utils.import(jsm, {}).RemoteController;
           this._controller = new RemoteController(this);
           this.controllers.appendController(this._controller);
@@ -129,6 +148,14 @@
           jsm = "resource://gre/modules/RemoteAddonsParent.jsm";
           let RemoteAddonsParent = Components.utils.import(jsm, {}).RemoteAddonsParent;
           RemoteAddonsParent.init();
+
+          if (!this.hasAttribute("disableglobalhistory")) {
+            this.messageManager.sendAsyncMessage("History:UseGlobalHistory", {enabled:true});
+          }
+
+          if (this.autoCompletePopup) {
+            this.messageManager.sendAsyncMessage("FormAutoComplete:InitPopup");
+          }
         ]]>
       </constructor>
 
@@ -145,6 +172,10 @@
                 width: data.width,
                 height: data.height
               };
+              break;
+
+            case "SetSyncHandler":
+              this._syncHandler = aMessage.objects.handler;
               break;
 
             case "Forms:ShowDropDown": {

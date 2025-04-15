@@ -42,13 +42,13 @@
 #include "nsNetUtil.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
 
 #include "plbase64.h"
 #include "prmem.h"
 #include "prnetdb.h"
-#include "prbit.h"
 #include "zlib.h"
 #include <algorithm>
 
@@ -965,8 +965,7 @@ WebSocketChannel::WebSocketChannel() :
   mConnectionLogService(nullptr),
   mCountRecv(0),
   mCountSent(0),
-  mAppId(0),
-  mIsInBrowser(false)
+  mAppId(NECKO_NO_APP_ID)
 {
   NS_ABORT_IF_FALSE(NS_IsMainThread(), "not main thread");
 
@@ -1075,15 +1074,19 @@ WebSocketChannel::BeginOpen()
     return;
   }
 
-  // obtain app info
   if (localChannel) {
-    NS_GetAppInfo(localChannel, &mAppId, &mIsInBrowser);
+    bool isInBrowser;
+    NS_GetAppInfo(localChannel, &mAppId, &isInBrowser);
   }
 
-  // obtain active network
+#ifdef MOZ_WIDGET_GONK
   if (mAppId != NECKO_NO_APP_ID) {
-    GetActiveNetwork();
+    nsCOMPtr<nsINetworkInterface> activeNetwork;
+    NS_GetActiveNetworkInterface(activeNetwork);
+    mActiveNetwork =
+      new nsMainThreadPtrHolder<nsINetworkInterface>(activeNetwork);
   }
+#endif
 
   rv = localChannel->AsyncOpen(this, mHttpChannel);
   if (NS_FAILED(rv)) {
@@ -1515,7 +1518,7 @@ WebSocketChannel::ApplyMask(uint32_t mask, uint8_t *data, uint64_t len)
 
   while (len && (reinterpret_cast<uintptr_t>(data) & 3)) {
     *data ^= mask >> 24;
-    mask = PR_ROTATE_LEFT32(mask, 8);
+    mask = RotateLeft(mask, 8);
     data++;
     len--;
   }
@@ -1536,7 +1539,7 @@ WebSocketChannel::ApplyMask(uint32_t mask, uint8_t *data, uint64_t len)
 
   while (len) {
     *data ^= mask >> 24;
-    mask = PR_ROTATE_LEFT32(mask, 8);
+    mask = RotateLeft(mask, 8);
     data++;
     len--;
   }
@@ -1779,7 +1782,7 @@ WebSocketChannel::PrimeNewOutgoingMessage()
 
   while (payload < (mOutHeader + mHdrOutToSend)) {
     *payload ^= mask >> 24;
-    mask = PR_ROTATE_LEFT32(mask, 8);
+    mask = RotateLeft(mask, 8);
     payload++;
   }
 
@@ -3271,27 +3274,56 @@ WebSocketChannel::OnDataAvailable(nsIRequest *aRequest,
   return NS_OK;
 }
 
-nsresult
-WebSocketChannel::GetActiveNetwork()
-{
+//-----------------------------------------------------------------------------
+// WebSocketChannel save network statistics event
+//-----------------------------------------------------------------------------
+
 #ifdef MOZ_WIDGET_GONK
-  MOZ_ASSERT(NS_IsMainThread());
+namespace {
+class SaveNetworkStatsEvent : public nsRunnable {
+public:
+    SaveNetworkStatsEvent(uint32_t aAppId,
+                          nsMainThreadPtrHandle<nsINetworkInterface> &aActiveNetwork,
+                          uint64_t aCountRecv,
+                          uint64_t aCountSent)
+        : mAppId(aAppId),
+          mActiveNetwork(aActiveNetwork),
+          mCountRecv(aCountRecv),
+          mCountSent(aCountSent)
+    {
+        MOZ_ASSERT(mAppId != NECKO_NO_APP_ID);
+        MOZ_ASSERT(mActiveNetwork);
+    }
 
-  nsresult result;
-  nsCOMPtr<nsINetworkManager> networkManager = do_GetService("@mozilla.org/network/manager;1", &result);
+    NS_IMETHOD Run()
+    {
+        MOZ_ASSERT(NS_IsMainThread());
 
-  if (NS_FAILED(result) || !networkManager) {
-    mActiveNetwork = nullptr;
-    return NS_ERROR_UNEXPECTED;
-  }
+        nsresult rv;
+        nsCOMPtr<nsINetworkStatsServiceProxy> mNetworkStatsServiceProxy =
+            do_GetService("@mozilla.org/networkstatsServiceProxy;1", &rv);
+        if (NS_FAILED(rv)) {
+            return rv;
+        }
 
-  result = networkManager->GetActive(getter_AddRefs(mActiveNetwork));
+        // save the network stats through NetworkStatsServiceProxy
+        mNetworkStatsServiceProxy->SaveAppStats(mAppId,
+                                                mActiveNetwork,
+                                                PR_Now() / 1000,
+                                                mCountRecv,
+                                                mCountSent,
+                                                nullptr);
 
-  return NS_OK;
-#else
-  return NS_ERROR_NOT_IMPLEMENTED;
+        return NS_OK;
+    }
+private:
+    uint32_t mAppId;
+    nsMainThreadPtrHandle<nsINetworkInterface> mActiveNetwork;
+    uint64_t mCountRecv;
+    uint64_t mCountSent;
+};
+};
 #endif
-}
 
 nsresult
 WebSocketChannel::SaveNetworkStats(bool enforce)
@@ -3315,15 +3347,12 @@ WebSocketChannel::SaveNetworkStats(bool enforce)
     return NS_OK;
   }
 
-  nsresult rv;
-  nsCOMPtr<nsINetworkStatsServiceProxy> mNetworkStatsServiceProxy =
-    do_GetService("@mozilla.org/networkstatsServiceProxy;1", &rv);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  mNetworkStatsServiceProxy->SaveAppStats(mAppId, mActiveNetwork, PR_Now() / 1000,
-                                          mCountRecv, mCountSent, nullptr);
+  // Create the event to save the network statistics.
+  // the event is then dispathed to the main thread.
+  nsRefPtr<nsRunnable> event =
+    new SaveNetworkStatsEvent(mAppId, mActiveNetwork,
+                              mCountRecv, mCountSent);
+  NS_DispatchToMainThread(event);
 
   // Reset the counters after saving.
   mCountSent = 0;

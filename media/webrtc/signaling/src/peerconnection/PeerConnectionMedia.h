@@ -29,11 +29,15 @@
 #include "VideoUtils.h"
 #include "ImageLayers.h"
 #include "VideoSegment.h"
-#else
-namespace mozilla {
-  class DataChannel;
-}
 #endif
+
+namespace mozilla {
+class DataChannel;
+namespace dom {
+class RTCInboundRTPStreamStats;
+class RTCOutboundRTPStreamStats;
+}
+}
 
 #include "nricectx.h"
 #include "nriceresolver.h"
@@ -99,7 +103,7 @@ class Fake_VideoGenerator {
 
     // Make a track
     mozilla::VideoSegment *segment = new mozilla::VideoSegment();
-    mStream->GetStream()->AsSourceStream()->AddTrack(1, USECS_PER_S, 0, segment);
+    mStream->GetStream()->AsSourceStream()->AddTrack(1, mozilla::USECS_PER_S, 0, segment);
     mStream->GetStream()->AsSourceStream()->AdvanceKnownTracksTime(mozilla::STREAM_TIME_MAX);
 
     // Set the timer. Set to 10 fps.
@@ -149,7 +153,7 @@ class Fake_VideoGenerator {
     // AddTrack takes ownership of segment
     mozilla::VideoSegment *segment = new mozilla::VideoSegment();
     // 10 fps.
-    segment->AppendFrame(image.forget(), USECS_PER_S / 10, gfxIntSize(WIDTH, HEIGHT));
+    segment->AppendFrame(image.forget(), mozilla::USECS_PER_S / 10, gfxIntSize(WIDTH, HEIGHT));
 
     gen->mStream->GetStream()->AsSourceStream()->AppendToTrack(1, segment);
   }
@@ -181,7 +185,9 @@ public:
   }
 
   mozilla::RefPtr<mozilla::MediaPipeline> GetPipeline(int aTrack);
-
+  nsresult GetPipelineStats(DOMHighResTimeStamp now, int aTrack,
+    mozilla::dom::Sequence<mozilla::dom::RTCInboundRTPStreamStats > *inbound,
+    mozilla::dom::Sequence<mozilla::dom::RTCOutboundRTPStreamStats > *outbound);
 protected:
   std::map<int, mozilla::RefPtr<mozilla::MediaPipeline> > mPipelines;
   nsRefPtr<DOMMediaStream> mMediaStream;
@@ -199,7 +205,7 @@ public:
       : SourceStreamInfo(aMediaStream, aParent) {}
 
   ~LocalSourceStreamInfo() {
-    mMediaStream = NULL;
+    mMediaStream = nullptr;
   }
 
   DOMMediaStream* GetMediaStream() {
@@ -262,7 +268,7 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
     // TODO(ekr@rtfm.com): If someone asks for a value that doesn't exist,
     // make one.
     if (i >= mIceStreams.size()) {
-      return NULL;
+      return nullptr;
     }
     return mIceStreams[i];
   }
@@ -301,7 +307,7 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
     int index_inner = aStreamIndex * 2 + (aIsRtcp ? 1 : 0);
 
     if (mTransportFlows.find(index_inner) == mTransportFlows.end())
-      return NULL;
+      return nullptr;
 
     return mTransportFlows[index_inner];
   }
@@ -319,7 +325,7 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
     int index_inner = aStreamIndex * 2 + (aReceive ? 0 : 1);
 
     if (mConduits.find(index_inner) == mConduits.end())
-      return NULL;
+      return nullptr;
 
     return mConduits[index_inner];
   }
@@ -334,9 +340,10 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
   }
 
   // ICE state signals
-  sigslot::signal1<mozilla::NrIceCtx *> SignalIceGatheringCompleted;  // Done gathering
-  sigslot::signal1<mozilla::NrIceCtx *> SignalIceCompleted;  // Done handshaking
-  sigslot::signal1<mozilla::NrIceCtx *> SignalIceFailed;  // Self explanatory
+  sigslot::signal2<mozilla::NrIceCtx*, mozilla::NrIceCtx::GatheringState>
+      SignalIceGatheringStateChange;
+  sigslot::signal2<mozilla::NrIceCtx*, mozilla::NrIceCtx::ConnectionState>
+      SignalIceConnectionStateChange;
 
  private:
   // Shutdown media transport. Must be called on STS thread.
@@ -347,9 +354,10 @@ class PeerConnectionMedia : public sigslot::has_slots<> {
   void SelfDestruct_m();
 
   // ICE events
-  void IceGatheringCompleted(mozilla::NrIceCtx *aCtx);
-  void IceCompleted(mozilla::NrIceCtx *aCtx);
-  void IceFailed(mozilla::NrIceCtx *aCtx);
+  void IceGatheringStateChange(mozilla::NrIceCtx* ctx,
+                               mozilla::NrIceCtx::GatheringState state);
+  void IceConnectionStateChange(mozilla::NrIceCtx* ctx,
+                                mozilla::NrIceCtx::ConnectionState state);
   void IceStreamReady(mozilla::NrIceMediaStream *aStream);
 
   // The parent PC

@@ -19,6 +19,7 @@
 #include "mozilla/dom/StructuredCloneTags.h"
 #include "mozilla/dom/ipc/Blob.h"
 #include "mozilla/dom/quota/FileStreams.h"
+#include "mozilla/Endian.h"
 #include "mozilla/storage.h"
 #include "nsContentUtils.h"
 #include "nsDOMClassInfo.h"
@@ -55,6 +56,9 @@ using namespace mozilla::dom;
 using namespace mozilla::dom::indexedDB::ipc;
 using mozilla::dom::quota::FileOutputStream;
 using mozilla::ErrorResult;
+using mozilla::fallible_t;
+using mozilla::LittleEndian;
+using mozilla::NativeEndian;
 
 BEGIN_INDEXEDDB_NAMESPACE
 
@@ -361,7 +365,8 @@ public:
   DoDatabaseWork(mozIStorageConnection* aConnection) MOZ_OVERRIDE;
 
   virtual nsresult
-  GetSuccessResult(JSContext* aCx, JS::MutableHandleValue aVal) MOZ_OVERRIDE;
+  GetSuccessResult(JSContext* aCx, JS::MutableHandle<JS::Value> aVal)
+                   MOZ_OVERRIDE;
 
   virtual void
   ReleaseMainThreadObjects() MOZ_OVERRIDE;
@@ -509,7 +514,8 @@ public:
   DoDatabaseWork(mozIStorageConnection* aConnection) MOZ_OVERRIDE;
 
   virtual nsresult
-  GetSuccessResult(JSContext* aCx, JS::MutableHandleValue aVal) MOZ_OVERRIDE;
+  GetSuccessResult(JSContext* aCx, JS::MutableHandle<JS::Value> aVal)
+                   MOZ_OVERRIDE;
 
   virtual void
   ReleaseMainThreadObjects() MOZ_OVERRIDE;
@@ -607,7 +613,7 @@ class ThreadLocalJSRuntime
   static const unsigned sRuntimeHeapSize = 768 * 1024;
 
   ThreadLocalJSRuntime()
-  : mRuntime(NULL), mContext(NULL), mGlobal(NULL)
+  : mRuntime(nullptr), mContext(nullptr), mGlobal(nullptr)
   {
       MOZ_COUNT_CTOR(ThreadLocalJSRuntime);
   }
@@ -628,7 +634,7 @@ class ThreadLocalJSRuntime
 
     JSAutoRequest ar(mContext);
 
-    mGlobal = JS_NewGlobalObject(mContext, &sGlobalClass, NULL,
+    mGlobal = JS_NewGlobalObject(mContext, &sGlobalClass, nullptr,
                                  JS::FireOnNewGlobalHook);
     NS_ENSURE_TRUE(mGlobal, NS_ERROR_OUT_OF_MEMORY);
 
@@ -956,7 +962,7 @@ const JSClass IDBObjectStore::sDummyPropJSClass = {
 already_AddRefed<IDBObjectStore>
 IDBObjectStore::Create(IDBTransaction* aTransaction,
                        ObjectStoreInfo* aStoreInfo,
-                       nsIAtom* aDatabaseId,
+                       const nsACString& aDatabaseId,
                        bool aCreating)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
@@ -1218,6 +1224,8 @@ IDBObjectStore::GetStructuredCloneReadInfoFromStatement(
   const char* compressed = reinterpret_cast<const char*>(blobData);
   size_t compressedLength = size_t(blobDataLength);
 
+  static const fallible_t fallible = fallible_t();
+
   size_t uncompressedLength;
   if (!snappy::GetUncompressedLength(compressed, compressedLength,
                                      &uncompressedLength)) {
@@ -1225,7 +1233,8 @@ IDBObjectStore::GetStructuredCloneReadInfoFromStatement(
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
   }
 
-  nsAutoArrayPtr<char> uncompressed(new char[uncompressedLength]);
+  nsAutoArrayPtr<char> uncompressed(new (fallible) char[uncompressedLength]);
+  NS_ENSURE_TRUE(uncompressed, NS_ERROR_OUT_OF_MEMORY);
 
   if (!snappy::RawUncompress(compressed, compressedLength,
                              uncompressed.get())) {
@@ -1366,36 +1375,6 @@ IDBObjectStore::SerializeValue(JSContext* aCx,
   return buffer.write(aCx, aValue, &callbacks, &aCloneWriteInfo);
 }
 
-static inline uint32_t
-SwapBytes(uint32_t u)
-{
-#ifdef IS_BIG_ENDIAN
-  return ((u & 0x000000ffU) << 24) |
-         ((u & 0x0000ff00U) << 8) |
-         ((u & 0x00ff0000U) >> 8) |
-         ((u & 0xff000000U) >> 24);
-#else
-  return u;
-#endif
-}
-
-static inline double
-SwapBytes(uint64_t u)
-{
-#ifdef IS_BIG_ENDIAN
-  return ((u & 0x00000000000000ffLLU) << 56) |
-         ((u & 0x000000000000ff00LLU) << 40) |
-         ((u & 0x0000000000ff0000LLU) << 24) |
-         ((u & 0x00000000ff000000LLU) << 8) |
-         ((u & 0x000000ff00000000LLU) >> 8) |
-         ((u & 0x0000ff0000000000LLU) >> 24) |
-         ((u & 0x00ff000000000000LLU) >> 40) |
-         ((u & 0xff00000000000000LLU) >> 56);
-#else
-  return double(u);
-#endif
-}
-
 static inline bool
 StructuredCloneReadString(JSStructuredCloneReader* aReader,
                           nsCString& aString)
@@ -1405,9 +1384,9 @@ StructuredCloneReadString(JSStructuredCloneReader* aReader,
     NS_WARNING("Failed to read length!");
     return false;
   }
-  length = SwapBytes(length);
+  length = NativeEndian::swapFromLittleEndian(length);
 
-  if (!aString.SetLength(length, mozilla::fallible_t())) {
+  if (!aString.SetLength(length, fallible_t())) {
     NS_WARNING("Out of memory?");
     return false;
   }
@@ -1468,7 +1447,7 @@ IDBObjectStore::ReadBlobOrFile(JSStructuredCloneReader* aReader,
     NS_WARNING("Failed to read size!");
     return false;
   }
-  aRetval->size = SwapBytes(size);
+  aRetval->size = NativeEndian::swapFromLittleEndian(size);
 
   nsCString type;
   if (!StructuredCloneReadString(aReader, type)) {
@@ -1484,11 +1463,16 @@ IDBObjectStore::ReadBlobOrFile(JSStructuredCloneReader* aReader,
   NS_ASSERTION(aTag == SCTAG_DOM_FILE ||
                aTag == SCTAG_DOM_FILE_WITHOUT_LASTMODIFIEDDATE, "Huh?!");
 
-  uint64_t lastModifiedDate = UINT64_MAX;
-  if (aTag != SCTAG_DOM_FILE_WITHOUT_LASTMODIFIEDDATE &&
-      !JS_ReadBytes(aReader, &lastModifiedDate, sizeof(lastModifiedDate))) {
-    NS_WARNING("Failed to read lastModifiedDate");
-    return false;
+  uint64_t lastModifiedDate;
+  if (aTag == SCTAG_DOM_FILE_WITHOUT_LASTMODIFIEDDATE) {
+    lastModifiedDate = UINT64_MAX;
+  }
+  else {
+    if(!JS_ReadBytes(aReader, &lastModifiedDate, sizeof(lastModifiedDate))) {
+      NS_WARNING("Failed to read lastModifiedDate");
+      return false;
+    }
+    lastModifiedDate = NativeEndian::swapFromLittleEndian(lastModifiedDate);
   }
   aRetval->lastModifiedDate = lastModifiedDate;
 
@@ -1579,6 +1563,7 @@ IDBObjectStore::StructuredCloneWriteCallback(JSContext* aCx,
     cloneWriteInfo->mOffsetToKeyProp = js_GetSCOffset(aWriter);
 
     uint64_t value = 0;
+    // Omit endian swap
     return JS_WriteBytes(aWriter, &value, sizeof(value));
   }
 
@@ -1586,7 +1571,7 @@ IDBObjectStore::StructuredCloneWriteCallback(JSContext* aCx,
   FileManager* fileManager = transaction->Database()->Manager();
 
   file::FileHandle* fileHandle = nullptr;
-  if (NS_SUCCEEDED(UNWRAP_OBJECT(FileHandle, aCx, aObj, fileHandle))) {
+  if (NS_SUCCEEDED(UNWRAP_OBJECT(FileHandle, aObj, fileHandle))) {
     nsRefPtr<FileInfo> fileInfo = fileHandle->GetFileInfo();
 
     // Throw when trying to store non IDB file handles or IDB file handles
@@ -1596,10 +1581,12 @@ IDBObjectStore::StructuredCloneWriteCallback(JSContext* aCx,
     }
 
     NS_ConvertUTF16toUTF8 convType(fileHandle->Type());
-    uint32_t convTypeLength = SwapBytes(convType.Length());
+    uint32_t convTypeLength =
+      NativeEndian::swapToLittleEndian(convType.Length());
 
     NS_ConvertUTF16toUTF8 convName(fileHandle->Name());
-    uint32_t convNameLength = SwapBytes(convName.Length());
+    uint32_t convNameLength =
+      NativeEndian::swapToLittleEndian(convName.Length());
 
     if (!JS_WriteUint32Pair(aWriter, SCTAG_DOM_FILEHANDLE,
                             cloneWriteInfo->mFiles.Length()) ||
@@ -1654,7 +1641,7 @@ IDBObjectStore::StructuredCloneWriteCallback(JSContext* aCx,
         NS_WARNING("Failed to get size!");
         return false;
       }
-      size = SwapBytes(size);
+      size = NativeEndian::swapToLittleEndian(size);
 
       nsString type;
       if (NS_FAILED(blob->GetType(type))) {
@@ -1662,7 +1649,8 @@ IDBObjectStore::StructuredCloneWriteCallback(JSContext* aCx,
         return false;
       }
       NS_ConvertUTF16toUTF8 convType(type);
-      uint32_t convTypeLength = SwapBytes(convType.Length());
+      uint32_t convTypeLength =
+        NativeEndian::swapToLittleEndian(convType.Length());
 
       nsCOMPtr<nsIDOMFile> file = do_QueryInterface(blob);
 
@@ -1681,7 +1669,7 @@ IDBObjectStore::StructuredCloneWriteCallback(JSContext* aCx,
           return false;
         }
 
-        lastModifiedDate = SwapBytes(lastModifiedDate);
+        lastModifiedDate = NativeEndian::swapToLittleEndian(lastModifiedDate);
 
         nsString name;
         if (NS_FAILED(file->GetName(name))) {
@@ -1689,7 +1677,8 @@ IDBObjectStore::StructuredCloneWriteCallback(JSContext* aCx,
           return false;
         }
         NS_ConvertUTF16toUTF8 convName(name);
-        uint32_t convNameLength = SwapBytes(convName.Length());
+        uint32_t convNameLength =
+          NativeEndian::swapToLittleEndian(convName.Length());
 
         if (!JS_WriteBytes(aWriter, &lastModifiedDate, sizeof(lastModifiedDate)) || 
             !JS_WriteBytes(aWriter, &convNameLength, sizeof(convNameLength)) ||
@@ -2965,7 +2954,7 @@ IDBObjectStore::Count(JSContext* aCx,
 
 already_AddRefed<IDBRequest>
 IDBObjectStore::GetAllKeys(JSContext* aCx,
-                           const Optional<JS::HandleValue>& aKey,
+                           const Optional<JS::Handle<JS::Value>>& aKey,
                            const Optional<uint32_t>& aLimit, ErrorResult& aRv)
 {
   MOZ_ASSERT(NS_IsMainThread());
@@ -2991,8 +2980,8 @@ IDBObjectStore::GetAllKeys(JSContext* aCx,
 
 already_AddRefed<IDBRequest>
 IDBObjectStore::OpenKeyCursor(JSContext* aCx,
-                              const Optional<JS::HandleValue>& aRange,
-                              IDBCursorDirection aDirection,  ErrorResult& aRv)
+                              const Optional<JS::Handle<JS::Value>>& aRange,
+                              IDBCursorDirection aDirection, ErrorResult& aRv)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -3128,6 +3117,18 @@ NoRequestObjectStoreHelper::OnError()
   mTransaction->Abort(GetResultCode());
 }
 
+// This is a duplicate of the js engine's byte munging in StructuredClone.cpp
+uint64_t
+ReinterpretDoubleAsUInt64(double d)
+{
+  union {
+    double d;
+    uint64_t u;
+  } pun;
+  pun.d = d;
+  return pun.u;
+}
+
 nsresult
 AddHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
 {
@@ -3174,9 +3175,14 @@ AddHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
   if (mObjectStore->IsAutoIncrement()) {
     if (keyUnset) {
       autoIncrementNum = mObjectStore->Info()->nextAutoIncrementId;
+
+      MOZ_ASSERT(autoIncrementNum > 0,
+                 "Generated key must always be a positive integer");
+
       if (autoIncrementNum > (1LL << 53)) {
         return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
       }
+
       mKey.SetFromInteger(autoIncrementNum);
     }
     else if (mKey.IsFloat() &&
@@ -3189,18 +3195,10 @@ AddHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
       // objectStore with no key in its keyPath set. We needed to figure out
       // which row id we would get above before we could set that properly.
 
-      // This is a duplicate of the js engine's byte munging here
-      union {
-        double d;
-        uint64_t u;
-      } pun;
-    
-      pun.d = SwapBytes(static_cast<uint64_t>(autoIncrementNum));
-
-      JSAutoStructuredCloneBuffer& buffer = mCloneWriteInfo.mCloneBuffer;
-      uint64_t offsetToKeyProp = mCloneWriteInfo.mOffsetToKeyProp;
-
-      memcpy((char*)buffer.data() + offsetToKeyProp, &pun.u, sizeof(uint64_t));
+      LittleEndian::writeUint64((char*)mCloneWriteInfo.mCloneBuffer.data() +
+                                mCloneWriteInfo.mOffsetToKeyProp,
+                                ReinterpretDoubleAsUInt64(static_cast<double>(
+                                                          autoIncrementNum)));
     }
   }
 
@@ -3211,10 +3209,12 @@ AddHelper::DoDatabaseWork(mozIStorageConnection* aConnection)
     reinterpret_cast<const char*>(mCloneWriteInfo.mCloneBuffer.data());
   size_t uncompressedLength = mCloneWriteInfo.mCloneBuffer.nbytes();
 
+  static const fallible_t fallible = fallible_t();
   size_t compressedLength = snappy::MaxCompressedLength(uncompressedLength);
   // This will hold our compressed data until the end of the method. The
   // BindBlobByName function will copy it.
-  nsAutoArrayPtr<char> compressed(new char[compressedLength]);
+  nsAutoArrayPtr<char> compressed(new (fallible) char[compressedLength]);
+  NS_ENSURE_TRUE(compressed, NS_ERROR_OUT_OF_MEMORY);
 
   snappy::RawCompress(uncompressed, uncompressedLength, compressed.get(),
                       &compressedLength);
@@ -4246,7 +4246,7 @@ OpenKeyCursorHelper::EnsureCursor()
 
 nsresult
 OpenKeyCursorHelper::GetSuccessResult(JSContext* aCx,
-                                      JS::MutableHandleValue aVal)
+                                      JS::MutableHandle<JS::Value> aVal)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -4911,7 +4911,8 @@ GetAllKeysHelper::DoDatabaseWork(mozIStorageConnection* /* aConnection */)
 }
 
 nsresult
-GetAllKeysHelper::GetSuccessResult(JSContext* aCx, JS::MutableHandleValue aVal)
+GetAllKeysHelper::GetSuccessResult(JSContext* aCx,
+                                   JS::MutableHandle<JS::Value> aVal)
 {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(mKeys.Length() <= mLimit);
@@ -4923,7 +4924,7 @@ GetAllKeysHelper::GetSuccessResult(JSContext* aCx, JS::MutableHandleValue aVal)
   nsTArray<Key> keys;
   mKeys.SwapElements(keys);
 
-  JS::RootedObject array(aCx, JS_NewArrayObject(aCx, 0, NULL));
+  JS::Rooted<JSObject*> array(aCx, JS_NewArrayObject(aCx, 0, nullptr));
   if (!array) {
     NS_WARNING("Failed to make array!");
     return NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR;
@@ -4939,7 +4940,7 @@ GetAllKeysHelper::GetSuccessResult(JSContext* aCx, JS::MutableHandleValue aVal)
       const Key& key = keys[index];
       MOZ_ASSERT(!key.IsUnset());
 
-      JS::RootedValue value(aCx);
+      JS::Rooted<JS::Value> value(aCx);
       nsresult rv = key.ToJSVal(aCx, &value);
       if (NS_FAILED(rv)) {
         NS_WARNING("Failed to get jsval for key!");

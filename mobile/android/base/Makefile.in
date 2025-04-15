@@ -2,11 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DIST_FILES = package-name.txt
-
-ifdef MOZ_ANDROID_ANR_REPORTER
-DEFINES += -DMOZ_ANDROID_ANR_REPORTER=1
-endif
+DIST_FILES := package-name.txt.in
 
 ifneq (,$(findstring -march=armv7,$(OS_CFLAGS)))
 MIN_CPU_VERSION=7
@@ -34,78 +30,29 @@ UA_BUILDID=$(shell echo $(ANDROID_VERSION_CODE) | cut -c1-8)
 
 MOZ_BUILD_TIMESTAMP=$(shell echo `$(PYTHON) $(topsrcdir)/toolkit/xre/make-platformini.py --print-timestamp`)
 
-ifdef MOZ_UPDATER
-DEFINES +=  -DMOZ_UPDATER=$(MOZ_UPDATER)
-endif
-
-# Mangle our package name to avoid Bug 750548.
 DEFINES += \
-  -DMANGLED_ANDROID_PACKAGE_NAME=$(subst fennec,f3nn3c,$(ANDROID_PACKAGE_NAME)) \
-  -DANDROID_PACKAGE_NAME=$(ANDROID_PACKAGE_NAME) \
-  -DANDROID_CPU_ARCH=$(ANDROID_CPU_ARCH) \
   -DANDROID_VERSION_CODE=$(ANDROID_VERSION_CODE) \
-  -DCPU_ARCH=$(CPU_ARCH) \
-  -DGRE_MILESTONE=$(GRE_MILESTONE) \
-  -DMOZILLA_OFFICIAL=$(MOZILLA_OFFICIAL) \
   -DMOZ_ANDROID_SHARED_ID="$(MOZ_ANDROID_SHARED_ID)" \
   -DMOZ_ANDROID_SHARED_ACCOUNT_TYPE="$(MOZ_ANDROID_SHARED_ACCOUNT_TYPE)" \
-  -DMOZ_APP_ABI=$(TARGET_XPCOM_ABI) \
-  -DMOZ_APP_BASENAME=$(MOZ_APP_BASENAME) \
   -DMOZ_APP_BUILDID=$(MOZ_APP_BUILDID) \
-  -DMOZ_APP_DISPLAYNAME="$(MOZ_APP_DISPLAYNAME)" \
-  -DMOZ_APP_ID=$(MOZ_APP_ID) \
-  -DMOZ_APP_NAME=$(MOZ_APP_NAME) \
-  -DMOZ_APP_VENDOR=$(MOZ_APP_VENDOR) \
-  -DMOZ_APP_VERSION=$(MOZ_APP_VERSION) \
   -DMOZ_BUILD_TIMESTAMP=$(MOZ_BUILD_TIMESTAMP) \
-  -DMOZ_CHILD_PROCESS_NAME=$(MOZ_CHILD_PROCESS_NAME) \
-  -DMOZ_CRASHREPORTER=$(MOZ_CRASHREPORTER) \
-  -DMOZ_MIN_CPU_VERSION=$(MIN_CPU_VERSION) \
-  -DMOZ_UPDATE_CHANNEL=$(MOZ_UPDATE_CHANNEL) \
-  -DOMNIJAR_NAME=$(OMNIJAR_NAME) \
-  -DOS_TARGET=$(OS_TARGET) \
-  -DTARGET_XPCOM_ABI=$(TARGET_XPCOM_ABI) \
   -DUA_BUILDID=$(UA_BUILDID) \
   $(NULL)
-
-ifdef MOZ_PKG_SPECIAL
-DEFINES += -DMOZ_PKG_SPECIAL=$(MOZ_PKG_SPECIAL)
-endif
-
-ifdef MOZ_LINKER_EXTRACT
-DEFINES += -DMOZ_LINKER_EXTRACT=1
-endif
-
-PP_JAVAFILES = $(filter-out R.java,$(gecko-mozglue_PP_JAVAFILES) $(gecko-browser_PP_JAVAFILES))
 
 GARBAGE += \
   AndroidManifest.xml  \
   classes.dex  \
-  $(PP_JAVAFILES) \
   gecko.ap_  \
   res/values/strings.xml \
-  R.java \
-  package-name.txt \
+  .aapt.deps \
   fennec_ids.txt \
-  Manifest.java \
   javah.out \
   jni-stubs.inc \
   GeneratedJNIWrappers.cpp \
   GeneratedJNIWrappers.h \
   $(NULL)
 
-GARBAGE_DIRS += classes db jars res sync services
-
-# Bug 567884 - Need a way to find appropriate icons during packaging
-ifeq ($(MOZ_APP_NAME),fennec)
-ICON_PATH = $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/content/fennec_48x48.png
-ICON_PATH_HDPI = $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/content/fennec_72x72.png
-ICON_PATH_XHDPI = $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/content/fennec_96x96.png
-ICON_PATH_XXHDPI = $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/content/fennec_144x144.png
-else
-ICON_PATH = $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/content/icon48.png
-ICON_PATH_HDPI = $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/content/icon64.png
-endif
+GARBAGE_DIRS += classes db jars res sync services generated
 
 JAVA_CLASSPATH = $(ANDROID_SDK)/android.jar
 
@@ -121,23 +68,26 @@ ifdef MOZ_WEBRTC
 ALL_JARS += webrtc.jar
 endif
 
-# We process ANDROID_RESFILES specially for now; the following flag
-# disables the default processing.
-IGNORE_ANDROID_RESFILES=1
-
-include $(topsrcdir)/config/rules.mk
-
-# Override the Java settings with some specific android settings
-include $(topsrcdir)/config/android-common.mk
+include $(topsrcdir)/config/config.mk
 
 # Note that we're going to set up a dependency directly between embed_android.dex and the java files
 # Instead of on the .class files, since more than one .class file might be produced per .java file
 # Sync dependencies are provided in a single jar. Sync classes themselves are delivered as source,
 # because Android resource classes must be compiled together in order to avoid overlapping resource
 # indices.
-classes.dex: $(ALL_JARS)
-	@echo "DX classes.dex"
-	$(DX) --dex --output=classes.dex $(ALL_JARS) $(ANDROID_COMPAT_LIB)
+
+classes.dex: proguard-jars
+	@echo 'DX classes.dex'
+	$(DX) --dex --output=classes.dex jars-proguarded $(ANDROID_COMPAT_LIB)
+
+ifdef MOZ_DEBUG
+PROGUARD_PASSES=1
+else
+PROGUARD_PASSES=6
+endif
+
+proguard-jars: $(ALL_JARS)
+	java -jar $(ANDROID_SDK_ROOT)/tools/proguard/lib/proguard.jar @$(topsrcdir)/mobile/android/config/proguard.cfg -optimizationpasses $(PROGUARD_PASSES) -injars $(subst ::,:,$(subst $(NULL) ,:,$(ALL_JARS))) -outjars jars-proguarded -libraryjars $(ANDROID_SDK)/android.jar:$(ANDROID_COMPAT_LIB)
 
 CLASSES_WITH_JNI= \
     org.mozilla.gecko.GeckoAppShell \
@@ -163,79 +113,127 @@ ANNOTATION_PROCESSOR_JAR_FILES := $(DEPTH)/build/annotationProcessors/annotation
 
 GeneratedJNIWrappers.cpp: $(ANNOTATION_PROCESSOR_JAR_FILES)
 GeneratedJNIWrappers.cpp: $(ALL_JARS)
-	$(JAVA) -classpath $(JAVA_BOOTCLASSPATH):$(ANNOTATION_PROCESSOR_JAR_FILES) org.mozilla.gecko.annotationProcessors.AnnotationProcessor $(ALL_JARS)
+	$(JAVA) -classpath gecko-mozglue.jar:$(JAVA_BOOTCLASSPATH):$(ANNOTATION_PROCESSOR_JAR_FILES) org.mozilla.gecko.annotationProcessors.AnnotationProcessor $(ALL_JARS)
 
-# AndroidManifest.xml includes these files, so they need to be marked as dependencies.
-SERVICES_MANIFEST_FRAGMENTS = $(wildcard $(topsrcdir)/mobile/android/services/manifests/*.in)
+gecko_package_dir = generated/org/mozilla/gecko
+# Like generated/org/mozilla/fennec_$USERID.
+android_package_dir = $(addprefix generated/,$(subst .,/,$(ANDROID_PACKAGE_NAME)))
 
-android-tgts = \
-  AndroidManifest.xml \
-  package-name.txt \
-  $(PP_JAVAFILES) \
+# These _PP_JAVAFILES are specified in moz.build and defined in
+# backend.mk, which is included by config.mk.  Therefore this needs to
+# be defined after config.mk is included.
+PP_JAVAFILES := $(filter-out $(gecko_package_dir)/R.java,$(gecko-mozglue_PP_JAVAFILES) $(gecko-browser_PP_JAVAFILES))
+
+manifest := \
+  AndroidManifest.xml.in \
   $(NULL)
 
-android-preqs = \
-  Makefile.in \
-  widget/GeckoView.java.frag \
-  $(SERVICES_MANIFEST_FRAGMENTS) \
-  $(call mkdir_deps,$(sort $(dir $(PP_JAVAFILES)))) \
-  $(NULL)
+PP_TARGETS += manifest
 
-$(android-tgts): % : %.in $(android-preqs)
-	$(PYTHON) $(topsrcdir)/config/Preprocessor.py \
-             $(AUTOMATION_PPARGS) $(DEFINES) $(ACDEFINES) $< > $@
+# Certain source files need to be preprocessed.  This special rule
+# generates these files into generated/org/mozilla/gecko for
+# consumption by the build system and IDEs.
 
-res/drawable-mdpi/icon.png: $(ICON_PATH)
-	$(NSINSTALL) -D res/drawable-mdpi
-	cp $(ICON_PATH) $@
+preprocessed := $(addsuffix .in,$(subst $(gecko_package_dir)/,,$(filter $(gecko_package_dir)/%,$(PP_JAVAFILES))))
 
-res/drawable-hdpi/icon.png: $(ICON_PATH_HDPI)
-	$(NSINSTALL) -D res/drawable-hdpi
-	cp $(ICON_PATH_HDPI) $@
+preprocessed_PATH := $(gecko_package_dir)
+preprocessed_KEEP_PATH := 1
 
-res/drawable-xhdpi/icon.png: $(ICON_PATH_XHDPI)
-	$(NSINSTALL) -D res/drawable-xhdpi
-	cp $(ICON_PATH_XHDPI) $@
+PP_TARGETS += preprocessed
 
-res/drawable-xxhdpi/icon.png: $(ICON_PATH_XXHDPI)
-	$(NSINSTALL) -D res/drawable-xxhdpi
-	cp $(ICON_PATH_XXHDPI) $@
+# Certain source files have Java package name @ANDROID_PACKAGE_NAME@.
+# We hate these files but they are necessary for backwards
+# compatibility.  These special rules generate these files into
+# generated/org/mozilla/{firefox,firefox_beta,fennec,fennec_$USER} for
+# consumption by the build system and IDEs.
 
-ANDROID_RESDIRS := $(subst resources/,res/,$(sort $(dir $(ANDROID_RESFILES))))
+preprocessed_package := $(addsuffix .in,$(subst $(android_package_dir)/,,$(filter $(android_package_dir)/%,$(PP_JAVAFILES))))
 
-$(call mkdir_deps,$(ANDROID_RESDIRS)): $(ANDROID_RESFILES) Makefile
-	$(RM) -r $(@D)
-	$(NSINSTALL) -D $(@D)
-	$(TOUCH) $@
+preprocessed_package_PATH := $(android_package_dir)
+preprocessed_package_KEEP_PATH := 1
 
-$(subst resources/,res/,$(ANDROID_RESFILES)): $(call mkdir_deps,$(ANDROID_RESDIRS)) $(ANDROID_RESFILES)
-	@echo "creating $@"
-	$(NSINSTALL) $(subst res/,$(srcdir)/resources/,$@) $(dir $@)
+PP_TARGETS += preprocessed_package
 
-res/values/strings.xml: $(call mkdir_deps,res/values)
+include $(topsrcdir)/config/rules.mk
+
+# This uses the fact that Android resource directories list all
+# resource files one subdirectory below the parent resource directory.
+android_res_files := $(wildcard $(addsuffix /*,$(wildcard $(addsuffix /*,$(ANDROID_RES_DIRS)))))
+
+$(ANDROID_GENERATED_RESFILES): $(call mkdir_deps,$(sort $(dir $(ANDROID_GENERATED_RESFILES))))
+
+# [Comment 1/3] We don't have correct dependencies for strings.xml at
+# this point, so we always recursively invoke the submake to check the
+# dependencies.  Sigh.  And, with multilocale builds, there will be
+# multiple strings.xml files, and we need to rebuild gecko.ap_ if any
+# of them change.  But!  mobile/android/base/locales does not have
+# enough information to actually build res/values/strings.xml during a
+# language repack.  So rather than adding rules into the main
+# makefile, and trying to work around the lack of information, we
+# force a rebuild of gecko.ap_ during packaging.  See below.
+
+res/values/strings.xml: FORCE
 	$(MAKE) -C locales
 
-# With multilocale builds, there will be multiple strings.xml files. We need to
-# rebuild gecko.ap_ if any of them change.
-MULTILOCALE_STRINGS_XML_FILES := $(wildcard res/values-*/strings.xml)
 all_resources = \
-  $(MULTILOCALE_STRINGS_XML_FILES) \
-  AndroidManifest.xml \
-  $(subst resources/,res/,$(ANDROID_RESFILES)) \
+  $(CURDIR)/AndroidManifest.xml \
+  $(android_res_files) \
   $(ANDROID_GENERATED_RESFILES) \
   $(NULL)
 
-R.java: $(all_resources)
-	$(AAPT) package -f -M AndroidManifest.xml -I $(ANDROID_SDK)/android.jar -S res -J . --custom-package org.mozilla.gecko --non-constant-id
+# All of generated/org/mozilla/gecko/R.java, gecko.ap_, and R.txt are
+# produced by aapt; this saves aapt invocations.
 
-gecko.ap_: $(all_resources)
-	$(AAPT) package -f -M AndroidManifest.xml -I $(ANDROID_SDK)/android.jar  -S res -F $@
+$(gecko_package_dir)/R.java: .aapt.deps
+gecko.ap_: .aapt.deps
+R.txt: .aapt.deps
 
-fennec_ids.txt: fennec-ids-generator.py R.java
-	$(PYTHON) $(topsrcdir)/mobile/android/base/fennec-ids-generator.py -i R.java -o $@
+# [Comment 2/3] This tom-foolery provides a target that forces a
+# rebuild of gecko.ap_.  This is used during packaging to ensure that
+# resources are fresh.  The alternative would be complicated; see
+# [Comment 1/3].
 
-libs:: classes.dex package-name.txt jni-stubs.inc GeneratedJNIWrappers.cpp fennec_ids.txt
+gecko-nodeps/R.java: .aapt.nodeps
+gecko-nodeps.ap_: .aapt.nodeps
+gecko-nodeps/R.txt: .aapt.nodeps
+
+# 1: target file.
+# 2: dependencies.
+# 3: name of ap_ file to write.
+# 4: directory to write R.java into.
+# 5: directory to write R.txt into.
+define aapt_command
+$(1): $$(call mkdir_deps,$(filter-out ./,$(dir $(3) $(4) $(5)))) $(2)
+	$$(AAPT) package -f -M AndroidManifest.xml -I $$(ANDROID_SDK)/android.jar \
+		--auto-add-overlay \
+		$$(addprefix -S ,$$(ANDROID_RES_DIRS)) \
+		--custom-package org.mozilla.gecko --non-constant-id \
+		-F $(3) \
+		-J $(4) \
+		--output-text-symbols $(5)
+	@$$(TOUCH) $$@
+endef
+
+# [Comment 3/3] The first of these rules is used during regular
+# builds.  The second writes an ap_ file that is only used during
+# packaging.  It doesn't write the normal ap_, or R.java, since we
+# don't want the packaging step to write anything that would make a
+# further no-op build do work.  See also
+# toolkit/mozapps/installer/packager.mk.
+
+# .aapt.deps: $(all_resources)
+$(eval $(call aapt_command,.aapt.deps,$(all_resources),gecko.ap_,$(gecko_package_dir)/,./))
+
+# .aapt.nodeps: $(CURDIR)/AndroidManifest.xml FORCE
+$(eval $(call aapt_command,.aapt.nodeps,$(CURDIR)/AndroidManifest.xml FORCE,gecko-nodeps.ap_,gecko-nodeps/,gecko-nodeps/))
+
+fennec_ids.txt: $(gecko_package_dir)/R.java fennec-ids-generator.py
+	$(PYTHON) $(topsrcdir)/mobile/android/base/fennec-ids-generator.py -i $< -o $@
+
+# Override the Java settings with some specific android settings
+include $(topsrcdir)/config/android-common.mk
+
+libs:: classes.dex jni-stubs.inc GeneratedJNIWrappers.cpp fennec_ids.txt
 	$(INSTALL) classes.dex $(FINAL_TARGET)
-	$(INSTALL) package-name.txt $(FINAL_TARGET)
 	@(diff jni-stubs.inc $(topsrcdir)/mozglue/android/jni-stubs.inc >/dev/null && diff GeneratedJNIWrappers.cpp $(topsrcdir)/widget/android/GeneratedJNIWrappers.cpp >/dev/null) || \
-	 (echo "*** Error: The generated JNI code has changed. Please run cp $(CURDIR)/jni-stubs.inc $(topsrcdir)/mozglue/android && cp $(CURDIR)/GeneratedJNIWrappers.* $(topsrcdir)/widget/android and repeat the build." && exit 1)
+	 (echo '*** Error: The generated JNI code has changed. Please run cp $(CURDIR)/jni-stubs.inc $(topsrcdir)/mozglue/android && cp $(CURDIR)/GeneratedJNIWrappers.* $(topsrcdir)/widget/android and repeat the build.' && exit 1)

@@ -128,11 +128,16 @@ PendingLookup::HandleEvent(const nsACString& tables) {
     return OnComplete(true, NS_OK);
   }
 
+#if 0
   nsresult rv = SendRemoteQuery();
   if (NS_FAILED(rv)) {
     return OnComplete(false, rv);
   }
   return NS_OK;
+#else
+  // Revert when remote lookups are enabled (bug 933432)
+  return OnComplete(false, NS_OK);
+#endif
 }
 
 nsresult
@@ -197,12 +202,6 @@ PendingLookup::SendRemoteQuery() {
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(channel, &rv));
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  // See bug 887044 for finalizing the user agent.
-  const nsCString userAgent = NS_LITERAL_CSTRING("CsdTesting/Mozilla");
-  rv = httpChannel->SetRequestHeader(
-    NS_LITERAL_CSTRING("User-Agent"), userAgent, false);
   NS_ENSURE_SUCCESS(rv, rv);
 
   // Upload the protobuf to the application reputation service.

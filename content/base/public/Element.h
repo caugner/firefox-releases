@@ -113,8 +113,8 @@ class DOMRectList;
 
 // IID for the dom::Element interface
 #define NS_ELEMENT_IID \
-{ 0xec962aa7, 0x53ee, 0x46ff, \
-  { 0x90, 0x34, 0x68, 0xea, 0x79, 0x9d, 0x7d, 0xf7 } }
+{ 0xf7c18f0f, 0xa8fd, 0x4a95, \
+  { 0x91, 0x72, 0xd3, 0xa7, 0x4a, 0xb8, 0xc4, 0xbe } }
 
 class Element : public FragmentOrElement
 {
@@ -385,16 +385,17 @@ private:
   // Style state computed from element's state and style locks.
   nsEventStates StyleStateFromLocks() const;
 
+protected:
   // Methods for the ESM to manage state bits.  These will handle
   // setting up script blockers when they notify, so no need to do it
   // in the callers unless desired.
-  void AddStates(nsEventStates aStates) {
+  virtual void AddStates(nsEventStates aStates) {
     NS_PRECONDITION(!aStates.HasAtLeastOneOfStates(INTRINSIC_STATES),
                     "Should only be adding ESM-managed states here");
     AddStatesSilently(aStates);
     NotifyStateChange(aStates);
   }
-  void RemoveStates(nsEventStates aStates) {
+  virtual void RemoveStates(nsEventStates aStates) {
     NS_PRECONDITION(!aStates.HasAtLeastOneOfStates(INTRINSIC_STATES),
                     "Should only be removing ESM-managed states here");
     RemoveStatesSilently(aStates);
@@ -538,6 +539,8 @@ protected:
   }
 
 public:
+  bool HasAttrs() const { return mAttrsAndChildren.HasAttrs(); }
+
   inline bool GetAttr(const nsAString& aName, DOMString& aResult) const
   {
     MOZ_ASSERT(aResult.HasStringBuffer() && aResult.StringBufferLength() == 0,
@@ -646,6 +649,13 @@ public:
 
   already_AddRefed<DOMRectList> GetClientRects();
   already_AddRefed<DOMRect> GetBoundingClientRect();
+
+  already_AddRefed<ShadowRoot> CreateShadowRoot(ErrorResult& aError);
+
+  void ScrollIntoView()
+  {
+    ScrollIntoView(true);
+  }
   void ScrollIntoView(bool aTop);
   int32_t ScrollTop()
   {
@@ -1073,8 +1083,8 @@ protected:
   /**
    * Add/remove this element to the documents id cache
    */
-  inline void AddToIdTable(nsIAtom* aId);
-  inline void RemoveFromIdTable();
+  void AddToIdTable(nsIAtom* aId);
+  void RemoveFromIdTable();
 
   /**
    * Functions to carry out event default actions for links of all types
@@ -1123,8 +1133,6 @@ private:
 
   nsIScrollableFrame* GetScrollFrame(nsIFrame **aStyledFrame = nullptr,
                                      bool aFlushLayout = true);
-
-  void GetMarkup(bool aIncludeSelf, nsAString& aMarkup);
 
   // Data members
   nsEventStates mState;
@@ -1186,7 +1194,7 @@ inline const mozilla::dom::Element* nsINode::AsElement() const
 
 inline bool nsINode::HasAttributes() const
 {
-  return IsElement() && AsElement()->GetAttrCount() > 0;
+  return IsElement() && AsElement()->HasAttrs();
 }
 
 /**
@@ -1464,28 +1472,6 @@ NS_IMETHOD MozRemove() MOZ_FINAL                                              \
 {                                                                             \
   nsINode::Remove();                                                          \
   return NS_OK;                                                               \
-}                                                                             \
-using nsINode::GetOnmouseenter;                                               \
-using nsINode::SetOnmouseenter;                                               \
-NS_IMETHOD GetOnmouseenter(JSContext* cx, JS::Value* aOnmouseenter) MOZ_FINAL \
-{                                                                             \
-  return Element::GetOnmouseenter(cx, aOnmouseenter);                         \
-}                                                                             \
-NS_IMETHOD SetOnmouseenter(JSContext* cx,                                     \
-                           const JS::Value& aOnmouseenter) MOZ_FINAL          \
-{                                                                             \
-  return Element::SetOnmouseenter(cx, aOnmouseenter);                         \
-}                                                                             \
-using nsINode::GetOnmouseleave;                                               \
-using nsINode::SetOnmouseleave;                                               \
-NS_IMETHOD GetOnmouseleave(JSContext* cx, JS::Value* aOnmouseleave) MOZ_FINAL \
-{                                                                             \
-  return Element::GetOnmouseleave(cx, aOnmouseleave);                         \
-}                                                                             \
-NS_IMETHOD SetOnmouseleave(JSContext* cx,                                     \
-                           const JS::Value& aOnmouseleave) MOZ_FINAL          \
-{                                                                             \
-  return Element::SetOnmouseleave(cx, aOnmouseleave);                         \
 }                                                                             \
 NS_IMETHOD GetClientRects(nsIDOMClientRectList** _retval) MOZ_FINAL           \
 {                                                                             \

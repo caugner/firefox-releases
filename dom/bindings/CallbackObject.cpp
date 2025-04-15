@@ -18,6 +18,7 @@
 #include "nsIScriptSecurityManager.h"
 #include "xpcprivate.h"
 #include "WorkerPrivate.h"
+#include "nsGlobalWindow.h"
 
 namespace mozilla {
 namespace dom {
@@ -66,38 +67,26 @@ CallbackObject::CallSetup::CallSetup(JS::Handle<JSObject*> aCallback,
   JSContext* cx = nullptr;
 
   if (mIsMainThread) {
-    // Now get the nsIScriptGlobalObject for this callback.
-    nsIScriptContext* ctx = nullptr;
-    nsIScriptGlobalObject* sgo = nsJSUtils::GetStaticScriptGlobal(realCallback);
-    if (sgo) {
+    // Now get the global and JSContext for this callback.
+    nsGlobalWindow* win = xpc::WindowGlobalOrNull(realCallback);
+    if (win) {
       // Make sure that if this is a window it's the current inner, since the
       // nsIScriptContext and hence JSContext are associated with the outer
       // window.  Which means that if someone holds on to a function from a
       // now-unloaded document we'd have the new document as the script entry
       // point...
-      nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(sgo);
-      if (win) {
-        MOZ_ASSERT(win->IsInnerWindow());
-        nsPIDOMWindow* outer = win->GetOuterWindow();
-        if (!outer || win != outer->GetCurrentInnerWindow()) {
-          // Just bail out from here
-          return;
-        }
+      MOZ_ASSERT(win->IsInnerWindow());
+      nsPIDOMWindow* outer = win->GetOuterWindow();
+      if (!outer || win != outer->GetCurrentInnerWindow()) {
+        // Just bail out from here
+        return;
       }
-      // if not a window at all, just press on
-
-      ctx = sgo->GetContext();
-      if (ctx) {
-        // We don't check whether scripts are enabled on ctx, because
-        // CheckFunctionAccess will do that anyway... and because we ignore them
-        // being disabled if the callee is system.
-        cx = ctx->GetNativeContext();
-      }
-    }
-
-    if (!cx) {
-      // We didn't manage to hunt down a script global to work with.  Just fall
-      // back on using the safe context.
+      cx = win->GetContext() ? win->GetContext()->GetNativeContext()
+                             // This happens - Removing it causes
+                             // test_bug293235.xul to go orange.
+                             : nsContentUtils::GetSafeJSContext();
+    } else {
+      // No DOM Window. Use the SafeJSContext.
       cx = nsContentUtils::GetSafeJSContext();
     }
 
@@ -120,14 +109,12 @@ CallbackObject::CallSetup::CallSetup(JS::Handle<JSObject*> aCallback,
 
   if (mIsMainThread) {
     // Check that it's ok to run this callback at all.
-    // FIXME: Bug 807371: we want a less silly check here.
-    // Make sure to unwrap aCallback before passing it in, because
-    // getting principals from wrappers is silly.
-    nsresult rv = nsContentUtils::GetSecurityManager()->
-      CheckFunctionAccess(cx, js::UncheckedUnwrap(aCallback), nullptr);
+    // Make sure to unwrap aCallback before passing it in to get the global of
+    // the callback object, not the wrapper.
+    bool allowed = nsContentUtils::GetSecurityManager()->
+      ScriptAllowed(js::GetGlobalForObjectCrossCompartment(js::UncheckedUnwrap(aCallback)));
 
-    if (NS_FAILED(rv)) {
-      // Security check failed.  We're done here.
+    if (!allowed) {
       return;
     }
   }
@@ -170,7 +157,7 @@ CallbackObject::CallSetup::ShouldRethrowException(JS::Handle<JS::Value> aExcepti
   }
 
   DOMError* domError;
-  return NS_SUCCEEDED(UNWRAP_OBJECT(DOMError, mCx, obj, domError));
+  return NS_SUCCEEDED(UNWRAP_OBJECT(DOMError, obj, domError));
 }
 
 CallbackObject::CallSetup::~CallSetup()
@@ -179,7 +166,7 @@ CallbackObject::CallSetup::~CallSetup()
   // errors on it, unless we were told to re-throw them.
   if (mCx) {
     bool dealtWithPendingException = false;
-    if (mExceptionHandling == eRethrowContentExceptions ||
+    if ((mCompartment && mExceptionHandling == eRethrowContentExceptions) ||
         mExceptionHandling == eRethrowExceptions) {
       // Restore the old context options
       JS::ContextOptionsRef(mCx) = mSavedJSContextOptions;

@@ -18,7 +18,6 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/MutationEvent.h"
 #include "mozilla/Telemetry.h"
-#include "mozilla/Util.h"
 #include "nsAsyncDOMEvent.h"
 #include "nsAttrValueOrString.h"
 #include "nsBindingManager.h"
@@ -97,6 +96,7 @@
 #include "nsCSSParser.h"
 #include "HTMLLegendElement.h"
 #include "nsWrapperCacheInlines.h"
+#include "mozilla/dom/ShadowRoot.h"
 #include "WrapperFactory.h"
 #include "DocumentType.h"
 #include <algorithm>
@@ -238,6 +238,15 @@ nsINode::GetTextEditorRootContent(nsIEditor** aEditor)
 static nsIContent* GetRootForContentSubtree(nsIContent* aContent)
 {
   NS_ENSURE_TRUE(aContent, nullptr);
+
+  // Special case for ShadowRoot because the ShadowRoot itself is
+  // the root. This is necessary to prevent selection from crossing
+  // the ShadowRoot boundary.
+  ShadowRoot* containingShadow = aContent->GetContainingShadow();
+  if (containingShadow) {
+    return containingShadow;
+  }
+
   nsIContent* stop = aContent->GetBindingParent();
   while (aContent) {
     nsIContent* parent = aContent->GetParent();
@@ -306,8 +315,17 @@ nsINode::GetSelectionRootContent(nsIPresShell* aPresShell)
   // This node might be in another subtree, if so, we should find this subtree's
   // root.  Otherwise, we can return the content simply.
   NS_ENSURE_TRUE(content, nullptr);
-  return nsContentUtils::IsInSameAnonymousTree(this, content) ?
-           content : GetRootForContentSubtree(static_cast<nsIContent*>(this));
+  if (!nsContentUtils::IsInSameAnonymousTree(this, content)) {
+    content = GetRootForContentSubtree(static_cast<nsIContent*>(this));
+    // Fixup for ShadowRoot because the ShadowRoot itself does not have a frame.
+    // Use the host as the root.
+    ShadowRoot* shadowRoot = ShadowRoot::FromNode(content);
+    if (shadowRoot) {
+      content = shadowRoot->GetHost();
+    }
+  }
+
+  return content;
 }
 
 nsINodeList*
@@ -520,8 +538,11 @@ nsINode::Normalize()
       HasMutationListeners(doc, NS_EVENT_BITS_MUTATION_NODEREMOVED);
   if (hasRemoveListeners) {
     for (uint32_t i = 0; i < nodes.Length(); ++i) {
-      nsContentUtils::MaybeFireNodeRemoved(nodes[i], nodes[i]->GetParentNode(),
-                                           doc);
+      nsINode* parentNode = nodes[i]->GetParentNode();
+      if (parentNode) { // Node may have already been removed.
+        nsContentUtils::MaybeFireNodeRemoved(nodes[i], parentNode,
+                                             doc);
+      }
     }
   }
 
@@ -738,6 +759,14 @@ nsINode::CompareDocumentPosition(nsINode& aOtherNode) const
 {
   if (this == &aOtherNode) {
     return 0;
+  }
+  if (GetPreviousSibling() == &aOtherNode) {
+    MOZ_ASSERT(GetParentNode() == aOtherNode.GetParentNode());
+    return static_cast<uint16_t>(nsIDOMNode::DOCUMENT_POSITION_PRECEDING);
+  }
+  if (GetNextSibling() == &aOtherNode) {
+    MOZ_ASSERT(GetParentNode() == aOtherNode.GetParentNode());
+    return static_cast<uint16_t>(nsIDOMNode::DOCUMENT_POSITION_FOLLOWING);
   }
 
   nsAutoTArray<const nsINode*, 32> parents1, parents2;
@@ -1331,15 +1360,15 @@ AdoptNodeIntoOwnerDoc(nsINode *aParent, nsINode *aNode)
 static nsresult
 CheckForOutdatedParent(nsINode* aParent, nsINode* aNode)
 {
-  if (JSObject* existingObj = aNode->GetWrapper()) {
+  if (JSObject* existingObjUnrooted = aNode->GetWrapper()) {
+    AutoJSContext cx;
+    JS::Rooted<JSObject*> existingObj(cx, existingObjUnrooted);
     nsIGlobalObject* global = aParent->OwnerDoc()->GetScopeObject();
     MOZ_ASSERT(global);
 
     if (js::GetGlobalForObjectCrossCompartment(existingObj) !=
         global->GetGlobalJSObject()) {
-      AutoJSContext cx;
-      JS::Rooted<JSObject*> rooted(cx, existingObj);
-      nsresult rv = ReparentWrapper(cx, rooted);
+      nsresult rv = ReparentWrapper(cx, existingObj);
       NS_ENSURE_SUCCESS(rv, rv);
     }
   }
@@ -1543,7 +1572,11 @@ bool IsAllowedAsChild(nsIContent* aNewChild, nsINode* aParent,
   // could be pretty deep in the DOM tree.
   if (aNewChild == aParent ||
       ((aNewChild->GetFirstChild() ||
-        aNewChild->Tag() == nsGkAtoms::_template) &&
+        // HTML template elements and ShadowRoot hosts need
+        // to be checked to ensure that they are not inserted into
+        // the hosted content.
+        aNewChild->Tag() == nsGkAtoms::_template ||
+        aNewChild->GetShadowRoot()) &&
        nsContentUtils::ContentIsHostIncludingDescendantOf(aParent,
                                                           aNewChild))) {
     return false;
@@ -2198,21 +2231,6 @@ nsINode::SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const
     if (elm) {                                                               \
       elm->SetEventHandler(nsGkAtoms::on##name_, EmptyString(), handler);    \
     }                                                                        \
-  }                                                                          \
-  NS_IMETHODIMP nsINode::GetOn##name_(JSContext *cx, JS::Value *vp) {        \
-    EventHandlerNonNull* h = GetOn##name_();                                 \
-    vp->setObjectOrNull(h ? h->Callable().get() : nullptr);                  \
-    return NS_OK;                                                            \
-  }                                                                          \
-  NS_IMETHODIMP nsINode::SetOn##name_(JSContext *cx, const JS::Value &v) {   \
-    nsRefPtr<EventHandlerNonNull> handler;                                   \
-    JSObject *callable;                                                      \
-    if (v.isObject() &&                                                      \
-        JS_ObjectIsCallable(cx, callable = &v.toObject())) {                 \
-      handler = new EventHandlerNonNull(callable);                           \
-    }                                                                        \
-    SetOn##name_(handler);                                                   \
-    return NS_OK;                                                            \
   }
 #define TOUCH_EVENT EVENT
 #define DOCUMENT_ONLY_EVENT EVENT
@@ -2291,8 +2309,7 @@ ParseSelectorList(nsINode* aNode,
                   const nsAString& aSelectorString,
                   nsCSSSelectorList** aSelectorList)
 {
-  NS_ENSURE_ARG(aNode);
-
+  MOZ_ASSERT(aNode);
   nsIDocument* doc = aNode->OwnerDoc();
   nsCSSParser parser(doc->CSSLoader());
 
@@ -2335,32 +2352,94 @@ AddScopeElements(TreeMatchContext& aMatchContext,
   }
 }
 
+namespace {
+struct SelectorMatchInfo {
+  nsCSSSelectorList* const mSelectorList;
+  TreeMatchContext& mMatchContext;
+};
+}
+
+// Given an id, find elements with that id under aRoot that match aMatchInfo if
+// any is provided.  If no SelectorMatchInfo is provided, just find the ones
+// with the given id.  aRoot must be in the document.
+template<bool onlyFirstMatch, class T>
+inline static void
+FindMatchingElementsWithId(const nsAString& aId, nsINode* aRoot,
+                           SelectorMatchInfo* aMatchInfo,
+                           T& aList)
+{
+  MOZ_ASSERT(aRoot->IsInDoc(),
+             "Don't call me if the root is not in the document");
+  MOZ_ASSERT(aRoot->IsElement() || aRoot->IsNodeOfType(nsINode::eDOCUMENT),
+             "The optimization below to check ContentIsDescendantOf only for "
+             "elements depends on aRoot being either an element or a "
+             "document if it's in the document.  Note that document fragments "
+             "can't be IsInDoc(), so should never show up here.");
+
+  const nsSmallVoidArray* elements = aRoot->OwnerDoc()->GetAllElementsForId(aId);
+
+  if (!elements) {
+    // Nothing to do; we're done
+    return;
+  }
+
+  // XXXbz: Should we fall back to the tree walk if aRoot is not the
+  // document and |elements| is long, for some value of "long"?
+  for (int32_t i = 0; i < elements->Count(); ++i) {
+    Element *element = static_cast<Element*>(elements->ElementAt(i));
+    if (!aRoot->IsElement() ||
+        (element != aRoot &&
+           nsContentUtils::ContentIsDescendantOf(element, aRoot))) {
+      // We have an element with the right id and it's a strict descendant
+      // of aRoot.  Make sure it really matches the selector.
+      if (!aMatchInfo ||
+          nsCSSRuleProcessor::SelectorListMatches(element,
+                                                  aMatchInfo->mMatchContext,
+                                                  aMatchInfo->mSelectorList)) {
+        aList.AppendElement(element);
+        if (onlyFirstMatch) {
+          return;
+        }
+      }
+    }
+  }
+}
+
 // Actually find elements matching aSelectorList (which must not be
 // null) and which are descendants of aRoot and put them in aList.  If
 // onlyFirstMatch, then stop once the first one is found.
-template<bool onlyFirstMatch, class T>
-inline static nsresult
+template<bool onlyFirstMatch, class Collector, class T>
+MOZ_ALWAYS_INLINE static nsresult
 FindMatchingElements(nsINode* aRoot, const nsAString& aSelector, T &aList)
 {
-
   nsIDocument* doc = aRoot->OwnerDoc();
   nsIDocument::SelectorCache& cache = doc->GetSelectorCache();
-  nsCSSSelectorList* selectorList = cache.GetList(aSelector);
+  nsCSSSelectorList* selectorList = nullptr;
+  bool haveCachedList = cache.GetList(aSelector, &selectorList);
 
-  if (!selectorList) {
-    nsresult rv = ParseSelectorList(aRoot, aSelector,
-                                    &selectorList);
+  if (!haveCachedList) {
+    nsresult rv = ParseSelectorList(aRoot, aSelector, &selectorList);
     if (NS_FAILED(rv)) {
-      delete selectorList;
+      MOZ_ASSERT(!selectorList);
+      MOZ_ASSERT(rv == NS_ERROR_DOM_SYNTAX_ERR,
+                 "Unexpected error, so cached version won't return it");
       // We hit this for syntax errors, which are quite common, so don't
       // use NS_ENSURE_SUCCESS.  (For example, jQuery has an extended set
       // of selectors, but it sees if we can parse them first.)
-      return rv;
+    } else if (!selectorList) {
+      // This is the "only pseudo-element selectors" case, which is
+      // not common, so just don't worry about caching it.  That way a
+      // null cached value can always indicate an invalid selector.
+      // Also don't try to do any matching, of course.
+      return NS_OK;
     }
 
-    NS_ENSURE_TRUE(selectorList, NS_OK);
-
     cache.CacheList(aSelector, selectorList);
+  }
+
+  if (!selectorList) {
+    // Invalid selector, since we've already handled the pseudo-element case.
+    return NS_ERROR_DOM_SYNTAX_ERR;
   }
 
   NS_ASSERTION(selectorList->mSelectors,
@@ -2386,35 +2465,13 @@ FindMatchingElements(nsINode* aRoot, const nsAString& aSelector, T &aList)
       !selectorList->mNext &&
       selectorList->mSelectors->mIDList) {
     nsIAtom* id = selectorList->mSelectors->mIDList->mAtom;
-    const nsSmallVoidArray* elements =
-      doc->GetAllElementsForId(nsDependentAtomString(id));
-
-    // XXXbz: Should we fall back to the tree walk if aRoot is not the
-    // document and |elements| is long, for some value of "long"?
-    if (elements) {
-      for (int32_t i = 0; i < elements->Count(); ++i) {
-        Element *element = static_cast<Element*>(elements->ElementAt(i));
-        if (!aRoot->IsElement() ||
-            (element != aRoot &&
-             nsContentUtils::ContentIsDescendantOf(element, aRoot))) {
-          // We have an element with the right id and it's a strict descendant
-          // of aRoot.  Make sure it really matches the selector.
-          if (nsCSSRuleProcessor::SelectorListMatches(element, matchingContext,
-                                                      selectorList)) {
-            aList.AppendElement(element);
-            if (onlyFirstMatch) {
-              return NS_OK;
-            }
-          }
-        }
-      }
-    }
-
-    // No elements with this id, or none of them are our descendants,
-    // or none of them match.  We're done here.
+    SelectorMatchInfo info = { selectorList, matchingContext };
+    FindMatchingElementsWithId<onlyFirstMatch, T>(nsDependentAtomString(id),
+                                                  aRoot, &info, aList);
     return NS_OK;
   }
 
+  Collector results;
   for (nsIContent* cur = aRoot->GetFirstChild();
        cur;
        cur = cur->GetNextNode(aRoot)) {
@@ -2422,10 +2479,19 @@ FindMatchingElements(nsINode* aRoot, const nsAString& aSelector, T &aList)
         nsCSSRuleProcessor::SelectorListMatches(cur->AsElement(),
                                                 matchingContext,
                                                 selectorList)) {
-      aList.AppendElement(cur->AsElement());
       if (onlyFirstMatch) {
+        aList.AppendElement(cur->AsElement());
         return NS_OK;
       }
+      results.AppendElement(cur->AsElement());
+    }
+  }
+
+  const uint32_t len = results.Length();
+  if (len) {
+    aList.SetCapacity(len);
+    for (uint32_t i = 0; i < len; ++i) {
+      aList.AppendElement(results.ElementAt(i));
     }
   }
 
@@ -2438,6 +2504,10 @@ struct ElementHolder {
     NS_ABORT_IF_FALSE(!mElement, "Should only get one element");
     mElement = aElement;
   }
+  void SetCapacity(uint32_t aCapacity) { MOZ_CRASH("Don't call me!"); }
+  uint32_t Length() { return 0; }
+  Element* ElementAt(uint32_t aIndex) { return nullptr; }
+
   Element* mElement;
 };
 
@@ -2445,7 +2515,7 @@ Element*
 nsINode::QuerySelector(const nsAString& aSelector, ErrorResult& aResult)
 {
   ElementHolder holder;
-  aResult = FindMatchingElements<true>(this, aSelector, holder);
+  aResult = FindMatchingElements<true, ElementHolder>(this, aSelector, holder);
 
   return holder.mElement;
 }
@@ -2455,7 +2525,10 @@ nsINode::QuerySelectorAll(const nsAString& aSelector, ErrorResult& aResult)
 {
   nsRefPtr<nsSimpleContentList> contentList = new nsSimpleContentList(this);
 
-  aResult = FindMatchingElements<false>(this, aSelector, *contentList);
+  aResult =
+    FindMatchingElements<false, nsAutoTArray<Element*, 128>>(this,
+                                                             aSelector,
+                                                             *contentList);
 
   return contentList.forget();
 }
@@ -2479,6 +2552,29 @@ nsINode::QuerySelectorAll(const nsAString& aSelector, nsIDOMNodeList **aReturn)
   ErrorResult rv;
   *aReturn = nsINode::QuerySelectorAll(aSelector, rv).get();
   return rv.ErrorCode();
+}
+
+Element*
+nsINode::GetElementById(const nsAString& aId)
+{
+  MOZ_ASSERT(IsElement() || IsNodeOfType(eDOCUMENT_FRAGMENT),
+             "Bogus this object for GetElementById call");
+  if (IsInDoc()) {
+    ElementHolder holder;
+    FindMatchingElementsWithId<true>(aId, this, nullptr, holder);
+    return holder.mElement;
+  }
+
+  for (nsIContent* kid = GetFirstChild(); kid; kid = kid->GetNextNode(this)) {
+    if (!kid->IsElement()) {
+      continue;
+    }
+    nsIAtom* id = kid->AsElement()->GetID();
+    if (id && id->Equals(aId)) {
+      return kid->AsElement();
+    }
+  }
+  return nullptr;
 }
 
 JSObject*
@@ -2531,6 +2627,17 @@ nsINode::CloneNode(bool aDeep, ErrorResult& aError)
                                       getter_AddRefs(result));
   return result.forget();
 }
+
+already_AddRefed<nsINode>
+nsINode::CloneNode(mozilla::ErrorResult& aError)
+{
+  if (HasChildNodes()) {
+    // Flag it as an error, not a warning, to make people actually notice.
+    OwnerDoc()->WarnOnceAbout(nsIDocument::eUnsafeCloneNode, true);
+  }
+  return CloneNode(true, aError);
+}
+
 
 nsDOMAttributeMap*
 nsINode::GetAttributes()

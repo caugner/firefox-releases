@@ -2321,7 +2321,7 @@ var gCSSProperties = {
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
 		other_values: [ "foo 1", "bar", "foo 3 bar baz 2", "\\32  1", "-\\32  1", "-c 1", "\\32 1", "-\\32 1", "\\2  1", "-\\2  1", "-c 1", "\\2 1", "-\\2 1", "-\\7f \\9e 1" ],
-		invalid_values: []
+		invalid_values: [ "none foo", "none foo 3", "foo none", "foo 3 none" ]
 	},
 	"counter-reset": {
 		domProp: "counterReset",
@@ -2329,7 +2329,7 @@ var gCSSProperties = {
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "none" ],
 		other_values: [ "foo 1", "bar", "foo 3 bar baz 2", "\\32  1", "-\\32  1", "-c 1", "\\32 1", "-\\32 1", "\\2  1", "-\\2  1", "-c 1", "\\2 1", "-\\2 1", "-\\7f \\9e 1" ],
-		invalid_values: []
+		invalid_values: [ "none foo", "none foo 3", "foo none", "foo 3 none" ]
 	},
 	"cursor": {
 		domProp: "cursor",
@@ -2356,6 +2356,8 @@ var gCSSProperties = {
 		prerequisites: { "float": "none", "position": "static" },
 		other_values: [
 			"block",
+			"flex",
+			"inline-flex",
 			"list-item",
 			"inline-block",
 			"table",
@@ -3694,6 +3696,232 @@ var gCSSProperties = {
 		other_values: [ "non-scaling-stroke" ],
 		invalid_values: []
 	},
+	"align-content": {
+		domProp: "alignContent",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "stretch" ],
+		other_values: [
+			"flex-start",
+			"flex-end",
+			"center",
+			"space-between",
+			"space-around"
+		],
+		invalid_values: [ "abc", "30px", "0", "auto" ]
+	},
+	"align-items": {
+		domProp: "alignItems",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "stretch" ],
+		other_values: [ "flex-start", "flex-end", "center", "baseline" ],
+		invalid_values: [ "space-between", "abc", "30px" ]
+	},
+	"align-self": {
+		domProp: "alignSelf",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		// (Assuming defaults on the parent, 'auto' will compute to 'stretch'.)
+		initial_values: [ "auto", "stretch" ],
+		other_values: [ "flex-start", "flex-end", "center", "baseline" ],
+		invalid_values: [ "space-between", "abc", "30px" ]
+	},
+	"flex": {
+		domProp: "flex",
+		inherited: false,
+		type: CSS_TYPE_TRUE_SHORTHAND,
+		subproperties: [
+			"flex-grow",
+			"flex-shrink",
+			"flex-basis"
+		],
+		initial_values: [ "0 1 auto", "auto 0 1", "0 auto", "auto 0" ],
+		other_values: [
+			"none",
+			"1",
+			"0",
+			"0 1",
+			"0.5",
+			"1.2 3.4",
+			"0 0 0",
+			"0 0 0px",
+			"0px 0 0",
+			"5px 0 0",
+			"2 auto",
+			"auto 4",
+			"auto 5.6 7.8",
+			"-moz-max-content",
+			"1 -moz-max-content",
+			"1 2 -moz-max-content",
+			"-moz-max-content 1",
+			"-moz-max-content 1 2",
+			"-0"
+		],
+		invalid_values: [
+			"1 2px 3",
+			"1 auto 3",
+			"1px 2 3px",
+			"1px 2 3 4px",
+			"-1",
+			"1 -1"
+		]
+	},
+	"flex-basis": {
+		domProp: "flexBasis",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ " auto" ],
+        // NOTE: This is cribbed directly from the "width" chunk, since this
+        // property takes the exact same values as width (albeit with
+        // different semantics on 'auto').
+        // XXXdholbert (Maybe these should get separated out into
+        // a reusable array defined at the top of this file?)
+		other_values: [ "15px", "3em", "15%", "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
+			// valid calc() values
+			"calc(-2px)",
+			"calc(2px)",
+			"calc(50%)",
+			"calc(50% + 2px)",
+			"calc( 50% + 2px)",
+			"calc(50% + 2px )",
+			"calc( 50% + 2px )",
+			"calc(50% - -2px)",
+			"calc(2px - -50%)",
+			"calc(3*25px)",
+			"calc(3 *25px)",
+			"calc(3 * 25px)",
+			"calc(3* 25px)",
+			"calc(25px*3)",
+			"calc(25px *3)",
+			"calc(25px* 3)",
+			"calc(25px * 3)",
+			"calc(3*25px + 50%)",
+			"calc(50% - 3em + 2px)",
+			"calc(50% - (3em + 2px))",
+			"calc((50% - 3em) + 2px)",
+			"calc(2em)",
+			"calc(50%)",
+			"calc(50px/2)",
+			"calc(50px/(2 - 1))"
+		],
+		invalid_values: [ "none", "-2px",
+			// invalid calc() values
+			"calc(50%+ 2px)",
+			"calc(50% +2px)",
+			"calc(50%+2px)",
+			"-moz-min()",
+			"calc(min())",
+			"-moz-max()",
+			"calc(max())",
+			"-moz-min(5px)",
+			"calc(min(5px))",
+			"-moz-max(5px)",
+			"calc(max(5px))",
+			"-moz-min(5px,2em)",
+			"calc(min(5px,2em))",
+			"-moz-max(5px,2em)",
+			"calc(max(5px,2em))",
+			"calc(50px/(2 - 2))",
+			// If we ever support division by values, which is
+			// complicated for the reasons described in
+			// http://lists.w3.org/Archives/Public/www-style/2010Jan/0007.html
+			// , we should support all 4 of these as described in
+			// http://lists.w3.org/Archives/Public/www-style/2009Dec/0296.html
+			"calc((3em / 100%) * 3em)",
+			"calc(3em / 100% * 3em)",
+			"calc(3em * (3em / 100%))",
+			"calc(3em * 3em / 100%)"
+		]
+	},
+	"flex-direction": {
+		domProp: "flexDirection",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "row" ],
+		other_values: [ "row-reverse", "column", "column-reverse" ],
+		invalid_values: [ "10px", "30%", "justify", "column wrap" ]
+	},
+	"flex-flow": {
+		domProp: "flexFlow",
+		inherited: false,
+		type: CSS_TYPE_TRUE_SHORTHAND,
+		subproperties: [
+			"flex-direction",
+			"flex-wrap"
+		],
+		initial_values: [ "row nowrap", "nowrap row", "row", "nowrap" ],
+		other_values: [
+			// only specifying one property:
+			"column",
+			"wrap",
+			"wrap-reverse",
+			// specifying both properties, 'flex-direction' first:
+			"row wrap",
+			"row wrap-reverse",
+			"column wrap",
+			"column wrap-reverse",
+			// specifying both properties, 'flex-wrap' first:
+			"wrap row",
+			"wrap column",
+			"wrap-reverse row",
+			"wrap-reverse column",
+		],
+		invalid_values: [
+			// specifying flex-direction twice (invalid):
+			"row column",
+			"row column nowrap",
+			"row nowrap column",
+			"nowrap row column",
+			// specifying flex-wrap twice (invalid):
+			"nowrap wrap-reverse",
+			"nowrap wrap-reverse row",
+			"nowrap row wrap-reverse",
+			"row nowrap wrap-reverse",
+			// Invalid data-type / invalid keyword type:
+			"1px", "5%", "justify", "none"
+		]
+	},
+	"flex-grow": {
+		domProp: "flexGrow",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "0" ],
+		other_values: [ "3", "1", "1.0", "2.5", "123" ],
+		invalid_values: [ "0px", "-5", "1%", "3em", "stretch", "auto" ]
+	},
+	"flex-shrink": {
+		domProp: "flexShrink",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "1" ],
+		other_values: [ "3", "0", "0.0", "2.5", "123" ],
+		invalid_values: [ "0px", "-5", "1%", "3em", "stretch", "auto" ]
+	},
+	"flex-wrap": {
+		domProp: "flexWrap",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "nowrap" ],
+		other_values: [ "wrap", "wrap-reverse" ],
+		invalid_values: [ "10px", "30%", "justify", "column wrap", "auto" ]
+	},
+	"order": {
+		domProp: "order",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "0" ],
+		other_values: [ "1", "99999", "-1", "-50" ],
+		invalid_values: [ "0px", "1.0", "1.", "1%", "0.2", "3em", "stretch" ]
+	},
+	"justify-content": {
+		domProp: "justifyContent",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "flex-start" ],
+		other_values: [ "flex-end", "center", "space-between", "space-around" ],
+		invalid_values: [ "baseline", "stretch", "30px", "5%" ]
+	},
 
 	// Aliases
 	"-moz-transform": {
@@ -4068,182 +4296,6 @@ function get_computed_value(cs, property)
 	return cs.getPropertyValue(property);
 }
 
-// Automatically add pref-controlled CSS properties & keywords
-// to gCSSProperties, if the flexbox pref is enabled.
-if (SpecialPowers.getBoolPref("layout.css.flexbox.enabled")) {
-	var flexProperties = {
-	"align-items": {
-		domProp: "alignItems",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "stretch" ],
-		other_values: [ "flex-start", "flex-end", "center", "baseline" ],
-		invalid_values: [ "space-between", "abc", "30px" ]
-	},
-	"align-self": {
-		domProp: "alignSelf",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		// (Assuming defaults on the parent, 'auto' will compute to 'stretch'.)
-		initial_values: [ "auto", "stretch" ],
-		other_values: [ "flex-start", "flex-end", "center", "baseline" ],
-		invalid_values: [ "space-between", "abc", "30px" ]
-	},
-	"flex": {
-		domProp: "flex",
-		inherited: false,
-		type: CSS_TYPE_TRUE_SHORTHAND,
-		subproperties: [
-			"flex-grow",
-			"flex-shrink",
-			"flex-basis"
-		],
-		initial_values: [ "0 1 auto", "auto 0 1", "0 auto", "auto 0" ],
-		other_values: [
-			"none",
-			"1",
-			"0",
-			"0 1",
-			"0.5",
-			"1.2 3.4",
-			"0 0 0",
-			"0 0 0px",
-			"0px 0 0",
-			"5px 0 0",
-			"2 auto",
-			"auto 4",
-			"auto 5.6 7.8",
-			"-moz-max-content",
-			"1 -moz-max-content",
-			"1 2 -moz-max-content",
-			"-moz-max-content 1",
-			"-moz-max-content 1 2",
-			"-0"
-		],
-		invalid_values: [
-			"1 2px 3",
-			"1 auto 3",
-			"1px 2 3px",
-			"1px 2 3 4px",
-			"-1",
-			"1 -1"
-		]
-	},
-	"flex-basis": {
-		domProp: "flexBasis",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		initial_values: [ " auto" ],
-        // NOTE: This is cribbed directly from the "width" chunk, since this
-        // property takes the exact same values as width (albeit with
-        // different semantics on 'auto').
-        // XXXdholbert (Maybe these should get separated out into
-        // a reusable array defined at the top of this file?)
-		other_values: [ "15px", "3em", "15%", "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
-			// valid calc() values
-			"calc(-2px)",
-			"calc(2px)",
-			"calc(50%)",
-			"calc(50% + 2px)",
-			"calc( 50% + 2px)",
-			"calc(50% + 2px )",
-			"calc( 50% + 2px )",
-			"calc(50% - -2px)",
-			"calc(2px - -50%)",
-			"calc(3*25px)",
-			"calc(3 *25px)",
-			"calc(3 * 25px)",
-			"calc(3* 25px)",
-			"calc(25px*3)",
-			"calc(25px *3)",
-			"calc(25px* 3)",
-			"calc(25px * 3)",
-			"calc(3*25px + 50%)",
-			"calc(50% - 3em + 2px)",
-			"calc(50% - (3em + 2px))",
-			"calc((50% - 3em) + 2px)",
-			"calc(2em)",
-			"calc(50%)",
-			"calc(50px/2)",
-			"calc(50px/(2 - 1))"
-		],
-		invalid_values: [ "none", "-2px",
-			// invalid calc() values
-			"calc(50%+ 2px)",
-			"calc(50% +2px)",
-			"calc(50%+2px)",
-			"-moz-min()",
-			"calc(min())",
-			"-moz-max()",
-			"calc(max())",
-			"-moz-min(5px)",
-			"calc(min(5px))",
-			"-moz-max(5px)",
-			"calc(max(5px))",
-			"-moz-min(5px,2em)",
-			"calc(min(5px,2em))",
-			"-moz-max(5px,2em)",
-			"calc(max(5px,2em))",
-			"calc(50px/(2 - 2))",
-			// If we ever support division by values, which is
-			// complicated for the reasons described in
-			// http://lists.w3.org/Archives/Public/www-style/2010Jan/0007.html
-			// , we should support all 4 of these as described in
-			// http://lists.w3.org/Archives/Public/www-style/2009Dec/0296.html
-			"calc((3em / 100%) * 3em)",
-			"calc(3em / 100% * 3em)",
-			"calc(3em * (3em / 100%))",
-			"calc(3em * 3em / 100%)"
-		]
-	},
-	"flex-direction": {
-		domProp: "flexDirection",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "row" ],
-		other_values: [ "row-reverse", "column", "column-reverse" ],
-		invalid_values: [ "10px", "30%", "justify", "column wrap" ]
-	},
-	"flex-grow": {
-		domProp: "flexGrow",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "0" ],
-		other_values: [ "3", "1", "1.0", "2.5", "123" ],
-		invalid_values: [ "0px", "-5", "1%", "3em", "stretch", "auto" ]
-	},
-	"flex-shrink": {
-		domProp: "flexShrink",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "1" ],
-		other_values: [ "3", "0", "0.0", "2.5", "123" ],
-		invalid_values: [ "0px", "-5", "1%", "3em", "stretch", "auto" ]
-	},
-	"order": {
-		domProp: "order",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "0" ],
-		other_values: [ "1", "99999", "-1", "-50" ],
-		invalid_values: [ "0px", "1.0", "1.", "1%", "0.2", "3em", "stretch" ]
-	},
-	"justify-content": {
-		domProp: "justifyContent",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "flex-start" ],
-		other_values: [ "flex-end", "center", "space-between", "space-around" ],
-		invalid_values: [ "baseline", "stretch", "30px", "5%" ]
-	}
-	};
-	for (var prop in flexProperties) {
-		gCSSProperties[prop] = flexProperties[prop];
-	}
-	gCSSProperties["display"].other_values.push("flex");
-	gCSSProperties["display"].other_values.push("inline-flex");
-}
-
 if (SpecialPowers.getBoolPref("layout.css.vertical-text.enabled")) {
 	var verticalTextProperties = {
 		"writing-mode": {
@@ -4323,14 +4375,15 @@ if (SpecialPowers.getBoolPref("layout.css.font-features.enabled")) {
 			inherited: true,
 			type: CSS_TYPE_LONGHAND,
 			initial_values: [ "normal" ],
-			other_values: [ "common-ligatures", "no-common-ligatures", "discretionary-ligatures", "no-discretionary-ligatures",
+			other_values: [ "none", "common-ligatures", "no-common-ligatures", "discretionary-ligatures", "no-discretionary-ligatures",
 			                "historical-ligatures", "no-historical-ligatures", "contextual", "no-contextual",
 			                "common-ligatures no-discretionary-ligatures", "contextual no-discretionary-ligatures",
 			                "historical-ligatures no-common-ligatures", "no-historical-ligatures discretionary-ligatures",
 			                "common-ligatures no-discretionary-ligatures historical-ligatures no-contextual" ],
 			invalid_values: [ "common-ligatures normal", "common-ligatures no-common-ligatures", "common-ligatures common-ligatures",
 			                  "no-historical-ligatures historical-ligatures", "no-discretionary-ligatures discretionary-ligatures",
-			                  "no-contextual contextual", "common-ligatures no-discretionary-ligatures no-common-ligatures" ]
+			                  "no-contextual contextual", "common-ligatures no-discretionary-ligatures no-common-ligatures",
+			                  "common-ligatures none", "no-discretionary-ligatures none", "none common-ligatures" ]
 		},
 		"font-variant-numeric": {
 			domProp: "fontVariantNumeric",
@@ -4760,6 +4813,18 @@ if (SpecialPowers.getBoolPref("layout.css.mix-blend-mode.enabled")) {
             "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"],
         invalid_values: []
     };
+}
+
+if (SpecialPowers.getBoolPref("layout.css.background-blend-mode.enabled")) {
+	gCSSProperties["background-blend-mode"] = {
+		domProp: "backgroundBlendMode",
+		inherited: false,
+		type: CSS_TYPE_LONGHAND,
+		initial_values: [ "normal" ],
+		other_values: [ "multiply", "screen", "overlay", "darken", "lighten", "color-dodge", "color-burn",
+			"hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity" ],
+		invalid_values: []
+	};
 }
 
 if (SpecialPowers.getBoolPref("layout.css.unset-value.enabled")) {

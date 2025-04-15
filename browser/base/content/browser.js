@@ -9,13 +9,15 @@ let Cu = Components.utils;
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/NotificationDB.jsm");
 Cu.import("resource:///modules/RecentWindow.jsm");
+Cu.import("resource://gre/modules/WindowsPrefSync.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "Task",
                                   "resource://gre/modules/Task.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "CharsetMenu",
+                                  "resource://gre/modules/CharsetMenu.jsm");
 
 const nsIWebNavigation = Ci.nsIWebNavigation;
 
-var gCharsetMenu = null;
 var gLastBrowserCharset = null;
 var gPrevCharset = null;
 var gProxyFavIcon = null;
@@ -109,10 +111,10 @@ XPCOMUtils.defineLazyGetter(this, "DeveloperToolbar", function() {
   return new tmp.DeveloperToolbar(window, document.getElementById("developer-toolbar"));
 });
 
-XPCOMUtils.defineLazyGetter(this, "BrowserDebuggerProcess", function() {
+XPCOMUtils.defineLazyGetter(this, "BrowserToolboxProcess", function() {
   let tmp = {};
-  Cu.import("resource:///modules/devtools/DebuggerProcess.jsm", tmp);
-  return tmp.BrowserDebuggerProcess;
+  Cu.import("resource:///modules/devtools/ToolboxProcess.jsm", tmp);
+  return tmp.BrowserToolboxProcess;
 });
 
 XPCOMUtils.defineLazyModuleGetter(this, "Social",
@@ -768,7 +770,6 @@ var gBrowserInit = {
     window.addEventListener("AppCommand", HandleAppCommandEvent, true);
 
     messageManager.loadFrameScript("chrome://browser/content/content.js", true);
-    messageManager.loadFrameScript("chrome://browser/content/content-sessionStore.js", true);
 
     // initialize observers and listeners
     // and give C++ access to gBrowser
@@ -994,8 +995,13 @@ var gBrowserInit = {
       }
       // Note: loadOneOrMoreURIs *must not* be called if window.arguments.length >= 3.
       // Such callers expect that window.arguments[0] is handled as a single URI.
-      else
+      else {
+        if (uriToLoad == "about:newtab" &&
+            Services.prefs.getBoolPref("browser.newtabpage.enabled")) {
+          Services.telemetry.getHistogramById("NEWTAB_PAGE_SHOWN").add(true);
+        }
         loadOneOrMoreURIs(uriToLoad);
+      }
     }
 
 #ifdef MOZ_SAFE_BROWSING
@@ -1088,24 +1094,13 @@ var gBrowserInit = {
     // auto-resume downloads begin (such as after crashing or quitting with
     // active downloads) and speeds up the first-load of the download manager UI.
     // If the user manually opens the download manager before the timeout, the
-    // downloads will start right away, and getting the service again won't hurt.
+    // downloads will start right away, and initializing again won't hurt.
     setTimeout(function() {
       try {
-        let DownloadsCommon =
-          Cu.import("resource:///modules/DownloadsCommon.jsm", {}).DownloadsCommon;
-        if (DownloadsCommon.useJSTransfer) {
-          // Open the data link without initalizing nsIDownloadManager.
-          DownloadsCommon.initializeAllDataLinks();
-          let DownloadsTaskbar =
-            Cu.import("resource:///modules/DownloadsTaskbar.jsm", {}).DownloadsTaskbar;
-          DownloadsTaskbar.registerIndicator(window);
-        } else {
-          // Initalizing nsIDownloadManager will trigger the data link.
-          Services.downloads;
-          let DownloadTaskbarProgress =
-            Cu.import("resource://gre/modules/DownloadTaskbarProgress.jsm", {}).DownloadTaskbarProgress;
-          DownloadTaskbarProgress.onBrowserWindowLoad(window);
-        }
+        Cu.import("resource:///modules/DownloadsCommon.jsm", {})
+          .DownloadsCommon.initializeAllDataLinks();
+        Cu.import("resource:///modules/DownloadsTaskbar.jsm", {})
+          .DownloadsTaskbar.registerIndicator(window);
       } catch (ex) {
         Cu.reportError(ex);
       }
@@ -1200,14 +1195,10 @@ var gBrowserInit = {
       Cu.reportError("Could not end startup crash tracking: " + ex);
     }
 
-#ifdef XP_WIN
-#ifdef MOZ_METRO
-    gMetroPrefs.prefDomain.forEach(function(prefName) {
-      gMetroPrefs.pushDesktopControlledPrefToMetro(prefName);
-      Services.prefs.addObserver(prefName, gMetroPrefs, false);
-    }, this);
-#endif
-#endif
+    if (typeof WindowsPrefSync !== 'undefined') {
+      // Pulls in Metro controlled prefs and pushes out Desktop controlled prefs
+      WindowsPrefSync.init();
+    }
 
     if (gMultiProcessBrowser) {
       // Bug 862519 - Backspace doesn't work in electrolysis builds.
@@ -1330,13 +1321,9 @@ var gBrowserInit = {
         Cu.reportError(ex);
       }
 
-#ifdef XP_WIN
-#ifdef MOZ_METRO
-      gMetroPrefs.prefDomain.forEach(function(prefName) {
-        Services.prefs.removeObserver(prefName, gMetroPrefs);
-      });
-#endif
-#endif
+      if (typeof WindowsPrefSync !== 'undefined') {
+        WindowsPrefSync.uninit();
+      }
 
       BrowserOffline.uninit();
       OfflineApps.uninit();
@@ -2520,6 +2507,77 @@ function getMeOutOfHere() {
 function BrowserFullScreen()
 {
   window.fullScreen = !window.fullScreen;
+}
+
+function _checkDefaultAndSwitchToMetro() {
+#ifdef HAVE_SHELL_SERVICE
+#ifdef XP_WIN
+#ifdef MOZ_METRO
+  let shell = Components.classes["@mozilla.org/browser/shell-service;1"].
+    getService(Components.interfaces.nsIShellService);
+  let isDefault = shell.isDefaultBrowser(false, false);
+
+  if (isDefault) {
+    let appStartup = Components.classes["@mozilla.org/toolkit/app-startup;1"].
+      getService(Components.interfaces.nsIAppStartup);
+
+    Services.prefs.setBoolPref("browser.sessionstore.resume_session_once", true);
+
+    let cancelQuit = Cc["@mozilla.org/supports-PRBool;1"]
+                     .createInstance(Ci.nsISupportsPRBool);
+    Services.obs.notifyObservers(cancelQuit, "quit-application-requested", "restart");
+
+    if (!cancelQuit.data) {
+      appStartup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit |
+                      Components.interfaces.nsIAppStartup.eRestartTouchEnvironment);
+    }
+    return true;
+  }
+  return false;
+#endif
+#endif
+#endif
+}
+
+function SwitchToMetro() {
+#ifdef HAVE_SHELL_SERVICE
+#ifdef XP_WIN
+#ifdef MOZ_METRO
+  if (this._checkDefaultAndSwitchToMetro()) {
+    return;
+  }
+
+  let shell = Components.classes["@mozilla.org/browser/shell-service;1"].
+    getService(Components.interfaces.nsIShellService);
+
+  shell.setDefaultBrowser(false, false);
+
+  let intervalID = window.setInterval(this._checkDefaultAndSwitchToMetro, 1000);
+  window.setTimeout(function() { window.clearInterval(intervalID); }, 10000);
+#endif
+#endif
+#endif
+}
+
+function isInWin8() {
+  let sysInfo = Services.sysinfo;
+  let osName = sysInfo.getProperty("name");
+  let version = sysInfo.getProperty("version");
+
+  // Windows 8 is version >= 6.2
+  return osName == "Windows_NT" && version >= 6.2;
+}
+
+function updateSwitchToMetroVisibility() {
+#ifdef HAVE_SHELL_SERVICE
+#ifdef XP_WIN
+#ifdef MOZ_METRO
+  if (PrivateBrowsingUtils.isWindowPrivate(window) || !isInWin8()) {
+    document.getElementById("switch-to-metro").hidden = true;
+  }
+#endif
+#endif
+#endif
 }
 
 function onFullScreen(event) {
@@ -4782,60 +4840,6 @@ function fireSidebarFocusedEvent() {
   sidebar.contentWindow.dispatchEvent(event);
 }
 
-#ifdef XP_WIN
-#ifdef MOZ_METRO
-/**
- * Some prefs that have consequences in both Metro and Desktop such as
- * app-update prefs, are automatically pushed from Desktop here for use
- * in Metro.
- */
-var gMetroPrefs = {
-  prefDomain: ["app.update.auto", "app.update.enabled",
-               "app.update.service.enabled",
-               "app.update.metro.enabled"],
-  observe: function (aSubject, aTopic, aPrefName)
-  {
-    if (aTopic != "nsPref:changed")
-      return;
-
-    this.pushDesktopControlledPrefToMetro(aPrefName);
-  },
-
-  /**
-   * Writes the pref to HKCU in the registry and adds a pref-observer to keep
-   * the registry in sync with changes to the value.
-   */
-  pushDesktopControlledPrefToMetro: function(aPrefName) {
-    let registry = Cc["@mozilla.org/windows-registry-key;1"].
-                    createInstance(Ci.nsIWindowsRegKey);
-    try {
-      var prefType = Services.prefs.getPrefType(aPrefName);
-      let prefFunc;
-      if (prefType == Components.interfaces.nsIPrefBranch.PREF_INT)
-        prefFunc = "getIntPref";
-      else if (prefType == Components.interfaces.nsIPrefBranch.PREF_BOOL)
-        prefFunc = "getBoolPref";
-      else if (prefType == Components.interfaces.nsIPrefBranch.PREF_STRING)
-        prefFunc = "getCharPref";
-      else
-        throw "Unsupported pref type";
-
-      let prefValue = Services.prefs[prefFunc](aPrefName);
-      registry.create(Ci.nsIWindowsRegKey.ROOT_KEY_CURRENT_USER,
-                    "Software\\Mozilla\\Firefox\\Metro\\Prefs\\" + prefType,
-                    Ci.nsIWindowsRegKey.ACCESS_WRITE);
-      // Always write as string, but the registry subfolder will determine
-      // how Metro interprets that string value.
-      registry.writeStringValue(aPrefName, prefValue);
-    } catch (ex) {
-      Components.utils.reportError("Couldn't push pref " + aPrefName + ": " + ex);
-    } finally {
-      registry.close();
-    }
-  }
-};
-#endif
-#endif
 
 var gHomeButton = {
   prefDomain: "browser.startup.homepage",
@@ -5135,9 +5139,26 @@ function handleLinkClick(event, href, linkNode) {
     return true;
   }
 
+  var referrerURI = doc.documentURIObject;
+  // if the mixedContentChannel is present and the referring URI passes
+  // a same origin check with the target URI, we can preserve the users
+  // decision of disabling MCB on a page for it's child tabs.
+  var persistDisableMCBInChildTab = false;
+
+  if (where == "tab" && gBrowser.docShell.mixedContentChannel) {
+    const sm = Services.scriptSecurityManager;
+    try {
+      var targetURI = makeURI(href);
+      sm.checkSameOriginURI(referrerURI, targetURI, false);
+      persistDisableMCBInChildTab = true;
+    }
+    catch (e) { }
+  }
+
   urlSecurityCheck(href, doc.nodePrincipal);
-  openLinkIn(href, where, { referrerURI: doc.documentURIObject,
-                            charset: doc.characterSet });
+  openLinkIn(href, where, { referrerURI: referrerURI,
+                            charset: doc.characterSet,
+                            disableMCB: persistDisableMCBInChildTab});
   event.preventDefault();
   return true;
 }
@@ -5213,7 +5234,7 @@ function MultiplexHandler(event)
         SelectDetector(event, false);
     } else if (name == 'charsetGroup') {
         var charset = node.getAttribute('id');
-        charset = charset.substring('charset.'.length, charset.length)
+        charset = charset.substring(charset.indexOf('charset.') + 'charset.'.length);
         BrowserSetForcedCharacterSet(charset);
     } else if (name == 'charsetCustomize') {
         //do nothing - please remove this else statement, once the charset prefs moves to the pref window
@@ -5226,7 +5247,7 @@ function MultiplexHandler(event)
 function SelectDetector(event, doReload)
 {
     var uri =  event.target.getAttribute("id");
-    var prefvalue = uri.substring('chardet.'.length, uri.length);
+    var prefvalue = uri.substring(uri.indexOf('chardet.') + 'chardet.'.length);
     if ("off" == prefvalue) { // "off" is special value to turn off the detectors
         prefvalue = "";
     }
@@ -5303,17 +5324,10 @@ function UpdateMenus(event) {
   UpdateCharsetDetector(event.target);
 }
 
-function CreateMenu(node) {
-  Services.obs.notifyObservers(null, "charsetmenu-selected", node);
-}
-
 function charsetLoadListener() {
   var charset = window.content.document.characterSet;
 
   if (charset.length > 0 && (charset != gLastBrowserCharset)) {
-    if (!gCharsetMenu)
-      gCharsetMenu = Cc['@mozilla.org/rdf/datasource;1?name=charset-menu'].getService(Ci.nsICurrentCharsetListener);
-    gCharsetMenu.SetCurrentCharset(charset);
     gPrevCharset = gLastBrowserCharset;
     gLastBrowserCharset = charset;
   }
@@ -6485,14 +6499,21 @@ var gIdentityHandler = {
     let nsIWebProgressListener = Ci.nsIWebProgressListener;
 
     // For some URIs like data: we can't get a host and so can't do
-    // anything useful here. Chrome URIs however get special treatment.
+    // anything useful here.
     let unknown = false;
     try {
       uri.host;
     } catch (e) { unknown = true; }
 
-    if ((uri.scheme == "chrome" || uri.scheme == "about") &&
-        uri.spec !== "about:blank") {
+    // Chrome URIs however get special treatment. Some chrome URIs are
+    // whitelisted to provide a positive security signal to the user.
+    let chromeWhitelist = ["about:addons", "about:app-manager", "about:config",
+                           "about:crashes", "about:healthreport", "about:home",
+                           "about:newaddon", "about:permissions", "about:preferences",
+                           "about:privatebrowsing", "about:sessionstore",
+                           "about:support", "about:welcomeback"];
+    let lowercaseSpec = uri.spec.toLowerCase();
+    if (chromeWhitelist.some(function(whitelistedSpec) lowercaseSpec.startsWith(whitelistedSpec))) {
       this.setMode(this.IDENTITY_MODE_CHROMEUI);
     } else if (unknown) {
       this.setMode(this.IDENTITY_MODE_UNKNOWN);

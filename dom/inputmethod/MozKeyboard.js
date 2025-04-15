@@ -42,8 +42,9 @@ MozKeyboard.prototype = {
 
   init: function mozKeyboardInit(win) {
     let principal = win.document.nodePrincipal;
-    let perm = Services.perms
-               .testExactPermissionFromPrincipal(principal, "keyboard");
+    // Limited the deprecated mozKeyboard API to certified apps only
+    let perm = Services.perms.testExactPermissionFromPrincipal(principal,
+                                                               "input-manage");
     if (perm != Ci.nsIPermissionManager.ALLOW_ACTION) {
       dump("No permission to use the keyboard API for " +
            principal.origin + "\n");
@@ -672,7 +673,7 @@ MozInputContext.prototype = {
   },
 
   set onsurroundingtextchange(handler) {
-    this.__DOM_IMPL__.setEventHandler("onsurroundingtextchange");
+    this.__DOM_IMPL__.setEventHandler("onsurroundingtextchange", handler);
   },
 
   get onselectionchange() {
@@ -680,7 +681,7 @@ MozInputContext.prototype = {
   },
 
   set onselectionchange(handler) {
-    this.__DOM_IMPL__.setEventHandler("onselectionchange");
+    this.__DOM_IMPL__.setEventHandler("onselectionchange", handler);
   },
 
   replaceSurroundingText: function ic_replaceSurrText(text, offset, length) {

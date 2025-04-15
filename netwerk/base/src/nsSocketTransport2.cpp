@@ -972,7 +972,10 @@ nsSocketTransport::SendStatus(nsresult status)
 nsresult
 nsSocketTransport::ResolveHost()
 {
-    SOCKET_LOG(("nsSocketTransport::ResolveHost [this=%p]\n", this));
+    SOCKET_LOG(("nsSocketTransport::ResolveHost [this=%p %s:%d%s]\n",
+                this, SocketHost().get(), SocketPort(),
+                mConnectionFlags & nsSocketTransport::BYPASS_CACHE ?
+                " bypass cache" : ""));
 
     nsresult rv;
 
@@ -1159,6 +1162,28 @@ nsSocketTransport::InitiateSocket()
         IsLocal(&isLocal);
         if (!isLocal)
             return NS_ERROR_OFFLINE;
+    }
+
+    // Hosts/Proxy Hosts that are Local IP Literals should not be speculatively
+    // connected - Bug 853423.
+    if (mConnectionFlags & nsISocketTransport::DISABLE_RFC1918 &&
+        IsIPAddrLocal(&mNetAddr)) {
+#ifdef PR_LOGGING
+        if (SOCKET_LOG_ENABLED()) {
+            nsAutoCString netAddrCString;
+            netAddrCString.SetCapacity(kIPv6CStrBufSize);
+            if (!NetAddrToString(&mNetAddr,
+                                 netAddrCString.BeginWriting(),
+                                 kIPv6CStrBufSize))
+                netAddrCString = NS_LITERAL_CSTRING("<IP-to-string failed>");
+            SOCKET_LOG(("nsSocketTransport::InitiateSocket skipping "
+                        "speculative connection for host [%s:%d] proxy "
+                        "[%s:%d] with Local IP address [%s]",
+                        mHost.get(), mPort, mProxyHost.get(), mProxyPort,
+                        netAddrCString.get()));
+        }
+#endif
+        return NS_ERROR_CONNECTION_REFUSED;
     }
 
     //
@@ -1615,8 +1640,9 @@ nsSocketTransport::OnSocketEvent(uint32_t type, nsresult status, nsISupports *pa
 #endif
                 mCondition = ResolveHost();
 
-        } else
+        } else {
             SOCKET_LOG(("  ignoring redundant event\n"));
+        }
         break;
 
     case MSG_DNS_LOOKUP_COMPLETE:
@@ -1782,8 +1808,14 @@ nsSocketTransport::OnSocketDetached(PRFileDesc *fd)
 
     // if we didn't initiate this detach, then be sure to pass an error
     // condition up to our consumers.  (e.g., STS is shutting down.)
-    if (NS_SUCCEEDED(mCondition))
-        mCondition = NS_ERROR_ABORT;
+    if (NS_SUCCEEDED(mCondition)) {
+        if (gIOService->IsOffline()) {
+          mCondition = NS_ERROR_OFFLINE;
+        }
+        else {
+          mCondition = NS_ERROR_ABORT;
+        }
+    }
 
     if (RecoverFromError())
         mCondition = NS_OK;

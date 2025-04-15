@@ -122,6 +122,12 @@ public:
     return resultMatrix;
   }
 
+  Matrix& operator*=(const Matrix &aMatrix)
+  {
+    Matrix resultMatrix = *this * aMatrix;
+    return *this = resultMatrix;
+  }
+
   /* Returns true if the other matrix is fuzzy-equal to this matrix.
    * Note that this isn't a cheap comparison!
    */
@@ -159,7 +165,27 @@ public:
            _31 == 0.0f && _32 == 0.0f;
   }
 
+  /* Returns true if the matrix is singular.
+   */
+  bool IsSingular() const
+  {
+    return Determinant() == 0;
+  }
+
   GFX2D_API void NudgeToIntegers();
+
+  bool IsTranslation() const
+  {
+    return FuzzyEqual(_11, 1.0f) && FuzzyEqual(_12, 0.0f) &&
+           FuzzyEqual(_21, 0.0f) && FuzzyEqual(_22, 1.0f);
+  }
+
+  bool IsIntegerTranslation() const
+  {
+    return IsTranslation() &&
+           FuzzyEqual(_31, floorf(_31 + 0.5f)) &&
+           FuzzyEqual(_32, floorf(_32 + 0.5f));
+  }
 
 private:
   static bool FuzzyEqual(Float aV1, Float aV2) {
@@ -204,6 +230,11 @@ public:
     return Matrix(_11, _12, _21, _22, _41, _42);
   }
 
+  bool Is2DIntegerTranslation() const
+  {
+    return Is2D() && As2D().IsIntegerTranslation();
+  }
+
   // Apply a scale to this matrix. This scale will be applied -before- the
   // existing transformation of the matrix.
   Matrix4x4 &Scale(Float aX, Float aY, Float aZ)
@@ -220,6 +251,34 @@ public:
 
     return *this;
   }
+};
+
+class Matrix5x4
+{
+public:
+  Matrix5x4()
+    : _11(1.0f), _12(0), _13(0), _14(0)
+    , _21(0), _22(1.0f), _23(0), _24(0)
+    , _31(0), _32(0), _33(1.0f), _34(0)
+    , _41(0), _42(0), _43(0), _44(1.0f)
+    , _51(0), _52(0), _53(0), _54(0)
+  {}
+  Matrix5x4(Float a11, Float a12, Float a13, Float a14,
+         Float a21, Float a22, Float a23, Float a24,
+         Float a31, Float a32, Float a33, Float a34,
+         Float a41, Float a42, Float a43, Float a44,
+         Float a51, Float a52, Float a53, Float a54)
+    : _11(a11), _12(a12), _13(a13), _14(a14)
+    , _21(a21), _22(a22), _23(a23), _24(a24)
+    , _31(a31), _32(a32), _33(a33), _34(a34)
+    , _41(a41), _42(a42), _43(a43), _44(a44)
+    , _51(a51), _52(a52), _53(a53), _54(a54)
+  {}
+  Float _11, _12, _13, _14;
+  Float _21, _22, _23, _24;
+  Float _31, _32, _33, _34;
+  Float _41, _42, _43, _44;
+  Float _51, _52, _53, _54;
 };
 
 }

@@ -124,11 +124,6 @@ public:
 
     EnableFMRadio(info);
 
-    nsCOMPtr<nsIAudioManager> audioManager =
-      do_GetService(NS_AUDIOMANAGER_CONTRACTID);
-    audioManager->SetFmRadioAudioEnabled(true);
-
-    // TODO apply path from bug 862899: AudioChannelAgent per process
     return NS_OK;
   }
 
@@ -209,11 +204,7 @@ public:
     // Fix Bug 796733. DisableFMRadio should be called before
     // SetFmRadioAudioEnabled to prevent the annoying beep sound.
     DisableFMRadio();
-
-    nsCOMPtr<nsIAudioManager> audioManager =
-      do_GetService(NS_AUDIOMANAGER_CONTRACTID);
-
-    audioManager->SetFmRadioAudioEnabled(false);
+    IFMRadioService::Singleton()->EnableAudio(false);
 
     return NS_OK;
   }
@@ -296,6 +287,24 @@ FMRadioService::RemoveObserver(FMRadioEventObserver* aObserver)
     if (IsFMRadioOn()) {
       NS_DispatchToMainThread(new DisableRunnable());
     }
+  }
+}
+
+void
+FMRadioService::EnableAudio(bool aAudioEnabled)
+{
+  MOZ_ASSERT(NS_IsMainThread(), "Wrong thread!");
+
+  nsCOMPtr<nsIAudioManager> audioManager =
+    do_GetService("@mozilla.org/telephony/audiomanager;1");
+  if (!audioManager) {
+    return;
+  }
+
+  bool audioEnabled;
+  audioManager->GetFmRadioAudioEnabled(&audioEnabled);
+  if (audioEnabled != aAudioEnabled) {
+    audioManager->SetFmRadioAudioEnabled(aAudioEnabled);
   }
 }
 
@@ -725,6 +734,12 @@ FMRadioService::Notify(const FMRadioOperationInformation& aInfo)
       // To make sure the FM app will get the right frequency after the FM
       // radio is enabled, we have to set the frequency first.
       SetFMRadioFrequency(mPendingFrequencyInKHz);
+
+      // Bug 949855: enable audio after the FM radio HW is enabled, to make sure
+      // 'hw.fm.isAnalog' could be detected as |true| during first time launch.
+      // This case is for audio output on analog path, i.e. 'ro.moz.fm.noAnalog'
+      // is not |true|.
+      EnableAudio(true);
 
       // Update the current frequency without sending the`FrequencyChanged`
       // event, to make sure the FM app will get the right frequency when the

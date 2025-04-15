@@ -7,19 +7,21 @@
  %toolboxDTD;
 ]>
 <?xml-stylesheet href="chrome://browser/skin/" type="text/css"?>
-<?xml-stylesheet rel="stylesheet" href="chrome://browser/content/devtools/framework/toolbox.css" type="text/css"?>
-<?xml-stylesheet rel="stylesheet" href="chrome://browser/skin/devtools/toolbox.css" type="text/css"?>
+<?xml-stylesheet rel="stylesheet" href="chrome://browser/content/devtools/framework/options-panel.css" type="text/css"?>
 
 <window xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
+
+  <script type="application/javascript;version=1.8"
+          src="chrome://browser/content/devtools/theme-switching.js"/>
   <hbox id="options-panel-container" flex="1">
-    <hbox id="options-panel" flex="1">
+    <hbox id="options-panel" class="theme-body" flex="1">
       <vbox id="tools-box" class="options-vertical-pane" flex="1">
         <label value="&options.selectDefaultTools.label;"/>
         <vbox id="default-tools-box" class="options-groupbox" tabindex="0"/>
         <label value="&options.selectAdditionalTools.label;"/>
         <vbox id="additional-tools-box" class="options-groupbox"/>
         <label id="tools-not-supported-label"
-               class="options-citation-label"
+               class="options-citation-label theme-comment"
                value="&options.toolNotSupported.label;"/>
       </vbox>
       <vbox class="options-vertical-pane" flex="1">
@@ -54,6 +56,10 @@
           <checkbox label="&options.enablePersistentLogging.label;"
                     tooltiptext="&options.enablePersistentLogging.tooltip;"
                     data-pref="devtools.webconsole.persistlog"/>
+          <checkbox id="webconsole-timestamp-messages"
+                    label="&options.timestampMessages.label;"
+                    tooltiptext="&options.timestampMessages.tooltip;"
+                    data-pref="devtools.webconsole.timestampMessages"/>
         </vbox>
         <label value="&options.profiler.label;"/>
         <vbox id="profiler-options" class="options-groupbox">
@@ -67,7 +73,7 @@
             <checkbox id="devtools-disable-javascript"
                       label="&options.disableJavaScript.label2;"
                       tooltiptext="&options.disableJavaScript.tooltip;"/>
-            <label class="options-citation-label"
+            <label class="options-citation-label theme-comment"
                    value="(&options.context.triggersPageRefresh2;)"/>
           </hbox>
           <hbox class="hidden-labels-box">

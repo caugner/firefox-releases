@@ -106,7 +106,8 @@ XPIDL_SOURCES += [
     'nsITimedChannel.idl',
     'nsITraceableChannel.idl',
     'nsITransport.idl',
-    'nsIUDPServerSocket.idl',
+    'nsIUDPSocket.idl',
+    'nsIUDPSocketFilter.idl',
     'nsIUnicharStreamLoader.idl',
     'nsIUploadChannel.idl',
     'nsIUploadChannel2.idl',
@@ -125,7 +126,7 @@ if CONFIG['MOZ_TOOLKIT_SEARCH']:
         'nsIBrowserSearchService.idl',
     ]
 
-MODULE = 'necko'
+XPIDL_MODULE = 'necko'
 
 EXPORTS += [
     'netCore.h',

@@ -26,9 +26,6 @@ if CONFIG['MOZ_WEBM']:
 if CONFIG['MOZ_GSTREAMER']:
     PARALLEL_DIRS += ['gstreamer']
 
-if CONFIG['MOZ_DASH']:
-    PARALLEL_DIRS += ['dash']
-
 if CONFIG['MOZ_DIRECTSHOW']:
     PARALLEL_DIRS += ['directshow']
 
@@ -37,6 +34,9 @@ if CONFIG['MOZ_MEDIA_PLUGINS']:
 
 if CONFIG['MOZ_WMF']:
     PARALLEL_DIRS += ['wmf']
+
+if CONFIG['MOZ_FMP4']:
+    PARALLEL_DIRS += ['fmp4']
 
 if CONFIG['MOZ_APPLEMEDIA']:
     PARALLEL_DIRS += ['apple']
@@ -50,8 +50,6 @@ if CONFIG['MOZ_OMX_DECODER']:
 PARALLEL_DIRS += ['webspeech']
 
 TEST_DIRS += ['test']
-
-MODULE = 'content'
 
 EXPORTS += [
     'AbstractMediaDecoder.h',
@@ -106,7 +104,7 @@ EXPORTS.mozilla.dom += [
     'VideoStreamTrack.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'AudioAvailableEventManager.cpp',
     'AudioChannelFormat.cpp',
     'AudioNodeEngine.cpp',
@@ -116,17 +114,16 @@ SOURCES += [
     'AudioStream.cpp',
     'AudioStreamTrack.cpp',
     'BufferDecoder.cpp',
-    'DecoderTraits.cpp',
     'DOMMediaStream.cpp',
     'EncodedBufferCache.cpp',
     'FileBlockCache.cpp',
-    'Latency.cpp',
     'MediaCache.cpp',
     'MediaDecoder.cpp',
     'MediaDecoderReader.cpp',
     'MediaDecoderStateMachine.cpp',
     'MediaRecorder.cpp',
     'MediaResource.cpp',
+    'MediaShutdownManager.cpp',
     'MediaStreamGraph.cpp',
     'MediaStreamTrack.cpp',
     'MP3FrameParser.cpp',
@@ -146,6 +143,13 @@ SOURCES += [
     'WebVTTListener.cpp',
 ]
 
+# DecoderTraits.cpp needs to be built separately because of Mac OS X headers.
+# Latency.cpp needs to be built separately because it forces NSPR logging.
+SOURCES += [
+    'DecoderTraits.cpp',
+    'Latency.cpp',
+]
+
 FAIL_ON_WARNINGS = True
 
 if CONFIG['CPU_ARCH'] == 'arm' and CONFIG['BUILD_ARM_NEON']:
@@ -153,11 +157,24 @@ if CONFIG['CPU_ARCH'] == 'arm' and CONFIG['BUILD_ARM_NEON']:
         'AudioNodeEngineNEON.cpp',
     ]
 
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
 
-LIBRARY_NAME = 'gkconmedia_s'
-
 include('/ipc/chromium/chromium-config.mozbuild')
+
+FINAL_LIBRARY = 'gklayout'
+LOCAL_INCLUDES += [
+    '/content/base/src',
+    '/layout/generic',
+    '/layout/xul',
+]
+
+if CONFIG['MOZ_DIRECTSHOW']:
+    LOCAL_INCLUDES += [
+        '/media/webrtc/trunk/webrtc/modules/video_capture/windows',
+    ]
+
+DEFINES['MOZILLA_INTERNAL_API'] = True
+
+if CONFIG['MOZ_OMX_DECODER']:
+    DEFINES['MOZ_OMX_DECODER'] = True
 

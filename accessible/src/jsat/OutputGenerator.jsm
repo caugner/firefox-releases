@@ -18,10 +18,6 @@ const NAME_FROM_SUBTREE_RULE = 0x10;
 const OUTPUT_DESC_FIRST = 0;
 const OUTPUT_DESC_LAST = 1;
 
-const ROLE_LISTITEM = Ci.nsIAccessibleRole.ROLE_LISTITEM;
-const ROLE_STATICTEXT = Ci.nsIAccessibleRole.ROLE_STATICTEXT;
-const ROLE_LINK = Ci.nsIAccessibleRole.ROLE_LINK;
-
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
 XPCOMUtils.defineLazyModuleGetter(this, 'Utils',
   'resource://gre/modules/accessibility/Utils.jsm');
@@ -31,6 +27,8 @@ XPCOMUtils.defineLazyModuleGetter(this, 'Logger',
   'resource://gre/modules/accessibility/Utils.jsm');
 XPCOMUtils.defineLazyModuleGetter(this, 'PluralForm',
   'resource://gre/modules/PluralForm.jsm');
+XPCOMUtils.defineLazyModuleGetter(this, 'Roles',
+  'resource://gre/modules/accessibility/Constants.jsm');
 
 var gStringBundle = Cc['@mozilla.org/intl/stringbundle;1'].
   getService(Ci.nsIStringBundleService).
@@ -220,7 +218,12 @@ this.OutputGenerator = {
     if (!typeName || typeName === 'text') {
       return;
     }
-    aDesc.push(gStringBundle.GetStringFromName('textInputType_' + typeName));
+    typeName = 'textInputType_' + typeName;
+    try {
+      aDesc.push(gStringBundle.GetStringFromName(typeName));
+    } catch (x) {
+      Logger.warning('Failed to get a string from a bundle for', typeName);
+    }
   },
 
   get outputOrder() {
@@ -436,6 +439,7 @@ this.UtteranceGenerator = {
     check: 'checkAction',
     uncheck: 'uncheckAction',
     select: 'selectAction',
+    unselect: 'unselectAction',
     open: 'openAction',
     close: 'closeAction',
     switch: 'switchAction',
@@ -691,8 +695,8 @@ this.BrailleGenerator = {
       let braille = this.objectOutputFunctions._generateBaseOutput.apply(this, arguments);
 
       if (aAccessible.indexInParent === 1 &&
-          aAccessible.parent.role == ROLE_LISTITEM &&
-          aAccessible.previousSibling.role == ROLE_STATICTEXT) {
+          aAccessible.parent.role == Roles.LISTITEM &&
+          aAccessible.previousSibling.role == Roles.STATICTEXT) {
         if (aAccessible.parent.parent && aAccessible.parent.parent.DOMNode &&
             aAccessible.parent.parent.DOMNode.nodeName == 'UL') {
           braille.unshift('*');
@@ -749,7 +753,7 @@ this.BrailleGenerator = {
     statictext: function statictext(aAccessible, aRoleStr, aStates, aFlags) {
       // Since we customize the list bullet's output, we add the static
       // text from the first node in each listitem, so skip it here.
-      if (aAccessible.parent.role == ROLE_LISTITEM) {
+      if (aAccessible.parent.role == Roles.LISTITEM) {
         return [];
       }
 
@@ -782,7 +786,7 @@ this.BrailleGenerator = {
   },
 
   _getContextStart: function _getContextStart(aContext) {
-    if (aContext.accessible.parent.role == ROLE_LINK) {
+    if (aContext.accessible.parent.role == Roles.LINK) {
       return [aContext.accessible.parent];
     }
 

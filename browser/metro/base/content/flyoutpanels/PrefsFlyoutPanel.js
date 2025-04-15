@@ -29,7 +29,8 @@ let PrefsFlyoutPanel = {
       });
     });
 
-    this._prefObserver(null, null, "privacy.donottrackheader.value");
+    this.observe(null, null, "privacy.donottrackheader.value");
+    this._updateSubmitURLs();
     this._topmostElement = this._elements.PrefsFlyoutPanel;
   },
 
@@ -39,17 +40,23 @@ let PrefsFlyoutPanel = {
       this._hasShown = true;
 
       Services.prefs.addObserver("privacy.donottrackheader.value",
-                                 this._prefObserver,
+                                 this,
                                  false);
       Services.prefs.addObserver("privacy.donottrackheader.enabled",
-                                 this._prefObserver,
+                                 this,
+                                 false);
+      Services.prefs.addObserver("app.crashreporter.autosubmit",
+                                 this,
+                                 false);
+      Services.prefs.addObserver("app.crashreporter.submitURLs",
+                                 this,
                                  false);
     }
 
     this._topmostElement.show();
   },
 
-  _prefObserver: function(subject, topic, data) {
+  observe: function(subject, topic, data) {
     let value = -1;
     try {
       value = Services.prefs.getIntPref("privacy.donottrackheader.value");
@@ -81,6 +88,33 @@ let PrefsFlyoutPanel = {
           Services.prefs.setIntPref('privacy.donottrackheader.value', -1);
         }
         break;
+
+      case "app.crashreporter.autosubmit":
+        let autosubmit = Services.prefs.getBoolPref("app.crashreporter.autosubmit");
+        let urlCheckbox = document.getElementById("prefs-reporting-submitURLs");
+        if (!autosubmit) {
+          // disables the submitURLs ui if no crashreports will be submited, but doesn't change the pref 
+          urlCheckbox.setAttribute("disabled", true);
+        }
+        else {
+          urlCheckbox.setAttribute("disabled", false);
+        }
+        break;
+
+      case "app.crashreporter.submitURLs":
+        this._updateSubmitURLs();
+        break;
+    }
+  },
+
+  _updateSubmitURLs: function() {
+    let submitURLs = Services.prefs.getBoolPref("app.crashreporter.submitURLs");
+    let urlCheckbox = document.getElementById("prefs-reporting-submitURLs");
+    if (submitURLs) {
+      urlCheckbox.checked = true; 
+    }
+    else {
+      urlCheckbox.checked = false;
     }
   },
 };

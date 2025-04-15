@@ -9,7 +9,21 @@ const Ci = Components.interfaces;
 const Cr = Components.results;
 const Cu = Components.utils;
 
+// Cannot use Services.appinfo here, or else xpcshell-tests will blow up, as
+// most tests later register different nsIAppInfo implementations, which
+// wouldn't be reflected in Services.appinfo anymore, as the lazy getter
+// underlying it would have been initialized if we used it here.
+if ("@mozilla.org/xre/app-info;1" in Cc) {
+  let runtime = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULRuntime);
+  if (runtime.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT) {
+    // Refuse to run in child processes.
+    throw new Error("You cannot use the AddonManager in child processes!");
+  }
+}
+
+
 const PREF_BLOCKLIST_PINGCOUNTVERSION = "extensions.blocklist.pingCountVersion";
+const PREF_DEFAULT_PROVIDERS_ENABLED  = "extensions.defaultProviders.enabled";
 const PREF_EM_UPDATE_ENABLED          = "extensions.update.enabled";
 const PREF_EM_LAST_APP_VERSION        = "extensions.lastAppVersion";
 const PREF_EM_LAST_PLATFORM_VERSION   = "extensions.lastPlatformVersion";
@@ -530,15 +544,22 @@ var AddonManagerInternal = {
     } catch (e) {}
     Services.prefs.addObserver(PREF_EM_HOTFIX_ID, this, false);
 
+    let defaultProvidersEnabled = true;
+    try {
+      defaultProvidersEnabled = Services.prefs.getBoolPref(PREF_DEFAULT_PROVIDERS_ENABLED);
+    } catch (e) {}
+
     // Ensure all default providers have had a chance to register themselves
-    DEFAULT_PROVIDERS.forEach(function(url) {
-      try {
-        Components.utils.import(url, {});
-      }
-      catch (e) {
-        ERROR("Exception loading default provider \"" + url + "\"", e);
-      }
-    });
+    if (defaultProvidersEnabled) {
+      DEFAULT_PROVIDERS.forEach(function(url) {
+        try {
+          Components.utils.import(url, {});
+        }
+        catch (e) {
+          ERROR("Exception loading default provider \"" + url + "\"", e);
+        }
+      });
+    }
 
     // Load any providers registered in the category manager
     let catman = Cc["@mozilla.org/categorymanager;1"].
@@ -2266,6 +2287,8 @@ this.AddonManager = {
   UPDATE_STATUS_UNKNOWN_FORMAT: -4,
   // The update information was not correctly signed or there was an SSL error.
   UPDATE_STATUS_SECURITY_ERROR: -5,
+  // The update was cancelled.
+  UPDATE_STATUS_CANCELLED: -6,
 
   // Constants to indicate why an update check is being performed
   // Update check has been requested by the user.

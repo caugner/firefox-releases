@@ -35,14 +35,12 @@ function FormAssistant() {
    * a key is entered on device
    */
   addEventListener("text", this, false);
-  addEventListener("keypress", this, true);
-  addEventListener("keyup", this, false);
   addEventListener("focus", this, true);
   addEventListener("blur", this, true);
   addEventListener("pageshow", this, false);
   addEventListener("pagehide", this, false);
   addEventListener("submit", this, false);
-};
+}
 
 FormAssistant.prototype = {
   _els: Cc["@mozilla.org/eventlistenerservice;1"].getService(Ci.nsIEventListenerService),
@@ -103,8 +101,8 @@ FormAssistant.prototype = {
         return false;
       }
       // Don't fire mouse events on selects; see bug 685197.
-      aEvent.preventDefault()
-      aEvent.stopPropagation()
+      aEvent.preventDefault();
+      aEvent.stopPropagation();
     }
 
     // The form assistant will close if a click happen:
@@ -128,6 +126,11 @@ FormAssistant.prototype = {
     if (!this._isSelectElement(aElement) &&
         !this._isAutocomplete(aElement)) {
       return this.close();
+    }
+
+    // Don't re-open when navigating to avoid repopulating list when changing selection.
+    if (this._isAutocomplete(aElement) && this._open && Util.isNavigationKey(aEvent.keyCode)) {
+      return false;
     }
 
     // Enable the assistant
@@ -167,11 +170,12 @@ FormAssistant.prototype = {
       case "FormAssist:ChoiceChange": {
         // ChoiceChange could happened once we have move to another element or
         // to nothing, so we should keep the used wrapper in mind.
+        this._selectWrapper = getWrapperForElement(currentElement);
         this._selectWrapper.fireOnChange();
 
         // New elements can be shown when a select is updated so we need to
         // reconstruct the inner elements array and to take care of possible
-        // focus change, this is why we use "self.currentElement" instead of 
+        // focus change, this is why we use "self.currentElement" instead of
         // using directly "currentElement".
         this._executeDelayed(function(self) {
           let currentElement = self.currentElement;
@@ -286,20 +290,6 @@ FormAssistant.prototype = {
           this._sendJsonMsgWrapper("FormAssist:AutoComplete");
         }
         break;
-
-      case "keyup":
-        // There is no need to handle keys if there is not element currently
-        // used by the form assistant
-        if (!currentElement)
-          return;
-
-        if (this._isAutocomplete(aEvent.target)) {
-          this._sendJsonMsgWrapper("FormAssist:AutoComplete");
-        }
-
-        let caretRect = this._getCaretRect();
-        if (!caretRect.isEmpty())
-          sendAsyncMessage("FormAssist:Update", { caretRect: caretRect });
     }
   },
 
@@ -338,7 +328,7 @@ FormAssistant.prototype = {
         element = element.ownerDocument.body;
       else if (element instanceof HTMLDocument)
         element = element.body;
-    
+
       while (element && !this._isEditable(element))
         element = element.parentNode;
 
@@ -471,19 +461,22 @@ FormAssistant.prototype = {
   },
 
   /** Gets a rect bounding important parts of the element that must be seen when assisting. */
-  _getRect: function _formHelperGetRect() {
+  _getRect: function _formHelperGetRect(aOptions={}) {
     const kDistanceMax = 100;
     let element = this.currentElement;
     let elRect = getBoundingContentRect(element);
-    let labels = this._getLabels();
-    for (let i=0; i<labels.length; i++) {
-      let labelRect = labels[i].rect;
-      if (labelRect.left < elRect.left) {
-        let isClose = Math.abs(labelRect.left - elRect.left) - labelRect.width < kDistanceMax &&
-                      Math.abs(labelRect.top - elRect.top) - labelRect.height < kDistanceMax;
-        if (isClose) {
-          let width = labelRect.width + elRect.width + (elRect.left - labelRect.left - labelRect.width);
-          return new Rect(labelRect.left, labelRect.top, width, elRect.height).expandToIntegers();
+
+    if (aOptions.alignToLabel) {
+      let labels = this._getLabels();
+      for (let i=0; i<labels.length; i++) {
+        let labelRect = labels[i].rect;
+        if (labelRect.left < elRect.left) {
+          let isClose = Math.abs(labelRect.left - elRect.left) - labelRect.width < kDistanceMax &&
+                        Math.abs(labelRect.top - elRect.top) - labelRect.height < kDistanceMax;
+          if (isClose) {
+            let width = labelRect.width + elRect.width + (elRect.left - labelRect.left - labelRect.width);
+            return new Rect(labelRect.left, labelRect.top, width, elRect.height).expandToIntegers();
+          }
         }
       }
     }
@@ -640,7 +633,7 @@ function getListForElement(aElement) {
   }
 
   return result;
-};
+}
 
 
 function SelectWrapper(aControl) {

@@ -7,8 +7,6 @@
 DIRS += ['xbl-marquee']
 TEST_TOOL_DIRS += ['test']
 
-MODULE = 'layout'
-
 EXPORTS += [
     'AnimationCommon.h',
     'nsAnimationManager.h',
@@ -76,7 +74,7 @@ EXPORTS.mozilla.css += [
     'StyleRule.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'AnimationCommon.cpp',
     'CSS.cpp',
     'Declaration.cpp',
@@ -92,7 +90,6 @@ SOURCES += [
     'nsCSSProps.cpp',
     'nsCSSPseudoClasses.cpp',
     'nsCSSPseudoElements.cpp',
-    'nsCSSRuleProcessor.cpp',
     'nsCSSRules.cpp',
     'nsCSSScanner.cpp',
     'nsCSSStyleSheet.cpp',
@@ -103,7 +100,6 @@ SOURCES += [
     'nsDOMCSSRGBColor.cpp',
     'nsDOMCSSValueList.cpp',
     'nsDOMMediaQueryList.cpp',
-    'nsFontFaceLoader.cpp',
     'nsHTMLCSSStyleSheet.cpp',
     'nsHTMLStyleSheet.cpp',
     'nsLayoutStylesheetCache.cpp',
@@ -123,13 +119,28 @@ SOURCES += [
     'StyleRule.cpp',
 ]
 
-FAIL_ON_WARNINGS = True
+# nsCSSRuleProcessor.cpp needs to be built separately because it uses plarena.h.
+# nsFontFaceLoader.cpp needs to be built separately because it forces NSPR logging.
+SOURCES += [
+    'nsCSSRuleProcessor.cpp',
+    'nsFontFaceLoader.cpp',
+]
 
-LIBXUL_LIBRARY = True
+FAIL_ON_WARNINGS = True
 
 MSVC_ENABLE_PGO = True
 
-LIBRARY_NAME = 'gkstyle_s'
-
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'gklayout'
+
+LOCAL_INCLUDES += [
+    '../../content/base/src',
+    '../../content/html/content/src',
+    '../../content/xbl/src',
+    '../../content/xul/document/src',
+    '../base',
+    '../generic',
+    '../xul',
+    '/dom/base',
+]

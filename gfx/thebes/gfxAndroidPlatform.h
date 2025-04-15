@@ -35,6 +35,9 @@ public:
     virtual already_AddRefed<gfxASurface>
     CreateOffscreenSurface(const gfxIntSize& size,
                            gfxContentType contentType);
+    virtual already_AddRefed<gfxASurface>
+    OptimizeImage(gfxImageSurface *aSurface,
+                  gfxImageFormat format) MOZ_OVERRIDE;
     
     virtual gfxImageFormat GetOffscreenFormat() { return mOffscreenFormat; }
     
@@ -81,8 +84,6 @@ public:
 private:
     int mScreenDepth;
     gfxImageFormat mOffscreenFormat;
-
-    nsCOMPtr<nsIMemoryReporter> mFreetypeReporter;
 };
 
 #endif /* GFX_PLATFORM_ANDROID_H */

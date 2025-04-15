@@ -10,8 +10,6 @@ XPIDL_SOURCES += [
 
 XPIDL_MODULE = 'xulapp_setup'
 
-MODULE = 'xulrunner'
-
 EXTRA_COMPONENTS += [
     'nsXULAppInstall.manifest',
 ]
@@ -19,3 +17,5 @@ EXTRA_COMPONENTS += [
 EXTRA_PP_COMPONENTS += [
     'nsXULAppInstall.js',
 ]
+
+DEFINES['BIN_SUFFIX'] = CONFIG['BIN_SUFFIX']

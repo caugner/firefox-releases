@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'mozglue'
-
 SOURCES += [
     'CustomElf.cpp',
     'ElfLoader.cpp',
@@ -21,4 +19,8 @@ HOST_SOURCES += [
     'szip.cpp',
 ]
 
-FORCE_STATIC_LIB = True
+HOST_PROGRAM = 'szip'
+
+FINAL_LIBRARY = 'mozglue'
+
+DEFINES['IMPL_MFBT'] = True

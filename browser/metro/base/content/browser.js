@@ -11,7 +11,7 @@ let Cr = Components.results;
 Cu.import("resource://gre/modules/PageThumbs.jsm");
 
 // Page for which the start UI is shown
-const kStartURI = "about:start";
+const kStartURI = "about:newtab";
 
 // allow panning after this timeout on pages with registered touch listeners
 const kTouchTimeout = 300;
@@ -79,6 +79,7 @@ var Browser = {
     // Call InputSourceHelper first so global listeners get called before
     // we start processing input in TouchModule.
     InputSourceHelper.init();
+    ClickEventHandler.init();
 
     TouchModule.init();
     GestureModule.init();
@@ -170,8 +171,10 @@ var Browser = {
       }
 
       // Should we restore the previous session (crash or some other event)
-      let ss = Cc["@mozilla.org/browser/sessionstore;1"].getService(Ci.nsISessionStore);
-      if (ss.shouldRestore() || Services.prefs.getBoolPref("browser.startup.sessionRestore")) {
+      let ss = Cc["@mozilla.org/browser/sessionstore;1"]
+               .getService(Ci.nsISessionStore);
+      let shouldRestore = ss.shouldRestore();
+      if (shouldRestore) {
         let bringFront = false;
         // First open any commandline URLs, except the homepage
         if (activationURI && activationURI != kStartURI) {
@@ -213,6 +216,7 @@ var Browser = {
   shutdown: function shutdown() {
     APZCObserver.shutdown();
     BrowserUI.uninit();
+    ClickEventHandler.uninit();
     ContentAreaObserver.shutdown();
     Appbar.shutdown();
 
@@ -370,6 +374,7 @@ var Browser = {
     let promptBox = {
       appendPrompt : function(args, onCloseCallback) {
           let newPrompt = document.createElementNS(XUL_NS, "tabmodalprompt");
+          newPrompt.setAttribute("promptType", args.promptType);
           stack.appendChild(newPrompt);
           browser.setAttribute("tabmodalPromptShowing", true);
           newPrompt.clientTop; // style flush to assure binding is attached
@@ -377,7 +382,7 @@ var Browser = {
           let tab = self.getTabForBrowser(browser);
           tab = tab.chromeTab;
 
-          newPrompt.init(args, tab, onCloseCallback);
+          newPrompt.metroInit(args, tab, onCloseCallback);
           return newPrompt;
       },
 
@@ -446,15 +451,45 @@ var Browser = {
     return this._tabId++;
   },
 
+  /**
+   * Create a new tab and add it to the tab list.
+   *
+   * If you are opening a new foreground tab in response to a user action, use
+   * BrowserUI.addAndShowTab which will also show the tab strip.
+   *
+   * @param aURI String specifying the URL to load.
+   * @param aBringFront Boolean (optional) Open the new tab in the foreground?
+   * @param aOwner Tab object (optional) The "parent" of the new tab.
+   *   This is the tab responsible for opening the new tab.  When the new tab
+   *   is closed, we will return to a parent or "sibling" tab if possible.
+   * @param aParams Object (optional) with optional properties:
+   *   index: Number specifying where in the tab list to insert the new tab.
+   *   flags, postData, charset, referrerURI: See loadURIWithFlags.
+   */
   addTab: function browser_addTab(aURI, aBringFront, aOwner, aParams) {
     let params = aParams || {};
+
+    if (aOwner && !('index' in params)) {
+      // Position the new tab to the right of its owner...
+      params.index = this._tabs.indexOf(aOwner) + 1;
+      // ...and to the right of any siblings.
+      while (this._tabs[params.index] && this._tabs[params.index].owner == aOwner) {
+        params.index++;
+      }
+    }
+
     let newTab = new Tab(aURI, params, aOwner);
-    this._tabs.push(newTab);
+
+    if (params.index >= 0) {
+      this._tabs.splice(params.index, 0, newTab);
+    } else {
+      this._tabs.push(newTab);
+    }
 
     if (aBringFront)
       this.selectedTab = newTab;
 
-    this._announceNewTab(newTab, params, aBringFront);
+    this._announceNewTab(newTab);
     return newTab;
   },
 
@@ -480,10 +515,9 @@ var Browser = {
    * helper for addTab related methods. Fires events related to
    * new tab creation.
    */
-  _announceNewTab: function _announceNewTab(aTab, aParams, aBringFront) {
-    let getAttention = ("getAttention" in aParams ? aParams.getAttention : !aBringFront);
+  _announceNewTab: function (aTab) {
     let event = document.createEvent("UIEvents");
-    event.initUIEvent("TabOpen", true, false, window, getAttention);
+    event.initUIEvent("TabOpen", true, false, window, 0);
     aTab.chromeTab.dispatchEvent(event);
     aTab.browser.messageManager.sendAsyncMessage("Browser:TabOpen");
   },
@@ -590,13 +624,13 @@ var Browser = {
     if (tab)
       tab.active = true;
 
+    BrowserUI.update();
+
     if (isFirstTab) {
-      // Don't waste time at startup updating the whole UI; just display the URL.
       BrowserUI._titleChanged(browser);
     } else {
       // Update all of our UI to reflect the new tab's location
       BrowserUI.updateURI();
-      BrowserUI.update();
 
       let event = document.createEvent("Events");
       event.initEvent("TabSelect", true, false);
@@ -700,7 +734,7 @@ var Browser = {
     Services.metro.pinTileAsync(this._currentPageTileID,
                                 Browser.selectedBrowser.contentTitle, // short name
                                 Browser.selectedBrowser.contentTitle, // display name
-                                "metrobrowser -url " + Browser.selectedBrowser.currentURI.spec,
+                                "-url " + Browser.selectedBrowser.currentURI.spec,
                             uriSpec, uriSpec);
   },
 
@@ -747,33 +781,6 @@ var Browser = {
   isSiteStarredAsync: function browser_isSiteStarredAsync(callback) {
     let uri = this.selectedBrowser.currentURI;
     Bookmarks.isURIBookmarked(uri, callback);
-  },
-
-  /** Rect should be in browser coordinates. */
-  _getZoomLevelForRect: function _getZoomLevelForRect(rect) {
-    const margin = 15;
-    return this.selectedTab.clampZoomLevel(ContentAreaObserver.width / (rect.width + margin * 2));
-  },
-
-  /**
-   * Find a good zoom rectangle for point that is specified in browser coordinates.
-   * @return Rect in viewport coordinates
-   */
-  _getZoomRectForPoint: function _getZoomRectForPoint(x, y, zoomLevel) {
-    let browser = getBrowser();
-    x = x * browser.scale;
-    y = y * browser.scale;
-
-    zoomLevel = Math.min(ZoomManager.MAX, zoomLevel);
-    let oldScale = browser.scale;
-    let zoomRatio = zoomLevel / oldScale;
-    let browserRect = browser.getBoundingClientRect();
-    let newVisW = browserRect.width / zoomRatio, newVisH = browserRect.height / zoomRatio;
-    let result = new Rect(x - newVisW / 2, y - newVisH / 2, newVisW, newVisH);
-
-    // Make sure rectangle doesn't poke out of viewport
-    return result.translateInside(new Rect(0, 0, browser.contentDocumentWidth * oldScale,
-                                                 browser.contentDocumentHeight * oldScale));
   },
 
   /**
@@ -990,9 +997,6 @@ Browser.MainDragger.prototype = {
 };
 
 
-
-const OPEN_APPTAB = 100; // Hack until we get a real API
-
 function nsBrowserAccess() { }
 
 nsBrowserAccess.prototype = {
@@ -1002,56 +1006,54 @@ nsBrowserAccess.prototype = {
     throw Cr.NS_NOINTERFACE;
   },
 
+  _getOpenAction: function _getOpenAction(aURI, aOpener, aWhere, aContext) {
+    let where = aWhere;
+    /*
+     * aWhere:
+     * OPEN_DEFAULTWINDOW: default action
+     * OPEN_CURRENTWINDOW: current window/tab
+     * OPEN_NEWWINDOW: not allowed, converted to newtab below
+     * OPEN_NEWTAB: open a new tab
+     * OPEN_SWITCHTAB: open in an existing tab if it matches, otherwise open
+     * a new tab. afaict we always open these in the current tab.
+     */
+    if (where == Ci.nsIBrowserDOMWindow.OPEN_DEFAULTWINDOW) {
+      // query standard browser prefs indicating what to do for default action
+      switch (aContext) {
+        // indicates this is an open request from a 3rd party app.
+        case Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL :
+          where = Services.prefs.getIntPref("browser.link.open_external");
+          break;
+        // internal request
+        default :
+          where = Services.prefs.getIntPref("browser.link.open_newwindow");
+      }
+    }
+    if (where == Ci.nsIBrowserDOMWindow.OPEN_NEWWINDOW) {
+      Util.dumpLn("Invalid request - we can't open links in new windows.");
+      where = Ci.nsIBrowserDOMWindow.OPEN_NEWTAB;
+    }
+    return where;
+  },
+
   _getBrowser: function _getBrowser(aURI, aOpener, aWhere, aContext) {
     let isExternal = (aContext == Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL);
+    // We don't allow externals apps opening chrome docs
     if (isExternal && aURI && aURI.schemeIs("chrome"))
       return null;
 
+    let location;
+    let browser;
     let loadflags = isExternal ?
                       Ci.nsIWebNavigation.LOAD_FLAGS_FROM_EXTERNAL :
                       Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
-    let location;
-    if (aWhere == Ci.nsIBrowserDOMWindow.OPEN_DEFAULTWINDOW) {
-      switch (aContext) {
-        case Ci.nsIBrowserDOMWindow.OPEN_EXTERNAL :
-          aWhere = Services.prefs.getIntPref("browser.link.open_external");
-          break;
-        default : // OPEN_NEW or an illegal value
-          aWhere = Services.prefs.getIntPref("browser.link.open_newwindow");
-      }
-    }
+    let openAction = this._getOpenAction(aURI, aOpener, aWhere, aContext);
 
-    let browser;
-    if (aWhere == Ci.nsIBrowserDOMWindow.OPEN_NEWWINDOW) {
-      let url = aURI ? aURI.spec : "about:blank";
-      let newWindow = openDialog("chrome://browser/content/browser.xul", "_blank",
-                                 "all,dialog=no", url, null, null, null);
-      // since newWindow.Browser doesn't exist yet, just return null
-      return null;
-    } else if (aWhere == Ci.nsIBrowserDOMWindow.OPEN_NEWTAB) {
+    if (openAction == Ci.nsIBrowserDOMWindow.OPEN_NEWTAB) {
       let owner = isExternal ? null : Browser.selectedTab;
-      let tab = Browser.addTab("about:blank", true, owner, { getAttention: true });
-      if (isExternal)
-        tab.closeOnExit = true;
+      let tab = BrowserUI.openLinkInNewTab("about:blank", true, owner);
       browser = tab.browser;
-    } else if (aWhere == OPEN_APPTAB) {
-      Browser.tabs.forEach(function(aTab) {
-        if ("appURI" in aTab.browser && aTab.browser.appURI.spec == aURI.spec) {
-          Browser.selectedTab = aTab;
-          browser = aTab.browser;
-        }
-      });
-
-      if (!browser) {
-        // Make a new tab to hold the app
-        let tab = Browser.addTab("about:blank", true, null, { getAttention: true });
-        browser = tab.browser;
-        browser.appURI = aURI;
-      } else {
-        // Just use the existing browser, but return null to keep the system from trying to load the URI again
-        browser = null;
-      }
-    } else { // OPEN_CURRENTWINDOW and illegal values
+    } else {
       browser = Browser.selectedBrowser;
     }
 
@@ -1066,10 +1068,6 @@ nsBrowserAccess.prototype = {
       }
       browser.focus();
     } catch(e) { }
-
-    // We are loading web content into this window, so make sure content is visible
-    // XXX Can we remove this?  It seems to be reproduced in BrowserUI already.
-    BrowserUI.showContent();
 
     return browser;
   },
@@ -1212,16 +1210,17 @@ var SessionHistoryObserver = {
     if (aTopic != "browser:purge-session-history")
       return;
 
-    let back = document.getElementById("cmd_back");
-    back.setAttribute("disabled", "true");
-    let forward = document.getElementById("cmd_forward");
-    forward.setAttribute("disabled", "true");
-
-    let urlbar = document.getElementById("urlbar-edit");
-    if (urlbar) {
-      // Clear undo history of the URL bar
-      urlbar.editor.transactionManager.clear();
+    let newTab = Browser.addTab("about:start", true);
+    let tab = Browser._tabs[0];
+    while(tab != newTab) {
+      Browser.closeTab(tab, { forceClose: true } );
+      tab = Browser._tabs[0];
     }
+
+    PlacesUtils.history.removeAllPages();
+
+    // Clear undo history of the URL bar
+    BrowserUI._edit.editor.transactionManager.clear();
   }
 };
 
@@ -1284,10 +1283,6 @@ Tab.prototype = {
   },
 
   endLoading: function endLoading() {
-    if (!this._loading) {
-      let stack = new Error().stack;
-      throw "Not Loading!\n" + stack;
-    }
     this._loading = false;
     this.updateFavicon();
   },
@@ -1299,7 +1294,7 @@ Tab.prototype = {
   create: function create(aURI, aParams, aOwner) {
     this._eventDeferred = Promise.defer();
 
-    this._chromeTab = Elements.tabList.addTab();
+    this._chromeTab = Elements.tabList.addTab(aParams.index);
     this._id = Browser.createTabId();
     let browser = this._createBrowser(aURI, null);
 
@@ -1312,12 +1307,45 @@ Tab.prototype = {
       self._eventDeferred = null;
     }
     browser.addEventListener("pageshow", onPageShowEvent, true);
+    browser.addEventListener("DOMWindowCreated", this, false);
+    browser.addEventListener("StartUIChange", this, false);
+    Elements.browsers.addEventListener("SizeChanged", this, false);
+
     browser.messageManager.addMessageListener("Content:StateChange", this);
-    Services.obs.addObserver(this, "metro_viewstate_changed", false);
 
     if (aOwner)
       this._copyHistoryFrom(aOwner);
     this._loadUsingParams(browser, aURI, aParams);
+  },
+
+  updateViewport: function (aEvent) {
+    // <meta name=viewport> is not yet supported; just use the browser size.
+    let browser = this.browser;
+
+    // On the start page we add padding to keep the browser above the navbar.
+    let paddingBottom = parseInt(getComputedStyle(browser).paddingBottom, 10);
+    let height = browser.clientHeight - paddingBottom;
+
+    browser.setWindowSize(browser.clientWidth, height);
+  },
+
+  handleEvent: function (aEvent) {
+    switch (aEvent.type) {
+      case "DOMWindowCreated":
+      case "StartUIChange":
+        this.updateViewport();
+        break;
+      case "SizeChanged":
+        this.updateViewport();
+        this._delayUpdateThumbnail();
+        break;
+      case "AlertClose": {
+        if (this == Browser.selectedTab) {
+          this.updateViewport();
+        }
+        break;
+      }
+    }
   },
 
   receiveMessage: function(aMessage) {
@@ -1327,28 +1355,24 @@ Tab.prototype = {
         this.updateThumbnail();
         // ...and in a little while to capture page after load.
         if (aMessage.json.stateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
-          clearTimeout(this._updateThumbnailTimeout);
-          this._updateThumbnailTimeout = setTimeout(() => {
-            this.updateThumbnail();
-          }, kTabThumbnailDelayCapture);
+          this._delayUpdateThumbnail();
         }
         break;
     }
   },
 
-  observe: function BrowserUI_observe(aSubject, aTopic, aData) {
-    switch (aTopic) {
-      case "metro_viewstate_changed":
-        if (aData !== "snapped") {
-          this.updateThumbnail();
-        }
-        break;
-    }
+  _delayUpdateThumbnail: function() {
+    clearTimeout(this._updateThumbnailTimeout);
+    this._updateThumbnailTimeout = setTimeout(() => {
+      this.updateThumbnail();
+    }, kTabThumbnailDelayCapture);
   },
 
   destroy: function destroy() {
     this._browser.messageManager.removeMessageListener("Content:StateChange", this);
-    Services.obs.removeObserver(this, "metro_viewstate_changed", false);
+    this._browser.removeEventListener("DOMWindowCreated", this, false);
+    this._browser.removeEventListener("StartUIChange", this, false);
+    Elements.browsers.removeEventListener("SizeChanged", this, false);
     clearTimeout(this._updateThumbnailTimeout);
 
     Elements.tabList.removeTab(this._chromeTab);
@@ -1427,6 +1451,7 @@ Tab.prototype = {
     Elements.browsers.insertBefore(notification, aInsertBefore);
 
     notification.dir = "reverse";
+    notification.addEventListener("AlertClose", this);
 
      // let the content area manager know about this browser.
     ContentAreaObserver.onBrowserCreated(browser);
@@ -1443,6 +1468,7 @@ Tab.prototype = {
   _destroyBrowser: function _destroyBrowser() {
     if (this._browser) {
       let notification = this._notification;
+      notification.removeEventListener("AlertClose", this);
       let browser = this._browser;
       browser.active = false;
 
@@ -1452,14 +1478,6 @@ Tab.prototype = {
 
       Elements.browsers.removeChild(notification);
     }
-  },
-
-  /**
-   * Takes a scale and restricts it based on this tab's zoom limits.
-   * @param aScale The original scale.
-   */
-  clampZoomLevel: function clampZoomLevel(aScale) {
-    return Util.clamp(aScale, ZoomManager.MIN, ZoomManager.MAX);
   },
 
   updateThumbnail: function updateThumbnail() {
@@ -1478,12 +1496,14 @@ Tab.prototype = {
     let browser = this._browser;
 
     if (aActive) {
+      notification.classList.add("active-tab-notificationbox");
       browser.setAttribute("type", "content-primary");
       Elements.browsers.selectedPanel = notification;
       browser.active = true;
       Elements.tabList.selectedTab = this._chromeTab;
       browser.focus();
     } else {
+      notification.classList.remove("active-tab-notificationbox");
       browser.messageManager.sendAsyncMessage("Browser:Blur", { });
       browser.setAttribute("type", "content");
       browser.active = false;
@@ -1534,4 +1554,69 @@ function rendererFactory(aBrowser, aCanvas) {
   }
 
   return wrapper;
+};
+
+// Based on ClickEventHandler from /browser/base/content/content.js
+let ClickEventHandler = {
+  init: function () {
+    gEventListenerService.addSystemEventListener(Elements.browsers, "click", this, true);
+  },
+
+  uninit: function () {
+    gEventListenerService.removeSystemEventListener(Elements.browsers, "click", this, true);
+  },
+
+  handleEvent: function (aEvent) {
+    if (!aEvent.isTrusted || aEvent.defaultPrevented) {
+      return;
+    }
+    let [href, node] = this._hrefAndLinkNodeForClickEvent(aEvent);
+    if (href && (aEvent.button == 1 || aEvent.ctrlKey)) {
+      // Open link in a new tab for middle-click or ctrl-click
+      BrowserUI.openLinkInNewTab(href, aEvent.shiftKey, Browser.selectedTab);
+    }
+  },
+
+  /**
+   * Extracts linkNode and href for the current click target.
+   *
+   * @param event
+   *        The click event.
+   * @return [href, linkNode].
+   *
+   * @note linkNode will be null if the click wasn't on an anchor
+   *       element (or XLink).
+   */
+  _hrefAndLinkNodeForClickEvent: function(event) {
+    function isHTMLLink(aNode) {
+      return ((aNode instanceof content.HTMLAnchorElement && aNode.href) ||
+              (aNode instanceof content.HTMLAreaElement && aNode.href) ||
+              aNode instanceof content.HTMLLinkElement);
+    }
+
+    let node = event.target;
+    while (node && !isHTMLLink(node)) {
+      node = node.parentNode;
+    }
+
+    if (node)
+      return [node.href, node];
+
+    // If there is no linkNode, try simple XLink.
+    let href, baseURI;
+    node = event.target;
+    while (node && !href) {
+      if (node.nodeType == content.Node.ELEMENT_NODE) {
+        href = node.getAttributeNS("http://www.w3.org/1999/xlink", "href");
+        if (href)
+          baseURI = node.ownerDocument.baseURIObject;
+      }
+      node = node.parentNode;
+    }
+
+    // In case of XLink, we don't return the node we got href from since
+    // callers expect <a>-like elements.
+    // Note: makeURI() will throw if aUri is not a valid URI.
+    return [href ? Services.io.newURI(href, null, baseURI).spec : null, null];
+  }
 };

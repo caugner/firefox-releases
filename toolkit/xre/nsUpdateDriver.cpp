@@ -300,6 +300,19 @@ IsOlderVersion(nsIFile *versionFile, const char *appVersion)
   return false;
 }
 
+#if defined(XP_WIN) && defined(MOZ_METRO)
+static bool
+IsWindowsMetroUpdateRequest(int appArgc, char **appArgv)
+{
+  for (int index = 0; index < appArgc; index++) {
+    if (!strcmp(appArgv[index], "--metro-update")) {
+      return true;
+    }
+  }
+  return false;
+}
+#endif
+
 static bool
 CopyFileIntoUpdateDir(nsIFile *parentDir, const char *leafName, nsIFile *updateDir)
 {
@@ -535,8 +548,10 @@ SwitchToUpdatedApp(nsIFile *greDir, nsIFile *updateDir, nsIFile *statusFile,
   pid.AppendLiteral("/replace");
 
   int immersiveArgc = 0;
-#ifdef XP_WIN
-  if (IsRunningInWindowsMetro()) {
+#if defined(XP_WIN) && defined(MOZ_METRO)
+  // If this is desktop doing an update for metro, or if we're the metro browser
+  // we want to launch the metro browser after we're finished.
+  if (IsWindowsMetroUpdateRequest(appArgc, appArgv) || IsRunningInWindowsMetro()) {
     immersiveArgc = 1;
   }
 #endif
@@ -606,9 +621,12 @@ GetOSApplyToDir(nsACString& applyToDir)
   NS_ASSERTION(ds, "Can't get directory service");
 
   nsCOMPtr<nsIFile> osApplyToDir;
-  DebugOnly<nsresult> rv = ds->Get(XRE_OS_UPDATE_APPLY_TO_DIR, NS_GET_IID(nsIFile),
+  nsresult rv = ds->Get(XRE_OS_UPDATE_APPLY_TO_DIR, NS_GET_IID(nsIFile),
                                    getter_AddRefs(osApplyToDir));
-  NS_ASSERTION(NS_SUCCEEDED(rv), "Can't get the OS applyTo dir");
+  if (NS_FAILED(rv)) {
+    LOG(("Can't get the OS applyTo dir"));
+    return rv;
+  }
 
   return osApplyToDir->GetNativePath(applyToDir);
 }
@@ -819,8 +837,10 @@ ApplyUpdate(nsIFile *greDir, nsIFile *updateDir, nsIFile *statusFile,
   }
 
   int immersiveArgc = 0;
-#ifdef XP_WIN
-  if (IsRunningInWindowsMetro()) {
+#if defined(XP_WIN) && defined(MOZ_METRO)
+  // If this is desktop doing an update for metro, or if we're the metro browser
+  // we want to launch the metro browser after we're finished.
+  if (IsWindowsMetroUpdateRequest(appArgc, appArgv) || IsRunningInWindowsMetro()) {
     immersiveArgc = 1;
   }
 #endif
@@ -1140,14 +1160,20 @@ nsUpdateProcessor::ProcessUpdate(nsIUpdate* aUpdate)
     // This needs to be done on the main thread, so we pass it along in
     // BackgroundThreadInfo
     nsresult rv = GetOSApplyToDir(osApplyToDir);
-    NS_ASSERTION(NS_SUCCEEDED(rv), "Can't get the OS apply to dir");
+    if (NS_FAILED(rv)) {
+      LOG(("Can't get the OS apply to dir"));
+      return rv;
+    }
 
     SetOSApplyToDir(aUpdate, osApplyToDir);
 
     mInfo.mIsOSUpdate = true;
     rv = NS_NewNativeLocalFile(osApplyToDir, false,
                                getter_AddRefs(mInfo.mOSApplyToDir));
-    NS_ASSERTION(NS_SUCCEEDED(rv), "Can't create nsIFile for OS apply to dir");
+    if (NS_FAILED(rv)) {
+      LOG(("Can't create nsIFile for OS apply to dir"));
+      return rv;
+    }
   }
 #endif
 

@@ -14,7 +14,6 @@
 #include "nsPrintfCString.h"            // for nsPrintfCString
 #include "nsString.h"                   // for nsAutoCString
 
-class gfxImageSurface;
 class nsIntRegion;
 
 namespace mozilla {
@@ -40,19 +39,20 @@ void
 ImageHost::UseTextureHost(TextureHost* aTexture)
 {
   mFrontBuffer = aTexture;
+  mFrontBuffer->SetCompositableBackendSpecificData(GetCompositableBackendSpecificData());
 }
 
 void
-ImageHost::RemoveTextureHost(uint64_t aTextureID)
+ImageHost::RemoveTextureHost(TextureHost* aTexture)
 {
-  CompositableHost::RemoveTextureHost(aTextureID);
-  if (mFrontBuffer && mFrontBuffer->GetID() == aTextureID) {
+  CompositableHost::RemoveTextureHost(aTexture);
+  if (mFrontBuffer && mFrontBuffer->GetID() == aTexture->GetID()) {
     mFrontBuffer = nullptr;
   }
 }
 
 TextureHost*
-ImageHost::GetTextureHost()
+ImageHost::GetAsTextureHost()
 {
   return mFrontBuffer;
 }
@@ -61,7 +61,6 @@ void
 ImageHost::Composite(EffectChain& aEffectChain,
                      float aOpacity,
                      const gfx::Matrix4x4& aTransform,
-                     const gfx::Point& aOffset,
                      const gfx::Filter& aFilter,
                      const gfx::Rect& aClipRect,
                      const nsIntRegion* aVisibleRegion,
@@ -87,6 +86,10 @@ ImageHost::Composite(EffectChain& aEffectChain,
   RefPtr<TexturedEffect> effect = CreateTexturedEffect(mFrontBuffer->GetFormat(),
                                                        source,
                                                        aFilter);
+  if (!effect) {
+    return;
+  }
+
   aEffectChain.mPrimaryEffect = effect;
   IntSize textureSize = source->GetSize();
   gfx::Rect gfxPictureRect
@@ -115,15 +118,15 @@ ImageHost::Composite(EffectChain& aEffectChain,
         effect->mTextureCoords = Rect(0, 0, 1, 1);
       }
       GetCompositor()->DrawQuad(rect, aClipRect, aEffectChain,
-                                aOpacity, aTransform, aOffset);
+                                aOpacity, aTransform);
       GetCompositor()->DrawDiagnostics(DIAGNOSTIC_IMAGE|DIAGNOSTIC_BIGIMAGE,
-                                       rect, aClipRect, aTransform, aOffset);
+                                       rect, aClipRect, aTransform);
     } while (it->NextTile());
     it->EndTileIteration();
     // layer border
     GetCompositor()->DrawDiagnostics(DIAGNOSTIC_IMAGE,
                                      gfxPictureRect, aClipRect,
-                                     aTransform, aOffset);    
+                                     aTransform);
   } else {
     IntSize textureSize = source->GetSize();
     gfx::Rect rect;
@@ -144,15 +147,14 @@ ImageHost::Composite(EffectChain& aEffectChain,
     }
 
     GetCompositor()->DrawQuad(rect, aClipRect, aEffectChain,
-                              aOpacity, aTransform, aOffset);
+                              aOpacity, aTransform);
     GetCompositor()->DrawDiagnostics(DIAGNOSTIC_IMAGE,
                                      rect, aClipRect,
-                                     aTransform, aOffset);
+                                     aTransform);
   }
   mFrontBuffer->Unlock();
 }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
 void
 ImageHost::PrintInfo(nsACString& aTo, const char* aPrefix)
 {
@@ -168,8 +170,6 @@ ImageHost::PrintInfo(nsACString& aTo, const char* aPrefix)
     mFrontBuffer->PrintInfo(aTo, pfx.get());
   }
 }
-#endif
-
 
 #ifdef MOZ_DUMP_PAINTING
 void
@@ -181,11 +181,11 @@ ImageHost::Dump(FILE* aFile,
     aFile = stderr;
   }
   if (mFrontBuffer) {
-    fprintf(aFile, "%s", aPrefix);
-    fprintf(aFile, aDumpHtml ? "<ul><li>TextureHost: "
+    fprintf_stderr(aFile, "%s", aPrefix);
+    fprintf_stderr(aFile, aDumpHtml ? "<ul><li>TextureHost: "
                              : "TextureHost: ");
     DumpTextureHost(aFile, mFrontBuffer);
-    fprintf(aFile, aDumpHtml ? " </li></ul> " : " ");
+    fprintf_stderr(aFile, aDumpHtml ? " </li></ul> " : " ");
   }
 }
 #endif
@@ -200,7 +200,7 @@ ImageHost::GetRenderState()
 }
 
 #ifdef MOZ_DUMP_PAINTING
-already_AddRefed<gfxImageSurface>
+TemporaryRef<gfx::DataSourceSurface>
 ImageHost::GetAsSurface()
 {
   return mFrontBuffer->GetAsSurface();
@@ -265,7 +265,6 @@ void
 DeprecatedImageHostSingle::Composite(EffectChain& aEffectChain,
                                      float aOpacity,
                                      const gfx::Matrix4x4& aTransform,
-                                     const gfx::Point& aOffset,
                                      const gfx::Filter& aFilter,
                                      const gfx::Rect& aClipRect,
                                      const nsIntRegion* aVisibleRegion,
@@ -293,6 +292,9 @@ DeprecatedImageHostSingle::Composite(EffectChain& aEffectChain,
 
   RefPtr<TexturedEffect> effect =
     CreateTexturedEffect(mDeprecatedTextureHost, aFilter);
+  if (!effect) {
+    return;
+  }
 
   aEffectChain.mPrimaryEffect = effect;
 
@@ -303,9 +305,9 @@ DeprecatedImageHostSingle::Composite(EffectChain& aEffectChain,
       nsIntRect tileRect = it->GetTileRect();
       gfx::Rect rect(tileRect.x, tileRect.y, tileRect.width, tileRect.height);
       GetCompositor()->DrawQuad(rect, aClipRect, aEffectChain,
-                                aOpacity, aTransform, aOffset);
+                                aOpacity, aTransform);
       GetCompositor()->DrawDiagnostics(DIAGNOSTIC_IMAGE|DIAGNOSTIC_BIGIMAGE,
-                                       rect, aClipRect, aTransform, aOffset);
+                                       rect, aClipRect, aTransform);
     } while (it->NextTile());
     it->EndTileIteration();
   } else {
@@ -329,15 +331,14 @@ DeprecatedImageHostSingle::Composite(EffectChain& aEffectChain,
     }
 
     GetCompositor()->DrawQuad(rect, aClipRect, aEffectChain,
-                              aOpacity, aTransform, aOffset);
+                              aOpacity, aTransform);
     GetCompositor()->DrawDiagnostics(DIAGNOSTIC_IMAGE,
-                                     rect, aClipRect, aTransform, aOffset);
+                                     rect, aClipRect, aTransform);
   }
 
   mDeprecatedTextureHost->Unlock();
 }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
 void
 DeprecatedImageHostSingle::PrintInfo(nsACString& aTo, const char* aPrefix)
 {
@@ -353,7 +354,6 @@ DeprecatedImageHostSingle::PrintInfo(nsACString& aTo, const char* aPrefix)
     mDeprecatedTextureHost->PrintInfo(aTo, pfx.get());
   }
 }
-#endif
 
 bool
 DeprecatedImageHostBuffered::Update(const SurfaceDescriptor& aImage,
@@ -391,15 +391,15 @@ DeprecatedImageHostSingle::Dump(FILE* aFile,
     aFile = stderr;
   }
   if (mDeprecatedTextureHost) {
-    fprintf(aFile, "%s", aPrefix);
-    fprintf(aFile, aDumpHtml ? "<ul><li>DeprecatedTextureHost: "
+    fprintf_stderr(aFile, "%s", aPrefix);
+    fprintf_stderr(aFile, aDumpHtml ? "<ul><li>DeprecatedTextureHost: "
                              : "DeprecatedTextureHost: ");
     DumpDeprecatedTextureHost(aFile, mDeprecatedTextureHost);
-    fprintf(aFile, aDumpHtml ? " </li></ul> " : " ");
+    fprintf_stderr(aFile, aDumpHtml ? " </li></ul> " : " ");
   }
 }
 
-already_AddRefed<gfxImageSurface>
+TemporaryRef<gfx::DataSourceSurface>
 DeprecatedImageHostSingle::GetAsSurface()
 {
   return mDeprecatedTextureHost->GetAsSurface();

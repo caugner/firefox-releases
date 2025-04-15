@@ -33,13 +33,13 @@
 
 #ifdef PR_LOGGING
 PRLogModuleInfo* gMediaResourceLog;
-#define LOG(msg, ...) PR_LOG(gMediaResourceLog, PR_LOG_DEBUG, \
-                             (msg, ##__VA_ARGS__))
+#define RESOURCE_LOG(msg, ...) PR_LOG(gMediaResourceLog, PR_LOG_DEBUG, \
+                                      (msg, ##__VA_ARGS__))
 // Debug logging macro with object pointer and class name.
 #define CMLOG(msg, ...) \
-        LOG("%p [ChannelMediaResource]: " msg, this, ##__VA_ARGS__)
+        RESOURCE_LOG("%p [ChannelMediaResource]: " msg, this, ##__VA_ARGS__)
 #else
-#define LOG(msg, ...)
+#define RESOURCE_LOG(msg, ...)
 #define CMLOG(msg, ...)
 #endif
 
@@ -59,12 +59,6 @@ ChannelMediaResource::ChannelMediaResource(MediaDecoder* aDecoder,
     mLock("ChannelMediaResource.mLock"),
     mIgnoreResume(false),
     mSeekingForMetadata(false),
-#ifdef MOZ_DASH
-    mByteRangeDownloads(false),
-    mByteRangeFirstOpen(true),
-    mSeekOffsetMonitor("media.dashseekmonitor"),
-    mSeekOffset(-1),
-#endif
     mIsTransportSeekable(true)
 {
 #ifdef PR_LOGGING
@@ -153,11 +147,21 @@ ChannelMediaResource::OnStartRequest(nsIRequest* aRequest)
 
   MediaDecoderOwner* owner = mDecoder->GetMediaOwner();
   NS_ENSURE_TRUE(owner, NS_ERROR_FAILURE);
-  HTMLMediaElement* element = owner->GetMediaElement();
+  dom::HTMLMediaElement* element = owner->GetMediaElement();
   NS_ENSURE_TRUE(element, NS_ERROR_FAILURE);
   nsresult status;
   nsresult rv = aRequest->GetStatus(&status);
   NS_ENSURE_SUCCESS(rv, rv);
+
+  if (status == NS_BINDING_ABORTED) {
+    // Request was aborted before we had a chance to receive any data, or
+    // even an OnStartRequest(). Close the channel. This is important, as
+    // we don't want to mess up our state, as if we're cloned that would
+    // cause the clone to copy incorrect metadata (like whether we're
+    // infinite for example).
+    CloseChannel();
+    return status;
+  }
 
   if (element->ShouldCheckAllowOrigin()) {
     // If the request was cancelled by nsCORSListenerProxy due to failing
@@ -417,16 +421,6 @@ ChannelMediaResource::OnStopRequest(nsIRequest* aRequest, nsresult aStatus)
     mChannelStatistics->Stop();
   }
 
-#ifdef MOZ_DASH
-  // If we were loading a byte range, notify decoder and return.
-  // Skip this for unterminated byte range requests, e.g. seeking for whole
-  // file downloads.
-  if (mByteRangeDownloads) {
-    mDecoder->NotifyDownloadEnded(aStatus);
-    return NS_OK;
-  }
-#endif
-
   // Note that aStatus might have succeeded --- this might be a normal close
   // --- even in situations where the server cut us off because we were
   // suspended. So we need to "reopen on error" in that case too. The only
@@ -468,7 +462,7 @@ nsresult
 ChannelMediaResource::OnChannelRedirect(nsIChannel* aOld, nsIChannel* aNew,
                                         uint32_t aFlags)
 {
-  mChannel = aNew;
+  mChannel = new nsMainThreadPtrHolder<nsIChannel>(aNew);
   SetupChannelHeaders();
   return NS_OK;
 }
@@ -490,23 +484,11 @@ ChannelMediaResource::CopySegmentToCache(nsIInputStream *aInStream,
 
   closure->mResource->mDecoder->NotifyDataArrived(aFromSegment, aCount, closure->mResource->mOffset);
 
-#ifdef MOZ_DASH
-  // For byte range downloads controlled by |DASHDecoder|, there are cases in
-  // which the reader's offset is different enough from the channel offset that
-  // |MediaCache| requests a |CacheClientSeek| to the reader's offset. This
-  // can happen between calls to |CopySegmentToCache|. To avoid copying at
-  // incorrect offsets, ensure |MediaCache| copies to the location that
-  // |ChannelMediaResource| expects.
-  if (closure->mResource->mByteRangeDownloads) {
-    closure->mResource->mCacheStream.NotifyDataStarted(closure->mResource->mOffset);
-  }
-#endif
-
   // Keep track of where we're up to.
-  LOG("%p [ChannelMediaResource]: CopySegmentToCache at mOffset [%lld] add "
-      "[%d] bytes for decoder[%p]",
-      closure->mResource, closure->mResource->mOffset, aCount,
-      closure->mResource->mDecoder);
+  RESOURCE_LOG("%p [ChannelMediaResource]: CopySegmentToCache at mOffset [%lld] add "
+               "[%d] bytes for decoder[%p]",
+               closure->mResource, closure->mResource->mOffset, aCount,
+               closure->mResource->mDecoder);
   closure->mResource->mOffset += aCount;
 
   closure->mResource->mCacheStream.NotifyDataReceived(aCount, aFromSegment,
@@ -529,7 +511,7 @@ ChannelMediaResource::OnDataAvailable(nsIRequest* aRequest,
 
   CopySegmentClosure closure;
   nsIScriptSecurityManager* secMan = nsContentUtils::GetSecurityManager();
-  if (secMan && mChannel) {
+  if (secMan && mChannel.get()) {
     secMan->GetChannelPrincipal(mChannel, getter_AddRefs(closure.mPrincipal));
   }
   closure.mResource = this;
@@ -548,39 +530,6 @@ ChannelMediaResource::OnDataAvailable(nsIRequest* aRequest,
   return NS_OK;
 }
 
-#ifdef MOZ_DASH
-/* |OpenByteRange|
- * For terminated byte range requests, use this function.
- * Callback is |MediaDecoder|::|NotifyByteRangeDownloaded|().
- * See |CacheClientSeek| also.
- */
-
-nsresult
-ChannelMediaResource::OpenByteRange(nsIStreamListener** aStreamListener,
-                                    MediaByteRange const & aByteRange)
-{
-  NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
-
-  mByteRangeDownloads = true;
-  mByteRange = aByteRange;
-
-  // OpenByteRange may be called multiple times; same URL, different ranges.
-  // For the first call using this URL, forward to Open for some init.
-  if (mByteRangeFirstOpen) {
-    mByteRangeFirstOpen = false;
-    return Open(aStreamListener);
-  }
-
-  // For subsequent calls, ensure channel is recreated with correct byte range.
-  CloseChannel();
-
-  nsresult rv = RecreateChannel();
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return OpenChannel(aStreamListener);
-}
-#endif
-
 nsresult ChannelMediaResource::Open(nsIStreamListener **aStreamListener)
 {
   NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
@@ -594,7 +543,7 @@ nsresult ChannelMediaResource::Open(nsIStreamListener **aStreamListener)
     return rv;
   NS_ASSERTION(mOffset == 0, "Who set mOffset already?");
 
-  if (!mChannel) {
+  if (!mChannel.get()) {
     // When we're a clone, the decoder might ask us to Open even though
     // we haven't established an mChannel (because we might not need one)
     NS_ASSERTION(!aStreamListener,
@@ -608,7 +557,7 @@ nsresult ChannelMediaResource::Open(nsIStreamListener **aStreamListener)
 nsresult ChannelMediaResource::OpenChannel(nsIStreamListener** aStreamListener)
 {
   NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
-  NS_ENSURE_TRUE(mChannel, NS_ERROR_NULL_POINTER);
+  NS_ENSURE_TRUE(mChannel.get(), NS_ERROR_NULL_POINTER);
   NS_ASSERTION(!mListener, "Listener should have been removed by now");
 
   if (aStreamListener) {
@@ -644,7 +593,7 @@ nsresult ChannelMediaResource::OpenChannel(nsIStreamListener** aStreamListener)
     // an authorizing Access-Control header.
     MediaDecoderOwner* owner = mDecoder->GetMediaOwner();
     NS_ENSURE_TRUE(owner, NS_ERROR_FAILURE);
-    HTMLMediaElement* element = owner->GetMediaElement();
+    dom::HTMLMediaElement* element = owner->GetMediaElement();
     NS_ENSURE_TRUE(element, NS_ERROR_FAILURE);
     if (element->ShouldCheckAllowOrigin()) {
       nsRefPtr<nsCORSListenerProxy> crossSiteListener =
@@ -703,7 +652,7 @@ void ChannelMediaResource::SetupChannelHeaders()
     if (!owner) {
       return;
     }
-    HTMLMediaElement* element = owner->GetMediaElement();
+    dom::HTMLMediaElement* element = owner->GetMediaElement();
     if (!element) {
       return;
     }
@@ -774,7 +723,7 @@ void ChannelMediaResource::CloseChannel()
     mListener = nullptr;
   }
 
-  if (mChannel) {
+  if (mChannel.get()) {
     if (mSuspendCount > 0) {
       // Resume the channel before we cancel it
       PossiblyResume();
@@ -832,13 +781,6 @@ nsresult ChannelMediaResource::Seek(int32_t aWhence, int64_t aOffset)
 
   CMLOG("Seek requested for aOffset [%lld] for decoder [%p]",
         aOffset, mDecoder);
-#ifdef MOZ_DASH
-  // Remember |aOffset|, because Media Cache may request a diff offset later.
-  if (mByteRangeDownloads) {
-    ReentrantMonitorAutoEnter mon(mSeekOffsetMonitor);
-    mSeekOffset = aOffset;
-  }
-#endif
   return mCacheStream.Seek(aWhence, aOffset);
 }
 
@@ -873,13 +815,13 @@ void ChannelMediaResource::Suspend(bool aCloseImmediately)
     // Shutting down; do nothing.
     return;
   }
-  HTMLMediaElement* element = owner->GetMediaElement();
+  dom::HTMLMediaElement* element = owner->GetMediaElement();
   if (!element) {
     // Shutting down; do nothing.
     return;
   }
 
-  if (mChannel) {
+  if (mChannel.get()) {
     if (aCloseImmediately && mCacheStream.IsTransportSeekable()) {
       // Kill off our channel right now, but don't tell anyone about it.
       mIgnoreClose = true;
@@ -908,7 +850,7 @@ void ChannelMediaResource::Resume()
     // Shutting down; do nothing.
     return;
   }
-  HTMLMediaElement* element = owner->GetMediaElement();
+  dom::HTMLMediaElement* element = owner->GetMediaElement();
   if (!element) {
     // Shutting down; do nothing.
     return;
@@ -917,7 +859,7 @@ void ChannelMediaResource::Resume()
   NS_ASSERTION(mSuspendCount > 0, "Resume without previous Suspend!");
   --mSuspendCount;
   if (mSuspendCount == 0) {
-    if (mChannel) {
+    if (mChannel.get()) {
       // Just wake up our existing channel
       {
         MutexAutoLock lock(mLock);
@@ -957,7 +899,7 @@ ChannelMediaResource::RecreateChannel()
     // The decoder is being shut down, so don't bother opening a new channel
     return NS_OK;
   }
-  HTMLMediaElement* element = owner->GetMediaElement();
+  dom::HTMLMediaElement* element = owner->GetMediaElement();
   if (!element) {
     // The decoder is being shut down, so don't bother opening a new channel
     return NS_OK;
@@ -965,12 +907,14 @@ ChannelMediaResource::RecreateChannel()
   nsCOMPtr<nsILoadGroup> loadGroup = element->GetDocumentLoadGroup();
   NS_ENSURE_TRUE(loadGroup, NS_ERROR_NULL_POINTER);
 
-  nsresult rv = NS_NewChannel(getter_AddRefs(mChannel),
+  nsCOMPtr<nsIChannel> channel;
+  nsresult rv = NS_NewChannel(getter_AddRefs(channel),
                               mURI,
                               nullptr,
                               loadGroup,
                               nullptr,
                               loadFlags);
+  mChannel = new nsMainThreadPtrHolder<nsIChannel>(channel);
 
   // We have cached the Content-Type, which should not change. Give a hint to
   // the channel to avoid a sniffing failure, which would be expected because we
@@ -1045,22 +989,7 @@ ChannelMediaResource::CacheClientSeek(int64_t aOffset, bool aResume)
   CMLOG("CacheClientSeek requested for aOffset [%lld] for decoder [%p]",
         aOffset, mDecoder);
 
-#ifndef MOZ_DASH
   CloseChannel();
-#else
-  // |CloseChannel| immediately for non-byte-range downloads.
-  if (!mByteRangeDownloads) {
-    CloseChannel();
-  } else if (mChannel) {
-    // Only close byte range channels if they are not in pending state.
-    bool isPending = false;
-    nsresult rv = mChannel->IsPending(&isPending);
-    NS_ENSURE_SUCCESS(rv, rv);
-    if (!isPending) {
-      CloseChannel();
-    }
-  }
-#endif
 
   if (aResume) {
     NS_ASSERTION(mSuspendCount > 0, "Too many resumes!");
@@ -1068,91 +997,12 @@ ChannelMediaResource::CacheClientSeek(int64_t aOffset, bool aResume)
     --mSuspendCount;
   }
 
-#ifdef MOZ_DASH  // Note: For chunked downloads, e.g. DASH, we need to determine which chunk
-  // contains the requested offset, |mOffset|. This is either previously
-  // requested in |Seek| or updated to the most recent bytes downloaded.
-  // So the process below is:
-  //   1 - Query decoder for chunk containing desired offset, |mOffset|.
-  //       Return silently if the offset is not available; suggests decoder is
-  //         yet to get range information.
-  //       Return with NetworkError for all other errors.
-  //
-  //   2 - Adjust |mByteRange|.mStart to |aOffset|, requested by media cache.
-  //       For seeking, the media cache always requests the start of the cache
-  //       block, so we need to adjust the first chunk of a seek.
-  //       E.g. For "DASH-WebM On Demand" this means the first chunk after
-  //       seeking will most likely be larger than the subsegment (cluster).
-  //
-  //   3 - Call |OpenByteRange| requesting |mByteRange| bytes.
-
-  if (mByteRangeDownloads) {
-    // Query decoder for chunk containing desired offset.
-    nsresult rv;
-    {
-      ReentrantMonitorAutoEnter mon(mSeekOffsetMonitor);
-      // Only continue with seek request if a prior call to |Seek| was made.
-      // If |Seek| was not called previously, it means the media cache is
-      // seeking on its own.
-      // E.g. For those WebM files which are encoded with cues at the end of
-      // the file, when the cues are parsed, the reader and media cache
-      // automatically return to the first offset not downloaded, normally the
-      // first byte after init data. This results in |MediaCache| requesting
-      // |aOffset| = 0 (aligning to the start of the cache block. Ignore this
-      // and let |DASHDecoder| decide which bytes to download and when.
-      if (mSeekOffset >= 0) {
-        rv = mDecoder->GetByteRangeForSeek(mSeekOffset, mByteRange);
-        // Cache may try to seek from the next uncached byte: this offset may
-        // be after the byte range being seeked, i.e. the range containing
-        // |mSeekOffset|, which is the offset actually requested by the reader.
-        // This case means that the seeked range is already cached. For byte
-        // range downloads, we do not permit the cache to request bytes outside
-        // the seeked range. Instead, the decoder is responsible for
-        // controlling the sequence of byte range downloads. As such, return
-        // silently, and do NOT request a new download.
-        if (NS_SUCCEEDED(rv) && !mByteRange.IsNull() &&
-            aOffset > mByteRange.mEnd) {
-          rv = NS_ERROR_NOT_AVAILABLE;
-          mByteRange.Clear();
-        }
-        mSeekOffset = -1;
-      } else if (mByteRange.mStart <= aOffset && aOffset <= mByteRange.mEnd) {
-        CMLOG("Trying to resume download at offset [%lld].", aOffset);
-        rv = NS_OK;
-      } else {
-        CMLOG("MediaCache [%p] trying to seek independently to offset [%lld].",
-            &mCacheStream, aOffset);
-        rv = NS_ERROR_NOT_AVAILABLE;
-      }
-    }
-    if (rv == NS_ERROR_NOT_AVAILABLE) {
-      // Decoder will not make byte ranges available for non-active streams, or
-      // if range information is not yet available, or for metadata bytes if
-      // they have already been downloaded and read. In all cases, it is ok to
-      // return silently and assume that the decoder will request the correct
-      // byte range when range information becomes available.
-      CMLOG("Byte range not available for decoder [%p]; returning "
-            "silently.", mDecoder);
-      return NS_OK;
-    } else if (NS_FAILED(rv) || mByteRange.IsNull()) {
-      // Decoder reported an error we don't want to handle here; just return.
-      CMLOG("Error getting byte range: seek offset[%lld] cache offset[%lld] "
-            "decoder[%p]", mSeekOffset, aOffset, mDecoder);
-      mDecoder->NetworkError();
-      CloseChannel();
-      return rv;
-    }
-    // Adjust the byte range to start where the media cache requested.
-    mByteRange.mStart = mOffset = aOffset;
-    return OpenByteRange(nullptr, mByteRange);
-  }
-#endif
-
   mOffset = aOffset;
 
   if (mSuspendCount > 0) {
     // Close the existing channel to force the channel to be recreated at
     // the correct offset upon resume.
-    if (mChannel) {
+    if (mChannel.get()) {
       mIgnoreClose = true;
       CloseChannel();
     }
@@ -1413,28 +1263,6 @@ private:
   bool mSizeInitialized;
 };
 
-class LoadedEvent : public nsRunnable
-{
-public:
-  LoadedEvent(MediaDecoder* aDecoder) :
-    mDecoder(aDecoder)
-  {
-    MOZ_COUNT_CTOR(LoadedEvent);
-  }
-  ~LoadedEvent()
-  {
-    MOZ_COUNT_DTOR(LoadedEvent);
-  }
-
-  NS_IMETHOD Run() {
-    mDecoder->NotifyDownloadEnded(NS_OK);
-    return NS_OK;
-  }
-
-private:
-  nsRefPtr<MediaDecoder> mDecoder;
-};
-
 void FileMediaResource::EnsureSizeInitialized()
 {
   mLock.AssertCurrentThreadOwns();
@@ -1448,7 +1276,7 @@ void FileMediaResource::EnsureSizeInitialized()
   nsresult res = mInput->Available(&size);
   if (NS_SUCCEEDED(res) && size <= INT64_MAX) {
     mSize = (int64_t)size;
-    nsCOMPtr<nsIRunnable> event = new LoadedEvent(mDecoder);
+    nsCOMPtr<nsIRunnable> event = new DataEnded(mDecoder, NS_OK);
     NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
   }
 }
@@ -1493,7 +1321,7 @@ nsresult FileMediaResource::Open(nsIStreamListener** aStreamListener)
     // web server.
     MediaDecoderOwner* owner = mDecoder->GetMediaOwner();
     NS_ENSURE_TRUE(owner, NS_ERROR_FAILURE);
-    HTMLMediaElement* element = owner->GetMediaElement();
+    dom::HTMLMediaElement* element = owner->GetMediaElement();
     NS_ENSURE_TRUE(element, NS_ERROR_FAILURE);
 
     rv = nsContentUtils::GetSecurityManager()->
@@ -1524,7 +1352,7 @@ nsresult FileMediaResource::Close()
 
   // Since mChennel is only accessed by main thread, there is no necessary to
   // take the lock.
-  if (mChannel) {
+  if (mChannel.get()) {
     mChannel->Cancel(NS_ERROR_PARSED_DATA_CACHED);
     mChannel = nullptr;
   }
@@ -1538,7 +1366,7 @@ already_AddRefed<nsIPrincipal> FileMediaResource::GetCurrentPrincipal()
 
   nsCOMPtr<nsIPrincipal> principal;
   nsIScriptSecurityManager* secMan = nsContentUtils::GetSecurityManager();
-  if (!secMan || !mChannel)
+  if (!secMan || !mChannel.get())
     return nullptr;
   secMan->GetChannelPrincipal(mChannel, getter_AddRefs(principal));
   return principal.forget();
@@ -1558,7 +1386,7 @@ already_AddRefed<MediaResource> FileMediaResource::CloneData(MediaDecoder* aDeco
     // The decoder is being shut down, so we can't clone
     return nullptr;
   }
-  HTMLMediaElement* element = owner->GetMediaElement();
+  dom::HTMLMediaElement* element = owner->GetMediaElement();
   if (!element) {
     // The decoder is being shut down, so we can't clone
     return nullptr;
@@ -1707,7 +1535,7 @@ MediaResource::Create(MediaDecoder* aDecoder, nsIChannel* aChannel)
 void BaseMediaResource::MoveLoadsToBackground() {
   NS_ASSERTION(!mLoadInBackground, "Why are you calling this more than once?");
   mLoadInBackground = true;
-  if (!mChannel) {
+  if (!mChannel.get()) {
     // No channel, resource is probably already loaded.
     return;
   }
@@ -1717,7 +1545,7 @@ void BaseMediaResource::MoveLoadsToBackground() {
     NS_WARNING("Null owner in MediaResource::MoveLoadsToBackground()");
     return;
   }
-  HTMLMediaElement* element = owner->GetMediaElement();
+  dom::HTMLMediaElement* element = owner->GetMediaElement();
   if (!element) {
     NS_WARNING("Null element in MediaResource::MoveLoadsToBackground()");
     return;
@@ -1793,6 +1621,9 @@ public:
 
 void BaseMediaResource::DispatchBytesConsumed(int64_t aNumBytes, int64_t aOffset)
 {
+  if (aNumBytes <= 0) {
+    return;
+  }
   RefPtr<nsIRunnable> event(new DispatchBytesConsumedEvent(mDecoder, aNumBytes, aOffset));
   NS_DispatchToMainThread(event, NS_DISPATCH_NORMAL);
 }

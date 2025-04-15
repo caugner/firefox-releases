@@ -65,12 +65,12 @@ public:
   MOZ_ALWAYS_INLINE void Update();
 
   MOZ_ALWAYS_INLINE void Unset(Modifiers aRemovingModifiers);
-  MOZ_ALWAYS_INLINE void Set(Modifiers aAddingModifiers);
+  void Set(Modifiers aAddingModifiers);
 
   void InitInputEvent(WidgetInputEvent& aInputEvent) const;
 
-  MOZ_ALWAYS_INLINE bool IsShift() const;
-  MOZ_ALWAYS_INLINE bool IsControl() const;
+  bool IsShift() const;
+  bool IsControl() const;
   MOZ_ALWAYS_INLINE bool IsAlt() const;
   MOZ_ALWAYS_INLINE bool IsAltGr() const;
   MOZ_ALWAYS_INLINE bool IsWin() const;
@@ -298,6 +298,24 @@ private:
     MOZ_CRASH("The default constructor of NativeKey isn't available");
   }
 
+  /**
+   * Returns true if the key event is caused by auto repeat.
+   */
+  bool IsRepeat() const
+  {
+    switch (mMsg.message) {
+      case WM_KEYDOWN:
+      case WM_SYSKEYDOWN:
+      case WM_CHAR:
+      case WM_SYSCHAR:
+      case WM_DEADCHAR:
+      case WM_SYSDEADCHAR:
+        return ((mMsg.lParam & (1 << 30)) != 0);
+      default:
+        return false;
+    }
+  }
+
   UINT GetScanCodeWithExtendedFlag() const;
 
   // The result is one of nsIDOMKeyEvent::DOM_KEY_LOCATION_*.
@@ -310,19 +328,57 @@ private:
    */
   bool IsIMEDoingKakuteiUndo() const;
 
-  /*
-   * Dispatches a plugin event after the specified message is removed.
-   * Returns true if the widget is destoyed.  Otherwise, false.
-   */
-  bool RemoveMessageAndDispatchPluginEvent(UINT aFirstMsg, UINT aLastMsg) const;
-
   bool IsKeyDownMessage() const
   {
     return (mMsg.message == WM_KEYDOWN || mMsg.message == WM_SYSKEYDOWN);
   }
-  bool IsFollowedByCharMessage() const;
+  bool IsKeyUpMessage() const
+  {
+    return (mMsg.message == WM_KEYUP || mMsg.message == WM_SYSKEYUP);
+  }
+  bool IsPrintableCharMessage(const MSG& aMSG) const
+  {
+    return IsPrintableCharMessage(aMSG.message);
+  }
+  bool IsPrintableCharMessage(UINT aMessage) const
+  {
+    return (aMessage == WM_CHAR || aMessage == WM_SYSCHAR);
+  }
+  bool IsCharMessage(const MSG& aMSG) const
+  {
+    return IsCharMessage(aMSG.message);
+  }
+  bool IsCharMessage(UINT aMessage) const
+  {
+    return (IsPrintableCharMessage(aMessage) || IsDeadCharMessage(aMessage));
+  }
+  bool IsDeadCharMessage(const MSG& aMSG) const
+  {
+    return IsDeadCharMessage(aMSG.message);
+  }
+  bool IsDeadCharMessage(UINT aMessage) const
+  {
+    return (aMessage == WM_DEADCHAR || aMessage == WM_SYSDEADCHAR);
+  }
+  bool IsSysCharMessage(const MSG& aMSG) const
+  {
+    return IsSysCharMessage(aMSG.message);
+  }
+  bool IsSysCharMessage(UINT aMessage) const
+  {
+    return (aMessage == WM_SYSCHAR || aMessage == WM_SYSDEADCHAR);
+  }
   bool IsFollowedByDeadCharMessage() const;
-  MSG RemoveFollowingCharMessage() const;
+
+  /**
+   * GetFollowingCharMessage() returns following char message of handling
+   * keydown event.  If the message is found, this method returns true.
+   * Otherwise, returns false.
+   *
+   * WARNING: Even if this returns true, aCharMsg may be WM_NULL or its
+   *          hwnd may be different window.
+   */
+  bool GetFollowingCharMessage(MSG& aCharMsg) const;
 
   /**
    * Wraps MapVirtualKeyEx() with MAPVK_VSC_TO_VK.
@@ -369,10 +425,10 @@ private:
 
   /**
    * DispatchKeyPressEventForFollowingCharMessage() dispatches keypress event
-   * for following WM_*CHAR message.
+   * for following WM_*CHAR message which is removed and set to aCharMsg.
    * Returns true if the event is consumed.  Otherwise, false.
    */
-  bool DispatchKeyPressEventForFollowingCharMessage() const;
+  bool DispatchKeyPressEventForFollowingCharMessage(const MSG& aCharMsg) const;
 
   /**
    * Checkes whether the key event down message is handled without following

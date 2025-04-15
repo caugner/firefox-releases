@@ -3,8 +3,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-SHARED_LIBRARY_LIBS = ../xpwidgets/libxpwidgets_s.a
-
 include $(topsrcdir)/config/rules.mk
 
 NIB_FILES = \
@@ -32,17 +30,4 @@ endif
 export::
 	$(INSTALL) $(srcdir)/cursors $(DIST)/bin/res
 
-LOCAL_INCLUDES	= \
-	$(TK_CFLAGS) \
-	-I$(srcdir)/../xpwidgets \
-	-I$(srcdir)/../shared \
-	-I$(topsrcdir)/layout/forms \
-	-I$(topsrcdir)/layout/generic \
-	-I$(topsrcdir)/layout/xul/base/src \
-	$(NULL)
-
-LDFLAGS	+= \
-	-framework QuickTime \
-	-framework IOKit \
-	-F/System/Library/PrivateFrameworks -framework CoreUI \
-	$(NULL)
+CXXFLAGS += $(TK_CFLAGS)

@@ -10,6 +10,10 @@
 #include "nsIClassInfoImpl.h"
 #include "nsTArray.h"
 #include "nsAutoPtr.h"
+#ifdef MOZ_CANARY
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 using namespace mozilla;
 
@@ -56,6 +60,15 @@ nsThreadManager::Init()
     return NS_ERROR_FAILURE;
 
   mLock = new Mutex("nsThreadManager.mLock");
+
+#ifdef MOZ_CANARY
+  const int flags = O_WRONLY | O_APPEND | O_CREAT | O_NONBLOCK;
+  const mode_t mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+  char* env_var_flag = getenv("MOZ_KILL_CANARIES");
+  sCanaryOutputFD = env_var_flag ? (env_var_flag[0] ?
+      open(env_var_flag, flags, mode) :
+      STDERR_FILENO) : 0;
+#endif
 
   // Setup "main" thread
   mMainThread = new nsThread(nsThread::MAIN_THREAD, 0);
@@ -204,7 +217,8 @@ nsThreadManager::NewThread(uint32_t creationFlags,
                            nsIThread **result)
 {
   // No new threads during Shutdown
-  NS_ENSURE_TRUE(mInitialized, NS_ERROR_NOT_INITIALIZED);
+  if (NS_WARN_IF(!mInitialized))
+    return NS_ERROR_NOT_INITIALIZED;
 
   nsThread *thr = new nsThread(nsThread::NOT_MAIN_THREAD, stackSize);
   if (!thr)
@@ -229,8 +243,10 @@ NS_IMETHODIMP
 nsThreadManager::GetThreadFromPRThread(PRThread *thread, nsIThread **result)
 {
   // Keep this functioning during Shutdown
-  NS_ENSURE_TRUE(mMainThread, NS_ERROR_NOT_INITIALIZED);
-  NS_ENSURE_ARG_POINTER(thread);
+  if (NS_WARN_IF(!mMainThread))
+    return NS_ERROR_NOT_INITIALIZED;
+  if (NS_WARN_IF(!thread))
+    return NS_ERROR_INVALID_ARG;
 
   nsRefPtr<nsThread> temp;
   {
@@ -246,7 +262,8 @@ NS_IMETHODIMP
 nsThreadManager::GetMainThread(nsIThread **result)
 {
   // Keep this functioning during Shutdown
-  NS_ENSURE_TRUE(mMainThread, NS_ERROR_NOT_INITIALIZED);
+  if (NS_WARN_IF(!mMainThread))
+    return NS_ERROR_NOT_INITIALIZED;
   NS_ADDREF(*result = mMainThread);
   return NS_OK;
 }
@@ -255,7 +272,8 @@ NS_IMETHODIMP
 nsThreadManager::GetCurrentThread(nsIThread **result)
 {
   // Keep this functioning during Shutdown
-  NS_ENSURE_TRUE(mMainThread, NS_ERROR_NOT_INITIALIZED);
+  if (NS_WARN_IF(!mMainThread))
+    return NS_ERROR_NOT_INITIALIZED;
   *result = GetCurrentThread();
   if (!*result)
     return NS_ERROR_OUT_OF_MEMORY;

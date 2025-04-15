@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'content'
-
 EXPORTS += [
     'ContainerWriter.h',
     'EncodedFrameContainer.h',
@@ -14,18 +12,15 @@ EXPORTS += [
     'TrackMetadataBase.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'MediaEncoder.cpp',
     'TrackEncoder.cpp',
 ]
 
 if CONFIG['MOZ_OPUS']:
     EXPORTS += ['OpusTrackEncoder.h']
-    SOURCES += ['OpusTrackEncoder.cpp']
-
-LIBRARY_NAME = 'gkconencoder_s'
+    UNIFIED_SOURCES += ['OpusTrackEncoder.cpp']
 
 FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
+FINAL_LIBRARY = 'gklayout'

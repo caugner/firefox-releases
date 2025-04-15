@@ -64,6 +64,12 @@ typedef struct nr_ice_media_stream_ nr_ice_media_stream;
 
 class NrIceCtx;
 
+struct NrIceAddr {
+  std::string host;
+  uint16_t port;
+  std::string transport;
+};
+
 /* A summary of a candidate, for use in asking which candidate
    pair is active */
 struct NrIceCandidate {
@@ -74,9 +80,10 @@ struct NrIceCandidate {
     ICE_RELAYED
   };
 
-  std::string host;
-  uint16_t port;
+  NrIceAddr cand_addr;
+  NrIceAddr local_addr;
   Type type;
+  std::string codeword;
 };
 
 struct NrIceCandidatePair {
@@ -104,6 +111,7 @@ struct NrIceCandidatePair {
   NrIceCandidate local;
   NrIceCandidate remote;
   // TODO(bcampen@mozilla.com): Is it important to put the foundation in here?
+  std::string codeword;
 };
 
 // Abstract base class for opaque values.

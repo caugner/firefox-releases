@@ -9,8 +9,9 @@ interface nsIDOMMozMobileCFInfo;
 interface nsIDOMMozMobileConnectionInfo;
 interface nsIDOMMozMobileNetworkInfo;
 interface nsIDOMWindow;
+interface nsIVariant;
 
-[scriptable, uuid(f1878629-4151-4e02-a22a-8cec3d7eddee)]
+[scriptable, uuid(5013f5cc-24f9-45dc-ba03-f5dc031a3a6b)]
 interface nsIMobileConnectionListener : nsISupports
 {
   void notifyVoiceChanged();
@@ -27,13 +28,15 @@ interface nsIMobileConnectionListener : nsISupports
   void notifyEmergencyCbModeChanged(in boolean active,
                                     in unsigned long timeoutMs);
   void notifyOtaStatusChanged(in DOMString status);
+  void notifyIccChanged();
+  void notifyRadioStateChanged();
 };
 
 /**
  * XPCOM component (in the content process) that provides the mobile
  * network information.
  */
-[scriptable, uuid(c66652e0-0628-11e3-8ffd-0800200c9a66)]
+[scriptable, uuid(987fc93a-e538-4fd3-9e4d-0e0f0934f019)]
 interface nsIMobileConnectionProvider : nsISupports
 {
   /**
@@ -41,47 +44,90 @@ interface nsIMobileConnectionProvider : nsISupports
    * RadioInterfaceLayer in the chrome process. Only a content process that has
    * the 'mobileconnection' permission is allowed to register.
    */
-  void registerMobileConnectionMsg(in nsIMobileConnectionListener listener);
-  void unregisterMobileConnectionMsg(in nsIMobileConnectionListener listener);
+  void registerMobileConnectionMsg(in unsigned long clientId,
+                                   in nsIMobileConnectionListener listener);
+  void unregisterMobileConnectionMsg(in unsigned long clientId,
+                                     in nsIMobileConnectionListener listener);
 
-  readonly attribute nsIDOMMozMobileConnectionInfo voiceConnectionInfo;
-  readonly attribute nsIDOMMozMobileConnectionInfo dataConnectionInfo;
-  readonly attribute DOMString networkSelectionMode;
+  /**
+   * These two fields require the 'mobilenetwork' permission.
+   */
+  DOMString getLastKnownNetwork(in unsigned long clientId);
+  DOMString getLastKnownHomeNetwork(in unsigned long clientId);
 
-  nsIDOMDOMRequest getNetworks(in nsIDOMWindow window);
-  nsIDOMDOMRequest selectNetwork(in nsIDOMWindow window, in nsIDOMMozMobileNetworkInfo network);
-  nsIDOMDOMRequest selectNetworkAutomatically(in nsIDOMWindow window);
+  /**
+   * All fields below require the 'mobileconnection' permission.
+   */
+  nsIDOMMozMobileConnectionInfo getVoiceConnectionInfo(in unsigned long clientId);
+  nsIDOMMozMobileConnectionInfo getDataConnectionInfo(in unsigned long clientId);
+  DOMString getIccId(in unsigned long clientId);
+  DOMString getNetworkSelectionMode(in unsigned long clientId);
+  DOMString getRadioState(in unsigned long clientId);
+  nsIVariant getSupportedNetworkTypes(in unsigned long clientId);
 
-  nsIDOMDOMRequest setRoamingPreference(in nsIDOMWindow window,
+  nsIDOMDOMRequest getNetworks(in unsigned long clientId,
+                               in nsIDOMWindow window);
+  nsIDOMDOMRequest selectNetwork(in unsigned long clientId,
+                                 in nsIDOMWindow window,
+                                 in nsIDOMMozMobileNetworkInfo network);
+  nsIDOMDOMRequest selectNetworkAutomatically(in unsigned long clientId,
+                                              in nsIDOMWindow window);
+
+  nsIDOMDOMRequest setPreferredNetworkType(in unsigned long clientId,
+                                           in nsIDOMWindow window,
+                                           in DOMString type);
+  nsIDOMDOMRequest getPreferredNetworkType(in unsigned long clientId,
+                                           in nsIDOMWindow window);
+
+  nsIDOMDOMRequest setRoamingPreference(in unsigned long clientId,
+                                        in nsIDOMWindow window,
                                         in DOMString mode);
-  nsIDOMDOMRequest getRoamingPreference(in nsIDOMWindow window);
+  nsIDOMDOMRequest getRoamingPreference(in unsigned long clientId,
+                                        in nsIDOMWindow window);
 
-  nsIDOMDOMRequest setVoicePrivacyMode(in nsIDOMWindow window,
+  nsIDOMDOMRequest setVoicePrivacyMode(in unsigned long clientId,
+                                       in nsIDOMWindow window,
                                        in bool enabled);
-  nsIDOMDOMRequest getVoicePrivacyMode(in nsIDOMWindow window);
+  nsIDOMDOMRequest getVoicePrivacyMode(in unsigned long clientId,
+                                       in nsIDOMWindow window);
 
-  nsIDOMDOMRequest sendMMI(in nsIDOMWindow window, in DOMString mmi);
-  nsIDOMDOMRequest cancelMMI(in nsIDOMWindow window);
+  nsIDOMDOMRequest sendMMI(in unsigned long clientId,
+                           in nsIDOMWindow window,
+                           in DOMString mmi);
+  nsIDOMDOMRequest cancelMMI(in unsigned long clientId,
+                             in nsIDOMWindow window);
 
-  nsIDOMDOMRequest getCallForwardingOption(in nsIDOMWindow   window,
+  nsIDOMDOMRequest getCallForwardingOption(in unsigned long clientId,
+                                           in nsIDOMWindow window,
                                            in unsigned short reason);
-  nsIDOMDOMRequest setCallForwardingOption(in nsIDOMWindow          window,
+  nsIDOMDOMRequest setCallForwardingOption(in unsigned long clientId,
+                                           in nsIDOMWindow window,
                                            in nsIDOMMozMobileCFInfo CFInfo);
 
-  nsIDOMDOMRequest getCallBarringOption(in nsIDOMWindow window,
-                                        in jsval        option);
-  nsIDOMDOMRequest setCallBarringOption(in nsIDOMWindow window,
-                                        in jsval        option);
-  nsIDOMDOMRequest changeCallBarringPassword(in nsIDOMWindow window,
+  nsIDOMDOMRequest getCallBarringOption(in unsigned long clientId,
+                                        in nsIDOMWindow window,
+                                        in jsval option);
+  nsIDOMDOMRequest setCallBarringOption(in unsigned long clientId,
+                                        in nsIDOMWindow window,
+                                        in jsval option);
+  nsIDOMDOMRequest changeCallBarringPassword(in unsigned long clientId,
+                                             in nsIDOMWindow window,
                                              in jsval info);
 
-  nsIDOMDOMRequest setCallWaitingOption(in nsIDOMWindow   window,
+  nsIDOMDOMRequest setCallWaitingOption(in unsigned long clientId,
+                                        in nsIDOMWindow window,
                                         in bool enabled);
-  nsIDOMDOMRequest getCallWaitingOption(in nsIDOMWindow   window);
+  nsIDOMDOMRequest getCallWaitingOption(in unsigned long clientId,
+                                        in nsIDOMWindow window);
 
-  nsIDOMDOMRequest setCallingLineIdRestriction(in nsIDOMWindow   window,
+  nsIDOMDOMRequest setCallingLineIdRestriction(in unsigned long clientId,
+                                               in nsIDOMWindow window,
                                                in unsigned short clirMode);
-  nsIDOMDOMRequest getCallingLineIdRestriction(in nsIDOMWindow   window);
+  nsIDOMDOMRequest getCallingLineIdRestriction(in unsigned long clientId,
+                                               in nsIDOMWindow window);
 
-  nsIDOMDOMRequest exitEmergencyCbMode(in nsIDOMWindow window);
+  nsIDOMDOMRequest exitEmergencyCbMode(in unsigned long clientId,
+                                       in nsIDOMWindow window);
+
+  nsIDOMDOMRequest setRadioEnabled(in unsigned long clientId, in nsIDOMWindow window, in bool enabled);
 };

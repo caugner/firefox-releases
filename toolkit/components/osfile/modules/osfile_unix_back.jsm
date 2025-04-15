@@ -165,7 +165,7 @@
          }
 
          stat.add_field_at(Const.OSFILE_OFFSETOF_STAT_ST_SIZE,
-                        "st_size", Type.size_t.implementation);
+                        "st_size", Type.off_t.implementation);
          Type.stat = stat.getType();
        }
 
@@ -199,6 +199,24 @@
          }
          return ctypes.CDataFinalizer(dir, SysFile._close_dir);
        };
+
+       // Structure |timeval|
+       {
+         let timeval = new SharedAll.HollowStructure(
+           "timeval",
+           Const.OSFILE_SIZEOF_TIMEVAL);
+         timeval.add_field_at(
+           Const.OSFILE_OFFSETOF_TIMEVAL_TV_SEC,
+           "tv_sec",
+           Type.long.implementation);
+         timeval.add_field_at(
+           Const.OSFILE_OFFSETOF_TIMEVAL_TV_USEC,
+           "tv_usec",
+           Type.long.implementation);
+         Type.timeval = timeval.getType();
+         Type.timevals = new SharedAll.Type("two timevals",
+           ctypes.ArrayType(Type.timeval.implementation, 2));
+       }
 
        // Declare libc functions as functions of |OS.Unix.File|
 
@@ -380,9 +398,15 @@
                     /*oflags*/Type.int,
                     /*mode*/  Type.int);
 
-       declareLazyFFI(SysFile,  "opendir", libc, "opendir", ctypes.default_abi,
+       if (OS.Constants.Sys.Name == "NetBSD") {
+          declareLazyFFI(SysFile,  "opendir", libc, "__opendir30", ctypes.default_abi,
+                   /*return*/ Type.null_or_DIR_ptr,
+                   /*path*/   Type.path);
+       } else {
+          declareLazyFFI(SysFile,  "opendir", libc, "opendir", ctypes.default_abi,
                     /*return*/ Type.null_or_DIR_ptr,
                     /*path*/   Type.path);
+       }
 
        declareLazyFFI(SysFile,  "pread", libc, "pread", ctypes.default_abi,
                     /*return*/ Type.negativeone_or_ssize_t,
@@ -419,6 +443,10 @@
          declareLazyFFI(SysFile,  "readdir", libc, "readdir$INODE64", ctypes.default_abi,
                      /*return*/Type.null_or_dirent_ptr,
                       /*dir*/   Type.DIR.in_ptr); // For MacOS X
+       } else if (OS.Constants.Sys.Name == "NetBSD") {
+         declareLazyFFI(SysFile,  "readdir", libc, "__readdir30", ctypes.default_abi,
+                      /*return*/Type.null_or_dirent_ptr,
+                      /*dir*/   Type.DIR.in_ptr); // Other Unices
        } else {
          declareLazyFFI(SysFile,  "readdir", libc, "readdir", ctypes.default_abi,
                       /*return*/Type.null_or_dirent_ptr,
@@ -529,6 +557,23 @@
          SysFile.fstat = function fstat(fd, buf) {
            return Stat.fxstat(ver, fd, buf);
          };
+       } else if (OS.Constants.Sys.Name == "NetBSD") {
+         // NetBSD 5.0 and newer
+         declareLazyFFI(SysFile,  "stat", libc, "__stat50", ctypes.default_abi,
+                      /*return*/ Type.negativeone_or_nothing,
+                      /*path*/   Type.path,
+                      /*buf*/    Type.stat.out_ptr
+                     );
+         declareLazyFFI(SysFile,  "lstat", libc, "__lstat50", ctypes.default_abi,
+                      /*return*/ Type.negativeone_or_nothing,
+                      /*path*/   Type.path,
+                      /*buf*/    Type.stat.out_ptr
+                     );
+         declareLazyFFI(SysFile,  "fstat", libc, "__fstat50", ctypes.default_abi,
+                      /*return*/ Type.negativeone_or_nothing,
+                      /*fd*/     Type.fd,
+                      /*buf*/    Type.stat.out_ptr
+                     );
        } else {
          // Mac OS X 32-bits, other Unix
          declareLazyFFI(SysFile,  "stat", libc, "stat", ctypes.default_abi,
@@ -570,6 +615,33 @@
          array[1] = ctypes.CDataFinalizer(_pipebuf[1], SysFile._close);
          return result;
        };
+
+       if (OS.Constants.Sys.Name == "NetBSD") {
+           declareLazyFFI(SysFile, "utimes", libc, "__utimes50", ctypes.default_abi,
+                      /*return*/     Type.negativeone_or_nothing,
+                      /*path*/       Type.path,
+                      /*timeval[2]*/ Type.timevals.out_ptr
+                      );
+       } else {
+           declareLazyFFI(SysFile, "utimes", libc, "utimes", ctypes.default_abi,
+                      /*return*/     Type.negativeone_or_nothing,
+                      /*path*/       Type.path,
+                      /*timeval[2]*/ Type.timevals.out_ptr
+                      );
+       }
+       if (OS.Constants.Sys.Name == "NetBSD") {
+           declareLazyFFI(SysFile, "futimes", libc, "__futimes50", ctypes.default_abi,
+                      /*return*/     Type.negativeone_or_nothing,
+                      /*fd*/         Type.fd,
+                      /*timeval[2]*/ Type.timevals.out_ptr
+                      );
+       } else {
+           declareLazyFFI(SysFile, "futimes", libc, "futimes", ctypes.default_abi,
+                      /*return*/     Type.negativeone_or_nothing,
+                      /*fd*/         Type.fd,
+                      /*timeval[2]*/ Type.timevals.out_ptr
+                      );
+       }
      };
 
      exports.OS.Unix = {

@@ -62,6 +62,9 @@ this.SystemMessagePermissionsTable = {
     "settings": ["read", "write"]
   },
   "media-button": { },
+  "networkstats-alarm": {
+    "networkstats-manage": []
+  },
   "notification": {
     "desktop-notification": []
   },
@@ -70,6 +73,12 @@ this.SystemMessagePermissionsTable = {
   },
   "push-register": {
   	"push": []
+  },
+  "sms-delivery-success": {
+    "sms": []
+  },
+  "sms-read-success": {
+    "sms": []
   },
   "sms-received": {
     "sms": []
@@ -91,6 +100,15 @@ this.SystemMessagePermissionsTable = {
   },
   "cdma-info-rec-received": {
     "mobileconnection": []
+  },
+  "nfc-manager-tech-discovered": {
+    "nfc-manager": []
+  },
+  "nfc-manager-tech-lost": {
+    "nfc-manager": []
+  },
+  "nfc-powerlevel-change": {
+    "settings": ["read", "write"]
   },
 };
 

@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'dom'
-
 EXPORTS.mozilla += [
     'ErrorResult.h',
 ]
@@ -35,28 +33,55 @@ EXPORTS.mozilla.dom += [
 
 FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
 
-LIBRARY_NAME = 'dombindings_s'
-
-EXPORT_LIBRARY = True
-
 LOCAL_INCLUDES += [
-    '../bluetooth',
-    '../camera',
-    '../file',
-    '../src/geolocation',
-    '../workers',
     '/content/base/src',
+    '/content/canvas/src',
     '/content/events/src',
+    '/content/html/content/src',
     '/content/html/document/src',
     '/content/media/webaudio',
+    '/content/media/webspeech/recognition',
     '/content/svg/content/src',
     '/content/xbl/src',
+    '/content/xml/content/src',
+    '/content/xslt/src/base',
+    '/content/xslt/src/xpath',
+    '/content/xul/content/src',
+    '/content/xul/document/src',
+    '/dom/base',
+    '/dom/battery',
+    '/dom/bluetooth',
+    '/dom/camera',
+    '/dom/file',
+    '/dom/indexedDB',
+    '/dom/src/geolocation',
+    '/dom/workers',
+    '/js/ipc',
+    '/js/xpconnect/src',
+    '/js/xpconnect/wrappers',
     '/layout/style',
     '/layout/xul/tree',
+    '/media/mtransport',
+    '/media/webrtc/signaling/src/common/time_profiling',
+    '/media/webrtc/signaling/src/peerconnection',
+]
+
+UNIFIED_SOURCES += [
+    'BindingUtils.cpp',
+    'CallbackInterface.cpp',
+    'CallbackObject.cpp',
+    'Date.cpp',
+    'DOMJSProxyHandler.cpp',
+    'Exceptions.cpp',
 ]
 
 include('/ipc/chromium/chromium-config.mozbuild')
+
+if CONFIG['MOZ_AUDIO_CHANNEL_MANAGER']:
+    LOCAL_INCLUDES += [
+        '/dom/system/gonk',
+    ]
+
+FINAL_LIBRARY = 'xul'

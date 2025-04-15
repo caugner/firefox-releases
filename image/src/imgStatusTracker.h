@@ -12,7 +12,6 @@ class imgIContainer;
 class imgStatusNotifyRunnable;
 class imgRequestNotifyRunnable;
 class imgStatusTrackerObserver;
-class imgStatusTrackerNotifyingObserver;
 class nsIRunnable;
 
 #include "mozilla/RefPtr.h"
@@ -292,12 +291,11 @@ public:
 
   nsIntRect GetInvalidRect() const { return mInvalidRect; }
 
-  typedef nsTObserverArray<mozilla::WeakPtr<imgRequestProxy>> ProxyArray;
 private:
+  typedef nsTObserverArray<mozilla::WeakPtr<imgRequestProxy>> ProxyArray;
   friend class imgStatusNotifyRunnable;
   friend class imgRequestNotifyRunnable;
   friend class imgStatusTrackerObserver;
-  friend class imgStatusTrackerNotifyingObserver;
   friend class imgStatusTrackerInit;
   imgStatusTracker(const imgStatusTracker& aOther);
 

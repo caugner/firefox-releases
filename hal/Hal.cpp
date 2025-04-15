@@ -7,7 +7,6 @@
 #include "Hal.h"
 #include "HalImpl.h"
 #include "HalSandbox.h"
-#include "mozilla/Util.h"
 #include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
 #include "mozilla/Observer.h"
@@ -749,6 +748,11 @@ SwitchState GetCurrentSwitchState(SwitchDevice aDevice)
 {
   AssertMainThread();
   RETURN_PROXY_IF_SANDBOXED(GetCurrentSwitchState(aDevice), SWITCH_STATE_UNKNOWN);
+}
+
+void NotifySwitchStateFromInputDevice(SwitchDevice aDevice, SwitchState aState)
+{
+  PROXY_IF_SANDBOXED(NotifySwitchStateFromInputDevice(aDevice, aState));
 }
 
 typedef mozilla::ObserverList<SwitchEvent> SwitchObserverList;

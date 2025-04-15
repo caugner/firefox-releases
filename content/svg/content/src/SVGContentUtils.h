@@ -11,11 +11,14 @@
 #include <math.h>
 
 #include "gfxMatrix.h"
+#include "mozilla/RangedPtr.h"
 
 class nsIContent;
 class nsIDocument;
 class nsIFrame;
+class nsPresContext;
 class nsStyleContext;
+class nsStyleCoord;
 class nsSVGElement;
 
 namespace mozilla {
@@ -132,16 +135,70 @@ public:
                       float aViewboxWidth, float aViewboxHeight,
                       const SVGPreserveAspectRatio &aPreserveAspectRatio);
 
+  static mozilla::RangedPtr<const PRUnichar>
+  GetStartRangedPtr(const nsAString& aString);
+
+  static mozilla::RangedPtr<const PRUnichar>
+  GetEndRangedPtr(const nsAString& aString);
+
+  /**
+   * True if 'aCh' is a decimal digit.
+   */
+  static inline bool IsDigit(PRUnichar aCh)
+  {
+    return aCh >= '0' && aCh <= '9';
+  }
+
+ /**
+  * Assuming that 'aCh' is a decimal digit, return its numeric value.
+  */
+  static inline uint32_t DecimalDigitValue(PRUnichar aCh)
+  {
+    MOZ_ASSERT(IsDigit(aCh), "Digit expected");
+    return aCh - '0';
+  }
+
+  /**
+   * Parses the sign (+ or -) of a number and moves aIter to the next
+   * character if a sign is found.
+   * @param aSignMultiplier [outparam] -1 if the sign is negative otherwise 1
+   * @return false if we hit the end of the string (i.e. if aIter is initially
+   *         at aEnd, or if we reach aEnd right after the sign character).
+   */
+  static inline bool
+  ParseOptionalSign(mozilla::RangedPtr<const PRUnichar>& aIter,
+                    const mozilla::RangedPtr<const PRUnichar>& aEnd,
+                    int32_t& aSignMultiplier)
+  {
+    if (aIter == aEnd) {
+      return false;
+    }
+    aSignMultiplier = *aIter == '-' ? -1 : 1;
+
+    mozilla::RangedPtr<const PRUnichar> iter(aIter);
+
+    if (*iter == '-' || *iter == '+') {
+      ++iter;
+      if (iter == aEnd) {
+        return false;
+      }
+    }
+    aIter = iter;
+    return true;
+  }
+
   /**
    * Parse a number of the form:
    * number ::= integer ([Ee] integer)? | [+-]? [0-9]* "." [0-9]+ ([Ee] integer)?
    * Parsing fails if the number cannot be represented by a floatType.
-   * Anything after the number is returned in aLeftOver.
+   * If parsing succeeds, aIter is updated so that it points to the character
+   * after the end of the number, otherwise it is left unchanged
    */
   template<class floatType>
   static bool
-  ParseNumber(const nsAString& aString, floatType& aValue,
-              nsAString& aLeftOver);
+  ParseNumber(mozilla::RangedPtr<const PRUnichar>& aIter,
+              const mozilla::RangedPtr<const PRUnichar>& aEnd,
+              floatType& aValue);
 
   /**
    * Parse a number of the form:
@@ -156,10 +213,30 @@ public:
   /**
    * Parse an integer of the form:
    * integer ::= [+-]? [0-9]+
-   * Parsing fails if the number cannot be represented by an int32_t.
+   * The returned number is clamped to an int32_t if outside that range.
+   * If parsing succeeds, aIter is updated so that it points to the character
+   * after the end of the number, otherwise it is left unchanged
    */
-  static bool
-  ParseInteger(const nsAString& aString, int32_t& aValue);
+  static bool ParseInteger(mozilla::RangedPtr<const PRUnichar>& aIter,
+                           const mozilla::RangedPtr<const PRUnichar>& aEnd,
+                           int32_t& aValue);
+
+  /**
+   * Parse an integer of the form:
+   * integer ::= [+-]? [0-9]+
+   * The returned number is clamped to an int32_t if outside that range.
+   * Parsing fails if there is anything left over after the number.
+   */
+  static bool ParseInteger(const nsAString& aString, int32_t& aValue);
+
+  /**
+   * Converts an nsStyleCoord into a userspace value.  Handles units
+   * Factor (straight userspace), Coord (dimensioned), and Percent (of
+   * aContent's SVG viewport)
+   */
+  static float CoordToFloat(nsPresContext *aPresContext,
+                            nsSVGElement *aContent,
+                            const nsStyleCoord &aCoord);
 };
 
 #endif

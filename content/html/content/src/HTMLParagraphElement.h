@@ -7,7 +7,6 @@
 #define mozilla_dom_HTMLParagraphElement_h
 
 #include "mozilla/Attributes.h"
-#include "mozilla/Util.h"
 
 #include "nsIDOMHTMLParagraphElement.h"
 #include "nsGenericHTMLElement.h"
@@ -50,6 +49,10 @@ public:
 protected:
   virtual JSObject* WrapNode(JSContext *aCx,
                              JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
+
+private:
+  static void MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
+                                    nsRuleData* aData);
 };
 
 } // namespace dom

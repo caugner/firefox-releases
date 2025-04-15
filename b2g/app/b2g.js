@@ -42,6 +42,12 @@ pref("network.protocol-handler.warn-external.tel", false);
 pref("network.protocol-handler.warn-external.mailto", false);
 pref("network.protocol-handler.warn-external.vnd.youtube", false);
 
+/* protocol expose prefs */
+// By default, all protocol handlers are exposed. This means that the browser
+// will response to openURL commands for all URL types. It will also try to open
+// link clicks inside the browser before failing over to the system handlers.
+pref("network.protocol-handler.expose.rtsp", false);
+
 /* http prefs */
 pref("network.http.pipelining", true);
 pref("network.http.pipelining.ssl", true);
@@ -75,7 +81,7 @@ pref("mozilla.widget.force-24bpp", true);
 pref("mozilla.widget.use-buffer-pixmap", true);
 pref("mozilla.widget.disable-native-theme", true);
 pref("layout.reflow.synthMouseMove", false);
-pref("layers.force-tiles", false);
+pref("layers.enable-tiles", false);
 
 /* download manager (don't show the window or alert) */
 pref("browser.download.useDownloadDir", true);
@@ -250,19 +256,17 @@ pref("ui.dragThresholdY", 25);
 
 // Layers Acceleration.  We can only have nice things on gonk, because
 // they're not maintained anywhere else.
+pref("layers.offmainthreadcomposition.enabled", true);
 #ifndef MOZ_WIDGET_GONK
 pref("dom.ipc.tabs.disabled", true);
-pref("layers.offmainthreadcomposition.enabled", false);
 pref("layers.offmainthreadcomposition.async-animations", false);
 pref("layers.async-video.enabled", false);
 #else
 pref("dom.ipc.tabs.disabled", false);
-pref("layers.offmainthreadcomposition.enabled", true);
 pref("layers.acceleration.disabled", false);
 pref("layers.offmainthreadcomposition.async-animations", true);
 pref("layers.async-video.enabled", true);
 pref("layers.async-pan-zoom.enabled", true);
-pref("gfx.content.azure.enabled", true);
 pref("gfx.content.azure.backends", "cairo");
 #endif
 
@@ -386,6 +390,7 @@ pref("dom.mozBrowserFramesEnabled", true);
 pref("dom.ipc.processCount", 100000);
 
 pref("dom.ipc.browser_frames.oop_by_default", false);
+pref("dom.browser_frames.useAsyncPanZoom", false);
 
 // SMS/MMS
 pref("dom.sms.enabled", true);
@@ -430,9 +435,14 @@ pref("services.push.requestTimeout", 10000);
 pref("services.push.udp.wakeupEnabled", true);
 
 // NetworkStats
-#ifdef MOZ_B2G_RIL
+#ifdef MOZ_WIDGET_GONK
 pref("dom.mozNetworkStats.enabled", true);
 pref("dom.webapps.firstRunWithSIM", true);
+#endif
+
+#ifdef MOZ_B2G_RIL
+// SingleVariant
+pref("dom.mozApps.single_variant_sourcedir", "/persist/svoperapps");
 #endif
 
 // WebSettings
@@ -557,6 +567,7 @@ pref("dom.sysmsg.enabled", true);
 pref("media.plugins.enabled", false);
 pref("media.omx.enabled", true);
 pref("media.rtsp.enabled", true);
+pref("media.rtsp.video.enabled", false);
 
 // Disable printing (particularly, window.print())
 pref("dom.disable_window_print", true);
@@ -567,6 +578,10 @@ pref("dom.disable_window_showModalDialog", true);
 // Enable new experimental html forms
 pref("dom.experimental_forms", true);
 pref("dom.forms.number", true);
+
+// Don't enable <input type=color> yet as we don't have a color picker
+// implemented for b2g (bug 875751)
+pref("dom.forms.color", false);
 
 // Turns on gralloc-based direct texturing for Gonk
 pref("gfx.gralloc.enabled", false);
@@ -591,12 +606,15 @@ pref("javascript.options.mem.gc_decommit_threshold_mb", 1);
 
 // Show/Hide scrollbars when active/inactive
 pref("ui.showHideScrollbars", 1);
+pref("ui.useOverlayScrollbars", 1);
 
 // Enable the ProcessPriorityManager, and give processes with no visible
 // documents a 1s grace period before they're eligible to be marked as
-// background.
+// background. Background processes that are perceivable due to playing
+// media are given a longer grace period to accomodate changing tracks, etc.
 pref("dom.ipc.processPriorityManager.enabled", true);
 pref("dom.ipc.processPriorityManager.backgroundGracePeriodMS", 1000);
+pref("dom.ipc.processPriorityManager.backgroundPerceivableGracePeriodMS", 5000);
 pref("dom.ipc.processPriorityManager.temporaryPriorityLockMS", 5000);
 
 // Number of different background levels for background processes.  We use
@@ -727,8 +745,7 @@ pref("font.size.inflation.disabledInMasterProcess", true);
 // consumption when applications are sent to the background.
 pref("memory.free_dirty_pages", true);
 
-pref("layout.imagevisibility.enabled", false);
-pref("layout.imagevisibility.enabled_for_browser_elements_only", true);
+pref("layout.imagevisibility.enabled", true);
 pref("layout.imagevisibility.numscrollportwidths", 1);
 pref("layout.imagevisibility.numscrollportheights", 1);
 
@@ -747,7 +764,6 @@ pref("webgl.can-lose-context-in-foreground", false);
 pref("memory_info_dumper.watch_fifo.enabled", true);
 pref("memory_info_dumper.watch_fifo.directory", "/data/local");
 
-pref("general.useragent.enable_overrides", true);
 // See ua-update.json.in for the packaged UA override list
 pref("general.useragent.updates.enabled", true);
 pref("general.useragent.updates.url", "https://dynamicua.cdn.mozilla.net/0/%APP_ID%");
@@ -812,8 +828,10 @@ pref("devtools.debugger.unix-domain-socket", "/data/local/debugger-socket");
 
 // enable Skia/GL (OpenGL-accelerated 2D drawing) for large enough 2d canvases,
 // falling back to Skia/software for smaller canvases
+#ifdef MOZ_WIDGET_GONK
 pref("gfx.canvas.azure.backends", "skia");
 pref("gfx.canvas.azure.accelerated", true);
+#endif
 
 // Turn on dynamic cache size for Skia
 pref("gfx.canvas.skiagl.dynamic-cache", true);
@@ -821,24 +839,37 @@ pref("gfx.canvas.skiagl.dynamic-cache", true);
 // enable fence with readpixels for SurfaceStream
 pref("gfx.gralloc.fence-with-readpixels", true);
 
-// Enable Telephony API
-pref("dom.telephony.enabled", true);
-
 // Cell Broadcast API
-pref("dom.cellbroadcast.enabled", true);
 pref("ril.cellbroadcast.disabled", false);
-
-// ICC API
-pref("dom.icc.enabled", true);
-
-// Mobile Connection API
-pref("dom.mobileconnection.enabled", true);
-
-// Voice Mail API
-pref("dom.voicemail.enabled", true);
 
 // The url of the page used to display network error details.
 pref("b2g.neterror.url", "app://system.gaiamobile.org/net_error.html");
 
 // Enable Web Speech synthesis API
 pref("media.webspeech.synth.enabled", true);
+
+// Inactivity time in milliseconds after which we shut down the OS.File worker.
+pref("osfile.reset_worker_delay", 5000);
+
+// The URL of the Firefox Accounts auth server backend
+pref("identity.fxaccounts.auth.uri", "https://api-accounts.dev.lcip.org/v1");
+
+// APZC preferences.
+//
+// Gaia relies heavily on scroll events for now, so lets fire them
+// more often than the default value (100).
+pref("apz.asyncscroll.throttle", 40);
+
+// This preference allows FirefoxOS apps (and content, I think) to force
+// the use of software (instead of hardware accelerated) 2D canvases by
+// creating a context like this:
+//
+//   canvas.getContext('2d', { willReadFrequently: true })
+//
+// Using a software canvas can save memory when JS calls getImageData()
+// on the canvas frequently. See bug 884226.
+pref("gfx.canvas.willReadFrequently.enable", true);
+
+// Disable autofocus until we can have it not bring up the keyboard.
+// https://bugzilla.mozilla.org/show_bug.cgi?id=965763
+pref("browser.autofocus", false);

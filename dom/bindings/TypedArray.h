@@ -13,7 +13,6 @@
 #include "js/Tracer.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/BindingDeclarations.h"
-#include "mozilla/Util.h" // for Maybe
 #include "nsWrapperCache.h"
 
 namespace mozilla {
@@ -33,7 +32,9 @@ protected:
 public:
   inline void TraceSelf(JSTracer* trc)
   {
-    JS_CallObjectTracer(trc, &mObj, "TypedArray.mObj");
+    if (mObj) {
+      JS_CallObjectTracer(trc, &mObj, "TypedArray.mObj");
+    }
   }
 
 private:
@@ -92,7 +93,8 @@ public:
 
   inline bool WrapIntoNewCompartment(JSContext* cx)
   {
-    return JS_WrapObject(cx, JS::MutableHandleObject::fromMarkedLocation(&mObj));
+    return JS_WrapObject(cx,
+      JS::MutableHandle<JSObject*>::fromMarkedLocation(&mObj));
   }
 
 protected:

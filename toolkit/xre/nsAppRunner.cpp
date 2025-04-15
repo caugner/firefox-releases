@@ -21,11 +21,11 @@
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ContentChild.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Poison.h"
 #include "mozilla/Telemetry.h"
-#include "mozilla/Util.h"
 
 #include "nsAppRunner.h"
 #include "mozilla/AppData.h"
@@ -99,6 +99,7 @@
 #include "nsIWinAppHelper.h"
 #include <windows.h>
 #include "cairo/cairo-features.h"
+#include "mozilla/WindowsVersion.h"
 #ifdef MOZ_METRO
 #include <roapi.h>
 #endif
@@ -126,10 +127,14 @@
 #include "nsXREDirProvider.h"
 #include "nsToolkitCompsCID.h"
 
+#if defined(XP_WIN) && defined(MOZ_METRO)
+#include "updatehelper.h"
+#endif
+
 #include "nsINIParser.h"
 #include "mozilla/Omnijar.h"
 #include "mozilla/StartupTimeline.h"
-#include "mozilla/mozPoisonWrite.h"
+#include "mozilla/LateWriteChecks.h"
 
 #include <stdlib.h>
 
@@ -148,8 +153,8 @@
 #include <process.h>
 #include <shlobj.h>
 #include "nsThreadUtils.h"
-#include <comutil.h>
-#include <Wbemidl.h>
+#include <comdef.h>
+#include <wbemidl.h>
 #endif
 
 #ifdef XP_MACOSX
@@ -569,6 +574,22 @@ ProcessDDE(nsINativeAppSupport* aNative, bool aWait)
 }
 #endif
 
+/**
+ * Determines if there is support for showing the profile manager
+ *
+ * @return true in all environments except for Windows Metro
+*/
+static bool
+CanShowProfileManager()
+{
+#if defined(XP_WIN)
+  return XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Desktop;
+#else
+  return true;
+#endif
+}
+
+
 bool gSafeMode = false;
 
 /**
@@ -586,7 +607,7 @@ class nsXULAppInfo : public nsIXULAppInfo,
 
 {
 public:
-  nsXULAppInfo() {}
+  MOZ_CONSTEXPR nsXULAppInfo() {}
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIXULAPPINFO
   NS_DECL_NSIXULRUNTIME
@@ -1649,7 +1670,7 @@ static nsresult LaunchChild(nsINativeAppSupport* aNative,
   SaveToEnv("MOZ_LAUNCHED_CHILD=1");
 
 #if defined(MOZ_WIDGET_ANDROID)
-  mozilla::AndroidBridge::Bridge()->ScheduleRestart();
+  mozilla::widget::android::GeckoAppShell::ScheduleRestart();
 #else
 #if defined(XP_MACOSX)
   CommandLineServiceMac::SetupMacCommandLine(gRestartArgc, gRestartArgv, true);
@@ -1761,7 +1782,7 @@ ProfileLockedDialog(nsIFile* aProfileDir, nsIFile* aProfileLocalDir,
     if (aUnlocker) {
       int32_t button;
 #ifdef MOZ_WIDGET_ANDROID
-      mozilla::AndroidBridge::Bridge()->KillAnyZombies();
+      mozilla::widget::android::GeckoAppShell::KillAnyZombies();
       button = 1;
 #else
       const uint32_t flags =
@@ -1788,7 +1809,7 @@ ProfileLockedDialog(nsIFile* aProfileDir, nsIFile* aProfileLocalDir,
       }
     } else {
 #ifdef MOZ_WIDGET_ANDROID
-      if (mozilla::AndroidBridge::Bridge()->UnlockProfile()) {
+      if (mozilla::widget::android::GeckoAppShell::UnlockProfile()) {
         return NS_LockProfilePath(aProfileDir, aProfileLocalDir, 
                                   nullptr, aResult);
       }
@@ -1878,6 +1899,10 @@ static nsresult
 ShowProfileManager(nsIToolkitProfileService* aProfileSvc,
                    nsINativeAppSupport* aNative)
 {
+  if (!CanShowProfileManager()) {
+    return NS_ERROR_NOT_IMPLEMENTED;
+  }
+
   nsresult rv;
 
   nsCOMPtr<nsIFile> profD, profLD;
@@ -2184,12 +2209,12 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
         return rv;
       }
       
-      // As with -profile, assume that the given path will be used for both the
-      // main profile directory and the temp profile directory.
-      rv = aProfileSvc->CreateProfile(lf, lf, nsDependentCSubstring(arg, delim),
+      // As with -profile, assume that the given path will be used for the
+      // main profile directory.
+      rv = aProfileSvc->CreateProfile(lf, nsDependentCSubstring(arg, delim),
                                      getter_AddRefs(profile));
     } else {
-      rv = aProfileSvc->CreateProfile(nullptr, nullptr, nsDependentCString(arg),
+      rv = aProfileSvc->CreateProfile(nullptr, nsDependentCString(arg),
                                      getter_AddRefs(profile));
     }
     // Some pathological arguments can make it this far
@@ -2228,7 +2253,10 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
       PR_fprintf(PR_STDERR, "Error: argument -p is invalid when argument -osint is specified\n");
       return NS_ERROR_FAILURE;
     }
-    return ShowProfileManager(aProfileSvc, aNative);
+
+    if (CanShowProfileManager()) {
+      return ShowProfileManager(aProfileSvc, aNative);
+    }
   }
   if (ar) {
     ar = CheckArg("osint");
@@ -2256,14 +2284,16 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
       return ProfileLockedDialog(profile, unlocker, aNative, aResult);
     }
 
-    return ShowProfileManager(aProfileSvc, aNative);
+    if (CanShowProfileManager()) {
+      return ShowProfileManager(aProfileSvc, aNative);
+    }
   }
 
   ar = CheckArg("profilemanager", true);
   if (ar == ARG_BAD) {
     PR_fprintf(PR_STDERR, "Error: argument -profilemanager is invalid when argument -osint is specified\n");
     return NS_ERROR_FAILURE;
-  } else if (ar == ARG_FOUND) {
+  } else if (ar == ARG_FOUND && CanShowProfileManager()) {
     return ShowProfileManager(aProfileSvc, aNative);
   }
 
@@ -2274,7 +2304,6 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
     // create a default profile
     nsCOMPtr<nsIToolkitProfile> profile;
     nsresult rv = aProfileSvc->CreateProfile(nullptr, // choose a default dir for us
-                                             nullptr, // choose a default dir for us
                                              NS_LITERAL_CSTRING("default"),
                                              getter_AddRefs(profile));
     if (NS_SUCCEEDED(rv)) {
@@ -2289,8 +2318,9 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
   }
 
   bool useDefault = true;
-  if (count > 1)
+  if (count > 1 && CanShowProfileManager()) {
     aProfileSvc->GetStartWithLastProfile(&useDefault);
+  }
 
   if (useDefault) {
     nsCOMPtr<nsIToolkitProfile> profile;
@@ -2343,6 +2373,10 @@ SelectProfile(nsIProfileLock* *aResult, nsIToolkitProfileService* aProfileSvc, n
 
       return ProfileLockedDialog(profile, unlocker, aNative, aResult);
     }
+  }
+
+  if (!CanShowProfileManager()) {
+    return NS_ERROR_FAILURE;
   }
 
   return ShowProfileManager(aProfileSvc, aNative);
@@ -2480,7 +2514,7 @@ WriteVersion(nsIFile* aProfileDir, const nsCString& aVersion,
     PR_Write(fd, appDir.get(), appDir.Length());
   }
 
-  static const char kInvalidationHeader[] = "InvalidateCaches=1" NS_LINEBREAK;
+  static const char kInvalidationHeader[] = NS_LINEBREAK "InvalidateCaches=1";
   if (invalidateCache)
     PR_Write(fd, kInvalidationHeader, sizeof(kInvalidationHeader) - 1);
 
@@ -2761,6 +2795,38 @@ static DWORD InitDwriteBG(LPVOID lpdwThreadParam)
 bool fire_glxtest_process();
 #endif
 
+#if defined(XP_WIN) && defined(MOZ_METRO)
+#ifndef AHE_TYPE
+enum AHE_TYPE {
+  AHE_DESKTOP = 0,
+  AHE_IMMERSIVE = 1
+};
+#endif
+
+/*
+ * The Windows launcher uses this value to decide what front end ui
+ * to launch. We always launch the same ui unless the user
+ * specifically asks to switch. Update the value on every startup
+ * based on the environment requested.
+ */
+void
+SetLastWinRunType(AHE_TYPE aType)
+{
+  HKEY key;
+  LONG result = RegOpenKeyExW(HKEY_CURRENT_USER,
+                              L"SOFTWARE\\Mozilla\\Firefox",
+                              0, KEY_WRITE, &key);
+  if (result != ERROR_SUCCESS) {
+    return;
+  }
+  DWORD value = (DWORD)aType;
+  result = RegSetValueEx(key, L"MetroLastAHE", 0, REG_DWORD,
+                         reinterpret_cast<LPBYTE>(&value),
+                         sizeof(DWORD));
+  RegCloseKey(key);
+}
+#endif // defined(XP_WIN) && defined(MOZ_METRO)
+
 #include "GeckoProfiler.h"
 
 // Encapsulates startup and shutdown state for XRE_main
@@ -2854,6 +2920,19 @@ XREMain::XRE_mainInit(bool* aExitFlag)
   }
 #endif
 
+#if defined(XP_WIN) && defined(MOZ_METRO)
+  // Don't remove this arg, we want to pass it on to nsUpdateDriver 
+  if (CheckArg("metro-update", false, nullptr, false) == ARG_FOUND ||
+      XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Metro) {
+    // If we're doing a restart update that was initiated from metro land,
+    // we'll be running desktop to handle the actual update. Request that
+    // after the restart we launch into metro.
+    SetLastWinRunType(AHE_IMMERSIVE);
+  } else {
+    SetLastWinRunType(AHE_DESKTOP);
+  }
+#endif
+
   SetupErrorHandling(gArgv[0]);
 
 #ifdef CAIRO_HAS_DWRITE_FONT
@@ -2867,10 +2946,8 @@ XREMain::XRE_mainInit(bool* aExitFlag)
     // manual font file I/O on _all_ system fonts.  To avoid this, load the
     // dwrite library and create a factory as early as possible so that the
     // FntCache service is ready by the time it's needed.
-      
-    OSVERSIONINFO vinfo;
-    vinfo.dwOSVersionInfoSize = sizeof(vinfo);
-    if (GetVersionEx(&vinfo) && vinfo.dwMajorVersion >= 6) {
+
+    if (IsVistaOrLater()) {
       CreateThread(nullptr, 0, (LPTHREAD_START_ROUTINE)&InitDwriteBG,
                    nullptr, 0, nullptr);
     }
@@ -3592,6 +3669,12 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
     *aExitFlag = true;
     return 0;
   }
+#if defined(XP_WIN) && defined(MOZ_METRO)
+  if (CheckArg("metro-update", false) == ARG_FOUND) {
+    *aExitFlag = true;
+    return 0;
+  }
+#endif
 #endif
 
   rv = NS_NewToolkitProfileService(getter_AddRefs(mProfileSvc));
@@ -4049,12 +4132,12 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 
   // Check for an application initiated restart.  This is one that
   // corresponds to nsIAppStartup.quit(eRestart)
-  if (rv == NS_SUCCESS_RESTART_APP) {
+  if (rv == NS_SUCCESS_RESTART_APP || rv == NS_SUCCESS_RESTART_METRO_APP) {
     appInitiatedRestart = true;
-  } else {
-    // We will have a real shutdown, let ShutdownXPCOM poison writes to
-    // find any late ones.
-    mozilla::EnableWritePoisoning();
+
+    // We have an application restart don't do any shutdown checks here
+    // In particular we don't want to poison IO for checking late-writes.
+    gShutdownChecks = SCM_NOTHING;
   }
 
   if (!mShuttingDown) {
@@ -4091,7 +4174,15 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
     MOZ_gdk_display_close(mGdkDisplay);
 #endif
 
-    rv = LaunchChild(mNativeApp, true);
+#if defined(MOZ_METRO) && defined(XP_WIN)
+    if (rv == NS_SUCCESS_RESTART_METRO_APP) {
+      LaunchDefaultMetroBrowser();
+      rv = NS_OK;
+    } else
+#endif
+    {
+      rv = LaunchChild(mNativeApp, true);
+    }
 
 #ifdef MOZ_CRASHREPORTER
     if (mAppData->flags & NS_XRE_ENABLE_CRASH_REPORTER)
@@ -4234,8 +4325,8 @@ void SetWindowsEnvironment(WindowsEnvironmentType aEnvID);
 #endif // MOZ_METRO || !defined(XP_WIN)
 
 void
-XRE_DisableWritePoisoning(void) {
-  mozilla::DisableWritePoisoning();
+XRE_StopLateWriteChecks(void) {
+  mozilla::StopLateWriteChecks();
 }
 
 int
@@ -4262,6 +4353,8 @@ XRE_main(int argc, char* argv[], const nsXREAppData* aAppData, uint32_t aFlags)
   // Metro
   NS_ASSERTION(XRE_GetWindowsEnvironment() == WindowsEnvironmentType_Metro,
                "Unknown Windows environment");
+
+  SetLastWinRunType(AHE_IMMERSIVE);
 
   int result = XRE_mainMetro(argc, argv, aAppData);
   mozilla::RecordShutdownEndTimeStamp();

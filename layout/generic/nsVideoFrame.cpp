@@ -92,8 +92,7 @@ nsVideoFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
     // And now have it update its internal state
     element->UpdateState(false);
 
-    nsresult res = UpdatePosterSource(false);
-    NS_ENSURE_SUCCESS(res,res);
+    UpdatePosterSource(false);
 
     if (!aElements.AppendElement(mPosterImage))
       return NS_ERROR_OUT_OF_MEMORY;
@@ -172,7 +171,7 @@ already_AddRefed<Layer>
 nsVideoFrame::BuildLayer(nsDisplayListBuilder* aBuilder,
                          LayerManager* aManager,
                          nsDisplayItem* aItem,
-                         const ContainerParameters& aContainerParameters)
+                         const ContainerLayerParameters& aContainerParameters)
 {
   nsRect area = GetContentRect() - GetPosition() + aItem->ToReferenceFrame();
   HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
@@ -398,14 +397,14 @@ public:
 
   virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
                                              LayerManager* aManager,
-                                             const ContainerParameters& aContainerParameters)
+                                             const ContainerLayerParameters& aContainerParameters)
   {
     return static_cast<nsVideoFrame*>(mFrame)->BuildLayer(aBuilder, aManager, this, aContainerParameters);
   }
 
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
                                    LayerManager* aManager,
-                                   const FrameLayerBuilder::ContainerParameters& aParameters)
+                                   const ContainerLayerParameters& aParameters)
   {
     if (aManager->IsCompositingCheap()) {
       // Since ImageLayers don't require additional memory of the
@@ -592,20 +591,22 @@ nsVideoFrame::GetVideoIntrinsicSize(nsRenderingContext *aRenderingContext)
                 nsPresContext::CSSPixelsToAppUnits(size.height));
 }
 
-nsresult
+void
 nsVideoFrame::UpdatePosterSource(bool aNotify)
 {
   NS_ASSERTION(HasVideoElement(), "Only call this on <video> elements.");
   HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
 
-  nsAutoString posterStr;
-  element->GetPoster(posterStr);
-  nsresult res = mPosterImage->SetAttr(kNameSpaceID_None,
-                                       nsGkAtoms::src,
-                                       posterStr,
-                                       aNotify);
-  NS_ENSURE_SUCCESS(res,res);
-  return NS_OK;
+  if (element->HasAttr(kNameSpaceID_None, nsGkAtoms::poster)) {
+    nsAutoString posterStr;
+    element->GetPoster(posterStr);
+    mPosterImage->SetAttr(kNameSpaceID_None,
+                          nsGkAtoms::src,
+                          posterStr,
+                          aNotify);
+  } else {
+    mPosterImage->UnsetAttr(kNameSpaceID_None, nsGkAtoms::poster, aNotify);
+  }
 }
 
 NS_IMETHODIMP
@@ -614,8 +615,7 @@ nsVideoFrame::AttributeChanged(int32_t aNameSpaceID,
                                int32_t aModType)
 {
   if (aAttribute == nsGkAtoms::poster && HasVideoElement()) {
-    nsresult res = UpdatePosterSource(true);
-    NS_ENSURE_SUCCESS(res,res);
+    UpdatePosterSource(true);
   }
   return nsContainerFrame::AttributeChanged(aNameSpaceID,
                                             aAttribute,

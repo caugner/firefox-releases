@@ -2640,6 +2640,24 @@
     "n_buckets": 20,
     "description": "Gloda: indexing rate (message/s)"
   },
+  "FX_GESTURE_TAKE_SNAPSHOT_OF_PAGE": {
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": "30",
+    "description": "Firefox: Time taken to capture the page to a canvas, for reuse while swiping through history (ms)."
+  },
+  "FX_GESTURE_INSTALL_SNAPSHOT_OF_PAGE": {
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": "30",
+    "description": "Firefox: Time taken to store the image capture of the page to a canvas, for reuse while swiping through history (ms)."
+  },
+  "FX_GESTURE_COMPRESS_SNAPSHOT_OF_PAGE": {
+    "kind": "exponential",
+    "high": "1000",
+    "n_buckets": "30",
+    "description": "Firefox: Time taken to kick off image compression of the canvas that will be used during swiping through history (ms)."
+  },
   "FX_TAB_ANIM_OPEN_MS": {
     "kind": "exponential",
     "high": "3000",
@@ -2659,24 +2677,12 @@
     "n_buckets": 50,
     "description": "Average frame interval during tab open animation of about:newtab (preview=on), when other tabs are unaffected"
   },
-  "FX_TAB_ANIM_OPEN_PREVIEW_FRAME_PAINT_MS": {
-    "kind": "exponential",
-    "high": "500",
-    "n_buckets": 30,
-    "description": "Average paint duration during tab open animation of about:newtab (preview=on), when other tabs are unaffected"
-  },
   "FX_TAB_ANIM_OPEN_FRAME_INTERVAL_MS": {
     "kind": "exponential",
     "low" : 7,
     "high": "500",
     "n_buckets": 50,
     "description": "Average frame interval during tab open animation of about:newtab (preview=off), when other tabs are unaffected"
-  },
-  "FX_TAB_ANIM_OPEN_FRAME_PAINT_MS": {
-    "kind": "exponential",
-    "high": "500",
-    "n_buckets": 30,
-    "description": "Average paint duration during tab open animation of about:newtab (preview=off), when other tabs are unaffected"
   },
   "FX_TAB_ANIM_ANY_FRAME_INTERVAL_MS": {
     "kind": "exponential",
@@ -2799,13 +2805,6 @@
     "extended_statistics_ok": true,
     "description": "Session restore: Time to read the session data from the file on disk (ms)"
   },
-  "FX_SESSION_RESTORE_SYNC_READ_FILE_MS": {
-    "kind": "exponential",
-    "high": "3000",
-    "n_buckets": 10,
-    "extended_statistics_ok": true,
-    "description": "Session restore: Time to read the session data from the file on disk, using the synchronous fallback (ms)"
-  },
   "FX_SESSION_RESTORE_WRITE_FILE_MS": {
     "kind": "exponential",
     "high": "3000",
@@ -2819,6 +2818,13 @@
     "n_buckets": 10,
     "extended_statistics_ok": true,
     "description": "Session restore: Duration of the longest uninterruptible operation while writing session data (ms)"
+  },
+  "FX_SESSION_RESTORE_FILE_SIZE_BYTES": {
+    "kind": "exponential",
+    "high": 50000000,
+    "n_buckets": 30,
+    "extended_statistics_ok": true,
+    "description": "Session restore: The size of file sessionstore.js (bytes)"
   },
   "FX_SESSION_RESTORE_CORRUPT_FILE": {
     "kind": "boolean",
@@ -2867,6 +2873,138 @@
     "kind": "flag",
     "description": "Whether the character encoding menu was used to override an encoding in this session."
   },
+  "DECODER_INSTANTIATED_HZ": {
+    "kind": "flag",
+    "description": "Whether the decoder for HZ has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_ISO2022CN": {
+    "kind": "flag",
+    "description": "Whether the decoder for ISO-2022-CN has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_ISO2022KR": {
+    "kind": "flag",
+    "description": "Whether the decoder for ISO-2022-KR has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_ISO2022JP": {
+    "kind": "flag",
+    "description": "Whether the decoder for ISO-2022-JP has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_JOHAB": {
+    "kind": "flag",
+    "description": "Whether the decoder for JOHAB has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_T61": {
+    "kind": "flag",
+    "description": "Whether the decoder for T.61 has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_IBM850": {
+    "kind": "flag",
+    "description": "Whether the decoder for IBM850 has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_IBM852": {
+    "kind": "flag",
+    "description": "Whether the decoder for IBM852 has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_IBM855": {
+    "kind": "flag",
+    "description": "Whether the decoder for IBM855 has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_IBM857": {
+    "kind": "flag",
+    "description": "Whether the decoder for IBM857 has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_IBM862": {
+    "kind": "flag",
+    "description": "Whether the decoder for IBM862 has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_IBM866": {
+    "kind": "flag",
+    "description": "Whether the decoder for IBM866 has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACGREEK": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACGREEK has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACICELANDIC": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACICELANDIC has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACCE": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACCE has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACHEBREW": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACHEBREW has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACARABIC": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACARABIC has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACFARSI": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACFARSI has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACCROATIAN": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACCROATIAN has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACCYRILLIC": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACCYRILLIC has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACROMANIAN": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACROMANIAN has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACTURKISH": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACTURKISH has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACDEVANAGARI": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACDEVANAGARI has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACGUJARATI": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACGUJARATI has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_MACGURMUKHI": {
+    "kind": "flag",
+    "description": "Whether the decoder for MACGURMUKHI has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_ISOIR111": {
+    "kind": "flag",
+    "description": "Whether the decoder for ISOIR111 has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_ARMSCII8": {
+    "kind": "flag",
+    "description": "Whether the decoder for ARMSCII8 has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_VISCII": {
+    "kind": "flag",
+    "description": "Whether the decoder for VISCII has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_VIETTCVN5712": {
+    "kind": "flag",
+    "description": "Whether the decoder for VIETTCVN5712 has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_VIETVPS": {
+    "kind": "flag",
+    "description": "Whether the decoder for VIETVPS has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_KOI8R": {
+    "kind": "flag",
+    "description": "Whether the decoder for KOI8R has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_KOI8U": {
+    "kind": "flag",
+    "description": "Whether the decoder for KOI8U has been instantiated in this session."
+  },
+  "DECODER_INSTANTIATED_ISO_8859_5": {
+    "kind": "flag",
+    "description": "Whether the decoder for ISO-8859-5 has been instantiated in this session."
+  },
   "XUL_FOREGROUND_REFLOW_MS": {
     "kind": "exponential",
     "high": "3000",
@@ -2879,17 +3017,21 @@
     "n_buckets": 10,
     "description": "XUL reflows in background windows (ms)"
   },
-  "HTML_FOREGROUND_REFLOW_MS": {
+  "HTML_FOREGROUND_REFLOW_MS_2": {
     "kind": "exponential",
-    "high": "3000",
-    "n_buckets": 10,
+    "high": "10000",
+    "n_buckets": 20,
     "description": "HTML reflows in foreground windows (ms)"
   },
-  "HTML_BACKGROUND_REFLOW_MS": {
+  "HTML_BACKGROUND_REFLOW_MS_2": {
     "kind": "exponential",
-    "high": "3000",
-    "n_buckets": 10,
+    "high": "10000",
+    "n_buckets": 20,
     "description": "HTML reflows in background windows (ms)"
+  },
+  "LONG_REFLOW_INTERRUPTIBLE": {
+    "kind": "boolean",
+    "description": "Long running reflow, interruptible or not"
   },
   "XUL_INITIAL_FRAME_CONSTRUCTION": {
     "kind": "exponential",
@@ -3137,6 +3279,10 @@
     "n_buckets": 10,
     "extended_statistics_ok": true,
     "description": "Number of sites blocked from the new tab page."
+  },
+  "NEWTAB_PAGE_SHOWN": {
+    "kind": "boolean",
+    "description": "Number of times about:newtab was shown from opening a new tab or window."
   },
   "PANORAMA_INITIALIZATION_TIME_MS": {
     "kind": "exponential",
@@ -4493,6 +4639,16 @@
     "n_values": 32,
     "description": "Symmetric cipher used in resumed handshake (null=0, rc4=1, 3des=4, aes-cbc=7, camellia=8, seed=9, aes-gcm=10)"
   },
+  "SSL_REASONS_FOR_NOT_FALSE_STARTING": {
+    "kind": "enumerated",
+    "n_values": 512,
+    "description": "Bitmask of reasons we did not false start when libssl would have let us (see key in nsNSSCallbacks.cpp)"
+  },
+  "SSL_HANDSHAKE_TYPE": { 
+    "kind": "enumerated",
+    "n_values": 8,
+    "description": "Type of handshake (1=resumption, 2=false started, 3=chose not to false start, 4=not allowed to false start)"
+  },
   "SSL_OCSP_STAPLING": {
     "kind": "enumerated",
     "n_values": 8,
@@ -4502,6 +4658,11 @@
     "kind": "enumerated",
     "n_values": 8,
     "description": "For non-stapling cases, is OCSP fetching a possibility? (0=yes, 1=no because missing/invalid OCSP URI, 2=no because fetching disabled, 3=no because both)"
+  },
+  "SSL_CERT_ERROR_OVERRIDES": {
+    "kind": "enumerated",
+    "n_values": 24,
+    "description": "Was a certificate error overridden on this handshake? What was it? (0=unknown error (indicating bug), 1=no, >1=a specific error)"
   },
   "CERT_OCSP_ENABLED": {
     "kind": "boolean",

@@ -45,12 +45,9 @@
 #include "nsIPrincipal.h"
 #include "mozilla/dom/HTMLMediaElement.h"
 #endif
-#ifdef MOZ_RTSP
+#ifdef NECKO_PROTOCOL_rtsp
 #include "RtspOmxDecoder.h"
 #include "RtspOmxReader.h"
-#endif
-#ifdef MOZ_DASH
-#include "DASHDecoder.h"
 #endif
 #ifdef MOZ_WMF
 #include "WMFDecoder.h"
@@ -63,6 +60,10 @@
 #ifdef MOZ_APPLEMEDIA
 #include "AppleDecoder.h"
 #include "AppleMP3Reader.h"
+#endif
+#ifdef MOZ_FMP4
+#include "MP4Reader.h"
+#include "MP4Decoder.h"
 #endif
 
 namespace mozilla
@@ -170,10 +171,13 @@ static const char* const gWebMTypes[3] = {
   nullptr
 };
 
-static char const *const gWebMCodecs[4] = {
+static char const *const gWebMCodecs[7] = {
   "vp8",
   "vp8.0",
+  "vp9",
+  "vp9.0",
   "vorbis",
+  "opus",
   nullptr
 };
 
@@ -247,7 +251,7 @@ static char const *const gMpegAudioCodecs[2] = {
 };
 #endif
 
-#ifdef MOZ_RTSP
+#ifdef NECKO_PROTOCOL_rtsp
 static const char* const gRtspTypes[2] = {
     "RTSP",
     nullptr
@@ -263,7 +267,7 @@ IsRtspSupportedType(const nsACString& aMimeType)
 
 /* static */
 bool DecoderTraits::DecoderWaitsForOnConnected(const nsACString& aMimeType) {
-#ifdef MOZ_RTSP
+#ifdef NECKO_PROTOCOL_rtsp
   return CodecListContains(gRtspTypes, aMimeType);
 #else
   return false;
@@ -285,29 +289,11 @@ IsMediaPluginsType(const nsACString& aType)
 }
 #endif
 
-#ifdef MOZ_DASH
-/* static */
-static const char* const gDASHMPDTypes[2] = {
-  "application/dash+xml",
-  nullptr
-};
-
-static bool
-IsDASHMPDType(const nsACString& aType)
-{
-  if (!MediaDecoder::IsDASHEnabled()) {
-    return false;
-  }
-
-  return CodecListContains(gDASHMPDTypes, aType);
-}
-#endif
-
 #ifdef MOZ_WMF
 static bool
 IsWMFSupportedType(const nsACString& aType)
 {
-  return WMFDecoder::GetSupportedCodecs(aType, nullptr);
+  return WMFDecoder::CanPlayType(aType, NS_LITERAL_STRING(""));
 }
 #endif
 
@@ -316,6 +302,15 @@ static bool
 IsDirectShowSupportedType(const nsACString& aType)
 {
   return DirectShowDecoder::GetSupportedCodecs(aType, nullptr);
+}
+#endif
+
+#ifdef MOZ_FMP4
+static bool
+IsMP4SupportedType(const nsACString& aType)
+{
+  return Preferences::GetBool("media.fragmented-mp4.exposed", false) &&
+         MP4Decoder::GetSupportedCodecs(aType, nullptr);
 }
 #endif
 
@@ -396,14 +391,7 @@ DecoderTraits::CanHandleMediaType(const char* aMIMEType,
 #ifdef MOZ_WEBM
   if (IsWebMType(nsDependentCString(aMIMEType))) {
     codecList = gWebMCodecs;
-    result = CANPLAY_YES;
-  }
-#endif
-#ifdef MOZ_DASH
-  if (IsDASHMPDType(nsDependentCString(aMIMEType))) {
-    // DASH manifest uses WebM codecs only.
-    codecList = gWebMCodecs;
-    result = CANPLAY_YES;
+    result = CANPLAY_MAYBE;
   }
 #endif
 #ifdef MOZ_GSTREAMER
@@ -425,8 +413,13 @@ DecoderTraits::CanHandleMediaType(const char* aMIMEType,
   }
 #endif
 #ifdef MOZ_WMF
-  if (WMFDecoder::GetSupportedCodecs(nsDependentCString(aMIMEType), &codecList)) {
-    result = CANPLAY_MAYBE;
+  if (IsWMFSupportedType(nsDependentCString(aMIMEType))) {
+    if (!aHaveRequestedCodecs) {
+      return CANPLAY_MAYBE;
+    }
+    return WMFDecoder::CanPlayType(nsDependentCString(aMIMEType),
+                                   aRequestedCodecs)
+           ? CANPLAY_YES : CANPLAY_NO;
   }
 #endif
 #ifdef MOZ_DIRECTSHOW
@@ -468,30 +461,35 @@ DecoderTraits::CanHandleMediaType(const char* aMIMEType,
   return CANPLAY_YES;
 }
 
-/* static */
+// Instantiates but does not initialize decoder.
+static
 already_AddRefed<MediaDecoder>
-DecoderTraits::CreateDecoder(const nsACString& aType, MediaDecoderOwner* aOwner)
+InstantiateDecoder(const nsACString& aType, MediaDecoderOwner* aOwner)
 {
   nsRefPtr<MediaDecoder> decoder;
 
 #ifdef MOZ_GSTREAMER
   if (IsGStreamerSupportedType(aType)) {
     decoder = new GStreamerDecoder();
+    return decoder.forget();
   }
 #endif
 #ifdef MOZ_RAW
   if (IsRawType(aType)) {
     decoder = new RawDecoder();
+    return decoder.forget();
   }
 #endif
 #ifdef MOZ_OGG
   if (IsOggType(aType)) {
     decoder = new OggDecoder();
+    return decoder.forget();
   }
 #endif
 #ifdef MOZ_WAVE
   if (IsWaveType(aType)) {
     decoder = new WaveDecoder();
+    return decoder.forget();
   }
 #endif
 #ifdef MOZ_OMX_DECODER
@@ -499,7 +497,7 @@ DecoderTraits::CreateDecoder(const nsACString& aType, MediaDecoderOwner* aOwner)
     // AMR audio is enabled for MMS, but we are discouraging Web and App
     // developers from using AMR, thus we only allow AMR to be played on WebApps.
     if (aType.EqualsASCII("audio/amr")) {
-      HTMLMediaElement* element = aOwner->GetMediaElement();
+      dom::HTMLMediaElement* element = aOwner->GetMediaElement();
       if (!element) {
         return nullptr;
       }
@@ -512,27 +510,26 @@ DecoderTraits::CreateDecoder(const nsACString& aType, MediaDecoderOwner* aOwner)
       }
     }
     decoder = new MediaOmxDecoder();
+    return decoder.forget();
   }
 #endif
-#ifdef MOZ_RTSP
+#ifdef NECKO_PROTOCOL_rtsp
   if (IsRtspSupportedType(aType)) {
     decoder = new RtspOmxDecoder();
+    return decoder.forget();
   }
 #endif
 #ifdef MOZ_MEDIA_PLUGINS
   if (MediaDecoder::IsMediaPluginsEnabled() &&
       GetMediaPluginHost()->FindDecoder(aType, nullptr)) {
     decoder = new MediaPluginDecoder(aType);
+    return decoder.forget();
   }
 #endif
 #ifdef MOZ_WEBM
   if (IsWebMType(aType)) {
     decoder = new WebMDecoder();
-  }
-#endif
-#ifdef MOZ_DASH
-  if (IsDASHMPDType(aType)) {
-    decoder = new DASHDecoder();
+    return decoder.forget();
   }
 #endif
 #ifdef MOZ_DIRECTSHOW
@@ -540,19 +537,38 @@ DecoderTraits::CreateDecoder(const nsACString& aType, MediaDecoderOwner* aOwner)
   // "media.directshow.preferred" won't be honored.
   if (IsDirectShowSupportedType(aType)) {
     decoder = new DirectShowDecoder();
+    return decoder.forget();
+  }
+#endif
+#ifdef MOZ_FMP4
+  if (IsMP4SupportedType(aType)) {
+    decoder = new MP4Decoder();
+    return decoder.forget();
   }
 #endif
 #ifdef MOZ_WMF
   if (IsWMFSupportedType(aType)) {
     decoder = new WMFDecoder();
+    return decoder.forget();
   }
 #endif
 #ifdef MOZ_APPLEMEDIA
   if (IsAppleMediaSupportedType(aType)) {
     decoder = new AppleDecoder();
+    return decoder.forget();
   }
 #endif
 
+  NS_ENSURE_TRUE(decoder != nullptr, nullptr);
+  NS_ENSURE_TRUE(decoder->Init(aOwner), nullptr);
+  return nullptr;
+}
+
+/* static */
+already_AddRefed<MediaDecoder>
+DecoderTraits::CreateDecoder(const nsACString& aType, MediaDecoderOwner* aOwner)
+{
+  nsRefPtr<MediaDecoder> decoder(InstantiateDecoder(aType, aOwner));
   NS_ENSURE_TRUE(decoder != nullptr, nullptr);
   NS_ENSURE_TRUE(decoder->Init(aOwner), nullptr);
 
@@ -607,6 +623,11 @@ MediaDecoderReader* DecoderTraits::CreateReader(const nsACString& aType, Abstrac
     decoderReader = new DirectShowReader(aDecoder);
   } else
 #endif
+#ifdef MOZ_FMP4
+  if (IsMP4SupportedType(aType)) {
+    decoderReader = new MP4Reader(aDecoder);
+  } else
+#endif
 #ifdef MOZ_WMF
   if (IsWMFSupportedType(aType)) {
     decoderReader = new WMFReader(aDecoder);
@@ -616,9 +637,6 @@ MediaDecoderReader* DecoderTraits::CreateReader(const nsACString& aType, Abstrac
   if (IsAppleMediaSupportedType(aType)) {
     decoderReader = new AppleMP3Reader(aDecoder);
   } else
-#endif
-#ifdef MOZ_DASH
-  // The DASH decoder is not supported.
 #endif
   if (false) {} // dummy if to take care of the dangling else
 
@@ -640,14 +658,14 @@ bool DecoderTraits::IsSupportedInVideoDocument(const nsACString& aType)
 #ifdef MOZ_WEBM
     IsWebMType(aType) ||
 #endif
-#ifdef MOZ_DASH
-    IsDASHMPDType(aType) ||
-#endif
 #ifdef MOZ_GSTREAMER
     IsGStreamerSupportedType(aType) ||
 #endif
 #ifdef MOZ_MEDIA_PLUGINS
     (MediaDecoder::IsMediaPluginsEnabled() && IsMediaPluginsType(aType)) ||
+#endif
+#ifdef MOZ_FMP4
+    IsMP4SupportedType(aType) ||
 #endif
 #ifdef MOZ_WMF
     (IsWMFSupportedType(aType) &&

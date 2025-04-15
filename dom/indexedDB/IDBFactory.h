@@ -16,7 +16,6 @@
 #include "nsWrapperCache.h"
 
 class mozIStorageConnection;
-class nsIAtom;
 class nsIFile;
 class nsIFileURL;
 class nsIPrincipal;
@@ -97,7 +96,7 @@ public:
 
   static nsresult
   LoadDatabaseInformation(mozIStorageConnection* aConnection,
-                          nsIAtom* aDatabaseId,
+                          const nsACString& aDatabaseId,
                           uint64_t* aVersion,
                           ObjectStoreInfoArray& aObjectStores);
 
@@ -145,6 +144,12 @@ public:
   GetASCIIOrigin() const
   {
     return mASCIIOrigin;
+  }
+
+  bool
+  FromIPC()
+  {
+    return !!mContentParent;
   }
 
   // nsWrapperCache

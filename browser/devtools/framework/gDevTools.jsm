@@ -52,6 +52,7 @@ DevTools.prototype = {
    * - id: Unique identifier for this tool (string|required)
    * - visibilityswitch: Property name to allow us to hide this tool from the
    *                     DevTools Toolbox.
+   *                     A falsy value indicates that it cannot be hidden.
    * - icon: URL pointing to a graphic which will be used as the src for an
    *         16x16 img tag (string|required)
    * - url: URL pointing to a XUL/XHTML document containing the user interface
@@ -69,8 +70,13 @@ DevTools.prototype = {
       throw new Error("Invalid definition.id");
     }
 
-    toolDefinition.visibilityswitch = toolDefinition.visibilityswitch ||
-        "devtools." + toolId + ".enabled";
+    // Make sure that additional tools will always be able to be hidden.
+    // When being called from main.js, defaultTools has not yet been exported.
+    // But, we can assume that in this case, it is a default tool.
+    if (devtools.defaultTools && devtools.defaultTools.indexOf(toolDefinition) == -1) {
+      toolDefinition.visibilityswitch = "devtools." + toolId + ".enabled";
+    }
+
     this._tools.set(toolId, toolDefinition);
 
     this.emit("tool-registered", toolId);
@@ -139,7 +145,7 @@ DevTools.prototype = {
     let tool = this._tools.get(toolId);
     if (!tool) {
       return null;
-    } else if (tool.id == "options") {
+    } else if (!tool.visibilityswitch) {
       return tool;
     }
 
@@ -206,11 +212,13 @@ DevTools.prototype = {
    *        The id of the tool to show
    * @param {Toolbox.HostType} hostType
    *        The type of host (bottom, window, side)
+   * @param {object} hostOptions
+   *        Options for host specifically
    *
    * @return {Toolbox} toolbox
    *        The toolbox that was opened
    */
-  showToolbox: function(target, toolId, hostType) {
+  showToolbox: function(target, toolId, hostType, hostOptions) {
     let deferred = promise.defer();
 
     let toolbox = this._toolboxes.get(target);
@@ -233,7 +241,7 @@ DevTools.prototype = {
     }
     else {
       // No toolbox for target, create one
-      toolbox = new devtools.Toolbox(target, toolId, hostType);
+      toolbox = new devtools.Toolbox(target, toolId, hostType, hostOptions);
 
       this._toolboxes.set(target, toolbox);
 
@@ -397,12 +405,12 @@ let gDevToolsBrowser = {
     let appMgrEnabled = Services.prefs.getBoolPref("devtools.appmanager.enabled");
     toggleCmd("Tools:DevAppMgr", appMgrEnabled);
 
-    // Enable Chrome Debugger?
+    // Enable Browser Toolbox?
     let chromeEnabled = Services.prefs.getBoolPref("devtools.chrome.enabled");
     let devtoolsRemoteEnabled = Services.prefs.getBoolPref("devtools.debugger.remote-enabled");
     let remoteEnabled = chromeEnabled && devtoolsRemoteEnabled &&
                         Services.prefs.getBoolPref("devtools.debugger.chrome-enabled");
-    toggleCmd("Tools:ChromeDebugger", remoteEnabled);
+    toggleCmd("Tools:BrowserToolbox", remoteEnabled);
 
     // Enable Error Console?
     let consoleEnabled = Services.prefs.getBoolPref("devtools.errorconsole.enabled");
@@ -551,7 +559,8 @@ let gDevToolsBrowser = {
 
     // Skip if the tool is disabled.
     try {
-      if (!Services.prefs.getBoolPref(toolDefinition.visibilityswitch)) {
+      if (toolDefinition.visibilityswitch &&
+         !Services.prefs.getBoolPref(toolDefinition.visibilityswitch)) {
         return;
       }
     } catch(e) {}

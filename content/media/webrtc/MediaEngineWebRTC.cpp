@@ -34,6 +34,7 @@ GetUserMediaLog()
 #include "nsITabSource.h"
 
 #ifdef MOZ_WIDGET_ANDROID
+#include "AndroidJNIWrapper.h"
 #include "AndroidBridge.h"
 #endif
 
@@ -42,7 +43,7 @@ GetUserMediaLog()
 
 namespace mozilla {
 #ifndef MOZ_B2G_CAMERA
-MediaEngineWebRTC::MediaEngineWebRTC()
+MediaEngineWebRTC::MediaEngineWebRTC(MediaEnginePrefs &aPrefs)
   : mMutex("mozilla::MediaEngineWebRTC")
   , mVideoEngine(nullptr)
   , mVoiceEngine(nullptr)
@@ -54,6 +55,10 @@ MediaEngineWebRTC::MediaEngineWebRTC()
   NS_GetComponentRegistrar(getter_AddRefs(compMgr));
   if (compMgr) {
     compMgr->IsContractIDRegistered(NS_TABSOURCESERVICE_CONTRACTID, &mHasTabVideoSource);
+  }
+  if (aPrefs.mLoadAdapt) {
+      mLoadMonitor = new LoadMonitor();
+      mLoadMonitor->Init(mLoadMonitor);
   }
 }
 #endif
@@ -248,16 +253,12 @@ MediaEngineWebRTC::EnumerateAudioDevices(nsTArray<nsRefPtr<MediaEngineAudioSourc
 
   // get the JVM
   JavaVM *jvm = mozilla::AndroidBridge::Bridge()->GetVM();
+  JNIEnv *env = GetJNIForThread();
 
-  JNIEnv *env;
-  jvm->AttachCurrentThread(&env, nullptr);
-
-  if (webrtc::VoiceEngine::SetAndroidObjects(jvm, (void*)context) != 0) {
+  if (webrtc::VoiceEngine::SetAndroidObjects(jvm, env, (void*)context) != 0) {
     LOG(("VoiceEngine:SetAndroidObjects Failed"));
     return;
   }
-
-  env->DeleteGlobalRef(context);
 #endif
 
   if (!mVoiceEngine) {
@@ -359,6 +360,9 @@ MediaEngineWebRTC::Shutdown()
 
   mVideoEngine = nullptr;
   mVoiceEngine = nullptr;
+
+  if (mLoadMonitor)
+    mLoadMonitor->Shutdown();
 }
 
 }

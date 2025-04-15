@@ -4,17 +4,24 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'accessibility'
-
-SOURCES += [
-    'nsAccessibleRelation.cpp',
-    'xpcAccessibleTable.cpp',
-    'xpcAccessibleTableCell.cpp',
+EXPORTS += [
+    'xpcAccessibleHyperText.h',
+    'xpcAccessibleSelectable.h',
+    'xpcAccessibleValue.h',
 ]
 
-LIBRARY_NAME = 'accessibility_xpcom_s'
+UNIFIED_SOURCES += [
+    'nsAccessibleRelation.cpp',
+    'xpcAccessibleHyperText.cpp',
+    'xpcAccessibleSelectable.cpp',
+    'xpcAccessibleTable.cpp',
+    'xpcAccessibleTableCell.cpp',
+    'xpcAccessibleValue.cpp',
+]
 
-LIBXUL_LIBRARY = True
+GENERATED_SOURCES += [
+    'xpcAccEvents.cpp',
+]
 
 LOCAL_INCLUDES += [
     '../base',
@@ -37,3 +44,5 @@ else:
     LOCAL_INCLUDES += [
         '../other',
     ]
+
+FINAL_LIBRARY = 'xul'

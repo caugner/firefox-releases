@@ -8,18 +8,18 @@
 // complete description of the expected file format and parsing rules, see
 // http://wiki.mozilla.org/Gecko:Effective_TLD_Service
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Util.h"
 
 #include "nsEffectiveTLDService.h"
 #include "nsIIDNService.h"
-#include "nsIMemoryReporter.h"
 #include "nsNetUtil.h"
 #include "prnetdb.h"
 
 using namespace mozilla;
 
-NS_IMPL_ISUPPORTS1(nsEffectiveTLDService, nsIEffectiveTLDService)
+NS_IMPL_ISUPPORTS_INHERITED1(nsEffectiveTLDService, MemoryUniReporter,
+                             nsIEffectiveTLDService)
 
 // ----------------------------------------------------------------------
 
@@ -61,28 +61,15 @@ nsDomainEntry::FuncForStaticAsserts(void)
 
 static nsEffectiveTLDService *gService = nullptr;
 
-class EffectiveTLDServiceReporter MOZ_FINAL : public MemoryUniReporter
-{
-public:
-  EffectiveTLDServiceReporter()
-    : MemoryUniReporter("explicit/xpcom/effective-TLD-service",
-                         KIND_HEAP, UNITS_BYTES,
-                         "Memory used by the effective TLD service.")
-  {}
-
-private:
-  int64_t Amount() MOZ_OVERRIDE
-  {
-    return gService ? gService->SizeOfIncludingThis(MallocSizeOf) : 0;
-  }
-};
-
 nsEffectiveTLDService::nsEffectiveTLDService()
   // We'll probably have to rehash at least once, since nsTHashtable doesn't
   // use a perfect hash, but at least we'll save a few rehashes along the way.
   // Next optimization here is to precompute the hash using something like
   // gperf, but one step at a time.  :-)
-  : mHash(ArrayLength(nsDomainEntry::entries))
+  : MemoryUniReporter("explicit/xpcom/effective-TLD-service",
+                       KIND_HEAP, UNITS_BYTES,
+                       "Memory used by the effective TLD service.")
+  , mHash(ArrayLength(nsDomainEntry::entries))
 {
 }
 
@@ -112,27 +99,31 @@ nsEffectiveTLDService::Init()
 
   MOZ_ASSERT(!gService);
   gService = this;
-  mReporter = new EffectiveTLDServiceReporter();
-  NS_RegisterMemoryReporter(mReporter);
+  RegisterWeakMemoryReporter(this);
 
   return NS_OK;
 }
 
 nsEffectiveTLDService::~nsEffectiveTLDService()
 {
-  NS_UnregisterMemoryReporter(mReporter);
+  UnregisterWeakMemoryReporter(this);
   gService = nullptr;
 }
 
+int64_t
+nsEffectiveTLDService::Amount()
+{
+  return SizeOfIncludingThis(MallocSizeOf);
+}
+
 size_t
-nsEffectiveTLDService::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf)
+nsEffectiveTLDService::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf)
 {
   size_t n = aMallocSizeOf(this);
   n += mHash.SizeOfExcludingThis(nullptr, aMallocSizeOf);
 
   // Measurement of the following members may be added later if DMD finds it is
   // worthwhile:
-  // - mReporter
   // - mIDNService
 
   return n;
@@ -166,6 +157,7 @@ nsEffectiveTLDService::GetBaseDomain(nsIURI     *aURI,
                                      nsACString &aBaseDomain)
 {
   NS_ENSURE_ARG_POINTER(aURI);
+  NS_ENSURE_TRUE( ((int32_t)aAdditionalParts) >= 0, NS_ERROR_INVALID_ARG);
 
   nsCOMPtr<nsIURI> innerURI = NS_GetInnermostURI(aURI);
   NS_ENSURE_ARG_POINTER(innerURI);
@@ -200,6 +192,8 @@ nsEffectiveTLDService::GetBaseDomainFromHost(const nsACString &aHostname,
                                              uint32_t          aAdditionalParts,
                                              nsACString       &aBaseDomain)
 {
+  NS_ENSURE_TRUE( ((int32_t)aAdditionalParts) >= 0, NS_ERROR_INVALID_ARG);
+
   // Create a mutable copy of the hostname and normalize it to ACE.
   // This will fail if the hostname includes invalid characters.
   nsAutoCString normHostname(aHostname);
@@ -300,7 +294,7 @@ nsEffectiveTLDService::GetBaseDomainInternal(nsCString  &aHostname,
   const char *begin, *iter;
   if (aAdditionalParts < 0) {
     NS_ASSERTION(aAdditionalParts == -1,
-                 "aAdditionalParts should can't be negative and different from -1");
+                 "aAdditionalParts can't be negative and different from -1");
 
     for (iter = aHostname.get(); iter != eTLD && *iter != '.'; iter++);
 

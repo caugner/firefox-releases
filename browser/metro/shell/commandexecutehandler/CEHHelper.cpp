@@ -12,6 +12,9 @@
 
 HANDLE sCon;
 LPCWSTR metroDX10Available = L"MetroD3DAvailable";
+LPCWSTR metroLastAHE = L"MetroLastAHE";
+LPCWSTR cehDumpDebugStrings = L"CEHDump";
+extern const WCHAR* kFirefoxExe;
 
 typedef HRESULT (WINAPI*D3D10CreateDevice1Func)
   (IDXGIAdapter *, D3D10_DRIVER_TYPE, HMODULE, UINT,
@@ -22,7 +25,10 @@ void
 Log(const wchar_t *fmt, ...)
 {
 #if !defined(SHOW_CONSOLE)
-  return;
+  DWORD dwRes = 0;
+  if (!GetDWORDRegKey(cehDumpDebugStrings, dwRes) || !dwRes) {
+    return;
+  }
 #endif
   va_list a = nullptr;
   wchar_t szDebugString[1024];
@@ -38,10 +44,8 @@ Log(const wchar_t *fmt, ...)
   WriteConsoleW(sCon, szDebugString, lstrlenW(szDebugString), &len, nullptr);
   WriteConsoleW(sCon, L"\n", 1, &len, nullptr);
 
-  if (IsDebuggerPresent()) {  
-    OutputDebugStringW(szDebugString);
-    OutputDebugStringW(L"\n");
-  }
+  OutputDebugStringW(szDebugString);
+  OutputDebugStringW(L"\n");
 }
 
 #if defined(SHOW_CONSOLE)
@@ -81,7 +85,7 @@ IsImmersiveProcessDynamic(HANDLE process)
 }
 
 bool
-IsImmersiveProcessRunning(const wchar_t *processName)
+IsProcessRunning(const wchar_t *processName, bool bCheckIfMetro)
 {
   bool exists = false;
   PROCESSENTRY32W entry;
@@ -93,7 +97,9 @@ IsImmersiveProcessRunning(const wchar_t *processName)
     while (!exists && Process32Next(snapshot, &entry)) {
       if (!_wcsicmp(entry.szExeFile, processName)) {
         HANDLE process = OpenProcess(GENERIC_READ, FALSE, entry.th32ProcessID);
-        if (IsImmersiveProcessDynamic(process)) {
+        bool isImmersiveProcess = IsImmersiveProcessDynamic(process);
+        if ((bCheckIfMetro && isImmersiveProcess) ||
+            (!bCheckIfMetro && !isImmersiveProcess)) {
           exists = true;
         }
         CloseHandle(process);
@@ -103,6 +109,33 @@ IsImmersiveProcessRunning(const wchar_t *processName)
 
   CloseHandle(snapshot);
   return exists;
+}
+
+bool
+IsMetroProcessRunning()
+{
+  return IsProcessRunning(kFirefoxExe, true);
+}
+
+bool
+IsDesktopProcessRunning()
+{
+  return IsProcessRunning(kFirefoxExe, false);
+}
+
+/*
+ * Retrieve the last front end ui we launched so we can target it
+ * again. This value is updated down in nsAppRunner when the browser
+ * starts up.
+ */
+AHE_TYPE
+GetLastAHE()
+{
+  DWORD ahe;
+  if (GetDWORDRegKey(metroLastAHE, ahe)) {
+    return (AHE_TYPE) ahe;
+  }
+  return AHE_DESKTOP;
 }
 
 bool

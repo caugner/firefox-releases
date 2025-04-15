@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "nsSVGAngle.h"
 #include "mozilla/dom/SVGMarkerElement.h"
@@ -94,16 +94,20 @@ GetValueString(nsAString &aValueAsString, float aValue, uint16_t aUnitType)
 }
 
 static bool
-GetValueFromString(const nsAString& aValueAsString,
+GetValueFromString(const nsAString& aString,
                    float& aValue,
                    uint16_t* aUnitType)
 {
-  nsAutoString units;
+  RangedPtr<const PRUnichar> iter =
+    SVGContentUtils::GetStartRangedPtr(aString);
+  const RangedPtr<const PRUnichar> end =
+    SVGContentUtils::GetEndRangedPtr(aString);
 
-  if (!SVGContentUtils::ParseNumber(aValueAsString, aValue, units)) {
+  if (!SVGContentUtils::ParseNumber(iter, end, aValue)) {
     return false;
   }
 
+  const nsAString& units = Substring(iter.get(), end.get());
   *aUnitType = GetUnitTypeForString(units);
   return IsValidUnitType(*aUnitType);
 }

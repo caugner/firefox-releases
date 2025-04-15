@@ -3,8 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
-
 #include "mozilla/dom/HTMLTableCellElement.h"
 #include "mozilla/dom/HTMLTableElement.h"
 #include "mozilla/dom/HTMLTableRowElement.h"
@@ -435,9 +433,9 @@ HTMLTableCellElement::ParseAttribute(int32_t aNamespaceID,
                                               aResult);
 }
 
-static 
-void MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
-                           nsRuleData* aData)
+void
+HTMLTableCellElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
+                                            nsRuleData* aData)
 {
   if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Position)) {
     // width: value

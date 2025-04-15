@@ -14,7 +14,7 @@
 #include "nsCOMPtr.h"
 #include "nsCOMArray.h"
 
-#include "AndroidJavaWrappers.h"
+#include "GeneratedJNIWrappers.h"
 
 #include "nsIMutableArray.h"
 #include "nsIMIMEInfo.h"
@@ -41,13 +41,14 @@ class nsIObserver;
 extern "C" JNIEnv * GetJNIForThread();
 
 extern bool mozilla_AndroidBridge_SetMainThread(pthread_t);
-extern jclass GetGeckoAppShellClass();
 
 namespace base {
 class Thread;
 } // end namespace base
 
 typedef void* EGLSurface;
+
+using namespace mozilla::widget::android;
 
 namespace mozilla {
 
@@ -160,10 +161,6 @@ public:
         return nullptr;
     }
 
-    static jclass GetGeckoAppShellClass() {
-        return sBridge->mGeckoAppShellClass;
-    }
-
     // The bridge needs to be constructed via ConstructBridge first,
     // and then once the Gecko main thread is spun up (Gecko side),
     // SetMainThread should be called which will create the JNIEnv for
@@ -180,10 +177,10 @@ public:
     void ContentDocumentChanged();
     bool IsContentDocumentDisplayed();
 
-    bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent, const LayerRect& aDisplayPort, float aDisplayResolution, bool aDrawingCritical, gfx::Rect& aViewport, float& aScaleX, float& aScaleY);
+    bool ProgressiveUpdateCallback(bool aHasPendingNewThebesContent, const LayerRect& aDisplayPort, float aDisplayResolution, bool aDrawingCritical, ScreenRect& aCompositionBounds, CSSToScreenScale& aZoom);
 
     void SetLayerClient(JNIEnv* env, jobject jobj);
-    AndroidGeckoLayerClient &GetLayerClient() { return *mLayerClient; }
+    GeckoLayerClient* GetLayerClient() { return mLayerClient; }
 
     bool GetHandlersForURL(const nsAString& aURL,
                            nsIMutableArray* handlersArray = nullptr,
@@ -199,10 +196,6 @@ public:
     void GetExtensionFromMimeType(const nsACString& aMimeType, nsACString& aFileExt);
 
     bool GetClipboardText(nsAString& aText);
-    
-    void EmptyClipboard();
-
-    bool ClipboardHasText();
 
     void ShowAlertNotification(const nsAString& aImageUrl,
                                const nsAString& aAlertTitle,
@@ -220,15 +213,13 @@ public:
 
     void Vibrate(const nsTArray<uint32_t>& aPattern);
 
-    void HideProgressDialogOnce();
-
     void GetSystemColors(AndroidSystemColors *aColors);
 
     void GetIconForExtension(const nsACString& aFileExt, uint32_t aIconSize, uint8_t * const aBuf);
 
     // Switch Java to composite with the Gecko Compositor thread
     void RegisterCompositor(JNIEnv* env = nullptr);
-    EGLSurface ProvideEGLSurface();
+    EGLSurface CreateEGLSurfaceForCompositor();
 
     bool GetStaticStringField(const char *classID, const char *field, nsAString &result, JNIEnv* env = nullptr);
 
@@ -307,7 +298,6 @@ public:
 
     void ScheduleComposite();
 
-    void GetGfxInfoData(nsACString& aRet);
     nsresult GetProxyForURI(const nsACString & aSpec,
                             const nsACString & aScheme,
                             const nsACString & aHost,
@@ -341,7 +331,7 @@ protected:
     JNIEnv *mJNIEnv;
     pthread_t mThread;
 
-    AndroidGeckoLayerClient *mLayerClient;
+    GeckoLayerClient *mLayerClient;
 
     // the android.telephony.SmsMessage class
     jclass mAndroidSmsMessageClass;
@@ -382,7 +372,7 @@ protected:
     jclass jLayerView;
 
     jfieldID jEGLSurfacePointerField;
-    jobject mGLControllerObj;
+    GLController *mGLControllerObj;
 
     // some convinient types to have around
     jclass jStringClass;
@@ -406,21 +396,21 @@ protected:
     void (* Region_set)(void* region, void* rect);
 
 private:
-    jobject mNativePanZoomController;
+    NativePanZoomController* mNativePanZoomController;
     // This will always be accessed from one thread (the APZC "controller"
     // thread, which is the Java UI thread), so we don't need to do locking
     // to touch it
     nsTArray<DelayedTask*> mDelayedTaskQueue;
 
 public:
-    #include "GeneratedJNIWrappers.h"
-    jobject SetNativePanZoomController(jobject obj);
+    NativePanZoomController* SetNativePanZoomController(jobject obj);
     // GeckoContentController methods
     void RequestContentRepaint(const mozilla::layers::FrameMetrics& aFrameMetrics) MOZ_OVERRIDE;
-    void HandleDoubleTap(const CSSIntPoint& aPoint) MOZ_OVERRIDE;
-    void HandleSingleTap(const CSSIntPoint& aPoint) MOZ_OVERRIDE;
-    void HandleLongTap(const CSSIntPoint& aPoint) MOZ_OVERRIDE;
-    void SendAsyncScrollDOMEvent(mozilla::layers::FrameMetrics::ViewID aScrollId,
+    void HandleDoubleTap(const CSSIntPoint& aPoint, int32_t aModifiers) MOZ_OVERRIDE;
+    void HandleSingleTap(const CSSIntPoint& aPoint, int32_t aModifiers) MOZ_OVERRIDE;
+    void HandleLongTap(const CSSIntPoint& aPoint, int32_t aModifiers) MOZ_OVERRIDE;
+    void HandleLongTapUp(const CSSIntPoint& aPoint, int32_t aModifiers) MOZ_OVERRIDE;
+    void SendAsyncScrollDOMEvent(bool aIsRoot,
                                  const CSSRect& aContentRect,
                                  const CSSSize& aScrollableSize) MOZ_OVERRIDE;
     void PostDelayedTask(Task* aTask, int aDelayMs) MOZ_OVERRIDE;

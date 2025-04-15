@@ -71,6 +71,10 @@ GonkCameraHardware::OnNewFrame()
     return;
   }
   nsRefPtr<GraphicBufferLocked> buffer = mNativeWindow->getCurrentBuffer();
+  if (!buffer) {
+    DOM_CAMERA_LOGW("received null frame");
+    return;
+  }
   ReceiveFrame(mTarget, buffer);
 }
 
@@ -164,8 +168,10 @@ GonkCameraHardware::Init()
   mRawSensorOrientation = info.orientation;
   mSensorOrientation = mRawSensorOrientation;
 
-  // Some kernels report the wrong sensor orientation through
-  // get_camera_info()...
+  /**
+   * Non-V4L2-based camera driver adds extra offset onto picture orientation
+   * set by gecko, so we have to adjust it back.
+   */
   char propname[PROP_NAME_MAX];
   char prop[PROP_VALUE_MAX];
   int offset = 0;

@@ -41,6 +41,7 @@ enum nsEventStructType
   NS_DRAG_EVENT,                     // WidgetDragEvent
   NS_MOUSE_SCROLL_EVENT,             // WidgetMouseScrollEvent
   NS_WHEEL_EVENT,                    // WidgetWheelEvent
+  NS_POINTER_EVENT,                  // PointerEvent
 
   // TouchEvents.h
   NS_GESTURENOTIFY_EVENT,            // WidgetGestureNotifyEvent
@@ -108,8 +109,7 @@ enum nsEventStructType
 #define NS_OFFLINE                       (NS_WINDOW_START + 64)
 #define NS_ONLINE                        (NS_WINDOW_START + 65)
 
-// Indicates a resize will occur
-#define NS_BEFORERESIZE_EVENT            (NS_WINDOW_START + 66)
+// NS_BEFORERESIZE_EVENT used to be here (NS_WINDOW_START + 66)
 
 // Indicates that the user is either idle or active
 #define NS_MOZ_USER_IDLE                 (NS_WINDOW_START + 67)
@@ -134,6 +134,19 @@ enum nsEventStructType
 #define NS_MOUSE_MOZHITTEST             (NS_MOUSE_MESSAGE_START + 33)
 #define NS_MOUSEENTER                   (NS_MOUSE_MESSAGE_START + 34)
 #define NS_MOUSELEAVE                   (NS_MOUSE_MESSAGE_START + 35)
+
+// Pointer spec events
+#define NS_POINTER_EVENT_START          4400
+#define NS_POINTER_MOVE                 (NS_POINTER_EVENT_START)
+#define NS_POINTER_UP                   (NS_POINTER_EVENT_START + 1)
+#define NS_POINTER_DOWN                 (NS_POINTER_EVENT_START + 2)
+#define NS_POINTER_OVER                 (NS_POINTER_EVENT_START + 22)
+#define NS_POINTER_OUT                  (NS_POINTER_EVENT_START + 23)
+#define NS_POINTER_ENTER                (NS_POINTER_EVENT_START + 24)
+#define NS_POINTER_LEAVE                (NS_POINTER_EVENT_START + 25)
+#define NS_POINTER_CANCEL               (NS_POINTER_EVENT_START + 26)
+#define NS_POINTER_GOT_CAPTURE          (NS_POINTER_EVENT_START + 27)
+#define NS_POINTER_LOST_CAPTURE         (NS_POINTER_EVENT_START + 28)
 
 #define NS_CONTEXTMENU_MESSAGE_START    500
 #define NS_CONTEXTMENU                  (NS_CONTEXTMENU_MESSAGE_START)
@@ -446,6 +459,10 @@ enum nsEventStructType
 #define NS_MEDIARECORDER_WARNING        (NS_MEDIARECORDER_EVENT_START + 2)
 #define NS_MEDIARECORDER_STOP           (NS_MEDIARECORDER_EVENT_START + 3)
 
+// SpeakerManager events
+#define NS_SPEAKERMANAGER_EVENT_START 5800
+#define NS_SPEAKERMANAGER_SPEAKERFORCEDCHANGE (NS_SPEAKERMANAGER_EVENT_START + 1)
+
 #ifdef MOZ_GAMEPAD
 // Gamepad input events
 #define NS_GAMEPAD_START         6000
@@ -690,14 +707,6 @@ public:
 #undef NS_EVENT_CLASS
 #undef NS_ROOT_EVENT_CLASS
 
-  /**
-   * Returns true if the event is WidgetInputEvent or inherits it.
-   */
-  bool IsInputDerivedEvent() const;
-  /**
-   * Returns true if the event is WidgetMouseEvent or inherits it.
-   */
-  bool IsMouseDerivedEvent() const;
   /**
    * Returns true if the event is a query content event.
    */

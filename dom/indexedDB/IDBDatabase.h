@@ -162,6 +162,12 @@ public:
                             const ObjectStoreInfoGuts& aInfo,
                             ErrorResult& aRv);
 
+  IDBFactory*
+  Factory() const
+  {
+    return mFactory;
+  }
+
   // nsWrapperCache
   virtual JSObject*
   WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
@@ -222,6 +228,7 @@ public:
                       ErrorResult& aRv);
 
   virtual void LastRelease() MOZ_OVERRIDE;
+
 private:
   IDBDatabase();
   ~IDBDatabase();
@@ -238,7 +245,7 @@ private:
   // Set to a copy of the existing DatabaseInfo when starting a versionchange
   // transaction.
   nsRefPtr<DatabaseInfo> mPreviousDatabaseInfo;
-  nsCOMPtr<nsIAtom> mDatabaseId;
+  nsCString mDatabaseId;
   nsString mName;
   nsString mFilePath;
   nsCString mASCIIOrigin;

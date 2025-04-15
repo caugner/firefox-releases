@@ -11,7 +11,6 @@ XPIDL_SOURCES += [
     'nsIContentViewerContainer.idl',
     'nsIContentViewerEdit.idl',
     'nsIContentViewerFile.idl',
-    'nsIContentViewerInternal.idl',
     'nsIDocCharset.idl',
     'nsIDocShell.idl',
     'nsIDocShellLoadInfo.idl',
@@ -34,7 +33,7 @@ XPIDL_SOURCES += [
     'nsIWebPageDescriptor.idl',
 ]
 
-MODULE = 'docshell'
+XPIDL_MODULE = 'docshell'
 
 EXPORTS += [
     'nsDocShellLoadTypes.h',
@@ -48,11 +47,10 @@ EXPORTS.mozilla += [
     'LoadContext.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'LoadContext.cpp',
     'nsAboutRedirector.cpp',
     'nsDefaultURIFixup.cpp',
-    'nsDocShell.cpp',
     'nsDocShellEditorData.cpp',
     'nsDocShellEnumerator.cpp',
     'nsDocShellLoadInfo.cpp',
@@ -63,13 +61,28 @@ SOURCES += [
     'SerializedLoadContext.cpp',
 ]
 
-FAIL_ON_WARNINGS = True
+# nsDocShell.cpp cannot be built in unified mode because it forces NSPR logging.
+SOURCES += [
+    'nsDocShell.cpp',
+]
 
-LIBXUL_LIBRARY = True
+FAIL_ON_WARNINGS = True
 
 MSVC_ENABLE_PGO = True
 
-LIBRARY_NAME = 'basedocshell_s'
-
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'xul'
+LOCAL_INCLUDES += [
+    '../shistory/src',
+    '/content/base/src',
+    '/dom/base',
+    '/layout/base',
+    '/layout/generic',
+    '/layout/xul',
+    '/netwerk/protocol/viewsource',
+    '/xpcom/ds',
+]
+
+if CONFIG['MOZ_TOOLKIT_SEARCH']:
+    DEFINES['MOZ_TOOLKIT_SEARCH'] = True

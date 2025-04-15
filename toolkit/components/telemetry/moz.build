@@ -11,11 +11,12 @@ XPIDL_SOURCES += [
     'nsITelemetryPing.idl',
 ]
 
-MODULE = 'telemetry'
+XPIDL_MODULE = 'telemetry'
 
 EXPORTS.mozilla += [
     'ProcessedStack.h',
     'Telemetry.h',
+    'ThreadHangStats.h',
 ]
 
 SOURCES += [
@@ -39,13 +40,15 @@ EXTRA_JS_MODULES += [
 
 FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
-
-LIBRARY_NAME = 'telemetry'
-
-EXPORT_LIBRARY = True
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'xul'
+
+GENERATED_FILES = [
+    'TelemetryHistogramData.inc',
+]
+
+if CONFIG['MOZILLA_OFFICIAL']:
+    DEFINES['MOZILLA_OFFICIAL'] = True

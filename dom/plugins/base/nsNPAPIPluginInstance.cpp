@@ -54,6 +54,7 @@ using namespace mozilla;
 #include "GLContextProvider.h"
 #include "GLContext.h"
 #include "TexturePoolOGL.h"
+#include "GLSharedHandleHelpers.h"
 
 using namespace mozilla::gl;
 
@@ -138,9 +139,10 @@ public:
       return 0;
 
     SharedTextureHandle handle =
-      sPluginContext->CreateSharedHandle(gl::SameProcess,
-                                         (void*)mTextureInfo.mTexture,
-                                         gl::TextureID);
+      gl::CreateSharedHandle(sPluginContext,
+                             gl::SameProcess,
+                             (void*)mTextureInfo.mTexture,
+                             gl::TextureID);
 
     // We want forget about this now, so delete the texture. Assigning it to zero
     // ensures that we create a new one in Lock()
@@ -868,7 +870,7 @@ void nsNPAPIPluginInstance::NotifyFullScreen(bool aFullScreen)
   SendLifecycleEvent(this, mFullScreen ? kEnterFullScreen_ANPLifecycleAction : kExitFullScreen_ANPLifecycleAction);
 
   if (mFullScreen && mFullScreenOrientation != dom::eScreenOrientation_None) {
-    AndroidBridge::Bridge()->LockScreenOrientation(mFullScreenOrientation);
+    GeckoAppShell::LockScreenOrientation(mFullScreenOrientation);
   }
 }
 
@@ -925,11 +927,11 @@ void nsNPAPIPluginInstance::SetFullScreenOrientation(uint32_t orientation)
     // We're already fullscreen so immediately apply the orientation change
 
     if (mFullScreenOrientation != dom::eScreenOrientation_None) {
-      AndroidBridge::Bridge()->LockScreenOrientation(mFullScreenOrientation);
+      GeckoAppShell::LockScreenOrientation(mFullScreenOrientation);
     } else if (oldOrientation != dom::eScreenOrientation_None) {
       // We applied an orientation when we entered fullscreen, but
       // we don't want it anymore
-      AndroidBridge::Bridge()->UnlockScreenOrientation();
+      GeckoAppShell::UnlockScreenOrientation();
     }
   }
 }
@@ -1018,9 +1020,10 @@ SharedTextureHandle nsNPAPIPluginInstance::CreateSharedHandle()
     return mContentTexture->CreateSharedHandle();
   } else if (mContentSurface) {
     EnsureGLContext();
-    return sPluginContext->CreateSharedHandle(gl::SameProcess,
-                                              mContentSurface,
-                                              gl::SurfaceTexture);
+    return gl::CreateSharedHandle(sPluginContext,
+                                  gl::SameProcess,
+                                  mContentSurface,
+                                  gl::SurfaceTexture);
   } else return 0;
 }
 

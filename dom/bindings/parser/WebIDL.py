@@ -320,7 +320,9 @@ class IDLUnresolvedIdentifier(IDLObject):
                               [location])
         if name[0] == '_' and not allowDoubleUnderscore:
             name = name[1:]
-        if (name in ["constructor", "toString", "toJSON"] and
+        # TODO: Bug 872377, Restore "toJSON" to below list.
+        # We sometimes need custom serialization, so allow toJSON for now.
+        if (name in ["constructor", "toString"] and
             not allowForbidden):
             raise WebIDLError("Cannot use reserved identifier '%s'" % (name),
                               [location])
@@ -360,7 +362,6 @@ class IDLObjectWithIdentifier(IDLObject):
             self.resolve(parentScope)
 
         self.treatNullAs = "Default"
-        self.treatUndefinedAs = "Default"
 
     def resolve(self, parentScope):
         assert isinstance(parentScope, IDLScope)
@@ -371,7 +372,7 @@ class IDLObjectWithIdentifier(IDLObject):
                                                  isDictionaryMember=False,
                                                  isOptional=False):
         """
-        A helper function to deal with TreatNullAs and TreatUndefinedAs.  Returns the list
+        A helper function to deal with TreatNullAs.  Returns the list
         of attrs it didn't handle itself.
         """
         assert isinstance(self, IDLArgument) or isinstance(self, IDLAttribute)
@@ -397,38 +398,6 @@ class IDLObjectWithIdentifier(IDLObject):
                                       "'EmptyString', not '%s'" % value,
                                       [self.location])
                 self.treatNullAs = value
-            elif identifier == "TreatUndefinedAs":
-                if isDictionaryMember:
-                    raise WebIDLError("[TreatUndefinedAs] is not allowed for "
-                                      "dictionary members", [self.location])
-                if value == 'Missing':
-                    if not isOptional:
-                        raise WebIDLError("[TreatUndefinedAs=Missing] is only "
-                                          "allowed on optional arguments",
-                                          [self.location])
-                elif value == 'Null':
-                    if not self.type.isDOMString():
-                        raise WebIDLError("[TreatUndefinedAs=Null] is only "
-                                          "allowed on arguments or "
-                                          "attributes whose type is "
-                                          "DOMString or DOMString?",
-                                          [self.location])
-                    if not self.type.nullable():
-                        raise WebIDLError("[TreatUndefinedAs=Null] is only "
-                                          "allowed on arguments whose type "
-                                          "is DOMString?", [self.location])
-                elif value == 'EmptyString':
-                    if not self.type.isDOMString():
-                        raise WebIDLError("[TreatUndefinedAs=EmptyString] "
-                                          "is only allowed on arguments or "
-                                          "attributes whose type is "
-                                          "DOMString or DOMString?",
-                                          [self.location])
-                else:
-                    raise WebIDLError("[TreatUndefinedAs] must take the "
-                                      "identifiers EmptyString or Null or "
-                                      "Missing", [self.location])
-                self.treatUndefinedAs = value
             else:
                 unhandledAttrs.append(attr)
 
@@ -524,6 +493,11 @@ class IDLInterface(IDLObjectWithScope):
         self.interfacesImplementingSelf = set()
         self._hasChildInterfaces = False
         self._isOnGlobalProtoChain = False
+        # Tracking of the number of reserved slots we need for our
+        # members and those of ancestor interfaces.
+        self.totalMembersInSlots = 0
+        # Tracking of the number of own own members we have in slots
+        self._ownMembersInSlots = 0
 
         IDLObjectWithScope.__init__(self, location, parentScope, name)
 
@@ -586,6 +560,8 @@ class IDLInterface(IDLObjectWithScope):
             self.parent.finish(scope)
 
             self.parent._hasChildInterfaces = True
+
+            self.totalMembersInSlots = self.parent.totalMembersInSlots
 
             # Interfaces with [Global] must not have anything inherit from them
             if self.parent.getExtendedAttribute("Global"):
@@ -681,6 +657,17 @@ class IDLInterface(IDLObjectWithScope):
             if (member.isAttr() and member.isUnforgeable() and
                 not hasattr(member, "originatingInterface")):
                 member.originatingInterface = self
+
+        # Compute slot indices for our members before we pull in
+        # unforgeable members from our parent.
+        for member in self.members:
+            if (member.isAttr() and
+                (member.getExtendedAttribute("StoreInSlot") or
+                 member.getExtendedAttribute("Cached"))):
+                member.slotIndex = self.totalMembersInSlots
+                self.totalMembersInSlots += 1
+                if member.getExtendedAttribute("StoreInSlot"):
+                    self._ownMembersInSlots += 1
 
         if self.parent:
             # Make sure we don't shadow any of the [Unforgeable] attributes on
@@ -889,6 +876,9 @@ class IDLInterface(IDLObjectWithScope):
             if identifier == "TreatNonCallableAsNull":
                 raise WebIDLError("TreatNonCallableAsNull cannot be specified on interfaces",
                                   [attr.location, self.location])
+            if identifier == "TreatNonObjectAsNull":
+                raise WebIDLError("TreatNonObjectAsNull cannot be specified on interfaces",
+                                  [attr.location, self.location])
             elif identifier == "NoInterfaceObject":
                 if not attr.noArguments():
                     raise WebIDLError("[NoInterfaceObject] must take no arguments",
@@ -899,7 +889,7 @@ class IDLInterface(IDLObjectWithScope):
                                       [self.location])
 
                 self._noInterfaceObject = True
-            elif identifier == "Constructor" or identifier == "NamedConstructor":
+            elif identifier == "Constructor" or identifier == "NamedConstructor" or identifier == "ChromeConstructor":
                 if identifier == "Constructor" and not self.hasInterfaceObject():
                     raise WebIDLError(str(identifier) + " and NoInterfaceObject are incompatible",
                                       [self.location])
@@ -908,11 +898,15 @@ class IDLInterface(IDLObjectWithScope):
                     raise WebIDLError("NamedConstructor must either take an identifier or take a named argument list",
                                       [attr.location])
 
+                if identifier == "ChromeConstructor" and not self.hasInterfaceObject():
+                    raise WebIDLError(str(identifier) + " and NoInterfaceObject are incompatible",
+                                      [self.location])
+
                 args = attr.args() if attr.hasArgs() else []
 
                 retType = IDLWrapperType(self.location, self)
                 
-                if identifier == "Constructor":
+                if identifier == "Constructor" or identifier == "ChromeConstructor":
                     name = "constructor"
                     allowForbidden = True
                 else:
@@ -931,9 +925,11 @@ class IDLInterface(IDLObjectWithScope):
                 method.addExtendedAttributes(
                     [IDLExtendedAttribute(self.location, ("NewObject",)),
                      IDLExtendedAttribute(self.location, ("Throws",))])
+                if identifier == "ChromeConstructor":
+                    method.addExtendedAttributes(
+                        [IDLExtendedAttribute(self.location, ("ChromeOnly",))])
 
-
-                if identifier == "Constructor":
+                if identifier == "Constructor" or identifier == "ChromeConstructor":
                     method.resolve(self)
                 else:
                     # We need to detect conflicts for NamedConstructors across
@@ -1096,6 +1092,9 @@ class IDLInterface(IDLObjectWithScope):
         if self.parent:
             deps.add(self.parent)
         return deps
+
+    def hasMembersInSlots(self):
+        return self._ownMembersInSlots != 0
 
 class IDLDictionary(IDLObjectWithScope):
     def __init__(self, location, parentScope, name, parent, members):
@@ -1414,6 +1413,10 @@ class IDLType(IDLObject):
     def treatNonCallableAsNull(self):
         assert self.tag() == IDLType.Tags.callback
         return self.nullable() and self.inner._treatNonCallableAsNull
+
+    def treatNonObjectAsNull(self):
+        assert self.tag() == IDLType.Tags.callback
+        return self.nullable() and self.inner._treatNonObjectAsNull
 
     def addExtendedAttributes(self, attrs):
         assert len(attrs) == 0
@@ -2036,7 +2039,7 @@ class IDLWrapperType(IDLType):
         elif self.isEnum():
             return True
         elif self.isDictionary():
-            return all(m.isSerializable() for m in self.inner.members)
+            return all(m.type.isSerializable() for m in self.inner.members)
         else:
             raise WebIDLError("IDLWrapperType wraps type %s that we don't know if "
                               "is serializable" % type(self.inner), [self.location])
@@ -2628,6 +2631,7 @@ class IDLAttribute(IDLInterfaceMember):
         self.stringifier = stringifier
         self.enforceRange = False
         self.clamp = False
+        self.slotIndex = None
 
         if static and identifier.name == "prototype":
             raise WebIDLError("The identifier of a static attribute must not be 'prototype'",
@@ -2655,9 +2659,9 @@ class IDLAttribute(IDLInterfaceMember):
         if self.type.isDictionary():
             raise WebIDLError("An attribute cannot be of a dictionary type",
                               [self.location])
-        if self.type.isSequence():
-            raise WebIDLError("An attribute cannot be of a sequence type",
-                              [self.location])
+        if self.type.isSequence() and not self.getExtendedAttribute("Cached"):
+            raise WebIDLError("A non-cached attribute cannot be of a sequence "
+                              "type", [self.location])
         if self.type.isUnion():
             for f in self.type.unroll().flatMemberTypes:
                 if f.isDictionary():
@@ -2681,27 +2685,30 @@ class IDLAttribute(IDLInterfaceMember):
                               "interface type as its type", [self.location])
 
     def validate(self):
+        if ((self.getExtendedAttribute("Cached") or
+             self.getExtendedAttribute("StoreInSlot")) and
+            not self.getExtendedAttribute("Constant") and
+            not self.getExtendedAttribute("Pure")):
+            raise WebIDLError("Cached attributes and attributes stored in "
+                              "slots must be constant or pure, since the "
+                              "getter won't always be called.",
+                              [self.location])
         pass
 
     def handleExtendedAttribute(self, attr):
         identifier = attr.identifier()
-        if identifier == "TreatNonCallableAsNull":
-            raise WebIDLError("TreatNonCallableAsNull cannot be specified on attributes",
-                              [attr.location, self.location])
-        elif identifier == "SetterThrows" and self.readonly:
+        if identifier == "SetterThrows" and self.readonly:
             raise WebIDLError("Readonly attributes must not be flagged as "
                               "[SetterThrows]",
                               [self.location])
         elif (((identifier == "Throws" or identifier == "GetterThrows") and
-               (self.getExtendedAttribute("Pure") or
-                self.getExtendedAttribute("SameObject") or
-                self.getExtendedAttribute("Constant"))) or
-              ((identifier == "Pure" or identifier == "SameObject" or
-                identifier == "Constant") and
+               self.getExtendedAttribute("StoreInSlot")) or
+              (identifier == "StoreInSlot" and
                (self.getExtendedAttribute("Throws") or
                 self.getExtendedAttribute("GetterThrows")))):
             raise WebIDLError("Throwing things can't be [Pure] or [Constant] "
-                              "or [SameObject]", [attr.location])
+                              "or [SameObject] or [StoreInSlot]",
+                              [attr.location])
         elif identifier == "LenientThis":
             if not attr.noArguments():
                 raise WebIDLError("[LenientThis] must take no arguments",
@@ -2709,6 +2716,14 @@ class IDLAttribute(IDLInterfaceMember):
             if self.isStatic():
                 raise WebIDLError("[LenientThis] is only allowed on non-static "
                                   "attributes", [attr.location, self.location])
+            if self.getExtendedAttribute("CrossOriginReadable"):
+                raise WebIDLError("[LenientThis] is not allowed in combination "
+                                  "with [CrossOriginReadable]",
+                                  [attr.location, self.location])
+            if self.getExtendedAttribute("CrossOriginWritable"):
+                raise WebIDLError("[LenientThis] is not allowed in combination "
+                                  "with [CrossOriginWritable]",
+                                  [attr.location, self.location])
             self.lenientThis = True
         elif identifier == "Unforgeable":
             if not self.readonly:
@@ -2761,6 +2776,29 @@ class IDLAttribute(IDLInterfaceMember):
                 raise WebIDLError("[Clamp] used on a readonly attribute",
                                   [attr.location, self.location])
             self.clamp = True
+        elif identifier == "StoreInSlot":
+            if self.getExtendedAttribute("Cached"):
+                raise WebIDLError("[StoreInSlot] and [Cached] must not be "
+                                  "specified on the same attribute",
+                                  [attr.location, self.location])
+        elif identifier == "Cached":
+            if self.getExtendedAttribute("StoreInSlot"):
+                raise WebIDLError("[Cached] and [StoreInSlot] must not be "
+                                  "specified on the same attribute",
+                                  [attr.location, self.location])
+        elif (identifier == "CrossOriginReadable" or
+              identifier == "CrossOriginWritable"):
+            if not attr.noArguments():
+                raise WebIDLError("[%s] must take no arguments" % identifier,
+                                  [attr.location])
+            if self.isStatic():
+                raise WebIDLError("[%s] is only allowed on non-static "
+                                  "attributes" % identifier,
+                                  [attr.location, self.location])
+            if self.getExtendedAttribute("LenientThis"):
+                raise WebIDLError("[LenientThis] is not allowed in combination "
+                                  "with [%s]" % identifier,
+                                  [attr.location, self.location])
         elif (identifier == "Pref" or
               identifier == "SetterThrows" or
               identifier == "Pure" or
@@ -2893,6 +2931,7 @@ class IDLCallbackType(IDLType, IDLObjectWithScope):
                 argument.resolve(self)
 
         self._treatNonCallableAsNull = False
+        self._treatNonObjectAsNull = False
 
     def isCallback(self):
         return True
@@ -2938,8 +2977,13 @@ class IDLCallbackType(IDLType, IDLObjectWithScope):
         for attr in attrs:
             if attr.identifier() == "TreatNonCallableAsNull":
                 self._treatNonCallableAsNull = True
+            elif attr.identifier() == "TreatNonObjectAsNull":
+                self._treatNonObjectAsNull = True
             else:
                 unhandledAttrs.append(attr)
+        if self._treatNonCallableAsNull and self._treatNonObjectAsNull:
+            raise WebIDLError("Cannot specify both [TreatNonCallableAsNull] "
+                              "and [TreatNonObjectAsNull]", [self.location])
         if len(unhandledAttrs) != 0:
             IDLType.addExtendedAttributes(self, unhandledAttrs)
 
@@ -3153,15 +3197,12 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
 
     def finish(self, scope):
         for overload in self._overloads:
-            inOptionalArguments = False
             variadicArgument = None
 
             arguments = overload.arguments
             for (idx, argument) in enumerate(arguments):
-                if argument.isComplete():
-                    continue
-
-                argument.complete(scope)
+                if not argument.isComplete():
+                    argument.complete(scope)
                 assert argument.type.isComplete()
 
                 if (argument.type.isDictionary() or
@@ -3171,7 +3212,7 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
                     # end of the list or followed by optional arguments must be
                     # optional.
                     if (not argument.optional and
-                        (idx == len(arguments) - 1 or arguments[idx+1].optional)):
+                        all(arg.optional for arg in arguments[idx+1:])):
                         raise WebIDLError("Dictionary argument or union "
                                           "argument containing a dictionary "
                                           "not followed by a required argument "
@@ -3189,13 +3230,6 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
                 if variadicArgument:
                     raise WebIDLError("Variadic argument is not last argument",
                                       [variadicArgument.location])
-                # Once we see an optional argument, there can't be any non-optional
-                # arguments.
-                if inOptionalArguments and not argument.optional:
-                    raise WebIDLError("Non-optional argument after optional "
-                                      "arguments",
-                                      [argument.location])
-                inOptionalArguments = argument.optional
                 if argument.variadic:
                     variadicArgument = argument
 
@@ -3240,7 +3274,7 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
         return [overload for overload in self._overloads if
                 len(overload.arguments) == argc or
                 (len(overload.arguments) > argc and
-                 overload.arguments[argc].optional) or
+                 all(arg.optional for arg in overload.arguments[argc:])) or
                 (len(overload.arguments) < argc and
                  len(overload.arguments) > 0 and
                  overload.arguments[-1].variadic)]
@@ -3299,10 +3333,6 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
         elif identifier == "Constant":
             raise WebIDLError("Methods must not be flagged as [Constant]",
                               [attr.location, self.location]);
-        elif identifier == "Pure":
-            raise WebIDLError("Methods must not be flagged as [Pure] and if "
-                              "that changes, don't forget to check for [Throws]",
-                              [attr.location, self.location]);
         elif identifier == "PutForwards":
             raise WebIDLError("Only attributes support [PutForwards]",
                               [attr.location, self.location])
@@ -3322,6 +3352,8 @@ class IDLMethod(IDLInterfaceMember, IDLScope):
               identifier == "ChromeOnly" or
               identifier == "Pref" or
               identifier == "Func" or
+              identifier == "Pure" or
+              identifier == "CrossOriginCallable" or
               identifier == "WebGLHandlesContextLoss"):
             # Known attributes that we don't need to do anything with here
             pass
@@ -4069,21 +4101,6 @@ class Parser(Tokenizer):
             if not returnType.isDOMString():
                 raise WebIDLError("stringifier must have DOMString return type",
                                   [self.getLocation(p, 2)])
-
-        inOptionalArguments = False
-        variadicArgument = False
-        for argument in arguments:
-            # Only the last argument can be variadic
-            if variadicArgument:
-                raise WebIDLError("Only the last argument can be variadic",
-                                  [variadicArgument.location])
-            # Once we see an optional argument, there can't be any non-optional
-            # arguments.
-            if inOptionalArguments and not argument.optional:
-                raise WebIDLError("Cannot have a non-optional argument following an optional argument",
-                                  [argument.location])
-            inOptionalArguments = argument.optional
-            variadicArgument = argument if argument.variadic else None
 
         # identifier might be None.  This is only permitted for special methods.
         if not identifier:

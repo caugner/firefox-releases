@@ -48,12 +48,20 @@ const kEventConstructors = {
                                                           return new BluetoothDeviceEvent(aName, aProps);
                                                        },
                                              },
+  BluetoothDiscoveryStateChangedEvent:       { create: function (aName, aProps) {
+                                                          return new BluetoothDiscoveryStateChangedEvent(aName, aProps);
+                                                       },
+                                             },
   BluetoothStatusChangedEvent:               { create: function (aName, aProps) {
                                                           return new BluetoothStatusChangedEvent(aName, aProps);
                                                        },
                                              },
   CallEvent:                                 { create: function (aName, aProps) {
                                                           return new CallEvent(aName, aProps);
+                                                       },
+                                             },
+  CallGroupErrorEvent:                       { create: function (aName, aProps) {
+                                                          return new CallGroupErrorEvent(aName, aProps);
                                                        },
                                              },
   CFStateChangeEvent:                        { create: function (aName, aProps) {
@@ -167,6 +175,10 @@ const kEventConstructors = {
                                                          return new HashChangeEvent(aName, aProps);
                                                        },
                                              },
+  IccChangeEvent:                            { create: function (aName, aProps) {
+                                                         return new IccChangeEvent(aName, aProps);
+                                                       },
+                                             },
   IDBVersionChangeEvent:                     { create: function (aName, aProps) {
                                                          return new IDBVersionChangeEvent(aName, aProps);
                                                        },
@@ -246,7 +258,9 @@ const kEventConstructors = {
                                                          return new MozSmsEvent(aName, aProps);
                                                        },
                                              },
-  MozStkCommandEvent:                        { create: null, // Cannot create untrusted event from JS.
+  MozStkCommandEvent:                        { create: function (aName, aProps) {
+                                                          return new MozStkCommandEvent(aName, aProps);
+                                                       },
                                              },
   MozVoicemailEvent:                         { create: function (aName, aProps) {
                                                           return new MozVoicemailEvent(aName, aProps);
@@ -286,6 +300,10 @@ const kEventConstructors = {
                                              },
   PageTransitionEvent:                       { create: function (aName, aProps) {
                                                          return new PageTransitionEvent(aName, aProps);
+                                                       },
+                                             },
+  PointerEvent:                              { create: function (aName, aProps) {
+                                                         return new PointerEvent(aName, aProps);
                                                        },
                                              },
   PopStateEvent:                             { create: function (aName, aProps) {

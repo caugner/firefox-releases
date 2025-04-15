@@ -6,12 +6,9 @@
 
 include('../shared.mozbuild')
 
-MODULE = 'accessibility'
-
 EXPORTS += [
     'AccEvent.h',
-    'nsAccessibilityService.h',
-    'nsAccessNode.h',
+    'nsAccessibilityService.h'
 ]
 
 EXPORTS.mozilla.a11y += [
@@ -30,7 +27,7 @@ if CONFIG['MOZ_DEBUG']:
         'Logging.h',
     ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'AccCollector.cpp',
     'AccEvent.cpp',
     'AccGroupInfo.cpp',
@@ -45,7 +42,6 @@ SOURCES += [
     'NotificationController.cpp',
     'nsAccessibilityService.cpp',
     'nsAccessiblePivot.cpp',
-    'nsAccessNode.cpp',
     'nsAccUtils.cpp',
     'nsCoreUtils.cpp',
     'nsEventShell.cpp',
@@ -58,13 +54,9 @@ SOURCES += [
 ]
 
 if a11y_log:
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'Logging.cpp',
     ]
-
-LIBRARY_NAME = 'accessibility_base_s'
-
-LIBXUL_LIBRARY = True
 
 LOCAL_INCLUDES += [
     '../../../content/xbl/src',
@@ -72,7 +64,7 @@ LOCAL_INCLUDES += [
     '../../../layout/generic',
     '../../../layout/style',
     '../../../layout/svg',
-    '../../../layout/xul/base/src',
+    '../../../layout/xul',
     '../../../layout/xul/tree/',
     '../generic',
     '../html',
@@ -97,3 +89,5 @@ else:
     LOCAL_INCLUDES += [
         '../other',
     ]
+
+FINAL_LIBRARY = 'xul'

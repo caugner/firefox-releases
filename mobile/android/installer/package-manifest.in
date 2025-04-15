@@ -44,6 +44,7 @@
 @BINPATH@/@DLL_PREFIX@omxplugingb@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@omxplugingb235@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@omxpluginhc@DLL_SUFFIX@
+@BINPATH@/@DLL_PREFIX@omxpluginkk@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@omxpluginfroyo@DLL_SUFFIX@
 @BINPATH@/@DLL_PREFIX@xul@DLL_SUFFIX@
 
@@ -286,8 +287,6 @@
 @BINPATH@/components/NotificationStorage.manifest
 @BINPATH@/components/SettingsManager.js
 @BINPATH@/components/SettingsManager.manifest
-@BINPATH@/components/SettingsService.js
-@BINPATH@/components/SettingsService.manifest
 @BINPATH@/components/BrowserElementParent.manifest
 @BINPATH@/components/BrowserElementParent.js
 @BINPATH@/components/FeedProcessor.manifest
@@ -387,8 +386,6 @@
 @BINPATH@/components/Webapps.manifest
 @BINPATH@/components/AppsService.js
 @BINPATH@/components/AppsService.manifest
-@BINPATH@/components/AppProtocolHandler.js
-@BINPATH@/components/AppProtocolHandler.manifest
 
 @BINPATH@/components/Push.js
 @BINPATH@/components/Push.manifest
@@ -560,6 +557,7 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/AddonUpdateService.js
 @BINPATH@/components/BlocklistPrompt.js
 @BINPATH@/components/BrowserCLH.js
+@BINPATH@/components/ColorPicker.js
 @BINPATH@/components/ContentDispatchChooser.js
 @BINPATH@/components/ContentPermissionPrompt.js
 @BINPATH@/components/DirectoryProvider.js
@@ -573,6 +571,7 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/PromptService.js
 @BINPATH@/components/SessionStore.js
 @BINPATH@/components/Sidebar.js
+@BINPATH@/components/Snippets.js
 
 @BINPATH@/components/Payment.js
 @BINPATH@/components/PaymentFlowInfo.js

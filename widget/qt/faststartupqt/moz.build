@@ -4,17 +4,34 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'faststartupqt'
-
-SOURCES += [
+GENERATED_SOURCES += [
     'moc_moziqwidget.cpp',
     'moc_nsFastStartupQt.cpp',
-    'mozqglwidgetwrapper.cpp',
     'mozqwidgetfast.cpp',
-    'nsFastStartupQt.cpp',
-    'nsQAppInstance.cpp',
 ]
 
-LIBRARY_NAME = 'faststartupqt'
+SOURCES += [
+    TOPSRCDIR + '/toolkit/xre/nsQAppInstance.cpp',
+    TOPSRCDIR + '/widget/qt/mozqglwidgetwrapper.cpp',
+]
 
-FORCE_STATIC_LIB = True
+SOURCES += [
+    'nsFastStartupQt.cpp',
+]
+
+FINAL_LIBRARY = 'xul'
+
+LOCAL_INCLUDES += [
+    '/widget/qt',
+    '/xpcom/build',
+]
+
+
+DEFINES['LIBRARY_FILENAME'] = '%s%s%s' % (
+    CONFIG['DLL_PREFIX'],
+    LIBRARY_NAME,
+    CONFIG['DLL_SUFFIX']
+)
+
+DEFINES['MOZ_NO_MOZALLOC'] = True
+DEFINES['XPCOM_GLUE'] = True

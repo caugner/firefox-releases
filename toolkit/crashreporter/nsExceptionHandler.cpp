@@ -5,11 +5,11 @@
 
 #include "nsExceptionHandler.h"
 #include "nsDataHashtable.h"
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/dom/CrashReporterChild.h"
 #include "mozilla/Services.h"
 #include "nsIObserverService.h"
 #include "mozilla/unused.h"
-#include "mozilla/Util.h"
 
 #include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
@@ -82,7 +82,7 @@ using mozilla::InjectCrashRunnable;
 #include <vector>
 
 #include "mozilla/mozalloc_oom.h"
-#include "mozilla/mozPoisonWrite.h"
+#include "mozilla/LateWriteChecks.h"
 #include "mozilla/WindowsDllBlocklist.h"
 
 #if defined(XP_MACOSX)
@@ -106,7 +106,6 @@ namespace CrashReporter {
 #ifdef XP_WIN32
 typedef wchar_t XP_CHAR;
 typedef std::wstring xpstring;
-#define CONVERT_UTF16_TO_XP_CHAR(x) x
 #define CONVERT_XP_CHAR_TO_UTF16(x) x
 #define XP_STRLEN(x) wcslen(x)
 #define my_strlen strlen
@@ -126,7 +125,6 @@ typedef std::wstring xpstring;
 #else
 typedef char XP_CHAR;
 typedef std::string xpstring;
-#define CONVERT_UTF16_TO_XP_CHAR(x) NS_ConvertUTF16toUTF8(x)
 #define CONVERT_XP_CHAR_TO_UTF16(x) NS_ConvertUTF8toUTF16(x)
 #define CRASH_REPORTER_FILENAME "crashreporter"
 #define PATH_SEPARATOR "/"
@@ -814,7 +812,7 @@ static bool ShouldReport()
 
 namespace {
   bool Filter(void* context) {
-    mozilla::DisableWritePoisoning();
+    mozilla::StopLateWriteChecks();
     return true;
   }
 }
@@ -826,17 +824,19 @@ nsresult SetExceptionHandler(nsIFile* aXREDirectory,
   if (gExceptionHandler)
     return NS_ERROR_ALREADY_INITIALIZED;
 
-#if defined(DEBUG)
+#if !defined(DEBUG) || defined(MOZ_WIDGET_GONK)
+  // In non-debug builds, enable the crash reporter by default, and allow
+  // disabling it with the MOZ_CRASHREPORTER_DISABLE environment variable.
+  // Also enable it by default in debug gonk builds as it is difficult to
+  // set environment on startup.
+  const char *envvar = PR_GetEnv("MOZ_CRASHREPORTER_DISABLE");
+  if (envvar && *envvar && !force)
+    return NS_OK;
+#else
   // In debug builds, disable the crash reporter by default, and allow to
   // enable it with the MOZ_CRASHREPORTER environment variable.
   const char *envvar = PR_GetEnv("MOZ_CRASHREPORTER");
   if ((!envvar || !*envvar) && !force)
-    return NS_OK;
-#else
-  // In non-debug builds, enable the crash reporter by default, and allow
-  // to disable it with the MOZ_CRASHREPORTER_DISABLE environment variable.
-  const char *envvar = PR_GetEnv("MOZ_CRASHREPORTER_DISABLE");
-  if (envvar && *envvar && !force)
     return NS_OK;
 #endif
 
@@ -890,7 +890,7 @@ nsresult SetExceptionHandler(nsIFile* aXREDirectory,
     nsString crashReporterPath_temp;
 
     exePath->GetPath(crashReporterPath_temp);
-    crashReporterPath = ToNewUnicode(crashReporterPath_temp);
+    crashReporterPath = reinterpret_cast<wchar_t*>(ToNewUnicode(crashReporterPath_temp));
 #elif !defined(__ANDROID__)
     nsCString crashReporterPath_temp;
 
@@ -1115,12 +1115,13 @@ nsresult SetMinidumpPath(const nsAString& aPath)
   if (!gExceptionHandler)
     return NS_ERROR_NOT_INITIALIZED;
 
-#ifndef XP_LINUX
-  gExceptionHandler->set_dump_path(
-      CONVERT_UTF16_TO_XP_CHAR(aPath).BeginReading());
-#else
+#ifdef XP_WIN32
+  gExceptionHandler->set_dump_path(char16ptr_t(aPath.BeginReading()));
+#elif defined(XP_LINUX)
   gExceptionHandler->set_minidump_descriptor(
-      MinidumpDescriptor(CONVERT_UTF16_TO_XP_CHAR(aPath).BeginReading()));
+      MinidumpDescriptor(NS_ConvertUTF16toUTF8(aPath).BeginReading()));
+#else
+  gExceptionHandler->set_dump_path(NS_ConvertUTF16toUTF8(aPath).BeginReading());
 #endif
   return NS_OK;
 }
@@ -1941,7 +1942,7 @@ FindPendingDir()
 #ifdef XP_WIN
     nsString path;
     pendingDir->GetPath(path);
-    pendingDirectory = ToNewUnicode(path);
+    pendingDirectory = reinterpret_cast<wchar_t*>(ToNewUnicode(path));
 #else
     nsCString path;
     pendingDir->GetNativePath(path);
@@ -2256,7 +2257,7 @@ OOPInitialized()
 
 #ifdef XP_MACOSX
 static bool ChildFilter(void *context) {
-  mozilla::DisableWritePoisoning();
+  mozilla::StopLateWriteChecks();
   return true;
 }
 #endif
@@ -2522,7 +2523,7 @@ SetRemoteExceptionHandler(const nsACString& crashPipe)
                      nullptr,    // no callback context
                      google_breakpad::ExceptionHandler::HANDLER_ALL,
                      MiniDumpNormal,
-                     NS_ConvertASCIItoUTF16(crashPipe).BeginReading(),
+                     NS_ConvertASCIItoUTF16(crashPipe).get(),
                      nullptr);
 #ifdef XP_WIN
   gExceptionHandler->set_handle_debug_exceptions(true);

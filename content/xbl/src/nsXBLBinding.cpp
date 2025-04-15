@@ -58,6 +58,7 @@
 #include "nsDOMClassInfo.h"
 
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/ShadowRoot.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -163,6 +164,16 @@ nsXBLBinding::nsXBLBinding(nsXBLPrototypeBinding* aBinding)
   NS_ADDREF(mPrototypeBinding->XBLDocumentInfo());
 }
 
+// Constructor used by web components.
+nsXBLBinding::nsXBLBinding(ShadowRoot* aShadowRoot, nsXBLPrototypeBinding* aBinding)
+  : mMarkedForDeath(false),
+    mPrototypeBinding(aBinding),
+    mContent(aShadowRoot)
+{
+  NS_ASSERTION(mPrototypeBinding, "Must have a prototype binding!");
+  // Grab a ref to the document info so the prototype binding won't die
+  NS_ADDREF(mPrototypeBinding->XBLDocumentInfo());
+}
 
 nsXBLBinding::~nsXBLBinding(void)
 {
@@ -273,6 +284,13 @@ void
 nsXBLBinding::UninstallAnonymousContent(nsIDocument* aDocument,
                                         nsIContent* aAnonParent)
 {
+  if (aAnonParent->HasFlag(NODE_IS_IN_SHADOW_TREE)) {
+    // It is unnecessary to uninstall anonymous content in a shadow tree
+    // because the ShadowRoot itself is a DocumentFragment and does not
+    // need any additional cleanup.
+    return;
+  }
+
   nsAutoScriptBlocker scriptBlocker;
   // Hold a strong ref while doing this, just in case.
   nsCOMPtr<nsIContent> anonParent = aAnonParent;
@@ -1064,40 +1082,7 @@ nsXBLBinding::DoInitJSClass(JSContext *cx, JS::Handle<JSObject*> global,
 bool
 nsXBLBinding::AllowScripts()
 {
-  if (!mPrototypeBinding->GetAllowScripts())
-    return false;
-
-  // Nasty hack.  Use the JSContext of the bound node, since the
-  // security manager API expects to get the docshell type from
-  // that.  But use the nsIPrincipal of our document.
-  nsIScriptSecurityManager* mgr = nsContentUtils::GetSecurityManager();
-  if (!mgr) {
-    return false;
-  }
-
-  nsIDocument* doc = mBoundElement ? mBoundElement->OwnerDoc() : nullptr;
-  if (!doc) {
-    return false;
-  }
-
-  nsCOMPtr<nsIScriptGlobalObject> global = do_QueryInterface(doc->GetWindow());
-  if (!global) {
-    return false;
-  }
-
-  nsCOMPtr<nsIScriptContext> context = global->GetContext();
-  if (!context) {
-    return false;
-  }
-  
-  AutoPushJSContext cx(context->GetNativeContext());
-
-  nsCOMPtr<nsIDocument> ourDocument =
-    mPrototypeBinding->XBLDocumentInfo()->GetDocument();
-  bool canExecute;
-  nsresult rv =
-    mgr->CanExecuteScripts(cx, ourDocument->NodePrincipal(), &canExecute);
-  return NS_SUCCEEDED(rv) && canExecute;
+  return mBoundElement && mPrototypeBinding->GetAllowScripts();
 }
 
 nsXBLBinding*
@@ -1124,7 +1109,7 @@ nsXBLBinding::ResolveAllFields(JSContext *cx, JS::Handle<JSObject*> obj) const
 }
 
 bool
-nsXBLBinding::LookupMember(JSContext* aCx, JS::HandleId aId,
+nsXBLBinding::LookupMember(JSContext* aCx, JS::Handle<jsid> aId,
                            JS::MutableHandle<JSPropertyDescriptor> aDesc)
 {
   // We should never enter this function with a pre-filled property descriptor.
@@ -1153,7 +1138,7 @@ nsXBLBinding::LookupMember(JSContext* aCx, JS::HandleId aId,
   // Enter the xbl scope and invoke the internal version.
   {
     JSAutoCompartment ac(aCx, xblScope);
-    JS::RootedId id(aCx, aId);
+    JS::Rooted<jsid> id(aCx, aId);
     if (!JS_WrapId(aCx, id.address()) ||
         !LookupMemberInternal(aCx, name, id, aDesc, xblScope))
     {
@@ -1167,7 +1152,7 @@ nsXBLBinding::LookupMember(JSContext* aCx, JS::HandleId aId,
 
 bool
 nsXBLBinding::LookupMemberInternal(JSContext* aCx, nsString& aName,
-                                   JS::HandleId aNameAsId,
+                                   JS::Handle<jsid> aNameAsId,
                                    JS::MutableHandle<JSPropertyDescriptor> aDesc,
                                    JS::Handle<JSObject*> aXBLScope)
 {
@@ -1183,7 +1168,7 @@ nsXBLBinding::LookupMemberInternal(JSContext* aCx, nsString& aName,
 
   // Find our class object. It's in a protected scope and permanent just in case,
   // so should be there no matter what.
-  JS::RootedValue classObject(aCx);
+  JS::Rooted<JS::Value> classObject(aCx);
   if (!JS_GetProperty(aCx, aXBLScope, mJSClass->name, &classObject)) {
     return false;
   }

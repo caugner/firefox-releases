@@ -21,7 +21,6 @@
 #include "nsGkAtoms.h"
 #include "mozilla/dom/HTMLCollectionBinding.h"
 #include "mozilla/dom/NodeListBinding.h"
-#include "mozilla/dom/BindingUtils.h"
 #include "mozilla/Likely.h"
 #include "nsGenericHTMLElement.h"
 #include <algorithm>
@@ -38,6 +37,7 @@
 #define ASSERT_IN_SYNC PR_BEGIN_MACRO PR_END_MACRO
 #endif
 
+using namespace mozilla;
 using namespace mozilla::dom;
 
 nsBaseContentList::~nsBaseContentList()
@@ -153,6 +153,16 @@ nsSimpleContentList::WrapObject(JSContext *cx, JS::Handle<JSObject*> scope)
 // Hashtable for storing nsContentLists
 static PLDHashTable gContentListHashTable;
 
+#define RECENTLY_USED_CONTENT_LIST_CACHE_SIZE 31
+static nsContentList*
+  sRecentlyUsedContentLists[RECENTLY_USED_CONTENT_LIST_CACHE_SIZE] = {};
+
+static MOZ_ALWAYS_INLINE uint32_t
+RecentlyUsedCacheIndex(const nsContentListKey& aKey)
+{
+  return aKey.GetHash() % RECENTLY_USED_CONTENT_LIST_CACHE_SIZE;
+}
+
 struct ContentListHashEntry : public PLDHashEntryHdr
 {
   nsContentList* mContentList;
@@ -187,8 +197,15 @@ NS_GetContentList(nsINode* aRootNode,
   NS_ASSERTION(aRootNode, "content list has to have a root");
 
   nsRefPtr<nsContentList> list;
+  nsContentListKey hashKey(aRootNode, aMatchNameSpaceId, aTagname);
+  uint32_t recentlyUsedCacheIndex = RecentlyUsedCacheIndex(hashKey);
+  nsContentList* cachedList = sRecentlyUsedContentLists[recentlyUsedCacheIndex];
+  if (cachedList && cachedList->MatchesKey(hashKey)) {
+    list = cachedList;
+    return list.forget();
+  }
 
-  static PLDHashTableOps hash_table_ops =
+  static const PLDHashTableOps hash_table_ops =
   {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
@@ -214,7 +231,6 @@ NS_GetContentList(nsINode* aRootNode,
   ContentListHashEntry *entry = nullptr;
   // First we look in our hashtable.  Then we create a content list if needed
   if (gContentListHashTable.ops) {
-    nsContentListKey hashKey(aRootNode, aMatchNameSpaceId, aTagname);
     
     // A PL_DHASH_ADD is equivalent to a PL_DHASH_LOOKUP for cases
     // when the entry is already in the hashtable.
@@ -245,6 +261,7 @@ NS_GetContentList(nsINode* aRootNode,
     }
   }
 
+  sRecentlyUsedContentLists[recentlyUsedCacheIndex] = list;
   return list.forget();
 }
 
@@ -309,7 +326,7 @@ GetFuncStringContentList(nsINode* aRootNode,
 
   nsRefPtr<nsCacheableFuncStringContentList> list;
 
-  static PLDHashTableOps hash_table_ops =
+  static const PLDHashTableOps hash_table_ops =
   {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
@@ -518,7 +535,7 @@ nsContentList::Item(uint32_t aIndex, bool aDoFlush)
   return mElements.SafeElementAt(aIndex);
 }
 
-nsIContent *
+Element*
 nsContentList::NamedItem(const nsAString& aName, bool aDoFlush)
 {
   BringSelfUpToDate(aDoFlush);
@@ -537,7 +554,7 @@ nsContentList::NamedItem(const nsAString& aName, bool aDoFlush)
                               name, eCaseMatters) ||
          content->AttrValueIs(kNameSpaceID_None, nsGkAtoms::id,
                               name, eCaseMatters))) {
-      return content;
+      return content->AsElement();
     }
   }
 
@@ -655,24 +672,6 @@ nsContentList::Item(uint32_t aIndex)
   return GetElementAt(aIndex);
 }
 
-JSObject*
-nsContentList::NamedItem(JSContext* cx, const nsAString& name,
-                         mozilla::ErrorResult& error)
-{
-  nsIContent *item = NamedItem(name, true);
-  if (!item) {
-    return nullptr;
-  }
-  JS::Rooted<JSObject*> wrapper(cx, GetWrapper());
-  JSAutoCompartment ac(cx, wrapper);
-  JS::Rooted<JS::Value> v(cx);
-  if (!mozilla::dom::WrapObject(cx, wrapper, item, item, nullptr, &v)) {
-    error.Throw(NS_ERROR_FAILURE);
-    return nullptr;
-  }
-  return &v.toObject();
-}
-
 void
 nsContentList::AttributeChanged(nsIDocument *aDocument, Element* aElement,
                                 int32_t aNameSpaceID, nsIAtom* aAttribute,
@@ -713,14 +712,22 @@ nsContentList::ContentAppended(nsIDocument* aDocument, nsIContent* aContainer,
   
   /*
    * If the state is LIST_DIRTY then we have no useful information in our list
-   * and we want to put off doing work as much as possible.  Also, if
-   * aContainer is anonymous from our point of view, we know that we can't
-   * possibly be matching any of the kids.
+   * and we want to put off doing work as much as possible.
+   *
+   * Also, if aContainer is anonymous from our point of view, we know that we
+   * can't possibly be matching any of the kids.
+   *
+   * Optimize out also the common case when just one new node is appended and
+   * it doesn't match us.
    */
   if (mState == LIST_DIRTY ||
       !nsContentUtils::IsInSameAnonymousTree(mRootNode, aContainer) ||
-      !MayContainRelevantNodes(aContainer))
+      !MayContainRelevantNodes(aContainer) ||
+      (!aFirstNewContent->HasChildren() &&
+       !aFirstNewContent->GetNextSibling() &&
+       !MatchSelf(aFirstNewContent))) {
     return;
+  }
 
   /*
    * We want to handle the case of ContentAppended by sometimes
@@ -970,11 +977,16 @@ nsContentList::RemoveFromHashtable()
     return;
   }
   
+  nsDependentAtomString str(mXMLMatchAtom);
+  nsContentListKey key(mRootNode, mMatchNameSpaceId, str);
+  uint32_t recentlyUsedCacheIndex = RecentlyUsedCacheIndex(key);
+  if (sRecentlyUsedContentLists[recentlyUsedCacheIndex] == this) {
+    sRecentlyUsedContentLists[recentlyUsedCacheIndex] = nullptr;
+  }
+
   if (!gContentListHashTable.ops)
     return;
 
-  nsDependentAtomString str(mXMLMatchAtom);
-  nsContentListKey key(mRootNode, mMatchNameSpaceId, str);
   PL_DHashTableOperate(&gContentListHashTable,
                        &key,
                        PL_DHASH_REMOVE);

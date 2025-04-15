@@ -178,6 +178,38 @@ add_test(function test_MmsHeader_encode() {
 });
 
 //
+// Test target: CancelStatusValue
+//
+
+//// CancelStatusValue.decode ////
+
+add_test(function test_CancelStatusValue_decode() {
+  for (let i = 0; i < 256; i++) {
+    if ((i >= 128) && (i <= 129)) {
+      wsp_decode_test(MMS.CancelStatusValue, [i], i);
+    } else {
+      wsp_decode_test(MMS.CancelStatusValue, [i], null, "CodeError");
+    }
+  }
+
+  run_next_test();
+});
+
+//// CancelStatusValue.encode ////
+
+add_test(function test_CancelStatusValue_encode() {
+  for (let i = 0; i < 256; i++) {
+    if ((i >= 128) && (i <= 129)) {
+      wsp_encode_test(MMS.CancelStatusValue, i, [i]);
+    } else {
+      wsp_encode_test(MMS.CancelStatusValue, i, null, "CodeError");
+    }
+  }
+
+  run_next_test();
+});
+
+//
 // Test target: ContentClassValue
 //
 
@@ -380,6 +412,7 @@ add_test(function test_EncodedStringValue_decode() {
 add_test(function test_EncodedStringValue_encode() {
   // Test for normal TextString
   wsp_encode_test(MMS.EncodedStringValue, "Hello", strToCharCodeArray("Hello"));
+
   // Test for utf-8
   let (entry = MMS.WSP.WSP_WELL_KNOWN_CHARSETS["utf-8"]) {
     // "Mozilla" in full width.
@@ -390,6 +423,16 @@ add_test(function test_EncodedStringValue_encode() {
     conv.charset = entry.converter;
 
     let raw = conv.convertToByteArray(str).concat([0]);
+    wsp_encode_test(MMS.EncodedStringValue, str,
+                    [raw.length + 2, 0x80 | entry.number, 127].concat(raw));
+
+    // MMS.EncodedStringValue encodes non us-ascii characters (128 ~ 255)
+    // (e.g., 'Ñ' or 'ü') by the utf-8 encoding. Otherwise, for us-ascii
+    // characters (0 ~ 127), still use the normal TextString encoding.
+
+    // "Ñü" in full width.
+    str = "\u00d1\u00fc";
+    raw = conv.convertToByteArray(str).concat([0]);
     wsp_encode_test(MMS.EncodedStringValue, str,
                     [raw.length + 2, 0x80 | entry.number, 127].concat(raw));
   }
@@ -658,6 +701,38 @@ add_test(function test_PriorityValue_encode() {
 });
 
 //
+// Test target: ReadStatusValue
+//
+
+//// ReadStatusValue.decode ////
+
+add_test(function test_ReadStatusValue_decode() {
+  for (let i = 0; i < 256; i++) {
+    if ((i >= 128) && (i <= 129)) {
+      wsp_decode_test(MMS.ReadStatusValue, [i], i);
+    } else {
+      wsp_decode_test(MMS.ReadStatusValue, [i], null, "CodeError");
+    }
+  }
+
+  run_next_test();
+});
+
+//// ReadStatusValue.encode ////
+
+add_test(function test_ReadStatusValue_encode() {
+  for (let i = 0; i < 256; i++) {
+    if ((i >= 128) && (i <= 129)) {
+      wsp_encode_test(MMS.ReadStatusValue, i, [i]);
+    } else {
+      wsp_encode_test(MMS.ReadStatusValue, i, null, "CodeError");
+    }
+  }
+
+  run_next_test();
+});
+
+//
 // Test target: RecommendedRetrievalModeValue
 //
 
@@ -759,6 +834,38 @@ add_test(function test_RetrieveStatusValue_decode() {
     } else {
       wsp_decode_test(MMS.RetrieveStatusValue, [i],
                       MMS_PDU_ERROR_PERMANENT_FAILURE);
+    }
+  }
+
+  run_next_test();
+});
+
+//
+// Test target: SenderVisibilityValue
+//
+
+//// SenderVisibilityValue.decode ////
+
+add_test(function test_SenderVisibilityValue_decode() {
+  for (let i = 0; i < 256; i++) {
+    if ((i >= 128) && (i <= 129)) {
+      wsp_decode_test(MMS.SenderVisibilityValue, [i], i);
+    } else {
+      wsp_decode_test(MMS.SenderVisibilityValue, [i], null, "CodeError");
+    }
+  }
+
+  run_next_test();
+});
+
+//// SenderVisibilityValue.encode ////
+
+add_test(function test_SenderVisibilityValue_encode() {
+  for (let i = 0; i < 256; i++) {
+    if ((i >= 128) && (i <= 129)) {
+      wsp_encode_test(MMS.SenderVisibilityValue, i, [i]);
+    } else {
+      wsp_encode_test(MMS.SenderVisibilityValue, i, null, "CodeError");
     }
   }
 

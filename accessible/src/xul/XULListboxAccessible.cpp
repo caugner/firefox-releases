@@ -133,7 +133,7 @@ XULListboxAccessible::QueryInterface(REFNSIID aIID, void** aInstancePtr)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-//nsAccessNode
+// Accessible
 
 void
 XULListboxAccessible::Shutdown()
@@ -635,7 +635,7 @@ XULListitemAccessible::NativeName(nsString& aName)
     }
   }
 
-  return GetXULName(aName);
+  return Accessible::NativeName(aName);
 }
 
 role

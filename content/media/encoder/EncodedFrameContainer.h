@@ -6,6 +6,7 @@
 #ifndef EncodedFrameContainer_H_
 #define EncodedFrameContainer_H_
 
+#include "nsAutoPtr.h"
 #include "nsTArray.h"
 
 namespace mozilla {
@@ -26,19 +27,20 @@ public:
     mEncodedFrames.AppendElement(aEncodedFrame);
   }
   // Retrieve all of the encoded frames
-  const nsTArray<nsAutoPtr<EncodedFrame> >& GetEncodedFrames() const
+  const nsTArray<nsRefPtr<EncodedFrame> >& GetEncodedFrames() const
   {
     return mEncodedFrames;
   }
 private:
   // This container is used to store the video or audio encoded packets.
   // Muxer should check mFrameType and get the encoded data type from mEncodedFrames.
-  nsTArray<nsAutoPtr<EncodedFrame> > mEncodedFrames;
+  nsTArray<nsRefPtr<EncodedFrame> > mEncodedFrames;
 };
 
 // Represent one encoded frame
 class EncodedFrame
 {
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(EncodedFrame)
 public:
   EncodedFrame() :
     mTimeStamp(0),

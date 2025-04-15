@@ -8,6 +8,8 @@ package org.mozilla.gecko;
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.favicons.Favicons;
 import org.mozilla.gecko.home.HomePager;
+import org.mozilla.gecko.mozglue.JNITarget;
+import org.mozilla.gecko.mozglue.RobocopTarget;
 import org.mozilla.gecko.sync.setup.SyncAccounts;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.ThreadUtils;
@@ -102,7 +104,9 @@ public class Tabs implements GeckoEventListener {
         registerEventListener("DOMTitleChanged");
         registerEventListener("Link:Favicon");
         registerEventListener("Link:Feed");
+        registerEventListener("Link:OpenSearch");
         registerEventListener("DesktopMode:Changed");
+        registerEventListener("Tab:ViewportMetadata");
     }
 
     public synchronized void attachToContext(Context context) {
@@ -372,6 +376,7 @@ public class Tabs implements GeckoEventListener {
         private static final Tabs INSTANCE = new Tabs();
     }
 
+    @RobocopTarget
     public static Tabs getInstance() {
        return Tabs.TabsInstanceHolder.INSTANCE;
     }
@@ -442,7 +447,7 @@ public class Tabs implements GeckoEventListener {
                     if ((state & GeckoAppShell.WPL_STATE_START) != 0) {
                         boolean showProgress = message.getBoolean("showProgress");
                         tab.handleDocumentStart(showProgress, message.getString("uri"));
-                        notifyListeners(tab, Tabs.TabEvents.START, showProgress);
+                        notifyListeners(tab, Tabs.TabEvents.START);
                     } else if ((state & GeckoAppShell.WPL_STATE_STOP) != 0) {
                         tab.handleDocumentStop(message.getBoolean("success"));
                         notifyListeners(tab, Tabs.TabEvents.STOP);
@@ -468,11 +473,18 @@ public class Tabs implements GeckoEventListener {
                 tab.updateFaviconURL(message.getString("href"), message.getInt("size"));
                 notifyListeners(tab, TabEvents.LINK_FAVICON);
             } else if (event.equals("Link:Feed")) {
-                tab.setFeedsEnabled(true);
+                tab.setHasFeeds(true);
                 notifyListeners(tab, TabEvents.LINK_FEED);
+            } else if (event.equals("Link:OpenSearch")) {
+                boolean visible = message.getBoolean("visible");
+                tab.setHasOpenSearch(visible);
             } else if (event.equals("DesktopMode:Changed")) {
                 tab.setDesktopMode(message.getBoolean("desktopMode"));
                 notifyListeners(tab, TabEvents.DESKTOP_MODE_CHANGE);
+            } else if (event.equals("Tab:ViewportMetadata")) {
+                tab.setZoomConstraints(new ZoomConstraints(message));
+                tab.setIsRTL(message.getBoolean("isRTL"));
+                notifyListeners(tab, TabEvents.VIEWPORT_CHANGE);
             }
         } catch (Exception e) {
             Log.w(LOGTAG, "handleMessage threw for " + event, e);
@@ -544,7 +556,8 @@ public class Tabs implements GeckoEventListener {
         LINK_FEED,
         SECURITY_CHANGE,
         READER_ENABLED,
-        DESKTOP_MODE_CHANGE
+        DESKTOP_MODE_CHANGE,
+        VIEWPORT_CHANGE
     }
 
     public void notifyListeners(Tab tab, TabEvents msg) {
@@ -656,6 +669,7 @@ public class Tabs implements GeckoEventListener {
      *
      * @param url URL of page to load, or search term used if searchEngine is given
      */
+    @RobocopTarget
     public Tab loadUrl(String url) {
         return loadUrl(url, LOADURL_NONE);
     }
@@ -787,9 +801,8 @@ public class Tabs implements GeckoEventListener {
 
     /**
      * Gets the next tab ID.
-     *
-     * This method is invoked via JNI.
      */
+    @JNITarget
     public static int getNextTabId() {
         return sTabId.getAndIncrement();
     }

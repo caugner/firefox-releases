@@ -32,29 +32,10 @@ static int32_t         gTableRefCount = 0;
 static uint32_t        gOperatorCount = 0;
 static OperatorData*   gOperatorArray = nullptr;
 static nsHashtable*    gOperatorTable = nullptr;
-static bool            gInitialized   = false;
-static nsTArray<nsString>*      gInvariantCharArray    = nullptr;
+static bool            gGlobalsInitialized   = false;
 
-static const PRUnichar kNullCh  = PRUnichar('\0');
 static const PRUnichar kDashCh  = PRUnichar('#');
 static const PRUnichar kColonCh = PRUnichar(':');
-
-static const char* const kMathVariant_name[] = {
-  "normal",
-  "bold",
-  "italic",
-  "bold-italic",
-  "sans-serif",
-  "bold-sans-serif",
-  "sans-serif-italic",
-  "sans-serif-bold-italic",
-  "monospace",
-  "script",
-  "bold-script",
-  "fraktur",
-  "bold-fraktur",
-  "double-struck"
-};
 
 static void
 SetBooleanProperty(OperatorData* aOperatorData,
@@ -129,6 +110,8 @@ SetOperator(OperatorData*   aOperatorData,
             nsString&        aAttributes)
 
 {
+  static const PRUnichar kNullCh = PRUnichar('\0');
+
   // aOperator is in the expanded format \uNNNN\uNNNN ...
   // First compress these Unicode points to the internal nsString format
   int32_t i = 0;
@@ -242,15 +225,6 @@ InitOperators(void)
        NS_LITERAL_CSTRING("resource://gre/res/fonts/mathfont.properties"));
   if (NS_FAILED(rv)) return rv;
 
-  // Get the list of invariant chars
-  for (int32_t i = 0; i < eMATHVARIANT_COUNT; ++i) {
-    nsAutoCString key(NS_LITERAL_CSTRING("mathvariant."));
-    key.Append(kMathVariant_name[i]);
-    nsAutoString value;
-    mathfontProp->GetStringProperty(key, value);
-    gInvariantCharArray->AppendElement(value); // i.e., gInvariantCharArray[i] holds this list
-  }
-
   // Parse the Operator Dictionary in two passes.
   // The first pass is to count the number of operators; the second pass is to
   // allocate the necessary space for them and to add them in the hash table.
@@ -315,14 +289,11 @@ InitOperators(void)
 static nsresult
 InitGlobals()
 {
-  gInitialized = true;
+  gGlobalsInitialized = true;
   nsresult rv = NS_ERROR_OUT_OF_MEMORY;
-  gInvariantCharArray = new nsTArray<nsString>();
-  if (gInvariantCharArray) {
-    gOperatorTable = new nsHashtable();
-    if (gOperatorTable) {
-      rv = InitOperators();
-    }
+  gOperatorTable = new nsHashtable();
+  if (gOperatorTable) {
+    rv = InitOperators();
   }
   if (NS_FAILED(rv))
     nsMathMLOperators::CleanUp();
@@ -332,10 +303,6 @@ InitGlobals()
 void
 nsMathMLOperators::CleanUp()
 {
-  if (gInvariantCharArray) {
-    delete gInvariantCharArray;
-    gInvariantCharArray = nullptr;
-  }
   if (gOperatorArray) {
     delete[] gOperatorArray;
     gOperatorArray = nullptr;
@@ -376,7 +343,7 @@ nsMathMLOperators::LookupOperator(const nsString&       aOperator,
                                   float*                aLeadingSpace,
                                   float*                aTrailingSpace)
 {
-  if (!gInitialized) {
+  if (!gGlobalsInitialized) {
     InitGlobals();
   }
   if (gOperatorTable) {
@@ -421,7 +388,7 @@ nsMathMLOperators::LookupOperators(const nsString&       aOperator,
                                    float*                aLeadingSpace,
                                    float*                aTrailingSpace)
 {
-  if (!gInitialized) {
+  if (!gGlobalsInitialized) {
     InitGlobals();
   }
 
@@ -463,7 +430,7 @@ nsMathMLOperators::LookupOperators(const nsString&       aOperator,
 bool
 nsMathMLOperators::IsMutableOperator(const nsString& aOperator)
 {
-  if (!gInitialized) {
+  if (!gGlobalsInitialized) {
     InitGlobals();
   }
   // lookup all the variants of the operator and return true if there
@@ -512,48 +479,4 @@ nsMathMLOperators::GetStretchyDirection(const nsString& aOperator)
   } else {
     return NS_STRETCH_DIRECTION_UNSUPPORTED;
   }
-}
-
-/* static */ eMATHVARIANT
-nsMathMLOperators::LookupInvariantChar(const nsAString& aChar)
-{
-  if (!gInitialized) {
-    InitGlobals();
-  }
-  if (gInvariantCharArray) {
-    for (int32_t i = gInvariantCharArray->Length()-1; i >= 0; --i) {
-      const nsString& list = gInvariantCharArray->ElementAt(i);
-      nsString::const_iterator start, end;
-      list.BeginReading(start);
-      list.EndReading(end);
-      // Style-invariant characters are at offset 3*j + 1.
-      if (FindInReadable(aChar, start, end) &&
-          start.size_backward() % 3 == 1) {
-        return eMATHVARIANT(i);
-      }
-    }
-  }
-  return eMATHVARIANT_NONE;
-}
-
-/* static */ const nsDependentSubstring
-nsMathMLOperators::TransformVariantChar(const PRUnichar& aChar,
-                                        eMATHVARIANT aVariant)
-{
-  if (!gInitialized) {
-    InitGlobals();
-  }
-  if (gInvariantCharArray) {
-    nsString list = gInvariantCharArray->ElementAt(aVariant);
-    int32_t index = list.FindChar(aChar);
-    // BMP characters are at offset 3*j
-    if (index != kNotFound && index % 3 == 0 && list.Length() - index >= 2 ) {
-      // The style-invariant character is the next character
-      // (and list should contain padding if the next character is in the BMP).
-      ++index;
-      uint32_t len = NS_IS_HIGH_SURROGATE(list.CharAt(index)) ? 2 : 1;
-      return nsDependentSubstring(list, index, len);
-    }
-  }
-  return nsDependentSubstring(&aChar, &aChar + 1);  
 }

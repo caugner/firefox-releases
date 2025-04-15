@@ -60,7 +60,7 @@ public:
   static already_AddRefed<IDBObjectStore>
   Create(IDBTransaction* aTransaction,
          ObjectStoreInfo* aInfo,
-         nsIAtom* aDatabaseId,
+         const nsACString& aDatabaseId,
          bool aCreating);
 
   static nsresult
@@ -355,11 +355,11 @@ public:
          const Optional<uint32_t>& aLimit, ErrorResult& aRv);
 
   already_AddRefed<IDBRequest>
-  GetAllKeys(JSContext* aCx, const Optional<JS::HandleValue>& aKey,
+  GetAllKeys(JSContext* aCx, const Optional<JS::Handle<JS::Value>>& aKey,
              const Optional<uint32_t>& aLimit, ErrorResult& aRv);
 
   already_AddRefed<IDBRequest>
-  OpenKeyCursor(JSContext* aCx, const Optional<JS::HandleValue>& aRange,
+  OpenKeyCursor(JSContext* aCx, const Optional<JS::Handle<JS::Value>>& aRange,
                 IDBCursorDirection aDirection, ErrorResult& aRv);
 
 protected:
@@ -402,7 +402,7 @@ private:
   JS::Heap<JS::Value> mCachedKeyPath;
   bool mRooted;
   bool mAutoIncrement;
-  nsCOMPtr<nsIAtom> mDatabaseId;
+  nsCString mDatabaseId;
   nsRefPtr<ObjectStoreInfo> mInfo;
 
   nsTArray<nsRefPtr<IDBIndex> > mCreatedIndexes;

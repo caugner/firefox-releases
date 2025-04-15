@@ -34,7 +34,7 @@
 
       var store = stores[0];
       ok("get" in store, "store.get exists");
-      ok("update" in store, "store.update exists");
+      ok("put" in store, "store.put exists");
       ok("add" in store, "store.add exists");
       ok("remove" in store, "store.remove exists");
       ok("clear" in store, "store.clear exists");
@@ -76,7 +76,7 @@
       objects.push(i);
     }
 
-    gStore.get(objects).then(function(data) {
+    gStore.get.apply(gStore, objects).then(function(data) {
        is(data.length, objects.length, "Get - Data matches");
        for (var i = 0; i < data.length; ++i) {
          is(data[i], objects[i] - 1, "Get - Data matches: " + i + " " + data[i] + " == " + objects[i]);

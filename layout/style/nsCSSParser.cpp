@@ -114,11 +114,11 @@ public:
                          bool aIsImportant,
                          bool aIsSVGMode);
 
-  nsresult ParseMediaList(const nsSubstring& aBuffer,
-                          nsIURI* aURL, // for error reporting
-                          uint32_t aLineNumber, // for error reporting
-                          nsMediaList* aMediaList,
-                          bool aHTMLMode);
+  void ParseMediaList(const nsSubstring& aBuffer,
+                      nsIURI* aURL, // for error reporting
+                      uint32_t aLineNumber, // for error reporting
+                      nsMediaList* aMediaList,
+                      bool aHTMLMode);
 
   bool ParseColorString(const nsSubstring& aBuffer,
                         nsIURI* aURL, // for error reporting
@@ -472,8 +472,10 @@ protected:
   bool ParseCalcTerm(nsCSSValue& aValue, int32_t& aVariantMask);
   bool RequireWhitespace();
 
-  // For "flex" shorthand property, defined in CSS3 Flexbox
+  // For "flex" shorthand property, defined in CSS Flexbox spec
   bool ParseFlex();
+  // For "flex-flow" shorthand property, defined in CSS Flexbox spec
+  bool ParseFlexFlow();
 
   // for 'clip' and '-moz-image-region'
   bool ParseRect(nsCSSProperty aPropID);
@@ -1151,7 +1153,7 @@ CSSParserImpl::ParseProperty(const nsCSSProperty aPropID,
 #pragma optimize( "", on )
 #endif
 
-nsresult
+void
 CSSParserImpl::ParseMediaList(const nsSubstring& aBuffer,
                               nsIURI* aURI, // for error reporting
                               uint32_t aLineNumber, // for error reporting
@@ -1189,8 +1191,6 @@ CSSParserImpl::ParseMediaList(const nsSubstring& aBuffer,
   CLEAR_ERROR();
   ReleaseScanner();
   mHTMLMediaMode = false;
-
-  return NS_OK;
 }
 
 bool
@@ -1964,7 +1964,7 @@ CSSParserImpl::ParseImportRule(RuleAppendFunc aAppendFunc, void* aData)
 
     // Safe to assert this, since we ensured that there is something
     // other than the ';' coming after the @import's url() token.
-    NS_ASSERTION(media->Count() != 0, "media list must be nonempty");
+    NS_ASSERTION(media->Length() != 0, "media list must be nonempty");
   }
 
   ProcessImport(url, media, aAppendFunc, aData);
@@ -2789,9 +2789,9 @@ CSSParserImpl::ParseSupportsConditionInParens(bool& aConditionMet)
   }
 
   if (!(ExpectSymbol(')', true))) {
-    REPORT_UNEXPECTED_TOKEN(PESupportsConditionExpectedCloseParen);
     SkipUntil(')');
-    return false;
+    aConditionMet = false;
+    return true;
   }
 
   return true;
@@ -3662,6 +3662,17 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
     nsCSSPseudoElements::GetPseudoType(pseudo);
   nsCSSPseudoClasses::Type pseudoClassType =
     nsCSSPseudoClasses::GetPseudoType(pseudo);
+  bool pseudoClassIsUserAction =
+    nsCSSPseudoClasses::IsUserActionPseudoClass(pseudoClassType);
+
+  if (!mUnsafeRulesEnabled &&
+      pseudoElementType < nsCSSPseudoElements::ePseudo_PseudoElementCount &&
+      nsCSSPseudoElements::PseudoElementIsChromeOnly(pseudoElementType)) {
+    // This pseudo-element is not exposed to content.
+    REPORT_UNEXPECTED_TOKEN(PEPseudoSelUnknown);
+    UngetToken();
+    return eSelectorParsingStatus_Error;
+  }
 
   // We currently allow :-moz-placeholder and ::-moz-placeholder. We have to
   // be a bit stricter regarding the pseudo-element parsing rules.
@@ -3749,6 +3760,22 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
     }
   }
   else if (!parsingPseudoElement && isPseudoClass) {
+    if (aSelector.IsPseudoElement()) {
+      nsCSSPseudoElements::Type type = aSelector.PseudoType();
+      if (!nsCSSPseudoElements::PseudoElementSupportsUserActionState(type)) {
+        // We only allow user action pseudo-classes on certain pseudo-elements.
+        REPORT_UNEXPECTED_TOKEN(PEPseudoSelNoUserActionPC);
+        UngetToken();
+        return eSelectorParsingStatus_Error;
+      }
+      if (!pseudoClassIsUserAction) {
+        // CSS 4 Selectors says that pseudo-elements can only be followed by
+        // a user action pseudo-class.
+        REPORT_UNEXPECTED_TOKEN(PEPseudoClassNotUserAction);
+        UngetToken();
+        return eSelectorParsingStatus_Error;
+      }
+    }
     aDataMask |= SEL_MASK_PCLASS;
     if (eCSSToken_Function == mToken.mType) {
       nsSelectorParsingStatus parsingStatus;
@@ -3817,15 +3844,21 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
       }
 #endif
 
-      // the next *non*whitespace token must be '{' or ',' or EOF
+      // Pseudo-elements can only be followed by user action pseudo-classes
+      // or be the end of the selector.  So the next non-whitespace token must
+      // be ':', '{' or ',' or EOF.
       if (!GetToken(true)) { // premature eof is ok (here!)
         return eSelectorParsingStatus_Done;
+      }
+      if (parsingPseudoElement && mToken.IsSymbol(':')) {
+        UngetToken();
+        return eSelectorParsingStatus_Continue;
       }
       if ((mToken.IsSymbol('{') || mToken.IsSymbol(','))) {
         UngetToken();
         return eSelectorParsingStatus_Done;
       }
-      REPORT_UNEXPECTED_TOKEN(PEPseudoSelTrailing);
+      REPORT_UNEXPECTED_TOKEN(PEPseudoSelEndOrUserActionPC);
       UngetToken();
       return eSelectorParsingStatus_Error;
     }
@@ -4191,6 +4224,19 @@ CSSParserImpl::ParseSelector(nsCSSSelectorList* aList,
                                           getter_AddRefs(pseudoElement),
                                           getter_Transfers(pseudoElementArgs),
                                           &pseudoElementType);
+      if (pseudoElement &&
+          pseudoElementType != nsCSSPseudoElements::ePseudo_AnonBox) {
+        // Pseudo-elements other than anonymous boxes are represented with
+        // a special ':' combinator.
+
+        aList->mWeight += selector->CalcWeight();
+
+        selector = aList->AddSelector(':');
+
+        selector->mLowercaseTag.swap(pseudoElement);
+        selector->mClassList = pseudoElementArgs.forget();
+        selector->SetPseudoType(pseudoElementType);
+      }
     }
     else if (mToken.IsSymbol('[')) {    // [attribute
       parsingStatus = ParseAttributeSelector(dataMask, *selector);
@@ -4244,16 +4290,6 @@ CSSParserImpl::ParseSelector(nsCSSSelectorList* aList,
   }
 
   aList->mWeight += selector->CalcWeight();
-
-  // Pseudo-elements other than anonymous boxes are represented as
-  // direct children ('>' combinator) of the rest of the selector.
-  if (pseudoElement) {
-    selector = aList->AddSelector('>');
-
-    selector->mLowercaseTag.swap(pseudoElement);
-    selector->mClassList = pseudoElementArgs.forget();
-    selector->SetPseudoType(pseudoElementType);
-  }
 
   return true;
 }
@@ -5702,6 +5738,39 @@ CSSParserImpl::ParseFlex()
   return true;
 }
 
+// flex-flow: <flex-direction> || <flex-wrap>
+bool
+CSSParserImpl::ParseFlexFlow()
+{
+  static const nsCSSProperty kFlexFlowSubprops[] = {
+    eCSSProperty_flex_direction,
+    eCSSProperty_flex_wrap
+  };
+  const size_t numProps = NS_ARRAY_LENGTH(kFlexFlowSubprops);
+  nsCSSValue values[numProps];
+
+  int32_t found = ParseChoice(values, kFlexFlowSubprops, numProps);
+
+  // Bail if we didn't successfully parse anything, or if there's trailing junk.
+  if (found < 1 || !ExpectEndProperty()) {
+    return false;
+  }
+
+  // If either property didn't get an explicit value, use its initial value.
+  if ((found & 1) == 0) {
+    values[0].SetIntValue(NS_STYLE_FLEX_DIRECTION_ROW, eCSSUnit_Enumerated);
+  }
+  if ((found & 2) == 0) {
+    values[1].SetIntValue(NS_STYLE_FLEX_WRAP_NOWRAP, eCSSUnit_Enumerated);
+  }
+
+  // Store these values and declare success!
+  for (size_t i = 0; i < numProps; i++) {
+    AppendValue(kFlexFlowSubprops[i], values[i]);
+  }
+  return true;
+}
+
 // <color-stop> : <color> [ <percentage> | <length> ]?
 bool
 CSSParserImpl::ParseColorStop(nsCSSValueGradient* aGradient)
@@ -6547,6 +6616,8 @@ CSSParserImpl::ParsePropertyByFunction(nsCSSProperty aPropID)
     return ParseFilter();
   case eCSSProperty_flex:
     return ParseFlex();
+  case eCSSProperty_flex_flow:
+    return ParseFlexFlow();
   case eCSSProperty_font:
     return ParseFont();
   case eCSSProperty_image_region:
@@ -8527,6 +8598,16 @@ CSSParserImpl::ParseCounterData(nsCSSProperty aPropID)
 
     nsCSSValuePairList *cur = value.SetPairListValue();
     for (;;) {
+      // check for "none", "default" and the CSS-wide keywords,
+      // which can't be used as counter names
+      nsCSSKeyword keyword = nsCSSKeywords::LookupKeyword(mToken.mIdent);
+      if (keyword == eCSSKeyword_inherit ||
+          keyword == eCSSKeyword_default ||
+          keyword == eCSSKeyword_none ||
+          keyword == eCSSKeyword_unset ||
+          keyword == eCSSKeyword_initial) {
+        return false;
+      }
       cur->mXValue.SetStringValue(mToken.mIdent, eCSSUnit_Ident);
       if (!GetToken(true)) {
         break;
@@ -8991,8 +9072,20 @@ CSSParserImpl::ParseFontVariantLigatures(nsCSSValue& aValue)
                  MASK_END_VALUE,
                "incorrectly terminated array");
 
-  return ParseBitmaskValues(aValue, nsCSSProps::kFontVariantLigaturesKTable,
-                            maskLigatures);
+  bool parsed =
+    ParseBitmaskValues(aValue, nsCSSProps::kFontVariantLigaturesKTable,
+                       maskLigatures);
+
+  // if none value included, no other values are possible
+  if (parsed && eCSSUnit_Enumerated == aValue.GetUnit()) {
+    int32_t val = aValue.GetIntValue();
+    if ((val & NS_FONT_VARIANT_LIGATURES_NONE) &&
+        (val & ~int32_t(NS_FONT_VARIANT_LIGATURES_NONE))) {
+      parsed = false;
+    }
+  }
+
+  return parsed;
 }
 
 static const int32_t maskNumeric[] = {
@@ -11265,14 +11358,14 @@ nsCSSParser::ParseProperty(const nsCSSProperty aPropID,
                   aIsImportant, aIsSVGMode);
 }
 
-nsresult
+void
 nsCSSParser::ParseMediaList(const nsSubstring& aBuffer,
                             nsIURI*            aURI,
                             uint32_t           aLineNumber,
                             nsMediaList*       aMediaList,
                             bool               aHTMLMode)
 {
-  return static_cast<CSSParserImpl*>(mImpl)->
+  static_cast<CSSParserImpl*>(mImpl)->
     ParseMediaList(aBuffer, aURI, aLineNumber, aMediaList, aHTMLMode);
 }
 

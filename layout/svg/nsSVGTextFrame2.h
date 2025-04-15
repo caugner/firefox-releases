@@ -7,25 +7,26 @@
 #define NS_SVGTEXTFRAME2_H
 
 #include "mozilla/Attributes.h"
+#include "mozilla/RefPtr.h"
+#include "mozilla/gfx/2D.h"
 #include "gfxMatrix.h"
 #include "gfxRect.h"
 #include "gfxSVGGlyphs.h"
 #include "nsIContent.h"
 #include "nsStubMutationObserver.h"
 #include "nsSVGPaintServerFrame.h"
-#include "nsSVGTextContainerFrame.h"
 
 class nsDisplaySVGText;
 class nsRenderingContext;
 class nsSVGTextFrame2;
 class nsTextFrame;
-class gfxPath;
 
 typedef nsSVGDisplayContainerFrame nsSVGTextFrame2Base;
 
 namespace mozilla {
 
 class CharIterator;
+class nsISVGPoint;
 class TextFrameIterator;
 class TextNodeCorrespondenceRecorder;
 struct TextRenderedRun;
@@ -251,6 +252,7 @@ class nsSVGTextFrame2 : public nsSVGTextFrame2Base
   friend class MutationObserver;
   friend class nsDisplaySVGText;
 
+  typedef mozilla::gfx::Path Path;
   typedef mozilla::SVGTextContextPaint SVGTextContextPaint;
 
 protected:
@@ -585,7 +587,7 @@ private:
 
   // Methods to get information for a <textPath> frame.
   nsIFrame* GetTextPathPathFrame(nsIFrame* aTextPathFrame);
-  already_AddRefed<gfxPath> GetTextPath(nsIFrame* aTextPathFrame);
+  mozilla::TemporaryRef<Path> GetTextPath(nsIFrame* aTextPathFrame);
   gfxFloat GetOffsetScale(nsIFrame* aTextPathFrame);
   gfxFloat GetStartOffset(nsIFrame* aTextPathFrame);
 

@@ -10,7 +10,6 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/HTMLTextAreaElementBinding.h"
 #include "mozilla/MouseEvents.h"
-#include "mozilla/Util.h"
 #include "nsAttrValueInlines.h"
 #include "nsContentCID.h"
 #include "nsContentCreatorFunctions.h"
@@ -268,14 +267,14 @@ HTMLTextAreaElement::GetRootEditorNode()
   return mState.GetRootNode();
 }
 
-NS_IMETHODIMP_(nsIContent*)
+NS_IMETHODIMP_(Element*)
 HTMLTextAreaElement::CreatePlaceholderNode()
 {
   NS_ENSURE_SUCCESS(mState.CreatePlaceholderNode(), nullptr);
   return mState.GetPlaceholderNode();
 }
 
-NS_IMETHODIMP_(nsIContent*)
+NS_IMETHODIMP_(Element*)
 HTMLTextAreaElement::GetPlaceholderNode()
 {
   return mState.GetPlaceholderNode();
@@ -400,9 +399,9 @@ HTMLTextAreaElement::ParseAttribute(int32_t aNamespaceID,
                                               aResult);
 }
 
-static void
-MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
-                      nsRuleData* aData)
+void
+HTMLTextAreaElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
+                                           nsRuleData* aData)
 {
   nsGenericHTMLFormElementWithState::MapDivAlignAttributeInto(aAttributes, aData);
   nsGenericHTMLFormElementWithState::MapCommonAttributesInto(aAttributes, aData);

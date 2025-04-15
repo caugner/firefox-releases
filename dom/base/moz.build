@@ -14,7 +14,7 @@ XPIDL_SOURCES += [
     'nsISiteSpecificUserAgent.idl',
 ]
 
-MODULE = 'dom'
+XPIDL_MODULE = 'dom'
 
 EXPORTS += [
     'Crypto.h',
@@ -34,7 +34,6 @@ EXPORTS += [
     'nsIScriptContext.h',
     'nsIScriptExternalNameSet.h',
     'nsIScriptGlobalObject.h',
-    'nsIScriptGlobalObjectOwner.h',
     'nsIScriptNameSpaceManager.h',
     'nsIScriptObjectPrincipal.h',
     'nsIScriptTimeoutHandler.h',
@@ -58,12 +57,13 @@ EXPORTS.mozilla.dom += [
     'MessageChannel.h',
     'MessagePort.h',
     'MessagePortList.h',
+    'Navigator.h',
     'ScreenOrientation.h',
     'StructuredCloneTags.h',
     'URL.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'BarProps.cpp',
     'CompositionStringSynthesizer.cpp',
     'Crypto.cpp',
@@ -72,7 +72,6 @@ SOURCES += [
     'DOMException.cpp',
     'DOMRequest.cpp',
     'MessageChannel.cpp',
-    'MessagePort.cpp',
     'MessagePortList.cpp',
     'Navigator.cpp',
     'nsContentPermissionHelper.cpp',
@@ -80,18 +79,14 @@ SOURCES += [
     'nsDOMNavigationTiming.cpp',
     'nsDOMScriptObjectFactory.cpp',
     'nsDOMWindowList.cpp',
-    'nsDOMWindowUtils.cpp',
     'nsFocusManager.cpp',
-    'nsGlobalWindow.cpp',
     'nsGlobalWindowCommands.cpp',
     'nsHistory.cpp',
-    'nsJSEnvironment.cpp',
     'nsJSTimeoutHandler.cpp',
     'nsJSUtils.cpp',
     'nsLocation.cpp',
     'nsMimeTypeArray.cpp',
     'nsPerformance.cpp',
-    'nsPluginArray.cpp',
     'nsQueryContentEventResult.cpp',
     'nsScreen.cpp',
     'nsScriptNameSpaceManager.cpp',
@@ -101,6 +96,20 @@ SOURCES += [
     'nsWrapperCache.cpp',
     'URL.cpp',
     'WindowNamedPropertiesHandler.cpp',
+]
+
+# these files couldn't be in UNIFIED_SOURCES for now for reasons given below:
+SOURCES += [
+    # this file doesn't like windows.h
+    'MessagePort.cpp',
+    # this file doesn't like windows.h
+    'nsDOMWindowUtils.cpp',
+    # This file has a #error "Never include windows.h in this file!"
+    'nsGlobalWindow.cpp',
+    # This file forces NSPR logging.
+    'nsJSEnvironment.cpp',
+    # nsPluginArray.cpp includes npapi.h indirectly, and that includes a lot of system headers
+    'nsPluginArray.cpp',
 ]
 
 EXTRA_COMPONENTS += [
@@ -119,16 +128,11 @@ EXTRA_JS_MODULES += [
 
 FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
-
-LIBRARY_NAME = 'jsdombase_s'
 
 LOCAL_INCLUDES += [
     '../battery',
     '../bluetooth',
-    '../icc/src',
     '../media',
     '../network/src',
     '../src/geolocation',
@@ -141,13 +145,25 @@ LOCAL_INCLUDES += [
     '/content/xul/document/src',
     '/layout/generic',
     '/layout/style',
-    '/layout/xul/base/src',
+    '/layout/xul',
 ]
 
-if CONFIG['MOZ_B2G_RIL']:
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
     LOCAL_INCLUDES += [
         '../fmradio',
         '../system/gonk',
     ]
 
 include('/ipc/chromium/chromium-config.mozbuild')
+
+FINAL_LIBRARY = 'gklayout'
+
+LOCAL_INCLUDES += [
+    '/js/xpconnect/src',
+    '/js/xpconnect/wrappers',
+    '/xpcom/ds',
+]
+
+for var in ('MOZ_JSDEBUGGER', 'MOZ_B2G_RIL', 'MOZ_B2G_FM'):
+    if CONFIG[var]:
+        DEFINES[var] = True

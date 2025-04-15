@@ -4,8 +4,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-MODULE = 'xpcom'
-
 EXPORTS += [
     'nsXPCOM.h',
     'nsXPCOMCID.h',
@@ -17,8 +15,9 @@ EXPORTS += [
 
 EXPORTS.mozilla += [
     'FileLocation.h',
-    'mozPoisonWrite.h',
+    'LateWriteChecks.h',
     'Omnijar.h',
+    'PoisonIOInterposer.h',
     'ServiceList.h',
     'Services.h',
     'XPCOM.h',
@@ -26,42 +25,53 @@ EXPORTS.mozilla += [
 
 if CONFIG['OS_ARCH'] == 'WINNT':
     EXPORTS.mozilla += ['perfprobe.h']
+    SOURCES += ['perfprobe.cpp']
+    if CONFIG['MOZ_ENABLE_PROFILER_SPS']:
+        SOURCES += [
+            'PoisonIOInterposerBase.cpp',
+            'PoisonIOInterposerWin.cpp',
+        ]
+    else:
+        SOURCES += ['PoisonIOInterposerStub.cpp']
+elif CONFIG['OS_ARCH'] == 'Darwin' and CONFIG['MOZ_ENABLE_PROFILER_SPS']:
     SOURCES += [
-        'mozPoisonWriteBase.cpp',
-        'mozPoisonWriteWin.cpp',
-        'perfprobe.cpp',
-    ]
-elif CONFIG['OS_ARCH'] == 'Darwin':
-    SOURCES += [
-        'mozPoisonWriteBase.cpp',
-        'mozPoisonWriteMac.cpp',
+        'mach_override.c',
+        'PoisonIOInterposerBase.cpp',
+        'PoisonIOInterposerMac.cpp',
     ]
 else:
-    SOURCES += [
-        'mozPoisonWriteStub.cpp',
-    ]
+    SOURCES += ['PoisonIOInterposerStub.cpp']
 
 include('../glue/objs.mozbuild')
 
-SOURCES += xpcom_gluens_src_cppsrcs
-SOURCES += xpcom_glue_src_cppsrcs
+UNIFIED_SOURCES += xpcom_gluens_src_cppsrcs
+UNIFIED_SOURCES += xpcom_glue_src_cppsrcs
 
-SOURCES += [
-    'FileLocation.cpp',
+UNIFIED_SOURCES += [
     'FrozenFunctions.cpp',
+    'LateWriteChecks.cpp',
     'nsXPComInit.cpp',
     'nsXPCOMStrings.cpp',
-    'Omnijar.cpp',
     'Services.cpp',
 ]
 
-LIBXUL_LIBRARY = True
+# FileLocation.cpp and Omnijar.cpp cannot be built in unified mode because they
+# use plarena.h.
+SOURCES += [
+    'FileLocation.cpp',
+    'Omnijar.cpp',
+]
 
 MSVC_ENABLE_PGO = True
 
 LIBRARY_NAME = 'xpcom_core'
 
-EXPORT_LIBRARY = True
-
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'xul'
+
+DEFINES['_IMPL_NS_STRINGAPI'] = True
+DEFINES['OMNIJAR_NAME'] = CONFIG['OMNIJAR_NAME']
+
+if CONFIG['TARGET_XPCOM_ABI']:
+    DEFINES['TARGET_XPCOM_ABI'] = '"%s"' % CONFIG['TARGET_XPCOM_ABI']

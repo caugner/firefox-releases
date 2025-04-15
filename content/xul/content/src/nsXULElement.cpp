@@ -293,7 +293,7 @@ nsXULElement::Create(nsXULPrototypeElement* aPrototype,
 }
 
 nsresult
-NS_NewXULElement(nsIContent** aResult, already_AddRefed<nsINodeInfo> aNodeInfo)
+NS_NewXULElement(Element** aResult, already_AddRefed<nsINodeInfo> aNodeInfo)
 {
     NS_PRECONDITION(aNodeInfo.get(), "need nodeinfo for non-proto Create");
 
@@ -511,7 +511,7 @@ static bool IsNonList(nsINodeInfo* aNodeInfo)
 }
 
 bool
-nsXULElement::IsFocusable(int32_t *aTabIndex, bool aWithMouse)
+nsXULElement::IsFocusableInternal(int32_t *aTabIndex, bool aWithMouse)
 {
   /* 
    * Returns true if an element may be focused, and false otherwise. The inout
@@ -2633,12 +2633,12 @@ nsXULPrototypeScript::Compile(const PRUnichar* aText,
     // source from the files on demand.
     options.setSourcePolicy(mOutOfLine ? JS::CompileOptions::LAZY_SOURCE
                                        : JS::CompileOptions::SAVE_SOURCE);
-    JS::RootedObject scope(cx, JS::CurrentGlobalOrNull(cx));
+    JS::Rooted<JSObject*> scope(cx, JS::CurrentGlobalOrNull(cx));
     if (scope) {
       JS::ExposeObjectToActiveJS(scope);
     }
 
-    if (aOffThreadReceiver && JS::CanCompileOffThread(cx, options)) {
+    if (aOffThreadReceiver && JS::CanCompileOffThread(cx, options, aTextLength)) {
         if (!JS::CompileOffThread(cx, scope, options,
                                   static_cast<const jschar*>(aText), aTextLength,
                                   OffThreadScriptReceiverCallback,

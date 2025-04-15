@@ -129,7 +129,7 @@ public:
   };
 
   State GetState() {
-    mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+    AssertCurrentThreadInMonitor();
     return mState;
   }
 
@@ -227,14 +227,14 @@ public:
   // This is called on the state machine thread and audio thread.
   // The decoder monitor must be obtained before calling this.
   bool HasAudio() const {
-    mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+    AssertCurrentThreadInMonitor();
     return mInfo.HasAudio();
   }
 
   // This is called on the state machine thread and audio thread.
   // The decoder monitor must be obtained before calling this.
   bool HasVideo() const {
-    mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+    AssertCurrentThreadInMonitor();
     return mInfo.HasVideo();
   }
 
@@ -243,19 +243,19 @@ public:
 
   // Must be called with the decode monitor held.
   bool IsBuffering() const {
-    mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+    AssertCurrentThreadInMonitor();
 
     return mState == DECODER_STATE_BUFFERING;
   }
 
   // Must be called with the decode monitor held.
   bool IsSeeking() const {
-    mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+    AssertCurrentThreadInMonitor();
 
     return mState == DECODER_STATE_SEEKING;
   }
 
-  nsresult GetBuffered(TimeRanges* aBuffered);
+  nsresult GetBuffered(dom::TimeRanges* aBuffered);
 
   void SetPlaybackRate(double aPlaybackRate);
   void SetPreservesPitch(bool aPreservesPitch);
@@ -277,17 +277,17 @@ public:
   void NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_t aOffset);
 
   int64_t GetEndMediaTime() const {
-    mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+    AssertCurrentThreadInMonitor();
     return mEndTime;
   }
 
   bool IsTransportSeekable() {
-    mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+    AssertCurrentThreadInMonitor();
     return mTransportSeekable;
   }
 
   bool IsMediaSeekable() {
-    mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+    AssertCurrentThreadInMonitor();
     return mMediaSeekable;
   }
 
@@ -328,9 +328,16 @@ public:
     mDecoder = nullptr;
   }
 
-   // Called when a "MozAudioAvailable" event listener is added to the media
-   // element. Called on the main thread.
-   void NotifyAudioAvailableListener();
+  // If we're playing into a MediaStream, record the current point in the
+  // MediaStream and the current point in our media resource so later we can
+  // convert MediaStream playback positions to media resource positions. Best to
+  // call this while we're not playing (while the MediaStream is blocked). Can
+  // be called on any thread with the decoder monitor held.
+  void SetSyncPointForMediaStream();
+
+  // Called when a "MozAudioAvailable" event listener is added to the media
+  // element. Called on the main thread.
+  void NotifyAudioAvailableListener();
 
   // Copy queued audio/video data in the reader to any output MediaStreams that
   // need it.
@@ -345,8 +352,14 @@ public:
 
   void QueueMetadata(int64_t aPublishTime, int aChannels, int aRate, bool aHasAudio, bool aHasVideo, MetadataTags* aTags);
 
+  // Returns true if we're currently playing. The decoder monitor must
+  // be held.
+  bool IsPlaying();
+
 protected:
   virtual uint32_t GetAmpleVideoFrames() { return mAmpleVideoFrames; }
+
+  void AssertCurrentThreadInMonitor() const { mDecoder->GetReentrantMonitor().AssertCurrentThreadIn(); }
 
 private:
   class WakeDecoderRunnable : public nsRunnable {
@@ -392,9 +405,8 @@ private:
   // The decoder monitor must be held.
   bool HasLowUndecodedData() const;
 
-  // Returns the number of microseconds of undecoded data available for
-  // decoding. The decoder monitor must be held.
-  int64_t GetUndecodedData() const;
+  // Returns true if we have less than aUsecs of undecoded data available.
+  bool HasLowUndecodedData(double aUsecs) const;
 
   // Returns the number of unplayed usecs of audio we've got decoded and/or
   // pushed to the hardware waiting to play. This is how much audio we can
@@ -503,13 +515,11 @@ private:
   void AudioLoop();
 
   // Sets internal state which causes playback of media to pause.
-  // The decoder monitor must be held. Called on the state machine,
-  // and decode threads.
+  // The decoder monitor must be held.
   void StopPlayback();
 
   // Sets internal state which causes playback of media to begin or resume.
-  // Must be called with the decode monitor held. Called on the state machine
-  // and decode threads.
+  // Must be called with the decode monitor held.
   void StartPlayback();
 
   // Moves the decoder into decoding state. Called on the state machine
@@ -520,17 +530,13 @@ private:
 
   void StartDecodeMetadata();
 
-  // Returns true if we're currently playing. The decoder monitor must
-  // be held.
-  bool IsPlaying();
-
   // Returns the "media time". This is the absolute time which the media
   // playback has reached. i.e. this returns values in the range
   // [mStartTime, mEndTime], and mStartTime will not be 0 if the media does
   // not start at 0. Note this is different to the value returned
   // by GetCurrentTime(), which is in the range [0,duration].
   int64_t GetMediaTime() const {
-    mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+    AssertCurrentThreadInMonitor();
     return mStartTime + mCurrentFrameTime;
   }
 
@@ -573,7 +579,7 @@ private:
   nsresult RunStateMachine();
 
   bool IsStateMachineScheduled() const {
-    mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
+    AssertCurrentThreadInMonitor();
     return !mTimeout.IsNull() || mRunAgain;
   }
 
@@ -619,6 +625,12 @@ private:
   // timing the presentation of video frames when there's no audio.
   // Accessed only via the state machine thread.
   TimeStamp mPlayStartTime;
+
+  // When we start writing decoded data to a new DecodedDataStream, or we
+  // restart writing due to PlaybackStarted(), we record where we are in the
+  // MediaStream and what that corresponds to in the media.
+  StreamTime mSyncPointInMediaStream;
+  int64_t mSyncPointInDecodedStream; // microseconds
 
   // When the playbackRate changes, and there is no audio clock, it is necessary
   // to reset the mPlayStartTime. This is done next time the clock is queried,
@@ -744,10 +756,12 @@ private:
   bool mPositionChangeQueued;
 
   // True if the audio playback thread has finished. It is finished
-  // when either all the audio frames in the Vorbis bitstream have completed
-  // playing, or we've moved into shutdown state, and the threads are to be
+  // when either all the audio frames have completed playing, or we've moved
+  // into shutdown state, and the threads are to be
   // destroyed. Written by the audio playback thread and read and written by
   // the state machine thread. Synchronised via decoder monitor.
+  // When data is being sent to a MediaStream, this is true when all data has
+  // been written to the MediaStream.
   bool mAudioCompleted;
 
   // True if mDuration has a value obtained from an HTTP header, or from

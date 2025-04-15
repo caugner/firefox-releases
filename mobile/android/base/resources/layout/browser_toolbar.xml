@@ -7,15 +7,10 @@
        xmlns:gecko="http://schemas.android.com/apk/res-auto">
 
     <ImageButton android:id="@+id/back"
-                 style="@style/UrlBar.ImageButton.Back"/>
+                 style="@style/UrlBar.ImageButton.Unused"/>
 
     <ImageButton android:id="@+id/forward"
-                 style="@style/UrlBar.ImageButton.Forward"/>
-
-    <org.mozilla.gecko.BrowserToolbarBackground android:id="@+id/url_bar_bg"
-                                                android:layout_width="fill_parent"
-                                                android:layout_height="fill_parent"
-                                                android:background="@drawable/url_bar_bg"/>
+                 style="@style/UrlBar.ImageButton.Unused"/>
 
     <ImageView android:id="@+id/url_bar_entry"
                style="@style/UrlBar.Button"
@@ -42,19 +37,20 @@
                android:duplicateParentState="true"
                android:clickable="false"
                android:focusable="false"
+               android:visibility="invisible"
                android:src="@drawable/url_bar_right_edge"
                android:scaleType="fitXY"/>
 
     <LinearLayout android:id="@+id/menu_items"
                   style="@style/UrlBar.ImageButton.Unused"/>
 
-    <org.mozilla.gecko.ShapedButton android:id="@+id/menu"
-                                    style="@style/UrlBar.ImageButton"
-                                    android:layout_width="48dip"
-                                    android:layout_alignParentRight="true"
-                                    android:contentDescription="@string/menu"
-                                    android:background="@drawable/shaped_button"
-                                    android:visibility="gone"/>
+    <org.mozilla.gecko.toolbar.ShapedButton android:id="@+id/menu"
+                                            style="@style/UrlBar.ImageButton"
+                                            android:layout_width="48dip"
+                                            android:layout_alignParentRight="true"
+                                            android:contentDescription="@string/menu"
+                                            android:background="@drawable/shaped_button"
+                                            android:visibility="gone"/>
 
     <org.mozilla.gecko.widget.GeckoImageView android:id="@+id/menu_icon"
                                              style="@style/UrlBar.ImageButton"
@@ -64,16 +60,16 @@
                                              android:src="@drawable/menu_level"
                                              android:visibility="gone"/>
 
-    <org.mozilla.gecko.ShapedButton android:id="@+id/tabs"
-                                    style="@style/UrlBar.ImageButton"
-                                    android:layout_width="72dip"
-                                    android:layout_toLeftOf="@id/menu"
-                                    android:layout_alignWithParentIfMissing="true"
-                                    gecko:curveTowards="right"
-                                    android:background="@drawable/shaped_button"
-                                    android:gravity="center_vertical"
-                                    android:paddingLeft="37dip"
-                                    android:paddingRight="11dip"/>
+    <org.mozilla.gecko.toolbar.ShapedButton android:id="@+id/tabs"
+                                            style="@style/UrlBar.ImageButton"
+                                            android:layout_width="72dip"
+                                            android:layout_toLeftOf="@id/menu"
+                                            android:layout_alignWithParentIfMissing="true"
+                                            gecko:curveTowards="right"
+                                            android:background="@drawable/shaped_button"
+                                            android:gravity="center_vertical"
+                                            android:paddingLeft="37dip"
+                                            android:paddingRight="11dip"/>
 
     <!-- The TextSwitcher should be shifted 24dp on the left, to avoid
          the curve. On a 48dp space, centering 24dp image will leave
@@ -81,7 +77,7 @@
          2 layers. Hence to center this, an additional 4dp is added to the left.
          The margins will be 40dp on left, 8dp on right, instead of ideal 30dp
          and 12dp. -->
-    <org.mozilla.gecko.TabCounter android:id="@+id/tabs_counter"
+    <org.mozilla.gecko.toolbar.TabCounter android:id="@+id/tabs_counter"
                         style="@style/UrlBar.ImageButton.TabCount"
                         android:layout_width="24dip"
                         android:layout_height="24dip"
@@ -90,42 +86,12 @@
                         android:layout_marginTop="12dip"
                         android:layout_alignRight="@id/tabs"/>
 
-    <LinearLayout android:id="@+id/url_edit_container"
+    <org.mozilla.gecko.toolbar.ToolbarEditLayout android:id="@+id/edit_layout"
                   style="@style/UrlBar.Button"
                   android:layout_marginLeft="4dp"
                   android:layout_marginRight="4dp"
                   android:paddingLeft="8dp"
-                  android:visibility="gone"
-                  android:orientation="horizontal">
-
-        <view class="org.mozilla.gecko.CustomEditText"
-              android:id="@+id/url_edit_text"
-              style="@style/UrlBar.Button"
-              android:layout_width="fill_parent"
-              android:layout_height="fill_parent"
-              android:layout_weight="1.0"
-              android:hint="@string/url_bar_default_text"
-              android:textColor="@color/url_bar_title"
-              android:textColorHint="@color/url_bar_title_hint"
-              android:textColorHighlight="@color/url_bar_text_highlight"
-              android:textSelectHandle="@drawable/handle_middle"
-              android:textSelectHandleLeft="@drawable/handle_start"
-              android:textSelectHandleRight="@drawable/handle_end"
-              android:textCursorDrawable="@null"
-              android:inputType="textUri|textNoSuggestions"
-              android:imeOptions="actionGo|flagNoExtractUi|flagNoFullscreen"
-              android:selectAllOnFocus="true"
-              android:singleLine="true"
-              android:gravity="center_vertical|left"
-              gecko:autoUpdateTheme="false"/>
-
-        <ImageButton android:id="@+id/go"
-                     style="@style/UrlBar.ImageButton.Icon"
-                     android:src="@drawable/ic_url_bar_go"
-                     android:contentDescription="@string/go"
-                     android:visibility="gone"/>
-
-    </LinearLayout>
+                  android:visibility="gone"/>
 
     <LinearLayout android:id="@+id/url_display_container"
                   style="@style/UrlBar.Button"
@@ -166,12 +132,12 @@
                                                 android:layout_gravity="center_vertical"
                                                 gecko:autoUpdateTheme="false"/>
 
-        <org.mozilla.gecko.PageActionLayout android:id="@+id/page_action_layout"
-                                            android:layout_width="wrap_content"
-                                            android:layout_height="match_parent"
-                                            android:layout_marginRight="12dp"
-                                            android:visibility="gone"
-                                            android:orientation="horizontal"/>
+        <org.mozilla.gecko.toolbar.PageActionLayout android:id="@+id/page_action_layout"
+                                                    android:layout_width="wrap_content"
+                                                    android:layout_height="match_parent"
+                                                    android:layout_marginRight="12dp"
+                                                    android:visibility="gone"
+                                                    android:orientation="horizontal"/>
 
         <ImageButton android:id="@+id/stop"
                      style="@style/UrlBar.ImageButton.Icon"

@@ -37,7 +37,6 @@
 #include "jsapi.h"
 #include "prenv.h"
 #include "nsAppDirectoryServiceDefs.h"
-#include "mozilla/mozPoisonWrite.h"
 
 #if defined(XP_WIN)
 // Prevent collisions with nsAppStartup::GetStartupInfo()
@@ -142,7 +141,8 @@ nsAppStartup::nsAppStartup() :
   mRestart(false),
   mInterrupted(false),
   mIsSafeModeNecessary(false),
-  mStartupCrashTrackingEnded(false)
+  mStartupCrashTrackingEnded(false),
+  mRestartTouchEnvironment(false)
 { }
 
 
@@ -230,22 +230,30 @@ NS_IMPL_ISUPPORTS5(nsAppStartup,
 NS_IMETHODIMP
 nsAppStartup::CreateHiddenWindow()
 {
+#ifdef MOZ_WIDGET_GONK
+  return NS_OK;
+#else
   nsCOMPtr<nsIAppShellService> appShellService
     (do_GetService(NS_APPSHELLSERVICE_CONTRACTID));
   NS_ENSURE_TRUE(appShellService, NS_ERROR_FAILURE);
 
   return appShellService->CreateHiddenWindow();
+#endif
 }
 
 
 NS_IMETHODIMP
 nsAppStartup::DestroyHiddenWindow()
 {
+#ifdef MOZ_WIDGET_GONK
+  return NS_OK;
+#else
   nsCOMPtr<nsIAppShellService> appShellService
     (do_GetService(NS_APPSHELLSERVICE_CONTRACTID));
   NS_ENSURE_TRUE(appShellService, NS_ERROR_FAILURE);
 
   return appShellService->DestroyHiddenWindow();
+#endif
 }
 
 NS_IMETHODIMP
@@ -270,7 +278,14 @@ nsAppStartup::Run(void)
       return rv;
   }
 
-  return mRestart ? NS_SUCCESS_RESTART_APP : NS_OK;
+  nsresult retval = NS_OK;
+  if (mRestartTouchEnvironment) {
+    retval = NS_SUCCESS_RESTART_METRO_APP;
+  } else if (mRestart) {
+    retval = NS_SUCCESS_RESTART_APP;
+  }
+
+  return retval;
 }
 
 
@@ -361,7 +376,12 @@ nsAppStartup::Quit(uint32_t aMode)
       gRestartMode = (aMode & 0xF0);
     }
 
-    if (mRestart) {
+    if (!mRestartTouchEnvironment) {
+      mRestartTouchEnvironment = (aMode & eRestartTouchEnvironment) != 0;
+      gRestartMode = (aMode & 0xF0);
+    }
+
+    if (mRestart || mRestartTouchEnvironment) {
       // Mark the next startup as a restart.
       PR_SetEnv("MOZ_APP_RESTART=1");
 
@@ -431,7 +451,8 @@ nsAppStartup::Quit(uint32_t aMode)
       NS_NAMED_LITERAL_STRING(shutdownStr, "shutdown");
       NS_NAMED_LITERAL_STRING(restartStr, "restart");
       obsService->NotifyObservers(nullptr, "quit-application",
-        mRestart ? restartStr.get() : shutdownStr.get());
+        (mRestart || mRestartTouchEnvironment) ?
+         restartStr.get() : shutdownStr.get());
     }
 
     if (!mRunning) {
@@ -551,6 +572,14 @@ nsAppStartup::GetWasRestarted(bool *aResult)
    * thus we have to check if the variable is present and not empty. */
   *aResult = mozAppRestart && (strcmp(mozAppRestart, "") != 0);
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsAppStartup::GetRestartingTouchEnvironment(bool *aResult)
+{
+  NS_ENSURE_ARG_POINTER(aResult);
+  *aResult = mRestartTouchEnvironment;
   return NS_OK;
 }
 

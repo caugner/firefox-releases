@@ -7,6 +7,7 @@ NO_PROFILE_GUIDED_OPTIMIZE = 1
 include $(topsrcdir)/config/config.mk
 
 DIST_PROGRAM = CommandExecuteHandler$(BIN_SUFFIX)
+RCINCLUDE = CommandExecuteHandler.rc
 
 # Don't link against mozglue.dll
 MOZ_GLUE_LDFLAGS =
@@ -21,5 +22,3 @@ OS_LIBS = \
 	advapi32.lib \
 	wininet.lib \
 	$(NULL)
-
-DEFINES += -DUNICODE -D_UNICODE -DNS_NO_XPCOM

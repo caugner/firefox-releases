@@ -12,9 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-MODULE_NAME = omxpluginfroyo
-FORCE_SHARED_LIB = 1
-
 # Don't use STL wrappers; this isn't Gecko code
 STL_FLAGS =
 
@@ -40,8 +37,3 @@ INCLUDES        += \
                 -I$(srcdir)/../include/froyo \
                 -I$(srcdir)/../include/froyo/media/stagefright/openmax \
                 $(NULL)
-
-libs::	$(DLL_PREFIX)$(LIBRARY_NAME)$(DLL_SUFFIX)
-	$(INSTALL) $< $(DEPTH)/dist/bin
-
-libs:: $(PROGRAMS)

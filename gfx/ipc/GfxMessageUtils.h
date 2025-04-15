@@ -11,7 +11,6 @@
 #include "chrome/common/ipc_message_utils.h"
 #include "ipc/IPCMessageUtils.h"
 
-#include "mozilla/Util.h"
 #include <stdint.h>
 
 #include "gfx3DMatrix.h"
@@ -584,6 +583,11 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
     WriteParam(aMsg, aParam.mDevPixelsPerCSSPixel);
     WriteParam(aMsg, aParam.mMayHaveTouchListeners);
     WriteParam(aMsg, aParam.mPresShellId);
+    WriteParam(aMsg, aParam.mIsRoot);
+    WriteParam(aMsg, aParam.mHasScrollgrab);
+    WriteParam(aMsg, aParam.mUpdateScrollOffset);
+    WriteParam(aMsg, aParam.mDisableScrollingX);
+    WriteParam(aMsg, aParam.mDisableScrollingY);
   }
 
   static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
@@ -600,7 +604,12 @@ struct ParamTraits<mozilla::layers::FrameMetrics>
             ReadParam(aMsg, aIter, &aResult->mZoom) &&
             ReadParam(aMsg, aIter, &aResult->mDevPixelsPerCSSPixel) &&
             ReadParam(aMsg, aIter, &aResult->mMayHaveTouchListeners) &&
-            ReadParam(aMsg, aIter, &aResult->mPresShellId));
+            ReadParam(aMsg, aIter, &aResult->mPresShellId) &&
+            ReadParam(aMsg, aIter, &aResult->mIsRoot) &&
+            ReadParam(aMsg, aIter, &aResult->mHasScrollgrab) &&
+            ReadParam(aMsg, aIter, &aResult->mUpdateScrollOffset) &&
+            ReadParam(aMsg, aIter, &aResult->mDisableScrollingX) &&
+            ReadParam(aMsg, aIter, &aResult->mDisableScrollingY));
   }
 };
 
@@ -659,6 +668,46 @@ struct ParamTraits<mozilla::gfx::SurfaceFormat>
                           mozilla::gfx::FORMAT_B8G8R8A8,
                           mozilla::gfx::FORMAT_UNKNOWN>
 {};
+
+template <>
+struct ParamTraits<mozilla::layers::ScrollableLayerGuid>
+{
+  typedef mozilla::layers::ScrollableLayerGuid paramType;
+
+  static void Write(Message* aMsg, const paramType& aParam)
+  {
+    WriteParam(aMsg, aParam.mLayersId);
+    WriteParam(aMsg, aParam.mPresShellId);
+    WriteParam(aMsg, aParam.mScrollId);
+  }
+
+  static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
+  {
+    return (ReadParam(aMsg, aIter, &aResult->mLayersId) &&
+            ReadParam(aMsg, aIter, &aResult->mPresShellId) &&
+            ReadParam(aMsg, aIter, &aResult->mScrollId));
+  }
+};
+
+template <>
+struct ParamTraits<mozilla::layers::ZoomConstraints>
+{
+  typedef mozilla::layers::ZoomConstraints paramType;
+
+  static void Write(Message* aMsg, const paramType& aParam)
+  {
+    WriteParam(aMsg, aParam.mAllowZoom);
+    WriteParam(aMsg, aParam.mMinZoom);
+    WriteParam(aMsg, aParam.mMaxZoom);
+  }
+
+  static bool Read(const Message* aMsg, void** aIter, paramType* aResult)
+  {
+    return (ReadParam(aMsg, aIter, &aResult->mAllowZoom) &&
+            ReadParam(aMsg, aIter, &aResult->mMinZoom) &&
+            ReadParam(aMsg, aIter, &aResult->mMaxZoom));
+  }
+};
 
 } /* namespace IPC */
 

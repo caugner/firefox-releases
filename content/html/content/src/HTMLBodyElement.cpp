@@ -3,8 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
-
 #include "HTMLBodyElement.h"
 #include "mozilla/dom/HTMLBodyElementBinding.h"
 #include "nsAttrValueInlines.h"
@@ -348,8 +346,9 @@ HTMLBodyElement::UnbindFromTree(bool aDeep, bool aNullParent)
   nsGenericHTMLElement::UnbindFromTree(aDeep, aNullParent);  
 }
 
-static 
-void MapAttributesIntoRule(const nsMappedAttributes* aAttributes, nsRuleData* aData)
+void
+HTMLBodyElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
+                                       nsRuleData* aData)
 {
   if (aData->mSIDs & NS_STYLE_INHERIT_BIT(Display)) {
     // When display if first asked for, go ahead and get our colors set up.
@@ -485,32 +484,6 @@ HTMLBodyElement::IsEventAttributeName(nsIAtom *aName)
 // nsGenericHTMLElement::GetOnError returns
 // already_AddRefed<EventHandlerNonNull> while other getters return
 // EventHandlerNonNull*, so allow passing in the type to use here.
-#define FORWARDED_EVENT_HELPER(name_, forwardto_, type_, getter_type_)         \
-  NS_IMETHODIMP                                                                \
-  HTMLBodyElement::GetOn##name_(JSContext *cx, JS::Value *vp)                  \
-  {                                                                            \
-    getter_type_ h = forwardto_::GetOn##name_();                               \
-    vp->setObjectOrNull(h ? h->Callable().get() : nullptr);                    \
-    return NS_OK;                                                              \
-  }                                                                            \
-  NS_IMETHODIMP                                                                \
-  HTMLBodyElement::SetOn##name_(JSContext *cx, const JS::Value &v)             \
-  {                                                                            \
-    nsRefPtr<type_> handler;                                                   \
-    JSObject *callable;                                                        \
-    if (v.isObject() &&                                                        \
-        JS_ObjectIsCallable(cx, callable = &v.toObject())) {                   \
-      handler = new type_(callable);                                           \
-    }                                                                          \
-    forwardto_::SetOn##name_(handler);                                         \
-    return NS_OK;                                                              \
-  }
-#define FORWARDED_EVENT(name_, id_, type_, struct_)                            \
-  FORWARDED_EVENT_HELPER(name_, nsGenericHTMLElement, EventHandlerNonNull,     \
-                         EventHandlerNonNull*)
-#define ERROR_EVENT(name_, id_, type_, struct_)                                \
-  FORWARDED_EVENT_HELPER(name_, nsGenericHTMLElement,                          \
-                         EventHandlerNonNull, nsCOMPtr<EventHandlerNonNull>)
 #define WINDOW_EVENT_HELPER(name_, type_)                                      \
   type_*                                                                       \
   HTMLBodyElement::GetOn##name_()                                              \
@@ -534,8 +507,7 @@ HTMLBodyElement::IsEventAttributeName(nsIAtom *aName)
     nsCOMPtr<nsISupports> supports = do_QueryInterface(win);                   \
     nsGlobalWindow* globalWin = nsGlobalWindow::FromSupports(supports);        \
     return globalWin->SetOn##name_(handler);                                   \
-  }                                                                            \
-  FORWARDED_EVENT_HELPER(name_, HTMLBodyElement, type_, type_*)
+  }
 #define WINDOW_EVENT(name_, id_, type_, struct_)                               \
   WINDOW_EVENT_HELPER(name_, EventHandlerNonNull)
 #define BEFOREUNLOAD_EVENT(name_, id_, type_, struct_)                         \
@@ -544,9 +516,6 @@ HTMLBodyElement::IsEventAttributeName(nsIAtom *aName)
 #undef BEFOREUNLOAD_EVENT
 #undef WINDOW_EVENT
 #undef WINDOW_EVENT_HELPER
-#undef ERROR_EVENT
-#undef FORWARDED_EVENT
-#undef FORWARDED_EVENT_HELPER
 #undef EVENT
 
 } // namespace dom

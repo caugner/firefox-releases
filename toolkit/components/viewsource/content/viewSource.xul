@@ -8,13 +8,14 @@
 <?xml-stylesheet href="chrome://global/content/viewSource.css" type="text/css"?>
 <?xml-stylesheet href="chrome://mozapps/skin/viewsource/viewsource.css" type="text/css"?>
 <?xul-overlay href="chrome://global/content/editMenuOverlay.xul"?>
-<?xul-overlay href="chrome://global/content/charsetOverlay.xul"?>
 
 <!DOCTYPE window [
 <!ENTITY % brandDTD SYSTEM "chrome://branding/locale/brand.dtd" >
 %brandDTD;
 <!ENTITY % sourceDTD SYSTEM "chrome://global/locale/viewSource.dtd" >
 %sourceDTD;
+<!ENTITY % charsetDTD SYSTEM "chrome://global/locale/charsetMenu.dtd" >
+%charsetDTD;
 ]>
 
 <window id="viewSource"
@@ -195,7 +196,43 @@
                         key="key_textZoomReset"/>
             </menupopup>
           </menu>
-          <menu id="charsetMenu"/>
+
+          <!-- Charset Menu -->
+          <menu id="charsetMenu"
+                label="&charsetMenu.label;"
+                accesskey="&charsetMenu.accesskey;"
+                oncommand="MultiplexHandler(event);"
+                onpopupshowing="CharsetMenu.build(event);"
+                onpopupshown="UpdateMenus();">
+            <menupopup>
+              <menu label="&charsetMenuAutodet.label;"
+                    accesskey="&charsetMenuAutodet.accesskey;">
+                <menupopup>
+                  <menuitem type="radio"
+                            name="detectorGroup"
+                            id="chardet.off"
+                            label="&charsetMenuAutodet.off.label;"
+                            accesskey="&charsetMenuAutodet.off.accesskey;"/>
+                  <menuitem type="radio"
+                            name="detectorGroup"
+                            id="chardet.ja_parallel_state_machine"
+                            label="&charsetMenuAutodet.ja.label;"
+                            accesskey="&charsetMenuAutodet.ja.accesskey;"/>
+                  <menuitem type="radio"
+                            name="detectorGroup"
+                            id="chardet.ruprob"
+                            label="&charsetMenuAutodet.ru.label;"
+                            accesskey="&charsetMenuAutodet.ru.accesskey;"/>
+                  <menuitem type="radio"
+                            name="detectorGroup"
+                            id="chardet.ukprob"
+                            label="&charsetMenuAutodet.uk.label;"
+                            accesskey="&charsetMenuAutodet.uk.accesskey;"/>
+                </menupopup>
+              </menu>
+              <menuseparator/>
+            </menupopup>
+          </menu>
           <menuseparator/>
           <menuitem id="menu_wrapLongLines" type="checkbox" command="cmd_wrapLongLines"
                     label="&menu_wrapLongLines.title;" accesskey="&menu_wrapLongLines.accesskey;"/>

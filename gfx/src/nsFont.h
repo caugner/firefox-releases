@@ -48,7 +48,7 @@ struct NS_GFX nsFont {
 
   // Force this font to not be considered a 'generic' font, even if
   // the name is the same as a CSS generic font family.
-  uint8_t systemFont;
+  bool systemFont;
 
   // The variant of the font (normal, small-caps)
   uint8_t variant;
@@ -56,10 +56,10 @@ struct NS_GFX nsFont {
   // Variant subproperties
   // (currently -moz- versions, will replace variant above eventually)
   uint8_t variantCaps;
-  uint8_t variantLigatures;
   uint8_t variantNumeric;
   uint8_t variantPosition;
 
+  uint16_t variantLigatures;
   uint16_t variantEastAsian;
 
   // Some font-variant-alternates property values require

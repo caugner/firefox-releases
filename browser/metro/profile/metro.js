@@ -9,20 +9,25 @@
 pref("nglayout.debug.disable_xul_cache", true);
 pref("nglayout.debug.disable_xul_fastload", true);
 pref("devtools.errorconsole.enabled", true);
+pref("devtools.chrome.enabled", true);
+#else
+pref("devtools.errorconsole.enabled", false);
+pref("devtools.chrome.enabled", false);
 #endif
 
 // Automatically submit crash reports
 #ifdef RELEASE_BUILD
 pref("app.crashreporter.autosubmit", false);
+pref("app.crashreporter.submitURLs", false);
 #else
 // For Nightly and Aurora we turn this on by default
 pref("app.crashreporter.autosubmit", true);
+pref("app.crashreporter.submitURLs", false);
 #endif
 // Has the user been prompted about crash reporting?
 pref("app.crashreporter.prompted", false);
 
 // Debug prefs, see input.js
-pref("metro.debug.treatmouseastouch", false);
 pref("metro.debug.colorizeInputOverlay", false);
 pref("metro.debug.selection.displayRanges", false);
 pref("metro.debug.selection.dumpRanges", false);
@@ -39,11 +44,12 @@ pref("layers.componentalpha.enabled", false);
 
 // Prefs to control the async pan/zoom behaviour
 pref("apz.touch_start_tolerance", "0.1"); // dpi * tolerance = pixel threshold
-pref("apz.pan_repaint_interval", "50");   // prefer 20 fps
-pref("apz.fling_repaint_interval", "50"); // prefer 20 fps
-pref("apz.fling_friction", "0.002");
+pref("apz.pan_repaint_interval", 50);   // prefer 20 fps
+pref("apz.fling_repaint_interval", 50); // prefer 20 fps
 pref("apz.fling_stopped_threshold", "0.2");
-
+pref("apz.x_skate_size_multiplier", "2.5");
+pref("apz.y_skate_size_multiplier", "2.5");
+pref("apz.min_skate_speed", "10.0");
 // 0 = free, 1 = standard, 2 = sticky
 pref("apz.axis_lock_mode", 2);
 pref("apz.cross_slide.enabled", true);
@@ -82,15 +88,19 @@ pref("browser.chromeURL", "chrome://browser/content/");
 pref("browser.tabs.remote", false);
 
 // Telemetry
+#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
+pref("toolkit.telemetry.enabledPreRelease", true);
+#else
 pref("toolkit.telemetry.enabled", true);
+#endif
 pref("toolkit.telemetry.prompted", 2);
 
 pref("toolkit.screen.lock", false);
 
-// From libpref/src/init/all.js, extended to allow a slightly wider zoom range.
-pref("zoom.minPercent", 20);
-pref("zoom.maxPercent", 400);
-pref("toolkit.zoomManager.zoomValues", ".2,.3,.5,.67,.8,.9,1,1.1,1.2,1.33,1.5,1.7,2,2.4,3,4");
+// From libpref/src/init/all.js. Disabling text zoom in favor of APZ zoom. See bug 936940.
+pref("zoom.minPercent", 100);
+pref("zoom.maxPercent", 100);
+pref("toolkit.zoomManager.zoomValues", "1");
 
 // Device pixel to CSS px ratio, in percent. Set to -1 to calculate based on display density.
 pref("browser.viewport.scaleRatio", -1);
@@ -117,6 +127,9 @@ pref("browser.display.history.maxresults", 100);
 /* max items per section of the startui */
 pref("browser.display.startUI.maxresults", 16);
 
+// Number of times to display firstrun instructions on new tab page
+pref("browser.firstrun.count", 3);
+
 // Backspace and Shift+Backspace behavior
 // 0 goes Back/Forward
 // 1 act like PgUp/PgDown
@@ -126,8 +139,8 @@ pref("browser.backspace_action", 0);
 /* session history */
 pref("browser.sessionhistory.max_entries", 50);
 
-// On startup, automatically restore tabs from last time?
-pref("browser.startup.sessionRestore", false);
+// On startup, don't automatically restore tabs
+pref("browser.startup.page", 1);
 
 /* session store */
 pref("browser.sessionstore.resume_from_crash", true);
@@ -189,9 +202,6 @@ pref("browser.helperApps.deleteTempFileOnExit", false);
 /* password manager */
 pref("signon.rememberSignons", true);
 
-/* find helper */
-pref("findhelper.autozoom", true);
-
 // this will automatically enable inline spellchecking (if it is available) for
 // editable elements in HTML
 // 0 = spellcheck nothing
@@ -200,6 +210,8 @@ pref("findhelper.autozoom", true);
 pref("layout.spellcheckDefault", 1);
 
 /* extension manager and xpinstall */
+// Completely disable extensions
+pref("extensions.defaultProviders.enabled", false);
 // Disable all add-on locations other than the profile
 pref("extensions.enabledScopes", 1);
 // Auto-disable any add-ons that are "dropped in" to the profile
@@ -215,6 +227,7 @@ pref("extensions.blocklist.enabled", true);
 pref("extensions.blocklist.interval", 86400);
 pref("extensions.blocklist.url", "https://addons.mozilla.org/blocklist/3/%APP_ID%/%APP_VERSION%/%PRODUCT%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/%PING_COUNT%/%TOTAL_PING_COUNT%/%DAYS_SINCE_LAST_PING%/");
 pref("extensions.blocklist.detailsURL", "https://www.mozilla.org/%LOCALE%/blocklist/");
+pref("extensions.showMismatchUI", false);
 
 /* block popups by default, and notify the user about blocked popups */
 pref("dom.disable_open_during_load", true);
@@ -383,9 +396,6 @@ pref("privacy.sanitize.migrateFx3Prefs",    false);
 pref("geo.enabled", true);
 pref("geo.wifi.uri", "https://www.googleapis.com/geolocation/v1/geolocate?key=%GOOGLE_API_KEY%");
 
-// JS error console
-pref("devtools.errorconsole.enabled", false);
-
 // snapped view
 pref("browser.ui.snapped.maxWidth", 600);
 
@@ -412,7 +422,7 @@ pref("dom.ipc.content.nice", 1);
 pref("breakpad.reportURL", "https://crash-stats.mozilla.com/report/index/");
 // TODO: This is not the correct article for metro!!!
 pref("app.sync.tutorialURL", "https://support.mozilla.org/kb/sync-firefox-between-desktop-and-mobile");
-pref("app.support.baseURL", "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/");
+pref("app.support.baseURL", "https://support.mozilla.org/1/touch/%VERSION%/%OS%/%LOCALE%/");
 pref("app.privacyURL", "http://www.mozilla.org/%LOCALE%/legal/privacy/firefox.html");
 pref("app.creditsURL", "http://www.mozilla.org/credits/");
 pref("app.channelURL", "http://www.mozilla.org/%LOCALE%/firefox/channel/");
@@ -519,7 +529,6 @@ pref("editor.singleLine.pasteNewlines", 2);
 pref("services.sync.registerEngines", "Tab,Bookmarks,Form,History,Password,Prefs");
 
 // prefs to sync by default
-pref("services.sync.prefs.sync.browser.startup.sessionRestore", true);
 pref("services.sync.prefs.sync.browser.tabs.warnOnClose", true);
 pref("services.sync.prefs.sync.devtools.errorconsole.enabled", true);
 pref("services.sync.prefs.sync.lightweightThemes.isThemeSelected", true);
@@ -648,3 +657,7 @@ pref("full-screen-api.ignore-widgets", true);
 pref("layout.imagevisibility.enabled", true);
 pref("layout.imagevisibility.numscrollportwidths", 1);
 pref("layout.imagevisibility.numscrollportheights", 1);
+
+// Don't enable <input type=color> yet as we don't have a color picker
+// implemented for Windows Metro (bug 895464)
+pref("dom.forms.color", false);

@@ -49,6 +49,11 @@ pref("general.smoothScroll", true);
 // WebPayment
 pref("dom.mozPay.enabled", true);
 
+// Disable slow script dialog for apps
+pref("dom.max_script_run_time", 0);
+pref("dom.max_chrome_script_run_time", 0);
+
+
 #ifndef RELEASE_BUILD
 // Enable mozPay default provider
 pref("dom.payment.provider.0.name", "Firefox Marketplace");
@@ -78,3 +83,4 @@ pref("dom.ipc.plugins.enabled.x86_64", true);
 pref("dom.ipc.plugins.enabled", true);
 #endif
 
+pref("places.database.growthIncrementKiB", 0);

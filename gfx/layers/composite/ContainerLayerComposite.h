@@ -9,7 +9,6 @@
 #include "Layers.h"                     // for Layer (ptr only), etc
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
 #include "mozilla/layers/LayerManagerComposite.h"
-#include "mozilla/layers/LayersTypes.h"  // for MOZ_LAYERS_HAVE_LOG
 
 class gfx3DMatrix;
 struct nsIntPoint;
@@ -25,7 +24,6 @@ class ContainerLayerComposite : public ContainerLayer,
 {
   template<class ContainerT>
   friend void ContainerRender(ContainerT* aContainer,
-                              const nsIntPoint& aOffset,
                               LayerManagerComposite* aManager,
                               const nsIntRect& aClipRect);
 public:
@@ -40,8 +38,7 @@ public:
 
   LayerComposite* GetFirstChildComposite();
 
-  virtual void RenderLayer(const nsIntPoint& aOffset,
-                           const nsIntRect& aClipRect) MOZ_OVERRIDE;
+  virtual void RenderLayer(const nsIntRect& aClipRect) MOZ_OVERRIDE;
 
   virtual void ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToSurface) MOZ_OVERRIDE
   {
@@ -55,9 +52,7 @@ public:
   // container layers don't use a compositable
   CompositableHost* GetCompositableHost() MOZ_OVERRIDE { return nullptr; }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() const MOZ_OVERRIDE { return "ContainerLayerComposite"; }
-#endif
 };
 
 class RefLayerComposite : public RefLayer,
@@ -65,7 +60,6 @@ class RefLayerComposite : public RefLayer,
 {
   template<class ContainerT>
   friend void ContainerRender(ContainerT* aContainer,
-                              const nsIntPoint& aOffset,
                               LayerManagerComposite* aManager,
                               const nsIntRect& aClipRect);
 public:
@@ -79,8 +73,7 @@ public:
 
   LayerComposite* GetFirstChildComposite();
 
-  virtual void RenderLayer(const nsIntPoint& aOffset,
-                           const nsIntRect& aClipRect) MOZ_OVERRIDE;
+  virtual void RenderLayer(const nsIntRect& aClipRect) MOZ_OVERRIDE;
 
   virtual void ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToSurface) MOZ_OVERRIDE
   {
@@ -94,9 +87,7 @@ public:
   // ref layers don't use a compositable
   CompositableHost* GetCompositableHost() MOZ_OVERRIDE { return nullptr; }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() const MOZ_OVERRIDE { return "RefLayerComposite"; }
-#endif
 };
 
 } /* layers */

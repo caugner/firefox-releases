@@ -85,6 +85,8 @@ public:
   virtual Rect GetStrokedBounds(const StrokeOptions &aStrokeOptions,
                                 const Matrix &aTransform = Matrix()) const;
 
+  virtual void StreamToSink(PathSink *aSink) const;
+
   virtual FillRule GetFillRule() const { return mFillRule; }
 
   CGMutablePathRef GetPath() const { return mPath; }
@@ -93,7 +95,6 @@ private:
   friend class DrawTargetCG;
 
   CGMutablePathRef mPath;
-  bool mEndedActive;
   Point mEndPoint;
   FillRule mFillRule;
 };

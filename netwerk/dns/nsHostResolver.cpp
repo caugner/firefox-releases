@@ -265,6 +265,42 @@ nsHostRecord::HasUsableResult(uint16_t queryFlags) const
     return addr_info || addr || negative;
 }
 
+static size_t
+SizeOfResolveHostCallbackListExcludingHead(const PRCList *head,
+                                           MallocSizeOf mallocSizeOf)
+{
+    size_t n = 0;
+    PRCList *curr = head->next;
+    while (curr != head) {
+        nsResolveHostCallback *callback =
+            static_cast<nsResolveHostCallback*>(curr);
+        n += callback->SizeOfIncludingThis(mallocSizeOf);
+        curr = curr->next;
+    }
+    return n;
+}
+
+size_t
+nsHostRecord::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const
+{
+    size_t n = mallocSizeOf(this);
+
+    // The |host| field (inherited from nsHostKey) actually points to extra
+    // memory that is allocated beyond the end of the nsHostRecord (see
+    // nsHostRecord::Create()).  So it will be included in the
+    // |mallocSizeOf(this)| call above.
+
+    n += SizeOfResolveHostCallbackListExcludingHead(&callbacks, mallocSizeOf);
+    n += addr_info ? addr_info->SizeOfIncludingThis(mallocSizeOf) : 0;
+    n += mallocSizeOf(addr);
+
+    n += mBlacklistedItems.SizeOfExcludingThis(mallocSizeOf);
+    for (size_t i = 0; i < mBlacklistedItems.Length(); i++) {
+        n += mBlacklistedItems[i].SizeOfIncludingThisMustBeUnshared(mallocSizeOf);
+    }
+    return n;
+}
+
 //----------------------------------------------------------------------------
 
 struct nsHostDBEnt : PLDHashEntryHdr
@@ -352,7 +388,7 @@ HostDB_InitEntry(PLDHashTable *table,
     return true;
 }
 
-static PLDHashTableOps gHostDB_ops =
+static const PLDHashTableOps gHostDB_ops =
 {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
@@ -517,7 +553,8 @@ nsHostResolver::ResolveHost(const char            *host,
 {
     NS_ENSURE_TRUE(host && *host, NS_ERROR_UNEXPECTED);
 
-    LOG(("Resolving host [%s].\n", host));
+    LOG(("Resolving host [%s]%s.\n",
+         host, flags & RES_BYPASS_CACHE ? " - bypassing cache" : ""));
 
     // ensure that we are working with a valid hostname before proceeding.  see
     // bug 304904 for details.
@@ -552,13 +589,15 @@ nsHostResolver::ResolveHost(const char            *host,
                                          (PL_DHashTableOperate(&mDB, &key, PL_DHASH_ADD));
 
             // if the record is null, then HostDB_InitEntry failed.
-            if (!he || !he->rec)
+            if (!he || !he->rec) {
+                LOG(("  Out of memory: no cache entry for [%s].\n", host));
                 rv = NS_ERROR_OUT_OF_MEMORY;
+            }
             // do we have a cached result that we can reuse?
             else if (!(flags & RES_BYPASS_CACHE) &&
                      he->rec->HasUsableResult(flags) &&
                      TimeStamp::NowLoRes() <= (he->rec->expiration + TimeDuration::FromSeconds(mGracePeriod * 60))) {
-                LOG(("Using cached record for host [%s].\n", host));
+                LOG(("  Using cached record for host [%s].\n", host));
                 // put reference to host record on stack...
                 result = he->rec;
                 Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_HIT);
@@ -569,6 +608,7 @@ nsHostResolver::ResolveHost(const char            *host,
                 ConditionallyRefreshRecord(he->rec, host);
                 
                 if (he->rec->negative) {
+                    LOG(("  Negative cache entry for[%s].\n", host));
                     Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
                                           METHOD_NEGATIVE_HIT);
                     status = NS_ERROR_UNKNOWN_HOST;
@@ -577,6 +617,7 @@ nsHostResolver::ResolveHost(const char            *host,
             // if the host name is an IP address literal and has been parsed,
             // go ahead and use it.
             else if (he->rec->addr) {
+                LOG(("  Using cached address for IP Literal [%s].\n", host));
                 Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
                                       METHOD_LITERAL);
                 result = he->rec;
@@ -585,6 +626,7 @@ nsHostResolver::ResolveHost(const char            *host,
             // circuit full host resolution.  (this is necessary on some
             // platforms like Win9x.  see bug 219376 for more details.)
             else if (PR_StringToNetAddr(host, &tempAddr) == PR_SUCCESS) {
+                LOG(("  Host is IP Literal [%s].\n", host));
                 // ok, just copy the result into the host record, and be done
                 // with it! ;-)
                 he->rec->addr = new NetAddr();
@@ -597,12 +639,16 @@ nsHostResolver::ResolveHost(const char            *host,
             else if (mPendingCount >= MAX_NON_PRIORITY_REQUESTS &&
                      !IsHighPriority(flags) &&
                      !he->rec->resolving) {
+                LOG(("  Lookup queue full: dropping %s priority request for "
+                     "[%s].\n",
+                     IsMediumPriority(flags) ? "medium" : "low", host));
                 Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
                                       METHOD_OVERFLOW);
                 // This is a lower priority request and we are swamped, so refuse it.
                 rv = NS_ERROR_DNS_LOOKUP_QUEUE_FULL;
             }
             else if (flags & RES_OFFLINE) {
+                LOG(("  Offline request for [%s]; ignoring.\n", host));
                 rv = NS_ERROR_OFFLINE;
             }
 
@@ -624,28 +670,35 @@ nsHostResolver::ResolveHost(const char            *host,
                         unspecHe->rec->HasUsableResult(flags) &&
                         TimeStamp::NowLoRes() <= (he->rec->expiration +
                             TimeDuration::FromSeconds(mGracePeriod * 60))) {
-                        LOG(("Specific DNS request (%s) for an unspecified "
-                             "cached record",
-                            (af == PR_AF_INET) ? "AF_INET" : "AF_INET6"));
 
-                        // Search for any valid address in the AF_UNSPEC entry
-                        // in the cache (not blacklisted and from the right
-                        // family).
-                        NetAddrElement *addrIter =
-                            unspecHe->rec->addr_info->mAddresses.getFirst();
+                        MOZ_ASSERT(unspecHe->rec->addr_info || unspecHe->rec->negative,
+                                   "Entry should be resolved or negative.");
+
+                        LOG(("  Trying AF_UNSPEC entry for [%s] af: %s.\n",
+                            host, (af == PR_AF_INET) ? "AF_INET" : "AF_INET6"));
+
                         he->rec->addr_info = nullptr;
-                        while (addrIter) {
-                            if ((af == addrIter->mAddress.inet.family) &&
-                                 !unspecHe->rec->Blacklisted(&addrIter->mAddress)) {
-                                if (!he->rec->addr_info) {
-                                    he->rec->addr_info = new AddrInfo(
-                                        unspecHe->rec->addr_info->mHostName,
-                                        unspecHe->rec->addr_info->mCanonicalName);
+                        if (unspecHe->rec->negative) {
+                            he->rec->negative = unspecHe->rec->negative;
+                        } else if (unspecHe->rec->addr_info) {
+                            // Search for any valid address in the AF_UNSPEC entry
+                            // in the cache (not blacklisted and from the right
+                            // family).
+                            NetAddrElement *addrIter =
+                                unspecHe->rec->addr_info->mAddresses.getFirst();
+                            while (addrIter) {
+                                if ((af == addrIter->mAddress.inet.family) &&
+                                     !unspecHe->rec->Blacklisted(&addrIter->mAddress)) {
+                                    if (!he->rec->addr_info) {
+                                        he->rec->addr_info = new AddrInfo(
+                                            unspecHe->rec->addr_info->mHostName,
+                                            unspecHe->rec->addr_info->mCanonicalName);
+                                    }
+                                    he->rec->addr_info->AddAddress(
+                                        new NetAddrElement(*addrIter));
                                 }
-                                he->rec->addr_info->AddAddress(
-                                    new NetAddrElement(*addrIter));
+                                addrIter = addrIter->getNext();
                             }
-                            addrIter = addrIter->getNext();
                         }
                         if (he->rec->HasUsableResult(flags)) {
                             result = he->rec;
@@ -658,6 +711,8 @@ nsHostResolver::ResolveHost(const char            *host,
                         // AF_UNSPEC addresses, so we mark this record as
                         // negative.
                         else if (af == PR_AF_INET6) {
+                            LOG(("  No AF_INET6 in AF_UNSPEC entry: "
+                                 "[%s] unknown host", host));
                             result = he->rec;
                             he->rec->negative = true;
                             status = NS_ERROR_UNKNOWN_HOST;
@@ -669,25 +724,26 @@ nsHostResolver::ResolveHost(const char            *host,
                 // If no valid address was found in the cache or this is an
                 // AF_UNSPEC request, then start a new lookup.
                 if (!result) {
-                    LOG(("No valid address was found in the cache for the "
-                         "requested IP family"));
+                    LOG(("  No usable address in cache for [%s]", host));
                     // Add callback to the list of pending callbacks.
                     PR_APPEND_LINK(callback, &he->rec->callbacks);
                     he->rec->flags = flags;
-                    IssueLookup(he->rec);
+                    rv = IssueLookup(he->rec);
                     Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
                                           METHOD_NETWORK_FIRST);
                     if (NS_FAILED(rv)) {
                         PR_REMOVE_AND_INIT_LINK(callback);
                     }
                     else {
-                        LOG(("DNS lookup for host [%s] blocking pending "
-                             "'getaddrinfo' query.", host));
+                        LOG(("  DNS lookup for host [%s] blocking pending "
+                             "'getaddrinfo' query: callback [%p]",
+                             host, callback));
                     }
                 }
             }
             else {
-                // The record is being resolved. Append our callback.
+                LOG(("  Host [%s] is being resolved. Appending callback [%p].",
+                     host, callback));
                 PR_APPEND_LINK(callback, &he->rec->callbacks);
                 if (he->rec->onQueue) {
                     Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2,
@@ -782,7 +838,7 @@ nsHostResolver::ConditionallyCreateThread(nsHostRecord *rec)
     }
 #if defined(PR_LOGGING)
     else
-      LOG(("Unable to find a thread for looking up host [%s].\n", rec->host));
+      LOG(("  Unable to find a thread for looking up host [%s].\n", rec->host));
 #endif
     return NS_OK;
 }
@@ -818,7 +874,7 @@ nsHostResolver::IssueLookup(nsHostRecord *rec)
 
     rv = ConditionallyCreateThread(rec);
     
-    LOG (("DNS thread counters: total=%d any-live=%d idle=%d pending=%d\n",
+    LOG (("  DNS thread counters: total=%d any-live=%d idle=%d pending=%d\n",
           mThreadCount,
           mActiveAnyThreadCount,
           mNumIdleThreads,
@@ -833,7 +889,7 @@ nsHostResolver::ConditionallyRefreshRecord(nsHostRecord *rec, const char *host)
     if ((((TimeStamp::NowLoRes() > rec->expiration) &&
         rec->mBlacklistedItems.Length()) ||
         rec->negative) && !rec->resolving) {
-        LOG(("Using %s cache entry for host [%s] but starting async renewal.",
+        LOG(("  Using %s cache entry for host [%s] but starting async renewal.",
             rec->negative ? "negative" :"positive", host));
         IssueLookup(rec);
 
@@ -963,7 +1019,7 @@ nsHostResolver::OnLookupComplete(nsHostRecord *rec, nsresult status, AddrInfo *r
             rec->usingAnyThread = false;
         }
 
-        if (rec->addr_info && !mShutdown) {
+        if (!mShutdown) {
             // add to mEvictionQ
             PR_APPEND_LINK(rec, &mEvictionQ);
             NS_ADDREF(rec);
@@ -1050,10 +1106,35 @@ nsHostResolver::CancelAsyncRequest(const char            *host,
     }
 }
 
+static size_t
+SizeOfHostDBEntExcludingThis(PLDHashEntryHdr* hdr, MallocSizeOf mallocSizeOf,
+                             void*)
+{
+    nsHostDBEnt* ent = static_cast<nsHostDBEnt*>(hdr);
+    return ent->rec->SizeOfIncludingThis(mallocSizeOf);
+}
+
+size_t
+nsHostResolver::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const
+{
+    MutexAutoLock lock(mLock);
+
+    size_t n = mallocSizeOf(this);
+    n += PL_DHashTableSizeOfExcludingThis(&mDB, SizeOfHostDBEntExcludingThis,
+                                          mallocSizeOf);
+
+    // The following fields aren't measured.
+    // - mHighQ, mMediumQ, mLowQ, mEvictionQ, because they just point to
+    //   nsHostRecords that also pointed to by entries |mDB|, and measured when
+    //   |mDB| is measured.
+
+    return n;
+}
+
 void
 nsHostResolver::ThreadFunc(void *arg)
 {
-    LOG(("DNS lookup thread starting execution.\n"));
+    LOG(("DNS lookup thread - starting execution.\n"));
 
     static nsThreadPoolNaming naming;
     naming.SetThreadPoolName(NS_LITERAL_CSTRING("DNS Resolver"));
@@ -1065,7 +1146,8 @@ nsHostResolver::ThreadFunc(void *arg)
     nsHostRecord *rec;
     PRAddrInfo *prai = nullptr;
     while (resolver->GetHostToLookup(&rec)) {
-        LOG(("Calling getaddrinfo for host [%s].\n", rec->host));
+        LOG(("DNS lookup thread - Calling getaddrinfo for host [%s].\n",
+             rec->host));
 
         int flags = PR_AI_ADDRCONFIG;
         if (!(rec->flags & RES_CANON_NAME))
@@ -1115,11 +1197,12 @@ nsHostResolver::ThreadFunc(void *arg)
         }
 
         // OnLookupComplete may release "rec", log before we lose it.
-        LOG(("Lookup completed for host [%s].\n", rec->host));
+        LOG(("DNS lookup thread - lookup completed for host [%s]: %s.\n",
+             rec->host, ai ? "success" : "failure: unknown host"));
         resolver->OnLookupComplete(rec, status, ai);
     }
     NS_RELEASE(resolver);
-    LOG(("DNS lookup thread ending execution.\n"));
+    LOG(("DNS lookup thread - queue empty, thread finished.\n"));
 }
 
 nsresult
@@ -1155,7 +1238,8 @@ CacheEntryEnumerator(PLDHashTable *table, PLDHashEntryHdr *entry,
     // We don't pay attention to address literals, only resolved domains.
     // Also require a host.
     nsHostRecord *rec = static_cast<nsHostDBEnt*>(entry)->rec;
-    if (!rec->addr_info || !rec->host) {
+    MOZ_ASSERT(rec, "rec should never be null here!");
+    if (!rec || !rec->addr_info || !rec->host) {
         return PL_DHASH_NEXT;
     }
 

@@ -17,6 +17,7 @@
 #include "nsAlgorithm.h"
 #include "mozilla/Preferences.h"
 #include <algorithm>
+#include "mozilla/CheckedInt.h"
 
 using namespace mozilla;
 
@@ -121,10 +122,22 @@ gfxXlibSurface::TakePixmap()
     NS_ASSERTION(!mPixmapTaken, "I already own the Pixmap!");
     mPixmapTaken = true;
 
+    // The bit depth returned from Cairo is technically int, but this is
+    // the last place we'd be worried about that scenario.
+    unsigned int bitDepth = cairo_xlib_surface_get_depth(CairoSurface());
+    MOZ_ASSERT((bitDepth % 8) == 0, "Memory used not recorded correctly");
+
     // Divide by 8 because surface_get_depth gives us the number of *bits* per
     // pixel.
-    RecordMemoryUsed(mSize.width * mSize.height *
-        cairo_xlib_surface_get_depth(CairoSurface()) / 8);
+    CheckedInt32 totalBytes = CheckedInt32(mSize.width) * CheckedInt32(mSize.height) * (bitDepth/8);
+
+    // Don't do anything in the "else" case.  We could add INT32_MAX, but that
+    // would overflow the memory used counter.  It would also mean we tried for
+    // a 2G image.  For now, we'll just assert,
+    MOZ_ASSERT(totalBytes.isValid(),"Did not expect to exceed 2Gb image");
+    if (totalBytes.isValid()) {
+        RecordMemoryUsed(totalBytes.value());
+    }
 }
 
 Drawable
@@ -133,6 +146,48 @@ gfxXlibSurface::ReleasePixmap() {
     mPixmapTaken = false;
     RecordMemoryFreed();
     return mDrawable;
+}
+
+static cairo_user_data_key_t gDestroyPixmapKey;
+
+struct DestroyPixmapClosure {
+    DestroyPixmapClosure(Drawable d, Screen *s) : mPixmap(d), mScreen(s) {}
+    Drawable mPixmap;
+    Screen *mScreen;
+};
+
+static void
+DestroyPixmap(void *data)
+{
+    DestroyPixmapClosure *closure = static_cast<DestroyPixmapClosure*>(data);
+    XFreePixmap(DisplayOfScreen(closure->mScreen), closure->mPixmap);
+    delete closure;
+}
+
+/* static */
+cairo_surface_t *
+gfxXlibSurface::CreateCairoSurface(Screen *screen, Visual *visual,
+                                   const gfxIntSize& size, Drawable relatedDrawable)
+{
+    Drawable drawable =
+        CreatePixmap(screen, size, DepthOfVisual(screen, visual),
+                     relatedDrawable);
+    if (!drawable)
+        return nullptr;
+
+    cairo_surface_t* surface =
+        cairo_xlib_surface_create(DisplayOfScreen(screen), drawable, visual,
+                                  size.width, size.height);
+    if (cairo_surface_status(surface)) {
+        cairo_surface_destroy(surface);
+        XFreePixmap(DisplayOfScreen(screen), drawable);
+        return nullptr;
+    }
+
+    DestroyPixmapClosure *closure = new DestroyPixmapClosure(drawable, screen);
+    cairo_surface_set_user_data(surface, &gDestroyPixmapKey,
+                                closure, DestroyPixmap);
+    return surface;
 }
 
 /* static */
@@ -401,19 +456,27 @@ DisplayTable::DisplayClosing(Display *display, XExtCodes* codes)
     return 0;
 }
 
+/* static */
+bool
+gfxXlibSurface::GetColormapAndVisual(cairo_surface_t* aXlibSurface,
+                                     Colormap* aColormap, Visual** aVisual)
+{
+    XRenderPictFormat* format =
+        cairo_xlib_surface_get_xrender_format(aXlibSurface);
+    Screen* screen = cairo_xlib_surface_get_screen(aXlibSurface);
+    Visual* visual = cairo_xlib_surface_get_visual(aXlibSurface);
+
+    return DisplayTable::GetColormapAndVisual(screen, format, visual,
+                                              aColormap, aVisual);
+}
+
 bool
 gfxXlibSurface::GetColormapAndVisual(Colormap* aColormap, Visual** aVisual)
 {
     if (!mSurfaceValid)
         return false;
 
-    XRenderPictFormat* format =
-        cairo_xlib_surface_get_xrender_format(CairoSurface());
-    Screen* screen = cairo_xlib_surface_get_screen(CairoSurface());
-    Visual* visual = cairo_xlib_surface_get_visual(CairoSurface());
-
-    return DisplayTable::GetColormapAndVisual(screen, format, visual,
-                                              aColormap, aVisual);
+    return GetColormapAndVisual(CairoSurface(), aColormap, aVisual);
 }
 
 /* static */

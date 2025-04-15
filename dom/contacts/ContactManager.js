@@ -176,18 +176,18 @@ function validateArrayField(data, createCb) {
     }
   };
 
-  if (data) {
-    data = Array.isArray(data) ? data : [data];
-    let filtered = [];
-    for (let i = 0, n = data.length; i < n; ++i) {
+  if (data === null || data === undefined) {
+    return undefined;
+  }
+
+  data = Array.isArray(data) ? data : [data];
+  let filtered = [];
+  for (let i = 0, n = data.length; i < n; ++i) {
+    if (data[i]) {
       filtered.push(createCb(data[i]));
     }
-    if (filtered.length === 0) {
-      return undefined;
-    }
-    return new Proxy(filtered, ArrayPropertyHandler);
   }
-  return undefined;
+  return new Proxy(filtered, ArrayPropertyHandler);
 }
 
 // We need this to create a copy of the mozContact object in ContactManager.save
@@ -200,6 +200,8 @@ const PROPERTIES = [
 const ADDRESS_PROPERTIES = ["adr"];
 const FIELD_PROPERTIES = ["email", "url", "impp"];
 const TELFIELD_PROPERTIES = ["tel"];
+
+let mozContactInitWarned = false;
 
 function Contact() { }
 
@@ -301,6 +303,17 @@ Contact.prototype = {
     this.sex =             aProp.sex;
     this.genderIdentity =  aProp.genderIdentity;
     this.key =             aProp.key;
+  },
+
+  init_ctor: function(aProp) {
+    // init is deprecated, warn once in the console if it's used
+    if (!mozContactInitWarned) {
+      mozContactInitWarned = true;
+      Cu.reportError("mozContact.init is DEPRECATED. Use the mozContact constructor instead. " +
+                     "See https://developer.mozilla.org/docs/WebAPI/Contacts for details.");
+    }
+
+    this.__init(aProp);
   },
 
   setMetadata: function(aId, aPublished, aUpdated) {
@@ -811,6 +824,7 @@ ContactManager.prototype = {
   classID: Components.ID("{8beb3a66-d70a-4111-b216-b8e995ad3aff}"),
   contractID: "@mozilla.org/contactManager;1",
   QueryInterface: XPCOMUtils.generateQI([Ci.nsISupportsWeakReference,
+                                         Ci.nsIObserver,
                                          Ci.nsIDOMGlobalPropertyInitializer]),
 };
 

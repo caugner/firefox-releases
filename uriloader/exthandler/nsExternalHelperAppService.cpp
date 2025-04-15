@@ -11,8 +11,8 @@
 #include "base/basictypes.h"
 
 /* This must occur *after* base/basictypes.h to avoid typedefs conflicts. */
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Base64.h"
-#include "mozilla/Util.h"
 
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/TabChild.h"
@@ -115,6 +115,15 @@
 
 #include "mozilla/Preferences.h"
 #include "mozilla/ipc/URIUtils.h"
+
+#ifdef MOZ_WIDGET_GONK
+#include "nsDeviceStorage.h"
+#endif
+
+#ifdef NECKO_PROTOCOL_rtsp
+#include "nsIScriptSecurityManager.h"
+#include "nsIMessageManager.h"
+#endif
 
 using namespace mozilla;
 using namespace mozilla::ipc;
@@ -328,6 +337,32 @@ static nsresult GetDownloadDirectory(nsIFile **_directory)
                                          getter_AddRefs(dir));
     NS_ENSURE_SUCCESS(rv, rv);
   }
+#elif defined(MOZ_WIDGET_GONK)
+  // On Gonk, store the files on the sdcard in the downloads directory.
+  // We need to check with the volume manager which storage point is
+  // available.
+
+  // Pick the default storage in case multiple (internal and external) ones
+  // are available.
+  nsString storageName;
+  nsDOMDeviceStorage::GetDefaultStorageName(NS_LITERAL_STRING("sdcard"),
+                                            storageName);
+  NS_ENSURE_TRUE(!storageName.IsEmpty(), NS_ERROR_FAILURE);
+
+  DeviceStorageFile dsf(NS_LITERAL_STRING("sdcard"),
+                        storageName,
+                        NS_LITERAL_STRING("downloads"));
+  NS_ENSURE_TRUE(dsf.mFile, NS_ERROR_FAILURE);
+  NS_ENSURE_TRUE(dsf.IsAvailable(), NS_ERROR_FAILURE);
+
+  bool alreadyThere;
+  nsresult rv = dsf.mFile->Exists(&alreadyThere);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!alreadyThere) {
+    rv = dsf.mFile->Create(nsIFile::DIRECTORY_TYPE, 0770);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+  dir = dsf.mFile;
 #elif defined(ANDROID)
   // On mobile devices, we are avoiding exposing users to the file
   // system, and don't save downloads to temp directories
@@ -412,9 +447,6 @@ static nsDefaultMimeTypeEntry defaultMimeEntries [] =
   { VIDEO_WEBM, "webm" },
   { AUDIO_WEBM, "webm" },
 #endif
-#ifdef MOZ_DASH
-  { APPLICATION_DASH, "mpd" },
-#endif
 #if defined(MOZ_GSTREAMER) || defined(MOZ_WMF)
   { VIDEO_MP4, "mp4" },
   { AUDIO_MP4, "m4a" },
@@ -497,9 +529,6 @@ static nsExtraMimeTypeEntry extraMimeEntries [] =
 #endif
   { VIDEO_WEBM, "webm", "Web Media Video" },
   { AUDIO_WEBM, "webm", "Web Media Audio" },
-#ifdef MOZ_DASH
-  { APPLICATION_DASH, "mpd", "DASH Media Presentation Description" },
-#endif
   { AUDIO_MP3, "mp3", "MPEG Audio" },
   { VIDEO_MP4, "mp4", "MPEG-4 Video" },
   { AUDIO_MP4, "m4a", "MPEG-4 Audio" },
@@ -557,6 +586,81 @@ nsresult nsExternalHelperAppService::Init()
 nsExternalHelperAppService::~nsExternalHelperAppService()
 {
 }
+
+#ifdef NECKO_PROTOCOL_rtsp
+namespace {
+/**
+ * A stack helper to clear the currently pending exception in a JS context.
+ */
+class AutoClearPendingException {
+public:
+  AutoClearPendingException(JSContext* aCx) :
+    mCx(aCx) {
+  }
+  ~AutoClearPendingException() {
+    JS_ClearPendingException(mCx);
+  }
+private:
+  JSContext *mCx;
+};
+} // anonymous namespace
+
+/**
+ * This function sends a message. This 'content-handler' message is handled in
+ * b2g/chrome/content/shell.js where it starts an activity request that will
+ * open the video app.
+ */
+void nsExternalHelperAppService::LaunchVideoAppForRtsp(nsIURI* aURI)
+{
+  bool rv;
+
+  // Get a system principal.
+  nsCOMPtr<nsIScriptSecurityManager> securityManager =
+    do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID);
+  NS_ENSURE_TRUE_VOID(securityManager);
+
+  nsCOMPtr<nsIPrincipal> principal;
+  securityManager->GetSystemPrincipal(getter_AddRefs(principal));
+  NS_ENSURE_TRUE_VOID(principal);
+
+  // Construct the message in jsVal format.
+  AutoSafeJSContext cx;
+  AutoClearPendingException helper(cx);
+  JS::Rooted<JSObject*> msgObj(cx, JS_NewObject(cx, nullptr, nullptr, nullptr));
+  NS_ENSURE_TRUE_VOID(msgObj);
+  JS::Rooted<JS::Value> jsVal(cx);
+
+  // Set the "type" property of the message. This is a fake MIME type.
+  {
+    NS_NAMED_LITERAL_CSTRING(mimeType, "video/rtsp");
+    JSString *typeStr = JS_NewStringCopyN(cx, mimeType.get(), mimeType.Length());
+    NS_ENSURE_TRUE_VOID(typeStr);
+    jsVal.setString(typeStr);
+    rv = JS_SetProperty(cx, msgObj, "type", jsVal);
+    NS_ENSURE_TRUE_VOID(rv);
+  }
+  // Set the "url" and "title" properties of the message.
+  // They are the same in the case of RTSP streaming.
+  {
+    nsAutoCString spec;
+    aURI->GetSpec(spec);
+    JSString *urlStr = JS_NewStringCopyN(cx, spec.get(), spec.Length());
+    NS_ENSURE_TRUE_VOID(urlStr);
+    jsVal.setString(urlStr);
+    rv = JS_SetProperty(cx, msgObj, "url", jsVal);
+    NS_ENSURE_TRUE_VOID(rv);
+    rv = JS_SetProperty(cx, msgObj, "title", jsVal);
+  }
+  jsVal.setObject(*msgObj);
+
+  // Send the message.
+  nsCOMPtr<nsIMessageSender> cpmm =
+    do_GetService("@mozilla.org/childprocessmessagemanager;1");
+  NS_ENSURE_TRUE_VOID(cpmm);
+  cpmm->SendAsyncMessage(NS_LITERAL_STRING("content-handler"),
+    jsVal, JSVAL_NULL, principal, cx, 2);
+}
+#endif
 
 NS_IMETHODIMP nsExternalHelperAppService::DoContent(const nsACString& aMimeContentType,
                                                     nsIRequest *aRequest,
@@ -898,7 +1002,18 @@ nsExternalHelperAppService::LoadURI(nsIURI *aURI,
     return NS_OK; // explicitly denied
   }
 
- 
+#ifdef NECKO_PROTOCOL_rtsp
+  // Handle rtsp protocol.
+  {
+    bool isRTSP = false;
+    rv = aURI->SchemeIs("rtsp", &isRTSP);
+    if (NS_SUCCEEDED(rv) && isRTSP) {
+      LaunchVideoAppForRtsp(aURI);
+      return NS_OK;
+    }
+  }
+#endif
+
   nsCOMPtr<nsIHandlerInfo> handler;
   rv = GetProtocolHandlerInfo(scheme, getter_AddRefs(handler));
   NS_ENSURE_SUCCESS(rv, rv);

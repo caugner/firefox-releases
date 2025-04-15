@@ -5,7 +5,6 @@
 
 #include "mozilla/dom/HTMLFrameElement.h"
 #include "mozilla/dom/HTMLFrameElementBinding.h"
-#include "mozilla/Util.h"
 
 class nsIDOMDocument;
 
@@ -81,9 +80,9 @@ HTMLFrameElement::ParseAttribute(int32_t aNamespaceID,
                                                    aValue, aResult);
 }
 
-static void
-MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
-                      nsRuleData* aData)
+void
+HTMLFrameElement::MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
+                                        nsRuleData* aData)
 {
   nsGenericHTMLElement::MapScrollingAttributeInto(aAttributes, aData);
   nsGenericHTMLElement::MapCommonAttributesInto(aAttributes, aData);

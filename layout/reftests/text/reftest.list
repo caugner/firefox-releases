@@ -106,7 +106,7 @@ HTTP(..) == variation-selector-unsupported-1.html variation-selector-unsupported
 == wordbreak-1.html wordbreak-1-ref.html
 == wordbreak-2.html wordbreak-2-ref.html
 == wordbreak-3.html wordbreak-3-ref.html
-== wordbreak-4a.html wordbreak-4a-ref.html
+skip-if(Android&&AndroidVersion==17) == wordbreak-4a.html wordbreak-4a-ref.html
 == wordbreak-4b.html wordbreak-4b-ref.html
 == wordbreak-5.html wordbreak-5-ref.html
 == wordbreak-6.html wordbreak-6-ref.html
@@ -180,8 +180,8 @@ pref(gfx.font_rendering.graphite.enabled,true) HTTP(..) != graphite-03a.html gra
 pref(gfx.font_rendering.graphite.enabled,true) HTTP(..) != graphite-03b.html graphite-03-notref.html
 pref(gfx.font_rendering.graphite.enabled,false) HTTP(..) != graphite-01.html graphite-01-ref.html
 pref(gfx.font_rendering.graphite.enabled,false) HTTP(..) != graphite-02.html graphite-02-ref.html
-# test 03a (lang setting in Padauk font) now works in opentype/harfbuzz as well, but not on Windows 7/8 (using Uniscribe/DirectWrite)
-fails-if(/^Windows\x20NT\x206\.[12]/.test(http.oscpu)) pref(gfx.font_rendering.graphite.enabled,false) HTTP(..) != graphite-03a.html graphite-03-notref.html
+# test 03a (lang setting in Padauk font) now works in opentype/harfbuzz as well
+pref(gfx.font_rendering.graphite.enabled,false) HTTP(..) != graphite-03a.html graphite-03-notref.html
 pref(gfx.font_rendering.graphite.enabled,false) HTTP(..) == graphite-03b.html graphite-03-notref.html
 
 # tests for graphite rendering with valid and invalid lang tags

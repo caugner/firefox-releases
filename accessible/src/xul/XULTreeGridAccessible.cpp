@@ -61,21 +61,14 @@ XULTreeGridAccessible::SelectedColCount()
   // If all the row has been selected, then all the columns are selected,
   // because we can't select a column alone.
 
-  int32_t selectedRowCount = 0;
-  nsresult rv = GetSelectionCount(&selectedRowCount);
-  NS_ENSURE_SUCCESS(rv, 0);
-
+  uint32_t selectedRowCount = SelectedItemCount();
   return selectedRowCount > 0 && selectedRowCount == RowCount() ? ColCount() : 0;
 }
 
 uint32_t
 XULTreeGridAccessible::SelectedRowCount()
 {
-  int32_t selectedRowCount = 0;
-  nsresult rv = GetSelectionCount(&selectedRowCount);
-  NS_ENSURE_SUCCESS(rv, 0);
-
-  return selectedRowCount >= 0 ? selectedRowCount : 0;
+  return SelectedItemCount();
 }
 
 void
@@ -164,12 +157,7 @@ XULTreeGridAccessible::IsColSelected(uint32_t aColIdx)
 {
   // If all the row has been selected, then all the columns are selected.
   // Because we can't select a column alone.
-
-  int32_t selectedrowCount = 0;
-  nsresult rv = GetSelectionCount(&selectedrowCount);
-  NS_ENSURE_SUCCESS(rv, false);
-
-  return selectedrowCount == RowCount();
+  return SelectedItemCount() == RowCount();
 }
 
 bool
@@ -220,7 +208,7 @@ XULTreeGridAccessible::UnselectRow(uint32_t aRowIdx)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// XULTreeGridAccessible: nsAccessNode implementation
+// XULTreeGridAccessible: Accessible implementation
 
 void
 XULTreeGridAccessible::Shutdown()
@@ -228,9 +216,6 @@ XULTreeGridAccessible::Shutdown()
   mTable = nullptr;
   XULTreeAccessible::Shutdown();
 }
-
-////////////////////////////////////////////////////////////////////////////////
-// XULTreeGridAccessible: Accessible implementation
 
 role
 XULTreeGridAccessible::NativeRole()
@@ -291,7 +276,7 @@ NS_IMPL_RELEASE_INHERITED(XULTreeGridRowAccessible,
                           XULTreeItemAccessibleBase)
 
 ////////////////////////////////////////////////////////////////////////////////
-// XULTreeGridRowAccessible: nsAccessNode implementation
+// XULTreeGridRowAccessible: Accessible implementation
 
 void
 XULTreeGridRowAccessible::Shutdown()
@@ -299,9 +284,6 @@ XULTreeGridRowAccessible::Shutdown()
   ClearCache(mAccessibleCache);
   XULTreeItemAccessibleBase::Shutdown();
 }
-
-////////////////////////////////////////////////////////////////////////////////
-// XULTreeGridRowAccessible: Accessible implementation
 
 role
 XULTreeGridRowAccessible::NativeRole()

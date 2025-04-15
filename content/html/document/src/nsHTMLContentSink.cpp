@@ -10,7 +10,7 @@
  * Don't bother adding new stuff in this file.
  */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "nsContentSink.h"
 #include "nsCOMPtr.h"
@@ -60,7 +60,6 @@
 #include "nsIPrincipal.h"
 #include "nsTextFragment.h"
 #include "nsIScriptGlobalObject.h"
-#include "nsIScriptGlobalObjectOwner.h"
 
 #include "nsIParserService.h"
 
@@ -243,7 +242,7 @@ public:
 };
 
 nsresult
-NS_NewHTMLElement(nsIContent** aResult, already_AddRefed<nsINodeInfo> aNodeInfo,
+NS_NewHTMLElement(Element** aResult, already_AddRefed<nsINodeInfo> aNodeInfo,
                   FromParser aFromParser)
 {
   *aResult = nullptr;
@@ -707,27 +706,17 @@ IsScriptEnabled(nsIDocument *aDoc, nsIDocShell *aContainer)
   NS_ENSURE_TRUE(aDoc && aContainer, true);
 
   nsCOMPtr<nsIScriptGlobalObject> globalObject =
-    do_QueryInterface(aDoc->GetWindow());
+    do_QueryInterface(aDoc->GetInnerWindow());
 
   // Getting context is tricky if the document hasn't had its
   // GlobalObject set yet
   if (!globalObject) {
-    nsCOMPtr<nsIScriptGlobalObjectOwner> owner = do_GetInterface(aContainer);
-    NS_ENSURE_TRUE(owner, true);
-
-    globalObject = owner->GetScriptGlobalObject();
-    NS_ENSURE_TRUE(globalObject, true);
+    globalObject = aContainer->GetScriptGlobalObject();
   }
 
-  nsIScriptContext *scriptContext = globalObject->GetContext();
-  NS_ENSURE_TRUE(scriptContext, true);
-  JSContext *cx = scriptContext->GetNativeContext();
-  NS_ENSURE_TRUE(cx, true);
-
-  bool enabled = true;
-  nsContentUtils::GetSecurityManager()->
-    CanExecuteScripts(cx, aDoc->NodePrincipal(), &enabled);
-  return enabled;
+  NS_ENSURE_TRUE(globalObject && globalObject->GetGlobalJSObject(), true);
+  return nsContentUtils::GetSecurityManager()->
+           ScriptAllowed(globalObject->GetGlobalJSObject());
 }
 
 nsresult

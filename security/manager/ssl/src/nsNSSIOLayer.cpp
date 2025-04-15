@@ -65,8 +65,6 @@ namespace {
 
 NSSCleanupAutoPtrClass(void, PR_FREEIF)
 
-static NS_DEFINE_CID(kNSSComponentCID, NS_NSSCOMPONENT_CID);
-
 void
 getSiteKey(const nsACString & hostName, uint16_t port,
            /*out*/ nsCSubstring & key)
@@ -78,6 +76,37 @@ getSiteKey(const nsACString & hostName, uint16_t port,
 
 /* SSM_UserCertChoice: enum for cert choice info */
 typedef enum {ASK, AUTO} SSM_UserCertChoice;
+
+// Forward secrecy provides us with a proof of posession of the private key
+// from the server. Without of proof of posession of the private key of the
+// server, any MitM can force us to false start in a connection that the real
+// server never participates in, since with RSA key exchange a MitM can
+// complete the server's first round of the handshake without knowing the
+// server's public key This would be used, for example, to greatly accelerate
+// the attacks on RC4 or other attacks that allow a MitM to decrypt encrypted
+// data without having the server's private key. Without false start, such
+// attacks are naturally rate limited by network latency and may also be rate
+// limited explicitly by the server's DoS or other security mechanisms.
+// Further, because the server that has the private key must participate in the
+// handshake, the server could detect these kinds of attacks if they they are
+// repeated rapidly and/or frequently, by noticing lots of invalid or
+// incomplete handshakes.
+//
+// With this in mind, when we choose not to require forward secrecy (when the
+// pref's value is false), then we will still only false start for RSA key
+// exchange only if the most recent handshake we've previously done used RSA
+// key exchange. This way, we prevent any (EC)DHE-to-RSA downgrade attacks for
+// servers that consistently choose (EC)DHE key exchange. In order to prevent
+// downgrade from ECDHE_*_GCM cipher suites, we need to also consider downgrade
+// from TLS 1.2 to earlier versions (bug 861310).
+static const bool FALSE_START_REQUIRE_FORWARD_SECRECY_DEFAULT = true;
+
+// XXX(perf bug 940787): We currently require NPN because there is a very
+// high (perfect so far) correlation between servers that are false-start-
+// tolerant and servers that support NPN, according to Google. Without this, we
+// will run into interop issues with a small percentage of servers that stop
+// responding when we attempt to false start.
+static const bool FALSE_START_REQUIRE_NPN_DEFAULT = true;
 
 } // unnamed namespace
 
@@ -91,10 +120,11 @@ nsNSSSocketInfo::nsNSSSocketInfo(SharedSSLState& aState, uint32_t providerFlags)
     mSharedState(aState),
     mForSTARTTLS(false),
     mHandshakePending(true),
-    mHasCleartextPhase(false),
     mRememberClientAuthCertificate(false),
     mPreliminaryHandshakeDone(false),
     mNPNCompleted(false),
+    mFalseStartCallbackCalled(false),
+    mFalseStarted(false),
     mIsFullHandshake(false),
     mHandshakeCompleted(false),
     mJoined(false),
@@ -102,8 +132,6 @@ nsNSSSocketInfo::nsNSSSocketInfo(SharedSSLState& aState, uint32_t providerFlags)
     mNotedTimeUntilReady(false),
     mKEAUsed(nsISSLSocketControl::KEY_EXCHANGE_UNKNOWN),
     mKEAExpected(nsISSLSocketControl::KEY_EXCHANGE_UNKNOWN),
-    mSymmetricCipherUsed(nsISSLSocketControl::SYMMETRIC_CIPHER_UNKNOWN),
-    mSymmetricCipherExpected(nsISSLSocketControl::SYMMETRIC_CIPHER_UNKNOWN),
     mProviderFlags(providerFlags),
     mSocketCreationTimestamp(TimeStamp::Now()),
     mPlaintextBytesRead(0)
@@ -144,27 +172,6 @@ nsNSSSocketInfo::SetKEAExpected(int16_t aKea)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsNSSSocketInfo::GetSymmetricCipherUsed(int16_t *aSymmetricCipher)
-{
-  *aSymmetricCipher = mSymmetricCipherUsed;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNSSSocketInfo::GetSymmetricCipherExpected(int16_t *aSymmetricCipher)
-{
-  *aSymmetricCipher = mSymmetricCipherExpected;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNSSSocketInfo::SetSymmetricCipherExpected(int16_t aSymmetricCipher)
-{
-  mSymmetricCipherExpected = aSymmetricCipher;
-  return NS_OK;
-}
-
 NS_IMETHODIMP nsNSSSocketInfo::GetRememberClientAuthCertificate(bool *aRememberClientAuthCertificate)
 {
   NS_ENSURE_ARG_POINTER(aRememberClientAuthCertificate);
@@ -176,16 +183,6 @@ NS_IMETHODIMP nsNSSSocketInfo::SetRememberClientAuthCertificate(bool aRememberCl
 {
   mRememberClientAuthCertificate = aRememberClientAuthCertificate;
   return NS_OK;
-}
-
-void nsNSSSocketInfo::SetHasCleartextPhase(bool aHasCleartextPhase)
-{
-  mHasCleartextPhase = aHasCleartextPhase;
-}
-
-bool nsNSSSocketInfo::GetHasCleartextPhase()
-{
-  return mHasCleartextPhase;
 }
 
 NS_IMETHODIMP
@@ -258,16 +255,32 @@ nsNSSSocketInfo::NoteTimeUntilReady()
 }
 
 void
-nsNSSSocketInfo::SetHandshakeCompleted(bool aResumedSession)
+nsNSSSocketInfo::SetHandshakeCompleted()
 {
   if (!mHandshakeCompleted) {
+    enum HandshakeType {
+      Resumption = 1,
+      FalseStarted = 2,
+      ChoseNotToFalseStart = 3,
+      NotAllowedToFalseStart = 4,
+    };
+
+    HandshakeType handshakeType = !IsFullHandshake() ? Resumption
+                                : mFalseStarted ? FalseStarted
+                                : mFalseStartCallbackCalled ? ChoseNotToFalseStart
+                                : NotAllowedToFalseStart;
+
     // This will include TCP and proxy tunnel wait time
     Telemetry::AccumulateTimeDelta(Telemetry::SSL_TIME_UNTIL_HANDSHAKE_FINISHED,
                                    mSocketCreationTimestamp, TimeStamp::Now());
 
     // If the handshake is completed for the first time from just 1 callback
     // that means that TLS session resumption must have been used.
-    Telemetry::Accumulate(Telemetry::SSL_RESUMED_SESSION, aResumedSession);
+    Telemetry::Accumulate(Telemetry::SSL_RESUMED_SESSION,
+                          handshakeType == Resumption);
+    Telemetry::Accumulate(Telemetry::SSL_HANDSHAKE_TYPE, handshakeType);
+  }
+
 
     // Remove the plain text layer as it is not needed anymore.
     // The plain text layer is not always present - so its not a fatal error
@@ -285,7 +298,6 @@ nsNSSSocketInfo::SetHandshakeCompleted(bool aResumedSession)
            ("[%p] nsNSSSocketInfo::SetHandshakeCompleted\n", (void*)mFd));
 
     mIsFullHandshake = false; // reset for next handshake on this connection
-  }
 }
 
 void
@@ -370,18 +382,16 @@ nsNSSSocketInfo::JoinConnection(const nsACString & npnProtocol,
   return NS_OK;
 }
 
-nsresult
-nsNSSSocketInfo::GetForSTARTTLS(bool* aForSTARTTLS)
+bool
+nsNSSSocketInfo::GetForSTARTTLS()
 {
-  *aForSTARTTLS = mForSTARTTLS;
-  return NS_OK;
+  return mForSTARTTLS;
 }
 
-nsresult
+void
 nsNSSSocketInfo::SetForSTARTTLS(bool aForSTARTTLS)
 {
   mForSTARTTLS = aForSTARTTLS;
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -921,8 +931,9 @@ retryDueToTLSIntolerance(PRErrorCode err, nsNSSSocketInfo* socketInfo)
   // be used to conclude server is TLS intolerant.
   // Note this only happens during the initial SSL handshake.
 
-  uint32_t reason;
+  SSLVersionRange range = socketInfo->GetTLSVersionRange();
 
+  uint32_t reason;
   switch (err)
   {
     case SSL_ERROR_BAD_MAC_ALERT: reason = 1; break;
@@ -950,9 +961,16 @@ retryDueToTLSIntolerance(PRErrorCode err, nsNSSSocketInfo* socketInfo)
       // to retry without TLS.
 
       // Don't allow STARTTLS connections to fall back on connection resets or
-      // EOF.
+      // EOF. Also, don't fall back from TLS 1.0 to SSL 3.0 for connection
+      // resets, because connection resets have too many false positives,
+      // and we want to maximize how often we send TLS 1.0+ with extensions
+      // if at all reasonable. Unfortunately, it appears we have to allow
+      // fallback from TLS 1.2 and TLS 1.1 for connection resets due to bad
+      // servers and possibly bad intermediaries.
     conditional:
-      if (socketInfo->GetHasCleartextPhase()) {
+      if ((err == PR_CONNECT_RESET_ERROR &&
+           range.max <= SSL_LIBRARY_VERSION_TLS_1_0) ||
+          socketInfo->GetForSTARTTLS()) {
         return false;
       }
       break;
@@ -963,7 +981,6 @@ retryDueToTLSIntolerance(PRErrorCode err, nsNSSSocketInfo* socketInfo)
 
   Telemetry::ID pre;
   Telemetry::ID post;
-  SSLVersionRange range = socketInfo->GetTLSVersionRange();
   switch (range.max) {
     case SSL_LIBRARY_VERSION_TLS_1_2:
       pre = Telemetry::SSL_TLS12_INTOLERANCE_REASON_PRE;
@@ -1349,11 +1366,13 @@ PrefObserver::Observe(nsISupports *aSubject, const char *aTopic,
       Preferences::GetInt("security.ssl.warn_missing_rfc5746", &warnLevel);
       mOwner->setWarnLevelMissingRFC5746(warnLevel);
     } else if (prefName.Equals("security.ssl.false_start.require-npn")) {
-      Preferences::GetBool("security.ssl.false_start.require-npn",
-                           &mOwner->mFalseStartRequireNPN);
+      mOwner->mFalseStartRequireNPN =
+        Preferences::GetBool("security.ssl.false_start.require-npn",
+                             FALSE_START_REQUIRE_NPN_DEFAULT);
     } else if (prefName.Equals("security.ssl.false_start.require-forward-secrecy")) {
-      Preferences::GetBool("security.ssl.false_start.require-forward-secrecy",
-                           &mOwner->mFalseStartRequireForwardSecrecy);
+      mOwner->mFalseStartRequireForwardSecrecy =
+        Preferences::GetBool("security.ssl.false_start.require-forward-secrecy",
+                             FALSE_START_REQUIRE_FORWARD_SECRECY_DEFAULT);
     }
   }
   return NS_OK;
@@ -1454,10 +1473,12 @@ nsresult nsSSLIOLayerHelpers::Init()
   Preferences::GetInt("security.ssl.warn_missing_rfc5746", &warnLevel);
   setWarnLevelMissingRFC5746(warnLevel);
 
-  Preferences::GetBool("security.ssl.false_start.require-npn",
-                       &mFalseStartRequireNPN);
-  Preferences::GetBool("security.ssl.false_start.require-forward-secrecy",
-                       &mFalseStartRequireForwardSecrecy);
+  mFalseStartRequireNPN =
+    Preferences::GetBool("security.ssl.false_start.require-npn",
+                         FALSE_START_REQUIRE_NPN_DEFAULT);
+  mFalseStartRequireForwardSecrecy =
+    Preferences::GetBool("security.ssl.false_start.require-forward-secrecy",
+                         FALSE_START_REQUIRE_FORWARD_SECRECY_DEFAULT);
 
   mPrefObserver = new PrefObserver(this);
   Preferences::AddStrongObserver(mPrefObserver,
@@ -2058,9 +2079,9 @@ private:
  * - socket: SSL socket we're dealing with
  * - caNames: list of CA names
  * - pRetCert: returns a pointer to a pointer to a valid certificate if
- *			   successful; otherwise NULL
+ *			   successful; otherwise nullptr
  * - pRetKey: returns a pointer to a pointer to the corresponding key if
- *			  successful; otherwise NULL
+ *			  successful; otherwise nullptr
  * - returns: SECSuccess if successful; error code otherwise
  */
 SECStatus nsNSS_SSLGetClientAuthData(void* arg, PRFileDesc* socket,
@@ -2532,6 +2553,7 @@ nsSSLIOLayerImportFD(PRFileDesc *fd,
   }
   SSL_SetPKCS11PinArg(sslSock, (nsIInterfaceRequestor*)infoObject);
   SSL_HandshakeCallback(sslSock, HandshakeCallback, infoObject);
+  SSL_SetCanFalseStartCallback(sslSock, CanFalseStartCallback, infoObject);
 
   // Disable this hook if we connect anonymously. See bug 466080.
   uint32_t flags = 0;
@@ -2576,7 +2598,6 @@ nsSSLIOLayerSetOptions(PRFileDesc *fd, bool forSTARTTLS,
     if (SECSuccess != SSL_OptionSet(fd, SSL_SECURITY, false)) {
       return NS_ERROR_FAILURE;
     }
-    infoObject->SetHasCleartextPhase(true);
   }
 
   // Let's see if we're trying to connect to a site we know is

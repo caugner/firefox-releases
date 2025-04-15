@@ -41,6 +41,11 @@ namespace base {
 class Thread;
 }
 
+// Windows specific constant indicating the maximum number of touch points the
+// inject api will allow. This also sets the maximum numerical value for touch
+// ids we can use when injecting touch points on Windows.
+#define TOUCH_INJECT_MAX_POINTS 256
+
 class nsBaseWidget;
 
 class WidgetShutdownObserver MOZ_FINAL : public nsIObserver
@@ -320,14 +325,17 @@ protected:
                                                     uint32_t aAdditionalFlags)
   { return NS_ERROR_UNEXPECTED; }
 
+  virtual nsresult SynthesizeNativeTouchPoint(uint32_t aPointerId,
+                                              TouchPointerState aPointerState,
+                                              nsIntPoint aPointerScreenPoint,
+                                              double aPointerPressure,
+                                              uint32_t aPointerOrientation)
+  { return NS_ERROR_UNEXPECTED; }
+
+protected:
   // Stores the clip rectangles in aRects into mClipRects. Returns true
   // if the new rectangles are different from the old rectangles.
   bool StoreWindowClipRegion(const nsTArray<nsIntRect>& aRects);
-
-  // We don't want to accelerate small popup windows like menu, but we still
-  // want to accelerate xul panels that may contain arbitrarily complex content.
-  bool IsSmallPopup();
-
 
   virtual already_AddRefed<nsIWidget>
   AllocateChildPopupWidget()

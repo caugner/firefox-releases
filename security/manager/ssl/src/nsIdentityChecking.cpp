@@ -89,7 +89,7 @@ struct nsMyTrustedEVInfo
  *   Remove all whitespaces. If you use multiple lines, make sure that
  *   only the final line will be followed by a comma.
  * - the "Serial DER Base64" (as printed by pp)
- * - a NULL pointer value
+ * - a nullptr value
  *
  * After adding an entry, test it locally against the test site that
  * has been provided by the CA. Note that you must use a version of NSS
@@ -112,19 +112,25 @@ static struct nsMyTrustedEVInfo myTrustedEVInfos[] = {
    * as an existing entry, then please use the same oid_name.
    */
 #ifdef DEBUG
+  /* Debug EV certificates should all use the OID (repeating EV OID is OK):
+   * 1.3.6.1.4.1.13769.666.666.666.1.500.9.1.
+   * If you add or remove debug EV certs you must also modify IdentityInfoInit
+   * (there is another #ifdef DEBUG section there) so that the correct number of
+   * certs are skipped as these debug EV certs are NOT part of the default trust
+   * store.
+   */
   {
-    // This is the testing EV signature.
-    // C=US, ST=CA, L=Mountain View, O=Mozilla - EV debug test CA, OU=Security Engineering, CN=EV Testing (untrustworthy) CA/name=ev-test-ca/emailAddress=charlatan@testing.example.com
+    // This is the testing EV signature (xpcshell) (RSA)
+    // CN=XPCShell EV Testing (untrustworthy) CA,OU=Security Engineering,O=Mozilla - EV debug test CA,L=Mountain View,ST=CA,C=US"
     "1.3.6.1.4.1.13769.666.666.666.1.500.9.1",
     "DEBUGtesting EV OID",
     SEC_OID_UNKNOWN,
-    "AD:FE:0E:44:16:45:B0:17:46:8B:76:01:74:B7:FF:64:5A:EC:35:91",
-    "MIHhMQswCQYDVQQGEwJVUzELMAkGA1UECBMCQ0ExFjAUBgNVBAcTDU1vdW50YWlu"
-    "IFZpZXcxIzAhBgNVBAoTGk1vemlsbGEgLSBFViBkZWJ1ZyB0ZXN0IENBMR0wGwYD"
-    "VQQLExRTZWN1cml0eSBFbmdpbmVlcmluZzEmMCQGA1UEAxMdRVYgVGVzdGluZyAo"
-    "dW50cnVzdHdvcnRoeSkgQ0ExEzARBgNVBCkTCmV2LXRlc3QtY2ExLDAqBgkqhkiG"
-    "9w0BCQEWHWNoYXJsYXRhbkB0ZXN0aW5nLmV4YW1wbGUuY29t",
-    "AK/FPSJmJkky",
+    "9C:62:EF:DB:AE:F9:EB:36:58:FB:3B:D3:47:64:93:9D:86:29:6A:E0",
+    "MIGnMQswCQYDVQQGEwJVUzELMAkGA1UECAwCQ0ExFjAUBgNVBAcMDU1vdW50YWlu"
+    "IFZpZXcxIzAhBgNVBAoMGk1vemlsbGEgLSBFViBkZWJ1ZyB0ZXN0IENBMR0wGwYD"
+    "VQQLDBRTZWN1cml0eSBFbmdpbmVlcmluZzEvMC0GA1UEAwwmWFBDU2hlbGwgRVYg"
+    "VGVzdGluZyAodW50cnVzdHdvcnRoeSkgQ0E=",
+    "At+3zdo=",
     nullptr
   },
 #endif
@@ -1127,8 +1133,8 @@ nsNSSComponent::IdentityInfoInit()
     entry.cert = CERT_FindCertByIssuerAndSN(nullptr, &ias);
 
 #ifdef DEBUG
-    // The debug CA info is at position 0, and is NOT on the NSS root db
-    if (iEV != 0) {
+    // The debug CA cert is at positions 0, and is NOT in the NSS root db.
+    if (iEV > 0) {
        NS_ASSERTION(entry.cert, "Could not find EV root in NSS storage");
     }
 #endif
@@ -1281,10 +1287,12 @@ nsNSSCertificate::hasValidEVOidTag(SECOidTag &resultOidTag, bool &validEV)
   validEV = false;
   resultOidTag = SEC_OID_UNKNOWN;
 
+  uint32_t flags = mozilla::psm::CertVerifier::FLAG_LOCAL_ONLY |
+                   mozilla::psm::CertVerifier::FLAG_NO_DV_FALLBACK_FOR_EV;
   SECStatus rv = certVerifier->VerifyCert(mCert,
                                           certificateUsageSSLServer, PR_Now(),
                                           nullptr /* XXX pinarg*/,
-                                          0, nullptr, &resultOidTag);
+                                          flags, nullptr, &resultOidTag);
 
   if (rv != SECSuccess) {
     resultOidTag = SEC_OID_UNKNOWN;

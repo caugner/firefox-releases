@@ -5,9 +5,6 @@
 let Ci = Components.interfaces;
 let Cu = Components.utils;
 
-const ROLE_ENTRY = Ci.nsIAccessibleRole.ROLE_ENTRY;
-const ROLE_INTERNAL_FRAME = Ci.nsIAccessibleRole.ROLE_INTERNAL_FRAME;
-
 const MOVEMENT_GRANULARITY_CHARACTER = 1;
 const MOVEMENT_GRANULARITY_WORD = 2;
 const MOVEMENT_GRANULARITY_PARAGRAPH = 8;
@@ -25,6 +22,8 @@ XPCOMUtils.defineLazyModuleGetter(this, 'EventManager',
   'resource://gre/modules/accessibility/EventManager.jsm');
 XPCOMUtils.defineLazyModuleGetter(this, 'ObjectWrapper',
   'resource://gre/modules/ObjectWrapper.jsm');
+XPCOMUtils.defineLazyModuleGetter(this, 'Roles',
+  'resource://gre/modules/accessibility/Constants.jsm');
 
 Logger.debug('content-script.js');
 
@@ -137,7 +136,7 @@ function forwardToParent(aMessage) {
 function forwardToChild(aMessage, aListener, aVCPosition) {
   let acc = aVCPosition || Utils.getVirtualCursor(content.document).position;
 
-  if (!Utils.isAliveAndVisible(acc) || acc.role != ROLE_INTERNAL_FRAME) {
+  if (!Utils.isAliveAndVisible(acc) || acc.role != Roles.INTERNAL_FRAME) {
     return false;
   }
 
@@ -165,7 +164,7 @@ function activateCurrent(aMessage) {
   Logger.debug('activateCurrent');
   function activateAccessible(aAccessible) {
     if (aMessage.json.activateIfKey &&
-        aAccessible.role != Ci.nsIAccessibleRole.ROLE_KEY) {
+        aAccessible.role != Roles.KEY) {
       // Only activate keys, don't do anything on other objects.
       return;
     }
@@ -204,6 +203,12 @@ function activateCurrent(aMessage) {
       dispatchMouseEvent('mousedown');
       dispatchMouseEvent('mouseup');
     }
+
+    if (aAccessible.role !== Roles.KEY) {
+      // Keys will typically have a sound of their own.
+      sendAsyncMessage('AccessFu:Present',
+                       Presentation.actionInvoked(aAccessible, 'click'));
+    }
   }
 
   function moveCaretTo(aAccessible, aOffset) {
@@ -219,7 +224,7 @@ function activateCurrent(aMessage) {
   }
 
   let focusedAcc = Utils.AccRetrieval.getAccessibleFor(content.document.activeElement);
-  if (focusedAcc && focusedAcc.role === ROLE_ENTRY) {
+  if (focusedAcc && focusedAcc.role === Roles.ENTRY) {
     moveCaretTo(focusedAcc, aMessage.json.offset);
     return;
   }
@@ -331,6 +336,23 @@ function scroll(aMessage) {
   }
 }
 
+function adjustRange(aMessage) {
+  function sendUpDownKey(aAccessible) {
+    let evt = content.document.createEvent('KeyboardEvent');
+    let keycode = aMessage.json.direction == 'forward' ?
+      content.KeyEvent.DOM_VK_DOWN : content.KeyEvent.DOM_VK_UP;
+    evt.initKeyEvent(
+      "keypress", false, true, null, false, false, false, false, keycode, 0);
+    if (aAccessible.DOMNode) {
+      aAccessible.DOMNode.dispatchEvent(evt);
+    }
+  }
+
+  let position = Utils.getVirtualCursor(content.document).position;
+  if (!forwardToChild(aMessage, adjustRange, position)) {
+    sendUpDownKey(position);
+  }
+}
 addMessageListener(
   'AccessFu:Start',
   function(m) {
@@ -344,6 +366,7 @@ addMessageListener(
     addMessageListener('AccessFu:Activate', activateCurrent);
     addMessageListener('AccessFu:ContextMenu', activateContextMenu);
     addMessageListener('AccessFu:Scroll', scroll);
+    addMessageListener('AccessFu:AdjustRange', adjustRange);
     addMessageListener('AccessFu:MoveCaret', moveCaret);
     addMessageListener('AccessFu:MoveByGranularity', moveByGranularity);
 

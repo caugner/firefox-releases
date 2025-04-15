@@ -5,8 +5,11 @@
 
 #include "nsPluginArray.h"
 
+#include "mozilla/Preferences.h"
 #include "mozilla/dom/PluginArrayBinding.h"
 #include "mozilla/dom/PluginBinding.h"
+
+#include "nsCharSeparatedTokenizer.h"
 #include "nsMimeTypeArray.h"
 #include "Navigator.h"
 #include "nsIDocShell.h"
@@ -63,24 +66,36 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsPluginArray)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
 NS_INTERFACE_MAP_END
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_2(nsPluginArray,
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_3(nsPluginArray,
                                         mWindow,
-                                        mPlugins)
+                                        mPlugins,
+                                        mHiddenPlugins)
+
+static void
+GetPluginMimeTypes(const nsTArray<nsRefPtr<nsPluginElement> >& aPlugins,
+                   nsTArray<nsRefPtr<nsMimeType> >& aMimeTypes)
+{
+  for (uint32_t i = 0; i < aPlugins.Length(); ++i) {
+    nsPluginElement *plugin = aPlugins[i];
+    aMimeTypes.AppendElements(plugin->MimeTypes());
+  }
+}
 
 void
-nsPluginArray::GetPlugins(nsTArray<nsRefPtr<nsPluginElement> >& aPlugins)
+nsPluginArray::GetMimeTypes(nsTArray<nsRefPtr<nsMimeType> >& aMimeTypes,
+                            nsTArray<nsRefPtr<nsMimeType> >& aHiddenMimeTypes)
 {
-  aPlugins.Clear();
+  aMimeTypes.Clear();
+  aHiddenMimeTypes.Clear();
 
   if (!AllowPlugins()) {
     return;
   }
 
-  if (mPlugins.IsEmpty()) {
-    EnsurePlugins();
-  }
+  EnsurePlugins();
 
-  aPlugins = mPlugins;
+  GetPluginMimeTypes(mPlugins, aMimeTypes);
+  GetPluginMimeTypes(mHiddenPlugins, aHiddenMimeTypes);
 }
 
 nsPluginElement*
@@ -120,12 +135,14 @@ nsPluginArray::Refresh(bool aReloadDocuments)
     // happens, and therefore the lengths will be in sync only when
     // the both arrays contain the same plugin tags (though as
     // different types).
-    if (newPluginTags.Length() == mPlugins.Length()) {
+    uint32_t pluginCount = mPlugins.Length() + mHiddenPlugins.Length();
+    if (newPluginTags.Length() == pluginCount) {
       return;
     }
   }
 
   mPlugins.Clear();
+  mHiddenPlugins.Clear();
 
   nsCOMPtr<nsIDOMNavigator> navigator;
   mWindow->GetNavigator(getter_AddRefs(navigator));
@@ -151,9 +168,7 @@ nsPluginArray::IndexedGetter(uint32_t aIndex, bool &aFound)
     return nullptr;
   }
 
-  if (mPlugins.IsEmpty()) {
-    EnsurePlugins();
-  }
+  EnsurePlugins();
 
   aFound = aIndex < mPlugins.Length();
 
@@ -170,6 +185,23 @@ nsPluginArray::Invalidate()
   }
 }
 
+static nsPluginElement*
+FindPlugin(const nsTArray<nsRefPtr<nsPluginElement> >& aPlugins,
+           const nsAString& aName)
+{
+  for (uint32_t i = 0; i < aPlugins.Length(); ++i) {
+    nsAutoString pluginName;
+    nsPluginElement* plugin = aPlugins[i];
+    plugin->GetName(pluginName);
+
+    if (pluginName.Equals(aName)) {
+      return plugin;
+    }
+  }
+
+  return nullptr;
+}
+
 nsPluginElement*
 nsPluginArray::NamedGetter(const nsAString& aName, bool &aFound)
 {
@@ -179,23 +211,15 @@ nsPluginArray::NamedGetter(const nsAString& aName, bool &aFound)
     return nullptr;
   }
 
-  if (mPlugins.IsEmpty()) {
-    EnsurePlugins();
+  EnsurePlugins();
+
+  nsPluginElement* plugin = FindPlugin(mPlugins, aName);
+  if (!plugin) {
+    plugin = FindPlugin(mHiddenPlugins, aName);
   }
 
-  for (uint32_t i = 0; i < mPlugins.Length(); ++i) {
-    nsAutoString pluginName;
-    nsPluginElement* plugin = mPlugins[i];
-    plugin->GetName(pluginName);
-
-    if (pluginName.Equals(aName)) {
-      aFound = true;
-
-      return plugin;
-    }
-  }
-
-  return nullptr;
+  aFound = (plugin != nullptr);
+  return plugin;
 }
 
 uint32_t
@@ -205,9 +229,7 @@ nsPluginArray::Length()
     return 0;
   }
 
-  if (mPlugins.IsEmpty()) {
-    EnsurePlugins();
-  }
+  EnsurePlugins();
 
   return mPlugins.Length();
 }
@@ -247,24 +269,75 @@ nsPluginArray::AllowPlugins() const
   return docShell && docShell->PluginsAllowedInCurrentDoc();
 }
 
+static bool
+HasStringPrefix(const nsCString& str, const nsACString& prefix) {
+  return str.Compare(prefix.BeginReading(), false, prefix.Length()) == 0;
+}
+
+static bool
+IsPluginEnumerable(const nsTArray<nsCString>& enumerableNames,
+                   const nsPluginTag* pluginTag)
+{
+  const nsCString& pluginName = pluginTag->mName;
+
+  const uint32_t length = enumerableNames.Length();
+  for (uint32_t i = 0; i < length; i++) {
+    const nsCString& name = enumerableNames[i];
+    if (HasStringPrefix(pluginName, name)) {
+      return true; // don't hide plugin
+    }
+  }
+
+  return false; // hide plugin!
+}
+
 void
 nsPluginArray::EnsurePlugins()
 {
+  if (!mPlugins.IsEmpty() || !mHiddenPlugins.IsEmpty()) {
+    // We already have an array of plugin elements.
+    return;
+  }
+
   nsRefPtr<nsPluginHost> pluginHost = nsPluginHost::GetInst();
-
-  if (!mPlugins.IsEmpty() || !pluginHost) {
-    // We already have an array of plugin elements, or no plugin host
-
+  if (!pluginHost) {
+    // We have no plugin host.
     return;
   }
 
   nsTArray<nsRefPtr<nsPluginTag> > pluginTags;
   pluginHost->GetPlugins(pluginTags);
 
+  nsTArray<nsCString> enumerableNames;
+
+  const nsAdoptingCString& enumerableNamesPref =
+      Preferences::GetCString("plugins.enumerable_names");
+
+  bool disablePluginHiding = !enumerableNamesPref ||
+                             enumerableNamesPref.EqualsLiteral("*");
+
+  if (!disablePluginHiding) {
+    nsCCharSeparatedTokenizer tokens(enumerableNamesPref, ',');
+    while (tokens.hasMoreTokens()) {
+      const nsCSubstring& token = tokens.nextToken();
+      if (!token.IsEmpty()) {
+        enumerableNames.AppendElement(token);
+      }
+    }
+  }
+
   // need to wrap each of these with a nsPluginElement, which is
   // scriptable.
   for (uint32_t i = 0; i < pluginTags.Length(); ++i) {
-    mPlugins.AppendElement(new nsPluginElement(mWindow, pluginTags[i]));
+    nsPluginTag* pluginTag = pluginTags[i];
+
+    // Add the plugin to the list of hidden plugins or non-hidden plugins?
+    nsTArray<nsRefPtr<nsPluginElement> >& pluginArray =
+        (disablePluginHiding || IsPluginEnumerable(enumerableNames, pluginTag))
+        ? mPlugins
+        : mHiddenPlugins;
+
+    pluginArray.AppendElement(new nsPluginElement(mWindow, pluginTag));
   }
 }
 
@@ -327,7 +400,7 @@ nsPluginElement::GetName(nsString& retval) const
 nsMimeType*
 nsPluginElement::Item(uint32_t aIndex)
 {
-  EnsureMimeTypes();
+  EnsurePluginMimeTypes();
 
   return mMimeTypes.SafeElementAt(aIndex);
 }
@@ -342,7 +415,7 @@ nsPluginElement::NamedItem(const nsAString& aName)
 nsMimeType*
 nsPluginElement::IndexedGetter(uint32_t aIndex, bool &aFound)
 {
-  EnsureMimeTypes();
+  EnsurePluginMimeTypes();
 
   aFound = aIndex < mMimeTypes.Length();
 
@@ -352,7 +425,7 @@ nsPluginElement::IndexedGetter(uint32_t aIndex, bool &aFound)
 nsMimeType*
 nsPluginElement::NamedGetter(const nsAString& aName, bool &aFound)
 {
-  EnsureMimeTypes();
+  EnsurePluginMimeTypes();
 
   aFound = false;
 
@@ -370,7 +443,7 @@ nsPluginElement::NamedGetter(const nsAString& aName, bool &aFound)
 uint32_t
 nsPluginElement::Length()
 {
-  EnsureMimeTypes();
+  EnsurePluginMimeTypes();
 
   return mMimeTypes.Length();
 }
@@ -378,7 +451,7 @@ nsPluginElement::Length()
 void
 nsPluginElement::GetSupportedNames(nsTArray< nsString >& retval)
 {
-  EnsureMimeTypes();
+  EnsurePluginMimeTypes();
 
   for (uint32_t i = 0; i < mMimeTypes.Length(); ++i) {
     retval.AppendElement(mMimeTypes[i]->Type());
@@ -388,13 +461,13 @@ nsPluginElement::GetSupportedNames(nsTArray< nsString >& retval)
 nsTArray<nsRefPtr<nsMimeType> >&
 nsPluginElement::MimeTypes()
 {
-  EnsureMimeTypes();
+  EnsurePluginMimeTypes();
 
   return mMimeTypes;
 }
 
 void
-nsPluginElement::EnsureMimeTypes()
+nsPluginElement::EnsurePluginMimeTypes()
 {
   if (!mMimeTypes.IsEmpty()) {
     return;

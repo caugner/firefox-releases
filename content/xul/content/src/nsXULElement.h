@@ -396,7 +396,7 @@ public:
 
     virtual nsIContent *GetBindingParent() const MOZ_OVERRIDE;
     virtual bool IsNodeOfType(uint32_t aFlags) const MOZ_OVERRIDE;
-    virtual bool IsFocusable(int32_t *aTabIndex = nullptr, bool aWithMouse = false) MOZ_OVERRIDE;
+    virtual bool IsFocusableInternal(int32_t* aTabIndex, bool aWithMouse) MOZ_OVERRIDE;
 
     NS_IMETHOD WalkContentStyleRules(nsRuleWalker* aRuleWalker) MOZ_OVERRIDE;
     virtual nsChangeHint GetAttributeChangeHint(const nsIAtom* aAttribute,
@@ -695,7 +695,7 @@ protected:
     bool BoolAttrIsTrue(nsIAtom* aName) const;
 
     friend nsresult
-    NS_NewXULElement(nsIContent** aResult, nsINodeInfo *aNodeInfo);
+    NS_NewXULElement(mozilla::dom::Element** aResult, nsINodeInfo *aNodeInfo);
     friend void
     NS_TrustedNewXULElement(nsIContent** aResult, nsINodeInfo *aNodeInfo);
 

@@ -23,7 +23,7 @@
 // BEGIN ProfileEntry
 
 ProfileEntry::ProfileEntry()
-  : mTagData(NULL)
+  : mTagData(nullptr)
   , mTagName(0)
 { }
 
@@ -387,6 +387,13 @@ void ThreadProfile::BuildJSObject(Builder& b,
         {
           if (sample) {
             b.DefineProperty(sample, "responsiveness", entry.mTagFloat);
+          }
+        }
+        break;
+      case 'p':
+        {
+          if (sample) {
+            b.DefineProperty(sample, "power", entry.mTagFloat);
           }
         }
         break;

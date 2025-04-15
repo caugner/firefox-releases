@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */ 
+/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,7 +7,7 @@
  * Implementation of nsIFile for "unixy" systems.
  */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 
 #include <sys/types.h>
@@ -243,8 +243,10 @@ nsLocalFile::nsLocalFileConstructor(nsISupports *outer,
                                     const nsIID &aIID,
                                     void **aInstancePtr)
 {
-    NS_ENSURE_ARG_POINTER(aInstancePtr);
-    NS_ENSURE_NO_AGGREGATION(outer);
+    if (NS_WARN_IF(!aInstancePtr))
+        return NS_ERROR_INVALID_ARG;
+    if (NS_WARN_IF(outer))
+        return NS_ERROR_NO_AGGREGATION;
 
     *aInstancePtr = nullptr;
 
@@ -816,7 +818,21 @@ nsLocalFile::CopyToNative(nsIFile *newParent, const nsACString &newName)
 #endif
         char buf[BUFSIZ];
         int32_t bytesRead;
-        
+
+        // record PR_Write() error for better error message later.
+        nsresult saved_write_error = NS_OK;
+        nsresult saved_read_error = NS_OK;
+        nsresult saved_read_close_error = NS_OK;
+        nsresult saved_write_close_error = NS_OK;
+
+        // DONE: Does PR_Read() return bytesRead < 0 for error?
+        // Yes., The errors from PR_Read are not so common and
+        // the value may not have correspondence in NS_ERROR_*, but
+        // we do catch it still, immediately after while() loop.
+        // We can differentiate errors pf PR_Read and PR_Write by
+        // looking at saved_write_error value. If PR_Write error occurs (and not
+        // PR_Read() error), save_write_error is not NS_OK.
+
         while ((bytesRead = PR_Read(oldFD, buf, BUFSIZ)) > 0) {
 #ifdef DEBUG_blizzard
             totalRead += bytesRead;
@@ -825,6 +841,7 @@ nsLocalFile::CopyToNative(nsIFile *newParent, const nsACString &newName)
             // PR_Write promises never to do a short write
             int32_t bytesWritten = PR_Write(newFD, buf, bytesRead);
             if (bytesWritten < 0) {
+                saved_write_error = NSRESULT_FOR_ERRNO();
                 bytesRead = -1;
                 break;
             }
@@ -835,18 +852,62 @@ nsLocalFile::CopyToNative(nsIFile *newParent, const nsACString &newName)
 #endif
         }
 
+        // TODO/FIXME: If CIFS (and NFS?) may force read/write to return EINTR,
+        // we are better off to prepare for retrying. But we need confirmation if
+        // EINTR is returned.
+
+        // Record error if PR_Read() failed.
+        // Must be done before any other I/O which may reset errno.
+        if ( (bytesRead < 0) && (saved_write_error == NS_OK)) {
+            saved_read_error = NSRESULT_FOR_ERRNO();
+        }
+
 #ifdef DEBUG_blizzard
         printf("read %d bytes, wrote %d bytes\n",
                  totalRead, totalWritten);
 #endif
 
-        // close the files
-        PR_Close(newFD);
-        PR_Close(oldFD);
+        // DONE: Errors of close can occur.  Read man page of
+        // close(2);
+        // This is likely to happen if the file system is remote file
+        // system (NFS, CIFS, etc.) and network outage occurs.
+        // At least, we should tell the user that filesystem/disk is
+        // hosed (possibly due to network error, hard disk failure,
+        // etc.) so that users can take remedial action.
 
-        // check for read (or write) error after cleaning up
-        if (bytesRead < 0) 
-            return NS_ERROR_OUT_OF_MEMORY;
+        // close the files
+        if (PR_Close(newFD) < 0) {
+            saved_write_close_error = NSRESULT_FOR_ERRNO();
+#if DEBUG
+            // This error merits printing.
+            fprintf(stderr, "ERROR: PR_Close(newFD) returned error. errno = %d\n", errno);
+#endif
+        }
+
+        if (PR_Close(oldFD) < 0) {
+            saved_read_close_error = NSRESULT_FOR_ERRNO();
+#if DEBUG
+            fprintf(stderr, "ERROR: PR_Close(oldFD) returned error. errno = %d\n", errno);
+#endif
+        }
+
+        // Let us report the failure to write and read.
+        // check for write/read error after cleaning up
+        if (bytesRead < 0) {
+            if (saved_write_error != NS_OK)
+                return saved_write_error;
+            else if (saved_read_error != NS_OK)
+                return saved_read_error;
+#if DEBUG
+            else                // sanity check. Die and debug.
+                MOZ_ASSERT(0);
+#endif
+        }
+
+        if (saved_write_close_error != NS_OK)
+            return saved_write_close_error;
+        if (saved_read_close_error != NS_OK)
+            return saved_read_close_error;
     }
     return rv;
 }
@@ -946,7 +1007,8 @@ NS_IMETHODIMP
 nsLocalFile::GetLastModifiedTime(PRTime *aLastModTime)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG(aLastModTime);
+    if (NS_WARN_IF(!aLastModTime))
+        return NS_ERROR_INVALID_ARG;
 
     PRFileInfo64 info;
     if (PR_GetFileInfo64(mPath.get(), &info) != PR_SUCCESS)
@@ -984,7 +1046,8 @@ NS_IMETHODIMP
 nsLocalFile::GetLastModifiedTimeOfLink(PRTime *aLastModTimeOfLink)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG(aLastModTimeOfLink);
+    if (NS_WARN_IF(!aLastModTimeOfLink))
+        return NS_ERROR_INVALID_ARG;
 
     struct STAT sbuf;
     if (LSTAT(mPath.get(), &sbuf) == -1)
@@ -1013,7 +1076,8 @@ nsLocalFile::SetLastModifiedTimeOfLink(PRTime aLastModTimeOfLink)
 NS_IMETHODIMP
 nsLocalFile::GetPermissions(uint32_t *aPermissions)
 {
-    NS_ENSURE_ARG(aPermissions);
+    if (NS_WARN_IF(!aPermissions))
+        return NS_ERROR_INVALID_ARG;
     ENSURE_STAT_CACHE();
     *aPermissions = NORMALIZE_PERMS(mCachedStat.st_mode);
     return NS_OK;
@@ -1023,7 +1087,8 @@ NS_IMETHODIMP
 nsLocalFile::GetPermissionsOfLink(uint32_t *aPermissionsOfLink)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG(aPermissionsOfLink);
+    if (NS_WARN_IF(!aPermissionsOfLink))
+        return NS_ERROR_INVALID_ARG;
 
     struct STAT sbuf;
     if (LSTAT(mPath.get(), &sbuf) == -1)
@@ -1068,7 +1133,8 @@ nsLocalFile::SetPermissionsOfLink(uint32_t aPermissions)
 NS_IMETHODIMP
 nsLocalFile::GetFileSize(int64_t *aFileSize)
 {
-    NS_ENSURE_ARG_POINTER(aFileSize);
+    if (NS_WARN_IF(!aFileSize))
+        return NS_ERROR_INVALID_ARG;
     *aFileSize = 0;
     ENSURE_STAT_CACHE();
 
@@ -1117,7 +1183,8 @@ NS_IMETHODIMP
 nsLocalFile::GetFileSizeOfLink(int64_t *aFileSize)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG(aFileSize);
+    if (NS_WARN_IF(!aFileSize))
+        return NS_ERROR_INVALID_ARG;
 
     struct STAT sbuf;
     if (LSTAT(mPath.get(), &sbuf) == -1)
@@ -1182,7 +1249,8 @@ GetDeviceName(int deviceMajor, int deviceMinor, nsACString &deviceName)
 NS_IMETHODIMP
 nsLocalFile::GetDiskSpaceAvailable(int64_t *aDiskSpaceAvailable)
 {
-    NS_ENSURE_ARG_POINTER(aDiskSpaceAvailable);
+    if (NS_WARN_IF(!aDiskSpaceAvailable))
+        return NS_ERROR_INVALID_ARG;
 
     // These systems have the operations necessary to check disk space.
 
@@ -1267,7 +1335,8 @@ NS_IMETHODIMP
 nsLocalFile::GetParent(nsIFile **aParent)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(aParent);
+    if (NS_WARN_IF(!aParent))
+        return NS_ERROR_INVALID_ARG;
     *aParent = nullptr;
 
     // if '/' we are at the top of the volume, return null
@@ -1313,7 +1382,8 @@ NS_IMETHODIMP
 nsLocalFile::Exists(bool *_retval)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
 
     *_retval = (access(mPath.get(), F_OK) == 0);
     return NS_OK;
@@ -1324,7 +1394,8 @@ NS_IMETHODIMP
 nsLocalFile::IsWritable(bool *_retval)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
 
     *_retval = (access(mPath.get(), W_OK) == 0);
     if (*_retval || errno == EACCES)
@@ -1336,7 +1407,8 @@ NS_IMETHODIMP
 nsLocalFile::IsReadable(bool *_retval)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
 
     *_retval = (access(mPath.get(), R_OK) == 0);
     if (*_retval || errno == EACCES)
@@ -1348,7 +1420,8 @@ NS_IMETHODIMP
 nsLocalFile::IsExecutable(bool *_retval)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
 
     // Check extension (bug 663899). On certain platforms, the file
     // extension may cause the OS to treat it as executable regardless of
@@ -1437,7 +1510,8 @@ nsLocalFile::IsExecutable(bool *_retval)
 NS_IMETHODIMP
 nsLocalFile::IsDirectory(bool *_retval)
 {
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
     *_retval = false;
     ENSURE_STAT_CACHE();
     *_retval = S_ISDIR(mCachedStat.st_mode);
@@ -1447,7 +1521,8 @@ nsLocalFile::IsDirectory(bool *_retval)
 NS_IMETHODIMP
 nsLocalFile::IsFile(bool *_retval)
 {
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
     *_retval = false;
     ENSURE_STAT_CACHE();
     *_retval = S_ISREG(mCachedStat.st_mode);
@@ -1457,7 +1532,8 @@ nsLocalFile::IsFile(bool *_retval)
 NS_IMETHODIMP
 nsLocalFile::IsHidden(bool *_retval)
 {
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
     nsACString::const_iterator begin, end;
     LocateNativeLeafName(begin, end);
     *_retval = (*begin == '.');
@@ -1467,7 +1543,8 @@ nsLocalFile::IsHidden(bool *_retval)
 NS_IMETHODIMP
 nsLocalFile::IsSymlink(bool *_retval)
 {
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
     CHECK_mPath();
 
     struct STAT symStat;
@@ -1480,7 +1557,8 @@ nsLocalFile::IsSymlink(bool *_retval)
 NS_IMETHODIMP
 nsLocalFile::IsSpecial(bool *_retval)
 {
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
     ENSURE_STAT_CACHE();
     *_retval = S_ISCHR(mCachedStat.st_mode)      ||
                  S_ISBLK(mCachedStat.st_mode)    ||
@@ -1495,8 +1573,10 @@ nsLocalFile::IsSpecial(bool *_retval)
 NS_IMETHODIMP
 nsLocalFile::Equals(nsIFile *inFile, bool *_retval)
 {
-    NS_ENSURE_ARG(inFile);
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!inFile))
+        return NS_ERROR_INVALID_ARG;
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
     *_retval = false;
 
     nsAutoCString inPath;
@@ -1514,8 +1594,10 @@ NS_IMETHODIMP
 nsLocalFile::Contains(nsIFile *inFile, bool recur, bool *_retval)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG(inFile);
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!inFile))
+        return NS_ERROR_INVALID_ARG;
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
 
     nsAutoCString inPath;
     nsresult rv;
@@ -1651,7 +1733,8 @@ NS_IMETHODIMP
 nsLocalFile::Load(PRLibrary **_retval)
 {
     CHECK_mPath();
-    NS_ENSURE_ARG_POINTER(_retval);
+    if (NS_WARN_IF(!_retval))
+        return NS_ERROR_INVALID_ARG;
 
 #ifdef NS_BUILD_REFCNT_LOGGING
     nsTraceRefcntImpl::SetActivityIsLegal(false);
@@ -1748,6 +1831,8 @@ nsLocalFile::Reveal()
         else 
             /* Fallback to GnomeVFS */
             return gnomevfs->ShowURIForInput(mPath);
+    } else if (giovfs && NS_SUCCEEDED(giovfs->OrgFreedesktopFileManager1ShowItems(mPath))) {
+        return NS_OK;
     } else {
         nsCOMPtr<nsIFile> parentDir;
         nsAutoCString dirPath;
@@ -1809,8 +1894,7 @@ nsLocalFile::Launch()
 
     nsDependentCString fileUri = NS_LITERAL_CSTRING("file://");
     fileUri.Append(mPath);
-    mozilla::AndroidBridge* bridge = mozilla::AndroidBridge::Bridge();
-    return bridge->OpenUriExternal(NS_ConvertUTF8toUTF16(fileUri), NS_ConvertUTF8toUTF16(type)) ? NS_OK : NS_ERROR_FAILURE;
+    return GeckoAppShell::OpenUriExternal(NS_ConvertUTF8toUTF16(fileUri), NS_ConvertUTF8toUTF16(type)) ? NS_OK : NS_ERROR_FAILURE;
 #elif defined(MOZ_WIDGET_COCOA)
     CFURLRef url;
     if (NS_SUCCEEDED(GetCFURL(&url))) {
@@ -2060,7 +2144,8 @@ nsLocalFile::InitWithCFURL(CFURLRef aCFURL)
 NS_IMETHODIMP
 nsLocalFile::InitWithFSRef(const FSRef *aFSRef)
 {
-  NS_ENSURE_ARG(aFSRef);
+  if (NS_WARN_IF(!aFSRef))
+      return NS_ERROR_INVALID_ARG;
 
   CFURLRef newURLRef = ::CFURLCreateFromFSRef(kCFAllocatorDefault, aFSRef);
   if (newURLRef) {
@@ -2090,7 +2175,8 @@ nsLocalFile::GetCFURL(CFURLRef *_retval)
 NS_IMETHODIMP
 nsLocalFile::GetFSRef(FSRef *_retval)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
+  if (NS_WARN_IF(!_retval))
+      return NS_ERROR_INVALID_ARG;
 
   nsresult rv = NS_ERROR_FAILURE;
 
@@ -2108,7 +2194,8 @@ nsLocalFile::GetFSRef(FSRef *_retval)
 NS_IMETHODIMP
 nsLocalFile::GetFSSpec(FSSpec *_retval)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
+  if (NS_WARN_IF(!_retval))
+      return NS_ERROR_INVALID_ARG;
 
   FSRef fsRef;
   nsresult rv = GetFSRef(&fsRef);
@@ -2123,7 +2210,8 @@ nsLocalFile::GetFSSpec(FSSpec *_retval)
 NS_IMETHODIMP
 nsLocalFile::GetFileSizeWithResFork(int64_t *aFileSizeWithResFork)
 {
-  NS_ENSURE_ARG_POINTER(aFileSizeWithResFork);
+  if (NS_WARN_IF(!aFileSizeWithResFork))
+      return NS_ERROR_INVALID_ARG;
 
   FSRef fsRef;
   nsresult rv = GetFSRef(&fsRef);
@@ -2282,7 +2370,8 @@ nsLocalFile::OpenDocWithApp(nsIFile *aAppToOpenWith, bool aLaunchInBackground)
 NS_IMETHODIMP
 nsLocalFile::IsPackage(bool *_retval)
 {
-  NS_ENSURE_ARG(_retval);
+  if (NS_WARN_IF(!_retval))
+      return NS_ERROR_INVALID_ARG;
   *_retval = false;
 
   CFURLRef url;
@@ -2353,7 +2442,8 @@ NS_IMETHODIMP
 nsLocalFile::GetBundleContentsLastModifiedTime(int64_t *aLastModTime)
 {
   CHECK_mPath();
-  NS_ENSURE_ARG_POINTER(aLastModTime);
+  if (NS_WARN_IF(!aLastModTime))
+      return NS_ERROR_INVALID_ARG;
 
   bool isPackage = false;
   nsresult rv = IsPackage(&isPackage);
@@ -2379,7 +2469,8 @@ nsLocalFile::GetBundleContentsLastModifiedTime(int64_t *aLastModTime)
 
 NS_IMETHODIMP nsLocalFile::InitWithFile(nsIFile *aFile)
 {
-  NS_ENSURE_ARG(aFile);
+  if (NS_WARN_IF(!aFile))
+      return NS_ERROR_INVALID_ARG;
 
   nsAutoCString nativePath;
   nsresult rv = aFile->GetNativePath(nativePath);

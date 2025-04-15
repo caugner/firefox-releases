@@ -6,8 +6,6 @@
 
 XPIDL_MODULE = 'necko_datachan'
 
-MODULE = 'necko'
-
 EXPORTS.mozilla.net += [
     'DataChannel.h',
     'DataChannelListener.h',
@@ -20,9 +18,24 @@ SOURCES += [
 
 FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
-LIBRARY_NAME = 'nkdatachan_s'
-
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'necko'
+
+LOCAL_INCLUDES += [
+    '../src',
+    '/media/mtransport',
+    '/media/webrtc/trunk/third_party/libjingle/source',
+    '/xpcom/ds',
+]
+
+DEFINES['INET'] = 1
+DEFINES['SCTP_DEBUG'] = 1
+
+if CONFIG['OS_TARGET'] != 'Android':
+    DEFINES['INET6'] = 1
+
+if CONFIG['OS_TARGET'] == 'WINNT':
+    DEFINES['__Userspace_os_Windows'] = 1
+else:
+    DEFINES['__Userspace_os_%s' % CONFIG['OS_TARGET']] = 1

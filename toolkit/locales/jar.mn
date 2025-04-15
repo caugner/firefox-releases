@@ -32,6 +32,7 @@
   locale/@AB_CD@/global/datetimepicker.dtd              (%chrome/global/datetimepicker.dtd)
   locale/@AB_CD@/global/dateFormat.properties           (%chrome/global/dateFormat.properties)
   locale/@AB_CD@/global/devtools/debugger.properties    (%chrome/global/devtools/debugger.properties)
+  locale/@AB_CD@/global/devtools/styleinspector.properties (%chrome/global/devtools/styleinspector.properties)
   locale/@AB_CD@/global/dialogOverlay.dtd               (%chrome/global/dialogOverlay.dtd)
   locale/@AB_CD@/global/editMenuOverlay.dtd             (%chrome/global/editMenuOverlay.dtd)
   locale/@AB_CD@/global/filefield.properties            (%chrome/global/filefield.properties)
@@ -134,3 +135,7 @@
 % locale places @AB_CD@ %locale/@AB_CD@/places/
   locale/@AB_CD@/places/places.properties                 (%chrome/places/places.properties)
   locale/@AB_CD@/global/search/search.properties          (%chrome/search/search.properties)
+
+relativesrcdir browser/locales:
+  locale/@AB_CD@/global/charsetMenu.dtd                 (%chrome/browser/charsetMenu.dtd)
+  locale/@AB_CD@/global/charsetMenu.properties          (%chrome/browser/charsetMenu.properties)

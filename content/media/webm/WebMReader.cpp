@@ -16,6 +16,8 @@
 #include "vpx/vp8dx.h"
 #include "vpx/vpx_decoder.h"
 
+#include "OggReader.h"
+
 using mozilla::NesteggPacketHolder;
 
 template <>
@@ -48,9 +50,6 @@ PRLogModuleInfo* gNesteggLog;
 
 static const unsigned NS_PER_USEC = 1000;
 static const double NS_PER_S = 1e9;
-#ifdef MOZ_DASH
-static const double USEC_PER_S = 1e6;
-#endif
 
 // Functions for reading and seeking using MediaResource required for
 // nestegg_io. The 'user data' passed to these functions is the
@@ -140,30 +139,21 @@ static void webm_log(nestegg * context,
 }
 
 WebMReader::WebMReader(AbstractMediaDecoder* aDecoder)
-#ifdef MOZ_DASH
-  : DASHRepReader(aDecoder),
-#else
   : MediaDecoderReader(aDecoder),
-#endif
   mContext(nullptr),
   mPacketCount(0),
   mChannels(0),
+#ifdef MOZ_OPUS
+  mOpusParser(nullptr),
+  mOpusDecoder(nullptr),
+  mSkip(0),
+#endif
   mVideoTrack(0),
   mAudioTrack(0),
   mAudioStartUsec(-1),
   mAudioFrames(0),
   mHasVideo(false),
   mHasAudio(false)
-#ifdef MOZ_DASH
-  , mMainReader(nullptr),
-  mSwitchingCluster(-1),
-  mNextReader(nullptr),
-  mSeekToCluster(-1),
-  mCurrentOffset(-1),
-  mNextCluster(1),
-  mPushVideoPacketToNextReader(false),
-  mReachedSwitchAccessPoint(false)
-#endif
 {
   MOZ_COUNT_CTOR(WebMReader);
 #ifdef PR_LOGGING
@@ -173,7 +163,7 @@ WebMReader::WebMReader(AbstractMediaDecoder* aDecoder)
 #endif
   // Zero these member vars to avoid crashes in VP8 destroy and Vorbis clear
   // functions when destructor is called before |Init|.
-  memset(&mVP8, 0, sizeof(vpx_codec_ctx_t));
+  memset(&mVPX, 0, sizeof(vpx_codec_ctx_t));
   memset(&mVorbisBlock, 0, sizeof(vorbis_block));
   memset(&mVorbisDsp, 0, sizeof(vorbis_dsp_state));
   memset(&mVorbisInfo, 0, sizeof(vorbis_info));
@@ -187,21 +177,23 @@ WebMReader::~WebMReader()
   mVideoPackets.Reset();
   mAudioPackets.Reset();
 
-  vpx_codec_destroy(&mVP8);
+  vpx_codec_destroy(&mVPX);
 
   vorbis_block_clear(&mVorbisBlock);
   vorbis_dsp_clear(&mVorbisDsp);
   vorbis_info_clear(&mVorbisInfo);
   vorbis_comment_clear(&mVorbisComment);
 
+  if (mOpusDecoder) {
+    opus_multistream_decoder_destroy(mOpusDecoder);
+    mOpusDecoder = nullptr;
+  }
+
   MOZ_COUNT_DTOR(WebMReader);
 }
 
 nsresult WebMReader::Init(MediaDecoderReader* aCloneDonor)
 {
-  if (vpx_codec_dec_init(&mVP8, vpx_codec_vp8_dx(), nullptr, 0)) {
-    return NS_ERROR_FAILURE;
-  }
 
   vorbis_info_init(&mVorbisInfo);
   vorbis_comment_init(&mVorbisComment);
@@ -234,16 +226,6 @@ nsresult WebMReader::ResetDecode()
   mVideoPackets.Reset();
   mAudioPackets.Reset();
 
-#ifdef MOZ_DASH
-  LOG(PR_LOG_DEBUG, ("Resetting DASH seek vars"));
-  mSwitchingCluster = -1;
-  mNextReader = nullptr;
-  mSeekToCluster = -1;
-  mCurrentOffset = -1;
-  mPushVideoPacketToNextReader = false;
-  mReachedSwitchAccessPoint = false;
-#endif
-
   return res;
 }
 
@@ -260,23 +242,12 @@ nsresult WebMReader::ReadMetadata(MediaInfo* aInfo,
 {
   NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
 
-#ifdef MOZ_DASH
-  LOG(PR_LOG_DEBUG, ("Reader [%p] for Decoder [%p]: Reading WebM Metadata: "
-                     "init bytes [%d - %d] cues bytes [%d - %d]",
-                     this, mDecoder,
-                     mInitByteRange.mStart, mInitByteRange.mEnd,
-                     mCuesByteRange.mStart, mCuesByteRange.mEnd));
-#endif
   nestegg_io io;
   io.read = webm_read;
   io.seek = webm_seek;
   io.tell = webm_tell;
   io.userdata = mDecoder;
-#ifdef MOZ_DASH
-  int64_t maxOffset = mInitByteRange.IsNull() ? -1 : mInitByteRange.mEnd;
-#else
   int64_t maxOffset = -1;
-#endif
   int r = nestegg_init(&mContext, io, &webm_log, maxOffset);
   if (r == -1) {
     return NS_ERROR_FAILURE;
@@ -307,6 +278,18 @@ nsresult WebMReader::ReadMetadata(MediaInfo* aInfo,
       nestegg_video_params params;
       r = nestegg_track_video_params(mContext, track, &params);
       if (r == -1) {
+        Cleanup();
+        return NS_ERROR_FAILURE;
+      }
+
+      vpx_codec_iface_t* dx = nullptr;
+      mVideoCodec = nestegg_track_codec_id(mContext, track);
+      if (mVideoCodec == NESTEGG_CODEC_VP8) {
+        dx = vpx_codec_vp8_dx();
+      } else if (mVideoCodec == NESTEGG_CODEC_VP9) {
+        dx = vpx_codec_vp9_dx();
+      }
+      if (!dx || vpx_codec_dec_init(&mVPX, dx, nullptr, 0)) {
         Cleanup();
         return NS_ERROR_FAILURE;
       }
@@ -376,92 +359,85 @@ nsresult WebMReader::ReadMetadata(MediaInfo* aInfo,
       mAudioTrack = track;
       mHasAudio = true;
       mInfo.mAudio.mHasAudio = true;
+      mAudioCodec = nestegg_track_codec_id(mContext, track);
+      mCodecDelay = params.codec_delay;
 
-      // Get the Vorbis header data
-      unsigned int nheaders = 0;
-      r = nestegg_track_codec_data_count(mContext, track, &nheaders);
-      if (r == -1 || nheaders != 3) {
-        Cleanup();
-        return NS_ERROR_FAILURE;
-      }
+      if (mAudioCodec == NESTEGG_CODEC_VORBIS) {
+        // Get the Vorbis header data
+        unsigned int nheaders = 0;
+        r = nestegg_track_codec_data_count(mContext, track, &nheaders);
+        if (r == -1 || nheaders != 3) {
+          Cleanup();
+          return NS_ERROR_FAILURE;
+        }
 
-      for (uint32_t header = 0; header < nheaders; ++header) {
+        for (uint32_t header = 0; header < nheaders; ++header) {
+          unsigned char* data = 0;
+          size_t length = 0;
+
+          r = nestegg_track_codec_data(mContext, track, header, &data, &length);
+          if (r == -1) {
+            Cleanup();
+            return NS_ERROR_FAILURE;
+          }
+          ogg_packet opacket = InitOggPacket(data, length, header == 0, false, 0);
+
+          r = vorbis_synthesis_headerin(&mVorbisInfo,
+                                        &mVorbisComment,
+                                        &opacket);
+          if (r != 0) {
+            Cleanup();
+            return NS_ERROR_FAILURE;
+          }
+        }
+
+        r = vorbis_synthesis_init(&mVorbisDsp, &mVorbisInfo);
+        if (r != 0) {
+          Cleanup();
+          return NS_ERROR_FAILURE;
+        }
+
+        r = vorbis_block_init(&mVorbisDsp, &mVorbisBlock);
+        if (r != 0) {
+          Cleanup();
+          return NS_ERROR_FAILURE;
+        }
+
+        mInfo.mAudio.mRate = mVorbisDsp.vi->rate;
+        mInfo.mAudio.mChannels = mVorbisDsp.vi->channels;
+        mChannels = mInfo.mAudio.mChannels;
+#ifdef MOZ_OPUS
+      } else if (mAudioCodec == NESTEGG_CODEC_OPUS) {
         unsigned char* data = 0;
         size_t length = 0;
-
-        r = nestegg_track_codec_data(mContext, track, header, &data, &length);
+        r = nestegg_track_codec_data(mContext, track, 0, &data, &length);
         if (r == -1) {
           Cleanup();
           return NS_ERROR_FAILURE;
         }
 
-        ogg_packet opacket = InitOggPacket(data, length, header == 0, false, 0);
-
-        r = vorbis_synthesis_headerin(&mVorbisInfo,
-                                      &mVorbisComment,
-                                      &opacket);
-        if (r != 0) {
+        mOpusParser = new OpusParser;
+        if (!mOpusParser->DecodeHeader(data, length)) {
           Cleanup();
           return NS_ERROR_FAILURE;
         }
-      }
 
-      r = vorbis_synthesis_init(&mVorbisDsp, &mVorbisInfo);
-      if (r != 0) {
+        if (!InitOpusDecoder()) {
+          Cleanup();
+          return NS_ERROR_FAILURE;
+        }
+
+        mInfo.mAudio.mRate = mOpusParser->mRate;
+
+        mInfo.mAudio.mChannels = mOpusParser->mChannels;
+        mInfo.mAudio.mChannels = mInfo.mAudio.mChannels > 2 ? 2 : mInfo.mAudio.mChannels;
+#endif
+      } else {
         Cleanup();
         return NS_ERROR_FAILURE;
       }
-
-      r = vorbis_block_init(&mVorbisDsp, &mVorbisBlock);
-      if (r != 0) {
-        Cleanup();
-        return NS_ERROR_FAILURE;
-      }
-
-      mInfo.mAudio.mRate = mVorbisDsp.vi->rate;
-      mInfo.mAudio.mChannels = mVorbisDsp.vi->channels;
-      mChannels = mInfo.mAudio.mChannels;
     }
   }
-
-#ifdef MOZ_DASH
-  // Byte range for cues has been specified; load them.
-  if (!mCuesByteRange.IsNull()) {
-    maxOffset = mCuesByteRange.mEnd;
-
-    // Iterate through cluster ranges until nestegg returns the last one
-    NS_ENSURE_TRUE(mClusterByteRanges.IsEmpty(),
-                   NS_ERROR_ALREADY_INITIALIZED);
-    int clusterNum = 0;
-    bool done = false;
-    uint64_t timestamp;
-    do {
-      mClusterByteRanges.AppendElement();
-      r = nestegg_get_cue_point(mContext, clusterNum, maxOffset,
-                                &(mClusterByteRanges[clusterNum].mStart),
-                                &(mClusterByteRanges[clusterNum].mEnd),
-                                &timestamp);
-      if (r != 0) {
-        Cleanup();
-        return NS_ERROR_FAILURE;
-      }
-      LOG(PR_LOG_DEBUG, ("Reader [%p] for Decoder [%p]: Cluster [%d]: "
-                         "start [%lld] end [%lld], timestamp [%.2llfs]",
-                         this, mDecoder, clusterNum,
-                         mClusterByteRanges[clusterNum].mStart,
-                         mClusterByteRanges[clusterNum].mEnd,
-                         timestamp/NS_PER_S));
-      mClusterByteRanges[clusterNum].mStartTime = timestamp/NS_PER_USEC;
-      // Last cluster will have '-1' as end value
-      if (mClusterByteRanges[clusterNum].mEnd == -1) {
-        mClusterByteRanges[clusterNum].mEnd = (mCuesByteRange.mStart-1);
-        done = true;
-      } else {
-        clusterNum++;
-      }
-    } while (!done);
-  }
-#endif
 
   // We can't seek in buffered regions if we have no cues.
   mDecoder->SetMediaSeekable(nestegg_has_cues(mContext) == 1);
@@ -470,12 +446,27 @@ nsresult WebMReader::ReadMetadata(MediaInfo* aInfo,
 
   *aTags = nullptr;
 
-#ifdef MOZ_DASH
-  mDecoder->OnReadMetadataCompleted();
-#endif
-
   return NS_OK;
 }
+
+#ifdef MOZ_OPUS
+bool WebMReader::InitOpusDecoder()
+{
+  int r;
+
+  NS_ASSERTION(mOpusDecoder == nullptr, "leaking OpusDecoder");
+
+  mOpusDecoder = opus_multistream_decoder_create(mOpusParser->mRate,
+                                             mOpusParser->mChannels,
+                                             mOpusParser->mStreams,
+                                             mOpusParser->mCoupledStreams,
+                                             mOpusParser->mMappingTable,
+                                             &r);
+  mSkip = mOpusParser->mPreSkip;
+
+  return r == OPUS_OK;
+}
+#endif
 
 ogg_packet WebMReader::InitOggPacket(unsigned char* aData,
                                        size_t aLength,
@@ -510,7 +501,7 @@ bool WebMReader::DecodeAudioPacket(nestegg_packet* aPacket, int64_t aOffset)
     return false;
   }
 
-  const uint32_t rate = mVorbisDsp.vi->rate;
+  const uint32_t rate = mInfo.mAudio.mRate;
   uint64_t tstamp_usecs = tstamp / NS_PER_USEC;
   if (mAudioStartUsec == -1) {
     // This is the first audio chunk. Assume the start time of our decode
@@ -552,27 +543,164 @@ bool WebMReader::DecodeAudioPacket(nestegg_packet* aPacket, int64_t aOffset)
     if (r == -1) {
       return false;
     }
+    if (mAudioCodec == NESTEGG_CODEC_VORBIS) {
+      ogg_packet opacket = InitOggPacket(data, length, false, false, -1);
 
-    ogg_packet opacket = InitOggPacket(data, length, false, false, -1);
+      if (vorbis_synthesis(&mVorbisBlock, &opacket) != 0) {
+        return false;
+      }
 
-    if (vorbis_synthesis(&mVorbisBlock, &opacket) != 0) {
-      return false;
-    }
+      if (vorbis_synthesis_blockin(&mVorbisDsp,
+                                   &mVorbisBlock) != 0) {
+        return false;
+      }
 
-    if (vorbis_synthesis_blockin(&mVorbisDsp,
-                                 &mVorbisBlock) != 0) {
-      return false;
-    }
-
-    VorbisPCMValue** pcm = 0;
-    int32_t frames = 0;
-    while ((frames = vorbis_synthesis_pcmout(&mVorbisDsp, &pcm)) > 0) {
-      nsAutoArrayPtr<AudioDataValue> buffer(new AudioDataValue[frames * mChannels]);
-      for (uint32_t j = 0; j < mChannels; ++j) {
-        VorbisPCMValue* channel = pcm[j];
-        for (uint32_t i = 0; i < uint32_t(frames); ++i) {
-          buffer[i*mChannels + j] = MOZ_CONVERT_VORBIS_SAMPLE(channel[i]);
+      VorbisPCMValue** pcm = 0;
+      int32_t frames = 0;
+      while ((frames = vorbis_synthesis_pcmout(&mVorbisDsp, &pcm)) > 0) {
+        nsAutoArrayPtr<AudioDataValue> buffer(new AudioDataValue[frames * mChannels]);
+        for (uint32_t j = 0; j < mChannels; ++j) {
+          VorbisPCMValue* channel = pcm[j];
+          for (uint32_t i = 0; i < uint32_t(frames); ++i) {
+            buffer[i*mChannels + j] = MOZ_CONVERT_VORBIS_SAMPLE(channel[i]);
+          }
         }
+
+        CheckedInt64 duration = FramesToUsecs(frames, rate);
+        if (!duration.isValid()) {
+          NS_WARNING("Int overflow converting WebM audio duration");
+          return false;
+        }
+        CheckedInt64 total_duration = FramesToUsecs(total_frames, rate);
+        if (!total_duration.isValid()) {
+          NS_WARNING("Int overflow converting WebM audio total_duration");
+          return false;
+        }
+
+        CheckedInt64 time = total_duration + tstamp_usecs;
+        if (!time.isValid()) {
+          NS_WARNING("Int overflow adding total_duration and tstamp_usecs");
+          nestegg_free_packet(aPacket);
+          return false;
+        };
+
+        total_frames += frames;
+        AudioQueue().Push(new AudioData(aOffset,
+                                       time.value(),
+                                       duration.value(),
+                                       frames,
+                                       buffer.forget(),
+                                       mChannels));
+        mAudioFrames += frames;
+        if (vorbis_synthesis_read(&mVorbisDsp, frames) != 0) {
+          return false;
+        }
+      }
+    } else if (mAudioCodec == NESTEGG_CODEC_OPUS) {
+#ifdef MOZ_OPUS
+      uint32_t channels = mOpusParser->mChannels;
+
+      // Maximum value is 63*2880, so there's no chance of overflow.
+      int32_t frames_number = opus_packet_get_nb_frames(data, length);
+
+      if (frames_number <= 0)
+        return false; // Invalid packet header.
+      int32_t samples = opus_packet_get_samples_per_frame(data,
+                                                          (opus_int32) rate);
+      int32_t frames = frames_number*samples;
+
+      // A valid Opus packet must be between 2.5 and 120 ms long.
+      if (frames < 120 || frames > 5760)
+        return false;
+      nsAutoArrayPtr<AudioDataValue> buffer(new AudioDataValue[frames * channels]);
+
+      // Decode to the appropriate sample type.
+#ifdef MOZ_SAMPLE_TYPE_FLOAT32
+      int ret = opus_multistream_decode_float(mOpusDecoder,
+                                              data, length,
+                                              buffer, frames, false);
+#else
+      int ret = opus_multistream_decode(mOpusDecoder,
+                                        data, length,
+                                        buffer, frames, false);
+#endif
+      if (ret < 0)
+        return false;
+      NS_ASSERTION(ret == frames, "Opus decoded too few audio samples");
+
+      // Trim the initial frames while the decoder is settling.
+      if (mSkip > 0) {
+        int32_t skipFrames = std::min(mSkip, frames);
+        if (skipFrames == frames) {
+          // discard the whole packet
+          mSkip -= frames;
+          LOG(PR_LOG_DEBUG, ("Opus decoder skipping %d frames"
+                             " (whole packet)", frames));
+          return true;
+        }
+        int32_t keepFrames = frames - skipFrames;
+        int samples = keepFrames * channels;
+        nsAutoArrayPtr<AudioDataValue> trimBuffer(new AudioDataValue[samples]);
+        for (int i = 0; i < samples; i++)
+          trimBuffer[i] = buffer[skipFrames*channels + i];
+
+        frames = keepFrames;
+        buffer = trimBuffer;
+
+        mSkip -= skipFrames;
+        LOG(PR_LOG_DEBUG, ("Opus decoder skipping %d frames", skipFrames));
+      }
+
+      int64_t discardPadding = 0;
+      r = nestegg_packet_discard_padding(aPacket, &discardPadding);
+      if (discardPadding > 0) {
+        CheckedInt64 discardFrames = UsecsToFrames(discardPadding * NS_PER_USEC, rate);
+        if (!discardFrames.isValid()) {
+          NS_WARNING("Int overflow in DiscardPadding");
+          return false;
+        }
+        int32_t keepFrames = frames - discardFrames.value();
+        if (keepFrames > 0) {
+          int samples = keepFrames * channels;
+          nsAutoArrayPtr<AudioDataValue> trimBuffer(new AudioDataValue[samples]);
+          for (int i = 0; i < samples; i++)
+            trimBuffer[i] = buffer[i];
+          frames = keepFrames;
+          buffer = trimBuffer;
+        } else {
+          LOG(PR_LOG_DEBUG, ("Opus decoder discarding whole packet"
+                             " ( %d frames) as padding", frames));
+          return true;
+        }
+      }
+
+      // Apply the header gain if one was specified.
+#ifdef MOZ_SAMPLE_TYPE_FLOAT32
+      if (mOpusParser->mGain != 1.0f) {
+        float gain = mOpusParser->mGain;
+        int samples = frames * channels;
+        for (int i = 0; i < samples; i++) {
+          buffer[i] *= gain;
+        }
+      }
+#else
+      if (mOpusParser->mGain_Q16 != 65536) {
+        int64_t gain_Q16 = mOpusParser->mGain_Q16;
+        int samples = frames * channels;
+        for (int i = 0; i < samples; i++) {
+          int32_t val = static_cast<int32_t>((gain_Q16*buffer[i] + 32768)>>16);
+          buffer[i] = static_cast<AudioDataValue>(MOZ_CLIP_TO_15(val));
+        }
+      }
+#endif
+
+      // More than 2 decoded channels must be downmixed to stereo.
+      if (channels > 2) {
+        // Opus doesn't provide a channel mapping for more than 8 channels,
+        // so we can't downmix more than that.
+        if (channels > 8)
+          return false;
+        OggReader::DownmixToStereo(buffer, channels, frames);
       }
 
       CheckedInt64 duration = FramesToUsecs(frames, rate);
@@ -580,30 +708,25 @@ bool WebMReader::DecodeAudioPacket(nestegg_packet* aPacket, int64_t aOffset)
         NS_WARNING("Int overflow converting WebM audio duration");
         return false;
       }
-      CheckedInt64 total_duration = FramesToUsecs(total_frames, rate);
-      if (!total_duration.isValid()) {
-        NS_WARNING("Int overflow converting WebM audio total_duration");
-        return false;
-      }
-      
-      CheckedInt64 time = total_duration + tstamp_usecs;
+
+      CheckedInt64 time = tstamp_usecs;
       if (!time.isValid()) {
         NS_WARNING("Int overflow adding total_duration and tstamp_usecs");
         nestegg_free_packet(aPacket);
         return false;
       };
 
-      total_frames += frames;
-      AudioQueue().Push(new AudioData(aOffset,
+      AudioQueue().Push(new AudioData(mDecoder->GetResource()->Tell(),
                                      time.value(),
                                      duration.value(),
                                      frames,
                                      buffer.forget(),
                                      mChannels));
+
       mAudioFrames += frames;
-      if (vorbis_synthesis_read(&mVorbisDsp, frames) != 0) {
-        return false;
-      }
+#else
+      return false;
+#endif /* MOZ_OPUS */
     }
   }
 
@@ -611,93 +734,6 @@ bool WebMReader::DecodeAudioPacket(nestegg_packet* aPacket, int64_t aOffset)
 }
 
 nsReturnRef<NesteggPacketHolder> WebMReader::NextPacket(TrackType aTrackType)
-#ifdef MOZ_DASH
-{
-  nsAutoRef<NesteggPacketHolder> holder;
-  // It is possible that following a seek, a requested switching offset could
-  // be reached before |DASHReader| calls |RequestSwitchAtSubsegment|. In this
-  // case |mNextReader| will be null, so check its value and at every possible
-  // switch access point, i.e. cluster boundary, ask |mMainReader| to
-  // |GetReaderForSubsegment|.
-  if (mMainReader && !mNextReader && aTrackType == VIDEO) {
-    WebMReader* nextReader = nullptr;
-    LOG(PR_LOG_DEBUG,
-      ("WebMReader[%p] for decoder [%p] NextPacket mNextReader not set: "
-       "mCurrentOffset[%lld] nextCluster [%d] comparing with offset[%lld]",
-       this, mDecoder, mCurrentOffset, mNextCluster,
-       mClusterByteRanges[mNextCluster].mStart));
-
-    if (mNextCluster < mClusterByteRanges.Length() &&
-        mCurrentOffset == mClusterByteRanges[mNextCluster].mStart) {
-      DASHRepReader* nextDASHRepReader =
-        mMainReader->GetReaderForSubsegment(mNextCluster);
-      nextReader = static_cast<WebMReader*>(nextDASHRepReader);
-      LOG(PR_LOG_DEBUG,
-          ("WebMReader[%p] for decoder [%p] reached SAP at cluster [%d]: next "
-         "reader is [%p]", this, mDecoder, mNextCluster, nextReader));
-      if (nextReader && nextReader != this) {
-        {
-          ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
-          // Ensure this reader is set to switch for the next packet.
-          RequestSwitchAtSubsegment(mNextCluster, nextReader);
-          NS_ASSERTION(mNextReader == nextReader, "mNextReader should be set");
-          // Ensure the next reader seeks to |mNextCluster|. |PrepareToDecode|
-          // must be called to ensure the reader's variables are set correctly.
-          nextReader->RequestSeekToSubsegment(mNextCluster);
-          nextReader->PrepareToDecode();
-        }
-      }
-      // Keep mNextCluster up-to-date with the |mCurrentOffset|.
-      if (mNextCluster+1 < mClusterByteRanges.Length()) {
-        // At least one more cluster to go.
-        mNextCluster++;
-      } else {
-        // Reached last cluster; prepare for being in cluster 0 again.
-        mNextCluster = 1;
-      }
-      LOG(PR_LOG_DEBUG,
-          ("WebMReader [%p] for decoder [%p] updating mNextCluster to [%d] "
-           "at offset [%lld]", this, mDecoder, mNextCluster, mCurrentOffset));
-    }
-  }
-
-  // Get packet from next reader if we're at a switching point; most likely we
-  // did not download the next packet for this reader's stream, so we have to
-  // get it from the next one. Note: Switch to next reader only for video;
-  // audio switching is not supported in the DASH-WebM On Demand profile.
-  if (aTrackType == VIDEO &&
-      (uint32_t)mSwitchingCluster < mClusterByteRanges.Length() &&
-      mCurrentOffset == mClusterByteRanges[mSwitchingCluster].mStart) {
-
-    if (mVideoPackets.GetSize() > 0) {
-      holder = NextPacketInternal(VIDEO);
-      LOG(PR_LOG_DEBUG,
-          ("WebMReader[%p] got packet from mVideoPackets @[%lld]",
-           this, holder->mOffset));
-    } else {
-      mReachedSwitchAccessPoint = true;
-      NS_ASSERTION(mNextReader,
-                   "Stream switch has been requested but mNextReader is null");
-      holder = mNextReader->NextPacket(aTrackType);
-      mPushVideoPacketToNextReader = true;
-      // Reset for possible future switches.
-      mSwitchingCluster = -1;
-      LOG(PR_LOG_DEBUG,
-          ("WebMReader[%p] got packet from mNextReader[%p] @[%lld]",
-           this, mNextReader.get(), (holder ? holder->mOffset : 0)));
-    }
-  } else {
-    holder = NextPacketInternal(aTrackType);
-    if (holder) {
-      mCurrentOffset = holder->mOffset;
-    }
-  }
-  return holder.out();
-}
-
-nsReturnRef<NesteggPacketHolder>
-WebMReader::NextPacketInternal(TrackType aTrackType)
-#endif
 {
   // The packet queue that packets will be pushed on if they
   // are not the type we are interested in.
@@ -841,7 +877,11 @@ bool WebMReader::DecodeVideoFrame(bool &aKeyframeSkip,
     vpx_codec_stream_info_t si;
     memset(&si, 0, sizeof(si));
     si.sz = sizeof(si);
-    vpx_codec_peek_stream_info(vpx_codec_vp8_dx(), data, length, &si);
+    if (mVideoCodec == NESTEGG_CODEC_VP8) {
+      vpx_codec_peek_stream_info(vpx_codec_vp8_dx(), data, length, &si);
+    } else if (mVideoCodec == NESTEGG_CODEC_VP9) {
+      vpx_codec_peek_stream_info(vpx_codec_vp9_dx(), data, length, &si);
+    }
     if (aKeyframeSkip && (!si.is_kf || tstamp_usecs < aTimeThreshold)) {
       // Skipping to next keyframe...
       parsed++; // Assume 1 frame per chunk.
@@ -852,7 +892,7 @@ bool WebMReader::DecodeVideoFrame(bool &aKeyframeSkip,
       aKeyframeSkip = false;
     }
 
-    if (vpx_codec_decode(&mVP8, data, length, nullptr, 0)) {
+    if (vpx_codec_decode(&mVPX, data, length, nullptr, 0)) {
       return false;
     }
 
@@ -867,7 +907,7 @@ bool WebMReader::DecodeVideoFrame(bool &aKeyframeSkip,
     vpx_codec_iter_t  iter = nullptr;
     vpx_image_t      *img;
 
-    while ((img = vpx_codec_get_frame(&mVP8, &iter))) {
+    while ((img = vpx_codec_get_frame(&mVPX, &iter))) {
       NS_ASSERTION(img->fmt == IMG_FMT_I420, "WebM image format is not I420");
 
       // Chroma shifts are rounded down as per the decoding examples in the VP8 SDK
@@ -928,18 +968,7 @@ bool WebMReader::DecodeVideoFrame(bool &aKeyframeSkip,
 void
 WebMReader::PushVideoPacket(NesteggPacketHolder* aItem)
 {
-#ifdef MOZ_DASH
-  if (mPushVideoPacketToNextReader) {
-    NS_ASSERTION(mNextReader,
-                 "Stream switch has been requested but mNextReader is null");
-    mNextReader->mVideoPackets.PushFront(aItem);
-    mPushVideoPacketToNextReader = false;
-  } else {
-#endif
     mVideoPackets.PushFront(aItem);
-#ifdef MOZ_DASH
-  }
-#endif
 }
 
 nsresult WebMReader::Seek(int64_t aTarget, int64_t aStartTime, int64_t aEndTime,
@@ -957,55 +986,8 @@ nsresult WebMReader::Seek(int64_t aTarget, int64_t aStartTime, int64_t aEndTime,
   if (r != 0) {
     return NS_ERROR_FAILURE;
   }
-#ifdef MOZ_DASH
-  // Find next cluster index;
-  MediaResource* resource = mDecoder->GetResource();
-  int64_t newOffset = resource->Tell();
-  for (uint32_t i = 1; i < mClusterByteRanges.Length(); i++) {
-    if (newOffset < mClusterByteRanges[i].mStart) {
-      mNextCluster = i;
-      LOG(PR_LOG_DEBUG,
-          ("WebMReader [%p] for decoder [%p] updating mNextCluster to [%d] "
-           "after seek to offset [%lld]",
-           this, mDecoder, mNextCluster, resource->Tell()));
-      break;
-    }
-  }
-#endif
   return DecodeToTarget(aTarget);
 }
-
-#ifdef MOZ_DASH
-bool WebMReader::IsDataCachedAtEndOfSubsegments()
-{
-  MediaResource* resource = mDecoder->GetResource();
-  NS_ENSURE_TRUE(resource, false);
-  if (resource->IsDataCachedToEndOfResource(0)) {
-     return true;
-  }
-
-  if (mClusterByteRanges.IsEmpty()) {
-    return false;
-  }
-
-  nsTArray<MediaByteRange> ranges;
-  nsresult rv = resource->GetCachedRanges(ranges);
-  NS_ENSURE_SUCCESS(rv, false);
-  if (ranges.IsEmpty()) {
-    return false;
-  }
-
-  // Return true if data at the end of the final subsegment is cached.
-  uint32_t finalSubsegmentIndex = mClusterByteRanges.Length()-1;
-  uint64_t finalSubEndOffset = mClusterByteRanges[finalSubsegmentIndex].mEnd;
-  uint32_t finalRangeIndex = ranges.Length()-1;
-  uint64_t finalRangeStartOffset = ranges[finalRangeIndex].mStart;
-  uint64_t finalRangeEndOffset = ranges[finalRangeIndex].mEnd;
-
-  return (finalRangeStartOffset < finalSubEndOffset &&
-          finalSubEndOffset <= finalRangeEndOffset);
-}
-#endif
 
 nsresult WebMReader::GetBuffered(dom::TimeRanges* aBuffered, int64_t aStartTime)
 {
@@ -1044,29 +1026,6 @@ nsresult WebMReader::GetBuffered(dom::TimeRanges* aBuffered, int64_t aStartTime)
       if (rv) {
         double startTime = start * timecodeScale / NS_PER_S - aStartTime;
         double endTime = end * timecodeScale / NS_PER_S - aStartTime;
-#ifdef MOZ_DASH
-        // If this range extends to the end of a cluster, the true end time is
-        // the cluster's end timestamp. Since WebM frames do not have an end
-        // timestamp, a fully cached cluster must be reported with the correct
-        // end time of its final frame. Otherwise, buffered ranges could be
-        // reported with missing frames at cluster boundaries, specifically
-        // boundaries where stream switching has occurred.
-        if (!mClusterByteRanges.IsEmpty()) {
-          for (uint32_t clusterIndex = 0;
-               clusterIndex < (mClusterByteRanges.Length()-1);
-               clusterIndex++) {
-            if (ranges[index].mEnd >= mClusterByteRanges[clusterIndex].mEnd) {
-              double clusterEndTime =
-                  mClusterByteRanges[clusterIndex+1].mStartTime / USEC_PER_S;
-              if (endTime < clusterEndTime) {
-                LOG(PR_LOG_DEBUG, ("End of cluster: endTime becoming %0.3fs",
-                                   clusterEndTime));
-                endTime = clusterEndTime;
-              }
-            }
-          }
-        }
-#endif
         // If this range extends to the end of the file, the true end time
         // is the file's duration.
         if (resource->IsDataCachedToEndOfResource(ranges[index].mStart)) {
@@ -1088,137 +1047,5 @@ void WebMReader::NotifyDataArrived(const char* aBuffer, uint32_t aLength, int64_
 {
   mBufferedState->NotifyDataArrived(aBuffer, aLength, aOffset);
 }
-
-#ifdef MOZ_DASH
-int64_t
-WebMReader::GetSubsegmentForSeekTime(int64_t aSeekToTime)
-{
-  NS_ENSURE_TRUE(0 <= aSeekToTime, -1);
-  // Check the first n-1 subsegments. End time is the start time of the next
-  // subsegment.
-  for (uint32_t i = 1; i < (mClusterByteRanges.Length()); i++) {
-    if (aSeekToTime < mClusterByteRanges[i].mStartTime) {
-      return i-1;
-    }
-  }
-  // Check the last subsegment. End time is the end time of the file.
-  NS_ASSERTION(mDecoder, "Decoder should not be null!");
-  if (aSeekToTime <= mDecoder->GetMediaDuration()) {
-    return mClusterByteRanges.Length()-1;
-  }
-
-  return (-1);
-}
-nsresult
-WebMReader::GetSubsegmentByteRanges(nsTArray<MediaByteRange>& aByteRanges)
-{
-  NS_ENSURE_TRUE(mContext, NS_ERROR_NULL_POINTER);
-  NS_ENSURE_TRUE(aByteRanges.IsEmpty(), NS_ERROR_ALREADY_INITIALIZED);
-  NS_ENSURE_FALSE(mClusterByteRanges.IsEmpty(), NS_ERROR_NOT_INITIALIZED);
-  NS_ENSURE_FALSE(mCuesByteRange.IsNull(), NS_ERROR_NOT_INITIALIZED);
-
-  for (uint32_t i = 0; i < mClusterByteRanges.Length(); i++) {
-    aByteRanges.AppendElement();
-    aByteRanges[i] = mClusterByteRanges[i];
-  }
-
-  return NS_OK;
-}
-
-void
-WebMReader::RequestSwitchAtSubsegment(int32_t aSubsegmentIdx,
-                                      MediaDecoderReader* aNextReader)
-{
-  NS_ASSERTION(NS_IsMainThread() || mDecoder->OnDecodeThread(),
-               "Should be on main thread or decode thread.");
-  mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
-
-  // Only allow one switch at a time; ignore if one is already requested.
-  if (mSwitchingCluster != -1) {
-    return;
-  }
-  NS_ENSURE_TRUE_VOID((uint32_t)aSubsegmentIdx < mClusterByteRanges.Length());
-  mSwitchingCluster = aSubsegmentIdx;
-  NS_ENSURE_TRUE_VOID(aNextReader);
-  NS_ENSURE_TRUE_VOID(aNextReader != this);
-  mNextReader = static_cast<WebMReader*>(aNextReader);
-}
-
-void
-WebMReader::RequestSeekToSubsegment(uint32_t aIdx)
-{
-  NS_ASSERTION(NS_IsMainThread() || mDecoder->OnDecodeThread(),
-               "Should be on main thread or decode thread.");
-  NS_ASSERTION(mDecoder, "decoder should not be null!");
-  mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
-
-  // Don't seek if we're about to switch to another reader.
-  if (mSwitchingCluster != -1) {
-    return;
-  }
-  // Only allow seeking if a request was not already made.
-  if (mSeekToCluster != -1) {
-    return;
-  }
-  NS_ENSURE_TRUE_VOID(aIdx < mClusterByteRanges.Length());
-  mSeekToCluster = aIdx;
-
-  // XXX Hack to get the resource to seek to the correct offset if the decode
-  // thread is in shutdown, e.g. if the video is not autoplay.
-  if (mDecoder->IsShutdown()) {
-    ReentrantMonitorAutoExit exitMon(mDecoder->GetReentrantMonitor());
-    mDecoder->GetResource()->Seek(PR_SEEK_SET,
-                                  mClusterByteRanges[mSeekToCluster].mStart);
-  }
-}
-
-void
-WebMReader::PrepareToDecode()
-{
-  NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
-  if (mSeekToCluster != -1) {
-    ReentrantMonitorAutoExit exitMon(mDecoder->GetReentrantMonitor());
-    SeekToCluster(mSeekToCluster);
-  }
-}
-
-void
-WebMReader::SeekToCluster(uint32_t aIdx)
-{
-  NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
-  NS_ENSURE_TRUE_VOID(aIdx < mClusterByteRanges.Length());
-  LOG(PR_LOG_DEBUG, ("Reader [%p] for Decoder [%p]: seeking to "
-                     "subsegment [%lld] at offset [%lld]",
-                     this, mDecoder, aIdx, mClusterByteRanges[aIdx].mStart));
-  int r = nestegg_offset_seek(mContext, mClusterByteRanges[aIdx].mStart);
-  NS_ENSURE_TRUE_VOID(r == 0);
-  if (aIdx + 1 < mClusterByteRanges.Length()) {
-    mNextCluster = aIdx + 1;
-  } else {
-    mNextCluster = 1;
-  }
-  mSeekToCluster = -1;
-}
-
-bool
-WebMReader::HasReachedSubsegment(uint32_t aSubsegmentIndex)
-{
-  NS_ASSERTION(mDecoder, "Decoder is null.");
-  NS_ASSERTION(mDecoder->OnDecodeThread(), "Should be on decode thread.");
-  NS_ENSURE_TRUE(aSubsegmentIndex < mClusterByteRanges.Length(), false);
-
-  NS_ASSERTION(mDecoder->GetResource(), "Decoder has no media resource.");
-  if (mReachedSwitchAccessPoint) {
-    LOG(PR_LOG_DEBUG,
-        ("Reader [%p] for Decoder [%p]: reached switching offset [%lld] = "
-         "mClusterByteRanges[%d].mStart[%lld]",
-         this, mDecoder, mCurrentOffset, aSubsegmentIndex,
-         mClusterByteRanges[aSubsegmentIndex].mStart));
-    mReachedSwitchAccessPoint = false;
-    return true;
-  }
-  return false;
-}
-#endif /* MOZ_DASH */
 
 } // namespace mozilla

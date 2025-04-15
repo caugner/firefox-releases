@@ -32,6 +32,9 @@ namespace mozilla {
 
 #ifdef PR_LOGGING
 PRLogModuleInfo* gMediaStreamGraphLog;
+#define STREAM_LOG(type, msg) PR_LOG(gMediaStreamGraphLog, type, msg)
+#else
+#define STREAM_LOG(type, msg)
 #endif
 
 /**
@@ -39,12 +42,22 @@ PRLogModuleInfo* gMediaStreamGraphLog;
  */
 static MediaStreamGraphImpl* gGraph;
 
+MediaStreamGraphImpl::~MediaStreamGraphImpl()
+{
+  NS_ASSERTION(IsEmpty(),
+               "All streams should have been destroyed by messages from the main thread");
+  STREAM_LOG(PR_LOG_DEBUG, ("MediaStreamGraph %p destroyed", this));
+}
+
+
 StreamTime
 MediaStreamGraphImpl::GetDesiredBufferEnd(MediaStream* aStream)
 {
   StreamTime current = mCurrentTime - aStream->mBufferStartTime;
+  // When waking up media decoders, we need a longer safety margin, as it can
+  // take more time to get new samples. A factor of two seem to work.
   return current +
-      MillisecondsToMediaTime(std::max(AUDIO_TARGET_MS, VIDEO_TARGET_MS));
+      2 * MillisecondsToMediaTime(std::max(AUDIO_TARGET_MS, VIDEO_TARGET_MS));
 }
 
 void
@@ -52,7 +65,7 @@ MediaStreamGraphImpl::FinishStream(MediaStream* aStream)
 {
   if (aStream->mFinished)
     return;
-  LOG(PR_LOG_DEBUG, ("MediaStream %p will finish", aStream));
+  STREAM_LOG(PR_LOG_DEBUG, ("MediaStream %p will finish", aStream));
   aStream->mFinished = true;
   // Force at least one more iteration of the control loop, since we rely
   // on UpdateCurrentTime to notify our listeners once the stream end
@@ -65,7 +78,7 @@ MediaStreamGraphImpl::AddStream(MediaStream* aStream)
 {
   aStream->mBufferStartTime = mCurrentTime;
   *mStreams.AppendElement() = already_AddRefed<MediaStream>(aStream);
-  LOG(PR_LOG_DEBUG, ("Adding media stream %p to the graph", aStream));
+  STREAM_LOG(PR_LOG_DEBUG, ("Adding media stream %p to the graph", aStream));
 }
 
 void
@@ -86,7 +99,7 @@ MediaStreamGraphImpl::RemoveStream(MediaStream* aStream)
   // This unrefs the stream, probably destroying it
   mStreams.RemoveElement(aStream);
 
-  LOG(PR_LOG_DEBUG, ("Removing media stream %p from the graph", aStream));
+  STREAM_LOG(PR_LOG_DEBUG, ("Removing media stream %p from the graph", aStream));
 }
 
 void
@@ -120,16 +133,16 @@ MediaStreamGraphImpl::ExtractPendingInput(SourceMediaStream* aStream,
       StreamTime t =
         GraphTimeToStreamTime(aStream, mStateComputedTime) +
         (aDesiredUpToTime - mStateComputedTime);
-      LOG(PR_LOG_DEBUG+1, ("Calling NotifyPull aStream=%p t=%f current end=%f", aStream,
-                           MediaTimeToSeconds(t),
-                           MediaTimeToSeconds(aStream->mBuffer.GetEnd())));
+      STREAM_LOG(PR_LOG_DEBUG+1, ("Calling NotifyPull aStream=%p t=%f current end=%f", aStream,
+                                  MediaTimeToSeconds(t),
+                                  MediaTimeToSeconds(aStream->mBuffer.GetEnd())));
       if (t > aStream->mBuffer.GetEnd()) {
         *aEnsureNextIteration = true;
 #ifdef DEBUG
         if (aStream->mListeners.Length() == 0) {
-          LOG(PR_LOG_ERROR, ("No listeners in NotifyPull aStream=%p desired=%f current end=%f",
-                             aStream, MediaTimeToSeconds(t),
-                             MediaTimeToSeconds(aStream->mBuffer.GetEnd())));
+          STREAM_LOG(PR_LOG_ERROR, ("No listeners in NotifyPull aStream=%p desired=%f current end=%f",
+                                    aStream, MediaTimeToSeconds(t),
+                                    MediaTimeToSeconds(aStream->mBuffer.GetEnd())));
           aStream->DumpTrackInfo();
         }
 #endif
@@ -155,9 +168,9 @@ MediaStreamGraphImpl::ExtractPendingInput(SourceMediaStream* aStream,
       }
       if (data->mCommands & SourceMediaStream::TRACK_CREATE) {
         MediaSegment* segment = data->mData.forget();
-        LOG(PR_LOG_DEBUG, ("SourceMediaStream %p creating track %d, rate %d, start %lld, initial end %lld",
-                           aStream, data->mID, data->mRate, int64_t(data->mStart),
-                           int64_t(segment->GetDuration())));
+        STREAM_LOG(PR_LOG_DEBUG, ("SourceMediaStream %p creating track %d, rate %d, start %lld, initial end %lld",
+                                  aStream, data->mID, data->mRate, int64_t(data->mStart),
+                                  int64_t(segment->GetDuration())));
         aStream->mBuffer.AddTrack(data->mID, data->mRate, data->mStart, segment);
         // The track has taken ownership of data->mData, so let's replace
         // data->mData with an empty clone.
@@ -165,10 +178,10 @@ MediaStreamGraphImpl::ExtractPendingInput(SourceMediaStream* aStream,
         data->mCommands &= ~SourceMediaStream::TRACK_CREATE;
       } else if (data->mData->GetDuration() > 0) {
         MediaSegment* dest = aStream->mBuffer.FindTrack(data->mID)->GetSegment();
-        LOG(PR_LOG_DEBUG+1, ("SourceMediaStream %p track %d, advancing end from %lld to %lld",
-                             aStream, data->mID,
-                             int64_t(dest->GetDuration()),
-                             int64_t(dest->GetDuration() + data->mData->GetDuration())));
+        STREAM_LOG(PR_LOG_DEBUG+1, ("SourceMediaStream %p track %d, advancing end from %lld to %lld",
+                                    aStream, data->mID,
+                                    int64_t(dest->GetDuration()),
+                                    int64_t(dest->GetDuration() + data->mData->GetDuration())));
         dest->AppendFrom(data->mData);
       }
       if (data->mCommands & SourceMediaStream::TRACK_END) {
@@ -322,31 +335,34 @@ MediaStreamGraphImpl::UpdateCurrentTime()
       SecondsToMediaTime((now - mCurrentTimeStamp).ToSeconds()) + mCurrentTime;
 
     mCurrentTimeStamp = now;
-    LOG(PR_LOG_DEBUG+1, ("Updating current time to %f (real %f, mStateComputedTime %f)",
-          MediaTimeToSeconds(nextCurrentTime),
-          (now - mInitialTimeStamp).ToSeconds(),
-          MediaTimeToSeconds(mStateComputedTime)));
+    STREAM_LOG(PR_LOG_DEBUG+1, ("Updating current time to %f (real %f, mStateComputedTime %f)",
+               MediaTimeToSeconds(nextCurrentTime),
+               (now - mInitialTimeStamp).ToSeconds(),
+               MediaTimeToSeconds(mStateComputedTime)));
   } else {
     prevCurrentTime = mCurrentTime;
     nextCurrentTime = mCurrentTime + MEDIA_GRAPH_TARGET_PERIOD_MS;
-    LOG(PR_LOG_DEBUG+1, ("Updating offline current time to %f (mStateComputedTime %f)",
-          MediaTimeToSeconds(nextCurrentTime),
-          MediaTimeToSeconds(mStateComputedTime)));
+    STREAM_LOG(PR_LOG_DEBUG+1, ("Updating offline current time to %f (mStateComputedTime %f)",
+               MediaTimeToSeconds(nextCurrentTime),
+               MediaTimeToSeconds(mStateComputedTime)));
   }
 
   if (mStateComputedTime < nextCurrentTime) {
-    LOG(PR_LOG_WARNING, ("Media graph global underrun detected"));
+    STREAM_LOG(PR_LOG_WARNING, ("Media graph global underrun detected"));
     nextCurrentTime = mStateComputedTime;
   }
 
   if (prevCurrentTime >= nextCurrentTime) {
     NS_ASSERTION(prevCurrentTime == nextCurrentTime, "Time can't go backwards!");
     // This could happen due to low clock resolution, maybe?
-    LOG(PR_LOG_DEBUG, ("Time did not advance"));
+    STREAM_LOG(PR_LOG_DEBUG, ("Time did not advance"));
     // There's not much left to do here, but the code below that notifies
     // listeners that streams have ended still needs to run.
   }
 
+  nsTArray<MediaStream*> streamsReadyToFinish;
+  nsAutoTArray<bool,800> streamHasOutput;
+  streamHasOutput.SetLength(mStreams.Length());
   for (uint32_t i = 0; i < mStreams.Length(); ++i) {
     MediaStream* stream = mStreams[i];
 
@@ -375,15 +391,33 @@ MediaStreamGraphImpl::UpdateCurrentTime()
     // AdvanceTimeVaryingValuesToCurrentTime can rely on the value of mBlocked.
     stream->mBlocked.AdvanceCurrentTime(nextCurrentTime);
 
-    if (blockedTime < nextCurrentTime - prevCurrentTime) {
-      for (uint32_t i = 0; i < stream->mListeners.Length(); ++i) {
-        MediaStreamListener* l = stream->mListeners[i];
-        l->NotifyOutput(this);
-      }
-    }
+    streamHasOutput[i] = blockedTime < nextCurrentTime - prevCurrentTime;
 
-    if (stream->mFinished && !stream->mNotifiedFinished &&
-        stream->mBufferStartTime + stream->GetBufferEnd() <= nextCurrentTime) {
+    if (stream->mFinished && !stream->mNotifiedFinished) {
+      streamsReadyToFinish.AppendElement(stream);
+    }
+    STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p bufferStartTime=%f blockedTime=%f",
+                                stream, MediaTimeToSeconds(stream->mBufferStartTime),
+                                MediaTimeToSeconds(blockedTime)));
+  }
+
+  mCurrentTime = nextCurrentTime;
+
+  // Do these after setting mCurrentTime so that StreamTimeToGraphTime works properly.
+  for (uint32_t i = 0; i < streamHasOutput.Length(); ++i) {
+    if (!streamHasOutput[i]) {
+      continue;
+    }
+    MediaStream* stream = mStreams[i];
+    for (uint32_t j = 0; j < stream->mListeners.Length(); ++j) {
+      MediaStreamListener* l = stream->mListeners[j];
+      l->NotifyOutput(this, mCurrentTime);
+    }
+  }
+
+  for (uint32_t i = 0; i < streamsReadyToFinish.Length(); ++i) {
+    MediaStream* stream = streamsReadyToFinish[i];
+    if (stream->mBufferStartTime + stream->GetBufferEnd() <= mCurrentTime) {
       stream->mNotifiedFinished = true;
       stream->mLastPlayedVideoFrame.SetNull();
       for (uint32_t j = 0; j < stream->mListeners.Length(); ++j) {
@@ -391,13 +425,7 @@ MediaStreamGraphImpl::UpdateCurrentTime()
         l->NotifyFinished(this);
       }
     }
-
-    LOG(PR_LOG_DEBUG+1, ("MediaStream %p bufferStartTime=%f blockedTime=%f",
-                         stream, MediaTimeToSeconds(stream->mBufferStartTime),
-                         MediaTimeToSeconds(blockedTime)));
   }
-
-  mCurrentTime = nextCurrentTime;
 }
 
 bool
@@ -415,19 +443,19 @@ MediaStreamGraphImpl::WillUnderrun(MediaStream* aStream, GraphTime aTime,
                           INCLUDE_TRAILING_BLOCKED_INTERVAL);
 #ifdef DEBUG
   if (bufferEnd < mCurrentTime) {
-    LOG(PR_LOG_ERROR, ("MediaStream %p underrun, "
-                       "bufferEnd %f < mCurrentTime %f (%lld < %lld), Streamtime %lld",
-                       aStream, MediaTimeToSeconds(bufferEnd), MediaTimeToSeconds(mCurrentTime),
-                       bufferEnd, mCurrentTime, aStream->GetBufferEnd()));
+    STREAM_LOG(PR_LOG_ERROR, ("MediaStream %p underrun, "
+                              "bufferEnd %f < mCurrentTime %f (%lld < %lld), Streamtime %lld",
+                              aStream, MediaTimeToSeconds(bufferEnd), MediaTimeToSeconds(mCurrentTime),
+                              bufferEnd, mCurrentTime, aStream->GetBufferEnd()));
     aStream->DumpTrackInfo();
     NS_ASSERTION(bufferEnd >= mCurrentTime, "Buffer underran");
   }
 #endif
   // We should block after bufferEnd.
   if (bufferEnd <= aTime) {
-    LOG(PR_LOG_DEBUG+1, ("MediaStream %p will block due to data underrun, "
-                         "bufferEnd %f",
-                         aStream, MediaTimeToSeconds(bufferEnd)));
+    STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p will block due to data underrun, "
+                                "bufferEnd %f",
+                                aStream, MediaTimeToSeconds(bufferEnd)));
     return true;
   }
   // We should keep blocking if we're currently blocked and we don't have
@@ -436,9 +464,9 @@ MediaStreamGraphImpl::WillUnderrun(MediaStream* aStream, GraphTime aTime,
   // but we might as well remain unblocked and play the data we've got while
   // we can.
   if (bufferEnd <= aEndBlockingDecisions && aStream->mBlocked.GetBefore(aTime)) {
-    LOG(PR_LOG_DEBUG+1, ("MediaStream %p will block due to speculative data underrun, "
-                         "bufferEnd %f",
-                         aStream, MediaTimeToSeconds(bufferEnd)));
+    STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p will block due to speculative data underrun, "
+                                "bufferEnd %f",
+                                aStream, MediaTimeToSeconds(bufferEnd)));
     return true;
   }
   // Reconsider decisions at bufferEnd
@@ -566,8 +594,8 @@ MediaStreamGraphImpl::RecomputeBlocking(GraphTime aEndBlockingDecisions)
 {
   bool blockingDecisionsWillChange = false;
 
-  LOG(PR_LOG_DEBUG+1, ("Media graph %p computing blocking for time %f",
-                       this, MediaTimeToSeconds(mStateComputedTime)));
+  STREAM_LOG(PR_LOG_DEBUG+1, ("Media graph %p computing blocking for time %f",
+                              this, MediaTimeToSeconds(mStateComputedTime)));
   for (uint32_t i = 0; i < mStreams.Length(); ++i) {
     MediaStream* stream = mStreams[i];
     if (!stream->mInBlockingSet) {
@@ -593,9 +621,9 @@ MediaStreamGraphImpl::RecomputeBlocking(GraphTime aEndBlockingDecisions)
       blockingDecisionsWillChange = true;
     }
   }
-  LOG(PR_LOG_DEBUG+1, ("Media graph %p computed blocking for interval %f to %f",
-                       this, MediaTimeToSeconds(mStateComputedTime),
-                       MediaTimeToSeconds(aEndBlockingDecisions)));
+  STREAM_LOG(PR_LOG_DEBUG+1, ("Media graph %p computed blocking for interval %f to %f",
+                              this, MediaTimeToSeconds(mStateComputedTime),
+                              MediaTimeToSeconds(aEndBlockingDecisions)));
   mStateComputedTime = aEndBlockingDecisions;
  
   if (blockingDecisionsWillChange) {
@@ -669,15 +697,15 @@ MediaStreamGraphImpl::RecomputeBlockingAt(const nsTArray<MediaStream*>& aStreams
     if (stream->mFinished) {
       GraphTime endTime = StreamTimeToGraphTime(stream, stream->GetBufferEnd());
       if (endTime <= aTime) {
-        LOG(PR_LOG_DEBUG+1, ("MediaStream %p is blocked due to being finished", stream));
+        STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p is blocked due to being finished", stream));
         // We'll block indefinitely
         MarkStreamBlocking(stream);
         *aEnd = aEndBlockingDecisions;
         continue;
       } else {
-        LOG(PR_LOG_DEBUG+1, ("MediaStream %p is finished, but not blocked yet (end at %f, with blocking at %f)",
-                             stream, MediaTimeToSeconds(stream->GetBufferEnd()),
-                             MediaTimeToSeconds(endTime)));
+        STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p is finished, but not blocked yet (end at %f, with blocking at %f)",
+                                    stream, MediaTimeToSeconds(stream->GetBufferEnd()),
+                                    MediaTimeToSeconds(endTime)));
         *aEnd = std::min(*aEnd, endTime);
       }
     }
@@ -686,7 +714,7 @@ MediaStreamGraphImpl::RecomputeBlockingAt(const nsTArray<MediaStream*>& aStreams
     bool explicitBlock = stream->mExplicitBlockerCount.GetAt(aTime, &end) > 0;
     *aEnd = std::min(*aEnd, end);
     if (explicitBlock) {
-      LOG(PR_LOG_DEBUG+1, ("MediaStream %p is blocked due to explicit blocker", stream));
+      STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p is blocked due to explicit blocker", stream));
       MarkStreamBlocking(stream);
       continue;
     }
@@ -760,7 +788,7 @@ MediaStreamGraphImpl::CreateOrDestroyAudioStreams(GraphTime aAudioOutputStartTim
           aStream->mAudioOutputStreams.AppendElement();
         audioOutputStream->mAudioPlaybackStartTime = aAudioOutputStartTime;
         audioOutputStream->mBlockedAudioTime = 0;
-        audioOutputStream->mStream = AudioStream::AllocateStream();
+        audioOutputStream->mStream = new AudioStream();
         // XXX for now, allocate stereo output. But we need to fix this to
         // match the system's ideal channel configuration.
         audioOutputStream->mStream->Init(2, tracks->GetRate(), AUDIO_CHANNEL_NORMAL, AudioStream::LowLatency);
@@ -826,8 +854,8 @@ MediaStreamGraphImpl::PlayAudio(MediaStream* aStream,
             TimeToTicksRoundDown(track->GetRate(), audioOutput.mBlockedAudioTime);
 
         output.InsertNullDataAtStart(endTicks - startTicks);
-        LOG(PR_LOG_DEBUG+1, ("MediaStream %p writing blocking-silence samples for %f to %f",
-                             aStream, MediaTimeToSeconds(t), MediaTimeToSeconds(end)));
+        STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p writing blocking-silence samples for %f to %f",
+                                    aStream, MediaTimeToSeconds(t), MediaTimeToSeconds(end)));
       } else {
         TrackTicks startTicks =
             track->TimeToTicksRoundDown(GraphTimeToStreamTime(aStream, t));
@@ -847,9 +875,9 @@ MediaStreamGraphImpl::PlayAudio(MediaStream* aStream,
         NS_ASSERTION(endTicks == sliceEnd || track->IsEnded(),
                      "Ran out of data but track not ended?");
         output.ApplyVolume(volume);
-        LOG(PR_LOG_DEBUG+1, ("MediaStream %p writing samples for %f to %f (samples %lld to %lld)",
-                             aStream, MediaTimeToSeconds(t), MediaTimeToSeconds(end),
-                             startTicks, endTicks));
+        STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p writing samples for %f to %f (samples %lld to %lld)",
+                                    aStream, MediaTimeToSeconds(t), MediaTimeToSeconds(end),
+                                    startTicks, endTicks));
       }
       // Need unique id for stream & track - and we want it to match the inserter
       output.WriteTo(LATENCY_STREAM_ID(aStream, track->GetID()),
@@ -905,9 +933,9 @@ MediaStreamGraphImpl::PlayVideo(MediaStream* aStream)
   if (!frame || *frame == aStream->mLastPlayedVideoFrame)
     return;
 
-  LOG(PR_LOG_DEBUG+1, ("MediaStream %p writing video frame %p (%dx%d)",
-                       aStream, frame->GetImage(), frame->GetIntrinsicSize().width,
-                       frame->GetIntrinsicSize().height));
+  STREAM_LOG(PR_LOG_DEBUG+1, ("MediaStream %p writing video frame %p (%dx%d)",
+                              aStream, frame->GetImage(), frame->GetIntrinsicSize().width,
+                              frame->GetIntrinsicSize().height));
   GraphTime startTime = StreamTimeToGraphTime(aStream,
       track->TicksToTimeRoundDown(start), INCLUDE_TRAILING_BLOCKED_INTERVAL);
   TimeStamp targetTime = mCurrentTimeStamp +
@@ -1068,6 +1096,28 @@ MediaStreamGraphImpl::ProduceDataForStreamsBlockByBlock(uint32_t aStreamIndex,
 }
 
 void
+MediaStreamGraphImpl::PauseAllAudioOutputs()
+{
+  for (uint32_t i = 0; i < mStreams.Length(); ++i) {
+    MediaStream* s = mStreams[i];
+    for (uint32_t j = 0; j < s->mAudioOutputStreams.Length(); ++j) {
+      s->mAudioOutputStreams[j].mStream->Pause();
+    }
+  }
+}
+
+void
+MediaStreamGraphImpl::ResumeAllAudioOutputs()
+{
+  for (uint32_t i = 0; i < mStreams.Length(); ++i) {
+    MediaStream* s = mStreams[i];
+    for (uint32_t j = 0; j < s->mAudioOutputStreams.Length(); ++j) {
+      s->mAudioOutputStreams[j].mStream->Resume();
+    }
+  }
+}
+
+void
 MediaStreamGraphImpl::RunThread()
 {
   nsTArray<MessageBlock> messageQueue;
@@ -1136,7 +1186,6 @@ MediaStreamGraphImpl::RunThread()
     RecomputeBlocking(endBlockingDecisions);
 
     // Play stream contents.
-    uint32_t audioStreamsActive = 0;
     bool allBlockedForever = true;
     // True when we've done ProduceOutput for all processed streams.
     bool doneAllProducing = false;
@@ -1176,7 +1225,6 @@ MediaStreamGraphImpl::RunThread()
         // Only playback audio and video in real-time mode
         CreateOrDestroyAudioStreams(prevComputedTime, stream);
         PlayAudio(stream, prevComputedTime, mStateComputedTime);
-        audioStreamsActive += stream->mAudioOutputStreams.Length();
         PlayVideo(stream);
       }
       SourceMediaStream* is = stream->AsSourceStream();
@@ -1199,7 +1247,7 @@ MediaStreamGraphImpl::RunThread()
         mMonitor.Wait(PR_INTERVAL_NO_TIMEOUT);
       }
     }
-    if (ensureNextIteration || !allBlockedForever || audioStreamsActive > 0) {
+    if (ensureNextIteration || !allBlockedForever) {
       EnsureNextIteration();
     }
 
@@ -1213,7 +1261,7 @@ MediaStreamGraphImpl::RunThread()
       if (finalUpdate) {
         // Enter shutdown mode. The stable-state handler will detect this
         // and complete shutdown. Destroy any streams immediately.
-        LOG(PR_LOG_DEBUG, ("MediaStreamGraph %p waiting for main thread cleanup", this));
+        STREAM_LOG(PR_LOG_DEBUG, ("MediaStreamGraph %p waiting for main thread cleanup", this));
         // Commit to shutting down this graph object.
         mLifecycleState = LIFECYCLE_WAITING_FOR_MAIN_THREAD_CLEANUP;
         // No need to Destroy streams here. The main-thread owner of each
@@ -1226,6 +1274,7 @@ MediaStreamGraphImpl::RunThread()
       if (mRealtime) {
         PRIntervalTime timeout = PR_INTERVAL_NO_TIMEOUT;
         TimeStamp now = TimeStamp::Now();
+        bool pausedOutputs = false;
         if (mNeedAnotherIteration) {
           int64_t timeoutMS = MEDIA_GRAPH_TARGET_PERIOD_MS -
             int64_t((now - mCurrentTimeStamp).ToMilliseconds());
@@ -1233,17 +1282,22 @@ MediaStreamGraphImpl::RunThread()
           // least once a minute, if we need to wake up at all
           timeoutMS = std::max<int64_t>(0, std::min<int64_t>(timeoutMS, 60*1000));
           timeout = PR_MillisecondsToInterval(uint32_t(timeoutMS));
-          LOG(PR_LOG_DEBUG+1, ("Waiting for next iteration; at %f, timeout=%f",
-                               (now - mInitialTimeStamp).ToSeconds(), timeoutMS/1000.0));
+          STREAM_LOG(PR_LOG_DEBUG+1, ("Waiting for next iteration; at %f, timeout=%f",
+                                     (now - mInitialTimeStamp).ToSeconds(), timeoutMS/1000.0));
           mWaitState = WAITSTATE_WAITING_FOR_NEXT_ITERATION;
         } else {
           mWaitState = WAITSTATE_WAITING_INDEFINITELY;
+          PauseAllAudioOutputs();
+          pausedOutputs = true;
         }
         if (timeout > 0) {
           mMonitor.Wait(timeout);
-          LOG(PR_LOG_DEBUG+1, ("Resuming after timeout; at %f, elapsed=%f",
-                               (TimeStamp::Now() - mInitialTimeStamp).ToSeconds(),
-                               (TimeStamp::Now() - now).ToSeconds()));
+          STREAM_LOG(PR_LOG_DEBUG+1, ("Resuming after timeout; at %f, elapsed=%f",
+                                     (TimeStamp::Now() - mInitialTimeStamp).ToSeconds(),
+                                     (TimeStamp::Now() - now).ToSeconds()));
+        }
+        if (pausedOutputs) {
+          ResumeAllAudioOutputs();
         }
       }
       mWaitState = WAITSTATE_RUNNING;
@@ -1282,7 +1336,7 @@ MediaStreamGraphImpl::ShutdownThreads()
 {
   NS_ASSERTION(NS_IsMainThread(), "Must be called on main thread");
   // mGraph's thread is not running so it's OK to do whatever here
-  LOG(PR_LOG_DEBUG, ("Stopping threads for MediaStreamGraph %p", this));
+  STREAM_LOG(PR_LOG_DEBUG, ("Stopping threads for MediaStreamGraph %p", this));
 
   if (mThread) {
     mThread->Shutdown();
@@ -1294,7 +1348,7 @@ void
 MediaStreamGraphImpl::ForceShutDown()
 {
   NS_ASSERTION(NS_IsMainThread(), "Must be called on main thread");
-  LOG(PR_LOG_DEBUG, ("MediaStreamGraph %p ForceShutdown", this));
+  STREAM_LOG(PR_LOG_DEBUG, ("MediaStreamGraph %p ForceShutdown", this));
   {
     MonitorAutoLock lock(mMonitor);
     mForceShutDown = true;
@@ -1468,7 +1522,7 @@ MediaStreamGraphImpl::RunInStableState()
       if (mLifecycleState == LIFECYCLE_WAITING_FOR_MAIN_THREAD_CLEANUP && IsEmpty()) {
         // Complete shutdown. First, ensure that this graph is no longer used.
         // A new graph graph will be created if one is needed.
-        LOG(PR_LOG_DEBUG, ("Disconnecting MediaStreamGraph %p", this));
+        STREAM_LOG(PR_LOG_DEBUG, ("Disconnecting MediaStreamGraph %p", this));
         if (this == gGraph) {
           // null out gGraph if that's the graph being shut down
           gGraph = nullptr;
@@ -1857,6 +1911,12 @@ MediaStream::ChangeExplicitBlockerCount(int32_t aDelta)
     }
     int32_t mDelta;
   };
+
+  // This can happen if this method has been called asynchronously, and the
+  // stream has been destroyed since then.
+  if (mMainThreadDestroyed) {
+    return;
+  }
   GraphImpl()->AppendMessage(new Message(this, aDelta));
 }
 
@@ -2189,8 +2249,8 @@ SourceMediaStream::GetBufferedTicks(TrackID aID)
 void
 MediaInputPort::Init()
 {
-  LOG(PR_LOG_DEBUG, ("Adding MediaInputPort %p (from %p to %p) to the graph",
-      this, mSource, mDest));
+  STREAM_LOG(PR_LOG_DEBUG, ("Adding MediaInputPort %p (from %p to %p) to the graph",
+             this, mSource, mDest));
   mSource->AddConsumer(this);
   mDest->AddInput(this);
   // mPortCount decremented via MediaInputPort::Destroy's message
@@ -2408,7 +2468,7 @@ MediaStreamGraph::GetInstance()
     }
 
     gGraph = new MediaStreamGraphImpl(true);
-    LOG(PR_LOG_DEBUG, ("Starting up MediaStreamGraph %p", gGraph));
+    STREAM_LOG(PR_LOG_DEBUG, ("Starting up MediaStreamGraph %p", gGraph));
   }
 
   return gGraph;

@@ -23,6 +23,7 @@
 #include "nsIUploadChannel2.h"
 #include "nsIProgressEventSink.h"
 #include "nsIURI.h"
+#include "nsIEffectiveTLDService.h"
 #include "nsIStringEnumerator.h"
 #include "nsISupportsPriority.h"
 #include "nsIApplicationCache.h"
@@ -152,6 +153,7 @@ public:
   NS_IMETHOD SetLoadAsBlocking(bool aLoadAsBlocking);
   NS_IMETHOD GetLoadUnblocked(bool *aLoadUnblocked);
   NS_IMETHOD SetLoadUnblocked(bool aLoadUnblocked);
+  NS_IMETHOD GetApiRedirectToURI(nsIURI * *aApiRedirectToURI);
   NS_IMETHOD AddSecurityMessage(const nsAString &aMessageTag, const nsAString &aMessageCategory);
   NS_IMETHOD TakeAllSecurityMessages(nsCOMArray<nsISecurityConsoleMessage> &aMessages);
 

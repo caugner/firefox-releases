@@ -230,7 +230,7 @@ typename Builder::Object BuildJavaThreadJSObject(Builder& b)
         b.DefineProperty(sample, "frames", frames);
         b.ArrayPush(samples, sample);
 
-        double sampleTime = AndroidBridge::Bridge()->GetSampleTimeJavaProfiling(0, sampleId);
+        double sampleTime = GeckoJavaSampler::GetSampleTimeJavaProfiling(0, sampleId);
         b.DefineProperty(sample, "time", sampleTime);
       }
       typename Builder::RootedObject frame(b.context(), b.CreateObject());
@@ -282,12 +282,12 @@ void TableTicker::BuildJSObject(Builder& b, typename Builder::ObjectHandle profi
 
 #if defined(SPS_OS_android) && !defined(MOZ_WIDGET_GONK)
   if (ProfileJava()) {
-    AndroidBridge::Bridge()->PauseJavaProfiling();
+    GeckoJavaSampler::PauseJavaProfiling();
 
     typename Builder::RootedObject javaThread(b.context(), BuildJavaThreadJSObject(b));
     b.ArrayPush(threads, javaThread);
 
-    AndroidBridge::Bridge()->UnpauseJavaProfiling();
+    GeckoJavaSampler::UnpauseJavaProfiling();
   }
 #endif
 
@@ -342,18 +342,18 @@ void addProfileEntry(volatile StackEntry &entry, ThreadProfile &aProfile,
     addDynamicTag(aProfile, 'c', sampleLabel);
     if (entry.js()) {
       if (!entry.pc()) {
-        // The JIT only allows the top-most entry to have a NULL pc
+        // The JIT only allows the top-most entry to have a nullptr pc
         MOZ_ASSERT(&entry == &stack->mStack[stack->stackSize() - 1]);
         // If stack-walking was disabled, then that's just unfortunate
         if (lastpc) {
           jsbytecode *jspc = js::ProfilingGetPC(stack->mRuntime, entry.script(),
                                                 lastpc);
           if (jspc) {
-            lineno = JS_PCToLineNumber(NULL, entry.script(), jspc);
+            lineno = JS_PCToLineNumber(nullptr, entry.script(), jspc);
           }
         }
       } else {
-        lineno = JS_PCToLineNumber(NULL, entry.script(), entry.pc());
+        lineno = JS_PCToLineNumber(nullptr, entry.script(), entry.pc());
       }
     } else {
       lineno = entry.line();
@@ -385,13 +385,13 @@ static void mergeNativeBacktrace(ThreadProfile &aProfile, const PCArray &array) 
    * and the pseudostack we managed during execution. We want to consolidate
    * the two in order. We do so by merging using the approximate stack address
    * when each entry was push. When pushing JS entry we may not now the stack
-   * address in which case we have a NULL stack address in which case we assume
+   * address in which case we have a nullptr stack address in which case we assume
    * that it follows immediatly the previous element.
    *
    *  C Stack | Address    --  Pseudo Stack | Address
    *  main()  | 0x100          run_js()     | 0x40
-   *  start() | 0x80           jsCanvas()   | NULL
-   *  timer() | 0x50           drawLine()   | NULL
+   *  start() | 0x80           jsCanvas()   | nullptr
+   *  timer() | 0x50           drawLine()   | nullptr
    *  azure() | 0x10
    *
    * Merged: main(), start(), timer(), run_js(), jsCanvas(), drawLine(), azure()
@@ -530,6 +530,9 @@ void TableTicker::InplaceTick(TickSample* sample)
 
   PseudoStack* stack = currThreadProfile.GetPseudoStack();
   bool recordSample = true;
+#if defined(XP_WIN)
+  bool powerSample = false;
+#endif
 
   /* Don't process the PeudoStack's markers or honour jankOnly if we're
      immediately sampling the current thread. */
@@ -542,6 +545,13 @@ void TableTicker::InplaceTick(TickSample* sample)
       currThreadProfile.addTag(ProfileEntry('m', marker));
     }
     stack->updateGeneration(currThreadProfile.GetGenerationID());
+
+#if defined(XP_WIN)
+    if (mProfilePower) {
+      mIntelPowerGadget->TakeSample();
+      powerSample = true;
+    }
+#endif
 
     if (mJankOnly) {
       // if we are on a different event we can discard any temporary samples
@@ -587,6 +597,12 @@ void TableTicker::InplaceTick(TickSample* sample)
     TimeDuration delta = sample->timestamp - sStartTime;
     currThreadProfile.addTag(ProfileEntry('t', delta.ToMilliseconds()));
   }
+
+#if defined(XP_WIN)
+  if (powerSample) {
+    currThreadProfile.addTag(ProfileEntry('p', mIntelPowerGadget->GetTotalPackagePowerInWatts()));
+  }
+#endif
 
   if (sLastFrameNumber != sFrameNumber) {
     currThreadProfile.addTag(ProfileEntry('f', sFrameNumber));
@@ -657,7 +673,7 @@ static void print_callback(const ProfileEntry& entry, const char* tagStringData)
 void mozilla_sampler_print_location1()
 {
   if (!stack_key_initialized)
-    profiler_init(NULL);
+    profiler_init(nullptr);
 
   SyncProfile* syncProfile = NewSyncProfile();
   if (!syncProfile) {
@@ -665,7 +681,7 @@ void mozilla_sampler_print_location1()
   }
 
   syncProfile->BeginUnwind();
-  doSampleStackTrace(syncProfile->GetPseudoStack(), *syncProfile, NULL);
+  doSampleStackTrace(syncProfile->GetPseudoStack(), *syncProfile, nullptr);
   syncProfile->EndUnwind();
 
   printf_stderr("Backtrace:\n");

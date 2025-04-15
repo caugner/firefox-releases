@@ -213,10 +213,9 @@ function openLinkIn(url, where, params) {
   var aCharset              = params.charset;
   var aReferrerURI          = params.referrerURI;
   var aRelatedToCurrent     = params.relatedToCurrent;
+  var aDisableMCB           = params.disableMCB;
   var aInBackground         = params.inBackground;
   var aDisallowInheritPrincipal = params.disallowInheritPrincipal;
-  // Currently, this parameter works only for where=="tab" or "current"
-  var aIsUTF8               = params.isUTF8;
   var aInitiatingDoc        = params.initiatingDoc;
   var aIsPrivate            = params.private;
 
@@ -305,8 +304,6 @@ function openLinkIn(url, where, params) {
       flags |= Ci.nsIWebNavigation.LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP;
     if (aDisallowInheritPrincipal)
       flags |= Ci.nsIWebNavigation.LOAD_FLAGS_DISALLOW_INHERIT_OWNER;
-    if (aIsUTF8)
-      flags |= Ci.nsIWebNavigation.LOAD_FLAGS_URI_IS_UTF8;
     w.gBrowser.loadURIWithFlags(url, flags, aReferrerURI, null, aPostData);
     break;
   case "tabshifted":
@@ -321,7 +318,7 @@ function openLinkIn(url, where, params) {
                        inBackground: loadInBackground,
                        allowThirdPartyFixup: aAllowThirdPartyFixup,
                        relatedToCurrent: aRelatedToCurrent,
-                       isUTF8: aIsUTF8});
+                       disableMCB: aDisableMCB});
     break;
   }
 
@@ -473,8 +470,37 @@ function openAboutDialog() {
 
 function openPreferences(paneID, extraArgs)
 {
-  if (Services.prefs.getBoolPref("browser.preferences.inContent")) {
-    openUILinkIn("about:preferences", "tab");
+  function switchToAdvancedSubPane(doc) {
+    if (extraArgs && extraArgs["advancedTab"]) {
+      let advancedPaneTabs = doc.getElementById("advancedPrefs");
+      advancedPaneTabs.selectedTab = doc.getElementById(extraArgs["advancedTab"]);
+    }
+  }
+
+  if (getBoolPref("browser.preferences.inContent")) {
+    let win = Services.wm.getMostRecentWindow("navigator:browser");
+    if (!win) {
+      return;
+    }
+
+    let newLoad = !win.switchToTabHavingURI("about:preferences", true);
+    let browser = win.gBrowser.selectedBrowser;
+
+    function switchToPane() {
+      if (paneID) {
+        browser.contentWindow.selectCategory(paneID);
+      }
+      switchToAdvancedSubPane(browser.contentDocument);
+    }
+
+    if (newLoad) {
+      browser.addEventListener("load", function onload() {
+        browser.removeEventListener("load", onload, true);
+        switchToPane();
+      }, true);
+    } else {
+      switchToPane();
+    }
   } else {
     var instantApply = getBoolPref("browser.preferences.instantApply", false);
     var features = "chrome,titlebar,toolbar,centerscreen" + (instantApply ? ",dialog=no" : ",modal");
@@ -487,16 +513,11 @@ function openPreferences(paneID, extraArgs)
         win.document.documentElement.showPane(pane);
       }
 
-      if (extraArgs && extraArgs["advancedTab"]) {
-        var advancedPaneTabs = win.document.getElementById("advancedPrefs");
-        advancedPaneTabs.selectedTab = win.document.getElementById(extraArgs["advancedTab"]);
-      }
-
-     return;
+      switchToAdvancedSubPane(win.document);
+    } else {
+      openDialog("chrome://browser/content/preferences/preferences.xul",
+                 "Preferences", features, paneID, extraArgs);
     }
-
-    openDialog("chrome://browser/content/preferences/preferences.xul",
-               "Preferences", features, paneID, extraArgs);
   }
 }
 

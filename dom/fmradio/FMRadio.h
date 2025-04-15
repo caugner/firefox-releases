@@ -11,6 +11,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "mozilla/HalTypes.h"
 #include "nsWeakReference.h"
+#include "AudioChannelAgent.h"
 
 class nsPIDOMWindow;
 class nsIScriptContext;
@@ -23,6 +24,9 @@ class FMRadio MOZ_FINAL : public nsDOMEventTargetHelper
                         , public hal::SwitchObserver
                         , public FMRadioEventObserver
                         , public nsSupportsWeakReference
+                        , public nsIAudioChannelAgentCallback
+                        , public nsIDOMEventListener
+
 {
   friend class FMRadioRequest;
 
@@ -78,12 +82,24 @@ public:
   IMPL_EVENT_HANDLER(antennaavailablechange);
   IMPL_EVENT_HANDLER(frequencychange);
 
+  // nsIAudioChannelAgentCallback
+  NS_IMETHOD CanPlayChanged(int32_t aCanPlay);
+
+  // nsIDOMEventListener
+  NS_IMETHOD HandleEvent(nsIDOMEvent* aEvent);
+
 private:
   ~FMRadio();
 
+  void SetCanPlay(bool aCanPlay);
+  void EnableAudioChannelAgent();
+
   hal::SwitchState mHeadphoneState;
+  bool mAudioChannelAgentEnabled;
   bool mHasInternalAntenna;
   bool mIsShutdown;
+
+  nsCOMPtr<nsIAudioChannelAgent> mAudioChannelAgent;
 };
 
 END_FMRADIO_NAMESPACE

@@ -3,8 +3,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
-
 #include <android/log.h>
 #include <dlfcn.h>
 #include <prthread.h>
@@ -13,12 +11,6 @@
 #include "mozilla/Assertions.h"
 #include "nsThreadUtils.h"
 #include "AndroidBridge.h"
-
-#ifdef DEBUG
-#define ALOG_BRIDGE(args...) ALOG(args)
-#else
-#define ALOG_BRIDGE(args...)
-#endif
 
 extern "C" {
   jclass __jsjni_GetGlobalClassRef(const char *className);
@@ -128,5 +120,10 @@ extern "C" {
   __attribute__ ((visibility("default")))
   JavaVM* jsjni_GetVM() {
     return mozilla::AndroidBridge::GetVM();
+  }
+
+  __attribute__ ((visibility("default")))
+  JNIEnv* jsjni_GetJNIForThread() {
+    return GetJNIForThread();
   }
 }

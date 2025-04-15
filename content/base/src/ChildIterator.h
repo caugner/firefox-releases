@@ -4,6 +4,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#ifndef ChildIterator_h
+#define ChildIterator_h
+
 /**
  * Iterates over the children on a node. If a child is an insertion point,
  * iterates over the children inserted there instead, or the default content
@@ -35,6 +38,24 @@ public:
   }
 
   nsIContent* GetNextChild();
+
+  // Looks for aChildToFind respecting insertion points until aChildToFind
+  // or aBound is found. If aBound is nullptr then the seek is unbounded. Returns
+  // whether aChildToFind was found as an explicit child prior to encountering
+  // aBound.
+  bool Seek(nsIContent* aChildToFind, nsIContent* aBound = nullptr)
+  {
+    // It would be nice to assert that we find aChildToFind, but bz thinks that
+    // we might not find aChildToFind when called from ContentInserted
+    // if first-letter frames are about.
+
+    nsIContent* child;
+    do {
+      child = GetNextChild();
+    } while (child && child != aChildToFind && child != aBound);
+
+    return child == aChildToFind;
+  }
 
 protected:
   // The parent of the children being iterated. For the FlattenedChildIterator,
@@ -81,19 +102,6 @@ public:
   // elements.
   nsIContent* GetPreviousChild();
 
-  // Looks for aChildToFind respecting XBL insertion points.
-  void Seek(nsIContent* aChildToFind)
-  {
-    // It would be nice to assert that we find aChildToFind, but bz thinks that
-    // we might not find aChildToFind when called from ContentInserted
-    // if first-letter frames are about.
-
-    nsIContent* child;
-    do {
-      child = GetNextChild();
-    } while (child && child != aChildToFind);
-  }
-
   bool XBLInvolved() { return mXBLInvolved; }
 
 private:
@@ -104,3 +112,5 @@ private:
 
 } // namespace dom
 } // namespace mozilla
+
+#endif

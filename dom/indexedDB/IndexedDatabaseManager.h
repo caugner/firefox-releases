@@ -21,7 +21,6 @@
 
 #define INDEXEDDB_MANAGER_CONTRACTID "@mozilla.org/dom/indexeddb/manager;1"
 
-class nsIAtom;
 class nsPIDOMWindow;
 class nsEventChainPostVisitor;
 
@@ -140,13 +139,7 @@ public:
                             const nsACString& aOrigin);
 
   static bool
-  DefineConstructors(JSContext* aCx, JS::HandleObject aGlobal);
-
-  static bool
-  DefineIndexedDBGetter(JSContext* aCx, JS::HandleObject aGlobal);
-
-  static bool
-  DefineIndexedDBLazyGetter(JSContext* aCx, JS::HandleObject aGlobal);
+  DefineIndexedDB(JSContext* aCx, JS::Handle<JSObject*> aGlobal);
 
 private:
   IndexedDatabaseManager();
@@ -175,10 +168,6 @@ private:
   static bool sIsMainProcess;
   static mozilla::Atomic<int32_t> sLowDiskSpaceMode;
 };
-
-bool
-ResolveConstructors(JSContext* aCx, JS::HandleObject aObj, JS::HandleId aId,
-                    JS::MutableHandleObject aObjp);
 
 END_INDEXEDDB_NAMESPACE
 

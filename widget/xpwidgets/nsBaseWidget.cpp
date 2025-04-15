@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "mozilla/layers/CompositorChild.h"
 #include "mozilla/layers/CompositorParent.h"
@@ -23,7 +23,6 @@
 #include "mozilla/Preferences.h"
 #include "BasicLayers.h"
 #include "ClientLayerManager.h"
-#include "LayerManagerOGL.h"
 #include "mozilla/layers/Compositor.h"
 #include "nsIXULRuntime.h"
 #include "nsIXULWindow.h"
@@ -41,6 +40,8 @@
 #include "gfxPlatform.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/MouseEvents.h"
+#include "GLConsts.h"
+#include "LayerScope.h"
 
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
@@ -68,6 +69,11 @@ nsIContent* nsBaseWidget::mLastRollup = nullptr;
 // Global user preference for disabling native theme. Used
 // in NativeWindowTheme.
 bool            gDisableNativeTheme               = false;
+
+// Async pump timer during injected long touch taps
+#define TOUCH_INJECT_PUMP_TIMER_MSEC 50
+#define TOUCH_INJECT_LONG_TAP_DEFAULT_MSEC 1500
+int32_t nsIWidget::sPointerIdCounter = 0;
 
 // nsBaseWidget
 NS_IMPL_ISUPPORTS1(nsBaseWidget, nsIWidget)
@@ -161,6 +167,8 @@ static void DeferredDestroyCompositor(CompositorParent* aCompositorParent,
 
 void nsBaseWidget::DestroyCompositor()
 {
+  LayerScope::DestroyServerSocket();
+
   if (mCompositorChild) {
     mCompositorChild->SendWillStop();
     mCompositorChild->Destroy();
@@ -749,7 +757,7 @@ NS_IMETHODIMP nsBaseWidget::MakeFullScreen(bool aFullScreen)
     if (!mOriginalBounds)
       mOriginalBounds = new nsIntRect();
     GetScreenBounds(*mOriginalBounds);
-    // convert dev pix to display pix for window manipulation 
+    // convert dev pix to display pix for window manipulation
     CSSToLayoutDeviceScale scale = GetDefaultScale();
     mOriginalBounds->x = NSToIntRound(mOriginalBounds->x / scale.scale);
     mOriginalBounds->y = NSToIntRound(mOriginalBounds->y / scale.scale);
@@ -851,7 +859,7 @@ nsBaseWidget::ComputeShouldAccelerate(bool aDefault)
 #endif
 
   // we should use AddBoolPrefVarCache
-  bool disableAcceleration = IsSmallPopup() || gfxPlatform::GetPrefLayersAccelerationDisabled();
+  bool disableAcceleration = gfxPlatform::GetPrefLayersAccelerationDisabled();
   mForceLayersAcceleration = gfxPlatform::GetPrefLayersAccelerationForceEnabled();
 
   const char *acceleratedEnv = PR_GetEnv("MOZ_ACCELERATED");
@@ -950,9 +958,12 @@ void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
     return;
   }
 
+  // The server socket has to be created on the main thread.
+  LayerScope::CreateServerSocket();
+
   mCompositorParent = NewCompositorParent(aWidth, aHeight);
   MessageChannel *parentChannel = mCompositorParent->GetIPCChannel();
-  LayerManager* lm = new ClientLayerManager(this);
+  ClientLayerManager* lm = new ClientLayerManager(this);
   MessageLoop *childMessageLoop = CompositorParent::CompositorLoop();
   mCompositorChild = new CompositorChild(lm);
   mCompositorChild->Open(parentChannel, childMessageLoop, ipc::ChildSide);
@@ -992,15 +1003,9 @@ void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
   // deallocated it when being freed.
 }
 
-bool nsBaseWidget::IsSmallPopup()
-{
-  return mWindowType == eWindowType_popup &&
-         mPopupType != ePopupTypePanel;
-}
-
 bool nsBaseWidget::ShouldUseOffMainThreadCompositing()
 {
-  return CompositorParent::CompositorLoop() && !IsSmallPopup();
+  return CompositorParent::CompositorLoop();
 }
 
 LayerManager* nsBaseWidget::GetLayerManager(PLayerTransactionChild* aShadowManager,
@@ -1020,22 +1025,6 @@ LayerManager* nsBaseWidget::GetLayerManager(PLayerTransactionChild* aShadowManag
       CreateCompositor();
     }
 
-    if (mUseLayersAcceleration) {
-      if (!mLayerManager) {
-        nsRefPtr<LayerManagerOGL> layerManager = new LayerManagerOGL(this);
-        /**
-         * XXX - On several OSes initialization is expected to fail for now.
-         * If we'd get a non-basic layer manager they'd crash. This is ok though
-         * since on those platforms it will fail. Anyone implementing new
-         * platforms on LayerManagerOGL should ensure their widget is able to
-         * deal with it though!
-         */
-
-        if (layerManager->Initialize(mForceLayersAcceleration)) {
-          mLayerManager = layerManager;
-        }
-      }
-    }
     if (!mLayerManager) {
       mLayerManager = CreateBasicLayerManager();
     }
@@ -1421,13 +1410,7 @@ nsBaseWidget::BeginMoveDrag(WidgetMouseEvent* aEvent)
 uint32_t
 nsBaseWidget::GetGLFrameBufferFormat()
 {
-  if (mLayerManager &&
-      mLayerManager->GetBackendType() == LAYERS_OPENGL) {
-    // Assume that the default framebuffer has RGBA format.  Specific
-    // backends that know differently will override this method.
-    return LOCAL_GL_RGBA;
-  }
-  return LOCAL_GL_NONE;
+  return LOCAL_GL_RGBA;
 }
 
 void nsBaseWidget::SetSizeConstraints(const SizeConstraints& aConstraints)
@@ -1549,7 +1532,103 @@ nsBaseWidget::GetRootAccessible()
   return nullptr;
 }
 
+#endif // ACCESSIBILITY
+
+nsresult
+nsIWidget::SynthesizeNativeTouchTap(nsIntPoint aPointerScreenPoint, bool aLongTap)
+{
+  if (sPointerIdCounter > TOUCH_INJECT_MAX_POINTS) {
+    sPointerIdCounter = 0;
+  }
+  int pointerId = sPointerIdCounter;
+  sPointerIdCounter++;
+  nsresult rv = SynthesizeNativeTouchPoint(pointerId, TOUCH_CONTACT,
+                                           aPointerScreenPoint, 1.0, 90);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  if (!aLongTap) {
+    nsresult rv = SynthesizeNativeTouchPoint(pointerId, TOUCH_REMOVE,
+                                             aPointerScreenPoint, 0, 0);
+    return rv;
+  }
+
+  // initiate a long tap
+  int elapse = Preferences::GetInt("ui.click_hold_context_menus.delay",
+                                   TOUCH_INJECT_LONG_TAP_DEFAULT_MSEC);
+  if (!mLongTapTimer) {
+    mLongTapTimer = do_CreateInstance(NS_TIMER_CONTRACTID, &rv);
+    if (NS_FAILED(rv)) {
+      SynthesizeNativeTouchPoint(pointerId, TOUCH_CANCEL,
+                                 aPointerScreenPoint, 0, 0);
+      return NS_ERROR_UNEXPECTED;
+    }
+    // Windows requires recuring events, so we set this to a smaller window
+    // than the pref value.
+    int timeout = elapse;
+    if (timeout > TOUCH_INJECT_PUMP_TIMER_MSEC) {
+      timeout = TOUCH_INJECT_PUMP_TIMER_MSEC;
+    }
+    mLongTapTimer->InitWithFuncCallback(OnLongTapTimerCallback, this,
+                                        timeout,
+                                        nsITimer::TYPE_REPEATING_SLACK);
+  }
+
+  // If we already have a long tap pending, cancel it. We only allow one long
+  // tap to be active at a time.
+  if (mLongTapTouchPoint) {
+    SynthesizeNativeTouchPoint(mLongTapTouchPoint->mPointerId, TOUCH_CANCEL,
+                               mLongTapTouchPoint->mPosition, 0, 0);
+  }
+
+  mLongTapTouchPoint = new LongTapInfo(pointerId, aPointerScreenPoint,
+                                       TimeDuration::FromMilliseconds(elapse));
+  return NS_OK;
+}
+
+// static
+void
+nsIWidget::OnLongTapTimerCallback(nsITimer* aTimer, void* aClosure)
+{
+  nsIWidget *self = static_cast<nsIWidget *>(aClosure);
+
+  if ((self->mLongTapTouchPoint->mStamp + self->mLongTapTouchPoint->mDuration) >
+      TimeStamp::Now()) {
+#ifdef XP_WIN
+    // Windows needs us to keep pumping feedback to the digitizer, so update
+    // the pointer id with the same position.
+    self->SynthesizeNativeTouchPoint(self->mLongTapTouchPoint->mPointerId,
+                                     TOUCH_CONTACT,
+                                     self->mLongTapTouchPoint->mPosition,
+                                     1.0, 90);
 #endif
+    return;
+  }
+
+  // finished, remove the touch point
+  self->mLongTapTimer->Cancel();
+  self->mLongTapTimer = nullptr;
+  self->SynthesizeNativeTouchPoint(self->mLongTapTouchPoint->mPointerId,
+                                   TOUCH_REMOVE,
+                                   self->mLongTapTouchPoint->mPosition,
+                                   0, 0);
+  self->mLongTapTouchPoint = nullptr;
+}
+
+nsresult
+nsIWidget::ClearNativeTouchSequence()
+{
+  if (!mLongTapTimer) {
+    return NS_OK;
+  }
+  mLongTapTimer->Cancel();
+  mLongTapTimer = nullptr;
+  SynthesizeNativeTouchPoint(mLongTapTouchPoint->mPointerId, TOUCH_CANCEL,
+                             mLongTapTouchPoint->mPosition, 0, 0);
+  mLongTapTouchPoint = nullptr;
+  return NS_OK;
+}
 
 #ifdef DEBUG
 //////////////////////////////////////////////////////////////

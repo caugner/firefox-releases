@@ -30,7 +30,6 @@
 #include "gfxUtils.h"
 #include "GLContextProvider.h"
 #include "GLContext.h"
-#include "LayerManagerOGL.h"
 #include "nsAutoPtr.h"
 #include "nsAppShell.h"
 #include "nsIdleService.h"
@@ -43,7 +42,10 @@
 #include "BasicLayers.h"
 #include "libdisplay/GonkDisplay.h"
 #include "pixelflinger/format.h"
-
+#include "mozilla/BasicEvents.h"
+#include "mozilla/layers/CompositorParent.h"
+#include "ParentProcessController.h"
+#include "nsThreadUtils.h"
 #include "HwcComposer2D.h"
 
 #define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "Gonk" , ## args)
@@ -174,8 +176,9 @@ nsWindow::nsWindow()
         sUsingOMTC = ShouldUseOffMainThreadCompositing();
 
         property_get("ro.display.colorfill", propValue, "0");
-        sUsingHwc = Preferences::GetBool("layers.composer2d.enabled",
-                                         atoi(propValue) == 1);
+
+        //Update sUsingHwc whenever layers.composer2d.enabled changes
+        Preferences::AddBoolVarCache(&sUsingHwc, "layers.composer2d.enabled");
 
         if (sUsingOMTC) {
           sOMTCSurface = new gfxImageSurface(gfxIntSize(1, 1),
@@ -210,16 +213,7 @@ nsWindow::DoDraw(void)
     }
 
     LayerManager* lm = gWindowToRedraw->GetLayerManager();
-    if (mozilla::layers::LAYERS_OPENGL == lm->GetBackendType()) {
-        LayerManagerOGL* oglm = static_cast<LayerManagerOGL*>(lm);
-        oglm->SetClippingRegion(region);
-        oglm->SetWorldTransform(sRotationMatrix);
-
-        listener = gWindowToRedraw->GetWidgetListener();
-        if (listener) {
-            listener->PaintWindow(gWindowToRedraw, region);
-        }
-    } else if (mozilla::layers::LAYERS_CLIENT == lm->GetBackendType()) {
+    if (mozilla::layers::LAYERS_CLIENT == lm->GetBackendType()) {
       // No need to do anything, the compositor will handle drawing
     } else if (mozilla::layers::LAYERS_BASIC == lm->GetBackendType()) {
         MOZ_ASSERT(sFramebufferOpen || sUsingOMTC);
@@ -544,10 +538,11 @@ nsWindow::GetDefaultScaleInternal()
     if (dpi < 200.0) {
         return 1.0; // mdpi devices.
     }
-    if (dpi < 280.0) {
+    if (dpi < 300.0) {
         return 1.5; // hdpi devices.
     }
-    return 2.0; // xhdpi devices.
+    // xhdpi devices and beyond.
+    return floor(dpi / 150.0);
 }
 
 LayerManager *
@@ -587,6 +582,10 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
 
     if (sUsingOMTC) {
         CreateCompositor();
+        if (mCompositorParent) {
+            uint64_t rootLayerTreeId = mCompositorParent->RootLayerTreeId();
+            CompositorParent::SetControllerForLayerTree(rootLayerTreeId, new ParentProcessController());
+        }
         if (mLayerManager)
             return mLayerManager;
     }
@@ -598,18 +597,6 @@ nsWindow::GetLayerManager(PLayerTransactionChild* aShadowManager,
         }
 
         MOZ_ASSERT(fbBounds.value == gScreenBounds);
-        if (sGLContext) {
-            nsRefPtr<LayerManagerOGL> layerManager = new LayerManagerOGL(this);
-
-            if (layerManager->Initialize(sGLContext)) {
-                mLayerManager = layerManager;
-                return mLayerManager;
-            } else {
-                LOGW("Could not create OGL LayerManager");
-            }
-        } else {
-            LOGW("GL context was not created");
-        }
     }
 
     // Fall back to software rendering.

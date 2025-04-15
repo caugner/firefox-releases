@@ -14,9 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-MODULE = 'widget'
-
 EXPORTS += [
+    'GonkPermission.h',
     'OrientationObserver.h',
 ]
 
@@ -48,6 +47,7 @@ SOURCES += [
     'Framebuffer.cpp',
     'GfxInfo.cpp',
     'GonkMemoryPressureMonitoring.cpp',
+    'GonkPermission.cpp',
     'HwcComposer2D.cpp',
     'HwcUtils.cpp',
     'nsAppShell.cpp',
@@ -56,14 +56,28 @@ SOURCES += [
     'nsWidgetFactory.cpp',
     'nsWindow.cpp',
     'OrientationObserver.cpp',
+    'ParentProcessController.cpp',
     'ProcessOrientation.cpp'
 ]
 
-LIBXUL_LIBRARY = True
-
 LIBRARY_NAME = 'widget_gonk'
-
-EXPORT_LIBRARY = True
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'xul'
+
+LOCAL_INCLUDES += [
+    '/content/events/src',
+    '/content/media/omx/mediaresourcemanager',
+    '/dom/system/android',
+    '/gfx/skia/include/config',
+    '/gfx/skia/include/core',
+    '/widget/shared',
+    '/widget/xpwidgets',
+]
+
+DEFINES['HAVE_OFF64_T'] = True
+DEFINES['SK_BUILD_FOR_ANDROID_NDK'] = True
+
+if CONFIG['MOZ_OMX_DECODER']:
+    DEFINES['MOZ_OMX_DECODER'] = True

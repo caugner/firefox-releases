@@ -42,6 +42,8 @@ class CompositableHost;
 class CompositableBackendSpecificData;
 class SurfaceDescriptor;
 class ISurfaceAllocator;
+class TextureHost;
+class TextureHostOGL;
 class TextureSourceOGL;
 class TextureSourceD3D9;
 class TextureSourceD3D11;
@@ -67,6 +69,35 @@ public:
   virtual bool NextTile() = 0;
 };
 
+
+/**
+ * TextureHostCommon is a base class for TextureHost and DeprecatedTextureHost.
+ * They need to be handled in a unified way.
+ * See Bug 925444.
+ * XXX - remove this class when deprecated texture classes are completely removed.
+ */
+class TextureHostCommon : public RefCounted<TextureHostCommon>
+{
+public:
+  TextureHostCommon()
+  {
+    MOZ_COUNT_CTOR(TextureHostCommon);
+  }
+  virtual ~TextureHostCommon()
+  {
+    MOZ_COUNT_DTOR(TextureHostCommon);
+  }
+
+  /**
+   * Cast to a TextureHost
+   */
+  virtual TextureHost* AsHost() { return nullptr; }
+  /**
+   * Cast to a TextureHost for each backend.
+   */
+  virtual TextureHostOGL* AsHostOGL() { return nullptr; }
+};
+
 /**
  * TextureSource is the interface for texture objects that can be composited
  * by a given compositor backend. Since the drawing APIs are different
@@ -76,7 +107,7 @@ public:
  *
  * This class is used on the compositor side.
  */
-class TextureSource : public RefCounted<TextureSource>
+class TextureSource : public TextureHostCommon
 {
 public:
   TextureSource();
@@ -257,13 +288,15 @@ private:
  * The Lock/Unlock mecanism here mirrors Lock/Unlock in TextureClient.
  *
  */
-class TextureHost : public RefCounted<TextureHost>
+class TextureHost : public TextureHostCommon
 {
 public:
   TextureHost(uint64_t aID,
               TextureFlags aFlags);
 
   virtual ~TextureHost();
+
+  virtual TextureHost* AsHost() { return this; }
 
   /**
    * Factory method.
@@ -308,7 +341,7 @@ public:
    * @param aRegion The region that has been changed, if nil, it means that the
    * entire surface should be updated.
    */
-  virtual void Updated(const nsIntRegion* aRegion) {}
+  virtual void Updated(const nsIntRegion* aRegion = nullptr) {}
 
   /**
    * Sets this TextureHost's compositor.
@@ -357,7 +390,7 @@ public:
    * Debug facility.
    * XXX - cool kids use Moz2D. See bug 882113.
    */
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() = 0;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() = 0;
 
   /**
    * XXX - Flags should only be set at creation time, this will be removed.
@@ -384,10 +417,12 @@ public:
 
   virtual void SetCompositableBackendSpecificData(CompositableBackendSpecificData* aBackendData);
 
-#ifdef MOZ_LAYERS_HAVE_LOG
+  // If a texture host holds a reference to shmem, it should override this method
+  // to forget about the shmem _without_ releasing it.
+  virtual void OnActorDestroy() {}
+
   virtual const char *Name() { return "TextureHost"; }
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix);
-#endif
 
 protected:
   uint64_t mID;
@@ -420,7 +455,7 @@ public:
 
   virtual uint8_t* GetBuffer() = 0;
 
-  virtual void Updated(const nsIntRegion* aRegion) MOZ_OVERRIDE;
+  virtual void Updated(const nsIntRegion* aRegion = nullptr) MOZ_OVERRIDE;
 
   virtual bool Lock() MOZ_OVERRIDE;
 
@@ -443,7 +478,7 @@ public:
 
   virtual gfx::IntSize GetSize() const MOZ_OVERRIDE { return mSize; }
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() MOZ_OVERRIDE;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() MOZ_OVERRIDE;
 
 protected:
   bool Upload(nsIntRegion *aRegion = nullptr);
@@ -469,7 +504,7 @@ class ShmemTextureHost : public BufferTextureHost
 {
 public:
   ShmemTextureHost(uint64_t aID,
-                   const ipc::Shmem& aShmem,
+                   const mozilla::ipc::Shmem& aShmem,
                    gfx::SurfaceFormat aFormat,
                    ISurfaceAllocator* aDeallocator,
                    TextureFlags aFlags);
@@ -480,13 +515,13 @@ public:
 
   virtual uint8_t* GetBuffer() MOZ_OVERRIDE;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char *Name() MOZ_OVERRIDE { return "ShmemTextureHost"; }
-#endif
+
+  virtual void OnActorDestroy() MOZ_OVERRIDE;
 
 protected:
-  ipc::Shmem* mShmem;
-  ISurfaceAllocator* mDeallocator;
+  mozilla::ipc::Shmem* mShmem;
+  RefPtr<ISurfaceAllocator> mDeallocator;
 };
 
 /**
@@ -509,9 +544,7 @@ public:
 
   virtual uint8_t* GetBuffer() MOZ_OVERRIDE;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char *Name() MOZ_OVERRIDE { return "MemoryTextureHost"; }
-#endif
 
 protected:
   uint8_t* mBuffer;
@@ -662,12 +695,10 @@ public:
     return LayerRenderState();
   }
 
-  virtual already_AddRefed<gfxImageSurface> GetAsSurface() = 0;
+  virtual TemporaryRef<gfx::DataSourceSurface> GetAsSurface() = 0;
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char *Name() = 0;
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix);
-#endif
 
   /**
    * TEMPORARY.
@@ -707,16 +738,13 @@ public:
    */
   // only made virtual to allow overriding in GrallocDeprecatedTextureHostOGL, for hacky fix in gecko 23 for bug 862324.
   // see bug 865908 about fixing this.
-  virtual void SetBuffer(SurfaceDescriptor* aBuffer, ISurfaceAllocator* aAllocator)
-  {
-    MOZ_ASSERT(!mBuffer || mBuffer == aBuffer, "Will leak the old mBuffer");
-    mBuffer = aBuffer;
-    mDeAllocator = aAllocator;
-  }
+  virtual void SetBuffer(SurfaceDescriptor* aBuffer, ISurfaceAllocator* aAllocator);
 
   // used only for hacky fix in gecko 23 for bug 862324
   // see bug 865908 about fixing this.
   virtual void ForgetBuffer() {}
+
+  void OnActorDestroy();
 
 protected:
   /**
@@ -762,7 +790,7 @@ protected:
                               // which can go away under our feet at any time. This is the cause
                               // of bug 862324 among others. Our current understanding is that
                               // this will be gone in Gecko 24. See bug 858914.
-  ISurfaceAllocator* mDeAllocator;
+  RefPtr<ISurfaceAllocator> mDeAllocator;
   gfx::SurfaceFormat mFormat;
 };
 
@@ -799,11 +827,19 @@ private:
 class CompositingRenderTarget : public TextureSource
 {
 public:
+  CompositingRenderTarget(const gfx::IntPoint& aOrigin)
+    : mOrigin(aOrigin)
+  {}
   virtual ~CompositingRenderTarget() {}
 
 #ifdef MOZ_DUMP_PAINTING
   virtual already_AddRefed<gfxImageSurface> Dump(Compositor* aCompositor) { return nullptr; }
 #endif
+
+  const gfx::IntPoint& GetOrigin() { return mOrigin; }
+
+private:
+  gfx::IntPoint mOrigin;
 };
 
 /**

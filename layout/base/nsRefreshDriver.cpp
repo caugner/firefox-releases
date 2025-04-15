@@ -25,8 +25,8 @@
 #include "WinUtils.h"
 #endif
 
-#include "mozilla/Util.h"
-
+#include "mozilla/ArrayUtils.h"
+#include "mozilla/AutoRestore.h"
 #include "nsRefreshDriver.h"
 #include "nsITimer.h"
 #include "nsLayoutUtils.h"
@@ -685,7 +685,8 @@ nsRefreshDriver::nsRefreshDriver(nsPresContext* aPresContext)
     mThrottled(false),
     mTestControllingRefreshes(false),
     mViewManagerFlushIsPending(false),
-    mRequestedHighPrecision(false)
+    mRequestedHighPrecision(false),
+    mInRefresh(false)
 {
   mMostRecentRefreshEpochTime = JS_Now();
   mMostRecentRefresh = TimeStamp::Now();
@@ -1061,6 +1062,9 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
 
   profiler_tracing("Paint", "RD", TRACING_INTERVAL_START);
 
+  AutoRestore<bool> restoreInRefresh(mInRefresh);
+  mInRefresh = true;
+
   /*
    * The timer holds a reference to |this| while calling |Notify|.
    * However, implementations of |WillRefresh| are permitted to destroy
@@ -1195,14 +1199,7 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
   if (mViewManagerFlushIsPending) {
 #ifdef MOZ_DUMP_PAINTING
     if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
-      printf("Starting ProcessPendingUpdates\n");
-    }
-#endif
-#ifndef MOZ_WIDGET_GONK
-    // Waiting for bug 830475 to work on B2G.
-    nsRefPtr<layers::LayerManager> mgr = mPresContext->GetPresShell()->GetLayerManager();
-    if (mgr) {
-      mgr->SetPaintStartTime(mMostRecentRefresh);
+      printf_stderr("Starting ProcessPendingUpdates\n");
     }
 #endif
 
@@ -1211,7 +1208,7 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
     vm->ProcessPendingUpdates();
 #ifdef MOZ_DUMP_PAINTING
     if (nsLayoutUtils::InvalidationDebuggingIsEnabled()) {
-      printf("Ending ProcessPendingUpdates\n");
+      printf_stderr("Ending ProcessPendingUpdates\n");
     }
 #endif
   }
@@ -1220,6 +1217,8 @@ nsRefreshDriver::Tick(int64_t aNowEpoch, TimeStamp aNowTime)
     mPostRefreshObservers[i]->DidRefresh();
   }
   profiler_tracing("Paint", "RD", TRACING_INTERVAL_END);
+
+  NS_ASSERTION(mInRefresh, "Still in refresh");
 }
 
 /* static */ PLDHashOperator
@@ -1377,3 +1376,5 @@ nsRefreshDriver::RevokeFrameRequestCallbacks(nsIDocument* aDocument)
   // No need to worry about restarting our timer in slack mode if it's already
   // running; that will happen automatically when it fires.
 }
+
+#undef LOG

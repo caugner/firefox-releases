@@ -12,7 +12,6 @@
 #include "nsBlockFrame.h"
 
 #include "mozilla/DebugOnly.h"
-#include "mozilla/Util.h"
 
 #include "nsCOMPtr.h"
 #include "nsAbsoluteContainingBlock.h"
@@ -49,6 +48,7 @@
 #include "nsRenderingContext.h"
 #include "TextOverflow.h"
 #include "nsIFrameInlines.h"
+#include "nsTextFrame.h"
 
 #ifdef IBMBIDI
 #include "nsBidiPresUtils.h"
@@ -784,6 +784,67 @@ nsBlockFrame::ComputeTightBounds(gfxContext* aContext) const
     return GetVisualOverflowRect();
   }
   return ComputeSimpleTightBounds(aContext);
+}
+
+/* virtual */ nsresult
+nsBlockFrame::GetPrefWidthTightBounds(nsRenderingContext* aRenderingContext,
+                                      nscoord* aX,
+                                      nscoord* aXMost)
+{
+  nsIFrame* firstInFlow = FirstContinuation();
+  if (firstInFlow != this) {
+    return firstInFlow->GetPrefWidthTightBounds(aRenderingContext, aX, aXMost);
+  }
+
+  *aX = 0;
+  *aXMost = 0;
+
+  nsresult rv;
+  InlinePrefWidthData data;
+  for (nsBlockFrame* curFrame = this; curFrame;
+       curFrame = static_cast<nsBlockFrame*>(curFrame->GetNextContinuation())) {
+    for (line_iterator line = curFrame->begin_lines(), line_end = curFrame->end_lines();
+         line != line_end; ++line)
+    {
+      nscoord childX, childXMost;
+      if (line->IsBlock()) {
+        data.ForceBreak(aRenderingContext);
+        rv = line->mFirstChild->GetPrefWidthTightBounds(aRenderingContext,
+                                                        &childX, &childXMost);
+        NS_ENSURE_SUCCESS(rv, rv);
+        *aX = std::min(*aX, childX);
+        *aXMost = std::max(*aXMost, childXMost);
+      } else {
+        if (!curFrame->GetPrevContinuation() &&
+            line == curFrame->begin_lines()) {
+          // Only add text-indent if it has no percentages; using a
+          // percentage basis of 0 unconditionally would give strange
+          // behavior for calc(10%-3px).
+          const nsStyleCoord &indent = StyleText()->mTextIndent;
+          if (indent.ConvertsToLength()) {
+            data.currentLine += nsRuleNode::ComputeCoordPercentCalc(indent, 0);
+          }
+        }
+        // XXX Bug NNNNNN Should probably handle percentage text-indent.
+
+        data.line = &line;
+        data.lineContainer = curFrame;
+        nsIFrame *kid = line->mFirstChild;
+        for (int32_t i = 0, i_end = line->GetChildCount(); i != i_end;
+             ++i, kid = kid->GetNextSibling()) {
+          rv = kid->GetPrefWidthTightBounds(aRenderingContext, &childX,
+                                            &childXMost);
+          NS_ENSURE_SUCCESS(rv, rv);
+          *aX = std::min(*aX, data.currentLine + childX);
+          *aXMost = std::max(*aXMost, data.currentLine + childXMost);
+          kid->AddInlinePrefWidth(aRenderingContext, &data);
+        }
+      }
+    }
+  }
+  data.ForceBreak(aRenderingContext);
+
+  return NS_OK;
 }
 
 static bool
@@ -1727,8 +1788,6 @@ nsBlockFrame::PropagateFloatDamage(nsBlockReflowState& aState,
   }
 }
 
-static void PlaceFrameView(nsIFrame* aFrame);
-
 static bool LineHasClear(nsLineBox* aLine) {
   return aLine->IsBlock()
     ? (aLine->GetBreakTypeBefore() ||
@@ -2143,7 +2202,7 @@ nsBlockFrame::ReflowDirtyLines(nsBlockReflowState& aState)
 
   // Should we really have to do this?
   if (repositionViews)
-    ::PlaceFrameView(this);
+    nsContainerFrame::PlaceFrameView(this);
 
   // We can skip trying to pull up the next line if our height is constrained
   // (so we can report being incomplete) and there is no next in flow or we
@@ -2558,15 +2617,6 @@ nsBlockFrame::PullFrameFrom(nsLineBox*           aLine,
   return frame;
 }
 
-static void
-PlaceFrameView(nsIFrame* aFrame)
-{
-  if (aFrame->HasView())
-    nsContainerFrame::PositionFrameView(aFrame);
-  else
-    nsContainerFrame::PositionChildViews(aFrame);
-}
-
 void
 nsBlockFrame::SlideLine(nsBlockReflowState& aState,
                         nsLineBox* aLine, nscoord aDY)
@@ -2588,7 +2638,7 @@ nsBlockFrame::SlideLine(nsBlockReflowState& aState,
     }
 
     // Make sure the frame's view and any child views are updated
-    ::PlaceFrameView(kid);
+    nsContainerFrame::PlaceFrameView(kid);
   }
   else {
     // Adjust the Y coordinate of the frames in the line.
@@ -2601,7 +2651,7 @@ nsBlockFrame::SlideLine(nsBlockReflowState& aState,
         kid->MovePositionBy(nsPoint(0, aDY));
       }
       // Make sure the frame's view and any child views are updated
-      ::PlaceFrameView(kid);
+      nsContainerFrame::PlaceFrameView(kid);
       kid = kid->GetNextSibling();
     }
   }
@@ -4723,9 +4773,9 @@ ShouldPutNextSiblingOnNewLine(nsIFrame* aLastFrame)
   if (type == nsGkAtoms::brFrame) {
     return true;
   }
-  // XXX the IS_DIRTY check is a wallpaper for bug 822910.
+  // XXX the TEXT_OFFSETS_NEED_FIXING check is a wallpaper for bug 822910.
   if (type == nsGkAtoms::textFrame &&
-      !(aLastFrame->GetStateBits() & NS_FRAME_IS_DIRTY)) {
+      !(aLastFrame->GetStateBits() & TEXT_OFFSETS_NEED_FIXING)) {
     return aLastFrame->HasTerminalNewline() &&
       aLastFrame->StyleText()->NewlineIsSignificant();
   }
@@ -5826,7 +5876,7 @@ nsBlockFrame::ReflowFloat(nsBlockReflowState& aState,
   // XXXldb This seems like the wrong place to be doing this -- shouldn't
   // we be doing this in nsBlockReflowState::FlowAndPlaceFloat after
   // we've positioned the float, and shouldn't we be doing the equivalent
-  // of |::PlaceFrameView| here?
+  // of |PlaceFrameView| here?
   aFloat->SetSize(nsSize(metrics.width, metrics.height));
   if (aFloat->HasView()) {
     nsContainerFrame::SyncFrameViewAfterReflow(aState.mPresContext, aFloat,
@@ -6500,7 +6550,7 @@ nsBlockFrame::SetInitialChildList(ChildListID     aListID,
           nsCSSPseudoElements::GetPseudoAtom(pseudoType))->StyleContext();
       nsRefPtr<nsStyleContext> kidSC = shell->StyleSet()->
         ResolvePseudoElementStyle(mContent->AsElement(), pseudoType,
-                                  parentStyle);
+                                  parentStyle, nullptr);
 
       // Create bullet frame
       nsBulletFrame* bullet = new (shell) nsBulletFrame(kidSC);

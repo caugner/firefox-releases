@@ -18,8 +18,6 @@ using namespace mozilla::plugins::parent;
 
 namespace {
 
-typedef PluginIdentifierParent::StackIdentifier StackIdentifier;
-
 inline void
 ReleaseVariant(NPVariant& aVariant,
                PluginInstanceParent* aInstance)
@@ -108,7 +106,7 @@ PluginScriptableObjectParent::ScriptableHasMethod(NPObject* aObject,
     return false;
   }
 
-  StackIdentifier identifier(aObject, aName);
+  PluginIdentifierParent::StackIdentifier identifier(aObject, aName);
   if (!identifier) {
     return false;
   }
@@ -148,7 +146,7 @@ PluginScriptableObjectParent::ScriptableInvoke(NPObject* aObject,
     return false;
   }
 
-  StackIdentifier identifier(aObject, aName);
+  PluginIdentifierParent::StackIdentifier identifier(aObject, aName);
   if (!identifier) {
     return false;
   }
@@ -250,7 +248,7 @@ PluginScriptableObjectParent::ScriptableHasProperty(NPObject* aObject,
     return false;
   }
 
-  StackIdentifier identifier(aObject, aName);
+  PluginIdentifierParent::StackIdentifier identifier(aObject, aName);
   if (!identifier) {
     return false;
   }
@@ -299,7 +297,7 @@ PluginScriptableObjectParent::ScriptableSetProperty(NPObject* aObject,
     return false;
   }
 
-  StackIdentifier identifier(aObject, aName);
+  PluginIdentifierParent::StackIdentifier identifier(aObject, aName);
   if (!identifier) {
     return false;
   }
@@ -342,7 +340,7 @@ PluginScriptableObjectParent::ScriptableRemoveProperty(NPObject* aObject,
     return false;
   }
 
-  StackIdentifier identifier(aObject, aName);
+  PluginIdentifierParent::StackIdentifier identifier(aObject, aName);
   if (!identifier) {
     return false;
   }
@@ -1046,7 +1044,7 @@ PluginScriptableObjectParent::AnswerEnumerate(InfallibleTArray<PPluginIdentifier
     // Because of GC hazards, all identifiers returned from enumerate
     // must be made permanent.
     if (_identifierisstring(ids[index])) {
-      JS::RootedString str(cx, NPIdentifierToString(ids[index]));
+      JS::Rooted<JSString*> str(cx, NPIdentifierToString(ids[index]));
       if (!JS_StringHasBeenInterned(cx, str)) {
         DebugOnly<JSString*> str2 = JS_InternJSString(cx, str);
         NS_ASSERTION(str2 == str, "Interning a JS string which is currently an ID should return itself.");
@@ -1226,7 +1224,7 @@ PluginScriptableObjectParent::GetPropertyHelper(NPIdentifier aName,
     return false;
   }
 
-  StackIdentifier identifier(GetInstance(), aName);
+  PluginIdentifierParent::StackIdentifier identifier(GetInstance(), aName);
   if (!identifier) {
     return false;
   }

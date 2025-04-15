@@ -124,7 +124,16 @@ status_t RtspMediaSource::read(MediaBuffer **out, const ReadOptions *options)
     rv = mRtspResource->ReadFrameFromTrack((uint8_t *)mBuffer->data(),
                                            mFrameMaxSize, mTrackIdx, readCount,
                                            time, actualFrameSize);
-    NS_ENSURE_SUCCESS(rv, ERROR_IO);
+    if (NS_FAILED(rv)) {
+      // Release mGroup and mBuffer.
+      stop();
+      // Since RtspMediaSource is an implementation of Android media source,
+      // it's held by OMXCodec and isn't released yet. So we have to re-construct
+      // mGroup and mBuffer.
+      start();
+      NS_WARNING("ReadFrameFromTrack failed; releasing buffers and returning.");
+      return ERROR_CONNECTION_LOST;
+    }
     if (actualFrameSize > mFrameMaxSize) {
       // release mGroup and mBuffer
       stop();
@@ -278,6 +287,46 @@ nsresult RtspOmxReader::Seek(int64_t aTime, int64_t aStartTime,
   // that store the decoded data and also call the |DecodeToTarget| to pass
   // the seek time to OMX a/v decoders.
   return MediaOmxReader::Seek(aTime, aStartTime, aEndTime, aCurrentTime);
+}
+
+void RtspOmxReader::OnDecodeThreadStart() {
+  // Start RTSP streaming right after starting the decoding thread in
+  // MediaDecoderStateMachine and before starting OMXCodec decoding.
+  if (mRtspResource) {
+    nsIStreamingProtocolController* controller =
+        mRtspResource->GetMediaStreamController();
+    if (controller) {
+      controller->Play();
+    }
+  }
+
+  // Call parent class to start OMXCodec decoding.
+  MediaOmxReader::OnDecodeThreadStart();
+}
+
+void RtspOmxReader::OnDecodeThreadFinish() {
+  // Call parent class to pause OMXCodec decoding.
+  MediaOmxReader::OnDecodeThreadFinish();
+
+  // Stop RTSP streaming right before destroying the decoding thread in
+  // MediaDecoderStateMachine and after pausing OMXCodec decoding.
+  // RTSP streaming should not be paused until OMXCodec has been paused and
+  // until the decoding thread in MediaDecoderStateMachine is about to be
+  // destroyed. Otherwise, RtspMediaSource::read() would block the binder
+  // thread of OMXCodecObserver::onMessage() --> OMXCodec::on_message() -->
+  // OMXCodec::drainInputBuffer() due to network data starvation. Because
+  // OMXCodec::mLock is held by the binder thread in this case, all other
+  // threads would be blocked when they try to lock this mutex. As a result, the
+  // decoding thread in MediaDecoderStateMachine would be blocked forever in
+  // OMXCodec::read() if there is no enough data for RtspMediaSource::read() to
+  // return.
+  if (mRtspResource) {
+    nsIStreamingProtocolController* controller =
+        mRtspResource->GetMediaStreamController();
+    if (controller) {
+      controller->Pause();
+    }
+  }
 }
 
 } // namespace mozilla

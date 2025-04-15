@@ -8,7 +8,6 @@
 #include "Layers.h"                     // for WriteSnapshotToDumpFile, etc
 #include "gfx2DGlue.h"                  // for ToFilter, ToMatrix4x4
 #include "gfx3DMatrix.h"                // for gfx3DMatrix
-#include "gfxImageSurface.h"            // for gfxImageSurface
 #include "gfxPoint.h"                   // for gfxIntSize
 #include "gfxRect.h"                    // for gfxRect
 #include "gfxUtils.h"                   // for gfxUtils, etc
@@ -78,8 +77,7 @@ ImageLayerComposite::GetLayer()
 }
 
 void
-ImageLayerComposite::RenderLayer(const nsIntPoint& aOffset,
-                                 const nsIntRect& aClipRect)
+ImageLayerComposite::RenderLayer(const nsIntRect& aClipRect)
 {
   if (!mImageHost || !mImageHost->IsAttached()) {
     return;
@@ -87,7 +85,13 @@ ImageLayerComposite::RenderLayer(const nsIntPoint& aOffset,
 
 #ifdef MOZ_DUMP_PAINTING
   if (gfxUtils::sDumpPainting) {
-    nsRefPtr<gfxImageSurface> surf = mImageHost->GetAsSurface();
+    RefPtr<gfx::DataSourceSurface> dSurf = mImageHost->GetAsSurface();
+    gfxPlatform *platform = gfxPlatform::GetPlatform();
+    RefPtr<gfx::DrawTarget> dt = platform->CreateDrawTargetForData(dSurf->GetData(),
+                                                                   dSurf->GetSize(),
+                                                                   dSurf->Stride(),
+                                                                   dSurf->GetFormat());
+    nsRefPtr<gfxASurface> surf = platform->GetThebesSurfaceForDrawTarget(dt);
     WriteSnapshotToDumpFile(this, surf);
   }
 #endif
@@ -104,7 +108,6 @@ ImageLayerComposite::RenderLayer(const nsIntPoint& aOffset,
   mImageHost->Composite(effectChain,
                         GetEffectiveOpacity(),
                         transform,
-                        gfx::Point(aOffset.x, aOffset.y),
                         gfx::ToFilter(mFilter),
                         clipRect);
 }
@@ -118,10 +121,10 @@ ImageLayerComposite::ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToS
   gfxRect sourceRect(0, 0, 0, 0);
   if (mImageHost &&
       mImageHost->IsAttached() &&
-      (mImageHost->GetDeprecatedTextureHost() || mImageHost->GetTextureHost())) {
+      (mImageHost->GetDeprecatedTextureHost() || mImageHost->GetAsTextureHost())) {
     IntSize size =
-      mImageHost->GetTextureHost() ? mImageHost->GetTextureHost()->GetSize()
-                                   : mImageHost->GetDeprecatedTextureHost()->GetSize();
+      mImageHost->GetAsTextureHost() ? mImageHost->GetAsTextureHost()->GetSize()
+                                     : mImageHost->GetDeprecatedTextureHost()->GetSize();
     sourceRect.SizeTo(size.width, size.height);
     if (mScaleMode != SCALE_NONE &&
         sourceRect.width != 0.0 && sourceRect.height != 0.0) {
@@ -160,7 +163,6 @@ ImageLayerComposite::CleanupResources()
   mImageHost = nullptr;
 }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
 nsACString&
 ImageLayerComposite::PrintInfo(nsACString& aTo, const char* aPrefix)
 {
@@ -173,7 +175,6 @@ ImageLayerComposite::PrintInfo(nsACString& aTo, const char* aPrefix)
   }
   return aTo;
 }
-#endif
 
 } /* layers */
 } /* mozilla */

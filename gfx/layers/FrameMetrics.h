@@ -12,6 +12,10 @@
 #include "mozilla/gfx/Rect.h"           // for RoundedIn
 #include "mozilla/gfx/ScaleFactor.h"    // for ScaleFactor
 
+namespace IPC {
+template <typename T> struct ParamTraits;
+} // namespace IPC
+
 namespace mozilla {
 namespace layers {
 
@@ -32,12 +36,12 @@ typedef gfx::ScaleFactor<ParentLayerPixel, ScreenPixel> ParentLayerToScreenScale
  * atomically with new pixels.
  */
 struct FrameMetrics {
+  friend struct IPC::ParamTraits<mozilla::layers::FrameMetrics>;
 public:
   // We use IDs to identify frames across processes.
   typedef uint64_t ViewID;
   static const ViewID NULL_SCROLL_ID;   // This container layer does not scroll.
-  static const ViewID ROOT_SCROLL_ID;   // This is the root scroll frame.
-  static const ViewID START_SCROLL_ID;  // This is the ID that scrolling subframes
+  static const ViewID START_SCROLL_ID = 2;  // This is the ID that scrolling subframes
                                         // will begin at.
 
   FrameMetrics()
@@ -52,8 +56,13 @@ public:
     , mCumulativeResolution(1)
     , mZoom(1)
     , mDevPixelsPerCSSPixel(1)
-    , mMayHaveTouchListeners(false)
     , mPresShellId(-1)
+    , mMayHaveTouchListeners(false)
+    , mIsRoot(false)
+    , mHasScrollgrab(false)
+    , mUpdateScrollOffset(false)
+    , mDisableScrollingX(false)
+    , mDisableScrollingY(false)
   {}
 
   // Default copy ctor and operator= are fine
@@ -71,7 +80,12 @@ public:
            mCumulativeResolution == aOther.mCumulativeResolution &&
            mDevPixelsPerCSSPixel == aOther.mDevPixelsPerCSSPixel &&
            mMayHaveTouchListeners == aOther.mMayHaveTouchListeners &&
-           mPresShellId == aOther.mPresShellId;
+           mPresShellId == aOther.mPresShellId &&
+           mIsRoot == aOther.mIsRoot &&
+           mHasScrollgrab == aOther.mHasScrollgrab &&
+           mDisableScrollingX == aOther.mDisableScrollingX &&
+           mDisableScrollingY == aOther.mDisableScrollingY &&
+           mUpdateScrollOffset == aOther.mUpdateScrollOffset;
   }
   bool operator!=(const FrameMetrics& aOther) const
   {
@@ -88,7 +102,7 @@ public:
 
   bool IsRootScrollable() const
   {
-    return mScrollId == ROOT_SCROLL_ID;
+    return mIsRoot;
   }
 
   bool IsScrollable() const
@@ -109,6 +123,31 @@ public:
   LayoutDeviceToParentLayerScale GetParentResolution() const
   {
     return mCumulativeResolution / mResolution;
+  }
+
+  // Ensure the scrollableRect is at least as big as the compositionBounds
+  // because the scrollableRect can be smaller if the content is not large
+  // and the scrollableRect hasn't been updated yet.
+  // We move the scrollableRect up because we don't know if we can move it
+  // down. i.e. we know that scrollableRect can go back as far as zero.
+  // but we don't know how much further ahead it can go.
+  CSSRect GetExpandedScrollableRect() const
+  {
+    CSSRect scrollableRect = mScrollableRect;
+    CSSRect compBounds = CalculateCompositedRectInCssPixels();
+    if (scrollableRect.width < compBounds.width) {
+      scrollableRect.x = std::max(0.f,
+                                  scrollableRect.x - (compBounds.width - scrollableRect.width));
+      scrollableRect.width = compBounds.width;
+    }
+
+    if (scrollableRect.height < compBounds.height) {
+      scrollableRect.y = std::max(0.f,
+                                  scrollableRect.y - (compBounds.height - scrollableRect.height));
+      scrollableRect.height = compBounds.height;
+    }
+
+    return scrollableRect;
   }
 
   /**
@@ -142,7 +181,8 @@ public:
   // instead.
   //
   // This value is valid for nested scrollable layers as well, and is still
-  // relative to the layer tree origin.
+  // relative to the layer tree origin. This value is provided by Gecko at
+  // layout/paint time.
   ScreenIntRect mCompositionBounds;
 
   // ---------------------------------------------------------------------------
@@ -205,8 +245,7 @@ public:
   // not any parents, regardless of parent transforms.
   CSSPoint mScrollOffset;
 
-  // A unique ID assigned to each scrollable frame (unless this is
-  // ROOT_SCROLL_ID, in which case it is not unique).
+  // A unique ID assigned to each scrollable frame.
   ViewID mScrollId;
 
   // The scrollable bounds of a frame. This is determined by reflow.
@@ -226,23 +265,20 @@ public:
   // The following metrics are dimensionless.
   //
 
-  // The resolution that the current frame has been painted at.
-  //
-  // Every time this frame is composited and the compositor samples its
-  // transform, this metric is used to create a transform which is
-  // post-multiplied into the parent's transform. Since this only happens when
-  // we walk the layer tree, the resulting transform isn't stored here. Thus the
-  // resolution of parent layers is opaque to this metric.
+  // The incremental resolution that the current frame has been painted at
+  // relative to the parent frame's resolution. This information is provided
+  // by Gecko at layout/paint time.
   ParentLayerToLayerScale mResolution;
 
   // The cumulative resolution that the current frame has been painted at.
   // This is the product of our mResolution and the mResolutions of our parent frames.
+  // This information is provided by Gecko at layout/paint time.
   LayoutDeviceToLayerScale mCumulativeResolution;
 
   // The "user zoom". Content is painted by gecko at mResolution * mDevPixelsPerCSSPixel,
   // but will be drawn to the screen at mZoom. In the steady state, the
   // two will be the same, but during an async zoom action the two may
-  // diverge.
+  // diverge. This information is initialized in Gecko but updated in the APZC.
   CSSToScreenScale mZoom;
 
   // The conversion factor between CSS pixels and device pixels for this frame.
@@ -251,10 +287,145 @@ public:
   // resolution.
   CSSToLayoutDeviceScale mDevPixelsPerCSSPixel;
 
+  uint32_t mPresShellId;
+
   // Whether or not this frame may have touch listeners.
   bool mMayHaveTouchListeners;
 
+  // Whether or not this is the root scroll frame for the root content document.
+  bool mIsRoot;
+
+  // Whether or not this frame is for an element marked 'scrollgrab'.
+  bool mHasScrollgrab;
+
+  // Whether mScrollOffset was updated by something other than the APZ code, and
+  // if the APZC receiving this metrics should update its local copy.
+  bool mUpdateScrollOffset;
+
+public:
+  bool GetDisableScrollingX() const
+  {
+    return mDisableScrollingX;
+  }
+
+  void SetDisableScrollingX(bool aDisableScrollingX)
+  {
+    mDisableScrollingX = aDisableScrollingX;
+  }
+
+  bool GetDisableScrollingY() const
+  {
+    return mDisableScrollingY;
+  }
+
+  void SetDisableScrollingY(bool aDisableScrollingY)
+  {
+    mDisableScrollingY = aDisableScrollingY;
+  }
+
+private:
+  // New fields from now on should be made private and old fields should
+  // be refactored to be private.
+
+  // Allow disabling scrolling in individual axis to support
+  // |overflow: hidden|.
+  bool mDisableScrollingX;
+  bool mDisableScrollingY;
+};
+
+/**
+ * This class allows us to uniquely identify a scrollable layer. The
+ * mLayersId identifies the layer tree (corresponding to a child process
+ * and/or tab) that the scrollable layer belongs to. The mPresShellId
+ * is a temporal identifier (corresponding to the document loaded that
+ * contains the scrollable layer, which may change over time). The
+ * mScrollId corresponds to the actual frame that is scrollable.
+ */
+struct ScrollableLayerGuid {
+  uint64_t mLayersId;
   uint32_t mPresShellId;
+  FrameMetrics::ViewID mScrollId;
+
+  ScrollableLayerGuid()
+    : mLayersId(0)
+    , mPresShellId(0)
+    , mScrollId(0)
+  {
+    MOZ_COUNT_CTOR(ScrollableLayerGuid);
+  }
+
+  ScrollableLayerGuid(uint64_t aLayersId, uint32_t aPresShellId,
+                      FrameMetrics::ViewID aScrollId)
+    : mLayersId(aLayersId)
+    , mPresShellId(aPresShellId)
+    , mScrollId(aScrollId)
+  {
+    MOZ_COUNT_CTOR(ScrollableLayerGuid);
+  }
+
+  ScrollableLayerGuid(uint64_t aLayersId, const FrameMetrics& aMetrics)
+    : mLayersId(aLayersId)
+    , mPresShellId(aMetrics.mPresShellId)
+    , mScrollId(aMetrics.mScrollId)
+  {
+    MOZ_COUNT_CTOR(ScrollableLayerGuid);
+  }
+
+  ~ScrollableLayerGuid()
+  {
+    MOZ_COUNT_DTOR(ScrollableLayerGuid);
+  }
+
+  bool operator==(const ScrollableLayerGuid& other) const
+  {
+    return mLayersId == other.mLayersId
+        && mPresShellId == other.mPresShellId
+        && mScrollId == other.mScrollId;
+  }
+
+  bool operator!=(const ScrollableLayerGuid& other) const
+  {
+    return !(*this == other);
+  }
+};
+
+struct ZoomConstraints {
+  bool mAllowZoom;
+  CSSToScreenScale mMinZoom;
+  CSSToScreenScale mMaxZoom;
+
+  ZoomConstraints()
+    : mAllowZoom(true)
+  {
+    MOZ_COUNT_CTOR(ZoomConstraints);
+  }
+
+  ZoomConstraints(bool aAllowZoom,
+                  const CSSToScreenScale& aMinZoom,
+                  const CSSToScreenScale& aMaxZoom)
+    : mAllowZoom(aAllowZoom)
+    , mMinZoom(aMinZoom)
+    , mMaxZoom(aMaxZoom)
+  {
+    MOZ_COUNT_CTOR(ZoomConstraints);
+  }
+
+  ~ZoomConstraints()
+  {
+    MOZ_COUNT_DTOR(ZoomConstraints);
+  }
+
+  bool operator==(const ZoomConstraints& other) const
+  {
+    return mAllowZoom == other.mAllowZoom
+        && mMinZoom == other.mMinZoom
+        && mMaxZoom == other.mMaxZoom;
+  }
+
+  bool operator!=(const ZoomConstraints& other) const
+  {
+    return !(*this == other);
+  }
 };
 
 }

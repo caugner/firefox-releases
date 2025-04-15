@@ -6,11 +6,10 @@
 
 #include "nsXMLHttpRequest.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/dom/XMLHttpRequestUploadBinding.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Util.h"
 #include "nsDOMBlobBuilder.h"
-#include "nsICharsetConverterManager.h"
 #include "nsIDOMDocument.h"
 #include "nsIDOMProgressEvent.h"
 #include "nsIJARChannel.h"
@@ -58,6 +57,7 @@
 #include "jsfriendapi.h"
 #include "GeckoProfiler.h"
 #include "mozilla/dom/EncodingUtils.h"
+#include "nsIUnicodeDecoder.h"
 #include "mozilla/dom/XMLHttpRequestBinding.h"
 #include "mozilla/Attributes.h"
 #include "nsIPermissionManager.h"
@@ -247,14 +247,6 @@ NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
 NS_IMPL_ADDREF_INHERITED(nsXHREventTarget, nsDOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(nsXHREventTarget, nsDOMEventTargetHelper)
 
-NS_IMPL_EVENT_HANDLER(nsXHREventTarget, loadstart)
-NS_IMPL_EVENT_HANDLER(nsXHREventTarget, progress)
-NS_IMPL_EVENT_HANDLER(nsXHREventTarget, abort)
-NS_IMPL_EVENT_HANDLER(nsXHREventTarget, error)
-NS_IMPL_EVENT_HANDLER(nsXHREventTarget, load)
-NS_IMPL_EVENT_HANDLER(nsXHREventTarget, timeout)
-NS_IMPL_EVENT_HANDLER(nsXHREventTarget, loadend)
-
 void
 nsXHREventTarget::DisconnectFromOwner()
 {
@@ -391,7 +383,7 @@ nsXMLHttpRequest::InitParameters(bool aAnon, bool aSystem)
 
   // Chrome is always allowed access, so do the permission check only
   // for non-chrome pages.
-  if (!IsSystemXHR()) {
+  if (!IsSystemXHR() && aSystem) {
     nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
     if (!doc) {
       return;
@@ -641,13 +633,9 @@ nsXMLHttpRequest::DetectCharset()
     mResponseCharset.AssignLiteral("UTF-8");
   }
 
-  nsresult rv;
-  nsCOMPtr<nsICharsetConverterManager> ccm =
-    do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);
-  NS_ENSURE_SUCCESS(rv, rv);
+  mDecoder = EncodingUtils::DecoderForEncoding(mResponseCharset);
 
-  return ccm->GetUnicodeDecoderRaw(mResponseCharset.get(),
-                                   getter_AddRefs(mDecoder));
+  return NS_OK;
 }
 
 nsresult
@@ -732,20 +720,7 @@ nsXMLHttpRequest::GetResponseText(nsString& aResponseText, ErrorResult& aRv)
     mResponseCharset = mResponseXML->GetDocumentCharacterSet();
     mResponseText.Truncate();
     mResponseBodyDecodedPos = 0;
-
-    nsresult rv;
-    nsCOMPtr<nsICharsetConverterManager> ccm =
-      do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID, &rv);
-    if (NS_FAILED(rv)) {
-      aRv.Throw(rv);
-      return;
-    }
-
-    aRv = ccm->GetUnicodeDecoderRaw(mResponseCharset.get(),
-                                    getter_AddRefs(mDecoder));
-    if (aRv.Failed()) {
-      return;
-    }
+    mDecoder = EncodingUtils::DecoderForEncoding(mResponseCharset);
   }
 
   NS_ASSERTION(mResponseBodyDecodedPos < mResponseBody.Length(),
@@ -2884,7 +2859,7 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
             (suspendedWindow = suspendedWindow->GetCurrentInnerWindow())) {
           suspendedDoc = suspendedWindow->GetExtantDoc();
           if (suspendedDoc) {
-            suspendedDoc->SuppressEventHandling();
+            suspendedDoc->SuppressEventHandling(nsIDocument::eEvents);
           }
           suspendedWindow->SuspendTimeouts(1, false);
           resumeTimeoutRunnable = new nsResumeTimeoutsEvent(suspendedWindow);
@@ -2908,7 +2883,8 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
     }
 
     if (suspendedDoc) {
-      suspendedDoc->UnsuppressEventHandlingAndFireEvents(true);
+      suspendedDoc->UnsuppressEventHandlingAndFireEvents(nsIDocument::eEvents,
+                                                         true);
     }
 
     if (resumeTimeoutRunnable) {

@@ -330,6 +330,14 @@ function getApplicationAccessible()
 }
 
 /**
+ * A version of accessible tree testing, doesn't fail if tree is not complete.
+ */
+function testElm(aID, aTreeObj)
+{
+  testAccessibleTree(aID, aTreeObj, kSkipTreeFullCheck);
+}
+
+/**
  * Flags used for testAccessibleTree
  */
 const kSkipTreeFullCheck = 1;
@@ -371,11 +379,7 @@ function testAccessibleTree(aAccOrElmOrID, aAccTree, aFlags)
 
     switch (prop) {
     case "actions": {
-      var actions = (typeof accTree.actions == "string") ?
-        [ accTree.actions ] : (accTree.actions || []);
-      is(acc.actionCount, actions.length, "Wong number of actions.");
-      for (var i = 0; i < actions.length; i++ )
-        is(acc.getActionName(i), actions[i], "Wrong action name at " + i + " index.");
+      testActionNames(acc, accTree.actions);
       break;
     }
 

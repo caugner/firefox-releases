@@ -170,8 +170,8 @@ var ContextCommands = {
   // Link specific
 
   openLinkInNewTab: function cc_openLinkInNewTab() {
-    Browser.addTab(ContextMenuUI.popupState.linkURL, false, Browser.selectedTab);
-    ContextUI.peekTabs(kOpenInNewTabAnimationDelayMsec);
+    let url = ContextMenuUI.popupState.linkURL;
+    BrowserUI.openLinkInNewTab(url, false, Browser.selectedTab);
   },
 
   copyLink: function cc_copyLink() {
@@ -275,6 +275,21 @@ var ContextCommands = {
       return "ms-windows-store:PDP?PFN=" + msApplicationName.getAttribute("content");
     }
     return null;
+  },
+
+  getPageSource: function cc_getPageSource() {
+    let uri = Services.io.newURI(Browser.selectedBrowser.currentURI.spec, null, null);
+    if (!uri.schemeIs("view-source")) {
+      return "view-source:" + Browser.selectedBrowser.currentURI.spec;
+    }
+    return null;
+  },
+
+  viewPageSource: function cc_viewPageSource() {
+    let uri = this.getPageSource();
+    if (uri) {
+      BrowserUI.addAndShowTab(uri);
+    }
   },
 
   /*

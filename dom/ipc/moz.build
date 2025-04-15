@@ -7,8 +7,6 @@
 if CONFIG['MOZ_WIDGET_TOOLKIT'] != 'cocoa':
     TEST_DIRS += ['tests']
 
-MODULE = 'dom'
-
 EXPORTS += [
     'nsICachedFileDescriptorListener.h',
     'PCOMContentPermissionRequestChild.h',
@@ -39,13 +37,11 @@ EXPORTS.mozilla += [
     'ProcessPriorityManager.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'AppProcessChecker.cpp',
-    'Blob.cpp',
     'ContentChild.cpp',
     'ContentParent.cpp',
     'ContentProcess.cpp',
-    'CrashReporterChild.cpp',
     'CrashReporterParent.cpp',
     'PermissionMessageUtils.cpp',
     'PreallocatedProcessManager.cpp',
@@ -55,6 +51,14 @@ SOURCES += [
     'TabContext.cpp',
     'TabMessageUtils.cpp',
     'TabParent.cpp',
+]
+
+# Blob.cpp cannot be compiled in unified mode because it triggers a fatal gcc warning.
+# CrashReporterChild.cpp cannot be compiled in unified mode because of name clashes
+# in OS X headers.
+SOURCES += [
+    'Blob.cpp',
+    'CrashReporterChild.cpp',
 ]
 
 IPDL_SOURCES += [
@@ -73,11 +77,42 @@ IPDL_SOURCES += [
 
 FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
-LIBRARY_NAME = 'domipc_s'
-
-EXPORT_LIBRARY = True
-
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'xul'
+LOCAL_INCLUDES += [
+    '../src/base',
+    '../src/geolocation',
+    '../src/storage',
+    '/chrome/src',
+    '/content/base/src',
+    '/content/events/src',
+    '/content/media/webspeech/synth/ipc',
+    '/docshell/base',
+    '/dom/base',
+    '/dom/bluetooth',
+    '/dom/bluetooth/ipc',
+    '/dom/devicestorage',
+    '/dom/fmradio/ipc',
+    '/dom/indexedDB',
+    '/dom/indexedDB/ipc',
+    '/dom/mobilemessage/src/ipc',
+    '/extensions/cookie',
+    '/hal/sandbox',
+    '/js/ipc',
+    '/layout/base',
+    '/netwerk/base/src',
+    '/toolkit/xre',
+    '/uriloader/exthandler',
+    '/widget/xpwidgets',
+    '/xpcom/base',
+]
+
+DEFINES['BIN_SUFFIX'] = '"%s"' % CONFIG['BIN_SUFFIX']
+
+if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('android', 'gtk2', 'gonk', 'qt'):
+    DEFINES['MOZ_ENABLE_FREETYPE'] = True
+
+for var in ('MOZ_PERMISSIONS', 'MOZ_CHILD_PERMISSIONS'):
+    if CONFIG[var]:
+        DEFINES[var] = True

@@ -6,15 +6,16 @@
 if CONFIG['LIBXUL_SDK']:
     error('toolkit.mozbuild is not compatible with --enable-libxul-sdk=')
 
-if not CONFIG['MOZ_NATIVE_NSPR']:
-    add_tier_dir('nspr', 'config/nspr')
+if CONFIG['COMPILE_ENVIRONMENT']:
+    if not CONFIG['MOZ_NATIVE_NSPR']:
+        add_tier_dir('nspr', 'config/nspr')
 
-add_tier_dir('external', 'config/external')
+    add_tier_dir('external', 'config/external')
 
-if not CONFIG['MOZ_NATIVE_NSS']:
-    add_tier_dir('nss', 'security/build')
+    if not CONFIG['MOZ_NATIVE_NSS']:
+        add_tier_dir('nss', 'security/build')
 
-include('/config/js/js.mozbuild')
+    include('/config/js/js.mozbuild')
 
 if CONFIG['MOZ_CONTENT_SANDBOX']:
     add_tier_dir('sandbox', 'security/sandbox')
@@ -74,6 +75,7 @@ if CONFIG['MOZ_OMX_PLUGIN']:
     add_tier_dir('platform', [
         'media/omx-plugin/lib/ics/libutils',
         'media/omx-plugin/lib/ics/libstagefright',
+        'media/omx-plugin/lib/ics/libvideoeditorplayer',
         'media/omx-plugin/lib/gb/libutils',
         'media/omx-plugin/lib/gb/libstagefright',
         'media/omx-plugin/lib/gb/libstagefright_color_conversion',
@@ -85,6 +87,7 @@ if CONFIG['MOZ_OMX_PLUGIN']:
         'media/omx-plugin/froyo',
         'media/omx-plugin/lib/hc/libstagefright',
         'media/omx-plugin/hc',
+        'media/omx-plugin/kk',
     ])
 
 if CONFIG['ENABLE_TESTS']:

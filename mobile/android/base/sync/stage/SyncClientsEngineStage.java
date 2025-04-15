@@ -25,6 +25,7 @@ import org.mozilla.gecko.sync.Utils;
 import org.mozilla.gecko.sync.crypto.CryptoException;
 import org.mozilla.gecko.sync.crypto.KeyBundle;
 import org.mozilla.gecko.sync.delegates.ClientsDataDelegate;
+import org.mozilla.gecko.sync.net.AuthHeaderProvider;
 import org.mozilla.gecko.sync.net.BaseResource;
 import org.mozilla.gecko.sync.net.SyncStorageCollectionRequest;
 import org.mozilla.gecko.sync.net.SyncStorageRecordRequest;
@@ -97,8 +98,8 @@ public class SyncClientsEngineStage extends AbstractSessionManagingSyncStage {
     boolean localAccountGUIDDownloaded = false;
 
     @Override
-    public String credentials() {
-      return session.credentials();
+    public AuthHeaderProvider getAuthHeaderProvider() {
+      return session.getAuthHeaderProvider();
     }
 
     @Override
@@ -214,8 +215,8 @@ public class SyncClientsEngineStage extends AbstractSessionManagingSyncStage {
     public boolean currentlyUploadingLocalRecord;
 
     @Override
-    public String credentials() {
-      return session.credentials();
+    public AuthHeaderProvider getAuthHeaderProvider() {
+      return session.getAuthHeaderProvider();
     }
 
     private void setUploadDetails(boolean isLocalRecord) {

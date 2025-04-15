@@ -5,15 +5,8 @@
 
 include $(topsrcdir)/config/rules.mk
 
-INCLUDES	+= \
-		-I$(srcdir)/../../../base/src \
-		$(NULL)
-
 EXPORT_RESOURCE_CONTENT = \
 		$(srcdir)/htmlmathml-f.ent \
 		$(NULL)
 libs::
 	$(INSTALL) $(EXPORT_RESOURCE_CONTENT) $(DIST)/bin/res/dtd
-
-install::
-	$(SYSINSTALL) $(IFLAGS1) $(EXPORT_RESOURCE_CONTENT) $(DESTDIR)$(mozappdir)/res/dtd

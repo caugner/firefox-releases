@@ -9,6 +9,23 @@ let Cu = Components.utils;
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
 Cu.import("resource://gre/modules/RemoteAddonsChild.jsm");
+Cu.import("resource://gre/modules/Timer.jsm");
+
+let SyncHandler = {
+  init: function() {
+    sendAsyncMessage("SetSyncHandler", {}, {handler: this});
+  },
+
+  getFocusedElementAndWindow: function() {
+    let fm = Cc["@mozilla.org/focus-manager;1"].getService(Ci.nsIFocusManager);
+
+    let focusedWindow = {};
+    let elt = fm.getFocusedElementForWindow(content, true, focusedWindow);
+    return [elt, focusedWindow.value];
+  },
+};
+
+SyncHandler.init();
 
 let WebProgressListener = {
   init: function() {
@@ -33,10 +50,8 @@ let WebProgressListener = {
   },
 
   _setupObjects: function setupObjects(aWebProgress) {
-    let win = docShell.QueryInterface(Ci.nsIInterfaceRequestor)
-                      .getInterface(Ci.nsIDOMWindow);
     return {
-      contentWindow: win,
+      contentWindow: content,
       // DOMWindow is not necessarily the content-window with subframes.
       DOMWindow: aWebProgress.DOMWindow
     };
@@ -60,6 +75,7 @@ let WebProgressListener = {
     let objects = this._setupObjects(aWebProgress);
 
     json.location = aLocationURI ? aLocationURI.spec : "";
+    json.flags = aFlags;
 
     if (json.isTopLevel) {
       json.canGoBack = docShell.canGoBack;
@@ -114,6 +130,10 @@ let WebNavigation =  {
     addMessageListener("WebNavigation:LoadURI", this);
     addMessageListener("WebNavigation:Reload", this);
     addMessageListener("WebNavigation:Stop", this);
+
+    // Send a CPOW for the sessionHistory object.
+    let history = this._webNavigation.sessionHistory;
+    sendAsyncMessage("WebNavigation:setHistory", {}, {history: history});
   },
 
   receiveMessage: function(message) {
@@ -125,16 +145,16 @@ let WebNavigation =  {
         this.goForward();
         break;
       case "WebNavigation:GotoIndex":
-        this.gotoIndex(message);
+        this.gotoIndex(message.data.index);
         break;
       case "WebNavigation:LoadURI":
-        this.loadURI(message);
+        this.loadURI(message.data.uri, message.data.flags);
         break;
       case "WebNavigation:Reload":
-        this.reload(message);
+        this.reload(message.data.flags);
         break;
       case "WebNavigation:Stop":
-        this.stop(message);
+        this.stop(message.data.flags);
         break;
     }
   },
@@ -149,22 +169,19 @@ let WebNavigation =  {
       this._webNavigation.goForward();
   },
 
-  gotoIndex: function(message) {
-    this._webNavigation.gotoIndex(message.index);
+  gotoIndex: function(index) {
+    this._webNavigation.gotoIndex(index);
   },
 
-  loadURI: function(message) {
-    let flags = message.json.flags || this._webNavigation.LOAD_FLAGS_NONE;
-    this._webNavigation.loadURI(message.json.uri, flags, null, null, null);
+  loadURI: function(uri, flags) {
+    this._webNavigation.loadURI(uri, flags, null, null, null);
   },
 
-  reload: function(message) {
-    let flags = message.json.flags || this._webNavigation.LOAD_FLAGS_NONE;
+  reload: function(flags) {
     this._webNavigation.reload(flags);
   },
 
-  stop: function(message) {
-    let flags = message.json.flags || this._webNavigation.STOP_ALL;
+  stop: function(flags) {
     this._webNavigation.stop(flags);
   }
 };
@@ -227,3 +244,70 @@ addEventListener("ImageContentLoaded", function (aEvent) {
 }, false);
 
 RemoteAddonsChild.init(this);
+
+addMessageListener("History:UseGlobalHistory", function (aMessage) {
+  docShell.useGlobalHistory = aMessage.data.enabled;
+});
+
+let AutoCompletePopup = {
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIAutoCompletePopup]),
+
+  init: function() {
+    // Hook up the form fill autocomplete controller.
+    let controller = Cc["@mozilla.org/satchel/form-fill-controller;1"]
+                       .getService(Ci.nsIFormFillController);
+
+    controller.attachToBrowser(docShell, this.QueryInterface(Ci.nsIAutoCompletePopup));
+
+    this._input = null;
+    this._popupOpen = false;
+
+    addMessageListener("FormAutoComplete:HandleEnter", message => {
+      this.selectedIndex = message.data.selectedIndex;
+
+      let controller = Components.classes["@mozilla.org/autocomplete/controller;1"].
+                  getService(Components.interfaces.nsIAutoCompleteController);
+      controller.handleEnter(message.data.isPopupSelection);
+    });
+  },
+
+  get input () { return this._input; },
+  get overrideValue () { return null; },
+  set selectedIndex (index) { },
+  get selectedIndex () {
+    // selectedIndex getter must be synchronous because we need the
+    // correct value when the controller is in controller::HandleEnter.
+    // We can't easily just let the parent inform us the new value every
+    // time it changes because not every action that can change the
+    // selectedIndex is trivial to catch (e.g. moving the mouse over the
+    // list).
+    return sendSyncMessage("FormAutoComplete:GetSelectedIndex", {});
+  },
+  get popupOpen () {
+    return this._popupOpen;
+  },
+
+  openAutocompletePopup: function (input, element) {
+    this._input = input;
+    this._popupOpen = true;
+  },
+
+  closePopup: function () {
+    this._popupOpen = false;
+    sendAsyncMessage("FormAutoComplete:ClosePopup", {});
+  },
+
+  invalidate: function () {
+  },
+
+  selectBy: function(reverse, page) {
+    this._index = sendSyncMessage("FormAutoComplete:SelectBy", {
+      reverse: reverse,
+      page: page
+    });
+  }
+}
+
+addMessageListener("FormAutoComplete:InitPopup", function (aMessage) {
+  setTimeout(function() AutoCompletePopup.init(), 0);
+});

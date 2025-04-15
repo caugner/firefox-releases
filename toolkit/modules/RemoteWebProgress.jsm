@@ -109,6 +109,30 @@ RemoteWebProgressManager.prototype = {
     return [deserialized, aState];
   },
 
+  setCurrentURI: function (aURI) {
+    // This function is simpler than nsDocShell::SetCurrentURI since
+    // it doesn't have to deal with child docshells.
+    let webNavigation = this._browser.webNavigation;
+    webNavigation._currentURI = aURI;
+
+    let webProgress = this.topLevelWebProgress;
+    for (let p of this._progressListeners) {
+      p.onLocationChange(webProgress, null, aURI);
+    }
+  },
+
+  _callProgressListeners: function(methodName, ...args) {
+    for (let p of this._progressListeners) {
+      if (p[methodName]) {
+        try {
+          p[methodName].apply(p, args);
+        } catch (ex) {
+          Cu.reportError("RemoteWebProgress failed to call " + methodName + ": " + ex + "\n");
+        }
+      }
+    }
+  },
+
   receiveMessage: function (aMessage) {
     let json = aMessage.json;
     let objects = aMessage.objects;
@@ -133,13 +157,12 @@ RemoteWebProgressManager.prototype = {
 
     switch (aMessage.name) {
     case "Content:StateChange":
-      for (let p of this._progressListeners) {
-        p.onStateChange(webProgress, request, json.stateFlags, json.status);
-      }
+      this._callProgressListeners("onStateChange", webProgress, request, json.stateFlags, json.status);
       break;
 
     case "Content:LocationChange":
       let location = newURI(json.location);
+      let flags = json.flags;
 
       if (json.isTopLevel) {
         this._browser.webNavigation._currentURI = location;
@@ -150,9 +173,7 @@ RemoteWebProgressManager.prototype = {
         this._browser._imageDocument = null;
       }
 
-      for (let p of this._progressListeners) {
-        p.onLocationChange(webProgress, request, location);
-      }
+      this._callProgressListeners("onLocationChange", webProgress, request, location, flags);
       break;
 
     case "Content:SecurityChange":
@@ -166,15 +187,11 @@ RemoteWebProgressManager.prototype = {
         this._browser._securityUI._update(status, state);
       }
 
-      for (let p of this._progressListeners) {
-        p.onSecurityChange(webProgress, request, state);
-      }
+      this._callProgressListeners("onSecurityChange", webProgress, request, state);
       break;
 
     case "Content:StatusChange":
-      for (let p of this._progressListeners) {
-        p.onStatusChange(webProgress, request, json.status, json.message);
-      }
+      this._callProgressListeners("onStatusChange", webProgress, request, json.status, json.message);
       break;
     }
   }

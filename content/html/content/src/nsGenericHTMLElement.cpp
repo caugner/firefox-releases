@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/MouseEvents.h"
-#include "mozilla/Util.h"
 #include "mozilla/Likely.h"
 
 #include "nscore.h"
@@ -48,6 +48,7 @@
 #include "nsError.h"
 #include "nsScriptLoader.h"
 #include "nsRuleData.h"
+#include "nsIPrincipal.h"
 
 #include "nsPresState.h"
 #include "nsILayoutHistoryState.h"
@@ -1182,24 +1183,6 @@ nsGenericHTMLElement::GetPresContext()
   return nullptr;
 }
 
-static const nsAttrValue::EnumTable kAlignTable[] = {
-  { "left",      NS_STYLE_TEXT_ALIGN_LEFT },
-  { "right",     NS_STYLE_TEXT_ALIGN_RIGHT },
-
-  { "top",       NS_STYLE_VERTICAL_ALIGN_TOP },
-  { "middle",    NS_STYLE_VERTICAL_ALIGN_MIDDLE_WITH_BASELINE },
-  { "bottom",    NS_STYLE_VERTICAL_ALIGN_BASELINE },
-
-  { "center",    NS_STYLE_VERTICAL_ALIGN_MIDDLE_WITH_BASELINE },
-  { "baseline",  NS_STYLE_VERTICAL_ALIGN_BASELINE },
-
-  { "texttop",   NS_STYLE_VERTICAL_ALIGN_TEXT_TOP },
-  { "absmiddle", NS_STYLE_VERTICAL_ALIGN_MIDDLE },
-  { "abscenter", NS_STYLE_VERTICAL_ALIGN_MIDDLE },
-  { "absbottom", NS_STYLE_VERTICAL_ALIGN_BOTTOM },
-  { 0 }
-};
-
 static const nsAttrValue::EnumTable kDivAlignTable[] = {
   { "left", NS_STYLE_TEXT_ALIGN_MOZ_LEFT },
   { "right", NS_STYLE_TEXT_ALIGN_MOZ_RIGHT },
@@ -1240,6 +1223,24 @@ bool
 nsGenericHTMLElement::ParseAlignValue(const nsAString& aString,
                                       nsAttrValue& aResult)
 {
+  static const nsAttrValue::EnumTable kAlignTable[] = {
+    { "left",      NS_STYLE_TEXT_ALIGN_LEFT },
+    { "right",     NS_STYLE_TEXT_ALIGN_RIGHT },
+
+    { "top",       NS_STYLE_VERTICAL_ALIGN_TOP },
+    { "middle",    NS_STYLE_VERTICAL_ALIGN_MIDDLE_WITH_BASELINE },
+    { "bottom",    NS_STYLE_VERTICAL_ALIGN_BASELINE },
+
+    { "center",    NS_STYLE_VERTICAL_ALIGN_MIDDLE_WITH_BASELINE },
+    { "baseline",  NS_STYLE_VERTICAL_ALIGN_BASELINE },
+
+    { "texttop",   NS_STYLE_VERTICAL_ALIGN_TEXT_TOP },
+    { "absmiddle", NS_STYLE_VERTICAL_ALIGN_MIDDLE },
+    { "abscenter", NS_STYLE_VERTICAL_ALIGN_MIDDLE },
+    { "absbottom", NS_STYLE_VERTICAL_ALIGN_BOTTOM },
+    { 0 }
+  };
+
   return aResult.ParseEnumValue(aString, kAlignTable, false);
 }
 
@@ -1813,6 +1814,15 @@ nsGenericHTMLElement::GetURIAttr(nsIAtom* aAttr, nsIAtom* aBaseAttr, nsIURI** aU
                                             attr->GetStringValue(),
                                             OwnerDoc(), baseURI);
   return true;
+}
+
+/* static */ bool
+nsGenericHTMLElement::IsScrollGrabAllowed(JSContext*, JSObject*)
+{
+  // Only allow scroll grabbing in chrome and certified apps.
+  nsIPrincipal* prin = nsContentUtils::GetSubjectPrincipal();
+  return nsContentUtils::IsSystemPrincipal(prin) ||
+    prin->GetAppStatus() == nsIPrincipal::APP_STATUS_CERTIFIED;
 }
 
 nsresult

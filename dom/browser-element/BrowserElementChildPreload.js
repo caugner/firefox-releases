@@ -101,6 +101,14 @@ function getErrorClass(errorCode) {
   return null;
 }
 
+const OBSERVED_EVENTS = [
+  'fullscreen-origin-change',
+  'ask-parent-to-exit-fullscreen',
+  'ask-parent-to-rollback-fullscreen',
+  'xpcom-shutdown',
+  'activity-done'
+];
+
 /**
  * The BrowserElementChild implements one half of <iframe mozbrowser>.
  * (The other half is, unsurprisingly, BrowserElementParent.)
@@ -250,25 +258,9 @@ BrowserElementChild.prototype = {
                                this._scrollEventHandler.bind(this),
                                /* useCapture = */ false);
 
-    Services.obs.addObserver(this,
-                             "fullscreen-origin-change",
-                             /* ownsWeak = */ true);
-
-    Services.obs.addObserver(this,
-                             'ask-parent-to-exit-fullscreen',
-                             /* ownsWeak = */ true);
-
-    Services.obs.addObserver(this,
-                             'ask-parent-to-rollback-fullscreen',
-                             /* ownsWeak = */ true);
-
-    Services.obs.addObserver(this,
-                             'xpcom-shutdown',
-                             /* ownsWeak = */ true);
-
-    Services.obs.addObserver(this,
-                             'activity-done',
-                             /* ownsWeak = */ true);
+    OBSERVED_EVENTS.forEach((aTopic) => {
+      Services.obs.addObserver(this, aTopic, false);
+    });
   },
 
   observe: function(subject, topic, data) {
@@ -303,6 +295,9 @@ BrowserElementChild.prototype = {
    */
   _unloadHandler: function() {
     this._shuttingDown = true;
+    OBSERVED_EVENTS.forEach((aTopic) => {
+      Services.obs.removeObserver(this, aTopic);
+    });
   },
 
   _tryGetInnerWindowID: function(win) {
@@ -839,18 +834,18 @@ BrowserElementChild.prototype = {
     let json = data.json;
     let utils = content.QueryInterface(Ci.nsIInterfaceRequestor)
                        .getInterface(Ci.nsIDOMWindowUtils);
-    utils.sendMouseEvent(json.type, json.x, json.y, json.button,
-                         json.clickCount, json.modifiers);
+    utils.sendMouseEventToWindow(json.type, json.x, json.y, json.button,
+                                 json.clickCount, json.modifiers);
   },
 
   _recvSendTouchEvent: function(data) {
     let json = data.json;
     let utils = content.QueryInterface(Ci.nsIInterfaceRequestor)
                        .getInterface(Ci.nsIDOMWindowUtils);
-    utils.sendTouchEvent(json.type, json.identifiers, json.touchesX,
-                         json.touchesY, json.radiisX, json.radiisY,
-                         json.rotationAngles, json.forces, json.count,
-                         json.modifiers);
+    utils.sendTouchEventToWindow(json.type, json.identifiers, json.touchesX,
+                                 json.touchesY, json.radiisX, json.radiisY,
+                                 json.rotationAngles, json.forces, json.count,
+                                 json.modifiers);
   },
 
   _recvCanGoBack: function(data) {

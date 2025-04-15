@@ -38,7 +38,7 @@ public:
 
 protected:
     GLLibraryEGL* const mEGL;
-    layers::ISurfaceAllocator* const mAllocator;
+    RefPtr<layers::ISurfaceAllocator> mAllocator;
     // We keep the SurfaceDescriptor around, because we'll end up
     // using it often and it's handy to do so.  The actual
     // GraphicBuffer is kept alive by the sp<GraphicBuffer> in
@@ -93,7 +93,7 @@ class SurfaceFactory_Gralloc
     : public SurfaceFactory_GL
 {
 protected:
-    WeakPtr<layers::ISurfaceAllocator> mAllocator;
+    RefPtr<layers::ISurfaceAllocator> mAllocator;
 
 public:
     SurfaceFactory_Gralloc(GLContext* prodGL,

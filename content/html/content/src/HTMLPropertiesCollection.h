@@ -55,16 +55,31 @@ public:
   HTMLPropertiesCollection(nsGenericHTMLElement* aRoot);
   virtual ~HTMLPropertiesCollection();
 
+  // nsWrapperCache
   using nsWrapperCache::GetWrapperPreserveColor;
-  virtual JSObject* WrapObject(JSContext *cx,
-                               JS::Handle<JSObject*> scope) MOZ_OVERRIDE;
+  virtual JSObject* WrapObject(JSContext* aCx,
+                               JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
+protected:
+  virtual JSObject* GetWrapperPreserveColorInternal() MOZ_OVERRIDE
+  {
+    return nsWrapperCache::GetWrapperPreserveColor();
+  }
+public:
 
   virtual Element* GetElementAt(uint32_t aIndex);
 
   void SetDocument(nsIDocument* aDocument);
   nsINode* GetParentObject() MOZ_OVERRIDE;
-  virtual JSObject* NamedItem(JSContext* cx, const nsAString& name,
-                              mozilla::ErrorResult& error) MOZ_OVERRIDE;
+
+  virtual Element*
+  GetFirstNamedElement(const nsAString& aName, bool& aFound) MOZ_OVERRIDE
+  {
+    // HTMLPropertiesCollection.namedItem and the named getter call the
+    // NamedItem that returns a PropertyNodeList, calling
+    // HTMLCollection.namedItem doesn't make sense so this returns null.
+    aFound = false;
+    return nullptr;
+  }
   PropertyNodeList* NamedItem(const nsAString& aName);
   PropertyNodeList* NamedGetter(const nsAString& aName, bool& aFound)
   {

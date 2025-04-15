@@ -18,7 +18,7 @@ Cu.import("resource://gre/modules/AppsUtils.jsm");
 Cu.import('resource://gre/modules/UserAgentOverrides.jsm');
 Cu.import('resource://gre/modules/Keyboard.jsm');
 Cu.import('resource://gre/modules/ErrorPage.jsm');
-#ifdef MOZ_B2G_RIL
+#ifdef MOZ_WIDGET_GONK
 Cu.import('resource://gre/modules/NetworkStatsService.jsm');
 #endif
 
@@ -322,6 +322,9 @@ var shell = {
     ppmm.addMessageListener("mail-handler", this);
     ppmm.addMessageListener("app-notification-send", AlertsHelper);
     ppmm.addMessageListener("file-picker", this);
+    ppmm.addMessageListener("getProfD", function(message) {
+      return Services.dirsvc.get("ProfD", Ci.nsIFile).path;
+    });
   },
 
   stop: function shell_stop() {
@@ -507,6 +510,9 @@ var shell = {
           Services.perms.addFromPrincipal(principal, 'offline-app',
                                           Ci.nsIPermissionManager.ALLOW_ACTION);
 
+          let documentURI = Services.io.newURI(contentWindow.document.documentURI,
+                                               null,
+                                               null);
           let manifestURI = Services.io.newURI(manifest, null, documentURI);
           let updateService = Cc['@mozilla.org/offlinecacheupdate-service;1']
                               .getService(Ci.nsIOfflineCacheUpdateService);
@@ -611,7 +617,7 @@ var shell = {
 
     this.sendEvent(window, 'ContentStart');
 
-#ifdef MOZ_B2G_RIL
+#ifdef MOZ_WIDGET_GONK
     Cu.import('resource://gre/modules/OperatorApps.jsm');
 #endif
 
@@ -1049,9 +1055,9 @@ let RemoteDebugger = {
       DebuggerServer.init(this.prompt.bind(this));
       DebuggerServer.chromeWindowType = "navigator:browser";
       DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webbrowser.js");
-      // Until we implement unix domain socket, we enable content actors
-      // only on development devices
-      if (Services.prefs.getBoolPref("devtools.debugger.enable-content-actors")) {
+      // Prevent tab actors to be loaded in parent process,
+      // unless we enable certified apps debugging
+      if (!Services.prefs.getBoolPref("devtools.debugger.forbid-certified-apps")) {
         DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/script.js");
         DebuggerServer.addGlobalActor(DebuggerServer.ChromeDebuggerActor, "chromeDebugger");
         DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webconsole.js");
@@ -1060,7 +1066,6 @@ let RemoteDebugger = {
           DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/profiler.js");
         }
         DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/styleeditor.js");
-        DebuggerServer.enableWebappsContentActor = true;
       }
       DebuggerServer.addActors('chrome://browser/content/dbg-browser-actors.js');
       DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webapps.js");
@@ -1118,14 +1123,16 @@ window.addEventListener('ContentStart', function ss_onContentStart() {
                                             'canvas');
       var width = window.innerWidth;
       var height = window.innerHeight;
-      canvas.setAttribute('width', width);
-      canvas.setAttribute('height', height);
+      var scale = window.devicePixelRatio;
+      canvas.setAttribute('width', width * scale);
+      canvas.setAttribute('height', height * scale);
 
       var context = canvas.getContext('2d');
       var flags =
         context.DRAWWINDOW_DRAW_CARET |
         context.DRAWWINDOW_DRAW_VIEW |
         context.DRAWWINDOW_USE_WIDGET_LAYERS;
+      context.scale(scale, scale);
       context.drawWindow(window, 0, 0, width, height,
                          'rgb(255,255,255)', flags);
 
@@ -1260,11 +1267,10 @@ window.addEventListener('ContentStart', function update_onContentStart() {
 
 (function recordingStatusTracker() {
   // Recording status is tracked per process with following data structure:
-  // {<processId>: {count: <N>,
-  //                requestURL: <requestURL>,
-  //                isApp: <isApp>,
-  //                audioCount: <N>,
-  //                videoCount: <N>}}
+  // {<processId>: {<requestURL>: {isApp: <isApp>,
+  //                               count: <N>,
+  //                               audioCount: <N>,
+  //                               videoCount: <N>}}
   let gRecordingActiveProcesses = {};
 
   let recordingHandler = function(aSubject, aTopic, aData) {
@@ -1272,57 +1278,87 @@ window.addEventListener('ContentStart', function update_onContentStart() {
     let processId = (props.hasKey('childID')) ? props.get('childID')
                                               : 'main';
     if (processId && !gRecordingActiveProcesses.hasOwnProperty(processId)) {
-      gRecordingActiveProcesses[processId] = {count: 0,
-                                              requestURL: props.get('requestURL'),
-                                              isApp: props.get('isApp'),
-                                              audioCount: 0,
-                                              videoCount: 0 };
+      gRecordingActiveProcesses[processId] = {};
     }
 
-    let currentActive = gRecordingActiveProcesses[processId];
-    let wasActive = (currentActive['count'] > 0);
-    let wasAudioActive = (currentActive['audioCount'] > 0);
-    let wasVideoActive = (currentActive['videoCount'] > 0);
+    let commandHandler = function (requestURL, command) {
+      let currentProcess = gRecordingActiveProcesses[processId];
+      let currentActive = currentProcess[requestURL];
+      let wasActive = (currentActive['count'] > 0);
+      let wasAudioActive = (currentActive['audioCount'] > 0);
+      let wasVideoActive = (currentActive['videoCount'] > 0);
+
+      switch (command.type) {
+        case 'starting':
+          currentActive['count']++;
+          currentActive['audioCount'] += (command.isAudio) ? 1 : 0;
+          currentActive['videoCount'] += (command.isVideo) ? 1 : 0;
+          break;
+        case 'shutdown':
+          currentActive['count']--;
+          currentActive['audioCount'] -= (command.isAudio) ? 1 : 0;
+          currentActive['videoCount'] -= (command.isVideo) ? 1 : 0;
+          break;
+        case 'content-shutdown':
+          currentActive['count'] = 0;
+          currentActive['audioCount'] = 0;
+          currentActive['videoCount'] = 0;
+          break;
+      }
+
+      if (currentActive['count'] > 0) {
+        currentProcess[requestURL] = currentActive;
+      } else {
+        delete currentProcess[requestURL];
+      }
+
+      // We need to track changes if any active state is changed.
+      let isActive = (currentActive['count'] > 0);
+      let isAudioActive = (currentActive['audioCount'] > 0);
+      let isVideoActive = (currentActive['videoCount'] > 0);
+      if ((isActive != wasActive) ||
+          (isAudioActive != wasAudioActive) ||
+          (isVideoActive != wasVideoActive)) {
+        shell.sendChromeEvent({
+          type: 'recording-status',
+          active: isActive,
+          requestURL: requestURL,
+          isApp: currentActive['isApp'],
+          isAudio: isAudioActive,
+          isVideo: isVideoActive
+        });
+      }
+    };
 
     switch (aData) {
       case 'starting':
-        currentActive['count']++;
-        currentActive['audioCount'] += (props.get('isAudio')) ? 1 : 0;
-        currentActive['videoCount'] += (props.get('isVideo')) ? 1 : 0;
-        break;
       case 'shutdown':
-        currentActive['count']--;
-        currentActive['audioCount'] -= (props.get('isAudio')) ? 1 : 0;
-        currentActive['videoCount'] -= (props.get('isVideo')) ? 1 : 0;
+        // create page record if it is not existed yet.
+        let requestURL = props.get('requestURL');
+        if (requestURL &&
+            !gRecordingActiveProcesses[processId].hasOwnProperty(requestURL)) {
+          gRecordingActiveProcesses[processId][requestURL] = {isApp: props.get('isApp'),
+                                                              count: 0,
+                                                              audioCount: 0,
+                                                              videoCount: 0};
+        }
+        commandHandler(requestURL, { type: aData,
+                                     isAudio: props.get('isAudio'),
+                                     isVideo: props.get('isVideo')});
         break;
       case 'content-shutdown':
-        currentActive['count'] = 0;
-        currentActive['audioCount'] = 0;
-        currentActive['videoCount'] = 0;
+        // iterate through all the existing active processes
+        Object.keys(gRecordingActiveProcesses[processId]).forEach(function(requestURL) {
+          commandHandler(requestURL, { type: aData,
+                                       isAudio: true,
+                                       isVideo: true});
+        });
         break;
     }
 
-    if (currentActive['count'] > 0) {
-      gRecordingActiveProcesses[processId] = currentActive;
-    } else {
+    // clean up process record if no page record in it.
+    if (Object.keys(gRecordingActiveProcesses[processId]).length == 0) {
       delete gRecordingActiveProcesses[processId];
-    }
-
-    // We need to track changes if any active state is changed.
-    let isActive = (currentActive['count'] > 0);
-    let isAudioActive = (currentActive['audioCount'] > 0);
-    let isVideoActive = (currentActive['videoCount'] > 0);
-    if ((isActive != wasActive) ||
-        (isAudioActive != wasAudioActive) ||
-        (isVideoActive != wasVideoActive)) {
-      shell.sendChromeEvent({
-        type: 'recording-status',
-        active: isActive,
-        requestURL: currentActive['requestURL'],
-        isApp: currentActive['isApp'],
-        isAudio: isAudioActive,
-        isVideo: isVideoActive
-      });
     }
   };
   Services.obs.addObserver(recordingHandler, 'recording-device-events', false);

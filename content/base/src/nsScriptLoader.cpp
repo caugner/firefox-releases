@@ -11,7 +11,6 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "nsScriptLoader.h"
-#include "nsICharsetConverterManager.h"
 #include "nsIUnicodeDecoder.h"
 #include "nsIContent.h"
 #include "mozilla/dom/Element.h"
@@ -48,6 +47,7 @@
 #include "nsSandboxFlags.h"
 #include "nsContentTypeParser.h"
 #include "nsINetworkSeer.h"
+#include "mozilla/dom/EncodingUtils.h"
 
 #include "mozilla/CORSMode.h"
 #include "mozilla/Attributes.h"
@@ -413,6 +413,72 @@ ParseTypeAttribute(const nsAString& aType, JSVersion* aVersion)
 }
 
 bool
+CSPAllowsInlineScript(nsIScriptElement *aElement, nsIDocument *aDocument)
+{
+  nsCOMPtr<nsIContentSecurityPolicy> csp;
+  nsresult rv = aDocument->NodePrincipal()->GetCsp(getter_AddRefs(csp));
+  NS_ENSURE_SUCCESS(rv, false);
+
+  if (!csp) {
+    // no CSP --> allow
+    return true;
+  }
+
+  bool reportViolation = false;
+  bool allowInlineScript = true;
+  rv = csp->GetAllowsInlineScript(&reportViolation, &allowInlineScript);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  bool foundNonce = false;
+  nsAutoString nonce;
+  if (!allowInlineScript) {
+    nsCOMPtr<nsIContent> scriptContent = do_QueryInterface(aElement);
+    foundNonce = scriptContent->GetAttr(kNameSpaceID_None, nsGkAtoms::nonce, nonce);
+    if (foundNonce) {
+      // We can overwrite the outparams from GetAllowsInlineScript because
+      // if the nonce is correct, then we don't want to report the original
+      // inline violation (it has been whitelisted by the nonce), and if
+      // the nonce is incorrect, then we want to return just the specific
+      // "nonce violation" rather than both a "nonce violation" and
+      // a generic "inline violation".
+      rv = csp->GetAllowsNonce(nonce, nsIContentPolicy::TYPE_SCRIPT,
+                               &reportViolation, &allowInlineScript);
+      NS_ENSURE_SUCCESS(rv, false);
+    }
+  }
+
+  if (reportViolation) {
+    // gather information to log with violation report
+    nsIURI* uri = aDocument->GetDocumentURI();
+    nsAutoCString asciiSpec;
+    uri->GetAsciiSpec(asciiSpec);
+    nsAutoString scriptText;
+    aElement->GetScriptText(scriptText);
+
+    // cap the length of the script sample at 40 chars
+    if (scriptText.Length() > 40) {
+      scriptText.Truncate(40);
+      scriptText.AppendLiteral("...");
+    }
+
+    // The type of violation to report is determined by whether there was
+    // a nonce present.
+    unsigned short violationType = foundNonce ?
+      nsIContentSecurityPolicy::VIOLATION_TYPE_NONCE_SCRIPT :
+      nsIContentSecurityPolicy::VIOLATION_TYPE_INLINE_SCRIPT;
+    csp->LogViolationDetails(violationType, NS_ConvertUTF8toUTF16(asciiSpec),
+                             scriptText, aElement->GetScriptLineNumber(), nonce);
+  }
+
+  if (!allowInlineScript) {
+    NS_ASSERTION(reportViolation,
+        "CSP blocked inline script but is not reporting a violation");
+   return false;
+  }
+  return true;
+}
+
+bool
 nsScriptLoader::ProcessScriptElement(nsIScriptElement *aElement)
 {
   // We need a document to evaluate scripts.
@@ -429,28 +495,6 @@ nsScriptLoader::ProcessScriptElement(nsIScriptElement *aElement)
 
   // Step 12. Check that the script is not an eventhandler
   if (IsScriptEventHandler(scriptContent)) {
-    return false;
-  }
-
-  // Script evaluation can also be disabled in the current script
-  // context even though it's enabled in the document.
-  // XXX - still hard-coded for JS here, even though another language
-  // may be specified.  Should this check be made *after* we examine
-  // the attributes to locate the script-type?
-  // For now though, if JS is disabled we assume every language is
-  // disabled.
-  // XXX is this different from the mDocument->IsScriptEnabled() call?
-  nsCOMPtr<nsIScriptGlobalObject> globalObject =
-    do_QueryInterface(mDocument->GetWindow());
-  if (!globalObject) {
-    return false;
-  }
-  
-  nsIScriptContext *context = globalObject->GetScriptContext();
-
-  // If scripts aren't enabled in the current context, there's no
-  // point in going on.
-  if (!context || !context->GetScriptsEnabled()) {
     return false;
   }
 
@@ -619,41 +663,9 @@ nsScriptLoader::ProcessScriptElement(nsIScriptElement *aElement)
     return false;
   }
 
-  nsCOMPtr<nsIContentSecurityPolicy> csp;
-  rv = mDocument->NodePrincipal()->GetCsp(getter_AddRefs(csp));
-  NS_ENSURE_SUCCESS(rv, false);
-
-  if (csp) {
-    PR_LOG(gCspPRLog, PR_LOG_DEBUG, ("New ScriptLoader i ****with CSP****"));
-    bool inlineOK = true;
-    bool reportViolations = false;
-    rv = csp->GetAllowsInlineScript(&reportViolations, &inlineOK);
-    NS_ENSURE_SUCCESS(rv, false);
-
-    if (reportViolations) {
-      // gather information to log with violation report
-      nsIURI* uri = mDocument->GetDocumentURI();
-      nsAutoCString asciiSpec;
-      uri->GetAsciiSpec(asciiSpec);
-      nsAutoString scriptText;
-      aElement->GetScriptText(scriptText);
-
-      // cap the length of the script sample at 40 chars
-      if (scriptText.Length() > 40) {
-        scriptText.Truncate(40);
-        scriptText.Append(NS_LITERAL_STRING("..."));
-      }
-
-      csp->LogViolationDetails(nsIContentSecurityPolicy::VIOLATION_TYPE_INLINE_SCRIPT,
-                               NS_ConvertUTF8toUTF16(asciiSpec),
-                               scriptText,
-                               aElement->GetScriptLineNumber());
-    }
-
-    if (!inlineOK) {
-      PR_LOG(gCspPRLog, PR_LOG_DEBUG, ("CSP blocked inline scripts (2)"));
-      return false;
-    }
+  // Does CSP allow this inline script to run?
+  if (!CSPAllowsInlineScript(aElement, mDocument)) {
+    return false;
   }
 
   // Inline scripts ignore ther CORS mode and are always CORS_NONE
@@ -705,72 +717,70 @@ namespace {
 
 class NotifyOffThreadScriptLoadCompletedRunnable : public nsRunnable
 {
-    nsRefPtr<nsScriptLoader> mLoader;
-    void *mToken;
+  nsRefPtr<nsScriptLoadRequest> mRequest;
+  nsRefPtr<nsScriptLoader> mLoader;
+  void *mToken;
 
 public:
-    NotifyOffThreadScriptLoadCompletedRunnable(already_AddRefed<nsScriptLoader> aLoader,
-                                               void *aToken)
-      : mLoader(aLoader), mToken(aToken)
-    {}
+  NotifyOffThreadScriptLoadCompletedRunnable(nsScriptLoadRequest* aRequest,
+                                             nsScriptLoader* aLoader)
+    : mRequest(aRequest), mLoader(aLoader), mToken(NULL)
+  {}
 
-    NS_DECL_NSIRUNNABLE
+  void SetToken(void* aToken) {
+    MOZ_ASSERT(aToken && !mToken);
+    mToken = aToken;
+  }
+
+  NS_DECL_NSIRUNNABLE
 };
 
 } /* anonymous namespace */
 
 nsresult
-nsScriptLoader::ProcessOffThreadRequest(void **aOffThreadToken)
+nsScriptLoader::ProcessOffThreadRequest(nsScriptLoadRequest* aRequest, void **aOffThreadToken)
 {
-    nsCOMPtr<nsScriptLoadRequest> request = mOffThreadScriptRequest;
-    mOffThreadScriptRequest = nullptr;
-    nsresult rv = ProcessRequest(request, aOffThreadToken);
-    mDocument->UnblockOnload(false);
-    return rv;
+  nsresult rv = ProcessRequest(aRequest, aOffThreadToken);
+  mDocument->UnblockOnload(false);
+  return rv;
 }
 
 NS_IMETHODIMP
 NotifyOffThreadScriptLoadCompletedRunnable::Run()
 {
-    MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(NS_IsMainThread());
 
-    nsresult rv = mLoader->ProcessOffThreadRequest(&mToken);
+  nsresult rv = mLoader->ProcessOffThreadRequest(mRequest, &mToken);
 
-    if (mToken) {
-      // The result of the off thread parse was not actually needed to process
-      // the request (disappearing window, some other error, ...). Finish the
-      // request to avoid leaks in the JS engine.
-      nsCOMPtr<nsIJSRuntimeService> svc = do_GetService("@mozilla.org/js/xpc/RuntimeService;1");
-      NS_ENSURE_TRUE(svc, NS_ERROR_FAILURE);
-      JSRuntime *rt;
-      svc->GetRuntime(&rt);
-      NS_ENSURE_TRUE(rt, NS_ERROR_FAILURE);
-      JS::FinishOffThreadScript(nullptr, rt, mToken);
-    }
+  if (mToken) {
+    // The result of the off thread parse was not actually needed to process
+    // the request (disappearing window, some other error, ...). Finish the
+    // request to avoid leaks in the JS engine.
+    nsCOMPtr<nsIJSRuntimeService> svc = do_GetService("@mozilla.org/js/xpc/RuntimeService;1");
+    NS_ENSURE_TRUE(svc, NS_ERROR_FAILURE);
+    JSRuntime *rt;
+    svc->GetRuntime(&rt);
+    NS_ENSURE_TRUE(rt, NS_ERROR_FAILURE);
+    JS::FinishOffThreadScript(nullptr, rt, mToken);
+  }
 
-    return rv;
+  return rv;
 }
 
 static void
 OffThreadScriptLoaderCallback(void *aToken, void *aCallbackData)
 {
-    // Be careful not to adjust the refcount on the loader, as this callback
-    // may be invoked off the main thread.
-    nsScriptLoader* aLoader = static_cast<nsScriptLoader*>(aCallbackData);
-    nsRefPtr<NotifyOffThreadScriptLoadCompletedRunnable> notify =
-        new NotifyOffThreadScriptLoadCompletedRunnable(
-            already_AddRefed<nsScriptLoader>(aLoader), aToken);
-    NS_DispatchToMainThread(notify);
+  NotifyOffThreadScriptLoadCompletedRunnable* aRunnable =
+    static_cast<NotifyOffThreadScriptLoadCompletedRunnable*>(aCallbackData);
+  aRunnable->SetToken(aToken);
+  NS_DispatchToMainThread(aRunnable);
+  NS_RELEASE(aRunnable);
 }
 
 nsresult
 nsScriptLoader::AttemptAsyncScriptParse(nsScriptLoadRequest* aRequest)
 {
   if (!aRequest->mElement->GetScriptAsync() || aRequest->mIsInline) {
-    return NS_ERROR_FAILURE;
-  }
-
-  if (mOffThreadScriptRequest) {
     return NS_ERROR_FAILURE;
   }
 
@@ -785,20 +795,22 @@ nsScriptLoader::AttemptAsyncScriptParse(nsScriptLoadRequest* aRequest)
   JS::CompileOptions options(cx);
   FillCompileOptionsForRequest(aRequest, global, &options);
 
-  if (!JS::CanCompileOffThread(cx, options)) {
+  if (!JS::CanCompileOffThread(cx, options, aRequest->mScriptText.Length())) {
     return NS_ERROR_FAILURE;
   }
 
-  mOffThreadScriptRequest = aRequest;
+  NotifyOffThreadScriptLoadCompletedRunnable* runnable =
+    new NotifyOffThreadScriptLoadCompletedRunnable(aRequest, this);
+
+  // This reference will be consumed by OffThreadScriptLoaderCallback.
+  NS_ADDREF(runnable);
+
   if (!JS::CompileOffThread(cx, global, options,
                             aRequest->mScriptText.get(), aRequest->mScriptText.Length(),
                             OffThreadScriptLoaderCallback,
-                            static_cast<void*>(this))) {
+                            static_cast<void*>(runnable))) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
-
-  // This reference will be consumed by the NotifyOffThreadScriptLoadCompletedRunnable.
-  NS_ADDREF(this);
 
   mDocument->BlockOnload();
 
@@ -1169,37 +1181,30 @@ nsScriptLoader::ConvertToUTF16(nsIChannel* aChannel, const uint8_t* aData,
 
   nsAutoCString charset;
 
-  nsCOMPtr<nsICharsetConverterManager> charsetConv =
-    do_GetService(NS_CHARSETCONVERTERMANAGER_CONTRACTID);
-
   nsCOMPtr<nsIUnicodeDecoder> unicodeDecoder;
 
   if (DetectByteOrderMark(aData, aLength, charset)) {
     // charset is now "UTF-8" or "UTF-16". The UTF-16 decoder will re-sniff
     // the BOM for endianness. Both the UTF-16 and the UTF-8 decoder will
     // take care of swallowing the BOM.
-    charsetConv->GetUnicodeDecoderRaw(charset.get(),
-                                      getter_AddRefs(unicodeDecoder));
+    unicodeDecoder = EncodingUtils::DecoderForEncoding(charset);
   }
 
   if (!unicodeDecoder &&
       aChannel &&
       NS_SUCCEEDED(aChannel->GetContentCharset(charset)) &&
-      !charset.IsEmpty()) {
-    charsetConv->GetUnicodeDecoder(charset.get(),
-                                   getter_AddRefs(unicodeDecoder));
+      EncodingUtils::FindEncodingForLabel(charset, charset)) {
+    unicodeDecoder = EncodingUtils::DecoderForEncoding(charset);
   }
 
-  if (!unicodeDecoder && !aHintCharset.IsEmpty()) {
-    CopyUTF16toUTF8(aHintCharset, charset);
-    charsetConv->GetUnicodeDecoder(charset.get(),
-                                   getter_AddRefs(unicodeDecoder));
+  if (!unicodeDecoder &&
+      EncodingUtils::FindEncodingForLabel(aHintCharset, charset)) {
+    unicodeDecoder = EncodingUtils::DecoderForEncoding(charset);
   }
 
   if (!unicodeDecoder && aDocument) {
     charset = aDocument->GetDocumentCharacterSet();
-    charsetConv->GetUnicodeDecoderRaw(charset.get(),
-                                      getter_AddRefs(unicodeDecoder));
+    unicodeDecoder = EncodingUtils::DecoderForEncoding(charset);
   }
 
   if (!unicodeDecoder) {
@@ -1207,8 +1212,7 @@ nsScriptLoader::ConvertToUTF16(nsIChannel* aChannel, const uint8_t* aData,
     // fallback in the old code was ISO-8859-1, which behaved like
     // windows-1252. Saying windows-1252 for clarity and for compliance
     // with the Encoding Standard.
-    charsetConv->GetUnicodeDecoderRaw("windows-1252",
-                                      getter_AddRefs(unicodeDecoder));
+    unicodeDecoder = EncodingUtils::DecoderForEncoding("windows-1252");
   }
 
   int32_t unicodeLength = 0;

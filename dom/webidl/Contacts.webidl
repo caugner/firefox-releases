@@ -16,22 +16,24 @@ interface ContactAddress {
 
   [ChromeOnly]
   void initialize(optional sequence<DOMString>? type,
-                  optional DOMString streetAddress,
-                  optional DOMString locality,
-                  optional DOMString region,
-                  optional DOMString postalCode,
-                  optional DOMString countryName,
-                  optional boolean pref);
+                  optional DOMString? streetAddress,
+                  optional DOMString? locality,
+                  optional DOMString? region,
+                  optional DOMString? postalCode,
+                  optional DOMString? countryName,
+                  optional boolean? pref);
+
+  object toJSON();
 };
 
 dictionary ContactAddressInit {
   sequence<DOMString>? type;
-  DOMString?           streetAddress;
-  DOMString?           locality;
-  DOMString?           region;
-  DOMString?           postalCode;
-  DOMString?           countryName;
-  boolean?             pref;
+  DOMString? streetAddress;
+  DOMString? locality;
+  DOMString? region;
+  DOMString? postalCode;
+  DOMString? countryName;
+  boolean? pref;
 };
 
 
@@ -43,8 +45,10 @@ interface ContactField {
 
   [ChromeOnly]
   void initialize(optional sequence<DOMString>? type,
-                  optional DOMString value,
-                  optional boolean pref);
+                  optional DOMString? value,
+                  optional boolean? pref);
+
+  object toJSON();
 };
 
 dictionary ContactFieldInit {
@@ -60,9 +64,11 @@ interface ContactTelField : ContactField {
 
   [ChromeOnly]
   void initialize(optional sequence<DOMString>? type,
-                  optional DOMString value,
+                  optional DOMString? value,
                   optional DOMString? carrier,
-                  optional boolean pref);
+                  optional boolean? pref);
+
+  object toJSON();
 };
 
 dictionary ContactTelFieldInit : ContactFieldInit {
@@ -137,10 +143,12 @@ interface mozContact {
            attribute object?      note;
            attribute object?      key;
 
+  void init(optional ContactProperties properties);
+
   [ChromeOnly]
   void setMetadata(DOMString id, Date? published, Date? updated);
 
-  jsonifier;
+  object toJSON();
 };
 
 dictionary ContactFindSortOptions {

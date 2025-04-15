@@ -3,8 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/MouseEvents.h"
-#include "mozilla/Util.h"
 #include "nsAString.h"
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
@@ -432,8 +432,7 @@ bool nsPlaintextEditor::IsSafeToInsertData(nsIDOMDocument* aSourceDoc)
 
   nsCOMPtr<nsIDocument> destdoc = GetDocument();
   NS_ASSERTION(destdoc, "Where is our destination doc?");
-  nsCOMPtr<nsISupports> container = destdoc->GetContainer();
-  nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(container);
+  nsCOMPtr<nsIDocShellTreeItem> dsti = destdoc->GetDocShell();
   nsCOMPtr<nsIDocShellTreeItem> root;
   if (dsti)
     dsti->GetRootTreeItem(getter_AddRefs(root));

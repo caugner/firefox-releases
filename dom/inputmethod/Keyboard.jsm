@@ -9,7 +9,6 @@ this.EXPORTED_SYMBOLS = ['Keyboard'];
 const Cu = Components.utils;
 const Cc = Components.classes;
 const Ci = Components.interfaces;
-const kFormsFrameScript = 'chrome://browser/content/forms.js';
 
 Cu.import('resource://gre/modules/Services.jsm');
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -64,33 +63,27 @@ this.Keyboard = {
         ppmm.broadcastAsyncMessage('Keyboard:FocusChange', { 'type': 'blur' });
       }
     } else {
-      mm.addMessageListener('Forms:Input', this);
-      mm.addMessageListener('Forms:SelectionChange', this);
-      mm.addMessageListener('Forms:GetText:Result:OK', this);
-      mm.addMessageListener('Forms:GetText:Result:Error', this);
-      mm.addMessageListener('Forms:SetSelectionRange:Result:OK', this);
-      mm.addMessageListener('Forms:ReplaceSurroundingText:Result:OK', this);
-      mm.addMessageListener('Forms:SendKey:Result:OK', this);
-      mm.addMessageListener('Forms:SequenceError', this);
-      mm.addMessageListener('Forms:GetContext:Result:OK', this);
-      mm.addMessageListener('Forms:SetComposition:Result:OK', this);
-      mm.addMessageListener('Forms:EndComposition:Result:OK', this);
-
-      // When not running apps OOP, we need to load forms.js here since this
-      // won't happen from dom/ipc/preload.js
-      try {
-         if (Services.prefs.getBoolPref("dom.ipc.tabs.disabled") === true) {
-           mm.loadFrameScript(kFormsFrameScript, true);
-        }
-      } catch (e) {
-         dump('Error loading ' + kFormsFrameScript + ' as frame script: ' + e + '\n');
-      }
+      this.initFormsFrameScript(mm);
     }
+  },
+
+  initFormsFrameScript: function(mm) {
+    mm.addMessageListener('Forms:Input', this);
+    mm.addMessageListener('Forms:SelectionChange', this);
+    mm.addMessageListener('Forms:GetText:Result:OK', this);
+    mm.addMessageListener('Forms:GetText:Result:Error', this);
+    mm.addMessageListener('Forms:SetSelectionRange:Result:OK', this);
+    mm.addMessageListener('Forms:ReplaceSurroundingText:Result:OK', this);
+    mm.addMessageListener('Forms:SendKey:Result:OK', this);
+    mm.addMessageListener('Forms:SequenceError', this);
+    mm.addMessageListener('Forms:GetContext:Result:OK', this);
+    mm.addMessageListener('Forms:SetComposition:Result:OK', this);
+    mm.addMessageListener('Forms:EndComposition:Result:OK', this);
   },
 
   receiveMessage: function keyboardReceiveMessage(msg) {
     // If we get a 'Keyboard:XXX' message, check that the sender has the
-    // keyboard permission.
+    // input permission.
     if (msg.name.indexOf("Keyboard:") != -1) {
       if (!this.messageManager) {
         return;
@@ -110,9 +103,9 @@ this.Keyboard = {
         return;
       }
 
-      if (!mm.assertPermission("keyboard")) {
+      if (!mm.assertPermission("input")) {
         dump("Keyboard message " + msg.name +
-        " from a content process with no 'keyboard' privileges.");
+        " from a content process with no 'input' privileges.");
         return;
       }
     }

@@ -9,6 +9,7 @@ import org.mozilla.gecko.util.GeckoEventResponder;
 import org.mozilla.gecko.GeckoEvent;
 import org.mozilla.gecko.util.ThreadUtils;
 import org.mozilla.gecko.widget.DateTimePicker;
+import org.mozilla.gecko.prompts.ColorPickerInput;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.GeckoAppShell;
 
@@ -108,8 +109,11 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
         }
     }
 
-    private View applyInputStyle(View view) {
-        view.setPadding(mInputPaddingSize, 0, mInputPaddingSize, 0);
+    private View applyInputStyle(View view, PromptInput input) {
+        // Don't add padding to color picker views
+        if (input.canApplyInputStyle()) {
+            view.setPadding(mInputPaddingSize, 0, mInputPaddingSize, 0);
+        }
         return view;
     }
 
@@ -313,6 +317,20 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
         mSelected = null;
     }
 
+
+    /* Wraps an input in a linearlayout. We do this so that we can set padding that appears outside the background
+     * drawable for the view.
+     */
+    private View wrapInput(final PromptInput input) {
+        final LinearLayout linearLayout = new LinearLayout(mContext);
+        linearLayout.setOrientation(LinearLayout.VERTICAL);
+        applyInputStyle(linearLayout, input);
+
+        linearLayout.addView(input.getView(mContext));
+
+        return linearLayout;
+    }
+
     /* Add the requested input elements to the dialog.
      *
      * @param builder
@@ -332,25 +350,27 @@ public class Prompt implements OnClickListener, OnCancelListener, OnItemClickLis
             boolean scrollable = false; // If any of the innuts are scrollable, we won't wrap this in a ScrollView
 
             if (length == 1) {
-                root = mInputs[0].getView(mContext);
+                root = wrapInput(mInputs[0]);
                 scrollable |= mInputs[0].getScrollable();
             } else if (length > 1) {
                 LinearLayout linearLayout = new LinearLayout(mContext);
                 linearLayout.setOrientation(LinearLayout.VERTICAL);
+
                 for (int i = 0; i < length; i++) {
-                    View content = mInputs[i].getView(mContext);
+                    View content = wrapInput(mInputs[i]);
                     linearLayout.addView(content);
                     scrollable |= mInputs[i].getScrollable();
                 }
+
                 root = linearLayout;
             }
 
             if (scrollable) {
-                builder.setView(applyInputStyle(root));
+                builder.setView(root);
             } else {
                 ScrollView view = new ScrollView(mContext);
                 view.addView(root);
-                builder.setView(applyInputStyle(view));
+                builder.setView(view);
             }
         } catch(Exception ex) {
             Log.e(LOGTAG, "Error showing prompt inputs", ex);

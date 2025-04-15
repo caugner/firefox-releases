@@ -1338,6 +1338,21 @@ nsRegion& nsRegion::ScaleInverseRoundOut (float aXScale, float aYScale)
   return *this;
 }
 
+void nsRegion::Inflate(const nsMargin& aMargin)
+{
+  nsRegion region;
+  nsRegionRectIterator iter(*this);
+  for (;;) {
+    const nsRect* r = iter.Next();
+    if (!r)
+      break;
+    nsRect rect = *r;
+    rect.Inflate(aMargin);
+    region.Or(region, rect);
+  }
+  *this = region;
+}
+
 nsRegion nsRegion::ConvertAppUnitsRoundOut (int32_t aFromAPP, int32_t aToAPP) const
 {
   if (aFromAPP == aToAPP) {

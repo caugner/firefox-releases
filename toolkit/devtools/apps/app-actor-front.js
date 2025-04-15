@@ -253,3 +253,60 @@ function getTargetForApp(client, webappsActor, manifestURL) {
 }
 exports.getTargetForApp = getTargetForApp;
 
+function reloadApp(client, webappsActor, manifestURL) {
+  let deferred = promise.defer();
+  getTargetForApp(client,
+                  webappsActor,
+                  manifestURL).
+    then((target) => {
+      // Request the ContentAppActor to reload the app
+      let request = {
+        to: target.form.actor,
+        type: "reload",
+        manifestURL: manifestURL
+      };
+      client.request(request, (res) => {
+        deferred.resolve();
+      });
+    }, () => {
+     deferred.reject("Not running");
+    });
+  return deferred.promise;
+}
+exports.reloadApp = reloadApp;
+
+function launchApp(client, webappsActor, manifestURL) {
+  let deferred = promise.defer();
+  let request = {
+    to: webappsActor,
+    type: "launch",
+    manifestURL: manifestURL
+  };
+  client.request(request, (res) => {
+    if (res.error) {
+      deferred.reject(res.error);
+    } else {
+      deferred.resolve(res);
+    }
+  });
+  return deferred.promise;
+}
+exports.launchApp = launchApp;
+
+function closeApp(client, webappsActor, manifestURL) {
+  let deferred = promise.defer();
+  let request = {
+    to: webappsActor,
+    type: "close",
+    manifestURL: manifestURL
+  };
+  client.request(request, (res) => {
+    if (res.error) {
+      deferred.reject(res.error);
+    } else {
+      deferred.resolve(res);
+    }
+  });
+  return deferred.promise;
+}
+exports.closeApp = closeApp;

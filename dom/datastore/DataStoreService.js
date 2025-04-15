@@ -9,7 +9,7 @@
 /* static functions */
 
 function debug(s) {
-  // dump('DEBUG DataStoreService: ' + s + '\n');
+  //dump('DEBUG DataStoreService: ' + s + '\n');
 }
 
 const {classes: Cc, interfaces: Ci, utils: Cu, results: Cr} = Components;
@@ -136,20 +136,27 @@ DataStoreService.prototype = {
         let request = aRevisionStore.openCursor(null, 'prev');
         request.onsuccess = function(aEvent) {
           let cursor = aEvent.target.result;
-          if (!cursor) {
+          if (cursor) {
+            debug("First revision already created.");
+            self.enableDataStore(aAppId, aName, aOwner);
+          } else {
             // If the revision doesn't exist, let's create the first one.
             db.addRevision(aRevisionStore, 0, REVISION_VOID, function() {
               debug("First revision created.");
-              if (aName in self.stores && aAppId in self.stores[aName]) {
-                self.stores[aName][aAppId].enabled = true;
-                ppmm.broadcastAsyncMessage('datastore-first-revision-created',
-                                           { name: aName, owner: aOwner });
-              }
+              self.enableDataStore(aAppId, aName, aOwner);
             });
           }
         };
       }
     );
+  },
+
+  enableDataStore: function(aAppId, aName, aOwner) {
+    if (aName in this.stores && aAppId in this.stores[aName]) {
+      this.stores[aName][aAppId].enabled = true;
+      ppmm.broadcastAsyncMessage('datastore-first-revision-created',
+                                 { name: aName, owner: aOwner });
+    }
   },
 
   addPermissions: function(aAppId, aName, aOrigin, aOwner, aReadOnly) {
@@ -231,13 +238,20 @@ DataStoreService.prototype = {
       // window, so we can skip the ipc communication.
       if (self.inParent) {
         let stores = self.getDataStoresInfo(aName, aWindow.document.nodePrincipal.appId);
+        if (stores === null) {
+          reject(new aWindow.DOMError("SecurityError", "Access denied"));
+          return;
+        }
         self.getDataStoreCreate(aWindow, resolve, stores);
       } else {
         // This method can be called in the child so we need to send a request
         // to the parent and create DataStore object here.
         new DataStoreServiceChild(aWindow, aName, function(aStores) {
-          debug("DataStoreServiceChild callback!");
+          debug("DataStoreServiceChild success callback!");
           self.getDataStoreCreate(aWindow, resolve, aStores);
+        }, function() {
+          debug("DataStoreServiceChild error callback!");
+          reject(new aWindow.DOMError("SecurityError", "Access denied"));
         });
       }
     });
@@ -245,6 +259,20 @@ DataStoreService.prototype = {
 
   getDataStoresInfo: function(aName, aAppId) {
     debug('GetDataStoresInfo');
+
+    let appsService = Cc["@mozilla.org/AppsService;1"]
+                        .getService(Ci.nsIAppsService);
+    let app = appsService.getAppByLocalId(aAppId);
+    if (!app) {
+      return null;
+    }
+
+    let prefName = "dom.testing.datastore_enabled_for_hosted_apps";
+    if (app.appStatus != Ci.nsIPrincipal.APP_STATUS_CERTIFIED &&
+        (Services.prefs.getPrefType(prefName) == Services.prefs.PREF_INVALID ||
+          !Services.prefs.getBoolPref(prefName))) {
+      return null;
+    }
 
     let results = [];
 
@@ -425,32 +453,38 @@ DataStoreService.prototype = {
 
 /* DataStoreServiceChild */
 
-function DataStoreServiceChild(aWindow, aName, aCallback) {
+function DataStoreServiceChild(aWindow, aName, aSuccessCb, aErrorCb) {
   debug("DataStoreServiceChild created");
-  this.init(aWindow, aName, aCallback);
+  this.init(aWindow, aName, aSuccessCb, aErrorCb);
 }
 
 DataStoreServiceChild.prototype = {
   __proto__: DOMRequestIpcHelper.prototype,
 
-  init: function(aWindow, aName, aCallback) {
+  init: function(aWindow, aName, aSuccessCb, aErrorCb) {
     debug("DataStoreServiceChild init");
-    this._callback = aCallback;
+    this._successCb = aSuccessCb;
+    this._errorCb = aErrorCb;
 
-    this.initDOMRequestHelper(aWindow, [ "DataStore:Get:Return" ]);
+    this.initDOMRequestHelper(aWindow, [ "DataStore:Get:Return:OK",
+                                         "DataStore:Get:Return:KO" ]);
 
-    // This is a security issue and it will be fixed by Bug 916091
     cpmm.sendAsyncMessage("DataStore:Get",
-                          { name: aName, appId: aWindow.document.nodePrincipal.appId });
+                          { name: aName }, null, aWindow.document.nodePrincipal );
   },
 
   receiveMessage: function(aMessage) {
     debug("DataStoreServiceChild receiveMessage");
-    if (aMessage.name != 'DataStore:Get:Return') {
-      return;
-    }
 
-    this._callback(aMessage.data.stores);
+    switch (aMessage.name) {
+      case 'DataStore:Get:Return:OK':
+        this._successCb(aMessage.data.stores);
+        break;
+
+      case 'DataStore:Get:Return:KO':
+        this._errorCb();
+        break;
+    }
   }
 }
 

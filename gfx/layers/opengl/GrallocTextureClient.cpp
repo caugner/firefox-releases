@@ -5,6 +5,7 @@
 
 #ifdef MOZ_WIDGET_GONK
 
+#include "ipc/FenceUtils.h"
 #include "mozilla/layers/GrallocTextureClient.h"
 #include "mozilla/layers/CompositableClient.h"
 #include "mozilla/layers/CompositableForwarder.h"
@@ -36,6 +37,11 @@ public:
   {
     mBufferLocked->Unlock();
     mBufferLocked = nullptr;
+  }
+
+  virtual void SetReleaseFenceHandle(FenceHandle aReleaseFenceHandle)
+  {
+    mBufferLocked->SetReleaseFenceHandle(aReleaseFenceHandle);
   }
 
 private:
@@ -85,6 +91,15 @@ GrallocTextureClientOGL::DropTextureData()
     mGraphicBuffer = nullptr;
     return result;
   }
+}
+
+void
+GrallocTextureClientOGL::SetReleaseFenceHandle(FenceHandle aReleaseFenceHandle)
+{
+  if (!mBufferLocked) {
+    return;
+  }
+  mBufferLocked->SetReleaseFenceHandle(aReleaseFenceHandle);
 }
 
 GrallocTextureClientOGL::GrallocTextureClientOGL(GrallocBufferActor* aActor,
@@ -186,7 +201,8 @@ GrallocTextureClientOGL::GetBuffer() const
 }
 
 bool
-GrallocTextureClientOGL::AllocateForSurface(gfx::IntSize aSize)
+GrallocTextureClientOGL::AllocateForSurface(gfx::IntSize aSize,
+                                            TextureAllocationFlags)
 {
   MOZ_ASSERT(IsValid());
   MOZ_ASSERT(mCompositable);

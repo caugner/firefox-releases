@@ -9,8 +9,6 @@ const SOURCE_SYNTAX_HIGHLIGHT_MAX_FILE_SIZE = 1048576; // 1 MB in bytes
 const SOURCE_URL_DEFAULT_MAX_LENGTH = 64; // chars
 const STACK_FRAMES_SOURCE_URL_MAX_LENGTH = 15; // chars
 const STACK_FRAMES_SOURCE_URL_TRIM_SECTION = "center";
-const STACK_FRAMES_POPUP_SOURCE_URL_MAX_LENGTH = 32; // chars
-const STACK_FRAMES_POPUP_SOURCE_URL_TRIM_SECTION = "center";
 const STACK_FRAMES_SCROLL_DELAY = 100; // ms
 const BREAKPOINT_LINE_TOOLTIP_MAX_LENGTH = 1000; // chars
 const BREAKPOINT_CONDITIONAL_POPUP_POSITION = "before_start";
@@ -28,6 +26,10 @@ const SEARCH_FUNCTION_FLAG = "@";
 const SEARCH_TOKEN_FLAG = "#";
 const SEARCH_LINE_FLAG = ":";
 const SEARCH_VARIABLE_FLAG = "*";
+const EDITOR_VARIABLE_HOVER_DELAY = 350; // ms
+const EDITOR_VARIABLE_POPUP_OFFSET_X = 5; // px
+const EDITOR_VARIABLE_POPUP_OFFSET_Y = 0; // px
+const EDITOR_VARIABLE_POPUP_POSITION = "before_start";
 
 /**
  * Object defining the debugger view components.
@@ -55,7 +57,9 @@ let DebuggerView = {
     this.FilteredFunctions.initialize();
     this.ChromeGlobals.initialize();
     this.StackFrames.initialize();
+    this.StackFramesClassicList.initialize();
     this.Sources.initialize();
+    this.VariableBubble.initialize();
     this.WatchExpressions.initialize();
     this.EventListeners.initialize();
     this.GlobalSearch.initialize();
@@ -88,7 +92,9 @@ let DebuggerView = {
     this.FilteredFunctions.destroy();
     this.ChromeGlobals.destroy();
     this.StackFrames.destroy();
+    this.StackFramesClassicList.destroy();
     this.Sources.destroy();
+    this.VariableBubble.destroy();
     this.WatchExpressions.destroy();
     this.EventListeners.destroy();
     this.GlobalSearch.destroy();
@@ -156,7 +162,10 @@ let DebuggerView = {
       emptyText: L10N.getStr("emptyVariablesText"),
       onlyEnumVisible: Prefs.variablesOnlyEnumVisible,
       searchEnabled: Prefs.variablesSearchboxVisible,
-      eval: DebuggerController.StackFrames.evaluate,
+      eval: (variable, value) => {
+        let string = variable.evaluationMacro(variable, value);
+        DebuggerController.StackFrames.evaluate(string);
+      },
       lazyEmpty: true
     });
 
@@ -188,15 +197,11 @@ let DebuggerView = {
   _initializeEditor: function(aCallback) {
     dumpn("Initializing the DebuggerView editor");
 
-    // This needs to be more localizable: see bug 929234.
     let extraKeys = {};
     bindKey("_doTokenSearch", "tokenSearchKey");
     bindKey("_doGlobalSearch", "globalSearchKey", { alt: true });
     bindKey("_doFunctionSearch", "functionSearchKey");
-
-    extraKeys[(Services.appinfo.OS == "Darwin" ? "Cmd-" : "Ctrl-") + "F"] = (cm) => {
-      DebuggerView.Filtering._doTokenSearch();
-    };
+    extraKeys[Editor.keyFor("jumpToLine")] = false;
 
     function bindKey(func, key, modifiers = {}) {
       let key = document.getElementById(key).getAttribute("key");
@@ -305,6 +310,7 @@ let DebuggerView = {
   _setEditorText: function(aTextContent = "") {
     this.editor.setMode(Editor.modes.text);
     this.editor.setText(aTextContent);
+    this.editor.clearDebugLocation();
     this.editor.clearHistory();
   },
 
@@ -420,8 +426,10 @@ let DebuggerView = {
    *          - columnOffset: column offset for the caret or debug location
    *          - noCaret: don't set the caret location at the specified line
    *          - noDebug: don't set the debug location at the specified line
+   *          - align: string specifying whether to align the specified line
+   *                   at the "top", "center" or "bottom" of the editor
    *          - force: boolean allowing whether we can get the selected url's
-   *                   text again.
+   *                   text again
    * @return object
    *         A promise that is resolved after the source text has been set.
    */
@@ -430,6 +438,7 @@ let DebuggerView = {
     if (!this.Sources.containsValue(aUrl)) {
       return promise.reject(new Error("Unknown source for the specified URL."));
     }
+
     // If the line is not specified, default to the current frame's position,
     // if available and the frame's url corresponds to the requested url.
     if (!aLine) {
@@ -444,11 +453,6 @@ let DebuggerView = {
     let sourceItem = this.Sources.getItemByValue(aUrl);
     let sourceForm = sourceItem.attachment.source;
 
-    // Once we change the editor location, it replaces editor's contents.
-    // This means that the debug location information is now obsolete, so
-    // we need to clear it. We set a new location below, in this function.
-    this.editor.clearDebugLocation();
-
     // Make sure the requested source client is shown in the editor, then
     // update the source editor's caret position and debug location.
     return this._setEditorSource(sourceForm, aFlags).then(() => {
@@ -457,20 +461,16 @@ let DebuggerView = {
       if (aLine < 1) {
         return;
       }
-
       if (aFlags.charOffset) {
         aLine += this.editor.getPosition(aFlags.charOffset).line;
       }
-
       if (aFlags.lineOffset) {
         aLine += aFlags.lineOffset;
       }
-
       if (!aFlags.noCaret) {
-        this.editor.setCursor({ line: aLine -1, ch: aFlags.columnOffset || 0 },
-                              aFlags.align);
+        let location = { line: aLine -1, ch: aFlags.columnOffset || 0 };
+        this.editor.setCursor(location, aFlags.align);
       }
-
       if (!aFlags.noDebug) {
         this.editor.setDebugLocation(aLine - 1);
       }
@@ -534,7 +534,7 @@ let DebuggerView = {
       animated: true,
       delayed: true,
       callback: aCallback
-    }, 0);
+    });
   },
 
   /**
@@ -641,6 +641,7 @@ let DebuggerView = {
   StackFrames: null,
   Sources: null,
   Variables: null,
+  VariableBubble: null,
   WatchExpressions: null,
   EventListeners: null,
   editor: null,

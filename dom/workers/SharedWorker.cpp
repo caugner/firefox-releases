@@ -16,7 +16,6 @@
 
 #include "MessagePort.h"
 #include "RuntimeService.h"
-#include "Worker.h"
 #include "WorkerPrivate.h"
 
 using mozilla::dom::Optional;
@@ -67,9 +66,6 @@ SharedWorker::Constructor(const GlobalObject& aGlobal, JSContext* aCx,
 {
   AssertIsOnMainThread();
 
-  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aGlobal.GetAsSupports());
-  MOZ_ASSERT(window);
-
   RuntimeService* rts = RuntimeService::GetOrCreateService();
   if (!rts) {
     aRv = NS_ERROR_NOT_AVAILABLE;
@@ -82,7 +78,7 @@ SharedWorker::Constructor(const GlobalObject& aGlobal, JSContext* aCx,
   }
 
   nsRefPtr<SharedWorker> sharedWorker;
-  nsresult rv = rts->CreateSharedWorker(aCx, window, aScriptURL, name,
+  nsresult rv = rts->CreateSharedWorker(aGlobal, aScriptURL, name,
                                         getter_AddRefs(sharedWorker));
   if (NS_FAILED(rv)) {
     aRv = rv;
@@ -165,7 +161,7 @@ SharedWorker::Close()
 }
 
 void
-SharedWorker::PostMessage(JSContext* aCx, JS::HandleValue aMessage,
+SharedWorker::PostMessage(JSContext* aCx, JS::Handle<JS::Value> aMessage,
                           const Optional<Sequence<JS::Value>>& aTransferable,
                           ErrorResult& aRv)
 {
@@ -209,7 +205,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(SharedWorker,
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 JSObject*
-SharedWorker::WrapObject(JSContext* aCx, JS::HandleObject aScope)
+SharedWorker::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   AssertIsOnMainThread();
 

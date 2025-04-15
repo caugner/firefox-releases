@@ -231,8 +231,8 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
    *         The corresponding breakpoints if found, an empty array otherwise.
    */
   getOtherBreakpoints: function(aLocation = {}, aStore = []) {
-    for (let source in this) {
-      for (let breakpointItem in source) {
+    for (let source of this) {
+      for (let breakpointItem of source) {
         let { url, line } = breakpointItem.attachment;
         if (url != aLocation.url || line != aLocation.line) {
           aStore.push(breakpointItem);
@@ -686,9 +686,9 @@ SourcesView.prototype = Heritage.extend(WidgetMethods, {
     // The container is not empty and an actual item was selected.
     DebuggerView.setEditorLocation(sourceItem.value);
 
-    // Set window title.
-    let script = sourceItem.value.split(" -> ").pop();
-    document.title = L10N.getFormatStr("DebuggerWindowScriptTitle", script);
+    // Set window title. No need to split the url by " -> " here, because it was
+    // already sanitized when the source was added.
+    document.title = L10N.getFormatStr("DebuggerWindowScriptTitle", sourceItem.value);
 
     DebuggerView.maybeShowBlackBoxMessage();
     this.updateToolbarButtonsState();
@@ -1085,38 +1085,14 @@ let SourceUtils = {
 
     try {
       // Use an nsIURL to parse all the url path parts.
-      var uri = Services.io.newURI(aUrl, null, null).QueryInterface(Ci.nsIURL);
+      let url = aUrl.split(" -> ").pop();
+      var uri = Services.io.newURI(url, null, null).QueryInterface(Ci.nsIURL);
     } catch (e) {
       // This doesn't look like a url, or nsIURL can't handle it.
       return "";
     }
 
-    let { scheme, directory, fileName } = uri;
-    let hostPort;
-    // Add-on SDK jar: URLs will cause accessing hostPort to throw.
-    if (scheme != "jar") {
-      hostPort = uri.hostPort;
-    }
-    let lastDir = directory.split("/").reverse()[1];
-    let group = [];
-
-    // Only show interesting schemes, http is implicit.
-    if (scheme != "http") {
-      group.push(scheme);
-    }
-    // Hostnames don't always exist for files or some resource urls.
-    // e.g. file://foo/bar.js or resource:///foo/bar.js don't have a host.
-    if (hostPort) {
-      // If the hostname is a dot-separated identifier, show the first 2 parts.
-      group.push(hostPort.split(".").slice(0, 2).join("."));
-    }
-    // Append the last directory if the path leads to an actual file.
-    // e.g. http://foo.org/bar/ should only show "foo.org", not "foo.org bar"
-    if (fileName) {
-      group.push(lastDir);
-    }
-
-    let groupLabel = group.join(" ");
+    let groupLabel = uri.prePath;
     let unicodeLabel = NetworkHelper.convertToUnicode(unescape(groupLabel));
     this._groupsCache.set(aUrl, unicodeLabel)
     return unicodeLabel;
@@ -1266,6 +1242,260 @@ let SourceUtils = {
 };
 
 /**
+ * Functions handling the variables bubble UI.
+ */
+function VariableBubbleView() {
+  dumpn("VariableBubbleView was instantiated");
+
+  this._onMouseMove = this._onMouseMove.bind(this);
+  this._onMouseLeave = this._onMouseLeave.bind(this);
+  this._onMouseScroll = this._onMouseScroll.bind(this);
+  this._onPopupHiding = this._onPopupHiding.bind(this);
+}
+
+VariableBubbleView.prototype = {
+  /**
+   * Initialization function, called when the debugger is started.
+   */
+  initialize: function() {
+    dumpn("Initializing the VariableBubbleView");
+
+    this._tooltip = new Tooltip(document);
+    this._editorContainer = document.getElementById("editor");
+
+    this._tooltip.defaultPosition = EDITOR_VARIABLE_POPUP_POSITION;
+    this._tooltip.defaultShowDelay = EDITOR_VARIABLE_HOVER_DELAY;
+
+    this._tooltip.panel.addEventListener("popuphiding", this._onPopupHiding);
+    this._editorContainer.addEventListener("mousemove", this._onMouseMove, false);
+    this._editorContainer.addEventListener("mouseleave", this._onMouseLeave, false);
+    this._editorContainer.addEventListener("scroll", this._onMouseScroll, true);
+  },
+
+  /**
+   * Destruction function, called when the debugger is closed.
+   */
+  destroy: function() {
+    dumpn("Destroying the VariableBubbleView");
+
+    this._tooltip.panel.removeEventListener("popuphiding", this._onPopupHiding);
+    this._editorContainer.removeEventListener("mousemove", this._onMouseMove, false);
+    this._editorContainer.removeEventListener("mouseleave", this._onMouseLeave, false);
+    this._editorContainer.removeEventListener("scroll", this._onMouseScroll, true);
+  },
+
+  /**
+   * Searches for an identifier underneath the specified position in the
+   * source editor, and if found, opens a VariablesView inspection popup.
+   *
+   * @param number x, y
+   *        The left/top coordinates where to look for an identifier.
+   */
+  _findIdentifier: function(x, y) {
+    let editor = DebuggerView.editor;
+
+    // Calculate the editor's line and column at the current x and y coords.
+    let hoveredPos = editor.getPositionFromCoords({ left: x, top: y });
+    let hoveredOffset = editor.getOffset(hoveredPos);
+    let hoveredLine = hoveredPos.line;
+    let hoveredColumn = hoveredPos.ch;
+
+    // A source contains multiple scripts. Find the start index of the script
+    // containing the specified offset relative to its parent source.
+    let contents = editor.getText();
+    let location = DebuggerView.Sources.selectedValue;
+    let parsedSource = DebuggerController.Parser.get(contents, location);
+    let scriptInfo = parsedSource.getScriptInfo(hoveredOffset);
+
+    // If the script length is negative, we're not hovering JS source code.
+    if (scriptInfo.length == -1) {
+      return;
+    }
+
+    // Using the script offset, determine the actual line and column inside the
+    // script, to use when finding identifiers.
+    let scriptStart = editor.getPosition(scriptInfo.start);
+    let scriptLineOffset = scriptStart.line;
+    let scriptColumnOffset = (hoveredLine == scriptStart.line ? scriptStart.ch : 0);
+
+    let scriptLine = hoveredLine - scriptLineOffset;
+    let scriptColumn = hoveredColumn - scriptColumnOffset;
+    let identifierInfo = parsedSource.getIdentifierAt(scriptLine + 1, scriptColumn);
+
+    // If the info is null, we're not hovering any identifier.
+    if (!identifierInfo) {
+      return;
+    }
+
+    // Transform the line and column relative to the parsed script back
+    // to the context of the parent source.
+    let { start: identifierStart, end: identifierEnd } = identifierInfo.location;
+    let identifierCoords = {
+      line: identifierStart.line + scriptLineOffset,
+      column: identifierStart.column + scriptColumnOffset,
+      length: identifierEnd.column - identifierStart.column
+    };
+
+    // Evaluate the identifier in the current stack frame and show the
+    // results in a VariablesView inspection popup.
+    DebuggerController.StackFrames.evaluate(identifierInfo.evalString)
+      .then(frameFinished => {
+        if ("return" in frameFinished) {
+          this.showContents({
+            coords: identifierCoords,
+            evalPrefix: identifierInfo.evalString,
+            objectActor: frameFinished.return
+          });
+        } else {
+          let msg = "Evaluation has thrown for: " + identifierInfo.evalString;
+          console.warn(msg);
+          dumpn(msg);
+        }
+      })
+      .then(null, err => {
+        let msg = "Couldn't evaluate: " + err.message;
+        console.error(msg);
+        dumpn(msg);
+      });
+  },
+
+  /**
+   * Shows an inspection popup for a specified object actor grip.
+   *
+   * @param string object
+   *        An object containing the following properties:
+   *          - coords: the inspected identifier coordinates in the editor,
+   *                    containing the { line, column, length } properties.
+   *          - evalPrefix: a prefix for the variables view evaluation macros.
+   *          - objectActor: the value grip for the object actor.
+   */
+  showContents: function({ coords, evalPrefix, objectActor }) {
+    let editor = DebuggerView.editor;
+    let { line, column, length } = coords;
+
+    // Highlight the function found at the mouse position.
+    this._markedText = editor.markText(
+      { line: line - 1, ch: column },
+      { line: line - 1, ch: column + length });
+
+    // If the grip represents a primitive value, use a more lightweight
+    // machinery to display it.
+    if (VariablesView.isPrimitive({ value: objectActor })) {
+      let className = VariablesView.getClass(objectActor);
+      let textContent = VariablesView.getString(objectActor);
+      this._tooltip.setTextContent([textContent], className, "plain");
+    } else {
+      this._tooltip.setVariableContent(objectActor, {
+        searchPlaceholder: L10N.getStr("emptyPropertiesFilterText"),
+        searchEnabled: Prefs.variablesSearchboxVisible,
+        eval: (variable, value) => {
+          let string = variable.evaluationMacro(variable, value);
+          DebuggerController.StackFrames.evaluate(string);
+          DebuggerView.VariableBubble.hideContents();
+        }
+      }, {
+        getEnvironmentClient: aObject => gThreadClient.environment(aObject),
+        getObjectClient: aObject => gThreadClient.pauseGrip(aObject),
+        simpleValueEvalMacro: this._getSimpleValueEvalMacro(evalPrefix),
+        getterOrSetterEvalMacro: this._getGetterOrSetterEvalMacro(evalPrefix),
+        overrideValueEvalMacro: this._getOverrideValueEvalMacro(evalPrefix)
+      }, {
+        fetched: (aEvent, aType) => {
+          if (aType == "properties") {
+            window.emit(EVENTS.FETCHED_BUBBLE_PROPERTIES);
+          }
+        }
+      });
+    }
+
+    // Calculate the x, y coordinates for the variable bubble anchor.
+    let identifierCenter = { line: line - 1, ch: column + length / 2 };
+    let anchor = editor.getCoordsFromPosition(identifierCenter);
+
+    this._tooltip.defaultOffsetX = anchor.left + EDITOR_VARIABLE_POPUP_OFFSET_X;
+    this._tooltip.defaultOffsetY = anchor.top + EDITOR_VARIABLE_POPUP_OFFSET_Y;
+    this._tooltip.show(this._editorContainer);
+  },
+
+  /**
+   * Hides the inspection popup.
+   */
+  hideContents: function() {
+    clearNamedTimeout("editor-mouse-move");
+    this._tooltip.hide();
+  },
+
+  /**
+   * Functions for getting customized variables view evaluation macros.
+   *
+   * @param string aPrefix
+   *        See the corresponding VariablesView.* functions.
+   */
+  _getSimpleValueEvalMacro: function(aPrefix) {
+    return (item, string) =>
+      VariablesView.simpleValueEvalMacro(item, string, aPrefix);
+  },
+  _getGetterOrSetterEvalMacro: function(aPrefix) {
+    return (item, string) =>
+      VariablesView.getterOrSetterEvalMacro(item, string, aPrefix);
+  },
+  _getOverrideValueEvalMacro: function(aPrefix) {
+    return (item, string) =>
+      VariablesView.overrideValueEvalMacro(item, string, aPrefix);
+  },
+
+  /**
+   * The mousemove listener for the source editor.
+   */
+  _onMouseMove: function({ clientX: x, clientY: y }) {
+    // Prevent the variable inspection popup from showing when the thread client
+    // is not paused, or while a popup is already visible.
+    if (gThreadClient && gThreadClient.state != "paused" || !this._tooltip.isHidden()) {
+      clearNamedTimeout("editor-mouse-move");
+      return;
+    }
+    // Allow events to settle down first. If the mouse hovers over
+    // a certain point in the editor long enough, try showing a variable bubble.
+    setNamedTimeout("editor-mouse-move",
+      EDITOR_VARIABLE_HOVER_DELAY, () => this._findIdentifier(x, y));
+  },
+
+  /**
+   * The mouseleave listener for the source editor container node.
+   */
+  _onMouseLeave: function() {
+    clearNamedTimeout("editor-mouse-move");
+  },
+
+  /**
+   * The mousescroll listener for the source editor container node.
+   */
+  _onMouseScroll: function() {
+    this.hideContents();
+  },
+
+  /**
+   * Listener handling the popup hiding event.
+   */
+  _onPopupHiding: function({ target }) {
+    if (this._tooltip.panel != target) {
+      return;
+    }
+    if (this._markedText) {
+      this._markedText.clear();
+      this._markedText = null;
+    }
+    if (!this._tooltip.isEmpty()) {
+      this._tooltip.empty();
+    }
+  },
+
+  _editorContainer: null,
+  _markedText: null,
+  _tooltip: null
+};
+
+/**
  * Functions handling the watch expressions UI.
  */
 function WatchExpressionsView() {
@@ -1341,7 +1571,7 @@ WatchExpressionsView.prototype = Heritage.extend(WidgetMethods, {
    */
   switchExpression: function(aVar, aExpression) {
     let expressionItem =
-      [i for (i in this) if (i.attachment.currentExpression == aVar.name)][0];
+      [i for (i of this) if (i.attachment.currentExpression == aVar.name)][0];
 
     // Remove the watch expression if it's going to be empty or a duplicate.
     if (!aExpression || this.getAllStrings().indexOf(aExpression) != -1) {
@@ -1367,7 +1597,7 @@ WatchExpressionsView.prototype = Heritage.extend(WidgetMethods, {
    */
   deleteExpression: function(aVar) {
     let expressionItem =
-      [i for (i in this) if (i.attachment.currentExpression == aVar.name)][0];
+      [i for (i of this) if (i.attachment.currentExpression == aVar.name)][0];
 
     // Remove the watch expression.
     this.remove(expressionItem);
@@ -1516,6 +1746,7 @@ WatchExpressionsView.prototype = Heritage.extend(WidgetMethods, {
       case e.DOM_VK_RETURN:
       case e.DOM_VK_ENTER:
       case e.DOM_VK_ESCAPE:
+        e.stopPropagation();
         DebuggerView.editor.focus();
         return;
     }
@@ -1999,7 +2230,7 @@ GlobalSearchView.prototype = Heritage.extend(WidgetMethods, {
   _createGlobalResultsUI: function(aGlobalResults) {
     let i = 0;
 
-    for (let sourceResults in aGlobalResults) {
+    for (let sourceResults of aGlobalResults) {
       if (i++ == 0) {
         this._createSourceResultsUI(sourceResults);
       } else {
@@ -2124,7 +2355,7 @@ GlobalSearchView.prototype = Heritage.extend(WidgetMethods, {
 
 /**
  * An object containing all source results, grouped by source location.
- * Iterable via "for (let [location, sourceResults] in globalResults) { }".
+ * Iterable via "for (let [location, sourceResults] of globalResults) { }".
  */
 function GlobalResults() {
   this._store = [];
@@ -2151,7 +2382,7 @@ GlobalResults.prototype = {
 
 /**
  * An object containing all the matched lines for a specific source.
- * Iterable via "for (let [lineNumber, lineResults] in sourceResults) { }".
+ * Iterable via "for (let [lineNumber, lineResults] of sourceResults) { }".
  *
  * @param string aUrl
  *        The target source url.
@@ -2292,7 +2523,7 @@ SourceResults.prototype = {
 
 /**
  * An object containing all the matches for a specific line.
- * Iterable via "for (let chunk in lineResults) { }".
+ * Iterable via "for (let chunk of lineResults) { }".
  *
  * @param number aLine
  *        The target line in the source.
@@ -2377,7 +2608,7 @@ LineResults.prototype = {
         firstMatch = firstMatch || lineChunkNode;
       }
       if (lineLength >= GLOBAL_SEARCH_LINE_MAX_LENGTH) {
-        lineContentsNode.appendChild(this._ellipsis.cloneNode());
+        lineContentsNode.appendChild(this._ellipsis.cloneNode(true));
         break;
       }
     }
@@ -2437,12 +2668,10 @@ LineResults.prototype = {
 /**
  * A generator-iterator over the global, source or line results.
  */
-GlobalResults.prototype.__iterator__ =
-SourceResults.prototype.__iterator__ =
-LineResults.prototype.__iterator__ = function() {
-  for (let item of this._store) {
-    yield item;
-  }
+GlobalResults.prototype["@@iterator"] =
+SourceResults.prototype["@@iterator"] =
+LineResults.prototype["@@iterator"] = function*() {
+  yield* this._store;
 };
 
 /**
@@ -2519,6 +2748,7 @@ LineResults.size = function() {
  * Preliminary setup for the DebuggerView object.
  */
 DebuggerView.Sources = new SourcesView();
+DebuggerView.VariableBubble = new VariableBubbleView();
 DebuggerView.WatchExpressions = new WatchExpressionsView();
 DebuggerView.EventListeners = new EventListenersView();
 DebuggerView.GlobalSearch = new GlobalSearchView();

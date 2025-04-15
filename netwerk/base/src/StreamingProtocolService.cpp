@@ -7,8 +7,9 @@
 #include "StreamingProtocolService.h"
 #include "mozilla/net/NeckoChild.h"
 #include "nsIURI.h"
+#include "necko-config.h"
 
-#ifdef MOZ_RTSP
+#ifdef NECKO_PROTOCOL_rtsp
 #include "RtspControllerChild.h"
 #include "RtspController.h"
 #endif
@@ -47,7 +48,7 @@ StreamingProtocolControllerService::Create(nsIChannel *aChannel, nsIStreamingPro
   nsresult rv = uri->GetScheme(scheme);
   if (NS_FAILED(rv)) return rv;
 
-#ifdef MOZ_RTSP
+#ifdef NECKO_PROTOCOL_rtsp
   if (scheme.EqualsLiteral("rtsp")) {
     if (IsNeckoChild()) {
       mediacontroller = new RtspControllerChild(aChannel);

@@ -25,6 +25,7 @@ var SelectionHandler = {
     addMessageListener("Browser:SelectionSwitchMode", this);
     addMessageListener("Browser:RepositionInfoRequest", this);
     addMessageListener("Browser:SelectionHandlerPing", this);
+    addMessageListener("Browser:ResetLastPos", this);
   },
 
   shutdown: function shutdown() {
@@ -44,6 +45,7 @@ var SelectionHandler = {
     removeMessageListener("Browser:SelectionSwitchMode", this);
     removeMessageListener("Browser:RepositionInfoRequest", this);
     removeMessageListener("Browser:SelectionHandlerPing", this);
+    removeMessageListener("Browser:ResetLastPos", this);
   },
 
   sendAsync: function sendAsync(aMsg, aJson) {
@@ -295,10 +297,16 @@ var SelectionHandler = {
    * Called any time SelectionHelperUI would like us to
    * recalculate the selection bounds.
    */
-  _onSelectionUpdate: function _onSelectionUpdate() {
+  _onSelectionUpdate: function _onSelectionUpdate(aMsg) {
     if (!this._contentWindow) {
       this._onFail("_onSelectionUpdate was called without proper view set up");
       return;
+    }
+
+    if (aMsg && aMsg.isInitiatedByAPZC) {
+      let {offset: offset} = Content.getCurrentWindowAndOffset(
+        this._targetCoordinates.x, this._targetCoordinates.y);
+      this._contentOffset = offset;
     }
 
     // Update the position of our selection monocles
@@ -382,6 +390,7 @@ var SelectionHandler = {
     this._contentOffset = null;
     this._domWinUtils = null;
     this._targetIsEditable = false;
+    this._targetCoordinates = null;
     sendSyncMessage("Content:HandlerShutdown", {});
   },
 
@@ -395,7 +404,7 @@ var SelectionHandler = {
           contentWindow: contentWindow,
           offset: offset,
           utils: utils } =
-      this.getCurrentWindowAndOffset(aX, aY);
+      Content.getCurrentWindowAndOffset(aX, aY);
     if (!contentWindow) {
       return false;
     }
@@ -404,6 +413,11 @@ var SelectionHandler = {
     this._contentOffset = offset;
     this._domWinUtils = utils;
     this._targetIsEditable = Util.isEditable(this._targetElement);
+    this._targetCoordinates = {
+      x: aX,
+      y: aY
+    };
+
     return true;
   },
 
@@ -528,7 +542,7 @@ var SelectionHandler = {
         break;
 
       case "Browser:SelectionUpdate":
-        this._onSelectionUpdate();
+        this._onSelectionUpdate(json);
         break;
 
       case "Browser:RepositionInfoRequest":
@@ -543,67 +557,16 @@ var SelectionHandler = {
       case "Browser:SelectionHandlerPing":
         this._onPing(json.id);
         break;
+
+      case "Browser:ResetLastPos":
+        this.onClickCoords(json.xPos, json.yPos);
+        break;
     }
   },
 
   /*************************************************
    * Utilities
    */
-
-  /*
-   * Retrieve the total offset from the window's origin to the sub frame
-   * element including frame and scroll offsets. The resulting offset is
-   * such that:
-   * sub frame coords + offset = root frame position
-   */
-  getCurrentWindowAndOffset: function(x, y) {
-    // If the element at the given point belongs to another document (such
-    // as an iframe's subdocument), the element in the calling document's
-    // DOM (e.g. the iframe) is returned.
-    let utils = Util.getWindowUtils(content);
-    let element = utils.elementFromPoint(x, y, true, false);
-    let offset = { x:0, y:0 };
-
-    while (element && (element instanceof HTMLIFrameElement ||
-                       element instanceof HTMLFrameElement)) {
-      // get the child frame position in client coordinates
-      let rect = element.getBoundingClientRect();
-
-      // calculate offsets for digging down into sub frames
-      // using elementFromPoint:
-
-      // Get the content scroll offset in the child frame
-      scrollOffset = ContentScroll.getScrollOffset(element.contentDocument.defaultView);
-      // subtract frame and scroll offset from our elementFromPoint coordinates
-      x -= rect.left + scrollOffset.x;
-      y -= rect.top + scrollOffset.y;
-
-      // calculate offsets we'll use to translate to client coords:
-
-      // add frame client offset to our total offset result
-      offset.x += rect.left;
-      offset.y += rect.top;
-
-      // get the frame's nsIDOMWindowUtils
-      utils = element.contentDocument
-                     .defaultView
-                     .QueryInterface(Ci.nsIInterfaceRequestor)
-                     .getInterface(Ci.nsIDOMWindowUtils);
-
-      // retrieve the target element in the sub frame at x, y
-      element = utils.elementFromPoint(x, y, true, false);
-    }
-
-    if (!element)
-      return {};
-
-    return {
-      element: element,
-      contentWindow: element.ownerDocument.defaultView,
-      offset: offset,
-      utils: utils
-    };
-  },
 
   _getDocShell: function _getDocShell(aWindow) {
     if (aWindow == null)

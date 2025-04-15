@@ -11,11 +11,17 @@
         <!-- Style for MenuItemActionBar -->
         <attr name="menuItemActionBarStyle" format="reference"/>
 
+        <!-- Style for MenuItemActionBar -->
+        <attr name="menuItemActionModeStyle" format="reference"/>
+
         <!-- Style for MenuItemActionView -->
         <attr name="menuItemActionViewStyle" format="reference"/>
 
         <!-- Style for MenuItemDefault -->
         <attr name="menuItemDefaultStyle" format="reference"/>
+
+        <!-- Style for MenuItemActionView's ShareActionButton -->
+        <attr name="menuItemShareActionButtonStyle" format="reference"/>
 
         <!-- Default style for the BookmarksListView -->
         <attr name="bookmarksListViewStyle" format="reference" />

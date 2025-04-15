@@ -33,21 +33,35 @@ public:
                                     const FrameMetrics& aMetrics);
 
     /* Applies the scroll and zoom parameters from the given FrameMetrics object to
-       the root frame corresponding to the given DOMWindowUtils. */
+       the root frame corresponding to the given DOMWindowUtils. If tiled thebes
+       layers are enabled, this will align the displayport to tile boundaries.
+       Setting the scroll position can cause some small adjustments to be made
+       to the actual scroll position. aMetrics' display port and scroll position
+       will be updated with any modifications made. */
     static void UpdateRootFrame(nsIDOMWindowUtils* aUtils,
-                                const FrameMetrics& aMetrics);
+                                FrameMetrics& aMetrics);
 
     /* Applies the scroll parameters from the given FrameMetrics object to the subframe
-       corresponding to the given content object. */
+       corresponding to the given content object. If tiled thebes
+       layers are enabled, this will align the displayport to tile boundaries.
+       Setting the scroll position can cause some small adjustments to be made
+       to the actual scroll position. aMetrics' display port and scroll position
+       will be updated with any modifications made. */
     static void UpdateSubFrame(nsIContent* aContent,
-                               const FrameMetrics& aMetrics);
+                               FrameMetrics& aMetrics);
 
     /* Get the DOMWindowUtils for the window corresponding to the given document. */
-    static already_AddRefed<nsIDOMWindowUtils> GetDOMWindowUtils(nsIDocument* doc);
+    static already_AddRefed<nsIDOMWindowUtils> GetDOMWindowUtils(const nsIDocument* aDoc);
 
     /* Get the DOMWindowUtils for the window corresponding to the givent content
-     * element. This might be an iframe inside the tab, for instance. */
-    static already_AddRefed<nsIDOMWindowUtils> GetDOMWindowUtils(nsIContent* content);
+       element. This might be an iframe inside the tab, for instance. */
+    static already_AddRefed<nsIDOMWindowUtils> GetDOMWindowUtils(const nsIContent* aContent);
+
+    /* Get the presShellId and view ID for the given content element, if they can be
+       found. Returns false if the values could not be found, true if they could. */
+    static bool GetScrollIdentifiers(const nsIContent* aContent,
+                                     uint32_t* aPresShellIdOut,
+                                     FrameMetrics::ViewID* aViewIdOut);
 };
 
 }

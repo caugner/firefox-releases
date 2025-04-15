@@ -6,8 +6,6 @@
 
 TEST_DIRS += ['test']
 
-MODULE = 'layout'
-
 EXPORTS += [
     'nsCanvasFrame.h',
     'nsDirection.h',
@@ -43,8 +41,9 @@ EXPORTS.mozilla.layout += [
     'FrameChildList.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'FrameChildList.cpp',
+    'MathVariantTextRunFactory.cpp',
     'nsAbsoluteContainingBlock.cpp',
     'nsBlockFrame.cpp',
     'nsBlockReflowContext.cpp',
@@ -72,8 +71,6 @@ SOURCES += [
     'nsIntervalSet.cpp',
     'nsLeafFrame.cpp',
     'nsLineBox.cpp',
-    'nsLineLayout.cpp',
-    'nsObjectFrame.cpp',
     'nsPageContentFrame.cpp',
     'nsPageFrame.cpp',
     'nsPlaceholderFrame.cpp',
@@ -91,18 +88,36 @@ SOURCES += [
     'TextOverflow.cpp',
 ]
 
+# nsLineLayout.cpp needs to be built separately because it uses plarena.h.
+# nsObjectFrame.cpp needs to be built separately because of name clashes in the OS X headers.
+SOURCES += [
+    'nsLineLayout.cpp',
+    'nsObjectFrame.cpp',
+]
+
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'nsPluginUtilsOSX.mm',
     ]
 
 FAIL_ON_WARNINGS = not CONFIG['_MSC_VER']
 
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
-
-LIBRARY_NAME = 'gkgeneric_s'
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'gklayout'
+
+LOCAL_INCLUDES += [
+    '../../content/base/src',
+    '../../content/html/content/src',
+    '../../content/xul/content/src',
+    '../../dom/base',
+    '../../dom/plugins/base',
+    '../base',
+    '../forms',
+    '../style',
+    '../svg',
+    '../tables',
+    '../xul',
+]

@@ -16,7 +16,7 @@ XPIDL_SOURCES += [
     'nsIZipReader.idl',
 ]
 
-MODULE = 'jar'
+XPIDL_MODULE = 'jar'
 LIBRARY_NAME	= 'jar'
 
 EXPORTS += [
@@ -25,23 +25,24 @@ EXPORTS += [
     'zipstruct.h',
 ]
 
+UNIFIED_SOURCES += [
+    'nsJARProtocolHandler.cpp',
+    'nsJARURI.cpp',
+]
+
+# These files cannot be built in unified mode because they rely on plarena.h.
 SOURCES += [
     'nsJAR.cpp',
     'nsJARChannel.cpp',
     'nsJARFactory.cpp',
     'nsJARInputStream.cpp',
-    'nsJARProtocolHandler.cpp',
-    'nsJARURI.cpp',
     'nsZipArchive.cpp',
 ]
 
 FAIL_ON_WARNINGS = True
 
-LIBXUL_LIBRARY = True
-
 MSVC_ENABLE_PGO = True
-
-EXPORT_LIBRARY = True
 
 include('/ipc/chromium/chromium-config.mozbuild')
 
+FINAL_LIBRARY = 'xul'

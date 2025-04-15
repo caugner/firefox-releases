@@ -27,8 +27,8 @@ NS_HandleScriptError(nsIScriptGlobalObject *aScriptGlobal,
 
 
 #define NS_ISCRIPTGLOBALOBJECT_IID \
-{ 0x214fa2f6, 0xcc0c, 0x42cf, \
-  { 0x98, 0x4b, 0x45, 0xf5, 0x73, 0x9c, 0x6b, 0x73 } }
+{ 0x30c64680, 0x909a, 0x4435, \
+  { 0x90, 0x3b, 0x29, 0x3e, 0xb5, 0x5d, 0xc7, 0xa0 } }
 
 /**
  * The global object which keeps a script context for each supported script
@@ -71,11 +71,6 @@ public:
   virtual void OnFinalize(JSObject* aObject) = 0;
 
   /**
-   * Called to enable/disable scripts.
-   */
-  virtual void SetScriptsEnabled(bool aEnabled, bool aFireTimeouts) = 0;
-
-  /**
    * Handle a script error.  Generally called by a script context.
    */
   virtual nsresult HandleScriptError(
@@ -85,7 +80,7 @@ public:
     return NS_OK;
   }
 
-  virtual bool IsBlackForCC() { return false; }
+  virtual bool IsBlackForCC(bool aTracingNeeded = true) { return false; }
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsIScriptGlobalObject,

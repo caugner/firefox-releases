@@ -25,19 +25,19 @@
         xmlns:html="http://www.w3.org/1999/xhtml"
         xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
         onload="gBrowserInit.onLoad()" onunload="gBrowserInit.onUnload()" onclose="return WindowIsClosing();"
-        title="&mainWindow.title;@PRE_RELEASE_SUFFIX@"
-        title_normal="&mainWindow.title;@PRE_RELEASE_SUFFIX@"
+        title="&mainWindow.title;"
+        title_normal="&mainWindow.title;"
 #ifdef XP_MACOSX
-        title_privatebrowsing="&mainWindow.title;@PRE_RELEASE_SUFFIX@&mainWindow.titlemodifiermenuseparator;&mainWindow.titlePrivateBrowsingSuffix;"
-        titledefault="&mainWindow.title;@PRE_RELEASE_SUFFIX@"
+        title_privatebrowsing="&mainWindow.title;&mainWindow.titlemodifiermenuseparator;&mainWindow.titlePrivateBrowsingSuffix;"
+        titledefault="&mainWindow.title;"
         titlemodifier=""
         titlemodifier_normal=""
         titlemodifier_privatebrowsing="&mainWindow.titlePrivateBrowsingSuffix;"
 #else
-        title_privatebrowsing="&mainWindow.titlemodifier;@PRE_RELEASE_SUFFIX@ &mainWindow.titlePrivateBrowsingSuffix;"
-        titlemodifier="&mainWindow.titlemodifier;@PRE_RELEASE_SUFFIX@"
-        titlemodifier_normal="&mainWindow.titlemodifier;@PRE_RELEASE_SUFFIX@"
-        titlemodifier_privatebrowsing="&mainWindow.titlemodifier;@PRE_RELEASE_SUFFIX@ &mainWindow.titlePrivateBrowsingSuffix;"
+        title_privatebrowsing="&mainWindow.titlemodifier; &mainWindow.titlePrivateBrowsingSuffix;"
+        titlemodifier="&mainWindow.titlemodifier;"
+        titlemodifier_normal="&mainWindow.titlemodifier;"
+        titlemodifier_privatebrowsing="&mainWindow.titlemodifier; &mainWindow.titlePrivateBrowsingSuffix;"
 #endif
         titlemenuseparator="&mainWindow.titlemodifiermenuseparator;"
         lightweightthemes="true"
@@ -138,7 +138,6 @@
            footertype="promobox"
            orient="vertical"
            ignorekeys="true"
-           consumeoutsideclicks="true"
            hidden="true"
            onpopupshown="StarUI.panelShown(event);"
            aria-labelledby="editBookmarkPanelTitle">
@@ -187,7 +186,6 @@
     <panel id="UITourTooltip"
            type="arrow"
            hidden="true"
-           consumeoutsideclicks="false"
            noautofocus="true"
            align="start"
            orient="vertical"
@@ -202,7 +200,6 @@
     <panel id="socialActivatedNotification"
            type="arrow"
            hidden="true"
-           consumeoutsideclicks="true"
            align="start"
            orient="horizontal"
            role="alert">
@@ -233,7 +230,6 @@
            orient="horizontal"
            onpopupshowing="SocialShare.onShowing()"
            onpopuphidden="SocialShare.onHidden()"
-           consumeoutsideclicks="true"
            hidden="true">
       <vbox class="social-share-toolbar">
         <vbox id="social-share-provider-buttons" flex="1"/>
@@ -254,7 +250,6 @@
            hidden="true"
            flip="slide"
            rolluponmousewheel="true"
-           consumeoutsideclicks="false"
            noautofocus="true"
            position="topcenter topright"/>
 
@@ -312,7 +307,6 @@
            type="arrow"
            hidden="true"
            noautofocus="true"
-           consumeoutsideclicks="true"
            onpopupshown="if (event.target == this)
                            gIdentityHandler.onPopupShown(event);"
            orient="vertical"
@@ -1101,7 +1095,6 @@
   <vbox id="browser-bottombox" layer="true">
     <notificationbox id="global-notificationbox"/>
     <toolbar id="developer-toolbar"
-             class="devtools-toolbar"
              hidden="true">
 #ifdef XP_MACOSX
           <toolbarbutton id="developer-toolbar-closebutton"

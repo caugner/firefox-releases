@@ -7,10 +7,6 @@
 // Implement TimeStamp::Now() with QueryPerformanceCounter() controlled with
 // values of GetTickCount().
 
-// XXX Forcing log to be able to catch issues in the field.  Should be removed
-// before this reaches the Release or even Beta channel.
-#define FORCE_PR_LOG
-
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/TimeStamp.h"
@@ -438,18 +434,6 @@ TimeDuration::Resolution()
   return TimeDuration::FromTicks(int64_t(sResolution));
 }
 
-struct TimeStampInitialization
-{
-  TimeStampInitialization() {
-    TimeStamp::Startup();
-  }
-  ~TimeStampInitialization() {
-    TimeStamp::Shutdown();
-  }
-};
-
-static TimeStampInitialization initOnce;
-
 static bool
 HasStableTSC()
 {
@@ -515,8 +499,6 @@ TimeStamp::Startup()
 
   InitThresholds();
   InitResolution();
-  sFirstTimeStamp = TimeStamp::Now();
-  sProcessCreation = TimeStamp();
 
   return NS_OK;
 }

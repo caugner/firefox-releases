@@ -39,6 +39,7 @@ let AboutFlyoutPanel = {
     }
 
     window.addEventListener('MozFlyoutPanelShowing', this, false);
+    window.addEventListener('MozFlyoutPanelHiding', this, false);
 
 #if MOZ_UPDATE_CHANNEL != release
     let defaults = Services.prefs.getDefaultBranch("");
@@ -59,9 +60,13 @@ let AboutFlyoutPanel = {
     switch (aEvent.type) {
       case 'MozFlyoutPanelShowing':
 #ifdef MOZ_UPDATER
-        onUnload();
         this.appUpdater = new appUpdater();
         gAppUpdater = this.appUpdater;
+#endif
+        break;
+      case 'MozFlyoutPanelHiding':
+#ifdef MOZ_UPDATER
+        onUnload();
 #endif
         break;
     }
@@ -83,7 +88,7 @@ function onUnload(aEvent) {
   // Safe to call even when there isn't a download in progress.
   gAppUpdater.removeDownloadListener();
   gAppUpdater = null;
-  AboutFlyout.appUpdater = null;
+  AboutFlyoutPanel.appUpdater = null;
 }
 
 function appUpdater()
@@ -273,12 +278,15 @@ appUpdater.prototype =
         return;
       }
 
+      Services.metro.updatePending = true;
       appStartup.quit(Components.interfaces.nsIAppStartup.eAttemptQuit |
-                      Components.interfaces.nsIAppStartup.eRestart);
+                      Components.interfaces.nsIAppStartup.eRestartTouchEnvironment);
       return;
     }
 
-    const URI_UPDATE_PROMPT_DIALOG = "chrome://mozapps/content/update/updates.xul";
+    // XXX We can't create dialogs in metro, and we currently don't support addons, so
+    // commenting this out for now.
+    /* const URI_UPDATE_PROMPT_DIALOG = "chrome://mozapps/content/update/updates.xul";
     // Firefox no longer displays a license for updates and the licenseURL check
     // is just in case a distibution does.
     if (this.update && (this.update.billboardURL || this.update.licenseURL ||
@@ -291,7 +299,7 @@ appUpdater.prototype =
       Services.ww.openWindow(null, URI_UPDATE_PROMPT_DIALOG, "", openFeatures, ary);
       window.close();
       return;
-    }
+    }*/
 
     this.selectPanel("checkingForUpdates");
     this.isChecking = true;
@@ -501,7 +509,7 @@ appUpdater.prototype =
    */
   setupDownloadingUI: function() {
     this.downloadStatus = document.getElementById("downloadStatus");
-    this.downloadStatus.value =
+    this.downloadStatus.textContent =
       DownloadUtils.getTransferTotal(0, this.update.selectedPatch.size);
     this.selectPanel("downloading");
     this.aus.addDownloadListener(this);
@@ -593,7 +601,7 @@ appUpdater.prototype =
    * See nsIProgressEventSink.idl
    */
   onProgress: function(aRequest, aContext, aProgress, aProgressMax) {
-    this.downloadStatus.value =
+    this.downloadStatus.textContent =
       DownloadUtils.getTransferTotal(aProgress, aProgressMax);
   },
 

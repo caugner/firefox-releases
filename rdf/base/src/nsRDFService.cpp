@@ -55,7 +55,6 @@
 #include "rdf.h"
 #include "nsCRT.h"
 #include "nsCRTGlue.h"
-#include "prbit.h"
 #include "mozilla/HashFunctions.h"
 
 using namespace mozilla;
@@ -140,7 +139,7 @@ struct ResourceHashEntry : public PLDHashEntryHdr {
     }
 };
 
-static PLDHashTableOps gResourceTableOps = {
+static const PLDHashTableOps gResourceTableOps = {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
     ResourceHashEntry::HashKey,
@@ -178,7 +177,7 @@ struct LiteralHashEntry : public PLDHashEntryHdr {
     }
 };
 
-static PLDHashTableOps gLiteralTableOps = {
+static const PLDHashTableOps gLiteralTableOps = {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
     LiteralHashEntry::HashKey,
@@ -215,7 +214,7 @@ struct IntHashEntry : public PLDHashEntryHdr {
     }
 };
 
-static PLDHashTableOps gIntTableOps = {
+static const PLDHashTableOps gIntTableOps = {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
     IntHashEntry::HashKey,
@@ -256,7 +255,7 @@ struct DateHashEntry : public PLDHashEntryHdr {
     }
 };
 
-static PLDHashTableOps gDateTableOps = {
+static const PLDHashTableOps gDateTableOps = {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
     DateHashEntry::HashKey,
@@ -374,7 +373,7 @@ struct BlobHashEntry : public PLDHashEntryHdr {
     }
 };
 
-static PLDHashTableOps gBlobTableOps = {
+static const PLDHashTableOps gBlobTableOps = {
     PL_DHashAllocTable,
     PL_DHashFreeTable,
     BlobHashEntry::HashKey,

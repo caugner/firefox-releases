@@ -5,7 +5,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "GfxInfoBase.h"
 
@@ -390,7 +390,8 @@ BlacklistEntryToDriverInfo(nsIDOMNode* aBlacklistEntry,
   if (BlacklistNodeGetChildByName(element, NS_LITERAL_STRING("osversion"),
                                   getter_AddRefs(dataNode))) {
     BlacklistNodeToTextValue(dataNode, dataValue);
-    aDriverInfo.mOperatingSystemVersion = strtoul(NS_LossyConvertUTF16toASCII(dataValue).get(), NULL, 10);
+    aDriverInfo.mOperatingSystemVersion = strtoul(NS_LossyConvertUTF16toASCII(dataValue).get(),
+                                                  nullptr, 10);
   }
 
   // <vendor>0x8086</vendor>

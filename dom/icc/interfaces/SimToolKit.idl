@@ -116,6 +116,17 @@ dictionary MozStkMenu
    * false: no help information available.
    */
   boolean isHelpAvailable;
+
+  /**
+   * List of Next Action Indicators.
+   * Each element should be one of nsIDOMMozIccManager.STK_CMD_*
+   *                            or nsIDOMMozIccManager.STK_NEXT_ACTION_*
+   * If it's STK_NEXT_ACTION_NULL, the terminal should ignore this action
+   * in corresponding item.
+   *
+   * @see TS 11.14, clause 12.24, Items Next Action Indicator.
+   */
+  jsval nextActionList; // unsigned short []
 };
 
 dictionary MozStkInput
@@ -401,6 +412,14 @@ dictionary MozStkTimer
   unsigned short timerAction;
 };
 
+dictionary MozStkBipMessage
+{
+  /**
+   * Text String
+   */
+  DOMString text;
+};
+
 dictionary MozStkCommand
 {
   /**
@@ -469,6 +488,13 @@ dictionary MozStkCommand
    * option is MozStkTimer
    *
    * When typeOfCommand is
+   * - STK_CMD_OPEN_CHANNEL
+   * - STK_CMD_CLOSE_CHANNEL
+   * - STK_CMD_SEND_DATA
+   * - STK_CMD_RECEIVE_DATA
+   * options is MozStkBipMessage
+   *
+   * When typeOfCommand is
    * - STK_CMD_POLL_OFF
    * options is null.
    *
@@ -477,16 +503,6 @@ dictionary MozStkCommand
    * options is null.
    */
   jsval options;
-};
-
-[scriptable, builtinclass, uuid(21cd2f25-ebea-43f8-8255-eaa4e1182858)]
-interface nsIDOMMozStkCommandEvent : nsIDOMEvent
-{
-  /**
-   * See nsIDOMMozStkCommand for the detail of command.
-   */
-  [implicit_jscontext]
-  readonly attribute jsval command;
 };
 
 dictionary MozStkResponse

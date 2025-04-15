@@ -8,6 +8,7 @@
 
 #include <cmath>
 #include <mozilla/Assertions.h>
+#include <mozilla/FloatingPoint.h>
 #include <algorithm>
 
 namespace mozilla {
@@ -59,10 +60,10 @@ struct BaseRect {
   // "Finite" means not inf and not NaN
   bool IsFinite() const
   {
-    return (std::isfinite(x) &&
-            std::isfinite(y) &&
-            std::isfinite(width) &&
-            std::isfinite(height));
+    return (mozilla::IsFinite(x) &&
+            mozilla::IsFinite(y) &&
+            mozilla::IsFinite(width) &&
+            mozilla::IsFinite(height));
   }
 
   // Returns true if this rectangle contains the interior of aRect. Always
@@ -440,18 +441,18 @@ struct BaseRect {
   }
 
   /**
-   * Clamp aRect to this rectangle. This returns aRect after it is forced
-   * inside the bounds of this rectangle. It will attempt to retain the size
-   * but will shrink the dimensions that don't fit.
+   * Clamp this rectangle to be inside aRect. The function returns a copy of
+   * this rect after it is forced inside the bounds of aRect. It will attempt to
+   * retain the size but will shrink the dimensions that don't fit.
    */
-  Sub ClampRect(const Sub& aRect) const
+  Sub ForceInside(const Sub& aRect) const
   {
     Sub rect(std::max(aRect.x, x),
              std::max(aRect.y, y),
              std::min(aRect.width, width),
              std::min(aRect.height, height));
-    rect.x = std::min(rect.XMost(), XMost()) - rect.width;
-    rect.y = std::min(rect.YMost(), YMost()) - rect.height;
+    rect.x = std::min(rect.XMost(), aRect.XMost()) - rect.width;
+    rect.y = std::min(rect.YMost(), aRect.YMost()) - rect.height;
     return rect;
   }
 

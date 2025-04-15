@@ -13,7 +13,6 @@
 #include <algorithm>
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/Assertions.h"
-#include "mozilla/Util.h"
 #include "nsAlgorithm.h"
 #include "nscore.h"
 #include "GeckoProfilerFunc.h"
@@ -306,13 +305,13 @@ public:
       _vsnprintf(buff, SAMPLER_MAX_STRING, aFormat, args);
       _snprintf(mDest, SAMPLER_MAX_STRING, "%s %s", aDefault, buff);
 #else
-      vsnprintf(buff, SAMPLER_MAX_STRING, aFormat, args);
-      snprintf(mDest, SAMPLER_MAX_STRING, "%s %s", aDefault, buff);
+      ::vsnprintf(buff, SAMPLER_MAX_STRING, aFormat, args);
+      ::snprintf(mDest, SAMPLER_MAX_STRING, "%s %s", aDefault, buff);
 #endif
       mHandle = mozilla_sampler_call_enter(mDest, this, true, line);
       va_end(args);
     } else {
-      mHandle = mozilla_sampler_call_enter(aDefault, NULL, false, line);
+      mHandle = mozilla_sampler_call_enter(aDefault, nullptr, false, line);
     }
   }
   ~SamplerStackFramePrintfRAII() {
@@ -328,7 +327,7 @@ private:
 inline PseudoStack* mozilla_get_pseudo_stack(void)
 {
   if (!stack_key_initialized)
-    return NULL;
+    return nullptr;
   return tlsPseudoStack.get();
 }
 
@@ -338,7 +337,7 @@ inline void* mozilla_sampler_call_enter(const char *aInfo, void *aFrameAddress,
   // check if we've been initialized to avoid calling pthread_getspecific
   // with a null tlsStack which will return undefined results.
   if (!stack_key_initialized)
-    return NULL;
+    return nullptr;
 
   PseudoStack *stack = tlsPseudoStack.get();
   // we can't infer whether 'stack' has been initialized

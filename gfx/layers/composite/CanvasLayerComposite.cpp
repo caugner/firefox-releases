@@ -6,7 +6,6 @@
 #include "CanvasLayerComposite.h"
 #include "composite/CompositableHost.h"  // for CompositableHost
 #include "gfx2DGlue.h"                  // for ToFilter, ToMatrix4x4
-#include "gfxImageSurface.h"            // for gfxImageSurface
 #include "GraphicsFilter.h"             // for GraphicsFilter
 #include "gfxUtils.h"                   // for gfxUtils, etc
 #include "mozilla/gfx/Matrix.h"         // for Matrix4x4
@@ -61,8 +60,7 @@ CanvasLayerComposite::GetRenderState()
 }
 
 void
-CanvasLayerComposite::RenderLayer(const nsIntPoint& aOffset,
-                                  const nsIntRect& aClipRect)
+CanvasLayerComposite::RenderLayer(const nsIntRect& aClipRect)
 {
   if (!mImageHost || !mImageHost->IsAttached()) {
     return;
@@ -72,7 +70,13 @@ CanvasLayerComposite::RenderLayer(const nsIntPoint& aOffset,
 
 #ifdef MOZ_DUMP_PAINTING
   if (gfxUtils::sDumpPainting) {
-    nsRefPtr<gfxImageSurface> surf = mImageHost->GetAsSurface();
+    RefPtr<gfx::DataSourceSurface> dSurf = mImageHost->GetAsSurface();
+    gfxPlatform *platform = gfxPlatform::GetPlatform();
+    RefPtr<gfx::DrawTarget> dt = platform->CreateDrawTargetForData(dSurf->GetData(),
+                                                                   dSurf->GetSize(),
+                                                                   dSurf->Stride(),
+                                                                   dSurf->GetFormat());
+    nsRefPtr<gfxASurface> surf = platform->GetThebesSurfaceForDrawTarget(dt);
     WriteSnapshotToDumpFile(this, surf);
   }
 #endif
@@ -89,7 +93,8 @@ CanvasLayerComposite::RenderLayer(const nsIntPoint& aOffset,
   }
 #endif
 
-  EffectChain effectChain;
+  EffectChain effectChain(this);
+
   LayerManagerComposite::AutoAddMaskEffect autoMaskEffect(mMaskLayer, effectChain);
   gfx::Matrix4x4 transform;
   ToMatrix4x4(GetEffectiveTransform(), transform);
@@ -98,7 +103,6 @@ CanvasLayerComposite::RenderLayer(const nsIntPoint& aOffset,
   mImageHost->Composite(effectChain,
                         GetEffectiveOpacity(),
                         transform,
-                        gfx::Point(aOffset.x, aOffset.y),
                         gfx::ToFilter(filter),
                         clipRect);
 }
@@ -122,7 +126,6 @@ CanvasLayerComposite::CleanupResources()
   mImageHost = nullptr;
 }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
 nsACString&
 CanvasLayerComposite::PrintInfo(nsACString& aTo, const char* aPrefix)
 {
@@ -135,5 +138,4 @@ CanvasLayerComposite::PrintInfo(nsACString& aTo, const char* aPrefix)
   }
   return aTo;
 }
-#endif
 

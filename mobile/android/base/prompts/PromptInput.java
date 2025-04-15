@@ -5,9 +5,9 @@
 
 package org.mozilla.gecko.prompts;
 
-import org.mozilla.gecko.AllCapsTextView;
 import org.mozilla.gecko.util.GeckoEventResponder;
 import org.mozilla.gecko.util.ThreadUtils;
+import org.mozilla.gecko.widget.AllCapsTextView;
 import org.mozilla.gecko.widget.DateTimePicker;
 
 import org.json.JSONArray;
@@ -350,6 +350,8 @@ public class PromptInput {
             return new LabelInput(obj);
         } else if (IconGridInput.INPUT_TYPE.equals(type)) {
             return new IconGridInput(obj);
+        } else if (ColorPickerInput.INPUT_TYPE.equals(type)) {
+            return new ColorPickerInput(obj);
         } else {
             for (String dtType : DateTimeInput.INPUT_TYPES) {
                 if (dtType.equals(type)) {
@@ -374,5 +376,9 @@ public class PromptInput {
 
     public boolean getScrollable() {
         return false;
+    }
+
+    public boolean canApplyInputStyle() {
+	return true;
     }
 }

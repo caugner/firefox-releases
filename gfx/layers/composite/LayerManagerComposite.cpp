@@ -37,7 +37,7 @@
 #include "mozilla/layers/Compositor.h"  // for Compositor
 #include "mozilla/layers/CompositorTypes.h"
 #include "mozilla/layers/Effects.h"     // for Effect, EffectChain, etc
-#include "mozilla/layers/LayersTypes.h"  // for MOZ_LAYERS_HAVE_LOG, etc
+#include "mozilla/layers/LayersTypes.h"  // for etc
 #include "ipc/ShadowLayerUtils.h"
 #include "mozilla/mozalloc.h"           // for operator new, etc
 #include "nsAutoPtr.h"                  // for nsRefPtr
@@ -101,6 +101,9 @@ LayerManagerComposite::ClearCachedResources(Layer* aSubtree)
  */
 LayerManagerComposite::LayerManagerComposite(Compositor* aCompositor)
 : mCompositor(aCompositor)
+, mInTransaction(false)
+, mIsCompositorReady(false)
+, mDebugOverlayWantsNextFrame(false)
 {
   MOZ_ASSERT(aCompositor);
 }
@@ -115,7 +118,6 @@ bool
 LayerManagerComposite::Initialize()
 {
   bool result = mCompositor->Initialize();
-  mComposer2D = mCompositor->GetWidget()->GetComposer2D();
   return result;
 }
 
@@ -145,12 +147,26 @@ void
 LayerManagerComposite::BeginTransaction()
 {
   mInTransaction = true;
+  
+  if (!mCompositor->Ready()) {
+    return;
+  }
+  
+  mIsCompositorReady = true;
+
+  if (Compositor::GetBackend() == LAYERS_BASIC) {
+    mClonedLayerTreeProperties = LayerProperties::CloneFrom(GetRoot());
+  }
 }
 
 void
 LayerManagerComposite::BeginTransactionWithDrawTarget(DrawTarget* aTarget)
 {
   mInTransaction = true;
+  
+  if (!mCompositor->Ready()) {
+    return;
+  }
 
 #ifdef MOZ_LAYERS_HAVE_LOG
   MOZ_LAYERS_LOG(("[----- BeginTransaction"));
@@ -162,16 +178,19 @@ LayerManagerComposite::BeginTransactionWithDrawTarget(DrawTarget* aTarget)
     return;
   }
 
+  mIsCompositorReady = true;
   mCompositor->SetTargetContext(aTarget);
 }
 
 bool
 LayerManagerComposite::EndEmptyTransaction(EndTransactionFlags aFlags)
 {
-  mInTransaction = false;
-
-  if (!mRoot)
+  NS_ASSERTION(mInTransaction, "Didn't call BeginTransaction?");
+  if (!mRoot) {
+    mInTransaction = false;
+    mIsCompositorReady = false;
     return false;
+  }
 
   EndTransaction(nullptr, nullptr);
   return true;
@@ -182,7 +201,13 @@ LayerManagerComposite::EndTransaction(DrawThebesLayerCallback aCallback,
                                       void* aCallbackData,
                                       EndTransactionFlags aFlags)
 {
+  NS_ASSERTION(mInTransaction, "Didn't call BeginTransaction?");
   mInTransaction = false;
+
+  if (!mIsCompositorReady) {
+    return;
+  }
+  mIsCompositorReady = false;
 
 #ifdef MOZ_LAYERS_HAVE_LOG
   MOZ_LAYERS_LOG(("  ----- (beginning paint)"));
@@ -192,6 +217,15 @@ LayerManagerComposite::EndTransaction(DrawThebesLayerCallback aCallback,
   if (mDestroyed) {
     NS_WARNING("Call on destroyed layer manager");
     return;
+  }
+
+  if (mRoot && mClonedLayerTreeProperties) {
+    nsIntRegion invalid = mClonedLayerTreeProperties->ComputeDifferences(mRoot, nullptr);
+    mClonedLayerTreeProperties = nullptr;
+
+    mInvalidRegion.Or(mInvalidRegion, invalid);
+  } else {
+    mInvalidRegion.Or(mInvalidRegion, mRenderBounds);
   }
 
   if (mRoot && !(aFlags & END_NO_IMMEDIATE_REDRAW)) {
@@ -303,8 +337,7 @@ LayerManagerComposite::RenderDebugOverlay(const Rect& aBounds)
                           clip,
                           effects,
                           opacity,
-                          gfx::Matrix4x4(),
-                          gfx::Point());
+                          gfx::Matrix4x4());
   }
   // We intentionally overflow at 2^16.
   sFrameCount++;
@@ -319,7 +352,14 @@ LayerManagerComposite::Render()
     return;
   }
 
-  if (mComposer2D && mComposer2D->TryRender(mRoot, mWorldMatrix)) {
+  if (gfxPlatform::GetPrefLayersDump()) {
+    this->Dump();
+  }
+
+  /** Our more efficient but less powerful alter ego, if one is available. */
+  nsRefPtr<Composer2D> composer2D = mCompositor->GetWidget()->GetComposer2D();
+
+  if (composer2D && composer2D->TryRender(mRoot, mWorldMatrix)) {
     mCompositor->EndFrameForExternalComposition(mWorldMatrix);
     return;
   }
@@ -338,12 +378,15 @@ LayerManagerComposite::Render()
     clipRect = *mRoot->GetClipRect();
     WorldTransformRect(clipRect);
     Rect rect(clipRect.x, clipRect.y, clipRect.width, clipRect.height);
-    mCompositor->BeginFrame(&rect, mWorldMatrix, bounds, nullptr, &actualBounds);
+    mCompositor->BeginFrame(mInvalidRegion, &rect, mWorldMatrix, bounds, nullptr, &actualBounds);
   } else {
     gfx::Rect rect;
-    mCompositor->BeginFrame(nullptr, mWorldMatrix, bounds, &rect, &actualBounds);
+    mCompositor->BeginFrame(mInvalidRegion, nullptr, mWorldMatrix, bounds, &rect, &actualBounds);
     clipRect = nsIntRect(rect.x, rect.y, rect.width, rect.height);
   }
+
+  // Reset the invalid region now that we've begun compositing.
+  mInvalidRegion.SetEmpty();
 
   if (actualBounds.IsEmpty()) {
     mCompositor->GetWidget()->PostRender(this);
@@ -359,7 +402,7 @@ LayerManagerComposite::Render()
   mCompositor->RestoreState();
 
   // Render our layers.
-  RootLayer()->RenderLayer(nsIntPoint(0, 0), clipRect);
+  RootLayer()->RenderLayer(clipRect);
 
   // Allow widget to render a custom foreground.
   mCompositor->SaveState();
@@ -378,6 +421,8 @@ LayerManagerComposite::Render()
   }
 
   mCompositor->GetWidget()->PostRender(this);
+
+  RecordFrame();
 }
 
 void
@@ -541,14 +586,10 @@ LayerManagerComposite::ComputeRenderIntegrity()
   Layer* primaryScrollable = GetPrimaryScrollableLayer();
   if (primaryScrollable) {
     // This is derived from the code in
-    // gfx/layers/ipc/CompositorParent.cpp::TransformShadowTree.
-    const gfx3DMatrix& rootTransform = root->GetTransform();
-    float devPixelRatioX = 1 / rootTransform.GetXScale();
-    float devPixelRatioY = 1 / rootTransform.GetYScale();
-
-    gfx3DMatrix transform = primaryScrollable->GetEffectiveTransform();
-    transform.ScalePost(devPixelRatioX, devPixelRatioY, 1);
+    // AsyncCompositionManager::TransformScrollableLayer
     const FrameMetrics& metrics = primaryScrollable->AsContainerLayer()->GetFrameMetrics();
+    gfx3DMatrix transform = primaryScrollable->GetEffectiveTransform();
+    transform.ScalePost(metrics.mResolution.scale, metrics.mResolution.scale, 1);
 
     // Clip the screen rect to the document bounds
     gfxRect documentBounds =
@@ -732,6 +773,7 @@ LayerComposite::LayerComposite(LayerManagerComposite *aManager)
   , mShadowTransformSetByAnimation(false)
   , mDestroyed(false)
   , mLayerComposited(false)
+  , mClearFB(false)
 { }
 
 LayerComposite::~LayerComposite()
@@ -786,14 +828,6 @@ LayerManagerComposite::GetMaxTextureSize() const
 }
 
 #ifndef MOZ_HAVE_PLATFORM_SPECIFIC_LAYER_BUFFERS
-
-/*static*/ already_AddRefed<TextureImage>
-LayerManagerComposite::OpenDescriptorForDirectTexturing(GLContext*,
-                                                        const SurfaceDescriptor&,
-                                                        GLenum)
-{
-  return nullptr;
-}
 
 /*static*/ bool
 LayerManagerComposite::SupportsDirectTexturing()

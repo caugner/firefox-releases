@@ -15,6 +15,7 @@
 class nsStringContainer;
 class nsCStringContainer;
 class nsIComponentLoader;
+class nsPurpleBufferEntry;
 
 /**
  * During this shutdown notification all threads which run XPCOM code must
@@ -272,6 +273,7 @@ void LogTerm();
 #endif
 
 extern bool gXPCOMShuttingDown;
+extern bool gXPCOMThreadsShutDown;
 
 namespace mozilla {
 namespace services {

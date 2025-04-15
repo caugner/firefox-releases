@@ -24,7 +24,7 @@ include $(topsrcdir)/config/rules.mk
 # Metro reuses desktop search plugins
 libs::
 	$(MAKE) -C $(DEPTH)/browser/locales searchplugins \
-	  DIST_SUBDIR=$(DIST_SUBDIR) XPI_ROOT_APPID="$(XPI_ROOT_APPID)"
+	  DIST_SUBDIR=$(DIST_SUBDIR) XPI_ROOT_APPID='$(XPI_ROOT_APPID)'
 
 #########################################
 # Bookmarks
@@ -43,10 +43,10 @@ bookmarks-src = $(srcdir)/../generic/profile/bookmarks.json.in
 # The resulting bookmarks.json will get picked up and packaged by the
 # processing of the jar file in the parent directory.
 bookmarks: bookmarks.inc
-	@echo "Generating: $@"
-	$(PYTHON) $(topsrcdir)/config/Preprocessor.py \
+	@echo 'Generating: $@'
+	$(call py_action,preprocessor, \
 	  -I $^ \
 	  -DAB_CD=$(AB_CD) \
-	  $(bookmarks-src) > ../bookmarks.json
+	  $(bookmarks-src) -o ../bookmarks.json)
 
 export:: bookmarks

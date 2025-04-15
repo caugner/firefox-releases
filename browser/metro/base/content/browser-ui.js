@@ -5,6 +5,7 @@
 "use strict";
 
 Cu.import("resource://gre/modules/devtools/dbg-server.jsm")
+Cu.import("resource://gre/modules/WindowsPrefSync.jsm");
 
 /**
  * Constants
@@ -14,12 +15,12 @@ Cu.import("resource://gre/modules/devtools/dbg-server.jsm")
 const debugServerStateChanged = "devtools.debugger.remote-enabled";
 const debugServerPortChanged = "devtools.debugger.remote-port";
 
-// delay when showing the tab bar briefly after a new (empty) tab opens
-const kNewTabAnimationDelayMsec = 1000;
-// delay when showing the tab bar after opening a link on a new tab
-const kOpenInNewTabAnimationDelayMsec = 3000;
-// delay before closing tab bar after selecting another tab
-const kSelectTabAnimationDelayMsec = 500;
+// delay when showing the tab bar briefly after a new foreground tab opens
+const kForegroundTabAnimationDelay = 1000;
+// delay when showing the tab bar after opening a new background tab opens
+const kBackgroundTabAnimationDelay = 3000;
+// delay before closing tab bar after closing or selecting a tab
+const kChangeTabAnimationDelay = 500;
 
 /**
  * Cache of commonly used elements.
@@ -31,6 +32,7 @@ let Elements = {};
   ["urlbarState",        "bcast_urlbarState"],
   ["loadingState",       "bcast_loadingState"],
   ["windowState",        "bcast_windowState"],
+  ["chromeState",        "bcast_chromeState"],
   ["mainKeyset",         "mainKeyset"],
   ["stack",              "stack"],
   ["tabList",            "tabs"],
@@ -47,6 +49,7 @@ let Elements = {};
   ["contentViewport",    "content-viewport"],
   ["progress",           "progress-control"],
   ["progressContainer",  "progress-container"],
+  ["feedbackLabel",  "feedback-label"],
 ].forEach(function (aElementGlobal) {
   let [name, id] = aElementGlobal;
   XPCOMUtils.defineLazyGetter(Elements, name, function() {
@@ -84,6 +87,7 @@ var BrowserUI = {
     }
     Services.prefs.addObserver(debugServerStateChanged, this, false);
     Services.prefs.addObserver(debugServerPortChanged, this, false);
+    Services.prefs.addObserver("app.crashreporter.autosubmit", this, false);
 
     Services.obs.addObserver(this, "handle-xul-text-link", false);
 
@@ -153,8 +157,6 @@ var BrowserUI = {
         Util.dumpLn("Exception in delay load module:", ex.message);
       }
 
-      BrowserUI._pullDesktopControlledPrefs();
-
       // check for left over crash reports and submit them if found.
       BrowserUI.startupCrashCheck();
 
@@ -173,6 +175,14 @@ var BrowserUI = {
   },
 
   uninit: function() {
+    messageManager.removeMessageListener("DOMTitleChanged", this);
+    messageManager.removeMessageListener("DOMWillOpenModalDialog", this);
+    messageManager.removeMessageListener("DOMWindowClose", this);
+
+    messageManager.removeMessageListener("Browser:OpenURI", this);
+    messageManager.removeMessageListener("Browser:SaveAs:Return", this);
+    messageManager.removeMessageListener("Content:StateChange", this);
+
     messageManager.removeMessageListener("Browser:MozApplicationManifest", OfflineApps);
     Services.obs.removeObserver(this, "handle-xul-text-link");
 
@@ -180,8 +190,10 @@ var BrowserUI = {
     FlyoutPanelsUI.uninit();
     MetroDownloadsView.uninit();
     SettingsCharm.uninit();
-    messageManager.removeMessageListener("Content:StateChange", this);
     PageThumbs.uninit();
+    if (WindowsPrefSync) {
+      WindowsPrefSync.uninit();
+    }
     this.stopDebugServer();
   },
 
@@ -224,7 +236,6 @@ var BrowserUI = {
   },
 
   showContent: function showContent(aURI) {
-    this.updateStartURIAttributes(aURI);
     ContextUI.dismissTabs();
     ContextUI.dismissContextAppbar();
     FlyoutPanelsUI.hide();
@@ -250,59 +261,11 @@ var BrowserUI = {
     if (!CrashReporter.enabled) {
       return;
     }
-    let lastCrashID = this.lastCrashID;
 
-    if (!lastCrashID || !lastCrashID.length) {
-      return;
-    }
+    // Ensure that CrashReporter state matches pref
+    CrashReporter.submitReports = Services.prefs.getBoolPref("app.crashreporter.autosubmit");
 
-    let shouldReport = Services.prefs.getBoolPref("app.crashreporter.autosubmit");
-    let didPrompt = Services.prefs.getBoolPref("app.crashreporter.prompted");
-
-    if (!shouldReport && !didPrompt) {
-      let crashBundle = Services.strings.createBundle("chrome://browser/locale/crashprompt.properties");
-      let title = crashBundle.GetStringFromName("crashprompt.dialog.title");
-      let acceptbutton = crashBundle.GetStringFromName("crashprompt.dialog.acceptbutton");
-      let refusebutton = crashBundle.GetStringFromName("crashprompt.dialog.refusebutton");
-      let bodyText = crashBundle.GetStringFromName("crashprompt.dialog.statement1");
-
-      let buttonPressed =
-            Services.prompt.confirmEx(
-                null,
-                title,
-                bodyText,
-                Ci.nsIPrompt.BUTTON_POS_0 * Ci.nsIPrompt.BUTTON_TITLE_IS_STRING
-              + Ci.nsIPrompt.BUTTON_POS_1 * Ci.nsIPrompt.BUTTON_TITLE_IS_STRING
-              + Ci.nsIPrompt.BUTTON_POS_1_DEFAULT,
-                acceptbutton,
-                refusebutton,
-                null,
-                null,
-                { value: false });
-
-      Services.prefs.setBoolPref("app.crashreporter.prompted", true);
-
-      if (buttonPressed == 0) {
-        Services.prefs.setBoolPref('app.crashreporter.autosubmit', true);
-        BrowserUI.crashReportingPrefChanged(true);
-        shouldReport = true;
-      } else {
-        Services.prefs.setBoolPref('app.crashreporter.autosubmit', false);
-        BrowserUI.crashReportingPrefChanged(false);
-      }
-    }
-
-    // We've already prompted, return if the user doesn't want to report.
-    if (!shouldReport) {
-      return;
-    }
-
-    Util.dumpLn("Submitting last crash id:", lastCrashID);
-    try {
-      this.CrashSubmit.submit(lastCrashID);
-    } catch (ex) {
-      Util.dumpLn(ex);
-    }
+    BrowserUI.submitLastCrashReportOrShowPrompt();
 #endif
   },
 
@@ -341,16 +304,24 @@ var BrowserUI = {
 
   isStartURI: function isStartURI(aURI) {
     aURI = aURI || Browser.selectedBrowser.currentURI.spec;
-    return aURI == kStartURI;
+    return aURI.startsWith(kStartURI) || aURI == "about:start" || aURI == "about:home";
   },
 
   updateStartURIAttributes: function (aURI) {
+    let wasStart = Elements.windowState.hasAttribute("startpage");
     aURI = aURI || Browser.selectedBrowser.currentURI.spec;
     if (this.isStartURI(aURI)) {
       ContextUI.displayNavbar();
       Elements.windowState.setAttribute("startpage", "true");
     } else if (aURI != "about:blank") { // about:blank is loaded briefly for new tabs; ignore it
       Elements.windowState.removeAttribute("startpage");
+    }
+
+    let isStart = Elements.windowState.hasAttribute("startpage");
+    if (wasStart != isStart) {
+      let event = document.createEvent("Events");
+      event.initEvent("StartUIChange", true, true);
+      Browser.selectedBrowser.dispatchEvent(event);
     }
   },
 
@@ -429,10 +400,30 @@ var BrowserUI = {
 
   /**
    * Open a new tab in the foreground in response to a user action.
+   * See Browser.addTab for more documentation.
    */
   addAndShowTab: function (aURI, aOwner) {
-    ContextUI.peekTabs(kNewTabAnimationDelayMsec);
+    ContextUI.peekTabs(kForegroundTabAnimationDelay);
     return Browser.addTab(aURI || kStartURI, true, aOwner);
+  },
+
+  /**
+   * Open a new tab in response to clicking a link in an existing tab.
+   * See Browser.addTab for more documentation.
+   */
+  openLinkInNewTab: function (aURI, aBringFront, aOwner) {
+    ContextUI.peekTabs(aBringFront ? kForegroundTabAnimationDelay
+                                   : kBackgroundTabAnimationDelay);
+    let params = null;
+    if (aOwner) {
+      params = {
+        referrerURI: aOwner.browser.documentURI,
+        charset: aOwner.browser.characterSet,
+      };
+    }
+    let tab = Browser.addTab(aURI, aBringFront, aOwner, params);
+    Elements.tabList.strip.ensureElementIsVisible(tab.chromeTab);
+    return tab;
   },
 
   setOnTabAnimationEnd: function setOnTabAnimationEnd(aCallback) {
@@ -459,7 +450,7 @@ var BrowserUI = {
     this.setOnTabAnimationEnd(function() {
       Browser.closeTab(tabToClose, { forceClose: true } );
       if (wasCollapsed)
-        ContextUI.dismissTabsWithDelay(kNewTabAnimationDelayMsec);
+        ContextUI.dismissTabsWithDelay(kChangeTabAnimationDelay);
     });
   },
 
@@ -501,7 +492,7 @@ var BrowserUI = {
 
   selectTabAndDismiss: function selectTabAndDismiss(aTab) {
     this.selectTab(aTab);
-    ContextUI.dismissTabsWithDelay(kSelectTabAnimationDelayMsec);
+    ContextUI.dismissTabsWithDelay(kChangeTabAnimationDelay);
   },
 
   selectTabAtIndex: function selectTabAtIndex(aIndex) {
@@ -598,45 +589,51 @@ var BrowserUI = {
           case debugServerPortChanged:
             this.changeDebugPort(Services.prefs.getIntPref(aData));
             break;
+          case "app.crashreporter.autosubmit":
+#ifdef MOZ_CRASHREPORTER
+            CrashReporter.submitReports = Services.prefs.getBoolPref(aData);
+
+            // The user explicitly set the autosubmit option, so there is no
+            // need to prompt them about crash reporting in the future
+            Services.prefs.setBoolPref("app.crashreporter.prompted", true);
+
+            BrowserUI.submitLastCrashReportOrShowPrompt;
+#endif
+            break;
+
+
         }
         break;
     }
   },
 
+  submitLastCrashReportOrShowPrompt: function() {
+#ifdef MOZ_CRASHREPORTER
+    let lastCrashID = this.lastCrashID;
+    if (lastCrashID && lastCrashID.length) {
+      if (Services.prefs.getBoolPref("app.crashreporter.autosubmit")) {
+        Util.dumpLn("Submitting last crash id:", lastCrashID);
+        let params = {};
+        if (!Services.prefs.getBoolPref("app.crashreporter.submitURLs")) {
+          params['extraExtraKeyVals'] = { URL: '' };
+        }
+        try {
+          this.CrashSubmit.submit(lastCrashID, params);
+        } catch (ex) {
+          Util.dumpLn(ex);
+        }
+      } else if (!Services.prefs.getBoolPref("app.crashreporter.prompted")) {
+        BrowserUI.addAndShowTab("about:crashprompt", null);
+      }
+    }
+#endif
+  },
+
+
+
   /*********************************
    * Internal utils
    */
-
-  /**
-  * Some prefs that have consequences in both Metro and Desktop such as
-  * app-update prefs, are automatically pulled from Desktop here.
-  */
-  _pullDesktopControlledPrefs: function() {
-    function pullDesktopControlledPrefType(prefType, prefFunc) {
-      try {
-        registry.create(Ci.nsIWindowsRegKey.ROOT_KEY_CURRENT_USER,
-                      "Software\\Mozilla\\Firefox\\Metro\\Prefs\\" + prefType,
-                      Ci.nsIWindowsRegKey.ACCESS_ALL);
-        for (let i = 0; i < registry.valueCount; i++) {
-          let prefName = registry.getValueName(i);
-          let prefValue = registry.readStringValue(prefName);
-          if (prefType == Ci.nsIPrefBranch.PREF_BOOL) {
-            prefValue = prefValue == "true";
-          }
-          Services.prefs[prefFunc](prefName, prefValue);
-        }
-      } catch (ex) {
-        Util.dumpLn("Could not pull for prefType " + prefType + ": " + ex);
-      } finally {
-        registry.close();
-      }
-    }
-    let registry = Cc["@mozilla.org/windows-registry-key;1"].
-                   createInstance(Ci.nsIWindowsRegKey);
-    pullDesktopControlledPrefType(Ci.nsIPrefBranch.PREF_INT, "setIntPref");
-    pullDesktopControlledPrefType(Ci.nsIPrefBranch.PREF_BOOL, "setBoolPref");
-    pullDesktopControlledPrefType(Ci.nsIPrefBranch.PREF_STRING, "setCharPref");
-  },
 
   _titleChanged: function(aBrowser) {
     let url = this.getDisplayURI(aBrowser);
@@ -958,10 +955,12 @@ var BrowserUI = {
       case "cmd_quit":
       case "cmd_close":
       case "cmd_newTab":
+      case "cmd_newTabKey":
       case "cmd_closeTab":
       case "cmd_undoCloseTab":
       case "cmd_actions":
       case "cmd_panel":
+      case "cmd_reportingCrashesSubmitURLs":
       case "cmd_flyout_back":
       case "cmd_sanitize":
       case "cmd_volumeLeft":
@@ -1050,6 +1049,9 @@ var BrowserUI = {
         break;
       case "cmd_newTab":
         this.addAndShowTab();
+        break;
+      case "cmd_newTabKey":
+        this.addAndShowTab();
         // Make sure navbar is displayed before setting focus on url bar. Bug 907244
         ContextUI.displayNavbar();
         this._edit.beginEditing(false);
@@ -1065,6 +1067,10 @@ var BrowserUI = {
         break;
       case "cmd_flyout_back":
         FlyoutPanelsUI.onBackButton();
+        break;
+      case "cmd_reportingCrashesSubmitURLs":
+        let urlCheckbox = document.getElementById("prefs-reporting-submitURLs");
+        Services.prefs.setBoolPref('app.crashreporter.submitURLs', urlCheckbox.checked);
         break;
       case "cmd_panel":
         PanelUI.toggle();
@@ -1084,6 +1090,9 @@ var BrowserUI = {
     let message = bundle.GetStringFromName("clearPrivateData.message");
     let clearbutton = bundle.GetStringFromName("clearPrivateData.clearButton");
 
+    let prefsClearButton = document.getElementById("prefs-clear-data");
+    prefsClearButton.disabled = true; 
+
     let buttonPressed = Services.prompt.confirmEx(
                           null,
                           title,
@@ -1100,11 +1109,9 @@ var BrowserUI = {
     if (buttonPressed === 0) {
       SanitizeUI.onSanitize();
     }
-  },
 
-  crashReportingPrefChanged: function crashReportingPrefChanged(aState) {
-    CrashReporter.submitReports = aState;
-  }
+    prefsClearButton.disabled = false;
+  },
 };
 
 var PanelUI = {
@@ -1263,68 +1270,5 @@ var DialogUI = {
         targetNode = targetNode.parentNode;
     }
     return targetNode ? true : false;
-  }
-};
-
-/**
- * Manage the contents of the Windows 8 "Settings" charm.
- */
-var SettingsCharm = {
-  _entries: new Map(),
-  _nextId: 0,
-
-  /**
-   * Add a new item to the "Settings" menu in the Windows 8 charms.
-   * @param aEntry Object with a "label" property (string that will appear in the UI)
-   *    and an "onselected" property (function to be called when the user chooses this entry)
-   */
-  addEntry: function addEntry(aEntry) {
-    try {
-      let id = Services.metro.addSettingsPanelEntry(aEntry.label);
-      this._entries.set(id, aEntry);
-    } catch (e) {
-      // addSettingsPanelEntry does not work on non-Metro platforms
-      Cu.reportError(e);
-    }
-  },
-
-  init: function SettingsCharm_init() {
-    Services.obs.addObserver(this, "metro-settings-entry-selected", false);
-
-    // Options
-    this.addEntry({
-        label: Strings.browser.GetStringFromName("optionsCharm"),
-        onselected: function() FlyoutPanelsUI.show('PrefsFlyoutPanel')
-    });
-    // Sync
-    this.addEntry({
-        label: Strings.brand.GetStringFromName("syncBrandShortName"),
-        onselected: function() FlyoutPanelsUI.show('SyncFlyoutPanel')
-    });
-    // About
-    this.addEntry({
-        label: Strings.browser.GetStringFromName("aboutCharm1"),
-        onselected: function() FlyoutPanelsUI.show('AboutFlyoutPanel')
-    });
-    // Help
-    this.addEntry({
-        label: Strings.browser.GetStringFromName("helpOnlineCharm"),
-        onselected: function() {
-          let url = Services.urlFormatter.formatURLPref("app.support.baseURL");
-          BrowserUI.addAndShowTab(url, Browser.selectedTab);
-        }
-    });
-  },
-
-  observe: function SettingsCharm_observe(aSubject, aTopic, aData) {
-    if (aTopic == "metro-settings-entry-selected") {
-      let entry = this._entries.get(parseInt(aData, 10));
-      if (entry)
-        entry.onselected();
-    }
-  },
-
-  uninit: function SettingsCharm_uninit() {
-    Services.obs.removeObserver(this, "metro-settings-entry-selected");
   }
 };

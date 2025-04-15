@@ -458,13 +458,9 @@ CycleCollectedJSRuntime::CycleCollectedJSRuntime(uint32_t aMaxbytes,
   nsCycleCollector_registerJSRuntime(this);
 }
 
-void
-CycleCollectedJSRuntime::DestroyRuntime()
+CycleCollectedJSRuntime::~CycleCollectedJSRuntime()
 {
-  if (!mJSRuntime) {
-    return;
-  }
-
+  MOZ_ASSERT(mJSRuntime);
   MOZ_ASSERT(!mDeferredFinalizerTable.Count());
   MOZ_ASSERT(!mDeferredSupports.Length());
 
@@ -474,12 +470,6 @@ CycleCollectedJSRuntime::DestroyRuntime()
   JS_DestroyRuntime(mJSRuntime);
   mJSRuntime = nullptr;
   nsCycleCollector_forgetJSRuntime();
-}
-
-CycleCollectedJSRuntime::~CycleCollectedJSRuntime()
-{
-  // Destroy our runtime if the subclass hasn't done it already.
-  DestroyRuntime();
 }
 
 size_t
@@ -518,8 +508,10 @@ CycleCollectedJSRuntime::DescribeGCThing(bool aIsMarked, void* aThing,
   }
 
   char name[72];
+  uint64_t compartmentAddress = 0;
   if (aTraceKind == JSTRACE_OBJECT) {
     JSObject* obj = static_cast<JSObject*>(aThing);
+    compartmentAddress = (uint64_t)js::GetObjectCompartment(obj);
     const js::Class* clasp = js::GetObjectClass(obj);
 
     // Give the subclass a chance to do something
@@ -555,7 +547,7 @@ CycleCollectedJSRuntime::DescribeGCThing(bool aIsMarked, void* aThing,
   }
 
   // Disable printing global for objects while we figure out ObjShrink fallout.
-  aCb.DescribeGCedNode(aIsMarked, name);
+  aCb.DescribeGCedNode(aIsMarked, name, compartmentAddress);
 }
 
 void
@@ -1117,6 +1109,7 @@ CycleCollectedJSRuntime::OnGC(JSGCStatus aStatus)
 {
   switch (aStatus) {
     case JSGC_BEGIN:
+      nsCycleCollector_prepareForGarbageCollection();
       break;
     case JSGC_END:
     {

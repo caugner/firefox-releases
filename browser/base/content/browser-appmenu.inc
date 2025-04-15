@@ -6,6 +6,7 @@
 <menupopup id="appmenu-popup"
            onpopupshowing="if (event.target == this) {
                              updateEditUIVisibility();
+                             updateSwitchToMetroVisibility();
 #ifdef MOZ_SERVICES_SYNC
                              gSyncUI.updateUI();
 #endif
@@ -149,8 +150,8 @@
                     observes="devtoolsMenuBroadcaster_DevToolbar"/>
           <menuitem id="appmenu_devAppMgr"
                     observes="devtoolsMenuBroadcaster_DevAppMgr"/>
-          <menuitem id="appmenu_chromeDebugger"
-                    observes="devtoolsMenuBroadcaster_ChromeDebugger"/>
+          <menuitem id="appmenu_browserToolbox"
+                    observes="devtoolsMenuBroadcaster_BrowserToolbox"/>
           <menuitem id="appmenu_browserConsole"
                     observes="devtoolsMenuBroadcaster_BrowserConsole"/>
           <menuitem id="appmenu_responsiveUI"
@@ -201,6 +202,15 @@
                 label="&syncSyncNowItem.label;"
                 observes="sync-syncnow-state"
                 oncommand="gSyncUI.doSync(event);"/>
+#endif
+#ifdef HAVE_SHELL_SERVICE
+#ifdef XP_WIN
+#ifdef MOZ_METRO
+      <menuitem id="switch-to-metro"
+                label="&switchToMetroCmd2.label;"
+                oncommand="SwitchToMetro()"/>
+#endif
+#endif
 #endif
       <menuitem id="appmenu-quit"
                 class="menuitem-iconic"

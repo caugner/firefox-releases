@@ -228,6 +228,13 @@ WebConsoleActor.prototype =
   consoleReflowListener: null,
 
   /**
+   * The JSTerm Helpers names cache.
+   * @private
+   * @type array
+   */
+  _jstermHelpersCache: null,
+
+  /**
    * Getter for the NetworkMonitor.saveRequestAndResponseBodies preference.
    * @type boolean
    */
@@ -652,7 +659,7 @@ WebConsoleActor.prototype =
     let evalResult = evalInfo.result;
     let helperResult = evalInfo.helperResult;
 
-    let result, error, errorMessage;
+    let result, errorMessage, errorGrip = null;
     if (evalResult) {
       if ("return" in evalResult) {
         result = evalResult.return;
@@ -661,7 +668,8 @@ WebConsoleActor.prototype =
         result = evalResult.yield;
       }
       else if ("throw" in evalResult) {
-        error = evalResult.throw;
+        let error = evalResult.throw;
+        errorGrip = this.createValueGrip(error);
         let errorToString = evalInfo.window
                             .evalInGlobalWithBindings("ex + ''", {ex: error});
         if (errorToString && typeof errorToString.return == "string") {
@@ -675,7 +683,7 @@ WebConsoleActor.prototype =
       input: input,
       result: this.createValueGrip(result),
       timestamp: timestamp,
-      exception: error ? this.createValueGrip(error) : null,
+      exception: errorGrip,
       exceptionMessage: errorMessage,
       helperResult: helperResult,
     };
@@ -691,12 +699,29 @@ WebConsoleActor.prototype =
    */
   onAutocomplete: function WCA_onAutocomplete(aRequest)
   {
-    // TODO: Bug 842682 - use the debugger API for autocomplete in the Web
-    // Console, and provide suggestions from the selected debugger stack frame.
-    // Also, properly reuse _getJSTermHelpers instead of re-implementing it
-    // here.
-    let result = JSPropertyProvider(this.window, aRequest.text,
-                                    aRequest.cursor) || {};
+    let frameActorId = aRequest.frameActor;
+    let dbgObject = null;
+    let environment = null;
+
+    // This is the case of the paused debugger
+    if (frameActorId) {
+      let frameActor = this.conn.getActor(frameActorId);
+      if (frameActor) {
+        let frame = frameActor.frame;
+        environment = frame.environment;
+      }
+      else {
+        Cu.reportError("Web Console Actor: the frame actor was not found: " +
+                       frameActorId);
+      }
+    }
+    // This is the general case (non-paused debugger)
+    else {
+      dbgObject = this.dbg.makeGlobalObjectReference(this.window);
+    }
+
+    let result = JSPropertyProvider(dbgObject, environment, aRequest.text,
+                                    aRequest.cursor, frameActorId) || {};
     let matches = result.matches || [];
     let reqText = aRequest.text.substr(0, aRequest.cursor);
 
@@ -704,13 +729,14 @@ WebConsoleActor.prototype =
     // helper functions.
     let lastNonAlphaIsDot = /[.][a-zA-Z0-9$]*$/.test(reqText);
     if (!lastNonAlphaIsDot) {
-      let helpers = {
-        sandbox: Object.create(null)
-      };
-      JSTermHelpers(helpers);
-
-      let helperNames = Object.getOwnPropertyNames(helpers.sandbox);
-      matches = matches.concat(helperNames.filter(n => n.startsWith(result.matchProp)));
+      if (!this._jstermHelpersCache) {
+        let helpers = {
+          sandbox: Object.create(null)
+        };
+        JSTermHelpers(helpers);
+        this._jstermHelpersCache = Object.getOwnPropertyNames(helpers.sandbox);
+      }
+      matches = matches.concat(this._jstermHelpersCache.filter(n => n.startsWith(result.matchProp)));
     }
 
     return {

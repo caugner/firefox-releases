@@ -191,7 +191,10 @@ public:
     NS_ENSURE_TRUE(settingsService, NS_ERROR_FAILURE);
     nsCOMPtr<nsISettingsServiceLock> lock;
     settingsService->CreateLock(getter_AddRefs(lock));
-    lock->Set(UMS_STATUS, INT_TO_JSVAL(mStatus), nullptr, nullptr);
+    // lock may be null if this gets called during shutdown.
+    if (lock) {
+      lock->Set(UMS_STATUS, INT_TO_JSVAL(mStatus), nullptr, nullptr);
+    }
     return NS_OK;
   }
 
@@ -240,7 +243,7 @@ AutoMounterSetting::Observe(nsISupports* aSubject,
     return NS_OK;
   }
 
-  JSString *jsKey = JS_ValueToString(cx, key);
+  JSString *jsKey = JS::ToString(cx, key);
   nsDependentJSString keyStr;
   if (!keyStr.init(cx, jsKey)) {
     return NS_OK;

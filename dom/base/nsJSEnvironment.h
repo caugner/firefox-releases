@@ -24,6 +24,7 @@ class nsCycleCollectionNoteRootCallback;
 
 namespace mozilla {
 template <class> class Maybe;
+struct CycleCollectorResults;
 }
 
 // The amount of time we wait between a request to GC (due to leaving
@@ -58,9 +59,6 @@ public:
   virtual JSContext* GetNativeContext() MOZ_OVERRIDE;
   virtual nsresult InitContext() MOZ_OVERRIDE;
   virtual bool IsContextInitialized() MOZ_OVERRIDE;
-
-  virtual bool GetScriptsEnabled() MOZ_OVERRIDE;
-  virtual void SetScriptsEnabled(bool aEnabled, bool aFireTimeouts) MOZ_OVERRIDE;
 
   virtual nsresult SetProperty(JS::Handle<JSObject*> aTarget, const char* aPropName, nsISupports* aVal) MOZ_OVERRIDE;
 
@@ -106,8 +104,10 @@ public:
   // If aExtraForgetSkippableCalls is -1, forgetSkippable won't be
   // called even if the previous collection was GC.
   static void CycleCollectNow(nsICycleCollectorListener *aListener = nullptr,
-                              int32_t aExtraForgetSkippableCalls = 0,
-                              bool aManuallyTriggered = true);
+                              int32_t aExtraForgetSkippableCalls = 0);
+  static void ScheduledCycleCollectNow();
+  static void BeginCycleCollectionCallback();
+  static void EndCycleCollectionCallback(mozilla::CycleCollectorResults &aResults);
 
   static void PokeGC(JS::gcreason::Reason aReason, int aDelay = 0);
   static void KillGCTimer();
@@ -166,7 +166,6 @@ private:
   JS::Heap<JSObject*> mWindowProxy;
 
   bool mIsInitialized;
-  bool mScriptsEnabled;
   bool mGCOnDestruction;
   bool mProcessingScriptTag;
 
@@ -208,7 +207,7 @@ public:
   AsyncErrorReporter(JSRuntime* aRuntime,
                      JSErrorReport* aErrorReport,
                      const char* aFallbackMessage,
-                     nsIPrincipal* aGlobalPrincipal, // To determine category
+                     bool aIsChromeError, // To determine category
                      nsPIDOMWindow* aWindow);
 
   NS_IMETHOD Run()

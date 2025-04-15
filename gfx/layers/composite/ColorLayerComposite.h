@@ -9,7 +9,6 @@
 #include "Layers.h"                     // for ColorLayer, etc
 #include "mozilla/Attributes.h"         // for MOZ_OVERRIDE
 #include "mozilla/layers/LayerManagerComposite.h"  // for LayerComposite, etc
-#include "mozilla/layers/LayersTypes.h"  // for MOZ_LAYERS_HAVE_LOG
 #include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
 
 struct nsIntPoint;
@@ -42,17 +41,14 @@ public:
 
   virtual void Destroy() MOZ_OVERRIDE { mDestroyed = true; }
 
-  virtual void RenderLayer(const nsIntPoint& aOffset,
-                           const nsIntRect& aClipRect) MOZ_OVERRIDE;
+  virtual void RenderLayer(const nsIntRect& aClipRect) MOZ_OVERRIDE;
   virtual void CleanupResources() MOZ_OVERRIDE {};
 
   CompositableHost* GetCompositableHost() MOZ_OVERRIDE { return nullptr; }
 
   virtual LayerComposite* AsLayerComposite() MOZ_OVERRIDE { return this; }
 
-#ifdef MOZ_LAYERS_HAVE_LOG
   virtual const char* Name() const MOZ_OVERRIDE { return "ColorLayerComposite"; }
-#endif
 };
 
 } /* layers */

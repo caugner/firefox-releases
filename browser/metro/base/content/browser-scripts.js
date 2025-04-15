@@ -46,6 +46,8 @@ XPCOMUtils.defineLazyModuleGetter(this, "Task",
 XPCOMUtils.defineLazyModuleGetter(this, "OS",
                                   "resource://gre/modules/osfile.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "UITelemetry",
+                                  "resource://gre/modules/UITelemetry.jsm");
 /*
  * Services
  */
@@ -66,6 +68,9 @@ XPCOMUtils.defineLazyServiceGetter(window, "gFaviconService",
 XPCOMUtils.defineLazyServiceGetter(window, "gFocusManager",
                                    "@mozilla.org/focus-manager;1",
                                    "nsIFocusManager");
+XPCOMUtils.defineLazyServiceGetter(window, "gEventListenerService",
+                                   "@mozilla.org/eventlistenerservice;1",
+                                   "nsIEventListenerService");
 #ifdef MOZ_CRASHREPORTER
 XPCOMUtils.defineLazyServiceGetter(this, "CrashReporter",
                                    "@mozilla.org/xre/app-info;1",
@@ -99,7 +104,6 @@ let ScriptContexts = {};
   ["SelectionHelperUI", "chrome://browser/content/helperui/SelectionHelperUI.js"],
   ["SelectionPrototype", "chrome://browser/content/library/SelectionPrototype.js"],
   ["ChromeSelectionHandler", "chrome://browser/content/helperui/ChromeSelectionHandler.js"],
-  ["AnimatedZoom", "chrome://browser/content/AnimatedZoom.js"],
   ["CommandUpdater", "chrome://browser/content/commandUtil.js"],
   ["ContextCommands", "chrome://browser/content/ContextCommands.js"],
   ["Bookmarks", "chrome://browser/content/bookmarks.js"],
@@ -114,6 +118,7 @@ let ScriptContexts = {};
   ["NavButtonSlider", "chrome://browser/content/NavButtonSlider.js"],
   ["ContextUI", "chrome://browser/content/ContextUI.js"],
   ["FlyoutPanelsUI", "chrome://browser/content/flyoutpanels/FlyoutPanelsUI.js"],
+  ["SettingsCharm", "chrome://browser/content/flyoutpanels/SettingsCharm.js"],
   ["APZCObserver", "chrome://browser/content/apzc.js"],
 ].forEach(function (aScript) {
   let [name, script] = aScript;
@@ -148,10 +153,4 @@ XPCOMUtils.defineLazyGetter(this, "ContentAreaUtils", function() {
   let ContentAreaUtils = {};
   Services.scriptloader.loadSubScript("chrome://global/content/contentAreaUtils.js", ContentAreaUtils);
   return ContentAreaUtils;
-});
-
-XPCOMUtils.defineLazyGetter(this, "ZoomManager", function() {
-  let sandbox = {};
-  Services.scriptloader.loadSubScript("chrome://global/content/viewZoomOverlay.js", sandbox);
-  return sandbox.ZoomManager;
 });

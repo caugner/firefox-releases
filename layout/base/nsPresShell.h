@@ -201,7 +201,7 @@ public:
   virtual void WillPaint() MOZ_OVERRIDE;
   virtual void WillPaintWindow() MOZ_OVERRIDE;
   virtual void DidPaintWindow() MOZ_OVERRIDE;
-  virtual void ScheduleViewManagerFlush() MOZ_OVERRIDE;
+  virtual void ScheduleViewManagerFlush(PaintType aType = PAINT_DEFAULT) MOZ_OVERRIDE;
   virtual void DispatchSynthMouseMove(mozilla::WidgetGUIEvent* aEvent,
                                       bool aFlushOnHoverChange) MOZ_OVERRIDE;
   virtual void ClearMouseCaptureOnView(nsView* aView) MOZ_OVERRIDE;
@@ -319,6 +319,8 @@ public:
       IsLayoutFlushObserver(this);
   }
 
+  virtual void LoadComplete() MOZ_OVERRIDE;
+
   void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
                               nsArenaMemoryStats *aArenaObjectsSize,
                               size_t *aPresShellSize,
@@ -346,6 +348,10 @@ public:
   virtual void RemoveImageFromVisibleList(nsIImageLoadingContent* aImage) MOZ_OVERRIDE;
 
   virtual bool AssumeAllImagesVisible() MOZ_OVERRIDE;
+
+  virtual void RestyleShadowRoot(mozilla::dom::ShadowRoot* aShadowRoot);
+
+  void SetNextPaintCompressed() { mNextPaintCompressed = true; }
 
 protected:
   virtual ~PresShell();
@@ -663,7 +669,6 @@ protected:
                                            nsIWidget *aRootWidget);
 
   void FireResizeEvent();
-  void FireBeforeResizeEvent();
   static void AsyncResizeEventCallback(nsITimer* aTimer, void* aPresShell);
 
   virtual void SynthesizeMouseMove(bool aFromScroll) MOZ_OVERRIDE;
@@ -756,8 +761,12 @@ protected:
   // moving/sizing loop is running, see bug 491700 for details.
   nsCOMPtr<nsITimer>        mReflowContinueTimer;
 
+  nsCOMPtr<nsITimer>        mDelayedPaintTimer;
+
   // The `performance.now()` value when we last started to process reflows.
   DOMHighResTimeStamp       mLastReflowStart;
+
+  mozilla::TimeStamp        mLoadBegin;  // used to time loads
 
   // Information needed to properly handle scrolling content into view if the
   // pre-scroll reflow flush can be interrupted.  mContentToScrollTo is
@@ -793,6 +802,8 @@ protected:
   bool                      mInResize : 1;
 
   bool                      mImageVisibilityVisited : 1;
+
+  bool                      mNextPaintCompressed : 1;
 
   static bool               sDisableNonTestMouseEvents;
 };

@@ -1289,7 +1289,7 @@ BrowserGlue.prototype = {
   },
 
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 14;
+    const UI_VERSION = 15;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul#";
 
     let wasCustomizedAndOnAustralis = Services.prefs.prefHasUserValue("browser.uiCustomization.state");
@@ -1302,6 +1302,22 @@ BrowserGlue.prototype = {
 
     this._rdf = Cc["@mozilla.org/rdf/rdf-service;1"].getService(Ci.nsIRDFService);
     this._dataSource = this._rdf.GetDataSource("rdf:local-store");
+
+    function migrateDetector() {
+      let detector = null;    
+      try {
+        detector = Services.prefs.getComplexValue("intl.charset.detector",
+                                                  Ci.nsIPrefLocalizedString).data;
+      } catch (ex) {}
+      if (!(detector == "" ||
+            detector == "ja_parallel_state_machine" ||
+            detector == "ruprob" ||
+            detector == "ukprob")) {
+        // If the encoding detector pref value is not reachable from the UI,
+        // reset to default (varies by localization).
+        Services.prefs.clearUserPref("intl.charset.detector");
+      }
+    }
 
     // No version check for this as this code should run until we have Australis everywhere:
     if (wasCustomizedAndOnAustralis) {
@@ -1328,6 +1344,11 @@ BrowserGlue.prototype = {
       if (oldCurrentset != currentset) {
         this._setPersist(toolbarResource, currentsetResource, currentset);
       }
+
+      // Taking the opportunity to do the version 15 action here as well to
+      // address profiles that have been on Australis.
+      migrateDetector();
+
       // If we don't have anything else to do, we can bail here:
       if (currentUIVersion >= UI_VERSION) {
         if (this._dirty) {
@@ -1523,6 +1544,14 @@ BrowserGlue.prototype = {
       OS.File.remove(path);
     }
 
+    // Reusing the version 15, which is no longer in use on m-c, on Holly.
+    // This fails if the user has used Australis with this profile without
+    // customization and then gone back no the non-Australis version stream.
+    // However, the situation will fix itself once Australis reaches the user.
+    if (currentUIVersion < 15) {
+      migrateDetector();
+    }
+
     if (this._dirty)
       this._dataSource.QueryInterface(Ci.nsIRDFRemoteDataSource).Flush();
 
@@ -1582,7 +1611,7 @@ BrowserGlue.prototype = {
     // be set to the version it has been added in, we will compare its value
     // to users' smartBookmarksVersion and add new smart bookmarks without
     // recreating old deleted ones.
-    const SMART_BOOKMARKS_VERSION = 4;
+    const SMART_BOOKMARKS_VERSION = 6;
     const SMART_BOOKMARKS_ANNO = "Places/SmartBookmark";
     const SMART_BOOKMARKS_PREF = "browser.places.smartBookmarksVersion";
 
@@ -1643,8 +1672,25 @@ BrowserGlue.prototype = {
             parent: PlacesUtils.bookmarksMenuFolderId,
             position: menuIndex++,
             newInVersion: 1
-          }
+          },
         };
+
+        if (Services.sysinfo.getProperty("hasWindowsTouchInterface")) {
+          smartBookmarks.Windows8Touch = {
+            title: bundle.GetStringFromName("windows8TouchTitle"),
+            uri: NetUtil.newURI("place:folder=" +
+                                PlacesUtils.annotations.getItemsWithAnnotation('metro/bookmarksRoot', {})[0] +
+                                "&queryType=" +
+                                Ci.nsINavHistoryQueryOptions.QUERY_TYPE_BOOKMARKS +
+                                "&sort=" +
+                                Ci.nsINavHistoryQueryOptions.SORT_BY_DATEADDED_DESCENDING +
+                                "&maxResults=" + MAX_RESULTS +
+                                "&excludeQueries=1"),
+            parent: PlacesUtils.bookmarksMenuFolderId,
+            position: menuIndex++,
+            newInVersion: 6
+          };
+        }
 
         // Set current itemId, parent and position if Smart Bookmark exists,
         // we will use these informations to create the new version at the same
@@ -2041,6 +2087,13 @@ ContentPermissionPrompt.prototype = {
         return;
       }
     }
+
+    var browser = this._getBrowserForRequest(request);
+    var chromeWin = browser.ownerDocument.defaultView;
+    if (!chromeWin.PopupNotifications)
+      // Ignore requests from browsers hosted in windows that don't support
+      // PopupNotifications.
+      return;
 
     // Show the prompt.
     switch (request.type) {

@@ -38,6 +38,7 @@
 #include "nsIDNSService.h"
 #include "nsWeakReference.h"
 #include "nricectx.h"
+#include "rlogringbuffer.h"
 #include "mozilla/SyncRunnable.h"
 #include "logging.h"
 #include "stunserver.h"
@@ -102,6 +103,50 @@ using namespace mozilla;
 using namespace mozilla::dom;
 
 namespace test {
+class RingbufferDumper : public ::testing::EmptyTestEventListener {
+  void ClearRingBuffer_s() {
+    RLogRingBuffer::CreateInstance();
+    // Set limit to zero to clear the ringbuffer
+    RLogRingBuffer::GetInstance()->SetLogLimit(0);
+    RLogRingBuffer::GetInstance()->SetLogLimit(UINT32_MAX);
+  }
+
+  void DestroyRingBuffer_s() {
+    RLogRingBuffer::DestroyInstance();
+  }
+
+  void DumpRingBuffer_s() {
+      std::deque<std::string> logs;
+      // Get an unlimited number of log lines, with no filter
+      RLogRingBuffer::GetInstance()->GetAny(0, &logs);
+      for (auto l = logs.begin(); l != logs.end(); ++l) {
+        std::cout << *l << std::endl;
+      }
+      ClearRingBuffer_s();
+  }
+
+  virtual void OnTestStart(const ::testing::TestInfo& testInfo) {
+    mozilla::SyncRunnable::DispatchToThread(
+      test_utils->sts_target(),
+      WrapRunnable(this, &RingbufferDumper::ClearRingBuffer_s));
+  }
+
+  virtual void OnTestEnd(const ::testing::TestInfo& testInfo) {
+    mozilla::SyncRunnable::DispatchToThread(
+      test_utils->sts_target(),
+      WrapRunnable(this, &RingbufferDumper::DestroyRingBuffer_s));
+  }
+
+  // Called after a failed assertion or a SUCCEED() invocation.
+  virtual void OnTestPartResult(const ::testing::TestPartResult& testResult) {
+    if (testResult.failed()) {
+      // Dump (and empty) the RLogRingBuffer
+      mozilla::SyncRunnable::DispatchToThread(
+        test_utils->sts_target(),
+        WrapRunnable(this, &RingbufferDumper::DumpRingBuffer_s));
+    }
+  }
+};
 
 std::string indent(const std::string &s, int width = 4) {
   std::string prefix;
@@ -371,7 +416,8 @@ TestObserver::OnStateChange(PCObserverStateType state_type, ER&, void*)
 {
   nsresult rv;
   PCImplReadyState gotready;
-  PCImplIceState gotice;
+  PCImplIceConnectionState gotice;
+  PCImplIceGatheringState goticegathering;
   PCImplSipccState gotsipcc;
   PCImplSignalingState gotsignaling;
 
@@ -386,12 +432,20 @@ TestObserver::OnStateChange(PCObserverStateType state_type, ER&, void*)
               << PCImplReadyStateValues::strings[int(gotready)].value
               << std::endl;
     break;
-  case PCObserverStateType::IceState:
-    rv = pc->IceState(&gotice);
+  case PCObserverStateType::IceConnectionState:
+    rv = pc->IceConnectionState(&gotice);
     NS_ENSURE_SUCCESS(rv, rv);
-    std::cout << "ICE State: "
-              << PCImplIceStateValues::strings[int(gotice)].value
+    std::cout << "ICE Connection State: "
+              << PCImplIceConnectionStateValues::strings[int(gotice)].value
               << std::endl;
+    break;
+  case PCObserverStateType::IceGatheringState:
+    rv = pc->IceGatheringState(&goticegathering);
+    NS_ENSURE_SUCCESS(rv, rv);
+    std::cout
+        << "ICE Gathering State: "
+        << PCImplIceGatheringStateValues::strings[int(goticegathering)].value
+        << std::endl;
     break;
   case PCObserverStateType::SdpState:
     std::cout << "SDP State: " << std::endl;
@@ -413,6 +467,7 @@ TestObserver::OnStateChange(PCObserverStateType state_type, ER&, void*)
     break;
   default:
     // Unknown State
+    MOZ_CRASH("Unknown state change type.");
     break;
   }
 
@@ -714,16 +769,19 @@ class SignalingAgent {
   }
 
   void WaitForGather() {
-    ASSERT_TRUE_WAIT(ice_state() == PCImplIceState::IceWaiting, 5000);
+    ASSERT_TRUE_WAIT(ice_gathering_state() == PCImplIceGatheringState::Complete,
+                     5000);
 
     std::cout << name << ": Init Complete" << std::endl;
   }
 
   bool WaitForGatherAllowFail() {
-    EXPECT_TRUE_WAIT(ice_state() == PCImplIceState::IceWaiting ||
-                     ice_state() == PCImplIceState::IceFailed, 5000);
+    EXPECT_TRUE_WAIT(
+        ice_gathering_state() == PCImplIceGatheringState::Complete ||
+        ice_connection_state() == PCImplIceConnectionState::Failed,
+        5000);
 
-    if (ice_state() == PCImplIceState::IceFailed) {
+    if (ice_connection_state() == PCImplIceConnectionState::Failed) {
       std::cout << name << ": Init Failed" << std::endl;
       return false;
     }
@@ -737,9 +795,14 @@ class SignalingAgent {
     return pc->SipccState();
   }
 
-  PCImplIceState ice_state()
+  PCImplIceConnectionState ice_connection_state()
   {
-    return pc->IceState();
+    return pc->IceConnectionState();
+  }
+
+  PCImplIceGatheringState ice_gathering_state()
+  {
+    return pc->IceGatheringState();
   }
 
   PCImplSignalingState signaling_state()
@@ -996,7 +1059,7 @@ void CreateAnswer(sipcc::MediaConstraints& constraints, std::string offer,
 
 
   bool IceCompleted() {
-    return pc->IceState() == PCImplIceState::IceConnected;
+    return pc->IceConnectionState() == PCImplIceConnectionState::Connected;
   }
 
   void AddIceCandidate(const char* candidate, const char* mid, unsigned short level,
@@ -2019,6 +2082,28 @@ TEST_F(SignalingTest, FullCallAudioOnly)
   sipcc::MediaConstraints constraints;
   OfferAnswer(constraints, constraints, OFFER_AUDIO | ANSWER_AUDIO,
               true, SHOULD_SENDRECV_AUDIO, SHOULD_SENDRECV_AUDIO);
+
+  // Wait for some data to get written
+  ASSERT_TRUE_WAIT(a1_->GetPacketsSent(0) >= 40 &&
+                   a2_->GetPacketsReceived(0) >= 40, kDefaultTimeout * 2);
+
+  a1_->CloseSendStreams();
+  a2_->CloseReceiveStreams();
+  // Check that we wrote a bunch of data
+  ASSERT_GE(a1_->GetPacketsSent(0), 40);
+  //ASSERT_GE(a2_->GetPacketsSent(0), 40);
+  //ASSERT_GE(a1_->GetPacketsReceived(0), 40);
+  ASSERT_GE(a2_->GetPacketsReceived(0), 40);
+}
+
+TEST_F(SignalingTest, FullCallAnswererRejectsVideo)
+{
+  sipcc::MediaConstraints offerconstraints;
+  sipcc::MediaConstraints answerconstraints;
+  answerconstraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
+  answerconstraints.setBooleanConstraint("OfferToReceiveVideo", false, false);
+  OfferAnswer(offerconstraints, answerconstraints, OFFER_AV | ANSWER_AUDIO,
+              true, SHOULD_SENDRECV_AV, SHOULD_SENDRECV_AUDIO);
 
   // Wait for some data to get written
   ASSERT_TRUE_WAIT(a1_->GetPacketsSent(0) >= 40 &&
@@ -3614,7 +3699,7 @@ int main(int argc, char **argv) {
       g_stun_server_port = atoi(tmp.c_str());
 
   test_utils = new MtransportTestUtils();
-  NSS_NoDB_Init(NULL);
+  NSS_NoDB_Init(nullptr);
   NSS_SetDomesticPolicy();
 
   ::testing::InitGoogleTest(&argc, argv);
@@ -3625,6 +3710,10 @@ int main(int argc, char **argv) {
     }
   }
 
+  ::testing::TestEventListeners& listeners =
+        ::testing::UnitTest::GetInstance()->listeners();
+  // Adds a listener to the end.  Google Test takes the ownership.
+  listeners.Append(new test::RingbufferDumper);
   test_utils->sts_target()->Dispatch(
     WrapRunnableNM(&TestStunServer::GetInstance), NS_DISPATCH_SYNC);
 

@@ -10,6 +10,7 @@
 #include "HelpersCairo.h"
 #include "ScaledFontBase.h"
 #include "BorrowedContext.h"
+#include "FilterNodeSoftware.h"
 
 #include "cairo.h"
 #include "cairo-tee.h"
@@ -114,6 +115,7 @@ GetCairoSurfaceSize(cairo_surface_t* surface, IntSize& size)
     }
 #endif
 #ifdef CAIRO_HAS_WIN32_SURFACE
+#ifdef MOZ2D_HAS_MOZ_CAIRO
     case CAIRO_SURFACE_TYPE_WIN32:
     case CAIRO_SURFACE_TYPE_WIN32_PRINTING:
     {
@@ -121,6 +123,21 @@ GetCairoSurfaceSize(cairo_surface_t* surface, IntSize& size)
       size.height = cairo_win32_surface_get_height(surface);
       return true;
     }
+#else
+    case CAIRO_SURFACE_TYPE_WIN32:
+    {
+      cairo_surface_t *img = cairo_win32_surface_get_image(surface);
+
+      if (!img) {
+        // XXX - fix me
+        MOZ_ASSERT(false);
+        return true;
+      }
+      size.width = cairo_image_surface_get_width(img);
+      size.height = cairo_image_surface_get_height(img);
+      return true;
+    }
+#endif
 #endif
 
     default:
@@ -541,6 +558,16 @@ DrawTargetCairo::DrawSurface(SourceSurface *aSurface,
 }
 
 void
+DrawTargetCairo::DrawFilter(FilterNode *aNode,
+                            const Rect &aSourceRect,
+                            const Point &aDestPoint,
+                            const DrawOptions &aOptions)
+{
+  FilterNodeSoftware* filter = static_cast<FilterNodeSoftware*>(aNode);
+  filter->Draw(this, aSourceRect, aDestPoint, aOptions);
+}
+
+void
 DrawTargetCairo::DrawSurfaceWithShadow(SourceSurface *aSurface,
                                        const Point &aDest,
                                        const Color &aColor,
@@ -572,7 +599,7 @@ DrawTargetCairo::DrawSurfaceWithShadow(SourceSurface *aSurface,
     Rect extents(0, 0, width, height);
     AlphaBoxBlur blur(extents,
                       cairo_image_surface_get_stride(blursurf),
-                      aSigma);
+                      aSigma, aSigma);
     blur.Blur(cairo_image_surface_get_data(blursurf));
   } else {
     blursurf = sourcesurf;
@@ -708,14 +735,19 @@ DrawTargetCairo::CopySurface(SourceSurface *aSurface,
   AutoPrepareForDrawing prep(this, mContext);
   AutoClearDeviceOffset clear(aSurface);
 
-  if (!aSurface || aSurface->GetType() != SURFACE_CAIRO) {
+  if (!aSurface) {
     gfxWarning() << "Unsupported surface type specified";
     return;
   }
 
-  cairo_surface_t* surf = static_cast<SourceSurfaceCairo*>(aSurface)->GetSurface();
+  cairo_surface_t* surf = GetCairoSurfaceForSourceSurface(aSurface);
+  if (!surf) {
+    gfxWarning() << "Unsupported surface type specified";
+    return;
+  }
 
   CopySurfaceInternal(surf, aSource, aDest);
+  cairo_surface_destroy(surf);
 }
 
 void
@@ -996,6 +1028,12 @@ DrawTargetCairo::CreateGradientStops(GradientStop *aStops, uint32_t aNumStops,
   return stops;
 }
 
+TemporaryRef<FilterNode>
+DrawTargetCairo::CreateFilter(FilterType aType)
+{
+  return FilterNodeSoftware::Create(aType);
+}
+
 /**
  * Copies pixel data from aData into aSurface; aData must have the dimensions
  * given in aSize, with a stride of aStride bytes and aPixelWidth bytes per pixel
@@ -1066,6 +1104,20 @@ DrawTargetCairo::CreateSourceSurfaceFromNativeSurface(const NativeSurface &aSurf
         new SourceSurfaceCairo(surf, size, aSurface.mFormat);
       return source;
     }
+  }
+
+  return nullptr;
+}
+
+TemporaryRef<SourceSurface>
+DrawTargetCairo::CreateSourceSurfaceForCairoSurface(cairo_surface_t *aSurface,
+                                                    SurfaceFormat aFormat)
+{
+  IntSize size;
+  if (GetCairoSurfaceSize(aSurface, size)) {
+    RefPtr<SourceSurfaceCairo> source =
+      new SourceSurfaceCairo(aSurface, size, aFormat);
+    return source;
   }
 
   return nullptr;
@@ -1153,6 +1205,25 @@ DrawTargetCairo::Init(cairo_surface_t* aSurface, const IntSize& aSize)
 {
   cairo_surface_reference(aSurface);
   return InitAlreadyReferenced(aSurface, aSize);
+}
+
+bool
+DrawTargetCairo::Init(const IntSize& aSize, SurfaceFormat aFormat)
+{
+  cairo_surface_t *surf = cairo_image_surface_create(GfxFormatToCairoFormat(aFormat), aSize.width, aSize.height);
+  return InitAlreadyReferenced(surf, aSize);
+}
+
+bool
+DrawTargetCairo::Init(unsigned char* aData, const IntSize &aSize, int32_t aStride, SurfaceFormat aFormat)
+{
+  cairo_surface_t* surf =
+    cairo_image_surface_create_for_data(aData,
+                                        GfxFormatToCairoFormat(aFormat),
+                                        aSize.width,
+                                        aSize.height,
+                                        aStride);
+  return InitAlreadyReferenced(surf, aSize);
 }
 
 void *

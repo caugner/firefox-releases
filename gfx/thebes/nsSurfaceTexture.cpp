@@ -16,8 +16,6 @@
 
 using namespace mozilla;
 
-#define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "nsSurfaceTexture" , ## args)
-
 // UGH
 static std::map<int, nsSurfaceTexture*> sInstances;
 static int sNextID = 0;
@@ -141,7 +139,7 @@ nsSurfaceTexture::Create(GLuint aTexture)
 
   nsSurfaceTexture* st = new nsSurfaceTexture();
   if (!st->Init(aTexture)) {
-    LOG("Failed to initialize nsSurfaceTexture");
+    printf_stderr("Failed to initialize nsSurfaceTexture");
     delete st;
     st = nullptr;
   }
@@ -210,7 +208,7 @@ nsSurfaceTexture::~nsSurfaceTexture()
     return;
 
   if (mSurfaceTexture && env) {
-    AndroidBridge::Bridge()->UnregisterSurfaceTextureFrameListener(mSurfaceTexture);
+    GeckoAppShell::UnregisterSurfaceTextureFrameListener(mSurfaceTexture);
 
     env->DeleteGlobalRef(mSurfaceTexture);
     mSurfaceTexture = nullptr;
@@ -239,9 +237,9 @@ void
 nsSurfaceTexture::SetFrameAvailableCallback(nsIRunnable* aRunnable)
 {
   if (aRunnable)
-    AndroidBridge::Bridge()->RegisterSurfaceTextureFrameListener(mSurfaceTexture, mID);
+    GeckoAppShell::RegisterSurfaceTextureFrameListener(mSurfaceTexture, mID);
   else
-    AndroidBridge::Bridge()->UnregisterSurfaceTextureFrameListener(mSurfaceTexture);
+    GeckoAppShell::UnregisterSurfaceTextureFrameListener(mSurfaceTexture);
 
   mFrameAvailableCallback = aRunnable;
 }
