@@ -301,7 +301,7 @@ fails-if(Android) != 192767-17.xul 192767-37.xul
 == 283686-3.html about:blank
 == 289384-1.xhtml 289384-ref.xhtml
 fails-if(Android) random-if(d2d) HTTP == 289480.html#top 289480-ref.html # basically-verbatim acid2 test, HTTP for a 404 page -- bug 578114 for the d2d failures
-asserts(1) == 290129-1.html 290129-1-ref.html # bug 315549/460637
+== 290129-1.html 290129-1-ref.html
 == 291078-1.html 291078-1-ref.html
 == 291078-2.html 291078-2-ref.html
 == 291262-1.html 291262-1-ref.html
@@ -683,11 +683,13 @@ fails-if(Android) != 376532-3.html 376532-3-ref.html
 == 379316-1.html 379316-1-ref.html
 fails-if(Android) random-if(cocoaWidget) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == 379316-2.html 379316-2-ref.html # bug 379786
 == 379328-1.html 379328-1-ref.html
-== 379349-1a.xhtml 379349-1-ref.xhtml
-== 379349-1b.xhtml 379349-1-ref.xhtml
-== 379349-1c.xhtml 379349-1-ref.xhtml
-== 379349-2a.xhtml 379349-2-ref.xhtml
-== 379349-2b.xhtml 379349-2-ref.xhtml
+# The next set of reftests all fail until bug 724978 has been fixed, and the
+# overflow container ability of nsColumnSetFrame is restored.
+fails == 379349-1a.xhtml 379349-1-ref.xhtml
+fails == 379349-1b.xhtml 379349-1-ref.xhtml
+fails == 379349-1c.xhtml 379349-1-ref.xhtml
+fails == 379349-2a.xhtml 379349-2-ref.xhtml
+fails == 379349-2b.xhtml 379349-2-ref.xhtml
 == 379349-3a.xhtml 379349-3-ref.xhtml
 == 379349-3b.xhtml 379349-3-ref.xhtml
 == 379361-1.html 379361-1-ref.html
@@ -1233,6 +1235,7 @@ fails-if(cocoaWidget) == 456147.xul 456147-ref.html # bug 458047
 == 466395-2.html 466395-2-ref.html
 == 467084-1.html 467084-1-ref.html
 == 467084-2.html 467084-2-ref.html
+== 467444-1.html 467444-1-ref.html
 == 467460-1.html 467460-1-ref.html
 == 468546-1.xhtml 468546-1-ref.xhtml
 == 468473-1.xul 468473-1-ref.xul
@@ -1450,7 +1453,7 @@ random-if(d2d) == 523468-1.html 523468-1-ref.html
 == 534804-1.html 534804-1-ref.html
 == 534808-1.html 534808-1-ref.html
 == 534808-2.html 534808-2-ref.html
-== 534919-1.html 534919-1-ref.html
+fails-if(/Mac\x20OS\x20X\x2010\.7/.test(http.oscpu)) == 534919-1.html 534919-1-ref.html # Bug 705044
 random == 536061.html 536061-ref.html # fixedpoint division in blur code makes this fail
 == 537507-1.xul 537507-1-ref.xul
 == 537507-2.html 537507-2-ref.html
@@ -1673,3 +1676,8 @@ fails-if(layersGPUAccelerated&&cocoaWidget) == 654950-1.html 654950-1-ref.html #
 == 691571-1.html 691571-1-ref.html
 == 696307-1.html 696307-1-ref.html
 == 696739-1.html 696739-1-ref.html
+needs-focus == 703186-1.html 703186-1-ref.html
+needs-focus == 703186-2.html 703186-2-ref.html
+needs-focus != 703186-1.html 703186-2.html
+== 711359-1.html 711359-1-ref.html
+== 712849-1.html 712849-1-ref.html
