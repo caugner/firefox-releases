@@ -1,6 +1,10 @@
 /* -*- Mode: Objective-C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsAccessibleWrap.h"
+
+#include "AccessibleWrap.h"
 
 #include "nsCocoaUtils.h"
 #include "nsObjCExceptions.h"
@@ -48,7 +52,7 @@ ToNSString(id aValue)
 
 @implementation mozTextAccessible
 
-- (id)initWithAccessible:(nsAccessibleWrap*)accessible
+- (id)initWithAccessible:(AccessibleWrap*)accessible
 {
   NS_OBJC_BEGIN_TRY_ABORT_BLOCK_NIL;
 
@@ -79,6 +83,8 @@ ToNSString(id aValue)
       NSAccessibilityNumberOfCharactersAttribute, // required
       NSAccessibilityVisibleCharacterRangeAttribute, // required
       NSAccessibilityInsertionPointLineNumberAttribute,
+      @"AXRequired",
+      @"AXInvalid",
       nil
     ];
     [supportedAttributes addObjectsFromArray:[super accessibilityAttributeNames]];
@@ -114,6 +120,12 @@ ToNSString(id aValue)
 
     return [self text];
   }
+
+  if ([attribute isEqualToString:@"AXRequired"])
+    return [NSNumber numberWithBool:!!(mGeckoAccessible->State() & states::REQUIRED)];
+
+  if ([attribute isEqualToString:@"AXInvalid"])
+    return [NSNumber numberWithBool:!!(mGeckoAccessible->State() & states::INVALID)];
 
   if ([attribute isEqualToString:NSAccessibilityVisibleCharacterRangeAttribute])
     return [self visibleCharacterRange];

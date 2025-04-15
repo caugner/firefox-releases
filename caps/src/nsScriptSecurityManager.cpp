@@ -1,49 +1,12 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998-2000
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Norris Boyd
- *   Mitch Stoltz
- *   Steve Morse
- *   Christopher A. Aillon
- *   Giorgio Maone
- *   Daniel Veditz
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/Util.h"
 
 #include "xpcprivate.h"
+#include "XPCWrapper.h"
 #include "nsScriptSecurityManager.h"
 #include "nsIServiceManager.h"
 #include "nsIScriptObjectPrincipal.h"
@@ -94,8 +57,9 @@
 #include "nsIContentSecurityPolicy.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/dom/bindings/Utils.h"
+#include "mozilla/dom/BindingUtils.h"
 #include "mozilla/StandardInteger.h"
+#include "mozilla/ClearOnShutdown.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -363,10 +327,7 @@ JSContext *
 nsScriptSecurityManager::GetSafeJSContext()
 {
     // Get JSContext from stack.
-    JSContext *cx;
-    if (NS_FAILED(sJSContextStack->GetSafeJSContext(&cx)))
-        return nsnull;
-    return cx;
+    return sJSContextStack->GetSafeJSContext();
 }
 
 /* static */
@@ -633,8 +594,8 @@ nsScriptSecurityManager::ContentSecurityPolicyPermitsJSAction(JSContext *cx)
 
 
 JSBool
-nsScriptSecurityManager::CheckObjectAccess(JSContext *cx, JSObject *obj,
-                                           jsid id, JSAccessMode mode,
+nsScriptSecurityManager::CheckObjectAccess(JSContext *cx, JSHandleObject obj,
+                                           JSHandleId id, JSAccessMode mode,
                                            jsval *vp)
 {
     // Get the security manager
@@ -2483,8 +2444,8 @@ nsScriptSecurityManager::doGetObjectPrincipal(JSObject *aObj
                                      JSCLASS_PRIVATE_IS_NSISUPPORTS))) {
                 priv = (nsISupports *) js::GetObjectPrivate(aObj);
             } else if ((jsClass->flags & JSCLASS_IS_DOMJSCLASS) &&
-                       bindings::DOMJSClass::FromJSClass(jsClass)->mDOMObjectIsISupports) {
-                priv = bindings::UnwrapDOMObject<nsISupports>(aObj, jsClass);
+                       DOMJSClass::FromJSClass(jsClass)->mDOMObjectIsISupports) {
+                priv = UnwrapDOMObject<nsISupports>(aObj, jsClass);
             } else {
                 priv = nsnull;
             }
@@ -2534,64 +2495,6 @@ nsScriptSecurityManager::doGetObjectPrincipal(JSObject *aObj
 #endif
 
     return result;
-}
-
-nsresult
-nsScriptSecurityManager::SavePrincipal(nsIPrincipal* aToSave)
-{
-    //-- Save to mPrincipals
-    mPrincipals.Put(aToSave, aToSave);
-
-    //-- Save to prefs
-    nsXPIDLCString idPrefName;
-    nsXPIDLCString id;
-    nsXPIDLCString subjectName;
-    nsXPIDLCString grantedList;
-    nsXPIDLCString deniedList;
-    bool isTrusted;
-    nsresult rv = aToSave->GetPreferences(getter_Copies(idPrefName),
-                                          getter_Copies(id),
-                                          getter_Copies(subjectName),
-                                          getter_Copies(grantedList),
-                                          getter_Copies(deniedList),
-                                          &isTrusted);
-    if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
-
-    nsCAutoString grantedPrefName;
-    nsCAutoString deniedPrefName;
-    nsCAutoString subjectNamePrefName;
-    rv = GetPrincipalPrefNames( idPrefName,
-                                grantedPrefName,
-                                deniedPrefName,
-                                subjectNamePrefName );
-    if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
-
-    mIsWritingPrefs = true;
-    if (grantedList) {
-        Preferences::SetCString(grantedPrefName.get(), grantedList);
-    } else {
-        Preferences::ClearUser(grantedPrefName.get());
-    }
-
-    if (deniedList) {
-        Preferences::SetCString(deniedPrefName.get(), deniedList);
-    } else {
-        Preferences::ClearUser(deniedPrefName.get());
-    }
-
-    if (grantedList || deniedList) {
-        Preferences::SetCString(idPrefName, id);
-        Preferences::SetCString(subjectNamePrefName.get(), subjectName);
-    } else {
-        Preferences::ClearUser(idPrefName);
-        Preferences::ClearUser(subjectNamePrefName.get());
-    }
-
-    mIsWritingPrefs = false;
-
-    nsIPrefService* prefService = Preferences::GetService();
-    NS_ENSURE_TRUE(prefService, NS_ERROR_FAILURE);
-    return prefService->SavePrefFile(nsnull);
 }
 
 ///////////////// Capabilities API /////////////////////
@@ -2726,125 +2629,16 @@ nsScriptSecurityManager::FormatCapabilityString(nsAString& aCapability)
     aCapability = newcaps;
 }
 
-bool
-nsScriptSecurityManager::CheckConfirmDialog(JSContext* cx, nsIPrincipal* aPrincipal,
-                                            const char* aCapability, bool *checkValue)
-{
-    nsresult rv;
-    *checkValue = false;
-
-    //-- Get a prompter for the current window.
-    nsCOMPtr<nsIPrompt> prompter;
-    if (cx)
-    {
-        nsIScriptContext *scriptContext = GetScriptContext(cx);
-        if (scriptContext)
-        {
-            nsCOMPtr<nsIDOMWindow> domWin =
-                do_QueryInterface(scriptContext->GetGlobalObject());
-            if (domWin)
-                domWin->GetPrompter(getter_AddRefs(prompter));
-        }
-    }
-
-    if (!prompter)
-    {
-        //-- Couldn't get prompter from the current window, so get the prompt service.
-        nsCOMPtr<nsIWindowWatcher> wwatch(do_GetService(NS_WINDOWWATCHER_CONTRACTID));
-        if (wwatch)
-          wwatch->GetNewPrompter(0, getter_AddRefs(prompter));
-        if (!prompter)
-            return false;
-    }
-
-    //-- Localize the dialog text
-    nsXPIDLString check;
-    rv = sStrBundle->GetStringFromName(NS_LITERAL_STRING("CheckMessage").get(),
-                                       getter_Copies(check));
-    if (NS_FAILED(rv))
-        return false;
-
-    nsXPIDLString title;
-    rv = sStrBundle->GetStringFromName(NS_LITERAL_STRING("Titleline").get(),
-                                       getter_Copies(title));
-    if (NS_FAILED(rv))
-        return false;
-
-    nsXPIDLString yesStr;
-    rv = sStrBundle->GetStringFromName(NS_LITERAL_STRING("Yes").get(),
-                                       getter_Copies(yesStr));
-    if (NS_FAILED(rv))
-        return false;
-
-    nsXPIDLString noStr;
-    rv = sStrBundle->GetStringFromName(NS_LITERAL_STRING("No").get(),
-                                       getter_Copies(noStr));
-    if (NS_FAILED(rv))
-        return false;
-
-    nsCAutoString val;
-    bool hasCert;
-    aPrincipal->GetHasCertificate(&hasCert);
-    if (hasCert)
-        rv = aPrincipal->GetPrettyName(val);
-    else
-        rv = GetPrincipalDomainOrigin(aPrincipal, val);
-
-    if (NS_FAILED(rv))
-        return false;
-
-    NS_ConvertUTF8toUTF16 location(val);
-    NS_ConvertASCIItoUTF16 capability(aCapability);
-    FormatCapabilityString(capability);
-    const PRUnichar *formatStrings[] = { location.get(), capability.get() };
-
-    nsXPIDLString message;
-    rv = sStrBundle->FormatStringFromName(NS_LITERAL_STRING("EnableCapabilityQuery").get(),
-                                          formatStrings,
-                                          ArrayLength(formatStrings),
-                                          getter_Copies(message));
-    if (NS_FAILED(rv))
-        return false;
-
-    PRInt32 buttonPressed = 1; // If the user exits by clicking the close box, assume No (button 1)
-    rv = prompter->ConfirmEx(title.get(), message.get(),
-                             (nsIPrompt::BUTTON_DELAY_ENABLE) +
-                             (nsIPrompt::BUTTON_POS_1_DEFAULT) +
-                             (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_0) +
-                             (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_1),
-                             yesStr.get(), noStr.get(), nsnull, check.get(), checkValue, &buttonPressed);
-
-    if (NS_FAILED(rv))
-        *checkValue = false;
-    return (buttonPressed == 0);
-}
-
 NS_IMETHODIMP
 nsScriptSecurityManager::RequestCapability(nsIPrincipal* aPrincipal,
                                            const char *capability, PRInt16* canEnable)
 {
     if (NS_FAILED(aPrincipal->CanEnableCapability(capability, canEnable)))
         return NS_ERROR_FAILURE;
+    // The confirm dialog is no longer supported. All of this stuff is going away
+    // real soon now anyhow.
     if (*canEnable == nsIPrincipal::ENABLE_WITH_USER_PERMISSION)
-    {
-        // Prompt user for permission to enable capability.
-        JSContext* cx = GetCurrentJSContext();
-        // The actual value is irrelevant but we shouldn't be handing out
-        // malformed JSBools to XPConnect.
-        bool remember = false;
-        if (CheckConfirmDialog(cx, aPrincipal, capability, &remember))
-            *canEnable = nsIPrincipal::ENABLE_GRANTED;
-        else
-            *canEnable = nsIPrincipal::ENABLE_DENIED;
-        if (remember)
-        {
-            //-- Save principal to prefs and to mPrincipals
-            if (NS_FAILED(aPrincipal->SetCanEnableCapability(capability, *canEnable)))
-                return NS_ERROR_FAILURE;
-            if (NS_FAILED(SavePrincipal(aPrincipal)))
-                return NS_ERROR_FAILURE;
-        }
-    }
+        *canEnable = nsIPrincipal::ENABLE_DENIED;
     return NS_OK;
 }
 
@@ -2937,105 +2731,6 @@ nsScriptSecurityManager::EnableCapability(const char *capability)
         return NS_ERROR_FAILURE;
     JS_SetFrameAnnotation(cx, fp, annotation);
     return NS_OK;
-}
-
-NS_IMETHODIMP
-nsScriptSecurityManager::RevertCapability(const char *capability)
-{
-    JSContext *cx = GetCurrentJSContext();
-    JSStackFrame *fp;
-    nsresult rv;
-    nsIPrincipal* principal = GetPrincipalAndFrame(cx, &fp, &rv);
-    if (NS_FAILED(rv))
-        return rv;
-    if (!principal)
-        return NS_ERROR_NOT_AVAILABLE;
-    void *annotation = JS_GetFrameAnnotation(cx, fp);
-    principal->RevertCapability(capability, &annotation);
-    JS_SetFrameAnnotation(cx, fp, annotation);
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsScriptSecurityManager::DisableCapability(const char *capability)
-{
-    JSContext *cx = GetCurrentJSContext();
-    JSStackFrame *fp;
-    nsresult rv;
-    nsIPrincipal* principal = GetPrincipalAndFrame(cx, &fp, &rv);
-    if (NS_FAILED(rv))
-        return rv;
-    if (!principal)
-        return NS_ERROR_NOT_AVAILABLE;
-    void *annotation = JS_GetFrameAnnotation(cx, fp);
-    principal->DisableCapability(capability, &annotation);
-    JS_SetFrameAnnotation(cx, fp, annotation);
-    return NS_OK;
-}
-
-//////////////// Master Certificate Functions ///////////////////////////////////////
-NS_IMETHODIMP
-nsScriptSecurityManager::SetCanEnableCapability(const nsACString& certFingerprint,
-                                                const char* capability,
-                                                PRInt16 canEnable)
-{
-    NS_ENSURE_ARG(!certFingerprint.IsEmpty());
-    
-    nsresult rv;
-    nsIPrincipal* subjectPrincipal = doGetSubjectPrincipal(&rv);
-    if (NS_FAILED(rv))
-        return rv;
-
-    //-- Get the system certificate
-    if (!mSystemCertificate)
-    {
-        nsCOMPtr<nsIFile> systemCertFile;
-        nsCOMPtr<nsIProperties> directoryService =
-                 do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID, &rv);
-        if (!directoryService) return NS_ERROR_FAILURE;
-        rv = directoryService->Get(NS_XPCOM_CURRENT_PROCESS_DIR, NS_GET_IID(nsIFile),
-                              getter_AddRefs(systemCertFile));
-        if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
-        systemCertFile->AppendNative(NS_LITERAL_CSTRING("systemSignature.jar"));
-        if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
-        nsCOMPtr<nsIZipReader> systemCertZip = do_CreateInstance(kZipReaderCID, &rv);
-        if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
-        rv = systemCertZip->Open(systemCertFile);
-        if (NS_SUCCEEDED(rv))
-        {
-            rv = systemCertZip->GetCertificatePrincipal(EmptyCString(),
-                                                        getter_AddRefs(mSystemCertificate));
-            if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
-        }
-    }
-
-    //-- Make sure the caller's principal is the system certificate
-    bool isEqual = false;
-    if (mSystemCertificate)
-    {
-        rv = mSystemCertificate->Equals(subjectPrincipal, &isEqual);
-        if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
-    }
-    if (!isEqual)
-    {
-        JSContext* cx = GetCurrentJSContext();
-        if (!cx) return NS_ERROR_FAILURE;
-        static const char msg1[] = "Only code signed by the system certificate may call SetCanEnableCapability or Invalidate";
-        static const char msg2[] = "Attempt to call SetCanEnableCapability or Invalidate when no system certificate has been established";
-        SetPendingException(cx, mSystemCertificate ? msg1 : msg2);
-        return NS_ERROR_FAILURE;
-    }
-
-    //-- Get the target principal
-    nsCOMPtr<nsIPrincipal> objectPrincipal;
-    rv = DoGetCertificatePrincipal(certFingerprint, EmptyCString(),
-                                   EmptyCString(), nsnull,
-                                   nsnull, false,
-                                   getter_AddRefs(objectPrincipal));
-    if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
-    rv = objectPrincipal->SetCanEnableCapability(capability, canEnable);
-    if (NS_FAILED(rv)) return NS_ERROR_FAILURE;
-    return SavePrincipal(objectPrincipal);
 }
 
 ////////////////////////////////////////////////
@@ -3435,7 +3130,7 @@ nsresult nsScriptSecurityManager::Init()
     return NS_OK;
 }
 
-static nsScriptSecurityManager *gScriptSecMan = nsnull;
+static nsRefPtr<nsScriptSecurityManager> gScriptSecMan;
 
 jsid nsScriptSecurityManager::sEnabledID   = JSID_VOID;
 
@@ -3447,7 +3142,6 @@ nsScriptSecurityManager::~nsScriptSecurityManager(void)
     if(mDefaultPolicy)
         mDefaultPolicy->Drop();
     delete mCapabilities;
-    gScriptSecMan = nsnull;
 }
 
 void
@@ -3471,14 +3165,12 @@ nsScriptSecurityManager::GetScriptSecurityManager()
 {
     if (!gScriptSecMan)
     {
-        nsScriptSecurityManager* ssManager = new nsScriptSecurityManager();
-        if (!ssManager)
-            return nsnull;
+        nsRefPtr<nsScriptSecurityManager> ssManager = new nsScriptSecurityManager();
+
         nsresult rv;
         rv = ssManager->Init();
         NS_ASSERTION(NS_SUCCEEDED(rv), "Failed to initialize nsScriptSecurityManager");
         if (NS_FAILED(rv)) {
-            delete ssManager;
             return nsnull;
         }
  
@@ -3486,10 +3178,10 @@ nsScriptSecurityManager::GetScriptSecurityManager()
                                                    nsIXPCSecurityManager::HOOK_ALL);
         if (NS_FAILED(rv)) {
             NS_WARNING("Failed to install xpconnect security manager!");
-            delete ssManager;
             return nsnull;
         }
 
+        ClearOnShutdown(&gScriptSecMan);
         gScriptSecMan = ssManager;
     }
     return gScriptSecMan;

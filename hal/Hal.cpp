@@ -85,13 +85,13 @@ void InitLastIDToVibrate()
 } // anonymous namespace
 
 void
-Vibrate(const nsTArray<uint32>& pattern, nsIDOMWindow* window)
+Vibrate(const nsTArray<uint32_t>& pattern, nsIDOMWindow* window)
 {
   Vibrate(pattern, WindowIdentifier(window));
 }
 
 void
-Vibrate(const nsTArray<uint32>& pattern, const WindowIdentifier &id)
+Vibrate(const nsTArray<uint32_t>& pattern, const WindowIdentifier &id)
 {
   AssertMainThread();
 
@@ -311,23 +311,23 @@ protected:
 
 static WakeLockObserversManager sWakeLockObservers;
 
-class ScreenOrientationObserversManager : public CachingObserversManager<dom::ScreenOrientationWrapper>
+class ScreenConfigurationObserversManager : public CachingObserversManager<ScreenConfiguration>
 {
 protected:
   void EnableNotifications() {
-    PROXY_IF_SANDBOXED(EnableScreenOrientationNotifications());
+    PROXY_IF_SANDBOXED(EnableScreenConfigurationNotifications());
   }
 
   void DisableNotifications() {
-    PROXY_IF_SANDBOXED(DisableScreenOrientationNotifications());
+    PROXY_IF_SANDBOXED(DisableScreenConfigurationNotifications());
   }
 
-  void GetCurrentInformationInternal(dom::ScreenOrientationWrapper* aInfo) {
-    PROXY_IF_SANDBOXED(GetCurrentScreenOrientation(&(aInfo->orientation)));
+  void GetCurrentInformationInternal(ScreenConfiguration* aInfo) {
+    PROXY_IF_SANDBOXED(GetCurrentScreenConfiguration(aInfo));
   }
 };
 
-static ScreenOrientationObserversManager sScreenOrientationObservers;
+static ScreenConfigurationObserversManager sScreenConfigurationObservers;
 
 void
 RegisterBatteryObserver(BatteryObserver* aObserver)
@@ -468,11 +468,19 @@ UnregisterSensorObserver(SensorType aSensor, ISensorObserver *aObserver) {
   AssertMainThread();
   
   observers.RemoveObserver(aObserver);
-  if(observers.Length() == 0) {
-    DisableSensorNotifications(aSensor);
-    delete [] gSensorObservers;
-    gSensorObservers = nsnull;
+  if (observers.Length() > 0) {
+    return;
   }
+  DisableSensorNotifications(aSensor);
+
+  // Destroy sSensorObservers only if all observer lists are empty.
+  for (int i = 0; i < NUM_SENSOR_TYPE; i++) {
+    if (gSensorObservers[i].Length() > 0) {
+      return;
+    }
+  }
+  delete [] gSensorObservers;
+  gSensorObservers = nsnull;
 }
 
 void
@@ -562,31 +570,31 @@ NotifyWakeLockChange(const WakeLockInformation& aInfo)
 }
 
 void
-RegisterScreenOrientationObserver(hal::ScreenOrientationObserver* aObserver)
+RegisterScreenConfigurationObserver(ScreenConfigurationObserver* aObserver)
 {
   AssertMainThread();
-  sScreenOrientationObservers.AddObserver(aObserver);
+  sScreenConfigurationObservers.AddObserver(aObserver);
 }
 
 void
-UnregisterScreenOrientationObserver(hal::ScreenOrientationObserver* aObserver)
+UnregisterScreenConfigurationObserver(ScreenConfigurationObserver* aObserver)
 {
   AssertMainThread();
-  sScreenOrientationObservers.RemoveObserver(aObserver);
+  sScreenConfigurationObservers.RemoveObserver(aObserver);
 }
 
 void
-GetCurrentScreenOrientation(dom::ScreenOrientation* aScreenOrientation)
+GetCurrentScreenConfiguration(ScreenConfiguration* aScreenConfiguration)
 {
   AssertMainThread();
-  *aScreenOrientation = sScreenOrientationObservers.GetCurrentInformation().orientation;
+  *aScreenConfiguration = sScreenConfigurationObservers.GetCurrentInformation();
 }
 
 void
-NotifyScreenOrientationChange(const dom::ScreenOrientation& aScreenOrientation)
+NotifyScreenConfigurationChange(const ScreenConfiguration& aScreenConfiguration)
 {
-  sScreenOrientationObservers.CacheInformation(dom::ScreenOrientationWrapper(aScreenOrientation));
-  sScreenOrientationObservers.BroadcastCachedInformation();
+  sScreenConfigurationObservers.CacheInformation(aScreenConfiguration);
+  sScreenConfigurationObservers.BroadcastCachedInformation();
 }
 
 bool

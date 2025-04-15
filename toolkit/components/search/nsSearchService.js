@@ -1,42 +1,6 @@
-# ***** BEGIN LICENSE BLOCK *****
-# Version: MPL 1.1/GPL 2.0/LGPL 2.1
-#
-# The contents of this file are subject to the Mozilla Public License Version
-# 1.1 (the "License"); you may not use this file except in compliance with
-# the License. You may obtain a copy of the License at
-# http://www.mozilla.org/MPL/
-#
-# Software distributed under the License is distributed on an "AS IS" basis,
-# WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
-# for the specific language governing rights and limitations under the
-# License.
-#
-# The Original Code is the Browser Search Service.
-#
-# The Initial Developer of the Original Code is
-# Google Inc.
-# Portions created by the Initial Developer are Copyright (C) 2005-2006
-# the Initial Developer. All Rights Reserved.
-#
-# Contributor(s):
-#   Ben Goodger <beng@google.com> (Original author)
-#   Gavin Sharp <gavin@gavinsharp.com>
-#   Joe Hughes  <joe@retrovirus.com>
-#   Pamela Greene <pamg.bugs@gmail.com>
-#
-# Alternatively, the contents of this file may be used under the terms of
-# either the GNU General Public License Version 2 or later (the "GPL"), or
-# the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
-# in which case the provisions of the GPL or the LGPL are applicable instead
-# of those above. If you wish to allow use of your version of this file only
-# under the terms of either the GPL or the LGPL, and not to allow others to
-# use your version of this file under the terms of the MPL, indicate your
-# decision by deleting the provisions above and replace them with the notice
-# and other provisions required by the GPL or the LGPL. If you do not delete
-# the provisions above, a recipient may use your version of this file under
-# the terms of any one of the MPL, the GPL or the LGPL.
-#
-# ***** END LICENSE BLOCK *****
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 const Ci = Components.interfaces;
 const Cc = Components.classes;
@@ -220,18 +184,6 @@ function isUsefulLine(aLine) {
   return !(/^\s*($|#)/i.test(aLine));
 }
 
-__defineGetter__("gObsSvc", function() {
-  delete this.gObsSvc;
-  return this.gObsSvc = Cc["@mozilla.org/observer-service;1"].
-                        getService(Ci.nsIObserverService);
-});
-
-__defineGetter__("gPrefSvc", function() {
-  delete this.gPrefSvc;
-  return this.gPrefSvc = Cc["@mozilla.org/preferences-service;1"].
-                         getService(Ci.nsIPrefBranch);
-});
-
 __defineGetter__("FileUtils", function() {
   delete this.FileUtils;
   Components.utils.import("resource://gre/modules/FileUtils.jsm");
@@ -260,9 +212,7 @@ const SEARCH_LOG_PREFIX = "*** Search: ";
  */
 function DO_LOG(aText) {
   dump(SEARCH_LOG_PREFIX + aText + "\n");
-  var consoleService = Cc["@mozilla.org/consoleservice;1"].
-                       getService(Ci.nsIConsoleService);
-  consoleService.logStringMessage(aText);
+  Services.console.logStringMessage(aText);
 }
 
 #ifdef DEBUG
@@ -539,15 +489,11 @@ function makeURI(aURLSpec, aCharset) {
  * @param aKey
  *        The directory service key indicating the directory to get.
  */
-let _dirSvc = null;
 function getDir(aKey, aIFace) {
   if (!aKey)
     FAIL("getDir requires a directory key!");
 
-  if (!_dirSvc)
-    _dirSvc = Cc["@mozilla.org/file/directory_service;1"].
-               getService(Ci.nsIProperties);
-  return _dirSvc.get(aKey, aIFace || Ci.nsIFile);
+  return Services.dirsvc.get(aKey, aIFace || Ci.nsIFile);
 }
 
 /**
@@ -685,7 +631,7 @@ function getLocale() {
     return locale;
 
   // Not localized
-  return gPrefSvc.getCharPref(localePref);
+  return Services.prefs.getCharPref(localePref);
 }
 
 /**
@@ -697,7 +643,7 @@ function getLocale() {
 function getLocalizedPref(aPrefName, aDefault) {
   const nsIPLS = Ci.nsIPrefLocalizedString;
   try {
-    return gPrefSvc.getComplexValue(aPrefName, nsIPLS).data;
+    return Services.prefs.getComplexValue(aPrefName, nsIPLS).data;
   } catch (ex) {}
 
   return aDefault;
@@ -714,7 +660,7 @@ function setLocalizedPref(aPrefName, aValue) {
     var pls = Components.classes["@mozilla.org/pref-localizedstring;1"]
                         .createInstance(Ci.nsIPrefLocalizedString);
     pls.data = aValue;
-    gPrefSvc.setComplexValue(aPrefName, nsIPLS, pls);
+    Services.prefs.setComplexValue(aPrefName, nsIPLS, pls);
   } catch (ex) {}
 }
 
@@ -726,7 +672,7 @@ function setLocalizedPref(aPrefName, aValue) {
  */
 function getBoolPref(aName, aDefault) {
   try {
-    return gPrefSvc.getBoolPref(aName);
+    return Services.prefs.getBoolPref(aName);
   } catch (ex) {
     return aDefault;
   }
@@ -775,7 +721,7 @@ function sanitizeName(aName) {
  *        The name of the pref.
  **/
 function getMozParamPref(prefName)
-  gPrefSvc.getCharPref(BROWSER_SEARCH_PREF + "param." + prefName);
+  Services.prefs.getCharPref(BROWSER_SEARCH_PREF + "param." + prefName);
 
 /**
  * Notifies watchers of SEARCH_ENGINE_TOPIC about changes to an engine or to
@@ -792,7 +738,7 @@ let gEnginesLoaded = false;
 function notifyAction(aEngine, aVerb) {
   if (gEnginesLoaded) {
     LOG("NOTIFY: Engine: \"" + aEngine.name + "\"; Verb: \"" + aVerb + "\"");
-    gObsSvc.notifyObservers(aEngine, SEARCH_ENGINE_TOPIC, aVerb);
+    Services.obs.notifyObservers(aEngine, SEARCH_ENGINE_TOPIC, aVerb);
   }
 }
 
@@ -833,7 +779,7 @@ function ParamSubstitution(aParamValue, aSearchTerms, aEngine) {
 
   var distributionID = MOZ_DISTRIBUTION_ID;
   try {
-    distributionID = gPrefSvc.getCharPref(BROWSER_SEARCH_PREF + "distributionID");
+    distributionID = Services.prefs.getCharPref(BROWSER_SEARCH_PREF + "distributionID");
   }
   catch (ex) { }
 
@@ -1170,17 +1116,6 @@ Engine.prototype = {
   _iconUpdateURL: null,
   // A reference to the timer used for lazily serializing the engine to file
   _serializeTimer: null,
-  // Whether this engine has been used since the cache was last recreated.
-  __used: null,
-  get _used() {
-    if (!this.__used)
-      this.__used = !!engineMetadataService.getAttr(this, "used");
-    return this.__used;
-  },
-  set _used(aValue) {
-    this.__used = aValue
-    engineMetadataService.setAttr(this, "used", aValue);
-  },
 
   /**
    * Retrieves the data from the engine's file. If the engine's dataType is
@@ -1291,9 +1226,7 @@ Engine.prototype = {
   },
 
   _confirmAddEngine: function SRCH_SVC_confirmAddEngine() {
-    var sbs = Cc["@mozilla.org/intl/stringbundle;1"].
-              getService(Ci.nsIStringBundleService);
-    var stringBundle = sbs.createBundle(SEARCH_BUNDLE);
+    var stringBundle = Services.strings.createBundle(SEARCH_BUNDLE);
     var titleMessage = stringBundle.GetStringFromName("addEngineConfirmTitle");
 
     // Display only the hostname portion of the URL.
@@ -1307,8 +1240,7 @@ Engine.prototype = {
     var addButtonLabel =
         stringBundle.GetStringFromName("addEngineAddButtonLabel");
 
-    var ps = Cc["@mozilla.org/embedcomp/prompt-service;1"].
-             getService(Ci.nsIPromptService);
+    var ps = Services.prompt;
     var buttonFlags = (ps.BUTTON_TITLE_IS_STRING * ps.BUTTON_POS_0) +
                       (ps.BUTTON_TITLE_CANCEL    * ps.BUTTON_POS_1) +
                        ps.BUTTON_POS_0_DEFAULT;
@@ -1344,13 +1276,10 @@ Engine.prototype = {
         LOG("updating " + aEngine._engineToUpdate.name + " failed");
         return;
       }
-      var sbs = Cc["@mozilla.org/intl/stringbundle;1"].
-                getService(Ci.nsIStringBundleService);
-
-      var brandBundle = sbs.createBundle(BRAND_BUNDLE);
+      var brandBundle = Services.strings.createBundle(BRAND_BUNDLE);
       var brandName = brandBundle.GetStringFromName("brandShortName");
 
-      var searchBundle = sbs.createBundle(SEARCH_BUNDLE);
+      var searchBundle = Services.strings.createBundle(SEARCH_BUNDLE);
       var msgStringName = aErrorString || "error_loading_engine_msg2";
       var titleStringName = aTitleString || "error_loading_engine_title";
       var title = searchBundle.GetStringFromName(titleStringName);
@@ -1358,9 +1287,7 @@ Engine.prototype = {
                                                    [brandName, aEngine._location],
                                                    2);
 
-      var ww = Cc["@mozilla.org/embedcomp/window-watcher;1"].
-               getService(Ci.nsIWindowWatcher);
-      ww.getNewPrompter(null).alert(title, text);
+      Services.ww.getNewPrompter(null).alert(title, text);
     }
 
     if (!aBytes) {
@@ -1406,9 +1333,7 @@ Engine.prototype = {
     // engine load, then we display a "this is a duplicate engine" prompt,
     // otherwise we fail silently.
     if (!engineToUpdate) {
-      var ss = Cc["@mozilla.org/browser/search-service;1"].
-               getService(Ci.nsIBrowserSearchService);
-      if (ss.getEngineByName(aEngine.name)) {
+      if (Services.search.getEngineByName(aEngine.name)) {
         if (aEngine._confirm)
           onError("error_duplicate_engine_msg", "error_invalid_engine_title");
 
@@ -1698,8 +1623,7 @@ Engine.prototype = {
   },
 
   _isDefaultEngine: function SRCH_ENG__isDefaultEngine() {
-    let defaultPrefB = gPrefSvc.QueryInterface(Ci.nsIPrefService)
-                               .getDefaultBranch(BROWSER_SEARCH_PREF);
+    let defaultPrefB = Services.prefs.getDefaultBranch(BROWSER_SEARCH_PREF);
     let nsIPLS = Ci.nsIPrefLocalizedString;
     let defaultEngine;
     try {
@@ -1717,6 +1641,10 @@ Engine.prototype = {
     if (aElement.getAttribute("width")  == "16" &&
         aElement.getAttribute("height") == "16") {
       this._setIcon(aElement.textContent, true);
+    }
+    else {
+      LOG("OpenSearch image must have explicit width=16 height=16: " +
+          aElement.textContent);
     }
   },
 
@@ -2316,7 +2244,9 @@ Engine.prototype = {
   },
 
   get iconURI() {
-    return this._iconURI;
+    if (this._iconURI)
+      return this._iconURI;
+    return null;
   },
 
   get _iconURL() {
@@ -2473,12 +2403,6 @@ Engine.prototype = {
     if (!aResponseType)
       aResponseType = URLTYPE_SEARCH_HTML;
 
-    // Check for updates on the first use of an app-shipped engine
-    if (this._isInAppDir && aResponseType == URLTYPE_SEARCH_HTML && !this._used) {
-      this._used = true;
-      engineUpdateService.update(this);
-    }
-
     var url = this._getURLOfType(aResponseType);
 
     if (!url)
@@ -2577,8 +2501,7 @@ SearchService.prototype = {
 
     let cache = {};
     let locale = getLocale();
-    let buildID = Cc["@mozilla.org/xre/app-info;1"].
-                  getService(Ci.nsIXULAppInfo).platformBuildID;
+    let buildID = Services.appinfo.platformBuildID;
 
     // Allows us to force a cache refresh should the cache format change.
     cache.version = CACHE_VERSION;
@@ -2688,15 +2611,14 @@ SearchService.prototype = {
     let toLoad = chromeFiles.concat(loadDirs);
 
     function modifiedDir(aDir) {
-      return (!cache.directories[aDir.path] ||
+      return (!cache.directories || !cache.directories[aDir.path] ||
               cache.directories[aDir.path].lastModifiedTime != aDir.lastModifiedTime);
     }
 
     function notInToLoad(aCachePath, aIndex)
       aCachePath != toLoad[aIndex].path;
 
-    let buildID = Cc["@mozilla.org/xre/app-info;1"].
-                  getService(Ci.nsIXULAppInfo).platformBuildID;
+    let buildID = Services.appinfo.platformBuildID;
     let cachePaths = [path for (path in cache.directories)];
 
     let rebuildCache = !cache.directories ||
@@ -2886,8 +2808,6 @@ SearchService.prototype = {
       try {
         addedEngine = new Engine(file, dataType, !isWritable);
         addedEngine._initFromFile();
-        if (addedEngine._used)
-          addedEngine._used = false;
       } catch (ex) {
         LOG("_loadEnginesFromDir: Failed to load " + file.path + "!\n" + ex);
         continue;
@@ -2937,7 +2857,7 @@ SearchService.prototype = {
 
     let rootURIPref = ""
     try {
-      rootURIPref = gPrefSvc.getCharPref(BROWSER_SEARCH_PREF + "jarURIs");
+      rootURIPref = Services.prefs.getCharPref(BROWSER_SEARCH_PREF + "jarURIs");
     } catch (ex) {}
 
     if (!rootURIPref) {
@@ -3003,7 +2923,7 @@ SearchService.prototype = {
 
     // Set the useDB pref to indicate that from now on we should use the order
     // information stored in the database.
-    gPrefSvc.setBoolPref(BROWSER_SEARCH_PREF + "useDBForOrder", true);
+    Services.prefs.setBoolPref(BROWSER_SEARCH_PREF + "useDBForOrder", true);
 
     var engines = this._getSortedEngines(true);
 
@@ -3062,10 +2982,10 @@ SearchService.prototype = {
 
       try {
         var extras =
-          gPrefSvc.getChildList(BROWSER_SEARCH_PREF + "order.extra.");
+          Services.prefs.getChildList(BROWSER_SEARCH_PREF + "order.extra.");
 
         for each (prefName in extras) {
-          engineName = gPrefSvc.getCharPref(prefName);
+          engineName = Services.prefs.getCharPref(prefName);
 
           engine = this._engines[engineName];
           if (!engine || engine.name in addedEngines)
@@ -3260,10 +3180,10 @@ SearchService.prototype = {
 
     // First, look at the "browser.search.order.extra" branch.
     try {
-      var extras = gPrefSvc.getChildList(BROWSER_SEARCH_PREF + "order.extra.");
+      var extras = Services.prefs.getChildList(BROWSER_SEARCH_PREF + "order.extra.");
 
       for each (var prefName in extras) {
-        engineName = gPrefSvc.getCharPref(prefName);
+        engineName = Services.prefs.getCharPref(prefName);
 
         if (!(engineName in engineOrder))
           engineOrder[engineName] = i++;
@@ -3489,7 +3409,7 @@ SearchService.prototype = {
     var currentEnginePref = BROWSER_SEARCH_PREF + "selectedEngine";
 
     if (this._currentEngine == this.defaultEngine) {
-      gPrefSvc.clearUserPref(currentEnginePref);
+      Services.prefs.clearUserPref(currentEnginePref);
     }
     else {
       setLocalizedPref(currentEnginePref, this._currentEngine.name);
@@ -3574,13 +3494,13 @@ SearchService.prototype = {
   },
 
   _addObservers: function SRCH_SVC_addObservers() {
-    gObsSvc.addObserver(this, SEARCH_ENGINE_TOPIC, false);
-    gObsSvc.addObserver(this, QUIT_APPLICATION_TOPIC, false);
+    Services.obs.addObserver(this, SEARCH_ENGINE_TOPIC, false);
+    Services.obs.addObserver(this, QUIT_APPLICATION_TOPIC, false);
   },
 
   _removeObservers: function SRCH_SVC_removeObservers() {
-    gObsSvc.removeObserver(this, SEARCH_ENGINE_TOPIC);
-    gObsSvc.removeObserver(this, QUIT_APPLICATION_TOPIC);
+    Services.obs.removeObserver(this, SEARCH_ENGINE_TOPIC);
+    Services.obs.removeObserver(this, QUIT_APPLICATION_TOPIC);
   },
 
   QueryInterface: function SRCH_SVC_QI(aIID) {
@@ -3646,7 +3566,10 @@ var engineMetadataService = {
     }
 
     // attr names must be lower case
-    return record[name.toLowerCase()];
+    let aName = name.toLowerCase();
+    if (!record[aName])
+      return null;
+    return record[aName];
   },
 
   _setAttr: function epsSetAttr(engine, name, value) {
@@ -3657,7 +3580,7 @@ var engineMetadataService = {
     if (!record) {
       record = db[engine._id] = {};
     }
-    if (record[name] != value) {
+    if (!record[name] || (record[name] != value)) {
       record[name] = value;
       return true;
     }
@@ -3787,9 +3710,10 @@ var engineMetadataService = {
 
         let callback = function(result) {
           if (Components.isSuccessCode(result)) {
-            gObsSvc.notifyObservers(null,
-                                    SEARCH_SERVICE_TOPIC,
-                                    SEARCH_SERVICE_METADATA_WRITTEN);
+            ostream.close();
+            Services.obs.notifyObservers(null,
+                                         SEARCH_SERVICE_TOPIC,
+                                         SEARCH_SERVICE_METADATA_WRITTEN);
           }
           LOG("epsWriteCommit: done " + result);
         };
@@ -3814,9 +3738,7 @@ const SEARCH_UPDATE_LOG_PREFIX = "*** Search update: ";
 function ULOG(aText) {
   if (getBoolPref(BROWSER_SEARCH_PREF + "update.log", false)) {
     dump(SEARCH_UPDATE_LOG_PREFIX + aText + "\n");
-    var consoleService = Cc["@mozilla.org/consoleservice;1"].
-                         getService(Ci.nsIConsoleService);
-    consoleService.logStringMessage(aText);
+    Services.console.logStringMessage(aText);
   }
 }
 

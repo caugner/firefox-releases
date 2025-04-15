@@ -1,44 +1,8 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ts=2 sw=2 et tw=80: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Travis Bogard <travis@netscape.com>
- *   Dan Rosen <dr@netscape.com>
- *   Vidur Apparao <vidur@netscape.com>
- *   Johnny Stenback <jst@netscape.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef nsGlobalWindow_h___
 #define nsGlobalWindow_h___
@@ -98,6 +62,8 @@
 #include "mozilla/TimeStamp.h"
 #include "nsIDOMTouchEvent.h"
 #include "nsIInlineEventHandlers.h"
+#include "nsWrapperCacheInlines.h"
+#include "nsIDOMApplicationRegistry.h"
 
 // JS includes
 #include "jsapi.h"
@@ -300,10 +266,6 @@ public:
 
   virtual nsIScriptContext *GetScriptContext();
 
-  // Set a new script language context for this global.  The native global
-  // for the context is created by the context's GetNativeGlobal() method.
-  virtual nsresult SetScriptContext(nsIScriptContext *aContext);
-  
   virtual void OnFinalize(JSObject* aObject);
   virtual void SetScriptsEnabled(bool aEnabled, bool aFireTimeouts);
 
@@ -359,6 +321,7 @@ public:
   virtual NS_HIDDEN_(bool) WouldReuseInnerWindow(nsIDocument *aNewDocument);
 
   virtual NS_HIDDEN_(void) SetDocShell(nsIDocShell* aDocShell);
+  virtual void DetachFromDocShell();
   virtual NS_HIDDEN_(nsresult) SetNewDocument(nsIDocument *aDocument,
                                               nsISupports *aState,
                                               bool aForceReuseInnerWindow);
@@ -376,6 +339,7 @@ public:
   virtual NS_HIDDEN_(void) MaybeUpdateTouchState();
   virtual NS_HIDDEN_(void) UpdateTouchState();
   virtual NS_HIDDEN_(bool) DispatchCustomEvent(const char *aEventName);
+  virtual NS_HIDDEN_(void) RefreshCompartmentPrincipal();
   virtual NS_HIDDEN_(nsresult) SetFullScreenInternal(bool aIsFullScreen, bool aRequireTrust);
 
   // nsIDOMStorageIndexedDB
@@ -400,6 +364,16 @@ public:
   static nsGlobalWindow *FromWrapper(nsIXPConnectWrappedNative *wrapper)
   {
     return FromSupports(wrapper->Native());
+  }
+
+  /**
+   * Wrap nsIDOMWindow::GetTop so we can overload the inline GetTop()
+   * implementation below.  (nsIDOMWindow::GetTop simply calls
+   * nsIDOMWindow::GetRealTop().)
+   */
+  nsresult GetTop(nsIDOMWindow **aWindow)
+  {
+    return nsIDOMWindow::GetTop(aWindow);
   }
 
   inline nsGlobalWindow *GetTop()
@@ -564,15 +538,35 @@ public:
   void AddEventTargetObject(nsDOMEventTargetHelper* aObject);
   void RemoveEventTargetObject(nsDOMEventTargetHelper* aObject);
 
+  /**
+   * Returns if the window is part of an application.
+   * It will check for the window app state and its parents until a window has
+   * an app state different from |TriState_Unknown|.
+   */
+  bool IsPartOfApp();
+
 protected:
   friend class HashchangeCallback;
   friend class nsBarProp;
+
+  enum TriState {
+    TriState_Unknown = -1,
+    TriState_False,
+    TriState_True
+  };
 
   // Object Management
   virtual ~nsGlobalWindow();
   void CleanUp(bool aIgnoreModalDialog);
   void ClearControllers();
   nsresult FinalClose();
+
+  inline void MaybeClearInnerWindow(nsGlobalWindow* aExpectedInner)
+  {
+    if(mInnerWindow == aExpectedInner) {
+      mInnerWindow = nsnull;
+    }
+  }
 
   void FreeInnerObjects();
   JSObject *CallerGlobal();
@@ -810,12 +804,18 @@ protected:
   nsresult CloneStorageEvent(const nsAString& aType,
                              nsCOMPtr<nsIDOMStorageEvent>& aEvent);
 
+  void SetIsApp(bool aValue);
+  nsresult SetApp(const nsAString& aManifestURL);
+
+  // Implements Get{Real,Scriptable}Top.
+  nsresult GetTopImpl(nsIDOMWindow **aWindow, bool aScriptable);
+
   // When adding new member variables, be careful not to create cycles
   // through JavaScript.  If there is any chance that a member variable
   // could own objects that are implemented in JavaScript, then those
   // objects will keep the global object (this object) alive.  To prevent
   // these cycles, ownership of such members must be released in
-  // |CleanUp| and |SetDocShell|.
+  // |CleanUp| and |DetachFromDocShell|.
 
   // This member is also used on both inner and outer windows, but
   // for slightly different purposes. On inner windows it means the
@@ -881,6 +881,11 @@ protected:
   // whether we've sent the destroy notification for our window id
   bool                   mNotifiedIDDestroyed : 1;
 
+  // Whether the window is the window of an application frame.
+  // This is TriState_Unknown if the object is the content window of an
+  // iframe which is neither mozBrowser nor mozApp.
+  TriState               mIsApp : 2;
+
   nsCOMPtr<nsIScriptContext>    mContext;
   nsWeakPtr                     mOpener;
   nsCOMPtr<nsIControllers>      mControllers;
@@ -934,7 +939,6 @@ protected:
 
   // These member variables are used on both inner and the outer windows.
   nsCOMPtr<nsIPrincipal> mDocumentPrincipal;
-  nsCOMPtr<nsIDocument> mDoc;  // For fast access to principals
   JSObject* mJSObject;
 
   typedef nsCOMArray<nsIDOMStorageEvent> nsDOMStorageEventArray;
@@ -979,6 +983,10 @@ protected:
   nsTHashtable<nsPtrHashKey<nsDOMEventTargetHelper> > mEventTargetObjects;
 
   nsTArray<PRUint32> mEnabledSensors;
+
+  // The application associated with this window.
+  // This should only be non-null if mIsApp's value is TriState_True.
+  nsCOMPtr<mozIDOMApplication> mApp;
 
   friend class nsDOMScriptableHelper;
   friend class nsDOMWindowUtils;

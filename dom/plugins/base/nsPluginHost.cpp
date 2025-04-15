@@ -1,42 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Sean Echevarria <sean@beatnik.com>
- *   Håkan Waara <hwaara@chello.se>
- *   Josh Aas <josh@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* nsPluginHost.cpp - top-level plugin management code */
 
@@ -50,7 +15,6 @@
 #include "nsNPAPIPlugin.h"
 #include "nsNPAPIPluginStreamListener.h"
 #include "nsNPAPIPluginInstance.h"
-#include "nsIPluginStreamListener.h"
 #include "nsIHTTPHeaderListener.h"
 #include "nsIHttpHeaderVisitor.h"
 #include "nsIObserverService.h"
@@ -86,7 +50,6 @@
 #include "nsIScriptChannel.h"
 #include "nsIBlocklistService.h"
 #include "nsVersionComparator.h"
-#include "nsIPrivateBrowsingService.h"
 #include "nsIObjectLoadingContent.h"
 #include "nsIWritablePropertyBag2.h"
 #include "nsPluginStreamListenerPeer.h"
@@ -359,7 +322,6 @@ nsPluginHost::nsPluginHost()
     mozilla::services::GetObserverService();
   if (obsService) {
     obsService->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, false);
-    obsService->AddObserver(this, NS_PRIVATE_BROWSING_SWITCH_TOPIC, false);
 #ifdef MOZ_WIDGET_ANDROID
     obsService->AddObserver(this, "application-foreground", false);
     obsService->AddObserver(this, "application-background", false);
@@ -591,7 +553,7 @@ nsresult nsPluginHost::GetPrompt(nsIPluginInstanceOwner *aOwner, nsIPrompt **aPr
 nsresult nsPluginHost::GetURL(nsISupports* pluginInst,
                               const char* url,
                               const char* target,
-                              nsIPluginStreamListener* streamListener,
+                              nsNPAPIPluginStreamListener* streamListener,
                               const char* altHost,
                               const char* referrer,
                               bool forceJSEnabled)
@@ -604,7 +566,7 @@ nsresult nsPluginHost::GetURL(nsISupports* pluginInst,
 nsresult nsPluginHost::GetURLWithHeaders(nsNPAPIPluginInstance* pluginInst,
                                          const char* url,
                                          const char* target,
-                                         nsIPluginStreamListener* streamListener,
+                                         nsNPAPIPluginStreamListener* streamListener,
                                          const char* altHost,
                                          const char* referrer,
                                          bool forceJSEnabled,
@@ -612,7 +574,7 @@ nsresult nsPluginHost::GetURLWithHeaders(nsNPAPIPluginInstance* pluginInst,
                                          const char* getHeaders)
 {
   // we can only send a stream back to the plugin (as specified by a
-  // null target) if we also have a nsIPluginStreamListener to talk to
+  // null target) if we also have a nsNPAPIPluginStreamListener to talk to
   if (!target && !streamListener)
     return NS_ERROR_ILLEGAL_VALUE;
 
@@ -648,7 +610,7 @@ nsresult nsPluginHost::PostURL(nsISupports* pluginInst,
                                     const char* postData,
                                     bool isFile,
                                     const char* target,
-                                    nsIPluginStreamListener* streamListener,
+                                    nsNPAPIPluginStreamListener* streamListener,
                                     const char* altHost,
                                     const char* referrer,
                                     bool forceJSEnabled,
@@ -658,7 +620,7 @@ nsresult nsPluginHost::PostURL(nsISupports* pluginInst,
   nsresult rv;
 
   // we can only send a stream back to the plugin (as specified
-  // by a null target) if we also have a nsIPluginStreamListener
+  // by a null target) if we also have a nsNPAPIPluginStreamListener
   // to talk to also
   if (!target && !streamListener)
     return NS_ERROR_ILLEGAL_VALUE;
@@ -913,36 +875,6 @@ nsPluginHost::GetPluginTempDir(nsIFile **aDir)
   }
 
   return sPluginTempDir->Clone(aDir);
-}
-
-nsresult nsPluginHost::CreateListenerForChannel(nsIChannel* aChannel,
-                                                nsObjectLoadingContent* aContent,
-                                                nsIStreamListener** aListener)
-{
-  NS_PRECONDITION(aChannel && aContent,
-                  "Invalid arguments to InstantiatePluginForChannel");
-  nsCOMPtr<nsIURI> uri;
-  nsresult rv = aChannel->GetURI(getter_AddRefs(uri));
-  if (NS_FAILED(rv))
-    return rv;
-
-#ifdef PLUGIN_LOGGING
-  if (PR_LOG_TEST(nsPluginLogging::gPluginLog, PLUGIN_LOG_NORMAL)) {
-    nsCAutoString urlSpec;
-    uri->GetAsciiSpec(urlSpec);
-
-    PR_LOG(nsPluginLogging::gPluginLog, PLUGIN_LOG_NORMAL,
-           ("nsPluginHost::InstantiatePluginForChannel Begin content=%p, url=%s\n",
-           aContent, urlSpec.get()));
-
-    PR_LogFlush();
-  }
-#endif
-
-  // Note that we're not setting up a plugin instance here; the stream
-  // listener's OnStartRequest will handle doing that.
-
-  return NewEmbeddedPluginStreamListener(uri, aContent, nsnull, aListener);
 }
 
 nsresult
@@ -2730,19 +2662,20 @@ nsPluginHost::ReadPluginInfo()
     return rv;
 
   // kPluginRegistryVersion
-  PRInt32 vdiff = NS_CompareVersions(values[1], kPluginRegistryVersion);
+  PRInt32 vdiff = mozilla::CompareVersions(values[1], kPluginRegistryVersion);
+  mozilla::Version version(values[1]);
   // If this is a registry from some future version then don't attempt to read it
   if (vdiff > 0)
     return rv;
   // If this is a registry from before the minimum then don't attempt to read it
-  if (NS_CompareVersions(values[1], kMinimumRegistryVersion) < 0)
+  if (version < kMinimumRegistryVersion)
     return rv;
 
   // Registry v0.10 and upwards includes the plugin version field
-  bool regHasVersion = NS_CompareVersions(values[1], "0.10") >= 0;
+  bool regHasVersion = (version >= "0.10");
 
   // Registry v0.13 and upwards includes the architecture
-  if (NS_CompareVersions(values[1], "0.13") >= 0) {
+  if (version >= "0.13") {
     char* archValues[6];
     
     if (!reader.NextLine()) {
@@ -2776,7 +2709,7 @@ nsPluginHost::ReadPluginInfo()
   }
   
   // Registry v0.13 and upwards includes the list of invalid plugins
-  bool hasInvalidPlugins = (NS_CompareVersions(values[1], "0.13") >= 0);
+  bool hasInvalidPlugins = (version >= "0.13");
 
   if (!ReadSectionHeader(reader, "PLUGINS"))
     return rv;
@@ -2784,7 +2717,7 @@ nsPluginHost::ReadPluginInfo()
 #if defined(XP_MACOSX)
   bool hasFullPathInFileNameField = false;
 #else
-  bool hasFullPathInFileNameField = (NS_CompareVersions(values[1], "0.11") < 0);
+  bool hasFullPathInFileNameField = (version < "0.11");
 #endif
 
   while (reader.NextLine()) {
@@ -2983,7 +2916,7 @@ nsPluginHost::EnsurePrivateDirServiceProvider()
 
 nsresult nsPluginHost::NewPluginURLStream(const nsString& aURL,
                                           nsNPAPIPluginInstance *aInstance,
-                                          nsIPluginStreamListener* aListener,
+                                          nsNPAPIPluginStreamListener* aListener,
                                           nsIInputStream *aPostStream,
                                           const char *aHeadersData,
                                           PRUint32 aHeadersDataLen)
@@ -3246,31 +3179,23 @@ nsPluginHost::StopPluginInstance(nsNPAPIPluginInstance* aInstance)
   return NS_OK;
 }
 
-nsresult nsPluginHost::NewEmbeddedPluginStreamListener(nsIURI* aURL,
+nsresult nsPluginHost::NewEmbeddedPluginStreamListener(nsIURI* aURI,
                                                        nsObjectLoadingContent *aContent,
                                                        nsNPAPIPluginInstance* aInstance,
-                                                       nsIStreamListener** aListener)
+                                                       nsIStreamListener **aStreamListener)
 {
-  NS_ENSURE_ARG_POINTER(aURL);
+  NS_ENSURE_ARG_POINTER(aURI);
+  NS_ENSURE_ARG_POINTER(aStreamListener);
 
   nsRefPtr<nsPluginStreamListenerPeer> listener = new nsPluginStreamListenerPeer();
-
-  // If we have an instance, everything has been set up
-  // if we only have an owner, then we need to pass it in
-  // so the listener can set up the instance later after
-  // we've determined the mimetype of the stream.
-  nsresult rv = NS_ERROR_ILLEGAL_VALUE;
-  if (aInstance) {
-    rv = listener->InitializeEmbedded(aURL, aInstance, nsnull);
-  } else if (aContent) {
-    rv = listener->InitializeEmbedded(aURL, nsnull, aContent);
+  nsresult rv = listener->InitializeEmbedded(aURI, aInstance, aContent);
+  if (NS_FAILED(rv)) {
+    return rv;
   }
 
-  if (NS_SUCCEEDED(rv)) {
-    NS_ADDREF(*aListener = listener);
-  }
+  listener.forget(aStreamListener);
 
-  return rv;
+  return NS_OK;
 }
 
 nsresult nsPluginHost::NewEmbeddedPluginStream(nsIURI* aURL,
@@ -3312,6 +3237,7 @@ nsresult nsPluginHost::NewFullPagePluginStreamListener(nsIURI* aURI,
                                                        nsNPAPIPluginInstance *aInstance,
                                                        nsIStreamListener **aStreamListener)
 {
+  NS_ENSURE_ARG_POINTER(aURI);
   NS_ENSURE_ARG_POINTER(aStreamListener);
 
   nsRefPtr<nsPluginStreamListenerPeer> listener = new nsPluginStreamListenerPeer();
@@ -3333,12 +3259,6 @@ NS_IMETHODIMP nsPluginHost::Observe(nsISupports *aSubject,
     OnShutdown();
     UnloadPlugins();
     sInst->Release();
-  }
-  if (!nsCRT::strcmp(NS_PRIVATE_BROWSING_SWITCH_TOPIC, aTopic)) {
-    // inform all active plugins of changed private mode state
-    for (PRUint32 i = 0; i < mInstances.Length(); i++) {
-      mInstances[i]->PrivateModeStateChanged();
-    }
   }
   if (!nsCRT::strcmp(NS_PREFBRANCH_PREFCHANGE_TOPIC_ID, aTopic)) {
     mPluginsDisabled = Preferences::GetBool("plugin.disable", false);

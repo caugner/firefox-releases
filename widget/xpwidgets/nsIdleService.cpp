@@ -1,44 +1,9 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim:expandtab:shiftwidth=2:tabstop=2:
  */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Gijs Kruitbosch <gijskruitbosch@gmail.com>.
- * Portions created by the Initial Developer are Copyright (C) 2007
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Gijs Kruitbosch <gijskruitbosch@gmail.com>
- *  Edward Lee <edward.lee@engineering.uiuc.edu>
- *  Mike Kristoffersen <mozstuff@mikek.dk>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsIdleService.h"
 #include "nsString.h"
@@ -47,6 +12,7 @@
 #include "nsDebug.h"
 #include "nsCOMArray.h"
 #include "prinrval.h"
+#include "prlog.h"
 #include "mozilla/Services.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/Telemetry.h"
@@ -66,6 +32,10 @@ using namespace mozilla;
 #define PREF_LAST_DAILY "idle.lastDailyNotification"
 // Number of seconds in a day.
 #define SECONDS_PER_DAY 86400
+
+#ifdef PR_LOGGING
+static PRLogModuleInfo *sLog = NULL;
+#endif
 
 // Use this to find previously added observers in our array:
 class IdleListenerComparator
@@ -126,6 +96,16 @@ nsIdleServiceDaily::Observe(nsISupports *,
   PRInt32 nowSec = static_cast<PRInt32>(PR_Now() / PR_USEC_PER_SEC);
   Preferences::SetInt(PREF_LAST_DAILY, nowSec);
 
+  // Force that to be stored so we don't retrigger twice a day under
+  // any circumstances.
+  nsIPrefService* prefs = Preferences::GetService();
+  if (prefs) {
+    prefs->SavePrefFile(nsnull);
+  }
+
+  // Note the moment we started our timer.
+  mDailyTimerStart  = PR_Now();
+
   // Start timer for the next check in one day.
   (void)mTimer->InitWithFuncCallback(DailyCallback,
                                      this,
@@ -161,6 +141,10 @@ nsIdleServiceDaily::Init()
     DailyCallback(nsnull, this);
   }
   else {
+
+    // Note the moment we started our timer.
+    mDailyTimerStart  = PR_Now();
+
     // Start timer for the next check in one day.
     (void)mTimer->InitWithFuncCallback(DailyCallback,
                                        this,
@@ -190,6 +174,35 @@ void
 nsIdleServiceDaily::DailyCallback(nsITimer* aTimer, void* aClosure)
 {
   nsIdleServiceDaily* me = static_cast<nsIdleServiceDaily*>(aClosure);
+
+  PRTime now = PR_Now();
+  PRTime launchTime = me->mDailyTimerStart + ((PRTime)SECONDS_PER_DAY * PR_USEC_PER_SEC);
+
+  // Check if it has been a day since we launched this timer.
+  if (now < launchTime) {
+      // Timer returned early, reschedule.
+      PRTime newTime = launchTime;
+
+      // Add 10 ms to ensure we don't undershoot, and never get a "0" timer.
+      newTime += 10 * PR_USEC_PER_MSEC;
+
+#ifdef ANDROID
+      __android_log_print(ANDROID_LOG_INFO, "IdleService",
+                          "DailyCallback resetting timer to %lld msec",
+                          (newTime - now) / PR_USEC_PER_MSEC);
+#endif
+
+      // Refire the timer.
+      (void)me->mTimer->InitWithFuncCallback(DailyCallback,
+                                             me,
+                                             (newTime - now) / PR_USEC_PER_MSEC,
+                                             nsITimer::TYPE_ONE_SHOT);
+      return;
+  }
+
+#ifdef ANDROID
+  __android_log_print(ANDROID_LOG_INFO, "IdleService", "DailyCallback registering Idle observer");
+#endif
 
   // The one thing we do every day is to start waiting for the user to "have
   // a significant idle time".
@@ -274,8 +287,12 @@ nsIdleServiceDaily::DailyCallback(nsITimer* aTimer, void* aClosure)
 nsIdleService::nsIdleService() : mCurrentlySetToTimeoutAtInPR(0),
                                  mAnyObserverIdle(false),
                                  mDeltaToNextIdleSwitchInS(PR_UINT32_MAX),
-                                 mLastUserInteractionInPR(0)
+                                 mLastUserInteractionInPR(PR_Now())
 {
+#ifdef PR_LOGGING
+  if (sLog == NULL)
+    sLog = PR_NewLogModule("idleService");
+#endif
   mDailyIdle = new nsIdleServiceDaily(this);
   mDailyIdle->Init();
 }
@@ -290,6 +307,10 @@ nsIdleService::~nsIdleService()
 NS_IMETHODIMP
 nsIdleService::AddIdleObserver(nsIObserver* aObserver, PRUint32 aIdleTimeInS)
 {
+  PR_LOG(sLog, PR_LOG_DEBUG,
+         ("idleService: Register idle observer %x for %d seconds",
+          aObserver, aIdleTimeInS));
+
   NS_ENSURE_ARG_POINTER(aObserver);
   // We don't accept idle time at 0, and we can't handle idle time that are too
   // high either - no more than ~136 years.
@@ -310,10 +331,13 @@ nsIdleService::AddIdleObserver(nsIObserver* aObserver, PRUint32 aIdleTimeInS)
   }
 
   // Check if the newly added observer has a smaller wait time than what we
-  // are wating for now.
+  // are waiting for now.
   if (mDeltaToNextIdleSwitchInS > aIdleTimeInS) {
     // If it is, then this is the next to move to idle (at this point we
     // don't care if it should have switched already).
+    PR_LOG(sLog, PR_LOG_DEBUG,
+          ("idleService: Register: adjusting next switch from %d to %d seconds",
+           mDeltaToNextIdleSwitchInS, aIdleTimeInS));
     mDeltaToNextIdleSwitchInS = aIdleTimeInS;
   }
 
@@ -336,21 +360,33 @@ nsIdleService::RemoveIdleObserver(nsIObserver* aObserver, PRUint32 aTimeInS)
   // little while.
   IdleListenerComparator c;
   if (mArrayListeners.RemoveElement(listener, c)) {
+    PR_LOG(sLog, PR_LOG_DEBUG,
+           ("idleService: Remove idle observer %x (%d seconds)",
+            aObserver, aTimeInS));
     return NS_OK;
   }
 
   // If we get here, we haven't removed anything:
+  PR_LOG(sLog, PR_LOG_WARNING, 
+         ("idleService: Failed to remove idle observer %x (%d seconds)",
+          aObserver, aTimeInS));
   return NS_ERROR_FAILURE;
 }
 
 void
 nsIdleService::ResetIdleTimeOut(PRUint32 idleDeltaInMS)
 {
+  PR_LOG(sLog, PR_LOG_DEBUG,
+         ("idleService: Reset idle timeout (last interaction %u msec)",
+          idleDeltaInMS));
+
   // Store the time
   mLastUserInteractionInPR = PR_Now() - (idleDeltaInMS * PR_USEC_PER_MSEC);
 
   // If no one is idle, then we are done, any existing timers can keep running.
   if (!mAnyObserverIdle) {
+    PR_LOG(sLog, PR_LOG_DEBUG,
+           ("idleService: Reset idle timeout: no idle observers"));
     return;
   }
 
@@ -399,6 +435,9 @@ nsIdleService::ResetIdleTimeOut(PRUint32 idleDeltaInMS)
 
   // Send the "non-idle" events.
   while (numberOfPendingNotifications--) {
+    PR_LOG(sLog, PR_LOG_DEBUG,
+           ("idleService: Reset idle timeout: tell observer %x user is back",
+            notifyList[numberOfPendingNotifications]));
     notifyList[numberOfPendingNotifications]->Observe(this,
                                                       OBSERVER_TOPIC_BACK,
                                                       timeStr.get());
@@ -419,21 +458,17 @@ nsIdleService::GetIdleTime(PRUint32* idleTime)
 
   bool polledIdleTimeIsValid = PollIdleTime(&polledIdleTimeMS);
 
-  // If we don't have any valid data, then we are not in idle - pr. definition.
-  if (!polledIdleTimeIsValid && 0 == mLastUserInteractionInPR) {
-    *idleTime = 0;
-    return NS_OK;
-  }
-
-  // If we never got a reset, just return the pulled time.
-  if (0 == mLastUserInteractionInPR) {
-    *idleTime = polledIdleTimeMS;
-    return NS_OK;
-  }
-
+  PR_LOG(sLog, PR_LOG_DEBUG,
+         ("idleService: Get idle time: polled %u msec, valid = %d",
+          polledIdleTimeMS, polledIdleTimeIsValid));
+  
   // timeSinceReset is in milliseconds.
   PRUint32 timeSinceResetInMS = (PR_Now() - mLastUserInteractionInPR) /
                                 PR_USEC_PER_MSEC;
+
+  PR_LOG(sLog, PR_LOG_DEBUG,
+         ("idleService: Get idle time: time since reset %u msec",
+          timeSinceResetInMS));
 
   // If we did't get pulled data, return the time since last idle reset.
   if (!polledIdleTimeIsValid) {
@@ -479,11 +514,17 @@ nsIdleService::IdleTimerCallback(void)
   PRUint32 currentIdleTimeInMS;
 
   if (NS_FAILED(GetIdleTime(&currentIdleTimeInMS))) {
+    PR_LOG(sLog, PR_LOG_ALWAYS,
+           ("idleService: Idle timer callback: failed to get idle time"));
     return;
   }
 
+  PR_LOG(sLog, PR_LOG_DEBUG,
+         ("idleService: Idle timer callback: current idle time %u msec",
+          currentIdleTimeInMS));
+
   // Check if we have had some user interaction we didn't handle previously
-  // we do the caluculation in ms to lessen the chance for rounding errors to
+  // we do the calculation in ms to lessen the chance for rounding errors to
   // trigger wrong results, it is also very important that we call PR_Now AFTER
   // the call to GetIdleTime().
   if (((PR_Now() - mLastUserInteractionInPR) / PR_USEC_PER_MSEC) >
@@ -557,6 +598,9 @@ nsIdleService::IdleTimerCallback(void)
 
   // Notify all listeners that just timed out.
   while (numberOfPendingNotifications--) {
+    PR_LOG(sLog, PR_LOG_DEBUG,
+           ("idleService: Idle timer callback: tell observer %x user is idle",
+            notifyList[numberOfPendingNotifications]));
     notifyList[numberOfPendingNotifications]->Observe(this,
                                                       OBSERVER_TOPIC_IDLE,
                                                       timeStr.get());
@@ -566,6 +610,10 @@ nsIdleService::IdleTimerCallback(void)
 void
 nsIdleService::SetTimerExpiryIfBefore(PRTime aNextTimeoutInPR)
 {
+  PR_LOG(sLog, PR_LOG_DEBUG,
+         ("idleService: SetTimerExpiryIfBefore: next timeout %lld usec",
+          aNextTimeoutInPR));
+
   // Bail if we don't have a timer service.
   if (!mTimer) {
     return;
@@ -575,6 +623,10 @@ nsIdleService::SetTimerExpiryIfBefore(PRTime aNextTimeoutInPR)
   // then restart the timer.
   if (mCurrentlySetToTimeoutAtInPR > aNextTimeoutInPR ||
       !mCurrentlySetToTimeoutAtInPR) {
+
+#ifdef PR_LOGGING
+    PRTime oldTimeout = mCurrentlySetToTimeoutAtInPR;
+#endif
 
     mCurrentlySetToTimeoutAtInPR = aNextTimeoutInPR ;
 
@@ -589,6 +641,10 @@ nsIdleService::SetTimerExpiryIfBefore(PRTime aNextTimeoutInPR)
 
     // Add 10 ms to ensure we don't undershoot, and never get a "0" timer.
     mCurrentlySetToTimeoutAtInPR += 10 * PR_USEC_PER_MSEC;
+
+    PR_LOG(sLog, PR_LOG_DEBUG,
+           ("idleService: reset timer expiry from %lld usec to %lld usec",
+            oldTimeout, mCurrentlySetToTimeoutAtInPR));
 
     // Start the timer
     mTimer->InitWithFuncCallback(StaticIdleTimerCallback,
@@ -608,6 +664,8 @@ nsIdleService::ReconfigureTimer(void)
   if (!mAnyObserverIdle && PR_UINT32_MAX == mDeltaToNextIdleSwitchInS) {
     // If not, just let any existing timers run to completion
     // And bail out.
+    PR_LOG(sLog, PR_LOG_DEBUG,
+           ("idleService: ReconfigureTimer: no idle or waiting observers"));
     return;
   }
 
@@ -621,12 +679,19 @@ nsIdleService::ReconfigureTimer(void)
                              (((PRTime)mDeltaToNextIdleSwitchInS) *
                               PR_USEC_PER_SEC);
 
+  PR_LOG(sLog, PR_LOG_DEBUG,
+         ("idleService: next timeout %lld usec (%u msec from now)",
+          nextTimeoutAtInPR,
+          (PRUint32)((nextTimeoutAtInPR - curTimeInPR) / PR_USEC_PER_MSEC)));
   // Check if we should correct the timeout time because we should poll before.
   if (mAnyObserverIdle && UsePollMode()) {
     PRTime pollTimeout = curTimeInPR +
-                         MIN_IDLE_POLL_INTERVAL_MSEC * PR_USEC_PER_SEC;
+                         MIN_IDLE_POLL_INTERVAL_MSEC * PR_USEC_PER_MSEC;
 
     if (nextTimeoutAtInPR > pollTimeout) {
+      PR_LOG(sLog, PR_LOG_DEBUG,
+           ("idleService: idle observers, reducing timeout to %u msec from now",
+            MIN_IDLE_POLL_INTERVAL_MSEC));
       nextTimeoutAtInPR = pollTimeout;
     }
   }

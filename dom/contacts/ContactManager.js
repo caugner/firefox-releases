@@ -27,11 +27,17 @@ XPCOMUtils.defineLazyGetter(this, "cpmm", function() {
   return Cc["@mozilla.org/childprocessmessagemanager;1"].getService(Ci.nsIFrameMessageManager);
 });
 
+XPCOMUtils.defineLazyGetter(this, "mRIL", function () {
+  return Cc["@mozilla.org/telephony/system-worker-manager;1"].getService(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIRadioInterfaceLayer);
+});
+
 const nsIClassInfo            = Ci.nsIClassInfo;
-const CONTACTPROPERTIES_CID   = Components.ID("{53ed7c20-ceda-11e0-9572-0800200c9a66}");
+const CONTACTPROPERTIES_CID   = Components.ID("{f5181640-89e8-11e1-b0c4-0800200c9a66}");
 const nsIDOMContactProperties = Ci.nsIDOMContactProperties;
 
 // ContactProperties is not directly instantiated. It is used as interface.
+
+function ContactProperties(aProp) { debug("ContactProperties Constructor"); }
 
 ContactProperties.prototype = {
 
@@ -48,18 +54,17 @@ ContactProperties.prototype = {
 //ContactAddress
 
 const CONTACTADDRESS_CONTRACTID = "@mozilla.org/contactAddress;1";
-const CONTACTADDRESS_CID        = Components.ID("{27a568b0-cee1-11e0-9572-0800200c9a66}");
+const CONTACTADDRESS_CID        = Components.ID("{eba48030-89e8-11e1-b0c4-0800200c9a66}");
 const nsIDOMContactAddress      = Components.interfaces.nsIDOMContactAddress;
 
-function ContactAddress(aStreetAddress, aLocality, aRegion, aPostalCode, aCountryName) {
+function ContactAddress(aType, aStreetAddress, aLocality, aRegion, aPostalCode, aCountryName) {
+  this.type = aType || null;
   this.streetAddress = aStreetAddress || null;
   this.locality = aLocality || null;
   this.region = aRegion || null;
   this.postalCode = aPostalCode || null;
   this.countryName = aCountryName || null;
 };
-
-function ContactProperties(aProp) { debug("ContactProperties Constructor"); }
 
 ContactAddress.prototype = {
 
@@ -71,6 +76,29 @@ ContactAddress.prototype = {
                                      flags: nsIClassInfo.DOM_OBJECT}),
 
   QueryInterface : XPCOMUtils.generateQI([nsIDOMContactAddress])
+}
+
+//ContactTelephone
+
+const CONTACTTELEPHONE_CONTRACTID = "@mozilla.org/contactTelephone;1";
+const CONTACTTELEPHONE_CID        = Components.ID("{82601b20-89e8-11e1-b0c4-0800200c9a66}");
+const nsIDOMContactTelephone      = Components.interfaces.nsIDOMContactTelephone;
+
+function ContactTelephone(aType, aNumber) {
+  this.type = aType || null;
+  this.number = aNumber || null;
+};
+
+ContactTelephone.prototype = {
+
+  classID : CONTACTTELEPHONE_CID,
+  classInfo : XPCOMUtils.generateCI({classID: CONTACTTELEPHONE_CID,
+                                     contractID: CONTACTTELEPHONE_CONTRACTID,
+                                     classDescription: "ContactTelephone",
+                                     interfaces: [nsIDOMContactTelephone],
+                                     flags: nsIClassInfo.DOM_OBJECT}),
+
+  QueryInterface : XPCOMUtils.generateQI([nsIDOMContactTelephone])
 }
 
 //ContactFindOptions
@@ -125,19 +153,27 @@ Contact.prototype = {
 
     if (aProp.adr) {
       // Make sure adr argument is an array. Instanceof doesn't work.
-      aProp.adr = aProp.adr.length == undefined ? [aProp.adr] : aProp.adr;
+      aProp.adr = Array.isArray(aProp.adr) ? aProp.adr : [aProp.adr];
 
       this.adr = new Array();
       for (let i = 0; i < aProp.adr.length; i++)
-        this.adr.push(new ContactAddress(aProp.adr[i].streetAddress, aProp.adr[i].locality,
-                                         aProp.adr[i].region, aProp.adr[i].postalCode,
-                                         aProp.adr[i].countryName));
+        this.adr.push(new ContactAddress(aProp.adr[i].type, aProp.adr[i].streetAddress, aProp.adr[i].locality,
+                                         aProp.adr[i].region, aProp.adr[i].postalCode, aProp.adr[i].countryName));
     } else {
       this.adr = null;
     }
 
-    this.tel =             _create(aProp.tel) || null;
+    if (aProp.tel) {
+      aProp.tel = Array.isArray(aProp.tel) ? aProp.tel : [aProp.tel];
+      this.tel = new Array();
+      for (let i = 0; i < aProp.tel.length; i++)
+        this.tel.push(new ContactTelephone(aProp.tel[i].type, aProp.tel[i].number));
+    } else {
+      this.tel = null;
+    }
+
     this.org =             _create(aProp.org) || null;
+    this.jobTitle =        _create(aProp.jobTitle) || null;
     this.bday =            (aProp.bday == "undefined" || aProp.bday == null) ? null : new Date(aProp.bday);
     this.note =            _create(aProp.note) || null;
     this.impp =            _create(aProp.impp) || null;
@@ -157,7 +193,7 @@ Contact.prototype = {
   get updated () {
     return this._updated;
   },
- 
+
   set updated(aUpdated) {
     this._updated = aUpdated;
   },
@@ -175,7 +211,7 @@ Contact.prototype = {
 // ContactManager
 
 const CONTACTMANAGER_CONTRACTID = "@mozilla.org/contactManager;1";
-const CONTACTMANAGER_CID        = Components.ID("{50a820b0-ced0-11e0-9572-0800200c9a66}");
+const CONTACTMANAGER_CID        = Components.ID("{d88af7e0-a45f-11e1-b3dd-0800200c9a66}");
 const nsIDOMContactManager      = Components.interfaces.nsIDOMContactManager;
 
 function ContactManager()
@@ -185,6 +221,18 @@ function ContactManager()
 
 ContactManager.prototype = {
   __proto__: DOMRequestIpcHelper.prototype,
+  _oncontactchange: null,
+
+  set oncontactchange(aCallback) {
+    if (this.hasPrivileges)
+      this._oncontactchange = aCallback;
+    else
+      throw Components.results.NS_ERROR_FAILURE;
+  },
+
+  get oncontactchange() {
+    return this._oncontactchange;
+  },
 
   save: function save(aContact) {
     let request;
@@ -206,6 +254,7 @@ ContactManager.prototype = {
         adr:             [],
         tel:             [],
         org:             [],
+        jobTitle:        [],
         bday:            null,
         note:            [],
         impp:            [],
@@ -216,17 +265,21 @@ ContactManager.prototype = {
       for (let field in newContact.properties)
         newContact.properties[field] = aContact[field];
 
+      let reason;
       if (aContact.id == "undefined") {
         // for example {25c00f01-90e5-c545-b4d4-21E2ddbab9e0} becomes
         // 25c00f0190e5c545b4d421E2ddbab9e0
-        aContact.id = this._getRandomId().replace('-', '').replace('{', '').replace('}', '');
+        aContact.id = this._getRandomId().replace('-', '', 'g').replace('{', '').replace('}', '');
+        reason = "create";
+      } else {
+        reason = "update";
       }
 
       this._setMetaData(newContact, aContact);
       debug("send: " + JSON.stringify(newContact));
       request = this.createRequest();
       cpmm.sendAsyncMessage("Contact:Save", {contact: newContact,
-                                             requestID: this.getRequestId(request)});
+                                             requestID: this.getRequestId({request: request, reason: reason })});
       return request;
     } else {
       throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
@@ -238,7 +291,7 @@ ContactManager.prototype = {
     if (this.hasPrivileges) {
       request = this.createRequest();
       cpmm.sendAsyncMessage("Contact:Remove", {id: aRecord.id,
-                                               requestID: this.getRequestId(request)});
+                                               requestID: this.getRequestId({request: request, reason: "remove"})});
       return request;
     } else {
       throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
@@ -273,7 +326,7 @@ ContactManager.prototype = {
         if (req) {
           let result = this._convertContactsArray(contacts);
           debug("result: " + JSON.stringify(result));
-          Services.DOMRequest.fireSuccess(req, result);
+          Services.DOMRequest.fireSuccess(req.request, result);
         } else {
           debug("no request stored!" + msg.requestID);
         }
@@ -283,7 +336,13 @@ ContactManager.prototype = {
       case "Contact:Remove:Return:OK":
         req = this.getRequest(msg.requestID);
         if (req)
-          Services.DOMRequest.fireSuccess(req, null);
+          Services.DOMRequest.fireSuccess(req.request, null);
+
+        // Fire oncontactchange event
+        if (this._oncontactchange) {
+          let event = new MozContactEvent(msg.contactID, req.reason);
+          this._oncontactchange.handleEvent(event);
+        }
         break;
       case "Contacts:Find:Return:KO":
       case "Contact:Save:Return:KO":
@@ -291,7 +350,7 @@ ContactManager.prototype = {
       case "Contacts:Clear:Return:KO":
         req = this.getRequest(msg.requestID);
         if (req)
-          Services.DOMRequest.fireError(req, msg.errorMsg);
+          Services.DOMRequest.fireError(req.request, msg.errorMsg);
         break;
       default: 
         debug("Wrong message: " + aMessage.name);
@@ -304,7 +363,7 @@ ContactManager.prototype = {
     if (this.hasPrivileges) {
       request = this.createRequest();
       cpmm.sendAsyncMessage("Contacts:Find", {findOptions: aOptions, 
-                                              requestID: this.getRequestId(request)});
+                                              requestID: this.getRequestId({request: request, reason: "find"})});
       return request;
     } else {
       debug("find not allowed");
@@ -316,10 +375,29 @@ ContactManager.prototype = {
     let request;
     if (this.hasPrivileges) {
       request = this.createRequest();
-      cpmm.sendAsyncMessage("Contacts:Clear", {requestID: this.getRequestId(request)});
+      cpmm.sendAsyncMessage("Contacts:Clear", {requestID: this.getRequestId({request: request, reason: "remove"})});
       return request;
     } else {
       debug("clear not allowed");
+      throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
+    }
+  },
+
+  getSimContacts: function(aType) {
+    let request;
+    if (this.hasPrivileges) {
+      let callback = function(aType, aContacts) {
+        debug("got SIM contacts: " + aType + " " + JSON.stringify(aContacts));
+        let result = aContacts.map(function(c) { return { name: [c.alphaId], tel: [c.number] } });
+        debug("result: " + JSON.stringify(result));
+        Services.DOMRequest.fireSuccess(request, result);
+      };
+      debug("getSimContacts " + aType);
+      request = this.createRequest();
+      mRIL.getICCContacts(aType, callback);
+      return request;
+    } else {
+      debug("getSimContacts not allowed");
       throw Components.results.NS_ERROR_NOT_IMPLEMENTED;
     }
   },
@@ -330,11 +408,9 @@ ContactManager.prototype = {
       return null;
 
     this.initHelper(aWindow, ["Contacts:Find:Return:OK", "Contacts:Find:Return:KO",
-                     "Contacts:Clear:Return:OK", "Contacts:Clear:Return:KO",
-                     "Contact:Save:Return:OK", "Contact:Save:Return:KO",
-                     "Contact:Remove:Return:OK", "Contact:Remove:Return:KO"]);
-
-    Services.obs.addObserver(this, "inner-window-destroyed", false);
+                              "Contacts:Clear:Return:OK", "Contacts:Clear:Return:KO",
+                              "Contact:Save:Return:OK", "Contact:Save:Return:KO",
+                              "Contact:Remove:Return:OK", "Contact:Remove:Return:KO"]);
 
     let principal = aWindow.document.nodePrincipal;
     let secMan = Cc["@mozilla.org/scriptsecuritymanager;1"].getService(Ci.nsIScriptSecurityManager);
@@ -348,6 +424,13 @@ ContactManager.prototype = {
     debug("has privileges :" + this.hasPrivileges);
   },
 
+  // Called from DOMRequestIpcHelper
+  uninit: function uninit() {
+    debug("uninit call");
+    if (this._oncontactchange)
+      this._oncontactchange = null;
+  },
+
   classID : CONTACTMANAGER_CID,
   QueryInterface : XPCOMUtils.generateQI([nsIDOMContactManager, Ci.nsIDOMGlobalPropertyInitializer]),
 
@@ -358,4 +441,32 @@ ContactManager.prototype = {
                                      flags: nsIClassInfo.DOM_OBJECT})
 }
 
-const NSGetFactory = XPCOMUtils.generateNSGetFactory([Contact, ContactManager, ContactProperties, ContactAddress, ContactFindOptions])
+// MozContactEvent object
+function MozContactEvent(aContactID, aReason) {
+  debug("ContactEventConstr: " + aContactID + ", " + aReason);
+  this._contactID = aContactID;
+  this._reason = aReason;
+}
+
+MozContactEvent.prototype = {
+  get contactID() {
+    return this._contactID;
+  },
+
+  get reason() {
+    return this._reason;
+  },
+
+  classID: Components.ID("{a8cd4ba0-93d1-11e1-b0c4-0800200c9a66}"),
+
+  QueryInterface: XPCOMUtils.generateQI([Ci.mozIDOMContactEvent]),
+
+  classInfo: XPCOMUtils.generateCI({classID: Components.ID("{a8cd4ba0-93d1-11e1-b0c4-0800200c9a66}"),
+                                    contractID: "@mozilla.org/contact-event;1",
+                                    interfaces: [Ci.mozIDOMContactEvent],
+                                    flags: Ci.nsIClassInfo.DOM_OBJECT,
+                                    classDescription: "Contact Change Event"})
+}
+
+const NSGetFactory = XPCOMUtils.generateNSGetFactory(
+                       [Contact, ContactManager, ContactProperties, ContactAddress, ContactTelephone, ContactFindOptions])

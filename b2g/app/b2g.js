@@ -1,39 +1,6 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Mobile Browser.
- *
- * The Initial Developer of the Original Code is
- * Mozilla Corporation.
- * Portions created by the Initial Developer are Copyright (C) 2008
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Matt Brubeck <mbrubeck@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #filter substitution
 
@@ -425,16 +392,25 @@ pref("browser.link.open_newwindow", 3);
 // 2: don't divert window.open with features
 pref("browser.link.open_newwindow.restriction", 0);
 
-// Enable browser frame
+// Enable browser frames (including OOP, except on Windows, where it doesn't
+// work), but make in-process browser frames the default.
 pref("dom.mozBrowserFramesEnabled", true);
 pref("dom.mozBrowserFramesWhitelist", "http://homescreen.gaiamobile.org,http://browser.gaiamobile.org");
+
+#ifdef XP_WIN
+pref("dom.ipc.tabs.disabled", true);
+#else
+pref("dom.ipc.tabs.disabled", false);
+#endif
+
+pref("dom.ipc.browser_frames.oop_by_default", false);
 
 // Temporary permission hack for WebSMS
 pref("dom.sms.enabled", true);
 pref("dom.sms.whitelist", "file://,http://homescreen.gaiamobile.org,http://sms.gaiamobile.org");
 
 // Temporary permission hack for WebMobileConnection
-pref("dom.mobileconnection.whitelist", "http://homescreen.gaiamobile.org");
+pref("dom.mobileconnection.whitelist", "http://system.gaiamobile.org,http://homescreen.gaiamobile.org,http://dialer.gaiamobile.org");
 
 // Temporary permission hack for WebContacts
 pref("dom.mozContacts.enabled", true);
@@ -475,15 +451,6 @@ pref("full-screen-api.enabled", true);
 
 pref("media.volume.steps", 10);
 
-// Data connection settings. These will eventually live in the
-// navigator.settings API, or even in a database where we can look
-// it up automatically (bug 729440), but for this will have to do.
-pref("ril.data.enabled", false);
-pref("ril.data.roaming.enabled", false);
-pref("ril.data.apn", "");
-pref("ril.data.user", "");
-pref("ril.data.passwd", "");
-
 //Enable/disable marionette server, set listening port
 pref("marionette.defaultPrefs.enabled", true);
 pref("marionette.defaultPrefs.port", 2828);
@@ -511,3 +478,16 @@ pref("app.update.download.backgroundInterval", 0);
 // field.
 pref("app.update.log", true);
 #endif
+
+// Extensions preferences
+pref("extensions.update.enabled", false);
+pref("extensions.getAddons.cache.enabled", false);
+
+// Context Menu
+pref("ui.click_hold_context_menus", true);
+pref("ui.click_hold_context_menus.delay", 1000);
+
+// Enable device storage
+pref("device.storage.enabled", true);
+
+pref("media.plugins.enabled", true);

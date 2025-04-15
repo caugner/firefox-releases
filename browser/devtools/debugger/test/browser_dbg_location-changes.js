@@ -17,7 +17,7 @@ function test()
     gTab = aTab;
     gDebuggee = aDebuggee;
     gPane = aPane;
-    gDebugger = gPane.debuggerWindow;
+    gDebugger = gPane.contentWindow;
 
     testSimpleCall();
   });
@@ -55,7 +55,7 @@ function testLocationChange()
       gDebugger.DebuggerController.client.addOneTimeListener("tabAttached", function(aEvent, aPacket) {
         ok(true, "Successfully reattached to the tab again.");
 
-        closeDebuggerAndFinish(gTab);
+        closeDebuggerAndFinish();
       });
     });
     content.location = TAB1_URL;

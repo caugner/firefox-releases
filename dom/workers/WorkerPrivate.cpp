@@ -1,41 +1,8 @@
 /* -*- Mode: c++; c-basic-offset: 2; indent-tabs-mode: nil; tab-width: 40 -*- */
 /* vim: set ts=2 et sw=2 tw=80: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Web Workers.
- *
- * The Initial Developer of the Original Code is
- *   The Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Ben Turner <bent.mozilla@gmail.com> (Original Author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "WorkerPrivate.h"
 
@@ -101,7 +68,7 @@
 using mozilla::MutexAutoLock;
 using mozilla::TimeDuration;
 using mozilla::TimeStamp;
-using mozilla::dom::workers::exceptions::ThrowDOMExceptionForCode;
+using mozilla::dom::workers::exceptions::ThrowDOMExceptionForNSResult;
 
 USING_WORKERS_NAMESPACE
 using namespace mozilla::dom::workers::events;
@@ -416,7 +383,7 @@ struct WorkerStructuredCloneCallbacks
   static void
   Error(JSContext* aCx, uint32_t /* aErrorId */)
   {
-    ThrowDOMExceptionForCode(aCx, DATA_CLONE_ERR);
+    ThrowDOMExceptionForNSResult(aCx, NS_ERROR_DOM_DATA_CLONE_ERR);
   }
 };
 
@@ -527,30 +494,38 @@ struct MainThreadWorkerStructuredCloneCallbacks
       nsISupports* wrappedObject = wrappedNative->Native();
       NS_ASSERTION(wrappedObject, "Null pointer?!");
 
-      // See if the wrapped native is a nsIDOMFile.
-      nsCOMPtr<nsIDOMFile> file = do_QueryInterface(wrappedObject);
-      if (file) {
-        nsCOMPtr<nsIMutable> mutableFile = do_QueryInterface(file);
-        if (mutableFile && NS_SUCCEEDED(mutableFile->SetMutable(false))) {
-          nsIDOMFile* filePtr = file;
-          if (JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_FILE, 0) &&
-              JS_WriteBytes(aWriter, &filePtr, sizeof(filePtr))) {
-            clonedObjects->AppendElement(file);
-            return true;
+      nsISupports* ccISupports = nsnull;
+      wrappedObject->QueryInterface(NS_GET_IID(nsCycleCollectionISupports),
+                                    reinterpret_cast<void**>(&ccISupports));
+      if (ccISupports) {
+        NS_WARNING("Cycle collected objects are not supported!");
+      }
+      else {
+        // See if the wrapped native is a nsIDOMFile.
+        nsCOMPtr<nsIDOMFile> file = do_QueryInterface(wrappedObject);
+        if (file) {
+          nsCOMPtr<nsIMutable> mutableFile = do_QueryInterface(file);
+          if (mutableFile && NS_SUCCEEDED(mutableFile->SetMutable(false))) {
+            nsIDOMFile* filePtr = file;
+            if (JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_FILE, 0) &&
+                JS_WriteBytes(aWriter, &filePtr, sizeof(filePtr))) {
+              clonedObjects->AppendElement(file);
+              return true;
+            }
           }
         }
-      }
 
-      // See if the wrapped native is a nsIDOMBlob.
-      nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(wrappedObject);
-      if (blob) {
-        nsCOMPtr<nsIMutable> mutableBlob = do_QueryInterface(blob);
-        if (mutableBlob && NS_SUCCEEDED(mutableBlob->SetMutable(false))) {
-          nsIDOMBlob* blobPtr = blob;
-          if (JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_BLOB, 0) &&
-              JS_WriteBytes(aWriter, &blobPtr, sizeof(blobPtr))) {
-            clonedObjects->AppendElement(blob);
-            return true;
+        // See if the wrapped native is a nsIDOMBlob.
+        nsCOMPtr<nsIDOMBlob> blob = do_QueryInterface(wrappedObject);
+        if (blob) {
+          nsCOMPtr<nsIMutable> mutableBlob = do_QueryInterface(blob);
+          if (mutableBlob && NS_SUCCEEDED(mutableBlob->SetMutable(false))) {
+            nsIDOMBlob* blobPtr = blob;
+            if (JS_WriteUint32Pair(aWriter, DOMWORKER_SCTAG_BLOB, 0) &&
+                JS_WriteBytes(aWriter, &blobPtr, sizeof(blobPtr))) {
+              clonedObjects->AppendElement(blob);
+              return true;
+            }
           }
         }
       }
@@ -1266,7 +1241,7 @@ public:
     if (!logged) {
       NS_ConvertUTF16toUTF8 msg(aMessage);
 #ifdef ANDROID
-      __android_log_print(ANDROID_LOG_INFO, "Gecko", msg.get());
+      __android_log_print(ANDROID_LOG_INFO, "Gecko", "%s", msg.get());
 #endif
       fputs(msg.get(), stderr);
       fflush(stderr);
@@ -1849,7 +1824,7 @@ WorkerRunnable::NotifyScriptExecutedIfNeeded() const
 struct WorkerPrivate::TimeoutInfo
 {
   TimeoutInfo()
-  : mTimeoutVal(JSVAL_VOID), mLineNumber(0), mId(0), mIsInterval(false),
+  : mTimeoutVal(JS::UndefinedValue()), mLineNumber(0), mId(0), mIsInterval(false),
     mCanceled(false)
   {
     MOZ_COUNT_CTOR(mozilla::dom::workers::WorkerPrivate::TimeoutInfo);
@@ -1870,7 +1845,7 @@ struct WorkerPrivate::TimeoutInfo
     return mTargetTime < aOther.mTargetTime;
   }
 
-  jsval mTimeoutVal;
+  JS::Value mTimeoutVal;
   nsTArray<jsval> mExtraArgVals;
   mozilla::TimeStamp mTargetTime;
   mozilla::TimeDuration mInterval;
@@ -2080,17 +2055,17 @@ WorkerPrivateParent<Derived>::Resume(JSContext* aCx)
 
 template <class Derived>
 void
-WorkerPrivateParent<Derived>::_Trace(JSTracer* aTrc)
+WorkerPrivateParent<Derived>::_trace(JSTracer* aTrc)
 {
   // This should only happen on the parent thread but we can't assert that
   // because it can also happen on the cycle collector thread when this is a
   // top-level worker.
-  EventTarget::_Trace(aTrc);
+  EventTarget::_trace(aTrc);
 }
 
 template <class Derived>
 void
-WorkerPrivateParent<Derived>::_Finalize(JSFreeOp* aFop)
+WorkerPrivateParent<Derived>::_finalize(JSFreeOp* aFop)
 {
   AssertIsOnParentThread();
 
@@ -2116,7 +2091,7 @@ WorkerPrivateParent<Derived>::_Finalize(JSFreeOp* aFop)
     NS_ADDREF(extraSelfRef = this);
   }
 
-  EventTarget::_Finalize(aFop);
+  EventTarget::_finalize(aFop);
 
   if (extraSelfRef) {
     nsCOMPtr<nsIRunnable> runnable =
@@ -3622,11 +3597,11 @@ WorkerPrivate::SetTimeout(JSContext* aCx, unsigned aArgc, jsval* aVp,
     mNextTimeoutId = 1;
   }
 
-  jsval* argv = JS_ARGV(aCx, aVp);
+  JS::Value* argv = JS_ARGV(aCx, aVp);
 
   // Take care of the main argument.
-  if (JSVAL_IS_OBJECT(argv[0])) {
-    if (JS_ObjectIsCallable(aCx, JSVAL_TO_OBJECT(argv[0]))) {
+  if (argv[0].isObject()) {
+    if (JS_ObjectIsCallable(aCx, &argv[0].toObject())) {
       newInfo->mTimeoutVal = argv[0];
     }
     else {
@@ -3634,10 +3609,10 @@ WorkerPrivate::SetTimeout(JSContext* aCx, unsigned aArgc, jsval* aVp,
       if (!timeoutStr) {
         return false;
       }
-      newInfo->mTimeoutVal = STRING_TO_JSVAL(timeoutStr);
+      newInfo->mTimeoutVal.setString(timeoutStr);
     }
   }
-  else if (JSVAL_IS_STRING(argv[0])) {
+  else if (argv[0].isString()) {
     newInfo->mTimeoutVal = argv[0];
   }
   else {
@@ -3654,7 +3629,7 @@ WorkerPrivate::SetTimeout(JSContext* aCx, unsigned aArgc, jsval* aVp,
     }
     newInfo->mInterval = TimeDuration::FromMilliseconds(intervalMS);
 
-    if (aArgc > 2 && JSVAL_IS_OBJECT(newInfo->mTimeoutVal)) {
+    if (aArgc > 2 && newInfo->mTimeoutVal.isObject()) {
       nsTArray<jsval> extraArgVals(aArgc - 2);
       for (unsigned index = 2; index < aArgc; index++) {
         extraArgVals.AppendElement(argv[index]);
@@ -3665,7 +3640,7 @@ WorkerPrivate::SetTimeout(JSContext* aCx, unsigned aArgc, jsval* aVp,
 
   newInfo->mTargetTime = TimeStamp::Now() + newInfo->mInterval;
 
-  if (JSVAL_IS_STRING(newInfo->mTimeoutVal)) {
+  if (newInfo->mTimeoutVal.isString()) {
     const char* filenameChars;
     PRUint32 lineNumber;
     if (nsJSUtils::GetCallingLocation(aCx, &filenameChars, &lineNumber)) {
@@ -3789,8 +3764,8 @@ WorkerPrivate::RunExpiredTimeouts(JSContext* aCx)
     // JS_ReportPendingException returns false (i.e. uncatchable exception) then
     // break out of the loop.
 
-    if (JSVAL_IS_STRING(info->mTimeoutVal)) {
-      JSString* expression = JSVAL_TO_STRING(info->mTimeoutVal);
+    if (info->mTimeoutVal.isString()) {
+      JSString* expression = info->mTimeoutVal.toString();
 
       size_t stringLength;
       const jschar* string = JS_GetStringCharsAndLength(aCx, expression,

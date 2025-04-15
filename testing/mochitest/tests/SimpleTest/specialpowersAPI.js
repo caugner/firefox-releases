@@ -1,40 +1,6 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Special Powers code
- *
- * The Initial Developer of the Original Code is
- * Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Clint Talbert cmtalbert@gmail.com
- *   Joel Maher joel.maher@gmail.com
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK *****/
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 /* This code is loaded in every child process that is started by mochitest in
  * order to be used as a replacement for UniversalXPConnect
  */
@@ -71,8 +37,12 @@ function bindDOMWindowUtils(aWindow) {
   // apply to call them from this privileged scope. This way we don't
   // have to explicitly stub out new methods that appear on
   // nsIDOMWindowUtils.
+  //
+  // Note that this will be a chrome object that is (possibly) exposed to
+  // content. Make sure to define __exposedProps__ for each property to make
+  // sure that it gets through the security membrane.
   var proto = Object.getPrototypeOf(util);
-  var target = {};
+  var target = { __exposedProps__: {} };
   function rebind(desc, prop) {
     if (prop in desc && typeof(desc[prop]) == "function") {
       var oldval = desc[prop];
@@ -91,6 +61,7 @@ function bindDOMWindowUtils(aWindow) {
     rebind(desc, "set");
     rebind(desc, "value");
     Object.defineProperty(target, i, desc);
+    target.__exposedProps__[i] = 'rw';
   }
   return target;
 }
@@ -188,6 +159,26 @@ function crawlProtoChain(obj, fn) {
     return crawlProtoChain(Object.getPrototypeOf(obj), fn);
 };
 
+/*
+ * We want to waive the __exposedProps__ security check for SpecialPowers-wrapped
+ * objects. We do this by creating a proxy singleton that just always returns 'rw'
+ * for any property name.
+ */
+function ExposedPropsWaiverHandler() {
+  // NB: XPConnect denies access if the relevant member of __exposedProps__ is not
+  // enumerable.
+  var _permit = { value: 'rw', writable: false, configurable: false, enumerable: true };
+  return {
+    getOwnPropertyDescriptor: function(name) { return _permit; },
+    getPropertyDescriptor: function(name) { return _permit; },
+    getOwnPropertyNames: function() { throw Error("Can't enumerate ExposedPropsWaiver"); },
+    getPropertyNames: function() { throw Error("Can't enumerate ExposedPropsWaiver"); },
+    enumerate: function() { throw Error("Can't enumerate ExposedPropsWaiver"); },
+    defineProperty: function(name) { throw Error("Can't define props on ExposedPropsWaiver"); },
+    delete: function(name) { throw Error("Can't delete props from ExposedPropsWaiver"); }
+  };
+};
+ExposedPropsWaiver = Proxy.create(ExposedPropsWaiverHandler());
 
 function SpecialPowersHandler(obj) {
   this.wrappedObject = obj;
@@ -200,6 +191,10 @@ SpecialPowersHandler.prototype.doGetPropertyDescriptor = function(name, own) {
   // Handle our special API.
   if (name == "SpecialPowers_wrappedObject")
     return { value: this.wrappedObject, writeable: false, configurable: false, enumerable: false };
+
+  // Handle __exposedProps__.
+  if (name == "__exposedProps__")
+    return { value: ExposedPropsWaiver, writable: false, configurable: false, enumerable: false };
 
   // In general, we want Xray wrappers for content DOM objects, because waiving
   // Xray gives us Xray waiver wrappers that clamp the principal when we cross
@@ -381,8 +376,9 @@ SpecialPowersAPI.prototype = {
    *    properties. This is explained in a comment in the wrapper code above,
    *    and shouldn't be a problem.
    */
-  wrap: wrapPrivileged,
-  unwrap: unwrapPrivileged,
+  wrap: function(obj) { return isWrapper(obj) ? obj : wrapPrivileged(obj); },
+  unwrap: unwrapIfWrapped,
+  isWrapper: isWrapper,
 
   get MockFilePicker() {
     return MockFilePicker
@@ -817,13 +813,13 @@ SpecialPowersAPI.prototype = {
     doPreciseGCandCC();
   },
 
-  hasContentProcesses: function() {
+  isMainProcess: function() {
     try {
-      var rt = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULRuntime);
-      return rt.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT;
-    } catch (e) {
-      return true;
-    }
+      return Cc["@mozilla.org/xre/app-info;1"].
+               getService(Ci.nsIXULRuntime).
+               processType == Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT;
+    } catch (e) { }
+    return true;
   },
 
   _xpcomabi: null,
@@ -1059,5 +1055,68 @@ SpecialPowersAPI.prototype = {
     delete this.isDebugBuild;
     var debug = Cc["@mozilla.org/xpcom/debug;1"].getService(Ci.nsIDebug2);
     return this.isDebugBuild = debug.isDebugBuild;
+  },
+
+  /**
+   * Get the message manager associated with an <iframe mozbrowser>.
+   */
+  getBrowserFrameMessageManager: function(aFrameElement) {
+    return this.wrap(aFrameElement.QueryInterface(Ci.nsIFrameLoaderOwner)
+                                  .frameLoader
+                                  .messageManager);
+  },
+  
+  setFullscreenAllowed: function(document) {
+    var pm = Cc["@mozilla.org/permissionmanager;1"].getService(Ci.nsIPermissionManager);
+    var uri = this.getDocumentURIObject(document);
+    pm.add(uri, "fullscreen", Ci.nsIPermissionManager.ALLOW_ACTION);
+    var obsvc = Cc['@mozilla.org/observer-service;1']
+                   .getService(Ci.nsIObserverService);
+    obsvc.notifyObservers(document, "fullscreen-approved", null);
+  },
+  
+  removeFullscreenAllowed: function(document) {
+    var pm = Cc["@mozilla.org/permissionmanager;1"].getService(Ci.nsIPermissionManager);
+    var uri = this.getDocumentURIObject(document);
+    pm.remove(uri.host, "fullscreen");
+  },
+
+  _getURI: function(urlOrDocument) {
+    if (typeof(urlOrDocument) == "string") {
+      return Cc["@mozilla.org/network/io-service;1"].
+               getService(Ci.nsIIOService).
+               newURI(url, null, null);
+    }
+    // Assume document.
+    return this.getDocumentURIObject(urlOrDocument);
+  },
+
+  addPermission: function(type, allow, urlOrDocument) {
+    let uri = this._getURI(urlOrDocument);
+
+    let permission = allow ?
+                     Ci.nsIPermissionManager.ALLOW_ACTION :
+                     Ci.nsIPermissionManager.DENY_ACTION;
+
+    var msg = {
+      'op': "add",
+      'type': type,
+      'url': uri.spec,
+      'permission': permission
+    };
+
+    this._sendSyncMessage('SPPermissionManager', msg);
+  },
+
+  removePermission: function(type, urlOrDocument) {
+    let uri = this._getURI(urlOrDocument);
+
+    var msg = {
+      'op': "remove",
+      'type': type,
+      'url': uri.spec
+    };
+
+    this._sendSyncMessage('SPPermissionManager', msg);
   }
 };

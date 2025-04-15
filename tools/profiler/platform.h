@@ -24,6 +24,10 @@
 #define LOG(text) printf("Profiler: %s\n", text)
 #endif
 
+#if defined(XP_MACOSX) || defined(XP_WIN)
+#define ENABLE_SPS_LEAF_DATA
+#endif
+
 typedef uint8_t* Address;
 
 // ----------------------------------------------------------------------------
@@ -207,6 +211,10 @@ class Sampler {
   // Whether the sampler is running (that is, consumes resources).
   bool IsActive() const { return active_; }
 
+  // Low overhead way to stop the sampler from ticking
+  bool IsPaused() const { return paused_; }
+  void SetPaused(bool value) { NoBarrier_Store(&paused_, value); }
+
   class PlatformData;
 
   PlatformData* platform_data() { return data_; }
@@ -225,6 +233,7 @@ class Sampler {
 
   const int interval_;
   const bool profiling_;
+  Atomic32 paused_;
   Atomic32 active_;
   PlatformData* data_;  // Platform specific data.
 };

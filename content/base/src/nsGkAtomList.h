@@ -1,39 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2006
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
   This file contains the list of all atoms used by gklayout;
@@ -71,6 +39,7 @@ GK_ATOM(mozeditorbogusnode, "_moz_editor_bogus_node")
 GK_ATOM(mozgeneratedcontentbefore, "_moz_generated_content_before")
 GK_ATOM(mozgeneratedcontentafter, "_moz_generated_content_after")
 GK_ATOM(mozgeneratedcontentimage, "_moz_generated_content_image")
+GK_ATOM(mozquote, "_moz_quote")
 GK_ATOM(_moz_original_size, "_moz_original_size")
 GK_ATOM(_moz_target, "_moz_target")
 GK_ATOM(_moz_type, "_moz-type")
@@ -107,6 +76,7 @@ GK_ATOM(ancestor, "ancestor")
 GK_ATOM(ancestorOrSelf, "ancestor-or-self")
 GK_ATOM(_and, "and")
 GK_ATOM(any, "any")
+GK_ATOM(mozapp, "mozapp")
 GK_ATOM(applet, "applet")
 GK_ATOM(applyImports, "apply-imports")
 GK_ATOM(applyTemplates, "apply-templates")
@@ -1362,6 +1332,7 @@ GK_ATOM(unicode_bidi, "unicode-bidi")
 GK_ATOM(userSpaceOnUse, "userSpaceOnUse")
 GK_ATOM(view, "view")
 GK_ATOM(viewBox, "viewBox")
+GK_ATOM(viewTarget, "viewTarget")
 GK_ATOM(vkern, "vkern")
 GK_ATOM(word_spacing, "word-spacing")
 GK_ATOM(x, "x")
@@ -1375,6 +1346,7 @@ GK_ATOM(y2, "y2")
 GK_ATOM(yChannelSelector, "yChannelSelector")
 GK_ATOM(z, "z")
 GK_ATOM(zoomAndPan, "zoomAndPan")
+GK_ATOM(vector_effect, "vector-effect")
 
 GK_ATOM(accumulate, "accumulate")
 GK_ATOM(additive, "additive")
@@ -1555,7 +1527,6 @@ GK_ATOM(matrixrow_, "matrixrow")
 GK_ATOM(maxsize_, "maxsize")
 GK_ATOM(mean_, "mean")
 GK_ATOM(median_, "median")
-GK_ATOM(mediummathspace_, "mediummathspace")
 GK_ATOM(menclose_, "menclose")
 GK_ATOM(merror_, "merror")
 GK_ATOM(mfenced_, "mfenced")
@@ -1599,13 +1570,6 @@ GK_ATOM(mtr_, "mtr")
 GK_ATOM(munder_, "munder")
 GK_ATOM(munderover_, "munderover")
 GK_ATOM(naturalnumbers_, "naturalnumbers")
-GK_ATOM(negativemediummathspace_, "negativemediummathspace")
-GK_ATOM(negativethickmathspace_, "negativethickmathspace")
-GK_ATOM(negativethinmathspace_, "negativethinmathspace")
-GK_ATOM(negativeverythickmathspace_, "negativeverythickmathspace")
-GK_ATOM(negativeverythinmathspace_, "negativeverythinmathspace")
-GK_ATOM(negativeveryverythickmathspace_, "negativeveryverythickmathspace")
-GK_ATOM(negativeveryverythinmathspace_, "negativeveryverythinmathspace")
 GK_ATOM(neq_, "neq")
 GK_ATOM(notanumber_, "notanumber")
 GK_ATOM(notation_, "notation")
@@ -1667,8 +1631,6 @@ GK_ATOM(symmetric_, "symmetric")
 GK_ATOM(tanh_, "tanh")
 GK_ATOM(tan_, "tan")
 GK_ATOM(tendsto_, "tendsto")
-GK_ATOM(thickmathspace_, "thickmathspace")
-GK_ATOM(thinmathspace_, "thinmathspace")
 GK_ATOM(times_, "times")
 GK_ATOM(transpose_, "transpose")
 GK_ATOM(union_, "union")
@@ -1676,10 +1638,6 @@ GK_ATOM(uplimit_, "uplimit")
 GK_ATOM(variance_, "variance")
 GK_ATOM(vectorproduct_, "vectorproduct")
 GK_ATOM(vector_, "vector")
-GK_ATOM(verythickmathspace_, "verythickmathspace")
-GK_ATOM(verythinmathspace_, "verythinmathspace")
-GK_ATOM(veryverythickmathspace_, "veryverythickmathspace")
-GK_ATOM(veryverythinmathspace_, "veryverythinmathspace")
 GK_ATOM(voffset_, "voffset")
 GK_ATOM(xref_, "xref")
 GK_ATOM(math, "math") // the only one without an underscore
@@ -1711,8 +1669,13 @@ GK_ATOM(onMozTouchMove, "onMozTouchMove")
 GK_ATOM(onMozTouchUp, "onMozTouchUp")
 
 // orientation support
-GK_ATOM(ondeviceorientation, "ondeviceorientation")
 GK_ATOM(ondevicemotion, "ondevicemotion")
+GK_ATOM(ondeviceorientation, "ondeviceorientation")
+GK_ATOM(ondeviceproximity, "ondeviceproximity")
+GK_ATOM(onuserproximity, "onuserproximity")
+
+// light sensor support
+GK_ATOM(ondevicelight, "ondevicelight")
 
 //---------------------------------------------------------------------------
 // Special atoms
@@ -1912,6 +1875,7 @@ GK_ATOM(az, "az")
 GK_ATOM(ba, "ba")
 GK_ATOM(crh, "crh")
 GK_ATOM(nl, "nl")
+GK_ATOM(el, "el")
 
 // Names for editor transactions
 GK_ATOM(TypingTxnName, "Typing")

@@ -2,115 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict"
+"use strict";
 
 /* static functions */
-let DEBUG = 0;
+let DEBUG = false;
 if (DEBUG)
-  debug = function (s) { dump("-*- SettingsManager: " + s + "\n"); }
+  debug = function (s) { dump("-*- SettingsManager: " + s + "\n"); };
 else
-  debug = function (s) {}
-
-function Queue() {
-  this._queue = [];
-  this._index = 0;
-}
-
-Queue.prototype = {
-  getLength: function() { return (this._queue.length - this._index); },
-
-  isEmpty: function() { return (this._queue.length == 0); },
-
-  enqueue: function(item) { this._queue.push(item); },
-
-  dequeue: function() {
-    if(this.isEmpty())
-      return undefined;
-
-    var item = this._queue[this._index];
-    if (++this._index * 2 >= this._queue.length){
-      this._queue  = this._queue.slice(this._index);
-      this._index = 0;
-    }
-    return item;
-  }
-}
-
-const DB_NAME = "settings";
-const DB_VERSION = 1;
-const STORE_NAME = "settings";
-
-function SettingsDB() {}
-
-SettingsDB.prototype = {
-
-  db: null,
-
-  close: function close() {
-    if (this.db)
-      this.db.close();
-  },
-
-  /**
-   * Prepare the database. This may include opening the database and upgrading
-   * it to the latest schema version.
-   * 
-   * @return (via callback) a database ready for use.
-   */
-  ensureDB: function ensureDB(aSuccessCb, aFailureCb, aGlobal) {
-    if (this.db) {
-      debug("ensureDB: already have a database, returning early.");
-      return;
-    }
-
-    let self = this;
-    debug("try to open database:" + DB_NAME + " " + DB_VERSION + " " + this.db);
-    let req = aGlobal.mozIndexedDB.open(DB_NAME, DB_VERSION);
-    req.onsuccess = function (event) {
-      debug("Opened database:", DB_NAME, DB_VERSION);
-      self.db = event.target.result;
-      self.db.onversionchange = function(event) {
-        debug("WARNING: DB modified from a different window.");
-      }
-      aSuccessCb();
-    };
-    req.onupgradeneeded = function (aEvent) {
-      debug("Database needs upgrade:" + DB_NAME + aEvent.oldVersion + aEvent.newVersion);
-      debug("Correct new database version:" + aEvent.newVersion == DB_VERSION);
-
-      let db = aEvent.target.result;
-      switch (aEvent.oldVersion) {
-        case 0:
-          debug("New database");
-          self.createSchema(db);
-          break;
-
-        default:
-          debug("No idea what to do with old database version:" + aEvent.oldVersion);
-          aFailureCb(aEvent.target.errorMessage);
-          break;
-      }
-    };
-    req.onerror = function (aEvent) {
-      debug("Failed to open database:", DB_NAME);
-      aFailureCb(aEvent.target.errorMessage);
-    };
-    req.onblocked = function (aEvent) {
-      debug("Opening database request is blocked.");
-    };
-  },
-
-  createSchema: function createSchema(aDb) {
-    let objectStore = aDb.createObjectStore(STORE_NAME, {keyPath: "settingName"});
-    objectStore.createIndex("settingValue", "settingValue", { unique: false });
-    debug("Created object stores and indexes");
-  }
-}
+  debug = function (s) {};
 
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
 
+Cu.import("resource://gre/modules/SettingsQueue.jsm");
+Cu.import("resource://gre/modules/SettingsDB.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
@@ -132,7 +38,7 @@ SettingsLock.prototype = {
   process: function process() {
     let lock = this;
     lock._open = false;
-    let store = lock._transaction.objectStore(STORE_NAME);
+    let store = lock._transaction.objectStore(SETTINGSSTORE_NAME);
 
     while (!lock._requests.isEmpty()) {
       let info = lock._requests.dequeue();
@@ -178,7 +84,8 @@ SettingsLock.prototype = {
             req = store.getAll(info.name);
           }
           req.onsuccess = function(event) {
-            debug("Request successful. Record count:" + event.target.result.length);
+            debug("Request for '" + info.name + "' successful. " + 
+                  "Record count: " + event.target.result.length);
             debug("result: " + JSON.stringify(event.target.result));
             var result = {};
             for (var i in event.target.result)
@@ -197,11 +104,11 @@ SettingsLock.prototype = {
   },
 
   createTransactionAndProcess: function() {
-    if (this._settingsManager._settingsDB.db) {
+    if (this._settingsManager._settingsDB._db) {
       var lock;
       while (lock = this._settingsManager._locks.dequeue()) {
         if (!lock._transaction) {
-          lock._transaction = lock._settingsManager._settingsDB.db.transaction(STORE_NAME, "readwrite");
+          lock._transaction = lock._settingsManager._settingsDB._db.transaction(SETTINGSSTORE_NAME, "readwrite");
         }
         lock.process();
       }
@@ -211,8 +118,10 @@ SettingsLock.prototype = {
   },
 
   get: function get(aName) {
-    if (!this._open)
+    if (!this._open) {
+      dump("Settings lock not open!\n");
       throw Components.results.NS_ERROR_ABORT;
+    }
 
     if (this._settingsManager.hasReadPrivileges || this._settingsManager.hasReadWritePrivileges) {
       let req = Services.DOMRequest.createRequest(this._settingsManager._window);
@@ -226,8 +135,10 @@ SettingsLock.prototype = {
   },
 
   set: function set(aSettings) {
-    if (!this._open)
+    if (!this._open) {
+      dump("Settings lock not open!\n");
       throw Components.results.NS_ERROR_ABORT;
+    }
 
     if (this._settingsManager.hasReadWritePrivileges) {
       let req = Services.DOMRequest.createRequest(this._settingsManager._window);
@@ -242,8 +153,10 @@ SettingsLock.prototype = {
   },
 
   clear: function clear() {
-    if (!this._open)
+    if (!this._open) {
+      dump("Settings lock not open!\n");
       throw Components.results.NS_ERROR_ABORT;
+    }
 
     if (this._settingsManager.hasReadWritePrivileges) {
       let req = Services.DOMRequest.createRequest(this._settingsManager._window);
@@ -278,6 +191,7 @@ function SettingsManager()
   var idbManager = Components.classes["@mozilla.org/dom/indexeddb/manager;1"].getService(Ci.nsIIndexedDatabaseManager);
   idbManager.initWindowless(myGlobal);
   this._settingsDB = new SettingsDB();
+  this._settingsDB.init(myGlobal);
 }
 
 SettingsManager.prototype = {

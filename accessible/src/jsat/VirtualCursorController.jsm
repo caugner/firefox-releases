@@ -18,16 +18,20 @@ var gAccRetrieval = Cc['@mozilla.org/accessibleRetrieval;1'].
   getService(Ci.nsIAccessibleRetrieval);
 
 var VirtualCursorController = {
+  NOT_EDITABLE: 0,
+  SINGLE_LINE_EDITABLE: 1,
+  MULTI_LINE_EDITABLE: 2,
+
   attach: function attach(aWindow) {
     this.chromeWin = aWindow;
-    this.chromeWin.document.addEventListener('keypress', this.onkeypress, true);
+    this.chromeWin.document.addEventListener('keypress', this, true);
   },
 
   detach: function detach() {
-    this.chromeWin.document.removeEventListener('keypress', this.onkeypress);
+    this.chromeWin.document.removeEventListener('keypress', this, true);
   },
 
-  getBrowserApp: function getBrowserApp() {
+  _getBrowserApp: function _getBrowserApp() {
     switch (Services.appinfo.OS) {
       case 'Android':
         return this.chromeWin.BrowserApp;
@@ -36,32 +40,59 @@ var VirtualCursorController = {
     }
   },
 
-  onkeypress: function onkeypress(aEvent) {
-    let document = VirtualCursorController.getBrowserApp().
-      selectedBrowser.contentDocument;
-
-    dump('keypress ' + aEvent.keyCode + '\n');
+  handleEvent: function handleEvent(aEvent) {
+    let document = this._getBrowserApp().selectedBrowser.contentDocument;
+    let target = aEvent.target;
 
     switch (aEvent.keyCode) {
-      case aEvent.DOM_END:
-        VirtualCursorController.moveForward(document, true);
+      case aEvent.DOM_VK_END:
+        this.moveForward(document, true);
         break;
-      case aEvent.DOM_HOME:
-        VirtualCursorController.moveBackward(document, true);
+      case aEvent.DOM_VK_HOME:
+        this.moveBackward(document, true);
         break;
-      case aEvent.DOM_VK_DOWN:
-        VirtualCursorController.moveForward(document, aEvent.shiftKey);
+      case aEvent.DOM_VK_RIGHT:
+        if (this._isEditableText(target)) {
+          if (target.selectionEnd != target.textLength)
+            // Don't move forward if caret is not at end of entry.
+            // XXX: Fix for rtl
+            return;
+          else
+            target.blur();
+        }
+        this.moveForward(document, aEvent.shiftKey);
+        break;
+      case aEvent.DOM_VK_LEFT:
+        if (this._isEditableText(target)) {
+          if (target.selectionEnd != 0)
+            // Don't move backward if caret is not at start of entry.
+            // XXX: Fix for rtl
+            return;
+          else
+            target.blur();
+        }
+        this.moveBackward(document, aEvent.shiftKey);
         break;
       case aEvent.DOM_VK_UP:
-        VirtualCursorController.moveBackward(document, aEvent.shiftKey);
+        if (this._isEditableText(target) == this.MULTI_LINE_EDITABLE) {
+          if (target.selectionEnd != 0)
+            // Don't blur content if caret is not at start of text area.
+            return;
+          else
+            target.blur();
+        }
+
+        if (Services.appinfo.OS == 'Android')
+          // Return focus to native Android browser chrome.
+          Cc['@mozilla.org/android/bridge;1'].
+            getService(Ci.nsIAndroidBridge).handleGeckoMessage(
+              JSON.stringify({ gecko: { type: 'ToggleChrome:Focus' } }));
         break;
       case aEvent.DOM_VK_RETURN:
-        //It is true that desktop does not map the kp enter key to ENTER.
-        //So for desktop we require a ctrl+return instead.
-        if (Services.appinfo.OS == 'Android' || !aEvent.ctrlKey)
-          return;
       case aEvent.DOM_VK_ENTER:
-        VirtualCursorController.activateCurrent(document);
+        if (this._isEditableText(target))
+          return;
+        this.activateCurrent(document);
         break;
       default:
         return;
@@ -71,31 +102,43 @@ var VirtualCursorController = {
     aEvent.stopPropagation();
   },
 
+  _isEditableText: function _isEditableText(aElement) {
+    // XXX: Support contentEditable and design mode
+    if (aElement instanceof Ci.nsIDOMHTMLInputElement &&
+        aElement.mozIsTextField(false))
+      return this.SINGLE_LINE_EDITABLE;
+
+    if (aElement instanceof Ci.nsIDOMHTMLTextAreaElement)
+      return this.MULTI_LINE_EDITABLE;
+
+    return this.NOT_EDITABLE;
+  },
+
   moveForward: function moveForward(document, last) {
     let virtualCursor = this.getVirtualCursor(document);
     if (last) {
       virtualCursor.moveLast(this.SimpleTraversalRule);
     } else {
-      virtualCursor.moveNext(this.SimpleTraversalRule);
+      try {
+        virtualCursor.moveNext(this.SimpleTraversalRule);
+      } catch (x) {
+        this.moveCursorToObject(
+          gAccRetrieval.getAccessibleFor(document.activeElement));
+      }
     }
   },
 
   moveBackward: function moveBackward(document, first) {
     let virtualCursor = this.getVirtualCursor(document);
-
     if (first) {
       virtualCursor.moveFirst(this.SimpleTraversalRule);
-      return
-
-    }
-
-    if (!virtualCursor.movePrevious(this.SimpleTraversalRule) &&
-        Services.appinfo.OS == 'Android') {
-      // Return focus to browser chrome, which in Android is a native widget.
-      Cc['@mozilla.org/android/bridge;1'].
-        getService(Ci.nsIAndroidBridge).handleGeckoMessage(
-          JSON.stringify({ gecko: { type: 'ToggleChrome:Focus' } }));
-      virtualCursor.position = null;
+    } else {
+      try {
+        virtualCursor.movePrevious(this.SimpleTraversalRule);
+      } catch (x) {
+        this.moveCursorToObject(
+          gAccRetrieval.getAccessibleFor(document.activeElement));
+      }
     }
   },
 
@@ -103,8 +146,28 @@ var VirtualCursorController = {
     let virtualCursor = this.getVirtualCursor(document);
     let acc = virtualCursor.position;
 
-    if (acc.numActions > 0)
+    if (acc.actionCount > 0) {
       acc.doAction(0);
+    } else {
+      // XXX Some mobile widget sets do not expose actions properly
+      // (via ARIA roles, etc.), so we need to generate a click.
+      // Could possibly be made simpler in the future. Maybe core
+      // engine could expose nsCoreUtiles::DispatchMouseEvent()?
+      let docAcc = gAccRetrieval.getAccessibleFor(this.chromeWin.document);
+      let docX = {}, docY = {}, docW = {}, docH = {};
+      docAcc.getBounds(docX, docY, docW, docH);
+
+      let objX = {}, objY = {}, objW = {}, objH = {};
+      acc.getBounds(objX, objY, objW, objH);
+
+      let x = Math.round((objX.value - docX.value) + objW.value/2);
+      let y = Math.round((objY.value - docY.value) + objH.value/2);
+
+      let cwu = this.chromeWin.QueryInterface(Ci.nsIInterfaceRequestor).
+        getInterface(Ci.nsIDOMWindowUtils);
+      cwu.sendMouseEventToWindow('mousedown', x, y, 0, 1, 0, false);
+      cwu.sendMouseEventToWindow('mouseup', x, y, 0, 1, 0, false);
+    }
   },
 
   getVirtualCursor: function getVirtualCursor(document) {
@@ -112,32 +175,85 @@ var VirtualCursorController = {
       QueryInterface(Ci.nsIAccessibleCursorable).virtualCursor;
   },
 
+  moveCursorToObject: function moveCursorToObject(aAccessible, aRule) {
+    let doc = aAccessible.document;
+    while (doc) {
+      let vc = null;
+      try {
+        vc = doc.QueryInterface(Ci.nsIAccessibleCursorable).virtualCursor;
+      } catch (x) {
+        doc = doc.parentDocument;
+        continue;
+      }
+      if (vc)
+        vc.moveNext(aRule || this.SimpleTraversalRule, aAccessible, true);
+      break;
+    }
+  },
+
   SimpleTraversalRule: {
-    getMatchRoles: function(aRules) {
-      aRules.value = [];
-      return 0;
+    getMatchRoles: function SimpleTraversalRule_getmatchRoles(aRules) {
+      aRules.value = this._matchRoles;
+      return this._matchRoles.length;
     },
 
     preFilter: Ci.nsIAccessibleTraversalRule.PREFILTER_DEFUNCT |
       Ci.nsIAccessibleTraversalRule.PREFILTER_INVISIBLE,
 
-    match: function(aAccessible) {
-      let rv = Ci.nsIAccessibleTraversalRule.FILTER_IGNORE;
-      if (aAccessible.childCount == 0) {
-        // TODO: Find a better solution for ROLE_STATICTEXT.
-        // Right now it helps filter list bullets, but it is also used
-        // in CSS generated content.
-        let ignoreRoles = [Ci.nsIAccessibleRole.ROLE_WHITESPACE,
-                           Ci.nsIAccessibleRole.ROLE_STATICTEXT];
-        let state = {};
-        aAccessible.getState(state, {});
-        if ((state.value & Ci.nsIAccessibleStates.STATE_FOCUSABLE) ||
-          (aAccessible.name && ignoreRoles.indexOf(aAccessible.role) < 0))
-          rv = Ci.nsIAccessibleTraversalRule.FILTER_MATCH;
+    match: function SimpleTraversalRule_match(aAccessible) {
+      switch (aAccessible.role) {
+      case Ci.nsIAccessibleRole.ROLE_COMBOBOX:
+        // We don't want to ignore the subtree because this is often
+        // where the list box hangs out.
+        return Ci.nsIAccessibleTraversalRule.FILTER_MATCH;
+      case Ci.nsIAccessibleRole.ROLE_TEXT_LEAF:
+        {
+          // Nameless text leaves are boring, skip them.
+          let name = aAccessible.name;
+          if (name && name.trim())
+            return Ci.nsIAccessibleTraversalRule.FILTER_MATCH;
+          else
+            return Ci.nsIAccessibleTraversalRule.FILTER_IGNORE;
         }
-      return rv;
+      case Ci.nsIAccessibleRole.ROLE_LINK:
+        // If the link has children we should land on them instead.
+        // Image map links don't have children so we need to match those.
+        if (aAccessible.childCount == 0)
+          return Ci.nsIAccessibleTraversalRule.FILTER_MATCH;
+        else
+          return Ci.nsIAccessibleTraversalRule.FILTER_IGNORE;
+      default:
+        // Ignore the subtree, if there is one. So that we don't land on
+        // the same content that was already presented by its parent.
+        return Ci.nsIAccessibleTraversalRule.FILTER_MATCH |
+          Ci.nsIAccessibleTraversalRule.FILTER_IGNORE_SUBTREE;
+      }
     },
 
-    QueryInterface: XPCOMUtils.generateQI([Ci.nsIAccessibleTraversalRule])
+    QueryInterface: XPCOMUtils.generateQI([Ci.nsIAccessibleTraversalRule]),
+
+    _matchRoles: [
+      Ci.nsIAccessibleRole.ROLE_MENUITEM,
+      Ci.nsIAccessibleRole.ROLE_LINK,
+      Ci.nsIAccessibleRole.ROLE_PAGETAB,
+      Ci.nsIAccessibleRole.ROLE_GRAPHIC,
+      // XXX: Find a better solution for ROLE_STATICTEXT.
+      // It allows to filter list bullets but at the same time it
+      // filters CSS generated content too as an unwanted side effect.
+      // Ci.nsIAccessibleRole.ROLE_STATICTEXT,
+      Ci.nsIAccessibleRole.ROLE_TEXT_LEAF,
+      Ci.nsIAccessibleRole.ROLE_PUSHBUTTON,
+      Ci.nsIAccessibleRole.ROLE_CHECKBUTTON,
+      Ci.nsIAccessibleRole.ROLE_RADIOBUTTON,
+      Ci.nsIAccessibleRole.ROLE_COMBOBOX,
+      Ci.nsIAccessibleRole.ROLE_PROGRESSBAR,
+      Ci.nsIAccessibleRole.ROLE_BUTTONDROPDOWN,
+      Ci.nsIAccessibleRole.ROLE_BUTTONMENU,
+      Ci.nsIAccessibleRole.ROLE_CHECK_MENU_ITEM,
+      Ci.nsIAccessibleRole.ROLE_PASSWORD_TEXT,
+      Ci.nsIAccessibleRole.ROLE_RADIO_MENU_ITEM,
+      Ci.nsIAccessibleRole.ROLE_TOGGLE_BUTTON,
+      Ci.nsIAccessibleRole.ROLE_ENTRY
+    ]
   }
 };

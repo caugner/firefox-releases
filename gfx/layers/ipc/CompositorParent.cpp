@@ -1,46 +1,13 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set sw=2 ts=2 et tw=80 : */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Content App.
- *
- * The Initial Developer of the Original Code is
- *   The Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Benoit Girard <bgirard@mozilla.com>
- *   Ali Juma <ajuma@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "CompositorParent.h"
 #include "RenderTrace.h"
 #include "ShadowLayersParent.h"
+#include "BasicLayers.h"
 #include "LayerManagerOGL.h"
 #include "nsIWidget.h"
 #include "nsGkAtoms.h"
@@ -56,17 +23,36 @@ using base::Thread;
 namespace mozilla {
 namespace layers {
 
-CompositorParent::CompositorParent(nsIWidget* aWidget, base::Thread* aCompositorThread)
-  : mCompositorThread(aCompositorThread)
-  , mWidget(aWidget)
+CompositorParent::CompositorParent(nsIWidget* aWidget, MessageLoop* aMsgLoop,
+                                   PlatformThreadId aThreadID, bool aRenderToEGLSurface,
+                                   int aSurfaceWidth, int aSurfaceHeight)
+  : mWidget(aWidget)
   , mCurrentCompositeTask(NULL)
   , mPaused(false)
+  , mXScale(1.0)
+  , mYScale(1.0)
   , mIsFirstPaint(false)
   , mLayersUpdated(false)
+  , mCompositorLoop(aMsgLoop)
+  , mThreadID(aThreadID)
+  , mRenderToEGLSurface(aRenderToEGLSurface)
+  , mEGLSurfaceSize(aSurfaceWidth, aSurfaceHeight)
   , mPauseCompositionMonitor("PauseCompositionMonitor")
   , mResumeCompositionMonitor("ResumeCompositionMonitor")
 {
   MOZ_COUNT_CTOR(CompositorParent);
+}
+
+MessageLoop*
+CompositorParent::CompositorLoop()
+{
+  return mCompositorLoop;
+}
+
+PlatformThreadId
+CompositorParent::CompositorThreadID()
+{
+  return mThreadID;
 }
 
 CompositorParent::~CompositorParent()
@@ -120,13 +106,13 @@ void
 CompositorParent::ScheduleRenderOnCompositorThread()
 {
   CancelableTask *renderTask = NewRunnableMethod(this, &CompositorParent::ScheduleComposition);
-  mCompositorThread->message_loop()->PostTask(FROM_HERE, renderTask);
+  CompositorLoop()->PostTask(FROM_HERE, renderTask);
 }
 
 void
 CompositorParent::PauseComposition()
 {
-  NS_ABORT_IF_FALSE(mCompositorThread->thread_id() == PlatformThread::CurrentId(),
+  NS_ABORT_IF_FALSE(CompositorThreadID() == PlatformThread::CurrentId(),
                     "PauseComposition() can only be called on the compositor thread");
 
   mozilla::MonitorAutoLock lock(mPauseCompositionMonitor);
@@ -146,7 +132,7 @@ CompositorParent::PauseComposition()
 void
 CompositorParent::ResumeComposition()
 {
-  NS_ABORT_IF_FALSE(mCompositorThread->thread_id() == PlatformThread::CurrentId(),
+  NS_ABORT_IF_FALSE(CompositorThreadID() == PlatformThread::CurrentId(),
                     "ResumeComposition() can only be called on the compositor thread");
 
   mozilla::MonitorAutoLock lock(mResumeCompositionMonitor);
@@ -157,14 +143,28 @@ CompositorParent::ResumeComposition()
   static_cast<LayerManagerOGL*>(mLayerManager.get())->gl()->RenewSurface();
 #endif
 
+  Composite();
+
   // if anyone's waiting to make sure that composition really got resumed, tell them
   lock.NotifyAll();
 }
 
 void
+CompositorParent::SetEGLSurfaceSize(int width, int height)
+{
+  NS_ASSERTION(mRenderToEGLSurface, "Compositor created without RenderToEGLSurface ar provided");
+  mEGLSurfaceSize.SizeTo(width, height);
+  if (mLayerManager) {
+    static_cast<LayerManagerOGL*>(mLayerManager.get())->SetSurfaceSize(mEGLSurfaceSize.width, mEGLSurfaceSize.height);
+  }
+}
+
+void
 CompositorParent::ResumeCompositionAndResize(int width, int height)
 {
-  static_cast<LayerManagerOGL*>(mLayerManager.get())->SetSurfaceSize(width, height);
+  mWidgetSize.width = width;
+  mWidgetSize.height = height;
+  SetEGLSurfaceSize(width, height);
   ResumeComposition();
 }
 
@@ -179,7 +179,7 @@ CompositorParent::SchedulePauseOnCompositorThread()
 
   CancelableTask *pauseTask = NewRunnableMethod(this,
                                                 &CompositorParent::PauseComposition);
-  mCompositorThread->message_loop()->PostTask(FROM_HERE, pauseTask);
+  CompositorLoop()->PostTask(FROM_HERE, pauseTask);
 
   // Wait until the pause has actually been processed by the compositor thread
   lock.Wait();
@@ -192,10 +192,20 @@ CompositorParent::ScheduleResumeOnCompositorThread(int width, int height)
 
   CancelableTask *resumeTask =
     NewRunnableMethod(this, &CompositorParent::ResumeCompositionAndResize, width, height);
-  mCompositorThread->message_loop()->PostTask(FROM_HERE, resumeTask);
+  CompositorLoop()->PostTask(FROM_HERE, resumeTask);
 
   // Wait until the resume has actually been processed by the compositor thread
   lock.Wait();
+}
+
+void
+CompositorParent::ScheduleTask(CancelableTask* task, int time)
+{
+  if (time == 0) {
+    MessageLoop::current()->PostTask(FROM_HERE, task);
+  } else {
+    MessageLoop::current()->PostDelayedTask(FROM_HERE, task, time);
+  }
 }
 
 void
@@ -222,9 +232,9 @@ CompositorParent::ScheduleComposition()
 #ifdef COMPOSITOR_PERFORMANCE_WARNING
     mExpectedComposeTime = mozilla::TimeStamp::Now() + TimeDuration::FromMilliseconds(15 - delta.ToMilliseconds());
 #endif
-    MessageLoop::current()->PostDelayedTask(FROM_HERE, mCurrentCompositeTask, 15 - delta.ToMilliseconds());
+    ScheduleTask(mCurrentCompositeTask, 15 - delta.ToMilliseconds());
   } else {
-    MessageLoop::current()->PostTask(FROM_HERE, mCurrentCompositeTask);
+    ScheduleTask(mCurrentCompositeTask, 0);
   }
 }
 
@@ -239,7 +249,7 @@ CompositorParent::SetTransformation(float aScale, nsIntPoint aScrollOffset)
 void
 CompositorParent::Composite()
 {
-  NS_ABORT_IF_FALSE(mCompositorThread->thread_id() == PlatformThread::CurrentId(),
+  NS_ABORT_IF_FALSE(CompositorThreadID() == PlatformThread::CurrentId(),
                     "Composite can only be called on the compositor thread");
   mCurrentCompositeTask = NULL;
 
@@ -249,9 +259,7 @@ CompositorParent::Composite()
     return;
   }
 
-#ifdef MOZ_WIDGET_ANDROID
   TransformShadowTree();
-#endif
 
   Layer* aLayer = mLayerManager->GetRoot();
   mozilla::layers::RenderTraceLayers(aLayer, "0000");
@@ -266,7 +274,6 @@ CompositorParent::Composite()
 #endif
 }
 
-#ifdef MOZ_WIDGET_ANDROID
 // Do a breadth-first search to find the first layer in the tree that is
 // scrollable.
 Layer*
@@ -297,7 +304,38 @@ CompositorParent::GetPrimaryScrollableLayer()
 
   return root;
 }
-#endif
+
+static void
+Translate2D(gfx3DMatrix& aTransform, const gfxPoint& aOffset)
+{
+  aTransform._41 += aOffset.x;
+  aTransform._42 += aOffset.y;
+}
+
+void
+CompositorParent::TranslateFixedLayers(Layer* aLayer,
+                                       const gfxPoint& aTranslation)
+{
+  if (aLayer->GetIsFixedPosition() &&
+      !aLayer->GetParent()->GetIsFixedPosition()) {
+    gfx3DMatrix layerTransform = aLayer->GetTransform();
+    Translate2D(layerTransform, aTranslation);
+    ShadowLayer* shadow = aLayer->AsShadowLayer();
+    shadow->SetShadowTransform(layerTransform);
+
+    const nsIntRect* clipRect = aLayer->GetClipRect();
+    if (clipRect) {
+      nsIntRect transformedClipRect(*clipRect);
+      transformedClipRect.MoveBy(aTranslation.x, aTranslation.y);
+      shadow->SetShadowClipRect(&transformedClipRect);
+    }
+  }
+
+  for (Layer* child = aLayer->GetFirstChild();
+       child; child = child->GetNextSibling()) {
+    TranslateFixedLayers(child, aTranslation);
+  }
+}
 
 // Go down shadow layer tree, setting properties to match their non-shadow
 // counterparts.
@@ -319,43 +357,40 @@ SetShadowProperties(Layer* aLayer)
 void
 CompositorParent::TransformShadowTree()
 {
-#ifdef MOZ_WIDGET_ANDROID
   Layer* layer = GetPrimaryScrollableLayer();
   ShadowLayer* shadow = layer->AsShadowLayer();
   ContainerLayer* container = layer->AsContainerLayer();
 
-  const FrameMetrics* metrics = &container->GetFrameMetrics();
+  const FrameMetrics& metrics = container->GetFrameMetrics();
   const gfx3DMatrix& rootTransform = mLayerManager->GetRoot()->GetTransform();
   const gfx3DMatrix& currentTransform = layer->GetTransform();
 
   float rootScaleX = rootTransform.GetXScale();
   float rootScaleY = rootTransform.GetYScale();
 
-  if (mIsFirstPaint && metrics) {
-    mContentRect = metrics->mContentRect;
-    mozilla::AndroidBridge::Bridge()->SetFirstPaintViewport(metrics->mViewportScrollOffset,
-                                                            1/rootScaleX,
-                                                            mContentRect,
-                                                            metrics->mCSSContentRect);
+  if (mIsFirstPaint) {
+    mContentRect = metrics.mContentRect;
+    SetFirstPaintViewport(metrics.mViewportScrollOffset,
+                          1/rootScaleX,
+                          mContentRect,
+                          metrics.mCSSContentRect);
     mIsFirstPaint = false;
-  } else if (metrics && !metrics->mContentRect.IsEqualEdges(mContentRect)) {
-    mContentRect = metrics->mContentRect;
-    mozilla::AndroidBridge::Bridge()->SetPageRect(1/rootScaleX, mContentRect, metrics->mCSSContentRect);
+  } else if (!metrics.mContentRect.IsEqualEdges(mContentRect)) {
+    mContentRect = metrics.mContentRect;
+    SetPageRect(1/rootScaleX, mContentRect, metrics.mCSSContentRect);
   }
 
   // We synchronise the viewport information with Java after sending the above
   // notifications, so that Java can take these into account in its response.
-  if (metrics) {
-    // Calculate the absolute display port to send to Java
-    nsIntRect displayPort = metrics->mDisplayPort;
-    nsIntPoint scrollOffset = metrics->mViewportScrollOffset;
-    displayPort.x += scrollOffset.x;
-    displayPort.y += scrollOffset.y;
+  // Calculate the absolute display port to send to Java
+  nsIntRect displayPort = metrics.mDisplayPort;
+  nsIntPoint scrollOffset = metrics.mViewportScrollOffset;
+  displayPort.x += scrollOffset.x;
+  displayPort.y += scrollOffset.y;
 
-    mozilla::AndroidBridge::Bridge()->SyncViewportInfo(displayPort, 1/rootScaleX, mLayersUpdated,
-                                                       mScrollOffset, mXScale, mYScale);
-    mLayersUpdated = false;
-  }
+  SyncViewportInfo(displayPort, 1/rootScaleX, mLayersUpdated,
+                   mScrollOffset, mXScale, mYScale);
+  mLayersUpdated = false;
 
   // Handle transformations for asynchronous panning and zooming. We determine the
   // zoom used by Gecko from the transformation set on the root layer, and we
@@ -363,23 +398,56 @@ CompositorParent::TransformShadowTree()
   // primary scrollable layer. We compare this to the desired zoom and scroll
   // offset in the view transform we obtained from Java in order to compute the
   // transformation we need to apply.
-  if (metrics) {
-    float tempScaleDiffX = rootScaleX * mXScale;
-    float tempScaleDiffY = rootScaleY * mYScale;
+  float tempScaleDiffX = rootScaleX * mXScale;
+  float tempScaleDiffY = rootScaleY * mYScale;
 
-    nsIntPoint metricsScrollOffset(0, 0);
-    if (metrics->IsScrollable())
-      metricsScrollOffset = metrics->mViewportScrollOffset;
+  nsIntPoint metricsScrollOffset(0, 0);
+  if (metrics.IsScrollable())
+    metricsScrollOffset = metrics.mViewportScrollOffset;
 
-    nsIntPoint scrollCompensation(
-      (mScrollOffset.x / tempScaleDiffX - metricsScrollOffset.x) * mXScale,
-      (mScrollOffset.y / tempScaleDiffY - metricsScrollOffset.y) * mYScale);
-    ViewTransform treeTransform(-scrollCompensation, mXScale, mYScale);
-    shadow->SetShadowTransform(gfx3DMatrix(treeTransform) * currentTransform);
-  } else {
-    ViewTransform treeTransform(nsIntPoint(0,0), mXScale, mYScale);
-    shadow->SetShadowTransform(gfx3DMatrix(treeTransform) * currentTransform);
-  }
+  nsIntPoint scrollCompensation(
+    (mScrollOffset.x / tempScaleDiffX - metricsScrollOffset.x) * mXScale,
+    (mScrollOffset.y / tempScaleDiffY - metricsScrollOffset.y) * mYScale);
+  ViewTransform treeTransform(-scrollCompensation, mXScale, mYScale);
+  shadow->SetShadowTransform(gfx3DMatrix(treeTransform) * currentTransform);
+
+  // Alter the scroll offset so that fixed position layers remain within
+  // the page area.
+  float offsetX = mScrollOffset.x / tempScaleDiffX;
+  float offsetY = mScrollOffset.y / tempScaleDiffY;
+  offsetX = NS_MAX((float)mContentRect.x, NS_MIN(offsetX, (float)(mContentRect.XMost() - mWidgetSize.width)));
+  offsetY = NS_MAX((float)mContentRect.y, NS_MIN(offsetY, (float)(mContentRect.YMost() - mWidgetSize.height)));
+  gfxPoint reverseViewTranslation(offsetX - metricsScrollOffset.x,
+                                  offsetY - metricsScrollOffset.y);
+
+  TranslateFixedLayers(layer, reverseViewTranslation);
+}
+
+void
+CompositorParent::SetFirstPaintViewport(const nsIntPoint& aOffset, float aZoom,
+                                        const nsIntRect& aPageRect, const gfx::Rect& aCssPageRect)
+{
+#ifdef MOZ_WIDGET_ANDROID
+  mozilla::AndroidBridge::Bridge()->SetFirstPaintViewport(aOffset, aZoom, aPageRect, aCssPageRect);
+#endif
+}
+
+void
+CompositorParent::SetPageRect(float aZoom, const nsIntRect& aPageRect, const gfx::Rect& aCssPageRect)
+{
+#ifdef MOZ_WIDGET_ANDROID
+  mozilla::AndroidBridge::Bridge()->SetPageRect(aZoom, aPageRect, aCssPageRect);
+#endif
+}
+
+void
+CompositorParent::SyncViewportInfo(const nsIntRect& aDisplayPort,
+                                   float aDisplayResolution, bool aLayersUpdated,
+                                   nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY)
+{
+#ifdef MOZ_WIDGET_ANDROID
+  mozilla::AndroidBridge::Bridge()->SyncViewportInfo(aDisplayPort, aDisplayResolution, aLayersUpdated,
+                                                     aScrollOffset, aScaleX, aScaleY);
 #endif
 }
 
@@ -400,17 +468,19 @@ CompositorParent::ShadowLayersUpdated(bool isFirstPaint)
 }
 
 PLayersParent*
-CompositorParent::AllocPLayers(const LayersBackend &backendType)
+CompositorParent::AllocPLayers(const LayersBackend& aBackendType, int* aMaxTextureSize)
 {
-  if (backendType == LayerManager::LAYERS_OPENGL) {
-#ifdef MOZ_JAVA_COMPOSITOR
-    nsIntRect rect;
-    mWidget->GetBounds(rect);
-    nsRefPtr<LayerManagerOGL> layerManager =
-      new LayerManagerOGL(mWidget, rect.width, rect.height, true);
-#else
-    nsRefPtr<LayerManagerOGL> layerManager = new LayerManagerOGL(mWidget);
-#endif
+  // mWidget doesn't belong to the compositor thread, so it should be set to
+  // NULL before returning from this method, to avoid accessing it elsewhere.
+  nsIntRect rect;
+  mWidget->GetBounds(rect);
+  mWidgetSize.width = rect.width;
+  mWidgetSize.height = rect.height;
+
+  if (aBackendType == LayerManager::LAYERS_OPENGL) {
+    nsRefPtr<LayerManagerOGL> layerManager;
+    layerManager =
+      new LayerManagerOGL(mWidget, mEGLSurfaceSize.width, mEGLSurfaceSize.height, mRenderToEGLSurface);
     mWidget = NULL;
     mLayerManager = layerManager;
 
@@ -423,6 +493,17 @@ CompositorParent::AllocPLayers(const LayersBackend &backendType)
     if (!slm) {
       return NULL;
     }
+    *aMaxTextureSize = layerManager->GetMaxTextureSize();
+    return new ShadowLayersParent(slm, this);
+  } else if (aBackendType == LayerManager::LAYERS_BASIC) {
+    nsRefPtr<LayerManager> layerManager = new BasicShadowLayerManager(mWidget);
+    mWidget = NULL;
+    mLayerManager = layerManager;
+    ShadowLayerManager* slm = layerManager->AsShadowManager();
+    if (!slm) {
+      return NULL;
+    }
+    *aMaxTextureSize = layerManager->GetMaxTextureSize();
     return new ShadowLayersParent(slm, this);
   } else {
     NS_ERROR("Unsupported backend selected for Async Compositor");

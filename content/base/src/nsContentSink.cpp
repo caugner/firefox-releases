@@ -1,41 +1,8 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ts=2 sw=2 et tw=78: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is 
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Henri Sivonen <hsivonen@iki.fi>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * Base class for the XML and HTML content sinks, which construct a
@@ -51,6 +18,7 @@
 #include "nsStyleLinkElement.h"
 #include "nsINodeInfo.h"
 #include "nsIDocShell.h"
+#include "nsILoadContext.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsCPrefetchService.h"
 #include "nsIURI.h"
@@ -449,6 +417,48 @@ nsContentSink::LinkContextIsOurDocument(const nsSubstring& aAnchor)
   return same;
 }
 
+// Decode a parameter value using the encoding defined in RFC 5987 (in place)
+//
+//   charset  "'" [ language ] "'" value-chars
+//
+// returns true when decoding happened successfully (otherwise leaves
+// passed value alone)
+bool
+nsContentSink::Decode5987Format(nsAString& aEncoded) {
+
+  nsresult rv;
+  nsCOMPtr<nsIMIMEHeaderParam> mimehdrpar =
+  do_GetService(NS_MIMEHEADERPARAM_CONTRACTID, &rv);
+  if (NS_FAILED(rv))
+    return false;
+
+  nsCAutoString asciiValue;
+
+  const PRUnichar* encstart = aEncoded.BeginReading();
+  const PRUnichar* encend = aEncoded.EndReading();
+
+  // create a plain ASCII string, aborting if we can't do that
+  // converted form is always shorter than input
+  while (encstart != encend) {
+    if (*encstart > 0 && *encstart < 128) {
+      asciiValue.Append((char)*encstart);
+    } else {
+      return false;
+    }
+    encstart++;
+  }
+
+  nsAutoString decoded;
+  nsCAutoString language;
+
+  rv = mimehdrpar->DecodeRFC5987Param(asciiValue, language, decoded);
+  if (NS_FAILED(rv))
+    return false;
+
+  aEncoded = decoded;
+  return true;
+}
+
 nsresult
 nsContentSink::ProcessLinkHeader(nsIContent* aElement,
                                  const nsAString& aLinkData)
@@ -462,6 +472,7 @@ nsContentSink::ProcessLinkHeader(nsIContent* aElement,
   nsAutoString href;
   nsAutoString rel;
   nsAutoString title;
+  nsAutoString titleStar;
   nsAutoString type;
   nsAutoString media;
   nsAutoString anchor;
@@ -486,7 +497,7 @@ nsContentSink::ProcessLinkHeader(nsIContent* aElement,
     end = start;
     last = end - 1;
 
-    bool needsUnescape = false;
+    bool wasQuotedString = false;
     
     // look for semicolon or comma
     while (*end != kNullCh && *end != kSemicolon && *end != kComma) {
@@ -500,14 +511,14 @@ nsContentSink::ProcessLinkHeader(nsIContent* aElement,
           quote = kGreaterThan;
         }
         
-        needsUnescape = (ch == kQuote);
+        wasQuotedString = (ch == kQuote);
         
         PRUnichar* closeQuote = (end + 1);
 
         // seek closing quote
         while (*closeQuote != kNullCh && quote != *closeQuote) {
           // in quoted-string, "\" is an escape character
-          if (needsUnescape && *closeQuote == kBackSlash && *(closeQuote + 1) != kNullCh) {
+          if (wasQuotedString && *closeQuote == kBackSlash && *(closeQuote + 1) != kNullCh) {
             ++closeQuote;
           }
 
@@ -582,7 +593,7 @@ nsContentSink::ProcessLinkHeader(nsIContent* aElement,
             value++;
           }
 
-          if (needsUnescape) {
+          if (wasQuotedString) {
             // unescape in-place
             PRUnichar* unescaped = value;
             PRUnichar *src = value;
@@ -606,6 +617,20 @@ nsContentSink::ProcessLinkHeader(nsIContent* aElement,
             if (title.IsEmpty()) {
               title = value;
               title.CompressWhitespace();
+            }
+          } else if (attr.LowerCaseEqualsLiteral("title*")) {
+            if (titleStar.IsEmpty() && !wasQuotedString) {
+              // RFC 5987 encoding; uses token format only, so skip if we get
+              // here with a quoted-string
+              nsAutoString tmp;
+              tmp = value;
+              if (Decode5987Format(tmp)) {
+                titleStar = tmp;
+                titleStar.CompressWhitespace();
+              } else {
+                // header value did not parse, throw it away
+                titleStar.Truncate();
+              }
             }
           } else if (attr.LowerCaseEqualsLiteral("type")) {
             if (type.IsEmpty()) {
@@ -635,7 +660,10 @@ nsContentSink::ProcessLinkHeader(nsIContent* aElement,
 
       href.Trim(" \t\n\r\f"); // trim HTML5 whitespace
       if (!href.IsEmpty() && !rel.IsEmpty()) {
-        rv = ProcessLink(aElement, anchor, href, rel, title, type, media);
+        rv = ProcessLink(aElement, anchor, href, rel,
+                         // prefer RFC 5987 variant over non-I18zed version
+                         titleStar.IsEmpty() ? title : titleStar,
+                         type, media);
       }
 
       href.Truncate();
@@ -653,7 +681,10 @@ nsContentSink::ProcessLinkHeader(nsIContent* aElement,
                 
   href.Trim(" \t\n\r\f"); // trim HTML5 whitespace
   if (!href.IsEmpty() && !rel.IsEmpty()) {
-    rv = ProcessLink(aElement, anchor, href, rel, title, type, media);
+    rv = ProcessLink(aElement, anchor, href, rel,
+                     // prefer RFC 5987 variant over non-I18zed version
+                     titleStar.IsEmpty() ? title : titleStar,
+                     type, media);
   }
 
   return rv;
@@ -999,6 +1030,13 @@ nsContentSink::ProcessOfflineManifest(const nsAString& aManifestSpec)
   // Don't bother processing offline manifest for documents
   // without a docshell
   if (!mDocShell) {
+    return;
+  }
+
+  // If the docshell's in private browsing mode, we don't want to do any
+  // manifest processing.
+  nsCOMPtr<nsILoadContext> loadContext = do_QueryInterface(mDocShell);
+  if (loadContext->UsePrivateBrowsing()) {
     return;
   }
 

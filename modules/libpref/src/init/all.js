@@ -1,40 +1,7 @@
 /* -*- Mode: Java; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Benjamin Smedberg <bsmedberg@covad.net>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* The prefs in this file are shipped with the GRE and should apply to all
  * embedding situations. Application-specific preferences belong somewhere else,
@@ -187,6 +154,9 @@ pref("media.raw.enabled", true);
 #ifdef MOZ_OGG
 pref("media.ogg.enabled", true);
 #endif
+#ifdef MOZ_OPUS
+pref("media.opus.enabled", true);
+#endif
 #ifdef MOZ_WAVE
 pref("media.wave.enabled", true);
 #endif
@@ -221,13 +191,27 @@ pref("gfx.font_rendering.fallback.always_use_cmaps", false);
 pref("gfx.font_rendering.graphite.enabled", false);
 #endif
 
-// see gfx/thebes/gfxUnicodeProperties.h for definitions of script bits
+// Check intl/unicharutil/util/nsUnicodeProperties.h for definitions of script bits
+// in the ShapingType enumeration
+// Currently-defined bits:
+//  SHAPING_DEFAULT   = 0x0001,
+//  SHAPING_ARABIC    = 0x0002,
+//  SHAPING_HEBREW    = 0x0004,
+//  SHAPING_HANGUL    = 0x0008,
+//  SHAPING_MONGOLIAN = 0x0010,
+//  SHAPING_INDIC     = 0x0020,
+//  SHAPING_THAI      = 0x0040
+// (see http://mxr.mozilla.org/mozilla-central/ident?i=ShapingType)
+// Scripts not listed are grouped in the default category.
+// Set the pref to -1 to have all text shaped via the harfbuzz backend.
 #ifdef XP_MACOSX
 // use harfbuzz for default (0x01) + arabic (0x02) + hebrew (0x04) + thai (0x40)
 pref("gfx.font_rendering.harfbuzz.scripts", 71);
 #else
 #ifdef ANDROID
-pref("gfx.font_rendering.harfbuzz.scripts", 71);
+// use harfbuzz for everything, as we don't have a platform script-shaping lib
+// to fall back on anyhow, and Indic support is coming along well
+pref("gfx.font_rendering.harfbuzz.scripts", -1);
 #else
 // use harfbuzz for default (0x01) + arabic (0x02) + hebrew (0x04)
 pref("gfx.font_rendering.harfbuzz.scripts", 7);
@@ -241,6 +225,7 @@ pref("gfx.font_rendering.directwrite.use_gdi_table_loading", true);
 
 #ifdef XP_WIN
 pref("gfx.canvas.azure.enabled", true);
+pref("gfx.content.azure.enabled", false);
 #else
 #ifdef XP_MACOSX
 pref("gfx.canvas.azure.enabled", true);
@@ -252,6 +237,7 @@ pref("gfx.textures.poweroftwo.force-enabled", false);
 #endif
 
 pref("gfx.work-around-driver-bugs", true);
+pref("gfx.prefer-mesa-llvmpipe", false);
 
 pref("accessibility.browsewithcaret", false);
 pref("accessibility.warn_on_browsewithcaret", true);
@@ -331,6 +317,11 @@ pref("toolkit.telemetry.debugSlowSql", false);
 
 // Disable remote debugging protocol logging
 pref("devtools.debugger.log", false);
+// Disable remote debugging connections
+pref("devtools.debugger.remote-enabled", false);
+pref("devtools.debugger.remote-port", 6000);
+// Force debugger server binding on the loopback interface
+pref("devtools.debugger.force-local", true);
 
 // view source
 pref("view_source.syntax_highlight", true);
@@ -642,7 +633,7 @@ pref("dom.min_background_timeout_value", 1000);
 // Use the new DOM bindings (only affects any scopes created after the pref is
 // changed)
 pref("dom.new_bindings", true);
-pref("dom.paris_bindings", true);
+pref("dom.experimental_bindings", true);
 
 // Parsing perf prefs. For now just mimic what the old code did.
 #ifndef XP_WIN
@@ -681,6 +672,7 @@ pref("javascript.options.typeinference", true);
 pref("javascript.options.mem.high_water_mark", 128);
 pref("javascript.options.mem.max", -1);
 pref("javascript.options.mem.gc_per_compartment", true);
+pref("javascript.options.mem.disable_explicit_compartment_gc", true);
 pref("javascript.options.mem.gc_incremental", false);
 pref("javascript.options.mem.gc_incremental_slice_ms", 10);
 pref("javascript.options.mem.log", false);
@@ -858,12 +850,16 @@ pref("network.http.fast-fallback-to-IPv4", true);
 
 // Try and use SPDY when using SSL
 pref("network.http.spdy.enabled", true);
+pref("network.http.spdy.enabled.v2", true);
+pref("network.http.spdy.enabled.v3", false);
 pref("network.http.spdy.chunk-size", 4096);
 pref("network.http.spdy.timeout", 180);
 pref("network.http.spdy.coalesce-hostnames", true);
 pref("network.http.spdy.use-alternate-protocol", true);
 pref("network.http.spdy.ping-threshold", 44);
 pref("network.http.spdy.ping-timeout", 8);
+
+pref("network.http.diagnostics", false);
 
 // default values for FTP
 // in a DSCP environment this should be 40 (0x28, or AF11), per RFC-4594,
@@ -984,8 +980,8 @@ pref("network.IDN.whitelist.th", true);
 pref("network.IDN.whitelist.tm", true);
 pref("network.IDN.whitelist.tw", true);
 pref("network.IDN.whitelist.ua", true);
-pref("network.IDN.whitelist.wf", true);
 pref("network.IDN.whitelist.vn", true);
+pref("network.IDN.whitelist.wf", true);
 pref("network.IDN.whitelist.yt", true);
 
 // IDN ccTLDs
@@ -1613,6 +1609,8 @@ pref("dom.ipc.plugins.parentTimeoutSecs", 0);
 // Disable oopp for standard java. They run their own process isolation (which
 // conflicts with our implementation, at least on Windows).
 pref("dom.ipc.plugins.java.enabled", false);
+
+pref("dom.ipc.plugins.flash.subprocess.crashreporter.enabled", true);
 
 #ifndef ANDROID
 #ifndef XP_MACOSX
@@ -2809,9 +2807,6 @@ pref("middlemouse.contentLoadURL", true);
 pref("middlemouse.openNewWindow", true);
 pref("middlemouse.scrollbarPosition", true);
 
-// Clipboard behavior
-pref("clipboard.autocopy", true);
-
 pref("browser.urlbar.clickSelectsAll", false);
 
 // Tab focus model bit field:
@@ -3439,7 +3434,6 @@ pref("webgl.disabled", false);
 pref("webgl.shader_validator", true);
 pref("webgl.force_osmesa", false);
 pref("webgl.osmesalib", "");
-pref("webgl.verbose", false);
 pref("webgl.prefer-native-gl", false);
 pref("webgl.min_capability_mode", false);
 pref("webgl.disable-extensions", false);
@@ -3463,7 +3457,11 @@ pref("layers.acceleration.force-enabled", false);
 
 pref("layers.acceleration.draw-fps", false);
 
-pref("layers.offmainthreadcomposition.enabled", false);
+#ifdef MOZ_X11
+#ifdef MOZ_WIDGET_GTK2
+pref("gfx.xrender.enabled",true);
+#endif
+#endif
 
 #ifdef XP_WIN
 // Whether to disable the automatic detection and use of direct2d.
@@ -3485,6 +3483,9 @@ pref("geo.enabled", true);
 
 // Enable/Disable the orientation API for content
 pref("device.motion.enabled", true);
+
+// Enable/Disable the device storage API for content
+pref("device.storage.enabled", false);
 
 // Toggle which thread the HTML5 parser uses for stream parsing
 pref("html5.offmainthread", true);
@@ -3522,8 +3523,6 @@ pref("alerts.disableSlidingEffect", false);
 // DOM full-screen API.
 pref("full-screen-api.enabled", false);
 pref("full-screen-api.allow-trusted-requests-only", true);
-pref("full-screen-api.key-input-restricted", true);
-pref("full-screen-api.warning.enabled", true);
 pref("full-screen-api.exit-on-deactivate", true);
 pref("full-screen-api.pointer-lock.enabled", true);
 

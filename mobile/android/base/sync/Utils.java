@@ -1,6 +1,6 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 package org.mozilla.gecko.sync;
 
@@ -347,5 +347,21 @@ public class Utils {
         }
       }
     }
+  }
+
+  /**
+   * This will take a string containing a UTF-8 representation of a UTF-8
+   * byte array — e.g., "pÃ¯gÃ©ons1" — and return UTF-8 (e.g., "pïgéons1").
+   *
+   * This is the format produced by desktop Firefox when exchanging credentials
+   * containing non-ASCII characters.
+   */
+  public static String decodeUTF8(final String in) throws UnsupportedEncodingException {
+    final int length = in.length();
+    final byte[] asciiBytes = new byte[length];
+    for (int i = 0; i < length; ++i) {
+      asciiBytes[i] = (byte) in.codePointAt(i);
+    }
+    return new String(asciiBytes, "UTF-8");
   }
 }

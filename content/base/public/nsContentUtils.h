@@ -1,41 +1,8 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  *
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code, released
- * March 31, 1998.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* A namespace class for static content utilities. */
 
@@ -444,6 +411,15 @@ public:
    */
   static bool ParseIntMarginValue(const nsAString& aString, nsIntMargin& aResult);
 
+  /**
+   * Parse the value of the <font size=""> attribute according to the HTML5
+   * spec as of April 16, 2012.
+   *
+   * @param aValue the value to parse
+   * @return 1 to 7, or 0 if the value couldn't be parsed
+   */
+  static PRInt32 ParseLegacyFontSize(const nsAString& aValue);
+
   static void Shutdown();
 
   /**
@@ -574,8 +550,10 @@ public:
    * @return boolean indicating whether a BOM was detected.
    */
   static bool CheckForBOM(const unsigned char* aBuffer, PRUint32 aLength,
-                            nsACString& aCharset, bool *bigEndian = nsnull);
+                          nsACString& aCharset, bool *bigEndian = nsnull);
 
+  static nsresult GuessCharset(const char *aData, PRUint32 aDataLen,
+                               nsACString &aCharset);
 
   /**
    * Determine whether aContent is in some way associated with aForm.  If the
@@ -605,10 +583,20 @@ public:
   static void SplitExpatName(const PRUnichar *aExpatName, nsIAtom **aPrefix,
                              nsIAtom **aTagName, PRInt32 *aNameSpaceID);
 
-  // Get a permission-manager setting for the given uri and type.
+  // Get a permission-manager setting for the given principal and type.
   // If the pref doesn't exist or if it isn't ALLOW_ACTION, false is
-  // returned, otherwise true is returned.
-  static bool IsSitePermAllow(nsIURI* aURI, const char* aType);
+  // returned, otherwise true is returned. Always returns true for the
+  // system principal, and false for a null principal.
+  static bool IsSitePermAllow(nsIPrincipal* aPrincipal, const char* aType);
+
+  // Get a permission-manager setting for the given principal and type.
+  // If the pref doesn't exist or if it isn't DENY_ACTION, false is
+  // returned, otherwise true is returned. Always returns false for the
+  // system principal, and true for a null principal.
+  static bool IsSitePermDeny(nsIPrincipal* aPrincipal, const char* aType);
+
+  // Returns true if aDoc1 and aDoc2 have equal NodePrincipal()s.
+  static bool HaveEqualPrincipals(nsIDocument* aDoc1, nsIDocument* aDoc2);
 
   static nsILineBreaker* LineBreaker()
   {
@@ -1364,6 +1352,23 @@ public:
   static bool IsSystemPrincipal(nsIPrincipal* aPrincipal);
 
   /**
+   * *aResourcePrincipal is a principal describing who may access the contents
+   * of a resource. The resource can only be consumed by a principal that
+   * subsumes *aResourcePrincipal. MAKE SURE THAT NOTHING EVER ACTS WITH THE
+   * AUTHORITY OF *aResourcePrincipal.
+   * It may be null to indicate that the resource has no data from any origin
+   * in it yet and anything may access the resource.
+   * Additional data is being mixed into the resource from aExtraPrincipal
+   * (which may be null; if null, no data is being mixed in and this function
+   * will do nothing). Update *aResourcePrincipal to reflect the new data.
+   * If *aResourcePrincipal subsumes aExtraPrincipal, nothing needs to change,
+   * otherwise *aResourcePrincipal is replaced with the system principal.
+   * Returns true if *aResourcePrincipal changed.
+   */
+  static bool CombineResourcePrincipals(nsCOMPtr<nsIPrincipal>* aResourcePrincipal,
+                                        nsIPrincipal* aExtraPrincipal);
+
+  /**
    * Trigger a link with uri aLinkURI. If aClick is false, this triggers a
    * mouseover on the link, otherwise it triggers a load after doing a
    * security check using aContent's principal.
@@ -1384,6 +1389,12 @@ public:
                           nsIURI *aLinkURI, const nsString& aTargetSpec,
                           bool aClick, bool aIsUserTriggered,
                           bool aIsTrusted);
+
+  /**
+   * Get the link location.
+   */
+  static void GetLinkLocation(mozilla::dom::Element* aElement,
+                              nsString& aLocationString);
 
   /**
    * Return top-level widget in the parent chain.
@@ -1817,13 +1828,6 @@ public:
   static bool IsRequestFullScreenAllowed();
 
   /**
-   * Returns true if key input is restricted in DOM full-screen mode
-   * to non-alpha-numeric key codes only. This mirrors the
-   * "full-screen-api.key-input-restricted" pref.
-   */
-  static bool IsFullScreenKeyInputRestricted();
-
-  /**
    * Returns true if the doc tree branch which contains aDoc contains any
    * plugins which we don't control event dispatch for, i.e. do any plugins
    * in the same tab as this document receive key events outside of our
@@ -2006,6 +2010,24 @@ public:
   static void SplitMimeType(const nsAString& aValue, nsString& aType,
                             nsString& aParams);
 
+  /** 
+   * Takes a window and a string to check prefs against. Assumes that
+   * the window is an app window, and that the pref is a comma
+   * seperated list of app urls that have permission to use whatever
+   * the preference refers to (for example, does the current window
+   * have access to mozTelephony). Chrome is always given permissions
+   * for the requested preference. Sets aAllowed based on preference.
+   *
+   * @param aWindow Current window asking for preference permission
+   * @param aPrefURL Preference name
+   * @param aAllowed [out] outparam on whether or not window is allowed
+   *                       to access pref
+   *
+   * @return NS_OK on successful preference lookup, error code otherwise
+   */
+  static nsresult IsOnPrefWhitelist(nsPIDOMWindow* aWindow,
+                                    const char* aPrefURL, bool *aAllowed);
+  
 private:
   static bool InitializeEventTable();
 
@@ -2095,7 +2117,6 @@ private:
   static bool sAllowXULXBL_for_file;
   static bool sIsFullScreenApiEnabled;
   static bool sTrustedFullScreenOnly;
-  static bool sFullScreenKeyInputRestricted;
   static PRUint32 sHandlingInputTimeout;
 
   static nsHtml5StringParser* sHTMLFragmentParser;

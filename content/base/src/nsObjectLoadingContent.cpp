@@ -1,41 +1,8 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 // vim:set et cin sw=2 sts=2:
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla <object> loading code.
- *
- * The Initial Developer of the Original Code is
- * Christian Biesinger <cbiesinger@web.de>.
- * Portions created by the Initial Developer are Copyright (C) 2005
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Justin Dolske <dolske@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * A base class implementing nsIObjectLoadingContent for use by
@@ -75,6 +42,7 @@
 #include "nsPluginError.h"
 
 // Util headers
+#include "prenv.h"
 #include "prlog.h"
 
 #include "nsAutoPtr.h"
@@ -815,7 +783,8 @@ nsObjectLoadingContent::OnStartRequest(nsIRequest *aRequest,
   // 1) The channel type is application/octet-stream and we have a
   //    type hint and the type hint is not a document type.
   // 2) Our type hint is a type that we support with a plugin.
-  if ((channelType.EqualsASCII(APPLICATION_OCTET_STREAM) && 
+  if (((channelType.EqualsASCII(APPLICATION_OCTET_STREAM) ||
+        channelType.EqualsASCII(BINARY_OCTET_STREAM)) && 
        !mContentType.IsEmpty() &&
        GetTypeOfContent(mContentType) != eType_Document) ||
       // Need to check IsPluginEnabledForType() in addition to GetTypeOfContent()
@@ -837,8 +806,12 @@ nsObjectLoadingContent::OnStartRequest(nsIRequest *aRequest,
 
   nsCOMPtr<nsIURI> uri;
   chan->GetURI(getter_AddRefs(uri));
+  if (!uri) {
+    return NS_ERROR_FAILURE;
+  }
 
-  if (mContentType.EqualsASCII(APPLICATION_OCTET_STREAM)) {
+  if (mContentType.EqualsASCII(APPLICATION_OCTET_STREAM) ||
+      mContentType.EqualsASCII(BINARY_OCTET_STREAM)) {
     nsCAutoString extType;
     if (IsPluginEnabledByExtension(uri, extType)) {
       mContentType = extType;
@@ -968,7 +941,8 @@ nsObjectLoadingContent::OnStartRequest(nsIRequest *aRequest,
       if (!pluginHost) {
         return NS_ERROR_NOT_AVAILABLE;
       }
-      pluginHost->CreateListenerForChannel(chan, this, getter_AddRefs(mFinalListener));
+      pluginHost->NewEmbeddedPluginStreamListener(uri, this, nsnull,
+                                                  getter_AddRefs(mFinalListener));
       break;
     }
     case eType_Loading:
@@ -1218,9 +1192,16 @@ nsObjectLoadingContent::ObjectState() const
         case ePluginCrashed:
           state |= NS_EVENT_STATE_HANDLER_CRASHED;
           break;
-        case ePluginUnsupported:
-          state |= NS_EVENT_STATE_TYPE_UNSUPPORTED;
+        case ePluginUnsupported: {
+          // Check to see if plugins are blocked on this platform.
+          char* pluginsBlocked = PR_GetEnv("MOZ_PLUGINS_BLOCKED");
+          if (pluginsBlocked && pluginsBlocked[0] == '1') {
+            state |= NS_EVENT_STATE_TYPE_UNSUPPORTED_PLATFORM;
+          } else {
+            state |= NS_EVENT_STATE_TYPE_UNSUPPORTED;
+          }
           break;
+        }
         case ePluginOutdated:
         case ePluginOtherState:
           // Do nothing, but avoid a compile warning
@@ -1950,8 +1931,14 @@ nsObjectLoadingContent::GetPluginSupportState(nsIContent* aContent,
     }
   }
 
-  return hasAlternateContent ? ePluginOtherState :
-    GetPluginDisabledState(aContentType);
+  PluginSupportState pluginDisabledState = GetPluginDisabledState(aContentType);
+  if (pluginDisabledState == ePluginClickToPlay) {
+    return ePluginClickToPlay;
+  } else if (hasAlternateContent) {
+    return ePluginOtherState;
+  } else {
+    return pluginDisabledState;
+  }
 }
 
 PluginSupportState

@@ -1,4 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
 
     <item android:id="@+id/reload"
@@ -20,6 +24,13 @@
     <item android:id="@+id/save_as_pdf"
           android:icon="@drawable/ic_menu_save_as_pdf"
           android:title="@string/save_as_pdf" />
+
+    <item android:id="@+id/find_in_page"
+          android:title="@string/find_in_page" />
+
+    <item android:id="@+id/desktop_mode"
+          android:title="@string/desktop_mode"
+          android:checkable="true" />
 
     <item android:id="@+id/site_settings"
           android:title="@string/site_settings_title" />

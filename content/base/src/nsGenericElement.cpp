@@ -1,41 +1,8 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ts=2 sw=2 et tw=79: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Ms2ger <ms2ger@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * Base class for all element classes; this provides an implementation
@@ -98,7 +65,6 @@
 
 #include "nsBindingManager.h"
 #include "nsXBLBinding.h"
-#include "nsIXBLService.h"
 #include "nsPIDOMWindow.h"
 #include "nsPIBoxObject.h"
 #include "nsClientRect.h"
@@ -153,7 +119,7 @@
 #include "nsWrapperCacheInlines.h"
 #include "nsCycleCollector.h"
 #include "xpcpublic.h"
-#include "xpcprivate.h"
+#include "nsIScriptError.h"
 #include "nsLayoutStatics.h"
 #include "mozilla/Telemetry.h"
 
@@ -1511,7 +1477,12 @@ nsIContent::IMEState
 nsIContent::GetDesiredIMEState()
 {
   if (!IsEditableInternal()) {
-    return IMEState(IMEState::DISABLED);
+    // Check for the special case where we're dealing with elements which don't
+    // have the editable flag set, but are readwrite (such as text controls).
+    if (!IsElement() ||
+        !AsElement()->State().HasState(NS_EVENT_STATE_MOZ_READWRITE)) {
+      return IMEState(IMEState::DISABLED);
+    }
   }
   // NOTE: The content for independent editors (e.g., input[type=text],
   // textarea) must override this method, so, we don't need to worry about
@@ -1551,7 +1522,7 @@ nsIContent::HasIndependentSelection()
   return (frame && frame->GetStateBits() & NS_FRAME_INDEPENDENT_SELECTION);
 }
 
-nsIContent*
+dom::Element*
 nsIContent::GetEditingHost()
 {
   // If this isn't editable, return NULL.
@@ -1565,12 +1536,12 @@ nsIContent::GetEditingHost()
   }
 
   nsIContent* content = this;
-  for (nsIContent* parent = GetParent();
+  for (dom::Element* parent = GetElementParent();
        parent && parent->HasFlag(NODE_IS_EDITABLE);
-       parent = content->GetParent()) {
+       parent = content->GetElementParent()) {
     content = parent;
   }
-  return content;
+  return content->AsElement();
 }
 
 nsresult
@@ -1716,17 +1687,9 @@ NS_IMPL_CYCLE_COLLECTING_ADDREF(nsChildContentList)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsChildContentList)
 
 // If nsChildContentList is changed so that any additional fields are
-// traversed by the cycle collector, then CAN_SKIP must be updated.
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsChildContentList)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsChildContentList)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsChildContentList)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsChildContentList)
-  NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
+// traversed by the cycle collector, then CAN_SKIP must be updated to
+// check that the additional fields are null.
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_0(nsChildContentList)
 
 // nsChildContentList only ever has a single child, its wrapper, so if
 // the wrapper is black, the list can't be part of a garbage cycle.
@@ -2140,8 +2103,8 @@ nsGenericElement::SetScrollTop(PRInt32 aScrollTop)
   nsIScrollableFrame* sf = GetScrollFrame();
   if (sf) {
     nsPoint pt = sf->GetScrollPosition();
-    pt.y = nsPresContext::CSSPixelsToAppUnits(aScrollTop);
-    sf->ScrollTo(pt, nsIScrollableFrame::INSTANT);
+    sf->ScrollToCSSPixels(nsIntPoint(nsPresContext::AppUnitsToIntCSSPixels(pt.x),
+                                     aScrollTop));
   }
   return NS_OK;
 }
@@ -2170,8 +2133,8 @@ nsGenericElement::SetScrollLeft(PRInt32 aScrollLeft)
   nsIScrollableFrame* sf = GetScrollFrame();
   if (sf) {
     nsPoint pt = sf->GetScrollPosition();
-    pt.x = nsPresContext::CSSPixelsToAppUnits(aScrollLeft);
-    sf->ScrollTo(pt, nsIScrollableFrame::INSTANT);
+    sf->ScrollToCSSPixels(nsIntPoint(aScrollLeft,
+                                     nsPresContext::AppUnitsToIntCSSPixels(pt.y)));
   }
   return NS_OK;
 }
@@ -2655,10 +2618,6 @@ nsGenericElement::GetAttributes(nsIDOMNamedNodeMap** aAttributes)
 
   if (!slots->mAttributeMap) {
     slots->mAttributeMap = new nsDOMAttributeMap(this);
-    if (!slots->mAttributeMap->Init()) {
-      slots->mAttributeMap = nsnull;
-      return NS_ERROR_FAILURE;
-    }
   }
 
   NS_ADDREF(*aAttributes = slots->mAttributeMap);
@@ -3593,6 +3552,12 @@ nsGenericElement::SetSMILOverrideStyleRule(css::StyleRule* aStyleRule,
   return NS_OK;
 }
 
+bool
+nsGenericElement::IsLabelable() const
+{
+  return false;
+}
+
 css::StyleRule*
 nsGenericElement::GetInlineStyleRule()
 {
@@ -3933,10 +3898,7 @@ nsGenericElement::DispatchClickEvent(nsPresContext* aPresContext,
   event.pressure = pressure;
   event.clickCount = clickCount;
   event.inputSource = inputSource;
-  event.isShift = aSourceEvent->isShift;
-  event.isControl = aSourceEvent->isControl;
-  event.isAlt = aSourceEvent->isAlt;
-  event.isMeta = aSourceEvent->isMeta;
+  event.modifiers = aSourceEvent->modifiers;
   event.flags |= aFlags; // Be careful not to overwrite existing flags!
 
   return DispatchEvent(aPresContext, &event, aTarget, aFullDispatch, aStatus);
@@ -5199,7 +5161,13 @@ nsGenericElement::MaybeCheckSameAttrVal(PRInt32 aNamespaceID,
       }
       bool valueMatches = aValue.EqualsAsStrings(*info.mValue);
       if (valueMatches && aPrefix == info.mName->GetPrefix()) {
-        return !OwnerDoc()->MayHaveDOMMutationObservers();
+        if (OwnerDoc()->MayHaveDOMMutationObservers()) {
+          // For backward compatibility, don't fire mutation events
+          // when setting an attribute to its old value.
+          *aHasListeners = false;
+        } else {
+          return true;
+        }
       }
       modification = true;
     }
@@ -5977,8 +5945,8 @@ nsGenericElement::PostHandleEventForLinks(nsEventChainPostVisitor& aVisitor)
   case NS_MOUSE_CLICK:
     if (NS_IS_MOUSE_LEFT_CLICK(aVisitor.mEvent)) {
       nsInputEvent* inputEvent = static_cast<nsInputEvent*>(aVisitor.mEvent);
-      if (inputEvent->isControl || inputEvent->isMeta ||
-          inputEvent->isAlt ||inputEvent->isShift) {
+      if (inputEvent->IsControl() || inputEvent->IsMeta() ||
+          inputEvent->IsAlt() ||inputEvent->IsShift()) {
         break;
       }
 
@@ -6475,6 +6443,20 @@ nsINode::Length() const
   }
 }
 
+static const char*
+GetFullScreenError(nsIDocument* aDoc)
+{
+  if (!nsContentUtils::IsRequestFullScreenAllowed()) {
+    return "FullScreenDeniedNotInputDriven";
+  }
+  
+  if (nsContentUtils::IsSitePermDeny(aDoc->NodePrincipal(), "fullscreen")) {
+    return "FullScreenDeniedBlocked";
+  }
+
+  return nsnull;
+}
+
 nsresult nsGenericElement::MozRequestFullScreen()
 {
   // Only grant full-screen requests if this is called from inside a trusted
@@ -6482,11 +6464,12 @@ nsresult nsGenericElement::MozRequestFullScreen()
   // This stops the full-screen from being abused similar to the popups of old,
   // and it also makes it harder for bad guys' script to go full-screen and
   // spoof the browser chrome/window and phish logins etc.
-  if (!nsContentUtils::IsRequestFullScreenAllowed()) {
+  const char* error = GetFullScreenError(OwnerDoc());
+  if (error) {
     nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
                                     "DOM", OwnerDoc(),
                                     nsContentUtils::eDOM_PROPERTIES,
-                                    "FullScreenDeniedNotInputDriven");
+                                    error);
     nsRefPtr<nsAsyncDOMEvent> e =
       new nsAsyncDOMEvent(OwnerDoc(),
                           NS_LITERAL_STRING("mozfullscreenerror"),

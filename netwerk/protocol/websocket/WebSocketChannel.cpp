@@ -1,42 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set sw=2 ts=8 et tw=80 : */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla.
- *
- * The Initial Developer of the Original Code is
- * Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2010 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Wellington Fernando de Macedo <wfernandom2004@gmail.com> (original author)
- *   Patrick McManus <mcmanus@ducksong.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "WebSocketLog.h"
 #include "WebSocketChannel.h"
@@ -232,6 +198,40 @@ private:
   PRUint32                          mSize;
 };
 NS_IMPL_THREADSAFE_ISUPPORTS1(CallAcknowledge, nsIRunnable)
+
+//-----------------------------------------------------------------------------
+// CallOnTransportAvailable
+//-----------------------------------------------------------------------------
+
+class CallOnTransportAvailable : public nsIRunnable
+{
+public:
+  NS_DECL_ISUPPORTS
+
+  CallOnTransportAvailable(WebSocketChannel *aChannel,
+                           nsISocketTransport *aTransport,
+                           nsIAsyncInputStream *aSocketIn,
+                           nsIAsyncOutputStream *aSocketOut)
+    : mChannel(aChannel),
+      mTransport(aTransport),
+      mSocketIn(aSocketIn),
+      mSocketOut(aSocketOut) {}
+
+  NS_IMETHOD Run()
+  {
+    LOG(("WebSocketChannel::CallOnTransportAvailable %p\n", this));
+    return mChannel->OnTransportAvailable(mTransport, mSocketIn, mSocketOut);
+  }
+
+private:
+  ~CallOnTransportAvailable() {}
+
+  nsRefPtr<WebSocketChannel>     mChannel;
+  nsCOMPtr<nsISocketTransport>   mTransport;
+  nsCOMPtr<nsIAsyncInputStream>  mSocketIn;
+  nsCOMPtr<nsIAsyncOutputStream> mSocketOut;
+};
+NS_IMPL_THREADSAFE_ISUPPORTS1(CallOnTransportAvailable, nsIRunnable)
 
 //-----------------------------------------------------------------------------
 // OutboundMessage
@@ -693,6 +693,7 @@ WebSocketChannel::WebSocketChannel() :
   mOpenBlocked(0),
   mOpenRunning(0),
   mChannelWasOpened(0),
+  mDataStarted(0),
   mIncrementedSessionCount(0),
   mDecrementedSessionCount(0),
   mMaxMessageSize(PR_INT32_MAX),
@@ -1050,10 +1051,9 @@ WebSocketChannel::ProcessInput(PRUint8 *buffer, PRUint32 count)
       LOG(("WebSocketChannel:: text frame received\n"));
       if (mListener) {
         nsCString utf8Data;
-        utf8Data.SetLength(payloadLength);
-        if (utf8Data.Length() != payloadLength)
+        if (!utf8Data.Assign((const char *)payload, payloadLength,
+                             mozilla::fallible_t()))
           return NS_ERROR_OUT_OF_MEMORY;
-        utf8Data.Assign((const char *)payload, payloadLength);
 
         // Section 8.1 says to fail connection if invalid utf-8 in text message
         if (!IsUTF8(utf8Data, false)) {
@@ -1910,6 +1910,14 @@ nsresult
 WebSocketChannel::StartWebsocketData()
 {
   LOG(("WebSocketChannel::StartWebsocketData() %p", this));
+  NS_ABORT_IF_FALSE(!mDataStarted, "StartWebsocketData twice");
+  mDataStarted = 1;
+  
+  LOG(("WebSocketChannel::StartWebsocketData Notifying Listener %p\n",
+       mListener.get()));
+
+  if (mListener)
+    mListener->OnStart(mContext);
 
   return mSocketIn->AsyncWait(this, 0, 0, mSocketThread);
 }
@@ -2420,6 +2428,13 @@ WebSocketChannel::OnTransportAvailable(nsISocketTransport *aTransport,
                                        nsIAsyncInputStream *aSocketIn,
                                        nsIAsyncOutputStream *aSocketOut)
 {
+  if (!NS_IsMainThread()) {
+    return NS_DispatchToMainThread(new CallOnTransportAvailable(this,
+                                                                aTransport,
+                                                                aSocketIn,
+                                                                aSocketOut));
+  }
+
   LOG(("WebSocketChannel::OnTransportAvailable %p [%p %p %p] rcvdonstart=%d\n",
        this, aTransport, aSocketIn, aSocketOut, mRecvdHttpOnStartRequest));
 
@@ -2594,12 +2609,6 @@ WebSocketChannel::OnStartRequest(nsIRequest *aRequest,
   rv = HandleExtensions();
   if (NS_FAILED(rv))
     return rv;
-
-  LOG(("WebSocketChannel::OnStartRequest: Notifying Listener %p\n",
-       mListener.get()));
-
-  if (mListener)
-    mListener->OnStart(mContext);
 
   mRecvdHttpOnStartRequest = 1;
   if (mRecvdHttpUpgradeTransport)

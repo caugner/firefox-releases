@@ -1,39 +1,6 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Mobile Browser.
- *
- * The Initial Developer of the Original Code is
- * Mozilla Corporation.
- * Portions created by the Initial Developer are Copyright (C) 2008
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Matt Brubeck <mbrubeck@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #filter substitution
 
@@ -60,7 +27,7 @@ pref("toolkit.defaultChromeURI", "chrome://browser/content/browser.xul");
 pref("browser.chromeURL", "chrome://browser/content/");
 
 pref("browser.tabs.warnOnClose", true);
-pref("browser.tabs.remote", true);
+pref("browser.tabs.remote", false);
 
 pref("toolkit.screen.lock", false);
 
@@ -71,9 +38,6 @@ pref("toolkit.zoomManager.zoomValues", ".2,.3,.5,.67,.8,.9,1,1.1,1.2,1.33,1.5,1.
 
 // Mobile will use faster, less durable mode.
 pref("toolkit.storage.synchronous", 0);
-
-// disable telemetry for beta
-pref("toolkit.telemetry.enabled", false);
 
 // Device pixel to CSS px ratio, in percent. Set to -1 to calculate based on display density.
 pref("browser.viewport.scaleRatio", -1);
@@ -125,10 +89,10 @@ pref("network.http.pipelining.ssl", true);
 pref("network.http.proxy.pipelining", true);
 pref("network.http.pipelining.maxrequests" , 6);
 pref("network.http.keep-alive.timeout", 600);
-pref("network.http.max-connections", 6);
-pref("network.http.max-connections-per-server", 4);
-pref("network.http.max-persistent-connections-per-server", 4);
-pref("network.http.max-persistent-connections-per-proxy", 4);
+pref("network.http.max-connections", 20);
+pref("network.http.max-connections-per-server", 15);
+pref("network.http.max-persistent-connections-per-server", 6);
+pref("network.http.max-persistent-connections-per-proxy", 8);
 #ifdef MOZ_PLATFORM_MAEMO
 pref("network.autodial-helper.enabled", true);
 #endif
@@ -296,8 +260,8 @@ pref("browser.search.update", false);
 pref("browser.search.update.log", false);
 pref("browser.search.updateinterval", 6);
 
-// enable search suggestions by default
-pref("browser.search.suggest.enabled", true);
+// disable search suggestions by default
+pref("browser.search.suggest.enabled", false);
 
 // Tell the search service to load search plugins from the locale JAR
 pref("browser.search.loadFromJars", true);
@@ -501,10 +465,8 @@ pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%/au
 pref("app.releaseNotesURL", "http://www.mozilla.com/%LOCALE%/mobile/%VERSION%/releasenotes/");
 #endif
 #if MOZ_UPDATE_CHANNEL == beta
-pref("app.featuresURL", "http://www.mozilla.com/%LOCALE%/mobile/beta/features/");
 pref("app.faqURL", "http://www.mozilla.com/%LOCALE%/mobile/beta/faq/");
 #else
-pref("app.featuresURL", "http://www.mozilla.com/%LOCALE%/mobile/features/");
 pref("app.faqURL", "http://www.mozilla.com/%LOCALE%/mobile/faq/");
 #endif
 pref("app.marketplaceURL", "https://marketplace.mozilla.org/");
@@ -731,9 +693,6 @@ pref("direct-texture.force.disabled", false);
 // show checkerboard pattern on android; we use background colour instead
 pref("gfx.show_checkerboard_pattern", true);
 
-pref("remote-debugger.enabled", false);
-pref("remote-debugger.port", 6000);
-
 // This fraction in 1000ths of velocity remains after every animation frame when the velocity is low.
 pref("ui.scrolling.friction_slow", -1);
 // This fraction in 1000ths of velocity remains after every animation frame when the velocity is high.
@@ -754,6 +713,9 @@ pref("ui.scrolling.min_scrollable_distance", -1);
 // A comma-separated list of float values in the range [0.0, 1.0) that are used as
 // interpolation frames for zoom animations.
 pref("ui.zooming.animation_frames", "");
+
+// Enable accessibility mode if platform accessibility is enabled.
+pref("accessibility.accessfu.activate", 2);
 
 // Mobile manages state by autodetection
 pref("network.manage-offline-status", true);

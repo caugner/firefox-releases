@@ -1,50 +1,8 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* vim:set ts=4 sw=4 sts=4 et cin: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications.
- * Portions created by the Initial Developer are Copyright (C) 2001
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Darin Fisher <darin@netscape.com> (original author)
- *   Gagan Saksena <gagan@netscape.com>
- *   Pierre Phaneuf <pp@ludusdesign.com>
- *   Christopher Blizzard <blizzard@mozilla.org>
- *   Adrian Havill <havill@redhat.com>
- *   Gervase Markham <gerv@gerv.net>
- *   Bradley Baetz <bbaetz@netscape.com>
- *   Benjamin Smedberg <bsmedberg@covad.net>
- *   Josh Aas <josh@mozilla.com>
- *   Dão Gottwald <dao@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsHttp.h"
 #include "nsHttpHandler.h"
@@ -77,7 +35,7 @@
 #include "nsAsyncRedirectVerifyHelper.h"
 #include "nsSocketTransportService2.h"
 #include "nsAlgorithm.h"
-#include "SpdySession.h"
+#include "ASpdySession.h"
 
 #include "nsIXULAppInfo.h"
 
@@ -197,7 +155,6 @@ nsHttpHandler::nsHttpHandler()
     , mQoSBits(0x00)
     , mPipeliningOverSSL(false)
     , mEnforceAssocReq(false)
-    , mInPrivateBrowsingMode(PRIVATE_BROWSING_UNKNOWN)
     , mLastUniqueID(NowInSeconds())
     , mSessionStartTime(0)
     , mLegacyAppName("Mozilla")
@@ -212,9 +169,11 @@ nsHttpHandler::nsHttpHandler()
     , mTelemetryEnabled(false)
     , mAllowExperiments(true)
     , mEnableSpdy(false)
+    , mSpdyV2(true)
+    , mSpdyV3(true)
     , mCoalesceSpdy(true)
     , mUseAlternateProtocol(false)
-    , mSpdySendingChunkSize(SpdySession::kSendingChunkSize)
+    , mSpdySendingChunkSize(ASpdySession::kSendingChunkSize)
     , mSpdyPingThreshold(PR_SecondsToInterval(44))
     , mSpdyPingTimeout(PR_SecondsToInterval(8))
 {
@@ -291,7 +250,11 @@ nsHttpHandler::Init()
 
     mAppName.AssignLiteral(MOZ_APP_UA_NAME);
     if (mAppName.Length() == 0 && appInfo) {
-        appInfo->GetName(mAppName);
+        // Try to get the UA name from appInfo, falling back to the name
+        appInfo->GetUAName(mAppName);
+        if (mAppName.Length() == 0) {
+          appInfo->GetName(mAppName);
+        }
         appInfo->GetVersion(mAppVersion);
         mAppName.StripChars(" ()<>@,;:\\\"/[]?={}");
     } else {
@@ -343,7 +306,6 @@ nsHttpHandler::Init()
         mObserverService->AddObserver(this, "profile-change-net-restore", true);
         mObserverService->AddObserver(this, NS_XPCOM_SHUTDOWN_OBSERVER_ID, true);
         mObserverService->AddObserver(this, "net:clear-active-logins", true);
-        mObserverService->AddObserver(this, NS_PRIVATE_BROWSING_SWITCH_TOPIC, true);
         mObserverService->AddObserver(this, "net:prune-dead-connections", true);
         mObserverService->AddObserver(this, "net:failed-to-process-uri-content", true);
     }
@@ -454,6 +416,7 @@ nsHttpHandler::IsAcceptableEncoding(const char *enc)
 
 nsresult
 nsHttpHandler::GetCacheSession(nsCacheStoragePolicy storagePolicy,
+                               bool isPrivate,
                                nsICacheSession **result)
 {
     nsresult rv;
@@ -473,7 +436,7 @@ nsHttpHandler::GetCacheSession(nsCacheStoragePolicy storagePolicy,
     const char *sessionName = "HTTP";
     switch (storagePolicy) {
     case nsICache::STORE_IN_MEMORY:
-        sessionName = "HTTP-memory-only";
+        sessionName = isPrivate ? "HTTP-memory-only-PB" : "HTTP-memory-only";
         break;
     case nsICache::STORE_OFFLINE:
         sessionName = "HTTP-offline";
@@ -495,23 +458,6 @@ nsHttpHandler::GetCacheSession(nsCacheStoragePolicy storagePolicy,
     NS_ADDREF(*result = cacheSession);
 
     return NS_OK;
-}
-
-bool
-nsHttpHandler::InPrivateBrowsingMode()
-{
-    if (PRIVATE_BROWSING_UNKNOWN == mInPrivateBrowsingMode) {
-        // figure out if we're starting in private browsing mode
-        nsCOMPtr<nsIPrivateBrowsingService> pbs =
-            do_GetService(NS_PRIVATE_BROWSING_SERVICE_CONTRACTID);
-        if (!pbs)
-            return PRIVATE_BROWSING_OFF;
-
-        bool p = false;
-        pbs->GetPrivateBrowsingEnabled(&p);
-        mInPrivateBrowsingMode = p ? PRIVATE_BROWSING_ON : PRIVATE_BROWSING_OFF;
-    }
-    return PRIVATE_BROWSING_ON == mInPrivateBrowsingMode;
 }
 
 nsresult
@@ -658,7 +604,7 @@ nsHttpHandler::BuildUserAgent()
     mUserAgent += mPlatform;
     mUserAgent.AppendLiteral("; ");
 #endif
-#ifdef ANDROID
+#if defined(ANDROID) || defined(MOZ_PLATFORM_MAEMO)
     if (!mCompatDevice.IsEmpty()) {
         mUserAgent += mCompatDevice;
         mUserAgent.AppendLiteral("; ");
@@ -716,7 +662,7 @@ nsHttpHandler::InitUserAgentComponents()
 #endif
     );
 
-#if defined(ANDROID)
+#if defined(ANDROID) || defined(MOZ_PLATFORM_MAEMO)
     nsCOMPtr<nsIPropertyBag2> infoService = do_GetService("@mozilla.org/system-info;1");
     NS_ASSERTION(infoService, "Could not find a system info service");
 
@@ -1196,6 +1142,18 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
             mEnableSpdy = cVar;
     }
 
+    if (PREF_CHANGED(HTTP_PREF("spdy.enabled.v2"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("spdy.enabled.v2"), &cVar);
+        if (NS_SUCCEEDED(rv))
+            mSpdyV2 = cVar;
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("spdy.enabled.v3"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("spdy.enabled.v3"), &cVar);
+        if (NS_SUCCEEDED(rv))
+            mSpdyV3 = cVar;
+    }
+
     if (PREF_CHANGED(HTTP_PREF("spdy.coalesce-hostnames"))) {
         rv = prefs->GetBoolPref(HTTP_PREF("spdy.coalesce-hostnames"), &cVar);
         if (NS_SUCCEEDED(rv))
@@ -1239,6 +1197,15 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
                 PR_SecondsToInterval((PRUint16) clamped(val, 0, 0x7fffffff));
     }
 
+    // on transition of network.http.diagnostics to true print
+    // a bunch of information to the console
+    if (pref && PREF_CHANGED(HTTP_PREF("diagnostics"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("diagnostics"), &cVar);
+        if (NS_SUCCEEDED(rv) && cVar) {
+            if (mConnMgr)
+                mConnMgr->PrintDiagnostics();
+        }
+    }
     //
     // INTL options
     //
@@ -1417,12 +1384,13 @@ nsHttpHandler::SetAcceptEncodings(const char *aAcceptEncodings)
 // nsHttpHandler::nsISupports
 //-----------------------------------------------------------------------------
 
-NS_IMPL_THREADSAFE_ISUPPORTS5(nsHttpHandler,
+NS_IMPL_THREADSAFE_ISUPPORTS6(nsHttpHandler,
                               nsIHttpProtocolHandler,
                               nsIProxiedProtocolHandler,
                               nsIProtocolHandler,
                               nsIObserver,
-                              nsISupportsWeakReference)
+                              nsISupportsWeakReference,
+                              nsISpeculativeConnect)
 
 //-----------------------------------------------------------------------------
 // nsHttpHandler::nsIProtocolHandler
@@ -1647,14 +1615,6 @@ nsHttpHandler::Observe(nsISupports *subject,
     else if (strcmp(topic, "net:clear-active-logins") == 0) {
         mAuthCache.ClearAll();
     }
-    else if (strcmp(topic, NS_PRIVATE_BROWSING_SWITCH_TOPIC) == 0) {
-        if (NS_LITERAL_STRING(NS_PRIVATE_BROWSING_ENTER).Equals(data))
-            mInPrivateBrowsingMode = PRIVATE_BROWSING_ON;
-        else if (NS_LITERAL_STRING(NS_PRIVATE_BROWSING_LEAVE).Equals(data))
-            mInPrivateBrowsingMode = PRIVATE_BROWSING_OFF;
-        if (mConnMgr)
-            mConnMgr->ClosePersistentConnections();
-    }
     else if (strcmp(topic, "net:prune-dead-connections") == 0) {
         if (mConnMgr) {
             mConnMgr->PruneDeadConnections();
@@ -1669,15 +1629,75 @@ nsHttpHandler::Observe(nsISupports *subject,
     return NS_OK;
 }
 
+// nsISpeculativeConnect
+
+NS_IMETHODIMP
+nsHttpHandler::SpeculativeConnect(nsIURI *aURI,
+                                  nsIInterfaceRequestor *aCallbacks,
+                                  nsIEventTarget *aTarget)
+{
+    nsIStrictTransportSecurityService* stss = gHttpHandler->GetSTSService();
+    bool isStsHost = false;
+    if (!stss)
+        return NS_OK;
+    
+    nsCOMPtr<nsIURI> clone;
+    if (NS_SUCCEEDED(stss->IsStsURI(aURI, &isStsHost)) && isStsHost) {
+        if (NS_SUCCEEDED(aURI->Clone(getter_AddRefs(clone)))) {
+            clone->SetScheme(NS_LITERAL_CSTRING("https"));
+            aURI = clone.get();
+        }
+    }
+
+    nsCAutoString scheme;
+    nsresult rv = aURI->GetScheme(scheme);
+    if (NS_FAILED(rv))
+        return rv;
+
+    // If this is HTTPS, make sure PSM is initialized as the channel
+    // creation path may have been bypassed
+    if (scheme.EqualsLiteral("https")) {
+        if (!IsNeckoChild()) {
+            // make sure PSM gets initialized on the main thread.
+            net_EnsurePSMInit();
+        }
+    }
+    // Ensure that this is HTTP or HTTPS, otherwise we don't do preconnect here
+    else if (!scheme.EqualsLiteral("http"))
+        return NS_ERROR_UNEXPECTED;
+
+    // Construct connection info object
+    bool usingSSL = false;
+    rv = aURI->SchemeIs("https", &usingSSL);
+    if (NS_FAILED(rv))
+        return rv;
+
+    nsCAutoString host;
+    rv = aURI->GetAsciiHost(host);
+    if (NS_FAILED(rv))
+        return rv;
+
+    PRInt32 port = -1;
+    rv = aURI->GetPort(&port);
+    if (NS_FAILED(rv))
+        return rv;
+
+    nsHttpConnectionInfo *ci =
+        new nsHttpConnectionInfo(host, port, nsnull, usingSSL);
+
+    return SpeculativeConnect(ci, aCallbacks, aTarget);
+}
+
 //-----------------------------------------------------------------------------
 // nsHttpsHandler implementation
 //-----------------------------------------------------------------------------
 
-NS_IMPL_THREADSAFE_ISUPPORTS4(nsHttpsHandler,
+NS_IMPL_THREADSAFE_ISUPPORTS5(nsHttpsHandler,
                               nsIHttpProtocolHandler,
                               nsIProxiedProtocolHandler,
                               nsIProtocolHandler,
-                              nsISupportsWeakReference)
+                              nsISupportsWeakReference,
+                              nsISpeculativeConnect)
 
 nsresult
 nsHttpsHandler::Init()

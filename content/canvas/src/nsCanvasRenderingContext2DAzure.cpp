@@ -1,39 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Corporation code.
- *
- * The Initial Developer of the Original Code is Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Bas Schouten <bschouten@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "base/basictypes.h"
 
@@ -104,7 +72,6 @@
 #include "nsIMemoryReporter.h"
 #include "nsStyleUtil.h"
 #include "CanvasImageCache.h"
-#include "CheckedInt.h"
 
 #include <algorithm>
 
@@ -112,6 +79,7 @@
 #include "jsfriendapi.h"
 
 #include "mozilla/Assertions.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/ImageData.h"
 #include "mozilla/dom/PBrowserParent.h"
@@ -383,6 +351,7 @@ NS_INTERFACE_MAP_BEGIN(nsTextMetricsAzure)
 NS_INTERFACE_MAP_END
 
 struct nsCanvasBidiProcessorAzure;
+class CanvasRenderingContext2DUserDataAzure;
 
 // Cap sigma to avoid overly large temp surfaces.
 static const Float SIGMA_MAX = 100;
@@ -447,6 +416,8 @@ public:
   
   nsresult LineTo(const Point& aPoint);
   nsresult BezierTo(const Point& aCP1, const Point& aCP2, const Point& aCP3);
+
+  friend class CanvasRenderingContext2DUserDataAzure;
 
 protected:
   nsresult GetImageDataArray(JSContext* aCx, int32_t aX, int32_t aY,
@@ -529,6 +500,8 @@ protected:
   bool mResetLayer;
   // This is needed for drawing in drawAsyncXULElement
   bool mIPC;
+
+  nsTArray<CanvasRenderingContext2DUserDataAzure*> mUserDatas;
 
   // the canvas element we're a context of
   nsCOMPtr<nsIDOMHTMLCanvasElement> mCanvasElement;
@@ -700,7 +673,7 @@ protected:
             dash(other.dash),
             dashOffset(other.dashOffset),
             op(other.op),
-            fillRule(FILL_WINDING),
+            fillRule(other.fillRule),
             lineCap(other.lineCap),
             lineJoin(other.lineJoin),
             imageSmoothingEnabled(other.imageSmoothingEnabled)
@@ -965,6 +938,40 @@ protected:
   friend struct nsCanvasBidiProcessorAzure;
 };
 
+class CanvasRenderingContext2DUserDataAzure : public LayerUserData {
+public:
+    CanvasRenderingContext2DUserDataAzure(nsCanvasRenderingContext2DAzure *aContext)
+    : mContext(aContext)
+  {
+    aContext->mUserDatas.AppendElement(this);
+  }
+  ~CanvasRenderingContext2DUserDataAzure()
+  {
+    if (mContext) {
+      mContext->mUserDatas.RemoveElement(this);
+    }
+  }
+  static void DidTransactionCallback(void* aData)
+  {
+      CanvasRenderingContext2DUserDataAzure* self =
+      static_cast<CanvasRenderingContext2DUserDataAzure*>(aData);
+    if (self->mContext) {
+      self->mContext->MarkContextClean();
+    }
+  }
+  bool IsForContext(nsCanvasRenderingContext2DAzure *aContext)
+  {
+    return mContext == aContext;
+  }
+  void Forget()
+  {
+    mContext = nsnull;
+  }
+
+private:
+  nsCanvasRenderingContext2DAzure *mContext;
+};
+
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsCanvasRenderingContext2DAzure)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsCanvasRenderingContext2DAzure)
 
@@ -1032,6 +1039,10 @@ nsCanvasRenderingContext2DAzure::nsCanvasRenderingContext2DAzure()
 nsCanvasRenderingContext2DAzure::~nsCanvasRenderingContext2DAzure()
 {
   Reset();
+  // Drop references from all CanvasRenderingContext2DUserDataAzure to this context
+  for (PRUint32 i = 0; i < mUserDatas.Length(); ++i) {
+    mUserDatas[i]->Forget();
+  }
   sNumLivingContexts--;
   if (!sNumLivingContexts) {
     delete[] sUnpremultiplyTable;
@@ -1146,13 +1157,13 @@ nsCanvasRenderingContext2DAzure::StyleColorToString(const nscolor& aColor, nsASt
   // We can't reuse the normal CSS color stringification code,
   // because the spec calls for a different algorithm for canvas.
   if (NS_GET_A(aColor) == 255) {
-    CopyUTF8toUTF16(nsPrintfCString(100, "#%02x%02x%02x",
+    CopyUTF8toUTF16(nsPrintfCString("#%02x%02x%02x",
                                     NS_GET_R(aColor),
                                     NS_GET_G(aColor),
                                     NS_GET_B(aColor)),
                     aStr);
   } else {
-    CopyUTF8toUTF16(nsPrintfCString(100, "rgba(%d, %d, %d, ",
+    CopyUTF8toUTF16(nsPrintfCString("rgba(%d, %d, %d, ",
                                     NS_GET_R(aColor),
                                     NS_GET_G(aColor),
                                     NS_GET_B(aColor)),
@@ -2548,6 +2559,7 @@ nsCanvasRenderingContext2DAzure::EnsureWritablePath()
         mPath->TransformedCopyToBuilder(mPathToDS, fillRule);
       mPath = nsnull;
       mPathBuilder = nsnull;
+      mPathTransformWillUpdate = false;
     }
     return;
   }
@@ -2798,8 +2810,9 @@ nsCanvasRenderingContext2DAzure::SetFont(const nsAString& font)
                       fontStyle->mFont.sizeAdjust,
                       fontStyle->mFont.systemFont,
                       printerFont,
-                      fontStyle->mFont.featureSettings,
                       fontStyle->mFont.languageOverride);
+
+  fontStyle->mFont.AddFontFeaturesToStyle(&style);
 
   CurrentState().fontGroup =
       gfxPlatform::GetPlatform()->CreateFontGroup(fontStyle->mFont.name,
@@ -3281,6 +3294,7 @@ nsCanvasRenderingContext2DAzure::DrawOrMeasureText(const nsAString& aRawText,
   processor.mPt.x -= anchorX * totalWidth;
 
   // offset pt.y based on text baseline
+  processor.mFontgrp->UpdateFontList(); // ensure user font generation is current
   NS_ASSERTION(processor.mFontgrp->FontListLength()>0, "font group contains no fonts");
   const gfxFont::Metrics& fontMetrics = processor.mFontgrp->GetFontAt(0)->GetMetrics();
 
@@ -4093,14 +4107,14 @@ nsCanvasRenderingContext2DAzure::GetImageDataArray(JSContext* aCx,
   MOZ_ASSERT(aWidth && aHeight);
 
   CheckedInt<uint32_t> len = CheckedInt<uint32_t>(aWidth) * aHeight * 4;
-  if (!len.valid()) {
+  if (!len.isValid()) {
     return NS_ERROR_DOM_INDEX_SIZE_ERR;
   }
 
   CheckedInt<int32_t> rightMost = CheckedInt<int32_t>(aX) + aWidth;
   CheckedInt<int32_t> bottomMost = CheckedInt<int32_t>(aY) + aHeight;
 
-  if (!rightMost.valid() || !bottomMost.valid()) {
+  if (!rightMost.isValid() || !bottomMost.isValid()) {
     return NS_ERROR_DOM_SYNTAX_ERR;
   }
 
@@ -4231,7 +4245,7 @@ nsCanvasRenderingContext2DAzure::PutImageData_explicit(PRInt32 x, PRInt32 y, PRU
 
       CheckedInt32 checkedDirtyX = CheckedInt32(dirtyX) + dirtyWidth;
 
-      if (!checkedDirtyX.valid())
+      if (!checkedDirtyX.isValid())
           return NS_ERROR_DOM_INDEX_SIZE_ERR;
 
       dirtyX = checkedDirtyX.value();
@@ -4243,7 +4257,7 @@ nsCanvasRenderingContext2DAzure::PutImageData_explicit(PRInt32 x, PRInt32 y, PRU
 
       CheckedInt32 checkedDirtyY = CheckedInt32(dirtyY) + dirtyHeight;
 
-      if (!checkedDirtyY.valid())
+      if (!checkedDirtyY.isValid())
           return NS_ERROR_DOM_INDEX_SIZE_ERR;
 
       dirtyY = checkedDirtyY.value();
@@ -4374,19 +4388,6 @@ nsCanvasRenderingContext2DAzure::SetMozImageSmoothingEnabled(bool val)
 
 static PRUint8 g2DContextLayerUserData;
 
-class CanvasRenderingContext2DUserData : public LayerUserData {
-public:
-  CanvasRenderingContext2DUserData(nsHTMLCanvasElement *aContent)
-    : mContent(aContent) {}
-  static void DidTransactionCallback(void* aData)
-  {
-    static_cast<CanvasRenderingContext2DUserData*>(aData)->mContent->MarkContextClean();
-  }
-
-private:
-  nsRefPtr<nsHTMLCanvasElement> mContent;
-};
-
 already_AddRefed<CanvasLayer>
 nsCanvasRenderingContext2DAzure::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
                                            CanvasLayer *aOldLayer,
@@ -4400,18 +4401,22 @@ nsCanvasRenderingContext2DAzure::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
     mTarget->Flush();
   }
 
-  if (!mResetLayer && aOldLayer &&
-      aOldLayer->HasUserData(&g2DContextLayerUserData)) {
+  if (!mResetLayer && aOldLayer) {
+    CanvasRenderingContext2DUserDataAzure* userData =
+      static_cast<CanvasRenderingContext2DUserDataAzure*>(
+        aOldLayer->GetUserData(&g2DContextLayerUserData));
+    if (userData && userData->IsForContext(this)) {
       NS_ADDREF(aOldLayer);
       return aOldLayer;
+    }
   }
 
   nsRefPtr<CanvasLayer> canvasLayer = aManager->CreateCanvasLayer();
   if (!canvasLayer) {
-      NS_WARNING("CreateCanvasLayer returned null!");
-      return nsnull;
+    NS_WARNING("CreateCanvasLayer returned null!");
+    return nsnull;
   }
-  CanvasRenderingContext2DUserData *userData = nsnull;
+  CanvasRenderingContext2DUserDataAzure *userData = nsnull;
   if (aBuilder->IsPaintingToWindow()) {
     // Make the layer tell us whenever a transaction finishes (including
     // the current transaction), so we can clear our invalidation state and
@@ -4425,9 +4430,9 @@ nsCanvasRenderingContext2DAzure::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
     // releasing the reference to the element.
     // The userData will receive DidTransactionCallbacks, which flush the
     // the invalidation state to indicate that the canvas is up to date.
-    userData = new CanvasRenderingContext2DUserData(HTMLCanvasElement());
+    userData = new CanvasRenderingContext2DUserDataAzure(this);
     canvasLayer->SetDidTransactionCallback(
-            CanvasRenderingContext2DUserData::DidTransactionCallback, userData);
+            CanvasRenderingContext2DUserDataAzure::DidTransactionCallback, userData);
   }
   canvasLayer->SetUserData(&g2DContextLayerUserData, userData);
 

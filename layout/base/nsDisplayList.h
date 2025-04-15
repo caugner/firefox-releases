@@ -1,40 +1,8 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*-
  * vim: set ts=2 sw=2 et tw=78:
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Novell code.
- *
- * The Initial Developer of the Original Code is Novell Corporation.
- * Portions created by the Initial Developer are Copyright (C) 2006
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *     robert@ocallahan.org
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK *****
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
 /*
@@ -56,6 +24,7 @@
 #include "nsRegion.h"
 #include "FrameLayerBuilder.h"
 #include "nsThemeConstants.h"
+#include "ImageLayers.h"
 
 #include "mozilla/StandardInteger.h"
 
@@ -353,6 +322,12 @@ public:
   void MarkFramesForDisplayList(nsIFrame* aDirtyFrame,
                                 const nsFrameList& aFrames,
                                 const nsRect& aDirtyRect);
+  /**
+   * Mark all child frames that Preserve3D() as needing display.
+   * Because these frames include transforms set on their parent, dirty rects
+   * for intermediate frames may be empty, yet child frames could still be visible.
+   */
+  void MarkPreserve3DFramesForDisplayList(nsIFrame* aDirtyFrame, const nsRect& aDirtyRect);
 
   /**
    * Return the FrameLayerBuilder.
@@ -480,6 +455,7 @@ public:
   void SetCurrentTableItem(nsDisplayTableItem* aTableItem) { mCurrentTableItem = aTableItem; }
 
   NS_DECLARE_FRAME_PROPERTY(OutOfFlowDirtyRectProperty, nsIFrame::DestroyRect)
+  NS_DECLARE_FRAME_PROPERTY(Preserve3DDirtyRectProperty, nsIFrame::DestroyRect)
 
   nsPresContext* CurrentPresContext() {
     return CurrentPresShellState()->mPresShell->GetPresContext();
@@ -495,6 +471,20 @@ public:
   }
   const nsRegion& GetExcludedGlassRegion() {
     return mExcludedGlassRegion;
+  }
+  void SetGlassDisplayItem(nsDisplayItem* aItem) {
+    if (mGlassDisplayItem) {
+      // Web pages or extensions could trigger this by using
+      // -moz-appearance:win-borderless-glass etc on their own elements.
+      // Keep the first one, since that will be the background of the root
+      // window
+      NS_WARNING("Multiple glass backgrounds found?");
+    } else {
+      mGlassDisplayItem = aItem;
+    }
+  }
+  bool NeedToForceTransparentSurfaceForItem(nsDisplayItem* aItem) {
+    return aItem == mGlassDisplayItem;
   }
 
 private:
@@ -529,6 +519,8 @@ private:
   nsPoint                        mCachedOffset;
   nsRect                         mDisplayPort;
   nsRegion                       mExcludedGlassRegion;
+  // The display item for the Windows window glass background, if any
+  nsDisplayItem*                 mGlassDisplayItem;
   Mode                           mMode;
   bool                           mBuildCaret;
   bool                           mIgnoreSuppression;
@@ -580,6 +572,7 @@ protected:
  */
 class nsDisplayItem : public nsDisplayItemLink {
 public:
+  typedef mozilla::FrameLayerBuilder::ContainerParameters ContainerParameters;
   typedef mozilla::layers::FrameMetrics::ViewID ViewID;
   typedef mozilla::layers::Layer Layer;
   typedef mozilla::layers::LayerManager LayerManager;
@@ -699,11 +692,9 @@ public:
    * culling.
    */
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
-                                   bool* aSnap,
-                                   bool* aForceTransparentSurface)
+                                   bool* aSnap)
   {
     *aSnap = false;
-    *aForceTransparentSurface = false;
     return nsRegion();
   }
   /**
@@ -751,7 +742,8 @@ public:
    * every time we paint.
    */
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
-                                   LayerManager* aManager)
+                                   LayerManager* aManager,
+                                   const ContainerParameters& aParameters)
   { return mozilla::LAYER_NONE; }
   /**
    * Actually paint this item to some rendering context.
@@ -786,7 +778,6 @@ public:
    * FrameLayerBuilder::BuildContainerLayerFor if a ContainerLayer is
    * constructed.
    */
-  typedef mozilla::FrameLayerBuilder::ContainerParameters ContainerParameters;
   virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
                                              LayerManager* aManager,
                                              const ContainerParameters& aContainerParameters)
@@ -1217,8 +1208,7 @@ private:
   // opaque content in this list).
   bool mIsOpaque;
   // This is set to true by ComputeVisibility if any display item in this
-  // list needs to force the surface to be transparent (e.g. if the
-  // item "punch holes" on the surface by clearing part of its area).
+  // list needs to force the surface containing this list to be transparent.
   bool mForceTransparentSurface;
 #ifdef DEBUG
   bool mDidComputeVisibility;
@@ -1554,10 +1544,8 @@ public:
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap);
 
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
-                                   bool* aSnap,
-                                   bool* aOutTransparentBackground) {
+                                   bool* aSnap) {
     *aSnap = false;
-    *aOutTransparentBackground = false;
     nsRegion result;
     if (NS_GET_A(mColor) == 255) {
       result = GetBounds(aBuilder, aSnap);
@@ -1592,14 +1580,21 @@ public:
   }
 #endif
 
+  virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
+                                   LayerManager* aManager,
+                                   const ContainerParameters& aParameters);
+
+  virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
+                                             LayerManager* aManager,
+                                             const ContainerParameters& aContainerParameters);
+
   virtual void HitTest(nsDisplayListBuilder* aBuilder, const nsRect& aRect,
                        HitTestState* aState, nsTArray<nsIFrame*> *aOutFrames);
   virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                    nsRegion* aVisibleRegion,
                                    const nsRect& aAllowVisibleRegionExpansion);
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
-                                   bool* aSnap,
-                                   bool* aForceTransparentSurface);
+                                   bool* aSnap);
   virtual bool IsVaryingRelativeToMovingFrame(nsDisplayListBuilder* aBuilder,
                                                 nsIFrame* aFrame);
   virtual bool IsUniform(nsDisplayListBuilder* aBuilder, nscolor* aColor);
@@ -1611,12 +1606,22 @@ public:
   bool IsThemed() { return mIsThemed; }
 
 protected:
+  typedef class mozilla::layers::ImageContainer ImageContainer;
+  typedef class mozilla::layers::ImageLayer ImageLayer;
+
   nsRegion GetInsideClipRegion(nsPresContext* aPresContext, PRUint8 aClip,
                                const nsRect& aRect, bool* aSnap);
+
+  bool TryOptimizeToImageLayer(nsDisplayListBuilder* aBuilder);
+  void ConfigureLayer(ImageLayer* aLayer);
 
   /* Used to cache mFrame->IsThemed() since it isn't a cheap call */
   bool mIsThemed;
   nsITheme::Transparency mThemeTransparency;
+
+  /* If this background can be a simple image layer, we store the format here. */
+  nsRefPtr<ImageContainer> mImageContainer;
+  gfxRect mDestRect;
 };
 
 /**
@@ -1755,8 +1760,7 @@ public:
                        HitTestState* aState, nsTArray<nsIFrame*> *aOutFrames);
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap);
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
-                                   bool* aSnap,
-                                   bool* aForceTransparentSurface);
+                                   bool* aSnap);
   virtual bool IsUniform(nsDisplayListBuilder* aBuilder, nscolor* aColor);
   virtual bool IsVaryingRelativeToMovingFrame(nsDisplayListBuilder* aBuilder,
                                                 nsIFrame* aFrame);
@@ -1796,9 +1800,10 @@ public:
    * and they all have the given aActiveScrolledRoot.
    */
   static bool ChildrenCanBeInactive(nsDisplayListBuilder* aBuilder,
-                                      LayerManager* aManager,
-                                      const nsDisplayList& aList,
-                                      nsIFrame* aActiveScrolledRoot);
+                                    LayerManager* aManager,
+                                    const ContainerParameters& aParameters,
+                                    const nsDisplayList& aList,
+                                    nsIFrame* aActiveScrolledRoot);
 
 protected:
   nsDisplayWrapList() {}
@@ -1861,13 +1866,13 @@ public:
 #endif
   
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
-                                   bool* aSnap,
-                                   bool* aForceTransparentSurface);
+                                   bool* aSnap);
   virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
                                              LayerManager* aManager,
                                              const ContainerParameters& aContainerParameters);
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
-                                   LayerManager* aManager);
+                                   LayerManager* aManager,
+                                   const ContainerParameters& aParameters);
   virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
                                    nsRegion* aVisibleRegion,
                                    const nsRect& aAllowVisibleRegionExpansion);  
@@ -1891,7 +1896,8 @@ public:
                                              LayerManager* aManager,
                                              const ContainerParameters& aContainerParameters);
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
-                                   LayerManager* aManager)
+                                   LayerManager* aManager,
+                                   const ContainerParameters& aParameters)
   {
     return mozilla::LAYER_ACTIVE;
   }
@@ -1958,7 +1964,8 @@ public:
                                    const nsRect& aAllowVisibleRegionExpansion);
 
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
-                                   LayerManager* aManager);
+                                   LayerManager* aManager,
+                                   const ContainerParameters& aParameters);
 
   virtual bool TryMerge(nsDisplayListBuilder* aBuilder,
                           nsDisplayItem* aItem);
@@ -1999,7 +2006,8 @@ public:
 #endif
 
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
-                                   LayerManager* aManager);
+                                   LayerManager* aManager,
+                                   const ContainerParameters& aParameters);
 
   virtual bool TryMerge(nsDisplayListBuilder* aBuilder,
                           nsDisplayItem* aItem);
@@ -2068,8 +2076,7 @@ public:
 #endif
 
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
-                                   bool* aSnap,
-                                   bool* aForceTransparentSurface);
+                                   bool* aSnap);
   virtual void HitTest(nsDisplayListBuilder* aBuilder, const nsRect& aRect,
                        HitTestState* aState, nsTArray<nsIFrame*> *aOutFrames);
   virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
@@ -2140,8 +2147,7 @@ public:
 #endif
   
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder* aBuilder,
-                                   bool* aSnap,
-                                   bool* aForceTransparentSurface);
+                                   bool* aSnap);
   virtual void HitTest(nsDisplayListBuilder* aBuilder, const nsRect& aRect,
                        HitTestState* aState, nsTArray<nsIFrame*> *aOutFrames);
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap) {
@@ -2221,11 +2227,11 @@ public:
                        HitTestState *aState, nsTArray<nsIFrame*> *aOutFrames);
   virtual nsRect GetBounds(nsDisplayListBuilder *aBuilder, bool* aSnap);
   virtual nsRegion GetOpaqueRegion(nsDisplayListBuilder *aBuilder,
-                                   bool* aSnap,
-                                   bool* aForceTransparentSurface);
+                                   bool* aSnap);
   virtual bool IsUniform(nsDisplayListBuilder *aBuilder, nscolor* aColor);
   virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
-                                   LayerManager* aManager);
+                                   LayerManager* aManager,
+                                   const ContainerParameters& aParameters);
   virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
                                              LayerManager* aManager,
                                              const ContainerParameters& aContainerParameters);
@@ -2302,8 +2308,8 @@ public:
   static nsRect GetFrameBoundsForTransform(const nsIFrame* aFrame);
 
   /**
-   * Given a frame with the -moz-transform property, returns the
-   * transformation matrix for that frame.
+   * Given a frame with the -moz-transform property or an SVG transform,
+   * returns the transformation matrix for that frame.
    *
    * @param aFrame The frame to get the matrix from.
    * @param aOrigin Relative to which point this transform should be applied.

@@ -1,49 +1,8 @@
 /* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* vim:set expandtab ts=4 sw=4 sts=4 cin: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications.
- * Portions created by the Initial Developer are Copyright (C) 2001
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Darin Fisher <darin@meer.net> (original author)
- *   Christian Biesinger <cbiesinger@web.de>
- *   Google Inc.
- *   Jan Wrobel <wrobel@blues.ath.cx>
- *   Jan Odvarko <odvarko@gmail.com>
- *   Dave Camp <dcamp@mozilla.com>
- *   Honza Bambas <honzab@firemni.cz>
- *   Daniel Witte <dwitte@mozilla.com>
- *   Jason Duell <jduell.mcbugs@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsHttpChannel.h"
 #include "nsHttpHandler.h"
@@ -73,6 +32,7 @@
 #include "sampler.h"
 #include "nsIConsoleService.h"
 #include "base/compiler_specific.h"
+#include "NullHttpTransaction.h"
 
 using namespace mozilla;
 
@@ -231,6 +191,10 @@ nsHttpChannel::Connect(bool firstTime)
 
     // true when called from AsyncOpen
     if (firstTime) {
+
+        // Consider opening a TCP connection right away
+        SpeculativeConnect();
+
         // are we offline?
         bool offline = gIOService->IsOffline();
         if (offline)
@@ -299,22 +263,22 @@ nsHttpChannel::Connect(bool firstTime)
                 event->Revoke();
             }
             mozilla::Telemetry::Accumulate(
-                    mozilla::Telemetry::HTTP_CACHE_DISPOSITION, kCacheHit);
+                    mozilla::Telemetry::HTTP_CACHE_DISPOSITION_2, kCacheHit);
 
             char* cacheDeviceID = nsnull;
             mCacheEntry->GetDeviceID(&cacheDeviceID);
             if (cacheDeviceID) {
                 if (!strcmp(cacheDeviceID, kDiskDeviceID))
                     mozilla::Telemetry::Accumulate(
-                            mozilla::Telemetry::HTTP_DISK_CACHE_DISPOSITION,
+                            mozilla::Telemetry::HTTP_DISK_CACHE_DISPOSITION_2,
                             kCacheHit);
                 else if (!strcmp(cacheDeviceID, kMemoryDeviceID))
                     mozilla::Telemetry::Accumulate(
-                            mozilla::Telemetry::HTTP_MEMORY_CACHE_DISPOSITION,
+                            mozilla::Telemetry::HTTP_MEMORY_CACHE_DISPOSITION_2,
                             kCacheHit);
                 else if (!strcmp(cacheDeviceID, kOfflineDeviceID))
                     mozilla::Telemetry::Accumulate(
-                            mozilla::Telemetry::HTTP_OFFLINE_CACHE_DISPOSITION,
+                            mozilla::Telemetry::HTTP_OFFLINE_CACHE_DISPOSITION_2,
                             kCacheHit);
             }
             return rv;
@@ -355,6 +319,36 @@ nsHttpChannel::Connect(bool firstTime)
         mTransactionPump->Suspend();
 
     return NS_OK;
+}
+
+void
+nsHttpChannel::SpeculativeConnect()
+{
+    // Before we take the latency hit of dealing with the cache, try and
+    // get the TCP (and SSL) handshakes going so they can overlap.
+
+    // don't speculate on uses of the offline application cache or if
+    // we are actually offline
+    if (mApplicationCache || gIOService->IsOffline())
+        return;
+
+    // LOAD_ONLY_FROM_CACHE and LOAD_NO_NETWORK_IO must not hit network.
+    // LOAD_FROM_CACHE and LOAD_CHECK_OFFLINE_CACHE are unlikely to hit network,
+    // so skip preconnects for them.
+    if (mLoadFlags & (LOAD_ONLY_FROM_CACHE | LOAD_FROM_CACHE |
+                      LOAD_NO_NETWORK_IO | LOAD_CHECK_OFFLINE_CACHE))
+        return;
+    
+    nsCOMPtr<nsIInterfaceRequestor> callbacks;
+    NS_NewNotificationCallbacksAggregation(mCallbacks, mLoadGroup,
+                                           getter_AddRefs(callbacks));
+    if (!callbacks)
+        return;
+
+    mConnectionInfo->SetAnonymous((mLoadFlags & LOAD_ANONYMOUS) != 0);
+    mConnectionInfo->SetPrivate(UsingPrivateBrowsing());
+    gHttpHandler->SpeculativeConnect(mConnectionInfo,
+                                     callbacks, NS_GetCurrentThread());
 }
 
 void
@@ -646,6 +640,7 @@ nsHttpChannel::SetupTransaction()
         mCaps |= NS_HTTP_TIMING_ENABLED;
 
     mConnectionInfo->SetAnonymous((mLoadFlags & LOAD_ANONYMOUS) != 0);
+    mConnectionInfo->SetPrivate(UsingPrivateBrowsing());
 
     if (mUpgradeProtocolCallback) {
         mRequestHead.SetHeader(nsHttp::Upgrade, mUpgradeProtocol, false);
@@ -1120,7 +1115,7 @@ nsHttpChannel::ProcessResponse()
     else
         cacheDisposition = kCacheMissedViaReval;
 
-    mozilla::Telemetry::Accumulate(mozilla::Telemetry::HTTP_CACHE_DISPOSITION,
+    mozilla::Telemetry::Accumulate(mozilla::Telemetry::HTTP_CACHE_DISPOSITION_2,
             cacheDisposition);
     if (mCacheEntry) {
         char* cacheDeviceID = nsnull;
@@ -1128,15 +1123,15 @@ nsHttpChannel::ProcessResponse()
         if (cacheDeviceID) {
             if (!strcmp(cacheDeviceID, kDiskDeviceID))
                 mozilla::Telemetry::Accumulate(
-                        mozilla::Telemetry::HTTP_DISK_CACHE_DISPOSITION,
+                        mozilla::Telemetry::HTTP_DISK_CACHE_DISPOSITION_2,
                         cacheDisposition);
             else if (!strcmp(cacheDeviceID, kMemoryDeviceID))
                 mozilla::Telemetry::Accumulate(
-                        mozilla::Telemetry::HTTP_MEMORY_CACHE_DISPOSITION,
+                        mozilla::Telemetry::HTTP_MEMORY_CACHE_DISPOSITION_2,
                         cacheDisposition);
             else if (!strcmp(cacheDeviceID, kOfflineDeviceID))
                 mozilla::Telemetry::Accumulate(
-                        mozilla::Telemetry::HTTP_OFFLINE_CACHE_DISPOSITION,
+                        mozilla::Telemetry::HTTP_OFFLINE_CACHE_DISPOSITION_2,
                         cacheDisposition);
         }
     }
@@ -1443,7 +1438,7 @@ nsHttpChannel::AsyncRedirectChannelToHttps()
     rv = ioService->NewChannelFromURI(upgradedURI, getter_AddRefs(newChannel));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = SetupReplacementChannel(upgradedURI, newChannel, true, false);
+    rv = SetupReplacementChannel(upgradedURI, newChannel, true);
     NS_ENSURE_SUCCESS(rv, rv);
 
     // Inform consumers about this fake redirect
@@ -1540,7 +1535,7 @@ nsHttpChannel::AsyncDoReplaceWithProxy(nsIProxyInfo* pi)
     if (NS_FAILED(rv))
         return rv;
 
-    rv = SetupReplacementChannel(mURI, newChannel, true, true);
+    rv = SetupReplacementChannel(mURI, newChannel, true);
     if (NS_FAILED(rv))
         return rv;
 
@@ -2103,7 +2098,7 @@ nsHttpChannel::ProcessFallback(bool *waitingForRedirectCallback)
     rv = gHttpHandler->NewChannel(mURI, getter_AddRefs(newChannel));
     NS_ENSURE_SUCCESS(rv, rv);
 
-    rv = SetupReplacementChannel(mURI, newChannel, true, false);
+    rv = SetupReplacementChannel(mURI, newChannel, true);
     NS_ENSURE_SUCCESS(rv, rv);
 
     // Make sure the new channel loads from the fallback key.
@@ -2275,6 +2270,8 @@ nsHttpChannel::OpenCacheEntry()
                                  getter_AddRefs(session));
         NS_ENSURE_SUCCESS(rv, rv);
 
+        session->SetIsPrivate(UsingPrivateBrowsing());
+
         mOnCacheEntryAvailableCallback =
             &nsHttpChannel::OnOfflineCacheEntryAvailable;
         // We open with ACCESS_READ only, because we don't want to overwrite
@@ -2378,6 +2375,7 @@ nsHttpChannel::OpenNormalCacheEntry()
 
     nsCOMPtr<nsICacheSession> session;
     rv = gHttpHandler->GetCacheSession(storagePolicy,
+                                       UsingPrivateBrowsing(),
                                        getter_AddRefs(session));
     if (NS_FAILED(rv))
         return rv;
@@ -2474,6 +2472,11 @@ nsHttpChannel::OpenOfflineCacheEntryForWriting()
                              nsICache::STREAM_BASED,
                              getter_AddRefs(session));
     if (NS_FAILED(rv)) return rv;
+
+    if (mProfileDirectory) {
+        rv = session->SetProfileDirectory(mProfileDirectory);
+        if (NS_FAILED(rv)) return rv;
+    }
 
     mOnCacheEntryAvailableCallback =
         &nsHttpChannel::OnOfflineCacheEntryForWritingAvailable;
@@ -3163,7 +3166,7 @@ nsHttpChannel::InitOfflineCacheEntry()
         return NS_OK;
     }
 
-    if (mResponseHead && mResponseHead->NoStore()) {
+    if (!mResponseHead || mResponseHead->NoStore()) {
         CloseOfflineCacheEntry();
 
         return NS_OK;
@@ -3447,15 +3450,13 @@ nsHttpChannel::ClearBogusContentEncodingIfNeeded()
 nsresult
 nsHttpChannel::SetupReplacementChannel(nsIURI       *newURI, 
                                        nsIChannel   *newChannel,
-                                       bool          preserveMethod,
-                                       bool          forProxy)
+                                       bool          preserveMethod)
 {
     LOG(("nsHttpChannel::SetupReplacementChannel "
          "[this=%p newChannel=%p preserveMethod=%d]",
          this, newChannel, preserveMethod));
 
-    nsresult rv = HttpBaseChannel::SetupReplacementChannel(newURI, newChannel,
-                                                           preserveMethod, forProxy);
+    nsresult rv = HttpBaseChannel::SetupReplacementChannel(newURI, newChannel, preserveMethod);
     if (NS_FAILED(rv))
         return rv;
 
@@ -3476,26 +3477,6 @@ nsHttpChannel::SetupReplacementChannel(nsIURI       *newURI,
             return NS_ERROR_NOT_RESUMABLE;
         }
         resumableChannel->ResumeAt(mStartPos, mEntityID);
-    }
-
-    if (forProxy) {
-        // Transfer the cache info to the new channel, if needed.
-        nsCOMPtr<nsICachingChannel> cachingChannel = do_QueryInterface(newChannel);
-        if (cachingChannel) {
-            // cacheKey is just mPostID wrapped in an nsISupportsPRUint32,
-            // we don't need to transfer it if it's 0.
-            if (mPostID) {
-                nsCOMPtr<nsISupports> cacheKey;
-                GetCacheKey(getter_AddRefs(cacheKey));
-                if (cacheKey) {
-                    cachingChannel->SetCacheKey(cacheKey);
-                }
-            }
-
-            // cacheClientID, cacheForOfflineUse
-            cachingChannel->SetOfflineCacheClientID(mOfflineCacheClientID);
-            cachingChannel->SetCacheForOfflineUse(mCacheForOfflineUse);
-        }
     }
 
     return NS_OK;
@@ -3624,7 +3605,7 @@ nsHttpChannel::ContinueProcessRedirectionAfterFallback(nsresult rv)
     rv = ioService->NewChannelFromURI(mRedirectURI, getter_AddRefs(newChannel));
     if (NS_FAILED(rv)) return rv;
 
-    rv = SetupReplacementChannel(mRedirectURI, newChannel, !rewriteToGET, false);
+    rv = SetupReplacementChannel(mRedirectURI, newChannel, !rewriteToGET);
     if (NS_FAILED(rv)) return rv;
 
     PRUint32 redirectFlags;
@@ -4466,18 +4447,8 @@ nsHttpChannel::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsresult st
         
         if (mUpgradeProtocolCallback && stickyConn &&
             mResponseHead && mResponseHead->Status() == 101) {
-            nsCOMPtr<nsISocketTransport>    socketTransport;
-            nsCOMPtr<nsIAsyncInputStream>   socketIn;
-            nsCOMPtr<nsIAsyncOutputStream>  socketOut;
-
-            nsresult rv;
-            rv = stickyConn->TakeTransport(getter_AddRefs(socketTransport),
-                                           getter_AddRefs(socketIn),
-                                           getter_AddRefs(socketOut));
-            if (NS_SUCCEEDED(rv))
-                mUpgradeProtocolCallback->OnTransportAvailable(socketTransport,
-                                                               socketIn,
-                                                               socketOut);
+            gHttpHandler->ConnMgr()->CompleteUpgrade(stickyConn,
+                                                     mUpgradeProtocolCallback);
         }
     }
 
@@ -4926,6 +4897,22 @@ nsHttpChannel::SetOfflineCacheClientID(const nsACString &value)
 }
 
 NS_IMETHODIMP
+nsHttpChannel::GetProfileDirectory(nsILocalFile **_result)
+{
+    NS_ENSURE_ARG(_result);
+
+    NS_ADDREF(*_result = mProfileDirectory);
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+nsHttpChannel::SetProfileDirectory(nsILocalFile *value)
+{
+    mProfileDirectory = value;
+    return NS_OK;
+}
+
+NS_IMETHODIMP
 nsHttpChannel::GetCacheFile(nsIFile **cacheFile)
 {
     if (!mCacheEntry)
@@ -5159,20 +5146,40 @@ nsHttpChannel::SetChooseApplicationCache(bool aChoose)
     return NS_OK;
 }
 
-NS_IMETHODIMP
-nsHttpChannel::MarkOfflineCacheEntryAsForeign()
+nsHttpChannel::OfflineCacheEntryAsForeignMarker*
+nsHttpChannel::GetOfflineCacheEntryAsForeignMarker()
 {
     if (!mApplicationCache)
-        return NS_ERROR_NOT_AVAILABLE;
+        return nsnull;
 
     nsresult rv;
 
     nsCAutoString cacheKey;
     rv = GenerateCacheKey(mPostID, cacheKey);
-    NS_ENSURE_SUCCESS(rv, rv);
+    NS_ENSURE_SUCCESS(rv, nsnull);
 
-    rv = mApplicationCache->MarkEntry(cacheKey,
-                                      nsIApplicationCache::ITEM_FOREIGN);
+    return new OfflineCacheEntryAsForeignMarker(mApplicationCache, cacheKey);
+}
+
+nsresult
+nsHttpChannel::OfflineCacheEntryAsForeignMarker::MarkAsForeign()
+{
+    return mApplicationCache->MarkEntry(mCacheKey,
+                                        nsIApplicationCache::ITEM_FOREIGN);
+}
+
+NS_IMETHODIMP
+nsHttpChannel::MarkOfflineCacheEntryAsForeign()
+{
+    nsresult rv;
+
+    nsAutoPtr<OfflineCacheEntryAsForeignMarker> marker(
+        GetOfflineCacheEntryAsForeignMarker());
+
+    if (!marker)
+        return NS_ERROR_NOT_AVAILABLE;
+
+    rv = marker->MarkAsForeign();
     NS_ENSURE_SUCCESS(rv, rv);
 
     return NS_OK;
@@ -5356,6 +5363,7 @@ nsHttpChannel::DoInvalidateCacheEntry(nsACString &key)
     nsCacheStoragePolicy storagePolicy = DetermineStoragePolicy();
 
     nsresult rv = gHttpHandler->GetCacheSession(storagePolicy,
+                                                UsingPrivateBrowsing(),
                                                 getter_AddRefs(session));
 
     if (NS_FAILED(rv))
@@ -5368,7 +5376,9 @@ nsCacheStoragePolicy
 nsHttpChannel::DetermineStoragePolicy()
 {
     nsCacheStoragePolicy policy = nsICache::STORE_ANYWHERE;
-    if (mLoadFlags & INHIBIT_PERSISTENT_CACHING)
+    if (UsingPrivateBrowsing())
+        policy = nsICache::STORE_IN_MEMORY;
+    else if (mLoadFlags & INHIBIT_PERSISTENT_CACHING)
         policy = nsICache::STORE_IN_MEMORY;
 
     return policy;
@@ -5399,4 +5409,5 @@ void
 nsHttpChannel::AsyncOnExamineCachedResponse()
 {
     gHttpHandler->OnExamineCachedResponse(this);
+
 }

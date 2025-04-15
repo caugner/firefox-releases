@@ -20,9 +20,10 @@ namespace dom {
 class DOMRequest : public nsDOMEventTargetHelper,
                    public nsIDOMDOMRequest
 {
-  bool mDone;
+protected:
   jsval mResult;
   nsCOMPtr<nsIDOMDOMError> mError;
+  bool mDone;
   bool mRooted;
 
   NS_DECL_EVENT_HANDLER(success)
@@ -38,32 +39,22 @@ public:
 
   void FireSuccess(jsval aResult);
   void FireError(const nsAString& aError);
+  void FireError(nsresult aError);
 
   DOMRequest(nsIDOMWindow* aWindow);
 
   virtual ~DOMRequest()
   {
-    UnrootResultVal();
-  }
-
-private:
-  void FireEvent(const nsAString& aType);
-
-  void RootResultVal()
-  {
-    if (!mRooted) {
-      NS_HOLD_JS_OBJECTS(this, DOMRequest);
-      mRooted = true;
-    }
-  }
-
-  void UnrootResultVal()
-  {
     if (mRooted) {
-      NS_DROP_JS_OBJECTS(this, DOMRequest);
-      mRooted = false;
+      UnrootResultVal();
     }
   }
+
+protected:
+  void FireEvent(const nsAString& aType, bool aBubble, bool aCancelable);
+
+  virtual void RootResultVal();
+  virtual void UnrootResultVal();
 };
 
 class DOMRequestService : public nsIDOMRequestService

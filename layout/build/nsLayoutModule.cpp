@@ -1,40 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Pierre Phaneuf <pp@ludusdesign.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "base/basictypes.h"
 
@@ -70,7 +37,6 @@
 #include "nsIPresShell.h"
 #include "nsIScriptNameSpaceManager.h"
 #include "nsISelection.h"
-#include "nsIXBLService.h"
 #include "nsCaret.h"
 #include "nsPlainTextSerializer.h"
 #include "nsXMLContentSerializer.h"
@@ -436,7 +402,6 @@ nsresult NS_NewGenSubtreeIterator(nsIContentIterator** aInstancePtrResult);
 nsresult NS_NewContentDocumentLoaderFactory(nsIDocumentLoaderFactory** aResult);
 nsresult NS_NewHTMLCopyTextEncoder(nsIDocumentEncoder** aResult);
 nsresult NS_NewTextEncoder(nsIDocumentEncoder** aResult);
-nsresult NS_NewXBLService(nsIXBLService** aResult);
 nsresult NS_NewContentPolicy(nsIContentPolicy** aResult);
 
 nsresult NS_NewEventListenerService(nsIEventListenerService** aResult);
@@ -507,7 +472,6 @@ MAKE_CTOR(CreateXMLContentSerializer,     nsIContentSerializer,        NS_NewXML
 MAKE_CTOR(CreateHTMLContentSerializer,    nsIContentSerializer,        NS_NewHTMLContentSerializer)
 MAKE_CTOR(CreateXHTMLContentSerializer,   nsIContentSerializer,        NS_NewXHTMLContentSerializer)
 MAKE_CTOR(CreatePlainTextSerializer,      nsIContentSerializer,        NS_NewPlainTextSerializer)
-MAKE_CTOR(CreateXBLService,               nsIXBLService,               NS_NewXBLService)
 MAKE_CTOR(CreateContentPolicy,            nsIContentPolicy,            NS_NewContentPolicy)
 #ifdef MOZ_XUL
 MAKE_CTOR(CreateXULSortService,           nsIXULSortService,           NS_NewXULSortService)
@@ -705,7 +669,6 @@ NS_DEFINE_NAMED_CID(NS_HTMLCONTENTSERIALIZER_CID);
 NS_DEFINE_NAMED_CID(NS_PLAINTEXTSERIALIZER_CID);
 NS_DEFINE_NAMED_CID(NS_PARSERUTILS_CID);
 NS_DEFINE_NAMED_CID(NS_SCRIPTABLEUNESCAPEHTML_CID);
-NS_DEFINE_NAMED_CID(NS_XBLSERVICE_CID);
 NS_DEFINE_NAMED_CID(NS_CONTENTPOLICY_CID);
 NS_DEFINE_NAMED_CID(NS_DATADOCUMENTCONTENTPOLICY_CID);
 NS_DEFINE_NAMED_CID(NS_NODATAPROTOCOLCONTENTPOLICY_CID);
@@ -745,7 +708,6 @@ NS_DEFINE_NAMED_CID(NS_XMLHTTPREQUEST_CID);
 NS_DEFINE_NAMED_CID(NS_EVENTSOURCE_CID);
 NS_DEFINE_NAMED_CID(NS_WEBSOCKET_CID);
 NS_DEFINE_NAMED_CID(NS_DOMPARSER_CID);
-NS_DEFINE_NAMED_CID(NS_DOMSTORAGE_CID);
 NS_DEFINE_NAMED_CID(NS_DOMSTORAGE2_CID);
 NS_DEFINE_NAMED_CID(NS_DOMSTORAGEMANAGER_CID);
 NS_DEFINE_NAMED_CID(NS_DOMJSON_CID);
@@ -976,7 +938,6 @@ static const mozilla::Module::CIDEntry kLayoutCIDs[] = {
   { &kNS_PLAINTEXTSERIALIZER_CID, false, NULL, CreatePlainTextSerializer },
   { &kNS_PARSERUTILS_CID, false, NULL, nsParserUtilsConstructor },
   { &kNS_SCRIPTABLEUNESCAPEHTML_CID, false, NULL, nsParserUtilsConstructor },
-  { &kNS_XBLSERVICE_CID, false, NULL, CreateXBLService },
   { &kNS_CONTENTPOLICY_CID, false, NULL, CreateContentPolicy },
   { &kNS_DATADOCUMENTCONTENTPOLICY_CID, false, NULL, nsDataDocumentContentPolicyConstructor },
   { &kNS_NODATAPROTOCOLCONTENTPOLICY_CID, false, NULL, nsNoDataProtocolContentPolicyConstructor },
@@ -1016,7 +977,6 @@ static const mozilla::Module::CIDEntry kLayoutCIDs[] = {
   { &kNS_EVENTSOURCE_CID, false, NULL, nsEventSourceConstructor },
   { &kNS_WEBSOCKET_CID, false, NULL, nsWebSocketConstructor },
   { &kNS_DOMPARSER_CID, false, NULL, nsDOMParserConstructor },
-  { &kNS_DOMSTORAGE_CID, false, NULL, NS_NewDOMStorage },
   { &kNS_DOMSTORAGE2_CID, false, NULL, NS_NewDOMStorage2 },
   { &kNS_DOMSTORAGEMANAGER_CID, false, NULL, nsDOMStorageManagerConstructor },
   { &kNS_DOMJSON_CID, false, NULL, NS_NewJSON },
@@ -1119,7 +1079,6 @@ static const mozilla::Module::ContractIDEntry kLayoutContracts[] = {
   { NS_CONTENTSERIALIZER_CONTRACTID_PREFIX "text/plain", &kNS_PLAINTEXTSERIALIZER_CID },
   { NS_PARSERUTILS_CONTRACTID, &kNS_PARSERUTILS_CID },
   { NS_SCRIPTABLEUNESCAPEHTML_CONTRACTID, &kNS_SCRIPTABLEUNESCAPEHTML_CID },
-  { "@mozilla.org/xbl;1", &kNS_XBLSERVICE_CID },
   { NS_CONTENTPOLICY_CONTRACTID, &kNS_CONTENTPOLICY_CID },
   { NS_DATADOCUMENTCONTENTPOLICY_CONTRACTID, &kNS_DATADOCUMENTCONTENTPOLICY_CID },
   { NS_NODATAPROTOCOLCONTENTPOLICY_CONTRACTID, &kNS_NODATAPROTOCOLCONTENTPOLICY_CID },
@@ -1151,7 +1110,6 @@ static const mozilla::Module::ContractIDEntry kLayoutContracts[] = {
   { NS_EVENTSOURCE_CONTRACTID, &kNS_EVENTSOURCE_CID },
   { NS_WEBSOCKET_CONTRACTID, &kNS_WEBSOCKET_CID },
   { NS_DOMPARSER_CONTRACTID, &kNS_DOMPARSER_CID },
-  { "@mozilla.org/dom/storage;1", &kNS_DOMSTORAGE_CID },
   { "@mozilla.org/dom/storage;2", &kNS_DOMSTORAGE2_CID },
   { "@mozilla.org/dom/storagemanager;1", &kNS_DOMSTORAGEMANAGER_CID },
   { "@mozilla.org/dom/json;1", &kNS_DOMJSON_CID },
@@ -1229,9 +1187,8 @@ static const mozilla::Module::CategoryEntry kLayoutCategories[] = {
 static void
 LayoutModuleDtor()
 {
-  xpcModuleDtor();
-
   nsScriptSecurityManager::Shutdown();
+  xpcModuleDtor();
 }
 
 static const mozilla::Module kLayoutModule = {

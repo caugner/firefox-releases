@@ -1,4 +1,8 @@
 <?xml version="1.0"?>
+<!-- This Source Code Form is subject to the terms of the Mozilla Public
+   - License, v. 2.0. If a copy of the MPL was not distributed with this
+   - file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
+
 
 <!DOCTYPE bindings [
   <!ENTITY % videocontrolsDTD SYSTEM "chrome://global/locale/videocontrols.dtd">
@@ -876,6 +880,9 @@
 
                     var isMouseOver = (event.type == "mouseover");
 
+                    var isMouseInControls = event.clientY > this.controlBar.getBoundingClientRect().top &&
+                                            event.clientY < this.controlBar.getBoundingClientRect().bottom;
+
                     // Suppress fading out the controls until the video has rendered
                     // its first frame. But since autoplay videos start off with no
                     // controls, let them fade-out so the controls don't get stuck on.
@@ -883,7 +890,7 @@
                         !(this.video.autoplay && this.video.mozAutoplayEnabled))
                         return;
 
-                    if (!isMouseOver) {
+                    if (!isMouseOver && !isMouseInControls) {
                         this.adjustControlSize();
 
                         // Keep the controls visible if the click-to-play is visible.
@@ -1427,6 +1434,12 @@
         <stack flex="1">
             <vbox flex="1" class="statusOverlay" hidden="true">
                 <box class="statusIcon"/>
+                <label class="errorLabel" anonid="errorAborted">&error.aborted;</label>
+                <label class="errorLabel" anonid="errorNetwork">&error.network;</label>
+                <label class="errorLabel" anonid="errorDecode">&error.decode;</label>
+                <label class="errorLabel" anonid="errorSrcNotSupported">&error.srcNotSupported;</label>
+                <label class="errorLabel" anonid="errorNoSource">&error.noSource2;</label>
+                <label class="errorLabel" anonid="errorGeneric">&error.generic;</label>
             </vbox>
 
             <vbox class="controlsOverlay">

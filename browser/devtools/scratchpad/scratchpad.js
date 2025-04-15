@@ -1,44 +1,7 @@
 /* vim:set ts=2 sw=2 sts=2 et:
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Scratchpad.
- *
- * The Initial Developer of the Original Code is
- * The Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Rob Campbell <robcee@mozilla.com> (original author)
- *   Erik Vold <erikvvold@gmail.com>
- *   David Dahl <ddahl@mozilla.com>
- *   Mihai Sucan <mihai.sucan@gmail.com>
- *   Kenny Heaton <kennyheaton@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK *****/
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * Original version history can be found here:
@@ -61,6 +24,7 @@ Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource:///modules/PropertyPanel.jsm");
 Cu.import("resource:///modules/source-editor.jsm");
 Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
+Cu.import("resource://gre/modules/jsdebugger.jsm");
 
 
 const SCRATCHPAD_CONTEXT_CONTENT = 1;
@@ -295,6 +259,7 @@ var Scratchpad = {
       this._chromeSandbox = new Cu.Sandbox(this.browserWindow,
         { sandboxPrototype: this.browserWindow, wantXrays: false, 
           sandboxName: 'scratchpad-chrome'});
+      addDebuggerToGlobal(this._chromeSandbox);
 
       this._previousBrowserWindow = this.browserWindow;
     }
@@ -522,11 +487,11 @@ var Scratchpad = {
                GetStringFromName("propertyPanel.updateButton.label"),
         accesskey: this.strings.
                    GetStringFromName("propertyPanel.updateButton.accesskey"),
-        oncommand: function () {
+        oncommand: function _SP_PP_Update_onCommand() {
           let [error, result] = self.evalForContext(aEvalString);
 
           if (!error) {
-            propPanel.treeView.data = result;
+            propPanel.treeView.data = { object: result };
           }
         }
       });
@@ -534,8 +499,9 @@ var Scratchpad = {
 
     let doc = this.browserWindow.document;
     let parent = doc.getElementById("mainPopupSet");
-    let title = aOutputObject.toString();
-    propPanel = new PropertyPanel(parent, doc, title, aOutputObject, buttons);
+    let title = String(aOutputObject);
+    propPanel = new PropertyPanel(parent, title, { object: aOutputObject },
+                                  buttons);
 
     let panel = propPanel.panel;
     panel.setAttribute("class", "scratchpad_propertyPanel");

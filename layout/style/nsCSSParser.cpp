@@ -1,48 +1,8 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   emk <VYV03354@nifty.ne.jp>
- *   Daniel Glazman <glazman@netscape.com>
- *   L. David Baron <dbaron@dbaron.org>
- *   Boris Zbarsky <bzbarsky@mit.edu>
- *   Mats Palmgren <mats.palmgren@bredband.net>
- *   Christian Biesinger <cbiesinger@web.de>
- *   Jeff Walden <jwalden+code@mit.edu>
- *   Jonathon Jongsma <jonathon.jongsma@collabora.co.uk>, Collabora Ltd.
- *   Siraj Razick <siraj.razick@collabora.co.uk>, Collabora Ltd.
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* vim: set ts=2 et sw=2 tw=78: */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* parsing of CSS stylesheets, based on a token stream from the CSS scanner */
 
@@ -128,6 +88,7 @@ using namespace mozilla;
 // Common combinations of variants
 #define VARIANT_AL   (VARIANT_AUTO | VARIANT_LENGTH)
 #define VARIANT_LP   (VARIANT_LENGTH | VARIANT_PERCENT)
+#define VARIANT_LN   (VARIANT_LENGTH | VARIANT_NUMBER)
 #define VARIANT_AH   (VARIANT_AUTO | VARIANT_INHERIT)
 #define VARIANT_AHLP (VARIANT_AH | VARIANT_LP)
 #define VARIANT_AHI  (VARIANT_AH | VARIANT_INTEGER)
@@ -154,6 +115,8 @@ using namespace mozilla;
 #define VARIANT_HUO  (VARIANT_INHERIT | VARIANT_URL | VARIANT_NONE)
 #define VARIANT_AHUO (VARIANT_AUTO | VARIANT_HUO)
 #define VARIANT_HPN  (VARIANT_INHERIT | VARIANT_PERCENT | VARIANT_NUMBER)
+#define VARIANT_PN   (VARIANT_PERCENT | VARIANT_NUMBER)
+#define VARIANT_ALPN (VARIANT_AL | VARIANT_PN)
 #define VARIANT_HN   (VARIANT_INHERIT | VARIANT_NUMBER)
 #define VARIANT_HON  (VARIANT_HN | VARIANT_NONE)
 #define VARIANT_HOS  (VARIANT_INHERIT | VARIANT_NONE | VARIANT_STRING)
@@ -170,8 +133,8 @@ using namespace mozilla;
 // This lives here because it depends on the above macros.
 const PRUint32
 nsCSSProps::kParserVariantTable[eCSSProperty_COUNT_no_shorthands] = {
-#define CSS_PROP(name_, id_, method_, flags_, parsevariant_, kwtable_,       \
-                 stylestruct_, stylestructoffset_, animtype_)                \
+#define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_, kwtable_, \
+                 stylestruct_, stylestructoffset_, animtype_)                 \
   parsevariant_,
 #include "nsCSSPropList.h"
 #undef CSS_PROP
@@ -486,6 +449,15 @@ protected:
   bool ParseBackgroundSizeValues(nsCSSValuePair& aOut);
   bool ParseBorderColor();
   bool ParseBorderColors(nsCSSProperty aProperty);
+  void SetBorderImageInitialValues();
+  bool ParseBorderImageRepeat(bool aAcceptsInherit);
+  // If ParseBorderImageSlice returns false, aConsumedTokens indicates
+  // whether or not any tokens were consumed (in other words, was the property
+  // in error or just not present).  If ParseBorderImageSlice returns true
+  // aConsumedTokens is always true.
+  bool ParseBorderImageSlice(bool aAcceptsInherit, bool* aConsumedTokens);
+  bool ParseBorderImageWidth(bool aAcceptsInherit);
+  bool ParseBorderImageOutset(bool aAcceptsInherit);
   bool ParseBorderImage();
   bool ParseBorderSpacing();
   bool ParseBorderSide(const nsCSSProperty aPropIDs[],
@@ -514,13 +486,14 @@ protected:
   bool ParseFontWeight(nsCSSValue& aValue);
   bool ParseOneFamily(nsAString& aValue);
   bool ParseFamily(nsCSSValue& aValue);
+  bool ParseFontFeatureSettings(nsCSSValue& aValue);
   bool ParseFontSrc(nsCSSValue& aValue);
   bool ParseFontSrcFormat(InfallibleTArray<nsCSSValue>& values);
   bool ParseFontRanges(nsCSSValue& aValue);
   bool ParseListStyle();
   bool ParseMargin();
   bool ParseMarks(nsCSSValue& aValue);
-  bool ParseMozTransform();
+  bool ParseTransform();
   bool ParseOutline();
   bool ParseOverflow();
   bool ParsePadding();
@@ -559,6 +532,8 @@ protected:
   // Reused utility parsing routines
   void AppendValue(nsCSSProperty aPropID, const nsCSSValue& aValue);
   bool ParseBoxProperties(const nsCSSProperty aPropIDs[]);
+  bool ParseGroupedBoxProperty(PRInt32 aVariantMask,
+                               nsCSSValue& aValue);
   bool ParseDirectionalBoxProperty(nsCSSProperty aProperty,
                                      PRInt32 aSourceType);
   bool ParseBoxCornerRadius(const nsCSSProperty aPropID);
@@ -602,7 +577,7 @@ protected:
     return mParsingCompoundProperty;
   }
 
-  /* Functions for -moz-transform Parsing */
+  /* Functions for transform Parsing */
   bool ParseSingleTransform(nsCSSValue& aValue, bool& aIs3D);
   bool ParseFunction(const nsString &aFunction, const PRInt32 aAllowedTypes[],
                        PRUint16 aMinElems, PRUint16 aMaxElems,
@@ -612,8 +587,8 @@ protected:
                                 PRUint16 aMaxElems,
                                 InfallibleTArray<nsCSSValue>& aOutput);
 
-  /* Functions for -moz-transform-origin/-moz-perspective-origin Parsing */
-  bool ParseMozTransformOrigin(bool aPerspective);
+  /* Functions for transform-origin/perspective-origin Parsing */
+  bool ParseTransformOrigin(bool aPerspective);
 
   /* Find and return the namespace ID associated with aPrefix.
      If aPrefix has not been declared in an @namespace rule, returns
@@ -5224,6 +5199,40 @@ CSSParserImpl::ParseBoxProperties(const nsCSSProperty aPropIDs[])
   return true;
 }
 
+// Similar to ParseBoxProperties, except there is only one property
+// with the result as its value, not four. Requires values be nonnegative.
+bool
+CSSParserImpl::ParseGroupedBoxProperty(PRInt32 aVariantMask,
+                                       /** outparam */ nsCSSValue& aValue)
+{
+  nsCSSRect& result = aValue.SetRectValue();
+
+  PRInt32 count = 0;
+  NS_FOR_CSS_SIDES (index) {
+    if (!ParseNonNegativeVariant(result.*(nsCSSRect::sides[index]),
+                                 aVariantMask, nsnull)) {
+      break;
+    }
+    count++;
+  }
+
+  if (count == 0) {
+    return false;
+  }
+
+  // Provide missing values by replicating some of the values found
+  switch (count) {
+    case 1: // Make right == top
+      result.mRight = result.mTop;
+    case 2: // Make bottom == top
+      result.mBottom = result.mTop;
+    case 3: // Make left == right
+      result.mLeft = result.mRight;
+  }
+
+  return true;
+}
+
 bool
 CSSParserImpl::ParseDirectionalBoxProperty(nsCSSProperty aProperty,
                                            PRInt32 aSourceType)
@@ -5449,6 +5458,14 @@ CSSParserImpl::ParsePropertyByFunction(nsCSSProperty aPropID)
   case eCSSProperty_border_right_colors:
   case eCSSProperty_border_top_colors:
     return ParseBorderColors(aPropID);
+  case eCSSProperty_border_image_slice:
+    return ParseBorderImageSlice(true, nsnull);
+  case eCSSProperty_border_image_width:
+    return ParseBorderImageWidth(true);
+  case eCSSProperty_border_image_outset:
+    return ParseBorderImageOutset(true);
+  case eCSSProperty_border_image_repeat:
+    return ParseBorderImageRepeat(true);
   case eCSSProperty_border_image:
     return ParseBorderImage();
   case eCSSProperty_border_width:
@@ -5565,12 +5582,12 @@ CSSParserImpl::ParsePropertyByFunction(nsCSSProperty aPropID)
     return ParseSize();
   case eCSSProperty_text_decoration:
     return ParseTextDecoration();
-  case eCSSProperty__moz_transform:
-    return ParseMozTransform();
-  case eCSSProperty__moz_transform_origin:
-    return ParseMozTransformOrigin(false);
+  case eCSSProperty_transform:
+    return ParseTransform();
+  case eCSSProperty_transform_origin:
+    return ParseTransformOrigin(false);
   case eCSSProperty_perspective_origin:
-    return ParseMozTransformOrigin(true);
+    return ParseTransformOrigin(true);
   case eCSSProperty_transition:
     return ParseTransition();
   case eCSSProperty_animation:
@@ -5622,6 +5639,8 @@ CSSParserImpl::ParseSingleValueProperty(nsCSSValue& aValue,
     switch (aPropID) {
       case eCSSProperty_font_family:
         return ParseFamily(aValue);
+      case eCSSProperty_font_feature_settings:
+        return ParseFontFeatureSettings(aValue);
       case eCSSProperty_font_weight:
         return ParseFontWeight(aValue);
       case eCSSProperty_marks:
@@ -5740,6 +5759,8 @@ CSSParserImpl::ParseFontDescriptorValue(nsCSSFontDesc aDescID,
     return ParseFontRanges(aValue);
 
   case eCSSFontDesc_FontFeatureSettings:
+    return ParseFontFeatureSettings(aValue);
+
   case eCSSFontDesc_FontLanguageOverride:
     return ParseVariant(aValue, VARIANT_NORMAL | VARIANT_STRING, nsnull);
 
@@ -6519,83 +6540,254 @@ CSSParserImpl::ParseBorderColor()
   return ParseBoxProperties(kBorderColorIDs);
 }
 
-bool
-CSSParserImpl::ParseBorderImage()
+void
+CSSParserImpl::SetBorderImageInitialValues()
 {
-  nsCSSValue val;
-  if (ParseVariant(val, VARIANT_INHERIT | VARIANT_NONE, nsnull)) {
-    AppendValue(eCSSProperty_border_image, val);
+  // border-image-source: none
+  nsCSSValue source;
+  source.SetNoneValue();
+  AppendValue(eCSSProperty_border_image_source, source);
+
+  // border-image-slice: 100%
+  nsCSSValue sliceBoxValue;
+  nsCSSRect& sliceBox = sliceBoxValue.SetRectValue();
+  sliceBox.SetAllSidesTo(nsCSSValue(1.0f, eCSSUnit_Percent));
+  nsCSSValue slice;
+  nsCSSValueList* sliceList = slice.SetListValue();
+  sliceList->mValue = sliceBoxValue;
+  AppendValue(eCSSProperty_border_image_slice, slice);
+
+  // border-image-width: 1
+  nsCSSValue width;
+  nsCSSRect& widthBox = width.SetRectValue();
+  widthBox.SetAllSidesTo(nsCSSValue(1.0f, eCSSUnit_Number));
+  AppendValue(eCSSProperty_border_image_width, width);
+
+  // border-image-outset: 0
+  nsCSSValue outset;
+  nsCSSRect& outsetBox = outset.SetRectValue();
+  outsetBox.SetAllSidesTo(nsCSSValue(0.0f, eCSSUnit_Number));
+  AppendValue(eCSSProperty_border_image_outset, outset);
+
+  // border-image-repeat: repeat
+  nsCSSValue repeat;
+  nsCSSValuePair repeatPair;
+  repeatPair.SetBothValuesTo(nsCSSValue(NS_STYLE_BORDER_IMAGE_REPEAT_STRETCH,
+                                        eCSSUnit_Enumerated));
+  repeat.SetPairValue(&repeatPair);
+  AppendValue(eCSSProperty_border_image_repeat, repeat);
+}
+
+bool
+CSSParserImpl::ParseBorderImageSlice(bool aAcceptsInherit,
+                                     bool* aConsumedTokens)
+{
+  // border-image-slice: initial | [<number>|<percentage>]{1,4} && fill?
+  nsCSSValue value;
+
+  if (aConsumedTokens) {
+    *aConsumedTokens = true;
+  }
+
+  if (aAcceptsInherit && ParseVariant(value, VARIANT_INHERIT, nsnull)) {
+    // Keyword "inherit" can not be mixed, so we are done.
+    AppendValue(eCSSProperty_border_image_slice, value);
     return true;
   }
 
-  // <uri> [<number> | <percentage>]{1,4}
-  //       [ / <border-width>{1,4} ]? [stretch | repeat | round]{0,2}
-  nsRefPtr<nsCSSValue::Array> arr = nsCSSValue::Array::Create(11);
+  // Try parsing "fill" value.
+  nsCSSValue imageSliceFillValue;
+  bool hasFill = ParseEnum(imageSliceFillValue,
+                           nsCSSProps::kBorderImageSliceKTable);
 
-  nsCSSValue& url = arr->Item(0);
-  nsCSSValue& splitTop = arr->Item(1);
-  nsCSSValue& splitRight = arr->Item(2);
-  nsCSSValue& splitBottom = arr->Item(3);
-  nsCSSValue& splitLeft = arr->Item(4);
-  nsCSSValue& borderWidthTop = arr->Item(5);
-  nsCSSValue& borderWidthRight = arr->Item(6);
-  nsCSSValue& borderWidthBottom = arr->Item(7);
-  nsCSSValue& borderWidthLeft = arr->Item(8);
-  nsCSSValue& horizontalKeyword = arr->Item(9);
-  nsCSSValue& verticalKeyword = arr->Item(10);
+  // Parse the box dimensions.
+  nsCSSValue imageSliceBoxValue;
+  if (!ParseGroupedBoxProperty(VARIANT_PN, imageSliceBoxValue)) {
+    if (!hasFill && aConsumedTokens) {
+      *aConsumedTokens = false;
+    }
 
-  // <uri>
-  if (!ParseVariant(url, VARIANT_URL, nsnull)) {
     return false;
   }
 
-  // [<number> | <percentage>]{1,4}
-  if (!ParseNonNegativeVariant(splitTop,
-                               VARIANT_NUMBER | VARIANT_PERCENT, nsnull)) {
-    return false;
-  }
-  if (!ParseNonNegativeVariant(splitRight,
-                               VARIANT_NUMBER | VARIANT_PERCENT, nsnull)) {
-    splitRight = splitTop;
-  }
-  if (!ParseNonNegativeVariant(splitBottom,
-                               VARIANT_NUMBER | VARIANT_PERCENT, nsnull)) {
-    splitBottom = splitTop;
-  }
-  if (!ParseNonNegativeVariant(splitLeft,
-                               VARIANT_NUMBER | VARIANT_PERCENT, nsnull)) {
-    splitLeft = splitRight;
+  // Try parsing "fill" keyword again if the first time failed because keyword
+  // and slice dimensions can be in any order.
+  if (!hasFill) {
+    hasFill = ParseEnum(imageSliceFillValue,
+                        nsCSSProps::kBorderImageSliceKTable);
   }
 
-  // [ / <border-width>{1,4} ]?
-  if (ExpectSymbol('/', true)) {
-    // if have '/', at least one value is required
-    if (!ParseNonNegativeVariant(borderWidthTop, VARIANT_LENGTH, nsnull)) {
-      return false;
-    }
-    if (!ParseNonNegativeVariant(borderWidthRight, VARIANT_LENGTH, nsnull)) {
-      borderWidthRight = borderWidthTop;
-    }
-    if (!ParseNonNegativeVariant(borderWidthBottom, VARIANT_LENGTH, nsnull)) {
-      borderWidthBottom = borderWidthTop;
-    }
-    if (!ParseNonNegativeVariant(borderWidthLeft, VARIANT_LENGTH, nsnull)) {
-      borderWidthLeft = borderWidthRight;
-    }
+  nsCSSValueList* borderImageSlice = value.SetListValue();
+  // Put the box value into the list.
+  borderImageSlice->mValue = imageSliceBoxValue;
+
+  if (hasFill) {
+    // Put the "fill" value into the list.
+    borderImageSlice->mNext = new nsCSSValueList;
+    borderImageSlice->mNext->mValue = imageSliceFillValue;
   }
 
-  // [stretch | repeat | round]{0,2}
-  // missing keywords are handled in nsRuleNode::ComputeBorderData()
-  if (ParseEnum(horizontalKeyword, nsCSSProps::kBorderImageKTable)) {
-    (void)ParseEnum(verticalKeyword, nsCSSProps::kBorderImageKTable);
+  AppendValue(eCSSProperty_border_image_slice, value);
+  return true;
+}
+
+bool
+CSSParserImpl::ParseBorderImageWidth(bool aAcceptsInherit)
+{
+  // border-image-width: initial | [<length>|<number>|<percentage>|auto]{1,4}
+  nsCSSValue value;
+
+  if (aAcceptsInherit && ParseVariant(value, VARIANT_INHERIT, nsnull)) {
+    // Keyword "inherit" can no be mixed, so we are done.
+    AppendValue(eCSSProperty_border_image_width, value);
+    return true;
   }
 
-  if (!ExpectEndProperty()) {
+  // Parse the box dimensions.
+  if (!ParseGroupedBoxProperty(VARIANT_ALPN, value)) {
     return false;
   }
 
-  val.SetArrayValue(arr, eCSSUnit_Array);
-  AppendValue(eCSSProperty_border_image, val);
+  AppendValue(eCSSProperty_border_image_width, value);
+  return true;
+}
+
+bool
+CSSParserImpl::ParseBorderImageOutset(bool aAcceptsInherit)
+{
+  // border-image-outset: initial | [<length>|<number>]{1,4}
+  nsCSSValue value;
+
+  if (aAcceptsInherit && ParseVariant(value, VARIANT_INHERIT, nsnull)) {
+    // Keyword "inherit" can not be mixed, so we are done.
+    AppendValue(eCSSProperty_border_image_outset, value);
+    return true;
+  }
+
+  // Parse the box dimensions.
+  if (!ParseGroupedBoxProperty(VARIANT_LN, value)) {
+    return false;
+  }
+
+  AppendValue(eCSSProperty_border_image_outset, value);
+  return true;
+}
+
+bool
+CSSParserImpl::ParseBorderImageRepeat(bool aAcceptsInherit)
+{
+  nsCSSValue value;
+  if (aAcceptsInherit && ParseVariant(value, VARIANT_INHERIT, nsnull)) {
+    // Keyword "inherit" can not be mixed, so we are done.
+    AppendValue(eCSSProperty_border_image_repeat, value);
+    return true;
+  }
+
+  nsCSSValuePair result;
+  if (!ParseEnum(result.mXValue, nsCSSProps::kBorderImageRepeatKTable)) {
+    return false;
+  }
+
+  // optional second keyword, defaults to first
+  if (!ParseEnum(result.mYValue, nsCSSProps::kBorderImageRepeatKTable)) {
+    result.mYValue = result.mXValue;
+  }
+
+  value.SetPairValue(&result);
+  AppendValue(eCSSProperty_border_image_repeat, value);
+  return true;
+}
+
+bool
+CSSParserImpl::ParseBorderImage()
+{
+  nsAutoParseCompoundProperty compound(this);
+
+  // border-image: inherit | -moz-initial |
+  // <border-image-source> ||
+  // <border-image-slice>
+  //   [ / <border-image-width> |
+  //     / <border-image-width>? / <border-image-outset> ]? ||
+  // <border-image-repeat>
+
+  nsCSSValue value;
+  if (ParseVariant(value, VARIANT_INHERIT, nsnull)) {
+    AppendValue(eCSSProperty_border_image_source, value);
+    AppendValue(eCSSProperty_border_image_slice, value);
+    AppendValue(eCSSProperty_border_image_width, value);
+    AppendValue(eCSSProperty_border_image_outset, value);
+    AppendValue(eCSSProperty_border_image_repeat, value);
+    // Keyword "inherit" (and "-moz-initial") can't be mixed, so we are done.
+    return true;
+  }
+
+  // No empty property.
+  if (CheckEndProperty()) {
+    return false;
+  }
+
+  // Shorthand properties are required to set everything they can.
+  SetBorderImageInitialValues();
+
+  bool foundSource = false;
+  bool foundSliceWidthOutset = false;
+  bool foundRepeat = false;
+
+  // This loop is used to handle the parsing of border-image properties which
+  // can appear in any order.
+  nsCSSValue imageSourceValue;
+  while (!CheckEndProperty()) {
+    // <border-image-source>
+    if (!foundSource && ParseVariant(imageSourceValue, VARIANT_UO, nsnull)) {
+      AppendValue(eCSSProperty_border_image_source, imageSourceValue);
+      foundSource = true;
+      continue;
+    }
+
+    // <border-image-slice>
+    // ParseBorderImageSlice is weird.  It may consume tokens and then return
+    // false, because it parses a property with two required components that
+    // can appear in either order.  Since the tokens that were consumed cannot
+    // parse as anything else we care about, this isn't a problem.
+    if (!foundSliceWidthOutset) {
+      bool sliceConsumedTokens = false;
+      if (ParseBorderImageSlice(false, &sliceConsumedTokens)) {
+        foundSliceWidthOutset = true;
+
+        // [ / <border-image-width>?
+        if (ExpectSymbol('/', true)) {
+          bool foundBorderImageWidth = ParseBorderImageWidth(false);
+
+          // [ / <border-image-outset>
+          if (ExpectSymbol('/', true)) {
+            if (!ParseBorderImageOutset(false)) {
+              return false;
+            }
+          } else if (!foundBorderImageWidth) {
+            // If this part has an trailing slash, the whole declaration is 
+            // invalid.
+            return false;
+          }
+        }
+
+        continue;
+      } else {
+        // If we consumed some tokens for <border-image-slice> but did not
+        // successfully parse it, we have an error.
+        if (sliceConsumedTokens) {
+          return false;
+        }
+      }
+    }
+
+    // <border-image-repeat>
+    if (!foundRepeat && ParseBorderImageRepeat(false)) {
+      foundRepeat = true;
+      continue;
+    }
+
+    return false;
+  }
 
   return true;
 }
@@ -6688,14 +6880,24 @@ CSSParserImpl::ParseBorderSide(const nsCSSProperty aPropIDs[],
     // initial values.
     nsCSSValue extraValue;
     switch (values[0].GetUnit()) {
-      case eCSSUnit_Inherit:    extraValue.SetInheritValue();    break;
-      case eCSSUnit_Initial:    extraValue.SetInitialValue();    break;
-      default:                  extraValue.SetNoneValue();       break;
+    case eCSSUnit_Inherit:
+    case eCSSUnit_Initial:
+      extraValue = values[0];
+      // Set value of border-image properties to initial/inherit
+      AppendValue(eCSSProperty_border_image_source, extraValue);
+      AppendValue(eCSSProperty_border_image_slice, extraValue);
+      AppendValue(eCSSProperty_border_image_width, extraValue);
+      AppendValue(eCSSProperty_border_image_outset, extraValue);
+      AppendValue(eCSSProperty_border_image_repeat, extraValue);
+      break;
+    default:
+      extraValue.SetNoneValue();
+      SetBorderImageInitialValues();
+      break;
     }
     NS_FOR_CSS_SIDES(side) {
       AppendValue(kBorderColorsProps[side], extraValue);
     }
-    AppendValue(eCSSProperty_border_image, extraValue);
   }
   else {
     // Just set our one side
@@ -7478,7 +7680,7 @@ CSSParserImpl::ParseOneFamily(nsAString& aFamily)
 }
 
 ///////////////////////////////////////////////////////
-// -moz-transform Parsing Implementation
+// transform Parsing Implementation
 
 /* Reads a function list of arguments.  Do not call this function
  * directly; it's mean to be caled from ParseFunction.
@@ -7701,6 +7903,12 @@ static bool GetFunctionParseInformation(nsCSSKeyword aToken,
     aMinElems = 1U;
     aMaxElems = 2U;
     break;
+  case eCSSKeyword_skew:
+    /* Exactly one or two angles. */
+    variantIndex = eTwoAngles;
+    aMinElems = 1U;
+    aMaxElems = 2U;
+    break;
   case eCSSKeyword_scale:
     /* One or two scale factors. */
     variantIndex = eTwoNumbers;
@@ -7814,10 +8022,10 @@ CSSParserImpl::ParseSingleTransform(nsCSSValue& aValue, bool& aIs3D)
   return ParseFunction(mToken.mIdent, variantMask, minElems, maxElems, aValue);
 }
 
-/* Parses a -moz-transform property list by continuously reading in properties
+/* Parses a transform property list by continuously reading in properties
  * and constructing a matrix from it.
  */
-bool CSSParserImpl::ParseMozTransform()
+bool CSSParserImpl::ParseTransform()
 {
   nsCSSValue value;
   if (ParseVariant(value, VARIANT_INHERIT | VARIANT_NONE, nsnull)) {
@@ -7842,17 +8050,17 @@ bool CSSParserImpl::ParseMozTransform()
       cur = cur->mNext;
     }
   }
-  AppendValue(eCSSProperty__moz_transform, value);
+  AppendValue(eCSSProperty_transform, value);
   return true;
 }
 
-bool CSSParserImpl::ParseMozTransformOrigin(bool aPerspective)
+bool CSSParserImpl::ParseTransformOrigin(bool aPerspective)
 {
   nsCSSValuePair position;
   if (!ParseBoxPositionValues(position, true))
     return false;
 
-  nsCSSProperty prop = eCSSProperty__moz_transform_origin;
+  nsCSSProperty prop = eCSSProperty_transform_origin;
   if (aPerspective) {
     if (!ExpectEndProperty()) {
       return false;
@@ -7979,6 +8187,8 @@ CSSParserImpl::ParseFontSrc(nsCSSValue& aValue)
       cur.SetStringValue(dat.mFamilyName, eCSSUnit_Local_Font);
       values.AppendElement(cur);
     } else {
+      // We don't know what to do with this token; unget it and error out
+      UngetToken();
       return false;
     }
 
@@ -8078,6 +8288,86 @@ CSSParserImpl::ParseFontRanges(nsCSSValue& aValue)
   for (PRUint32 i = 0; i < ranges.Length(); i++)
     srcVals->Item(i).SetIntValue(ranges[i], eCSSUnit_Integer);
   aValue.SetArrayValue(srcVals, eCSSUnit_Array);
+  return true;
+}
+
+// font-feature-settings: normal | <feature-tag-value> [, <feature-tag-value>]*
+// <feature-tag-value> = <string> [ <integer> | on | off ]?
+
+// minimum - "tagx", "tagy", "tagz"
+// edge error case - "tagx" on 1, "tagx" "tagy", "tagx" -1, "tagx" big
+
+// pair value is always x = string, y = int
+
+// font feature tags must be four ASCII characters
+#define FEATURE_TAG_LENGTH   4
+
+static bool
+ValidFontFeatureTag(const nsString& aTag)
+{
+  if (aTag.Length() != FEATURE_TAG_LENGTH) {
+    return false;
+  }
+  PRUint32 i;
+  for (i = 0; i < FEATURE_TAG_LENGTH; i++) {
+    PRUint32 ch = aTag[i];
+    if (ch < 0x20 || ch > 0x7e) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool
+CSSParserImpl::ParseFontFeatureSettings(nsCSSValue& aValue)
+{
+  if (ParseVariant(aValue, VARIANT_INHERIT | VARIANT_NORMAL, nsnull)) {
+    return true;
+  }
+
+  nsCSSValuePairList *cur = aValue.SetPairListValue();
+  for (;;) {
+    // feature tag
+    if (!GetToken(true)) {
+      return false;
+    }
+
+    if (mToken.mType != eCSSToken_String ||
+        !ValidFontFeatureTag(mToken.mIdent)) {
+      UngetToken();
+      return false;
+    }
+    cur->mXValue.SetStringValue(mToken.mIdent, eCSSUnit_String);
+
+    if (!GetToken(true)) {
+      cur->mYValue.SetIntValue(1, eCSSUnit_Integer);
+      break;
+    }
+
+    // optional value or on/off keyword
+    if (mToken.mType == eCSSToken_Number && mToken.mIntegerValid &&
+        mToken.mInteger >= 0) {
+      cur->mYValue.SetIntValue(mToken.mInteger, eCSSUnit_Integer);
+    } else if (mToken.mType == eCSSToken_Ident &&
+               mToken.mIdent.LowerCaseEqualsLiteral("on")) {
+      cur->mYValue.SetIntValue(1, eCSSUnit_Integer);
+    } else if (mToken.mType == eCSSToken_Ident &&
+               mToken.mIdent.LowerCaseEqualsLiteral("off")) {
+      cur->mYValue.SetIntValue(0, eCSSUnit_Integer);
+    } else {
+      // something other than value/on/off, set default value
+      cur->mYValue.SetIntValue(1, eCSSUnit_Integer);
+      UngetToken();
+    }
+
+    if (!ExpectSymbol(',', true)) {
+      break;
+    }
+
+    cur->mNext = new nsCSSValuePairList;
+    cur = cur->mNext;
+  }
+
   return true;
 }
 
@@ -9028,7 +9318,7 @@ CSSParserImpl::ParsePaint(nsCSSProperty aPropID)
     return false;
   if (x.GetUnit() == eCSSUnit_URL) {
     if (!ParseVariant(y, VARIANT_COLOR | VARIANT_NONE, nsnull))
-      y.SetColorValue(NS_RGB(0, 0, 0));
+      y.SetNoneValue();
   }
   if (!ExpectEndProperty())
     return false;

@@ -74,6 +74,7 @@ li:active .details {
   position: absolute;
   top: 27px;
   left: 27px;
+  pointer-events: none;
 }
 
 .details {
@@ -102,6 +103,11 @@ li:active .details {
 .domain,
 .size {
   display: inline;
+}
+
+.displayState {
+  color:gray;
+  margin-bottom: -3px; /* Prevent overflow that hides bottom border */
 }
 
 .size:after {

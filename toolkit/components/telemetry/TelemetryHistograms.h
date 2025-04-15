@@ -1,40 +1,7 @@
 /* -*-  Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2; -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * The Mozilla Foundation <http://www.mozilla.org/>.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *  Taras Glek <tglek@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /**
  * This file lists Telemetry histograms collected by Mozilla. The format is
@@ -101,6 +68,8 @@ HISTOGRAM(MEMORY_RESIDENT, 32 * 1024, 1024 * 1024, 50, EXPONENTIAL, "Resident me
 HISTOGRAM(MEMORY_STORAGE_SQLITE, 1024, 512 * 1024, 50, EXPONENTIAL, "Memory used by SQLite (KB)")
 HISTOGRAM(MEMORY_IMAGES_CONTENT_USED_UNCOMPRESSED, 1024, 1024 * 1024, 50, EXPONENTIAL, "Memory used for uncompressed, in-use content images (KB)")
 HISTOGRAM(MEMORY_HEAP_ALLOCATED, 1024, 1024 * 1024, 50, EXPONENTIAL, "Heap memory allocated (KB)")
+HISTOGRAM(MEMORY_HEAP_COMMITTED_UNUSED, 1024, 512 * 1024, 50, EXPONENTIAL, "Committed, unused heap memory (KB)")
+HISTOGRAM(MEMORY_HEAP_COMMITTED_UNUSED_RATIO, 1, 100, 25, LINEAR, "Ratio of committed, unused memory to allocated memory in the heap (percentage).")
 HISTOGRAM(MEMORY_EXPLICIT, 1024, 1024 * 1024, 50, EXPONENTIAL, "Explicit memory allocations (KB)")
 HISTOGRAM(GHOST_WINDOWS, 1, 128, 8, EXPONENTIAL, "Number of ghost windows")
 #if defined(XP_MACOSX)
@@ -116,6 +85,7 @@ HISTOGRAM(EARLY_GLUESTARTUP_READ_OPS, 1, 100, 12, LINEAR, "ProcessIoCounters.Rea
 HISTOGRAM(EARLY_GLUESTARTUP_READ_TRANSFER, 1, 50 * 1024, 12, EXPONENTIAL, "ProcessIoCounters.ReadTransferCount before glue startup (KB)")
 HISTOGRAM(GLUESTARTUP_READ_OPS, 1, 100, 12, LINEAR, "ProcessIoCounters.ReadOperationCount after glue startup")
 HISTOGRAM(GLUESTARTUP_READ_TRANSFER, 1, 50 * 1024, 12, EXPONENTIAL, "ProcessIoCounters.ReadTransferCount after glue startup (KB)")
+HISTOGRAM(STARTUP_USING_PRELOAD, 1, 2, 3, LINEAR, "Preload heuristic. 0: none, 1: preload from service, 2: preload from ioCounters.ReadOperationCount")
 #elif defined(XP_UNIX)
 HISTOGRAM(EARLY_GLUESTARTUP_HARD_FAULTS, 1, 100, 12, LINEAR, "Hard faults count before glue startup")
 HISTOGRAM(GLUESTARTUP_HARD_FAULTS, 1, 500, 12, EXPONENTIAL, "Hard faults count after glue startup")
@@ -200,6 +170,7 @@ HISTOGRAM(HTTP_KBREAD_PER_CONN, 1, 3000, 50, EXPONENTIAL, "HTTP: KB read per con
 HTTP_HISTOGRAMS(PAGE, "page: ")
 HTTP_HISTOGRAMS(SUB, "subitem: ")
 
+HISTOGRAM(SPDY_VERSION, 1, 16, 16, LINEAR, "SPDY: Protocol Version Used")
 HISTOGRAM(SPDY_PARALLEL_STREAMS, 1, 1000, 50, EXPONENTIAL, "SPDY: Streams concurrent active per connection")
 HISTOGRAM(SPDY_REQUEST_PER_CONN, 1, 1000, 50, EXPONENTIAL,  "SPDY: Streams created per connection")
 HISTOGRAM(SPDY_SERVER_INITIATED_STREAMS, 1, 100000, 250, EXPONENTIAL,  "SPDY: Streams recevied per connection")
@@ -225,11 +196,11 @@ HISTOGRAM(SPDY_SETTINGS_IW, 1, 1000, 50, EXPONENTIAL,  "SPDY: Settings IW (round
 #undef _HTTP_HIST
 #undef HTTP_HISTOGRAMS
 
-HISTOGRAM(HTTP_CACHE_DISPOSITION, 1, 5, 5, LINEAR, "HTTP Cache Hit, Reval, Failed-Reval, Miss")
 HISTOGRAM(DISK_CACHE_CORRUPT, 0, 1, 2, BOOLEAN, "Was the HTTP disk cache corrupt at startup?")
-HISTOGRAM(HTTP_DISK_CACHE_DISPOSITION, 1, 5, 5, LINEAR, "HTTP Disk Cache Hit, Reval, Failed-Reval, Miss")
-HISTOGRAM(HTTP_MEMORY_CACHE_DISPOSITION, 1, 5, 5, LINEAR, "HTTP Memory Cache Hit, Reval, Failed-Reval, Miss")
-HISTOGRAM(HTTP_OFFLINE_CACHE_DISPOSITION, 1, 5, 5, LINEAR, "HTTP Offline Cache Hit, Reval, Failed-Reval, Miss")
+HISTOGRAM_ENUMERATED_VALUES(HTTP_CACHE_DISPOSITION_2,         5, "HTTP Cache Hit, Reval, Failed-Reval, Miss")
+HISTOGRAM_ENUMERATED_VALUES(HTTP_DISK_CACHE_DISPOSITION_2,    5, "HTTP Disk Cache Hit, Reval, Failed-Reval, Miss")
+HISTOGRAM_ENUMERATED_VALUES(HTTP_MEMORY_CACHE_DISPOSITION_2,  5, "HTTP Memory Cache Hit, Reval, Failed-Reval, Miss")
+HISTOGRAM_ENUMERATED_VALUES(HTTP_OFFLINE_CACHE_DISPOSITION_2, 5, "HTTP Offline Cache Hit, Reval, Failed-Reval, Miss")
 HISTOGRAM(CACHE_DEVICE_SEARCH, 1, 100, 100, LINEAR, "Time to search cache (ms)")
 HISTOGRAM(CACHE_MEMORY_SEARCH, 1, 100, 100, LINEAR, "Time to search memory cache (ms)")
 HISTOGRAM(CACHE_DISK_SEARCH, 1, 100, 100, LINEAR, "Time to search disk cache (ms)")
@@ -376,6 +347,12 @@ HISTOGRAM(FX_THUMBNAILS_CAPTURE_TIME_MS, 1, 500, 15, EXPONENTIAL, "THUMBNAILS: T
 HISTOGRAM(FX_THUMBNAILS_STORE_TIME_MS, 1, 500, 15, EXPONENTIAL, "THUMBNAILS: Time (ms) it takes to store a thumbnail in the cache")
 HISTOGRAM(FX_THUMBNAILS_HIT_OR_MISS, 0, 1, 2, BOOLEAN, "THUMBNAILS: Thumbnail found")
 
+
+/*
+ * Widget telemetry.
+ */
+HISTOGRAM(EVENTLOOP_UI_LAG_EXP_MS, 50, 60000, 20, EXPONENTIAL, "Widget: Time it takes for the message before a UI message (ms)")
+
 /**
  * Session restore telemetry
  */
@@ -394,6 +371,14 @@ HISTOGRAM(HTML_BACKGROUND_REFLOW_MS, 1, 3000, 10, EXPONENTIAL, "HTML reflows in 
 HISTOGRAM(XUL_INITIAL_FRAME_CONSTRUCTION, 1, 3000, 10, EXPONENTIAL, "initial xul frame construction")
 HISTOGRAM_BOOLEAN(XMLHTTPREQUEST_ASYNC_OR_SYNC, "Type of XMLHttpRequest, async or sync")
 HISTOGRAM_BOOLEAN(MULTIPART_XHR_RESPONSE, "XMLHttpRequest response was of type multipart/x-mixed-replace.")
+
+/**
+ * Private browsing transition telemetry.
+ */
+HISTOGRAM(PRIVATE_BROWSING_TRANSITION_ENTER_PREPARATION_MS, 1, 3000, 10, EXPONENTIAL, "Time spent on private browsing enter transition, excluding session restore (ms)")
+HISTOGRAM(PRIVATE_BROWSING_TRANSITION_ENTER_TOTAL_MS, 1, 10000, 50, EXPONENTIAL, "Time spent on private browsing enter transition, including session restore (ms)")
+HISTOGRAM(PRIVATE_BROWSING_TRANSITION_EXIT_PREPARATION_MS, 1, 3000, 10, EXPONENTIAL, "Time spent on private browsing exit transition, excluding session restore (ms)")
+HISTOGRAM(PRIVATE_BROWSING_TRANSITION_EXIT_TOTAL_MS, 1, 10000, 50, EXPONENTIAL, "Time spent on private browsing exit transition, including session restore (ms)")
 
 /**
  * DOM telemetry.
@@ -433,6 +418,21 @@ HISTOGRAM_FLAG(TELEMETRY_TEST_FLAG, "a testing histogram; not meant to be touche
  */
 HISTOGRAM_FLAG(STARTUP_CRASH_DETECTED, "Whether there was a crash during the last startup")
 HISTOGRAM_ENUMERATED_VALUES(SAFE_MODE_USAGE, 3, "Whether the user is in safe mode (No, Yes, Forced)")
+
+/**
+ * New Tab Page telemetry.
+ */
+HISTOGRAM(NEWTAB_PAGE_ENABLED, 0, 1, 2, BOOLEAN, "New tab page is enabled.")
+HISTOGRAM(NEWTAB_PAGE_PINNED_SITES_COUNT, 1, 9, 10, EXPONENTIAL, "Number of pinned sites on the new tab page.")
+HISTOGRAM(NEWTAB_PAGE_BLOCKED_SITES_COUNT, 1, 100, 10, EXPONENTIAL, "Number of sites blocked from the new tab page.")
+
+/**
+ * Panorama telemetry.
+ */
+HISTOGRAM(PANORAMA_INITIALIZATION_TIME_MS, 1, 10000, 15, EXPONENTIAL, "Time it takes to initialize Panorama (ms)")
+HISTOGRAM(PANORAMA_GROUPS_COUNT, 1, 25, 15, EXPONENTIAL, "Number of groups in Panorama")
+HISTOGRAM(PANORAMA_STACKED_GROUPS_COUNT, 1, 25, 15, EXPONENTIAL, "Number of stacked groups in Panorama")
+HISTOGRAM(PANORAMA_MEDIAN_TABS_IN_GROUPS_COUNT, 1, 100, 15, EXPONENTIAL, "Median of tabs in groups in Panorama")
 
 /**
  * Native Fennec Telemetry

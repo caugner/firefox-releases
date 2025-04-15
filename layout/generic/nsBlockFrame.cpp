@@ -1,45 +1,8 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 // vim:cindent:ts=2:et:sw=2:
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Communicator client code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Steve Clark <buster@netscape.com>
- *   Robert O'Callahan <roc+moz@cs.cmu.edu>
- *   L. David Baron <dbaron@dbaron.org>
- *   IBM Corporation
- *   Mats Palmgren <matspal@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * rendering object for CSS display:block, inline-block, and list-item
@@ -438,6 +401,18 @@ nsBlockFrame::List(FILE* out, PRInt32 aIndent) const
     pseudoTag->ToString(atomString);
     fprintf(out, " pst=%s",
             NS_LossyConvertUTF16toASCII(atomString).get());
+  }
+  if (IsTransformed()) {
+    fprintf(out, " transformed");
+  }
+  if (ChildrenHavePerspective()) {
+    fprintf(out, " perspective");
+  }
+  if (Preserves3DChildren()) {
+    fprintf(out, " preserves-3d-children");
+  }
+  if (Preserves3D()) {
+    fprintf(out, " preserves-3d");
   }
   fputs("<\n", out);
 
@@ -2881,8 +2856,8 @@ nsBlockFrame::IsSelfEmpty()
 
   const nsStyleBorder* border = GetStyleBorder();
   const nsStylePadding* padding = GetStylePadding();
-  if (border->GetActualBorderWidth(NS_SIDE_TOP) != 0 ||
-      border->GetActualBorderWidth(NS_SIDE_BOTTOM) != 0 ||
+  if (border->GetComputedBorderWidth(NS_SIDE_TOP) != 0 ||
+      border->GetComputedBorderWidth(NS_SIDE_BOTTOM) != 0 ||
       !nsLayoutUtils::IsPaddingZero(padding->mPadding.GetTop()) ||
       !nsLayoutUtils::IsPaddingZero(padding->mPadding.GetBottom())) {
     return false;
@@ -4955,7 +4930,7 @@ nsBlockFrame::AddFrames(nsFrameList& aFrameList, nsIFrame* aPrevSibling)
       // Mark prevSibLine dirty and as needing textrun invalidation, since
       // we may be breaking up text in the line. Its previous line may also
       // need to be invalidated because it may be able to pull some text up.
-      MarkLineDirty(prevSibLine);
+      MarkLineDirty(prevSibLine, lineList);
       // The new line will also need its textruns recomputed because of the
       // frame changes.
       line->MarkDirty();
@@ -5012,7 +4987,7 @@ nsBlockFrame::AddFrames(nsFrameList& aFrameList, nsIFrame* aPrevSibling)
       // We're adding inline content to prevSibLine, so we need to mark it
       // dirty, ensure its textruns are recomputed, and possibly do the same
       // to its previous line since that line may be able to pull content up.
-      MarkLineDirty(prevSibLine);
+      MarkLineDirty(prevSibLine, lineList);
     }
 
     aPrevSibling = newFrame;
@@ -6388,7 +6363,7 @@ nsBlockFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 }
 
 #ifdef ACCESSIBILITY
-already_AddRefed<nsAccessible>
+already_AddRefed<Accessible>
 nsBlockFrame::CreateAccessible()
 {
   nsAccessibilityService* accService = nsIPresShell::AccService();

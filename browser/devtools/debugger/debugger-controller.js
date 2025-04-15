@@ -1,51 +1,17 @@
 /* -*- Mode: javascript; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ft=javascript ts=2 et sw=2 tw=80: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- *   Mozilla Foundation
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Dave Camp <dcamp@mozilla.com>
- *   Panos Astithas <past@mozilla.com>
- *   Victor Porof <vporof@mozilla.com>
- *   Mihai Sucan <mihai.sucan@gmail.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
 
+const FRAME_STEP_CACHE_DURATION = 100; // ms
 const DBG_STRINGS_URI = "chrome://browser/locale/devtools/debugger.properties";
+const SYNTAX_HIGHLIGHT_MAX_FILE_SIZE = 1048576; // 1 MB in bytes
 
 Cu.import("resource:///modules/source-editor.jsm");
 Cu.import("resource://gre/modules/devtools/dbg-server.jsm");
@@ -83,10 +49,12 @@ let DebuggerController = {
     this._isInitialized = true;
     window.removeEventListener("DOMContentLoaded", this._startupDebugger, true);
 
+    DebuggerView.initializePanes();
     DebuggerView.initializeEditor();
     DebuggerView.StackFrames.initialize();
     DebuggerView.Properties.initialize();
     DebuggerView.Scripts.initialize();
+    DebuggerView.showCloseButton(!this._isRemoteDebugger && !this._isChromeDebugger);
 
     this.dispatchEvent("Debugger:Loaded");
     this._connect();
@@ -103,17 +71,72 @@ let DebuggerController = {
     this._isDestroyed = true;
     window.removeEventListener("unload", this._shutdownDebugger, true);
 
+    DebuggerView.destroyPanes();
     DebuggerView.destroyEditor();
     DebuggerView.Scripts.destroy();
     DebuggerView.StackFrames.destroy();
     DebuggerView.Properties.destroy();
 
+    DebuggerController.Breakpoints.destroy();
     DebuggerController.SourceScripts.disconnect();
     DebuggerController.StackFrames.disconnect();
     DebuggerController.ThreadState.disconnect();
 
     this.dispatchEvent("Debugger:Unloaded");
     this._disconnect();
+    this._isChromeDebugger && this._quitApp();
+  },
+
+  /**
+   * Prepares the hostname and port number for a remote debugger connection
+   * and handles connection retries and timeouts.
+   *
+   * @return boolean true if connection should proceed normally
+   */
+  _prepareConnection: function DC__prepareConnection() {
+    // If we exceeded the total number of connection retries, bail.
+    if (this._remoteConnectionTry === Prefs.remoteConnectionRetries) {
+      Services.prompt.alert(null,
+        L10N.getStr("remoteDebuggerPromptTitle"),
+        L10N.getStr("remoteDebuggerConnectionFailedMessage"));
+      this.dispatchEvent("Debugger:Close");
+      return false;
+    }
+
+    // TODO: This is ugly, need to rethink the design for the UI in #751677.
+    if (!Prefs.remoteAutoConnect) {
+      let prompt = new RemoteDebuggerPrompt();
+      let result = prompt.show(!!this._remoteConnectionTimeout);
+      // If the connection was not established before the user canceled the
+      // prompt, close the remote debugger.
+      if (!result && !DebuggerController.activeThread) {
+        this.dispatchEvent("Debugger:Close");
+        return false;
+      }
+      Prefs.remoteHost = prompt.uri.host;
+      Prefs.remotePort = prompt.uri.port;
+    }
+
+    // If this debugger is connecting remotely to a server, we need to check
+    // after a while if the connection actually succeeded.
+    this._remoteConnectionTry = ++this._remoteConnectionTry || 1;
+    this._remoteConnectionTimeout = window.setTimeout(function() {
+      // If we couldn't connect to any server yet, try again...
+      if (!DebuggerController.activeThread) {
+        DebuggerController._onRemoteConnectionTimeout();
+        DebuggerController._connect();
+      }
+    }, Prefs.remoteTimeout);
+
+    return true;
+  },
+
+  /**
+   * Called when a remote connection timeout occurs.
+   */
+  _onRemoteConnectionTimeout: function DC__onRemoteConnectionTimeout() {
+    Cu.reportError("Couldn't connect to " +
+      Prefs.remoteHost + ":" + Prefs.remotePort);
   },
 
   /**
@@ -121,15 +144,19 @@ let DebuggerController = {
    * wiring event handlers as necessary.
    */
   _connect: function DC__connect() {
-    if (!DebuggerServer.initialized) {
-      DebuggerServer.init();
-      DebuggerServer.addBrowserActors();
+    if (this._isRemoteDebugger) {
+      if (!this._prepareConnection()) {
+        return;
+      }
     }
 
-    let transport = DebuggerServer.connectPipe();
+    let transport = (this._isChromeDebugger || this._isRemoteDebugger)
+      ? debuggerSocketConnect(Prefs.remoteHost, Prefs.remotePort)
+      : DebuggerServer.connectPipe();
+
     let client = this.client = new DebuggerClient(transport);
 
-    client.addListener("tabNavigated", this._onTabNavigated);
+    client.addListener("tabNavigated", this._onTabDetached);
     client.addListener("tabDetached", this._onTabDetached);
 
     client.connect(function(aType, aTraits) {
@@ -145,7 +172,7 @@ let DebuggerController = {
    * Closes the debugger client and removes event handlers as necessary.
    */
   _disconnect: function DC__disconnect() {
-    this.client.removeListener("tabNavigated", this._onTabNavigated);
+    this.client.removeListener("tabNavigated", this._onTabDetached);
     this.client.removeListener("tabDetached", this._onTabDetached);
     this.client.close();
 
@@ -218,6 +245,39 @@ let DebuggerController = {
 
       }.bind(this));
     }.bind(this));
+  },
+
+  /**
+   * Returns true if this is a remote debugger instance.
+   * @return boolean
+   */
+  get _isRemoteDebugger() {
+    return window._remoteFlag;
+  },
+
+  /**
+   * Returns true if this is a chrome debugger instance.
+   * @return boolean
+   */
+  get _isChromeDebugger() {
+    return !window.parent.content && !this._isRemoteDebugger;
+  },
+
+  /**
+   * Attempts to quit the current process if allowed.
+   */
+  _quitApp: function DC__quitApp() {
+    let canceled = Cc["@mozilla.org/supports-PRBool;1"]
+      .createInstance(Ci.nsISupportsPRBool);
+
+    Services.obs.notifyObservers(canceled, "quit-application-requested", null);
+
+    // Somebody canceled our quit request.
+    if (canceled.data) {
+      return;
+    }
+
+    Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit);
   },
 
   /**
@@ -297,6 +357,7 @@ function StackFrames() {
   this._onResume = this._onResume.bind(this);
   this._onFrames = this._onFrames.bind(this);
   this._onFramesCleared = this._onFramesCleared.bind(this);
+  this._afterFramesCleared = this._afterFramesCleared.bind(this);
 }
 
 StackFrames.prototype = {
@@ -312,6 +373,12 @@ StackFrames.prototype = {
   selectedFrame: null,
 
   /**
+   * A flag that defines whether the debuggee will pause whenever an exception
+   * is thrown.
+   */
+  pauseOnExceptions: false,
+
+  /**
    * Gets the current thread the client has connected to.
    */
   get activeThread() {
@@ -325,12 +392,16 @@ StackFrames.prototype = {
    *        The next function in the initialization sequence.
    */
   connect: function SF_connect(aCallback) {
+    window.addEventListener("Debugger:FetchedVariables", this._onFetchedVars, false);
+
+    this._onFramesCleared();
+
     this.activeThread.addListener("paused", this._onPaused);
     this.activeThread.addListener("resumed", this._onResume);
     this.activeThread.addListener("framesadded", this._onFrames);
     this.activeThread.addListener("framescleared", this._onFramesCleared);
 
-    this._onFramesCleared();
+    this.updatePauseOnExceptions(this.pauseOnExceptions);
 
     aCallback && aCallback();
   },
@@ -339,6 +410,8 @@ StackFrames.prototype = {
    * Disconnect from the client.
    */
   disconnect: function SF_disconnect() {
+    window.removeEventListener("Debugger:FetchedVariables", this._onFetchedVars, false);
+
     if (!this.activeThread) {
       return;
     }
@@ -350,8 +423,17 @@ StackFrames.prototype = {
 
   /**
    * Handler for the thread client's paused notification.
+   *
+   * @param string aEvent
+   *        The name of the notification ("paused" in this case).
+   * @param object aPacket
+   *        The response packet.
    */
-  _onPaused: function SF__onPaused() {
+  _onPaused: function SF__onPaused(aEvent, aPacket) {
+    // In case the pause was caused by an exception, store the exception value.
+    if (aPacket.why.type == "exception") {
+      this.exception = aPacket.why.exception;
+    }
     this.activeThread.fillFrames(this.pageSize);
   },
 
@@ -368,9 +450,11 @@ StackFrames.prototype = {
   _onFrames: function SF__onFrames() {
     if (!this.activeThread.cachedFrames.length) {
       DebuggerView.StackFrames.emptyText();
+      DebuggerView.Properties.emptyText();
       return;
     }
     DebuggerView.StackFrames.empty();
+    DebuggerView.Properties.empty();
 
     for each (let frame in this.activeThread.cachedFrames) {
       this._addFrame(frame);
@@ -387,12 +471,24 @@ StackFrames.prototype = {
    * Handler for the thread client's framescleared notification.
    */
   _onFramesCleared: function SF__onFramesCleared() {
-    DebuggerView.StackFrames.emptyText();
     this.selectedFrame = null;
+    this.exception = null;
+    // After each frame step (in, over, out), framescleared is fired, which
+    // forces the UI to be emptied and rebuilt on framesadded. Most of the times
+    // this is not necessary, and will result in a brief redraw flicker.
+    // To avoid it, invalidate the UI only after a short time if necessary.
+    window.setTimeout(this._afterFramesCleared, FRAME_STEP_CACHE_DURATION);
+  },
 
-    // Clear the properties as well.
-    DebuggerView.Properties.localScope.empty();
-    DebuggerView.Properties.globalScope.empty();
+  /**
+   * Called soon after the thread client's framescleared notification.
+   */
+  _afterFramesCleared: function SF__afterFramesCleared() {
+    if (this.activeThread && !this.activeThread.cachedFrames.length) {
+      DebuggerView.StackFrames.emptyText();
+      DebuggerView.Properties.emptyText();
+      DebuggerController.dispatchEvent("Debugger:AfterFramesCleared");
+    }
   },
 
   /**
@@ -415,6 +511,18 @@ StackFrames.prototype = {
     } else {
       editor.setDebugLocation(-1);
     }
+  },
+
+  /**
+   * Inform the debugger client whether the debuggee should be paused whenever
+   * an exception is thrown.
+   *
+   * @param boolean aFlag
+   *        The new value of the flag: true for pausing, false otherwise.
+   */
+  updatePauseOnExceptions: function SF_updatePauseOnExceptions(aFlag) {
+    this.pauseOnExceptions = aFlag;
+    this.activeThread.pauseOnExceptions(this.pauseOnExceptions);
   },
 
   /**
@@ -456,57 +564,144 @@ StackFrames.prototype = {
       editor.setDebugLocation(-1);
     }
 
-    // Display the local variables.
-    let localScope = DebuggerView.Properties.localScope;
-    localScope.empty();
+    // Start recording any added variables or properties in any scope.
+    DebuggerView.Properties.createHierarchyStore();
 
-    // Add "this".
-    if (frame.this) {
-      let thisVar = localScope.addVar("this");
-      thisVar.setGrip({
-        type: frame.this.type,
-        class: frame.this.class
-      });
-      this._addExpander(thisVar, frame.this);
-    }
+    // Clear existing scopes and create each one dynamically.
+    DebuggerView.Properties.empty();
 
-    if (frame.arguments && frame.arguments.length > 0) {
-      // Add "arguments".
-      let argsVar = localScope.addVar("arguments");
-      argsVar.setGrip({
-        type: "object",
-        class: "Arguments"
-      });
-      this._addExpander(argsVar, frame.arguments);
-
-      // Add variables for every argument.
-      let objClient = this.activeThread.pauseGrip(frame.callee);
-      objClient.getSignature(function SF_getSignature(aResponse) {
-        for (let i = 0, l = aResponse.parameters.length; i < l; i++) {
-          let param = aResponse.parameters[i];
-          let paramVar = localScope.addVar(param);
-          let paramVal = frame.arguments[i];
-
-          paramVar.setGrip(paramVal);
-          this._addExpander(paramVar, paramVal);
+    if (frame.environment) {
+      let env = frame.environment;
+      do {
+        // Construct the scope name.
+        let name = env.type.charAt(0).toUpperCase() + env.type.slice(1);
+        // Call the outermost scope Global.
+        if (!env.parent) {
+          name = L10N.getStr("globalScopeLabel");
+        }
+        let label = L10N.getFormatStr("scopeLabel", [name]);
+        switch (env.type) {
+          case "with":
+          case "object":
+            label += " [" + env.object.class + "]";
+            break;
+          case "function":
+            if (env.functionName) {
+              label += " [" + env.functionName + "]";
+            }
+            break;
+          default:
+            break;
         }
 
-        // Signal that call parameters have been fetched.
-        DebuggerController.dispatchEvent("Debugger:FetchedParameters");
+        let scope = DebuggerView.Properties.addScope(label);
 
-      }.bind(this));
+        // Special additions to the innermost scope.
+        if (env == frame.environment) {
+          // Add any thrown exception.
+          if (aDepth == 0 && this.exception) {
+            let excVar = scope.addVar("<exception>");
+            if (typeof this.exception == "object") {
+              excVar.setGrip({
+                type: this.exception.type,
+                class: this.exception.class
+              });
+              this._addExpander(excVar, this.exception);
+            } else {
+              excVar.setGrip(this.exception);
+            }
+          }
+
+          // Add "this".
+          if (frame.this) {
+            let thisVar = scope.addVar("this");
+            thisVar.setGrip({
+              type: frame.this.type,
+              class: frame.this.class
+            });
+            this._addExpander(thisVar, frame.this);
+          }
+
+          // Expand the innermost scope by default.
+          scope.expand(true);
+          scope.addToHierarchy();
+        }
+
+        switch (env.type) {
+          case "with":
+          case "object":
+            let objClient = this.activeThread.pauseGrip(env.object);
+            objClient.getPrototypeAndProperties(function SF_getProps(aResponse) {
+              this._addScopeVariables(aResponse.ownProperties, scope);
+              // Signal that variables have been fetched.
+              DebuggerController.dispatchEvent("Debugger:FetchedVariables");
+            }.bind(this));
+            break;
+          case "block":
+          case "function":
+            // Add nodes for every argument.
+            let variables = env.bindings.arguments;
+            for each (let variable in variables) {
+              let name = Object.getOwnPropertyNames(variable)[0];
+              let paramVar = scope.addVar(name, variable[name]);
+              let paramVal = variable[name].value;
+              paramVar.setGrip(paramVal);
+              this._addExpander(paramVar, paramVal);
+            }
+            // Add nodes for every other variable in scope.
+            this._addScopeVariables(env.bindings.variables, scope);
+            break;
+          default:
+            Cu.reportError("Unknown Debugger.Environment type: " + env.type);
+            break;
+        }
+      } while (env = env.parent);
+    }
+
+    // Signal that variables have been fetched.
+    DebuggerController.dispatchEvent("Debugger:FetchedVariables");
+  },
+
+  /**
+   * Called afters variables have been fetched after a frame was selected.
+   */
+  _onFetchedVars: function SF__onFetchedVars() {
+    DebuggerView.Properties.commitHierarchy();
+  },
+
+  /**
+   * Add nodes for every variable in scope.
+   *
+   * @param object aVariables
+   *        The map of names to variables, as specified in the Remote
+   *        Debugging Protocol.
+   * @param object aScope
+   *        The scope where the nodes will be placed into.
+   */
+  _addScopeVariables: function SF_addScopeVariables(aVariables, aScope) {
+    // Sort all of the variables before adding them, for better UX.
+    let variables = {};
+    for each (let prop in Object.keys(aVariables).sort()) {
+      variables[prop] = aVariables[prop];
+    }
+
+    // Add the sorted variables to the specified scope.
+    for (let variable in variables) {
+      let paramVar = aScope.addVar(variable, variables[variable]);
+      let paramVal = variables[variable].value;
+      paramVar.setGrip(paramVal);
+      this._addExpander(paramVar, paramVal);
     }
   },
 
   /**
-   * Adds a onexpand callback for a variable, lazily handling the addition of
+   * Adds an 'onexpand' callback for a variable, lazily handling the addition of
    * new properties.
    */
   _addExpander: function SF__addExpander(aVar, aObject) {
-    // No need for expansion for null and undefined values, but we do need them
-    // for frame.arguments which is a regular array.
-    if (!aObject || typeof aObject !== "object" ||
-        (aObject.type !== "object" && !Array.isArray(aObject))) {
+    // No need for expansion for null and undefined values.
+    if (!aVar || !aObject || typeof aObject !== "object" ||
+        aObject.type !== "object") {
       return;
     }
 
@@ -525,34 +720,8 @@ StackFrames.prototype = {
       return;
     }
 
-    // For arrays we have to construct a grip-like object.
-    if (Array.isArray(aObject)) {
-      let properties = { length: { value: aObject.length } };
-      for (let i = 0, l = aObject.length; i < l; i++) {
-        properties[i] = { value: aObject[i] };
-      }
-      aVar.addProperties(properties);
-
-      // Expansion handlers must be set after the properties are added.
-      for (let i = 0, l = aObject.length; i < l; i++) {
-        this._addExpander(aVar[i], aObject[i]);
-      }
-
-      aVar.fetched = true;
-      return;
-    }
-
     let objClient = this.activeThread.pauseGrip(aObject);
     objClient.getPrototypeAndProperties(function SF_onProtoAndProps(aResponse) {
-      // Add __proto__.
-      if (aResponse.prototype.type !== "null") {
-        let properties = { "__proto__ ": { value: aResponse.prototype } };
-        aVar.addProperties(properties);
-
-        // Expansion handlers must be set after the properties are added.
-        this._addExpander(aVar["__proto__ "], aResponse.prototype);
-      }
-
       // Sort all of the properties before adding them, for better UX.
       let properties = {};
       for each (let prop in Object.keys(aResponse.ownProperties).sort()) {
@@ -565,6 +734,14 @@ StackFrames.prototype = {
         this._addExpander(aVar[prop], aResponse.ownProperties[prop].value);
       }
 
+      // Add __proto__.
+      if (aResponse.prototype.type !== "null") {
+        let properties = { "__proto__ ": { value: aResponse.prototype } };
+        aVar.addProperties(properties);
+
+        // Expansion handlers must be set after the properties are added.
+        this._addExpander(aVar["__proto__ "], aResponse.prototype);
+      }
       aVar.fetched = true;
     }.bind(this));
   },
@@ -608,6 +785,18 @@ StackFrames.prototype = {
       return aFrame["calleeName"] ? aFrame["calleeName"] : "(anonymous)";
     }
     return "(" + aFrame.type + ")";
+  },
+
+  /**
+   * Evaluate an expression in the context of the selected frame. This is used
+   * for modifying the value of variables in scope.
+   *
+   * @param string aExpression
+   *        The expression to evaluate.
+   */
+  evaluate: function SF_evaluate(aExpression) {
+    let frame = this.activeThread.cachedFrames[this.selectedFrame];
+    this.activeThread.eval(frame.actor, aExpression);
   }
 };
 
@@ -686,7 +875,18 @@ SourceScripts.prototype = {
    * Handler for the debugger client's unsolicited newScript notification.
    */
   _onNewScript: function SS__onNewScript(aNotification, aPacket) {
-    this._addScript({ url: aPacket.url, startLine: aPacket.startLine });
+    // Ignore scripts generated from 'clientEvaluate' packets.
+    if (aPacket.url == "debugger eval code") {
+      return;
+    }
+
+    this._addScript({ url: aPacket.url, startLine: aPacket.startLine }, true);
+    // If there are any stored breakpoints for this script, display them again.
+    for each (let bp in DebuggerController.Breakpoints.store) {
+      if (bp.location.url == aPacket.url) {
+        DebuggerController.Breakpoints.displayBreakpoint(bp.location);
+      }
+    }
   },
 
   /**
@@ -694,8 +894,9 @@ SourceScripts.prototype = {
    */
   _onScriptsAdded: function SS__onScriptsAdded() {
     for each (let script in this.activeThread.cachedScripts) {
-      this._addScript(script);
+      this._addScript(script, false);
     }
+    DebuggerView.Scripts.commitScripts();
   },
 
   /**
@@ -725,7 +926,7 @@ SourceScripts.prototype = {
     }
 
     // Use JS mode for files with .js and .jsm extensions.
-    if (/\.jsm?$/.test(this._trimUrlQuery(aUrl))) {
+    if (/\.jsm?$/.test(this.trimUrlQuery(aUrl))) {
       DebuggerView.editor.setMode(SourceEditor.MODES.JAVASCRIPT);
     } else {
       DebuggerView.editor.setMode(SourceEditor.MODES.HTML);
@@ -733,62 +934,132 @@ SourceScripts.prototype = {
   },
 
   /**
-   * Trims the query part of a url string, if necessary.
+   * Trims the query part or reference identifier of a url string, if necessary.
    *
    * @param string aUrl
    *        The script url.
    * @return string
+   *         The url with the trimmed query.
    */
-  _trimUrlQuery: function SS__trimUrlQuery(aUrl) {
-    let q = aUrl.indexOf('?');
-    if (q > -1) {
-      return aUrl.slice(0, q);
+  trimUrlQuery: function SS_trimUrlQuery(aUrl) {
+    let length = aUrl.length;
+    let q1 = aUrl.indexOf('?');
+    let q2 = aUrl.indexOf('&');
+    let q3 = aUrl.indexOf('#');
+    let q = Math.min(q1 !== -1 ? q1 : length,
+                     q2 !== -1 ? q2 : length,
+                     q3 !== -1 ? q3 : length);
+
+    return aUrl.slice(0, q);
+  },
+
+  /**
+   * Trims as much as possible from a URL, while keeping the result unique
+   * in the Debugger View scripts container.
+   *
+   * @param string | nsIURL aUrl
+   *        The script URL.
+   * @param string aLabel [optional]
+   *        The resulting label at each step.
+   * @param number aSeq [optional]
+   *        The current iteration step.
+   * @return string
+   *         The resulting label at the final step.
+   */
+  _trimURL: function SS__trimURL(aUrl, aLabel, aSeq) {
+    if (!(aUrl instanceof Ci.nsIURL)) {
+      try {
+        // Use an nsIURL to parse all the url path parts.
+        aUrl = Services.io.newURI(aUrl, null, null).QueryInterface(Ci.nsIURL);
+      } catch (e) {
+        // This doesn't look like a url, or nsIURL can't handle it.
+        return aUrl;
+      }
     }
-    return aUrl;
+    if (!aSeq) {
+      let name = aUrl.fileName;
+      if (name) {
+        // This is a regular file url, get only the file name (contains the
+        // base name and extension if available).
+
+        // If this url contains an invalid query, unfortunately nsIURL thinks
+        // it's part of the file extension. It must be removed.
+        aLabel = aUrl.fileName.replace(/\&.*/, "");
+      } else {
+        // This is not a file url, hence there is no base name, nor extension.
+        // Proceed using other available information.
+        aLabel = "";
+      }
+      aSeq = 1;
+    }
+
+    // If we have a label and it doesn't start with a query...
+    if (aLabel && aLabel.indexOf("?") !== 0) {
+
+      if (DebuggerView.Scripts.containsIgnoringQuery(aUrl.spec)) {
+        // A page may contain multiple requests to the same url but with different
+        // queries. It would be redundant to show each one.
+        return aLabel;
+      }
+      if (!DebuggerView.Scripts.containsLabel(aLabel)) {
+        // We found the shortest unique label for the url.
+        return aLabel;
+      }
+    }
+
+    // Append the url query.
+    if (aSeq === 1) {
+      let query = aUrl.query;
+      if (query) {
+        return this._trimURL(aUrl, aLabel + "?" + query, aSeq + 1);
+      }
+      aSeq++;
+    }
+    // Append the url reference.
+    if (aSeq === 2) {
+      let ref = aUrl.ref;
+      if (ref) {
+        return this._trimURL(aUrl, aLabel + "#" + aUrl.ref, aSeq + 1);
+      }
+      aSeq++;
+    }
+    // Prepend the url directory.
+    if (aSeq === 3) {
+      let dir = aUrl.directory;
+      if (dir) {
+        return this._trimURL(aUrl, dir.replace(/^\//, "") + aLabel, aSeq + 1);
+      }
+      aSeq++;
+    }
+    // Prepend the hostname and port number.
+    if (aSeq === 4) {
+      let host = aUrl.hostPort;
+      if (host) {
+        return this._trimURL(aUrl, host + "/" + aLabel, aSeq + 1);
+      }
+      aSeq++;
+    }
+    // Use the whole url spec but ignoring the reference.
+    if (aSeq === 5) {
+      return this._trimURL(aUrl, aUrl.specIgnoringRef, aSeq + 1);
+    }
+    // Give up.
+    return aUrl.spec;
   },
 
   /**
    * Gets a unique, simplified label from a script url.
-   * ex: a). ici://some.address.com/random/subrandom/
-   *     b). ni://another.address.org/random/subrandom/page.html
-   *     c). san://interesting.address.gro/random/script.js
-   *     d). si://interesting.address.moc/random/another/script.js
-   * =>
-   *     a). subrandom/
-   *     b). page.html
-   *     c). script.js
-   *     d). another/script.js
    *
    * @param string aUrl
    *        The script url.
    * @param string aHref
    *        The content location href to be used. If unspecified, it will
-   *        defalult to debugged panrent window location.
+   *        default to the script url prepath.
    * @return string
    *         The simplified label.
    */
   _getScriptLabel: function SS__getScriptLabel(aUrl, aHref) {
-    let url = this._trimUrlQuery(aUrl);
-
-    if (this._labelsCache[url]) {
-      return this._labelsCache[url];
-    }
-
-    let href = aHref || window.parent.content.location.href;
-    let pathElements = url.split("/");
-    let label = pathElements.pop() || (pathElements.pop() + "/");
-
-    // if the label as a leaf name is alreay present in the scripts list
-    if (DebuggerView.Scripts.containsLabel(label)) {
-      label = url.replace(href.substring(0, href.lastIndexOf("/") + 1), "");
-
-      // if the path/to/script is exactly the same, we're in different domains
-      if (DebuggerView.Scripts.containsLabel(label)) {
-        label = url;
-      }
-    }
-
-    return this._labelsCache[url] = label;
+    return this._labelsCache[aUrl] || (this._labelsCache[aUrl] = this._trimURL(aUrl));
   },
 
   /**
@@ -800,15 +1071,16 @@ SourceScripts.prototype = {
   },
 
   /**
-   * Add the specified script to the list and display it in the editor if the
-   * editor is empty.
+   * Add the specified script to the list.
+   *
+   * @param object aScript
+   *        The script object coming from the active thread.
+   * @param boolean aForceFlag
+   *        True to force the script to be immediately added.
    */
-  _addScript: function SS__addScript(aScript) {
-    DebuggerView.Scripts.addScript(this._getScriptLabel(aScript.url), aScript);
-
-    if (DebuggerView.editor.getCharCount() == 0) {
-      this.showScript(aScript);
-    }
+  _addScript: function SS__addScript(aScript, aForceFlag) {
+    DebuggerView.Scripts.addScript(
+      this._getScriptLabel(aScript.url), aScript, aForceFlag);
   },
 
   /**
@@ -852,7 +1124,9 @@ SourceScripts.prototype = {
   _onShowScript: function SS__onShowScript(aScript, aOptions) {
     aOptions = aOptions || {};
 
-    this._setEditorMode(aScript.url, aScript.contentType);
+    if (aScript.text.length < SYNTAX_HIGHLIGHT_MAX_FILE_SIZE) {
+      this._setEditorMode(aScript.url, aScript.contentType);
+    }
 
     let editor = DebuggerView.editor;
     editor.setText(aScript.text);
@@ -876,7 +1150,7 @@ SourceScripts.prototype = {
    * Handles notifications to load a source script from the cache or from a
    * local file.
    *
-   * XXX: Tt may be better to use nsITraceableChannel to get to the sources
+   * XXX: It may be better to use nsITraceableChannel to get to the sources
    * without relying on caching when we can (not for eval, etc.):
    * http://www.softwareishard.com/blog/firebug/nsitraceablechannel-intercept-http-traffic/
    */
@@ -967,7 +1241,7 @@ SourceScripts.prototype = {
    *        The failure status code.
    */
   _logError: function SS__logError(aUrl, aStatus) {
-    Components.utils.reportError(L10N.getFormatStr("loadingError", [aUrl, aStatus]));
+    Cu.reportError(L10N.getFormatStr("loadingError", [aUrl, aStatus]));
   },
 };
 
@@ -1004,7 +1278,7 @@ Breakpoints.prototype = {
 
   /**
    * The list of breakpoints in the debugger as tracked by the current
-   * debugger instance. This an object where the values are BreakpointActor
+   * debugger instance. This is an object where the values are BreakpointActor
    * objects received from the client, while the keys are actor names, for
    * example "conn0.breakpoint3".
    *
@@ -1076,14 +1350,7 @@ Breakpoints.prototype = {
 
     let line = aBreakpoint.line + 1;
 
-    let callback = function(aClient, aError) {
-      if (aError) {
-        this._skipEditorBreakpointChange = true;
-        let result = this.editor.removeBreakpoint(aBreakpoint.line);
-        this._skipEditorBreakpointChange = false;
-      }
-    }.bind(this);
-    this.addBreakpoint({ url: url, line: line }, callback, true);
+    this.addBreakpoint({ url: url, line: line }, null, true);
   },
 
   /**
@@ -1154,21 +1421,33 @@ Breakpoints.prototype = {
     }
 
     this.activeThread.setBreakpoint(aLocation, function(aResponse, aBpClient) {
-      if (!aResponse.error) {
-        this.store[aBpClient.actor] = aBpClient;
-
-        if (!aNoEditorUpdate) {
-          let url = DebuggerView.Scripts.selected;
-          if (url == aLocation.url) {
-            this._skipEditorBreakpointChange = true;
-            this.editor.addBreakpoint(aLocation.line - 1);
-            this._skipEditorBreakpointChange = false;
-          }
-        }
-      }
-
+      this.store[aBpClient.actor] = aBpClient;
+      this.displayBreakpoint(aLocation, aNoEditorUpdate);
       aCallback && aCallback(aBpClient, aResponse.error);
     }.bind(this));
+  },
+
+  /**
+   * Update the editor to display the specified breakpoint in the gutter.
+   *
+   * @param object aLocation
+   *        The location where you want the breakpoint. This object must have
+   *        two properties:
+   *          - url - the URL of the script.
+   *          - line - the line number (starting from 1).
+   * @param boolean [aNoEditorUpdate=false]
+   *        Tells if you want to skip editor updates. Typically the editor is
+   *        updated to visually indicate that a breakpoint has been added.
+   */
+  displayBreakpoint: function BP_displayBreakpoint(aLocation, aNoEditorUpdate) {
+    if (!aNoEditorUpdate) {
+      let url = DebuggerView.Scripts.selected;
+      if (url == aLocation.url) {
+        this._skipEditorBreakpointChange = true;
+        this.editor.addBreakpoint(aLocation.line - 1);
+        this._skipEditorBreakpointChange = false;
+      }
+    }
   },
 
   /**
@@ -1256,6 +1535,105 @@ let L10N = {
 
 XPCOMUtils.defineLazyGetter(L10N, "stringBundle", function() {
   return Services.strings.createBundle(DBG_STRINGS_URI);
+});
+
+/**
+ * Shortcuts for accessing various debugger preferences.
+ */
+let Prefs = {
+
+  /**
+   * Gets the preferred stackframes pane width.
+   * @return number
+   */
+  get stackframesWidth() {
+    if (this._sfrmWidth === undefined) {
+      this._sfrmWidth = Services.prefs.getIntPref("devtools.debugger.ui.stackframes-width");
+    }
+    return this._sfrmWidth;
+  },
+
+  /**
+   * Sets the preferred stackframes pane width.
+   * @return number
+   */
+  set stackframesWidth(value) {
+    Services.prefs.setIntPref("devtools.debugger.ui.stackframes-width", value);
+    this._sfrmWidth = value;
+  },
+
+  /**
+   * Gets the preferred variables pane width.
+   * @return number
+   */
+  get variablesWidth() {
+    if (this._varsWidth === undefined) {
+      this._varsWidth = Services.prefs.getIntPref("devtools.debugger.ui.variables-width");
+    }
+    return this._varsWidth;
+  },
+
+  /**
+   * Sets the preferred variables pane width.
+   * @return number
+   */
+  set variablesWidth(value) {
+    Services.prefs.setIntPref("devtools.debugger.ui.variables-width", value);
+    this._varsWidth = value;
+  },
+
+  /**
+   * Gets a flag specifying if the the debugger should automatically connect to
+   * the default host and port number.
+   * @return boolean
+   */
+  get remoteAutoConnect() {
+    if (this._autoConn === undefined) {
+      this._autoConn = Services.prefs.getBoolPref("devtools.debugger.remote-autoconnect");
+    }
+    return this._autoConn;
+  },
+
+  /**
+   * Sets a flag specifying if the the debugger should automatically connect.
+   * @param boolean value
+   */
+  set remoteAutoConnect(value) {
+    Services.prefs.setBoolPref("devtools.debugger.remote-autoconnect", value);
+    this._autoConn = value;
+  }
+};
+
+/**
+ * Gets the preferred default remote debugging host.
+ * @return string
+ */
+XPCOMUtils.defineLazyGetter(Prefs, "remoteHost", function() {
+  return Services.prefs.getCharPref("devtools.debugger.remote-host");
+});
+
+/**
+ * Gets the preferred default remote debugging port.
+ * @return number
+ */
+XPCOMUtils.defineLazyGetter(Prefs, "remotePort", function() {
+  return Services.prefs.getIntPref("devtools.debugger.remote-port");
+});
+
+/**
+ * Gets the max number of attempts to reconnect to a remote server.
+ * @return number
+ */
+XPCOMUtils.defineLazyGetter(Prefs, "remoteConnectionRetries", function() {
+  return Services.prefs.getIntPref("devtools.debugger.remote-connection-retries");
+});
+
+/**
+ * Gets the remote debugging connection timeout (in milliseconds).
+ * @return number
+ */
+XPCOMUtils.defineLazyGetter(Prefs, "remoteTimeout", function() {
+  return Services.prefs.getIntPref("devtools.debugger.remote-timeout");
 });
 
 /**

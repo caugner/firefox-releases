@@ -1,41 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1999
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Mats Palmgren <matspal@gmail.com>
- *   Jonathon Jongsma <jonathon.jongsma@collabora.co.uk>, Collabora Ltd.
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /*
  * methods for dealing with CSS properties and tables of the keyword
@@ -63,12 +29,12 @@ extern const char* const kCSSRawProperties[];
 
 // define an array of all CSS properties
 const char* const kCSSRawProperties[] = {
-#define CSS_PROP(name_, id_, method_, flags_, parsevariant_, kwtable_,       \
-                 stylestruct_, stylestructoffset_, animtype_)                \
+#define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_, kwtable_, \
+                 stylestruct_, stylestructoffset_, animtype_)                 \
   #name_,
 #include "nsCSSPropList.h"
 #undef CSS_PROP
-#define CSS_PROP_SHORTHAND(name_, id_, method_, flags_) #name_,
+#define CSS_PROP_SHORTHAND(name_, id_, method_, flags_, pref_) #name_,
 #include "nsCSSPropList.h"
 #undef CSS_PROP_SHORTHAND
 };
@@ -319,7 +285,7 @@ nsCSSProps::ReleaseTable(void)
 // We need eCSSAliasCount so we can make gAliases nonzero size when there
 // are no aliases.
 enum {
-#define CSS_PROP_ALIAS(aliasname_, propid_, aliasmethod_)                     \
+#define CSS_PROP_ALIAS(aliasname_, propid_, aliasmethod_, pref_)              \
   eCSSAliasCountBefore_##aliasmethod_,
 #include "nsCSSPropAliasList.h"
 #undef CSS_PROP_ALIAS
@@ -337,7 +303,7 @@ enum {
   //     conveniently zero.
   //   eMaxCSSAliasNameSizeWith_##aliasmethod_ is **one less than** the
   //     largest sizeof(#aliasname_) before or including that alias.
-#define CSS_PROP_ALIAS(aliasname_, propid_, aliasmethod_)                     \
+#define CSS_PROP_ALIAS(aliasname_, propid_, aliasmethod_, pref_)              \
   eMaxCSSAliasNameSizeBefore_##aliasmethod_,                                  \
   eMaxCSSAliasNameSizeWith_##aliasmethod_ =                                   \
     PR_MAX(sizeof(#aliasname_), eMaxCSSAliasNameSizeBefore_##aliasmethod_) - 1,
@@ -353,7 +319,7 @@ struct CSSPropertyAlias {
 };
 
 static const CSSPropertyAlias gAliases[PR_MAX(eCSSAliasCount, 1)] = {
-#define CSS_PROP_ALIAS(aliasname_, propid_, aliasmethod_) \
+#define CSS_PROP_ALIAS(aliasname_, propid_, aliasmethod_, pref_)  \
   { #aliasname_, eCSSProperty_##propid_ },
 #include "nsCSSPropAliasList.h"
 #undef CSS_PROP_ALIAS
@@ -688,10 +654,15 @@ const PRInt32 nsCSSProps::kBorderColorKTable[] = {
   eCSSKeyword_UNKNOWN,-1
 };
 
-const PRInt32 nsCSSProps::kBorderImageKTable[] = {
-  eCSSKeyword_stretch, NS_STYLE_BORDER_IMAGE_STRETCH,
-  eCSSKeyword_repeat, NS_STYLE_BORDER_IMAGE_REPEAT,
-  eCSSKeyword_round, NS_STYLE_BORDER_IMAGE_ROUND,
+const PRInt32 nsCSSProps::kBorderImageRepeatKTable[] = {
+  eCSSKeyword_stretch, NS_STYLE_BORDER_IMAGE_REPEAT_STRETCH,
+  eCSSKeyword_repeat, NS_STYLE_BORDER_IMAGE_REPEAT_REPEAT,
+  eCSSKeyword_round, NS_STYLE_BORDER_IMAGE_REPEAT_ROUND,
+  eCSSKeyword_UNKNOWN,-1
+};
+
+const PRInt32 nsCSSProps::kBorderImageSliceKTable[] = {
+  eCSSKeyword_fill, NS_STYLE_BORDER_IMAGE_SLICE_FILL,
   eCSSKeyword_UNKNOWN,-1
 };
 
@@ -1389,7 +1360,14 @@ const PRInt32 nsCSSProps::kWindowShadowKTable[] = {
   eCSSKeyword_UNKNOWN,-1
 };
 
-const PRInt32 nsCSSProps::kWordwrapKTable[] = {
+const PRInt32 nsCSSProps::kWordBreakKTable[] = {
+  eCSSKeyword_normal, NS_STYLE_WORDBREAK_NORMAL,
+  eCSSKeyword_break_all, NS_STYLE_WORDBREAK_BREAK_ALL,
+  eCSSKeyword_keep_all, NS_STYLE_WORDBREAK_KEEP_ALL,
+  eCSSKeyword_UNKNOWN,-1
+};
+
+const PRInt32 nsCSSProps::kWordWrapKTable[] = {
   eCSSKeyword_normal, NS_STYLE_WORDWRAP_NORMAL,
   eCSSKeyword_break_word, NS_STYLE_WORDWRAP_BREAK_WORD,
   eCSSKeyword_UNKNOWN,-1
@@ -1503,6 +1481,12 @@ const PRInt32 nsCSSProps::kTextRenderingKTable[] = {
   eCSSKeyword_UNKNOWN, -1
 };
 
+const PRInt32 nsCSSProps::kVectorEffectKTable[] = {
+  eCSSKeyword_none, NS_STYLE_VECTOR_EFFECT_NONE,
+  eCSSKeyword_non_scaling_stroke, NS_STYLE_VECTOR_EFFECT_NON_SCALING_STROKE,
+  eCSSKeyword_UNKNOWN, -1
+};
+
 const PRInt32 nsCSSProps::kColorInterpolationKTable[] = {
   eCSSKeyword_auto, NS_STYLE_COLOR_INTERPOLATION_AUTO,
   eCSSKeyword_srgb, NS_STYLE_COLOR_INTERPOLATION_SRGB,
@@ -1554,8 +1538,8 @@ nsCSSProps::ValueToKeyword(PRInt32 aValue, const PRInt32 aTable[])
 
 /* static */ const PRInt32* const
 nsCSSProps::kKeywordTableTable[eCSSProperty_COUNT_no_shorthands] = {
-  #define CSS_PROP(name_, id_, method_, flags_, parsevariant_, kwtable_,     \
-                   stylestruct_, stylestructoffset_, animtype_)              \
+  #define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_,     \
+                   kwtable_, stylestruct_, stylestructoffset_, animtype_) \
     kwtable_,
   #include "nsCSSPropList.h"
   #undef CSS_PROP
@@ -1599,8 +1583,8 @@ const nsStyleStructID nsCSSProps::kSIDTable[eCSSProperty_COUNT_no_shorthands] = 
     // Note that this uses the special BackendOnly style struct ID
     // (which does need to be valid for storing in the
     // nsCSSCompressedDataBlock::mStyleBits bitfield).
-    #define CSS_PROP(name_, id_, method_, flags_, parsevariant_, kwtable_,   \
-                     stylestruct_, stylestructoffset_, animtype_)            \
+    #define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_,     \
+                     kwtable_, stylestruct_, stylestructoffset_, animtype_) \
         eStyleStruct_##stylestruct_,
 
     #include "nsCSSPropList.h"
@@ -1610,8 +1594,8 @@ const nsStyleStructID nsCSSProps::kSIDTable[eCSSProperty_COUNT_no_shorthands] = 
 
 const nsStyleAnimType
 nsCSSProps::kAnimTypeTable[eCSSProperty_COUNT_no_shorthands] = {
-#define CSS_PROP(name_, id_, method_, flags_, parsevariant_, kwtable_,       \
-                 stylestruct_, stylestructoffset_, animtype_)                \
+#define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_, kwtable_, \
+                 stylestruct_, stylestructoffset_, animtype_)                 \
   animtype_,
 #include "nsCSSPropList.h"
 #undef CSS_PROP
@@ -1619,20 +1603,20 @@ nsCSSProps::kAnimTypeTable[eCSSProperty_COUNT_no_shorthands] = {
 
 const ptrdiff_t
 nsCSSProps::kStyleStructOffsetTable[eCSSProperty_COUNT_no_shorthands] = {
-#define CSS_PROP(name_, id_, method_, flags_, parsevariant_, kwtable_,       \
-                 stylestruct_, stylestructoffset_, animtype_)                \
+#define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_, kwtable_, \
+                 stylestruct_, stylestructoffset_, animtype_)                 \
   stylestructoffset_,
 #include "nsCSSPropList.h"
 #undef CSS_PROP
 };
 
 const PRUint32 nsCSSProps::kFlagsTable[eCSSProperty_COUNT] = {
-#define CSS_PROP(name_, id_, method_, flags_, parsevariant_, kwtable_,       \
-                 stylestruct_, stylestructoffset_, animtype_)                \
+#define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_, kwtable_, \
+                 stylestruct_, stylestructoffset_, animtype_)                 \
   flags_,
 #include "nsCSSPropList.h"
 #undef CSS_PROP
-#define CSS_PROP_SHORTHAND(name_, id_, method_, flags_) flags_,
+#define CSS_PROP_SHORTHAND(name_, id_, method_, flags_, pref_) flags_,
 #include "nsCSSPropList.h"
 #undef CSS_PROP_SHORTHAND
 };
@@ -1712,7 +1696,11 @@ static const nsCSSProperty gBorderSubpropTable[] = {
   eCSSProperty_border_right_colors,
   eCSSProperty_border_bottom_colors,
   eCSSProperty_border_left_colors,
-  eCSSProperty_border_image,
+  eCSSProperty_border_image_source,
+  eCSSProperty_border_image_slice,
+  eCSSProperty_border_image_width,
+  eCSSProperty_border_image_outset,
+  eCSSProperty_border_image_repeat,
   eCSSProperty_UNKNOWN
 };
 
@@ -2101,6 +2089,15 @@ static const nsCSSProperty gTransitionSubpropTable[] = {
   eCSSProperty_UNKNOWN
 };
 
+static const nsCSSProperty gBorderImageSubpropTable[] = {
+  eCSSProperty_border_image_source,
+  eCSSProperty_border_image_slice,
+  eCSSProperty_border_image_width,
+  eCSSProperty_border_image_outset,
+  eCSSProperty_border_image_repeat,
+  eCSSProperty_UNKNOWN
+};
+
 static const nsCSSProperty gMarkerSubpropTable[] = {
   eCSSProperty_marker_start,
   eCSSProperty_marker_mid,
@@ -2114,7 +2111,8 @@ nsCSSProps::kSubpropertyTable[eCSSProperty_COUNT - eCSSProperty_COUNT_no_shortha
 // Need an extra level of macro nesting to force expansion of method_
 // params before they get pasted.
 #define NSCSSPROPS_INNER_MACRO(method_) g##method_##SubpropTable,
-#define CSS_PROP_SHORTHAND(name_, id_, method_, flags_) NSCSSPROPS_INNER_MACRO(method_)
+#define CSS_PROP_SHORTHAND(name_, id_, method_, flags_, pref_) \
+  NSCSSPROPS_INNER_MACRO(method_)
 #include "nsCSSPropList.h"
 #undef CSS_PROP_SHORTHAND
 #undef NSCSSPROPS_INNER_MACRO
@@ -2122,8 +2120,9 @@ nsCSSProps::kSubpropertyTable[eCSSProperty_COUNT - eCSSProperty_COUNT_no_shortha
 };
 
 
-#define ENUM_DATA_FOR_PROPERTY(name_, id_, method_, flags_, parsevariant_,   \
-                               kwtable_, stylestructoffset_, animtype_)      \
+#define ENUM_DATA_FOR_PROPERTY(name_, id_, method_, flags_, pref_,          \
+                               parsevariant_, kwtable_, stylestructoffset_, \
+                               animtype_)                                   \
   ePropertyIndex_for_##id_,
 
 // The order of these enums must match the g*Flags arrays in nsRuleNode.cpp.
@@ -2302,11 +2301,11 @@ nsCSSProps::gPropertyCountInStruct[nsStyleStructID_Length] = {
 /* static */ const size_t
 nsCSSProps::gPropertyIndexInStruct[eCSSProperty_COUNT_no_shorthands] = {
 
-  #define CSS_PROP_BACKENDONLY(name_, id_, method_, flags_, parsevariant_,    \
-                               kwtable_)                                      \
+  #define CSS_PROP_BACKENDONLY(name_, id_, method_, flags_, pref_, \
+                               parsevariant_, kwtable_)            \
       size_t(-1),
-  #define CSS_PROP(name_, id_, method_, flags_, parsevariant_, kwtable_,      \
-                   stylestruct_, stylestructoffset_, animtype_)               \
+  #define CSS_PROP(name_, id_, method_, flags_, pref_, parsevariant_,     \
+                   kwtable_, stylestruct_, stylestructoffset_, animtype_) \
     ePropertyIndex_for_##id_,
   #include "nsCSSPropList.h"
   #undef CSS_PROP

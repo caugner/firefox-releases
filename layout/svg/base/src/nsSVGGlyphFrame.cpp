@@ -1,40 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is the Mozilla SVG project.
- *
- * The Initial Developer of the Original Code is
- * Crocodile Clips Ltd..
- * Portions created by the Initial Developer are Copyright (C) 2002
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Alex Fritze <alex.fritze@crocodile-clips.com> (original author)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // Main header first:
 #include "nsSVGGlyphFrame.h"
@@ -109,11 +76,12 @@ public:
    * This matrix will be applied to aContext in the SetupFor methods below,
    * before any glyph translation/rotation.
    */
-  void SetInitialMatrix(gfxContext *aContext) {
+  bool SetInitialMatrix(gfxContext *aContext) {
     mInitialMatrix = aContext->CurrentMatrix();
     if (mInitialMatrix.IsSingular()) {
       mInError = true;
     }
+    return !mInError;
   }
   /**
    * Try to set up aContext so we can draw the whole textrun at once.
@@ -355,7 +323,9 @@ nsSVGGlyphFrame::PaintSVG(nsRenderingContext *aContext,
     SetupGlobalTransform(gfx);
 
     CharacterIterator iter(this, true);
-    iter.SetInitialMatrix(gfx);
+    if (!iter.SetInitialMatrix(gfx)) {
+      return NS_OK;
+    }
 
     if (GetClipRule() == NS_STYLE_FILL_RULE_EVENODD)
       gfx->SetFillRule(gfxContext::FILL_RULE_EVEN_ODD);
@@ -379,7 +349,10 @@ nsSVGGlyphFrame::PaintSVG(nsRenderingContext *aContext,
   SetupGlobalTransform(gfx);
 
   CharacterIterator iter(this, true);
-  iter.SetInitialMatrix(gfx);
+  if (!iter.SetInitialMatrix(gfx)) {
+    gfx->Restore();
+    return NS_OK;
+  }
 
   nsRefPtr<gfxPattern> strokePattern;
   DrawMode drawMode = SetupCairoState(gfx, getter_AddRefs(strokePattern));
@@ -404,7 +377,9 @@ nsSVGGlyphFrame::GetFrameForPoint(const nsPoint &aPoint)
   nsRefPtr<gfxContext> context = MakeTmpCtx();
   SetupGlobalTransform(context);
   CharacterIterator iter(this, true);
-  iter.SetInitialMatrix(context);
+  if (!iter.SetInitialMatrix(context)) {
+    return nsnull;
+  }
 
   // The SVG 1.1 spec says that text is hit tested against the character cells
   // of the text, not the fill and stroke. See the section starting "For text
@@ -476,7 +451,9 @@ nsSVGGlyphFrame::UpdateBounds()
   }
 
   CharacterIterator iter(this, true);
-  iter.SetInitialMatrix(tmpCtx);
+  if (!iter.SetInitialMatrix(tmpCtx)) {
+    return;
+  }
   AddBoundingBoxesToPath(&iter, tmpCtx);
   tmpCtx->IdentityMatrix();
 
@@ -512,6 +489,10 @@ nsSVGGlyphFrame::UpdateBounds()
   mCoveredRegion = nsSVGUtils::TransformFrameRectToOuterSVG(
     mRect, GetCanvasTM(), PresContext());
 
+  nsRect overflow = nsRect(nsPoint(0,0), mRect.Size());
+  nsOverflowAreas overflowAreas(overflow, overflow);
+  FinishAndStoreOverflow(overflowAreas, mRect.Size());
+
   mState &= ~(NS_FRAME_FIRST_REFLOW | NS_FRAME_IS_DIRTY |
               NS_FRAME_HAS_DIRTY_CHILDREN);
 
@@ -519,6 +500,7 @@ nsSVGGlyphFrame::UpdateBounds()
     // We only invalidate if our outer-<svg> has already had its
     // initial reflow (since if it hasn't, its entire area will be
     // invalidated when it gets that initial reflow):
+    // XXXSDL Let FinishAndStoreOverflow do this.
     nsSVGUtils::InvalidateBounds(this, true);
   }
 }  
@@ -594,6 +576,8 @@ SVGBBox
 nsSVGGlyphFrame::GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
                                      PRUint32 aFlags)
 {
+  SVGBBox bbox;
+
   if (mOverrideCanvasTM) {
     *mOverrideCanvasTM = aToBBoxUserspace;
   } else {
@@ -603,13 +587,13 @@ nsSVGGlyphFrame::GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
   nsRefPtr<gfxContext> tmpCtx = MakeTmpCtx();
   SetupGlobalTransform(tmpCtx);
   CharacterIterator iter(this, true);
-  iter.SetInitialMatrix(tmpCtx);
+  if (!iter.SetInitialMatrix(tmpCtx)) {
+    return bbox;
+  }
   AddBoundingBoxesToPath(&iter, tmpCtx);
   tmpCtx->IdentityMatrix();
 
   mOverrideCanvasTM = nsnull;
-
-  gfxRect bbox;
 
   gfxRect pathExtents = tmpCtx->GetUserPathExtent();
 
@@ -623,10 +607,9 @@ nsSVGGlyphFrame::GetBBoxContribution(const gfxMatrix &aToBBoxUserspace,
   // Account for stroke:
   if ((aFlags & nsSVGUtils::eBBoxIncludeStroke) != 0 &&
       ((aFlags & nsSVGUtils::eBBoxIgnoreStrokeIfNone) == 0 || HasStroke())) {
-    bbox =
-      bbox.Union(nsSVGUtils::PathExtentsToMaxStrokeExtents(pathExtents,
-                                                           this,
-                                                           aToBBoxUserspace));
+    bbox.UnionEdges(nsSVGUtils::PathExtentsToMaxStrokeExtents(pathExtents,
+                                                              this,
+                                                              aToBBoxUserspace));
   }
 
   return bbox;
@@ -904,7 +887,7 @@ nsSVGGlyphFrame::SetupCairoState(gfxContext *aContext, gfxPattern **aStrokePatte
 
     if (ps) {
       // Gradient or Pattern: can get pattern directly from frame
-      strokePattern = ps->GetPaintServerPattern(this, opacity);
+      strokePattern = ps->GetPaintServerPattern(this, &nsStyleSVG::mStroke, opacity);
     }
 
     if (!strokePattern) {
@@ -1605,8 +1588,9 @@ nsSVGGlyphFrame::EnsureTextRun(float *aDrawScale, float *aMetricsScale,
                            mStyleContext->GetStyleFont()->mLanguage,
                            font.sizeAdjust, font.systemFont,
                            printerFont,
-                           font.featureSettings,
                            font.languageOverride);
+
+    font.AddFontFeaturesToStyle(&fontStyle);
 
     nsRefPtr<gfxFontGroup> fontGroup =
       gfxPlatform::GetPlatform()->CreateFontGroup(font.name, &fontStyle, presContext->GetUserFontSet());

@@ -131,9 +131,6 @@ include datalist/reftest.list
 # dom/
 include dom/reftest.list
 
-# editor/
-include editor/reftest.list
-
 # generated-content/
 include generated-content/reftest.list
 
@@ -178,6 +175,9 @@ include image-rect/reftest.list
 
 # image-region/
 include image-region/reftest.list
+
+# indic shaping with harfbuzz
+include indic-shaping/reftest.list
 
 # inline borders and padding
 include inline-borderpadding/reftest.list
@@ -309,3 +309,6 @@ include z-index/reftest.list
 # reftest(s) to verify content bugfixes
 include ../../content/html/document/reftests/reftests.list
 include ../../content/html/content/reftests/reftest.list
+
+# editor/
+include ../../editor/reftests/reftest.list

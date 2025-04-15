@@ -1,40 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Author: Kyle Yuan (kyle.yuan@sun.com)
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #ifndef __nsXULTreeAccessible_h__
 #define __nsXULTreeAccessible_h__
 
@@ -53,37 +20,36 @@ const PRUint32 kDefaultTreeCacheSize = 256;
  * Accessible class for XUL tree element.
  */
 
-class nsXULTreeAccessible : public nsAccessibleWrap
+class nsXULTreeAccessible : public AccessibleWrap
 {
 public:
-  using nsAccessible::GetChildCount;
-  using nsAccessible::GetChildAt;
+  using Accessible::GetChildAt;
 
-  nsXULTreeAccessible(nsIContent* aContent, nsDocAccessible* aDoc);
+  nsXULTreeAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
   // nsISupports and cycle collection
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsXULTreeAccessible,
-                                           nsAccessible)
+                                           Accessible)
 
   // nsAccessNode
   virtual void Shutdown();
 
-  // nsAccessible
+  // Accessible
   virtual void Value(nsString& aValue);
   virtual mozilla::a11y::role NativeRole();
   virtual PRUint64 NativeState();
-  virtual nsAccessible* ChildAtPoint(PRInt32 aX, PRInt32 aY,
-                                     EWhichChildAtPoint aWhichChild);
+  virtual Accessible* ChildAtPoint(PRInt32 aX, PRInt32 aY,
+                                   EWhichChildAtPoint aWhichChild);
 
-  virtual nsAccessible* GetChildAt(PRUint32 aIndex);
-  virtual PRInt32 GetChildCount();
+  virtual Accessible* GetChildAt(PRUint32 aIndex);
+  virtual PRUint32 ChildCount() const;
 
   // SelectAccessible
   virtual bool IsSelect();
   virtual already_AddRefed<nsIArray> SelectedItems();
   virtual PRUint32 SelectedItemCount();
-  virtual nsAccessible* GetSelectedItem(PRUint32 aIndex);
+  virtual Accessible* GetSelectedItem(PRUint32 aIndex);
   virtual bool IsItemSelected(PRUint32 aIndex);
   virtual bool AddItemToSelection(PRUint32 aIndex);
   virtual bool RemoveItemFromSelection(PRUint32 aIndex);
@@ -94,10 +60,10 @@ public:
   virtual bool IsWidget() const;
   virtual bool IsActiveWidget() const;
   virtual bool AreItemsOperable() const;
-  virtual nsAccessible* CurrentItem();
-  virtual void SetCurrentItem(nsAccessible* aItem);
+  virtual Accessible* CurrentItem();
+  virtual void SetCurrentItem(Accessible* aItem);
 
-  virtual nsAccessible* ContainerWidget() const;
+  virtual Accessible* ContainerWidget() const;
 
   // nsXULTreeAccessible
 
@@ -107,7 +73,7 @@ public:
    *
    * @param aRow         [in] the given row index
    */
-  nsAccessible* GetTreeItemAccessible(PRInt32 aRow);
+  Accessible* GetTreeItemAccessible(PRInt32 aRow);
 
   /**
    * Invalidates the number of cached treeitem accessibles.
@@ -140,11 +106,11 @@ protected:
   /**
    * Creates tree item accessible for the given row index.
    */
-  virtual already_AddRefed<nsAccessible> CreateTreeItemAccessible(PRInt32 aRow);
+  virtual already_AddRefed<Accessible> CreateTreeItemAccessible(PRInt32 aRow);
 
   nsCOMPtr<nsITreeBoxObject> mTree;
-  nsCOMPtr<nsITreeView> mTreeView;
-  nsAccessibleHashtable mAccessibleCache;
+  nsITreeView* mTreeView;
+  AccessibleHashtable mAccessibleCache;
 };
 
 /**
@@ -159,19 +125,19 @@ protected:
   { 0x94, 0x0b, 0xb1, 0xe6, 0xb0, 0x83, 0x1d, 0xfc }  \
 }
 
-class nsXULTreeItemAccessibleBase : public nsAccessibleWrap
+class nsXULTreeItemAccessibleBase : public AccessibleWrap
 {
 public:
-  using nsAccessible::GetParent;
+  using Accessible::GetParent;
 
-  nsXULTreeItemAccessibleBase(nsIContent* aContent, nsDocAccessible* aDoc,
-                              nsAccessible* aParent, nsITreeBoxObject* aTree,
+  nsXULTreeItemAccessibleBase(nsIContent* aContent, DocAccessible* aDoc,
+                              Accessible* aParent, nsITreeBoxObject* aTree,
                               nsITreeView* aTreeView, PRInt32 aRow);
 
   // nsISupports and cycle collection
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsXULTreeItemAccessibleBase,
-                                           nsAccessibleWrap)
+                                           AccessibleWrap)
 
   // nsIAccessible
   NS_IMETHOD GetBounds(PRInt32 *aX, PRInt32 *aY,
@@ -180,10 +146,6 @@ public:
   NS_IMETHOD SetSelected(bool aSelect); 
   NS_IMETHOD TakeFocus();
 
-  NS_IMETHOD GroupPosition(PRInt32 *aGroupLevel,
-                           PRInt32 *aSimilarItemsInGroup,
-                           PRInt32 *aPositionInGroup);
-
   NS_IMETHOD GetActionName(PRUint8 aIndex, nsAString& aName);
   NS_IMETHOD DoAction(PRUint8 aIndex);
 
@@ -191,17 +153,19 @@ public:
   virtual void Shutdown();
   virtual bool IsPrimaryForNode() const;
 
-  // nsAccessible
+  // Accessible
+  virtual mozilla::a11y::GroupPos GroupPosition();
   virtual PRUint64 NativeState();
+  virtual PRUint64 NativeInteractiveState() const;
   virtual PRInt32 IndexInParent() const;
   virtual Relation RelationByType(PRUint32 aType);
-  virtual nsAccessible* FocusedChild();
+  virtual Accessible* FocusedChild();
 
   // ActionAccessible
   virtual PRUint8 ActionCount();
 
   // Widgets
-  virtual nsAccessible* ContainerWidget() const;
+  virtual Accessible* ContainerWidget() const;
 
   // nsXULTreeItemAccessibleBase
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_XULTREEITEMBASEACCESSIBLE_IMPL_CID)
@@ -215,7 +179,7 @@ public:
    * Return cell accessible for the given column. If XUL tree accessible is not
    * accessible table then return null.
    */
-  virtual nsAccessible* GetCellAccessible(nsITreeColumn *aColumn)
+  virtual Accessible* GetCellAccessible(nsITreeColumn* aColumn)
     { return nsnull; }
 
   /**
@@ -226,10 +190,10 @@ public:
 protected:
   enum { eAction_Click = 0, eAction_Expand = 1 };
 
-  // nsAccessible
+  // Accessible
   virtual void DispatchClickEvent(nsIContent *aContent, PRUint32 aActionIndex);
-  virtual nsAccessible* GetSiblingAtOffset(PRInt32 aOffset,
-                                           nsresult *aError = nsnull) const;
+  virtual Accessible* GetSiblingAtOffset(PRInt32 aOffset,
+                                         nsresult *aError = nsnull) const;
 
   // nsXULTreeItemAccessibleBase
 
@@ -244,7 +208,7 @@ protected:
   void GetCellName(nsITreeColumn* aColumn, nsAString& aName);
 
   nsCOMPtr<nsITreeBoxObject> mTree;
-  nsCOMPtr<nsITreeView> mTreeView;
+  nsITreeView* mTreeView;
   PRInt32 mRow;
 };
 
@@ -258,8 +222,8 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsXULTreeItemAccessibleBase,
 class nsXULTreeItemAccessible : public nsXULTreeItemAccessibleBase
 {
 public:
-  nsXULTreeItemAccessible(nsIContent* aContent, nsDocAccessible* aDoc,
-                          nsAccessible* aParent, nsITreeBoxObject* aTree,
+  nsXULTreeItemAccessible(nsIContent* aContent, DocAccessible* aDoc,
+                          Accessible* aParent, nsITreeBoxObject* aTree,
                           nsITreeView* aTreeView, PRInt32 aRow);
 
   // nsISupports and cycle collection
@@ -267,13 +231,12 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsXULTreeItemAccessible,
                                            nsXULTreeItemAccessibleBase)
 
-  NS_IMETHOD GetName(nsAString& aName);
-
   // nsAccessNode
   virtual bool Init();
   virtual void Shutdown();
 
-  // nsAccessible
+  // Accessible
+  virtual mozilla::a11y::ENameValueFlag Name(nsString& aName);
   virtual mozilla::a11y::role NativeRole();
 
   // nsXULTreeItemAccessibleBase
@@ -281,7 +244,7 @@ public:
 
 protected:
 
-  // nsAccessible
+  // Accessible
   virtual void CacheChildren();
 
   // nsXULTreeItemAccessible
@@ -293,23 +256,23 @@ protected:
 /**
  * Accessible class for columns element of XUL tree.
  */
-class nsXULTreeColumnsAccessible : public nsXULColumnsAccessible
+class nsXULTreeColumAccessible : public nsXULColumAccessible
 {
 public:
-  nsXULTreeColumnsAccessible(nsIContent* aContent, nsDocAccessible* aDoc);
+  nsXULTreeColumAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
 protected:
 
-  // nsAccessible
-  virtual nsAccessible* GetSiblingAtOffset(PRInt32 aOffset,
-                                           nsresult *aError = nsnull) const;
+  // Accessible
+  virtual Accessible* GetSiblingAtOffset(PRInt32 aOffset,
+                                         nsresult *aError = nsnull) const;
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-// nsAccessible downcasting method
+// Accessible downcasting method
 
 inline nsXULTreeAccessible*
-nsAccessible::AsXULTree()
+Accessible::AsXULTree()
 {
   return IsXULTree() ?
     static_cast<nsXULTreeAccessible*>(this) : nsnull;

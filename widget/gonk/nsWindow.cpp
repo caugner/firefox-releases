@@ -1,39 +1,6 @@
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Gonk.
- *
- * The Initial Developer of the Original Code is
- * the Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Michael Wu <mwu@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
@@ -56,18 +23,22 @@
 #include "nsScreenManagerGonk.h"
 #include "nsTArray.h"
 #include "nsWindow.h"
+#include "cutils/properties.h"
 
 #define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "Gonk" , ## args)
 
 #define IS_TOPLEVEL() (mWindowType == eWindowType_toplevel || mWindowType == eWindowType_dialog)
 
 using namespace mozilla;
+using namespace mozilla::dom;
+using namespace mozilla::hal;
 using namespace mozilla::gl;
 using namespace mozilla::layers;
 using namespace mozilla::widget;
 
 nsIntRect gScreenBounds;
 static uint32_t sScreenRotation;
+static uint32_t sPhysicalScreenRotation;
 static nsIntRect sVirtualBounds;
 static gfxMatrix sRotationMatrix;
 
@@ -79,7 +50,7 @@ static android::FramebufferNativeWindow *gNativeWindow = nsnull;
 static bool sFramebufferOpen;
 static bool sUsingOMTC;
 static nsRefPtr<gfxASurface> sOMTCSurface;
-static nsCOMPtr<nsIThread> sFramebufferWatchThread;
+static pthread_t sFramebufferWatchThread;
 
 namespace {
 
@@ -112,17 +83,15 @@ private:
 static const char* kSleepFile = "/sys/power/wait_for_fb_sleep";
 static const char* kWakeFile = "/sys/power/wait_for_fb_wake";
 
-class FramebufferWatcher : public nsRunnable {
-public:
-    FramebufferWatcher()
-        : mScreenOnEvent(new ScreenOnOffEvent(true))
-        , mScreenOffEvent(new ScreenOnOffEvent(false))
-    {}
+static void *frameBufferWatcher(void *) {
 
-    NS_IMETHOD Run() {
-        int len = 0;
-        char buf;
+    int len = 0;
+    char buf;
 
+    nsRefPtr<ScreenOnOffEvent> mScreenOnEvent = new ScreenOnOffEvent(true);
+    nsRefPtr<ScreenOnOffEvent> mScreenOffEvent = new ScreenOnOffEvent(false);
+
+    while (true) {
         // Cannot use epoll here because kSleepFile and kWakeFile are
         // always ready to read and blocking.
         {
@@ -142,17 +111,10 @@ public:
             NS_WARN_IF_FALSE(len >= 0, "WAIT_FOR_FB_WAKE failed");
             NS_DispatchToMainThread(mScreenOnEvent);
         }
-
-        // Dispatch to ourself.
-        NS_DispatchToCurrentThread(this);
-
-        return NS_OK;
     }
-
-private:
-    nsRefPtr<ScreenOnOffEvent> mScreenOnEvent;
-    nsRefPtr<ScreenOnOffEvent> mScreenOffEvent;
-};
+    
+    return NULL;
+}
 
 } // anonymous namespace
 
@@ -162,10 +124,13 @@ nsWindow::nsWindow()
         // workaround Bug 725143
         hal::SetScreenEnabled(true);
 
-        // Watching screen on/off state
-        NS_NewThread(getter_AddRefs(sFramebufferWatchThread), new FramebufferWatcher());
+        // Watching screen on/off state by using a pthread
+        // which implicitly calls exit() when the main thread ends
+        if (pthread_create(&sFramebufferWatchThread, NULL, frameBufferWatcher, NULL)) {
+            NS_RUNTIMEABORT("Failed to create framebufferWatcherThread, aborting...");
+        }
 
-        sUsingOMTC = Preferences::GetBool("layers.offmainthreadcomposition.enabled", false);
+        sUsingOMTC = UseOffMainThreadCompositing();
 
         // We (apparently) don't have a way to tell if allocating the
         // fbs succeeded or failed.
@@ -194,6 +159,25 @@ nsWindow::nsWindow()
                     NS_RUNTIMEABORT("Can't open GL context and can't fall back on /dev/graphics/fb0 ...");
                 }
             }
+        }
+
+        char propValue[PROPERTY_VALUE_MAX];
+        property_get("ro.sf.hwrotation", propValue, "0");
+        sPhysicalScreenRotation = atoi(propValue) / 90;
+
+        // Unlike nsScreenGonk::SetRotation(), only support 0 and 180 as there
+        // are no known screens that are mounted at 90 or 270 at the moment.
+        switch (sPhysicalScreenRotation) {
+        case nsIScreen::ROTATION_0_DEG:
+            break;
+        case nsIScreen::ROTATION_180_DEG:
+            sRotationMatrix.Translate(gfxPoint(gScreenBounds.width,
+                                               gScreenBounds.height));
+            sRotationMatrix.Rotate(M_PI);
+            break;
+        default:
+            MOZ_NOT_REACHED("Unknown rotation");
+            break;
         }
         sVirtualBounds = gScreenBounds;
 
@@ -617,11 +601,18 @@ nsScreenGonk::GetAvailRect(PRInt32 *outLeft,  PRInt32 *outTop,
     return GetRect(outLeft, outTop, outWidth, outHeight);
 }
 
+static uint32_t
+ColorDepth()
+{
+    return gNativeWindow->getDevice()->format == GGL_PIXEL_FORMAT_RGB_565 ? 16 : 24;
+}
 
 NS_IMETHODIMP
 nsScreenGonk::GetPixelDepth(PRInt32 *aPixelDepth)
 {
-    *aPixelDepth = gNativeWindow->getDevice()->format == GGL_PIXEL_FORMAT_RGB_565 ? 16 : 24;
+    // XXX: this should actually return 32 when we're using 24-bit
+    // color, because we use RGBX.
+    *aPixelDepth = ColorDepth();
     return NS_OK;
 }
 
@@ -649,7 +640,7 @@ nsScreenGonk::SetRotation(PRUint32 aRotation)
 
     sScreenRotation = aRotation;
     sRotationMatrix.Reset();
-    switch (aRotation) {
+    switch ((aRotation + sPhysicalScreenRotation) % (360 / 90)) {
     case nsIScreen::ROTATION_0_DEG:
         sVirtualBounds = gScreenBounds;
         break;
@@ -681,13 +672,54 @@ nsScreenGonk::SetRotation(PRUint32 aRotation)
                                sVirtualBounds.height,
                                !i);
 
+    nsAppShell::NotifyScreenRotation();
+
     return NS_OK;
 }
 
-uint32_t
+// NB: This isn't gonk-specific, but gonk is the only widget backend
+// that does this calculation itself, currently.
+static ScreenOrientation
+ComputeOrientation(uint32_t aRotation, const nsIntSize& aScreenSize)
+{
+    bool naturallyPortrait = (aScreenSize.height > aScreenSize.width);
+    switch (aRotation) {
+    case nsIScreen::ROTATION_0_DEG:
+        return (naturallyPortrait ? eScreenOrientation_PortraitPrimary : 
+                eScreenOrientation_LandscapePrimary);
+    case nsIScreen::ROTATION_90_DEG:
+        // Arbitrarily choosing 90deg to be primary "unnatural"
+        // rotation.
+        return (naturallyPortrait ? eScreenOrientation_LandscapePrimary : 
+                eScreenOrientation_PortraitPrimary);
+    case nsIScreen::ROTATION_180_DEG:
+        return (naturallyPortrait ? eScreenOrientation_PortraitSecondary : 
+                eScreenOrientation_LandscapeSecondary);
+    case nsIScreen::ROTATION_270_DEG:
+        return (naturallyPortrait ? eScreenOrientation_LandscapeSecondary : 
+                eScreenOrientation_PortraitSecondary);
+    default:
+        MOZ_NOT_REACHED("Gonk screen must always have a known rotation");
+        return eScreenOrientation_None;
+    }
+}
+
+/*static*/ uint32_t
 nsScreenGonk::GetRotation()
 {
     return sScreenRotation;
+}
+
+/*static*/ ScreenConfiguration
+nsScreenGonk::GetConfiguration()
+{
+    ScreenOrientation orientation = ComputeOrientation(sScreenRotation,
+                                                       gScreenBounds.Size());
+    uint32_t colorDepth = ColorDepth();
+    // NB: perpetuating colorDepth == pixelDepth illusion here, for
+    // consistency.
+    return ScreenConfiguration(sVirtualBounds, orientation,
+                               colorDepth, colorDepth);
 }
 
 NS_IMPL_ISUPPORTS1(nsScreenManagerGonk, nsIScreenManager)

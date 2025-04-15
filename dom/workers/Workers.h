@@ -44,7 +44,7 @@ AssertIsOnMainThread()
 
 // All of these are implemented in RuntimeService.cpp
 JSBool
-ResolveWorkerClasses(JSContext* aCx, JSObject* aObj, jsid aId, unsigned aFlags,
+ResolveWorkerClasses(JSContext* aCx, JSHandleObject aObj, JSHandleId aId, unsigned aFlags,
                      JSObject** aObjp);
 
 void
@@ -96,6 +96,14 @@ GetWorkerCrossThreadDispatcher(JSContext* aCx, jsval aWorker);
 
 // Random unique constant to facilitate JSPrincipal debugging
 const uint32_t kJSPrincipalsDebugToken = 0x7e2df9d2;
+
+namespace exceptions {
+
+// Implemented in Exceptions.cpp
+void
+ThrowDOMExceptionForNSResult(JSContext* aCx, nsresult aNSResult);
+
+} // namespace exceptions
 
 END_WORKERS_NAMESPACE
 

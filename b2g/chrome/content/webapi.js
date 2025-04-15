@@ -13,10 +13,9 @@ Cu.import('resource://gre/modules/XPCOMUtils.jsm');
 Cu.import('resource://gre/modules/Services.jsm');
 Cu.import('resource://gre/modules/Geometry.jsm');
 
-XPCOMUtils.defineLazyGetter(Services, 'fm', function() {
-  return Cc['@mozilla.org/focus-manager;1']
-           .getService(Ci.nsIFocusManager);
-});
+XPCOMUtils.defineLazyServiceGetter(Services, 'fm',
+                                   '@mozilla.org/focus-manager;1',
+                                   'nsIFocusManager');
 
 // MozKeyboard
 (function VirtualKeyboardManager() {
@@ -50,6 +49,12 @@ XPCOMUtils.defineLazyGetter(Services, 'fm', function() {
   let constructor = {
     handleEvent: function vkm_handleEvent(evt) {
       switch (evt.type) {
+        case 'resize':
+          if (!isKeyboardOpened)
+            return;
+
+          activeElement.scrollIntoView(false);
+          break;
         case 'keypress':
           if (evt.keyCode != evt.DOM_VK_ESCAPE || !isKeyboardOpened)
             return;
@@ -85,7 +90,7 @@ XPCOMUtils.defineLazyGetter(Services, 'fm', function() {
   };
 
   Services.obs.addObserver(constructor, 'ime-enabled-state-changed', false);
-  ['keypress', 'mousedown'].forEach(function vkm_events(type) {
+  ['keypress', 'mousedown', 'resize'].forEach(function vkm_events(type) {
     addEventListener(type, constructor, true);
   });
 })();

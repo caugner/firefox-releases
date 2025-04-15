@@ -1,40 +1,8 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ts=2 sw=2 et tw=78: */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Netscape Communications Corporation.
- * Portions created by the Initial Developer are Copyright (C) 1998
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either of the GNU General Public License Version 2 or later (the "GPL"),
- * or the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* interface for all rendering objects */
 
@@ -97,7 +65,7 @@ class nsBoxLayoutState;
 class nsBoxLayout;
 class nsILineIterator;
 #ifdef ACCESSIBILITY
-class nsAccessible;
+class Accessible;
 #endif
 class nsDisplayListBuilder;
 class nsDisplayListSet;
@@ -242,8 +210,9 @@ typedef PRUint64 nsFrameState;
 // more details.
 #define NS_FRAME_IS_SPECIAL                         NS_FRAME_STATE_BIT(15)
 
-// If this bit is set, the frame may have a transform that it applies
-// to its coordinate system (e.g. CSS transform, SVG foreignObject).
+// If this bit is set, then transforms (e.g. CSS or SVG transforms) are allowed
+// to affect the frame, and a transform may currently be in affect. If this bit
+// is not set, then any transforms on the frame will be ignored.
 // This is used primarily in GetTransformMatrix to optimize for the
 // common case.
 #define  NS_FRAME_MAY_BE_TRANSFORMED                NS_FRAME_STATE_BIT(16)
@@ -310,6 +279,14 @@ typedef PRUint64 nsFrameState;
 // i.e., roughly, is it an element establishing a new block formatting
 // context?
 #define NS_FRAME_FONT_INFLATION_FLOW_ROOT           NS_FRAME_STATE_BIT(42)
+
+// This bit is set on SVG frames that are laid out using SVG's coordinate
+// system based layout (as opposed to any of the CSS layout models). Note that
+// this does not include nsSVGOuterSVGFrame since it takes part is CSS layout.
+#define NS_FRAME_SVG_LAYOUT                         NS_FRAME_STATE_BIT(43)
+
+// Is this frame allowed to have generated (::before/::after) content?
+#define NS_FRAME_MAY_HAVE_GENERATED_CONTENT         NS_FRAME_STATE_BIT(44)
 
 // Box layout bits
 #define NS_STATE_IS_HORIZONTAL                      NS_FRAME_STATE_BIT(22)
@@ -1229,10 +1206,23 @@ public:
   virtual bool NeedsView() { return false; }
 
   /**
-   * Returns whether this frame has a transform matrix applied to it.  This is true
-   * if we have the -moz-transform property or if we're an SVGForeignObjectFrame.
+   * Returns true if this frame is transformed (e.g. has CSS or SVG transforms)
+   * or if its parent is an SVG frame that has children-only transforms (e.g.
+   * an SVG viewBox attribute).
    */
-  virtual bool IsTransformed() const;
+  bool IsTransformed() const;
+
+  /**
+   * Returns true if this frame is an SVG frame that has SVG transforms applied
+   * to it, or if its parent frame is an SVG frame that has children-only
+   * transforms (e.g. an SVG viewBox attribute).
+   * If aOwnTransforms is non-null and the frame has its own SVG transforms,
+   * aOwnTransforms will be set to these transforms. If aFromParentTransforms
+   * is non-null and the frame has an SVG parent with children-only transforms,
+   * then aFromParentTransforms will be set to these transforms.
+   */
+  virtual bool IsSVGTransformed(gfxMatrix *aOwnTransforms = nsnull,
+                                gfxMatrix *aFromParentTransforms = nsnull) const;
 
   /**
    * Returns whether this frame will attempt to preserve the 3d transforms of its
@@ -1302,6 +1292,11 @@ public:
     // to display on.
     bool associateWithNext;
   };
+  enum {
+    IGNORE_SELECTION_STYLE = 0x01,
+    // Treat visibility:hidden frames as non-selectable
+    SKIP_HIDDEN = 0x02
+  };
   /**
    * This function calculates the content offsets for selection relative to
    * a point.  Note that this should generally only be callled on the event
@@ -1310,11 +1305,11 @@ public:
    * @param aPoint point relative to this frame
    */
   ContentOffsets GetContentOffsetsFromPoint(nsPoint aPoint,
-                                            bool aIgnoreSelectionStyle = false);
+                                            PRUint32 aFlags = 0);
 
   virtual ContentOffsets GetContentOffsetsFromPointExternal(nsPoint aPoint,
-                                                            bool aIgnoreSelectionStyle = false)
-  { return GetContentOffsetsFromPoint(aPoint, aIgnoreSelectionStyle); }
+                                                            PRUint32 aFlags = 0)
+  { return GetContentOffsetsFromPoint(aPoint, aFlags); }
 
   /**
    * This structure holds information about a cursor. mContainer represents a
@@ -1527,7 +1522,20 @@ public:
     nscoord trailingWhitespace;
 
     // Floats encountered in the lines.
-    nsTArray<nsIFrame*> floats;
+    class FloatInfo {
+    public:
+      FloatInfo(const nsIFrame* aFrame, nscoord aWidth)
+        : mFrame(aFrame), mWidth(aWidth)
+      { }
+      const nsIFrame* Frame() const { return mFrame; }
+      nscoord         Width() const { return mWidth; }
+
+    private:
+      const nsIFrame* mFrame;
+      nscoord         mWidth;
+    };
+
+    nsTArray<FloatInfo> floats;
   };
 
   struct InlineMinWidthData : public InlineIntrinsicWidthData {
@@ -1969,8 +1977,8 @@ public:
    * @return A gfxMatrix that converts points in this frame's coordinate space
    *   into points in aOutAncestor's coordinate space.
    */
-  virtual gfx3DMatrix GetTransformMatrix(nsIFrame* aStopAtAncestor,
-                                         nsIFrame **aOutAncestor);
+  gfx3DMatrix GetTransformMatrix(nsIFrame* aStopAtAncestor,
+                                 nsIFrame **aOutAncestor);
 
   /**
    * Bit-flags to pass to IsFrameOfType()
@@ -2423,11 +2431,11 @@ public:
    * Called to retrieve this frame's accessible.
    * If this frame implements Accessibility return a valid accessible
    * If not return NS_ERROR_NOT_IMPLEMENTED.
-   * Note: nsAccessible must be refcountable. Do not implement directly on your frame
+   * Note: Accessible must be refcountable. Do not implement directly on your frame
    * Use a mediatior of some kind.
    */
 #ifdef ACCESSIBILITY
-  virtual already_AddRefed<nsAccessible> CreateAccessible() = 0;
+  virtual already_AddRefed<Accessible> CreateAccessible() = 0;
 #endif
 
   /**

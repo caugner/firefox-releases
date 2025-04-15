@@ -1,40 +1,7 @@
 /* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is mozilla.org code.
- *
- * The Initial Developer of the Original Code is
- * Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Benoit Girard <bgirard@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <string>
 #include <stdio.h>
@@ -102,11 +69,11 @@ using namespace mozilla;
 #endif
 
 
-mozilla::tls::key pkey_stack;
-mozilla::tls::key pkey_ticker;
+mozilla::ThreadLocal<ProfileStack *> tlsStack;
+mozilla::ThreadLocal<TableTicker *> tlsTicker;
 // We need to track whether we've been initialized otherwise
-// we end up using pkey_stack without initializing it.
-// Because pkey_stack is totally opaque to us we can't reuse
+// we end up using tlsStack without initializing it.
+// Because tlsStack is totally opaque to us we can't reuse
 // it as the flag itself.
 bool stack_key_initialized;
 
@@ -125,6 +92,11 @@ public:
   // aTagData must not need release (i.e. be a string from the text segment)
   ProfileEntry(char aTagName, const char *aTagData)
     : mTagData(aTagData)
+    , mTagName(aTagName)
+  { }
+
+  ProfileEntry(char aTagName, void *aTagPtr)
+    : mTagPtr(aTagPtr)
     , mTagName(aTagName)
   { }
 
@@ -149,6 +121,7 @@ private:
   friend class ThreadProfile;
   union {
     const char* mTagData;
+    void* mTagPtr;
     double mTagFloat;
     Address mTagAddress;
     uintptr_t mTagOffset;
@@ -284,7 +257,10 @@ public:
             if (sample) {
               JSObject *frame = b.CreateObject();
               char tagBuff[1024];
-              unsigned long long pc = (unsigned long long)entry.mTagData;
+              // Bug 753041
+              // We need a double cast here to tell GCC that we don't want to sign
+              // extend 32-bit addresses starting with 0xFXXXXXX.
+              unsigned long long pc = (unsigned long long)(uintptr_t)entry.mTagPtr;
               snprintf(tagBuff, 1024, "%#llx", pc);
               b.DefineProperty(frame, "location", tagBuff);
               b.ArrayPush(frames, frame);
@@ -383,7 +359,7 @@ public:
   SaveProfileTask() {}
 
   NS_IMETHOD Run() {
-    TableTicker *t = mozilla::tls::get<TableTicker>(pkey_ticker);
+    TableTicker *t = tlsTicker.get();
 
     char buff[MAXPATHLEN];
 #ifdef ANDROID
@@ -405,8 +381,14 @@ public:
     }
 #endif
 
+    // Pause the profiler during saving.
+    // This will prevent us from recording sampling
+    // regarding profile saving. This will also
+    // prevent bugs caused by the circular buffer not
+    // being thread safe. Bug 750989.
     std::ofstream stream;
     stream.open(buff);
+    t->SetPaused(true);
     if (stream.is_open()) {
       stream << *(t->GetPrimaryThreadProfile());
       stream << "h-" << GetSharedLibraryInfoString() << std::endl;
@@ -415,6 +397,7 @@ public:
     } else {
       LOG("Fail to open profile log file.");
     }
+    t->SetPaused(false);
 
     return NS_OK;
   }
@@ -446,8 +429,10 @@ JSObject* TableTicker::ToJSObject(JSContext *aCx)
   b.DefineProperty(profile, "threads", threads);
 
   // For now we only have one thread
+  SetPaused(true);
   JSObject* threadSamples = GetPrimaryThreadProfile()->ToJSObject(aCx);
   b.ArrayPush(threads, threadSamples);
+  SetPaused(false);
 
   return profile;
 }
@@ -463,7 +448,7 @@ void TableTicker::doBacktrace(ThreadProfile &aProfile, TickSample* aSample)
 
   for (int i = 0; i < count; i++) {
     if( (intptr_t)array[i] == -1 ) break;
-    aProfile.addTag(ProfileEntry('l', (const char*)array[i]));
+    aProfile.addTag(ProfileEntry('l', (void*)array[i]));
   }
 }
 #endif
@@ -516,7 +501,7 @@ void TableTicker::doBacktrace(ThreadProfile &aProfile, TickSample* aSample)
     aProfile.addTag(ProfileEntry('s', "(root)"));
 
     for (size_t i = array.count; i > 0; --i) {
-      aProfile.addTag(ProfileEntry('l', (const char*)array.array[i - 1]));
+      aProfile.addTag(ProfileEntry('l', (void*)array.array[i - 1]));
     }
   }
 }
@@ -565,7 +550,7 @@ void TableTicker::doBacktrace(ThreadProfile &aProfile, TickSample* aSample)
 
   aProfile.addTag(ProfileEntry('s', "(root)"));
   for (size_t i = count; i > 0; --i) {
-    aProfile.addTag(ProfileEntry('l', reinterpret_cast<const char*>(pc_array[i - 1])));
+    aProfile.addTag(ProfileEntry('l', reinterpret_cast<void*>(pc_array[i - 1])));
   }
 }
 #endif
@@ -585,8 +570,7 @@ void doSampleStackTrace(ProfileStack *aStack, ThreadProfile &aProfile, TickSampl
   }
 #ifdef ENABLE_SPS_LEAF_DATA
   if (sample) {
-    Address pc = sample->pc;
-    aProfile.addTag(ProfileEntry('l', sample->pc));
+    aProfile.addTag(ProfileEntry('l', (void*)sample->pc));
   }
 #endif
 }
@@ -671,7 +655,7 @@ std::ostream& operator<<(std::ostream& stream, const ProfileEntry& entry)
     // Bug 739800 - Force l-tag addresses to have a "0x" prefix on all platforms
     // Additionally, stringstream seemed to be ignoring formatter flags.
     char tagBuff[1024];
-    unsigned long long pc = (unsigned long long)entry.mTagData;
+    unsigned long long pc = (unsigned long long)(uintptr_t)entry.mTagPtr;
     snprintf(tagBuff, 1024, "l-%#llx\n", pc);
     stream << tagBuff;
   } else {
@@ -682,16 +666,14 @@ std::ostream& operator<<(std::ostream& stream, const ProfileEntry& entry)
 
 void mozilla_sampler_init()
 {
-  // TODO linux port: Use TLS with ifdefs
-  if (!mozilla::tls::create(&pkey_stack) ||
-      !mozilla::tls::create(&pkey_ticker)) {
+  if (!tlsStack.init() || !tlsTicker.init()) {
     LOG("Failed to init.");
     return;
   }
   stack_key_initialized = true;
 
   ProfileStack *stack = new ProfileStack();
-  mozilla::tls::set(pkey_stack, stack);
+  tlsStack.set(stack);
 
 #if defined(USE_LIBUNWIND) && defined(ANDROID)
   // Only try debug_frame and exidx unwinding
@@ -727,7 +709,7 @@ void mozilla_sampler_deinit()
 
 void mozilla_sampler_save()
 {
-  TableTicker *t = mozilla::tls::get<TableTicker>(pkey_ticker);
+  TableTicker *t = tlsTicker.get();
   if (!t) {
     return;
   }
@@ -740,13 +722,15 @@ void mozilla_sampler_save()
 
 char* mozilla_sampler_get_profile()
 {
-  TableTicker *t = mozilla::tls::get<TableTicker>(pkey_ticker);
+  TableTicker *t = tlsTicker.get();
   if (!t) {
     return NULL;
   }
 
   std::stringstream profile;
+  t->SetPaused(true);
   profile << *(t->GetPrimaryThreadProfile());
+  t->SetPaused(false);
 
   std::string profileString = profile.str();
   char *rtn = (char*)malloc( (profileString.length() + 1) * sizeof(char) );
@@ -756,7 +740,7 @@ char* mozilla_sampler_get_profile()
 
 JSObject *mozilla_sampler_get_profile_data(JSContext *aCx)
 {
-  TableTicker *t = mozilla::tls::get<TableTicker>(pkey_ticker);
+  TableTicker *t = tlsTicker.get();
   if (!t) {
     return NULL;
   }
@@ -782,7 +766,7 @@ const char** mozilla_sampler_get_features()
 void mozilla_sampler_start(int aProfileEntries, int aInterval,
                            const char** aFeatures, uint32_t aFeatureCount)
 {
-  ProfileStack *stack = mozilla::tls::get<ProfileStack>(pkey_stack);
+  ProfileStack *stack = tlsStack.get();
   if (!stack) {
     ASSERT(false);
     return;
@@ -792,24 +776,25 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
 
   TableTicker *t = new TableTicker(aInterval, aProfileEntries, stack,
                                    aFeatures, aFeatureCount);
-  mozilla::tls::set(pkey_ticker, t);
+  tlsTicker.set(t);
   t->Start();
 }
 
 void mozilla_sampler_stop()
 {
-  TableTicker *t = mozilla::tls::get<TableTicker>(pkey_ticker);
+  TableTicker *t = tlsTicker.get();
   if (!t) {
     return;
   }
 
   t->Stop();
-  mozilla::tls::set(pkey_ticker, (ProfileStack*)NULL);
+  delete t;
+  tlsTicker.set(NULL);
 }
 
 bool mozilla_sampler_is_active()
 {
-  TableTicker *t = mozilla::tls::get<TableTicker>(pkey_ticker);
+  TableTicker *t = tlsTicker.get();
   if (!t) {
     return false;
   }

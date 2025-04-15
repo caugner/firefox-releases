@@ -1,42 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set sw=4 ts=8 et tw=80 : */
-/* ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Content App.
- *
- * The Initial Developer of the Original Code is
- *   The Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2011
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Benoit Girard <bgirard@mozilla.com>
- *   Ali Juma <ajuma@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef mozilla_layers_CompositorParent_h
 #define mozilla_layers_CompositorParent_h
@@ -47,7 +13,7 @@
 //    1) Compose a frame within 15ms of receiving a ScheduleCompositeCall
 //    2) Unless a frame was composited within the throttle threshold in
 //       which the deadline will be 15ms + throttle threshold
-#define COMPOSITOR_PERFORMANCE_WARNING
+//#define COMPOSITOR_PERFORMANCE_WARNING
 
 #include "mozilla/layers/PCompositorParent.h"
 #include "mozilla/layers/PLayersParent.h"
@@ -56,10 +22,6 @@
 #include "ShadowLayersManager.h"
 
 class nsIWidget;
-
-namespace base {
-class Thread;
-}
 
 namespace mozilla {
 namespace layers {
@@ -91,7 +53,10 @@ class CompositorParent : public PCompositorParent,
 {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(CompositorParent)
 public:
-  CompositorParent(nsIWidget* aWidget, base::Thread* aCompositorThread);
+  CompositorParent(nsIWidget* aWidget, MessageLoop* aMsgLoop,
+                   PlatformThreadId aThreadID, bool aRenderToEGLSurface = false,
+                   int aSurfaceWidth = -1, int aSurfaceHeight = -1);
+
   virtual ~CompositorParent();
 
   virtual bool RecvWillStop() MOZ_OVERRIDE;
@@ -113,29 +78,41 @@ public:
   void ScheduleResumeOnCompositorThread(int width, int height);
 
 protected:
-  virtual PLayersParent* AllocPLayers(const LayersBackend &backendType);
+  virtual PLayersParent* AllocPLayers(const LayersBackend& aBackendType, int* aMaxTextureSize);
   virtual bool DeallocPLayers(PLayersParent* aLayers);
+  virtual void ScheduleTask(CancelableTask*, int);
+  virtual void Composite();
+  virtual void ScheduleComposition();
+  virtual void SetFirstPaintViewport(const nsIntPoint& aOffset, float aZoom, const nsIntRect& aPageRect, const gfx::Rect& aCssPageRect);
+  virtual void SetPageRect(float aZoom, const nsIntRect& aPageRect, const gfx::Rect& aCssPageRect);
+  virtual void SyncViewportInfo(const nsIntRect& aDisplayPort, float aDisplayResolution, bool aLayersUpdated,
+                                nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY);
+  void SetEGLSurfaceSize(int width, int height);
 
 private:
   void PauseComposition();
   void ResumeComposition();
   void ResumeCompositionAndResize(int width, int height);
 
-  void Composite();
-  void ScheduleComposition();
   void TransformShadowTree();
 
+  inline MessageLoop* CompositorLoop();
+  inline PlatformThreadId CompositorThreadID();
+
   // Platform specific functions
-#ifdef MOZ_WIDGET_ANDROID
   /**
    * Does a breadth-first search to find the first layer in the tree with a
    * displayport set.
    */
   Layer* GetPrimaryScrollableLayer();
-#endif
+
+  /**
+   * Recursively applies the given translation to all fixed position layers
+   * that aren't children of other fixed position layers.
+   */
+  void TranslateFixedLayers(Layer* aLayer, const gfxPoint& aTranslation);
 
   nsRefPtr<LayerManager> mLayerManager;
-  base::Thread* mCompositorThread;
   nsIWidget* mWidget;
   CancelableTask *mCurrentCompositeTask;
   TimeStamp mLastCompose;
@@ -148,6 +125,7 @@ private:
   float mYScale;
   nsIntPoint mScrollOffset;
   nsIntRect mContentRect;
+  nsIntSize mWidgetSize;
 
   // When this flag is set, the next composition will be the first for a
   // particular document (i.e. the document displayed on the screen will change).
@@ -159,6 +137,11 @@ private:
   // This flag is set during a layers update, so that the first composition
   // after a layers update has it set. It is cleared after that first composition.
   bool mLayersUpdated;
+
+  MessageLoop* mCompositorLoop;
+  PlatformThreadId mThreadID;
+  bool mRenderToEGLSurface;
+  nsIntSize mEGLSurfaceSize;
 
   mozilla::Monitor mPauseCompositionMonitor;
   mozilla::Monitor mResumeCompositionMonitor;

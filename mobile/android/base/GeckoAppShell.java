@@ -1,40 +1,7 @@
 /* -*- Mode: Java; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: nil; -*-
- * ***** BEGIN LICENSE BLOCK *****
- * Version: MPL 1.1/GPL 2.0/LGPL 2.1
- *
- * The contents of this file are subject to the Mozilla Public License Version
- * 1.1 (the "License"); you may not use this file except in compliance with
- * the License. You may obtain a copy of the License at
- * http://www.mozilla.org/MPL/
- *
- * Software distributed under the License is distributed on an "AS IS" basis,
- * WITHOUT WARRANTY OF ANY KIND, either express or implied. See the License
- * for the specific language governing rights and limitations under the
- * License.
- *
- * The Original Code is Mozilla Android code.
- *
- * The Initial Developer of the Original Code is Mozilla Foundation.
- * Portions created by the Initial Developer are Copyright (C) 2010
- * the Initial Developer. All Rights Reserved.
- *
- * Contributor(s):
- *   Vladimir Vukicevic <vladimir@pobox.com>
- *   Sriram Ramasubramanian <sriram@mozilla.com>
- *
- * Alternatively, the contents of this file may be used under the terms of
- * either the GNU General Public License Version 2 or later (the "GPL"), or
- * the GNU Lesser General Public License Version 2.1 or later (the "LGPL"),
- * in which case the provisions of the GPL or the LGPL are applicable instead
- * of those above. If you wish to allow use of your version of this file only
- * under the terms of either the GPL or the LGPL, and not to allow others to
- * use your version of this file under the terms of the MPL, indicate your
- * decision by deleting the provisions above and replace them with the notice
- * and other provisions required by the GPL or the LGPL. If you do not delete
- * the provisions above, a recipient may use your version of this file under
- * the terms of any one of the MPL, the GPL or the LGPL.
- *
- * ***** END LICENSE BLOCK ***** */
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 package org.mozilla.gecko;
 
@@ -73,8 +40,6 @@ import android.webkit.MimeTypeMap;
 import android.media.MediaScannerConnection;
 import android.media.MediaScannerConnection.MediaScannerConnectionClient;
 import android.provider.Settings;
-import android.view.accessibility.AccessibilityManager;
-import android.view.accessibility.AccessibilityEvent;
 import android.opengl.GLES20;
 
 import android.util.*;
@@ -99,7 +64,6 @@ public class GeckoAppShell
         new LinkedList<GeckoEvent>();
 
     static private boolean gRestartScheduled = false;
-    static private PromptService gPromptService = null;
 
     static private GeckoInputConnection mInputConnection = null;
 
@@ -157,10 +121,15 @@ public class GeckoAppShell
     private static Sensor gGyroscopeSensor = null;
     private static Sensor gOrientationSensor = null;
     private static Sensor gProximitySensor = null;
+    private static Sensor gLightSensor = null;
 
     private static boolean mLocationHighAccuracy = false;
 
     private static Handler sGeckoHandler;
+
+    private static boolean sDisableScreenshot = false;
+
+    static ActivityHandlerHelper sActivityHelper = new ActivityHandlerHelper();
 
     /* The Android-side API: API methods that Android calls */
 
@@ -181,6 +150,7 @@ public class GeckoAppShell
     public static native void loadNSSLibsNative(String apkName, boolean shouldExtract);
     public static native void onChangeNetworkLinkStatus(String status);
     public static native Message getNextMessageFromQueue(MessageQueue queue);
+    public static native void onSurfaceTextureFrameAvailable(Object surfaceTexture, int id);
 
     public static void registerGlobalExceptionHandler() {
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
@@ -322,21 +292,26 @@ public class GeckoAppShell
 
         File cacheFile = getCacheDir(context);
         putenv("GRE_HOME=" + getGREDir(context).getPath());
-        File[] files = cacheFile.listFiles();
-        if (files != null) {
-            Iterator<File> cacheFiles = Arrays.asList(files).iterator();
-            while (cacheFiles.hasNext()) {
-                File libFile = cacheFiles.next();
-                if (libFile.getName().endsWith(".so"))
-                    libFile.delete();
-            }
-        }
 
         // setup the libs cache
         String linkerCache = System.getenv("MOZ_LINKER_CACHE");
-        if (System.getenv("MOZ_LINKER_CACHE") == null) {
-            GeckoAppShell.putenv("MOZ_LINKER_CACHE=" + cacheFile.getPath());
+        if (linkerCache == null) {
+            linkerCache = cacheFile.getPath();
+            GeckoAppShell.putenv("MOZ_LINKER_CACHE=" + linkerCache);
         }
+
+        if (GeckoApp.mAppContext != null &&
+            GeckoApp.mAppContext.linkerExtract()) {
+            GeckoAppShell.putenv("MOZ_LINKER_EXTRACT=1");
+            // Ensure that the cache dir is world-writable
+            File cacheDir = new File(linkerCache);
+            if (cacheDir.isDirectory()) {
+                cacheDir.setWritable(true, false);
+                cacheDir.setExecutable(true, false);
+                cacheDir.setReadable(true, false);
+            }
+        }
+
         sLibsSetup = true;
     }
 
@@ -344,6 +319,13 @@ public class GeckoAppShell
         // setup plugin path directories
         try {
             String[] dirs = context.getPluginDirectories();
+            // Check to see if plugins were blocked.
+            if (dirs == null) {
+                GeckoAppShell.putenv("MOZ_PLUGINS_BLOCKED=1");
+                GeckoAppShell.putenv("MOZ_PLUGIN_PATH=");
+                return;
+            }
+
             StringBuffer pluginSearchPath = new StringBuffer();
             for (int i = 0; i < dirs.length; i++) {
                 Log.i(LOGTAG, "dir: " + dirs[i]);
@@ -409,6 +391,9 @@ public class GeckoAppShell
         // setup the downloads path
         f = Environment.getDownloadCacheDirectory();
         GeckoAppShell.putenv("EXTERNAL_STORAGE=" + f.getPath());
+
+        // Enable fixed position layers
+        GeckoAppShell.putenv("MOZ_ENABLE_FIXED_POSITION_LAYERS=1");
 
         // setup the app-specific cache path
         f = context.getCacheDir();
@@ -570,8 +555,13 @@ public class GeckoAppShell
                     if (tab == null)
                         return;
 
-                    if (!Tabs.getInstance().isSelectedTab(tab) && SCREENSHOT_THUMBNAIL != token)
+                    // XXX This code and GeckoApp.handleThumbnailData should
+                    // change to match the version in mozilla-central (Firefox 16)
+                    // if bug 755070 lands on the Firefox 15 branch.
+                    if (SCREENSHOT_THUMBNAIL == token) {
+                        GeckoApp.mAppContext.handleThumbnailData(tab, data, width, height);
                         return;
+                    }
 
                     Bitmap b = Bitmap.createBitmap(width, height, Bitmap.Config.RGB_565);
                     b.copyPixelsFromBuffer(data);
@@ -589,9 +579,6 @@ public class GeckoAppShell
                                 sLastCheckerboardWidthRatio * width,
                                 sLastCheckerboardHeightRatio * height,
                                 sCheckerboardPageRect);
-                        break;
-                    case SCREENSHOT_THUMBNAIL:
-                        GeckoApp.mAppContext.processThumbnail(tab, b, null);
                         break;
                     }
                 } finally {
@@ -691,7 +678,15 @@ public class GeckoAppShell
             if(gProximitySensor == null)
                 gProximitySensor = sm.getDefaultSensor(Sensor.TYPE_PROXIMITY);
             if (gProximitySensor != null)
-                sm.registerListener(GeckoApp.mAppContext, gProximitySensor, sDefaultSensorHint);
+                sm.registerListener(GeckoApp.mAppContext, gProximitySensor, SensorManager.SENSOR_DELAY_NORMAL);
+            break;
+
+        case GeckoHalDefines.SENSOR_LIGHT:
+            Log.i(LOGTAG, "Enabling SENSOR_LIGHT");
+            if(gLightSensor == null)
+                gLightSensor = sm.getDefaultSensor(Sensor.TYPE_LIGHT);
+            if (gLightSensor != null)
+                sm.registerListener(GeckoApp.mAppContext, gLightSensor, SensorManager.SENSOR_DELAY_NORMAL);
             break;
 
         case GeckoHalDefines.SENSOR_LINEAR_ACCELERATION:
@@ -735,6 +730,12 @@ public class GeckoAppShell
             Log.i(LOGTAG, "Disabling SENSOR_PROXIMITY");
             if (gProximitySensor != null)
                 sm.unregisterListener(GeckoApp.mAppContext, gProximitySensor);
+            break;
+
+        case GeckoHalDefines.SENSOR_LIGHT:
+            Log.i(LOGTAG, "Disabling SENSOR_LIGHT");
+            if (gLightSensor != null)
+                sm.unregisterListener(GeckoApp.mAppContext, gLightSensor);
             break;
 
         case GeckoHalDefines.SENSOR_LINEAR_ACCELERATION:
@@ -1207,12 +1208,11 @@ public class GeckoAppShell
     }
 
     public static String showFilePickerForExtensions(String aExtensions) {
-        return GeckoApp.mAppContext.
-            showFilePicker(getMimeTypeFromExtensions(aExtensions));
+        return sActivityHelper.showFilePicker(GeckoApp.mAppContext, getMimeTypeFromExtensions(aExtensions));
     }
 
     public static String showFilePickerForMimeType(String aMimeType) {
-        return GeckoApp.mAppContext.showFilePicker(aMimeType);
+        return sActivityHelper.showFilePicker(GeckoApp.mAppContext, aMimeType);
     }
 
     public static void performHapticFeedback(boolean aIsLongPress) {
@@ -1533,7 +1533,7 @@ public class GeckoAppShell
                                      int x, int y,
                                      int w, int h,
                                      boolean isFullScreen)
-{
+    {
         ImmutableViewportMetrics pluginViewport;
 
         Log.i(LOGTAG, "addPluginView:" + view + " @ x:" + x + " y:" + y + " w:" + w + " h:" + h + " fullscreen: " + isFullScreen);
@@ -1544,35 +1544,6 @@ public class GeckoAppShell
     public static void removePluginView(View view, boolean isFullScreen) {
         Log.i(LOGTAG, "removePluginView:" + view + " fullscreen: " + isFullScreen);
         GeckoApp.mAppContext.removePluginView(view, isFullScreen);
-    }
-
-    public static Surface createSurface() {
-        Log.i(LOGTAG, "createSurface");
-        return GeckoApp.mAppContext.createSurface();
-    }
-
-    public static void showSurface(Surface surface,
-                                   int x, int y,
-                                   int w, int h,
-                                   boolean inverted,
-                                   boolean blend)
-    {
-        Log.i(LOGTAG, "showSurface:" + surface + " @ x:" + x + " y:" + y + " w:" + w + " h:" + h + " inverted: " + inverted + " blend: " + blend);
-        try {
-            GeckoApp.mAppContext.showSurface(surface, x, y, w, h, inverted, blend);
-        } catch (Exception e) {
-            Log.i(LOGTAG, "Error in showSurface:", e);
-        }
-    }
-
-    public static void hideSurface(Surface surface) {
-        Log.i(LOGTAG, "hideSurface:" + surface);
-        GeckoApp.mAppContext.hideSurface(surface);
-    }
-
-    public static void destroySurface(Surface surface) {
-        Log.i(LOGTAG, "destroySurface:" + surface);
-        GeckoApp.mAppContext.destroySurface(surface);
     }
 
     public static Class<?> loadPluginClass(String className, String libName) {
@@ -1682,7 +1653,7 @@ public class GeckoAppShell
             }
 
             try {
-                sCamera.setPreviewDisplay(GeckoApp.cameraView.getHolder());
+                sCamera.setPreviewDisplay(GeckoApp.mAppContext.cameraView.getHolder());
             } catch(IOException e) {
                 Log.e(LOGTAG, "Error setPreviewDisplay:", e);
             } catch(RuntimeException e) {
@@ -1814,32 +1785,6 @@ public class GeckoAppShell
             final JSONObject geckoObject = json.getJSONObject("gecko");
             String type = geckoObject.getString("type");
             
-            if (type.equals("Prompt:Show")) {
-                getHandler().post(new Runnable() {
-                    public void run() {
-                        getPromptService().processMessage(geckoObject);
-                    }
-                });
-
-                String promptServiceResult = "";
-                try {
-                    promptServiceResult = PromptService.waitForReturn();
-                } catch (InterruptedException e) {
-                    Log.i(LOGTAG, "showing prompt ",  e);
-                }
-                return promptServiceResult;
-            }
-
-            if (type.equals("Accessibility:IsEnabled")) {
-                JSONObject ret = new JSONObject();
-                AccessibilityManager accessibilityManager =
-                    (AccessibilityManager) GeckoApp.mAppContext.getSystemService(Context.ACCESSIBILITY_SERVICE);
-                try {
-                    ret.put("enabled", accessibilityManager.isEnabled());
-                } catch (Exception ex) { }
-                return ret.toString();
-            }
-
             CopyOnWriteArrayList<GeckoEventListener> listeners;
             synchronized (mEventListeners) {
                 listeners = mEventListeners.get(type);
@@ -1873,13 +1818,6 @@ public class GeckoAppShell
 
     public static void disableBatteryNotifications() {
         GeckoBatteryManager.disableNotifications();
-    }
-
-    public static PromptService getPromptService() {
-        if (gPromptService == null) {
-            gPromptService = new PromptService();
-        }
-        return gPromptService;
     }
 
     public static double[] getCurrentBatteryInformation() {
@@ -1970,39 +1908,7 @@ public class GeckoAppShell
     }
 
     public static boolean isTablet() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.GINGERBREAD) {
-            Configuration config = GeckoApp.mAppContext.getResources().getConfiguration();
-            // xlarge is defined by android as screens larger than 960dp x 720dp
-            // and should include most devices ~7in and up.
-            // http://developer.android.com/guide/practices/screens_support.html
-            if ((config.screenLayout & Configuration.SCREENLAYOUT_SIZE_MASK) >= Configuration.SCREENLAYOUT_SIZE_XLARGE) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public static void emitGeckoAccessibilityEvent (int eventType, String[] textList, String description, boolean enabled, boolean checked, boolean password) {
-        AccessibilityManager accessibilityManager =
-            (AccessibilityManager) GeckoApp.mAppContext.getSystemService(Context.ACCESSIBILITY_SERVICE);
-
-        if (!accessibilityManager.isEnabled())
-            return;
-
-        LayerController layerController = GeckoApp.mAppContext.getLayerController();
-        LayerView layerView = layerController.getView();
-
-        AccessibilityEvent event = AccessibilityEvent.obtain(eventType);
-        event.setClassName(layerView.getClass().getName());
-        event.setPackageName(GeckoApp.mAppContext.getPackageName());
-        event.setEnabled(enabled);
-        event.setChecked(checked);
-        event.setPassword(password);
-        event.setContentDescription(description);
-        for (String text: textList)
-            event.getText().add(text);
-
-        accessibilityManager.sendAccessibilityEvent(event);
+        return GeckoApp.mAppContext.isTablet();
     }
 
     public static void viewSizeChanged() {
@@ -2164,9 +2070,10 @@ public class GeckoAppShell
         msg.recycle();
     }
 
-    static class AsyncResultHandler extends GeckoApp.FilePickerResultHandler {
+    static class AsyncResultHandler extends FilePickerResultHandler {
         private long mId;
         AsyncResultHandler(long id) {
+            super(null);
             mId = id;
         }
 
@@ -2180,8 +2087,9 @@ public class GeckoAppShell
 
     /* Called by JNI from AndroidBridge */
     public static void showFilePickerAsync(String aMimeType, long id) {
-        if (!GeckoApp.mAppContext.showFilePicker(aMimeType, new AsyncResultHandler(id)))
+        if (!sActivityHelper.showFilePicker(GeckoApp.mAppContext, aMimeType, new AsyncResultHandler(id))) {
             GeckoAppShell.notifyFilePickerResult("", id);
+        }
     }
 
     static class RepaintRunnable implements Runnable {
@@ -2232,7 +2140,15 @@ public class GeckoAppShell
         return Math.max(Math.min(max, val), min);
     }
 
+    // Invoked via reflection from robocop test
+    public static void disableScreenshot() {
+        sDisableScreenshot = true;
+    }
+
     public static void screenshotWholePage(Tab tab) {
+        if (sDisableScreenshot) {
+            return;
+        }
         if (GeckoApp.mAppContext.isApplicationInBackground())
             return;
 
@@ -2243,7 +2159,12 @@ public class GeckoAppShell
             if (sMaxTextureSize == 0)
                 return;
         }
-        ImmutableViewportMetrics viewport = GeckoApp.mAppContext.getLayerController().getViewportMetrics();
+        if (tab == null)
+            return;
+        LayerController layerController = GeckoApp.mAppContext.getLayerController();
+        if (layerController == null)
+            return;
+        ImmutableViewportMetrics viewport = layerController.getViewportMetrics();
         Log.i(LOGTAG, "Taking whole-screen screenshot, viewport: " + viewport);
         // source width and height to screenshot
         float sx = viewport.cssPageRectLeft;
@@ -2276,5 +2197,17 @@ public class GeckoAppShell
 
     public static void notifyWakeLockChanged(String topic, String state) {
         GeckoApp.mAppContext.notifyWakeLockChanged(topic, state);
+    }
+
+    public static void registerSurfaceTextureFrameListener(Object surfaceTexture, final int id) {
+        ((SurfaceTexture)surfaceTexture).setOnFrameAvailableListener(new SurfaceTexture.OnFrameAvailableListener() {
+            public void onFrameAvailable(SurfaceTexture surfaceTexture) {
+                GeckoAppShell.onSurfaceTextureFrameAvailable(surfaceTexture, id);
+            }
+        });
+    }
+
+    public static void unregisterSurfaceTextureFrameListener(Object surfaceTexture) {
+        ((SurfaceTexture)surfaceTexture).setOnFrameAvailableListener(null);
     }
 }
