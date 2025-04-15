@@ -476,6 +476,14 @@ WorkerGlobalScope::CreateImageBitmap(const ImageBitmapSource& aImage,
                                      const Sequence<ChannelPixelLayout>& aLayout,
                                      ErrorResult& aRv)
 {
+  JSContext* cx = GetCurrentThreadJSContext();
+  MOZ_ASSERT(cx);
+
+  if (!ImageBitmap::ExtensionsEnabled(cx, nullptr)) {
+    aRv.Throw(NS_ERROR_TYPE_ERR);
+    return nullptr;
+  }
+
   if (aImage.IsArrayBuffer() || aImage.IsArrayBufferView()) {
     return ImageBitmap::Create(this, aImage, aOffset, aLength, aFormat, aLayout,
                                aRv);
@@ -609,6 +617,95 @@ ServiceWorkerGlobalScope::Registration()
   }
 
   return mRegistration;
+}
+
+EventHandlerNonNull*
+ServiceWorkerGlobalScope::GetOnfetch()
+{
+  MOZ_ASSERT(mWorkerPrivate);
+  mWorkerPrivate->AssertIsOnWorkerThread();
+
+  return GetEventHandler(nullptr, NS_LITERAL_STRING("fetch"));
+}
+
+namespace {
+
+class ReportFetchListenerWarningRunnable final : public Runnable
+{
+  const nsCString mScope;
+  nsCString mSourceSpec;
+  uint32_t mLine;
+  uint32_t mColumn;
+
+public:
+  explicit ReportFetchListenerWarningRunnable(const nsString& aScope)
+    : mScope(NS_ConvertUTF16toUTF8(aScope))
+  {
+    WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
+    MOZ_ASSERT(workerPrivate);
+    JSContext* cx = workerPrivate->GetJSContext();
+    MOZ_ASSERT(cx);
+
+    nsJSUtils::GetCallingLocation(cx, mSourceSpec, &mLine, &mColumn);
+  }
+
+  NS_IMETHOD
+  Run() override
+  {
+    AssertIsOnMainThread();
+
+    ServiceWorkerManager::LocalizeAndReportToAllClients(mScope, "ServiceWorkerNoFetchHandler",
+        nsTArray<nsString>{}, nsIScriptError::warningFlag, NS_ConvertUTF8toUTF16(mSourceSpec),
+        EmptyString(), mLine, mColumn);
+
+    return NS_OK;
+  }
+};
+
+} // anonymous namespace
+
+void
+ServiceWorkerGlobalScope::SetOnfetch(mozilla::dom::EventHandlerNonNull* aCallback)
+{
+  MOZ_ASSERT(mWorkerPrivate);
+  mWorkerPrivate->AssertIsOnWorkerThread();
+
+  if (aCallback) {
+    if (mWorkerPrivate->WorkerScriptExecutedSuccessfully()) {
+      RefPtr<Runnable> r = new ReportFetchListenerWarningRunnable(mScope);
+      mWorkerPrivate->DispatchToMainThread(r.forget());
+    }
+    mWorkerPrivate->SetFetchHandlerWasAdded();
+  }
+  SetEventHandler(nullptr, NS_LITERAL_STRING("fetch"), aCallback);
+}
+
+void
+ServiceWorkerGlobalScope::AddEventListener(
+                          const nsAString& aType,
+                          dom::EventListener* aListener,
+                          const dom::AddEventListenerOptionsOrBoolean& aOptions,
+                          const dom::Nullable<bool>& aWantsUntrusted,
+                          ErrorResult& aRv)
+{
+  MOZ_ASSERT(mWorkerPrivate);
+  mWorkerPrivate->AssertIsOnWorkerThread();
+
+  DOMEventTargetHelper::AddEventListener(aType, aListener, aOptions,
+                                         aWantsUntrusted, aRv);
+
+  if (!aType.EqualsLiteral("fetch")) {
+    return;
+  }
+
+  if (mWorkerPrivate->WorkerScriptExecutedSuccessfully()) {
+    RefPtr<Runnable> r = new ReportFetchListenerWarningRunnable(mScope);
+    mWorkerPrivate->DispatchToMainThread(r.forget());
+  }
+
+  if (!aRv.Failed()) {
+    mWorkerPrivate->SetFetchHandlerWasAdded();
+  }
 }
 
 namespace {
